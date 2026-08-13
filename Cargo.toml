@@ -1,0 +1,15 @@
+[workspace]
+members = ["kernel"]
+default-members = ["kernel"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[profile.dev]
+debug = 2
+panic = "abort"
+
+[profile.release]
+debug = 1

@@ -1,0 +1,19 @@
+[package]
+name = "kernel"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+log = "0.4.33"
+riscv = { version = "0.16.1", feature = ["s-mode"] }
+riscv-rt = { version = "0.18.0", feature = ["s-mode"] }
+riscv-semihosting = "0.2.1"
+rustsbi = "0.4.1"
+
+
+[[bin]]
+name = "sqware"
+path = "src/main.rs"
+test = false
+bench = false
+doctest = false
