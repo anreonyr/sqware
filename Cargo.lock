@@ -3,12 +3,6 @@
 version = 4
 
 [[package]]
-name = "bitflags"
-version = "2.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
-
-[[package]]
 name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21,14 +15,65 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
+name = "erra"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
+
+[[package]]
+name = "fack"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fa1171fba1ee1a0653aa7bc3ab9fdd4bd7b03e5b0e44e5bb3a5e6d1eb53d027"
+dependencies = [
+ "fack-core",
+ "fack-macro",
+]
+
+[[package]]
+name = "fack-codegen"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0116a9d10fc7c4c264974b08dc5fc785db06623ba93fa8aff1af0e8f6fbe2bce"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "fack-core"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16caf1e99787156beeb5fa3ad66fdaa30902eb47fbd3e7017cedf43237831482"
+
+[[package]]
+name = "fack-macro"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53771f0e14299c2146c3b18af61cd28fb54e0a299ac3d6ca1e3347f581c53010"
+dependencies = [
+ "fack-codegen",
+ "syn",
+]
+
+[[package]]
+name = "fdt"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "784a4df722dc6267a04af36895398f59d21d07dce47232adf31ec0ff2fa45e67"
+
+[[package]]
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "erra",
+ "fack",
+ "fdt",
  "log",
  "riscv",
  "riscv-rt",
  "riscv-semihosting",
- "rustsbi",
 ]
 
 [[package]]
@@ -117,36 +162,6 @@ name = "riscv-types"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3f2ad9f15a07f4a0e1677124f9120ce7e83ab7e1ca7186af0ca9da529b62e80"
-
-[[package]]
-name = "rustsbi"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0da89e7936845ca69a9c12307862828180f10e55cc3b313ace4a0efee5f20622"
-dependencies = [
- "rustsbi-macros",
- "sbi-spec",
-]
-
-[[package]]
-name = "rustsbi-macros"
-version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a71347da9582cc6b6f3652c7d2c06516c9555690b3738ecdff7e84297f4e17fc"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "sbi-spec"
-version = "0.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "785b91fcc41c7426fc07510be49ed1db44f002b45d45c175ec7f155c3cd447a9"
-dependencies = [
- "bitflags",
-]
 
 [[package]]
 name = "syn"

@@ -1,0 +1,21 @@
+pub const BASE: usize = 0x10;
+pub const TIME: usize = 0x54494D45;
+pub const IPI: usize = 0x735049;
+pub const RFENCE: usize = 0x52464E43;
+pub const HSM: usize = 0x48534D;
+pub const SYSTEM_RESET: usize = 0x53525354;
+pub const PMU: usize = 0x504D55;
+pub const DBCN: usize = 0x4442434E;
+pub const SUSP: usize = 0x53555350;
+pub const CPPC: usize = 0x43505043;
+pub const NACL: usize = 0x4E41434C;
+
+pub const LEGACY_SET_TIMER: usize = 0x00;
+pub const LEGACY_CONSOLE_PUTCHAR: usize = 0x01;
+pub const LEGACY_CONSOLE_GETCHAR: usize = 0x02;
+pub const LEGACY_CLEAR_IPI: usize = 0x03;
+pub const LEGACY_SEND_IPI: usize = 0x04;
+pub const LEGACY_REMOTE_FENCE_I: usize = 0x05;
+pub const LEGACY_REMOTE_SFENCE_VMA: usize = 0x06;
+pub const LEGACY_REMOTE_SFENCE_VMA_ASID: usize = 0x07;
+pub const LEGACY_SHUTDOWN: usize = 0x08;

@@ -1,0 +1,135 @@
+// 类型安全的虚拟地址 / 物理地址 / 物理页号
+//
+// Sv39 虚拟地址规范：
+//   bits 63:39 — 必须全等于 bit 38（符号扩展）
+//   bits 38:30 — VPN[2]  (L2 索引)
+//   bits 29:21 — VPN[1]  (L1 索引)
+//   bits 20:12 — VPN[0]  (L0 索引)
+//   bits 11:0  — 页内偏移
+//
+// VPN[2] 决定地址空间：
+//   0x000 (0-255)   — 用户半区  (0x0000_0000_0000_0000 .. 0x0000_007F_FFFF_FFFF)
+//   0x1FF (256-511) — 内核半区  (0xFFFF_FF80_0000_0000 .. 0xFFFF_FFFF_FFFF_FFFF)
+
+use core::ops::Add;
+
+use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
+
+/// Sv39 虚拟地址。
+///
+/// 保证规范形式：bits 63:39 全等于 bit 38。
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VirtAddr(usize);
+
+impl VirtAddr {
+    /// 内核半区起始虚拟地址 (VPN[2] = 256, VA = 2^38 符号扩展)
+    pub const KERNEL_BASE: usize = 0xFFFF_FFC0_0000_0000;
+
+    /// 从原始 usize 构造虚拟地址，符号扩展到规范形式。
+    ///
+    /// 利用 bit 38 的值填充 bits 63:39（恒合法，不检查）。
+    #[inline]
+    pub const fn from_raw(addr: usize) -> Self {
+        let sign = ((addr as isize) << (63 - 38)) >> (63 - 38);
+        Self(sign as usize)
+    }
+
+    /// 提取指定级别的 VPN（9 位索引）。
+    ///
+    /// `level` 2 → bits 38:30, `level` 1 → bits 29:21, `level` 0 → bits 20:12
+    #[inline]
+    pub fn vpn(self, level: u8) -> usize {
+        (self.0 >> (PAGE_SHIFT + level as usize * 9)) & 0x1FF
+    }
+
+    /// 页内偏移（bits 11:0）
+    #[inline]
+    pub fn offset(self) -> usize {
+        self.0 & (PAGE_SIZE - 1)
+    }
+
+    /// 向下对齐到页边界
+    #[inline]
+    pub fn page_align(self) -> Self {
+        Self(self.0 & !(PAGE_SIZE - 1))
+    }
+
+    /// 是否为用户地址（VPN[2] <= 255，即 bit 38 = 0）
+    #[inline]
+    pub fn is_user(self) -> bool {
+        (self.0 >> 38) & 1 == 0
+    }
+
+    /// 获取原始 usize 值
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
+impl Add<usize> for VirtAddr {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: usize) -> Self {
+        Self(self.0 + rhs)
+    }
+}
+
+impl core::fmt::Debug for VirtAddr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "VA({:#x})", self.0)
+    }
+}
+
+/// 物理地址。
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PhysAddr(usize);
+
+impl PhysAddr {
+    /// 从原始 usize 构造物理地址。
+    #[inline]
+    pub const fn from_raw(addr: usize) -> Self {
+        Self(addr)
+    }
+
+    /// 是否 4 KiB 对齐
+    #[inline]
+    pub fn is_aligned(self) -> bool {
+        self.0 & (PAGE_SIZE - 1) == 0
+    }
+
+    /// 向下对齐到页边界
+    #[inline]
+    #[allow(dead_code)] // 对齐工具预留
+    pub fn page_align(self) -> Self {
+        Self(self.0 & !(PAGE_SIZE - 1))
+    }
+
+    /// 获取原始 usize 值
+    #[inline]
+    pub const fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
+impl Add<usize> for PhysAddr {
+    type Output = Self;
+    #[inline]
+    fn add(self, rhs: usize) -> Self {
+        Self(self.0 + rhs)
+    }
+}
+
+impl core::fmt::Debug for PhysAddr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "PA({:#x})", self.0)
+    }
+}
+
+impl core::fmt::LowerHex for PhysAddr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::LowerHex::fmt(&self.0, f)
+    }
+}
