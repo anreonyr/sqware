@@ -39,6 +39,40 @@ pub const TIMER_INTERVAL: usize = 1_000_000;
 /// 定时器 tick 计数（自检：前若干次打印后静默）。
 static TICKS: AtomicUsize = AtomicUsize::new(0);
 
+/// 用户 ecall 计数（自检：前若干次打印后静默）。
+static ECALLS: AtomicUsize = AtomicUsize::new(0);
+
+/// trap 栈已用字节数（高水位跟踪用）。
+fn trap_stack_used() -> usize {
+    let sp: usize;
+    // SAFETY: 读当前栈指针，纯读无副作用。
+    unsafe {
+        core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+    }
+    trap_stack_top().saturating_sub(sp)
+}
+
+/// trap 栈高水位（字节）——新峰值时打印一次（上限若干次，避免刷屏）。
+static TRAP_STACK_PEAK: AtomicUsize = AtomicUsize::new(0);
+static PEAK_PRINTS: AtomicUsize = AtomicUsize::new(0);
+
+/// 更新高水位，新峰值且打印配额内时输出。
+fn track_trap_stack_usage() {
+    let used = trap_stack_used();
+    let mut peak = TRAP_STACK_PEAK.load(Ordering::Relaxed);
+    while used > peak {
+        match TRAP_STACK_PEAK.compare_exchange_weak(peak, used, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => {
+                if PEAK_PRINTS.fetch_add(1, Ordering::Relaxed) < 8 {
+                    putln!("trap stack high-water: {used} B / 16 KiB");
+                }
+                break;
+            }
+            Err(current) => peak = current,
+        }
+    }
+}
+
 /// 初始化 trap 运行时（须在 `manager::init` 之后：内核帧与 TRAMPOLINE 映射已就绪）。
 pub fn init() {
     // 0. 防呆：trampoline 汇编必须落在一页内（TRAMPOLINE 映射只覆盖一页）
@@ -101,16 +135,17 @@ pub fn arm_timer(interval: usize) {
 
 /// 陷阱分发 — 汇编入口（`jalr trap_handler`）的唯一 Rust 侧。
 ///
-/// 入参 `frame_pa` = 被中断上下文的帧物理地址（self_pa，内核恒等映射可访问）；
-/// 返回值 = 待恢复帧（阶段 A 恒为入参帧；阶段 C 可返回下一任务帧实现切换）。
+/// 入参 `frame` = 被中断上下文的帧（汇编以 a0 = 帧物理地址调用，恒等映射下
+/// 引用即物理地址）；返回值 = 待恢复帧（阶段 A 恒为入参帧；阶段 C 可返回
+/// 下一任务帧实现切换）。
 ///
 /// # Safety
 ///
-/// 仅由 trampoline 汇编调用：入参必须是合法帧地址，且当前处于陷阱上下文
-/// （中断屏蔽、CSR 已由硬件保存）。
+/// 仅由 trampoline 汇编调用：入参必须指向有效且独占的 `TrapContext`（帧独占性
+/// 由汇编入口/出口顺序保证——每次陷阱新建引用，无并发别名），且当前处于陷阱
+/// 上下文（中断屏蔽、CSR 已由硬件保存）。
 #[unsafe(no_mangle)]
-extern "C" fn trap_handler(frame_pa: usize) -> usize {
-    let frame = unsafe { &mut *(frame_pa as *mut TrapContext) };
+extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
     // 入口校验：trap 栈 canary 与内核帧标记（上一次处理器若溢出，此处立即暴露）
     let canary = unsafe { (trap_stack_bottom() as *const usize).read() };
     assert_eq!(
@@ -121,6 +156,7 @@ extern "C" fn trap_handler(frame_pa: usize) -> usize {
         frame.trap_stack_corrupt, TRAP_STACK_CANARY,
         "kernel trap frame corrupted"
     );
+    track_trap_stack_usage();
 
     // scause 裸码值：5 = SupervisorTimer 中断；8 = ecall；12/13/15 = 缺页
     match scause::read().cause() {
@@ -136,14 +172,35 @@ extern "C" fn trap_handler(frame_pa: usize) -> usize {
                 putln!("unhandled interrupt: code={other}");
             }
         },
-        Trap::Exception(code) => {
-            putln!(
-                "kernel exception: code={code} at sepc={:#x}, stval={:#x}",
-                sepc::read(),
-                stval::read()
-            );
-            panic!("unhandled kernel exception");
-        }
+        Trap::Exception(code) => match code {
+            // 用户态 ecall（syscall 占位）：跳过 ecall 指令继续执行
+            8 => {
+                frame.sepc += 4;
+                let n = ECALLS.fetch_add(1, Ordering::Relaxed);
+                if n < 8 {
+                    putln!("user ecall #{n}");
+                }
+            }
+            // 用户态缺页：机制归 memory::fault，策略归 trap 层（解析失败即 panic）
+            12 | 13 | 15 => {
+                let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
+                let ok =
+                    crate::memory::manager::fault::handle_page_fault(&fault, crate::user::user_space());
+                if ok {
+                    putln!("user page fault resolved: {fault:?}");
+                } else {
+                    panic!("unresolved page fault: {fault:?}");
+                }
+            }
+            other => {
+                putln!(
+                    "kernel exception: code={other} at sepc={:#x}, stval={:#x}",
+                    sepc::read(),
+                    stval::read()
+                );
+                panic!("unhandled kernel exception");
+            }
+        },
     }
 
     // 出口再校验一次 canary（处理器自身栈用量引发的溢出）
@@ -153,5 +210,5 @@ extern "C" fn trap_handler(frame_pa: usize) -> usize {
         "trap stack corrupted after handler"
     );
 
-    frame_pa
+    frame as *mut TrapContext
 }

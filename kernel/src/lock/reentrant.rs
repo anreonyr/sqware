@@ -19,6 +19,7 @@ use crate::machine;
 use super::dep;
 use super::trap::TrapGuard;
 
+#[derive(Debug)]
 pub struct RelLock<T: ?Sized> {
     // 持有者 hart_id + 1；0 = 空闲
     owner: AtomicUsize,

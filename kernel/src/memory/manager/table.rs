@@ -47,6 +47,7 @@ pub enum MapError {
 /// `entries` 字段公开（`pub(crate)`），数组自带 `Index`/`IndexMut`/slice 操作——
 /// 无需额外 trait impl。
 #[repr(C, align(4096))]
+#[derive(Debug)]
 pub(crate) struct PageTable {
     pub(crate) entries: [PageTableEntry; 512],
 }

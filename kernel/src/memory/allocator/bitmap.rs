@@ -19,6 +19,7 @@ use alloc::vec::Vec;
 /// 语义对齐 allocator 家族（block/frame）：`allocate` / `deallocate` + `AllocError`，
 /// 但返回的是**地址/编号区间**而非可解引用的内存指针（本分配器管理未映射的
 /// VA 或编号空间，不实现 [`core::alloc::Allocator`]）。
+#[derive(Debug)]
 pub(crate) struct BitmapAllocator {
     /// 空间基址（含）。
     base: usize,

@@ -134,7 +134,7 @@ const _: () = {
     assert!(TRAMPOLINE.as_usize() % PAGE_SIZE == 0);
     assert!(TRAP_CONTEXT.as_usize() % PAGE_SIZE == 0);
     assert!(TRAMPOLINE.as_usize() - PAGE_SIZE == TRAP_CONTEXT.as_usize()); // 相邻页（trampoline 收尾依赖）
-    assert!(KERNEL_BASE.as_usize() == 0xFFFF_FFC0_0000_0000);              // Sv39 内核半区起点（VPN[2] = 256）
+    assert!(KERNEL_BASE.as_usize() == 0xFFFF_FFC0_0000_0000); // Sv39 内核半区起点（VPN[2] = 256）
     assert!(USER_HEAP_BASE.as_usize() % PAGE_SIZE == 0);
     assert!(USER_HEAP_SIZE % PAGE_SIZE == 0);
     assert!(USER_HEAP_BASE.as_usize() + USER_HEAP_SIZE <= USER_STACK_BASE.as_usize()); // 堆窗口不越过栈窗口
@@ -169,6 +169,7 @@ const _: () = {
 ///
 /// `root`（Box）与 `frames`（Vec<Frame>）随字段自动 drop 归还 frame 池，
 /// 无需遍历页表树、无需手写 deallocate。
+#[derive(Debug)]
 pub struct Space {
     /// 根页表 — 强类型 `Box<PageTable>`：读路径（translate）走 `as_ref()` 免 unsafe；
     /// 写路径（map/unmap/protect）持 inner 锁期间经 `root_mut()` 拿 `&mut`。
@@ -184,6 +185,7 @@ pub struct Space {
 /// 只做组合：`regions`（VMA 表）与 `frames`（自有帧）是页表/缺页的核心状态；
 /// 用户堆与任务栈窗口各持一个 [`BitmapAllocator`] 实例（只算虚拟地址区间、
 /// 不碰页表），与映射操作同锁互斥（锁约定见 [`Space`]）。
+#[derive(Debug)]
 struct SpaceInner {
     /// 虚拟内存区域表（声明 + 查询，缺页/堆操作据此解析权限与 kind）。
     regions: Vec<Region>,
@@ -340,13 +342,16 @@ impl SpaceBuilder {
         let trap_context_pa = PhysAddr::from_raw(trap_context.as_ptr() as usize);
         // SAFETY: 内核帧 PA 恒等可读（trap::init 已写入元数据）；新帧独占。
         unsafe {
-            let ktc = kernel_trap_context_pa.as_usize() as *const crate::runtime::context::TrapContext;
+            let ktc =
+                kernel_trap_context_pa.as_usize() as *const crate::runtime::context::TrapContext;
             let utc = trap_context_pa.as_usize() as *mut crate::runtime::context::TrapContext;
             (*utc).kernel_satp = (*ktc).kernel_satp;
             (*utc).kernel_sp = (*ktc).kernel_sp;
             (*utc).trap_handler = (*ktc).trap_handler;
             (*utc).trap_stack_corrupt = (*ktc).trap_stack_corrupt;
             (*utc).self_pa = trap_context_pa;
+            // user_satp = Sv39 模式位(8) << 60 | asid << 44 | root_ppn —— __restore 切回本空间用
+            (*utc).user_satp = (8usize << 60) | (space.asid() << 44) | space.root();
         }
         space.map(
             TRAP_CONTEXT,

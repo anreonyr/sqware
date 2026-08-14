@@ -10,6 +10,7 @@ mod machine;
 mod memory;
 mod runtime;
 mod sbi;
+mod user;
 
 use core::arch::{asm, global_asm};
 
@@ -66,13 +67,9 @@ fn main() -> ! {
     manager::init().unwrap_or_else(|e| panic!("manager init failed: {e}"));
     runtime::init();
 
-    // 阶段 A 自检：S-timer 中断由 init 武装、trap_handler 内循环重武装，
-    // 此处只需 wfi 等待中断驱动 trap 进出链路。
-    loop {
-        unsafe {
-            asm!("wfi");
-        }
-    }
+    // 阶段 B：构建首用户空间并进入用户态（永不返回）。S-timer 由 init 武装、
+    // trap_handler 内循环重武装——用户态下照常触发，验证中断打断用户路径。
+    user::boot();
 }
 
 /// 内核栈大小（DRAM 顶部保留，向下增长）。

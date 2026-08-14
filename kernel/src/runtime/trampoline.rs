@@ -153,6 +153,7 @@ global_asm!(
     "__restore:",
     "    mv    sp, a0",
     "    ld    t0, 0x130(sp)",
+    "    andi  t0, t0, -3",            // 清 sstatus.SIE：恢复后到 sret 之间不得被中断打断
     "    csrw  sstatus, t0",
     "    ld    t0, 0x138(sp)",
     "    csrw  sepc, t0",
@@ -216,9 +217,28 @@ unsafe extern "C" {
     pub static __alltraps: u8;
     /// trampoline 页结束（防呆：与 __trampoline_start 同页）。
     pub static __trampoline_end: u8;
+    /// 上下文恢复出口（仅供 restore() 计算 TRAMPOLINE VA 偏移，勿直接链接地址调用）。
+    pub static __restore: u8;
     /// per-hart trap 栈底 / 栈顶（link.ld 保留 16 KiB，恒等映射地址即物理地址）。
     pub static _trap_stack_bottom: u8;
     pub static _trap_stack_top: u8;
+}
+
+/// 恢复目标帧上下文并进入其中（永不返回）。frame_pa = 目标帧 self_pa。
+///
+/// 必须在 TRAMPOLINE VA 执行 `__restore`：切换用户页表后，链接地址（内核镜像）
+/// 不再映射，只有 TRAMPOLINE VA 在目标空间恒映射（G 位）。
+pub fn restore(frame_pa: usize) -> ! {
+    let link = core::ptr::addr_of!(__restore) as usize;
+    let va = TRAMPOLINE.as_usize() + (link - core::ptr::addr_of!(__trampoline_start) as usize);
+    unsafe {
+        core::arch::asm!(
+            "jalr ra, {addr}",
+            addr = in(reg) va,
+            in("a0") frame_pa,
+            options(noreturn),
+        );
+    }
 }
 
 /// trampoline 页的物理地址（链接符号地址：内核镜像 0x8020_0000 恒等加载）。
