@@ -8,7 +8,7 @@
 use log::{error, info};
 use riscv::register::{scause, sepc, stval};
 
-use crate::memory::{PAGE_SIZE, allocator::page};
+use crate::memory::PAGE_SIZE;
 
 use super::{
     addr::VirtAddr,
@@ -43,20 +43,18 @@ impl PageFault {
     ///
     /// 仅在 trap handler 内调用。
     pub unsafe fn capture() -> Self {
-        unsafe {
-            let code = scause::read().code();
-            let kind = match code {
-                12 => FaultKind::Instruction,
-                13 => FaultKind::Load,
-                15 => FaultKind::Store,
-                _ => panic!("capture() called on non-page-fault scause={}", code),
-            };
+        let code = scause::read().code();
+        let kind = match code {
+            12 => FaultKind::Instruction,
+            13 => FaultKind::Load,
+            15 => FaultKind::Store,
+            _ => panic!("capture() called on non-page-fault scause={}", code),
+        };
 
-            Self {
-                addr: VirtAddr::from_raw(stval::read()),
-                pc: sepc::read(),
-                kind,
-            }
+        Self {
+            addr: VirtAddr::from_raw(stval::read()),
+            pc: sepc::read(),
+            kind,
         }
     }
 }
@@ -69,7 +67,7 @@ fn resolve_anonymous(fault: &PageFault, space: &AddressSpace, flags: PteFlags) -
     // A/D 必须设置，否则硬件可能再次缺页
     let flags = flags | PteFlags::A | PteFlags::D;
 
-    match space.page_fault(vaddr, PAGE_SIZE, flags, page::allocator()) {
+    match space.page_fault(vaddr, PAGE_SIZE, flags) {
         Ok(()) => {
             // map 内部已按空间 ASID 局部刷 TLB（只失效本空间旧条目）。
             info!(

@@ -38,6 +38,7 @@ def main [elf: path] {
         "-bios", $bios
         "-kernel", $elf
         "-nographic"
+        "-no-reboot"
         "-m", $mem
         "-smp", $smp
         ...$gdb

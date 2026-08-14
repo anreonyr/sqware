@@ -25,11 +25,11 @@ SECTIONS
 
   . = ALIGN(16);
 
-  _bump_base = .;
-
   _trap_stack_bottom = .;
   . += 16K;
   _trap_stack_top = .;
+
+  _free_base = .;
 
   _early_stack_bottom = .;
   . += 4K;

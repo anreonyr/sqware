@@ -6,13 +6,13 @@
 //   VA[20:12] → VPN[0] — 叶子页表 (Level 0, L0) 索引
 //   VA[11:0]            — 页内偏移
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::{
-    alloc::{Allocator, Layout},
-    ptr::NonNull,
-};
 
-use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
+use crate::memory::{
+    allocator::frame::{self, Frame, FrameAllocator},
+    PAGE_SHIFT, PAGE_SIZE,
+};
 
 use super::{
     addr::{PhysAddr, VirtAddr},
@@ -50,18 +50,11 @@ impl PageTable {
     /// # Errors
     ///
     /// 物理帧耗尽时返回 [`MapError::OutOfMemory`]。
-    pub(crate) fn allocate(alloc: &dyn Allocator) -> Result<NonNull<Self>, MapError> {
-        alloc
-            .allocate(Layout::new::<PageTable>())
-            .map(|mem| {
-                let ptr: NonNull<Self> = mem.cast();
-                // SAFETY: 分配器刚给的独占页，清零以保证所有 PTE 初始无效
-                unsafe {
-                    core::ptr::write_bytes(ptr.as_ptr() as *mut u8, 0, PAGE_SIZE);
-                }
-                ptr
-            })
-            .map_err(|_| MapError::OutOfMemory)
+    pub(crate) fn allocate() -> Result<Box<PageTable, &'static FrameAllocator>, MapError> {
+        let zero = PageTable {
+            entries: [PageTableEntry::default(); 512],
+        };
+        Box::try_new_in(zero, frame::allocator_ref()).map_err(|_| MapError::OutOfMemory)
     }
 
     /// Walk to the leaf PTE read-only, returning the physical address and flags.
@@ -93,10 +86,9 @@ impl PageTable {
 
     /// Walk to the leaf PTE and return a mutable reference.
     ///
-    /// `alloc` controls intermediate-table allocation: `Some` allocates on-demand;
-    /// `None` returns [`MapError::NotMapped`] when an intermediate table is missing.
-    /// `new_tables` 收集本 walk 新分配的中间表帧（`Some` 时 push）——调用方经它把
-    /// 帧纳入所有权（`AddressSpace.frames`），Drop 时统一归还。
+    /// `frames` 控制中间表分配：`Some` 时按需分配，新帧**当场** push 进 `frames`
+    /// （所有权在分配点即归 `AddressSpace`，无 out-param、无泄漏）；`None` 时
+    /// 缺中间表即 [`MapError::NotMapped`]（`protect` 等只读遍历用）。
     ///
     /// # Physical-to-virtual assumption
     ///
@@ -106,28 +98,17 @@ impl PageTable {
     ///
     /// # Errors
     ///
-    /// - `OutOfMemory` — `alloc` is `Some` and physical frames exhausted
-    /// - `NotMapped` — `alloc` is `None` and an intermediate table is missing
+    /// - `OutOfMemory` — `frames` is `Some` and physical frames exhausted
+    /// - `NotMapped` — `frames` is `None` and an intermediate table is missing
     pub(crate) fn walk_mut(
         &mut self,
         vaddr: VirtAddr,
-        alloc: Option<&dyn Allocator>,
-        mut new_tables: Option<&mut Vec<NonNull<u8>>>,
+        mut frames: Option<&mut Vec<Frame>>,
     ) -> Result<&mut PageTableEntry, MapError> {
         // Level 2 → Level 1
         let l2 = &mut self.entries[vaddr.vpn(2)];
         if !l2.is_valid() {
-            match alloc {
-                Some(a) => {
-                    let child = Self::allocate(a)?;
-                    if let Some(nt) = new_tables.as_deref_mut() {
-                        nt.push(child.cast());
-                    }
-                    let child_pa = child.as_ptr() as usize;
-                    l2.set((child_pa >> PAGE_SHIFT) as u64, PteFlags::V);
-                }
-                None => return Err(MapError::NotMapped),
-            }
+            install_child(l2, &mut frames)?;
         }
         // SAFETY: l2 is valid (pre-existing or just allocated with V only, hence not a leaf).
         // paddr() points to a valid PageTable frame.
@@ -136,17 +117,7 @@ impl PageTable {
         // Level 1 → Level 0
         let l1 = &mut p1.entries[vaddr.vpn(1)];
         if !l1.is_valid() {
-            match alloc {
-                Some(a) => {
-                    let child = Self::allocate(a)?;
-                    if let Some(nt) = new_tables.as_deref_mut() {
-                        nt.push(child.cast());
-                    }
-                    let child_pa = child.as_ptr() as usize;
-                    l1.set((child_pa >> PAGE_SHIFT) as u64, PteFlags::V);
-                }
-                None => return Err(MapError::NotMapped),
-            }
+            install_child(l1, &mut frames)?;
         }
         // SAFETY: l1 is valid (pre-existing or just allocated with V only, hence not a leaf).
         // paddr() points to a valid PageTable frame.
@@ -180,8 +151,7 @@ impl PageTable {
         paddr: PhysAddr,
         size: usize,
         flags: PteFlags,
-        alloc: &dyn Allocator,
-        new_tables: &mut Vec<NonNull<u8>>,
+        frames: &mut Vec<Frame>,
     ) -> Result<(), MapError> {
         if vaddr.offset() != 0 || !paddr.is_aligned() || size & (PAGE_SIZE - 1) != 0 {
             return Err(MapError::NotAligned);
@@ -191,7 +161,7 @@ impl PageTable {
         for i in 0..pages {
             let va = vaddr + i * PAGE_SIZE;
             let pa = paddr + i * PAGE_SIZE;
-            let leaf = self.walk_mut(va, Some(alloc), Some(new_tables))?;
+            let leaf = self.walk_mut(va, Some(frames))?;
             if leaf.is_valid() {
                 return Err(MapError::AlreadyMapped);
             }
@@ -221,4 +191,20 @@ impl PageTable {
         let p0 = unsafe { &mut *(l1.paddr() as *mut PageTable) };
         p0.entries[vaddr.vpn(0)].clear();
     }
+}
+
+/// 分配一个零帧中间表并安装到 `pte`（`frames` 为 `None` 时视为「不分配」，报 NotMapped）。
+///
+/// 新帧在分配点即 push 进 `frames`，所有权归 `AddressSpace`——即使后续 `map`
+/// 因 `AlreadyMapped` 提前返回，帧也不泄漏（Drop 统一归还）。
+fn install_child(
+    pte: &mut PageTableEntry,
+    frames: &mut Option<&mut Vec<Frame>>,
+) -> Result<(), MapError> {
+    let frames = frames.as_mut().ok_or(MapError::NotMapped)?;
+    let child = frame::zeroed_frame().map_err(|_| MapError::OutOfMemory)?;
+    let child_pa = child.as_ptr() as usize;
+    frames.push(child);
+    pte.set((child_pa >> PAGE_SHIFT) as u64, PteFlags::V);
+    Ok(())
 }

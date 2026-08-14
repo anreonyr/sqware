@@ -16,7 +16,9 @@ use core::{cell::UnsafeCell, ptr::NonNull};
 use core::alloc::{AllocError, Allocator, Layout};
 
 use alloc::{boxed::Box, vec::Vec};
+use log::{debug, warn};
 
+use crate::machine;
 use crate::{
     lock::{OnceLock, TrapGuard},
     memory::PAGE_SIZE,
@@ -72,9 +74,11 @@ unsafe impl Allocator for BlockAllocator {
                 // size class 与调用点，而非事后在错误地址上 page fault。
                 #[cfg(debug_assertions)]
                 {
-                    let cfg = crate::memory::platform::get();
+                    use crate::machine;
+
+                    let m = machine::get();
                     let a = head.as_ptr() as usize;
-                    if !(cfg.dram_base..cfg.dram_base + cfg.dram_size).contains(&a) {
+                    if !m.free.range().contains(&a) {
                         panic!(
                             "block allocator: freelist head corrupted — power {power}, head {head:?} ({a:#x})"
                         );
@@ -313,7 +317,7 @@ pub fn allocator() -> &'static dyn Allocator {
 }
 
 pub fn init() {
-    let n = crate::memory::platform::get().hart_count;
+    let n = machine::get().hart;
     let mut v: Vec<BlockAllocator> = Vec::with_capacity(n);
     for _ in 0..n {
         v.push(BlockAllocator::new());

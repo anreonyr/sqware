@@ -4,14 +4,15 @@
 // 其他 RISC-V 内核项目无需携带内核 hal。satp 构造为纯位运算；hart_id 为
 // 单 hart stub。
 
-/// 当前 hart id — 单 hart stub 恒 0。
+/// 当前 hart id — 读 mhartid CSR。
 ///
 /// # Safety
 ///
-/// 多 hart 启动协议就绪前返回值无意义；当前实现恒 0。
+/// 处于 S-mode；读 mhartid 无副作用。单 hart 启动下 mhartid = 0，行为与旧
+/// stub 一致；多 hart 启动协议就绪后 block 分配器的 per-hart 槽自动生效。
 #[inline(always)]
 pub(crate) unsafe fn hart_id() -> usize {
-    0
+    riscv::register::mhartid::read()
 }
 
 /// Sv39 satp token 构造（纯位运算，不碰 CSR）。

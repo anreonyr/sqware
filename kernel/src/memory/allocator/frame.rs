@@ -1,8 +1,11 @@
+use crate::machine;
 use crate::memory::PAGE_SIZE;
 use core::ptr::NonNull;
+use log::debug;
 
 use alloc::{
     alloc::{AllocError, Allocator},
+    boxed::Box,
     vec::Vec,
 };
 
@@ -51,26 +54,24 @@ impl FrameAllocator {
     pub fn outstanding(&self) -> usize {
         #[cfg(debug_assertions)]
         {
-            self.inner.lock().as_ref().map(|f| f.outstanding).unwrap_or(0)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            0
+            self.inner
+                .lock()
+                .as_ref()
+                .map(|f| f.outstanding)
+                .unwrap_or(0)
         }
     }
 }
 
 /// 内核持久帧基线（record_baseline 记录；check_baseline 断言回落）。
 #[cfg(debug_assertions)]
-static FRAME_BASELINE: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+static FRAME_BASELINE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// 记录基线时内核堆持有的页数——check_baseline 用它把堆支撑页从在途帧中
 /// 扣除，得到真正的任务帧泄漏量。须记**差值**而非直接扣当前堆页：基线本身
 /// 已含 space::init 期间 refill 的堆页，直接扣会双扣、掩盖真实泄漏。
 #[cfg(debug_assertions)]
-static HEAP_BASELINE: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+static HEAP_BASELINE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// 记录内核持久帧基线（在 spawn 用户任务**之前**调用）——此后在途帧应只增
 /// 用户任务所有 + 内核堆支撑页，关机时用户任务帧全部归还。若断言触发 =
@@ -269,9 +270,9 @@ impl FrameInner {
             // 调用点，而非事后在错误地址上 page fault。
             #[cfg(debug_assertions)]
             {
-                let cfg = crate::memory::platform::get();
+                let m = machine::get();
                 let a = head.as_ptr() as usize;
-                if !(cfg.dram_base..cfg.dram_base + cfg.dram_size).contains(&a) {
+                if !m.free.range().contains(&a) {
                     panic!(
                         "frame allocator: freelist head corrupted — power {power}, head {head:?} ({a:#x})"
                     );
@@ -305,9 +306,9 @@ impl FrameInner {
                 // 已被覆写——free 块被误用为数据页的特征）。
                 #[cfg(debug_assertions)]
                 {
-                    let cfg = crate::memory::platform::get();
+                    let m = machine::get();
                     let a = n.as_ptr() as usize;
-                    if !(cfg.dram_base..cfg.dram_base + cfg.dram_size).contains(&a) {
+                    if !m.free.range().contains(&a) {
                         panic!(
                             "frame allocator: freelist next corrupted — power {power}, head {head:?}, next {a:#x}"
                         );
@@ -367,9 +368,9 @@ impl FrameInner {
                 // debug: 链表头必须是 DRAM 内合法地址（读 head 的 prev 前）。
                 #[cfg(debug_assertions)]
                 {
-                    let cfg = crate::memory::platform::get();
+                    let m = machine::get();
                     let a = head.as_ptr() as usize;
-                    if !(cfg.dram_base..cfg.dram_base + cfg.dram_size).contains(&a) {
+                    if !m.free.range().contains(&a) {
                         panic!(
                             "frame allocator: push_link head corrupted — power {power}, head {head:?} ({a:#x})"
                         );
@@ -394,9 +395,9 @@ impl FrameInner {
             // debug: 被摘除的 Link 节点地址必须合法（读其 prev/next 前）。
             #[cfg(debug_assertions)]
             {
-                let cfg = crate::memory::platform::get();
+                let m = machine::get();
                 let a = addr as usize;
-                if !(cfg.dram_base..cfg.dram_base + cfg.dram_size).contains(&a) {
+                if !m.free.range().contains(&a) {
                     panic!(
                         "frame allocator: remove_link addr corrupted — power {power}, addr {a:#x}"
                     );
@@ -520,6 +521,25 @@ pub(crate) static FRAME_ALLOCATOR: FrameAllocator = FrameAllocator::new();
 
 pub fn allocator() -> &'static dyn Allocator {
     &FRAME_ALLOCATOR
+}
+
+/// 具体类型的分配器引用——`Box<T, A>` 需要 `A: Allocator` 的具体类型
+/// （`&dyn Allocator` 不满足 Sized 约束）。帧句柄构造（页表帧 / 数据帧）
+/// 用它：帧直接来自 buddy 池，地址是 `frame_addr` 定义的物理地址，drop
+/// 自动归还，不依赖 block 整页分支 / 恒等映射两条巧合。
+pub(crate) fn allocator_ref() -> &'static FrameAllocator {
+    &FRAME_ALLOCATOR
+}
+
+/// 一页物理帧句柄——`Box` drop 自动归还 frame 池（buddy）。
+///
+/// 统一用字节帧（而非强类型 `Box<PageTable>`）：页表帧 / 数据帧 / trap-context
+/// 帧可装进同一个 `Vec`；页表遍历时按需 cast 成 `*PageTable`。
+pub(crate) type Frame = Box<[u8; PAGE_SIZE], &'static FrameAllocator>;
+
+/// 分配一页零化帧（页表帧需全零 PTE、匿名数据帧需零页）。
+pub(crate) fn zeroed_frame() -> Result<Frame, AllocError> {
+    Box::try_new_in([0u8; PAGE_SIZE], allocator_ref())
 }
 
 pub fn init() {

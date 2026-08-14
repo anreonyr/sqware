@@ -1,7 +1,7 @@
 use alloc::alloc::{AllocError, Allocator};
 use core::ptr::NonNull;
 
-use crate::lock::SpinLock;
+use crate::{lock::SpinLock, machine};
 
 pub(crate) struct BumpAllocator {
     inner: SpinLock<Option<BumpInner>>,
@@ -38,9 +38,9 @@ impl BumpInner {
     fn init(&mut self) {
         // 区域来自调用方注入的 memory::platform 配置（allocator::init 设置），
         // 不再引用内核链接符号 _bump_base——自包含。
-        let cfg = crate::memory::platform::get();
-        self.base = cfg.dram_base;
-        self.edge = cfg.dram_base + cfg.dram_size;
+        let m = machine::get();
+        self.base = m.free.base;
+        self.edge = m.free.base + m.free.size;
     }
 }
 

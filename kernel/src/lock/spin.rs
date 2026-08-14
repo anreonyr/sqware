@@ -16,11 +16,16 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use riscv::register::mhartid;
+
 use super::dep;
 use super::trap::TrapGuard;
 
 pub struct SpinLock<T: ?Sized> {
     locked: AtomicBool,
+    /// 持有者 hart_id + 1（0 = 空闲）——区分同 hart 重入与跨 hart 争用。
+    /// 语义对齐 RelLock：同 hart 再次获取是锁序违规（panic），跨 hart 是真争用（自旋）。
+    owner: AtomicUsize,
     /// 当前持有者调用点（返回地址；0 = 未持有）——递归获取检测与死锁溯源用
     holder_pc: AtomicUsize,
     data: UnsafeCell<T>,
@@ -46,6 +51,7 @@ impl<T> SpinLock<T> {
     pub const fn new(val: T) -> Self {
         SpinLock {
             locked: AtomicBool::new(false),
+            owner: AtomicUsize::new(0),
             holder_pc: AtomicUsize::new(0),
             data: UnsafeCell::new(val),
         }
@@ -75,19 +81,25 @@ impl<T: ?Sized> SpinLock<T> {
         let caller = dep::read_ra();
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
+        // SAFETY: 读 mhartid CSR 无副作用；S-mode 下恒可读（与 RelLock 同款）。
+        let me = mhartid::read() + 1;
 
-        // Acquire：保证后续读取看到之前写入的完整状态。
-        // 单 hart 下 swap 返回 true 即锁已被持有（重入）——报告后 panic，无需自旋。
-        if self.locked.swap(true, Ordering::Acquire) {
-            let holder = self.holder_pc.load(Ordering::Relaxed);
-            dep::report(
-                "spinlock",
-                "recursive acquisition",
-                self as *const Self as *const () as usize,
-                holder,
-                caller,
-            );
+        // Acquire：获取成功后看到前持有者的所有写入。跨 hart 争用时真自旋；
+        // 同 hart 再次获取（关中断后无抢占，必然是同 hart 重入）是锁序违规——panic。
+        while self.locked.swap(true, Ordering::Acquire) {
+            if self.owner.load(Ordering::Relaxed) == me {
+                let holder = self.holder_pc.load(Ordering::Relaxed);
+                dep::report(
+                    "spinlock",
+                    "recursive acquisition",
+                    self as *const Self as *const () as usize,
+                    holder,
+                    caller,
+                );
+            }
+            core::hint::spin_loop();
         }
+        self.owner.store(me, Ordering::Relaxed);
         self.holder_pc.store(caller, Ordering::Relaxed);
 
         SpinLockGuard {
@@ -111,6 +123,9 @@ impl<T: ?Sized> SpinLock<T> {
         if self.locked.swap(true, Ordering::Acquire) {
             return None;
         }
+        // SAFETY: 读 mhartid CSR 无副作用（与 RelLock 同款）。
+        let me = mhartid::read() + 1;
+        self.owner.store(me, Ordering::Relaxed);
         self.holder_pc.store(caller, Ordering::Relaxed);
 
         Some(SpinLockGuard {
@@ -143,8 +158,9 @@ impl<T: ?Sized> Drop for SpinLockGuard<'_, T> {
     fn drop(&mut self) {
         // Release：保证之前写入在解锁时对其他核可见
         self.lock.locked.store(false, Ordering::Release);
-        // 清除持有者调用点（AtomicUsize，与 data 同受锁互斥保护）
+        // 清除持有者调用点与持有者 hart（AtomicUsize，与 data 同受锁互斥保护）
         self.lock.holder_pc.store(0, Ordering::Relaxed);
+        self.lock.owner.store(0, Ordering::Relaxed);
         // _trap 字段随后析构，恢复 SIE
     }
 }

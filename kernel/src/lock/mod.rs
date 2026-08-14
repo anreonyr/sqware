@@ -18,13 +18,19 @@
 //
 // To prevent deadlocks, locks must be acquired in the following order:
 //
-//   1. KERNEL_SPACE  (RelLock)          — page table mutations
-//   2. hub::devices (RwLock)           — device table lookups
-//   3. INTERRUPT_HANDLERS (SpinLock)    — interrupt handler registration
+//   1. KERNEL_SPACE        (RelLock)   — 内核地址空间
+//   2. AddressSpace.inner  (RelLock)   — 任务地址空间可变状态（页表读写 + regions/frames/heap）
+//   3. ASID_ALLOCATOR      (SpinLock)  — ASID 分配器
+//   4. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（buddy）
+//   5. portal / block      (SpinLock / TrapGuard) — 全局堆分配
 //
 // A lock at level N may be acquired while holding a lock at level < N.
 // Acquiring a lock at level N while holding one at level ≥ N is forbidden.
 // OnceLock / LazyLock read paths are lock-free and exempt from this hierarchy.
+//
+// 关键嵌套边：AddressSpace.inner → FRAME_ALLOCATOR（map/page_fault 持空间锁分配帧）。
+// from_kernel 中 ASID → KERNEL_SPACE 为顺序获取（drop 前一把再拿后一把），不嵌套。
+// （hub::devices / INTERRUPT_HANDLERS 为规划中模块，接入后插入对应层级。）
 
 mod bare;
 mod dep;

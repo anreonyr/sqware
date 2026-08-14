@@ -5,10 +5,12 @@
 //   10:53 — PPN (物理页号, 44 bits, 对应 56-bit 物理地址的 12:55)
 //   54:63 — 保留 (必须为零)
 
+use bitflags::bitflags;
 use core::fmt;
 
 bitflags! {
     /// Sv39 PTE 标志位 (bits 0-9)
+    #[derive(Debug, Clone, Copy)]
     pub struct PteFlags: u64 {
         /// Valid — PTE 有效
         const V = 1 << 0;
@@ -76,7 +78,7 @@ impl PageTableEntry {
     /// 提取标志位
     #[inline(always)]
     pub fn flags(self) -> PteFlags {
-        PteFlags::from_bits(self.bits & Self::FLAGS_MASK)
+        PteFlags::from_bits_truncate(self.bits & Self::FLAGS_MASK)
     }
 
     // ── 修改 ────────────────────────────────────────────────
