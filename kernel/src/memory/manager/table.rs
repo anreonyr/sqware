@@ -8,6 +8,7 @@
 
 use alloc::vec::Vec;
 use alloc::{alloc::Allocator, boxed::Box};
+use fack::prelude::Error;
 
 use crate::memory::allocator::frame::allocator;
 use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
@@ -18,18 +19,26 @@ use super::{
 };
 
 /// 页表操作错误。
-#[derive(Debug)]
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapError {
     /// 物理页帧分配器耗尽。
+    #[error("physical frame allocator exhausted")]
     OutOfMemory,
     /// 该虚拟地址已被映射。
+    #[error("virtual address already mapped")]
     AlreadyMapped,
     /// 地址未按页对齐。
+    #[error("address not page-aligned")]
     NotAligned,
     /// 页表项/中间表不存在。
+    #[error("page table entry not mapped")]
     NotMapped,
     /// 虚拟地址不在任何已注册的 Region 内。
+    #[error("virtual address not in any declared region")]
     NoRegion,
+    /// DRAM 恒等映射越过用户栈窗口（内存配置非法）。
+    #[error("DRAM identity map overlaps the user stack window")]
+    DramOverlap,
 }
 
 /// Sv39 页表 — 512 条目 × 8 字节 = 4 KiB，对齐到页边界。
@@ -198,8 +207,8 @@ fn install_child(
     let frames = frames.as_mut().ok_or(MapError::NotMapped)?;
     let child =
         Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
-    let child_pa = child.as_ptr() as usize;
+    let child_pa = PhysAddr::from_raw(child.as_ptr() as usize);
     frames.push(child);
-    pte.set((child_pa >> PAGE_SHIFT) as u64, PteFlags::V);
+    pte.set((child_pa.as_usize() >> PAGE_SHIFT) as u64, PteFlags::V);
     Ok(())
 }

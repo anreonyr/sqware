@@ -1,6 +1,7 @@
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use core::ptr::NonNull;
+use erra::ResultExt;
 use log::debug;
 
 use alloc::{
@@ -10,7 +11,7 @@ use alloc::{
 
 use crate::{
     lock::SpinLock,
-    memory::allocator::{Link, bump},
+    memory::allocator::{InitError, InitResult, Link, bump},
 };
 
 struct Meta {
@@ -39,13 +40,12 @@ impl FrameAllocator {
     ///
     /// 必须在所有 bump 分配（包括 block::init）之后调用，因为基址取自
     /// `bump::frontier()`——确保 frame 的 Link 节点不被后续 bump 覆盖。
-    pub fn init(&self) {
+    pub fn init(&self) -> Result<(), InitError> {
         let mut guard = self.inner.lock();
-        guard.replace({
-            let mut inner = FrameInner::new();
-            inner.init();
-            inner
-        });
+        let mut inner = FrameInner::new();
+        inner.init()?;
+        guard.replace(inner);
+        Ok(())
     }
 
     /// 在途（未归还）物理帧数（debug 统计用；release 下恒 0）。
@@ -210,18 +210,38 @@ impl FrameInner {
     }
 
     /// 初始化：分配元数据 Vec（经 bump），确定基址，构建 buddy freelist。
-    fn init(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// - 空闲区不足一页 → [`InitError::NoFreeFrames`]（`max_frame == 0` 时
+    ///   `ilog2` 会 panic，必须提前报错）。
+    /// - 元数据 Vec 分配失败 → [`InitError::OutOfMemory`]。
+    fn init(&mut self) -> Result<(), InitError> {
         // 第一步：分配 freelist/pagemeta Vecs（基于当前 frontier 暂估尺寸）
         self.edge = bump::boundary();
         let prov_base = bump::frontier().next_multiple_of(PAGE_SIZE);
-        let max_frame = (self.edge - prov_base) / PAGE_SIZE;
+        let max_frame = self.edge.saturating_sub(prov_base) / PAGE_SIZE;
+        if max_frame == 0 {
+            return Err(InitError::NoFreeFrames);
+        }
         let max_power = max_frame.ilog2() as usize + 1;
+        self.freelist
+            .try_reserve(max_power)
+            .map_err(|_| InitError::OutOfMemory)?;
         self.freelist.resize_with(max_power, || None);
+        self.pagemeta
+            .try_reserve(max_frame)
+            .map_err(|_| InitError::OutOfMemory)?;
         self.pagemeta.resize_with(max_frame, || None);
 
-        // 第二步：此时所有 bump 分配已完成，确定实际基址并收缩 Vec
+        // 第二步：此时所有 bump 分配已完成，确定实际基址并收缩 Vec。
+        // base ≥ prov_base（frontier 单调前进）⇒ 本步尺寸 ≤ 第一步，
+        // resize 不会触发新分配，无需 try_reserve。
         self.base = bump::frontier().next_multiple_of(PAGE_SIZE);
-        let max_frame = (self.edge - self.base) / PAGE_SIZE;
+        let max_frame = self.edge.saturating_sub(self.base) / PAGE_SIZE;
+        if max_frame == 0 {
+            return Err(InitError::NoFreeFrames);
+        }
         let max_power = max_frame.ilog2() as usize + 1;
         self.freelist.resize_with(max_power, || None);
         self.pagemeta.resize_with(max_frame, || None);
@@ -238,6 +258,7 @@ impl FrameInner {
             index += 1 << power;
             remaining -= 1 << power;
         }
+        Ok(())
     }
 
     // 物理地址 → 帧索引
@@ -522,6 +543,15 @@ pub fn allocator() -> &'static dyn Allocator {
     &FRAME_ALLOCATOR
 }
 
-pub fn init() {
-    FRAME_ALLOCATOR.init();
+/// 初始化 frame 分配器。
+///
+/// 必须在所有 bump 分配（包括 block::init）之后调用，因为基址取自
+/// `bump::frontier()`——确保 frame 的 Link 节点不被后续 bump 覆盖。
+///
+/// # Errors
+///
+/// - 空闲区不足一页 → [`InitError::NoFreeFrames`]。
+/// - 元数据 Vec 分配失败 → [`InitError::OutOfMemory`]。
+pub fn init() -> InitResult<()> {
+    FRAME_ALLOCATOR.init().annotate("initializing frame allocator")
 }

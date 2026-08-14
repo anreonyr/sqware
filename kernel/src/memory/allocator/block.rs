@@ -16,14 +16,15 @@ use core::{cell::UnsafeCell, ptr::NonNull};
 use core::alloc::{AllocError, Allocator, Layout};
 
 use alloc::{boxed::Box, vec::Vec};
-use log::{debug, warn};
+use erra::ResultExt;
+use log::debug;
 use riscv::register::mhartid;
 
 use crate::machine;
 use crate::{
     lock::{OnceLock, TrapGuard},
     memory::PAGE_SIZE,
-    memory::allocator::frame::allocator as frame_allocator,
+    memory::allocator::{InitError, InitResult, frame::allocator as frame_allocator},
 };
 
 const MIN_POWER: usize = 3;
@@ -43,14 +44,13 @@ impl BlockAllocator {
         }
     }
 
-    pub fn init(&self) {
+    pub fn init(&self) -> Result<(), InitError> {
         // SAFETY: 单 hart 下调用，无并发。
         let cell = unsafe { &mut *self.inner.get() };
-        cell.replace({
-            let mut inner = BlockInner::new();
-            inner.init();
-            inner
-        });
+        let mut inner = BlockInner::new();
+        inner.init()?;
+        cell.replace(inner);
+        Ok(())
     }
 }
 
@@ -146,8 +146,12 @@ impl BlockInner {
         }
     }
 
-    fn init(&mut self) {
+    fn init(&mut self) -> Result<(), InitError> {
+        self.freepool
+            .try_reserve(MAX_POWER + 1)
+            .map_err(|_| InitError::OutOfMemory)?;
         self.freepool.resize_with(MAX_POWER + 1, || None);
+        Ok(())
     }
 
     /// 标记某 block 在用数 +1。
@@ -317,17 +321,34 @@ pub fn allocator() -> &'static dyn Allocator {
     &allocators[hart.min(allocators.len() - 1)]
 }
 
-pub fn init() {
-    let n = machine::get().hart;
-    let mut v: Vec<BlockAllocator> = Vec::with_capacity(n);
-    for _ in 0..n {
-        v.push(BlockAllocator::new());
-    }
-    let allocators = Box::leak(v.into_boxed_slice());
-    for allocator in allocators.iter() {
-        allocator.init();
-    }
-    if BLOCK_ALLOCATORS.set(allocators).is_err() {
-        warn!("block allocator already initialized (init called more than once)");
-    }
+/// 初始化 per-hart 块分配器数组并注册到全局。
+///
+/// 必须在 `main` 早期调用恰好一次（经 `allocator::init`），在任何堆分配之前。
+///
+/// # Errors
+///
+/// - 设备树未报告任何 hart → [`InitError::NoHarts`]。
+/// - 初始化期间元数据分配失败 → [`InitError::OutOfMemory`]。
+/// - 重复初始化 → [`InitError::AlreadyInitialized`]。
+pub fn init() -> InitResult<()> {
+    (|| -> Result<(), InitError> {
+        let n = machine::get().hart;
+        if n == 0 {
+            return Err(InitError::NoHarts);
+        }
+        let mut v: Vec<BlockAllocator> = Vec::new();
+        v.try_reserve(n).map_err(|_| InitError::OutOfMemory)?;
+        for _ in 0..n {
+            v.push(BlockAllocator::new());
+        }
+        let allocators = Box::leak(v.into_boxed_slice());
+        for allocator in allocators.iter() {
+            allocator.init()?;
+        }
+        if BLOCK_ALLOCATORS.set(allocators).is_err() {
+            return Err(InitError::AlreadyInitialized);
+        }
+        Ok(())
+    })()
+    .annotate("initializing block allocator")
 }

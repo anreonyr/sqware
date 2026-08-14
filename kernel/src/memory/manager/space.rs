@@ -10,7 +10,7 @@
 
 use alloc::vec::Vec;
 use alloc::{alloc::Allocator, boxed::Box};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 
 use crate::lock::reentrant::RelLockGuard;
 use crate::memory::allocator::bitmap::BitmapAllocator;
@@ -18,7 +18,7 @@ use crate::memory::allocator::frame::allocator;
 use crate::{lock::RelLock, memory::PAGE_SIZE};
 
 use super::{
-    addr::{PhysAddr, VirtAddr},
+    addr::{AtomicPhysAddr, PhysAddr, VirtAddr},
     entry::PteFlags,
     flush_asid,
     table::{MapError, PageTable},
@@ -39,8 +39,8 @@ pub enum RegionKind {
 /// 虚拟内存区域 — 连续虚拟地址范围
 #[derive(Debug, Clone, Copy)]
 pub struct Region {
-    pub base: usize,
-    pub edge: usize,
+    pub base: VirtAddr,
+    pub edge: VirtAddr,
     pub flags: PteFlags,
     pub kind: RegionKind,
 }
@@ -70,20 +70,38 @@ impl SpaceKind {
     }
 }
 
-// ── 用户区布局常量（原 Heap/Stacks 关联常量提升为模块常量）────────────
+// ── 地址空间布局常量（原 Heap/Stacks 关联常量提升为模块常量）───────────
+
+/// 内核半区起始虚拟地址（VPN[2] = 256，VA = 2^38 符号扩展）— Sv39 用户/内核分界。
+pub(crate) const KERNEL_BASE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFC0_0000_0000);
 
 /// 用户堆窗口基址 — map syscall 的堆区起点。
-pub(crate) const USER_HEAP_BASE: usize = 0x2000_0000;
+pub(crate) const USER_HEAP_BASE: VirtAddr = VirtAddr::from_raw(0x2000_0000);
 /// 用户堆窗口大小（64 MiB）。
 pub(crate) const USER_HEAP_SIZE: usize = 0x40_0000;
 /// 任务栈窗口基址（1 GiB 用户区，约 5 万窗口）。
-pub(crate) const TASK_STACK_BASE: usize = 0xC000_0000;
+pub(crate) const USER_STACK_BASE: VirtAddr = VirtAddr::from_raw(0xC000_0000);
 /// 每个任务栈的大小（字节）。
 pub(crate) const TASK_STACK_SIZE: usize = 16384;
 /// 栈守护页大小（= 一页）。
 pub(crate) const STACK_GUARD_SIZE: usize = PAGE_SIZE;
 /// 任务栈窗口大小（1 GiB）。
 pub(crate) const TASK_STACK_AREA_SIZE: usize = 0x4000_0000;
+/// trap 入口 trampoline 页的固定虚拟地址（Sv39 最高页，L2[511]·L1[511]·L0[511]）。
+///
+/// 一页含 `__alltraps`（保存帧 + 切 satp）与 `__restore`（切回 + 恢复 + sret），
+/// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。`stvec` 指向此处。
+pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000);
+
+/// 每空间 trap-context 页的固定虚拟地址（trampoline 下方一页，L2[511]·L1[511]·L0[510]）。
+///
+/// 用户空间把本任务的 [`crate::context::TrapContext`] 帧映射于此（S 态独占、无 U
+/// 位）；内核空间映射自己的帧。`__alltraps` 在用户空间经此 VA 存帧；`__restore`
+/// 切回目标空间后经此 VA 恢复。
+///
+/// 本帧物理地址不冗余存储：需要时经 [`translate`](Self::translate) 查询
+/// （帧内 `self_pa` 字段亦自存一份）。
+pub(crate) const TRAP_CONTEXT: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_E000);
 
 /// Sv39 虚拟地址空间。
 ///
@@ -118,24 +136,6 @@ pub struct Space {
     inner: RelLock<SpaceInner>,
     /// 空间种类（内核 / 用户），内嵌 ASID。
     kind: SpaceKind,
-    /// 本空间 trap-context 帧物理地址（映射于 [`TRAP_CONTEXT`](Self::TRAP_CONTEXT) VA，
-    /// `SpaceBuilder::user()` 构建时分配）。spawn 据此写初始帧；内核在 KERNEL_SPACE 恒等访问。
-    trap_cx_pa: usize,
-}
-
-impl Space {
-    /// trap 入口 trampoline 页的固定虚拟地址（Sv39 最高页，L2[511]·L1[511]·L0[511]）。
-    ///
-    /// 一页含 `__alltraps`（保存帧 + 切 satp）与 `__restore`（切回 + 恢复 + sret），
-    /// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。`stvec` 指向此处。
-    pub const TRAMPOLINE: usize = 0xFFFF_FFFF_FFFF_F000;
-
-    /// 每空间 trap-context 页的固定虚拟地址（trampoline 下方一页，L2[511]·L1[511]·L0[510]）。
-    ///
-    /// 用户空间把本任务的 [`crate::context::TrapContext`] 帧映射于此（S 态独占、无 U
-    /// 位）；内核空间映射自己的帧。`__alltraps` 在用户空间经此 VA 存帧；`__restore`
-    /// 切回目标空间后经此 VA 恢复。
-    pub const TRAP_CONTEXT: usize = 0xFFFF_FFFF_FFFF_E000;
 }
 
 /// 地址空间的可变状态——由 [`Space::inner`] 这把 [`RelLock`] 保护。
@@ -161,10 +161,14 @@ impl SpaceInner {
         Self {
             regions: Vec::new(),
             frames: Vec::new(),
-            heap: BitmapAllocator::new(USER_HEAP_BASE, USER_HEAP_BASE + USER_HEAP_SIZE, PAGE_SIZE),
+            heap: BitmapAllocator::new(
+                USER_HEAP_BASE.as_usize(),
+                (USER_HEAP_BASE + USER_HEAP_SIZE).as_usize(),
+                PAGE_SIZE,
+            ),
             stacks: BitmapAllocator::new(
-                TASK_STACK_BASE,
-                TASK_STACK_BASE + TASK_STACK_AREA_SIZE,
+                USER_STACK_BASE.as_usize(),
+                (USER_STACK_BASE + TASK_STACK_AREA_SIZE).as_usize(),
                 PAGE_SIZE,
             ),
         }
@@ -172,13 +176,12 @@ impl SpaceInner {
 
     /// 查询虚拟地址所属的 Region（内部版，调用者须持锁）。
     fn resolve(&self, vaddr: VirtAddr) -> Option<Region> {
-        let addr = vaddr.as_usize();
-        let idx = self.regions.partition_point(|r| r.base <= addr);
+        let idx = self.regions.partition_point(|r| r.base <= vaddr);
         if idx == 0 {
             return None;
         }
         let region = self.regions[idx - 1];
-        if addr < region.edge {
+        if vaddr < region.edge {
             Some(region)
         } else {
             None
@@ -190,12 +193,12 @@ impl SpaceInner {
     /// `start`/`size` 必须页对齐，不得与已有 Region 重叠；按 `base` 有序插入。
     fn declare(
         &mut self,
-        start: usize,
+        start: VirtAddr,
         size: usize,
         flags: PteFlags,
         kind: RegionKind,
     ) -> Result<(), MapError> {
-        if !start.is_multiple_of(PAGE_SIZE) || !size.is_multiple_of(PAGE_SIZE) {
+        if !start.as_usize().is_multiple_of(PAGE_SIZE) || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
         let end = start + size;
@@ -215,7 +218,7 @@ impl SpaceInner {
 }
 
 // SAFETY: 全部可变状态由 `RelLock` 互斥（跨 hart 自旋）；页表树读写与 `SpaceInner`
-// 共享同一把锁。`kind` / `trap_cx_pa` / `root` 分配后不可变。
+// 共享同一把锁。`kind` / `root` 分配后不可变。
 unsafe impl Send for Space {}
 unsafe impl Sync for Space {}
 
@@ -258,7 +261,6 @@ impl SpaceBuilder {
             root: PageTable::root()?,
             kind: self.kind,
             inner: RelLock::new(SpaceInner::new()),
-            trap_cx_pa: 0,
         };
         if matches!(space.kind, SpaceKind::User { .. }) {
             self.seed_user(&mut space)?;
@@ -280,50 +282,38 @@ impl SpaceBuilder {
     /// 页表/数据帧耗尽时返回 [`MapError::OutOfMemory`]。
     fn seed_user(&self, space: &mut Space) -> Result<(), MapError> {
         // 读内核空间的 trampoline 叶 PTE 与 trap-context 帧 PA（KERNEL_SPACE 只读）
-        let (tramp_pa, tramp_flags, kernel_trap_cx_pa) = {
+        let (tramp_pa, tramp_flags, kernel_trap_context_pa) = {
             let guard = KERNEL_SPACE.lock();
             let ks = guard.as_ref().ok_or(MapError::NotMapped)?;
-            let (tramp_pa, tramp_flags) = ks
-                .root
-                .as_ref()
-                .walk_ref(VirtAddr::from_raw(Space::TRAMPOLINE))?;
-            let (kpa, _) = ks
-                .root
-                .as_ref()
-                .walk_ref(VirtAddr::from_raw(Space::TRAP_CONTEXT))?;
-            (tramp_pa, tramp_flags, kpa.as_usize())
+            let (tramp_pa, tramp_flags) = ks.root.as_ref().walk_ref(TRAMPOLINE)?;
+            let (kpa, _) = ks.root.as_ref().walk_ref(TRAP_CONTEXT)?;
+            (tramp_pa, tramp_flags, kpa)
         };
 
         // trampoline 叶（帧归内核，不入 frames）
-        space.map(
-            VirtAddr::from_raw(Space::TRAMPOLINE),
-            tramp_pa,
-            crate::memory::PAGE_SIZE,
-            tramp_flags,
-        )?;
+        space.map(TRAMPOLINE, tramp_pa, crate::memory::PAGE_SIZE, tramp_flags)?;
 
         // trap-context 帧：分配 + 拷贝内核元数据 + 映射（自有，入 frames）
-        let trap_cx =
+        let trap_context =
             Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
-        let trap_cx_pa = trap_cx.as_ptr() as usize;
+        let trap_context_pa = PhysAddr::from_raw(trap_context.as_ptr() as usize);
         // SAFETY: 内核帧 PA 恒等可读（trap::init 已写入元数据）；新帧独占。
         unsafe {
-            let ktc = kernel_trap_cx_pa as *const crate::context::TrapContext;
-            let ntc = trap_cx_pa as *mut crate::context::TrapContext;
-            (*ntc).kernel_satp = (*ktc).kernel_satp;
-            (*ntc).kernel_sp = (*ktc).kernel_sp;
-            (*ntc).trap_handler = (*ktc).trap_handler;
-            (*ntc).trap_stack_corrupt = (*ktc).trap_stack_corrupt;
-            (*ntc).self_pa = trap_cx_pa;
+            let ktc = kernel_trap_context_pa.as_usize() as *const crate::context::TrapContext;
+            let utc = trap_context_pa.as_usize() as *mut crate::context::TrapContext;
+            (*utc).kernel_satp = (*ktc).kernel_satp;
+            (*utc).kernel_sp = (*ktc).kernel_sp;
+            (*utc).trap_handler = (*ktc).trap_handler;
+            (*utc).trap_stack_corrupt = (*ktc).trap_stack_corrupt;
+            (*utc).self_pa = trap_context_pa;
         }
         space.map(
-            VirtAddr::from_raw(Space::TRAP_CONTEXT),
-            PhysAddr::from_raw(trap_cx_pa),
+            TRAP_CONTEXT,
+            trap_context_pa,
             crate::memory::PAGE_SIZE,
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
         )?;
-        space.inner.lock().frames.push(trap_cx);
-        space.trap_cx_pa = trap_cx_pa;
+        space.inner.lock().frames.push(trap_context);
         Ok(())
     }
 }
@@ -356,13 +346,14 @@ impl Space {
     /// （归 Task 所有权，不入本空间 `frames`）；如需懒分配可另行
     /// [`declare`](Self::declare)。窗口释放见 [`stack_dealloc`](Self::stack_dealloc)。
     #[allow(dead_code)] // 任务 spawn 后端预留
-    pub(crate) fn stack_alloc(&self) -> Result<usize, MapError> {
+    pub(crate) fn stack_alloc(&self) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         let slot_size = TASK_STACK_SIZE + STACK_GUARD_SIZE;
         let (slot_va, _) = inner
             .stacks
             .allocate(slot_size)
             .map_err(|_| MapError::OutOfMemory)?;
+        let slot_va = VirtAddr::from_raw(slot_va);
         // 守护页 [slot_va, slot_va + STACK_GUARD_SIZE)：Reserved → 溢出缺页可诊断
         if let Err(e) = inner.declare(
             slot_va,
@@ -370,7 +361,7 @@ impl Space {
             PteFlags::V | PteFlags::R | PteFlags::W,
             RegionKind::Reserved,
         ) {
-            let _ = inner.stacks.deallocate(slot_va, slot_size);
+            let _ = inner.stacks.deallocate(slot_va.as_usize(), slot_size);
             return Err(e);
         }
         Ok(slot_va + STACK_GUARD_SIZE)
@@ -381,24 +372,25 @@ impl Space {
     /// 栈帧所有权仍在 Task（unmap 只清 PTE 不碰帧）；**窗口复用安全的关键**：
     /// PTE 清理 + [`flush_asid`] 先于归还，杜绝新窗口摸到旧任务残留映射。
     #[allow(dead_code)] // 任务回收后端预留
-    pub(crate) fn stack_dealloc(&self, stack_va: usize) -> bool {
+    pub(crate) fn stack_dealloc(&self, stack_va: VirtAddr) -> bool {
         let slot_va = stack_va - STACK_GUARD_SIZE;
         let slot_size = TASK_STACK_SIZE + STACK_GUARD_SIZE;
         let mut inner = self.inner.lock();
         // 1. 清整窗口叶子 PTE（含 Task 侧栈帧映射；帧仍归 Task）
         for i in 0..slot_size / PAGE_SIZE {
             // SAFETY: 持 inner 锁期间修改页表。
-            unsafe {
-                self.root_mut()
-                    .unmap(VirtAddr::from_raw(slot_va + i * PAGE_SIZE))
-            };
+            unsafe { self.root_mut().unmap(slot_va + i * PAGE_SIZE) };
         }
         // 2. 删守护页 Region
         inner
             .regions
             .retain(|r| !(slot_va < r.edge && (slot_va + slot_size) > r.base));
         // 3. 窗口归还位图分配器（供后续 stack_alloc 复用）
-        if inner.stacks.deallocate(slot_va, slot_size).is_err() {
+        if inner
+            .stacks
+            .deallocate(slot_va.as_usize(), slot_size)
+            .is_err()
+        {
             return false;
         }
         drop(inner);
@@ -419,18 +411,19 @@ impl Space {
     /// 叶子并归还其数据帧，VA 块退回复用（[`BitmapAllocator::deallocate`]，
     /// 中间表帧仍留 `frames`，随 Space Drop 归还）。
     #[allow(dead_code)] // map/unmap syscall 后端预留
-    pub(crate) fn heap_allocate(&self, size: usize) -> Result<usize, MapError> {
+    pub(crate) fn heap_allocate(&self, size: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         // 1. 堆 VA 簿记：位图分配器保留块（first-fit，释放后可复用）
         let (base, size) = inner
             .heap
             .allocate(size)
             .map_err(|_| MapError::OutOfMemory)?;
+        let base = VirtAddr::from_raw(base);
         let flags =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
         // 2. 登记 Anonymous Region（resolve/缺页可识别堆区；与 unmap/释放配对）
         if let Err(e) = inner.declare(base, size, flags, RegionKind::Anonymous) {
-            let _ = inner.heap.deallocate(base, size);
+            let _ = inner.heap.deallocate(base.as_usize(), size);
             return Err(e);
         }
         // 3. 逐页分配物理帧并映射（立即分配）
@@ -439,24 +432,19 @@ impl Space {
         while mapped < pages {
             let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                 .map_err(|_| MapError::OutOfMemory)?;
-            let pa = page.as_ptr() as usize;
+            let pa = PhysAddr::from_raw(page.as_ptr() as usize);
             inner.frames.push(page);
-            let va = VirtAddr::from_raw(base + mapped * crate::memory::PAGE_SIZE);
+            let va = base + mapped * crate::memory::PAGE_SIZE;
             // SAFETY: 持 inner 锁期间修改页表。
             if unsafe {
-                self.root_mut().map(
-                    va,
-                    PhysAddr::from_raw(pa),
-                    crate::memory::PAGE_SIZE,
-                    flags,
-                    &mut inner.frames,
-                )
+                self.root_mut()
+                    .map(va, pa, crate::memory::PAGE_SIZE, flags, &mut inner.frames)
             }
             .is_err()
             {
                 // 回滚：清掉本块已映射页的叶子并归还其数据帧；VA 块退回位图
                 for i in 0..mapped {
-                    let v = VirtAddr::from_raw(base + i * crate::memory::PAGE_SIZE);
+                    let v = base + i * crate::memory::PAGE_SIZE;
                     if let Some((pa, _)) = self.translate_inner(v) {
                         // retain 丢弃的 Frame 由 Drop 归还 frame 池
                         inner
@@ -469,7 +457,7 @@ impl Space {
                 inner
                     .regions
                     .retain(|r| !(base < r.edge && (base + size) > r.base));
-                let _ = inner.heap.deallocate(base, size);
+                let _ = inner.heap.deallocate(base.as_usize(), size);
                 drop(inner);
                 // SAFETY: S-mode 下 sfence.vma 恒合法。
                 unsafe {
@@ -494,15 +482,15 @@ impl Space {
     /// 池）→ 清叶子 PTE → 删 Region → 刷 TLB。返回是否找到并释放（未分配/
     /// 部分已释放的区间返回 false，同旧块表精确匹配语义）。
     #[allow(dead_code)] // map/unmap syscall 后端预留
-    pub(crate) fn heap_deallocate(&self, addr: usize, size: usize) -> bool {
+    pub(crate) fn heap_deallocate(&self, addr: VirtAddr, size: usize) -> bool {
         let mut inner = self.inner.lock();
         // 1. 位图精确匹配释放（未分配/部分已释放 → 返回 false）
-        if inner.heap.deallocate(addr, size).is_err() {
+        if inner.heap.deallocate(addr.as_usize(), size).is_err() {
             return false;
         }
         // 2. 逐页归还物理帧并清叶子
         for i in 0..size / crate::memory::PAGE_SIZE {
-            let v = VirtAddr::from_raw(addr + i * crate::memory::PAGE_SIZE);
+            let v = addr + i * crate::memory::PAGE_SIZE;
             if let Some((pa, _)) = self.translate_inner(v) {
                 // retain 丢弃的 Frame 由 Drop 归还 frame 池
                 inner
@@ -565,8 +553,7 @@ impl Space {
     /// 删除与 `[start, start+size)` 相交的所有记录。`vaddr`/`size` 不要求
     /// 页对齐（向上取整语义与 POSIX munmap 一致）。
     pub fn unmap(&self, vaddr: VirtAddr, size: usize) {
-        let start = vaddr.as_usize();
-        let end = start + size;
+        let end = vaddr + size;
 
         let mut inner = self.inner.lock();
         // 页表侧：逐页清叶子 PTE
@@ -576,7 +563,7 @@ impl Space {
             unsafe { self.root_mut().unmap(vaddr + i * PAGE_SIZE) };
         }
         // Region 侧：删重叠记录
-        inner.regions.retain(|r| !(start < r.edge && end > r.base));
+        inner.regions.retain(|r| !(vaddr < r.edge && end > r.base));
         drop(inner);
 
         // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -636,17 +623,12 @@ impl Space {
             let va = vaddr + i * PAGE_SIZE;
             let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                 .map_err(|_| MapError::OutOfMemory)?;
-            let pa = page.as_ptr() as usize;
+            let pa = PhysAddr::from_raw(page.as_ptr() as usize);
             inner.frames.push(page);
             // SAFETY: 持 inner 锁期间修改页表。
             unsafe {
-                self.root_mut().map(
-                    va,
-                    PhysAddr::from_raw(pa),
-                    PAGE_SIZE,
-                    flags,
-                    &mut inner.frames,
-                )?;
+                self.root_mut()
+                    .map(va, pa, PAGE_SIZE, flags, &mut inner.frames)?;
             }
         }
         drop(inner);
@@ -687,7 +669,7 @@ impl Space {
     /// [`unmap`](Self::unmap) 原子完成（清页表 + 移除声明）。
     pub fn declare(
         &self,
-        start: usize,
+        start: VirtAddr,
         size: usize,
         flags: PteFlags,
         kind: RegionKind,
@@ -722,11 +704,6 @@ impl Space {
     pub(crate) fn track_frame(&self, frame: Box<[u8; PAGE_SIZE], &'static dyn Allocator>) {
         self.inner.lock().frames.push(frame);
     }
-
-    /// 本空间 trap-context 帧物理地址（`SpaceBuilder::user().build()` 分配，spawn 写初始帧用）。
-    pub(crate) fn trap_context_pa(&self) -> usize {
-        self.trap_cx_pa
-    }
 }
 
 // ── 内核地址空间 ─────────────────────────────────────────────
@@ -745,9 +722,9 @@ pub(crate) fn kernel_space() -> RelLockGuard<'static, Option<Space>> {
 
 /// 内核 trap-context 帧物理地址（`init()` 写入；trap::init 写元数据、idle_frame
 /// 写空闲合成帧、用户空间构建从它拷内核切换信息）。
-pub static KERNEL_TRAP_CX_PA: AtomicUsize = AtomicUsize::new(0);
+pub static KERNEL_TRAP_CONTEXT: AtomicPhysAddr = AtomicPhysAddr::new(PhysAddr::from_raw(0));
 
 /// 内核 trap-context 帧物理地址。
-pub fn kernel_trap_cx_pa() -> usize {
-    KERNEL_TRAP_CX_PA.load(Ordering::Relaxed)
+pub fn kernel_trap_context() -> PhysAddr {
+    KERNEL_TRAP_CONTEXT.load(Ordering::Relaxed)
 }

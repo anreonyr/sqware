@@ -1,6 +1,9 @@
 use alloc::alloc::{AllocError, Allocator};
 use core::ptr::NonNull;
 
+use erra::ResultExt;
+
+use crate::memory::allocator::{InitError, InitResult};
 use crate::{lock::SpinLock, machine};
 
 pub(crate) struct BumpAllocator {
@@ -14,13 +17,12 @@ impl BumpAllocator {
         }
     }
 
-    pub fn init(&self) {
+    pub fn init(&self) -> Result<(), InitError> {
         let mut guard = self.inner.lock();
-        guard.replace({
-            let mut inner = BumpInner::new(0, 0, 0);
-            inner.init();
-            inner
-        });
+        let mut inner = BumpInner::new(0, 0, 0);
+        inner.init()?;
+        guard.replace(inner);
+        Ok(())
     }
 }
 
@@ -35,12 +37,16 @@ impl BumpInner {
         Self { base, edge, used }
     }
 
-    fn init(&mut self) {
+    fn init(&mut self) -> Result<(), InitError> {
         // 区域来自调用方注入的 memory::platform 配置（allocator::init 设置），
         // 不再引用内核链接符号 _bump_base——自包含。
         let m = machine::get();
+        if m.free.size == 0 {
+            return Err(InitError::NoFreeMemory);
+        }
         self.base = m.free.base;
         self.edge = m.free.base + m.free.size;
+        Ok(())
     }
 }
 
@@ -91,6 +97,10 @@ pub fn allocator() -> &'static dyn Allocator {
 /// 初始化 bump 分配器的内存区域。
 ///
 /// 必须在 `main` 早期调用恰好一次，在任何堆分配之前。
-pub fn init() {
-    BUMP_ALLOCATOR.init();
+///
+/// # Errors
+///
+/// 机器未配置空闲内存区 → [`InitError::NoFreeMemory`]。
+pub fn init() -> InitResult<()> {
+    BUMP_ALLOCATOR.init().annotate("initializing bump allocator")
 }

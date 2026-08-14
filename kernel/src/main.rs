@@ -64,8 +64,8 @@ fn main() -> ! {
     );
     putln!("hart: {}", machine.hart);
 
-    allocator::init();
-    manager::init().unwrap();
+    allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
+    manager::init().unwrap_or_else(|e| panic!("manager init failed: {e}"));
 
     loop {
         unsafe {

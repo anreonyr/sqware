@@ -28,13 +28,18 @@ use crate::{
         manager::{
             addr::{PhysAddr, VirtAddr},
             entry::PteFlags,
-            space::{KERNEL_SPACE, KERNEL_TRAP_CX_PA, Space, SpaceBuilder, TASK_STACK_BASE},
+            space::{
+                KERNEL_BASE, KERNEL_SPACE, KERNEL_TRAP_CONTEXT, Space, SpaceBuilder, TRAMPOLINE,
+                TRAP_CONTEXT, USER_STACK_BASE,
+            },
         },
     },
 };
 
 use alloc::boxed::Box;
+use erra::ResultExt;
 
+use riscv::register::satp;
 /// 页表操作错误 — `Space` pub 方法返回的错误类型。
 ///
 /// 经 `pub use` 从 `pub(crate) mod table` 导出，使 pub API 签名中的类型
@@ -42,6 +47,9 @@ use alloc::boxed::Box;
 /// re-export 为「pub 签名类型可命名性」预留，故 allow(unused_imports)。
 #[allow(unused_imports)]
 pub use table::MapError;
+
+/// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
+pub type MapResult<T> = erra::Result<T, MapError>;
 
 /// 刷新指定 ASID 的 TLB 条目（非全局）。
 ///
@@ -68,87 +76,89 @@ pub unsafe fn flush_asid(asid: usize) {
 ///
 /// 写入 `satp` 后会立即启用分页。调用者需确保此时所有存活的指针
 /// （栈、代码、数据段）都已 identity-mapped。
+///
 /// # Errors
 ///
-/// - [`MapError::OutOfMemory`] — 物理帧不足以分配根页表或中间页表。
-pub fn init() -> Result<(), MapError> {
-    unsafe {
-        let m = machine::get();
+/// - [`MapError::DramOverlap`] — DRAM 末端越过用户栈窗口（内存配置非法）。
+/// - [`MapError::OutOfMemory`] — 物理帧不足以分配根/中间页表或内核 trap-context 帧。
+/// - [`MapError::NotAligned`] / [`MapError::AlreadyMapped`] — 映射参数非法。
+pub fn init() -> MapResult<()> {
+    (|| -> Result<(), MapError> {
+        unsafe {
+            let m = machine::get();
 
-        // 任务栈窗口 TASK_STACK_BASE=0xC0000000：恒等映射的 DRAM 必须落在其下方，
-        // 否则任务栈窗口覆盖真实内存而非专用窗口（DRAM 起点 0x80000000 → size < 1 GiB）。
-        assert!(
-            m.dram.base + m.dram.size <= TASK_STACK_BASE,
-            "DRAM identity map ends at {:#x}, overlapping task stack window {:#x}",
-            m.dram.base + m.dram.size,
-            TASK_STACK_BASE
-        );
+            // 任务栈窗口 TASK_STACK_BASE=0xC0000000：恒等映射的 DRAM 必须落在其下方，
+            // 否则任务栈窗口覆盖真实内存而非专用窗口（DRAM 起点 0x80000000 → size < 1 GiB）。
+            if VirtAddr::from_raw(m.dram.base + m.dram.size) > USER_STACK_BASE {
+                return Err(MapError::DramOverlap);
+            }
 
-        // 1. 创建内核地址空间
-        let kernel_space = SpaceBuilder::kernel().build()?;
+            // 1. 创建内核地址空间
+            let kernel_space = SpaceBuilder::kernel().build()?;
 
-        // 2. Identity-map 整个 DRAM —— 内核镜像（_free_base 以下）+ free 区 +
-        //    内核栈保留区（DRAM 顶部）都在 DRAM 内。只 map free 会在启用分页后
-        //    让内核栈/内核镜像变成未映射，下一次栈访问或取指即缺页。
-        let ram_flags = PteFlags::V
-            | PteFlags::R
-            | PteFlags::W
-            | PteFlags::X
-            | PteFlags::A
-            | PteFlags::D
-            | PteFlags::G;
+            // 2. Identity-map 整个 DRAM —— 内核镜像（_free_base 以下）+ free 区 +
+            //    内核栈保留区（DRAM 顶部）都在 DRAM 内。只 map free 会在启用分页后
+            //    让内核栈/内核镜像变成未映射，下一次栈访问或取指即缺页。
+            let ram_flags = PteFlags::V
+                | PteFlags::R
+                | PteFlags::W
+                | PteFlags::X
+                | PteFlags::A
+                | PteFlags::D
+                | PteFlags::G;
 
-        kernel_space.map(
-            VirtAddr::from_raw(m.dram.base),
-            PhysAddr::from_raw(m.dram.base),
-            m.dram.size,
-            ram_flags,
-        )?;
+            kernel_space.map(
+                VirtAddr::from_raw(m.dram.base),
+                PhysAddr::from_raw(m.dram.base),
+                m.dram.size,
+                ram_flags,
+            )?;
 
-        // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备）
-        let kernel_va_base = VirtAddr::from_raw(VirtAddr::KERNEL_BASE + m.dram.base);
-        kernel_space.map(
-            kernel_va_base,
-            PhysAddr::from_raw(m.dram.base),
-            m.dram.size,
-            ram_flags,
-        )?;
+            // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备）
+            kernel_space.map(
+                KERNEL_BASE + m.dram.base,
+                PhysAddr::from_raw(m.dram.base),
+                m.dram.size,
+                ram_flags,
+            )?;
 
-        // 4. 映射 trap trampoline 页（内核自有帧）：所有空间以 TRAMPOLINE VA
-        //    映射同一物理页，`stvec` 指向它。G 位：内容不可变，不被 ASID 局部
-        //    sfence 刷掉也安全。
-        let tramp_flags =
-            PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
-        kernel_space.map(
-            VirtAddr::from_raw(Space::TRAMPOLINE),
-            PhysAddr::from_raw(crate::runtime::trampoline::trampoline_pa()),
-            crate::memory::PAGE_SIZE,
-            tramp_flags,
-        )?;
+            // 4. 映射 trap trampoline 页（内核自有帧）：所有空间以 TRAMPOLINE VA
+            //    映射同一物理页，`stvec` 指向它。G 位：内容不可变，不被 ASID 局部
+            //    sfence 刷掉也安全。
+            let tramp_flags =
+                PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
+            kernel_space.map(
+                TRAMPOLINE,
+                crate::runtime::trampoline::trampoline_pa(),
+                crate::memory::PAGE_SIZE,
+                tramp_flags,
+            )?;
 
-        // 5. 内核 trap-context 帧：映射于 TRAP_CONTEXT（内核自身 trap 用；
-        //    元数据字段由 trap::init 写入），PA 存入 KERNEL_TRAP_CX_PA。
-        let ktc =
-            Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
-        let ktc_pa = ktc.as_ptr() as usize;
-        kernel_space.map(
-            VirtAddr::from_raw(Space::TRAP_CONTEXT),
-            PhysAddr::from_raw(ktc_pa),
-            crate::memory::PAGE_SIZE,
-            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
-        )?;
-        kernel_space.track_frame(ktc);
-        KERNEL_TRAP_CX_PA.store(ktc_pa, core::sync::atomic::Ordering::Relaxed);
+            // 5. 内核 trap-context 帧：映射于 TRAP_CONTEXT（内核自身 trap 用；
+            //    元数据字段由 trap::init 写入），PA 存入 KERNEL_TRAP_CONTEXT。
+            let ktc = Box::try_new_in([0u8; PAGE_SIZE], allocator())
+                .map_err(|_| MapError::OutOfMemory)?;
+            let ktc_pa = PhysAddr::from_raw(ktc.as_ptr() as usize);
+            kernel_space.map(
+                TRAP_CONTEXT,
+                ktc_pa,
+                crate::memory::PAGE_SIZE,
+                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+            )?;
+            kernel_space.track_frame(ktc);
+            KERNEL_TRAP_CONTEXT.store(ktc_pa, core::sync::atomic::Ordering::Relaxed);
 
-        // 6. 启用 Sv39 分页
-        riscv::register::satp::set(riscv::register::satp::Mode::Sv39, 0, kernel_space.root());
+            // 6. 启用 Sv39 分页
+            satp::set(satp::Mode::Sv39, 0, kernel_space.root());
 
-        // 7. 刷新 TLB
-        flush_asid(0);
+            // 7. 刷新 TLB
+            flush_asid(0);
 
-        // 8. 保存内核地址空间
-        KERNEL_SPACE.lock().replace(kernel_space);
+            // 8. 保存内核地址空间
+            KERNEL_SPACE.lock().replace(kernel_space);
 
-        Ok(())
-    }
+            Ok(())
+        }
+    })()
+    .annotate("initializing memory manager")
 }

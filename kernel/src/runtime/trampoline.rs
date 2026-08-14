@@ -6,9 +6,11 @@
 // 本阶段汇编未接入——`trampoline_pa()` 是占位，`space::init` 映射前必须由
 // trap 子系统提供真实物理地址（链接符号或运行时分配的帧）。
 
+use crate::memory::manager::addr::PhysAddr;
+
 /// trampoline 页的物理地址。
 ///
 /// 尚未实现：trap 汇编接入后改为返回链接符号/分配帧的真实地址。
-pub fn trampoline_pa() -> usize {
+pub fn trampoline_pa() -> PhysAddr {
     unimplemented!("trampoline not yet wired up")
 }

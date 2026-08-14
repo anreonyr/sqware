@@ -11,7 +11,8 @@
 //   0x000 (0-255)   — 用户半区  (0x0000_0000_0000_0000 .. 0x0000_007F_FFFF_FFFF)
 //   0x1FF (256-511) — 内核半区  (0xFFFF_FF80_0000_0000 .. 0xFFFF_FFFF_FFFF_FFFF)
 
-use core::ops::Add;
+use core::ops::{Add, Sub};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
 
@@ -23,9 +24,6 @@ use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
 pub struct VirtAddr(usize);
 
 impl VirtAddr {
-    /// 内核半区起始虚拟地址 (VPN[2] = 256, VA = 2^38 符号扩展)
-    pub const KERNEL_BASE: usize = 0xFFFF_FFC0_0000_0000;
-
     /// 从原始 usize 构造虚拟地址，符号扩展到规范形式。
     ///
     /// 利用 bit 38 的值填充 bits 63:39（恒合法，不检查）。
@@ -73,6 +71,14 @@ impl Add<usize> for VirtAddr {
     #[inline]
     fn add(self, rhs: usize) -> Self {
         Self(self.0 + rhs)
+    }
+}
+
+impl Sub<usize> for VirtAddr {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: usize) -> Self {
+        Self(self.0 - rhs)
     }
 }
 
@@ -131,5 +137,32 @@ impl core::fmt::Debug for PhysAddr {
 impl core::fmt::LowerHex for PhysAddr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+/// 物理地址的原子包装 — 全局静态状态（如内核 trap-context 帧 PA）无锁读写用。
+///
+/// core 没有泛型 `Atomic<T>`，按本模块风格做具体包装（`PhysAddr` 为
+/// `#[repr(transparent)]` 的 usize 新类型，原子性由内层 `AtomicUsize` 保证）。
+#[repr(transparent)]
+pub struct AtomicPhysAddr(AtomicUsize);
+
+impl AtomicPhysAddr {
+    /// 新建原子物理地址。
+    #[inline]
+    pub const fn new(pa: PhysAddr) -> Self {
+        Self(AtomicUsize::new(pa.as_usize()))
+    }
+
+    /// 原子读取。
+    #[inline]
+    pub fn load(&self, order: Ordering) -> PhysAddr {
+        PhysAddr::from_raw(self.0.load(order))
+    }
+
+    /// 原子写入。
+    #[inline]
+    pub fn store(&self, pa: PhysAddr, order: Ordering) {
+        self.0.store(pa.as_usize(), order);
     }
 }

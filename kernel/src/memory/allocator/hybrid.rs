@@ -12,7 +12,7 @@ use core::ptr::NonNull;
 use alloc::alloc::{AllocError, Allocator};
 
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::{block, frame};
+use crate::memory::allocator::{InitResult, block, frame};
 
 pub(crate) struct HybridAllocator;
 
@@ -25,9 +25,15 @@ impl HybridAllocator {
     ///
     /// block 先初始化（经 bump），frame 后初始化（经 bump），确保
     /// frame 的 base（= bump frontier）在所有 bump 分配之后，Link 节点不被覆盖。
-    pub fn init(&self) {
-        block::init();
-        frame::init();
+    ///
+    /// # Errors
+    ///
+    /// 任一后端初始化失败（`block::init` / `frame::init` 的错误原样传播，
+    /// 已在对应模块附加上下文）。
+    pub fn init(&self) -> InitResult<()> {
+        block::init()?;
+        frame::init()?;
+        Ok(())
     }
 }
 
@@ -57,6 +63,13 @@ pub fn allocator() -> &'static dyn Allocator {
     &HYBRID_ALLOCATOR
 }
 
-pub fn init() {
-    HYBRID_ALLOCATOR.init();
+/// 初始化混合分配器（block + frame 后端）。
+///
+/// 必须在 `main` 早期调用恰好一次（经 `allocator::init`），在任何堆分配之前。
+///
+/// # Errors
+///
+/// 任一后端初始化失败，错误原样传播（见 [`HybridAllocator::init`]）。
+pub fn init() -> InitResult<()> {
+    HYBRID_ALLOCATOR.init()
 }
