@@ -17,6 +17,7 @@ use core::alloc::{AllocError, Allocator, Layout};
 
 use alloc::{boxed::Box, vec::Vec};
 use log::{debug, warn};
+use riscv::register::mhartid;
 
 use crate::machine;
 use crate::{
@@ -309,7 +310,7 @@ pub(crate) fn live_pages() -> usize {
 }
 
 pub fn allocator() -> &'static dyn Allocator {
-    let hart = unsafe { crate::memory::arch::hart_id() };
+    let hart = unsafe { mhartid::read() };
     let allocators = BLOCK_ALLOCATORS
         .get()
         .expect("block allocator not initialized");

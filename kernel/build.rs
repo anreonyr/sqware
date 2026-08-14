@@ -6,4 +6,3 @@ fn main() {
     println!("cargo::rustc-link-arg=-T{ld}");
     println!("cargo::rerun-if-changed=link.ld"); // link.ld 变更自动重链
 }
-

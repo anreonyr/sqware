@@ -5,7 +5,6 @@ use log::debug;
 
 use alloc::{
     alloc::{AllocError, Allocator},
-    boxed::Box,
     vec::Vec,
 };
 
@@ -521,25 +520,6 @@ pub(crate) static FRAME_ALLOCATOR: FrameAllocator = FrameAllocator::new();
 
 pub fn allocator() -> &'static dyn Allocator {
     &FRAME_ALLOCATOR
-}
-
-/// 具体类型的分配器引用——`Box<T, A>` 需要 `A: Allocator` 的具体类型
-/// （`&dyn Allocator` 不满足 Sized 约束）。帧句柄构造（页表帧 / 数据帧）
-/// 用它：帧直接来自 buddy 池，地址是 `frame_addr` 定义的物理地址，drop
-/// 自动归还，不依赖 block 整页分支 / 恒等映射两条巧合。
-pub(crate) fn allocator_ref() -> &'static FrameAllocator {
-    &FRAME_ALLOCATOR
-}
-
-/// 一页物理帧句柄——`Box` drop 自动归还 frame 池（buddy）。
-///
-/// 统一用字节帧（而非强类型 `Box<PageTable>`）：页表帧 / 数据帧 / trap-context
-/// 帧可装进同一个 `Vec`；页表遍历时按需 cast 成 `*PageTable`。
-pub(crate) type Frame = Box<[u8; PAGE_SIZE], &'static FrameAllocator>;
-
-/// 分配一页零化帧（页表帧需全零 PTE、匿名数据帧需零页）。
-pub(crate) fn zeroed_frame() -> Result<Frame, AllocError> {
-    Box::try_new_in([0u8; PAGE_SIZE], allocator_ref())
 }
 
 pub fn init() {

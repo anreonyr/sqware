@@ -1,8 +1,8 @@
 // 陷入上下文（TrapContext）— trap 入口/出口在 TRAP_CONTEXT 页保存/恢复的帧
 //
-// 本阶段仅 memory 子系统引用（`space::from_kernel` 把内核切换元数据拷进任务帧、
-// `space::init` 经恒等映射访问），trap 汇编尚未接入。字段布局一经 trap 子系统
-// 与汇编固化后不可随意增删。
+// 本阶段仅 memory 子系统引用（用户空间构建 `space::Space::build` 把内核切换
+// 元数据拷进任务帧、`space::init` 经恒等映射访问），trap 汇编尚未接入。字段布局
+// 一经 trap 子系统与汇编固化后不可随意增删。
 
 /// 陷入上下文帧 — 存于每空间独占的 TRAP_CONTEXT 页（S 态独占、无 U 位）。
 ///

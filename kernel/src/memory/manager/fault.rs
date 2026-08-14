@@ -13,7 +13,7 @@ use crate::memory::PAGE_SIZE;
 use super::{
     addr::VirtAddr,
     entry::PteFlags,
-    space::{AddressSpace, RegionKind},
+    space::{RegionKind, Space},
 };
 
 /// 从机器 CSR 捕获的缺页信息。
@@ -62,7 +62,7 @@ impl PageFault {
 /// 为用户缺页解析匿名物理页。
 ///
 /// 按 Region 权限从 frame 分配器取一页并映射到缺页地址。
-fn resolve_anonymous(fault: &PageFault, space: &AddressSpace, flags: PteFlags) -> bool {
+fn resolve_anonymous(fault: &PageFault, space: &Space, flags: PteFlags) -> bool {
     let vaddr = fault.addr.page_align();
     // A/D 必须设置，否则硬件可能再次缺页
     let flags = flags | PteFlags::A | PteFlags::D;
@@ -92,7 +92,7 @@ fn resolve_anonymous(fault: &PageFault, space: &AddressSpace, flags: PteFlags) -
 /// 1. Re-walk 页表 — 排除 A/D 位竞争
 /// 2. 用户地址 → 查 Region：Anonymous 分配零页，Reserved/无 Region 返回 false
 /// 3. 内核地址 → fatal（内核页必须预映射）
-pub fn handle_page_fault(fault: &PageFault, space: &AddressSpace) -> bool {
+pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
     // 1. Re-walk 页表 (A/D 位竞争检查)
     if let Some((_paddr, flags)) = space.translate(fault.addr)
         && flags.contains(PteFlags::V)

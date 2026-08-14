@@ -11,8 +11,8 @@ use core::ptr::NonNull;
 
 use alloc::alloc::{AllocError, Allocator};
 
-use crate::memory::allocator::{block, frame};
 use crate::memory::PAGE_SIZE;
+use crate::memory::allocator::{block, frame};
 
 pub(crate) struct HybridAllocator;
 

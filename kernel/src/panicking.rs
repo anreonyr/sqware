@@ -6,7 +6,12 @@ use crate::console::_write;
 fn panic_handler(info: &PanicInfo) -> ! {
     _write(format_args!("[KERNEL PANIC]"));
     if let Some(loc) = info.location() {
-        _write(format_args!(" at {}:{}:{}", loc.file(), loc.line(), loc.column()));
+        _write(format_args!(
+            " at {}:{}:{}",
+            loc.file(),
+            loc.line(),
+            loc.column()
+        ));
     }
     _write(format_args!("\n"));
     if let Some(msg) = info.message().as_str() {

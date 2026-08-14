@@ -13,7 +13,6 @@
 // 页大小常量 PAGE_SIZE 与 PAGE_SHIFT 留在本模块顶层，分配器与 manager 共用。
 
 // 顺序重要：宏先于使用它们的子模块声明（`#[macro_use]` 文本作用域）。
-mod arch;
 
 pub mod allocator;
 pub mod manager;
