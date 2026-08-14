@@ -11,6 +11,13 @@ SECTIONS
     *(.text._start)
     *(.text*)
   }
+
+  /* 陷阱 trampoline 页：必须页对齐且 ≤ 4 KiB（TRAMPOLINE VA 只映射一页，
+     见 manager::space::Space::TRAMPOLINE 与 runtime/trampoline.rs） */
+  .trampoline ALIGN(0x1000) : {
+    KEEP(*(.trampoline))
+  }
+
   .rodata : {
     *(.rodata*)
   }

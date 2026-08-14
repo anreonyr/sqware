@@ -16,7 +16,7 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use riscv::register::mhartid;
+use crate::machine;
 
 use super::dep;
 use super::trap::TrapGuard;
@@ -81,8 +81,8 @@ impl<T: ?Sized> SpinLock<T> {
         let caller = dep::read_ra();
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
-        // SAFETY: 读 mhartid CSR 无副作用；S-mode 下恒可读（与 RelLock 同款）。
-        let me = mhartid::read() + 1;
+        // SAFETY: 读 tp（入口 `_start` 写入的 hartid）无副作用。
+        let me = machine::hart_id() + 1;
 
         // Acquire：获取成功后看到前持有者的所有写入。跨 hart 争用时真自旋；
         // 同 hart 再次获取（关中断后无抢占，必然是同 hart 重入）是锁序违规——panic。
@@ -123,8 +123,8 @@ impl<T: ?Sized> SpinLock<T> {
         if self.locked.swap(true, Ordering::Acquire) {
             return None;
         }
-        // SAFETY: 读 mhartid CSR 无副作用（与 RelLock 同款）。
-        let me = mhartid::read() + 1;
+        // SAFETY: 读 tp（入口 `_start` 写入的 hartid）无副作用。
+        let me = machine::hart_id() + 1;
         self.owner.store(me, Ordering::Relaxed);
         self.holder_pc.store(caller, Ordering::Relaxed);
 

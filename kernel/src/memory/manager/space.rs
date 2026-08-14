@@ -95,13 +95,54 @@ pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000
 
 /// 每空间 trap-context 页的固定虚拟地址（trampoline 下方一页，L2[511]·L1[511]·L0[510]）。
 ///
-/// 用户空间把本任务的 [`crate::context::TrapContext`] 帧映射于此（S 态独占、无 U
+/// 用户空间把本任务的 [`crate::runtime::context::TrapContext`] 帧映射于此（S 态独占、无 U
 /// 位）；内核空间映射自己的帧。`__alltraps` 在用户空间经此 VA 存帧；`__restore`
 /// 切回目标空间后经此 VA 恢复。
 ///
 /// 本帧物理地址不冗余存储：需要时经 [`translate`](Self::translate) 查询
 /// （帧内 `self_pa` 字段亦自存一份）。
 pub(crate) const TRAP_CONTEXT: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_E000);
+
+// ── 地址空间总览（Sv39）───────────────────────────────────────────
+//
+// 用户半区（bit 38 = 0，VPN[2] = 0..255）：
+//
+//   0x0000_0000
+//     ┌─────────────────────────────────┐
+//     │             保留                │
+//     ├─────────────────────────────────┤ 0x2000_0000  USER_HEAP_BASE
+//     │  用户堆窗口 64 MiB               │ USER_HEAP_BASE + USER_HEAP_SIZE
+//     │ （BitmapAllocator 实例管理）     │
+//     ├─────────────────────────────────┤ 0x2040_0000
+//     │             保留                │
+//     ├─────────────────────────────────┤ 0xC000_0000  USER_STACK_BASE
+//     │  任务栈窗口 1 GiB                │ USER_STACK_BASE + TASK_STACK_AREA_SIZE
+//     │ （16 KiB 栈 + 守护页，约 5 万）  │
+//     ├─────────────────────────────────┤ 0x1_0000_0000（低 4 GiB，设计上限）
+//     │             保留（至 2^38）      │
+//     └─────────────────────────────────┘
+//
+// 内核半区（bit 38 = 1，VPN[2] = 256..511，起点 KERNEL_BASE）：
+//
+//   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐；汇编 LUI 由 TRAP_CONTEXT_LUI 注入）
+//   0xFFFF_FFFF_FFFF_E000 — TRAP_CONTEXT（= TRAMPOLINE - PAGE_SIZE，相邻页）
+//
+// 布局即不变量：以下断言把「对齐 / 相邻 / 不重叠」编译期锁死——
+// 改布局必须先改这里（编译器兜底），并同步 link.ld / trampoline 汇编。
+const _: () = {
+    // 注意：VirtAddr 的 Add/Sub/PartialEq 非 const fn，此处一律用 as_usize() 裸算术。
+    assert!(TRAMPOLINE.as_usize() % PAGE_SIZE == 0);
+    assert!(TRAP_CONTEXT.as_usize() % PAGE_SIZE == 0);
+    assert!(TRAMPOLINE.as_usize() - PAGE_SIZE == TRAP_CONTEXT.as_usize()); // 相邻页（trampoline 收尾依赖）
+    assert!(KERNEL_BASE.as_usize() == 0xFFFF_FFC0_0000_0000);              // Sv39 内核半区起点（VPN[2] = 256）
+    assert!(USER_HEAP_BASE.as_usize() % PAGE_SIZE == 0);
+    assert!(USER_HEAP_SIZE % PAGE_SIZE == 0);
+    assert!(USER_HEAP_BASE.as_usize() + USER_HEAP_SIZE <= USER_STACK_BASE.as_usize()); // 堆窗口不越过栈窗口
+    assert!(USER_STACK_BASE.as_usize() % PAGE_SIZE == 0);
+    assert!(TASK_STACK_AREA_SIZE % PAGE_SIZE == 0);
+    assert!(TASK_STACK_SIZE % PAGE_SIZE == 0);
+    assert!(USER_STACK_BASE.as_usize() + TASK_STACK_AREA_SIZE <= 0x1_0000_0000); // 栈窗口不越出低 4 GiB
+};
 
 /// Sv39 虚拟地址空间。
 ///
@@ -299,8 +340,8 @@ impl SpaceBuilder {
         let trap_context_pa = PhysAddr::from_raw(trap_context.as_ptr() as usize);
         // SAFETY: 内核帧 PA 恒等可读（trap::init 已写入元数据）；新帧独占。
         unsafe {
-            let ktc = kernel_trap_context_pa.as_usize() as *const crate::context::TrapContext;
-            let utc = trap_context_pa.as_usize() as *mut crate::context::TrapContext;
+            let ktc = kernel_trap_context_pa.as_usize() as *const crate::runtime::context::TrapContext;
+            let utc = trap_context_pa.as_usize() as *mut crate::runtime::context::TrapContext;
             (*utc).kernel_satp = (*ktc).kernel_satp;
             (*utc).kernel_sp = (*ktc).kernel_sp;
             (*utc).trap_handler = (*ktc).trap_handler;

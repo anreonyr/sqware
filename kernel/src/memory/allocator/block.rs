@@ -18,7 +18,6 @@ use core::alloc::{AllocError, Allocator, Layout};
 use alloc::{boxed::Box, vec::Vec};
 use erra::ResultExt;
 use log::debug;
-use riscv::register::mhartid;
 
 use crate::machine;
 use crate::{
@@ -314,7 +313,8 @@ pub(crate) fn live_pages() -> usize {
 }
 
 pub fn allocator() -> &'static dyn Allocator {
-    let hart = unsafe { mhartid::read() };
+    // S-mode 读不到 mhartid，hartid 在入口由 `_start` 存入 tp（见 machine::hart_id）。
+    let hart = machine::hart_id();
     let allocators = BLOCK_ALLOCATORS
         .get()
         .expect("block allocator not initialized");

@@ -5,13 +5,11 @@
 extern crate alloc;
 
 mod console;
-mod context;
-mod ecall;
 mod lock;
 mod machine;
 mod memory;
-mod panicking;
 mod runtime;
+mod sbi;
 
 use core::arch::{asm, global_asm};
 
@@ -23,6 +21,7 @@ global_asm!(
     ".globl _early_stack_top",
     ".globl _start",
     "_start:",
+    "    mv   tp, a0", // hartid → tp：S-mode 读不到 M-mode CSR mhartid，入口处暂存
     "    la   sp, _early_stack_top",
     "    j    early",
 );
@@ -35,6 +34,18 @@ extern "C" fn early(hartid: usize, dtp: usize) -> ! {
 
     let machine = probe(dtp);
     machine::init(machine);
+
+    putln!(
+        "dram: base @ {:#X} size = {:#X}",
+        machine.dram.base,
+        machine.dram.size,
+    );
+    putln!(
+        "free: base @ {:#X} size = {:#X}",
+        machine.free.base,
+        machine.free.size,
+    );
+    putln!("hart: {}", machine.hart);
 
     let stack_top = machine.dram.base + machine.dram.size;
 
@@ -51,22 +62,12 @@ extern "C" fn early(hartid: usize, dtp: usize) -> ! {
 
 /// 在内核栈（DRAM 顶部）上继续启动：初始化分配器后进入 idle。
 fn main() -> ! {
-    let machine = machine::get();
-    putln!(
-        "dram: base @ {:#X} size = {:#X}",
-        machine.dram.base,
-        machine.dram.size,
-    );
-    putln!(
-        "free: base @ {:#X} size = {:#X}",
-        machine.free.base,
-        machine.free.size,
-    );
-    putln!("hart: {}", machine.hart);
-
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
     manager::init().unwrap_or_else(|e| panic!("manager init failed: {e}"));
+    runtime::init();
 
+    // 阶段 A 自检：S-timer 中断由 init 武装、trap_handler 内循环重武装，
+    // 此处只需 wfi 等待中断驱动 trap 进出链路。
     loop {
         unsafe {
             asm!("wfi");

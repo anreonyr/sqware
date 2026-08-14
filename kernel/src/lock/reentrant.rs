@@ -14,7 +14,7 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use riscv::register::mhartid;
+use crate::machine;
 
 use super::dep;
 use super::trap::TrapGuard;
@@ -74,8 +74,8 @@ impl<T: ?Sized> RelLock<T> {
         let caller = dep::read_ra();
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
-        // SAFETY: 单 hart stub 恒返回 HartId(0)；多 hart 时协议已就位。
-        let me = mhartid::read() + 1;
+        // SAFETY: 读 tp（入口 `_start` 写入的 hartid）无副作用；多 hart 时各核 tp 各异。
+        let me = machine::hart_id() + 1;
 
         loop {
             // Acquire：获取成功后看到前持有者的所有写入

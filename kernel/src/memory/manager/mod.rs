@@ -29,7 +29,7 @@ use crate::{
             addr::{PhysAddr, VirtAddr},
             entry::PteFlags,
             space::{
-                KERNEL_BASE, KERNEL_SPACE, KERNEL_TRAP_CONTEXT, Space, SpaceBuilder, TRAMPOLINE,
+                KERNEL_BASE, KERNEL_SPACE, KERNEL_TRAP_CONTEXT, SpaceBuilder, TRAMPOLINE,
                 TRAP_CONTEXT, USER_STACK_BASE,
             },
         },
@@ -130,7 +130,7 @@ pub fn init() -> MapResult<()> {
             kernel_space.map(
                 TRAMPOLINE,
                 crate::runtime::trampoline::trampoline_pa(),
-                crate::memory::PAGE_SIZE,
+                PAGE_SIZE,
                 tramp_flags,
             )?;
 
@@ -142,7 +142,7 @@ pub fn init() -> MapResult<()> {
             kernel_space.map(
                 TRAP_CONTEXT,
                 ktc_pa,
-                crate::memory::PAGE_SIZE,
+                PAGE_SIZE,
                 PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
             )?;
             kernel_space.track_frame(ktc);

@@ -5,7 +5,7 @@
 // （QEMU virt 未配 debug console，DBCN `sbi_debug_console_write` 是空操作，故用 legacy。）
 use core::fmt::{self, Write};
 
-use crate::ecall::{DbcnCall, fid::Dbcn, scall::SArgs};
+use crate::sbi::{DbcnCall, fid::Dbcn, scall::SArgs};
 
 struct Console;
 
