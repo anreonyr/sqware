@@ -20,7 +20,8 @@
 //   steal            — 跨 hart 取活：先读 ready_lens()[v]（锁外原子读，S 态共享
 //                      不失效缓存行）再 try_lock（非阻塞）——空队列不做 RMW，
 //                      避免对受害者锁行乒乓；拿不到即跳过（无锁序规则）。
-//   idle             — 本 hart 无任务：spin + steal；全退出 → halt_all。
+//   idle             — 本 hart 无任务：自核队首 → steal → WFI 休眠（IPI / 残留
+//                      定时器唤醒，SLEEPING 位图 + wake_sleepers）；全退出 → halt_all。
 //
 // 切换语义：tick/exit_current/steal 返回下一任务帧 PA；trap_handler 原样返回，
 // trampoline 尾部 j __restore 用 a0 = PA 恢复。**kernel_sp 每切换写入**：把帧
@@ -41,6 +42,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::ecall::fid;
+use crate::ecall::scall::SArgs;
 use crate::lock::{OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
@@ -245,6 +247,9 @@ static SPAWNED: AtomicUsize = AtomicUsize::new(0);
 static EXITED: AtomicUsize = AtomicUsize::new(0);
 /// 停机互斥：第一个触发 srst 的核胜出，其余 wfi（避免双 srst）。
 static HALTING: AtomicBool = AtomicBool::new(false);
+/// WFI 休眠 hart 位图（bit h = hart h 正阻塞在 WFI 等待唤醒；enqueue 后据此
+/// 发 IPI——休眠核醒来后可 steal 新任务）。
+static SLEEPING: AtomicUsize = AtomicUsize::new(0);
 
 /// 全部任务是否已退出（SPAWNED > 0 防 boot 早期误判）。
 fn all_exited() -> bool {
@@ -276,10 +281,14 @@ fn halt_all() -> ! {
 /// （层级 1 → 3 合法；Team.tasks 与 Space.inner 不嵌套，见 lock/mod.rs）。
 pub(crate) fn enqueue(task: Arc<Task>) {
     let me = machine::hart_id();
-    let mut sch = schedulers()[me].lock();
-    task.team.push_task(&task);
-    sch.enqueue(task);
-    SPAWNED.fetch_add(1, Ordering::Relaxed);
+    {
+        let mut sch = schedulers()[me].lock();
+        task.team.push_task(&task);
+        sch.enqueue(task);
+        SPAWNED.fetch_add(1, Ordering::Relaxed);
+    }
+    // 新任务出现：唤醒 WFI 休眠核（可 steal 取活）
+    wake_sleepers();
 }
 
 /// 抢占/让出入口（trap 定时器分支调用）。
@@ -297,16 +306,8 @@ pub fn exit_current() -> usize {
         return pa;
     }
     drop(sch);
-    // 本 hart 无任务：steal 直至拿到任务；全部退出则停机
-    loop {
-        if all_exited() {
-            halt_all();
-        }
-        if let Some(next) = steal() {
-            return install_stolen(next);
-        }
-        core::hint::spin_loop();
-    }
+    // 本 hart 无任务：阻塞获取（Idle → Running）；全部退出则停机
+    acquire_next()
 }
 
 /// 当前运行任务 id（诊断用；无任务返回 usize::MAX）。
@@ -359,6 +360,89 @@ fn steal() -> Option<Arc<Task>> {
     None
 }
 
+// ── 核休眠与唤醒（Idle 的阻塞点）──────────────────────────────────
+
+/// 唤醒所有 WFI 休眠中的 hart（enqueue 后调用：新任务出现 → 睡核可 steal）。
+///
+/// SBI IPI 把目标核 SSIP 置位（sie.SSIP 已使能），目标核在 WFI 中挂起即被唤醒
+/// ——全局 SIE=0，只唤醒不取中断。错误（如核已醒）尽力而为。
+fn wake_sleepers() {
+    let sleeping = SLEEPING.load(Ordering::Acquire);
+    if sleeping == 0 {
+        return;
+    }
+    // a0 = hart_mask（≤ 8 核，mask_base = 0）
+    let _ = ecall::IpiCall::new(ecall::fid::Ipi::SendIpi)
+        .args(SArgs {
+            a0: sleeping,
+            ..Default::default()
+        })
+        .call();
+}
+
+/// 本 hart 进入 WFI 休眠（Idle 自环的「阻塞点」）。
+///
+/// 协议（闭合「置位后漏唤醒」窗口）：置睡眠位 → **复查**（自核队首 / steal——
+/// 置位前的 enqueue 已按位补 IPI，置位后的 enqueue 会看到位）→ 全退出检查 →
+/// 停掉周期定时器（stimecmp 是本 hart 自己的 CSR，推远防 STIP 每量子唤醒）→
+/// WFI。唤醒后清 SSIP 与睡眠位，返回 None 让外层循环重扫（也可能直接带出任务）。
+fn idle_wait() -> Option<Arc<Task>> {
+    let me = machine::hart_id();
+    SLEEPING.fetch_or(1usize << me, Ordering::AcqRel);
+    // 置位后复查：防「检查完 → 置位 → 睡」窗口内的 enqueue 漏唤醒
+    let found = {
+        let mut sch = schedulers()[me].lock();
+        match sch.pop_ready() {
+            Some(task) => Some(task),
+            None => {
+                drop(sch);
+                steal()
+            }
+        }
+    };
+    if let Some(task) = found {
+        SLEEPING.fetch_and(!(1usize << me), Ordering::AcqRel);
+        return Some(task);
+    }
+    if all_exited() {
+        halt_all();
+    }
+    crate::runtime::trap::arm_timer(1 << 60);
+    // WFI：SSIP（IPI）/ 残留 STIP 挂起即唤醒——只唤醒不取中断（SIE=0）
+    unsafe {
+        core::arch::asm!("wfi");
+    }
+    // 唤醒后清 SSIP（防残留位导致下次 WFI 立即重醒）与睡眠位
+    unsafe {
+        core::arch::asm!("csrc sip, 2");
+    }
+    SLEEPING.fetch_and(!(1usize << me), Ordering::AcqRel);
+    None
+}
+
+/// Idle → Running 阻塞获取（enter_first_task / exit_current 空分支 / idle_loop
+/// 共用的唯一转移）：自核队首 → 跨核 steal → 全退出检查 → WFI 休眠（IPI 唤醒）。
+fn acquire_next() -> usize {
+    let me = machine::hart_id();
+    loop {
+        {
+            let mut sch = schedulers()[me].lock();
+            if let Some(task) = sch.pop_ready() {
+                return sch.install_current(task);
+            }
+        }
+        if all_exited() {
+            halt_all();
+        }
+        if let Some(task) = steal() {
+            return install_stolen(task);
+        }
+        if let Some(task) = idle_wait() {
+            return install_stolen(task);
+        }
+    }
+}
+
 // ── 核入口（首次进入调度与副核 idle）────────────────────────────
 
 /// 调度入口（hart 0 首次进入）：从本 hart 就绪队列取首任务装为 current 并返回
@@ -368,33 +452,14 @@ fn steal() -> Option<Arc<Task>> {
 /// 把首任务 steal 走——那个 PA 已过期（任务在别核运行），直接恢复会双核跑同一
 /// 任务 + 本核 current 恒 None。
 pub fn enter_first_task() -> usize {
-    let me = machine::hart_id();
-    loop {
-        let mut sch = schedulers()[me].lock();
-        if let Some(task) = sch.pop_ready() {
-            return sch.install_current(task);
-        }
-        drop(sch);
-        if all_exited() {
-            halt_all();
-        }
-        if let Some(task) = steal() {
-            return install_stolen(task);
-        }
-        core::hint::spin_loop();
-    }
+    // 与 exit_current 空分支 / idle_loop 共用同一 Idle→Running 获取转移
+    acquire_next()
 }
 
 /// 副核 idle 循环：spin + steal；拿到任务即 restore（永不返回）；全退出停机。
 pub fn idle_loop() -> ! {
     loop {
-        if all_exited() {
-            halt_all();
-        }
-        if let Some(task) = steal() {
-            let pa = install_stolen(task);
-            restore(pa)
-        }
-        core::hint::spin_loop();
+        let pa = acquire_next();
+        restore(pa)
     }
 }

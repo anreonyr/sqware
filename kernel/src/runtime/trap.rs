@@ -118,6 +118,7 @@ pub fn init() {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
         core::arch::asm!("csrw sscratch, zero");
         sie::set_stimer();
+        sie::set_ssoft(); // SSIP 使能：WFI 休眠核被 SBI IPI 唤醒的前提（只唤醒不取中断）
     }
 
     info!(
@@ -145,6 +146,7 @@ pub fn init_secondary() {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
         core::arch::asm!("csrw sscratch, zero");
         sie::set_stimer();
+        sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
     }
     info!("runtime: hart {} trap secondary init done", machine::hart_id());
 }
