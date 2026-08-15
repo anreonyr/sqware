@@ -21,10 +21,10 @@
 // 的全局实例（见 `memory::manager::asid`）。
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 use core::sync::atomic::Ordering;
+use hashbrown::HashMap;
 
 use crate::lock::reentrant::RelLockGuard;
 use crate::memory::allocator::bitmap::BitmapAllocator;
@@ -144,11 +144,11 @@ impl Map {
     }
 }
 
-/// 窗口种类 — 动态区域的身份，兼作 `dynamic` 表的键（`BTreeMap<WindowKind, Window>`）。
+/// 窗口种类 — 动态区域的身份，兼作 `dynamic` 表的键（`HashMap<WindowKind, Window>`）。
 ///
 /// 数据载荷是区号（区域级窗口恒为 0）：同一种类未来可扩展多个区域（如按 NUMA
 /// 节点分区的堆），键仍唯一；当前每类各一个区级窗口。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowKind {
     /// 用户堆窗口（[`USER_HEAP_BASE`] 起 [`USER_HEAP_SIZE`]）。
     Heap(usize),
@@ -311,7 +311,7 @@ impl Durable {
         &self,
         start: VirtAddr,
         size: usize,
-        windows: &BTreeMap<WindowKind, Window>,
+        windows: &HashMap<WindowKind, Window>,
     ) -> bool {
         let end = start.as_usize().saturating_add(size);
         self.maps.iter().any(|m| {
@@ -332,16 +332,16 @@ struct SpaceInner {
     durable: Durable,
     /// 动态侧：堆 / 栈 / 帧窗口，按种类（[`WindowKind`]）为键。
     ///
-    /// no_std 的 alloc crate 无 `HashMap`，以 `BTreeMap` 实现键查（窗口数恒 3，
-    /// 查表开销无关紧要）。
-    dynamic: BTreeMap<WindowKind, Window>,
+    /// no_std 的 alloc crate 无 `HashMap`，经 `hashbrown`（std 同源实现，
+    /// `alloc` + `default-hasher`/foldhash 特性）提供。窗口数恒 3，查表开销无关紧要。
+    dynamic: HashMap<WindowKind, Window>,
 }
 
 impl SpaceInner {
     fn new() -> Result<Self, MapError> {
         Ok(Self {
             durable: Durable::new()?,
-            dynamic: BTreeMap::from([
+            dynamic: HashMap::from([
                 (WindowKind::Heap(0), Window::new(WindowKind::Heap(0))),
                 (WindowKind::Stack(0), Window::new(WindowKind::Stack(0))),
                 (WindowKind::Frame(0), Window::new(WindowKind::Frame(0))),
@@ -656,7 +656,7 @@ impl Space {
         let mut inner = self.inner.lock();
         let slot_size = TASK_STACK_SIZE + STACK_GUARD_SIZE;
         let stack = {
-            let windows: &mut BTreeMap<WindowKind, Window> = &mut inner.dynamic;
+            let windows: &mut HashMap<WindowKind, Window> = &mut inner.dynamic;
             let kind = WindowKind::Stack(0);
             windows.get_mut(&kind).expect("window exists")
         };
