@@ -1,12 +1,13 @@
 // 任务调度器 — round-robin 轮转（S-timer 抢占 + envcall 主动让出）
 //
 // 线程模型（阶段 A）：Team（进程容器）→ Task（线程）两层。
-//   Team   — 唯一 Space + 全部线程簿记（弱引用，无强环）；多个 Task 共享同一空间
-//   Task   — 可调度单元：Arc<Team> + 自己的 trap 帧句柄（TrapFrame { va, pa }）
+//   Team   — 唯一 Space + 成员簿记（Vec<Weak<Task>>，弱引用，无强环）；多个 Task 共享同一空间
+//   Task   — 可调度单元：Arc<Team> + 调度状态 + 自己的 trap 帧句柄（TrapFrame { va, pa }）
 //
-// 引用图无环：Task → Arc<Team>（强）、Scheduler → Arc<Task>（强）。Team 由它的
-// 线程持有：spawn 返回的 Arc<Team> 只是构造期句柄，spawn 完线程即 drop；最后一个
-// 线程退出 → Arc<Team> 归零 → Team/Space（ASID + 全部帧）自动回收。
+// 引用图无环：Task → Arc<Team>（强）、Scheduler → Arc<Task>（强）、
+// Team → Weak<Task>（弱，簿记不参与生命周期）。Team 由它的线程持有：spawn 返回
+// 的 Arc<Team> 只是构造期句柄，spawn 完线程即 drop；最后一个线程退出 → Arc<Team>
+// 归零 → Team/Space（ASID + 全部帧）自动回收。
 //
 // 队列模型：VecDeque<Arc<Task>>，队首恒为当前运行任务。切换只在 trap 边界发生
 // （内核态恒关中断，见 runtime/trap.rs 的 SIE 策略——内核代码永不抢占/阻塞）
@@ -25,13 +26,19 @@
 // exit_current 在锁内 drop Arc<Task>（Space::drop → ASID/帧归还）即 1 → {3,4}，
 // 均合法。禁止同 hart 重入 SCHEDULER（SpinLock 检测并 panic）。
 //
+// Team.tasks（成员簿记）以 UnsafeCell 承载、无内部锁——可变访问只在 SCHEDULER
+// 锁内（push_task/prune_tasks 的调用方均持锁），跨 hart 互斥由 SCHEDULER 提供；
+// 该不变量即 Send/Sync 的 unsafe 依据（见 Team 的 SAFETY 注释）。
+//
 // 队列空（全部任务退出）：打印后 wfi 停机。
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
+use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::lock::SpinLock;
 use crate::memory::PAGE_SIZE;
@@ -45,6 +52,20 @@ use crate::memory::manager::space::{
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::task::USER_TEXT_BASE;
+
+/// 任务状态（生命周期：就绪 ↔ 运行）。
+///
+/// 存为 `AtomicU8` 而非裸枚举字段：Task 经 `Arc` 共享，状态转换须经不可变
+/// 引用完成——原子字段是满足 `Sync` 的最小载体。实际全部转换都在 SCHEDULER
+/// 锁内发生（单写者 + 锁内读取），原子性只是形式而非并发协议。
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskState {
+    /// 就绪（在调度队列中等待运行）。
+    Ready = 0,
+    /// 当前运行（恒为队列队首）。
+    Running = 1,
+}
 
 /// trap 帧句柄 — 线程 trap 帧的薄引用。
 ///
@@ -61,23 +82,71 @@ pub struct TrapFrame {
 /// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
 ///
 /// 栈 / 堆 / 帧全部归 Team.space 的窗口簿记（Window 子 Map），Task 只持
-/// trap 句柄与共享的 team 引用——无任何页所有权。**无运行状态字段**：
-/// 状态由就绪队列位置隐含（队首 = 当前运行，其余 = 就绪）——Arc<Task> 不可变，
-/// 状态位图须内部可变性才能维护，属过度设计。
+/// trap 句柄与共享的 team 引用——无任何页所有权。
 pub struct Task {
     id: usize,
     name: &'static str,
+    state: AtomicU8,
     team: Arc<Team>,
     trap: TrapFrame,
 }
 
+impl Task {
+    fn set_state(&self, state: TaskState) {
+        self.state.store(state as u8, Ordering::Relaxed);
+    }
+
+    fn state(&self) -> TaskState {
+        match self.state.load(Ordering::Relaxed) {
+            0 => TaskState::Ready,
+            1 => TaskState::Running,
+            // 只会写入 TaskState 的合法编码，此处不可能到达
+            _ => unreachable!("invalid task state: {}", self.state.load(Ordering::Relaxed)),
+        }
+    }
+}
+
 /// 团队（进程）— 共享地址空间的线程容器。
 ///
-/// 无内部锁：全部可变状态（Space 内部）只在 SCHEDULER 锁内改动。
-/// 线程成员表暂缓：&Arc<Team> 下无法追加弱引用（需内部可变性，与「无内部锁」
-/// 冲突），多核阶段经就绪队列扫描派生。
+/// `tasks` 为成员簿记（弱引用，无强环——线程由就绪队列强持有），多核阶段用于
+/// 团队视角的负载判断；生命周期仍由引用计数决定（最后一个线程退出 → Arc<Team>
+/// 归零 → 团队回收）。
+///
+/// **无内部锁**：全部可变状态（Space 内部、`tasks`）只在 SCHEDULER 锁内改动
+/// （spawn_thread 入簿、exit_current 清理）。`&Arc<Team>` 下可写须内部可变性，
+/// 故 `tasks` 以 `UnsafeCell` 承载——跨 hart 互斥由 SCHEDULER（SpinLock）提供，
+/// 访问不变量见 [`Team::push_task`]/[`Team::prune_tasks`] 的 SAFETY 注释。
 pub struct Team {
     space: Space,
+    /// 成员簿记（弱引用条目；死条目在下次清理时摘除）。
+    tasks: UnsafeCell<Vec<Weak<Task>>>,
+}
+
+// SAFETY: `tasks` 仅在 SCHEDULER 锁内访问（push_task/prune_tasks 的调用方均持锁，
+// 见模块头注释）；跨 hart 互斥由该锁保证，故 Team 可跨线程共享。`space` 已有
+// 自身的 Send/Sync unsafe impl。若未来新增 `tasks` 访问路径，必须同样持锁。
+unsafe impl Send for Team {}
+unsafe impl Sync for Team {}
+
+impl Team {
+    /// 成员入簿（调用方须持 SCHEDULER 锁——spawn_thread）。
+    fn push_task(&self, task: &Arc<Task>) {
+        // SAFETY: 本方法仅由持 SCHEDULER 锁的路径调用（见 Team 文档不变量），
+        // 跨 hart 无并发别名；同 hart 重入由 SpinLock 检测并 panic。
+        unsafe { (*self.tasks.get()).push(Arc::downgrade(task)) };
+    }
+
+    /// 清理簿记：摘除已退出线程与全部死条目（弱引用无所有权，滞留仅占条目）。
+    /// 调用方须持 SCHEDULER 锁（exit_current）。
+    fn prune_tasks(&self, exited: &Arc<Task>) {
+        // SAFETY: 本方法仅由持 SCHEDULER 锁的路径调用（见 Team 文档不变量）。
+        let tasks = unsafe { &mut *self.tasks.get() };
+        tasks.retain(|t| match t.upgrade() {
+            // 已回收的死条目（strong_count == 0）与本线程条目一并摘除
+            Some(a) => !Arc::ptr_eq(&a, exited),
+            None => false,
+        });
+    }
 }
 
 /// 调度器状态 — 就绪队列（队首 = 当前运行任务）+ 任务号。
@@ -100,7 +169,10 @@ static SCHEDULER: SpinLock<Scheduler> = SpinLock::new(Scheduler {
 /// # Errors
 ///
 /// 空间构建/映射/帧分配失败（MapError 原样传播）。
-pub fn spawn(program: &'static [u8], name: &'static str) -> Result<(PhysAddr, Arc<Team>), MapError> {
+pub fn spawn(
+    program: &'static [u8],
+    name: &'static str,
+) -> Result<(PhysAddr, Arc<Team>), MapError> {
     assert!(program.len() <= PAGE_SIZE, "task program exceeds one page");
     let space = SpaceBuilder::user().build()?;
 
@@ -119,7 +191,10 @@ pub fn spawn(program: &'static [u8], name: &'static str) -> Result<(PhysAddr, Ar
     )?;
 
     // 2. 团队（由首线程持有；本函数返回构造期句柄）
-    let team = Arc::new(Team { space });
+    let team = Arc::new(Team {
+        space,
+        tasks: UnsafeCell::new(Vec::new()),
+    });
 
     // 3. 首线程（入口参数 a0 = 0）
     let first = spawn_thread(&team, name, 0)?;
@@ -127,14 +202,18 @@ pub fn spawn(program: &'static [u8], name: &'static str) -> Result<(PhysAddr, Ar
 }
 
 /// 在团队内生成一个新线程：栈 slot + trap 帧（均入团队空间的窗口簿记，
-/// owner = 线程 id）→ 填帧 → 入就绪队列。返回新线程 trap 帧 PA。
+/// owner = 线程 id）→ 填帧 → 入簿 + 入就绪队列。返回新线程 trap 帧 PA。
 ///
 /// arg 写入用户上下文 a0（线程入口参数——blob D 按其分支行为）。
 ///
 /// # Errors
 ///
 /// 栈/帧分配失败（MapError 原样传播）；失败时已分配资源回滚。
-pub fn spawn_thread(team: &Arc<Team>, name: &'static str, arg: usize) -> Result<PhysAddr, MapError> {
+pub fn spawn_thread(
+    team: &Arc<Team>,
+    name: &'static str,
+    arg: usize,
+) -> Result<PhysAddr, MapError> {
     // 空间构建在锁外完成——SCHEDULER 与 KERNEL_SPACE 不嵌套
     let mut sch = SCHEDULER.lock();
     let id = sch.next_id;
@@ -175,27 +254,31 @@ pub fn spawn_thread(team: &Arc<Team>, name: &'static str, arg: usize) -> Result<
         frame.sstatus = (s & !(1 << 1) & !(1 << 8)) | (1 << 5);
     }
 
-    // 4. 入队
-    putln!(
-        "task #{} '{}': spawned, frame @ {:#x}, stack @ {:#x}",
+    // 4. 入簿 + 入队（初始状态 Ready）
+    let task = Arc::new(Task {
         id,
         name,
-        frame_pa.as_usize(),
-        stack_top.as_usize()
-    );
-    sch.ready.push_back(Arc::new(Task {
-        id,
-        name,
+        state: AtomicU8::new(TaskState::Ready as u8),
         team: team.clone(),
         trap: TrapFrame {
             va: frame_va,
             pa: frame_pa,
         },
-    }));
+    });
+    team.push_task(&task);
+    putln!(
+        "task #{} '{}': spawned ({:?}), frame @ {:#x}, stack @ {:#x}",
+        task.id,
+        task.name,
+        task.state(),
+        frame_pa.as_usize(),
+        stack_top.as_usize()
+    );
+    sch.ready.push_back(task);
     Ok(frame_pa)
 }
 
-/// 抢占/让出：轮转就绪队列，返回下一运行任务帧 PA。
+/// 抢占/让出：轮转就绪队列（当前 → Ready，新队首 → Running），返回下一运行任务帧 PA。
 ///
 /// 仅应在用户态陷阱中调用（内核态陷阱须恢复被中断的内核上下文——切换会丢弃
 /// 它；防御性判断见 trap.rs 定时器分支）。
@@ -206,26 +289,39 @@ pub fn tick() -> usize {
         return sch.ready.front().expect("queue empty").trap.pa.as_usize();
     }
     let cur = sch.ready.pop_front().expect("queue empty");
+    cur.set_state(TaskState::Ready);
     sch.ready.push_back(cur);
-    sch.ready.front().expect("queue empty").trap.pa.as_usize()
+    let next = sch.ready.front().expect("queue empty");
+    next.set_state(TaskState::Running);
+    next.trap.pa.as_usize()
 }
 
-/// 当前线程退出：回收线程私有资源（栈 slot + trap 帧，帧随窗口子 Map 归还），
-/// drop Arc<Task>（团队引用递减——最后一个线程退出 → Team/Space 归零回收），
+/// 当前线程退出：清理簿记 + 回收线程私有资源（栈 slot + trap 帧，帧随窗口子 Map
+/// 归还），drop Arc<Task>（团队引用递减——最后一个线程退出 → Team/Space 归零回收），
 /// 返回下一运行任务帧 PA。
 ///
 /// 调用方注意：返回后当前任务帧已失效（其帧页已归还），不得再解引用。
 pub fn exit_current() -> usize {
     let mut sch = SCHEDULER.lock();
     let exited = sch.ready.pop_front().expect("no running task");
+    debug_assert_eq!(
+        exited.state(),
+        TaskState::Running,
+        "current task must be running"
+    );
     putln!("task #{} '{}': exited", exited.id, exited.name);
+    // 簿记清理（弱引用条目：本线程 + 死条目）——锁内，无锁 Cell 访问合法
+    exited.team.prune_tasks(&exited);
     // 锁内回收（层级 1 → Space.inner=2 → FRAME=4 合法，见模块注释）：
     // 先摘窗口子 Map（栈/帧页归还 frame 池 + VA 回位图），再 drop Arc<Task>
     // —— Space 在还有其它线程存活时保持完好。
     exited.team.space.task_reclaim(exited.id, exited.trap.va);
     drop(exited);
     match sch.ready.front() {
-        Some(next) => next.trap.pa.as_usize(),
+        Some(next) => {
+            next.set_state(TaskState::Running);
+            next.trap.pa.as_usize()
+        }
         None => {
             drop(sch);
             halt_all()

@@ -206,8 +206,18 @@ impl Window {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
-        let (base, size) = self.alloc.allocate(size).map_err(|_| MapError::OutOfMemory)?;
-        let map = Map::new(VirtAddr::from_raw(base), size, flags, kind, Vec::new(), owner);
+        let (base, size) = self
+            .alloc
+            .allocate(size)
+            .map_err(|_| MapError::OutOfMemory)?;
+        let map = Map::new(
+            VirtAddr::from_raw(base),
+            size,
+            flags,
+            kind,
+            Vec::new(),
+            owner,
+        );
         let info = map.info();
         self.children.push(map);
         Ok(info)
@@ -220,8 +230,7 @@ impl Window {
         }
         let end = va.as_usize().saturating_add(size);
         self.children.retain(|m| {
-            !(va.as_usize() < m.va.as_usize().saturating_add(m.size.get())
-                && end > m.va.as_usize())
+            !(va.as_usize() < m.va.as_usize().saturating_add(m.size.get()) && end > m.va.as_usize())
         });
         true
     }
@@ -298,7 +307,12 @@ impl Durable {
     ///
     /// 边界用 saturating 算术：TRAMPOLINE 等最高页映射的 `va + size` 会溢出 2^64，
     /// 饱和到 `usize::MAX` 即「延伸到地址空间尽头」——比较仍正确。
-    fn overlaps(&self, start: VirtAddr, size: usize, windows: &BTreeMap<WindowKind, Window>) -> bool {
+    fn overlaps(
+        &self,
+        start: VirtAddr,
+        size: usize,
+        windows: &BTreeMap<WindowKind, Window>,
+    ) -> bool {
         let end = start.as_usize().saturating_add(size);
         self.maps.iter().any(|m| {
             start.as_usize() < m.va.as_usize().saturating_add(m.size.get()) && end > m.va.as_usize()
@@ -334,7 +348,6 @@ impl SpaceInner {
             ]),
         })
     }
-
 
     /// 查询 `vaddr` 所属的映射（常数表 → 动态窗口子表），返回 Copy 摘要。
     fn resolve(&self, vaddr: VirtAddr) -> Option<MapInfo> {
@@ -394,15 +407,6 @@ impl SpaceInner {
     fn translate(&self, vaddr: VirtAddr) -> Option<(PhysAddr, PteFlags)> {
         self.durable.root.walk_ref(vaddr).ok()
     }
-}
-
-/// 按种类取窗口的可变引用（调用者须持锁）。
-///
-/// 只借 `windows` 表本身（`&mut BTreeMap<WindowKind, Window>`）——与 `durable`
-/// 字段的借用共存：同时需要两者时先 `let SpaceInner { durable, dynamic } = &mut *guard`
-/// 解构。
-fn window_mut(windows: &mut BTreeMap<WindowKind, Window>, kind: WindowKind) -> &mut Window {
-    windows.get_mut(&kind).expect("window exists")
 }
 
 // SAFETY: 全部可变状态由 `RelLock` 互斥（跨 hart 自旋）；页表树读写与 `SpaceInner`
@@ -469,7 +473,8 @@ pub(crate) const TRAP_CONTEXT: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_E0
 /// 线程 trap 帧窗口大小（64 MiB = 16K 并发帧页；帧 VA 复用由窗口位图管理）。
 pub(crate) const FRAME_REGION_SIZE: usize = 0x400_0000;
 /// 线程 trap 帧窗口基址（`TRAP_CONTEXT` 之下，内核半区，S-only——用户不可触碰）。
-pub(crate) const FRAME_BASE: VirtAddr = VirtAddr::from_raw(TRAP_CONTEXT.as_usize() - FRAME_REGION_SIZE);
+pub(crate) const FRAME_BASE: VirtAddr =
+    VirtAddr::from_raw(TRAP_CONTEXT.as_usize() - FRAME_REGION_SIZE);
 
 // ── 地址空间总览（Sv39）───────────────────────────────────────────
 //
@@ -625,7 +630,14 @@ impl SpaceBuilder {
         };
 
         // trampoline 叶（帧归内核，借用：Reserved 常数映射、无帧）
-        space.map(TRAMPOLINE, tramp_pa, PAGE_SIZE, tramp_flags, MapKind::Reserved, Vec::new())?;
+        space.map(
+            TRAMPOLINE,
+            tramp_pa,
+            PAGE_SIZE,
+            tramp_flags,
+            MapKind::Reserved,
+            Vec::new(),
+        )?;
         Ok(())
     }
 }
@@ -643,7 +655,11 @@ impl Space {
     pub(crate) fn stack_alloc(&self, owner: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         let slot_size = TASK_STACK_SIZE + STACK_GUARD_SIZE;
-        let stack = window_mut(&mut inner.dynamic, WindowKind::Stack(0));
+        let stack = {
+            let windows: &mut BTreeMap<WindowKind, Window> = &mut inner.dynamic;
+            let kind = WindowKind::Stack(0);
+            windows.get_mut(&kind).expect("window exists")
+        };
         let (slot_va, _) = stack
             .alloc
             .allocate(slot_size)
@@ -683,7 +699,10 @@ impl Space {
     ) -> Result<(), MapError> {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
-        let stack = window_mut(dynamic, WindowKind::Stack(0));
+        let stack = {
+            let kind = WindowKind::Stack(0);
+            dynamic.get_mut(&kind).expect("window exists")
+        };
         let child = stack
             .children
             .iter_mut()
@@ -719,12 +738,14 @@ impl Space {
     pub(crate) fn frame_alloc(&self, owner: usize) -> Result<(VirtAddr, PhysAddr), MapError> {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
-        let flags =
-            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
-        let frame_win = window_mut(dynamic, WindowKind::Frame(0));
+        let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
+        let frame_win = {
+            let kind = WindowKind::Frame(0);
+            dynamic.get_mut(&kind).expect("window exists")
+        };
         let info = frame_win.allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
-        let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-            .map_err(|_| MapError::OutOfMemory)?;
+        let page =
+            Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
         let pa = PhysAddr::from_raw(page.as_ptr() as usize);
         if durable.root.map(info.va, pa, PAGE_SIZE, flags).is_err() {
             // 回滚：清可能残留的中间表/PTE + VA 退回位图（空子 Map 一并移除）
@@ -765,14 +786,20 @@ impl Space {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
         // 1+3. 栈窗口：摘 owner 子 Map → 清 PTE → 位图归还 slot
-        let stack = window_mut(dynamic, WindowKind::Stack(0));
+        let stack = {
+            let kind = WindowKind::Stack(0);
+            dynamic.get_mut(&kind).expect("window exists")
+        };
         if let Some((slot_va, slot_size)) = stack.remove_owner(owner) {
             durable.clear_range(slot_va.as_usize(), slot_size);
             // 位图归还与子 Map 结构性绑定：remove_owner 命中则 dealloc 必成功
             let _ = stack.alloc.deallocate(slot_va.as_usize(), slot_size);
         }
         // 2+4. 帧窗口：摘帧子 Map → 清 PTE → 位图归还帧 VA
-        let frames = window_mut(dynamic, WindowKind::Frame(0));
+        let frames = {
+            let kind = WindowKind::Frame(0);
+            dynamic.get_mut(&kind).expect("window exists")
+        };
         if frames.deallocate(frame_va, PAGE_SIZE) {
             durable.clear_range(frame_va.as_usize(), PAGE_SIZE);
         }
@@ -798,7 +825,10 @@ impl Space {
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
         let SpaceInner { durable, dynamic } = &mut *inner;
         // 1. 窗口位图保留块 + 登记空子 Map（Anonymous）
-        let heap = window_mut(dynamic, WindowKind::Heap(0));
+        let heap = {
+            let kind = WindowKind::Heap(0);
+            dynamic.get_mut(&kind).expect("window exists")
+        };
         let info = heap.allocate(size, flags, MapKind::Anonymous, None)?;
         // 2. 逐页分配物理帧并映射（立即分配）+ 注入子 Map
         let pages = info.size.get() / PAGE_SIZE;
@@ -842,7 +872,10 @@ impl Space {
     pub(crate) fn heap_deallocate(&self, addr: VirtAddr, size: usize) -> bool {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
-        let heap = window_mut(dynamic, WindowKind::Heap(0));
+        let heap = {
+            let kind = WindowKind::Heap(0);
+            dynamic.get_mut(&kind).expect("window exists")
+        };
         // 1. 位图精确匹配释放 + 移除子 Map（未分配/部分已释放 → 返回 false）
         if !heap.deallocate(addr, size) {
             return false;
@@ -882,8 +915,7 @@ impl Space {
     ) -> Result<(), MapError> {
         let mut inner = self.inner.lock();
         // 0. 参数校验（先于任何页表修改）
-        if size == 0 || vaddr.offset() != 0 || !paddr.is_aligned() || size & (PAGE_SIZE - 1) != 0
-        {
+        if size == 0 || vaddr.offset() != 0 || !paddr.is_aligned() || size & (PAGE_SIZE - 1) != 0 {
             return Err(MapError::NotAligned);
         }
         // 1. 重叠检查（常数表 + 窗口区间）
@@ -893,7 +925,9 @@ impl Space {
         // 2. PTE 安装 + 3. 登记常数映射（一次解构拿 durable 各字段，字段间可拆借）
         let SpaceInner { durable, .. } = &mut *inner;
         durable.root.map(vaddr, paddr, size, flags)?;
-        durable.maps.push(Map::new(vaddr, size, flags, kind, frames, None));
+        durable
+            .maps
+            .push(Map::new(vaddr, size, flags, kind, frames, None));
         drop(inner);
         // 按本空间 ASID 局部刷：只失效本地址空间的旧条目，其它任务 TLB 保留。
         // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -1092,4 +1126,3 @@ pub static KERNEL_TRAP_CONTEXT: AtomicPhysAddr = AtomicPhysAddr::new(PhysAddr::f
 pub fn kernel_trap_context() -> PhysAddr {
     KERNEL_TRAP_CONTEXT.load(Ordering::Relaxed)
 }
-

@@ -71,12 +71,7 @@ fn pt_reclaim_selftest() {
     const ROUNDS: usize = 32;
 
     let space = SpaceBuilder::user().build().expect("selftest: build space");
-    let flags = PteFlags::V
-        | PteFlags::R
-        | PteFlags::W
-        | PteFlags::U
-        | PteFlags::A
-        | PteFlags::D;
+    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
     let base_count = space.table_count();
     let held_before = frame::FRAME_ALLOCATOR
         .outstanding()
@@ -133,9 +128,7 @@ fn pt_reclaim_selftest() {
         "selftest: net frames leaked: {held_before} → {held_after}"
     );
     drop(space);
-    putln!(
-        "pt-reclaim selftest: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})"
-    );
+    putln!("pt-reclaim selftest: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})");
 }
 
 // ── 演示程序（手写机器码 blob，llvm-mc 核对字节；rv64gc 基础指令）──────────

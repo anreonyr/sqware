@@ -29,8 +29,8 @@ use crate::{
             addr::{PhysAddr, VirtAddr},
             entry::PteFlags,
             space::{
-                KERNEL_BASE, KERNEL_SPACE, KERNEL_TRAP_CONTEXT, MapKind, SpaceBuilder,
-                TRAMPOLINE, TRAP_CONTEXT, USER_STACK_BASE,
+                KERNEL_BASE, KERNEL_SPACE, KERNEL_TRAP_CONTEXT, MapKind, SpaceBuilder, TRAMPOLINE,
+                TRAP_CONTEXT, USER_STACK_BASE,
             },
         },
     },
