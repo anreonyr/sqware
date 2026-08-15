@@ -18,9 +18,8 @@ fn panic_handler(info: &PanicInfo) -> ! {
         ));
     }
     _write(format_args!("\n"));
-    if let Some(msg) = info.message().as_str() {
-        _write(format_args!("  message: {msg}\n"));
-    }
+    // 格式化的 panic 消息（非字面量）也打印——诊断调试必备
+    _write(format_args!("  message: {}\n", info.message()));
 
     loop {
         unsafe { core::arch::asm!("wfi") };

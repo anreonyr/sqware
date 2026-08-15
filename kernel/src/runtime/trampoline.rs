@@ -18,9 +18,13 @@
 // 帧布局与偏移见 runtime/context.rs（编译期偏移断言锁定，改布局必须先改两处）。
 
 use core::arch::global_asm;
+use core::cell::UnsafeCell;
 
-use crate::memory::manager::addr::PhysAddr;
-use crate::memory::manager::space::{TRAMPOLINE, TRAP_CONTEXT};
+use crate::machine::MAX_HARTS;
+use crate::memory::PAGE_SIZE;
+use crate::memory::allocator::frame::allocator;
+use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::space::{TRAMPOLINE, TRAP_CONTEXT, kernel_space};
 
 /// TRAP_CONTEXT 的 LUI 立即数（bits[31:12]）——汇编经 `const` 注入，单一来源。
 ///
@@ -95,7 +99,9 @@ global_asm!(
     // 切内核页表（PC 仍在 trampoline，两空间同 VA，安全）
     "    csrw  satp, t0",
     "    sfence.vma",
-    // 切内核栈；旧 sp（TRAP_CONTEXT VA）切表后指向内核帧，不再解引用
+    // 切内核栈；旧 sp（TRAP_CONTEXT VA）切表后指向内核帧，不再解引用。
+    // （tp 由 C 侧 trap_handler 入口按 sp 反解重建——见 establish_tp；汇编
+    //   不能 PC 相对引用跨页符号，TRAMPOLINE VA 下 la 会算出错误地址）
     "    mv    sp, t1",
     "    jalr  t2",                        // handler(frame_pa) -> frame_pa（阶段 A 恒原帧）
     "    j     __restore",
@@ -221,9 +227,6 @@ unsafe extern "C" {
     pub static __trampoline_end: u8;
     /// 上下文恢复出口（仅供 restore() 计算 TRAMPOLINE VA 偏移，勿直接链接地址调用）。
     pub static __restore: u8;
-    /// per-hart trap 栈底 / 栈顶（link.ld 保留 16 KiB，恒等映射地址即物理地址）。
-    pub static _trap_stack_bottom: u8;
-    pub static _trap_stack_top: u8;
 }
 
 /// 恢复目标帧上下文并进入其中（永不返回）。frame_pa = 目标帧 self_pa。
@@ -255,12 +258,140 @@ pub fn alltraps_va() -> usize {
     TRAMPOLINE.as_usize() + (alltraps - start)
 }
 
-/// per-hart trap 栈顶（阶段 A：hart 0 独占；多核按 hart 切分）。
-pub fn trap_stack_top() -> usize {
-    core::ptr::addr_of!(_trap_stack_top) as usize
+/// per-hart trap 栈段元数据（boot 时由 hart 0 的 [`init_trap_stacks`] 一次性
+/// 填充，此后只读；UnsafeCell：静态不可变处经原始指针写入一次）。
+#[derive(Clone, Copy, Debug)]
+pub struct TrapStackMeta {
+    /// 栈顶（向下增长，sp 初始值）。
+    pub top: usize,
+    /// 栈体底（canary 所在，guard 之上）。
+    pub bottom: usize,
+    /// guard 页起始（内核空间未映射，越过即页故障）。
+    pub guard: usize,
 }
 
-/// per-hart trap 栈底（canary 写入处）。
-pub fn trap_stack_bottom() -> usize {
-    core::ptr::addr_of!(_trap_stack_bottom) as usize
+/// 写一次、此后只读的 Sync 单元（trap 栈表 boot 时由 hart 0 填充）。
+struct SyncCell<T>(UnsafeCell<T>);
+
+// SAFETY: 调用方保证 boot 时单写者填充一次、此后只读。
+unsafe impl<T: Copy> Sync for SyncCell<T> {}
+
+impl<T: Copy> SyncCell<T> {
+    const fn new(v: T) -> Self {
+        Self(UnsafeCell::new(v))
+    }
+    fn get(&self) -> T {
+        // SAFETY: 只读访问（boot 后不再写）。
+        unsafe { *self.0.get() }
+    }
+    fn set(&self, v: T) {
+        // SAFETY: 仅 boot 时由 hart 0 调用一次。
+        unsafe {
+            *self.0.get() = v;
+        }
+    }
+}
+
+/// per-hart trap 栈元数据表（模块内专用；经 trap_stack_top/bottom 读取）。
+static TRAP_STACKS: [SyncCell<TrapStackMeta>; MAX_HARTS] = [const {
+    SyncCell::new(TrapStackMeta {
+        top: 0,
+        bottom: 0,
+        guard: 0,
+    })
+}; MAX_HARTS];
+
+/// 读取某 hart 的 trap 栈元数据。
+fn trap_stack_meta(hart: usize) -> TrapStackMeta {
+    TRAP_STACKS[hart].get()
+}
+
+/// 由当前 sp（trap 栈体内）反解 hart 并写入 tp——用户态可自由改写 tp，而内核
+/// 调度/锁/canary 全部依赖 hart_id()（读 tp）；trap 入口必须先重建。
+///
+/// 汇编不能做这件事：trampoline 执行于 TRAMPOLINE VA，PC 相对引用跨页符号会
+/// 算出错误地址（本页代码的寻址约束，见模块头注释）。C 代码执行于链接地址，
+/// 反解 TRAP_STACKS 表无此问题。
+pub fn establish_tp() {
+    let sp: usize;
+    // SAFETY: 读当前栈指针，纯读无副作用。
+    unsafe {
+        core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+    }
+    let hart = (0..MAX_HARTS)
+        .find(|&h| {
+            let m = trap_stack_meta(h);
+            m.top != 0 && sp <= m.top && sp > m.bottom
+        })
+        .unwrap_or(0);
+    // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建内核 hartid）。
+    unsafe {
+        core::arch::asm!("mv tp, {}", in(reg) hart, options(nomem, nostack, preserves_flags));
+    }
+}
+
+/// hart 的 trap 栈顶（__alltraps/__strap 经帧内 kernel_sp 上栈的目标）。
+pub fn trap_stack_top(hart: usize) -> usize {
+    trap_stack_meta(hart).top
+}
+
+/// hart 的 trap 栈体底（canary 处）。
+pub fn trap_stack_bottom(hart: usize) -> usize {
+    trap_stack_meta(hart).bottom
+}
+
+/// 地址是否落在某 hart 的 trap 栈 guard 页内（返回该 hart 号）——内核故障
+/// 路径据此识别「trap 栈溢出」并给出精确诊断。
+pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
+    for h in 0..MAX_HARTS {
+        let guard = trap_stack_meta(h).guard;
+        if guard != 0 && addr >= guard && addr < guard + PAGE_SIZE {
+            return Some(h);
+        }
+    }
+    None
+}
+
+/// per-hart trap 栈段常量：每段 32 KiB = 低 4 KiB guard（未映射）+ 28 KiB 栈体；
+/// 一块 256 KiB（buddy order-6）连续块切 MAX_HARTS 段，guard 页兼作段边界。
+pub const TRAP_STACK_SEGMENT: usize = 32 * 1024;
+pub const TRAP_STACK_GUARD: usize = PAGE_SIZE;
+
+/// 初始化 per-hart trap 栈（boot 时由 trap::init 调用**恰好一次**，hart 0）。
+///
+/// 1. buddy **连续**分配 256 KiB（8 段 x 32 KiB；buddy 按 order 支持连续块）；
+/// 2. 内核空间**清 guard 页 PTE**（栈体随 DRAM 恒等映射保持可访问——unmap 对
+///    部分覆盖的 DRAM 常数映射只清 PTE、保留簿记）；
+/// 3. 各段栈底写 canary；填充 TRAP_STACKS。
+///
+/// 块永不释放（静态分配，段数 = MAX_HARTS）。
+pub fn init_trap_stacks() {
+    const TOTAL: usize = TRAP_STACK_SEGMENT * MAX_HARTS;
+    let layout =
+        core::alloc::Layout::from_size_align(TOTAL, PAGE_SIZE).expect("trap stack layout");
+    // 块连续（buddy order-6 = 256 KiB）；boot 期帧池充足。
+    let block = allocator().allocate(layout).expect("trap stack block allocation");
+    let base = block.cast::<u8>().as_ptr() as usize;
+    // establish_tp 反解 hartid 依赖段大小 = 2^15（kernel_sp - base 恒为 32 KiB
+    // 整数倍——段连续切分；C 侧按 TRAP_STACKS 表范围匹配，无需 base 静态）
+    assert_eq!(TRAP_STACK_SEGMENT, 1 << 15, "trap stack segment must be 32 KiB");
+
+    let ks = kernel_space();
+    let space = ks.as_ref().expect("kernel space not initialized");
+    for h in 0..MAX_HARTS {
+        let seg = base + h * TRAP_STACK_SEGMENT;
+        let guard = seg;
+        let body = seg + TRAP_STACK_GUARD;
+        // guard 页：内核空间清 PTE（未映射 → 越过即页故障）
+        space.unmap(VirtAddr::from_raw(guard), TRAP_STACK_GUARD);
+        // canary 写于栈体底（guard 之上）
+        unsafe {
+            (body as *mut usize).write(crate::runtime::trap::TRAP_STACK_CANARY);
+        }
+        TRAP_STACKS[h].set(TrapStackMeta {
+            top: seg + TRAP_STACK_SEGMENT,
+            bottom: body,
+            guard,
+        });
+    }
 }

@@ -32,14 +32,10 @@ SECTIONS
 
   . = ALIGN(16);
 
-  _trap_stack_bottom = .;
-  . += 16K;
-  _trap_stack_top = .;
-
   _free_base = .;
 
   _early_stack_bottom = .;
-  . += 4K;
+  . += 16K;   /* 引导栈：debug 构建 probe/putln 栈用量大，须留足余量（曾溢出砸坏 .bss） */
   _early_stack_top = .;
 
 }

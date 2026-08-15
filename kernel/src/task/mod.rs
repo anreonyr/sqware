@@ -1,4 +1,4 @@
-// 任务（task）— 线程模型（阶段 A）：Team（进程）→ Task（线程）两层
+// 任务（task）— 线程模型（阶段 A 延续，hart B1 多核化）：Team（进程）→ Task（线程）两层
 //
 // 一个 Team 持有唯一 Space（共享地址空间），多个 Task 共享之；每个 Task 持有
 // 自己的 trap 帧（Frame 窗口分配，任意 VA——alltraps/restore 经帧内 self_va
@@ -6,8 +6,14 @@
 // trap_handler 返回下一任务帧 → restore 切 satp + sret，无独立切换汇编
 // （见 runtime/trampoline.rs）。
 //
+// 多核启动（hart B1）：hart 0 完整初始化（trap 栈/canary/spawn）后经 SBI HSM
+// `hart_start` 拉起 hart 1..N-1；副核入口（_secondary_entry）把 HSM 传入的
+// a0=hartid / a1=opaque（= 本 hart trap 栈顶，寄存器传递免共享内存同步）装成
+// tp/sp 后进入 secondary_main → per-hart CSR 配置 → idle（spin+steal，见
+// scheduler::idle_loop）。
+//
 // 子模块：
-//   scheduler — round-robin 调度器（Team/Task/队列/切换/回收/当前空间借出）
+//   scheduler — per-hart 调度器（Team/Task/队列/steal/回收/当前空间借出）
 //   envcall   — 用户态环境调用 ABI（RISC-V "Environment Call"，见 riscv crate
 //               的 Exception::UserEnvCall 命名——术语与规范同源）
 //
@@ -17,9 +23,13 @@
 pub mod envcall;
 pub mod scheduler;
 
+use core::arch::global_asm;
+
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use crate::machine;
+use crate::machine::MAX_HARTS;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::{block, frame};
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
@@ -27,6 +37,22 @@ use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::space::{MapKind, SpaceBuilder};
 use crate::putln;
 use crate::runtime::trampoline::restore;
+
+global_asm!(
+    ".section .text.secondary",
+    ".align 2",
+    ".globl _secondary_entry",
+    "_secondary_entry:",
+    "    mv   tp, a0", // hartid → tp（与 _start 一致；hart_id() 读 tp）
+    "    csrc sstatus, 2", // 清 SIE：内核态恒关中断（同 _start）
+    "    mv   sp, a1", // opaque = 本 hart trap 栈顶（HSM Start 传入；寄存器传递）
+    "    call secondary_main",
+);
+
+unsafe extern "C" {
+    /// 副核入口（HSM Start 的 start_addr；内核镜像恒等加载，链接地址即物理地址）。
+    static _secondary_entry: u8;
+}
 
 /// 用户程序加载基址（阶段 B 沿用；阶段 C 后续 ELF 加载亦用此基址）。
 pub const USER_TEXT_BASE: VirtAddr = VirtAddr::from_raw(0x1_0000);
@@ -47,16 +73,67 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     pt_reclaim_selftest();
 
-    // Team1：双线程共享同一地址空间
-    let (first, team1) = scheduler::spawn(program_d(), "thread-A").expect("spawn team1 failed");
+    // Team1：双线程共享同一地址空间（两线程均长跑——多核下分布在两 hart 上
+    // 真实并行：a0=0 → 'A' 循环，a0=1 → 'B' 循环）
+    let (_first, team1) = scheduler::spawn(program_d(), "thread-A").expect("spawn team1 failed");
     let _ = scheduler::spawn_thread(&team1, "thread-B", 1).expect("spawn thread B failed");
     drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
     // 单线程团队回归：A/B/C 行为不变
     let _ = scheduler::spawn(program_a(), "counter").expect("spawn A failed");
     let _ = scheduler::spawn(program_b(), "yielder").expect("spawn B failed");
     let _ = scheduler::spawn(program_c(), "exiter").expect("spawn C failed");
+
+    // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
+    // 经 steal 从队列取活——任务即向各核迁移）
+    start_secondary_harts();
+
+    // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
+    // 副核 steal 走，见 scheduler::enter_first_task）
     putln!("task: entering first task");
-    restore(first.as_usize())
+    restore(scheduler::enter_first_task())
+}
+
+/// 副核启动：HSM `hart_start` 逐个拉起 hart 1..count-1。
+///
+/// start_addr = _secondary_entry（恒等映射地址）；opaque = 该 hart 的 trap 栈顶
+/// ——副核入口直接 `mv sp, a1`，寄存器传递，无需共享内存同步。
+fn start_secondary_harts() {
+    // boot hart 不一定是 0（QEMU/OpenSBI 随机选）——它已在运行，须标记为已启动，
+    // 并只 HSM 拉起**其它** hart（0..count 中除自身外全部）。
+    let me = machine::hart_id();
+    machine::mark_hart_started(me);
+    let count = machine::get().hart.min(MAX_HARTS);
+    let entry = core::ptr::addr_of!(_secondary_entry) as usize;
+    for hart in 0..count {
+        if hart == me {
+            continue;
+        }
+        let stack_top = crate::runtime::trampoline::trap_stack_top(hart);
+        putln!(
+            "hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}"
+        );
+        let r = crate::ecall::HsmCall::new(crate::ecall::fid::Hsm::Start)
+            .args(crate::ecall::scall::SArgs {
+                a0: hart,
+                a1: entry,
+                a2: stack_top,
+                ..Default::default()
+            })
+            .call();
+        if r.is_err() {
+            panic!("failed to start hart {hart}: {r:?}");
+        }
+        machine::mark_hart_started(hart);
+    }
+}
+
+/// 副核主流程（asm 入口调用）：per-hart CSR 配置后进入 idle（spin+steal）。
+#[unsafe(no_mangle)]
+extern "C" fn secondary_main() -> ! {
+    let hart = machine::hart_id();
+    putln!("hart {hart}: secondary boot, entering idle");
+    crate::runtime::trap::init_secondary();
+    crate::task::scheduler::idle_loop()
 }
 
 /// PT 回收自测（debug）：map/unmap 循环验证中间表回收——无孤儿表、无 double-free。
@@ -193,34 +270,41 @@ const fn program_c() -> &'static [u8] {
     ]
 }
 
-/// D "threader"：线程入口参数 a0 分支行为（线程模型 demo）。
+/// D "threader"：线程入口参数 a0 分支行为（多核线程模型 demo）。
 ///
-/// a0 == 0 → 'A' 计数循环（同 program_a，从不主动让出，靠定时器抢占切走）；
-/// a0 != 0 → 写 'B' 后退出（ENV_EXIT）——同一空间双线程：一个常驻、一个退出。
+/// a0 == 0 → 'A' 计数循环；a0 != 0 → 'B' 计数循环——同一空间双线程**均长跑**，
+/// 多核下分布在两个 hart 上真实并行（同一 satp、不同 trap 帧）。
 /// 计数用 t1 而非 a0：ENV_WRITE 的返回值槽是 a0，作为计数器会被破坏。
 ///
-/// 布局（68 B）：beqz a0,+0x1c; li a7,1; li a0,'B'; ecall; li a7,2; ecall;
-/// j 0; [A 循环] addi t1,t1,1; andi t0,t1,0x7ff; bnez t0,+0x18;
-/// srli t0,t1,11; andi t0,t0,0x7f; bnez t0,+0x0c; li a7,1; li a0,'A';
-/// ecall; j -0x24
+/// 布局（84 B）：beqz a0,+0x2c; [B 循环] addi t1,t1,1; andi t0,t1,0x7ff;
+/// bnez t0,+0x1c; srli t0,t1,11; andi t0,t0,0x7f; bnez t0,+0x10;
+/// li a7,1; li a0,'B'; ecall; j -0x24; [A 循环] addi t1,t1,1; andi t0,t1,0x7ff;
+/// bnez t0,+0x1c; srli t0,t1,11; andi t0,t0,0x7f; bnez t0,+0x10;
+/// li a7,1; li a0,'A'; ecall; j -0x24
 const fn program_d() -> &'static [u8] {
     &[
-        0x63, 0x0e, 0x05, 0x00, // beqz a0, +0x1c    (a0==0 → 'A' 循环)
+        0x63, 0x06, 0x05, 0x02, // beqz a0, +0x2c    (a0==0 → 'A' 循环)
+        // 'B' 循环（长跑）
+        0x13, 0x03, 0x13, 0x00, // addi t1, t1, 1
+        0x93, 0x72, 0xf3, 0x7f, // andi t0, t1, 0x7ff
+        0x63, 0x9e, 0x02, 0x00, // bnez t0, +0x1c
+        0x93, 0x52, 0xb3, 0x00, // srli t0, t1, 11
+        0x93, 0xf2, 0xf2, 0x07, // andi t0, t0, 0x7f
+        0x63, 0x98, 0x02, 0x00, // bnez t0, +0x10
         0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
         0x13, 0x05, 0x20, 0x04, // li   a0, 0x42     ('B')
         0x73, 0x00, 0x00, 0x00, // ecall
-        0x93, 0x08, 0x20, 0x00, // li   a7, 2        (ENV_EXIT)
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x6f, 0x00, 0x00, 0x00, // j    0（兜底，exit 不返回）
-        0x13, 0x03, 0x13, 0x00, // addi t1, t1, 1    ('A' 循环)
+        0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24        (B 循环)
+        // 'A' 循环（长跑）
+        0x13, 0x03, 0x13, 0x00, // addi t1, t1, 1
         0x93, 0x72, 0xf3, 0x7f, // andi t0, t1, 0x7ff
-        0x63, 0x9c, 0x02, 0x00, // bnez t0, +0x18
+        0x63, 0x9e, 0x02, 0x00, // bnez t0, +0x1c
         0x93, 0x52, 0xb3, 0x00, // srli t0, t1, 11
         0x93, 0xf2, 0xf2, 0x07, // andi t0, t0, 0x7f
-        0x63, 0x96, 0x02, 0x00, // bnez t0, +0x0c
-        0x93, 0x08, 0x10, 0x00, // li   a7, 1
+        0x63, 0x98, 0x02, 0x00, // bnez t0, +0x10
+        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
         0x13, 0x05, 0x10, 0x04, // li   a0, 0x41     ('A')
         0x73, 0x00, 0x00, 0x00, // ecall
-        0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24
+        0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24        (A 循环)
     ]
 }

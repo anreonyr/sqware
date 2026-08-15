@@ -18,22 +18,29 @@
 //
 // To prevent deadlocks, locks must be acquired in the following order:
 //
-//   1. SCHEDULER          (SpinLock)  — 任务就绪队列/当前任务（task::scheduler）
-//                                          （spawn_thread 锁内做栈/帧分配 → Space.inner；
-//                                          exit_current 锁内 drop Arc<Task> → Space/ASID/帧）
-//   1. KERNEL_SPACE        (RelLock)   — 内核地址空间（与 SCHEDULER 同级不嵌套：
+//   1. SCHEDULERS[hart]   (SpinLock)  — 每 hart 调度器：current + 就绪队列（task::scheduler）
+//                                          （类型级：不同 hart 的锁彼此不嵌套；
+//                                          steal 走 try_lock（非阻塞），无锁序依赖）
+//   1. KERNEL_SPACE        (RelLock)   — 内核地址空间（与 SCHEDULERS 同级不嵌套：
 //                                          spawn 的空间构建在调度器锁外完成）
 //   2. Space.inner  (RelLock)   — 任务地址空间可变状态（Durable：页表/常数映射 + dynamic：窗口）
-//   3. ASID_ALLOCATOR      (SpinLock)  — ASID 分配器
-//   4. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（buddy）
-//   5. portal / block      (SpinLock / TrapGuard) — 全局堆分配
+//   3. Team.tasks          (SpinLock)  — 团队成员簿记（弱引用列表；纯 Vec 操作，
+//                                          **与 Space.inner 禁止嵌套持有**——
+//                                          push_task/prune_tasks 锁内绝不调 space 方法）
+//   4. ASID_ALLOCATOR      (SpinLock)  — ASID 分配器
+//   5. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（buddy）
+//   6. portal / block      (SpinLock / TrapGuard) — 全局堆分配
 //
 // A lock at level N may be acquired while holding a lock at level < N.
 // Acquiring a lock at level N while holding one at level ≥ N is forbidden.
 // OnceLock / LazyLock read paths are lock-free and exempt from this hierarchy.
 //
-// 关键嵌套边：Space.inner → FRAME_ALLOCATOR（map/page_fault 持空间锁分配帧）。
+// 关键嵌套边：Space.inner → FRAME_ALLOCATOR（map/page_fault 持空间锁分配帧）；
+// SCHEDULERS[hart] → Team.tasks（spawn 入簿 / exit 清理，1 → 3）；
+// SCHEDULERS[hart] → Space.inner（exit_current 锁内回收，1 → 2 → 5）；
+// Team.tasks 与 Space.inner 只顺序获取、永不嵌套（见 scheduler.rs 不变量）。
 // 用户空间构建（SpaceBuilder::user().build()）中 ASID → KERNEL_SPACE 为顺序获取（drop 前一把再拿后一把），不嵌套。
+// per-hart trap 栈的分配发生在 boot（无锁需求）。
 // （hub::devices / INTERRUPT_HANDLERS 为规划中模块，接入后插入对应层级。）
 
 mod bare;

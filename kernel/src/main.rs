@@ -23,6 +23,7 @@ global_asm!(
     ".globl _start",
     "_start:",
     "    mv   tp, a0", // hartid → tp：S-mode 读不到 M-mode CSR mhartid，入口处暂存
+    "    csrc sstatus, 2", // 清 SIE：内核态恒关中断（boot 期 OpenSBI 可能遗留 SIE=1）
     "    la   sp, _early_stack_top",
     "    j    early",
 );
