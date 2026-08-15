@@ -8,8 +8,8 @@
 // （la/call 等）的目标必须在本页内；跨页符号（如 _trap_stack_top、Rust 的
 // trap_handler）只能经帧内元数据（kernel_sp / trap_handler 字段）或绝对常量（LUI）
 // 寻址。本页代码无 PC 相对跨页引用，故在链接地址（0x8020_0000+）与 TRAMPOLINE VA
-// 两处取指均正确。TRAP_CONTEXT 的 LUI 立即数由 Rust 常量 TRAP_CONTEXT_LUI 注入
-// （单一来源，改 space::TRAP_CONTEXT 即可）。
+// 两处取指均正确。per-hart 内核帧基址（__strap 按 TP 索引）的 LUI 立即数由
+// Rust 常量 KERNEL_FRAMES_LUI 注入（单一来源，改 space::KERNEL_FRAME_BASE 即可）。
 //
 // sscratch 约定：用户态 = 当前线程帧 VA（帧内 self_va 字段，帧窗口分配，不再
 // 固定 TRAP_CONTEXT）；内核态 = 0。`__restore` 按恢复的 sstatus.SPP 复原该约定
@@ -25,19 +25,21 @@ use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::memory::manager::space::{TRAMPOLINE, TRAP_CONTEXT, kernel_space};
+use crate::memory::manager::space::{KERNEL_FRAME_BASE, TRAMPOLINE, kernel_space};
 
-/// TRAP_CONTEXT 的 LUI 立即数（bits[31:12]）——汇编经 `const` 注入，单一来源。
+/// KERNEL_FRAME_BASE 的 LUI 立即数（bits[31:12]）——__strap 按 TP 索引 per-hart
+/// 内核帧：sp = KERNEL_FRAME_BASE + tp·PAGE_SIZE。汇编经 `const` 注入，单一来源。
 ///
 /// LUI 把 20 位立即数符号扩展后左移 12 位，与 `VirtAddr::from_raw` 的符号扩展
-/// 语义一致；改 `space::TRAP_CONTEXT` 即可，勿手改汇编。
-const TRAP_CONTEXT_LUI: usize = (TRAP_CONTEXT.as_usize() >> 12) & 0xFFFFF;
+/// 语义一致；改 `space::KERNEL_FRAME_BASE` 即可，勿手改汇编。
+const KERNEL_FRAMES_LUI: usize = (KERNEL_FRAME_BASE.as_usize() >> 12) & 0xFFFFF;
 
-// 编码断言：LUI 立即数符号扩展必须能还原 TRAP_CONTEXT（VA 不再满足 LUI 编码时编译期报错）。
+// 编码断言：LUI 立即数符号扩展必须能还原 KERNEL_FRAME_BASE（VA 不再满足 LUI
+// 编码时编译期报错）。
 const _: () = {
     let shift = usize::BITS as usize - 20;
-    let imm = ((TRAP_CONTEXT_LUI as isize) << shift) >> shift;
-    assert!(((imm as usize) << 12) == TRAP_CONTEXT.as_usize());
+    let imm = ((KERNEL_FRAMES_LUI as isize) << shift) >> shift;
+    assert!(((imm as usize) << 12) == KERNEL_FRAME_BASE.as_usize());
 };
 
 global_asm!(
@@ -107,10 +109,14 @@ global_asm!(
     "    jalr  t2",                        // handler(frame_pa) -> frame_pa（阶段 A 恒原帧）
     "    j     __restore",
 
-    // ── 内核态陷阱（__strap）：现场存内核帧（TRAP_CONTEXT VA），栈切 per-hart trap 栈 ──
+    // ── 内核态陷阱（__strap）：现场存**本 hart**内核帧（TP 索引 per-hart 帧区，
+    //    栈切本 hart trap 栈。tp 约定：内核态恒为 hartid——入口/establish_tp 维持；
+    //    用户态可改写 tp，但内核陷阱只在 S 态发生）。 ──
     "__strap:",
     "    csrrw sp, sscratch, sp",          // sp = 0（内核态约定）；sscratch = 被中断内核 sp
-    "    lui   sp, {tc}",                 // sp = TRAP_CONTEXT VA（内核帧，内核空间映射）
+    "    slli  t0, tp, 12",               // t0 = hart · PAGE_SIZE（per-hart 帧索引）
+    "    lui   sp, {kf}",                 // sp = KERNEL_FRAME_BASE（LUI 高 20 位）
+    "    add   sp, sp, t0",               // sp = 本 hart 内核帧 VA（内核空间映射）
     "    sd    x1,  0x38(sp)",
     "    sd    x3,  0x48(sp)",
     "    sd    x4,  0x50(sp)",
@@ -216,7 +222,7 @@ global_asm!(
 
     ".globl __trampoline_end",
     "__trampoline_end:",
-    tc = const TRAP_CONTEXT_LUI,
+    kf = const KERNEL_FRAMES_LUI,
 );
 
 unsafe extern "C" {

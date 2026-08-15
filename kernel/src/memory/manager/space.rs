@@ -470,11 +470,21 @@ pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000
 /// `self_va` 字段定位（见 runtime/trampoline.rs）。
 pub(crate) const TRAP_CONTEXT: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_E000);
 
-/// 线程 trap 帧窗口大小（64 MiB = 16K 并发帧页；帧 VA 复用由窗口位图管理）。
-pub(crate) const FRAME_REGION_SIZE: usize = 0x400_0000;
-/// 线程 trap 帧窗口基址（`TRAP_CONTEXT` 之下，内核半区，S-only——用户不可触碰）。
+/// per-hart 内核帧槽数（编译期固定 = MAX_HARTS 上限；帧 VA 区与帧窗口布局耦合，
+/// 见下方布局断言——实际按 hart_count() 映射/填充，槽位固定使 __strap 的 TP 索引
+/// 不依赖 DTB 核数）。
+pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HARTS;
+
+/// per-hart 内核帧区基址（TRAP_CONTEXT 之下 SLOTS-1 页；hart h 帧 VA =
+/// KERNEL_FRAME_BASE + h·PAGE_SIZE，hart 0 = TRAP_CONTEXT 兼容旧路径）。
+pub(crate) const KERNEL_FRAME_BASE: VirtAddr =
+    VirtAddr::from_raw(TRAP_CONTEXT.as_usize() - (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE);
+
+/// 线程 trap 帧窗口大小（64 MiB − 内核帧区；帧窗口止于 KERNEL_FRAME_BASE）。
+pub(crate) const FRAME_REGION_SIZE: usize = 0x400_0000 - (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE;
+/// 线程 trap 帧窗口基址（`KERNEL_FRAME_BASE` 之下，内核半区，S-only——用户不可触碰）。
 pub(crate) const FRAME_BASE: VirtAddr =
-    VirtAddr::from_raw(TRAP_CONTEXT.as_usize() - FRAME_REGION_SIZE);
+    VirtAddr::from_raw(KERNEL_FRAME_BASE.as_usize() - FRAME_REGION_SIZE);
 
 // ── 地址空间总览（Sv39）───────────────────────────────────────────
 //
@@ -498,12 +508,14 @@ pub(crate) const FRAME_BASE: VirtAddr =
 // 内核半区（bit 38 = 1，VPN[2] = 256..511，起点 KERNEL_BASE）：
 //
 //   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐；汇编 LUI 由 TRAP_CONTEXT_LUI 注入）
-//   0xFFFF_FFFF_FFFF_E000 — TRAP_CONTEXT（内核帧，= TRAMPOLINE - PAGE_SIZE，相邻页）
+//   0xFFFF_FFFF_FFFF_E000 — TRAP_CONTEXT（hart 0 内核帧，= TRAMPOLINE - PAGE_SIZE）
+//   0xFFFF_FFFF_FFFF_D000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页
+//   0xFFFF_FFFF_FFFF_7000 ┘ （hart h 帧 = BASE + h·PAGE；__strap 按 TP 索引）
 //   0xFFFF_FFFF_FFBF_E000 — FRAME_BASE（帧窗口下界）
 //     ┌─────────────────────────────────┐
-//     │  线程 trap 帧窗口 64 MiB         │ FRAME_BASE + FRAME_REGION_SIZE = TRAP_CONTEXT
+//     │  线程 trap 帧窗口 64 MiB − 帧区  │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
 //     │ （16K 并发帧，S-only，位图管理）  │
-//     └─────────────────────────────────┘ TRAP_CONTEXT
+//     └─────────────────────────────────┘ KERNEL_FRAME_BASE
 //
 // 布局即不变量：以下断言把「对齐 / 相邻 / 不重叠」编译期锁死——
 // 改布局必须先改这里（编译器兜底），并同步 link.ld / trampoline 汇编。
@@ -511,11 +523,14 @@ const _: () = {
     // 注意：VirtAddr 的 Add/Sub/PartialEq 非 const fn，此处一律用 as_usize() 裸算术。
     assert!(TRAMPOLINE.as_usize() % PAGE_SIZE == 0);
     assert!(TRAP_CONTEXT.as_usize() % PAGE_SIZE == 0);
+    assert!(KERNEL_FRAME_BASE.as_usize() % PAGE_SIZE == 0);
     assert!(TRAMPOLINE.as_usize() - PAGE_SIZE == TRAP_CONTEXT.as_usize()); // 相邻页（trampoline 收尾依赖）
-    // 帧窗口：页对齐、恰止于 TRAP_CONTEXT（内核帧在其上方相邻，互不重叠）
+    // 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页，hart 0 恰止于 TRAP_CONTEXT
+    assert!(KERNEL_FRAME_BASE.as_usize() + (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE == TRAP_CONTEXT.as_usize());
+    // 帧窗口：页对齐、恰止于 KERNEL_FRAME_BASE（内核帧区在其上方，互不重叠）
     assert!(FRAME_REGION_SIZE % PAGE_SIZE == 0);
     assert!(FRAME_BASE.as_usize() % PAGE_SIZE == 0);
-    assert!(FRAME_BASE.as_usize() + FRAME_REGION_SIZE == TRAP_CONTEXT.as_usize());
+    assert!(FRAME_BASE.as_usize() + FRAME_REGION_SIZE == KERNEL_FRAME_BASE.as_usize());
     assert!(KERNEL_BASE.as_usize() == 0xFFFF_FFC0_0000_0000); // Sv39 内核半区起点（VPN[2] = 256）
     assert!(USER_HEAP_BASE.as_usize() % PAGE_SIZE == 0);
     assert!(USER_HEAP_SIZE % PAGE_SIZE == 0);
@@ -1118,11 +1133,17 @@ pub(crate) fn kernel_space() -> RelLockGuard<'static, Option<Space>> {
     KERNEL_SPACE.lock()
 }
 
-/// 内核 trap-context 帧物理地址（`init()` 写入；trap::init 写元数据、idle_frame
-/// 写空闲合成帧、用户空间构建从它拷内核切换信息）。
-pub static KERNEL_TRAP_CONTEXT: AtomicPhysAddr = AtomicPhysAddr::new(PhysAddr::from_raw(0));
+/// per-hart 内核 trap-context 帧物理地址（`manager::init` 逐帧映射并发布；hart 0
+/// 即旧 KERNEL_TRAP_CONTEXT，`kernel_trap_context()` 兼容读它）。
+pub static KERNEL_FRAMES: [AtomicPhysAddr; KERNEL_FRAME_SLOTS] =
+    [const { AtomicPhysAddr::new(PhysAddr::from_raw(0)) }; KERNEL_FRAME_SLOTS];
 
-/// 内核 trap-context 帧物理地址。
+/// hart h 的内核帧物理地址（__strap 按 TP 索引的帧页；trap::init 写元数据）。
+pub fn kernel_frame_pa(hart: usize) -> PhysAddr {
+    KERNEL_FRAMES[hart].load(Ordering::Relaxed)
+}
+
+/// 内核 trap-context 帧物理地址（hart 0；用户帧构建从它拷内核切换信息）。
 pub fn kernel_trap_context() -> PhysAddr {
-    KERNEL_TRAP_CONTEXT.load(Ordering::Relaxed)
+    kernel_frame_pa(0)
 }

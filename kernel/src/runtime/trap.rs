@@ -21,7 +21,7 @@ use crate::ecall::{TimerCall, fid::Timer, scall::SArgs};
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
-use crate::memory::manager::space::{TRAP_CONTEXT, kernel_trap_context};
+use crate::memory::manager::space::{KERNEL_FRAME_BASE, kernel_frame_pa, kernel_trap_context};
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{
@@ -89,21 +89,23 @@ pub fn init() {
         "trampoline exceeds one page: {tsize:#x}"
     );
 
-    // 2. 内核 trap-context 帧元数据（帧由 manager::init 映射，PA 已发布）。
-    //    B1 共享单份内核帧：kernel_sp = hart 0 trap 栈顶（内核态故障的兜底栈；
-    //    per-hart 内核帧 + __strap TP 寻址 → B2）。用户帧的 kernel_sp 由调度器
-    //    每切换写入（见 scheduler::prepare_resume）。
-    let ktc = kernel_trap_context();
-    let frame = unsafe { &mut *(ktc.as_usize() as *mut TrapContext) };
+    // 2. per-hart 内核 trap-context 帧元数据（帧由 manager::init 逐页映射，PA 已
+    //    发布）。B2：每 hart 一份——kernel_sp = 本 hart trap 栈顶，__strap 按 TP
+    //    索引帧页；内核态故障在**故障核**的帧与 trap 栈上处理。用户帧的
+    //    kernel_sp 由调度器每切换写入（见 scheduler::prepare_resume）。
     let ksatp = satp::read().bits();
-    frame.kernel_satp = ksatp;
-    frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(0));
-    frame.trap_handler = VirtAddr::from_raw(trap_handler as *const () as usize);
-    frame.trap_stack_corrupt = TRAP_STACK_CANARY;
-    frame.user_pa = ktc;
-    frame.user_satp = ksatp;
-    // self_va：内核帧恒在 TRAP_CONTEXT VA（restore 切表后经此收尾）
-    frame.self_va = TRAP_CONTEXT.as_usize();
+    for h in 0..crate::machine::hart_count() {
+        let pa = kernel_frame_pa(h);
+        let frame = unsafe { &mut *(pa.as_usize() as *mut TrapContext) };
+        frame.kernel_satp = ksatp;
+        frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(h));
+        frame.trap_handler = VirtAddr::from_raw(trap_handler as *const () as usize);
+        frame.trap_stack_corrupt = TRAP_STACK_CANARY;
+        frame.user_pa = pa;
+        frame.user_satp = ksatp;
+        // self_va：本 hart 内核帧 VA（restore 切表后经此收尾）
+        frame.self_va = (KERNEL_FRAME_BASE + h * PAGE_SIZE).as_usize();
+    }
 
     // 3. 先武装定时器：OpenSBI 可能遗留一个已到期的 stimecmp，若不清掉，
     //    开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序难看）。
@@ -122,9 +124,10 @@ pub fn init() {
     }
 
     info!(
-        "runtime: trap vector {:#x}, kernel frame {:#x}, hart0 trap stack {:#x}..{:#x}",
+        "runtime: trap vector {:#x}, kernel frames {:#x}..{:#x}, hart0 trap stack {:#x}..{:#x}",
         alltraps_va(),
-        ktc.as_usize(),
+        KERNEL_FRAME_BASE.as_usize(),
+        KERNEL_FRAME_BASE.as_usize() + crate::machine::hart_count() * PAGE_SIZE,
         trap_stack_bottom(0),
         trap_stack_top(0)
     );
@@ -261,7 +264,8 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
         ) => {
             if frame.sstatus & (1 << 8) != 0 {
                 panic!(
-                    "kernel page fault at sepc={:#x}, stval={:#x}",
+                    "kernel page fault on hart {} at sepc={:#x}, stval={:#x}",
+                    machine::hart_id(),
                     sepc::read(),
                     stval::read()
                 );

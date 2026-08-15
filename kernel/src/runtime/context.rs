@@ -35,8 +35,8 @@ pub struct TrapContext {
     /// 本帧在目标空间中的虚拟地址（restore 切表后经此 VA 收尾）。
     ///
     /// 用户线程帧 = 本空间 Frame 窗口分配的 VA（不再固定 TRAP_CONTEXT）；
-    /// 内核帧 = TRAP_CONTEXT。alltraps 用户路径把 sscratch 设为该 VA，
-    /// 使每线程帧可位于任意页而汇编零改动。
+    /// 内核帧 = per-hart 帧（hart 0 即 TRAP_CONTEXT）。alltraps 用户路径把
+    /// sscratch 设为该 VA，使每线程帧可位于任意页而汇编零改动。
     pub self_va: usize,
 }
 

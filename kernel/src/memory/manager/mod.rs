@@ -29,8 +29,8 @@ use crate::{
             addr::{PhysAddr, VirtAddr},
             entry::PteFlags,
             space::{
-                KERNEL_BASE, KERNEL_SPACE, KERNEL_TRAP_CONTEXT, MapKind, SpaceBuilder, TRAMPOLINE,
-                TRAP_CONTEXT, USER_STACK_BASE,
+                KERNEL_BASE, KERNEL_FRAME_BASE, KERNEL_FRAMES, KERNEL_SPACE, MapKind, SpaceBuilder,
+                TRAMPOLINE, USER_STACK_BASE,
             },
         },
     },
@@ -146,20 +146,23 @@ pub fn init() -> MapResult<()> {
                 Vec::new(),
             )?;
 
-            // 5. 内核 trap-context 帧：映射于 TRAP_CONTEXT（内核自身 trap 用；
-            //    元数据字段由 trap::init 写入），帧入常数 Map，PA 存入 KERNEL_TRAP_CONTEXT。
-            let ktc = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                .map_err(|_| MapError::OutOfMemory)?;
-            let ktc_pa = PhysAddr::from_raw(ktc.as_ptr() as usize);
-            kernel_space.map(
-                TRAP_CONTEXT,
-                ktc_pa,
-                PAGE_SIZE,
-                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
-                MapKind::Anonymous,
-                vec![ktc],
-            )?;
-            KERNEL_TRAP_CONTEXT.store(ktc_pa, core::sync::atomic::Ordering::Relaxed);
+            // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（hart h 帧 =
+            //    BASE + h·PAGE；hart 0 = TRAP_CONTEXT。元数据由 trap::init 逐帧写入），
+            //    PA 存 KERNEL_FRAMES[h]——__strap 按 TP 索引帧页。
+            for h in 0..crate::machine::hart_count() {
+                let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
+                    .map_err(|_| MapError::OutOfMemory)?;
+                let pa = PhysAddr::from_raw(page.as_ptr() as usize);
+                kernel_space.map(
+                    KERNEL_FRAME_BASE + h * PAGE_SIZE,
+                    pa,
+                    PAGE_SIZE,
+                    PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+                    MapKind::Anonymous,
+                    vec![page],
+                )?;
+                KERNEL_FRAMES[h].store(pa, core::sync::atomic::Ordering::Relaxed);
+            }
 
             // 6. 启用 Sv39 分页
             satp::set(satp::Mode::Sv39, 0, kernel_space.root());
