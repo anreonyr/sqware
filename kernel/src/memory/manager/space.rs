@@ -5,24 +5,24 @@
 // 全局唯一）与用户空间（独立 ASID），构造统一走 [`SpaceBuilder`]。
 //
 // 簿记模型（三层，语义 = VA→PA 的显式表达）：
-//   Durable — 常数侧：根页表（root）+ 中间表帧（tables）+ 常数映射表（maps：
-//             DRAM 恒等/内核高半区、trampoline 叶 PTE、文本、trap-context 帧）
+//   Durable — 常数侧：页表树（root: TableNode，硬件页 + 子树所有权）+ 常数映射表
+//             （maps：DRAM 恒等/内核高半区、trampoline 叶 PTE、文本、trap-context 帧）
 //   Window  — 动态侧：堆/栈窗口，各持一个 [`BitmapAllocator`] 细分窗口内 VA，
 //             每次分配的一块区间即一个子 Map（children）——heap 块 / 栈 slot
 //   Map     — VA→PA 的原子单元：{ va, size, flags, kind, frames }，不变量
 //             frames[i] ↔ va + i·PAGE_SIZE；帧随 Map 所有权回收（drop 归还）
 //
 // 路线 1 后用户空间不共享内核映射——trampoline 叶 PTE 只映射不拥有（帧归内核，
-// Map.frames 为空）；其余帧（文本、trap-context、堆块、栈体、中间表）全归本
-// 空间所有。中间表帧无用户 VA 身份，收进 Durable::tables 平铺持有（树状所有权
-// 会使 PageTable 超过 4096 B，见 table.rs 的尺寸约束）。
+// Map.frames 为空）；其余帧（文本、trap-context、堆块、栈体）全归本空间所有。
+// 页表树由 Durable::root（TableNode）持有：硬件页恰好 4096 B 装不下元数据，
+// 树（children）放在帧外的 TableNode 上（见 table.rs）；unmap 回收变空的中间表。
 //
 // 锁（`Space::inner`，RelLock）：全部可变状态同锁互斥；ASID 空间为位图分配器
 // 的全局实例（见 `memory::manager::asid`）。
 
 use alloc::vec;
 use alloc::vec::Vec;
-use alloc::{alloc::Allocator, boxed::Box};
+use alloc::boxed::Box;
 use core::num::NonZeroUsize;
 use core::sync::atomic::Ordering;
 
@@ -35,7 +35,7 @@ use super::{
     addr::{AtomicPhysAddr, PhysAddr, VirtAddr},
     entry::PteFlags,
     flush_asid,
-    table::{Frame, MapError, PageTable},
+    table::{Frame, MapError, TableNode},
 };
 
 /// 映射种类 — 缺页时如何响应。
@@ -207,25 +207,41 @@ impl Window {
     }
 }
 
-/// 常数侧 — 根页表 + 中间表帧 + 常数映射表。
+/// 常数侧 — 页表树（TableNode）+ 常数映射表。
 ///
-/// `maps` 覆盖空间建立期就确定、生命周期与空间一致的映射（内核 DRAM 恒等/
-/// 高半区、trampoline 叶、文本、trap-context 帧）；`tables` 收集全部中间页表
-/// 帧（无用户 VA 身份，不占 maps 槽位）。Drop 统一归还。
+/// `root` 是页表树：硬件页（根/中间表，恰好一帧）+ 子树所有权（帧外 TableNode）；
+/// unmap 回收变空的中间表。`maps` 覆盖空间建立期就确定、生命周期与空间一致的
+/// 映射（内核 DRAM 恒等/高半区、trampoline 叶、文本、trap-context 帧）。
+/// Drop 递归归还全部页表帧。
 #[derive(Debug)]
 pub struct Durable {
-    root: Box<PageTable, &'static dyn Allocator>,
-    tables: Vec<Frame>,
+    root: TableNode,
     maps: Vec<Map>,
 }
 
 impl Durable {
     fn new() -> Result<Self, MapError> {
         Ok(Self {
-            root: PageTable::root()?,
-            tables: Vec::new(),
+            root: TableNode::root()?,
             maps: Vec::new(),
         })
+    }
+
+    /// 清 `[va, va+size)` 叶 PTE 并回收变空的中间表（unmap/dealloc/回滚共用）。
+    ///
+    /// 回收 = 自底向上判空（512 项全无效）即摘除子树、帧当场归还——树与 PTE
+    /// 同源（`TableNode::reclaim` 先清 PTE 再摘子节点）。
+    fn clear_range(&mut self, va: usize, size: usize) {
+        if size == 0 {
+            return;
+        }
+        for i in 0..size.div_ceil(PAGE_SIZE) {
+            self.root.unmap(VirtAddr::from_raw(va + i * PAGE_SIZE));
+        }
+        // Sv39 39 位地址空间（掩去符号扩展：内核半区 VA 的 bit 39..63 高位）
+        const SV39_MASK: usize = (1usize << 39) - 1;
+        let end = va.saturating_add(size);
+        self.root.reclaim(2, 0, va & SV39_MASK, end & SV39_MASK);
     }
 
     /// 查询覆盖 `vaddr` 的常数映射。
@@ -329,7 +345,7 @@ impl SpaceInner {
 
     /// 页表读翻译（内部版，调用者须持锁，与 map/unmap 写互斥）。
     fn translate(&self, vaddr: VirtAddr) -> Option<(PhysAddr, PteFlags)> {
-        self.durable.root.as_ref().walk_ref(vaddr).ok()
+        self.durable.root.walk_ref(vaddr).ok()
     }
 }
 
@@ -468,12 +484,12 @@ const _: () = {
 /// `unmap` 写页表，都要持锁互斥（页表修改跨核可见性由锁的 Release/Acquire 保证）。
 ///
 /// 借用约定：guard 是 `Deref`，方法调用的自动引用会借整个 deref 目标——
-/// 需要同时借 `durable` 的不同字段（如 `root` 与 `tables`）时，先绑定局部
+/// 需要同时借 `durable` 的不同字段（如 `root` 与 `maps`）时，先绑定局部
 /// 变量（字段级拆借），再调用方法。
 ///
 /// # Drop
 ///
-/// `durable.root`（Box）、`durable.tables`、`durable.maps` 与 `dynamic` 窗口的
+/// `durable.root`（页表树，递归归还全部表帧）、`durable.maps` 与 `dynamic` 窗口的
 /// 子 Map 帧随字段自动 drop 归还 frame 池——所有权驱动，无需遍历页表树、
 /// 无需手写 deallocate。
 #[derive(Debug)]
@@ -548,8 +564,8 @@ impl SpaceBuilder {
             let guard = KERNEL_SPACE.lock();
             let ks = guard.as_ref().ok_or(MapError::NotMapped)?;
             let ks_inner = ks.inner.lock();
-            let (tramp_pa, tramp_flags) = ks_inner.durable.root.as_ref().walk_ref(TRAMPOLINE)?;
-            let (kpa, _) = ks_inner.durable.root.as_ref().walk_ref(TRAP_CONTEXT)?;
+            let (tramp_pa, tramp_flags) = ks_inner.durable.root.walk_ref(TRAMPOLINE)?;
+            let (kpa, _) = ks_inner.durable.root.walk_ref(TRAP_CONTEXT)?;
             (tramp_pa, tramp_flags, kpa)
         };
 
@@ -626,7 +642,7 @@ impl Space {
 
     /// 把栈体帧注入并映射（spawn 用：stack_alloc 取 VA 后分配帧再 attach）。
     ///
-    /// 逐帧：PTE 安装（新中间表帧入 `durable.tables`）+ `push_frame`（入栈体子
+    /// 逐帧：PTE 安装（新中间表帧由页表树 TableNode 持有）+ `push_frame`（入栈体子
     /// Map，保持「帧 i ↔ va + i·PAGE_SIZE」不变量）。中途失败返回错误，调用方
     /// drop Space 统一回收（无部分状态残留担忧——已装 PTE 与已入帧随空间归还）。
     pub(crate) fn stack_attach(
@@ -646,8 +662,8 @@ impl Space {
         for (i, frame) in frames.into_iter().enumerate() {
             let pa = PhysAddr::from_raw(frame.as_ptr() as usize);
             let va = stack_va + i * PAGE_SIZE;
-            // 解构后 durable 内部字段（root/tables）可直接拆借调用
-            durable.root.map(va, pa, PAGE_SIZE, child_flags, &mut durable.tables)?;
+            // 中间表由页表树内部持有，无需外部容器
+            durable.root.map(va, pa, PAGE_SIZE, child_flags)?;
             child.push_frame(frame);
         }
         drop(inner);
@@ -668,10 +684,9 @@ impl Space {
         let slot_size = TASK_STACK_SIZE + STACK_GUARD_SIZE;
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
-        // 1. 清整窗口叶子 PTE（含栈体帧映射；帧归子 Map，随后 drop 归还）
-        for i in 0..slot_size / PAGE_SIZE {
-            durable.root.unmap(slot_va + i * PAGE_SIZE);
-        }
+        // 1. 清整窗口叶子 PTE（含栈体帧映射；帧归子 Map，随后 drop 归还）+
+        //    回收变空的中间表
+        durable.clear_range(slot_va.as_usize(), slot_size);
         // 2. 窗口释放：位图精确匹配 + 移除守护页/栈体子 Map
         let stack = window_mut(dynamic, WindowKind::Stack);
         if !stack.deallocate(slot_va, slot_size) {
@@ -692,7 +707,7 @@ impl Space {
     /// [`MapError::OutOfMemory`]。立即分配（非懒分配）：教学简化，页表与物理页
     /// 当场就位，用户访问不再缺页。中途帧耗尽时回滚：清已映射页叶子 + 移除子
     /// Map（帧随 drop 归还）+ VA 块退回复用（[`BitmapAllocator::deallocate`]；
-    /// 中间表帧仍留 `durable.tables`，随 Space Drop 归还）。
+    /// 中间表帧已由 clear_range 回收）。
     #[allow(dead_code)] // map/unmap syscall 后端预留
     pub(crate) fn heap_allocate(&self, size: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
@@ -710,11 +725,9 @@ impl Space {
                 .map_err(|_| MapError::OutOfMemory)?;
             let pa = PhysAddr::from_raw(page.as_ptr() as usize);
             let va = info.va + mapped * PAGE_SIZE;
-            if durable.root.map(va, pa, PAGE_SIZE, flags, &mut durable.tables).is_err() {
-                // 回滚：清已映射页叶子 + 移除子 Map（帧随 drop 归还）+ VA 退回位图
-                for i in 0..mapped {
-                    durable.root.unmap(info.va + i * PAGE_SIZE);
-                }
+            if durable.root.map(va, pa, PAGE_SIZE, flags).is_err() {
+                // 回滚：清已映射页叶子并回收中间表 + 移除子 Map（帧随 drop 归还）+ VA 退回位图
+                durable.clear_range(info.va.as_usize(), mapped * PAGE_SIZE);
                 heap.deallocate(info.va, info.size.get());
                 drop(inner);
                 // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -739,7 +752,7 @@ impl Space {
         Ok(info.va)
     }
 
-    /// 用户堆释放：位图精确匹配 `(addr, size)` 后清叶子 PTE 并移除子 Map（帧随
+    /// 用户堆释放：位图精确匹配 `(addr, size)` 后清叶子 PTE（含回收中间表）并移除子 Map（帧随
     /// drop 归还 frame 池）。返回是否找到并释放（未分配/部分已释放的区间返回
     /// false，同旧块表精确匹配语义）。
     #[allow(dead_code)] // map/unmap syscall 后端预留
@@ -751,10 +764,8 @@ impl Space {
         if !heap.deallocate(addr, size) {
             return false;
         }
-        // 2. 逐页清叶子 PTE（帧已随子 Map 移除 drop 归还）
-        for i in 0..size / PAGE_SIZE {
-            durable.root.unmap(addr + i * PAGE_SIZE);
-        }
+        // 2. 清叶子 PTE + 回收变空的中间表（帧已随子 Map 移除 drop 归还）
+        durable.clear_range(addr.as_usize(), size);
         drop(inner);
         // SAFETY: S-mode 下 sfence.vma 恒合法。
         unsafe {
@@ -767,7 +778,7 @@ impl Space {
     ///
     /// PTE 安装 + 登记常数 [`Map`]（VA→PA 簿记）一次完成：`kind` 决定缺页响应，
     /// `frames` 为本映射**拥有**的帧（借用映射——DRAM 恒等、trampoline 叶——传空）。
-    /// 按需分配中间页表——新帧收集进 [`durable.tables`](Durable::tables)。
+    /// 按需分配中间页表——由页表树（[`Durable::root`]）持有。
     ///
     /// **vaddr、paddr、size 必须全部按 [`PAGE_SIZE`] 对齐**，且不得与已有映射/
     /// 窗口区间重叠。非对齐大小的调用方（如 MMIO 设备映射）须自行向上取整。
@@ -776,7 +787,7 @@ impl Space {
     ///
     /// # Errors
     ///
-    /// 参见 [`PageTable::map`] 与 [`MapError::AlreadyMapped`]。
+    /// 参见 [`TableNode::map`] 与 [`MapError::AlreadyMapped`]。
     pub fn map(
         &self,
         vaddr: VirtAddr,
@@ -798,7 +809,7 @@ impl Space {
         }
         // 2. PTE 安装 + 3. 登记常数映射（一次解构拿 durable 各字段，字段间可拆借）
         let SpaceInner { durable, .. } = &mut *inner;
-        durable.root.map(vaddr, paddr, size, flags, &mut durable.tables)?;
+        durable.root.map(vaddr, paddr, size, flags)?;
         durable.maps.push(Map::new(vaddr, size, flags, kind, frames));
         drop(inner);
         // 按本空间 ASID 局部刷：只失效本地址空间的旧条目，其它任务 TLB 保留。
@@ -811,7 +822,7 @@ impl Space {
 
     /// 取消映射一段虚拟地址并移除其簿记（ecall munmap 后端）。
     ///
-    /// 页表侧逐页清叶子 PTE（惰性策略，不释放中间页表）；簿记侧移除被 `[start,
+    /// 页表侧清叶子 PTE 并**回收变空的中间表**（表帧当场归还 frame 池）；簿记侧移除被 `[start,
     /// start+size)` **完全覆盖**的映射（帧随 drop 归还——unmap 即释放）。部分
     /// 重叠的映射保留记录、仅清 PTE：munmap 边界拆分留待后端接入时实现。
     /// `vaddr`/`size` 不要求页对齐（向上取整语义与 POSIX munmap 一致）。
@@ -819,12 +830,8 @@ impl Space {
         let end = vaddr.as_usize().saturating_add(size);
 
         let mut inner = self.inner.lock();
-        // 页表侧：逐页清叶子 PTE
-        let root = &mut inner.durable.root;
-        let pages = size.div_ceil(PAGE_SIZE);
-        for i in 0..pages {
-            root.unmap(vaddr + i * PAGE_SIZE);
-        }
+        // 页表侧：清叶子 PTE + 回收变空的中间表
+        inner.durable.clear_range(vaddr.as_usize(), size);
         // 簿记侧：移除被完全覆盖的常数映射与窗口子 Map
         let covered = |m: &Map| {
             vaddr.as_usize() <= m.va.as_usize()
@@ -858,7 +865,7 @@ impl Space {
         for i in 0..pages {
             let va = vaddr + i * PAGE_SIZE;
             // None = 不分配中间表：叶子缺失即 NotMapped
-            let leaf = root.walk_mut(va, None)?;
+            let leaf = root.walk_mut(va, false)?;
             leaf.set_flags(flags | PteFlags::V);
         }
         drop(inner);
@@ -901,7 +908,7 @@ impl Space {
             let pa = PhysAddr::from_raw(page.as_ptr() as usize);
             {
                 let SpaceInner { durable, .. } = &mut *inner;
-                durable.root.map(va, pa, PAGE_SIZE, flags, &mut durable.tables)?;
+                durable.root.map(va, pa, PAGE_SIZE, flags)?;
             }
             let map = inner.resolve_mut(va).expect("map exists (checked above)");
             map.push_frame(page);
@@ -927,12 +934,18 @@ impl Space {
     /// 返回根页表页号（写入 `satp` 用）。
     pub fn root(&self) -> usize {
         let inner = self.inner.lock();
-        Box::as_ptr(&inner.durable.root) as usize >> crate::memory::PAGE_SHIFT
+        inner.durable.root.ppn()
     }
 
     /// 返回本空间的 ASID（写入 `satp.ASID` 用；0 = 内核空间）。
     pub fn asid(&self) -> usize {
         self.kind.asid()
+    }
+
+    /// 页表树节点总数（根 + 全部子孙；debug 统计/PT 回收自测用）。
+    #[cfg(debug_assertions)]
+    pub fn table_count(&self) -> usize {
+        self.inner.lock().durable.root.count()
     }
 
     // ── Map 管理 ──────────────────────────────────────────────
@@ -969,7 +982,7 @@ impl Drop for Space {
         if let SpaceKind::User { asid } = self.kind {
             super::asid::deallocate(asid);
         }
-        // `inner` 随字段自动 drop：root/tables/maps 与窗口子 Map 的帧全部归还
+        // `inner` 随字段自动 drop：root（页表树，递归归还全部表帧）/maps 与窗口子 Map 的帧全部归还
         // frame 池——所有权驱动，无遍历页表树、无手写 deallocate。
     }
 }

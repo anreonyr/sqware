@@ -15,7 +15,14 @@
 pub mod envcall;
 pub mod scheduler;
 
-use crate::memory::manager::addr::VirtAddr;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use crate::memory::PAGE_SIZE;
+use crate::memory::allocator::{block, frame};
+use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::entry::PteFlags;
+use crate::memory::manager::space::{MapKind, SpaceBuilder};
 use crate::putln;
 use crate::runtime::trampoline::restore;
 
@@ -30,11 +37,94 @@ pub use scheduler::{exit_current, spawn, tick, with_current_space};
 /// 顺序：A counter（不自让出，靠抢占）→ B yielder（主动让出）→ C exiter
 /// （写 'C' 后退出）。S-timer 由 runtime::init 武装、trap_handler 内循环重武装。
 pub fn init() -> ! {
+    // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
+    #[cfg(debug_assertions)]
+    pt_reclaim_selftest();
+
     let first = scheduler::spawn(program_a(), "counter").expect("spawn A failed");
     let _ = scheduler::spawn(program_b(), "yielder").expect("spawn B failed");
     let _ = scheduler::spawn(program_c(), "exiter").expect("spawn C failed");
     putln!("task: entering first task");
     restore(first.as_usize())
+}
+
+/// PT 回收自测（debug）：map/unmap 循环验证中间表回收——无孤儿表、无 double-free。
+///
+/// 在 spawn 用户任务之前运行（分配器与 KERNEL_SPACE 均已就绪）。每轮：
+/// map 4 MiB（4 KiB 页，根表槽 1）→ 表数 +3（1×L1 + 2×L0）；unmap → 回落；
+/// 32 轮后「在途帧 − 堆支撑页」回到轮前（块堆缓存页不误报，口径同 check_baseline）。
+#[cfg(debug_assertions)]
+fn pt_reclaim_selftest() {
+    const BASE: usize = 0x4000_0000; // 根表槽 1：堆窗口之后、栈窗口之前的空地
+    const SIZE: usize = 4 * 1024 * 1024; // 4 MiB → 1×L1 + 2×L0
+    const ROUNDS: usize = 32;
+
+    let space = SpaceBuilder::user().build().expect("selftest: build space");
+    let flags = PteFlags::V
+        | PteFlags::R
+        | PteFlags::W
+        | PteFlags::U
+        | PteFlags::A
+        | PteFlags::D;
+    let base_count = space.table_count();
+    let held_before = frame::FRAME_ALLOCATOR
+        .outstanding()
+        .saturating_sub(block::live_pages());
+
+    for round in 0..ROUNDS {
+        // map：分配数据帧 + 中间表
+        let mut frames = Vec::new();
+        for _ in 0..(SIZE / PAGE_SIZE) {
+            frames.push(
+                Box::try_new_in([0u8; PAGE_SIZE], frame::allocator())
+                    .expect("selftest: data frame"),
+            );
+        }
+        let pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
+        space
+            .map(
+                VirtAddr::from_raw(BASE),
+                pa,
+                SIZE,
+                flags,
+                MapKind::Anonymous,
+                frames,
+            )
+            .expect("selftest: map");
+        assert_eq!(
+            space.table_count(),
+            base_count + 3,
+            "selftest round {round}: tables after map"
+        );
+        assert!(
+            space.translate(VirtAddr::from_raw(BASE)).is_some(),
+            "selftest round {round}: map hit"
+        );
+
+        // unmap：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）
+        space.unmap(VirtAddr::from_raw(BASE), SIZE);
+        assert_eq!(
+            space.table_count(),
+            base_count,
+            "selftest round {round}: tables after unmap"
+        );
+        assert!(
+            space.translate(VirtAddr::from_raw(BASE)).is_none(),
+            "selftest round {round}: unmap hit"
+        );
+    }
+
+    let held_after = frame::FRAME_ALLOCATOR
+        .outstanding()
+        .saturating_sub(block::live_pages());
+    assert_eq!(
+        held_before, held_after,
+        "selftest: net frames leaked: {held_before} → {held_after}"
+    );
+    drop(space);
+    putln!(
+        "pt-reclaim selftest: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})"
+    );
 }
 
 // ── 演示程序（手写机器码 blob，llvm-mc 核对字节；rv64gc 基础指令）──────────
