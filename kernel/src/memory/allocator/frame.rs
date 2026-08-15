@@ -553,5 +553,7 @@ pub fn allocator() -> &'static dyn Allocator {
 /// - 空闲区不足一页 → [`InitError::NoFreeFrames`]。
 /// - 元数据 Vec 分配失败 → [`InitError::OutOfMemory`]。
 pub fn init() -> InitResult<()> {
-    FRAME_ALLOCATOR.init().annotate("initializing frame allocator")
+    FRAME_ALLOCATOR
+        .init()
+        .annotate("initializing frame allocator")
 }

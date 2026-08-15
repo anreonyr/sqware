@@ -3,7 +3,7 @@
 // 职责：
 //   init()          — 写内核 trap-context 帧元数据、per-hart trap 栈 canary、
 //                     stvec → __alltraps、sscratch 清 0、开 SIE
-//   trap_handler()  — 汇编入口的 Rust 分发（scause 解码），返回待恢复帧
+//   trap_handler()  — 汇编入口的 Rust 分发（scause 解码，类型化枚举），返回待恢复帧
 //                     （阶段 A 恒为入参帧；阶段 C 上下文切换后返回下一任务帧）
 //   arm_timer()     — SBI set_timer 武装 S-timer 中断（阶段 A 自检驱动）
 //
@@ -14,11 +14,8 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use log::info;
-use riscv::register::{
-    satp,
-    scause::{self, Trap},
-    sepc, sie, sstatus, stval, stvec, time,
-};
+use riscv::interrupt::{Exception, Interrupt, Trap};
+use riscv::register::{satp, scause, sepc, sie, stval, stvec, time};
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
@@ -39,9 +36,6 @@ pub const TIMER_INTERVAL: usize = 1_000_000;
 /// 定时器 tick 计数（自检：前若干次打印后静默）。
 static TICKS: AtomicUsize = AtomicUsize::new(0);
 
-/// 用户 ecall 计数（自检：前若干次打印后静默）。
-static ECALLS: AtomicUsize = AtomicUsize::new(0);
-
 /// trap 栈已用字节数（高水位跟踪用）。
 fn trap_stack_used() -> usize {
     let sp: usize;
@@ -61,7 +55,12 @@ fn track_trap_stack_usage() {
     let used = trap_stack_used();
     let mut peak = TRAP_STACK_PEAK.load(Ordering::Relaxed);
     while used > peak {
-        match TRAP_STACK_PEAK.compare_exchange_weak(peak, used, Ordering::Relaxed, Ordering::Relaxed) {
+        match TRAP_STACK_PEAK.compare_exchange_weak(
+            peak,
+            used,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
             Ok(_) => {
                 if PEAK_PRINTS.fetch_add(1, Ordering::Relaxed) < 8 {
                     putln!("trap stack high-water: {used} B / 16 KiB");
@@ -91,7 +90,7 @@ pub fn init() {
     frame.kernel_sp = VirtAddr::from_raw(trap_stack_top());
     frame.trap_handler = VirtAddr::from_raw(trap_handler as *const () as usize);
     frame.trap_stack_corrupt = TRAP_STACK_CANARY;
-    frame.self_pa = ktc;
+    frame.user_pa = ktc;
     frame.user_satp = ksatp;
 
     // 2. per-hart trap 栈底 canary（内核恒等映射，链接地址即物理地址）
@@ -104,12 +103,13 @@ pub fn init() {
     arm_timer(TIMER_INTERVAL);
 
     // 4. stvec → __alltraps（Direct 模式）；sscratch = 0（内核态约定）；
-    //    开中断：sie.STIE（S-timer 源）+ sstatus.SIE（全局）
+    //    使能定时器源：sie.STIE。**不**开 sstatus.SIE（全局）——内核态恒关中断
+    //    （处理器内关中断策略）：SIE 只经 sret 由帧内 SPIE 恢复，用户态 = 1，
+    //    内核态 = 0。故 S-timer 只在用户态触发，内核代码永不被打断/抢占。
     unsafe {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
         core::arch::asm!("csrw sscratch, zero");
         sie::set_stimer();
-        sstatus::set_sie();
     }
 
     info!(
@@ -131,6 +131,11 @@ pub fn arm_timer(interval: usize) {
         })
         .call()
         .unwrap();
+}
+
+/// 定时器 tick 计数（ENV_GET_TICKS 后端）。
+pub fn ticks() -> usize {
+    TICKS.load(Ordering::Relaxed)
 }
 
 /// 陷阱分发 — 汇编入口（`jalr trap_handler`）的唯一 Rust 侧。
@@ -158,50 +163,57 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
     );
     track_trap_stack_usage();
 
-    // scause 裸码值：5 = SupervisorTimer 中断；8 = ecall；12/13/15 = 缺页
-    match scause::read().cause() {
-        Trap::Interrupt(code) => match code {
-            5 => {
-                let tick = TICKS.fetch_add(1, Ordering::Relaxed);
-                if tick < 8 {
-                    putln!("timer tick #{tick} @ time={}", time::read());
-                }
-                arm_timer(TIMER_INTERVAL);
+    // 类型化分发：裸码 → riscv::interrupt 枚举（try_into 对标准集外码返回 Err，
+    // 不会 panic；Err 分支给出诊断）。变体即规范语义：SupervisorTimer=5、
+    // UserEnvCall=8、InstructionPageFault=12、LoadPageFault=13、StorePageFault=15。
+    let trap: Trap<Interrupt, Exception> = scause::read().cause().try_into().unwrap_or_else(|e| {
+        panic!("unknown trap cause: {e:?}");
+    });
+    let next: *mut TrapContext = match trap {
+        // S-timer：重武装 + 抢占（仅用户态陷阱可切换——内核态陷阱须恢复被
+        // 中断的内核上下文；内核恒关中断下本不应发生，SPP 判断为防御性）
+        Trap::Interrupt(Interrupt::SupervisorTimer) => {
+            let tick = TICKS.fetch_add(1, Ordering::Relaxed);
+            if tick < 8 {
+                putln!("timer tick #{tick} @ time={}", time::read());
             }
-            other => {
-                putln!("unhandled interrupt: code={other}");
+            arm_timer(TIMER_INTERVAL);
+            if frame.sstatus & (1 << 8) == 0 {
+                crate::task::tick() as *mut TrapContext
+            } else {
+                frame as *mut TrapContext
             }
-        },
-        Trap::Exception(code) => match code {
-            // 用户态 ecall（syscall 占位）：跳过 ecall 指令继续执行
-            8 => {
-                frame.sepc += 4;
-                let n = ECALLS.fetch_add(1, Ordering::Relaxed);
-                if n < 8 {
-                    putln!("user ecall #{n}");
-                }
+        }
+        Trap::Interrupt(other) => {
+            putln!("unhandled interrupt: {other:?}");
+            frame as *mut TrapContext
+        }
+        // 用户态环境调用（U 态 ecall）：envcall 表分发
+        Trap::Exception(Exception::UserEnvCall) => crate::task::envcall::dispatch(frame),
+        // 用户态缺页：机制归 memory::fault，策略归 trap 层（解析失败即 panic）
+        Trap::Exception(
+            Exception::InstructionPageFault | Exception::LoadPageFault | Exception::StorePageFault,
+        ) => {
+            let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
+            let ok = crate::task::with_current_space(|space| {
+                crate::memory::manager::fault::handle_page_fault(&fault, space)
+            });
+            if ok {
+                putln!("user page fault resolved: {fault:?}");
+            } else {
+                panic!("unresolved page fault: {fault:?}");
             }
-            // 用户态缺页：机制归 memory::fault，策略归 trap 层（解析失败即 panic）
-            12 | 13 | 15 => {
-                let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
-                let ok =
-                    crate::memory::manager::fault::handle_page_fault(&fault, crate::user::user_space());
-                if ok {
-                    putln!("user page fault resolved: {fault:?}");
-                } else {
-                    panic!("unresolved page fault: {fault:?}");
-                }
-            }
-            other => {
-                putln!(
-                    "kernel exception: code={other} at sepc={:#x}, stval={:#x}",
-                    sepc::read(),
-                    stval::read()
-                );
-                panic!("unhandled kernel exception");
-            }
-        },
-    }
+            frame as *mut TrapContext
+        }
+        // 其余异常（含 S-mode envcall = 内核 bug）：fatal
+        Trap::Exception(other) => {
+            panic!(
+                "unhandled kernel exception: {other:?} at sepc={:#x}, stval={:#x}",
+                sepc::read(),
+                stval::read()
+            );
+        }
+    };
 
     // 出口再校验一次 canary（处理器自身栈用量引发的溢出）
     let canary = unsafe { (trap_stack_bottom() as *const usize).read() };
@@ -210,5 +222,5 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
         "trap stack corrupted after handler"
     );
 
-    frame as *mut TrapContext
+    next
 }

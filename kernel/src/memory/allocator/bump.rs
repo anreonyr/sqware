@@ -102,5 +102,7 @@ pub fn allocator() -> &'static dyn Allocator {
 ///
 /// 机器未配置空闲内存区 → [`InitError::NoFreeMemory`]。
 pub fn init() -> InitResult<()> {
-    BUMP_ALLOCATOR.init().annotate("initializing bump allocator")
+    BUMP_ALLOCATOR
+        .init()
+        .annotate("initializing bump allocator")
 }

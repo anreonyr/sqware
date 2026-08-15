@@ -23,7 +23,7 @@ pub struct TrapContext {
     /// trap 栈损坏标记（内核 trap 栈溢出检测：与栈底 canary 比对）。
     pub trap_stack_corrupt: usize,
     /// 本帧自身物理地址。
-    pub self_pa: PhysAddr,
+    pub user_pa: PhysAddr,
     /// 本空间 satp token（`__restore`切回目标空间用）。
     pub user_satp: usize,
     /// 被中断上下文通用寄存器（x0 恒 0 不存；x2=sp 在 gpr[2]）。
@@ -40,7 +40,7 @@ const _: () = {
     assert!(core::mem::offset_of!(TrapContext, kernel_sp) == 0x08);
     assert!(core::mem::offset_of!(TrapContext, trap_handler) == 0x10);
     assert!(core::mem::offset_of!(TrapContext, trap_stack_corrupt) == 0x18);
-    assert!(core::mem::offset_of!(TrapContext, self_pa) == 0x20);
+    assert!(core::mem::offset_of!(TrapContext, user_pa) == 0x20);
     assert!(core::mem::offset_of!(TrapContext, user_satp) == 0x28);
     assert!(core::mem::offset_of!(TrapContext, gpr) == 0x30);
     assert!(core::mem::offset_of!(TrapContext, sstatus) == 0x130);

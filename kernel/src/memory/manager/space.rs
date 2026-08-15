@@ -349,7 +349,7 @@ impl SpaceBuilder {
             (*utc).kernel_sp = (*ktc).kernel_sp;
             (*utc).trap_handler = (*ktc).trap_handler;
             (*utc).trap_stack_corrupt = (*ktc).trap_stack_corrupt;
-            (*utc).self_pa = trap_context_pa;
+            (*utc).user_pa = trap_context_pa;
             // user_satp = Sv39 模式位(8) << 60 | asid << 44 | root_ppn —— __restore 切回本空间用
             (*utc).user_satp = (8usize << 60) | (space.asid() << 44) | space.root();
         }
