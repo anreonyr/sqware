@@ -36,18 +36,12 @@ impl Region {
 /// 见 [`hart_count`]）。
 pub const MAX_HARTS: usize = 8;
 
-/// 已由 hart 0 经 HSM 启动的 hart 数（含 hart 0）。boot 早期 = 1；RFNC 掩码
-/// 据此排除未启动核（SBI 对未启动核发远程 fence 会报 InvalidParam）。
+/// 已启动的 hart 集合（进程级进度记录；RFNC 移除后无读者，保留为诊断信息）。
 static STARTED_HARTS: AtomicUsize = AtomicUsize::new(1);
 
 /// 记录某 hart 已启动（HSM `hart_start` 成功后由 hart 0 调用）。
 pub fn mark_hart_started(hart: usize) {
     STARTED_HARTS.fetch_max(hart + 1, Ordering::Relaxed);
-}
-
-/// 当前已启动的 hart 数（远程 TLB 刷新的掩码上界）。
-pub fn started_harts() -> usize {
-    STARTED_HARTS.load(Ordering::Relaxed)
 }
 
 /// 实际活跃核数 = min(DTB 核数, MAX_HARTS 上限)。

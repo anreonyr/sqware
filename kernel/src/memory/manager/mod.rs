@@ -56,12 +56,13 @@ pub type MapResult<T> = erra::Result<T, MapError>;
 /// 刷新指定 ASID 的 TLB 条目（非全局）。
 ///
 /// 本地 `sfence.vma zero, asid`（rs2 用通用寄存器传值：asid=0 时全刷
-/// 含全局条目，asid≠0 时只刷新该 ASID）+ **防御性远程刷**（SBI RFNC，通知其它
-/// 已启动 hart 也刷该 ASID）。页表修改（map/unmap/protect）后按空间 ASID 调用。
+/// 含全局条目，asid≠0 时只刷新该 ASID）。页表修改（map/unmap/protect）后
+/// 按空间 ASID 调用。
 ///
-/// B1 中每次 satp 切换（`__alltraps`/`__restore`）都已全刷 TLB，变更点
-/// 无跨核陈旧条目——远程刷为未来 map/unmap 路径与 B2（WFI 休眠）铺路；RFNC
-/// 目标由 M 态（OpenSBI）处理，不依赖目标 hart 的 SIE。
+/// **无需远程刷（RFNC）**：每次 satp 切换（`__alltraps`/`__restore`）都已全刷
+/// 本地 TLB（rs1=rs2=x0），跨核不会残留陈旧条目——远程核只在切换 satp 到自己
+/// 空间时接触其页表，而切换本身即全刷；内核空间 post-boot 无 map/unmap。休眠
+/// 核（WFI）醒来后同样经 satp 切换全刷，不依赖远程 fence。
 ///
 /// # Safety
 ///
@@ -70,23 +71,6 @@ pub type MapResult<T> = erra::Result<T, MapError>;
 pub unsafe fn flush_asid(asid: usize) {
     unsafe {
         core::arch::asm!("sfence.vma zero, {}", in(reg) asid);
-    }
-    // 防御性远程刷：掩码只含已启动 hart（排除自身——本地已刷）。
-    let n = crate::machine::started_harts();
-    if n > 1 {
-        let me = crate::machine::hart_id();
-        let mask = ((1usize << n) - 1) & !(1usize << me);
-        // 防御性：错误（如目标未启动）不致命——B1 无必须场景。
-        let _ = crate::ecall::RfenceCall::new(crate::ecall::fid::Rfence::RemoteSfenceVmaAsid)
-            .args(crate::ecall::scall::SArgs {
-                a0: mask,
-                a1: 0,
-                a2: 0,
-                a3: 0,
-                a4: asid,
-                ..Default::default()
-            })
-            .call();
     }
 }
 
