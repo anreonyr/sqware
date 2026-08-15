@@ -11,8 +11,9 @@
 // 两处取指均正确。TRAP_CONTEXT 的 LUI 立即数由 Rust 常量 TRAP_CONTEXT_LUI 注入
 // （单一来源，改 space::TRAP_CONTEXT 即可）。
 //
-// sscratch 约定：用户态 = TRAP_CONTEXT VA；内核态 = 0。`__restore` 按恢复的
-// sstatus.SPP 复原该约定。
+// sscratch 约定：用户态 = 当前线程帧 VA（帧内 self_va 字段，帧窗口分配，不再
+// 固定 TRAP_CONTEXT）；内核态 = 0。`__restore` 按恢复的 sstatus.SPP 复原该约定
+// （SPP=0 从帧内 self_va 字段读取——每线程帧位置可任意，`__alltraps` 零改动）。
 //
 // 帧布局与偏移见 runtime/context.rs（编译期偏移断言锁定，改布局必须先改两处）。
 
@@ -147,8 +148,8 @@ global_asm!(
     "    j     __restore",
 
     // ── 上下文恢复：a0 = 目标帧 self_pa（物理地址）────────────────────
-    // 用户帧 / 内核帧统一走此路径：目标帧在目标空间映射于 TRAP_CONTEXT VA，
-    // 切换页表后经该 VA（LUI 常量）访问同一物理页收尾。
+    // 用户帧 / 内核帧统一走此路径：切表前（物理访问有效）读帧内 self_va，切表
+    // 后经该 VA 访问同一物理页收尾。
     ".globl __restore",
     "__restore:",
     "    mv    sp, a0",
@@ -161,7 +162,7 @@ global_asm!(
     "    csrr  t0, sstatus",
     "    andi  t0, t0, (1 << 8)",
     "    bnez  t0, 1f",
-    "    lui   t0, {tc}",
+    "    ld    t0,  0x140(sp)",        // self_va（物理访问，切表前）
     "    csrw  sscratch, t0",
     "    j     2f",
     "1:",
@@ -197,9 +198,10 @@ global_asm!(
     "    ld    x30, 0x120(sp)",
     "    ld    x31, 0x128(sp)",
     "    ld    t0,  0x28(sp)",             // user_satp
+    "    ld    t1,  0x140(sp)",            // self_va（切表前取，物理访问）
     "    csrw  satp, t0",
     "    sfence.vma",
-    "    lui   x5,  {tc}",                // x5 = TRAP_CONTEXT VA（目标空间映射同一帧）
+    "    mv    x5,  t1",                   // x5 = self_va（目标空间帧 VA）
     "    ld    x6,  0x60(x5)",             // 原 t1
     "    ld    x2,  0x40(x5)",             // 目标 sp（用户栈 / 内核栈）
     "    ld    x5,  0x58(x5)",             // 原 t0（基址先读后写，合法）

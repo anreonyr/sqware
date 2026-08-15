@@ -19,6 +19,8 @@
 // To prevent deadlocks, locks must be acquired in the following order:
 //
 //   1. SCHEDULER          (SpinLock)  — 任务就绪队列/当前任务（task::scheduler）
+//                                          （spawn_thread 锁内做栈/帧分配 → Space.inner；
+//                                          exit_current 锁内 drop Arc<Task> → Space/ASID/帧）
 //   1. KERNEL_SPACE        (RelLock)   — 内核地址空间（与 SCHEDULER 同级不嵌套：
 //                                          spawn 的空间构建在调度器锁外完成）
 //   2. Space.inner  (RelLock)   — 任务地址空间可变状态（Durable：页表/常数映射 + dynamic：窗口）

@@ -1,15 +1,17 @@
-// 任务（task）— 可调度单元：独立地址空间 + 用户栈 + trap 帧 + 调度状态
+// 任务（task）— 线程模型（阶段 A）：Team（进程）→ Task（线程）两层
 //
-// 阶段 C：多任务内核。每个 Task 持有独立 Space（各自 ASID + TRAP_CONTEXT 帧），
-// 由 S-timer 抢占 + envcall 驱动切换。切换完全走 trap 链路——trap_handler 返回
-// 下一任务帧 → __restore 切 satp + sret，无独立切换汇编（见 runtime/trampoline.rs）。
+// 一个 Team 持有唯一 Space（共享地址空间），多个 Task 共享之；每个 Task 持有
+// 自己的 trap 帧（Frame 窗口分配，任意 VA——alltraps/restore 经帧内 self_va
+// 定位）。由 S-timer 抢占 + envcall 驱动切换。切换完全走 trap 链路——
+// trap_handler 返回下一任务帧 → restore 切 satp + sret，无独立切换汇编
+// （见 runtime/trampoline.rs）。
 //
 // 子模块：
-//   scheduler — round-robin 调度器（队列/切换/回收/当前空间借出）
+//   scheduler — round-robin 调度器（Team/Task/队列/切换/回收/当前空间借出）
 //   envcall   — 用户态环境调用 ABI（RISC-V "Environment Call"，见 riscv crate
 //               的 Exception::UserEnvCall 命名——术语与规范同源）
 //
-// 阶段 B 的 user.rs 被本模块吸收：USER_SPACE 单例 → per-task Space；boot() →
+// 阶段 B 的 user.rs 被本模块吸收：USER_SPACE 单例 → per-team Space；boot() →
 // init()；trap.rs 缺页路由改经 task::with_current_space 取当前空间。
 
 pub mod envcall;
@@ -30,18 +32,27 @@ use crate::runtime::trampoline::restore;
 pub const USER_TEXT_BASE: VirtAddr = VirtAddr::from_raw(0x1_0000);
 
 // 常用 API 收敛到 task::（scheduler 内部实现，详见 scheduler.rs）
-pub use scheduler::{exit_current, spawn, tick, with_current_space};
+// 只 re-export 外部引用者（envcall/trap）：spawn/spawn_thread 由 init 经
+// scheduler:: 限定路径调用。
+pub use scheduler::{exit_current, tick, with_current_space};
 
-/// 启动多任务（阶段 C）：spawn 演示任务后进入首个任务，永不返回。
+/// 启动多任务（阶段 A 线程模型）：spawn 演示团队后进入首个线程，永不返回。
 ///
-/// 顺序：A counter（不自让出，靠抢占）→ B yielder（主动让出）→ C exiter
-/// （写 'C' 后退出）。S-timer 由 runtime::init 武装、trap_handler 内循环重武装。
+/// Team1 = 双线程共享空间：首线程 a0=0 计数循环写 'A'（靠抢占轮转）；次线程
+/// a0=1 写 'B' 后退出——验证「线程退出、团队/兄弟线程存活」的引用计数语义。
+/// 之后是单线程团队回归：A counter（不自让出，靠抢占）→ B yielder（主动让出）
+/// → C exiter（写 'C' 后退出）。S-timer 由 runtime::init 武装、trap_handler 内循环重武装。
 pub fn init() -> ! {
     // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
     #[cfg(debug_assertions)]
     pt_reclaim_selftest();
 
-    let first = scheduler::spawn(program_a(), "counter").expect("spawn A failed");
+    // Team1：双线程共享同一地址空间
+    let (first, team1) = scheduler::spawn(program_d(), "thread-A").expect("spawn team1 failed");
+    let _ = scheduler::spawn_thread(&team1, "thread-B", 1).expect("spawn thread B failed");
+    drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
+    // 单线程团队回归：A/B/C 行为不变
+    let _ = scheduler::spawn(program_a(), "counter").expect("spawn A failed");
     let _ = scheduler::spawn(program_b(), "yielder").expect("spawn B failed");
     let _ = scheduler::spawn(program_c(), "exiter").expect("spawn C failed");
     putln!("task: entering first task");
@@ -186,5 +197,37 @@ const fn program_c() -> &'static [u8] {
         0x93, 0x08, 0x20, 0x00, // li   a7, 2        (ENV_EXIT)
         0x73, 0x00, 0x00, 0x00, // ecall
         0x6f, 0x00, 0x00, 0x00, // j    0（正常不可达兜底）
+    ]
+}
+
+/// D "threader"：线程入口参数 a0 分支行为（线程模型 demo）。
+///
+/// a0 == 0 → 'A' 计数循环（同 program_a，从不主动让出，靠定时器抢占切走）；
+/// a0 != 0 → 写 'B' 后退出（ENV_EXIT）——同一空间双线程：一个常驻、一个退出。
+/// 计数用 t1 而非 a0：ENV_WRITE 的返回值槽是 a0，作为计数器会被破坏。
+///
+/// 布局（68 B）：beqz a0,+0x1c; li a7,1; li a0,'B'; ecall; li a7,2; ecall;
+/// j 0; [A 循环] addi t1,t1,1; andi t0,t1,0x7ff; bnez t0,+0x18;
+/// srli t0,t1,11; andi t0,t0,0x7f; bnez t0,+0x0c; li a7,1; li a0,'A';
+/// ecall; j -0x24
+const fn program_d() -> &'static [u8] {
+    &[
+        0x63, 0x0e, 0x05, 0x00, // beqz a0, +0x1c    (a0==0 → 'A' 循环)
+        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
+        0x13, 0x05, 0x20, 0x04, // li   a0, 0x42     ('B')
+        0x73, 0x00, 0x00, 0x00, // ecall
+        0x93, 0x08, 0x20, 0x00, // li   a7, 2        (ENV_EXIT)
+        0x73, 0x00, 0x00, 0x00, // ecall
+        0x6f, 0x00, 0x00, 0x00, // j    0（兜底，exit 不返回）
+        0x13, 0x03, 0x13, 0x00, // addi t1, t1, 1    ('A' 循环)
+        0x93, 0x72, 0xf3, 0x7f, // andi t0, t1, 0x7ff
+        0x63, 0x9c, 0x02, 0x00, // bnez t0, +0x18
+        0x93, 0x52, 0xb3, 0x00, // srli t0, t1, 11
+        0x93, 0xf2, 0xf2, 0x07, // andi t0, t0, 0x7f
+        0x63, 0x96, 0x02, 0x00, // bnez t0, +0x0c
+        0x93, 0x08, 0x10, 0x00, // li   a7, 1
+        0x13, 0x05, 0x10, 0x04, // li   a0, 0x41     ('A')
+        0x73, 0x00, 0x00, 0x00, // ecall
+        0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24
     ]
 }

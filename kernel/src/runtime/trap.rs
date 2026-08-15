@@ -19,7 +19,7 @@ use riscv::register::{satp, scause, sepc, sie, stval, stvec, time};
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
-use crate::memory::manager::space::kernel_trap_context;
+use crate::memory::manager::space::{TRAP_CONTEXT, kernel_trap_context};
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{
@@ -92,6 +92,8 @@ pub fn init() {
     frame.trap_stack_corrupt = TRAP_STACK_CANARY;
     frame.user_pa = ktc;
     frame.user_satp = ksatp;
+    // self_va：内核帧恒在 TRAP_CONTEXT VA（restore 切表后经此收尾）
+    frame.self_va = TRAP_CONTEXT.as_usize();
 
     // 2. per-hart trap 栈底 canary（内核恒等映射，链接地址即物理地址）
     unsafe {
