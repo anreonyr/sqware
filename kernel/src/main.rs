@@ -5,11 +5,11 @@
 extern crate alloc;
 
 mod console;
+mod ecall;
 mod lock;
 mod machine;
 mod memory;
 mod runtime;
-mod sbi;
 mod task;
 
 use core::arch::{asm, global_asm};

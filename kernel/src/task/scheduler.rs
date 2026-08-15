@@ -40,6 +40,7 @@ use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU8, Ordering};
 
+use crate::ecall::fid;
 use crate::lock::SpinLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
@@ -49,9 +50,9 @@ use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::space::{
     MapKind, Space, SpaceBuilder, TASK_STACK_SIZE, kernel_trap_context,
 };
-use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::task::USER_TEXT_BASE;
+use crate::{ecall, putln};
 
 /// 任务状态（生命周期：就绪 ↔ 运行）。
 ///
@@ -341,6 +342,9 @@ pub fn with_current_space<R>(f: impl FnOnce(&Space) -> R) -> R {
 /// 全部任务已退出：显式停机（wfi 死循环；内核态 SIE=0，不会再被中断唤醒）。
 fn halt_all() -> ! {
     putln!("task: all tasks exited, system halted");
+    ecall::SystemResetCall::new(fid::SystemReset::SystemReset)
+        .call()
+        .unwrap();
     loop {
         unsafe { core::arch::asm!("wfi") };
     }

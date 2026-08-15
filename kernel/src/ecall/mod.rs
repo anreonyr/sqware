@@ -1,11 +1,13 @@
 #![allow(unused)]
 
-use crate::ecall::{extension::*, scall::ScallBuilder};
-
 pub mod eid;
 pub mod extension;
 pub mod fid;
 pub mod scall;
+
+use eid::*;
+use extension::*;
+use scall::*;
 
 pub type BaseCall = ScallBuilder<BaseExt>;
 pub type TimerCall = ScallBuilder<TimerExt>;

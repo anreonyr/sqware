@@ -17,6 +17,7 @@ use log::info;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sie, stval, stvec, time};
 
+use crate::ecall::{TimerCall, fid::Timer, scall::SArgs};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::space::{TRAP_CONTEXT, kernel_trap_context};
@@ -25,7 +26,6 @@ use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, trap_stack_bottom, trap_stack_top,
 };
-use crate::sbi::{TimerCall, fid::Timer, scall::SArgs};
 
 /// per-hart trap 栈底 canary（溢出检测：破坏即 panic）。
 const TRAP_STACK_CANARY: usize = 0x5EED_CAFE_51A7_0000;
