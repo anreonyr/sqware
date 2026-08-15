@@ -4,7 +4,7 @@
 //   addr      — VirtAddr / PhysAddr
 //   entry     — Sv39 PTE + PteFlags
 //   fault     — 缺页处理
-//   space     — Space、SpaceKind、Region、BitmapAllocator 实例、内核地址空间初始化
+//   space     — Space/SpaceKind、Map/Window/Durable 簿记模型、内核地址空间初始化
 //   table     — PageTable、页表遍历/映射（pub(crate)）
 //   asid      — ASID 分配器
 //
@@ -29,14 +29,16 @@ use crate::{
             addr::{PhysAddr, VirtAddr},
             entry::PteFlags,
             space::{
-                KERNEL_BASE, KERNEL_SPACE, KERNEL_TRAP_CONTEXT, SpaceBuilder, TRAMPOLINE,
-                TRAP_CONTEXT, USER_STACK_BASE,
+                KERNEL_BASE, KERNEL_SPACE, KERNEL_TRAP_CONTEXT, MapKind, SpaceBuilder,
+                TRAMPOLINE, TRAP_CONTEXT, USER_STACK_BASE,
             },
         },
     },
 };
 
 use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
 use erra::ResultExt;
 
 use riscv::register::satp;
@@ -112,6 +114,8 @@ pub fn init() -> MapResult<()> {
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
                 ram_flags,
+                MapKind::Reserved, // 借用映射：帧归机器/内核；user 半区触碰 → 预留诊断
+                Vec::new(),
             )?;
 
             // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备）
@@ -120,6 +124,8 @@ pub fn init() -> MapResult<()> {
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
                 ram_flags,
+                MapKind::Reserved,
+                Vec::new(),
             )?;
 
             // 4. 映射 trap trampoline 页（内核自有帧）：所有空间以 TRAMPOLINE VA
@@ -132,10 +138,12 @@ pub fn init() -> MapResult<()> {
                 crate::runtime::trampoline::trampoline_pa(),
                 PAGE_SIZE,
                 tramp_flags,
+                MapKind::Reserved,
+                Vec::new(),
             )?;
 
             // 5. 内核 trap-context 帧：映射于 TRAP_CONTEXT（内核自身 trap 用；
-            //    元数据字段由 trap::init 写入），PA 存入 KERNEL_TRAP_CONTEXT。
+            //    元数据字段由 trap::init 写入），帧入常数 Map，PA 存入 KERNEL_TRAP_CONTEXT。
             let ktc = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                 .map_err(|_| MapError::OutOfMemory)?;
             let ktc_pa = PhysAddr::from_raw(ktc.as_ptr() as usize);
@@ -144,8 +152,9 @@ pub fn init() -> MapResult<()> {
                 ktc_pa,
                 PAGE_SIZE,
                 PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+                MapKind::Anonymous,
+                vec![ktc],
             )?;
-            kernel_space.track_frame(ktc);
             KERNEL_TRAP_CONTEXT.store(ktc_pa, core::sync::atomic::Ordering::Relaxed);
 
             // 6. 启用 Sv39 分页

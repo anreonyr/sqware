@@ -13,7 +13,7 @@ use crate::memory::PAGE_SIZE;
 use super::{
     addr::VirtAddr,
     entry::PteFlags,
-    space::{RegionKind, Space},
+    space::{MapKind, Space},
 };
 
 /// 从机器 CSR 捕获的缺页信息。
@@ -61,7 +61,7 @@ impl PageFault {
 
 /// 为用户缺页解析匿名物理页。
 ///
-/// 按 Region 权限从 frame 分配器取一页并映射到缺页地址。
+/// 按映射权限从 frame 分配器取一页并映射到缺页地址。
 fn resolve_anonymous(fault: &PageFault, space: &Space, flags: PteFlags) -> bool {
     let vaddr = fault.addr.page_align();
     // A/D 必须设置，否则硬件可能再次缺页
@@ -90,7 +90,7 @@ fn resolve_anonymous(fault: &PageFault, space: &Space, flags: PteFlags) -> bool 
 /// # 处理策略
 ///
 /// 1. Re-walk 页表 — 排除 A/D 位竞争
-/// 2. 用户地址 → 查 Region：Anonymous 分配零页，Reserved/无 Region 返回 false
+/// 2. 用户地址 → 查 Map：Anonymous 分配零页，Reserved/无 Map 返回 false
 /// 3. 内核地址 → fatal（内核页必须预映射）
 pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
     // 1. Re-walk 页表 (A/D 位竞争检查)
@@ -105,14 +105,14 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
         return true;
     }
 
-    // 2. 用户地址 → 查 Region
+    // 2. 用户地址 → 查 Map（常数表 + 窗口子表）
     if fault.addr.is_user() {
-        if let Some(region) = space.resolve(fault.addr) {
-            match region.kind {
-                RegionKind::Anonymous => {
-                    return resolve_anonymous(fault, space, region.flags);
+        if let Some(map) = space.resolve(fault.addr) {
+            match map.kind {
+                MapKind::Anonymous => {
+                    return resolve_anonymous(fault, space, map.flags);
                 }
-                RegionKind::Reserved => {
+                MapKind::Reserved => {
                     error!(
                         "reserved region access: {:?} at {:?}, pc={:#x}",
                         fault.kind, fault.addr, fault.pc
@@ -122,7 +122,7 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
             }
         } else {
             error!(
-                "no region for user page fault: {:?} at {:?}, pc={:#x}",
+                "no map for user page fault: {:?} at {:?}, pc={:#x}",
                 fault.kind, fault.addr, fault.pc
             );
             return false;

@@ -21,7 +21,7 @@
 //   1. SCHEDULER          (SpinLock)  — 任务就绪队列/当前任务（task::scheduler）
 //   1. KERNEL_SPACE        (RelLock)   — 内核地址空间（与 SCHEDULER 同级不嵌套：
 //                                          spawn 的空间构建在调度器锁外完成）
-//   2. Space.inner  (RelLock)   — 任务地址空间可变状态（页表读写 + regions/frames/heap）
+//   2. Space.inner  (RelLock)   — 任务地址空间可变状态（Durable：页表/常数映射 + dynamic：窗口）
 //   3. ASID_ALLOCATOR      (SpinLock)  — ASID 分配器
 //   4. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（buddy）
 //   5. portal / block      (SpinLock / TrapGuard) — 全局堆分配

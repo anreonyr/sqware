@@ -18,6 +18,9 @@ use super::{
     entry::{PageTableEntry, PteFlags},
 };
 
+/// 4 KiB 物理帧 — `Box` 指向帧分配器管理的页面，Drop 归还 frame 池。
+pub(crate) type Frame = Box<[u8; PAGE_SIZE], &'static dyn Allocator>;
+
 /// 页表操作错误。
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapError {
@@ -33,8 +36,8 @@ pub enum MapError {
     /// 页表项/中间表不存在。
     #[error("page table entry not mapped")]
     NotMapped,
-    /// 虚拟地址不在任何已注册的 Region 内。
-    #[error("virtual address not in any declared region")]
+    /// 虚拟地址不在任何已注册的 Map 内。
+    #[error("virtual address not in any declared map")]
     NoRegion,
     /// DRAM 恒等映射越过用户栈窗口（内存配置非法）。
     #[error("DRAM identity map overlaps the user stack window")]
@@ -99,9 +102,9 @@ impl PageTable {
 
     /// Walk to the leaf PTE and return a mutable reference.
     ///
-    /// `frames` 控制中间表分配：`Some` 时按需分配，新帧**当场** push 进 `frames`
-    /// （所有权在分配点即归 `Space`，无 out-param、无泄漏）；`None` 时
-    /// 缺中间表即 [`MapError::NotMapped`]（`protect` 等只读遍历用）。
+    /// `tables` 控制中间表分配：`Some` 时按需分配，新帧**当场** push 进 `tables`
+    /// （收集进 `Durable::tables`，所有权在分配点即归空间，无 out-param、无泄漏）；
+    /// `None` 时缺中间表即 [`MapError::NotMapped`]（`protect` 等只读遍历用）。
     ///
     /// # Physical-to-virtual assumption
     ///
@@ -111,17 +114,17 @@ impl PageTable {
     ///
     /// # Errors
     ///
-    /// - `OutOfMemory` — `frames` is `Some` and physical frames exhausted
-    /// - `NotMapped` — `frames` is `None` and an intermediate table is missing
+    /// - `OutOfMemory` — `tables` is `Some` and physical frames exhausted
+    /// - `NotMapped` — `tables` is `None` and an intermediate table is missing
     pub(crate) fn walk_mut(
         &mut self,
         vaddr: VirtAddr,
-        mut frames: Option<&mut Vec<Box<[u8; PAGE_SIZE], &'static dyn Allocator>>>,
+        mut tables: Option<&mut Vec<Frame>>,
     ) -> Result<&mut PageTableEntry, MapError> {
         // Level 2 → Level 1
         let l2 = &mut self.entries[vaddr.vpn(2)];
         if !l2.is_valid() {
-            install_child(l2, &mut frames)?;
+            install_child(l2, &mut tables)?;
         }
         // SAFETY: l2 is valid (pre-existing or just allocated with V only, hence not a leaf).
         // paddr() points to a valid PageTable frame.
@@ -130,7 +133,7 @@ impl PageTable {
         // Level 1 → Level 0
         let l1 = &mut p1.entries[vaddr.vpn(1)];
         if !l1.is_valid() {
-            install_child(l1, &mut frames)?;
+            install_child(l1, &mut tables)?;
         }
         // SAFETY: l1 is valid (pre-existing or just allocated with V only, hence not a leaf).
         // paddr() points to a valid PageTable frame.
@@ -164,7 +167,7 @@ impl PageTable {
         paddr: PhysAddr,
         size: usize,
         flags: PteFlags,
-        frames: &mut Vec<Box<[u8; PAGE_SIZE], &'static dyn Allocator>>,
+        tables: &mut Vec<Frame>,
     ) -> Result<(), MapError> {
         if vaddr.offset() != 0 || !paddr.is_aligned() || size & (PAGE_SIZE - 1) != 0 {
             return Err(MapError::NotAligned);
@@ -174,7 +177,7 @@ impl PageTable {
         for i in 0..pages {
             let va = vaddr + i * PAGE_SIZE;
             let pa = paddr + i * PAGE_SIZE;
-            let leaf = self.walk_mut(va, Some(frames))?;
+            let leaf = self.walk_mut(va, Some(tables))?;
             if leaf.is_valid() {
                 return Err(MapError::AlreadyMapped);
             }
@@ -188,7 +191,7 @@ impl PageTable {
     ///
     /// 将叶子 PTE 清零，不释放中间页表节点（惰性策略）。
     ///
-    /// 复用 [`walk_mut`](Self::walk_mut)（`frames = None`）：中间表缺失时返回
+    /// 复用 [`walk_mut`](Self::walk_mut)（`tables = None`）：中间表缺失时返回
     /// `NotMapped`，与本无映射一致，直接跳过。
     pub(crate) fn unmap(&mut self, vaddr: VirtAddr) {
         if let Ok(leaf) = self.walk_mut(vaddr, None) {
@@ -197,19 +200,19 @@ impl PageTable {
     }
 }
 
-/// 分配一个零帧中间表并安装到 `pte`（`frames` 为 `None` 时视为「不分配」，报 NotMapped）。
+/// 分配一个零帧中间表并安装到 `pte`（`tables` 为 `None` 时视为「不分配」，报 NotMapped）。
 ///
-/// 新帧在分配点即 push 进 `frames`，所有权归 `Space`——即使后续 `map`
+/// 新帧在分配点即 push 进 `tables`，所有权归空间——即使后续 `map`
 /// 因 `AlreadyMapped` 提前返回，帧也不泄漏（Drop 统一归还）。
 fn install_child(
     pte: &mut PageTableEntry,
-    frames: &mut Option<&mut Vec<Box<[u8; PAGE_SIZE], &'static dyn Allocator>>>,
+    tables: &mut Option<&mut Vec<Frame>>,
 ) -> Result<(), MapError> {
-    let frames = frames.as_mut().ok_or(MapError::NotMapped)?;
+    let tables = tables.as_mut().ok_or(MapError::NotMapped)?;
     let child =
         Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
     let child_pa = PhysAddr::from_raw(child.as_ptr() as usize);
-    frames.push(child);
+    tables.push(child);
     pte.set((child_pa.as_usize() >> PAGE_SHIFT) as u64, PteFlags::V);
     Ok(())
 }
