@@ -29,7 +29,6 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::machine;
-use crate::machine::MAX_HARTS;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::{block, frame};
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
@@ -69,6 +68,9 @@ pub use scheduler::{exit_current, tick, with_current_space};
 /// 之后是单线程团队回归：A counter（不自让出，靠抢占）→ B yielder（主动让出）
 /// → C exiter（写 'C' 后退出）。S-timer 由 runtime::init 武装、trap_handler 内循环重武装。
 pub fn init() -> ! {
+    // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
+    scheduler::init_schedulers();
+
     // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
     #[cfg(debug_assertions)]
     pt_reclaim_selftest();
@@ -102,7 +104,7 @@ fn start_secondary_harts() {
     // 并只 HSM 拉起**其它** hart（0..count 中除自身外全部）。
     let me = machine::hart_id();
     machine::mark_hart_started(me);
-    let count = machine::get().hart.min(MAX_HARTS);
+    let count = machine::hart_count();
     let entry = core::ptr::addr_of!(_secondary_entry) as usize;
     for hart in 0..count {
         if hart == me {

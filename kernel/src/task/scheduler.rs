@@ -10,9 +10,9 @@
 // 归零 → Team/Space（ASID + 全部帧）自动回收。
 //
 // 多核调度（锁模型 B）：
-//   SCHEDULERS[hart] — 每 hart 一把 SpinLock（level 1）：保护该 hart 的
+//   schedulers()[hart] — 每 hart 一把 SpinLock（level 1）：保护该 hart 的
 //                      current（运行中，**不在队列**）+ ready（VecDeque）。
-//   steal            — 跨 hart 取活：先读 READY_LENS[v]（锁外原子读，S 态共享
+//   steal            — 跨 hart 取活：先读 ready_lens()[v]（锁外原子读，S 态共享
 //                      不失效缓存行）再 try_lock（非阻塞）——空队列不做 RMW，
 //                      避免对受害者锁行乒乓；拿不到即跳过（无锁序规则）。
 //   idle             — 本 hart 无任务：spin + steal；全退出 → halt_all。
@@ -23,7 +23,7 @@
 // 从帧读 kernel_sp 上 per-hart trap 栈——steal 迁移后任务在偷取核上运行，写漏
 // 会让它跑到旧核的栈上；debug assert 在 trap 入口兜底）。
 //
-// 锁层级（lock/mod.rs）：SCHEDULERS[hart] = level 1（类型级，彼此不嵌套；
+// 锁层级（lock/mod.rs）：schedulers()[hart] = level 1（类型级，彼此不嵌套；
 // try_lock steal 免于锁序规则）；Team.tasks = level 3——与 Space.inner = 2
 // **禁止嵌套持有**：push_task/prune_tasks 是纯 Vec 操作，锁内绝不调 space 方法。
 //
@@ -38,9 +38,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 use crate::ecall::fid;
-use crate::lock::SpinLock;
+use crate::lock::{OnceLock, SpinLock};
 use crate::machine;
-use crate::machine::MAX_HARTS;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
@@ -125,7 +124,7 @@ pub struct Team {
 }
 
 impl Team {
-    /// 成员入簿（调用方通常持 SCHEDULERS[hart]——spawn_thread；不调 space 方法）。
+    /// 成员入簿（调用方通常持 schedulers()[hart]——spawn_thread；不调 space 方法）。
     fn push_task(&self, task: &Arc<Task>) {
         self.tasks.lock().push(Arc::downgrade(task));
     }
@@ -159,13 +158,43 @@ const fn new_scheduler() -> SpinLock<Scheduler> {
 }
 
 /// 每 hart 调度锁（level 1；类型级，彼此不嵌套）。
-static SCHEDULERS: [SpinLock<Scheduler>; MAX_HARTS] = [const { new_scheduler() }; MAX_HARTS];
+///
+/// **按实际核数动态分配**（boot 时 init_schedulers 从 buddy 取，Box::leak 进
+/// OnceLock）——机器核数由 DTB 决定，不固定 MAX_HARTS 静态数组。
+static SCHEDULERS: OnceLock<&'static [SpinLock<Scheduler>]> = OnceLock::new();
 
 /// 就绪队列长度（锁外只读信号：steal 先读后锁；写须在持对应调度器锁时进行）。
 #[repr(align(64))]
 struct ReadyLen(AtomicUsize);
 
-static READY_LENS: [ReadyLen; MAX_HARTS] = [const { ReadyLen(AtomicUsize::new(0)) }; MAX_HARTS];
+static READY_LENS: OnceLock<&'static [ReadyLen]> = OnceLock::new();
+
+/// per-hart 调度锁数组（与 hart 数同尺寸）。
+fn schedulers() -> &'static [SpinLock<Scheduler>] {
+    SCHEDULERS.get().expect("schedulers not initialized")
+}
+
+/// 就绪队列长度数组（与 hart 数同尺寸）。
+fn ready_lens() -> &'static [ReadyLen] {
+    READY_LENS.get().expect("ready lens not initialized")
+}
+
+/// 按实际核数（DTB）动态分配 per-hart 调度器状态（boot 时调用**恰好一次**，
+/// 先于任何调度器访问：spawn / trap / steal）。
+pub fn init_schedulers() {
+    let n = machine::hart_count();
+    assert!(n > 0, "no harts");
+    let sched: Box<[SpinLock<Scheduler>]> = (0..n).map(|_| new_scheduler()).collect();
+    let lens: Box<[ReadyLen]> = (0..n).map(|_| ReadyLen(AtomicUsize::new(0))).collect();
+    assert!(
+        SCHEDULERS.set(Box::leak(sched)).is_ok(),
+        "schedulers double init"
+    );
+    assert!(
+        READY_LENS.set(Box::leak(lens)).is_ok(),
+        "ready lens double init"
+    );
+}
 
 /// 全局任务号（跨 hart 唯一；替代阶段 A 的锁内递增）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -176,10 +205,7 @@ static EXITED: AtomicUsize = AtomicUsize::new(0);
 /// 停机互斥：第一个触发 srst 的核胜出，其余 wfi（避免双 srst）。
 static HALTING: AtomicBool = AtomicBool::new(false);
 
-/// 实际活跃 hart 数（DTB 核数 ≤ MAX_HARTS）。
-fn hart_count() -> usize {
-    machine::get().hart.min(MAX_HARTS)
-}
+// 实际活跃核数由 machine::hart_count() 提供（DTB 核数 ≤ MAX_HARTS）
 
 /// 生成一个新团队（进程）：建空间 → 映射文本/TRAMPOLINE → 建首个线程。
 ///
@@ -287,7 +313,7 @@ pub fn spawn_thread(
             pa: frame_pa,
         },
     });
-    let mut sch = SCHEDULERS[me].lock();
+    let mut sch = schedulers()[me].lock();
     team.push_task(&task);
     putln!(
         "task #{} '{}': spawned ({:?}), frame @ {:#x}, stack @ {:#x}",
@@ -298,7 +324,7 @@ pub fn spawn_thread(
         stack_top.as_usize()
     );
     sch.ready.push_back(task);
-    READY_LENS[me].0.fetch_add(1, Ordering::Relaxed);
+    ready_lens()[me].0.fetch_add(1, Ordering::Relaxed);
     SPAWNED.fetch_add(1, Ordering::Relaxed);
     Ok(frame_pa)
 }
@@ -321,7 +347,7 @@ fn prepare_resume(task: &Arc<Task>, hart: usize) {
 /// 内核上下文——切换会丢弃它；防御性判断见 trap.rs 定时器分支）。
 pub fn tick() -> usize {
     let me = machine::hart_id();
-    let mut sch = SCHEDULERS[me].lock();
+    let mut sch = schedulers()[me].lock();
     let Some(cur) = sch.current.take() else {
         // tick 只可能来自用户态陷阱（恒有 current）——防御性 panic
         panic!("tick with no current task on hart {me}");
@@ -334,9 +360,9 @@ pub fn tick() -> usize {
     }
     cur.set_state(TaskState::Ready);
     sch.ready.push_back(cur);
-    READY_LENS[me].0.fetch_add(1, Ordering::Relaxed);
+    ready_lens()[me].0.fetch_add(1, Ordering::Relaxed);
     let next = sch.ready.pop_front().expect("non-empty");
-    READY_LENS[me].0.fetch_sub(1, Ordering::Relaxed);
+    ready_lens()[me].0.fetch_sub(1, Ordering::Relaxed);
     let pa = next.trap.pa.as_usize();
     prepare_resume(&next, me);
     sch.current = Some(next);
@@ -353,7 +379,7 @@ pub fn tick() -> usize {
 /// 调用方注意：返回后当前任务帧已失效（其帧页已归还），不得再解引用。
 pub fn exit_current() -> usize {
     let me = machine::hart_id();
-    let mut sch = SCHEDULERS[me].lock();
+    let mut sch = schedulers()[me].lock();
     let exited = sch.current.take().expect("no running task");
     debug_assert_eq!(
         exited.state(),
@@ -369,7 +395,7 @@ pub fn exit_current() -> usize {
     EXITED.fetch_add(1, Ordering::Relaxed);
     match sch.ready.pop_front() {
         Some(next) => {
-            READY_LENS[me].0.fetch_sub(1, Ordering::Relaxed);
+            ready_lens()[me].0.fetch_sub(1, Ordering::Relaxed);
             let pa = next.trap.pa.as_usize();
             prepare_resume(&next, me);
             sch.current = Some(next);
@@ -396,7 +422,7 @@ fn install_current(task: Arc<Task>) -> usize {
     let me = machine::hart_id();
     prepare_resume(&task, me);
     let pa = task.trap.pa.as_usize();
-    SCHEDULERS[me].lock().current = Some(task);
+    schedulers()[me].lock().current = Some(task);
     pa
 }
 
@@ -407,15 +433,15 @@ fn install_current(task: Arc<Task>) -> usize {
 /// 跳过——受害者忙时不等待，无锁序规则）。锁内复查队列防读后变更竞态。
 fn steal() -> Option<Arc<Task>> {
     let me = machine::hart_id();
-    let n = hart_count();
+    let n = machine::hart_count();
     for v in 0..n {
         if v == me {
             continue;
         }
-        if READY_LENS[v].0.load(Ordering::Relaxed) == 0 {
+        if ready_lens()[v].0.load(Ordering::Relaxed) == 0 {
             continue;
         }
-        let Some(mut sch) = SCHEDULERS[v].try_lock() else {
+        let Some(mut sch) = schedulers()[v].try_lock() else {
             continue;
         };
         if sch.ready.is_empty() {
@@ -423,7 +449,7 @@ fn steal() -> Option<Arc<Task>> {
             continue;
         }
         let task = sch.ready.pop_front().expect("non-empty");
-        READY_LENS[v].0.fetch_sub(1, Ordering::Relaxed);
+        ready_lens()[v].0.fetch_sub(1, Ordering::Relaxed);
         drop(sch);
         putln!("hart {me}: stole task #{} '{}' from hart {v}", task.id, task.name);
         return Some(task);
@@ -440,9 +466,9 @@ fn steal() -> Option<Arc<Task>> {
 pub fn enter_first_task() -> usize {
     let me = machine::hart_id();
     loop {
-        let mut sch = SCHEDULERS[me].lock();
+        let mut sch = schedulers()[me].lock();
         if let Some(task) = sch.ready.pop_front() {
-            READY_LENS[me].0.fetch_sub(1, Ordering::Relaxed);
+            ready_lens()[me].0.fetch_sub(1, Ordering::Relaxed);
             let pa = task.trap.pa.as_usize();
             prepare_resume(&task, me);
             sch.current = Some(task);
@@ -476,7 +502,7 @@ pub fn idle_loop() -> ! {
 /// 当前运行任务 id（诊断用；无任务返回 usize::MAX）。
 pub fn current_task_id() -> usize {
     let me = machine::hart_id();
-    let sch = SCHEDULERS[me].lock();
+    let sch = schedulers()[me].lock();
     sch.current.as_ref().map(|t| t.id).unwrap_or(usize::MAX)
 }
 
@@ -485,7 +511,7 @@ pub fn current_task_id() -> usize {
 /// 供 trap 缺页路径取当前空间（多核下取本 hart 的 current）。
 pub fn with_current_space<R>(f: impl FnOnce(&Space) -> R) -> R {
     let me = machine::hart_id();
-    let sch = SCHEDULERS[me].lock();
+    let sch = schedulers()[me].lock();
     let task = sch.current.as_ref().expect("no running task");
     f(&task.team.space)
 }

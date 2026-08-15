@@ -32,8 +32,8 @@ impl Region {
     }
 }
 
-/// 最大支持的 hart 数（静态数组 / trap 栈段数上限；实际活跃核数 =
-/// `min(Machine::hart, MAX_HARTS)`——见 task::start_secondary_harts）。
+/// 最大支持的 hart 数（编译期安全上限；per-hart 结构按实际核数动态分配，
+/// 见 [`hart_count`]）。
 pub const MAX_HARTS: usize = 8;
 
 /// 已由 hart 0 经 HSM 启动的 hart 数（含 hart 0）。boot 早期 = 1；RFNC 掩码
@@ -48,6 +48,13 @@ pub fn mark_hart_started(hart: usize) {
 /// 当前已启动的 hart 数（远程 TLB 刷新的掩码上界）。
 pub fn started_harts() -> usize {
     STARTED_HARTS.load(Ordering::Relaxed)
+}
+
+/// 实际活跃核数 = min(DTB 核数, MAX_HARTS 上限)。
+///
+/// 动态分配的 per-hart 结构（调度器数组 / trap 栈）都按此值定尺寸。
+pub fn hart_count() -> usize {
+    get().hart.min(MAX_HARTS)
 }
 
 /// 启动时从 DTB 解析出的机器设备信息（纯值，Copy，可安全存入 static）。

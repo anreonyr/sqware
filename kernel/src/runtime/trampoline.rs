@@ -17,10 +17,11 @@
 //
 // 帧布局与偏移见 runtime/context.rs（编译期偏移断言锁定，改布局必须先改两处）。
 
+use alloc::boxed::Box;
 use core::arch::global_asm;
 use core::cell::UnsafeCell;
 
-use crate::machine::MAX_HARTS;
+use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
@@ -293,17 +294,18 @@ impl<T: Copy> SyncCell<T> {
 }
 
 /// per-hart trap 栈元数据表（模块内专用；经 trap_stack_top/bottom 读取）。
-static TRAP_STACKS: [SyncCell<TrapStackMeta>; MAX_HARTS] = [const {
-    SyncCell::new(TrapStackMeta {
-        top: 0,
-        bottom: 0,
-        guard: 0,
-    })
-}; MAX_HARTS];
+///
+/// **按实际核数动态分配**（boot 时 init_trap_stacks 分配并填充；此后只读）。
+static TRAP_STACKS: OnceLock<&'static [SyncCell<TrapStackMeta>]> = OnceLock::new();
 
 /// 读取某 hart 的 trap 栈元数据。
 fn trap_stack_meta(hart: usize) -> TrapStackMeta {
-    TRAP_STACKS[hart].get()
+    TRAP_STACKS.get().expect("trap stacks not initialized")[hart].get()
+}
+
+/// trap 栈元数据表长度（= 实际核数）。
+fn trap_stack_count() -> usize {
+    TRAP_STACKS.get().expect("trap stacks not initialized").len()
 }
 
 /// 由当前 sp（trap 栈体内）反解 hart 并写入 tp——用户态可自由改写 tp，而内核
@@ -318,7 +320,7 @@ pub fn establish_tp() {
     unsafe {
         core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
     }
-    let hart = (0..MAX_HARTS)
+    let hart = (0..trap_stack_count())
         .find(|&h| {
             let m = trap_stack_meta(h);
             m.top != 0 && sp <= m.top && sp > m.bottom
@@ -343,7 +345,7 @@ pub fn trap_stack_bottom(hart: usize) -> usize {
 /// 地址是否落在某 hart 的 trap 栈 guard 页内（返回该 hart 号）——内核故障
 /// 路径据此识别「trap 栈溢出」并给出精确诊断。
 pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
-    for h in 0..MAX_HARTS {
+    for h in 0..trap_stack_count() {
         let guard = trap_stack_meta(h).guard;
         if guard != 0 && addr >= guard && addr < guard + PAGE_SIZE {
             return Some(h);
@@ -353,32 +355,52 @@ pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
 }
 
 /// per-hart trap 栈段常量：每段 32 KiB = 低 4 KiB guard（未映射）+ 28 KiB 栈体；
-/// 一块 256 KiB（buddy order-6）连续块切 MAX_HARTS 段，guard 页兼作段边界。
+/// 连续块按实际核数分配（N x 32 KiB，buddy 向上取整到 2 的幂），guard 页兼作
+/// 段边界。
 pub const TRAP_STACK_SEGMENT: usize = 32 * 1024;
 pub const TRAP_STACK_GUARD: usize = PAGE_SIZE;
 
 /// 初始化 per-hart trap 栈（boot 时由 trap::init 调用**恰好一次**，hart 0）。
 ///
-/// 1. buddy **连续**分配 256 KiB（8 段 x 32 KiB；buddy 按 order 支持连续块）；
-/// 2. 内核空间**清 guard 页 PTE**（栈体随 DRAM 恒等映射保持可访问——unmap 对
+/// 1. 按实际核数（DTB）buddy **连续**分配 N x 32 KiB（buddy 按 order 支持连续块，
+///    向上取整到 2 的幂）；
+/// 2. 动态分配 TRAP_STACKS 元数据表（N 项）并置入 OnceLock；
+/// 3. 内核空间**清 guard 页 PTE**（栈体随 DRAM 恒等映射保持可访问——unmap 对
 ///    部分覆盖的 DRAM 常数映射只清 PTE、保留簿记）；
-/// 3. 各段栈底写 canary；填充 TRAP_STACKS。
+/// 4. 各段栈底写 canary；填充表项。
 ///
-/// 块永不释放（静态分配，段数 = MAX_HARTS）。
+/// 块与表永不释放（静态分配，段数 = 实际核数）。
 pub fn init_trap_stacks() {
-    const TOTAL: usize = TRAP_STACK_SEGMENT * MAX_HARTS;
+    let segments = crate::machine::hart_count();
+    assert!(segments > 0, "no harts");
+    let total = segments * TRAP_STACK_SEGMENT;
     let layout =
-        core::alloc::Layout::from_size_align(TOTAL, PAGE_SIZE).expect("trap stack layout");
-    // 块连续（buddy order-6 = 256 KiB）；boot 期帧池充足。
+        core::alloc::Layout::from_size_align(total, PAGE_SIZE).expect("trap stack layout");
+    // 块连续（buddy 按 order 取整到 2 的幂）；boot 期帧池充足。
     let block = allocator().allocate(layout).expect("trap stack block allocation");
     let base = block.cast::<u8>().as_ptr() as usize;
     // establish_tp 反解 hartid 依赖段大小 = 2^15（kernel_sp - base 恒为 32 KiB
     // 整数倍——段连续切分；C 侧按 TRAP_STACKS 表范围匹配，无需 base 静态）
     assert_eq!(TRAP_STACK_SEGMENT, 1 << 15, "trap stack segment must be 32 KiB");
 
+    // 元数据表（N 项，先置 OnceLock 再逐项填充）
+    let table: Box<[SyncCell<TrapStackMeta>]> = (0..segments)
+        .map(|_| {
+            SyncCell::new(TrapStackMeta {
+                top: 0,
+                bottom: 0,
+                guard: 0,
+            })
+        })
+        .collect();
+    assert!(
+        TRAP_STACKS.set(Box::leak(table)).is_ok(),
+        "trap stacks double init"
+    );
+
     let ks = kernel_space();
     let space = ks.as_ref().expect("kernel space not initialized");
-    for h in 0..MAX_HARTS {
+    for h in 0..segments {
         let seg = base + h * TRAP_STACK_SEGMENT;
         let guard = seg;
         let body = seg + TRAP_STACK_GUARD;
@@ -388,10 +410,15 @@ pub fn init_trap_stacks() {
         unsafe {
             (body as *mut usize).write(crate::runtime::trap::TRAP_STACK_CANARY);
         }
-        TRAP_STACKS[h].set(TrapStackMeta {
+        trap_stack_cell(h).set(TrapStackMeta {
             top: seg + TRAP_STACK_SEGMENT,
             bottom: body,
             guard,
         });
     }
+}
+
+/// 表项引用（boot 填充用：SyncCell::set 取 &self）。
+fn trap_stack_cell(hart: usize) -> &'static SyncCell<TrapStackMeta> {
+    &TRAP_STACKS.get().expect("trap stacks not initialized")[hart]
 }
