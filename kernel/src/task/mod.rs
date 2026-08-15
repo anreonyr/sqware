@@ -13,15 +13,19 @@
 // scheduler::idle_loop）。
 //
 // 子模块：
-//   scheduler — per-hart 调度器（Team/Task/队列/steal/回收/当前空间借出）
+//   scheduler — per-hart 调度核心（Scheduler/每核表/切换/回收/steal/停机）
+//   task      — 线程模型类型（Team/Task/TaskState/TrapFrame）
+//   create    — 进程/线程创建（spawn/spawn_thread）
 //   envcall   — 用户态环境调用 ABI（RISC-V "Environment Call"，见 riscv crate
 //               的 Exception::UserEnvCall 命名——术语与规范同源）
 //
 // 阶段 B 的 user.rs 被本模块吸收：USER_SPACE 单例 → per-team Space；boot() →
 // init()；trap.rs 缺页路由改经 task::with_current_space 取当前空间。
 
+pub(crate) mod create;
 pub mod envcall;
 pub mod scheduler;
+pub(crate) mod task;
 
 use core::arch::global_asm;
 
@@ -56,9 +60,9 @@ unsafe extern "C" {
 /// 用户程序加载基址（阶段 B 沿用；阶段 C 后续 ELF 加载亦用此基址）。
 pub const USER_TEXT_BASE: VirtAddr = VirtAddr::from_raw(0x1_0000);
 
-// 常用 API 收敛到 task::（scheduler 内部实现，详见 scheduler.rs）
+// 常用 API 收敛到 task::（实现分布在 scheduler.rs / create.rs）
 // 只 re-export 外部引用者（envcall/trap）：spawn/spawn_thread 由 init 经
-// scheduler:: 限定路径调用。
+// create:: 限定路径调用。
 pub use scheduler::{exit_current, tick, with_current_space};
 
 /// 启动多任务（阶段 A 线程模型）：spawn 演示团队后进入首个线程，永不返回。
@@ -77,13 +81,13 @@ pub fn init() -> ! {
 
     // Team1：双线程共享同一地址空间（两线程均长跑——多核下分布在两 hart 上
     // 真实并行：a0=0 → 'A' 循环，a0=1 → 'B' 循环）
-    let (_first, team1) = scheduler::spawn(program_d(), "thread-A").expect("spawn team1 failed");
-    let _ = scheduler::spawn_thread(&team1, "thread-B", 1).expect("spawn thread B failed");
+    let (_first, team1) = create::spawn(program_d(), "thread-A").expect("spawn team1 failed");
+    let _ = create::spawn_thread(&team1, "thread-B", 1).expect("spawn thread B failed");
     drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
     // 单线程团队回归：A/B/C 行为不变
-    let _ = scheduler::spawn(program_a(), "counter").expect("spawn A failed");
-    let _ = scheduler::spawn(program_b(), "yielder").expect("spawn B failed");
-    let _ = scheduler::spawn(program_c(), "exiter").expect("spawn C failed");
+    let _ = create::spawn(program_a(), "counter").expect("spawn A failed");
+    let _ = create::spawn(program_b(), "yielder").expect("spawn B failed");
+    let _ = create::spawn(program_c(), "exiter").expect("spawn C failed");
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
     // 经 steal 从队列取活——任务即向各核迁移）
