@@ -245,6 +245,8 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
                 putln!("timer tick #{tick} @ time={}", time::read());
             }
             arm_timer(TIMER_INTERVAL);
+            // 到期睡眠任务唤醒（Blocked → Ready 入队；wake_due 内部先放队列锁）
+            crate::task::wake_due();
             if frame.sstatus & (1 << 8) == 0 {
                 crate::task::tick() as *mut TrapContext
             } else {

@@ -12,6 +12,10 @@
 //       （SPAWNED/EXITED/HALTING + all_exited/halt_all）、对外 API 入口
 //       （tick/exit_current/enqueue 等薄包装：取本核锁 + 委托方法）、跨核偷取
 //       （steal + install_stolen）、核入口（enter_first_task/idle_loop）
+//   任务阻塞      — Blocked 态 + 睡眠队列（SLEEP_LIST）：sleep（Running→Blocked
+//                   入队，wake_at 单调 → 队首即最早到期）与 wake_due（tick 扫描
+//                   到期者 Blocked→Ready 出队入调度队列）——任务级等待的通用
+//                   模式（未来信号量等原语同持锁纪律）
 //
 // 多核调度（锁模型 B）：
 //   schedulers()[hart] — 每 hart 一把 SpinLock（level 1）：保护该 hart 的
@@ -39,6 +43,7 @@
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::ecall::fid;
@@ -107,7 +112,7 @@ impl Scheduler {
     /// 任务即将在本 hart 上运行：置 Running + 写 kernel_sp（本 hart trap 栈顶——
     /// steal 迁移正确性的关键）+ 武装定时器。调用方须持本 hart 调度锁。
     fn prepare_resume(&self, task: &Arc<Task>) {
-        task.set_state(TaskState::Running);
+        task.transition(TaskState::Running);
         // SAFETY: 帧 PA 恒等映射可写；帧属 task 独占（current 或刚从就绪队列摘出）。
         unsafe {
             let frame = &mut *(task.trap.pa.as_usize() as *mut TrapContext);
@@ -139,7 +144,7 @@ impl Scheduler {
             self.current = Some(cur);
             return pa;
         }
-        cur.set_state(TaskState::Ready);
+        cur.transition(TaskState::Ready);
         self.enqueue(cur);
         let next = self.pop_ready().expect("non-empty");
         let pa = next.trap.pa.as_usize();
@@ -407,7 +412,11 @@ fn idle_wait() -> Option<Arc<Task>> {
     if all_exited() {
         halt_all();
     }
-    crate::runtime::trap::arm_timer(1 << 60);
+    // 停掉周期定时器唤醒（stimecmp 推远）——**除非睡眠队列非空**：此时必须保持
+    // tick，让任意核（含空闲核）都能跑 wake_due 唤醒到期任务（防全员阻塞死等）。
+    if SLEEP_LIST.lock().is_empty() {
+        crate::runtime::trap::arm_timer(1 << 60);
+    }
     // WFI：SSIP（IPI）/ 残留 STIP 挂起即唤醒——只唤醒不取中断（SIE=0）
     unsafe {
         core::arch::asm!("wfi");
@@ -440,6 +449,95 @@ fn acquire_next() -> usize {
         if let Some(task) = idle_wait() {
             return install_stolen(task);
         }
+    }
+}
+
+// ── 任务阻塞：睡眠队列（Blocked 态的等待队列）──────────────────────
+
+/// 睡眠条目：唤醒截止时间（time::read() 绝对时间）+ 阻塞任务。
+struct SleepEntry {
+    wake_at: usize,
+    task: Arc<Task>,
+}
+
+/// 睡眠阻塞队列（FIFO；wake_at 单调递增——后睡者必后醒，队首即最早到期）。
+///
+/// 持锁纪律（见 lock/mod.rs，与 Team.tasks 同级）：block 路径「调度锁 → 队列
+/// 锁」嵌套合法；wake 路径（wake_due）**先放队列锁再取调度锁**——绝不持队列锁
+/// 取调度锁（防 ABBA）。
+static SLEEP_LIST: SpinLock<VecDeque<SleepEntry>> = SpinLock::new(VecDeque::new());
+
+/// 当前任务睡眠 `ticks` 个调度量子（Running → Blocked → 睡眠队列；到期由 trap
+/// 定时器分支 wake_due 唤醒）。返回下一运行任务帧 PA（本核队列空则转阻塞获取）。
+///
+/// 调用方注意：返回后当前任务帧**仍有效**（阻塞非退出——帧未回收）。
+pub fn sleep(ticks: usize) -> usize {
+    let me = machine::hart_id();
+    let wake_at = riscv::register::time::read() + ticks * TIMER_INTERVAL;
+    let mut sch = schedulers()[me].lock();
+    let task = sch.current.take().expect("no running task");
+    debug_assert_eq!(
+        task.state(),
+        TaskState::Running,
+        "current task must be running"
+    );
+    putln!(
+        "task #{} '{}': sleeping {} ticks (wake @ {wake_at:#x})",
+        task.id,
+        task.name,
+        ticks
+    );
+    task.transition(TaskState::Blocked);
+    // 调度锁 → 睡眠队列锁（同层嵌套合法；wake 路径绝不反向嵌套）
+    SLEEP_LIST.lock().push_back(SleepEntry { wake_at, task });
+    match sch.pop_ready() {
+        Some(next) => {
+            let pa = next.trap.pa.as_usize();
+            sch.prepare_resume(&next);
+            sch.current = Some(next);
+            pa
+        }
+        None => {
+            drop(sch);
+            acquire_next()
+        }
+    }
+}
+
+/// 唤醒入队（Blocked → Ready 后）：只入队 + 计数 + 唤醒休眠核；**不做**团队
+/// 簿记（任务已在团队簿记中）与 SPAWNED（非新任务）。
+fn wake_enqueue(task: Arc<Task>) {
+    let me = machine::hart_id();
+    {
+        let mut sch = schedulers()[me].lock();
+        sch.enqueue(task);
+    }
+    wake_sleepers();
+}
+
+/// tick 唤醒：扫描睡眠队列，到期任务 Blocked → Ready 出队并入调度队列（调用方
+/// = trap 定时器分支；队列锁先放后取，绝不持队列锁取调度锁）。
+pub fn wake_due() {
+    let now = riscv::register::time::read();
+    let due: Vec<Arc<Task>> = {
+        let mut list = SLEEP_LIST.lock();
+        let mut due = Vec::new();
+        loop {
+            let due_front = match list.front() {
+                Some(entry) => entry.wake_at <= now,
+                None => false,
+            };
+            if !due_front {
+                break;
+            }
+            due.push(list.pop_front().expect("front checked").task);
+        }
+        due
+    };
+    for task in due {
+        task.transition(TaskState::Ready);
+        putln!("task #{} '{}': woken", task.id, task.name);
+        wake_enqueue(task);
     }
 }
 

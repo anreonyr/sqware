@@ -25,6 +25,8 @@ pub enum Envcall {
     Exit = 2,
     /// 读取定时器 tick 计数（返回值写 a0）。
     GetTicks = 3,
+    /// 睡眠指定量子数（a0 = ticks；Running → Blocked → 到期由 tick 唤醒）。
+    Sleep = 4,
 }
 
 impl TryFrom<usize> for Envcall {
@@ -36,6 +38,7 @@ impl TryFrom<usize> for Envcall {
             1 => Ok(Self::Write),
             2 => Ok(Self::Exit),
             3 => Ok(Self::GetTicks),
+            4 => Ok(Self::Sleep),
             _ => Err(()),
         }
     }
@@ -69,6 +72,11 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             frame.sepc += 4;
             frame.gpr[10] = ticks();
             frame as *mut TrapContext
+        }
+        Envcall::Sleep => {
+            // sepc 前进（唤醒恢复时从 ecall 之后继续）；任务被 park，返回下一帧
+            frame.sepc += 4;
+            crate::task::sleep(frame.gpr[10]) as *mut TrapContext
         }
     }
 }

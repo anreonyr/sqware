@@ -63,7 +63,7 @@ pub const USER_TEXT_BASE: VirtAddr = VirtAddr::from_raw(0x1_0000);
 // 常用 API 收敛到 task::（实现分布在 scheduler.rs / create.rs）
 // 只 re-export 外部引用者（envcall/trap）：spawn/spawn_thread 由 init 经
 // create:: 限定路径调用。
-pub use scheduler::{exit_current, tick, with_current_space};
+pub use scheduler::{exit_current, sleep, tick, wake_due, with_current_space};
 
 /// 启动多任务（阶段 A 线程模型）：spawn 演示团队后进入首个线程，永不返回。
 ///
@@ -88,6 +88,9 @@ pub fn init() -> ! {
     let _ = create::spawn(program_a(), "counter").expect("spawn A failed");
     let _ = create::spawn(program_b(), "yielder").expect("spawn B failed");
     let _ = create::spawn(program_c(), "exiter").expect("spawn C failed");
+    // E sleeper：每 1.6s 写 'E' 后睡眠 16 量子——任务级阻塞（Running → Blocked →
+    // 睡眠队列 → tick 唤醒）演示
+    let _ = create::spawn(program_e(), "sleeper").expect("spawn E failed");
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
     // 经 steal 从队列取活——任务即向各核迁移）
@@ -312,5 +315,22 @@ const fn program_d() -> &'static [u8] {
         0x13, 0x05, 0x10, 0x04, // li   a0, 0x41     ('A')
         0x73, 0x00, 0x00, 0x00, // ecall
         0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24        (A 循环)
+    ]
+}
+
+/// E "sleeper"：写 'E' 后睡眠 16 量子（ENV_SLEEP，约 1.6s）再循环——任务级阻塞
+/// 演示：Running → Blocked（睡眠队列）→ tick 唤醒（wake_due）。
+///
+/// 布局（28 B）：li a7,1; li a0,'E'; ecall; li a7,4; li a0,16; ecall; j -0x24
+/// （字节经 llvm-mc 核对；ENV_SLEEP = 4）
+const fn program_e() -> &'static [u8] {
+    &[
+        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
+        0x13, 0x05, 0x50, 0x04, // li   a0, 0x45     ('E')
+        0x73, 0x00, 0x00, 0x00, // ecall
+        0x93, 0x08, 0x40, 0x00, // li   a7, 4        (ENV_SLEEP)
+        0x13, 0x05, 0x00, 0x01, // li   a0, 16       (ticks)
+        0x73, 0x00, 0x00, 0x00, // ecall
+        0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24
     ]
 }

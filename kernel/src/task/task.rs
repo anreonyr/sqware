@@ -28,6 +28,8 @@ pub enum TaskState {
     Ready = 0,
     /// 当前运行（恒为某 hart 的 current，不在任何队列）。
     Running = 1,
+    /// 阻塞（在某个等待队列中——睡眠/信号量等；**不在**任何就绪队列，不可被 steal）。
+    Blocked = 2,
 }
 
 /// trap 帧句柄 — 线程 trap 帧的薄引用。
@@ -55,14 +57,31 @@ pub struct Task {
 }
 
 impl Task {
-    pub(crate) fn set_state(&self, state: TaskState) {
-        self.state.store(state as u8, Ordering::Relaxed);
+    /// 状态转移（状态机不变量）：非法转移直接 panic。
+    ///
+    /// 合法转移：
+    ///   Ready → Running（调度器选上 / steal 迁移后运行）
+    ///   Running → Ready（抢占 / 让出）
+    ///   Running → Blocked（阻塞：进入等待队列，如睡眠）
+    ///   Blocked → Ready（唤醒：回到就绪队列）
+    pub(crate) fn transition(&self, next: TaskState) {
+        let cur = self.state();
+        let legal = matches!(
+            (cur, next),
+            (TaskState::Ready, TaskState::Running)
+                | (TaskState::Running, TaskState::Ready)
+                | (TaskState::Running, TaskState::Blocked)
+                | (TaskState::Blocked, TaskState::Ready)
+        );
+        assert!(legal, "illegal task state transition: {cur:?} -> {next:?}");
+        self.state.store(next as u8, Ordering::Relaxed);
     }
 
     pub(crate) fn state(&self) -> TaskState {
         match self.state.load(Ordering::Relaxed) {
             0 => TaskState::Ready,
             1 => TaskState::Running,
+            2 => TaskState::Blocked,
             // 只会写入 TaskState 的合法编码，此处不可能到达
             _ => unreachable!("invalid task state: {}", self.state.load(Ordering::Relaxed)),
         }

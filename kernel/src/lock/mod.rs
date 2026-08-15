@@ -27,6 +27,9 @@
 //   3. Team.tasks          (SpinLock)  — 团队成员簿记（弱引用列表；纯 Vec 操作，
 //                                          **与 Space.inner 禁止嵌套持有**——
 //                                          push_task/prune_tasks 锁内绝不调 space 方法）
+//   3. SLEEP_LIST          (SpinLock)  — 睡眠阻塞队列：block 路径 1 → 3 嵌套合法；
+//                                          wake 路径（wake_due）**先放队列锁再取
+//                                          调度锁**——绝不持队列锁取调度锁（防 ABBA）
 //   4. ASID_ALLOCATOR      (SpinLock)  — ASID 分配器
 //   5. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（buddy）
 //   6. portal / block      (SpinLock / TrapGuard) — 全局堆分配
