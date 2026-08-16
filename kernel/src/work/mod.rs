@@ -13,18 +13,21 @@
 // scheduler::idle_loop）。
 //
 // 子模块：
-//   scheduler — per-hart 调度核心（Scheduler/每核表/切换/回收/steal/停机）
+//   scheduler — per-hart 调度核心（Scheduler/每核表/切换/回收/steal）
+//   lifecycle — 系统级生命周期（任务计数/全退出停机、休眠核位图/IPI 唤醒）
 //   task      — 线程模型类型（Team/Task/TaskState/TrapFrame）
 //   create    — 进程/线程创建（spawn/spawn_thread）
 //   envcall   — 用户态环境调用 ABI（RISC-V "Environment Call"，见 riscv crate
 //               的 Exception::UserEnvCall 命名——术语与规范同源）
 //
 // 阶段 B 的 user.rs 被本模块吸收：USER_SPACE 单例 → per-team Space；boot() →
-// init()；trap.rs 缺页路由改经 task::with_current_space 取当前空间。
+// init()；trap.rs 缺页路由改经 task::with_running_space 取当前空间。
 
 pub(crate) mod create;
 pub mod envcall;
+pub(crate) mod lifecycle;
 pub mod scheduler;
+#[allow(clippy::module_inception)] // task 模块内嵌 task.rs（类型子模块），命名既成事实
 pub(crate) mod task;
 
 use core::arch::global_asm;
@@ -46,9 +49,9 @@ global_asm!(
     ".align 2",
     ".globl _secondary_entry",
     "_secondary_entry:",
-    "    mv   tp, a0", // hartid → tp（与 _start 一致；hart_id() 读 tp）
+    "    mv   tp, a0",     // hartid → tp（与 _start 一致；hart_id() 读 tp）
     "    csrc sstatus, 2", // 清 SIE：内核态恒关中断（同 _start）
-    "    mv   sp, a1", // opaque = 本 hart trap 栈顶（HSM Start 传入；寄存器传递）
+    "    mv   sp, a1",     // opaque = 本 hart trap 栈顶（HSM Start 传入；寄存器传递）
     "    call secondary_main",
 );
 
@@ -63,7 +66,7 @@ pub const USER_TEXT_BASE: VirtAddr = VirtAddr::from_raw(0x1_0000);
 // 常用 API 收敛到 task::（实现分布在 scheduler.rs / create.rs）
 // 只 re-export 外部引用者（envcall/trap）：spawn/spawn_thread 由 init 经
 // create:: 限定路径调用。
-pub use scheduler::{exit_current, sleep, tick, wake_due, with_current_space};
+pub use scheduler::run;
 
 /// 启动多任务（阶段 A 线程模型）：spawn 演示团队后进入首个线程，永不返回。
 ///
@@ -73,7 +76,7 @@ pub use scheduler::{exit_current, sleep, tick, wake_due, with_current_space};
 /// → C exiter（写 'C' 后退出）。S-timer 由 runtime::init 武装、trap_handler 内循环重武装。
 pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
-    scheduler::init_schedulers();
+    scheduler::init();
 
     // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
     #[cfg(debug_assertions)]
@@ -89,7 +92,7 @@ pub fn init() -> ! {
     let _ = create::spawn(program_b(), "yielder").expect("spawn B failed");
     let _ = create::spawn(program_c(), "exiter").expect("spawn C failed");
     // E sleeper：每 1.6s 写 'E' 后睡眠 16 量子——任务级阻塞（Running → Blocked →
-    // 睡眠队列 → tick 唤醒）演示
+    // 睡眠队列 → unpark 唤醒）演示
     let _ = create::spawn(program_e(), "sleeper").expect("spawn E failed");
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
@@ -99,7 +102,7 @@ pub fn init() -> ! {
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
     // 副核 steal 走，见 scheduler::enter_first_task）
     putln!("task: entering first task");
-    restore(scheduler::enter_first_task())
+    restore(run())
 }
 
 /// 副核启动：HSM `hart_start` 逐个拉起 hart 1..count-1。
@@ -118,9 +121,7 @@ fn start_secondary_harts() {
             continue;
         }
         let stack_top = crate::runtime::trampoline::trap_stack_top(hart);
-        putln!(
-            "hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}"
-        );
+        putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
         let r = crate::ecall::HsmCall::new(crate::ecall::fid::Hsm::Start)
             .args(crate::ecall::scall::SArgs {
                 a0: hart,
@@ -142,7 +143,7 @@ extern "C" fn secondary_main() -> ! {
     let hart = machine::hart_id();
     putln!("hart {hart}: secondary boot, entering idle");
     crate::runtime::trap::init_secondary();
-    crate::task::scheduler::idle_loop()
+    crate::work::scheduler::idle()
 }
 
 /// PT 回收自测（debug）：map/unmap 循环验证中间表回收——无孤儿表、无 double-free。
@@ -225,6 +226,7 @@ fn pt_reclaim_selftest() {
 ///    码），作为计数器会被破坏；
 /// 2. andi 立即数仅 12 位有符号（0xfff 溢出、srli+andi 单级是 1/64 段选而非
 ///    点选），故用两级检查：低 11 位全零 && (t1>>11)&0x7f 全零 → 每 2^18 次。
+///
 /// 输出频率 ~12 字符/量子（0.1s），保持演示可读。
 ///
 /// 布局（40 B）：addi t1,t1,1; andi t0,t1,0x7ff; bnez t0,+0x1c;
@@ -319,7 +321,7 @@ const fn program_d() -> &'static [u8] {
 }
 
 /// E "sleeper"：写 'E' 后睡眠 16 量子（ENV_SLEEP，约 1.6s）再循环——任务级阻塞
-/// 演示：Running → Blocked（睡眠队列）→ tick 唤醒（wake_due）。
+/// 演示：Running → Blocked（睡眠队列）→ Starved（unpark 唤醒）。
 ///
 /// 布局（28 B）：li a7,1; li a0,'E'; ecall; li a7,4; li a0,16; ecall; j -0x24
 /// （字节经 llvm-mc 核对；ENV_SLEEP = 4）

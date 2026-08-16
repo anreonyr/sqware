@@ -1,0 +1,337 @@
+
+<div id="mhs-root">
+<style>
+  #mhs-root{--bg:light-dark(#f4f6fb,#0d1117);--panel:light-dark(#ffffff,#151b23);--panel2:light-dark(#eef1f8,#1b222c);--line:light-dark(#dde3ef,#2a3340);--ink:light-dark(#1b2233,#e7eaf1);--mut:light-dark(#66708a,#96a0b0);--acc:light-dark(#2f6bff,#6c9bff);
+  --run:light-dark(#0f9d58,#34d399);--rdy:light-dark(#2563eb,#60a5fa);--blk:light-dark(#d97706,#fbbf24);--idle:light-dark(#9aa3b5,#5c6672);--bad:light-dark(#d92d20,#f97066);
+  --run-bg:light-dark(#e6f6ec,#122f20);--rdy-bg:light-dark(#e8effe,#132440);--blk-bg:light-dark(#fdf0dc,#32240e);--idle-bg:light-dark(#eef0f5,#23272e);
+  --shadow:light-dark(rgba(23,30,55,.08),rgba(0,0,0,.35));
+  font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:16px;padding:16px 16px 12px;max-width:980px;box-sizing:border-box;
+  }
+  #mhs-root *,#mhs-root *::before,#mhs-root *::after{box-sizing:border-box}
+  #mhs-root .hd{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  #mhs-root .tt{font-size:15px;font-weight:700;letter-spacing:.2px}
+  #mhs-root .pills{display:flex;gap:6px;margin-left:auto}
+  #mhs-root .pill{border:1px solid var(--line);background:var(--panel);color:var(--mut);border-radius:999px;padding:4px 12px;font-size:12px;cursor:pointer}
+  #mhs-root .pill.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  #mhs-root .clock{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12px;color:var(--mut);border:1px solid var(--line);border-radius:8px;padding:3px 10px;background:var(--panel)}
+  #mhs-root .clock b{color:var(--acc)}
+  #mhs-root .legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:11px;color:var(--mut);margin-bottom:10px}
+  #mhs-root .lg{display:inline-flex;align-items:center;gap:5px}
+  #mhs-root .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  #mhs-root .halt{display:flex;align-items:center;gap:8px;background:var(--blk-bg);color:var(--blk);border:1px solid var(--blk);border-radius:10px;padding:8px 12px;font-size:12.5px;font-weight:600;margin-bottom:10px}
+  #mhs-root .halt.hidden{display:none}
+  #mhs-root .stage{display:grid;grid-template-columns:1fr 290px;gap:12px;margin-bottom:12px}
+  #mhs-root .harts{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start}
+  #mhs-root .hart{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 11px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+  #mhs-root .hart.sel{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 22%,transparent)}
+  #mhs-root .hhead{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  #mhs-root .hname{font-size:12.5px;font-weight:700}
+  #mhs-root .lock{font-size:11px;opacity:.75;transition:opacity .15s;border:1px solid var(--line);border-radius:6px;padding:1px 5px;background:var(--panel2)}
+  #mhs-root .lock.held{opacity:1;border-color:var(--bad);color:var(--bad)}
+  #mhs-root .tag{margin-left:auto;font-size:10.5px;border-radius:999px;padding:2px 8px;font-weight:600}
+  #mhs-root .tag.run{background:var(--run-bg);color:var(--run)}
+  #mhs-root .tag.idle{background:var(--idle-bg);color:var(--idle)}
+  #mhs-root .tag.busy{background:var(--rdy-bg);color:var(--rdy)}
+  #mhs-root .field{margin-bottom:6px}
+  #mhs-root .fname{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:10.5px;color:var(--mut);display:block;margin-bottom:4px}
+  #mhs-root .slots{display:flex;flex-wrap:wrap;gap:4px;min-height:22px;align-items:center}
+  #mhs-root .chip{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11px;border-radius:999px;padding:2px 9px;cursor:pointer;border:1px solid transparent;animation:pop .22s ease;white-space:nowrap}
+  #mhs-root .chip.run{background:var(--run-bg);color:var(--run);border-color:var(--run)}
+  #mhs-root .chip.rdy{background:var(--rdy-bg);color:var(--rdy);border-color:var(--rdy)}
+  #mhs-root .chip.blk{background:var(--blk-bg);color:var(--blk);border-color:var(--blk)}
+  #mhs-root .chip:hover{filter:brightness(1.06)}
+  #mhs-root .none{font-style:italic;font-size:11px;color:var(--mut);opacity:.75}
+  #mhs-root .lane{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+  #mhs-root .lane-lbl{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:10px;color:var(--mut);background:var(--panel2);border-radius:5px;padding:1px 6px;flex:none}
+  #mhs-root .lane-items{display:flex;flex-wrap:wrap;gap:4px;min-height:20px;align-items:center}
+  #mhs-root .lens{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:10.5px;color:var(--mut);margin:7px 0 6px;background:var(--panel2);border-radius:6px;padding:3px 8px;display:inline-block}
+  #mhs-root .hbtns{display:flex;gap:5px;flex-wrap:wrap}
+  #mhs-root .hbtns button{border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:7px;padding:3px 8px;font-size:11px;cursor:pointer}
+  #mhs-root .hbtns button:hover{border-color:var(--acc);color:var(--acc)}
+  #mhs-root .glob{display:flex;flex-direction:column;gap:10px}
+  #mhs-root .gsec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 11px}
+  #mhs-root .gname{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;margin-bottom:5px}
+  #mhs-root .gmode{font-size:10.5px;color:var(--mut);margin-bottom:7px}
+  #mhs-root .row{font-size:11.5px;margin-bottom:7px;color:var(--mut)}
+  #mhs-root .row b{color:var(--ink);font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  #mhs-root .bar{height:6px;background:var(--panel2);border-radius:99px;overflow:hidden;margin-bottom:7px}
+  #mhs-root .barfill{height:100%;background:var(--acc);border-radius:99px;transition:width .3s ease}
+  #mhs-root .halt-note{font-size:11px;color:var(--bad);font-weight:600}
+  #mhs-root .bits{display:flex;gap:6px;flex-wrap:wrap}
+  #mhs-root .bit{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:10.5px;border-radius:6px;padding:2px 8px}
+  #mhs-root .bit.on{background:var(--idle-bg);color:var(--idle);border:1px solid var(--idle)}
+  #mhs-root .bit.off{background:var(--run-bg);color:var(--run);border:1px solid var(--run)}
+  #mhs-root .ctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  #mhs-root .btns{display:flex;gap:7px}
+  #mhs-root .btns button{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:6px 14px;font-size:12.5px;cursor:pointer;font-weight:600}
+  #mhs-root .btns button:hover{border-color:var(--acc);color:var(--acc)}
+  #mhs-root #b-auto{background:var(--acc);border-color:var(--acc);color:#fff}
+  #mhs-root .hint{font-size:11px;color:var(--mut);margin-left:auto}
+  #mhs-root .log{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px 12px;max-height:158px;overflow:auto;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11px;line-height:1.75}
+  #mhs-root .ll{display:flex;gap:8px}
+  #mhs-root .lt{color:var(--mut);flex:none}
+  @keyframes pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+  @media(max-width:760px){#mhs-root .stage{grid-template-columns:1fr}#mhs-root .harts{grid-template-columns:1fr}}
+</style>
+
+<div class="hd">
+  <div class="tt">多 hart 调度器 · 数据结构模型</div>
+  <div class="pills">
+    <button class="pill on" id="pill-cur">当前实现</button>
+    <button class="pill" id="pill-red">重设计预览</button>
+  </div>
+  <div class="clock">t = <b id="clk">0</b></div>
+</div>
+
+<div class="legend">
+  <span class="lg"><span class="dot" style="background:var(--run)"></span>Running</span>
+  <span class="lg"><span class="dot" style="background:var(--rdy)"></span>Ready</span>
+  <span class="lg"><span class="dot" style="background:var(--blk)"></span>Blocked（睡眠队列，不可被偷）</span>
+  <span class="lg"><span class="dot" style="background:var(--idle)"></span>空闲 / WFI 休眠</span>
+  <span style="margin-left:auto">▷ 点击任务或核面板查看详情</span>
+</div>
+
+<div id="halt-banner" class="halt hidden">⏻ 全部任务退出 → halt_all：SBI 系统复位…</div>
+
+<div class="stage">
+  <div class="harts" id="harts"></div>
+  <div class="glob" id="glob"></div>
+</div>
+
+<div class="ctl">
+  <div class="btns">
+    <button id="b-wake">唤醒扫描</button>
+    <button id="b-steal">偷取 steal</button>
+    <button id="b-auto">▶ 自动演示</button>
+    <button id="b-reset">重置</button>
+  </div>
+  <div class="hint">点击核面板选中目标核（蓝色描边）；「抢占 / 睡眠 / 退出」作用于目标核；「抢占」会推进时钟并顺带唤醒扫描</div>
+</div>
+
+<div class="log" id="log"></div>
+</div>
+
+<script>
+(function(){
+  var H=4, NS=['计算','IO','打印','心跳','渲染','网络'], PRIO=['高','中','低'];
+  var $=function(id){return document.getElementById(id)};
+  var S;
+  function fresh(){
+    return {
+      mode:'cur', time:0, tasks:new Map(), nextId:1,
+      harts:Array.from({length:H},function(_,i){return {hart:i,current:null,ready:[[],[],[]]}}),
+      sleep:[], spawned:0, exited:0, halting:false, active:0, log:[], auto:null
+    };
+  }
+  S=fresh();
+
+  function logm(m){ S.log.unshift({t:S.time,m:m}); if(S.log.length>80) S.log.pop(); }
+
+  function totalReady(h){ return h.ready[0].length+h.ready[1].length+h.ready[2].length; }
+  function pushReady(h,t){ h.ready[t.prio].push(t); }
+  function popReady(h){
+    for(var i=0;i<3;i++){ if(h.ready[i].length) return h.ready[i].shift(); }
+    return null;
+  }
+  function where(t){
+    for(var i=0;i<H;i++){
+      var h=S.harts[i];
+      if(h.current&&h.current.id===t.id) return 'hart '+i+' current';
+      for(var j=0;j<3;j++){ for(var k=0;k<h.ready[j].length;k++){ if(h.ready[j][k].id===t.id) return 'hart '+i+' ready['+j+']'; } }
+    }
+    for(var m=0;m<S.sleep.length;m++){ if(S.sleep[m].id===t.id) return 'SLEEP_LIST（唤醒@t='+S.sleep[m].wakeAt+'）'; }
+    return '已回收';
+  }
+
+  function spawn(hart){
+    if(S.halting){ logm('系统已停机，无法新建'); render(); return; }
+    var h=S.harts[hart];
+    var t={id:S.nextId++, name:NS[(S.nextId-2)%NS.length], state:'Ready', prio:S.mode==='red'?Math.floor(Math.random()*3):0, qleft:3};
+    S.tasks.set(t.id,t);
+    pushReady(h,t); S.spawned++;
+    logm('spawn：#'+t.id+' '+t.name+'（优先级 '+(t.prio===0?'高':t.prio===1?'中':'低')+'）入 hart '+hart+' 就绪队列');
+    if(!h.current){ h.current=popReady(h); h.current.state='Running'; logm('hart '+hart+' 空闲 → acquire_next 取活：#'+h.current.id+' 上台'); }
+    flashLock(hart); render();
+  }
+  function tick(hart){
+    if(S.halting){ logm('系统已停机'); render(); return; }
+    S.time+=1; wakeDue();
+    var h=S.harts[hart];
+    if(!h.current){ logm('hart '+hart+' 空闲：tick 仅推进时钟 + 唤醒扫描'); flashLock(hart); render(); return; }
+    var cur=h.current;
+    if(totalReady(h)===0){ logm('hart '+hart+' 唯一任务 #'+cur.id+'：无需轮转，继续运行'); flashLock(hart); render(); return; }
+    cur.state='Ready'; cur.qleft=3; pushReady(h,cur);
+    h.current=popReady(h); h.current.state='Running'; h.current.qleft=3;
+    logm('hart '+hart+' 抢占：#'+cur.id+' 轮转到队尾，#'+h.current.id+' 上台');
+    flashLock(hart); render();
+  }
+  function sleep(hart){
+    if(S.halting){ logm('系统已停机'); render(); return; }
+    var h=S.harts[hart];
+    if(!h.current){ logm('hart '+hart+' 无运行任务，无法睡眠'); render(); return; }
+    var t=h.current; var wakeAt=S.time+3;
+    t.state='Blocked';
+    var e={wakeAt:wakeAt,id:t.id};
+    if(S.mode==='red'){
+      var i=0; while(i<S.sleep.length && (S.sleep[i].wakeAt<wakeAt)) i++;
+      S.sleep.splice(i,0,e);
+    } else { S.sleep.push(e); }
+    h.current=null;
+    logm('#'+t.id+' 睡眠 3 量子 → Blocked 入 SLEEP_LIST，wake@'+wakeAt);
+    flashLock(hart); render();
+  }
+  function wakeDue(){
+    var now=S.time, due=[];
+    while(S.sleep.length && S.sleep[0].wakeAt<=now) due.push(S.sleep.shift());
+    if(!due.length){ return; }
+    for(var i=0;i<due.length;i++){
+      var t=S.tasks.get(due[i].id);
+      t.state='Ready';
+      pushReady(S.harts[S.active],t);
+      logm('t='+now+' 唤醒 #'+t.id+'（wake@'+due[i].wakeAt+' 到期）→ Blocked→Ready 入 hart '+S.active+' 就绪队列');
+    }
+  }
+  function steal(){
+    if(S.halting){ logm('系统已停机'); render(); return; }
+    var idle=[], victims=[];
+    for(var i=0;i<H;i++){
+      var h=S.harts[i];
+      if(!h.current && totalReady(h)===0) idle.push(h);
+      else if(totalReady(h)>0) victims.push(h);
+    }
+    if(!idle.length){ logm('steal：无空闲核（每核都有活），无可偷'); render(); return; }
+    if(!victims.length){ logm('steal：有空闲核，但所有就绪队列都空'); render(); return; }
+    victims.sort(function(a,b){return totalReady(b)-totalReady(a)});
+    var v=victims[0], st=idle[0];
+    var t=popReady(v);
+    st.current=t; t.state='Running'; t.qleft=3;
+    logm('steal：hart '+st.hart+' 从 hart '+v.hart+' 偷走 #'+t.id+'（READY_LENS 预检 → try_lock → pop）');
+    flashLock(st.hart); render();
+  }
+  function exitTask(hart){
+    if(S.halting){ logm('系统已停机'); render(); return; }
+    var h=S.harts[hart];
+    if(!h.current){ logm('hart '+hart+' 无运行任务，无法退出'); render(); return; }
+    var t=h.current;
+    h.current=null; S.exited++; S.tasks.delete(t.id);
+    logm('#'+t.id+' 退出：回收栈/trap 帧 → drop，EXITED='+S.exited);
+    if(S.spawned>0 && S.exited>=S.spawned){ S.halting=true; logm('SPAWNED==EXITED → 全部退出，halt_all 停机'); }
+    flashLock(hart); render();
+  }
+
+  function flashLock(hart){
+    var el=$('lock'+hart);
+    if(el){ el.classList.add('held'); setTimeout(function(){ el.classList.remove('held'); },480); }
+  }
+
+  function chip(t){
+    var cls=t.state==='Running'?'run':(t.state==='Ready'?'rdy':'blk');
+    var extra=(S.mode==='red'&&t.state==='Running')?' · ⏱'+t.qleft:'';
+    return '<span class="chip '+cls+'" data-id="'+t.id+'" title="状态: '+t.state+' · 优先级: '+PRIO[t.prio]+' · 位置: '+where(t)+'">#'+t.id+' '+t.name+extra+'</span>';
+  }
+
+  function render(){
+    $('clk').textContent=S.time;
+    $('halt-banner').classList.toggle('hidden',!S.halting);
+    $('b-auto').textContent=S.auto?'⏸ 暂停':'▶ 自动演示';
+
+    var hh='';
+    for(var i=0;i<H;i++){
+      var h=S.harts[i];
+      var curChip=h.current?chip(h.current):'<em class="none">None</em>';
+      var tag,tagCls;
+      if(h.current){ tag='运行 #'+h.current.id; tagCls='run'; }
+      else if(totalReady(h)>0){ tag='取活中'; tagCls='busy'; }
+      else { tag='WFI 休眠'; tagCls='idle'; }
+      var lanesHtml='';
+      if(S.mode==='cur'){
+        var items=h.ready[0].map(chip).join('')||'<em class="none">∅</em>';
+        lanesHtml='<div class="lane"><span class="lane-lbl">FIFO</span><div class="lane-items">'+items+'</div></div>';
+      } else {
+        for(var p=0;p<3;p++){
+          var it=h.ready[p].map(chip).join('')||'<em class="none">∅</em>';
+          lanesHtml+='<div class="lane"><span class="lane-lbl">'+PRIO[p]+' ×'+h.ready[p].length+'</span><div class="lane-items">'+it+'</div></div>';
+        }
+      }
+      hh+='<div class="hart'+(i===S.active?' sel':'')+'" data-hart="'+i+'">'+
+        '<div class="hhead"><span class="hname">hart '+i+(i===0?' · 主核':'')+'</span>'+
+        '<span class="lock" id="lock'+i+'">🔒</span>'+
+        '<span class="tag '+tagCls+'">'+tag+'</span></div>'+
+        '<div class="field"><span class="fname">current: Option&lt;Arc&lt;Task&gt;&gt;</span><div class="slots">'+curChip+'</div></div>'+
+        '<div class="field"><span class="fname">'+(S.mode==='cur'?'ready: VecDeque&lt;Arc&lt;Task&gt;&gt;':'ready: [VecDeque&lt;Arc&lt;Task&gt;&gt;; 3]（高/中/低）')+'</span>'+lanesHtml+'</div>'+
+        '<span class="lens">READY_LENS['+i+'] = '+totalReady(h)+'</span>'+
+        '<div class="hbtns">'+
+          '<button data-act="spawn" data-hart="'+i+'">＋新建</button>'+
+          '<button data-act="tick" data-hart="'+i+'">⏱ 抢占</button>'+
+          '<button data-act="sleep" data-hart="'+i+'">💤 睡眠</button>'+
+          '<button data-act="exit" data-hart="'+i+'">✕ 退出</button>'+
+        '</div></div>';
+    }
+    $('harts').innerHTML=hh;
+
+    var sleepChips=S.sleep.map(function(e){
+      var t=S.tasks.get(e.id);
+      return '<span class="chip blk" data-id="'+e.id+'" title="唤醒@t='+e.wakeAt+'">#'+e.id+' '+t.name+' · wake@'+e.wakeAt+'</span>';
+    }).join('')||'<em class="none">空</em>';
+    var pct=S.spawned>0?Math.round(S.exited/S.spawned*100):0;
+    var bits='';
+    for(var i2=0;i2<H;i2++){
+      var idle=(!S.harts[i2].current&&totalReady(S.harts[i2])===0);
+      bits+='<span class="bit '+(idle?'on':'off')+'">'+i2+':'+(idle?'休眠':'运行')+'</span>';
+    }
+    $('glob').innerHTML=
+      '<div class="gsec"><div class="gname">SLEEP_LIST · SpinLock&lt;VecDeque&lt;SleepEntry&gt;&gt;</div>'+
+      '<div class="gmode">'+(S.mode==='cur'?'FIFO（wake_at 单调，队首最早到期）':'按 wake_at 排序（精确定时唤醒，队首最早到期）')+'</div>'+
+      '<div class="slots">'+sleepChips+'</div></div>'+
+      '<div class="gsec"><div class="gname">lifecycle（原子计数）</div>'+
+      '<div class="row">SPAWNED <b>'+S.spawned+'</b> · EXITED <b>'+S.exited+'</b>'+(S.halting?' · HALTING ✓':'')+'</div>'+
+      '<div class="bar"><div class="barfill" style="width:'+pct+'%"></div></div>'+
+      (S.halting?'<div class="halt-note">全部退出 → halt_all：SBI srst 复位</div>':'')+
+      '</div>'+
+      '<div class="gsec"><div class="gname">SLEEPING 位图（跨核只读 · IPI 唤醒目标）</div>'+
+      '<div class="bits">'+bits+'</div></div>';
+
+    $('log').innerHTML=S.log.map(function(l){
+      return '<div class="ll"><span class="lt">t='+l.t+'</span><span>'+l.m+'</span></div>';
+    }).join('');
+  }
+
+  $('harts').addEventListener('click',function(e){
+    var ch=e.target.closest('.chip');
+    if(ch){
+      var t=S.tasks.get(+ch.dataset.id);
+      if(t){ logm('▶ #'+t.id+' '+t.name+'：状态 '+t.state+'，优先级 '+PRIO[t.prio]+'，位于 '+where(t)); render(); }
+      return;
+    }
+    var b=e.target.closest('[data-act]');
+    if(b){ var h=+b.dataset.hart, act=b.dataset.act;
+      if(act==='spawn')spawn(h); else if(act==='tick')tick(h); else if(act==='sleep')sleep(h); else exitTask(h);
+      return; }
+    var p=e.target.closest('.hart');
+    if(p){ S.active=+p.dataset.hart; logm('选中 hart '+S.active+' 为操作目标'); render(); }
+  });
+
+  $('b-wake').addEventListener('click',function(){ wakeDue(); if(!S.log[0]||S.log[0].m.indexOf('唤醒')<0){ logm('唤醒扫描：无到期任务'); } render(); });
+  $('b-steal').addEventListener('click',function(){ steal(); });
+  $('b-reset').addEventListener('click',function(){
+    if(S.auto){ clearInterval(S.auto); S.auto=null; }
+    S=fresh(); render();
+  });
+  $('b-auto').addEventListener('click',function(){
+    if(S.auto){ clearInterval(S.auto); S.auto=null; $('b-auto').textContent='▶ 自动演示'; render(); return; }
+    var steps=[[spawn,0],[spawn,0],[tick,0],[spawn,1],[sleep,0],[tick,1],[tick,0],[tick,1],[steal,0],[exitTask,2],[exitTask,1],[exitTask,0]];
+    var i=0;
+    S.auto=setInterval(function(){
+      if(i>=steps.length){ clearInterval(S.auto); S.auto=null; $('b-auto').textContent='▶ 自动演示'; render(); return; }
+      var st=steps[i++]; st[0](st[1]);
+    },950);
+    $('b-auto').textContent='⏸ 暂停'; render();
+  });
+
+  $('pill-cur').addEventListener('click',function(){ S.mode='cur'; $('pill-cur').classList.add('on'); $('pill-red').classList.remove('on'); logm('视图切换：当前实现（单 FIFO）'); render(); });
+  $('pill-red').addEventListener('click',function(){ S.mode='red'; $('pill-red').classList.add('on'); $('pill-cur').classList.remove('on'); logm('视图切换：重设计预览（多级队列 + 排序睡眠表 + 量子记账）'); render(); });
+
+  render();
+})();
+</script>

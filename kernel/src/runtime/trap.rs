@@ -11,6 +11,7 @@
 // trap 栈上；入口硬件已清 SIE，处理器内嵌套陷阱仅可能是内核 bug，会覆写内核
 // 帧（panic 兜底）。trap 栈底 canary 在处理器出入口校验（溢出即 panic）。
 
+use crate::work::scheduler::{unpark, with_running_space};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use log::info;
@@ -151,7 +152,10 @@ pub fn init_secondary() {
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
     }
-    info!("runtime: hart {} trap secondary init done", machine::hart_id());
+    info!(
+        "runtime: hart {} trap secondary init done",
+        machine::hart_id()
+    );
 }
 
 /// 武装 S-timer 中断：`stimecmp = time + interval`（SBI TIME 扩展，绝对时间）。
@@ -222,7 +226,7 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
         }
         let top = trap_stack_top(me);
         let ksp = frame.kernel_sp.as_usize();
-        let tid = crate::task::scheduler::current_task_id();
+        let tid = crate::work::scheduler::running_task_id();
         debug_assert!(
             sp <= top && top - sp < 0x4000,
             "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{tid}) — kernel_sp per-switch write missing?"
@@ -245,10 +249,10 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
                 putln!("timer tick #{tick} @ time={}", time::read());
             }
             arm_timer(TIMER_INTERVAL);
-            // 到期睡眠任务唤醒（Blocked → Ready 入队；wake_due 内部先放队列锁）
-            crate::task::wake_due();
+            // 到期睡眠任务唤醒（Blocked → Starved 入队；unpark 内部先放队列锁）
+            unpark();
             if frame.sstatus & (1 << 8) == 0 {
-                crate::task::tick() as *mut TrapContext
+                crate::work::run() as *mut TrapContext
             } else {
                 frame as *mut TrapContext
             }
@@ -258,7 +262,7 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
             frame as *mut TrapContext
         }
         // 用户态环境调用（U 态 ecall）：envcall 表分发
-        Trap::Exception(Exception::UserEnvCall) => crate::task::envcall::dispatch(frame),
+        Trap::Exception(Exception::UserEnvCall) => crate::work::envcall::dispatch(frame),
         // 用户态缺页：机制归 memory::fault，策略归 trap 层（解析失败即 panic）。
         // SPP=1（内核态）缺页：guard 已在入口特判，其余内核缺页 = 内核 bug → fatal
         Trap::Exception(
@@ -273,7 +277,7 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
                 );
             }
             let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
-            let ok = crate::task::with_current_space(|space| {
+            let ok = with_running_space(|space| {
                 crate::memory::manager::fault::handle_page_fault(&fault, space)
             });
             if ok {

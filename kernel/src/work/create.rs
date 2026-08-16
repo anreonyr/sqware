@@ -2,14 +2,14 @@
 // spawn_thread（栈 slot + trap 帧 + 填帧 + 入队收尾）。
 //
 // 本模块只管「造」——空间构建、栈/帧分配、用户上下文填充；队列侧收尾
-// （入簿 + 入队 + SPAWNED 计数）交给 scheduler::enqueue，锁纪律集中在
+// （入簿 + 入队 + SPAWNED 计数）交给 scheduler::push，锁纪律集中在
 // scheduler.rs。阶段 C ELF 加载（沿用 USER_TEXT_BASE 基址）扩展点在此。
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::lock::SpinLock;
 use crate::machine;
@@ -22,7 +22,7 @@ use crate::memory::manager::space::{MapKind, SpaceBuilder, TASK_STACK_SIZE, kern
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::trap_stack_top;
-use crate::task::USER_TEXT_BASE;
+use crate::work::USER_TEXT_BASE;
 
 use super::scheduler;
 use super::task::{Task, TaskState, Team, TrapFrame};
@@ -72,7 +72,7 @@ pub fn spawn(
 }
 
 /// 在团队内生成一个新线程：栈 slot + trap 帧（均入团队空间的窗口簿记，
-/// owner = 线程 id）→ 填帧 → 入队收尾（scheduler::enqueue）。返回新线程
+/// owner = 线程 id）→ 填帧 → 入队收尾（scheduler::push）。返回新线程
 /// trap 帧 PA。
 ///
 /// arg 写入用户上下文 a0（线程入口参数——blob D 按其分支行为）。
@@ -130,7 +130,7 @@ pub fn spawn_thread(
     let task = Arc::new(Task {
         id,
         name,
-        state: AtomicU8::new(TaskState::Ready as u8),
+        state: TaskState::Starved, // 初始就绪：入 starved 容器等首次选中（上台重置满额预算）
         team: team.clone(),
         trap: TrapFrame {
             va: frame_va,
@@ -145,6 +145,6 @@ pub fn spawn_thread(
         frame_pa.as_usize(),
         stack_top.as_usize()
     );
-    scheduler::enqueue(task);
+    scheduler::push(task);
     Ok(frame_pa)
 }

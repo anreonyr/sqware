@@ -10,7 +10,7 @@ mod lock;
 mod machine;
 mod memory;
 mod runtime;
-mod task;
+mod work;
 
 use core::arch::{asm, global_asm};
 
@@ -70,7 +70,7 @@ fn main() -> ! {
 
     // 阶段 C：spawn 多任务并进入首个任务（永不返回）。S-timer 由 init 武装、
     // trap_handler 内循环重武装——用户态下照常触发，驱动抢占式任务切换。
-    task::init();
+    work::init();
 }
 
 /// 内核栈大小（DRAM 顶部保留，向下增长）。

@@ -11,7 +11,7 @@
 use crate::put;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trap::ticks;
-use crate::task::{exit_current, tick};
+use crate::work::scheduler::{park, reap, starve};
 
 /// envcall 调用号。
 #[repr(usize)]
@@ -25,7 +25,7 @@ pub enum Envcall {
     Exit = 2,
     /// 读取定时器 tick 计数（返回值写 a0）。
     GetTicks = 3,
-    /// 睡眠指定量子数（a0 = ticks；Running → Blocked → 到期由 tick 唤醒）。
+    /// 睡眠指定量子数（a0 = ticks；Running → Blocked → 到期由 unpark 唤醒）。
     Sleep = 4,
 }
 
@@ -48,7 +48,7 @@ impl TryFrom<usize> for Envcall {
 ///
 /// 入参 frame = 当前任务用户帧；返回待恢复帧：Yield/Exit 返回调度器选出的
 /// 下一任务帧，其余返回入参帧。Exit 返回后调用方不得再触碰 frame（其空间
-/// 已在 exit_current 中回收）。
+/// 已在 reap 中回收）。
 pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
     let number = frame.gpr[17]; // a7
     let call =
@@ -56,7 +56,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
     match call {
         Envcall::Yield => {
             frame.sepc += 4;
-            tick() as *mut TrapContext
+            starve() as *mut TrapContext
         }
         Envcall::Write => {
             frame.sepc += 4;
@@ -65,8 +65,8 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             frame as *mut TrapContext
         }
         Envcall::Exit => {
-            // 不做 sepc += 4：任务不再恢复；frame 指向的空间随即在 exit_current 中回收
-            exit_current() as *mut TrapContext
+            // 不做 sepc += 4：任务不再恢复；frame 指向的空间随即在 reap 中回收
+            reap() as *mut TrapContext
         }
         Envcall::GetTicks => {
             frame.sepc += 4;
@@ -76,7 +76,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
         Envcall::Sleep => {
             // sepc 前进（唤醒恢复时从 ecall 之后继续）；任务被 park，返回下一帧
             frame.sepc += 4;
-            crate::task::sleep(frame.gpr[10]) as *mut TrapContext
+            park(frame.gpr[10]) as *mut TrapContext
         }
     }
 }

@@ -98,7 +98,7 @@ impl BitmapAllocator {
         if addr < self.base || addr + size > self.edge {
             return Err(AllocError);
         }
-        if addr % self.unit != 0 || size % self.unit != 0 {
+        if !addr.is_multiple_of(self.unit) || !size.is_multiple_of(self.unit) {
             return Err(AllocError);
         }
         let start = (addr - self.base) / self.unit;

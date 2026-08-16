@@ -149,7 +149,11 @@ pub fn init() -> MapResult<()> {
             // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（hart h 帧 =
             //    BASE + h·PAGE；hart 0 = TRAP_CONTEXT。元数据由 trap::init 逐帧写入），
             //    PA 存 KERNEL_FRAMES[h]——__strap 按 TP 索引帧页。
-            for h in 0..crate::machine::hart_count() {
+            for (h, slot) in KERNEL_FRAMES
+                .iter()
+                .enumerate()
+                .take(crate::machine::hart_count())
+            {
                 let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                     .map_err(|_| MapError::OutOfMemory)?;
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
@@ -161,7 +165,7 @@ pub fn init() -> MapResult<()> {
                     MapKind::Anonymous,
                     vec![page],
                 )?;
-                KERNEL_FRAMES[h].store(pa, core::sync::atomic::Ordering::Relaxed);
+                slot.store(pa, core::sync::atomic::Ordering::Relaxed);
             }
 
             // 6. 启用 Sv39 分页

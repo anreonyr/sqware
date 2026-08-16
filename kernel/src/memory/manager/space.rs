@@ -355,10 +355,10 @@ impl SpaceInner {
             return Some(m.info());
         }
         for w in self.dynamic.values() {
-            if w.contains(vaddr) {
-                if let Some(m) = w.children.iter().rev().find(|m| m.contains(vaddr)) {
-                    return Some(m.info());
-                }
+            if w.contains(vaddr)
+                && let Some(m) = w.children.iter().rev().find(|m| m.contains(vaddr))
+            {
+                return Some(m.info());
             }
         }
         None
@@ -370,10 +370,10 @@ impl SpaceInner {
             return Some(m);
         }
         for w in self.dynamic.values_mut() {
-            if w.contains(vaddr) {
-                if let Some(m) = w.children.iter_mut().rev().find(|m| m.contains(vaddr)) {
-                    return Some(m);
-                }
+            if w.contains(vaddr)
+                && let Some(m) = w.children.iter_mut().rev().find(|m| m.contains(vaddr))
+            {
+                return Some(m);
             }
         }
         None
@@ -521,23 +521,23 @@ pub(crate) const FRAME_BASE: VirtAddr =
 // 改布局必须先改这里（编译器兜底），并同步 link.ld / trampoline 汇编。
 const _: () = {
     // 注意：VirtAddr 的 Add/Sub/PartialEq 非 const fn，此处一律用 as_usize() 裸算术。
-    assert!(TRAMPOLINE.as_usize() % PAGE_SIZE == 0);
-    assert!(TRAP_CONTEXT.as_usize() % PAGE_SIZE == 0);
-    assert!(KERNEL_FRAME_BASE.as_usize() % PAGE_SIZE == 0);
+    assert!(TRAMPOLINE.as_usize().is_multiple_of(PAGE_SIZE));
+    assert!(TRAP_CONTEXT.as_usize().is_multiple_of(PAGE_SIZE));
+    assert!(KERNEL_FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
     assert!(TRAMPOLINE.as_usize() - PAGE_SIZE == TRAP_CONTEXT.as_usize()); // 相邻页（trampoline 收尾依赖）
     // 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页，hart 0 恰止于 TRAP_CONTEXT
     assert!(KERNEL_FRAME_BASE.as_usize() + (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE == TRAP_CONTEXT.as_usize());
     // 帧窗口：页对齐、恰止于 KERNEL_FRAME_BASE（内核帧区在其上方，互不重叠）
-    assert!(FRAME_REGION_SIZE % PAGE_SIZE == 0);
-    assert!(FRAME_BASE.as_usize() % PAGE_SIZE == 0);
+    assert!(FRAME_REGION_SIZE.is_multiple_of(PAGE_SIZE));
+    assert!(FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
     assert!(FRAME_BASE.as_usize() + FRAME_REGION_SIZE == KERNEL_FRAME_BASE.as_usize());
     assert!(KERNEL_BASE.as_usize() == 0xFFFF_FFC0_0000_0000); // Sv39 内核半区起点（VPN[2] = 256）
-    assert!(USER_HEAP_BASE.as_usize() % PAGE_SIZE == 0);
-    assert!(USER_HEAP_SIZE % PAGE_SIZE == 0);
+    assert!(USER_HEAP_BASE.as_usize().is_multiple_of(PAGE_SIZE));
+    assert!(USER_HEAP_SIZE.is_multiple_of(PAGE_SIZE));
     assert!(USER_HEAP_BASE.as_usize() + USER_HEAP_SIZE <= USER_STACK_BASE.as_usize()); // 堆窗口不越过栈窗口
-    assert!(USER_STACK_BASE.as_usize() % PAGE_SIZE == 0);
-    assert!(TASK_STACK_AREA_SIZE % PAGE_SIZE == 0);
-    assert!(TASK_STACK_SIZE % PAGE_SIZE == 0);
+    assert!(USER_STACK_BASE.as_usize().is_multiple_of(PAGE_SIZE));
+    assert!(TASK_STACK_AREA_SIZE.is_multiple_of(PAGE_SIZE));
+    assert!(TASK_STACK_SIZE.is_multiple_of(PAGE_SIZE));
     assert!(USER_STACK_BASE.as_usize() + TASK_STACK_AREA_SIZE <= 0x1_0000_0000); // 栈窗口不越出低 4 GiB
 };
 /// Sv39 虚拟地址空间。
