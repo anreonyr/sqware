@@ -116,7 +116,7 @@ pub fn init() {
     //    使能定时器源：sie.STIE。**不**开 sstatus.SIE（全局）——内核态恒关中断
     //    （处理器内关中断策略）：SIE 只经 sret 由帧内 SPIE 恢复，用户态 = 1，
     //    内核态 = 0。故 S-timer 只在用户态触发，内核代码永不被打断/抢占。
-    //    （本步是 hart 0 的 CSR；副核经 init_secondary 各自配置。）
+    //    （本步是 hart 0 的 CSR；副核经 init_hart 各自配置。）
     unsafe {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
         core::arch::asm!("csrw sscratch, zero");
@@ -134,10 +134,10 @@ pub fn init() {
     );
 }
 
-/// 副核 per-hart 初始化（HSM 启动后由 secondary_main 调用）：
+/// 副核 per-hart 初始化（HSM 启动后由 boot_main 调用）：
 /// satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
 /// （trap 栈 / canary / 内核帧由 hart 0 在 init 完成；B1 共享内核帧。）
-pub fn init_secondary() {
+pub fn init_hart() {
     let ktc = kernel_trap_context();
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;

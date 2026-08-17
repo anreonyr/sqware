@@ -4,11 +4,14 @@
 // （见 lock/mod.rs 的 panic 路径说明）。
 use core::panic::PanicInfo;
 
-use crate::console::_write;
+use crate::{
+    console::_write,
+    ecall::{self, fid},
+};
 
 #[panic_handler]
 fn panic_handler(info: &PanicInfo) -> ! {
-    _write(format_args!("[KERNEL PANIC]"));
+    _write(format_args!("[PANIC]"));
     if let Some(loc) = info.location() {
         _write(format_args!(
             " at {}:{}:{}",
@@ -22,6 +25,9 @@ fn panic_handler(info: &PanicInfo) -> ! {
     _write(format_args!("  message: {}\n", info.message()));
 
     loop {
+        ecall::SystemResetCall::new(fid::SystemReset::SystemReset)
+            .call()
+            .unwrap();
         unsafe { core::arch::asm!("wfi") };
     }
 }

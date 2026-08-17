@@ -21,6 +21,7 @@
 // 的全局实例（见 `memory::manager::asid`）。
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 use core::sync::atomic::Ordering;
@@ -526,7 +527,10 @@ const _: () = {
     assert!(KERNEL_FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
     assert!(TRAMPOLINE.as_usize() - PAGE_SIZE == TRAP_CONTEXT.as_usize()); // 相邻页（trampoline 收尾依赖）
     // 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页，hart 0 恰止于 TRAP_CONTEXT
-    assert!(KERNEL_FRAME_BASE.as_usize() + (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE == TRAP_CONTEXT.as_usize());
+    assert!(
+        KERNEL_FRAME_BASE.as_usize() + (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE
+            == TRAP_CONTEXT.as_usize()
+    );
     // 帧窗口：页对齐、恰止于 KERNEL_FRAME_BASE（内核帧区在其上方，互不重叠）
     assert!(FRAME_REGION_SIZE.is_multiple_of(PAGE_SIZE));
     assert!(FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
@@ -1122,14 +1126,15 @@ impl Drop for Space {
 // ── 内核地址空间 ─────────────────────────────────────────────
 
 /// 内核地址空间。`memory::init()` 创建并写入，此后只读访问。
+/// 存 Arc<Space>：内核团队（work::team::kernel）共享同一份（约束 1）。
 ///
 /// 用 RelLock（可重入锁）：持有此锁期间若触发缺页，缺页处理器（trap.rs）
 /// 会在同一 hart 上再次获取它——RelLock 允许同 hart 重入，避免自旋死锁；
 /// 不同 hart 之间仍互斥。
-pub(crate) static KERNEL_SPACE: RelLock<Option<Space>> = RelLock::new(None);
+pub(crate) static KERNEL_SPACE: RelLock<Option<Arc<Space>>> = RelLock::new(None);
 
 /// 获取内核地址空间的锁保护引用。
-pub(crate) fn kernel_space() -> RelLockGuard<'static, Option<Space>> {
+pub(crate) fn kernel_space() -> RelLockGuard<'static, Option<Arc<Space>>> {
     KERNEL_SPACE.lock()
 }
 

@@ -5,6 +5,7 @@
 //   - 内核缺页 → fatal（内核页必须预映射）
 //   - 用户缺页 → 匿名页分配（懒分配）
 
+use fack::prelude::Error;
 use log::{error, info};
 use riscv::register::{scause, sepc, stval};
 
@@ -28,13 +29,16 @@ pub struct PageFault {
 }
 
 /// 缺页类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaultKind {
     /// 指令缺页 (scause = 12)
+    #[error("Execute OOM Instruction")]
     Instruction,
     /// 加载缺页 (scause = 13)
+    #[error("Load OOM Data")]
     Load,
     /// 存储/AMO 缺页 (scause = 15)
+    #[error("Store OOM Data")]
     Store,
 }
 

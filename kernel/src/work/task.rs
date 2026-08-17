@@ -1,27 +1,30 @@
-// 线程模型类型（阶段 A 延续）：Team（进程容器）→ Task（线程）两层。
+// 线程（可调度单元）— 类型 + 构造。
 //
-//   Team   — 唯一 Space + 成员簿记（SpinLock<Vec<Weak<Task>>>，弱引用，无强环）
-//   Task   — 可调度单元：Arc<Team> + 调度状态 + 自己的 trap 帧句柄（TrapFrame { va, pa }）
-//
-// 引用图无环：Task → Arc<Team>（强）、调度器 → Arc<Task>（强，running/starved/
-// blocked/reaped 恰好其一）、Team → Weak<Task>（弱，簿记不参与生命周期）。
-// Team 由它的线程持有：spawn 返回的 Arc<Team> 只是构造期句柄，spawn 完线程即
-// drop；最后一个线程退出 → Arc<Team> 归零 → Team/Space（ASID + 全部帧）自动回收。
-//
-// 状态是单一枚举 + 载荷：Running{ticks_left}（运行预算）/ Blocked{reason}（阻塞
-// 原因）/ Starved（就绪）/ Reaped（僵尸）。阻塞原因与运行预算作为状态变体数据
-// 放在任务上，外部队列（blocked / reaped）退化为纯 Arc<Task> 索引。
-//
-// 状态字段是普通字段（无原子）：所有状态变更都发生在「锁内 take/pop 出唯一
-// Arc<Task> → Arc::get_mut 拿 &mut」路径上（见 scheduler::task_mut）——互斥由
-// 锁 + 所有权保证，编译器强制；Task: Sync 仅意味着 &Task 可跨核只读共享。
+// Task = 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
+// TaskBuilder 在团队容器内生成任务：栈 + trap 帧 + 填帧 + 入队。
+// 程序装载（loader.rs）与团队容器化（team.rs）在任务生成之前完成。
 
-use alloc::sync::{Arc, Weak};
+use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::lock::SpinLock;
+use crate::machine;
+use crate::memory::PAGE_SIZE;
+use crate::memory::allocator::frame::allocator;
+use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::memory::manager::space::Space;
+use crate::memory::manager::space::{TASK_STACK_SIZE, kernel_trap_context};
+use crate::putln;
+use crate::runtime::context::TrapContext;
+use crate::runtime::trampoline::trap_stack_top;
+use crate::work::USER_TEXT_BASE;
+
+use super::scheduler;
+use super::team::Team;
+
+/// 全局任务号（跨 hart 唯一）。
+static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// 任务状态：任务现在在哪 +（Running/Blocked 时）该状态特有的数据。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,7 +116,7 @@ impl Task {
     }
 
     /// 阻塞唤醒时间（Blocked(Park) 才有值；unpark 从 blocked 队首读它）。
-    pub(crate) fn wake_at(&self) -> Option<usize> {
+    pub(crate) fn unpark(&self) -> Option<usize> {
         match self.state {
             TaskState::Blocked {
                 reason: BlockReason::Park { wake_at },
@@ -123,35 +126,105 @@ impl Task {
     }
 }
 
-/// 团队（进程）— 共享地址空间的线程容器。
+/// 任务构建器：在团队容器内生成线程（栈 + trap 帧 + 填帧 + 入队）。
 ///
-/// tasks 为成员簿记（弱引用，无强环——线程由各 hart 的 running/starved/blocked/
-/// reaped 容器强持有），多核阶段用于团队视角的负载判断；生命周期仍由引用计数
-/// 决定（最后一个线程退出 → Arc<Team> 归零 → 团队回收）。
+/// 入口参数 arg 写入用户上下文 a0（blob D 按其分支行为）。空间分配（栈/帧）
+/// 在调度器锁外完成（id 已原子化、空间自有锁）——锁只保护本 hart 队列的
+/// push（与偷取者的 pop 互斥）与入簿（1 → 3 合法）。
 ///
-/// 多核下 per-hart 调度锁不再提供跨 hart 互斥，故 tasks 自带 SpinLock
-/// （level 3）。**不变量：持本锁时绝不调用任何 space 方法**——push_task /
-/// prune_tasks 是纯 Vec 操作，与 Space.inner（level 2）只顺序获取、永不嵌套
-/// 持有（ABBA 防御，见 lock/mod.rs 层级注释）。
-pub struct Team {
-    /// 地址空间（窗口簿记持有全部分配的页）。
-    pub(crate) space: Space,
-    /// 成员簿记（弱引用条目；死条目在下次清理时摘除）。
-    pub(crate) tasks: SpinLock<Vec<Weak<Task>>>,
+/// # Errors
+///
+/// 栈/帧分配失败（MapError 原样传播）；失败时已分配资源随 Space drop 回滚。
+pub struct TaskBuilder {
+    team: Arc<Team>,
+    name: &'static str,
+    arg: usize,
 }
 
-impl Team {
-    /// 成员入簿（scheduler::push 入队收尾调用；不调 space 方法）。
-    pub(crate) fn push_task(&self, task: &Arc<Task>) {
-        self.tasks.lock().push(Arc::downgrade(task));
+impl TaskBuilder {
+    /// 在指定团队内生成任务。
+    pub fn new(team: Arc<Team>) -> TaskBuilder {
+        TaskBuilder {
+            team,
+            name: "task",
+            arg: 0,
+        }
     }
 
-    /// 清理簿记：摘除已退出线程与全部死条目（弱引用无所有权，滞留仅占条目）。
-    pub(crate) fn prune_tasks(&self, exited: &Arc<Task>) {
-        self.tasks.lock().retain(|t| match t.upgrade() {
-            // 已回收的死条目（strong_count == 0）与本线程条目一并摘除
-            Some(a) => !Arc::ptr_eq(&a, exited),
-            None => false,
+    /// 线程名（默认 "task"）。
+    pub fn name(mut self, name: &'static str) -> TaskBuilder {
+        self.name = name;
+        self
+    }
+
+    /// 线程入口参数（写入用户上下文 a0）。
+    pub fn arg(mut self, arg: usize) -> TaskBuilder {
+        self.arg = arg;
+        self
+    }
+
+    /// 生成任务：栈 slot + trap 帧（入团队空间窗口簿记）→ 填帧 → 入队收尾。
+    /// 返回新线程 trap 帧 PA。
+    pub fn spawn(self) -> Result<PhysAddr, MapError> {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let me = machine::hart_id();
+
+        // 1. 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id）→ 分配帧 attach
+        let stack_va = self.team.space.stack_alloc(id)?;
+        let mut stack_frames = Vec::new();
+        for _ in 0..(TASK_STACK_SIZE / PAGE_SIZE) {
+            let frame = Box::try_new_in([0u8; PAGE_SIZE], allocator())
+                .map_err(|_| MapError::OutOfMemory)?;
+            stack_frames.push(frame);
+        }
+        self.team.space.stack_attach(stack_va, stack_frames)?;
+        let stack_top = stack_va + TASK_STACK_SIZE;
+
+        // 2. trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）
+        let (frame_va, frame_pa) = self.team.space.frame_alloc(id)?;
+
+        // 3. 填帧：内核切换元数据从内核帧拷贝；用户上下文 = 入口/栈顶/a0/状态。
+        //    kernel_sp = **本 hart** trap 栈顶（任务随后在本 hart 首次运行；若被
+        //    steal 走，偷取核会在上台前重写——见 scheduler::prepare）。
+        unsafe {
+            let ktc = kernel_trap_context().as_usize() as *const TrapContext;
+            let frame = &mut *(frame_pa.as_usize() as *mut TrapContext);
+            frame.kernel_satp = (*ktc).kernel_satp;
+            frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(me));
+            frame.trap_handler = (*ktc).trap_handler;
+            frame.trap_stack_corrupt = (*ktc).trap_stack_corrupt;
+            frame.user_pa = frame_pa;
+            // user_satp = Sv39 模式位(8) << 60 | asid << 44 | root_ppn —— restore 切回本空间用
+            frame.user_satp =
+                (8usize << 60) | (self.team.space.asid() << 44) | self.team.space.root();
+            frame.self_va = frame_va.as_usize();
+            frame.sepc = USER_TEXT_BASE.as_usize();
+            frame.gpr[2] = stack_top.as_usize();
+            frame.gpr[10] = self.arg;
+            let s = riscv::register::sstatus::read().bits();
+            frame.sstatus = (s & !(1 << 1) & !(1 << 8)) | (1 << 5);
+        }
+
+        // 4. 入队收尾（初始状态 Starved；持本 hart 调度锁完成入簿 + 入队 + 计数）
+        let task = Arc::new(Task {
+            id,
+            name: self.name,
+            state: TaskState::Starved, // 初始就绪：入 starved 容器等首次选中（上台重置满额预算）
+            team: self.team.clone(),
+            trap: TrapFrame {
+                va: frame_va,
+                pa: frame_pa,
+            },
         });
+        putln!(
+            "task #{} '{}': spawned ({:?}), frame @ {:#x}, stack @ {:#x}",
+            task.id,
+            task.name,
+            task.state(),
+            frame_pa.as_usize(),
+            stack_top.as_usize()
+        );
+        scheduler::push(task);
+        Ok(frame_pa)
     }
 }

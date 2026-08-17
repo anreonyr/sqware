@@ -54,8 +54,8 @@ use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::runtime::trap::{TIMER_INTERVAL, arm_timer};
 
-use super::lifecycle;
 use super::task::{BlockReason, Task, TaskState};
+use super::tie;
 
 // ── 核心：常量 ──
 
@@ -243,23 +243,33 @@ impl Scheduler {
         putln!("task #{} '{}': exited", exited.id, exited.name);
         task_mut(&mut exited).transform(TaskState::Reaped);
         TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
-        lifecycle::on_task_exited();
+        tie::exit();
     }
 }
 
 /// 取唯一强引用下的 &mut Task。
 ///
 /// 不变量：任务任一时刻只被一个容器强持有（running / starved / blocked / reaped
-/// 恰好其一），Team 只持 Weak——strong_count == 1 恒成立，get_mut 必成功。
+/// 恰好其一），Team 只持 Weak——strong_count == 1 恒成立。
 /// 状态机更新因此由「锁内 take/pop 出唯一 Arc → &mut」保证互斥：没有锁内的
 /// take/pop 拿不到 Arc，拿不到 Arc 就无法 &mut——编译器强制同步，无需原子字段。
+///
+/// # SAFETY（不用 Arc::get_mut 的原因）
+///
+/// `Arc::get_mut` 在 `weak_count > 0` 时也返回 None——而每个任务 spawn 时即被
+/// `Team::push_task` 记入簿记（`Arc::downgrade`），weak_count ≥ 1 永不归零，
+/// get_mut 恒失败。簿记弱引用**从不读 Task 字段**（push_task 只 downgrade、
+/// prune_tasks 只 `ptr_eq` 比较），不构成可变访问冲突；互斥由锁 + strong_count
+/// == 1（唯一强持有）保证，故直接经 `Arc::as_ptr` 转 `&mut` 安全。
 fn task_mut(t: &mut Arc<Task>) -> &mut Task {
     debug_assert_eq!(
         Arc::strong_count(t),
         1,
         "task must be uniquely owned for mutation"
     );
-    Arc::get_mut(t).expect("task must be uniquely owned")
+    // SAFETY: 强计数唯一 + 锁内 take/pop 互斥；Team.tasks 弱引用只作簿记、
+    // 不读 Task 字段（见上）。
+    unsafe { &mut *(Arc::as_ptr(t) as *mut Task) }
 }
 
 // 每核调度器表：boot 时按 DTB 实际核数从 buddy 分配，Box::leak 进 OnceLock
@@ -325,15 +335,15 @@ fn steal() -> Option<Arc<Task>> {
 /// WFI。唤醒后清 SSIP 与睡眠位，返回 None 让外层循环重扫（也可能直接带出任务）。
 fn wait() -> Option<Arc<Task>> {
     let me = machine::hart_id();
-    lifecycle::mark_sleeping(me);
+    tie::sleep(me);
     // 置位后复查：防「检查完 → 置位 → 睡」窗口内的 push 漏唤醒
     let found = schedulers()[me].pop().or_else(steal);
     if let Some(task) = found {
-        lifecycle::mark_awake(me);
+        tie::wake(me);
         return Some(task);
     }
-    if lifecycle::all_exited() {
-        lifecycle::halt_all();
+    if tie::done() {
+        tie::halt();
     }
     // 停掉周期定时器唤醒（stimecmp 推远）——**除非 blocked 非空**：此时必须保持
     // 定时器，让任意核（含空闲核）都能跑 unpark 唤醒到期任务（防全员阻塞死等）。
@@ -347,7 +357,7 @@ fn wait() -> Option<Arc<Task>> {
     // 唤醒后清 SSIP（防残留位导致下次 WFI 立即重醒）与睡眠位
     // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
     unsafe { sip::clear_ssoft() };
-    lifecycle::mark_awake(me);
+    tie::wake(me);
     None
 }
 
@@ -369,7 +379,7 @@ fn clear() {
     }
 }
 
-// ── 适配层：boot（mod.rs init / secondary_main 调用）──
+// ── 适配层：boot（boot.rs init / boot_main 调用）──
 
 /// 按实际核数（DTB）动态分配 per-hart 调度器状态（boot 时调用**恰好一次**，
 /// 先于任何调度器访问：spawn / trap / steal）。
@@ -383,7 +393,7 @@ pub fn init() {
     );
 }
 
-// 任务计数 / 全退出停机 / 休眠核唤醒：见 lifecycle.rs（不变）。
+// 任务计数 / 全退出停机 / 休眠核唤醒：见 tie.rs（不变）。
 
 /// 副核 idle 循环：spin + steal；拿到任务即 restore（永不返回）；全退出停机。
 pub fn idle() -> ! {
@@ -392,19 +402,19 @@ pub fn idle() -> ! {
     restore(run())
 }
 
-// ── 适配层：create（create.rs spawn_thread 调用）──
+// ── 适配层：task（task.rs TaskBuilder::spawn 调用）──
 
-/// 新任务入队收尾（create.rs spawn_thread 调用）：入簿（Team.tasks，3）+
-/// 入本 hart starved（1）+ SPAWNED 计数；锁外唤醒 WFI 休眠核。
+/// 新任务入队收尾（task.rs TaskBuilder::spawn 调用）：入簿（Team.tasks，3）+
+/// 入本 hart starved（1）+ PUSHED 计数；锁外唤醒 WFI 休眠核。
 ///
 /// 锁序：Team.tasks 与调度锁顺序获取、不嵌套（无 3 → 1 方向）。
 pub(crate) fn push(task: Arc<Task>) {
     let me = machine::hart_id();
     task.team.push_task(&task);
     schedulers()[me].push(task);
-    lifecycle::on_task_spawned();
+    tie::push();
     // 新任务出现：唤醒 WFI 休眠核（可 steal 取活）
-    lifecycle::wake_sleepers();
+    tie::wake_all();
 }
 
 // ── 适配层：trap（trap.rs 定时器 / 缺页 / 诊断调用）──
@@ -448,8 +458,8 @@ pub fn run() -> usize {
         if let Some(pa) = schedulers()[me].pop().map(|t| schedulers()[me].replace(t)) {
             return pa;
         }
-        if lifecycle::all_exited() {
-            lifecycle::halt_all();
+        if tie::done() {
+            tie::halt();
         }
         if let Some(task) = steal() {
             return schedulers()[me].replace(task);
@@ -469,7 +479,7 @@ pub fn unpark() {
         let mut due = Vec::new();
         loop {
             let due_front = match list.front() {
-                Some(task) => task.wake_at().is_some_and(|w| w <= now),
+                Some(task) => task.unpark().is_some_and(|w| w <= now),
                 None => false,
             };
             if !due_front {
@@ -484,7 +494,7 @@ pub fn unpark() {
         putln!("task #{} '{}': woken", task.id, task.name);
         let me = machine::hart_id();
         schedulers()[me].push(task);
-        lifecycle::wake_sleepers();
+        tie::wake_all();
     }
 }
 
@@ -527,7 +537,7 @@ pub fn park(ticks: usize) -> usize {
 }
 
 /// 当前线程退出入口（envcall ENV_EXIT 分支调用）：标记 Reaped + 取下一任务
-/// （run 的取活循环；拿不到就 WFI）；全部任务退出 → halt_all。
+/// （run 的取活循环；拿不到就 WFI）；全部任务退出 → halt。
 pub fn reap() -> usize {
     let me = machine::hart_id();
     schedulers()[me].reap();

@@ -37,6 +37,7 @@ use crate::{
 };
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use erra::ResultExt;
@@ -175,7 +176,7 @@ pub fn init() -> MapResult<()> {
             flush_asid(0);
 
             // 8. 保存内核地址空间
-            KERNEL_SPACE.lock().replace(kernel_space);
+            KERNEL_SPACE.lock().replace(Arc::new(kernel_space));
 
             Ok(())
         }
