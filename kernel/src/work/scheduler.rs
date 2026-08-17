@@ -272,7 +272,7 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
     unsafe { &mut *(Arc::as_ptr(t) as *mut Task) }
 }
 
-// 每核调度器表：boot 时按 DTB 实际核数从 buddy 分配，Box::leak 进 OnceLock
+// 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
 // （MAX_HARTS=8 仅为编译期安全上限，不固定静态数组）。长度镜像随结构体共生，
 // 不再有平行数组 READY_LENS。
 

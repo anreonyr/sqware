@@ -311,7 +311,10 @@ fn trap_stack_meta(hart: usize) -> TrapStackMeta {
 
 /// trap 栈元数据表长度（= 实际核数）。
 fn trap_stack_count() -> usize {
-    TRAP_STACKS.get().expect("trap stacks not initialized").len()
+    TRAP_STACKS
+        .get()
+        .expect("trap stacks not initialized")
+        .len()
 }
 
 /// 由当前 sp（trap 栈体内）反解 hart 并写入 tp——用户态可自由改写 tp，而内核
@@ -361,14 +364,14 @@ pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
 }
 
 /// per-hart trap 栈段常量：每段 32 KiB = 低 4 KiB guard（未映射）+ 28 KiB 栈体；
-/// 连续块按实际核数分配（N x 32 KiB，buddy 向上取整到 2 的幂），guard 页兼作
+/// 连续块按实际核数分配（N x 32 KiB，frame 向上取整到 2 的幂），guard 页兼作
 /// 段边界。
 pub const TRAP_STACK_SEGMENT: usize = 32 * 1024;
 pub const TRAP_STACK_GUARD: usize = PAGE_SIZE;
 
 /// 初始化 per-hart trap 栈（boot 时由 trap::init 调用**恰好一次**，hart 0）。
 ///
-/// 1. 按实际核数（DTB）buddy **连续**分配 N x 32 KiB（buddy 按 order 支持连续块，
+/// 1. 按实际核数（DTB）frame **连续**分配 N x 32 KiB（frame 按 order 支持连续块，
 ///    向上取整到 2 的幂）；
 /// 2. 动态分配 TRAP_STACKS 元数据表（N 项）并置入 OnceLock；
 /// 3. 内核空间**清 guard 页 PTE**（栈体随 DRAM 恒等映射保持可访问——unmap 对
@@ -380,14 +383,19 @@ pub fn init_trap_stacks() {
     let segments = crate::machine::hart_count();
     assert!(segments > 0, "no harts");
     let total = segments * TRAP_STACK_SEGMENT;
-    let layout =
-        core::alloc::Layout::from_size_align(total, PAGE_SIZE).expect("trap stack layout");
-    // 块连续（buddy 按 order 取整到 2 的幂）；boot 期帧池充足。
-    let block = allocator().allocate(layout).expect("trap stack block allocation");
+    let layout = core::alloc::Layout::from_size_align(total, PAGE_SIZE).expect("trap stack layout");
+    // 块连续（frame 按 order 取整到 2 的幂）；boot 期帧池充足。
+    let block = allocator()
+        .allocate(layout)
+        .expect("trap stack block allocation");
     let base = block.cast::<u8>().as_ptr() as usize;
     // establish_tp 反解 hartid 依赖段大小 = 2^15（kernel_sp - base 恒为 32 KiB
     // 整数倍——段连续切分；C 侧按 TRAP_STACKS 表范围匹配，无需 base 静态）
-    assert_eq!(TRAP_STACK_SEGMENT, 1 << 15, "trap stack segment must be 32 KiB");
+    assert_eq!(
+        TRAP_STACK_SEGMENT,
+        1 << 15,
+        "trap stack segment must be 32 KiB"
+    );
 
     // 元数据表（N 项，先置 OnceLock 再逐项填充）
     let table: Box<[SyncCell<TrapStackMeta>]> = (0..segments)

@@ -32,7 +32,7 @@
 //                                          嵌套合法；unpark 路径**先放队列锁
 //                                          再取调度锁**——绝不持队列锁取调度锁（防 ABBA）
 //   4. ASID_ALLOCATOR      (SpinLock)  — ASID 分配器
-//   5. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（buddy）
+//   5. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（frame）
 //   6. portal / block      (SpinLock / TrapGuard) — 全局堆分配
 //
 // A lock at level N may be acquired while holding a lock at level < N.

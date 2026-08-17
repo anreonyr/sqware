@@ -78,7 +78,7 @@ fn track_trap_stack_usage() {
 
 /// 初始化 trap 运行时（须在 `manager::init` 之后：内核帧与 TRAMPOLINE 映射已就绪）。
 pub fn init() {
-    // 0. per-hart trap 栈：buddy 连续分配 + guard 页 + 全部 canary（先于内核帧
+    // 0. per-hart trap 栈：frame 连续分配 + guard 页 + 全部 canary（先于内核帧
     //    元数据——帧 kernel_sp 需要指向本 hart 栈顶）。仅 hart 0 调用一次。
     init_trap_stacks();
 

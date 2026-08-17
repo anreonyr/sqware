@@ -36,7 +36,7 @@ impl FrameAllocator {
         }
     }
 
-    /// 初始化 frame 分配器：分配元数据 Vec（经 bump），确定基址，构建 buddy freelist。
+    /// 初始化 frame 分配器：分配元数据 Vec（经 bump），确定基址，构建 frame freelist。
     ///
     /// 必须在所有 bump 分配（包括 block::init）之后调用，因为基址取自
     /// `bump::frontier()`——确保 frame 的 Link 节点不被后续 bump 覆盖。
@@ -110,9 +110,9 @@ pub fn check_baseline() {
     }
 }
 
-/// 由请求字节数计算 buddy order（块 = 2^power × PAGE_SIZE，须覆盖 size）。
+/// 由请求字节数计算 frame order（块 = 2^power × PAGE_SIZE，须覆盖 size）。
 ///
-/// size 先向上取整到页，再取整到 **2 的幂页数**——buddy 块必须是 2 的幂倍页。
+/// size 先向上取整到页，再取整到 **2 的幂页数**——frame 块必须是 2 的幂倍页。
 /// 例：8976 B（3 页）→ 4 页 → power 2（16 KiB ≥ 8976）。旧实现对页字节数直接
 /// `ilog2`（floor），非 2 的幂页数会低配（3 页 → power 1 = 8 KiB < 8976）→
 /// 调用方写满请求大小即溢出到相邻 free 帧（M5 `copy_from_user` 的堆 Vec 触发，
@@ -161,7 +161,7 @@ unsafe impl Allocator for FrameAllocator {
             let index = frame.frame_index(addr);
 
             // debug: double-free 检测——pagemeta 已标 free 的帧再释放说明
-            // 帧被释放两次（或归还未分配的地址），会破坏 buddy 合并。
+            // 帧被释放两次（或归还未分配的地址），会破坏 frame 合并。
             #[cfg(debug_assertions)]
             {
                 if frame.pagemeta[index].as_ref().is_some_and(|m| m.free) {
@@ -209,7 +209,7 @@ impl FrameInner {
         }
     }
 
-    /// 初始化：分配元数据 Vec（经 bump），确定基址，构建 buddy freelist。
+    /// 初始化：分配元数据 Vec（经 bump），确定基址，构建 frame freelist。
     ///
     /// # Errors
     ///
@@ -271,7 +271,7 @@ impl FrameInner {
         self.base + index * PAGE_SIZE
     }
 
-    // buddy 索引：翻转 order 对应的位
+    // frame 索引：翻转 order 对应的位
     fn buddy_index(index: usize, power: usize) -> usize {
         index ^ (1 << power)
     }
@@ -311,7 +311,7 @@ impl FrameInner {
             );
 
             // debug: pop 出的帧必须是 free 的（pagemeta 校验）——分配到在用帧
-            // 说明 buddy 元数据与 freelist 不一致（重叠分配，两个持有者共享一帧）。
+            // 说明 frame 元数据与 freelist 不一致（重叠分配，两个持有者共享一帧）。
             #[cfg(debug_assertions)]
             if !self.pagemeta[index].as_ref().is_some_and(|m| m.free) {
                 panic!(
@@ -471,7 +471,7 @@ impl FrameInner {
 
             let index = self.pop_link(k)?;
 
-            // 逐级拆分：每级把 buddy 推入 freelist
+            // 逐级拆分：每级把 frame 推入 freelist
             while k > power {
                 k -= 1;
                 let buddy = Self::buddy_index(index, k);
@@ -482,7 +482,7 @@ impl FrameInner {
         }
     }
 
-    // 将释放的帧索引推入 freelist，并逐级向上与空闲 buddy 合并。
+    // 将释放的帧索引推入 freelist，并逐级向上与空闲 frame 合并。
     //
     // # Safety
     //
@@ -498,17 +498,17 @@ impl FrameInner {
                 {
                     break;
                 }
-                // pagemeta 说 buddy 空闲，但必须确实在 freelist[power] 链中才可
-                // 合并——否则是残留标记（buddy 已并入其它块/已被分配），合并会
+                // pagemeta 说 frame 空闲，但必须确实在 freelist[power] 链中才可
+                // 合并——否则是残留标记（frame 已并入其它块/已被分配），合并会
                 // 摘除一个不在链中的节点、破坏链表（跨 order 交叉的直接来源）。
                 if !self.in_freelist(buddy, power) {
                     break;
                 }
 
                 self.remove_link(buddy, power);
-                // 合并后 buddy 并入 index 块：清除其独立 pagemeta——残留 free
+                // 合并后 frame 并入 index 块：清除其独立 pagemeta——残留 free
                 // 标记会让后续 split/merge 把已并入大块的帧当空闲块处理
-                // （buddy 不变量破坏 → 同一帧双重入链 → freelist 读垃圾）。
+                // （frame 不变量破坏 → 同一帧双重入链 → freelist 读垃圾）。
                 self.pagemeta[buddy] = None;
                 index = index.min(buddy); // 合并后取较小的帧索引
                 power += 1;
@@ -520,8 +520,8 @@ impl FrameInner {
 
     /// 帧是否在 freelist[power] 链中（遍历核对）。
     ///
-    /// merge 合并 buddy 前调用：pagemeta 可能残留 free 标记（buddy 已并入
-    /// 其它块），链中核对可避免摘除不存在的节点——这是 buddy 一致性修复的
+    /// merge 合并 frame 前调用：pagemeta 可能残留 free 标记（frame 已并入
+    /// 其它块），链中核对可避免摘除不存在的节点——这是 frame 一致性修复的
     /// 本体，release 同样生效（不是纯调试防御）。
     fn in_freelist(&self, index: usize, power: usize) -> bool {
         let target = self.frame_addr(index);

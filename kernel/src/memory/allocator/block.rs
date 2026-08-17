@@ -4,7 +4,7 @@
 // 存下一块的指针（利用 niche optimization: None = 0, Some = 指针值）。
 // freepool[power] 指向该 size class 的空闲链表头部。
 //
-// 内存从 frame allocator（buddy）获取，按需懒分配新页。
+// 内存从 frame allocator 获取，按需懒分配新页。
 // 每页单独追踪引用计数，全部 block 释放后整页归还。
 // block 大小范围：2^3 .. 2^12（8 字节 .. 4096 字节 = PAGE_SIZE）。
 // 最小对齐 8 字节，申请量不足 8 字节时自动向上取整。
