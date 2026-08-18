@@ -1,0 +1,16 @@
+[package]
+name = "user"
+version.workspace = true
+edition.workspace = true
+
+# 用户程序：freestanding、无 std、无 main crt。链接在 USER_TEXT_BASE (0x10000)，
+# 静态 ET_EXEC；由内核 loader 按绝对 VMA 装载，_start 即 e_entry。
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "user-exiter"
+path = "src/bin/exiter.rs"
+test = false
+bench = false
+doctest = false

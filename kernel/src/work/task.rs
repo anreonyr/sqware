@@ -128,6 +128,7 @@ impl Task {
 pub struct TaskBuilder {
     team: Arc<Team>,
     name: &'static str,
+    entry: VirtAddr,
     arg: usize,
 }
 
@@ -137,6 +138,7 @@ impl TaskBuilder {
         TaskBuilder {
             team,
             name: "task",
+            entry: USER_TEXT_BASE,
             arg: 0,
         }
     }
@@ -150,6 +152,12 @@ impl TaskBuilder {
     /// 线程入口参数（写入用户上下文 a0）。
     pub fn arg(mut self, arg: usize) -> TaskBuilder {
         self.arg = arg;
+        self
+    }
+
+    /// 线程入口（loader 产出的绝对 entry；默认 USER_TEXT_BASE）。
+    pub fn entry(mut self, entry: VirtAddr) -> TaskBuilder {
+        self.entry = entry;
         self
     }
 
@@ -188,7 +196,7 @@ impl TaskBuilder {
             frame.user_satp =
                 (8usize << 60) | (self.team.space.asid() << 44) | self.team.space.root();
             frame.self_va = frame_va.as_usize();
-            frame.sepc = USER_TEXT_BASE.as_usize();
+            frame.sepc = self.entry.as_usize();
             frame.gpr[2] = stack_top.as_usize();
             frame.gpr[10] = self.arg;
             let s = riscv::register::sstatus::read().bits();

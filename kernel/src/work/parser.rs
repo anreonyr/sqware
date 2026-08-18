@@ -1,15 +1,13 @@
 //! ELF 程序解析器 — 纯解析核心，零副作用。
 //!
 //! 只做「读字节 → 出配方」：验头、列段（PT_LOAD）、验段、取入口。不碰内存/
-//! 页表/任务。定址、映射、置栈归 Space/spawn 层（mapper）；本模块是纯数据层，
+//! 页表/任务。定址、映射、置栈归 Space/spawn 层（loader）；本模块是纯数据层，
 //! 可离线单测。
 //!
 //! 公开面只留 parse；check/collect/entry 为核心内部原语，不单独暴露，
 //! 保证产物 ParsedProgram 只能以「已验段」形态存在（不变量成为类型义务）。
 //!
 //! fack 0.2.0 语法：元组变体用位置式 {0}/{1}，勿用 {_0}。
-#![allow(dead_code)] // ELF 装载（mapper）接入前的预留后端
-
 use alloc::vec::Vec;
 use erra::ResultExt;
 use fack::prelude::Error;
@@ -120,7 +118,7 @@ pub struct LoadSegment {
 pub struct ParsedProgram {
     pub entry: VirtAddr,
     pub pie: bool,
-    pub loads: Vec<LoadSegment>,
+    pub segments: Vec<LoadSegment>,
 }
 
 // ── 核心原语 ──────────────────────────────────────────────────
@@ -183,7 +181,7 @@ fn collect(bytes: &[u8], h: &Header) -> Result<Vec<LoadSegment>, ParseError> {
         let memsz = u64(bytes, base + PH_MEMSZ) as usize;
 
         // 验段
-        if vaddr % PAGE_SIZE != 0 || offset % PAGE_SIZE != 0 {
+        if !vaddr.is_multiple_of(PAGE_SIZE) || !offset.is_multiple_of(PAGE_SIZE) {
             return Err(ParseError::BadAlign(vaddr));
         }
         if memsz < filesz {
@@ -234,8 +232,9 @@ pub fn parse(bytes: &[u8]) -> ParseResult<ParsedProgram> {
         Ok(ParsedProgram {
             entry: entry(&h),
             pie: h.pie,
-            loads,
+            segments: loads,
         })
     })()
     .annotate("parsing ELF program")
 }
+

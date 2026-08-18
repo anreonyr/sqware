@@ -59,7 +59,7 @@ pub fn init() -> ! {
     // Team1：双线程共享同一地址空间（两线程均长跑——多核下分布在两 hart 上
     // 真实并行：a0=0 → 'A' 循环，a0=1 → 'B' 循环）——先 Team 后任务
     let space1 = SpaceBuilder::user().build().expect("space1 failed");
-    loader::load(&space1, program_d()).expect("load team1 failed");
+    loader::load_blob(&space1, program_d()).expect("load team1 failed");
     let team1 = team::TeamBuilder::new(space1).spawn();
     let _ = task::TaskBuilder::new(team1.clone())
         .name("thread-A")
@@ -77,16 +77,30 @@ pub fn init() -> ! {
     for (program, name) in [
         (program_a(), "counter"),
         (program_b(), "yielder"),
-        (program_c(), "exiter"),
         (program_e(), "sleeper"),
     ] {
         let space = SpaceBuilder::user().build().expect("space failed");
-        loader::load(&space, program).expect("load failed");
+        loader::load_blob(&space, program).expect("load failed");
         let team = team::TeamBuilder::new(space).spawn();
         let _ = task::TaskBuilder::new(team)
             .name(name)
             .spawn()
             .expect("spawn failed");
+    }
+
+    // exiter（旧 blob program_c）改走 ELF 全链：parser → loader → TaskBuilder。
+    // 用户程序 user-exiter 静态链接于 USER_TEXT_BASE(0x10000)，内嵌 ELF 字节。
+    {
+        let elf: &[u8] = include_bytes!("../../user/user-exiter.elf");
+        let parsed = crate::work::parser::parse(elf).expect("parse user-exiter");
+        let space = SpaceBuilder::user().build().expect("space failed");
+        let loaded = loader::load(space, elf, &parsed).expect("load user-exiter");
+        let team = team::TeamBuilder::new(loaded.space).spawn();
+        let _ = task::TaskBuilder::new(team)
+            .name("exiter")
+            .entry(loaded.entry)
+            .spawn()
+            .expect("spawn exiter failed");
     }
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
@@ -258,20 +272,6 @@ const fn program_b() -> &'static [u8] {
         0x93, 0x08, 0x00, 0x00, // li   a7, 0        (ENV_YIELD)
         0x73, 0x00, 0x00, 0x00, // ecall
         0x6f, 0xf0, 0x1f, 0xfe, // j    -0x20
-    ]
-}
-
-/// C "exiter"：写 'C' 一次后退出（ENV_EXIT）。
-///
-/// 布局（20 B）：li a7,1; li a0,'C'; ecall; li a7,2; ecall; j 0（兜底）
-const fn program_c() -> &'static [u8] {
-    &[
-        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
-        0x13, 0x05, 0x30, 0x04, // li   a0, 0x43     ('C')
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x93, 0x08, 0x20, 0x00, // li   a7, 2        (ENV_EXIT)
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x6f, 0x00, 0x00, 0x00, // j    0（正常不可达兜底）
     ]
 }
 
