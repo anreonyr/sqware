@@ -4,7 +4,7 @@
 // 本模块（有副作用）消费配方 + 源字节，把程序装进一个按值持有的 Space，
 // 携 Space 与入口交还（Loaded → TeamBuilder）。
 //
-// 现状：旧 blob 装载保留为 load_blob（demo 迁移完毕即删）；load 是按设计的新契约。
+// load 为设计契约；blob 装载已随 demo 全 ELF 化移除。
 // 只碰 durable（静态段）；栈/帧/堆窗口（dynamic）由 TaskBuilder 分配，正交。
 
 use alloc::boxed::Box;
@@ -75,26 +75,5 @@ fn map_segment(space: &Space, bytes: &[u8], seg: &LoadSegment) -> Result<(), Map
         flags,
         MapKind::Anonymous,
         frames,
-    )
-}
-
-// ── 旧 blob 装载（demo 迁移到 ELF 后删除）────────────────────────
-
-/// 装载程序到 Space：分配物理帧 → 拷贝 blob → 映射进 durable（文本段）。
-pub fn load_blob(space: &Space, program: &'static [u8]) -> Result<(), MapError> {
-    use alloc::vec;
-    assert!(program.len() <= PAGE_SIZE, "task program exceeds one page");
-
-    let mut text =
-        Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
-    text[..program.len()].copy_from_slice(program);
-    let text_pa = PhysAddr::from_raw(text.as_ptr() as usize);
-    space.map(
-        crate::work::USER_TEXT_BASE,
-        text_pa,
-        PAGE_SIZE,
-        PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::U | PteFlags::A | PteFlags::D,
-        MapKind::Anonymous,
-        vec![text],
     )
 }

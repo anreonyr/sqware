@@ -13,6 +13,7 @@
 use core::arch::global_asm;
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::machine;
@@ -56,51 +57,40 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     pt_reclaim_selftest();
 
-    // Team1：双线程共享同一地址空间（两线程均长跑——多核下分布在两 hart 上
-    // 真实并行：a0=0 → 'A' 循环，a0=1 → 'B' 循环）——先 Team 后任务
-    let space1 = SpaceBuilder::user().build().expect("space1 failed");
-    loader::load_blob(&space1, program_d()).expect("load team1 failed");
-    let team1 = team::TeamBuilder::new(space1).spawn();
+    // 全部演示程序改为经 parser → loader → TaskBuilder 装载的**真 ELF**（user crate，
+    // 静态链接于 USER_TEXT_BASE 0x10000），blob 装载 load_blob 随之移除。
+    //
+    // Team1「threader」：双线程共享同一地址空间——线程参数 a0 分支（0 → 'A' 循环、
+    // 非 0 → 'B' 循环），多核下分布在两 hart 真实并行。先 Team 后 Task。
+    let (team1, entry1) = load_user(&include_bytes!("../../user/user-threader.elf")[..]);
     let _ = task::TaskBuilder::new(team1.clone())
         .name("thread-A")
+        .entry(entry1)
         .arg(0)
         .spawn()
         .expect("spawn A failed");
     let _ = task::TaskBuilder::new(team1.clone())
         .name("thread-B")
+        .entry(entry1)
         .arg(1)
         .spawn()
         .expect("spawn B failed");
     drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
-    // 单线程团队回归：A/B/C/E 行为不变（E 每 ~1.6s 写 'E' 后睡眠 1600 ms——
-    // 任务级阻塞：Running → Blocked → deadline 堆 → unpark 唤醒）
-    for (program, name) in [
-        (program_a(), "counter"),
-        (program_b(), "yielder"),
-        (program_e(), "sleeper"),
+
+    // 单线程团队回归：counter/yielder/sleeper/exiter 行为不变
+    // （sleeper 写 'E' 后睡眠 16 量子——任务级阻塞 Running → Blocked → unpark 唤醒）。
+    for (elf, name) in [
+        (&include_bytes!("../../user/user-counter.elf")[..], "counter"),
+        (&include_bytes!("../../user/user-yielder.elf")[..], "yielder"),
+        (&include_bytes!("../../user/user-sleeper.elf")[..], "sleeper"),
+        (&include_bytes!("../../user/user-exiter.elf")[..], "exiter"),
     ] {
-        let space = SpaceBuilder::user().build().expect("space failed");
-        loader::load_blob(&space, program).expect("load failed");
-        let team = team::TeamBuilder::new(space).spawn();
+        let (team, entry) = load_user(elf);
         let _ = task::TaskBuilder::new(team)
             .name(name)
+            .entry(entry)
             .spawn()
             .expect("spawn failed");
-    }
-
-    // exiter（旧 blob program_c）改走 ELF 全链：parser → loader → TaskBuilder。
-    // 用户程序 user-exiter 静态链接于 USER_TEXT_BASE(0x10000)，内嵌 ELF 字节。
-    {
-        let elf: &[u8] = include_bytes!("../../user/user-exiter.elf");
-        let parsed = crate::work::parser::parse(elf).expect("parse user-exiter");
-        let space = SpaceBuilder::user().build().expect("space failed");
-        let loaded = loader::load(space, elf, &parsed).expect("load user-exiter");
-        let team = team::TeamBuilder::new(loaded.space).spawn();
-        let _ = task::TaskBuilder::new(team)
-            .name("exiter")
-            .entry(loaded.entry)
-            .spawn()
-            .expect("spawn exiter failed");
     }
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
@@ -111,6 +101,16 @@ pub fn init() -> ! {
     // 副核 steal 走，见 scheduler::enter_first_task）
     putln!("task: entering first task");
     restore(scheduler::run())
+}
+
+/// 内嵌用户 ELF → parser → loader → Team；返回 (Team, 绝对入口)。
+fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
+    let parsed = crate::work::parser::parse(elf).expect("parse user elf");
+    let space = SpaceBuilder::user().build().expect("space failed");
+    let loaded = loader::load(space, elf, &parsed).expect("load user elf");
+    let entry = loaded.entry;
+    let team = team::TeamBuilder::new(loaded.space).spawn();
+    (team, entry)
 }
 
 /// boot 启动：HSM `hart_start` 逐个拉起 hart 1..count-1。
@@ -226,107 +226,3 @@ fn pt_reclaim_selftest() {
     putln!("pt-reclaim selftest: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})");
 }
 
-// ── 演示程序（手写机器码 blob，llvm-mc 核对字节；rv64gc 基础指令）──────────
-
-/// A "counter"：每 262144 次迭代写 'A'（(t1 & 0x3ffff)==0），从不主动让出——
-/// 靠定时器抢占切走。两个关键设计：
-/// 1. 计数器用 **t1** 而非 a0：ENV_WRITE 的 a0 是返回值槽（帧恢复后 a0 = 字符
-///    码），作为计数器会被破坏；
-/// 2. andi 立即数仅 12 位有符号（0xfff 溢出、srli+andi 单级是 1/64 段选而非
-///    点选），故用两级检查：低 11 位全零 && (t1>>11)&0x7f 全零 → 每 2^18 次。
-///
-/// 输出频率 ~12 字符/量子（0.1s），保持演示可读。
-///
-/// 布局（40 B）：addi t1,t1,1; andi t0,t1,0x7ff; bnez t0,+0x1c;
-/// srli t0,t1,11; andi t0,t0,0x7f; bnez t0,+0x10;
-/// li a7,1; li a0,'A'; ecall; j -0x24
-const fn program_a() -> &'static [u8] {
-    &[
-        0x13, 0x03, 0x13, 0x00, // addi t1, t1, 1
-        0x93, 0x72, 0xf3, 0x7f, // andi t0, t1, 0x7ff
-        0x63, 0x9e, 0x02, 0x00, // bnez t0, +0x1c
-        0x93, 0x52, 0xb3, 0x00, // srli t0, t1, 11
-        0x93, 0xf2, 0xf2, 0x07, // andi t0, t0, 0x7f
-        0x63, 0x98, 0x02, 0x00, // bnez t0, +0x10
-        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
-        0x13, 0x05, 0x10, 0x04, // li   a0, 0x41     ('A')
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24
-    ]
-}
-
-/// B "yielder"：每次迭代主动让出（ENV_YIELD），每 4 次让出写 'B'。
-/// B 每次运行只迭代 1 次（立即让出），跨运行累计 a0 计数——每 4 次运行
-/// （~0.8s）输出一个 'B'，展示主动让出驱动的轮转。
-///
-/// 布局（36 B）：addi a0,a0,1; andi t0,a0,0x3; bnez t0,+0x10;
-/// li a7,1; li a0,'B'; ecall; li a7,0; ecall; j -0x20
-const fn program_b() -> &'static [u8] {
-    &[
-        0x13, 0x05, 0x15, 0x00, // addi a0, a0, 1
-        0x93, 0x72, 0x35, 0x00, // andi t0, a0, 0x3
-        0x63, 0x98, 0x02, 0x00, // bnez t0, +0x10
-        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
-        0x13, 0x05, 0x20, 0x04, // li   a0, 0x42     ('B')
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x93, 0x08, 0x00, 0x00, // li   a7, 0        (ENV_YIELD)
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x6f, 0xf0, 0x1f, 0xfe, // j    -0x20
-    ]
-}
-
-/// D "threader"：线程入口参数 a0 分支行为（多核线程模型 demo）。
-///
-/// a0 == 0 → 'A' 计数循环；a0 != 0 → 'B' 计数循环——同一空间双线程**均长跑**，
-/// 多核下分布在两个 hart 上真实并行（同一 satp、不同 trap 帧）。
-/// 计数用 t1 而非 a0：ENV_WRITE 的返回值槽是 a0，作为计数器会被破坏。
-///
-/// 布局（84 B）：beqz a0,+0x2c; [B 循环] addi t1,t1,1; andi t0,t1,0x7ff;
-/// bnez t0,+0x1c; srli t0,t1,11; andi t0,t0,0x7f; bnez t0,+0x10;
-/// li a7,1; li a0,'B'; ecall; j -0x24; [A 循环] addi t1,t1,1; andi t0,t1,0x7ff;
-/// bnez t0,+0x1c; srli t0,t1,11; andi t0,t0,0x7f; bnez t0,+0x10;
-/// li a7,1; li a0,'A'; ecall; j -0x24
-const fn program_d() -> &'static [u8] {
-    &[
-        0x63, 0x06, 0x05, 0x02, // beqz a0, +0x2c    (a0==0 → 'A' 循环)
-        // 'B' 循环（长跑）
-        0x13, 0x03, 0x13, 0x00, // addi t1, t1, 1
-        0x93, 0x72, 0xf3, 0x7f, // andi t0, t1, 0x7ff
-        0x63, 0x9e, 0x02, 0x00, // bnez t0, +0x1c
-        0x93, 0x52, 0xb3, 0x00, // srli t0, t1, 11
-        0x93, 0xf2, 0xf2, 0x07, // andi t0, t0, 0x7f
-        0x63, 0x98, 0x02, 0x00, // bnez t0, +0x10
-        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
-        0x13, 0x05, 0x20, 0x04, // li   a0, 0x42     ('B')
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24        (B 循环)
-        // 'A' 循环（长跑）
-        0x13, 0x03, 0x13, 0x00, // addi t1, t1, 1
-        0x93, 0x72, 0xf3, 0x7f, // andi t0, t1, 0x7ff
-        0x63, 0x9e, 0x02, 0x00, // bnez t0, +0x1c
-        0x93, 0x52, 0xb3, 0x00, // srli t0, t1, 11
-        0x93, 0xf2, 0xf2, 0x07, // andi t0, t0, 0x7f
-        0x63, 0x98, 0x02, 0x00, // bnez t0, +0x10
-        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
-        0x13, 0x05, 0x10, 0x04, // li   a0, 0x41     ('A')
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x6f, 0xf0, 0xdf, 0xfd, // j    -0x24        (A 循环)
-    ]
-}
-
-/// E "sleeper"：写 'E' 后睡眠 1600 ms（ENV_SLEEP 的毫秒语义）再循环——
-/// 任务级阻塞演示：Running → Blocked（deadline 堆）→ Starved（unpark 唤醒）。
-///
-/// 布局（28 B）：li a7,1; li a0,'E'; ecall; li a7,4; li a0,1600; ecall; j -0x18
-/// （字节经 llvm-mc 核对；ENV_SLEEP = 4，a0 = 毫秒）
-const fn program_e() -> &'static [u8] {
-    &[
-        0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
-        0x13, 0x05, 0x50, 0x04, // li   a0, 0x45     ('E')
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x93, 0x08, 0x40, 0x00, // li   a7, 4        (ENV_SLEEP)
-        0x13, 0x05, 0x40, 0x06, // li   a0, 1600     (ms)
-        0x73, 0x00, 0x00, 0x00, // ecall
-        0x6f, 0xf0, 0x9f, 0xfe, // j    -0x18        (28 B：0x18 + (-0x18) = 0x00)
-    ]
-}
