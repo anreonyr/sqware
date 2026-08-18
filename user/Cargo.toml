@@ -7,6 +7,9 @@ edition.workspace = true
 # 静态 ET_EXEC；由内核 loader 按绝对 VMA 装载，_start 即 e_entry。
 [lib]
 path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
 
 [["bin"]]
 name = "user-exiter"
