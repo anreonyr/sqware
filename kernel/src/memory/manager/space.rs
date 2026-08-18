@@ -833,7 +833,6 @@ impl Space {
     /// 当场就位，用户访问不再缺页。中途帧耗尽时回滚：清已映射页叶子 + 移除子
     /// Map（帧随 drop 归还）+ VA 块退回复用（[`BitmapAllocator::deallocate`]；
     /// 中间表帧已由 clear_range 回收）。
-    #[allow(dead_code)] // map/unmap syscall 后端预留
     pub(crate) fn heap_allocate(&self, size: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         let flags =
@@ -883,7 +882,6 @@ impl Space {
     /// 用户堆释放：位图精确匹配 `(addr, size)` 后清叶子 PTE（含回收中间表）并移除子 Map（帧随
     /// drop 归还 frame 池）。返回是否找到并释放（未分配/部分已释放的区间返回
     /// false，同旧块表精确匹配语义）。
-    #[allow(dead_code)] // map/unmap syscall 后端预留
     pub(crate) fn heap_deallocate(&self, addr: VirtAddr, size: usize) -> bool {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;

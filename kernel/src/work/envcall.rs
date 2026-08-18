@@ -3,93 +3,86 @@
 // RISC-V 特权规范：U 态 ecall 即 "Environment Call"（riscv crate 官方枚举亦名
 // `Exception::UserEnvCall`）——本模块即该调用的内核侧 ABI，术语与规范同源。
 //
-// 约定：a7 = 调用号（枚举，禁止裸数字），a0..a5 = 参数，返回值写回 a0/a1
-// （frame.gpr[10]/gpr[11]）；每个调用后 sepc += 4（Exit 除外——不返回）。
-// 时间语义统一以毫秒（Duration 边界）表达（Sleep=4）；tick 计数（GetTicks=3）
-// 仅作兼容诊断，非时间单位。分发只处理用户态陷阱：内核态 S-mode envcall 属
-// 内核 bug，走 trap 的 "unhandled kernel exception" 分支。
+// 调用号契约（a7 枚举）单一事实源在 `ubi::Ucall`，kernel/user 共用（见 ubi）。
+// 约定：a7 = 调用号，a0..a5 = 参数，返回值写回 a0/a1（frame.gpr[10]/gpr[11]）；
+// 每个调用后 sepc += 4（Exit 除外——不返回）。时间语义统一以毫秒（Duration 边界）
+// 表达（Sleep=4）；tick 计数（GetTicks=3）仅作兼容诊断，非时间单位。
+// 分发只处理用户态陷阱：内核态 S-mode envcall 属内核 bug，走 trap 的
+// "unhandled kernel exception" 分支。
 
 use core::time::Duration;
 
+use ubi::Ucall;
+
+use crate::memory::PAGE_SIZE;
+use crate::memory::manager::addr::VirtAddr;
 use crate::put;
 use crate::runtime::{clock, timer};
 use crate::runtime::context::TrapContext;
-use crate::work::scheduler::{park, reap, starve};
-
-/// envcall 调用号。
-#[repr(usize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Envcall {
-    /// 主动让出处理器（round-robin 轮转，定时器抢占的主动版）。
-    Yield = 0,
-    /// 输出单字符（a0 = 字符码；最小可用，缓冲区写留待延伸）。
-    Write = 1,
-    /// 退出当前任务（不返回）。
-    Exit = 2,
-    /// 读取定时器中断 tick 计数（诊断用，非时间单位；返回值写 a0）。
-    GetTicks = 3,
-    /// 睡眠指定毫秒数（a0 = ms；Running → Blocked → 到期由 unpark 唤醒）。
-    Sleep = 4,
-    /// 读取单调时钟（uptime）：a0 = 秒，a1 = 亚秒纳秒（clock_gettime 形状）。
-    ClockGetTime = 5,
-}
-
-impl TryFrom<usize> for Envcall {
-    type Error = ();
-
-    fn try_from(number: usize) -> Result<Self, ()> {
-        match number {
-            0 => Ok(Self::Yield),
-            1 => Ok(Self::Write),
-            2 => Ok(Self::Exit),
-            3 => Ok(Self::GetTicks),
-            4 => Ok(Self::Sleep),
-            5 => Ok(Self::ClockGetTime),
-            _ => Err(()),
-        }
-    }
-}
+use crate::work::scheduler::{park, reap, starve, with_running_space};
 
 /// envcall 分发（trap_handler 的 UserEnvCall 分支调用）。
 ///
-/// 入参 frame = 当前任务用户帧；返回待恢复帧：Yield/Exit 返回调度器选出的
-/// 下一任务帧，其余返回入参帧。Exit 返回后调用方不得再触碰 frame（其空间
-/// 已在 reap 中回收）。
+/// 入参 frame = 当前任务用户帧；返回待恢复帧：Yield 返回调度器选出的下一任务帧，
+/// Exit 返回后调用方不得再触碰 frame（其空间已在 reap 中回收）。
 pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
     let number = frame.gpr[17]; // a7
     let call =
-        Envcall::try_from(number).unwrap_or_else(|_| panic!("invalid envcall number: {number}"));
+        Ucall::try_from(number).unwrap_or_else(|_| panic!("invalid envcall number: {number}"));
     match call {
-        Envcall::Yield => {
+        Ucall::Yield => {
             frame.sepc += 4;
             starve() as *mut TrapContext
         }
-        Envcall::Write => {
+        Ucall::Write => {
             frame.sepc += 4;
             let ch = frame.gpr[10] as u8 as char; // a0
             put!("{ch}");
             frame as *mut TrapContext
         }
-        Envcall::Exit => {
+        Ucall::Exit => {
             // 不做 sepc += 4：任务不再恢复；frame 指向的空间随即在 reap 中回收
             reap() as *mut TrapContext
         }
-        Envcall::GetTicks => {
+        Ucall::GetTicks => {
             frame.sepc += 4;
             frame.gpr[10] = timer::ticks() as usize;
             frame as *mut TrapContext
         }
-        Envcall::Sleep => {
+        Ucall::Sleep => {
             // sepc 前进（唤醒恢复时从 ecall 之后继续）；任务被 park，返回下一帧。
             // a0 = 毫秒（Duration 边界；clock 按 timebase 换算成 deadline）
             frame.sepc += 4;
             park(Duration::from_millis(frame.gpr[10] as u64)) as *mut TrapContext
         }
-        Envcall::ClockGetTime => {
+        Ucall::ClockGetTime => {
             frame.sepc += 4;
             let up = clock::uptime();
             frame.gpr[10] = up.as_secs() as usize;
             frame.gpr[11] = up.subsec_nanos() as usize;
+            frame as *mut TrapContext
+        }
+        Ucall::HeapAllocate => {
+            // a0 = 字节数（页对齐向上取整；内核 Window::allocate 要求页对齐）。
+            // 当前运行任务空间经 with_running_space 借出（锁序 1→2→5 合法）。
+            frame.sepc += 4;
+            let size = frame.gpr[10].max(1).next_multiple_of(PAGE_SIZE);
+            let addr = with_running_space(|s| s.heap_allocate(size));
+            frame.gpr[10] = match addr {
+                Ok(va) => va.as_usize(),
+                Err(_) => usize::MAX, // 负错误码（D1）：用户侧 (a0 as isize) < 0 判为 Err
+            };
+            frame as *mut TrapContext
+        }
+        Ucall::HeapDeallocate => {
+            // a0 = 分配所得 VA，a1 = 字节数（与分配时同源页对齐；位图精确匹配）。
+            frame.sepc += 4;
+            let addr = frame.gpr[10];
+            let size = frame.gpr[11].max(1).next_multiple_of(PAGE_SIZE);
+            let ok = with_running_space(|s| {
+                s.heap_deallocate(VirtAddr::from_raw(addr), size)
+            });
+            frame.gpr[10] = if ok { 0 } else { usize::MAX };
             frame as *mut TrapContext
         }
     }

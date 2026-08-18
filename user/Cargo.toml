@@ -11,6 +11,9 @@ test = false
 bench = false
 doctest = false
 
+[dependencies]
+ubi = { path = "../crates/ubi" }
+
 [["bin"]]
 name = "user-exiter"
 path = "src/bin/exiter.rs"

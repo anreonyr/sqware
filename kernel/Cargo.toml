@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+ubi = { path = "../crates/ubi" }
+sbi = { path = "../crates/sbi" }
 bitflags = "2.13.1"
 erra = { version = "0.2.0", default-features = false }
 fack = { version = "0.2.0", default-features = false }

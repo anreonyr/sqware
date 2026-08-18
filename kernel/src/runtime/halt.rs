@@ -4,10 +4,8 @@
 // （见 lock/mod.rs 的 panic 路径说明）。
 use core::panic::PanicInfo;
 
-use crate::{
-    console::_write,
-    ecall::{self, fid},
-};
+use crate::console::_write;
+use sbi::{self, fid};
 
 #[panic_handler]
 fn panic_handler(info: &PanicInfo) -> ! {
@@ -25,7 +23,7 @@ fn panic_handler(info: &PanicInfo) -> ! {
     _write(format_args!("  message: {}\n", info.message()));
 
     loop {
-        ecall::SystemResetCall::new(fid::SystemReset::SystemReset)
+        sbi::SystemResetCall::new(fid::SystemReset::SystemReset)
             .call()
             .unwrap();
         unsafe { core::arch::asm!("wfi") };

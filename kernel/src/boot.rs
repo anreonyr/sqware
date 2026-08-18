@@ -146,8 +146,8 @@ fn boot_harts() {
         }
         let stack_top = crate::runtime::trampoline::trap_stack_top(hart);
         putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
-        let r = crate::ecall::HsmCall::new(crate::ecall::fid::Hsm::Start)
-            .args(crate::ecall::scall::SArgs {
+        let r = sbi::HsmCall::new(sbi::fid::Hsm::Start)
+            .args(sbi::scall::SArgs {
                 a0: hart,
                 a1: entry,
                 a2: stack_top,

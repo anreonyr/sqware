@@ -6,7 +6,6 @@ extern crate alloc;
 
 mod boot;
 mod console;
-mod ecall;
 mod lock;
 mod machine;
 mod memory;
@@ -14,6 +13,8 @@ mod runtime;
 mod work;
 
 use core::arch::{asm, global_asm};
+
+use log::info;
 
 use crate::machine::{Machine, Region};
 use crate::memory::{allocator, manager};
@@ -33,23 +34,21 @@ global_asm!(
 extern "C" fn early(hartid: usize, dtp: usize) -> ! {
     console::init();
 
-    putln!("SQware Kernel booted (hart {})", hartid);
+    info!("SQware Kernel booted (hart {})", hartid);
 
     let machine = probe(dtp);
     machine::init(machine);
 
-    putln!(
+    info!(
         "dram: base @ {:#X} size = {:#X}",
-        machine.dram.base,
-        machine.dram.size,
+        machine.dram.base, machine.dram.size,
     );
-    putln!(
+    info!(
         "free: base @ {:#X} size = {:#X}",
-        machine.free.base,
-        machine.free.size,
+        machine.free.base, machine.free.size,
     );
-    putln!("hart: {} H", machine.hart);
-    putln!("freq: {} Hz", machine.hertz);
+    info!("hart: {} H", machine.hart);
+    info!("freq: {} Hz", machine.hertz);
 
     let stack_top = machine.dram.base + machine.dram.size;
 

@@ -1,11 +1,16 @@
-#![allow(unused)]
+#![no_std]
+//! S-mode → M-mode 的 SBI 调用封装（sbi），独立共享 crate。
+//!
+//! 镜像用户侧 U-mode → S-mode 的 `ubi` crate：`ScallBuilder`（SBI）与
+//! `UcallBuilder`（envcall）同构，模块 `sbi::scall` ↔ `ubi::ucall`。
+//! 错误处理：本 crate（仅内核用，有分配器）用 fack derive；ubi（供无堆用户程序）
+//! 用 erra + 手写 Error impl。
 
 pub mod eid;
 pub mod extension;
 pub mod fid;
 pub mod scall;
 
-use eid::*;
 use extension::*;
 use scall::*;
 

@@ -20,7 +20,7 @@ use log::info;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sie, stval, stvec, time};
 
-use crate::ecall::{TimerCall, fid::Timer, scall::SArgs};
+use sbi::{TimerCall, fid::Timer, scall::SArgs};
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
@@ -123,10 +123,11 @@ pub fn init() {
     }
 
     info!(
-        "runtime: trap vector {:#x}, kernel frames {:#x}..{:#x}, hart0 trap stack {:#x}..{:#x}",
+        "runtime \n\t trap   vector {:#x} \n\t kernel frames {:#x}..{:#x} \n\t trap   stack{} {:#x}..{:#x}",
         alltraps_va(),
         KERNEL_FRAME_BASE.as_usize(),
         KERNEL_FRAME_BASE.as_usize() + crate::machine::hart_count() * PAGE_SIZE,
+        machine::hart_id(),
         trap_stack_bottom(0),
         trap_stack_top(0)
     );
@@ -150,10 +151,7 @@ pub fn init_hart() {
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
     }
-    info!(
-        "runtime: hart {} trap secondary init done",
-        machine::hart_id()
-    );
+    info!("runtime \n\t hart {} trap init done", machine::hart_id());
 }
 
 /// 武装 S-timer 中断：`stimecmp = time + interval`（SBI TIME 扩展，绝对时间）。

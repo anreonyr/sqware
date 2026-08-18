@@ -15,8 +15,8 @@
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::ecall::scall::SArgs;
-use crate::ecall::{self, fid};
+use sbi::scall::SArgs;
+use sbi::{self, fid};
 use crate::memory::allocator::frame;
 use crate::putln;
 
@@ -58,7 +58,7 @@ pub(super) fn halt() -> ! {
         // 全部任务已回收、帧已归还——断言零泄漏后再发复位（debug 构建生效）。
         #[cfg(debug_assertions)]
         frame::check_baseline();
-        let _ = ecall::SystemResetCall::new(fid::SystemReset::SystemReset).call();
+        let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }
     wfi()
 }
@@ -92,7 +92,7 @@ pub(super) fn wake_all() {
         return;
     }
     // a0 = hart_mask（≤ 8 核，mask_base = 0）
-    let _ = ecall::IpiCall::new(fid::Ipi::SendIpi)
+    let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
         .args(SArgs {
             a0: waiting,
             ..Default::default()

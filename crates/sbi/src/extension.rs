@@ -1,4 +1,4 @@
-use super::{eid, fid};
+use crate::{eid, fid};
 
 /// 用于绑定 EID 和 FID 类型的 trait
 pub trait Extension {
