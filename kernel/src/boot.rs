@@ -116,6 +116,7 @@ fn spawn_demos() -> Result<(), MapError> {
         ),
         (&include_bytes!("../../user/user-exiter.elf")[..], "exiter"),
         (&include_bytes!("../../user/user-heaper.elf")[..], "heaper"),
+        (&include_bytes!("../../user/user-spawner.elf")[..], "spawner"),
     ] {
         let (team, entry) = load_user(elf);
         team.task().name(name).entry(entry).spawn()?;

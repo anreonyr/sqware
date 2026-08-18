@@ -2,8 +2,11 @@
 //! 用户态系统调用封装（U-mode → S-mode 环境调用）。
 //!
 //! 机制层（`UArgs`/`UError`/`UResult`/`UcallBuilder`/`warpper`）在 `ubi` crate
-//! （镜像 sbi·ubi::ucall），本 crate 只留 `env` 域适配层、共享入口（`entry`）与
-//! 用户堆（`heap`）：域操作一段薄封装、零 asm；入口由各 bin 引用 `_start` 引导。
+//! （镜像 sbi·ubi::ucall），本 crate 只留 `env` 域适配层、共享入口（`entry`）、
+//! 用户堆（`heap`）与 task 模块（`task`，对齐内核 work::task）：域操作一段薄封装、
+//! 零 asm；入口由各 bin 引用 `_start` 引导。
+
+extern crate alloc;
 
 /// 页大小（与内核 `memory::PAGE_SIZE` 对齐；堆分配按页对齐向上取整）。
 pub const PAGE_SIZE: usize = 4096;
@@ -13,6 +16,9 @@ pub mod entry;
 
 /// 用户堆：`heap_allocate`/`heap_deallocate` envcall 后端 + `#[global_allocator]`。
 pub mod heap;
+
+/// 用户 task：`spawn`/`closure`/`Join`（对齐内核 `work::task` 词汇）。
+pub mod task;
 
 /// 域适配层：每个域操作一段薄封装，只转发 `ubi::UcallBuilder`。
 pub mod env {
@@ -86,5 +92,16 @@ pub mod env {
         };
         let (_v0, _v1) = UcallBuilder::new(Ucall::HeapDeallocate).args(args).call()?;
         Ok(())
+    }
+
+    /// 建用户任务（Spawn envcall）：a0 = 入口 VA，a1 = arg；返回任务句柄（帧 PA）或 UError。
+    pub fn spawn(entry: usize, arg: usize) -> UResult<usize> {
+        let args = UArgs {
+            a0: entry,
+            a1: arg,
+            ..UArgs::default()
+        };
+        let (v0, _v1) = UcallBuilder::new(Ucall::Spawn).args(args).call()?;
+        Ok(v0)
     }
 }

@@ -59,6 +59,7 @@ use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::runtime::trap::arm_timer;
 
 use super::task::{BlockReason, Task, TaskState};
+use super::team::Team;
 use super::tie;
 
 // ── 核心：常量 ──
@@ -520,6 +521,22 @@ pub fn with_running_space<R>(f: impl FnOnce(&Space) -> R) -> R {
     let i = schedulers()[me].inner.lock();
     let task = i.running.as_ref().expect("no running task");
     f(&task.team.space)
+}
+
+/// 当前运行任务所属团队 Arc（锁内取、放锁返回）。
+///
+/// 供 envcall Spawn 使用：放锁后再建任务（spawn 内部逐段取 Space 锁 + scheduler 锁，
+/// 不得跨锁持有）。持有的 Arc 保团队存活。无运行任务则 panic（envcall 必然有）。
+pub fn running_team() -> Arc<Team> {
+    let me = machine::hart_id();
+    schedulers()[me]
+        .inner
+        .lock()
+        .running
+        .as_ref()
+        .expect("no running task")
+        .team
+        .clone()
 }
 
 /// 当前运行任务 id（诊断用；无任务返回 NO_TASK_ID）。

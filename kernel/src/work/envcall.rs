@@ -19,7 +19,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::put;
 use crate::runtime::{clock, timer};
 use crate::runtime::context::TrapContext;
-use crate::work::scheduler::{park, reap, starve, with_running_space};
+use crate::work::scheduler::{park, reap, running_team, starve, with_running_space};
 
 /// envcall 分发（trap_handler 的 UserEnvCall 分支调用）。
 ///
@@ -83,6 +83,20 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                 s.heap_deallocate(VirtAddr::from_raw(addr), size)
             });
             frame.gpr[10] = if ok { 0 } else { usize::MAX };
+            frame as *mut TrapContext
+        }
+        Ucall::Spawn => {
+            // a0 = 入口 VA（用户 trampoline），a1 = arg（闭包指针）。当前 team 建 U 任务。
+            // running_team 放锁后由 TaskBuilder::spawn 逐段取锁建任务（不跨锁持有）。
+            frame.sepc += 4;
+            let entry = VirtAddr::from_raw(frame.gpr[10]);
+            let arg = frame.gpr[11];
+            let team = running_team();
+            let r = team.task().name("u-thread").entry(entry).arg(arg).spawn();
+            frame.gpr[10] = match r {
+                Ok(pa) => pa.as_usize(), // 任务句柄（trap 帧 PA，唯一；供用户记认）
+                Err(_) => usize::MAX,
+            };
             frame as *mut TrapContext
         }
     }

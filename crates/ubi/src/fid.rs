@@ -21,6 +21,8 @@ pub enum Ucall {
     HeapAllocate = 6,
     /// 用户堆释放（a0 = VA，a1 = 字节数，页对齐）：0 或负错误码。
     HeapDeallocate = 7,
+    /// 建用户任务（a0 = 入口 VA，a1 = arg）：当前 team 建 U 任务，返回任务句柄或负错误码。
+    Spawn = 8,
 }
 
 impl From<Ucall> for usize {
@@ -42,6 +44,7 @@ impl TryFrom<usize> for Ucall {
             5 => Ok(Self::ClockGetTime),
             6 => Ok(Self::HeapAllocate),
             7 => Ok(Self::HeapDeallocate),
+            8 => Ok(Self::Spawn),
             _ => Err(()),
         }
     }

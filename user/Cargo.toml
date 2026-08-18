@@ -55,3 +55,10 @@ path = "src/bin/heaper.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "user-spawner"
+path = "src/bin/spawner.rs"
+test = false
+bench = false
+doctest = false
