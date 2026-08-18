@@ -17,7 +17,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::space::{TASK_STACK_SIZE, kernel_frame_pa};
 use crate::putln;
 use crate::runtime::context::TrapContext;
-use crate::runtime::trampoline::trap_stack_top;
+use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::work::USER_TEXT_BASE;
 
 use super::scheduler;
@@ -116,6 +116,66 @@ impl Task {
     }
 }
 
+impl Task {
+    /// 以内核态闭包新建内核任务（协作式：跑完即退，不被打断/抢占）。
+    ///
+    /// 挂 kernel 团队单例（共享 KERNEL_SPACE）→ spawn() 经团队身份自动判定为
+    /// S 态任务（SPP=1），不新增类型/方法。闭包装箱到内核堆（`Box<dyn FnOnce()>`），
+    /// 入口为内核 trampoline（`kthread_entry`），a0 传 Box 指针；闭包跑完自动退出
+    /// （切 per-hart trap 栈后 reap → 取下一任务）。
+    ///
+    /// 语义与 `std::thread::spawn` 一致：`FnOnce + Send + 'static`。注意内核态不可
+    /// 抢占：闭包若忙等不返回也不主动让出，将独占所在核。
+    pub fn spawn_kernel<F>(name: &'static str, f: F) -> Result<(), MapError>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        // `Box<dyn FnOnce()>` 是胖指针（data+vtable），不能直接转 usize——外包一层
+        // `Box<Box<dyn FnOnce()>>`，对外是薄指针，a0 传该指针即可。
+        let inner: Box<dyn FnOnce()> = Box::new(f);
+        let holder: Box<Box<dyn FnOnce()>> = Box::new(inner);
+        let ptr = Box::into_raw(holder) as usize;
+        let entry = VirtAddr::from_raw(kthread_entry as *const () as usize);
+        TaskBuilder::new(super::team::kernel().clone())
+            .entry(entry)
+            .arg(ptr)
+            .name(name)
+            .spawn()
+            .map(|_| ())
+    }
+}
+
+/// 内核任务 trampoline：解包闭包、执行、跑完自动退出。
+///
+/// a0 = `Box<dyn FnOnce()>` 指针（`TaskBuilder::arg` 写入）。该函数作为内核任务的
+/// sepc 入口，SPP=1 回 S 态执行于该任务内核栈上；闭包返回后退出调度。
+///
+/// 必须以 `-> !` 返回：从 `_start`-式入口返回会跳 0 崩溃，退出必须显式执行。
+///
+/// # Safety
+/// `arg` 必须是对应 `spawn_kernel` 所 box 的 `Box<dyn FnOnce()>` 原始指针。
+extern "C" fn kthread_entry(arg: usize) -> ! {
+    // SAFETY: arg 由 spawn_kernel 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
+    let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
+    let boxed: Box<dyn FnOnce()> = *holder; // 移出内层闭包，holder 随之 drop
+    boxed();
+    kthread_exit()
+}
+
+/// 内核任务退出：切到 per-hart trap 栈（否则 reap 的 clear 会回收**正在使用**的内核栈）→
+/// 标记退出 + 取下一任务 → restore。永不返回。
+fn kthread_exit() -> ! {
+    // 切 trap 栈：clear() 回收 Reaped 任务（含其内核栈）时，我们已不在该栈上。
+    // SAFETY: 本函数尾部，其后再无对旧内核栈帧的访问；`mv sp` 后新 sp 指向 per-hart
+    // trap 栈顶（内核空间映射、S 态可用）。
+    unsafe {
+        let sp = trap_stack_top(crate::machine::hart_id());
+        core::arch::asm!("mv sp, {sp}", sp = in(reg) sp, options(nostack));
+    }
+    let next = scheduler::reap();
+    restore(next)
+}
+
 /// 任务构建器：在团队容器内生成线程（栈 + trap 帧 + 填帧 + 入队）。
 ///
 /// 入口参数 arg 写入用户上下文 a0（blob D 按其分支行为）。空间分配（栈/帧）
@@ -200,7 +260,14 @@ impl TaskBuilder {
             frame.gpr[2] = stack_top.as_usize();
             frame.gpr[10] = self.arg;
             let s = riscv::register::sstatus::read().bits();
-            frame.sstatus = (s & !(1 << 1) & !(1 << 8)) | (1 << 5);
+            // 内核任务（挂 kernel 团队、共享 KERNEL_SPACE）→ S 态：SPP=1、SIE=0、SPIE=0
+            // （内核恒关中断——协作式，从不被 S-timer 抢占；跑完即退）。其它团队 → U 态：
+            // SPP=0、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。模式由团队身份推断，无新 API。
+            if Arc::ptr_eq(&self.team, super::team::kernel()) {
+                frame.sstatus = (s & !(1 << 1) & !(1 << 5)) | (1 << 8);
+            } else {
+                frame.sstatus = (s & !(1 << 1) & !(1 << 8)) | (1 << 5);
+            }
         }
 
         // 4. 入队收尾（初始状态 Starved；持本 hart 调度锁完成入簿 + 入队 + 计数）

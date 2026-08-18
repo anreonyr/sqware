@@ -93,6 +93,12 @@ pub fn init() -> ! {
             .expect("spawn failed");
     }
 
+    // 内核任务（kthread）：挂 kernel 团队单例 → TaskBuilder 自动判定 S 态（SPP=1）。
+    // 协作式跑完即退（内核态不可抢占）；闭包装箱到内核堆，入口为内核 trampoline。
+    let _ = task::Task::spawn_kernel("ktask", || {
+        putln!("kernel task running");
+    });
+
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
     // 经 steal 从队列取活——任务即向各核迁移）
     boot_harts();
@@ -225,4 +231,3 @@ fn pt_reclaim_selftest() {
     drop(space);
     putln!("pt-reclaim selftest: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})");
 }
-

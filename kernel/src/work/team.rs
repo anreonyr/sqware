@@ -75,8 +75,7 @@ impl TeamBuilder {
 }
 
 /// 内核团队单例：与全局 KERNEL_SPACE 共享同一份空间（'static 引用，永不回收）。
-/// 内核任务（kthread 式）接入前无调用方——约束 2 的既定形态，标注预留。
-#[allow(dead_code)]
+/// 内核任务（kthread 式）挂此团队：SPP=1 运行于 S 态（见 task.rs spawn 的团队推理）。
 pub fn kernel() -> &'static Arc<Team> {
     static KERNEL_TEAM: OnceLock<Arc<Team>> = OnceLock::new();
     KERNEL_TEAM.get_or_init(|| {

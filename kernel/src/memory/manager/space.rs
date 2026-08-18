@@ -682,12 +682,19 @@ impl Space {
             Vec::new(),
             Some(owner),
         ));
-        // 栈体 [slot_va + GUARD, +TASK_STACK_SIZE)：Anonymous，帧待 attach
+        // 栈体 [slot_va + GUARD, +TASK_STACK_SIZE)：Anonymous，帧待 attach。
+        // U 位按空间种类：用户空间栈需 U（用户 push）；内核空间栈（kernel 团队/kthread）
+        // 不得带 U——S 态 SUM=0 下访问 U 页会页故障，而内核任务跑 S 态。
+        let body_flags = if matches!(self.kind, SpaceKind::Kernel) {
+            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D
+        } else {
+            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D
+        };
         let body_va = slot_va + STACK_GUARD_SIZE;
         stack.children.push(Map::new(
             body_va,
             TASK_STACK_SIZE,
-            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D,
+            body_flags,
             MapKind::Anonymous,
             Vec::new(),
             Some(owner),
