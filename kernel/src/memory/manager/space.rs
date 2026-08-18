@@ -36,7 +36,7 @@ use super::{
     addr::{AtomicPhysAddr, PhysAddr, VirtAddr},
     entry::PteFlags,
     flush_asid,
-    table::{Frame, MapError, TableNode},
+    table::{Frame, FrameState, MapError, TableNode},
 };
 
 /// 映射种类 — 缺页时如何响应。
@@ -81,7 +81,7 @@ pub struct Map {
     /// 所属线程 id（线程私有映射：栈 guard/体、trap 帧）——退出时按 owner 定位回收；
     /// 共享/空间级映射（文本、DRAM、trampoline、堆块）为 `None`。
     owner: Option<usize>,
-    frames: Vec<Frame>,
+    frames: Vec<FrameState>,
 }
 
 impl Map {
@@ -91,7 +91,7 @@ impl Map {
         size: usize,
         flags: PteFlags,
         kind: MapKind,
-        frames: Vec<Frame>,
+        frames: Vec<FrameState>,
         owner: Option<usize>,
     ) -> Self {
         Self {
@@ -131,7 +131,7 @@ impl Map {
         }
         let idx = off / PAGE_SIZE;
         let frame = self.frames.get(idx).ok_or(MapError::NotMapped)?;
-        Ok(PhysAddr::from_raw(frame.as_ptr() as usize))
+        Ok(frame.pa())
     }
 
     /// 追加一帧（保持不变量；调用方保证序号连续且不越界）。
@@ -141,7 +141,7 @@ impl Map {
             "map {:#x} frame overflow",
             self.va.as_usize()
         );
-        self.frames.push(frame);
+        self.frames.push(FrameState::Owned(frame));
     }
 }
 
@@ -933,9 +933,14 @@ impl Space {
         // 2. PTE 安装 + 3. 登记常数映射（一次解构拿 durable 各字段，字段间可拆借）
         let SpaceInner { durable, .. } = &mut *inner;
         durable.root.map(vaddr, paddr, size, flags)?;
-        durable
-            .maps
-            .push(Map::new(vaddr, size, flags, kind, frames, None));
+        durable.maps.push(Map::new(
+            vaddr,
+            size,
+            flags,
+            kind,
+            frames.into_iter().map(FrameState::Owned).collect(),
+            None,
+        ));
         drop(inner);
         // 按本空间 ASID 局部刷：只失效本地址空间的旧条目，其它任务 TLB 保留。
         // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -1001,6 +1006,144 @@ impl Space {
         Ok(())
     }
 
+    // ── COW（copy-on-write 共享帧）────────────────────────────
+    //
+    // borrow ↔ unborrow 空间级成对（共享/离共享）；to_mut / into_owned
+    // 写触发/主动的转私有。仅作用 durable 常数侧（程序文本/数据/BSS）；
+    // 栈/帧/堆窗口为线程私有、永不 COW 共享。跨空间分发 Arc 属 fork，不在此。
+
+    /// 把 `[start, start+size)` 内可写页提升为共享只读：Owned → Borrowed(Arc)，
+    /// PTE 重指到 Arc 帧、置 A/D、清 W（保留 R，只拦写）。
+    ///
+    /// # Errors
+    ///
+    /// 区间任一页未映射或非可写 → [`MapError::NotMapped`]。
+    #[allow(dead_code)] // fork 后端预留
+    pub fn borrow(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
+        let mut inner = self.inner.lock();
+        for i in 0..size.div_ceil(PAGE_SIZE) {
+            let va = start + i * PAGE_SIZE;
+            let (bytes_src, flags) = {
+                let SpaceInner { durable, .. } = &*inner;
+                let map = durable
+                    .maps
+                    .iter()
+                    .find(|m| m.contains(va))
+                    .ok_or(MapError::NotMapped)?;
+                let idx = (va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+                match &map.frames[idx] {
+                    FrameState::Borrowed(_) => continue,
+                    FrameState::Owned(b) => {
+                        let bytes: &[u8] = &**b;
+                        (bytes, map.flags)
+                    }
+                }
+            };
+            // Arc 从 frame 分配器新建（带分配器参数）+ 拷字节
+            let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> =
+                Arc::new_in([0u8; PAGE_SIZE], allocator());
+            Arc::get_mut(&mut arc).expect("fresh arc").copy_from_slice(bytes_src);
+            let arc_pa = PhysAddr::from_raw(Arc::as_ptr(&arc) as usize);
+            // 换帧：旧 Owned 归还，PTE 重指到 Arc 帧、清 W
+            {
+                let SpaceInner { durable, .. } = &mut *inner;
+                let map = durable
+                    .maps
+                    .iter_mut()
+                    .find(|m| m.contains(va))
+                    .ok_or(MapError::NotMapped)?;
+                let idx = (va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+                let old = core::mem::replace(&mut map.frames[idx], FrameState::Borrowed(arc));
+                drop(old); // 旧 Owned 帧归还 frame 池
+                let leaf = durable.root.walk_mut(va, false)?;
+                let ppn = (arc_pa.as_usize() >> 12) as u64;
+                leaf.set(ppn, (flags & !PteFlags::W) | PteFlags::A | PteFlags::D | PteFlags::V);
+            }
+        }
+        drop(inner);
+        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        unsafe {
+            flush_asid(self.kind.asid());
+        }
+        Ok(())
+    }
+
+    /// 写缺页分裂：保证该页私有可写。Borrowed → 分新 Owned 拷字节、装带 W PTE、
+    /// drop 本空间 Arc；Owned → 仅确保 W 置位（no-op 语义）。
+    ///
+    /// # Errors
+    ///
+    /// 页未映射 → [`MapError::NotMapped`]；帧耗尽 → [`MapError::OutOfMemory`]。
+    pub fn to_mut(&self, va: VirtAddr) -> Result<(), MapError> {
+        let page = va.page_align();
+        let mut inner = self.inner.lock();
+        {
+            let SpaceInner { durable, .. } = &mut *inner;
+            let map = durable
+                .maps
+                .iter_mut()
+                .find(|m| m.contains(page))
+                .ok_or(MapError::NotMapped)?;
+            let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+            let flags = map.flags;
+            if let FrameState::Owned(_) = &map.frames[idx] {
+                let leaf = durable.root.walk_mut(page, false)?;
+                leaf.set_flags(leaf.flags() | PteFlags::W | PteFlags::V);
+                return Ok(());
+            }
+            let new_box: Frame = {
+                let FrameState::Borrowed(arc) = &map.frames[idx] else {
+                    unreachable!("checked above")
+                };
+                let mut nb = Box::try_new_in([0u8; PAGE_SIZE], allocator())
+                    .map_err(|_| MapError::OutOfMemory)?;
+                nb.copy_from_slice(&arc[..]);
+                nb
+            };
+            let pa = PhysAddr::from_raw(new_box.as_ptr() as usize);
+            let old = core::mem::replace(&mut map.frames[idx], FrameState::Owned(new_box));
+            drop(old); // 放下共享 Arc（计数 −1）
+            let leaf = durable.root.walk_mut(page, false)?;
+            let ppn = (pa.as_usize() >> 12) as u64;
+            leaf.set(ppn, flags | PteFlags::W | PteFlags::V);
+        }
+        drop(inner);
+        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        unsafe {
+            flush_asid(self.kind.asid());
+        }
+        Ok(())
+    }
+
+    /// 无条件私有化：立即分裂成私有 Owned（fork 后父方脱离共享用）。
+    /// 语义 = to_mut（保证该页从此私有可写）。
+    #[allow(dead_code)] // fork 后端预留
+    pub fn into_owned(&self, va: VirtAddr) -> Result<(), MapError> {
+        self.to_mut(va)
+    }
+
+    /// 判别 va 所在页是否 Borrowed 共享态（未映射/未持有帧 → false）。
+    pub fn is_borrowed(&self, va: VirtAddr) -> bool {
+        let page = va.page_align();
+        let inner = self.inner.lock();
+        let SpaceInner { durable, .. } = &*inner;
+        let Some(map) = durable.maps.iter().find(|m| m.contains(page)) else {
+            return false;
+        };
+        let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+        matches!(map.frames.get(idx), Some(FrameState::Borrowed(_)))
+    }
+
+    /// 放下 `[start, start+size)` 内共享引用（Borrowed 页 Arc 计数 −1、归零归还）。
+    ///
+    /// 实现注记：本空间对该帧的 Arc 引用由 `Map.frames` 持有——卸映射
+    /// （unmap / task_reclaim / Space::drop）drop 整个 Map 时随帧自动释放，
+    /// 无需额外操作。本方法保留为 borrow 的反向语义锚点，本身不改变状态；
+    /// 必须与 PTE 拆除路径（unmap）配对，否则共享页会悬空。
+    #[allow(dead_code)] // 语义由 Map teardown 承担；borrow 成对锚点
+    pub fn unborrow(&self, start: VirtAddr, size: usize) {
+        let _ = (&self, start, size);
+    }
     // ── 缺页处理 ──────────────────────────────────────────────
 
     /// 缺页处理：查 Anonymous 映射 → 分配零页 → 映射 + 注入帧。

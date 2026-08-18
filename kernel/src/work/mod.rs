@@ -21,6 +21,7 @@
 
 pub mod envcall;
 pub(crate) mod loader;
+pub(crate) mod parser;
 pub mod scheduler;
 pub(crate) mod task;
 pub(crate) mod team;

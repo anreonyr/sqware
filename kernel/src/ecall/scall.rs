@@ -41,7 +41,7 @@ pub enum SError {
     InvalidAddress,
     #[error("resource already available")]
     AlreadyAvailable,
-    #[error("unknown error: {_0}")]
+    #[error("unknown error: {0}")]
     Unknown(isize),
 }
 

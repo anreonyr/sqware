@@ -97,6 +97,15 @@ fn resolve_anonymous(fault: &PageFault, space: &Space, flags: PteFlags) -> bool 
 /// 2. 用户地址 → 查 Map：Anonymous 分配零页，Reserved/无 Map 返回 false
 /// 3. 内核地址 → fatal（内核页必须预映射）
 pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
+    // 0. COW：写缺页命中共享（Borrowed）页 → 分裂为私有可写（保留共享内容）。
+    //    必须先于 Re-walk：共享页 PTE 有效（置了 A/D、清了 W），若不拦会在
+    //    步骤 1 被当成 A/D 竞争而重试 → 无限缺页循环。
+    if fault.addr.is_user()
+        && matches!(fault.kind, FaultKind::Store)
+        && space.is_borrowed(fault.addr)
+    {
+        return space.to_mut(fault.addr).is_ok();
+    }
     // 1. Re-walk 页表 (A/D 位竞争检查)
     if let Some((_paddr, flags)) = space.translate(fault.addr)
         && flags.contains(PteFlags::V)
