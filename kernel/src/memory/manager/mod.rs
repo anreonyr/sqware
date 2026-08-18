@@ -148,7 +148,7 @@ pub fn init() -> MapResult<()> {
             )?;
 
             // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（hart h 帧 =
-            //    BASE + h·PAGE；顶页即旧 TRAP_CONTEXT 定位。元数据由 trap::init 逐帧写入），
+            //    BASE + h·PAGE；元数据由 trap::init 逐帧写入），
             //    PA 存 KERNEL_FRAMES[h]——__strap 按 TP 索引帧页。
             for (h, slot) in KERNEL_FRAMES
                 .iter()
@@ -175,7 +175,15 @@ pub fn init() -> MapResult<()> {
             // 7. 刷新 TLB
             flush_asid(0);
 
-            // 8. 保存内核地址空间
+            // 8. 主内核栈 guard 页：位于 DRAM 顶部栈区下缘（free 区已在 probe 剔除），
+            //    恒等地址清 PTE → 向下溢出越过 guard 即页故障（而非静默踩坏 free 区）。
+            //    必须在启用分页后 unmap：MMU 开启后才真正拦截。与 per-hart trap 栈
+            //    guard 做法一致（unmap 只清叶子 PTE、保留 DRAM 常数映射簿记）。
+            let kernel_stack_guard =
+                m.dram.base + m.dram.size - crate::KERNEL_STACK_SIZE - PAGE_SIZE;
+            kernel_space.unmap(VirtAddr::from_raw(kernel_stack_guard), PAGE_SIZE);
+
+            // 9. 保存内核地址空间
             KERNEL_SPACE.lock().replace(Arc::new(kernel_space));
 
             Ok(())

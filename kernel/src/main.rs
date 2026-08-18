@@ -52,7 +52,10 @@ extern "C" fn early(hartid: usize, dtp: usize) -> ! {
 
     let stack_top = machine.dram.base + machine.dram.size;
 
+    // 主内核栈底写 canary（boot 期自下而上生长；boot::init 进首任务前校验）。
+    let stack_bottom = stack_top - KERNEL_STACK_SIZE;
     unsafe {
+        (stack_bottom as *mut usize).write(KERNEL_STACK_CANARY);
         asm!(
             "mv sp, {stack_top}",
             "call {main}",
@@ -71,7 +74,7 @@ fn main() -> ! {
         .unwrap_or_else(|e| panic!("clock init failed: {e:?}"));
     runtime::init();
 
-    // 阶段 C：boot 模块 spawn 多任务并进入首个任务（永不返回）。S-timer 由
+    // boot 模块 spawn 多任务并进入首个任务（永不返回）。S-timer 由
     // runtime::init 武装、trap_handler 内循环重武装——用户态下照常触发，驱动
     // 抢占式任务切换。
     boot::init();
@@ -79,12 +82,29 @@ fn main() -> ! {
 
 /// 内核栈大小（DRAM 顶部保留，向下增长）。
 ///
+/// 栈底之下还保留一页 guard（未映射，见 `manager::init` 的开栈 guard unmap）：
+/// 向下溢出越过 guard 页时触发缺页，而非静默踩进 free 区。栈底本身写有
+/// canary（见 [`KERNEL_STACK_CANARY`]），`boot::init` 离开本栈前校验——boot 期
+/// 溢出即使未越过 guard 也会在此暴露。
+///
 /// early 栈只作 bootstrap：`probe` 完成后 `main` 把 `sp` 切到 DRAM 顶部
 /// （`dram_end`），此后 early 栈区域废弃，可被 bump 回收。
-const KERNEL_STACK_SIZE: usize = 0x10_0000; // 1 MiB
+pub(crate) const KERNEL_STACK_SIZE: usize = 0x10_0000; // 1 MiB
 
-// `_free_base`：内核镜像 + trap 栈之后的第一个可回收地址。
-// early 栈（4 KiB）位于其后，但栈切换完成后即废弃，可被 bump 回收。
+/// 主内核栈 canary 值（写在栈底，`boot::init` 进首任务前校验）。
+/// boot 期主内核栈自上而下生长，栈底紧邻 guard 页之上。
+pub(crate) const KERNEL_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
+
+/// 主内核栈底地址（canary 所在，guard 页之上；DRAM 顶部栈区下缘）。
+pub(crate) fn kernel_stack_bottom() -> usize {
+    let m = crate::machine::get();
+    m.dram.base + m.dram.size - KERNEL_STACK_SIZE
+}
+
+// `_free_base`：内核镜像之后的第一个可回收地址（per-hart trap 栈为动态分配，
+// 不占用此固定布局）。
+// early 栈（16 KiB，见 link.ld `. += 16K`）位于其后，但栈切换完成后即废弃，
+// 可被 bump 回收。
 unsafe extern "C" {
     static _free_base: u8;
 }
@@ -122,8 +142,10 @@ fn probe(dtp: usize) -> Machine {
 
     let free_base = (&raw const _free_base).addr();
     // 内核栈保留在 DRAM 顶部 [dram_end - KERNEL_STACK_SIZE, dram_end)，向下增长；
-    // 从 free 区剔除，避免 bump/frame 分配覆盖内核栈。
-    let free_end = dram_base + dram_size - KERNEL_STACK_SIZE;
+    // 其下再留一页 guard（[dram_end - KERNEL_STACK_SIZE - PAGE, dram_end - KERNEL_STACK_SIZE)）
+    // 一并从 free 区剔除，避免 bump/frame 分配覆盖 guard/内核栈，且 guard 不映射
+    // （manager::init 会 unmap），向下溢出即缺页。
+    let free_end = dram_base + dram_size - KERNEL_STACK_SIZE - crate::memory::PAGE_SIZE;
     let free_size = free_end - free_base;
 
     Machine {
