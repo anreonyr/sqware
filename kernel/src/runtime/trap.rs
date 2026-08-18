@@ -4,8 +4,8 @@
 //   init()          — 写内核 trap-context 帧元数据、per-hart trap 栈 canary、
 //                     stvec → __alltraps、sscratch 清 0、开 SIE
 //   trap_handler()  — 汇编入口的 Rust 分发（scause 解码，类型化枚举），返回待恢复帧
-//                     （阶段 A 恒为入参帧；阶段 C 上下文切换后返回下一任务帧）
-//   arm_timer()     — SBI set_timer 武装 S-timer 中断（阶段 A 自检驱动）
+//                     （当前任务续跑时恒为入参帧；切换时返回下一任务帧）
+//   arm_timer()     — SBI set_timer 武装 S-timer 中断
 //
 // 内核态陷阱约定：现场保存在 per-hart 内核帧（KERNEL_FRAME_BASE + hart·PAGE），处理器运行在 per-hart
 // trap 栈上；入口硬件已清 SIE，处理器内嵌套陷阱仅可能是内核 bug，会覆写内核
@@ -36,8 +36,7 @@ use crate::runtime::trampoline::{
 /// init_trap_stacks 在 boot 时写全部 hart 的 canary）。
 pub(crate) const TRAP_STACK_CANARY: usize = 0x5EED_CAFE_51A7_0000;
 
-// 定时器周期 = 100 ms 抢占量子（由 clock 按 timebase 换算成 ticks）——
-// 替代原硬编码 TIMER_INTERVAL。
+// 定时器周期 = 100 ms 抢占量子（由 clock 按 timebase 换算成 ticks）。
 /// trap 栈已用字节数（高水位跟踪用）。
 fn trap_stack_used() -> usize {
     let sp: usize;
@@ -170,8 +169,8 @@ pub fn arm_timer(interval: u64) {
 /// 陷阱分发 — 汇编入口（`jalr trap_handler`）的唯一 Rust 侧。
 ///
 /// 入参 `frame` = 被中断上下文的帧（汇编以 a0 = 帧物理地址调用，恒等映射下
-/// 引用即物理地址）；返回值 = 待恢复帧（阶段 A 恒为入参帧；阶段 C 可返回
-/// 下一任务帧实现切换）。
+/// 引用即物理地址）；返回值 = 待恢复帧（当前任务续跑时恒为入参帧；切换时
+/// 返回下一任务帧）。
 ///
 /// # Safety
 ///
@@ -181,7 +180,7 @@ pub fn arm_timer(interval: u64) {
 #[unsafe(no_mangle)]
 extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
     // 0. 重建内核 tp（= hartid）：用户态可能改写过 tp；一切 hart_id() 依赖它。
-    //    由当前 sp（trap 栈体内）反解段号——见 trampoline::establish_tp。
+    //    由当前 sp（trap 栈体内）反解段号（trampoline::establish_tp）。
     establish_tp();
 
     // 1. trap 栈 guard 溢出特判（先于 canary：溢出可能已破坏 canary 字）。

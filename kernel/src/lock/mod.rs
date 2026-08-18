@@ -10,9 +10,9 @@
 //   - OnceLock / LazyLock：读路径无锁，无中断安全问题
 //
 // 多核准备：所有互斥 guard 携带 !Send 标记（锁须在本 hart 释放）；
-// 关中断逻辑统一由 trap::TrapGuard 提供；RelLock 通过 hal::cpu::hart_id 区分持有者。
+// 关中断逻辑统一由 trap::TrapGuard 提供；RelLock 通过 machine::hart_id 区分持有者。
 //
-// panic 路径：panic.rs 经 sink::SBI_WRITER（SBI ecall）无锁直写控制台，故意绕过所有锁，新框架不影响。
+// panic 路径：halt.rs 的 panic_handler 经 console::_write 无锁直写控制台，故意绕过所有锁。
 //
 // # Lock hierarchy
 //
@@ -50,7 +50,6 @@
 // 获取、不嵌套，1 → 3）；Team.tasks 与 Space.inner 只顺序获取、永不嵌套。
 // 用户空间构建（SpaceBuilder::user().build()）中 ASID → KERNEL_SPACE 为顺序获取（drop 前一把再拿后一把），不嵌套。
 // per-hart trap 栈的分配发生在 boot（无锁需求）。
-// （hub::devices / INTERRUPT_HANDLERS 为规划中模块，接入后插入对应层级。）
 
 mod bare;
 mod dep;
@@ -63,12 +62,12 @@ mod trap;
 pub(crate) use trap::TrapGuard;
 
 #[allow(unused_imports)]
-// BareLock：锁体系原语，当前无用户（platform::PROBE_ERROR 移除后），预留
+// BareLock：锁体系原语，当前无用户，预留
 pub use bare::BareLock;
 // LazyLock 可用但暂未使用：crate::lock::lazy::LazyLock
 pub use once::OnceLock;
 pub use reentrant::RelLock;
-// RwLock：锁体系原语，当前无用户（与 BareLock 同为预留），保留 re-export
+// RwLock：锁体系原语，当前无用户，保留 re-export
 #[allow(unused_imports)]
 pub use rw::RwLock;
 pub use spin::SpinLock;

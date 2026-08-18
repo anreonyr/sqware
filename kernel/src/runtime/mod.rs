@@ -9,7 +9,7 @@
 //   trap       — stvec 接线、内核帧元数据、scause 分发、SBI 定时器武装
 //
 // 接线顺序：manager::init（映射 TRAMPOLINE / 内核帧）→ clock::init（timebase 注入）→
-// trap::init（stvec、sscratch、SIE）。阶段 C：任务化调度（S-timer 抢占）。
+// trap::init（stvec、sscratch、SIE）→ 任务化调度（S-timer 抢占）。
 
 pub mod clock;
 pub mod timer;

@@ -2,7 +2,6 @@
 //
 // Task = 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
 // TaskBuilder 在团队容器内生成任务：栈 + trap 帧 + 填帧 + 入队。
-// 程序装载（loader.rs）与团队容器化（team.rs）在任务生成之前完成。
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -134,10 +133,9 @@ impl Task {
 /// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
 /// `Box<dyn FnOnce()>` 原始指针。
 pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
-    // 重建 tp = 实际执行 hart：内核任务被 steal/调度到任一 hart 时 tp 未必随之更新
-    // （restore 不动 tp；诊断证实 kthread 跑在次核却 tp=0，致 reap 摸错 hart → no
-    //  running task）。帧 kernel_sp 由 scheduler::prepare 按**真实** hart 写入
-    // （trap 栈顶），据此反推实际 hart 写入 tp——与用户任务 trap 入口 establish_tp 同理。
+    // 重建 tp = 实际执行 hart：内核任务被调度到任一 hart 时 tp 未必随之更新（restore
+    // 不动 tp）。帧 kernel_sp 由 scheduler::prepare 按**真实** hart 写入（trap 栈顶），
+    // 据此反推实际 hart 写入 tp——与用户任务 trap 入口 establish_tp 同理。
     let fr = KT_FRAME_PA.load(core::sync::atomic::Ordering::Relaxed)
         as *const crate::runtime::context::TrapContext;
     let ksp = unsafe { core::ptr::addr_of!((*fr).kernel_sp).read() }.as_usize();
@@ -163,9 +161,9 @@ pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
 fn ktask_exit() -> ! {
     // 切到 per-hart trap 栈再退出：clear() 回收 Reaped 任务（含其内核栈）时我们已不在
     // 该栈上。**必须用 options(noreturn) 的 tail-jump**——在 Rust 函数中部 `mv sp` 若配
-    // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位
-    // （曾致 sepc=0 / sepc 落 trap 栈 / no running 等跨核损坏）。noreturn 保证 asm 后
-    // 无编译器生成代码，`jr` 到退出函数后在**全新** trap 栈帧上执行，无被丢弃的旧 Rust 帧。
+    // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位。
+    // noreturn 保证 asm 后无编译器生成代码，`jr` 到退出函数后在**全新** trap 栈帧上执行，
+    // 无被丢弃的旧 Rust 帧。
     let top = trap_stack_top(crate::machine::hart_id());
     // SAFETY: `top` 是本 hart per-hart trap 栈顶（内核空间、S 态可写）；退出函数跑在其上，
     // 永不返回（restore 是 noreturn）。
@@ -233,9 +231,9 @@ impl TaskBuilder {
     }
 
     /// 统一闭包式任务生成：团队 + 闭包建任务（与 `std::thread::spawn` 同构——闭包装箱
-    /// → trampoline → 新任务栈上调用）。团队决定运行世界：kernel 团队 → S 态内核任务
-    /// （内核堆装箱、入口 `ktask_entry`、SPP=1 由 spawn 按团队身份自动定）；用户团队（U 态）
-    /// 需用户侧 trampoline，待 user lib 阶段接入，当前 debug 断言限 kernel 团队。
+    /// → trampoline → 新任务栈上调用）。团队身份决定运行世界：kernel 团队 → S 态内核任务
+    /// （内核堆装箱、入口 `ktask_entry`、SPP=1 由 spawn 按团队身份自动定）。
+    /// 当前仅支持 kernel 团队（U 态用户闭包未接入）。
     ///
     /// 约束与 std 一致：`FnOnce + Send + 'static`——闭包可捕获、可搬移到新执行上下文。
     /// 内核态不可抢占：闭包忙等不返回也不主动让出，将独占所在核。

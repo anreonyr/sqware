@@ -3,7 +3,7 @@
 // RISC-V 特权规范：U 态 ecall 即 "Environment Call"（riscv crate 官方枚举亦名
 // `Exception::UserEnvCall`）——本模块即该调用的内核侧 ABI，术语与规范同源。
 //
-// 调用号契约（a7 枚举）单一事实源在 `ubi::Ucall`，kernel/user 共用（见 ubi）。
+// 调用号契约（a7 枚举）单一事实源在 `ubi::Ucall`，kernel/user 共用。
 // 约定：a7 = 调用号，a0..a5 = 参数，返回值写回 a0/a1（frame.gpr[10]/gpr[11]）；
 // 每个调用后 sepc += 4（Exit 除外——不返回）。时间语义统一以毫秒（Duration 边界）
 // 表达（Sleep=4）；tick 计数（GetTicks=3）仅作兼容诊断，非时间单位。

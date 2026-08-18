@@ -36,7 +36,7 @@ impl Region {
 /// 见 [`hart_count`]）。
 pub const MAX_HARTS: usize = 8;
 
-/// 已启动的 hart 集合（进程级进度记录；RFNC 移除后无读者，保留为诊断信息）。
+/// 已启动的 hart 集合（进程级进度记录；无功能读者，保留为诊断信息）。
 static STARTED_HARTS: AtomicUsize = AtomicUsize::new(1);
 
 /// 记录某 hart 已启动（HSM `hart_start` 成功后由 hart 0 调用）。
@@ -53,9 +53,8 @@ pub fn hart_count() -> usize {
 
 /// 当前 hart id（**执行本代码的核**）——与 `Machine::hart`（总核数）不同。
 ///
-/// S-mode 读不到 M-mode 专属 CSR `mhartid`（读它触发 illegal instruction），
-/// 改为读 `tp`：`_start` 入口（`main.rs` global_asm）已执行 `mv tp, a0` 把
-/// hartid 存入 `tp`。本内核不使用 TLS，`tp` 恒为入口值，不被任何子例程改写。
+/// S-mode 读不到 M-mode 专属 CSR `mhartid`（读它触发 illegal instruction），故
+/// hartid 在入口处存入 `tp`。本内核不使用 TLS，`tp` 恒为入口值，不被任何子例程改写。
 #[inline]
 pub fn hart_id() -> usize {
     let id: usize;

@@ -106,7 +106,7 @@ global_asm!(
     // （tp 由 C 侧 trap_handler 入口按 sp 反解重建——见 establish_tp；汇编
     //   不能 PC 相对引用跨页符号，TRAMPOLINE VA 下 la 会算出错误地址）
     "    mv    sp, t1",
-    "    jalr  t2",                        // handler(frame_pa) -> frame_pa（阶段 A 恒原帧）
+    "    jalr  t2",                        // handler(frame_pa) -> frame_pa（续跑时恒为原帧）
     "    j     __restore",
 
     // ── 内核态陷阱（__strap）：现场存**本 hart**内核帧（TP 索引 per-hart 帧区，
@@ -367,9 +367,9 @@ pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
 /// 连续块按实际核数分配（N x 64 KiB），guard 页兼作段边界。
 ///
 /// 栈体须容纳 trap 处理内最深的调用链：`heap_allocate` 的页表 map 递归 + 控制台
-/// 输出在内核陷栈上叠加，曾以 28 KiB 偶发溢出（heaper 高频堆分配触发）；60 KiB
-/// 提供充足余量。hartid 由 C 侧 `establish_tp` 按 TRAP_STACKS 表扫描反解（与段滑
-/// 负荷 2 的幂无关），仅保守断言段留 2 的幂以保持段内切分可预测。
+/// 输出在内核陷栈上叠加；60 KiB 提供充足余量。hartid 由 C 侧 `establish_tp` 按
+/// TRAP_STACKS 表扫描反解（与段滑负荷 2 的幂无关），仅保守断言段留 2 的幂以保持
+/// 段内切分可预测。
 pub const TRAP_STACK_SEGMENT: usize = 64 * 1024;
 pub const TRAP_STACK_GUARD: usize = PAGE_SIZE;
 

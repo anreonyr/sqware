@@ -1,14 +1,13 @@
 // 启动（boot）— 把 work 子系统拉起到首个用户任务（永不返回）。
 //
 // 一条纵线：调度器 init（per-hart 状态按 DTB 实际核数分配，先于任何调度器
-// 访问）→ debug PT 回收自测 → 构建演示团队/任务（先 Team 后 Task，见 work/
-// team.rs 与 work/task.rs）→ HSM 拉起副核 → 本核 restore(run()) 进入首任务。
+// 访问）→ debug PT 回收自测 → 构建演示团队/任务（先 Team 后 Task）
+// → HSM 拉起副核 → 本核 restore(run()) 进入首任务。
 //
 // 多核启动（hart B1）：hart 0 完整初始化（trap 栈/canary/spawn）后经 SBI HSM
 // `hart_start` 拉起 hart 1..N-1；副核入口（_boot_entry）把 HSM 传入的
 // a0=hartid / a1=opaque（= 本 hart trap 栈顶，寄存器传递免共享内存同步）装成
-// tp/sp 后进入 boot_main → per-hart CSR 配置 → idle（spin+steal，见
-// work::scheduler::idle_loop）。
+// tp/sp 后进入 boot_main → per-hart CSR 配置 → idle（spin+steal）。
 
 use core::arch::global_asm;
 
@@ -45,7 +44,7 @@ unsafe extern "C" {
     static _boot_entry: u8;
 }
 
-/// 启动多任务（阶段 A 线程模型）：spawn 演示团队后进入首个线程，永不返回。
+/// 启动多任务：spawn 演示团队后进入首个线程，永不返回。
 ///
 /// Team1 = 双线程共享空间：首线程 a0=0 计数循环写 'A'（靠抢占轮转）；次线程
 /// a0=1 写 'B' 后退出——验证「线程退出、团队/兄弟线程存活」的引用计数语义。
@@ -65,8 +64,8 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     frame::record_baseline();
 
-    // 全部演示程序改为经 parser → loader → TaskBuilder 装载的**真 ELF**（user crate，
-    // 静态链接于 USER_TEXT_BASE 0x10000），blob 装载 load_blob 随之移除。
+    // 全部演示程序均为经 parser → loader → TaskBuilder 装载的**真 ELF**（user crate，
+    // 静态链接于 USER_TEXT_BASE 0x10000）。
     //
     // Team1「threader」：双线程共享同一地址空间——线程参数 a0 分支（0 → 'A' 循环、
     // 非 0 → 'B' 循环），多核下分布在两 hart 真实并行。先 Team 后 Task。
@@ -76,6 +75,16 @@ pub fn init() -> ! {
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
     // 经 steal 从队列取活——任务即向各核迁移）
     boot_harts();
+
+    // 主内核栈（boot 栈）将永久离开前校验 canary：boot 期栈溢出即使未越过
+    // guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。
+    let boot_guard = unsafe {
+        (crate::kernel_stack_bottom() as *const usize).read()
+    };
+    assert!(
+        boot_guard == crate::KERNEL_STACK_CANARY,
+        "main kernel stack overflow during boot: canary corrupted {boot_guard:#x}",
+    );
 
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
     // 副核 steal 走，见 scheduler::enter_first_task）

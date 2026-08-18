@@ -4,8 +4,8 @@
 // 本模块（有副作用）消费配方 + 源字节，把程序装进一个按值持有的 Space，
 // 携 Space 与入口交还（Loaded → TeamBuilder）。
 //
-// load 为设计契约；blob 装载已随 demo 全 ELF 化移除。
-// 只碰 durable（静态段）；栈/帧/堆窗口（dynamic）由 TaskBuilder 分配，正交。
+// load 为设计契约。只碰 durable（静态段）；栈/帧/堆窗口（dynamic）由
+// TaskBuilder 分配，正交。
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;

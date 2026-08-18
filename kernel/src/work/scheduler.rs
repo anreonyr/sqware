@@ -7,7 +7,7 @@
 //
 // 时间片记账：新选中任务获得满额 TIME_SLICE 预算；run 时 Running 预算 > 1 →
 // 递减续跑（不重排），== 1 → 转 Starved 轮转。主动让出（envcall YIELD）走
-// starve：无视剩余预算立即轮转——抢占与让出不再是同构（旧实现二者共用 tick）。
+// starve：无视剩余预算立即轮转——抢占与让出各自独立。
 //
 // 退出回收：reap 标记 Reaped 入全局 reaped 容器（延迟回收——不能在自己正在用的
 // 栈上回收自己）；本 hart 取到下一任务后 clear 统一回收。Reaped 任务
@@ -21,7 +21,7 @@
 // 状态互斥：无原子字段。所有状态变更都经 task_mut（唯一 Arc 所有权 + &mut）——
 // 锁内 take/pop 出任务 → Arc::get_mut；锁 + 所有权保证互斥，编译器强制。
 //
-// 锁纪律（lock/mod.rs）：inner = level 1 每核一把；Team.tasks = 3 与 Space.inner
+// 锁纪律：inner = level 1 每核一把；Team.tasks = 3 与 Space.inner
 // = 2 禁止嵌套——锁内只做纯 Vec 操作，绝不调 space 方法。blocked（sleepers 的
 // handle→Task 映射）/ reaped / timer 的 TIMER_HEAP（tock 堆）同级（3）：park 路径 1 → 3
 // 嵌套合法（顺序获取 blocked 与 clock 锁，绝不 3 → 3 嵌套）；unpark 路径先放
@@ -63,15 +63,15 @@ use super::tie;
 
 // ── 核心：常量 ──
 
-/// WFI 休眠的推远增量：无待唤醒 tock 时 arm 到「永远」（替代原 TIMER_NEVER hack）。
+/// WFI 休眠的推远增量：无待唤醒 tock 时 arm 到「永远」。
 const WFI_FAR: u64 = 1 << 60;
 /// sleep(tock) 的句柄分配器——调度器自管；park「先入簿、后 tock」闭合竞态。
 static NEXT_PARK_HANDLE: AtomicUsize = AtomicUsize::new(0);
 /// running_task_id 无任务时的哨兵返回值（诊断用）。
 const NO_TASK_ID: usize = usize::MAX;
 
-/// 新选中任务的满额时间片（量子数）。耗尽才轮转——定时器频率不变（仍每量子
-/// 打断），只是任务不再每量子切走；park 的 ticks 语义不受影响。
+/// 新选中任务的满额时间片（量子数）。耗尽才轮转；定时器仍每量子打断，
+/// 只是任务不再每量子切走。park 的 ticks 语义不受影响。
 const TIME_SLICE: u32 = 8;
 
 // ── 核心：per-hart 调度器结构与方法 ──
@@ -284,8 +284,7 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
 }
 
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
-// （MAX_HARTS=8 仅为编译期安全上限，不固定静态数组）。长度镜像随结构体共生，
-// 不再有平行数组 READY_LENS。
+// （MAX_HARTS=8 仅为编译期安全上限，不固定静态数组）。长度镜像随结构体共生。
 
 // ── 核心：全局表（SCHEDULERS / blocked / reaped）──
 
@@ -299,9 +298,9 @@ fn schedulers() -> &'static [Scheduler] {
 ///
 /// blocked 以 clock 的 deadline 句柄为键：条目即任务本身，阻塞原因（含 wake_at）
 /// 在任务的 Blocked(Park) 载荷里，映射退化为「句柄 → 唯一 Arc<Task>」。唤醒
-/// 由 timer::drain 产出到期句柄，unpark 按句柄摘除并唤醒——不再依赖入队
-/// 顺序（修「后入睡更早醒沉队尾」缺陷）。锁纪律与 Team.tasks 同级（3）：park
-/// 路径 1 → 3 嵌套合法（blocked 与 clock 锁顺序获取、不嵌套）；unpark 路径
+/// 由 timer::drain 产出到期句柄，unpark 按句柄摘除并唤醒。锁纪律与 Team.tasks
+/// 同级（3）：park 路径 1 → 3 嵌套合法（blocked 与 clock 锁顺序获取、不嵌套）；
+/// unpark 路径
 /// 先放堆锁/队列锁再取调度锁（防 ABBA）。
 /// Blocked（睡眠映射 handle→Task）— 惰性初始化：hashbrown 的 HashMap::new
 /// 非 const，无法进 static（单独 static 保证 get_or_init 的 'static 借用）。
@@ -365,8 +364,7 @@ fn wait() -> Option<Arc<Task>> {
     if tie::done() {
         tie::halt();
     }
-    // 睡到最近 tock（无待唤醒则推远 stimecmp）——取代旧「blocked 非空才保持
-    // 周期定时器」的 hack：全核休眠时也能被最近唤醒点准时唤醒
+    // 睡到最近 tock（无待唤醒则推远 stimecmp）：全核休眠时也能被最近唤醒点准时唤醒
     let delta = match timer::next_tock() {
         Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
         None => WFI_FAR,
@@ -498,8 +496,7 @@ pub fn run() -> usize {
 /// 唤醒：从 clock 到期句柄按 blocked 映射摘除任务，Blocked → Starved 入本核
 /// starved。调用方 = trap 定时器分支与 wait()（空闲核 WFI 唤醒后）。
 ///
-/// 缺陷修复：旧实现在 VecDeque 上只检查队首——后 park 的更早到期任务沉队尾
-/// 永不唤醒；现按 tock 堆 (timer::drain) 取到期者，与入队顺序无关。
+/// 按 tock 堆（timer::drain）取到期者，与入队顺序无关。
 /// 队列锁/堆锁先放后取，绝不持队列锁取调度锁（防 ABBA）。
 pub fn unpark() {
     let due = timer::drain(clock::now());

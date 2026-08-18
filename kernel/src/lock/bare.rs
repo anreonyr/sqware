@@ -31,7 +31,7 @@ pub struct BareLockGuard<'a, T: ?Sized> {
 }
 
 impl<T> BareLock<T> {
-    #[allow(dead_code)] // 当前无用户（platform::PROBE_ERROR 移除后），锁体系预留
+    #[allow(dead_code)] // 当前无用户，锁体系预留
     pub const fn new(val: T) -> Self {
         BareLock {
             locked: AtomicBool::new(false),
@@ -48,7 +48,7 @@ impl<T: ?Sized> BareLock<T> {
     ///
     /// 调用者必须保证绝不从中断上下文争用此锁，否则同 hart 中断重入会死锁。
     /// 仅可用于启动期或纯任务上下文的共享状态。
-    #[allow(dead_code)] // 当前无用户（platform::PROBE_ERROR 移除后），锁体系预留
+    #[allow(dead_code)] // 当前无用户，锁体系预留
     #[inline(never)] // 保证入口读到的 ra 是调用者返回地址（内联会破坏）
     pub unsafe fn lock(&self) -> BareLockGuard<'_, T> {
         // 入口第一件事：捕获调用者返回地址（任何函数调用都会覆盖 ra）

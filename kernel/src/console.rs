@@ -1,8 +1,7 @@
 // 控制台输出 — 内核打印 sink（legacy `sbi_console_putchar`）
 //
-// 命名约定：输出用 put!/putln!，未来输入侧对应 get!/getln!（本文件暂不实现）。
+// 命名约定：输出用 put!/putln!。
 // 所有输出都经 legacy SBI console putchar 直写，无锁、无堆——panic/持锁态下也可安全调用。
-// （QEMU virt 未配 debug console，DBCN `sbi_debug_console_write` 是空操作，故用 legacy。）
 use core::fmt::{self, Write};
 
 use sbi::{DbcnCall, fid::Dbcn, scall::SArgs};
@@ -42,8 +41,6 @@ macro_rules! putln {
     () => { $crate::put!("\n") };
     ($($arg:tt)*) => { $crate::console::_write(format_args!("{}\n", format_args!($($arg)*))) };
 }
-
-// 未来输入侧：get!/getln!（预留，本阶段不实现）
 
 // ── log crate 集成 ──────────────────────────────
 

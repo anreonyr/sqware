@@ -12,7 +12,7 @@
 //   Map     — VA→PA 的原子单元：{ va, size, flags, kind, frames }，不变量
 //             frames[i] ↔ va + i·PAGE_SIZE；帧随 Map 所有权回收（drop 归还）
 //
-// 路线 1 后用户空间不共享内核映射——trampoline 叶 PTE 只映射不拥有（帧归内核，
+// 用户空间不共享内核映射——trampoline 叶 PTE 只映射不拥有（帧归内核，
 // Map.frames 为空）；其余帧（文本、trap-context、堆块、栈体）全归本空间所有。
 // 页表树由 Durable::root（TableNode）持有：硬件页恰好 4096 B 装不下元数据，
 // 树（children）放在帧外的 TableNode 上（见 table.rs）；unmap 回收变空的中间表。
@@ -469,8 +469,7 @@ pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000
 pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HARTS;
 
 /// per-hart 内核帧区基址（紧贴 TRAMPOLINE 之下 SLOTS 页；hart h 帧 VA =
-/// KERNEL_FRAME_BASE + h·PAGE_SIZE，顶页即旧 TRAP_CONTEXT 定位——该常量已并入
-/// 本区，不再有独立内核帧常量）。帧由 manager::init 逐页映射（PA 存
+/// KERNEL_FRAME_BASE + h·PAGE_SIZE）。帧由 manager::init 逐页映射（PA 存
 /// KERNEL_FRAMES[h]），__strap 经 KERNEL_FRAMES_LUI + tp 索引。
 pub(crate) const KERNEL_FRAME_BASE: VirtAddr =
     VirtAddr::from_raw(TRAMPOLINE.as_usize() - KERNEL_FRAME_SLOTS * PAGE_SIZE);
@@ -504,8 +503,7 @@ pub(crate) const FRAME_BASE: VirtAddr =
 //
 //   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐；__strap 经 KERNEL_FRAMES_LUI 注入）
 //   0xFFFF_FFFF_FFFF_7000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页
-//   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE；顶页即旧 TRAP_CONTEXT；
-//                             __strap 按 TP 索引）
+//   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE；__strap 按 TP 索引）
 //   0xFFFF_FFFF_FFBF_E000 — FRAME_BASE（帧窗口下界）
 //     ┌─────────────────────────────────┐
 //     │  线程 trap 帧窗口 64 MiB − 帧区  │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
@@ -535,10 +533,10 @@ const _: () = {
 };
 /// Sv39 虚拟地址空间。
 ///
-/// 拥有根页表与**全部自有物理帧**。路线 1 后用户空间不再复制/共享内核映射
-/// （用户空间构建只映射 trampoline 叶 PTE——帧归内核、不拥有——与 trap-context
-/// 帧——自有）。全部可变状态（`SpaceInner`：durable / dynamic）收进一把
-/// [`RelLock`]；根页表随 `durable.root` 持有（Box 自动 drop）。
+/// 拥有根页表与**全部自有物理帧**。用户空间只映射 trampoline 叶 PTE（帧归内核、
+/// 不拥有）与自有 trap-context 帧，不复制/共享内核映射。全部可变状态
+/// （`SpaceInner`：durable / dynamic）收进一把 [`RelLock`]；根页表随
+/// `durable.root` 持有（Box 自动 drop）。
 ///
 /// 空间种类由 [`kind`](Self::kind) 显式区分（见 [`SpaceKind`]）。
 ///
@@ -912,7 +910,7 @@ impl Space {
     /// **vaddr、paddr、size 必须全部按 [`PAGE_SIZE`] 对齐**，且不得与已有映射/
     /// 窗口区间重叠。非对齐大小的调用方（如 MMIO 设备映射）须自行向上取整。
     ///
-    /// 路线 1 后无共享子树：本空间所有页表帧私有，`map` 直接写叶子，无需 COW。
+    /// 本空间所有页表帧私有，`map` 直接写叶子，无需 COW。
     ///
     /// # Errors
     ///
