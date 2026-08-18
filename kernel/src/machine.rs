@@ -51,6 +51,21 @@ pub fn hart_count() -> usize {
     get().hart.min(MAX_HARTS)
 }
 
+/// 当前 hart id（**执行本代码的核**）——与 `Machine::hart`（总核数）不同。
+///
+/// S-mode 读不到 M-mode 专属 CSR `mhartid`（读它触发 illegal instruction），
+/// 改为读 `tp`：`_start` 入口（`main.rs` global_asm）已执行 `mv tp, a0` 把
+/// hartid 存入 `tp`。本内核不使用 TLS，`tp` 恒为入口值，不被任何子例程改写。
+#[inline]
+pub fn hart_id() -> usize {
+    let id: usize;
+    // SAFETY: 读取线程指针寄存器（入口处由 `_start` 写入 hartid），纯读、无副作用。
+    unsafe {
+        core::arch::asm!("mv {0}, tp", out(reg) id, options(nomem, nostack, preserves_flags));
+    }
+    id
+}
+
 /// 启动时从 DTB 解析出的机器设备信息（纯值，Copy，可安全存入 static）。
 #[derive(Clone, Copy, Debug)]
 pub struct Machine {
@@ -81,19 +96,4 @@ pub fn init(m: Machine) {
 #[allow(dead_code)]
 pub fn get() -> &'static Machine {
     MACHINE.get().expect("machine not initialized")
-}
-
-/// 当前 hart id（**执行本代码的核**）——与 `Machine::hart`（总核数）不同。
-///
-/// S-mode 读不到 M-mode 专属 CSR `mhartid`（读它触发 illegal instruction），
-/// 改为读 `tp`：`_start` 入口（`main.rs` global_asm）已执行 `mv tp, a0` 把
-/// hartid 存入 `tp`。本内核不使用 TLS，`tp` 恒为入口值，不被任何子例程改写。
-#[inline]
-pub fn hart_id() -> usize {
-    let id: usize;
-    // SAFETY: 读取线程指针寄存器（入口处由 `_start` 写入 hartid），纯读、无副作用。
-    unsafe {
-        core::arch::asm!("mv {0}, tp", out(reg) id, options(nomem, nostack, preserves_flags));
-    }
-    id
 }

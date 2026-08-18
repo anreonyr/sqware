@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::lock::{OnceLock, SpinLock};
 use crate::memory::manager::space::{Space, kernel_space};
 
-use super::task::Task;
+use super::task::{Task, TaskBuilder};
 
 /// 团队（进程）— 共享地址空间的线程容器。
 ///
@@ -48,6 +48,11 @@ impl Team {
             Some(a) => !Arc::ptr_eq(&a, exited),
             None => false,
         });
+    }
+
+    /// 本团队产出任务 builder（后续 `.name/.entry/.arg/.closure/.spawn` 链式构造任务）。
+    pub fn task(self: &Arc<Self>) -> TaskBuilder {
+        TaskBuilder::new(self.clone())
     }
 }
 

@@ -27,7 +27,8 @@ use super::team::Team;
 /// 入口据此读帧内 kernel_sp（调度器 prepare 按**真实** hart 写的 trap 栈顶）反推实际
 /// 执行 hart 重建 tp——内核任务的 tp 不像用户任务那样由 establish_tp 在每次 trap 入口
 /// 重建，被迁移到次核后 tp 会残留错误，致 reap（按 hart_id 定位调度器）摸错 hart。
-pub(crate) static KT_FRAME_PA: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+pub(crate) static KT_FRAME_PA: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
 
 /// 全局任务号（跨 hart 唯一）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -122,36 +123,6 @@ impl Task {
     }
 }
 
-impl Task {
-    /// 以内核态闭包新建内核任务（协作式：跑完即退，不被打断/抢占）。
-    ///
-    /// 挂 kernel 团队单例（共享 KERNEL_SPACE）→ spawn() 经团队身份自动判定为
-    /// S 态任务（SPP=1），不新增类型/方法。闭包装箱到内核堆（`Box<dyn FnOnce()>`），
-    /// 入口为内核 trampoline（`kthread_entry`），a0 传 Box 指针；闭包跑完自动退出
-    /// （切 per-hart trap 栈后 reap → 取下一任务）。
-    ///
-    /// 语义与 `std::thread::spawn` 一致：`FnOnce + Send + 'static`。注意内核态不可
-    /// 抢占：闭包若忙等不返回也不主动让出，将独占所在核。
-    pub fn spawn_kernel<F>(name: &'static str, f: F) -> Result<(), MapError>
-    where
-        F: FnOnce() + Send + 'static,
-    {
-        // `Box<dyn FnOnce()>` 是胖指针（data+vtable），不能直接转 usize——外包一层
-        // `Box<Box<dyn FnOnce()>>`，对外是薄指针，a0 传该指针即可。
-        let inner: Box<dyn FnOnce()> = Box::new(f);
-        let holder: Box<Box<dyn FnOnce()>> = Box::new(inner);
-        let ptr = Box::into_raw(holder) as usize;
-        let entry = VirtAddr::from_raw(kthread_entry as *const () as usize);
-        let frame_pa = TaskBuilder::new(super::team::kernel().clone())
-            .entry(entry)
-            .arg(ptr)
-            .name(name)
-            .spawn()?;
-        KT_FRAME_PA.store(frame_pa.as_usize(), core::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    }
-}
-
 /// 内核任务 trampoline：解包闭包、执行、跑完自动退出。
 ///
 /// a0 = `Box<dyn FnOnce()>` 指针（`TaskBuilder::arg` 写入）。该函数作为内核任务的
@@ -160,13 +131,15 @@ impl Task {
 /// 必须以 `-> !` 返回：从 `_start`-式入口返回会跳 0 崩溃，退出必须显式执行。
 ///
 /// # Safety
-/// `arg` 必须是对应 `spawn_kernel` 所 box 的 `Box<dyn FnOnce()>` 原始指针。
-extern "C" fn kthread_entry(arg: usize) -> ! {
+/// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
+/// `Box<dyn FnOnce()>` 原始指针。
+pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
     // 重建 tp = 实际执行 hart：内核任务被 steal/调度到任一 hart 时 tp 未必随之更新
     // （restore 不动 tp；诊断证实 kthread 跑在次核却 tp=0，致 reap 摸错 hart → no
     //  running task）。帧 kernel_sp 由 scheduler::prepare 按**真实** hart 写入
     // （trap 栈顶），据此反推实际 hart 写入 tp——与用户任务 trap 入口 establish_tp 同理。
-    let fr = KT_FRAME_PA.load(core::sync::atomic::Ordering::Relaxed) as *const crate::runtime::context::TrapContext;
+    let fr = KT_FRAME_PA.load(core::sync::atomic::Ordering::Relaxed)
+        as *const crate::runtime::context::TrapContext;
     let ksp = unsafe { core::ptr::addr_of!((*fr).kernel_sp).read() }.as_usize();
     let mut actual = crate::machine::hart_id();
     for h in 0..crate::machine::hart_count() {
@@ -182,12 +155,12 @@ extern "C" fn kthread_entry(arg: usize) -> ! {
     let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
     let boxed: Box<dyn FnOnce()> = *holder; // 移出内层闭包，holder 随之 drop
     boxed();
-    kthread_exit()
+    ktask_exit()
 }
 
 /// 内核任务退出：切到 per-hart trap 栈（否则 reap 的 clear 会回收**正在使用**的内核栈）→
 /// 标记退出 + 取下一任务 → restore。永不返回。
-fn kthread_exit() -> ! {
+fn ktask_exit() -> ! {
     // 切到 per-hart trap 栈再退出：clear() 回收 Reaped 任务（含其内核栈）时我们已不在
     // 该栈上。**必须用 options(noreturn) 的 tail-jump**——在 Rust 函数中部 `mv sp` 若配
     // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位
@@ -202,14 +175,14 @@ fn kthread_exit() -> ! {
             "la t0, {exit}",
             "jr t0",
             top = in(reg) top,
-            exit = sym kthread_exit_on_stack,
+            exit = sym kstack_exit,
             options(noreturn),
         );
     }
 }
 
 /// 在 per-hart trap 栈上执行退出：标记 Reaped + 取下一任务 + 恢复。永不返回。
-extern "C" fn kthread_exit_on_stack() -> ! {
+extern "C" fn kstack_exit() -> ! {
     let next = scheduler::reap();
     restore(next)
 }
@@ -257,6 +230,33 @@ impl TaskBuilder {
     pub fn entry(mut self, entry: VirtAddr) -> TaskBuilder {
         self.entry = entry;
         self
+    }
+
+    /// 统一闭包式任务生成：团队 + 闭包建任务（与 `std::thread::spawn` 同构——闭包装箱
+    /// → trampoline → 新任务栈上调用）。团队决定运行世界：kernel 团队 → S 态内核任务
+    /// （内核堆装箱、入口 `ktask_entry`、SPP=1 由 spawn 按团队身份自动定）；用户团队（U 态）
+    /// 需用户侧 trampoline，待 user lib 阶段接入，当前 debug 断言限 kernel 团队。
+    ///
+    /// 约束与 std 一致：`FnOnce + Send + 'static`——闭包可捕获、可搬移到新执行上下文。
+    /// 内核态不可抢占：闭包忙等不返回也不主动让出，将独占所在核。
+    pub fn closure<F>(self, f: F) -> Result<PhysAddr, MapError>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        debug_assert!(
+            Arc::ptr_eq(&self.team, super::team::kernel()),
+            "TaskBuilder::closure 目前仅支持 kernel 团队（内核态任务）"
+        );
+        // `Box<dyn FnOnce()>` 是胖指针（data+vtable），不能直接转 usize——外包一层
+        // `Box<Box<dyn FnOnce()>>`，对外是薄指针，a0 传该指针即可。
+        let inner: Box<dyn FnOnce()> = Box::new(f);
+        let holder: Box<Box<dyn FnOnce()>> = Box::new(inner);
+        let ptr = Box::into_raw(holder) as usize;
+        // SAFETY: 闭包在本地装箱，a0 传其薄指针；SPP=1 回 S 态运行于 `ktask_entry`。
+        let entry = VirtAddr::from_raw(ktask_entry as *const () as usize);
+        let frame_pa = self.entry(entry).arg(ptr).spawn()?;
+        KT_FRAME_PA.store(frame_pa.as_usize(), core::sync::atomic::Ordering::Relaxed);
+        Ok(frame_pa)
     }
 
     /// 生成任务：栈 slot + trap 帧（入团队空间窗口簿记）→ 填帧 → 入队收尾。

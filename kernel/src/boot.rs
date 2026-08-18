@@ -19,13 +19,15 @@ use alloc::vec::Vec;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::{block, frame};
+use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::space::{MapKind, SpaceBuilder};
 use crate::putln;
 use crate::runtime::trampoline::restore;
 use crate::work::scheduler;
-use crate::work::{loader, task, team};
+use crate::work::team::kernel;
+use crate::work::{loader, team};
 
 global_asm!(
     ".section .text.boot",
@@ -62,42 +64,8 @@ pub fn init() -> ! {
     //
     // Team1「threader」：双线程共享同一地址空间——线程参数 a0 分支（0 → 'A' 循环、
     // 非 0 → 'B' 循环），多核下分布在两 hart 真实并行。先 Team 后 Task。
-    let (team1, entry1) = load_user(&include_bytes!("../../user/user-threader.elf")[..]);
-    let _ = task::TaskBuilder::new(team1.clone())
-        .name("thread-A")
-        .entry(entry1)
-        .arg(0)
-        .spawn()
-        .expect("spawn A failed");
-    let _ = task::TaskBuilder::new(team1.clone())
-        .name("thread-B")
-        .entry(entry1)
-        .arg(1)
-        .spawn()
-        .expect("spawn B failed");
-    drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
-
-    // 单线程团队回归：counter/yielder/sleeper/exiter 行为不变
-    // （sleeper 写 'E' 后睡眠 16 量子——任务级阻塞 Running → Blocked → unpark 唤醒）。
-    for (elf, name) in [
-        (&include_bytes!("../../user/user-counter.elf")[..], "counter"),
-        (&include_bytes!("../../user/user-yielder.elf")[..], "yielder"),
-        (&include_bytes!("../../user/user-sleeper.elf")[..], "sleeper"),
-        (&include_bytes!("../../user/user-exiter.elf")[..], "exiter"),
-    ] {
-        let (team, entry) = load_user(elf);
-        let _ = task::TaskBuilder::new(team)
-            .name(name)
-            .entry(entry)
-            .spawn()
-            .expect("spawn failed");
-    }
-
-    // 内核任务（kthread）：挂 kernel 团队单例 → TaskBuilder 自动判定 S 态（SPP=1）。
-    // 协作式跑完即退（内核态不可抢占）；闭包装箱到内核堆，入口为内核 trampoline。
-    let _ = task::Task::spawn_kernel("ktask", || {
-        putln!("kernel task running");
-    });
+    // 全部演示任务（用户 + 内核）经统一 `Team::task()` 入口生成，错误一律 `?` 上抛至本边界。
+    spawn_demos().expect("boot spawn failed");
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
     // 经 steal 从队列取活——任务即向各核迁移）
@@ -107,6 +75,42 @@ pub fn init() -> ! {
     // 副核 steal 走，见 scheduler::enter_first_task）
     putln!("task: entering first task");
     restore(scheduler::run())
+}
+
+/// 生成全部演示任务（用户 + 内核 ktask）；错误统一 `?` 上抛。返回前所有任务已入队。
+fn spawn_demos() -> Result<(), MapError> {
+    // Team1「threader」：双线程共享同一地址空间——线程参数 a0 分支 'A'/'B'。先 Team 后 Task。
+    let (team1, entry1) = load_user(&include_bytes!("../../user/user-threader.elf")[..]);
+    team1.task().name("thread-A").entry(entry1).arg(0).spawn()?;
+    team1.task().name("thread-B").entry(entry1).arg(1).spawn()?;
+    drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
+
+    // 单线程团队回归：counter/yielder/sleeper/exiter 行为不变
+    for (elf, name) in [
+        (
+            &include_bytes!("../../user/user-counter.elf")[..],
+            "counter",
+        ),
+        (
+            &include_bytes!("../../user/user-yielder.elf")[..],
+            "yielder",
+        ),
+        (
+            &include_bytes!("../../user/user-sleeper.elf")[..],
+            "sleeper",
+        ),
+        (&include_bytes!("../../user/user-exiter.elf")[..], "exiter"),
+    ] {
+        let (team, entry) = load_user(elf);
+        team.task().name(name).entry(entry).spawn()?;
+    }
+
+    // 内核任务（ktask）：挂 kernel 团队单例，经统一 `Team::task().closure`——团队身份
+    // 自动定 S 态（SPP=1）、闭包装箱到内核堆、入口为内核 trampoline `ktask_entry`。
+    kernel().task().name("ktask").closure(|| {
+        putln!("kernel task running");
+    })?;
+    Ok(())
 }
 
 /// 内嵌用户 ELF → parser → loader → Team；返回 (Team, 绝对入口)。
