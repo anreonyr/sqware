@@ -3,6 +3,11 @@ name = "ubi"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+test = false
+bench = false
+doctest = false
+
 [dependencies]
 erra = { version = "0.2.0", default-features = false }
 fack = { version = "0.2.0", default-features = false }
