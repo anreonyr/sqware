@@ -11,8 +11,8 @@
 // 两处取指均正确。per-hart 内核帧基址（__strap 按 TP 索引）的 LUI 立即数由
 // Rust 常量 KERNEL_FRAMES_LUI 注入（单一来源，改 space::KERNEL_FRAME_BASE 即可）。
 //
-// sscratch 约定：用户态 = 当前线程帧 VA（帧内 self_va 字段，帧窗口分配，不再
-// 固定 TRAP_CONTEXT）；内核态 = 0。`__restore` 按恢复的 sstatus.SPP 复原该约定
+// sscratch 约定：用户态 = 当前线程帧 VA（帧内 self_va 字段，帧窗口分配，无固定帧 VA）；
+// 内核态 = 0。`__restore` 按恢复的 sstatus.SPP 复原该约定
 // （SPP=0 从帧内 self_va 字段读取——每线程帧位置可任意，`__alltraps` 零改动）。
 //
 // 帧布局与偏移见 runtime/context.rs（编译期偏移断言锁定，改布局必须先改两处）。
@@ -55,9 +55,9 @@ global_asm!(
     "    andi  t0, t0, (1 << 8)",          // SPP：0 = 来自用户态，1 = 来自内核态
     "    bnez  t0, __strap",
 
-    // ── 用户态陷阱（__utrap）：现场存本空间 TRAP_CONTEXT 帧 ────────────
+    // ── 用户态陷阱（__utrap）：现场存当前线程帧（sscratch 交换）────────────
     "__utrap:",
-    "    csrrw sp, sscratch, sp",          // sp = TRAP_CONTEXT VA；sscratch = 用户 sp
+    "    csrrw sp, sscratch, sp",          // sp = 本线程帧 VA；sscratch = 用户 sp
     "    sd    x1,  0x38(sp)",             // gpr[1] = ra
     "    csrr  t0, sscratch",
     "    sd    t0,  0x40(sp)",             // gpr[2] = 用户 sp
@@ -102,7 +102,7 @@ global_asm!(
     // 切内核页表（PC 仍在 trampoline，两空间同 VA，安全）
     "    csrw  satp, t0",
     "    sfence.vma",
-    // 切内核栈；旧 sp（TRAP_CONTEXT VA）切表后指向内核帧，不再解引用。
+    // 切内核栈；旧 sp（线程帧 VA）切表后指向本空间帧窗口，不再解引用。
     // （tp 由 C 侧 trap_handler 入口按 sp 反解重建——见 establish_tp；汇编
     //   不能 PC 相对引用跨页符号，TRAMPOLINE VA 下 la 会算出错误地址）
     "    mv    sp, t1",
@@ -171,7 +171,7 @@ global_asm!(
     "    csrw  sstatus, t0",
     "    ld    t0, 0x138(sp)",
     "    csrw  sepc, t0",
-    // sscratch 约定复原：SPP = 0（回用户）→ TRAP_CONTEXT VA；SPP = 1（回内核）→ 0
+    // sscratch 约定复原：SPP = 0（回用户）→ 线程帧 self_va；SPP = 1（回内核）→ 0
     "    csrr  t0, sstatus",
     "    andi  t0, t0, (1 << 8)",
     "    bnez  t0, 1f",
@@ -181,7 +181,7 @@ global_asm!(
     "1:",
     "    csrw  sscratch, zero",
     "2:",
-    // 恢复 GPR（x1、x3、x4、x7..x31；x2=sp、x5=t0、x6=t1 最后经 TRAP_CONTEXT VA 收尾）
+    // 恢复 GPR（x1、x3、x4、x7..x31；x2=sp、x5=t0、x6=t1 最后经 self_va 收尾）
     "    ld    x1,  0x38(sp)",
     "    ld    x3,  0x48(sp)",
     "    ld    x4,  0x50(sp)",

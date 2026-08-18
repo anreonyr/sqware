@@ -7,12 +7,14 @@
 //                     （阶段 A 恒为入参帧；阶段 C 上下文切换后返回下一任务帧）
 //   arm_timer()     — SBI set_timer 武装 S-timer 中断（阶段 A 自检驱动）
 //
-// 内核态陷阱约定：现场保存在内核帧（TRAP_CONTEXT VA），处理器运行在 per-hart
+// 内核态陷阱约定：现场保存在 per-hart 内核帧（KERNEL_FRAME_BASE + hart·PAGE），处理器运行在 per-hart
 // trap 栈上；入口硬件已清 SIE，处理器内嵌套陷阱仅可能是内核 bug，会覆写内核
 // 帧（panic 兜底）。trap 栈底 canary 在处理器出入口校验（溢出即 panic）。
 
+use crate::runtime::{clock, timer};
 use crate::work::scheduler::{unpark, with_running_space};
 use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 
 use log::info;
 use riscv::interrupt::{Exception, Interrupt, Trap};
@@ -22,7 +24,7 @@ use crate::ecall::{TimerCall, fid::Timer, scall::SArgs};
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
-use crate::memory::manager::space::{KERNEL_FRAME_BASE, kernel_frame_pa, kernel_trap_context};
+use crate::memory::manager::space::{KERNEL_FRAME_BASE, kernel_frame_pa};
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{
@@ -34,12 +36,8 @@ use crate::runtime::trampoline::{
 /// init_trap_stacks 在 boot 时写全部 hart 的 canary）。
 pub(crate) const TRAP_STACK_CANARY: usize = 0x5EED_CAFE_51A7_0000;
 
-/// 阶段 A 自检定时器周期（QEMU virt 时钟约 10 MHz → 0.1 s）。
-pub const TIMER_INTERVAL: usize = 1_000_000;
-
-/// 定时器 tick 计数（自检：前若干次打印后静默）。
-static TICKS: AtomicUsize = AtomicUsize::new(0);
-
+// 定时器周期 = 100 ms 抢占量子（由 clock 按 timebase 换算成 ticks）——
+// 替代原硬编码 TIMER_INTERVAL。
 /// trap 栈已用字节数（高水位跟踪用）。
 fn trap_stack_used() -> usize {
     let sp: usize;
@@ -110,7 +108,7 @@ pub fn init() {
 
     // 3. 先武装定时器：OpenSBI 可能遗留一个已到期的 stimecmp，若不清掉，
     //    开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序难看）。
-    arm_timer(TIMER_INTERVAL);
+    arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
 
     // 4. stvec → __alltraps（Direct 模式）；sscratch = 0（内核态约定）；
     //    使能定时器源：sie.STIE。**不**开 sstatus.SIE（全局）——内核态恒关中断
@@ -138,7 +136,7 @@ pub fn init() {
 /// satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
 /// （trap 栈 / canary / 内核帧由 hart 0 在 init 完成；B1 共享内核帧。）
 pub fn init_hart() {
-    let ktc = kernel_trap_context();
+    let ktc = kernel_frame_pa(0);
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;
     // Sv39 token：低 44 位 ppn、[63:44] asid/模式
@@ -159,20 +157,16 @@ pub fn init_hart() {
 }
 
 /// 武装 S-timer 中断：`stimecmp = time + interval`（SBI TIME 扩展，绝对时间）。
-pub fn arm_timer(interval: usize) {
-    let next = time::read() + interval;
+/// interval 为 timebase 刻度（clock 换算）；休眠推远见 scheduler::wait。
+pub fn arm_timer(interval: u64) {
+    let next = (time::read() as u64).wrapping_add(interval);
     TimerCall::new(Timer::SetTimer)
         .args(SArgs {
-            a0: next,
+            a0: next as usize,
             ..Default::default()
         })
         .call()
         .unwrap();
-}
-
-/// 定时器 tick 计数（ENV_GET_TICKS 后端）。
-pub fn ticks() -> usize {
-    TICKS.load(Ordering::Relaxed)
 }
 
 /// 陷阱分发 — 汇编入口（`jalr trap_handler`）的唯一 Rust 侧。
@@ -244,12 +238,12 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
         // S-timer：重武装 + 抢占（仅用户态陷阱可切换——内核态陷阱须恢复被
         // 中断的内核上下文；内核恒关中断下本不应发生，SPP 判断为防御性）
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
-            let tick = TICKS.fetch_add(1, Ordering::Relaxed);
+            let tick = timer::tick();
             if tick < 8 {
                 putln!("timer tick #{tick} @ time={}", time::read());
             }
-            arm_timer(TIMER_INTERVAL);
-            // 到期睡眠任务唤醒（Blocked → Starved 入队；unpark 内部先放队列锁）
+            // 重武装：运行任务抢占量子；到期唤醒由 unpark 经 timer::drain 驱动
+            arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
             unpark();
             if frame.sstatus & (1 << 8) == 0 {
                 crate::work::run() as *mut TrapContext

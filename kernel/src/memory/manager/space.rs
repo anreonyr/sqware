@@ -169,7 +169,7 @@ pub enum WindowKind {
 pub struct Window {
     va: VirtAddr,
     size: NonZeroUsize,
-    alloc: BitmapAllocator,
+    allocator: BitmapAllocator,
     children: Vec<Map>,
 }
 
@@ -183,7 +183,7 @@ impl Window {
         Self {
             va: VirtAddr::from_raw(base),
             size: NonZeroUsize::new(size).expect("window size non-zero"),
-            alloc: BitmapAllocator::new(base, base + size, PAGE_SIZE),
+            allocator: BitmapAllocator::new(base, base + size, PAGE_SIZE),
             children: Vec::new(),
         }
     }
@@ -208,7 +208,7 @@ impl Window {
             return Err(MapError::NotAligned);
         }
         let (base, size) = self
-            .alloc
+            .allocator
             .allocate(size)
             .map_err(|_| MapError::OutOfMemory)?;
         let map = Map::new(
@@ -226,7 +226,7 @@ impl Window {
 
     /// 释放一块 VA：位图精确匹配成功后移除重叠子 Map（帧随 drop 归还）。
     fn deallocate(&mut self, va: VirtAddr, size: usize) -> bool {
-        if self.alloc.deallocate(va.as_usize(), size).is_err() {
+        if self.allocator.deallocate(va.as_usize(), size).is_err() {
             return false;
         }
         let end = va.as_usize().saturating_add(size);
@@ -463,23 +463,17 @@ pub(crate) const TASK_STACK_AREA_SIZE: usize = 0x4000_0000;
 /// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。`stvec` 指向此处。
 pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000);
 
-/// 内核 trap-context 帧的固定虚拟地址（trampoline 下方一页，L2[511]·L1[511]·L0[510]）。
-///
-/// 内核空间把自己的 [`crate::runtime::context::TrapContext`] 帧映射于此（`__strap`
-/// 内核路径经 LUI 常量寻址）；**用户空间不再映射此 VA**——线程帧全部位于下方
-/// Frame 窗口（[`FRAME_BASE`]）分配的任意 VA，`__alltraps`/`__restore` 经帧内
-/// `self_va` 字段定位（见 runtime/trampoline.rs）。
-pub(crate) const TRAP_CONTEXT: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_E000);
-
 /// per-hart 内核帧槽数（编译期固定 = MAX_HARTS 上限；帧 VA 区与帧窗口布局耦合，
 /// 见下方布局断言——实际按 hart_count() 映射/填充，槽位固定使 __strap 的 TP 索引
 /// 不依赖 DTB 核数）。
 pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HARTS;
 
-/// per-hart 内核帧区基址（TRAP_CONTEXT 之下 SLOTS-1 页；hart h 帧 VA =
-/// KERNEL_FRAME_BASE + h·PAGE_SIZE，hart 0 = TRAP_CONTEXT 兼容旧路径）。
+/// per-hart 内核帧区基址（紧贴 TRAMPOLINE 之下 SLOTS 页；hart h 帧 VA =
+/// KERNEL_FRAME_BASE + h·PAGE_SIZE，顶页即旧 TRAP_CONTEXT 定位——该常量已并入
+/// 本区，不再有独立内核帧常量）。帧由 manager::init 逐页映射（PA 存
+/// KERNEL_FRAMES[h]），__strap 经 KERNEL_FRAMES_LUI + tp 索引。
 pub(crate) const KERNEL_FRAME_BASE: VirtAddr =
-    VirtAddr::from_raw(TRAP_CONTEXT.as_usize() - (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE);
+    VirtAddr::from_raw(TRAMPOLINE.as_usize() - KERNEL_FRAME_SLOTS * PAGE_SIZE);
 
 /// 线程 trap 帧窗口大小（64 MiB − 内核帧区；帧窗口止于 KERNEL_FRAME_BASE）。
 pub(crate) const FRAME_REGION_SIZE: usize = 0x400_0000 - (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE;
@@ -508,10 +502,10 @@ pub(crate) const FRAME_BASE: VirtAddr =
 //
 // 内核半区（bit 38 = 1，VPN[2] = 256..511，起点 KERNEL_BASE）：
 //
-//   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐；汇编 LUI 由 TRAP_CONTEXT_LUI 注入）
-//   0xFFFF_FFFF_FFFF_E000 — TRAP_CONTEXT（hart 0 内核帧，= TRAMPOLINE - PAGE_SIZE）
-//   0xFFFF_FFFF_FFFF_D000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页
-//   0xFFFF_FFFF_FFFF_7000 ┘ （hart h 帧 = BASE + h·PAGE；__strap 按 TP 索引）
+//   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐；__strap 经 KERNEL_FRAMES_LUI 注入）
+//   0xFFFF_FFFF_FFFF_7000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页
+//   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE；顶页即旧 TRAP_CONTEXT；
+//                             __strap 按 TP 索引）
 //   0xFFFF_FFFF_FFBF_E000 — FRAME_BASE（帧窗口下界）
 //     ┌─────────────────────────────────┐
 //     │  线程 trap 帧窗口 64 MiB − 帧区  │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
@@ -523,14 +517,9 @@ pub(crate) const FRAME_BASE: VirtAddr =
 const _: () = {
     // 注意：VirtAddr 的 Add/Sub/PartialEq 非 const fn，此处一律用 as_usize() 裸算术。
     assert!(TRAMPOLINE.as_usize().is_multiple_of(PAGE_SIZE));
-    assert!(TRAP_CONTEXT.as_usize().is_multiple_of(PAGE_SIZE));
     assert!(KERNEL_FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
-    assert!(TRAMPOLINE.as_usize() - PAGE_SIZE == TRAP_CONTEXT.as_usize()); // 相邻页（trampoline 收尾依赖）
-    // 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页，hart 0 恰止于 TRAP_CONTEXT
-    assert!(
-        KERNEL_FRAME_BASE.as_usize() + (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE
-            == TRAP_CONTEXT.as_usize()
-    );
+    // 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页，恰止于 TRAMPOLINE（相邻、不重叠）
+    assert!(KERNEL_FRAME_BASE.as_usize() + KERNEL_FRAME_SLOTS * PAGE_SIZE == TRAMPOLINE.as_usize());
     // 帧窗口：页对齐、恰止于 KERNEL_FRAME_BASE（内核帧区在其上方，互不重叠）
     assert!(FRAME_REGION_SIZE.is_multiple_of(PAGE_SIZE));
     assert!(FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
@@ -671,7 +660,7 @@ impl Space {
     /// 「无 Map」。栈体登记为 Anonymous 子 Map（帧随后经
     /// [`stack_attach`](Self::stack_attach) 注入）。两子 Map 均标 `owner`，退出时
     /// 按 owner 一并回收（[`task_reclaim`](Self::task_reclaim)）。
-    pub(crate) fn stack_alloc(&self, owner: usize) -> Result<VirtAddr, MapError> {
+    pub(crate) fn stack_allocate(&self, owner: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         let slot_size = TASK_STACK_SIZE + STACK_GUARD_SIZE;
         let stack = {
@@ -680,7 +669,7 @@ impl Space {
             windows.get_mut(&kind).expect("window exists")
         };
         let (slot_va, _) = stack
-            .alloc
+            .allocator
             .allocate(slot_size)
             .map_err(|_| MapError::OutOfMemory)?;
         let slot_va = VirtAddr::from_raw(slot_va);
@@ -706,7 +695,7 @@ impl Space {
         Ok(body_va)
     }
 
-    /// 把栈体帧注入并映射（spawn 用：stack_alloc 取 VA 后分配帧再 attach）。
+    /// 把栈体帧注入并映射（spawn 用：stack_allocate 取 VA 后分配帧再 attach）。
     ///
     /// 逐帧：PTE 安装（新中间表帧由页表树 TableNode 持有）+ `push_frame`（入栈体子
     /// Map，保持「帧 i ↔ va + i·PAGE_SIZE」不变量）。中途失败返回错误，调用方
@@ -754,7 +743,7 @@ impl Space {
     /// # Errors
     ///
     /// 窗口耗尽或物理帧耗尽 → [`MapError::OutOfMemory`]（后者回滚已装状态）。
-    pub(crate) fn frame_alloc(&self, owner: usize) -> Result<(VirtAddr, PhysAddr), MapError> {
+    pub(crate) fn frame_allocate(&self, owner: usize) -> Result<(VirtAddr, PhysAddr), MapError> {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
         let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
@@ -812,7 +801,7 @@ impl Space {
         if let Some((slot_va, slot_size)) = stack.remove_owner(owner) {
             durable.clear_range(slot_va.as_usize(), slot_size);
             // 位图归还与子 Map 结构性绑定：remove_owner 命中则 dealloc 必成功
-            let _ = stack.alloc.deallocate(slot_va.as_usize(), slot_size);
+            let _ = stack.allocator.deallocate(slot_va.as_usize(), slot_size);
         }
         // 2+4. 帧窗口：摘帧子 Map → 清 PTE → 位图归还帧 VA
         let frames = {
@@ -1138,17 +1127,15 @@ pub(crate) fn kernel_space() -> RelLockGuard<'static, Option<Arc<Space>>> {
     KERNEL_SPACE.lock()
 }
 
-/// per-hart 内核 trap-context 帧物理地址（`manager::init` 逐帧映射并发布；hart 0
-/// 即旧 KERNEL_TRAP_CONTEXT，`kernel_trap_context()` 兼容读它）。
+/// per-hart 内核帧物理地址表（`manager::init` 逐帧映射并发布；`__strap` 按 TP 索引、
+/// `trap::init` 写元数据）。
 pub static KERNEL_FRAMES: [AtomicPhysAddr; KERNEL_FRAME_SLOTS] =
     [const { AtomicPhysAddr::new(PhysAddr::from_raw(0)) }; KERNEL_FRAME_SLOTS];
 
 /// hart h 的内核帧物理地址（__strap 按 TP 索引的帧页；trap::init 写元数据）。
+///
+/// hart 0 的帧即旧 `TRAP_CONTEXT`（用户帧构建从它拷内核切换信息），现统一经
+/// `kernel_frame_pa(hart)` 读取，不再保留独立常量或别名函数。
 pub fn kernel_frame_pa(hart: usize) -> PhysAddr {
     KERNEL_FRAMES[hart].load(Ordering::Relaxed)
-}
-
-/// 内核 trap-context 帧物理地址（hart 0；用户帧构建从它拷内核切换信息）。
-pub fn kernel_trap_context() -> PhysAddr {
-    kernel_frame_pa(0)
 }

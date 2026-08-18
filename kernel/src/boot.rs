@@ -72,8 +72,8 @@ pub fn init() -> ! {
         .spawn()
         .expect("spawn B failed");
     drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
-    // 单线程团队回归：A/B/C/E 行为不变（E 每 1.6s 写 'E' 后睡眠 16 量子——
-    // 任务级阻塞：Running → Blocked → 睡眠队列 → unpark 唤醒）
+    // 单线程团队回归：A/B/C/E 行为不变（E 每 ~1.6s 写 'E' 后睡眠 1600 ms——
+    // 任务级阻塞：Running → Blocked → deadline 堆 → unpark 唤醒）
     for (program, name) in [
         (program_a(), "counter"),
         (program_b(), "yielder"),
@@ -314,18 +314,18 @@ const fn program_d() -> &'static [u8] {
     ]
 }
 
-/// E "sleeper"：写 'E' 后睡眠 16 量子（ENV_SLEEP，约 1.6s）再循环——任务级阻塞
-/// 演示：Running → Blocked（睡眠队列）→ Starved（unpark 唤醒）。
+/// E "sleeper"：写 'E' 后睡眠 1600 ms（ENV_SLEEP 的毫秒语义）再循环——
+/// 任务级阻塞演示：Running → Blocked（deadline 堆）→ Starved（unpark 唤醒）。
 ///
-/// 布局（28 B）：li a7,1; li a0,'E'; ecall; li a7,4; li a0,16; ecall; j -0x18
-/// （字节经 llvm-mc 核对；ENV_SLEEP = 4）
+/// 布局（28 B）：li a7,1; li a0,'E'; ecall; li a7,4; li a0,1600; ecall; j -0x18
+/// （字节经 llvm-mc 核对；ENV_SLEEP = 4，a0 = 毫秒）
 const fn program_e() -> &'static [u8] {
     &[
         0x93, 0x08, 0x10, 0x00, // li   a7, 1        (ENV_WRITE)
         0x13, 0x05, 0x50, 0x04, // li   a0, 0x45     ('E')
         0x73, 0x00, 0x00, 0x00, // ecall
         0x93, 0x08, 0x40, 0x00, // li   a7, 4        (ENV_SLEEP)
-        0x13, 0x05, 0x00, 0x01, // li   a0, 16       (ticks)
+        0x13, 0x05, 0x40, 0x06, // li   a0, 1600     (ms)
         0x73, 0x00, 0x00, 0x00, // ecall
         0x6f, 0xf0, 0x9f, 0xfe, // j    -0x18        (28 B：0x18 + (-0x18) = 0x00)
     ]

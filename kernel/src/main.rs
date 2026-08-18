@@ -48,7 +48,8 @@ extern "C" fn early(hartid: usize, dtp: usize) -> ! {
         machine.free.base,
         machine.free.size,
     );
-    putln!("hart: {}", machine.hart);
+    putln!("hart: {} H", machine.hart);
+    putln!("freq: {} Hz", machine.hertz);
 
     let stack_top = machine.dram.base + machine.dram.size;
 
@@ -67,6 +68,8 @@ extern "C" fn early(hartid: usize, dtp: usize) -> ! {
 fn main() -> ! {
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
     manager::init().unwrap_or_else(|e| panic!("manager init failed: {e}"));
+    runtime::clock::init(machine::get().hertz)
+        .unwrap_or_else(|e| panic!("clock init failed: {e:?}"));
     runtime::init();
 
     // 阶段 C：boot 模块 spawn 多任务并进入首个任务（永不返回）。S-timer 由
@@ -87,6 +90,22 @@ unsafe extern "C" {
     static _free_base: u8;
 }
 
+/// 读取 DTB `/cpus` 的 timebase-frequency（Hz）；缺失/非法长度返回 0
+/// （clock::init 会以 ClockError::NoTimebase 拒绝 0）。
+fn timebase_of(fdt: &fdt::Fdt) -> usize {
+    fdt.find_node("/cpus")
+        .and_then(|n| n.property("timebase-frequency"))
+        .map(|p| match p.value.len() {
+            4 => u32::from_be_bytes([p.value[0], p.value[1], p.value[2], p.value[3]]) as usize,
+            8 => {
+                let b = p.value;
+                u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as usize
+            }
+            _ => 0,
+        })
+        .unwrap_or(0)
+}
+
 /// 解析设备树，返回机器设备信息 `Machine`（内存空闲区 + hart 数 + 设备 MMIO 占位）。
 fn probe(dtp: usize) -> Machine {
     let fdt = unsafe { fdt::Fdt::from_ptr(dtp as *const u8) }.expect("invalid device tree blob");
@@ -100,6 +119,7 @@ fn probe(dtp: usize) -> Machine {
         .expect("device tree has no /memory node");
     let dram_base = mem.starting_address.addr();
     let dram_size = mem.size.unwrap_or(0);
+    let timebase = timebase_of(&fdt);
 
     let free_base = (&raw const _free_base).addr();
     // 内核栈保留在 DRAM 顶部 [dram_end - KERNEL_STACK_SIZE, dram_end)，向下增长；
@@ -111,6 +131,7 @@ fn probe(dtp: usize) -> Machine {
         dram: Region::new(dram_base, dram_size),
         free: Region::new(free_base, free_size),
         hart,
+        hertz: timebase,
         uart: Region::new(0, 0),
         plic: Region::new(0, 0),
         clint: Region::new(0, 0),

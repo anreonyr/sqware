@@ -1,0 +1,155 @@
+<div id="sq-mm">
+<style>
+  #sq-mm{--bg:light-dark(#f4f6fb,#0d1117);--panel:light-dark(#ffffff,#151b23);--panel2:light-dark(#eef1f8,#1b222c);--line:light-dark(#dde3ef,#2a3340);--ink:light-dark(#1b2233,#e7eaf1);--mut:light-dark(#66708a,#96a0b0);--use:light-dark(#0f9d58,#34d399);--use-bg:light-dark(#e6f6ec,#122f20);--res:light-dark(#d97706,#fbbf24);--res-bg:light-dark(#fdf0dc,#32240e);--warn:light-dark(#d92d20,#f97066);--warn-bg:light-dark(#fdecec,#33181a);--gapbg:light-dark(rgba(102,112,138,.16),rgba(150,160,176,.14));--acc:light-dark(#2f6bff,#6c9bff);
+  font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:14px 16px 12px;max-width:1060px;box-sizing:border-box}
+  #sq-mm *,#sq-mm *::before,#sq-mm *::after{box-sizing:border-box}
+  #sq-mm .hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  #sq-mm .tt{font-size:15px;font-weight:700}
+  #sq-mm .swc{margin-left:auto;display:flex;align-items:center;gap:9px}
+  #sq-mm .sw{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--mut);cursor:pointer;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 12px;user-select:none}
+  #sq-mm .sw input{accent-color:var(--acc);cursor:pointer}
+  #sq-mm .legend{display:flex;gap:13px;flex-wrap:wrap;font-size:11px;color:var(--mut);margin-bottom:10px}
+  #sq-mm .lg{display:inline-flex;align-items:center;gap:5px}
+  #sq-mm .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+  #sq-mm .d-use{background:var(--use);box-shadow:0 0 0 1px var(--line)}
+  #sq-mm .d-res{background:var(--res)}
+  #sq-mm .d-warn{background:var(--warn)}
+  #sq-mm .d-gap{background:repeating-linear-gradient(45deg,var(--mut) 0 2px,transparent 2px 5px);opacity:.5}
+  #sq-mm .bars{display:flex;gap:16px;align-items:stretch;flex-wrap:wrap}
+  #sq-mm .panel{flex:1 1 380px;min-width:300px}
+  #sq-mm .pname{font-size:12.5px;font-weight:600;margin-bottom:7px}
+  #sq-mm .pnote{font-size:11px;color:var(--mut);margin-top:7px;line-height:1.5}
+  #sq-mm .bar{position:relative;height:430px;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+  #sq-mm .seg{position:relative;flex:none;width:100%;cursor:pointer;transition:filter .12s;border-bottom:1px solid var(--line);overflow:hidden}
+  #sq-mm .seg:hover{filter:brightness(1.1)}
+  #sq-mm .seg.sel{outline:2px solid var(--acc);outline-offset:-2px;z-index:1}
+  #sq-mm .seg .lbl{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-weight:600;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis;max-width:72%;overflow:hidden}
+  #sq-mm .seg .addr{position:absolute;right:7px;top:3px;font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:9.5px;opacity:.85}
+  #sq-mm .seg.use{background:var(--use-bg);border-left:3px solid var(--use)}
+  #sq-mm .seg.use .lbl{color:var(--use)}
+  #sq-mm .seg.res{background:var(--res-bg);border-left:3px solid var(--res)}
+  #sq-mm .seg.res .lbl{color:var(--res)}
+  #sq-mm .seg.warn{background:var(--warn-bg);border-left:3px solid var(--warn)}
+  #sq-mm .seg.warn .lbl{color:var(--warn)}
+  #sq-mm .seg.gap{background:var(--gapbg);border-left:3px dashed var(--mut)}
+  #sq-mm .seg .addr{color:var(--mut)}
+  #sq-mm .seg.sm .lbl{display:none}
+  #sq-mm .info{display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin-top:10px;font-size:12px;min-height:40px}
+  #sq-mm .info .k{color:var(--mut);font-size:11px;margin-right:2px}
+  #sq-mm .info .v{font-weight:600}
+  #sq-mm .info .d{width:100%;color:var(--mut);font-size:11.5px;margin-top:2px;line-height:1.5}
+</style>
+<div class="hd">
+  <div class="tt">SQware 内存布局</div>
+  <div class="swc">
+    <label class="sw"><input type="checkbox" id="sq-mm-c" checked>紧凑视图（折叠保留区）</label>
+  </div>
+</div>
+<div class="legend">
+  <span class="lg"><span class="dot d-use"></span>已实现/在用</span>
+  <span class="lg"><span class="dot d-res"></span>预留·后端已写未接线</span>
+  <span class="lg"><span class="dot d-warn"></span>待实现（ELF 加载）</span>
+  <span class="lg"><span class="dot d-gap"></span>保留/未映射空隙</span>
+</div>
+<div class="bars">
+  <div class="panel">
+    <div class="pname">Sv39 虚拟地址空间（高 → 低）</div>
+    <div class="bar" id="sq-mm-vb"></div>
+    <div class="pnote">用户空间不复制内核映射：构建时仅种入 TRAMPOLINE 叶 PTE（借用内核帧）；线程 trap 帧窗口每空间一份。紧凑视图下空隙折叠，区间按真实大小比例 + 最小可见高度绘制；取消勾选改为对数刻度显示全部空隙。</div>
+  </div>
+  <div class="panel">
+    <div class="pname">物理内存 DRAM（QEMU virt · 默认 128 MiB）</div>
+    <div class="bar" id="sq-mm-pb"></div>
+    <div class="pnote">恒等映射 + KERNEL_BASE 高半区双映射（Reserved 借用）；MMIO（uart / plic / clint）未解析，Region 均为 0。镜像尺寸为估算，非严格比例。</div>
+  </div>
+</div>
+<div class="info" id="sq-mm-info"><span class="k">提示</span><span class="v">悬停内存块查看详情</span></div>
+<script>
+(function(){
+  var root=document.getElementById('sq-mm');
+  if(!root) return;
+  var GIB=1073741824, MIB=1048576, KIB=1024;
+  var VADATA=[
+    {n:'TRAMPOLINE',a:'0xFFFF_FFFF_FFFF_F000',s:4096,c:'use',d:'trap 入口 / 恢复汇编（1 页）。内核与全部用户空间以同一 VA 映射同一物理帧（G 位，不被 ASID 局部刷 TLB 影响）。'},
+    {n:'per-hart 内核帧区（含旧 TRAP_CONTEXT）',a:'0xFFFF_FFFF_FFFF_7000',s:8*4096,c:'use',d:'KERNEL_FRAME_BASE = TRAMPOLINE − SLOTS·4096（0xFFFF_FFFF_FFFF_7000），SLOTS = 8 页（MAX_HARTS），帧 VA = 基址 + hart·4096，__strap 按 tp 索引；顶页即旧 TRAP_CONTEXT 定位。内核态故障在故障核自己的帧与 trap 栈上处理。'},
+    {n:'线程 trap 帧窗口',a:'0xFFFF_FFFF_FFBF_E000',s:67104768,c:'use',d:'FRAME_REGION_SIZE ≈ 64 MiB − 28 KiB，S-only 位图管理，每线程帧分配任意 VA，经帧内 self_va 字段定位（每空间一份）。'},
+    {n:'内核高半区 + 非规范区 + 用户上保留',a:'0x1_0000_0000',s:0xFFFF_FFFF_FFBF_E000-0x1_0000_0000,c:'gap',d:'约 256 GiB 级别的空地址空间：内核仅映射 KERNEL_BASE + DRAM 恒等区（0xFFFF_FFC0_8000_0000 附近），其余保留、未映射。'},
+    {n:'用户栈窗口',a:'0xC000_0000',s:GIB,c:'use',d:'TASK_STACK_AREA_SIZE = 1 GiB。每个线程 slot = 4 KiB 守护页（Reserved，栈溢出可诊断）+ 16 KiB 栈体，位图分配，约 5.2 万并发线程。'},
+    {n:'保留',a:'0x2040_0000',s:0xC000_0000-0x2040_0000,c:'gap',d:'≈ 3 GiB − 4 MiB 未映射。'},
+    {n:'用户堆窗口',a:'0x2000_0000',s:0x40_0000,c:'res',d:'USER_HEAP_SIZE = 4 MiB（源码注释里 64 MiB 为旧文案）。Space::heap_allocate / heap_deallocate 已实现，mmap / brk syscall 尚未接线。'},
+    {n:'保留',a:'0x0002_0000',s:0x2000_0000-0x20000,c:'gap',d:'≈ 512 MiB − 128 KiB 未映射。'},
+    {n:'程序文本',a:'0x0001_0000',s:4096,c:'warn',d:'USER_TEXT_BASE。当前仅装载 ≤ 1 页的手写机器码 blob；ELF 加载器（解析 PT_LOAD 段）未实现。'},
+    {n:'NULL / 低端保留',a:'0x0000_0000',s:0x10000,c:'gap',d:'低 64 KiB 未映射：解引用空指针触发缺页（当前缺页无法解析时直接 panic）。'}
+  ];
+  var PHDATA=[
+    {n:'内核镜像',a:'0x8000_0000',s:2*MIB,c:'use',d:'text / rodata / data / bss，截至链接符号 _free_base。图示高度按约 2 MiB 估算。'},
+    {n:'早期 boot 栈',a:'(镜像后)',s:4096,c:'use',d:'early 栈 4 KiB：仅在 probe 期间使用，切换到 DRAM 顶部内核栈后废弃，可被 bump 回收。'},
+    {n:'free 区（物理页池）',a:'0x8000_0000 + 镜像',s:124*MIB+1020*KIB,c:'use',d:'bump 序贯池 → hybrid → frame/buddy + block 堆。per-hart trap 栈（32 KiB 段 + 4 KiB 守护页）、内核帧、任务栈/帧/堆的物理页全部从此分配。'},
+    {n:'内核栈保留区',a:'DRAM 顶部 − 1 MiB',s:MIB,c:'use',d:'KERNEL_STACK_SIZE = 1 MiB，位于 0x8800_0000 − 1 MiB 处，向下增长；从 free 区剔除，防止 bump/buddy 覆盖。'}
+  ];
+  var VC={use:{l:'已实现/在用',c:''},res:{l:'预留（未接线）',c:''},warn:{l:'待实现',c:''},gap:{l:'保留空隙',c:''}};
+  function hCompact(item){
+    if(item.c==='gap') return 10;
+    if(item.s>=256*MIB) return 180;
+    if(item.s>=16*MIB) return Math.max(14,item.s/(GIB)*180);
+    if(item.s>=1*MIB) return 7;
+    return 5;
+  }
+  function hLog(item){
+    if(item.s<=0) return 4;
+    return Math.max(4,Math.log10(item.s)*6.6);
+  }
+  function renderBar(barId,data,mode,compact){
+    var bar=document.getElementById(barId);
+    bar.innerHTML='';
+    var heights=data.map(function(it){return compact?hCompact(it):hLog(it);});
+    var raw=0,fix=0;
+    for(var i=0;i<data.length;i++){raw+=heights[i];}
+    var scale=430/(raw||1);
+    var total=0;
+    for(var i=0;i<data.length;i++){
+      var it=data[i],h=Math.round(heights[i]*scale);
+      var seg=document.createElement('div');
+      seg.className='seg '+it.c;
+      seg.style.height=h+'px';
+      if(h<22) seg.className+=' sm';
+      var lbl=document.createElement('span');lbl.className='lbl';lbl.textContent=it.n;seg.appendChild(lbl);
+      var adr=document.createElement('span');adr.className='addr';adr.textContent=it.a;seg.appendChild(adr);
+      seg.addEventListener('mouseenter',function(item,el){
+        return function(){
+          var all=bar.children;
+          for(var j=0;j<all.length;j++)all[j].classList.remove('sel');
+          el.classList.add('sel');
+          info(item);
+        };
+      }(it,seg));
+      bar.appendChild(seg);
+      total+=h;
+    }
+  }
+  function info(it){
+    var box=document.getElementById('sq-mm-info');
+    box.innerHTML='';
+    var k=document.createElement('span');k.className='k';k.textContent='当前';box.appendChild(k);
+    var v=document.createElement('span');v.className='v';v.textContent=it.n;box.appendChild(v);
+    var meta=document.createElement('span');meta.style.marginLeft='auto';meta.className='v';meta.textContent=fmt(it.s);box.appendChild(meta);
+    var d=document.createElement('div');d.className='d';
+    d.textContent=it.d+'（'+it.a+(it.s>0?' · '+fmt(it.s):'')+' · '+vc[it.c].l+'）';
+    box.appendChild(d);
+  }
+  function fmt(s){
+    if(s>=GIB) return (s/GIB).toFixed(2)+' GiB';
+    if(s>=MIB) return (s/MIB).toFixed(1)+' MiB';
+    if(s>=KIB) return Math.round(s/KIB)+' KiB';
+    return s+' B';
+  }
+  var c=document.getElementById('sq-mm-c');
+  function rerender(){
+    renderBar('sq-mm-vb',VADATA,c.checked?1:0,c.checked);
+    renderBar('sq-mm-pb',PHDATA,1,true);
+  }
+  c.addEventListener('change',rerender);
+  rerender();
+})();
+</script>
+</div>

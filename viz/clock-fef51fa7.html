@@ -1,0 +1,156 @@
+<div id="clk-model-root">
+<style>
+#clk-model-root{font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--foreground);line-height:1.5}
+#clk-model-root .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+#clk-model-root .tab{border:1px solid var(--border);background:var(--card);color:var(--muted-foreground);padding:6px 13px;border-radius:999px;cursor:pointer;font-size:12.5px;transition:all .18s ease-out}
+#clk-model-root .tab.on{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
+#clk-model-root .panel{display:none;margin-top:10px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:var(--card)}
+#clk-model-root .panel.on{display:block}
+#clk-model-root h3{margin:0 0 6px;font-size:13.5px;font-weight:700}
+#clk-model-root .sub{font-size:12px;color:var(--muted-foreground);margin:0 0 12px}
+#clk-model-root .layer{margin-bottom:12px}
+#clk-model-root .layer b{display:block;font-size:12.5px;margin-bottom:5px}
+#clk-model-root .layer p{margin:4px 0 0;font-size:12px;color:var(--muted-foreground)}
+#clk-model-root code{background:var(--background);border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-size:11.5px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;white-space:nowrap}
+#clk-model-root .chips{display:flex;flex-wrap:wrap;gap:6px}
+#clk-model-root .chip{border:1px solid var(--border);background:var(--background);color:var(--foreground);border-radius:8px;padding:3px 8px;font-size:11.5px;font-family:ui-monospace,Menlo,Consolas,monospace}
+#clk-model-root ul{margin:4px 0 0;padding-left:18px}
+#clk-model-root li{font-size:12px;margin:3px 0}
+#clk-model-root table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+#clk-model-root th,#clk-model-root td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+#clk-model-root th{color:var(--muted-foreground);font-weight:600;font-size:11.5px}
+#clk-model-root .steps{display:grid;gap:12px}
+#clk-model-root .step{border-left:3px solid var(--primary);padding-left:12px;background:var(--background);border-radius:0 8px 8px 0;padding-top:8px;padding-bottom:8px}
+#clk-model-root .step b{font-size:12.5px;display:block;margin-bottom:4px}
+#clk-model-root .step p,.step code{font-size:11.5px}
+#clk-model-root .step p{margin:2px 0 0;color:var(--muted-foreground)}
+#clk-model-root .fmt{font-variant-numeric:tabular-nums}
+#clk-model-root .simtop{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+#clk-model-root .stat b{font-size:22px;display:block;font-variant-numeric:tabular-nums}
+#clk-model-root .stat span{font-size:11px;color:var(--muted-foreground)}
+#clk-model-root .ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+#clk-model-root .ctl button{border:1px solid var(--border);background:var(--background);color:var(--foreground);border-radius:8px;padding:5px 11px;font-size:12px;cursor:pointer}
+#clk-model-root .ctl button.on{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}
+#clk-model-root .ctl input{width:74px;border:1px solid var(--border);background:var(--background);color:var(--foreground);border-radius:8px;padding:5px 8px;font-size:12px;font-variant-numeric:tabular-nums}
+#clk-model-root .simrow{padding:7px 9px;border:1px solid var(--border);border-radius:9px;margin-bottom:7px;background:var(--background)}
+#clk-model-root .simrow .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px}
+#clk-model-root .simid{font-weight:700;color:var(--primary);font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+#clk-model-root .simchip{border-radius:999px;padding:2px 9px;font-size:10.5px;font-weight:600;margin-left:auto}
+#clk-model-root .simchip.sleep{background:color-mix(in srgb,var(--viz-series-3) 18%,transparent);color:var(--viz-series-3)}
+#clk-model-root .simchip.due{background:color-mix(in srgb,var(--viz-series-4) 22%,transparent);color:var(--viz-series-4)}
+#clk-model-root .simchip.ok{background:color-mix(in srgb,var(--viz-series-2) 18%,transparent);color:var(--viz-series-2)}
+#clk-model-root .simchip.bad{background:color-mix(in srgb,var(--viz-series-5) 22%,transparent);color:var(--viz-series-5)}
+#clk-model-root .simb{height:6px;border-radius:99px;background:var(--border);margin-top:7px;overflow:hidden}
+#clk-model-root .simfill{height:100%;width:0;transition:width .3s ease-out}
+#clk-model-root .simfill.sleep{background:var(--viz-series-3)}
+#clk-model-root .simfill.due{background:var(--viz-series-4)}
+#clk-model-root .simfill.ok{background:var(--viz-series-2)}
+#clk-model-root .simfill.bad{background:var(--viz-series-5)}
+#clk-model-root .legacy-tip{border:1px solid color-mix(in srgb,var(--viz-series-5) 45%,transparent);background:color-mix(in srgb,var(--viz-series-5) 10%,transparent);border-radius:10px;padding:8px 11px;font-size:11.5px;margin-top:10px}
+#clk-model-root .lockgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:6px}
+#clk-model-root .lockb{border:1px solid var(--border);border-radius:10px;padding:9px 11px;font-size:11.5px;background:var(--background)}
+#clk-model-root .lockb b{font-size:12px}
+</style>
+<div class="tabs">
+<button class="tab on" data-p="p1">① 功能分层</button>
+<button class="tab" data-p="p2">② 生命周期时序</button>
+<button class="tab" data-p="p3">③ 唤醒机制 · 仿真</button>
+<button class="tab" data-p="p4">④ 调用方与锁模型</button>
+</div>
+<section id="p1" class="panel on">
+<h3>clock 模块 = 时间源 + 刻度抽象 + 计时器注册表 + WFI 目标</h3>
+<p class="sub">外部统一用 <code>core::time::Duration</code>；内部热路径用 raw u64 ticks；换算在模块内(u128、无浮点)。</p>
+<div class="layer"><b>1 · 频率源 / 初始化</b><div class="chips"><span class="chip">init(timebase) → Result&lt;(),ClockError&gt;</span><span class="chip">ClockError::{NoTimebase, AlreadyInit}</span></div><p>DTB <code>/cpus</code> 的 timebase-frequency 由 main::probe 纯值注入，记录启动时刻 BOOT → 消除硬编码 10 MHz 假设。</p></div>
+<div class="layer"><b>2 · 单调时钟抽象</b><div class="chips"><span class="chip">now() → Instant</span><span class="chip">Instant::add / sub (Duration)</span><span class="chip">elapsed() / elapsed_since()</span><span class="chip">uptime() → Duration</span><span class="chip">ticks_to_duration / duration_to_ticks</span></div><p><code>Instant</code> 是内部 u64 计数器刻度的薄包装；时间区间一律 <code>Duration</code>，回绕安全。</p></div>
+<div class="layer"><b>3 · tick 计数字（定时器中断次数）</b><div class="chips"><span class="chip">tick()</span><span class="chip">ticks()</span></div><p>trap 的 S-timer 分支每中断 <code>tick()</code> +1；<code>ticks()</code> 供 ENV_GET_TICKS 兼容（诊断用，非时间单位）。</p></div>
+<div class="layer"><b>4 · deadline 注册表（核心，全局最小堆）</b><div class="chips"><span class="chip">reserve() → handle</span><span class="chip">arm_at(handle, dl)</span><span class="chip">cancel(handle)</span><span class="chip">poll_due(now) → Vec&lt;handle&gt;</span><span class="chip">next_deadline()</span></div><p>堆条目 = <code>(deadline_ticks, handle)</code> 纯数据，不持任务引用；<code>NEXT_DEADLINE</code> 原子镜像供锁外读。修复“队首检查漏唤醒”缺陷①。</p></div>
+<div class="layer"><b>5 · WFI / 武装目标</b><div class="chips"><span class="chip">timer_interval_ticks()</span><span class="chip">wfi_arm_delta()</span></div><p>100 ms 抢占量子由 timebase 派生；tickless：WFI 睡到最近 deadline、无则推远 —— 替代 TIMER_NEVER hack（缺陷③）。</p></div>
+</section>
+<section id="p2" class="panel">
+<h3>功能如何被串起来：三条关键时序</h3>
+<div class="steps">
+<div class="step"><b>启动 / 每次定时器中断</b><p>DTB probe → <code>clock::init(timebase)</code> → <code>trap::init</code>(arm <code>timer_interval_ticks</code>) → 每 S-timer 中断: <code>clock::tick()</code> → <code>scheduler::unpark()</code>(内含 <code>poll_due</code>) → 重武装下一周期。</p></div>
+<div class="step"><b>任务睡眠生命周期</b><p><code>ENV_SLEEP(Duration)</code> → <code>scheduler::park</code>: <code>deadline_after(d)</code> → <code>reserve()</code> → blocked 映射 insert → <code>arm_at(handle,dl)</code> → Running→Blocked{Park{wake_at}} → 到期: <code>poll_due(now)</code> → 按 handle 摘除 → Blocked→Starved 入就绪 → 恢复运行。</p></div>
+<div class="step"><b>空闲核 tickless 休眠</b><p><code>wait()</code>: 置睡眠位 → 复查队列 → <code>wfi_arm_delta()</code> → arm → WFI → 到期/IPI 唤醒 → <code>unpark()</code>(poll 唤醒到期者) → 清 SSIP → 循环。</p></div>
+</div>
+</section>
+<section id="p3" class="panel">
+<h3>唤醒机制仿真：最小堆 vs 旧队首检查</h3>
+<p class="sub">时间单位简化为 ms（真实实现经 timebase 换算成 ticks）。试加入两个到期先后与插入顺序相反的任务，切到“旧实现”对比。</p>
+<div class="simtop">
+<div class="stat"><b class="fmt" id="sim-now">0</b><span>当前 now (ms)</span></div>
+<div class="stat"><b class="fmt" id="sim-nd">—</b><span>next_deadline（堆顶）</span></div>
+</div>
+<div class="ctl" id="sim-mode"><button data-m="heap" class="on">新：deadline 最小堆</button><button data-m="legacy">旧：VecDeque 队首检查</button></div>
+<div class="ctl">
+<button id="sim-add" class="on">＋ 添加睡眠任务</button>
+<input id="sim-dur" type="number" min="1" step="10" value="200"> ms
+<button id="sim-step">时间前进 +50</button>
+<button id="sim-jump">前进 +300</button>
+<button id="sim-poll">poll_due 到期唤醒</button>
+<button id="sim-reset">重置</button>
+</div>
+<div id="sim-lanes"></div>
+<div class="legacy-tip" id="sim-tip"></div>
+</section>
+<section id="p4" class="panel">
+<h3>调用方（现在用 / 预留）与锁模型</h3>
+<table><thead><tr><th>调用方</th><th>clock API</th><th>场景</th></tr></thead><tbody>
+<tr><td>runtime::trap (S-timer)</td><td>tick · timer_interval_ticks ·(unpark→poll_due)</td><td>抢占量子 + 驱动到期唤醒</td></tr>
+<tr><td>work::scheduler::park</td><td>deadline_after · reserve · arm_at</td><td>ENV_SLEEP 睡眠</td></tr>
+<tr><td>work::scheduler::unpark</td><td>poll_due</td><td>到期唤醒（删 front-only）</td></tr>
+<tr><td>work::scheduler::wait</td><td>wfi_arm_delta ·(unpark)</td><td>空闲核 tickless 休眠</td></tr>
+<tr><td>work::envcall</td><td>ticks · uptime ·(Sleep→Duration)</td><td>GetTicks / ClockGetTime / Sleep</td></tr>
+<tr><td>预留：IPC 超时 · 驱动 · 调度记账</td><td>cancel · next_deadline · Instant::elapsed/…</td><td>后续路线 ⑤④⑨</td></tr>
+</tbody></table>
+<div class="lockgrid">
+<div class="lockb"><b>TIMER_HEAP</b><br>SpinLock · 锁层级第 3 级（与 blocked/reaped 同级）：park 路径 1→3 顺序获取、不嵌套。</div>
+<div class="lockb"><b>NEXT_DEADLINE</b><br>AtomicU64 镜像（AcqRel/锁内刷新）．锁外读供 WFI / 武装。</div>
+<div class="lockb"><b>blocked 映射</b><br>OnceLock&lt;SpinLock&lt;HashMap&lt;handle, Arc&lt;Task&gt;&gt;&gt;&gt;（惰性初始化）。</div>
+<div class="lockb"><b>两段登记</b><br>reserve → 入簿 → arm_at：闭合「堆可见 ⇒ 簿记必在」竞态。</div>
+</div>
+</section>
+<script>
+(function(){
+var root=document.getElementById("clk-model-root");
+var deep=root.querySelectorAll(".tab");for(var i=0;i<deep.length;i++){(function(b){b.addEventListener("click",function(){var p=b.getAttribute("data-p");var ts=root.querySelectorAll(".tab");for(var j=0;j<ts.length;j++){ts[j].classList.toggle("on",ts[j]===b);}var ps=root.querySelectorAll(".panel");for(var k=0;k<ps.length;k++){ps[k].classList.toggle("on",ps[k].id===p);}});})(deep[i]);}
+function fmt(n){if(n>=1000)return n.toLocaleString("en-US");return String(n);}
+var now=0,tasks=[],nid=1,mode="heap";
+var elNow=root.querySelector("#sim-now"),elNd=root.querySelector("#sim-nd"),elLanes=root.querySelector("#sim-lanes"),elTip=root.querySelector("#sim-tip"),elDur=root.querySelector("#sim-dur");
+function refresh(){
+elNow.textContent=fmt(now);
+tasks.forEach(function(t){if(t.status==="sleeping"&&t.deadline<=now)t.status="due";});
+var active=tasks.filter(function(t){return t.status==="sleeping"||t.status==="due";});
+var nd=active.length?active.map(function(t){return t.deadline;}).reduce(function(a,b){return Math.min(a,b);}):null;
+elNd.textContent=nd==null?"—":fmt(nd);
+var order=(mode==="heap")?tasks.slice().sort(function(a,b){return a.deadline-b.deadline;}):tasks.slice();
+elLanes.innerHTML="";
+for(var i=0;i<order.length;i++){elLanes.appendChild(row(order[i]));}
+if(mode==="legacy"){var bad=tasks.filter(function(t){return t.status==="stuck";}).length;elTip.innerHTML=bad>0?("旧实现按插入顺序，<b>只查队首</b>：队首未到期即停止，后面更早到期的 "+bad+" 个任务被漏掉（缺陷①）——它们永远不会被唤醒。"):"旧实现按插入顺序只查队首：重新加一个“早期短眠在晚插入”的组合，再点一次「前进 +300」+「poll_due」看效果。";}else{elTip.innerHTML="新实现按 <b>deadline 最小堆</b> 取到期者，与插入顺序无关——先到期先醒，绝不漏唤醒。";}
+}
+function row(t){
+var el=document.createElement("div");el.className="simrow";
+var chip,cls;if(t.status==="woken"){chip="已唤醒";cls="ok";}else if(t.status==="stuck"){chip="卡死·被队首漏掉";cls="bad";}else if(t.status==="due"){chip="已到期·待唤醒";cls="due";}else{chip="睡眠中";cls="sleep";}
+var rel=t.deadline-now;
+var top=document.createElement("div");top.className="top";
+top.innerHTML="<span class=\"simid\">T"+t.id+"</span><span>睡觉 "+t.dur+" ms → 期限 "+fmt(t.deadline)+"</span><span>now 距期限 "+(rel>=0?"+":"")+fmt(rel)+" ms</span><span class=\"simchip "+cls+"\">"+chip+"</span>";
+var bar=document.createElement("div");bar.className="simb";var fill=document.createElement("div");fill.className="simfill "+cls;var pct=Math.min(100,Math.max(0,(now-t.entered)/t.dur*100));fill.style.width=pct+"%";bar.appendChild(fill);el.appendChild(top);el.appendChild(bar);return el;
+}
+function addDur(d){tasks.push({id:nid++,entered:now,dur:d,deadline:now+d,status:"sleeping"});refresh();}
+function poll(){
+if(mode==="heap"){tasks.forEach(function(t){if((t.status==="due"||t.status==="sleeping")&&t.deadline<=now)t.status="woken";});}
+else{var stop=false;for(var i=0;i<tasks.length;i++){var t=tasks[i];if(t.status==="woken")continue;if(t.deadline>now){stop=true;continue;}if(stop)t.status="stuck";else t.status="woken";}}
+refresh();}
+function setMode(m){mode=m;var bs=root.querySelectorAll("#sim-mode button");for(var i=0;i<bs.length;i++){bs[i].classList.toggle("on",bs[i].getAttribute("data-m")===m);}refresh();}
+function reset(){now=0;tasks=[];nid=1;refresh();}
+root.querySelector("#sim-add").addEventListener("click",function(){var d=parseInt(elDur.value||"100",10);if(isNaN(d)||d<1)d=100;addDur(d);elDur.value="";});
+root.querySelector("#sim-step").addEventListener("click",function(){now+=50;refresh();});
+root.querySelector("#sim-jump").addEventListener("click",function(){now+=300;refresh();});
+root.querySelector("#sim-poll").addEventListener("click",poll);
+root.querySelector("#sim-reset").addEventListener("click",reset);
+var mb=root.querySelectorAll("#sim-mode button");for(var m=0;m<mb.length;m++){(function(b){b.addEventListener("click",function(){setMode(b.getAttribute("data-m"));});})(mb[m]);}
+// 预置演示：先插入长眠 T1(1600)，再插入短眠 T2(200)——到期先后与插入顺序相反
+addDur(1600);addDur(200);
+})();
+</script>
+</div>

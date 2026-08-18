@@ -14,7 +14,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::memory::manager::space::{TASK_STACK_SIZE, kernel_trap_context};
+use crate::memory::manager::space::{TASK_STACK_SIZE, kernel_frame_pa};
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::trap_stack_top;
@@ -43,8 +43,8 @@ pub enum TaskState {
 /// Blocked 的载荷：阻塞原因。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockReason {
-    /// 睡眠：wake_at 到期由 unpark 唤醒。
-    Park { wake_at: usize },
+    /// 睡眠：wake_at（timebase 刻度）到期由 unpark 唤醒。
+    Park { wake_at: u64 },
 }
 
 /// trap 帧句柄 — 线程 trap 帧的薄引用。
@@ -114,16 +114,6 @@ impl Task {
             _ => unreachable!("dec_ticks_left 只对 Running 任务调用"),
         }
     }
-
-    /// 阻塞唤醒时间（Blocked(Park) 才有值；unpark 从 blocked 队首读它）。
-    pub(crate) fn unpark(&self) -> Option<usize> {
-        match self.state {
-            TaskState::Blocked {
-                reason: BlockReason::Park { wake_at },
-            } => Some(wake_at),
-            _ => None,
-        }
-    }
 }
 
 /// 任务构建器：在团队容器内生成线程（栈 + trap 帧 + 填帧 + 入队）。
@@ -170,7 +160,7 @@ impl TaskBuilder {
         let me = machine::hart_id();
 
         // 1. 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id）→ 分配帧 attach
-        let stack_va = self.team.space.stack_alloc(id)?;
+        let stack_va = self.team.space.stack_allocate(id)?;
         let mut stack_frames = Vec::new();
         for _ in 0..(TASK_STACK_SIZE / PAGE_SIZE) {
             let frame = Box::try_new_in([0u8; PAGE_SIZE], allocator())
@@ -181,13 +171,13 @@ impl TaskBuilder {
         let stack_top = stack_va + TASK_STACK_SIZE;
 
         // 2. trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）
-        let (frame_va, frame_pa) = self.team.space.frame_alloc(id)?;
+        let (frame_va, frame_pa) = self.team.space.frame_allocate(id)?;
 
         // 3. 填帧：内核切换元数据从内核帧拷贝；用户上下文 = 入口/栈顶/a0/状态。
         //    kernel_sp = **本 hart** trap 栈顶（任务随后在本 hart 首次运行；若被
         //    steal 走，偷取核会在上台前重写——见 scheduler::prepare）。
         unsafe {
-            let ktc = kernel_trap_context().as_usize() as *const TrapContext;
+            let ktc = kernel_frame_pa(0).as_usize() as *const TrapContext;
             let frame = &mut *(frame_pa.as_usize() as *mut TrapContext);
             frame.kernel_satp = (*ktc).kernel_satp;
             frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(me));

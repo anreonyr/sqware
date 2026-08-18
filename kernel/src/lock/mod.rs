@@ -27,10 +27,14 @@
 //   3. Team.tasks          (SpinLock)  — 团队成员簿记（弱引用列表；纯 Vec 操作，
 //                                          **与 Space.inner 禁止嵌套持有**——
 //                                          push_task/prune_tasks 锁内绝不调 space 方法）
-//   3. blocked / reaped    (SpinLock)  — 全局容器（task::scheduler）：Blocked 睡眠
-//                                          队列 / Reaped 回收队列：block 路径 1 → 3
-//                                          嵌套合法；unpark 路径**先放队列锁
-//                                          再取调度锁**——绝不持队列锁取调度锁（防 ABBA）
+//   3. TIMER_DEADLINES     (SpinLock)  — timer 模块的 deadline 堆（runtime::timer）：
+//                                         与 blocked/reaped 同级；park 路径 1 → 3
+//                                         嵌套合法（blocked 与 timer 顺序获取、不嵌套）
+//   3. blocked / reaped    (SpinLock)  — 全局容器（task::scheduler）：Blocked 为
+//                                          handle→Task 睡眠映射 / Reaped 回收队列：
+//                                         park 路径 1 → 3 嵌套合法；unpark 路径**先放
+//                                         堆锁/队列锁再取调度锁**——绝不持队列锁取
+//                                         调度锁（防 ABBA）
 //   4. ASID_ALLOCATOR      (SpinLock)  — ASID 分配器
 //   5. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（frame）
 //   6. portal / block      (SpinLock / TrapGuard) — 全局堆分配
@@ -42,7 +46,8 @@
 // 关键嵌套边：Space.inner → FRAME_ALLOCATOR（map/page_fault 持空间锁分配帧）；
 // SCHEDULERS[hart] → Team.tasks（spawn 入簿 / exit 清理，1 → 3）；
 // SCHEDULERS[hart] → Space.inner（reap 锁内回收，1 → 2 → 5）；
-// Team.tasks 与 Space.inner 只顺序获取、永不嵌套（见 scheduler.rs 不变量）。
+// SCHEDULERS[hart] → TIMER_DEADLINES / blocked（park：reserve/入簿/arm_at 顺序
+// 获取、不嵌套，1 → 3）；Team.tasks 与 Space.inner 只顺序获取、永不嵌套。
 // 用户空间构建（SpaceBuilder::user().build()）中 ASID → KERNEL_SPACE 为顺序获取（drop 前一把再拿后一把），不嵌套。
 // per-hart trap 栈的分配发生在 boot（无锁需求）。
 // （hub::devices / INTERRUPT_HANDLERS 为规划中模块，接入后插入对应层级。）

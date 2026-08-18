@@ -2,8 +2,8 @@
 //
 // 状态机（task.rs）：TaskState 回答"任务在哪 + 该状态的数据"——Running{ticks_left}
 // （运行预算）/ Blocked{reason}（阻塞原因）/ Starved（就绪，预算耗尽等补给）/
-// Reaped（僵尸，等延迟回收）。阻塞原因与预算作为状态载荷放在任务上，外部队列
-// （blocked / reaped）退化为纯 Arc<Task> 索引。
+// Reaped（僵尸，等延迟回收）。阻塞原因与预算作为状态载荷放在任务上；blocked
+// 为 clock 句柄 → Task 映射（见下），reaped 退化为纯 Arc<Task> 索引。
 //
 // 时间片记账：新选中任务获得满额 TIME_SLICE 预算；run 时 Running 预算 > 1 →
 // 递减续跑（不重排），== 1 → 转 Starved 轮转。主动让出（envcall YIELD）走
@@ -22,10 +22,11 @@
 // 锁内 take/pop 出任务 → Arc::get_mut；锁 + 所有权保证互斥，编译器强制。
 //
 // 锁纪律（lock/mod.rs）：inner = level 1 每核一把；Team.tasks = 3 与 Space.inner
-// = 2 禁止嵌套——锁内只做纯 Vec 操作，绝不调 space 方法。blocked / reaped 与
-// Team.tasks 同级（3）：park 路径 1 → 3 嵌套合法；unpark 路径先放队列锁再取
-// 调度锁（防 ABBA）。clear 只持 reaped 锁出队，放锁后再取 Team.tasks / Space.inner
-// （顺序获取，不嵌套）。
+// = 2 禁止嵌套——锁内只做纯 Vec 操作，绝不调 space 方法。blocked（sleepers 的
+// handle→Task 映射）/ reaped / timer 的 TIMER_HEAP（tock 堆）同级（3）：park 路径 1 → 3
+// 嵌套合法（顺序获取 blocked 与 clock 锁，绝不 3 → 3 嵌套）；unpark 路径先放
+// 堆锁/队列锁再取调度锁（防 ABBA）。clear 只持 reaped 锁出队，放锁后再取
+// Team.tasks / Space.inner（顺序获取，不嵌套）。
 //
 // 装槽（replace）：唯一装 running 的方法，自取锁，装前 running 必空（断言）。
 // 调用方统一为「持锁 pop/rotate 出唯一 Arc<Task> → 放锁 → replace」——放锁
@@ -40,28 +41,32 @@
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 
-use riscv::register::{sip, time};
+use riscv::register::sip;
+
+use hashbrown::HashMap;
 
 use crate::lock::{OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::space::Space;
 use crate::putln;
+use crate::runtime::{clock, timer};
 use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{restore, trap_stack_top};
-use crate::runtime::trap::{TIMER_INTERVAL, arm_timer};
+use crate::runtime::trap::arm_timer;
 
 use super::task::{BlockReason, Task, TaskState};
 use super::tie;
 
 // ── 核心：常量 ──
 
-/// 定时器推远值：WFI 休眠期间作 stimecmp 目标，防 STIP 每量子唤醒。
-const TIMER_NEVER: usize = 1 << 60;
-
+/// WFI 休眠的推远增量：无待唤醒 tock 时 arm 到「永远」（替代原 TIMER_NEVER hack）。
+const WFI_FAR: u64 = 1 << 60;
+/// sleep(tock) 的句柄分配器——调度器自管；park「先入簿、后 tock」闭合竞态。
+static NEXT_PARK_HANDLE: AtomicUsize = AtomicUsize::new(0);
 /// running_task_id 无任务时的哨兵返回值（诊断用）。
 const NO_TASK_ID: usize = usize::MAX;
 
@@ -155,7 +160,7 @@ impl Scheduler {
             let frame = &mut *(t.trap.pa.as_usize() as *mut TrapContext);
             frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(self.hart));
         }
-        arm_timer(TIMER_INTERVAL);
+        arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
     }
 
     /// 装槽：把 Starved 任务装为本 hart 的 running（自取锁）。装前 running 必空。
@@ -203,15 +208,17 @@ impl Scheduler {
         self.replace(next)
     }
 
-    /// 当前任务 park：Running → Blocked(Park{wake_at}) 入 blocked 容器。
-    /// 返回下一帧 PA；本核 starved 空 → None（调用方转 run() 取活）。
-    fn park(&self, wake_at: usize) -> Option<usize> {
+    /// 当前任务 park：Running → Blocked(Park{wake_at})。入 timer 的 tock 堆
+    /// （句柄 → blocked 映射），不再依赖入队顺序。返回下一帧 PA；本核 starved
+    /// 空 → None（调用方转 run() 取活）。
+    fn park(&self, duration: Duration) -> Option<usize> {
         let mut i = self.inner.lock();
         let mut task = i.running.take().expect("no running task");
         debug_assert!(
             matches!(task.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
         );
+        let wake_at = clock::now().add(duration).as_ticks();
         putln!(
             "task #{} '{}': parked (wake @ {wake_at:#x})",
             task.id,
@@ -220,8 +227,12 @@ impl Scheduler {
         task_mut(&mut task).transform(TaskState::Blocked {
             reason: BlockReason::Park { wake_at },
         });
-        // 调度锁 → blocked 容器锁（1 → 3 嵌套合法；unpark 路径绝不反向嵌套）
-        TASK_TABLES.blocked.lock().push_back(task);
+        // 注册 tock（防跨锁竞态，锁序 1 → 3 顺序获取、不嵌套）：
+        //   NEXT_PARK_HANDLE（原子）→ blocked 入簿（blocked 锁）→ tock（timer 锁）。
+        // 不变量：堆可见 ⇒ 簿记必在——unpark 按句柄摘除绝不会命中空簿记。
+        let handle = NEXT_PARK_HANDLE.fetch_add(1, Ordering::Relaxed) as u64;
+        blocked().lock().insert(handle, task);
+        timer::tock(handle, wake_at);
         if i.starved.is_empty() {
             return None;
         }
@@ -284,18 +295,26 @@ fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
 }
 
-/// 全局容器：Blocked（睡眠队列）/ Reaped（回收队列）任务集合。
+/// 全局容器：Blocked（睡眠映射 handle→Task）/ Reaped（回收队列）任务集合。
 ///
-/// 条目即任务本身——阻塞原因（含 wake_at）在任务的 Blocked(Park) 载荷里，
-/// 队列退化为纯 Arc<Task> 索引。锁纪律与 Team.tasks 同级（3）：park 路径
-/// 1 → 3 嵌套合法；unpark 路径先放队列锁再取调度锁（防 ABBA）。
+/// blocked 以 clock 的 deadline 句柄为键：条目即任务本身，阻塞原因（含 wake_at）
+/// 在任务的 Blocked(Park) 载荷里，映射退化为「句柄 → 唯一 Arc<Task>」。唤醒
+/// 由 timer::drain 产出到期句柄，unpark 按句柄摘除并唤醒——不再依赖入队
+/// 顺序（修「后入睡更早醒沉队尾」缺陷）。锁纪律与 Team.tasks 同级（3）：park
+/// 路径 1 → 3 嵌套合法（blocked 与 clock 锁顺序获取、不嵌套）；unpark 路径
+/// 先放堆锁/队列锁再取调度锁（防 ABBA）。
+/// Blocked（睡眠映射 handle→Task）— 惰性初始化：hashbrown 的 HashMap::new
+/// 非 const，无法进 static（单独 static 保证 get_or_init 的 'static 借用）。
+fn blocked() -> &'static SpinLock<HashMap<u64, Arc<Task>>> {
+    static BLOCKED: OnceLock<SpinLock<HashMap<u64, Arc<Task>>>> = OnceLock::new();
+    BLOCKED.get_or_init(|| SpinLock::new(HashMap::new()))
+}
+
 struct TaskTables {
-    blocked: SpinLock<VecDeque<Arc<Task>>>,
     reaped: SpinLock<VecDeque<Arc<Task>>>,
 }
 
 static TASK_TABLES: TaskTables = TaskTables {
-    blocked: SpinLock::new(VecDeque::new()),
     reaped: SpinLock::new(VecDeque::new()),
 };
 
@@ -331,8 +350,9 @@ fn steal() -> Option<Arc<Task>> {
 ///
 /// 协议（闭合「置位后漏唤醒」窗口）：置睡眠位 → **复查**（自核队首 / steal——
 /// 置位前的 push 已按位补 IPI，置位后的 push 会看到位）→ 全退出检查 →
-/// 停掉周期定时器（stimecmp 是本 hart 自己的 CSR，推远防 STIP 每量子唤醒）→
-/// WFI。唤醒后清 SSIP 与睡眠位，返回 None 让外层循环重扫（也可能直接带出任务）。
+/// 睡到最近 tock（tickless：由 timer::next_tock 推算，无则推远）→ WFI。唤醒后：
+/// 若为定时器到期立即 drain 唤醒到期任务（含全核休眠场景）；清 SSIP 与睡眠位，
+/// 返回 None 让外层循环重扫（也可能直接带出任务）。
 fn wait() -> Option<Arc<Task>> {
     let me = machine::hart_id();
     tie::sleep(me);
@@ -345,15 +365,20 @@ fn wait() -> Option<Arc<Task>> {
     if tie::done() {
         tie::halt();
     }
-    // 停掉周期定时器唤醒（stimecmp 推远）——**除非 blocked 非空**：此时必须保持
-    // 定时器，让任意核（含空闲核）都能跑 unpark 唤醒到期任务（防全员阻塞死等）。
-    if TASK_TABLES.blocked.lock().is_empty() {
-        arm_timer(TIMER_NEVER);
-    }
-    // WFI：SSIP（IPI）/ 残留 STIP 挂起即唤醒——只唤醒不取中断（SIE=0）
+    // 睡到最近 tock（无待唤醒则推远 stimecmp）——取代旧「blocked 非空才保持
+    // 周期定时器」的 hack：全核休眠时也能被最近唤醒点准时唤醒
+    let delta = match timer::next_tock() {
+        Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
+        None => WFI_FAR,
+    };
+    arm_timer(delta);
+    // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）
     unsafe {
         core::arch::asm!("wfi");
     }
+    // 定时器到期唤醒：立即 drain（timer::drain）把到期任务送上本核 starved——
+    // 空闲核也要能跑 unpark（原代码依赖其他核的周期中断，全核休眠会死等）
+    unpark();
     // 唤醒后清 SSIP（防残留位导致下次 WFI 立即重醒）与睡眠位
     // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
     unsafe { sip::clear_ssoft() };
@@ -470,26 +495,20 @@ pub fn run() -> usize {
     }
 }
 
-/// 唤醒：扫描 blocked 队列，到期任务 Blocked → Starved 出队并入本核 starved。
-/// 调用方 = trap 定时器分支；队列锁先放后取，绝不持队列锁取调度锁。
+/// 唤醒：从 clock 到期句柄按 blocked 映射摘除任务，Blocked → Starved 入本核
+/// starved。调用方 = trap 定时器分支与 wait()（空闲核 WFI 唤醒后）。
+///
+/// 缺陷修复：旧实现在 VecDeque 上只检查队首——后 park 的更早到期任务沉队尾
+/// 永不唤醒；现按 tock 堆 (timer::drain) 取到期者，与入队顺序无关。
+/// 队列锁/堆锁先放后取，绝不持队列锁取调度锁（防 ABBA）。
 pub fn unpark() {
-    let now = time::read();
-    let due: Vec<Arc<Task>> = {
-        let mut list = TASK_TABLES.blocked.lock();
-        let mut due = Vec::new();
-        loop {
-            let due_front = match list.front() {
-                Some(task) => task.unpark().is_some_and(|w| w <= now),
-                None => false,
-            };
-            if !due_front {
-                break;
-            }
-            due.push(list.pop_front().expect("front checked"));
-        }
-        due
-    };
-    for mut task in due {
+    let due = timer::drain(clock::now());
+    for handle in due {
+        // blocked 映射锁：摘除（锁作用域到此语句结束即释放）
+        let Some(mut task) = blocked().lock().remove(&handle) else {
+            // 已取消/已由他路唤醒：跳过（timer 侧堆项已在 drain 丢弃）
+            continue;
+        };
         task_mut(&mut task).transform(TaskState::Starved);
         putln!("task #{} '{}': woken", task.id, task.name);
         let me = machine::hart_id();
@@ -526,11 +545,10 @@ pub fn starve() -> usize {
     schedulers()[me].starve()
 }
 
-/// 当前线程睡眠入口（envcall ENV_SLEEP 分支调用）：算 wake_at → 方法 park；
-/// 本核 starved 空 → run() 取活。
-pub fn park(ticks: usize) -> usize {
-    let wake_at = time::read() + ticks * TIMER_INTERVAL;
-    match schedulers()[machine::hart_id()].park(wake_at) {
+/// 当前线程睡眠入口（envcall ENV_SLEEP/ENV_MSLEEP 分支调用）：交由 clock 换算
+/// deadline → 方法 park；本核 starved 空 → run() 取活。
+pub fn park(duration: Duration) -> usize {
+    match schedulers()[machine::hart_id()].park(duration) {
         Some(pa) => pa,
         None => run(),
     }

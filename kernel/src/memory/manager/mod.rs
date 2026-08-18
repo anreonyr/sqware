@@ -148,7 +148,7 @@ pub fn init() -> MapResult<()> {
             )?;
 
             // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（hart h 帧 =
-            //    BASE + h·PAGE；hart 0 = TRAP_CONTEXT。元数据由 trap::init 逐帧写入），
+            //    BASE + h·PAGE；顶页即旧 TRAP_CONTEXT 定位。元数据由 trap::init 逐帧写入），
             //    PA 存 KERNEL_FRAMES[h]——__strap 按 TP 索引帧页。
             for (h, slot) in KERNEL_FRAMES
                 .iter()
