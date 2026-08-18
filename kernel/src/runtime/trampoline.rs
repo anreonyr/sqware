@@ -363,15 +363,19 @@ pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
     None
 }
 
-/// per-hart trap 栈段常量：每段 32 KiB = 低 4 KiB guard（未映射）+ 28 KiB 栈体；
-/// 连续块按实际核数分配（N x 32 KiB，frame 向上取整到 2 的幂），guard 页兼作
-/// 段边界。
-pub const TRAP_STACK_SEGMENT: usize = 32 * 1024;
+/// per-hart trap 栈段常量：每段 64 KiB = 低 4 KiB guard（未映射）+ 60 KiB 栈体；
+/// 连续块按实际核数分配（N x 64 KiB），guard 页兼作段边界。
+///
+/// 栈体须容纳 trap 处理内最深的调用链：`heap_allocate` 的页表 map 递归 + 控制台
+/// 输出在内核陷栈上叠加，曾以 28 KiB 偶发溢出（heaper 高频堆分配触发）；60 KiB
+/// 提供充足余量。hartid 由 C 侧 `establish_tp` 按 TRAP_STACKS 表扫描反解（与段滑
+/// 负荷 2 的幂无关），仅保守断言段留 2 的幂以保持段内切分可预测。
+pub const TRAP_STACK_SEGMENT: usize = 64 * 1024;
 pub const TRAP_STACK_GUARD: usize = PAGE_SIZE;
 
 /// 初始化 per-hart trap 栈（boot 时由 trap::init 调用**恰好一次**，hart 0）。
 ///
-/// 1. 按实际核数（DTB）frame **连续**分配 N x 32 KiB（frame 按 order 支持连续块，
+/// 1. 按实际核数（DTB）frame **连续**分配 N x 64 KiB（frame 按 order 支持连续块，
 ///    向上取整到 2 的幂）；
 /// 2. 动态分配 TRAP_STACKS 元数据表（N 项）并置入 OnceLock；
 /// 3. 内核空间**清 guard 页 PTE**（栈体随 DRAM 恒等映射保持可访问——unmap 对
@@ -389,12 +393,12 @@ pub fn init_trap_stacks() {
         .allocate(layout)
         .expect("trap stack block allocation");
     let base = block.cast::<u8>().as_ptr() as usize;
-    // establish_tp 反解 hartid 依赖段大小 = 2^15（kernel_sp - base 恒为 32 KiB
-    // 整数倍——段连续切分；C 侧按 TRAP_STACKS 表范围匹配，无需 base 静态）
+    // establish_tp 按 TRAP_STACKS 表范围扫描反解 hartid（与段大小 2 的幂解耦）；
+    // 保留幂次断言仅为段内切分可预测（段连续切分；C 侧按表范围匹配，无需 base 静态）
     assert_eq!(
         TRAP_STACK_SEGMENT,
-        1 << 15,
-        "trap stack segment must be 32 KiB"
+        1 << 16,
+        "trap stack segment must be 64 KiB"
     );
 
     // 元数据表（N 项，先置 OnceLock 再逐项填充）
