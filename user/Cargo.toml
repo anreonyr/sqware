@@ -48,3 +48,10 @@ path = "src/bin/threader.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "user-heaper"
+path = "src/bin/heaper.rs"
+test = false
+bench = false
+doctest = false
