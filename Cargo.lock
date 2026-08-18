@@ -28,9 +28,9 @@ checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 
 [[package]]
 name = "fack"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fa1171fba1ee1a0653aa7bc3ab9fdd4bd7b03e5b0e44e5bb3a5e6d1eb53d027"
+checksum = "79bf0abbd0418af0e15118cce2ebafbc49d877867f4eeb2fa3120bbf3ca94765"
 dependencies = [
  "fack-core",
  "fack-macro",
@@ -38,9 +38,9 @@ dependencies = [
 
 [[package]]
 name = "fack-codegen"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0116a9d10fc7c4c264974b08dc5fc785db06623ba93fa8aff1af0e8f6fbe2bce"
+checksum = "43eb35ab3b590c556df60c7df949560c7df1fbf45bb78ba03246e8218a836410"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -49,15 +49,15 @@ dependencies = [
 
 [[package]]
 name = "fack-core"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16caf1e99787156beeb5fa3ad66fdaa30902eb47fbd3e7017cedf43237831482"
+checksum = "3cb29ce2b3ca6df89e4f6b7e0ab461223ee77ee997e21f13469b7474e378e83a"
 
 [[package]]
 name = "fack-macro"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53771f0e14299c2146c3b18af61cd28fb54e0a299ac3d6ca1e3347f581c53010"
+checksum = "e3bb69083fa40ad0cbddacc560efd420208969c7924745c28da0f94e5a836ac0"
 dependencies = [
  "fack-codegen",
  "syn",

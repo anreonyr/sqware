@@ -6,9 +6,12 @@ edition.workspace = true
 [dependencies]
 bitflags = "2.13.1"
 erra = { version = "0.2.0", default-features = false }
-fack = { version = "0.1.2", default-features = false }
+fack = { version = "0.2.0", default-features = false }
 fdt = { version = "0.1.5", default-features = false }
-hashbrown = { version = "0.17.1", default-features = false, features = ["alloc", "default-hasher"] }
+hashbrown = { version = "0.17.1", default-features = false, features = [
+  "alloc",
+  "default-hasher",
+] }
 log = { version = "0.4.33" }
 riscv = { version = "0.16.1", features = ["s-mode"] }
 riscv-rt = { version = "0.18.0", features = ["s-mode"] }
