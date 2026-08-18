@@ -17,6 +17,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::ecall::scall::SArgs;
 use crate::ecall::{self, fid};
+use crate::memory::allocator::frame;
 use crate::putln;
 
 /// 已入队（创建）任务计数（全退出检测：REAPED == PUSHED → 停机）。
@@ -47,9 +48,16 @@ pub(super) fn done() -> bool {
 }
 
 /// 全部任务已退出：显式停机（srst；AtomicBool 防双核同时触发——后到者 wfi）。
+///
+/// 停机前先经 `frame::check_baseline` 断言任务帧已全部归还（在途帧回落内核
+/// 持久帧 + 堆支撑页基线）——地址空间/栈所有权 Drop 泄漏在此暴露。仅胜出核
+/// 检查一次即可（原子互斥保证单核执行）。
 pub(super) fn halt() -> ! {
     if !HALTING.swap(true, Ordering::AcqRel) {
         putln!("task: all tasks exited, system halted");
+        // 全部任务已回收、帧已归还——断言零泄漏后再发复位（debug 构建生效）。
+        #[cfg(debug_assertions)]
+        frame::check_baseline();
         let _ = ecall::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }
     wfi()

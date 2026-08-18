@@ -59,6 +59,12 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     pt_reclaim_selftest();
 
+    // 记录内核持久帧基线：spawn 用户任务前的在途帧 + 内核堆支撑页。此后在途帧
+    // 只应增用户任务所有 + 堆支撑页；关机时全部归还，由 tie::halt 的
+    // check_baseline 断言零泄漏（见 frame.rs record_baseline/check_baseline）。
+    #[cfg(debug_assertions)]
+    frame::record_baseline();
+
     // 全部演示程序改为经 parser → loader → TaskBuilder 装载的**真 ELF**（user crate，
     // 静态链接于 USER_TEXT_BASE 0x10000），blob 装载 load_blob 随之移除。
     //
