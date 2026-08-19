@@ -1,4 +1,4 @@
-// 块分配器 — segregated free list，单链表侵入式
+// 块分配器 — 全局单一分池，segregated free list，单链表侵入式
 //
 // 将大块内存划分为 2^power 大小的 block，每块前 8 字节用 `Option<NonNull<u8>>`
 // 存下一块的指针（利用 niche optimization: None = 0, Some = 指针值）。
@@ -8,21 +8,37 @@
 // 每页单独追踪引用计数，全部 block 释放后整页归还。
 // block 大小范围：2^3 .. 2^12（8 字节 .. 4096 字节 = PAGE_SIZE）。
 // 最小对齐 8 字节，申请量不足 8 字节时自动向上取整。
-
-#[cfg(debug_assertions)]
-use core::sync::atomic::{AtomicUsize, Ordering};
-use core::{cell::UnsafeCell, ptr::NonNull};
+//
+// # 并发模型：全局单池 + SpinLock（不是 per-hart 池）
+//
+// 内核堆支撑着全部可迁移数据（Arc<Task>、Vec/Box/HashMap 缓冲、reaped 队列），
+// 而调度器会跨 hart 偷取（steal）任务、任意 hart 在 clear() 里回收 Reaped 任务
+// 并 drop 其 Arc ——分配与释放几乎必然发生在不同 hart。早期 per-hart 分池设计
+// （each hart 自己的 freepool，无锁）在偷取引入后失效：跨池释放会
+//  1. 把块挂进**错误的**池的空闲链；源池仍认为该块在用 → 重复分配同一块
+//     （两个活持有者互相覆盖）；
+//  2. `decrease_used` 在错误池的页上递减**垃圾位置**的页头计数，计数误归零后
+//     把仍被堆使用的页整页归还 frame 池 → frame 分配器双重释放、
+//     vtable/堆元数据被覆写 → 内核缺页 / 双重释放 panic。
+// （实测症状：`&dyn Allocator::deallocate` vtable 分发缺页 stval=0x29；
+//  `frame allocator: double free of index ... power 0`。）
+// 故改为与 frame 分配器同构的**全局单池 + SpinLock**：锁即互斥，不再依赖
+// 「分配与释放同 hart」的不变量（该不变量在任务迁移下无法成立）。
+//
+// 锁序：block → frame（refill 取页 / decrease_used 还页会调 frame 分配器），
+// 从不反向——frame 分配器的分配/释放路径不做任何全局堆分配（其元数据 Vec
+// 在 init 期经 bump 预分配且此后只索引不增长）。
+use core::ptr::NonNull;
 
 use core::alloc::{AllocError, Allocator, Layout};
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use erra::ResultExt;
 use log::debug;
 
-use crate::machine;
+use crate::memory::PAGE_SIZE;
 use crate::{
-    lock::{OnceLock, TrapGuard},
-    memory::PAGE_SIZE,
+    lock::SpinLock,
     memory::allocator::{InitError, InitResult, frame::allocator as frame_allocator},
 };
 
@@ -30,25 +46,26 @@ const MIN_POWER: usize = 3;
 const MAX_POWER: usize = PAGE_SIZE.ilog2() as usize;
 
 pub(crate) struct BlockAllocator {
-    inner: UnsafeCell<Option<BlockInner>>,
+    inner: SpinLock<Option<BlockInner>>,
 }
 
-// SAFETY: per-hart（每个核只访问自己的 slot），TrapGuard 防止同核中断重入。
+// SAFETY: 全部可变状态经 SpinLock 访问（同 frame 分配器），同时刻只有一把
+// guard（互斥 + 中断关闭），可安全跨 hart 共享。
 unsafe impl Sync for BlockAllocator {}
 
 impl BlockAllocator {
     const fn new() -> Self {
         Self {
-            inner: UnsafeCell::new(None),
+            inner: SpinLock::new(None),
         }
     }
 
     pub fn init(&self) -> Result<(), InitError> {
-        // SAFETY: 单 hart 下调用，无并发。
-        let cell = unsafe { &mut *self.inner.get() };
+        let mut guard = self.inner.lock();
+        // SAFETY: 单 hart（boot 早期）下调用，无并发。
         let mut inner = BlockInner::new();
         inner.init()?;
-        cell.replace(inner);
+        guard.replace(inner);
         Ok(())
     }
 }
@@ -62,75 +79,73 @@ unsafe impl Allocator for BlockAllocator {
             return Err(AllocError);
         }
 
-        // SAFETY: TrapGuard 关中断防止同核重入；per-hart 保证不被其他核访问。
-        unsafe {
-            let _trap = TrapGuard::save();
-            let inner = (*self.inner.get()).as_mut().ok_or(AllocError)?;
+        // SAFETY: SpinLockGuard 关中断 + 互斥，防止同核中断重入与跨核并发。
+        let mut guard = self.inner.lock();
+        let inner = guard.as_mut().ok_or(AllocError)?;
 
-            // 从 freelist 头部弹出
-            if let Some(head) = inner.freepool[power] {
-                // debug: freepool 头必须是 DRAM 内的合法地址——否则 free list
-                // 已被覆写（越界写/use-after-free 特征），读它必崩。提前报出
-                // size class 与调用点，而非事后在错误地址上 page fault。
-                #[cfg(debug_assertions)]
-                {
-                    use crate::machine;
+        // 从 freelist 头部弹出
+        if let Some(head) = inner.freepool[power] {
+            // debug: freepool 头必须是 DRAM 内的合法地址——否则 free list
+            // 已被覆写（越界写/use-after-free 特征），读它必崩。提前报出
+            // size class 与调用点，而非事后在错误地址上 page fault。
+            #[cfg(debug_assertions)]
+            {
+                use crate::machine;
 
-                    let m = machine::get();
-                    let a = head.as_ptr() as usize;
-                    if !m.free.range().contains(&a) {
-                        panic!(
-                            "block allocator: freelist head corrupted — power {power}, head {head:?} ({a:#x})"
-                        );
-                    }
+                let m = machine::get();
+                let a = head.as_ptr() as usize;
+                if !m.free.range().contains(&a) {
+                    panic!(
+                        "block allocator: freelist head corrupted — power {power}, head {head:?} ({a:#x})"
+                    );
                 }
-                let next = head.cast::<Option<NonNull<u8>>>().read();
-                inner.freepool[power] = next;
-                inner.increase_used(head, power);
-
-                debug!("address {:?}, power {} allocated", head, power);
-
-                return Ok(NonNull::slice_from_raw_parts(head, block_size));
             }
+            let next = unsafe { head.cast::<Option<NonNull<u8>>>().read() };
+            inner.freepool[power] = next;
+            unsafe { inner.increase_used(head, power) };
 
-            inner.refill(power)
+            debug!("address {:?}, power {} allocated", head, power);
+
+            return Ok(NonNull::slice_from_raw_parts(head, block_size));
         }
+
+        unsafe { inner.refill(power) }
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         let power = block_power(layout);
 
-        // SAFETY: TrapGuard 关中断防止同核重入；per-hart 保证不被其他核访问。
-        unsafe {
-            let _trap = TrapGuard::save();
-            let Some(inner) = (*self.inner.get()).as_mut() else {
-                return;
-            };
+        // SAFETY: SpinLockGuard 关中断 + 互斥，防止同核中断重入与跨核并发。
+        let mut guard = self.inner.lock();
+        let Some(inner) = guard.as_mut() else {
+            return;
+        };
 
-            // debug: double-free 检测——同一 block 已在 freepool 中再释放
-            // 会破坏链表（两次分配同一块 → 重叠写坏）。遍历当前 size class。
-            #[cfg(debug_assertions)]
-            {
-                let mut cur = inner.freepool[power];
-                while let Some(node) = cur {
-                    if node == ptr {
-                        panic!("block allocator: double free of {:?} (power {power})", ptr);
-                    }
-                    // SAFETY: freepool 节点恒为已释放块，头 8 字节是 next 指针。
-                    cur = node.cast::<Option<NonNull<u8>>>().read();
+        // debug: double-free 检测——同一 block 已在 freepool 中再释放
+        // 会破坏链表（两次分配同一块 → 重叠写坏）。遍历当前 size class。
+        #[cfg(debug_assertions)]
+        {
+            let mut cur = inner.freepool[power];
+            while let Some(node) = cur {
+                if node == ptr {
+                    panic!("block allocator: double free of {:?} (power {power})", ptr);
                 }
+                // SAFETY: freepool 节点恒为已释放块，头 8 字节是 next 指针。
+                cur = node.cast::<Option<NonNull<u8>>>().read();
             }
+        }
 
-            // 头插：将 freed block 写入 freelist 头部
+        // 头插：将 freed block 写入 freelist 头部
+        unsafe {
             ptr.cast::<Option<NonNull<u8>>>()
                 .write(inner.freepool[power]);
-            inner.freepool[power] = Some(ptr);
-
-            debug!("address {:?}, power {} deallocated", ptr, power);
-
-            // 该 pool 在用数 -1，归零时整页归还
-            inner.decrease_used(ptr, power);
         }
+        inner.freepool[power] = Some(ptr);
+
+        debug!("address {:?}, power {} deallocated", ptr, power);
+
+        // 该 pool 在用数 -1，归零时整页归还
+        unsafe { inner.decrease_used(ptr, power) };
     }
 }
 
@@ -296,13 +311,16 @@ unsafe fn purge_freelist(head: Option<NonNull<u8>>, pool_base: usize) -> Option<
     }
 }
 
-static BLOCK_ALLOCATORS: OnceLock<&'static [BlockAllocator]> = OnceLock::new();
+/// 全局单例：唯一的内核堆（与 frame 分配器同构：SpinLock 保护，跨 hart 共享）。
+static BLOCK_ALLOCATOR: BlockAllocator = BlockAllocator::new();
 
 /// 内核堆当前从 FRAME_ALLOCATOR 持有的页数（debug 统计用；release 下恒 0）。
 ///
 /// `refill` 每取一页 +1，整页归还（`decrease_used` 两条路径）各 -1。关机时仍
 /// 持有的页是堆的常驻支撑内存（任务帧之外），`check_baseline` 需扣除——否则
 /// 把良性的堆页误报为任务帧泄漏。
+#[cfg(debug_assertions)]
+use core::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(debug_assertions)]
 static HEAP_LIVE_PAGES: AtomicUsize = AtomicUsize::new(0);
 
@@ -313,42 +331,20 @@ pub(crate) fn live_pages() -> usize {
 }
 
 pub fn allocator() -> &'static dyn Allocator {
-    // S-mode 读不到 mhartid，hartid 在入口由 `_start` 存入 tp（见 machine::hart_id）。
-    let hart = machine::hart_id();
-    let allocators = BLOCK_ALLOCATORS
-        .get()
-        .expect("block allocator not initialized");
-    &allocators[hart.min(allocators.len() - 1)]
+    &BLOCK_ALLOCATOR
 }
 
-/// 初始化 per-hart 块分配器数组并注册到全局。
+/// 初始化块分配器。
 ///
 /// 必须在 `main` 早期调用恰好一次（经 `allocator::init`），在任何堆分配之前。
+/// 此时门户分配器仍在 bump 后端，本模块自身的 Vec 元数据经 bump 分配——
+/// 不会重入本锁。
 ///
 /// # Errors
 ///
-/// - 设备树未报告任何 hart → [`InitError::NoHarts`]。
-/// - 初始化期间元数据分配失败 → [`InitError::OutOfMemory`]。
-/// - 重复初始化 → [`InitError::AlreadyInitialized`]。
+/// 元数据分配失败 → [`InitError::OutOfMemory`]。
 pub fn init() -> InitResult<()> {
-    (|| -> Result<(), InitError> {
-        let n = machine::get().hart;
-        if n == 0 {
-            return Err(InitError::NoHarts);
-        }
-        let mut v: Vec<BlockAllocator> = Vec::new();
-        v.try_reserve(n).map_err(|_| InitError::OutOfMemory)?;
-        for _ in 0..n {
-            v.push(BlockAllocator::new());
-        }
-        let allocators = Box::leak(v.into_boxed_slice());
-        for allocator in allocators.iter() {
-            allocator.init()?;
-        }
-        if BLOCK_ALLOCATORS.set(allocators).is_err() {
-            return Err(InitError::AlreadyInitialized);
-        }
-        Ok(())
-    })()
-    .annotate("initializing block allocator")
+    BLOCK_ALLOCATOR
+        .init()
+        .annotate("initializing block allocator")
 }
