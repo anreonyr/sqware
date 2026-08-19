@@ -141,6 +141,7 @@ pub(crate) fn dump_fail(f: &MarkFail) {
 }
 
 /// 断言整页无活跃单元——页级记账完整性检查（页永驻池区段，仅校验不归还）。
+#[track_caller]
 pub(crate) fn assert_page_clear(pa: usize) {
     let flags = flags(pa);
     for i in 0..UNITS_PER_PAGE {

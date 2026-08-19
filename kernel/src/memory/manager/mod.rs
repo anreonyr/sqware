@@ -192,3 +192,75 @@ pub fn init() -> MapResult<()> {
     })()
     .annotate("initializing memory manager")
 }
+
+/// PT 回收自测（debug）：map/unmap 循环验证中间表回收——无孤儿表、无 double-free。
+///
+/// 在 spawn 用户任务之前运行（分配器与 KERNEL_SPACE 均已就绪），由 `boot::init`
+/// 经 `crate::memory::manager::pt_reclaim_selftest()` 调用。每轮：
+/// map 4 MiB（4 KiB 页，根表槽 1）→ 表数 +3（1×L1 + 2×L0）；unmap → 回落；
+/// 32 轮后「在途帧 − 堆支撑页」回到轮前（块堆缓存页不误报，口径同 check_baseline）。
+#[cfg(debug_assertions)]
+pub fn pt_reclaim_selftest() {
+    const BASE: usize = 0x4000_0000; // 根表槽 1：堆窗口之后、栈窗口之前的空地
+    const SIZE: usize = 4 * 1024 * 1024; // 4 MiB → 1×L1 + 2×L0
+    const ROUNDS: usize = 32;
+
+    let space = SpaceBuilder::user().build().expect("selftest: build space");
+    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
+    let base_count = space.table_count();
+    let held_before = crate::memory::allocator::frame::FRAME_ALLOCATOR
+        .outstanding()
+        .saturating_sub(crate::memory::allocator::block::live_pages());
+
+    for round in 0..ROUNDS {
+        // map：分配数据帧 + 中间表
+        let mut frames = Vec::new();
+        for _ in 0..(SIZE / PAGE_SIZE) {
+            frames.push(
+                Box::try_new_in([0u8; PAGE_SIZE], allocator()).expect("selftest: data frame"),
+            );
+        }
+        let pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
+        space
+            .map(
+                VirtAddr::from_raw(BASE),
+                pa,
+                SIZE,
+                flags,
+                MapKind::Anonymous,
+                frames,
+            )
+            .expect("selftest: map");
+        assert_eq!(
+            space.table_count(),
+            base_count + 3,
+            "selftest round {round}: tables after map"
+        );
+        assert!(
+            space.translate(VirtAddr::from_raw(BASE)).is_some(),
+            "selftest round {round}: map hit"
+        );
+
+        // unmap：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）
+        space.unmap(VirtAddr::from_raw(BASE), SIZE);
+        assert_eq!(
+            space.table_count(),
+            base_count,
+            "selftest round {round}: tables after unmap"
+        );
+        assert!(
+            space.translate(VirtAddr::from_raw(BASE)).is_none(),
+            "selftest round {round}: unmap hit"
+        );
+    }
+
+    let held_after = crate::memory::allocator::frame::FRAME_ALLOCATOR
+        .outstanding()
+        .saturating_sub(crate::memory::allocator::block::live_pages());
+    assert_eq!(
+        held_before, held_after,
+        "selftest: net frames leaked: {held_before} → {held_after}"
+    );
+    drop(space);
+    crate::putln!("pt-reclaim selftest: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})");
+}

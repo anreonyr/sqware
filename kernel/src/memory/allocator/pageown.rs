@@ -78,6 +78,7 @@ pub(crate) fn is_held(pa: usize) -> bool {
 
 /// 标记页为堆持有（refill 取页时）——前置断言：此前未持有（页来自 frame 池）。
 #[cfg(debug_assertions)]
+#[track_caller]
 pub(crate) fn hold(pa: usize) {
     let n = idx(pa);
     assert!(
@@ -90,6 +91,7 @@ pub(crate) fn hold(pa: usize) {
 
 /// 解除页的堆持有（decrease_used 整页归还时）——前置断言：确实持有。
 #[cfg(debug_assertions)]
+#[track_caller]
 pub(crate) fn release(pa: usize) {
     let n = idx(pa);
     assert!(
@@ -102,6 +104,7 @@ pub(crate) fn release(pa: usize) {
 
 /// frame 侧检查：分配/归还前该页**不得**被堆持有（命中 = 活堆页泄漏进 frame 池）。
 #[cfg(debug_assertions)]
+#[track_caller]
 pub(crate) fn assert_not_held(pa: usize, ctx: &str) {
     assert!(
         !is_held(pa),

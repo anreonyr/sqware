@@ -97,6 +97,7 @@ pub fn record_baseline() {
 ///
 /// block.rs 惰性 refill 的堆页是良性常驻支撑内存（任务之外），扣除后才得到
 /// 真正的任务帧泄漏量。
+#[track_caller]
 pub fn check_baseline() {
     #[cfg(debug_assertions)]
     {

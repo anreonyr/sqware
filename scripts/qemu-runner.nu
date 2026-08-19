@@ -21,7 +21,7 @@ def main [elf: path] {
     let smp = ($env.QEMU_SMP? | default "4")
 
     # icount 随机种子: 32 位随机数，配合 -icount 保证 RNG 可复现
-    let seed = (random binary 4 | into int)
+    let seed = ( $env.QEMU_SEED? | default (random binary 4 | into int))
 
     # 透传额外参数: 空格字符串拆成参数列表（正则切分兼容多空格/Tab），过滤空串
     let extra = (
@@ -52,4 +52,5 @@ def main [elf: path] {
  
     ^cargo b --all
     ^qemu-system-riscv64 ...$qemu_args
+    echo $"SEED: ($seed)"
 }
