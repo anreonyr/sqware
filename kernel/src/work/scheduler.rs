@@ -53,10 +53,10 @@ use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::space::Space;
 use crate::putln;
-use crate::runtime::{clock, timer};
 use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::runtime::trap::arm_timer;
+use crate::runtime::{clock, timer};
 
 use super::task::{BlockReason, Task, TaskState};
 use super::team::Team;
@@ -342,8 +342,13 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
             let caller2_ra = unsafe { *(prev_fp as *const usize).sub(1) };
             // 扫描全部容器，找出第二持有者（不分配——putln 直写 console）。
             let me = machine::hart_id();
-            let ptr = Arc::as_ptr(t) as *const Task as usize;
-            putln!("[dbg] task #{} '{}' ({:?}) strong_count {sc}: scanning containers...", t.id, t.name, t.state());
+            let ptr = Arc::as_ptr(t) as usize;
+            putln!(
+                "[dbg] task #{} '{}' ({:?}) strong_count {sc}: scanning containers...",
+                t.id,
+                t.name,
+                t.state()
+            );
             for (h, s) in schedulers().iter().enumerate() {
                 match s.inner.try_lock() {
                     Some(g) => {
@@ -355,7 +360,11 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
                                     x.id,
                                     x.name,
                                     Arc::as_ptr(x) as usize,
-                                    if Arc::as_ptr(x) as usize == ptr { " ** MATCH **" } else { "" }
+                                    if Arc::as_ptr(x) as usize == ptr {
+                                        " ** MATCH **"
+                                    } else {
+                                        ""
+                                    }
                                 )
                             }
                             None => putln!("  hart {h} running:{is_me} (none)"),
@@ -370,7 +379,11 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
                     // None——上一版无条件跳过 me，若第二持有者在**本核** running/starved
                     // 会被漏检；现在 try_lock 拿不到本核锁即打印提示，能拿到则照常扫描。
                     None => {
-                        let why = if h == me { "(self-held, skip)" } else { "(locked, skip)" };
+                        let why = if h == me {
+                            "(self-held, skip)"
+                        } else {
+                            "(locked, skip)"
+                        };
                         putln!("  hart {h}: {why}");
                     }
                 }
@@ -385,7 +398,11 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
                         x.id,
                         x.name,
                         Arc::as_ptr(x) as usize,
-                        if Arc::as_ptr(x) as usize == ptr { " ** MATCH **" } else { "" }
+                        if Arc::as_ptr(x) as usize == ptr {
+                            " ** MATCH **"
+                        } else {
+                            ""
+                        }
                     );
                 }
             } else {
@@ -399,7 +416,11 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
                         x.id,
                         x.name,
                         Arc::as_ptr(x) as usize,
-                        if Arc::as_ptr(x) as usize == ptr { " ** MATCH **" } else { "" }
+                        if Arc::as_ptr(x) as usize == ptr {
+                            " ** MATCH **"
+                        } else {
+                            ""
+                        }
                     );
                 }
             } else {
@@ -419,7 +440,9 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
                 for i in 0..10 {
                     putln!("    task[{i}] = {:#x}", *(ptr as *const usize).add(i));
                 }
-                putln!("  frame: ra={ra:#x} fp={fp:#x} caller_ra(real)={caller_ra:#x} prev_fp={prev_fp:#x} caller2_ra={caller2_ra:#x}");
+                putln!(
+                    "  frame: ra={ra:#x} fp={fp:#x} caller_ra(real)={caller_ra:#x} prev_fp={prev_fp:#x} caller2_ra={caller2_ra:#x}"
+                );
                 // 粗糙栈回溯：沿当前 sp 扫 256 个字，凡落在 .text 范围者即调用返回地址。
                 let mut sp: usize;
                 core::arch::asm!("mv {0}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
@@ -466,7 +489,7 @@ fn probe_strong(t: &Arc<Task>, ctx: &str) {
         t.id,
         t.name
     );
-    let ptr = Arc::as_ptr(t) as *const Task as usize;
+    let ptr = Arc::as_ptr(t) as usize;
     // 原始块 dump：ArcInner{strong@-16, weak@-8, data@ptr} + Task 前 16 字——
     // 判断块内存里是谁的数据（能否认出另一任务的 name/team/trap 特征）。
     unsafe {
@@ -522,7 +545,11 @@ fn probe_strong(t: &Arc<Task>, ctx: &str) {
                     "    reaped[{k}] task #{} @ {:#x}{}",
                     x.id,
                     Arc::as_ptr(x) as usize,
-                    if Arc::as_ptr(x) as usize == ptr { " ** ME **" } else { "" }
+                    if Arc::as_ptr(x) as usize == ptr {
+                        " ** ME **"
+                    } else {
+                        ""
+                    }
                 );
             }
         }
@@ -851,6 +878,5 @@ pub fn reap() -> usize {
     // 时 run() 一旦走 done→halt 路径 clear 永不执行）。
     clear();
     // 取下一任务：此刻 running 已 take，本核空闲 → run（steal / WFI）
-    let pa = run();
-    pa
+    run()
 }

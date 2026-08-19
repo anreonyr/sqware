@@ -27,6 +27,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 #[repr(transparent)]
 pub struct Gprs(pub [usize; 32]);
 
+#[allow(unused)]
 impl Gprs {
     // ── ABI 寄存器号（RISC-V calling convention：a0..a7 = x10..x17） ──
     pub const RA: usize = 1; // 返回地址
@@ -132,4 +133,3 @@ mod tests {
         assert!(!s.contains("x1="));
     }
 }
-

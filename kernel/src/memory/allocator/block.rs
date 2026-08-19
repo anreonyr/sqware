@@ -25,9 +25,9 @@ use alloc::vec::Vec;
 use erra::ResultExt;
 use log::debug;
 
-use crate::putln;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
+use crate::putln;
 use crate::{
     lock::{OnceLock, SpinLock},
     memory::allocator::{InitError, InitResult, bump},
@@ -51,8 +51,8 @@ const ARRAY_SIZE: usize = 2 * 1024 * 1024;
 
 pub(crate) struct Pool {
     inner: SpinLock<Option<BlockInner>>, // freepool + 页头 used 计数 + 区段游标
-    pump: SpinLock<VecDeque<Remote>>,     // 过境驿站：只收 feed，suck 抽空
-    base: usize,                          // 区段 [base, edge)，init 后不可变
+    pump: SpinLock<VecDeque<Remote>>,    // 过境驿站：只收 feed，suck 抽空
+    base: usize,                         // 区段 [base, edge)，init 后不可变
     edge: usize,
 }
 
@@ -106,16 +106,16 @@ impl Pool {
                 self.dump_crash_site(inner, power, "pull-mark", &f);
                 panic!(
                     "block alloc: unit {} (addr {:#x}) ALREADY IN USE — 块级双发！({} bytes popped from freepool[{power}])",
-                    f.unit, f.addr + f.unit * 8, 1usize << power
+                    f.unit,
+                    f.addr + f.unit * 8,
+                    1usize << power
                 );
             }
             debug!("address {:?}, power {} allocated", head, power);
             return Some(head.as_ptr() as usize);
         }
         // 无现成块：撕下一页拆入链，首块即本次分配结果
-        let first = self
-            .tear(inner, power)
-            .ok()?;
+        let first = self.tear(inner, power).ok()?;
         Some(first.as_ptr() as usize)
     }
 
@@ -131,23 +131,33 @@ impl Pool {
             let mut depth = 0usize;
             while let Some(node) = cur {
                 if node == ptr {
-                    self.dump_crash_site(inner, power, "push-double-free", &unitmap::MarkFail {
-                        unit: 0,
-                        value: 0xff,
-                        page_idx: 0,
-                        addr: ptr.as_ptr() as usize,
-                    });
+                    self.dump_crash_site(
+                        inner,
+                        power,
+                        "push-double-free",
+                        &unitmap::MarkFail {
+                            unit: 0,
+                            value: 0xff,
+                            page_idx: 0,
+                            addr: ptr.as_ptr() as usize,
+                        },
+                    );
                     panic!("block allocator: double free of {:?} (power {power})", ptr);
                 }
                 depth += 1;
                 if depth > 1 << 14 {
                     // debug: 链过长或成环——遍历失控前的护栏（环 = 某节点 next 被覆写）。
-                    self.dump_crash_site(inner, power, "push-walk-loop", &unitmap::MarkFail {
-                        unit: 0,
-                        value: 0xfe,
-                        page_idx: 0,
-                        addr: ptr.as_ptr() as usize,
-                    });
+                    self.dump_crash_site(
+                        inner,
+                        power,
+                        "push-walk-loop",
+                        &unitmap::MarkFail {
+                            unit: 0,
+                            value: 0xfe,
+                            page_idx: 0,
+                            addr: ptr.as_ptr() as usize,
+                        },
+                    );
                     panic!("block allocator: freepool[{power}] walk exceeded depth — cyclic list");
                 }
                 cur = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
@@ -160,7 +170,8 @@ impl Pool {
             self.dump_crash_site(inner, power, "push-unmark", &f);
             panic!(
                 "block dealloc: unit {} (addr {:#x}) NOT IN USE — 释放未分配单元（错幂释放/脏指针），power {power}",
-                f.unit, f.addr + f.unit * 8
+                f.unit,
+                f.addr + f.unit * 8
             );
         }
         // 头插
@@ -188,7 +199,9 @@ impl Pool {
         let torn_pages = (inner.cursor - self.base) / PAGE_SIZE;
         putln!(
             "[crash] {ctx}: pool base {:#x} edge {:#x} cursor {:#x} (torn {torn_pages} pages)",
-            self.base, self.edge, inner.cursor
+            self.base,
+            self.edge,
+            inner.cursor
         );
         putln!("[crash] non-empty freepool classes:");
         for (p, h) in inner.freepool.iter().enumerate() {
@@ -211,7 +224,7 @@ impl Pool {
             n
         );
         let shown = n.min(walk.len());
-        for i in 0..shown {
+        (0..shown).for_each(|i| {
             let a = walk[i];
             putln!(
                 "  [{}] {:#x} (page {:#x}, torn {}, offset {:#x})",
@@ -221,7 +234,7 @@ impl Pool {
                 a < inner.cursor,
                 a & (crate::memory::PAGE_SIZE - 1)
             );
-        }
+        });
         // 游标后第一张未撕页原始内容（链头常指向未撕页——看那里有什么）
         if inner.cursor + PAGE_SIZE <= self.edge {
             let np = inner.cursor;
@@ -283,7 +296,10 @@ impl Pool {
                 #[cfg(debug_assertions)]
                 if let Err(f) = unitmap::mark(first.as_ptr() as usize, block_size) {
                     self.dump_crash_site(inner, power, "tear-mark", &f);
-                    panic!("block tear: unit {} ALREADY IN USE — 撕出的首块居然已在使用", f.unit);
+                    panic!(
+                        "block tear: unit {} ALREADY IN USE — 撕出的首块居然已在使用",
+                        f.unit
+                    );
                 }
                 // 其余块留在链上：首块的 next 指向块1…——首块本次被分配，其 next 字段
                 // 将随 push 被覆盖（头插重写链头）而丢失，故先把链头写入 freepool
@@ -302,7 +318,10 @@ impl Pool {
                 #[cfg(debug_assertions)]
                 if let Err(f) = unitmap::mark(first.as_ptr() as usize, block_size) {
                     self.dump_crash_site(inner, power, "tear-mark", &f);
-                    panic!("block tear: unit {} ALREADY IN USE — 撕出的首块居然已在使用", f.unit);
+                    panic!(
+                        "block tear: unit {} ALREADY IN USE — 撕出的首块居然已在使用",
+                        f.unit
+                    );
                 }
                 Ok(first)
             }
@@ -499,17 +518,15 @@ unsafe impl Allocator for BlockAllocator {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        unsafe {
-            let power = block_power(layout);
-            let pa = ptr.addr().get();
-            let Some(home) = pool_of(pa) else { return };
-            let me = node_of(machine::hart_id());
-            let pool = &heap().pools[home];
-            if home == me {
-                pool.push(ptr, power);
-            } else {
-                pool.feed(ptr, power);
-            }
+        let power = block_power(layout);
+        let pa = ptr.addr().get();
+        let Some(home) = pool_of(pa) else { return };
+        let me = node_of(machine::hart_id());
+        let pool = &heap().pools[home];
+        if home == me {
+            pool.push(ptr, power);
+        } else {
+            pool.feed(ptr, power);
         }
     }
 }
@@ -640,10 +657,21 @@ mod unitmap {
         let page = (f.addr & !(PAGE_SIZE - 1)) as *const u8;
         let flags = flags(f.addr);
         let u0 = (f.addr % PAGE_SIZE) / 8;
-        putln!("[unitmap] mark/unmark fail — addr {:#x}, unit {}, value {:#x} (byte {})", f.addr, f.unit, f.value, f.value);
-        putln!("[unitmap] page {:#x}, page_idx {}, unit offset {:#x} (u0 {u0})", page as usize, f.page_idx, f.unit * 8);
+        putln!(
+            "[unitmap] mark/unmark fail — addr {:#x}, unit {}, value {:#x} (byte {})",
+            f.addr,
+            f.unit,
+            f.value,
+            f.value
+        );
+        putln!(
+            "[unitmap] page {:#x}, page_idx {}, unit offset {:#x} (u0 {u0})",
+            page as usize,
+            f.page_idx,
+            f.unit * 8
+        );
         // 单元数组 ±16 字节（当前单元在中间）——逐字节直写
-        let lo = f.unit.saturating_sub(16).max(0);
+        let lo = f.unit.saturating_sub(16);
         let hi = (f.unit + 16).min(UNITS_PER_PAGE);
         putln!("[unitmap] array[{lo}..{hi}):");
         for i in lo..hi {
@@ -709,7 +737,14 @@ pub fn init() -> InitResult<()> {
         let pool = Pool::new(base, edge);
         pool.init()?;
         let pools = Box::leak(vec![pool].into_boxed_slice());
-        let segments = Box::leak(vec![Segment { base, edge, pool: 0 }].into_boxed_slice());
+        let segments = Box::leak(
+            vec![Segment {
+                base,
+                edge,
+                pool: 0,
+            }]
+            .into_boxed_slice(),
+        );
         let heap = Box::leak(Box::new(BlockHeap { pools, segments }));
         if BLOCK_HEAP.set(heap).is_ok() {
             Ok(())
@@ -719,3 +754,4 @@ pub fn init() -> InitResult<()> {
     })()
     .annotate("initializing block allocator")
 }
+
