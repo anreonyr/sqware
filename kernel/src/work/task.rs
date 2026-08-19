@@ -13,9 +13,10 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use riscv::register::{satp, sstatus};
 use crate::memory::manager::space::{TASK_STACK_SIZE, kernel_frame_pa};
 use crate::putln;
-use crate::runtime::context::TrapContext;
+use crate::runtime::context::{Gprs, TrapContext};
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::work::USER_TEXT_BASE;
 
@@ -289,21 +290,27 @@ impl TaskBuilder {
             frame.trap_stack_corrupt = (*ktc).trap_stack_corrupt;
             frame.user_pa = frame_pa;
             // user_satp = Sv39 模式位(8) << 60 | asid << 44 | root_ppn —— restore 切回本空间用
-            frame.user_satp =
-                (8usize << 60) | (self.team.space.asid() << 44) | self.team.space.root();
-            frame.self_va = frame_va.as_usize();
-            frame.sepc = self.entry.as_usize();
-            frame.gpr[2] = stack_top.as_usize();
-            frame.gpr[10] = self.arg;
-            let s = riscv::register::sstatus::read().bits();
-            // 内核任务（挂 kernel 团队、共享 KERNEL_SPACE）→ S 态：SPP=1、SIE=0、SPIE=0
+            frame.user_satp = satp::Satp::from_bits(
+                (8usize << 60) | (self.team.space.asid() << 44) | self.team.space.root(),
+            );
+            frame.self_va = frame_va;
+            frame.sepc = self.entry;
+            frame.gpr.set_x(Gprs::SP, stack_top.as_usize());
+            frame.gpr.set_x(Gprs::A0, self.arg);
+            let mut ss =
+                sstatus::Sstatus::from_bits(riscv::register::sstatus::read().bits());
+            // 内核任务（挂 kernel 团队、共享 KERNEL_SPACE）→ S 态：SPP=S、SIE=0、SPIE=0
             // （内核恒关中断——协作式，从不被 S-timer 抢占；跑完即退）。其它团队 → U 态：
-            // SPP=0、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。模式由团队身份推断，无新 API。
+            // SPP=U、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。模式由团队身份推断，无新 API。
+            ss.set_sie(false);
             if Arc::ptr_eq(&self.team, super::team::kernel()) {
-                frame.sstatus = (s & !(1 << 1) & !(1 << 5)) | (1 << 8);
+                ss.set_spp(sstatus::SPP::Supervisor);
+                ss.set_spie(false);
             } else {
-                frame.sstatus = (s & !(1 << 1) & !(1 << 8)) | (1 << 5);
+                ss.set_spp(sstatus::SPP::User);
+                ss.set_spie(true);
             }
+            frame.sstatus = ss;
         }
 
         // 4. 入队收尾（初始状态 Starved；持本 hart 调度锁完成入簿 + 入队 + 计数）

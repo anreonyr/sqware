@@ -129,6 +129,25 @@ impl Scheduler {
             "starved 容器只收 Starved 任务"
         );
         let mut i = self.inner.lock();
+        // debug: 同一任务不得重复入队（重复 push = 多容器强持有 → 后续 task_mut
+        // 断言失败）。必查**所有核**的 starved——同任务跨核双入队是漏网形态。
+        #[cfg(debug_assertions)]
+        {
+            for (h, s) in schedulers().iter().enumerate() {
+                let Some(g) = s.inner.try_lock() else {
+                    continue;
+                };
+                if g.starved.iter().any(|x| Arc::ptr_eq(x, &task)) {
+                    panic!(
+                        "push: duplicate enqueue of task #{} '{}' on hart {} (already queued on hart {h}, len {})",
+                        task.id,
+                        task.name,
+                        self.hart,
+                        g.starved.len()
+                    );
+                }
+            }
+        }
         i.starved.push_back(task);
         self.set_len(&i);
     }
@@ -232,6 +251,18 @@ impl Scheduler {
         //   NEXT_PARK_HANDLE（原子）→ blocked 入簿（blocked 锁）→ tock（timer 锁）。
         // 不变量：堆可见 ⇒ 簿记必在——unpark 按句柄摘除绝不会命中空簿记。
         let handle = NEXT_PARK_HANDLE.fetch_add(1, Ordering::Relaxed) as u64;
+        // debug: 同一任务不得在 blocked 簿记中重复登记（两次 park 同一任务 =
+        // 唤醒后重复入队 → 多容器强持有）。持 blocked 锁遍历核对（锁内不做分配）。
+        #[cfg(debug_assertions)]
+        {
+            let b = blocked().lock();
+            if b.values().any(|t| Arc::ptr_eq(t, &task)) {
+                panic!(
+                    "park: task #{} '{}' already in blocked map (double park, handle {handle})",
+                    task.id, task.name
+                );
+            }
+        }
         blocked().lock().insert(handle, task);
         timer::tock(handle, wake_at);
         if i.starved.is_empty() {
@@ -274,11 +305,105 @@ impl Scheduler {
 /// prune_tasks 只 `ptr_eq` 比较），不构成可变访问冲突；互斥由锁 + strong_count
 /// == 1（唯一强持有）保证，故直接经 `Arc::as_ptr` 转 `&mut` 安全。
 fn task_mut(t: &mut Arc<Task>) -> &mut Task {
-    debug_assert_eq!(
-        Arc::strong_count(t),
-        1,
-        "task must be uniquely owned for mutation"
-    );
+    // debug: 强计数唯一 + 锁内 take/pop 互斥；Team.tasks 弱引用只作簿记、
+    // 不读 Task 字段（见上）。
+    // 断言失败 = 同一任务被多容器同时强持有（运行/就绪/阻塞/僵尸队列重复入队），
+    // 打印身份与引用计数定位现场。
+    #[cfg(debug_assertions)]
+    {
+        let sc = Arc::strong_count(t);
+        if sc != 1 {
+            // 调用点返回地址：定位谁在任务仍在容器中时动手 mutate。
+            let ra: usize;
+            // SAFETY: 读返回地址寄存器，纯读。
+            unsafe {
+                core::arch::asm!("mv {0}, ra", out(reg) ra, options(nomem, nostack, preserves_flags));
+            }
+            // 扫描全部容器，找出第二持有者（不分配——putln 直写 console）。
+            let me = machine::hart_id();
+            let ptr = Arc::as_ptr(t) as *const Task as usize;
+            putln!("[dbg] task #{} '{}' ({:?}) strong_count {sc}: scanning containers...", t.id, t.name, t.state());
+            for (h, s) in schedulers().iter().enumerate() {
+                if h == me {
+                    // 本核的 running 即当前上下文（pre/rotate/park/reap 路径），
+                    // 已知不含被 mutate 的任务；其 starved 刚被 take 过——跳过。
+                    continue;
+                }
+                match s.inner.try_lock() {
+                    Some(g) => {
+                        match &g.running {
+                            Some(x) => {
+                                putln!(
+                                    "  hart {h} running: #{} '{}' @ {:#x}{}",
+                                    x.id,
+                                    x.name,
+                                    Arc::as_ptr(x) as usize,
+                                    if Arc::as_ptr(x) as usize == ptr { " ** MATCH **" } else { "" }
+                                )
+                            }
+                            None => putln!("  hart {h} running: (none)"),
+                        }
+                        for (k, x) in g.starved.iter().enumerate() {
+                            if Arc::as_ptr(x) as usize == ptr {
+                                putln!("  hart {h}: ** starved[{k}] **");
+                            }
+                        }
+                    }
+                    None => putln!("  hart {h}: (locked, skip)"),
+                }
+            }
+            if let Some(b) = blocked().try_lock() {
+                for (k, x) in b.iter() {
+                    if Arc::as_ptr(x) as usize == ptr {
+                        putln!("  blocked[{k}] **");
+                    }
+                }
+            } else {
+                putln!("  blocked: (locked, skip)");
+            }
+            if let Some(r) = TASK_TABLES.reaped.try_lock() {
+                for (k, x) in r.iter().enumerate() {
+                    if Arc::as_ptr(x) as usize == ptr {
+                        putln!("  reaped[{k}] **");
+                    }
+                }
+            } else {
+                putln!("  reaped: (locked, skip)");
+            }
+            putln!("  == Arc ctrl block & stack trace ==");
+            // Arc 头：strong 在 data-8，weak 在 data-16（alloc 布局，按字读）。
+            // SAFETY: 读 t 指针附近内存做诊断；指针必须有效（任务存活）。
+            unsafe {
+                let w0 = *(ptr as *const usize); // Task.id
+                let s = *(ptr as *const usize).sub(1); // strong
+                let w = *(ptr as *const usize).sub(2); // weak
+                putln!(
+                    "  arc@{ptr:#x}: id_word={w0:#x} hdr[strong]={s:#x} hdr[weak]={w:#x}"
+                );
+                // 粗糙栈回溯：沿当前 sp 扫 256 个字，凡落在 .text 范围者即调用返回地址。
+                let mut sp: usize;
+                core::arch::asm!("mv {0}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+                let mut n = 0usize;
+                for i in 0..256 {
+                    let v = *(sp as *const usize).add(i);
+                    if (0x8020_0000..0x8060_0000).contains(&v) {
+                        putln!("  trace[{i}] {v:#x}");
+                        n += 1;
+                        if n >= 12 {
+                            break;
+                        }
+                    }
+                }
+            }
+            panic!(
+                "task #{} '{}' ({:?}): strong_count {sc} weak {} caller_ra={ra:#x} — 同一任务被多个容器强持有",
+                t.id,
+                t.name,
+                t.state(),
+                Arc::weak_count(t)
+            );
+        }
+    }
     // SAFETY: 强计数唯一 + 锁内 take/pop 互斥；Team.tasks 弱引用只作簿记、
     // 不读 Task 字段（见上）。
     unsafe { &mut *(Arc::as_ptr(t) as *mut Task) }

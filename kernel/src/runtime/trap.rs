@@ -18,9 +18,8 @@ use core::time::Duration;
 
 use log::info;
 use riscv::interrupt::{Exception, Interrupt, Trap};
-use riscv::register::{satp, scause, sepc, sie, stval, stvec, time};
+use riscv::register::{satp, scause, sepc, sie, sip, sstatus, stval, stvec, time};
 
-use sbi::{TimerCall, fid::Timer, scall::SArgs};
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
@@ -31,6 +30,7 @@ use crate::runtime::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, establish_tp, init_trap_stacks,
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
 };
+use sbi::{TimerCall, fid::Timer, scall::SArgs};
 
 /// per-hart trap 栈底 canary（溢出检测：破坏即 panic；trampoline 的
 /// init_trap_stacks 在 boot 时写全部 hart 的 canary）。
@@ -91,7 +91,7 @@ pub fn init() {
     //    发布）。B2：每 hart 一份——kernel_sp = 本 hart trap 栈顶，__strap 按 TP
     //    索引帧页；内核态故障在**故障核**的帧与 trap 栈上处理。用户帧的
     //    kernel_sp 由调度器每切换写入（见 scheduler::prepare_resume）。
-    let ksatp = satp::read().bits();
+    let ksatp = satp::read();
     for h in 0..crate::machine::hart_count() {
         let pa = kernel_frame_pa(h);
         let frame = unsafe { &mut *(pa.as_usize() as *mut TrapContext) };
@@ -102,7 +102,7 @@ pub fn init() {
         frame.user_pa = pa;
         frame.user_satp = ksatp;
         // self_va：本 hart 内核帧 VA（restore 切表后经此收尾）
-        frame.self_va = (KERNEL_FRAME_BASE + h * PAGE_SIZE).as_usize();
+        frame.self_va = KERNEL_FRAME_BASE + h * PAGE_SIZE;
     }
 
     // 3. 先武装定时器：OpenSBI 可能遗留一个已到期的 stimecmp，若不清掉，
@@ -139,11 +139,9 @@ pub fn init_hart() {
     let ktc = kernel_frame_pa(0);
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;
-    // Sv39 token：低 44 位 ppn、[63:44] asid/模式
-    let ppn = ksatp & ((1usize << 44) - 1);
-    let asid = (ksatp >> 44) & 0xffff;
+    // Sv39 token：低 44 位 ppn、[63:44] asid/模式（字段访问器拆解，无裸位运算）
     unsafe {
-        satp::set(satp::Mode::Sv39, asid, ppn);
+        satp::set(satp::Mode::Sv39, ksatp.asid(), ksatp.ppn());
         core::arch::asm!("sfence.vma");
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
         core::arch::asm!("csrw sscratch, zero");
@@ -209,7 +207,7 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
     //    写入的正确性——steal 迁移后写漏即在此暴露；内核态故障走共享内核帧 +
     //    hart 0 栈，跳过本检查）。
     #[cfg(debug_assertions)]
-    if frame.sstatus & (1 << 8) == 0 {
+    if frame.sstatus.spp() != sstatus::SPP::Supervisor {
         let sp: usize;
         // SAFETY: 读当前栈指针，纯读无副作用。
         unsafe {
@@ -242,14 +240,24 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
             // 重武装：运行任务抢占量子；到期唤醒由 unpark 经 timer::drain 驱动
             arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
             unpark();
-            if frame.sstatus & (1 << 8) == 0 {
+            if frame.sstatus.spp() != sstatus::SPP::Supervisor {
                 crate::work::run() as *mut TrapContext
             } else {
                 frame as *mut TrapContext
             }
         }
+        Trap::Interrupt(Interrupt::SupervisorSoft) => {
+            // IPI 唤醒信号。wake_all 按 WAITING 位图发 IPI；竞态窗口：IPI 发出时
+            // 目标核可能已离开 WFI（steal 取走任务、回到用户态 SIE=1）→ SSIP 挂起
+            // 会被真取中断。业务（steal 复查）在 wait()/wake_all 路径已闭合；此处
+            // 是最后一站：清挂起位（不清则 sret 后立即再取 → 中断风暴），静默放行。
+            unsafe {
+                sip::clear_ssoft();
+            }
+            frame as *mut TrapContext
+        }
         Trap::Interrupt(other) => {
-            putln!("unhandled interrupt: {other:?}");
+            panic!("unhandled interrupt: {other:?} \n{frame:#?}");
             frame as *mut TrapContext
         }
         // 用户态环境调用（U 态 ecall）：envcall 表分发
@@ -259,7 +267,7 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
         Trap::Exception(
             Exception::InstructionPageFault | Exception::LoadPageFault | Exception::StorePageFault,
         ) => {
-            if frame.sstatus & (1 << 8) != 0 {
+            if frame.sstatus.spp() == sstatus::SPP::Supervisor {
                 panic!(
                     "kernel page fault on hart {} at sepc={:#x}, stval={:#x}",
                     machine::hart_id(),
