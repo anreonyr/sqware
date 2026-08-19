@@ -25,12 +25,19 @@ use alloc::vec::Vec;
 use erra::ResultExt;
 use log::debug;
 
+use crate::putln;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::{
     lock::{OnceLock, SpinLock},
     memory::allocator::{InitError, InitResult, bump},
 };
+
+// ── 断言失败零分配现场 dump ──
+//
+// 症状：pull 弹出块时 unitmap 断言单元已在用/释放未分配单元。为使 panic 前
+// 能输出完整现场而不触发分配器重入（dump 若 alloc 会经 portal→block→inner
+// 递归），dump 只用 putln! 直写 + 固定缓冲，绝不经 global_allocator。
 
 const MIN_POWER: usize = 3;
 const MAX_POWER: usize = PAGE_SIZE.ilog2() as usize;
@@ -95,14 +102,21 @@ impl Pool {
             unsafe { inner.increase_used(head, power) };
             // debug: 弹出块必须无主（块级双发检测），再标在途。
             #[cfg(debug_assertions)]
-            unitmap::mark(head.as_ptr() as usize, 1usize << power);
+            if let Err(f) = unitmap::mark(head.as_ptr() as usize, 1usize << power) {
+                self.dump_crash_site(inner, power, "pull-mark", &f);
+                panic!(
+                    "block alloc: unit {} (addr {:#x}) ALREADY IN USE — 块级双发！({} bytes popped from freepool[{power}])",
+                    f.unit, f.addr + f.unit * 8, 1usize << power
+                );
+            }
             debug!("address {:?}, power {} allocated", head, power);
             return Some(head.as_ptr() as usize);
         }
         // 无现成块：撕下一页拆入链，首块即本次分配结果
-        self.tear(inner, power)
-            .ok()
-            .map(|first| first.as_ptr() as usize)
+        let first = self
+            .tear(inner, power)
+            .ok()?;
+        Some(first.as_ptr() as usize)
     }
 
     /// 推回本池：写 freelist 链 + 递减本池页头计数（页永驻本池区段，不归还帧层）。
@@ -114,9 +128,27 @@ impl Pool {
         #[cfg(debug_assertions)]
         {
             let mut cur = inner.freepool[power];
+            let mut depth = 0usize;
             while let Some(node) = cur {
                 if node == ptr {
+                    self.dump_crash_site(inner, power, "push-double-free", &unitmap::MarkFail {
+                        unit: 0,
+                        value: 0xff,
+                        page_idx: 0,
+                        addr: ptr.as_ptr() as usize,
+                    });
                     panic!("block allocator: double free of {:?} (power {power})", ptr);
+                }
+                depth += 1;
+                if depth > 1 << 14 {
+                    // debug: 链过长或成环——遍历失控前的护栏（环 = 某节点 next 被覆写）。
+                    self.dump_crash_site(inner, power, "push-walk-loop", &unitmap::MarkFail {
+                        unit: 0,
+                        value: 0xfe,
+                        page_idx: 0,
+                        addr: ptr.as_ptr() as usize,
+                    });
+                    panic!("block allocator: freepool[{power}] walk exceeded depth — cyclic list");
                 }
                 cur = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
             }
@@ -124,7 +156,13 @@ impl Pool {
 
         // debug: 释放前先校验块确在途（错幂释放/脏指针的面具在此揭开）。
         #[cfg(debug_assertions)]
-        unitmap::unmark(ptr.as_ptr() as usize, 1usize << power);
+        if let Err(f) = unitmap::unmark(ptr.as_ptr() as usize, 1usize << power) {
+            self.dump_crash_site(inner, power, "push-unmark", &f);
+            panic!(
+                "block dealloc: unit {} (addr {:#x}) NOT IN USE — 释放未分配单元（错幂释放/脏指针），power {power}",
+                f.unit, f.addr + f.unit * 8
+            );
+        }
         // 头插
         unsafe {
             ptr.cast::<Option<NonNull<u8>>>()
@@ -133,6 +171,71 @@ impl Pool {
         inner.freepool[power] = Some(ptr);
         debug!("address {:?}, power {} deallocated", ptr, power);
         unsafe { inner.decrease_used(ptr, power) };
+    }
+
+    /// 断言/push 异常现场 dump：游标/区段/该 power 全链/单元数组/操作序列。
+    /// 注意：本函数**零分配**——任何 alloc 都会经 portal→block 递归/死锁，
+    /// 且会污染现场。只用 putln! 直写 + 固定缓冲数组。
+    #[cfg(debug_assertions)]
+    fn dump_crash_site(
+        &self,
+        inner: &mut BlockInner,
+        power: usize,
+        ctx: &str,
+        fail: &unitmap::MarkFail,
+    ) {
+        unitmap::dump_fail(fail);
+        let torn_pages = (inner.cursor - self.base) / PAGE_SIZE;
+        putln!(
+            "[crash] {ctx}: pool base {:#x} edge {:#x} cursor {:#x} (torn {torn_pages} pages)",
+            self.base, self.edge, inner.cursor
+        );
+        putln!("[crash] non-empty freepool classes:");
+        for (p, h) in inner.freepool.iter().enumerate() {
+            if h.is_some() {
+                putln!("  class {p}");
+            }
+        }
+        let mut walk = [0usize; 256];
+        let mut n = 0usize;
+        let mut cur = inner.freepool[power];
+        while let Some(node) = cur {
+            if n < walk.len() {
+                walk[n] = node.as_ptr() as usize;
+            }
+            n += 1;
+            cur = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
+        }
+        putln!(
+            "[crash] freepool[{power}] walk ({} nodes, first 256 shown):",
+            n
+        );
+        let shown = n.min(walk.len());
+        for i in 0..shown {
+            let a = walk[i];
+            putln!(
+                "  [{}] {:#x} (page {:#x}, torn {}, offset {:#x})",
+                i,
+                a,
+                a & !(crate::memory::PAGE_SIZE - 1),
+                a < inner.cursor,
+                a & (crate::memory::PAGE_SIZE - 1)
+            );
+        }
+        // 游标后第一张未撕页原始内容（链头常指向未撕页——看那里有什么）
+        if inner.cursor + PAGE_SIZE <= self.edge {
+            let np = inner.cursor;
+            let p = np as *const usize;
+            putln!("[crash] first untorn page {np:#x} head words:");
+            for i in 0..8 {
+                putln!("  w{i} = {:#x}", unsafe { *p.add(i) });
+            }
+        }
+        let blk = (fail.addr & !(crate::memory::PAGE_SIZE - 1)) as *const usize;
+        putln!("[crash] failing page (fail.addr) head words:");
+        for i in 0..8 {
+            putln!("  w{i} = {:#x}", unsafe { *blk.add(i) });
+        }
     }
 
     /// 喂入本池 pump：块在外地被释放时投递至此（送它回家）。只入驿站，绝不碰 inner。
@@ -178,7 +281,15 @@ impl Pool {
                 let first = NonNull::new_unchecked(usable as *mut u8);
                 // debug: 首块随撕页分配（在途标记）
                 #[cfg(debug_assertions)]
-                unitmap::mark(first.as_ptr() as usize, block_size);
+                if let Err(f) = unitmap::mark(first.as_ptr() as usize, block_size) {
+                    self.dump_crash_site(inner, power, "tear-mark", &f);
+                    panic!("block tear: unit {} ALREADY IN USE — 撕出的首块居然已在使用", f.unit);
+                }
+                // 其余块留在链上：首块的 next 指向块1…——首块本次被分配，其 next 字段
+                // 将随 push 被覆盖（头插重写链头）而丢失，故先把链头写入 freepool
+                // 再清空首块的 next，避免整链随首块丢失（旧实现每页只用一个块）。
+                inner.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
+                first.cast::<Option<NonNull<u8>>>().write(None);
                 Ok(first)
             }
         } else {
@@ -189,7 +300,10 @@ impl Pool {
                 inner.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
                 // debug: 首块随撕页分配（在途标记）
                 #[cfg(debug_assertions)]
-                unitmap::mark(first.as_ptr() as usize, block_size);
+                if let Err(f) = unitmap::mark(first.as_ptr() as usize, block_size) {
+                    self.dump_crash_site(inner, power, "tear-mark", &f);
+                    panic!("block tear: unit {} ALREADY IN USE — 撕出的首块居然已在使用", f.unit);
+                }
                 Ok(first)
             }
         }
@@ -359,6 +473,13 @@ pub(crate) fn flush_all() {
 
 // ── 适配层（hybrid/portal/tie 调用，接口零改动）──
 
+/// debug: 返回首个 pool 的 [base, edge) 块区——供 frame 侧检测「是否把本池
+/// 区段页交给外部」；未初始化返回 None。
+#[cfg(debug_assertions)]
+pub(crate) fn pool_region() -> Option<(usize, usize)> {
+    BLOCK_HEAP.get().map(|h| (h.pools[0].base, h.pools[0].edge))
+}
+
 pub struct BlockAllocator;
 
 unsafe impl Allocator for BlockAllocator {
@@ -420,6 +541,7 @@ mod unitmap {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::memory::PAGE_SIZE;
+    use crate::putln;
 
     pub(crate) const UNITS_PER_PAGE: usize = PAGE_SIZE / 8; // 512 单元/页
     const UNIT_BYTES: usize = 512; // 每页单元数组字节数
@@ -454,37 +576,85 @@ mod unitmap {
         (ARRAY_BASE.load(Ordering::Relaxed) + idx * UNIT_BYTES) as *mut u8
     }
 
+    /// 页在块区内的页序号（用于 MarkFail 报告）。
+    fn page_idx(pa: usize) -> usize {
+        (pa - POOL_BASE.load(Ordering::Relaxed)) / PAGE_SIZE
+    }
+
+    /// mark 失败现场：单元值非 0（可能为 1 = 真在途，或任意字节 = 数组被写脏）。
+    #[derive(Clone, Copy)]
+    pub(crate) struct MarkFail {
+        pub(crate) unit: usize,
+        pub(crate) value: u8,
+        pub(crate) page_idx: usize,
+        pub(crate) addr: usize,
+    }
+
     /// 断言 addr..addr+size 所有单元均无主（再标记为在途）。
-    pub(crate) fn mark(addr: usize, size: usize) {
+    pub(crate) fn mark(addr: usize, size: usize) -> Result<(), MarkFail> {
         let n = size / 8;
         let u0 = (addr % PAGE_SIZE) / 8;
         let flags = flags(addr);
+        let page = page_idx(addr);
         for i in 0..n {
             // SAFETY: u0+n ≤ 512（块不跨页，size ≤ PAGE_SIZE）；页在块区内。
             let f = unsafe { *flags.add(u0 + i) };
-            assert_eq!(
-                f, 0,
-                "block alloc: unit {} (addr {:#x}) ALREADY IN USE — 块级双发！",
-                u0 + i, addr + i * 8
-            );
+            if f != 0 {
+                return Err(MarkFail {
+                    unit: u0 + i,
+                    value: f,
+                    page_idx: page,
+                    addr,
+                });
+            }
             unsafe { *flags.add(u0 + i) = 1 };
         }
+        Ok(())
     }
 
     /// 断言 addr..addr+size 所有单元均在途（再清空）。
-    pub(crate) fn unmark(addr: usize, size: usize) {
+    pub(crate) fn unmark(addr: usize, size: usize) -> Result<(), MarkFail> {
         let n = size / 8;
         let u0 = (addr % PAGE_SIZE) / 8;
         let flags = flags(addr);
+        let page = page_idx(addr);
         for i in 0..n {
             // SAFETY: 同 mark。
             let f = unsafe { *flags.add(u0 + i) };
-            assert_eq!(
-                f, 1,
-                "block dealloc: unit {} (addr {:#x}) NOT IN USE — 释放未分配单元（错幂释放/脏指针）",
-                u0 + i, addr + i * 8
-            );
+            if f != 1 {
+                return Err(MarkFail {
+                    unit: u0 + i,
+                    value: f,
+                    page_idx: page,
+                    addr,
+                });
+            }
             unsafe { *flags.add(u0 + i) = 0 };
+        }
+        Ok(())
+    }
+
+    /// 断言失败现场 dump：单元数组上下文 + 单元字节原始值。
+    /// **零分配**（只用 putln! 直写 + 固定缓冲）——避免 dump 触发分配器重入。
+    pub(crate) fn dump_fail(f: &MarkFail) {
+        let page = (f.addr & !(PAGE_SIZE - 1)) as *const u8;
+        let flags = flags(f.addr);
+        let u0 = (f.addr % PAGE_SIZE) / 8;
+        putln!("[unitmap] mark/unmark fail — addr {:#x}, unit {}, value {:#x} (byte {})", f.addr, f.unit, f.value, f.value);
+        putln!("[unitmap] page {:#x}, page_idx {}, unit offset {:#x} (u0 {u0})", page as usize, f.page_idx, f.unit * 8);
+        // 单元数组 ±16 字节（当前单元在中间）——逐字节直写
+        let lo = f.unit.saturating_sub(16).max(0);
+        let hi = (f.unit + 16).min(UNITS_PER_PAGE);
+        putln!("[unitmap] array[{lo}..{hi}):");
+        for i in lo..hi {
+            let b = unsafe { *flags.add(i) };
+            let marker = if i == f.unit { " <<<" } else { "" };
+            putln!("  u{i:3} = {b:02x}{marker}");
+        }
+        // 页头字节（used 计数 / 整页块的 link）原始内容——逐字节直写
+        putln!("[unitmap] page head:");
+        for i in 0..16 {
+            putln!("  b{i} = {:#02x}", unsafe { *page.add(i) });
         }
     }
 
