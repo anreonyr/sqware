@@ -12,7 +12,7 @@ mod memory;
 mod runtime;
 mod work;
 
-use core::arch::{asm, global_asm};
+use core::arch::global_asm;
 
 use log::info;
 
@@ -21,17 +21,27 @@ use crate::memory::{allocator, manager};
 
 global_asm!(
     ".section .text._start",
-    ".globl _early_stack_top",
     ".globl _start",
     "_start:",
     "    mv   tp, a0", // hartid → tp：S-mode 读不到 M-mode CSR mhartid，入口处暂存
     "    csrc sstatus, 2", // 清 SIE：内核态恒关中断（boot 期 OpenSBI 可能遗留 SIE=1）
-    "    la   sp, _early_stack_top",
-    "    j    early",
+    // 主栈布局：sp = _kernel_edge + (guard + KERNEL_STACK_SIZE)，栈向低地址生长。
+    // 栈区/guard 不由链接脚本预留，偏移 `_boot_stack_offset` 是 Rust 常量（单一来源）。
+    "    la   sp, _kernel_edge",
+    "    la   t0, _stack",
+    "    ld   t0, 0(t0)",
+    "    add  sp, sp, t0",
+    "    j    init",
 );
 
 #[unsafe(no_mangle)]
-extern "C" fn early(hartid: usize, dtp: usize) -> ! {
+extern "C" fn init(hartid: usize, dtp: usize) -> ! {
+    // _start 已把 sp 设到主栈顶（镜像内，无换栈）。先写主栈底 canary
+    // （boot::init 进首任务前校验，检测 boot 期下溢）。
+    unsafe {
+        (kernel_stack_base() as *mut usize).write(KERNEL_STACK_CANARY);
+    }
+
     console::init();
 
     info!("SQware Kernel booted (hart {})", hartid);
@@ -50,20 +60,8 @@ extern "C" fn early(hartid: usize, dtp: usize) -> ! {
     info!("hart: {} H", machine.hart);
     info!("freq: {} Hz", machine.hertz);
 
-    let stack_top = machine.dram.base + machine.dram.size;
-
-    // 主内核栈底写 canary（boot 期自下而上生长；boot::init 进首任务前校验）。
-    let stack_bottom = stack_top - KERNEL_STACK_SIZE;
-    unsafe {
-        (stack_bottom as *mut usize).write(KERNEL_STACK_CANARY);
-        asm!(
-            "mv sp, {stack_top}",
-            "call {main}",
-            stack_top = in(reg) stack_top,
-            main = sym main,
-            options(noreturn),
-        );
-    }
+    // 同一主栈继续启动（永不返回）。
+    main();
 }
 
 /// 在内核栈（DRAM 顶部）上继续启动：初始化分配器后进入 idle。
@@ -80,33 +78,41 @@ fn main() -> ! {
     boot::init();
 }
 
-/// 内核栈大小（DRAM 顶部保留，向下增长）。
-///
-/// 栈底之下还保留一页 guard（未映射，见 `manager::init` 的开栈 guard unmap）：
-/// 向下溢出越过 guard 页时触发缺页，而非静默踩进 free 区。栈底本身写有
-/// canary（见 [`KERNEL_STACK_CANARY`]），`boot::init` 离开本栈前校验——boot 期
-/// 溢出即使未越过 guard 也会在此暴露。
-///
-/// early 栈只作 bootstrap：`probe` 完成后 `main` 把 `sp` 切到 DRAM 顶部
-/// （`dram_end`），此后 early 栈区域废弃，可被 bump 回收。
+/// 主内核栈布局（镜像内单一引导栈；栈大小/guard 均由 Rust 常量单一来源）：
+///   `_kernel_edge`           镜像结束（页对齐，链接脚本唯一锚点）
+///   [guard 帧 1页]           未映射，栈下溢拦截（见 `manager::init`）
+///   [主栈区 KERNEL_STACK_SIZE]  栈向低地址生长，栈顶 = `_kernel_edge`+guard+size
+/// free 区起点 = 栈顶。
 pub(crate) const KERNEL_STACK_SIZE: usize = 0x10_0000; // 1 MiB
+/// 主栈区之下的 guard 帧大小（1 页，未映射，防下溢踩镜像）。
+pub(crate) const KERNEL_STACK_GUARD: usize = crate::memory::PAGE_SIZE;
 
 /// 主内核栈 canary 值（写在栈底，`boot::init` 进首任务前校验）。
-/// boot 期主内核栈自上而下生长，栈底紧邻 guard 页之上。
 pub(crate) const KERNEL_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
 
-/// 主内核栈底地址（canary 所在，guard 页之上；DRAM 顶部栈区下缘）。
-pub(crate) fn kernel_stack_bottom() -> usize {
-    let m = crate::machine::get();
-    m.dram.base + m.dram.size - KERNEL_STACK_SIZE
+/// 镜像结束地址（链接脚本 `_kernel_edge`）——栈/guard/free 区布局的唯一基准。
+pub(crate) fn kernel_edge() -> usize {
+    (&raw const _kernel_edge).addr()
+}
+unsafe extern "C" {
+    /// 内核镜像结束锚点（见 link.ld）。栈区与 free 区都从它推导。
+    static _kernel_edge: u8;
 }
 
-// `_free_base`：内核镜像之后的第一个可回收地址（per-hart trap 栈为动态分配，
-// 不占用此固定布局）。
-// early 栈（16 KiB，见 link.ld `. += 16K`）位于其后，但栈切换完成后即废弃，
-// 可被 bump 回收。
-unsafe extern "C" {
-    static _free_base: u8;
+/// 主栈区偏移（guard + 栈大小）——`_start` 汇编加载它算出栈顶 sp。
+/// no_mangle 暴露为符号，global_asm `la t0,_boot_stack_offset; ld t0,0(t0)` 读取，
+/// 栈大小单一来源（此处由 Rust 常量推导），链接脚本不写栈布局。
+#[unsafe(no_mangle)]
+static _stack: usize = KERNEL_STACK_GUARD + KERNEL_STACK_SIZE;
+
+/// 主内核栈底地址（canary 所在，guard 帧之上）。
+pub(crate) fn kernel_stack_base() -> usize {
+    kernel_edge() + KERNEL_STACK_GUARD
+}
+
+/// 主内核栈顶地址（= free 区起点）。
+pub(crate) fn kernel_stack_edge() -> usize {
+    kernel_edge() + KERNEL_STACK_GUARD + KERNEL_STACK_SIZE
 }
 
 /// 读取 DTB `/cpus` 的 timebase-frequency（Hz）；缺失/非法长度返回 0
@@ -140,12 +146,10 @@ fn probe(dtp: usize) -> Machine {
     let dram_size = mem.size.unwrap_or(0);
     let timebase = timebase_of(&fdt);
 
-    let free_base = (&raw const _free_base).addr();
-    // 内核栈保留在 DRAM 顶部 [dram_end - KERNEL_STACK_SIZE, dram_end)，向下增长；
-    // 其下再留一页 guard（[dram_end - KERNEL_STACK_SIZE - PAGE, dram_end - KERNEL_STACK_SIZE)）
-    // 一并从 free 区剔除，避免 bump/frame 分配覆盖 guard/内核栈，且 guard 不映射
-    // （manager::init 会 unmap），向下溢出即缺页。
-    let free_end = dram_base + dram_size - KERNEL_STACK_SIZE - crate::memory::PAGE_SIZE;
+    let free_base = crate::kernel_stack_edge();
+    // 主内核栈位于镜像内（guard + 主栈区），DRAM 顶部不再保留内核栈 → 整个
+    // 空闲区（free_base = 栈顶 .. dram_end）均可分配。
+    let free_end = dram_base + dram_size;
     let free_size = free_end - free_base;
 
     Machine {

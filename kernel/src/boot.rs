@@ -78,7 +78,7 @@ pub fn init() -> ! {
 
     // 主内核栈（boot 栈）将永久离开前校验 canary：boot 期栈溢出即使未越过
     // guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。
-    let boot_guard = unsafe { (crate::kernel_stack_bottom() as *const usize).read() };
+    let boot_guard = unsafe { (crate::kernel_stack_base() as *const usize).read() };
     assert!(
         boot_guard == crate::KERNEL_STACK_CANARY,
         "main kernel stack overflow during boot: canary corrupted {boot_guard:#x}",
