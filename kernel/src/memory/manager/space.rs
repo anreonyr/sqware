@@ -28,6 +28,7 @@ use core::sync::atomic::Ordering;
 use hashbrown::HashMap;
 
 use crate::lock::reentrant::RelLockGuard;
+use crate::lock::OnceLock;
 use crate::memory::allocator::bitmap::BitmapAllocator;
 use crate::memory::allocator::frame::allocator;
 use crate::{lock::RelLock, memory::PAGE_SIZE};
@@ -472,10 +473,11 @@ pub(crate) const TASK_STACK_AREA_SIZE: usize = 0x4000_0000;
 /// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。`stvec` 指向此处。
 pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000);
 
-/// per-hart 内核帧槽数（编译期按 MAX_HARTS 预留 = usize 位宽（64 核，协议边界）；
-/// 帧 VA 区与帧窗口布局耦合，见下方布局断言——实际按 hart_count() 映射/填充，
-/// 槽位预留使 __strap 的 TP 索引不依赖 DTB 核数，仅多占高位虚拟地址空间）。
-pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HARTS;
+/// per-hart 内核帧槽数（= 内核帧区 VA 窗口宽度 = MAX_HART_SLOTS，编译期预留
+/// 4096 页 = 16 MiB 高位虚拟地址）。帧区与帧窗口布局耦合，见下方布局断言——
+/// 实际按 hart_count() 映射/填充，槽位预留使 __strap 的 TP 索引不依赖 DTB
+/// 核数，仅多占高位虚拟地址空间（虚拟地址免费，窗口宽度与核数解耦）。
+pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HART_SLOTS;
 
 /// per-hart 内核帧区基址（紧贴 TRAMPOLINE 之下 SLOTS 页；hart h 帧 VA =
 /// KERNEL_FRAME_BASE + h·PAGE_SIZE）。帧由 manager::init 逐页映射（PA 存
@@ -484,6 +486,7 @@ pub(crate) const KERNEL_FRAME_BASE: VirtAddr =
     VirtAddr::from_raw(TRAMPOLINE.as_usize() - KERNEL_FRAME_SLOTS * PAGE_SIZE);
 
 /// 线程 trap 帧窗口大小（64 MiB − 内核帧区；帧窗口止于 KERNEL_FRAME_BASE）。
+/// 4096 槽帧区使窗口缩到 ≈48 MiB（0x300_1000 ≈ 12289 个 4 KiB 帧）。
 pub(crate) const FRAME_REGION_SIZE: usize = 0x400_0000 - (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE;
 /// 线程 trap 帧窗口基址（`KERNEL_FRAME_BASE` 之下，内核半区，S-only——用户不可触碰）。
 pub(crate) const FRAME_BASE: VirtAddr =
@@ -511,12 +514,12 @@ pub(crate) const FRAME_BASE: VirtAddr =
 // 内核半区（bit 38 = 1，VPN[2] = 256..511，起点 KERNEL_BASE）：
 //
 //   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐；__strap 经 KERNEL_FRAMES_LUI 注入）
-//   0xFFFF_FFFF_FFFF_7000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 SLOTS 页
+//   0xFFFF_FFFF_FFEF_F000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 4096 页（16 MiB VA 窗口）
 //   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE；__strap 按 TP 索引）
-//   0xFFFF_FFFF_FFBF_E000 — FRAME_BASE（帧窗口下界）
+//   0xFFFF_FFFF_FCEF_E000 — FRAME_BASE（帧窗口下界）
 //     ┌─────────────────────────────────┐
-//     │  线程 trap 帧窗口 64 MiB − 帧区  │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
-//     │ （16K 并发帧，S-only，位图管理）  │
+//     │  线程 trap 帧窗口（≈48 MiB）     │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
+//     │ （≈12K 并发帧，S-only，位图管理） │
 //     └─────────────────────────────────┘ KERNEL_FRAME_BASE
 //
 // 布局即不变量：以下断言把「对齐 / 相邻 / 不重叠」编译期锁死——
@@ -1282,15 +1285,33 @@ pub(crate) fn kernel_space() -> RelLockGuard<'static, Option<Arc<Space>>> {
     KERNEL_SPACE.lock()
 }
 
-/// per-hart 内核帧物理地址表（`manager::init` 逐帧映射并发布；`__strap` 按 TP 索引、
-/// `trap::init` 写元数据）。
-pub static KERNEL_FRAMES: [AtomicPhysAddr; KERNEL_FRAME_SLOTS] =
-    [const { AtomicPhysAddr::new(PhysAddr::from_raw(0)) }; KERNEL_FRAME_SLOTS];
+/// per-hart 内核帧物理地址表（`manager::init` 按实际核数**动态分配**并发布；
+/// `__strap` 按 TP 索引的是**帧区 VA**（KERNEL_FRAME_BASE，LUI 常量注入），
+/// 不读此表；本表仅供 Rust 侧经 [`kernel_frame_pa`] 读 PA——trap::init 写帧
+/// 元数据、init_hart 取 hart 0 框架。仿 SCHEDULERS/TRAP_STACKS：
+/// Box::leak 进 OnceLock，先于任何帧映射分配）。
+static KERNEL_FRAMES: OnceLock<&'static [AtomicPhysAddr]> = OnceLock::new();
 
-/// hart h 的内核帧物理地址（__strap 按 TP 索引的帧页；trap::init 写元数据）。
+/// 按实际核数分配帧 PA 表（`manager::init` 调用，恰好一次，先于任何帧映射）。
+pub(crate) fn init_kernel_frames(n: usize) {
+    let table: Box<[AtomicPhysAddr]> = (0..n)
+        .map(|_| AtomicPhysAddr::new(PhysAddr::from_raw(0)))
+        .collect();
+    assert!(
+        KERNEL_FRAMES.set(Box::leak(table)).is_ok(),
+        "kernel frames double init"
+    );
+}
+
+/// 帧 PA 表只读视图（`manager::init` 映射 per-hart 帧时迭代用）。
+pub(crate) fn kernel_frames() -> &'static [AtomicPhysAddr] {
+    KERNEL_FRAMES.get().expect("kernel frames not initialized")
+}
+
+/// hart h 的内核帧物理地址（__strap 按 TP 索引的帧页 VA；trap::init 写元数据）。
 ///
 /// hart 0 的帧即旧 `TRAP_CONTEXT`（用户帧构建从它拷内核切换信息），现统一经
 /// `kernel_frame_pa(hart)` 读取，不再保留独立常量或别名函数。
 pub fn kernel_frame_pa(hart: usize) -> PhysAddr {
-    KERNEL_FRAMES[hart].load(Ordering::Relaxed)
+    kernel_frames()[hart].load(Ordering::Relaxed)
 }

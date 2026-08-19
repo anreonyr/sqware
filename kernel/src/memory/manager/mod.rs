@@ -29,8 +29,8 @@ use crate::{
             addr::{PhysAddr, VirtAddr},
             entry::PteFlags,
             space::{
-                KERNEL_BASE, KERNEL_FRAME_BASE, KERNEL_FRAMES, KERNEL_SPACE, MapKind, SpaceBuilder,
-                TRAMPOLINE, USER_STACK_BASE,
+                KERNEL_BASE, KERNEL_FRAME_BASE, KERNEL_SPACE, MapKind, SpaceBuilder, TRAMPOLINE,
+                USER_STACK_BASE,
             },
         },
     },
@@ -148,13 +148,13 @@ pub fn init() -> MapResult<()> {
             )?;
 
             // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（hart h 帧 =
-            //    BASE + h·PAGE；元数据由 trap::init 逐帧写入），
-            //    PA 存 KERNEL_FRAMES[h]——__strap 按 TP 索引帧页。
-            for (h, slot) in KERNEL_FRAMES
-                .iter()
-                .enumerate()
-                .take(crate::machine::hart_count())
-            {
+            //    BASE + h·PAGE；元数据由 trap::init 逐帧写入）。帧 PA 表按实际核数
+            //    动态分配（不再编译期预留 MAX 槽的静态数组）；PA 存 frames[h]——
+            //    __strap 按 TP 索引的是帧区 VA（KERNEL_FRAME_BASE），不经此表。
+            let n = machine::hart_count();
+            space::init_kernel_frames(n);
+            let frames = space::kernel_frames();
+            for (h, slot) in frames.iter().enumerate() {
                 let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                     .map_err(|_| MapError::OutOfMemory)?;
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);

@@ -17,7 +17,7 @@ def main [elf: path] {
     let bios = ($proj_root | path join "SBI")
 
     # 内存 / CPU 核数: $env.X? 未设置时为 null，default 补默认值
-    let mem = ($env.QEMU_MEM? | default "128M")
+    let mem = ($env.QEMU_MEM? | default "256M")
     let smp = ($env.QEMU_SMP? | default "4")
 
     # 透传额外参数: 空格字符串拆成参数列表（正则切分兼容多空格/Tab），过滤空串

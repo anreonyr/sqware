@@ -32,27 +32,38 @@ impl Region {
     }
 }
 
-/// 最大支持的 hart 数（usize 位宽自然上限：WAITING 位图按位号存于
-/// AtomicUsize，SBI IPI 的 hart_mask 同为 64 位——64 核是协议边界；
-/// 帧 VA 布局 KERNEL_FRAME_SLOTS 按此预留，见 space.rs）。
-pub const MAX_HARTS: usize = usize::BITS as usize;
+/// 可寻址的 per-hart 槽数上限（编译期常量 = 内核帧区 VA 窗口宽度，4096 页 =
+/// 16 MiB 高位虚拟地址）。虚拟地址免费，故放得慷慨：**窗口宽度与核数解耦**——
+/// 实际启用核数由 DTB 运行时决定（[`hart_count`]），本常量只是页表槽位的
+/// 编译期防呆上限（超过即 panic，不静默截断）。
+///
+/// 注意：这不是 SBI 协议边界。SBI 的 `sbi_send_ipi` 每次调用至多寻址
+/// XLEN(=64) 个 hart（掩码寄存器位宽），超过需按 64 核一组多次调用
+/// （tie::wake_all 已按此循环）；协议对总核数不设上限。
+pub const MAX_HART_SLOTS: usize = 4096;
 
 /// 已启动的 hart 集合（进程级进度记录；无功能读者，保留为诊断信息）。
 static STARTED_HARTS: AtomicUsize = AtomicUsize::new(1);
 
 /// 记录某 hart 已启动（HSM `hart_start` 成功后由 hart 0 调用）。
 pub fn mark_hart_started(hart: usize) {
-    debug_assert!(hart < MAX_HARTS, "hart id {hart} beyond MAX_HARTS {MAX_HARTS}");
+    debug_assert!(
+        hart < MAX_HART_SLOTS,
+        "hart id {hart} beyond MAX_HART_SLOTS {MAX_HART_SLOTS}"
+    );
     STARTED_HARTS.fetch_max(hart + 1, Ordering::Relaxed);
 }
 
-/// 实际活跃核数 = DTB 上报核数（按 MAX_HARTS 截断——64 位掩码协议边界）。
+/// 实际活跃核数 = DTB 上报核数（上限 = VA 窗口槽数 MAX_HART_SLOTS）。
 ///
-/// **动态获取**：不固定 8 核；DTB 报多少核就启用多少（上限 64）。
-/// per-hart 结构（调度器数组 / trap 栈 / 内核帧）都按此值定尺寸。
+/// **动态获取**：核数完全由 DTB 决定（`Machine.hart`，运行时注入）。
+/// per-hart 结构（调度器数组 / trap 栈 / 内核帧 / 帧 PA 表）都按此值定尺寸。
 pub fn hart_count() -> usize {
     let n = get().hart;
-    assert!(n <= MAX_HARTS, "DTB reports {n} harts, at most {MAX_HARTS} supported");
+    assert!(
+        n <= MAX_HART_SLOTS,
+        "DTB reports {n} harts, at most {MAX_HART_SLOTS} VA slots"
+    );
     n
 }
 

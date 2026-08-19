@@ -59,6 +59,10 @@ impl FrameAllocator {
                 .map(|f| f.outstanding)
                 .unwrap_or(0)
         }
+        #[cfg(not(debug_assertions))]
+        {
+            0
+        }
     }
 }
 
@@ -100,8 +104,11 @@ pub fn check_baseline() {
         let base = FRAME_BASELINE.load(core::sync::atomic::Ordering::Relaxed);
         let heap_base = HEAP_BASELINE.load(core::sync::atomic::Ordering::Relaxed);
         let heap_now = crate::memory::allocator::block::live_pages();
-        // 内核持久帧 = 基线在途帧 − 基线时的堆页；关机在途帧 = 内核持久帧 + 当前堆页 + 任务帧。
-        let expected = base.saturating_sub(heap_base) + heap_now;
+        // 内核持久帧 = 基线在途帧 − 基线时的堆页；关机在途帧 = 内核持久帧 + 当前堆页
+        // + 任务帧 + 每张活堆页挂接的 unitmap 单元页（debug 位图：live 堆页 1:1
+        // 挂一张单元页，整页归还时随 detach 释放——常驻堆页（如调度器表）的单元页
+        // 也常驻，须随堆页一起计入预期）。
+        let expected = base.saturating_sub(heap_base) + heap_now * 2;
         let leaked = now.saturating_sub(expected);
         assert_eq!(
             leaked, 0,
@@ -242,8 +249,8 @@ impl FrameInner {
         // base ≥ prov_base（frontier 单调前进）⇒ 本步尺寸 ≤ 第一步，
         // resize 不会触发新分配，无需 try_reserve。
         self.base = bump::frontier().next_multiple_of(PAGE_SIZE);
-        #[cfg(debug_assertions)]
-        crate::memory::allocator::pageown::set_base(self.base);
+        // pageown 位图已在 block::init 分配（先于本处 base 定址，见 block.rs）；
+        // 帧区从此基址起，位图数组在其下方、绝无重叠。
         let max_frame = self.edge.saturating_sub(self.base) / PAGE_SIZE;
         if max_frame == 0 {
             return Err(InitError::NoFreeFrames);

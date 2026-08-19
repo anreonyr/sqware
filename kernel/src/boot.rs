@@ -122,10 +122,10 @@ fn spawn_demos() -> Result<(), MapError> {
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-heaper")[..],
         //     "heaper",
         // ),
-        (
-            &include_bytes!("../..//target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
-            "spawner",
-        ),
+        // (
+        //     &include_bytes!("../..//target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
+        //     "spawner",
+        // ),
     ] {
         let (team, entry) = load_user(elf);
         team.task().name(name).entry(entry).spawn()?;

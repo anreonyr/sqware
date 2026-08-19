@@ -30,9 +30,15 @@ static HALTING: AtomicBool = AtomicBool::new(false);
 /// 其它核可能在 done() 置位瞬间仍在 clear()/task_reclaim 归还任务帧，不等齐
 /// 会把在途回收误报为泄漏（多核 shutdown 竞态）。
 static HALT_ARRIVED: AtomicUsize = AtomicUsize::new(0);
-/// WFI 等待唤醒的 hart 位图（bit h = hart h 正阻塞在 scheduler::wait；push 后
-/// 据此发 IPI——休眠核醒来后可 steal 新任务）。
-static WAITING: AtomicUsize = AtomicUsize::new(0);
+/// WFI 等待唤醒的 hart 位图（字 w 的 bit b = hart `w·64 + b` 正阻塞在
+/// scheduler::wait；push 后据此发 IPI——休眠核醒来后可 steal 新任务）。
+/// 多字：字宽 = SBI 单次 `sbi_send_ipi` 的寻址窗口（XLEN = 64 位），按
+/// MAX_HART_SLOTS 分字（当前 4096/64 = 64 字 = 512 B 静态）。位位置 = hartid，
+/// 故仍要求 DTB hartid 连续（QEMU 满足；稀疏 hartid 需映射层，超出本次范围）。
+static WAITING: [AtomicUsize; WAITING_WORDS] = [const { AtomicUsize::new(0) }; WAITING_WORDS];
+
+/// WAITING 位图字数：每字 64 位（= 协议单次 IPI 掩码窗口）。
+const WAITING_WORDS: usize = crate::machine::MAX_HART_SLOTS / usize::BITS as usize;
 
 /// 任务入队计数 +1（scheduler::push 收尾时调用；PUSHED）。
 ///
@@ -87,29 +93,44 @@ fn wfi() -> ! {
 /// **复查队列**再睡：置位前的 push 已按位补 IPI，置位后的 push 经 Acquire 读
 /// 必见本位置位——AcqRel 与 wake_all 的 Acquire 配对闭合「漏唤醒」窗口。
 pub(super) fn sleep(hart: usize) {
-    WAITING.fetch_or(1usize << hart, Ordering::AcqRel);
+    debug_assert!(
+        hart < crate::machine::MAX_HART_SLOTS,
+        "sleep hart {hart} beyond MAX_HART_SLOTS"
+    );
+    WAITING[hart / (usize::BITS as usize)].fetch_or(1usize << (hart % (usize::BITS as usize)), Ordering::AcqRel);
 }
 
 /// 清除 hart 的等待标记（WFI 唤醒后 / 复查发现任务时调用）。
 pub(super) fn wake(hart: usize) {
-    WAITING.fetch_and(!(1usize << hart), Ordering::AcqRel);
+    debug_assert!(
+        hart < crate::machine::MAX_HART_SLOTS,
+        "wake hart {hart} beyond MAX_HART_SLOTS"
+    );
+    WAITING[hart / (usize::BITS as usize)].fetch_and(!(1usize << (hart % (usize::BITS as usize))), Ordering::AcqRel);
 }
 
 /// 唤醒所有 WFI 等待中的 hart（push 后调用：新任务出现 → 睡核可 steal）。
 ///
 /// SBI IPI 把目标核 SSIP 置位（sie.SSIP 已使能），目标核在 WFI 中挂起即被唤醒
 /// ——全局 SIE=0，只唤醒不取中断。错误（如核已醒）尽力而为。
+///
+/// 按 64 核一组循环：SBI 协议每次 `sbi_send_ipi` 的掩码至多 XLEN(=64) 位，超过
+/// 必须以 mask_base 递增多次调用（riscv-sbi-doc binary-encoding 的 Hart list
+/// parameter 节明确如此规定，未设总核数上限）。当前字 0 之外恒为空，
+/// 循环退化回单次调用。
 pub(super) fn wake_all() {
-    let waiting = WAITING.load(Ordering::Acquire);
-    if waiting == 0 {
-        return;
+    for (w, word) in WAITING.iter().enumerate() {
+        let waiting = word.load(Ordering::Acquire);
+        if waiting == 0 {
+            continue;
+        }
+        // a0 = hart_mask（本组 64 位，bit b = hart w·64+b），a1 = mask_base = w·64
+        let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
+            .args(SArgs {
+                a0: waiting,
+                a1: w * (usize::BITS as usize),
+                ..Default::default()
+            })
+            .call();
     }
-    // a0 = hart_mask（≤ 64 核，mask_base = 0 —— WAITING 位图与 SBI IPI 掩码同为
-    // 64 位，MAX_HARTS = usize::BITS 即此协议边界）
-    let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
-        .args(SArgs {
-            a0: waiting,
-            ..Default::default()
-        })
-        .call();
 }

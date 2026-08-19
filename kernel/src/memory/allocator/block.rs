@@ -65,12 +65,18 @@ impl BlockAllocator {
         // SAFETY: 单 hart（boot 早期）下调用，无并发。
         let mut inner = BlockInner::new();
         inner.init()?;
-        // debug: unitmap 基准 = frame 区域基址（与 frame::init 同一算式；
-        // frame::init 后置写入相同值）。
+        // debug: pageown/unitmap 基准 = frame 区域基址（与 frame::init 同一算式；
+        // frame::init 后置写入相同值）——按实际空闲区页数分配位图（内存
+        // >128 MiB 时固定 128 MiB 数组会越界）。**两张表都须在此分配**：
+        // 它们会占用 bump 内存，而 frame base 要等所有 bump 分配完成后才定址——
+        // 在此分配保证位图数组落在帧区之下，帧分配器绝不会把它们当作可用页交出
+        // （否则其内存会被堆数据覆写、位图突然归零）。
         #[cfg(debug_assertions)]
         {
             let base = crate::memory::allocator::bump::frontier().next_multiple_of(PAGE_SIZE);
-            unitmap::set_base(base);
+            let pages = (crate::memory::allocator::bump::boundary() - base) / PAGE_SIZE;
+            crate::memory::allocator::pageown::set_base(base, pages);
+            unitmap::set_base(base, pages);
         }
         guard.replace(inner);
         Ok(())
@@ -213,6 +219,7 @@ impl BlockInner {
                     // debug: 整页归还——页必须确实由堆持有（防把非堆页误还）
                     crate::memory::allocator::pageown::release(base);
                     unitmap::assert_page_clear(base);
+                    unitmap::detach(base);
                 }
                 frame_allocator().deallocate(
                     NonNull::new_unchecked(base as *mut u8),
@@ -234,6 +241,7 @@ impl BlockInner {
                 // debug: 整页归还——页必须确实由堆持有（防把非堆页误还）
                 crate::memory::allocator::pageown::release(base);
                 unitmap::assert_page_clear(base);
+                unitmap::detach(base);
             }
             frame_allocator().deallocate(
                 NonNull::new_unchecked(base as *mut u8),
@@ -253,9 +261,13 @@ impl BlockInner {
             HEAP_LIVE_PAGES.fetch_add(1, Ordering::Relaxed);
 
             let base = page.cast::<u8>().as_ptr() as usize;
-            // debug: 登记堆页所有权（页必须来自 frame 池且此前未被堆持有）
+            // debug: 登记堆页所有权（页必须来自 frame 池且此前未被堆持有），
+            // 并惰性挂接本页的块级在位位图（懒分配：只有持有页才有单元数组）。
             #[cfg(debug_assertions)]
-            crate::memory::allocator::pageown::hold(base);
+            {
+                crate::memory::allocator::pageown::hold(base);
+                unitmap::attach(base);
+            }
 
             if power < MAX_POWER {
                 // 多 block 页：页头 8 字节存 used 计数，block 从 offset 8 开始
@@ -367,76 +379,156 @@ pub(crate) fn live_pages() -> usize {
 // 页级 pageown 位图只能抓「堆页泄漏进 frame 池」；本位图按 8 字节单元追踪
 // 「块当前有没有活跃持有者」——抓到**堆内部**的块级双发（同一块发给两个持有者
 //  → Arc<Task> 头互写、strong 幻值）与错幂释放（如 4096 布局释放在 128B 块页
-//  → 整页被误还/整页单元断言失败）。诊断成本：2 MB .bss（仅 debug 构建）。
+//  → 整页被误还/整页单元断言失败）。
 //
-// 仅在 BLOCK 锁内访问（分配/释放路径已持锁），AtomicU8 只作静态内存容器。
+// 存储**懒分配**：只有 block 堆实际持有的页才挂接 512 B 单元数组（取自 frame
+// 池整页），页索引表按空闲区页数定长 O(1) 查——内存与初始化成本只随堆页数
+// 增长，而非全量 RAM（1 GiB 下由原先 128 MiB 常驻降到 ≈2 MiB 表 + 每活动堆页
+// 4 KiB）。任何单元在**未持页**上被访问立即报错——正是要抓的越界特征。
+// 仅在 BLOCK 锁内访问（分配/释放路径已持锁），无需原子指令。
 #[cfg(debug_assertions)]
 mod unitmap {
-    use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+    use core::cell::UnsafeCell;
+    use core::ptr::NonNull;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    use alloc::boxed::Box;
+    use alloc::vec;
+
+    use crate::lock::OnceLock;
     use crate::memory::PAGE_SIZE;
+    use crate::memory::allocator::frame::allocator as frame_allocator;
 
     pub(crate) const UNITS_PER_PAGE: usize = PAGE_SIZE / 8; // 512 单元/页
-    pub(crate) const PAGES: usize = 32768; // 128 MiB / 4 KiB
-    /// 单元在途位（1 = 有活跃持有者；0 = 空闲/在 freepool）。
-    pub(crate) static FLAG: [AtomicU8; UNITS_PER_PAGE * PAGES] =
-        [const { AtomicU8::new(0) }; UNITS_PER_PAGE * PAGES];
+
+    struct UnitTable(UnsafeCell<Box<[Option<NonNull<u8>>]>>);
+    // SAFETY: 数组读写全部在 BLOCK 锁内（见模块头注释），跨 hart 互斥由该锁
+    // 保证；这里的 Send/Sync 与「任何时刻至多一个持锁者触达内部数据」同义。
+    unsafe impl Send for UnitTable {}
+    unsafe impl Sync for UnitTable {}
+    impl UnitTable {
+        /// 取可变切片（调用方须持 BLOCK 锁保证独占）。
+        fn get(&self) -> &mut [Option<NonNull<u8>>] {
+            // SAFETY: 调用方持 BLOCK 锁（唯一写者），无并发别名。
+            unsafe { &mut *self.0.get() }
+        }
+    }
+
+    static TABLE: OnceLock<UnitTable> = OnceLock::new();
     static FRAME_BASE: AtomicUsize = AtomicUsize::new(0);
 
-    pub(crate) fn set_base(base: usize) {
+    /// 记录基准并分配页索引表（block::init 调用恰好一次，单 hart boot 期）。
+    /// `pages` = 实际空闲区页数；表按页索引定长，条目由 [`attach`] 惰性挂接。
+    pub(crate) fn set_base(base: usize, pages: usize) {
         FRAME_BASE.store(base, Ordering::Relaxed);
+        let table: Box<[Option<NonNull<u8>>]> = vec![None; pages].into_boxed_slice();
+        assert!(
+            TABLE.set(UnitTable(UnsafeCell::new(table))).is_ok(),
+            "unitmap double init"
+        );
     }
 
     fn base() -> usize {
         FRAME_BASE.load(Ordering::Relaxed)
     }
 
-    /// 全局单元号：相对 frame 基址的 (页内偏移 8B 单元)。
-    fn unit(addr: usize) -> usize {
-        let b = base();
-        let page = (addr - b) / PAGE_SIZE;
+    /// 页索引（相对 frame 基址）。
+    fn page_idx(pa: usize) -> usize {
+        let page = (pa - base()) / PAGE_SIZE;
+        let npages = TABLE.get().expect("unitmap not initialized").get().len();
         assert!(
-            page < PAGES,
-            "unitmap: addr {addr:#x} outside range (base {b:#x})"
+            page < npages,
+            "unitmap: addr {pa:#x} outside range (base {:#x}, pages {npages})",
+            base()
         );
-        page * UNITS_PER_PAGE + (addr % PAGE_SIZE) / 8
+        page
+    }
+
+    /// 某页的单元数组指针（须已 attach——未持页访问 = 越界特征，立即报）。
+    fn flags(pa: usize) -> *mut u8 {
+        let table = TABLE.get().expect("unitmap not initialized").get();
+        table[page_idx(pa)]
+            .expect("unitmap: page {pa:#x} not tracked by block heap (foreign ptr?)")
+            .as_ptr()
+    }
+
+    /// refill 取页后登记：为页分配 512 B 单元数组（整页取自 frame 池，仅用首
+    /// 512 B）。**须持 BLOCK 锁调用**（锁序 block→frame 合规）。
+    pub(crate) fn attach(pa: usize) {
+        let page = page_idx(pa);
+        let table = TABLE.get().expect("unitmap not initialized").get();
+        assert!(
+            table[page].is_none(),
+            "unitmap attach: page {pa:#x} already tracked"
+        );
+        let layout = core::alloc::Layout::from_size_align(512, 8).expect("unitmap layout");
+        let block = frame_allocator()
+            .allocate(layout)
+            .expect("unitmap attach: frame OOM");
+        let ptr = block.cast::<u8>().as_ptr();
+        // SAFETY: 独占的新分配区域；BLOCK 锁内写，无并发。
+        unsafe { core::ptr::write_bytes(ptr, 0, block.len()) };
+        // SAFETY: 新分配的非空指针。
+        table[page] = Some(unsafe { NonNull::new_unchecked(ptr) });
+    }
+
+    /// 整页归还 frame 前摘除并释放单元数组（调用方须先通过 [`assert_page_clear`]）。
+    /// **须持 BLOCK 锁调用**。
+    pub(crate) fn detach(pa: usize) {
+        let page = page_idx(pa);
+        let table = TABLE.get().expect("unitmap not initialized").get();
+        let block = table[page]
+            .take()
+            .expect("unitmap detach: page {pa:#x} not tracked");
+        // SAFETY: block 来自 attach 的同一布局分配（512 B → 整页对齐归一）。
+        unsafe {
+            frame_allocator().deallocate(
+                NonNull::new_unchecked(block.as_ptr() as *mut u8),
+                core::alloc::Layout::from_size_align(512, 8).expect("unitmap layout"),
+            );
+        }
     }
 
     /// 断言 addr..addr+size 所有单元均无主（再标记为在途）。
     pub(crate) fn mark(addr: usize, size: usize) {
         let n = size / 8;
-        let u0 = unit(addr);
+        let u0 = (addr % PAGE_SIZE) / 8;
+        let flags = flags(addr);
         for i in 0..n {
-            let f = FLAG[u0 + i].load(Ordering::Relaxed);
+            // SAFETY: u0+n ≤ 512（块不跨页，size ≤ PAGE_SIZE）；页已 attach。
+            let f = unsafe { *flags.add(u0 + i) };
             assert_eq!(
                 f, 0,
-                "block alloc: unit {} (addr {:#x}) ALREADY IN USE — 块级双发！(base {:#x})",
-                u0 + i, addr + i * 8, base()
+                "block alloc: unit {} (addr {:#x}) ALREADY IN USE — 块级双发！",
+                u0 + i, addr + i * 8
             );
-            FLAG[u0 + i].store(1, Ordering::Relaxed);
+            unsafe { *flags.add(u0 + i) = 1 };
         }
     }
 
     /// 断言 addr..addr+size 所有单元均在途（再清空）。
     pub(crate) fn unmark(addr: usize, size: usize) {
         let n = size / 8;
-        let u0 = unit(addr);
+        let u0 = (addr % PAGE_SIZE) / 8;
+        let flags = flags(addr);
         for i in 0..n {
-            let f = FLAG[u0 + i].load(Ordering::Relaxed);
+            // SAFETY: 同 mark。
+            let f = unsafe { *flags.add(u0 + i) };
             assert_eq!(
                 f, 1,
                 "block dealloc: unit {} (addr {:#x}) NOT IN USE — 释放未分配单元（错幂释放/脏指针）",
                 u0 + i, addr + i * 8
             );
-            FLAG[u0 + i].store(0, Ordering::Relaxed);
+            unsafe { *flags.add(u0 + i) = 0 };
         }
     }
 
-    /// 断言整页（header 之外）无活跃单元——整页归还前的完整性检查。
+    /// 断言整页无活跃单元——整页归还前的完整性检查（通过后调用方 detach）。
     pub(crate) fn assert_page_clear(pa: usize) {
-        let u0 = unit(pa);
-        debug_assert_eq!(FLAG[u0].load(Ordering::Relaxed), 0, "unitmap: page header unit busy");
-        for i in 1..UNITS_PER_PAGE {
-            let f = FLAG[u0 + i].load(Ordering::Relaxed);
+        let flags = flags(pa);
+        for i in 0..UNITS_PER_PAGE {
+            // SAFETY: 页已 attach，i < 512。
+            let f = unsafe { *flags.add(i) };
             assert_eq!(
                 f, 0,
                 "block: page {pa:#x} returned with live unit {} — 计数记账错误（used-counter 提前归零）",

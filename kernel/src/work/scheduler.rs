@@ -531,7 +531,7 @@ fn probe_strong(t: &Arc<Task>, ctx: &str) {
 }
 
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
-// （MAX_HARTS=8 仅为编译期安全上限，不固定静态数组）。长度镜像随结构体共生。
+// （MAX_HART_SLOTS=4096 仅为编译期 VA 窗口上限，不固定静态数组）。长度镜像随结构体共生。
 
 // ── 核心：全局表（SCHEDULERS / blocked / reaped）──
 
