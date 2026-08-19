@@ -32,23 +32,28 @@ impl Region {
     }
 }
 
-/// 最大支持的 hart 数（编译期安全上限；per-hart 结构按实际核数动态分配，
-/// 见 [`hart_count`]）。
-pub const MAX_HARTS: usize = 8;
+/// 最大支持的 hart 数（usize 位宽自然上限：WAITING 位图按位号存于
+/// AtomicUsize，SBI IPI 的 hart_mask 同为 64 位——64 核是协议边界；
+/// 帧 VA 布局 KERNEL_FRAME_SLOTS 按此预留，见 space.rs）。
+pub const MAX_HARTS: usize = usize::BITS as usize;
 
 /// 已启动的 hart 集合（进程级进度记录；无功能读者，保留为诊断信息）。
 static STARTED_HARTS: AtomicUsize = AtomicUsize::new(1);
 
 /// 记录某 hart 已启动（HSM `hart_start` 成功后由 hart 0 调用）。
 pub fn mark_hart_started(hart: usize) {
+    debug_assert!(hart < MAX_HARTS, "hart id {hart} beyond MAX_HARTS {MAX_HARTS}");
     STARTED_HARTS.fetch_max(hart + 1, Ordering::Relaxed);
 }
 
-/// 实际活跃核数 = min(DTB 核数, MAX_HARTS 上限)。
+/// 实际活跃核数 = DTB 上报核数（按 MAX_HARTS 截断——64 位掩码协议边界）。
 ///
-/// 动态分配的 per-hart 结构（调度器数组 / trap 栈）都按此值定尺寸。
+/// **动态获取**：不固定 8 核；DTB 报多少核就启用多少（上限 64）。
+/// per-hart 结构（调度器数组 / trap 栈 / 内核帧）都按此值定尺寸。
 pub fn hart_count() -> usize {
-    get().hart.min(MAX_HARTS)
+    let n = get().hart;
+    assert!(n <= MAX_HARTS, "DTB reports {n} harts, at most {MAX_HARTS} supported");
+    n
 }
 
 /// 当前 hart id（**执行本代码的核**）——与 `Machine::hart`（总核数）不同。

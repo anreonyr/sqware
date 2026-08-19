@@ -104,7 +104,8 @@ pub(super) fn wake_all() {
     if waiting == 0 {
         return;
     }
-    // a0 = hart_mask（≤ 8 核，mask_base = 0）
+    // a0 = hart_mask（≤ 64 核，mask_base = 0 —— WAITING 位图与 SBI IPI 掩码同为
+    // 64 位，MAX_HARTS = usize::BITS 即此协议边界）
     let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
         .args(SArgs {
             a0: waiting,

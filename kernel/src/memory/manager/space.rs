@@ -472,9 +472,9 @@ pub(crate) const TASK_STACK_AREA_SIZE: usize = 0x4000_0000;
 /// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。`stvec` 指向此处。
 pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000);
 
-/// per-hart 内核帧槽数（编译期固定 = MAX_HARTS 上限；帧 VA 区与帧窗口布局耦合，
-/// 见下方布局断言——实际按 hart_count() 映射/填充，槽位固定使 __strap 的 TP 索引
-/// 不依赖 DTB 核数）。
+/// per-hart 内核帧槽数（编译期按 MAX_HARTS 预留 = usize 位宽（64 核，协议边界）；
+/// 帧 VA 区与帧窗口布局耦合，见下方布局断言——实际按 hart_count() 映射/填充，
+/// 槽位预留使 __strap 的 TP 索引不依赖 DTB 核数，仅多占高位虚拟地址空间）。
 pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HARTS;
 
 /// per-hart 内核帧区基址（紧贴 TRAMPOLINE 之下 SLOTS 页；hart h 帧 VA =
