@@ -132,6 +132,9 @@ unsafe impl Allocator for FrameAllocator {
 
         let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
         let addr = frame.frame_addr(index) as *mut u8;
+        // debug: 弹出的帧不得仍是堆持有页（活堆页泄漏进 frame 池 = 双持有）
+        #[cfg(debug_assertions)]
+        crate::memory::allocator::pageown::assert_not_held(addr as usize, "allocate");
         #[cfg(debug_assertions)]
         {
             frame.outstanding += 1;
@@ -156,6 +159,10 @@ unsafe impl Allocator for FrameAllocator {
             let power = block_power(size);
             let addr = ptr.addr().get();
             let index = frame.frame_index(addr);
+
+            // debug: 归还的帧不得仍是堆持有页（活堆页被归还 = 双持有源头）
+            #[cfg(debug_assertions)]
+            crate::memory::allocator::pageown::assert_not_held(addr, "deallocate");
 
             // debug: double-free 检测——pagemeta 已标 free 的帧再释放说明
             // 帧被释放两次（或归还未分配的地址），会破坏 frame 合并。
@@ -235,6 +242,8 @@ impl FrameInner {
         // base ≥ prov_base（frontier 单调前进）⇒ 本步尺寸 ≤ 第一步，
         // resize 不会触发新分配，无需 try_reserve。
         self.base = bump::frontier().next_multiple_of(PAGE_SIZE);
+        #[cfg(debug_assertions)]
+        crate::memory::allocator::pageown::set_base(self.base);
         let max_frame = self.edge.saturating_sub(self.base) / PAGE_SIZE;
         if max_frame == 0 {
             return Err(InitError::NoFreeFrames);

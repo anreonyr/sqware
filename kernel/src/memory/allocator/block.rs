@@ -65,6 +65,13 @@ impl BlockAllocator {
         // SAFETY: 单 hart（boot 早期）下调用，无并发。
         let mut inner = BlockInner::new();
         inner.init()?;
+        // debug: unitmap 基准 = frame 区域基址（与 frame::init 同一算式；
+        // frame::init 后置写入相同值）。
+        #[cfg(debug_assertions)]
+        {
+            let base = crate::memory::allocator::bump::frontier().next_multiple_of(PAGE_SIZE);
+            unitmap::set_base(base);
+        }
         guard.replace(inner);
         Ok(())
     }
@@ -103,6 +110,9 @@ unsafe impl Allocator for BlockAllocator {
             let next = unsafe { head.cast::<Option<NonNull<u8>>>().read() };
             inner.freepool[power] = next;
             unsafe { inner.increase_used(head, power) };
+            // debug: 块级在位标记（抓堆内块双发）
+            #[cfg(debug_assertions)]
+            unitmap::mark(head.as_ptr() as usize, block_size);
 
             debug!("address {:?}, power {} allocated", head, power);
 
@@ -136,6 +146,9 @@ unsafe impl Allocator for BlockAllocator {
         }
 
         // 头插：将 freed block 写入 freelist 头部
+        // debug: 释放前先校验块确在途（错幂释放/脏指针的面具在此揭开）
+        #[cfg(debug_assertions)]
+        unitmap::unmark(ptr.as_ptr() as usize, 1usize << power);
         unsafe {
             ptr.cast::<Option<NonNull<u8>>>()
                 .write(inner.freepool[power]);
@@ -195,7 +208,12 @@ impl BlockInner {
             if power == MAX_POWER {
                 self.freepool[power] = purge_freelist(self.freepool[power], base);
                 #[cfg(debug_assertions)]
-                HEAP_LIVE_PAGES.fetch_sub(1, Ordering::Relaxed);
+                {
+                    HEAP_LIVE_PAGES.fetch_sub(1, Ordering::Relaxed);
+                    // debug: 整页归还——页必须确实由堆持有（防把非堆页误还）
+                    crate::memory::allocator::pageown::release(base);
+                    unitmap::assert_page_clear(base);
+                }
                 frame_allocator().deallocate(
                     NonNull::new_unchecked(base as *mut u8),
                     Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap(),
@@ -211,7 +229,12 @@ impl BlockInner {
 
             self.freepool[power] = purge_freelist(self.freepool[power], base);
             #[cfg(debug_assertions)]
-            HEAP_LIVE_PAGES.fetch_sub(1, Ordering::Relaxed);
+            {
+                HEAP_LIVE_PAGES.fetch_sub(1, Ordering::Relaxed);
+                // debug: 整页归还——页必须确实由堆持有（防把非堆页误还）
+                crate::memory::allocator::pageown::release(base);
+                unitmap::assert_page_clear(base);
+            }
             frame_allocator().deallocate(
                 NonNull::new_unchecked(base as *mut u8),
                 Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap(),
@@ -230,6 +253,9 @@ impl BlockInner {
             HEAP_LIVE_PAGES.fetch_add(1, Ordering::Relaxed);
 
             let base = page.cast::<u8>().as_ptr() as usize;
+            // debug: 登记堆页所有权（页必须来自 frame 池且此前未被堆持有）
+            #[cfg(debug_assertions)]
+            crate::memory::allocator::pageown::hold(base);
 
             if power < MAX_POWER {
                 // 多 block 页：页头 8 字节存 used 计数，block 从 offset 8 开始
@@ -240,6 +266,9 @@ impl BlockInner {
 
                 let first = NonNull::new_unchecked(usable as *mut u8);
                 self.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
+                // debug: 首块随 refill 分配（在途标记）
+                #[cfg(debug_assertions)]
+                unitmap::mark(first.as_ptr() as usize, block_size);
                 Ok(NonNull::slice_from_raw_parts(first, block_size))
             } else {
                 // 整页单 block：无页头
@@ -247,6 +276,9 @@ impl BlockInner {
 
                 let first = NonNull::new_unchecked(base as *mut u8);
                 self.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
+                // debug: 首块随 refill 分配（在途标记）
+                #[cfg(debug_assertions)]
+                unitmap::mark(first.as_ptr() as usize, block_size);
                 Ok(NonNull::slice_from_raw_parts(first, block_size))
             }
         }
@@ -328,6 +360,95 @@ static HEAP_LIVE_PAGES: AtomicUsize = AtomicUsize::new(0);
 #[cfg(debug_assertions)]
 pub(crate) fn live_pages() -> usize {
     HEAP_LIVE_PAGES.load(Ordering::Relaxed)
+}
+
+// ── 块级在位位图（debug）：任何块在被分配时必须是「无主」的 ──
+//
+// 页级 pageown 位图只能抓「堆页泄漏进 frame 池」；本位图按 8 字节单元追踪
+// 「块当前有没有活跃持有者」——抓到**堆内部**的块级双发（同一块发给两个持有者
+//  → Arc<Task> 头互写、strong 幻值）与错幂释放（如 4096 布局释放在 128B 块页
+//  → 整页被误还/整页单元断言失败）。诊断成本：2 MB .bss（仅 debug 构建）。
+//
+// 仅在 BLOCK 锁内访问（分配/释放路径已持锁），AtomicU8 只作静态内存容器。
+#[cfg(debug_assertions)]
+mod unitmap {
+    use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+    use crate::memory::PAGE_SIZE;
+
+    pub(crate) const UNITS_PER_PAGE: usize = PAGE_SIZE / 8; // 512 单元/页
+    pub(crate) const PAGES: usize = 32768; // 128 MiB / 4 KiB
+    /// 单元在途位（1 = 有活跃持有者；0 = 空闲/在 freepool）。
+    pub(crate) static FLAG: [AtomicU8; UNITS_PER_PAGE * PAGES] =
+        [const { AtomicU8::new(0) }; UNITS_PER_PAGE * PAGES];
+    static FRAME_BASE: AtomicUsize = AtomicUsize::new(0);
+
+    pub(crate) fn set_base(base: usize) {
+        FRAME_BASE.store(base, Ordering::Relaxed);
+    }
+
+    fn base() -> usize {
+        FRAME_BASE.load(Ordering::Relaxed)
+    }
+
+    /// 全局单元号：相对 frame 基址的 (页内偏移 8B 单元)。
+    fn unit(addr: usize) -> usize {
+        let b = base();
+        let page = (addr - b) / PAGE_SIZE;
+        assert!(
+            page < PAGES,
+            "unitmap: addr {addr:#x} outside range (base {b:#x})"
+        );
+        page * UNITS_PER_PAGE + (addr % PAGE_SIZE) / 8
+    }
+
+    /// 断言 addr..addr+size 所有单元均无主（再标记为在途）。
+    pub(crate) fn mark(addr: usize, size: usize) {
+        let n = size / 8;
+        let u0 = unit(addr);
+        for i in 0..n {
+            let f = FLAG[u0 + i].load(Ordering::Relaxed);
+            assert_eq!(
+                f, 0,
+                "block alloc: unit {} (addr {:#x}) ALREADY IN USE — 块级双发！(base {:#x})",
+                u0 + i, addr + i * 8, base()
+            );
+            FLAG[u0 + i].store(1, Ordering::Relaxed);
+        }
+    }
+
+    /// 断言 addr..addr+size 所有单元均在途（再清空）。
+    pub(crate) fn unmark(addr: usize, size: usize) {
+        let n = size / 8;
+        let u0 = unit(addr);
+        for i in 0..n {
+            let f = FLAG[u0 + i].load(Ordering::Relaxed);
+            assert_eq!(
+                f, 1,
+                "block dealloc: unit {} (addr {:#x}) NOT IN USE — 释放未分配单元（错幂释放/脏指针）",
+                u0 + i, addr + i * 8
+            );
+            FLAG[u0 + i].store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// 断言整页（header 之外）无活跃单元——整页归还前的完整性检查。
+    pub(crate) fn assert_page_clear(pa: usize) {
+        let u0 = unit(pa);
+        debug_assert_eq!(FLAG[u0].load(Ordering::Relaxed), 0, "unitmap: page header unit busy");
+        for i in 1..UNITS_PER_PAGE {
+            let f = FLAG[u0 + i].load(Ordering::Relaxed);
+            assert_eq!(
+                f, 0,
+                "block: page {pa:#x} returned with live unit {} — 计数记账错误（used-counter 提前归零）",
+                i
+            );
+        }
+    }
+
+    /// 初始化基准（block::init 时由 frame 侧 base 写入；refill 前必有值）。
+    pub(crate) fn base_set() -> bool {
+        base() != 0
+    }
 }
 
 pub fn allocator() -> &'static dyn Allocator {

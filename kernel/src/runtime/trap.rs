@@ -20,7 +20,6 @@ use log::info;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sie, sip, sstatus, stval, stvec, time};
 
-use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::space::{KERNEL_FRAME_BASE, kernel_frame_pa};
@@ -30,6 +29,7 @@ use crate::runtime::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, establish_tp, init_trap_stacks,
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
 };
+use crate::{machine, put};
 use sbi::{TimerCall, fid::Timer, scall::SArgs};
 
 /// per-hart trap 栈底 canary（溢出检测：破坏即 panic；trampoline 的
@@ -257,7 +257,7 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
             frame as *mut TrapContext
         }
         Trap::Interrupt(other) => {
-            panic!("unhandled interrupt: {other:?} \n{frame:#?}");
+            put!("unhandled interrupt: {other:?}\n{frame:#?}\n");
             frame as *mut TrapContext
         }
         // 用户态环境调用（U 态 ecall）：envcall 表分发
