@@ -44,6 +44,7 @@ def main [elf: path] {
         ...$gdb
         ...$extra
     ]
-
+ 
+    ^cargo b --all
     ^qemu-system-riscv64 ...$qemu_args
 }

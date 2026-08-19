@@ -127,4 +127,20 @@ impl BitmapAllocator {
             self.bits.resize(self.units().div_ceil(64), 0);
         }
     }
+
+    /// 构建期立即分配位图（不惰性）——调用方须能传播分配失败。
+    ///
+    /// Space 窗口位图（尤其是 1 GiB 栈窗口的 32 KiB 位图）若惰性推迟到首个
+    /// 任务分配，会落在 frame 基线（`record_baseline`）之后；而 kernel 空间为
+    /// 'static 永不 Drop，其位图随空间永生 → `check_baseline` 把良性的内核窗口
+    /// 簿记误报为任务帧泄漏。构建期就位后：kernel 空间的位图计入基线（内核
+    /// 持久帧），用户空间的位图随 `Space::drop` 照常归还。
+    pub(crate) fn eager(&mut self) -> Result<(), AllocError> {
+        if self.bits.is_empty() && self.units() > 0 {
+            let n = self.units().div_ceil(64);
+            self.bits.try_reserve_exact(n).map_err(|_| AllocError)?;
+            self.bits.resize(n, 0);
+        }
+        Ok(())
+    }
 }

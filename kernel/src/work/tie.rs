@@ -17,6 +17,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use sbi::scall::SArgs;
 use sbi::{self, fid};
+use crate::machine;
 use crate::memory::allocator::frame;
 use crate::putln;
 
@@ -25,6 +26,10 @@ static PUSHED: AtomicUsize = AtomicUsize::new(0);
 static REAPED: AtomicUsize = AtomicUsize::new(0);
 /// 停机互斥：第一个触发 srst 的核胜出，其余 wfi（避免双 srst）。
 static HALTING: AtomicBool = AtomicBool::new(false);
+/// 已到达 halt 的核数 — 关机屏障：胜出核须等**全部**核到达后再断言帧基线。
+/// 其它核可能在 done() 置位瞬间仍在 clear()/task_reclaim 归还任务帧，不等齐
+/// 会把在途回收误报为泄漏（多核 shutdown 竞态）。
+static HALT_ARRIVED: AtomicUsize = AtomicUsize::new(0);
 /// WFI 等待唤醒的 hart 位图（bit h = hart h 正阻塞在 scheduler::wait；push 后
 /// 据此发 IPI——休眠核醒来后可 steal 新任务）。
 static WAITING: AtomicUsize = AtomicUsize::new(0);
@@ -49,13 +54,21 @@ pub(super) fn done() -> bool {
 
 /// 全部任务已退出：显式停机（srst；AtomicBool 防双核同时触发——后到者 wfi）。
 ///
-/// 停机前先经 `frame::check_baseline` 断言任务帧已全部归还（在途帧回落内核
-/// 持久帧 + 堆支撑页基线）——地址空间/栈所有权 Drop 泄漏在此暴露。仅胜出核
-/// 检查一次即可（原子互斥保证单核执行）。
+/// 关机屏障：先登记本核到达（HALT_ARRIVED），胜出核唤醒 WFI 睡核（它们随后
+/// 也会到达 halt）并**自旋等全部核到齐**，然后才经 `frame::check_baseline` 断言
+/// 任务帧已全部归还（在途帧回落内核持久帧 + 堆支撑页基线）——地址空间/栈
+/// 所有权 Drop 泄漏在此暴露。不等齐的核可能仍在 clear() 归还帧，会把在途回收
+/// 误报为泄漏。仅胜出核检查一次即可（原子互斥保证单核执行）。
 pub(super) fn halt() -> ! {
+    HALT_ARRIVED.fetch_add(1, Ordering::AcqRel);
     if !HALTING.swap(true, Ordering::AcqRel) {
+        // 唤醒 WFI 睡核：它们醒来后同样会走 done → halt → 登记到达。
+        wake_all();
+        while HALT_ARRIVED.load(Ordering::Acquire) < machine::hart_count() {
+            core::hint::spin_loop();
+        }
         putln!("task: all tasks exited, system halted");
-        // 全部任务已回收、帧已归还——断言零泄漏后再发复位（debug 构建生效）。
+        // 全部核已到齐（回收完毕）、帧已归还——断言零泄漏后再发复位（debug 构建生效）。
         #[cfg(debug_assertions)]
         frame::check_baseline();
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();

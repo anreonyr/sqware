@@ -551,6 +551,20 @@ pub fn running_task_id() -> usize {
         .unwrap_or(NO_TASK_ID)
 }
 
+/// 当前运行任务 id + 名称（panic 诊断用；非阻塞，失败返回 None）。
+///
+/// 与 `running_task_id` 不同，本函数专供 panic_handler：panic 路径故意绕过所有
+/// 锁（见 halt.rs），故这里走两个防御——调度器尚未初始化（极早期 boot panic）
+/// 直接返回 None；调度锁被 panic 现场持有（持锁处 panic）则 `try_lock` 拿不到
+/// 立即放弃，避免递归死锁。拿到的 id/name 均为可拷贝数据，锁随作用域即放。
+pub fn running_task_info() -> Option<(usize, &'static str)> {
+    // 调度器未初始化（boot 早期 panic）时无可查。
+    let all = SCHEDULERS.get()?;
+    let me = machine::hart_id();
+    let guard = all[me].inner.try_lock()?;
+    guard.running.as_ref().map(|t| (t.id, t.name))
+}
+
 // ── 适配层：envcall（envcall.rs 分发调用）──
 
 /// 主动让出入口（envcall YIELD 调用）：无视剩余预算立即轮转。
@@ -573,10 +587,15 @@ pub fn park(duration: Duration) -> usize {
 pub fn reap() -> usize {
     let me = machine::hart_id();
     schedulers()[me].reap();
-    // 取下一任务：此刻 running 已 take，本核空闲 → run（steal / WFI）
-    let pa = run();
     // 回收 Reaped：此刻执行在 per-hart trap 栈上，不触碰任务内存；Reaped 任务
     // 不在任何核运行（running/starved 均无引用），任意核回收均安全。
+    //
+    // 必须在取活（可能触发 done→halt 的 check_baseline）**之前**清空 reaped 队列
+    // ——否则最后退出的任务会带着它的栈/trap 帧及团队地址空间滞留到关机断言，
+    // 泄漏成 check_baseline 的「task frames leaked」（reap 自身先入队，clear 后置
+    // 时 run() 一旦走 done→halt 路径 clear 永不执行）。
     clear();
+    // 取下一任务：此刻 running 已 take，本核空闲 → run（steal / WFI）
+    let pa = run();
     pa
 }

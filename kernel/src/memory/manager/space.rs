@@ -340,13 +340,22 @@ struct SpaceInner {
 
 impl SpaceInner {
     fn new() -> Result<Self, MapError> {
+        let mut dynamic = HashMap::from([
+            (WindowKind::Heap(0), Window::new(WindowKind::Heap(0))),
+            (WindowKind::Stack(0), Window::new(WindowKind::Stack(0))),
+            (WindowKind::Frame(0), Window::new(WindowKind::Frame(0))),
+        ]);
+        // 窗口位图构建期立即分配（不惰性）——kernel 空间的窗口簿记必须先于
+        // frame 基线（record_baseline）存在：惰性推迟到首个任务分配会使 kernel
+        // 空间的位图落在基线后、又随 'static 空间永不归还，check_baseline 把
+        // 良性的内核窗口簿记误报为任务帧泄漏（1 GiB 栈窗口 → 32 KiB 位图 →
+        // frame 分配器 1 块）。
+        for w in dynamic.values_mut() {
+            w.allocator.eager().map_err(|_| MapError::OutOfMemory)?;
+        }
         Ok(Self {
             durable: Durable::new()?,
-            dynamic: HashMap::from([
-                (WindowKind::Heap(0), Window::new(WindowKind::Heap(0))),
-                (WindowKind::Stack(0), Window::new(WindowKind::Stack(0))),
-                (WindowKind::Frame(0), Window::new(WindowKind::Frame(0))),
-            ]),
+            dynamic,
         })
     }
 
