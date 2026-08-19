@@ -12,16 +12,16 @@
 // 基址（block::init 写入 FRAME_BASE，block 首次 refill 必然晚于分配，读到的是
 // 稳定值）。
 //
-// 存储：按实际空闲区页数动态分配（不再固定 128 MiB 上限——内存更大时帧分配器
-// 会合法给出更远的页）。数组在 block::init 阶段（frame base 定址之前）从 bump
-// 分配：必须落在 frame 区域之下——否则帧分配器会把它当作可用页交出，堆数据
-// 覆写位图（实测：word 突然归零 → 误报/漏报持有关系）。
+// 存储：按实际空闲区页数动态分配（内存更大时帧分配器会合法给出更远的页）。
+// 数组在 block::init 阶段（frame base 定址之前）从 bump 分配：必须落在 frame
+// 区域之下——否则帧分配器会把它当作可用页交出，堆数据覆写位图（word 突然归零
+// → 误报/漏报持有关系）。
 //
 // 生命周期：refill 取页 → set（前置断言未持有）；decrease_used 还页 → clear
 // （前置断言持有）。frame::allocate 弹出页 → assert 非持有；frame::deallocate
 // 推入页 → assert 非持有。release 构建整体编译为空。
 
-#![cfg_attr(not(debug_assertions), allow(dead_code))]
+#![cfg_attr(debug_assertions, allow(dead_code))]
 
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -71,7 +71,8 @@ pub(crate) fn set_base(base: usize, pages: usize) {
 #[cfg(debug_assertions)]
 pub(crate) fn is_held(pa: usize) -> bool {
     let n = idx(pa);
-    BITS.get().expect("pageown not initialized")[n / 64].load(Ordering::Relaxed) & (1u64 << (n % 64))
+    BITS.get().expect("pageown not initialized")[n / 64].load(Ordering::Relaxed)
+        & (1u64 << (n % 64))
         != 0
 }
 
@@ -107,3 +108,4 @@ pub(crate) fn assert_not_held(pa: usize, ctx: &str) {
         "frame {ctx}: page {pa:#x} still owned by block heap — live heap page leaked into frame pool"
     );
 }
+

@@ -321,8 +321,8 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
         if sc != 1 {
             // 真实调用者：task_mut 的入口 ra 保存在其帧槽 (s0-8)（0x8021f81a 的
             // `sd ra, 0x1e8(sp)`）。注意不能用 `mv ra`——编译器把 asm 挪到
-            // Arc::strong_count 调用之后，读到的是该调用的返回地址（曾误判为
-            // 多个不同 caller）。同一 asm 内同时读 ra/fp，保证两点同时刻。
+            // Arc::strong_count 调用之后，读到的是该调用的返回地址。同一 asm 内
+            // 同时读 ra/fp，保证两点同时刻。
             let ra: usize;
             let fp: usize;
             // SAFETY: 读返回地址与帧指针寄存器，纯读。
@@ -692,7 +692,7 @@ pub fn init() {
     );
 }
 
-// 任务计数 / 全退出停机 / 休眠核唤醒：见 tie.rs（不变）。
+// 任务计数 / 全退出停机 / 休眠核唤醒：见 tie.rs。
 
 /// 副核 idle 循环：spin + steal；拿到任务即 restore（永不返回）；全退出停机。
 pub fn idle() -> ! {

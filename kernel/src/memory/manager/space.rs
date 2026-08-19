@@ -165,7 +165,7 @@ pub enum WindowKind {
 /// `children` 记录本窗口已分配出去的每块区间（heap 块 / 栈 slot / 线程帧），
 /// 与位图分配器的存活块一一对应——释放即从 children 移除（帧随 Map drop 归还），
 /// 窗口可安全复用（PTE 已清、无残留映射）。身份在 `dynamic` 表的键
-/// （[`WindowKind`]）上，本结构不再携带。
+/// （[`WindowKind`]）上。
 #[derive(Debug)]
 pub struct Window {
     va: VirtAddr,
@@ -610,7 +610,7 @@ impl SpaceBuilder {
 
     /// 完成构建：分配根页表帧；用户空间额外从内核空间种入 trampoline 叶
     /// PTE（见 [`SpaceBuilder::seed_user`]）。线程 trap 帧由后续
-    /// [`Space::frame_alloc`] 按线程分配（不再在构建期创建固定帧）。
+    /// [`Space::frame_alloc`] 按线程分配。
     ///
     /// # Errors
     ///
@@ -632,7 +632,7 @@ impl SpaceBuilder {
     /// （[`Space::TRAMPOLINE`] VA → 内核 trampoline 物理页，**不拥有**，以 Reserved
     /// 常数映射登记：借用、无帧）。
     ///
-    /// 线程 trap 帧**不再**在此创建：每线程帧由 [`Space::frame_alloc`] 在 Frame
+    /// 线程 trap 帧在此不创建：每线程帧由 [`Space::frame_alloc`] 在 Frame
     /// 窗口分配（VA 任意、S-only），内核切换元数据在 spawn 时从内核帧拷贝。
     ///
     /// # Errors
@@ -1310,8 +1310,8 @@ pub(crate) fn kernel_frames() -> &'static [AtomicPhysAddr] {
 
 /// hart h 的内核帧物理地址（__strap 按 TP 索引的帧页 VA；trap::init 写元数据）。
 ///
-/// hart 0 的帧即旧 `TRAP_CONTEXT`（用户帧构建从它拷内核切换信息），现统一经
-/// `kernel_frame_pa(hart)` 读取，不再保留独立常量或别名函数。
+/// hart 0 的帧供用户帧构建从它拷贝内核切换信息，统一经
+/// `kernel_frame_pa(hart)` 读取。
 pub fn kernel_frame_pa(hart: usize) -> PhysAddr {
     kernel_frames()[hart].load(Ordering::Relaxed)
 }

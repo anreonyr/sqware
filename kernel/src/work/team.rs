@@ -41,11 +41,10 @@ impl Team {
 
     /// 清理簿记：摘除已退出线程与全部死条目（弱引用无所有权，滞留仅占条目）。
     ///
-    /// **不 upgrade**：弱引用提升会把存活条目的强计数瞬时 1→2（为取 &mut Task
-    /// 前释放），与调度器 `task_mut` 的「强计数唯一（==1）」不变量撞车——任何
-    /// 并发 task_mut（steal/park/装槽/唤醒）都会在提升窗口误报「多容器强持有」
-    /// 而 panic。改为纯指针比较：本线程条目按 Arc 数据指针摘除，死条目按
-    /// 强计数为 0 摘除——全程不触碰强计数，不变量成立。
+    /// **不 upgrade**：弱引用提升会让存活条目的强计数瞬时 +1，与调度器
+    /// `task_mut` 的「强计数唯一（==1）」不变量撞车。改为纯指针比较：本线程
+    /// 条目按 Arc 数据指针摘除，死条目按强计数为 0 摘除——全程不触碰强计数，
+    /// 不变量成立。
     pub(crate) fn prune_tasks(&self, exited: &Arc<Task>) {
         let exited_ptr = Arc::as_ptr(exited);
         self.tasks.lock().retain(|t| {
@@ -54,7 +53,7 @@ impl Team {
             if Weak::strong_count(t) == 0 {
                 return false;
             }
-            // 本线程条目：按数据指针摘除（不再 `upgrade` + `ptr_eq`——那会造成
+            // 本线程条目：按数据指针摘除（不用 `upgrade` + `ptr_eq`——那会造成
             // 瞬时强计数提升）。
             !(Weak::as_ptr(t) == exited_ptr)
         });

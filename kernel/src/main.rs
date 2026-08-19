@@ -147,8 +147,8 @@ fn probe(dtp: usize) -> Machine {
     let timebase = timebase_of(&fdt);
 
     let free_base = crate::kernel_stack_edge();
-    // 主内核栈位于镜像内（guard + 主栈区），DRAM 顶部不再保留内核栈 → 整个
-    // 空闲区（free_base = 栈顶 .. dram_end）均可分配。
+    // 主内核栈位于镜像内（guard + 主栈区），整个空闲区
+    // （free_base = 栈顶 .. dram_end）均可分配。
     let free_end = dram_base + dram_size;
     let free_size = free_end - free_base;
 
