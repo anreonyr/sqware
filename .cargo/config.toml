@@ -7,4 +7,4 @@ target = "riscv64gc-unknown-none-elf"
 # crate 生效（静态 ET_EXEC，loader 按绝对 VMA 装载——内核同样无 PIE，无害）。
 rustflags = ["-Crelocation-model=static", "-Cforce-frame-pointers=yes"]
 # cargo run 经 scripts/qemu-runner.nu 启动 QEMU（从 workspace 根执行）
-runner = ["nu", "scripts/qemu-runner.nu"]
+runner = ["nu", "scripts/runner.nu"]

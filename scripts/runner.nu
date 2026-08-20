@@ -9,6 +9,7 @@
 #   QEMU_SMP         CPU 核数（默认 4）
 #   QEMU_SEED        -icount RNG 种子（默认随机 32 位；同 seed 可复现）
 #   TRACE_OUT        panic 捕获文件输出目录（默认 <project>/trace）
+#   QEMU_FEATURES    追加给 kernel 的 cargo features（空格分隔；经 -p kernel --features 构建，默认: 无）
 
 def main [elf: path] {
     # 定位项目根: 脚本在 <root>/scripts/, 故 root = FILE_PWD 的父目录。
@@ -36,6 +37,14 @@ def main [elf: path] {
     # GDB 开关: QEMU_GDB=1 时加 ["-s", "-S"], 否则空列表（spread 出去无影响）
     let gdb = if ($env.QEMU_GDB? == "1") { ["-s", "-S"] } else { [] }
 
+    # kernel cargo features：空格分隔，非空时额外对 kernel 单独 -p kernel --features 构建
+    let feats = (
+        $env.QEMU_FEATURES?
+        | default ""
+        | split row ' '
+        | where { |s| $s != "" }
+    )
+
     # panic 捕获：输出目录（默认 <project>/trace）、临时捕获文件
     let trapdir = ($env.TRACE_OUT? | default ($proj_root | path join "trace"))
     mkdir $trapdir
@@ -57,13 +66,15 @@ def main [elf: path] {
         ...$extra
     ]
 
+    # 构建：先 --all（保证 user ELF 就绪），再按需对 kernel 单独带 feature 构建
     ^cargo b --all
+    if (($feats | length) > 0) {
+        ^cargo b -p kernel --features ($feats | str join ',')
+    }
 
-    # 运行 qemu：客机 console（含 panic/trace）走 stdout；tee 旁路到临时捕获文件并保留终端回显
-    let _captured = (
-        ^qemu-system-riscv64 ...$qemu_args
-        | tee { save --force $cap }
-    )
+    # 运行 qemu：客机 console 走 stdout；tee 同时实时显示到终端并写入捕获文件。
+    # 勿包进 let —— let 会把外部输出吞掉，终端看不到（"我看不到输出"的根因）。
+    ^qemu-system-riscv64 ...$qemu_args | tee { save --force $cap }
 
     echo $"SEED: ($seed)"
 
@@ -75,7 +86,9 @@ def main [elf: path] {
     )
     if $panicked {
         let ts = (date now | format date '%Y%m%d-%H%M%S')
-        let dump = ($trapdir | path join $"trace-($seed)-($ts).log")
+        # 文件名带 dump 的信息长度（字节数），与 JSON 行的 len 呼应
+        let nbytes = (ls $cap | get size.0)
+        let dump = ($trapdir | path join $"trace-($seed)-($ts)-($nbytes)B.log")
         cp $cap $dump
         print $"panic captured -> ($dump)"
     } else {
