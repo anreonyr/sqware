@@ -725,6 +725,10 @@ pub(crate) fn push(task: Arc<Task>) {
 /// 检查；enter_first_task / idle_loop / reap / park 空分支（running 已 take 或
 /// 本为空闲）直接进入取活循环。
 pub fn run() -> usize {
+    // 0. 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）。
+    //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒、不经过 trap_handler
+    //    的路径（用户核走 trap 入口钩子）。常运行时恒 no-op。
+    crate::runtime::halt::hush();
     let me = machine::hart_id();
     let s = &schedulers()[me];
     let mut i = s.inner.lock();

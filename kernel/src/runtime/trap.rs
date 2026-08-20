@@ -181,6 +181,11 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
     //    由当前 sp（trap 栈体内）反解段号（trampoline::establish_tp）。
     establish_tp();
 
+    // 0.5 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）。
+    //    用户态核的定时器/IPI 陷阱、及任何 trap 入口都会在此拦下并自停；
+    //    正常运行时恒 no-op。
+    crate::runtime::halt::hush();
+
     // 1. trap 栈 guard 溢出特判（先于 canary：溢出可能已破坏 canary 字）。
     //    仅缺页类 scause 才读 stval（其余陷阱 stval 无意义，可能残留旧值）。
     let cause = scause::read();
