@@ -27,14 +27,14 @@ use core::num::NonZeroUsize;
 use core::sync::atomic::Ordering;
 use hashbrown::HashMap;
 
-use crate::lock::reentrant::RelLockGuard;
 use crate::lock::OnceLock;
 use crate::memory::allocator::bitmap::BitmapAllocator;
 use crate::memory::allocator::frame::allocator;
 use crate::{lock::RelLock, memory::PAGE_SIZE};
 
-use super::{
+use crate::memory::manager::{
     addr::{AtomicPhysAddr, PhysAddr, VirtAddr},
+    asid,
     entry::PteFlags,
     flush_asid,
     table::{Frame, FrameState, MapError, TableNode},
@@ -473,6 +473,18 @@ pub(crate) const TASK_STACK_AREA_SIZE: usize = 0x4000_0000;
 /// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。`stvec` 指向此处。
 pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000);
 
+/// trampoline 页的物理地址（纯链接符号：内核镜像恒等加载，链接地址即物理地址）。
+///
+/// 属内核空间布局（TRAMPOLINE VA 所映射的物理帧），故与 `TRAMPOLINE` 同驻本模块；
+/// `memory::manager::init` 映射该页时经此取 PA。`runtime::trampoline` 的
+/// `__alltraps/__restore` 仍在运行时层按自身 VA 偏移计算。
+pub(crate) fn trampoline_pa() -> PhysAddr {
+    unsafe extern "C" {
+        static __trampoline_start: u8;
+    }
+    PhysAddr::from_raw(core::ptr::addr_of!(__trampoline_start) as usize)
+}
+
 /// per-hart 内核帧槽数（= 内核帧区 VA 窗口宽度 = MAX_HART_SLOTS，编译期预留
 /// 4096 页 = 16 MiB 高位虚拟地址）。帧区与帧窗口布局耦合，见下方布局断言——
 /// 实际按 hart_count() 映射/填充，槽位预留使 __strap 的 TP 索引不依赖 DTB
@@ -603,7 +615,7 @@ impl SpaceBuilder {
     pub fn user() -> Self {
         Self {
             kind: SpaceKind::User {
-                asid: super::asid::allocate(),
+                asid: asid::allocate(),
             },
         }
     }
@@ -639,11 +651,9 @@ impl SpaceBuilder {
     ///
     /// 页表帧耗尽时返回 [`MapError::OutOfMemory`]。
     fn seed_user(&self, space: &mut Space) -> Result<(), MapError> {
-        // 读内核空间的 trampoline 叶 PTE（KERNEL_SPACE 只读）
+        // 读内核空间的 trampoline 叶 PTE（内核空间唯一归属 KERNEL_TEAM，只读）
         let (tramp_pa, tramp_flags) = {
-            let guard = KERNEL_SPACE.lock();
-            let ks = guard.as_ref().ok_or(MapError::NotMapped)?;
-            let ks_inner = ks.inner.lock();
+            let ks_inner = crate::work::unit::team::kernel().space.inner.lock();
             ks_inner.durable.root.walk_ref(TRAMPOLINE)?
         };
 
@@ -1263,7 +1273,7 @@ impl Drop for Space {
         // 先释放本空间的 ASID：`free` 内部会 sfence 该 ASID 的 TLB 残留条目
         // （ASID 可能被后续任务复用，旧条目须失效）。内核空间 ASID 0 不参与分配。
         if let SpaceKind::User { asid } = self.kind {
-            super::asid::deallocate(asid);
+            asid::deallocate(asid);
         }
         // `inner` 随字段自动 drop：root（页表树，递归归还全部表帧）/maps 与窗口子 Map 的帧全部归还
         // frame 池——所有权驱动，无遍历页表树、无手写 deallocate。
@@ -1271,19 +1281,6 @@ impl Drop for Space {
 }
 
 // ── 内核地址空间 ─────────────────────────────────────────────
-
-/// 内核地址空间。`memory::init()` 创建并写入，此后只读访问。
-/// 存 Arc<Space>：内核团队（work::team::kernel）共享同一份（约束 1）。
-///
-/// 用 RelLock（可重入锁）：持有此锁期间若触发缺页，缺页处理器（trap.rs）
-/// 会在同一 hart 上再次获取它——RelLock 允许同 hart 重入，避免自旋死锁；
-/// 不同 hart 之间仍互斥。
-pub(crate) static KERNEL_SPACE: RelLock<Option<Arc<Space>>> = RelLock::new(None);
-
-/// 获取内核地址空间的锁保护引用。
-pub(crate) fn kernel_space() -> RelLockGuard<'static, Option<Arc<Space>>> {
-    KERNEL_SPACE.lock()
-}
 
 /// per-hart 内核帧物理地址表（`manager::init` 按实际核数**动态分配**并发布；
 /// `__strap` 按 TP 索引的是**帧区 VA**（KERNEL_FRAME_BASE，LUI 常量注入），

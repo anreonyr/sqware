@@ -1,7 +1,7 @@
 // 位图分配器 — 通用编号空间连续区间分配器
 //
 // 在 [base, edge) 编号空间上按 unit 粒度分配连续区间（1 bit / unit，1 = 已分配）。
-// 典型实例：用户堆窗口、任务栈窗口（per-Space，见 memory::manager::space）、
+// 典型实例：用户堆窗口、任务栈窗口（per-Space，见 work::unit::space）、
 // ASID 空间（见 memory::manager::asid）——三类资源共用同一实现，释放即复用。
 //
 // 元数据全在外部（Vec<u64>，内核堆），**不写被管空间本身**——对未映射的 VA

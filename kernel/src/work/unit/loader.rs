@@ -15,8 +15,8 @@ use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::space::{MapKind, Space};
-use crate::work::parser::{LoadSegment, ParsedProgram};
+use super::space::{MapKind, Space};
+use super::parser::{LoadSegment, ParsedProgram};
 
 /// 装载产物 — 已装完的空间 + 绝对入口（交 Team，并供 TaskBuilder 填 sepc）。
 pub struct Loaded {

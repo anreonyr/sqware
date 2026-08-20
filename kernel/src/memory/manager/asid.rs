@@ -1,6 +1,6 @@
 // ASID 分配器 — Sv39 satp.ASID 字段（16 位）的独立分配
 //
-// ASID 0 保留给内核（KERNEL_SPACE / 空闲任务）；1..=65535 由任务地址空间
+// ASID 0 保留给内核（内核团队 / 空闲任务）；1..=65535 由任务地址空间
 // 独占分配。每任务独立 ASID 让 TLB 按地址空间隔离：switch_space 写 satp 后
 // 只 `sfence.vma zero, asid` 刷新本任务 ASID 的非全局条目，其余任务的 TLB
 // 热点（栈顶 / 代码页）跨切换保留；页表修改（map/unmap/protect）同样按空间

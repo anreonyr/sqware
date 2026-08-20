@@ -4,20 +4,23 @@
 //   addr      — VirtAddr / PhysAddr
 //   entry     — Sv39 PTE + PteFlags
 //   fault     — 缺页处理
-//   space     — Space/SpaceKind、Map/Window/Durable 簿记模型、内核地址空间初始化
 //   table     — PageTable、页表遍历/映射（pub(crate)）
 //   asid      — ASID 分配器
 //
-// satp/TLB 切换函数（satp_token / flush_asid）与 MMU 初始化（init）归本模块，
+// satp/TLB 切换函数（satp_token / flush_asid）与 MMU 装配（init）归本模块，
 // 描述「如何管理虚拟地址空间」，与物理内存分配（crate::memory::allocator）解耦。
-// 地址空间布局常量（USER_HEAP_* / TASK_STACK_*）收敛进 space 模块，
+// 地址空间**类型/实例**（Space/Team 容器）与布局常量（USER_HEAP_* / TASK_STACK_* /
+// KERNEL_BASE / TRAMPOLINE / KERNEL_FRAME_BASE）收敛进 work::unit::space，
 // 由通用位图分配器实例（memory::allocator::bitmap）消费；ASID 空间亦为其实例。
+//
+// 本模块对 work 零依赖（除 `init` 末尾把内核 Space 封包进 KERNEL_TEAM/
+// team::init_kernel 这一处薄边，及其装配所需 work::unit::space 的 Space 类型）；
+// 亦不再上穿 runtime（TRAMPOLINE 物理页经 work::unit::space::trampoline_pa 取，叶子）。
 
 pub mod addr;
 pub mod asid;
 pub mod entry;
 pub mod fault;
-pub mod space;
 pub mod table;
 
 use crate::{
@@ -28,12 +31,13 @@ use crate::{
         manager::{
             addr::{PhysAddr, VirtAddr},
             entry::PteFlags,
-            space::{
-                KERNEL_BASE, KERNEL_FRAME_BASE, KERNEL_SPACE, MapKind, SpaceBuilder, TRAMPOLINE,
-                USER_STACK_BASE,
-            },
         },
     },
+};
+
+use crate::work::unit::space::{
+    KERNEL_BASE, KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, USER_STACK_BASE,
+    init_kernel_frames, kernel_frames, trampoline_pa,
 };
 
 use alloc::boxed::Box;
@@ -167,7 +171,7 @@ pub fn init() -> MapResult<()> {
                 PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
             kernel_space.map(
                 TRAMPOLINE,
-                crate::runtime::trampoline::trampoline_pa(),
+                trampoline_pa(),
                 PAGE_SIZE,
                 tramp_flags,
                 MapKind::Reserved,
@@ -179,8 +183,8 @@ pub fn init() -> MapResult<()> {
             //    动态分配（不再编译期预留 MAX 槽的静态数组）；PA 存 frames[h]——
             //    __strap 按 TP 索引的是帧区 VA（KERNEL_FRAME_BASE），不经此表。
             let n = machine::hart_count();
-            space::init_kernel_frames(n);
-            let frames = space::kernel_frames();
+            init_kernel_frames(n);
+            let frames = kernel_frames();
             for (h, slot) in frames.iter().enumerate() {
                 let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                     .map_err(|_| MapError::OutOfMemory)?;
@@ -202,8 +206,9 @@ pub fn init() -> MapResult<()> {
             // 7. 刷新 TLB
             flush_asid(0);
 
-            // 8. 保存内核地址空间
-            KERNEL_SPACE.lock().replace(Arc::new(kernel_space));
+            // 8. 把内核地址空间封包进内核团队（KERNEL_TEAM 唯一持有；KERNEL_SPACE
+            //    全局已消除，团队插入此处即内核空间的唯一出生点）
+            crate::work::unit::team::init_kernel(Arc::new(kernel_space));
 
             Ok(())
         }
@@ -211,74 +216,3 @@ pub fn init() -> MapResult<()> {
     .annotate("initializing memory manager")
 }
 
-/// PT 回收自测（debug）：map/unmap 循环验证中间表回收——无孤儿表、无 double-free。
-///
-/// 在 spawn 用户任务之前运行（分配器与 KERNEL_SPACE 均已就绪），由 `boot::init`
-/// 经 `crate::memory::manager::pt_reclaim_selftest()` 调用。每轮：
-/// map 4 MiB（4 KiB 页，根表槽 1）→ 表数 +3（1×L1 + 2×L0）；unmap → 回落；
-/// 32 轮后「在途帧 − 堆支撑页」回到轮前（块堆缓存页不误报，口径同 check_baseline）。
-#[cfg(debug_assertions)]
-pub fn pt_reclaim_selftest() {
-    const BASE: usize = 0x4000_0000; // 根表槽 1：堆窗口之后、栈窗口之前的空地
-    const SIZE: usize = 4 * 1024 * 1024; // 4 MiB → 1×L1 + 2×L0
-    const ROUNDS: usize = 32;
-
-    let space = SpaceBuilder::user().build().expect("selftest: build space");
-    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-    let base_count = space.table_count();
-    let held_before = crate::memory::allocator::frame::FRAME_ALLOCATOR
-        .outstanding()
-        .saturating_sub(crate::memory::allocator::block::live_pages());
-
-    for round in 0..ROUNDS {
-        // map：分配数据帧 + 中间表
-        let mut frames = Vec::new();
-        for _ in 0..(SIZE / PAGE_SIZE) {
-            frames.push(
-                Box::try_new_in([0u8; PAGE_SIZE], allocator()).expect("selftest: data frame"),
-            );
-        }
-        let pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
-        space
-            .map(
-                VirtAddr::from_raw(BASE),
-                pa,
-                SIZE,
-                flags,
-                MapKind::Anonymous,
-                frames,
-            )
-            .expect("selftest: map");
-        assert_eq!(
-            space.table_count(),
-            base_count + 3,
-            "selftest round {round}: tables after map"
-        );
-        assert!(
-            space.translate(VirtAddr::from_raw(BASE)).is_some(),
-            "selftest round {round}: map hit"
-        );
-
-        // unmap：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）
-        space.unmap(VirtAddr::from_raw(BASE), SIZE);
-        assert_eq!(
-            space.table_count(),
-            base_count,
-            "selftest round {round}: tables after unmap"
-        );
-        assert!(
-            space.translate(VirtAddr::from_raw(BASE)).is_none(),
-            "selftest round {round}: unmap hit"
-        );
-    }
-
-    let held_after = crate::memory::allocator::frame::FRAME_ALLOCATOR
-        .outstanding()
-        .saturating_sub(crate::memory::allocator::block::live_pages());
-    assert_eq!(
-        held_before, held_after,
-        "selftest: net frames leaked: {held_before} → {held_after}"
-    );
-    drop(space);
-    crate::putln!("pt-reclaim selftest: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})");
-}

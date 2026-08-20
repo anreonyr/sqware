@@ -15,16 +15,16 @@ use alloc::sync::Arc;
 
 use crate::machine;
 use crate::memory::allocator::frame;
-#[cfg(debug_assertions)]
-use crate::memory::manager;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
-use crate::memory::manager::space::SpaceBuilder;
 use crate::putln;
 use crate::runtime::trampoline::restore;
 use crate::work::scheduler;
-use crate::work::team::kernel;
-use crate::work::{loader, team};
+#[cfg(debug_assertions)]
+use crate::work::unit;
+use crate::work::unit::space::SpaceBuilder;
+use crate::work::unit::team::kernel;
+use crate::work::unit::{loader, team};
 
 global_asm!(
     ".section .text.boot",
@@ -54,7 +54,7 @@ pub fn init() -> ! {
 
     // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
     #[cfg(debug_assertions)]
-    manager::pt_reclaim_selftest();
+    unit::pt_reclaim_selftest();
 
     // 记录内核持久帧基线：spawn 用户任务前的在途帧 + 内核堆支撑页。此后在途帧
     // 只应增用户任务所有 + 堆支撑页；关机时全部归还，由 tie::halt 的
@@ -139,14 +139,14 @@ fn spawn_demos() -> Result<(), MapError> {
 
 /// 内嵌用户 ELF → parser → loader → Team；返回 (Team, 绝对入口)。
 fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
-    let parsed = crate::work::parser::parse(elf).expect("parse user elf");
+    let parsed = crate::work::unit::parser::parse(elf).expect("parse user elf");
     let space = SpaceBuilder::user().build().expect("space failed");
     let loaded = loader::load(space, elf, &parsed).expect("load user elf");
     let entry = loaded.entry;
     // 符号表：内嵌 ELF 的 .symtab/.strtab → ElfTable（失败则 None，只影响符号化不碍装载）
-    let elftable = crate::work::parser::symtabs(elf)
+    let elftable = crate::work::unit::parser::symtabs(elf)
         .ok()
-        .and_then(|(s, ss)| crate::work::elftable::ElfTable::from_sections(s, ss))
+        .and_then(|(s, ss)| crate::work::unit::elftable::ElfTable::from_sections(s, ss))
         .map(Arc::new);
     let team = team::TeamBuilder::new(loaded.space).elftable(elftable).spawn();
     (team, entry)

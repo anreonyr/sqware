@@ -51,7 +51,6 @@ use hashbrown::HashMap;
 use crate::lock::{OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
-use crate::memory::manager::space::Space;
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{restore, trap_stack_top};
@@ -59,8 +58,9 @@ use crate::runtime::trap::arm_timer;
 use crate::runtime::{clock, timer};
 use crate::runtime::trace::{self, EventKind, SchedEvent};
 
-use super::task::{BlockReason, Task, TaskState};
-use super::team::Team;
+use super::unit::space::Space;
+use super::unit::task::{BlockReason, Task, TaskState};
+use super::unit::team::Team;
 use super::tie;
 
 // ── 核心：常量 ──

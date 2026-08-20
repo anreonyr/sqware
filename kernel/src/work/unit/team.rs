@@ -3,15 +3,15 @@
 // Team = Space 容器：地址空间（Arc 共享）+ 成员簿记（弱引用）。
 //
 // 生命周期：最后一个线程退出 → Arc<Team> 归零 → 团队回收；内核团队（kernel）
-// 为 'static 单例，共享全局 KERNEL_SPACE，永不回收。
+// 为 'static 单例，**唯一拥有内核地址空间**（KERNEL_SPACE 全局已消除），永不回收。
 
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use crate::lock::{OnceLock, SpinLock};
-use crate::memory::manager::space::{Space, kernel_space};
-use crate::work::elftable::ElfTable;
+use crate::work::unit::space::Space;
 
+use super::elftable::ElfTable;
 use super::task::{Task, TaskBuilder};
 
 /// 团队（进程）— 共享地址空间的线程容器。
@@ -20,15 +20,15 @@ use super::task::{Task, TaskBuilder};
 /// reaped 容器强持有），多核阶段用于团队视角的负载判断；生命周期仍由引用计数
 /// 决定（最后一个线程退出 → Arc<Team> 归零 → 团队回收）。
 ///
-/// space 为 Arc 共享：用户团队独占一份；内核团队（kernel）与全局 KERNEL_SPACE
-/// 共享同一份（'static 引用，永不回收）。
+/// space 为 Arc 共享：用户团队独占一份；内核团队（kernel）由
+/// [`init_kernel`] 注入构建好的内核 Space（'static 引用，永不回收）。
 ///
 /// 多核下 per-hart 调度锁不提供跨 hart 互斥，故 tasks 自带 SpinLock
 /// （level 3）。**不变量：持本锁时绝不调用任何 space 方法**——push_task /
 /// prune_tasks 是纯 Vec 操作，与 Space.inner（level 2）只顺序获取、永不嵌套。
 pub struct Team {
     /// 地址空间（窗口簿记持有全部分配的页）。Arc 共享：用户团队独占；
-    /// 内核团队与 KERNEL_SPACE 共享同一份。
+    /// 内核团队独占内核 Space。
     pub(crate) space: Arc<Space>,
     /// 成员簿记（弱引用条目；死条目在下次清理时摘除）。
     pub(crate) tasks: SpinLock<Vec<Weak<Task>>>,
@@ -102,19 +102,26 @@ impl TeamBuilder {
     }
 }
 
-/// 内核团队单例：与全局 KERNEL_SPACE 共享同一份空间（'static 引用，永不回收）。
-/// 内核任务（kthread 式）挂此团队：SPP=1 运行于 S 态。
-pub fn kernel() -> &'static Arc<Team> {
-    static KERNEL_TEAM: OnceLock<Arc<Team>> = OnceLock::new();
+/// 内核团队单例：地址空间由 `manager::init` 构建内核 Space 后经 [`init_kernel`]
+/// 注入，**唯一拥有内核地址空间**（KERNEL_SPACE 全局已消除）。内核任务
+/// （kthread 式）挂此团队：SPP=1 运行于 S 态。
+pub(crate) static KERNEL_TEAM: OnceLock<Arc<Team>> = OnceLock::new();
+
+/// 把构建好的内核地址空间封包进内核团队单例（由 `memory::manager::init` 末尾调用，
+/// 恰好一次）。此后内核空间唯一归属 `KERNEL_TEAM.space`，永不回收。
+pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     KERNEL_TEAM.get_or_init(|| {
-        let space = kernel_space()
-            .as_ref()
-            .expect("kernel space not initialized")
-            .clone();
         Arc::new(Team {
             space,
             tasks: SpinLock::new(Vec::new()),
-            elftable: crate::work::elftable::kernel_table().map(Arc::new),
+            elftable: crate::work::unit::elftable::kernel_table().map(Arc::new),
         })
     })
+}
+
+/// 内核团队单例访问器。**不变量**：须在 `manager::init`（其内 `init_kernel`）之后
+/// 调用；main 启动序 allocator → manager::init → runtime → boot 已保证。过早访问
+/// 会 panic 而非静默。
+pub fn kernel() -> &'static Arc<Team> {
+    KERNEL_TEAM.get().expect("kernel team not initialized")
 }

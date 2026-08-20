@@ -14,8 +14,8 @@ use crate::memory::PAGE_SIZE;
 use super::{
     addr::VirtAddr,
     entry::PteFlags,
-    space::{MapKind, Space},
 };
+use crate::work::unit::space::{MapKind, Space};
 
 /// 从机器 CSR 捕获的缺页信息。
 #[derive(Debug)]

@@ -7,7 +7,7 @@
 //   3. page — 委托给 frame，在 memory::init() 中按需分配；无独立初始化
 //
 // bitmap — 通用位图分配器（编号空间连续区间：VA 窗口 / ASID），无独立初始化
-// （位图首次使用时惰性分配），见 memory::manager::space / asid。
+// （位图首次使用时惰性分配），见 work::unit::space / memory::manager::asid。
 
 use core::ptr::NonNull;
 

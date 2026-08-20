@@ -22,7 +22,7 @@ use riscv::register::{satp, scause, sepc, sie, sip, sstatus, stval, stvec, time}
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
-use crate::memory::manager::space::{KERNEL_FRAME_BASE, kernel_frame_pa};
+use crate::work::unit::space::{KERNEL_FRAME_BASE, kernel_frame_pa};
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trace::{self, EventKind, MemEvent};

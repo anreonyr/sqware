@@ -21,9 +21,9 @@
 //   1. SCHEDULERS[hart]   (SpinLock)  — 每 hart 调度器：running + starved（task::scheduler）
 //                                          （类型级：不同 hart 的锁彼此不嵌套；
 //                                          steal 走 try_lock（非阻塞），无锁序依赖）
-//   1. KERNEL_SPACE        (RelLock)   — 内核地址空间（与 SCHEDULERS 同级不嵌套：
-//                                          spawn 的空间构建在调度器锁外完成）
 //   2. Space.inner  (RelLock)   — 任务地址空间可变状态（Durable：页表/常数映射 + dynamic：窗口）
+//                                   （内核空间同属此级：唯一归属 KERNEL_TEAM.space，
+//                                   RelLock 可重入——持锁缺页时同 hart 再入不死锁）
 //   3. Team.tasks          (SpinLock)  — 团队成员簿记（弱引用列表；纯 Vec 操作，
 //                                          **与 Space.inner 禁止嵌套持有**——
 //                                          push_task/prune_tasks 锁内绝不调 space 方法）
@@ -48,7 +48,8 @@
 // SCHEDULERS[hart] → Space.inner（reap 锁内回收，1 → 2 → 5）；
 // SCHEDULERS[hart] → TIMER_DEADLINES / blocked（park：reserve/入簿/arm_at 顺序
 // 获取、不嵌套，1 → 3）；Team.tasks 与 Space.inner 只顺序获取、永不嵌套。
-// 用户空间构建（SpaceBuilder::user().build()）中 ASID → KERNEL_SPACE 为顺序获取（drop 前一把再拿后一把），不嵌套。
+// 用户空间构建（SpaceBuilder::user().build()）中 ASID 与内核 Space（seed 读 trampoline 叶）
+// 为顺序获取（drop 前一把再拿后一把），不嵌套。
 // per-hart trap 栈的分配发生在 boot（无锁需求）。
 
 mod bare;

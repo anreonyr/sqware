@@ -114,7 +114,7 @@ impl ElfTable {
 
 // ── 地址域判定 ─────────────────────────────────────────────────
 
-/// Sv39 内核高半区起点（与 memory::manager::space::KERNEL_BASE 一致）。
+/// Sv39 内核高半区起点（与 work::unit::space::KERNEL_BASE 一致）。
 const KERNEL_HIGH: usize = 0xFFFF_FFC0_0000_0000;
 
 /// 是否内核域地址：高半区，或内核镜像恒等区 [_kernel_start,_kernel_edge)。
@@ -169,14 +169,14 @@ pub fn kernel_table() -> Option<ElfTable> {
 
 // ── 解析器（地址域 → 选表）────────────────────────────────────
 
-/// 地址 → (符号, 偏移)：内核域查内核表（work::team::kernel），用户域查运行 team 表。
+/// 地址 → (符号, 偏移)：内核域查内核表（unit::team::kernel），用户域查运行 team 表。
 /// 无表/无命中 → None（调用方打印裸 hex）。
 pub fn resolve(
     addr: VirtAddr,
-    team: Option<&crate::work::team::Team>,
+    team: Option<&crate::work::unit::team::Team>,
 ) -> Option<(&'static str, usize)> {
     if is_kernel_addr(addr.as_usize()) {
-        crate::work::team::kernel().elftable.as_ref()?.lookup(addr)
+        crate::work::unit::team::kernel().elftable.as_ref()?.lookup(addr)
     } else {
         let t = team?;
         t.elftable.as_ref()?.lookup(addr)

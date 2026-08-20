@@ -2,7 +2,7 @@
 //
 // 一页（4 KiB）内含 `__alltraps`（保存帧 + 切 satp）与 `__restore`（切回 + 恢复 + sret），
 // 内核空间与所有用户空间以 TRAMPOLINE VA 映射同一物理页（G 位，见
-// manager::space::Space::TRAMPOLINE），`stvec` 指向 `__alltraps`。
+// work::unit::space::Space::TRAMPOLINE），`stvec` 指向 `__alltraps`。
 //
 // 本页代码执行于 TRAMPOLINE 固定 VA（0xFFFF_FFFF_FFFF_F000）——任何 PC 相对寻址
 // （la/call 等）的目标必须在本页内；跨页符号（如 _trap_stack_top、Rust 的
@@ -24,8 +24,8 @@ use core::cell::UnsafeCell;
 use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::memory::manager::space::{KERNEL_FRAME_BASE, TRAMPOLINE, kernel_space};
+use crate::memory::manager::addr::VirtAddr;
+use crate::work::unit::space::{KERNEL_FRAME_BASE, TRAMPOLINE};
 
 /// KERNEL_FRAME_BASE 的 LUI 立即数（bits[31:12]）——__strap 按 TP 索引 per-hart
 /// 内核帧：sp = KERNEL_FRAME_BASE + tp·PAGE_SIZE。汇编经 `const` 注入，单一来源。
@@ -253,11 +253,6 @@ pub fn restore(frame_pa: usize) -> ! {
     }
 }
 
-/// trampoline 页的物理地址（链接符号地址：内核镜像 0x8020_0000 恒等加载）。
-pub fn trampoline_pa() -> PhysAddr {
-    PhysAddr::from_raw(core::ptr::addr_of!(__trampoline_start) as usize)
-}
-
 /// `__alltraps` 在 TRAMPOLINE 固定 VA 处的地址（stvec 写入值）。
 pub fn alltraps_va() -> usize {
     let start = core::ptr::addr_of!(__trampoline_start) as usize;
@@ -416,8 +411,7 @@ pub fn init_trap_stacks() {
         "trap stacks double init"
     );
 
-    let ks = kernel_space();
-    let space = ks.as_ref().expect("kernel space not initialized");
+    let space = &crate::work::unit::team::kernel().space;
     for h in 0..segments {
         let seg = base + h * TRAP_STACK_SEGMENT;
         let guard = seg;
