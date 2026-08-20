@@ -22,7 +22,7 @@ use alloc::vec::Vec;
 
 use super::OnceLock;
 use crate::machine;
-use crate::putln;
+use crate::{put, putln};
 
 /// 锁层级 — lock/mod.rs 层级契约的具名化（1 最低、6 最高）。
 /// 参与锁才有 level；Option<Level>::None = exempt（不参与、不校验）。
@@ -59,6 +59,52 @@ pub(crate) fn ra() -> usize {
     ra
 }
 
+// ── 地址符号化（可选回调；depend 保持解耦）───────────────────────────
+
+/// 地址符号化回调：addr → (函数名, 偏移)。由 boot/适配层注入。
+pub type SymFn = dyn Fn(usize) -> Option<(&'static str, usize)> + Sync + 'static;
+
+/// 已注入的符号化回调（未注入则打印裸地址）。
+static SYM: OnceLock<&'static SymFn> = OnceLock::new();
+
+/// 注入地址符号化回调（boot 装配后调用一次；未注入则打印裸地址）。
+pub fn set_symbolizer(f: &'static SymFn) {
+    let _ = SYM.set(f);
+}
+
+/// 打印地址：符号化优先（name+0xoff），否则四位分组 hex（0x_8089_2208，去前导零组）。
+fn print_addr(a: usize) {
+    if let Some((name, off)) = SYM.get().and_then(|f| f(a)) {
+        crate::console::_write(format_args!("{name}+{off:#x}"));
+        return;
+    }
+    let hx = b"0123456789abcdef";
+    let mut buf = [0u8; 21];
+    buf[0] = b'0';
+    buf[1] = b'x';
+    let mut n = 2;
+    let mut started = false;
+    for sig in (0..=3).rev() {
+        let g = (a >> (sig * 16)) & 0xffff;
+        if !started {
+            if g == 0 && sig > 0 {
+                continue;
+            }
+            started = true;
+        } else {
+            buf[n] = b'_';
+            n += 1;
+        }
+        buf[n] = hx[(g >> 12) as usize];
+        buf[n + 1] = hx[((g >> 8) & 0xf) as usize];
+        buf[n + 2] = hx[((g >> 4) & 0xf) as usize];
+        buf[n + 3] = hx[(g & 0xf) as usize];
+        n += 4;
+    }
+    // SAFETY: 全 ASCII hex / 下划线 / 前导 0x。
+    crate::console::_write(format_args!("{}", core::str::from_utf8(&buf[..n]).unwrap()));
+}
+
 /// 单 hart 重入/升级现场报告后 panic（沿用现有形态）。
 pub(crate) fn report(
     kind: &'static str,
@@ -68,9 +114,16 @@ pub(crate) fn report(
     caller: usize,
 ) -> ! {
     putln!("[DEPEND] {kind}: {what} (single-hart lock-order violation)");
-    putln!("  lock     @ {lock:#x}");
-    putln!("  holder   @ {holder:#x}");
-    putln!("  acquirer @ {caller:#x}");
+    putln!("  hart      {}", machine::hart_id());
+    put!("  lock      ");
+    print_addr(lock);
+    putln!("");
+    put!("  holder    ");
+    print_addr(holder);
+    putln!("");
+    put!("  caller    ");
+    print_addr(caller);
+    putln!("");
     panic!("{kind} lock-order violation: {what}");
 }
 
@@ -232,17 +285,32 @@ pub(crate) fn release(addr: usize, level: Level) {
 /// 跨核持有集 best-effort 读取留待后续（需 raw usize 拷贝避免 &mut 别名 UB）。
 #[cfg(debug_assertions)]
 pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
-    putln!("[DEPEND] lock-order hazard: acquiring {addr:#x} @ {level:?}, caller {caller:#x}");
+    putln!("[DEPEND] lock-order hazard");
+    putln!("  hart       {}", machine::hart_id());
+    put!("  taking     ");
+    print_addr(addr);
+    putln!("  ({:?})", level);
     let Some(held) = held_mut() else {
-        panic!("depend: lock-order hazard acquiring {addr:#x} @ {level:?}");
+        panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
     };
-    for i in 0..held.len {
-        putln!(
-            "  hart {} holds {:#x} @ {:?}",
-            machine::hart_id(),
-            held.slots[i].addr,
-            held.slots[i].level
-        );
+    if held.len == 0 {
+        putln!("  held       (none)");
+    } else {
+        let max = held.max_level().unwrap_or(level);
+        for i in 0..held.len {
+            let is_max = held.slots[i].level == max;
+            put!("  held       ");
+            print_addr(held.slots[i].addr);
+            putln!(
+                "  ({:?}){}",
+                held.slots[i].level,
+                if is_max { "  <-- max held" } else { "" }
+            );
+        }
     }
-    panic!("depend: lock-order hazard acquiring {addr:#x} @ {level:?}");
+    put!("  caller     ");
+    print_addr(caller);
+    putln!("");
+    putln!("  rule       new level must exceed max(held);  {:?} <= max => violation", level);
+    panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
 }
