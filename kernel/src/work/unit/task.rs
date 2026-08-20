@@ -20,7 +20,7 @@ use crate::runtime::context::{Gprs, TrapContext};
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::work::USER_TEXT_BASE;
 
-use crate::work::scheduler;
+use crate::work::room::scheduler;
 use super::team::Team;
 
 /// 内核任务自身的 trap 帧 PA（spawn_kernel 写入一次）。

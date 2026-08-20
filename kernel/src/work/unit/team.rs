@@ -102,12 +102,12 @@ impl TeamBuilder {
     }
 }
 
-/// 内核团队单例：地址空间由 `manager::init` 构建内核 Space 后经 [`init_kernel`]
+/// 内核团队单例：地址空间由 `unit::init` 构建内核 Space 后经 [`init_kernel`]
 /// 注入，**唯一拥有内核地址空间**（KERNEL_SPACE 全局已消除）。内核任务
 /// （kthread 式）挂此团队：SPP=1 运行于 S 态。
 pub(crate) static KERNEL_TEAM: OnceLock<Arc<Team>> = OnceLock::new();
 
-/// 把构建好的内核地址空间封包进内核团队单例（由 `memory::manager::init` 末尾调用，
+/// 把构建好的内核地址空间封包进内核团队单例（由 `unit::init` 末尾调用，
 /// 恰好一次）。此后内核空间唯一归属 `KERNEL_TEAM.space`，永不回收。
 pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     KERNEL_TEAM.get_or_init(|| {
@@ -119,8 +119,8 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     })
 }
 
-/// 内核团队单例访问器。**不变量**：须在 `manager::init`（其内 `init_kernel`）之后
-/// 调用；main 启动序 allocator → manager::init → runtime → boot 已保证。过早访问
+/// 内核团队单例访问器。**不变量**：须在 `unit::init`（其内 `init_kernel`）之后
+/// 调用；main 启动序 allocator → unit::init → runtime → boot 已保证。过早访问
 /// 会 panic 而非静默。
 pub fn kernel() -> &'static Arc<Team> {
     KERNEL_TEAM.get().expect("kernel team not initialized")

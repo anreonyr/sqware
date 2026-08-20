@@ -12,7 +12,7 @@
 // 帧（panic 兜底）。trap 栈底 canary 在处理器出入口校验（溢出即 panic）。
 
 use crate::runtime::{clock, timer};
-use crate::work::scheduler::{unpark, with_running_space};
+use crate::work::room::scheduler::{unpark, with_running_space};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -74,7 +74,7 @@ fn track_trap_stack_usage() {
     }
 }
 
-/// 初始化 trap 运行时（须在 `manager::init` 之后：内核帧与 TRAMPOLINE 映射已就绪）。
+/// 初始化 trap 运行时（须在 `unit::init` 之后：内核帧与 TRAMPOLINE 映射已就绪）。
 pub fn init() {
     // 0. per-hart trap 栈：frame 连续分配 + guard 页 + 全部 canary（先于内核帧
     //    元数据——帧 kernel_sp 需要指向本 hart 栈顶）。仅 hart 0 调用一次。
@@ -88,7 +88,7 @@ pub fn init() {
         "trampoline exceeds one page: {tsize:#x}"
     );
 
-    // 2. per-hart 内核 trap-context 帧元数据（帧由 manager::init 逐页映射，PA 已
+    // 2. per-hart 内核 trap-context 帧元数据（帧由 unit::init 逐页映射，PA 已
     //    发布）。B2：每 hart 一份——kernel_sp = 本 hart trap 栈顶，__strap 按 TP
     //    索引帧页；内核态故障在**故障核**的帧与 trap 栈上处理。用户帧的
     //    kernel_sp 由调度器每切换写入（见 scheduler::prepare_resume）。
@@ -221,7 +221,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         }
         let top = trap_stack_top(me);
         let ksp = frame.kernel_sp.as_usize();
-        let tid = crate::work::scheduler::running_task_id();
+        let tid = crate::work::room::scheduler::running_task_id();
         debug_assert!(
             sp <= top && top - sp < 0x4000,
             "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{tid}) — kernel_sp per-switch write missing?"
@@ -267,7 +267,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             frame as *mut TrapContext
         }
         // 用户态环境调用（U 态 ecall）：envcall 表分发
-        Trap::Exception(Exception::UserEnvCall) => crate::work::envcall::dispatch(frame),
+        Trap::Exception(Exception::UserEnvCall) => crate::runtime::envcall::dispatch(frame),
         // 用户态缺页：机制归 memory::fault，策略归 trap 层（解析失败即 panic）。
         // SPP=1（内核态）缺页：guard 已在入口特判，其余内核缺页 = 内核 bug → fatal
         Trap::Exception(

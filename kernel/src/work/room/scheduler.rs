@@ -58,9 +58,9 @@ use crate::runtime::trap::arm_timer;
 use crate::runtime::{clock, timer};
 use crate::runtime::trace::{self, EventKind, SchedEvent};
 
-use super::unit::space::Space;
-use super::unit::task::{BlockReason, Task, TaskState};
-use super::unit::team::Team;
+use crate::work::unit::space::Space;
+use crate::work::unit::task::{BlockReason, Task, TaskState};
+use crate::work::unit::team::Team;
 use super::tie;
 
 // ── 核心：常量 ──

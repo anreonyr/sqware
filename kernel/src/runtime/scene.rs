@@ -18,7 +18,7 @@ use riscv::register::{satp, scause, sepc, sstatus, stval};
 use crate::console::_write;
 use crate::memory::manager::addr::VirtAddr;
 use crate::work::unit::elftable;
-use crate::work::scheduler::{running_task_info, running_team_try};
+use crate::work::room::scheduler::{running_task_info, running_team_try};
 
 /// 回溯深度上限。
 const BT_DEPTH: usize = 32;

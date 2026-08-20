@@ -7,8 +7,9 @@
 //   halt       — 内核 panic 处理器（无锁直写控制台后停机）
 //   trampoline — 陷阱进出汇编（__alltraps/__restore）与物理页地址
 //   trap       — stvec 接线、内核帧元数据、scause 分发、SBI 定时器武装
+//   envcall    — 用户态环境调用 ABI（RISC-V "Environment Call"，dispatch 经 trap 分发）
 //
-// 接线顺序：manager::init（映射 TRAMPOLINE / 内核帧）→ clock::init（timebase 注入）→
+// 接线顺序：unit::init（构建内核空间、映射 TRAMPOLINE / 内核帧、封包 KERNEL_TEAM）→ clock::init（timebase 注入）→
 // trap::init（stvec、sscratch、SIE）→ 任务化调度（S-timer 抢占）。
 
 pub mod clock;
@@ -19,5 +20,6 @@ pub mod trampoline;
 pub mod trap;
 pub mod trace;
 pub mod scene;
+pub mod envcall;
 
 pub use trap::init;

@@ -19,7 +19,7 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
 use crate::runtime::trampoline::restore;
-use crate::work::scheduler;
+use crate::work::room::scheduler;
 #[cfg(debug_assertions)]
 use crate::work::unit;
 use crate::work::unit::space::SpaceBuilder;
@@ -54,7 +54,7 @@ pub fn init() -> ! {
 
     // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
     #[cfg(debug_assertions)]
-    unit::pt_reclaim_selftest();
+    unit::pagetable_reclaim();
 
     // 记录内核持久帧基线：spawn 用户任务前的在途帧 + 内核堆支撑页。此后在途帧
     // 只应增用户任务所有 + 堆支撑页；关机时全部归还，由 tie::halt 的
@@ -148,7 +148,9 @@ fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
         .ok()
         .and_then(|(s, ss)| crate::work::unit::elftable::ElfTable::from_sections(s, ss))
         .map(Arc::new);
-    let team = team::TeamBuilder::new(loaded.space).elftable(elftable).spawn();
+    let team = team::TeamBuilder::new(loaded.space)
+        .elftable(elftable)
+        .spawn();
     (team, entry)
 }
 

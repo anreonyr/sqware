@@ -20,7 +20,7 @@ use crate::put;
 use crate::runtime::{clock, timer};
 use crate::runtime::context::{Gprs, TrapContext};
 use crate::runtime::trace::{self, EventKind, EnvEvent};
-use crate::work::scheduler::{park, reap, running_team, starve, with_running_space};
+use crate::work::room::scheduler::{park, reap, running_team, starve, with_running_space};
 
 /// envcall 分发（trap_handler 的 UserEnvCall 分支调用）。
 ///

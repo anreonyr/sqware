@@ -17,7 +17,8 @@ use core::arch::global_asm;
 use log::info;
 
 use crate::machine::{Machine, Region};
-use crate::memory::{allocator, manager};
+use crate::memory::allocator;
+use crate::work::unit;
 
 global_asm!(
     ".section .text._start",
@@ -67,7 +68,7 @@ extern "C" fn init(hartid: usize, dtp: usize) -> ! {
 /// 在内核栈（DRAM 顶部）上继续启动：初始化分配器后进入 idle。
 fn main() -> ! {
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
-    manager::init().unwrap_or_else(|e| panic!("manager init failed: {e}"));
+    unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
     runtime::clock::init(machine::get().hertz)
         .unwrap_or_else(|e| panic!("clock init failed: {e:?}"));
     // trace：静态池切分 + 核数上限防御（须在 clock 就绪后、任何 note 前）。

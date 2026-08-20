@@ -476,7 +476,7 @@ pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000
 /// trampoline 页的物理地址（纯链接符号：内核镜像恒等加载，链接地址即物理地址）。
 ///
 /// 属内核空间布局（TRAMPOLINE VA 所映射的物理帧），故与 `TRAMPOLINE` 同驻本模块；
-/// `memory::manager::init` 映射该页时经此取 PA。`runtime::trampoline` 的
+/// `unit::init` 映射该页时经此取 PA。`runtime::trampoline` 的
 /// `__alltraps/__restore` 仍在运行时层按自身 VA 偏移计算。
 pub(crate) fn trampoline_pa() -> PhysAddr {
     unsafe extern "C" {
@@ -492,7 +492,7 @@ pub(crate) fn trampoline_pa() -> PhysAddr {
 pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HART_SLOTS;
 
 /// per-hart 内核帧区基址（紧贴 TRAMPOLINE 之下 SLOTS 页；hart h 帧 VA =
-/// KERNEL_FRAME_BASE + h·PAGE_SIZE）。帧由 manager::init 逐页映射（PA 存
+/// KERNEL_FRAME_BASE + h·PAGE_SIZE）。帧由 unit::init 逐页映射（PA 存
 /// KERNEL_FRAMES[h]），__strap 经 KERNEL_FRAMES_LUI + tp 索引。
 pub(crate) const KERNEL_FRAME_BASE: VirtAddr =
     VirtAddr::from_raw(TRAMPOLINE.as_usize() - KERNEL_FRAME_SLOTS * PAGE_SIZE);
@@ -1282,14 +1282,14 @@ impl Drop for Space {
 
 // ── 内核地址空间 ─────────────────────────────────────────────
 
-/// per-hart 内核帧物理地址表（`manager::init` 按实际核数**动态分配**并发布；
+/// per-hart 内核帧物理地址表（`unit::init` 按实际核数**动态分配**并发布；
 /// `__strap` 按 TP 索引的是**帧区 VA**（KERNEL_FRAME_BASE，LUI 常量注入），
 /// 不读此表；本表仅供 Rust 侧经 [`kernel_frame_pa`] 读 PA——trap::init 写帧
 /// 元数据、init_hart 取 hart 0 框架。仿 SCHEDULERS/TRAP_STACKS：
 /// Box::leak 进 OnceLock，先于任何帧映射分配）。
 static KERNEL_FRAMES: OnceLock<&'static [AtomicPhysAddr]> = OnceLock::new();
 
-/// 按实际核数分配帧 PA 表（`manager::init` 调用，恰好一次，先于任何帧映射）。
+/// 按实际核数分配帧 PA 表（`unit::init` 调用，恰好一次，先于任何帧映射）。
 pub(crate) fn init_kernel_frames(n: usize) {
     let table: Box<[AtomicPhysAddr]> = (0..n)
         .map(|_| AtomicPhysAddr::new(PhysAddr::from_raw(0)))
@@ -1300,7 +1300,7 @@ pub(crate) fn init_kernel_frames(n: usize) {
     );
 }
 
-/// 帧 PA 表只读视图（`manager::init` 映射 per-hart 帧时迭代用）。
+/// 帧 PA 表只读视图（`unit::init` 映射 per-hart 帧时迭代用）。
 pub(crate) fn kernel_frames() -> &'static [AtomicPhysAddr] {
     KERNEL_FRAMES.get().expect("kernel frames not initialized")
 }

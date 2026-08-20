@@ -117,7 +117,7 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 显示崩溃现场所在 hart 正在运行的任务（若有）：方便定位"哪个任务崩了"。
     // 非阻塞（try_lock）——panic 可能正发生在持有调度锁的现场，拿不到就跳过，
     // 不冒险在 panic 路径再加锁/递归。
-    if let Some((tid, tname)) = crate::work::scheduler::running_task_info() {
+    if let Some((tid, tname)) = crate::work::room::scheduler::running_task_info() {
         _write(format_args!(
             "  running task #{tid} '{tname}' (hart {})\n",
             crate::machine::hart_id()

@@ -7,15 +7,11 @@
 //   table     — PageTable、页表遍历/映射（pub(crate)）
 //   asid      — ASID 分配器
 //
-// satp/TLB 切换函数（satp_token / flush_asid）与 MMU 装配（init）归本模块，
-// 描述「如何管理虚拟地址空间」，与物理内存分配（crate::memory::allocator）解耦。
-// 地址空间**类型/实例**（Space/Team 容器）与布局常量（USER_HEAP_* / TASK_STACK_* /
-// KERNEL_BASE / TRAMPOLINE / KERNEL_FRAME_BASE）收敛进 work::unit::space，
-// 由通用位图分配器实例（memory::allocator::bitmap）消费；ASID 空间亦为其实例。
-//
-// 本模块对 work 零依赖（除 `init` 末尾把内核 Space 封包进 KERNEL_TEAM/
-// team::init_kernel 这一处薄边，及其装配所需 work::unit::space 的 Space 类型）；
-// 亦不再上穿 runtime（TRAMPOLINE 物理页经 work::unit::space::trampoline_pa 取，叶子）。
+// satp/TLB 切换函数（flush_asid）与错误/结果类型（MapError/MapResult）归本模块，
+// 描述「如何管理虚拟地址空间」这一原语层，与物理内存分配（crate::memory::allocator）解耦。
+// 地址空间**类型/实例**（Space/Team 容器）、布局常量与内核地址空间的构建/装配
+// （原 memory::manager::init）已全部收编进 work::unit（unit::space + unit::init）——
+// 本模块对 work 零依赖、亦不上穿 runtime，只供应原语与错误接缝。
 
 pub mod addr;
 pub mod asid;
@@ -23,42 +19,11 @@ pub mod entry;
 pub mod fault;
 pub mod table;
 
-use crate::{
-    machine,
-    memory::{
-        PAGE_SIZE,
-        allocator::frame::allocator,
-        manager::{
-            addr::{PhysAddr, VirtAddr},
-            entry::PteFlags,
-        },
-    },
-};
-
-use crate::work::unit::space::{
-    KERNEL_BASE, KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, USER_STACK_BASE,
-    init_kernel_frames, kernel_frames, trampoline_pa,
-};
-
-use alloc::boxed::Box;
-use alloc::sync::Arc;
-use alloc::vec;
-use alloc::vec::Vec;
-use erra::ResultExt;
-
-use riscv::register::satp;
-
-// 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
-// 兼作主栈下方的写保护 guard（栈下溢踩 .rodata 即写保护缺页）。
-unsafe extern "C" {
-    static _rodata_start: u8;
-}
 /// 页表操作错误 — `Space` pub 方法返回的错误类型。
 ///
 /// 经 `pub use` 从 `pub(crate) mod table` 导出，使 pub API 签名中的类型
 /// 可通过 `crate::memory::manager::MapError` 命名。bin crate 无外部消费者，
 /// re-export 为「pub 签名类型可命名性」预留，故 allow(unused_imports)。
-#[allow(unused_imports)]
 pub use table::MapError;
 
 /// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
@@ -84,135 +49,3 @@ pub unsafe fn flush_asid(asid: usize) {
         core::arch::asm!("sfence.vma zero, {}", in(reg) asid);
     }
 }
-
-/// 初始化 MMU：创建内核地址空间，identity-map DRAM 和 MMIO，启用 Sv39 分页。
-///
-/// 必须在 `memory::allocator::init()` 之后、在驱动程序 MMIO 访问之前调用。
-///
-/// # Safety
-///
-/// 写入 `satp` 后会立即启用分页。调用者需确保此时所有存活的指针
-/// （栈、代码、数据段）都已 identity-mapped。
-///
-/// # Errors
-///
-/// - [`MapError::DramOverlap`] — DRAM 末端越过用户栈窗口（内存配置非法）。
-/// - [`MapError::OutOfMemory`] — 物理帧不足以分配根/中间页表或内核 trap-context 帧。
-/// - [`MapError::NotAligned`] / [`MapError::AlreadyMapped`] — 映射参数非法。
-pub fn init() -> MapResult<()> {
-    (|| -> Result<(), MapError> {
-        unsafe {
-            let m = machine::get();
-
-            // 任务栈窗口 TASK_STACK_BASE=0xC0000000：恒等映射的 DRAM 必须落在其下方，
-            // 否则任务栈窗口覆盖真实内存而非专用窗口（DRAM 起点 0x80000000 → size < 1 GiB）。
-            if VirtAddr::from_raw(m.dram.base + m.dram.size) > USER_STACK_BASE {
-                return Err(MapError::DramOverlap);
-            }
-
-            // 1. 创建内核地址空间
-            let kernel_space = SpaceBuilder::kernel().build()?;
-
-            // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内主栈区，位于
-            //    `_kernel_edge` 之上）都在 DRAM 内。只 map free 会在启用分页后
-            //    让内核栈/内核镜像变成未映射，下一次栈访问或取指即缺页。
-            let ram_flags = PteFlags::V
-                | PteFlags::R
-                | PteFlags::W
-                | PteFlags::X
-                | PteFlags::A
-                | PteFlags::D
-                | PteFlags::G;
-
-            kernel_space.map(
-                VirtAddr::from_raw(m.dram.base),
-                PhysAddr::from_raw(m.dram.base),
-                m.dram.size,
-                ram_flags,
-                MapKind::Reserved, // 借用映射：帧归机器/内核；user 半区触碰 → 预留诊断
-                Vec::new(),
-            )?;
-
-            // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备）
-            kernel_space.map(
-                KERNEL_BASE + m.dram.base,
-                PhysAddr::from_raw(m.dram.base),
-                m.dram.size,
-                ram_flags,
-                MapKind::Reserved,
-                Vec::new(),
-            )?;
-
-            // 3.5 内核 .rodata 段只读化：镜像尾部 .rodata 经恒等与高半区两处都已
-            //    RWX 映射，此处用 protect 降为只读（去 W）。作用有二：
-            //      a) 主栈位于 _kernel_edge 之上、向下生长，越界第一脚即踩 .rodata
-            //         → 写保护缺页（天然主栈 guard，省 unmap/预留帧）；
-            //      b) 内核只读数据获得 RO 防护（BUG 改写 .rodata 立即缺页暴露）。
-            //    protect 只改已映射叶子 PTE，不影响中间表与 free 区；两处都要降。
-            let rodata_start = (&raw const _rodata_start).addr();
-            let rodata_size = crate::kernel_edge() - rodata_start;
-            let ro_flags =
-                PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D | PteFlags::G;
-            kernel_space.protect(
-                VirtAddr::from_raw(rodata_start),
-                rodata_size,
-                ro_flags,
-            )?;
-            kernel_space.protect(
-                KERNEL_BASE + rodata_start,
-                rodata_size,
-                ro_flags,
-            )?;
-
-            // 4. 映射 trap trampoline 页（内核自有帧）：所有空间以 TRAMPOLINE VA
-            //    映射同一物理页，`stvec` 指向它。G 位：内容不可变，不被 ASID 局部
-            //    sfence 刷掉也安全。
-            let tramp_flags =
-                PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
-            kernel_space.map(
-                TRAMPOLINE,
-                trampoline_pa(),
-                PAGE_SIZE,
-                tramp_flags,
-                MapKind::Reserved,
-                Vec::new(),
-            )?;
-
-            // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（hart h 帧 =
-            //    BASE + h·PAGE；元数据由 trap::init 逐帧写入）。帧 PA 表按实际核数
-            //    动态分配（不再编译期预留 MAX 槽的静态数组）；PA 存 frames[h]——
-            //    __strap 按 TP 索引的是帧区 VA（KERNEL_FRAME_BASE），不经此表。
-            let n = machine::hart_count();
-            init_kernel_frames(n);
-            let frames = kernel_frames();
-            for (h, slot) in frames.iter().enumerate() {
-                let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                    .map_err(|_| MapError::OutOfMemory)?;
-                let pa = PhysAddr::from_raw(page.as_ptr() as usize);
-                kernel_space.map(
-                    KERNEL_FRAME_BASE + h * PAGE_SIZE,
-                    pa,
-                    PAGE_SIZE,
-                    PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
-                    MapKind::Anonymous,
-                    vec![page],
-                )?;
-                slot.store(pa, core::sync::atomic::Ordering::Relaxed);
-            }
-
-            // 6. 启用 Sv39 分页
-            satp::set(satp::Mode::Sv39, 0, kernel_space.root());
-
-            // 7. 刷新 TLB
-            flush_asid(0);
-
-            // 8. 把内核地址空间封包进内核团队（KERNEL_TEAM 唯一持有；KERNEL_SPACE
-            //    全局已消除，团队插入此处即内核空间的唯一出生点）
-            crate::work::unit::team::init_kernel(Arc::new(kernel_space));
-
-            Ok(())
-        }
-    })()
-    .annotate("initializing memory manager")
-}
-
