@@ -177,7 +177,7 @@ pub fn arm_timer(interval: u64) {
 /// 由汇编入口/出口顺序保证——每次陷阱新建引用，无并发别名），且当前处于陷阱
 /// 上下文（中断屏蔽、CSR 已由硬件保存）。
 #[unsafe(no_mangle)]
-extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
+pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
     // 0. 重建内核 tp（= hartid）：用户态可能改写过 tp；一切 hart_id() 依赖它。
     //    由当前 sp（trap 栈体内）反解段号（trampoline::establish_tp）。
     establish_tp();

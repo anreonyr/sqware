@@ -99,7 +99,7 @@ fn alarm() {
 }
 
 #[panic_handler]
-fn panic_handler(info: &PanicInfo) -> ! {
+pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 拉响警报：抢占报警源（唯一继续运行并打印的 hart，输家就地卧倒），
     // 再广播停止其它核（唤醒睡核、提示用户核），随后打印诊断现场。
     alarm();

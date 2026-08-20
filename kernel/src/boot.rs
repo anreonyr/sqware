@@ -186,7 +186,7 @@ fn boot_harts() {
 
 /// 副核主流程（asm 入口调用）：per-hart CSR 配置后进入 idle（spin+steal）。
 #[unsafe(no_mangle)]
-extern "C" fn boot_main() -> ! {
+pub(crate) extern "C" fn boot_main() -> ! {
     let hart = machine::hart_id();
     putln!("hart {hart}: secondary boot, entering idle");
     crate::runtime::trap::init_hart();

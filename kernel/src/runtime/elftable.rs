@@ -86,6 +86,12 @@ impl ElfTable {
         })
     }
 
+    /// 从已按 addr 升序的静态切片构建（调用方保证排序；无排序检查）。
+    /// 供内核关键入口表（编译期闭合）使用。
+    pub const fn from_entries(entries: &'static [Entry]) -> ElfTable {
+        ElfTable { entries }
+    }
+
     /// 二分查最近 ≤ a 的符号；命中 → (名字, 距符号头偏移)。
     pub fn lookup(&self, a: VirtAddr) -> Option<(&'static str, usize)> {
         let target = a.as_usize();
@@ -129,13 +135,36 @@ pub fn is_kernel_addr(addr: usize) -> bool {
 
 // ── 内核表（挂 kernel team，见 work/team::kernel）──────────────
 
-/// 内核符号表（挂 kernel team）。
+/// 内核符号表（挂 kernel team）——方案 (b)：编译期闭合的小表。
 ///
-/// v1 返回 None：内核镜像不含自身 .symtab（链接器生成的 .symtab 无法通过
-/// link.ld keep 进装载镜像，且远址会让 rust-lld 的 PCREL 越界）。内核域地址
-/// 暂由宿主侧 nm 兜底；要内核自包含需构建期 `nm` 生成 include! 表（后续做）。
+/// 不扫 .symtab、不引远端链接符号：直接对关键入口函数 `$f as usize` 取址
+/// （链接期解析、恒对应当前镜像，永不过期）。只列调试最关心的入口，够回答
+/// 「崩在哪个子系统/哪条路径」；深层 helper 查不到（打印裸 hex）。
 pub fn kernel_table() -> Option<ElfTable> {
-    None
+    let mut v = Vec::new();
+    macro_rules! sym {
+        ($($n:literal : $f:expr);+ $(;)?) => {$(
+            v.push(Entry {
+                addr: VirtAddr::from_raw($f as *const () as usize),
+                name: $n,
+            });
+        )*};
+    }
+    sym! {
+        "panic_handler" : crate::runtime::halt::panic_handler;
+        "trap_handler"  : crate::runtime::trap::trap_handler;
+        "boot_main"     : crate::boot::boot_main;
+        "restore"       : crate::runtime::trampoline::restore;
+        "sched_run"     : crate::work::scheduler::run;
+        "sched_idle"    : crate::work::scheduler::idle;
+        "sched_starve"  : crate::work::scheduler::starve;
+        "sched_reap"    : crate::work::scheduler::reap;
+        "sched_park"    : crate::work::scheduler::park;
+        "sched_unpark"  : crate::work::scheduler::unpark;
+        "page_fault"    : crate::memory::manager::fault::handle_page_fault;
+    }
+    v.sort_by_key(|e| e.addr.as_usize());
+    Some(ElfTable::from_entries(Box::leak(v.into_boxed_slice())))
 }
 
 // ── 解析器（地址域 → 选表）────────────────────────────────────
