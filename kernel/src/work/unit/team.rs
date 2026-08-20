@@ -8,7 +8,7 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use crate::lock::{OnceLock, SpinLock};
+use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;
 
 use super::elftable::ElfTable;
@@ -96,7 +96,7 @@ impl TeamBuilder {
     pub fn spawn(self) -> Arc<Team> {
         Arc::new(Team {
             space: Arc::new(self.space),
-            tasks: SpinLock::new(Vec::new()),
+            tasks: SpinLock::new_level(Level::L3, Vec::new()),
             elftable: self.elftable,
         })
     }
@@ -113,7 +113,7 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     KERNEL_TEAM.get_or_init(|| {
         Arc::new(Team {
             space,
-            tasks: SpinLock::new(Vec::new()),
+            tasks: SpinLock::new_level(Level::L3, Vec::new()),
             elftable: crate::work::unit::elftable::kernel_table().map(Arc::new),
         })
     })

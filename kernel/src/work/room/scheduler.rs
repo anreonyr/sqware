@@ -48,7 +48,7 @@ use riscv::register::sip;
 
 use hashbrown::HashMap;
 
-use crate::lock::{OnceLock, SpinLock};
+use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
@@ -104,7 +104,7 @@ impl Scheduler {
     const fn new(hart: usize) -> Scheduler {
         Scheduler {
             hart,
-            inner: SpinLock::new(SchedInner {
+            inner: SpinLock::new_level(Level::Scheduler, SchedInner {
                 running: None,
                 starved: VecDeque::new(),
             }),
@@ -589,7 +589,7 @@ fn schedulers() -> &'static [Scheduler] {
 /// 非 const，无法进 static（单独 static 保证 get_or_init 的 'static 借用）。
 fn blocked() -> &'static SpinLock<HashMap<u64, Arc<Task>>> {
     static BLOCKED: OnceLock<SpinLock<HashMap<u64, Arc<Task>>>> = OnceLock::new();
-    BLOCKED.get_or_init(|| SpinLock::new(HashMap::new()))
+    BLOCKED.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
 struct TaskTables {
@@ -597,7 +597,7 @@ struct TaskTables {
 }
 
 static TASK_TABLES: TaskTables = TaskTables {
-    reaped: SpinLock::new(VecDeque::new()),
+    reaped: SpinLock::new_level(Level::L3, VecDeque::new()),
 };
 
 // ── 核心：取活 / 休眠 / 回收机制（内部）──

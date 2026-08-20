@@ -53,7 +53,7 @@
 // per-hart trap 栈的分配发生在 boot（无锁需求）。
 
 mod bare;
-mod dep;
+mod depend;
 mod lazy;
 mod once;
 pub(crate) mod reentrant;
@@ -72,3 +72,11 @@ pub use reentrant::RelLock;
 #[allow(unused_imports)]
 pub use rw::RwLock;
 pub use spin::SpinLock;
+/// 锁层级（depend 具名化；参与锁用 new_level 声明；None = exempt）。
+pub use depend::Level;
+
+/// debug 装配 lockdep（release 为 no-op；boot 分配器就绪后调用一次）。
+#[cfg(debug_assertions)]
+pub fn init_depend(hart_count: usize) -> Result<(), depend::DepInitError> {
+    depend::init(hart_count)
+}

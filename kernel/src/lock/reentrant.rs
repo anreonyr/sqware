@@ -16,7 +16,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::machine;
 
-use super::dep;
+use super::depend;
 use super::trap::TrapGuard;
 
 #[derive(Debug)]
@@ -28,6 +28,9 @@ pub struct RelLock<T: ?Sized> {
     /// 最外层持有者调用点（返回地址；0 = 空闲）——死锁溯源用。
     /// 重入是 RelLock 的合法语义，不检测；仅记录首次获取的调用点。
     holder_pc: AtomicUsize,
+    /// 锁层级（参与 lockdep；None = exempt）。enforcement 仅 debug 生效。
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    level: Option<depend::Level>,
     data: UnsafeCell<T>,
 }
 
@@ -52,6 +55,19 @@ impl<T> RelLock<T> {
             owner: AtomicUsize::new(0),
             count: UnsafeCell::new(0),
             holder_pc: AtomicUsize::new(0),
+            level: None,
+            data: UnsafeCell::new(val),
+        }
+    }
+
+    /// 带锁层级的构造（参与 lockdep；new() 默认 None = exempt）。
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub const fn new_level(level: depend::Level, val: T) -> Self {
+        RelLock {
+            owner: AtomicUsize::new(0),
+            count: UnsafeCell::new(0),
+            holder_pc: AtomicUsize::new(0),
+            level: Some(level),
             data: UnsafeCell::new(val),
         }
     }
@@ -72,11 +88,19 @@ impl<T: ?Sized> RelLock<T> {
     #[inline(never)] // 保证入口读到的 ra 是调用者返回地址（内联会破坏）
     pub fn lock(&self) -> RelLockGuard<'_, T> {
         // 入口第一件事：捕获调用者返回地址（任何函数调用都会覆盖 ra）
-        let caller = dep::read_ra();
+        let caller = depend::ra();
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
         // SAFETY: 读 tp（入口 `_start` 写入的 hartid）无副作用；多 hart 时各核 tp 各异。
         let me = machine::hart_id() + 1;
+
+        // lockdep：非重入（本核尚未持有）才做取前校验；同锁重入合法，跳过。
+        #[cfg(debug_assertions)]
+        if self.owner.load(Ordering::Relaxed) != me {
+            if let Some(lv) = self.level {
+                depend::check(self as *const Self as *const () as usize, lv, caller);
+            }
+        }
 
         loop {
             // Acquire：获取成功后看到前持有者的所有写入
@@ -89,6 +113,11 @@ impl<T: ?Sized> RelLock<T> {
                     // SAFETY: 刚获得独占所有权，count 仅本 hart 访问。
                     unsafe { *self.count.get() = 1 };
                     self.holder_pc.store(caller, Ordering::Relaxed);
+                    // lockdep：首获记入持有集。
+                    #[cfg(debug_assertions)]
+                    if let Some(lv) = self.level {
+                        depend::acquire(self as *const Self as *const () as usize, lv);
+                    }
                     break;
                 }
                 Err(cur) if cur == me => {
@@ -138,6 +167,11 @@ impl<T: ?Sized> Drop for RelLockGuard<'_, T> {
             *p
         };
         if c == 0 {
+            // lockdep：外层释放时移除持有集条目。
+            #[cfg(debug_assertions)]
+            if let Some(lv) = self.lock.level {
+                depend::release(self.lock as *const _ as *const () as usize, lv);
+            }
             // 重入计数归零：释放锁，清除最外层调用点。Release 保证写入对后续获取者可见。
             self.lock.holder_pc.store(0, Ordering::Relaxed);
             self.lock.owner.store(0, Ordering::Release);

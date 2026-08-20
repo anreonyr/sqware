@@ -55,6 +55,11 @@ pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
     scheduler::init();
 
+    // lockdep 装配（debug 构建）：per-hart 持有集。release 为 no-op。
+    // 置于调度器就绪后、spawn 演示任务/HSM 拉起副核前——正是多核 ABBA 的生效窗口。
+    #[cfg(debug_assertions)]
+    crate::lock::init_depend(machine::hart_count()).expect("depend init failed");
+
     // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
     #[cfg(debug_assertions)]
     unit::pagetable_reclaim();

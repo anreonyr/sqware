@@ -2,7 +2,7 @@ use crate::machine;
 use crate::memory::PAGE_SIZE;
 use core::ptr::NonNull;
 use erra::ResultExt;
-use log::debug;
+use log::trace;
 
 use alloc::{
     alloc::{AllocError, Allocator},
@@ -10,7 +10,7 @@ use alloc::{
 };
 
 use crate::{
-    lock::SpinLock,
+    lock::{Level, SpinLock},
     memory::allocator::{InitError, InitResult, Link, bump},
 };
 
@@ -32,7 +32,7 @@ pub(crate) struct FrameAllocator {
 impl FrameAllocator {
     pub const fn new() -> Self {
         Self {
-            inner: SpinLock::new(None),
+            inner: SpinLock::new_level(Level::Frame, None),
         }
     }
 
@@ -159,7 +159,7 @@ unsafe impl Allocator for FrameAllocator {
             frame.outstanding += 1;
         }
 
-        debug!(
+        trace!(
             "address {:?}, frame index {}, power {} allocated",
             addr, index, power
         );
@@ -200,7 +200,7 @@ unsafe impl Allocator for FrameAllocator {
                 frame.outstanding = frame.outstanding.saturating_sub(1);
             }
 
-            debug!(
+            trace!(
                 "address {:?}, frame index {}, power {} deallocated",
                 addr, index, power
             );

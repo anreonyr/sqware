@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use core::cmp::Reverse;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::lock::SpinLock;
+use crate::lock::{Level, SpinLock};
 use crate::runtime::clock::Instant;
 
 /// 镜像的无 tock 哨兵（内部；对外以 next_tock() -> None 表达）。
@@ -46,7 +46,7 @@ struct TimerInner {
 }
 
 static TIMER_HEAP: TimerHeap = TimerHeap {
-    inner: SpinLock::new(TimerInner {
+    inner: SpinLock::new_level(Level::L3, TimerInner {
         heap: BinaryHeap::new(),
         cancelled: Vec::new(),
     }),

@@ -30,7 +30,7 @@ use hashbrown::HashMap;
 use crate::lock::OnceLock;
 use crate::memory::allocator::bitmap::BitmapAllocator;
 use crate::memory::allocator::frame::allocator;
-use crate::{lock::RelLock, memory::PAGE_SIZE};
+use crate::{lock::{Level, RelLock}, memory::PAGE_SIZE};
 
 use crate::memory::manager::{
     addr::{AtomicPhysAddr, PhysAddr, VirtAddr},
@@ -630,7 +630,7 @@ impl SpaceBuilder {
     pub fn build(self) -> Result<Space, MapError> {
         let mut space = Space {
             kind: self.kind,
-            inner: RelLock::new(SpaceInner::new()?),
+            inner: RelLock::new_level(Level::Space, SpaceInner::new()?),
         };
         if matches!(space.kind, SpaceKind::User { .. }) {
             self.seed_user(&mut space)?;

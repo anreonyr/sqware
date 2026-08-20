@@ -11,7 +11,7 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use super::dep;
+use super::depend;
 
 pub struct BareLock<T: ?Sized> {
     locked: AtomicBool,
@@ -52,12 +52,12 @@ impl<T: ?Sized> BareLock<T> {
     #[inline(never)] // 保证入口读到的 ra 是调用者返回地址（内联会破坏）
     pub unsafe fn lock(&self) -> BareLockGuard<'_, T> {
         // 入口第一件事：捕获调用者返回地址（任何函数调用都会覆盖 ra）
-        let caller = dep::read_ra();
+        let caller = depend::ra();
         // Acquire：保证后续读取看到之前写入的完整状态
         if self.locked.swap(true, Ordering::Acquire) {
             // 单 hart 下锁已被持有必是同执行流重入（不关中断下亦然）——报告后 panic
             let holder = self.holder_pc.load(Ordering::Relaxed);
-            dep::report(
+            depend::report(
                 "barelock",
                 "recursive acquisition",
                 self as *const Self as *const () as usize,
@@ -81,7 +81,7 @@ impl<T: ?Sized> BareLock<T> {
     #[allow(dead_code)] // 非阻塞获取预留
     #[inline(never)] // 同 lock：保证入口 ra 为调用者返回地址
     pub unsafe fn try_lock(&self) -> Option<BareLockGuard<'_, T>> {
-        let caller = dep::read_ra();
+        let caller = depend::ra();
         // 失败不报重入——try_lock 语义允许拿不到
         if self.locked.swap(true, Ordering::Acquire) {
             return None;

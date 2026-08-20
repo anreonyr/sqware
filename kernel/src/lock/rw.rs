@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use super::dep;
+use super::depend;
 use super::trap::TrapGuard;
 
 // 最高位：写者持有标志
@@ -68,7 +68,7 @@ impl<T: ?Sized> RwLock<T> {
     #[inline(never)] // 保证入口读到的 ra 是调用者返回地址（内联会破坏）
     pub fn read(&self) -> RwLockReadGuard<'_, T> {
         // 入口第一件事：捕获调用者返回地址（任何函数调用都会覆盖 ra）
-        let caller = dep::read_ra();
+        let caller = depend::ra();
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
 
@@ -78,7 +78,7 @@ impl<T: ?Sized> RwLock<T> {
             // 有写者：单 hart 下写者必是本执行流（持写锁再读）→ 撤销计数后报告
             self.state.fetch_sub(1, Ordering::Release);
             let holder = self.holder_pc.load(Ordering::Relaxed);
-            dep::report(
+            depend::report(
                 "rwlock",
                 "write→read downgrade deadlock",
                 self as *const Self as *const () as usize,
@@ -104,7 +104,7 @@ impl<T: ?Sized> RwLock<T> {
     #[allow(dead_code)] // 写路径当前无调用方（RwLock 仅 hub 查询用读路径），保留
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         // 入口第一件事：捕获调用者返回地址
-        let caller = dep::read_ra();
+        let caller = depend::ra();
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
 
@@ -114,7 +114,7 @@ impl<T: ?Sized> RwLock<T> {
             if s & WRITER_BIT != 0 {
                 // 已有写者：单 hart 下写者必是本执行流 → 写重入，报告后 panic
                 let holder = self.holder_pc.load(Ordering::Relaxed);
-                dep::report(
+                depend::report(
                     "rwlock",
                     "recursive write acquisition",
                     self as *const Self as *const () as usize,
@@ -136,7 +136,7 @@ impl<T: ?Sized> RwLock<T> {
         // 等待现存读者全部离开：单 hart 下读者计数非 0 必是本执行流的读锁（升级死锁）
         if self.state.load(Ordering::Acquire) & READER_MASK != 0 {
             let holder = self.holder_pc.load(Ordering::Relaxed);
-            dep::report(
+            depend::report(
                 "rwlock",
                 "read→write upgrade deadlock",
                 self as *const Self as *const () as usize,
