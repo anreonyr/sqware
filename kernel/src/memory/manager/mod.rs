@@ -43,6 +43,12 @@ use alloc::vec::Vec;
 use erra::ResultExt;
 
 use riscv::register::satp;
+
+// 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
+// 兼作主栈下方的写保护 guard（栈下溢踩 .rodata 即写保护缺页）。
+unsafe extern "C" {
+    static _rodata_start: u8;
+}
 /// 页表操作错误 — `Space` pub 方法返回的错误类型。
 ///
 /// 经 `pub use` 从 `pub(crate) mod table` 导出，使 pub API 签名中的类型
@@ -131,6 +137,27 @@ pub fn init() -> MapResult<()> {
                 ram_flags,
                 MapKind::Reserved,
                 Vec::new(),
+            )?;
+
+            // 3.5 内核 .rodata 段只读化：镜像尾部 .rodata 经恒等与高半区两处都已
+            //    RWX 映射，此处用 protect 降为只读（去 W）。作用有二：
+            //      a) 主栈位于 _kernel_edge 之上、向下生长，越界第一脚即踩 .rodata
+            //         → 写保护缺页（天然主栈 guard，省 unmap/预留帧）；
+            //      b) 内核只读数据获得 RO 防护（BUG 改写 .rodata 立即缺页暴露）。
+            //    protect 只改已映射叶子 PTE，不影响中间表与 free 区；两处都要降。
+            let rodata_start = (&raw const _rodata_start).addr();
+            let rodata_size = crate::kernel_edge() - rodata_start;
+            let ro_flags =
+                PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D | PteFlags::G;
+            kernel_space.protect(
+                VirtAddr::from_raw(rodata_start),
+                rodata_size,
+                ro_flags,
+            )?;
+            kernel_space.protect(
+                KERNEL_BASE + rodata_start,
+                rodata_size,
+                ro_flags,
             )?;
 
             // 4. 映射 trap trampoline 页（内核自有帧）：所有空间以 TRAMPOLINE VA
