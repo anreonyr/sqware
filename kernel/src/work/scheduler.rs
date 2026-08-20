@@ -57,6 +57,7 @@ use crate::runtime::context::TrapContext;
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::runtime::trap::arm_timer;
 use crate::runtime::{clock, timer};
+use crate::runtime::trace::{self, EventKind, SchedEvent};
 
 use super::task::{BlockReason, Task, TaskState};
 use super::team::Team;
@@ -223,6 +224,7 @@ impl Scheduler {
             i.running = Some(cur);
             return pa;
         }
+        trace::note(EventKind::Sched(SchedEvent::Starve { tid: cur.id }));
         let next = self.rotate(&mut i, cur);
         drop(i);
         self.replace(next)
@@ -246,6 +248,10 @@ impl Scheduler {
             task.id,
             task.name
         );
+        trace::note(EventKind::Sched(SchedEvent::Park {
+            tid: task.id,
+            wake_at: wake_at as usize,
+        }));
         #[cfg(debug_assertions)]
         {
             probe_strong(&task, "park: before blocked insert");
@@ -290,6 +296,7 @@ impl Scheduler {
             "running 容器里不是 Running 任务"
         );
         putln!("task #{} '{}': exited", exited.id, exited.name);
+        trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.id }));
         task_mut(&mut exited).transform(TaskState::Reaped);
         TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
         tie::exit();
@@ -616,6 +623,10 @@ fn steal() -> Option<Arc<Task>> {
             task.id,
             task.name
         );
+        trace::note(EventKind::Sched(SchedEvent::Steal {
+            tid: task.id,
+            src_hart: v,
+        }));
         return Some(task);
     }
     None
@@ -670,6 +681,7 @@ fn clear() {
             break;
         };
         putln!("task #{} '{}': reaped reclaimed", z.id, z.name);
+        trace::note(EventKind::Sched(SchedEvent::Reap { tid: z.id }));
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.team.prune_tasks(&z);
         // 锁外回收（Team.tasks 已放 → Space.inner=2 → FRAME=5 合法）
@@ -709,9 +721,11 @@ pub fn idle() -> ! {
 /// 锁序：Team.tasks 与调度锁顺序获取、不嵌套（无 3 → 1 方向）。
 pub(crate) fn push(task: Arc<Task>) {
     let me = machine::hart_id();
+    let tid = task.id;
     task.team.push_task(&task);
     schedulers()[me].push(task);
     tie::push();
+    trace::note(EventKind::Sched(SchedEvent::Spawn { tid }));
     // 新任务出现：唤醒 WFI 休眠核（可 steal 取活）
     tie::wake_all();
 }
@@ -752,8 +766,14 @@ pub fn run() -> usize {
             i.running = Some(cur);
             return pa;
         }
+        let prev_tid = cur.id;
         let next = s.rotate(&mut i, cur);
+        let next_tid = next.id;
         drop(i);
+        trace::note(EventKind::Sched(SchedEvent::Switch {
+            prev_tid,
+            next_tid,
+        }));
         return s.replace(next);
     }
     drop(i);
@@ -795,6 +815,7 @@ pub fn unpark() {
         probe_strong(&task, "unpark: after blocked remove");
         task_mut(&mut task).transform(TaskState::Starved);
         putln!("task #{} '{}': woken", task.id, task.name);
+        trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.id }));
         let me = machine::hart_id();
         schedulers()[me].push(task);
         tie::wake_all();

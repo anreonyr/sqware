@@ -70,6 +70,8 @@ fn main() -> ! {
     manager::init().unwrap_or_else(|e| panic!("manager init failed: {e}"));
     runtime::clock::init(machine::get().hertz)
         .unwrap_or_else(|e| panic!("clock init failed: {e:?}"));
+    // trace：静态池切分 + 核数上限防御（须在 clock 就绪后、任何 note 前）。
+    runtime::trace::init();
     runtime::init();
 
     // boot 模块 spawn 多任务并进入首个任务（永不返回）。S-timer 由

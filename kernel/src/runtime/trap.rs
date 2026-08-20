@@ -25,6 +25,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::space::{KERNEL_FRAME_BASE, kernel_frame_pa};
 use crate::putln;
 use crate::runtime::context::TrapContext;
+use crate::runtime::trace::{self, EventKind, MemEvent};
 use crate::runtime::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, establish_tp, init_trap_stacks,
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
@@ -284,6 +285,11 @@ extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
             let ok = with_running_space(|space| {
                 crate::memory::manager::fault::handle_page_fault(&fault, space)
             });
+            trace::note(EventKind::Mem(MemEvent::PageFault {
+                va: fault.addr.as_usize(),
+                fault: fault.kind,
+                resolved: ok,
+            }));
             if ok {
                 putln!("user page fault resolved: {fault:?}");
             } else {

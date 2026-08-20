@@ -17,5 +17,6 @@ pub mod context;
 pub mod halt;
 pub mod trampoline;
 pub mod trap;
+pub mod trace;
 
 pub use trap::init;

@@ -131,6 +131,12 @@ fn panic_handler(info: &PanicInfo) -> ! {
         machine::hart_id()
     ));
 
+    // 崩溃现场：先记 Panic 事件，再倒出各 hart 最近事件窗口（无分配、无锁）。
+    crate::runtime::trace::note(crate::runtime::trace::EventKind::Halt(
+        crate::runtime::trace::HaltEvent::Panic,
+    ));
+    crate::runtime::trace::panic_dump();
+
     loop {
         sbi::SystemResetCall::new(fid::SystemReset::SystemReset)
             .call()

@@ -19,6 +19,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::put;
 use crate::runtime::{clock, timer};
 use crate::runtime::context::{Gprs, TrapContext};
+use crate::runtime::trace::{self, EventKind, EnvEvent};
 use crate::work::scheduler::{park, reap, running_team, starve, with_running_space};
 
 /// envcall 分发（trap_handler 的 UserEnvCall 分支调用）。
@@ -29,6 +30,10 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
     let number = frame.gpr.x(Gprs::A7); // a7 = 调用号
     let call =
         Ucall::try_from(number).unwrap_or_else(|_| panic!("invalid envcall number: {number}"));
+    trace::note(EventKind::Env(EnvEvent::Call {
+        call: number,
+        arg: frame.gpr.x(Gprs::A0),
+    }));
     match call {
         Ucall::Yield => {
             frame.sepc = frame.sepc + 4;
