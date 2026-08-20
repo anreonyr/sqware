@@ -103,10 +103,9 @@ pub fn init() -> MapResult<()> {
             // 1. 创建内核地址空间
             let kernel_space = SpaceBuilder::kernel().build()?;
 
-            // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内主栈区，_kernel_edge
-            //    之上 guard+主栈）+ free 区都在 DRAM 内。只 map free 会在启用分页后
+            // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内主栈区，位于
+            //    `_kernel_edge` 之上）都在 DRAM 内。只 map free 会在启用分页后
             //    让内核栈/内核镜像变成未映射，下一次栈访问或取指即缺页。
-            //    （主栈区下的 guard 帧随后单独 unmap，见第 8 步。）
             let ram_flags = PteFlags::V
                 | PteFlags::R
                 | PteFlags::W
@@ -176,15 +175,7 @@ pub fn init() -> MapResult<()> {
             // 7. 刷新 TLB
             flush_asid(0);
 
-            // 8. 主内核栈 guard 页：位于镜像之上 [_kernel_edge, +PAGE)，即主栈区
-            //    下缘（栈区由此下溢拦截）。恒等地址清 PTE → 向下溢出越过 guard
-            //    即页故障（而非静默踩进镜像 .bss）。必须在启用分页后 unmap：MMU
-            //    开启后才真正拦截。与 per-hart trap 栈 guard 做法一致（unmap 只清
-            //    叶子 PTE、保留 DRAM 常数映射簿记）。
-            let kernel_stack_guard = crate::kernel_edge();
-            kernel_space.unmap(VirtAddr::from_raw(kernel_stack_guard), PAGE_SIZE);
-
-            // 9. 保存内核地址空间
+            // 8. 保存内核地址空间
             KERNEL_SPACE.lock().replace(Arc::new(kernel_space));
 
             Ok(())

@@ -25,8 +25,8 @@ global_asm!(
     "_start:",
     "    mv   tp, a0", // hartid → tp：S-mode 读不到 M-mode CSR mhartid，入口处暂存
     "    csrc sstatus, 2", // 清 SIE：内核态恒关中断（boot 期 OpenSBI 可能遗留 SIE=1）
-    // 主栈布局：sp = _kernel_edge + (guard + KERNEL_STACK_SIZE)，栈向低地址生长。
-    // 栈区/guard 不由链接脚本预留，偏移 `_boot_stack_offset` 是 Rust 常量（单一来源）。
+    // 主栈布局：sp = _kernel_edge + KERNEL_STACK_SIZE，栈向低地址生长。
+    // 栈区不由链接脚本预留，偏移 `_stack` 是 Rust 常量（单一来源）。
     "    la   sp, _kernel_edge",
     "    la   t0, _stack",
     "    ld   t0, 0(t0)",
@@ -80,19 +80,17 @@ fn main() -> ! {
     boot::init();
 }
 
-/// 主内核栈布局（镜像内单一引导栈；栈大小/guard 均由 Rust 常量单一来源）：
-///   `_kernel_edge`           镜像结束（页对齐，链接脚本唯一锚点）
-///   [guard 帧 1页]           未映射，栈下溢拦截（见 `manager::init`）
-///   [主栈区 KERNEL_STACK_SIZE]  栈向低地址生长，栈顶 = `_kernel_edge`+guard+size
-/// free 区起点 = 栈顶。
+/// 主内核栈布局（镜像内单一引导栈；栈大小由 Rust 常量单一来源）：
+///   `_kernel_edge`             镜像结束（页对齐，链接脚本唯一锚点）
+///   [主栈区 KERNEL_STACK_SIZE] 向下生长，栈底 = `_kernel_edge`，栈顶 = +size
+/// free 区起点 = 栈顶。无独立 guard 帧——主栈是 boot 短命栈，下溢由栈底
+/// canary 兜底（boot::init 进首任务前校验）。
 pub(crate) const KERNEL_STACK_SIZE: usize = 0x10_0000; // 1 MiB
-/// 主栈区之下的 guard 帧大小（1 页，未映射，防下溢踩镜像）。
-pub(crate) const KERNEL_STACK_GUARD: usize = crate::memory::PAGE_SIZE;
 
 /// 主内核栈 canary 值（写在栈底，`boot::init` 进首任务前校验）。
 pub(crate) const KERNEL_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
 
-/// 镜像结束地址（链接脚本 `_kernel_edge`）——栈/guard/free 区布局的唯一基准。
+/// 镜像结束地址（链接脚本 `_kernel_edge`）——栈与 free 区布局的唯一基准。
 pub(crate) fn kernel_edge() -> usize {
     (&raw const _kernel_edge).addr()
 }
@@ -101,20 +99,20 @@ unsafe extern "C" {
     static _kernel_edge: u8;
 }
 
-/// 主栈区偏移（guard + 栈大小）——`_start` 汇编加载它算出栈顶 sp。
-/// no_mangle 暴露为符号，global_asm `la t0,_boot_stack_offset; ld t0,0(t0)` 读取，
+/// 主栈区偏移（栈大小）——`_start` 汇编加载它算出栈顶 sp。
+/// no_mangle 暴露为符号，global_asm `la t0,_stack; ld t0,0(t0)` 读取，
 /// 栈大小单一来源（此处由 Rust 常量推导），链接脚本不写栈布局。
 #[unsafe(no_mangle)]
-static _stack: usize = KERNEL_STACK_GUARD + KERNEL_STACK_SIZE;
+static _stack: usize = KERNEL_STACK_SIZE;
 
-/// 主内核栈底地址（canary 所在，guard 帧之上）。
+/// 主内核栈底地址（canary 所在）。
 pub(crate) fn kernel_stack_base() -> usize {
-    kernel_edge() + KERNEL_STACK_GUARD
+    kernel_edge()
 }
 
 /// 主内核栈顶地址（= free 区起点）。
 pub(crate) fn kernel_stack_edge() -> usize {
-    kernel_edge() + KERNEL_STACK_GUARD + KERNEL_STACK_SIZE
+    kernel_edge() + KERNEL_STACK_SIZE
 }
 
 /// 读取 DTB `/cpus` 的 timebase-frequency（Hz）；缺失/非法长度返回 0
