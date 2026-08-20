@@ -38,6 +38,7 @@ pub enum EventKind {
     Env(EnvEvent),
     Mem(MemEvent),
     Halt(HaltEvent),
+    Watch(WatchEvent),
 }
 
 /// work/scheduler 的任务生命周期。
@@ -71,6 +72,12 @@ pub enum MemEvent {
 pub enum HaltEvent {
     Halt,
     Panic,
+}
+
+/// runtime/watch 值班看护的报警事件。
+#[derive(Clone, Copy)]
+pub enum WatchEvent {
+    Raised,
 }
 
 /// 一条事件：时间戳 + 聚合事件。仅标量、Copy，可 const 初始化。
@@ -225,6 +232,7 @@ fn kind_str(k: EventKind) -> &'static str {
         EventKind::Mem(MemEvent::PageFault { .. }) => "pagefault",
         EventKind::Halt(HaltEvent::Halt) => "halt",
         EventKind::Halt(HaltEvent::Panic) => "panic",
+        EventKind::Watch(WatchEvent::Raised) => "watch",
     }
 }
 
@@ -253,6 +261,7 @@ fn fields_json(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
             write!(w, ",\"va\":{va:#x},\"fault\":\"{:?}\",\"resolved\":{resolved}", fault)
         }
         EventKind::Halt(HaltEvent::Halt) | EventKind::Halt(HaltEvent::Panic) => Ok(()),
+        EventKind::Watch(WatchEvent::Raised) => Ok(()),
     }
 }
 
@@ -338,6 +347,7 @@ fn fmt_event(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         }
         EventKind::Halt(HaltEvent::Halt) => write!(w, "halt"),
         EventKind::Halt(HaltEvent::Panic) => write!(w, "panic"),
+        EventKind::Watch(WatchEvent::Raised) => write!(w, "watch raised"),
     }
 }
 

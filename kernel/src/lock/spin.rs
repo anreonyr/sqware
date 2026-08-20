@@ -117,6 +117,13 @@ impl<T: ?Sized> SpinLock<T> {
                     holder,
                     caller,
                 );
+            } else {
+                // 跨核争用：本地看门狗盯住这把被抢的锁（持方 + 起始时刻）。
+                crate::runtime::watch::stake(
+                    self as *const Self as *const () as usize,
+                    self.owner.load(Ordering::Relaxed),
+                    self.holder_pc.load(Ordering::Relaxed),
+                );
             }
             core::hint::spin_loop();
         }
@@ -192,6 +199,8 @@ impl<T: ?Sized> DerefMut for SpinLockGuard<'_, T> {
 
 impl<T: ?Sized> Drop for SpinLockGuard<'_, T> {
     fn drop(&mut self) {
+        // 本地看门狗撤哨（若正盯这把锁；未盯即免，热路径廉价）。
+        crate::runtime::watch::unstake(self.lock as *const SpinLock<T> as *const () as usize);
         // lockdep：释放时移除持有集条目。
         #[cfg(debug_assertions)]
         if let Some(lv) = self.lock.level {

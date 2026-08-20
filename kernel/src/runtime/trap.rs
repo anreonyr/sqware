@@ -224,6 +224,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             // 重武装：运行任务抢占量子；到期唤醒由 unpark 经 timer::drain 驱动
             arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
             unpark();
+            // 值班看护：健康核打点报岗 + 巡岗查险（失速/静默/锁相持）——这里是
+            // 每量子的定时器节拍，是 watchdog 判据的可靠驱动点。
+            crate::work::room::scheduler::round();
             if frame.sstatus.spp() != sstatus::SPP::Supervisor {
                 run() as *mut TrapContext
             } else {

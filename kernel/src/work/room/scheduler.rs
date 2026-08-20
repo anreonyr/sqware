@@ -56,7 +56,7 @@ use crate::runtime::context::TrapContext;
 use crate::runtime::trace::{self, EventKind, SchedEvent};
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::runtime::trap::arm_timer;
-use crate::runtime::{clock, timer};
+use crate::runtime::{clock, timer, watch};
 
 use super::tie;
 use crate::work::unit::{
@@ -670,6 +670,7 @@ fn wait() -> Option<Arc<Task>> {
     // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
     unsafe { sip::clear_ssoft() };
     tie::wake(me);
+    round();
     None
 }
 
@@ -745,6 +746,7 @@ pub fn run() -> usize {
     //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒、不经过 trap_handler
     //    的路径（用户核走 trap 入口钩子）。常运行时恒 no-op。
     crate::runtime::halt::hush();
+    watch::pulse();
     let me = machine::hart_id();
     let s = &schedulers()[me];
     let mut i = s.inner.lock();
@@ -792,6 +794,31 @@ pub fn run() -> usize {
             return schedulers()[me].replace(task);
         }
     }
+}
+
+// ── 适配层：watch（值班看护）──────────────────────────────────────────
+
+/// 打点 + 巡岗：pulse 后按现况判 A/L，命中即 raise。供 trap 定时器分支与
+/// wait() 唤醒后调用（健康核的节拍）。
+pub fn round() {
+    watch::pulse();
+    let probe = watch::Probe {
+        has_work: has_work(),
+        asleep: tie::waiting(),
+    };
+    if let Some(r) = watch::check(clock::now(), probe) {
+        watch::raise(r);
+    }
+}
+
+/// 是否有活：任一核 starved 非空，或 timer 有已到期 tock。
+fn has_work() -> bool {
+    for s in schedulers().iter() {
+        if s.get_len() > 0 {
+            return true;
+        }
+    }
+    timer::next_tock().is_some_and(|t| t.as_ticks() <= clock::now().as_ticks())
 }
 
 /// 唤醒：从 clock 到期句柄按 blocked 映射摘除任务，Blocked → Starved 入本核

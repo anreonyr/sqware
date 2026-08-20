@@ -20,6 +20,7 @@ pub mod trampoline;
 pub mod trap;
 pub mod trace;
 pub mod scene;
+pub mod watch;
 pub mod envcall;
 
 pub use trap::init;
