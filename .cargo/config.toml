@@ -5,6 +5,6 @@ target = "riscv64gc-unknown-none-elf"
 # -Tlink.ld 移出全局 rustflags（kernel/user 各自 link.ld 不同），改由各 crate
 # build.rs 经 cargo::rustc-link-arg 传绝对路径。relocation-model=static 对所有
 # crate 生效（静态 ET_EXEC，loader 按绝对 VMA 装载——内核同样无 PIE，无害）。
-rustflags = ["-Crelocation-model=static", "-Cforce-frame-pointers=yes"]
+rustflags = ["-Crelocation-model=static", "-Cforce-frame-pointers=yes", "-Ccode-model=medium"]
 # cargo run 经 scripts/qemu-runner.nu 启动 QEMU（从 workspace 根执行）
 runner = ["nu", "scripts/runner.nu"]
