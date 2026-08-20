@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use crate::lock::{OnceLock, SpinLock};
 use crate::memory::manager::space::{Space, kernel_space};
-use crate::runtime::elftable::ElfTable;
+use crate::work::elftable::ElfTable;
 
 use super::task::{Task, TaskBuilder};
 
@@ -114,7 +114,7 @@ pub fn kernel() -> &'static Arc<Team> {
         Arc::new(Team {
             space,
             tasks: SpinLock::new(Vec::new()),
-            elftable: crate::runtime::elftable::kernel_table().map(Arc::new),
+            elftable: crate::work::elftable::kernel_table().map(Arc::new),
         })
     })
 }

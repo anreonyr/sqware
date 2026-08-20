@@ -16,6 +16,7 @@
 // 启动编排（调度器 init/自测 → Team/Task 构建 → HSM 副核 → 首任务）在 boot.rs。
 
 pub mod envcall;
+pub mod elftable;
 pub(crate) mod loader;
 pub(crate) mod parser;
 pub mod scheduler;
