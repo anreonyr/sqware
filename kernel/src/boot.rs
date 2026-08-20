@@ -52,6 +52,14 @@ unsafe extern "C" {
 /// a0=1 写 'B' 后退出——验证「线程退出、团队/兄弟线程存活」的引用计数语义。
 /// 之后是单线程团队回归：A counter（不自让出，靠抢占）→ B yielder（主动让出）
 /// → C exiter（写 'C' 后退出）。S-timer 由 runtime::init 武装、trap_handler 内循环重武装。
+/// 锁地址符号化回调：内核地址 → (函数名, 偏移)。team=None 只走内核表。
+fn kernel_symbolizer(addr: usize) -> Option<(&'static str, usize)> {
+    crate::work::unit::elftable::resolve(
+        crate::memory::manager::addr::VirtAddr::from_raw(addr),
+        None,
+    )
+}
+
 pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
     scheduler::init();
@@ -67,6 +75,8 @@ pub fn init() -> ! {
     // 置于调度器就绪后、spawn 演示任务/HSM 拉起副核前——正是多核 ABBA 的生效窗口。
     #[cfg(debug_assertions)]
     crate::lock::init_depend(machine::hart_count()).expect("depend init failed");
+    // 锁地址符号化：depend 打印现场用（未注入则裸地址）。
+    crate::lock::set_symbolizer(&kernel_symbolizer);
 
     // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
     #[cfg(debug_assertions)]
