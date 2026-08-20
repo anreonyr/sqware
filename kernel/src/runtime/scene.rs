@@ -162,6 +162,8 @@ pub fn dump_crash() {
     dump_csrs();
     dump_gprs();
     dump_backtrace();
+    // trace-host 下 JSON 实时流已含全部事件，文本窗口冗余——只关事件窗口，保留 CSR/GPR/回溯。
+    #[cfg(not(feature = "trace-host"))]
     crate::runtime::trace::panic_dump();
 }
 
