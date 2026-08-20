@@ -8,20 +8,20 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use super::space::{TASK_STACK_SIZE, kernel_frame_pa};
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use riscv::register::{satp, sstatus};
-use super::space::{TASK_STACK_SIZE, kernel_frame_pa};
 use crate::putln;
 use crate::runtime::context::{Gprs, TrapContext};
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::work::USER_TEXT_BASE;
+use riscv::register::{satp, sstatus};
 
-use crate::work::room::scheduler;
 use super::team::Team;
+use crate::work::room::scheduler;
 
 /// 内核任务自身的 trap 帧 PA（spawn_kernel 写入一次）。
 /// 入口据此读帧内 kernel_sp（调度器 prepare 按**真实** hart 写的 trap 栈顶）反推实际
@@ -297,8 +297,7 @@ impl TaskBuilder {
             frame.sepc = self.entry;
             frame.gpr.set_x(Gprs::SP, stack_top.as_usize());
             frame.gpr.set_x(Gprs::A0, self.arg);
-            let mut ss =
-                sstatus::Sstatus::from_bits(riscv::register::sstatus::read().bits());
+            let mut ss = sstatus::Sstatus::from_bits(riscv::register::sstatus::read().bits());
             // 内核任务（挂 kernel 团队、共享内核地址空间 KERNEL_TEAM.space）→ S 态：SPP=S、SIE=0、SPIE=0
             // （内核恒关中断——协作式，从不被 S-timer 抢占；跑完即退）。其它团队 → U 态：
             // SPP=U、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。模式由团队身份推断，无新 API。

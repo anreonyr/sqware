@@ -53,15 +53,17 @@ use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
 use crate::runtime::context::TrapContext;
+use crate::runtime::trace::{self, EventKind, SchedEvent};
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::runtime::trap::arm_timer;
 use crate::runtime::{clock, timer};
-use crate::runtime::trace::{self, EventKind, SchedEvent};
 
-use crate::work::unit::space::Space;
-use crate::work::unit::task::{BlockReason, Task, TaskState};
-use crate::work::unit::team::Team;
 use super::tie;
+use crate::work::unit::{
+    space::Space,
+    task::{BlockReason, Task, TaskState},
+    team::Team,
+};
 
 // ── 核心：常量 ──
 
@@ -770,10 +772,7 @@ pub fn run() -> usize {
         let next = s.rotate(&mut i, cur);
         let next_tid = next.id;
         drop(i);
-        trace::note(EventKind::Sched(SchedEvent::Switch {
-            prev_tid,
-            next_tid,
-        }));
+        trace::note(EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }));
         return s.replace(next);
     }
     drop(i);

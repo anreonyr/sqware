@@ -1067,7 +1067,9 @@ impl Space {
             // Arc 从 frame 分配器新建（带分配器参数）+ 拷字节
             let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> =
                 Arc::new_in([0u8; PAGE_SIZE], allocator());
-            Arc::get_mut(&mut arc).expect("fresh arc").copy_from_slice(bytes_src);
+            Arc::get_mut(&mut arc)
+                .expect("fresh arc")
+                .copy_from_slice(bytes_src);
             let arc_pa = PhysAddr::from_raw(Arc::as_ptr(&arc) as usize);
             // 换帧：旧 Owned 归还，PTE 重指到 Arc 帧、清 W
             {
@@ -1082,7 +1084,10 @@ impl Space {
                 drop(old); // 旧 Owned 帧归还 frame 池
                 let leaf = durable.root.walk_mut(va, false)?;
                 let ppn = (arc_pa.as_usize() >> 12) as u64;
-                leaf.set(ppn, (flags & !PteFlags::W) | PteFlags::A | PteFlags::D | PteFlags::V);
+                leaf.set(
+                    ppn,
+                    (flags & !PteFlags::W) | PteFlags::A | PteFlags::D | PteFlags::V,
+                );
             }
         }
         drop(inner);

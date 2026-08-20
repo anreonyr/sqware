@@ -315,7 +315,7 @@ impl FrameInner {
             // 调用点，而非事后在错误地址上 page fault。
             #[cfg(debug_assertions)]
             {
-                let m = machine::get();
+                let m = machine::info();
                 let a = head.as_ptr() as usize;
                 if !m.free.range().contains(&a) {
                     panic!(
@@ -351,7 +351,7 @@ impl FrameInner {
                 // 已被覆写——free 块被误用为数据页的特征）。
                 #[cfg(debug_assertions)]
                 {
-                    let m = machine::get();
+                    let m = machine::info();
                     let a = n.as_ptr() as usize;
                     if !m.free.range().contains(&a) {
                         panic!(
@@ -413,7 +413,7 @@ impl FrameInner {
                 // debug: 链表头必须是 DRAM 内合法地址（读 head 的 prev 前）。
                 #[cfg(debug_assertions)]
                 {
-                    let m = machine::get();
+                    let m = machine::info();
                     let a = head.as_ptr() as usize;
                     if !m.free.range().contains(&a) {
                         panic!(
@@ -440,7 +440,7 @@ impl FrameInner {
             // debug: 被摘除的 Link 节点地址必须合法（读其 prev/next 前）。
             #[cfg(debug_assertions)]
             {
-                let m = machine::get();
+                let m = machine::info();
                 let a = addr as usize;
                 if !m.free.range().contains(&a) {
                     panic!(

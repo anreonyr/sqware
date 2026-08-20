@@ -33,12 +33,12 @@ use erra::ResultExt;
 
 use riscv::register::satp;
 
-use crate::machine;
+use crate::machine::{self, kernel_edge};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::block::live_pages;
 use crate::memory::allocator::frame::{FRAME_ALLOCATOR, allocator};
 use crate::memory::manager::{
-    MapError, MapResult,
+    MapError,
     addr::{PhysAddr, VirtAddr},
     entry::PteFlags,
     flush_asid,
@@ -54,6 +54,9 @@ use space::{
 unsafe extern "C" {
     static _rodata_start: u8;
 }
+
+/// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
+pub type MapResult<T> = erra::Result<T, MapError>;
 
 /// 初始化 MMU：创建内核地址空间，identity-map DRAM 和 MMIO，启用 Sv39 分页，
 /// 并把内核空间封包进 KERNEL_TEAM（唯一出生点）。
@@ -73,7 +76,7 @@ unsafe extern "C" {
 pub fn init() -> MapResult<()> {
     (|| -> Result<(), MapError> {
         unsafe {
-            let m = machine::get();
+            let m = machine::info();
 
             // 任务栈窗口 TASK_STACK_BASE=0xC0000000：恒等映射的 DRAM 必须落在其下方，
             // 否则任务栈窗口覆盖真实内存而非专用窗口（DRAM 起点 0x80000000 → size < 1 GiB）。
@@ -121,7 +124,7 @@ pub fn init() -> MapResult<()> {
             //      b) 内核只读数据获得 RO 防护（BUG 改写 .rodata 立即缺页暴露）。
             //    protect 只改已映射叶子 PTE，不影响中间表与 free 区；两处都要降。
             let rodata_start = (&raw const _rodata_start).addr();
-            let rodata_size = crate::kernel_edge() - rodata_start;
+            let rodata_size = kernel_edge() - rodata_start;
             let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D | PteFlags::G;
             kernel_space.protect(VirtAddr::from_raw(rodata_start), rodata_size, ro_flags)?;
             kernel_space.protect(KERNEL_BASE + rodata_start, rodata_size, ro_flags)?;

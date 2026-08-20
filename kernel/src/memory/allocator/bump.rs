@@ -39,7 +39,7 @@ impl BumpInner {
 
     fn init(&mut self) -> Result<(), InitError> {
         // 区域来自调用方注入的 memory::platform 配置（allocator::init 设置），自包含。
-        let m = machine::get();
+        let m = machine::info();
         if m.free.size == 0 {
             return Err(InitError::NoFreeMemory);
         }

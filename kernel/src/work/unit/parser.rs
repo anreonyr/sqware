@@ -291,4 +291,3 @@ pub fn symtabs(bytes: &[u8]) -> ParseResult<(&[u8], &[u8])> {
     })()
     .annotate("reading ELF symbol table")
 }
-

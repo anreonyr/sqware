@@ -12,7 +12,7 @@
 // 帧（panic 兜底）。trap 栈底 canary 在处理器出入口校验（溢出即 panic）。
 
 use crate::runtime::{clock, timer};
-use crate::work::room::scheduler::{unpark, with_running_space};
+use crate::work::room::scheduler::{run, unpark, with_running_space};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -22,7 +22,6 @@ use riscv::register::{satp, scause, sepc, sie, sip, sstatus, stval, stvec, time}
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
-use crate::work::unit::space::{KERNEL_FRAME_BASE, kernel_frame_pa};
 use crate::putln;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trace::{self, EventKind, MemEvent};
@@ -30,6 +29,7 @@ use crate::runtime::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, establish_tp, init_trap_stacks,
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
 };
+use crate::work::unit::space::{KERNEL_FRAME_BASE, kernel_frame_pa};
 use crate::{machine, put};
 use sbi::{TimerCall, fid::Timer, scall::SArgs};
 
@@ -133,25 +133,6 @@ pub fn init() {
     );
 }
 
-/// 副核 per-hart 初始化（HSM 启动后由 boot_main 调用）：
-/// satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
-/// （trap 栈 / canary / 内核帧由 hart 0 在 init 完成；B1 共享内核帧。）
-pub fn init_hart() {
-    let ktc = kernel_frame_pa(0);
-    let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
-    let ksatp = frame.kernel_satp;
-    // Sv39 token：低 44 位 ppn、[63:44] asid/模式（字段访问器拆解，无裸位运算）
-    unsafe {
-        satp::set(satp::Mode::Sv39, ksatp.asid(), ksatp.ppn());
-        core::arch::asm!("sfence.vma");
-        stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
-        core::arch::asm!("csrw sscratch, zero");
-        sie::set_stimer();
-        sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
-    }
-    info!("runtime \n\t hart {} trap init done", machine::hart_id());
-}
-
 /// 武装 S-timer 中断：`stimecmp = time + interval`（SBI TIME 扩展，绝对时间）。
 /// interval 为 timebase 刻度（clock 换算）；休眠推远见 scheduler::wait。
 pub fn arm_timer(interval: u64) {
@@ -239,15 +220,12 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         // S-timer：重武装 + 抢占（仅用户态陷阱可切换——内核态陷阱须恢复被
         // 中断的内核上下文；内核恒关中断下本不应发生，SPP 判断为防御性）
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
-            let tick = timer::tick();
-            if tick < 8 {
-                putln!("timer tick #{tick} @ time={}", time::read());
-            }
+            timer::tick();
             // 重武装：运行任务抢占量子；到期唤醒由 unpark 经 timer::drain 驱动
             arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
             unpark();
             if frame.sstatus.spp() != sstatus::SPP::Supervisor {
-                crate::work::run() as *mut TrapContext
+                run() as *mut TrapContext
             } else {
                 frame as *mut TrapContext
             }

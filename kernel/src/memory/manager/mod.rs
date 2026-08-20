@@ -26,9 +26,6 @@ pub mod table;
 /// re-export 为「pub 签名类型可命名性」预留，故 allow(unused_imports)。
 pub use table::MapError;
 
-/// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
-pub type MapResult<T> = erra::Result<T, MapError>;
-
 /// 刷新指定 ASID 的 TLB 条目（非全局）。
 ///
 /// 本地 `sfence.vma zero, asid`（rs2 用通用寄存器传值：asid=0 时全刷

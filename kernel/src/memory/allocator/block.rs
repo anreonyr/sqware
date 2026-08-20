@@ -90,7 +90,7 @@ impl Pool {
         if let Some(head) = inner.freepool[power] {
             #[cfg(debug_assertions)]
             {
-                let m = machine::get();
+                let m = machine::info();
                 let a = head.as_ptr() as usize;
                 if !m.free.range().contains(&a) {
                     panic!(
@@ -572,7 +572,7 @@ pub fn init() -> InitResult<()> {
         {
             use crate::memory::allocator::unitmap;
 
-            let m = machine::get();
+            let m = machine::info();
             let fbase = m.free.base;
             let fpages = m.free.size / PAGE_SIZE;
             crate::memory::allocator::pageown::set_base(fbase, fpages);

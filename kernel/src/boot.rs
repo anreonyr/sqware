@@ -12,17 +12,20 @@
 use core::arch::global_asm;
 
 use alloc::sync::Arc;
+use log::info;
+use riscv::register::{satp, sie, stvec};
 
 use crate::machine;
 use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
-use crate::runtime::trampoline::restore;
+use crate::runtime::context::TrapContext;
+use crate::runtime::trampoline::{alltraps_va, restore};
 use crate::work::room::scheduler;
 #[cfg(debug_assertions)]
 use crate::work::unit;
-use crate::work::unit::space::SpaceBuilder;
+use crate::work::unit::space::{SpaceBuilder, kernel_frame_pa};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 
@@ -112,18 +115,18 @@ fn spawn_demos() -> Result<(), MapError> {
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-sleeper")[..],
         //     "sleeper",
         // ),
-        // (
-        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
-        //     "exiter",
-        // ),
+        (
+            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
+            "exiter",
+        ),
         (
             &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-heaper")[..],
             "heaper",
         ),
-        (
-            &include_bytes!("../..//target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
-            "spawner",
-        ),
+        // (
+        //     &include_bytes!("../..//target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
+        //     "spawner",
+        // ),
     ] {
         let (team, entry) = load_user(elf);
         team.task().name(name).entry(entry).spawn()?;
@@ -189,8 +192,21 @@ fn boot_harts() {
 /// 副核主流程（asm 入口调用）：per-hart CSR 配置后进入 idle（spin+steal）。
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn boot_main() -> ! {
-    let hart = machine::hart_id();
-    putln!("hart {hart}: secondary boot, entering idle");
-    crate::runtime::trap::init_hart();
+    // 副核 per-hart 初始化（HSM 启动后由 boot_main 调用）：
+    // satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
+    // （trap 栈 / canary / 内核帧由 hart 0 在 init 完成；B1 共享内核帧。）
+    let ktc = kernel_frame_pa(0);
+    let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
+    let ksatp = frame.kernel_satp;
+    // Sv39 token：低 44 位 ppn、[63:44] asid/模式（字段访问器拆解，无裸位运算）
+    unsafe {
+        satp::set(satp::Mode::Sv39, ksatp.asid(), ksatp.ppn());
+        core::arch::asm!("sfence.vma");
+        stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
+        core::arch::asm!("csrw sscratch, zero");
+        sie::set_stimer();
+        sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
+    }
+    info!("runtime \n\t hart {} trap init done", machine::hart_id());
     scheduler::idle()
 }

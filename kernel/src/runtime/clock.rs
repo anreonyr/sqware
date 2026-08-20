@@ -46,14 +46,14 @@ static CYCLE: AtomicU64 = AtomicU64::new(0);
 ///
 /// # Errors
 ///
-/// timebase 为 0（DTB 缺失）→ ClockError::NoTimebase；重复初始化 →
+/// hertz 为 0（DTB 缺失）→ ClockError::NoTimebase；重复初始化 →
 /// ClockError::AlreadyInit。
-pub fn init(timebase: usize) -> Result<(), ClockError> {
-    if timebase == 0 {
+pub fn init(hertz: usize) -> Result<(), ClockError> {
+    if hertz == 0 {
         return Err(ClockError::NoTimebase);
     }
     HERTZ
-        .set(timebase as u64)
+        .set(hertz as u64)
         .map_err(|_| ClockError::AlreadyInit)?;
     CYCLE.store(time::read() as u64, Ordering::Relaxed);
     Ok(())
@@ -131,4 +131,3 @@ pub(crate) fn duration_to_ticks(d: Duration) -> u64 {
     let t = ns.saturating_mul(hertz() as u128) / NANOS_PER_SEC;
     t.min(u64::MAX as u128) as u64
 }
-

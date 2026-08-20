@@ -10,13 +10,13 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use super::parser::{LoadSegment, ParsedProgram};
+use super::space::{MapKind, Space};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use super::space::{MapKind, Space};
-use super::parser::{LoadSegment, ParsedProgram};
 
 /// 装载产物 — 已装完的空间 + 绝对入口（交 Team，并供 TaskBuilder 填 sepc）。
 pub struct Loaded {
@@ -36,11 +36,7 @@ pub type LoadResult<T> = Result<T, MapError>;
 /// # Errors
 ///
 /// 帧耗尽（OutOfMemory）或映射冲突（AlreadyMapped / NotAligned，均不改动 space）。
-pub fn load(
-    space: Space,
-    bytes: &[u8],
-    parsed: &ParsedProgram,
-) -> LoadResult<Loaded> {
+pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Loaded> {
     for seg in &parsed.segments {
         map_segment(&space, bytes, seg)?;
     }
@@ -58,8 +54,8 @@ fn map_segment(space: &Space, bytes: &[u8], seg: &LoadSegment) -> Result<(), Map
     let pages = seg.filesz.div_ceil(PAGE_SIZE);
     let mut frames = Vec::with_capacity(pages);
     for i in 0..pages {
-        let mut frame = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-            .map_err(|_| MapError::OutOfMemory)?;
+        let mut frame =
+            Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
         let src = seg.offset + i * PAGE_SIZE;
         let end = seg.offset.saturating_add(seg.filesz);
         let len = end.min(src.saturating_add(PAGE_SIZE)) - src;

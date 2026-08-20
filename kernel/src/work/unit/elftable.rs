@@ -108,7 +108,10 @@ impl ElfTable {
             }
         }
         let i = found?;
-        Some((self.entries[i].name, target - self.entries[i].addr.as_usize()))
+        Some((
+            self.entries[i].name,
+            target - self.entries[i].addr.as_usize(),
+        ))
     }
 }
 
@@ -122,15 +125,13 @@ pub fn is_kernel_addr(addr: usize) -> bool {
     if addr >= KERNEL_HIGH {
         return true;
     }
-    unsafe {
-        unsafe extern "C" {
-            static _kernel_start: u8;
-            static _kernel_edge: u8;
-        }
-        let s = (&raw const _kernel_start).addr();
-        let e = (&raw const _kernel_edge).addr();
-        addr >= s && addr < e
+    unsafe extern "C" {
+        static _kernel_start: u8;
+        static _kernel_edge: u8;
     }
+    let s = (&raw const _kernel_start).addr();
+    let e = (&raw const _kernel_edge).addr();
+    addr >= s && addr < e
 }
 
 // ── 内核表（挂 kernel team，见 work/team::kernel）──────────────
@@ -176,7 +177,10 @@ pub fn resolve(
     team: Option<&crate::work::unit::team::Team>,
 ) -> Option<(&'static str, usize)> {
     if is_kernel_addr(addr.as_usize()) {
-        crate::work::unit::team::kernel().elftable.as_ref()?.lookup(addr)
+        crate::work::unit::team::kernel()
+            .elftable
+            .as_ref()?
+            .lookup(addr)
     } else {
         let t = team?;
         t.elftable.as_ref()?.lookup(addr)

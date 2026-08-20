@@ -18,6 +18,3 @@ use crate::memory::manager::addr::VirtAddr;
 
 /// 用户程序加载基址。
 pub const USER_TEXT_BASE: VirtAddr = VirtAddr::from_raw(0x1_0000);
-
-// 常用 API 收敛到 work::；只 re-export 外部引用者（trap）。
-pub use room::scheduler::run;
