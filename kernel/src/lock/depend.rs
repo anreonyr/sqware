@@ -16,13 +16,14 @@
 // read_ra/report（单 hart 重入检测，维持现行为）。
 
 use core::cell::UnsafeCell;
+use core::fmt::{self, Write};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::OnceLock;
 use crate::machine;
-use crate::{put, putln};
+use crate::putln;
 
 /// 锁层级 — lock/mod.rs 层级契约的具名化（1 最低、6 最高）。
 /// 参与锁才有 level；Option<Level>::None = exempt（不参与、不校验）。
@@ -72,17 +73,83 @@ pub fn set_symbolizer(f: &'static SymFn) {
     let _ = SYM.set(f);
 }
 
-/// 打印地址：符号化优先（name+0xoff），否则四位分组 hex（0x_8089_2208，去前导零组）。
-fn print_addr(a: usize) {
-    if let Some((name, off)) = SYM.get().and_then(|f| f(a)) {
-        crate::console::_write(format_args!("{name}+{off:#x}"));
-        return;
+/// 栈上字符串缓冲：把一行拼好再整体直写（免分配、免多条 put/putln 拆行）。
+struct Buf {
+    b: [u8; 160],
+    n: usize,
+}
+
+impl Buf {
+    const fn new() -> Buf {
+        Buf { b: [0; 160], n: 0 }
     }
-    let hx = b"0123456789abcdef";
-    let mut buf = [0u8; 21];
-    buf[0] = b'0';
-    buf[1] = b'x';
-    let mut n = 2;
+    fn push(&mut self, s: &str) {
+        let e = self.n + s.len();
+        if e <= self.b.len() {
+            self.b[self.n..e].copy_from_slice(s.as_bytes());
+            self.n = e;
+        }
+    }
+    /// 追地址（符号化优先 / 四位分组 hex），返回本次写入的字节数（列宽用）。
+    fn push_addr(&mut self, a: usize) -> usize {
+        let start = self.n;
+        match SYM.get().and_then(|f| f(a)) {
+            Some((name, off)) => {
+                let _ = write!(self, "{name}+{off:#x}");
+            }
+            None => {
+                let hx = b"0123456789abcdef";
+                self.push("0x");
+                let mut started = false;
+                for sig in (0..=3).rev() {
+                    let g = (a >> (sig * 16)) & 0xffff;
+                    if !started {
+                        if g == 0 && sig > 0 {
+                            continue;
+                        }
+                        started = true;
+                    } else {
+                        self.push("_");
+                    }
+                    self.b[self.n] = hx[(g >> 12) as usize];
+                    self.b[self.n + 1] = hx[((g >> 8) & 0xf) as usize];
+                    self.b[self.n + 2] = hx[((g >> 4) & 0xf) as usize];
+                    self.b[self.n + 3] = hx[(g & 0xf) as usize];
+                    self.n += 4;
+                }
+            }
+        }
+        self.n - start
+    }
+}
+
+impl fmt::Write for Buf {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.push(s);
+        Ok(())
+    }
+}
+
+/// addr 的显示宽度（符号串或分组 hex 的字符数），用于表格列对齐。
+fn addr_len(a: usize) -> usize {
+    match SYM.get().and_then(|f| f(a)) {
+        Some((name, off)) => name.len() + 3 + hex_digits(off), // "+0x" + 偏移
+        None => grouped_hex_len(a),
+    }
+}
+
+fn hex_digits(mut v: usize) -> usize {
+    let mut n = 1;
+    while v > 15 {
+        v >>= 4;
+        n += 1;
+    }
+    n
+}
+
+/// 分组 hex 文本长度："0x" + 4·组数 + (组数-1) 下划线，从最高非零组起。
+fn grouped_hex_len(a: usize) -> usize {
+    let mut groups: usize = 0;
     let mut started = false;
     for sig in (0..=3).rev() {
         let g = (a >> (sig * 16)) & 0xffff;
@@ -91,18 +158,24 @@ fn print_addr(a: usize) {
                 continue;
             }
             started = true;
-        } else {
-            buf[n] = b'_';
-            n += 1;
         }
-        buf[n] = hx[(g >> 12) as usize];
-        buf[n + 1] = hx[((g >> 8) & 0xf) as usize];
-        buf[n + 2] = hx[((g >> 4) & 0xf) as usize];
-        buf[n + 3] = hx[(g & 0xf) as usize];
-        n += 4;
+        groups += 1;
     }
-    // SAFETY: 全 ASCII hex / 下划线 / 前导 0x。
-    crate::console::_write(format_args!("{}", core::str::from_utf8(&buf[..n]).unwrap()));
+    2 + groups * 4 + groups.saturating_sub(1)
+}
+
+/// 表格行：label + addr（右补空格到 width）+ suffix，一次整行直写。
+fn emit_row(label: &str, addr: usize, width: usize, suffix: fmt::Arguments) {
+    let mut b = Buf::new();
+    b.push(label);
+    let pushed = b.push_addr(addr);
+    for _ in pushed..width {
+        b.push(" ");
+    }
+    let _ = b.write_fmt(suffix);
+    b.push("\n");
+    // SAFETY: 内容全 ASCII（hex/下划线/符号名/文案）。
+    crate::console::_write(format_args!("{}", core::str::from_utf8(&b.b[..b.n]).unwrap()));
 }
 
 /// 单 hart 重入/升级现场报告后 panic（沿用现有形态）。
@@ -115,15 +188,10 @@ pub(crate) fn report(
 ) -> ! {
     putln!("[DEPEND] {kind}: {what} (single-hart lock-order violation)");
     putln!("  hart      {}", machine::hart_id());
-    put!("  lock      ");
-    print_addr(lock);
-    putln!("");
-    put!("  holder    ");
-    print_addr(holder);
-    putln!("");
-    put!("  caller    ");
-    print_addr(caller);
-    putln!("");
+    let width = addr_len(lock).max(addr_len(holder)).max(addr_len(caller));
+    emit_row("  lock      ", lock, width, format_args!(""));
+    emit_row("  holder    ", holder, width, format_args!(""));
+    emit_row("  caller    ", caller, width, format_args!(""));
     panic!("{kind} lock-order violation: {what}");
 }
 
@@ -287,30 +355,34 @@ pub(crate) fn release(addr: usize, level: Level) {
 pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
     putln!("[DEPEND] lock-order hazard");
     putln!("  hart       {}", machine::hart_id());
-    put!("  taking     ");
-    print_addr(addr);
-    putln!("  ({:?})", level);
     let Some(held) = held_mut() else {
         panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
     };
+    // 地址列宽 = max(taking, 所有 held)——右补空格对齐成表。
+    let mut width = addr_len(addr);
+    for i in 0..held.len {
+        width = width.max(addr_len(held.slots[i].addr));
+    }
+    emit_row("  taking     ", addr, width, format_args!("  ({:?})", level));
     if held.len == 0 {
         putln!("  held       (none)");
     } else {
         let max = held.max_level().unwrap_or(level);
         for i in 0..held.len {
             let is_max = held.slots[i].level == max;
-            put!("  held       ");
-            print_addr(held.slots[i].addr);
-            putln!(
-                "  ({:?}){}",
-                held.slots[i].level,
-                if is_max { "  <-- max held" } else { "" }
+            emit_row(
+                "  held       ",
+                held.slots[i].addr,
+                width,
+                format_args!(
+                    "  ({:?}){}",
+                    held.slots[i].level,
+                    if is_max { "  <-- max held" } else { "" }
+                ),
             );
         }
     }
-    put!("  caller     ");
-    print_addr(caller);
-    putln!("");
+    emit_row("  caller     ", caller, width, format_args!(""));
     putln!("  rule       new level must exceed max(held);  {:?} <= max => violation", level);
     panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
 }
