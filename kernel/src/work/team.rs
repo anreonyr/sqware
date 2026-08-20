@@ -10,6 +10,7 @@ use alloc::vec::Vec;
 
 use crate::lock::{OnceLock, SpinLock};
 use crate::memory::manager::space::{Space, kernel_space};
+use crate::runtime::elftable::ElfTable;
 
 use super::task::{Task, TaskBuilder};
 
@@ -31,6 +32,8 @@ pub struct Team {
     pub(crate) space: Arc<Space>,
     /// 成员簿记（弱引用条目；死条目在下次清理时摘除）。
     pub(crate) tasks: SpinLock<Vec<Weak<Task>>>,
+    /// 本团队程序的符号表（内核团队 = 内核表；用户团队 = 装载时构建）。None = 未建。
+    pub(crate) elftable: Option<Arc<ElfTable>>,
 }
 
 impl Team {
@@ -71,12 +74,22 @@ impl Team {
 /// 容器化不分配新资源（包 Arc<Space> + 建空簿记），故 spawn 无错误路径。
 pub struct TeamBuilder {
     space: Space,
+    elftable: Option<Arc<ElfTable>>,
 }
 
 impl TeamBuilder {
     /// 接收已装载程序的 Space（owned；此后 Space 归团队）。
     pub fn new(space: Space) -> TeamBuilder {
-        TeamBuilder { space }
+        TeamBuilder {
+            space,
+            elftable: None,
+        }
+    }
+
+    /// 绑定本团队程序的符号表（可选；装载后由调用方传入）。
+    pub fn elftable(mut self, elftable: Option<Arc<ElfTable>>) -> TeamBuilder {
+        self.elftable = elftable;
+        self
     }
 
     /// 容器化：包 Arc<Space> + 建空簿记，返回团队句柄。
@@ -84,6 +97,7 @@ impl TeamBuilder {
         Arc::new(Team {
             space: Arc::new(self.space),
             tasks: SpinLock::new(Vec::new()),
+            elftable: self.elftable,
         })
     }
 }
@@ -100,6 +114,7 @@ pub fn kernel() -> &'static Arc<Team> {
         Arc::new(Team {
             space,
             tasks: SpinLock::new(Vec::new()),
+            elftable: crate::runtime::elftable::kernel_table().map(Arc::new),
         })
     })
 }

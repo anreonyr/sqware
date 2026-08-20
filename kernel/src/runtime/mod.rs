@@ -18,5 +18,7 @@ pub mod halt;
 pub mod trampoline;
 pub mod trap;
 pub mod trace;
+pub mod elftable;
+pub mod scene;
 
 pub use trap::init;

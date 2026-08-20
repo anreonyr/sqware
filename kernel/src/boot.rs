@@ -143,7 +143,12 @@ fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
     let space = SpaceBuilder::user().build().expect("space failed");
     let loaded = loader::load(space, elf, &parsed).expect("load user elf");
     let entry = loaded.entry;
-    let team = team::TeamBuilder::new(loaded.space).spawn();
+    // 符号表：内嵌 ELF 的 .symtab/.strtab → ElfTable（失败则 None，只影响符号化不碍装载）
+    let elftable = crate::work::parser::symtabs(elf)
+        .ok()
+        .and_then(|(s, ss)| crate::runtime::elftable::ElfTable::from_sections(s, ss))
+        .map(Arc::new);
+    let team = team::TeamBuilder::new(loaded.space).elftable(elftable).spawn();
     (team, entry)
 }
 

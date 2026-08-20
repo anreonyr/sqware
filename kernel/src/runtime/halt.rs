@@ -135,7 +135,8 @@ fn panic_handler(info: &PanicInfo) -> ! {
     crate::runtime::trace::note(crate::runtime::trace::EventKind::Halt(
         crate::runtime::trace::HaltEvent::Panic,
     ));
-    crate::runtime::trace::panic_dump();
+    // 统一崩溃现场转储（CSR/GPR/回溯符号化 + 事件窗口；内含 trace::panic_dump）。
+    crate::crash_scene!();
 
     loop {
         sbi::SystemResetCall::new(fid::SystemReset::SystemReset)

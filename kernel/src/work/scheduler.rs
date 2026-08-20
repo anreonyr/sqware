@@ -846,6 +846,15 @@ pub fn running_team() -> Arc<Team> {
         .clone()
 }
 
+/// 当前运行任务所属团队（panic/诊断现场安全：try_lock + Option，不 panic、不阻塞）。
+/// 与 running_team 不同，供崩溃转储符号化在可能持锁/无任务的 panic 现场调用。
+pub fn running_team_try() -> Option<Arc<Team>> {
+    let all = SCHEDULERS.get()?;
+    let me = machine::hart_id();
+    let guard = all[me].inner.try_lock()?;
+    guard.running.as_ref().map(|t| t.team.clone())
+}
+
 /// 当前运行任务 id（诊断用；无任务返回 NO_TASK_ID）。
 pub fn running_task_id() -> usize {
     let me = machine::hart_id();
