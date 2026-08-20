@@ -13,6 +13,8 @@
 //!   - semihost 全量（未来）= 同一 dump 流的另一消费端；本版本实现环形 + 控制台 panic_dump。
 
 use core::fmt;
+#[cfg(feature = "trace-host")]
+use core::fmt::Write;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::console::_write;
@@ -131,7 +133,127 @@ pub fn note(kind: EventKind) {
     if hart >= POOL_HARTS {
         return;
     }
-    trace(hart).note(kind, crate::runtime::clock::now().as_ticks());
+    let when = crate::runtime::clock::now().as_ticks();
+    trace(hart).note(kind, when);
+    // opt-in 宿主全量（构建开关 trace-host）：每条结构化事件经 console 送宿主，
+    // 带自描述长度 "len"，便于 tail/离线解析可靠分帧（try_lock 原子成行、尽力而为）。
+    #[cfg(feature = "trace-host")]
+    host_note(kind, hart, when);
+}
+
+/// 宿主镜像：把一条事件序列化成带长度的 JSON 行，经 console 原子送宿主。
+/// try_lock：并发丢失尽力而为（不阻塞、不因锁死场 panic）。
+#[cfg(feature = "trace-host")]
+fn host_note(kind: EventKind, hart: usize, when: u64) {
+    use crate::lock::SpinLock;
+    static HOST: SpinLock<()> = SpinLock::new(());
+    if let Some(_g) = HOST.try_lock() {
+        let mut buf = [0u8; 160];
+        let n = line_json(&Event { when, kind }, hart, &mut buf);
+        _write(format_args!(
+            "{}\n",
+            core::str::from_utf8(&buf[..n]).unwrap_or("")
+        ));
+    }
+}
+
+/// 单条事件 → 完整 JSON 行，内含自描述长度 "len"（= 整行对象字节数，含自身）。
+/// 消费端据 len 校验/丢弃被截断或交错的半条。返回写入长度。
+#[cfg(feature = "trace-host")]
+fn line_json(e: &Event, hart: usize, out: &mut [u8]) -> usize {
+    let mut body = [0u8; 96];
+    let mut used = 0usize;
+    {
+        let mut w = Buf(&mut body, &mut used);
+        let _ = write!(
+            w,
+            "\"h\":{hart},\"t\":{},\"kind\":\"{}\"",
+            e.when,
+            kind_str(e.kind)
+        );
+        let _ = fields_json(e, &mut w);
+    }
+    let total = total_len(used);
+    let mut o = 0usize;
+    {
+        let mut w = Buf(out, &mut o);
+        let _ = w.write_str("{");
+        let _ = w.write_str(core::str::from_utf8(&body[..used]).unwrap_or(""));
+        let _ = write!(w, ",\"len\":{total}}}");
+    }
+    o
+}
+
+/// total = '{' + body + ',"len":'(7) + digits(total) + '}' = used + 9 + digits(total)。
+/// 求不动点（digits 单调，1~2 步收敛）。
+#[cfg(feature = "trace-host")]
+fn total_len(used: usize) -> usize {
+    let mut total = used + 9 + 1;
+    loop {
+        let d = digits(total);
+        let want = used + 9 + d;
+        if want == total {
+            return total;
+        }
+        total = want;
+    }
+}
+
+#[cfg(feature = "trace-host")]
+fn digits(mut n: usize) -> usize {
+    let mut d = 1usize;
+    while n >= 10 {
+        n /= 10;
+        d += 1;
+    }
+    d
+}
+
+#[cfg(feature = "trace-host")]
+fn kind_str(k: EventKind) -> &'static str {
+    match k {
+        EventKind::Sched(SchedEvent::Spawn { .. }) => "spawn",
+        EventKind::Sched(SchedEvent::Switch { .. }) => "switch",
+        EventKind::Sched(SchedEvent::Starve { .. }) => "starve",
+        EventKind::Sched(SchedEvent::Steal { .. }) => "steal",
+        EventKind::Sched(SchedEvent::Park { .. }) => "park",
+        EventKind::Sched(SchedEvent::Wake { .. }) => "wake",
+        EventKind::Sched(SchedEvent::Exit { .. }) => "exit",
+        EventKind::Sched(SchedEvent::Reap { .. }) => "reap",
+        EventKind::Sched(SchedEvent::Idle) => "idle",
+        EventKind::Env(EnvEvent::Call { .. }) => "envcall",
+        EventKind::Mem(MemEvent::PageFault { .. }) => "pagefault",
+        EventKind::Halt(HaltEvent::Halt) => "halt",
+        EventKind::Halt(HaltEvent::Panic) => "panic",
+    }
+}
+
+#[cfg(feature = "trace-host")]
+fn fields_json(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
+    match e.kind {
+        EventKind::Sched(SchedEvent::Spawn { tid }) => write!(w, ",\"tid\":{tid}"),
+        EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }) => {
+            write!(w, ",\"prev\":{prev_tid},\"next\":{next_tid}")
+        }
+        EventKind::Sched(SchedEvent::Starve { tid }) => write!(w, ",\"tid\":{tid}"),
+        EventKind::Sched(SchedEvent::Steal { tid, src_hart }) => {
+            write!(w, ",\"tid\":{tid},\"src_hart\":{src_hart}")
+        }
+        EventKind::Sched(SchedEvent::Park { tid, wake_at }) => {
+            write!(w, ",\"tid\":{tid},\"wake_at\":{wake_at}")
+        }
+        EventKind::Sched(SchedEvent::Wake { tid }) => write!(w, ",\"tid\":{tid}"),
+        EventKind::Sched(SchedEvent::Exit { tid }) => write!(w, ",\"tid\":{tid}"),
+        EventKind::Sched(SchedEvent::Reap { tid }) => write!(w, ",\"tid\":{tid}"),
+        EventKind::Sched(SchedEvent::Idle) => Ok(()),
+        EventKind::Env(EnvEvent::Call { call, arg }) => {
+            write!(w, ",\"call\":{call},\"arg\":{arg:#x}")
+        }
+        EventKind::Mem(MemEvent::PageFault { va, fault, resolved }) => {
+            write!(w, ",\"va\":{va:#x},\"fault\":\"{:?}\",\"resolved\":{resolved}", fault)
+        }
+        EventKind::Halt(HaltEvent::Halt) | EventKind::Halt(HaltEvent::Panic) => Ok(()),
+    }
 }
 
 /// 对窗口内最近 ≤k 条事件从旧到新调 f。

@@ -7,6 +7,8 @@
 #   QEMU_GDB=1       追加 -s（GDB 监听 1234）+ -S（复位后暂停 CPU）
 #   QEMU_MEM         内存大小（默认 128M）
 #   QEMU_SMP         CPU 核数（默认 4）
+#   QEMU_SEED        -icount RNG 种子（默认随机 32 位；同 seed 可复现）
+#   TRACE_OUT        panic 捕获文件输出目录（默认 <project>/trace）
 
 def main [elf: path] {
     # 定位项目根: 脚本在 <root>/scripts/, 故 root = FILE_PWD 的父目录。
@@ -34,6 +36,11 @@ def main [elf: path] {
     # GDB 开关: QEMU_GDB=1 时加 ["-s", "-S"], 否则空列表（spread 出去无影响）
     let gdb = if ($env.QEMU_GDB? == "1") { ["-s", "-S"] } else { [] }
 
+    # panic 捕获：输出目录（默认 <project>/trace）、临时捕获文件
+    let trapdir = ($env.TRACE_OUT? | default ($proj_root | path join "trace"))
+    mkdir $trapdir
+    let cap = ($trapdir | path join $"sqware-($seed).cap")
+
     # 组装参数列表（nu 的外部命令不支持 \ 续行，用数组 + spread 展开。
     # ^ 强制外部命令; 数组内 ...$list 把列表 spread 成独立参数）。
     let qemu_args = [
@@ -49,8 +56,29 @@ def main [elf: path] {
         ...$gdb
         ...$extra
     ]
- 
+
     ^cargo b --all
-    ^qemu-system-riscv64 ...$qemu_args
+
+    # 运行 qemu：客机 console（含 panic/trace）走 stdout；tee 旁路到临时捕获文件并保留终端回显
+    let _captured = (
+        ^qemu-system-riscv64 ...$qemu_args
+        | tee { save --force $cap }
+    )
+
     echo $"SEED: ($seed)"
+
+    # 结束后检测 panic（halt.rs panic_handler 打 '[PANIC]'）：有则把捕获 dump 到带 seed 的文件。
+    # panic → 复位 → qemu 因 -no-reboot 退出，故 qemu 返回后即可判定。
+    let panicked = (
+        ($cap | path exists)
+        and (open $cap --raw | str contains '[PANIC]')
+    )
+    if $panicked {
+        let ts = (date now | format date '%Y%m%d-%H%M%S')
+        let dump = ($trapdir | path join $"trace-($seed)-($ts).log")
+        cp $cap $dump
+        print $"panic captured -> ($dump)"
+    } else {
+        rm -f $cap
+    }
 }

@@ -3,6 +3,11 @@ name = "kernel"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# opt-in：trace 结构化事件经 console 镜像到宿主（JSON Lines，自描述长度），
+# 供离线反推；仅宿主侧深挖打开（cargo build --features trace-host）。
+trace-host = []
+
 [dependencies]
 ubi = { path = "../crates/ubi" }
 sbi = { path = "../crates/sbi" }
