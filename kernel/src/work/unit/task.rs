@@ -8,8 +8,6 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use core::fmt::Write;
-use table::Fmt;
 use super::space::{TASK_STACK_SIZE, kernel_frame_pa};
 use crate::console::Sink;
 use crate::machine;
@@ -20,7 +18,9 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::runtime::context::{Gprs, TrapContext};
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::work::USER_TEXT_BASE;
+use core::fmt::Write;
 use riscv::register::{satp, sstatus};
+use table::Fmt;
 
 use super::team::Team;
 use crate::work::room::scheduler;
@@ -327,7 +327,7 @@ impl TaskBuilder {
         });
         let mut f = Fmt::<96>::new();
         let _ = write!(f, "task #{} ", task.id);
-        f.cell(&task.name, scheduler::NAME_W);
+        f.cell(task.name, scheduler::NAME_W);
         let _ = write!(
             f,
             ": spawned ({:?}), frame @ {:#x}, stack @ {:#x}",

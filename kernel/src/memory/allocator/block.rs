@@ -78,6 +78,70 @@ impl BlockAllocator {
         let s = &segs[idx - 1];
         (pa < s.edge).then_some(s.pool)
     }
+
+    /// 构建块分配器：按核数均分空闲区，给每核划一块池区段，建池集合 + 区段表
+    /// （segments 按 base 升序，二分查询）。顶层单例装配见自由函数 [`init`]。
+    ///
+    /// 池总预算 = 空闲区一半（另一半留给 frame 区），均分到每池——每池大小随
+    /// 机器内存自适应，不设编译期常量。单核退化 = 单池拿整个预算（原 POOL_SIZE
+    /// 16 MiB 只是 128M 机器的特例值，此处自动算得更大）。
+    ///
+    /// 必须在 `main` 早期调用恰好一次（经 [`init`]），bump 后端下执行——池元数据
+    /// 经 bump 分配，不会重入本锁；且须在 bump 所有元数据分配之后、frame base
+    /// 计算之前：池区段划在 bump frontier 最前部，frame 从其后开始，两区不相交。
+    ///
+    /// # Errors
+    ///
+    /// 元数据分配失败 / 区段划走失败（含空闲区不足均分） → [`InitError::OutOfMemory`]。
+    fn init() -> Result<Self, InitError> {
+        let nodes = machine::hart_count();
+        assert!(nodes > 0, "block init: no harts");
+        // 预算：空闲区一半分给池(均分到每池)，另一半留给 frame 区。
+        let m = machine::info();
+        let per_pool_pages = m.free.size / 2 / nodes / PAGE_SIZE;
+        if per_pool_pages < 1 {
+            // 至少 1 块页
+            return Err(InitError::OutOfMemory);
+        }
+
+        let mut pools = Vec::new();
+        let mut segments = Vec::new();
+        for i in 0..nodes {
+            let layout = Layout::from_size_align(per_pool_pages * PAGE_SIZE, PAGE_SIZE).unwrap();
+            let region = bump::allocator()
+                .allocate(layout)
+                .map_err(|_| InitError::OutOfMemory)?;
+            // 区段 = 全部块页（unitmap 数组区已删，1/9 预留回归块区）。
+            let base = region.as_ptr() as *const u8 as usize;
+            let edge = base + per_pool_pages * PAGE_SIZE;
+
+            let mut pool = Pool::new();
+            pool.init(base)?;
+            let blk = BlockInner::new(base, edge, pool);
+            pools.push(blk);
+            segments.push(Segment {
+                base,
+                edge,
+                pool: i,
+            });
+        }
+
+        // audit: 完整性框架装配——Banker 覆盖帧池全 free 区；Ledger 按块区页数预留容量。
+        #[cfg(all(debug_assertions, feature = "audit"))]
+        {
+            let m = machine::info();
+            let fbase = m.free.base;
+            let fpages = m.free.size / PAGE_SIZE;
+            crate::memory::integrity::BANKER.init(fbase, fpages);
+            let pool_pages = per_pool_pages * nodes;
+            crate::memory::integrity::LEDGER.init(pool_pages.saturating_mul(4));
+        }
+
+        Ok(BlockAllocator {
+            blocks: Box::leak(pools.into_boxed_slice()),
+            segments: Box::leak(segments.into_boxed_slice()),
+        })
+    }
 }
 
 /// 核 → 节点 id：每核一池(UMA 全核同内存,节点 = 核的逻辑划分;多节点时
@@ -102,9 +166,9 @@ unsafe impl Allocator for BlockAllocator {
         let me = node_of(machine::hart_id());
         let pool = &self.blocks[me];
         let addr = pool.pull(power).ok_or(AllocError)?;
-        // debug: 整块毒化（未初始化读现行）+ 活块入账（重复入账=块级双发现行；
+        // audit: 整块毒化（未初始化读现行）+ 活块入账（重复入账=块级双发现行；
         // KernelHeap 且 slack≥8 时 mark 内部写对齐 slack canary）。
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, feature = "audit"))]
         {
             crate::memory::integrity::poison(addr, 1usize << power);
             crate::memory::integrity::LEDGER.mark(
@@ -125,9 +189,9 @@ unsafe impl Allocator for BlockAllocator {
         let power = block_power(layout);
         let pa = ptr.addr().get();
         let Some(home) = self.pool_of(pa) else { return };
-        // debug: 注销账目（无账=双 free/悬垂、canary=越界、尺寸=错幂现行）+ 本体毒化
+        // audit: 注销账目（无账=双 free/悬垂、canary=越界、尺寸=错幂现行）+ 本体毒化
         // 复写（头 8B 随后被 freelist 头插覆盖，其余保持毒化——UAF 读数变 0xCD）。
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, feature = "audit"))]
         {
             crate::memory::integrity::LEDGER.unmark(pa, layout.size());
             crate::memory::integrity::poison(pa, 1usize << power);
@@ -205,8 +269,8 @@ impl BlockInner {
         let page = inner.cursor;
         inner.cursor += PAGE_SIZE;
 
-        // debug: Banker 取出本页（页来自自有区段，永驻不还；双取出现行）。
-        #[cfg(debug_assertions)]
+        // audit: Banker 取出本页（页来自自有区段，永驻不还；双取出现行）。
+        #[cfg(all(debug_assertions, feature = "audit"))]
         crate::memory::integrity::BANKER.debit(page);
 
         if power < MAX_POWER {
@@ -291,12 +355,6 @@ impl BlockInner {
     }
 
     // ── 调试 ──
-
-    /// debug: 本池已撕页数（inner 锁内读 cursor；Banker audit 交叉核对用）。
-    #[cfg(debug_assertions)]
-    fn torn_pages(&self) -> usize {
-        (self.inner.lock().cursor - self.base) / PAGE_SIZE
-    }
 
     /// 断言/push 异常现场 dump：游标/区段/该 power 全链/单元数组/操作序列。
     /// 注意：本函数**零分配**——任何 alloc 都会经 portal→block 递归/死锁，
@@ -404,8 +462,8 @@ impl Pool {
             let base = block.as_ptr() as usize & !(PAGE_SIZE - 1);
             if power == MAX_POWER {
                 self.freepool[power] = purge_freelist(self.freepool[power], base);
-                // debug: 整页清链后须无活跃账目（used-counter 记账正确性检查）。
-                #[cfg(debug_assertions)]
+                // audit: 整页清链后须无活跃账目（used-counter 记账正确性检查）。
+                #[cfg(all(debug_assertions, feature = "audit"))]
                 crate::memory::integrity::page_clear(base);
                 return;
             }
@@ -415,8 +473,8 @@ impl Pool {
                 return;
             }
             self.freepool[power] = purge_freelist(self.freepool[power], base);
-            // debug: 同上——整页清链后须无活跃账目（页永驻，仅校验，不归还）。
-            #[cfg(debug_assertions)]
+            // audit: 同上——整页清链后须无活跃账目（页永驻，仅校验，不归还）。
+            #[cfg(all(debug_assertions, feature = "audit"))]
             crate::memory::integrity::page_clear(base);
         }
     }
@@ -492,17 +550,24 @@ pub(crate) fn flush_all() {
 
 // ── 适配层（hybrid/portal/tie 调用，接口零改动）──
 
-/// debug: page 是否落在**任一**池区段内——供 frame 侧检测「frame 分配撞进
+/// audit: page 是否落在**任一**池区段内——供 frame 侧检测「frame 分配撞进
 /// 块池区段页」（多池全查，单池退化为包含判定）；未初始化返回 false。
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, feature = "audit"))]
 pub(crate) fn pool_includes(pa: usize) -> bool {
     heap().pool_of(pa).is_some()
 }
 
-/// debug: 全部池已撕页总数（Banker audit 交叉核对用）。
-#[cfg(debug_assertions)]
+/// audit: 全部池已撕页总数（Banker audit 交叉核对用）。
+#[cfg(all(debug_assertions, feature = "audit"))]
 pub(crate) fn torn_pages() -> usize {
-    heap().blocks.iter().map(|p| p.torn_pages()).sum()
+    heap()
+        .blocks
+        .iter()
+        .map(|p| {
+            let this = &p;
+            (this.inner.lock().cursor - this.base) / PAGE_SIZE
+        })
+        .sum()
 }
 
 pub fn allocator() -> &'static dyn Allocator {
@@ -511,69 +576,17 @@ pub fn allocator() -> &'static dyn Allocator {
 
 // ── 初始化 ──
 
-/// 初始化块分配器：按核数均分空闲区，给每核划一块池区段，建池集合 + 区段表
-/// （segments 按 base 升序，二分查询）。
+/// 初始化块分配器（OnceLock 顶层单例装配；池/区段构建见 [`BlockAllocator::init`]）。
 ///
-/// 池总预算 = 空闲区一半（另一半留给 frame 区），均分到每池——每池大小随
-/// 机器内存自适应，不设编译期常量。单核退化 = 单池拿整个预算（原 POOL_SIZE
-/// 16 MiB 只是 128M 机器的特例值，此处自动算得更大）。
-///
-/// 必须在 `main` 早期调用恰好一次（经 `allocator::init`），bump 后端下执行——池
-/// 元数据经 bump 分配，不会重入本锁。必须在 bump 的所有元数据分配之后、frame 的
-/// base 计算之前：池区段划在 bump frontier 最前部，frame 从其后开始，两区不相交。
+/// 必须在 `main` 早期调用恰好一次（经 `allocator::init`），bump 后端下执行；且须在
+/// frame::init 之前——池区段划在 bump frontier 最前部，frame 从其后开始，两区不相交。
 ///
 /// # Errors
 ///
-/// 元数据分配失败 / 区段划走失败（含空闲区不足均分） → [`InitError::OutOfMemory`]。
+/// 构建失败（`BlockAllocator::init` 的 [`InitError`]）/ 重复初始化 → [`InitError`]。
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
-        let nodes = machine::hart_count();
-        assert!(nodes > 0, "block init: no harts");
-        // 预算：空闲区一半分给池(均分到每池)，另一半留给 frame 区。
-        let m = machine::info();
-        let per_pool_pages = m.free.size / 2 / nodes / PAGE_SIZE;
-        if per_pool_pages < 1 {
-            // 至少 1 块页
-            return Err(InitError::OutOfMemory);
-        }
-
-        let mut pools = Vec::new();
-        let mut segments = Vec::new();
-        for i in 0..nodes {
-            let layout = Layout::from_size_align(per_pool_pages * PAGE_SIZE, PAGE_SIZE).unwrap();
-            let region = bump::allocator()
-                .allocate(layout)
-                .map_err(|_| InitError::OutOfMemory)?;
-            // 区段 = 全部块页（unitmap 数组区已删，1/9 预留回归块区）。
-            let base = region.as_ptr() as *const u8 as usize;
-            let edge = base + per_pool_pages * PAGE_SIZE;
-
-            let mut pool = Pool::new();
-            pool.init(base)?;
-            let blk = BlockInner::new(base, edge, pool);
-            pools.push(blk);
-            segments.push(Segment {
-                base,
-                edge,
-                pool: i,
-            });
-        }
-
-        // debug: 完整性框架装配——Banker 覆盖帧池全 free 区；Ledger 按块区页数预留容量。
-        #[cfg(debug_assertions)]
-        {
-            let m = machine::info();
-            let fbase = m.free.base;
-            let fpages = m.free.size / PAGE_SIZE;
-            crate::memory::integrity::BANKER.init(fbase, fpages);
-            let pool_pages = per_pool_pages * nodes;
-            crate::memory::integrity::LEDGER.init(pool_pages.saturating_mul(4));
-        }
-
-        let heap = BlockAllocator {
-            blocks: Box::leak(pools.into_boxed_slice()),
-            segments: Box::leak(segments.into_boxed_slice()),
-        };
+        let heap = BlockAllocator::init()?;
         BLOCK_ALLOCATOR
             .set(heap)
             .map_err(|_| InitError::AlreadyInitialized)

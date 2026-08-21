@@ -25,7 +25,6 @@ use crate::runtime::trace;
 use crate::runtime::trampoline::{alltraps_va, restore, trap_stack_bottom, trap_stack_top};
 use crate::work::room::scheduler;
 #[cfg(debug_assertions)]
-use crate::work::unit;
 use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
@@ -173,13 +172,13 @@ pub fn init() -> ! {
     // 锁地址符号化：depend 打印现场用（未注入则裸地址）。
     crate::lock::set_symbolizer(&kernel_symbolizer);
 
-    // PT 回收自测（debug）：unmap 时中间表必须当场归还——不泄漏、不 double-free
-    #[cfg(debug_assertions)]
-    unit::pagetable_reclaim();
+    // PT 回收自测（audit）：unmap 时中间表必须当场归还——不泄漏、不 double-free
+    #[cfg(all(debug_assertions, feature = "audit"))]
+    crate::work::unit::pagetable_reclaim();
 
     // 记录内核持久帧基线：spawn 用户任务前的在途帧。此后在途帧只应增用户任务
     // 所有；关机时全部归还，由 tie::halt 的 check_baseline 断言零泄漏。
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "audit"))]
     crate::memory::integrity::record_baseline();
 
     // 全部演示程序均为经 parser → loader → TaskBuilder 装载的**真 ELF**（user crate，
@@ -191,7 +190,7 @@ pub fn init() -> ! {
     spawn_demos().expect("boot spawn failed");
 
     // 完整性框架（debug）：boot 收尾全量审计——Banker↔Ledger↔frame↔block 交叉核对。
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "audit"))]
     crate::memory::integrity::audit();
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
@@ -241,10 +240,10 @@ fn spawn_demos() -> Result<(), MapError> {
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
         //     "exiter",
         // ),
-        // (
-        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-heaper")[..],
-        //     "heaper",
-        // ),
+        (
+            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-heaper")[..],
+            "heaper",
+        ),
         (
             &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
             "spawner",

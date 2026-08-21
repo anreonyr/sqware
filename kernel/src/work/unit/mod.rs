@@ -35,7 +35,7 @@ use riscv::register::satp;
 
 use crate::machine::{self, kernel_edge};
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame::{allocator, outstanding};
+use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::{
     MapError,
     addr::{PhysAddr, VirtAddr},
@@ -180,13 +180,13 @@ pub fn init() -> MapResult<()> {
     .annotate("initializing unit (kernel space + team)")
 }
 
-/// PT 回收自测（debug）：map/unmap 循环验证中间表回收——无孤儿表、无 double-free。
+/// PT 回收自测（audit）：map/unmap 循环验证中间表回收——无孤儿表、无 double-free。
 ///
 /// 在 spawn 用户任务之前运行（分配器与 KERNEL_TEAM 均已就绪），由 `boot::init`
 /// 经 `crate::work::unit::pagetable_reclaim()` 调用。每轮：
 /// map 4 MiB（4 KiB 页，根表槽 1）→ 表数 +3（1×L1 + 2×L0）；unmap → 回落；
 /// 32 轮后「在途帧 − 堆支撑页」回到轮前（块堆缓存页不误报，口径同 check_baseline）。
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, feature = "audit"))]
 pub fn pagetable_reclaim() {
     const BASE: usize = 0x4000_0000; // 根表槽 1：堆窗口之后、栈窗口之前的空地
     const SIZE: usize = 4 * 1024 * 1024; // 4 MiB → 1×L1 + 2×L0
@@ -195,7 +195,7 @@ pub fn pagetable_reclaim() {
     let space = SpaceBuilder::user().build().expect("selftest: build space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
     let base_count = space.table_count();
-    let held_before = outstanding();
+    let held_before = crate::memory::allocator::frame::outstanding();
 
     for round in 0..ROUNDS {
         // map：分配数据帧 + 中间表
@@ -243,7 +243,7 @@ pub fn pagetable_reclaim() {
         );
     }
 
-    let held_after = outstanding();
+    let held_after = crate::memory::allocator::frame::outstanding();
     assert_eq!(
         held_before, held_after,
         "selftest: net frames leaked: {held_before} → {held_after}"

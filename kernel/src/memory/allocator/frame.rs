@@ -43,14 +43,14 @@ impl FrameAllocator {
         })
     }
 
-    /// 在途（未归还）物理帧数（debug 统计用；release 下恒 0）。
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    /// 在途（未归还）物理帧数（audit 统计用；未开 audit / release 恒 0）。
+    #[cfg_attr(not(all(debug_assertions, feature = "audit")), allow(dead_code))]
     pub fn outstanding(&self) -> usize {
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, feature = "audit"))]
         {
             self.inner.lock().outstanding
         }
-        #[cfg(not(debug_assertions))]
+        #[cfg(not(all(debug_assertions, feature = "audit")))]
         {
             0
         }
@@ -79,12 +79,12 @@ unsafe impl Allocator for FrameAllocator {
 
         let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
         let addr = frame.frame_addr(index) as *mut u8;
-        // debug: 弹出的帧必须 Free → Banker 取出（双取出 / 活堆页泄漏进池现行）
-        #[cfg(debug_assertions)]
+        // audit: 弹出的帧必须 Free → Banker 取出（双取出 / 活堆页泄漏进池现行）
+        #[cfg(all(debug_assertions, feature = "audit"))]
         {
             crate::memory::integrity::BANKER.debit(addr as usize);
         }
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, feature = "audit"))]
         {
             frame.outstanding += 1;
         }
@@ -109,13 +109,13 @@ unsafe impl Allocator for FrameAllocator {
             let addr = ptr.addr().get();
             let index = frame.frame_index(addr);
 
-            // debug: 归还的帧必须 held → Banker 存入（存入陌生页 / 双释放现行）
-            #[cfg(debug_assertions)]
+            // audit: 归还的帧必须 held → Banker 存入（存入陌生页 / 双释放现行）
+            #[cfg(all(debug_assertions, feature = "audit"))]
             crate::memory::integrity::BANKER.credit(addr);
 
             // double-free 已由 Banker::credit（DoubleCredit）覆盖，此处不再重复检查。
             frame.merge_block(index, power);
-            #[cfg(debug_assertions)]
+            #[cfg(all(debug_assertions, feature = "audit"))]
             {
                 frame.outstanding = frame.outstanding.saturating_sub(1);
             }
@@ -133,10 +133,10 @@ struct FrameInner {
     pagemeta: Vec<Option<Meta>>,
     base: usize,
     edge: usize,
-    /// 在途（未归还）物理帧数 — debug 断言用：关机时须回落到内核基线，
+    /// 在途（未归还）物理帧数 — audit 断言用：关机时须回落到内核基线，
     /// 证明地址空间 Drop 的所有权回收无泄漏（见 schedule::scheduler::idle）。
     /// 只做 usize 计数（锁内不得分配——Vec push 会触发分配器回调，见下）。
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "audit"))]
     outstanding: usize,
 }
 
@@ -147,7 +147,7 @@ impl FrameInner {
             pagemeta: Vec::new(),
             base: 0,
             edge: 0,
-            #[cfg(debug_assertions)]
+            #[cfg(all(debug_assertions, feature = "audit"))]
             outstanding: 0,
         }
     }
@@ -494,7 +494,7 @@ pub fn allocator() -> &'static dyn Allocator {
 
 /// 在途（未归还）物理帧数 —— Boot audit 交叉核对、关机基线断言用。
 /// 简单包一层 `FRAME_ALLOCATOR.outstanding()`，供模块外调用（未初始化 panic）。
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
+#[cfg(all(debug_assertions, feature = "audit"))]
 pub(crate) fn outstanding() -> usize {
     FRAME_ALLOCATOR
         .get()
@@ -513,9 +513,9 @@ pub(crate) fn outstanding() -> usize {
 /// - 元数据 Vec 分配失败 → [`InitError::OutOfMemory`]。
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
-        let alloc = Box::leak(Box::new(FrameAllocator::init()?));
+        let heap = Box::leak(Box::new(FrameAllocator::init()?));
         FRAME_ALLOCATOR
-            .set(alloc)
+            .set(heap)
             .map_err(|_| InitError::AlreadyInitialized)
     })()
     .annotate("initializing frame allocator")

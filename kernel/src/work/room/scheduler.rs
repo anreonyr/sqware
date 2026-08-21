@@ -264,7 +264,7 @@ impl Scheduler {
         let wake_at = clock::now().add(duration).as_ticks();
         let mut f = Fmt::<64>::new();
         let _ = write!(f, "task #{} ", task.id);
-        f.cell(&task.name, NAME_W);
+        f.cell(task.name, NAME_W);
         let _ = write!(f, ": parked (wake @ {wake_at:#x})");
         task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Park {
@@ -643,7 +643,7 @@ fn steal() -> Option<Arc<Task>> {
         probe_strong(&task, "steal: try_pop");
         let mut f = Fmt::<64>::new();
         let _ = write!(f, "hart {me}: stole task #{} ", task.id);
-        f.cell(&task.name, NAME_W);
+        f.cell(task.name, NAME_W);
         let _ = write!(f, " from hart {v}");
         task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Steal {
@@ -706,7 +706,7 @@ fn clear() {
         };
         let mut f = Fmt::<64>::new();
         let _ = write!(f, "task #{} ", z.id);
-        f.cell(&z.name, NAME_W);
+        f.cell(z.name, NAME_W);
         let _ = write!(f, ": reaped reclaimed");
         task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Reap { tid: z.id }));
@@ -867,7 +867,7 @@ pub fn unpark() {
         task_mut(&mut task).transform(TaskState::Starved);
         let mut f = Fmt::<64>::new();
         let _ = write!(f, "task #{} ", task.id);
-        f.cell(&task.name, NAME_W);
+        f.cell(task.name, NAME_W);
         let _ = write!(f, ": woken");
         task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.id }));
@@ -969,4 +969,3 @@ pub fn reap() -> usize {
     // 取下一任务：此刻 running 已 take，本核空闲 → run（steal / WFI）
     run()
 }
-

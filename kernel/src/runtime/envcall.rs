@@ -16,7 +16,6 @@ use core::time::Duration;
 use ubi::Ucall;
 
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::put;

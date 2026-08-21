@@ -8,6 +8,11 @@ edition.workspace = true
 # 供离线反推；仅宿主侧深挖打开（cargo build --features trace-host）。
 trace-host = []
 
+# opt-in：完整性/审计框架（Banker/Ledger/poison/audit/基线断言——见 memory::integrity）。
+# 需 debug 构建且 --features audit 同时满足才生效（all(debug_assertions, feature="audit")）；
+# release 或未开 feature 均编译为空、零开销。
+audit = []
+
 [dependencies]
 ubi = { path = "../crates/ubi" }
 sbi = { path = "../crates/sbi" }

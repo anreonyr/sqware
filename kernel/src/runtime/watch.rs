@@ -47,15 +47,30 @@ pub enum WatchReport {
     /// 有活却全系统无声（D）。
     WakeFailure { hart: usize, since: u64 },
     /// 锁被持超阈值且仍被等（A）。
-    LockHold { addr: usize, holder: usize, holder_pc: usize, since: u64 },
+    LockHold {
+        addr: usize,
+        holder: usize,
+        holder_pc: usize,
+        since: u64,
+    },
 }
 
 impl core::fmt::Display for WatchReport {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             WatchReport::Stall { hart, since } => write!(f, "hart {hart} stalled since {since:#x}"),
-            WatchReport::WakeFailure { hart, since } => write!(f, "system silent since {since:#x} (last beat hart {hart})"),
-            WatchReport::LockHold { addr, holder, holder_pc, since } => write!(f, "lock {addr:#x} held by hart {holder} pc {holder_pc:#x} since {since:#x}"),
+            WatchReport::WakeFailure { hart, since } => {
+                write!(f, "system silent since {since:#x} (last beat hart {hart})")
+            }
+            WatchReport::LockHold {
+                addr,
+                holder,
+                holder_pc,
+                since,
+            } => write!(
+                f,
+                "lock {addr:#x} held by hart {holder} pc {holder_pc:#x} since {since:#x}"
+            ),
         }
     }
 }
@@ -94,10 +109,14 @@ static WATCHED: Watched = Watched {
 
 /// 打点报岗：本核完成一次确凿进展。禁用时是廉价 relaxed 判定后跳过。
 pub fn pulse() {
-    if !ENABLED.load(Ordering::Relaxed) { return; }
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     let me = machine::hart_id();
     let now = clock::now().as_ticks();
-    if me < POOL { BEAT[me].store(now, Ordering::Relaxed); }
+    if me < POOL {
+        BEAT[me].store(now, Ordering::Relaxed);
+    }
     LASTBEAT.store(now, Ordering::Relaxed);
     LASTBEATHART.store(me, Ordering::Relaxed);
 }
@@ -105,7 +124,9 @@ pub fn pulse() {
 /// 巡岗：按现况判 A/L，命中产 report（纯读，不改状态）。前置：由健康核调用
 /// （自核刚 pulse 过，不误报），可处 SIE=0/1 trap 上下文。
 pub fn check(now: Instant, p: Probe) -> Option<WatchReport> {
-    if !ENABLED.load(Ordering::Relaxed) { return None; }
+    if !ENABLED.load(Ordering::Relaxed) {
+        return None;
+    }
     let now = now.as_ticks();
     // A：锁相持超时（槽 active = 仍有人等；释放会 unstake）。
     if WATCHED.active.load(Ordering::Relaxed)
@@ -119,14 +140,18 @@ pub fn check(now: Instant, p: Probe) -> Option<WatchReport> {
             since: WATCHED.hold_start.load(Ordering::Relaxed),
         });
     }
-    if !p.has_work { return None; }
+    if !p.has_work {
+        return None;
+    }
     // B：醒着核脉搏过期 → 点名最旧那个。
     let live = LIVETO.load(Ordering::Relaxed);
     let mut oldest: Option<(usize, u64)> = None;
-    for h in 0..machine::hart_count() {
-        if asleep(p.asleep, h) || h >= POOL { continue; }
-        let b = BEAT[h].load(Ordering::Relaxed);
-        if now.wrapping_sub(b) > live && oldest.map_or(true, |(_, s)| b < s) {
+    for (h, a) in BEAT.iter().enumerate().take(machine::hart_count()) {
+        if asleep(p.asleep, h) || h >= POOL {
+            continue;
+        }
+        let b = a.load(Ordering::Relaxed);
+        if now.wrapping_sub(b) > live && oldest.is_none_or(|(_, s)| b < s) {
             oldest = Some((h, b));
         }
     }
@@ -146,8 +171,7 @@ pub fn check(now: Instant, p: Probe) -> Option<WatchReport> {
 /// 位 h 是否正 WFI 睡眠（合法深睡豁免，不判失速）。
 fn asleep(words: &[AtomicUsize], h: usize) -> bool {
     let w = h / (usize::BITS as usize);
-    w < words.len()
-        && words[w].load(Ordering::Acquire) & (1 << (h % (usize::BITS as usize))) != 0
+    w < words.len() && words[w].load(Ordering::Acquire) & (1 << (h % (usize::BITS as usize))) != 0
 }
 
 /// 上报：冻结现场后停机（trace + scene + panic→halt）。不返回。
@@ -161,14 +185,18 @@ pub fn raise(r: WatchReport) -> ! {
 
 /// 盯住一个被抢的锁（记录持方 + 起始时刻）。幂等：同 addr 已盯则不重置 hold_start。
 pub fn stake(addr: usize, holder: usize, holder_pc: usize) {
-    if !ENABLED.load(Ordering::Relaxed) { return; }
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     if WATCHED.active.load(Ordering::Relaxed) && WATCHED.addr.load(Ordering::Relaxed) == addr {
         return;
     }
     WATCHED.addr.store(addr, Ordering::Relaxed);
     WATCHED.holder.store(holder, Ordering::Relaxed);
     WATCHED.holder_pc.store(holder_pc, Ordering::Relaxed);
-    WATCHED.hold_start.store(clock::now().as_ticks(), Ordering::Relaxed);
+    WATCHED
+        .hold_start
+        .store(clock::now().as_ticks(), Ordering::Relaxed);
     WATCHED.active.store(true, Ordering::Relaxed);
 }
 
@@ -182,16 +210,29 @@ pub fn unstake(addr: usize) {
 
 /// 设阈值/开关（boot 注入）。启用同时把基线初始化到 now，避免旧 LASTBEAT=0 误报。
 pub fn threshold(cfg: Threshold) {
-    HOLDTO.store(clock::duration_to_ticks(cfg.hold_timeout), Ordering::Relaxed);
-    LIVETO.store(clock::duration_to_ticks(cfg.liveness_timeout), Ordering::Relaxed);
+    HOLDTO.store(
+        clock::duration_to_ticks(cfg.hold_timeout),
+        Ordering::Relaxed,
+    );
+    LIVETO.store(
+        clock::duration_to_ticks(cfg.liveness_timeout),
+        Ordering::Relaxed,
+    );
     if cfg.enabled {
         let now = clock::now().as_ticks();
-        for b in BEAT.iter() { b.store(now, Ordering::Relaxed); }
+        for b in BEAT.iter() {
+            b.store(now, Ordering::Relaxed);
+        }
         LASTBEAT.store(now, Ordering::Relaxed);
     }
     ENABLED.store(cfg.enabled, Ordering::Relaxed);
 }
 
 /// 关键段临时撤岗。
-pub fn suspend() { ENABLED.store(false, Ordering::Relaxed); }
-pub fn resume() { ENABLED.store(true, Ordering::Relaxed); }
+pub fn suspend() {
+    ENABLED.store(false, Ordering::Relaxed);
+}
+pub fn resume() {
+    ENABLED.store(true, Ordering::Relaxed);
+}
+

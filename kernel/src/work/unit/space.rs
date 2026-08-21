@@ -911,9 +911,9 @@ impl Space {
             mapped += 1;
         }
         drop(inner);
-        // debug: 用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
+        // audit: 用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
         // 键 = asid << 32 | VA：多个空间共享同一堆窗口 VA，须并入空间身份防碰撞。
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, feature = "audit"))]
         crate::memory::integrity::LEDGER.mark(
             (self.kind.asid() << 32) | info.va.as_usize(),
             info.size.get(),
@@ -948,8 +948,8 @@ impl Space {
         unsafe {
             flush_asid(self.kind.asid());
         }
-        // debug: 注销用户堆账目（无账 = 悬垂/双释放现行；键与 heap_allocate 相同）。
-        #[cfg(debug_assertions)]
+        // audit: 注销用户堆账目（无账 = 悬垂/双释放现行；键与 heap_allocate 相同）。
+        #[cfg(all(debug_assertions, feature = "audit"))]
         crate::memory::integrity::LEDGER.unmark((self.kind.asid() << 32) | addr.as_usize(), size);
         true
     }

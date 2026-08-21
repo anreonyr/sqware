@@ -18,7 +18,7 @@
 //!     低层级锁内获取（Space=2 / 无锁路径），绝不反向嵌套。
 //!   - canary 只写 KernelHeap 块（用户堆为清零语义，不 poison、不 canary）。
 
-#![cfg(debug_assertions)] // 完整性框架整体 debug-only（release 编译为空，零开销）
+#![cfg(all(debug_assertions, feature = "audit"))] // 完整性框架整体：debug 构建 + audit feature 双开（release / 未开 feature 编译为空，零开销）
 
 use core::fmt;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
