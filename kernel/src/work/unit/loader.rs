@@ -15,7 +15,7 @@ use super::space::{MapKind, Space};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
 /// 装载产物 — 已装完的空间 + 绝对入口（交 Team，并供 TaskBuilder 填 sepc）。
@@ -62,14 +62,6 @@ fn map_segment(space: &Space, bytes: &[u8], seg: &LoadSegment) -> Result<(), Map
         frame[..len].copy_from_slice(&bytes[src..src + len]);
         frames.push(frame);
     }
-    let pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
     let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;
-    space.map(
-        seg.vaddr,
-        pa,
-        pages * PAGE_SIZE,
-        flags,
-        MapKind::Anonymous,
-        frames,
-    )
+    space.attach_durable(seg.vaddr, frames, flags, MapKind::Anonymous)
 }

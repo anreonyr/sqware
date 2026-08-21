@@ -272,7 +272,7 @@ impl TaskBuilder {
                 .map_err(|_| MapError::OutOfMemory)?;
             stack_frames.push(frame);
         }
-        self.team.space.stack_attach(stack_va, stack_frames)?;
+        self.team.space.attach_dynamic(stack_va, stack_frames)?;
         let stack_top = stack_va + TASK_STACK_SIZE;
 
         // 2. trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）

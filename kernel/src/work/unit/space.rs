@@ -7,7 +7,7 @@
 // 簿记模型（三层，语义 = VA→PA 的显式表达）：
 //   Durable — 常数侧：页表树（root: TableNode，硬件页 + 子树所有权）+ 常数映射表
 //             （maps：DRAM 恒等/内核高半区、trampoline 叶 PTE、文本、trap-context 帧）
-//   Window  — 动态侧：堆/栈窗口，各持一个 [`BitmapAllocator`] 细分窗口内 VA，
+//   Dynamic  — 动态侧：堆/栈窗口，各持一个 [`BitmapAllocator`] 细分窗口内 VA，
 //             每次分配的一块区间即一个子 Map（children）——heap 块 / 栈 slot
 //   Map     — VA→PA 的原子单元：{ va, size, flags, kind, frames }，不变量
 //             frames[i] ↔ va + i·PAGE_SIZE；帧随 Map 所有权回收（drop 归还）
@@ -30,7 +30,10 @@ use hashbrown::HashMap;
 use crate::lock::OnceLock;
 use crate::memory::allocator::bitmap::BitmapAllocator;
 use crate::memory::allocator::frame::allocator;
-use crate::{lock::{Level, RelLock}, memory::PAGE_SIZE};
+use crate::{
+    lock::{Level, RelLock},
+    memory::PAGE_SIZE,
+};
 
 use crate::memory::manager::{
     addr::{AtomicPhysAddr, PhysAddr, VirtAddr},
@@ -146,12 +149,12 @@ impl Map {
     }
 }
 
-/// 窗口种类 — 动态区域的身份，兼作 `dynamic` 表的键（`HashMap<WindowKind, Window>`）。
+/// 窗口种类 — 动态区域的身份，兼作 `dynamic` 表的键（`HashMap<DynamicKind, Dynamic>`）。
 ///
 /// 数据载荷是区号（区域级窗口恒为 0）：同一种类未来可扩展多个区域（如按 NUMA
 /// 节点分区的堆），键仍唯一；当前每类各一个区级窗口。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WindowKind {
+pub enum DynamicKind {
     /// 用户堆窗口（[`USER_HEAP_BASE`] 起 [`USER_HEAP_SIZE`]）。
     Heap(usize),
     /// 任务栈窗口（[`USER_STACK_BASE`] 起 [`TASK_STACK_AREA_SIZE`]，约 5 万 slot）。
@@ -165,21 +168,21 @@ pub enum WindowKind {
 /// `children` 记录本窗口已分配出去的每块区间（heap 块 / 栈 slot / 线程帧），
 /// 与位图分配器的存活块一一对应——释放即从 children 移除（帧随 Map drop 归还），
 /// 窗口可安全复用（PTE 已清、无残留映射）。身份在 `dynamic` 表的键
-/// （[`WindowKind`]）上。
+/// （[`DynamicKind`]）上。
 #[derive(Debug)]
-pub struct Window {
+pub struct Dynamic {
     va: VirtAddr,
     size: NonZeroUsize,
     allocator: BitmapAllocator,
     children: Vec<Map>,
 }
 
-impl Window {
-    fn new(kind: WindowKind) -> Self {
+impl Dynamic {
+    fn new(kind: DynamicKind) -> Self {
         let (base, size) = match kind {
-            WindowKind::Heap(_) => (USER_HEAP_BASE.as_usize(), USER_HEAP_SIZE),
-            WindowKind::Stack(_) => (USER_STACK_BASE.as_usize(), TASK_STACK_AREA_SIZE),
-            WindowKind::Frame(_) => (FRAME_BASE.as_usize(), FRAME_REGION_SIZE),
+            DynamicKind::Heap(_) => (USER_HEAP_BASE.as_usize(), USER_HEAP_SIZE),
+            DynamicKind::Stack(_) => (USER_STACK_BASE.as_usize(), TASK_STACK_AREA_SIZE),
+            DynamicKind::Frame(_) => (FRAME_BASE.as_usize(), FRAME_REGION_SIZE),
         };
         Self {
             va: VirtAddr::from_raw(base),
@@ -313,7 +316,7 @@ impl Durable {
         &self,
         start: VirtAddr,
         size: usize,
-        windows: &HashMap<WindowKind, Window>,
+        windows: &HashMap<DynamicKind, Dynamic>,
     ) -> bool {
         let end = start.as_usize().saturating_add(size);
         self.maps.iter().any(|m| {
@@ -326,25 +329,25 @@ impl Durable {
 
 /// 地址空间的可变状态 — 由 [`Space::inner`] 这把 [`RelLock`] 保护。
 ///
-/// 只做组合：`durable`（常数侧）与 `dynamic`（堆/栈窗口）覆盖空间全部簿记；
+/// 只做组合：`durable`（常数侧）与 `dynamic`（堆/栈）覆盖空间全部簿记；
 /// 与页表操作同锁互斥（锁约定见 [`Space`]）。
 #[derive(Debug)]
 struct SpaceInner {
     /// 常数侧：根页表 + 中间表帧 + 常数映射表。
     durable: Durable,
-    /// 动态侧：堆 / 栈 / 帧窗口，按种类（[`WindowKind`]）为键。
+    /// 动态侧：堆 / 栈 / 帧窗口，按种类（[`DynamicKind`]）为键。
     ///
     /// no_std 的 alloc crate 无 `HashMap`，经 `hashbrown`（std 同源实现，
     /// `alloc` + `default-hasher`/foldhash 特性）提供。窗口数恒 3，查表开销无关紧要。
-    dynamic: HashMap<WindowKind, Window>,
+    dynamic: HashMap<DynamicKind, Dynamic>,
 }
 
 impl SpaceInner {
     fn new() -> Result<Self, MapError> {
         let mut dynamic = HashMap::from([
-            (WindowKind::Heap(0), Window::new(WindowKind::Heap(0))),
-            (WindowKind::Stack(0), Window::new(WindowKind::Stack(0))),
-            (WindowKind::Frame(0), Window::new(WindowKind::Frame(0))),
+            (DynamicKind::Heap(0), Dynamic::new(DynamicKind::Heap(0))),
+            (DynamicKind::Stack(0), Dynamic::new(DynamicKind::Stack(0))),
+            (DynamicKind::Frame(0), Dynamic::new(DynamicKind::Frame(0))),
         ]);
         // 窗口位图构建期立即分配（不惰性）——kernel 空间的窗口簿记必须先于
         // frame 基线（record_baseline）存在：惰性推迟到首个任务分配会使 kernel
@@ -431,7 +434,7 @@ unsafe impl Sync for Space {}
 /// 构造时经 [`super::asid::allocate`] 分配、`Drop` 释放。
 ///
 /// 用户区布局常量（堆窗口 / 任务栈窗口）收敛进本模块（`USER_HEAP_*` / `TASK_STACK_*`），
-/// 由 [`Window`] 的位图分配器实例消费。
+/// 由 [`Dynamic`] 的位图分配器实例消费。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpaceKind {
     /// 内核空间（ASID 0）。
@@ -512,15 +515,15 @@ pub(crate) const FRAME_BASE: VirtAddr =
 //     ┌─────────────────────────────────┐
 //     │             保留                │
 //     ├─────────────────────────────────┤ 0x2000_0000  USER_HEAP_BASE
-//     │  用户堆窗口 64 MiB               │ USER_HEAP_BASE + USER_HEAP_SIZE
-//     │ （BitmapAllocator 实例管理）     │
+//     │  用户堆窗口 64 MiB              │ USER_HEAP_BASE + USER_HEAP_SIZE
+//     │ （BitmapAllocator 实例管理）    │
 //     ├─────────────────────────────────┤ 0x2040_0000
 //     │             保留                │
 //     ├─────────────────────────────────┤ 0xC000_0000  USER_STACK_BASE
-//     │  任务栈窗口 1 GiB                │ USER_STACK_BASE + TASK_STACK_AREA_SIZE
-//     │ （16 KiB 栈 + 守护页，约 5 万）  │
+//     │  任务栈窗口 1 GiB               │ USER_STACK_BASE + TASK_STACK_AREA_SIZE
+//     │ （16 KiB 栈 + 守护页，约 5 万） │
 //     ├─────────────────────────────────┤ 0x1_0000_0000（低 4 GiB，设计上限）
-//     │             保留（至 2^38）      │
+//     │             保留（至 2^38）     │
 //     └─────────────────────────────────┘
 //
 // 内核半区（bit 38 = 1，VPN[2] = 256..511，起点 KERNEL_BASE）：
@@ -530,8 +533,8 @@ pub(crate) const FRAME_BASE: VirtAddr =
 //   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE；__strap 按 TP 索引）
 //   0xFFFF_FFFF_FCEF_E000 — FRAME_BASE（帧窗口下界）
 //     ┌─────────────────────────────────┐
-//     │  线程 trap 帧窗口（≈48 MiB）     │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
-//     │ （≈12K 并发帧，S-only，位图管理） │
+//     │  线程 trap 帧窗口（≈48 MiB）    │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
+//     │（≈12K 并发帧，S-only，位图管理）│
 //     └─────────────────────────────────┘ KERNEL_FRAME_BASE
 //
 // 布局即不变量：以下断言把「对齐 / 相邻 / 不重叠」编译期锁死——
@@ -670,6 +673,26 @@ impl SpaceBuilder {
     }
 }
 
+/// 逐帧装叶子 PTE：VA 连续推进、PA 取每帧自身（物理可断，不假设连续）。
+///
+/// [`attach_durable`](Space::attach_durable) 与
+/// [`attach_dynamic`](Space::attach_dynamic) 共享的同一段循环——把一帧 Physical
+/// 页装配到对应 VA 的叶子 PTE（新中间表由页表树 [`TableNode`] 内部持有）。
+/// 簿记（登记 / 压入 Map）由调用方各自完成，故本函数**仅装 PTE、不动簿记**。
+fn install_frame_ptes(
+    root: &mut TableNode,
+    va: VirtAddr,
+    frames: &[Frame],
+    flags: PteFlags,
+) -> Result<(), MapError> {
+    for (i, frame) in frames.iter().enumerate() {
+        let pa = PhysAddr::from_raw(frame.as_ptr() as usize);
+        let addr = va + i * PAGE_SIZE;
+        root.map(addr, pa, PAGE_SIZE, flags)?;
+    }
+    Ok(())
+}
+
 impl Space {
     // ── 映射操作 ──────────────────────────────────────────────
 
@@ -678,14 +701,14 @@ impl Space {
     /// slot = 守护页 + 栈体，一次从 Stack 窗口位图领取；守护页登记为 Reserved
     /// 子 Map——栈溢出触碰守护页时 fault 处理器识别为「预留映射访问」而非笼统的
     /// 「无 Map」。栈体登记为 Anonymous 子 Map（帧随后经
-    /// [`stack_attach`](Self::stack_attach) 注入）。两子 Map 均标 `owner`，退出时
+    /// [`attach_dynamic`](Self::attach_dynamic) 注入）。两子 Map 均标 `owner`，退出时
     /// 按 owner 一并回收（[`task_reclaim`](Self::task_reclaim)）。
     pub(crate) fn stack_allocate(&self, owner: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         let slot_size = TASK_STACK_SIZE + STACK_GUARD_SIZE;
         let stack = {
-            let windows: &mut HashMap<WindowKind, Window> = &mut inner.dynamic;
-            let kind = WindowKind::Stack(0);
+            let windows: &mut HashMap<DynamicKind, Dynamic> = &mut inner.dynamic;
+            let kind = DynamicKind::Stack(0);
             windows.get_mut(&kind).expect("window exists")
         };
         let (slot_va, _) = stack
@@ -722,33 +745,25 @@ impl Space {
         Ok(body_va)
     }
 
-    /// 把栈体帧注入并映射（spawn 用：stack_allocate 取 VA 后分配帧再 attach）。
+    /// 把帧注入映射到一段**已登记的动态窗口子 Map**（spawn 用：先经窗口位图
+    /// `allocate` 预留 VA 块获得子 Map，再分配帧 attach）。
     ///
-    /// 逐帧：PTE 安装（新中间表帧由页表树 TableNode 持有）+ `push_frame`（入栈体子
-    /// Map，保持「帧 i ↔ va + i·PAGE_SIZE」不变量）。中途失败返回错误，调用方
-    /// drop Space 统一回收（无部分状态残留担忧——已装 PTE 与已入帧随空间归还）。
-    pub(crate) fn stack_attach(
-        &self,
-        stack_va: VirtAddr,
-        frames: Vec<Frame>,
-    ) -> Result<(), MapError> {
+    /// [`attach_durable`](Self::attach_durable) 的 dynamic 簿记变体：逐帧装 PTE
+    /// （[`install_frame_ptes`]，中间表由页表树 TableNode 持有）+ `push_frame`
+    /// （入窗口子 Map，保持「帧 i ↔ va + i·PAGE_SIZE」不变量）。中途失败返回
+    /// 错误，调用方 drop Space 统一回收（已装 PTE 与已入帧随空间归还）。
+    pub(crate) fn attach_dynamic(&self, va: VirtAddr, frames: Vec<Frame>) -> Result<(), MapError> {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
-        let stack = {
-            let kind = WindowKind::Stack(0);
-            dynamic.get_mut(&kind).expect("window exists")
-        };
-        let child = stack
-            .children
-            .iter_mut()
-            .find(|m| m.va == stack_va)
+        // 各窗口 VA 区间互不重叠（布局断言保证），故按 VA 定位子 Map 唯一。
+        let child = dynamic
+            .values_mut()
+            .flat_map(|w| w.children.iter_mut())
+            .find(|m| m.va == va)
             .ok_or(MapError::NoRegion)?;
         let child_flags = child.flags;
-        for (i, frame) in frames.into_iter().enumerate() {
-            let pa = PhysAddr::from_raw(frame.as_ptr() as usize);
-            let va = stack_va + i * PAGE_SIZE;
-            // 中间表由页表树内部持有，无需外部容器
-            durable.root.map(va, pa, PAGE_SIZE, child_flags)?;
+        install_frame_ptes(&mut durable.root, va, &frames, child_flags)?;
+        for frame in frames {
             child.push_frame(frame);
         }
         drop(inner);
@@ -775,7 +790,7 @@ impl Space {
         let SpaceInner { durable, dynamic } = &mut *inner;
         let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
         let frame_win = {
-            let kind = WindowKind::Frame(0);
+            let kind = DynamicKind::Frame(0);
             dynamic.get_mut(&kind).expect("window exists")
         };
         let info = frame_win.allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
@@ -822,7 +837,7 @@ impl Space {
         let SpaceInner { durable, dynamic } = &mut *inner;
         // 1+3. 栈窗口：摘 owner 子 Map → 清 PTE → 位图归还 slot
         let stack = {
-            let kind = WindowKind::Stack(0);
+            let kind = DynamicKind::Stack(0);
             dynamic.get_mut(&kind).expect("window exists")
         };
         if let Some((slot_va, slot_size)) = stack.remove_owner(owner) {
@@ -832,7 +847,7 @@ impl Space {
         }
         // 2+4. 帧窗口：摘帧子 Map → 清 PTE → 位图归还帧 VA
         let frames = {
-            let kind = WindowKind::Frame(0);
+            let kind = DynamicKind::Frame(0);
             dynamic.get_mut(&kind).expect("window exists")
         };
         if frames.deallocate(frame_va, PAGE_SIZE) {
@@ -860,7 +875,7 @@ impl Space {
         let SpaceInner { durable, dynamic } = &mut *inner;
         // 1. 窗口位图保留块 + 登记空子 Map（Anonymous）
         let heap = {
-            let kind = WindowKind::Heap(0);
+            let kind = DynamicKind::Heap(0);
             dynamic.get_mut(&kind).expect("window exists")
         };
         let info = heap.allocate(size, flags, MapKind::Anonymous, None)?;
@@ -906,7 +921,7 @@ impl Space {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
         let heap = {
-            let kind = WindowKind::Heap(0);
+            let kind = DynamicKind::Heap(0);
             dynamic.get_mut(&kind).expect("window exists")
         };
         // 1. 位图精确匹配释放 + 移除子 Map（未分配/部分已释放 → 返回 false）
@@ -958,6 +973,63 @@ impl Space {
         // 2. PTE 安装 + 3. 登记常数映射（一次解构拿 durable 各字段，字段间可拆借）
         let SpaceInner { durable, .. } = &mut *inner;
         durable.root.map(vaddr, paddr, size, flags)?;
+        durable.maps.push(Map::new(
+            vaddr,
+            size,
+            flags,
+            kind,
+            frames.into_iter().map(FrameState::Owned).collect(),
+            None,
+        ));
+        drop(inner);
+        // 按本空间 ASID 局部刷：只失效本地址空间的旧条目，其它任务 TLB 保留。
+        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        unsafe {
+            flush_asid(self.kind.asid());
+        }
+        Ok(())
+    }
+
+    /// 把调用方配好的物理帧映射到一段连续虚拟地址（**常数侧**公共入口之一）。
+    ///
+    /// 与 [`map`](Self::map) 的差别只在物理连续性：`map` 假定 `paddr` 起 `size`
+    /// **物理连续**（一次装整段，见 [`TableNode::map`] 的 `pa = paddr + i·PAGE`），
+    /// 而本方法逐帧装 PTE（[`install_frame_ptes`]）——每帧用自身 PA，物理可断，
+    /// 与 [`attach_dynamic`](Self::attach_dynamic) 同范本。
+    ///
+    /// 场景：程序段装载（[`crate::work::unit::loader`]）、用户堆——帧是独立
+    /// 堆分配的 `Box`，物理**不连续**。若只用 `map`，第 i 页 PTE 会被算成
+    /// `pa0 + i·PAGE_SIZE`，指向错误的物理页（`TableNode::map` 的物理连续假设
+    /// 在这里失效）。簿记仍登记**一张**多页 [`Map`]：其不变量「帧 i ↔
+    /// va + i·PAGE」只约束 VA 索引、不要求 PA 连续，帧随 Map 所有权回收。
+    ///
+    /// `vaddr` 必须按页对齐；`frames` 非空，长度即页数（`size = len·PAGE_SIZE`）。
+    ///
+    /// # Errors
+    ///
+    /// 参见 [`TableNode::map`] 与 [`MapError::AlreadyMapped`]（重叠/帧耗尽，
+    /// 均不改动空间；中途失败时调用方按既有契约 drop 整个 Space 统一回收）。
+    pub(crate) fn attach_durable(
+        &self,
+        vaddr: VirtAddr,
+        frames: Vec<Frame>,
+        flags: PteFlags,
+        kind: MapKind,
+    ) -> Result<(), MapError> {
+        let mut inner = self.inner.lock();
+        let pages = frames.len();
+        // 0. 参数校验：非空帧 + VA 页对齐（先于任何页表修改）
+        if pages == 0 || vaddr.offset() != 0 {
+            return Err(MapError::NotAligned);
+        }
+        let size = pages * PAGE_SIZE;
+        // 1. 重叠检查（常数表 + 窗口区间）
+        if inner.durable.overlaps(vaddr, size, &inner.dynamic) {
+            return Err(MapError::AlreadyMapped);
+        }
+        // 2. 逐帧装 PTE（每帧自身 PA，物理可断）+ 3. 登记一张多页常数映射
+        let SpaceInner { durable, .. } = &mut *inner;
+        install_frame_ptes(&mut durable.root, vaddr, &frames, flags)?;
         durable.maps.push(Map::new(
             vaddr,
             size,
