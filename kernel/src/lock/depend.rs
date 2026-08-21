@@ -14,16 +14,21 @@
 //
 // 仅 DEBUG：整个 held-set/层级强制部分包在 #[cfg(debug_assertions)]；release 只留
 // read_ra/report（单 hart 重入检测，维持现行为）。
+//
+// 表格输出：复用 crate table（papergrid 无堆渲染），本模块只负责把报警现场
+// 组装成 Table 并写到控制台 sink。符号器由 boot 注入 table::set_symbolizer。
 
 use core::cell::UnsafeCell;
-use core::fmt::{self, Write};
+use core::fmt::Write;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::OnceLock;
+use crate::console;
 use crate::machine;
 use crate::putln;
+use table::{render_addr, Table};
 
 /// 锁层级 — lock/mod.rs 层级契约的具名化（1 最低、6 最高）。
 /// 参与锁才有 level；Option<Level>::None = exempt（不参与、不校验）。
@@ -60,125 +65,9 @@ pub(crate) fn ra() -> usize {
     ra
 }
 
-// ── 地址符号化（可选回调；depend 保持解耦）───────────────────────────
-
-/// 地址符号化回调：addr → (函数名, 偏移)。由 boot/适配层注入。
-pub type SymFn = dyn Fn(usize) -> Option<(&'static str, usize)> + Sync + 'static;
-
-/// 已注入的符号化回调（未注入则打印裸地址）。
-static SYM: OnceLock<&'static SymFn> = OnceLock::new();
-
-/// 注入地址符号化回调（boot 装配后调用一次；未注入则打印裸地址）。
-pub fn set_symbolizer(f: &'static SymFn) {
-    let _ = SYM.set(f);
-}
-
-/// 栈上字符串缓冲：把一行拼好再整体直写（免分配、免多条 put/putln 拆行）。
-struct Buf {
-    b: [u8; 160],
-    n: usize,
-}
-
-impl Buf {
-    const fn new() -> Buf {
-        Buf { b: [0; 160], n: 0 }
-    }
-    fn push(&mut self, s: &str) {
-        let e = self.n + s.len();
-        if e <= self.b.len() {
-            self.b[self.n..e].copy_from_slice(s.as_bytes());
-            self.n = e;
-        }
-    }
-    /// 追地址（符号化优先 / 四位分组 hex），返回本次写入的字节数（列宽用）。
-    fn push_addr(&mut self, a: usize) -> usize {
-        let start = self.n;
-        match SYM.get().and_then(|f| f(a)) {
-            Some((name, off)) => {
-                let _ = write!(self, "{name}+{off:#x}");
-            }
-            None => {
-                let hx = b"0123456789abcdef";
-                self.push("0x");
-                let mut started = false;
-                for sig in (0..=3).rev() {
-                    let g = (a >> (sig * 16)) & 0xffff;
-                    if !started {
-                        if g == 0 && sig > 0 {
-                            continue;
-                        }
-                        started = true;
-                    } else {
-                        self.push("_");
-                    }
-                    self.b[self.n] = hx[(g >> 12) as usize];
-                    self.b[self.n + 1] = hx[((g >> 8) & 0xf) as usize];
-                    self.b[self.n + 2] = hx[((g >> 4) & 0xf) as usize];
-                    self.b[self.n + 3] = hx[(g & 0xf) as usize];
-                    self.n += 4;
-                }
-            }
-        }
-        self.n - start
-    }
-}
-
-impl fmt::Write for Buf {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.push(s);
-        Ok(())
-    }
-}
-
-/// addr 的显示宽度（符号串或分组 hex 的字符数），用于表格列对齐。
-fn addr_len(a: usize) -> usize {
-    match SYM.get().and_then(|f| f(a)) {
-        Some((name, off)) => name.len() + 3 + hex_digits(off), // "+0x" + 偏移
-        None => grouped_hex_len(a),
-    }
-}
-
-fn hex_digits(mut v: usize) -> usize {
-    let mut n = 1;
-    while v > 15 {
-        v >>= 4;
-        n += 1;
-    }
-    n
-}
-
-/// 分组 hex 文本长度："0x" + 4·组数 + (组数-1) 下划线，从最高非零组起。
-fn grouped_hex_len(a: usize) -> usize {
-    let mut groups: usize = 0;
-    let mut started = false;
-    for sig in (0..=3).rev() {
-        let g = (a >> (sig * 16)) & 0xffff;
-        if !started {
-            if g == 0 && sig > 0 {
-                continue;
-            }
-            started = true;
-        }
-        groups += 1;
-    }
-    2 + groups * 4 + groups.saturating_sub(1)
-}
-
-/// 表格行：label + addr（右补空格到 width）+ suffix，一次整行直写。
-fn emit_row(label: &str, addr: usize, width: usize, suffix: fmt::Arguments) {
-    let mut b = Buf::new();
-    b.push(label);
-    let pushed = b.push_addr(addr);
-    for _ in pushed..width {
-        b.push(" ");
-    }
-    let _ = b.write_fmt(suffix);
-    b.push("\n");
-    // SAFETY: 内容全 ASCII（hex/下划线/符号名/文案）。
-    crate::console::_write(format_args!("{}", core::str::from_utf8(&b.b[..b.n]).unwrap()));
-}
-
-/// 单 hart 重入/升级现场报告后 panic（沿用现有形态）。
+/// 单 hart 重入/升级现场报告后 panic。
+///
+/// 用 table 渲染两列表（label / addr），整块写控制台。
 pub(crate) fn report(
     kind: &'static str,
     what: &'static str,
@@ -188,10 +77,14 @@ pub(crate) fn report(
 ) -> ! {
     putln!("[DEPEND] {kind}: {what} (single-hart lock-order violation)");
     putln!("  hart      {}", machine::hart_id());
-    let width = addr_len(lock).max(addr_len(holder)).max(addr_len(caller));
-    emit_row("  lock      ", lock, width, format_args!(""));
-    emit_row("  holder    ", holder, width, format_args!(""));
-    emit_row("  caller    ", caller, width, format_args!(""));
+    let mut t = Table::<3, 2, 64>::new();
+    t.cell(0, 0).push_str("lock");
+    let _ = render_addr(t.cell(0, 1), lock);
+    t.cell(1, 0).push_str("holder");
+    let _ = render_addr(t.cell(1, 1), holder);
+    t.cell(2, 0).push_str("caller");
+    let _ = render_addr(t.cell(2, 1), caller);
+    write_table(t);
     panic!("{kind} lock-order violation: {what}");
 }
 
@@ -358,31 +251,48 @@ pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
     let Some(held) = held_mut() else {
         panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
     };
-    // 地址列宽 = max(taking, 所有 held)——右补空格对齐成表。
-    let mut width = addr_len(addr);
-    for i in 0..held.len {
-        width = width.max(addr_len(held.slots[i].addr));
-    }
-    emit_row("  taking     ", addr, width, format_args!("  ({:?})", level));
+    // 行 = label / addr / 说明。taking + caller 两行，中间夹 held 各行。
+    let rows = held.len + 2;
+    let mut t = Table::<{ MAX_HELD + 2 }, 3, 96>::new();
+    t.cell(0, 0).push_str("taking");
+    let _ = render_addr(t.cell(0, 1), addr);
+    let _ = write!(t.cell(0, 2), "({:?})", level);
     if held.len == 0 {
-        putln!("  held       (none)");
+        t.cell(1, 0).push_str("held");
+        t.cell(1, 2).push_str("(none)");
     } else {
         let max = held.max_level().unwrap_or(level);
         for i in 0..held.len {
-            let is_max = held.slots[i].level == max;
-            emit_row(
-                "  held       ",
-                held.slots[i].addr,
-                width,
-                format_args!(
-                    "  ({:?}){}",
-                    held.slots[i].level,
-                    if is_max { "  <-- max held" } else { "" }
-                ),
+            let r = 1 + i;
+            t.cell(r, 0).push_str("held");
+            let _ = render_addr(t.cell(r, 1), held.slots[i].addr);
+            let _ = write!(
+                t.cell(r, 2),
+                "({:?}){}",
+                held.slots[i].level,
+                if held.slots[i].level == max {
+                    "  <-- max held"
+                } else {
+                    ""
+                }
             );
         }
     }
-    emit_row("  caller     ", caller, width, format_args!(""));
-    putln!("  rule       new level must exceed max(held);  {:?} <= max => violation", level);
+    let last = rows - 1;
+    t.cell(last, 0).push_str("caller");
+    let _ = render_addr(t.cell(last, 1), caller);
+    write_table(t);
+    putln!(
+        "  rule       new level must exceed max(held);  {:?} <= max => violation",
+        level
+    );
     panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
+}
+
+/// 把整表渲染进一个栈缓冲，再整块写控制台（无堆；一次 SBI 调用）。
+#[cfg(debug_assertions)]
+fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
+    let mut buf: table::Line<512> = table::Line::new();
+    let _ = t.render(&mut buf);
+    console::_write(format_args!("{buf}"));
 }

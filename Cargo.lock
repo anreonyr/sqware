@@ -3,10 +3,22 @@
 version = 4
 
 [[package]]
+name = "arrayvec"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
+
+[[package]]
+name = "bytecount"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
 
 [[package]]
 name = "critical-section"
@@ -99,6 +111,7 @@ dependencies = [
  "riscv-rt",
  "riscv-semihosting",
  "sbi",
+ "table",
  "ubi",
 ]
 
@@ -107,6 +120,16 @@ name = "log"
 version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+
+[[package]]
+name = "papergrid"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0984e668274d34691bc2b262ef0d115de5fa9973bcdee7ae32213f93099153e"
+dependencies = [
+ "bytecount",
+ "unicode-width",
+]
 
 [[package]]
 name = "pastey"
@@ -215,6 +238,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "table"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "papergrid",
+]
+
+[[package]]
 name = "ubi"
 version = "0.1.0"
 dependencies = [
@@ -227,6 +258,12 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-width"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "user"

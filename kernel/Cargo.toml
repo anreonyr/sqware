@@ -11,6 +11,7 @@ trace-host = []
 [dependencies]
 ubi = { path = "../crates/ubi" }
 sbi = { path = "../crates/sbi" }
+table = { path = "../crates/table" }
 bitflags = "2.13.1"
 erra = { version = "0.2.0", default-features = false }
 fack = { version = "0.2.0", default-features = false }

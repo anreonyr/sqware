@@ -1,5 +1,5 @@
 [workspace]
-members = ["kernel", "user", "crates/ubi", "crates/sbi"]
+members = ["kernel", "user", "crates/ubi", "crates/sbi", "crates/table"]
 default-members = ["kernel"]
 resolver = "3"
 
