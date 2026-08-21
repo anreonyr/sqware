@@ -5,13 +5,17 @@ extern crate alloc;
 
 use core::time::Duration;
 
-use user::{env, task};
+use user::{
+    env::{self, put},
+    task,
+};
 
 // spawner：验证 task::closure + Join（spawn envcall → U 态 trampoline → 完成槽 → join）。
 // 反复派一个算 `0..1000` 的闭包并 join 取回，成功则写 'J'；每轮 sleep 让出免刷屏。
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
+    put("FUCK\n").ok();
     loop {
         let sum = task::closure(|| {
             let mut s: u64 = 0;

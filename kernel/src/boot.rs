@@ -231,10 +231,10 @@ fn spawn_demos() -> Result<(), MapError> {
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-yielder")[..],
         //     "yielder",
         // ),
-        (
-            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-sleeper")[..],
-            "sleeper",
-        ),
+        // (
+        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-sleeper")[..],
+        //     "sleeper",
+        // ),
         // (
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
         //     "exiter",

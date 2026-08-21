@@ -11,7 +11,7 @@
 //   0x000 (0-255)   — 用户半区  (0x0000_0000_0000_0000 .. 0x0000_007F_FFFF_FFFF)
 //   0x1FF (256-511) — 内核半区  (0xFFFF_FF80_0000_0000 .. 0xFFFF_FFFF_FFFF_FFFF)
 
-use core::ops::{Add, Sub};
+use core::ops::{Add, AddAssign, Sub, SubAssign};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
@@ -82,6 +82,18 @@ impl Sub<usize> for VirtAddr {
     }
 }
 
+impl AddAssign<usize> for VirtAddr {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs;
+    }
+}
+
+impl SubAssign<usize> for VirtAddr {
+    fn sub_assign(&mut self, rhs: usize) {
+        self.0 -= rhs;
+    }
+}
+
 impl core::fmt::Debug for VirtAddr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "VA({:#x})", self.0)
@@ -125,6 +137,26 @@ impl Add<usize> for PhysAddr {
     #[inline]
     fn add(self, rhs: usize) -> Self {
         Self(self.0 + rhs)
+    }
+}
+
+impl Sub<usize> for PhysAddr {
+    type Output = Self;
+    #[inline]
+    fn sub(self, rhs: usize) -> Self {
+        Self(self.0 - rhs)
+    }
+}
+
+impl AddAssign<usize> for PhysAddr {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs;
+    }
+}
+
+impl SubAssign<usize> for PhysAddr {
+    fn sub_assign(&mut self, rhs: usize) {
+        self.0 -= rhs;
     }
 }
 

@@ -16,6 +16,7 @@ use core::time::Duration;
 use ubi::Ucall;
 
 use crate::memory::PAGE_SIZE;
+use crate::memory::allocator::frame;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::put;
@@ -36,17 +37,10 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
         call: number,
         arg: frame.gpr.x(Gprs::A0),
     }));
+    frame.sepc += 4;
     match call {
-        Ucall::Yield => {
-            frame.sepc = frame.sepc + 4;
-            starve() as *mut TrapContext
-        }
+        Ucall::Yield => return starve() as *mut TrapContext,
         Ucall::Write => {
-            // a0 = len，a1 = 缓冲指针（用户空间 VA）。trap 已切内核页表，直接解引用
-            // 用户 VA 会缺页（内核页表不映射用户区）——须经当前空间 `translate` 把
-            // 用户 VA 翻译成物理页基址（PA），再加页内偏移后逐字节读（内核恒等
-            // 映射可直接访问 PA）。按页分块：每页一次 translate，页内连续直读。
-            frame.sepc = frame.sepc + 4;
             let len = frame.gpr.x(Gprs::A0);
             let ptr = frame.gpr.x(Gprs::A1);
             with_running_space(|space| {
@@ -58,38 +52,29 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                         }
                     }
                 } else {
-                    // 缺页
-                    todo!();
+                    frame.gpr.set_x(Gprs::A0, usize::MAX);
                 }
             });
-            frame as *mut TrapContext
         }
         Ucall::Exit => {
-            // 不做 sepc += 4：任务不再恢复；frame 指向的空间随即在 reap 中回收
-            reap() as *mut TrapContext
+            return reap() as *mut TrapContext;
         }
         Ucall::GetTicks => {
-            frame.sepc = frame.sepc + 4;
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);
-            frame as *mut TrapContext
         }
         Ucall::Sleep => {
             // sepc 前进（唤醒恢复时从 ecall 之后继续）；任务被 park，返回下一帧。
             // a0 = 毫秒（Duration 边界；clock 按 timebase 换算成 deadline）
-            frame.sepc = frame.sepc + 4;
-            park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext
+            return park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext;
         }
         Ucall::ClockGetTime => {
-            frame.sepc = frame.sepc + 4;
             let up = clock::uptime();
             frame.gpr.set_x(Gprs::A0, up.as_secs() as usize);
             frame.gpr.set_x(Gprs::A1, up.subsec_nanos() as usize);
-            frame as *mut TrapContext
         }
         Ucall::HeapAllocate => {
             // a0 = 字节数（页对齐向上取整；内核 Window::allocate 要求页对齐）。
             // 当前运行任务空间经 with_running_space 借出（锁序 1→2→5 合法）。
-            frame.sepc = frame.sepc + 4;
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
             let addr = with_running_space(|s| s.heap_allocate(size));
             frame.gpr.set_x(
@@ -99,21 +84,17 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                     Err(_) => usize::MAX, // 负错误码（D1）：用户侧 (a0 as isize) < 0 判为 Err
                 },
             );
-            frame as *mut TrapContext
         }
         Ucall::HeapDeallocate => {
             // a0 = 分配所得 VA，a1 = 字节数（与分配时同源页对齐；位图精确匹配）。
-            frame.sepc = frame.sepc + 4;
             let addr = frame.gpr.x(Gprs::A0);
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let ok = with_running_space(|s| s.heap_deallocate(VirtAddr::from_raw(addr), size));
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
-            frame as *mut TrapContext
         }
         Ucall::Spawn => {
             // a0 = 入口 VA（用户 trampoline），a1 = arg（闭包指针）。当前 team 建 U 任务。
             // running_team 放锁后由 TaskBuilder::spawn 逐段取锁建任务（不跨锁持有）。
-            frame.sepc = frame.sepc + 4;
             let entry = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let arg = frame.gpr.x(Gprs::A1);
             let team = running_team();
@@ -125,7 +106,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                     Err(_) => usize::MAX,
                 },
             );
-            frame as *mut TrapContext
         }
-    }
+    };
+    frame as *mut TrapContext
 }
