@@ -24,7 +24,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
 use crate::runtime::context::TrapContext;
-use crate::runtime::trace::{self, EventKind, MemEvent};
+use crate::runtime::trace::{self, BootEvent, EventKind, MemEvent};
 use crate::runtime::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, establish_tp, init_trap_stacks,
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
@@ -65,7 +65,10 @@ fn track_trap_stack_usage() {
         ) {
             Ok(_) => {
                 if PEAK_PRINTS.fetch_add(1, Ordering::Relaxed) < 8 {
-                    putln!("trap stack high-water: {used} B (28 KiB segment)");
+                    trace::note(EventKind::Boot(BootEvent::Stack {
+                        hart: machine::hart_id(),
+                        used,
+                    }));
                 }
                 break;
             }

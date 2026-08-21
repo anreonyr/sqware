@@ -48,6 +48,7 @@ pub enum EventKind {
     Mem(MemEvent),
     Halt(HaltEvent),
     Watch(WatchEvent),
+    Boot(BootEvent),
 }
 
 /// work/scheduler 的任务生命周期。
@@ -87,6 +88,18 @@ pub enum HaltEvent {
 #[derive(Clone, Copy)]
 pub enum WatchEvent {
     Raised,
+}
+
+/// boot / 副核启动的初始化消息（直打控制台会扰乱 panic 现场，改写进 trace）。
+/// 各 hart 启动时一次；crash 后由报警源统一 dump，既可查又不打断现场。
+#[derive(Clone, Copy)]
+pub enum BootEvent {
+    /// 主核 call 该副核（HSM start）。
+    Launch { hart: usize },
+    /// 副核 trap/调度初始化完成（原 console 的 "trap init done"）。
+    Done { hart: usize },
+    /// 该核 trap 栈峰值水位（原 console 的 "high-water"）。
+    Stack { hart: usize, used: usize },
 }
 
 /// 一条事件：时间戳 + 聚合事件。仅标量、Copy，可 const 初始化。
@@ -242,6 +255,9 @@ fn kind_str(k: EventKind) -> &'static str {
         EventKind::Halt(HaltEvent::Halt) => "halt",
         EventKind::Halt(HaltEvent::Panic) => "panic",
         EventKind::Watch(WatchEvent::Raised) => "watch",
+        EventKind::Boot(BootEvent::Launch { .. }) => "launch",
+        EventKind::Boot(BootEvent::Done { .. }) => "bootdone",
+        EventKind::Boot(BootEvent::Stack { .. }) => "trpstack",
     }
 }
 
@@ -271,6 +287,11 @@ fn fields_json(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         }
         EventKind::Halt(HaltEvent::Halt) | EventKind::Halt(HaltEvent::Panic) => Ok(()),
         EventKind::Watch(WatchEvent::Raised) => Ok(()),
+        EventKind::Boot(BootEvent::Launch { hart }) => write!(w, ",\"hart\":{hart}"),
+        EventKind::Boot(BootEvent::Done { hart }) => write!(w, ",\"hart\":{hart}"),
+        EventKind::Boot(BootEvent::Stack { hart, used }) => {
+            write!(w, ",\"hart\":{hart},\"used\":{used}")
+        }
     }
 }
 
@@ -357,6 +378,11 @@ fn fmt_event(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         EventKind::Halt(HaltEvent::Halt) => write!(w, "halt"),
         EventKind::Halt(HaltEvent::Panic) => write!(w, "panic"),
         EventKind::Watch(WatchEvent::Raised) => write!(w, "watch raised"),
+        EventKind::Boot(BootEvent::Launch { hart }) => write!(w, "launch hart {hart}"),
+        EventKind::Boot(BootEvent::Done { hart }) => write!(w, "boot done hart {hart}"),
+        EventKind::Boot(BootEvent::Stack { hart, used }) => {
+            write!(w, "trap stack high-water hart {hart}: {used} B")
+        }
     }
 }
 

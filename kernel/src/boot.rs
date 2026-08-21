@@ -13,7 +13,6 @@ use core::arch::global_asm;
 use core::time::Duration;
 
 use alloc::sync::Arc;
-use log::info;
 use riscv::register::{satp, sie, stvec};
 
 use crate::machine;
@@ -22,6 +21,7 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
 use crate::runtime::context::TrapContext;
+use crate::runtime::trace;
 use crate::runtime::trampoline::{alltraps_va, restore};
 use crate::work::room::scheduler;
 #[cfg(debug_assertions)]
@@ -199,6 +199,8 @@ fn boot_harts() {
         }
         let stack_top = crate::runtime::trampoline::trap_stack_top(hart);
         putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
+        // 同事件也进 trace（hart 0 窗口）：崩溃回放可见启动序列。
+        trace::note(trace::EventKind::Boot(trace::BootEvent::Launch { hart }));
         let r = sbi::HsmCall::new(sbi::fid::Hsm::Start)
             .args(sbi::scall::SArgs {
                 a0: hart,
@@ -232,6 +234,7 @@ pub(crate) extern "C" fn boot_main() -> ! {
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
     }
-    info!("runtime \n\t hart {} trap init done", machine::hart_id());
+    // 启动完成改写进 trace（直打控制台会扰 panic 现场）；crash 后统一 dump。
+    trace::note(trace::EventKind::Boot(trace::BootEvent::Done { hart: machine::hart_id() }));
     scheduler::idle()
 }

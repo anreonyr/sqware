@@ -31,11 +31,15 @@ impl<const CAP: usize> Fmt<CAP> {
     }
 
     /// 追加字节数（B / KiB / MiB，>=1MiB 才换 MiB）。
+    /// 全整数运算（无堆打印绝不碰浮点——RISC-V 无 FPU/未开 FS 时浮点即
+    /// IllegalInstruction）；单位切换取整数商，损失精度可接受（只求大数可读）。
     pub fn size(&mut self, n: usize) {
-        if n >= 1 << 20 {
-            let _ = write!(self.buf, "{:.1} MiB", n as f64 / (1 << 20) as f64);
-        } else if n >= 1 << 10 {
-            let _ = write!(self.buf, "{:.1} KiB", n as f64 / (1 << 10) as f64);
+        const KIB: usize = 1 << 10;
+        const MIB: usize = 1 << 20;
+        if n >= MIB {
+            let _ = write!(self.buf, "{} MiB", n / MIB);
+        } else if n >= KIB {
+            let _ = write!(self.buf, "{} KiB", n / KIB);
         } else {
             let _ = write!(self.buf, "{n} B");
         }
