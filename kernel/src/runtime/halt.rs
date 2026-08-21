@@ -14,8 +14,8 @@
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use core::fmt::Write;
 use crate::machine;
+use core::fmt::Write;
 use sbi::{self, fid, scall::SArgs};
 use table::Fmt;
 
@@ -117,12 +117,20 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 非阻塞（try_lock）——panic 可能正发生在持有调度锁的现场，拿不到就跳过，
     // 不冒险在 panic 路径再加锁/递归。
     if let Some((tid, tname)) = crate::work::room::scheduler::running_task_info() {
-        let _ = writeln!(fld, "  running task #{tid} '{tname}' (hart {})", machine::hart_id());
+        let _ = writeln!(
+            fld,
+            "  running task #{tid} '{tname}' (hart {})",
+            machine::hart_id()
+        );
     }
     // 格式化的 panic 消息（非字面量）也打印——诊断调试必备
     let _ = writeln!(fld, "  {}", info.message());
     // 其余 hart 已停止：本 hart 是唯一存活者，停机自环（srst 复位 / wfi）。
-    let _ = writeln!(fld, "  [stop] other harts hushed; only hart {} remains", machine::hart_id());
+    let _ = writeln!(
+        fld,
+        "  other harts hushed only hart {} remains",
+        machine::hart_id()
+    );
     let mut sink = crate::console::Sink;
     let _ = fld.flush(&mut sink);
 

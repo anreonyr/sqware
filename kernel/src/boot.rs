@@ -241,11 +241,11 @@ fn spawn_demos() -> Result<(), MapError> {
         //     "exiter",
         // ),
         (
-            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-heaper")[..],
+            &include_bytes!(env!("USER_HEAPER"))[..],
             "heaper",
         ),
         (
-            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
+            &include_bytes!(env!("USER_SPAWNER"))[..],
             "spawner",
         ),
     ] {

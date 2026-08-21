@@ -3,21 +3,27 @@
 //! 分层（signature 即文档）：
 //!   事件 = 按模块分组、字段自足的枚举（EventKind 聚合）
 //!   核心 = Trace（per-hart 窗口）+ note / dump / reset / init
-//!   适配 = panic_dump（把崩溃前最近窗口倒到控制台；未来 semihost 是同一 dump 流的另一消费端）
+//!   适配 = panic_dump（把崩溃前最近窗口倒到控制台）+ 宿主镜像（共享同一事件流）
 //!
 //! 设计决策：
-//!   - per-hart、静态池（.bss 按 MAX_HARTS×BUFFER_SIZE 备足），**不经分配器**——
+//!   - per-hart、静态池（.bss 按 POOL_HARTS×BUFFER_SIZE 备足），**不经分配器**——
 //!     崩溃现场分配器不可信，缓冲必须仍可用。
 //!   - 写 = 单生产者无锁：cursor 单调不回卷、读侧取模；读只在 panic，此时其余核
 //!     已由 halt 停写（写读互斥由 halt 语义保证）。
-//!   - semihost 全量（未来）= 同一 dump 流的另一消费端；本版本实现环形 + 控制台 panic_dump。
+//!   - 宿主镜像 = semihosting fs（feature semihosting，**默认开启**）：每条事件
+//!     JSON Lines 写入宿主文件 sqware-trace.jsonl（qemu CWD 下；首行 '#' 头部溯源），
+//!     runner 归档；依赖 QEMU -semihosting（runner 恒加）。
+//!   - **文件唯一写者 = host_note（live 流）**：panic 只经 note(Halt(Panic)) 追加一条
+//!     事件行，决不把环形窗口再 dump 一遍进文件（文本窗口在 semihosting 下由 scene 抑制）。
 
+#[cfg(feature = "semihosting")]
+use crate::lock::OnceLock;
 use core::fmt;
 use core::fmt::Write;
+#[cfg(feature = "semihosting")]
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(feature = "trace-host")]
-use crate::console::_write;
 use crate::console::Sink;
 use crate::machine;
 use crate::memory::manager::fault::FaultKind;
@@ -74,7 +80,11 @@ pub enum EnvEvent {
 /// memory/manager/fault 的缺页与 memory/integrity 的完整性违例。
 #[derive(Clone, Copy)]
 pub enum MemEvent {
-    PageFault { va: usize, fault: FaultKind, resolved: bool },
+    PageFault {
+        va: usize,
+        fault: FaultKind,
+        resolved: bool,
+    },
     /// 完整性违例（IntegrityViolation 的 repr(u8) 编码；见 memory::integrity）。
     Integrity { code: u8, addr: usize },
 }
@@ -166,31 +176,94 @@ pub fn note(kind: EventKind) {
     }
     let when = crate::runtime::clock::now().as_ticks();
     trace(hart).note(kind, when);
-    // opt-in 宿主全量（构建开关 trace-host）：每条结构化事件经 console 送宿主，
+    // opt-in 宿主全量（构建开关 semihosting）：每条结构化事件经 semihosting 送宿主，
     // 带自描述长度 "len"，便于 tail/离线解析可靠分帧（try_lock 原子成行、尽力而为）。
-    #[cfg(feature = "trace-host")]
+    #[cfg(feature = "semihosting")]
     host_note(kind, hart, when);
 }
 
-/// 宿主镜像：把一条事件序列化成带长度的 JSON 行，经 console 原子送宿主。
-/// try_lock：并发丢失尽力而为（不阻塞、不因锁死场 panic）。
-#[cfg(feature = "trace-host")]
+/// 导出文件名。QEMU semihosting fs 按 **qemu 进程 CWD**（= 调用 runner 的目录，
+/// 通常仓库根）解析相对路径；runner 结束后归档进 trace/。
+#[cfg(feature = "semihosting")]
+const EXPORT_NAME: &core::ffi::CStr = c"sqware-trace.jsonl";
+
+#[cfg(feature = "semihosting")]
+static EXPORT: OnceLock<semihosting::fs::File> = OnceLock::new();
+/// 头部已写（首行溯源）——只写一次。
+#[cfg(feature = "semihosting")]
+static EXPORT_STARTED: AtomicBool = AtomicBool::new(false);
+/// 打开失败闩：告警一次后静默停用（避免每事件重试 open 刷屏）。
+#[cfg(feature = "semihosting")]
+static EXPORT_BROKEN: AtomicBool = AtomicBool::new(false);
+
+/// 宿主镜像：把一条事件序列化成带长度的 JSON 行，经 semihosting **fs** 写入宿主
+/// 文件 sqware-trace.jsonl（首行 '#' 头部：宿主时刻溯源）。依赖 QEMU
+/// -semihosting（feature 默认开启，runner 恒加该标志）。打开失败仅告警一次并静默停用
+/// （诊断路径永不 panic）；行写失败忽略（尽力而为）。try_lock 串行跨核写。
+///
+/// **唯一写者**：panic 只追加自身一行（note(Halt(Panic))），环形窗口 dump 不写本文件。
+#[cfg(feature = "semihosting")]
 fn host_note(kind: EventKind, hart: usize, when: u64) {
     use crate::lock::SpinLock;
+    use semihosting::io::Write as _;
     static HOST: SpinLock<()> = SpinLock::new(());
     if let Some(_g) = HOST.try_lock() {
+        if EXPORT_BROKEN.load(Ordering::Relaxed) {
+            return;
+        }
+        if EXPORT.get().is_none() {
+            match semihosting::fs::File::create(EXPORT_NAME) {
+                Ok(f) => {
+                    let _ = EXPORT.set(f);
+                }
+                Err(_) => {
+                    EXPORT_BROKEN.store(true, Ordering::Relaxed);
+                    crate::putln!(
+                        "semihosting: cannot create {:?}; host export disabled",
+                        EXPORT_NAME
+                    );
+                    return;
+                }
+            }
+        }
+        let mut file = EXPORT.get().expect("just stored above");
+        if !EXPORT_STARTED.swap(true, Ordering::Relaxed) {
+            let mut head = [0u8; 512];
+            let n = host_header(&mut head);
+            let _ = file.write_all(&head[..n]);
+            let _ = file.write_all(b"\n");
+        }
         let mut buf = [0u8; 160];
         let n = line_json(&Event { when, kind }, hart, &mut buf);
-        _write(format_args!(
-            "{}\n",
-            core::str::from_utf8(&buf[..n]).unwrap_or("")
-        ));
+        let _ = file.write_all(&buf[..n]);
+        let _ = file.write_all(b"\n");
     }
+}
+
+/// 头部一行：# sqware semihosting t=<时期秒>。以 '#' 开头，消费端跳过非 '{' 行。
+/// 时刻用 SYS_TIME 的 Result API（尽力而为），不用 experimental::time 的
+/// SystemTime::now —— 其内部 unwrap，违反诊断路径不 panic。只依赖 fs feature。
+#[cfg(feature = "semihosting")]
+fn host_header(out: &mut [u8]) -> usize {
+    let mut o = 0usize;
+    {
+        let mut w = Buf(out, &mut o);
+        let _ = w.write_str("# sqware semihosting");
+        match semihosting::sys::arm_compat::sys_time() {
+            Ok(secs) => {
+                let _ = write!(w, " t={secs}");
+            }
+            Err(_) => {
+                let _ = w.write_str(" t=?");
+            }
+        }
+    }
+    o
 }
 
 /// 单条事件 → 完整 JSON 行，内含自描述长度 "len"（= 整行对象字节数，含自身）。
 /// 消费端据 len 校验/丢弃被截断或交错的半条。返回写入长度。
-#[cfg(feature = "trace-host")]
+#[cfg(feature = "semihosting")]
 fn line_json(e: &Event, hart: usize, out: &mut [u8]) -> usize {
     let mut body = [0u8; 96];
     let mut used = 0usize;
@@ -217,7 +290,7 @@ fn line_json(e: &Event, hart: usize, out: &mut [u8]) -> usize {
 
 /// total = '{' + body + ',"len":'(7) + digits(total) + '}' = used + 9 + digits(total)。
 /// 求不动点（digits 单调，1~2 步收敛）。
-#[cfg(feature = "trace-host")]
+#[cfg(feature = "semihosting")]
 fn total_len(used: usize) -> usize {
     let mut total = used + 9 + 1;
     loop {
@@ -230,7 +303,7 @@ fn total_len(used: usize) -> usize {
     }
 }
 
-#[cfg(feature = "trace-host")]
+#[cfg(feature = "semihosting")]
 fn digits(mut n: usize) -> usize {
     let mut d = 1usize;
     while n >= 10 {
@@ -240,7 +313,7 @@ fn digits(mut n: usize) -> usize {
     d
 }
 
-#[cfg(feature = "trace-host")]
+#[cfg(feature = "semihosting")]
 fn kind_str(k: EventKind) -> &'static str {
     match k {
         EventKind::Sched(SchedEvent::Spawn { .. }) => "spawn",
@@ -264,7 +337,7 @@ fn kind_str(k: EventKind) -> &'static str {
     }
 }
 
-#[cfg(feature = "trace-host")]
+#[cfg(feature = "semihosting")]
 fn fields_json(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
     match e.kind {
         EventKind::Sched(SchedEvent::Spawn { tid }) => write!(w, ",\"tid\":{tid}"),
@@ -285,8 +358,16 @@ fn fields_json(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         EventKind::Env(EnvEvent::Call { call, arg }) => {
             write!(w, ",\"call\":{call},\"arg\":{arg:#x}")
         }
-        EventKind::Mem(MemEvent::PageFault { va, fault, resolved }) => {
-            write!(w, ",\"va\":{va:#x},\"fault\":\"{:?}\",\"resolved\":{resolved}", fault)
+        EventKind::Mem(MemEvent::PageFault {
+            va,
+            fault,
+            resolved,
+        }) => {
+            write!(
+                w,
+                ",\"va\":{va:#x},\"fault\":\"{:?}\",\"resolved\":{resolved}",
+                fault
+            )
         }
         EventKind::Mem(MemEvent::Integrity { code, addr }) => {
             write!(w, ",\"code\":{code},\"addr\":{addr:#x}")
@@ -378,8 +459,16 @@ fn fmt_event(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         EventKind::Sched(SchedEvent::Reap { tid }) => write!(w, "reap tid={tid}"),
         EventKind::Sched(SchedEvent::Idle) => write!(w, "idle"),
         EventKind::Env(EnvEvent::Call { call, arg }) => write!(w, "envcall #{call} arg={arg:#x}"),
-        EventKind::Mem(MemEvent::PageFault { va, fault, resolved }) => {
-            write!(w, "pagefault va={va:#x} kind={:?} resolved={resolved}", fault)
+        EventKind::Mem(MemEvent::PageFault {
+            va,
+            fault,
+            resolved,
+        }) => {
+            write!(
+                w,
+                "pagefault va={va:#x} kind={:?} resolved={resolved}",
+                fault
+            )
         }
         EventKind::Mem(MemEvent::Integrity { code, addr }) => {
             write!(w, "integrity code={code} addr={addr:#x}")

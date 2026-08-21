@@ -20,8 +20,8 @@ use riscv::register::{satp, scause, sepc, sstatus, stval};
 
 use crate::console::Sink;
 use crate::memory::manager::addr::VirtAddr;
-use crate::work::unit::elftable;
 use crate::work::room::scheduler::{running_task_info, running_team_try};
+use crate::work::unit::elftable;
 use table::Fmt;
 
 /// 回溯深度上限。
@@ -142,8 +142,8 @@ fn dump_csrs() {
 fn dump_gprs() {
     const NAMES: [&str; 32] = [
         "x0", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
-        "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3",
-        "t4", "t5", "t6",
+        "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
+        "t5", "t6",
     ];
     let r = gprs();
     let mut f = Fmt::<256>::new();
@@ -184,8 +184,8 @@ pub fn dump_crash() {
     dump_csrs();
     dump_gprs();
     dump_backtrace();
-    // trace-host 下 JSON 实时流已含全部事件，文本窗口冗余——只关事件窗口，保留 CSR/GPR/回溯。
-    #[cfg(not(feature = "trace-host"))]
+    // semihosting 下 JSON 实时流已含全部事件，文本窗口冗余——只关事件窗口，保留 CSR/GPR/回溯。
+    #[cfg(not(feature = "semihosting"))]
     crate::runtime::trace::panic_dump();
 }
 

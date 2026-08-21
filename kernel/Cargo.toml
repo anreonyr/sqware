@@ -4,9 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-# opt-in：trace 结构化事件经 console 镜像到宿主（JSON Lines，自描述长度），
-# 供离线反推；仅宿主侧深挖打开（cargo build --features trace-host）。
-trace-host = []
+default = ["semihosting"]
+# trace 结构化事件经 semihosting fs 导出宿主文件（JSON Lines，自描述长度；文件
+# sqware-trace.jsonl 落在 qemu CWD，runner 归档）。**默认开启**（default 引入）——
+# 要关则把 default 里的 semihosting 拿掉。依赖 QEMU -semihosting（runner 恒加）。
+semihosting = []
 
 # opt-in：完整性/审计框架（Banker/Ledger/poison/audit/基线断言——见 memory::integrity）。
 # 需 debug 构建且 --features audit 同时满足才生效（all(debug_assertions, feature="audit")）；
@@ -29,7 +31,10 @@ hashbrown = { version = "0.17.1", default-features = false, features = [
 log = { version = "0.4.33" }
 riscv = { version = "0.16.1", features = ["s-mode"] }
 riscv-rt = { version = "0.18.0", features = ["s-mode"] }
-semihosting = "0.1.25"
+# semihosting 通道（semihosting 导出）：fs=写宿主导出文件（唯一必需）。
+# 未开 stdio（每行 open ":tt" 过重）、panic-handler（与内核自带 handler 冲突）、
+# time/args（本次不需要）。所有 API 均 no_std、零分配。
+semihosting = { version = "0.1.25", features = ["fs"] }
 
 [[bin]]
 name = "sqware"
