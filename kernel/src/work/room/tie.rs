@@ -18,7 +18,6 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use sbi::scall::SArgs;
 use sbi::{self, fid};
 use crate::machine;
-use crate::memory::allocator::frame;
 use crate::putln;
 
 /// 已入队（创建）任务计数（全退出检测：REAPED == PUSHED → 停机）。
@@ -61,7 +60,7 @@ pub(super) fn done() -> bool {
 /// 全部任务已退出：显式停机（srst；AtomicBool 防双核同时触发——后到者 wfi）。
 ///
 /// 关机屏障：先登记本核到达（HALT_ARRIVED），胜出核唤醒 WFI 睡核（它们随后
-/// 也会到达 halt）并**自旋等全部核到齐**，然后才经 `frame::check_baseline` 断言
+/// 也会到达 halt）并**自旋等全部核到齐**，然后才经 `integrity::check_baseline` 断言
 /// 任务帧已全部归还（在途帧回落内核持久帧 + 堆支撑页基线）——地址空间/栈
 /// 所有权 Drop 泄漏在此暴露。不等齐的核可能仍在 clear() 归还帧，会把在途回收
 /// 误报为泄漏。仅胜出核检查一次即可（原子互斥保证单核执行）。
@@ -81,7 +80,7 @@ pub(super) fn halt() -> ! {
         // 帧基线扣除公式才成立），再断言零泄漏，最后发复位（debug 构建生效）。
         crate::memory::allocator::block::flush_all();
         #[cfg(debug_assertions)]
-        frame::check_baseline();
+        crate::memory::integrity::check_baseline();
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }
     wfi()

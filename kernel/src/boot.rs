@@ -18,7 +18,6 @@ use riscv::register::{satp, sie, stvec};
 use crate::console::Sink;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::context::TrapContext;
@@ -178,11 +177,10 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     unit::pagetable_reclaim();
 
-    // 记录内核持久帧基线：spawn 用户任务前的在途帧 + 内核堆支撑页。此后在途帧
-    // 只应增用户任务所有 + 堆支撑页；关机时全部归还，由 tie::halt 的
-    // check_baseline 断言零泄漏（见 frame.rs record_baseline/check_baseline）。
+    // 记录内核持久帧基线：spawn 用户任务前的在途帧。此后在途帧只应增用户任务
+    // 所有；关机时全部归还，由 tie::halt 的 check_baseline 断言零泄漏。
     #[cfg(debug_assertions)]
-    frame::record_baseline();
+    crate::memory::integrity::record_baseline();
 
     // 全部演示程序均为经 parser → loader → TaskBuilder 装载的**真 ELF**（user crate，
     // 静态链接于 USER_TEXT_BASE 0x10000）。

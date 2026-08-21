@@ -20,7 +20,6 @@ use core::alloc::{AllocError, Allocator, Layout};
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
-use alloc::vec;
 use alloc::vec::Vec;
 use erra::ResultExt;
 use log::debug;
@@ -35,7 +34,7 @@ use crate::{
 
 // ── 断言失败零分配现场 dump ──
 //
-// 症状：pull 弹出块时 unitmap 断言单元已在用/释放未分配单元。为使 panic 前
+// 症状：pull 弹出块 / push 双 free / 撞环等分配器自检断言触发。为使 panic 前
 // 能输出完整现场而不触发分配器重入（dump 若 alloc 会经 portal→block→inner
 // 递归），dump 只用 putln! 直写 + 固定缓冲，绝不经 global_allocator。
 
@@ -46,7 +45,6 @@ const MAX_POWER: usize = PAGE_SIZE.ilog2() as usize;
 /// 单元数组区（每块区页 512 B 位图）+ 块区（tear 撕页）。
 /// 区段大小不设编译期常量——init 按「空闲区均分到每池」动态算出（见 init），
 /// 大内存机器上自动放大；区段耗尽即内存耗尽。
-
 pub(crate) struct Pool {
     inner: SpinLock<Option<BlockInner>>, // freepool + 页头 used 计数 + 区段游标
     pump: SpinLock<VecDeque<Remote>>,    // 过境驿站：只收 feed，suck 抽空
@@ -315,7 +313,7 @@ impl BlockInner {
                 self.freepool[power] = purge_freelist(self.freepool[power], base);
                 // debug: 整页清链后须无活跃账目（used-counter 记账正确性检查）。
                 #[cfg(debug_assertions)]
-                page_clear_check(base);
+                crate::memory::integrity::page_clear(base);
                 return;
             }
             let used = &mut *(base as *mut usize);
@@ -326,7 +324,7 @@ impl BlockInner {
             self.freepool[power] = purge_freelist(self.freepool[power], base);
             // debug: 同上——整页清链后须无活跃账目（页永驻，仅校验，不归还）。
             #[cfg(debug_assertions)]
-            page_clear_check(base);
+            crate::memory::integrity::page_clear(base);
         }
     }
 }
@@ -448,17 +446,6 @@ pub(crate) fn torn_pages() -> usize {
     heap().pools.iter().map(|p| p.torn_pages()).sum()
 }
 
-/// debug: 整页归还时须无活账目（used-counter 先于账目归零 = 记账错误现行）。
-#[cfg(debug_assertions)]
-fn page_clear_check(pa: usize) {
-    if crate::memory::integrity::page_has_records(pa) {
-        crate::memory::integrity::report(
-            crate::memory::integrity::IntegrityViolation::AuditDivergence,
-            pa,
-            format_args!("page returned with live ledger entries"),
-        );
-    }
-}
 
 pub struct BlockAllocator;
 
@@ -513,12 +500,6 @@ unsafe impl Allocator for BlockAllocator {
 
 static BLOCK_ALLOCATOR: BlockAllocator = BlockAllocator;
 
-/// 块池堆借自帧层的页数：恒 0——池区段自给自足，从不向帧层借用。
-/// 保留该接口仅为 frame::check_baseline 的堆扣除公式兼容（扣除项恒零即退化正确）。
-pub fn live_pages() -> usize {
-    0
-}
-
 pub fn allocator() -> &'static dyn Allocator {
     &BLOCK_ALLOCATOR
 }
@@ -544,31 +525,21 @@ pub fn init() -> InitResult<()> {
         // 预算：空闲区一半分给池(均分到每池)，另一半留给 frame 区。
         let m = machine::info();
         let per_pool_pages = m.free.size / 2 / nodes / PAGE_SIZE;
-        if per_pool_pages < 9 {
-            // 至少 1 块页 + 配置的数组区
+        if per_pool_pages < 1 {
+            // 至少 1 块页
             return Err(InitError::OutOfMemory);
         }
-        // 区段内部分块：块区约 8/9（每块页配 512 B 单元数组 → 8 块页 + 1 数组页）。
-        let block_pages = per_pool_pages * 8 / 9;
-        let array_pages = per_pool_pages - block_pages;
 
         let mut pools = Vec::new();
         let mut segments = Vec::new();
-        #[cfg(debug_assertions)]
-        let mut maps: Vec<(usize, usize, usize)> = Vec::new(); // (base, array, pages)
         for i in 0..nodes {
             let layout = Layout::from_size_align(per_pool_pages * PAGE_SIZE, PAGE_SIZE).unwrap();
             let region = bump::allocator()
                 .allocate(layout)
                 .map_err(|_| InitError::OutOfMemory)?;
-            let region_base = region.as_ptr() as *const u8 as usize;
-            // 布局：数组区在区段头部，块区在其后；array 永不参与块分配。
-            let array_base = region_base;
-            let base = region_base + array_pages * PAGE_SIZE;
-            let edge = region_base + per_pool_pages * PAGE_SIZE;
-
-            #[cfg(debug_assertions)]
-            maps.push((base, array_base, block_pages));
+            // 区段 = 全部块页（unitmap 数组区已删，1/9 预留回归块区）。
+            let base = region.as_ptr() as *const u8 as usize;
+            let edge = base + per_pool_pages * PAGE_SIZE;
 
             let pool = Pool::new(base, edge);
             pool.init()?;
@@ -587,7 +558,7 @@ pub fn init() -> InitResult<()> {
             let fbase = m.free.base;
             let fpages = m.free.size / PAGE_SIZE;
             crate::memory::integrity::BANKER.init(fbase, fpages);
-            let pool_pages: usize = maps.iter().map(|&(_, _, p)| p).sum();
+            let pool_pages = per_pool_pages * nodes;
             crate::memory::integrity::LEDGER.init(pool_pages.saturating_mul(4));
         }
 

@@ -351,17 +351,54 @@ pub fn stats() -> IntegrityStats {
     }
 }
 
+// ── 基线 ──────────────────────────────────────────────
+
+/// 内核持久帧基线（boot 记录；关机断言回落）。
+static FRAME_BASELINE: AtomicUsize = AtomicUsize::new(0);
+
+/// 记录基线（在 spawn 用户任务**之前**调用）——此后在途帧应只增用户任务所有，
+/// 关机时全部归还；断言触发 = 任务地址空间/栈所有权 Drop 有泄漏。
+pub fn record_baseline() {
+    FRAME_BASELINE.store(
+        crate::memory::allocator::frame::FRAME_ALLOCATOR.outstanding(),
+        Ordering::Relaxed,
+    );
+}
+
+/// 断言关机时任务帧已全部归还（在途帧 == 基线）。
+///
+/// 旧公式「基线 − 记录时堆页 + 当前堆页×2」随 unitmap/live_pages 删除而失效
+/// （且 live_pages 恒 0、单元页 1:1 挂账项恒 0），简化为直比基线。
+#[track_caller]
+pub fn check_baseline() {
+    let now = crate::memory::allocator::frame::FRAME_ALLOCATOR.outstanding();
+    let base = FRAME_BASELINE.load(Ordering::Relaxed);
+    if now != base {
+        report(
+            IntegrityViolation::AuditDivergence,
+            0,
+            format_args!("task frames leaked at shutdown: outstanding {now} != baseline {base}"),
+        );
+    }
+}
+
 // ── 审计 ──────────────────────────────────────────────
 
-/// 页内是否有活账目（decrease_used 整页清链后的记账完整性检查）。
-pub fn page_has_records(pa: usize) -> bool {
+/// 整页清链后的记账完整性检查：页内须无活账目方可返回（有 → report）。
+pub fn page_clear(pa: usize) {
     let mut any = false;
     LEDGER.for_each(|addr, _| {
         if addr >= pa && addr < pa + PAGE_SIZE {
             any = true;
         }
     });
-    any
+    if any {
+        report(
+            IntegrityViolation::AuditDivergence,
+            pa,
+            format_args!("page returned with live ledger entries"),
+        );
+    }
 }
 
 /// 全量审计（boot 收尾调用一次；三源交叉核对，违例即 report）：

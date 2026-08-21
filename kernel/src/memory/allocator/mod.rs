@@ -22,6 +22,7 @@ pub mod portal;
 
 /// 分配器初始化错误 — 与 `erra::Error<InitError>` 配对使用（见 [`InitResult`]）。
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(unused)]
 pub enum InitError {
     /// 设备树未配置空闲内存区（`machine.free.size == 0`）。
     #[error("no free memory region configured")]

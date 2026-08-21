@@ -66,58 +66,6 @@ impl FrameAllocator {
     }
 }
 
-/// 内核持久帧基线（record_baseline 记录；check_baseline 断言回落）。
-#[cfg(debug_assertions)]
-static FRAME_BASELINE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-
-/// 记录基线时内核堆持有的页数——check_baseline 用它把堆支撑页从在途帧中
-/// 扣除，得到真正的任务帧泄漏量。须记**差值**而非直接扣当前堆页：基线本身
-/// 已含 space::init 期间 refill 的堆页，直接扣会双扣、掩盖真实泄漏。
-#[cfg(debug_assertions)]
-static HEAP_BASELINE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-
-/// 记录内核持久帧基线（在 spawn 用户任务**之前**调用）——此后在途帧应只增
-/// 用户任务所有 + 内核堆支撑页，关机时用户任务帧全部归还。若断言触发 =
-/// 任务地址空间/栈所有权 Drop 有泄漏。
-pub fn record_baseline() {
-    #[cfg(debug_assertions)]
-    {
-        FRAME_BASELINE.store(
-            FRAME_ALLOCATOR.outstanding(),
-            core::sync::atomic::Ordering::Relaxed,
-        );
-        HEAP_BASELINE.store(
-            crate::memory::allocator::block::live_pages(),
-            core::sync::atomic::Ordering::Relaxed,
-        );
-    }
-}
-
-/// 断言关机时任务帧已全部归还（在途帧 = 内核持久帧 + 内核堆支撑页）。
-///
-/// block.rs 惰性 refill 的堆页是良性常驻支撑内存（任务之外），扣除后才得到
-/// 真正的任务帧泄漏量。
-#[track_caller]
-pub fn check_baseline() {
-    #[cfg(debug_assertions)]
-    {
-        let now = FRAME_ALLOCATOR.outstanding();
-        let base = FRAME_BASELINE.load(core::sync::atomic::Ordering::Relaxed);
-        let heap_base = HEAP_BASELINE.load(core::sync::atomic::Ordering::Relaxed);
-        let heap_now = crate::memory::allocator::block::live_pages();
-        // 内核持久帧 = 基线在途帧 − 基线时的堆页；关机在途帧 = 内核持久帧 + 当前堆页
-        // + 任务帧 + 每张活堆页挂接的 unitmap 单元页（debug 位图：live 堆页 1:1
-        // 挂一张单元页，整页归还时随 detach 释放——常驻堆页（如调度器表）的单元页
-        // 也常驻，须随堆页一起计入预期）。
-        let expected = base.saturating_sub(heap_base) + heap_now * 2;
-        let leaked = now.saturating_sub(expected);
-        assert_eq!(
-            leaked, 0,
-            "task frames leaked at shutdown: outstanding {now} = kernel+heap {expected} + leaked {leaked}"
-        );
-    }
-}
-
 /// 由请求字节数计算 frame order（块 = 2^power × PAGE_SIZE，须覆盖 size）。
 ///
 /// size 先向上取整到页，再取整到 **2 的幂页数**——frame 块必须是 2 的幂倍页。
@@ -144,15 +92,6 @@ unsafe impl Allocator for FrameAllocator {
         #[cfg(debug_assertions)]
         {
             crate::memory::integrity::BANKER.debit(addr as usize);
-        }
-        // debug: 弹出的帧不得落在任一 block pool 区段——那说明 block pool 与 frame
-        // 区段重叠，pageown 会因「per-node 池页不向 frame 借」而漏检。
-        #[cfg(debug_assertions)]
-        if crate::memory::allocator::block::pool_includes(addr as usize) {
-            crate::putln!(
-                "[FRAMEPOOL] frame allocate INSIDE a block pool region: {:#x} power {power} size {size} — trap/context 页撞进池区段!",
-                addr as usize
-            );
         }
         #[cfg(debug_assertions)]
         {
@@ -183,17 +122,7 @@ unsafe impl Allocator for FrameAllocator {
             #[cfg(debug_assertions)]
             crate::memory::integrity::BANKER.credit(addr);
 
-            // debug: double-free 检测——pagemeta 已标 free 的帧再释放说明
-            // 帧被释放两次（或归还未分配的地址），会破坏 frame 合并。
-            #[cfg(debug_assertions)]
-            {
-                if frame.pagemeta[index].as_ref().is_some_and(|m| m.free) {
-                    panic!(
-                        "frame allocator: double free of index {index} (addr {addr:#x}, power {power})"
-                    );
-                }
-            }
-
+            // double-free 已由 Banker::credit（DoubleCredit）覆盖，此处不再重复检查。
             frame.merge_block(index, power);
             #[cfg(debug_assertions)]
             {
