@@ -250,6 +250,6 @@ pub fn pagetable_reclaim() {
     );
     drop(space);
     crate::putln!(
-        "pt-reclaim selftest: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})"
+        "pagetable reclaim test: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})"
     );
 }

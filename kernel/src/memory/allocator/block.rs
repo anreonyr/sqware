@@ -6,6 +6,13 @@
 // 其归属池的 pump 驿站，属主核下次 pull 前 suck 抽回归位——正确性不依赖任何调度策略
 // （任务可自由迁移，内存子系统免疫调度行为）。
 //
+// 结构镜像 frame.rs——自上而下一条脊柱：
+//   公共对象 BlockAllocator（池集合 + 区段表，等价 FrameAllocator）
+//       → Allocator 实现（直接在公共对象上）
+//       → 每节点 BlockInner（锁壳，等价 FrameAllocator 的每节点一份）
+//       → BlockInner 内状态 Pool（等价 FrameInner）
+//       → 自由助手 → 静态实例 → allocator()/init()。
+//
 // 命名：pool(池) pump(泵) pull/push(池内拉/推) feed/suck(泵口喂/抽) tear(撕页)——全部
 // 4 字母动词成族；base/edge 区段两端成对；pool_of/node_of 是定位原语。
 //
@@ -14,9 +21,9 @@
 //   - 页头 used 计数只在池 inner 锁内写（feed 拿不到 inner）；
 //   - 拓扑（区段表）建成后只读；锁序 = pull/suck 先 pump 后 inner（摘空再归位），
 //     feed 仅 pump，push/tear 仅 inner——无环。
-use core::ptr::NonNull;
 
 use core::alloc::{AllocError, Allocator, Layout};
+use core::ptr::NonNull;
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -32,35 +39,125 @@ use crate::{
     memory::allocator::{InitError, InitResult, bump},
 };
 
-// ── 断言失败零分配现场 dump ──
-//
-// 症状：pull 弹出块 / push 双 free / 撞环等分配器自检断言触发。为使 panic 前
-// 能输出完整现场而不触发分配器重入（dump 若 alloc 会经 portal→block→inner
-// 递归），dump 只用 putln! 直写 + 固定缓冲，绝不经 global_allocator。
+// ── 常量 ──
 
 const MIN_POWER: usize = 3;
 const MAX_POWER: usize = PAGE_SIZE.ilog2() as usize;
 
-/// 每个池从空闲区划走的堆区段，空间均分为两块：
-/// 单元数组区（每块区页 512 B 位图）+ 块区（tear 撕页）。
-/// 区段大小不设编译期常量——init 按「空闲区均分到每池」动态算出（见 init），
-/// 大内存机器上自动放大；区段耗尽即内存耗尽。
-pub(crate) struct Pool {
-    inner: SpinLock<Option<BlockInner>>, // freepool + 页头 used 计数 + 区段游标
-    pump: SpinLock<VecDeque<Remote>>,    // 过境驿站：只收 feed，suck 抽空
-    base: usize,                         // 区段 [base, edge)，init 后不可变
-    edge: usize,
-}
+// ── 公共对象：池集合 + 区段表 —— 等价 Frame 的 FrameAllocator ──
 
-/// 过境块：喂入/吸出之间携带的最小信息（指针 + size class）。
+/// 过境块：喂入/吸出之间携带的最小信息（指针 + size class）——等价 Frame 的 Meta。
 struct Remote {
     ptr: NonNull<u8>,
     power: usize,
 }
 
-impl Pool {
-    fn new(base: usize, edge: usize) -> Pool {
-        Pool {
+/// 区段：一段物理内存 → 池 id（按 base 有序，二分查询；init 后只读）。
+struct Segment {
+    base: usize,
+    edge: usize,
+    pool: usize,
+}
+
+/// 块堆本体：每节点一个 BlockInner + 按 base 有序的区段表（init 后一次装配，之后只读）。
+/// 定位原语 pool_of 直接挂在对象上；核→节点映射见 `node_of`。
+pub(crate) struct BlockAllocator {
+    blocks: &'static [BlockInner],
+    segments: &'static [Segment],
+}
+
+impl BlockAllocator {
+    /// 页地址 → 池 id（区段覆盖判定；非常规堆内存返回 None）。
+    fn pool_of(&self, pa: usize) -> Option<usize> {
+        let segs = self.segments;
+        // 二分：找最后一个 base <= pa 的段
+        let idx = segs.partition_point(|s| s.base <= pa);
+        if idx == 0 {
+            return None;
+        }
+        let s = &segs[idx - 1];
+        (pa < s.edge).then_some(s.pool)
+    }
+}
+
+/// 核 → 节点 id：每核一池(UMA 全核同内存,节点 = 核的逻辑划分;多节点时
+/// pools 数 = 核数,node_of 恒等直取)。
+fn node_of(hart: usize) -> usize {
+    hart
+}
+
+/// 由请求 Layout 计算块 power（块 = 2^power 字节，须覆盖 size 且 ≤ 一页）。
+fn block_power(layout: Layout) -> usize {
+    let size = layout.size().max(1usize << MIN_POWER);
+    let power = size.next_power_of_two().ilog2() as usize;
+    power.clamp(MIN_POWER, MAX_POWER)
+}
+
+unsafe impl Allocator for BlockAllocator {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let power = block_power(layout);
+        if layout.align() > (1usize << power) {
+            return Err(AllocError);
+        }
+        let me = node_of(machine::hart_id());
+        let pool = &self.blocks[me];
+        let addr = pool.pull(power).ok_or(AllocError)?;
+        // debug: 整块毒化（未初始化读现行）+ 活块入账（重复入账=块级双发现行；
+        // KernelHeap 且 slack≥8 时 mark 内部写对齐 slack canary）。
+        #[cfg(debug_assertions)]
+        {
+            crate::memory::integrity::poison(addr, 1usize << power);
+            crate::memory::integrity::LEDGER.mark(
+                addr,
+                layout.size(),
+                crate::lock::ra(),
+                crate::memory::integrity::OwnerKind::KernelHeap,
+            );
+        }
+        // SAFETY: pull 返回的地址必非零（分配器保证）。
+        Ok(NonNull::slice_from_raw_parts(
+            unsafe { NonNull::new_unchecked(addr as *mut u8) },
+            1usize << power,
+        ))
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        let power = block_power(layout);
+        let pa = ptr.addr().get();
+        let Some(home) = self.pool_of(pa) else { return };
+        // debug: 注销账目（无账=双 free/悬垂、canary=越界、尺寸=错幂现行）+ 本体毒化
+        // 复写（头 8B 随后被 freelist 头插覆盖，其余保持毒化——UAF 读数变 0xCD）。
+        #[cfg(debug_assertions)]
+        {
+            crate::memory::integrity::LEDGER.unmark(pa, layout.size());
+            crate::memory::integrity::poison(pa, 1usize << power);
+        }
+        let me = node_of(machine::hart_id());
+        let pool = &self.blocks[home];
+        if home == me {
+            pool.push(ptr, power);
+        } else {
+            pool.feed(ptr, power);
+        }
+    }
+}
+
+// ── 每节点池：锁壳 + 区段 —— 等价 Frame 的 FrameAllocator 每节点一份 ──
+
+/// 每个池从空闲区划走的堆区段，空间均分为两块：
+/// 单元数组区（每块区页 512 B 位图）+ 块区（tear 撕页）。
+/// 区段大小不设编译期常量——init 按「空闲区均分到每池」动态算出（见 init），
+/// 大内存机器上自动放大；区段耗尽即内存耗尽。
+pub(crate) struct BlockInner {
+    inner: SpinLock<Option<Pool>>, // freepool + 页头 used 计数 + 区段游标
+    pump: SpinLock<VecDeque<Remote>>, // 过境驿站：只收 feed，suck 抽空
+    base: usize,                   // 区段 [base, edge)，init 后不可变
+    edge: usize,
+}
+
+impl BlockInner {
+    fn new(base: usize, edge: usize) -> BlockInner {
+        BlockInner {
             inner: SpinLock::new(None),
             pump: SpinLock::new(VecDeque::new()),
             base,
@@ -69,12 +166,14 @@ impl Pool {
     }
 
     fn init(&self) -> Result<(), InitError> {
-        let mut inner = BlockInner::new();
+        let mut inner = Pool::new();
         inner.init(self.base)?;
         let mut g = self.inner.lock();
         g.replace(inner);
         Ok(())
     }
+
+    // ── 池内核心：拉 / 撕 / 推 ──
 
     /// 拉出一块：先 suck 归位过境块，再从 freelist 取；无则从区段撕页拆链。
     fn pull(&self, power: usize) -> Option<usize> {
@@ -102,6 +201,46 @@ impl Pool {
         // 无现成块：撕下一页拆入链，首块即本次分配结果
         let first = self.tear(inner, power).ok()?;
         Some(first.as_ptr() as usize)
+    }
+
+    /// 从区段 [base, edge) 撕下一页拆块入链，返回首块（即分配结果）。
+    /// 调用方须已持本池 inner 锁（pull 内调用）。
+    fn tear(&self, inner: &mut Pool, power: usize) -> Result<NonNull<u8>, AllocError> {
+        let block_size = 1usize << power;
+        if inner.cursor + PAGE_SIZE > self.edge {
+            return Err(AllocError);
+        }
+        let page = inner.cursor;
+        inner.cursor += PAGE_SIZE;
+
+        // debug: Banker 取出本页（页来自自有区段，永驻不还；双取出现行）。
+        #[cfg(debug_assertions)]
+        crate::memory::integrity::BANKER.debit(page);
+
+        if power < MAX_POWER {
+            // 多块页：页头 8 字节存 used 计数，块从 offset 8 开始
+            unsafe {
+                *(page as *mut usize) = 1;
+                let usable = page + 8;
+                let block_nums = (PAGE_SIZE - 8) / block_size;
+                link_blocks(usable, block_nums, block_size);
+                let first = NonNull::new_unchecked(usable as *mut u8);
+                // 其余块留在链上：首块的 next 指向块1…——首块本次被分配，其 next 字段
+                // 将随 push 被覆盖（头插重写链头）而丢失，故先把链头写入 freepool
+                // 再清空首块的 next，避免整链随首块丢失。
+                inner.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
+                first.cast::<Option<NonNull<u8>>>().write(None);
+                Ok(first)
+            }
+        } else {
+            // 整页单块：无页头
+            unsafe {
+                link_blocks(page, 1, block_size);
+                let first = NonNull::new_unchecked(page as *mut u8);
+                inner.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
+                Ok(first)
+            }
+        }
     }
 
     /// 推回本池：写 freelist 链 + 递减本池页头计数（页永驻本池区段，不归还帧层）。
@@ -139,11 +278,43 @@ impl Pool {
         unsafe { inner.decrease_used(ptr, power) };
     }
 
+    // ── 泵：喂 / 抽 ──
+
+    /// 喂入本池 pump：块在外地被释放时投递至此（送它回家）。只入驿站，绝不碰 inner。
+    fn feed(&self, ptr: NonNull<u8>, power: usize) {
+        let mut g = self.pump.lock();
+        g.push_back(Remote { ptr, power });
+    }
+
+    /// 抽干本池 pump：取空队列，逐块归位（锁序 pump→放→inner；幂等）。
+    fn suck(&self) {
+        // 交换队列：锁内只做 O(1) 摘空，绝不持 pump 求 inner
+        let drained = {
+            let mut g = self.pump.lock();
+            core::mem::take(&mut *g)
+        };
+        for Remote { ptr, power } in drained {
+            self.push(ptr, power);
+        }
+    }
+
+    // ── 调试 ──
+
+    /// debug: 本池已撕页数（inner 锁内读 cursor；Banker audit 交叉核对用）。
+    #[cfg(debug_assertions)]
+    fn torn_pages(&self) -> usize {
+        self.inner
+            .lock()
+            .as_ref()
+            .map(|i| (i.cursor - self.base) / PAGE_SIZE)
+            .unwrap_or(0)
+    }
+
     /// 断言/push 异常现场 dump：游标/区段/该 power 全链/单元数组/操作序列。
     /// 注意：本函数**零分配**——任何 alloc 都会经 portal→block 递归/死锁，
     /// 且会污染现场。只用 putln! 直写 + 固定缓冲数组。
     #[cfg(debug_assertions)]
-    fn dump_crash_site(&self, inner: &mut BlockInner, power: usize, ctx: &str, addr: usize) {
+    fn dump_crash_site(&self, inner: &mut Pool, power: usize, ctx: &str, addr: usize) {
         putln!("[crash] {ctx}: failing block addr {addr:#x}");
         let torn_pages = (inner.cursor - self.base) / PAGE_SIZE;
         putln!(
@@ -199,83 +370,17 @@ impl Pool {
             putln!("  w{i} = {:#x}", unsafe { *blk.add(i) });
         }
     }
-
-    /// 喂入本池 pump：块在外地被释放时投递至此（送它回家）。只入驿站，绝不碰 inner。
-    fn feed(&self, ptr: NonNull<u8>, power: usize) {
-        let mut g = self.pump.lock();
-        g.push_back(Remote { ptr, power });
-    }
-
-    /// 抽干本池 pump：取空队列，逐块归位（锁序 pump→放→inner；幂等）。
-    fn suck(&self) {
-        // 交换队列：锁内只做 O(1) 摘空，绝不持 pump 求 inner
-        let drained = {
-            let mut g = self.pump.lock();
-            core::mem::take(&mut *g)
-        };
-        for Remote { ptr, power } in drained {
-            self.push(ptr, power);
-        }
-    }
-
-    /// debug: 本池已撕页数（inner 锁内读 cursor；Banker audit 交叉核对用）。
-    #[cfg(debug_assertions)]
-    fn torn_pages(&self) -> usize {
-        self.inner
-            .lock()
-            .as_ref()
-            .map(|i| (i.cursor - self.base) / PAGE_SIZE)
-            .unwrap_or(0)
-    }
-
-    /// 从区段 [base, edge) 撕下一页拆块入链，返回首块（即分配结果）。
-    /// 调用方须已持本池 inner 锁（pull 内调用）。
-    fn tear(&self, inner: &mut BlockInner, power: usize) -> Result<NonNull<u8>, AllocError> {
-        let block_size = 1usize << power;
-        if inner.cursor + PAGE_SIZE > self.edge {
-            return Err(AllocError);
-        }
-        let page = inner.cursor;
-        inner.cursor += PAGE_SIZE;
-
-        // debug: Banker 取出本页（页来自自有区段，永驻不还；双取出现行）。
-        #[cfg(debug_assertions)]
-        crate::memory::integrity::BANKER.debit(page);
-
-        if power < MAX_POWER {
-            // 多块页：页头 8 字节存 used 计数，块从 offset 8 开始
-            unsafe {
-                *(page as *mut usize) = 1;
-                let usable = page + 8;
-                let block_nums = (PAGE_SIZE - 8) / block_size;
-                link_blocks(usable, block_nums, block_size);
-                let first = NonNull::new_unchecked(usable as *mut u8);
-                // 其余块留在链上：首块的 next 指向块1…——首块本次被分配，其 next 字段
-                // 将随 push 被覆盖（头插重写链头）而丢失，故先把链头写入 freepool
-                // 再清空首块的 next，避免整链随首块丢失。
-                inner.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
-                first.cast::<Option<NonNull<u8>>>().write(None);
-                Ok(first)
-            }
-        } else {
-            // 整页单块：无页头
-            unsafe {
-                link_blocks(page, 1, block_size);
-                let first = NonNull::new_unchecked(page as *mut u8);
-                inner.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
-                Ok(first)
-            }
-        }
-    }
 }
 
-struct BlockInner {
+// ── 池内状态：freepool + 游标 —— 等价 Frame 的 FrameInner ──
+
+struct Pool {
     freepool: Vec<Option<NonNull<u8>>>,
     /// 区段游标：下一张待撕页的地址（仅 inner 锁内推进）。
     cursor: usize,
 }
 
-impl BlockInner {
+impl Pool {
     fn new() -> Self {
         Self {
             freepool: Vec::new(),
@@ -329,11 +434,7 @@ impl BlockInner {
     }
 }
 
-fn block_power(layout: Layout) -> usize {
-    let size = layout.size().max(1usize << MIN_POWER);
-    let power = size.next_power_of_two().ilog2() as usize;
-    power.clamp(MIN_POWER, MAX_POWER)
-}
+// ── 自由助手 ──
 
 /// 将 `block_nums` 个等大连续块串成单向链表。
 unsafe fn link_blocks(base: usize, block_nums: usize, block_size: usize) {
@@ -386,47 +487,17 @@ unsafe fn purge_freelist(head: Option<NonNull<u8>>, pool_base: usize) -> Option<
     }
 }
 
-// ── 全局核心：池集合 + 区段表 ──
+// ── 静态实例 + 访问器 ──
 
-struct BlockHeap {
-    pools: &'static [Pool],
-    segments: &'static [Segment],
-}
+static BLOCK_ALLOCATOR: OnceLock<BlockAllocator> = OnceLock::new();
 
-/// 区段：一段物理内存 → 池 id（按 base 有序，二分查询；init 后只读）。
-struct Segment {
-    base: usize,
-    edge: usize,
-    pool: usize,
-}
-
-static BLOCK_HEAP: OnceLock<&'static BlockHeap> = OnceLock::new();
-
-fn heap() -> &'static BlockHeap {
-    BLOCK_HEAP.get().expect("block heap not initialized")
-}
-
-/// 页地址 → 池 id（区段覆盖判定；非常规堆内存返回 None）。
-fn pool_of(pa: usize) -> Option<usize> {
-    let segs = heap().segments;
-    // 二分：找最后一个 base <= pa 的段
-    let idx = segs.partition_point(|s| s.base <= pa);
-    if idx == 0 {
-        return None;
-    }
-    let s = &segs[idx - 1];
-    (pa < s.edge).then_some(s.pool)
-}
-
-/// 核 → 节点 id:每核一池(UMA 全核同内存,节点 = 核的逻辑划分;多节点时
-/// pools 数 = 核数,node_of 恒等直取)。
-fn node_of(hart: usize) -> usize {
-    hart
+fn heap() -> &'static BlockAllocator {
+    BLOCK_ALLOCATOR.get().expect("block heap not initialized")
 }
 
 /// 停机前把每个池的 pump 抽干（全部过境块归位后才能做帧基线断言）。
 pub(crate) fn flush_all() {
-    for pool in heap().pools {
+    for pool in heap().blocks {
         pool.suck();
     }
 }
@@ -437,75 +508,23 @@ pub(crate) fn flush_all() {
 /// 块池区段页」（多池全查，单池退化为包含判定）；未初始化返回 false。
 #[cfg(debug_assertions)]
 pub(crate) fn pool_includes(pa: usize) -> bool {
-    pool_of(pa).is_some()
+    heap().pool_of(pa).is_some()
 }
 
 /// debug: 全部池已撕页总数（Banker audit 交叉核对用）。
 #[cfg(debug_assertions)]
 pub(crate) fn torn_pages() -> usize {
-    heap().pools.iter().map(|p| p.torn_pages()).sum()
+    heap().blocks.iter().map(|p| p.torn_pages()).sum()
 }
-
-
-pub struct BlockAllocator;
-
-unsafe impl Allocator for BlockAllocator {
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        let power = block_power(layout);
-        if layout.align() > (1usize << power) {
-            return Err(AllocError);
-        }
-        let me = node_of(machine::hart_id());
-        let pool = &heap().pools[me];
-        let addr = pool.pull(power).ok_or(AllocError)?;
-        // debug: 整块毒化（未初始化读现行）+ 活块入账（重复入账=块级双发现行；
-        // KernelHeap 且 slack≥8 时 mark 内部写对齐 slack canary）。
-        #[cfg(debug_assertions)]
-        {
-            crate::memory::integrity::poison(addr, 1usize << power);
-            crate::memory::integrity::LEDGER.mark(
-                addr,
-                layout.size(),
-                crate::lock::ra(),
-                crate::memory::integrity::OwnerKind::KernelHeap,
-            );
-        }
-        // SAFETY: pull 返回的地址必非零（分配器保证）。
-        Ok(NonNull::slice_from_raw_parts(
-            unsafe { NonNull::new_unchecked(addr as *mut u8) },
-            1usize << power,
-        ))
-    }
-
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        let power = block_power(layout);
-        let pa = ptr.addr().get();
-        let Some(home) = pool_of(pa) else { return };
-        // debug: 注销账目（无账=双 free/悬垂、canary=越界、尺寸=错幂现行）+ 本体毒化
-        // 复写（头 8B 随后被 freelist 头插覆盖，其余保持毒化——UAF 读数变 0xCD）。
-        #[cfg(debug_assertions)]
-        {
-            crate::memory::integrity::LEDGER.unmark(pa, layout.size());
-            crate::memory::integrity::poison(pa, 1usize << power);
-        }
-        let me = node_of(machine::hart_id());
-        let pool = &heap().pools[home];
-        if home == me {
-            pool.push(ptr, power);
-        } else {
-            pool.feed(ptr, power);
-        }
-    }
-}
-
-static BLOCK_ALLOCATOR: BlockAllocator = BlockAllocator;
 
 pub fn allocator() -> &'static dyn Allocator {
-    &BLOCK_ALLOCATOR
+    heap()
 }
 
-/// 初始化块分配器：按核数均分空闲区，给每核划一块池区段（数组区 + 块区），
-/// 建池集合 + 区段表（segments 按 base 升序，二分查询）。
+// ── 初始化 ──
+
+/// 初始化块分配器：按核数均分空闲区，给每核划一块池区段，建池集合 + 区段表
+/// （segments 按 base 升序，二分查询）。
 ///
 /// 池总预算 = 空闲区一半（另一半留给 frame 区），均分到每池——每池大小随
 /// 机器内存自适应，不设编译期常量。单核退化 = 单池拿整个预算（原 POOL_SIZE
@@ -541,9 +560,9 @@ pub fn init() -> InitResult<()> {
             let base = region.as_ptr() as *const u8 as usize;
             let edge = base + per_pool_pages * PAGE_SIZE;
 
-            let pool = Pool::new(base, edge);
-            pool.init()?;
-            pools.push(pool);
+            let blk = BlockInner::new(base, edge);
+            blk.init()?;
+            pools.push(blk);
             segments.push(Segment {
                 base,
                 edge,
@@ -562,14 +581,13 @@ pub fn init() -> InitResult<()> {
             crate::memory::integrity::LEDGER.init(pool_pages.saturating_mul(4));
         }
 
-        let pools = Box::leak(pools.into_boxed_slice());
-        let segments = Box::leak(segments.into_boxed_slice());
-        let heap = Box::leak(Box::new(BlockHeap { pools, segments }));
-        if BLOCK_HEAP.set(heap).is_ok() {
-            Ok(())
-        } else {
-            Err(InitError::AlreadyInitialized)
-        }
+        let heap = BlockAllocator {
+            blocks: Box::leak(pools.into_boxed_slice()),
+            segments: Box::leak(segments.into_boxed_slice()),
+        };
+        BLOCK_ALLOCATOR
+            .set(heap)
+            .map_err(|_| InitError::AlreadyInitialized)
     })()
     .annotate("initializing block allocator")
 }
