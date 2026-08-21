@@ -143,16 +143,14 @@ unsafe impl Allocator for FrameAllocator {
         // debug: 弹出的帧不得仍是堆持有页（活堆页泄漏进 frame 池 = 双持有）
         #[cfg(debug_assertions)]
         crate::memory::allocator::pageown::assert_not_held(addr as usize, "allocate");
-        // debug: 弹出的帧不得落在 block pool 区段——那说明 block pool 与 frame
+        // debug: 弹出的帧不得落在任一 block pool 区段——那说明 block pool 与 frame
         // 区段重叠，pageown 会因「per-node 池页不向 frame 借」而漏检。
         #[cfg(debug_assertions)]
-        if let Some((pb, pe)) = crate::memory::allocator::block::pool_region() {
-            let a = addr as usize;
-            if a >= pb && a < pe {
-                crate::putln!(
-                    "[FRAMEPOOL] frame allocate INSIDE block pool region: {a:#x} power {power} size {size} (pool {pb:#x}..{pe:#x}) — trap/context 页撞进池区段!"
-                );
-            }
+        if crate::memory::allocator::block::pool_includes(addr as usize) {
+            crate::putln!(
+                "[FRAMEPOOL] frame allocate INSIDE a block pool region: {:#x} power {power} size {size} — trap/context 页撞进池区段!",
+                addr as usize
+            );
         }
         #[cfg(debug_assertions)]
         {

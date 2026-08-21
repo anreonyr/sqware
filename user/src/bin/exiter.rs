@@ -7,6 +7,6 @@ use user::env::put;
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     // 对照旧 demo program_c：写 'C' 后退出，验证 parser→loader→TaskBuilder 全链
-    let _ = put(b'C');
+    let _ = put("C\n");
     user::env::exit()
 }

@@ -33,10 +33,12 @@ pub mod env {
         Ok(())
     }
 
-    /// 单字符输出（a0 = 字符）；ok = 该字符已送出到控制台。
-    pub fn put(ch: u8) -> UResult<()> {
+    /// 输出字符串（a0 = len，a1 = 缓冲指针）；ok = 该字符串已送出到控制台。
+    /// 经 envcall Write 的字节直写——字符串字面量与 &[u8] 均可经 `as_bytes`/`as_ptr`。
+    pub fn put(s: &str) -> UResult<()> {
         let args = UArgs {
-            a0: ch as usize,
+            a0: s.len(),
+            a1: s.as_ptr() as usize,
             ..UArgs::default()
         };
         let (_v0, _v1) = UcallBuilder::new(Ucall::Write).args(args).call()?;

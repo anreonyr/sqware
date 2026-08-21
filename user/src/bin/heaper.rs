@@ -23,7 +23,7 @@ extern "C" fn main() -> ! {
         drop(v); // 归还内核堆窗口位图
 
         if n & 0xFFFF == 0 {
-            let _ = put(b'H');
+            let _ = put("H\n");
         }
     }
 }

@@ -131,7 +131,12 @@ pub fn banner() {
     {
         let row = b.open_row();
         row[0].push_str("trap stack");
-        let _ = write!(&mut row[1], "{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
+        let _ = write!(
+            &mut row[1],
+            "{:#x}..{:#x}",
+            trap_stack_bottom(0),
+            trap_stack_top(0)
+        );
     }
     {
         let row = b.open_row();
@@ -226,18 +231,18 @@ fn spawn_demos() -> Result<(), MapError> {
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-yielder")[..],
         //     "yielder",
         // ),
-        // (
-        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-sleeper")[..],
-        //     "sleeper",
-        // ),
+        (
+            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-sleeper")[..],
+            "sleeper",
+        ),
         // (
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
         //     "exiter",
         // ),
-        (
-            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-heaper")[..],
-            "heaper",
-        ),
+        // (
+        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-heaper")[..],
+        //     "heaper",
+        // ),
         (
             &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
             "spawner",

@@ -23,8 +23,7 @@ extern "C" fn main() -> ! {
         .join();
 
         if sum == 499_500 {
-            let _ = env::put(b'J');
-            let _ = env::put(b'\n');
+            let _ = env::put("J\n");
         }
         let _ = env::sleep(Duration::from_millis(16));
     }

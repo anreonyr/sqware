@@ -43,12 +43,10 @@ use crate::{
 const MIN_POWER: usize = 3;
 const MAX_POWER: usize = PAGE_SIZE.ilog2() as usize;
 
-/// 每个池从空闲区划走的堆区段总大小（16 MiB），内部分两块：
-/// 单元数组区（ARRAY_SIZE，覆盖块区每页的块级在位位图）+ 块区（tear 撕页）。
-/// spawner 8 核场景峰值实测数百页，块区 14 MiB = 3584 页富余；区段耗尽即内存耗尽。
-const POOL_SIZE: usize = 16 * 1024 * 1024;
-/// 单元数组区大小：块区页数 × 512 B（3584 × 512 ≈ 1.75 MiB，取 2 MiB 富余）。
-const ARRAY_SIZE: usize = 2 * 1024 * 1024;
+/// 每个池从空闲区划走的堆区段，空间均分为两块：
+/// 单元数组区（每块区页 512 B 位图）+ 块区（tear 撕页）。
+/// 区段大小不设编译期常量——init 按「空闲区均分到每池」动态算出（见 init），
+/// 大内存机器上自动放大；区段耗尽即内存耗尽。
 
 pub(crate) struct Pool {
     inner: SpinLock<Option<BlockInner>>, // freepool + 页头 used 计数 + 区段游标
@@ -479,9 +477,10 @@ fn pool_of(pa: usize) -> Option<usize> {
     (pa < s.edge).then_some(s.pool)
 }
 
-/// 核 → 节点 id（当前机器全核同节点，单段内存；多节点时按拓扑填充）。
-fn node_of(_hart: usize) -> usize {
-    0
+/// 核 → 节点 id:每核一池(UMA 全核同内存,节点 = 核的逻辑划分;多节点时
+/// pools 数 = 核数,node_of 恒等直取)。
+fn node_of(hart: usize) -> usize {
+    hart
 }
 
 /// 停机前把每个池的 pump 抽干（全部过境块归位后才能做帧基线断言）。
@@ -493,11 +492,11 @@ pub(crate) fn flush_all() {
 
 // ── 适配层（hybrid/portal/tie 调用，接口零改动）──
 
-/// debug: 返回首个 pool 的 [base, edge) 块区——供 frame 侧检测「是否把本池
-/// 区段页交给外部」；未初始化返回 None。
+/// debug: page 是否落在**任一**池区段内——供 frame 侧检测「frame 分配撞进
+/// 块池区段页」（多池全查，单池退化为包含判定）；未初始化返回 false。
 #[cfg(debug_assertions)]
-pub(crate) fn pool_region() -> Option<(usize, usize)> {
-    BLOCK_HEAP.get().map(|h| (h.pools[0].base, h.pools[0].edge))
+pub(crate) fn pool_includes(pa: usize) -> bool {
+    pool_of(pa).is_some()
 }
 
 pub struct BlockAllocator;
@@ -544,7 +543,12 @@ pub fn allocator() -> &'static dyn Allocator {
     &BLOCK_ALLOCATOR
 }
 
-/// 初始化块分配器：从空闲区划走每个池的区段（数组区 + 块区），建池集合 + 区段表。
+/// 初始化块分配器：按核数均分空闲区，给每核划一块池区段（数组区 + 块区），
+/// 建池集合 + 区段表（segments 按 base 升序，二分查询）。
+///
+/// 池总预算 = 空闲区一半（另一半留给 frame 区），均分到每池——每池大小随
+/// 机器内存自适应，不设编译期常量。单核退化 = 单池拿整个预算（原 POOL_SIZE
+/// 16 MiB 只是 128M 机器的特例值，此处自动算得更大）。
 ///
 /// 必须在 `main` 早期调用恰好一次（经 `allocator::init`），bump 后端下执行——池
 /// 元数据经 bump 分配，不会重入本锁。必须在 bump 的所有元数据分配之后、frame 的
@@ -552,20 +556,49 @@ pub fn allocator() -> &'static dyn Allocator {
 ///
 /// # Errors
 ///
-/// 元数据分配失败 / 区段划走失败 → [`InitError::OutOfMemory`]。
+/// 元数据分配失败 / 区段划走失败（含空闲区不足均分） → [`InitError::OutOfMemory`]。
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
-        // 区段：从 bump 前端划走 POOL_SIZE（单节点；多节点按拓扑逐段规划）
-        let layout = Layout::from_size_align(POOL_SIZE, PAGE_SIZE).unwrap();
-        let region = bump::allocator()
-            .allocate(layout)
-            .map_err(|_| InitError::OutOfMemory)?;
-        let region_base = region.as_ptr() as *const u8 as usize;
-        // 布局：数组区在区段头部，块区在其后；array 永不参与块分配。
-        let array_base = region_base;
-        let base = region_base + ARRAY_SIZE;
-        let edge = region_base + POOL_SIZE;
-        let block_pages = (POOL_SIZE - ARRAY_SIZE) / PAGE_SIZE;
+        let nodes = machine::hart_count();
+        assert!(nodes > 0, "block init: no harts");
+        // 预算：空闲区一半分给池(均分到每池)，另一半留给 frame 区。
+        let m = machine::info();
+        let per_pool_pages = m.free.size / 2 / nodes / PAGE_SIZE;
+        if per_pool_pages < 9 {
+            // 至少 1 块页 + 配置的数组区
+            return Err(InitError::OutOfMemory);
+        }
+        // 区段内部分块：块区约 8/9（每块页配 512 B 单元数组 → 8 块页 + 1 数组页）。
+        let block_pages = per_pool_pages * 8 / 9;
+        let array_pages = per_pool_pages - block_pages;
+
+        let mut pools = Vec::new();
+        let mut segments = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut maps: Vec<(usize, usize, usize)> = Vec::new(); // (base, array, pages)
+        for i in 0..nodes {
+            let layout = Layout::from_size_align(per_pool_pages * PAGE_SIZE, PAGE_SIZE).unwrap();
+            let region = bump::allocator()
+                .allocate(layout)
+                .map_err(|_| InitError::OutOfMemory)?;
+            let region_base = region.as_ptr() as *const u8 as usize;
+            // 布局：数组区在区段头部，块区在其后；array 永不参与块分配。
+            let array_base = region_base;
+            let base = region_base + array_pages * PAGE_SIZE;
+            let edge = region_base + per_pool_pages * PAGE_SIZE;
+
+            #[cfg(debug_assertions)]
+            maps.push((base, array_base, block_pages));
+
+            let pool = Pool::new(base, edge);
+            pool.init()?;
+            pools.push(pool);
+            segments.push(Segment {
+                base,
+                edge,
+                pool: i,
+            });
+        }
 
         // debug: 页级位图按空闲区索引（frame 侧检查用）；块级位图按块区静态映射。
         #[cfg(debug_assertions)]
@@ -576,20 +609,11 @@ pub fn init() -> InitResult<()> {
             let fbase = m.free.base;
             let fpages = m.free.size / PAGE_SIZE;
             crate::memory::allocator::pageown::set_base(fbase, fpages);
-            unitmap::set(base, array_base, block_pages);
+            unitmap::set(Box::leak(maps.into_boxed_slice()));
         }
 
-        let pool = Pool::new(base, edge);
-        pool.init()?;
-        let pools = Box::leak(vec![pool].into_boxed_slice());
-        let segments = Box::leak(
-            vec![Segment {
-                base,
-                edge,
-                pool: 0,
-            }]
-            .into_boxed_slice(),
-        );
+        let pools = Box::leak(pools.into_boxed_slice());
+        let segments = Box::leak(segments.into_boxed_slice());
         let heap = Box::leak(Box::new(BlockHeap { pools, segments }));
         if BLOCK_HEAP.set(heap).is_ok() {
             Ok(())

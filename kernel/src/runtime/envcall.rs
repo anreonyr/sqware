@@ -10,16 +10,18 @@
 // 分发只处理用户态陷阱：内核态 S-mode envcall 属内核 bug，走 trap 的
 // "unhandled kernel exception" 分支。
 
+use core::str;
 use core::time::Duration;
 
 use ubi::Ucall;
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
+use crate::memory::manager::entry::PteFlags;
 use crate::put;
-use crate::runtime::{clock, timer};
 use crate::runtime::context::{Gprs, TrapContext};
-use crate::runtime::trace::{self, EventKind, EnvEvent};
+use crate::runtime::trace::{self, EnvEvent, EventKind};
+use crate::runtime::{clock, timer};
 use crate::work::room::scheduler::{park, reap, running_team, starve, with_running_space};
 
 /// envcall 分发（trap_handler 的 UserEnvCall 分支调用）。
@@ -40,9 +42,26 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             starve() as *mut TrapContext
         }
         Ucall::Write => {
+            // a0 = len，a1 = 缓冲指针（用户空间 VA）。trap 已切内核页表，直接解引用
+            // 用户 VA 会缺页（内核页表不映射用户区）——须经当前空间 `translate` 把
+            // 用户 VA 翻译成物理页基址（PA），再加页内偏移后逐字节读（内核恒等
+            // 映射可直接访问 PA）。按页分块：每页一次 translate，页内连续直读。
             frame.sepc = frame.sepc + 4;
-            let ch = frame.gpr.x(Gprs::A0) as u8 as char; // a0
-            put!("{ch}");
+            let len = frame.gpr.x(Gprs::A0);
+            let ptr = frame.gpr.x(Gprs::A1);
+            with_running_space(|space| {
+                let va = VirtAddr::from_raw(ptr);
+                if let Some((pa, flag)) = space.translate(va) {
+                    if flag.intersects(PteFlags::R) {
+                        unsafe {
+                            put!("{}", str::from_raw_parts_mut(pa.as_usize() as *mut u8, len))
+                        }
+                    }
+                } else {
+                    // 缺页
+                    todo!();
+                }
+            });
             frame as *mut TrapContext
         }
         Ucall::Exit => {
@@ -87,9 +106,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             frame.sepc = frame.sepc + 4;
             let addr = frame.gpr.x(Gprs::A0);
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
-            let ok = with_running_space(|s| {
-                s.heap_deallocate(VirtAddr::from_raw(addr), size)
-            });
+            let ok = with_running_space(|s| s.heap_deallocate(VirtAddr::from_raw(addr), size));
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
             frame as *mut TrapContext
         }

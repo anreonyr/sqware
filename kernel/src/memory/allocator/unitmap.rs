@@ -4,12 +4,13 @@
 // 「块当前有没有活跃持有者」——抓到**堆内部**的块级双发（同一块发给两个持有者
 //  → Arc<Task> 头互写、strong 幻值）与错幂释放（如 4096 布局释放在 128B 块页）。
 //
-// 存储：**池区段内的固定数组区**（ARRAY_SIZE，每块区页 512 B 单元数组）——静态
-// 映射、零运行时分配：flags(pa) = 数组区 + 页偏移 × 512，O(1) 无锁直查。不向
-// frame 池借页（否则数组帧随页永驻而泄漏，boot selftest 帧基线即暴露）。仅在池
+// 存储：**各池区段内的固定数组区**（每块区页 512 B 单元数组）——静态映射、零
+// 运行时分配：flags(pa) = 所属池数组区 + 页内偏移 × 512，池段表二分定位，O(log 池数)
+// 无锁直查（`#![cfg_attr(debug_assertions, allow(dead_code))]` 模块，release 恒空）。
+// 不向 frame 池借页（否则数组帧随页永驻而泄漏，boot selftest 帧基线即暴露）。仅在池
 // inner 锁内访问（分配/释放路径已持锁），无需原子指令。
 #![cfg_attr(debug_assertions, allow(dead_code))]
-use core::sync::atomic::{AtomicUsize, Ordering};
+use crate::lock::OnceLock;
 
 use crate::memory::PAGE_SIZE;
 use crate::putln;
@@ -17,39 +18,42 @@ use crate::putln;
 pub(crate) const UNITS_PER_PAGE: usize = PAGE_SIZE / 8; // 512 单元/页
 const UNIT_BYTES: usize = 512; // 每页单元数组字节数
 
-/// 块区基址（页索引基准）与数组区基址；init 写入一次，此后只读。
-static POOL_BASE: AtomicUsize = AtomicUsize::new(0);
-static ARRAY_BASE: AtomicUsize = AtomicUsize::new(0);
-/// 数组区覆盖的块区页数（上限校验用）。
-static ARRAY_PAGES: AtomicUsize = AtomicUsize::new(0);
+/// 池段表：(块区基址, 数组区基址, 块区页数)，按块区基址升序。
+/// block::init 整表设置一次（单 hart boot 期），此后只读。
+static MAPS: OnceLock<&'static [(usize, usize, usize)]> = OnceLock::new();
 
-/// 记录基准（block::init 调用恰好一次，单 hart boot 期）。
-/// 数组区与块区相邻：单元数组静态映射，无需逐页分配/归还。
-pub(crate) fn set(pool_base: usize, array_base: usize, array_pages: usize) {
-    assert_eq!(
-        array_base % PAGE_SIZE,
-        0,
+/// 记录池段表。数组区与块区相邻：单元数组静态映射，无需逐页分配/归还。
+pub(crate) fn set(maps: &'static [(usize, usize, usize)]) {
+    assert!(
+        maps.iter().all(|&(_, a, _)| a % PAGE_SIZE == 0),
         "unitmap: array base must be page-aligned"
     );
-    POOL_BASE.store(pool_base, Ordering::Relaxed);
-    ARRAY_BASE.store(array_base, Ordering::Relaxed);
-    ARRAY_PAGES.store(array_pages, Ordering::Relaxed);
+    assert!(MAPS.set(maps).is_ok(), "unitmap double init");
 }
 
-/// 某页的单元数组指针（页须在块区内；块页必然在区内）。
-fn flags(pa: usize) -> *mut u8 {
-    let idx = (pa - POOL_BASE.load(Ordering::Relaxed)) / PAGE_SIZE;
-    let pages = ARRAY_PAGES.load(Ordering::Relaxed);
+/// 页所在池段（二分；页须在某个块区内，块页必然在区内）。
+fn seg(pa: usize) -> &'static (usize, usize, usize) {
+    let maps = MAPS.get().expect("unitmap not initialized");
+    let idx = maps.partition_point(|&(b, _, _)| b <= pa);
+    assert!(idx > 0, "unitmap: page {pa:#x} below first pool segment");
+    let s = &maps[idx - 1];
     assert!(
-        idx < pages,
-        "unitmap: page {pa:#x} outside block region (idx {idx}, pages {pages})"
+        pa < s.0 + s.2 * PAGE_SIZE,
+        "unitmap: page {pa:#x} outside all pool segments"
     );
-    (ARRAY_BASE.load(Ordering::Relaxed) + idx * UNIT_BYTES) as *mut u8
+    s
 }
 
-/// 页在块区内的页序号（用于 MarkFail 报告）。
+/// 某页的单元数组指针。
+fn flags(pa: usize) -> *mut u8 {
+    let &(base, array, _) = seg(pa);
+    (array + ((pa - base) / PAGE_SIZE) * UNIT_BYTES) as *mut u8
+}
+
+/// 页在所属池块区内的页序号（用于 MarkFail 报告）。
 fn page_idx(pa: usize) -> usize {
-    (pa - POOL_BASE.load(Ordering::Relaxed)) / PAGE_SIZE
+    let &(base, _, _) = seg(pa);
+    (pa - base) / PAGE_SIZE
 }
 
 /// mark 失败现场：单元值非 0（可能为 1 = 真在途，或任意字节 = 数组被写脏）。

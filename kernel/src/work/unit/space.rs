@@ -419,7 +419,11 @@ impl SpaceInner {
 
     /// 页表读翻译（内部版，调用者须持锁，与 map/unmap 写互斥）。
     fn translate(&self, vaddr: VirtAddr) -> Option<(PhysAddr, PteFlags)> {
-        self.durable.root.walk_ref(vaddr).ok()
+        self.durable
+            .root
+            .walk_ref(vaddr)
+            .map(|x| (x.0 + vaddr.offset(), x.1))
+            .ok()
     }
 }
 

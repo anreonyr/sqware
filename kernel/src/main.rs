@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(allocator_api)]
+#![feature(str_from_raw_parts)]
 
 extern crate alloc;
 

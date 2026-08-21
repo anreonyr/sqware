@@ -11,7 +11,7 @@ extern "C" fn main() -> ! {
     loop {
         n = n.wrapping_add(1);
         if n & 0x3_FFFF == 0 {
-            let _ = put(b'A');
+            let _ = put("A\n");
         }
     }
 }

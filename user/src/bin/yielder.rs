@@ -10,7 +10,7 @@ extern "C" fn main() -> ! {
     loop {
         n = n.wrapping_add(1);
         if n & 0x3 == 0 {
-            let _ = put(b'B');
+            let _ = put("B\n");
         }
         let _ = starve();
     }
