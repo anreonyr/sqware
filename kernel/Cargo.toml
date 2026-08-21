@@ -29,7 +29,7 @@ hashbrown = { version = "0.17.1", default-features = false, features = [
 log = { version = "0.4.33" }
 riscv = { version = "0.16.1", features = ["s-mode"] }
 riscv-rt = { version = "0.18.0", features = ["s-mode"] }
-riscv-semihosting = "0.2.1"
+semihosting = "0.1.25"
 
 [[bin]]
 name = "sqware"

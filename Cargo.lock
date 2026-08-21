@@ -103,8 +103,8 @@ dependencies = [
  "log",
  "riscv",
  "riscv-rt",
- "riscv-semihosting",
  "sbi",
+ "semihosting",
  "table",
  "ubi",
 ]
@@ -176,15 +176,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "riscv-semihosting"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c83afc16bdc415995941a8f522dfda32c1864f7743666ee905e54c681dce02ac"
-dependencies = [
- "critical-section",
-]
-
-[[package]]
 name = "riscv-target-parser"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -209,6 +200,12 @@ dependencies = [
  "erra",
  "fack",
 ]
+
+[[package]]
+name = "semihosting"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8e4abf97879f4e80db69a9fba7bd64998e9bdad25f58ef045a778e191172fd4"
 
 [[package]]
 name = "syn"
