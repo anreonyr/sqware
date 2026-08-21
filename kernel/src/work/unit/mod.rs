@@ -35,7 +35,7 @@ use riscv::register::satp;
 
 use crate::machine::{self, kernel_edge};
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame::{FRAME_ALLOCATOR, allocator};
+use crate::memory::allocator::frame::{allocator, outstanding};
 use crate::memory::manager::{
     MapError,
     addr::{PhysAddr, VirtAddr},
@@ -195,7 +195,7 @@ pub fn pagetable_reclaim() {
     let space = SpaceBuilder::user().build().expect("selftest: build space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
     let base_count = space.table_count();
-    let held_before = FRAME_ALLOCATOR.outstanding();
+    let held_before = outstanding();
 
     for round in 0..ROUNDS {
         // map：分配数据帧 + 中间表
@@ -243,7 +243,7 @@ pub fn pagetable_reclaim() {
         );
     }
 
-    let held_after = FRAME_ALLOCATOR.outstanding();
+    let held_after = outstanding();
     assert_eq!(
         held_before, held_after,
         "selftest: net frames leaked: {held_before} → {held_after}"

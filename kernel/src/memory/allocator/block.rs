@@ -149,28 +149,20 @@ unsafe impl Allocator for BlockAllocator {
 /// 区段大小不设编译期常量——init 按「空闲区均分到每池」动态算出（见 init），
 /// 大内存机器上自动放大；区段耗尽即内存耗尽。
 pub(crate) struct BlockInner {
-    inner: SpinLock<Option<Pool>>, // freepool + 页头 used 计数 + 区段游标
+    inner: SpinLock<Pool>,            // freepool + 页头 used 计数 + 区段游标
     pump: SpinLock<VecDeque<Remote>>, // 过境驿站：只收 feed，suck 抽空
-    base: usize,                   // 区段 [base, edge)，init 后不可变
+    base: usize,                      // 区段 [base, edge)，init 后不可变
     edge: usize,
 }
 
 impl BlockInner {
-    fn new(base: usize, edge: usize) -> BlockInner {
+    fn new(base: usize, edge: usize, pool: Pool) -> BlockInner {
         BlockInner {
-            inner: SpinLock::new(None),
+            inner: SpinLock::new(pool),
             pump: SpinLock::new(VecDeque::new()),
             base,
             edge,
         }
-    }
-
-    fn init(&self) -> Result<(), InitError> {
-        let mut inner = Pool::new();
-        inner.init(self.base)?;
-        let mut g = self.inner.lock();
-        g.replace(inner);
-        Ok(())
     }
 
     // ── 池内核心：拉 / 撕 / 推 ──
@@ -179,7 +171,7 @@ impl BlockInner {
     fn pull(&self, power: usize) -> Option<usize> {
         self.suck();
         let mut g = self.inner.lock();
-        let inner = g.as_mut()?;
+        let inner = &mut *g;
         // debug: freepool 头必须在 DRAM 内（链表节点被覆写的特征——越界写/UAF）。
         if let Some(head) = inner.freepool[power] {
             #[cfg(debug_assertions)]
@@ -246,7 +238,7 @@ impl BlockInner {
     /// 推回本池：写 freelist 链 + 递减本池页头计数（页永驻本池区段，不归还帧层）。
     fn push(&self, ptr: NonNull<u8>, power: usize) {
         let mut g = self.inner.lock();
-        let Some(inner) = g.as_mut() else { return };
+        let inner = &mut *g;
 
         // debug: double-free 检测——同一块已在 freepool 中再释放会破坏链表。
         #[cfg(debug_assertions)]
@@ -303,11 +295,7 @@ impl BlockInner {
     /// debug: 本池已撕页数（inner 锁内读 cursor；Banker audit 交叉核对用）。
     #[cfg(debug_assertions)]
     fn torn_pages(&self) -> usize {
-        self.inner
-            .lock()
-            .as_ref()
-            .map(|i| (i.cursor - self.base) / PAGE_SIZE)
-            .unwrap_or(0)
+        (self.inner.lock().cursor - self.base) / PAGE_SIZE
     }
 
     /// 断言/push 异常现场 dump：游标/区段/该 power 全链/单元数组/操作序列。
@@ -518,7 +506,7 @@ pub(crate) fn torn_pages() -> usize {
 }
 
 pub fn allocator() -> &'static dyn Allocator {
-    heap()
+    BLOCK_ALLOCATOR.get().expect("block heap not initialized")
 }
 
 // ── 初始化 ──
@@ -560,8 +548,9 @@ pub fn init() -> InitResult<()> {
             let base = region.as_ptr() as *const u8 as usize;
             let edge = base + per_pool_pages * PAGE_SIZE;
 
-            let blk = BlockInner::new(base, edge);
-            blk.init()?;
+            let mut pool = Pool::new();
+            pool.init(base)?;
+            let blk = BlockInner::new(base, edge, pool);
             pools.push(blk);
             segments.push(Segment {
                 base,

@@ -360,7 +360,7 @@ static FRAME_BASELINE: AtomicUsize = AtomicUsize::new(0);
 /// 关机时全部归还；断言触发 = 任务地址空间/栈所有权 Drop 有泄漏。
 pub fn record_baseline() {
     FRAME_BASELINE.store(
-        crate::memory::allocator::frame::FRAME_ALLOCATOR.outstanding(),
+        crate::memory::allocator::frame::outstanding(),
         Ordering::Relaxed,
     );
 }
@@ -371,7 +371,7 @@ pub fn record_baseline() {
 /// （且 live_pages 恒 0、单元页 1:1 挂账项恒 0），简化为直比基线。
 #[track_caller]
 pub fn check_baseline() {
-    let now = crate::memory::allocator::frame::FRAME_ALLOCATOR.outstanding();
+    let now = crate::memory::allocator::frame::outstanding();
     let base = FRAME_BASELINE.load(Ordering::Relaxed);
     if now != base {
         report(
@@ -406,7 +406,7 @@ pub fn page_clear(pa: usize) {
 ///   每条 KernelHeap 记录地址须落在块池区段，且所在页须 held（撕页时已 debit）。
 pub fn audit() {
     let held = BANKER.held_count();
-    let frames = crate::memory::allocator::frame::FRAME_ALLOCATOR.outstanding();
+    let frames = crate::memory::allocator::frame::outstanding();
     let torn = crate::memory::allocator::block::torn_pages();
     if held != frames + torn {
         report(

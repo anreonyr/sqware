@@ -6,11 +6,12 @@ use log::trace;
 
 use alloc::{
     alloc::{AllocError, Allocator},
+    boxed::Box,
     vec::Vec,
 };
 
 use crate::{
-    lock::{Level, SpinLock},
+    lock::{Level, OnceLock, SpinLock},
     memory::allocator::{InitError, InitResult, Link, bump},
 };
 
@@ -26,26 +27,20 @@ impl Meta {
 }
 
 pub(crate) struct FrameAllocator {
-    inner: SpinLock<Option<FrameInner>>,
+    inner: SpinLock<FrameInner>,
 }
 
 impl FrameAllocator {
-    pub const fn new() -> Self {
-        Self {
-            inner: SpinLock::new_level(Level::Frame, None),
-        }
-    }
-
-    /// 初始化 frame 分配器：分配元数据 Vec（经 bump），确定基址，构建 frame freelist。
+    /// 构建 frame 分配器：分配元数据 Vec（经 bump），确定基址，构建 frame freelist。
     ///
-    /// 必须在所有 bump 分配（包括 block::init）之后调用，因为基址取自
-    /// `bump::frontier()`——确保 frame 的 Link 节点不被后续 bump 覆盖。
-    pub fn init(&self) -> Result<(), InitError> {
-        let mut guard = self.inner.lock();
+    /// 在 `init` 的 OnceLock 顶层单例里运行时装配——故 `inner` 是**无 Option** 的
+    /// `SpinLock<FrameInner>`，不存在"未初始化 None"死路（同 block 每节点）。
+    fn init() -> Result<Self, InitError> {
         let mut inner = FrameInner::new();
         inner.init()?;
-        guard.replace(inner);
-        Ok(())
+        Ok(Self {
+            inner: SpinLock::new_level(Level::Frame, inner),
+        })
     }
 
     /// 在途（未归还）物理帧数（debug 统计用；release 下恒 0）。
@@ -53,11 +48,7 @@ impl FrameAllocator {
     pub fn outstanding(&self) -> usize {
         #[cfg(debug_assertions)]
         {
-            self.inner
-                .lock()
-                .as_ref()
-                .map(|f| f.outstanding)
-                .unwrap_or(0)
+            self.inner.lock().outstanding
         }
         #[cfg(not(debug_assertions))]
         {
@@ -84,7 +75,7 @@ unsafe impl Allocator for FrameAllocator {
         let power = block_power(size);
 
         let mut guard = self.inner.lock();
-        let frame = guard.as_mut().ok_or(AllocError)?;
+        let frame = &mut *guard;
 
         let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
         let addr = frame.frame_addr(index) as *mut u8;
@@ -112,7 +103,7 @@ unsafe impl Allocator for FrameAllocator {
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
         unsafe {
             let mut guard = self.inner.lock();
-            let Some(frame) = guard.as_mut() else { return };
+            let frame = &mut *guard;
             let size = layout.size().max(PAGE_SIZE);
             let power = block_power(size);
             let addr = ptr.addr().get();
@@ -491,10 +482,24 @@ impl FrameInner {
     }
 }
 
-pub(crate) static FRAME_ALLOCATOR: FrameAllocator = FrameAllocator::new();
+// FrameAllocator 持有 SpinLock（!Send）按值，不能直接 `OnceLock<FrameAllocator>`
+// （需 Send+Sync）；故存 `&'static FrameAllocator`（引用只需 Sync），init 时 Box::leak。
+static FRAME_ALLOCATOR: OnceLock<&'static FrameAllocator> = OnceLock::new();
 
 pub fn allocator() -> &'static dyn Allocator {
-    &FRAME_ALLOCATOR
+    FRAME_ALLOCATOR
+        .get()
+        .expect("frame allocator not initialized")
+}
+
+/// 在途（未归还）物理帧数 —— Boot audit 交叉核对、关机基线断言用。
+/// 简单包一层 `FRAME_ALLOCATOR.outstanding()`，供模块外调用（未初始化 panic）。
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+pub(crate) fn outstanding() -> usize {
+    FRAME_ALLOCATOR
+        .get()
+        .expect("frame allocator not initialized")
+        .outstanding()
 }
 
 /// 初始化 frame 分配器。
@@ -507,7 +512,11 @@ pub fn allocator() -> &'static dyn Allocator {
 /// - 空闲区不足一页 → [`InitError::NoFreeFrames`]。
 /// - 元数据 Vec 分配失败 → [`InitError::OutOfMemory`]。
 pub fn init() -> InitResult<()> {
-    FRAME_ALLOCATOR
-        .init()
-        .annotate("initializing frame allocator")
+    (|| -> Result<(), InitError> {
+        let alloc = Box::leak(Box::new(FrameAllocator::init()?));
+        FRAME_ALLOCATOR
+            .set(alloc)
+            .map_err(|_| InitError::AlreadyInitialized)
+    })()
+    .annotate("initializing frame allocator")
 }
