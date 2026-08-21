@@ -17,7 +17,9 @@ use core::arch::global_asm;
 
 use crate::machine::{KERNEL_STACK_CANARY, kernel_stack_base};
 use crate::memory::allocator;
-use crate::runtime::{time, diagnose::trace, switcher::trap};
+use crate::runtime::chrono::clock;
+use crate::runtime::diagnose::trace;
+use crate::runtime::switcher::trap;
 use crate::work::unit;
 
 global_asm!(
@@ -44,7 +46,7 @@ extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
 
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
     unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
-    time::init().unwrap_or_else(|e| panic!("clock init failed: {e:?}"));
+    clock::init().unwrap_or_else(|e| panic!("clock init failed: {e:?}"));
     // trace：静态池切分 + 核数上限防御（须在 clock 就绪后、任何 note 前）。
     trace::init();
     trap::init();
@@ -53,7 +55,7 @@ extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
     boot::banner();
 
     // boot 模块 spawn 多任务并进入首个任务（永不返回）。S-timer 由
-    // runtime::init 武装、trap_handler 内循环重武装——用户态下照常触发，驱动
+    // switcher::trap::init 武装、trap_handler 内循环重武装——用户态下照常触发，驱动
     // 抢占式任务切换。
     boot::init();
 }

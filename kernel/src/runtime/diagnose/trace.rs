@@ -170,7 +170,7 @@ pub fn note(kind: EventKind) {
     if hart >= POOL_HARTS {
         return;
     }
-    let when = crate::runtime::time::now().as_ticks();
+    let when = crate::runtime::chrono::clock::now().as_ticks();
     trace(hart).note(kind, when);
     // 宿主全量（feature semihosting，默认开启）：每条结构化事件经 semihosting 送宿主，
     // 带自描述长度 "len"，便于 tail/离线解析可靠分帧（try_lock 原子成行、尽力而为）。

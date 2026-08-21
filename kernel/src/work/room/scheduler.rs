@@ -59,7 +59,8 @@ use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
 use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
 use crate::runtime::switcher::trap::arm_timer;
-use crate::runtime::{time, diagnose::watch};
+use crate::runtime::chrono::{clock, timer};
+use crate::runtime::diagnose::watch;
 use table::Fmt;
 
 use super::tie;
@@ -200,7 +201,7 @@ impl Scheduler {
             let frame = &mut *(t.trap.pa.as_usize() as *mut TrapContext);
             frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(self.hart));
         }
-        arm_timer(time::duration_to_ticks(Duration::from_millis(100)));
+        arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
     }
 
     /// 装槽：把 Starved 任务装为本 hart 的 running（自取锁）。装前 running 必空。
@@ -261,7 +262,7 @@ impl Scheduler {
             matches!(task.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
         );
-        let wake_at = time::now().add(duration).as_ticks();
+        let wake_at = clock::now().add(duration).as_ticks();
         let mut f = Fmt::<64>::new();
         let _ = write!(f, "task #{} ", task.id);
         f.cell(task.name, NAME_W);
@@ -295,7 +296,7 @@ impl Scheduler {
             }
         }
         blocked().lock().insert(handle, task);
-        time::tock(handle, wake_at);
+        timer::tock(handle, wake_at);
         if i.starved.is_empty() {
             return None;
         }
@@ -602,7 +603,7 @@ fn schedulers() -> &'static [Scheduler] {
 ///
 /// blocked 以 clock 的 deadline 句柄为键：条目即任务本身，阻塞原因（含 wake_at）
 /// 在任务的 Blocked(Park) 载荷里，映射退化为「句柄 → 唯一 Arc<Task>」。唤醒
-/// 由 time::drain 产出到期句柄，unpark 按句柄摘除并唤醒。锁纪律与 Team.tasks
+/// 由 timer::drain 产出到期句柄，unpark 按句柄摘除并唤醒。锁纪律与 Team.tasks
 /// 同级（3）：park 路径 1 → 3 嵌套合法（blocked 与 clock 锁顺序获取、不嵌套）；
 /// unpark 路径
 /// 先放堆锁/队列锁再取调度锁（防 ABBA）。
@@ -659,7 +660,7 @@ fn steal() -> Option<Arc<Task>> {
 ///
 /// 协议（闭合「置位后漏唤醒」窗口）：置睡眠位 → **复查**（自核队首 / steal——
 /// 置位前的 push 已按位补 IPI，置位后的 push 会看到位）→ 全退出检查 →
-/// 睡到最近 tock（tickless：由 time::next_tock 推算，无则推远）→ WFI。唤醒后：
+/// 睡到最近 tock（tickless：由 timer::next_tock 推算，无则推远）→ WFI。唤醒后：
 /// 若为定时器到期立即 drain 唤醒到期任务（含全核休眠场景）；清 SSIP 与睡眠位，
 /// 返回 None 让外层循环重扫（也可能直接带出任务）。
 fn wait() -> Option<Arc<Task>> {
@@ -675,8 +676,8 @@ fn wait() -> Option<Arc<Task>> {
         tie::halt();
     }
     // 睡到最近 tock（无待唤醒则推远 stimecmp）：全核休眠时也能被最近唤醒点准时唤醒
-    let delta = match time::next_tock() {
-        Some(t) => t.as_ticks().saturating_sub(time::now().as_ticks()),
+    let delta = match timer::next_tock() {
+        Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
         None => WFI_FAR,
     };
     arm_timer(delta);
@@ -684,7 +685,7 @@ fn wait() -> Option<Arc<Task>> {
     unsafe {
         core::arch::asm!("wfi");
     }
-    // 定时器到期唤醒：立即 drain（time::drain）把到期任务送上本核 starved——
+    // 定时器到期唤醒：立即 drain（timer::drain）把到期任务送上本核 starved——
     // 空闲核也要能跑 unpark（原代码依赖其他核的周期中断，全核休眠会死等）
     unpark();
     // 唤醒后清 SSIP（防残留位导致下次 WFI 立即重醒）与睡眠位
@@ -831,7 +832,7 @@ pub fn round() {
         has_work: has_work(),
         asleep: tie::waiting(),
     };
-    if let Some(r) = watch::check(time::now(), probe) {
+    if let Some(r) = watch::check(clock::now(), probe) {
         watch::raise(r);
     }
 }
@@ -843,16 +844,16 @@ fn has_work() -> bool {
             return true;
         }
     }
-    time::next_tock().is_some_and(|t| t.as_ticks() <= time::now().as_ticks())
+    timer::next_tock().is_some_and(|t| t.as_ticks() <= clock::now().as_ticks())
 }
 
 /// 唤醒：从 clock 到期句柄按 blocked 映射摘除任务，Blocked → Starved 入本核
 /// starved。调用方 = trap 定时器分支与 wait()（空闲核 WFI 唤醒后）。
 ///
-/// 按 tock 堆（time::drain）取到期者，与入队顺序无关。
+/// 按 tock 堆（timer::drain）取到期者，与入队顺序无关。
 /// 队列锁/堆锁先放后取，绝不持队列锁取调度锁（防 ABBA）。
 pub fn unpark() {
-    let due = time::drain(time::now());
+    let due = timer::drain(clock::now());
     for handle in due {
         // blocked 映射锁：摘除（锁作用域到此语句结束即释放）
         let Some(mut task) = blocked().lock().remove(&handle) else {

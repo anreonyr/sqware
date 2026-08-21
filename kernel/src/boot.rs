@@ -52,7 +52,7 @@ unsafe extern "C" {
 /// Team1 = 双线程共享空间：首线程 a0=0 计数循环写 'A'（靠抢占轮转）；次线程
 /// a0=1 写 'B' 后退出——验证「线程退出、团队/兄弟线程存活」的引用计数语义。
 /// 之后是单线程团队回归：A counter（不自让出，靠抢占）→ B yielder（主动让出）
-/// → C exiter（写 'C' 后退出）。S-timer 由 runtime::init 武装、trap_handler 内循环重武装。
+/// → C exiter（写 'C' 后退出）。S-timer 由 switcher::trap::init 武装、trap_handler 内循环重武装。
 /// 锁地址符号化回调：内核地址 → (函数名, 偏移)。team=None 只走内核表。
 fn kernel_symbolizer(addr: usize) -> Option<(&'static str, usize)> {
     crate::work::unit::elftable::resolve(

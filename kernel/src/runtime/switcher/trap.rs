@@ -11,7 +11,7 @@
 // trap 栈上；入口硬件已清 SIE，处理器内嵌套陷阱仅可能是内核 bug，会覆写内核
 // 帧（panic 兜底）。trap 栈底 canary 在处理器出入口校验（溢出即 panic）。
 
-use crate::runtime::time;
+use crate::runtime::chrono::{clock, timer};
 use crate::work::room::scheduler::{run, unpark, with_running_space};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
@@ -110,7 +110,7 @@ pub fn init() {
 
     // 3. 先武装定时器：OpenSBI 可能遗留一个已到期的 stimecmp，若不清掉，
     //    开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序难看）。
-    arm_timer(time::duration_to_ticks(Duration::from_millis(100)));
+    arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
 
     // 4. stvec → __alltraps（Direct 模式）；sscratch = 0（内核态约定）；
     //    使能定时器源：sie.STIE。**不**开 sstatus.SIE（全局）——内核态恒关中断
@@ -212,9 +212,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         // S-timer：重武装 + 抢占（仅用户态陷阱可切换——内核态陷阱须恢复被
         // 中断的内核上下文；内核恒关中断下本不应发生，SPP 判断为防御性）
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
-            time::tick();
-            // 重武装：运行任务抢占量子；到期唤醒由 unpark 经 time::drain 驱动
-            arm_timer(time::duration_to_ticks(Duration::from_millis(100)));
+            timer::tick();
+            // 重武装：运行任务抢占量子；到期唤醒由 unpark 经 timer::drain 驱动
+            arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
             unpark();
             // 值班看护：健康核打点报岗 + 巡岗查险（失速/静默/锁相持）——这里是
             // 每量子的定时器节拍，是 watchdog 判据的可靠驱动点。
