@@ -420,7 +420,7 @@ pub fn init_trap_stacks() {
         space.unmap(VirtAddr::from_raw(guard), TRAP_STACK_GUARD);
         // canary 写于栈体底（guard 之上）
         unsafe {
-            (body as *mut usize).write(crate::runtime::trap::TRAP_STACK_CANARY);
+            (body as *mut usize).write(crate::runtime::switcher::trap::TRAP_STACK_CANARY);
         }
         trap_stack_cell(h).set(TrapStackMeta {
             top: seg + TRAP_STACK_SEGMENT,

@@ -1,6 +1,6 @@
 // 陷入上下文（TrapContext）— trap 入口/出口保存/恢复的帧（用户线程帧 / per-hart 内核帧）
 //
-// 字段布局即 trap ABI：`__alltraps`/`__restore`（runtime::trampoline 汇编）按裸偏移
+// 字段布局即 trap ABI：`__alltraps`/`__restore`（runtime::switcher::trampoline 汇编）按裸偏移
 // 读写，一经固化不可随意增删——布局由本文件底部的编译期偏移断言锁定，与汇编
 // 注释中的偏移一一对应（改布局必须先改两处）。
 //

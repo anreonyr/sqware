@@ -18,7 +18,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::machine;
-use crate::runtime::clock::{self, Instant};
+use crate::runtime::time::{self, Instant};
 
 /// per-hart 脉搏池上限（同 trace 纪律；超限核静默跳过）。
 const POOL: usize = 64;
@@ -113,7 +113,7 @@ pub fn pulse() {
         return;
     }
     let me = machine::hart_id();
-    let now = clock::now().as_ticks();
+    let now = time::now().as_ticks();
     if me < POOL {
         BEAT[me].store(now, Ordering::Relaxed);
     }
@@ -196,7 +196,7 @@ pub fn stake(addr: usize, holder: usize, holder_pc: usize) {
     WATCHED.holder_pc.store(holder_pc, Ordering::Relaxed);
     WATCHED
         .hold_start
-        .store(clock::now().as_ticks(), Ordering::Relaxed);
+        .store(time::now().as_ticks(), Ordering::Relaxed);
     WATCHED.active.store(true, Ordering::Relaxed);
 }
 
@@ -211,15 +211,15 @@ pub fn unstake(addr: usize) {
 /// 设阈值/开关（boot 注入）。启用同时把基线初始化到 now，避免旧 LASTBEAT=0 误报。
 pub fn threshold(cfg: Threshold) {
     HOLDTO.store(
-        clock::duration_to_ticks(cfg.hold_timeout),
+        time::duration_to_ticks(cfg.hold_timeout),
         Ordering::Relaxed,
     );
     LIVETO.store(
-        clock::duration_to_ticks(cfg.liveness_timeout),
+        time::duration_to_ticks(cfg.liveness_timeout),
         Ordering::Relaxed,
     );
     if cfg.enabled {
-        let now = clock::now().as_ticks();
+        let now = time::now().as_ticks();
         for b in BEAT.iter() {
             b.store(now, Ordering::Relaxed);
         }

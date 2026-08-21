@@ -483,7 +483,7 @@ pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000
 /// trampoline 页的物理地址（纯链接符号：内核镜像恒等加载，链接地址即物理地址）。
 ///
 /// 属内核空间布局（TRAMPOLINE VA 所映射的物理帧），故与 `TRAMPOLINE` 同驻本模块；
-/// `unit::init` 映射该页时经此取 PA。`runtime::trampoline` 的
+/// `unit::init` 映射该页时经此取 PA。`runtime::switcher::trampoline` 的
 /// `__alltraps/__restore` 仍在运行时层按自身 VA 偏移计算。
 pub(crate) fn trampoline_pa() -> PhysAddr {
     unsafe extern "C" {

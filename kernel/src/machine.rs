@@ -86,7 +86,7 @@ pub fn hart_id() -> usize {
 pub struct Machine {
     /// CPU 核数。
     pub hart: usize,
-    /// 时钟频率（DTB /cpus timebase-frequency，Hz；供 runtime::clock 注入）。
+    /// 时钟频率（DTB /cpus timebase-frequency，Hz；供 runtime::time 注入）。
     pub hertz: usize,
     /// 物理内存范围
     pub dram: Region,

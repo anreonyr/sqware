@@ -27,7 +27,7 @@
 //   3. Team.tasks          (SpinLock)  — 团队成员簿记（弱引用列表；纯 Vec 操作，
 //                                          **与 Space.inner 禁止嵌套持有**——
 //                                          push_task/prune_tasks 锁内绝不调 space 方法）
-//   3. TIMER_DEADLINES     (SpinLock)  — timer 模块的 deadline 堆（runtime::timer）：
+//   3. TIMER_DEADLINES     (SpinLock)  — 计时模块的 deadline 堆（runtime::time 段二）：
 //                                         与 blocked/reaped 同级；park 路径 1 → 3
 //                                         嵌套合法（blocked 与 timer 顺序获取、不嵌套）
 //   3. blocked / reaped    (SpinLock)  — 全局容器（task::scheduler）：Blocked 为

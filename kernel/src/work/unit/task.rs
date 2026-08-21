@@ -15,8 +15,8 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::runtime::context::{Gprs, TrapContext};
-use crate::runtime::trampoline::{restore, trap_stack_top};
+use crate::runtime::switcher::context::{Gprs, TrapContext};
+use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
 use crate::work::USER_TEXT_BASE;
 use core::fmt::Write;
 use riscv::register::{satp, sstatus};
@@ -140,11 +140,11 @@ pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
     // 不动 tp）。帧 kernel_sp 由 scheduler::prepare 按**真实** hart 写入（trap 栈顶），
     // 据此反推实际 hart 写入 tp——与用户任务 trap 入口 establish_tp 同理。
     let fr = KT_FRAME_PA.load(core::sync::atomic::Ordering::Relaxed)
-        as *const crate::runtime::context::TrapContext;
+        as *const crate::runtime::switcher::context::TrapContext;
     let ksp = unsafe { core::ptr::addr_of!((*fr).kernel_sp).read() }.as_usize();
     let mut actual = crate::machine::hart_id();
     for h in 0..crate::machine::hart_count() {
-        if crate::runtime::trampoline::trap_stack_top(h) == ksp {
+        if crate::runtime::switcher::trampoline::trap_stack_top(h) == ksp {
             actual = h;
         }
     }

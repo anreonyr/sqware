@@ -20,9 +20,9 @@ use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
-use crate::runtime::context::TrapContext;
+use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::diagnose::trace;
-use crate::runtime::trampoline::{alltraps_va, restore, trap_stack_bottom, trap_stack_top};
+use crate::runtime::switcher::trampoline::{alltraps_va, restore, trap_stack_bottom, trap_stack_top};
 use crate::work::room::scheduler;
 #[cfg(debug_assertions)]
 use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa};
@@ -301,7 +301,7 @@ fn boot_harts() {
         if hart == me {
             continue;
         }
-        let stack_top = crate::runtime::trampoline::trap_stack_top(hart);
+        let stack_top = crate::runtime::switcher::trampoline::trap_stack_top(hart);
         // putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
         // 同事件也进 trace（hart 0 窗口）：崩溃回放可见启动序列。
         trace::note(trace::EventKind::Boot(trace::BootEvent::Launch { hart }));

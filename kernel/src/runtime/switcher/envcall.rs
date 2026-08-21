@@ -19,9 +19,9 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::put;
-use crate::runtime::context::{Gprs, TrapContext};
+use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
-use crate::runtime::{clock, timer};
+use crate::runtime::time;
 use crate::work::room::scheduler::{park, reap, running_team, starve, with_running_space};
 
 /// envcall 分发（trap_handler 的 UserEnvCall 分支调用）。
@@ -59,7 +59,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             return reap() as *mut TrapContext;
         }
         Ucall::GetTicks => {
-            frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);
+            frame.gpr.set_x(Gprs::A0, time::ticks() as usize);
         }
         Ucall::Sleep => {
             // sepc 前进（唤醒恢复时从 ecall 之后继续）；任务被 park，返回下一帧。
@@ -67,7 +67,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             return park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext;
         }
         Ucall::ClockGetTime => {
-            let up = clock::uptime();
+            let up = time::uptime();
             frame.gpr.set_x(Gprs::A0, up.as_secs() as usize);
             frame.gpr.set_x(Gprs::A1, up.subsec_nanos() as usize);
         }
