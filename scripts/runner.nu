@@ -66,8 +66,7 @@ def main [elf: path] {
         ...$extra
     ]
 
-    # 构建：先 --all（保证 user ELF 就绪），再按需对 kernel 单独带 feature 构建
-    ^cargo b --all
+    ^cargo b -p user
     if (($feats | length) > 0) {
         ^cargo b -p kernel --features ($feats | str join ',')
     }

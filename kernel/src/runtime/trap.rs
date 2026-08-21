@@ -16,9 +16,6 @@ use crate::work::room::scheduler::{run, unpark, with_running_space};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
-use core::fmt::Write;
-use crate::console::Sink;
-use table::Table;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sie, sip, sstatus, stval, stvec, time};
 
@@ -126,18 +123,6 @@ pub fn init() {
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠核被 SBI IPI 唤醒的前提（只唤醒不取中断）
     }
-
-    let mut l = Table::<4, 2, 96>::new();
-    l.cell(0, 0).push_str("trap vector");
-    let _ = write!(l.cell(0, 1), "{:#x}", alltraps_va());
-    l.cell(1, 0).push_str("kernel frames");
-    let _ = write!(l.cell(1, 1), "{:#x}..{:#x}", KERNEL_FRAME_BASE.as_usize(), KERNEL_FRAME_BASE.as_usize() + crate::machine::hart_count() * PAGE_SIZE);
-    l.cell(2, 0).push_str("trap stack");
-    let _ = write!(l.cell(2, 1), "{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
-    l.cell(3, 0).push_str("trap stack this");
-    let _ = write!(l.cell(3, 1), "{} @ {:#x}..{:#x}", machine::hart_id(), trap_stack_bottom(machine::hart_id()), trap_stack_top(machine::hart_id()));
-    let mut sink = Sink;
-    let _ = l.render(&mut sink);
 }
 
 /// 武装 S-timer 中断：`stimecmp = time + interval`（SBI TIME 扩展，绝对时间）。

@@ -40,7 +40,6 @@ extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
     console::init();
 
     machine::init(dtp);
-    boot::banner();
 
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
     unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
@@ -48,6 +47,9 @@ extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
     // trace：静态池切分 + 核数上限防御（须在 clock 就绪后、任何 note 前）。
     trace::init();
     trap::init();
+    // 启动横幅：机器块 + 陷阱布局块连打。trap 栈为堆分配、其 top/bottom 须在
+    // trap::init（分配并填充 TRAP_STACKS）之后取，故 banner 放这里。
+    boot::banner();
 
     // boot 模块 spawn 多任务并进入首个任务（永不返回）。S-timer 由
     // runtime::init 武装、trap_handler 内循环重武装——用户态下照常触发，驱动

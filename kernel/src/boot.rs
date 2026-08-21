@@ -16,17 +16,18 @@ use alloc::sync::Arc;
 use riscv::register::{satp, sie, stvec};
 
 use crate::console::Sink;
-use crate::machine::{self, Machine};
+use crate::machine;
+use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trace;
-use crate::runtime::trampoline::{alltraps_va, restore};
+use crate::runtime::trampoline::{alltraps_va, restore, trap_stack_bottom, trap_stack_top};
 use crate::work::room::scheduler;
 #[cfg(debug_assertions)]
 use crate::work::unit;
-use crate::work::unit::space::{SpaceBuilder, kernel_frame_pa};
+use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 use core::fmt::Write;
@@ -62,17 +63,13 @@ fn kernel_symbolizer(addr: usize) -> Option<(&'static str, usize)> {
     )
 }
 
-/// SBI 式启动横幅：机器/板级「标签|值」对齐表（layout 块在 trap::init 侧）。
+/// SBI 式启动横幅：机器/板级「标签|值」对齐表 + 陷阱布局表，两块连打成一个横幅。
 pub fn banner() {
     let m = machine::info();
     let mut sink = Sink;
-    // 标题行（独立，后随空行分隔下面块）
-    let mut t = Fmt::<64>::new();
-    let _ = writeln!(t, "SQware Kernel booted (hart {})", machine::hart_id());
-    let _ = writeln!(t);
-    let _ = t.flush(&mut sink);
-    // 机器/板级块
-    let mut b = Table::<8, 2, 96>::new();
+    // 机器/板级 + 陷阱布局两块并成一个 Table：统一列宽，值列对齐；
+    // 中间空行分隔两块（空行以一行空 cell 表示，渲染为空格行）。
+    let mut b = Table::<13, 2, 96>::new();
     b.cell(0, 0).push_str("hart count");
     let _ = write!(b.cell(0, 1), "{} H", m.hart);
     b.cell(1, 0).push_str("hart this");
@@ -99,11 +96,37 @@ pub fn banner() {
     let _ = write!(b.cell(6, 1), "{:#x}", m.plic.base);
     b.cell(7, 0).push_str("clint");
     let _ = write!(b.cell(7, 1), "{:#x}", m.clint.base);
+    // 空行分隔：两行空 cell（渲染为空格行）。
+    let _ = write!(b.cell(8, 0), " ");
+    let _ = write!(b.cell(8, 1), " ");
+    // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
+    b.cell(9, 0).push_str("trap vector");
+    let _ = write!(b.cell(9, 1), "{:#x}", alltraps_va());
+    b.cell(10, 0).push_str("kernel frames");
+    let _ = write!(
+        b.cell(10, 1),
+        "{:#x}..{:#x}",
+        KERNEL_FRAME_BASE.as_usize(),
+        KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
+    );
+    b.cell(11, 0).push_str("trap stack");
+    let _ = write!(
+        b.cell(11, 1),
+        "{:#x}..{:#x}",
+        trap_stack_bottom(0),
+        trap_stack_top(0)
+    );
+    b.cell(12, 0).push_str("trap stack this");
+    let _ = write!(
+        b.cell(12, 1),
+        "{} @ {:#x}..{:#x}",
+        machine::hart_id(),
+        trap_stack_bottom(machine::hart_id()),
+        trap_stack_top(machine::hart_id())
+    );
     let _ = b.render(&mut sink);
-    // 机器块后补空行，分隔其后的 layout 块。
-    // render 末行无尾换行，故双写：一个补末行换行，一个作空行。
-    let mut g = Fmt::<8>::new();
-    let _ = writeln!(g);
+    // render 末行无尾换行，补一个。
+    let mut g = Fmt::<2>::new();
     let _ = writeln!(g);
     let _ = g.flush(&mut sink);
 }
@@ -196,7 +219,7 @@ fn spawn_demos() -> Result<(), MapError> {
             "heaper",
         ),
         (
-            &include_bytes!("../..//target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
+            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
             "spawner",
         ),
     ] {
