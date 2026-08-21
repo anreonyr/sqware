@@ -48,10 +48,14 @@ use riscv::register::sip;
 
 use hashbrown::HashMap;
 
+use core::fmt::Write;
+
+use crate::console::Sink;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
+use table::Fmt;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trace::{self, EventKind, SchedEvent};
 use crate::runtime::trampoline::{restore, trap_stack_top};
@@ -77,6 +81,16 @@ const NO_TASK_ID: usize = usize::MAX;
 /// 新选中任务的满额时间片（量子数）。耗尽才轮转；定时器仍每量子打断，
 /// 只是任务不再每量子切走。park 的 ticks 语义不受影响。
 const TIME_SLICE: u32 = 8;
+
+/// 任务打印时的任务名列宽（cell 对齐；超宽截断到 16 字符）。
+const NAME_W: usize = 16;
+
+/// 把 Fmt 拼好的一行补换行，一次 flush 到控制台（无堆无锁）。
+fn task_emit<const CAP: usize>(mut f: Fmt<CAP>) {
+    let _ = writeln!(f);
+    let mut sink = Sink;
+    let _ = f.flush(&mut sink);
+}
 
 // ── 核心：per-hart 调度器结构与方法 ──
 
@@ -297,7 +311,11 @@ impl Scheduler {
             matches!(exited.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
         );
-        putln!("task #{} '{}': exited", exited.id, exited.name);
+        let mut f = Fmt::<64>::new();
+        let _ = write!(f, "task #{} ", exited.id);
+        f.cell(&exited.name, NAME_W);
+        let _ = write!(f, ": exited");
+        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.id }));
         task_mut(&mut exited).transform(TaskState::Reaped);
         TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
@@ -620,11 +638,11 @@ fn steal() -> Option<Arc<Task>> {
         };
         #[cfg(debug_assertions)]
         probe_strong(&task, "steal: try_pop");
-        putln!(
-            "hart {me}: stole task #{} '{}' from hart {v}",
-            task.id,
-            task.name
-        );
+        let mut f = Fmt::<64>::new();
+        let _ = write!(f, "hart {me}: stole task #{} ", task.id);
+        f.cell(&task.name, NAME_W);
+        let _ = write!(f, " from hart {v}");
+        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Steal {
             tid: task.id,
             src_hart: v,
@@ -683,7 +701,11 @@ fn clear() {
         let Some(z) = TASK_TABLES.reaped.lock().pop_front() else {
             break;
         };
-        putln!("task #{} '{}': reaped reclaimed", z.id, z.name);
+        let mut f = Fmt::<64>::new();
+        let _ = write!(f, "task #{} ", z.id);
+        f.cell(&z.name, NAME_W);
+        let _ = write!(f, ": reaped reclaimed");
+        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Reap { tid: z.id }));
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.team.prune_tasks(&z);
@@ -840,7 +862,11 @@ pub fn unpark() {
         #[cfg(debug_assertions)]
         probe_strong(&task, "unpark: after blocked remove");
         task_mut(&mut task).transform(TaskState::Starved);
-        putln!("task #{} '{}': woken", task.id, task.name);
+        let mut f = Fmt::<64>::new();
+        let _ = write!(f, "task #{} ", task.id);
+        f.cell(&task.name, NAME_W);
+        let _ = write!(f, ": woken");
+        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.id }));
         let me = machine::hart_id();
         schedulers()[me].push(task);

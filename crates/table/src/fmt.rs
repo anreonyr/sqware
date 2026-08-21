@@ -45,6 +45,20 @@ impl<const CAP: usize> Fmt<CAP> {
         }
     }
 
+    /// 追加一个固定宽文本格：写入 s，右补空格到 width；超宽截断到 width 字符。
+    /// 任务名等需列对齐的字段用（对齐 + 截断一体）。无堆、无分配：逐 char 直写。
+    pub fn cell(&mut self, s: &str, width: usize) {
+        // 只写前 width 个字符（char 安全），其余丢弃——截断。
+        let wrote = s.chars().take(width).count();
+        for c in s.chars().take(width) {
+            self.buf.push(c);
+        }
+        // 补空格到 width（已到 width 即补 0 个）。
+        for _ in wrote..width {
+            self.buf.push(' ');
+        }
+    }
+
     /// 收行：把整行一次写到 out，随后清空缓冲（可复用本 Fmt 拼下一行）。
     pub fn flush<W: Write>(&mut self, out: &mut W) -> fmt::Result {
         let r = out.write_str(self.buf.as_str());

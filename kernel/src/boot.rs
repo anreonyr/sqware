@@ -18,9 +18,11 @@ use riscv::register::{satp, sie, stvec};
 use crate::machine;
 use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
+use core::fmt::Write;
+use crate::console::Sink;
 use crate::memory::manager::addr::VirtAddr;
-use crate::putln;
 use crate::runtime::context::TrapContext;
+use table::Fmt;
 use crate::runtime::trace;
 use crate::runtime::trampoline::{alltraps_va, restore};
 use crate::work::room::scheduler;
@@ -112,7 +114,10 @@ pub fn init() -> ! {
 
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
     // 副核 steal 走，见 scheduler::enter_first_task）
-    putln!("task: entering first task");
+    let mut f = Fmt::<64>::new();
+    let _ = write!(f, "task: entering first task");
+    let mut sink = Sink;
+    let _ = f.flush(&mut sink);
     restore(scheduler::run())
 }
 
@@ -160,7 +165,10 @@ fn spawn_demos() -> Result<(), MapError> {
     // 内核任务（ktask）：挂 kernel 团队单例，经统一 `Team::task().closure`——团队身份
     // 自动定 S 态（SPP=1）、闭包装箱到内核堆、入口为内核 trampoline `ktask_entry`。
     kernel().task().name("ktask").closure(|| {
-        putln!("kernel task running");
+        let mut f = Fmt::<64>::new();
+        let _ = write!(f, "kernel task running");
+        let mut sink = Sink;
+        let _ = f.flush(&mut sink);
     })?;
     Ok(())
 }
