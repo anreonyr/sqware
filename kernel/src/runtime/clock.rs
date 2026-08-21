@@ -16,6 +16,7 @@ use core::time::Duration;
 use riscv::register::time;
 
 use crate::lock::OnceLock;
+use crate::machine;
 
 const NANOS_PER_SEC: u128 = 1_000_000_000;
 
@@ -48,7 +49,8 @@ static CYCLE: AtomicU64 = AtomicU64::new(0);
 ///
 /// hertz 为 0（DTB 缺失）→ ClockError::NoTimebase；重复初始化 →
 /// ClockError::AlreadyInit。
-pub fn init(hertz: usize) -> Result<(), ClockError> {
+pub fn init() -> Result<(), ClockError> {
+    let hertz = machine::info().hertz;
     if hertz == 0 {
         return Err(ClockError::NoTimebase);
     }

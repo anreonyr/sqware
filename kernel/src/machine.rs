@@ -166,6 +166,9 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 static _stack: usize = KERNEL_STACK_SIZE;
 
+#[unsafe(no_mangle)]
+static _canary: usize = KERNEL_STACK_CANARY;
+
 /// 主内核栈底地址（canary 所在）。
 pub(crate) fn kernel_stack_base() -> usize {
     kernel_edge()
