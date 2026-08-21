@@ -70,60 +70,80 @@ pub fn banner() {
     // 机器/板级 + 陷阱布局两块并成一个 Table：统一列宽，值列对齐；
     // 中间空行分隔两块（空行以一行空 cell 表示，渲染为空格行）。
     let mut b = Table::<13, 2, 96>::new();
-    b.cell(0, 0).push_str("hart count");
-    let _ = write!(b.cell(0, 1), "{} H", m.hart);
-    b.cell(1, 0).push_str("hart this");
-    let _ = write!(b.cell(1, 1), "{}", machine::hart_id());
-    b.cell(2, 0).push_str("timebase");
-    let _ = write!(b.cell(2, 1), "{} Hz", m.hertz);
-    b.cell(3, 0).push_str("dram");
-    let _ = write!(
-        b.cell(3, 1),
-        "{:#x}..{:#x}",
-        m.dram.base,
-        m.dram.range().end
-    );
-    b.cell(4, 0).push_str("free");
-    let _ = write!(
-        b.cell(4, 1),
-        "{:#x}..{:#x}",
-        m.free.base,
-        m.free.range().end
-    );
-    b.cell(5, 0).push_str("uart");
-    let _ = write!(b.cell(5, 1), "{:#x}", m.uart.base);
-    b.cell(6, 0).push_str("plic");
-    let _ = write!(b.cell(6, 1), "{:#x}", m.plic.base);
-    b.cell(7, 0).push_str("clint");
-    let _ = write!(b.cell(7, 1), "{:#x}", m.clint.base);
-    // 空行分隔：两行空 cell（渲染为空格行）。
-    let _ = write!(b.cell(8, 0), " ");
-    let _ = write!(b.cell(8, 1), " ");
+    {
+        let row = b.open_row();
+        row[0].push_str("hart count");
+        let _ = write!(&mut row[1], "{} H", m.hart);
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("hart this");
+        let _ = write!(&mut row[1], "{}", machine::hart_id());
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("timebase");
+        let _ = write!(&mut row[1], "{} Hz", m.hertz);
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("dram");
+        let _ = write!(&mut row[1], "{:#x}..{:#x}", m.dram.base, m.dram.range().end);
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("free");
+        let _ = write!(&mut row[1], "{:#x}..{:#x}", m.free.base, m.free.range().end);
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("uart");
+        let _ = write!(&mut row[1], "{:#x}", m.uart.base);
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("plic");
+        let _ = write!(&mut row[1], "{:#x}", m.plic.base);
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("clint");
+        let _ = write!(&mut row[1], "{:#x}", m.clint.base);
+    }
+    // 空行分隔两块（渲染为空格行）。
+    b.blank_row();
     // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
-    b.cell(9, 0).push_str("trap vector");
-    let _ = write!(b.cell(9, 1), "{:#x}", alltraps_va());
-    b.cell(10, 0).push_str("kernel frames");
-    let _ = write!(
-        b.cell(10, 1),
-        "{:#x}..{:#x}",
-        KERNEL_FRAME_BASE.as_usize(),
-        KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
-    );
-    b.cell(11, 0).push_str("trap stack");
-    let _ = write!(
-        b.cell(11, 1),
-        "{:#x}..{:#x}",
-        trap_stack_bottom(0),
-        trap_stack_top(0)
-    );
-    b.cell(12, 0).push_str("trap stack this");
-    let _ = write!(
-        b.cell(12, 1),
-        "{} @ {:#x}..{:#x}",
-        machine::hart_id(),
-        trap_stack_bottom(machine::hart_id()),
-        trap_stack_top(machine::hart_id())
-    );
+    {
+        let row = b.open_row();
+        row[0].push_str("trap vector");
+        let _ = write!(&mut row[1], "{:#x}", alltraps_va());
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("kernel frames");
+        let _ = write!(
+            &mut row[1],
+            "{:#x}..{:#x}",
+            KERNEL_FRAME_BASE.as_usize(),
+            KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
+        );
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("trap stack");
+        let _ = write!(&mut row[1], "{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
+    }
+    {
+        let row = b.open_row();
+        row[0].push_str("trap stack this");
+        let _ = write!(
+            &mut row[1],
+            "{} @ {:#x}..{:#x}",
+            machine::hart_id(),
+            trap_stack_bottom(machine::hart_id()),
+            trap_stack_top(machine::hart_id())
+        );
+    }
     let _ = b.render(&mut sink);
     // render 末行无尾换行，补一个。
     let mut g = Fmt::<2>::new();

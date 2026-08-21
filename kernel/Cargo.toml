@@ -12,6 +12,7 @@ trace-host = []
 ubi = { path = "../crates/ubi" }
 sbi = { path = "../crates/sbi" }
 table = { path = "../crates/table" }
+
 bitflags = "2.13.1"
 erra = { version = "0.2.0", default-features = false }
 fack = { version = "0.2.0", default-features = false }
@@ -24,7 +25,6 @@ log = { version = "0.4.33" }
 riscv = { version = "0.16.1", features = ["s-mode"] }
 riscv-rt = { version = "0.18.0", features = ["s-mode"] }
 riscv-semihosting = "0.2.1"
-
 
 [[bin]]
 name = "sqware"

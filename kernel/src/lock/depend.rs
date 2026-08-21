@@ -78,12 +78,11 @@ pub(crate) fn report(
     putln!("[DEPEND] {kind}: {what} (single-hart lock-order violation)");
     putln!("  hart      {}", machine::hart_id());
     let mut t = Table::<3, 2, 64>::new();
-    t.cell(0, 0).push_str("lock");
-    let _ = render_addr(t.cell(0, 1), lock);
-    t.cell(1, 0).push_str("holder");
-    let _ = render_addr(t.cell(1, 1), holder);
-    t.cell(2, 0).push_str("caller");
-    let _ = render_addr(t.cell(2, 1), caller);
+    for (label, addr) in [("lock", lock), ("holder", holder), ("caller", caller)] {
+        let row = t.open_row();
+        row[0].push_str(label);
+        let _ = render_addr(&mut row[1], addr);
+    }
     write_table(t);
     panic!("{kind} lock-order violation: {what}");
 }
@@ -251,23 +250,26 @@ pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
     let Some(held) = held_mut() else {
         panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
     };
-    // 行 = label / addr / 说明。taking + caller 两行，中间夹 held 各行。
-    let rows = held.len + 2;
+    // 行 = label / addr / 说明。taking + caller 两行，中间夹 held 各行（open_row 游标自增）。
     let mut t = Table::<{ MAX_HELD + 2 }, 3, 96>::new();
-    t.cell(0, 0).push_str("taking");
-    let _ = render_addr(t.cell(0, 1), addr);
-    let _ = write!(t.cell(0, 2), "({:?})", level);
+    {
+        let row = t.open_row();
+        row[0].push_str("taking");
+        let _ = render_addr(&mut row[1], addr);
+        let _ = write!(&mut row[2], "({:?})", level);
+    }
     if held.len == 0 {
-        t.cell(1, 0).push_str("held");
-        t.cell(1, 2).push_str("(none)");
+        let row = t.open_row();
+        row[0].push_str("held");
+        let _ = write!(&mut row[2], "(none)");
     } else {
         let max = held.max_level().unwrap_or(level);
         for i in 0..held.len {
-            let r = 1 + i;
-            t.cell(r, 0).push_str("held");
-            let _ = render_addr(t.cell(r, 1), held.slots[i].addr);
+            let row = t.open_row();
+            row[0].push_str("held");
+            let _ = render_addr(&mut row[1], held.slots[i].addr);
             let _ = write!(
-                t.cell(r, 2),
+                &mut row[2],
                 "({:?}){}",
                 held.slots[i].level,
                 if held.slots[i].level == max {
@@ -278,9 +280,11 @@ pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
             );
         }
     }
-    let last = rows - 1;
-    t.cell(last, 0).push_str("caller");
-    let _ = render_addr(t.cell(last, 1), caller);
+    {
+        let row = t.open_row();
+        row[0].push_str("caller");
+        let _ = render_addr(&mut row[1], caller);
+    }
     write_table(t);
     putln!(
         "  rule       new level must exceed max(held);  {:?} <= max => violation",

@@ -2,7 +2,7 @@
 name = "table"
 version.workspace = true
 edition.workspace = true
-description = "无堆表格渲染：数据源 + 列宽交给 papergrid CompactGrid 渲染（Display 出口，无 alloc）"
+description = "无堆表格渲染：行导向有界格子 + 自研逐行渲染（&mut fmt::Write 出口，无 alloc）"
 
 [lib]
 test = false
@@ -11,4 +11,3 @@ doctest = false
 
 [dependencies]
 arrayvec = { version = "0.7.8", default-features = false }
-papergrid = { version = "0.18.0", default-features = false }
