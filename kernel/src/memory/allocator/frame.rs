@@ -48,12 +48,10 @@ impl FrameAllocator {
     pub fn outstanding(&self) -> usize {
         #[cfg(all(debug_assertions, feature = "audit"))]
         {
-            self.inner.lock().outstanding
+            return self.inner.lock().outstanding;
         }
-        #[cfg(not(all(debug_assertions, feature = "audit")))]
-        {
-            0
-        }
+        #[allow(unused)]
+        0
     }
 }
 
