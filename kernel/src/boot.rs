@@ -198,7 +198,7 @@ fn boot_harts() {
             continue;
         }
         let stack_top = crate::runtime::trampoline::trap_stack_top(hart);
-        putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
+        // putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
         // 同事件也进 trace（hart 0 窗口）：崩溃回放可见启动序列。
         trace::note(trace::EventKind::Boot(trace::BootEvent::Launch { hart }));
         let r = sbi::HsmCall::new(sbi::fid::Hsm::Start)
@@ -235,6 +235,9 @@ pub(crate) extern "C" fn boot_main() -> ! {
         sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
     }
     // 启动完成改写进 trace（直打控制台会扰 panic 现场）；crash 后统一 dump。
-    trace::note(trace::EventKind::Boot(trace::BootEvent::Done { hart: machine::hart_id() }));
+    trace::note(trace::EventKind::Boot(trace::BootEvent::Done {
+        hart: machine::hart_id(),
+    }));
     scheduler::idle()
 }
+
