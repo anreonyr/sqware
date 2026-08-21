@@ -115,7 +115,7 @@ pub fn init() -> ! {
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
     // 副核 steal 走，见 scheduler::enter_first_task）
     let mut f = Fmt::<64>::new();
-    let _ = write!(f, "task: entering first task");
+    let _ = writeln!(f, "task: entering first task");
     let mut sink = Sink;
     let _ = f.flush(&mut sink);
     restore(scheduler::run())
@@ -166,7 +166,7 @@ fn spawn_demos() -> Result<(), MapError> {
     // 自动定 S 态（SPP=1）、闭包装箱到内核堆、入口为内核 trampoline `ktask_entry`。
     kernel().task().name("ktask").closure(|| {
         let mut f = Fmt::<64>::new();
-        let _ = write!(f, "kernel task running");
+        let _ = writeln!(f, "kernel task running");
         let mut sink = Sink;
         let _ = f.flush(&mut sink);
     })?;

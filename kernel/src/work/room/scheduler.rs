@@ -82,8 +82,8 @@ const NO_TASK_ID: usize = usize::MAX;
 /// 只是任务不再每量子切走。park 的 ticks 语义不受影响。
 const TIME_SLICE: u32 = 8;
 
-/// 任务打印时的任务名列宽（cell 对齐；超宽截断到 16 字符）。
-const NAME_W: usize = 16;
+/// 任务打印时的任务名列宽（cell 对齐；超宽截断）。各任务打印点共享单一来源。
+pub const NAME_W: usize = 16;
 
 /// 把 Fmt 拼好的一行补换行，一次 flush 到控制台（无堆无锁）。
 fn task_emit<const CAP: usize>(mut f: Fmt<CAP>) {
