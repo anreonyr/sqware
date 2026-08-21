@@ -16,7 +16,7 @@ use alloc::sync::Arc;
 use riscv::register::{satp, sie, stvec};
 
 use crate::console::Sink;
-use crate::machine;
+use crate::machine::{self, Machine};
 use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
@@ -30,7 +30,7 @@ use crate::work::unit::space::{SpaceBuilder, kernel_frame_pa};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 use core::fmt::Write;
-use table::Fmt;
+use table::{Fmt, Table};
 
 global_asm!(
     ".section .text.boot",
@@ -60,6 +60,52 @@ fn kernel_symbolizer(addr: usize) -> Option<(&'static str, usize)> {
         crate::memory::manager::addr::VirtAddr::from_raw(addr),
         None,
     )
+}
+
+/// SBI 式启动横幅：机器/板级「标签|值」对齐表（layout 块在 trap::init 侧）。
+pub fn banner() {
+    let m = machine::info();
+    let mut sink = Sink;
+    // 标题行（独立，后随空行分隔下面块）
+    let mut t = Fmt::<64>::new();
+    let _ = writeln!(t, "SQware Kernel booted (hart {})", machine::hart_id());
+    let _ = writeln!(t);
+    let _ = t.flush(&mut sink);
+    // 机器/板级块
+    let mut b = Table::<8, 2, 96>::new();
+    b.cell(0, 0).push_str("hart count");
+    let _ = write!(b.cell(0, 1), "{} H", m.hart);
+    b.cell(1, 0).push_str("hart this");
+    let _ = write!(b.cell(1, 1), "{}", machine::hart_id());
+    b.cell(2, 0).push_str("timebase");
+    let _ = write!(b.cell(2, 1), "{} Hz", m.hertz);
+    b.cell(3, 0).push_str("dram");
+    let _ = write!(
+        b.cell(3, 1),
+        "{:#x}..{:#x}",
+        m.dram.base,
+        m.dram.range().end
+    );
+    b.cell(4, 0).push_str("free");
+    let _ = write!(
+        b.cell(4, 1),
+        "{:#x}..{:#x}",
+        m.free.base,
+        m.free.range().end
+    );
+    b.cell(5, 0).push_str("uart");
+    let _ = write!(b.cell(5, 1), "{:#x}", m.uart.base);
+    b.cell(6, 0).push_str("plic");
+    let _ = write!(b.cell(6, 1), "{:#x}", m.plic.base);
+    b.cell(7, 0).push_str("clint");
+    let _ = write!(b.cell(7, 1), "{:#x}", m.clint.base);
+    let _ = b.render(&mut sink);
+    // 机器块后补空行，分隔其后的 layout 块。
+    // render 末行无尾换行，故双写：一个补末行换行，一个作空行。
+    let mut g = Fmt::<8>::new();
+    let _ = writeln!(g);
+    let _ = writeln!(g);
+    let _ = g.flush(&mut sink);
 }
 
 pub fn init() -> ! {

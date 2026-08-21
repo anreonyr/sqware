@@ -26,7 +26,6 @@ global_asm!(
     "    mv   tp, a0", // hartid → tp：S-mode 读不到 M-mode CSR mhartid，入口处暂存
     "    csrc sstatus, 2", // 清 SIE：内核态恒关中断（boot 期 OpenSBI 可能遗留 SIE=1）
     // 主栈布局：sp = _kernel_edge + KERNEL_STACK_SIZE，栈向低地址生长。
-    // 栈区不由链接脚本预留，偏移 `_stack` 是 Rust 常量（单一来源）。
     "    la   sp, _kernel_edge",
     "    ld   t0, _canary",
     "    sd   t0, 0(sp)",
@@ -41,8 +40,7 @@ extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
     console::init();
 
     machine::init(dtp);
-    let machine = machine::info();
-    boot::boot_banner(machine);
+    boot::banner();
 
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
     unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));

@@ -13,14 +13,14 @@
 // trap::init（stvec、sscratch、SIE）→ 任务化调度（S-timer 抢占）。
 
 pub mod clock;
-pub mod timer;
 pub mod context;
+pub mod envcall;
 pub mod halt;
+pub mod scene;
+pub mod timer;
+pub mod trace;
 pub mod trampoline;
 pub mod trap;
-pub mod trace;
-pub mod scene;
 pub mod watch;
-pub mod envcall;
 
-pub use trap::init;
+
