@@ -56,10 +56,10 @@ use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
 use crate::runtime::context::TrapContext;
-use crate::runtime::trace::{self, EventKind, SchedEvent};
+use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::runtime::trap::arm_timer;
-use crate::runtime::{clock, timer, watch};
+use crate::runtime::{clock, timer, diagnose::watch};
 use table::Fmt;
 
 use super::tie;
@@ -770,7 +770,7 @@ pub fn run() -> usize {
     // 0. 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）。
     //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒、不经过 trap_handler
     //    的路径（用户核走 trap 入口钩子）。常运行时恒 no-op。
-    crate::runtime::halt::hush();
+    crate::runtime::diagnose::halt::hush();
     watch::pulse();
     let me = machine::hart_id();
     let s = &schedulers()[me];

@@ -176,10 +176,10 @@ fn asleep(words: &[AtomicUsize], h: usize) -> bool {
 
 /// 上报：冻结现场后停机（trace + scene + panic→halt）。不返回。
 pub fn raise(r: WatchReport) -> ! {
-    crate::runtime::trace::note(crate::runtime::trace::EventKind::Watch(
-        crate::runtime::trace::WatchEvent::Raised,
+    crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Watch(
+        crate::runtime::diagnose::trace::WatchEvent::Raised,
     ));
-    crate::runtime::scene::dump_crash();
+    crate::runtime::diagnose::scene::dump_crash();
     panic!("watch caught incident: {r}");
 }
 

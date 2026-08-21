@@ -20,7 +20,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::put;
 use crate::runtime::context::{Gprs, TrapContext};
-use crate::runtime::trace::{self, EnvEvent, EventKind};
+use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::{clock, timer};
 use crate::work::room::scheduler::{park, reap, running_team, starve, with_running_space};
 

@@ -31,9 +31,7 @@ hashbrown = { version = "0.17.1", default-features = false, features = [
 log = { version = "0.4.33" }
 riscv = { version = "0.16.1", features = ["s-mode"] }
 riscv-rt = { version = "0.18.0", features = ["s-mode"] }
-# semihosting 通道（semihosting 导出）：fs=写宿主导出文件（唯一必需）。
-# 未开 stdio（每行 open ":tt" 过重）、panic-handler（与内核自带 handler 冲突）、
-# time/args（本次不需要）。所有 API 均 no_std、零分配。
+# semihosting = 导宿主文件用的 crate；只开 fs（stdio/panic-handler/time/args 均不需要）。
 semihosting = { version = "0.1.25", features = ["fs"] }
 
 [[bin]]

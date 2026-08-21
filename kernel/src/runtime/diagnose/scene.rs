@@ -186,17 +186,17 @@ pub fn dump_crash() {
     dump_backtrace();
     // semihosting 下 JSON 实时流已含全部事件，文本窗口冗余——只关事件窗口，保留 CSR/GPR/回溯。
     #[cfg(not(feature = "semihosting"))]
-    crate::runtime::trace::panic_dump();
+    crate::runtime::diagnose::trace::panic_dump();
 }
 
 /// 统一崩溃现场宏：空调用即完整转储；带参则先写一行消息再转储（可在任意点 drop-in 调试）。
 #[macro_export]
 macro_rules! crash_scene {
     () => {
-        $crate::runtime::scene::dump_crash()
+        $crate::runtime::diagnose::scene::dump_crash()
     };
     ($($arg:tt)*) => {{
         $crate::console::_write(format_args!($($arg)*));
-        $crate::runtime::scene::dump_crash();
+        $crate::runtime::diagnose::scene::dump_crash();
     }};
 }

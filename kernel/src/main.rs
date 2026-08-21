@@ -17,7 +17,7 @@ use core::arch::global_asm;
 
 use crate::machine::{KERNEL_STACK_CANARY, kernel_stack_base};
 use crate::memory::allocator;
-use crate::runtime::{clock, trace, trap};
+use crate::runtime::{clock, diagnose::trace, trap};
 use crate::work::unit;
 
 global_asm!(

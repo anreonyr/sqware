@@ -29,7 +29,7 @@ use hashbrown::HashMap;
 use crate::console::_write;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::memory::PAGE_SIZE;
-use crate::runtime::trace;
+use crate::runtime::diagnose::trace;
 
 /// 毒化模式字节（分配/释放填充：未初始化读、UAF 读数的现行标记）。
 pub const POISON: u8 = 0xCD;

@@ -21,7 +21,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::context::TrapContext;
-use crate::runtime::trace;
+use crate::runtime::diagnose::trace;
 use crate::runtime::trampoline::{alltraps_va, restore, trap_stack_bottom, trap_stack_top};
 use crate::work::room::scheduler;
 #[cfg(debug_assertions)]
@@ -159,7 +159,7 @@ pub fn init() -> ! {
     scheduler::init();
 
     // 值班看护：设阈值并启用（clock 已就绪）。失速 200ms / 锁相持 500ms。
-    crate::runtime::watch::threshold(crate::runtime::watch::Threshold {
+    crate::runtime::diagnose::watch::threshold(crate::runtime::diagnose::watch::Threshold {
         hold_timeout: Duration::from_millis(500),
         liveness_timeout: Duration::from_millis(200),
         enabled: true,
@@ -195,9 +195,9 @@ pub fn init() -> ! {
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
     // 经 steal 从队列取活——任务即向各核迁移）
-    crate::runtime::watch::suspend();
+    crate::runtime::diagnose::watch::suspend();
     boot_harts();
-    crate::runtime::watch::resume();
+    crate::runtime::diagnose::watch::resume();
 
     // 主内核栈（boot 栈）将永久离开前校验 canary：boot 期栈溢出即使未越过
     // guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。

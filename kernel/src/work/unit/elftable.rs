@@ -152,7 +152,7 @@ pub fn kernel_table() -> Option<ElfTable> {
         )*};
     }
     sym! {
-        "panic_handler" : crate::runtime::halt::panic_handler;
+        "panic_handler" : crate::runtime::diagnose::halt::panic_handler;
         "trap_handler"  : crate::runtime::trap::trap_handler;
         "boot_main"     : crate::boot::boot_main;
         "restore"       : crate::runtime::trampoline::restore;

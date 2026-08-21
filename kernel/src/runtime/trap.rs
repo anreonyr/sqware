@@ -23,7 +23,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
 use crate::runtime::context::TrapContext;
-use crate::runtime::trace::{self, BootEvent, EventKind, MemEvent};
+use crate::runtime::diagnose::trace::{self, BootEvent, EventKind, MemEvent};
 use crate::runtime::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, establish_tp, init_trap_stacks,
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
@@ -158,7 +158,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     // 0.5 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）。
     //    用户态核的定时器/IPI 陷阱、及任何 trap 入口都会在此拦下并自停；
     //    正常运行时恒 no-op。
-    crate::runtime::halt::hush();
+    crate::runtime::diagnose::halt::hush();
 
     // 1. trap 栈 guard 溢出特判（先于 canary：溢出可能已破坏 canary 字）。
     //    仅缺页类 scause 才读 stval（其余陷阱 stval 无意义，可能残留旧值）。

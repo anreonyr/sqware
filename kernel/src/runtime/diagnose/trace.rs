@@ -16,12 +16,8 @@
 //!   - **文件唯一写者 = host_note（live 流）**：panic 只经 note(Halt(Panic)) 追加一条
 //!     事件行，决不把环形窗口再 dump 一遍进文件（文本窗口在 semihosting 下由 scene 抑制）。
 
-#[cfg(feature = "semihosting")]
-use crate::lock::OnceLock;
 use core::fmt;
 use core::fmt::Write;
-#[cfg(feature = "semihosting")]
-use core::sync::atomic::AtomicBool;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::console::Sink;
@@ -176,11 +172,21 @@ pub fn note(kind: EventKind) {
     }
     let when = crate::runtime::clock::now().as_ticks();
     trace(hart).note(kind, when);
-    // opt-in 宿主全量（构建开关 semihosting）：每条结构化事件经 semihosting 送宿主，
+    // 宿主全量（feature semihosting，默认开启）：每条结构化事件经 semihosting 送宿主，
     // 带自描述长度 "len"，便于 tail/离线解析可靠分帧（try_lock 原子成行、尽力而为）。
     #[cfg(feature = "semihosting")]
     host_note(kind, hart, when);
 }
+
+// ── semihosting 宿主镜像（feature gate: semihosting）──────────────────
+// 本文件**唯一** semihosting 段：cfg 导入 + 导出句柄 + host_note/host_header +
+// JSON 序列化（line_json/total_len/digits/kind_str/fields_json）在此形成单一连续
+// 区域；文件其余部分不带 semihosting cfg。
+
+#[cfg(feature = "semihosting")]
+use crate::lock::OnceLock;
+#[cfg(feature = "semihosting")]
+use core::sync::atomic::AtomicBool;
 
 /// 导出文件名。QEMU semihosting fs 按 **qemu 进程 CWD**（= 调用 runner 的目录，
 /// 通常仓库根）解析相对路径；runner 结束后归档进 trace/。

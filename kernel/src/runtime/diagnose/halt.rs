@@ -135,8 +135,8 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     let _ = fld.flush(&mut sink);
 
     // 崩溃现场：先记 Panic 事件，再倒出各 hart 最近事件窗口（无分配、无锁）。
-    crate::runtime::trace::note(crate::runtime::trace::EventKind::Halt(
-        crate::runtime::trace::HaltEvent::Panic,
+    crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
+        crate::runtime::diagnose::trace::HaltEvent::Panic,
     ));
     // 统一崩溃现场转储（CSR/GPR/回溯符号化 + 事件窗口；内含 trace::panic_dump）。
     crate::crash_scene!();
