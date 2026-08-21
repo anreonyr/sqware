@@ -55,12 +55,12 @@ use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
-use table::Fmt;
 use crate::runtime::context::TrapContext;
 use crate::runtime::trace::{self, EventKind, SchedEvent};
 use crate::runtime::trampoline::{restore, trap_stack_top};
 use crate::runtime::trap::arm_timer;
 use crate::runtime::{clock, timer, watch};
+use table::Fmt;
 
 use super::tie;
 use crate::work::unit::{
@@ -118,10 +118,13 @@ impl Scheduler {
     const fn new(hart: usize) -> Scheduler {
         Scheduler {
             hart,
-            inner: SpinLock::new_level(Level::Scheduler, SchedInner {
-                running: None,
-                starved: VecDeque::new(),
-            }),
+            inner: SpinLock::new_level(
+                Level::Scheduler,
+                SchedInner {
+                    running: None,
+                    starved: VecDeque::new(),
+                },
+            ),
             starved_len: AtomicUsize::new(0),
         }
     }
@@ -259,11 +262,11 @@ impl Scheduler {
             "running 容器里不是 Running 任务"
         );
         let wake_at = clock::now().add(duration).as_ticks();
-        putln!(
-            "task #{} '{}': parked (wake @ {wake_at:#x})",
-            task.id,
-            task.name
-        );
+        let mut f = Fmt::<64>::new();
+        let _ = write!(f, "task #{} ", task.id);
+        f.cell(&task.name, NAME_W);
+        let _ = write!(f, ": parked (wake @ {wake_at:#x})");
+        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Park {
             tid: task.id,
             wake_at: wake_at as usize,
@@ -313,7 +316,7 @@ impl Scheduler {
         );
         let mut f = Fmt::<64>::new();
         let _ = write!(f, "task #{} ", exited.id);
-        f.cell(&exited.name, NAME_W);
+        f.cell(exited.name, NAME_W);
         let _ = write!(f, ": exited");
         task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.id }));
@@ -966,3 +969,4 @@ pub fn reap() -> usize {
     // 取下一任务：此刻 running 已 take，本核空闲 → run（steal / WFI）
     run()
 }
+

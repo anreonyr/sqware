@@ -15,14 +15,12 @@ use core::time::Duration;
 use alloc::sync::Arc;
 use riscv::register::{satp, sie, stvec};
 
+use crate::console::Sink;
 use crate::machine;
 use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
-use core::fmt::Write;
-use crate::console::Sink;
 use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::context::TrapContext;
-use table::Fmt;
 use crate::runtime::trace;
 use crate::runtime::trampoline::{alltraps_va, restore};
 use crate::work::room::scheduler;
@@ -31,6 +29,8 @@ use crate::work::unit;
 use crate::work::unit::space::{SpaceBuilder, kernel_frame_pa};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
+use core::fmt::Write;
+use table::Fmt;
 
 global_asm!(
     ".section .text.boot",
@@ -114,10 +114,6 @@ pub fn init() -> ! {
 
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
     // 副核 steal 走，见 scheduler::enter_first_task）
-    let mut f = Fmt::<64>::new();
-    let _ = writeln!(f, "task: entering first task");
-    let mut sink = Sink;
-    let _ = f.flush(&mut sink);
     restore(scheduler::run())
 }
 
@@ -145,18 +141,18 @@ fn spawn_demos() -> Result<(), MapError> {
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-sleeper")[..],
         //     "sleeper",
         // ),
-        (
-            &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
-            "exiter",
-        ),
+        // (
+        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
+        //     "exiter",
+        // ),
         (
             &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-heaper")[..],
             "heaper",
         ),
-        // (
-        //     &include_bytes!("../..//target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
-        //     "spawner",
-        // ),
+        (
+            &include_bytes!("../..//target/riscv64gc-unknown-none-elf/debug/user-spawner")[..],
+            "spawner",
+        ),
     ] {
         let (team, entry) = load_user(elf);
         team.task().name(name).entry(entry).spawn()?;
@@ -248,4 +244,3 @@ pub(crate) extern "C" fn boot_main() -> ! {
     }));
     scheduler::idle()
 }
-
