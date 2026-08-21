@@ -297,7 +297,7 @@ pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
 }
 
 /// 把整表渲染进一个栈缓冲，再整块写控制台（无堆；一次 SBI 调用）。
-#[cfg(debug_assertions)]
+/// 无 cfg：`depend::report`（单 hart 重入检测）release 亦生效，须可渲染现场表。
 fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
     let mut buf: table::Line<512> = table::Line::new();
     let _ = t.render(&mut buf);
