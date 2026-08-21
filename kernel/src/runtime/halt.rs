@@ -14,8 +14,10 @@
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use core::fmt::{self, Write};
 use crate::{console::_write, machine};
 use sbi::{self, fid, scall::SArgs};
+use table::Fmt;
 
 /// 警报是否已拉响（第一个 panic 置位；其余 hart 依此停止）。
 /// 与 follower 的 Acquire 读配对：`ALARM` 置位可见时，`ALARMER` 的写入亦必可见。
@@ -98,38 +100,40 @@ fn alarm() {
     broadcast();
 }
 
+/// 把 fmt::Write 的写转发到控制台（panic 路径无锁直写）。
+struct ConsoleSink;
+impl Write for ConsoleSink {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        _write(format_args!("{s}"));
+        Ok(())
+    }
+}
+
 #[panic_handler]
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 拉响警报：抢占报警源（唯一继续运行并打印的 hart，输家就地卧倒），
     // 再广播停止其它核（唤醒睡核、提示用户核），随后打印诊断现场。
     alarm();
 
-    _write(format_args!("[PANIC]"));
+    // 诊断头：拼进一个行缓冲，整段一次 flush 到控制台（无堆、无锁）。
+    let mut fld = Fmt::<256>::new();
+    let _ = write!(fld, "[PANIC]");
     if let Some(loc) = info.location() {
-        _write(format_args!(
-            " at {}:{}:{}",
-            loc.file(),
-            loc.line(),
-            loc.column()
-        ));
+        let _ = write!(fld, " at {}:{}:{}", loc.file(), loc.line(), loc.column());
     }
-    _write(format_args!("\n"));
+    let _ = writeln!(fld);
     // 显示崩溃现场所在 hart 正在运行的任务（若有）：方便定位"哪个任务崩了"。
     // 非阻塞（try_lock）——panic 可能正发生在持有调度锁的现场，拿不到就跳过，
     // 不冒险在 panic 路径再加锁/递归。
     if let Some((tid, tname)) = crate::work::room::scheduler::running_task_info() {
-        _write(format_args!(
-            "  running task #{tid} '{tname}' (hart {})\n",
-            crate::machine::hart_id()
-        ));
+        let _ = writeln!(fld, "  running task #{tid} '{tname}' (hart {})", machine::hart_id());
     }
     // 格式化的 panic 消息（非字面量）也打印——诊断调试必备
-    _write(format_args!("  {}\n", info.message()));
+    let _ = writeln!(fld, "  {}", info.message());
     // 其余 hart 已停止：本 hart 是唯一存活者，停机自环（srst 复位 / wfi）。
-    _write(format_args!(
-        "  [stop] other harts hushed; only hart {} remains\n",
-        machine::hart_id()
-    ));
+    let _ = writeln!(fld, "  [stop] other harts hushed; only hart {} remains", machine::hart_id());
+    let mut sink = ConsoleSink;
+    let _ = fld.flush(&mut sink);
 
     // 崩溃现场：先记 Panic 事件，再倒出各 hart 最近事件窗口（无分配、无锁）。
     crate::runtime::trace::note(crate::runtime::trace::EventKind::Halt(
