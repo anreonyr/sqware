@@ -14,8 +14,8 @@
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use core::fmt::{self, Write};
-use crate::{console::_write, machine};
+use core::fmt::Write;
+use crate::machine;
 use sbi::{self, fid, scall::SArgs};
 use table::Fmt;
 
@@ -100,15 +100,6 @@ fn alarm() {
     broadcast();
 }
 
-/// 把 fmt::Write 的写转发到控制台（panic 路径无锁直写）。
-struct ConsoleSink;
-impl Write for ConsoleSink {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        _write(format_args!("{s}"));
-        Ok(())
-    }
-}
-
 #[panic_handler]
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 拉响警报：抢占报警源（唯一继续运行并打印的 hart，输家就地卧倒），
@@ -132,7 +123,7 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     let _ = writeln!(fld, "  {}", info.message());
     // 其余 hart 已停止：本 hart 是唯一存活者，停机自环（srst 复位 / wfi）。
     let _ = writeln!(fld, "  [stop] other harts hushed; only hart {} remains", machine::hart_id());
-    let mut sink = ConsoleSink;
+    let mut sink = crate::console::Sink;
     let _ = fld.flush(&mut sink);
 
     // 崩溃现场：先记 Panic 事件，再倒出各 hart 最近事件窗口（无分配、无锁）。

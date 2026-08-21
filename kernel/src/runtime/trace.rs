@@ -13,13 +13,22 @@
 //!   - semihost 全量（未来）= 同一 dump 流的另一消费端；本版本实现环形 + 控制台 panic_dump。
 
 use core::fmt;
-#[cfg(feature = "trace-host")]
 use core::fmt::Write;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(feature = "trace-host")]
 use crate::console::_write;
+use crate::console::Sink;
 use crate::machine;
 use crate::memory::manager::fault::FaultKind;
+use table::Fmt;
+
+/// 收行：给 Fmt 拼好的缓冲补换行，一次 flush 到控制台（无堆无锁）。
+fn emit<const CAP: usize>(mut f: Fmt<CAP>) {
+    let _ = writeln!(f);
+    let mut sink = Sink;
+    let _ = f.flush(&mut sink);
+}
 
 /// 每 hart 事件窗口容量。
 pub const BUFFER_SIZE: usize = 512;
@@ -355,22 +364,17 @@ fn fmt_event(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
 ///
 /// 必须在 halt 已让其它核停写后调用（panic_handler 的报警核）。无分配、无锁。
 pub fn panic_dump() {
-    _write(format_args!("[trace] per-hart event window:
-"));
+    let mut f = Fmt::<64>::new();
+    let _ = writeln!(f, "[trace] per-hart event window:");
+    emit(f);
     for h in 0..machine::hart_count() {
-        _write(format_args!("[trace] hart {h}:
-"));
+        let mut t = Fmt::<64>::new();
+        let _ = writeln!(t, "[trace] hart {h}:");
+        emit(t);
         dump(h, BUFFER_SIZE, |e| {
-            let mut buf = [0u8; 128];
-            let mut used = 0usize;
-            let mut w = Buf(&mut buf, &mut used);
-            let _ = fmt_event(e, &mut w);
-            _write(format_args!(
-                "{}",
-                core::str::from_utf8(&buf[..used]).unwrap_or("<bad utf8>")
-            ));
-            _write(format_args!("
-"));
+            let mut l = Fmt::<160>::new();
+            let _ = fmt_event(e, &mut l);
+            emit(l);
         });
     }
 }

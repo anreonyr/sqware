@@ -11,14 +11,18 @@
 //! 回溯 = 无帧指针启发式：扫描当前栈区间，收集可执行地址（内核恒等/高半区或
 //! 用户运行 team 表内）的候选返回地址（去重、深度封顶）。sepc/stval/回溯每条
 //! 都经 elftable::resolve 符号化（命中出函数名），未命中打印裸 hex。
+//!
+//! 输出：用 table::Fmt 行缓冲把每段拼成一行、一次 flush（无堆无锁）。
 
 use core::arch::asm;
+use core::fmt::Write;
 use riscv::register::{satp, scause, sepc, sstatus, stval};
 
-use crate::console::_write;
+use crate::console::Sink;
 use crate::memory::manager::addr::VirtAddr;
 use crate::work::unit::elftable;
 use crate::work::room::scheduler::{running_task_info, running_team_try};
+use table::Fmt;
 
 /// 回溯深度上限。
 const BT_DEPTH: usize = 32;
@@ -27,14 +31,24 @@ const BT_SCAN: usize = 4096;
 /// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
 const ADDR_ALIGN: usize = 4;
 
-/// 打印地址：经 elftable::resolve 符号化（命中出「函数+偏移」），否则裸 hex。
-fn print_addr(a: usize) {
+/// 收行：给 Fmt 拼好的缓冲补换行，一次 flush 到控制台。
+fn emit<const CAP: usize>(mut f: Fmt<CAP>) {
+    let _ = writeln!(f);
+    let mut sink = Sink;
+    let _ = f.flush(&mut sink);
+}
+
+/// 写地址：经 elftable::resolve 符号化（含用户 team；命中出「函数+偏移」），否则裸 hex。
+///
+/// 注意：这点刻意不用 table::Fmt::addr——scene 需用户空间 team 符号化，而
+/// Fmt::addr 走全局内核符号器（team=None）。这里写入传入的 sink，由调用方收行。
+fn write_addr<W: Write>(w: &mut W, a: usize) {
     let va = VirtAddr::from_raw(a);
     let team = running_team_try();
     if let Some((name, off)) = elftable::resolve(va, team.as_deref()) {
-        _write(format_args!("{name}+{off:#x}"));
+        let _ = write!(w, "{name}+{off:#x}");
     } else {
-        _write(format_args!("{a:#x}"));
+        let _ = write!(w, "{a:#x}");
     }
 }
 
@@ -108,17 +122,20 @@ fn backtrace(out: &mut [usize; BT_DEPTH]) -> usize {
 fn dump_csrs() {
     let sc = scause::read();
     let kind = if sc.is_interrupt() { "int" } else { "exc" };
-    _write(format_args!("[scene] sepc="));
-    print_addr(sepc::read());
-    _write(format_args!("  stval="));
-    print_addr(stval::read());
-    _write(format_args!(
-        "  scause={} ({})  sstatus={:#x}  satp={:#x}\n",
+    let mut f = Fmt::<256>::new();
+    let _ = write!(f, "[scene] sepc=");
+    write_addr(&mut f, sepc::read());
+    let _ = write!(f, "  stval=");
+    write_addr(&mut f, stval::read());
+    let _ = write!(
+        f,
+        "  scause={} ({})  sstatus={:#x}  satp={:#x}",
         sc.code(),
         kind,
         sstatus::read().bits(),
         satp::read().bits(),
-    ));
+    );
+    emit(f);
 }
 
 /// GPR 转储（只打非零，命名打印）。
@@ -129,35 +146,40 @@ fn dump_gprs() {
         "t4", "t5", "t6",
     ];
     let r = gprs();
-    _write(format_args!("[scene] gpr:"));
+    let mut f = Fmt::<256>::new();
+    let _ = write!(f, "[scene] gpr:");
     for (i, name) in NAMES.iter().enumerate().skip(1) {
         if r[i] != 0 {
-            _write(format_args!(" {}={:#x}", name, r[i]));
+            let _ = write!(f, " {}={:#x}", name, r[i]);
         }
     }
-    _write(format_args!("\n"));
+    emit(f);
 }
 
 /// 栈回溯转储（每条符号化）。
 fn dump_backtrace() {
     let mut bt = [0usize; BT_DEPTH];
     let n = backtrace(&mut bt);
-    _write(format_args!("[scene] backtrace ({} frames):\n", n));
+    let mut f = Fmt::<256>::new();
+    let _ = write!(f, "[scene] backtrace ({} frames):", n);
+    emit(f);
     for (i, a) in bt[..n].iter().enumerate() {
-        _write(format_args!("[scene]   #{i}: "));
-        print_addr(*a);
-        _write(format_args!("\n"));
+        let mut l = Fmt::<128>::new();
+        let _ = write!(l, "[scene]   #{i}: ");
+        write_addr(&mut l, *a);
+        emit(l);
     }
 }
 
 /// 统一崩溃现场转储：hart + 任务 + CSR + GPR + 回溯 + 事件窗口。
 pub fn dump_crash() {
-    _write(format_args!(
-        "[scene] crash scene, hart {}\n",
-        crate::machine::hart_id()
-    ));
+    let mut f = Fmt::<128>::new();
+    let _ = write!(f, "[scene] crash scene, hart {}", crate::machine::hart_id());
+    emit(f);
     if let Some((tid, name)) = running_task_info() {
-        _write(format_args!("[scene] running task #{tid} '{name}'\n"));
+        let mut t = Fmt::<256>::new();
+        let _ = write!(t, "[scene] running task #{tid} '{name}'");
+        emit(t);
     }
     dump_csrs();
     dump_gprs();

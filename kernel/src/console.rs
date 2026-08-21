@@ -31,6 +31,16 @@ pub fn _write(args: fmt::Arguments) {
     let _ = Console.write_fmt(args);
 }
 
+/// 让 `fmt::Write` 的格式化器（如 table::Fmt）能把整行转发到控制台。
+/// 无锁、无堆（`_write` 直写 SBI putchar）；panic/持锁态下安全。
+pub struct Sink;
+impl Write for Sink {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        _write(format_args!("{s}"));
+        Ok(())
+    }
+}
+
 #[macro_export]
 macro_rules! put {
     ($($arg:tt)*) => { $crate::console::_write(format_args!($($arg)*)) };
