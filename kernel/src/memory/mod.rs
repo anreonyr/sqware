@@ -15,6 +15,7 @@
 // 顺序重要：宏先于使用它们的子模块声明（`#[macro_use]` 文本作用域）。
 
 pub mod allocator;
+pub mod integrity;
 pub mod manager;
 
 /// 页大小 (4 KiB) — RISC-V 架构常量（自包含，不再依赖内核 platform）。

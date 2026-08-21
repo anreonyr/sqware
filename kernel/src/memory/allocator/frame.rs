@@ -140,9 +140,11 @@ unsafe impl Allocator for FrameAllocator {
 
         let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
         let addr = frame.frame_addr(index) as *mut u8;
-        // debug: 弹出的帧不得仍是堆持有页（活堆页泄漏进 frame 池 = 双持有）
+        // debug: 弹出的帧必须 Free → Banker 取出（双取出 / 活堆页泄漏进池现行）
         #[cfg(debug_assertions)]
-        crate::memory::allocator::pageown::assert_not_held(addr as usize, "allocate");
+        {
+            crate::memory::integrity::BANKER.debit(addr as usize);
+        }
         // debug: 弹出的帧不得落在任一 block pool 区段——那说明 block pool 与 frame
         // 区段重叠，pageown 会因「per-node 池页不向 frame 借」而漏检。
         #[cfg(debug_assertions)]
@@ -177,9 +179,9 @@ unsafe impl Allocator for FrameAllocator {
             let addr = ptr.addr().get();
             let index = frame.frame_index(addr);
 
-            // debug: 归还的帧不得仍是堆持有页（活堆页被归还 = 双持有源头）
+            // debug: 归还的帧必须 held → Banker 存入（存入陌生页 / 双释放现行）
             #[cfg(debug_assertions)]
-            crate::memory::allocator::pageown::assert_not_held(addr, "deallocate");
+            crate::memory::integrity::BANKER.credit(addr);
 
             // debug: double-free 检测——pagemeta 已标 free 的帧再释放说明
             // 帧被释放两次（或归还未分配的地址），会破坏 frame 合并。

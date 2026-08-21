@@ -71,10 +71,12 @@ pub enum EnvEvent {
     Call { call: usize, arg: usize },
 }
 
-/// memory/manager/fault 的缺页。
+/// memory/manager/fault 的缺页与 memory/integrity 的完整性违例。
 #[derive(Clone, Copy)]
 pub enum MemEvent {
     PageFault { va: usize, fault: FaultKind, resolved: bool },
+    /// 完整性违例（IntegrityViolation 的 repr(u8) 编码；见 memory::integrity）。
+    Integrity { code: u8, addr: usize },
 }
 
 /// runtime/halt 的系统级事件。
@@ -252,6 +254,7 @@ fn kind_str(k: EventKind) -> &'static str {
         EventKind::Sched(SchedEvent::Idle) => "idle",
         EventKind::Env(EnvEvent::Call { .. }) => "envcall",
         EventKind::Mem(MemEvent::PageFault { .. }) => "pagefault",
+        EventKind::Mem(MemEvent::Integrity { .. }) => "integrity",
         EventKind::Halt(HaltEvent::Halt) => "halt",
         EventKind::Halt(HaltEvent::Panic) => "panic",
         EventKind::Watch(WatchEvent::Raised) => "watch",
@@ -284,6 +287,9 @@ fn fields_json(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         }
         EventKind::Mem(MemEvent::PageFault { va, fault, resolved }) => {
             write!(w, ",\"va\":{va:#x},\"fault\":\"{:?}\",\"resolved\":{resolved}", fault)
+        }
+        EventKind::Mem(MemEvent::Integrity { code, addr }) => {
+            write!(w, ",\"code\":{code},\"addr\":{addr:#x}")
         }
         EventKind::Halt(HaltEvent::Halt) | EventKind::Halt(HaltEvent::Panic) => Ok(()),
         EventKind::Watch(WatchEvent::Raised) => Ok(()),
@@ -374,6 +380,9 @@ fn fmt_event(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         EventKind::Env(EnvEvent::Call { call, arg }) => write!(w, "envcall #{call} arg={arg:#x}"),
         EventKind::Mem(MemEvent::PageFault { va, fault, resolved }) => {
             write!(w, "pagefault va={va:#x} kind={:?} resolved={resolved}", fault)
+        }
+        EventKind::Mem(MemEvent::Integrity { code, addr }) => {
+            write!(w, "integrity code={code} addr={addr:#x}")
         }
         EventKind::Halt(HaltEvent::Halt) => write!(w, "halt"),
         EventKind::Halt(HaltEvent::Panic) => write!(w, "panic"),

@@ -911,6 +911,15 @@ impl Space {
             mapped += 1;
         }
         drop(inner);
+        // debug: 用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
+        // 键 = asid << 32 | VA：多个空间共享同一堆窗口 VA，须并入空间身份防碰撞。
+        #[cfg(debug_assertions)]
+        crate::memory::integrity::LEDGER.mark(
+            (self.kind.asid() << 32) | info.va.as_usize(),
+            info.size.get(),
+            crate::lock::ra(),
+            crate::memory::integrity::OwnerKind::UserHeap,
+        );
         // SAFETY: S-mode 下 sfence.vma 恒合法。
         unsafe {
             flush_asid(self.kind.asid());
@@ -939,6 +948,9 @@ impl Space {
         unsafe {
             flush_asid(self.kind.asid());
         }
+        // debug: 注销用户堆账目（无账 = 悬垂/双释放现行；键与 heap_allocate 相同）。
+        #[cfg(debug_assertions)]
+        crate::memory::integrity::LEDGER.unmark((self.kind.asid() << 32) | addr.as_usize(), size);
         true
     }
 
@@ -1293,6 +1305,32 @@ impl Space {
             flush_asid(self.kind.asid());
         }
         Ok(())
+    }
+
+    /// 簿记↔页表一致性审计（boot / 压力测试后调用；不一致即 panic）。
+    /// 每个自持 Map 的每帧：translate(va + i·PAGE) 必须在页表中且 PA 与帧相等。
+    #[cfg(debug_assertions)]
+    pub(crate) fn audit(&self) {
+        let inner = self.inner.lock();
+        let check = |m: &Map| {
+            for (i, f) in m.frames.iter().enumerate() {
+                let va = m.va + i * PAGE_SIZE;
+                let expect = f.pa();
+                match inner.translate(va) {
+                    Some((pa, _)) if pa == expect => {}
+                    other => panic!(
+                        "space audit @{:#x}: pte {other:?} != frame {expect:#x} (map {:#x}+{})",
+                        va.as_usize(),
+                        m.va.as_usize(),
+                        m.size.get()
+                    ),
+                }
+            }
+        };
+        inner.durable.maps.iter().for_each(check);
+        for w in inner.dynamic.values() {
+            w.children.iter().for_each(check);
+        }
     }
 
     // ── 查询 ──────────────────────────────────────────────────

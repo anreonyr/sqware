@@ -14,7 +14,6 @@
 //   - 页头 used 计数只在池 inner 锁内写（feed 拿不到 inner）；
 //   - 拓扑（区段表）建成后只读；锁序 = pull/suck 先 pump 后 inner（摘空再归位），
 //     feed 仅 pump，push/tear 仅 inner——无环。
-use crate::allocator::unitmap;
 use core::ptr::NonNull;
 
 use core::alloc::{AllocError, Allocator, Layout};
@@ -99,17 +98,6 @@ impl Pool {
             let next = unsafe { head.cast::<Option<NonNull<u8>>>().read() };
             inner.freepool[power] = next;
             unsafe { inner.increase_used(head, power) };
-            // debug: 弹出块必须无主（块级双发检测），再标在途。
-            #[cfg(debug_assertions)]
-            if let Err(f) = unitmap::mark(head.as_ptr() as usize, 1usize << power) {
-                self.dump_crash_site(inner, power, "pull-mark", &f);
-                panic!(
-                    "block alloc: unit {} (addr {:#x}) ALREADY IN USE — 块级双发！({} bytes popped from freepool[{power}])",
-                    f.unit,
-                    f.addr + f.unit * 8,
-                    1usize << power
-                );
-            }
             debug!("address {:?}, power {} allocated", head, power);
             return Some(head.as_ptr() as usize);
         }
@@ -130,49 +118,19 @@ impl Pool {
             let mut depth = 0usize;
             while let Some(node) = cur {
                 if node == ptr {
-                    self.dump_crash_site(
-                        inner,
-                        power,
-                        "push-double-free",
-                        &unitmap::MarkFail {
-                            unit: 0,
-                            value: 0xff,
-                            page_idx: 0,
-                            addr: ptr.as_ptr() as usize,
-                        },
-                    );
+                    self.dump_crash_site(inner, power, "push-double-free", ptr.as_ptr() as usize);
                     panic!("block allocator: double free of {:?} (power {power})", ptr);
                 }
                 depth += 1;
                 if depth > 1 << 14 {
                     // debug: 链过长或成环——遍历失控前的护栏（环 = 某节点 next 被覆写）。
-                    self.dump_crash_site(
-                        inner,
-                        power,
-                        "push-walk-loop",
-                        &unitmap::MarkFail {
-                            unit: 0,
-                            value: 0xfe,
-                            page_idx: 0,
-                            addr: ptr.as_ptr() as usize,
-                        },
-                    );
+                    self.dump_crash_site(inner, power, "push-walk-loop", ptr.as_ptr() as usize);
                     panic!("block allocator: freepool[{power}] walk exceeded depth — cyclic list");
                 }
                 cur = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
             }
         }
 
-        // debug: 释放前先校验块确在途（错幂释放/脏指针的面具在此揭开）。
-        #[cfg(debug_assertions)]
-        if let Err(f) = unitmap::unmark(ptr.as_ptr() as usize, 1usize << power) {
-            self.dump_crash_site(inner, power, "push-unmark", &f);
-            panic!(
-                "block dealloc: unit {} (addr {:#x}) NOT IN USE — 释放未分配单元（错幂释放/脏指针），power {power}",
-                f.unit,
-                f.addr + f.unit * 8
-            );
-        }
         // 头插
         unsafe {
             ptr.cast::<Option<NonNull<u8>>>()
@@ -187,14 +145,8 @@ impl Pool {
     /// 注意：本函数**零分配**——任何 alloc 都会经 portal→block 递归/死锁，
     /// 且会污染现场。只用 putln! 直写 + 固定缓冲数组。
     #[cfg(debug_assertions)]
-    fn dump_crash_site(
-        &self,
-        inner: &mut BlockInner,
-        power: usize,
-        ctx: &str,
-        fail: &unitmap::MarkFail,
-    ) {
-        unitmap::dump_fail(fail);
+    fn dump_crash_site(&self, inner: &mut BlockInner, power: usize, ctx: &str, addr: usize) {
+        putln!("[crash] {ctx}: failing block addr {addr:#x}");
         let torn_pages = (inner.cursor - self.base) / PAGE_SIZE;
         putln!(
             "[crash] {ctx}: pool base {:#x} edge {:#x} cursor {:#x} (torn {torn_pages} pages)",
@@ -243,8 +195,8 @@ impl Pool {
                 putln!("  w{i} = {:#x}", unsafe { *p.add(i) });
             }
         }
-        let blk = (fail.addr & !(crate::memory::PAGE_SIZE - 1)) as *const usize;
-        putln!("[crash] failing page (fail.addr) head words:");
+        let blk = (addr & !(crate::memory::PAGE_SIZE - 1)) as *const usize;
+        putln!("[crash] failing page head words:");
         for i in 0..8 {
             putln!("  w{i} = {:#x}", unsafe { *blk.add(i) });
         }
@@ -268,6 +220,16 @@ impl Pool {
         }
     }
 
+    /// debug: 本池已撕页数（inner 锁内读 cursor；Banker audit 交叉核对用）。
+    #[cfg(debug_assertions)]
+    fn torn_pages(&self) -> usize {
+        self.inner
+            .lock()
+            .as_ref()
+            .map(|i| (i.cursor - self.base) / PAGE_SIZE)
+            .unwrap_or(0)
+    }
+
     /// 从区段 [base, edge) 撕下一页拆块入链，返回首块（即分配结果）。
     /// 调用方须已持本池 inner 锁（pull 内调用）。
     fn tear(&self, inner: &mut BlockInner, power: usize) -> Result<NonNull<u8>, AllocError> {
@@ -278,10 +240,9 @@ impl Pool {
         let page = inner.cursor;
         inner.cursor += PAGE_SIZE;
 
-        // debug: 登记堆页所有权（页来自自有区段，永驻不还）。单元位图已由 init
-        // 静态映射（数组区），无需逐页分配。
+        // debug: Banker 取出本页（页来自自有区段，永驻不还；双取出现行）。
         #[cfg(debug_assertions)]
-        crate::memory::allocator::pageown::hold(page);
+        crate::memory::integrity::BANKER.debit(page);
 
         if power < MAX_POWER {
             // 多块页：页头 8 字节存 used 计数，块从 offset 8 开始
@@ -291,15 +252,6 @@ impl Pool {
                 let block_nums = (PAGE_SIZE - 8) / block_size;
                 link_blocks(usable, block_nums, block_size);
                 let first = NonNull::new_unchecked(usable as *mut u8);
-                // debug: 首块随撕页分配（在途标记）
-                #[cfg(debug_assertions)]
-                if let Err(f) = unitmap::mark(first.as_ptr() as usize, block_size) {
-                    self.dump_crash_site(inner, power, "tear-mark", &f);
-                    panic!(
-                        "block tear: unit {} ALREADY IN USE — 撕出的首块居然已在使用",
-                        f.unit
-                    );
-                }
                 // 其余块留在链上：首块的 next 指向块1…——首块本次被分配，其 next 字段
                 // 将随 push 被覆盖（头插重写链头）而丢失，故先把链头写入 freepool
                 // 再清空首块的 next，避免整链随首块丢失。
@@ -313,15 +265,6 @@ impl Pool {
                 link_blocks(page, 1, block_size);
                 let first = NonNull::new_unchecked(page as *mut u8);
                 inner.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
-                // debug: 首块随撕页分配（在途标记）
-                #[cfg(debug_assertions)]
-                if let Err(f) = unitmap::mark(first.as_ptr() as usize, block_size) {
-                    self.dump_crash_site(inner, power, "tear-mark", &f);
-                    panic!(
-                        "block tear: unit {} ALREADY IN USE — 撕出的首块居然已在使用",
-                        f.unit
-                    );
-                }
                 Ok(first)
             }
         }
@@ -370,9 +313,9 @@ impl BlockInner {
             let base = block.as_ptr() as usize & !(PAGE_SIZE - 1);
             if power == MAX_POWER {
                 self.freepool[power] = purge_freelist(self.freepool[power], base);
-                // debug: 整页清链后须无活跃单元（used-counter 记账正确性检查）。
+                // debug: 整页清链后须无活跃账目（used-counter 记账正确性检查）。
                 #[cfg(debug_assertions)]
-                unitmap::assert_page_clear(base);
+                page_clear_check(base);
                 return;
             }
             let used = &mut *(base as *mut usize);
@@ -381,9 +324,9 @@ impl BlockInner {
                 return;
             }
             self.freepool[power] = purge_freelist(self.freepool[power], base);
-            // debug: 同上——整页清链后须无活跃单元（页永驻，仅校验，不归还）。
+            // debug: 同上——整页清链后须无活跃账目（页永驻，仅校验，不归还）。
             #[cfg(debug_assertions)]
-            unitmap::assert_page_clear(base);
+            page_clear_check(base);
         }
     }
 }
@@ -499,6 +442,24 @@ pub(crate) fn pool_includes(pa: usize) -> bool {
     pool_of(pa).is_some()
 }
 
+/// debug: 全部池已撕页总数（Banker audit 交叉核对用）。
+#[cfg(debug_assertions)]
+pub(crate) fn torn_pages() -> usize {
+    heap().pools.iter().map(|p| p.torn_pages()).sum()
+}
+
+/// debug: 整页归还时须无活账目（used-counter 先于账目归零 = 记账错误现行）。
+#[cfg(debug_assertions)]
+fn page_clear_check(pa: usize) {
+    if crate::memory::integrity::page_has_records(pa) {
+        crate::memory::integrity::report(
+            crate::memory::integrity::IntegrityViolation::AuditDivergence,
+            pa,
+            format_args!("page returned with live ledger entries"),
+        );
+    }
+}
+
 pub struct BlockAllocator;
 
 unsafe impl Allocator for BlockAllocator {
@@ -510,6 +471,18 @@ unsafe impl Allocator for BlockAllocator {
         let me = node_of(machine::hart_id());
         let pool = &heap().pools[me];
         let addr = pool.pull(power).ok_or(AllocError)?;
+        // debug: 整块毒化（未初始化读现行）+ 活块入账（重复入账=块级双发现行；
+        // KernelHeap 且 slack≥8 时 mark 内部写对齐 slack canary）。
+        #[cfg(debug_assertions)]
+        {
+            crate::memory::integrity::poison(addr, 1usize << power);
+            crate::memory::integrity::LEDGER.mark(
+                addr,
+                layout.size(),
+                crate::lock::ra(),
+                crate::memory::integrity::OwnerKind::KernelHeap,
+            );
+        }
         // SAFETY: pull 返回的地址必非零（分配器保证）。
         Ok(NonNull::slice_from_raw_parts(
             unsafe { NonNull::new_unchecked(addr as *mut u8) },
@@ -521,6 +494,13 @@ unsafe impl Allocator for BlockAllocator {
         let power = block_power(layout);
         let pa = ptr.addr().get();
         let Some(home) = pool_of(pa) else { return };
+        // debug: 注销账目（无账=双 free/悬垂、canary=越界、尺寸=错幂现行）+ 本体毒化
+        // 复写（头 8B 随后被 freelist 头插覆盖，其余保持毒化——UAF 读数变 0xCD）。
+        #[cfg(debug_assertions)]
+        {
+            crate::memory::integrity::LEDGER.unmark(pa, layout.size());
+            crate::memory::integrity::poison(pa, 1usize << power);
+        }
         let me = node_of(machine::hart_id());
         let pool = &heap().pools[home];
         if home == me {
@@ -600,16 +580,15 @@ pub fn init() -> InitResult<()> {
             });
         }
 
-        // debug: 页级位图按空闲区索引（frame 侧检查用）；块级位图按块区静态映射。
+        // debug: 完整性框架装配——Banker 覆盖帧池全 free 区；Ledger 按块区页数预留容量。
         #[cfg(debug_assertions)]
         {
-            use crate::memory::allocator::unitmap;
-
             let m = machine::info();
             let fbase = m.free.base;
             let fpages = m.free.size / PAGE_SIZE;
-            crate::memory::allocator::pageown::set_base(fbase, fpages);
-            unitmap::set(Box::leak(maps.into_boxed_slice()));
+            crate::memory::integrity::BANKER.init(fbase, fpages);
+            let pool_pages: usize = maps.iter().map(|&(_, _, p)| p).sum();
+            crate::memory::integrity::LEDGER.init(pool_pages.saturating_mul(4));
         }
 
         let pools = Box::leak(pools.into_boxed_slice());

@@ -192,6 +192,10 @@ pub fn init() -> ! {
     // 全部演示任务（用户 + 内核）经统一 `Team::task()` 入口生成，错误一律 `?` 上抛至本边界。
     spawn_demos().expect("boot spawn failed");
 
+    // 完整性框架（debug）：boot 收尾全量审计——Banker↔Ledger↔frame↔block 交叉核对。
+    #[cfg(debug_assertions)]
+    crate::memory::integrity::audit();
+
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
     // 经 steal 从队列取活——任务即向各核迁移）
     crate::runtime::watch::suspend();
@@ -250,6 +254,9 @@ fn spawn_demos() -> Result<(), MapError> {
     ] {
         let (team, entry) = load_user(elf);
         team.task().name(name).entry(entry).spawn()?;
+        // debug: 每个演示空间 簿记↔页表 一致性审计
+        #[cfg(debug_assertions)]
+        team.space.audit();
     }
 
     // 内核任务（ktask）：挂 kernel 团队单例，经统一 `Team::task().closure`——团队身份
@@ -260,6 +267,8 @@ fn spawn_demos() -> Result<(), MapError> {
         let mut sink = Sink;
         let _ = f.flush(&mut sink);
     })?;
+    #[cfg(debug_assertions)]
+    kernel().space.audit();
     Ok(())
 }
 
