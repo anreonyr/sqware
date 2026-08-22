@@ -64,13 +64,13 @@ fn write_addr<W: Write>(w: &mut W, a: usize) {
     }
 }
 
-/// 行尾符号化注解：地址的定宽值已写，命中出符号则追加「 name+off」（未命中无注解）。
-/// 用于对齐行：定宽 hex 是值列，符号化只作行尾追加，不影响对齐。
+/// 行尾符号化注解：地址的定宽值已写，命中出符号则追加「name+off」（未命中无注解）。
+/// 无前缀——列间分隔由 Table 的 cell padding 统一负责（避免与语义注解叠成多层空格）。
 fn addr_note<W: Write>(w: &mut W, a: usize) {
     let va = VirtAddr::from_raw(a);
     let team = running_team_try();
     if let Some((name, off)) = elftable::resolve(va, team.as_deref()) {
-        let _ = write!(w, "  {name}+{off:#x}");
+        let _ = write!(w, "{name}+{off:#x}");
     }
 }
 
@@ -140,17 +140,17 @@ fn backtrace(out: &mut [usize; BT_DEPTH]) -> usize {
     n
 }
 
-/// stval 解码：按 scause 的语义注解（fault 地址 / 指令位 / 未写入）。
+/// stval 解码：按 scause 的语义注解（fault 地址 / 指令位 / 断点地址）；
+/// 无有价值语义时输出 Unknown（中断 / ecall / 保留码 stval 均无定义）。
 fn stval_note(int: bool, code: usize) -> &'static str {
     if int {
-        return "interrupt stval undefined";
+        return "Unknown";
     }
     match code {
         0 | 1 | 4 | 5 | 6 | 7 | 12 | 13 | 15 => "faulting addr",
         2 => "illegal instruction bits",
         3 => "breakpoint addr",
-        8 | 9 | 11 => "stval not written",
-        _ => "undefined",
+        _ => "Unknown",
     }
 }
 
@@ -178,31 +178,37 @@ fn dump_csrs() {
         let row = t.open_row();
         row[0].push_str("stval");
         let _ = write!(&mut row[1], "{:#018x}", stval::read());
-        addr_note(&mut row[2], stval::read());
-        let _ = write!(&mut row[2], "  {}", stval_note(int, code));
+        // 符号命中 → 「sym note」单空格衔接；未命中 → 仅 note（无前缀）。
+        // 不写固定「  」前缀，避免与 addr_note 叠成多余空格。
+        let mut note = Fmt::<96>::new();
+        {
+            let va = VirtAddr::from_raw(stval::read());
+            let team = running_team_try();
+            if let Some((name, off)) = elftable::resolve(va, team.as_deref()) {
+                let _ = write!(note, "{name}+{off:#x} ");
+            }
+        }
+        let _ = write!(note, "{}", stval_note(int, code));
+        let _ = write!(&mut row[2], "{}", note.as_str());
     }
     {
         let row = t.open_row();
         row[0].push_str("scause");
         let _ = write!(&mut row[1], "{:#018x}", sc.bits());
         // 类型化枚举（同 trap 分发）：Trap<Interrupt, Exception> Debug 即
-        // 变体名（UserEnvCall / LoadPageFault / SupervisorTimer…）。非法码回退
-        // 打印裸码——崩溃现场不 panic；后续 CSR 行照常渲染。
+        // 变体名（UserEnvCall / LoadPageFault / SupervisorTimer…），本身自解释，
+        // 不加 int/exc 前缀（中断/异常由 bit63 隐含，hex 值列可查）。非法码回退
+        // Unknown——崩溃现场不 panic；后续 CSR 行照常渲染。
         let trap: Option<Trap<Interrupt, Exception>> = sc.cause().try_into().ok();
         match trap {
             Some(Trap::Interrupt(i)) => {
-                let _ = write!(&mut row[2], "int {:?}", i);
+                let _ = write!(&mut row[2], "{:?}", i);
             }
             Some(Trap::Exception(e)) => {
-                let _ = write!(&mut row[2], "exc {:?}", e);
+                let _ = write!(&mut row[2], "{:?}", e);
             }
             None => {
-                let _ = write!(
-                    &mut row[2],
-                    "{} code {}",
-                    if int { "int" } else { "exc" },
-                    code
-                );
+                let _ = write!(&mut row[2], "Unknown");
             }
         }
     }
@@ -213,17 +219,17 @@ fn dump_csrs() {
         addr_note(&mut row[2], stvec::read().address());
     }
     {
-        // sscratch 语义（内核约定，见 trampoline）：内核态 = 0；非 0 = 线程帧
-        // VA（用户态陷阱入口经 csrrw 交换前的用户 sp 或帧自址）。崩溃多在内核态，
-        // 0 即常态注解；非 0 只标注语义，不解析偏移（崩溃现场读运行帧有风险）。
+        // sscratch 语义（内核约定，见 trampoline）：0 = 内核态约定；非 0 =
+        // 用户态陷阱入口/线程帧相关（该值 = 曾写进 sscratch 的用户 sp 或帧自址）。
+        // 注解简化为特权归属：Kernel / User。崩溃多在内核态，0 即常态。
         let scr = sscratch::read();
         let row = t.open_row();
         row[0].push_str("sscratch");
         let _ = write!(&mut row[1], "{scr:#018x}");
         if scr == 0 {
-            let _ = write!(&mut row[2], "kernel-mode convention");
+            let _ = write!(&mut row[2], "Kernel");
         } else {
-            let _ = write!(&mut row[2], "user sp / thread frame VA");
+            let _ = write!(&mut row[2], "User");
         }
     }
     {
@@ -231,14 +237,60 @@ fn dump_csrs() {
         let row = t.open_row();
         row[0].push_str("sstatus");
         let _ = write!(&mut row[1], "{:#018x}", ss.bits());
-        let _ = write!(
-            &mut row[2],
-            "SPP {:?} SIE {} FS {:?} SD {}",
-            ss.spp(),
-            ss.sie() as u8,
-            ss.fs(),
-            ss.sd() as u8,
-        );
+        // 注解只列非默认态：前特权模式（User/Supervisor）恒打——崩溃在用户/
+        // 内核态的定位关键；布尔位置位才打缩写（SIE/SPIE/SUM/MXR/SD）；
+        // FS/VS/XS 非 Off 才打短码（Off=未启用省略；短码表见各分支注释）。
+        let mut note = Fmt::<160>::new();
+        let _ = write!(note, "{:?}", ss.spp());
+        if ss.sie() {
+            let _ = write!(note, " SIE");
+        }
+        if ss.spie() {
+            let _ = write!(note, " SPIE");
+        }
+        if ss.fs() != riscv::register::mstatus::FS::Off {
+            // FS 短码：Initial→FI / Clean→FC / Dirty→FD（Off 为未启用，不打印）。
+            // 保守 else：不 panic（诊断路径零 panic），Off 分支实际不会进入。
+            let code = match ss.fs() {
+                riscv::register::mstatus::FS::Initial => "FI",
+                riscv::register::mstatus::FS::Clean => "FC",
+                riscv::register::mstatus::FS::Dirty => "FD",
+                riscv::register::mstatus::FS::Off => "FO",
+            };
+            let _ = write!(note, " FS {code}");
+        }
+        if ss.vs() != riscv::register::mstatus::VS::Off {
+            // VS 短码：Initial→VI / Clean→VC / Dirty→VD（结构同 FS）。
+            let code = match ss.vs() {
+                riscv::register::mstatus::VS::Initial => "VI",
+                riscv::register::mstatus::VS::Clean => "VC",
+                riscv::register::mstatus::VS::Dirty => "VD",
+                riscv::register::mstatus::VS::Off => "VO",
+            };
+            let _ = write!(note, " VS {code}");
+        }
+        if ss.xs() != riscv::register::mstatus::XS::AllOff {
+            // XS 短码（结构同 FS/VS，语义平行：NoneDirtyOrClean=Initial 等价）：
+            // NoneDirtyOrClean→XI / NoneDirtySomeClean→XC / SomeDirty→XD；
+            // AllOff=未启用，不打印。
+            let code = match ss.xs() {
+                riscv::register::mstatus::XS::NoneDirtyOrClean => "XI",
+                riscv::register::mstatus::XS::NoneDirtySomeClean => "XC",
+                riscv::register::mstatus::XS::SomeDirty => "XD",
+                riscv::register::mstatus::XS::AllOff => "XA",
+            };
+            let _ = write!(note, " XS {code}");
+        }
+        if ss.sum() {
+            let _ = write!(note, " SUM");
+        }
+        if ss.mxr() {
+            let _ = write!(note, " MXR");
+        }
+        if ss.sd() {
+            let _ = write!(note, " SD");
+        }
+        let _ = write!(&mut row[2], "{}", note.as_str());
     }
     {
         let s = satp::read();
@@ -247,7 +299,7 @@ fn dump_csrs() {
         let _ = write!(&mut row[1], "{:#018x}", s.bits());
         let _ = write!(
             &mut row[2],
-            "mode {:?} asid {:#x} ppn {:#x}",
+            "{:?} {:#06x} {:#013x}",
             s.mode(),
             s.asid(),
             s.ppn(),
