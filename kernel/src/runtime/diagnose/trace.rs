@@ -92,7 +92,10 @@ pub enum HaltEvent {
 /// runtime/watch 值班看护的报警事件。
 #[derive(Clone, Copy)]
 pub enum WatchEvent {
+    /// 报警已拉响。
     Raised,
+    /// 时钟可疑：raw 与哨所标准钟偏差超限，判据撤岗（不误杀）。
+    Suspect,
 }
 
 /// boot / 副核启动的初始化消息（直打控制台会扰乱 panic 现场，改写进 trace）。
@@ -280,6 +283,11 @@ fn json_payload(e: &Event, w: &mut crate::runtime::diagnose::export::Buf) -> fmt
         EventKind::Halt(HaltEvent::Halt) => write!(w, ",\"kind\":\"halt\""),
         EventKind::Halt(HaltEvent::Panic) => write!(w, ",\"kind\":\"panic\""),
         EventKind::Watch(WatchEvent::Raised) => write!(w, ",\"kind\":\"watch\""),
+        EventKind::Watch(WatchEvent::Suspect) => {
+            write!(w, ",\"kind\":\"watch\"")?;
+            k(w, "event")?;
+            v(w, "suspect")
+        }
         EventKind::Boot(BootEvent::Launch { hart }) => {
             write!(w, ",\"kind\":\"launch\"")?;
             k(w, "hart")?;
@@ -381,6 +389,7 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         EventKind::Halt(HaltEvent::Halt) => write!(w, "halt"),
         EventKind::Halt(HaltEvent::Panic) => write!(w, "panic"),
         EventKind::Watch(WatchEvent::Raised) => write!(w, "watch raised"),
+        EventKind::Watch(WatchEvent::Suspect) => write!(w, "watch suspect"),
         EventKind::Boot(BootEvent::Launch { hart }) => write!(w, "launch hart {hart}"),
         EventKind::Boot(BootEvent::Done { hart }) => write!(w, "boot done hart {hart}"),
         EventKind::Boot(BootEvent::Stack { hart, used }) => {

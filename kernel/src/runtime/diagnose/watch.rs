@@ -86,6 +86,15 @@ static LASTBEATHART: AtomicUsize = AtomicUsize::new(usize::MAX);
 /// 阈值（ticks；由 threshold 注入）。
 static HOLDTO: AtomicU64 = AtomicU64::new(0);
 static LIVETO: AtomicU64 = AtomicU64::new(0);
+/// 哨所标准钟：全局单调时刻（判据与打点的唯一「今」来源）。仅 now() 推进；
+/// 回跳/超限不推进（钳制）。初值 0，threshold 启用时上弦为启动时刻。
+static WALL: AtomicU64 = AtomicU64::new(0);
+/// 时钟可疑：raw 超前 WALL 超 SUSPECTTO → 置位（判据撤岗）；下次正常前向推进清位。
+static SUSPECT: AtomicBool = AtomicBool::new(false);
+/// 可疑上限（ticks；threshold 派生 = LIVETO×10）。
+static SUSPECTTO: AtomicU64 = AtomicU64::new(0);
+/// 护栏额度（ticks；threshold 派生 = LIVETO/2；wait 限睡用）。0 = 未注入。
+static CAPACITY: AtomicU64 = AtomicU64::new(0);
 /// 开关：false 时 check 一律 None。
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -107,13 +116,46 @@ static WATCHED: Watched = Watched {
 
 // ── 原语 ─────────────────────────────────────────────────────────
 
-/// 打点报岗：本核完成一次确凿进展。禁用时是廉价 relaxed 判定后跳过。
-pub fn pulse() {
+/// 报时：读裸表 → 单调钳入哨所标准钟（WALL）→ 返今。判据与打点的唯一时间入口。
+///
+/// 语义：返回恒单调非降。回跳/持平（raw ≤ WALL）→ 今 = WALL；超前且超限
+/// （raw − WALL > SUSPECTTO）→ 不推进、置 Suspect（判据撤岗），今 = WALL；
+/// 正常前向 → WALL = raw 并复岗（清 Suspect）。
+pub fn now() -> Instant {
+    let raw = clock::now().as_ticks();
+    let wall = WALL.load(Ordering::Acquire);
+    if raw <= wall || raw.wrapping_sub(wall) > SUSPECTTO.load(Ordering::Relaxed) {
+        if raw > wall {
+            mark_suspect();
+        }
+        return Instant::from_ticks(wall);
+    }
+    match WALL.compare_exchange(wall, raw, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => {
+            SUSPECT.store(false, Ordering::Release);
+            Instant::from_ticks(raw)
+        }
+        Err(cur) => Instant::from_ticks(cur.max(raw)),
+    }
+}
+
+/// 时钟可疑点名：首次置位记事件（重复置位静默）。
+fn mark_suspect() {
+    if !SUSPECT.swap(true, Ordering::AcqRel) {
+        crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Watch(
+            crate::runtime::diagnose::trace::WatchEvent::Suspect,
+        ));
+    }
+}
+
+/// 打点报岗：本核完成一次确凿进展（给定今，须为 [`now`] 产物）。禁用时是
+/// 廉价 relaxed 判定后跳过。
+pub fn pulse(w: Instant) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
     let me = machine::hart_id();
-    let now = clock::now().as_ticks();
+    let now = w.as_ticks();
     if me < POOL {
         BEAT[me].store(now, Ordering::Relaxed);
     }
@@ -122,9 +164,10 @@ pub fn pulse() {
 }
 
 /// 巡岗：按现况判 A/L，命中产 report（纯读，不改状态）。前置：由健康核调用
-/// （自核刚 pulse 过，不误报），可处 SIE=0/1 trap 上下文。
+/// （自核刚 pulse 过，不误报，且今与 pulse 同源），可处 SIE=0/1 trap 上下文。
+/// 时钟可疑（Suspect 置位）期间一律撤岗返回 None。
 pub fn check(now: Instant, p: Probe) -> Option<WatchReport> {
-    if !ENABLED.load(Ordering::Relaxed) {
+    if !ENABLED.load(Ordering::Relaxed) || SUSPECT.load(Ordering::Acquire) {
         return None;
     }
     let now = now.as_ticks();
@@ -223,9 +266,7 @@ pub fn stake(addr: usize, holder: usize, holder_pc: usize) {
     WATCHED.addr.store(addr, Ordering::Relaxed);
     WATCHED.holder.store(holder, Ordering::Relaxed);
     WATCHED.holder_pc.store(holder_pc, Ordering::Relaxed);
-    WATCHED
-        .hold_start
-        .store(clock::now().as_ticks(), Ordering::Relaxed);
+    WATCHED.hold_start.store(now().as_ticks(), Ordering::Relaxed);
     WATCHED.active.store(true, Ordering::Relaxed);
 }
 
@@ -237,24 +278,34 @@ pub fn unstake(addr: usize) {
     WATCHED.active.store(false, Ordering::Relaxed);
 }
 
-/// 设阈值/开关（boot 注入）。启用同时把基线初始化到 now，避免旧 LASTBEAT=0 误报。
+/// 设阈值/开关（boot 注入）：注入 HOLDTO/LIVETO 并派生 SUSPECTTO（=LIVETO×10）与
+/// CAPACITY（=LIVETO/2）；启用时先给 WALL 上弦（防首读超限误置 Suspect），
+/// 再把基线初始化到今，避免旧 LASTBEAT=0 误报。
 pub fn threshold(cfg: Threshold) {
     HOLDTO.store(
         clock::duration_to_ticks(cfg.hold_timeout),
         Ordering::Relaxed,
     );
-    LIVETO.store(
-        clock::duration_to_ticks(cfg.liveness_timeout),
-        Ordering::Relaxed,
-    );
+    let live = clock::duration_to_ticks(cfg.liveness_timeout);
+    LIVETO.store(live, Ordering::Relaxed);
+    SUSPECTTO.store(live.saturating_mul(10), Ordering::Relaxed);
+    CAPACITY.store(live / 2, Ordering::Relaxed);
     if cfg.enabled {
-        let now = clock::now().as_ticks();
+        WALL.store(clock::now().as_ticks(), Ordering::Relaxed);
+        let w = now();
         for b in BEAT.iter() {
-            b.store(now, Ordering::Relaxed);
+            b.store(w.as_ticks(), Ordering::Relaxed);
         }
-        LASTBEAT.store(now, Ordering::Relaxed);
+        LASTBEAT.store(w.as_ticks(), Ordering::Relaxed);
     }
     ENABLED.store(cfg.enabled, Ordering::Relaxed);
+}
+
+/// 护栏额度（ticks；= LIVETO/2，threshold 派生）：wait() 以此封顶睡距——
+/// 即使最近 tock 推远或镜像失真，哨兵也会周期性醒来复查（假醒不伪装进展）。
+/// 0 = 阈值未注入 → 调用方回退默认睡距。
+pub fn capacity() -> u64 {
+    CAPACITY.load(Ordering::Relaxed)
 }
 
 /// 关键段临时撤岗。

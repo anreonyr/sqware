@@ -678,8 +678,11 @@ fn steal() -> Option<Arc<Task>> {
 /// 协议（闭合「置位后漏唤醒」窗口）：置睡眠位 → **复查**（自核队首 / steal——
 /// 置位前的 push 已按位补 IPI，置位后的 push 会看到位）→ 全退出检查 →
 /// 睡到最近 tock（tickless：由 timer::next_tock 推算，无则推远）→ WFI。唤醒后：
-/// 若为定时器到期立即 drain 唤醒到期任务（含全核休眠场景）；清 SSIP 与睡眠位，
-/// 返回 None 让外层循环重扫（也可能直接带出任务）。
+/// 有到期任务 → 正常出口（清 SSIP 与睡眠位、round 打点、外层重扫）。
+///
+/// 护栏：睡距以 watch::capacity() 封顶（防 tock 镜像/送达失真造成长睡）——
+/// 到期假醒但无活 → 哑睡壳回睡：保持睡眠位、不打点不清位（假醒不伪装进展，
+/// D 判据的「全系统无进展」语义不被假节拍污染）。
 fn wait() -> Option<Arc<Task>> {
     let me = machine::hart_id();
     tie::sleep(me);
@@ -692,20 +695,26 @@ fn wait() -> Option<Arc<Task>> {
     if tie::done() {
         tie::halt();
     }
-    // 睡到最近 tock（无待唤醒则推远 stimecmp）：全核休眠时也能被最近唤醒点准时唤醒
-    let delta = match timer::next_tock() {
-        Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
-        None => WFI_FAR,
-    };
-    arm_timer(delta);
-    // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）
-    unsafe {
-        core::arch::asm!("wfi");
+    let cap = watch::capacity();
+    loop {
+        let delta = match timer::next_tock() {
+            Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
+            None => WFI_FAR,
+        };
+        let delta = if cap != 0 { delta.min(cap) } else { delta };
+        arm_timer(delta);
+        // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+        if unpark() {
+            break;
+        }
+        // 哑睡壳（假醒无活）：保持睡眠位、不打点不清位，清残留 SSIP 后回睡。
+        // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
+        unsafe { sip::clear_ssoft() };
     }
-    // 定时器到期唤醒：立即 drain（timer::drain）把到期任务送上本核 starved——
-    // 空闲核也要能跑 unpark（原代码依赖其他核的周期中断，全核休眠会死等）
-    unpark();
-    // 唤醒后清 SSIP（防残留位导致下次 WFI 立即重醒）与睡眠位
+    // 正常出口：清 SSIP（防残留位导致下次 WFI 立即重醒）与睡眠位
     // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
     unsafe { sip::clear_ssoft() };
     tie::wake(me);
@@ -789,7 +798,7 @@ pub fn run() -> usize {
     //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒、不经过 trap_handler
     //    的路径（用户核走 trap 入口钩子）。常运行时恒 no-op。
     crate::runtime::diagnose::halt::hush();
-    watch::pulse();
+    watch::pulse(watch::now());
     let me = machine::hart_id();
     let s = &schedulers()[me];
     let mut i = s.inner.lock();
@@ -825,7 +834,7 @@ pub fn run() -> usize {
     loop {
         // 取活空转也是「活着」的形态：每轮报岗——被抢空转/steal 反复失败可能
         // 持续远超 liveness 阈值，入口只打点一次会断岗（B 判据误报 stalled）。
-        watch::pulse();
+        watch::pulse(watch::now());
         let me = machine::hart_id();
         if let Some(pa) = schedulers()[me].pop().map(|t| schedulers()[me].replace(t)) {
             return pa;
@@ -844,15 +853,17 @@ pub fn run() -> usize {
 
 // ── 适配层：watch（值班看护）──────────────────────────────────────────
 
-/// 打点 + 巡岗：pulse 后按现况判 A/L，命中即 raise。供 trap 定时器分支与
-/// wait() 唤醒后调用（健康核的节拍）。
+/// 打点 + 巡岗：取一份「今」（watch::now 钳制）——pulse 与 check 同源，判据
+/// 永不与打点各读各的表（样本契约）。供 trap 定时器分支与 wait() 唤醒后调用
+/// （健康核的节拍）。
 pub fn round() {
-    watch::pulse();
+    let w = watch::now();
+    watch::pulse(w);
     let probe = watch::Probe {
         has_work: has_work(),
         asleep: tie::waiting(),
     };
-    if let Some(r) = watch::check(clock::now(), probe) {
+    if let Some(r) = watch::check(w, probe) {
         watch::raise(r);
     }
 }
@@ -872,30 +883,29 @@ fn has_work() -> bool {
 ///
 /// 按 tock 堆（timer::drain）取到期者，与入队顺序无关。
 /// 队列锁/堆锁先放后取，绝不持队列锁取调度锁（防 ABBA）。
-pub fn unpark() {
+/// 返回：本次是否撤出过任务（wait 的哑睡壳判定用）。
+pub fn unpark() -> bool {
     let due = timer::drain(clock::now());
+    let mut woke = false;
     for handle in due {
         // blocked 映射锁：摘除（锁作用域到此语句结束即释放）
         let Some(mut task) = blocked().lock().remove(&handle) else {
             // 已取消/已由他路唤醒：跳过（timer 侧堆项已在 drain 丢弃）
             continue;
         };
+        woke = true;
         // debug: 移除后 strong 应为 1（映射条目是唯一强持有者）——若为 2 说明
         // 此刻还存在第二个持有者（比如映射里同名任务的双条目、或另一容器），
         // 全量 dump 映射抓现行。
         #[cfg(debug_assertions)]
         probe_strong(&task, "unpark: after blocked remove");
         task_mut(&mut task).transform(TaskState::Starved);
-        let mut f = Fmt::<64>::new();
-        let _ = write!(f, "task #{} ", task.id);
-        f.cell(task.name, NAME_W);
-        let _ = write!(f, ": woken");
-        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.id }));
         let me = machine::hart_id();
         schedulers()[me].push(task);
         tie::wake_all();
     }
+    woke
 }
 
 /// 在当前运行任务的空间上执行闭包（锁内借出，引用不逃逸锁）。
