@@ -26,7 +26,6 @@ use crate::runtime::switcher::trampoline::{
     alltraps_va, restore, trap_stack_bottom, trap_stack_top,
 };
 use crate::work::room::scheduler;
-#[cfg(debug_assertions)]
 use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
