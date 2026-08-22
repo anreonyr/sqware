@@ -178,17 +178,17 @@ fn asleep(words: &[AtomicUsize], h: usize) -> bool {
 /// 先于 scene 行导出（记录序：watch 事件 → watch 记录 → scene 行 → halt 记录）。
 #[cfg(feature = "semihosting")]
 fn export_report(r: &WatchReport) {
-    use crate::runtime::diagnose::export::{json_esc, line};
+    use crate::runtime::diagnose::export::{k, line, v};
     use core::fmt::Write as _;
     use table::Fmt;
     let h = machine::hart_id();
     let t = clock::now().as_ticks();
     line(|w| {
-        let _ = write!(w, "\"h\":{h},\"t\":{t},\"kind\":\"watch\",\"report\":\"");
+        let _ = write!(w, "\"h\":{h},\"t\":{t},\"kind\":\"watch\"");
+        let _ = k(w, "report");
         let mut s = Fmt::<192>::new();
         let _ = write!(s, "{r}");
-        let _ = json_esc(w, s.as_str());
-        let _ = write!(w, "\"");
+        let _ = v(w, s.as_str());
     });
 }
 

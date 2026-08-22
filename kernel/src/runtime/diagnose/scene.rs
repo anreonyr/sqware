@@ -12,9 +12,11 @@
 //! 用户运行 team 表内）的候选返回地址（去重、深度封顶）。sepc/stval/回溯每条
 //! 都经 elftable::resolve 符号化（命中出函数名），未命中打印裸 hex。
 //!
-//! 输出：崩溃现场用 table::Table 渲染（label/value 对齐，列宽自动 = max cell），
-//! 无堆无锁；与 lock/depend 同格式（标题行 + 表格）。地址符号化经 elftable
-//! （含用户 team），详见 write_addr / addr_note。
+//! 输出：标题（顶格）+ 段落（缩进表格），经 table::Para 渲染——一标题 = 一张表
+//! （段落内多表列宽无法对齐，CSR+GPR 合并单表才是对齐正道）；行 = (label, value,
+//! note) 三槽经 row3 双写：控制台表 + 宿主 scene 行（同一 &str 两个消费端）。
+//! 无堆无锁；与 lock/depend 同段落格式。地址符号化经 elftable（含用户 team），
+//! 详见 write_addr / addr_note。
 
 use core::arch::asm;
 use core::fmt::Write;
@@ -25,7 +27,7 @@ use crate::console::Sink;
 use crate::memory::manager::addr::VirtAddr;
 use crate::work::room::scheduler::{running_task_info, running_team_try};
 use crate::work::unit::elftable;
-use table::{Fmt, Table};
+use table::{Cell, Fmt, Para, RowsMut, Table};
 
 /// 回溯深度上限。
 const BT_DEPTH: usize = 32;
@@ -33,21 +35,14 @@ const BT_DEPTH: usize = 32;
 const BT_SCAN: usize = 4096;
 /// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
 const ADDR_ALIGN: usize = 4;
+/// crash scene 合并表行上限：CSR 8（task 可选 + 7 固定）+ GPR 31（非零至多 31）。
+const SCENE_ROWS: usize = 8 + 31;
 
-/// 收行：给 Fmt 拼好的缓冲补换行，一次 flush 到控制台。
-fn emit<const CAP: usize>(mut f: Fmt<CAP>) {
-    let _ = writeln!(f);
-    let mut sink = Sink;
-    let _ = f.flush(&mut sink);
-}
-
-/// 整表渲染到控制台（无堆无锁）：Table 逐行直写缩进包装的 Sink——`[scene]`
-/// 标题行顶格、表格整体缩进 2 空格（末行不补尾换行，这里补）。
-fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
-    let mut ind = crate::console::Indented::new(Sink);
-    let _ = t.render(&mut ind);
-    let mut sink = Sink;
-    let _ = sink.write_str("\n");
+/// 定宽 hex（{:#018x}）——值列的通用形态（经 Fmt::hexw）。
+fn hx(x: usize) -> Fmt<40> {
+    let mut v = Fmt::<40>::new();
+    v.hexw(x);
+    v
 }
 
 /// 写地址（保留 user team 符号化）：命中出「函数+偏移」，否则裸 hex。
@@ -72,33 +67,46 @@ fn addr_note<W: Write>(w: &mut W, a: usize) {
     }
 }
 
+/// 符号注解 → Fmt 缓冲（与值列同源，供 row3 双写）。
+fn addr_note_v(a: usize) -> Fmt<96> {
+    let mut n = Fmt::<96>::new();
+    addr_note(&mut n, a);
+    n
+}
+
 /// 一行 scene 记录 → 宿主导出文件（JSON `{"h","t","kind":"scene","tbl",
 /// "label","v","n"}`；feature semihosting 时启用）。与控制台表格同源（同一
 /// 局部 label/v/n），值/注解双写；不启用时 no-op——调用点无条件、表格照旧。
 fn scene_row(tbl: &str, label: &str, v: &str, n: &str) {
     #[cfg(feature = "semihosting")]
     {
-        use crate::runtime::diagnose::export::{json_esc, line};
+        use crate::runtime::diagnose::export::{k, line, v as jv};
         let h = crate::machine::hart_id();
         let t = crate::runtime::chrono::clock::now().as_ticks();
         line(|w| {
-            let _ = write!(
-                w,
-                "\"h\":{h},\"t\":{t},\"kind\":\"scene\",\"tbl\":\"{tbl}\""
-            );
-            let _ = write!(w, ",\"label\":\"");
-            let _ = json_esc(w, label);
-            let _ = write!(w, "\",\"v\":\"");
-            let _ = json_esc(w, v);
-            let _ = write!(w, "\",\"n\":\"");
-            let _ = json_esc(w, n);
-            let _ = write!(w, "\"");
+            let _ = write!(w, "\"h\":{h},\"t\":{t},\"kind\":\"scene\",\"tbl\":\"{tbl}\"");
+            let _ = k(w, "label");
+            let _ = jv(w, label);
+            let _ = k(w, "v");
+            let _ = jv(w, v);
+            let _ = k(w, "n");
+            let _ = jv(w, n);
         });
     }
     #[cfg(not(feature = "semihosting"))]
     {
         let _ = (tbl, label, v, n);
     }
+}
+
+/// 三槽行：label/value/note 入合并表当前行，同值导出 scene 行（tbl 由调用方给，
+/// 两消费端不可能只写一边）。行耗尽（上限满，调用方 bug）静默跳过，不 panic。
+fn row3(it: &mut RowsMut<'_, 3, 96>, tbl: &str, label: &str, v: &str, n: &str) {
+    let Some(row) = it.next() else { return; };
+    row[0] = Cell::new(label);
+    row[1] = Cell::new(v);
+    row[2] = Cell::new(n);
+    scene_row(tbl, label, v, n);
 }
 
 /// 读全部 31 个非零 GPR（x0 恒 0；ra/sp/gp/tp 首页）。
@@ -175,64 +183,44 @@ fn stval_note(int: bool, code: usize) -> &'static str {
     }
     match code {
         0 | 1 | 4 | 5 | 6 | 7 | 12 | 13 | 15 => "faulting addr",
-        2 => "illegal instruction bits",
-        3 => "breakpoint addr",
+        2 => "Illegal instruction bits",
+        3 => "Breakpoint",
         _ => "Unknown",
     }
 }
 
-/// 关键 CSR 转储（Table 渲染：三列 label/hex/注解，列宽自动 = max cell 对齐）。
-/// sepc/stval/scause = 崩点；stvec/sscratch = 陷阱入口/暂存；sstatus/satp = 特权/地址空间域。
-/// 注解列 = 符号化（sepc/stval/stvec）+ 解码（scause 用 riscv 枚举、stval 语义、
-/// sscratch 约定、sstatus 位域、satp 用 Mode 枚举）。首行 task = 运行中任务（若有；try_lock 拿不到则跳过，表格少一行）。
-fn dump_csrs() {
+/// CSR 块填充（进合并表首 8 行）：sepc/stval/scause = 崩点；stvec/sscratch =
+/// 陷阱入口/暂存；sstatus/satp = 特权/地址空间域。注解列 = 符号化（sepc/stval/
+/// stvec）+ 解码（scause 用 riscv 枚举、stval 语义、sscratch 约定、sstatus 位域、
+/// satp 用 Mode 枚举）。首行 task = 运行中任务（若有；try_lock 拿不到则跳过）。
+fn fill_csrs(it: &mut RowsMut<'_, 3, 96>) {
     let sc = scause::read();
     let (int, code) = (sc.is_interrupt(), sc.code());
-    let mut t = Table::<8, 3, 160>::new();
-    t.set_col_width(0, 10);
     if let Some((tid, name)) = running_task_info() {
-        let row = t.open_row();
-        row[0].push_str("task");
         let mut v = Fmt::<64>::new();
         let _ = write!(v, "#{tid} '{name}'");
-        row[1].push_str(v.as_str());
-        scene_row("csr", "task", v.as_str(), "");
+        row3(it, "csr", "task", v.as_str(), "");
     }
+    row3(
+        it,
+        "csr",
+        "sepc",
+        hx(sepc::read()).as_str(),
+        addr_note_v(sepc::read()).as_str(),
+    );
     {
-        let row = t.open_row();
-        row[0].push_str("sepc");
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{:#018x}", sepc::read());
-        let mut n = Fmt::<96>::new();
-        addr_note(&mut n, sepc::read());
-        row[1].push_str(v.as_str());
-        row[2].push_str(n.as_str());
-        scene_row("csr", "sepc", v.as_str(), n.as_str());
-    }
-    {
-        let row = t.open_row();
-        row[0].push_str("stval");
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{:#018x}", stval::read());
-        let mut n = Fmt::<96>::new();
         // 符号命中 → 「sym note」单空格衔接；未命中 → 仅 note（无前缀）。
         // 不写固定「  」前缀，避免与 addr_note 叠成多余空格。
-        {
-            let va = VirtAddr::from_raw(stval::read());
-            if let Some((name, off)) = elftable::resolve(va, running_team_try().as_deref()) {
-                let _ = write!(n, "{name}+{off:#x} ");
-            }
+        let a = stval::read();
+        let mut n = Fmt::<96>::new();
+        let va = VirtAddr::from_raw(a);
+        if let Some((name, off)) = elftable::resolve(va, running_team_try().as_deref()) {
+            let _ = write!(n, "{name}+{off:#x} ");
         }
         let _ = write!(n, "{}", stval_note(int, code));
-        row[1].push_str(v.as_str());
-        row[2].push_str(n.as_str());
-        scene_row("csr", "stval", v.as_str(), n.as_str());
+        row3(it, "csr", "stval", hx(a).as_str(), n.as_str());
     }
     {
-        let row = t.open_row();
-        row[0].push_str("scause");
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{:#018x}", sc.bits());
         // 类型化枚举（同 trap 分发）：Trap<Interrupt, Exception> Debug 即
         // 变体名（UserEnvCall / LoadPageFault / SupervisorTimer…），本身自解释，
         // 不加 int/exc 前缀（中断/异常由 bit63 隐含，hex 值列可查）。非法码回退
@@ -250,46 +238,29 @@ fn dump_csrs() {
                 let _ = write!(n, "Unknown");
             }
         }
-        row[1].push_str(v.as_str());
-        row[2].push_str(n.as_str());
-        scene_row("csr", "scause", v.as_str(), n.as_str());
+        row3(it, "csr", "scause", hx(sc.bits()).as_str(), n.as_str());
     }
-    {
-        let row = t.open_row();
-        row[0].push_str("stvec");
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{:#018x}", stvec::read().address());
-        let mut n = Fmt::<96>::new();
-        addr_note(&mut n, stvec::read().address());
-        row[1].push_str(v.as_str());
-        row[2].push_str(n.as_str());
-        scene_row("csr", "stvec", v.as_str(), n.as_str());
-    }
+    row3(
+        it,
+        "csr",
+        "stvec",
+        hx(stvec::read().address()).as_str(),
+        addr_note_v(stvec::read().address()).as_str(),
+    );
     {
         // sscratch 语义（内核约定，见 trampoline）：0 = 内核态约定；非 0 =
         // 用户态陷阱入口/线程帧相关（该值 = 曾写进 sscratch 的用户 sp 或帧自址）。
         // 注解简化为特权归属：Kernel / User。崩溃多在内核态，0 即常态。
         let scr = sscratch::read();
-        let row = t.open_row();
-        row[0].push_str("sscratch");
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{scr:#018x}");
         let n = if scr == 0 { "Kernel" } else { "User" };
-        row[1].push_str(v.as_str());
-        row[2].push_str(n);
-        scene_row("csr", "sscratch", v.as_str(), n);
+        row3(it, "csr", "sscratch", hx(scr).as_str(), n);
     }
     {
         let ss = sstatus::read();
-        let row = t.open_row();
-        row[0].push_str("sstatus");
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{:#018x}", ss.bits());
-        row[1].push_str(v.as_str());
         // 注解只列非默认态：前特权模式（User/Supervisor）恒打——崩溃在用户/
         // 内核态的定位关键；布尔位置位才打缩写（SIE/SPIE/SUM/MXR/SD）；
         // FS/VS/XS 非 Off 才打短码（Off=未启用省略；短码表见各分支注释）。
-        let mut note = Fmt::<160>::new();
+        let mut note = Fmt::<96>::new();
         let _ = write!(note, "{:?}", ss.spp());
         if ss.sie() {
             let _ = write!(note, " SIE");
@@ -339,90 +310,78 @@ fn dump_csrs() {
         if ss.sd() {
             let _ = write!(note, " SD");
         }
-        row[2].push_str(note.as_str());
-        scene_row("csr", "sstatus", v.as_str(), note.as_str());
+        row3(it, "csr", "sstatus", hx(ss.bits()).as_str(), note.as_str());
     }
     {
         let s = satp::read();
-        let row = t.open_row();
-        row[0].push_str("satp");
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{:#018x}", s.bits());
         let mut n = Fmt::<96>::new();
-        let _ = write!(
-            n,
-            "{:?} {:#06x} {:#013x}",
-            s.mode(),
-            s.asid(),
-            s.ppn(),
-        );
-        row[1].push_str(v.as_str());
-        row[2].push_str(n.as_str());
-        scene_row("csr", "satp", v.as_str(), n.as_str());
+        let _ = write!(n, "{:?} {:#06x} {:#013x}", s.mode(), s.asid(), s.ppn(),);
+        row3(it, "csr", "satp", hx(s.bits()).as_str(), n.as_str());
     }
-    write_table(t);
 }
 
-/// GPR 转储（只打非零，命名打印）。Table 渲染两列 name/hex——列宽自动
-/// = max cell 对齐（非零寄存器逐行，矩阵由 Table 游标填满）。
-fn dump_gprs() {
+/// GPR 块填充（进合并表 8 行之后，只打非零）：两槽行（label/hex），note 空。
+fn fill_gprs(it: &mut RowsMut<'_, 3, 96>) {
     const NAMES: [&str; 32] = [
         "x0", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
         "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
         "t5", "t6",
     ];
     let r = gprs();
-    let mut t = Table::<32, 2, 64>::new();
-    t.set_col_width(0, 10);
     for (i, name) in NAMES.iter().enumerate().skip(1) {
         if r[i] == 0 {
             continue;
         }
-        let row = t.open_row();
-        row[0].push_str(name);
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{:#018x}", r[i]);
-        row[1].push_str(v.as_str());
-        scene_row("gpr", name, v.as_str(), "");
+        row3(it, "gpr", name, hx(r[i]).as_str(), "");
     }
-    write_table(t);
 }
 
-/// 栈回溯转储（每条符号化）。标题行带 `[scene]` 前缀，帧行 Table 渲染两列
-/// （#i / 符号化地址——列宽自动 = max cell 对齐）。
-fn dump_backtrace() {
-    let mut bt = [0usize; BT_DEPTH];
-    let n = backtrace(&mut bt);
-    let mut f = Fmt::<256>::new();
-    let _ = writeln!(f, "[scene] backtrace ({} frames):", n);
-    emit(f);
-    let mut t = Table::<{ BT_DEPTH }, 2, 96>::new();
-    t.set_col_width(0, 10);
-    for (i, a) in bt[..n].iter().enumerate() {
-        let row = t.open_row();
-        let mut l = Fmt::<16>::new();
-        let _ = write!(l, "#{i}");
-        let mut v = Fmt::<40>::new();
-        let _ = write!(v, "{:#018x}", a);
-        let mut s = Fmt::<96>::new();
-        write_addr(&mut s, *a);
-        row[0].push_str(l.as_str());
-        row[1].push_str(s.as_str());
-        scene_row("bt", l.as_str(), v.as_str(), s.as_str());
-    }
-    write_table(t);
+/// 回溯两槽行：#i / 符号化地址；导出行 v = 定宽 hex、n = 符号。
+fn bt_row(it: &mut RowsMut<'_, 2, 96>, i: usize, a: usize) {
+    let Some(row) = it.next() else { return; };
+    let mut l = Fmt::<16>::new();
+    let _ = write!(l, "#{i}");
+    let mut s = Fmt::<96>::new();
+    write_addr(&mut s, a);
+    row[0] = Cell::new(l.as_str());
+    row[1] = Cell::new(s.as_str());
+    scene_row("bt", l.as_str(), hx(a).as_str(), s.as_str());
 }
 
 /// 统一崩溃现场转储：hart + 任务 + CSR + GPR + 回溯 + 事件窗口。
-/// running task 并入 CSR 表首行（label=task，值列写「#tid 'name'」）——不单独
-/// 打印缩进行，保持「标题行 + 顶格表格」风格统一（无行首空格）。
+///
+/// 段落（一标题 = 一张表）：crash scene 段 = 合并表（CSR + GPR——列宽对齐靠合并，
+/// 非两表独立 auto；boot banner 同款）；backtrace 段独立标题独立表。running task
+/// 并入 CSR 首行（label=task）——不单独打印缩进行，保持「标题行 + 顶格表格」。
 pub fn dump_crash() {
-    let mut f = Fmt::<128>::new();
-    let _ = writeln!(f, "[scene] crash scene, hart {}", crate::machine::hart_id());
-    emit(f);
-    dump_csrs();
-    dump_gprs();
-    dump_backtrace();
+    // crash scene 段：标题 + 合并表。
+    let mut p = Para::new(Sink);
+    p.title(format_args!(
+        "[scene] crash scene, hart {}",
+        crate::machine::hart_id()
+    ));
+    let mut t = Table::<3, SCENE_ROWS, 96>::new();
+    {
+        let mut it = t.rows_mut();
+        fill_csrs(&mut it);
+        fill_gprs(&mut it);
+    }
+    p.table(&t);
+
+    // backtrace 段：独立标题 + 独立表（段内单表，auto 列宽一致）。
+    let mut bt = [0usize; BT_DEPTH];
+    let n = backtrace(&mut bt);
+    let mut p2 = Para::new(Sink);
+    p2.title(format_args!("[scene] backtrace {n} frames"));
+    let mut b = Table::<2, { BT_DEPTH }, 96>::new();
+    {
+        let mut it = b.rows_mut();
+        for (i, a) in bt[..n].iter().enumerate() {
+            bt_row(&mut it, i, *a);
+        }
+    }
+    p2.table(&b);
+
     // 每 hart 最近事件窗口文本统一倒出（报警核；崩溃后其余核已停写）。
     // JSON 侧事件已实时导出，窗口文本供终端上下文对照（人读）。
     crate::runtime::diagnose::trace::panic_dump();

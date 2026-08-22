@@ -30,6 +30,11 @@ impl<const CAP: usize> Fmt<CAP> {
         let _ = write!(self.buf, "{a:#x}");
     }
 
+    /// 追加定宽 hex（{:#018x}：0x + 16 位）——诊断现场地址列的统一宽度。
+    pub fn hexw(&mut self, a: usize) {
+        let _ = write!(self.buf, "{a:#018x}");
+    }
+
     /// 追加字节数（B / KiB / MiB，>=1MiB 才换 MiB）。
     /// 全整数运算（无堆打印绝不碰浮点——RISC-V 无 FPU/未开 FS 时浮点即
     /// IllegalInstruction）；单位切换取整数商，损失精度可接受（只求大数可读）。

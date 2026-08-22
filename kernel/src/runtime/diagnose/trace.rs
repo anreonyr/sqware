@@ -22,25 +22,9 @@ use core::fmt::Write;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::console::Sink;
-use crate::machine;
 use crate::memory::manager::fault::FaultKind;
-use table::{Fmt, Table};
-
-/// 收行：给 Fmt 拼好的缓冲补换行，一次 flush 到控制台（无堆无锁）。
-fn emit<const CAP: usize>(mut f: Fmt<CAP>) {
-    let _ = writeln!(f);
-    let mut sink = Sink;
-    let _ = f.flush(&mut sink);
-}
-
-/// 整表渲染到控制台（无堆无锁）：Table 逐行直写缩进包装的 Sink——`[trace]`
-/// 标题行顶格、表格整体缩进 2 空格（末行不补尾换行，这里补）。
-fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
-    let mut ind = crate::console::Indented::new(Sink);
-    let _ = t.render(&mut ind);
-    let mut sink = Sink;
-    let _ = sink.write_str("\n");
-}
+use crate::{machine, putln};
+use table::{Cell, Fmt, Para, Table};
 
 /// 每 hart 事件窗口容量。
 pub const BUFFER_SIZE: usize = 512;
@@ -192,8 +176,8 @@ pub fn note(kind: EventKind) {
 }
 
 // ── 宿主镜像适配（feature gate: semihosting）──────────────────────────
-// 事件 JSON 序列化（kind_str/fields_json）在此；文件/分帧/锁/闩均归
-// diagnose::export（JSON Lines 单文件 sqware-diagnose.jsonl）。
+// 事件 JSON 序列化（json_payload）在此；人读文本（fmt_description）同源平行。
+// 文件/分帧/锁/闩均归 diagnose::export（JSON Lines 单文件 sqware-diagnose.jsonl）。
 
 /// 宿主镜像：把一条事件序列化成 JSON 记录，经 `export::line` 写入宿主文件
 /// sqware-diagnose.jsonl。依赖 QEMU -semihosting（feature 默认开启，runner
@@ -206,81 +190,112 @@ fn host_note(kind: EventKind, hart: usize, when: u64) {
     use crate::runtime::diagnose::export::line;
     let e = Event { when, kind };
     line(|w| {
-        let _ = write!(
-            w,
-            "\"h\":{hart},\"t\":{},\"kind\":\"{}\"",
-            e.when,
-            kind_str(e.kind)
-        );
-        let _ = fields_json(&e, w);
+        let _ = write!(w, "\"h\":{hart},\"t\":{}", e.when);
+        let _ = json_payload(&e, w);
     });
 }
 
+/// 一条事件的 JSON 载荷：`,"kind":"…"` + 模块字段（数字裸写、字符串经 k/v）。
+/// 与 fmt_description（人读文本）平行——事件只有机器/人读两个形状，各一个 match。
 #[cfg(feature = "semihosting")]
-fn kind_str(k: EventKind) -> &'static str {
-    match k {
-        EventKind::Sched(SchedEvent::Spawn { .. }) => "spawn",
-        EventKind::Sched(SchedEvent::Switch { .. }) => "switch",
-        EventKind::Sched(SchedEvent::Starve { .. }) => "starve",
-        EventKind::Sched(SchedEvent::Steal { .. }) => "steal",
-        EventKind::Sched(SchedEvent::Park { .. }) => "park",
-        EventKind::Sched(SchedEvent::Wake { .. }) => "wake",
-        EventKind::Sched(SchedEvent::Exit { .. }) => "exit",
-        EventKind::Sched(SchedEvent::Reap { .. }) => "reap",
-        EventKind::Sched(SchedEvent::Idle) => "idle",
-        EventKind::Env(EnvEvent::Call { .. }) => "envcall",
-        EventKind::Mem(MemEvent::PageFault { .. }) => "pagefault",
-        EventKind::Mem(MemEvent::Integrity { .. }) => "integrity",
-        EventKind::Halt(HaltEvent::Halt) => "halt",
-        EventKind::Halt(HaltEvent::Panic) => "panic",
-        EventKind::Watch(WatchEvent::Raised) => "watch",
-        EventKind::Boot(BootEvent::Launch { .. }) => "launch",
-        EventKind::Boot(BootEvent::Done { .. }) => "bootdone",
-        EventKind::Boot(BootEvent::Stack { .. }) => "trpstack",
-    }
-}
-
-#[cfg(feature = "semihosting")]
-fn fields_json(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
+fn json_payload(e: &Event, w: &mut crate::runtime::diagnose::export::Buf) -> fmt::Result {
+    use crate::runtime::diagnose::export::{k, v};
     match e.kind {
-        EventKind::Sched(SchedEvent::Spawn { tid }) => write!(w, ",\"tid\":{tid}"),
-        EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }) => {
-            write!(w, ",\"prev\":{prev_tid},\"next\":{next_tid}")
+        EventKind::Sched(SchedEvent::Spawn { tid }) => {
+            write!(w, ",\"kind\":\"spawn\"")?;
+            k(w, "tid")?;
+            write!(w, "{tid}")
         }
-        EventKind::Sched(SchedEvent::Starve { tid }) => write!(w, ",\"tid\":{tid}"),
+        EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }) => {
+            write!(w, ",\"kind\":\"switch\"")?;
+            k(w, "prev")?;
+            write!(w, "{prev_tid}")?;
+            k(w, "next")?;
+            write!(w, "{next_tid}")
+        }
+        EventKind::Sched(SchedEvent::Starve { tid }) => {
+            write!(w, ",\"kind\":\"starve\"")?;
+            k(w, "tid")?;
+            write!(w, "{tid}")
+        }
         EventKind::Sched(SchedEvent::Steal { tid, src_hart }) => {
-            write!(w, ",\"tid\":{tid},\"src_hart\":{src_hart}")
+            write!(w, ",\"kind\":\"steal\"")?;
+            k(w, "tid")?;
+            write!(w, "{tid}")?;
+            k(w, "src_hart")?;
+            write!(w, "{src_hart}")
         }
         EventKind::Sched(SchedEvent::Park { tid, wake_at }) => {
-            write!(w, ",\"tid\":{tid},\"wake_at\":{wake_at}")
+            write!(w, ",\"kind\":\"park\"")?;
+            k(w, "tid")?;
+            write!(w, "{tid}")?;
+            k(w, "wake_at")?;
+            write!(w, "{wake_at}")
         }
-        EventKind::Sched(SchedEvent::Wake { tid }) => write!(w, ",\"tid\":{tid}"),
-        EventKind::Sched(SchedEvent::Exit { tid }) => write!(w, ",\"tid\":{tid}"),
-        EventKind::Sched(SchedEvent::Reap { tid }) => write!(w, ",\"tid\":{tid}"),
-        EventKind::Sched(SchedEvent::Idle) => Ok(()),
+        EventKind::Sched(SchedEvent::Wake { tid }) => {
+            write!(w, ",\"kind\":\"wake\"")?;
+            k(w, "tid")?;
+            write!(w, "{tid}")
+        }
+        EventKind::Sched(SchedEvent::Exit { tid }) => {
+            write!(w, ",\"kind\":\"exit\"")?;
+            k(w, "tid")?;
+            write!(w, "{tid}")
+        }
+        EventKind::Sched(SchedEvent::Reap { tid }) => {
+            write!(w, ",\"kind\":\"reap\"")?;
+            k(w, "tid")?;
+            write!(w, "{tid}")
+        }
+        EventKind::Sched(SchedEvent::Idle) => write!(w, ",\"kind\":\"idle\""),
         EventKind::Env(EnvEvent::Call { call, arg }) => {
-            write!(w, ",\"call\":{call},\"arg\":{arg:#x}")
+            write!(w, ",\"kind\":\"envcall\"")?;
+            k(w, "call")?;
+            write!(w, "{call}")?;
+            k(w, "arg")?;
+            write!(w, "{arg:#x}")
         }
         EventKind::Mem(MemEvent::PageFault {
             va,
             fault,
             resolved,
         }) => {
-            write!(
-                w,
-                ",\"va\":{va:#x},\"fault\":\"{:?}\",\"resolved\":{resolved}",
-                fault
-            )
+            write!(w, ",\"kind\":\"pagefault\"")?;
+            k(w, "va")?;
+            write!(w, "{va:#x}")?;
+            k(w, "fault")?;
+            let mut f = Fmt::<32>::new();
+            let _ = write!(f, "{fault:?}");
+            v(w, f.as_str())?;
+            k(w, "resolved")?;
+            write!(w, "{resolved}")
         }
         EventKind::Mem(MemEvent::Integrity { code, addr }) => {
-            write!(w, ",\"code\":{code},\"addr\":{addr:#x}")
+            write!(w, ",\"kind\":\"integrity\"")?;
+            k(w, "code")?;
+            write!(w, "{code}")?;
+            k(w, "addr")?;
+            write!(w, "{addr:#x}")
         }
-        EventKind::Halt(HaltEvent::Halt) | EventKind::Halt(HaltEvent::Panic) => Ok(()),
-        EventKind::Watch(WatchEvent::Raised) => Ok(()),
-        EventKind::Boot(BootEvent::Launch { hart }) => write!(w, ",\"hart\":{hart}"),
-        EventKind::Boot(BootEvent::Done { hart }) => write!(w, ",\"hart\":{hart}"),
+        EventKind::Halt(HaltEvent::Halt) => write!(w, ",\"kind\":\"halt\""),
+        EventKind::Halt(HaltEvent::Panic) => write!(w, ",\"kind\":\"panic\""),
+        EventKind::Watch(WatchEvent::Raised) => write!(w, ",\"kind\":\"watch\""),
+        EventKind::Boot(BootEvent::Launch { hart }) => {
+            write!(w, ",\"kind\":\"launch\"")?;
+            k(w, "hart")?;
+            write!(w, "{hart}")
+        }
+        EventKind::Boot(BootEvent::Done { hart }) => {
+            write!(w, ",\"kind\":\"bootdone\"")?;
+            k(w, "hart")?;
+            write!(w, "{hart}")
+        }
         EventKind::Boot(BootEvent::Stack { hart, used }) => {
-            write!(w, ",\"hart\":{hart},\"used\":{used}")
+            write!(w, ",\"kind\":\"trpstack\"")?;
+            k(w, "hart")?;
+            write!(w, "{hart}")?;
+            k(w, "used")?;
+            write!(w, "{used}")
         }
     }
 }
@@ -374,25 +389,29 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
     }
 }
 
-/// 崩溃转储：遍历已启动各 hart 的最近窗口，按「标题行 + 两列表（t/描述）」倒出。
+/// 崩溃转储：遍历已启动各 hart 的最近窗口，按段落（标题 + 两列表 t/描述）倒出。
 ///
 /// 必须在 halt 已让其它核停写后调用（panic_handler 的报警核）。无分配、无锁。
-/// 每 hart 一个 Table（列宽自动 = max cell 对齐）；标题行顶格、表格经 Indented
-/// 缩进 2 空格——与 scene/depend 同格式。只倒最近 TRACE_DUMP 条。
+/// 每 hart 一个段落（标题后空行、表格经 Para 缩进 2 空格——与 scene/depend 同
+/// 格式）。只倒最近 TRACE_DUMP 条。
 pub fn panic_dump() {
-    let mut f = Fmt::<64>::new();
-    let _ = writeln!(f, "[trace] per-hart event window:");
-    emit(f);
     for h in 0..machine::hart_count() {
-        let mut t = Fmt::<64>::new();
-        let _ = writeln!(t, "[trace] hart {h}:");
-        emit(t);
-        let mut tab = Table::<{ TRACE_DUMP }, 2, 96>::new();
-        dump(h, TRACE_DUMP, |e| {
-            let row = tab.open_row();
-            let _ = write!(&mut row[0], "{:#018x}", e.when);
-            let _ = fmt_description(e, &mut row[1]);
-        });
-        write_table(tab);
+        let mut p = Para::new(Sink);
+        p.title(format_args!("[trace] hart {h}:"));
+        let mut tab = Table::<2, { TRACE_DUMP }, 96>::new();
+        {
+            let mut it = tab.rows_mut();
+            dump(h, TRACE_DUMP, |e| {
+                let Some(row) = it.next() else { return; };
+                let mut w = Fmt::<40>::new();
+                w.hexw(e.when as usize);
+                let mut d = Fmt::<96>::new();
+                let _ = fmt_description(e, &mut d);
+                row[0] = Cell::new(w.as_str());
+                row[1] = Cell::new(d.as_str());
+            });
+        }
+        p.table(&tab);
+        putln!();
     }
 }

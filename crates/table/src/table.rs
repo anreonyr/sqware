@@ -1,150 +1,173 @@
-//! 表格 —— 行导向有界格子，自研渲染（无 papergrid）。
+//! 表格 —— 无堆容器渲染：Table 装 Cell、Cell 装 Str、Str 由格式化器产。
 //!
-//! 行导向构建：open_row 推一行（游标自增，不数行号）、blank_row 空行分隔；
-//! render 逐行直写 sink。锁死无分配出口：只走 &mut fmt::Write，绝不 to_string()（std 分配出口）。
-//! 不变量：同列所有格等宽（列宽 = 该列 max cell 宽或显式 set_col_width）；结构即保证。
+//! 层级（签名即文档，格式化与容纳分离是类型义务）：
+//!   Fmt（格式化器，产 &str）→ Cell（容器，装 Str + 自对齐）→ Table（容器，装 Cell）
+//!
+//! 渲染：列宽一律 auto = max cell；第 0 列顶格、列间 1 空格；每格由 Cell::pad
+//! 按自对齐成型（内容超格容量在 put 时截断，渲染层不截）。行位置由 Table 管理
+//! （rows_mut 迭代器推进）；行耗尽返回 None，调用方静默跳过——诊断路径零 panic。
+//! 段落形状（标题顶格 + 内容缩进）归 para，本模块只渲染表体。
 
 use core::fmt::{self, Write};
 
 use arrayvec::ArrayString;
 
-/// 行内对齐。
+/// 列内对齐（每格自带，默认 Left）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Align {
     Left,
     Right,
 }
 
-/// 一个格子：有界栈字符串。写满自动截断（不 panic）——崩溃现场语义。
-pub type Cell<const CAP: usize> = ArrayString<CAP>;
-
-/// 渲染输出缓冲：一段有界栈字符串，调用方整块直写自己的 sink。
+/// 渲染输出缓冲：一段有界栈字符串（ArrayString 别名；Fmt 行缓冲同用它）。
 pub type Line<const CAP: usize> = ArrayString<CAP>;
 
-/// 每格左右 padding 各 PAD 空格。
-const PAD: usize = 1;
-
-/// 表格：行导向有界格子，render 逐行直写。
+/// 格 = Str 容器 + 自对齐。
 ///
-/// 约束：row/col 数、cell 容量都是编译期常量；对齐 per-column（默认 Left）。
-pub struct Table<const ROWS: usize, const COLS: usize, const CAP: usize> {
-    grid: [[Cell<CAP>; COLS]; ROWS],
-    nrows: usize, // 行游标：已填行数（open_row/blank_row 自增，其余行忽略）
-    align: [Align; COLS],
-    width: [Option<usize>; COLS],
+/// 内容超 S 截断（不 panic）；不实现 Write——str 必由格式化器（Fmt）产生，直写
+/// 格子的形态不可表达（格式化与容纳分离）。空串 = 空格子（渲染为该列宽空格）。
+#[derive(Clone, Copy)]
+pub struct Cell<const S: usize> {
+    buf: ArrayString<S>,
+    align: Align,
 }
 
-impl<const ROWS: usize, const COLS: usize, const CAP: usize> Table<ROWS, COLS, CAP> {
-    /// 建空表。全部容量编译期定死。
-    pub fn new() -> Self {
+impl<const S: usize> Cell<S> {
+    /// 建格即放内容（空串也合法）。
+    pub fn new(s: &str) -> Self {
+        let mut buf = ArrayString::new();
+        let _ = buf.push_str(s);
         Self {
-            grid: [[ArrayString::new(); COLS]; ROWS],
-            nrows: 0,
-            align: [Align::Left; COLS],
-            width: [None; COLS],
+            buf,
+            align: Align::Left,
         }
     }
 
-    /// 已填行数。
-    pub fn num_rows(&self) -> usize {
-        self.nrows
+    /// 设自对齐（默认 Left）。链式：`Cell::new(s).align(Align::Right)`。
+    pub fn align(mut self, a: Align) -> Self {
+        self.align = a;
+        self
     }
 
-    /// 列数（编译期常量）。
-    pub const fn num_cols(&self) -> usize {
-        COLS
+    /// 内容读出。
+    pub fn as_str(&self) -> &str {
+        self.buf.as_str()
     }
 
-    /// 空表判定。
-    pub fn is_empty(&self) -> bool {
-        self.nrows == 0
-    }
-
-    /// 推一行：返回整行格子的可变引用（游标自增）。动态值（地址/格式化）
-    /// 直写；常量下标越界=编译错。满 ROWS 后继续推 panic。
-    pub fn open_row(&mut self) -> &mut [Cell<CAP>; COLS] {
-        assert!(self.nrows < ROWS, "table: rows exhausted");
-        let row = self.nrows;
-        self.nrows += 1;
-        &mut self.grid[row]
-    }
-
-    /// 空行分隔（游标自增，格留空——渲染为该行两列 padding 空格）。
-    pub fn blank_row(&mut self) {
-        assert!(self.nrows < ROWS, "table: rows exhausted");
-        self.nrows += 1;
-    }
-
-    /// 设某列对齐（默认 Left；Right 用于地址列整列右对齐）。
-    pub fn set_col_align(&mut self, col: usize, align: Align) {
-        assert!(col < COLS, "table: column out of bounds");
-        self.align[col] = align;
-    }
-
-    /// 设某列显式宽（None=render 时取该列最大 cell 宽）。
-    pub fn set_col_width(&mut self, col: usize, w: usize) {
-        assert!(col < COLS, "table: column out of bounds");
-        self.width[col] = Some(w);
-    }
-
-    /// 渲染整表到 sink（无堆：逐行直写）。
-    ///
-    /// 每格 = 左 PAD 空格 + 按列对齐 pad 到列宽 + 右 PAD 空格；行间换行。
-    /// 末行不补尾换行（调用方定）；空表 no-op。
-    pub fn render<W: Write>(&self, out: &mut W) -> fmt::Result {
-        if self.nrows == 0 {
-            return Ok(());
-        }
-        let mut width = [0usize; COLS];
-        for c in 0..COLS {
-            width[c] = match self.width[c] {
-                Some(w) => w,
-                None => {
-                    let mut m = 0usize;
-                    for r in 0..self.nrows {
-                        m = m.max(self.grid[r][c].chars().count());
-                    }
-                    m
-                }
-            };
-        }
-        for r in 0..self.nrows {
-            if r > 0 {
-                out.write_char('\n')?;
-            }
-            for c in 0..COLS {
-                let cell = &self.grid[r][c];
-                // 左 padding：第 0 列顶格（行首无空格），其后列各 PAD 空格
-                if c > 0 {
-                    for _ in 0..PAD {
-                        out.write_char(' ')?;
-                    }
-                }
-                // 按列对齐 pad 到列宽
-                let fill = width[c].saturating_sub(cell.chars().count());
-                if self.align[c] == Align::Right {
-                    for _ in 0..fill {
-                        out.write_char(' ')?;
-                    }
-                    out.write_str(cell.as_str())?;
-                } else {
-                    out.write_str(cell.as_str())?;
-                    for _ in 0..fill {
-                        out.write_char(' ')?;
-                    }
-                }
-                // 右 padding PAD 空格
-                for _ in 0..PAD {
+    /// 成型：按自对齐把内容补空格到 width 后直写 sink（Left 补右侧 / Right 补左侧）。
+    pub fn pad<W: Write>(&self, out: &mut W, width: usize) -> fmt::Result {
+        let fill = width.saturating_sub(self.buf.as_str().chars().count());
+        match self.align {
+            Align::Left => {
+                out.write_str(self.buf.as_str())?;
+                for _ in 0..fill {
                     out.write_char(' ')?;
                 }
+            }
+            Align::Right => {
+                for _ in 0..fill {
+                    out.write_char(' ')?;
+                }
+                out.write_str(self.buf.as_str())?;
             }
         }
         Ok(())
     }
 }
 
-impl<const ROWS: usize, const COLS: usize, const CAP: usize> Default for Table<ROWS, COLS, CAP> {
+/// 表 = Cell 的容器（R 行 × C 列，格容量 S）。列宽一律 auto = max cell。
+pub struct Table<const C: usize, const R: usize, const S: usize> {
+    grid: [[Cell<S>; C]; R],
+    nrows: usize,
+}
+
+impl<const C: usize, const R: usize, const S: usize> Table<C, R, S> {
+    /// 建空表（格子全空串）。
+    pub fn new() -> Self {
+        Self {
+            grid: [[Cell {
+                buf: ArrayString::new(),
+                align: Align::Left,
+            }; C]; R],
+            nrows: 0,
+        }
+    }
+
+    /// 行的可变迭代器：next 推进一行并返回该行格子（行位置由本表管理，调用方
+    /// 不必数行号）。行耗尽返回 None——调用方静默跳过，诊断路径不 panic。
+    pub fn rows_mut(&mut self) -> RowsMut<'_, C, S> {
+        RowsMut {
+            rows: self.grid.as_mut_slice().as_mut_ptr(),
+            left: R,
+            nrows: &mut self.nrows,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    /// 已填行数（渲染范围）。
+    pub fn num_rows(&self) -> usize {
+        self.nrows
+    }
+
+    /// 渲染整表到 sink：列宽 auto、第 0 列顶格、列间 1 空格、行间换行，末行不补
+    /// 尾换行（段落收尾归 para::Para）。空表 no-op。渲染层不截断（列宽按内容）。
+    pub fn render<W: Write>(&self, out: &mut W) -> fmt::Result {
+        if self.nrows == 0 {
+            return Ok(());
+        }
+        // 列宽 = 每列已填行的 max cell 宽。
+        let mut width = [0usize; C];
+        for c in 0..C {
+            for r in 0..self.nrows {
+                width[c] = width[c].max(self.grid[r][c].buf.as_str().chars().count());
+            }
+        }
+        for r in 0..self.nrows {
+            if r > 0 {
+                out.write_char('\n')?;
+            }
+            for c in 0..C {
+                if c > 0 {
+                    out.write_char(' ')?; // 列间 1 空格；第 0 列顶格
+                }
+                self.grid[r][c].pad(out, width[c])?;
+                out.write_char(' ')?; // 列尾间距（对齐既有 PAD 语义）
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<const C: usize, const R: usize, const S: usize> Default for Table<C, R, S> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 行迭代器：每次 next 借出下一行（指针 + 剩余计数，std IterMut 同款形态），
+/// 同步推进行计数（渲染范围）。借用期 'a 由 PhantomData 统一约束。
+pub struct RowsMut<'a, const C: usize, const S: usize> {
+    rows: *mut [Cell<S>; C],
+    left: usize,
+    nrows: &'a mut usize,
+    _marker: core::marker::PhantomData<&'a mut [[Cell<S>; C]]>,
+}
+
+impl<'a, const C: usize, const S: usize> Iterator for RowsMut<'a, C, S> {
+    type Item = &'a mut [Cell<S>; C];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.left == 0 {
+            return None;
+        }
+        // SAFETY: rows 指向 left 个未借出的行；每次借出首行后指针前进、计数递减，
+        // 各行互不重叠（迭代互斥由自身状态保证）；'a 是构造时的 Table 可变借用期。
+        unsafe {
+            let row = &mut *self.rows;
+            self.rows = self.rows.add(1);
+            self.left -= 1;
+            *self.nrows += 1;
+            Some(row)
+        }
     }
 }

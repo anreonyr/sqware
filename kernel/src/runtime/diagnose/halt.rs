@@ -101,28 +101,26 @@ fn alarm() {
 }
 
 /// panic 明细 → 宿主记录（feature semihosting）：`{"h","t","kind":"halt",
-/// "loc","msg","task"(可选)}`。loc 为 file:line:col；文本字段经 json_esc。
+/// "loc","msg","task"(可选)}`。loc 为 file:line:col；文本字段经 k/v（引号转义一体）。
 #[cfg(feature = "semihosting")]
 fn export_panic(loc: Option<(&str, u32, u32)>, msg: &str, task: Option<(usize, &str)>) {
-    use crate::runtime::diagnose::export::{json_esc, line};
+    use crate::runtime::diagnose::export::{k, line, v};
     let h = machine::hart_id();
     let t = crate::runtime::chrono::clock::now().as_ticks();
     line(|w| {
         let _ = write!(w, "\"h\":{h},\"t\":{t},\"kind\":\"halt\"");
         if let Some((file, ln, col)) = loc {
-            let _ = write!(w, ",\"loc\":\"");
-            let _ = json_esc(w, file);
-            let _ = write!(w, "\":{ln}:{col}");
+            let _ = k(w, "loc");
+            let _ = v(w, file);
+            let _ = write!(w, ":{ln}:{col}");
         }
-        let _ = write!(w, ",\"msg\":\"");
-        let _ = json_esc(w, msg);
-        let _ = write!(w, "\"");
+        let _ = k(w, "msg");
+        let _ = v(w, msg);
         if let Some((tid, name)) = task {
-            let _ = write!(w, ",\"task\":\"");
+            let _ = k(w, "task");
             let mut s = Fmt::<64>::new();
             let _ = write!(s, "#{tid} '{name}'");
-            let _ = json_esc(w, s.as_str());
-            let _ = write!(w, "\"");
+            let _ = v(w, s.as_str());
         }
     });
 }
@@ -135,7 +133,7 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
 
     // 诊断头：拼进一个行缓冲，整段一次 flush 到控制台（无堆、无锁）。
     let mut fld = Fmt::<256>::new();
-    let _ = write!(fld, "[panic]");
+    let _ = write!(fld, "\n[panic]");
     if let Some(loc) = info.location() {
         let _ = write!(fld, " at {}:{}:{}", loc.file(), loc.line(), loc.column());
     }

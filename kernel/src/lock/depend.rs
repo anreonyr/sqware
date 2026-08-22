@@ -25,10 +25,9 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::OnceLock;
-use crate::console;
 use crate::machine;
 use crate::putln;
-use table::{Table, render_addr};
+use table::{Cell, Fmt, Para, Table, render_addr};
 
 /// 锁层级 — lock/mod.rs 层级契约的具名化（1 最低、6 最高）。
 /// 参与锁才有 level；Option<Level>::None = exempt（不参与、不校验）。
@@ -70,7 +69,7 @@ pub(crate) fn ra() -> usize {
 
 /// 单 hart 重入/升级现场报告后 panic。
 ///
-/// 用 table 渲染两列表（label / addr），整块写控制台。
+/// 段落渲染两列表（label / addr）：标题顶格 + 表格缩进（table::Para）。
 pub(crate) fn report(
     kind: &'static str,
     what: &'static str,
@@ -78,23 +77,27 @@ pub(crate) fn report(
     holder: usize,
     caller: usize,
 ) -> ! {
-    putln!("[depend] {kind}: {what} (single-hart lock-order violation)");
-    // 标题行后空行（与 [scene]/[trace]/[panic] 标题统一）。
-    putln!();
+    let mut p = Para::new(crate::console::Sink);
+    p.title(format_args!("[depend] {kind}: {what} (single-hart lock-order violation)"));
     // hart 首行并入 Table（值列写数字，非地址）；表格第 0 列顶格，无行首空格。
-    let mut t = Table::<4, 2, 64>::new();
-    t.set_col_width(0, 10);
+    let mut t = Table::<2, 4, 96>::new();
     {
-        let row = t.open_row();
-        row[0].push_str("hart");
-        let _ = write!(&mut row[1], "{}", machine::hart_id());
+        let mut it = t.rows_mut();
+        if let Some(row) = it.next() {
+            row[0] = Cell::new("hart");
+            let mut v = Fmt::<40>::new();
+            let _ = write!(v, "{}", machine::hart_id());
+            row[1] = Cell::new(v.as_str());
+        }
+        for (label, addr) in [("lock", lock), ("holder", holder), ("caller", caller)] {
+            let Some(row) = it.next() else { break; };
+            row[0] = Cell::new(label);
+            let mut v = Fmt::<96>::new();
+            let _ = render_addr(&mut v, addr);
+            row[1] = Cell::new(v.as_str());
+        }
     }
-    for (label, addr) in [("lock", lock), ("holder", holder), ("caller", caller)] {
-        let row = t.open_row();
-        row[0].push_str(label);
-        let _ = render_addr(&mut row[1], addr);
-    }
-    write_table(t);
+    p.table(&t);
     panic!("{kind} lock-order violation: {what}");
 }
 
@@ -247,7 +250,7 @@ pub(crate) fn release(addr: usize, level: Level) {
         return;
     };
     if held.remove(addr).is_err() {
-        putln!("[depend] release of unheld lock {addr:#x} (level {level:?})");
+        putln!("\n[depend] release of unheld lock {addr:#x} (level {level:?})");
         panic!("depend: release of unheld lock {addr:#x}");
     }
 }
@@ -256,68 +259,71 @@ pub(crate) fn release(addr: usize, level: Level) {
 /// 跨核持有集 best-effort 读取留待后续（需 raw usize 拷贝避免 &mut 别名 UB）。
 #[cfg(debug_assertions)]
 pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
-    putln!("[depend] lock-order hazard");
-    // 标题行后空行（与 [scene]/[trace]/[panic] 标题统一）。
-    putln!();
+    let mut p = Para::new(crate::console::Sink);
+    p.title(format_args!("[depend] lock-order hazard"));
     let Some(held) = held_mut() else {
         panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
     };
     // 行 = label / addr / 说明。hart 首行并入 Table（值列写数字），taking + caller 两行，中间夹 held 各行。
-    let mut t = Table::<{ MAX_HELD + 3 }, 3, 96>::new();
-    t.set_col_width(0, 10);
+    let mut t = Table::<3, { MAX_HELD + 3 }, 96>::new();
     {
-        let row = t.open_row();
-        row[0].push_str("hart");
-        let _ = write!(&mut row[1], "{}", machine::hart_id());
-    }
-    {
-        let row = t.open_row();
-        row[0].push_str("taking");
-        let _ = render_addr(&mut row[1], addr);
-        let _ = write!(&mut row[2], "({:?})", level);
-    }
-    if held.len == 0 {
-        let row = t.open_row();
-        row[0].push_str("held");
-        let _ = write!(&mut row[2], "(none)");
-    } else {
-        let max = held.max_level().unwrap_or(level);
-        for i in 0..held.len {
-            let row = t.open_row();
-            row[0].push_str("held");
-            let _ = render_addr(&mut row[1], held.slots[i].addr);
-            let _ = write!(
-                &mut row[2],
-                "({:?}){}",
-                held.slots[i].level,
-                if held.slots[i].level == max {
-                    "  <-- max held"
-                } else {
-                    ""
-                }
-            );
+        let mut it = t.rows_mut();
+        if let Some(row) = it.next() {
+            row[0] = Cell::new("hart");
+            let mut v = Fmt::<40>::new();
+            let _ = write!(v, "{}", machine::hart_id());
+            row[1] = Cell::new(v.as_str());
+            row[2] = Cell::new("");
+        }
+        if let Some(row) = it.next() {
+            row[0] = Cell::new("taking");
+            let mut v = Fmt::<96>::new();
+            let _ = render_addr(&mut v, addr);
+            row[1] = Cell::new(v.as_str());
+            let mut n = Fmt::<96>::new();
+            let _ = write!(n, "({:?})", level);
+            row[2] = Cell::new(n.as_str());
+        }
+        if held.len == 0 {
+            if let Some(row) = it.next() {
+                row[0] = Cell::new("held");
+                row[1] = Cell::new(""); // 缺格 = 空串（该行第二列不参与）。
+                row[2] = Cell::new("(none)");
+            }
+        } else {
+            let max = held.max_level().unwrap_or(level);
+            for i in 0..held.len {
+                let Some(row) = it.next() else { break; };
+                row[0] = Cell::new("held");
+                let mut v = Fmt::<96>::new();
+                let _ = render_addr(&mut v, held.slots[i].addr);
+                row[1] = Cell::new(v.as_str());
+                let mut n = Fmt::<96>::new();
+                let _ = write!(
+                    &mut n,
+                    "({:?}){}",
+                    held.slots[i].level,
+                    if held.slots[i].level == max {
+                        "  <-- max held"
+                    } else {
+                        ""
+                    }
+                );
+                row[2] = Cell::new(n.as_str());
+            }
+        }
+        if let Some(row) = it.next() {
+            row[0] = Cell::new("caller");
+            let mut v = Fmt::<96>::new();
+            let _ = render_addr(&mut v, caller);
+            row[1] = Cell::new(v.as_str());
+            row[2] = Cell::new("");
         }
     }
-    {
-        let row = t.open_row();
-        row[0].push_str("caller");
-        let _ = render_addr(&mut row[1], caller);
-    }
-    write_table(t);
+    p.table(&t);
     putln!(
         "  rule       new level must exceed max(held);  {:?} <= max => violation",
         level
     );
     panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
-}
-
-/// 把整表渲染进一个栈缓冲，再整块写控制台（无堆；一次 SBI 调用）。
-/// 无 cfg：`depend::report`（单 hart 重入检测）release 亦生效，须可渲染现场表。
-/// 经 Indented 整体缩进 2 空格（`[depend]` 标题行顶格、表格内容缩进——与 scene/halt 统一）；
-/// Table::render 末行不补尾换行，此处补——表格块须独立结束，避免紧接下行输出。
-fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
-    let mut buf: table::Line<512> = table::Line::new();
-    let mut ind = crate::console::Indented::new(&mut buf);
-    let _ = t.render(&mut ind);
-    console::_write(format_args!("{buf}\n"));
 }

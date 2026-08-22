@@ -61,97 +61,105 @@ fn kernel_symbolizer(addr: usize) -> Option<(&'static str, usize)> {
     )
 }
 
+/// banner 行：label/值两槽入表（行位置由表迭代器推进；行耗尽静默跳过）。
+fn brow(it: &mut table::RowsMut<'_, 2, 96>, label: &str, v: &str) {
+    let Some(row) = it.next() else { return; };
+    row[0] = table::Cell::new(label);
+    row[1] = table::Cell::new(v);
+}
+
 /// SBI 式启动横幅：机器/板级「标签|值」对齐表 + 陷阱布局表，两块连打成一个横幅。
 pub fn banner() {
     let m = machine::info();
     let mut sink = Sink;
     // 机器/板级 + 陷阱布局两块并成一个 Table：统一列宽，值列对齐；
-    // 中间空行分隔两块（空行以一行空 cell 表示，渲染为空格行）。
-    let mut b = Table::<13, 2, 96>::new();
+    // 中间空行分隔两块（认领一行但不填，渲染为空格行）。
+    let mut b = Table::<2, 13, 96>::new();
     {
-        let row = b.open_row();
-        row[0].push_str("hart count");
-        let _ = write!(&mut row[1], "{} H", m.hart);
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("hart this");
-        let _ = write!(&mut row[1], "{}", machine::hart_id());
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("timebase");
-        let _ = write!(&mut row[1], "{} Hz", m.hertz);
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("dram");
-        let _ = write!(&mut row[1], "{:#x}..{:#x}", m.dram.base, m.dram.range().end);
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("free");
-        let _ = write!(&mut row[1], "{:#x}..{:#x}", m.free.base, m.free.range().end);
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("uart");
-        let _ = write!(&mut row[1], "{:#x}", m.uart.base);
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("plic");
-        let _ = write!(&mut row[1], "{:#x}", m.plic.base);
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("clint");
-        let _ = write!(&mut row[1], "{:#x}", m.clint.base);
-    }
-    // 空行分隔两块（渲染为空格行）。
-    b.blank_row();
-    // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
-    {
-        let row = b.open_row();
-        row[0].push_str("trap vector");
-        let _ = write!(&mut row[1], "{:#x}", alltraps_va());
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("kernel frames");
-        let _ = write!(
-            &mut row[1],
-            "{:#x}..{:#x}",
-            KERNEL_FRAME_BASE.as_usize(),
-            KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
-        );
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("trap stack");
-        let _ = write!(
-            &mut row[1],
-            "{:#x}..{:#x}",
-            trap_stack_bottom(0),
-            trap_stack_top(0)
-        );
-    }
-    {
-        let row = b.open_row();
-        row[0].push_str("trap stack this");
-        let _ = write!(
-            &mut row[1],
-            "{} @ {:#x}..{:#x}",
-            machine::hart_id(),
-            trap_stack_bottom(machine::hart_id()),
-            trap_stack_top(machine::hart_id())
-        );
+        let mut it = b.rows_mut();
+        {
+            let mut v = Fmt::<64>::new();
+            let _ = write!(v, "{} H", m.hart);
+            brow(&mut it, "hart count", v.as_str());
+        }
+        {
+            let mut v = Fmt::<64>::new();
+            let _ = write!(v, "{}", machine::hart_id());
+            brow(&mut it, "hart this", v.as_str());
+        }
+        {
+            let mut v = Fmt::<64>::new();
+            let _ = write!(v, "{} Hz", m.hertz);
+            brow(&mut it, "timebase", v.as_str());
+        }
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(v, "{:#x}..{:#x}", m.dram.base, m.dram.range().end);
+            brow(&mut it, "dram", v.as_str());
+        }
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(v, "{:#x}..{:#x}", m.free.base, m.free.range().end);
+            brow(&mut it, "free", v.as_str());
+        }
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(v, "{:#x}", m.uart.base);
+            brow(&mut it, "uart", v.as_str());
+        }
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(v, "{:#x}", m.plic.base);
+            brow(&mut it, "plic", v.as_str());
+        }
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(v, "{:#x}", m.clint.base);
+            brow(&mut it, "clint", v.as_str());
+        }
+        // 空行分隔两块（认领一行但不填）。
+        drop(it.next());
+        // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(v, "{:#x}", alltraps_va());
+            brow(&mut it, "trap vector", v.as_str());
+        }
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(
+                v,
+                "{:#x}..{:#x}",
+                KERNEL_FRAME_BASE.as_usize(),
+                KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
+            );
+            brow(&mut it, "kernel frames", v.as_str());
+        }
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(
+                v,
+                "{:#x}..{:#x}",
+                trap_stack_bottom(0),
+                trap_stack_top(0)
+            );
+            brow(&mut it, "trap stack", v.as_str());
+        }
+        {
+            let mut v = Fmt::<96>::new();
+            let _ = write!(
+                v,
+                "{} @ {:#x}..{:#x}",
+                machine::hart_id(),
+                trap_stack_bottom(machine::hart_id()),
+                trap_stack_top(machine::hart_id())
+            );
+            brow(&mut it, "trap stack this", v.as_str());
+        }
     }
     let _ = b.render(&mut sink);
     // render 末行无尾换行，补一个。
-    let mut g = Fmt::<2>::new();
-    let _ = writeln!(g);
-    let _ = g.flush(&mut sink);
+    let _ = writeln!(sink);
 }
 
 pub fn init() -> ! {

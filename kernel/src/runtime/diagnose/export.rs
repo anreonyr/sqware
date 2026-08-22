@@ -75,9 +75,23 @@ pub fn line(fields: impl FnOnce(&mut Buf)) {
     }
 }
 
+/// 开一个字段键：`,"name":`。键名是字面量（不发散为调用方输入），调用方随后
+/// 裸写数字值，或经 [`v`] 写字符串值。
+pub fn k(w: &mut Buf, name: &str) -> fmt::Result {
+    write!(w, ",\"{name}\":")
+}
+
+/// 字符串值：`"<esc>"`——引号 + 控制字符转义一体（原 json_esc 调用点自行包引号
+/// 的坑在这里收口：v 永不可能漏引号）。
+pub fn v(w: &mut Buf, s: &str) -> fmt::Result {
+    w.write_str("\"")?;
+    json_esc(w, s)?;
+    w.write_str("\"")
+}
+
 /// JSON 字符串转义：把 s 原样写入 w，遇 `"` `\` 与 <0x20 控制字符加反斜杠转义。
-/// 用于 halt/watch 的文本字段（loc/msg/task/report）——事件字段全是标量，无需转义。
-pub fn json_esc(w: &mut Buf, s: &str) -> fmt::Result {
+/// 只被 [`v`] 调用（带引号包裹）；事件字段全是标量，无需转义。
+fn json_esc(w: &mut Buf, s: &str) -> fmt::Result {
     for c in s.chars() {
         match c {
             '"' => w.write_str("\\\"")?,
