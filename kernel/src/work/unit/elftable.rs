@@ -93,6 +93,11 @@ impl ElfTable {
     }
 
     /// 二分查最近 ≤ a 的符号；命中 → (名字, 距符号头偏移)。
+    ///
+    /// 上界约束：a 必须落在符号的「活动区间」内——下一符号起点之前；表尾符号
+    /// 用 [`TAIL_SPAN`] 兜底。超出即 None（调用方打印裸 hex）：地址高于表内
+    /// 全部符号时不再回退到「表尾符号 + 无意义大偏移」（回溯扫描把栈数据当
+    /// 返回地址、以及 `memset+0x8fc5d834` 式标签的病根）。
     pub fn lookup(&self, a: VirtAddr) -> Option<(&'static str, usize)> {
         let target = a.as_usize();
         let mut lo = 0usize;
@@ -108,12 +113,24 @@ impl ElfTable {
             }
         }
         let i = found?;
-        Some((
-            self.entries[i].name,
-            target - self.entries[i].addr.as_usize(),
-        ))
+        let base = self.entries[i].addr.as_usize();
+        // 活动区间：下一符号起点；表尾（无下一符号）→ 保守跨度兜底。
+        let end = self
+            .entries
+            .get(i + 1)
+            .map(|e| e.addr.as_usize())
+            .unwrap_or(base.saturating_add(TAIL_SPAN));
+        if target >= end {
+            return None;
+        }
+        Some((self.entries[i].name, target - base))
     }
 }
+
+/// 表尾符号的保守活动跨度（有下一符号时不用）：函数体最大限度，超出即视为
+/// 「地址不在任何符号区间内」（栈数据/垃圾字走同一判定）→ [`ElfTable::lookup`]
+/// 返回 None。溢出位仅 4B 对齐指令，16 KiB 远超任何单函数尾部的现实跨度。
+const TAIL_SPAN: usize = 0x4000;
 
 // ── 地址域判定 ─────────────────────────────────────────────────
 

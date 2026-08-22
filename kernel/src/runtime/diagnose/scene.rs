@@ -175,9 +175,12 @@ fn backtrace(out: &mut [usize; BT_DEPTH]) -> usize {
     while a < high && n < BT_DEPTH {
         // SAFETY: 只读本线程栈区间（S 态直读恒等映射内存，无副作用）。
         let w = unsafe { (a as *const usize).read_volatile() };
-        // 可执行地址判定：内核域直接判，用户域用 team 表真实命中（resolve）确认
-        let code = elftable::is_kernel_addr(w)
-            || elftable::resolve(VirtAddr::from_raw(w), running_team_try().as_deref()).is_some();
+        // 可执行候选 = 「能解析进符号区间」的地址：resolve 已按域（内核/用户）选表，
+        // 并经 lookup 上界约束（下一符号/尾部跨度）。栈上的数据字（保存的 sp、撕裂
+        // 值、ASCII 串）在此全部落空——不再用 is_kernel_addr 的宽镜像区间（含
+        // .bss/.rodata）误收。
+        let code =
+            elftable::resolve(VirtAddr::from_raw(w), running_team_try().as_deref()).is_some();
         if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
             out[n] = w;
             n += 1;
