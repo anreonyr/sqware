@@ -710,6 +710,12 @@ fn wait() -> Option<Arc<Task>> {
         if unpark() {
             break;
         }
+        // 假醒：也可能被 wake_all 的 IPI 唤来 steal（有活入队）——先复查取活，
+        // 有任务即正常出口（清位交外层）；真无活才保持睡眠位回睡。
+        if let Some(task) = schedulers()[me].pop().or_else(steal) {
+            tie::wake(me);
+            return Some(task);
+        }
         // 哑睡壳（假醒无活）：保持睡眠位、不打点不清位，清残留 SSIP 后回睡。
         // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
         unsafe { sip::clear_ssoft() };
@@ -798,7 +804,7 @@ pub fn run() -> usize {
     //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒、不经过 trap_handler
     //    的路径（用户核走 trap 入口钩子）。常运行时恒 no-op。
     crate::runtime::diagnose::halt::hush();
-    watch::pulse(watch::now());
+    watch::pulse(watch::ticks());
     let me = machine::hart_id();
     let s = &schedulers()[me];
     let mut i = s.inner.lock();
@@ -834,7 +840,7 @@ pub fn run() -> usize {
     loop {
         // 取活空转也是「活着」的形态：每轮报岗——被抢空转/steal 反复失败可能
         // 持续远超 liveness 阈值，入口只打点一次会断岗（B 判据误报 stalled）。
-        watch::pulse(watch::now());
+        watch::pulse(watch::ticks());
         let me = machine::hart_id();
         if let Some(pa) = schedulers()[me].pop().map(|t| schedulers()[me].replace(t)) {
             return pa;
@@ -853,17 +859,17 @@ pub fn run() -> usize {
 
 // ── 适配层：watch（值班看护）──────────────────────────────────────────
 
-/// 打点 + 巡岗：取一份「今」（watch::now 钳制）——pulse 与 check 同源，判据
-/// 永不与打点各读各的表（样本契约）。供 trap 定时器分支与 wait() 唤醒后调用
-/// （健康核的节拍）。
+/// 打点 + 巡岗：取一份 tick 样本（全局中断计数，见 watch::ticks）——pulse 与
+/// check 同源（计数域样本契约：两次读差 ≤1，阈值 ≥2 天然兼容；时间摆动免疫）。
+/// 供 trap 定时器分支与 wait() 唤醒后调用（健康核的节拍）。
 pub fn round() {
-    let w = watch::now();
-    watch::pulse(w);
+    let t = watch::ticks();
+    watch::pulse(t);
     let probe = watch::Probe {
         has_work: has_work(),
         asleep: tie::waiting(),
     };
-    if let Some(r) = watch::check(w, probe) {
+    if let Some(r) = watch::check(t, probe) {
         watch::raise(r);
     }
 }

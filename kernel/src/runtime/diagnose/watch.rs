@@ -77,15 +77,19 @@ impl core::fmt::Display for WatchReport {
 
 // ── 状态（原子、静态）────────────────────────────────────────────
 
-/// per-hart 上次报岗时刻（ticks）。
+/// per-hart 上次报岗时刻（全局定时器中断计数 tick；判据 B 用）。
 static BEAT: [AtomicU64; POOL] = [const { AtomicU64::new(0) }; POOL];
-/// 全局：任一核最近一次报岗时刻。
+/// 全局：任一核最近一次报岗的 tick 计数。
 static LASTBEAT: AtomicU64 = AtomicU64::new(0);
 /// 全局：最近报岗的核（诊断用）。
 static LASTBEATHART: AtomicUsize = AtomicUsize::new(usize::MAX);
 /// 阈值（ticks；由 threshold 注入）。
 static HOLDTO: AtomicU64 = AtomicU64::new(0);
 static LIVETO: AtomicU64 = AtomicU64::new(0);
+/// 计数域失速阈值（量子数；= 2×(LIVETO/quantum)，threshold 派生）。B/D 判据用：
+/// 「live 时长内全系统一个量子中断都没有」= 失速/静默。2× 余量吃进跨核无同步下
+/// beat/LASTBEAT 的读到旧值（传播延迟）与样本落后；对时间摆动免疫。
+static LIVETICKS: AtomicU64 = AtomicU64::new(0);
 /// 哨所标准钟：全局单调时刻（判据与打点的唯一「今」来源）。仅 now() 推进；
 /// 回跳/超限不推进（钳制）。初值 0，threshold 启用时上弦为启动时刻。
 static WALL: AtomicU64 = AtomicU64::new(0);
@@ -148,32 +152,37 @@ fn mark_suspect() {
     }
 }
 
-/// 打点报岗：本核完成一次确凿进展（给定今，须为 [`now`] 产物）。禁用时是
-/// 廉价 relaxed 判定后跳过。
-pub fn pulse(w: Instant) {
+/// 全局定时器中断计数（判据 B/D 的漂移免疫参考系：跨核同构、单调，不受
+/// time CSR 回跳/前跳漂移影响；见 LIVETICKS）。
+pub fn ticks() -> u64 {
+    crate::runtime::chrono::timer::ticks()
+}
+
+/// 打点报岗：本核完成一次确凿进展（给定 tick 样本，须为 [`ticks`] 产物）。
+/// 禁用时是廉价 relaxed 判定后跳过。
+pub fn pulse(t: u64) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
     let me = machine::hart_id();
-    let now = w.as_ticks();
     if me < POOL {
-        BEAT[me].store(now, Ordering::Relaxed);
+        BEAT[me].store(t, Ordering::Relaxed);
     }
-    LASTBEAT.store(now, Ordering::Relaxed);
+    LASTBEAT.store(t, Ordering::Relaxed);
     LASTBEATHART.store(me, Ordering::Relaxed);
 }
 
-/// 巡岗：按现况判 A/L，命中产 report（纯读，不改状态）。前置：由健康核调用
-/// （自核刚 pulse 过，不误报，且今与 pulse 同源），可处 SIE=0/1 trap 上下文。
-/// 时钟可疑（Suspect 置位）期间一律撤岗返回 None。
-pub fn check(now: Instant, p: Probe) -> Option<WatchReport> {
+/// 巡岗：A 判据用时间域（WALL 钳制「今」），B/D 判据用计数域（tick 样本 t，
+/// 须与同轮 pulse 同源）。Suspect 置位期间一律撤岗返回 None。
+pub fn check(t: u64, p: Probe) -> Option<WatchReport> {
     if !ENABLED.load(Ordering::Relaxed) || SUSPECT.load(Ordering::Acquire) {
         return None;
     }
-    let now = now.as_ticks();
-    // A：锁相持超时（槽 active = 仍有人等；释放会 unstake）。
+    // A：锁相持超时（时间域：锁持有时长语义需要真实时间；短跨度受时间摆动影响小）。
+    let wall_now = now().as_ticks();
     if WATCHED.active.load(Ordering::Relaxed)
-        && now.wrapping_sub(WATCHED.hold_start.load(Ordering::Relaxed))
+        && wall_now >= WATCHED.hold_start.load(Ordering::Relaxed)
+        && wall_now.wrapping_sub(WATCHED.hold_start.load(Ordering::Relaxed))
             > HOLDTO.load(Ordering::Relaxed)
     {
         return Some(WatchReport::LockHold {
@@ -186,29 +195,31 @@ pub fn check(now: Instant, p: Probe) -> Option<WatchReport> {
     if !p.has_work {
         return None;
     }
-    // B：醒着核脉搏过期 → 点名最旧那个。成立前提：所有「活着」形态都在打
-    // 点——调度/trap 进度（run/wait/round 的 pulse）与内核准点（spin::lock
-    // 自旋循环的节流 pulse，见 spin.rs）：BEAT 过期 = 该核既无调度/trap 进展、
-    // 也无自旋等锁 = 真失速。锁相持（有人正自旋等锁）由 A 判据报告，不在此误伤。
-    let live = LIVETO.load(Ordering::Relaxed);
+    // B/D：计数域判据——live 时长内全系统一个量子中断都没有才算失速/静默。
+    // 系统只要在跑，timer 中断（trap 定时器分支）就会驱动 timer::ticks() 前进，
+    // beat/LASTBEAT 跟不上即点名；时间摆动（回跳/前跳漂移）不影响中断计数。
+    let live_ticks = LIVETICKS.load(Ordering::Relaxed);
     let mut oldest: Option<(usize, u64)> = None;
     for (h, a) in BEAT.iter().enumerate().take(machine::hart_count()) {
         if asleep(p.asleep, h) || h >= POOL {
             continue;
         }
         let b = a.load(Ordering::Relaxed);
-        if now.wrapping_sub(b) > live && oldest.is_none_or(|(_, s)| b < s) {
+        // 样本不早于 beat 才判：beat 在「将来」（样本落后）说明该核刚打过点、
+        // 只是跨核可见性交错——wrapping 回绕会把「+0/1」错判成 u64::MAX 失速。
+        if t >= b && t.wrapping_sub(b) > live_ticks && oldest.is_none_or(|(_, s)| b < s) {
             oldest = Some((h, b));
         }
     }
     if let Some((hart, since)) = oldest {
         return Some(WatchReport::Stall { hart, since });
     }
-    // D：有活却全系统无声。
-    if now.wrapping_sub(LASTBEAT.load(Ordering::Relaxed)) > live {
+    // D：有活却全系统无声（样本不早于 LASTBEAT，同理防回绕误报）。
+    let lb = LASTBEAT.load(Ordering::Relaxed);
+    if t >= lb && t.wrapping_sub(lb) > live_ticks {
         return Some(WatchReport::WakeFailure {
             hart: LASTBEATHART.load(Ordering::Relaxed),
-            since: LASTBEAT.load(Ordering::Relaxed),
+            since: lb,
         });
     }
     None
@@ -278,25 +289,28 @@ pub fn unstake(addr: usize) {
     WATCHED.active.store(false, Ordering::Relaxed);
 }
 
-/// 设阈值/开关（boot 注入）：注入 HOLDTO/LIVETO 并派生 SUSPECTTO（=LIVETO×10）与
-/// CAPACITY（=LIVETO/2）；启用时先给 WALL 上弦（防首读超限误置 Suspect），
-/// 再把基线初始化到今，避免旧 LASTBEAT=0 误报。
+/// 设阈值/开关（boot 注入）：注入 HOLDTO/LIVETO 并派生 SUSPECTTO（=LIVETO×10）、
+/// CAPACITY（=LIVETO/2）与 LIVETICKS（=LIVETO/quantum，B/D 计数域阈值）；
+/// 启用时先给 WALL 上弦（防首读超限误置 Suspect），再把打点基线（tick 域）
+/// 初始化到今，避免旧 beat=0 误报。
 pub fn threshold(cfg: Threshold) {
     HOLDTO.store(
         clock::duration_to_ticks(cfg.hold_timeout),
         Ordering::Relaxed,
     );
     let live = clock::duration_to_ticks(cfg.liveness_timeout);
+    let quantum = clock::duration_to_ticks(core::time::Duration::from_millis(100));
     LIVETO.store(live, Ordering::Relaxed);
     SUSPECTTO.store(live.saturating_mul(10), Ordering::Relaxed);
     CAPACITY.store(live / 2, Ordering::Relaxed);
+    LIVETICKS.store((live / quantum).max(1) * 2, Ordering::Relaxed);
     if cfg.enabled {
         WALL.store(clock::now().as_ticks(), Ordering::Relaxed);
-        let w = now();
+        let t = ticks();
         for b in BEAT.iter() {
-            b.store(w.as_ticks(), Ordering::Relaxed);
+            b.store(t, Ordering::Relaxed);
         }
-        LASTBEAT.store(w.as_ticks(), Ordering::Relaxed);
+        LASTBEAT.store(t, Ordering::Relaxed);
     }
     ENABLED.store(cfg.enabled, Ordering::Relaxed);
 }
