@@ -100,6 +100,33 @@ fn alarm() {
     broadcast();
 }
 
+/// panic 明细 → 宿主记录（feature semihosting）：`{"h","t","kind":"halt",
+/// "loc","msg","task"(可选)}`。loc 为 file:line:col；文本字段经 json_esc。
+#[cfg(feature = "semihosting")]
+fn export_panic(loc: Option<(&str, u32, u32)>, msg: &str, task: Option<(usize, &str)>) {
+    use crate::runtime::diagnose::export::{json_esc, line};
+    let h = machine::hart_id();
+    let t = crate::runtime::chrono::clock::now().as_ticks();
+    line(|w| {
+        let _ = write!(w, "\"h\":{h},\"t\":{t},\"kind\":\"halt\"");
+        if let Some((file, ln, col)) = loc {
+            let _ = write!(w, ",\"loc\":\"");
+            let _ = json_esc(w, file);
+            let _ = write!(w, "\":{ln}:{col}");
+        }
+        let _ = write!(w, ",\"msg\":\"");
+        let _ = json_esc(w, msg);
+        let _ = write!(w, "\"");
+        if let Some((tid, name)) = task {
+            let _ = write!(w, ",\"task\":\"");
+            let mut s = Fmt::<64>::new();
+            let _ = write!(s, "#{tid} '{name}'");
+            let _ = json_esc(w, s.as_str());
+            let _ = write!(w, "\"");
+        }
+    });
+}
+
 #[panic_handler]
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 拉响警报：抢占报警源（唯一继续运行并打印的 hart，输家就地卧倒），
@@ -138,6 +165,18 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
         crate::runtime::diagnose::trace::HaltEvent::Panic,
     ));
+    // panic 明细 → 宿主记录（feature semihosting；记录序：panic 事件 → halt → scene 行）。
+    #[cfg(feature = "semihosting")]
+    {
+        let mut msg = Fmt::<256>::new();
+        // 与终端行缓冲同限（上述 fld 同为 256）：超长消息在诊断路径同步截断语义。
+        let _ = write!(msg, "{}", info.message());
+        export_panic(
+            info.location().map(|l| (l.file(), l.line(), l.column())),
+            msg.as_str(),
+            crate::work::room::scheduler::running_task_info(),
+        );
+    }
     // 统一崩溃现场转储（CSR/GPR/回溯符号化 + 事件窗口；内含 trace::panic_dump）。
     crate::crash_scene!();
 

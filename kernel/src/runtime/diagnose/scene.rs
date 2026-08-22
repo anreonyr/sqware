@@ -72,6 +72,35 @@ fn addr_note<W: Write>(w: &mut W, a: usize) {
     }
 }
 
+/// 一行 scene 记录 → 宿主导出文件（JSON `{"h","t","kind":"scene","tbl",
+/// "label","v","n"}`；feature semihosting 时启用）。与控制台表格同源（同一
+/// 局部 label/v/n），值/注解双写；不启用时 no-op——调用点无条件、表格照旧。
+fn scene_row(tbl: &str, label: &str, v: &str, n: &str) {
+    #[cfg(feature = "semihosting")]
+    {
+        use crate::runtime::diagnose::export::{json_esc, line};
+        let h = crate::machine::hart_id();
+        let t = crate::runtime::chrono::clock::now().as_ticks();
+        line(|w| {
+            let _ = write!(
+                w,
+                "\"h\":{h},\"t\":{t},\"kind\":\"scene\",\"tbl\":\"{tbl}\""
+            );
+            let _ = write!(w, ",\"label\":\"");
+            let _ = json_esc(w, label);
+            let _ = write!(w, "\",\"v\":\"");
+            let _ = json_esc(w, v);
+            let _ = write!(w, "\",\"n\":\"");
+            let _ = json_esc(w, n);
+            let _ = write!(w, "\"");
+        });
+    }
+    #[cfg(not(feature = "semihosting"))]
+    {
+        let _ = (tbl, label, v, n);
+    }
+}
+
 /// 读全部 31 个非零 GPR（x0 恒 0；ra/sp/gp/tp 首页）。
 fn gprs() -> [usize; 32] {
     let mut r = [0usize; 32];
@@ -164,56 +193,77 @@ fn dump_csrs() {
     if let Some((tid, name)) = running_task_info() {
         let row = t.open_row();
         row[0].push_str("task");
-        let _ = write!(&mut row[1], "#{tid} '{name}'");
+        let mut v = Fmt::<64>::new();
+        let _ = write!(v, "#{tid} '{name}'");
+        row[1].push_str(v.as_str());
+        scene_row("csr", "task", v.as_str(), "");
     }
     {
         let row = t.open_row();
         row[0].push_str("sepc");
-        let _ = write!(&mut row[1], "{:#018x}", sepc::read());
-        addr_note(&mut row[2], sepc::read());
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{:#018x}", sepc::read());
+        let mut n = Fmt::<96>::new();
+        addr_note(&mut n, sepc::read());
+        row[1].push_str(v.as_str());
+        row[2].push_str(n.as_str());
+        scene_row("csr", "sepc", v.as_str(), n.as_str());
     }
     {
         let row = t.open_row();
         row[0].push_str("stval");
-        let _ = write!(&mut row[1], "{:#018x}", stval::read());
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{:#018x}", stval::read());
+        let mut n = Fmt::<96>::new();
         // 符号命中 → 「sym note」单空格衔接；未命中 → 仅 note（无前缀）。
         // 不写固定「  」前缀，避免与 addr_note 叠成多余空格。
-        let mut note = Fmt::<96>::new();
         {
             let va = VirtAddr::from_raw(stval::read());
             if let Some((name, off)) = elftable::resolve(va, running_team_try().as_deref()) {
-                let _ = write!(note, "{name}+{off:#x} ");
+                let _ = write!(n, "{name}+{off:#x} ");
             }
         }
-        let _ = write!(note, "{}", stval_note(int, code));
-        let _ = write!(&mut row[2], "{}", note.as_str());
+        let _ = write!(n, "{}", stval_note(int, code));
+        row[1].push_str(v.as_str());
+        row[2].push_str(n.as_str());
+        scene_row("csr", "stval", v.as_str(), n.as_str());
     }
     {
         let row = t.open_row();
         row[0].push_str("scause");
-        let _ = write!(&mut row[1], "{:#018x}", sc.bits());
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{:#018x}", sc.bits());
         // 类型化枚举（同 trap 分发）：Trap<Interrupt, Exception> Debug 即
         // 变体名（UserEnvCall / LoadPageFault / SupervisorTimer…），本身自解释，
         // 不加 int/exc 前缀（中断/异常由 bit63 隐含，hex 值列可查）。非法码回退
         // Unknown——崩溃现场不 panic；后续 CSR 行照常渲染。
+        let mut n = Fmt::<96>::new();
         let trap: Option<Trap<Interrupt, Exception>> = sc.cause().try_into().ok();
         match trap {
             Some(Trap::Interrupt(i)) => {
-                let _ = write!(&mut row[2], "{:?}", i);
+                let _ = write!(n, "{:?}", i);
             }
             Some(Trap::Exception(e)) => {
-                let _ = write!(&mut row[2], "{:?}", e);
+                let _ = write!(n, "{:?}", e);
             }
             None => {
-                let _ = write!(&mut row[2], "Unknown");
+                let _ = write!(n, "Unknown");
             }
         }
+        row[1].push_str(v.as_str());
+        row[2].push_str(n.as_str());
+        scene_row("csr", "scause", v.as_str(), n.as_str());
     }
     {
         let row = t.open_row();
         row[0].push_str("stvec");
-        let _ = write!(&mut row[1], "{:#018x}", stvec::read().address());
-        addr_note(&mut row[2], stvec::read().address());
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{:#018x}", stvec::read().address());
+        let mut n = Fmt::<96>::new();
+        addr_note(&mut n, stvec::read().address());
+        row[1].push_str(v.as_str());
+        row[2].push_str(n.as_str());
+        scene_row("csr", "stvec", v.as_str(), n.as_str());
     }
     {
         // sscratch 语义（内核约定，见 trampoline）：0 = 内核态约定；非 0 =
@@ -222,18 +272,20 @@ fn dump_csrs() {
         let scr = sscratch::read();
         let row = t.open_row();
         row[0].push_str("sscratch");
-        let _ = write!(&mut row[1], "{scr:#018x}");
-        if scr == 0 {
-            let _ = write!(&mut row[2], "Kernel");
-        } else {
-            let _ = write!(&mut row[2], "User");
-        }
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{scr:#018x}");
+        let n = if scr == 0 { "Kernel" } else { "User" };
+        row[1].push_str(v.as_str());
+        row[2].push_str(n);
+        scene_row("csr", "sscratch", v.as_str(), n);
     }
     {
         let ss = sstatus::read();
         let row = t.open_row();
         row[0].push_str("sstatus");
-        let _ = write!(&mut row[1], "{:#018x}", ss.bits());
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{:#018x}", ss.bits());
+        row[1].push_str(v.as_str());
         // 注解只列非默认态：前特权模式（User/Supervisor）恒打——崩溃在用户/
         // 内核态的定位关键；布尔位置位才打缩写（SIE/SPIE/SUM/MXR/SD）；
         // FS/VS/XS 非 Off 才打短码（Off=未启用省略；短码表见各分支注释）。
@@ -287,20 +339,26 @@ fn dump_csrs() {
         if ss.sd() {
             let _ = write!(note, " SD");
         }
-        let _ = write!(&mut row[2], "{}", note.as_str());
+        row[2].push_str(note.as_str());
+        scene_row("csr", "sstatus", v.as_str(), note.as_str());
     }
     {
         let s = satp::read();
         let row = t.open_row();
         row[0].push_str("satp");
-        let _ = write!(&mut row[1], "{:#018x}", s.bits());
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{:#018x}", s.bits());
+        let mut n = Fmt::<96>::new();
         let _ = write!(
-            &mut row[2],
+            n,
             "{:?} {:#06x} {:#013x}",
             s.mode(),
             s.asid(),
             s.ppn(),
         );
+        row[1].push_str(v.as_str());
+        row[2].push_str(n.as_str());
+        scene_row("csr", "satp", v.as_str(), n.as_str());
     }
     write_table(t);
 }
@@ -322,7 +380,10 @@ fn dump_gprs() {
         }
         let row = t.open_row();
         row[0].push_str(name);
-        let _ = write!(&mut row[1], "{:#018x}", r[i]);
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{:#018x}", r[i]);
+        row[1].push_str(v.as_str());
+        scene_row("gpr", name, v.as_str(), "");
     }
     write_table(t);
 }
@@ -339,8 +400,15 @@ fn dump_backtrace() {
     t.set_col_width(0, 10);
     for (i, a) in bt[..n].iter().enumerate() {
         let row = t.open_row();
-        let _ = write!(&mut row[0], "#{i}");
-        write_addr(&mut row[1], *a);
+        let mut l = Fmt::<16>::new();
+        let _ = write!(l, "#{i}");
+        let mut v = Fmt::<40>::new();
+        let _ = write!(v, "{:#018x}", a);
+        let mut s = Fmt::<96>::new();
+        write_addr(&mut s, *a);
+        row[0].push_str(l.as_str());
+        row[1].push_str(s.as_str());
+        scene_row("bt", l.as_str(), v.as_str(), s.as_str());
     }
     write_table(t);
 }

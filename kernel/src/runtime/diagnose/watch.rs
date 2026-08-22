@@ -174,11 +174,31 @@ fn asleep(words: &[AtomicUsize], h: usize) -> bool {
     w < words.len() && words[w].load(Ordering::Acquire) & (1 << (h % (usize::BITS as usize))) != 0
 }
 
+/// 报警报告 → 宿主记录（feature semihosting）：`{"h","t","kind":"watch","report"}`。
+/// 先于 scene 行导出（记录序：watch 事件 → watch 记录 → scene 行 → halt 记录）。
+#[cfg(feature = "semihosting")]
+fn export_report(r: &WatchReport) {
+    use crate::runtime::diagnose::export::{json_esc, line};
+    use core::fmt::Write as _;
+    use table::Fmt;
+    let h = machine::hart_id();
+    let t = clock::now().as_ticks();
+    line(|w| {
+        let _ = write!(w, "\"h\":{h},\"t\":{t},\"kind\":\"watch\",\"report\":\"");
+        let mut s = Fmt::<192>::new();
+        let _ = write!(s, "{r}");
+        let _ = json_esc(w, s.as_str());
+        let _ = write!(w, "\"");
+    });
+}
+
 /// 上报：冻结现场后停机（trace + scene + panic→halt）。不返回。
 pub fn raise(r: WatchReport) -> ! {
     crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Watch(
         crate::runtime::diagnose::trace::WatchEvent::Raised,
     ));
+    #[cfg(feature = "semihosting")]
+    export_report(&r);
     crate::runtime::diagnose::scene::dump_crash();
     panic!("watch caught incident: {r}");
 }

@@ -4,11 +4,13 @@
 # 由 .cargo/config.toml 的 target.<triple>.runner 触发，cargo 把 ELF 路径追加为位置参数。
 #
 # 导出模型（semihosting，B 通道）：
-#   内核经 semihosting fs 在 **qemu 的 CWD** 创建 sqware-trace.jsonl（JSON Lines；
-#   首行 '#' = 宿主时刻溯源）。本脚本先 cd 进 <TRACE_OUT> 再起 qemu，
-#   故导出的文件与 console 捕获都落在归档目录：sqware-trace.jsonl 归档为
-#   trace-<seed>-<ts>.jsonl；panic 文本场景（[PANIC]）归档为 .log。
-#   .jsonl = 事件全量（live 流，panic 只追加自身一行）；.log = 场景补充（CSR/GPR/回溯）。
+#   内核经 semihosting fs 在 **qemu 的 CWD** 创建 sqware-diagnose.jsonl（JSON Lines；
+#   首行 '#' = 宿主时刻溯源）。本脚本先 cd 进 <TRACE_OUT> 再起 qemu，故导出文件
+#   与 console 捕获都落在归档目录：sqware-diagnose.jsonl 归档为
+#   diagnose-<seed>-<ts>.jsonl；panic（jsonl 含 "kind":"halt" 记录）时 console
+#   捕获归档为 console-<seed>-<ts>.log。
+#   .jsonl = diagnose 族全量（事件 live 流 + panic 的 halt 记录与 scene 现场行）；
+#   .log  = 完整终端捕获（含诊断文本；panic 判定改走 halt 记录，不再靠字符串匹配）。
 #
 # 约定：kernel/build.rs 已负责构建 user 供 include_bytes! 嵌入，本脚本不再预构建 user；
 #       仅 QEMU_FEATURES 非空时二次构建 kernel（带 feature）。
@@ -82,7 +84,7 @@ def run_qemu [cfg: record] {
   # 起 qemu 前 cd 进归档目录：导出文件与 console 捕获都就地落盘，消除对
   # 调用者 CWD 的隐式依赖（-kernel/-bios 均为绝对路径，cd 无损）。
   cd $cfg.trapdir
-  rm --force sqware-trace.jsonl   # 干净基线（guest create 本会 truncate，双保险）
+  rm --force sqware-diagnose.jsonl   # 干净基线（guest create 本会 truncate，双保险）
   let cap = $"sqware-($cfg.seed).cap"
   # 勿包进 let —— let 会把外部输出吞掉，终端看不到（"我看不到输出"的根因）。
   if ($cfg.timeout | is-empty) {
@@ -96,20 +98,21 @@ def archive [cfg: record] {
   cd $cfg.trapdir
   let ts = (date now | format date '%Y%m%d-%H%M%S')
 
-  # 1) semihosting fs 导出：sqware-trace.jsonl → trace-<seed>-<ts>.jsonl
-  let export = "sqware-trace.jsonl"
-  if ($export | path exists) {
-      let dumped = $"trace-($cfg.seed)-($ts).jsonl"
-      mv $export $dumped
-      print $"trace exported -> ($cfg.trapdir)/($dumped)"
+  # 1) panic 判定（jsonl 含 halt 记录）→ 归档 console 捕获为 console-<seed>-<ts>.log。
+  #    判定走结构化导出（"kind":"halt"），不依赖终端文本匹配。判定先于改名。
+  let export = "sqware-diagnose.jsonl"
+  let cap = $"sqware-($cfg.seed).cap"
+  let panicked = (($export | path exists) and (open $export --raw | str contains '"kind":"halt"'))
+  if $panicked and ($cap | path exists) {
+      let dump = $"console-($cfg.seed)-($ts).log"
+      mv $cap $dump
+      print $"panic console captured -> ($cfg.trapdir)/($dump)"
   }
 
-  # 2) panic 文本场景（halt.rs panic_handler 打 '[PANIC]'）：有则归档 console 捕获。
-  let cap = $"sqware-($cfg.seed).cap"
-  let panicked = (($cap | path exists) and (open $cap --raw | str contains '[PANIC]'))
-  if $panicked {
-      let dump = $"trace-($cfg.seed)-($ts).log"
-      mv $cap $dump
-      print $"panic captured -> ($cfg.trapdir)/($dump)"
+  # 2) 诊断导出：sqware-diagnose.jsonl → diagnose-<seed>-<ts>.jsonl
+  if ($export | path exists) {
+      let dumped = $"diagnose-($cfg.seed)-($ts).jsonl"
+      mv $export $dumped
+      print $"diagnose exported -> ($cfg.trapdir)/($dumped)"
   }
 }

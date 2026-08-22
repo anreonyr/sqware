@@ -10,11 +10,12 @@
 //!     崩溃现场分配器不可信，缓冲必须仍可用。
 //!   - 写 = 单生产者无锁：cursor 单调不回卷、读侧取模；读只在 panic，此时其余核
 //!     已由 halt 停写（写读互斥由 halt 语义保证）。
-//!   - 宿主镜像 = semihosting fs（feature semihosting，**默认开启**）：每条事件
-//!     JSON Lines 写入宿主文件 sqware-trace.jsonl（qemu CWD 下；首行 '#' 头部溯源），
-//!     runner 归档；依赖 QEMU -semihosting（runner 恒加）。
-//!   - **文件唯一写者 = host_note（live 流）**：panic 只经 note(Halt(Panic)) 追加一条
-//!     事件行，决不把环形窗口再 dump 一遍进文件（文本窗口在 semihosting 下由 scene 抑制）。
+//!   - 宿主镜像 = diagnose::export（feature semihosting，**默认开启**）：每条事件
+//!     一条 JSON 记录写入宿主文件 sqware-diagnose.jsonl（qemu CWD 下；首行 '#' 头部
+//!     溯源），runner 归档；依赖 QEMU -semihosting（runner 恒加）。
+//!   - 事件写者 = host_note（live 流，经 export::line 串行）：panic 只经
+//!     note(Halt(Panic)) 追加一条事件行，决不把环形窗口再 dump 一遍进文件
+//!     （控制台窗口在 semihosting 下仍由 scene 抑制）。
 
 use core::fmt;
 use core::fmt::Write;
@@ -190,145 +191,29 @@ pub fn note(kind: EventKind) {
     host_note(kind, hart, when);
 }
 
-// ── semihosting 宿主镜像（feature gate: semihosting）──────────────────
-// 本文件**唯一** semihosting 段：cfg 导入 + 导出句柄 + host_note/host_header +
-// JSON 序列化（line_json/total_len/digits/kind_str/fields_json）在此形成单一连续
-// 区域；文件其余部分不带 semihosting cfg。
+// ── 宿主镜像适配（feature gate: semihosting）──────────────────────────
+// 事件 JSON 序列化（kind_str/fields_json）在此；文件/分帧/锁/闩均归
+// diagnose::export（JSON Lines 单文件 sqware-diagnose.jsonl）。
 
-#[cfg(feature = "semihosting")]
-use crate::lock::OnceLock;
-#[cfg(feature = "semihosting")]
-use core::sync::atomic::AtomicBool;
-
-/// 导出文件名。QEMU semihosting fs 按 **qemu 进程 CWD**（= 调用 runner 的目录，
-/// 通常仓库根）解析相对路径；runner 结束后归档进 trace/。
-#[cfg(feature = "semihosting")]
-const EXPORT_NAME: &core::ffi::CStr = c"sqware-trace.jsonl";
-
-#[cfg(feature = "semihosting")]
-static EXPORT: OnceLock<semihosting::fs::File> = OnceLock::new();
-/// 头部已写（首行溯源）——只写一次。
-#[cfg(feature = "semihosting")]
-static EXPORT_STARTED: AtomicBool = AtomicBool::new(false);
-/// 打开失败闩：告警一次后静默停用（避免每事件重试 open 刷屏）。
-#[cfg(feature = "semihosting")]
-static EXPORT_BROKEN: AtomicBool = AtomicBool::new(false);
-
-/// 宿主镜像：把一条事件序列化成带长度的 JSON 行，经 semihosting **fs** 写入宿主
-/// 文件 sqware-trace.jsonl（首行 '#' 头部：宿主时刻溯源）。依赖 QEMU
-/// -semihosting（feature 默认开启，runner 恒加该标志）。打开失败仅告警一次并静默停用
-/// （诊断路径永不 panic）；行写失败忽略（尽力而为）。try_lock 串行跨核写。
+/// 宿主镜像：把一条事件序列化成 JSON 记录，经 `export::line` 写入宿主文件
+/// sqware-diagnose.jsonl。依赖 QEMU -semihosting（feature 默认开启，runner
+/// 恒加该标志）。打开失败/写失败尽力而为（诊断路径永不 panic）；跨核写由
+/// export 以 try_lock 串行。
 ///
-/// **唯一写者**：panic 只追加自身一行（note(Halt(Panic))），环形窗口 dump 不写本文件。
+/// 事件写者：panic 只追加自身一行（note(Halt(Panic))），环形窗口 dump 不写文件。
 #[cfg(feature = "semihosting")]
 fn host_note(kind: EventKind, hart: usize, when: u64) {
-    use crate::lock::SpinLock;
-    use semihosting::io::Write as _;
-    static HOST: SpinLock<()> = SpinLock::new(());
-    if let Some(_g) = HOST.try_lock() {
-        if EXPORT_BROKEN.load(Ordering::Relaxed) {
-            return;
-        }
-        if EXPORT.get().is_none() {
-            match semihosting::fs::File::create(EXPORT_NAME) {
-                Ok(f) => {
-                    let _ = EXPORT.set(f);
-                }
-                Err(_) => {
-                    EXPORT_BROKEN.store(true, Ordering::Relaxed);
-                    crate::putln!(
-                        "semihosting: cannot create {:?}; host export disabled",
-                        EXPORT_NAME
-                    );
-                    return;
-                }
-            }
-        }
-        let mut file = EXPORT.get().expect("just stored above");
-        if !EXPORT_STARTED.swap(true, Ordering::Relaxed) {
-            let mut head = [0u8; 512];
-            let n = host_header(&mut head);
-            let _ = file.write_all(&head[..n]);
-            let _ = file.write_all(b"\n");
-        }
-        let mut buf = [0u8; 160];
-        let n = line_json(&Event { when, kind }, hart, &mut buf);
-        let _ = file.write_all(&buf[..n]);
-        let _ = file.write_all(b"\n");
-    }
-}
-
-/// 头部一行：# sqware semihosting t=<时期秒>。以 '#' 开头，消费端跳过非 '{' 行。
-/// 时刻用 SYS_TIME 的 Result API（尽力而为），不用 experimental::time 的
-/// SystemTime::now —— 其内部 unwrap，违反诊断路径不 panic。只依赖 fs feature。
-#[cfg(feature = "semihosting")]
-fn host_header(out: &mut [u8]) -> usize {
-    let mut o = 0usize;
-    {
-        let mut w = Buf(out, &mut o);
-        let _ = w.write_str("# sqware semihosting");
-        match semihosting::sys::arm_compat::sys_time() {
-            Ok(secs) => {
-                let _ = write!(w, " t={secs}");
-            }
-            Err(_) => {
-                let _ = w.write_str(" t=?");
-            }
-        }
-    }
-    o
-}
-
-/// 单条事件 → 完整 JSON 行，内含自描述长度 "len"（= 整行对象字节数，含自身）。
-/// 消费端据 len 校验/丢弃被截断或交错的半条。返回写入长度。
-#[cfg(feature = "semihosting")]
-fn line_json(e: &Event, hart: usize, out: &mut [u8]) -> usize {
-    let mut body = [0u8; 96];
-    let mut used = 0usize;
-    {
-        let mut w = Buf(&mut body, &mut used);
+    use crate::runtime::diagnose::export::line;
+    let e = Event { when, kind };
+    line(|w| {
         let _ = write!(
             w,
             "\"h\":{hart},\"t\":{},\"kind\":\"{}\"",
             e.when,
             kind_str(e.kind)
         );
-        let _ = fields_json(e, &mut w);
-    }
-    let total = total_len(used);
-    let mut o = 0usize;
-    {
-        let mut w = Buf(out, &mut o);
-        let _ = w.write_str("{");
-        let _ = w.write_str(core::str::from_utf8(&body[..used]).unwrap_or(""));
-        let _ = write!(w, ",\"len\":{total}}}");
-    }
-    o
-}
-
-/// total = '{' + body + ',"len":'(7) + digits(total) + '}' = used + 9 + digits(total)。
-/// 求不动点（digits 单调，1~2 步收敛）。
-#[cfg(feature = "semihosting")]
-fn total_len(used: usize) -> usize {
-    let mut total = used + 9 + 1;
-    loop {
-        let d = digits(total);
-        let want = used + 9 + d;
-        if want == total {
-            return total;
-        }
-        total = want;
-    }
-}
-
-#[cfg(feature = "semihosting")]
-fn digits(mut n: usize) -> usize {
-    let mut d = 1usize;
-    while n >= 10 {
-        n /= 10;
-        d += 1;
-    }
-    d
+        let _ = fields_json(&e, w);
+    });
 }
 
 #[cfg(feature = "semihosting")]
@@ -444,19 +329,6 @@ pub fn init() {
 }
 
 // ── 适配：panic_dump ────────────────────────────────
-
-/// 栈上写缓冲（格式化成行再整段 _write，避免逐字符 SBI 调用）。
-struct Buf<'a>(&'a mut [u8], &'a mut usize);
-
-impl fmt::Write for Buf<'_> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let used = *self.1;
-        let n = s.len().min(self.0.len().saturating_sub(used));
-        self.0[used..used + n].copy_from_slice(&s.as_bytes()[..n]);
-        *self.1 = used + n;
-        Ok(())
-    }
-}
 
 /// 事件描述文本（无时间前缀）——供表格列 1 使用。
 fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
