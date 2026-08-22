@@ -158,6 +158,8 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
         "  other harts hushed only hart {} remains",
         machine::hart_id()
     );
+    // 段尾空行（块间间距统一：与后续 [scene] 段间隔一行）。
+    let _ = writeln!(fld);
     let mut sink = crate::console::Sink;
     let _ = fld.flush(&mut sink);
 

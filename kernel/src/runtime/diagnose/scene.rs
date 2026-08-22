@@ -426,6 +426,7 @@ pub fn dump_crash() {
         }
     }
     p.table(&b);
+    crate::putln!(); // 段尾空行（块间间距统一；供 [trace] 段分隔）。
 
     // 每 hart 最近事件窗口文本统一倒出（报警核；崩溃后其余核已停写）。
     // JSON 侧事件已实时导出，窗口文本供终端上下文对照（人读）。
@@ -440,6 +441,7 @@ macro_rules! crash_scene {
     };
     ($($arg:tt)*) => {{
         $crate::console::_write(format_args!($($arg)*));
+        $crate::put!("\n"); // 消息后换行，[scene] 标题不与消息同段紧贴
         $crate::runtime::diagnose::scene::dump_crash();
     }};
 }

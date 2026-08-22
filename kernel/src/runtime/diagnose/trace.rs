@@ -415,5 +415,6 @@ pub fn panic_dump() {
             });
         }
         p.table(&tab);
+        putln!(); // 段尾空行（块间间距统一：标题/表之间恰一空行）。
     }
 }

@@ -1,9 +1,8 @@
-//! para —— 段落渲染：标题顶格 + 空行 + 内容缩进（诊断输出的统一段落形状）。
+//! para —— 段落渲染：标题顶格 + 内容缩进 + 块间统一空行（诊断输出形状）。
 //!
-//! 段落 = 一段独立输出的最小自含单位：标题行（顶格）→ 空行 → 内容（缩进 2）。
-//! 语义约束：一标题 = 一张表——段内多表列宽各自 auto 无法对齐，合并单表才是
-//! 对齐正道（boot banner / crash scene 均如此）。缩进包装是段落私有工具，
-//! 不对外裸漏：缩进语义只属于段落层。
+//! 间距契约：**任何输出块（标题行 / 表格）之间恰一个空行**——title 无前导
+//! （段首），table 前自动 gap（段内表间/标题后），段尾空行由调用方补（供下一段
+//! 或结尾分隔）。缩进包装是段落私有工具，不对外裸漏。
 
 use core::fmt::{self, Write};
 
@@ -12,27 +11,33 @@ use crate::table::Table;
 /// 段落渲染器：把「标题 + 整表」按段落形状写出（标题经 title、表体经 table）。
 pub struct Para<W: Write> {
     out: W,
+    at_start: bool,
 }
 
 impl<W: Write> Para<W> {
-    /// 包一个 sink（console / 栈缓冲）。
+    /// 包一个 sink（console / 栈缓冲）。at_start：本段落尚未输出（首块无前导间距）。
     pub fn new(out: W) -> Self {
-        Self { out }
+        Self {
+            out,
+            at_start: true,
+        }
     }
 
-    /// 标题段头："\n{args}\n\n"（顶格标题 + 与其后内容空一行）。
+    /// 标题（段首，顶格）。标题与内容的空行由后续首个 table 的前导 gap 提供。
     pub fn title(&mut self, args: fmt::Arguments<'_>) {
-        let _ = writeln!(self.out, "\n{args}");
-        let _ = writeln!(self.out);
+        let _ = writeln!(self.out, "{args}");
+        self.at_start = false;
     }
 
-    /// 整表按段落写出：内容缩进 2 空格 + 补尾换行。
+    /// 整表（缩进 2 空格）：段内表间自动补 1 空行（gap）。段尾空行由调用方补。
     pub fn table<const C: usize, const R: usize, const S: usize>(&mut self, t: &Table<C, R, S>) {
+        if !self.at_start {
+            let _ = writeln!(self.out);
+        }
+        self.at_start = false;
         let mut ind = Indented::new(&mut self.out);
         let _ = t.render(&mut ind);
         drop(ind);
-        let _ = writeln!(self.out);
-        let _ = writeln!(self.out); // 表尾空行：表间/段间分隔统一
     }
 }
 
