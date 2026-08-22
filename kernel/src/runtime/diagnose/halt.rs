@@ -51,13 +51,21 @@ fn hunker() -> ! {
     }
 }
 
-/// 抢占为报警源：返回 true = 本 hart 胜出（继续处理），false = 已有人报警、输家卧倒。
+/// 抢占为报警源：返回 true = 本 hart 首次胜出（继续转储）；false = 本 hart **已
+/// 是**报警源（嵌套 panic re-entry——不再重复转储，调用方直接进停机自环）。
 ///
-/// 原子互斥保证并发 panic 只有一个报警源；`ALARMER` 仅在胜出后写入并 Release
-/// 发布——窗口期读到的哨兵 `usize::MAX` 使任何核都判为 follower→`hunker`，不误停胜出核。
+/// 原子互斥保证并发 panic 只有一个报警源：CAS 失手即输——输家若**不是**报警源
+/// 就地 `hunker` 卧倒；输家若**就是**报警源（`ALARMER == me`，即现场转储过程中
+/// 再 fault 的嵌套路径）则**不卧倒**——卧倒会把本 hart HSM 停掉，srst 停机自环
+/// 永远到不了（"panic 后不停机"的根路径）。`ALARMER` 仅在胜出后写入并 Release
+/// 发布——窗口期读到的哨兵 `usize::MAX` 使任何非报警核都判为 follower→`hunker`。
 fn claim() -> bool {
     if ALARM.swap(true, Ordering::AcqRel) {
-        hunker();
+        // 已有人报警：唯一例外是本核自己就是报警源（嵌套 panic）——豁免卧倒。
+        if ALARMER.load(Ordering::Acquire) != machine::hart_id() {
+            hunker();
+        }
+        return false;
     }
     ALARMER.store(machine::hart_id(), Ordering::Release);
     true
@@ -94,10 +102,14 @@ fn broadcast() {
 }
 
 /// 拉响警报：抢占为报警源（并发 panic 的输家在此卧倒，不返回），随后广播唤醒
-/// 及其它核。返回仅意味着本 hart 胜出、可继续打印/停机。
-fn alarm() {
-    claim();
-    broadcast();
+/// 及其它核。返回 true = 本 hart 首次胜出（可继续打印/停机）；false = 嵌套
+/// re-entry（本 hart 已是报警源，报警/广播已做过，调用方直接进停机自环）。
+fn alarm() -> bool {
+    let won = claim();
+    if won {
+        broadcast();
+    }
+    won
 }
 
 /// panic 明细 → 宿主记录（feature semihosting）：`{"h","t","kind":"halt",
@@ -129,7 +141,12 @@ fn export_panic(loc: Option<(&str, u32, u32)>, msg: &str, task: Option<(usize, &
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 拉响警报：抢占报警源（唯一继续运行并打印的 hart，输家就地卧倒），
     // 再广播停止其它核（唤醒睡核、提示用户核），随后打印诊断现场。
-    alarm();
+    // 嵌套 panic（本 hart 已是报警源，现场转储期间再 fault 的重入）：报警与
+    // 广播已做过、其它核已停——不再重复转储（当前现场栈/缓冲已被嵌套 trap
+    // 覆写或不完整），直接进停机自环，保证任何残余 fault 都必然收敛到停机。
+    if !alarm() {
+        halt_loop()
+    }
 
     // 诊断头：拼进一个行缓冲，整段一次 flush 到控制台（无堆、无锁）。
     let mut fld = Fmt::<256>::new();
@@ -182,10 +199,17 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 统一崩溃现场转储（CSR/GPR/回溯符号化 + 事件窗口；内含 trace::panic_dump）。
     crate::crash_scene!();
 
+    halt_loop()
+}
+
+/// 停机自环：srst 关机/复位（QEMU 以 "QEMU: Terminated" 退出），失败则关中断
+/// wfi 兜底自旋。**不 panic**：此处已是 panic 末端，再 panic 会经嵌套 re-entry
+/// 回到本函数（listener 豁免已保证不会无限递归转储，但停机路径不引入新故障源）。
+fn halt_loop() -> ! {
+    // SAFETY: 仅清 sstatus.SIE（纯写本 hart 自己的 CSR，与 hunker 同契约）。
+    unsafe { core::arch::asm!("csrci sstatus, 2") };
     loop {
-        sbi::SystemResetCall::new(fid::SystemReset::SystemReset)
-            .call()
-            .unwrap();
+        let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
         unsafe { core::arch::asm!("wfi") };
     }
 }
