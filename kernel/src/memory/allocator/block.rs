@@ -4,7 +4,9 @@
 // 一把 inner 锁；块从池区段上撕页（tear）拆链——页来自自有区段，**不经过帧分配器**
 // （帧层保持全局，只管栈/trap/页表页）。跨节点释放经泵路由：块在异地释放时 feed 进
 // 其归属池的 pump 驿站，属主核下次 pull 前 suck 抽回归位——正确性不依赖任何调度策略
-// （任务可自由迁移，内存子系统免疫调度行为）。
+// （任务可自由迁移，内存子系统免疫调度行为）。驿站为按 size class 分立的侵入式单链
+// （块首 8 字节挂 next，同 freepool 手法），喂/抽全程零分配——feed 常处持门户锁的
+// deallocate 上下文，pump 若扩容分配会经 portal 自重入（lockdep 报警，见 Pump）。
 //
 // 结构镜像 frame.rs——自上而下一条脊柱：
 //   公共对象 BlockAllocator（池集合 + 区段表，等价 FrameAllocator）
@@ -26,7 +28,6 @@ use core::alloc::{AllocError, Allocator, Layout};
 use core::ptr::NonNull;
 
 use alloc::boxed::Box;
-use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use erra::ResultExt;
 use log::debug;
@@ -46,10 +47,37 @@ const MAX_POWER: usize = PAGE_SIZE.ilog2() as usize;
 
 // ── 公共对象：池集合 + 区段表 —— 等价 Frame 的 FrameAllocator ──
 
-/// 过境块：喂入/吸出之间携带的最小信息（指针 + size class）——等价 Frame 的 Meta。
-struct Remote {
-    ptr: NonNull<u8>,
-    power: usize,
+/// 过境驿站（pump）一处：按 size class 分立的一条侵入式单向链表——块自身内存存
+/// next（同 freepool 手法），跨节点释放时把块首 8 字节挂链。**零分配**：feed 常处
+/// 于 deallocate 持门户（portal）锁的上下文，任何分配都会经 portal 自重入
+/// （spinlock 递归 → lockdep panic，见 lock/depend）；suck 摘空整链（O(1) 换头）
+/// 后于 pump 锁外逐块 push 归位。
+struct Pump {
+    head: Option<NonNull<u8>>,
+    /// 在途块数（诊断/审计：feed 递增、suck 归零，恒等于链长）。
+    len: usize,
+}
+
+impl Pump {
+    const fn new() -> Self {
+        Self { head: None, len: 0 }
+    }
+
+    /// 头插：把链头写入块首 8 字节（同 push 的 freepool 头插，块尺寸 ≥ 8B 恒够）。
+    unsafe fn push(&mut self, ptr: NonNull<u8>) {
+        unsafe {
+            ptr.cast::<Option<NonNull<u8>>>().write(self.head);
+            self.head = Some(ptr);
+            self.len += 1;
+        }
+    }
+
+    /// 摘空整链（O(1)）并返回旧链头；len 归零。
+    fn take(&mut self) -> Option<NonNull<u8>> {
+        let head = self.head.take();
+        self.len = 0;
+        head
+    }
 }
 
 /// 区段：一段物理内存 → 池 id（按 base 有序，二分查询；init 后只读）。
@@ -213,9 +241,9 @@ unsafe impl Allocator for BlockAllocator {
 /// 区段大小不设编译期常量——init 按「空闲区均分到每池」动态算出（见 init），
 /// 大内存机器上自动放大；区段耗尽即内存耗尽。
 pub(crate) struct BlockInner {
-    inner: SpinLock<Pool>,            // freepool + 页头 used 计数 + 区段游标
-    pump: SpinLock<VecDeque<Remote>>, // 过境驿站：只收 feed，suck 抽空
-    base: usize,                      // 区段 [base, edge)，init 后不可变
+    inner: SpinLock<Pool>,                        // freepool + 页头 used 计数 + 区段游标
+    pump: [SpinLock<Pump>; MAX_POWER + 1],        // 过境驿站：按 size class 分立；只收 feed，suck 抽空
+    base: usize,                                  // 区段 [base, edge)，init 后不可变
     edge: usize,
 }
 
@@ -223,7 +251,7 @@ impl BlockInner {
     fn new(base: usize, edge: usize, pool: Pool) -> BlockInner {
         BlockInner {
             inner: SpinLock::new(pool),
-            pump: SpinLock::new(VecDeque::new()),
+            pump: core::array::from_fn(|_| SpinLock::new(Pump::new())),
             base,
             edge,
         }
@@ -336,21 +364,40 @@ impl BlockInner {
 
     // ── 泵：喂 / 抽 ──
 
-    /// 喂入本池 pump：块在外地被释放时投递至此（送它回家）。只入驿站，绝不碰 inner。
+    /// 喂入本池 pump：块在外地被释放时投递至此（送它回家）。只入驿站，绝不碰 inner；
+    /// 块首 8 字节挂链（同 freepool 手法），**零分配**——本路径常处 deallocate 持
+    /// 门户锁的上下文，任何分配都会经 portal 递归重入（见 Pump 注释）。
     fn feed(&self, ptr: NonNull<u8>, power: usize) {
-        let mut g = self.pump.lock();
-        g.push_back(Remote { ptr, power });
+        let mut g = self.pump[power].lock();
+        // SAFETY: 块已被释放（调用方不再使用）；首 8 字节空闲可写，尺寸 ≥ 8B。
+        unsafe { g.push(ptr) };
     }
 
-    /// 抽干本池 pump：取空队列，逐块归位（锁序 pump→放→inner；幂等）。
+    /// 抽干本池 pump：按 size class 逐链摘空（pump 锁内仅 O(1) 换头），摘出的链
+    /// 在 pump 锁外逐块 push 归位（锁序 pump→放→inner；幂等）。读 next 必须先于
+    /// push——push 会把 freepool 链头写进块首字、覆盖 next。
     fn suck(&self) {
-        // 交换队列：锁内只做 O(1) 摘空，绝不持 pump 求 inner
-        let drained = {
-            let mut g = self.pump.lock();
-            core::mem::take(&mut *g)
-        };
-        for Remote { ptr, power } in drained {
-            self.push(ptr, power);
+        for power in MIN_POWER..=MAX_POWER {
+            let head = {
+                let mut g = self.pump[power].lock();
+                g.take()
+            };
+            let mut this = head;
+            let mut n = 0usize;
+            while let Some(node) = this {
+                // 护栏：同块双 feed 会让同一块两次入链（甚至自环）——深度越界即报
+                // 错，避免抽空死循环（同 push 的 freepool walk 护栏）。
+                n += 1;
+                if n > 1 << 14 {
+                    panic!(
+                        "block allocator: pump[{power}] walk exceeded depth — cyclic chain (double feed?)"
+                    );
+                }
+                // SAFETY: 链中块均已被释放、首字为 next 指针（feed 挂链专用），可读。
+                let next = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
+                self.push(node, power);
+                this = next;
+            }
         }
     }
 
