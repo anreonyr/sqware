@@ -56,8 +56,7 @@ fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, 
 /// Fmt::addr 走全局内核符号器（team=None）。这里写入传入的 sink，由调用方收行。
 fn write_addr<W: Write>(w: &mut W, a: usize) {
     let va = VirtAddr::from_raw(a);
-    let team = running_team_try();
-    if let Some((name, off)) = elftable::resolve(va, team.as_deref()) {
+    if let Some((name, off)) = elftable::resolve(va, running_team_try().as_deref()) {
         let _ = write!(w, "{name}+{off:#x}");
     } else {
         let _ = write!(w, "{a:#x}");
@@ -68,8 +67,7 @@ fn write_addr<W: Write>(w: &mut W, a: usize) {
 /// 无前缀——列间分隔由 Table 的 cell padding 统一负责（避免与语义注解叠成多层空格）。
 fn addr_note<W: Write>(w: &mut W, a: usize) {
     let va = VirtAddr::from_raw(a);
-    let team = running_team_try();
-    if let Some((name, off)) = elftable::resolve(va, team.as_deref()) {
+    if let Some((name, off)) = elftable::resolve(va, running_team_try().as_deref()) {
         let _ = write!(w, "{name}+{off:#x}");
     }
 }
@@ -183,8 +181,7 @@ fn dump_csrs() {
         let mut note = Fmt::<96>::new();
         {
             let va = VirtAddr::from_raw(stval::read());
-            let team = running_team_try();
-            if let Some((name, off)) = elftable::resolve(va, team.as_deref()) {
+            if let Some((name, off)) = elftable::resolve(va, running_team_try().as_deref()) {
                 let _ = write!(note, "{name}+{off:#x} ");
             }
         }

@@ -55,12 +55,12 @@ use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
-use crate::runtime::switcher::context::TrapContext;
+use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
+use crate::runtime::diagnose::watch;
+use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
 use crate::runtime::switcher::trap::arm_timer;
-use crate::runtime::chrono::{clock, timer};
-use crate::runtime::diagnose::watch;
 use table::Fmt;
 
 use super::tie;
@@ -218,6 +218,7 @@ impl Scheduler {
             "running 容器只装 Running 任务"
         );
         let pa = task.trap.pa.as_usize();
+        mirror_running_team(&task.team);
         i.running = Some(task);
         pa
     }
@@ -595,6 +596,22 @@ fn probe_strong(t: &Arc<Task>, ctx: &str) {
 
 static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
+/// 锁外 running team 镜像：最近装槽上台任务的 Team（`SpinLock<Option<Arc<Team>>>`）。
+/// 供 panic/诊断现场符号化用户地址：不碰调度锁（崩溃时它常被持、可能死锁），
+/// 走独立小锁——写侧仅 replace 装槽瞬间持有（原子窗口），诊断读 try_lock，
+/// 失败仅本次不符号化（不 panic）。
+/// 生命周期：镜像持正常 `Arc<Team>` 引用、写侧换新即释放旧 Arc —— Team 完全
+/// 正常退出/回收，无滞留、无泄漏。镜像非精确「当前 running」——是最近上台过
+/// 的 team，足供符号化（诊断容忍近似）。
+/// 锁层级 L3（同 blocked/reaped）：replace 内为 L1(调度锁)→L3(镜像)严格递增；
+/// 调用方已先放调度锁，无外层锁残留，不构成 3→3 嵌套。
+static RUNNING_TEAM: SpinLock<Option<Arc<Team>>> = SpinLock::new_level(Level::L3, None);
+
+/// replace 装槽时调用：把新上台任务的 team 写入镜像。仅持有锁的 replace 写。
+fn mirror_running_team(team: &Arc<Team>) {
+    RUNNING_TEAM.lock().replace(team.clone());
+}
+
 fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
 }
@@ -902,13 +919,13 @@ pub fn running_team() -> Arc<Team> {
         .clone()
 }
 
-/// 当前运行任务所属团队（panic/诊断现场安全：try_lock + Option，不 panic、不阻塞）。
-/// 与 running_team 不同，供崩溃转储符号化在可能持锁/无任务的 panic 现场调用。
+/// 当前运行任务所属团队（panic/诊断现场安全：try_lock 读 RUNNING_TEAM 镜像锁，
+/// 非调度锁——崩溃时调度锁常被持会失败；镜像锁仅 replace 瞬间持有，几无争用）。
+/// 返回 clone 的 Arc<Team>（放锁后安全使用）。镜像近似：非精确「此刻 running」
+/// 而是最近上台过的 team，足供符号化。未装槽（boot 早期 / 无任务）→ None。
 pub fn running_team_try() -> Option<Arc<Team>> {
-    let all = SCHEDULERS.get()?;
-    let me = machine::hart_id();
-    let guard = all[me].inner.try_lock()?;
-    guard.running.as_ref().map(|t| t.team.clone())
+    let guard = RUNNING_TEAM.try_lock()?;
+    guard.as_ref().map(|t| t.clone())
 }
 
 /// 当前运行任务 id（诊断用；无任务返回 NO_TASK_ID）。
