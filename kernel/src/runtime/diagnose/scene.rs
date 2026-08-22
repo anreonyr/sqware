@@ -27,7 +27,7 @@ use crate::console::Sink;
 use crate::memory::manager::addr::VirtAddr;
 use crate::work::room::scheduler::{running_task_info, running_team_try};
 use crate::work::unit::elftable;
-use table::{Cell, Fmt, Para, RowsMut, Table};
+use table::{Cell, Fmt, Para, RowsMut, Table, Width};
 
 /// 回溯深度上限。
 const BT_DEPTH: usize = 32;
@@ -35,8 +35,6 @@ const BT_DEPTH: usize = 32;
 const BT_SCAN: usize = 4096;
 /// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
 const ADDR_ALIGN: usize = 4;
-/// crash scene 合并表行上限：CSR 8（task 可选 + 7 固定）+ GPR 31（非零至多 31）。
-const SCENE_ROWS: usize = 8 + 31;
 
 /// 定宽 hex（{:#018x}）——值列的通用形态（经 Fmt::hexw）。
 fn hx(x: usize) -> Fmt<40> {
@@ -84,7 +82,10 @@ fn scene_row(tbl: &str, label: &str, v: &str, n: &str) {
         let h = crate::machine::hart_id();
         let t = crate::runtime::chrono::clock::now().as_ticks();
         line(|w| {
-            let _ = write!(w, "\"h\":{h},\"t\":{t},\"kind\":\"scene\",\"tbl\":\"{tbl}\"");
+            let _ = write!(
+                w,
+                "\"h\":{h},\"t\":{t},\"kind\":\"scene\",\"tbl\":\"{tbl}\""
+            );
             let _ = k(w, "label");
             let _ = jv(w, label);
             let _ = k(w, "v");
@@ -99,14 +100,26 @@ fn scene_row(tbl: &str, label: &str, v: &str, n: &str) {
     }
 }
 
-/// 三槽行：label/value/note 入合并表当前行，同值导出 scene 行（tbl 由调用方给，
+/// 三槽行：label/value/note 入当前行，同值导出 scene 行（tbl 由调用方给，
 /// 两消费端不可能只写一边）。行耗尽（上限满，调用方 bug）静默跳过，不 panic。
 fn row3(it: &mut RowsMut<'_, 3, 96>, tbl: &str, label: &str, v: &str, n: &str) {
-    let Some(row) = it.next() else { return; };
+    let Some(row) = it.next() else {
+        return;
+    };
     row[0] = Cell::new(label);
     row[1] = Cell::new(v);
     row[2] = Cell::new(n);
     scene_row(tbl, label, v, n);
+}
+
+/// 两槽行：label/value 入表，note 恒空（GPR 无注解列）。
+fn row2(it: &mut RowsMut<'_, 2, 96>, tbl: &str, label: &str, v: &str) {
+    let Some(row) = it.next() else {
+        return;
+    };
+    row[0] = Cell::new(label);
+    row[1] = Cell::new(v);
+    scene_row(tbl, label, v, "");
 }
 
 /// 读全部 31 个非零 GPR（x0 恒 0；ra/sp/gp/tp 首页）。
@@ -189,11 +202,32 @@ fn stval_note(int: bool, code: usize) -> &'static str {
     }
 }
 
-/// CSR 块填充（进合并表首 8 行）：sepc/stval/scause = 崩点；stvec/sscratch =
+/// 表头行（三列表）：块名 + 列语义（hex/note）。纯渲染装饰，不导出 scene 记录；
+/// 首列与内容行同宽（列宽统一），dump 内各表头风格一致。
+fn header3(it: &mut RowsMut<'_, 3, 96>, name: &str) {
+    let Some(row) = it.next() else {
+        return;
+    };
+    row[0] = Cell::new(name);
+    row[1] = Cell::new("hex");
+    row[2] = Cell::new("note");
+}
+
+/// 表头行（两列表）：块名 + 列语义。
+fn header2(it: &mut RowsMut<'_, 2, 96>, name: &str, col: &str) {
+    let Some(row) = it.next() else {
+        return;
+    };
+    row[0] = Cell::new(name);
+    row[1] = Cell::new(col);
+}
+
+/// CSR 块填充（首行表头，其后至多 8 行）：sepc/stval/scause = 崩点；stvec/sscratch =
 /// 陷阱入口/暂存；sstatus/satp = 特权/地址空间域。注解列 = 符号化（sepc/stval/
 /// stvec）+ 解码（scause 用 riscv 枚举、stval 语义、sscratch 约定、sstatus 位域、
-/// satp 用 Mode 枚举）。首行 task = 运行中任务（若有；try_lock 拿不到则跳过）。
+/// satp 用 Mode 枚举）。task 行 = 运行中任务（若有；try_lock 拿不到则跳过）。
 fn fill_csrs(it: &mut RowsMut<'_, 3, 96>) {
+    header3(it, "csr");
     let sc = scause::read();
     let (int, code) = (sc.is_interrupt(), sc.code());
     if let Some((tid, name)) = running_task_info() {
@@ -320,8 +354,9 @@ fn fill_csrs(it: &mut RowsMut<'_, 3, 96>) {
     }
 }
 
-/// GPR 块填充（进合并表 8 行之后，只打非零）：两槽行（label/hex），note 空。
-fn fill_gprs(it: &mut RowsMut<'_, 3, 96>) {
+/// GPR 块填充（首行表头，其后只打非零）：label/hex 两槽，note 空。
+fn fill_gprs(it: &mut RowsMut<'_, 2, 96>) {
+    header2(it, "gpr", "hex");
     const NAMES: [&str; 32] = [
         "x0", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
         "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
@@ -332,13 +367,15 @@ fn fill_gprs(it: &mut RowsMut<'_, 3, 96>) {
         if r[i] == 0 {
             continue;
         }
-        row3(it, "gpr", name, hx(r[i]).as_str(), "");
+        row2(it, "gpr", name, hx(r[i]).as_str());
     }
 }
 
 /// 回溯两槽行：#i / 符号化地址；导出行 v = 定宽 hex、n = 符号。
 fn bt_row(it: &mut RowsMut<'_, 2, 96>, i: usize, a: usize) {
-    let Some(row) = it.next() else { return; };
+    let Some(row) = it.next() else {
+        return;
+    };
     let mut l = Fmt::<16>::new();
     let _ = write!(l, "#{i}");
     let mut s = Fmt::<96>::new();
@@ -350,32 +387,42 @@ fn bt_row(it: &mut RowsMut<'_, 2, 96>, i: usize, a: usize) {
 
 /// 统一崩溃现场转储：hart + 任务 + CSR + GPR + 回溯 + 事件窗口。
 ///
-/// 段落（一标题 = 一张表）：crash scene 段 = 合并表（CSR + GPR——列宽对齐靠合并，
-/// 非两表独立 auto；boot banner 同款）；backtrace 段独立标题独立表。running task
-/// 并入 CSR 首行（label=task）——不单独打印缩进行，保持「标题行 + 顶格表格」。
+/// 段落：crash scene 标题下 CSR 三列表（label/value/note）与 GPR 两列表（label/
+/// hex）分离独立，各自首行表头（块名 + 列语义）分界；backtrace 独立标题独立表，
+/// 表头与 csr/gpr 同风格。三表首列同 fixed(10)（label 列宽统一）。running task
+/// 并入 CSR 首行（label=task）——不单独打印缩进行。
 pub fn dump_crash() {
-    // crash scene 段：标题 + 合并表。
+    // crash scene 段：标题 + CSR 三列表 + GPR 两列表。
     let mut p = Para::new(Sink);
     p.title(format_args!(
         "[scene] crash scene, hart {}",
         crate::machine::hart_id()
     ));
-    let mut t = Table::<3, SCENE_ROWS, 96>::new();
+    let mut csr = Table::<3, 9, 96>::new();
+    csr.set_width(0, Width::fixed(10));
     {
-        let mut it = t.rows_mut();
+        let mut it = csr.rows_mut();
         fill_csrs(&mut it);
+    }
+    p.table(&csr);
+    let mut gpr = Table::<2, 32, 96>::new();
+    gpr.set_width(0, Width::fixed(10));
+    {
+        let mut it = gpr.rows_mut();
         fill_gprs(&mut it);
     }
-    p.table(&t);
+    p.table(&gpr);
 
-    // backtrace 段：独立标题 + 独立表（段内单表，auto 列宽一致）。
+    // backtrace 段：独立标题 + 独立表（表头与 csr/gpr 同风格统一）。
     let mut bt = [0usize; BT_DEPTH];
     let n = backtrace(&mut bt);
     let mut p2 = Para::new(Sink);
     p2.title(format_args!("[scene] backtrace {n} frames"));
-    let mut b = Table::<2, { BT_DEPTH }, 96>::new();
+    let mut b = Table::<2, { BT_DEPTH + 1 }, 96>::new();
+    b.set_width(0, Width::fixed(10));
     {
         let mut it = b.rows_mut();
+        header2(&mut it, "bt", "sym");
         for (i, a) in bt[..n].iter().enumerate() {
             bt_row(&mut it, i, *a);
         }

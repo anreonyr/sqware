@@ -1,4 +1,3 @@
-
 //! memory::integrity — 内存完整性检测框架（debug-only；release 整体编译为空）。
 //!
 //! 隐喻：Banker（页金库）+ Ledger（活块账本），同属簿记域。
@@ -99,7 +98,10 @@ impl Banker {
         assert!(pa >= base, "banker: page {pa:#x} below base {base:#x}");
         let n = (pa - base) / PAGE_SIZE;
         let bits = self.words.get().expect("banker not initialized").len() * 64;
-        assert!(n < bits, "banker: page {pa:#x} outside bank (base {base:#x})");
+        assert!(
+            n < bits,
+            "banker: page {pa:#x} outside bank (base {base:#x})"
+        );
         n
     }
 
@@ -198,7 +200,11 @@ impl Ledger {
     pub fn mark(&self, addr: usize, size: usize, site: usize, kind: OwnerKind) {
         let mut g = self.inner.lock();
         let Some((map, soft)) = g.as_mut() else {
-            report(IntegrityViolation::NotInitialized, addr, format_args!("ledger mark before init"));
+            report(
+                IntegrityViolation::NotInitialized,
+                addr,
+                format_args!("ledger mark before init"),
+            );
         };
         if map.len() >= *soft {
             report(
@@ -218,12 +224,13 @@ impl Ledger {
         // canary 槽位按 8 对齐（块首 + 请求尺寸可能不对齐；u64 读写必须对齐——
         // 未对齐会触发 misaligned trap 进 OpenSBI 模拟，极慢/卡死）。
         let aligned = (size + 7) & !7;
-        let canary = (kind == OwnerKind::KernelHeap && class - aligned >= CANARY_MIN_SLACK).then(|| {
-            let at = addr + aligned;
-            // SAFETY: at..at+8 落在块 slack 区（class ≥ aligned+8），块此刻独占（分配未交付）。
-            unsafe { (at as *mut u64).write_volatile(CANARY_MAGIC) };
-            CANARY_MAGIC
-        });
+        let canary =
+            (kind == OwnerKind::KernelHeap && class - aligned >= CANARY_MIN_SLACK).then(|| {
+                let at = addr + aligned;
+                // SAFETY: at..at+8 落在块 slack 区（class ≥ aligned+8），块此刻独占（分配未交付）。
+                unsafe { (at as *mut u64).write_volatile(CANARY_MAGIC) };
+                CANARY_MAGIC
+            });
         map.insert(
             addr,
             Record {
@@ -240,10 +247,18 @@ impl Ledger {
     pub fn verify(&self, addr: usize) {
         let g = self.inner.lock();
         let Some((map, _)) = g.as_ref() else {
-            report(IntegrityViolation::NotInitialized, addr, format_args!("ledger verify before init"));
+            report(
+                IntegrityViolation::NotInitialized,
+                addr,
+                format_args!("ledger verify before init"),
+            );
         };
         let Some(rec) = map.get(&addr) else {
-            report(IntegrityViolation::UnregisteredFree, addr, format_args!("verify: no record"));
+            report(
+                IntegrityViolation::UnregisteredFree,
+                addr,
+                format_args!("verify: no record"),
+            );
         };
         check_canary(addr, rec);
     }
@@ -252,10 +267,18 @@ impl Ledger {
     pub fn unmark(&self, addr: usize, size: usize) {
         let mut g = self.inner.lock();
         let Some((map, _)) = g.as_mut() else {
-            report(IntegrityViolation::NotInitialized, addr, format_args!("ledger unmark before init"));
+            report(
+                IntegrityViolation::NotInitialized,
+                addr,
+                format_args!("ledger unmark before init"),
+            );
         };
         let rec = map.get(&addr).unwrap_or_else(|| {
-            report(IntegrityViolation::UnregisteredFree, addr, format_args!("unmark: no record"));
+            report(
+                IntegrityViolation::UnregisteredFree,
+                addr,
+                format_args!("unmark: no record"),
+            );
         });
         if rec.size != size {
             check_canary(addr, rec);
@@ -279,7 +302,11 @@ impl Ledger {
     }
 
     pub fn len(&self) -> usize {
-        self.inner.lock().as_ref().map(|(m, _)| m.len()).unwrap_or(0)
+        self.inner
+            .lock()
+            .as_ref()
+            .map(|(m, _)| m.len())
+            .unwrap_or(0)
     }
 }
 
@@ -323,8 +350,10 @@ pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
         code: v as u8,
         addr,
     }));
-    _write(format_args!("[integrity] {v:?} at {addr:#x}: {detail}
-"));
+    _write(format_args!(
+        "[integrity] {v:?} at {addr:#x}: {detail}
+"
+    ));
     panic!("memory integrity violation: {v:?}");
 }
 
@@ -419,7 +448,11 @@ pub fn audit() {
         let page = addr & !(PAGE_SIZE - 1);
         if rec.kind == OwnerKind::KernelHeap {
             if !crate::memory::allocator::block::pool_includes(addr) {
-                report(IntegrityViolation::WildAddress, addr, format_args!("kernel-heap record outside pool segments"));
+                report(
+                    IntegrityViolation::WildAddress,
+                    addr,
+                    format_args!("kernel-heap record outside pool segments"),
+                );
             }
             if !BANKER.is_held(page) {
                 report(

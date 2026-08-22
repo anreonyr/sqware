@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use super::OnceLock;
 use crate::machine;
 use crate::putln;
-use table::{Cell, Fmt, Para, Table, render_addr};
+use table::{Cell, Fmt, Para, Table, Width, render_addr};
 
 /// 锁层级 — lock/mod.rs 层级契约的具名化（1 最低、6 最高）。
 /// 参与锁才有 level；Option<Level>::None = exempt（不参与、不校验）。
@@ -78,9 +78,12 @@ pub(crate) fn report(
     caller: usize,
 ) -> ! {
     let mut p = Para::new(crate::console::Sink);
-    p.title(format_args!("[depend] {kind}: {what} (single-hart lock-order violation)"));
+    p.title(format_args!(
+        "[depend] {kind}: {what} (single-hart lock-order violation)"
+    ));
     // hart 首行并入 Table（值列写数字，非地址）；表格第 0 列顶格，无行首空格。
     let mut t = Table::<2, 4, 96>::new();
+    t.set_width(0, Width::fixed(10));
     {
         let mut it = t.rows_mut();
         if let Some(row) = it.next() {
@@ -90,7 +93,9 @@ pub(crate) fn report(
             row[1] = Cell::new(v.as_str());
         }
         for (label, addr) in [("lock", lock), ("holder", holder), ("caller", caller)] {
-            let Some(row) = it.next() else { break; };
+            let Some(row) = it.next() else {
+                break;
+            };
             row[0] = Cell::new(label);
             let mut v = Fmt::<96>::new();
             let _ = render_addr(&mut v, addr);
@@ -250,7 +255,7 @@ pub(crate) fn release(addr: usize, level: Level) {
         return;
     };
     if held.remove(addr).is_err() {
-        putln!("\n[depend] release of unheld lock {addr:#x} (level {level:?})");
+        putln!("[depend] release of unheld lock {addr:#x} level {level:?}");
         panic!("depend: release of unheld lock {addr:#x}");
     }
 }
@@ -266,6 +271,7 @@ pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
     };
     // 行 = label / addr / 说明。hart 首行并入 Table（值列写数字），taking + caller 两行，中间夹 held 各行。
     let mut t = Table::<3, { MAX_HELD + 3 }, 96>::new();
+    t.set_width(0, Width::fixed(10));
     {
         let mut it = t.rows_mut();
         if let Some(row) = it.next() {
@@ -293,7 +299,9 @@ pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
         } else {
             let max = held.max_level().unwrap_or(level);
             for i in 0..held.len {
-                let Some(row) = it.next() else { break; };
+                let Some(row) = it.next() else {
+                    break;
+                };
                 row[0] = Cell::new("held");
                 let mut v = Fmt::<96>::new();
                 let _ = render_addr(&mut v, held.slots[i].addr);

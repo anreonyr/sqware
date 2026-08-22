@@ -11,10 +11,7 @@ use riscv::register::{scause, sepc, stval};
 
 use crate::memory::PAGE_SIZE;
 
-use super::{
-    addr::VirtAddr,
-    entry::PteFlags,
-};
+use super::{addr::VirtAddr, entry::PteFlags};
 use crate::work::unit::space::{MapKind, Space};
 
 /// 从机器 CSR 捕获的缺页信息。

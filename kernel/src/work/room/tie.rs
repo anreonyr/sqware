@@ -15,10 +15,10 @@
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use sbi::scall::SArgs;
-use sbi::{self, fid};
 use crate::machine;
 use crate::putln;
+use sbi::scall::SArgs;
+use sbi::{self, fid};
 
 /// 已入队（创建）任务计数（全退出检测：REAPED == PUSHED → 停机）。
 static PUSHED: AtomicUsize = AtomicUsize::new(0);
@@ -101,7 +101,8 @@ pub(super) fn sleep(hart: usize) {
         hart < crate::machine::MAX_HART_SLOTS,
         "sleep hart {hart} beyond MAX_HART_SLOTS"
     );
-    WAITING[hart / (usize::BITS as usize)].fetch_or(1usize << (hart % (usize::BITS as usize)), Ordering::AcqRel);
+    WAITING[hart / (usize::BITS as usize)]
+        .fetch_or(1usize << (hart % (usize::BITS as usize)), Ordering::AcqRel);
 }
 
 /// 清除 hart 的等待标记（WFI 唤醒后 / 复查发现任务时调用）。
@@ -110,7 +111,10 @@ pub(super) fn wake(hart: usize) {
         hart < crate::machine::MAX_HART_SLOTS,
         "wake hart {hart} beyond MAX_HART_SLOTS"
     );
-    WAITING[hart / (usize::BITS as usize)].fetch_and(!(1usize << (hart % (usize::BITS as usize))), Ordering::AcqRel);
+    WAITING[hart / (usize::BITS as usize)].fetch_and(
+        !(1usize << (hart % (usize::BITS as usize))),
+        Ordering::AcqRel,
+    );
 }
 
 /// 唤醒所有 WFI 等待中的 hart（push 后调用：新任务出现 → 睡核可 steal）。

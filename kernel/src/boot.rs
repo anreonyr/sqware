@@ -20,9 +20,11 @@ use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
-use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::diagnose::trace;
-use crate::runtime::switcher::trampoline::{alltraps_va, restore, trap_stack_bottom, trap_stack_top};
+use crate::runtime::switcher::context::TrapContext;
+use crate::runtime::switcher::trampoline::{
+    alltraps_va, restore, trap_stack_bottom, trap_stack_top,
+};
 use crate::work::room::scheduler;
 #[cfg(debug_assertions)]
 use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa};
@@ -63,7 +65,9 @@ fn kernel_symbolizer(addr: usize) -> Option<(&'static str, usize)> {
 
 /// banner 行：label/值两槽入表（行位置由表迭代器推进；行耗尽静默跳过）。
 fn brow(it: &mut table::RowsMut<'_, 2, 96>, label: &str, v: &str) {
-    let Some(row) = it.next() else { return; };
+    let Some(row) = it.next() else {
+        return;
+    };
     row[0] = table::Cell::new(label);
     row[1] = table::Cell::new(v);
 }
@@ -137,12 +141,7 @@ pub fn banner() {
         }
         {
             let mut v = Fmt::<96>::new();
-            let _ = write!(
-                v,
-                "{:#x}..{:#x}",
-                trap_stack_bottom(0),
-                trap_stack_top(0)
-            );
+            let _ = write!(v, "{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
             brow(&mut it, "trap stack", v.as_str());
         }
         {
@@ -248,14 +247,8 @@ fn spawn_demos() -> Result<(), MapError> {
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
         //     "exiter",
         // ),
-        (
-            &include_bytes!(env!("USER_HEAPER"))[..],
-            "heaper",
-        ),
-        (
-            &include_bytes!(env!("USER_SPAWNER"))[..],
-            "spawner",
-        ),
+        (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
+        (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
     ] {
         let (team, entry) = load_user(elf);
         team.task().name(name).entry(entry).spawn()?;

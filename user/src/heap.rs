@@ -9,8 +9,8 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 
-use crate::env;
 use crate::PAGE_SIZE;
+use crate::env;
 
 /// 转发型全局分配器：alloc = 内核堆 `heap_allocate`，dealloc = `heap_deallocate`。
 ///

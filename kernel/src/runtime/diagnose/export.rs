@@ -33,46 +33,65 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 /// 打开失败闩：告警一次后静默停用（避免每记录重试 open 刷屏）。
 static BROKEN: AtomicBool = AtomicBool::new(false);
 
+/// HOST 锁等待上限（ticks；timebase 10MHz 下 ≈1ms）：持锁方写一条记录
+/// （semihosting host 回调）在该量级内必完成；超限即放弃——防 panic 现场对
+/// 已 hunker 的持锁核死等（尽力而为的最后兜底）。
+const HOST_WAIT_TICKS: u64 = 10_000;
+
 /// 写一条结构化记录：`{<fields>,"len":N}\n`。
 ///
 /// fields 闭包向 [`Buf`] 写记录字段（含 `"h"`/`"t"`/`"kind"` 与模块自有字段；
-/// 文本字段经 [`json_esc`]）。框架自动补 `,"len":N` 与首行 '#' 头部。
-/// 尽力而为：try_lock 失败（panic 瞬间他核正写）或 broken 闩 → 静默跳过；
-/// 记录超过栈缓冲 → 截断（消费端按 len 不符丢弃）。诊断路径永不 panic。
+/// 文本字段经 [`k`]/[`v`]）。框架自动补 `,"len":N` 与首行 '#' 头部。
+/// 尽力而为：HOST 锁繁忙（他核正写）→ 在时间预算内等待重试后才放弃（SMP
+/// 高频下事件不再成片丢失；panic 现场等得起、对 hunker 持锁核超时跳过，永不
+/// panic）；broken 闩 → 静默停用；记录超栈缓冲 → 截断（消费端按 len 不符丢弃）。
 pub fn line(fields: impl FnOnce(&mut Buf)) {
     use semihosting::io::Write as _;
     static HOST: SpinLock<()> = SpinLock::new(());
-    if let Some(_g) = HOST.try_lock() {
-        if BROKEN.load(Ordering::Relaxed) {
-            return;
+    let deadline = crate::runtime::chrono::clock::now()
+        .as_ticks()
+        .wrapping_add(HOST_WAIT_TICKS);
+    let _g = loop {
+        if let Some(g) = HOST.try_lock() {
+            break g;
         }
-        if FILE.get().is_none() {
-            match semihosting::fs::File::create(EXPORT_NAME) {
-                Ok(f) => {
-                    let _ = FILE.set(f);
-                }
-                Err(_) => {
-                    BROKEN.store(true, Ordering::Relaxed);
-                    crate::putln!(
-                        "semihosting: cannot create {:?}; host export disabled",
-                        EXPORT_NAME
-                    );
-                    return;
-                }
+        if crate::runtime::chrono::clock::now().as_ticks() >= deadline {
+            return; // 超时：静默跳过（尽力而为，不阻塞诊断路径）
+        }
+        core::hint::spin_loop();
+    };
+    if BROKEN.load(Ordering::Relaxed) {
+        return;
+    }
+    if FILE.get().is_none() {
+        match semihosting::fs::File::create(EXPORT_NAME) {
+            Ok(f) => {
+                let _ = FILE.set(f);
+            }
+            Err(_) => {
+                BROKEN.store(true, Ordering::Relaxed);
+                crate::putln!(
+                    "semihosting: cannot create {:?}; host export disabled",
+                    EXPORT_NAME
+                );
+                return;
             }
         }
-        let mut file = FILE.get().expect("just stored above");
-        if !STARTED.swap(true, Ordering::Relaxed) {
-            let mut head = [0u8; 512];
-            let n = header(&mut head);
-            let _ = file.write_all(&head[..n]);
-            let _ = file.write_all(b"\n");
-        }
-        let mut out = [0u8; 560];
-        let n = record(fields, &mut out);
-        let _ = file.write_all(&out[..n]);
+    }
+    let mut file = FILE.get().expect("just stored above");
+    if !STARTED.swap(true, Ordering::Relaxed) {
+        let mut head = [0u8; 512];
+        let n = header(&mut head);
+        let _ = file.write_all(&head[..n]);
         let _ = file.write_all(b"\n");
     }
+    let mut out = [0u8; 560];
+    let n = record(fields, &mut out);
+    // 写失败提前返回：不留半行（消费端按 len 校验会丢弃破损行，但避免继续叠写）。
+    if file.write_all(&out[..n]).is_err() {
+        return;
+    }
+    let _ = file.write_all(b"\n");
 }
 
 /// 开一个字段键：`,"name":`。键名是字面量（不发散为调用方输入），调用方随后

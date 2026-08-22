@@ -69,14 +69,14 @@ pub use bare::BareLock;
 pub use once::OnceLock;
 pub use reentrant::RelLock;
 // RwLock：锁体系原语，当前无用户，保留 re-export
-#[allow(unused_imports)]
-pub use rw::RwLock;
-pub use spin::SpinLock;
 /// 锁层级（depend 具名化；参与锁用 new_level 声明；None = exempt）。
 pub use depend::Level;
 /// 分配点返回地址捕获（integrity alloc-site 与诊断报告用）。
 #[cfg(all(debug_assertions, feature = "audit"))]
 pub(crate) use depend::ra;
+#[allow(unused_imports)]
+pub use rw::RwLock;
+pub use spin::SpinLock;
 /// 注入地址符号化回调（boot 装配后调用；未注入则 table 打印裸地址）。
 pub use table::set_symbolizer;
 

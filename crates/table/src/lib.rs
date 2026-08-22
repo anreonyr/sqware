@@ -20,5 +20,5 @@ mod table;
 pub use fmt::Fmt;
 pub use hex::{addr_width, render_addr};
 pub use para::Para;
-pub use sym::{set_symbolizer, SymFn};
-pub use table::{Align, Cell, RowsMut, Table};
+pub use sym::{SymFn, set_symbolizer};
+pub use table::{Align, Cell, RowsMut, Table, Width};

@@ -402,7 +402,9 @@ pub fn panic_dump() {
         {
             let mut it = tab.rows_mut();
             dump(h, TRACE_DUMP, |e| {
-                let Some(row) = it.next() else { return; };
+                let Some(row) = it.next() else {
+                    return;
+                };
                 let mut w = Fmt::<40>::new();
                 w.hexw(e.when as usize);
                 let mut d = Fmt::<96>::new();
@@ -412,6 +414,5 @@ pub fn panic_dump() {
             });
         }
         p.table(&tab);
-        putln!();
     }
 }

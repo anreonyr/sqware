@@ -19,9 +19,9 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::put;
-use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::chrono::{clock, timer};
+use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
+use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::scheduler::{park, reap, running_team, starve, with_running_space};
 
 /// envcall 分发（trap_handler 的 UserEnvCall 分支调用）。

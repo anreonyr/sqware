@@ -22,8 +22,8 @@ use riscv::register::{satp, scause, sepc, sie, sip, sstatus, stval, stvec, time}
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
-use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::diagnose::trace::{self, BootEvent, EventKind, MemEvent};
+use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, establish_tp, init_trap_stacks,
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
@@ -240,7 +240,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             frame as *mut TrapContext
         }
         // 用户态环境调用（U 态 ecall）：envcall 表分发
-        Trap::Exception(Exception::UserEnvCall) => crate::runtime::switcher::envcall::dispatch(frame),
+        Trap::Exception(Exception::UserEnvCall) => {
+            crate::runtime::switcher::envcall::dispatch(frame)
+        }
         // 用户态缺页：机制归 memory::fault，策略归 trap 层（解析失败即 panic）。
         // SPP=1（内核态）缺页：guard 已在入口特判，其余内核缺页 = 内核 bug → fatal
         Trap::Exception(

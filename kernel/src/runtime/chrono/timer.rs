@@ -47,10 +47,13 @@ struct TimerInner {
 }
 
 static TIMER_HEAP: TimerHeap = TimerHeap {
-    inner: SpinLock::new_level(Level::L3, TimerInner {
-        heap: BinaryHeap::new(),
-        cancelled: Vec::new(),
-    }),
+    inner: SpinLock::new_level(
+        Level::L3,
+        TimerInner {
+            heap: BinaryHeap::new(),
+            cancelled: Vec::new(),
+        },
+    ),
     nearest: AtomicU64::new(NONE),
 };
 

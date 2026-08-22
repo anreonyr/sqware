@@ -255,4 +255,3 @@ pub fn suspend() {
 pub fn resume() {
     ENABLED.store(true, Ordering::Relaxed);
 }
-

@@ -200,7 +200,9 @@ impl<T: ?Sized> DerefMut for SpinLockGuard<'_, T> {
 impl<T: ?Sized> Drop for SpinLockGuard<'_, T> {
     fn drop(&mut self) {
         // 本地看门狗撤哨（若正盯这把锁；未盯即免，热路径廉价）。
-        crate::runtime::diagnose::watch::unstake(self.lock as *const SpinLock<T> as *const () as usize);
+        crate::runtime::diagnose::watch::unstake(
+            self.lock as *const SpinLock<T> as *const () as usize,
+        );
         // lockdep：释放时移除持有集条目。
         #[cfg(debug_assertions)]
         if let Some(lv) = self.lock.level {
