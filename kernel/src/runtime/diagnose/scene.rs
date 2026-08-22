@@ -423,8 +423,8 @@ pub fn dump_crash() {
     dump_csrs();
     dump_gprs();
     dump_backtrace();
-    // semihosting 下 JSON 实时流已含全部事件，文本窗口冗余——只关事件窗口，保留 CSR/GPR/回溯。
-    #[cfg(not(feature = "semihosting"))]
+    // 每 hart 最近事件窗口文本统一倒出（报警核；崩溃后其余核已停写）。
+    // JSON 侧事件已实时导出，窗口文本供终端上下文对照（人读）。
     crate::runtime::diagnose::trace::panic_dump();
 }
 

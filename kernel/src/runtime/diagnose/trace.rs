@@ -14,8 +14,8 @@
 //!     一条 JSON 记录写入宿主文件 sqware-diagnose.jsonl（qemu CWD 下；首行 '#' 头部
 //!     溯源），runner 归档；依赖 QEMU -semihosting（runner 恒加）。
 //!   - 事件写者 = host_note（live 流，经 export::line 串行）：panic 只经
-//!     note(Halt(Panic)) 追加一条事件行，决不把环形窗口再 dump 一遍进文件
-//!     （控制台窗口在 semihosting 下仍由 scene 抑制）。
+//!     note(Halt(Panic)) 追加一条事件行，决不把环形窗口再 dump 一遍进文件；
+//!     环形窗口文本由 scene::dump_crash 恒倒到控制台（人读上下文）。
 
 use core::fmt;
 use core::fmt::Write;
