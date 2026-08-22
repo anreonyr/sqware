@@ -79,6 +79,8 @@ pub(crate) fn report(
     caller: usize,
 ) -> ! {
     putln!("[depend] {kind}: {what} (single-hart lock-order violation)");
+    // 标题行后空行（与 [scene]/[trace]/[panic] 标题统一）。
+    putln!();
     // hart 首行并入 Table（值列写数字，非地址）；表格第 0 列顶格，无行首空格。
     let mut t = Table::<4, 2, 64>::new();
     t.set_col_width(0, 10);
@@ -255,6 +257,8 @@ pub(crate) fn release(addr: usize, level: Level) {
 #[cfg(debug_assertions)]
 pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
     putln!("[depend] lock-order hazard");
+    // 标题行后空行（与 [scene]/[trace]/[panic] 标题统一）。
+    putln!();
     let Some(held) = held_mut() else {
         panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
     };

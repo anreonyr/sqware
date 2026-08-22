@@ -394,7 +394,7 @@ fn dump_backtrace() {
     let mut bt = [0usize; BT_DEPTH];
     let n = backtrace(&mut bt);
     let mut f = Fmt::<256>::new();
-    let _ = write!(f, "[scene] backtrace ({} frames):", n);
+    let _ = writeln!(f, "[scene] backtrace ({} frames):", n);
     emit(f);
     let mut t = Table::<{ BT_DEPTH }, 2, 96>::new();
     t.set_col_width(0, 10);
@@ -418,7 +418,7 @@ fn dump_backtrace() {
 /// 打印缩进行，保持「标题行 + 顶格表格」风格统一（无行首空格）。
 pub fn dump_crash() {
     let mut f = Fmt::<128>::new();
-    let _ = write!(f, "[scene] crash scene, hart {}", crate::machine::hart_id());
+    let _ = writeln!(f, "[scene] crash scene, hart {}", crate::machine::hart_id());
     emit(f);
     dump_csrs();
     dump_gprs();

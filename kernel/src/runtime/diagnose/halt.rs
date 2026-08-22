@@ -140,6 +140,8 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
         let _ = write!(fld, " at {}:{}:{}", loc.file(), loc.line(), loc.column());
     }
     let _ = writeln!(fld);
+    // 标题行后空行（与 [scene]/[trace]/[depend] 标题统一）。
+    let _ = writeln!(fld);
     // 显示崩溃现场所在 hart 正在运行的任务（若有）：方便定位"哪个任务崩了"。
     // 非阻塞（try_lock）——panic 可能正发生在持有调度锁的现场，拿不到就跳过，
     // 不冒险在 panic 路径再加锁/递归。
