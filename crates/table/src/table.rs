@@ -159,9 +159,9 @@ impl<const C: usize, const R: usize, const S: usize> Table<C, R, S> {
         self.nrows
     }
 
-    /// 渲染整表到 sink：前面列对齐（列宽 Auto/Width 约束 + 第 0 列顶格 + 列间
-    /// 1 空格）；**末列内容直接输出后换行**——不 fill、行尾无尾随空格（total 宽
-    /// 预算只对末列做显示截断）。空表 no-op。
+    /// 渲染整表到 sink：列宽 Auto/Width 约束 + 第 0 列顶格 + 列间 1 空格；每格由
+    /// Cell::pad 按列宽成型（总宽预算由末列吸收差额，令各表最长行同宽）。
+    /// 行间换行、末行不补尾换行（段落收尾归 para::Para）。空表 no-op。
     pub fn render<W: Write>(&self, out: &mut W) -> fmt::Result {
         if self.nrows == 0 {
             return Ok(());
@@ -183,29 +183,15 @@ impl<const C: usize, const R: usize, const S: usize> Table<C, R, S> {
             width[C - 1] = last.clamp(self.width[C - 1].min, self.width[C - 1].max);
         }
         for r in 0..self.nrows {
+            if r > 0 {
+                out.write_char('\n')?;
+            }
             for c in 0..C {
                 if c > 0 {
                     out.write_char(' ')?; // 列间 1 空格；第 0 列顶格
                 }
-                if c == C - 1 {
-                    // 末列：内容直接输出（不 fill——行尾无尾随空格），按总宽预算
-                    // 截断显示后立即换行（对齐只作用于前面各列）。
-                    let s = self.grid[r][c].buf.as_str();
-                    match self.total {
-                        None => out.write_str(s)?,
-                        Some(w) => {
-                            let rest: usize = width[..C - 1].iter().sum();
-                            let budget = w.saturating_sub(rest + 2 * C - 1);
-                            for ch in s.chars().take(budget) {
-                                out.write_char(ch)?;
-                            }
-                        }
-                    }
-                    out.write_char('\n')?;
-                } else {
-                    self.grid[r][c].pad(out, width[c])?;
-                    out.write_char(' ')?; // 列尾间距（对齐既有 PAD 语义）
-                }
+                self.grid[r][c].pad(out, width[c])?;
+                out.write_char(' ')?; // 列尾间距（对齐既有 PAD 语义）
             }
         }
         Ok(())
