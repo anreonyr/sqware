@@ -41,6 +41,50 @@ impl Write for Sink {
     }
 }
 
+/// 行首缩进包装：把多行输出整体右移 INDENT 空格——「前缀标题行顶格、其下
+/// 表格/明细统一缩进」的通用实现（包住 sink 或缓冲后，render/写流时每个新行
+/// 行首自动补缩进；空行不补）。无堆、无锁，panic/持锁态下安全。
+pub struct Indented<W> {
+    out: W,
+    at_bol: bool,
+}
+
+impl<W: Write> Indented<W> {
+    /// 包装一个 sink/缓冲：后续每个新行行首补缩进。
+    pub fn new(out: W) -> Self {
+        Self {
+            out,
+            at_bol: true,
+        }
+    }
+}
+
+impl<W: Write> Write for Indented<W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let mut rest = s;
+        while let Some(i) = rest.find('\n') {
+            if self.at_bol {
+                self.out.write_str("  ")?;
+                self.at_bol = false;
+            }
+            if i > 0 {
+                self.out.write_str(&rest[..i])?;
+            }
+            self.out.write_char('\n')?;
+            self.at_bol = true;
+            rest = &rest[i + 1..];
+        }
+        if !rest.is_empty() {
+            if self.at_bol {
+                self.out.write_str("  ")?;
+                self.at_bol = false;
+            }
+            self.out.write_str(rest)?;
+        }
+        Ok(())
+    }
+}
+
 #[macro_export]
 macro_rules! put {
     ($($arg:tt)*) => { $crate::console::_write(format_args!($($arg)*)) };

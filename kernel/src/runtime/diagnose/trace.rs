@@ -23,7 +23,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::console::Sink;
 use crate::machine;
 use crate::memory::manager::fault::FaultKind;
-use table::Fmt;
+use table::{Fmt, Table};
 
 /// 收行：给 Fmt 拼好的缓冲补换行，一次 flush 到控制台（无堆无锁）。
 fn emit<const CAP: usize>(mut f: Fmt<CAP>) {
@@ -32,8 +32,20 @@ fn emit<const CAP: usize>(mut f: Fmt<CAP>) {
     let _ = f.flush(&mut sink);
 }
 
+/// 整表渲染到控制台（无堆无锁）：Table 逐行直写缩进包装的 Sink——`[trace]`
+/// 标题行顶格、表格整体缩进 2 空格（末行不补尾换行，这里补）。
+fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
+    let mut ind = crate::console::Indented::new(Sink);
+    let _ = t.render(&mut ind);
+    let mut sink = Sink;
+    let _ = sink.write_str("\n");
+}
+
 /// 每 hart 事件窗口容量。
 pub const BUFFER_SIZE: usize = 512;
+/// 崩溃转储每条 hart 倒出的事件数上限：现场只关心「崩前最近一段」，
+/// 全量 512 对控制台过长且 Table 栈预算不可承载（ROWS 编译期常量）。
+pub const TRACE_DUMP: usize = 64;
 /// trace 可容纳的诊断核数上限（静态池按此备足）。
 ///
 /// 内核核数已完全由 DTB 动态决定，无编译期上限；诊断环形按一个务实上限
@@ -446,8 +458,8 @@ impl fmt::Write for Buf<'_> {
     }
 }
 
-fn fmt_event(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
-    write!(w, "  t={:#x} ", e.when)?;
+/// 事件描述文本（无时间前缀）——供表格列 1 使用。
+fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
     match e.kind {
         EventKind::Sched(SchedEvent::Spawn { tid }) => write!(w, "spawn tid={tid}"),
         EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }) => {
@@ -490,9 +502,11 @@ fn fmt_event(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
     }
 }
 
-/// 崩溃转储：遍历已启动各 hart 的最近窗口，格式化到控制台。
+/// 崩溃转储：遍历已启动各 hart 的最近窗口，按「标题行 + 两列表（t/描述）」倒出。
 ///
 /// 必须在 halt 已让其它核停写后调用（panic_handler 的报警核）。无分配、无锁。
+/// 每 hart 一个 Table（列宽自动 = max cell 对齐）；标题行顶格、表格经 Indented
+/// 缩进 2 空格——与 scene/depend 同格式。只倒最近 TRACE_DUMP 条。
 pub fn panic_dump() {
     let mut f = Fmt::<64>::new();
     let _ = writeln!(f, "[trace] per-hart event window:");
@@ -501,10 +515,12 @@ pub fn panic_dump() {
         let mut t = Fmt::<64>::new();
         let _ = writeln!(t, "[trace] hart {h}:");
         emit(t);
-        dump(h, BUFFER_SIZE, |e| {
-            let mut l = Fmt::<160>::new();
-            let _ = fmt_event(e, &mut l);
-            emit(l);
+        let mut tab = Table::<{ TRACE_DUMP }, 2, 96>::new();
+        dump(h, TRACE_DUMP, |e| {
+            let row = tab.open_row();
+            let _ = write!(&mut row[0], "{:#018x}", e.when);
+            let _ = fmt_description(e, &mut row[1]);
         });
+        write_table(tab);
     }
 }

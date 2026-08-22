@@ -309,9 +309,11 @@ pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
 
 /// 把整表渲染进一个栈缓冲，再整块写控制台（无堆；一次 SBI 调用）。
 /// 无 cfg：`depend::report`（单 hart 重入检测）release 亦生效，须可渲染现场表。
+/// 经 Indented 整体缩进 2 空格（`[depend]` 标题行顶格、表格内容缩进——与 scene/halt 统一）；
 /// Table::render 末行不补尾换行，此处补——表格块须独立结束，避免紧接下行输出。
 fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
     let mut buf: table::Line<512> = table::Line::new();
-    let _ = t.render(&mut buf);
+    let mut ind = crate::console::Indented::new(&mut buf);
+    let _ = t.render(&mut ind);
     console::_write(format_args!("{buf}\n"));
 }

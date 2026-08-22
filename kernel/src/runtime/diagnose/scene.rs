@@ -18,6 +18,7 @@
 
 use core::arch::asm;
 use core::fmt::Write;
+use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sscratch, sstatus, stval, stvec};
 
 use crate::console::Sink;
@@ -40,10 +41,12 @@ fn emit<const CAP: usize>(mut f: Fmt<CAP>) {
     let _ = f.flush(&mut sink);
 }
 
-/// 整表渲染到控制台（无堆无锁）：Table 逐行直写 Sink（末行不补尾换行，这里补）。
+/// 整表渲染到控制台（无堆无锁）：Table 逐行直写缩进包装的 Sink——`[scene]`
+/// 标题行顶格、表格整体缩进 2 空格（末行不补尾换行，这里补）。
 fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
+    let mut ind = crate::console::Indented::new(Sink);
+    let _ = t.render(&mut ind);
     let mut sink = Sink;
-    let _ = t.render(&mut sink);
     let _ = sink.write_str("\n");
 }
 
@@ -137,37 +140,10 @@ fn backtrace(out: &mut [usize; BT_DEPTH]) -> usize {
     n
 }
 
-/// scause 解码：中断/异常名（RISC-V privileged spec 表）。
-fn scause_name(int: bool, code: usize) -> &'static str {
-    match (int, code) {
-        (true, 1) => "supervisor software interrupt",
-        (true, 3) => "machine software interrupt",
-        (true, 5) => "supervisor timer interrupt",
-        (true, 7) => "machine timer interrupt",
-        (true, 9) => "supervisor external interrupt",
-        (true, 11) => "machine external interrupt",
-        (false, 0) => "instruction address misaligned",
-        (false, 1) => "instruction access fault",
-        (false, 2) => "illegal instruction",
-        (false, 3) => "breakpoint",
-        (false, 4) => "load address misaligned",
-        (false, 5) => "load access fault",
-        (false, 6) => "store/AMO address misaligned",
-        (false, 7) => "store/AMO access fault",
-        (false, 8) => "env call from U-mode",
-        (false, 9) => "env call from S-mode",
-        (false, 11) => "env call from M-mode",
-        (false, 12) => "instruction page fault",
-        (false, 13) => "load page fault",
-        (false, 15) => "store/AMO page fault",
-        _ => "reserved",
-    }
-}
-
 /// stval 解码：按 scause 的语义注解（fault 地址 / 指令位 / 未写入）。
 fn stval_note(int: bool, code: usize) -> &'static str {
     if int {
-        return "interrupt (stval undefined)";
+        return "interrupt stval undefined";
     }
     match code {
         0 | 1 | 4 | 5 | 6 | 7 | 12 | 13 | 15 => "faulting addr",
@@ -180,8 +156,8 @@ fn stval_note(int: bool, code: usize) -> &'static str {
 
 /// 关键 CSR 转储（Table 渲染：三列 label/hex/注解，列宽自动 = max cell 对齐）。
 /// sepc/stval/scause = 崩点；stvec/sscratch = 陷阱入口/暂存；sstatus/satp = 特权/地址空间域。
-/// 注解列 = 符号化（sepc/stval/stvec）+ 解码（stval/scause）+ satp 分解。
-/// 首行 task = 运行中任务（若有；try_lock 拿不到则跳过，表格少一行）。
+/// 注解列 = 符号化（sepc/stval/stvec）+ 解码（scause 用 riscv 枚举、stval 语义、
+/// sscratch 约定、sstatus 位域、satp 用 Mode 枚举）。首行 task = 运行中任务（若有；try_lock 拿不到则跳过，表格少一行）。
 fn dump_csrs() {
     let sc = scause::read();
     let (int, code) = (sc.is_interrupt(), sc.code());
@@ -203,18 +179,32 @@ fn dump_csrs() {
         row[0].push_str("stval");
         let _ = write!(&mut row[1], "{:#018x}", stval::read());
         addr_note(&mut row[2], stval::read());
-        let _ = write!(&mut row[2], " ({})", stval_note(int, code));
+        let _ = write!(&mut row[2], "  {}", stval_note(int, code));
     }
     {
         let row = t.open_row();
         row[0].push_str("scause");
         let _ = write!(&mut row[1], "{:#018x}", sc.bits());
-        let _ = write!(
-            &mut row[2],
-            "({}) {}",
-            if int { "int" } else { "exc" },
-            scause_name(int, code)
-        );
+        // 类型化枚举（同 trap 分发）：Trap<Interrupt, Exception> Debug 即
+        // 变体名（UserEnvCall / LoadPageFault / SupervisorTimer…）。非法码回退
+        // 打印裸码——崩溃现场不 panic；后续 CSR 行照常渲染。
+        let trap: Option<Trap<Interrupt, Exception>> = sc.cause().try_into().ok();
+        match trap {
+            Some(Trap::Interrupt(i)) => {
+                let _ = write!(&mut row[2], "int {:?}", i);
+            }
+            Some(Trap::Exception(e)) => {
+                let _ = write!(&mut row[2], "exc {:?}", e);
+            }
+            None => {
+                let _ = write!(
+                    &mut row[2],
+                    "{} code {}",
+                    if int { "int" } else { "exc" },
+                    code
+                );
+            }
+        }
     }
     {
         let row = t.open_row();
@@ -223,26 +213,44 @@ fn dump_csrs() {
         addr_note(&mut row[2], stvec::read().address());
     }
     {
+        // sscratch 语义（内核约定，见 trampoline）：内核态 = 0；非 0 = 线程帧
+        // VA（用户态陷阱入口经 csrrw 交换前的用户 sp 或帧自址）。崩溃多在内核态，
+        // 0 即常态注解；非 0 只标注语义，不解析偏移（崩溃现场读运行帧有风险）。
+        let scr = sscratch::read();
         let row = t.open_row();
         row[0].push_str("sscratch");
-        let _ = write!(&mut row[1], "{:#018x}", sscratch::read());
+        let _ = write!(&mut row[1], "{scr:#018x}");
+        if scr == 0 {
+            let _ = write!(&mut row[2], "kernel-mode convention");
+        } else {
+            let _ = write!(&mut row[2], "user sp / thread frame VA");
+        }
     }
     {
+        let ss = sstatus::read();
         let row = t.open_row();
         row[0].push_str("sstatus");
-        let _ = write!(&mut row[1], "{:#018x}", sstatus::read().bits());
-    }
-    {
-        let satp_bits = satp::read().bits();
-        let row = t.open_row();
-        row[0].push_str("satp");
-        let _ = write!(&mut row[1], "{satp_bits:#018x}");
+        let _ = write!(&mut row[1], "{:#018x}", ss.bits());
         let _ = write!(
             &mut row[2],
-            "(mode={:#x} asid={:#x} ppn={:#x})",
-            satp_bits >> 60,
-            (satp_bits >> 44) & 0xffff,
-            satp_bits & ((1 << 44) - 1),
+            "SPP {:?} SIE {} FS {:?} SD {}",
+            ss.spp(),
+            ss.sie() as u8,
+            ss.fs(),
+            ss.sd() as u8,
+        );
+    }
+    {
+        let s = satp::read();
+        let row = t.open_row();
+        row[0].push_str("satp");
+        let _ = write!(&mut row[1], "{:#018x}", s.bits());
+        let _ = write!(
+            &mut row[2],
+            "mode {:?} asid {:#x} ppn {:#x}",
+            s.mode(),
+            s.asid(),
+            s.ppn(),
         );
     }
     write_table(t);
