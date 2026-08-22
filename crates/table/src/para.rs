@@ -32,6 +32,7 @@ impl<W: Write> Para<W> {
         let _ = t.render(&mut ind);
         drop(ind);
         let _ = writeln!(self.out);
+        let _ = writeln!(self.out); // 表尾空行：表间/段间分隔统一
     }
 }
 

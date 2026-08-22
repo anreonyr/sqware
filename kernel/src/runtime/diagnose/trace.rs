@@ -399,6 +399,7 @@ pub fn panic_dump() {
         let mut p = Para::new(Sink);
         p.title(format_args!("[trace] hart {h}:"));
         let mut tab = Table::<2, { TRACE_DUMP }, 96>::new();
+        tab.set_total_width(64); // 统一诊断表宽预算（同 scene，最长行同宽）。
         {
             let mut it = tab.rows_mut();
             dump(h, TRACE_DUMP, |e| {

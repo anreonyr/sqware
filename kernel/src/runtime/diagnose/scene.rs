@@ -385,14 +385,13 @@ fn bt_row(it: &mut RowsMut<'_, 2, 96>, i: usize, a: usize) {
     scene_row("bt", l.as_str(), hx(a).as_str(), s.as_str());
 }
 
-/// 统一崩溃现场转储：hart + 任务 + CSR + GPR + 回溯 + 事件窗口。
+/// 统一崩溃现场转储：一个 [scene] 标题统辖全部表——CSR 三列表 + GPR 两列表 +
+/// 回溯两列表，表间空行分隔（表头分块 + 空行，不再为 backtrace 单设标题段）。
 ///
-/// 段落：crash scene 标题下 CSR 三列表（label/value/note）与 GPR 两列表（label/
-/// hex）分离独立，各自首行表头（块名 + 列语义）分界；backtrace 独立标题独立表，
-/// 表头与 csr/gpr 同风格。三表首列同 fixed(10)（label 列宽统一）。running task
-/// 并入 CSR 首行（label=task）——不单独打印缩进行。
+/// 三表首行表头（块名 + 列语义）分界，首列 fixed(10) 统一；running task 并入
+/// CSR 首行（label=task）。末尾倒出每 hart 最近事件窗口（人读上下文）。
 pub fn dump_crash() {
-    // crash scene 段：标题 + CSR 三列表 + GPR 两列表。
+    // [scene] 标题 + CSR 表 + GPR 表 + 回溯表（表间空行由 Para::table 统一）。
     let mut p = Para::new(Sink);
     p.title(format_args!(
         "[scene] crash scene, hart {}",
@@ -400,6 +399,7 @@ pub fn dump_crash() {
     ));
     let mut csr = Table::<3, 9, 96>::new();
     csr.set_width(0, Width::fixed(10));
+    csr.set_total_width(64); // 与 [trace] 表同宽（统一诊断表宽预算）
     {
         let mut it = csr.rows_mut();
         fill_csrs(&mut it);
@@ -412,14 +412,11 @@ pub fn dump_crash() {
         fill_gprs(&mut it);
     }
     p.table(&gpr);
-
-    // backtrace 段：独立标题 + 独立表（表头与 csr/gpr 同风格统一）。
     let mut bt = [0usize; BT_DEPTH];
     let n = backtrace(&mut bt);
-    let mut p2 = Para::new(Sink);
-    p2.title(format_args!("[scene] backtrace {n} frames"));
     let mut b = Table::<2, { BT_DEPTH + 1 }, 96>::new();
     b.set_width(0, Width::fixed(10));
+    b.set_total_width(64); // 统一诊断表宽预算（同 csr）。
     {
         let mut it = b.rows_mut();
         header2(&mut it, "bt", "sym");
@@ -427,7 +424,7 @@ pub fn dump_crash() {
             bt_row(&mut it, i, *a);
         }
     }
-    p2.table(&b);
+    p.table(&b);
 
     // 每 hart 最近事件窗口文本统一倒出（报警核；崩溃后其余核已停写）。
     // JSON 侧事件已实时导出，窗口文本供终端上下文对照（人读）。

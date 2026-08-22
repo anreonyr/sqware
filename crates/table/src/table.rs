@@ -107,15 +107,17 @@ impl Width {
 }
 
 /// 表 = Cell 的容器（R 行 × C 列，格容量 S）。列宽 per-column 约束（Width），
-/// 第 0 列顶格、列间 1 空格由 render 保证。
+/// 可选总宽预算（set_total_width）——渲染时末列吸收差额使各表最长行同宽
+/// （HTML table-layout fixed 语义）；第 0 列顶格、列间 1 空格由 render 保证。
 pub struct Table<const C: usize, const R: usize, const S: usize> {
     grid: [[Cell<S>; C]; R],
     nrows: usize,
     width: [Width; C],
+    total: Option<usize>,
 }
 
 impl<const C: usize, const R: usize, const S: usize> Table<C, R, S> {
-    /// 建空表（格子全空串，列宽全 AUTO）。
+    /// 建空表（格子全空串，列宽全 AUTO，无总宽预算）。
     pub fn new() -> Self {
         Self {
             grid: [[Cell {
@@ -124,6 +126,7 @@ impl<const C: usize, const R: usize, const S: usize> Table<C, R, S> {
             }; C]; R],
             nrows: 0,
             width: [Width::AUTO; C],
+            total: None,
         }
     }
 
@@ -131,6 +134,13 @@ impl<const C: usize, const R: usize, const S: usize> Table<C, R, S> {
     pub fn set_width(&mut self, c: usize, w: Width) {
         debug_assert!(c < C, "table: column out of bounds");
         self.width[c] = w;
+    }
+
+    /// 设总宽预算（字符）：渲染时末列（通常 = 文本/描述列）吸收
+    /// `W − 其余列 − 列间距` 的差额，令该表最长行恒为 W——各表等宽的对齐手段。
+    /// 其余列合计已超 W 时末列收窄（可至内容截断显示）。
+    pub fn set_total_width(&mut self, w: usize) {
+        self.total = Some(w);
     }
 
     /// 行的可变迭代器：next 推进一行并返回该行格子（行位置由本表管理，调用方
@@ -163,6 +173,13 @@ impl<const C: usize, const R: usize, const S: usize> Table<C, R, S> {
                 need = need.max(self.grid[r][c].buf.as_str().chars().count());
             }
             width[c] = need.clamp(self.width[c].min, self.width[c].max);
+        }
+        // 总宽预算：末列吸收差额（其余列合计 + 列间距已超 W 时末列收窄）。
+        // 行宽 = Σwidth + 列间空格(C-1) + 列尾空格(C)。
+        if let Some(w) = self.total {
+            let rest: usize = width[..C - 1].iter().sum();
+            let last = w.saturating_sub(rest + 2 * C - 1);
+            width[C - 1] = last.clamp(self.width[C - 1].min, self.width[C - 1].max);
         }
         for r in 0..self.nrows {
             if r > 0 {
