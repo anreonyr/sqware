@@ -12,17 +12,19 @@
 //! 用户运行 team 表内）的候选返回地址（去重、深度封顶）。sepc/stval/回溯每条
 //! 都经 elftable::resolve 符号化（命中出函数名），未命中打印裸 hex。
 //!
-//! 输出：用 table::Fmt 行缓冲把每段拼成一行、一次 flush（无堆无锁）。
+//! 输出：崩溃现场用 table::Table 渲染（label/value 对齐，列宽自动 = max cell），
+//! 无堆无锁；与 lock/depend 同格式（标题行 + 表格）。地址符号化经 elftable
+//! （含用户 team），详见 write_addr / addr_note。
 
 use core::arch::asm;
 use core::fmt::Write;
-use riscv::register::{satp, scause, sepc, sstatus, stval};
+use riscv::register::{satp, scause, sepc, sscratch, sstatus, stval, stvec};
 
 use crate::console::Sink;
 use crate::memory::manager::addr::VirtAddr;
 use crate::work::room::scheduler::{running_task_info, running_team_try};
 use crate::work::unit::elftable;
-use table::Fmt;
+use table::{Fmt, Table};
 
 /// 回溯深度上限。
 const BT_DEPTH: usize = 32;
@@ -38,7 +40,14 @@ fn emit<const CAP: usize>(mut f: Fmt<CAP>) {
     let _ = f.flush(&mut sink);
 }
 
-/// 写地址：经 elftable::resolve 符号化（含用户 team；命中出「函数+偏移」），否则裸 hex。
+/// 整表渲染到控制台（无堆无锁）：Table 逐行直写 Sink（末行不补尾换行，这里补）。
+fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
+    let mut sink = Sink;
+    let _ = t.render(&mut sink);
+    let _ = sink.write_str("\n");
+}
+
+/// 写地址（保留 user team 符号化）：命中出「函数+偏移」，否则裸 hex。
 ///
 /// 注意：这点刻意不用 table::Fmt::addr——scene 需用户空间 team 符号化，而
 /// Fmt::addr 走全局内核符号器（team=None）。这里写入传入的 sink，由调用方收行。
@@ -49,6 +58,16 @@ fn write_addr<W: Write>(w: &mut W, a: usize) {
         let _ = write!(w, "{name}+{off:#x}");
     } else {
         let _ = write!(w, "{a:#x}");
+    }
+}
+
+/// 行尾符号化注解：地址的定宽值已写，命中出符号则追加「 name+off」（未命中无注解）。
+/// 用于对齐行：定宽 hex 是值列，符号化只作行尾追加，不影响对齐。
+fn addr_note<W: Write>(w: &mut W, a: usize) {
+    let va = VirtAddr::from_raw(a);
+    let team = running_team_try();
+    if let Some((name, off)) = elftable::resolve(va, team.as_deref()) {
+        let _ = write!(w, "  {name}+{off:#x}");
     }
 }
 
@@ -118,27 +137,119 @@ fn backtrace(out: &mut [usize; BT_DEPTH]) -> usize {
     n
 }
 
-/// 关键 CSR 转储（sepc/stval/scause = 崩点；sstatus/satp = 特权/地址空间域）。
-fn dump_csrs() {
-    let sc = scause::read();
-    let kind = if sc.is_interrupt() { "int" } else { "exc" };
-    let mut f = Fmt::<256>::new();
-    let _ = write!(f, "[scene] sepc=");
-    write_addr(&mut f, sepc::read());
-    let _ = write!(f, "  stval=");
-    write_addr(&mut f, stval::read());
-    let _ = write!(
-        f,
-        "  scause={} ({})  sstatus={:#x}  satp={:#x}",
-        sc.code(),
-        kind,
-        sstatus::read().bits(),
-        satp::read().bits(),
-    );
-    emit(f);
+/// scause 解码：中断/异常名（RISC-V privileged spec 表）。
+fn scause_name(int: bool, code: usize) -> &'static str {
+    match (int, code) {
+        (true, 1) => "supervisor software interrupt",
+        (true, 3) => "machine software interrupt",
+        (true, 5) => "supervisor timer interrupt",
+        (true, 7) => "machine timer interrupt",
+        (true, 9) => "supervisor external interrupt",
+        (true, 11) => "machine external interrupt",
+        (false, 0) => "instruction address misaligned",
+        (false, 1) => "instruction access fault",
+        (false, 2) => "illegal instruction",
+        (false, 3) => "breakpoint",
+        (false, 4) => "load address misaligned",
+        (false, 5) => "load access fault",
+        (false, 6) => "store/AMO address misaligned",
+        (false, 7) => "store/AMO access fault",
+        (false, 8) => "env call from U-mode",
+        (false, 9) => "env call from S-mode",
+        (false, 11) => "env call from M-mode",
+        (false, 12) => "instruction page fault",
+        (false, 13) => "load page fault",
+        (false, 15) => "store/AMO page fault",
+        _ => "reserved",
+    }
 }
 
-/// GPR 转储（只打非零，命名打印）。
+/// stval 解码：按 scause 的语义注解（fault 地址 / 指令位 / 未写入）。
+fn stval_note(int: bool, code: usize) -> &'static str {
+    if int {
+        return "interrupt (stval undefined)";
+    }
+    match code {
+        0 | 1 | 4 | 5 | 6 | 7 | 12 | 13 | 15 => "faulting addr",
+        2 => "illegal instruction bits",
+        3 => "breakpoint addr",
+        8 | 9 | 11 => "stval not written",
+        _ => "undefined",
+    }
+}
+
+/// 关键 CSR 转储（Table 渲染：三列 label/hex/注解，列宽自动 = max cell 对齐）。
+/// sepc/stval/scause = 崩点；stvec/sscratch = 陷阱入口/暂存；sstatus/satp = 特权/地址空间域。
+/// 注解列 = 符号化（sepc/stval/stvec）+ 解码（stval/scause）+ satp 分解。
+/// 首行 task = 运行中任务（若有；try_lock 拿不到则跳过，表格少一行）。
+fn dump_csrs() {
+    let sc = scause::read();
+    let (int, code) = (sc.is_interrupt(), sc.code());
+    let mut t = Table::<8, 3, 160>::new();
+    t.set_col_width(0, 10);
+    if let Some((tid, name)) = running_task_info() {
+        let row = t.open_row();
+        row[0].push_str("task");
+        let _ = write!(&mut row[1], "#{tid} '{name}'");
+    }
+    {
+        let row = t.open_row();
+        row[0].push_str("sepc");
+        let _ = write!(&mut row[1], "{:#018x}", sepc::read());
+        addr_note(&mut row[2], sepc::read());
+    }
+    {
+        let row = t.open_row();
+        row[0].push_str("stval");
+        let _ = write!(&mut row[1], "{:#018x}", stval::read());
+        addr_note(&mut row[2], stval::read());
+        let _ = write!(&mut row[2], " ({})", stval_note(int, code));
+    }
+    {
+        let row = t.open_row();
+        row[0].push_str("scause");
+        let _ = write!(&mut row[1], "{:#018x}", sc.bits());
+        let _ = write!(
+            &mut row[2],
+            "({}) {}",
+            if int { "int" } else { "exc" },
+            scause_name(int, code)
+        );
+    }
+    {
+        let row = t.open_row();
+        row[0].push_str("stvec");
+        let _ = write!(&mut row[1], "{:#018x}", stvec::read().address());
+        addr_note(&mut row[2], stvec::read().address());
+    }
+    {
+        let row = t.open_row();
+        row[0].push_str("sscratch");
+        let _ = write!(&mut row[1], "{:#018x}", sscratch::read());
+    }
+    {
+        let row = t.open_row();
+        row[0].push_str("sstatus");
+        let _ = write!(&mut row[1], "{:#018x}", sstatus::read().bits());
+    }
+    {
+        let satp_bits = satp::read().bits();
+        let row = t.open_row();
+        row[0].push_str("satp");
+        let _ = write!(&mut row[1], "{satp_bits:#018x}");
+        let _ = write!(
+            &mut row[2],
+            "(mode={:#x} asid={:#x} ppn={:#x})",
+            satp_bits >> 60,
+            (satp_bits >> 44) & 0xffff,
+            satp_bits & ((1 << 44) - 1),
+        );
+    }
+    write_table(t);
+}
+
+/// GPR 转储（只打非零，命名打印）。Table 渲染两列 name/hex——列宽自动
+/// = max cell 对齐（非零寄存器逐行，矩阵由 Table 游标填满）。
 fn dump_gprs() {
     const NAMES: [&str; 32] = [
         "x0", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
@@ -146,41 +257,44 @@ fn dump_gprs() {
         "t5", "t6",
     ];
     let r = gprs();
-    let mut f = Fmt::<256>::new();
-    let _ = write!(f, "[scene] gpr:");
+    let mut t = Table::<32, 2, 64>::new();
+    t.set_col_width(0, 10);
     for (i, name) in NAMES.iter().enumerate().skip(1) {
-        if r[i] != 0 {
-            let _ = write!(f, " {}={:#x}", name, r[i]);
+        if r[i] == 0 {
+            continue;
         }
+        let row = t.open_row();
+        row[0].push_str(name);
+        let _ = write!(&mut row[1], "{:#018x}", r[i]);
     }
-    emit(f);
+    write_table(t);
 }
 
-/// 栈回溯转储（每条符号化）。
+/// 栈回溯转储（每条符号化）。标题行带 `[scene]` 前缀，帧行 Table 渲染两列
+/// （#i / 符号化地址——列宽自动 = max cell 对齐）。
 fn dump_backtrace() {
     let mut bt = [0usize; BT_DEPTH];
     let n = backtrace(&mut bt);
     let mut f = Fmt::<256>::new();
     let _ = write!(f, "[scene] backtrace ({} frames):", n);
     emit(f);
+    let mut t = Table::<{ BT_DEPTH }, 2, 96>::new();
+    t.set_col_width(0, 10);
     for (i, a) in bt[..n].iter().enumerate() {
-        let mut l = Fmt::<128>::new();
-        let _ = write!(l, "[scene]   #{i}: ");
-        write_addr(&mut l, *a);
-        emit(l);
+        let row = t.open_row();
+        let _ = write!(&mut row[0], "#{i}");
+        write_addr(&mut row[1], *a);
     }
+    write_table(t);
 }
 
 /// 统一崩溃现场转储：hart + 任务 + CSR + GPR + 回溯 + 事件窗口。
+/// running task 并入 CSR 表首行（label=task，值列写「#tid 'name'」）——不单独
+/// 打印缩进行，保持「标题行 + 顶格表格」风格统一（无行首空格）。
 pub fn dump_crash() {
     let mut f = Fmt::<128>::new();
     let _ = write!(f, "[scene] crash scene, hart {}", crate::machine::hart_id());
     emit(f);
-    if let Some((tid, name)) = running_task_info() {
-        let mut t = Fmt::<256>::new();
-        let _ = write!(t, "[scene] running task #{tid} '{name}'");
-        emit(t);
-    }
     dump_csrs();
     dump_gprs();
     dump_backtrace();

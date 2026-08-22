@@ -28,7 +28,7 @@ use super::OnceLock;
 use crate::console;
 use crate::machine;
 use crate::putln;
-use table::{render_addr, Table};
+use table::{Table, render_addr};
 
 /// 锁层级 — lock/mod.rs 层级契约的具名化（1 最低、6 最高）。
 /// 参与锁才有 level；Option<Level>::None = exempt（不参与、不校验）。
@@ -78,9 +78,15 @@ pub(crate) fn report(
     holder: usize,
     caller: usize,
 ) -> ! {
-    putln!("[DEPEND] {kind}: {what} (single-hart lock-order violation)");
-    putln!("  hart      {}", machine::hart_id());
-    let mut t = Table::<3, 2, 64>::new();
+    putln!("[depend] {kind}: {what} (single-hart lock-order violation)");
+    // hart 首行并入 Table（值列写数字，非地址）；表格第 0 列顶格，无行首空格。
+    let mut t = Table::<4, 2, 64>::new();
+    t.set_col_width(0, 10);
+    {
+        let row = t.open_row();
+        row[0].push_str("hart");
+        let _ = write!(&mut row[1], "{}", machine::hart_id());
+    }
     for (label, addr) in [("lock", lock), ("holder", holder), ("caller", caller)] {
         let row = t.open_row();
         row[0].push_str(label);
@@ -239,7 +245,7 @@ pub(crate) fn release(addr: usize, level: Level) {
         return;
     };
     if held.remove(addr).is_err() {
-        putln!("[DEPEND] release of unheld lock {addr:#x} (level {level:?})");
+        putln!("[depend] release of unheld lock {addr:#x} (level {level:?})");
         panic!("depend: release of unheld lock {addr:#x}");
     }
 }
@@ -248,13 +254,18 @@ pub(crate) fn release(addr: usize, level: Level) {
 /// 跨核持有集 best-effort 读取留待后续（需 raw usize 拷贝避免 &mut 别名 UB）。
 #[cfg(debug_assertions)]
 pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
-    putln!("[DEPEND] lock-order hazard");
-    putln!("  hart       {}", machine::hart_id());
+    putln!("[depend] lock-order hazard");
     let Some(held) = held_mut() else {
         panic!("depend: lock-order hazard taking {addr:#x} @ {level:?}");
     };
-    // 行 = label / addr / 说明。taking + caller 两行，中间夹 held 各行（open_row 游标自增）。
-    let mut t = Table::<{ MAX_HELD + 2 }, 3, 96>::new();
+    // 行 = label / addr / 说明。hart 首行并入 Table（值列写数字），taking + caller 两行，中间夹 held 各行。
+    let mut t = Table::<{ MAX_HELD + 3 }, 3, 96>::new();
+    t.set_col_width(0, 10);
+    {
+        let row = t.open_row();
+        row[0].push_str("hart");
+        let _ = write!(&mut row[1], "{}", machine::hart_id());
+    }
     {
         let row = t.open_row();
         row[0].push_str("taking");
@@ -298,8 +309,9 @@ pub(crate) fn hazard(addr: usize, level: Level, caller: usize) -> ! {
 
 /// 把整表渲染进一个栈缓冲，再整块写控制台（无堆；一次 SBI 调用）。
 /// 无 cfg：`depend::report`（单 hart 重入检测）release 亦生效，须可渲染现场表。
+/// Table::render 末行不补尾换行，此处补——表格块须独立结束，避免紧接下行输出。
 fn write_table<const R: usize, const C: usize, const CAP: usize>(t: Table<R, C, CAP>) {
     let mut buf: table::Line<512> = table::Line::new();
     let _ = t.render(&mut buf);
-    console::_write(format_args!("{buf}"));
+    console::_write(format_args!("{buf}\n"));
 }

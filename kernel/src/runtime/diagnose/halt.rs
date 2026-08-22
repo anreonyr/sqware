@@ -108,7 +108,7 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
 
     // 诊断头：拼进一个行缓冲，整段一次 flush 到控制台（无堆、无锁）。
     let mut fld = Fmt::<256>::new();
-    let _ = write!(fld, "[PANIC]");
+    let _ = write!(fld, "[panic]");
     if let Some(loc) = info.location() {
         let _ = write!(fld, " at {}:{}:{}", loc.file(), loc.line(), loc.column());
     }
@@ -119,16 +119,16 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     if let Some((tid, tname)) = crate::work::room::scheduler::running_task_info() {
         let _ = writeln!(
             fld,
-            "  running task #{tid} '{tname}' (hart {})",
+            "running task #{tid} '{tname}' (hart {})",
             machine::hart_id()
         );
     }
     // 格式化的 panic 消息（非字面量）也打印——诊断调试必备
-    let _ = writeln!(fld, "  {}", info.message());
+    let _ = writeln!(fld, "{}", info.message());
     // 其余 hart 已停止：本 hart 是唯一存活者，停机自环（srst 复位 / wfi）。
     let _ = writeln!(
         fld,
-        "  other harts hushed only hart {} remains",
+        "other harts hushed only hart {} remains",
         machine::hart_id()
     );
     let mut sink = crate::console::Sink;
