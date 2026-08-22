@@ -407,6 +407,7 @@ pub fn dump_crash() {
     p.table(&csr);
     let mut gpr = Table::<2, 32, 96>::new();
     gpr.set_width(0, Width::fixed(10));
+    gpr.set_total_width(64); // 三表同宽（末列截断上限）。
     {
         let mut it = gpr.rows_mut();
         fill_gprs(&mut it);
