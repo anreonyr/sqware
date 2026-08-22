@@ -102,6 +102,9 @@ impl<T: ?Sized> RelLock<T> {
             }
         }
 
+        // 自旋打点节流本地时钟（同 spin.rs 语义；仅自旋分支使用）。
+        let mut last_pulse = 0u64;
+
         loop {
             // Acquire：获取成功后看到前持有者的所有写入
             match self
@@ -127,7 +130,15 @@ impl<T: ?Sized> RelLock<T> {
                     break;
                 }
                 Err(_) => {
-                    // 其他 hart 持有：自旋等待（单 hart 下不可达，多核协议保留）
+                    // 其他 hart 持有：自旋等待（单 hart 下不可达，多核协议保留）——
+                    // 与 spin.rs 同纪律：看警（他核报警 → 就地卧倒）+ 节流报岗
+                    // （自旋=有进展，B 判据不误伤）。
+                    crate::runtime::diagnose::halt::hush();
+                    let t = crate::runtime::chrono::clock::now().as_ticks();
+                    if t.wrapping_sub(last_pulse) >= super::spin::SPIN_PULSE_TICKS {
+                        crate::runtime::diagnose::watch::pulse();
+                        last_pulse = t;
+                    }
                     core::hint::spin_loop();
                 }
             }

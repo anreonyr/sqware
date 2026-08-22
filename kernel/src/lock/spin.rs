@@ -21,6 +21,12 @@ use crate::machine;
 use super::depend;
 use super::trap::TrapGuard;
 
+/// 自旋等待打点节流（ticks；timebase 10MHz 下 1ms）。自旋核经此报岗「有进展」，
+/// 使 watch 的 B 判据（BEAT 过期 → "stalled"）不再把等锁自旋误判为失速；须远
+/// 小于 boot 注入的 liveness_timeout（200ms），1ms 留足余量。SpinLock 与
+/// RelLock 的自旋路径共用（见 reentrant.rs）。
+pub(crate) const SPIN_PULSE_TICKS: u64 = 10_000;
+
 pub struct SpinLock<T: ?Sized> {
     locked: AtomicBool,
     /// 持有者 hart_id + 1（0 = 空闲）——区分同 hart 重入与跨 hart 争用。
@@ -105,6 +111,9 @@ impl<T: ?Sized> SpinLock<T> {
             depend::check(self as *const Self as *const () as usize, lv, caller);
         }
 
+        // 自旋打点节流本地时钟（见 SPIN_PULSE_TICKS；仅自旋分支使用）。
+        let mut last_pulse = 0u64;
+
         // Acquire：获取成功后看到前持有者的所有写入。跨 hart 争用时真自旋；
         // 同 hart 再次获取（关中断后无抢占，必然是同 hart 重入）是锁序违规——panic。
         while self.locked.swap(true, Ordering::Acquire) {
@@ -124,6 +133,15 @@ impl<T: ?Sized> SpinLock<T> {
                     self.owner.load(Ordering::Relaxed),
                     self.holder_pc.load(Ordering::Relaxed),
                 );
+            }
+            // 自旋等待者也是「活着」的形态：看警（ALARM 已拉响且他核报警 → 就地
+            // 卧倒——修补自旋核不收 trap、hush 钩子覆盖不到的停机漏洞），并按节流
+            // 报岗（自旋即有进展，B 判据不误伤；锁相持交 A 判据在语义确凿时报告）。
+            crate::runtime::diagnose::halt::hush();
+            let t = crate::runtime::chrono::clock::now().as_ticks();
+            if t.wrapping_sub(last_pulse) >= SPIN_PULSE_TICKS {
+                crate::runtime::diagnose::watch::pulse();
+                last_pulse = t;
             }
             core::hint::spin_loop();
         }

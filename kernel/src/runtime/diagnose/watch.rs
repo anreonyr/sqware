@@ -143,7 +143,10 @@ pub fn check(now: Instant, p: Probe) -> Option<WatchReport> {
     if !p.has_work {
         return None;
     }
-    // B：醒着核脉搏过期 → 点名最旧那个。
+    // B：醒着核脉搏过期 → 点名最旧那个。成立前提：所有「活着」形态都在打
+    // 点——调度/trap 进度（run/wait/round 的 pulse）与内核准点（spin::lock
+    // 自旋循环的节流 pulse，见 spin.rs）：BEAT 过期 = 该核既无调度/trap 进展、
+    // 也无自旋等锁 = 真失速。锁相持（有人正自旋等锁）由 A 判据报告，不在此误伤。
     let live = LIVETO.load(Ordering::Relaxed);
     let mut oldest: Option<(usize, u64)> = None;
     for (h, a) in BEAT.iter().enumerate().take(machine::hart_count()) {
@@ -175,7 +178,8 @@ fn asleep(words: &[AtomicUsize], h: usize) -> bool {
 }
 
 /// 报警报告 → 宿主记录（feature semihosting）：`{"h","t","kind":"watch","report"}`。
-/// 先于 scene 行导出（记录序：watch 事件 → watch 记录 → scene 行 → halt 记录）。
+/// 先于 halt 记录导出（记录序：watch 事件 → watch 记录 → halt 记录 → scene 行；
+/// scene 由 panic_handler 在 alarm 之后统一 dump）。
 #[cfg(feature = "semihosting")]
 fn export_report(r: &WatchReport) {
     use crate::runtime::diagnose::export::{k, line, v};
@@ -192,14 +196,19 @@ fn export_report(r: &WatchReport) {
     });
 }
 
-/// 上报：冻结现场后停机（trace + scene + panic→halt）。不返回。
+/// 上报：拉响警报停机（trace + watch 记录，随后 panic → panic_handler 完成
+/// alarm/广播/现场 dump/reset）。不返回。
+///
+/// 顺序纪律：**不在此处 dump 现场**——现场 dump 必须在其它核被 hunker（报警
+/// 广播后）才可靠；panic_handler 的流程即「先 alarm（claim+广播）→ 打印 →
+/// halt 记录 → crash_scene」。此前在 panic 前先行 dump 会在 dump 卡住时让报警
+/// 永不发出、系统继续运行（多组 scene / 停不住的根因，见 23:48 现场）。
 pub fn raise(r: WatchReport) -> ! {
     crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Watch(
         crate::runtime::diagnose::trace::WatchEvent::Raised,
     ));
     #[cfg(feature = "semihosting")]
     export_report(&r);
-    crate::runtime::diagnose::scene::dump_crash();
     panic!("watch caught incident: {r}");
 }
 

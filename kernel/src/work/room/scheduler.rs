@@ -823,6 +823,9 @@ pub fn run() -> usize {
     drop(i);
     // 取活：Idle → Running 阻塞获取（自核队首 → 跨核 steal → 全退出检查 → WFI）
     loop {
+        // 取活空转也是「活着」的形态：每轮报岗——被抢空转/steal 反复失败可能
+        // 持续远超 liveness 阈值，入口只打点一次会断岗（B 判据误报 stalled）。
+        watch::pulse();
         let me = machine::hart_id();
         if let Some(pa) = schedulers()[me].pop().map(|t| schedulers()[me].replace(t)) {
             return pa;
