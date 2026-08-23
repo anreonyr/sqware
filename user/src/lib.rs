@@ -106,4 +106,17 @@ pub mod env {
         let (v0, _v1) = UcallBuilder::new(Ucall::Spawn).args(args).call()?;
         Ok(v0)
     }
+
+    /// 用户主动内核 panic（a0 = 任意关联码；不返回）：显式触发场景转储。
+    ///
+    /// 取代「非法 envcall 撞 panic」的隐式方式——带消息、带关联码，且呼叫人即
+    /// running 任务，trap 帧保留用户现场 → 转储的 ubt/CSR 符号化完整可用。
+    pub fn panic_me(code: usize) -> ! {
+        let args = UArgs {
+            a0: code,
+            ..UArgs::default()
+        };
+        let _ = UcallBuilder::new(Ucall::Panic).args(args).call();
+        unsafe { core::hint::unreachable_unchecked() }
+    }
 }

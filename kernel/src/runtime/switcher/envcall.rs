@@ -106,6 +106,12 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                 },
             );
         }
+        Ucall::Panic => {
+            // 用户主动 panic：a0 = 呼叫人指定的关联码（trace 窗口可见调用号 9）。
+            // 场景转储的显式触发——呼叫人即 running 任务，trap 帧保留用户现场，
+            // ubt/CSR 符号化完整可用（同 envcall 非法号撞 panic，但带消息、带参）。
+            panic!("user-initiated panic (code {:#x})", frame.gpr.x(Gprs::A0));
+        }
     };
     frame as *mut TrapContext
 }

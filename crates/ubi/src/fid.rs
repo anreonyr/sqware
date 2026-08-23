@@ -23,6 +23,10 @@ pub enum Ucall {
     HeapDeallocate = 7,
     /// 建用户任务（a0 = 入口 VA，a1 = arg）：当前 team 建 U 任务，返回任务句柄或负错误码。
     Spawn = 8,
+    /// 用户主动内核 panic（a0 = 任意关联码；不返回）——场景转储的显式触发。
+    /// 取代「非法调用号撞 panic」的隐式路径（无消息、不可携带参数）；呼叫人即
+    /// running 任务，trap 帧保留用户现场 → ubt/CSR 符号化完整可用。
+    Panic = 9,
 }
 
 impl From<Ucall> for usize {
@@ -45,6 +49,7 @@ impl TryFrom<usize> for Ucall {
             6 => Ok(Self::HeapAllocate),
             7 => Ok(Self::HeapDeallocate),
             8 => Ok(Self::Spawn),
+            9 => Ok(Self::Panic),
             _ => Err(()),
         }
     }
