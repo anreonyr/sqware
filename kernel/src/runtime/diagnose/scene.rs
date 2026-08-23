@@ -62,10 +62,18 @@ fn hx(x: usize) -> Fmt<40> {
 fn write_addr<W: Write>(w: &mut W, a: usize) {
     let va = VirtAddr::from_raw(a);
     if let Some((name, off)) = elftable::resolve(va, running_team_try().as_deref()) {
-        let _ = write!(w, "{name}+{off:#x}");
+        let _ = write!(w, "{:#}", sym_name(name));
+        let _ = write!(w, "+{off:#x}");
     } else {
         let _ = write!(w, "{a:#x}");
     }
+}
+
+/// 符号名可读化：经 rustc_demangle（v0/legacy 全语法，流式零分配——panic 现场
+/// 不碰堆）；非 Rust 符号（内核表字面量 / no_mangle 名）原样透传，坏语法出
+/// `{invalid syntax}` 占位（有界、不 panic）。
+fn sym_name(name: &str) -> rustc_demangle::Demangle<'_> {
+    rustc_demangle::demangle(name)
 }
 
 /// 行尾符号化注解：地址的定宽值已写，命中出符号则追加「name+off」（未命中无注解）。
@@ -73,7 +81,8 @@ fn write_addr<W: Write>(w: &mut W, a: usize) {
 fn addr_note<W: Write>(w: &mut W, a: usize) {
     let va = VirtAddr::from_raw(a);
     if let Some((name, off)) = elftable::resolve(va, running_team_try().as_deref()) {
-        let _ = write!(w, "{name}+{off:#x}");
+        let _ = write!(w, "{:#}", sym_name(name));
+        let _ = write!(w, "+{off:#x}");
     }
 }
 
@@ -506,7 +515,8 @@ fn ubt_row(it: &mut RowsMut<'_, 2, 96>, i: usize, a: usize, tbl: Option<Arc<ElfT
         .as_deref()
         .and_then(|t| t.lookup(VirtAddr::from_raw(a)))
     {
-        let _ = write!(s, "{name}+{off:#x}");
+        let _ = write!(s, "{:#}", sym_name(name));
+        let _ = write!(s, "+{off:#x}");
     } else {
         let _ = write!(s, "{a:#x}");
     }

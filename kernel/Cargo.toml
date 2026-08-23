@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = []
+default = ["audit"]
 # diagnose 结构化记录经 semihosting fs 导出宿主文件（JSON Lines，自描述长度；文件
 # sqware-diagnose.jsonl 落在 qemu CWD，runner 归档）。**默认开启**（default 引入）——
 # 要关则把 default 里的 semihosting 拿掉。依赖 QEMU -semihosting（runner 恒加）。
@@ -31,6 +31,9 @@ hashbrown = { version = "0.17.1", default-features = false, features = [
 log = { version = "0.4.33" }
 riscv = { version = "0.16.1", features = ["s-mode"] }
 riscv-rt = { version = "0.18.0", features = ["s-mode"] }
+# 符号名 demangle（scene 转储打印）：v0/legacy 全语法、流式零分配（panic 现场
+# 零分配纪律）、非 Rust 符号原样透传。default-features=false → 纯 no_std。
+rustc-demangle = { version = "0.1.28", default-features = false }
 # semihosting = 导宿主文件用的 crate；只开 fs（stdio/panic-handler/time/args 均不需要）。
 semihosting = { version = "0.1.25", features = ["fs"] }
 
