@@ -72,8 +72,8 @@ pub struct TrapFrame {
 pub struct Task {
     pub(crate) id: usize,
     pub(crate) name: &'static str,
-    /// 状态（含载荷）。普通字段：只有经 [`Task::exclusive`]（调度器侧 `task_mut`
-    /// 包装）的 &mut 能改——唯一强持有语义见 exclusive。
+    /// 状态（含载荷）。普通字段：只有经 [`Task::exclusive`] 的 &mut 能改（唯一
+    /// 强持有语义见 exclusive）。
     pub(crate) state: TaskState,
     pub(crate) team: Arc<Team>,
     pub(crate) trap: TrapFrame,
@@ -130,8 +130,7 @@ impl Task {
     /// 调用方义务（约束所在）：任务任一时刻只被一个容器强持有（running /
     /// starved / blocked / reaped 恰好其一，由调度器**锁内 take/pop 取出唯一
     /// Arc** 保证）→ strong == 1；互斥 = 锁 + 唯一强持有，无需原子字段。
-    /// debug 断言兜底；**定位第二持有者的现场扫描（全容器 + 栈回溯）在调度器侧
-    /// `task_mut` 包装**——需 schedulers()/blocked() 容器全查，见 room::scheduler。
+    /// debug 断言兜底（违规即 panic，含 task id/name）。
     pub(crate) fn exclusive(t: &mut Arc<Self>) -> &mut Task {
         #[cfg(debug_assertions)]
         assert_eq!(

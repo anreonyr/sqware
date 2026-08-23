@@ -18,8 +18,9 @@
 // 派生计数）——不变量靠构造成立，无"漏一步 fetch_add/fetch_sub"的失步面。
 // steal 锁外先读 starved_len 跳过空队列（不做 RMW），再 try_lock。
 //
-// 状态互斥：无原子字段。所有状态变更都经 task_mut（唯一 Arc 所有权 + &mut）——
-// 锁内 take/pop 出任务 → Arc::get_mut；锁 + 所有权保证互斥，编译器强制。
+// 状态互斥：无原子字段。所有状态变更都经 Task::exclusive（唯一 Arc 所有权
+// + &mut，Arc::get_mut 的 weak≥1 变体）——锁内 take/pop 出任务 → 取 &mut；
+// 锁 + 所有权保证互斥，编译器强制。
 //
 // 锁纪律：inner = level 1 每核一把；Team.tasks = 3 与 Space.inner
 // = 2 禁止嵌套——锁内只做纯 Vec 操作，绝不调 space 方法。blocked（sleepers 的
@@ -149,10 +150,6 @@ impl Scheduler {
             "starved 容器只收 Starved 任务"
         );
         let mut i = self.inner.lock();
-        // debug: 同一任务不得重复入队（重复 push = 多容器强持有 → task_mut 断言
-        // 失败）——实现收进尾部 debug 段（check_no_dup_enqueue）。
-        #[cfg(debug_assertions)]
-        check_no_dup_enqueue(&self, &task);
         i.starved.push_back(task);
         self.set_len(&i);
     }
@@ -176,7 +173,7 @@ impl Scheduler {
     /// 任务即将在本 hart 上运行：置 Running + 满额预算 + 写 kernel_sp（本 hart
     /// trap 栈顶——steal 迁移正确性的关键）+ 武装定时器。
     fn prepare(&self, task: &mut Arc<Task>) {
-        let t = task_mut(task);
+        let t = Task::exclusive(task);
         t.transform(TaskState::Running {
             ticks_left: TIME_SLICE,
         });
@@ -210,7 +207,7 @@ impl Scheduler {
     /// 轮转尾部（持锁、starved 非空）：Running → Starved 入队尾，队首上台。
     /// 调用方负责空队列判断（空 → 唯一任务续跑，不走本方法）。
     fn rotate(&self, i: &mut SchedInner, mut cur: Arc<Task>) -> Arc<Task> {
-        task_mut(&mut cur).transform(TaskState::Starved);
+        Task::exclusive(&mut cur).transform(TaskState::Starved);
         i.starved.push_back(cur);
         let next = i.starved.pop_front().expect("non-empty");
         self.set_len(i);
@@ -241,8 +238,6 @@ impl Scheduler {
     fn park(&self, duration: Duration) -> Option<usize> {
         let mut i = self.inner.lock();
         let mut task = i.running.take().expect("no running task");
-        #[cfg(debug_assertions)]
-        probe_strong(&task, "park: running take");
         debug_assert!(
             matches!(task.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
@@ -252,11 +247,7 @@ impl Scheduler {
             tid: task.id,
             wake_at: wake_at as usize,
         }));
-        #[cfg(debug_assertions)]
-        {
-            probe_strong(&task, "park: before blocked insert");
-        }
-        task_mut(&mut task).transform(TaskState::Blocked {
+        Task::exclusive(&mut task).transform(TaskState::Blocked {
             reason: BlockReason::Park { wake_at },
         });
         // 注册 tock（防跨锁竞态，锁序 1 → 3 顺序获取、不嵌套）：
@@ -296,251 +287,12 @@ impl Scheduler {
             "running 容器里不是 Running 任务"
         );
         trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.id }));
-        task_mut(&mut exited).transform(TaskState::Reaped);
+        Task::exclusive(&mut exited).transform(TaskState::Reaped);
         TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
         tie::exit();
     }
 }
 
-/// 调度器侧 task_mut 包装：核心转换在 [`Task::exclusive`]（unit::task，含强计数
-/// 断言兜底与 SAFETY 论证）；本包装负责**违反唯一强持有时的现场定位**——先扫
-/// 全部容器（schedulers / blocked / reaped）+ 栈回溯找第二强持有者再 panic，
-/// 信息量远超 exclusive 的兜底断言。唯一强持有不变量见 exclusive（running /
-/// starved / blocked / reaped 恰好其一，Team 只持 Weak——strong == 1 由锁内
-/// take/pop 保证）。
-fn task_mut(t: &mut Arc<Task>) -> &mut Task {
-    // 违反唯一强持有 → 调度器现场工具（容器全查 + Arc 原始字 + 栈回溯，见尾部
-    // cfg 段 report_strong_violation）；通过后委托核心转换（其内兜底断言）。
-    #[cfg(debug_assertions)]
-    if Arc::strong_count(t) != 1 {
-        report_strong_violation(t);
-    }
-    Task::exclusive(t)
-}
-
-// ── debug 现场工具（cfg(debug_assertions)；release 整体编译为空）────────────
-//
-// 职责：唯一强持有不变量（running/starved/blocked/reaped 恰好其一）被打破时的
-// 现场定位——probe_strong 把「出现点」前移到容器移动瞬时，report_strong_violation
-// 在 task_mut 违规处全量 dump，两者共用 dump_holders（全容器归属扫描，不重复实现）。
-
-/// debug: 容器间移动瞬时的强计数探针——任务应恒为唯一强持有（sc == 1）。
-///
-/// 调用点：run()/park()/steal() 把任务从一个容器移出的瞬间。sc > 1 说明同一
-/// 任务已在另一容器/另一移动中被重复持有（映射双条目、双入队等）——全量 dump
-/// 容器抓现行（help 诊断：panic 是 task_mut 的强计数断言，但第二持有者可能在
-/// 更早的移动点就已出现；本探针把「出现点」前移）。
-#[cfg(debug_assertions)]
-fn probe_strong(t: &Arc<Task>, ctx: &str) {
-    let sc = Arc::strong_count(t);
-    if sc == 1 {
-        return;
-    }
-    putln!(
-        "[dbg] {ctx}: task #{} '{}' strong_count {sc} (expect 1) — duplicate holder!",
-        t.id,
-        t.name
-    );
-    let ptr = Arc::as_ptr(t) as usize;
-    // 原始块 dump：ArcInner{strong@-16, weak@-8, data@ptr} + Task 前 16 字——
-    // 判断块内存里是谁的数据（能否认出另一任务的 name/team/trap 特征）。
-    unsafe {
-        let s = *(ptr as *const usize).sub(2); // strong
-        let w = *(ptr as *const usize).sub(1); // weak
-        putln!("    arc@{ptr:#x}: hdr[strong]={s:#x} hdr[weak]={w:#x}");
-        for i in 0..16 {
-            putln!("      w[{i}] = {:#x}", *(ptr as *const usize).add(i));
-        }
-    }
-    dump_holders(ptr, "ME");
-}
-
-/// debug: 全容器归属 dump——`ptr` 任务在每核 running/starved、blocked、reaped
-/// 中的出现点，命中处以 `** {mark} **` 标注。`report_strong_violation` 与
-/// `probe_strong` 共用（同一结构不重复实现）；try_lock 拿不到即跳过（现场不
-/// 允许等待）。零分配（putln 直写 console，现场可安全调）。
-#[cfg(debug_assertions)]
-fn dump_holders(ptr: usize, mark: &str) {
-    let me = machine::hart_id();
-    for (h, s) in schedulers().iter().enumerate() {
-        match s.inner.try_lock() {
-            Some(g) => {
-                let is_me = if h == me { " [self]" } else { "" };
-                match &g.running {
-                    Some(x) => {
-                        if Arc::as_ptr(x) as usize == ptr {
-                            putln!(
-                                "  hart {h} running:{is_me} #{} '{}' @ {:#x} ** {mark} **",
-                                x.id,
-                                x.name,
-                                ptr
-                            );
-                        } else {
-                            putln!(
-                                "  hart {h} running:{is_me} #{} '{}' @ {:#x}",
-                                x.id,
-                                x.name,
-                                Arc::as_ptr(x) as usize
-                            );
-                        }
-                    }
-                    None => putln!("  hart {h} running:{is_me} (none)"),
-                }
-                for (k, x) in g.starved.iter().enumerate() {
-                    if Arc::as_ptr(x) as usize == ptr {
-                        putln!("  hart {h}: ** starved[{k}] ** ({mark})");
-                    }
-                }
-            }
-            // 本核自持锁（park/reap/rotate 内调 task_mut）与跨核真争用都表现为
-            // None——拿不到本核锁即打印提示，能拿到则照常扫描（不无条件跳过 me）。
-            None => {
-                let why = if h == me {
-                    "(self-held, skip)"
-                } else {
-                    "(locked, skip)"
-                };
-                putln!("  hart {h}: {why}");
-            }
-        }
-    }
-    // blocked 映射全量（含非匹配条目——区分「映射里没有」与「并发被移除」）。
-    if let Some(b) = blocked().try_lock() {
-        putln!("  blocked map ({} entries):", b.len());
-        for (k, x) in b.iter() {
-            if Arc::as_ptr(x) as usize == ptr {
-                putln!(
-                    "    [{k:#x}] task #{} '{}' @ {:#x} ** {mark} **",
-                    x.id,
-                    x.name,
-                    ptr
-                );
-            } else {
-                putln!(
-                    "    [{k:#x}] task #{} '{}' @ {:#x}",
-                    x.id,
-                    x.name,
-                    Arc::as_ptr(x) as usize
-                );
-            }
-        }
-    } else {
-        putln!("  blocked: (locked, skip)");
-    }
-    if let Some(r) = TASK_TABLES.reaped.try_lock() {
-        putln!("  reaped queue ({} entries):", r.len());
-        for (k, x) in r.iter().enumerate() {
-            if Arc::as_ptr(x) as usize == ptr {
-                putln!(
-                    "    reaped[{k}] task #{} '{}' @ {:#x} ** {mark} **",
-                    x.id,
-                    x.name,
-                    ptr
-                );
-            } else {
-                putln!(
-                    "    reaped[{k}] task #{} '{}' @ {:#x}",
-                    x.id,
-                    x.name,
-                    Arc::as_ptr(x) as usize
-                );
-            }
-        }
-    } else {
-        putln!("  reaped: (locked, skip)");
-    }
-}
-
-/// debug: 唯一强持有违反的现场报告（`task_mut` 包装的违规路径）——读 ra/fp
-/// 定位真实调用者、容器全查、Arc 头/任务原始字、粗糙栈回溯，然后 panic。
-/// 帧槽偏移（s0-8 等）与 .text 扫描范围 [0x80200000, 0x80600000) 是 **codegen
-/// 依赖的尽力而为诊断**——镜像一变即失真，失效只影响定位精度、不阻塞 panic。
-#[cfg(debug_assertions)]
-fn report_strong_violation(t: &Arc<Task>) -> ! {
-    let ra: usize;
-    let fp: usize;
-    // SAFETY: 读返回地址与帧指针寄存器，纯读。
-    unsafe {
-        core::arch::asm!(
-            "mv {0}, ra",
-            "mv {1}, s0",
-            out(reg) ra,
-            out(reg) fp,
-            options(nomem, nostack, preserves_flags)
-        );
-    }
-    // task_mut 入口 ra 保存在其帧槽 (s0-8)（codegen 依赖；旧镜像 0x8021f81a 的
-    // `sd ra, 0x1e8(sp)`）。不能用 `mv ra`——编译器把 asm 挪到 Arc::strong_count
-    // 调用之后，读到的是该调用的返回地址；同一 asm 内同时读 ra/fp 保证同时刻。
-    let caller_ra = unsafe { *(fp as *const usize).sub(1) };
-    let prev_fp = unsafe { *(fp as *const usize).sub(2) };
-    let caller2_ra = unsafe { *(prev_fp as *const usize).sub(1) };
-    let ptr = Arc::as_ptr(t) as usize;
-    let sc = Arc::strong_count(t);
-    putln!(
-        "[dbg] task #{} '{}' ({:?}) strong_count {sc}: scanning containers...",
-        t.id,
-        t.name,
-        t.state()
-    );
-    dump_holders(ptr, "MATCH");
-    putln!("  == Arc ctrl block & task raw bytes ==");
-    // ArcInner 布局：strong@data-16, weak@data-8（strong 在偏移 0、weak 在
-    // 偏移 8、data 在偏移 16）；Task 字段顺序编译器可重排（实测 state@0, id@8）。
-    // SAFETY: 读 t 指针附近内存做诊断；指针必须有效（任务存活）。
-    unsafe {
-        let s = *(ptr as *const usize).sub(2); // strong（真实）
-        let w = *(ptr as *const usize).sub(1); // weak（真实）
-        putln!("  arc@{ptr:#x}: hdr[strong]={s:#x} hdr[weak]={w:#x}");
-        for i in 0..10 {
-            putln!("    task[{i}] = {:#x}", *(ptr as *const usize).add(i));
-        }
-        putln!(
-            "  frame: ra={ra:#x} fp={fp:#x} caller_ra(real)={caller_ra:#x} prev_fp={prev_fp:#x} caller2_ra={caller2_ra:#x}"
-        );
-        // 粗糙栈回溯：沿当前 sp 扫 256 个字，凡落在 .text 范围者即调用返回地址。
-        let mut sp: usize;
-        core::arch::asm!("mv {0}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
-        let mut n = 0usize;
-        for i in 0..256 {
-            let v = *(sp as *const usize).add(i);
-            if (0x8020_0000..0x8060_0000).contains(&v) {
-                putln!("  trace[{i}] {v:#x}");
-                n += 1;
-                if n >= 12 {
-                    break;
-                }
-            }
-        }
-    }
-    panic!(
-        "task #{} '{}' ({:?}): strong_count {sc} weak {} — 同一任务被多个容器强持有（caller via fp-walk={caller_ra:#x}）",
-        t.id,
-        t.name,
-        t.state(),
-        Arc::weak_count(t)
-    );
-}
-
-/// debug: 同一任务不得重复入队（重复 push = 多容器强持有 → `task_mut` 断言
-/// 失败）。必查**所有核**的 starved——同任务跨核双入队是漏网形态。
-#[cfg(debug_assertions)]
-fn check_no_dup_enqueue(s: &Scheduler, task: &Arc<Task>) {
-    for (h, sch) in schedulers().iter().enumerate() {
-        let Some(g) = sch.inner.try_lock() else {
-            continue;
-        };
-        if g.starved.iter().any(|x| Arc::ptr_eq(x, task)) {
-            panic!(
-                "push: duplicate enqueue of task #{} '{}' on hart {} (already queued on hart {h}, len {})",
-                task.id,
-                task.name,
-                s.hart,
-                g.starved.len()
-            );
-        }
-    }
-}
 
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
 // （MAX_HART_SLOTS=4096 仅为编译期 VA 窗口上限，不固定静态数组）。长度镜像随结构体共生。
@@ -594,8 +346,6 @@ fn steal() -> Option<Arc<Task>> {
         let Some(task) = schedulers()[v].try_pop() else {
             continue;
         };
-        #[cfg(debug_assertions)]
-        probe_strong(&task, "steal: try_pop");
         trace::note(EventKind::Sched(SchedEvent::Steal {
             tid: task.id,
             src_hart: v,
@@ -736,15 +486,13 @@ pub fn run() -> usize {
     let s = &schedulers()[me];
     let mut i = s.inner.lock();
     if let Some(mut cur) = i.running.take() {
-        #[cfg(debug_assertions)]
-        probe_strong(&cur, "run: running take");
         let ticks_left = match cur.state() {
             TaskState::Running { ticks_left } => ticks_left,
             _ => unreachable!("running 容器里不是 Running 任务"),
         };
         if ticks_left > 1 {
             // 预算未耗尽：续跑——不切走、不进 starved
-            task_mut(&mut cur).dec_ticks_left();
+            Task::exclusive(&mut cur).dec_ticks_left();
             let pa = cur.trap.pa.as_usize();
             i.running = Some(cur);
             return pa;
@@ -827,12 +575,7 @@ pub fn unpark() -> bool {
             continue;
         };
         woke = true;
-        // debug: 移除后 strong 应为 1（映射条目是唯一强持有者）——若为 2 说明
-        // 此刻还存在第二个持有者（比如映射里同名任务的双条目、或另一容器），
-        // 全量 dump 映射抓现行。
-        #[cfg(debug_assertions)]
-        probe_strong(&task, "unpark: after blocked remove");
-        task_mut(&mut task).transform(TaskState::Starved);
+        Task::exclusive(&mut task).transform(TaskState::Starved);
         trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.id }));
         let me = machine::hart_id();
         schedulers()[me].push(task);
