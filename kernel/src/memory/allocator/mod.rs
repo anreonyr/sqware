@@ -16,6 +16,8 @@ use fack::prelude::Error;
 pub mod bitmap;
 pub mod block;
 pub mod bump;
+/// 共享 debug 校验原语（block/frame 链式断言收容处；release 空体零开销）。
+pub(crate) mod debug_checks;
 pub mod frame;
 pub mod hybrid;
 pub mod portal;
@@ -73,7 +75,7 @@ pub fn init() -> InitResult<()> {
     portal::switch(bump::allocator());
 
     hybrid::init()?;
-    log::debug!("hybird");
+    log::debug!("hybrid");
     portal::switch(hybrid::allocator());
     Ok(())
 }

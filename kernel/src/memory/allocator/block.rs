@@ -18,6 +18,9 @@
 // 命名：pool(池) pump(泵) pull/push(池内拉/推) feed/suck(泵口喂/抽) tear(撕页)——全部
 // 4 字母动词成族；base/edge 区段两端成对；pool_of/node_of 是定位原语。
 //
+// 调试：校验/流水收容在 allocator::debug_checks（frame.rs 同用）——pull/push 本体
+// 只留单行钩子；钩子恒编译、release 空体零开销；断言仅 debug 构建生效（见该模块）。
+//
 // 不变·硬（贴结构）：
 //   - 块只进归属池的 freelist：feed 只入 pump，suck 是唯一转 push 的路径；
 //   - 页头 used 计数只在池 inner 锁内写（feed 拿不到 inner）；
@@ -30,11 +33,10 @@ use core::ptr::NonNull;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use erra::ResultExt;
-use log::debug;
 
+use super::debug_checks;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
-use crate::putln;
 use crate::{
     lock::{OnceLock, SpinLock},
     memory::allocator::{InitError, InitResult, bump},
@@ -241,9 +243,12 @@ unsafe impl Allocator for BlockAllocator {
 /// 区段大小不设编译期常量——init 按「空闲区均分到每池」动态算出（见 init），
 /// 大内存机器上自动放大；区段耗尽即内存耗尽。
 pub(crate) struct BlockInner {
-    inner: SpinLock<Pool>,                        // freepool + 页头 used 计数 + 区段游标
-    pump: [SpinLock<Pump>; MAX_POWER + 1],        // 过境驿站：按 size class 分立；只收 feed，suck 抽空
-    base: usize,                                  // 区段 [base, edge)，init 后不可变
+    inner: SpinLock<Pool>,                 // freepool + 页头 used 计数 + 区段游标
+    pump: [SpinLock<Pump>; MAX_POWER + 1], // 过境驿站：按 size class 分立；只收 feed，suck 抽空
+    /// 区段 [base, edge)，init 后不可变；仅 audit 的 `torn_pages` 读取
+    /// （非 audit 构建允许未读，同 frame 的 `outstanding` 手法）。
+    #[cfg_attr(not(all(debug_assertions, feature = "audit")), allow(dead_code))]
+    base: usize,
     edge: usize,
 }
 
@@ -264,22 +269,12 @@ impl BlockInner {
         self.suck();
         let mut g = self.inner.lock();
         let inner = &mut *g;
-        // debug: freepool 头必须在 DRAM 内（链表节点被覆写的特征——越界写/UAF）。
         if let Some(head) = inner.freepool[power] {
-            #[cfg(debug_assertions)]
-            {
-                let m = machine::info();
-                let a = head.as_ptr() as usize;
-                if !m.free.range().contains(&a) {
-                    panic!(
-                        "block allocator: freelist head corrupted — power {power}, head {head:?} ({a:#x})"
-                    );
-                }
-            }
+            debug_checks::check_dram_addr(head.as_ptr() as usize, "block pull (freepool head)");
             let next = unsafe { head.cast::<Option<NonNull<u8>>>().read() };
             inner.freepool[power] = next;
             unsafe { inner.increase_used(head, power) };
-            debug!("address {:?}, power {} allocated", head, power);
+            debug_checks::log_alloc(head.as_ptr() as usize, power);
             return Some(head.as_ptr() as usize);
         }
         // 无现成块：撕下一页拆入链，首块即本次分配结果
@@ -332,25 +327,13 @@ impl BlockInner {
         let mut g = self.inner.lock();
         let inner = &mut *g;
 
-        // debug: double-free 检测——同一块已在 freepool 中再释放会破坏链表。
-        #[cfg(debug_assertions)]
-        {
-            let mut cur = inner.freepool[power];
-            let mut depth = 0usize;
-            while let Some(node) = cur {
-                if node == ptr {
-                    self.dump_crash_site(inner, power, "push-double-free", ptr.as_ptr() as usize);
-                    panic!("block allocator: double free of {:?} (power {power})", ptr);
-                }
-                depth += 1;
-                if depth > 1 << 14 {
-                    // debug: 链过长或成环——遍历失控前的护栏（环 = 某节点 next 被覆写）。
-                    self.dump_crash_site(inner, power, "push-walk-loop", ptr.as_ptr() as usize);
-                    panic!("block allocator: freepool[{power}] walk exceeded depth — cyclic list");
-                }
-                cur = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
-            }
-        }
+        debug_checks::check_not_in_chain(
+            power,
+            "block push",
+            inner.freepool[power],
+            ptr.as_ptr() as usize,
+            |n| unsafe { n.cast::<Option<NonNull<u8>>>().read() },
+        );
 
         // 头插
         unsafe {
@@ -358,7 +341,7 @@ impl BlockInner {
                 .write(inner.freepool[power]);
         }
         inner.freepool[power] = Some(ptr);
-        debug!("address {:?}, power {} deallocated", ptr, power);
+        debug_checks::log_dealloc(ptr.as_ptr() as usize, power);
         unsafe { inner.decrease_used(ptr, power) };
     }
 
@@ -386,7 +369,7 @@ impl BlockInner {
             let mut n = 0usize;
             while let Some(node) = this {
                 // 护栏：同块双 feed 会让同一块两次入链（甚至自环）——深度越界即报
-                // 错，避免抽空死循环（同 push 的 freepool walk 护栏）。
+                // 错，避免抽空死循环（链被破坏时宁可 panic 也不要挂死）。
                 n += 1;
                 if n > 1 << 14 {
                     panic!(
@@ -398,69 +381,6 @@ impl BlockInner {
                 self.push(node, power);
                 this = next;
             }
-        }
-    }
-
-    // ── 调试 ──
-
-    /// 断言/push 异常现场 dump：游标/区段/该 power 全链/单元数组/操作序列。
-    /// 注意：本函数**零分配**——任何 alloc 都会经 portal→block 递归/死锁，
-    /// 且会污染现场。只用 putln! 直写 + 固定缓冲数组。
-    #[cfg(debug_assertions)]
-    fn dump_crash_site(&self, inner: &mut Pool, power: usize, ctx: &str, addr: usize) {
-        putln!("[crash] {ctx}: failing block addr {addr:#x}");
-        let torn_pages = (inner.cursor - self.base) / PAGE_SIZE;
-        putln!(
-            "[crash] {ctx}: pool base {:#x} edge {:#x} cursor {:#x} (torn {torn_pages} pages)",
-            self.base,
-            self.edge,
-            inner.cursor
-        );
-        putln!("[crash] non-empty freepool classes:");
-        for (p, h) in inner.freepool.iter().enumerate() {
-            if h.is_some() {
-                putln!("  class {p}");
-            }
-        }
-        let mut walk = [0usize; 256];
-        let mut n = 0usize;
-        let mut cur = inner.freepool[power];
-        while let Some(node) = cur {
-            if n < walk.len() {
-                walk[n] = node.as_ptr() as usize;
-            }
-            n += 1;
-            cur = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
-        }
-        putln!(
-            "[crash] freepool[{power}] walk ({} nodes, first 256 shown):",
-            n
-        );
-        let shown = n.min(walk.len());
-        (0..shown).for_each(|i| {
-            let a = walk[i];
-            putln!(
-                "  [{}] {:#x} (page {:#x}, torn {}, offset {:#x})",
-                i,
-                a,
-                a & !(crate::memory::PAGE_SIZE - 1),
-                a < inner.cursor,
-                a & (crate::memory::PAGE_SIZE - 1)
-            );
-        });
-        // 游标后第一张未撕页原始内容（链头常指向未撕页——看那里有什么）
-        if inner.cursor + PAGE_SIZE <= self.edge {
-            let np = inner.cursor;
-            let p = np as *const usize;
-            putln!("[crash] first untorn page {np:#x} head words:");
-            for i in 0..8 {
-                putln!("  w{i} = {:#x}", unsafe { *p.add(i) });
-            }
-        }
-        let blk = (addr & !(crate::memory::PAGE_SIZE - 1)) as *const usize;
-        putln!("[crash] failing page head words:");
-        for i in 0..8 {
-            putln!("  w{i} = {:#x}", unsafe { *blk.add(i) });
         }
     }
 }

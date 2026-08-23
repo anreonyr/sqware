@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["audit"]
+default = []
 # diagnose 结构化记录经 semihosting fs 导出宿主文件（JSON Lines，自描述长度；文件
 # sqware-diagnose.jsonl 落在 qemu CWD，runner 归档）。**默认开启**（default 引入）——
 # 要关则把 default 里的 semihosting 拿掉。依赖 QEMU -semihosting（runner 恒加）。
