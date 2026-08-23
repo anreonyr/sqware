@@ -301,6 +301,42 @@ impl Ledger {
         }
     }
 
+    /// 活块 canary 清查（panic 现场 drop-in；只报不 panic——诊断不截断转储）。
+    ///
+    /// 平时 canary 只在释放（[`unmark`]）时核对；**永不释放的泄漏块**（符号表
+    /// 等）的 canary 永远等不到检查，且越界写若只砸进相邻**活**块，期间无任何
+    /// 告警。崩溃现场扫一遍全部 KernelHeap 记录：砸坏的 canary → 打印受害块
+    /// 地址与分配点返回地址（alloc-site，host addr2line 可符号化）并计数。
+    /// try_lock：现场若正持 Ledger 锁（如分配器内 panic）则跳过、静默。返回
+    /// 砸坏数。本模块整体 gate（debug+audit），调用方同条件。
+    pub fn sweep_canaries(&self) -> usize {
+        let Some(g) = self.inner.try_lock() else {
+            return 0;
+        };
+        let Some((map, _)) = g.as_ref() else {
+            return 0;
+        };
+        let mut bad = 0usize;
+        for (addr, rec) in map.iter() {
+            if rec.canary.is_none() {
+                continue; // UserHeap 不设 canary
+            }
+            // 与 mark/unmark 同表达式：对齐后的 slack 槽位（见 mark 注释）。
+            let at = (addr + rec.size + 7) & !7;
+            // SAFETY: canary 只对 KernelHeap 登记（对齐 slack 区，≤ 块尾）；崩溃
+            // 现场只读。若该处已被越界写砸坏，值 ≠ magic——正是本清查要找的。
+            let got = unsafe { (at as *const u64).read_volatile() };
+            if got != CANARY_MAGIC {
+                crate::putln!(
+                    "[integrity] sweep: canary broken @{at:#x} (block {addr:#x} site {:#x})",
+                    rec.site
+                );
+                bad += 1;
+            }
+        }
+        bad
+    }
+
     pub fn len(&self) -> usize {
         self.inner
             .lock()

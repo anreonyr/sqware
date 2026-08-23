@@ -56,6 +56,26 @@ fn name_at(strtab: &'static [u8], off: usize) -> &'static str {
     core::str::from_utf8(&rest[..end]).unwrap_or(NO_NAME)
 }
 
+/// name 防御判定（[`ElfTable::lookup`] 与现场体检 [`ElfTable::check_integrity`]
+/// 共用）：合法 name 必指向**镜像 .rodata**（嵌入 ELF 的 strtab 所在区
+/// [_rodata_start, _kernel_edge)）且长度有界。坏 ptr 可落在恒等区内未映射/不可
+/// 读页（如 128M 机器 0x88000000 之上）——打印时 OOB 读会触发崩溃现场嵌套
+/// fault；长度上限只防破坏值失控。**纯算术判定**（as_ptr/len 已随条目读入
+/// 寄存器，不触碰 name 内容字节），panic 现场调用安全。
+fn name_in_range(nm: &str) -> bool {
+    unsafe extern "C" {
+        static _rodata_start: u8;
+        static _kernel_edge: u8;
+    }
+    let (rs, ke) = (
+        (&raw const _rodata_start).addr(),
+        (&raw const _kernel_edge).addr(),
+    );
+    let np = nm.as_ptr() as usize;
+    let nl = nm.len();
+    nl <= 4096 && np >= rs && np.saturating_add(nl) <= ke
+}
+
 impl ElfTable {
     /// 从 .symtab+.strtab 构建：只留 STT_FUNC，按 addr 升序；空表 → None。
     /// 表一次建成 Box::leak（'static，永不回收）。
@@ -129,23 +149,50 @@ impl ElfTable {
         // _kernel_edge)）——超出即拒绝（降级裸 hex）。DRAM 宽范围不够：坏 ptr
         // 可落在恒等区内未映射/不可读页（如 128M 机器 0x88000000 之上）。
         let nm = self.entries[i].name;
-        let np = nm.as_ptr() as usize;
-        let nl = nm.len();
-        unsafe extern "C" {
-            static _rodata_start: u8;
-            static _kernel_edge: u8;
-        }
-        let (rs, ke) = (
-            (&raw const _rodata_start).addr(),
-            (&raw const _kernel_edge).addr(),
-        );
         // str 引用（含 len）须完全落入 .rodata（符号名 ≤ 几十字节，长度上限
         // 只防破坏值失控）。坏条目降级为 None（裸 hex）——不打印坏 name，
         // 避免崩溃现场 OOB 读触发嵌套 fault 截断转储。
-        if nl > 4096 || np < rs || np.saturating_add(nl) > ke {
+        if !name_in_range(nm) {
             return None;
         }
         Some((nm, target - base))
+    }
+
+    /// 完整性体检（debug-only；panic 现场 drop-in 探针）：核对全表条目
+    /// name 防御不变量（[`name_in_range`]）+ addr 排序/非零，坏条目计数并打印
+    /// 首例地址——**越界写破坏 entries 时自我报告**（写穿源无处可查时，崩溃
+    /// 现场至少自报「表已坏、坏在哪」）。纯读零分配（只经 putln! 直写 SBI
+    /// 控制台，无锁安全）；release 编译为空、零开销。返回坏条目数。
+    #[cfg(debug_assertions)]
+    pub fn check_integrity(&self) -> usize {
+        let mut bad = 0usize;
+        let mut first = 0usize;
+        let mut unsorted = 0usize;
+        let mut prev = 0usize;
+        for e in self.entries.iter() {
+            let a = e.addr.as_usize();
+            if a == 0 || !name_in_range(e.name) {
+                bad += 1;
+                if first == 0 {
+                    first = a;
+                }
+            }
+            if a < prev {
+                unsorted += 1;
+            }
+            prev = a;
+        }
+        if bad > 0 {
+            crate::putln!(
+                "[table] integrity: {bad}/{} entries name/addr broken (first {first:#x}); {unsorted} unsorted",
+                self.entries.len()
+            );
+        } else if unsorted > 0 {
+            crate::putln!(
+                "[table] integrity: entries addr unsorted ({unsorted} inversions)"
+            );
+        }
+        bad
     }
 }
 

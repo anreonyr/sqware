@@ -496,6 +496,23 @@ fn bt_row(it: &mut RowsMut<'_, 2, 96>, tbl: &str, i: usize, a: usize) {
 /// 用户态时 bt 后附 ubt（从 trap 帧用户 sp 经页表 walk 安全读栈，见
 /// `user_backtrace`；读不到即 0 帧不渲染）。末尾倒出每 hart 最近事件窗口。
 pub fn dump_crash() {
+    // ① 探针：panic 现场 drop-in 完整性体检——越界写破坏用户符号表/相邻活块
+    // 时自报（lookup 已降级裸 hex，体检负责把「破坏存在」说出来，含首例地址 /
+    // 受害块分配点）。运行团队表体检 debug 才编译；ledger canary 清查额外需
+    // audit feature。两者均纯读零分配、只经 putln! 直写 SBI 控制台——panic
+    // 现场（含持锁）安全，且不截断本次转储。
+    #[cfg(debug_assertions)]
+    {
+        if let Some(t) = running_team_try().as_deref() {
+            if let Some(et) = t.elftable.as_ref() {
+                et.check_integrity();
+            }
+        }
+        #[cfg(feature = "audit")]
+        {
+            let _ = crate::memory::integrity::LEDGER.sweep_canaries();
+        }
+    }
     // [scene] 标题 + CSR 表 + GPR 表 + 回溯表（表间空行由 Para::table 统一）。
     let mut p = Para::new(Sink);
     p.title(format_args!(
