@@ -91,6 +91,12 @@ pub struct Scheduler {
     hart: usize,
     /// 锁内：running + starved（本核调度决策的原子单位）。
     inner: SpinLock<SchedInner>,
+    /// 锁外：running team 镜像（崩溃现场符号化）。与 `inner` 同结构体共生——
+    /// 写侧 = 本核装槽窗口内派生（L1→L3 递增），读侧 = `running_team_try`
+    /// 只 try_lock **本核**的这把小锁。**per-hart 各一**：不动全局单槽——那会被
+    /// 其它核装槽互踩，报警核读到别核 team、用户地址对错程序符号化（ubt 弃
+    /// 全局镜像的同一原因，见 scene::user_backtrace）。
+    running_team: SpinLock<Option<Arc<Team>>>,
     /// 锁外：starved 长度镜像（steal 预检；与 inner 同结构体共生，不会分家）。
     starved_len: AtomicUsize,
 }
@@ -113,8 +119,14 @@ impl Scheduler {
                     starved: VecDeque::new(),
                 },
             ),
+            running_team: SpinLock::new_level(Level::L3, None),
             starved_len: AtomicUsize::new(0),
         }
+    }
+
+    /// 装槽时同步镜像（与 inner 同锁域调用：L1 调度锁内 → L3 镜像 严格递增）。
+    fn mirror_team(&self, team: &Arc<Team>) {
+        self.running_team.lock().replace(team.clone());
     }
 
     /// 锁外读：starved 长度（steal 预检；Relaxed 提示，旧读最多少偷一次）。
@@ -205,7 +217,7 @@ impl Scheduler {
             "running 容器只装 Running 任务"
         );
         let pa = task.trap.pa.as_usize();
-        mirror_running_team(&task.team);
+        self.mirror_team(&task.team);
         i.running = Some(task);
         pa
     }
@@ -573,22 +585,6 @@ fn probe_strong(t: &Arc<Task>, ctx: &str) {
 
 static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
-/// 锁外 running team 镜像：最近装槽上台任务的 Team（`SpinLock<Option<Arc<Team>>>`）。
-/// 供 panic/诊断现场符号化用户地址：不碰调度锁（崩溃时它常被持、可能死锁），
-/// 走独立小锁——写侧仅 replace 装槽瞬间持有（原子窗口），诊断读 try_lock，
-/// 失败仅本次不符号化（不 panic）。
-/// 生命周期：镜像持正常 `Arc<Team>` 引用、写侧换新即释放旧 Arc —— Team 完全
-/// 正常退出/回收，无滞留、无泄漏。镜像非精确「当前 running」——是最近上台过
-/// 的 team，足供符号化（诊断容忍近似）。
-/// 锁层级 L3（同 blocked/reaped）：replace 内为 L1(调度锁)→L3(镜像)严格递增；
-/// 调用方已先放调度锁，无外层锁残留，不构成 3→3 嵌套。
-static RUNNING_TEAM: SpinLock<Option<Arc<Team>>> = SpinLock::new_level(Level::L3, None);
-
-/// replace 装槽时调用：把新上台任务的 team 写入镜像。仅持有锁的 replace 写。
-fn mirror_running_team(team: &Arc<Team>) {
-    RUNNING_TEAM.lock().replace(team.clone());
-}
-
 fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
 }
@@ -905,12 +901,15 @@ pub fn running_team() -> Arc<Team> {
         .clone()
 }
 
-/// 当前运行任务所属团队（panic/诊断现场安全：try_lock 读 RUNNING_TEAM 镜像锁，
-/// 非调度锁——崩溃时调度锁常被持会失败；镜像锁仅 replace 瞬间持有，几无争用）。
-/// 返回 clone 的 Arc<Team>（放锁后安全使用）。镜像近似：非精确「此刻 running」
-/// 而是最近上台过的 team，足供符号化。未装槽（boot 早期 / 无任务）→ None。
+/// 当前运行任务所属团队（panic/诊断现场安全）：读**本核**调度器的 running_team
+/// 镜像——不碰调度锁（崩溃时它常被持会失败），镜像锁仅本核装槽瞬间持、无争用。
+/// 返回 clone 的 Arc<Team>（放锁后安全使用）。per-hart 各一：精确到核（本核
+/// 最近上台的 team，即本核 running 任务的 team；idle 时保留旧值——符号化无碍），
+/// 不再有全局单槽被别核互踩的问题。未装槽（boot 早期 / 无任务）→ None。
 pub fn running_team_try() -> Option<Arc<Team>> {
-    let guard = RUNNING_TEAM.try_lock()?;
+    let all = SCHEDULERS.get()?;
+    let me = machine::hart_id();
+    let guard = all[me].running_team.try_lock()?;
     guard.as_ref().map(|t| t.clone())
 }
 
@@ -945,8 +944,8 @@ pub fn running_task_info() -> Option<(usize, &'static str)> {
 ///
 /// 与 `running_task_info` 同纪律：调度锁被 panic 现场持有则 `try_lock` 放弃。
 /// 返回 (task id, 帧 PA, 团队 elftable)——PA 经恒等映射可读；elftable 供 scene
-/// 用**本任务自己的表**符号化（镜像 `RUNNING_TEAM` 是全局最后上台、跨核互踩，
-/// 用户侧解析不可靠，见 scene::user_backtrace）。
+/// 用**本任务自己的表**符号化（不依赖 running_team 镜像：ubt 收集需要帧
+/// 地址 + 与收集同源的表，见 scene::user_backtrace）。
 pub fn running_task_frame() -> Option<(usize, usize, Option<alloc::sync::Arc<ElfTable>>)> {
     let all = SCHEDULERS.get()?;
     let me = machine::hart_id();
