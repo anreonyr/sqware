@@ -491,6 +491,30 @@ fn bt_row(it: &mut RowsMut<'_, 2, 96>, tbl: &str, i: usize, a: usize) {
     scene_row(tbl, l.as_str(), hx(a).as_str(), s.as_str());
 }
 
+/// ubt 两槽行：**按任务自己的符号表**（与 `user_backtrace` 收集同表——不依赖
+/// 报警核 `running_team_try` 的镜像）符号化；命中出 name+off，未命中裸 hex。
+/// name 经 `lookup` 的 name_in_range 防御（坏条目降级裸 hex，check_integrity
+/// 现场自报），panic 现场打印安全（CSR/sepc 注解同路径已实证）。
+fn ubt_row(it: &mut RowsMut<'_, 2, 96>, i: usize, a: usize, tbl: Option<Arc<ElfTable>>) {
+    let Some(row) = it.next() else {
+        return;
+    };
+    let mut l = Fmt::<16>::new();
+    let _ = write!(l, "#{i}");
+    let mut s = Fmt::<96>::new();
+    if let Some((name, off)) = tbl
+        .as_deref()
+        .and_then(|t| t.lookup(VirtAddr::from_raw(a)))
+    {
+        let _ = write!(s, "{name}+{off:#x}");
+    } else {
+        let _ = write!(s, "{a:#x}");
+    }
+    row[0] = Cell::new(l.as_str());
+    row[1] = Cell::new(s.as_str());
+    scene_row("ubt", l.as_str(), hx(a).as_str(), s.as_str());
+}
+
 /// 统一崩溃现场转储：一个 [scene] 标题统辖全部表——CSR 三列表 + GPR 两列表 +
 /// 回溯表（内核栈 kbt + 用户栈 ubt，表头分块 + 空行）。u-thread 被中断上下文为
 /// 用户态时 bt 后附 ubt（从 trap 帧用户 sp 经页表 walk 安全读栈，见
@@ -553,10 +577,11 @@ pub fn dump_crash() {
     // running 任务帧时附加；0 帧不渲染（尽力而为，失败不 panic）。渲染色沿用
     // 任务自己的符号表（user_backtrace 带回），不依赖全局镜像。
     let mut ubt = [0usize; BT_DEPTH];
-    let (m, _tbl_arc) = user_backtrace(&mut ubt);
+    let (m, tbl_arc) = user_backtrace(&mut ubt);
     if m > 0 {
-        // ubt 表：裸 hex 行渲染（lookup 打印 name 在 panic 现场仍触发嵌套
-        // fault——halt 已收敛停机但截断转储；符号化留给宿主 addr2line）。
+        // ubt 表：符号化用任务自己的表（收集同表）；命中出 name+off，未命中
+        // 裸 hex（lookup 的 name_in_range 防御下打印安全；表损坏由体检现场
+        // 自报、行降级裸 hex——不再是「干脆全裸 hex」的旧裁量）。
         let mut u = Table::<2, { BT_DEPTH + 1 }, 96>::new();
         u.set_width(0, Width::fixed(10));
         u.set_total_width(64);
@@ -564,16 +589,7 @@ pub fn dump_crash() {
             let mut it = u.rows_mut();
             header2(&mut it, "ubt", "sym");
             for (i, a) in ubt[..m].iter().enumerate() {
-                let Some(row) = it.next() else {
-                    break;
-                };
-                let mut l = Fmt::<16>::new();
-                let _ = write!(l, "#{i}");
-                let mut s = Fmt::<96>::new();
-                let _ = write!(s, "{a:#x}");
-                row[0] = Cell::new(l.as_str());
-                row[1] = Cell::new(s.as_str());
-                scene_row("ubt", l.as_str(), hx(*a).as_str(), s.as_str());
+                ubt_row(&mut it, i, *a, tbl_arc.clone());
             }
         }
         p.table(&u);
