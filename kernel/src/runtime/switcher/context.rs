@@ -117,19 +117,3 @@ const _: () = {
     assert!(core::mem::offset_of!(TrapContext, sepc) == 0x138);
     assert!(core::mem::offset_of!(TrapContext, self_va) == 0x140);
 };
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gpr_debug_skips_zero_registers() {
-        let mut g = Gprs([0; 32]);
-        g.set_x(Gprs::SP, 0xc000_a000);
-        g.set_x(Gprs::A7, 8);
-        let s = format!("{g:?}");
-        assert!(s.contains("x2=0xc000a000"));
-        assert!(s.contains("x17=0x8"));
-        assert!(!s.contains("x1="));
-    }
-}

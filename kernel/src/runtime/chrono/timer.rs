@@ -120,12 +120,18 @@ pub fn next_tock() -> Option<Instant> {
 ///
 /// 返回的句柄由调用方（scheduler::unpark）在放锁后处理——本函数不持任何
 /// 调度器锁，只在 TIMER_HEAP 锁内完成弹堆与镜像刷新。
+///
+/// **锁内零分配**：`due` 用固定栈缓冲（[`MAX_DUE`]）——持 Level::L3 锁时不得触
+/// 分配器（portal/pool 均 exempt，lockdep 逃检；跨核 ABBA 曾致静默死锁）。到期
+/// 数超 `MAX_DUE` 的极端洪峰截断（尽力而为，timer 路径不许失败）。
 pub fn drain(now: Instant) -> Vec<u64> {
-    let mut due = Vec::new();
+    const MAX_DUE: usize = 64;
+    let mut due: [u64; MAX_DUE] = [0; MAX_DUE];
+    let mut n = 0usize;
     let mut i = TIMER_HEAP.inner.lock();
     let now = now.as_ticks();
     while let Some(Reverse((t, _))) = i.heap.peek() {
-        if *t > now {
+        if *t > now || n >= MAX_DUE {
             break;
         }
         let Reverse((_, handle)) = i.heap.pop().expect("peeked non-empty heap entry");
@@ -133,8 +139,12 @@ pub fn drain(now: Instant) -> Vec<u64> {
             i.cancelled.retain(|c| *c != handle);
             continue;
         }
-        due.push(handle);
+        due[n] = handle;
+        n += 1;
     }
     TIMER_HEAP.recompute_nearest(&i);
-    due
+    drop(i); // 放锁后再组装结果（锁外分配，零锁内分配）
+    let mut out = Vec::with_capacity(n);
+    out.extend_from_slice(&due[..n]);
+    out
 }

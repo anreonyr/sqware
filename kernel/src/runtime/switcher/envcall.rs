@@ -10,15 +10,12 @@
 // 分发只处理用户态陷阱：内核态 S-mode envcall 属内核 bug，走 trap 的
 // "unhandled kernel exception" 分支。
 
-use core::str;
 use core::time::Duration;
 
 use ubi::Ucall;
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
-use crate::memory::manager::entry::PteFlags;
-use crate::put;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
@@ -42,18 +39,12 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
         Ucall::Write => {
             let len = frame.gpr.x(Gprs::A0);
             let ptr = frame.gpr.x(Gprs::A1);
-            with_running_space(|space| {
-                let va = VirtAddr::from_raw(ptr);
-                if let Some((pa, flag)) = space.translate(va) {
-                    if flag.intersects(PteFlags::R) {
-                        unsafe {
-                            put!("{}", str::from_raw_parts_mut(pa.as_usize() as *mut u8, len))
-                        }
-                    }
-                } else {
-                    frame.gpr.set_x(Gprs::A0, usize::MAX);
-                }
-            });
+            // 连续 VA → 逐段 PA：console::write_in 借 running space 经
+            // Space::segments 逐段译（含 R 检查）并块写，不跨物理帧。
+            let ok = with_running_space(|space| crate::console::write_in(space, ptr, len));
+            if !ok {
+                frame.gpr.set_x(Gprs::A0, usize::MAX);
+            }
         }
         Ucall::Exit => {
             return reap() as *mut TrapContext;

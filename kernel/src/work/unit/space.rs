@@ -599,6 +599,39 @@ pub struct Space {
     kind: SpaceKind,
 }
 
+/// 连续 VA 区间逐段翻译迭代器（`Space::segments` 产出）。
+///
+/// 每步：经 `Space::translate` 译当前 VA 页 → 产出 `(PA, flags, 页内余量)`。
+/// 物理帧可能不连续，故按页切段；flags 随段（消费方据此做 R 权限检查）。
+/// 未映射页 → 迭代终止（消费方据完整度处置）。惰性零分配；持锁语义同
+/// `translate`（逐页加锁，与 map/unmap 互斥）。
+pub struct Segments<'a> {
+    space: &'a Space,
+    va: usize,
+    end: usize,
+}
+
+impl Iterator for Segments<'_> {
+    type Item = (
+        crate::memory::manager::addr::PhysAddr,
+        PteFlags,
+        usize,
+    );
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.va >= self.end {
+            return None;
+        }
+        let (pa, flags) = self
+            .space
+            .translate(crate::memory::manager::addr::VirtAddr::from_raw(self.va))?;
+        let page = self.va & !(PAGE_SIZE - 1);
+        let chunk = (page + PAGE_SIZE - self.va).min(self.end - self.va);
+        self.va += chunk;
+        Some((pa, flags, chunk))
+    }
+}
+
 /// [`Space`] 构造器 — 区分内核空间与用户空间。自身即为构建入口，
 /// 不依赖 `Space` 签发。
 ///
@@ -1338,9 +1371,26 @@ impl Space {
     /// 将虚拟地址翻译为物理地址和标志位（页表读路径）。
     ///
     /// 未映射时返回 `None`。持锁与 map/unmap 的页表写互斥。
+    /// **单点查询原语**：缺页判定 / 映射存在性断言用；连续区间遍历见 [`segments`]。
     pub fn translate(&self, vaddr: VirtAddr) -> Option<(PhysAddr, PteFlags)> {
         let inner = self.inner.lock();
         inner.translate(vaddr)
+    }
+
+    /// 连续 VA 区间 → 逐段物理翻译（[`Segments`] 迭代器）。
+    ///
+    /// 逐页步进（每页经 [`translate`] 翻译，物理帧可能不连续——VA 连续 ≠ PA
+    /// 连续），产出 `(物理地址, 段字节数)`；某页未映射即停（调用方据不完整
+    /// 结果处置）。零分配、持锁语义同 `translate`（逐页加锁）。
+    ///
+    /// 消费方：console / envcall Write——「连续 VA → 多段可直读 PA」的唯一遍历
+    /// 原语，取代各方自己的逐页循环。
+    pub fn segments(&self, va: VirtAddr, len: usize) -> Segments<'_> {
+        Segments {
+            space: self,
+            va: va.as_usize(),
+            end: va.as_usize() + len,
+        }
     }
 
     /// 返回根页表页号（写入 `satp` 用）。

@@ -14,15 +14,15 @@ use user::env::put;
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     let mut n: u64 = 0;
+    put("heaper\n").ok();
     loop {
         n = n.wrapping_add(1);
 
-        let mut v: Vec<u8> = Vec::with_capacity((2048 + 1024) >> 2); // 非页尺寸 → 页对齐取整分配
-        v.push(7);
-        v.push(8);
-        drop(v); // 归还内核堆窗口位图
+        {
+            let _: Vec<u8> = Vec::with_capacity((2048 + 1024) >> 2); // 非页尺寸 → 页对齐取整分配
+        }
 
-        if n & 0xFFFF == 0 {
+        if n.is_multiple_of(0xFFFF) {
             put("H\n").ok();
         }
     }
