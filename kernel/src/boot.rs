@@ -121,7 +121,7 @@ pub fn banner() {
             brow(&mut it, "clint", v.as_str());
         }
         // 空行分隔两块（认领一行但不填）。
-        drop(it.next());
+        it.next();
         // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
         {
             let mut v = Fmt::<96>::new();
@@ -246,7 +246,7 @@ fn spawn_demos() -> Result<(), MapError> {
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
         //     "exiter",
         // ),
-        (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
+        // (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
         (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
     ] {
         let (team, entry) = load_user(elf);
@@ -276,7 +276,7 @@ fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
     let loaded = loader::load(space, elf, &parsed).expect("load user elf");
     let entry = loaded.entry;
     // 符号表：内嵌 ELF 的 .symtab/.strtab → ElfTable（失败则 None，只影响符号化不碍装载）
-    let elftable = crate::work::unit::parser::symtabs(elf)
+    let elftable = crate::work::unit::parser::tables(elf)
         .ok()
         .and_then(|(s, ss)| crate::work::unit::elftable::ElfTable::from_sections(s, ss))
         .map(Arc::new);

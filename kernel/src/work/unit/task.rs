@@ -9,7 +9,6 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::space::{TASK_STACK_SIZE, kernel_frame_pa};
-use crate::console::Sink;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
@@ -18,9 +17,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
 use crate::work::USER_TEXT_BASE;
-use core::fmt::Write;
 use riscv::register::{satp, sstatus};
-use table::Fmt;
 
 use super::team::Team;
 use crate::work::room::scheduler;
@@ -325,19 +322,6 @@ impl TaskBuilder {
                 pa: frame_pa,
             },
         });
-        let mut f = Fmt::<96>::new();
-        let _ = write!(f, "task #{} ", task.id);
-        f.cell(task.name, scheduler::NAME_W);
-        let _ = write!(
-            f,
-            ": spawned ({:?}), frame @ {:#x}, stack @ {:#x}",
-            task.state(),
-            frame_pa.as_usize(),
-            stack_top.as_usize()
-        );
-        let _ = writeln!(f);
-        let mut sink = Sink;
-        let _ = f.flush(&mut sink);
         scheduler::push(task);
         Ok(frame_pa)
     }

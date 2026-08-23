@@ -560,52 +560,6 @@ pub fn dump_crash() {
             }
         }
         p.table(&u);
-    } else {
-        // 诊断探针：ubt 空的原因——打印用户现场判定细节（sp/根表/walk/栈头字），
-        // 终端可读（进 console 不进 JSONL）。零分配：栈缓冲 Fmt。
-        #[cfg(debug_assertions)]
-        {
-            let mut probe = Fmt::<384>::new();
-            match running_task_frame() {
-                Some((id, pa, _)) => {
-                    // SAFETY: 任务用户帧 PA（DRAM 恒等映射），只读。
-                    let f = unsafe { &*(pa as *const crate::runtime::switcher::context::TrapContext) };
-                    let sp = f.gpr.x(Gprs::SP);
-                    let root = f.user_satp.ppn();
-                    let _ = write!(
-                        probe,
-                        "task#{id} sepc={:#x} sp={sp:#x} root={root:#x}",
-                        f.sepc.as_usize()
-                    );
-                    if sp != 0 {
-                        let page = sp & !(crate::memory::PAGE_SIZE - 1);
-                        match walk_sv39(page, root) {
-                            Some(pa0) => {
-                                let _ = write!(probe, " walk(page{page:#x})->pa {pa0:#x}");
-                                // 栈头 8 字（从 sp 起，走物理直读，越页截断）。
-                                for i in 0..8 {
-                                    let a = (sp & !7) + i * 8;
-                                    if a - page >= crate::memory::PAGE_SIZE - 8 {
-                                        break;
-                                    }
-                                    let w = unsafe { ((pa0 + (a - page)) as *const usize).read_volatile() };
-                                    let _ = write!(probe, " [{i}]{w:#x}");
-                                }
-                            }
-                            None => {
-                                let _ = write!(probe, " walk(page{page:#x})->None");
-                            }
-                        }
-                    }
-                }
-                None => {
-                    let _ = write!(probe, "frame None (sched lock busy?)");
-                }
-            }
-            crate::putln!("[scene] ubt probe: {}", probe.as_str());
-            // 同步导出到 JSONL（终端捕获可能丢失/未归档；scene 行为准）。
-            scene_row("ubt", "probe", "0", probe.as_str());
-        }
     }
     crate::putln!(); // 段尾空行（块间间距统一；供 [trace] 段分隔）。
 

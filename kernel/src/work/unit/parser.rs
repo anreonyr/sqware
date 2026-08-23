@@ -251,7 +251,7 @@ pub fn parse(bytes: &[u8]) -> ParseResult<ParsedProgram> {
 ///
 /// 纯读取、零拷贝；不含 .symtab → NoSymtab。切片生命周期绑定入参 bytes
 /// （装载侧传 &'static 内嵌 ELF → 'static 切片，供 ElfTable::from_sections）。
-pub fn symtabs(bytes: &[u8]) -> ParseResult<(&[u8], &[u8])> {
+pub fn tables(bytes: &[u8]) -> ParseResult<(&[u8], &[u8])> {
     (|| -> Result<(&[u8], &[u8]), ParseError> {
         check(bytes)?;
         let shoff = u64(bytes, 40) as usize;

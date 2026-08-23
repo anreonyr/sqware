@@ -71,8 +71,8 @@ pub use reentrant::RelLock;
 // RwLock：锁体系原语，当前无用户，保留 re-export
 /// 锁层级（depend 具名化；参与锁用 new_level 声明；None = exempt）。
 pub use depend::Level;
-/// 分配点返回地址捕获（integrity alloc-site 与诊断报告用；无条件可用——
-/// block-OOM 现场定位依赖它，见 allocator::portal）。
+/// 分配点返回地址捕获（integrity alloc-site 与诊断报告用）。
+#[cfg(all(debug_assertions, feature = "audit"))]
 pub(crate) use depend::ra;
 #[allow(unused_imports)]
 pub use rw::RwLock;

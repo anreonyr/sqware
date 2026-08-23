@@ -137,7 +137,7 @@ impl<T: ?Sized> RelLock<T> {
                     let t = crate::runtime::chrono::clock::now().as_ticks();
                     if t.wrapping_sub(last_pulse) >= super::spin::SPIN_PULSE_TICKS {
                         crate::runtime::diagnose::watch::pulse(
-                            crate::runtime::diagnose::watch::now(),
+                            crate::runtime::diagnose::watch::ticks(),
                         );
                         last_pulse = t;
                     }

@@ -170,189 +170,12 @@ impl BlockAllocator {
             segments: Box::leak(segments.into_boxed_slice()),
         })
     }
-
-    /// OOM 现场打印（block 分配失败路径调用）：分配点 + 本池撕页水位 + 该 power
-    /// freepool 链长 + 全池 pump 在途块数（跨核滞留即泄漏的直接证据）+ portal
-    /// 入口捕获的业务调用点。
-    /// 调用点持门户锁（Portal→hybrid→block 链）——**零分配**、只用 try_lock +
-    /// putln! 直写（同 dump_crash_site 纪律）；锁忙跳过不阻塞。
-    fn dump_oom(&self, me: usize, power: usize, request: usize, caller: usize) {
-        // 0. **先**捕获栈窗口（任何格式化打印之前）：putln!/fmt 的帧会占据栈顶
-        // 并挤掉业务帧（上版教训）。失败发生在正常执行流，父链完好；范围限定
-        // 镜像 .text（到 _rodata_start 为止），bss/数据值不会误收。
-        let sp: usize;
-        // SAFETY: 读栈指针无副作用。
-        unsafe { core::arch::asm!("mv {}, sp", out(reg) sp) };
-        unsafe extern "C" {
-            static _rodata_start: u8;
-        }
-        let text_end = (&raw const _rodata_start).addr();
-        let mut hits = [0usize; 12];
-        let mut nh = 0usize;
-        let hi = sp.saturating_add(0x4000);
-        let mut a = sp & !7;
-        while a < hi && nh < hits.len() {
-            // SAFETY: 只读本执行流的栈区间（S 态恒等映射）。
-            let w = unsafe { (a as *const usize).read_volatile() };
-            if w >= 0x8020_0000 && w < text_end && w & 3 == 0 && (nh == 0 || hits[nh - 1] != w)
-            {
-                hits[nh] = w;
-                nh += 1;
-            }
-            a += 8;
-        }
-        putln!("[block-oom] stack-scan text ({nh}):");
-        for w in hits[..nh].iter() {
-            putln!("[block-oom]   {w:#x}");
-        }
-        putln!(
-            "[block-oom] hart {} request {request} B -> block power {power} ({} B) FAILED, caller {:#x}",
-            machine::hart_id(),
-            1usize << power,
-            caller
-        );
-        let pool = &self.blocks[me];
-        match pool.inner.try_lock() {
-            Some(g) => {
-                putln!(
-                    "[block-oom] pool{me}: base {:#x} edge {:#x} cursor {:#x} (torn {} pages, {} bytes left)",
-                    pool.base,
-                    pool.edge,
-                    g.cursor,
-                    (g.cursor - pool.base) / crate::memory::PAGE_SIZE,
-                    pool.edge.saturating_sub(g.cursor)
-                );
-                // 该 power freepool 链长（限深防环，同 push 护栏）。
-                let mut depth = 0usize;
-                let mut cur = g.freepool[power];
-                while let Some(node) = cur {
-                    depth += 1;
-                    if depth > 1 << 14 {
-                        putln!("[block-oom] freepool[{power}] walk EXCEEDED depth — cyclic?");
-                        break;
-                    }
-                    // SAFETY: freepool 节点恒为已释放块，首 8B 是 next（同 push 遍历）。
-                    cur = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
-                }
-                putln!("[block-oom] freepool[{power}] length {}", depth);
-                // **全 class 链长普查**：归还进错 class（dealloc layout 与 alloc 不
-                // 一致 / 跨类 double-free）会让失败 class 空、别的 class 藏着巨链。
-                putln!("[block-oom] freepool chain lengths by power:");
-                for (pw, head) in g.freepool.iter().enumerate() {
-                    if head.is_none() {
-                        continue;
-                    }
-                    let mut d = 0usize;
-                    let mut node = *head;
-                    while let Some(n) = node {
-                        d += 1;
-                        if d > 1 << 16 {
-                            putln!("[block-oom]   power {pw}: walk EXCEEDED — cyclic?");
-                            break;
-                        }
-                        // SAFETY: freepool 节点恒为已释放块，首 8B 是 next。
-                        node = unsafe { n.cast::<Option<NonNull<u8>>>().read() };
-                    }
-                    putln!(
-                        "[block-oom]   power {pw} ({} B): length {d}, head {:#x}",
-                        1usize << pw,
-                        head.unwrap().as_ptr() as usize
-                    );
-                }
-                // 活块净值分布：15.8 MB 被哪些 size class 占用（分配+1/归还-1 对账）。
-                // 全 power 7 = 小而均匀的 Arc/Vec 类泄漏；大 power 高 = 块级泄漏。
-                putln!("[block-oom] live blocks by power:");
-                let mut live_total = 0usize;
-                for (pw, n) in g.live.iter().enumerate() {
-                    if *n != 0 {
-                        putln!(
-                            "[block-oom]   power {pw} ({} B): {n} live ≈ {} B",
-                            1usize << pw,
-                            n.saturating_mul(1usize << pw)
-                        );
-                        live_total += n.saturating_mul(1usize << pw);
-                    }
-                }
-                putln!("[block-oom]   live total ≈ {live_total} B of pool ({} B)",
-                    pool.edge.saturating_sub(pool.base));
-                putln!(
-                    "[block-oom]   cumulative allocs {} / frees {} (delta {})",
-                    g.allocs,
-                    g.frees,
-                    g.allocs.saturating_sub(g.frees)
-                );
-                drop(g);
-            }
-            None => putln!("[block-oom] pool{me} inner busy (skip)"),
-        }
-        // **全池 freepool 总览**：本池撕空但 freepool 空、live 归零 ⇒ 块很可能
-        // 归还进了**别的池**（pool_of/feed 归属错判或跨核路径错位）——逐池打印
-        // 各 power 链长，谁藏着巨链谁就是"错收"池。
-        putln!("[block-oom] all-pool freepool census:");
-        for (i, p) in self.blocks.iter().enumerate() {
-            let Some(mut g) = p.inner.try_lock() else {
-                putln!("[block-oom]   pool{i}: inner busy (skip)");
-                continue;
-            };
-            let mut any = false;
-            for (pw, head) in g.freepool.iter().enumerate() {
-                let Some(mut node) = *head else { continue };
-                let mut d = 0usize;
-                loop {
-                    d += 1;
-                    if d > 1 << 16 {
-                        break;
-                    }
-                    // SAFETY: freepool 节点恒为已释放块，首 8B 是 next。
-                    let next = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
-                    match next {
-                        Some(n) => node = n,
-                        None => break,
-                    }
-                }
-                any = true;
-                putln!(
-                    "[block-oom]   pool{i} p{pw} ({} B): length {d}",
-                    1usize << pw
-                );
-            }
-            if !any {
-                putln!("[block-oom]   pool{i}: all classes empty");
-            }
-        }
-        // 全池 pump 在途块数：跨核释放滞留（泄漏）指标。
-        for (i, p) in self.blocks.iter().enumerate() {
-            for pw in MIN_POWER..=MAX_POWER {
-                if let Some(g) = p.pump[pw].try_lock() {
-                    if g.len != 0 {
-                        putln!("[block-oom] pump[pool{i}][{pw}] in-flight {}", g.len);
-                    }
-                    drop(g);
-                }
-            }
-        }
-        // 业务分配调用点：portal 入口捕获（per-hart；`__rust_alloc` 内联后即
-        // Vec/Box/Arc 等业务调用点）。block caller（=hybrid）与 block 内部分层
-        // 无定位价值，真正的分配者在此 ra。
-        let biz = crate::memory::allocator::portal::last_alloc_ra(machine::hart_id());
-        putln!("[block-oom] portal caller (this hart) {biz:#x}");
-    }
 }
 
 /// 核 → 节点 id：每核一池(UMA 全核同内存,节点 = 核的逻辑划分;多节点时
 /// pools 数 = 核数,node_of 恒等直取)。
 fn node_of(hart: usize) -> usize {
     hart
-}
-
-/// 读调用者返回地址（OOM 现场定位用；与 lock/depend::ra 同理，不依赖 audit
-/// feature 的 re-export 门）。须在 allocate 入口捕获——ra 随后会被调用覆盖。
-#[inline(always)]
-fn caller_ra() -> usize {
-    let ra: usize;
-    // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
-    unsafe { core::arch::asm!("mv {}, ra", out(reg) ra) };
-    ra
 }
 
 /// 由请求 Layout 计算块 power（块 = 2^power 字节，须覆盖 size 且 ≤ 一页）。
@@ -363,22 +186,14 @@ fn block_power(layout: Layout) -> usize {
 }
 
 unsafe impl Allocator for BlockAllocator {
-    /// 入口第一件事捕获调用者返回地址（OOM 现场用）——**必须先于任何函数调用**
-    /// （caller_ra 内联后 asm 直读 ra；后续任何 jal 都会覆盖 ra）。inline(never)
-    /// 保证读到的 ra 是分配调用者的返回地址（同 spin::lock 手法）。
-    #[inline(never)]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        let caller = caller_ra();
         let power = block_power(layout);
         if layout.align() > (1usize << power) {
             return Err(AllocError);
         }
         let me = node_of(machine::hart_id());
         let pool = &self.blocks[me];
-        let Some(addr) = pool.pull(power) else {
-            self.dump_oom(me, power, layout.size(), caller);
-            return Err(AllocError);
-        };
+        let addr = pool.pull(power).ok_or(AllocError)?;
         // audit: 整块毒化（未初始化读现行）+ 活块入账（重复入账=块级双发现行；
         // KernelHeap 且 slack≥8 时 mark 内部写对齐 slack canary）。
         #[cfg(all(debug_assertions, feature = "audit"))]
@@ -464,15 +279,11 @@ impl BlockInner {
             let next = unsafe { head.cast::<Option<NonNull<u8>>>().read() };
             inner.freepool[power] = next;
             unsafe { inner.increase_used(head, power) };
-            inner.live[power] = inner.live[power].saturating_add(1);
-            inner.allocs = inner.allocs.saturating_add(1);
             debug!("address {:?}, power {} allocated", head, power);
             return Some(head.as_ptr() as usize);
         }
         // 无现成块：撕下一页拆入链，首块即本次分配结果
         let first = self.tear(inner, power).ok()?;
-        inner.live[power] = inner.live[power].saturating_add(1);
-        inner.allocs = inner.allocs.saturating_add(1);
         Some(first.as_ptr() as usize)
     }
 
@@ -548,8 +359,6 @@ impl BlockInner {
         }
         inner.freepool[power] = Some(ptr);
         debug!("address {:?}, power {} deallocated", ptr, power);
-        inner.live[power] = inner.live[power].saturating_sub(1);
-        inner.frees = inner.frees.saturating_add(1);
         unsafe { inner.decrease_used(ptr, power) };
     }
 
@@ -662,14 +471,6 @@ struct Pool {
     freepool: Vec<Option<NonNull<u8>>>,
     /// 区段游标：下一张待撕页的地址（仅 inner 锁内推进）。
     cursor: usize,
-    /// per-power 活块净值（分配 +1 / 归还 -1；仅 inner 锁内改）。OOM 现场打印
-    /// 「15.8 MB 被哪类块占」——泄漏的形状一眼可知（全 power 7 = 小而均匀的
-    /// Arc/Vec 类泄漏；大 power = 块级泄漏）。
-    live: Vec<usize>,
-    /// 累计分配/归还次数（对数账：live 净值与 freepool 内容矛盾时，累计数揭示
-    /// 是否有归还未发生）。
-    allocs: u64,
-    frees: u64,
 }
 
 impl Pool {
@@ -677,9 +478,6 @@ impl Pool {
         Self {
             freepool: Vec::new(),
             cursor: 0,
-            live: Vec::new(),
-            allocs: 0,
-            frees: 0,
         }
     }
 
@@ -688,8 +486,6 @@ impl Pool {
             .try_reserve(MAX_POWER + 1)
             .map_err(|_| InitError::OutOfMemory)?;
         self.freepool.resize_with(MAX_POWER + 1, || None);
-        self.live.try_reserve(MAX_POWER + 1).map_err(|_| InitError::OutOfMemory)?;
-        self.live.resize_with(MAX_POWER + 1, || 0);
         self.cursor = base;
         Ok(())
     }
