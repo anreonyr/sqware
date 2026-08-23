@@ -72,7 +72,8 @@ pub struct TrapFrame {
 pub struct Task {
     pub(crate) id: usize,
     pub(crate) name: &'static str,
-    /// 状态（含载荷）。普通字段：只有经 scheduler::task_mut 的 &mut 能改。
+    /// 状态（含载荷）。普通字段：只有经 [`Task::as_mut`]（调度器侧 `task_mut`
+    /// 包装）的 &mut 能改——唯一强持有语义见 as_mut。
     pub(crate) state: TaskState,
     pub(crate) team: Arc<Team>,
     pub(crate) trap: TrapFrame,
@@ -119,6 +120,30 @@ impl Task {
             }
             _ => unreachable!("dec_ticks_left 只对 Running 任务调用"),
         }
+    }
+
+    /// 唯一强持有下取 &mut（`Arc::get_mut` 的 weak ≥ 1 变体：每个任务 spawn 时
+    /// 即被 `Team::push_task` 记入簿记（`Arc::downgrade`），weak_count ≥ 1 永不
+    /// 归零，`Arc::get_mut` 恒失败。簿记弱引用**从不读 Task 字段**（push_task 只
+    /// downgrade、prune_tasks 只 `ptr_eq` 比较），不构成可变访问冲突）。
+    ///
+    /// 调用方义务（约束所在）：任务任一时刻只被一个容器强持有（running /
+    /// starved / blocked / reaped 恰好其一，由调度器**锁内 take/pop 取出唯一
+    /// Arc** 保证）→ strong == 1；互斥 = 锁 + 唯一强持有，无需原子字段。
+    /// debug 断言兜底；**定位第二持有者的现场扫描（全容器 + 栈回溯）在调度器侧
+    /// `task_mut` 包装**——需 schedulers()/blocked() 容器全查，见 room::scheduler。
+    pub(crate) fn as_mut(t: &mut Arc<Self>) -> &mut Task {
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            Arc::strong_count(t),
+            1,
+            "task #{} '{}': not uniquely held (strong_count != 1)",
+            t.id,
+            t.name
+        );
+        // SAFETY: strong == 1 ⇒ 无并发 &mut（互斥由调度器锁 + 计数保证）；
+        // Team 簿记弱引用不读字段。等价 Arc::get_mut（其要求 weak == 0）。
+        unsafe { &mut *Arc::as_ptr(t).cast_mut() }
     }
 }
 

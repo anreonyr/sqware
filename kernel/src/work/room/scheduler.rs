@@ -317,20 +317,11 @@ impl Scheduler {
     }
 }
 
-/// 取唯一强引用下的 &mut Task。
-///
-/// 不变量：任务任一时刻只被一个容器强持有（running / starved / blocked / reaped
-/// 恰好其一），Team 只持 Weak——strong_count == 1 恒成立。
-/// 状态机更新因此由「锁内 take/pop 出唯一 Arc → &mut」保证互斥：没有锁内的
-/// take/pop 拿不到 Arc，拿不到 Arc 就无法 &mut——编译器强制同步，无需原子字段。
-///
-/// # SAFETY（不用 Arc::get_mut 的原因）
-///
-/// `Arc::get_mut` 在 `weak_count > 0` 时也返回 None——而每个任务 spawn 时即被
-/// `Team::push_task` 记入簿记（`Arc::downgrade`），weak_count ≥ 1 永不归零，
-/// get_mut 恒失败。簿记弱引用**从不读 Task 字段**（push_task 只 downgrade、
-/// prune_tasks 只 `ptr_eq` 比较），不构成可变访问冲突；互斥由锁 + strong_count
-/// == 1（唯一强持有）保证，故直接经 `Arc::as_ptr` 转 `&mut` 安全。
+/// 调度器侧 task_mut 包装：核心转换在 [`Task::as_mut`]（unit::task，含强计数
+/// 断言兜底与 SAFETY 论证）；本包装负责**违反唯一强持有时的现场定位**——先扫
+/// 全部容器（schedulers / blocked / reaped）+ 栈回溯找第二强持有者再 panic，
+/// 信息量远超 as_mut 的兜底断言。唯一强持有不变量见 as_mut（running / starved /
+/// blocked / reaped 恰好其一，Team 只持 Weak——strong == 1 由锁内 take/pop 保证）。
 fn task_mut(t: &mut Arc<Task>) -> &mut Task {
     // debug: 强计数唯一 + 锁内 take/pop 互斥；Team.tasks 弱引用只作簿记、
     // 不读 Task 字段（见上）。
@@ -488,9 +479,8 @@ fn task_mut(t: &mut Arc<Task>) -> &mut Task {
             );
         }
     }
-    // SAFETY: 强计数唯一 + 锁内 take/pop 互斥；Team.tasks 弱引用只作簿记、
-    // 不读 Task 字段（见上）。
-    unsafe { &mut *(Arc::as_ptr(t) as *mut Task) }
+    // 委托核心转换（含兜底断言）：强计数唯一已由上方现场扫描保证。
+    Task::as_mut(t)
 }
 
 /// debug: 容器间移动瞬时的强计数探针——任务应恒为唯一强持有（sc == 1）。
