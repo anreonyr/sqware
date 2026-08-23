@@ -161,8 +161,8 @@ fn walk_chain<T>(
 }
 
 /// 违例现场链快照：目标地址 + 该 power 全链（前 256 节点）+ 失败页头 8 字。
-/// **零分配**（putln! 直写 + 固定缓冲数组）——panic 现场任何 alloc 都会经
-/// portal→block 递归/死锁，且会污染现场。`next` 读取同 walk 闭包。
+/// **零分配**（putln! 直写 + 固定缓冲数组）——panic 现场任何 alloc 都会重入
+/// 分配器锁（inner/tally/frame）递归/死锁，且会污染现场。`next` 读取同 walk 闭包。
 #[cfg(debug_assertions)]
 fn dump_chain<T>(
     power: usize,

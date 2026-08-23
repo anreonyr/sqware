@@ -1,10 +1,12 @@
 // 内核内存分配子系统
 //
-// 门户分配器 (portal) 作为 #[global_allocator]，在启动阶段通过 trait object
-// 委托给不同后端。初始化顺序：
+// 门户分配器 (portal) 作为 #[global_allocator]，以**无锁原子后端模式**（Backend：
+// bump / hybrid / spare，见 portal.rs）在不同阶段分派。初始化顺序：
 //   1. bump::init() — 标记 bump 可用内存区域
-//   2. portal 切换到 bump trait object
-//   3. page — 委托给 frame，在 memory::init() 中按需分配；无独立初始化
+//   2. portal::switch(Backend::Bump) — 门户切到 bump（boot 单核，store 安全）
+//   3. spare::init() — 从 bump 头顶 carve 诊断预算成后备仓（frame 基址定址
+//      之前，永不与主堆相交；见 spare.rs）
+//   4. portal::switch(Backend::Hybrid) — 运行时主堆后端（block + frame）
 //
 // bitmap — 通用位图分配器（编号空间连续区间：VA 窗口 / ASID），无独立初始化
 // （位图首次使用时惰性分配），见 work::unit::space / memory::manager::asid。
@@ -12,6 +14,8 @@
 use core::ptr::NonNull;
 
 use fack::prelude::Error;
+
+use crate::memory::manager::addr::AtomicPhysAddr;
 
 pub mod bitmap;
 pub mod block;
@@ -22,6 +26,8 @@ pub mod fence;
 pub mod frame;
 pub mod hybrid;
 pub mod portal;
+/// 后备仓（日志 + panic 打印专用，从 bump carve，崩溃现场唯一可信分配源）。
+pub mod spare;
 
 /// 分配器初始化错误 — 与 `erra::Error<InitError>` 配对使用（见 [`InitResult`]）。
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +66,11 @@ impl Link {
 
 /// 初始化内存子系统。
 ///
-/// 注入物理内存池区域并完成 bump → hybrid 自举。
+/// 注入物理内存池区域并完成 bump → spare → hybrid 三级自举。spare 容量**不
+/// 显式注入**：内部按 `machine::hart_count()` 经诊断预算自行推导
+/// （diagnose::budget::spare_budget = trace 环形常驻 + panic 打印峰值；与 bump
+/// 读 `machine::info().free` 同一查源习惯）——在 hybrid 前从 bump carve，
+/// frame/block 永不触碰。
 ///
 /// # Safety
 ///
@@ -69,14 +79,14 @@ impl Link {
 ///
 /// # Errors
 ///
-/// 任一后端初始化失败（bump / hybrid 的错误原样传播，已在对应模块附加上下文）。
+/// 任一后端初始化失败（bump / spare / hybrid 的错误原样传播，已在对应模块附加上下文）。
 pub fn init() -> InitResult<()> {
     bump::init()?;
-    log::debug!("bump");
-    portal::switch(bump::allocator());
+    portal::switch(portal::Backend::Bump);
+
+    spare::init()?;
 
     hybrid::init()?;
-    log::debug!("hybrid");
-    portal::switch(hybrid::allocator());
+    portal::switch(portal::Backend::Hybrid);
     Ok(())
 }

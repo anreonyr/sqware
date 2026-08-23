@@ -142,9 +142,3 @@ pub(super) fn wake_all() {
             .call();
     }
 }
-
-/// 暴露 WFI 睡眠位图（watch 判据的 asleep 快照；位 h = hart h 正 WFI）。
-/// 适配层（scheduler::round）传 `&tie::waiting()[..]` 给 watch::Probe。
-pub(super) fn waiting() -> &'static [core::sync::atomic::AtomicUsize] {
-    &WAITING
-}

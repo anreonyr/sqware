@@ -14,6 +14,7 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 
+use fack::prelude::Error;
 use riscv::register::time;
 
 use crate::lock::OnceLock;
@@ -29,11 +30,13 @@ const NANOS_PER_SEC: u128 = 1_000_000_000;
 pub struct Instant(u64);
 
 /// 时钟初始化错误。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClockError {
     /// DTB 未报告 timebase-frequency（或为 0）。
+    #[error("no timebase-frequency in device tree")]
     NoTimebase,
     /// 重复初始化。
+    #[error("clock already initialized")]
     AlreadyInit,
 }
 

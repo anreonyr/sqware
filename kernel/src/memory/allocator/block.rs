@@ -18,8 +18,9 @@
 //   每页一条 Meta（owner/power/used 三字段，不做位打包，可读性优先）：
 //   owner=归属池（None=无主）、power=页的 size class（drain 摘链定位）、used=在册块数。
 //   idx = ((pa & !(PAGE-1)) - meta_base) >> PAGE_SHIFT。
-//   无 MAGIC：own 两层防护 = 范围检查（区外 → None）+ owner=None（无主）。读写全在
-//   portal 全局锁（块路径全程持有）与池 inner 锁之内——跨核串行，无数据竞争。
+//   无 MAGIC：own 两层防护 = 范围检查（区外 → None）+ owner=None（无主）。全部表
+//   访问（读/写/复合 RMW）自锁（tally，Level::Tally）——跨核串行，无数据竞争；
+//   portal 已无锁（无锁模式分派见 portal.rs），此锁是簿记表现任闸门。
 //
 // 分配策略（arena 迟滞）：
 //   spare[power] — 每 size class 保留 1 个空闲页（used==0）不归还：push 归零时本 class
@@ -43,8 +44,8 @@
 //   - 块只进归属池的 freelist：feed 只入 pump，suck 是唯一转 push 的路径；
 //   - used==0 ⇔ 本页全部块已 push 归位（跨节点 feed 的块不进泵不递减，归零瞬间
 //     泵无残留）——drain 摘链安全的前提，见 drain；
-//   - 簿记表只在池 inner 锁内写（own 的读在 portal 锁内）；prime/drain 持 inner 调
-//     frame（锁序 inner→frame，从不反向；hybrid 路由保证 frame 永不回问 block）；
+//   - 簿记表自锁（tally）：own/inc_used/dec_used 单锁内原子；prime/drain 持 inner 调
+//     frame（锁序 inner→frame→tally，从不反向；hybrid 路由保证 frame 永不回问 block）；
 //   - 拓扑（块区）建成后只读；锁序 = pull/suck 先 pump 后 inner（摘空再归位），
 //     feed 仅 pump，push/prime/drain 仅 inner——无环。
 
@@ -59,7 +60,7 @@ use super::fence::checker;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::{
-    lock::{OnceLock, SpinLock},
+    lock::{Level, OnceLock, SpinLock},
     memory::allocator::{InitError, InitResult, bump, frame},
 };
 
@@ -71,7 +72,7 @@ const MAX_POWER: usize = (PAGE_SIZE / 2).ilog2() as usize;
 /// 页偏移位宽（簿记表下标换算用）。
 const PAGE_SHIFT: usize = PAGE_SIZE.ilog2() as usize;
 
-// ── 簿记表辅助（裸读写；调用方须持 portal 或池 inner 锁）──
+// ── 簿记表辅助（访问全部自锁（tally），调用方不必另行持锁）──
 
 /// 簿记表项（每页一条，4B/页——不做位打包，字段直读直写，可读性优先）：
 ///   owner — 归属池 id；None = 无主（帧自由/非块内存页）
@@ -129,8 +130,10 @@ impl Meta {
 /// 下标语义：`idx(pa) = ((pa & !(PAGE-1)) - base) >> PAGE_SHIFT`——页对齐后从
 /// free 区基址起算的页号。**不做 `Index` trait**：`Index::index` 须返回 `&Meta`，
 /// 与表内存的共享可写（写路径仅持 `&self`）冲突、别名 UB；本表语义是范围检查
-/// + 拷贝读。读写全在 portal 锁域（`own` 读于 deallocate、写于 prime/pull/push
-/// 持 portal+inner）——跨核串行，无数据竞争。
+/// + 拷贝读。**全部表访问（含 RMW 复合步）自锁**（`lock`，Level::Tally）——跨核
+/// 串行、无数据竞争；portal 已无锁（无锁模式分派见 portal.rs），此为簿记表
+/// 的现任闸门。复合步（`inc_used`/`dec_used`）必须在单锁内完成读改写，否则
+/// 锁间留丢更新窗口（旧 meta_get/meta_put 两段式在 portal 锁内曾靠外层串行）。
 struct Tally {
     /// free 区基址（表覆盖下界）。
     base: usize,
@@ -138,9 +141,11 @@ struct Tally {
     cells: *mut Meta,
     /// 表长（free 区页数）。
     len: usize,
+    /// 串行锁（Level::Tally）。
+    lock: SpinLock<()>,
 }
 
-// SAFETY: cells 指向 'static bump 内存；读写均持 portal 锁（见上）——跨核串行。
+// SAFETY: cells 指向 'static bump 内存；全部访问经 lock 串行——跨核无数据竞争。
 // 声明 Send+Sync 使 `&'static Tally` 可在 BlockAllocator 与各 BlockInner 间共享、
 // 顶层 OnceLock<BlockAllocator> 成立。
 unsafe impl Send for Tally {}
@@ -148,7 +153,12 @@ unsafe impl Sync for Tally {}
 
 impl Tally {
     fn new(base: usize, cells: *mut Meta, len: usize) -> Self {
-        Self { base, cells, len }
+        Self {
+            base,
+            cells,
+            len,
+            lock: SpinLock::new_level(Level::Tally, ()),
+        }
     }
 
     /// 物理地址 → 表下标（页对齐、上下界检查）。区外/下溢 → None。
@@ -169,29 +179,63 @@ impl Tally {
     }
 
     /// 物理地址 → 归属池 id（deallocate 路由前提）。两层防护：范围检查（`idx`
-    /// 区外 → None）+ 表项无主（owner=None）。调用方须持 portal 锁。
+    /// 区外 → None）+ 表项无主（owner=None）。
     fn owner_of(&self, pa: usize) -> Option<usize> {
-        // SAFETY: idx 通过上下界检查；'static 表私有访问（portal 串行）。
+        let _g = self.lock.lock();
+        // SAFETY: idx 通过上下界检查；lock 串行，读与写互斥。
         let m = unsafe { self.cells.add(self.idx(pa)?).read() };
         m.owner()
     }
 
-    /// 读表项（调用方须持本池 inner 锁；page 为本池持页，idx 必在表内）。
+    /// 读表项（page 为本池持页，idx 必在表内）。
     fn read(&self, page: usize) -> Meta {
+        let _g = self.lock.lock();
         let idx = self.idx(page).expect("block tally: page out of table");
+        // SAFETY: idx 已检查；lock 串行。
         unsafe { self.cells.add(idx).read() }
     }
 
     /// 按下标读表项（clear 扫表用；idx 已由调用方保证 < len）。
     fn read_idx(&self, idx: usize) -> Meta {
+        let _g = self.lock.lock();
+        // SAFETY: idx < len 已由调用方保证；lock 串行。
         unsafe { self.cells.add(idx).read() }
     }
 
-    /// 写表项（同上）。
+    /// 写表项。
     fn write(&self, page: usize, m: Meta) {
+        let _g = self.lock.lock();
         let idx = self.idx(page).expect("block tally: page out of table");
+        // SAFETY: idx 已检查；lock 串行。
         unsafe {
             self.cells.add(idx).write(m);
+        }
+    }
+
+    /// 复合读改写：used +1（**单锁内**完成读→改→写——旧 meta_get/meta_put 两段式
+    /// 在锁间有丢更新窗口，此处杜绝）。
+    fn inc_used(&self, page: usize) -> Meta {
+        let _g = self.lock.lock();
+        let idx = self.idx(page).expect("block tally: page out of table");
+        // SAFETY: idx 已检查；lock 串行，RMW 原子。
+        unsafe {
+            let mut m = self.cells.add(idx).read();
+            m.used = m.used.saturating_add(1);
+            self.cells.add(idx).write(m);
+            m
+        }
+    }
+
+    /// 复合读改写：used -1（同上）；返回 (新项, 是否归零)。
+    fn dec_used(&self, page: usize) -> (Meta, bool) {
+        let _g = self.lock.lock();
+        let idx = self.idx(page).expect("block tally: page out of table");
+        // SAFETY: idx 已检查；lock 串行，RMW 原子。
+        unsafe {
+            let m = self.cells.add(idx).read();
+            let (m, empty) = m.dec_used();
+            self.cells.add(idx).write(m);
+            (m, empty)
         }
     }
 }
@@ -200,9 +244,9 @@ impl Tally {
 
 /// 过境驿站（pump）一处：按 size class 分立的一条侵入式单向链表——块自身内存存
 /// next（同 freepool 手法），跨节点释放时把块首 8 字节挂链。**零分配**：feed 常处
-/// 于 deallocate 持门户（portal）锁的上下文，任何分配都会经 portal 自重入
-/// （spinlock 递归 → lockdep panic，见 lock/depend）；suck 摘空整链（O(1) 换头）
-/// 后于 pump 锁外逐块 push 归位。
+/// 于 deallocate 持锁上下文（own 持 tally、路由后持 pump），任何分配都会重入分配
+/// 器锁（inner/tally/frame）——递归或死锁（lockdep，见 lock/depend）；suck 摘空
+/// 整链（O(1) 换头）后于 pump 锁外逐块 push 归位。
 struct Pump {
     head: Option<NonNull<u8>>,
     /// 在途块数（诊断/审计：feed 递增、suck 归零，恒等于链长）。
@@ -251,8 +295,8 @@ impl BlockAllocator {
 
     /// 构建块分配器：按核数建池集合 + bump 分配簿记表。**不划区段**——池从 0
     /// 页起，页全部经 prime 向 frame 借（frame::init 之后首次分配即可借，自举
-    /// 无碍：block::init 与 frame::init 同跑在 bump 后端，池首借发生在 portal 切
-    /// hybrid 之后）。
+    /// 无碍：block::init 与 frame::init 同跑在 bump 后端，池首借发生在门户后端
+    /// 切 hybrid 之后）。
     ///
     /// 必须在 `main` 早期调用恰好一次（经 [`init`]），bump 后端下执行——池元数据
     /// 经 bump 分配，不会重入本锁；且须在 frame::init 之前。
@@ -390,14 +434,9 @@ impl BlockInner {
         }
     }
 
-    // ── 簿记表访问（调用方须持本池 inner 锁；跨核串行见 Tally 注释）──
+    // ── 簿记表访问（自锁见 Tally；写路径仅此一处，读走 own/inc/dec）──
 
-    /// 读表项（page 为本池持页，idx 必在表内）。
-    fn meta_get(&self, page: usize) -> Meta {
-        self.tally.read(page)
-    }
-
-    /// 写表项。
+    /// 写表项（prime 入账 / drain 清账；tally 自锁串行）。
     fn meta_put(&self, page: usize, m: Meta) {
         self.tally.write(page, m);
     }
@@ -418,7 +457,8 @@ impl BlockInner {
             }
             let next = unsafe { head.cast::<Option<NonNull<u8>>>().read() };
             inner.freepool[power] = next;
-            self.meta_put(page, self.meta_get(page).inc_used());
+            // used 记账：复合 RMW 单锁内完成（tally 自锁；见 Tally::inc_used）。
+            self.tally.inc_used(page);
             checker::log_alloc(head.as_ptr() as usize, power);
             return Some(head.as_ptr() as usize);
         }
@@ -530,10 +570,10 @@ impl BlockInner {
         inner.freepool[power] = Some(ptr);
         checker::log_dealloc(ptr.as_ptr() as usize, power);
 
-        // 递减表项计数；归零 → 本 class 无 spare 则补位（迟滞保留），有则归还本页
+        // 递减表项计数；归零 → 本 class 无 spare 则补位（迟滞保留），有则归还本页。
+        // used 记账：复合 RMW 单锁内完成（tally 自锁；见 Tally::dec_used）。
         let page = ptr.as_ptr() as usize & !(PAGE_SIZE - 1);
-        let (m, empty) = self.meta_get(page).dec_used();
-        self.meta_put(page, m);
+        let (_, empty) = self.tally.dec_used(page);
         if empty {
             // audit: 整页无活跃账目（used-counter 记账正确性检查；与 freepool
             // 内容无关——块都在链上正常周转）。
@@ -550,8 +590,8 @@ impl BlockInner {
     // ── 泵：喂 / 抽（不变）──
 
     /// 喂入本池 pump：块在外地被释放时投递至此（送它回家）。只入驿站，绝不碰 inner；
-    /// 块首 8 字节挂链（同 freepool 手法），**零分配**——本路径常处 deallocate 持
-    /// 门户锁的上下文，任何分配都会经 portal 递归重入（见 Pump 注释）。
+    /// 块首 8 字节挂链（同 freepool 手法），**零分配**——本路径常处 deallocate 持锁
+    /// 上下文（见 Pump 注释），任何分配都会重入分配器锁。
     fn feed(&self, ptr: NonNull<u8>, power: usize) {
         let mut g = self.pump[power].lock();
         // SAFETY: 块已被释放（调用方不再使用）；首 8 字节空闲可写，尺寸 ≥ 8B。

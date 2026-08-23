@@ -4,7 +4,9 @@
 //! for_each 锁内遍历、sweep_canaries 崩溃现场清查）。笼统：
 //!   - 容量 init 预留（with_capacity），soft_cap = 容量 × 7/8——插入在装载 < 0.875
 //!     不扩容、零分配（绝不持锁触碰分配器，防 block 重入 / 锁序死锁）；
-//!   - 锁 = Level::Ledger（层级 7，只在无锁或低层级锁内获取，绝不反向嵌套）；
+//!   - 锁 = Level::Ledger（层级 7，只在无锁或低层级锁内获取，持锁**绝不分配**——
+//!     audit 只读块归属（pool_includes → tally，层级 8 更高）不受限；
+//!     插入（mark）容量 init 预留、零分配、绝不反向嵌套）；
 //!   - canary 只写 KernelHeap 块（用户堆为清零语义，不 poison、不 canary）。
 //! 违例统一经 `report` 处置（见 fence/mod）。
 

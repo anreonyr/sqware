@@ -122,7 +122,7 @@ pub fn next_tock() -> Option<Instant> {
 /// 调度器锁，只在 TIMER_HEAP 锁内完成弹堆与镜像刷新。
 ///
 /// **锁内零分配**：`due` 用固定栈缓冲（[`MAX_DUE`]）——持 Level::L3 锁时不得触
-/// 分配器（portal/pool 均 exempt，lockdep 逃检；跨核 ABBA 曾致静默死锁）。到期
+/// 分配器（分配器锁均 exempt，lockdep 逃检；跨核 ABBA 曾致静默死锁）。到期
 /// 数超 `MAX_DUE` 的极端洪峰截断（尽力而为，timer 路径不许失败）。
 pub fn drain(now: Instant) -> Vec<u64> {
     const MAX_DUE: usize = 64;

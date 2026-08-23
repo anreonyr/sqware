@@ -45,9 +45,9 @@ extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
     machine::init(dtp);
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
     unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
-    clock::init().unwrap_or_else(|e| panic!("clock init failed: {e:?}"));
-    // trace：静态池切分 + 核数上限防御（须在 clock 就绪后、任何 note 前）。
-    trace::init();
+    clock::init().unwrap_or_else(|e| panic!("clock init failed: {e}"));
+    // trace：spare 仓内动态 ring（size_of 精确预算，须在 clock 就绪后、任何 note 前）。
+    trace::init().unwrap_or_else(|e| panic!("trace init failed: {e}"));
     trap::init();
     // 启动横幅：机器块 + 陷阱布局块连打。trap 栈为堆分配、其 top/bottom 须在
     // trap::init（分配并填充 TRAP_STACKS）之后取，故 banner 放这里。

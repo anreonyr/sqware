@@ -37,7 +37,17 @@
 //                                         调度锁（防 ABBA）
 //   4. ASID_ALLOCATOR      (SpinLock)  — ASID 分配器
 //   5. FRAME_ALLOCATOR     (SpinLock)  — 物理帧分配器（frame）
-//   6. portal / block      (SpinLock / TrapGuard) — 全局堆分配
+//   6. block inner / pump  (SpinLock)  — 每池实例锁（互不嵌套靠路由纪律，保持
+//                                        exempt；见 depend::Level::Block）
+//   7. LEDGER              (SpinLock)  — 护栏账本（fence::ledger；持锁绝不分配，
+//                                        audit 只读块归属不受限——tally 更高）
+//   8. tally               (SpinLock)  — block 簿记表（全部表访问自锁：own 单独持、
+//                                        池内路径 inner → tally、审计 ledger →
+//                                        tally 只读；tally 是叶锁，无反向边）
+//   9. spare               (SpinLock)  — 后备仓（常态显式调用 + 崩溃无锁切换；
+//                                        常驻 ring 在 boot 无锁期分配）
+//   portal                (无锁)      — 原子后端模式判别（AtomicU8，Backend），
+//                                        不取任何锁，不在层级中
 //
 // A lock at level N may be acquired while holding a lock at level < N.
 // Acquiring a lock at level N while holding one at level ≥ N is forbidden.

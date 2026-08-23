@@ -6,8 +6,9 @@
 //!   适配 = panic_dump（把崩溃前最近窗口倒到控制台）+ 宿主镜像（共享同一事件流）
 //!
 //! 设计决策：
-//!   - per-hart、静态池（.bss 按 POOL_HARTS×BUFFER_SIZE 备足），**不经分配器**——
-//!     崩溃现场分配器不可信，缓冲必须仍可用。
+//!   - per-hart、环常驻后备仓（spare 内存，boot 早期一次分配：窗口表 + 事件槽，
+//!     size_of 精确预算，见 trace::init / ring_bytes）——崩溃现场主堆不可信，缓冲
+//!     仍可用（spare 是独立仓，budget 即契约，health 验收）。
 //!   - 写 = 单生产者无锁：cursor 单调不回卷、读侧取模；读只在 panic，此时其余核
 //!     已由 halt 停写（写读互斥由 halt 语义保证）。
 //!   - 宿主镜像 = diagnose::export（feature semihosting，**默认开启**）：每条事件
@@ -18,10 +19,17 @@
 //!     环形窗口文本由 scene::dump_crash 恒倒到控制台（人读上下文）。
 
 use core::fmt;
-use core::fmt::Write;
+use core::mem::size_of;
 use core::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "semihosting")]
+use core::fmt::Write;
+
+use alloc::alloc::Layout;
+use fack::prelude::Error;
 
 use crate::console::Sink;
+use crate::lock::OnceLock;
+use crate::memory::allocator::spare;
 use crate::memory::manager::fault::FaultKind;
 use crate::{machine, putln};
 use table::{Cell, Fmt, Para, Table};
@@ -30,12 +38,8 @@ use table::{Cell, Fmt, Para, Table};
 pub const BUFFER_SIZE: usize = 512;
 /// 崩溃转储每条 hart 倒出的事件数上限：现场只关心「崩前最近一段」，
 /// 全量 512 对控制台过长且 Table 栈预算不可承载（ROWS 编译期常量）。
+/// 多核下按 hart 平摊（hart_rows：总额恒 ≤ TRACE_DUMP，渲染预算与核数无关）。
 pub const TRACE_DUMP: usize = 64;
-/// trace 可容纳的诊断核数上限（静态池按此备足）。
-///
-/// 内核核数已完全由 DTB 动态决定，无编译期上限；诊断环形按一个务实上限
-/// （普通 SMP/仿真远低于此）在 .bss 静态备足，超限则 trace 静默停用（init 告警）。
-pub const POOL_HARTS: usize = 64;
 
 // ── 事件定义（按模块分组）────────────────────────────
 
@@ -46,7 +50,6 @@ pub enum EventKind {
     Env(EnvEvent),
     Mem(MemEvent),
     Halt(HaltEvent),
-    Watch(WatchEvent),
     Boot(BootEvent),
 }
 
@@ -89,15 +92,6 @@ pub enum HaltEvent {
     Panic,
 }
 
-/// runtime/watch 值班看护的报警事件。
-#[derive(Clone, Copy)]
-pub enum WatchEvent {
-    /// 报警已拉响。
-    Raised,
-    /// 时钟可疑：raw 与哨所标准钟偏差超限，判据撤岗（不误杀）。
-    Suspect,
-}
-
 /// boot / 副核启动的初始化消息（直打控制台会扰乱 panic 现场，改写进 trace）。
 /// 各 hart 启动时一次；crash 后由报警源统一 dump，既可查又不打断现场。
 #[derive(Clone, Copy)]
@@ -129,17 +123,11 @@ impl Event {
 pub struct Trace {
     /// 写游标：单调不回卷；读侧取模落位。
     cursor: AtomicUsize,
-    buffer: [Event; BUFFER_SIZE],
+    /// 本 hart 事件槽（后备仓分配，容量 = BUFFER_SIZE；写经裸指针，读见 dump）。
+    buffer: &'static [Event],
 }
 
 impl Trace {
-    const fn new() -> Trace {
-        Trace {
-            cursor: AtomicUsize::new(0),
-            buffer: [Event::EMPTY; BUFFER_SIZE],
-        }
-    }
-
     fn note(&self, kind: EventKind, when: u64) {
         let i = self.cursor.fetch_add(1, Ordering::Relaxed) % BUFFER_SIZE;
         // SAFETY: i < BUFFER_SIZE；单生产者（本 hart 唯一写者），与跨核读者互斥由 halt 停写保证。
@@ -151,12 +139,12 @@ impl Trace {
     }
 }
 
-/// 静态池（.bss，不经分配器）。逻辑切分：hart h → POOL[h]（独立 512 条窗口）。
-static POOL: [Trace; POOL_HARTS] = [const { Trace::new() }; POOL_HARTS];
+/// 事件池（spare 仓内）：写入一次、读多次。分配于 `init`，环在分配后只读结构。
+static POOL: OnceLock<&'static [Trace]> = OnceLock::new();
 
-/// 第 h 个 hart 的窗口（调用方保证 h < POOL_HARTS）。
-fn trace(hart: usize) -> &'static Trace {
-    &POOL[hart]
+/// 环形常驻字节数（h 个窗口表 + 事件槽，size_of 精确）——spare 预算公式同源。
+pub fn ring_bytes(h: usize) -> usize {
+    h * (size_of::<Trace>() + BUFFER_SIZE * size_of::<Event>())
 }
 
 // ── 核心原语 ────────────────────────────────────────
@@ -166,12 +154,15 @@ fn trace(hart: usize) -> &'static Trace {
 /// 尽力而为、不失败：hart 越界即丢弃；诊断路径永不允许失败或 panic。
 /// 只进环形（release/panic 转储），不做实时控制台输出——不扰动时序。
 pub fn note(kind: EventKind) {
+    let Some(pool) = POOL.get() else {
+        return; // 未初始化（init 前）静默跳过——诊断路径不失败
+    };
     let hart = machine::hart_id();
-    if hart >= POOL_HARTS {
+    let Some(t) = pool.get(hart) else {
         return;
-    }
+    };
     let when = crate::runtime::chrono::clock::now().as_ticks();
-    trace(hart).note(kind, when);
+    t.note(kind, when);
     // 宿主全量（feature semihosting，默认开启）：每条结构化事件经 semihosting 送宿主，
     // 带自描述长度 "len"，便于 tail/离线解析可靠分帧（try_lock 原子成行、尽力而为）。
     #[cfg(feature = "semihosting")]
@@ -282,12 +273,6 @@ fn json_payload(e: &Event, w: &mut crate::runtime::diagnose::export::Buf) -> fmt
         }
         EventKind::Halt(HaltEvent::Halt) => write!(w, ",\"kind\":\"halt\""),
         EventKind::Halt(HaltEvent::Panic) => write!(w, ",\"kind\":\"panic\""),
-        EventKind::Watch(WatchEvent::Raised) => write!(w, ",\"kind\":\"watch\""),
-        EventKind::Watch(WatchEvent::Suspect) => {
-            write!(w, ",\"kind\":\"watch\"")?;
-            k(w, "event")?;
-            v(w, "suspect")
-        }
         EventKind::Boot(BootEvent::Launch { hart }) => {
             write!(w, ",\"kind\":\"launch\"")?;
             k(w, "hart")?;
@@ -313,10 +298,9 @@ fn json_payload(e: &Event, w: &mut crate::runtime::diagnose::export::Buf) -> fmt
 /// 用回调而非返回 &[Event]：环形窗口可能跨缝（cursor 为绝对下标、读按取模），
 /// 给不出一段连续切片。panic_dump / 未来 semihost 都经此消费同一事件流。
 pub fn dump<F: FnMut(&Event)>(hart: usize, k: usize, mut f: F) {
-    if hart >= POOL_HARTS {
+    let Some(t) = POOL.get().and_then(|p| p.get(hart)) else {
         return;
-    }
-    let t = trace(hart);
+    };
     let w = t.cursor.load(Ordering::Relaxed);
     let start = w.saturating_sub(k);
     for i in start..w {
@@ -327,28 +311,61 @@ pub fn dump<F: FnMut(&Event)>(hart: usize, k: usize, mut f: F) {
 
 /// 清空某 hart 窗口（boot / 复现）。
 pub fn reset(hart: usize) {
-    if hart < POOL_HARTS {
-        trace(hart).clear();
+    if let Some(t) = POOL.get().and_then(|p| p.get(hart)) {
+        t.clear();
     }
 }
 
-/// 初始化（boot 恰好一次）。
+/// 初始化（boot 恰好一次）：从 spare 仓取 ring_bytes 的常驻环（窗口表 + 事件槽）。
+/// 失败 = 预算错误，返回 Err 由 main 统一 fail-fast（panic → halt）。须在 clock
+/// 就绪后、任何 note 之前调用。
 ///
-/// 静态池编译期已备足，本函数只做防御断言（核数 ≤ 静态上限），并作为未来
-/// semihost 镜像 / 构建开关的接线点。须在 clock 就绪后、任何 note 之前调用。
-pub fn init() {
-    // 静态池为 POOL_HARTS 核备足。核数超限不 panic（避免破坏大 SMP 启动），
-    // 而是告警并静默停用：note 对越限 hart 直接丢弃。
-    if machine::hart_count() > POOL_HARTS {
-        crate::putln!(
-            "trace: hart_count {} exceeds diagnostic cap {POOL_HARTS}; trace disabled",
-            machine::hart_count()
-        );
+/// # Errors
+///
+/// spare 仓余量不足（预算与 ring 失配）→ [`TraceInitError::OutOfMemory`]；
+/// 重复初始化 → [`TraceInitError::AlreadyInit`]。
+pub fn init() -> Result<(), TraceInitError> {
+    let h = machine::hart_count();
+    let total = ring_bytes(h);
+    // 16 为 2 的幂硬对齐，from_size_align 不可失败（不变量）。
+    let layout = Layout::from_size_align(total, 16).expect("trace: ring layout");
+    let chunk = spare::allocator()
+        .allocate(layout)
+        .map_err(|_| TraceInitError::OutOfMemory)?;
+    // SAFETY: chunk 为 spare 仓内块（16B 对齐）；下分窗口表区 + 事件槽区，互不重叠。
+    let base = chunk.as_ptr() as *mut u8 as usize;
+    let traces = base as *mut Trace;
+    let events = (base + h * size_of::<Trace>()) as *mut Event;
+    for i in 0..h {
+        // SAFETY: 槽区总长 = h × BUFFER_SIZE × size_of<Event>，本窗口切片在界内。
+        let buf =
+            unsafe { core::slice::from_raw_parts_mut(events.add(i * BUFFER_SIZE), BUFFER_SIZE) };
+        for slot in buf.iter_mut() {
+            *slot = Event::EMPTY;
+        }
+        // SAFETY: traces 区内第 i 个 Trace 未初始化；boot 单核写入，无并发。
+        unsafe {
+            traces.add(i).write(Trace {
+                cursor: AtomicUsize::new(0),
+                buffer: buf,
+            });
+        }
     }
-    // 清空全部窗口：boot 建立干净基线（支持复现/重入）。静态池初始即空，此处确立契约。
-    for h in 0..POOL_HARTS {
-        reset(h);
-    }
+    // SAFETY: 全部 h 个 Trace 已初始化；此后只读结构（环写经裸指针 + 原子游标）。
+    let pool = unsafe { core::slice::from_raw_parts(traces, h) };
+    POOL.set(pool).map_err(|_| TraceInitError::AlreadyInit)?;
+    Ok(())
+}
+
+/// trace 初始化错误。
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraceInitError {
+    /// spare 仓余量不足（容量预算与 ring 需求失配）。
+    #[error("spare ring allocation failed")]
+    OutOfMemory,
+    /// 重复初始化。
+    #[error("trace already initialized")]
+    AlreadyInit,
 }
 
 // ── 适配：panic_dump ────────────────────────────────
@@ -388,8 +405,6 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         }
         EventKind::Halt(HaltEvent::Halt) => write!(w, "halt"),
         EventKind::Halt(HaltEvent::Panic) => write!(w, "panic"),
-        EventKind::Watch(WatchEvent::Raised) => write!(w, "watch raised"),
-        EventKind::Watch(WatchEvent::Suspect) => write!(w, "watch suspect"),
         EventKind::Boot(BootEvent::Launch { hart }) => write!(w, "launch hart {hart}"),
         EventKind::Boot(BootEvent::Done { hart }) => write!(w, "boot done hart {hart}"),
         EventKind::Boot(BootEvent::Stack { hart, used }) => {
@@ -398,11 +413,17 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
     }
 }
 
+/// 每 hart 倒出行数（总量平摊）：总额恒 ≤ TRACE_DUMP——渲染预算与核数无关，
+/// 64 hart 极端配置也不超 spare 的打印预算。
+pub fn hart_rows() -> usize {
+    (TRACE_DUMP / machine::hart_count()).max(1)
+}
+
 /// 崩溃转储：遍历已启动各 hart 的最近窗口，按段落（标题 + 两列表 t/描述）倒出。
 ///
 /// 必须在 halt 已让其它核停写后调用（panic_handler 的报警核）。无分配、无锁。
 /// 每 hart 一个段落（标题后空行、表格经 Para 缩进 2 空格——与 scene/depend 同
-/// 格式）。只倒最近 TRACE_DUMP 条。
+/// 格式）。只倒最近 hart_rows 条（总量平摊）。
 pub fn panic_dump() {
     for h in 0..machine::hart_count() {
         let mut p = Para::new(Sink);
@@ -411,7 +432,7 @@ pub fn panic_dump() {
         tab.set_total_width(64); // 统一诊断表宽预算（同 scene，最长行同宽）。
         {
             let mut it = tab.rows_mut();
-            dump(h, TRACE_DUMP, |e| {
+            dump(h, hart_rows(), |e| {
                 let Some(row) = it.next() else {
                     return;
                 };

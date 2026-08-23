@@ -37,3 +37,4 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 }
 
 pub mod pt_reclaim;
+pub mod spare;

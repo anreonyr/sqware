@@ -148,6 +148,11 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
         halt_loop()
     }
 
+    // 崩溃全局切换：门户后端**无锁**换到后备仓（spare）——此后所有 alloc（转储
+    // 渲染，含未来 stanza 模型的隐式分配）都进仓内，主堆锁链/完整性不再可信。
+    // 原子 store 不取任何锁：即使 panic 恰在持主堆锁现场也绝不卡死。
+    crate::memory::allocator::portal::switch(crate::memory::allocator::portal::Backend::Spare);
+
     // 诊断头：拼进一个行缓冲，整段一次 flush 到控制台（无堆、无锁）。
     let mut fld = Fmt::<256>::new();
     let _ = write!(fld, "\n[panic]");

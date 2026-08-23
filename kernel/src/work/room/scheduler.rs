@@ -55,7 +55,6 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
-use crate::runtime::diagnose::watch;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
 use crate::runtime::switcher::trap::arm_timer;
@@ -362,9 +361,8 @@ fn steal() -> Option<Arc<Task>> {
 /// 睡到最近 tock（tickless：由 timer::next_tock 推算，无则推远）→ WFI。唤醒后：
 /// 有到期任务 → 正常出口（清 SSIP 与睡眠位、round 打点、外层重扫）。
 ///
-/// 护栏：睡距以 watch::capacity() 封顶（防 tock 镜像/送达失真造成长睡）——
-/// 到期假醒但无活 → 哑睡壳回睡：保持睡眠位、不打点不清位（假醒不伪装进展，
-/// D 判据的「全系统无进展」语义不被假节拍污染）。
+/// 护栏：睡距以 timer::next_tock 为准（tickless；无则推远 WFI_FAR），
+/// 到期假醒但无活 → 哑睡壳回睡：保持睡眠位、不打点不清位（假醒不伪装进展）。
 fn wait() -> Option<Arc<Task>> {
     let me = machine::hart_id();
     tie::sleep(me);
@@ -377,13 +375,11 @@ fn wait() -> Option<Arc<Task>> {
     if tie::done() {
         tie::halt();
     }
-    let cap = watch::capacity();
     loop {
         let delta = match timer::next_tock() {
             Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
             None => WFI_FAR,
         };
-        let delta = if cap != 0 { delta.min(cap) } else { delta };
         arm_timer(delta);
         // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）
         unsafe {
@@ -406,7 +402,6 @@ fn wait() -> Option<Arc<Task>> {
     // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
     unsafe { sip::clear_ssoft() };
     tie::wake(me);
-    round();
     None
 }
 
@@ -481,7 +476,6 @@ pub fn run() -> usize {
     //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒、不经过 trap_handler
     //    的路径（用户核走 trap 入口钩子）。常运行时恒 no-op。
     crate::runtime::diagnose::halt::hush();
-    watch::pulse(watch::ticks());
     let me = machine::hart_id();
     let s = &schedulers()[me];
     let mut i = s.inner.lock();
@@ -513,9 +507,6 @@ pub fn run() -> usize {
     drop(i);
     // 取活：Idle → Running 阻塞获取（自核队首 → 跨核 steal → 全退出检查 → WFI）
     loop {
-        // 取活空转也是「活着」的形态：每轮报岗——被抢空转/steal 反复失败可能
-        // 持续远超 liveness 阈值，入口只打点一次会断岗（B 判据误报 stalled）。
-        watch::pulse(watch::ticks());
         let me = machine::hart_id();
         if let Some(pa) = schedulers()[me].pop().map(|t| schedulers()[me].replace(t)) {
             return pa;
@@ -530,33 +521,6 @@ pub fn run() -> usize {
             return schedulers()[me].replace(task);
         }
     }
-}
-
-// ── 适配层：watch（值班看护）──────────────────────────────────────────
-
-/// 打点 + 巡岗：取一份 tick 样本（全局中断计数，见 watch::ticks）——pulse 与
-/// check 同源（计数域样本契约：两次读差 ≤1，阈值 ≥2 天然兼容；时间摆动免疫）。
-/// 供 trap 定时器分支与 wait() 唤醒后调用（健康核的节拍）。
-pub fn round() {
-    let t = watch::ticks();
-    watch::pulse(t);
-    let probe = watch::Probe {
-        has_work: has_work(),
-        asleep: tie::waiting(),
-    };
-    if let Some(r) = watch::check(t, probe) {
-        watch::raise(r);
-    }
-}
-
-/// 是否有活：任一核 starved 非空，或 timer 有已到期 tock。
-fn has_work() -> bool {
-    for s in schedulers().iter() {
-        if s.get_len() > 0 {
-            return true;
-        }
-    }
-    timer::next_tock().is_some_and(|t| t.as_ticks() <= clock::now().as_ticks())
 }
 
 /// 唤醒：从 clock 到期句柄按 blocked 映射摘除任务，Blocked → Starved 入本核

@@ -10,7 +10,6 @@
 // tp/sp 后进入 boot_main → per-hart CSR 配置 → idle（spin+steal）。
 
 use core::arch::global_asm;
-use core::time::Duration;
 
 use alloc::sync::Arc;
 use riscv::register::{satp, sie, stvec};
@@ -164,13 +163,6 @@ pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
     scheduler::init();
 
-    // 值班看护：设阈值并启用（clock 已就绪）。失速 200ms / 锁相持 500ms。
-    crate::runtime::diagnose::watch::threshold(crate::runtime::diagnose::watch::Threshold {
-        hold_timeout: Duration::from_millis(500),
-        liveness_timeout: Duration::from_millis(200),
-        enabled: true,
-    });
-
     // lockdep 装配（debug 构建）：per-hart 持有集。release 为 no-op。
     // 置于调度器就绪后、spawn 演示任务/HSM 拉起副核前——正是多核 ABBA 的生效窗口。
     #[cfg(debug_assertions)]
@@ -181,6 +173,9 @@ pub fn init() -> ! {
     // 健康检查（audit）：PT 回收自测——unmap 时中间表必须当场归还，不泄漏、不 double-free
     #[cfg(all(debug_assertions, feature = "audit"))]
     crate::health::pt_reclaim::pagetable_reclaim();
+
+    // 健康检查：spare 后备仓预算验收——ring 常驻 + 溢出演练（预算即契约）。
+    crate::health::spare::accept();
 
     // 记录内核持久帧基线：spawn 用户任务前的在途帧。此后在途帧只应增用户任务
     // 所有；关机时全部归还，由 tie::halt 的 check_baseline 断言零泄漏。
@@ -201,9 +196,7 @@ pub fn init() -> ! {
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
     // 经 steal 从队列取活——任务即向各核迁移）
-    crate::runtime::diagnose::watch::suspend();
     boot_harts();
-    crate::runtime::diagnose::watch::resume();
 
     // 主内核栈（boot 栈）将永久离开前校验 canary：boot 期栈溢出即使未越过
     // guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。
