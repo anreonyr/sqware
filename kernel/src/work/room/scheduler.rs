@@ -48,9 +48,6 @@ use riscv::register::sip;
 
 use hashbrown::HashMap;
 
-use core::fmt::Write;
-
-use crate::console::Sink;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
@@ -61,10 +58,10 @@ use crate::runtime::diagnose::watch;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
 use crate::runtime::switcher::trap::arm_timer;
-use table::Fmt;
 
 use super::tie;
 use crate::work::unit::{
+    elftable::ElfTable,
     space::Space,
     task::{BlockReason, Task, TaskState},
     team::Team,
@@ -82,16 +79,6 @@ const NO_TASK_ID: usize = usize::MAX;
 /// 新选中任务的满额时间片（量子数）。耗尽才轮转；定时器仍每量子打断，
 /// 只是任务不再每量子切走。park 的 ticks 语义不受影响。
 const TIME_SLICE: u32 = 8;
-
-/// 任务打印时的任务名列宽（cell 对齐；超宽截断）。各任务打印点共享单一来源。
-pub const NAME_W: usize = 16;
-
-/// 把 Fmt 拼好的一行补换行，一次 flush 到控制台（无堆无锁）。
-fn task_emit<const CAP: usize>(mut f: Fmt<CAP>) {
-    let _ = writeln!(f);
-    let mut sink = Sink;
-    let _ = f.flush(&mut sink);
-}
 
 // ── 核心：per-hart 调度器结构与方法 ──
 
@@ -264,11 +251,6 @@ impl Scheduler {
             "running 容器里不是 Running 任务"
         );
         let wake_at = clock::now().add(duration).as_ticks();
-        let mut f = Fmt::<64>::new();
-        let _ = write!(f, "task #{} ", task.id);
-        f.cell(task.name, NAME_W);
-        let _ = write!(f, ": parked (wake @ {wake_at:#x})");
-        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Park {
             tid: task.id,
             wake_at: wake_at as usize,
@@ -316,11 +298,6 @@ impl Scheduler {
             matches!(exited.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
         );
-        let mut f = Fmt::<64>::new();
-        let _ = write!(f, "task #{} ", exited.id);
-        f.cell(exited.name, NAME_W);
-        let _ = write!(f, ": exited");
-        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.id }));
         task_mut(&mut exited).transform(TaskState::Reaped);
         TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
@@ -659,11 +636,6 @@ fn steal() -> Option<Arc<Task>> {
         };
         #[cfg(debug_assertions)]
         probe_strong(&task, "steal: try_pop");
-        let mut f = Fmt::<64>::new();
-        let _ = write!(f, "hart {me}: stole task #{} ", task.id);
-        f.cell(task.name, NAME_W);
-        let _ = write!(f, " from hart {v}");
-        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Steal {
             tid: task.id,
             src_hart: v,
@@ -737,11 +709,6 @@ fn clear() {
         let Some(z) = TASK_TABLES.reaped.lock().pop_front() else {
             break;
         };
-        let mut f = Fmt::<64>::new();
-        let _ = write!(f, "task #{} ", z.id);
-        f.cell(z.name, NAME_W);
-        let _ = write!(f, ": reaped reclaimed");
-        task_emit(f);
         trace::note(EventKind::Sched(SchedEvent::Reap { tid: z.id }));
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.team.prune_tasks(&z);
@@ -971,6 +938,23 @@ pub fn running_task_info() -> Option<(usize, &'static str)> {
     let me = machine::hart_id();
     let guard = all[me].inner.try_lock()?;
     guard.running.as_ref().map(|t| (t.id, t.name))
+}
+
+/// 当前运行任务 trap 帧物理地址 + 其团队符号表（崩溃现场用；非阻塞，失败返回
+/// None）。
+///
+/// 与 `running_task_info` 同纪律：调度锁被 panic 现场持有则 `try_lock` 放弃。
+/// 返回 (task id, 帧 PA, 团队 elftable)——PA 经恒等映射可读；elftable 供 scene
+/// 用**本任务自己的表**符号化（镜像 `RUNNING_TEAM` 是全局最后上台、跨核互踩，
+/// 用户侧解析不可靠，见 scene::user_backtrace）。
+pub fn running_task_frame() -> Option<(usize, usize, Option<alloc::sync::Arc<ElfTable>>)> {
+    let all = SCHEDULERS.get()?;
+    let me = machine::hart_id();
+    let guard = all[me].inner.try_lock()?;
+    guard
+        .running
+        .as_ref()
+        .map(|t| (t.id, t.trap.pa.as_usize(), t.team.elftable.clone()))
 }
 
 // ── 适配层：envcall（envcall.rs 分发调用）──

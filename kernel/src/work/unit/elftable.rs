@@ -123,7 +123,29 @@ impl ElfTable {
         if target >= end {
             return None;
         }
-        Some((self.entries[i].name, target - base))
+        // name 防御：条目内存可能被越界写破坏（name 的 ptr/len 坏值会在符号
+        // 打印时 OOB 读 → 崩溃现场嵌套 fault → panic 卡死/不停机）。合法 name
+        // 必指向**镜像 .rodata**（嵌入 ELF 的 strtab 所在区 [_rodata_start,
+        // _kernel_edge)）——超出即拒绝（降级裸 hex）。DRAM 宽范围不够：坏 ptr
+        // 可落在恒等区内未映射/不可读页（如 128M 机器 0x88000000 之上）。
+        let nm = self.entries[i].name;
+        let np = nm.as_ptr() as usize;
+        let nl = nm.len();
+        unsafe extern "C" {
+            static _rodata_start: u8;
+            static _kernel_edge: u8;
+        }
+        let (rs, ke) = (
+            (&raw const _rodata_start).addr(),
+            (&raw const _kernel_edge).addr(),
+        );
+        // str 引用（含 len）须完全落入 .rodata（符号名 ≤ 几十字节，长度上限
+        // 只防破坏值失控）。坏条目降级为 None（裸 hex）——不打印坏 name，
+        // 避免崩溃现场 OOB 读触发嵌套 fault 截断转储。
+        if nl > 4096 || np < rs || np.saturating_add(nl) > ke {
+            return None;
+        }
+        Some((nm, target - base))
     }
 }
 

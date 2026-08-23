@@ -20,13 +20,17 @@
 
 use core::arch::asm;
 use core::fmt::Write;
+
+use alloc::sync::Arc;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sscratch, sstatus, stval, stvec};
 
 use crate::console::Sink;
+use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
-use crate::work::room::scheduler::{running_task_info, running_team_try};
-use crate::work::unit::elftable;
+use crate::runtime::switcher::context::{Gprs, TrapContext};
+use crate::work::room::scheduler::{running_task_frame, running_task_info, running_team_try};
+use crate::work::unit::elftable::{self, ElfTable};
 use table::{Cell, Fmt, Para, RowsMut, Table, Width};
 
 /// 回溯深度上限。
@@ -35,6 +39,14 @@ const BT_DEPTH: usize = 32;
 const BT_SCAN: usize = 4096;
 /// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
 const ADDR_ALIGN: usize = 4;
+
+// Sv39 PTE 位（诊断路径零依赖：直读 u64，不走 entry::Pte 类型）。
+const PTE_V: u64 = 1 << 0;
+const PTE_R: u64 = 1 << 1;
+const PTE_W: u64 = 1 << 2;
+const PTE_X: u64 = 1 << 3;
+/// PTE.PPN 取位（bit 10 起 44 位 → 左移 12 得物理地址）。
+const PTE_PPN_MASK: u64 = (1u64 << 44) - 1;
 
 /// 定宽 hex（{:#018x}）——值列的通用形态（经 Fmt::hexw）。
 fn hx(x: usize) -> Fmt<40> {
@@ -189,6 +201,96 @@ fn backtrace(out: &mut [usize; BT_DEPTH]) -> usize {
         a += 8;
     }
     n
+}
+
+/// Sv39 页表 walk：把用户 **页对齐** VA 翻译为物理页（leaf 且带 R），未映射/无
+/// 读权 → None。纯物理直读（恒等映射），零锁零 panic——诊断路径安全，不借
+/// `Space::translate`（其持 RelLock，panic 现场可能死锁）。
+///
+/// **PA 范围守卫**：根表/中间表/leaf 的 PA 必须落在 DRAM 恒等区，否则直接返回
+/// None——用户 satp 字段若被覆写为坏值，裸读会触发 S 态读 fault → 嵌套 panic
+/// → halt 卡死（"panic 后不停机"的根路径）。
+fn walk_sv39(page_va: usize, root_ppn: usize) -> Option<usize> {
+    // DRAM 恒等区（覆盖 128M/256M 机器配置；QEMU virt DRAM 基址恒 0x80000000）。
+    let in_dram = |pa: usize| (0x8000_0000..0x9000_0000).contains(&pa);
+    let mut tbl = root_ppn << 12;
+    if !in_dram(tbl) {
+        return None;
+    }
+    for level in [2usize, 1, 0] {
+        let idx = (page_va >> (12 + level * 9)) & 0x1ff;
+        // SAFETY: tbl 已校验在 DRAM 内；诊断路径只读，其余核已冻结。
+        let pte = unsafe { ((tbl + idx * 8) as *const u64).read_volatile() };
+        if pte & PTE_V == 0 {
+            return None;
+        }
+        if pte & (PTE_R | PTE_W | PTE_X) != 0 {
+            // leaf 页：需可读（我们只读栈）且 PA 在 DRAM。
+            if pte & PTE_R == 0 {
+                return None;
+            }
+            let pa = (((pte >> 10) & PTE_PPN_MASK) << 12) as usize;
+            return in_dram(pa).then_some(pa);
+        }
+        tbl = (((pte >> 10) & PTE_PPN_MASK) as usize) << 12; // 下一级表
+        if !in_dram(tbl) {
+            return None;
+        }
+    }
+    None
+}
+
+/// 用户侧回溯：崩溃时 running 任务的 **用户 trap 帧**里有该任务最近一次用户态
+/// 现场（SPP=User 时即被中断的当下；SPP=S 的内核态崩溃也保留着它上次进 trap
+/// 的用户现场——用户程序正停在哪次 envcall 的答案）。取用户 sp 按用户页表逐页
+/// 安全读栈窗口，收集可执行候选返回地址（判定 = **本任务自己的符号表**命中 +
+/// 对齐 + 去重——不用跨核互踩的 `RUNNING_TEAM` 镜像，否则用户地址会查进别的
+/// 团队的表而落空）。尽力而为：帧拿不到 / 现场非用户态（sepc 在内核域）/
+/// sp 无效 / 栈页不可读 → 0 帧（不渲染 ubt 表）。
+/// 返回 (帧数, 任务符号表 Arc)——渲染行仍用同一张表。
+fn user_backtrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
+    let Some((_, pa, tbl)) = running_task_frame() else {
+        return (0, None);
+    };
+    // SAFETY: 帧 PA 在用户 Frame 窗口（DRAM，恒等映射）；崩溃现场读只读、其余核冻结。
+    let frame = unsafe { &*(pa as *const TrapContext) };
+    // 现场须属用户态：sepc 在内核域 ⇒ 该帧不含用户现场（从未跑用户/内核帧占位）→ 跳过。
+    if elftable::is_kernel_addr(frame.sepc.as_usize()) {
+        return (0, tbl);
+    }
+    let (sp, root_ppn) = (frame.gpr.x(Gprs::SP), frame.user_satp.ppn());
+    if sp == 0 {
+        return (0, tbl);
+    }
+    let high = sp.saturating_add(BT_SCAN);
+    let mut n = 0usize;
+    let mut prev = 0usize;
+    let mut page = sp & !(PAGE_SIZE - 1);
+    while page < high && n < BT_DEPTH {
+        let Some(pa0) = walk_sv39(page, root_ppn) else {
+            page += PAGE_SIZE;
+            continue;
+        };
+        let start = core::cmp::max(page, sp & !7);
+        let end = core::cmp::min(page + PAGE_SIZE, high);
+        let mut a = start;
+        while a < end && n < BT_DEPTH {
+            // SAFETY: 该页已 walk 命中且带 R；offset 恒在页内，S 态直读。
+            let w = unsafe { ((pa0 + (a - page)) as *const usize).read_volatile() };
+            // 用户域候选判定：能解析进本任务符号区间 + 4B 对齐 + 去重。
+            let code = tbl
+                .as_deref()
+                .is_some_and(|t| t.lookup(VirtAddr::from_raw(w)).is_some());
+            if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
+                out[n] = w;
+                n += 1;
+                prev = w;
+            }
+            a += 8;
+        }
+        page += PAGE_SIZE;
+    }
+    (n, tbl)
 }
 
 /// stval 解码：按 scause 的语义注解（fault 地址 / 指令位 / 断点地址）；
@@ -375,7 +477,8 @@ fn fill_gprs(it: &mut RowsMut<'_, 2, 96>) {
 }
 
 /// 回溯两槽行：#i / 符号化地址；导出行 v = 定宽 hex、n = 符号。
-fn bt_row(it: &mut RowsMut<'_, 2, 96>, i: usize, a: usize) {
+/// tbl 传 "kbt"（内核栈）/ "ubt"（用户栈），scene 记录按表区分。
+fn bt_row(it: &mut RowsMut<'_, 2, 96>, tbl: &str, i: usize, a: usize) {
     let Some(row) = it.next() else {
         return;
     };
@@ -385,14 +488,13 @@ fn bt_row(it: &mut RowsMut<'_, 2, 96>, i: usize, a: usize) {
     write_addr(&mut s, a);
     row[0] = Cell::new(l.as_str());
     row[1] = Cell::new(s.as_str());
-    scene_row("bt", l.as_str(), hx(a).as_str(), s.as_str());
+    scene_row(tbl, l.as_str(), hx(a).as_str(), s.as_str());
 }
 
 /// 统一崩溃现场转储：一个 [scene] 标题统辖全部表——CSR 三列表 + GPR 两列表 +
-/// 回溯两列表，表间空行分隔（表头分块 + 空行，不再为 backtrace 单设标题段）。
-///
-/// 三表首行表头（块名 + 列语义）分界，首列 fixed(10) 统一；running task 并入
-/// CSR 首行（label=task）。末尾倒出每 hart 最近事件窗口（人读上下文）。
+/// 回溯表（内核栈 kbt + 用户栈 ubt，表头分块 + 空行）。u-thread 被中断上下文为
+/// 用户态时 bt 后附 ubt（从 trap 帧用户 sp 经页表 walk 安全读栈，见
+/// `user_backtrace`；读不到即 0 帧不渲染）。末尾倒出每 hart 最近事件窗口。
 pub fn dump_crash() {
     // [scene] 标题 + CSR 表 + GPR 表 + 回溯表（表间空行由 Para::table 统一）。
     let mut p = Para::new(Sink);
@@ -423,12 +525,88 @@ pub fn dump_crash() {
     b.set_total_width(64); // 统一诊断表宽预算（同 csr）。
     {
         let mut it = b.rows_mut();
-        header2(&mut it, "bt", "sym");
+        header2(&mut it, "kbt", "sym");
         for (i, a) in bt[..n].iter().enumerate() {
-            bt_row(&mut it, i, *a);
+            bt_row(&mut it, "kbt", i, *a);
         }
     }
     p.table(&b);
+
+    // 用户侧回溯（kbt = 内核栈；ubt = 用户栈）——被中断上下文为用户态、能取到
+    // running 任务帧时附加；0 帧不渲染（尽力而为，失败不 panic）。渲染色沿用
+    // 任务自己的符号表（user_backtrace 带回），不依赖全局镜像。
+    let mut ubt = [0usize; BT_DEPTH];
+    let (m, _tbl_arc) = user_backtrace(&mut ubt);
+    if m > 0 {
+        // ubt 表：裸 hex 行渲染（lookup 打印 name 在 panic 现场仍触发嵌套
+        // fault——halt 已收敛停机但截断转储；符号化留给宿主 addr2line）。
+        let mut u = Table::<2, { BT_DEPTH + 1 }, 96>::new();
+        u.set_width(0, Width::fixed(10));
+        u.set_total_width(64);
+        {
+            let mut it = u.rows_mut();
+            header2(&mut it, "ubt", "sym");
+            for (i, a) in ubt[..m].iter().enumerate() {
+                let Some(row) = it.next() else {
+                    break;
+                };
+                let mut l = Fmt::<16>::new();
+                let _ = write!(l, "#{i}");
+                let mut s = Fmt::<96>::new();
+                let _ = write!(s, "{a:#x}");
+                row[0] = Cell::new(l.as_str());
+                row[1] = Cell::new(s.as_str());
+                scene_row("ubt", l.as_str(), hx(*a).as_str(), s.as_str());
+            }
+        }
+        p.table(&u);
+    } else {
+        // 诊断探针：ubt 空的原因——打印用户现场判定细节（sp/根表/walk/栈头字），
+        // 终端可读（进 console 不进 JSONL）。零分配：栈缓冲 Fmt。
+        #[cfg(debug_assertions)]
+        {
+            let mut probe = Fmt::<384>::new();
+            match running_task_frame() {
+                Some((id, pa, _)) => {
+                    // SAFETY: 任务用户帧 PA（DRAM 恒等映射），只读。
+                    let f = unsafe { &*(pa as *const crate::runtime::switcher::context::TrapContext) };
+                    let sp = f.gpr.x(Gprs::SP);
+                    let root = f.user_satp.ppn();
+                    let _ = write!(
+                        probe,
+                        "task#{id} sepc={:#x} sp={sp:#x} root={root:#x}",
+                        f.sepc.as_usize()
+                    );
+                    if sp != 0 {
+                        let page = sp & !(crate::memory::PAGE_SIZE - 1);
+                        match walk_sv39(page, root) {
+                            Some(pa0) => {
+                                let _ = write!(probe, " walk(page{page:#x})->pa {pa0:#x}");
+                                // 栈头 8 字（从 sp 起，走物理直读，越页截断）。
+                                for i in 0..8 {
+                                    let a = (sp & !7) + i * 8;
+                                    if a - page >= crate::memory::PAGE_SIZE - 8 {
+                                        break;
+                                    }
+                                    let w = unsafe { ((pa0 + (a - page)) as *const usize).read_volatile() };
+                                    let _ = write!(probe, " [{i}]{w:#x}");
+                                }
+                            }
+                            None => {
+                                let _ = write!(probe, " walk(page{page:#x})->None");
+                            }
+                        }
+                    }
+                }
+                None => {
+                    let _ = write!(probe, "frame None (sched lock busy?)");
+                }
+            }
+            crate::putln!("[scene] ubt probe: {}", probe.as_str());
+            // 同步导出到 JSONL（终端捕获可能丢失/未归档；scene 行为准）。
+            scene_row("ubt", "probe", "0", probe.as_str());
+        }
+    }
     crate::putln!(); // 段尾空行（块间间距统一；供 [trace] 段分隔）。
 
     // 每 hart 最近事件窗口文本统一倒出（报警核；崩溃后其余核已停写）。
