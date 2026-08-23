@@ -60,7 +60,7 @@ pub(super) fn done() -> bool {
 /// 全部任务已退出：显式停机（srst；AtomicBool 防双核同时触发——后到者 wfi）。
 ///
 /// 关机屏障：先登记本核到达（HALT_ARRIVED），胜出核唤醒 WFI 睡核（它们随后
-/// 也会到达 halt）并**自旋等全部核到齐**，然后才经 `integrity::check_baseline` 断言
+/// 也会到达 halt）并**自旋等全部核到齐**，然后才经 `fence::audit::check_baseline` 断言
 /// 任务帧已全部归还（在途帧回落内核持久帧 + 堆支撑页基线）——地址空间/栈
 /// 所有权 Drop 泄漏在此暴露。不等齐的核可能仍在 clear() 归还帧，会把在途回收
 /// 误报为泄漏。仅胜出核检查一次即可（原子互斥保证单核执行）。
@@ -76,11 +76,11 @@ pub(super) fn halt() -> ! {
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,
         ));
-        // 全部核已到齐（回收完毕）、帧已归还——先抽干每个块的 pump（过境块全部归位，
-        // 帧基线扣除公式才成立），再断言零泄漏，最后发复位（debug 构建生效）。
-        crate::memory::allocator::block::flush_all();
+        // 全部核已到齐（回收完毕）、帧已归还——先冲洗每个块的池（过境块归位 +
+        // 空页还 frame，帧基线扣除公式才成立），再断言零泄漏，最后发复位（debug 构建生效）。
+        crate::memory::allocator::block::flush();
         #[cfg(all(debug_assertions, feature = "audit"))]
-        crate::memory::integrity::check_baseline();
+        crate::memory::allocator::fence::audit::check_baseline();
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }
     wfi()

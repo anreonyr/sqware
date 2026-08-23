@@ -7,6 +7,7 @@ extern crate alloc;
 
 mod boot;
 mod console;
+mod health;
 mod lock;
 mod machine;
 mod memory;
@@ -41,9 +42,7 @@ global_asm!(
 #[unsafe(no_mangle)]
 extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
     console::init();
-
     machine::init(dtp);
-
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
     unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
     clock::init().unwrap_or_else(|e| panic!("clock init failed: {e:?}"));

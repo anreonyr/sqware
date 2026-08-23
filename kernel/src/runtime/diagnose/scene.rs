@@ -544,7 +544,7 @@ pub fn dump_crash() {
         }
         #[cfg(feature = "audit")]
         {
-            let _ = crate::memory::integrity::LEDGER.sweep_canaries();
+            let _ = crate::memory::allocator::fence::ledger::LEDGER.sweep_canaries();
         }
     }
     // [scene] 标题 + CSR 表 + GPR 表 + 回溯表（表间空行由 Para::table 统一）。

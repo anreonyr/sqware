@@ -1,7 +1,11 @@
 // 混合路由分配器 — 按大小委派给 block 或 frame 后端
 //
-// layout.size() <= PAGE_SIZE  → block::allocator()
-// layout.size() >  PAGE_SIZE  → frame::allocator()
+// layout.size() <= PAGE_SIZE/2  → block::allocator()（8..=2048B 多块页）
+// layout.size() >  PAGE_SIZE/2  → frame::allocator()（≥2049B，order0 及以上）
+//
+// 分界取半页：block 只保留多块页（恒有页头，used 可计数、页可整体归还），
+// 4096B 整页块已退役给 frame（order0，本质即帧分配）。2049B 请求走 frame
+// 会要一整页（浪费 ~2KB slack，与旧 4096B 整页块同量级，可接受）。
 //
 // hybrid 自身不管理任何内存，仅检查大小并路由。block 内部缺页时
 // 直接调用 frame::allocator() 取页（锁序：block→frame，从不反向）。
@@ -39,7 +43,7 @@ impl HybridAllocator {
 
 unsafe impl Allocator for HybridAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        if layout.size() <= PAGE_SIZE {
+        if layout.size() <= PAGE_SIZE / 2 {
             block::allocator().allocate(layout)
         } else {
             frame::allocator().allocate(layout)
@@ -48,7 +52,7 @@ unsafe impl Allocator for HybridAllocator {
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         unsafe {
-            if layout.size() <= PAGE_SIZE {
+            if layout.size() <= PAGE_SIZE / 2 {
                 block::allocator().deallocate(ptr, layout);
             } else {
                 frame::allocator().deallocate(ptr, layout);

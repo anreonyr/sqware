@@ -16,8 +16,9 @@ use fack::prelude::Error;
 pub mod bitmap;
 pub mod block;
 pub mod bump;
-/// 共享 debug 校验原语（block/frame 链式断言收容处；release 空体零开销）。
-pub(crate) mod debug_checks;
+/// 护栏层（in-path 运行时不变量检查）：checker（链断言）/ banker（页金库）/
+/// ledger（活块账本）/ audit（核查）。
+pub mod fence;
 pub mod frame;
 pub mod hybrid;
 pub mod portal;

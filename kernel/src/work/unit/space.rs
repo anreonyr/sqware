@@ -914,11 +914,11 @@ impl Space {
         // audit: 用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
         // 键 = asid << 32 | VA：多个空间共享同一堆窗口 VA，须并入空间身份防碰撞。
         #[cfg(all(debug_assertions, feature = "audit"))]
-        crate::memory::integrity::LEDGER.mark(
+        crate::memory::allocator::fence::ledger::LEDGER.mark(
             (self.kind.asid() << 32) | info.va.as_usize(),
             info.size.get(),
             crate::lock::ra(),
-            crate::memory::integrity::OwnerKind::UserHeap,
+            crate::memory::allocator::fence::ledger::OwnerKind::UserHeap,
         );
         // SAFETY: S-mode 下 sfence.vma 恒合法。
         unsafe {
@@ -950,7 +950,7 @@ impl Space {
         }
         // audit: 注销用户堆账目（无账 = 悬垂/双释放现行；键与 heap_allocate 相同）。
         #[cfg(all(debug_assertions, feature = "audit"))]
-        crate::memory::integrity::LEDGER.unmark((self.kind.asid() << 32) | addr.as_usize(), size);
+        crate::memory::allocator::fence::ledger::LEDGER.unmark((self.kind.asid() << 32) | addr.as_usize(), size);
         true
     }
 

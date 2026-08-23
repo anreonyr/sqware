@@ -51,7 +51,7 @@ pub enum Level {
     /// 同层 6→6 高发但安全，因每池实例互不相扰）——故保持 exempt，**勿加**
     /// 本层级触发误报。
     Block = 6,
-    /// memory::integrity::LEDGER（层级末尾：只在无锁或低层级锁内获取，且绝不在
+    /// allocator::fence::ledger::LEDGER（层级末尾：只在无锁或低层级锁内获取，且绝不在
     /// 持本锁时触碰分配器——容量 init 预留、运行期插入零分配）。
     Ledger = 7,
 }

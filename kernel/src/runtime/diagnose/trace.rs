@@ -78,7 +78,7 @@ pub enum MemEvent {
         fault: FaultKind,
         resolved: bool,
     },
-    /// 完整性违例（IntegrityViolation 的 repr(u8) 编码；见 memory::integrity）。
+    /// 完整性违例（IntegrityViolation 的 repr(u8) 编码；见 allocator::fence）。
     Integrity { code: u8, addr: usize },
 }
 

@@ -8,7 +8,7 @@ use alloc::{
     vec::Vec,
 };
 
-use super::debug_checks;
+use super::fence::checker;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
     memory::allocator::{InitError, InitResult, Link, bump},
@@ -79,14 +79,14 @@ unsafe impl Allocator for FrameAllocator {
         // audit: 弹出的帧必须 Free → Banker 取出（双取出 / 活堆页泄漏进池现行）
         #[cfg(all(debug_assertions, feature = "audit"))]
         {
-            crate::memory::integrity::BANKER.debit(addr as usize);
+            crate::memory::allocator::fence::banker::BANKER.debit(addr as usize);
         }
         #[cfg(all(debug_assertions, feature = "audit"))]
         {
             frame.outstanding += 1;
         }
 
-        debug_checks::log_frame_alloc(addr as usize, index, power);
+        checker::log_frame_alloc(addr as usize, index, power);
 
         Ok(NonNull::slice_from_raw_parts(
             NonNull::new(addr).ok_or(AllocError)?,
@@ -105,7 +105,7 @@ unsafe impl Allocator for FrameAllocator {
 
             // audit: 归还的帧必须 held → Banker 存入（存入陌生页 / 双释放现行）
             #[cfg(all(debug_assertions, feature = "audit"))]
-            crate::memory::integrity::BANKER.credit(addr);
+            crate::memory::allocator::fence::banker::BANKER.credit(addr);
 
             // double-free 已由 Banker::credit（DoubleCredit）覆盖，此处不再重复检查。
             frame.merge_block(index, power);
@@ -114,7 +114,7 @@ unsafe impl Allocator for FrameAllocator {
                 frame.outstanding = frame.outstanding.saturating_sub(1);
             }
 
-            debug_checks::log_frame_dealloc(addr, index, power);
+            checker::log_frame_dealloc(addr, index, power);
         }
     }
 }
@@ -220,16 +220,16 @@ impl FrameInner {
     unsafe fn pop_link(&mut self, power: usize) -> Option<usize> {
         unsafe {
             let head = self.freelist[power]?;
-            debug_checks::check_dram_addr(head.as_ptr() as usize, "frame pop_link (head)");
+            checker::check_dram_addr(head.as_ptr() as usize, "frame pop_link (head)");
 
             let addr = head.addr().get();
             let index = self.frame_index(addr);
-            debug_checks::check_bounds(
+            checker::check_bounds(
                 index,
                 self.pagemeta.len(),
                 "frame pop_link (pagemeta index)",
             );
-            debug_checks::check_frame_free(
+            checker::check_frame_free(
                 self.pagemeta[index].as_ref().is_some_and(|m| m.free),
                 index,
                 addr,
@@ -239,7 +239,7 @@ impl FrameInner {
             let next = head.read().next;
             self.freelist[power] = next;
             if let Some(n) = next {
-                debug_checks::check_dram_addr(n.as_ptr() as usize, "frame pop_link (next)");
+                checker::check_dram_addr(n.as_ptr() as usize, "frame pop_link (next)");
                 n.read().prev = None;
             }
 
@@ -255,13 +255,13 @@ impl FrameInner {
     // 调用者需确保 index 对应的物理地址有效且未被其他方式使用。
     unsafe fn push_link(&mut self, index: usize, power: usize) {
         unsafe {
-            debug_checks::check_bounds(power, self.freelist.len(), "frame push_link (power)");
-            debug_checks::check_bounds(
+            checker::check_bounds(power, self.freelist.len(), "frame push_link (power)");
+            checker::check_bounds(
                 index,
                 self.pagemeta.len(),
                 "frame push_link (pagemeta index)",
             );
-            debug_checks::check_not_in_chain(
+            checker::check_not_in_chain(
                 power,
                 "frame push_link",
                 self.freelist[power],
@@ -273,7 +273,7 @@ impl FrameInner {
             addr.write(Link::new(None, self.freelist[power]));
 
             if let Some(head) = self.freelist[power] {
-                debug_checks::check_dram_addr(head.as_ptr() as usize, "frame push_link (head)");
+                checker::check_dram_addr(head.as_ptr() as usize, "frame push_link (head)");
                 head.read().prev = Some(addr);
             }
 
@@ -290,8 +290,8 @@ impl FrameInner {
     unsafe fn remove_link(&mut self, index: usize, power: usize) {
         unsafe {
             let addr = self.frame_addr(index) as *mut Link;
-            debug_checks::check_dram_addr(addr as usize, "frame remove_link");
-            debug_checks::check_in_chain(
+            checker::check_dram_addr(addr as usize, "frame remove_link");
+            checker::check_in_chain(
                 power,
                 "frame remove_link",
                 self.freelist[power],
