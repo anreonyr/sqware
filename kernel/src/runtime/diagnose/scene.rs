@@ -264,7 +264,7 @@ fn user_backtrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>)
     // SAFETY: 帧 PA 在用户 Frame 窗口（DRAM，恒等映射）；崩溃现场读只读、其余核冻结。
     let frame = unsafe { &*(pa as *const TrapContext) };
     // 现场须属用户态：sepc 在内核域 ⇒ 该帧不含用户现场（从未跑用户/内核帧占位）→ 跳过。
-    if elftable::is_kernel_addr(frame.sepc.as_usize()) {
+    if frame.sepc.is_kernel() {
         return (0, tbl);
     }
     let (sp, root_ppn) = (frame.gpr.x(Gprs::SP), frame.user_satp.ppn());

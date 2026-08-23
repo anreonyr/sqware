@@ -15,6 +15,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::memory::manager::addr::VirtAddr;
+use crate::work::unit::team::kernel;
 
 /// 一条符号（STT_FUNC；表内按 addr 升序）。
 pub struct Entry {
@@ -188,9 +189,7 @@ impl ElfTable {
                 self.entries.len()
             );
         } else if unsorted > 0 {
-            crate::putln!(
-                "[table] integrity: entries addr unsorted ({unsorted} inversions)"
-            );
+            crate::putln!("[table] integrity: entries addr unsorted ({unsorted} inversions)");
         }
         bad
     }
@@ -202,23 +201,11 @@ impl ElfTable {
 const TAIL_SPAN: usize = 0x4000;
 
 // ── 地址域判定 ─────────────────────────────────────────────────
-
-/// Sv39 内核高半区起点（与 work::unit::space::KERNEL_BASE 一致）。
-const KERNEL_HIGH: usize = 0xFFFF_FFC0_0000_0000;
-
-/// 是否内核域地址：高半区，或内核镜像恒等区 [_kernel_start,_kernel_edge)。
-pub fn is_kernel_addr(addr: usize) -> bool {
-    if addr >= KERNEL_HIGH {
-        return true;
-    }
-    unsafe extern "C" {
-        static _kernel_start: u8;
-        static _kernel_edge: u8;
-    }
-    let s = (&raw const _kernel_start).addr();
-    let e = (&raw const _kernel_edge).addr();
-    addr >= s && addr < e
-}
+//
+// 内核/用户域判定下沉为 `VirtAddr::is_kernel()`（addr.rs）：Sv39 高半区
+// **或**内核镜像恒等区 [_kernel_start, _kernel_edge) 双段判定。镜像恒等映射
+// 落在低半区——纯半区判定（is_user/bit38）会把内核镜像地址（sepc/kbt 帧
+// 0x8020xxxx）误判为用户域、分派查错表（见 [`resolve`]）。
 
 // ── 内核表（挂 kernel team，见 work/team::kernel）──────────────
 
@@ -257,18 +244,16 @@ pub fn kernel_table() -> Option<ElfTable> {
 // ── 解析器（地址域 → 选表）────────────────────────────────────
 
 /// 地址 → (符号, 偏移)：内核域查内核表（unit::team::kernel），用户域查运行 team 表。
-/// 无表/无命中 → None（调用方打印裸 hex）。
+/// 无表/无命中 → None（调用方打印裸 hex）。域判定走 [`VirtAddr::is_kernel`]
+/// （高半区 + 镜像恒等区，见 addr.rs）——不用 `is_user` 单半区判定，防镜像
+/// 地址查错表。
 pub fn resolve(
     addr: VirtAddr,
     team: Option<&crate::work::unit::team::Team>,
 ) -> Option<(&'static str, usize)> {
-    if is_kernel_addr(addr.as_usize()) {
-        crate::work::unit::team::kernel()
-            .elftable
-            .as_ref()?
-            .lookup(addr)
+    if addr.is_kernel() {
+        kernel().elftable.as_ref()?.lookup(addr)
     } else {
-        let t = team?;
-        t.elftable.as_ref()?.lookup(addr)
+        team?.elftable.as_ref()?.lookup(addr)
     }
 }

@@ -59,6 +59,29 @@ impl VirtAddr {
         (self.0 >> 38) & 1 == 0
     }
 
+    /// 是否为内核域地址：Sv39 高半区（bit 38 = 1，`!is_user` 等价判定），**或**
+    /// 内核镜像恒等区 [_kernel_start, _kernel_edge)。
+    ///
+    /// 两段都要：镜像恒等映射落在**低半区**（0x80200000 起）——纯半区判定会把
+    /// 内核镜像地址误判为用户域（符号化分派将查错表，见 elftable::resolve）。
+    /// 纯位运算 + 一次链接符号区间比较，panic/诊断现场可安全调用。
+    #[inline]
+    pub fn is_kernel(self) -> bool {
+        if !self.is_user() {
+            return true; // 高半区
+        }
+        unsafe extern "C" {
+            static _kernel_start: u8;
+            static _kernel_edge: u8;
+        }
+        let a = self.0;
+        let (s, e) = (
+            (&raw const _kernel_start).addr(),
+            (&raw const _kernel_edge).addr(),
+        );
+        a >= s && a < e
+    }
+
     /// 获取原始 usize 值
     #[inline]
     pub const fn as_usize(self) -> usize {
