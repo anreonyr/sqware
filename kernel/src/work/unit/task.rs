@@ -72,8 +72,8 @@ pub struct TrapFrame {
 pub struct Task {
     pub(crate) id: usize,
     pub(crate) name: &'static str,
-    /// 状态（含载荷）。普通字段：只有经 [`Task::as_mut`]（调度器侧 `task_mut`
-    /// 包装）的 &mut 能改——唯一强持有语义见 as_mut。
+    /// 状态（含载荷）。普通字段：只有经 [`Task::exclusive`]（调度器侧 `task_mut`
+    /// 包装）的 &mut 能改——唯一强持有语义见 exclusive。
     pub(crate) state: TaskState,
     pub(crate) team: Arc<Team>,
     pub(crate) trap: TrapFrame,
@@ -132,7 +132,7 @@ impl Task {
     /// Arc** 保证）→ strong == 1；互斥 = 锁 + 唯一强持有，无需原子字段。
     /// debug 断言兜底；**定位第二持有者的现场扫描（全容器 + 栈回溯）在调度器侧
     /// `task_mut` 包装**——需 schedulers()/blocked() 容器全查，见 room::scheduler。
-    pub(crate) fn as_mut(t: &mut Arc<Self>) -> &mut Task {
+    pub(crate) fn exclusive(t: &mut Arc<Self>) -> &mut Task {
         #[cfg(debug_assertions)]
         assert_eq!(
             Arc::strong_count(t),
