@@ -25,7 +25,7 @@ pub struct RwLock<T: ?Sized> {
     // WRITER_BIT | reader_count
     state: AtomicUsize,
     /// 写锁持有者调用点（返回地址；0 = 无写者）——写重入/升级/降级检测与溯源用
-    holder_pc: AtomicUsize,
+    caller: AtomicUsize,
     data: UnsafeCell<T>,
 }
 
@@ -52,7 +52,7 @@ impl<T> RwLock<T> {
     pub const fn new(val: T) -> Self {
         RwLock {
             state: AtomicUsize::new(0),
-            holder_pc: AtomicUsize::new(0),
+            caller: AtomicUsize::new(0),
             data: UnsafeCell::new(val),
         }
     }
@@ -68,7 +68,9 @@ impl<T: ?Sized> RwLock<T> {
     #[inline(never)] // 保证入口读到的 ra 是调用者返回地址（内联会破坏）
     pub fn read(&self) -> RwLockReadGuard<'_, T> {
         // 入口第一件事：捕获调用者返回地址（任何函数调用都会覆盖 ra）
-        let caller = depend::ra();
+        let caller: usize;
+        // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
+        unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
 
@@ -77,14 +79,15 @@ impl<T: ?Sized> RwLock<T> {
         if s & WRITER_BIT != 0 {
             // 有写者：单 hart 下写者必是本执行流（持写锁再读）→ 撤销计数后报告
             self.state.fetch_sub(1, Ordering::Release);
-            let holder = self.holder_pc.load(Ordering::Relaxed);
+            #[cfg(debug_assertions)]
             depend::report(
-                "rwlock",
-                "write→read downgrade deadlock",
+                "write->read downgrade deadlock",
                 self as *const Self as *const () as usize,
-                holder,
                 caller,
             );
+            // release 无 depend：仍须拒绝双持（否则错误返回共享守卫）。
+            #[cfg(not(debug_assertions))]
+            panic!("[rwlock] write->read downgrade deadlock");
         }
 
         RwLockReadGuard {
@@ -104,7 +107,9 @@ impl<T: ?Sized> RwLock<T> {
     #[allow(dead_code)] // 写路径当前无调用方（RwLock 仅 hub 查询用读路径），保留
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         // 入口第一件事：捕获调用者返回地址
-        let caller = depend::ra();
+        let caller: usize;
+        // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
+        unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
 
@@ -113,14 +118,14 @@ impl<T: ?Sized> RwLock<T> {
             let s = self.state.load(Ordering::Relaxed);
             if s & WRITER_BIT != 0 {
                 // 已有写者：单 hart 下写者必是本执行流 → 写重入，报告后 panic
-                let holder = self.holder_pc.load(Ordering::Relaxed);
+                #[cfg(debug_assertions)]
                 depend::report(
-                    "rwlock",
                     "recursive write acquisition",
                     self as *const Self as *const () as usize,
-                    holder,
                     caller,
                 );
+                #[cfg(not(debug_assertions))]
+                panic!("[rwlock] recursive write acquisition");
             }
             if self
                 .state
@@ -135,16 +140,16 @@ impl<T: ?Sized> RwLock<T> {
 
         // 等待现存读者全部离开：单 hart 下读者计数非 0 必是本执行流的读锁（升级死锁）
         if self.state.load(Ordering::Acquire) & READER_MASK != 0 {
-            let holder = self.holder_pc.load(Ordering::Relaxed);
+            #[cfg(debug_assertions)]
             depend::report(
-                "rwlock",
-                "read→write upgrade deadlock",
+                "read->write upgrade deadlock",
                 self as *const Self as *const () as usize,
-                holder,
                 caller,
             );
+            #[cfg(not(debug_assertions))]
+            panic!("[rwlock] read->write upgrade deadlock");
         }
-        self.holder_pc.store(caller, Ordering::Relaxed);
+        self.caller.store(caller, Ordering::Relaxed);
 
         RwLockWriteGuard {
             lock: self,
@@ -189,7 +194,7 @@ impl<T: ?Sized> DerefMut for RwLockWriteGuard<'_, T> {
 impl<T: ?Sized> Drop for RwLockWriteGuard<'_, T> {
     fn drop(&mut self) {
         // 清除写持有者调用点
-        self.lock.holder_pc.store(0, Ordering::Relaxed);
+        self.lock.caller.store(0, Ordering::Relaxed);
         // Release：清除 WRITER_BIT（读者计数此刻为 0），写入对后续获取者可见
         self.lock.state.store(0, Ordering::Release);
     }

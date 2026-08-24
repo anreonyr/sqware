@@ -21,8 +21,6 @@ sbi = { path = "../crates/sbi" }
 stanza = "0.5.2"
 
 bitflags = "2.13.1"
-# Fmt 行缓冲的有界字符串（原 crates/table 依赖，随工具迁入而随迁）。
-arrayvec = { version = "0.7.8", default-features = false }
 erra = { version = "0.2.0", default-features = false }
 fack = { version = "0.2.0", default-features = false }
 fdt = { version = "0.1.5", default-features = false }
@@ -36,6 +34,9 @@ riscv-rt = { version = "0.18.0", features = ["s-mode"] }
 # 符号名 demangle（scene 转储打印）：v0/legacy 全语法、流式零分配（panic 现场
 # 零分配纪律）、非 Rust 符号原样透传。default-features=false → 纯 no_std。
 rustc-demangle = { version = "0.1.28", default-features = false }
+# 诊断报告序列化（整档 + 事件流）：serde_json 承担 JSON，derive 即形状、零手写序列化器。
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 # semihosting = 导宿主文件用的 crate；只开 fs（stdio/panic-handler/time/args 均不需要）。
 semihosting = { version = "0.1.25", features = ["fs"] }
 

@@ -11,11 +11,11 @@
 
 use core::arch::global_asm;
 
+use alloc::format;
 use alloc::sync::Arc;
 use riscv::register::{satp, sie, stvec};
 
 use crate::console::Sink;
-use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
@@ -28,9 +28,9 @@ use crate::work::room::scheduler;
 use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
+use crate::{machine, putln};
 use core::fmt::Write;
 use stanza::table::Table;
-use crate::runtime::diagnose::fmt::Fmt;
 
 global_asm!(
     ".section .text.boot",
@@ -48,106 +48,61 @@ unsafe extern "C" {
     static _boot_entry: u8;
 }
 
-/// 启动多任务：spawn 演示团队后进入首个线程，永不返回。
-///
-/// Team1 = 双线程共享空间：首线程 a0=0 计数循环写 'A'（靠抢占轮转）；次线程
-/// a0=1 写 'B' 后退出——验证「线程退出、团队/兄弟线程存活」的引用计数语义。
-/// 之后是单线程团队回归：A counter（不自让出，靠抢占）→ B yielder（主动让出）
-/// → C exiter（写 'C' 后退出）。S-timer 由 switcher::trap::init 武装、trap_handler 内循环重武装。
-/// 锁地址符号化回调：内核地址 → (函数名, 偏移)。team=None 只走内核表。
-fn kernel_symbolizer(addr: usize) -> Option<(&'static str, usize)> {
-    crate::work::unit::elftable::resolve(
-        crate::memory::manager::addr::VirtAddr::from_raw(addr),
-        None,
-    )
-}
-
 /// SBI 式启动横幅：机器/板级「标签|值」对齐表 + 陷阱布局表，两块连打成一个横幅。
 /// 正常路径即时输出（不经崩溃收集器）；stanza 自动列宽自然布局。
+/// 值列经 String 拼装（boot 正常路径可堆；无 Fmt 行缓冲——已随诊断精简移除）。
 pub fn banner() {
     let m = machine::info();
     let mut sink = Sink;
     // 机器/板级 + 陷阱布局两块并成一个 Table：统一列宽，值列对齐；
     // 中间空行分隔两块（认领一行但不填，渲染为空格行）。
     let mut b = Table::default();
-    {
-        let mut v = Fmt::<64>::new();
-        let _ = write!(v, "{} H", m.hart);
-        b = b.with_row(["hart count", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<64>::new();
-        let _ = write!(v, "{}", machine::hart_id());
-        b = b.with_row(["hart this", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<64>::new();
-        let _ = write!(v, "{} Hz", m.hertz);
-        b = b.with_row(["timebase", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(v, "{:#x}..{:#x}", m.dram.base, m.dram.range().end);
-        b = b.with_row(["dram", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(v, "{:#x}..{:#x}", m.free.base, m.free.range().end);
-        b = b.with_row(["free", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(v, "{:#x}", m.uart.base);
-        b = b.with_row(["uart", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(v, "{:#x}", m.plic.base);
-        b = b.with_row(["plic", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(v, "{:#x}", m.clint.base);
-        b = b.with_row(["clint", v.as_str()]);
-    }
+    let v = format!("{} H", m.hart);
+    b = b.with_row(["hart count", v.as_str()]);
+    let v = format!("{}", machine::hart_id());
+    b = b.with_row(["hart this", v.as_str()]);
+    let v = format!("{} Hz", m.hertz);
+    b = b.with_row(["timebase", v.as_str()]);
+    let v = format!("{:#x}..{:#x}", m.dram.base, m.dram.range().end);
+    b = b.with_row(["dram", v.as_str()]);
+    let v = format!("{:#x}..{:#x}", m.free.base, m.free.range().end);
+    b = b.with_row(["free", v.as_str()]);
+    let v = format!("{:#x}", m.uart.base);
+    b = b.with_row(["uart", v.as_str()]);
+    let v = format!("{:#x}", m.plic.base);
+    b = b.with_row(["plic", v.as_str()]);
+    let v = format!("{:#x}", m.clint.base);
+    b = b.with_row(["clint", v.as_str()]);
     // 空行分隔两块（认领一行但不填）。
     b = b.with_row(["", ""]);
     // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(v, "{:#x}", alltraps_va());
-        b = b.with_row(["trap vector", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(
-            v,
-            "{:#x}..{:#x}",
-            KERNEL_FRAME_BASE.as_usize(),
-            KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
-        );
-        b = b.with_row(["kernel frames", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(v, "{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
-        b = b.with_row(["trap stack", v.as_str()]);
-    }
-    {
-        let mut v = Fmt::<96>::new();
-        let _ = write!(
-            v,
-            "{} @ {:#x}..{:#x}",
-            machine::hart_id(),
-            trap_stack_bottom(machine::hart_id()),
-            trap_stack_top(machine::hart_id())
-        );
-        b = b.with_row(["trap stack this", v.as_str()]);
-    }
+    let v = format!("{:#x}", alltraps_va());
+    b = b.with_row(["trap vector", v.as_str()]);
+    let v = format!(
+        "{:#x}..{:#x}",
+        KERNEL_FRAME_BASE.as_usize(),
+        KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
+    );
+    b = b.with_row(["kernel frames", v.as_str()]);
+    let v = format!("{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
+    b = b.with_row(["trap stack", v.as_str()]);
+    let v = format!(
+        "{} @ {:#x}..{:#x}",
+        machine::hart_id(),
+        trap_stack_bottom(machine::hart_id()),
+        trap_stack_top(machine::hart_id())
+    );
+    b = b.with_row(["trap stack this", v.as_str()]);
     crate::runtime::diagnose::render::render_to(&mut sink, &b, 0);
     let _ = writeln!(sink);
 }
 
+/// 启动多任务：spawn 演示团队后进入首个线程，永不返回。
+///
+/// Team1 = 双线程共享空间：首线程 a0=0 计数循环写 'A'（靠抢占轮转）；次线程
+/// a0=1 写 'B' 后退出——验证「线程退出、团队/兄弟线程存活」的引用计数语义。
+/// 之后是单线程团队回归：A counter（不自让出，靠抢占）→ B yielder（主动让出）
+/// → C exiter（写 'C' 后退出）。S-timer 由 switcher::trap::init 武装、trap_handler 内循环重武装。
 pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
     scheduler::init();
@@ -156,8 +111,6 @@ pub fn init() -> ! {
     // 置于调度器就绪后、spawn 演示任务/HSM 拉起副核前——正是多核 ABBA 的生效窗口。
     #[cfg(debug_assertions)]
     crate::lock::init_depend(machine::hart_count()).expect("depend init failed");
-    // 锁地址符号化：depend 打印现场用（未注入则裸地址）。
-    crate::lock::set_symbolizer(&kernel_symbolizer);
 
     // 健康检查（audit）：PT 回收自测——unmap 时中间表必须当场归还，不泄漏、不 double-free
     #[cfg(all(debug_assertions, feature = "audit"))]
@@ -240,12 +193,7 @@ fn spawn_demos() -> Result<(), MapError> {
 
     // 内核任务（ktask）：挂 kernel 团队单例，经统一 `Team::task().closure`——团队身份
     // 自动定 S 态（SPP=1）、闭包装箱到内核堆、入口为内核 trampoline `ktask_entry`。
-    kernel().task().name("ktask").closure(|| {
-        let mut f = Fmt::<64>::new();
-        let _ = writeln!(f, "kernel task running");
-        let mut sink = Sink;
-        let _ = f.flush(&mut sink);
-    })?;
+    kernel().task().name("ktask").closure(|| putln!("ktask"))?;
     #[cfg(debug_assertions)]
     kernel().space.audit();
     Ok(())

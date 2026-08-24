@@ -373,10 +373,13 @@ unsafe impl Allocator for BlockAllocator {
         #[cfg(all(debug_assertions, feature = "audit"))]
         {
             crate::memory::allocator::fence::poison(addr, 1usize << power);
+            let caller: usize;
+            // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
+            unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
             crate::memory::allocator::fence::ledger::LEDGER.mark(
                 addr,
                 layout.size(),
-                crate::lock::ra(),
+                caller,
                 crate::memory::allocator::fence::ledger::OwnerKind::KernelHeap,
             );
         }

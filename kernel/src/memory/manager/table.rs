@@ -101,7 +101,7 @@ impl PageTable {
     /// # Errors
     ///
     /// 物理帧耗尽时返回 [`MapError::OutOfMemory`]。
-    pub(crate) fn alloc() -> Result<Box<PageTable, &'static dyn Allocator>, MapError> {
+    pub(crate) fn new() -> Result<Box<PageTable, &'static dyn Allocator>, MapError> {
         Box::try_new_in(PageTable::default(), allocator()).map_err(|_| MapError::OutOfMemory)
     }
 }
@@ -123,7 +123,7 @@ impl TableNode {
     /// 新根节点（根页表帧；satp 写入见 [`Self::ppn`]）。
     pub(crate) fn root() -> Result<Self, MapError> {
         Ok(Self {
-            page: PageTable::alloc()?,
+            page: PageTable::new()?,
             children: Vec::new(),
         })
     }
@@ -142,7 +142,7 @@ impl TableNode {
     /// 分配一个零页表子节点。
     fn new_child() -> Result<Self, MapError> {
         Ok(Self {
-            page: PageTable::alloc()?,
+            page: PageTable::new()?,
             children: Vec::new(),
         })
     }
@@ -207,12 +207,54 @@ impl TableNode {
         Ok(&mut l0node.page.entries[vaddr.vpn(0)])
     }
 
+    /// 树外裸路径：沿 PTE 链从根帧遍历到 leaf 页（**不依赖本树元数据**——
+    /// 入口为根页表物理地址，如 trap 帧 satp.ppn()；现场/诊断专用，守卫兜底）。
+    ///
+    /// 与 [`Self::walk_ref`]（树内路径：children 借用引用、无裸指针）按依赖
+    /// 分工并存：本函数没有树可用、不碰元数据，守卫必须由调用方提供——根、
+    /// 每级中间表与 leaf 的 PA 都经 `ok` 校验后才访问/返回，坏地址的裸读
+    /// fault 在此拦下（诊断传 in_dram；可信场景可传恒真）。
+    /// 逐级读 PTE：V=0 未映射 → None；R|W|X 置位 = leaf（返回页基 + flags，
+    /// 支持任意级超页）；否则沿 PTE.PPN 下钻。
+    pub(crate) fn walk_raw(
+        root: PhysAddr,
+        page_va: VirtAddr,
+        ok: impl Fn(PhysAddr) -> bool,
+    ) -> Option<(PhysAddr, PteFlags)> {
+        let mut tbl = root;
+        if !ok(tbl) {
+            return None;
+        }
+        for level in (0..LEVELS).rev() {
+            // SAFETY: tbl 已过 ok 校验（合法可读物理区）；调用方保证只读、无并发写。
+            let pte = unsafe {
+                *((tbl.as_usize() + page_va.vpn(level) * 8) as *const PageTableEntry)
+            };
+            if !pte.is_valid() {
+                return None;
+            }
+            if pte.is_leaf() {
+                let pa = PhysAddr::from_raw(pte.paddr() as usize);
+                return ok(pa).then_some((pa, pte.flags()));
+            }
+            tbl = PhysAddr::from_raw(pte.paddr() as usize);
+            if !ok(tbl) {
+                return None;
+            }
+        }
+        None
+    }
+
     /// Walk to the leaf PTE read-only，沿所有权树下钻（无裸指针解引用）。
+    ///
+    /// 可信任路径（树内）：children 引用链由 Box 持有、借用检查保护——即使
+    /// PTE 被软件写坏，也不会裸解引用 PPN（正常路径的内存安全不依赖「树与
+    /// PTE 同源」不变量）。树外裸路径（现场/诊断，无树可用）走
+    /// [`Self::walk_raw`]（裸 PPN + 调用方守卫）——按依赖分工，互不外包。
     ///
     /// # Errors
     ///
-    /// 中间表或叶 PTE 无效时返回 [`MapError::NotMapped`]（与
-    /// [`Self::walk_mut`] 的 alloc=false 语义一致）。
+    /// 中间表或叶 PTE 无效（含中间级 leaf 超页）时返回 [`MapError::NotMapped`]。
     pub(crate) fn walk_ref(&self, vaddr: VirtAddr) -> Result<(PhysAddr, PteFlags), MapError> {
         let e2 = &self.page.entries[vaddr.vpn(2)];
         if !e2.is_valid() || e2.is_leaf() {
@@ -346,3 +388,7 @@ impl TableNode {
         self.page.entries.iter().all(|e| !e.is_valid())
     }
 }
+
+/// 页表遍历层级数（Sv39 = 3；架构演进只改这里——索引位宽已由
+/// [`VirtAddr::vpn`](crate::memory::manager::addr::VirtAddr::vpn) 封装）。
+const LEVELS: u8 = 3;

@@ -12,6 +12,8 @@
 //! 地址域（内核高半区/镜像恒等区 → 内核表，用户区 → 运行 team 表）选表查询。
 
 use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::memory::manager::addr::VirtAddr;
@@ -255,5 +257,20 @@ pub fn resolve(
         kernel().elftable.as_ref()?.lookup(addr)
     } else {
         team?.elftable.as_ref()?.lookup(addr)
+    }
+}
+
+/// 地址符号化文本（诊断族公共显示）：命中出「func+0xoff」（demangle），未命中
+/// 裸 hex。`tbl` = 任务自己的表（ubt 用，直接 `lookup`）；`None` = 走
+/// [`resolve`] 的域判定——内核域恒内核表、用户域退化裸 hex（如 depend 的
+/// 内核锁地址、scene 的 kbt/csr 行）。
+pub(crate) fn symbol(va: VirtAddr, tbl: Option<&ElfTable>) -> String {
+    let hit = match tbl {
+        Some(t) => t.lookup(va),
+        None => resolve(va, None),
+    };
+    match hit {
+        Some((name, off)) => format!("{}+{off:#x}", rustc_demangle::demangle(name)),
+        None => format!("{:#x}", va.as_usize()),
     }
 }

@@ -26,7 +26,7 @@ pub struct PageFault {
 }
 
 /// 缺页类型
-#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum FaultKind {
     /// 指令缺页 (scause = 12)
     #[error("Execute OOM Instruction")]

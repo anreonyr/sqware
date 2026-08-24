@@ -15,8 +15,11 @@ use super::depend;
 
 pub struct BareLock<T: ?Sized> {
     locked: AtomicBool,
-    /// 当前持有者调用点（返回地址；0 = 未持有）——重入检测与死锁溯源用
-    holder_pc: AtomicUsize,
+    /// 当前持有者调用点（返回地址；0 = 未持有）——死锁溯源用
+    caller: AtomicUsize,
+    /// 锁层级（参与 lockdep；None = exempt）。enforcement 仅 debug 生效。
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    level: Option<depend::Level>,
     data: UnsafeCell<T>,
 }
 
@@ -35,7 +38,19 @@ impl<T> BareLock<T> {
     pub const fn new(val: T) -> Self {
         BareLock {
             locked: AtomicBool::new(false),
-            holder_pc: AtomicUsize::new(0),
+            caller: AtomicUsize::new(0),
+            level: None,
+            data: UnsafeCell::new(val),
+        }
+    }
+
+    /// 带锁层级的构造（参与 lockdep；new() 默认 None = exempt）。
+    #[allow(dead_code)]
+    pub const fn new_level(level: depend::Level, val: T) -> Self {
+        BareLock {
+            locked: AtomicBool::new(false),
+            caller: AtomicUsize::new(0),
+            level: Some(level),
             data: UnsafeCell::new(val),
         }
     }
@@ -51,21 +66,19 @@ impl<T: ?Sized> BareLock<T> {
     #[allow(dead_code)] // 当前无用户，锁体系预留
     #[inline(never)] // 保证入口读到的 ra 是调用者返回地址（内联会破坏）
     pub unsafe fn lock(&self) -> BareLockGuard<'_, T> {
-        // 入口第一件事：捕获调用者返回地址（任何函数调用都会覆盖 ra）
-        let caller = depend::ra();
-        // Acquire：保证后续读取看到之前写入的完整状态
-        if self.locked.swap(true, Ordering::Acquire) {
-            // 单 hart 下锁已被持有必是同执行流重入（不关中断下亦然）——报告后 panic
-            let holder = self.holder_pc.load(Ordering::Relaxed);
-            depend::report(
-                "barelock",
-                "recursive acquisition",
-                self as *const Self as *const () as usize,
-                holder,
-                caller,
-            );
+        // 入口第一件事：读调用点（任何函数调用会覆盖 ra）。
+        let caller = crate::lock::depend_enter!(self);
+        // 自旋前层级校验（同一执行流内、无中断上下文争用——unsafe 契约保证）。
+        crate::lock::depend_check!(self, caller);
+        // Acquire：保证后续读取看到之前写入的完整状态。跨 hart 竞争真自旋；
+        // 同 hart 重入已在 check（自旋前 contains）暴露（debug）。
+        while self.locked.swap(true, Ordering::Acquire) {
+            crate::runtime::diagnose::halt::hush();
+            core::hint::spin_loop();
         }
-        self.holder_pc.store(caller, Ordering::Relaxed);
+        self.caller.store(caller, Ordering::Relaxed);
+        // lockdep：取到后记入持有集。
+        crate::lock::depend_acquire!(self, caller);
 
         BareLockGuard {
             lock: self,
@@ -81,12 +94,16 @@ impl<T: ?Sized> BareLock<T> {
     #[allow(dead_code)] // 非阻塞获取预留
     #[inline(never)] // 同 lock：保证入口 ra 为调用者返回地址
     pub unsafe fn try_lock(&self) -> Option<BareLockGuard<'_, T>> {
-        let caller = depend::ra();
+        let caller: usize;
+        // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
+        unsafe { core::arch::asm!("mv {0}, ra", out(reg) caller) };
         // 失败不报重入——try_lock 语义允许拿不到
         if self.locked.swap(true, Ordering::Acquire) {
             return None;
         }
-        self.holder_pc.store(caller, Ordering::Relaxed);
+        self.caller.store(caller, Ordering::Relaxed);
+        // lockdep：取到后记入持有集。
+        crate::lock::depend_acquire!(self, caller);
 
         Some(BareLockGuard {
             lock: self,
@@ -113,9 +130,12 @@ impl<T: ?Sized> DerefMut for BareLockGuard<'_, T> {
 
 impl<T: ?Sized> Drop for BareLockGuard<'_, T> {
     fn drop(&mut self) {
+        // lockdep：释放时移除持有集条目。
+        crate::lock::depend_release!(self.lock);
+
         // Release：保证之前写入在解锁时对其他核可见
         self.lock.locked.store(false, Ordering::Release);
         // 清除持有者调用点（AtomicUsize，与 data 同受锁互斥保护）
-        self.lock.holder_pc.store(0, Ordering::Relaxed);
+        self.lock.caller.store(0, Ordering::Relaxed);
     }
 }

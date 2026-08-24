@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 
 use crate::machine;
 use crate::memory::allocator::spare;
-use crate::runtime::diagnose::budget::DUMP_BUDGET;
+use crate::memory::allocator::spare::DUMP_BUDGET;
 use crate::runtime::diagnose::trace;
 
 /// spare 预算验收（boot 恰好一次；失败即 halt）。

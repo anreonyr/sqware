@@ -7,27 +7,22 @@
 // 关中断逻辑委托给 TrapGuard（见 lock/trap.rs）；guard 携带 !Send 标记，
 // 保证锁必须在获取它的同一 hart 上释放（多核安全前提）。
 //
-// lockdep 最小版：lock/try_lock 在入口捕获调用者返回地址（ra）写入 holder_pc，
-// 单 hart 下 swap 发现锁已被持有必然是同 hart 重入（关中断后无抢占）——
-// 在必然死循环前报告持有者/本次调用点并 panic（depend::report）。
+// lockdep：lock/try_lock 在入口捕获调用者返回地址（ra）写入 caller，
+// 同 hart 重入由 depend::check（自旋前 contains）暴露（recursive acquisition）；
+// 跨 hart 争用是真自旋（他核持有，check 通过）。
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::machine;
-
 use super::depend;
 use super::trap::TrapGuard;
 
 pub struct SpinLock<T: ?Sized> {
     locked: AtomicBool,
-    /// 持有者 hart_id + 1（0 = 空闲）——区分同 hart 重入与跨 hart 争用。
-    /// 语义对齐 RelLock：同 hart 再次获取是锁序违规（panic），跨 hart 是真争用（自旋）。
-    owner: AtomicUsize,
-    /// 当前持有者调用点（返回地址；0 = 未持有）——递归获取检测与死锁溯源用
-    holder_pc: AtomicUsize,
+    /// 当前持有者调用点（返回地址；0 = 未持有）——死锁溯源用
+    caller: AtomicUsize,
     /// 锁层级（参与 lockdep；None = exempt）。enforcement 仅 debug 生效。
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     level: Option<depend::Level>,
@@ -54,8 +49,7 @@ impl<T> SpinLock<T> {
     pub const fn new(val: T) -> Self {
         SpinLock {
             locked: AtomicBool::new(false),
-            owner: AtomicUsize::new(0),
-            holder_pc: AtomicUsize::new(0),
+            caller: AtomicUsize::new(0),
             level: None,
             data: UnsafeCell::new(val),
         }
@@ -65,8 +59,7 @@ impl<T> SpinLock<T> {
     pub const fn new_level(level: depend::Level, val: T) -> Self {
         SpinLock {
             locked: AtomicBool::new(false),
-            owner: AtomicUsize::new(0),
-            holder_pc: AtomicUsize::new(0),
+            caller: AtomicUsize::new(0),
             level: Some(level),
             data: UnsafeCell::new(val),
         }
@@ -78,8 +71,8 @@ impl<T: ?Sized> SpinLock<T> {
     ///
     /// 预留 API：panic/死锁场景下经 SBI 无锁输出，供定位"谁锁着不释放"。
     #[allow(dead_code)]
-    pub fn holder_pc(&self) -> usize {
-        self.holder_pc.load(Ordering::Relaxed)
+    pub fn caller(&self) -> usize {
+        self.caller.load(Ordering::Relaxed)
     }
 
     /// 获取锁，返回守卫。
@@ -88,49 +81,27 @@ impl<T: ?Sized> SpinLock<T> {
     /// 防止同 CPU 中断上下文重入导致死锁。
     /// 守卫析构时释放锁并恢复 SIE。
     ///
-    /// 单 hart 下锁已被持有必然是同 hart 重入（关中断后无抢占）——
-    /// 在必然死循环前报告持有者与本次调用点（lockdep 最小版）。
+    /// 同 hart 重入由 depend::check（自旋前 contains）暴露并 panic；
+    /// 跨 hart 争用是真自旋（他核持有，check 通过后自旋等待）。
     #[inline(never)] // 保证入口读到的 ra 是调用者返回地址（内联会破坏）
     pub fn lock(&self) -> SpinLockGuard<'_, T> {
-        // 入口第一件事：捕获调用者返回地址（任何函数调用都会覆盖 ra）
-        let caller = depend::ra();
+        // 入口第一件事：读调用点（任何函数调用会覆盖 ra）。
+        let caller = crate::lock::depend_enter!(self);
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
-        // SAFETY: 读 tp（入口 `_start` 写入的 hartid）无副作用。
-        let me = machine::hart_id() + 1;
+        // lockdep：自旋前层级校验（关中断后——held set 仅 SIE 关时可写）。
+        crate::lock::depend_check!(self, caller);
 
-        // lockdep：自旋前校验（抓 ABBA——死锁发生在自旋后，须先暴露）。
-        #[cfg(debug_assertions)]
-        if let Some(lv) = self.level {
-            depend::check(self as *const Self as *const () as usize, lv, caller);
-        }
-
-        // Acquire：获取成功后看到前持有者的所有写入。跨 hart 争用时真自旋；
-        // 同 hart 再次获取（关中断后无抢占，必然是同 hart 重入）是锁序违规——panic。
+        // Acquire：获取成功后看到前持有者的所有写入。跨 hart 争用时真自旋。
         while self.locked.swap(true, Ordering::Acquire) {
-            if self.owner.load(Ordering::Relaxed) == me {
-                let holder = self.holder_pc.load(Ordering::Relaxed);
-                depend::report(
-                    "spinlock",
-                    "recursive acquisition",
-                    self as *const Self as *const () as usize,
-                    holder,
-                    caller,
-                );
-            }
             // 自旋等待者也是「活着」的形态：看警（ALARM 已拉响且他核报警 → 就地
             // 卧倒——修补自旋核不收 trap、hush 钩子覆盖不到的停机漏洞）。
             crate::runtime::diagnose::halt::hush();
             core::hint::spin_loop();
         }
-        self.owner.store(me, Ordering::Relaxed);
-        self.holder_pc.store(caller, Ordering::Relaxed);
-
-        // lockdep：取到后记入持有集。
-        #[cfg(debug_assertions)]
-        if let Some(lv) = self.level {
-            depend::acquire(self as *const Self as *const () as usize, lv);
-        }
+        self.caller.store(caller, Ordering::Relaxed);
+        // lockdep：取到后记入持有集（顺带记本次调用点）。
+        crate::lock::depend_acquire!(self, caller);
 
         SpinLockGuard {
             lock: self,
@@ -142,30 +113,24 @@ impl<T: ?Sized> SpinLock<T> {
     /// 尝试获取锁，成功返回守卫，失败返回 `None`（不自旋）。
     ///
     /// 失败不报重入——`try_lock` 语义允许拿不到；成功时同样记录持有者调用点。
+    /// 非阻塞路径无死锁可能（拿不到即弃）——不做 check（顺序校验只对阻塞
+    /// lock() 生效，那是 ABBA 发生的边界）。
     #[allow(dead_code)] // 非阻塞获取预留
     #[inline(never)] // 同 lock：保证入口 ra 为调用者返回地址
     pub fn try_lock(&self) -> Option<SpinLockGuard<'_, T>> {
-        let caller = depend::ra();
+        let caller: usize;
+        // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
+        unsafe { core::arch::asm!("mv {0}, ra", out(reg) caller) };
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
-
-        // lockdep：try_lock 非阻塞、拿不到即弃，无死锁可能——不做顺序校验
-        // （但仍记入持有集）。顺序校验只对阻塞 lock() 生效，那是 ABBA 发生的边界。
 
         // 获取失败时 trap 析构自动恢复中断
         if self.locked.swap(true, Ordering::Acquire) {
             return None;
         }
-        // SAFETY: 读 tp（入口 `_start` 写入的 hartid）无副作用。
-        let me = machine::hart_id() + 1;
-        self.owner.store(me, Ordering::Relaxed);
-        self.holder_pc.store(caller, Ordering::Relaxed);
-
+        self.caller.store(caller, Ordering::Relaxed);
         // lockdep：取到后记入持有集。
-        #[cfg(debug_assertions)]
-        if let Some(lv) = self.level {
-            depend::acquire(self as *const Self as *const () as usize, lv);
-        }
+        crate::lock::depend_acquire!(self, caller);
 
         Some(SpinLockGuard {
             lock: self,
@@ -196,16 +161,12 @@ impl<T: ?Sized> DerefMut for SpinLockGuard<'_, T> {
 impl<T: ?Sized> Drop for SpinLockGuard<'_, T> {
     fn drop(&mut self) {
         // lockdep：释放时移除持有集条目。
-        #[cfg(debug_assertions)]
-        if let Some(lv) = self.lock.level {
-            depend::release(self.lock as *const _ as *const () as usize, lv);
-        }
+        crate::lock::depend_release!(self.lock);
 
         // Release：保证之前写入在解锁时对其他核可见
         self.lock.locked.store(false, Ordering::Release);
-        // 清除持有者调用点与持有者 hart（AtomicUsize，与 data 同受锁互斥保护）
-        self.lock.holder_pc.store(0, Ordering::Relaxed);
-        self.lock.owner.store(0, Ordering::Relaxed);
+        // 清除持有者调用点（AtomicUsize，与 data 同受锁互斥保护）
+        self.lock.caller.store(0, Ordering::Relaxed);
         // _trap 字段随后析构，恢复 SIE
     }
 }

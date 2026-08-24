@@ -1,24 +1,21 @@
-//! diagnose — 诊断族：事件、现场、停机、导出（崩溃链路的同一责任面）。
+//! diagnose — 诊断族：事件、报告、现场、停机、导出（崩溃链路的同一责任面）。
 //!
 //! 组合（相互咬合）：
-//!   export — 宿主导出：JSON Lines 单文件（sqware-diagnose.jsonl），trace/scene/halt
-//!           的结构化记录统一经此落盘（终端纯文本归 console.rs）
-//!   trace  — 事件环形缓冲 + 宿主镜像（经 export 导出），崩溃反推依据
+//!   report — 诊断报告核心：信息收集模块化、一次印发全部信息（段落 + 行，
+//!           投稿方直写，成册后两出口——控制台表格 / 宿主 JSON）
+//!   export — 宿主导出：单文件 JSON 流（事件行实时 + 报告快照整档）
+//!   trace  — 事件环形缓冲（运行时设施）+ 宿主镜像（事件行实时导出）
 //!   scene  — 崩溃现场转储（GPR/CSR/回溯符号化，回答「崩在哪」）
 //!   halt   — 停机决策：panic 处理器（抢占报警源、广播停其它核、诊断输出）
 //!
 //! 崩溃链路：断言失败 → panic → halt 拉警报 → trace 记 Panic 事件 →
-//! scene 转现场；读取侧（panic_dump）只在报警核、halt 已让其它核停写后运行。
+//! scene/trace 组稿进报告 → seal → render（控制台）+ export（宿主）。
 #[cfg(feature = "semihosting")]
 pub mod export;
-/// 预算政策：spare 仓容量（trace 环形常驻 + panic 打印峰值）单源。
-pub mod budget;
-/// 地址显示：全局符号化 + 分组 hex（原 crates/table hex+sym 合并迁入）。
-pub mod addr;
-/// 行缓冲格式化器（原 crates/table fmt 迁入）。
-pub mod fmt;
-/// 表格渲染适配：stanza 无边框定宽 + 全局收集器（替代自建表格）。
+/// 表格渲染适配：stanza 定宽栅格（列宽自适应）；报告印发 + 迁移期收集器。
 pub mod render;
+/// 诊断报告核心（段落 + 行；成册/清空生命周期）。
+pub mod report;
 pub mod halt;
 pub mod scene;
 pub mod trace;

@@ -947,12 +947,17 @@ impl Space {
         // audit: 用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
         // 键 = asid << 32 | VA：多个空间共享同一堆窗口 VA，须并入空间身份防碰撞。
         #[cfg(all(debug_assertions, feature = "audit"))]
-        crate::memory::allocator::fence::ledger::LEDGER.mark(
-            (self.kind.asid() << 32) | info.va.as_usize(),
-            info.size.get(),
-            crate::lock::ra(),
-            crate::memory::allocator::fence::ledger::OwnerKind::UserHeap,
-        );
+        {
+            let caller: usize;
+            // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
+            unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
+            crate::memory::allocator::fence::ledger::LEDGER.mark(
+                (self.kind.asid() << 32) | info.va.as_usize(),
+                info.size.get(),
+                caller,
+                crate::memory::allocator::fence::ledger::OwnerKind::UserHeap,
+            );
+        }
         // SAFETY: S-mode 下 sfence.vma 恒合法。
         unsafe {
             flush_asid(self.kind.asid());

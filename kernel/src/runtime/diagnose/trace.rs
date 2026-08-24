@@ -21,18 +21,20 @@
 use core::fmt;
 use core::mem::size_of;
 use core::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(feature = "semihosting")]
-use core::fmt::Write;
+use serde::Serialize;
 
 use alloc::alloc::Layout;
 use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 use fack::prelude::Error;
 
 use crate::lock::OnceLock;
+use crate::machine;
 use crate::memory::allocator::spare;
 use crate::memory::manager::fault::FaultKind;
-use crate::machine;
-use crate::runtime::diagnose::{fmt::Fmt, render};
+use crate::runtime::diagnose::report::Report;
 
 /// 每 hart 事件窗口容量。
 pub const BUFFER_SIZE: usize = 512;
@@ -44,7 +46,8 @@ pub const TRACE_DUMP: usize = 64;
 // ── 事件定义（按模块分组）────────────────────────────
 
 /// 各模块事件的聚合。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventKind {
     Sched(SchedEvent),
     Env(EnvEvent),
@@ -54,7 +57,8 @@ pub enum EventKind {
 }
 
 /// work/scheduler 的任务生命周期。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SchedEvent {
     Spawn { tid: usize },
     Switch { prev_tid: usize, next_tid: usize },
@@ -68,13 +72,15 @@ pub enum SchedEvent {
 }
 
 /// work/envcall 的用户环境调用。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EnvEvent {
     Call { call: usize, arg: usize },
 }
 
 /// memory/manager/fault 的缺页与 memory/integrity 的完整性违例。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemEvent {
     PageFault {
         va: usize,
@@ -86,7 +92,8 @@ pub enum MemEvent {
 }
 
 /// runtime/halt 的系统级事件。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HaltEvent {
     Halt,
     Panic,
@@ -94,7 +101,8 @@ pub enum HaltEvent {
 
 /// boot / 副核启动的初始化消息（直打控制台会扰乱 panic 现场，改写进 trace）。
 /// 各 hart 启动时一次；crash 后由报警源统一 dump，既可查又不打断现场。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BootEvent {
     /// 主核 call 该副核（HSM start）。
     Launch { hart: usize },
@@ -105,7 +113,7 @@ pub enum BootEvent {
 }
 
 /// 一条事件：时间戳 + 聚合事件。仅标量、Copy，可 const 初始化。
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize)]
 pub struct Event {
     when: u64,
     kind: EventKind,
@@ -173,124 +181,29 @@ pub fn note(kind: EventKind) {
 // 事件 JSON 序列化（json_payload）在此；人读文本（fmt_description）同源平行。
 // 文件/分帧/锁/闩均归 diagnose::export（JSON Lines 单文件 sqware-diagnose.jsonl）。
 
-/// 宿主镜像：把一条事件序列化成 JSON 记录，经 `export::line` 写入宿主文件
+/// 宿主镜像：把一条事件序列化成 JSON 记录，经 `export::push` 写入宿主文件
 /// sqware-diagnose.jsonl。依赖 QEMU -semihosting（feature 默认开启，runner
-/// 恒加该标志）。打开失败/写失败尽力而为（诊断路径永不 panic）；跨核写由
-/// export 以 try_lock 串行。
+/// 恒加该标志）。序列化全交 serde_json（[`HostEvent`] 只做打包，零手写 JSON）；
+/// 失败静默（诊断路径永不 panic）；跨核写由 export 以 try_lock 串行。
 ///
 /// 事件写者：panic 只追加自身一行（note(Halt(Panic))），环形窗口 dump 不写文件。
 #[cfg(feature = "semihosting")]
 fn host_note(kind: EventKind, hart: usize, when: u64) {
-    use crate::runtime::diagnose::export::line;
+    use crate::runtime::diagnose::export::push;
     let e = Event { when, kind };
-    line(|w| {
-        let _ = write!(w, "\"h\":{hart},\"t\":{}", e.when);
-        let _ = json_payload(&e, w);
-    });
+    if let Ok(json) = serde_json::to_vec(&HostEvent { h: hart, e: &e }) {
+        push(&json);
+    }
 }
 
-/// 一条事件的 JSON 载荷：`,"kind":"…"` + 模块字段（数字裸写、字符串经 k/v）。
-/// 与 fmt_description（人读文本）平行——事件只有机器/人读两个形状，各一个 match。
+/// 事件导出行：`{"h":…,"when":…,"kind":…}`——hart 由包装补，when/kind 经
+/// flatten 从 [`Event`] 展开（内存环不含 hart，per-hart 窗口只是隐式的）。
 #[cfg(feature = "semihosting")]
-fn json_payload(e: &Event, w: &mut crate::runtime::diagnose::export::Buf) -> fmt::Result {
-    use crate::runtime::diagnose::export::{k, v};
-    match e.kind {
-        EventKind::Sched(SchedEvent::Spawn { tid }) => {
-            write!(w, ",\"kind\":\"spawn\"")?;
-            k(w, "tid")?;
-            write!(w, "{tid}")
-        }
-        EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }) => {
-            write!(w, ",\"kind\":\"switch\"")?;
-            k(w, "prev")?;
-            write!(w, "{prev_tid}")?;
-            k(w, "next")?;
-            write!(w, "{next_tid}")
-        }
-        EventKind::Sched(SchedEvent::Starve { tid }) => {
-            write!(w, ",\"kind\":\"starve\"")?;
-            k(w, "tid")?;
-            write!(w, "{tid}")
-        }
-        EventKind::Sched(SchedEvent::Steal { tid, src_hart }) => {
-            write!(w, ",\"kind\":\"steal\"")?;
-            k(w, "tid")?;
-            write!(w, "{tid}")?;
-            k(w, "src_hart")?;
-            write!(w, "{src_hart}")
-        }
-        EventKind::Sched(SchedEvent::Park { tid, wake_at }) => {
-            write!(w, ",\"kind\":\"park\"")?;
-            k(w, "tid")?;
-            write!(w, "{tid}")?;
-            k(w, "wake_at")?;
-            write!(w, "{wake_at}")
-        }
-        EventKind::Sched(SchedEvent::Wake { tid }) => {
-            write!(w, ",\"kind\":\"wake\"")?;
-            k(w, "tid")?;
-            write!(w, "{tid}")
-        }
-        EventKind::Sched(SchedEvent::Exit { tid }) => {
-            write!(w, ",\"kind\":\"exit\"")?;
-            k(w, "tid")?;
-            write!(w, "{tid}")
-        }
-        EventKind::Sched(SchedEvent::Reap { tid }) => {
-            write!(w, ",\"kind\":\"reap\"")?;
-            k(w, "tid")?;
-            write!(w, "{tid}")
-        }
-        EventKind::Sched(SchedEvent::Idle) => write!(w, ",\"kind\":\"idle\""),
-        EventKind::Env(EnvEvent::Call { call, arg }) => {
-            write!(w, ",\"kind\":\"envcall\"")?;
-            k(w, "call")?;
-            write!(w, "{call}")?;
-            k(w, "arg")?;
-            write!(w, "{arg:#x}")
-        }
-        EventKind::Mem(MemEvent::PageFault {
-            va,
-            fault,
-            resolved,
-        }) => {
-            write!(w, ",\"kind\":\"pagefault\"")?;
-            k(w, "va")?;
-            write!(w, "{va:#x}")?;
-            k(w, "fault")?;
-            let mut f = Fmt::<32>::new();
-            let _ = write!(f, "{fault:?}");
-            v(w, f.as_str())?;
-            k(w, "resolved")?;
-            write!(w, "{resolved}")
-        }
-        EventKind::Mem(MemEvent::Integrity { code, addr }) => {
-            write!(w, ",\"kind\":\"integrity\"")?;
-            k(w, "code")?;
-            write!(w, "{code}")?;
-            k(w, "addr")?;
-            write!(w, "{addr:#x}")
-        }
-        EventKind::Halt(HaltEvent::Halt) => write!(w, ",\"kind\":\"halt\""),
-        EventKind::Halt(HaltEvent::Panic) => write!(w, ",\"kind\":\"panic\""),
-        EventKind::Boot(BootEvent::Launch { hart }) => {
-            write!(w, ",\"kind\":\"launch\"")?;
-            k(w, "hart")?;
-            write!(w, "{hart}")
-        }
-        EventKind::Boot(BootEvent::Done { hart }) => {
-            write!(w, ",\"kind\":\"bootdone\"")?;
-            k(w, "hart")?;
-            write!(w, "{hart}")
-        }
-        EventKind::Boot(BootEvent::Stack { hart, used }) => {
-            write!(w, ",\"kind\":\"trpstack\"")?;
-            k(w, "hart")?;
-            write!(w, "{hart}")?;
-            k(w, "used")?;
-            write!(w, "{used}")
-        }
-    }
+#[derive(Serialize)]
+struct HostEvent<'a> {
+    h: usize,
+    #[serde(flatten)]
+    e: &'a Event,
 }
 
 /// 对窗口内最近 ≤k 条事件从旧到新调 f。
@@ -419,24 +332,22 @@ pub fn hart_rows() -> usize {
     (TRACE_DUMP / machine::hart_count()).max(1)
 }
 
-/// 崩溃转储：遍历已启动各 hart 的最近窗口，按段落（标题 + 两列表 t/描述）倒出。
-///
-/// 必须在 halt 已让其它核停写后调用（panic_handler 的报警核）。表入全局收集器
-/// （render::push，stanza 定宽截断建格；控制台静默），由 scene::dump_crash 末尾
-/// render_all 统一打印（「收集完所有信息后再打印」）。只倒最近 hart_rows 条
-/// （总量平摊）。
-pub fn panic_dump() {
-    const TRACE_W: [usize; 2] = [18, 45]; // t = {:#018x} 18 字符；ΣW + 1 = 64
+/// 崩溃转储：遍历已启动各 hart 的最近窗口，每人开一段（标题 + 两列表 t/描述）
+/// 投进报告（`report::paragraph("trace", …)`，表中首行恒为表头）。由
+/// scene::dump_crash 末尾调用；报告成册后由印发统一输出——控制台与宿主
+/// 收到同一份数据。只倒最近 hart_rows 条（总量平摊）。
+pub fn panic_dump(r: &mut Report) {
     for h in 0..machine::hart_count() {
-        let mut tab = render::fixed_table(&TRACE_W);
+        let mut rows: Vec<Vec<Option<String>>> = vec![
+            vec![Some("t".into()), Some("event".into())], // 首行表头
+        ];
         dump(h, hart_rows(), |e| {
-            let mut w = Fmt::<40>::new();
-            w.hexw(e.when as usize);
-            let mut d = Fmt::<96>::new();
+            let mut d = String::new();
             let _ = fmt_description(e, &mut d);
-            // with_row 消耗 self：FnMut 捕获内不能 move，经 mem::take 换出再链。
-            tab = core::mem::take(&mut tab).with_row(render::row(&TRACE_W, [w.as_str(), d.as_str()]));
+            rows.push(vec![Some(format!("{:#018x}", e.when)), Some(d)]);
         });
-        render::push(format!("[trace] hart {h}:"), &tab);
+        r.paragraph("trace", Some(format!("[trace] hart {h}:")))
+            .items
+            .extend(rows);
     }
 }

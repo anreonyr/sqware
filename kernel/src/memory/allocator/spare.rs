@@ -227,10 +227,18 @@ impl SpareInner {
     }
 }
 
+/// 崩溃打印峰值预算。**实测校准（panic E2E）**：stanza 渲染瞬态风暴规模随预算
+/// 同向浮动（多轮 96→512KiB 校准中峰值始终贴当时 cap、余量 <1KB，疑似渲染器
+/// 按可用内存上限分配，未及深挖）——故定 **1MiB**：dump 内容天然有界，海量
+/// 余量下任何栈形/seed 都安全；128MB DRAM 中占比 <1%。
+/// `[spare]` 行自报 used/peak 供审计。原属 diagnose::budget（模块已删——预算
+/// 归仓所在，诊断报告零预算痕迹）。
+pub const DUMP_BUDGET: usize = 1024 * 1024;
+
 /// 给定载荷与预留所需仓容：载荷（16B 取整）+ 块头 + 预留，页对齐后整取。
 ///
-/// 供诊断预算（diagnose::budget::spare_budget）与验收（health::spare）共用的
-/// 开销公式——预算与记账同源，remaining 恒 ≥ 预留。
+/// 供仓容量公式与验收（health::spare）共用的开销公式——预算与记账同源，
+/// remaining 恒 ≥ 预留。
 pub fn region_size(payload: usize, reserve: usize) -> usize {
     (payload.next_multiple_of(MAX_ALIGN) + HEADER + reserve).next_multiple_of(PAGE_SIZE)
 }
@@ -240,10 +248,10 @@ pub(crate) struct SpareAllocator {
 }
 
 impl SpareAllocator {
-    /// 建仓：经 hybrid 一次性 allocate 诊断预算（PAGE 对齐、整块连续），整区入链。
+    /// 建仓：经 hybrid 一次性 allocate 仓容量（PAGE 对齐、整块连续），整区入链。
     ///
-    /// 容量不显式注入：按 `machine::hart_count()` 经诊断预算
-    /// （diagnose::budget::spare_budget = trace 环形常驻 + panic 打印峰值）自查。
+    /// 容量不显式注入：按 `machine::hart_count()` 经公式自查（trace 环形常驻
+    /// + 崩溃打印峰值 DUMP_BUDGET——预算归仓所在，诊断报告零预算痕迹）。
     /// 前置：`hybrid::init` 之后（allocator::init 内）——区域是主堆的一次整块
     /// 页级锁定分配：frame 记账在册、绝不回收再分发；panic 现场仍与主堆运行时
     /// 状态（锁链/碎片/账目）互不相干。
@@ -252,7 +260,10 @@ impl SpareAllocator {
     ///
     /// 主堆余量不足 → [`InitError::OutOfMemory`]。
     fn init() -> Result<Self, InitError> {
-        let cap = crate::runtime::diagnose::budget::spare_budget(machine::hart_count());
+        let cap = crate::memory::allocator::spare::region_size(
+            crate::runtime::diagnose::trace::ring_bytes(machine::hart_count()),
+            DUMP_BUDGET,
+        );
         let align = Layout::from_size_align(cap, PAGE_SIZE).map_err(|_| InitError::OutOfMemory)?;
         let chunk = hybrid::allocator()
             .allocate(align)
