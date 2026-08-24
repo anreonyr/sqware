@@ -38,6 +38,10 @@ const BT_DEPTH: usize = 32;
 const BT_SCAN: usize = 4096;
 /// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
 const ADDR_ALIGN: usize = 4;
+/// 栈窗口 slot 步长（守护页 + 栈体，见 space::stack_allocate）——内核团队任务栈
+/// 段顶对齐基准。
+const STACK_SLOT: usize =
+    crate::work::unit::space::TASK_STACK_SIZE + crate::work::unit::space::STACK_GUARD_SIZE;
 
 /// 定宽 hex 文本（{:#018x}）——值列的通用形态。
 fn hex(x: usize) -> String {
@@ -97,7 +101,31 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         asm!("mv {0}, sp", out(reg) sp);
         asm!("mv {0}, s0", out(reg) fp);
     }
-    let high = sp.saturating_add(BT_SCAN);
+    // 扫描上界钳制：崩溃现场可能运行在两类「段顶之上是刻意未映射 guard 页」的
+    // 栈上，扫描窗 [sp, sp+BT_SCAN) 越过段顶即读缺页 → 嵌套 panic → 停机自环 →
+    // 崩溃现场整体静默消失（"幽灵 panic"）。两类都把 high 钳到段顶：
+    //   ① per-hart trap 栈：段顶之上 = 相邻段 guard（init_trap_stacks 已 unmap）；
+    //   ② 内核团队任务栈（ktask 等，S 态栈位于 0xC0000000 栈窗口，kernel 空间的
+    //      Stack 窗口）：slot 顶之上 = 下一 slot 的 guard（stack_allocate 只登记
+    //      guard 子 Map、不装 PTE）。panic 在 trap 栈之外触发（如内核任务退出
+    //      路径）时 sp 落栈窗口内——按 0x5000 slot 对齐上取段顶。
+    // 其余栈（boot 主栈等）上方为已映射 DRAM，退回原 sp+BT_SCAN 行为。只读栈段
+    // 元数据（boot 常驻）与纯位运算，崩溃路径零分配零锁。
+    let high = {
+        let trap_top =
+            crate::runtime::switcher::trampoline::trap_stack_meta_opt(crate::machine::hart_id())
+                .filter(|m| m.top != 0 && sp <= m.top && sp > m.bottom)
+                .map(|m| m.top);
+        let stack_top = (sp >= crate::work::unit::space::USER_STACK_BASE.as_usize()
+            && sp
+                < crate::work::unit::space::USER_STACK_BASE.as_usize()
+                    + crate::work::unit::space::TASK_STACK_AREA_SIZE)
+            .then(|| (sp & !(STACK_SLOT - 1)) + STACK_SLOT);
+        match trap_top.or(stack_top) {
+            Some(t) => sp.saturating_add(BT_SCAN).min(t),
+            None => sp.saturating_add(BT_SCAN),
+        }
+    };
     let mut n = 0usize;
     let mut prev = 0usize;
     // ① 帧指针链：每帧取 ra 与调用者 fp（单调增，栈向下生长）。

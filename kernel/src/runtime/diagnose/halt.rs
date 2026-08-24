@@ -126,7 +126,18 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 再广播停止其它核（唤醒睡核、提示用户核），随后组成诊断报告。
     // 嵌套 panic（本 hart 已是报警源，组稿期间再 fault 的重入）：报警与
     // 广播已做过、其它核已停——不再重复组稿，直接进停机自环。
+    // 幽灵指纹：重入绝不静默——把第二次 panic 的原话与现场 sepc/stval 直写
+    // 控制台（PanicMessage 的 Display 与两个 usize 全经 format_args 落栈上
+    // 缓冲，无堆无锁不碰分配器，崩溃路径纪律不破）。否则组稿期任意再 fault
+    // 会连第二次 panic 的文本一起吞掉：控制台全静默却 exit 0（"幽灵 panic"）。
+    // claim() 的 false 分支恒为「本核即报警源」的重入（输家已在内部 hunker）。
     if !alarm() {
+        crate::putln!(
+            "info: {} sepc={:#x} stval={:#x}",
+            info.message(),
+            riscv::register::sepc::read(),
+            riscv::register::stval::read(),
+        );
         halt_loop()
     }
 

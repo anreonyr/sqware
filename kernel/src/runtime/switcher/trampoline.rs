@@ -304,6 +304,17 @@ fn trap_stack_meta(hart: usize) -> TrapStackMeta {
     TRAP_STACKS.get().expect("trap stacks not initialized")[hart].get()
 }
 
+/// 只读探针版（崩溃路径专用）：表未初始化或 hart 越界 → `None`，**不 panic**。
+///
+/// 崩溃现场（scene::kbacktrace 等）只读栈段元数据来钳制扫描窗口；此处若走
+/// `expect` 会在 panic 现场引入新的 panic 源（嵌套 panic → 停机自环，现场丢失）。
+pub(crate) fn trap_stack_meta_opt(hart: usize) -> Option<TrapStackMeta> {
+    TRAP_STACKS
+        .get()
+        .and_then(|t| t.get(hart))
+        .map(SyncCell::get)
+}
+
 /// trap 栈元数据表长度（= 实际核数）。
 fn trap_stack_count() -> usize {
     TRAP_STACKS
