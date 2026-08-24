@@ -18,9 +18,11 @@ audit = []
 [dependencies]
 ubi = { path = "../crates/ubi" }
 sbi = { path = "../crates/sbi" }
-table = { path = "../crates/table" }
+stanza = "0.5.2"
 
 bitflags = "2.13.1"
+# Fmt 行缓冲的有界字符串（原 crates/table 依赖，随工具迁入而随迁）。
+arrayvec = { version = "0.7.8", default-features = false }
 erra = { version = "0.2.0", default-features = false }
 fack = { version = "0.2.0", default-features = false }
 fdt = { version = "0.1.5", default-features = false }

@@ -3,11 +3,16 @@
 //! 无堆（ArrayString 有界缓冲、写满截断、不 panic），泛 sink（flush 的目标
 //! 由调用方每次传入，可 console / trace-host / test，不硬绑底层）。
 //! 每格式一个方法（formatter），不抽统一 trait。
+//!
+//! 原属 crates/table（行缓冲工具随表格渲染退役而迁入诊断面——表格渲染改用
+//! stanza（见 diagnose::render），Fmt 仍是值列成型的统一行缓冲）。
 
 use core::fmt::{self, Write};
 
-use crate::hex::render_addr;
-use crate::table::Line;
+use super::addr::render_addr;
+
+/// 渲染输出缓冲：一段有界栈字符串（arrayvec 别名）。
+pub type Line<const CAP: usize> = arrayvec::ArrayString<CAP>;
 
 /// 行缓冲格式化器：把格式化的片段拼进一个有界栈行，收行整段直写 sink。
 pub struct Fmt<const CAP: usize> {

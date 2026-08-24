@@ -25,14 +25,14 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::fmt::Write;
 
 use alloc::alloc::Layout;
+use alloc::format;
 use fack::prelude::Error;
 
-use crate::console::Sink;
 use crate::lock::OnceLock;
 use crate::memory::allocator::spare;
 use crate::memory::manager::fault::FaultKind;
-use crate::{machine, putln};
-use table::{Cell, Fmt, Para, Table};
+use crate::machine;
+use crate::runtime::diagnose::{fmt::Fmt, render};
 
 /// 每 hart 事件窗口容量。
 pub const BUFFER_SIZE: usize = 512;
@@ -421,30 +421,22 @@ pub fn hart_rows() -> usize {
 
 /// 崩溃转储：遍历已启动各 hart 的最近窗口，按段落（标题 + 两列表 t/描述）倒出。
 ///
-/// 必须在 halt 已让其它核停写后调用（panic_handler 的报警核）。无分配、无锁。
-/// 每 hart 一个段落（标题后空行、表格经 Para 缩进 2 空格——与 scene/depend 同
-/// 格式）。只倒最近 hart_rows 条（总量平摊）。
+/// 必须在 halt 已让其它核停写后调用（panic_handler 的报警核）。表入全局收集器
+/// （render::push，stanza 定宽截断建格；控制台静默），由 scene::dump_crash 末尾
+/// render_all 统一打印（「收集完所有信息后再打印」）。只倒最近 hart_rows 条
+/// （总量平摊）。
 pub fn panic_dump() {
+    const TRACE_W: [usize; 2] = [18, 45]; // t = {:#018x} 18 字符；ΣW + 1 = 64
     for h in 0..machine::hart_count() {
-        let mut p = Para::new(Sink);
-        p.title(format_args!("[trace] hart {h}:"));
-        let mut tab = Table::<2, { TRACE_DUMP }, 96>::new();
-        tab.set_total_width(64); // 统一诊断表宽预算（同 scene，最长行同宽）。
-        {
-            let mut it = tab.rows_mut();
-            dump(h, hart_rows(), |e| {
-                let Some(row) = it.next() else {
-                    return;
-                };
-                let mut w = Fmt::<40>::new();
-                w.hexw(e.when as usize);
-                let mut d = Fmt::<96>::new();
-                let _ = fmt_description(e, &mut d);
-                row[0] = Cell::new(w.as_str());
-                row[1] = Cell::new(d.as_str());
-            });
-        }
-        p.table(&tab);
-        putln!(); // 段尾空行（块间间距统一：标题/表之间恰一空行）。
+        let mut tab = render::fixed_table(&TRACE_W);
+        dump(h, hart_rows(), |e| {
+            let mut w = Fmt::<40>::new();
+            w.hexw(e.when as usize);
+            let mut d = Fmt::<96>::new();
+            let _ = fmt_description(e, &mut d);
+            // with_row 消耗 self：FnMut 捕获内不能 move，经 mem::take 换出再链。
+            tab = core::mem::take(&mut tab).with_row(render::row(&TRACE_W, [w.as_str(), d.as_str()]));
+        });
+        render::push(format!("[trace] hart {h}:"), &tab);
     }
 }

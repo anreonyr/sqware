@@ -87,8 +87,8 @@ pub(crate) use depend::ra;
 #[allow(unused_imports)]
 pub use rw::RwLock;
 pub use spin::SpinLock;
-/// 注入地址符号化回调（boot 装配后调用；未注入则 table 打印裸地址）。
-pub use table::set_symbolizer;
+/// 注入地址符号化回调（boot 装配后调用；未注入则诊断打印裸地址）。
+pub use crate::runtime::diagnose::addr::set_symbolizer;
 
 /// debug 装配 lockdep（release 为 no-op；boot 分配器就绪后调用一次）。
 #[cfg(debug_assertions)]

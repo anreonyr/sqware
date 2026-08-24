@@ -13,6 +13,12 @@
 pub mod export;
 /// 预算政策：spare 仓容量（trace 环形常驻 + panic 打印峰值）单源。
 pub mod budget;
+/// 地址显示：全局符号化 + 分组 hex（原 crates/table hex+sym 合并迁入）。
+pub mod addr;
+/// 行缓冲格式化器（原 crates/table fmt 迁入）。
+pub mod fmt;
+/// 表格渲染适配：stanza 无边框定宽 + 全局收集器（替代自建表格）。
+pub mod render;
 pub mod halt;
 pub mod scene;
 pub mod trace;

@@ -17,7 +17,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::machine;
 use core::fmt::Write;
 use sbi::{self, fid, scall::SArgs};
-use table::Fmt;
+use crate::runtime::diagnose::fmt::Fmt;
 
 /// 警报是否已拉响（第一个 panic 置位；其余 hart 依此停止）。
 /// 与 follower 的 Acquire 读配对：`ALARM` 置位可见时，`ALARMER` 的写入亦必可见。

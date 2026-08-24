@@ -44,9 +44,11 @@ pub fn accept() {
             Err(_) => break,
         }
     }
+    // 直接断言"耗尽后再分配必 Err"（失败路径返回 Err 才是演练本意；旧版用
+    // remaining() < 1024 间接判定，余量落在 [1024, 块开销) 区间时会误报）。
     crate::expect!(
-        spare::remaining() < 1024,
-        "spare: drill did not exhaust budget (remaining {})",
+        spare::allocator().allocate(step).is_err(),
+        "spare: drill did not reach exhaustion (remaining {})",
         spare::remaining()
     );
     // 逆序归还（相邻块逆序释放 → 合并链仍应还原为单块）。

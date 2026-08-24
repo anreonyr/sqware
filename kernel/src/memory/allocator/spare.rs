@@ -1,10 +1,10 @@
 // spare — 后备仓分配器（日志 + panic 打印专用）：coalescing free-list，有序相邻合并
 //
-// 与主堆（portal → bump/hybrid → block/frame）**互不可见**：
-//   · 区 —— boot 早期从 bump 头顶 carve 一次性成仓（3 号位：bump::init 之后、
-//     hybrid::init 之前），大小 = 诊断预算（spare_budget(h)：trace 环形常驻 +
-//     panic 打印峰值，见 diagnose::budget）。bump 前沿越过本仓，frame/block 永不触
-//     碰——崩溃现场分配器可信的唯一来源，主堆烂了也不影响本仓。
+// 与主堆（portal → bump/hybrid → block/frame）**区域互不重叠**：
+//   · 区 —— boot 期经 **hybrid** 一次性 allocate 诊断预算成仓（allocator::init 内
+//     hybrid::init 之后；hybrid 路由超大块到 frame 的 2 幂页块），大小 = 诊断预算
+//     （spare_budget(h)：trace 环形常驻 + panic 打印峰值，见 diagnose::budget）。
+//     区域在主堆里是**整块页级锁定分配**：block/frame 记账在册、绝不回收再分发。
 //   · 用 —— 常态**显式调用**（trace 环形、health 演练指名道姓取 `spare::allocator()`）；
 //     崩溃 = 报警核把门户后端**无锁切换**到本仓（portal::switch(Backend::Spare)——原子
 //     store，不取任何锁，panic 恰在持主堆锁现场也不卡死），转储渲染的分配整个
@@ -12,6 +12,9 @@
 //     持锁者恒为瞬时上下文，无死锁环。
 //   · 失 —— 预算即契约：health 验收断言 ring 常驻后余量 ≥ DUMP_BUDGET，溢出演练
 //     证明失败路径返回 Err（不 panic，调用方映射）。
+//
+// 曾踩的坑：把 init 挪到 hybrid 之后却仍向 bump 要区——bump 区域已被 frame/block
+// 接管，与主堆空闲区重叠双管理 → panic 现场写同一批页互相踩 → dump 时灵时不灵。
 //
 // 块模型（有序单链 free-list，无 buddy 幂级——仓小、碎片随合并消解）：
 //   Blk = 侵入式 Link（复用 allocator::Link）+ size（本块总长含 HEADER），写块首；
@@ -39,7 +42,7 @@ use crate::{
     lock::{Level, OnceLock, SpinLock},
     memory::{
         PAGE_SIZE,
-        allocator::{InitError, InitResult, Link, bump},
+        allocator::{hybrid, InitError, InitResult, Link},
     },
 };
 
@@ -143,7 +146,9 @@ impl SpareInner {
     }
 
     /// 拆块：前 `need`（16B 倍数）作分配区留在 blk，剩余（≥ HEADER）另成一空闲块
-    /// 继承 blk 原链位——位置不变、出入链一次，整块给出则整体出链。
+    /// **继承 blk 原链位**（prev/next 拷给 rest，邻居改指 rest）——位置不变、出入链
+    /// 一次；整块给出则整体出链。曾丢继承：rest 链位（尤其 next）不拷会造成多节点
+    /// 下尾部块断链（单节点时原链位为空、恰好无感，dump 多节点序列才现行）。
     fn split(&mut self, blk: NonNull<Blk>, need: usize) {
         let start = blk.as_ptr() as usize;
         // SAFETY: blk 在链中，其 size 为块首写的真实总长。
@@ -151,14 +156,17 @@ impl SpareInner {
         let left = size - HEADER - need;
         if left >= HEADER {
             let rest = unsafe { Blk::write(start + HEADER + need, left) };
-            // SAFETY: 邻居指针与 rest 均在仓内；head 换首、邻居改接。
+            // SAFETY: 邻居指针与 rest 均在仓内；blk 被分配（出链）、rest 继承其链位。
             unsafe {
                 let l = blk.read().link;
-                match l.prev {
+                (*rest.as_ptr()).link = l;
+                // Link 非 Copy：从 rest 上读 Copy 成员（已持有原块 prev/next）。
+                let (p, n) = ((*rest.as_ptr()).link.prev, (*rest.as_ptr()).link.next);
+                match p {
                     Some(p) => (*p.as_ptr()).next = Some(rest.cast()),
                     None => self.head = Some(rest),
                 }
-                if let Some(n) = l.next {
+                if let Some(n) = n {
                     (*n.as_ptr()).prev = Some(rest.cast());
                 }
                 (*blk.as_ptr()).size = HEADER + need;
@@ -232,20 +240,21 @@ pub(crate) struct SpareAllocator {
 }
 
 impl SpareAllocator {
-    /// 建仓：从 bump 头顶 carve 诊断预算（PAGE 对齐、线性连续），整区入链。
+    /// 建仓：经 hybrid 一次性 allocate 诊断预算（PAGE 对齐、整块连续），整区入链。
     ///
     /// 容量不显式注入：按 `machine::hart_count()` 经诊断预算
-    /// （diagnose::budget::spare_budget = trace 环形常驻 + panic 打印峰值）自查——
-    /// 同 bump 读 `machine::info().free` 的查源习惯。前置：bump::init 之后、
-    /// hybrid::init 之前（frame 基址 = bump 前沿，晚于本处会切到 frame 已认领的区）。
+    /// （diagnose::budget::spare_budget = trace 环形常驻 + panic 打印峰值）自查。
+    /// 前置：`hybrid::init` 之后（allocator::init 内）——区域是主堆的一次整块
+    /// 页级锁定分配：frame 记账在册、绝不回收再分发；panic 现场仍与主堆运行时
+    /// 状态（锁链/碎片/账目）互不相干。
     ///
     /// # Errors
     ///
-    /// bump 余量不足 → [`InitError::OutOfMemory`]。
+    /// 主堆余量不足 → [`InitError::OutOfMemory`]。
     fn init() -> Result<Self, InitError> {
         let cap = crate::runtime::diagnose::budget::spare_budget(machine::hart_count());
         let align = Layout::from_size_align(cap, PAGE_SIZE).map_err(|_| InitError::OutOfMemory)?;
-        let chunk = bump::allocator()
+        let chunk = hybrid::allocator()
             .allocate(align)
             .map_err(|_| InitError::OutOfMemory)?;
         let base = chunk.as_ptr() as *mut u8 as usize;
@@ -299,10 +308,11 @@ unsafe impl Allocator for SpareAllocator {
             let mut guard = self.inner.lock();
             let inner = &mut *guard;
             if !inner.owns(blk_addr) {
-                // 区外指针（主堆对象误还）：不释放、不腐坏——崩溃转储不灭尾主堆
-                // Arc（不变量），此路径 = 不变量被破坏：debug 当场报警，release
-                // 静默丢弃（宁漏不烂，转储继续、halt 照常收敛）。
-                debug_assert!(false, "spare: deallocate outside arena");
+                // 跨堆指针（切换前主堆分配、切换后被 drop——报警核转储期间他核
+                // 收尾 syscall 的正常现象）：不还本仓、**绝不 panic**——直接丢弃
+                // （停机在即，泄漏无害）。曾用 debug_assert 当"不变量破坏"报警：
+                // follower 持本仓锁 panic → hunker 卧倒 → 报警核下次分配永久自旋
+                // （跨核死锁，dump 时灵时不灵）。
                 return;
             }
             checker::check_dram_addr(blk_addr, "spare put");
@@ -348,14 +358,14 @@ pub fn remaining() -> usize {
         .remaining()
 }
 
-/// 初始化后备仓（boot 恰好一次，allocator::init 内 3 号位调用）。
+/// 初始化后备仓（boot 恰好一次，allocator::init 内 hybrid::init 之后调用）。
 ///
-/// 必须在所有 bump 分配之前 carve（bump 前沿单调前进，晚取会从 frame 已认领的
-/// 区里切块）。区为自由 DRAM 前切片，恒等可见、崩溃现场可读。
+/// 区域经 hybrid 一次整块分配（页级锁定，frame/block 记账在册、绝不回收再分发）——
+/// 恒等可见、崩溃现场可读；panic 现场与主堆运行时状态互不相干。
 ///
 /// # Errors
 ///
-/// bump 余量不足（预算超空闲区）→ [`InitError::OutOfMemory`]。
+/// 主堆余量不足（预算超可用）→ [`InitError::OutOfMemory`]。
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
         let heap = Box::leak(Box::new(SpareAllocator::init()?));

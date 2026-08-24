@@ -95,6 +95,7 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "bitflags",
  "erra",
  "fack",
@@ -106,7 +107,7 @@ dependencies = [
  "rustc-demangle",
  "sbi",
  "semihosting",
- "table",
+ "stanza",
  "ubi",
 ]
 
@@ -215,6 +216,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8e4abf97879f4e80db69a9fba7bd64998e9bdad25f58ef045a778e191172fd4"
 
 [[package]]
+name = "stanza"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b568a227f4c766db1b0e74f74a93016f7be926fb9a5770fcc6ee555b7564c23"
+
+[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -223,13 +230,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "table"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
 ]
 
 [[package]]

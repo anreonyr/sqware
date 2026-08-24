@@ -29,7 +29,8 @@ use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa}
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 use core::fmt::Write;
-use table::{Fmt, Table};
+use stanza::table::Table;
+use crate::runtime::diagnose::fmt::Fmt;
 
 global_asm!(
     ".section .text.boot",
@@ -61,101 +62,89 @@ fn kernel_symbolizer(addr: usize) -> Option<(&'static str, usize)> {
     )
 }
 
-/// banner 行：label/值两槽入表（行位置由表迭代器推进；行耗尽静默跳过）。
-fn brow(it: &mut table::RowsMut<'_, 2, 96>, label: &str, v: &str) {
-    let Some(row) = it.next() else {
-        return;
-    };
-    row[0] = table::Cell::new(label);
-    row[1] = table::Cell::new(v);
-}
-
 /// SBI 式启动横幅：机器/板级「标签|值」对齐表 + 陷阱布局表，两块连打成一个横幅。
+/// 正常路径即时输出（不经崩溃收集器）；stanza 自动列宽自然布局。
 pub fn banner() {
     let m = machine::info();
     let mut sink = Sink;
     // 机器/板级 + 陷阱布局两块并成一个 Table：统一列宽，值列对齐；
     // 中间空行分隔两块（认领一行但不填，渲染为空格行）。
-    let mut b = Table::<2, 13, 96>::new();
+    let mut b = Table::default();
     {
-        let mut it = b.rows_mut();
-        {
-            let mut v = Fmt::<64>::new();
-            let _ = write!(v, "{} H", m.hart);
-            brow(&mut it, "hart count", v.as_str());
-        }
-        {
-            let mut v = Fmt::<64>::new();
-            let _ = write!(v, "{}", machine::hart_id());
-            brow(&mut it, "hart this", v.as_str());
-        }
-        {
-            let mut v = Fmt::<64>::new();
-            let _ = write!(v, "{} Hz", m.hertz);
-            brow(&mut it, "timebase", v.as_str());
-        }
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(v, "{:#x}..{:#x}", m.dram.base, m.dram.range().end);
-            brow(&mut it, "dram", v.as_str());
-        }
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(v, "{:#x}..{:#x}", m.free.base, m.free.range().end);
-            brow(&mut it, "free", v.as_str());
-        }
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(v, "{:#x}", m.uart.base);
-            brow(&mut it, "uart", v.as_str());
-        }
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(v, "{:#x}", m.plic.base);
-            brow(&mut it, "plic", v.as_str());
-        }
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(v, "{:#x}", m.clint.base);
-            brow(&mut it, "clint", v.as_str());
-        }
-        // 空行分隔两块（认领一行但不填）。
-        it.next();
-        // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(v, "{:#x}", alltraps_va());
-            brow(&mut it, "trap vector", v.as_str());
-        }
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(
-                v,
-                "{:#x}..{:#x}",
-                KERNEL_FRAME_BASE.as_usize(),
-                KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
-            );
-            brow(&mut it, "kernel frames", v.as_str());
-        }
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(v, "{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
-            brow(&mut it, "trap stack", v.as_str());
-        }
-        {
-            let mut v = Fmt::<96>::new();
-            let _ = write!(
-                v,
-                "{} @ {:#x}..{:#x}",
-                machine::hart_id(),
-                trap_stack_bottom(machine::hart_id()),
-                trap_stack_top(machine::hart_id())
-            );
-            brow(&mut it, "trap stack this", v.as_str());
-        }
+        let mut v = Fmt::<64>::new();
+        let _ = write!(v, "{} H", m.hart);
+        b = b.with_row(["hart count", v.as_str()]);
     }
-    let _ = b.render(&mut sink);
-    // render 末行无尾换行，补一个。
+    {
+        let mut v = Fmt::<64>::new();
+        let _ = write!(v, "{}", machine::hart_id());
+        b = b.with_row(["hart this", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<64>::new();
+        let _ = write!(v, "{} Hz", m.hertz);
+        b = b.with_row(["timebase", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(v, "{:#x}..{:#x}", m.dram.base, m.dram.range().end);
+        b = b.with_row(["dram", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(v, "{:#x}..{:#x}", m.free.base, m.free.range().end);
+        b = b.with_row(["free", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(v, "{:#x}", m.uart.base);
+        b = b.with_row(["uart", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(v, "{:#x}", m.plic.base);
+        b = b.with_row(["plic", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(v, "{:#x}", m.clint.base);
+        b = b.with_row(["clint", v.as_str()]);
+    }
+    // 空行分隔两块（认领一行但不填）。
+    b = b.with_row(["", ""]);
+    // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(v, "{:#x}", alltraps_va());
+        b = b.with_row(["trap vector", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(
+            v,
+            "{:#x}..{:#x}",
+            KERNEL_FRAME_BASE.as_usize(),
+            KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
+        );
+        b = b.with_row(["kernel frames", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(v, "{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
+        b = b.with_row(["trap stack", v.as_str()]);
+    }
+    {
+        let mut v = Fmt::<96>::new();
+        let _ = write!(
+            v,
+            "{} @ {:#x}..{:#x}",
+            machine::hart_id(),
+            trap_stack_bottom(machine::hart_id()),
+            trap_stack_top(machine::hart_id())
+        );
+        b = b.with_row(["trap stack this", v.as_str()]);
+    }
+    crate::runtime::diagnose::render::render_to(&mut sink, &b, 0);
     let _ = writeln!(sink);
 }
 

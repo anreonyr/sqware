@@ -4,9 +4,10 @@
 // bump / hybrid / spare，见 portal.rs）在不同阶段分派。初始化顺序：
 //   1. bump::init() — 标记 bump 可用内存区域
 //   2. portal::switch(Backend::Bump) — 门户切到 bump（boot 单核，store 安全）
-//   3. spare::init() — 从 bump 头顶 carve 诊断预算成后备仓（frame 基址定址
-//      之前，永不与主堆相交；见 spare.rs）
-//   4. portal::switch(Backend::Hybrid) — 运行时主堆后端（block + frame）
+//   3. hybrid::init() — 运行时主堆后端（block + frame）
+//   4. portal::switch(Backend::Hybrid)
+//   5. spare::init() — 经 hybrid 一次整块分配诊断预算成后备仓（页级锁定，
+//      绝不回收再分发，见 spare.rs；panic 现场唯一可信的分配源）
 //
 // bitmap — 通用位图分配器（编号空间连续区间：VA 窗口 / ASID），无独立初始化
 // （位图首次使用时惰性分配），见 work::unit::space / memory::manager::asid。
@@ -84,9 +85,8 @@ pub fn init() -> InitResult<()> {
     bump::init()?;
     portal::switch(portal::Backend::Bump);
 
-    spare::init()?;
-
     hybrid::init()?;
     portal::switch(portal::Backend::Hybrid);
+    spare::init()?;
     Ok(())
 }

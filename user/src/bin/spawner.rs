@@ -20,12 +20,12 @@ extern "C" fn main() -> ! {
     // 用户主动 panic 方式（显式 envcall）：a7=Panic(9)，a0=关联码；内核 panic!
     // 并转储场景（呼叫人即 running 任务 → ubt/CSR 符号化完整）。等效封装见
     // user::env::panic_me(code)。此处用原始构建器直拼（镜像 ubi ABI）。
-    // let _ = ucall::UcallBuilder::new(ubi::Ucall::Panic)
-    //     .args(ucall::UArgs {
-    //         a0: 0xDEAD,
-    //         ..Default::default()
-    //     })
-    //     .call();
+    let _ = ucall::UcallBuilder::new(ubi::Ucall::Panic)
+        .args(ucall::UArgs {
+            a0: 0xDEAD,
+            ..Default::default()
+        })
+        .call();
     loop {
         let sum = task::closure(|| {
             let mut s: u64 = 0;
