@@ -16,7 +16,6 @@ use core::ptr::NonNull;
 
 use fack::prelude::Error;
 
-use crate::memory::manager::addr::AtomicPhysAddr;
 
 pub mod bitmap;
 pub mod block;

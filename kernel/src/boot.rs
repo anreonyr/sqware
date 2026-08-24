@@ -12,7 +12,6 @@
 use core::arch::global_asm;
 
 use alloc::format;
-use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use riscv::register::{satp, sie, stvec};
@@ -121,7 +120,7 @@ pub fn init() -> ! {
 
     // 健康检查（audit）：PT 回收自测——unmap 时中间表必须当场归还，不泄漏、不 double-free
     #[cfg(all(debug_assertions, feature = "audit"))]
-    crate::health::pt_reclaim::pagetable_reclaim();
+    crate::health::pagetable::pagetable();
 
     // 健康检查：spare 后备仓预算验收——ring 常驻 + 溢出演练（预算即契约）。
     crate::health::spare::accept();

@@ -26,7 +26,7 @@ macro_rules! expect {
         }
     };
     ($cond:expr) => {
-        crate::expect!($cond, "expectation failed")
+        $crate::expect!($cond, "expectation failed")
     };
 }
 
@@ -36,5 +36,6 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
     crate::putln!("[health] {item}: ok ({detail})");
 }
 
-pub mod pt_reclaim;
+pub mod pagetable;
 pub mod spare;
+

@@ -62,6 +62,8 @@
 // 为顺序获取（drop 前一把再拿后一把），不嵌套。
 // per-hart trap 栈的分配发生在 boot（无锁需求）。
 
+#![allow(unused)]
+
 mod bare;
 mod depend;
 mod lazy;
@@ -70,7 +72,6 @@ pub(crate) mod reentrant;
 mod rw;
 mod spin;
 mod trap;
-pub(crate) use trap::TrapGuard;
 
 // ── depend 钩子宏族（不可重入独占锁入口样板归一）────────────────────────
 // 读调用点 + 层级校验 / 记入 / 移除三段样板收进宏；宏体内部 cfg(debug_assertions)

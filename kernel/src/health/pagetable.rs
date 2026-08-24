@@ -20,12 +20,14 @@ use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::{MapKind, SpaceBuilder};
 
 /// PT 回收自测（audit-only）：map/unmap 循环验证中间表当场归还。
-pub fn pagetable_reclaim() {
+pub fn pagetable() {
     const BASE: usize = 0x4000_0000; // 根表槽 1：堆窗口之后、栈窗口之前的空地
     const SIZE: usize = 4 * 1024 * 1024; // 4 MiB → 1×L1 + 2×L0
     const ROUNDS: usize = 32;
 
-    let space = SpaceBuilder::user().build().expect("[health] pt_reclaim: build space");
+    let space = SpaceBuilder::user()
+        .build()
+        .expect("[health] pagetable: build space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
     let base_count = space.table_count();
     // 口径同 fence::audit::check_baseline：全动态下块池页已计入 frame outstanding，
@@ -39,13 +41,20 @@ pub fn pagetable_reclaim() {
         for _ in 0..(SIZE / PAGE_SIZE) {
             frames.push(
                 Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                    .expect("[health] pt_reclaim: data frame"),
+                    .expect("[health] pagetable: data frame"),
             );
         }
         let pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
         space
-            .map(VirtAddr::from_raw(BASE), pa, SIZE, flags, MapKind::Anonymous, frames)
-            .expect("[health] pt_reclaim: map");
+            .map(
+                VirtAddr::from_raw(BASE),
+                pa,
+                SIZE,
+                flags,
+                MapKind::Anonymous,
+                frames,
+            )
+            .expect("[health] pagetable: map");
         crate::expect!(
             space.table_count() == base_count + 3,
             "round {round}: tables after map (got {} want {})",
@@ -79,6 +88,6 @@ pub fn pagetable_reclaim() {
     );
     drop(space);
     crate::putln!(
-        "[health] pt_reclaim: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})"
+        "[health] pagetable: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})"
     );
 }

@@ -18,12 +18,13 @@
 //
 // 依赖方向（无环）：checker 独立；banker/ledger → 模块根；audit → 模块根 + banker + ledger。
 
+#[cfg(all(debug_assertions, feature = "audit"))]
+use alloc::fmt;
+
 pub mod audit;
 pub mod banker;
 pub mod checker;
 pub mod ledger;
-
-use core::fmt;
 
 // ── 公共处置原语（audit-gated；release/无 audit feature 编译为空）──
 
@@ -92,3 +93,4 @@ pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
     ));
     panic!("memory integrity violation: {v:?}");
 }
+

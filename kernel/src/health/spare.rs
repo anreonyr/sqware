@@ -38,13 +38,9 @@ pub fn accept() {
     let step = Layout::from_size_align(1024, 16).unwrap();
     let (used_before, remaining_before) = (spare::used(), spare::remaining());
     let mut held: Vec<NonNull<[u8]>> = Vec::new();
-    loop {
-        match spare::allocator().allocate(step) {
-            Ok(b) => held.push(b),
-            Err(_) => break,
-        }
+    while let Ok(b) = spare::allocator().allocate(step) {
+        held.push(b)
     }
-    // 直接断言"耗尽后再分配必 Err"（失败路径返回 Err 才是演练本意；旧版用
     // remaining() < 1024 间接判定，余量落在 [1024, 块开销) 区间时会误报）。
     crate::expect!(
         spare::allocator().allocate(step).is_err(),
@@ -67,7 +63,6 @@ pub fn accept() {
         spare::used()
     );
 
-    crate::putln!(
-        "[health] spare: ok (ring {ring} B, dump budget {DUMP_BUDGET} B, drill clean)"
-    );
+    crate::putln!("[health] spare: ok (ring {ring} B, dump budget {DUMP_BUDGET} B, drill clean)");
 }
+
