@@ -66,11 +66,11 @@ impl Link {
 
 /// 初始化内存子系统。
 ///
-/// 注入物理内存池区域并完成 bump → spare → hybrid 三级自举。spare 容量**不
-/// 显式注入**：内部按 `machine::hart_count()` 经诊断预算自行推导
-/// （diagnose::budget::spare_budget = trace 环形常驻 + panic 打印峰值；与 bump
-/// 读 `machine::info().free` 同一查源习惯）——在 hybrid 前从 bump carve，
-/// frame/block 永不触碰。
+/// 注入物理内存池区域并完成 bump → hybrid → spare 三级自举。spare 容量**不
+/// 显式注入**：内部按 `machine::hart_count()` 经仓容公式自行推导（region_size：
+/// trace 环形常驻 + panic 打印峰值 DUMP_BUDGET；与 bump 读 `machine::info().free`
+/// 同一查源习惯）——在 hybrid 之后经 hybrid 整块取区，frame/block 记账在册、
+/// 绝不回收再分发。
 ///
 /// # Safety
 ///

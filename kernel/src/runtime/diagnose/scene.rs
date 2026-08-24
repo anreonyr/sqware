@@ -374,10 +374,7 @@ pub fn dump_crash(r: &mut Report) {
         {
             et.check_integrity();
         }
-        #[cfg(feature = "audit")]
-        {
-            let _ = crate::memory::allocator::fence::ledger::LEDGER.sweep_canaries();
-        }
+        let _ = crate::memory::allocator::fence::ledger::LEDGER.sweep_canaries();
     }
     // 投稿：CSR/GPR/回溯段入报告（[scene] 标题挂首段，其余段空标题同段落）。
     r.paragraph(

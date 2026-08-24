@@ -8,7 +8,7 @@
 //
 // 断言用 `expect!`（health 专用宏）：失败统一报告 + fail-fast，与生产断言分离。
 
-#![cfg(all(debug_assertions, feature = "audit"))]
+#![cfg(debug_assertions)]
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -87,7 +87,8 @@ pub fn pagetable() {
         "net frames leaked: {held_before} → {held_after}"
     );
     drop(space);
-    crate::putln!(
-        "[health] pagetable: ok ({ROUNDS} rounds, tables {base_count} → +3 → {base_count})"
+    super::report_ok(
+        "pagetable",
+        format_args!("{ROUNDS} rounds, tables {base_count} → +3 → {base_count}"),
     );
 }

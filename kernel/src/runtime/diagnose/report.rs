@@ -60,7 +60,9 @@ impl Report {
     }
 
     /// 清空重刊：清空全部段落（打戳位待下次 [`Report::seal`] 重写）。
+    #[allow(unused)]
     pub fn clear(&mut self) {
         self.paras.clear();
     }
 }
+

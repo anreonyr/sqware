@@ -110,7 +110,7 @@ impl Meta {
         self.used
     }
 
-    /// used +1（u16 饱和——满装 512 块远不到上限，不应溢出）。
+    /// used +1（u16 饱和——满装 512 块远不到上限，不应溢出）。Tally 复合步调用。
     fn inc_used(self) -> Self {
         Self {
             used: self.used.saturating_add(1),
@@ -118,7 +118,7 @@ impl Meta {
         }
     }
 
-    /// used -1（饱和）；返回 (新项, 是否归零)。
+    /// used -1（饱和）；返回 (新项, 是否归零)。Tally 复合步调用。
     fn dec_used(self) -> (Self, bool) {
         let used = self.used.saturating_sub(1);
         (Self { used, ..self }, used == 0)
@@ -131,9 +131,9 @@ impl Meta {
 /// free 区基址起算的页号。**不做 `Index` trait**：`Index::index` 须返回 `&Meta`，
 /// 与表内存的共享可写（写路径仅持 `&self`）冲突、别名 UB；本表语义是范围检查
 /// + 拷贝读。**全部表访问（含 RMW 复合步）自锁**（`lock`，Level::Tally）——跨核
-/// 串行、无数据竞争；portal 已无锁（无锁模式分派见 portal.rs），此为簿记表
-/// 的现任闸门。复合步（`inc_used`/`dec_used`）必须在单锁内完成读改写，否则
-/// 锁间留丢更新窗口（旧 meta_get/meta_put 两段式在 portal 锁内曾靠外层串行）。
+///   串行、无数据竞争；portal 已无锁（无锁模式分派见 portal.rs），此为簿记表
+///   的现任闸门。复合步（`inc_used`/`dec_used`）必须在单锁内完成读改写，否则
+///   锁间留丢更新窗口（旧 meta_get/meta_put 两段式在 portal 锁内曾靠外层串行）。
 struct Tally {
     /// free 区基址（表覆盖下界）。
     base: usize,
@@ -187,14 +187,6 @@ impl Tally {
         m.owner()
     }
 
-    /// 读表项（page 为本池持页，idx 必在表内）。
-    fn read(&self, page: usize) -> Meta {
-        let _g = self.lock.lock();
-        let idx = self.idx(page).expect("block tally: page out of table");
-        // SAFETY: idx 已检查；lock 串行。
-        unsafe { self.cells.add(idx).read() }
-    }
-
     /// 按下标读表项（clear 扫表用；idx 已由调用方保证 < len）。
     fn read_idx(&self, idx: usize) -> Meta {
         let _g = self.lock.lock();
@@ -220,7 +212,7 @@ impl Tally {
         // SAFETY: idx 已检查；lock 串行，RMW 原子。
         unsafe {
             let mut m = self.cells.add(idx).read();
-            m.used = m.used.saturating_add(1);
+            m = m.inc_used();
             self.cells.add(idx).write(m);
             m
         }
@@ -340,9 +332,10 @@ impl BlockAllocator {
         // audit: 完整性框架装配——Banker 覆盖 free 区全页（借还由 frame 记账，
         // block 不重复 debit）；Ledger 按经验上限预留（全 free 区×每页块数不可行，
         // 见 fence::ledger::Ledger 注释；真实负载峰值远低于 512K）。
-        #[cfg(all(debug_assertions, feature = "audit"))]
+        #[cfg(debug_assertions)]
         {
-            crate::memory::allocator::fence::banker::BANKER.init(m.free.base, m.free.size / PAGE_SIZE);
+            crate::memory::allocator::fence::banker::BANKER
+                .init(m.free.base, m.free.size / PAGE_SIZE);
             crate::memory::allocator::fence::ledger::LEDGER.init(512 * 1024);
         }
 
@@ -368,21 +361,8 @@ unsafe impl Allocator for BlockAllocator {
         let me = machine::hart_id();
         let pool = &self.blocks[me];
         let addr = pool.pull(power).ok_or(AllocError)?;
-        // audit: 整块毒化（未初始化读现行）+ 活块入账（重复入账=块级双发现行；
-        // KernelHeap 且 slack≥8 时 mark 内部写对齐 slack canary）。
-        #[cfg(all(debug_assertions, feature = "audit"))]
-        {
-            crate::memory::allocator::fence::poison(addr, 1usize << power);
-            let caller: usize;
-            // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
-            unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
-            crate::memory::allocator::fence::ledger::LEDGER.mark(
-                addr,
-                layout.size(),
-                caller,
-                crate::memory::allocator::fence::ledger::OwnerKind::KernelHeap,
-            );
-        }
+        // 护栏事件：活块入账 + 整块毒化（upside ASM/poison 藏在 fence 内部）。
+        super::fence::on_alloc(addr, layout.size(), super::fence::OwnerKind::KernelHeap);
         // SAFETY: pull 返回的地址必非零（分配器保证）。
         Ok(NonNull::slice_from_raw_parts(
             unsafe { NonNull::new_unchecked(addr as *mut u8) },
@@ -399,13 +379,9 @@ unsafe impl Allocator for BlockAllocator {
         let pa = ptr.addr().get();
         // 归属路由：own 读页头（MAGIC 不符 = 非块内存 → 静默丢弃，非本层所有）。
         let Some(home) = self.own(pa) else { return };
-        // audit: 注销账目（无账=双 free/悬垂、canary=越界、尺寸=错幂现行）+ 本体毒化
-        // 复写（头 8B 随后被 freelist 头插覆盖，其余保持毒化——UAF 读数变 0xCD）。
-        #[cfg(all(debug_assertions, feature = "audit"))]
-        {
-            crate::memory::allocator::fence::ledger::LEDGER.unmark(pa, layout.size());
-            crate::memory::allocator::fence::poison(pa, 1usize << power);
-        }
+        // 护栏事件：活块注销 + 本体毒化复写（头 8B 随后被 freelist 头插覆盖，
+        // 其余保持毒化——UAF 读数变 0xCD；实现细节藏在 fence 内部）。
+        super::fence::on_free(pa, layout.size());
         let me = machine::hart_id();
         let pool = &self.blocks[home];
         if home == me {
@@ -580,7 +556,7 @@ impl BlockInner {
         if empty {
             // audit: 整页无活跃账目（used-counter 记账正确性检查；与 freepool
             // 内容无关——块都在链上正常周转）。
-            #[cfg(all(debug_assertions, feature = "audit"))]
+            #[cfg(debug_assertions)]
             crate::memory::allocator::fence::audit::page_clear(page);
             if inner.spare[power].is_none() {
                 inner.spare[power] = Some(page);
@@ -697,14 +673,14 @@ pub(crate) fn flush() {
 
 /// audit: 地址是否为某池持有的块内存（簿记表归属判定；替代旧区段包含判定——
 /// 全动态下池无区段，表项即权威）。未初始化返回 false。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 pub(crate) fn pool_includes(pa: usize) -> bool {
     heap().own(pa).is_some()
 }
 
 /// audit: 全池持页总数（prime 借出未还；关机基线断言与 Banker 交叉核对用）。
 /// 池持有页已计入 frame outstanding——关机比较须剔除（见 fence::audit::check_baseline）。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 pub(crate) fn held_pages() -> usize {
     heap().blocks.iter().map(|b| b.pool.lock().pages).sum()
 }

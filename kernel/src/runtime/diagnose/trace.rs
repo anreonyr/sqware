@@ -23,7 +23,7 @@ use core::mem::size_of;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use serde::Serialize;
 
-use alloc::alloc::Layout;
+use alloc::alloc::{Allocator, Layout};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -142,6 +142,7 @@ impl Trace {
         unsafe { *(self.buffer.as_ptr() as *mut Event).add(i) = Event { when, kind } };
     }
 
+    #[allow(unused)]
     fn clear(&self) {
         self.cursor.store(0, Ordering::Relaxed);
     }
@@ -222,13 +223,6 @@ pub fn dump<F: FnMut(&Event)>(hart: usize, k: usize, mut f: F) {
     }
 }
 
-/// 清空某 hart 窗口（boot / 复现）。
-pub fn reset(hart: usize) {
-    if let Some(t) = POOL.get().and_then(|p| p.get(hart)) {
-        t.clear();
-    }
-}
-
 /// 初始化（boot 恰好一次）：从 spare 仓取 ring_bytes 的常驻环（窗口表 + 事件槽）。
 /// 失败 = 预算错误，返回 Err 由 main 统一 fail-fast（panic → halt）。须在 clock
 /// 就绪后、任何 note 之前调用。
@@ -242,7 +236,7 @@ pub fn init() -> Result<(), TraceInitError> {
     let total = ring_bytes(h);
     // 16 为 2 的幂硬对齐，from_size_align 不可失败（不变量）。
     let layout = Layout::from_size_align(total, 16).expect("trace: ring layout");
-    let chunk = spare::allocator()
+    let chunk = spare::spare()
         .allocate(layout)
         .map_err(|_| TraceInitError::OutOfMemory)?;
     // SAFETY: chunk 为 spare 仓内块（16B 对齐）；下分窗口表区 + 事件槽区，互不重叠。

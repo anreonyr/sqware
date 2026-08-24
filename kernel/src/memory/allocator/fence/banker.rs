@@ -7,7 +7,7 @@
 //! 硬不变量（贴结构）：debit 前置 held==false（双取出 = 违例）；credit 前置
 //! held==true（存陌生页 = 违例）——表项是「谁借了这页」的唯一权威。
 
-#![cfg(all(debug_assertions, feature = "audit"))] // 与 fence 根同 gate（debug + audit）
+#![cfg(debug_assertions)] // debug 构建生效；release 空体零开销
 
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 

@@ -118,16 +118,13 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     crate::lock::init_depend(machine::hart_count()).expect("depend init failed");
 
-    // 健康检查（audit）：PT 回收自测——unmap 时中间表必须当场归还，不泄漏、不 double-free
-    #[cfg(all(debug_assertions, feature = "audit"))]
-    crate::health::pagetable::pagetable();
-
-    // 健康检查：spare 后备仓预算验收——ring 常驻 + 溢出演练（预算即契约）。
-    crate::health::spare::accept();
+    // 健康检查总入口：spare 预算验收（恒跑）+ PT 回收自测（debug）。任一失败
+    // fail-fast（panic → crash scene）。
+    crate::health::run();
 
     // 记录内核持久帧基线：spawn 用户任务前的在途帧。此后在途帧只应增用户任务
     // 所有；关机时全部归还，由 tie::halt 的 check_baseline 断言零泄漏。
-    #[cfg(all(debug_assertions, feature = "audit"))]
+    #[cfg(debug_assertions)]
     crate::memory::allocator::fence::audit::record_baseline();
 
     // 全部演示程序均为经 parser → loader → TaskBuilder 装载的**真 ELF**（user crate，
@@ -139,7 +136,7 @@ pub fn init() -> ! {
     spawn_demos().expect("boot spawn failed");
 
     // 完整性框架（debug）：boot 收尾全量审计——Banker↔Ledger↔frame↔block 交叉核对。
-    #[cfg(all(debug_assertions, feature = "audit"))]
+    #[cfg(debug_assertions)]
     crate::memory::allocator::fence::audit::audit();
 
     // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后

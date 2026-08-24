@@ -394,7 +394,6 @@ impl SpaceInner {
     }
 
     /// 登记常数映射（内部版，调用者须持锁；不装 PTE、不注入帧——懒区域用）。
-    #[allow(dead_code)] // 经 pub Space::declare 暴露，懒区域（ecall mmap 预留）后端接入前无调用方
     fn declare_durable(
         &mut self,
         start: VirtAddr,
@@ -612,11 +611,7 @@ pub struct Segments<'a> {
 }
 
 impl Iterator for Segments<'_> {
-    type Item = (
-        crate::memory::manager::addr::PhysAddr,
-        PteFlags,
-        usize,
-    );
+    type Item = (crate::memory::manager::addr::PhysAddr, PteFlags, usize);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.va >= self.end {
@@ -944,20 +939,13 @@ impl Space {
             mapped += 1;
         }
         drop(inner);
-        // audit: 用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
+        // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
         // 键 = asid << 32 | VA：多个空间共享同一堆窗口 VA，须并入空间身份防碰撞。
-        #[cfg(all(debug_assertions, feature = "audit"))]
-        {
-            let caller: usize;
-            // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
-            unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
-            crate::memory::allocator::fence::ledger::LEDGER.mark(
-                (self.kind.asid() << 32) | info.va.as_usize(),
-                info.size.get(),
-                caller,
-                crate::memory::allocator::fence::ledger::OwnerKind::UserHeap,
-            );
-        }
+        crate::memory::allocator::fence::on_alloc(
+            (self.kind.asid() << 32) | info.va.as_usize(),
+            info.size.get(),
+            crate::memory::allocator::fence::OwnerKind::UserHeap,
+        );
         // SAFETY: S-mode 下 sfence.vma 恒合法。
         unsafe {
             flush_asid(self.kind.asid());
@@ -986,9 +974,8 @@ impl Space {
         unsafe {
             flush_asid(self.kind.asid());
         }
-        // audit: 注销用户堆账目（无账 = 悬垂/双释放现行；键与 heap_allocate 相同）。
-        #[cfg(all(debug_assertions, feature = "audit"))]
-        crate::memory::allocator::fence::ledger::LEDGER.unmark((self.kind.asid() << 32) | addr.as_usize(), size);
+        // 护栏事件：用户堆活块注销（无账 = 悬垂/双释放现行；键与 heap_allocate 相同）。
+        crate::memory::allocator::fence::on_free((self.kind.asid() << 32) | addr.as_usize(), size);
         true
     }
 
@@ -1230,6 +1217,7 @@ impl Space {
     /// # Errors
     ///
     /// 页未映射 → [`MapError::NotMapped`]；帧耗尽 → [`MapError::OutOfMemory`]。
+    #[allow(clippy::wrong_self_convention)] // Space 跨核 Arc 共享，&self 刻意为之：可变性全在 inner 锁内
     pub fn to_mut(&self, va: VirtAddr) -> Result<(), MapError> {
         let page = va.page_align();
         let mut inner = self.inner.lock();
@@ -1274,6 +1262,7 @@ impl Space {
     /// 无条件私有化：立即分裂成私有 Owned（fork 后父方脱离共享用）。
     /// 语义 = to_mut（保证该页从此私有可写）。
     #[allow(dead_code)] // fork 后端预留
+    #[allow(clippy::wrong_self_convention)] // 同 to_mut：Arc 共享，&self 刻意为之
     pub fn into_owned(&self, va: VirtAddr) -> Result<(), MapError> {
         self.to_mut(va)
     }

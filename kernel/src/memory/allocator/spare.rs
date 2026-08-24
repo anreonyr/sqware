@@ -2,10 +2,10 @@
 //
 // 与主堆（portal → bump/hybrid → block/frame）**区域互不重叠**：
 //   · 区 —— boot 期经 **hybrid** 一次性 allocate 诊断预算成仓（allocator::init 内
-//     hybrid::init 之后；hybrid 路由超大块到 frame 的 2 幂页块），大小 = 诊断预算
-//     （spare_budget(h)：trace 环形常驻 + panic 打印峰值，见 diagnose::budget）。
+//     hybrid::init 之后；hybrid 路由超大块到 frame 的 2 幂页块），size = 诊断预算
+//     （trace 环形常驻 + panic 打印峰值，见本文件 DUMP_BUDGET）。
 //     区域在主堆里是**整块页级锁定分配**：block/frame 记账在册、绝不回收再分发。
-//   · 用 —— 常态**显式调用**（trace 环形、health 演练指名道姓取 `spare::allocator()`）；
+//   · 用 —— 常态**显式调用**（trace 环形、health 演练指名道姓取 `spare::spare()`）；
 //     崩溃 = 报警核把门户后端**无锁切换**到本仓（portal::switch(Backend::Spare)——原子
 //     store，不取任何锁，panic 恰在持主堆锁现场也不卡死），转储渲染的分配整个
 //     落仓（含未来 stanza 模型的隐式分配）。自持 SpinLock（Level::Spare）：
@@ -23,13 +23,13 @@
 //
 // 不变·硬（贴结构）：
 //   - 所有空闲块头写在本区块内，块与块首尾相接（合并后 size 恰为两邻之和）；
-//   - used 记账含块头且每字节至多归属一次（合并不重复计数）；peak 单调；
-//   - 区内指针才可释放（区外 = 主堆误还，debug_assert 现行）；
+//   - used 记账含块头且每字节至多归属一次（合并不重复计数）；
+//   - 区内指针才可释放（区外 = 主堆误还/切换窗口跨堆 drop：静默丢弃、绝不 panic）；
 //   - 只支持 align ≤ MAX_ALIGN 的请求（更高对齐回 Err）——崩溃打印的
 //     Vec/String/Box 均 ≤ 16B 对齐。
 //
 // 命名：spare（后备仓）与 block 的备页 spare 同一隐喻延伸（备件储备）；块操作
-// pull/push（池内拉/推，同 block 家族动词）；合并 merge；统计 used/peak/remaining。
+// pull/push（池内拉/推，同 block 家族动词）；合并 merge；统计 used/remaining。
 
 use core::alloc::{AllocError, Allocator, Layout};
 use core::ptr::NonNull;
@@ -42,7 +42,7 @@ use crate::{
     lock::{Level, OnceLock, SpinLock},
     memory::{
         PAGE_SIZE,
-        allocator::{hybrid, InitError, InitResult, Link},
+        allocator::{InitError, InitResult, Link, hybrid},
     },
 };
 
@@ -96,7 +96,6 @@ struct SpareInner {
     edge: usize,
     head: Option<NonNull<Blk>>,
     used: usize,
-    peak: usize,
 }
 
 impl SpareInner {
@@ -108,7 +107,6 @@ impl SpareInner {
             edge,
             head: Some(head),
             used: 0,
-            peak: 0,
         }
     }
 
@@ -231,19 +229,10 @@ impl SpareInner {
 /// 同向浮动（多轮 96→512KiB 校准中峰值始终贴当时 cap、余量 <1KB，疑似渲染器
 /// 按可用内存上限分配，未及深挖）——故定 **1MiB**：dump 内容天然有界，海量
 /// 余量下任何栈形/seed 都安全；128MB DRAM 中占比 <1%。
-/// `[spare]` 行自报 used/peak 供审计。原属 diagnose::budget（模块已删——预算
-/// 归仓所在，诊断报告零预算痕迹）。
+/// 原属 diagnose::budget（模块已删——预算归仓所在，诊断报告零预算痕迹）。
 pub const DUMP_BUDGET: usize = 1024 * 1024;
 
-/// 给定载荷与预留所需仓容：载荷（16B 取整）+ 块头 + 预留，页对齐后整取。
-///
-/// 供仓容量公式与验收（health::spare）共用的开销公式——预算与记账同源，
-/// remaining 恒 ≥ 预留。
-pub fn region_size(payload: usize, reserve: usize) -> usize {
-    (payload.next_multiple_of(MAX_ALIGN) + HEADER + reserve).next_multiple_of(PAGE_SIZE)
-}
-
-pub(crate) struct SpareAllocator {
+pub struct SpareAllocator {
     inner: SpinLock<SpareInner>,
 }
 
@@ -252,18 +241,18 @@ impl SpareAllocator {
     ///
     /// 容量不显式注入：按 `machine::hart_count()` 经公式自查（trace 环形常驻
     /// + 崩溃打印峰值 DUMP_BUDGET——预算归仓所在，诊断报告零预算痕迹）。
-    /// 前置：`hybrid::init` 之后（allocator::init 内）——区域是主堆的一次整块
-    /// 页级锁定分配：frame 记账在册、绝不回收再分发；panic 现场仍与主堆运行时
-    /// 状态（锁链/碎片/账目）互不相干。
+    ///   前置：`hybrid::init` 之后（allocator::init 内）——区域是主堆的一次整块
+    ///   页级锁定分配：frame 记账在册、绝不回收再分发；panic 现场仍与主堆运行时
+    ///   状态（锁链/碎片/账目）互不相干。
     ///
     /// # Errors
     ///
     /// 主堆余量不足 → [`InitError::OutOfMemory`]。
     fn init() -> Result<Self, InitError> {
-        let cap = crate::memory::allocator::spare::region_size(
-            crate::runtime::diagnose::trace::ring_bytes(machine::hart_count()),
-            DUMP_BUDGET,
-        );
+        let cap = {
+            let payload = crate::runtime::diagnose::trace::ring_bytes(machine::hart_count());
+            (payload.next_multiple_of(MAX_ALIGN) + HEADER + DUMP_BUDGET).next_multiple_of(PAGE_SIZE)
+        };
         let align = Layout::from_size_align(cap, PAGE_SIZE).map_err(|_| InitError::OutOfMemory)?;
         let chunk = hybrid::allocator()
             .allocate(align)
@@ -275,15 +264,13 @@ impl SpareAllocator {
         })
     }
 
-    fn used(&self) -> usize {
+    /// 在册字节（含块头，常驻 ring 计入）。
+    pub fn used(&self) -> usize {
         self.inner.lock().used
     }
 
-    fn peak(&self) -> usize {
-        self.inner.lock().peak
-    }
-
-    fn remaining(&self) -> usize {
+    /// 余量字节（仓容 − 在册；诊断打印的可用预算）。
+    pub fn remaining(&self) -> usize {
         let inner = self.inner.lock();
         (inner.edge - inner.base) - inner.used
     }
@@ -305,7 +292,6 @@ unsafe impl Allocator for SpareAllocator {
         let size = unsafe { blk.read() }.size;
         checker::check_dram_addr(addr, "spare pull");
         inner.used += size;
-        inner.peak = inner.peak.max(inner.used);
         // SAFETY: addr + HEADER 为仓内空闲块载荷首（16B 对齐，块已出链）。
         Ok(NonNull::slice_from_raw_parts(
             NonNull::new((addr + HEADER) as *mut u8).ok_or(AllocError)?,
@@ -339,34 +325,18 @@ unsafe impl Allocator for SpareAllocator {
 // init 时 Box::leak（同 frame）。
 static SPARE_ALLOCATOR: OnceLock<&'static SpareAllocator> = OnceLock::new();
 
+/// 后备仓入口（统一暴露）：返回具体 `SpareAllocator`——调用方直接
+/// `spare().allocate(...)` / `spare().used()` / `spare().remaining()`。
+pub fn spare() -> &'static SpareAllocator {
+    SPARE_ALLOCATOR
+        .get()
+        .expect("spare allocator not initialized")
+}
+
 pub fn allocator() -> &'static dyn Allocator {
     SPARE_ALLOCATOR
         .get()
         .expect("spare allocator not initialized")
-}
-
-/// 在册字节（含块头，常驻 ring 计入）。
-pub fn used() -> usize {
-    SPARE_ALLOCATOR
-        .get()
-        .expect("spare allocator not initialized")
-        .used()
-}
-
-/// 历史最高在册字节（预算验收断言峰值用）。
-pub fn peak() -> usize {
-    SPARE_ALLOCATOR
-        .get()
-        .expect("spare allocator not initialized")
-        .peak()
-}
-
-/// 余量字节（仓容 − 在册；诊断打印的可用预算）。
-pub fn remaining() -> usize {
-    SPARE_ALLOCATOR
-        .get()
-        .expect("spare allocator not initialized")
-        .remaining()
 }
 
 /// 初始化后备仓（boot 恰好一次，allocator::init 内 hybrid::init 之后调用）。
@@ -386,4 +356,3 @@ pub fn init() -> InitResult<()> {
     })()
     .annotate("initializing spare allocator")
 }
-

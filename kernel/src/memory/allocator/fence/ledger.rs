@@ -8,22 +8,18 @@
 //!     audit 只读块归属（pool_includes → tally，层级 8 更高）不受限；
 //!     插入（mark）容量 init 预留、零分配、绝不反向嵌套）；
 //!   - canary 只写 KernelHeap 块（用户堆为清零语义，不 poison、不 canary）。
-//! 违例统一经 `report` 处置（见 fence/mod）。
+//!     违例统一经 `report` 处置（见 fence/mod）。
+//!
+//! 分配/释放记账经 fence 根事件入口（`on_alloc`/`on_free`）调用，本模块为
+//! debug-gated（release 空），事件函数体内 cfg 包住对本模块的使用。
 
-#![cfg(all(debug_assertions, feature = "audit"))] // 与 fence 根同 gate（debug + audit）
+#![cfg(debug_assertions)] // 与 fence 根同 gate（debug 构建生效；release 空体零开销）
 
 use hashbrown::HashMap;
 
 use crate::lock::{Level, SpinLock};
 
-use super::{CANARY_MAGIC, CANARY_MIN_SLACK, IntegrityViolation, report};
-
-/// 登记类别（Ledger 记录归属；用户堆不 poison/canary——维持清零语义）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OwnerKind {
-    KernelHeap,
-    UserHeap,
-}
+use super::{CANARY_MAGIC, CANARY_MIN_SLACK, IntegrityViolation, OwnerKind, report};
 
 /// 一条活块登记。
 pub struct Record {
@@ -229,3 +225,4 @@ fn check_canary(addr: usize, rec: &Record) {
         }
     }
 }
+

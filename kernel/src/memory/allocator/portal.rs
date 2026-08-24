@@ -10,7 +10,7 @@
 // 注意：portal 解锁后，block 的簿记表读（own）改由 tally 自锁串行（见 block.rs——
 // 这是从"portal 锁兼任跨池闸门"迁移过来的唯一承重点）。
 
-use core::alloc::{AllocError, Allocator, Layout, GlobalAllocator};
+use core::alloc::{AllocError, Allocator, GlobalAllocator, Layout};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -65,3 +65,4 @@ pub fn switch(backend: Backend) {
 
 #[global_allocator]
 pub static PORTAL_ALLOCATOR: PortalAllocator = PortalAllocator;
+

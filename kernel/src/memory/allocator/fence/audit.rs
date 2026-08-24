@@ -5,11 +5,11 @@
 //! `page_clear` 验页内无活账。只读账本（banker/ledger），不写。
 //! 违例统一经 `report` 处置（见 fence/mod）。
 
-#![cfg(all(debug_assertions, feature = "audit"))] // 与 fence 根同 gate（debug + audit）
+#![cfg(debug_assertions)] // debug 构建生效；release 空体零开销
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use super::{IntegrityViolation, ledger::OwnerKind, report};
+use super::{IntegrityViolation, OwnerKind, report};
 
 // ── 基线核算 ──────────────────────────────────────────
 

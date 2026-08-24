@@ -79,7 +79,7 @@ pub(super) fn halt() -> ! {
         // 全部核已到齐（回收完毕）、帧已归还——先冲洗每个块的池（过境块归位 +
         // 空页还 frame，帧基线扣除公式才成立），再断言零泄漏，最后发复位（debug 构建生效）。
         crate::memory::allocator::block::flush();
-        #[cfg(all(debug_assertions, feature = "audit"))]
+        #[cfg(debug_assertions)]
         crate::memory::allocator::fence::audit::check_baseline();
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }

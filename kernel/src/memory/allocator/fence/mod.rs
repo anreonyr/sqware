@@ -9,7 +9,10 @@
 //   audit    — 核查侧（多源交叉核对 audit()、关机基线 record/check_baseline、
 //              页清残留 page_clear、基线快照 stats）。
 // 模块根 = banker/ledger/checker/audit 共享的处置原语：report（违例→trace→panic）、
-// IntegrityViolation（违例类目）、poison（毒化标记）与相关常量。
+// IntegrityViolation（违例类目）、poison（毒化标记）、OwnerKind（登记类别）与相关
+// 常量，以及**事件入口**（on_alloc/on_free/on_frame_alloc/on_frame_free）——
+// 分配器热路径对其的调用是一行无 cfg 的语义事件，asm 读 ra、poison、记账全部
+// 收在本层内部（纯功能文件零审计词汇）。
 //
 // 分层（in-path / out-of-path）：
 //   功能   memory/allocator/{block,frame,hybrid,...} — 实现本身
@@ -18,7 +21,7 @@
 //
 // 依赖方向（无环）：checker 独立；banker/ledger → 模块根；audit → 模块根 + banker + ledger。
 
-#[cfg(all(debug_assertions, feature = "audit"))]
+#![allow(unused)]
 use alloc::fmt;
 
 pub mod audit;
@@ -26,20 +29,28 @@ pub mod banker;
 pub mod checker;
 pub mod ledger;
 
-// ── 公共处置原语（audit-gated；release/无 audit feature 编译为空）──
+// ── 公共处置原语（debug-gated；release 编译为空，零开销）──
 
 /// 毒化模式字节（分配/释放填充：未初始化读、UAF 读数的现行标记）。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 pub const POISON: u8 = 0xCD;
 /// slack canary 期望值（写进块尾 slack 8 字节；释放时核对）。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 pub(crate) const CANARY_MAGIC: u64 = 0x51A7_0D1E_CAFE_BEEF;
 /// canary 所需最小 slack 字节数（不足则本块不设 canary）。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 pub(crate) const CANARY_MIN_SLACK: usize = 8;
 
+/// 登记类别（Ledger 记录归属；用户堆不 poison/canary——维持清零语义）。
+/// 放模块根（不 gate）：事件入口签名引用它，release 下 ledger 模块为空也可编译。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnerKind {
+    KernelHeap,
+    UserHeap,
+}
+
 /// 完整性违例类别（report 的字段；repr(u8) 供 trace 事件编码，**顺序即 ABI**）。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum IntegrityViolation {
@@ -68,7 +79,7 @@ pub enum IntegrityViolation {
 /// 毒化填充 [addr, addr+len)。前置：区间此刻归调用方独占（刚分配未交付 / 已取出未复用）。
 ///
 /// SAFETY: 前置条件保证区间独占可写；volatile 写防写合并吞掉标记。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 pub fn poison(addr: usize, len: usize) {
     // SAFETY: 调用方保证区间独占；volatile 写。
     let p = addr as *mut u8;
@@ -79,7 +90,7 @@ pub fn poison(addr: usize, len: usize) {
 
 /// 统一处置（不返回）：trace 记 Mem(Integrity) → 现场直写 → panic
 /// （halt 的 panic 处理器再转储 crash scene；panic 路径零分配）。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
     crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Mem(
         crate::runtime::diagnose::trace::MemEvent::Integrity {
@@ -94,3 +105,51 @@ pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
     panic!("memory integrity violation: {v:?}");
 }
 
+// ── 事件入口（恒编译；体内 debug-gated，release 空体零开销）──
+//
+// 分配器热路径唯一可见的护栏痕迹：一行语义调用。asm 读 ra、poison 填充、
+// ledger/banker 记账全部收在本层内部——纯功能文件（block/frame/space）不见
+// 任何 cfg、编译器内联指令或审计词汇。debug 构建做账，release 空体经
+// #[inline] 消除。
+
+/// 分配事件：活块入账（含整块毒化）。caller = 调用点 ra（分配现场符号化用）。
+#[inline]
+pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
+    #[cfg(debug_assertions)]
+    {
+        poison(addr, size);
+        let caller: usize;
+        // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
+        unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
+        ledger::LEDGER.mark(addr, size, caller, kind);
+    }
+}
+
+/// 释放事件：活块注销 + 本体毒化复写（头 8B 随后被 freelist 头插覆盖，其余保持
+/// 毒化——UAF 读数变 0xCD）。
+#[inline]
+pub fn on_free(addr: usize, size: usize) {
+    #[cfg(debug_assertions)]
+    {
+        ledger::LEDGER.unmark(addr, size);
+        poison(addr, size);
+    }
+}
+
+/// 帧分配事件：页金库取出（Free→held；双取出 / 活堆页泄漏进池现行）。
+#[inline]
+pub fn on_frame_alloc(addr: usize) {
+    #[cfg(debug_assertions)]
+    {
+        banker::BANKER.debit(addr);
+    }
+}
+
+/// 帧释放事件：页金库存入（held→Free；存入陌生页 / 双释放现行）。
+#[inline]
+pub fn on_frame_free(addr: usize) {
+    #[cfg(debug_assertions)]
+    {
+        banker::BANKER.credit(addr);
+    }
+}

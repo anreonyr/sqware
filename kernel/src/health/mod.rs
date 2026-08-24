@@ -39,3 +39,13 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 pub mod pagetable;
 pub mod spare;
 
+/// 健康检查总入口：boot 恰好调用一次（spawn 用户任务前），逐项验收。
+///
+/// 编排：spare 预算验收**恒跑**（预算即契约，release 也验）；pagetable PT 回收
+/// 自测 debug-only（依赖 debug 构建的 ledger/banker 记账与审计口径）。
+pub fn run() {
+    spare::accept();
+    #[cfg(debug_assertions)]
+    pagetable::pagetable();
+}
+

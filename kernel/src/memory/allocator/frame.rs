@@ -43,9 +43,9 @@ impl FrameAllocator {
     }
 
     /// 在途（未归还）物理帧数（audit 统计用；未开 audit / release 恒 0）。
-    #[cfg_attr(not(all(debug_assertions, feature = "audit")), allow(dead_code))]
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn outstanding(&self) -> usize {
-        #[cfg(all(debug_assertions, feature = "audit"))]
+        #[cfg(debug_assertions)]
         {
             return self.inner.lock().outstanding;
         }
@@ -76,12 +76,9 @@ unsafe impl Allocator for FrameAllocator {
 
         let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
         let addr = frame.frame_addr(index) as *mut u8;
-        // audit: 弹出的帧必须 Free → Banker 取出（双取出 / 活堆页泄漏进池现行）
-        #[cfg(all(debug_assertions, feature = "audit"))]
-        {
-            crate::memory::allocator::fence::banker::BANKER.debit(addr as usize);
-        }
-        #[cfg(all(debug_assertions, feature = "audit"))]
+        // 护栏事件：页金库取出（Free→held；双取出 / 活堆页泄漏进池现行）。
+        super::fence::on_frame_alloc(addr as usize);
+        #[cfg(debug_assertions)]
         {
             frame.outstanding += 1;
         }
@@ -103,13 +100,11 @@ unsafe impl Allocator for FrameAllocator {
             let addr = ptr.addr().get();
             let index = frame.frame_index(addr);
 
-            // audit: 归还的帧必须 held → Banker 存入（存入陌生页 / 双释放现行）
-            #[cfg(all(debug_assertions, feature = "audit"))]
-            crate::memory::allocator::fence::banker::BANKER.credit(addr);
-
-            // double-free 已由 Banker::credit（DoubleCredit）覆盖，此处不再重复检查。
+            // 护栏事件：页金库存入（held→Free；存入陌生页 / 双释放现行——double-free
+            // 已由 Banker::credit（DoubleCredit）覆盖）。
+            super::fence::on_frame_free(addr);
             frame.merge_block(index, power);
-            #[cfg(all(debug_assertions, feature = "audit"))]
+            #[cfg(debug_assertions)]
             {
                 frame.outstanding = frame.outstanding.saturating_sub(1);
             }
@@ -127,7 +122,7 @@ struct FrameInner {
     /// 在途（未归还）物理帧数 — audit 断言用：关机时须回落到内核基线，
     /// 证明地址空间 Drop 的所有权回收无泄漏（见 schedule::scheduler::idle）。
     /// 只做 usize 计数（锁内不得分配——Vec push 会触发分配器回调，见下）。
-    #[cfg(all(debug_assertions, feature = "audit"))]
+    #[cfg(debug_assertions)]
     outstanding: usize,
 }
 
@@ -138,7 +133,7 @@ impl FrameInner {
             pagemeta: Vec::new(),
             base: 0,
             edge: 0,
-            #[cfg(all(debug_assertions, feature = "audit"))]
+            #[cfg(debug_assertions)]
             outstanding: 0,
         }
     }
@@ -409,7 +404,7 @@ pub fn allocator() -> &'static dyn Allocator {
 
 /// 在途（未归还）物理帧数 —— Boot audit 交叉核对、关机基线断言用。
 /// 简单包一层 `FRAME_ALLOCATOR.outstanding()`，供模块外调用（未初始化 panic）。
-#[cfg(all(debug_assertions, feature = "audit"))]
+#[cfg(debug_assertions)]
 pub(crate) fn outstanding() -> usize {
     FRAME_ALLOCATOR
         .get()

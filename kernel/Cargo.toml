@@ -10,11 +10,6 @@ default = []
 # 要关则把 default 里的 semihosting 拿掉。依赖 QEMU -semihosting（runner 恒加）。
 semihosting = []
 
-# opt-in：完整性/审计框架（Banker/Ledger/poison/audit/基线断言——见 memory::integrity）。
-# 需 debug 构建且 --features audit 同时满足才生效（all(debug_assertions, feature="audit")）；
-# release 或未开 feature 均编译为空、零开销。
-audit = []
-
 [dependencies]
 ubi = { path = "../crates/ubi" }
 sbi = { path = "../crates/sbi" }
@@ -35,7 +30,10 @@ riscv-rt = { version = "0.18.0", features = ["s-mode"] }
 # 零分配纪律）、非 Rust 符号原样透传。default-features=false → 纯 no_std。
 rustc-demangle = { version = "0.1.28", default-features = false }
 # 诊断报告序列化（整档 + 事件流）：serde_json 承担 JSON，derive 即形状、零手写序列化器。
-serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde = { version = "1.0", default-features = false, features = [
+  "derive",
+  "alloc",
+] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 # semihosting = 导宿主文件用的 crate；只开 fs（stdio/panic-handler/time/args 均不需要）。
 semihosting = { version = "0.1.25", features = ["fs"] }
