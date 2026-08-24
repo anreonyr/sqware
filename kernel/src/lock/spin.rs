@@ -94,8 +94,7 @@ impl<T: ?Sized> SpinLock<T> {
 
         // Acquire：获取成功后看到前持有者的所有写入。跨 hart 争用时真自旋。
         while self.locked.swap(true, Ordering::Acquire) {
-            // 自旋等待者也是「活着」的形态：看警（ALARM 已拉响且他核报警 → 就地
-            // 卧倒——修补自旋核不收 trap、hush 钩子覆盖不到的停机漏洞）。
+            // 自旋核收不到 trap：就地留意停机报警并卧倒。
             crate::runtime::diagnose::halt::hush();
             core::hint::spin_loop();
         }

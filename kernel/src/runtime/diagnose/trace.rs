@@ -1,22 +1,7 @@
 //! trace — 内核事件环形缓冲（崩溃后反推的依据）。
 //!
-//! 分层（signature 即文档）：
-//!   事件 = 按模块分组、字段自足的枚举（EventKind 聚合）
-//!   核心 = Trace（per-hart 窗口）+ note / dump / reset / init
-//!   适配 = panic_dump（把崩溃前最近窗口倒到控制台）+ 宿主镜像（共享同一事件流）
-//!
-//! 设计决策：
-//!   - per-hart、环常驻后备仓（spare 内存，boot 早期一次分配：窗口表 + 事件槽，
-//!     size_of 精确预算，见 trace::init / ring_bytes）——崩溃现场主堆不可信，缓冲
-//!     仍可用（spare 是独立仓，budget 即契约，health 验收）。
-//!   - 写 = 单生产者无锁：cursor 单调不回卷、读侧取模；读只在 panic，此时其余核
-//!     已由 halt 停写（写读互斥由 halt 语义保证）。
-//!   - 宿主镜像 = diagnose::export（feature semihosting，**默认开启**）：每条事件
-//!     一条 JSON 记录写入宿主文件 sqware-diagnose.jsonl（qemu CWD 下；首行 '#' 头部
-//!     溯源），runner 归档；依赖 QEMU -semihosting（runner 恒加）。
-//!   - 事件写者 = host_note（live 流，经 export::line 串行）：panic 只经
-//!     note(Halt(Panic)) 追加一条事件行，决不把环形窗口再 dump 一遍进文件；
-//!     环形窗口文本由 scene::dump_crash 恒倒到控制台（人读上下文）。
+//! 事件 = 按模块分组、字段自足的枚举（EventKind 聚合）；核心 = Trace（per-hart
+//! 窗口）+ note / dump / reset / init；适配 = panic_dump + 宿主镜像。
 
 use core::fmt;
 use core::mem::size_of;
@@ -56,7 +41,7 @@ pub enum EventKind {
     Boot(BootEvent),
 }
 
-/// work/scheduler 的任务生命周期。
+/// 调度事件。
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SchedEvent {
@@ -71,14 +56,14 @@ pub enum SchedEvent {
     Idle,
 }
 
-/// work/envcall 的用户环境调用。
+/// 环境调用事件。
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvEvent {
     Call { call: usize, arg: usize },
 }
 
-/// memory/manager/fault 的缺页与 memory/integrity 的完整性违例。
+/// 内存事件（缺页 + 完整性违例）。
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemEvent {
@@ -87,11 +72,11 @@ pub enum MemEvent {
         fault: FaultKind,
         resolved: bool,
     },
-    /// 完整性违例（IntegrityViolation 的 repr(u8) 编码；见 allocator::fence）。
+    /// 完整性违例（repr(u8) 编码）。
     Integrity { code: u8, addr: usize },
 }
 
-/// runtime/halt 的系统级事件。
+/// 停机事件。
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HaltEvent {
@@ -99,16 +84,15 @@ pub enum HaltEvent {
     Panic,
 }
 
-/// boot / 副核启动的初始化消息（直打控制台会扰乱 panic 现场，改写进 trace）。
-/// 各 hart 启动时一次；crash 后由报警源统一 dump，既可查又不打断现场。
+/// boot 初始化消息（各 hart 启动时一次）。
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BootEvent {
     /// 主核 call 该副核（HSM start）。
     Launch { hart: usize },
-    /// 副核 trap/调度初始化完成（原 console 的 "trap init done"）。
+    /// 副核 trap/调度初始化完成。
     Done { hart: usize },
-    /// 该核 trap 栈峰值水位（原 console 的 "high-water"）。
+    /// 该核 trap 栈峰值水位。
     Stack { hart: usize, used: usize },
 }
 
@@ -151,7 +135,7 @@ impl Trace {
 /// 事件池（spare 仓内）：写入一次、读多次。分配于 `init`，环在分配后只读结构。
 static POOL: OnceLock<&'static [Trace]> = OnceLock::new();
 
-/// 环形常驻字节数（h 个窗口表 + 事件槽，size_of 精确）——spare 预算公式同源。
+/// 环形常驻字节数（h 个窗口表 + 事件槽，size_of 精确）。
 pub fn ring_bytes(h: usize) -> usize {
     h * (size_of::<Trace>() + BUFFER_SIZE * size_of::<Event>())
 }
@@ -172,22 +156,15 @@ pub fn note(kind: EventKind) {
     };
     let when = crate::runtime::chrono::clock::now().as_ticks();
     t.note(kind, when);
-    // 宿主全量（feature semihosting，默认开启）：每条结构化事件经 semihosting 送宿主，
-    // 带自描述长度 "len"，便于 tail/离线解析可靠分帧（try_lock 原子成行、尽力而为）。
+    // 宿主镜像（semihosting）：每条结构化事件送宿主。
     #[cfg(feature = "semihosting")]
     host_note(kind, hart, when);
 }
 
 // ── 宿主镜像适配（feature gate: semihosting）──────────────────────────
-// 事件 JSON 序列化（json_payload）在此；人读文本（fmt_description）同源平行。
-// 文件/分帧/锁/闩均归 diagnose::export（JSON Lines 单文件 sqware-diagnose.jsonl）。
 
-/// 宿主镜像：把一条事件序列化成 JSON 记录，经 `export::push` 写入宿主文件
-/// sqware-diagnose.jsonl。依赖 QEMU -semihosting（feature 默认开启，runner
-/// 恒加该标志）。序列化全交 serde_json（[`HostEvent`] 只做打包，零手写 JSON）；
-/// 失败静默（诊断路径永不 panic）；跨核写由 export 以 try_lock 串行。
-///
-/// 事件写者：panic 只追加自身一行（note(Halt(Panic))），环形窗口 dump 不写文件。
+/// 宿主镜像：把一条事件序列化成 JSON 记录写入宿主文件。序列化全交 serde_json；
+/// 失败静默（诊断路径永不 panic）。
 #[cfg(feature = "semihosting")]
 fn host_note(kind: EventKind, hart: usize, when: u64) {
     use crate::runtime::diagnose::export::push;
@@ -210,7 +187,7 @@ struct HostEvent<'a> {
 /// 对窗口内最近 ≤k 条事件从旧到新调 f。
 ///
 /// 用回调而非返回 &[Event]：环形窗口可能跨缝（cursor 为绝对下标、读按取模），
-/// 给不出一段连续切片。panic_dump / 未来 semihost 都经此消费同一事件流。
+/// 给不出一段连续切片。
 pub fn dump<F: FnMut(&Event)>(hart: usize, k: usize, mut f: F) {
     let Some(t) = POOL.get().and_then(|p| p.get(hart)) else {
         return;
@@ -223,14 +200,12 @@ pub fn dump<F: FnMut(&Event)>(hart: usize, k: usize, mut f: F) {
     }
 }
 
-/// 初始化（boot 恰好一次）：从 spare 仓取 ring_bytes 的常驻环（窗口表 + 事件槽）。
-/// 失败 = 预算错误，返回 Err 由 main 统一 fail-fast（panic → halt）。须在 clock
-/// 就绪后、任何 note 之前调用。
+/// 初始化：从 spare 仓取 ring_bytes 的常驻环（窗口表 + 事件槽）。失败 = 预算错误，
+/// 返回 Err。须在 clock 就绪后、任何 note 之前调用。
 ///
 /// # Errors
 ///
-/// spare 仓余量不足（预算与 ring 失配）→ [`TraceInitError::OutOfMemory`]；
-/// 重复初始化 → [`TraceInitError::AlreadyInit`]。
+/// spare 仓余量不足 → [`TraceInitError::OutOfMemory`]；重复初始化 → [`TraceInitError::AlreadyInit`]。
 pub fn init() -> Result<(), TraceInitError> {
     let h = machine::hart_count();
     let total = ring_bytes(h);
@@ -267,7 +242,7 @@ pub fn init() -> Result<(), TraceInitError> {
 /// trace 初始化错误。
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TraceInitError {
-    /// spare 仓余量不足（容量预算与 ring 需求失配）。
+    /// spare 仓余量不足。
     #[error("spare ring allocation failed")]
     OutOfMemory,
     /// 重复初始化。
@@ -320,16 +295,13 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
     }
 }
 
-/// 每 hart 倒出行数（总量平摊）：总额恒 ≤ TRACE_DUMP——渲染预算与核数无关，
-/// 64 hart 极端配置也不超 spare 的打印预算。
+/// 每 hart 倒出行数（总量平摊）：总额恒 ≤ TRACE_DUMP。
 pub fn hart_rows() -> usize {
     (TRACE_DUMP / machine::hart_count()).max(1)
 }
 
 /// 崩溃转储：遍历已启动各 hart 的最近窗口，每人开一段（标题 + 两列表 t/描述）
-/// 投进报告（`report::paragraph("trace", …)`，表中首行恒为表头）。由
-/// scene::dump_crash 末尾调用；报告成册后由印发统一输出——控制台与宿主
-/// 收到同一份数据。只倒最近 hart_rows 条（总量平摊）。
+/// 投进报告（表中首行恒为表头）。只倒最近 hart_rows 条（总量平摊）。
 pub fn panic_dump(r: &mut Report) {
     for h in 0..machine::hart_count() {
         let mut rows: Vec<Vec<Option<String>>> = vec![

@@ -1,43 +1,31 @@
-// 任务调度器（多核 hart B1）：per-hart 调度锁 + 非阻塞 steal + 动态 trap 栈。
-//
-// 状态机（task.rs）：TaskState 回答"任务在哪 + 该状态的数据"——Running{ticks_left}
-// （运行预算）/ Blocked{reason}（阻塞原因）/ Starved（就绪，预算耗尽等补给）/
-// Reaped（僵尸，等延迟回收）。阻塞原因与预算作为状态载荷放在任务上；blocked
-// 为 clock 句柄 → Task 映射（见下），reaped 退化为纯 Arc<Task> 索引。
+// 任务调度器（多核 hart）：per-hart 调度锁 + 非阻塞 steal + 动态 trap 栈。
 //
 // 时间片记账：新选中任务获得满额 TIME_SLICE 预算；run 时 Running 预算 > 1 →
 // 递减续跑（不重排），== 1 → 转 Starved 轮转。主动让出（envcall YIELD）走
 // starve：无视剩余预算立即轮转——抢占与让出各自独立。
 //
 // 退出回收：reap 标记 Reaped 入全局 reaped 容器（延迟回收——不能在自己正在用的
-// 栈上回收自己）；本 hart 取到下一任务后 clear 统一回收。Reaped 任务
-// 不在任何核运行，任意核回收均安全。
+// 栈上回收自己）；本 hart 取到下一任务后 clear 统一回收。
 //
 // 结构：Scheduler = inner(SpinLock) + starved_len(AtomicUsize 锁外镜像)。
 // starved 字段私有，唯一修改路径是 push/pop（方法内持锁 + 从 starved.len()
-// 派生计数）——不变量靠构造成立，无"漏一步 fetch_add/fetch_sub"的失步面。
-// steal 锁外先读 starved_len 跳过空队列（不做 RMW），再 try_lock。
+// 派生计数）；steal 锁外先读 starved_len 跳过空队列（不做 RMW），再 try_lock。
 //
 // 状态互斥：无原子字段。所有状态变更都经 Task::exclusive（唯一 Arc 所有权
 // + &mut，Arc::get_mut 的 weak≥1 变体）——锁内 take/pop 出任务 → 取 &mut；
 // 锁 + 所有权保证互斥，编译器强制。
 //
-// 锁纪律：inner = level 1 每核一把；Team.tasks = 3 与 Space.inner
-// = 2 禁止嵌套——锁内只做纯 Vec 操作，绝不调 space 方法。blocked（sleepers 的
-// handle→Task 映射）/ reaped / timer 的 TIMER_HEAP（tock 堆）同级（3）：park 路径 1 → 3
-// 嵌套合法（顺序获取 blocked 与 clock 锁，绝不 3 → 3 嵌套）；unpark 路径先放
+// 锁纪律：inner = level 1 每核一把；Team.tasks(3) 与 Space.inner(2) 禁止嵌套
+// ——锁内只做纯 Vec 操作，绝不调 space 方法。blocked / reaped / timer 的 tock
+// 堆同级（3）：park 路径 1 → 3 嵌套合法（绝不 3 → 3 嵌套）；unpark 路径先放
 // 堆锁/队列锁再取调度锁（防 ABBA）。clear 只持 reaped 锁出队，放锁后再取
 // Team.tasks / Space.inner（顺序获取，不嵌套）。
 //
 // 装槽（replace）：唯一装 running 的方法，自取锁，装前 running 必空（断言）。
-// 调用方统一为「持锁 pop/rotate 出唯一 Arc<Task> → 放锁 → replace」——放锁
-// 窗口内任务已出队且 strong_count == 1（唯一持有），steal 只偷仍在队列里的
-// 任务，SIE=0 无中断重入，无并发别名。
 //
-// 文件布局：前半为调度核心（per-hart 结构 / 方法 / 全局表 / 取活·休眠·回收
-// 机制）；后半为适配层——对外部模块（boot / create / trap / envcall）暴露的
-// 入口函数，按服务模块分组。核心不依赖适配层，适配层只做「取本核 → 转发
-// 核心方法」的薄封装。
+// 文件布局：前半为调度核心（per-hart 结构 / 方法 / 全局表 / 取活·休眠·回收）；
+// 后半为适配层——对外部调用方暴露的入口函数，只做「取本核 → 转发核心方法」
+// 的薄封装。
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -92,9 +80,8 @@ pub struct Scheduler {
     inner: SpinLock<SchedInner>,
     /// 锁外：running team 镜像（崩溃现场符号化）。与 `inner` 同结构体共生——
     /// 写侧 = 本核装槽窗口内派生（L1→L3 递增），读侧 = `running_team_try`
-    /// 只 try_lock **本核**的这把小锁。**per-hart 各一**：不动全局单槽——那会被
-    /// 其它核装槽互踩，报警核读到别核 team、用户地址对错程序符号化（ubt 弃
-    /// 全局镜像的同一原因，见 scene::user_backtrace）。
+    /// 只 try_lock **本核**的这把小锁。per-hart 各一：报警核只读本核最近上台的
+    /// team（idle 时保留旧值——符号化无碍）。
     running_team: SpinLock<Option<Arc<Team>>>,
     /// 锁外：starved 长度镜像（steal 预检；与 inner 同结构体共生，不会分家）。
     starved_len: AtomicUsize,
@@ -185,9 +172,8 @@ impl Scheduler {
 
     /// 装槽：把 Starved 任务装为本 hart 的 running（自取锁）。装前 running 必空。
     ///
-    /// 装槽为单一入口（合并自双安装路径）：锁内调用方（starve / park / run
-    /// 的轮转分支）先放锁再调本方法——放锁窗口内任务已出队且唯一持有，安全
-    /// （见模块头注释）。
+    /// 安全前提：调用方先放锁再调本方法——放锁窗口内任务已出队且唯一持有
+    /// （strong == 1），无并发别名。
     fn replace(&self, mut task: Arc<Task>) -> usize {
         let mut i = self.inner.lock();
         debug_assert!(i.running.is_none(), "装槽前 running 必须为空");
@@ -231,8 +217,8 @@ impl Scheduler {
     }
 
     /// 当前任务 park：Running → Blocked(Park{wake_at})。入 timer 的 tock 堆
-    /// （句柄 → blocked 映射），不再依赖入队顺序。返回下一帧 PA；本核 starved
-    /// 空 → None（调用方转 run() 取活）。
+    /// （句柄 → blocked 映射）。返回下一帧 PA；本核 starved 空 → None（调用方
+    /// 转 run() 取活）。
     fn park(&self, duration: Duration) -> Option<usize> {
         let mut i = self.inner.lock();
         let mut task = i.running.take().expect("no running task");
@@ -304,14 +290,12 @@ fn schedulers() -> &'static [Scheduler] {
 
 /// 全局容器：Blocked（睡眠映射 handle→Task）/ Reaped（回收队列）任务集合。
 ///
-/// blocked 以 clock 的 deadline 句柄为键：条目即任务本身，阻塞原因（含 wake_at）
-/// 在任务的 Blocked(Park) 载荷里，映射退化为「句柄 → 唯一 Arc<Task>」。唤醒
-/// 由 timer::drain 产出到期句柄，unpark 按句柄摘除并唤醒。锁纪律与 Team.tasks
-/// 同级（3）：park 路径 1 → 3 嵌套合法（blocked 与 clock 锁顺序获取、不嵌套）；
-/// unpark 路径
-/// 先放堆锁/队列锁再取调度锁（防 ABBA）。
-/// Blocked（睡眠映射 handle→Task）— 惰性初始化：hashbrown 的 HashMap::new
-/// 非 const，无法进 static（单独 static 保证 get_or_init 的 'static 借用）。
+/// blocked 以 deadline 句柄为键：条目即任务本身，阻塞原因（含 wake_at）在任务
+/// 的 Blocked(Park) 载荷里，映射退化为「句柄 → 唯一 Arc<Task>」；unpark 按句柄
+/// 摘除并唤醒。锁级 3（与 Team.tasks 同级）：park 路径 1 → 3 嵌套合法（blocked
+/// 与 clock 锁顺序获取、不嵌套）；unpark 先放堆锁/队列锁再取调度锁（防 ABBA）。
+/// 惰性初始化：hashbrown 的 HashMap::new 非 const，无法进 static（单独 static
+/// 保证 get_or_init 的 'static 借用）。
 fn blocked() -> &'static SpinLock<HashMap<u64, Arc<Task>>> {
     static BLOCKED: OnceLock<SpinLock<HashMap<u64, Arc<Task>>>> = OnceLock::new();
     BLOCKED.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
@@ -356,11 +340,11 @@ fn steal() -> Option<Arc<Task>> {
 ///
 /// 协议（闭合「置位后漏唤醒」窗口）：置睡眠位 → **复查**（自核队首 / steal——
 /// 置位前的 push 已按位补 IPI，置位后的 push 会看到位）→ 全退出检查 →
-/// 睡到最近 tock（tickless：由 timer::next_tock 推算，无则推远）→ WFI。唤醒后：
-/// 有到期任务 → 正常出口（清 SSIP 与睡眠位、round 打点、外层重扫）。
+/// 睡到最近 tock（tickless：无到期 tock 则推远）→ WFI。唤醒后：有到期任务 →
+/// 正常出口（清 SSIP 与睡眠位、round 打点、外层重扫）。
 ///
-/// 护栏：睡距以 timer::next_tock 为准（tickless；无则推远 WFI_FAR），
-/// 到期假醒但无活 → 哑睡壳回睡：保持睡眠位、不打点不清位（假醒不伪装进展）。
+/// 护栏：睡距按 tickless 推算（无则推远 WFI_FAR）；到期假醒但无活 → 哑睡壳
+/// 回睡：保持睡眠位、不打点不清位（假醒不伪装进展）。
 fn wait() -> Option<Arc<Task>> {
     let me = machine::hart_id();
     tie::sleep(me);
@@ -403,10 +387,9 @@ fn wait() -> Option<Arc<Task>> {
     None
 }
 
-/// 回收全部 Reaped 任务：簿记清理（Team.tasks 弱引用）+ 栈 slot/trap 帧归还 +
-/// drop。安全：Reaped 任务不在任何核运行（running/starved 均无引用）。
-/// 锁纪律：只持 reaped 锁出队，放锁后再取 Team.tasks / Space.inner（顺序获取，
-/// 不嵌套——锁内绝不调 space 方法）。
+/// 回收全部 Reaped 任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：Reaped
+/// 任务不在任何核运行（running/starved 均无引用）。锁纪律：只持 reaped 锁
+/// 出队，放锁后再取 Team.tasks / Space.inner（顺序获取、不嵌套）。
 fn clear() {
     loop {
         let Some(z) = TASK_TABLES.reaped.lock().pop_front() else {
@@ -421,10 +404,10 @@ fn clear() {
     }
 }
 
-// ── 适配层：boot（boot.rs init / boot_main 调用）──
+// ── 适配层：boot ──
 
-/// 按实际核数（DTB）动态分配 per-hart 调度器状态（boot 时调用**恰好一次**，
-/// 先于任何调度器访问：spawn / trap / steal）。
+/// 按实际核数（DTB）动态分配 per-hart 调度器状态（调用**恰好一次**，先于任何
+/// 调度器访问）。
 pub fn init() {
     let n = machine::hart_count();
     assert!(n > 0, "no harts");
@@ -444,10 +427,10 @@ pub fn idle() -> ! {
     restore(run())
 }
 
-// ── 适配层：task（task.rs TaskBuilder::spawn 调用）──
+// ── 适配层：task ──
 
-/// 新任务入队收尾（task.rs TaskBuilder::spawn 调用）：入簿（Team.tasks，3）+
-/// 入本 hart starved（1）+ PUSHED 计数；锁外唤醒 WFI 休眠核。
+/// 新任务入队收尾：入簿（Team.tasks，3）+ 入本 hart starved（1）+ PUSHED 计数；
+/// 锁外唤醒 WFI 休眠核。
 ///
 /// 锁序：Team.tasks 与调度锁顺序获取、不嵌套（无 3 → 1 方向）。
 pub(crate) fn push(task: Arc<Task>) {
@@ -461,18 +444,17 @@ pub(crate) fn push(task: Arc<Task>) {
     tie::wake_all();
 }
 
-// ── 适配层：trap（trap.rs 定时器 / 缺页 / 诊断调用）──
+// ── 适配层：trap ──
 
-/// 统一入口（定时器抢占 / 取活）：running 预算 > 1 → 续跑（只减计数不重排）；
-/// == 1 → 转 Starved 轮转；无 running → 取活（自核队首 → 跨核 steal → WFI）。
+/// 统一入口：running 预算 > 1 → 续跑（只减计数不重排）；== 1 → 转 Starved
+/// 轮转；无 running → 取活（自核队首 → 跨核 steal → WFI）。
 ///
-/// 取活与抢占合一：定时器分支（用户态陷阱，running 恒存在）走预算
-/// 检查；enter_first_task / idle_loop / reap / park 空分支（running 已 take 或
-/// 本为空闲）直接进入取活循环。
+/// 取活与抢占合一：有 running 走预算检查；空分支（running 已 take 或本为
+/// 空闲）直接进入取活循环。
 pub fn run() -> usize {
     // 0. 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）。
-    //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒、不经过 trap_handler
-    //    的路径（用户核走 trap 入口钩子）。常运行时恒 no-op。
+    //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒的路径；常运行
+    //    时恒 no-op。
     crate::runtime::diagnose::halt::hush();
     let me = machine::hart_id();
     let s = &schedulers()[me];
@@ -521,19 +503,17 @@ pub fn run() -> usize {
     }
 }
 
-/// 唤醒：从 clock 到期句柄按 blocked 映射摘除任务，Blocked → Starved 入本核
-/// starved。调用方 = trap 定时器分支与 wait()（空闲核 WFI 唤醒后）。
+/// 唤醒：从到期句柄按 blocked 映射摘除任务，Blocked → Starved 入本核 starved。
 ///
-/// 按 tock 堆（timer::drain）取到期者，与入队顺序无关。
-/// 队列锁/堆锁先放后取，绝不持队列锁取调度锁（防 ABBA）。
-/// 返回：本次是否撤出过任务（wait 的哑睡壳判定用）。
+/// 按 tock 堆取到期者（与入队顺序无关）；队列锁/堆锁先放后取，绝不持队列锁取
+/// 调度锁（防 ABBA）。返回：本次是否撤出过任务（wait 的哑睡壳判定用）。
 pub fn unpark() -> bool {
     let due = timer::drain(clock::now());
     let mut woke = false;
     for handle in due {
         // blocked 映射锁：摘除（锁作用域到此语句结束即释放）
         let Some(mut task) = blocked().lock().remove(&handle) else {
-            // 已取消/已由他路唤醒：跳过（timer 侧堆项已在 drain 丢弃）
+            // 已取消/已由他路唤醒：跳过（堆项随 drain 已丢弃）
             continue;
         };
         woke = true;
@@ -546,11 +526,11 @@ pub fn unpark() -> bool {
     woke
 }
 
-/// 是否有运行任务（console 兜底判定用）。
+/// 是否有运行任务。
 ///
-/// 与 `with_running_space` 的 expect 语义互补：envcall/trap 路径**必然**有运行
-/// 任务（不减不 panic）；console 在 boot/panic 早期可能没有——判 `false` 即
-/// 静默丢弃用户窗口缓冲，绝不嵌套 panic（512M 静默挂死的教训）。
+/// 与 `with_running_space` 的 expect 语义互补：正常运行路径必然有运行任务
+/// （不减不 panic）；早期 boot/panic 现场可能没有——判 `false` 即静默丢弃
+/// 用户窗口缓冲，绝不嵌套 panic。
 pub fn has_running_task() -> bool {
     let me = machine::hart_id();
     schedulers()[me].inner.lock().running.is_some()
@@ -566,8 +546,8 @@ pub fn with_running_space<R>(f: impl FnOnce(&Space) -> R) -> R {
 
 /// 当前运行任务所属团队 Arc（锁内取、放锁返回）。
 ///
-/// 供 envcall Spawn 使用：放锁后再建任务（spawn 内部逐段取 Space 锁 + scheduler 锁，
-/// 不得跨锁持有）。持有的 Arc 保团队存活。无运行任务则 panic（envcall 必然有）。
+/// 供 envcall Spawn 使用：放锁后再建任务，不得跨锁持有；持有的 Arc 保团队
+/// 存活。无运行任务则 panic。
 pub fn running_team() -> Arc<Team> {
     let me = machine::hart_id();
     schedulers()[me]
@@ -583,8 +563,8 @@ pub fn running_team() -> Arc<Team> {
 /// 当前运行任务所属团队（panic/诊断现场安全）：读**本核**调度器的 running_team
 /// 镜像——不碰调度锁（崩溃时它常被持会失败），镜像锁仅本核装槽瞬间持、无争用。
 /// 返回 clone 的 Arc<Team>（放锁后安全使用）。per-hart 各一：精确到核（本核
-/// 最近上台的 team，即本核 running 任务的 team；idle 时保留旧值——符号化无碍），
-/// 不再有全局单槽被别核互踩的问题。未装槽（boot 早期 / 无任务）→ None。
+/// 最近上台的 team；idle 时保留旧值——符号化无碍）。未装槽（boot 早期 / 无
+/// 任务）→ None。
 pub fn running_team_try() -> Option<Arc<Team>> {
     let all = SCHEDULERS.get()?;
     let me = machine::hart_id();
@@ -606,10 +586,10 @@ pub fn running_task_id() -> usize {
 
 /// 当前运行任务 id + 名称（panic 诊断用；非阻塞，失败返回 None）。
 ///
-/// 与 `running_task_id` 不同，本函数专供 panic_handler：panic 路径故意绕过所有
-/// 锁（见 halt.rs），故这里走两个防御——调度器尚未初始化（极早期 boot panic）
-/// 直接返回 None；调度锁被 panic 现场持有（持锁处 panic）则 `try_lock` 拿不到
-/// 立即放弃，避免递归死锁。拿到的 id/name 均为可拷贝数据，锁随作用域即放。
+/// 与 `running_task_id` 不同，本函数专供 panic 现场：panic 路径故意绕过所有锁，
+/// 故这里走两个防御——调度器尚未初始化（极早期 boot panic）直接返回 None；
+/// 调度锁被 panic 现场持有（持锁处 panic）则 `try_lock` 拿不到立即放弃，避免
+/// 递归死锁。拿到的 id/name 均为可拷贝数据，锁随作用域即放。
 pub fn running_task_info() -> Option<(usize, &'static str)> {
     // 调度器未初始化（boot 早期 panic）时无可查。
     let all = SCHEDULERS.get()?;
@@ -622,9 +602,8 @@ pub fn running_task_info() -> Option<(usize, &'static str)> {
 /// None）。
 ///
 /// 与 `running_task_info` 同纪律：调度锁被 panic 现场持有则 `try_lock` 放弃。
-/// 返回 (task id, 帧 PA, 团队 elftable)——PA 经恒等映射可读；elftable 供 scene
-/// 用**本任务自己的表**符号化（不依赖 running_team 镜像：ubt 收集需要帧
-/// 地址 + 与收集同源的表，见 scene::user_backtrace）。
+/// 返回 (task id, 帧 PA, 团队 elftable)——PA 经恒等映射可读；elftable 为符号
+/// 化提供与帧同源的符号表（不依赖 running_team 镜像）。
 pub fn running_task_frame() -> Option<(usize, usize, Option<alloc::sync::Arc<ElfTable>>)> {
     let all = SCHEDULERS.get()?;
     let me = machine::hart_id();
@@ -635,7 +614,7 @@ pub fn running_task_frame() -> Option<(usize, usize, Option<alloc::sync::Arc<Elf
         .map(|t| (t.id, t.trap.pa.as_usize(), t.team.elftable.clone()))
 }
 
-// ── 适配层：envcall（envcall.rs 分发调用）──
+// ── 适配层：envcall ──
 
 /// 主动让出入口（envcall YIELD 调用）：无视剩余预算立即轮转。
 pub fn starve() -> usize {
@@ -643,8 +622,8 @@ pub fn starve() -> usize {
     schedulers()[me].starve()
 }
 
-/// 当前线程睡眠入口（envcall ENV_SLEEP/ENV_MSLEEP 分支调用）：交由 clock 换算
-/// deadline → 方法 park；本核 starved 空 → run() 取活。
+/// 当前线程睡眠入口（envcall ENV_SLEEP/ENV_MSLEEP 分支调用）：换算 deadline →
+/// 方法 park；本核 starved 空 → run() 取活。
 pub fn park(duration: Duration) -> usize {
     match schedulers()[machine::hart_id()].park(duration) {
         Some(pa) => pa,
@@ -660,10 +639,9 @@ pub fn reap() -> usize {
     // 回收 Reaped：此刻执行在 per-hart trap 栈上，不触碰任务内存；Reaped 任务
     // 不在任何核运行（running/starved 均无引用），任意核回收均安全。
     //
-    // 必须在取活（可能触发 done→halt 的 check_baseline）**之前**清空 reaped 队列
-    // ——否则最后退出的任务会带着它的栈/trap 帧及团队地址空间滞留到关机断言，
-    // 泄漏成 check_baseline 的「task frames leaked」（reap 自身先入队，clear 后置
-    // 时 run() 一旦走 done→halt 路径 clear 永不执行）。
+    // 必须在取活（可能触发 done→halt）**之前**清空 reaped 队列——否则最后退出
+    // 的任务会带着它的栈/trap 帧及团队地址空间滞留到关机断言，被误报为帧泄漏
+    // （reap 自身先入队，clear 后置时 run() 一旦走 done→halt 路径 clear 永不执行）。
     clear();
     // 取下一任务：此刻 running 已 take，本核空闲 → run（steal / WFI）
     run()

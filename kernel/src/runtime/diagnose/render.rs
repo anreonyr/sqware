@@ -1,9 +1,7 @@
 //! render —— 渲染适配：段落 → 控制台表格（stanza 定宽栅格，列宽自适应）。
 //!
-//! [`render`] 一次遍历 `Report` 全部段落——段落 = 标题 + 首行表头 + 行集合；
 //! 列宽 = 每列非空槽最宽（自适应）；`None` 槽占位空（栅格保持），非空槽间由
-//! stanza 的 cell padding 分隔。 [`render_to`] 供 boot 横幅即时输出（正常路径
-//! 不经报告）。
+//! stanza 的 cell padding 分隔。
 
 use core::fmt::Write;
 
@@ -51,9 +49,7 @@ pub fn render_table(t: &Table) -> String {
     Console(decor).render(t)
 }
 
-/// 新形态：报告 → 控制台表格。一次遍历全部段落：「收集完所有信息再打印」
-/// 由报告结构天然保证（seal 前只进数据，这里只读遍历）。`indent` = 段落
-/// 正文的整体缩进（崩溃现场统一 2；banner 顶格 0）。
+/// 报告 → 控制台表格。`indent` = 段落正文的整体缩进。
 pub fn render(r: &Report, sink: &mut impl Write, indent: usize) {
     for p in &r.paras {
         if let Some(t) = &p.title {
@@ -94,7 +90,7 @@ fn render_paragraph(p: &Paragraph) -> String {
 }
 
 /// 行首缩进包装：把多行输出整体右移 `indent` 空格（每个非空行行首补缩进；
-/// 空行不补）。段落私有工具（原 crates/table 的 Indented 随迁）。
+/// 空行不补）。
 struct Indented<'a, W: Write> {
     out: &'a mut W,
     at_bol: bool,

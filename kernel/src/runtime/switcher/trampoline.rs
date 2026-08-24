@@ -1,21 +1,21 @@
 // 陷阱 trampoline — 所有地址空间共同映射、共同取指的 trap 入口页
 //
 // 一页（4 KiB）内含 `__alltraps`（保存帧 + 切 satp）与 `__restore`（切回 + 恢复 + sret），
-// 内核空间与所有用户空间以 TRAMPOLINE VA 映射同一物理页（G 位，见
-// work::unit::space::Space::TRAMPOLINE），`stvec` 指向 `__alltraps`。
+// 内核空间与所有用户空间以 TRAMPOLINE VA 映射同一物理页（G 位），`stvec`
+// 指向 `__alltraps`。
 //
 // 本页代码执行于 TRAMPOLINE 固定 VA（0xFFFF_FFFF_FFFF_F000）——任何 PC 相对寻址
-// （la/call 等）的目标必须在本页内；跨页符号（如 _trap_stack_top、Rust 的
+// （la/call 等）的目标必须在本页内；跨页符号（如 Rust 的
 // trap_handler）只能经帧内元数据（kernel_sp / trap_handler 字段）或绝对常量（LUI）
 // 寻址。本页代码无 PC 相对跨页引用，故在链接地址（0x8020_0000+）与 TRAMPOLINE VA
 // 两处取指均正确。per-hart 内核帧基址（__strap 按 TP 索引）的 LUI 立即数由
-// Rust 常量 KERNEL_FRAMES_LUI 注入（单一来源，改 space::KERNEL_FRAME_BASE 即可）。
+// Rust 常量 KERNEL_FRAMES_LUI 注入（单一来源，改 KERNEL_FRAME_BASE 即可）。
 //
 // sscratch 约定：用户态 = 当前线程帧 VA（帧内 self_va 字段，帧窗口分配，无固定帧 VA）；
 // 内核态 = 0。`__restore` 按恢复的 sstatus.SPP 复原该约定
 // （SPP=0 从帧内 self_va 字段读取——每线程帧位置可任意，`__alltraps` 零改动）。
 //
-// 帧布局与偏移见 runtime/context.rs（编译期偏移断言锁定，改布局必须先改两处）。
+// 帧布局与偏移见 `context.rs`（编译期偏移断言锁定，改布局必须先改两处）。
 
 use alloc::boxed::Box;
 use core::arch::global_asm;
@@ -31,7 +31,7 @@ use crate::work::unit::space::{KERNEL_FRAME_BASE, TRAMPOLINE};
 /// 内核帧：sp = KERNEL_FRAME_BASE + tp·PAGE_SIZE。汇编经 `const` 注入，单一来源。
 ///
 /// LUI 把 20 位立即数符号扩展后左移 12 位，与 `VirtAddr::from_raw` 的符号扩展
-/// 语义一致；改 `space::KERNEL_FRAME_BASE` 即可，勿手改汇编。
+/// 语义一致；改 `KERNEL_FRAME_BASE` 即可，勿手改汇编。
 const KERNEL_FRAMES_LUI: usize = (KERNEL_FRAME_BASE.as_usize() >> 12) & 0xFFFFF;
 
 // 编码断言：LUI 立即数符号扩展必须能还原 KERNEL_FRAME_BASE（VA 不再满足 LUI
@@ -301,7 +301,7 @@ static TRAP_STACKS: OnceLock<&'static [SyncCell<TrapStackMeta>]> = OnceLock::new
 
 /// 读取某 hart 的 trap 栈元数据：表未初始化或 hart 越界 → `None`。
 ///
-/// 崩溃路径（scene::kbacktrace 等）用它钳制扫描窗口，**不允许 panic**——panic
+/// 崩溃路径用它钳制扫描窗口，**不允许 panic**——panic
 /// 现场再 panic 会嵌套进停机自环、现场整体丢失（"幽灵 panic"）。引导期
 /// （trap::init 之前）表未装载、或 hart 号越界，都是合法的早期/损坏状态，
 /// 调用方按需降级；正常路径的访问器（[`trap_stack_top`] 等）在此之上 expect，
@@ -373,14 +373,14 @@ pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
 /// per-hart trap 栈段常量：每段 64 KiB = 低 4 KiB guard（未映射）+ 60 KiB 栈体；
 /// 连续块按实际核数分配（N x 64 KiB），guard 页兼作段边界。
 ///
-/// 栈体须容纳 trap 处理内最深的调用链：`heap_allocate` 的页表 map 递归 + 控制台
-/// 输出在内核陷栈上叠加；60 KiB 提供充足余量。hartid 由 C 侧 `establish_tp` 按
+/// 栈体须容纳 trap 处理内最深的调用链：页表 map 递归与控制台输出叠加；
+/// 60 KiB 提供充足余量。hartid 由 C 侧 `establish_tp` 按
 /// TRAP_STACKS 表扫描反解（与段滑负荷 2 的幂无关），仅保守断言段留 2 的幂以保持
 /// 段内切分可预测。
 pub const TRAP_STACK_SEGMENT: usize = 64 * 1024;
 pub const TRAP_STACK_GUARD: usize = PAGE_SIZE;
 
-/// 初始化 per-hart trap 栈（boot 时由 trap::init 调用**恰好一次**，hart 0）。
+/// 初始化 per-hart trap 栈（boot 时调用**恰好一次**，hart 0）。
 ///
 /// 1. 按实际核数（DTB）frame **连续**分配 N x 64 KiB（frame 按 order 支持连续块，
 ///    向上取整到 2 的幂）；

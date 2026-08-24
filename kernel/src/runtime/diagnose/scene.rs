@@ -1,18 +1,13 @@
 //! scene — 崩溃现场转储（定位错误的统一诊断）。
 //!
-//! 职责：回答「崩在哪个地址 / 哪条调用链」。组稿形态已改为**报告投稿**——
-//! 本模块只产行（`Vec<Vec<Option<String>>>`）投进 [`Report`] 的段落，不碰
-//! 表格/渲染/导出（那是印发适配的职责：header/row 家族、列宽数组、逐行双写
-//! 导出全部退场）。读现场（GPR + 关键 CSR + 栈回溯）与符号化逻辑不变。
+//! 职责：回答「崩在哪个地址 / 哪条调用链」。本模块只产行
+//! （`Vec<Vec<Option<String>>>`）投进 [`Report`] 的段落。
 //!
-//! 现场语义（诚实边界）：panic_handler 里实时读到的 GPR 是处理器已压栈损坏
-//! 的现场；真正可定位的是 CSR 的 sepc/scause/stval（trap 进入后持续有效，
-//! 直到下一次 trap）与栈回溯。GPR 尽力而为，sepc/stval 与回溯才是「where」。
+//! 现场语义：GPR 是处理器已压栈损坏的现场；真正可定位的是 CSR 的 sepc/scause/stval
+//! （trap 进入后持续有效）与栈回溯。
 //!
-//! 回溯 = 无帧指针启发式：扫描当前栈区间，收集可执行地址（内核恒等/高半区
-//! 或用户运行 team 表内）的候选返回地址（去重、深度封顶）。sepc/stval/回溯
-//! 每条都经 elftable::resolve 符号化（命中出函数名），未命中打印裸 hex。
-//! 无堆无锁；地址符号化经 elftable（含用户 team）。
+//! 回溯 = 无帧指针启发式：扫描当前栈区间，收集可执行地址的候选返回地址（去重、
+//! 深度封顶）。每条经 `elftable::resolve` 符号化，未命中打印裸 hex。
 
 use core::arch::asm;
 
@@ -101,16 +96,9 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         asm!("mv {0}, sp", out(reg) sp);
         asm!("mv {0}, s0", out(reg) fp);
     }
-    // 扫描上界钳制：崩溃现场可能运行在两类「段顶之上是刻意未映射 guard 页」的
-    // 栈上，扫描窗 [sp, sp+BT_SCAN) 越过段顶即读缺页 → 嵌套 panic → 停机自环 →
-    // 崩溃现场整体静默消失（"幽灵 panic"）。两类都把 high 钳到段顶：
-    //   ① per-hart trap 栈：段顶之上 = 相邻段 guard（init_trap_stacks 已 unmap）；
-    //   ② 内核团队任务栈（ktask 等，S 态栈位于 0xC0000000 栈窗口，kernel 空间的
-    //      Stack 窗口）：slot 顶之上 = 下一 slot 的 guard（stack_allocate 只登记
-    //      guard 子 Map、不装 PTE）。panic 在 trap 栈之外触发（如内核任务退出
-    //      路径）时 sp 落栈窗口内——按 0x5000 slot 对齐上取段顶。
-    // 其余栈（boot 主栈等）上方为已映射 DRAM，退回原 sp+BT_SCAN 行为。只读栈段
-    // 元数据（boot 常驻）与纯位运算，崩溃路径零分配零锁。
+    // 扫描上界钳制：崩溃现场可能运行在「段顶之上是刻意未映射 guard 页」的栈上，
+    // 扫描窗越过段顶即读缺页 → 嵌套 panic → 现场静默消失（幽灵 panic）。high 钳到
+    // 两类段顶（trap 栈 / 内核任务栈 slot）；其余栈上方为已映射 DRAM，退回原行为。
     let high = {
         let trap_top =
             crate::runtime::switcher::trampoline::trap_stack_meta(crate::machine::hart_id())
@@ -165,12 +153,10 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     n
 }
 
-/// 用户侧回溯：崩溃时 running 任务的 **用户 trap 帧**里有该任务最近一次用户态
-/// 现场（SPP=User 时即被中断的当下；SPP=S 的内核态崩溃也保留着它上次进 trap
-/// 的用户现场）。取用户 sp 按用户页表逐页安全读栈窗口，收集可执行候选返回
-/// 地址（判定 = **本任务自己的符号表**命中 + 对齐 + 去重——不用跨核互踩的
-/// RUNNING_TEAM 镜像）。尽力而为：帧拿不到/现场非用户态/sp 无效/栈页不可读
-/// → 0 帧（不渲染 ubt 段）。返回 (帧数, 任务符号表 Arc)——渲染行仍用同表。
+/// 用户侧回溯：崩溃时 running 任务的**用户 trap 帧**里有该任务最近一次用户态
+/// 现场。取用户 sp 按用户页表逐页安全读栈窗口，收集可执行候选返回地址（判定 =
+/// 本任务自己的符号表命中 + 对齐 + 去重）。尽力而为：帧拿不到/现场非用户态 /
+/// 栈页不可读 → 0 帧（不渲染 ubt 段）。返回 (帧数, 任务符号表 Arc)。
 fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
     let Some((_, pa, tbl)) = running_task_frame() else {
         return (0, None);
@@ -188,11 +174,9 @@ fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
     let mut n = 0usize;
     let mut prev = 0usize;
     let mut page = sp & !(PAGE_SIZE - 1);
-    // DRAM 恒等区守卫（上界随机器 dram 取：128M/256M/512M 通用；QEMU virt DRAM
-    // 基址恒 0x80000000）：walk_raw 的根/中间表/leaf 逐级 PA 都过此校验——用户 satp
-    // 若被覆写为坏值，裸读会 fault → 嵌套 panic → halt 卡死（"panic 后不停机"
-    // 的根路径）；此处拦下，跳页继续。未注入机器信息（崩溃在 machine::init 自身
-    // 现场）→ 退回保守 256M 上界，行为与既往一致。
+    // DRAM 恒等区守卫（上界随机器 dram 取）：walk_raw 逐级 PA 都过此校验——用户
+    // satp 若被覆写为坏值，裸读会 fault → 嵌套 panic；此处拦下，跳页继续。未注入
+    // 机器信息 → 退回保守上界。
     let in_dram = |pa: PhysAddr| {
         (0x8000_0000..crate::machine::dram_end().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
     };
@@ -279,8 +263,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         rows.push(vec![Some("stval".into()), Some(hex(a)), Some(n)]);
     }
     {
-        // 类型化枚举（同 trap 分发）：变体名自解释；非法码回退 Unknown——
-        // 崩溃现场不 panic，后续 CSR 行照常渲染。
+        // 类型化枚举：变体名自解释；非法码回退 Unknown。
         let trap: Option<Trap<Interrupt, Exception>> = sc.cause().try_into().ok();
         let note = match trap {
             Some(Trap::Interrupt(i)) => format!("{i:?}"),
@@ -299,8 +282,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         Some(elftable::symbol(VirtAddr::from_raw(stvec::read().address()), None)),
     ]);
     {
-        // sscratch 语义（内核约定，见 trampoline）：0 = 内核态；非 0 = 用户态
-        // 陷阱入口/线程帧相关。注解简化为特权归属：Kernel / User。
+        // sscratch：0 = 内核态；非 0 = 用户态。
         let scr = sscratch::read();
         let n = if scr == 0 { "Kernel" } else { "User" };
         rows.push(vec![
@@ -387,12 +369,8 @@ fn gpr_rows() -> Vec<Vec<Option<String>>> {
     rows
 }
 
-/// 统一崩溃现场组稿：一个 [scene] 标题段落统辖——CSR 三列表 + GPR 两列表 +
-/// 回溯表（内核栈 kbt + 用户栈 ubt，表头分块）。u-thread 被中断上下文为
-/// 用户态时 bt 后附 ubt（从 trap 帧用户 sp 经页表 walk 安全读栈，见
-/// `user_backtrace`；读不到即 0 帧不渲染）。末尾倒出每 hart 最近事件窗口
-/// （trace::panic_dump 同样投稿）。全部段落先入报告、成册后一次印发——
-/// 「收集完所有信息后再打印」由报告结构天然保证。
+/// 统一崩溃现场组稿：CSR 三列表 + GPR 两列表 + 回溯表（内核栈 kbt + 用户栈 ubt）。
+/// 末尾倒出每 hart 最近事件窗口。
 pub fn dump_crash(r: &mut Report) {
     // 探针：panic 现场 drop-in 完整性体检——越界写破坏用户符号表/相邻活块
     // 时自报。两者均纯读零分配、只经 putln! 直写控制台——panic 现场安全，
@@ -422,7 +400,7 @@ pub fn dump_crash(r: &mut Report) {
     let mut bt = [0usize; BT_DEPTH];
     let n = kbacktrace(&mut bt);
     {
-        // 行 = #i / 定宽 hex / 符号（与旧 bt_row 三槽一致：v = hex、n = 符号）。
+        // 行 = #i / 定宽 hex / 符号。
         let mut rows: Vec<Vec<Option<String>>> = vec![vec![
             Some("#".into()),
             Some("hex".into()),
@@ -439,8 +417,7 @@ pub fn dump_crash(r: &mut Report) {
     }
 
     // 用户侧回溯（kbt = 内核栈；ubt = 用户栈）——被中断上下文为用户态、能取到
-    // running 任务帧时附加；0 帧不渲染。符号化用任务自己的表（user_backtrace
-    // 带回），不依赖全局镜像。
+    // running 任务帧时附加；0 帧不渲染。符号化用任务自己的表。
     let mut ubt = [0usize; BT_DEPTH];
     let (m, tbl_arc) = ubacktrace(&mut ubt);
     if m > 0 {
@@ -460,14 +437,12 @@ pub fn dump_crash(r: &mut Report) {
         r.paragraph("ubt", None).items.extend(rows);
     }
 
-    // 每 hart 最近事件窗口（trace::panic_dump 内部同样投稿段落；JSON 侧
-    // 事件已实时导出，窗口文本供终端上下文对照——人读）。
+    // 每 hart 最近事件窗口（人读对照）。
     crate::runtime::diagnose::trace::panic_dump(r);
 }
 
 /// 统一崩溃现场宏：空调用即完整转储（自建报告、成册、印发——可在任意点
-/// drop-in 调试）；带参则先写一行消息再转储。崩溃主链路（halt）不经过本宏，
-/// 它自己组稿（panic 段先行）后调用 dump_crash。
+/// drop-in 调试）；带参则先写一行消息再转储。
 #[macro_export]
 macro_rules! crash_scene {
     () => {{

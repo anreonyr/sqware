@@ -1,15 +1,12 @@
-// 位图分配器 — 通用编号空间连续区间分配器
+// 位图分配器 — 通用编号空间连续区间分配器。
 //
 // 在 [base, edge) 编号空间上按 unit 粒度分配连续区间（1 bit / unit，1 = 已分配）。
-// 典型实例：用户堆窗口、任务栈窗口（per-Space，见 work::unit::space）、
-// ASID 空间（见 memory::manager::asid）——三类资源共用同一实现，释放即复用。
+// 典型实例：用户堆窗口、任务栈窗口、ASID 空间。
 //
 // 元数据全在外部（Vec<u64>，内核堆），**不写被管空间本身**——对未映射的 VA
-// 窗口这是硬要求：侵入式 free-list（block.rs / frame.rs 风格）要把链表节点写进
-// 空闲块，而空闲 VA 是未映射的，写入即内核缺页。
+// 窗口这是硬要求（侵入式 free-list 需把节点写进空闲块，而空闲 VA 未映射）。
 //
-// 无内部锁：方法取 &mut self，调用方负责互斥。SpaceInner 内的实例随 Space 锁
-// （RelLock）访问；ASID 全局实例由 asid.rs 的 SpinLock 保护（锁层级 L3）。
+// 无内部锁：方法取 &mut self，调用方负责互斥。
 
 use alloc::alloc::AllocError;
 use alloc::vec::Vec;
@@ -50,8 +47,7 @@ impl BitmapAllocator {
     ///
     /// # Errors
     ///
-    /// 空间耗尽或窗口内无足够连续空闲区间 → [`AllocError`]（调用方映射为
-    /// 自己的错误，如 [`crate::memory::manager::MapError::OutOfMemory`]）。
+    /// 空间耗尽或窗口内无足够连续空闲区间 → [`AllocError`]。
     pub(crate) fn allocate(&mut self, size: usize) -> Result<(usize, usize), AllocError> {
         self.ensure();
         let units = size.div_ceil(self.unit).max(1);
@@ -89,9 +85,7 @@ impl BitmapAllocator {
     ///
     /// # Errors
     ///
-    /// 越界/非对齐/区间内含未分配 unit（从未分配或部分已释放）→ [`AllocError`]，
-    /// 调用方按语义处理：堆路径返回 false（同旧块表精确匹配）、ASID 路径 panic
-    /// （double-free 检测）。
+    /// 越界/非对齐/区间内含未分配 unit（从未分配或部分已释放）→ [`AllocError`]。
     pub(crate) fn deallocate(&mut self, addr: usize, size: usize) -> Result<(), AllocError> {
         self.ensure();
         // 越界/非对齐：运行时检查（addr 可能来自 syscall 边界，不可只 debug_assert）
@@ -129,12 +123,6 @@ impl BitmapAllocator {
     }
 
     /// 构建期立即分配位图（不惰性）——调用方须能传播分配失败。
-    ///
-    /// Space 窗口位图（尤其是 1 GiB 栈窗口的 32 KiB 位图）若惰性推迟到首个
-    /// 任务分配，会落在 frame 基线（`record_baseline`）之后；而 kernel 空间为
-    /// 'static 永不 Drop，其位图随空间永生 → `check_baseline` 把良性的内核窗口
-    /// 簿记误报为任务帧泄漏。构建期就位后：kernel 空间的位图计入基线（内核
-    /// 持久帧），用户空间的位图随 `Space::drop` 照常归还。
     pub(crate) fn eager(&mut self) -> Result<(), AllocError> {
         if self.bits.is_empty() && self.units() > 0 {
             let n = self.units().div_ceil(64);

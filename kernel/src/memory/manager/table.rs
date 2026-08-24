@@ -26,8 +26,8 @@ use super::{
 
 /// 4 KiB 物理帧 — `Box` 指向分配器管理的页面，Drop 归还 frame 池。
 ///
-/// 仅用于**数据页**（`Map::frames`）；页表页用 `TableNode::page`
-/// （`Box<PageTable>`，同为 4096 B / 4096 对齐）——类型即语义，两种帧各归其位。
+/// 仅用于**数据页**；页表页用 `TableNode::page`（`Box<PageTable>`，同为
+/// 4096 B / 4096 对齐）——类型即语义，两种帧各归其位。
 pub(crate) type Frame = Box<[u8; PAGE_SIZE], &'static dyn Allocator>;
 
 /// 数据页的共享 / 私有身份 —— COW 共享帧。
@@ -208,14 +208,11 @@ impl TableNode {
     }
 
     /// 树外裸路径：沿 PTE 链从根帧遍历到 leaf 页（**不依赖本树元数据**——
-    /// 入口为根页表物理地址，如 trap 帧 satp.ppn()；现场/诊断专用，守卫兜底）。
+    /// 入口为根页表物理地址；现场/诊断专用，守卫由调用方提供）。
     ///
-    /// 与 [`Self::walk_ref`]（树内路径：children 借用引用、无裸指针）按依赖
-    /// 分工并存：本函数没有树可用、不碰元数据，守卫必须由调用方提供——根、
-    /// 每级中间表与 leaf 的 PA 都经 `ok` 校验后才访问/返回，坏地址的裸读
-    /// fault 在此拦下（诊断传 in_dram；可信场景可传恒真）。
-    /// 逐级读 PTE：V=0 未映射 → None；R|W|X 置位 = leaf（返回页基 + flags，
-    /// 支持任意级超页）；否则沿 PTE.PPN 下钻。
+    /// 根、每级中间表与 leaf 的 PA 都经 `ok`（守卫）校验后才访问/返回，坏地址的
+    /// 裸读 fault 在此拦下。逐级读 PTE：V=0 未映射 → None；R|W|X 置位 = leaf
+    /// （返回页基 + flags，支持任意级超页）；否则沿 PTE.PPN 下钻。
     pub(crate) fn walk_raw(
         root: PhysAddr,
         page_va: VirtAddr,

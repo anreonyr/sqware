@@ -1,14 +1,9 @@
-// 内核分配器门户 — 无锁后端模式分派（#[global_allocator]）
+// 内核分配器门户 — 无锁后端模式分派（#[global_allocator]）。
 //
 // 后端锁定在编译期已知的三种实现（bump / hybrid / spare），门户只存一个原子
 // 判别位（AtomicU8），alloc 路径一次 Acquire 读即分派——**不取任何锁**：
 //   · boot 切换（Bump → Hybrid）发生在单核期，store 天然安全；
-//   · 崩溃切换（→ Spare）发生在报警核，原子 store 无锁——panic 现场即使正有
-//     他核持主堆锁，也绝不会被本切换卡死。
-// 跨核分配互斥全部由后端自带锁负责（bump / block-inner / frame-inner / tally）。
-//
-// 注意：portal 解锁后，block 的簿记表读（own）改由 tally 自锁串行（见 block.rs——
-// 这是从"portal 锁兼任跨池闸门"迁移过来的唯一承重点）。
+//   · 崩溃切换（→ Spare）发生在报警核，原子 store 无锁。
 
 use core::alloc::{AllocError, Allocator, GlobalAllocator, Layout};
 use core::ptr::NonNull;

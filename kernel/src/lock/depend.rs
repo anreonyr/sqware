@@ -21,8 +21,7 @@
 // **exempt 锁（level=None）也记入持有集**（Held.level=None）：acquire/release
 // 双侧都记账才平衡（否则 guard Drop 的 release 必然误报 unheld）；层级校验
 // 只对 `Some(level)` 生效（max 只数参与锁），exempt 条目只作用于 `contains`
-// ——block 池锁互不嵌套靠路由纪律、6→6 跨池合法不受层级误报，但同锁重入仍
-// 必被 contains 揪出（单核自旋死锁的最后防线）。
+// ——同锁重入仍必被 contains 揪出（单核自旋死锁的最后防线）。
 
 use core::cell::UnsafeCell;
 
@@ -35,10 +34,7 @@ use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::work::unit::elftable;
 
-/// 锁层级 — lock/mod.rs 层级契约的具名化（1 最低、9 最高）。
-/// 参与锁才有 level；Option<Level>::None = exempt（不参与、不校验）。
-/// 注册表的声明性条目（Block/Ledger/Tally/Spare 等当前无锁实际构造）：层级
-/// 编号是契约的一部分，即使暂无用户也保留注册。
+/// 锁层级（1 最低、9 最高）。参与锁才有 level；`None` = exempt（不参与、不校验）。
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]
@@ -53,21 +49,13 @@ pub enum Level {
     Asid = 4,
     /// FRAME_ALLOCATOR
     Frame = 5,
-    /// block 的 `inner`/`pump`（每池实例锁，同 per-hart 调度锁）：互不嵌套靠
-    /// 路由纪律（feed 持本池 pump 时可能经分配器锁他池 inner，同层 6→6 高发但
-    /// 安全，因每池实例互不相扰）——保持 exempt，**勿加**本层级触发误报。
+    /// block 的 `inner`/`pump`
     Block = 6,
-    /// allocator::fence::ledger::LEDGER（层级 7：只在无锁或低层级锁内获取；
-    /// 持本锁**绝不分配**——容量 init 预留、运行期插入零分配。audit 只读块归属
-    /// （pool_includes → tally，层级更高）不受此限，见 fence::audit）。
+    /// allocator::fence::ledger::LEDGER
     Ledger = 7,
-    /// block 簿记表（tally）：全部表访问（读/写/复合 RMW）自锁——own 单独持、
-    /// 池内路径 inner → tally、审计 ledger → tally（审计只读）；绝无反向边
-    /// （tally 是叶锁：锁内不再取任何锁）。portal 已无锁，此为簿记表现任闸门。
+    /// block 簿记表（tally）
     Tally = 8,
-    /// allocator::spare（后备仓）：崩溃打印 / trace 环形的分配源——常态显式调用、
-    /// 崩溃经 portal 无锁切换（Backend::Spare）进入。恒居末尾（持 Ledger 不分配
-    /// 的纪律之上再加一层保险）。
+    /// allocator::spare（后备仓）
     Spare = 9,
 }
 

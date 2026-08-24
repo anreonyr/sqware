@@ -1,22 +1,6 @@
-// spare — 后备仓分配器（日志 + panic 打印专用）：coalescing free-list，有序相邻合并
+// spare — 后备仓分配器（日志 + panic 打印专用）：coalescing free-list，有序相邻合并。
 //
-// 与主堆（portal → bump/hybrid → block/frame）**区域互不重叠**：
-//   · 区 —— boot 期经 **hybrid** 一次性 allocate 诊断预算成仓（allocator::init 内
-//     hybrid::init 之后；hybrid 路由超大块到 frame 的 2 幂页块），size = 诊断预算
-//     （trace 环形常驻 + panic 打印峰值，见本文件 DUMP_BUDGET）。
-//     区域在主堆里是**整块页级锁定分配**：block/frame 记账在册、绝不回收再分发。
-//   · 用 —— 常态**显式调用**（trace 环形、health 演练指名道姓取 `spare::spare()`）；
-//     崩溃 = 报警核把门户后端**无锁切换**到本仓（portal::switch(Backend::Spare)——原子
-//     store，不取任何锁，panic 恰在持主堆锁现场也不卡死），转储渲染的分配整个
-//     落仓（含未来 stanza 模型的隐式分配）。自持 SpinLock（Level::Spare）：
-//     持锁者恒为瞬时上下文，无死锁环。
-//   · 失 —— 预算即契约：health 验收断言 ring 常驻后余量 ≥ DUMP_BUDGET，溢出演练
-//     证明失败路径返回 Err（不 panic，调用方映射）。
-//
-// 曾踩的坑：把 init 挪到 hybrid 之后却仍向 bump 要区——bump 区域已被 frame/block
-// 接管，与主堆空闲区重叠双管理 → panic 现场写同一批页互相踩 → dump 时灵时不灵。
-//
-// 块模型（有序单链 free-list，无 buddy 幂级——仓小、碎片随合并消解）：
+// 块模型（有序单链 free-list，无 buddy 幂级）：
 //   Blk = 侵入式 Link（复用 allocator::Link）+ size（本块总长含 HEADER），写块首；
 //   块首 16B 对齐 ⇒ 载荷 16B 对齐（MAX_ALIGN 内请求零垫片）。链恒按地址升序——
 //   pull 首适配 + 拆余、push 排序插入 + 前后邻合并，绝不重复入链。
@@ -25,11 +9,7 @@
 //   - 所有空闲块头写在本区块内，块与块首尾相接（合并后 size 恰为两邻之和）；
 //   - used 记账含块头且每字节至多归属一次（合并不重复计数）；
 //   - 区内指针才可释放（区外 = 主堆误还/切换窗口跨堆 drop：静默丢弃、绝不 panic）；
-//   - 只支持 align ≤ MAX_ALIGN 的请求（更高对齐回 Err）——崩溃打印的
-//     Vec/String/Box 均 ≤ 16B 对齐。
-//
-// 命名：spare（后备仓）与 block 的备页 spare 同一隐喻延伸（备件储备）；块操作
-// pull/push（池内拉/推，同 block 家族动词）；合并 merge；统计 used/remaining。
+//   - 只支持 align ≤ MAX_ALIGN 的请求（更高对齐回 Err）。
 
 use core::alloc::{AllocError, Allocator, Layout};
 use core::ptr::NonNull;
@@ -225,11 +205,7 @@ impl SpareInner {
     }
 }
 
-/// 崩溃打印峰值预算。**实测校准（panic E2E）**：stanza 渲染瞬态风暴规模随预算
-/// 同向浮动（多轮 96→512KiB 校准中峰值始终贴当时 cap、余量 <1KB，疑似渲染器
-/// 按可用内存上限分配，未及深挖）——故定 **1MiB**：dump 内容天然有界，海量
-/// 余量下任何栈形/seed 都安全；128MB DRAM 中占比 <1%。
-/// 原属 diagnose::budget（模块已删——预算归仓所在，诊断报告零预算痕迹）。
+/// 崩溃打印峰值预算。
 pub const DUMP_BUDGET: usize = 1024 * 1024;
 
 pub struct SpareAllocator {
@@ -238,12 +214,6 @@ pub struct SpareAllocator {
 
 impl SpareAllocator {
     /// 建仓：经 hybrid 一次性 allocate 仓容量（PAGE 对齐、整块连续），整区入链。
-    ///
-    /// 容量不显式注入：按 `machine::hart_count()` 经公式自查（trace 环形常驻
-    /// + 崩溃打印峰值 DUMP_BUDGET——预算归仓所在，诊断报告零预算痕迹）。
-    ///   前置：`hybrid::init` 之后（allocator::init 内）——区域是主堆的一次整块
-    ///   页级锁定分配：frame 记账在册、绝不回收再分发；panic 现场仍与主堆运行时
-    ///   状态（锁链/碎片/账目）互不相干。
     ///
     /// # Errors
     ///
@@ -264,7 +234,7 @@ impl SpareAllocator {
         })
     }
 
-    /// 在册字节（含块头，常驻 ring 计入）。
+    /// 在册字节（含块头）。
     pub fn used(&self) -> usize {
         self.inner.lock().used
     }
@@ -305,11 +275,7 @@ unsafe impl Allocator for SpareAllocator {
             let mut guard = self.inner.lock();
             let inner = &mut *guard;
             if !inner.owns(blk_addr) {
-                // 跨堆指针（切换前主堆分配、切换后被 drop——报警核转储期间他核
-                // 收尾 syscall 的正常现象）：不还本仓、**绝不 panic**——直接丢弃
-                // （停机在即，泄漏无害）。曾用 debug_assert 当"不变量破坏"报警：
-                // follower 持本仓锁 panic → hunker 卧倒 → 报警核下次分配永久自旋
-                // （跨核死锁，dump 时灵时不灵）。
+                // 跨堆指针（切换前主堆分配、切换后 drop）：不还本仓、绝不 panic——直接丢弃。
                 return;
             }
             checker::check_dram_addr(blk_addr, "spare put");
@@ -322,7 +288,7 @@ unsafe impl Allocator for SpareAllocator {
 }
 
 // 锁（!Send）按值不能直接 `OnceLock<SpareAllocator>`，存 `&'static` 引用，
-// init 时 Box::leak（同 frame）。
+// init 时 Box::leak。
 static SPARE_ALLOCATOR: OnceLock<&'static SpareAllocator> = OnceLock::new();
 
 /// 后备仓入口（统一暴露）：返回具体 `SpareAllocator`——调用方直接
@@ -339,10 +305,7 @@ pub fn allocator() -> &'static dyn Allocator {
         .expect("spare allocator not initialized")
 }
 
-/// 初始化后备仓（boot 恰好一次，allocator::init 内 hybrid::init 之后调用）。
-///
-/// 区域经 hybrid 一次整块分配（页级锁定，frame/block 记账在册、绝不回收再分发）——
-/// 恒等可见、崩溃现场可读；panic 现场与主堆运行时状态互不相干。
+/// 初始化后备仓（boot 恰好一次，hybrid 初始化之后调用）。
 ///
 /// # Errors
 ///

@@ -1,14 +1,9 @@
 #![no_std]
 //! 用户态系统调用封装（U-mode → S-mode 环境调用）。
-//!
-//! 机制层（`UArgs`/`UError`/`UResult`/`UcallBuilder`/`warpper`）在 `ubi` crate
-//! （镜像 sbi·ubi::ucall），本 crate 只留 `env` 域适配层、共享入口（`entry`）、
-//! 用户堆（`heap`）与 task 模块（`task`，对齐内核 work::task）：域操作一段薄封装、
-//! 零 asm；入口由各 bin 引用 `_start` 引导。
 
 extern crate alloc;
 
-/// 页大小（与内核 `memory::PAGE_SIZE` 对齐；堆分配按页对齐向上取整）。
+/// 页大小。
 pub const PAGE_SIZE: usize = 4096;
 
 /// 共享入口：`_start` → `main` 引导 + panic 处理（bin 只需写 `main`）。
@@ -17,7 +12,7 @@ pub mod entry;
 /// 用户堆：`heap_allocate`/`heap_deallocate` envcall 后端 + `#[global_allocator]`。
 pub mod heap;
 
-/// 用户 task：`spawn`/`closure`/`Join`（对齐内核 `work::task` 词汇）。
+/// 用户 task：`spawn`/`closure`/`Join`。
 pub mod task;
 
 /// 域适配层：每个域操作一段薄封装，只转发 `ubi::UcallBuilder`。
@@ -27,14 +22,13 @@ pub mod env {
 
     use crate::PAGE_SIZE;
 
-    /// 主动让出处理器（轮转；对齐内核 `scheduler::starve`）。
+    /// 主动让出处理器（轮转）。
     pub fn starve() -> UResult<()> {
         let (_v0, _v1) = UcallBuilder::new(Ucall::Yield).call()?;
         Ok(())
     }
 
-    /// 输出字符串（a0 = len，a1 = 缓冲指针）；ok = 该字符串已送出到控制台。
-    /// 经 envcall Write 的字节直写——字符串字面量与 &[u8] 均可经 `as_bytes`/`as_ptr`。
+    /// 输出字符串（a0 = len，a1 = 缓冲指针）。
     pub fn put(s: &str) -> UResult<()> {
         let args = UArgs {
             a0: s.len(),
@@ -45,7 +39,7 @@ pub mod env {
         Ok(())
     }
 
-    /// 退出当前任务；不返回（内核随后调度别的任务）。
+    /// 退出当前任务；不返回。
     pub fn exit() -> ! {
         let _ = UcallBuilder::new(Ucall::Exit).call();
         unsafe { core::hint::unreachable_unchecked() }
@@ -84,7 +78,7 @@ pub mod env {
         Ok(v0)
     }
 
-    /// 用户堆释放 `(addr, size)`：与分配时同源页对齐，位图精确匹配；未分配/部分释放 → Err。
+    /// 用户堆释放 `(addr, size)`：与分配时同源页对齐；未分配/部分释放 → Err。
     pub fn heap_deallocate(addr: usize, size: usize) -> UResult<()> {
         let size = size.max(1).next_multiple_of(PAGE_SIZE);
         let args = UArgs {
@@ -96,7 +90,7 @@ pub mod env {
         Ok(())
     }
 
-    /// 建用户任务（Spawn envcall）：a0 = 入口 VA，a1 = arg；返回任务句柄（帧 PA）或 UError。
+    /// 建用户任务（Spawn envcall）：a0 = 入口 VA，a1 = arg；返回任务句柄或 UError。
     pub fn spawn(entry: usize, arg: usize) -> UResult<usize> {
         let args = UArgs {
             a0: entry,
@@ -107,10 +101,7 @@ pub mod env {
         Ok(v0)
     }
 
-    /// 用户主动内核 panic（a0 = 任意关联码；不返回）：显式触发场景转储。
-    ///
-    /// 取代「非法 envcall 撞 panic」的隐式方式——带消息、带关联码，且呼叫人即
-    /// running 任务，trap 帧保留用户现场 → 转储的 ubt/CSR 符号化完整可用。
+    /// 用户主动内核 panic（a0 = 任意关联码；不返回）。
     pub fn panic_me(code: usize) -> ! {
         let args = UArgs {
             a0: code,

@@ -1,18 +1,7 @@
-//! elftable — 从 ELF 的 .symtab+.strtab 读出的符号表（B.3 符号化）。
+//! elftable — 从 ELF 的 .symtab+.strtab 读出的符号表（符号化）。
 //!
-//! 职责：给定 .symtab（Elf64_Sym 数组）+ .strtab（字符串表）两个切片，产出可按
-//! 地址二分查询的符号表。名字是从 strtab 里切出的 &'static str（零拷贝）；表本身
-//! 一次建成后 Box::leak（boot/装载时，永不回收）。
-//!
-//! 两域同一坐标：符号 st_value 是虚拟地址，查询 key（sepc/stval/回溯）也是虚拟
-//! 地址，故 Entry.addr: VirtAddr、lookup(a: VirtAddr)。内核恒等映射使 VA==PA 只是
-//! 凑巧，语义仍是 VA。
-//!
-//! 存储：内核表随 kernel team 挂载（`KERNEL_TEAM.elftable`）；resolve 经宽容
-//! 访问器 `team::kernel()` 取表——团队未注入（unit::init 自身失败的早期 panic）
-//! → None → 调用方打印裸 hex，正常路径的不变量由调用点各自 expect。用户/团队
-//! 表同挂 `Team.elftable`。resolve(addr, team) 按地址域选表查询（内核高半区/
-//! 镜像恒等区 → 内核表，用户区 → 运行 team 表）。
+//! 职责：给定 .symtab + .strtab，产出可按地址二分查询的符号表。名字是 strtab 里
+//! 切出的 &'static str（零拷贝）；表一次建成后 Box::leak。
 
 use alloc::boxed::Box;
 use alloc::format;
@@ -33,7 +22,7 @@ pub struct ElfTable {
     entries: &'static [Entry],
 }
 
-// ELF64 符号表布局（Elf64_Sym，24 B/条；按字节 + LE 读取，同 parser.rs 风格）。
+// ELF64 符号表布局（Elf64_Sym，24 B/条；按字节 + LE 读取）。
 const SYM_SIZE: usize = 24;
 const SYM_NAME: usize = 0;
 const SYM_INFO: usize = 4;
@@ -207,21 +196,12 @@ const TAIL_SPAN: usize = 0x4000;
 
 // ── 地址域判定 ─────────────────────────────────────────────────
 //
-// 内核/用户域判定下沉为 `VirtAddr::is_kernel()`（addr.rs）：Sv39 高半区
-// **或**内核镜像恒等区 [_kernel_start, _kernel_edge) 双段判定。镜像恒等映射
-// 落在低半区——纯半区判定（is_user/bit38）会把内核镜像地址（sepc/kbt 帧
-// 0x8020xxxx）误判为用户域、分派查错表（见 [`resolve`]）。
+// 内核/用户域判定走 [`VirtAddr::is_kernel`]（高半区 + 镜像恒等区）。
 
-// ── 内核表（挂 kernel team；resolve 经宽容访问器取用）──────────
+// ── 内核表 ──
 
-/// 构建内核关键入口表——方案 (b) 编译期闭合的小表：不扫 .symtab、不引远端
-/// 链接符号，直接对关键入口函数 `$f as usize` 取址（链接期解析、恒对应当前
-/// 镜像，永不过期）。只列调试最关心的入口，够回答「崩在哪个子系统/哪条路径」；
-/// 深层 helper 查不到（打印裸 hex）。
-///
-/// 由 `team::init_kernel` 在 boot 路径调用**恰好一次**，结果挂
-/// `KERNEL_TEAM.elftable`；**崩溃路径不建表**——resolve 经宽容访问器
-/// `kernel()`（团队未注入 → None）取表，取不到即降级裸 hex。
+/// 构建内核关键入口表（编译期闭合的小表：直接对函数 `$f as usize` 取址，
+/// 不扫 .symtab）。只列调试最关心的入口；深层 helper 查不到（打印裸 hex）。
 pub fn kernel_table() -> Option<ElfTable> {
     let mut v = Vec::new();
     macro_rules! sym {
@@ -251,28 +231,20 @@ pub fn kernel_table() -> Option<ElfTable> {
 
 // ── 解析器（地址域 → 选表）────────────────────────────────────
 
-/// 地址 → (符号, 偏移)：内核域查内核表（unit::team::kernel），用户域查运行 team 表。
-/// 无表/无命中 → None（调用方打印裸 hex）。域判定走 [`VirtAddr::is_kernel`]
-/// （高半区 + 镜像恒等区，见 addr.rs）——不用 `is_user` 单半区判定，防镜像
-/// 地址查错表。
+/// 地址 → (符号, 偏移)。无表/无命中 → None。
 pub fn resolve(
     addr: VirtAddr,
     team: Option<&crate::work::unit::team::Team>,
 ) -> Option<(&'static str, usize)> {
     if addr.is_kernel() {
-        // 内核表随 kernel team 挂载；团队未注入（unit::init 自身失败的早期
-        // panic）→ None → 调用方打印裸 hex。宽容读 = 已定义的 `kernel()`
-        // 访问器本身；正常路径的不变量由调用点各自 expect。
+        // 内核表随内核团队挂载；未注入 → None。
         kernel()?.elftable.as_ref()?.lookup(addr)
     } else {
         team?.elftable.as_ref()?.lookup(addr)
     }
 }
 
-/// 地址符号化文本（诊断族公共显示）：命中出「func+0xoff」（demangle），未命中
-/// 裸 hex。`tbl` = 任务自己的表（ubt 用，直接 `lookup`）；`None` = 走
-/// [`resolve`] 的域判定——内核域恒内核表、用户域退化裸 hex（如 depend 的
-/// 内核锁地址、scene 的 kbt/csr 行）。
+/// 地址符号化文本：命中出「func+0xoff」（demangle），未命中裸 hex。
 pub(crate) fn symbol(va: VirtAddr, tbl: Option<&ElfTable>) -> String {
     let hit = match tbl {
         Some(t) => t.lookup(va),

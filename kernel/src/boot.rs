@@ -1,13 +1,4 @@
-// 启动（boot）— 把 work 子系统拉起到首个用户任务（永不返回）。
-//
-// 一条纵线：调度器 init（per-hart 状态按 DTB 实际核数分配，先于任何调度器
-// 访问）→ debug PT 回收自测 → 构建演示团队/任务（先 Team 后 Task）
-// → HSM 拉起副核 → 本核 restore(run()) 进入首任务。
-//
-// 多核启动（hart B1）：hart 0 完整初始化（trap 栈/canary/spawn）后经 SBI HSM
-// `hart_start` 拉起 hart 1..N-1；副核入口（_boot_entry）把 HSM 传入的
-// a0=hartid / a1=opaque（= 本 hart trap 栈顶，寄存器传递免共享内存同步）装成
-// tp/sp 后进入 boot_main → per-hart CSR 配置 → idle（spin+steal）。
+// 启动（boot）— 把 work 子系统拉起到首个用户任务。
 
 use core::arch::global_asm;
 
@@ -48,10 +39,8 @@ unsafe extern "C" {
     static _boot_entry: u8;
 }
 
-/// SBI 式启动横幅：机器/板级 + 陷阱布局两块投稿成一个 banner 段落（label/
-/// value 两槽行，空行行分隔两块；列宽/对齐由渲染端自适应统一负责）。正常
-/// 路径即时输出（走报告段落——通用通道，与崩溃组稿同形态；值用 format!
-/// 拼装，boot 正常路径可堆）。
+/// SBI 式启动横幅：机器/板级 + 陷阱布局两块投稿成一个 banner 段落；值用
+/// format! 拼装。
 pub fn banner() {
     let m = machine::info();
     let mut r = Report::default();
@@ -103,12 +92,7 @@ pub fn banner() {
     crate::runtime::diagnose::render::render(sealed, &mut sink, 0);
 }
 
-/// 启动多任务：spawn 演示团队后进入首个线程，永不返回。
-///
-/// Team1 = 双线程共享空间：首线程 a0=0 计数循环写 'A'（靠抢占轮转）；次线程
-/// a0=1 写 'B' 后退出——验证「线程退出、团队/兄弟线程存活」的引用计数语义。
-/// 之后是单线程团队回归：A counter（不自让出，靠抢占）→ B yielder（主动让出）
-/// → C exiter（写 'C' 后退出）。S-timer 由 switcher::trap::init 武装、trap_handler 内循环重武装。
+/// 启动多任务：spawn 演示团队后进入首个线程。
 pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
     scheduler::init();
@@ -118,29 +102,23 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     crate::lock::init_depend(machine::hart_count()).expect("depend init failed");
 
-    // 健康检查总入口：spare 预算验收（恒跑）+ PT 回收自测（debug）。任一失败
+    // 健康检查（spare 预算验收恒跑 + PT 回收自测 debug）：任一失败
     // fail-fast（panic → crash scene）。
     crate::health::run();
 
     // 记录内核持久帧基线：spawn 用户任务前的在途帧。此后在途帧只应增用户任务
-    // 所有；关机时全部归还，由 tie::halt 的 check_baseline 断言零泄漏。
+    // 所有；关机时全部归还（零泄漏审计）。
     #[cfg(debug_assertions)]
     crate::memory::allocator::fence::audit::record_baseline();
 
-    // 全部演示程序均为经 parser → loader → TaskBuilder 装载的**真 ELF**（user crate，
-    // 静态链接于 USER_TEXT_BASE 0x10000）。
-    //
-    // Team1「threader」：双线程共享同一地址空间——线程参数 a0 分支（0 → 'A' 循环、
-    // 非 0 → 'B' 循环），多核下分布在两 hart 真实并行。先 Team 后 Task。
-    // 全部演示任务（用户 + 内核）经统一 `Team::task()` 入口生成，错误一律 `?` 上抛至本边界。
+    // 演示程序均为内嵌 ELF，经装载生成任务并入队；错误一律 `?` 上抛至本边界。
     spawn_demos().expect("boot spawn failed");
 
-    // 完整性框架（debug）：boot 收尾全量审计——Banker↔Ledger↔frame↔block 交叉核对。
+    // 完整性审计（debug）：boot 收尾全量核对。
     #[cfg(debug_assertions)]
     crate::memory::allocator::fence::audit::audit();
 
-    // 多核：HSM 启动副核（trap 栈/canary 已由 trap::init 就绪；副核 idle 后
-    // 经 steal 从队列取活——任务即向各核迁移）
+    // 多核：HSM 拉起其余副核。
     boot_harts();
 
     // 主内核栈（boot 栈）将永久离开前校验 canary：boot 期栈溢出即使未越过
@@ -194,8 +172,7 @@ fn spawn_demos() -> Result<(), MapError> {
         team.space.audit();
     }
 
-    // 内核任务（ktask）：挂 kernel 团队单例，经统一 `Team::task().closure`——团队身份
-    // 自动定 S 态（SPP=1）、闭包装箱到内核堆、入口为内核 trampoline `ktask_entry`。
+    // 内核任务（ktask）：挂 kernel 团队单例。
     kernel().expect("kernel team not initialized").task().name("ktask").closure(|| {
         putln!("ktask");
         // panic!("Shit");
@@ -205,7 +182,7 @@ fn spawn_demos() -> Result<(), MapError> {
     Ok(())
 }
 
-/// 内嵌用户 ELF → parser → loader → Team；返回 (Team, 绝对入口)。
+/// 内嵌用户 ELF 经解析装载生成 Team；返回 (Team, 绝对入口)。
 fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
     let parsed = crate::work::unit::parser::parse(elf).expect("parse user elf");
     let space = SpaceBuilder::user().build().expect("space failed");
@@ -256,12 +233,10 @@ fn boot_harts() {
     }
 }
 
-/// 副核主流程（asm 入口调用）：per-hart CSR 配置后进入 idle（spin+steal）。
+/// 副核主流程：per-hart CSR 配置后进入 idle。
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn boot_main() -> ! {
-    // 副核 per-hart 初始化（HSM 启动后由 boot_main 调用）：
-    // satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
-    // （trap 栈 / canary / 内核帧由 hart 0 在 init 完成；B1 共享内核帧。）
+    // 副核 per-hart 初始化：satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
     let ktc = kernel_frame_pa(0);
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;
@@ -274,7 +249,7 @@ pub(crate) extern "C" fn boot_main() -> ! {
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
     }
-    // 启动完成改写进 trace（直打控制台会扰 panic 现场）；crash 后统一 dump。
+    // 启动完成写进 trace（直打控制台会扰 panic 现场）。
     trace::note(trace::EventKind::Boot(trace::BootEvent::Done {
         hart: machine::hart_id(),
     }));

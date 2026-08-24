@@ -1,13 +1,12 @@
-//! 环境调用号（ubi · fid），镜像 sbi::fid：调用号枚举 + usize 往返。
-//! user 侧 `From<Ucall> for usize` 编码 a7，kernel 侧 `TryFrom<usize>` 解析 a7。
+//! 环境调用号（Ucall）枚举 + usize 往返。
 
-/// 环境调用号（a7）。变体名即 ABI 契约名，与 kernel `work::envcall` 分发表一一对应。
+/// 环境调用号（a7）。
 #[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ucall {
-    /// 主动让出处理器（round-robin 轮转）。
+    /// 主动让出处理器。
     Yield = 0,
-    /// 输出单字符（a0 = 字符码）。
+    /// 写缓冲（a0 = len，a1 = 缓冲 VA）。
     Write = 1,
     /// 退出当前任务（不返回）。
     Exit = 2,
@@ -21,11 +20,9 @@ pub enum Ucall {
     HeapAllocate = 6,
     /// 用户堆释放（a0 = VA，a1 = 字节数，页对齐）：0 或负错误码。
     HeapDeallocate = 7,
-    /// 建用户任务（a0 = 入口 VA，a1 = arg）：当前 team 建 U 任务，返回任务句柄或负错误码。
+    /// 建用户任务（a0 = 入口 VA，a1 = arg）：返回任务句柄或负错误码。
     Spawn = 8,
-    /// 用户主动内核 panic（a0 = 任意关联码；不返回）——场景转储的显式触发。
-    /// 取代「非法调用号撞 panic」的隐式路径（无消息、不可携带参数）；呼叫人即
-    /// running 任务，trap 帧保留用户现场 → ubt/CSR 符号化完整可用。
+    /// 用户主动内核 panic（a0 = 任意关联码；不返回）。
     Panic = 9,
 }
 

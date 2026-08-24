@@ -1,8 +1,4 @@
-//! 用户 task 模块 — 对齐内核 `work::task` 词汇：`spawn`/`closure`/`Join`。
-//!
-//! `closure(f)` 把 `FnOnce() -> T` 装箱到用户堆，经一个共享 U 态 trampoline 于新线程
-//! 运行；跑完把结果存进完成槽（`Completion<T>`）并置完成位，`Join::join` 轮询取回 `T`。
-//! 对应内核侧 `Ucall::Spawn`（当前 team 建 U 任务）。
+//! 用户 task 模块：`spawn`/`closure`/`Join`。
 
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -72,12 +68,12 @@ impl<T> Join<T> {
     }
 }
 
-/// 在当前 team 建一 U 任务：`entry` = 用户入口 VA，`arg` = 闭包指针；返回任务句柄。
+/// 建一 U 任务：`entry` = 用户入口 VA，`arg` = 闭包指针；返回任务句柄。
 pub fn spawn(entry: usize, arg: usize) -> UResult<usize> {
     env::spawn(entry, arg)
 }
 
-/// 带闭包任务（镜像内核 `TaskBuilder::closure` 的用户版）：新线程跑 `f`，join 取回 `T`。
+/// 带闭包任务：新线程跑 `f`，join 取回 `T`。
 pub fn closure<F, T>(f: F) -> Join<T>
 where
     F: FnOnce() -> T + Send + 'static,
@@ -92,7 +88,7 @@ where
         // SAFETY: store_result 内部访问槽；done 栅栏保证 join 侧安全。
         unsafe { send_slot.store_result(r) }
     });
-    // 双装箱瘦指针（对齐内核 closure 手法）：a0 传该薄指针。
+    // 双装箱瘦指针：a0 传该薄指针。
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
     let _task = spawn((task_trampoline as extern "C" fn(usize) -> !) as usize, ptr)

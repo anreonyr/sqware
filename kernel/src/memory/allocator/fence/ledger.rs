@@ -4,9 +4,7 @@
 //! for_each 锁内遍历、sweep_canaries 崩溃现场清查）。笼统：
 //!   - 容量 init 预留（with_capacity），soft_cap = 容量 × 7/8——插入在装载 < 0.875
 //!     不扩容、零分配（绝不持锁触碰分配器，防 block 重入 / 锁序死锁）；
-//!   - 锁 = Level::Ledger（层级 7，只在无锁或低层级锁内获取，持锁**绝不分配**——
-//!     audit 只读块归属（pool_includes → tally，层级 8 更高）不受限；
-//!     插入（mark）容量 init 预留、零分配、绝不反向嵌套）；
+//!   - 锁 = Level::Ledger；持锁**绝不分配**（插入容量 init 预留、零分配、绝不反向嵌套）；
 //!   - canary 只写 KernelHeap 块（用户堆为清零语义，不 poison、不 canary）。
 //!     违例统一经 `report` 处置（见 fence/mod）。
 //!
@@ -31,7 +29,7 @@ pub struct Record {
     pub(crate) site: usize,
     /// slack canary（Some = 在 addr+size 处写入 8 字节；UserHeap 恒 None）。
     canary: Option<u64>,
-    /// 登记类别（audit 交叉核对用；audit.rs 读）。
+    /// 登记类别。
     pub(crate) kind: OwnerKind,
 }
 
@@ -48,7 +46,7 @@ impl Ledger {
         }
     }
 
-    /// 预留容量（block::init 调用恰好一次；先于任何 mark/unmark）。
+    /// 预留容量（先于任何 mark/unmark）。
     pub fn init(&self, capacity: usize) {
         let cap = capacity.max(64);
         let soft = cap / 8 * 7;
@@ -152,7 +150,7 @@ impl Ledger {
         map.remove(&addr);
     }
 
-    /// 锁内遍历（audit 用）；回调签名 (addr, &Record)。
+    /// 锁内遍历；回调签名 (addr, &Record)。
     pub fn for_each(&self, mut f: impl FnMut(usize, &Record)) {
         let g = self.inner.lock();
         let Some((map, _)) = g.as_ref() else { return };
@@ -206,7 +204,7 @@ impl Ledger {
     }
 }
 
-/// 全局账本单例（block::init 装配）。
+/// 全局账本单例。
 pub static LEDGER: Ledger = Ledger::new();
 
 /// 核对记录 canary（未设则该页无动作）。

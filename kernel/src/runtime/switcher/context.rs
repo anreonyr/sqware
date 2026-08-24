@@ -1,11 +1,11 @@
 // 陷入上下文（TrapContext）— trap 入口/出口保存/恢复的帧（用户线程帧 / per-hart 内核帧）
 //
-// 字段布局即 trap ABI：`__alltraps`/`__restore`（runtime::switcher::trampoline 汇编）按裸偏移
+// 字段布局即 trap ABI：`__alltraps`/`__restore`（trampoline 汇编）按裸偏移
 // 读写，一经固化不可随意增删——布局由本文件底部的编译期偏移断言锁定，与汇编
 // 注释中的偏移一一对应（改布局必须先改两处）。
 //
 // 前 6 个字段是内核侧切换元数据：`__alltraps`保存用户上下文后读它们切回内核，
-// `__restore`按它们切回目标空间。`self_pa`让内核在内核空间（KERNEL_TEAM）经恒等映射
+// `__restore`按它们切回目标空间。`self_pa`让内核经恒等映射
 // 访问用户帧（无需重指向）；`user_satp`供 `__restore`切回目标空间页表。
 // 之后是用户寄存器上下文（gpr[32] + sstatus + sepc）。
 //
@@ -104,7 +104,7 @@ pub struct TrapContext {
     pub self_va: VirtAddr,
 }
 
-// 布局即 ABI：偏移断言与 runtime/trampoline.rs 汇编硬编码偏移一一对应。
+// 布局即 ABI：偏移断言与 trampoline 汇编硬编码偏移一一对应。
 const _: () = {
     assert!(core::mem::offset_of!(TrapContext, kernel_satp) == 0x00);
     assert!(core::mem::offset_of!(TrapContext, kernel_sp) == 0x08);

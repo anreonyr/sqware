@@ -1,12 +1,8 @@
 // 健康检查 · pt_reclaim — PT 回收自测：map/unmap 循环验证中间表回收，
 // 无孤儿表、无 double-free。
 //
-// 在 spawn 用户任务之前运行（分配器与 KERNEL_TEAM 均已就绪），由 `boot::init`
-// 经 `crate::health::pt_reclaim::pagetable_reclaim()` 调用。每轮：
-// map 4 MiB（4 KiB 页，根表槽 1）→ 表数 +3（1×L1 + 2×L0）；unmap → 回落；
-// 32 轮后「在途帧 − 堆支撑页」回到轮前（块堆缓存页不误报，口径同 fence::audit）。
-//
-// 断言用 `expect!`（health 专用宏）：失败统一报告 + fail-fast，与生产断言分离。
+// 每轮：map 4 MiB（4 KiB 页，根表槽 1）→ 表数 +3（1×L1 + 2×L0）；unmap → 回落；
+// 32 轮后「在途帧 − 堆支撑页」回到轮前。断言用 `expect!`：失败统一报告 + fail-fast。
 
 #![cfg(debug_assertions)]
 
@@ -30,8 +26,8 @@ pub fn pagetable() {
         .expect("[health] pagetable: build space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
     let base_count = space.table_count();
-    // 口径同 fence::audit::check_baseline：全动态下块池页已计入 frame outstanding，
-    // 剔除块池持页——期间 spare 迟滞保留的页会净增 outstanding，不误报。
+    // 全动态下块池页已计入 frame outstanding，剔除块池持页——期间 spare 迟滞
+    // 保留的页会净增 outstanding，不误报。
     let held_before = crate::memory::allocator::frame::outstanding()
         - crate::memory::allocator::block::held_pages();
 

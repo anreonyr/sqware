@@ -14,11 +14,6 @@
 // 分配器热路径对其的调用是一行无 cfg 的语义事件，asm 读 ra、poison、记账全部
 // 收在本层内部（纯功能文件零审计词汇）。
 //
-// 分层（in-path / out-of-path）：
-//   功能   memory/allocator/{block,frame,hybrid,...} — 实现本身
-//   护栏   memory/allocator/fence/*                    — 本层（in-path 检查）
-//   自测   selftest/*                                  — 开机一次性验收（独立于功能）
-//
 // 依赖方向（无环）：checker 独立；banker/ledger → 模块根；audit → 模块根 + banker + ledger。
 
 #![allow(unused)]

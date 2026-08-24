@@ -38,7 +38,6 @@ impl BumpInner {
     }
 
     fn init(&mut self) -> Result<(), InitError> {
-        // 区域来自调用方注入的 memory::platform 配置（allocator::init 设置），自包含。
         let m = machine::info();
         if m.free.size == 0 {
             return Err(InitError::NoFreeMemory);
@@ -85,17 +84,17 @@ pub fn frontier() -> usize {
     inner.base + inner.used
 }
 
-/// Bump 分配器实例 — 通过 PortalAllocator 的 trait object 间接调用。
+/// Bump 分配器实例。
 pub(crate) static BUMP_ALLOCATOR: BumpAllocator = BumpAllocator::new();
 
-/// 获取 bump 分配器的 `&'static dyn Allocator` 引用 — 供 PortalAllocator 使用。
+/// 获取 bump 分配器的 `&'static dyn Allocator` 引用。
 pub fn allocator() -> &'static dyn Allocator {
     &BUMP_ALLOCATOR
 }
 
 /// 初始化 bump 分配器的内存区域。
 ///
-/// 必须在 `main` 早期调用恰好一次，在任何堆分配之前。
+/// 必须在任何堆分配之前调用恰好一次。
 ///
 /// # Errors
 ///

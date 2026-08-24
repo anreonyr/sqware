@@ -32,7 +32,7 @@ impl Banker {
         }
     }
 
-    /// 登记金库范围（block::init 调用恰好一次；须先于任何 debit/credit）。
+    /// 登记金库范围（须先于任何 debit/credit）。
     pub fn init(&self, base: usize, pages: usize) {
         self.base.store(base, Ordering::Relaxed);
         let words = pages.div_ceil(64);
@@ -104,5 +104,5 @@ impl Banker {
     }
 }
 
-/// 金库全局单例（block::init 装配）。
+/// 金库全局单例。
 pub static BANKER: Banker = Banker::new();

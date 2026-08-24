@@ -1,8 +1,6 @@
 //! ELF 程序解析器 — 纯解析核心，零副作用。
 //!
-//! 只做「读字节 → 出配方」：验头、列段（PT_LOAD）、验段、取入口。不碰内存/
-//! 页表/任务。定址、映射、置栈归 Space/spawn 层（loader）；本模块是纯数据层，
-//! 可离线单测。
+//! 只做「读字节 → 出配方」：验头、列段（PT_LOAD）、验段、取入口；可离线单测。
 //!
 //! 公开面只留 parse；check/collect/entry 为核心内部原语，不单独暴露，
 //! 保证产物 ParsedProgram 只能以「已验段」形态存在（不变量成为类型义务）。
@@ -249,8 +247,8 @@ pub fn parse(bytes: &[u8]) -> ParseResult<ParsedProgram> {
 
 /// 抽取 .symtab / 关联 .strtab 两个节切片（用户程序符号化用）。
 ///
-/// 纯读取、零拷贝；不含 .symtab → NoSymtab。切片生命周期绑定入参 bytes
-/// （装载侧传 &'static 内嵌 ELF → 'static 切片，供 ElfTable::from_sections）。
+/// 纯读取、零拷贝；不含 .symtab → NoSymtab。切片生命周期绑定入参 bytes，
+/// 调用方保证其存活至消费结束。
 pub fn tables(bytes: &[u8]) -> ParseResult<(&[u8], &[u8])> {
     (|| -> Result<(&[u8], &[u8]), ParseError> {
         check(bytes)?;

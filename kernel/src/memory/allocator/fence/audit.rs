@@ -13,7 +13,7 @@ use super::{IntegrityViolation, OwnerKind, report};
 
 // ── 基线核算 ──────────────────────────────────────────
 
-/// 基线核算快照（check_baseline / 启动横幅用）。
+/// 基线核算快照。
 pub struct IntegrityStats {
     pub held_frames: usize,
     pub kernel_blocks: usize,
@@ -41,8 +41,7 @@ pub fn stats() -> IntegrityStats {
 static FRAME_BASELINE: AtomicUsize = AtomicUsize::new(0);
 static BLOCK_BASELINE: AtomicUsize = AtomicUsize::new(0);
 
-/// 记录基线（在 spawn 用户任务**之前**调用）——此后在途帧应只增用户任务所有，
-/// 关机时全部归还；断言触发 = 任务地址空间/栈所有权 Drop 有泄漏。
+/// 记录基线：此后在途帧应只增任务所有，关机时全部归还。
 pub fn record_baseline() {
     FRAME_BASELINE.store(
         crate::memory::allocator::frame::outstanding(),
@@ -56,9 +55,7 @@ pub fn record_baseline() {
 
 /// 断言关机时任务帧已全部归还（非块池在途帧 == 基线）。
 ///
-/// 全动态下块池持页数随任务分配波动：关机 flush_all 已把空闲页全还、忙页
-/// 保留（内核常驻 + 任务残留）。公式取「帧 − 块池页」差，剔除块池波动，
-/// 专验任务地址空间 Drop 的正确性（泄漏的块页使块池持页数高于基线，差变小）。
+/// 公式取「帧 − 块池页」差，剔除块池波动，专验任务地址空间 Drop 的正确性。
 #[track_caller]
 pub fn check_baseline() {
     let now = crate::memory::allocator::frame::outstanding();
@@ -96,9 +93,8 @@ pub fn page_clear(pa: usize) {
 }
 
 /// 全量审计（boot 收尾调用一次；三源交叉核对，违例即 report）：
-///   Banker.held_count == frame.outstanding（块池页已计入 frame outstanding——
-///   prime 借页时 frame 已 debit、drain 还页时 frame 已 credit，block 不重复记账）；
-///   每条 KernelHeap 记录地址须落在某池持有页（页头 MAGIC 判定），且所在页须 held。
+///   Banker.held_count == frame.outstanding；
+///   每条 KernelHeap 记录地址须落在某池持有页，且所在页须 held。
 pub fn audit() {
     let held = super::banker::BANKER.held_count();
     let frames = crate::memory::allocator::frame::outstanding();

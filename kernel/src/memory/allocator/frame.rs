@@ -42,7 +42,7 @@ impl FrameAllocator {
         })
     }
 
-    /// 在途（未归还）物理帧数（audit 统计用；未开 audit / release 恒 0）。
+    /// 在途（未归还）物理帧数。
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub fn outstanding(&self) -> usize {
         #[cfg(debug_assertions)]
@@ -76,7 +76,7 @@ unsafe impl Allocator for FrameAllocator {
 
         let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
         let addr = frame.frame_addr(index) as *mut u8;
-        // 护栏事件：页金库取出（Free→held；双取出 / 活堆页泄漏进池现行）。
+        // 护栏事件：帧由金库取出。
         super::fence::on_frame_alloc(addr as usize);
         #[cfg(debug_assertions)]
         {
@@ -100,8 +100,7 @@ unsafe impl Allocator for FrameAllocator {
             let addr = ptr.addr().get();
             let index = frame.frame_index(addr);
 
-            // 护栏事件：页金库存入（held→Free；存入陌生页 / 双释放现行——double-free
-            // 已由 Banker::credit（DoubleCredit）覆盖）。
+            // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);
             frame.merge_block(index, power);
             #[cfg(debug_assertions)]
@@ -119,9 +118,7 @@ struct FrameInner {
     pagemeta: Vec<Option<Meta>>,
     base: usize,
     edge: usize,
-    /// 在途（未归还）物理帧数 — audit 断言用：关机时须回落到内核基线，
-    /// 证明地址空间 Drop 的所有权回收无泄漏（见 schedule::scheduler::idle）。
-    /// 只做 usize 计数（锁内不得分配——Vec push 会触发分配器回调，见下）。
+    /// 在途（未归还）物理帧数（仅 debug；锁内不得分配）。
     #[cfg(debug_assertions)]
     outstanding: usize,
 }
@@ -167,8 +164,6 @@ impl FrameInner {
         // base ≥ prov_base（frontier 单调前进）⇒ 本步尺寸 ≤ 第一步，
         // resize 不会触发新分配，无需 try_reserve。
         self.base = bump::frontier().next_multiple_of(PAGE_SIZE);
-        // pageown 位图已在 block::init 分配（先于本处 base 定址，见 block.rs）；
-        // 帧区从此基址起，位图数组在其下方、绝无重叠。
         let max_frame = self.edge.saturating_sub(self.base) / PAGE_SIZE;
         if max_frame == 0 {
             return Err(InitError::NoFreeFrames);
@@ -402,8 +397,7 @@ pub fn allocator() -> &'static dyn Allocator {
         .expect("frame allocator not initialized")
 }
 
-/// 在途（未归还）物理帧数 —— Boot audit 交叉核对、关机基线断言用。
-/// 简单包一层 `FRAME_ALLOCATOR.outstanding()`，供模块外调用（未初始化 panic）。
+/// 在途（未归还）物理帧数。
 #[cfg(debug_assertions)]
 pub(crate) fn outstanding() -> usize {
     FRAME_ALLOCATOR
@@ -412,10 +406,7 @@ pub(crate) fn outstanding() -> usize {
         .outstanding()
 }
 
-/// 初始化 frame 分配器。
-///
-/// 必须在所有 bump 分配（包括 block::init）之后调用，因为基址取自
-/// `bump::frontier()`——确保 frame 的 Link 节点不被后续 bump 覆盖。
+/// 初始化 frame 分配器。基址取自 bump frontier，须在所有 bump 分配之后调用。
 ///
 /// # Errors
 ///

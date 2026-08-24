@@ -1,4 +1,4 @@
-// 护栏层 · checker — block.rs / frame.rs 链式不变式的断言收容处。
+// 护栏层 · checker — 分配器链式不变式的断言收容处。
 //
 // 设计：钩子恒编译、单行调用；函数体以 #[cfg(debug_assertions)] 包住，release 下
 // 为空体（#[inline(always)] 保证消除，零开销）。断言仅 debug 构建生效，命中一律

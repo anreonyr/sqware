@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
-//! counter：每 2^18 次迭代写 'A'，从不让出——靠定时器抢占切走。
-//! 对位旧 blob program_a。
+//! counter：每 2^18 次迭代写 'A'，从不让出。
 
 use user::env::put;
 

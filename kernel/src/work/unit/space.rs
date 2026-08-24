@@ -51,7 +51,7 @@ pub enum MapKind {
     /// 预留映射 — 不可访问，缺页时返回错误
     ///
     /// 任务栈守护页与内核借用映射（DRAM 恒等、trampoline 叶）以 Reserved 登记：
-    /// 越权触碰时 fault.rs 返回「预留映射访问」而非笼统的「无 Map」。
+    /// 越权触碰时返回「预留映射访问」而非笼统的「无 Map」。
     Reserved,
 }
 
@@ -349,11 +349,9 @@ impl SpaceInner {
             (DynamicKind::Stack(0), Dynamic::new(DynamicKind::Stack(0))),
             (DynamicKind::Frame(0), Dynamic::new(DynamicKind::Frame(0))),
         ]);
-        // 窗口位图构建期立即分配（不惰性）——kernel 空间的窗口簿记必须先于
-        // frame 基线（record_baseline）存在：惰性推迟到首个任务分配会使 kernel
-        // 空间的位图落在基线后、又随 'static 空间永不归还，check_baseline 把
-        // 良性的内核窗口簿记误报为任务帧泄漏（1 GiB 栈窗口 → 32 KiB 位图 →
-        // frame 分配器 1 块）。
+        // 窗口位图构建期立即分配（不惰性）——内核空间的窗口簿记必须先于帧基线
+        // 存在：惰性推迟到首个任务分配会使位图落在基线后、又随 'static 空间
+        // 永不归还，被关机基线检查误报为任务帧泄漏。
         for w in dynamic.values_mut() {
             w.allocator.eager().map_err(|_| MapError::OutOfMemory)?;
         }
@@ -475,15 +473,13 @@ pub(crate) const STACK_GUARD_SIZE: usize = PAGE_SIZE;
 pub(crate) const TASK_STACK_AREA_SIZE: usize = 0x4000_0000;
 /// trap 入口 trampoline 页的固定虚拟地址（Sv39 最高页，L2[511]·L1[511]·L0[511]）。
 ///
-/// 一页含 `__alltraps`（保存帧 + 切 satp）与 `__restore`（切回 + 恢复 + sret），
-/// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。`stvec` 指向此处。
+/// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。
 pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000);
 
 /// trampoline 页的物理地址（纯链接符号：内核镜像恒等加载，链接地址即物理地址）。
 ///
 /// 属内核空间布局（TRAMPOLINE VA 所映射的物理帧），故与 `TRAMPOLINE` 同驻本模块；
-/// `unit::init` 映射该页时经此取 PA。`runtime::switcher::trampoline` 的
-/// `__alltraps/__restore` 仍在运行时层按自身 VA 偏移计算。
+/// 供映射该页的调用方取 PA。
 pub(crate) fn trampoline_pa() -> PhysAddr {
     unsafe extern "C" {
         static __trampoline_start: u8;
@@ -493,13 +489,12 @@ pub(crate) fn trampoline_pa() -> PhysAddr {
 
 /// per-hart 内核帧槽数（= 内核帧区 VA 窗口宽度 = MAX_HART_SLOTS，编译期预留
 /// 4096 页 = 16 MiB 高位虚拟地址）。帧区与帧窗口布局耦合，见下方布局断言——
-/// 实际按 hart_count() 映射/填充，槽位预留使 __strap 的 TP 索引不依赖 DTB
-/// 核数，仅多占高位虚拟地址空间（虚拟地址免费，窗口宽度与核数解耦）。
+/// 实际按 hart_count() 映射/填充；槽位预留使帧区宽度不依赖 DTB 核数，仅多占
+/// 高位虚拟地址空间（窗口宽度与核数解耦）。
 pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HART_SLOTS;
 
 /// per-hart 内核帧区基址（紧贴 TRAMPOLINE 之下 SLOTS 页；hart h 帧 VA =
-/// KERNEL_FRAME_BASE + h·PAGE_SIZE）。帧由 unit::init 逐页映射（PA 存
-/// KERNEL_FRAMES[h]），__strap 经 KERNEL_FRAMES_LUI + tp 索引。
+/// KERNEL_FRAME_BASE + h·PAGE_SIZE）。帧 PA 存 KERNEL_FRAMES[h]。
 pub(crate) const KERNEL_FRAME_BASE: VirtAddr =
     VirtAddr::from_raw(TRAMPOLINE.as_usize() - KERNEL_FRAME_SLOTS * PAGE_SIZE);
 
@@ -531,9 +526,9 @@ pub(crate) const FRAME_BASE: VirtAddr =
 //
 // 内核半区（bit 38 = 1，VPN[2] = 256..511，起点 KERNEL_BASE）：
 //
-//   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐；__strap 经 KERNEL_FRAMES_LUI 注入）
+//   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐）
 //   0xFFFF_FFFF_FFEF_F000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 4096 页（16 MiB VA 窗口）
-//   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE；__strap 按 TP 索引）
+//   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE）
 //   0xFFFF_FFFF_FCEF_E000 — FRAME_BASE（帧窗口下界）
 //     ┌─────────────────────────────────┐
 //     │  线程 trap 帧窗口（≈48 MiB）    │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
@@ -677,16 +672,13 @@ impl SpaceBuilder {
     ///
     /// 不复制内核半区映射——用户页表只含用户映射 + trampoline 叶 PTE 复制
     /// （[`Space::TRAMPOLINE`] VA → 内核 trampoline 物理页，**不拥有**，以 Reserved
-    /// 常数映射登记：借用、无帧）。
-    ///
-    /// 线程 trap 帧在此不创建：每线程帧由 [`Space::frame_alloc`] 在 Frame
-    /// 窗口分配（VA 任意、S-only），内核切换元数据在 spawn 时从内核帧拷贝。
+    /// 常数映射登记：借用、无帧）。线程 trap 帧在此不创建，按线程另行分配。
     ///
     /// # Errors
     ///
     /// 页表帧耗尽时返回 [`MapError::OutOfMemory`]。
     fn seed_user(&self, space: &mut Space) -> Result<(), MapError> {
-        // 读内核空间的 trampoline 叶 PTE（内核空间唯一归属 KERNEL_TEAM，只读）
+        // 读内核空间的 trampoline 叶 PTE（只读）
         let (tramp_pa, tramp_flags) = {
             let ks_inner =
                 crate::work::unit::team::kernel().expect("kernel team not initialized").space.inner.lock();
@@ -759,7 +751,7 @@ impl Space {
             Some(owner),
         ));
         // 栈体 [slot_va + GUARD, +TASK_STACK_SIZE)：Anonymous，帧待 attach。
-        // U 位按空间种类：用户空间栈需 U（用户 push）；内核空间栈（kernel 团队/kthread）
+        // U 位按空间种类：用户空间栈需 U（用户 push）；内核空间栈
         // 不得带 U——S 态 SUM=0 下访问 U 页会页故障，而内核任务跑 S 态。
         let body_flags = if matches!(self.kind, SpaceKind::Kernel) {
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D
@@ -778,8 +770,8 @@ impl Space {
         Ok(body_va)
     }
 
-    /// 把帧注入映射到一段**已登记的动态窗口子 Map**（spawn 用：先经窗口位图
-    /// `allocate` 预留 VA 块获得子 Map，再分配帧 attach）。
+    /// 把帧注入映射到一段**已登记的动态窗口子 Map**：先经窗口位图 `allocate`
+    /// 预留 VA 块获得子 Map，再分配帧逐帧 attach。
     ///
     /// [`attach_durable`](Self::attach_durable) 的 dynamic 簿记变体：逐帧装 PTE
     /// （[`install_frame_ptes`]，中间表由页表树 TableNode 持有）+ `push_frame`
@@ -811,9 +803,8 @@ impl Space {
     /// （S-only，内核半区——用户不可触碰）→ 登记帧子 Map（`owner` = 线程 id，
     /// 退出时按 owner/VA 回收）。返回 `(帧 VA, 帧 PA)`。
     ///
-    /// 帧元数据（内核切换信息 + 用户上下文）由调用方（spawn_thread）随后经 PA
-    /// 填充。帧 VA 无固定地址——`__alltraps`/`__restore` 经帧内 `self_va` 定位，
-    /// 是每线程帧可任意放置的机制前提。
+    /// 帧元数据（内核切换信息 + 用户上下文）由调用方随后经 PA 填充。帧 VA 无
+    /// 固定地址——切换代码经帧内 `self_va` 定位，是每线程帧可任意放置的前提。
     ///
     /// # Errors
     ///
@@ -857,7 +848,6 @@ impl Space {
 
     /// 回收一个线程的全部私有资源（栈 slot + trap 帧），`owner` = 线程 id。
     ///
-    /// 线程退出调用（SCHEDULER 锁内）：
     /// 1. 栈窗口按 owner 摘除守护页/栈体子 Map（栈帧随 drop 归还 frame 池）；
     /// 2. 清整 slot 叶 PTE + 回收变空的中间表；
     /// 3. 位图归还 slot VA（[`BitmapAllocator::deallocate`] 精确匹配）；
@@ -1044,9 +1034,8 @@ impl Space {
     /// 而本方法逐帧装 PTE（[`install_frame_ptes`]）——每帧用自身 PA，物理可断，
     /// 与 [`attach_dynamic`](Self::attach_dynamic) 同范本。
     ///
-    /// 场景：程序段装载（[`crate::work::unit::loader`]）、用户堆——帧是独立
-    /// 堆分配的 `Box`，物理**不连续**。若只用 `map`，第 i 页 PTE 会被算成
-    /// `pa0 + i·PAGE_SIZE`，指向错误的物理页（`TableNode::map` 的物理连续假设
+    /// 场景：程序段装载、用户堆——帧是独立堆分配的 `Box`，物理**不连续**。若只用
+    /// `map`，第 i 页 PTE 会被算成 `pa0 + i·PAGE_SIZE`，指向错误的物理页（`TableNode::map` 的物理连续假设
     /// 在这里失效）。簿记仍登记**一张**多页 [`Map`]：其不变量「帧 i ↔
     /// va + i·PAGE」只约束 VA 索引、不要求 PA 连续，帧随 Map 所有权回收。
     ///
@@ -1383,8 +1372,7 @@ impl Space {
     /// 连续），产出 `(物理地址, 段字节数)`；某页未映射即停（调用方据不完整
     /// 结果处置）。零分配、持锁语义同 `translate`（逐页加锁）。
     ///
-    /// 消费方：console / envcall Write——「连续 VA → 多段可直读 PA」的唯一遍历
-    /// 原语，取代各方自己的逐页循环。
+    /// 消费方：「连续 VA → 多段可直读 PA」的唯一遍历原语。
     pub fn segments(&self, va: VirtAddr, len: usize) -> Segments<'_> {
         Segments {
             space: self,
@@ -1439,8 +1427,8 @@ impl Space {
 
 impl Drop for Space {
     fn drop(&mut self) {
-        // 先释放本空间的 ASID：`free` 内部会 sfence 该 ASID 的 TLB 残留条目
-        // （ASID 可能被后续任务复用，旧条目须失效）。内核空间 ASID 0 不参与分配。
+        // 先释放本空间的 ASID：释放内部会 sfence 该 ASID 的 TLB 残留条目（ASID
+        // 可能被后续任务复用，旧条目须失效）。内核空间 ASID 0 不参与分配。
         if let SpaceKind::User { asid } = self.kind {
             asid::deallocate(asid);
         }
@@ -1451,14 +1439,11 @@ impl Drop for Space {
 
 // ── 内核地址空间 ─────────────────────────────────────────────
 
-/// per-hart 内核帧物理地址表（`unit::init` 按实际核数**动态分配**并发布；
-/// `__strap` 按 TP 索引的是**帧区 VA**（KERNEL_FRAME_BASE，LUI 常量注入），
-/// 不读此表；本表仅供 Rust 侧经 [`kernel_frame_pa`] 读 PA——trap::init 写帧
-/// 元数据、init_hart 取 hart 0 框架。仿 SCHEDULERS/TRAP_STACKS：
-/// Box::leak 进 OnceLock，先于任何帧映射分配）。
+/// per-hart 内核帧物理地址表（按实际核数**动态分配**并发布）。本表仅供 Rust
+/// 侧经 [`kernel_frame_pa`] 读 PA。Box::leak 进 OnceLock，先于任何帧映射分配。
 static KERNEL_FRAMES: OnceLock<&'static [AtomicPhysAddr]> = OnceLock::new();
 
-/// 按实际核数分配帧 PA 表（`unit::init` 调用，恰好一次，先于任何帧映射）。
+/// 按实际核数分配帧 PA 表（调用**恰好一次**，先于任何帧映射）。
 pub(crate) fn init_kernel_frames(n: usize) {
     let table: Box<[AtomicPhysAddr]> = (0..n)
         .map(|_| AtomicPhysAddr::new(PhysAddr::from_raw(0)))
@@ -1469,15 +1454,14 @@ pub(crate) fn init_kernel_frames(n: usize) {
     );
 }
 
-/// 帧 PA 表只读视图（`unit::init` 映射 per-hart 帧时迭代用）。
+/// 帧 PA 表只读视图（逐 hart 映射 per-hart 帧时迭代用）。
 pub(crate) fn kernel_frames() -> &'static [AtomicPhysAddr] {
     KERNEL_FRAMES.get().expect("kernel frames not initialized")
 }
 
-/// hart h 的内核帧物理地址（__strap 按 TP 索引的帧页 VA；trap::init 写元数据）。
+/// hart h 的内核帧物理地址。
 ///
-/// hart 0 的帧供用户帧构建从它拷贝内核切换信息，统一经
-/// `kernel_frame_pa(hart)` 读取。
+/// hart 0 的帧供用户帧构建从它拷贝内核切换信息，统一经本函数读取。
 pub fn kernel_frame_pa(hart: usize) -> PhysAddr {
     kernel_frames()[hart].load(Ordering::Relaxed)
 }

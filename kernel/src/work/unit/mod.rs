@@ -1,22 +1,14 @@
-// 任务执行单元（unit）— 地址空间 + 团队 + 线程 + 装载，物化为一个子模块
+// 任务执行单元（unit）— 地址空间 + 团队 + 线程 + 装载。
 //
 // 一个 Team 持有唯一 Space（共享地址空间），多个 Task 共享之；每个 Task 持有
-// 自己的 trap 帧（Frame 窗口分配，任意 VA——alltraps/restore 经帧内 self_va
-// 定位）。由 S-timer 抢占 + envcall 驱动切换。切换完全走 trap 链路——
-// trap_handler 返回下一任务帧 → restore 切 satp + sret，无独立切换汇编。
+// 自己的 trap 帧（Frame 窗口分配）。
 //
-// 子模块：
 //   space     — 地址空间（Space/SpaceBuilder、Map/Window/Durable 簿记模型、内核布局）
-//   team      — 团队容器（Team/TeamBuilder/kernel 单例；内核空间唯一归属 KERNEL_TEAM）
+//   team      — 团队容器（Team/TeamBuilder/kernel 单例）
 //   task      — 线程单元（Task/TaskBuilder）
 //   loader    — 程序装载（ELF → Space durable）
 //   parser    — ELF 解析（含符号表抽取）
 //   elftable  — 符号表
-//
-// `init` 是本子系统的唯一装配入口：构建内核地址空间（identity-map DRAM /
-// 高半区 / rodata / TRAMPOLINE / per-hart 内核帧）、启用 Sv39 分页，并把它
-// 封包进 KERNEL_TEAM。原本的 memory::manager::init 已并入此处（satp/DRAM 装配
-// 随之迁来），memory::manager 只留原语/错误接缝。
 
 pub mod elftable;
 pub(crate) mod loader;
@@ -58,9 +50,9 @@ unsafe extern "C" {
 pub type MapResult<T> = erra::Result<T, MapError>;
 
 /// 初始化 MMU：创建内核地址空间，identity-map DRAM 和 MMIO，启用 Sv39 分页，
-/// 并把内核空间封包进 KERNEL_TEAM（唯一出生点）。
+/// 并把内核空间封包进 KERNEL_TEAM。
 ///
-/// 必须在 `memory::allocator::init()` 之后、在驱动程序 MMIO 访问之前调用。
+/// 必须在分配器初始化之后调用。
 ///
 /// # Safety
 ///
@@ -142,10 +134,7 @@ pub fn init() -> MapResult<()> {
                 Vec::new(),
             )?;
 
-            // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（hart h 帧 =
-            //    BASE + h·PAGE；元数据由 trap::init 逐帧写入）。帧 PA 表按实际核数
-            //    动态分配（不再编译期预留 MAX 槽的静态数组）；PA 存 frames[h]——
-            //    __strap 按 TP 索引的是帧区 VA（KERNEL_FRAME_BASE），不经此表。
+            // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页。
             let n = machine::hart_count();
             init_kernel_frames(n);
             let frames = kernel_frames();
@@ -170,8 +159,7 @@ pub fn init() -> MapResult<()> {
             // 7. 刷新 TLB
             flush_asid(0);
 
-            // 8. 把内核地址空间封包进内核团队（KERNEL_TEAM 唯一持有；KERNEL_SPACE
-            //    全局已消除，团队插入此处即内核空间的唯一出生点）
+            // 8. 内核空间封包进内核团队。
             team::init_kernel(Arc::new(kernel_space));
 
             Ok(())

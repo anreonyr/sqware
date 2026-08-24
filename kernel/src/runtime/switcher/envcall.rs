@@ -3,12 +3,10 @@
 // RISC-V 特权规范：U 态 ecall 即 "Environment Call"（riscv crate 官方枚举亦名
 // `Exception::UserEnvCall`）——本模块即该调用的内核侧 ABI，术语与规范同源。
 //
-// 调用号契约（a7 枚举）单一事实源在 `ubi::Ucall`，kernel/user 共用。
+// 调用号契约（a7 枚举）单一事实源在 `ubi::Ucall`。
 // 约定：a7 = 调用号，a0..a5 = 参数，返回值写回 a0/a1（Gprs::A0/A1）；
 // 每个调用后 sepc += 4（Exit 除外——不返回）。时间语义统一以毫秒（Duration 边界）
 // 表达（Sleep=4）；tick 计数（GetTicks=3）仅作兼容诊断，非时间单位。
-// 分发只处理用户态陷阱：内核态 S-mode envcall 属内核 bug，走 trap 的
-// "unhandled kernel exception" 分支。
 
 use core::time::Duration;
 
@@ -21,10 +19,10 @@ use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::scheduler::{park, reap, running_team, starve, with_running_space};
 
-/// envcall 分发（trap_handler 的 UserEnvCall 分支调用）。
+/// envcall 分发。
 ///
-/// 入参 frame = 当前任务用户帧；返回待恢复帧：Yield 返回调度器选出的下一任务帧，
-/// Exit 返回后调用方不得再触碰 frame（其空间已在 reap 中回收）。
+/// 入参 frame = 当前任务用户帧；返回待恢复帧：Yield 返回下一任务帧，
+/// Exit 返回后调用方不得再触碰 frame。
 pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
     let number = frame.gpr.x(Gprs::A7); // a7 = 调用号
     let call =
@@ -39,8 +37,6 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
         Ucall::Write => {
             let len = frame.gpr.x(Gprs::A0);
             let ptr = frame.gpr.x(Gprs::A1);
-            // 连续 VA → 逐段 PA：console::write_in 借 running space 经
-            // Space::segments 逐段译（含 R 检查）并块写，不跨物理帧。
             let ok = with_running_space(|space| crate::console::write_in(space, ptr, len));
             if !ok {
                 frame.gpr.set_x(Gprs::A0, usize::MAX);
@@ -53,8 +49,8 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);
         }
         Ucall::Sleep => {
-            // sepc 前进（唤醒恢复时从 ecall 之后继续）；任务被 park，返回下一帧。
-            // a0 = 毫秒（Duration 边界；clock 按 timebase 换算成 deadline）
+            // sepc 前进（唤醒恢复时从 ecall 之后继续）。
+            // a0 = 毫秒（Duration 边界；换算按 timebase 进行）
             return park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext;
         }
         Ucall::ClockGetTime => {
@@ -63,8 +59,8 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             frame.gpr.set_x(Gprs::A1, up.subsec_nanos() as usize);
         }
         Ucall::HeapAllocate => {
-            // a0 = 字节数（页对齐向上取整；内核 Window::allocate 要求页对齐）。
-            // 当前运行任务空间经 with_running_space 借出（锁序 1→2→5 合法）。
+            // a0 = 字节数（页对齐向上取整——分配需页对齐）。
+            // 经 with_running_space 借出当前任务空间（锁序 1→2→5 合法）。
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
             let addr = with_running_space(|s| s.heap_allocate(size));
             frame.gpr.set_x(
@@ -83,8 +79,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Spawn => {
-            // a0 = 入口 VA（用户 trampoline），a1 = arg（闭包指针）。当前 team 建 U 任务。
-            // running_team 放锁后由 TaskBuilder::spawn 逐段取锁建任务（不跨锁持有）。
+            // a0 = 入口 VA（用户 trampoline），a1 = arg（闭包指针）。当前 team 内建 U 任务。
             let entry = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let arg = frame.gpr.x(Gprs::A1);
             let team = running_team();
@@ -98,9 +93,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             );
         }
         Ucall::Panic => {
-            // 用户主动 panic：a0 = 呼叫人指定的关联码（trace 窗口可见调用号 9）。
-            // 场景转储的显式触发——呼叫人即 running 任务，trap 帧保留用户现场，
-            // ubt/CSR 符号化完整可用（同 envcall 非法号撞 panic，但带消息、带参）。
+            // 用户主动 panic：a0 = 呼叫人指定的关联码。
             panic!("user-initiated panic (code {:#x})", frame.gpr.x(Gprs::A0));
         }
     };

@@ -1,10 +1,5 @@
 // 时钟源（clock）— 全内核时间源 + 单位换算
 //
-// 职责：只回答「现在几点了 / 过了多久」——时间读数 + Duration 换算 + tick 基准。
-// 与同组（chrono）的 timer 模块分工：clock 不含任何 deadline 登记 / 武装语义
-// （那是 timer 的事）；timer 依赖 clock（now / 换算 / Instant），clock 不反向
-// 依赖 timer。
-//
 // 数据：HERTZ = timebase-frequency（OnceLock<u64>，init 注入后只读）；
 //      CYCLE = 启动时计数器读数（uptime 基准，AtomicU64）。
 //
@@ -24,8 +19,8 @@ const NANOS_PER_SEC: u128 = 1_000_000_000;
 
 /// 单调时刻：time CSR 刻度（u64 计数器）薄包装。
 ///
-/// 时间区间（Duration）在模块边界折算；本类型用于调度器/驱动内部比较与
-/// 「语义时间点」传递。回绕安全：差值一律 wrapping/saturating 减法。
+/// 时间区间（Duration）在模块边界折算；本类型用于内部比较与「语义时间点」
+/// 传递。回绕安全：差值一律 wrapping/saturating 减法。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Instant(u64);
 
@@ -47,7 +42,7 @@ static CYCLE: AtomicU64 = AtomicU64::new(0);
 
 /// 初始化时钟：注入 hertz ，记录启动时刻。
 ///
-/// 必须在任何时间 API 调用之前、且在 trap 武装（switcher::trap::init）之前调用。
+/// 必须在任何时间 API 调用之前、且在 trap 武装之前调用。
 ///
 /// # Errors
 ///
@@ -81,18 +76,18 @@ pub fn uptime() -> Duration {
 }
 
 impl Instant {
-    /// 内部刻度（timer 的 WFI/arm 目标、热路径比较用）。
+    /// 内部刻度（arm 目标、热路径比较用）。
     pub fn as_ticks(self) -> u64 {
         self.0
     }
 
-    /// 从刻度构造时刻（timer::next_tock 还原用）。
+    /// 从刻度构造时刻。
     pub(crate) fn from_ticks(t: u64) -> Instant {
         Instant(t)
     }
 
     /// 自 earlier 以来的时长（回绕安全；earlier 在未来按零处理）。
-    #[allow(dead_code)] // 预留：syscall clock_gettime / 驱动超时统计用
+    #[allow(dead_code)] // 预留：相对计时用
     pub fn elapsed_since(&self, earlier: Instant) -> Duration {
         ticks_to_duration(self.0.wrapping_sub(earlier.0))
     }
@@ -109,7 +104,7 @@ impl Instant {
     }
 
     /// 本时刻 − Duration（换算饱和防溢出；非负语义由调用方保证，wrapping 承担）。
-    #[allow(dead_code)] // 预留：IPC 超时 / 协议 deadline 计算用
+    #[allow(dead_code)] // 预留：超时 / deadline 计算用
     pub fn sub(&self, d: Duration) -> Instant {
         Instant(self.0.wrapping_sub(duration_to_ticks(d)))
     }
@@ -122,14 +117,14 @@ impl Instant {
 }
 
 /// ticks → Duration（u128 中间量、饱和到 Duration 可表达范围）。
-/// pub(crate)：供同组 timer 与 switcher::trap 使用。
+/// pub(crate)：供同组模块使用。
 pub(crate) fn ticks_to_duration(ticks: u64) -> Duration {
     let ns = (ticks as u128).saturating_mul(NANOS_PER_SEC) / hertz() as u128;
     Duration::from_nanos(ns.min(u64::MAX as u128) as u64)
 }
 
 /// Duration → ticks（u128 中间量、饱和到 u64::MAX）。
-/// pub(crate)：供同组 timer 与 switcher::trap 使用。
+/// pub(crate)：供同组模块使用。
 pub(crate) fn duration_to_ticks(d: Duration) -> u64 {
     let ns = d.as_nanos();
     let t = ns.saturating_mul(hertz() as u128) / NANOS_PER_SEC;

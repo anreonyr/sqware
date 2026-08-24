@@ -22,10 +22,10 @@ use riscv::register::{satp, sstatus};
 use super::team::Team;
 use crate::work::room::scheduler;
 
-/// 内核任务自身的 trap 帧 PA（spawn_kernel 写入一次）。
-/// 入口据此读帧内 kernel_sp（调度器 prepare 按**真实** hart 写的 trap 栈顶）反推实际
-/// 执行 hart 重建 tp——内核任务的 tp 不像用户任务那样由 establish_tp 在每次 trap 入口
-/// 重建，被迁移到次核后 tp 会残留错误，致 reap（按 hart_id 定位调度器）摸错 hart。
+/// 内核任务自身的 trap 帧 PA（创建内核任务时写入一次）。
+/// 入口据此读帧内 kernel_sp（调度器按**真实** hart 写的 trap 栈顶）反推实际
+/// 执行 hart 重建 tp——内核任务的 tp 不随迁移更新，残留错误会致退出路径摸错
+/// hart。
 pub(crate) static KT_FRAME_PA: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
@@ -49,14 +49,14 @@ pub enum TaskState {
 /// Blocked 的载荷：阻塞原因。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockReason {
-    /// 睡眠：wake_at（timebase 刻度）到期由 unpark 唤醒。
+    /// 睡眠：wake_at（timebase 刻度）到期后被唤醒。
     Park { wake_at: u64 },
 }
 
 /// trap 帧句柄 — 线程 trap 帧的薄引用。
 ///
 /// 帧页由所属 Space 的 Frame 窗口子 Map **持有**（随线程退出回收），本句柄只
-/// 携带 VA/PA 两个数：PA 供 restore 直接取帧，VA 供退出时按位归还窗口。
+/// 携带 VA/PA 两个数：PA 供直接取帧，VA 供退出时按位归还窗口。
 #[derive(Clone, Copy, Debug)]
 pub struct TrapFrame {
     /// 帧在本空间中的虚拟地址（Frame 窗口分配，S-only）。
@@ -124,13 +124,12 @@ impl Task {
 
     /// 唯一强持有下取 &mut（`Arc::get_mut` 的 weak ≥ 1 变体：每个任务 spawn 时
     /// 即被 `Team::push_task` 记入簿记（`Arc::downgrade`），weak_count ≥ 1 永不
-    /// 归零，`Arc::get_mut` 恒失败。簿记弱引用**从不读 Task 字段**（push_task 只
-    /// downgrade、prune_tasks 只 `ptr_eq` 比较），不构成可变访问冲突）。
+    /// 归零，`Arc::get_mut` 恒失败。簿记弱引用**从不读 Task 字段**（只 downgrade /
+    /// `ptr_eq` 比较），不构成可变访问冲突）。
     ///
     /// 调用方义务（约束所在）：任务任一时刻只被一个容器强持有（running /
-    /// starved / blocked / reaped 恰好其一，由调度器**锁内 take/pop 取出唯一
-    /// Arc** 保证）→ strong == 1；互斥 = 锁 + 唯一强持有，无需原子字段。
-    /// debug 断言兜底（违规即 panic，含 task id/name）。
+    /// starved / blocked / reaped 恰好其一）→ strong == 1；互斥 = 锁 + 唯一强
+    /// 持有，无需原子字段。debug 断言兜底（违规即 panic，含 task id/name）。
     pub(crate) fn exclusive(t: &mut Arc<Self>) -> &mut Task {
         #[cfg(debug_assertions)]
         assert_eq!(
@@ -157,9 +156,9 @@ impl Task {
 /// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
 /// `Box<dyn FnOnce()>` 原始指针。
 pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
-    // 重建 tp = 实际执行 hart：内核任务被调度到任一 hart 时 tp 未必随之更新（restore
-    // 不动 tp）。帧 kernel_sp 由 scheduler::prepare 按**真实** hart 写入（trap 栈顶），
-    // 据此反推实际 hart 写入 tp——与用户任务 trap 入口 establish_tp 同理。
+    // 重建 tp = 实际执行 hart：内核任务被调度到任一 hart 时 tp 未必随之更新。
+    // 帧 kernel_sp 由调度器按**真实** hart 写入（trap 栈顶），据此反推实际
+    // hart 写入 tp。
     let fr = KT_FRAME_PA.load(core::sync::atomic::Ordering::Relaxed)
         as *const crate::runtime::switcher::context::TrapContext;
     let ksp = unsafe { core::ptr::addr_of!((*fr).kernel_sp).read() }.as_usize();
@@ -173,17 +172,17 @@ pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
     unsafe {
         core::arch::asm!("mv tp, {h}", h = in(reg) actual, options(nomem, nostack, preserves_flags));
     }
-    // SAFETY: arg 由 spawn_kernel 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
+    // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
     let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
     let boxed: Box<dyn FnOnce()> = *holder; // 移出内层闭包，holder 随之 drop
     boxed();
     ktask_exit()
 }
 
-/// 内核任务退出：切到 per-hart trap 栈（否则 reap 的 clear 会回收**正在使用**的内核栈）→
+/// 内核任务退出：切到 per-hart trap 栈（否则栈回收会回收**正在使用**的内核栈）→
 /// 标记退出 + 取下一任务 → restore。永不返回。
 fn ktask_exit() -> ! {
-    // 切到 per-hart trap 栈再退出：clear() 回收 Reaped 任务（含其内核栈）时我们已不在
+    // 切到 per-hart trap 栈再退出：回收 Reaped 任务（含其内核栈）时我们已不在
     // 该栈上。**必须用 options(noreturn) 的 tail-jump**——在 Rust 函数中部 `mv sp` 若配
     // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位。
     // noreturn 保证 asm 后无编译器生成代码，`jr` 到退出函数后在**全新** trap 栈帧上执行，
@@ -211,7 +210,7 @@ extern "C" fn kstack_exit() -> ! {
 
 /// 任务构建器：在团队容器内生成线程（栈 + trap 帧 + 填帧 + 入队）。
 ///
-/// 入口参数 arg 写入用户上下文 a0（blob D 按其分支行为）。空间分配（栈/帧）
+/// 入口参数 arg 写入用户上下文 a0。空间分配（栈/帧）
 /// 在调度器锁外完成（id 已原子化、空间自有锁）——锁只保护本 hart 队列的
 /// push（与偷取者的 pop 互斥）与入簿（1 → 3 合法）。
 ///
@@ -248,7 +247,7 @@ impl TaskBuilder {
         self
     }
 
-    /// 线程入口（loader 产出的绝对 entry；默认 USER_TEXT_BASE）。
+    /// 线程入口（绝对 entry；默认 USER_TEXT_BASE）。
     pub fn entry(mut self, entry: VirtAddr) -> TaskBuilder {
         self.entry = entry;
         self
@@ -306,7 +305,7 @@ impl TaskBuilder {
 
         // 3. 填帧：内核切换元数据从内核帧拷贝；用户上下文 = 入口/栈顶/a0/状态。
         //    kernel_sp = **本 hart** trap 栈顶（任务随后在本 hart 首次运行；若被
-        //    steal 走，偷取核会在上台前重写——见 scheduler::prepare）。
+        //    steal 走，上台前由调度器重写）。
         unsafe {
             let ktc = kernel_frame_pa(0).as_usize() as *const TrapContext;
             let frame = &mut *(frame_pa.as_usize() as *mut TrapContext);
@@ -315,7 +314,7 @@ impl TaskBuilder {
             frame.trap_handler = (*ktc).trap_handler;
             frame.trap_stack_corrupt = (*ktc).trap_stack_corrupt;
             frame.user_pa = frame_pa;
-            // user_satp = Sv39 模式位(8) << 60 | asid << 44 | root_ppn —— restore 切回本空间用
+            // user_satp = Sv39 模式位(8) << 60 | asid << 44 | root_ppn —— 切回本空间用
             frame.user_satp = satp::Satp::from_bits(
                 (8usize << 60) | (self.team.space.asid() << 44) | self.team.space.root(),
             );
@@ -324,9 +323,9 @@ impl TaskBuilder {
             frame.gpr.set_x(Gprs::SP, stack_top.as_usize());
             frame.gpr.set_x(Gprs::A0, self.arg);
             let mut ss = sstatus::Sstatus::from_bits(riscv::register::sstatus::read().bits());
-            // 内核任务（挂 kernel 团队、共享内核地址空间 KERNEL_TEAM.space）→ S 态：SPP=S、SIE=0、SPIE=0
-            // （内核恒关中断——协作式，从不被 S-timer 抢占；跑完即退）。其它团队 → U 态：
-            // SPP=U、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。模式由团队身份推断，无新 API。
+            // 内核任务（挂 kernel 团队）→ S 态：SPP=S、SIE=0、SPIE=0（内核恒关
+            // 中断——协作式，从不被 S-timer 抢占；跑完即退）。其它团队 → U 态：
+            // SPP=U、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。模式由团队身份推断。
             ss.set_sie(false);
             if Arc::ptr_eq(
                 &self.team,

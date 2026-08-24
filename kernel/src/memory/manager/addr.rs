@@ -59,12 +59,10 @@ impl VirtAddr {
         (self.0 >> 38) & 1 == 0
     }
 
-    /// 是否为内核域地址：Sv39 高半区（bit 38 = 1，`!is_user` 等价判定），**或**
-    /// 内核镜像恒等区 [_kernel_start, _kernel_edge)。
+    /// 是否为内核域地址：Sv39 高半区（bit 38 = 1），**或**内核镜像恒等区
+    /// [_kernel_start, _kernel_edge)。
     ///
-    /// 两段都要：镜像恒等映射落在**低半区**（0x80200000 起）——纯半区判定会把
-    /// 内核镜像地址误判为用户域（符号化分派将查错表，见 elftable::resolve）。
-    /// 纯位运算 + 一次链接符号区间比较，panic/诊断现场可安全调用。
+    /// 两段都要：镜像恒等映射落在**低半区**（0x80200000 起），纯半区判定会误判。
     #[inline]
     pub fn is_kernel(self) -> bool {
         if !self.is_user() {
@@ -195,7 +193,7 @@ impl core::fmt::LowerHex for PhysAddr {
     }
 }
 
-/// 物理地址的原子包装 — 全局静态状态（如内核 trap-context 帧 PA）无锁读写用。
+/// 物理地址的原子包装 — 全局静态状态无锁读写用。
 ///
 /// core 没有泛型 `Atomic<T>`，按本模块风格做具体包装（`PhysAddr` 为
 /// `#[repr(transparent)]` 的 usize 新类型，原子性由内层 `AtomicUsize` 保证）。

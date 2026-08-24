@@ -1,20 +1,12 @@
-// 内核 panic 处理器（halt）— 组成诊断报告后停机
+// 内核 panic 处理器（halt）— 组成诊断报告后停机。
 //
 // 多核 panic 策略：**只保留报警源（第一个 panic 的）hart，其余 hart 停止**。
 //   - `alarm()`：抢占成为报警源（原子互斥，输家即 `hunker()`），置 `ALARMER`，
 //     广播 SBI IPI 唤醒/提示所有其它核，然后组成诊断报告，停机自环。
-//   - 其余 hart（follower，含并发 panic 者）经 `hush()`（trap 入口 / 调度
-//     `run()` 循环钩子）检测到警报后 `hunker()` 就地卧倒——关中断 + HSM 自停
-//     （真正离线，不再执行任何指令），彻底不再触碰内存。
+//   - 其余 hart 经 `hush()` 检测到警报后 `hunker()` 就地卧倒——关中断 + HSM 自停。
 //
-// 命名隐喻（警报族，全单字无下划线）：`alarm` 拉响警报 → 各核 `hush` 噤声
-// （非报警源即 `hunker` 卧倒）→ 只剩 `ALARMER` 那一个核在继续。
-// panic 路径故意绕过所有锁：经 `console::_write` 无锁直写控制台。
-//
-// 组稿形态（d8 设计的落地）：头部文本（[panic] 位置/任务/消息）作为 **panic
-// 段**（单槽行 = 文本行）进报告，随后 scene/trace 段由 dump_crash 投稿；成册
-// 打戳后一次印发——旧收集器块（depend 报警源）先行，再印新报告，最后宿主
-// 导出整档快照。全部信息一个出口、一个顺序。
+// 命名隐喻：`alarm` 拉响警报 → 各核 `hush` 噤声（非报警源即 `hunker` 卧倒）
+// → 只剩 `ALARMER` 那一个核在继续。
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -34,10 +26,7 @@ static ALARM: AtomicBool = AtomicBool::new(false);
 /// 仅报警源在抢占成功后写入（follower 不写），故恒为真正报警源的 id。
 static ALARMER: AtomicUsize = AtomicUsize::new(usize::MAX);
 
-/// 非报警源核“噤声”：系统已进入警报且本 hart 非报警源 → 就地卧倒（不返回）。
-///
-/// 供 trap 入口与调度器 `run()` 循环钩子调用；正常运行时恒 no-op（一次
-/// Acquire 读 + 分支）。卧倒路径 `hunker` 不依赖任何锁/分配器。
+/// 非报警源核「噤声」：就地卧倒（不返回）。正常运行时恒 no-op（一次 Acquire 读 + 分支）。
 pub fn hush() {
     if ALARM.load(Ordering::Acquire) && ALARMER.load(Ordering::Acquire) != machine::hart_id() {
         hunker();
@@ -63,10 +52,8 @@ fn hunker() -> ! {
 /// 是**报警源（嵌套 panic re-entry——不再重复转储，调用方直接进停机自环）。
 ///
 /// 原子互斥保证并发 panic 只有一个报警源：CAS 失手即输——输家若**不是**报警源
-/// 就地 `hunker` 卧倒；输家若**就是**报警源（`ALARMER == me`，即现场转储过程中
-/// 再 fault 的嵌套路径）则**不卧倒**——卧倒会把本 hart HSM 停掉，srst 停机自环
-/// 永远到不了（"panic 后不停机"的根路径）。`ALARMER` 仅在胜出后写入并 Release
-/// 发布——窗口期读到的哨兵 `usize::MAX` 使任何非报警核都判为 follower→`hunker`。
+/// 就地 `hunker` 卧倒；输家若**就是**报警源（现场转储过程中再 fault 的嵌套路径）
+/// 则**不卧倒**。`ALARMER` 仅在胜出后写入并 Release 发布。
 fn claim() -> bool {
     if ALARM.swap(true, Ordering::AcqRel) {
         // 已有人报警：唯一例外是本核自己就是报警源（嵌套 panic）——豁免卧倒。
@@ -79,10 +66,8 @@ fn claim() -> bool {
     true
 }
 
-/// 向所有其它已启动 hart 广播 SBI IPI（唤醒睡核、提示用户核）；错误尽力而为。
-///
-/// 按 64 核一组循环（SBI `sbi_send_ipi` 掩码至多 XLEN=64 位，超 64 需递增
-/// mask_base）；排除自身（报警源在停机自环，不卧倒自己）。
+/// 向所有其它已启动 hart 广播 SBI IPI（错误尽力而为）。按 64 核一组循环
+/// （SBI `sbi_send_ipi` 掩码至多 XLEN=64 位）；排除自身。
 fn broadcast() {
     let me = machine::hart_id();
     let n = machine::hart_count();
@@ -141,9 +126,7 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
         halt_loop()
     }
 
-    // 崩溃全局切换：门户后端**无锁**换到后备仓（spare）——此后所有 alloc（报
-    // 告组稿/渲染/序列化）都进仓内，主堆锁链/完整性不再可信。
-    // 原子 store 不取任何锁：即使 panic 恰在持主堆锁现场也绝不卡死。
+    // 门户后端无锁切到后备仓（spare）：不取锁，即使 panic 恰在持主堆锁现场也绝不卡死。
     crate::memory::allocator::portal::switch(crate::memory::allocator::portal::Backend::Spare);
 
     let mut report = Report::default();
@@ -187,9 +170,7 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     halt_loop()
 }
 
-/// 停机自环：srst 关机/复位（QEMU 以 "QEMU: Terminated" 退出），失败则关中断
-/// wfi 兜底自旋。**不 panic**：此处已是 panic 末端，再 panic 会经嵌套 re-entry
-/// 回到本函数（listener 豁免已保证不会无限递归转储，但停机路径不引入新故障源）。
+/// 停机自环：srst 关机/复位，失败则关中断 wfi 兜底自旋。**不 panic**（已是 panic 末端）。
 fn halt_loop() -> ! {
     // SAFETY: 仅清 sstatus.SIE（纯写本 hart 自己的 CSR，与 hunker 同契约）。
     unsafe { core::arch::asm!("csrci sstatus, 2") };

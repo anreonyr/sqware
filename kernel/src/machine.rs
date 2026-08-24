@@ -1,12 +1,4 @@
 // 机器设备信息 — 启动时从设备树一次性解析出的纯值（无引用、无 fdt 依赖）
-//
-// 设计原则：DTB 解析只发生在 main::probe 一次，产出 Copy 的纯值注入；任何模块
-// 都不直接依赖 fdt crate。模块按需取标量字段——自包含模块（如 memory）只收
-// Region，不反向依赖整个 Machine。读路径经 OnceLock，仅一次 AtomicBool::load，
-// 无锁。
-//
-// 与 memory 的关系：本文件只定义纯值类型 + 注册表（不含任何 DTB 探测），
-// memory 仅依赖这里的 `Region`，不重引入旧的 platform 耦合。
 
 use core::ops;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -15,8 +7,7 @@ use crate::lock::OnceLock;
 
 /// 半开物理区间 `[base, end)` — 内存池 / MMIO 设备区域通用。
 ///
-/// 长度用 `end - base` 计算，不单独存 size。与 memory 的 debug 越界检查
-/// 口径一致（`base..end`）。
+/// 长度用 `end - base` 计算，不单独存 size。
 #[derive(Clone, Copy, Debug)]
 pub struct Region {
     pub base: usize,
@@ -38,14 +29,14 @@ impl Region {
 /// 编译期防呆上限（超过即 panic，不静默截断）。
 ///
 /// 注意：这不是 SBI 协议边界。SBI 的 `sbi_send_ipi` 每次调用至多寻址
-/// XLEN(=64) 个 hart（掩码寄存器位宽），超过需按 64 核一组多次调用
-/// （tie::wake_all 已按此循环）；协议对总核数不设上限。
+/// XLEN(=64) 个 hart（掩码寄存器位宽），超过需按 64 核一组多次调用；
+/// 协议对总核数不设上限。
 pub const MAX_HART_SLOTS: usize = 4096;
 
 /// 已启动的 hart 集合（进程级进度记录；无功能读者，保留为诊断信息）。
 static STARTED_HARTS: AtomicUsize = AtomicUsize::new(1);
 
-/// 记录某 hart 已启动（HSM `hart_start` 成功后由 hart 0 调用）。
+/// 记录某 hart 已启动（HSM `hart_start` 成功后调用）。
 pub fn mark_hart_started(hart: usize) {
     debug_assert!(
         hart < MAX_HART_SLOTS,
@@ -57,7 +48,6 @@ pub fn mark_hart_started(hart: usize) {
 /// 实际活跃核数 = DTB 上报核数（上限 = VA 窗口槽数 MAX_HART_SLOTS）。
 ///
 /// **动态获取**：核数完全由 DTB 决定（`Machine.hart`，运行时注入）。
-/// per-hart 结构（调度器数组 / trap 栈 / 内核帧 / 帧 PA 表）都按此值定尺寸。
 pub fn hart_count() -> usize {
     let n = info().hart;
     assert!(
@@ -86,7 +76,7 @@ pub fn hart_id() -> usize {
 pub struct Machine {
     /// CPU 核数。
     pub hart: usize,
-    /// 时钟频率（DTB /cpus timebase-frequency，Hz；供 runtime::time 注入）。
+    /// 时钟频率（DTB /cpus timebase-frequency，Hz）。
     pub hertz: usize,
     /// 物理内存范围
     pub dram: Region,
@@ -141,9 +131,9 @@ pub fn info() -> &'static Machine {
     MACHINE.get().expect("machine not initialized")
 }
 
-/// DRAM 物理上界（exclusive）——console 判恒等区可直读区间的上界。
-/// 机器信息未注入（`machine::init` 前，含其自身崩溃现场）→ None，调用方
-/// 自行退回保守值。取 None 而非 panic：console 在崩溃现场也绝不能再 panic。
+/// DRAM 物理上界（exclusive，恒等区可直读区间的上界）。
+/// 机器信息未注入（`machine::init` 前）→ None，调用方自行退回保守值。
+/// 取 None 而非 panic：崩溃现场绝不能再 panic。
 pub(crate) fn dram_end() -> Option<usize> {
     MACHINE.get().map(|m| m.dram.range().end)
 }
@@ -152,10 +142,10 @@ pub(crate) fn dram_end() -> Option<usize> {
 ///   `_kernel_edge`             镜像结束（页对齐，链接脚本唯一锚点）
 ///   [主栈区 KERNEL_STACK_SIZE] 向下生长，栈底 = `_kernel_edge`，栈顶 = +size
 /// free 区起点 = 栈顶。无独立 guard 帧——主栈是 boot 短命栈，下溢由栈底
-/// canary 兜底（boot::init 进首任务前校验）。
+/// canary 兜底。
 pub(crate) const KERNEL_STACK_SIZE: usize = 0x10_0000; // 1 MiB
 
-/// 主内核栈 canary 值（写在栈底，`boot::init` 进首任务前校验）。
+/// 主内核栈 canary 值（写在栈底）。
 pub(crate) const KERNEL_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
 
 /// 镜像结束地址（链接脚本 `_kernel_edge`）——栈与 free 区布局的唯一基准。
@@ -186,8 +176,7 @@ pub(crate) fn kernel_stack_edge() -> usize {
     kernel_edge() + KERNEL_STACK_SIZE
 }
 
-/// 读取 DTB `/cpus` 的 timebase-frequency（Hz）；缺失/非法长度返回 0
-/// （clock::init 会以 ClockError::NoTimebase 拒绝 0）。
+/// 读取 DTB `/cpus` 的 timebase-frequency（Hz）；缺失/非法长度返回 0。
 fn hertz(fdt: &fdt::Fdt) -> usize {
     fdt.find_node("/cpus")
         .and_then(|n| n.property("timebase-frequency"))

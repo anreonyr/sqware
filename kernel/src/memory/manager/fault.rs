@@ -1,6 +1,5 @@
-// 缺页异常处理
+// 缺页异常处理。
 //
-// 替换 trap.rs 中的 panic，提供结构化的缺页诊断和处理框架。
 // 当前阶段：
 //   - 内核缺页 → fatal（内核页必须预映射）
 //   - 用户缺页 → 匿名页分配（懒分配）
@@ -61,8 +60,6 @@ impl PageFault {
 }
 
 /// 为用户缺页解析匿名物理页。
-///
-/// 按映射权限从 frame 分配器取一页并映射到缺页地址。
 fn resolve_anonymous(fault: &PageFault, space: &Space, flags: PteFlags) -> bool {
     let vaddr = fault.addr.page_align();
     // A/D 必须设置，否则硬件可能再次缺页
@@ -70,7 +67,6 @@ fn resolve_anonymous(fault: &PageFault, space: &Space, flags: PteFlags) -> bool 
 
     match space.page_fault(vaddr, PAGE_SIZE, flags) {
         Ok(()) => {
-            // map 内部已按空间 ASID 局部刷 TLB（只失效本空间旧条目）。
             info!(
                 "resolved page fault: allocated anon page for {:?} at {:?}",
                 fault.kind, vaddr
