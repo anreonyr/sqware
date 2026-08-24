@@ -381,7 +381,7 @@ unsafe impl Allocator for BlockAllocator {
         let Some(home) = self.own(pa) else { return };
         // 护栏事件：活块注销 + 本体毒化复写（头 8B 随后被 freelist 头插覆盖，
         // 其余保持毒化——UAF 读数变 0xCD；实现细节藏在 fence 内部）。
-        super::fence::on_free(pa, layout.size());
+        super::fence::on_free(pa, layout.size(), super::fence::OwnerKind::KernelHeap);
         let me = machine::hart_id();
         let pool = &self.blocks[home];
         if home == me {

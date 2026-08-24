@@ -160,11 +160,14 @@ fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
     let mut n = 0usize;
     let mut prev = 0usize;
     let mut page = sp & !(PAGE_SIZE - 1);
-    // DRAM 恒等区守卫（覆盖 128M/256M 机器配置；QEMU virt DRAM 基址恒
-    // 0x80000000）：walk_raw 的根/中间表/leaf 逐级 PA 都过此校验——用户 satp
+    // DRAM 恒等区守卫（上界随机器 dram 取：128M/256M/512M 通用；QEMU virt DRAM
+    // 基址恒 0x80000000）：walk_raw 的根/中间表/leaf 逐级 PA 都过此校验——用户 satp
     // 若被覆写为坏值，裸读会 fault → 嵌套 panic → halt 卡死（"panic 后不停机"
-    // 的根路径）；此处拦下，跳页继续。
-    let in_dram = |pa: PhysAddr| (0x8000_0000..0x9000_0000).contains(&pa.as_usize());
+    // 的根路径）；此处拦下，跳页继续。未注入机器信息（崩溃在 machine::init 自身
+    // 现场）→ 退回保守 256M 上界，行为与既往一致。
+    let in_dram = |pa: PhysAddr| {
+        (0x8000_0000..crate::machine::dram_end().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
+    };
     while page < high && n < BT_DEPTH {
         let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
             PhysAddr::from_raw(root_ppn << 12),

@@ -975,7 +975,12 @@ impl Space {
             flush_asid(self.kind.asid());
         }
         // 护栏事件：用户堆活块注销（无账 = 悬垂/双释放现行；键与 heap_allocate 相同）。
-        crate::memory::allocator::fence::on_free((self.kind.asid() << 32) | addr.as_usize(), size);
+        // UserHeap 不 poison——键 = asid<<32|va 非地址，且用户页维持清零语义。
+        crate::memory::allocator::fence::on_free(
+            (self.kind.asid() << 32) | addr.as_usize(),
+            size,
+            crate::memory::allocator::fence::OwnerKind::UserHeap,
+        );
         true
     }
 

@@ -112,12 +112,16 @@ pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
 // 任何 cfg、编译器内联指令或审计词汇。debug 构建做账，release 空体经
 // #[inline] 消除。
 
-/// 分配事件：活块入账（含整块毒化）。caller = 调用点 ra（分配现场符号化用）。
+/// 分配事件：活块入账（KernelHeap 整块毒化）。caller = 调用点 ra（分配现场符号化用）。
+/// 用户堆不 poison（键 = asid<<32|va，非地址；且用户页维持清零语义，见
+/// [`OwnerKind`]）——只入 ledger 账。
 #[inline]
 pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
     #[cfg(debug_assertions)]
     {
-        poison(addr, size);
+        if let OwnerKind::KernelHeap = kind {
+            poison(addr, size);
+        }
         let caller: usize;
         // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
         unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
@@ -125,14 +129,17 @@ pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
     }
 }
 
-/// 释放事件：活块注销 + 本体毒化复写（头 8B 随后被 freelist 头插覆盖，其余保持
-/// 毒化——UAF 读数变 0xCD）。
+/// 释放事件：活块注销 + KernelHeap 本体毒化复写（头 8B 随后被 freelist 头插
+/// 覆盖，其余保持毒化——UAF 读数变 0xCD）。用户堆不 poison（同 [`on_alloc`]：
+/// 键非地址、维持清零语义）——只注销账目。
 #[inline]
-pub fn on_free(addr: usize, size: usize) {
+pub fn on_free(addr: usize, size: usize, kind: OwnerKind) {
     #[cfg(debug_assertions)]
     {
         ledger::LEDGER.unmark(addr, size);
-        poison(addr, size);
+        if let OwnerKind::KernelHeap = kind {
+            poison(addr, size);
+        }
     }
 }
 

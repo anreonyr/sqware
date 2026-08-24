@@ -546,6 +546,16 @@ pub fn unpark() -> bool {
     woke
 }
 
+/// 是否有运行任务（console 兜底判定用）。
+///
+/// 与 `with_running_space` 的 expect 语义互补：envcall/trap 路径**必然**有运行
+/// 任务（不减不 panic）；console 在 boot/panic 早期可能没有——判 `false` 即
+/// 静默丢弃用户窗口缓冲，绝不嵌套 panic（512M 静默挂死的教训）。
+pub fn has_running_task() -> bool {
+    let me = machine::hart_id();
+    schedulers()[me].inner.lock().running.is_some()
+}
+
 /// 在当前运行任务的空间上执行闭包（锁内借出，引用不逃逸锁）。
 pub fn with_running_space<R>(f: impl FnOnce(&Space) -> R) -> R {
     let me = machine::hart_id();

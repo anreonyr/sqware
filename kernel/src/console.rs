@@ -22,10 +22,20 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::work::room::scheduler;
 use crate::work::unit::space::Space;
 
-/// **恒等区**（DRAM 0x80000000..0x90000000，同 scene::walk_sv39 的守卫范围）：
+/// **恒等区**（DRAM 0x80000000.. dram 上界，同 scene::walk_sv39 的守卫范围）：
 /// VA 即 PA，Dbcn 可直读。其他（用户窗口 VA）须经页表 translate。
+///
+/// 上界**随机器 dram 取**（[`identity_edge`]）：写死 0x9000_0000 只覆盖 ≤256M——
+/// 512M 下帧池首借页落在 0x90000000 之上，write_bytes 误判非恒等 → 走
+/// with_running_space → 无运行空间 expect panic（"512M 无法启动"的根因）。
 const IDENTITY_BASE: usize = 0x8000_0000;
-const IDENTITY_EDGE: usize = 0x9000_0000;
+
+/// DRAM 恒等区上界（VA=PA 区间的 exclusive 上界）。机器信息未注入
+/// （machine::init 自身崩溃的现场）→ 退回保守 256M 上界——现场缓冲全在
+/// 镜像静态区（0x8020_xxxx，恒在区内），取小只会让个别缓冲走丢弃分支，不误。
+fn identity_edge() -> usize {
+    crate::machine::dram_end().unwrap_or(0x9000_0000)
+}
 
 struct Console;
 
@@ -76,14 +86,17 @@ pub(crate) fn write_in(space: &Space, va: usize, len: usize) -> bool {
 fn write_bytes(bytes: &[u8]) {
     let va = bytes.as_ptr() as usize;
     let end = va + bytes.len();
-    if va >= IDENTITY_BASE && end <= IDENTITY_EDGE {
+    if va >= IDENTITY_BASE && end <= identity_edge() {
         // 恒等区：VA 即 PA，一次直通（连续段）
         dbcn_write(va, bytes.len());
-    } else {
+    } else if scheduler::has_running_task() {
         scheduler::with_running_space(|space| {
             write_in(space, va, bytes.len());
         });
     }
+    // 无运行空间（boot/panic 早期）：用户窗口 VA 无从译 PA，静默丢弃——内核
+    // 缓冲恒在恒等区（上界随 dram），此分支仅防御未来失误；宁可丢一行也不在
+    // panic 现场嵌套 panic 静默挂死（512M 的教训）。
 }
 
 /// put!/putln!/log logger 的共同出口。

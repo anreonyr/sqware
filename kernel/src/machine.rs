@@ -141,6 +141,13 @@ pub fn info() -> &'static Machine {
     MACHINE.get().expect("machine not initialized")
 }
 
+/// DRAM 物理上界（exclusive）——console 判恒等区可直读区间的上界。
+/// 机器信息未注入（`machine::init` 前，含其自身崩溃现场）→ None，调用方
+/// 自行退回保守值。取 None 而非 panic：console 在崩溃现场也绝不能再 panic。
+pub(crate) fn dram_end() -> Option<usize> {
+    MACHINE.get().map(|m| m.dram.range().end)
+}
+
 /// 主内核栈布局（镜像内单一引导栈；栈大小由 Rust 常量单一来源）：
 ///   `_kernel_edge`             镜像结束（页对齐，链接脚本唯一锚点）
 ///   [主栈区 KERNEL_STACK_SIZE] 向下生长，栈底 = `_kernel_edge`，栈顶 = +size
