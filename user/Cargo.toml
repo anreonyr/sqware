@@ -62,3 +62,10 @@ path = "src/bin/spawner.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "user-mmaper"
+path = "src/bin/mmaper.rs"
+test = false
+bench = false
+doctest = false

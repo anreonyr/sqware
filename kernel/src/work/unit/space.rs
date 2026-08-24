@@ -30,8 +30,8 @@ use core::sync::atomic::Ordering;
 use hashbrown::HashMap;
 
 use crate::lock::OnceLock;
-use crate::memory::allocator::interval::IntervalAllocator;
 use crate::memory::allocator::frame::allocator;
+use crate::memory::allocator::interval::{Direction, IntervalAllocator};
 use crate::{
     lock::{Level, RelLock},
     memory::PAGE_SIZE,
@@ -42,11 +42,9 @@ use crate::memory::manager::{
     asid,
     entry::PteFlags,
     flush_asid,
-    mode,
+    mode::{self, STACK_AREA},
     table::{Frame, FrameState, MapError, TableNode},
 };
-#[cfg(debug_assertions)]
-use crate::memory::manager::mode::STACK_AREA;
 
 /// 映射种类 — 缺页时如何响应。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,7 +212,7 @@ impl Dynamic {
         }
         let (base, size) = self
             .allocator
-            .allocate(size)
+            .allocate(size, Direction::Rise)
             .map_err(|_| MapError::OutOfMemory)?;
         let map = Map::new(
             VirtAddr::from_raw(base),
@@ -303,7 +301,7 @@ impl Durable {
     }
 
     /// 查询覆盖 `vaddr` 的常数映射。
-    fn resolve(&self, vaddr: VirtAddr) -> Option<&Map> {
+    fn resolve_ref(&self, vaddr: VirtAddr) -> Option<&Map> {
         self.maps.iter().rev().find(|m| m.contains(vaddr))
     }
 
@@ -349,12 +347,15 @@ struct SpaceInner {
 
 impl SpaceInner {
     fn new() -> Result<Self, MapError> {
-        // 栈窗口顶锚（upper 起 STACK_AREA）；帧窗口内核半区常量区。区间分配器
-        // 零 up-front（∝ 存活块）；内核空间窗口元数据在基线前稳定由 boot 顺序
-        // 保证（record_baseline 在 spawn_demos 之后——内核团队任务仅启动期创建）。
-        let top = 1usize << mode::geometry(mode::mode()).split_bit();
-        let stack = Dynamic::window(mode::upper().as_usize(), top);
-        let frame = Dynamic::window(FRAME_BASE.as_usize(), FRAME_BASE.as_usize() + FRAME_REGION_SIZE);
+        // 栈窗口顶锚于用户空间上界之下（[upper − STACK_AREA, upper)，fall 排槽）；
+        // 帧窗口内核半区常量区。区间分配器零 up-front（∝ 存活块）；内核空间
+        // 窗口元数据在基线前稳定由 boot 顺序保证（record_baseline 在 spawn 前）。
+        let upper = mode::upper().as_usize();
+        let stack = Dynamic::window(upper - STACK_AREA, upper);
+        let frame = Dynamic::window(
+            FRAME_BASE.as_usize(),
+            FRAME_BASE.as_usize() + FRAME_REGION_SIZE,
+        );
         let dynamic = HashMap::from([
             (DynamicKind::Stack(0), stack),
             (DynamicKind::Frame(0), frame),
@@ -365,27 +366,27 @@ impl SpaceInner {
         })
     }
 
-    /// 登记堆窗口 `[base, upper())`（装载期注册；重复注册 → AlreadyMapped）。
-    fn attach_heap(&mut self, base: VirtAddr, upper: VirtAddr) -> Result<(), MapError> {
+    /// 登记堆窗口 `[base, 栈底)`（装载期注册；重复注册 → AlreadyMapped）。
+    fn attach_heap(&mut self, base: VirtAddr, edge: VirtAddr) -> Result<(), MapError> {
         let kind = DynamicKind::Heap(0);
-        if !base.as_usize().is_multiple_of(PAGE_SIZE) || base > upper {
+        if !base.as_usize().is_multiple_of(PAGE_SIZE) || base > edge {
             return Err(MapError::NotAligned);
         }
         if self.dynamic.contains_key(&kind) {
             return Err(MapError::AlreadyMapped);
         }
-        let size = upper.as_usize() - base.as_usize();
+        let size = edge.as_usize() - base.as_usize();
         if self.durable.overlaps(base, size, &self.dynamic) {
             return Err(MapError::AlreadyMapped);
         }
         self.dynamic
-            .insert(kind, Dynamic::window(base.as_usize(), upper.as_usize()));
+            .insert(kind, Dynamic::window(base.as_usize(), edge.as_usize()));
         Ok(())
     }
 
     /// 查询 `vaddr` 所属的映射（常数表 → 动态窗口子表），返回 Copy 摘要。
     fn resolve(&self, vaddr: VirtAddr) -> Option<MapInfo> {
-        if let Some(m) = self.durable.resolve(vaddr) {
+        if let Some(m) = self.durable.resolve_ref(vaddr) {
             return Some(m.info());
         }
         for w in self.dynamic.values() {
@@ -414,7 +415,7 @@ impl SpaceInner {
     }
 
     /// 登记常数映射（内部版，调用者须持锁；不装 PTE、不注入帧——懒区域用）。
-    fn declare_durable(
+    fn declare(
         &mut self,
         start: VirtAddr,
         size: usize,
@@ -583,10 +584,14 @@ pub(crate) fn validate() {
         "lower not canonical kernel base"
     );
     assert!(!lower.is_user());
-    // upper = top − STACK_AREA，处用户半区、页对齐
-    assert_eq!(top - upper.as_usize(), STACK_AREA);
+    // upper = 用户空间上界（1 << split_bit），排他边界（本身处规范空洞，非用户地址）；
+    // 栈窗顶锚 [upper − STACK, upper)，窗口内地址须全部落在用户半区。
+    assert_eq!(upper.as_usize(), top, "upper must equal user space ceiling");
     assert!(upper.as_usize().is_multiple_of(PAGE_SIZE));
-    assert!(upper.is_user());
+    let stack_bottom = upper.as_usize() - STACK_AREA;
+    assert!(stack_bottom.is_multiple_of(PAGE_SIZE)); // 栈窗底对齐
+    assert!(stack_bottom < upper.as_usize()); // 栈窗非空
+    assert!(VirtAddr::wrap(stack_bottom).is_user()); // 栈窗内地址处用户半区
     // 布局常量在全部受支持模式下规范（wrap 前置条件的运行期印证）
     assert!(!TRAMPOLINE.is_user());
     assert!(KERNEL_FRAME_BASE.as_usize() < TRAMPOLINE.as_usize());
@@ -717,8 +722,11 @@ impl SpaceBuilder {
     fn seed_user(&self, space: &mut Space) -> Result<(), MapError> {
         // 读内核空间的 trampoline 叶 PTE（只读）
         let (tramp_pa, tramp_flags) = {
-            let ks_inner =
-                crate::work::unit::team::kernel().expect("kernel team not initialized").space.inner.lock();
+            let ks_inner = crate::work::unit::team::kernel()
+                .expect("kernel team not initialized")
+                .space
+                .inner
+                .lock();
             ks_inner.durable.root.walk_ref(TRAMPOLINE)?
         };
 
@@ -765,9 +773,10 @@ impl Space {
     /// 「无 Map」。栈体登记为 Anonymous 子 Map（帧随后经
     /// [`attach_dynamic`](Self::attach_dynamic) 注入）。两子 Map 均标 `owner`，退出时
     /// 按 owner 一并回收（[`task_reclaim`](Self::task_reclaim)）。
-    pub(crate) fn stack_allocate(&self, owner: usize) -> Result<VirtAddr, MapError> {
+    pub(crate) fn stack_allocate(&self, owner: usize, size: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
-        let slot_size = TASK_STACK_SIZE + STACK_GUARD_SIZE;
+        // 槽 = 栈体 size + 守护页；栈窗 fall 排槽（自窗口顶向下，槽下方保持空闲）。
+        let slot_size = size + STACK_GUARD_SIZE;
         let stack = {
             let windows: &mut HashMap<DynamicKind, Dynamic> = &mut inner.dynamic;
             let kind = DynamicKind::Stack(0);
@@ -775,7 +784,7 @@ impl Space {
         };
         let (slot_va, _) = stack
             .allocator
-            .allocate(slot_size)
+            .allocate(slot_size, Direction::Fall)
             .map_err(|_| MapError::OutOfMemory)?;
         let slot_va = VirtAddr::from_raw(slot_va);
         // 守护页 [slot_va, slot_va + STACK_GUARD_SIZE)：Reserved → 溢出缺页可诊断
@@ -787,7 +796,7 @@ impl Space {
             Vec::new(),
             Some(owner),
         ));
-        // 栈体 [slot_va + GUARD, +TASK_STACK_SIZE)：Anonymous，帧待 attach。
+        // 栈体 [slot_va + GUARD, +size)：Anonymous，帧待 attach。
         // U 位按空间种类：用户空间栈需 U（用户 push）；内核空间栈
         // 不得带 U——S 态 SUM=0 下访问 U 页会页故障，而内核任务跑 S 态。
         let body_flags = if matches!(self.kind, SpaceKind::Kernel) {
@@ -798,7 +807,7 @@ impl Space {
         let body_va = slot_va + STACK_GUARD_SIZE;
         stack.children.push(Map::new(
             body_va,
-            TASK_STACK_SIZE,
+            size,
             body_flags,
             MapKind::Anonymous,
             Vec::new(),
@@ -1012,19 +1021,99 @@ impl Space {
         true
     }
 
-    /// 装载期注册堆窗口（loader 在文件段映射前调用）：`[base, upper())`。
+    /// 高位大段懒匿名映射（mmap）：heap 窗 `fall` 取高位段 + Anonymous 子 Map
+    /// （帧空 → 懒）。触碰经既有缺页懒分配零页帧（`page_fault` → Anonymous 分支）；
+    /// 返回高位 VA（Sv39 ≈ 254 GiB / Sv48 ≈ 128 TiB / Sv57 ≈ 64 PiB —— >4 GiB
+    /// 一出手可见）。与堆共用 `DynamicKind::Heap(0)` 窗，方向分区：堆 rise、mmap fall。
+    ///
+    /// # Errors
+    ///
+    /// - `NotAligned` — size 未页对齐或为零。
+    /// - `NoRegion` — 未装载（无堆窗）。
+    /// - `OutOfMemory` — 窗口空隙不足。
+    pub(crate) fn mmap(&self, size: usize) -> Result<VirtAddr, MapError> {
+        let mut inner = self.inner.lock();
+        if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::NotAligned);
+        }
+        let SpaceInner { dynamic, .. } = &mut *inner;
+        let heap = dynamic
+            .get_mut(&DynamicKind::Heap(0))
+            .ok_or(MapError::NoRegion)?;
+        let (base, size) = heap
+            .allocator
+            .allocate(size, Direction::Fall)
+            .map_err(|_| MapError::OutOfMemory)?;
+        let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
+        heap.children.push(Map::new(
+            VirtAddr::from_raw(base),
+            size,
+            flags,
+            MapKind::Anonymous,
+            Vec::new(),
+            None,
+        ));
+        Ok(VirtAddr::from_raw(base))
+    }
+
+    /// 释放 mmap 区域：精确匹配摘块摘子 Map（帧随 drop 归还）+ 清已触页 PTE/
+    /// 中间表 + 刷新 TLB。
+    ///
+    /// **懒区只有已触页有 PTE/帧**：PTE 清理按登记帧逐页走（O(触页数)，
+    /// 非 O(段大小)）——1 TiB 级区域不可逐页扫全段。帧按触序登记（须有序
+    /// 触碰；乱序由 audit 现行暴露）。中间表回收单走一次（O(现存树)）。
+    pub(crate) fn munmap(&self, addr: VirtAddr, size: usize) -> bool {
+        let mut inner = self.inner.lock();
+        let SpaceInner { durable, dynamic } = &mut *inner;
+        let heap = match dynamic.get_mut(&DynamicKind::Heap(0)) {
+            Some(h) => h,
+            None => return false,
+        };
+        // 1. 已触页数（= 已登记帧数；懒触碰有序，帧 i ↔ addr + i·PAGE）
+        let mapped = match heap.children.iter().find(|m| m.va == addr) {
+            Some(c) => c.frames.len(),
+            None => return false,
+        };
+        // 2. 逐已触页清叶 PTE（未触页本无 PTE，无需访问）
+        for i in 0..mapped {
+            durable
+                .root
+                .unmap(VirtAddr::from_raw(addr.as_usize() + i * PAGE_SIZE));
+        }
+        // 3. 精确摘块摘子 Map（帧随 drop 归还）
+        if !heap.deallocate(addr, size) {
+            return false;
+        }
+        // 4. 回收变空的中间表（单次遍历现存树结构）
+        let geo = mode::geometry(mode::mode());
+        let mask = (1usize << geo.va_bits) - 1;
+        let end = addr.as_usize().saturating_add(size);
+        let top = (geo.levels - 1) as usize;
+        durable
+            .root
+            .reclaim(top, 0, addr.as_usize() & mask, end & mask);
+        drop(inner);
+        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        unsafe {
+            flush_asid(self.kind.asid());
+        }
+        true
+    }
+
+    /// 装载期注册堆窗口（loader 在文件段映射前调用）：`[base, 栈底)`。
     ///
     /// `base = image_end`（镜像段尾页对齐，装载器由 `parsed.memsz` 推出）；
+    /// 上界 = 栈底 `upper() − STACK_AREA`（堆/预留/mmap 区止于栈底，栈窗顶锚其上）；
     /// 窗口挂在 `DynamicKind::Heap(0)`，区间分配器 ∝ 存活块。
     ///
     /// # Errors
     ///
-    /// - `NotAligned` — base 未页对齐，或越过 `upper()`。
+    /// - `NotAligned` — base 未页对齐，或越过上界。
     /// - `AlreadyMapped` — 已注册堆窗口，或与常数映射/窗口重叠。
     pub(crate) fn attach_heap(&self, base: VirtAddr) -> Result<(), MapError> {
         let mut inner = self.inner.lock();
-        let upper = mode::upper();
-        inner.attach_heap(base, upper)
+        let edge = VirtAddr::from_raw(mode::upper().as_usize() - STACK_AREA);
+        inner.attach_heap(base, edge)
     }
 
     /// 映射 `size` 字节虚拟地址到物理地址（常数映射唯一公共入口）。
@@ -1465,7 +1554,7 @@ impl Space {
         flags: PteFlags,
         kind: MapKind,
     ) -> Result<(), MapError> {
-        self.inner.lock().declare_durable(start, size, flags, kind)
+        self.inner.lock().declare(start, size, flags, kind)
     }
 
     /// 查询虚拟地址所属的映射（常数表 → 动态窗口子表）。

@@ -222,6 +222,8 @@ pub struct TaskBuilder {
     name: &'static str,
     entry: VirtAddr,
     arg: usize,
+    /// 栈体大小（页对齐；缺省 `TASK_STACK_SIZE`）。
+    stack: usize,
 }
 
 impl TaskBuilder {
@@ -232,6 +234,7 @@ impl TaskBuilder {
             name: "task",
             entry: USER_TEXT_BASE,
             arg: 0,
+            stack: TASK_STACK_SIZE,
         }
     }
 
@@ -250,6 +253,13 @@ impl TaskBuilder {
     /// 线程入口（绝对 entry；默认 USER_TEXT_BASE）。
     pub fn entry(mut self, entry: VirtAddr) -> TaskBuilder {
         self.entry = entry;
+        self
+    }
+
+    /// 自定义栈体大小（页对齐向上取整；缺省 `TASK_STACK_SIZE`）。栈窗 slot
+    /// 按此大小 fall 取段（自窗口顶向下排）。
+    pub fn stack(mut self, size: usize) -> TaskBuilder {
+        self.stack = size.max(1).next_multiple_of(PAGE_SIZE);
         self
     }
 
@@ -289,16 +299,18 @@ impl TaskBuilder {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let me = machine::hart_id();
 
-        // 1. 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id）→ 分配帧 attach
-        let stack_va = self.team.space.stack_allocate(id)?;
+        // 1. 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id；大小 = builder.stack）
+        //    → 分配帧 attach
+        let stack_size = self.stack;
+        let stack_va = self.team.space.stack_allocate(id, stack_size)?;
         let mut stack_frames = Vec::new();
-        for _ in 0..(TASK_STACK_SIZE / PAGE_SIZE) {
+        for _ in 0..(stack_size / PAGE_SIZE) {
             let frame = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                 .map_err(|_| MapError::OutOfMemory)?;
             stack_frames.push(frame);
         }
         self.team.space.attach_dynamic(stack_va, stack_frames)?;
-        let stack_top = stack_va + TASK_STACK_SIZE;
+        let stack_top = stack_va + stack_size;
 
         // 2. trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）
         let (frame_va, frame_pa) = self.team.space.frame_allocate(id)?;

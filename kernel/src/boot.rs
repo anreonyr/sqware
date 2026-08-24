@@ -150,6 +150,7 @@ fn spawn_demos() -> Result<(), MapError> {
 
     // 单线程团队回归：counter/yielder/sleeper/exiter 行为不变
     for (elf, name) in [
+        (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
         // (
         //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-counter")[..],
         //     "counter",
@@ -177,10 +178,14 @@ fn spawn_demos() -> Result<(), MapError> {
     }
 
     // 内核任务（ktask）：挂 kernel 团队单例。
-    kernel().expect("kernel team not initialized").task().name("ktask").closure(|| {
-        putln!("ktask");
-        // panic!("Shit");
-    })?;
+    kernel()
+        .expect("kernel team not initialized")
+        .task()
+        .name("ktask")
+        .closure(|| {
+            putln!("ktask");
+            // panic!("Shit");
+        })?;
     #[cfg(debug_assertions)]
     kernel().expect("kernel team not initialized").space.audit();
     Ok(())

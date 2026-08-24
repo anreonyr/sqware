@@ -29,6 +29,15 @@ pub(crate) struct IntervalAllocator {
     allocated: BTreeMap<usize, usize>,
 }
 
+/// 取段方向 — 空隙选择的倾向（隐喻作值：Rise=低端优先，Fall=高端优先）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Direction {
+    /// 底向上：取**最低**够大空隙（堆/帧等低端生长）。
+    Rise,
+    /// 顶向下：取**最高**够大空隙，块落空隙高端（栈槽自顶向下排、mmap 高位取段）。
+    Fall,
+}
+
 impl IntervalAllocator {
     /// 构造（空区间树；`BTreeMap::new` 为 const，静态实例可行）。
     pub(crate) const fn new(base: usize, edge: usize) -> Self {
@@ -39,31 +48,58 @@ impl IntervalAllocator {
         }
     }
 
-    /// 分配 ≥ `size` 的连续区间。
+    /// 按方向取段：沿有序树序遍历空隙，按 [`Direction`] 选最低/最高够大空隙落块。
     ///
-    /// first-fit：沿有序树序遍历空隙，首个空隙 `≥ size` 即落块（含窗口末尾
-    /// 与最小空块退化界）；返回 `(区间基址, size)`。
+    /// 返回 `(区间基址, size)`；`size == 0` 按 1 处理。
     ///
     /// # Errors
     ///
     /// 空间耗尽或窗口内无足够连续空隙 → [`AllocError`]。
-    pub(crate) fn allocate(&mut self, size: usize) -> Result<(usize, usize), AllocError> {
+    pub(crate) fn allocate(
+        &mut self,
+        size: usize,
+        dir: Direction,
+    ) -> Result<(usize, usize), AllocError> {
         let size = size.max(1);
-        let mut cursor = self.base;
-        for (&start, &len) in self.allocated.iter() {
-            // 空隙 [cursor, start)：候选
-            if start.saturating_sub(cursor) >= size {
-                self.allocated.insert(cursor, size);
-                return Ok((cursor, size));
+        match dir {
+            Direction::Rise => {
+                let mut cursor = self.base;
+                for (&start, &len) in self.allocated.iter() {
+                    // 空隙 [cursor, start)：候选
+                    if start.saturating_sub(cursor) >= size {
+                        self.allocated.insert(cursor, size);
+                        return Ok((cursor, size));
+                    }
+                    cursor = cursor.max(start.saturating_add(len));
+                }
+                // 窗口尾空隙 [cursor, edge)
+                if self.edge.saturating_sub(cursor) >= size {
+                    self.allocated.insert(cursor, size);
+                    return Ok((cursor, size));
+                }
+                Err(AllocError)
             }
-            cursor = cursor.max(start.saturating_add(len));
+            Direction::Fall => {
+                let mut cursor = self.edge;
+                for (&start, &len) in self.allocated.iter().rev() {
+                    // 空隙 [start+len, cursor)：候选，块落空隙高端
+                    let gap_lo = start.saturating_add(len);
+                    if cursor.saturating_sub(gap_lo) >= size {
+                        let base = cursor - size;
+                        self.allocated.insert(base, size);
+                        return Ok((base, size));
+                    }
+                    cursor = start;
+                }
+                // 窗口底空隙 [base, cursor)
+                if cursor.saturating_sub(self.base) >= size {
+                    let base = cursor - size;
+                    self.allocated.insert(base, size);
+                    return Ok((base, size));
+                }
+                Err(AllocError)
+            }
         }
-        // 窗口尾空隙 [cursor, edge)
-        if self.edge.saturating_sub(cursor) >= size {
-            self.allocated.insert(cursor, size);
-            return Ok((cursor, size));
-        }
-        Err(AllocError)
     }
 
     /// 精确匹配释放 `(addr, size)`：条目存在且长度相等 → 删除 → `Ok(())`。

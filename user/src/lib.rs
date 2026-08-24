@@ -90,6 +90,30 @@ pub mod env {
         Ok(())
     }
 
+    /// 高位大段懒匿名映射（mmap envcall）：a0 = 字节数（页对齐）；返回映射 VA
+    /// （高位，>4 GiB 一出手可见）或 UError。触碰才分配物理帧。
+    pub fn mmap(size: usize) -> UResult<usize> {
+        let size = size.max(1).next_multiple_of(PAGE_SIZE);
+        let args = UArgs {
+            a0: size,
+            ..UArgs::default()
+        };
+        let (v0, _v1) = UcallBuilder::new(Ucall::Mmap).args(args).call()?;
+        Ok(v0)
+    }
+
+    /// 释放 mmap 区域（munmap envcall）：a0 = VA，a1 = 字节数；未精确命中 → Err。
+    pub fn munmap(addr: usize, size: usize) -> UResult<()> {
+        let size = size.max(1).next_multiple_of(PAGE_SIZE);
+        let args = UArgs {
+            a0: addr,
+            a1: size,
+            ..UArgs::default()
+        };
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Munmap).args(args).call()?;
+        Ok(())
+    }
+
     /// 建用户任务（Spawn envcall）：a0 = 入口 VA，a1 = arg；返回任务句柄或 UError。
     pub fn spawn(entry: usize, arg: usize) -> UResult<usize> {
         let args = UArgs {

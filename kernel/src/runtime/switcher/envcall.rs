@@ -96,6 +96,25 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             // 用户主动 panic：a0 = 呼叫人指定的关联码。
             panic!("user-initiated panic (code {:#x})", frame.gpr.x(Gprs::A0));
         }
+        Ucall::Mmap => {
+            // a0 = 字节数（页对齐）。高位大段懒匿名映射——触碰经缺页补零页帧。
+            let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
+            let va = with_running_space(|s| s.mmap(size));
+            frame.gpr.set_x(
+                Gprs::A0,
+                match va {
+                    Ok(va) => va.as_usize(),
+                    Err(_) => usize::MAX, // D1：负值错误码
+                },
+            );
+        }
+        Ucall::Munmap => {
+            // a0 = 映射 VA，a1 = 字节数（与 mmap 同源页对齐）。
+            let addr = frame.gpr.x(Gprs::A0);
+            let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
+            let ok = with_running_space(|s| s.munmap(VirtAddr::from_raw(addr), size));
+            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+        }
     };
     frame as *mut TrapContext
 }

@@ -51,11 +51,7 @@ static MODE: OnceLock<satp::Mode> = OnceLock::new();
 /// - [`SatpError::Unsupported`] — 三种模式全不支持（无 S 态分页，boot halt）。
 /// - [`SatpError::OutOfMemory`] — 恒等临时根表帧耗尽。
 pub fn detect() -> Result<satp::Mode, SatpError> {
-    for candidate in [
-        satp::Mode::Sv57,
-        satp::Mode::Sv48,
-        satp::Mode::Sv39,
-    ] {
+    for candidate in [satp::Mode::Sv57, satp::Mode::Sv48, satp::Mode::Sv39] {
         if try_mode(candidate).is_ok() {
             MODE.set(candidate).expect("mode: detect is single-shot");
             return Ok(candidate);
@@ -93,9 +89,18 @@ impl Geo {
 /// `mode` 为 Bare/Sv64 等非分页模式时 panic（编码错误——探测只产出三分页模式）。
 pub fn geometry(mode: satp::Mode) -> Geo {
     match mode {
-        satp::Mode::Sv39 => Geo { levels: 3, va_bits: 39 },
-        satp::Mode::Sv48 => Geo { levels: 4, va_bits: 48 },
-        satp::Mode::Sv57 => Geo { levels: 5, va_bits: 57 },
+        satp::Mode::Sv39 => Geo {
+            levels: 3,
+            va_bits: 39,
+        },
+        satp::Mode::Sv48 => Geo {
+            levels: 4,
+            va_bits: 48,
+        },
+        satp::Mode::Sv57 => Geo {
+            levels: 5,
+            va_bits: 57,
+        },
         _ => panic!("geometry: unsupported satp mode {mode:?}"),
     }
 }
@@ -108,13 +113,14 @@ pub fn lower() -> VirtAddr {
     VirtAddr::from_raw(1usize << geometry(mode()).split_bit())
 }
 
-/// 用户栈窗口基址 = 用户半区顶 `1 << split_bit` 之下 `STACK_AREA`（顶锚）。
+/// 用户空间上界 = `1 << split_bit`（用户半区 `[0, upper)`）。
 ///
-/// 注意：**不要在 `lower()` 之上减**——那会落进各模式的规范空洞
-/// （user 顶与 kernel 底之间非规范区）；必须从 `1 << split_bit`（无符号顶）减。
+/// 与 [`lower()`]（内核空间下界，`canonical(1 << split_bit)`）同源自分裂位，
+/// 两者之间是各模式的规范空洞（不可访问无人区）。**必须 `wrap` 纯位**——
+/// `from_raw` 会把 `1 << split_bit`（bit split=1）进位成内核下界。
+/// 栈窗顶锚于其下缘：栈窗 `[upper − STACK_AREA, upper)`、堆/mmap 区止于栈底。
 pub fn upper() -> VirtAddr {
-    let top = 1usize << geometry(mode()).split_bit();
-    VirtAddr::from_raw(top - STACK_AREA)
+    VirtAddr::wrap(1usize << geometry(mode()).split_bit())
 }
 
 /// 用户栈窗口面积（1 GiB，顶锚窗口宽度）。

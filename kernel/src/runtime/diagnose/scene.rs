@@ -22,6 +22,7 @@ use riscv::register::{satp, scause, sepc, sscratch, sstatus, stval, stvec};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
+use crate::memory::manager::mode::STACK_AREA;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::scheduler::{running_task_frame, running_task_info, running_team_try};
@@ -104,9 +105,9 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
             crate::runtime::switcher::trampoline::trap_stack_meta(crate::machine::hart_id())
                 .filter(|m| m.top != 0 && sp <= m.top && sp > m.bottom)
                 .map(|m| m.top);
-        let stack_base = crate::memory::manager::mode::upper().as_usize();
-        let stack_top = (sp >= stack_base
-            && sp < stack_base + crate::memory::manager::mode::STACK_AREA)
+        // 栈窗顶锚于用户空间上界之下：[upper − STACK_AREA, upper)。
+        let stack_base = crate::memory::manager::mode::upper().as_usize() - STACK_AREA;
+        let stack_top = (sp >= stack_base && sp < stack_base + STACK_AREA)
             .then(|| (sp & !(STACK_SLOT - 1)) + STACK_SLOT);
         match trap_top.or(stack_top) {
             Some(t) => sp.saturating_add(BT_SCAN).min(t),
@@ -278,7 +279,10 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("stvec".into()),
         Some(hex(stvec::read().address())),
-        Some(elftable::symbol(VirtAddr::from_raw(stvec::read().address()), None)),
+        Some(elftable::symbol(
+            VirtAddr::from_raw(stvec::read().address()),
+            None,
+        )),
     ]);
     {
         // sscratch：0 = 内核态；非 0 = 用户态。

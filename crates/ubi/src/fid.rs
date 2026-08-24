@@ -24,6 +24,10 @@ pub enum Ucall {
     Spawn = 8,
     /// 用户主动内核 panic（a0 = 任意关联码；不返回）。
     Panic = 9,
+    /// 高位大段懒匿名映射（a0 = 字节数，页对齐）：返回映射 VA 或负错误码。
+    Mmap = 10,
+    /// 释放 mmap 区域（a0 = VA，a1 = 字节数，页对齐）：0 或负错误码。
+    Munmap = 11,
 }
 
 impl From<Ucall> for usize {
@@ -47,6 +51,8 @@ impl TryFrom<usize> for Ucall {
             7 => Ok(Self::HeapDeallocate),
             8 => Ok(Self::Spawn),
             9 => Ok(Self::Panic),
+            10 => Ok(Self::Mmap),
+            11 => Ok(Self::Munmap),
             _ => Err(()),
         }
     }
