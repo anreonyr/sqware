@@ -196,12 +196,12 @@ fn spawn_demos() -> Result<(), MapError> {
 
     // 内核任务（ktask）：挂 kernel 团队单例，经统一 `Team::task().closure`——团队身份
     // 自动定 S 态（SPP=1）、闭包装箱到内核堆、入口为内核 trampoline `ktask_entry`。
-    kernel().task().name("ktask").closure(|| {
+    kernel().expect("kernel team not initialized").task().name("ktask").closure(|| {
         putln!("ktask");
         // panic!("Shit");
     })?;
     #[cfg(debug_assertions)]
-    kernel().space.audit();
+    kernel().expect("kernel team not initialized").space.audit();
     Ok(())
 }
 

@@ -688,7 +688,8 @@ impl SpaceBuilder {
     fn seed_user(&self, space: &mut Space) -> Result<(), MapError> {
         // 读内核空间的 trampoline 叶 PTE（内核空间唯一归属 KERNEL_TEAM，只读）
         let (tramp_pa, tramp_flags) = {
-            let ks_inner = crate::work::unit::team::kernel().space.inner.lock();
+            let ks_inner =
+                crate::work::unit::team::kernel().expect("kernel team not initialized").space.inner.lock();
             ks_inner.durable.root.walk_ref(TRAMPOLINE)?
         };
 

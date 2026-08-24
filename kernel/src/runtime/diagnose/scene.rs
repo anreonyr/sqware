@@ -113,7 +113,7 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     // 元数据（boot 常驻）与纯位运算，崩溃路径零分配零锁。
     let high = {
         let trap_top =
-            crate::runtime::switcher::trampoline::trap_stack_meta_opt(crate::machine::hart_id())
+            crate::runtime::switcher::trampoline::trap_stack_meta(crate::machine::hart_id())
                 .filter(|m| m.top != 0 && sp <= m.top && sp > m.bottom)
                 .map(|m| m.top);
         let stack_top = (sp >= crate::work::unit::space::USER_STACK_BASE.as_usize()

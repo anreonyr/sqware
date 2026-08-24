@@ -266,7 +266,10 @@ impl TaskBuilder {
         F: FnOnce() + Send + 'static,
     {
         debug_assert!(
-            Arc::ptr_eq(&self.team, super::team::kernel()),
+            Arc::ptr_eq(
+                &self.team,
+                super::team::kernel().expect("kernel team not initialized")
+            ),
             "TaskBuilder::closure 目前仅支持 kernel 团队（内核态任务）"
         );
         // `Box<dyn FnOnce()>` 是胖指针（data+vtable），不能直接转 usize——外包一层
@@ -325,7 +328,10 @@ impl TaskBuilder {
             // （内核恒关中断——协作式，从不被 S-timer 抢占；跑完即退）。其它团队 → U 态：
             // SPP=U、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。模式由团队身份推断，无新 API。
             ss.set_sie(false);
-            if Arc::ptr_eq(&self.team, super::team::kernel()) {
+            if Arc::ptr_eq(
+                &self.team,
+                super::team::kernel().expect("kernel team not initialized"),
+            ) {
                 ss.set_spp(sstatus::SPP::Supervisor);
                 ss.set_spie(false);
             } else {

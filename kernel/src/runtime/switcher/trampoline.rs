@@ -299,16 +299,14 @@ impl<T: Copy> SyncCell<T> {
 /// **按实际核数动态分配**（boot 时 init_trap_stacks 分配并填充；此后只读）。
 static TRAP_STACKS: OnceLock<&'static [SyncCell<TrapStackMeta>]> = OnceLock::new();
 
-/// 读取某 hart 的 trap 栈元数据。
-fn trap_stack_meta(hart: usize) -> TrapStackMeta {
-    TRAP_STACKS.get().expect("trap stacks not initialized")[hart].get()
-}
-
-/// 只读探针版（崩溃路径专用）：表未初始化或 hart 越界 → `None`，**不 panic**。
+/// 读取某 hart 的 trap 栈元数据：表未初始化或 hart 越界 → `None`。
 ///
-/// 崩溃现场（scene::kbacktrace 等）只读栈段元数据来钳制扫描窗口；此处若走
-/// `expect` 会在 panic 现场引入新的 panic 源（嵌套 panic → 停机自环，现场丢失）。
-pub(crate) fn trap_stack_meta_opt(hart: usize) -> Option<TrapStackMeta> {
+/// 崩溃路径（scene::kbacktrace 等）用它钳制扫描窗口，**不允许 panic**——panic
+/// 现场再 panic 会嵌套进停机自环、现场整体丢失（"幽灵 panic"）。引导期
+/// （trap::init 之前）表未装载、或 hart 号越界，都是合法的早期/损坏状态，
+/// 调用方按需降级；正常路径的访问器（[`trap_stack_top`] 等）在此之上 expect，
+/// 不变量违反 = 编程错误，fail-fast。
+pub(crate) fn trap_stack_meta(hart: usize) -> Option<TrapStackMeta> {
     TRAP_STACKS
         .get()
         .and_then(|t| t.get(hart))
@@ -336,10 +334,7 @@ pub fn establish_tp() {
         core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
     }
     let hart = (0..trap_stack_count())
-        .find(|&h| {
-            let m = trap_stack_meta(h);
-            m.top != 0 && sp <= m.top && sp > m.bottom
-        })
+        .find(|&h| trap_stack_meta(h).is_some_and(|m| m.top != 0 && sp <= m.top && sp > m.bottom))
         .unwrap_or(0);
     // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建内核 hartid）。
     unsafe {
@@ -349,19 +344,25 @@ pub fn establish_tp() {
 
 /// hart 的 trap 栈顶（__alltraps/__strap 经帧内 kernel_sp 上栈的目标）。
 pub fn trap_stack_top(hart: usize) -> usize {
-    trap_stack_meta(hart).top
+    trap_stack_meta(hart)
+        .expect("trap stacks not initialized")
+        .top
 }
 
 /// hart 的 trap 栈体底（canary 处）。
 pub fn trap_stack_bottom(hart: usize) -> usize {
-    trap_stack_meta(hart).bottom
+    trap_stack_meta(hart)
+        .expect("trap stacks not initialized")
+        .bottom
 }
 
 /// 地址是否落在某 hart 的 trap 栈 guard 页内（返回该 hart 号）——内核故障
 /// 路径据此识别「trap 栈溢出」并给出精确诊断。
 pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
     for h in 0..trap_stack_count() {
-        let guard = trap_stack_meta(h).guard;
+        let Some(guard) = trap_stack_meta(h).map(|m| m.guard) else {
+            continue;
+        };
         if guard != 0 && addr >= guard && addr < guard + PAGE_SIZE {
             return Some(h);
         }
@@ -422,7 +423,9 @@ pub fn init_trap_stacks() {
         "trap stacks double init"
     );
 
-    let space = &crate::work::unit::team::kernel().space;
+    let space = &crate::work::unit::team::kernel()
+        .expect("kernel team not initialized")
+        .space;
     for h in 0..segments {
         let seg = base + h * TRAP_STACK_SEGMENT;
         let guard = seg;

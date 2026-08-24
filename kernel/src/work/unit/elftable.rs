@@ -8,19 +8,19 @@
 //! 地址，故 Entry.addr: VirtAddr、lookup(a: VirtAddr)。内核恒等映射使 VA==PA 只是
 //! 凑巧，语义仍是 VA。
 //!
-//! 存储：内核关键入口表（编译期闭合，见 [`kernel_table`]）独立挂本模块的
-//! `OnceLock`——表内容全是链接期常量，生命周期不绑 KERNEL_TEAM：崩溃路径
-//! （unit::init 自身失败、团队尚未注入的早期 panic）也能符号化，无需触碰团队
-//! 单例。用户/团队表仍挂 `Team.elftable`。resolve(addr, team) 按地址域选表查询
-//! （内核高半区/镜像恒等区 → 内核表，用户区 → 运行 team 表）。
+//! 存储：内核表随 kernel team 挂载（`KERNEL_TEAM.elftable`）；resolve 经宽容
+//! 访问器 `team::kernel()` 取表——团队未注入（unit::init 自身失败的早期 panic）
+//! → None → 调用方打印裸 hex，正常路径的不变量由调用点各自 expect。用户/团队
+//! 表同挂 `Team.elftable`。resolve(addr, team) 按地址域选表查询（内核高半区/
+//! 镜像恒等区 → 内核表，用户区 → 运行 team 表）。
 
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::lock::OnceLock;
 use crate::memory::manager::addr::VirtAddr;
+use crate::work::unit::team::kernel;
 
 /// 一条符号（STT_FUNC；表内按 addr 升序）。
 pub struct Entry {
@@ -28,12 +28,7 @@ pub struct Entry {
     pub name: &'static str,
 }
 
-/// 符号表 — 有序 Entry 切片。
-///
-/// `entries` 是不可变共享切片（'static，`Box::leak` 建成），`Copy` 语义天然
-/// 成立——内核表单例（[`kernel_table`]）经 `OnceLock<ElfTable>` 按值缓存/返回
-/// 依赖它。
-#[derive(Clone, Copy)]
+/// 符号表 — 有序 Entry 切片（升序，二进制查找见 [`ElfTable::lookup`]）。
 pub struct ElfTable {
     entries: &'static [Entry],
 }
@@ -217,46 +212,41 @@ const TAIL_SPAN: usize = 0x4000;
 // 落在低半区——纯半区判定（is_user/bit38）会把内核镜像地址（sepc/kbt 帧
 // 0x8020xxxx）误判为用户域、分派查错表（见 [`resolve`]）。
 
-// ── 内核表（挂 kernel team，见 work/team::kernel）──────────────
+// ── 内核表（挂 kernel team；resolve 经宽容访问器取用）──────────
 
-/// 内核符号表单例（懒建一次）：方案 (b) 编译期闭合的小表。
+/// 构建内核关键入口表——方案 (b) 编译期闭合的小表：不扫 .symtab、不引远端
+/// 链接符号，直接对关键入口函数 `$f as usize` 取址（链接期解析、恒对应当前
+/// 镜像，永不过期）。只列调试最关心的入口，够回答「崩在哪个子系统/哪条路径」；
+/// 深层 helper 查不到（打印裸 hex）。
 ///
-/// 不扫 .symtab、不引远端链接符号：直接对关键入口函数 `$f as usize` 取址
-/// （链接期解析、恒对应当前镜像，永不过期）。只列调试最关心的入口，够回答
-/// 「崩在哪个子系统/哪条路径」；深层 helper 查不到（打印裸 hex）。
-///
-/// 生命周期**独立于 KERNEL_TEAM**：内容全是链接期常量，本模块 OnceLock 懒建
-/// 一次、按值缓存——`unit::init` 自身失败的早期 panic（团队尚未注入）崩溃
-/// 路径也能经它符号化，绝不触碰团队单例；`init_kernel` 的团队字段与
-/// [`resolve`] 同源取自本表。
-static KERNEL_TABLE: OnceLock<ElfTable> = OnceLock::new();
+/// 由 `team::init_kernel` 在 boot 路径调用**恰好一次**，结果挂
+/// `KERNEL_TEAM.elftable`；**崩溃路径不建表**——resolve 经宽容访问器
+/// `kernel()`（团队未注入 → None）取表，取不到即降级裸 hex。
 pub fn kernel_table() -> Option<ElfTable> {
-    Some(*KERNEL_TABLE.get_or_init(|| {
-        let mut v = Vec::new();
-        macro_rules! sym {
-            ($($n:literal : $f:expr);+ $(;)?) => {$(
-                v.push(Entry {
-                    addr: VirtAddr::from_raw($f as *const () as usize),
-                    name: $n,
-                });
-            )*};
-        }
-        sym! {
-            "panic_handler" : crate::runtime::diagnose::halt::panic_handler;
-            "trap_handler"  : crate::runtime::switcher::trap::trap_handler;
-            "boot_main"     : crate::boot::boot_main;
-            "restore"       : crate::runtime::switcher::trampoline::restore;
-            "sched_run"     : crate::work::room::scheduler::run;
-            "sched_idle"    : crate::work::room::scheduler::idle;
-            "sched_starve"  : crate::work::room::scheduler::starve;
-            "sched_reap"    : crate::work::room::scheduler::reap;
-            "sched_park"    : crate::work::room::scheduler::park;
-            "sched_unpark"  : crate::work::room::scheduler::unpark;
-            "page_fault"    : crate::memory::manager::fault::handle_page_fault;
-        }
-        v.sort_by_key(|e| e.addr.as_usize());
-        ElfTable::from_entries(Box::leak(v.into_boxed_slice()))
-    }))
+    let mut v = Vec::new();
+    macro_rules! sym {
+        ($($n:literal : $f:expr);+ $(;)?) => {$(
+            v.push(Entry {
+                addr: VirtAddr::from_raw($f as *const () as usize),
+                name: $n,
+            });
+        )*};
+    }
+    sym! {
+        "panic_handler" : crate::runtime::diagnose::halt::panic_handler;
+        "trap_handler"  : crate::runtime::switcher::trap::trap_handler;
+        "boot_main"     : crate::boot::boot_main;
+        "restore"       : crate::runtime::switcher::trampoline::restore;
+        "sched_run"     : crate::work::room::scheduler::run;
+        "sched_idle"    : crate::work::room::scheduler::idle;
+        "sched_starve"  : crate::work::room::scheduler::starve;
+        "sched_reap"    : crate::work::room::scheduler::reap;
+        "sched_park"    : crate::work::room::scheduler::park;
+        "sched_unpark"  : crate::work::room::scheduler::unpark;
+        "page_fault"    : crate::memory::manager::fault::handle_page_fault;
+    }
+    v.sort_by_key(|e| e.addr.as_usize());
+    Some(ElfTable::from_entries(Box::leak(v.into_boxed_slice())))
 }
 
 // ── 解析器（地址域 → 选表）────────────────────────────────────
@@ -270,9 +260,10 @@ pub fn resolve(
     team: Option<&crate::work::unit::team::Team>,
 ) -> Option<(&'static str, usize)> {
     if addr.is_kernel() {
-        // 内核表独立挂本模块（编译期闭合、与初始化顺序无关）——早期 panic
-        // （unit::init 自身失败）也能符号化；无表 → None，调用方打印裸 hex。
-        kernel_table()?.lookup(addr)
+        // 内核表随 kernel team 挂载；团队未注入（unit::init 自身失败的早期
+        // panic）→ None → 调用方打印裸 hex。宽容读 = 已定义的 `kernel()`
+        // 访问器本身；正常路径的不变量由调用点各自 expect。
+        kernel()?.elftable.as_ref()?.lookup(addr)
     } else {
         team?.elftable.as_ref()?.lookup(addr)
     }

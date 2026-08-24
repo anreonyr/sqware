@@ -119,9 +119,10 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     })
 }
 
-/// 内核团队单例访问器。**不变量**：须在 `unit::init`（其内 `init_kernel`）之后
-/// 调用；main 启动序 allocator → unit::init → runtime → boot 已保证。过早访问
-/// 会 panic 而非静默。
-pub fn kernel() -> &'static Arc<Team> {
-    KERNEL_TEAM.get().expect("kernel team not initialized")
+/// 内核团队单例访问器（**宽容形**）：团队未注入（`unit::init` 自身失败的早期
+/// panic）→ `None`，调用方自行降级（崩溃路径符号化取不到 → 打印裸 hex）。
+/// 正常路径的不变量（团队已注入）由**调用点各自 `expect`**——内核表/空间归属
+/// 在团队单例上，不另设平行访问器（"从 kernel() 取，取不到降级"）。
+pub fn kernel() -> Option<&'static Arc<Team>> {
+    KERNEL_TEAM.get()
 }
