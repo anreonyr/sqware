@@ -24,8 +24,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::machine;
-use sbi::{self, fid, scall::SArgs};
 use crate::runtime::diagnose::report::Report;
+use sbi::{self, fid, scall::SArgs};
 
 /// 警报是否已拉响（第一个 panic 置位；其余 hart 依此停止）。
 /// 与 follower 的 Acquire 读配对：`ALARM` 置位可见时，`ALARMER` 的写入亦必可见。
@@ -135,7 +135,6 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 原子 store 不取任何锁：即使 panic 恰在持主堆锁现场也绝不卡死。
     crate::memory::allocator::portal::switch(crate::memory::allocator::portal::Backend::Spare);
 
-    // ① 组稿：头部 → panic 段（单槽行 = 文本行；空槽行分隔块间空白）。
     let mut report = Report::default();
     {
         let mut head = String::from("[panic]");
@@ -147,41 +146,30 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
                 loc.column()
             ));
         }
-        let mut rows: Vec<Vec<Option<String>>> = vec![vec![Some(head)]];
-        rows.push(vec![Some(String::new())]); // 标题行后空行
-        // 显示崩溃现场所在 hart 正在运行的任务（若有）：方便定位"哪个任务崩了"。
-        // 非阻塞（try_lock）——panic 可能正发生在持有调度锁的现场，拿不到就跳过。
+        let mut rows: Vec<Vec<Option<String>>> = Vec::new();
         if let Some((tid, tname)) = crate::work::room::scheduler::running_task_info() {
             rows.push(vec![Some(format!(
-                "running task #{tid} '{tname}' (hart {})",
+                "running task #{tid} '{tname}' @ hart {}",
                 machine::hart_id()
             ))]);
         }
-        // 格式化的 panic 消息（非字面量）也打印——诊断调试必备。
         rows.push(vec![Some(format!("{}", info.message()))]);
-        // 其余 hart 已停止：本 hart 是唯一存活者（srst 复位 / wfi 停机自环）。
         rows.push(vec![Some(format!(
             "other harts hushed only hart {} remains",
             machine::hart_id()
         ))]);
-        rows.push(vec![Some(String::new())]);
-        report.paragraph("panic", None).items.extend(rows);
+        report.paragraph("panic", Some(head)).items.extend(rows);
     }
 
-    // ② 崩溃现场：先记 Panic 事件（环形窗口 + 宿主事件行），再组现场稿
-    // （CSR/GPR/kbt/ubt + 各 hart 事件窗口段落，见 scene::dump_crash）。
     crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
         crate::runtime::diagnose::trace::HaltEvent::Panic,
     ));
     crate::runtime::diagnose::scene::dump_crash(&mut report);
 
-    // ③ 成册 → 一次印发：报告一次渲染到控制台；宿主侧整档快照一次导出
-    // （feature semihosting；报告含事件窗口行——事件行的实时镜像已另出，
-    // 此处快照给人读上下文）。
     let sealed = report.seal();
-    crate::putln!(); // 前导空行（旧 "\n[panic]" 语义）
+    crate::putln!();
     let mut sink = crate::console::Sink;
-    crate::runtime::diagnose::render::render(sealed, &mut sink);
+    crate::runtime::diagnose::render::render(sealed, &mut sink, 2);
     #[cfg(feature = "semihosting")]
     crate::runtime::diagnose::export::export(sealed);
 
@@ -199,3 +187,4 @@ fn halt_loop() -> ! {
         unsafe { core::arch::asm!("wfi") };
     }
 }
+

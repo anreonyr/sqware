@@ -12,13 +12,16 @@
 use core::arch::global_asm;
 
 use alloc::format;
+use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec;
 use riscv::register::{satp, sie, stvec};
 
 use crate::console::Sink;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
+use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{
@@ -29,8 +32,6 @@ use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa}
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 use crate::{machine, putln};
-use core::fmt::Write;
-use stanza::table::Table;
 
 global_asm!(
     ".section .text.boot",
@@ -48,53 +49,59 @@ unsafe extern "C" {
     static _boot_entry: u8;
 }
 
-/// SBI 式启动横幅：机器/板级「标签|值」对齐表 + 陷阱布局表，两块连打成一个横幅。
-/// 正常路径即时输出（不经崩溃收集器）；stanza 自动列宽自然布局。
-/// 值列经 String 拼装（boot 正常路径可堆；无 Fmt 行缓冲——已随诊断精简移除）。
+/// SBI 式启动横幅：机器/板级 + 陷阱布局两块投稿成一个 banner 段落（label/
+/// value 两槽行，空行行分隔两块；列宽/对齐由渲染端自适应统一负责）。正常
+/// 路径即时输出（走报告段落——通用通道，与崩溃组稿同形态；值用 format!
+/// 拼装，boot 正常路径可堆）。
 pub fn banner() {
     let m = machine::info();
+    let mut r = Report::default();
+    {
+        let p = r.paragraph("banner", None);
+        for (label, value) in [
+            ("hart count", format!("{} H", m.hart)),
+            ("hart this", format!("{}", machine::hart_id())),
+            ("timebase", format!("{} Hz", m.hertz)),
+            (
+                "dram",
+                format!("{:#x}..{:#x}", m.dram.base, m.dram.range().end),
+            ),
+            (
+                "free",
+                format!("{:#x}..{:#x}", m.free.base, m.free.range().end),
+            ),
+            ("uart", format!("{:#x}", m.uart.base)),
+            ("plic", format!("{:#x}", m.plic.base)),
+            ("clint", format!("{:#x}", m.clint.base)),
+            ("trap vector", format!("{:#x}", alltraps_va())),
+            (
+                "kernel frames",
+                format!(
+                    "{:#x}..{:#x}",
+                    KERNEL_FRAME_BASE.as_usize(),
+                    KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
+                ),
+            ),
+            (
+                "trap stack",
+                format!("{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0)),
+            ),
+            (
+                "trap stack this",
+                format!(
+                    "{} @ {:#x}..{:#x}",
+                    machine::hart_id(),
+                    trap_stack_bottom(machine::hart_id()),
+                    trap_stack_top(machine::hart_id())
+                ),
+            ),
+        ] {
+            p.items.push(vec![Some(label.into()), Some(value)]);
+        }
+    }
+    let sealed = r.seal();
     let mut sink = Sink;
-    // 机器/板级 + 陷阱布局两块并成一个 Table：统一列宽，值列对齐；
-    // 中间空行分隔两块（认领一行但不填，渲染为空格行）。
-    let mut b = Table::default();
-    let v = format!("{} H", m.hart);
-    b = b.with_row(["hart count", v.as_str()]);
-    let v = format!("{}", machine::hart_id());
-    b = b.with_row(["hart this", v.as_str()]);
-    let v = format!("{} Hz", m.hertz);
-    b = b.with_row(["timebase", v.as_str()]);
-    let v = format!("{:#x}..{:#x}", m.dram.base, m.dram.range().end);
-    b = b.with_row(["dram", v.as_str()]);
-    let v = format!("{:#x}..{:#x}", m.free.base, m.free.range().end);
-    b = b.with_row(["free", v.as_str()]);
-    let v = format!("{:#x}", m.uart.base);
-    b = b.with_row(["uart", v.as_str()]);
-    let v = format!("{:#x}", m.plic.base);
-    b = b.with_row(["plic", v.as_str()]);
-    let v = format!("{:#x}", m.clint.base);
-    b = b.with_row(["clint", v.as_str()]);
-    // 空行分隔两块（认领一行但不填）。
-    b = b.with_row(["", ""]);
-    // 陷阱布局块：trap vector / 内核帧区 / 本核 trap 栈。
-    let v = format!("{:#x}", alltraps_va());
-    b = b.with_row(["trap vector", v.as_str()]);
-    let v = format!(
-        "{:#x}..{:#x}",
-        KERNEL_FRAME_BASE.as_usize(),
-        KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
-    );
-    b = b.with_row(["kernel frames", v.as_str()]);
-    let v = format!("{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0));
-    b = b.with_row(["trap stack", v.as_str()]);
-    let v = format!(
-        "{} @ {:#x}..{:#x}",
-        machine::hart_id(),
-        trap_stack_bottom(machine::hart_id()),
-        trap_stack_top(machine::hart_id())
-    );
-    b = b.with_row(["trap stack this", v.as_str()]);
-    crate::runtime::diagnose::render::render_to(&mut sink, &b, 0);
-    let _ = writeln!(sink);
+    crate::runtime::diagnose::render::render(sealed, &mut sink, 0);
 }
 
 /// 启动多任务：spawn 演示团队后进入首个线程，永不返回。

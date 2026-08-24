@@ -10,8 +10,8 @@ use core::fmt::Write;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use stanza::renderer::console::{Console, Decor};
 use stanza::renderer::Renderer;
+use stanza::renderer::console::{Console, Decor};
 use stanza::style::{MaxWidth, MinWidth, Styles};
 use stanza::table::{Cell, Col, Content, Row, Table};
 
@@ -25,16 +25,6 @@ pub fn fixed(w: usize) -> Styles {
 /// 建定宽列表（列样式锁死，供 with_row 填行）。
 pub fn fixed_table(widths: &[usize]) -> Table {
     Table::default().with_cols(widths.iter().map(|&w| Col::new(fixed(w))).collect())
-}
-
-/// 一行的 N 格：每格按列宽截断建格（char 安全）。
-pub fn row<const N: usize>(widths: &[usize; N], cols: [&str; N]) -> Row {
-    let cells = cols
-        .iter()
-        .zip(widths)
-        .map(|(s, &w)| cell(s, w))
-        .collect();
-    Row::new(Styles::default(), cells)
 }
 
 /// 建格：源文本按列宽截断（char 安全）。
@@ -62,14 +52,15 @@ pub fn render_table(t: &Table) -> String {
 }
 
 /// 新形态：报告 → 控制台表格。一次遍历全部段落：「收集完所有信息再打印」
-/// 由报告结构天然保证（seal 前只进数据，这里只读遍历）。
-pub fn render(r: &Report, sink: &mut impl Write) {
+/// 由报告结构天然保证（seal 前只进数据，这里只读遍历）。`indent` = 段落
+/// 正文的整体缩进（崩溃现场统一 2；banner 顶格 0）。
+pub fn render(r: &Report, sink: &mut impl Write, indent: usize) {
     for p in &r.paras {
         if let Some(t) = &p.title {
             let _ = writeln!(sink, "{t}");
             let _ = writeln!(sink);
         }
-        let mut ind = Indented::new(sink, 2);
+        let mut ind = Indented::new(sink, indent);
         let _ = ind.write_str(&render_paragraph(p));
         let _ = writeln!(sink);
     }
@@ -100,13 +91,6 @@ fn render_paragraph(p: &Paragraph) -> String {
         t = t.with_row(Row::new(Styles::default(), cells));
     }
     render_table(&t)
-}
-
-/// 即时渲染（boot 横幅等正常路径；不经报告）。
-pub fn render_to<W: Write>(out: &mut W, t: &Table, indent: usize) {
-    let s = render_table(t);
-    let mut ind = Indented::new(out, indent);
-    let _ = ind.write_str(&s);
 }
 
 /// 行首缩进包装：把多行输出整体右移 `indent` 空格（每个非空行行首补缩进；

@@ -52,7 +52,6 @@ use hashbrown::HashMap;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
-use crate::putln;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
 use crate::runtime::switcher::context::TrapContext;
@@ -291,7 +290,6 @@ impl Scheduler {
         tie::exit();
     }
 }
-
 
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
 // （MAX_HART_SLOTS=4096 仅为编译期 VA 窗口上限，不固定静态数组）。长度镜像随结构体共生。

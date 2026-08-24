@@ -447,7 +447,7 @@ macro_rules! crash_scene {
         $crate::runtime::diagnose::scene::dump_crash(&mut __r);
         let __sealed = __r.seal();
         let mut __sink = $crate::console::Sink;
-        $crate::runtime::diagnose::render::render(__sealed, &mut __sink);
+        $crate::runtime::diagnose::render::render(__sealed, &mut __sink, 2);
         #[cfg(feature = "semihosting")]
         $crate::runtime::diagnose::export::export(__sealed);
     }};
