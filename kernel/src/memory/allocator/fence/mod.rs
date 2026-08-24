@@ -107,8 +107,26 @@ pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
 // 任何 cfg、编译器内联指令或审计词汇。debug 构建做账，release 空体经
 // #[inline] 消除。
 
+/// 用户堆活块账键（**跨模块硬不变量：键必须单射**）。
+///
+/// `(asid << 44) | (va >> 12)`：asid < 2^16，va < 2^56（任何受支持模式的用户
+/// 半区）→ 页索引 < 2^44，两段不重叠。替代旧 `asid<<32|va`（VA≥2^32 时碰撞）。
+///
+/// 恒编译（release 返回 0 空体，与事件入口同惯例）。
+#[inline]
+pub(crate) fn key(asid: usize, va: usize) -> usize {
+    #[cfg(debug_assertions)]
+    {
+        (asid << 44) | (va >> 12)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        0
+    }
+}
+
 /// 分配事件：活块入账（KernelHeap 整块毒化）。caller = 调用点 ra（分配现场符号化用）。
-/// 用户堆不 poison（键 = asid<<32|va，非地址；且用户页维持清零语义，见
+/// 用户堆不 poison（键 = [`key`] 页索引编码，非地址；且用户页维持清零语义，见
 /// [`OwnerKind`]）——只入 ledger 账。
 #[inline]
 pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {

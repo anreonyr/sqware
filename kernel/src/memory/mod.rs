@@ -1,7 +1,7 @@
 // 内存管理 — 物理分配器 + 虚拟内存管理。
 //
 //   allocator — 物理内存分配器（bump → hybrid → frame/block）
-//   manager   — 虚拟内存管理（VirtAddr/PhysAddr、Sv39 页表、地址空间、缺页、ASID）
+//   manager   — 虚拟内存管理（VirtAddr/PhysAddr、随模式页表、地址空间、缺页、ASID）
 //
 // 页大小常量 PAGE_SIZE 与 PAGE_SHIFT 留在本模块顶层，分配器与 manager 共用。
 

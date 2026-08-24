@@ -1,7 +1,7 @@
-// 虚拟内存管理 — Sv39 页表 + 地址空间 + 缺页 + ASID。
+// 虚拟内存管理 — 随模式的多级页表 + 地址空间 + 缺页 + ASID。
 //
 //   addr   — VirtAddr / PhysAddr
-//   entry  — Sv39 PTE + PteFlags
+//   entry  — PTE + PteFlags（Sv39/48/57 同格式）
 //   fault  — 缺页处理
 //   table  — PageTable、页表遍历/映射（pub(crate)）
 //   asid   — ASID 分配器
@@ -10,6 +10,7 @@ pub mod addr;
 pub mod asid;
 pub mod entry;
 pub mod fault;
+pub mod mode;
 pub mod table;
 
 /// 页表操作错误。

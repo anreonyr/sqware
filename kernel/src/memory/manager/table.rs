@@ -1,12 +1,12 @@
-// Sv39 三级页表结构 — 页表遍历、映射、取消映射、中间表回收
+// 多级页表结构 — 页表遍历、映射、取消映射、中间表回收（层级随运行模式）。
 //
-// Sv39 地址分解：
-//   VA[38:30] → VPN[2] — 根页表 (Level 2, L2) 索引
-//   VA[29:21] → VPN[1] — 中间页表 (Level 1, L1) 索引
-//   VA[20:12] → VPN[0] — 叶子页表 (Level 0, L0) 索引
-//   VA[11:0]            — 页内偏移
+// 地址分解（层级 L = 模式几何；每级 9 位 VPN，页内偏移 12 位）：
+//   VA[12+9·L−1 : 12+9·(L−1)] → VPN[L−1] — 根页表索引（顶层随模式：Sv39=2 / Sv48=3 / Sv57=4）
+//   ...                               → 中间页表索引
+//   VA[20:12]                        → VPN[0] — 叶子页表索引
+//   VA[11:0]                         → 页内偏移
 //
-// 所有权模型（TableNode）：Sv39 要求每级页表恰好一帧（4096 B，对齐 4096），
+// 所有权模型（TableNode）：每级页表恰好一帧（4096 B，对齐 4096），
 // PageTable 装不下任何元数据——树状所有权因此放在**帧外**的 TableNode 上：
 // `page` 是硬件页（根/中间表），`children` 是子树（槽位 → 节点）。树与 PTE
 // 经同一入口维护：walk_mut 建表时同步写 PTE + push 子节点，reclaim 拆表时
@@ -76,7 +76,7 @@ pub enum MapError {
     DramOverlap,
 }
 
-/// Sv39 页表 — 512 条目 × 8 字节 = 4 KiB，对齐到页边界。
+/// 页表页 — 512 条目 × 8 字节 = 4 KiB，对齐到页边界（三类模式同宽）。
 ///
 /// 硬件结构，恰好一帧：不承载任何所有权元数据（见 [`TableNode`]）。
 /// 不实现 `Clone` / `Copy`：4 KiB 的隐式复制是错误源。
@@ -112,7 +112,7 @@ impl PageTable {
 /// - `children`：本表有效子表 `(槽位, 子树)`——槽位 = 对应 VPN 索引
 ///
 /// 树与 PTE 同源：walk_mut 建（写 PTE + push）、reclaim 拆（清 PTE + 摘除），
-/// children 恒与 PTE 指向一致。Drop 递归释放全部子树帧（Sv39 三层，深度 ≤ 3）。
+/// children 恒与 PTE 指向一致。Drop 递归释放全部子树帧（深度 = 模式层级 ≤ 5）。
 #[derive(Debug)]
 pub(crate) struct TableNode {
     pub(crate) page: Box<PageTable, &'static dyn Allocator>,
@@ -157,7 +157,8 @@ impl TableNode {
     ///
     /// `alloc`：缺中间表时是否新建（map/缺页用 true；protect 等只读遍历用
     /// false → [`MapError::NotMapped`]）。新建子表**先入树再写 PTE**——PTE
-    /// 永不指向未登记的表；树与 PTE 同源，无第二份待同步状态。
+    /// 永不指向未登记的表；树与 PTE 同源，无第二份待同步状态。下钻层数 =
+    /// 当前模式层级（[`mode::geometry`]）。
     ///
     /// # Errors
     ///
@@ -168,43 +169,43 @@ impl TableNode {
         vaddr: VirtAddr,
         alloc: bool,
     ) -> Result<&mut PageTableEntry, MapError> {
-        // Level 2 → Level 1
-        let e2 = &mut self.page.entries[vaddr.vpn(2)];
-        if !e2.is_valid() {
-            if !alloc {
-                return Err(MapError::NotMapped);
-            }
-            let child = Self::new_child()?;
-            self.children.push((vaddr.vpn(2), child));
-            let child = self.children.last().expect("just pushed");
-            Self::set_child_pte(e2, &child.1);
-        }
-        let l1node = self
-            .children
-            .iter_mut()
-            .find(|(s, _)| *s == vaddr.vpn(2))
-            .expect("child exists (PTE ↔ tree invariant)");
-        let l1node = &mut l1node.1;
+        let levels = super::mode::geometry(super::mode::mode()).levels as usize;
+        self.walk_mut_with(vaddr, alloc, levels)
+    }
 
-        // Level 1 → Level 0
-        let e1 = &mut l1node.page.entries[vaddr.vpn(1)];
-        if !e1.is_valid() {
-            if !alloc {
-                return Err(MapError::NotMapped);
+    /// 指定层数下钻（模式探测等显式层数场景用；正常路径走 [`Self::walk_mut`]，
+    /// 以当前模式层级下钻）。语义与 `walk_mut` 相同。
+    pub(crate) fn walk_mut_with(
+        &mut self,
+        vaddr: VirtAddr,
+        alloc: bool,
+        levels: usize,
+    ) -> Result<&mut PageTableEntry, MapError> {
+        let mut node = self;
+        for level in (0..levels).rev() {
+            let idx = vaddr.vpn(level as u8);
+            if level == 0 {
+                return Ok(&mut node.page.entries[idx]);
             }
-            let child = Self::new_child()?;
-            l1node.children.push((vaddr.vpn(1), child));
-            let child = l1node.children.last().expect("just pushed");
-            Self::set_child_pte(e1, &child.1);
+            let valid = node.page.entries[idx].is_valid();
+            if !valid {
+                if !alloc {
+                    return Err(MapError::NotMapped);
+                }
+                let child = Self::new_child()?;
+                node.children.push((idx, child));
+                let child = node.children.last().expect("just pushed");
+                let e = &mut node.page.entries[idx];
+                Self::set_child_pte(e, &child.1);
+            }
+            node = &mut node
+                .children
+                .iter_mut()
+                .find(|(s, _)| *s == idx)
+                .expect("child exists (PTE ↔ tree invariant)")
+                .1;
         }
-        let l0node = l1node
-            .children
-            .iter_mut()
-            .find(|(s, _)| *s == vaddr.vpn(1))
-            .expect("child exists (PTE ↔ tree invariant)");
-        let l0node = &mut l0node.1;
-
-        Ok(&mut l0node.page.entries[vaddr.vpn(0)])
+        unreachable!("loop covers 0..levels")
     }
 
     /// 树外裸路径：沿 PTE 链从根帧遍历到 leaf 页（**不依赖本树元数据**——
@@ -218,14 +219,15 @@ impl TableNode {
         page_va: VirtAddr,
         ok: impl Fn(PhysAddr) -> bool,
     ) -> Option<(PhysAddr, PteFlags)> {
+        let levels = super::mode::geometry(super::mode::mode()).levels as usize;
         let mut tbl = root;
         if !ok(tbl) {
             return None;
         }
-        for level in (0..LEVELS).rev() {
+        for level in (0..levels).rev() {
             // SAFETY: tbl 已过 ok 校验（合法可读物理区）；调用方保证只读、无并发写。
             let pte = unsafe {
-                *((tbl.as_usize() + page_va.vpn(level) * 8) as *const PageTableEntry)
+                *((tbl.as_usize() + page_va.vpn(level as u8) * 8) as *const PageTableEntry)
             };
             if !pte.is_valid() {
                 return None;
@@ -253,33 +255,29 @@ impl TableNode {
     ///
     /// 中间表或叶 PTE 无效（含中间级 leaf 超页）时返回 [`MapError::NotMapped`]。
     pub(crate) fn walk_ref(&self, vaddr: VirtAddr) -> Result<(PhysAddr, PteFlags), MapError> {
-        let e2 = &self.page.entries[vaddr.vpn(2)];
-        if !e2.is_valid() || e2.is_leaf() {
-            return Err(MapError::NotMapped);
+        let levels = super::mode::geometry(super::mode::mode()).levels as usize;
+        let mut node = self;
+        for level in (0..levels).rev() {
+            let idx = vaddr.vpn(level as u8);
+            let e = &node.page.entries[idx];
+            if level == 0 {
+                return if e.is_valid() && e.is_leaf() {
+                    Ok((PhysAddr::from_raw(e.paddr() as usize), e.flags()))
+                } else {
+                    Err(MapError::NotMapped)
+                };
+            }
+            if !e.is_valid() || e.is_leaf() {
+                return Err(MapError::NotMapped);
+            }
+            node = &node
+                .children
+                .iter()
+                .find(|(s, _)| *s == idx)
+                .ok_or(MapError::NotMapped)?
+                .1;
         }
-        let l1node = self
-            .children
-            .iter()
-            .find(|(s, _)| *s == vaddr.vpn(2))
-            .ok_or(MapError::NotMapped)?;
-
-        let e1 = &l1node.1.page.entries[vaddr.vpn(1)];
-        if !e1.is_valid() || e1.is_leaf() {
-            return Err(MapError::NotMapped);
-        }
-        let l0node = l1node
-            .1
-            .children
-            .iter()
-            .find(|(s, _)| *s == vaddr.vpn(1))
-            .ok_or(MapError::NotMapped)?;
-
-        let leaf = &l0node.1.page.entries[vaddr.vpn(0)];
-        if leaf.is_valid() && leaf.is_leaf() {
-            Ok((PhysAddr::from_raw(leaf.paddr() as usize), leaf.flags()))
-        } else {
-            Err(MapError::NotMapped)
-        }
+        unreachable!("loop covers 0..levels")
     }
 
     /// 映射 `size` 字节（n 页）从 `vaddr` 到 `paddr` 的连续区域。
@@ -385,7 +383,3 @@ impl TableNode {
         self.page.entries.iter().all(|e| !e.is_valid())
     }
 }
-
-/// 页表遍历层级数（Sv39 = 3；架构演进只改这里——索引位宽已由
-/// [`VirtAddr::vpn`](crate::memory::manager::addr::VirtAddr::vpn) 封装）。
-const LEVELS: u8 = 3;

@@ -104,10 +104,9 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
             crate::runtime::switcher::trampoline::trap_stack_meta(crate::machine::hart_id())
                 .filter(|m| m.top != 0 && sp <= m.top && sp > m.bottom)
                 .map(|m| m.top);
-        let stack_top = (sp >= crate::work::unit::space::USER_STACK_BASE.as_usize()
-            && sp
-                < crate::work::unit::space::USER_STACK_BASE.as_usize()
-                    + crate::work::unit::space::TASK_STACK_AREA_SIZE)
+        let stack_base = crate::memory::manager::mode::upper().as_usize();
+        let stack_top = (sp >= stack_base
+            && sp < stack_base + crate::memory::manager::mode::STACK_AREA)
             .then(|| (sp & !(STACK_SLOT - 1)) + STACK_SLOT);
         match trap_top.or(stack_top) {
             Some(t) => sp.saturating_add(BT_SCAN).min(t),

@@ -1,13 +1,15 @@
 // 地址空间 — MMU 子系统的核心抽象
 //
-// Space 拥有一个 Sv39 根页表与全部自有物理帧，提供虚拟→物理映射、权限管理、
-// 地址翻译等高层操作。空间种类由 [`SpaceKind`] 显式区分：内核空间（ASID 0，
-// 全局唯一）与用户空间（独立 ASID），构造统一走 [`SpaceBuilder`]。
+// Space 拥有一个**随运行模式**的根页表与全部自有物理帧，提供虚拟→物理映射、
+// 权限管理、地址翻译等高层操作。空间种类由 [`SpaceKind`] 显式区分：内核空间
+// （ASID 0，全局唯一）与用户空间（独立 ASID），构造统一走 [`SpaceBuilder`]。
+// 布局几何随模式（lower/upper，见 `memory::manager::mode`）。
 //
 // 簿记模型（三层，语义 = VA→PA 的显式表达）：
 //   Durable — 常数侧：页表树（root: TableNode，硬件页 + 子树所有权）+ 常数映射表
 //             （maps：DRAM 恒等/内核高半区、trampoline 叶 PTE、文本、trap-context 帧）
-//   Dynamic  — 动态侧：堆/栈窗口，各持一个 [`BitmapAllocator`] 细分窗口内 VA，
+//   Dynamic  — 动态侧：栈/帧窗口（构造期建）+ 堆窗口（装载期 attach_heap 建），
+//             各持一个 [`IntervalAllocator`]（区间树，∝ 存活块）细分窗口内 VA，
 //             每次分配的一块区间即一个子 Map（children）——heap 块 / 栈 slot
 //   Map     — VA→PA 的原子单元：{ va, size, flags, kind, frames }，不变量
 //             frames[i] ↔ va + i·PAGE_SIZE；帧随 Map 所有权回收（drop 归还）
@@ -28,7 +30,7 @@ use core::sync::atomic::Ordering;
 use hashbrown::HashMap;
 
 use crate::lock::OnceLock;
-use crate::memory::allocator::bitmap::BitmapAllocator;
+use crate::memory::allocator::interval::IntervalAllocator;
 use crate::memory::allocator::frame::allocator;
 use crate::{
     lock::{Level, RelLock},
@@ -40,8 +42,11 @@ use crate::memory::manager::{
     asid,
     entry::PteFlags,
     flush_asid,
+    mode,
     table::{Frame, FrameState, MapError, TableNode},
 };
+#[cfg(debug_assertions)]
+use crate::memory::manager::mode::STACK_AREA;
 
 /// 映射种类 — 缺页时如何响应。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,39 +160,35 @@ impl Map {
 /// 节点分区的堆），键仍唯一；当前每类各一个区级窗口。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DynamicKind {
-    /// 用户堆窗口（[`USER_HEAP_BASE`] 起 [`USER_HEAP_SIZE`]）。
+    /// 用户堆窗口（装载期由 [`Space::attach_heap`] 注册：`[image_end, upper())`）。
     Heap(usize),
-    /// 任务栈窗口（[`USER_STACK_BASE`] 起 [`TASK_STACK_AREA_SIZE`]，约 5 万 slot）。
+    /// 任务栈窗口（顶锚：`[upper(), 用户半区顶)`，约 5 万 slot）。
     Stack(usize),
     /// 线程 trap 帧窗口（[`FRAME_BASE`] 起 [`FRAME_REGION_SIZE`]，S-only 内核半区）。
     Frame(usize),
 }
 
-/// 动态窗口 — 固定 VA 区间 + 位图分配器 + 结构性绑定的子映射表。
+/// 动态窗口 — 固定 VA 区间 + 区间分配器 + 结构性绑定的子映射表。
 ///
 /// `children` 记录本窗口已分配出去的每块区间（heap 块 / 栈 slot / 线程帧），
-/// 与位图分配器的存活块一一对应——释放即从 children 移除（帧随 Map drop 归还），
+/// 与区间分配器的存活块一一对应——释放即从 children 移除（帧随 Map drop 归还），
 /// 窗口可安全复用（PTE 已清、无残留映射）。身份在 `dynamic` 表的键
 /// （[`DynamicKind`]）上。
 #[derive(Debug)]
 pub struct Dynamic {
     va: VirtAddr,
     size: NonZeroUsize,
-    allocator: BitmapAllocator,
+    allocator: IntervalAllocator,
     children: Vec<Map>,
 }
 
 impl Dynamic {
-    fn new(kind: DynamicKind) -> Self {
-        let (base, size) = match kind {
-            DynamicKind::Heap(_) => (USER_HEAP_BASE.as_usize(), USER_HEAP_SIZE),
-            DynamicKind::Stack(_) => (USER_STACK_BASE.as_usize(), TASK_STACK_AREA_SIZE),
-            DynamicKind::Frame(_) => (FRAME_BASE.as_usize(), FRAME_REGION_SIZE),
-        };
+    /// 构造窗口 `[base, edge)`（区间分配器，内存 ∝ 存活块，无 eager）。
+    fn window(base: usize, edge: usize) -> Self {
         Self {
             va: VirtAddr::from_raw(base),
-            size: NonZeroUsize::new(size).expect("window size non-zero"),
-            allocator: BitmapAllocator::new(base, base + size, PAGE_SIZE),
+            size: NonZeroUsize::new(edge - base).expect("window size non-zero"),
+            allocator: IntervalAllocator::new(base, edge),
             children: Vec::new(),
         }
     }
@@ -284,7 +285,8 @@ impl Durable {
     /// 清 `[va, va+size)` 叶 PTE 并回收变空的中间表（unmap/dealloc/回滚共用）。
     ///
     /// 回收 = 自底向上判空（512 项全无效）即摘除子树、帧当场归还——树与 PTE
-    /// 同源（`TableNode::reclaim` 先清 PTE 再摘子节点）。
+    /// 同源（`TableNode::reclaim` 先清 PTE 再摘子节点）。层级与 VA 掩码按
+    /// 当前模式几何派生。
     fn clear_range(&mut self, va: usize, size: usize) {
         if size == 0 {
             return;
@@ -292,10 +294,12 @@ impl Durable {
         for i in 0..size.div_ceil(PAGE_SIZE) {
             self.root.unmap(VirtAddr::from_raw(va + i * PAGE_SIZE));
         }
-        // Sv39 39 位地址空间（掩去符号扩展：内核半区 VA 的 bit 39..63 高位）
-        const SV39_MASK: usize = (1usize << 39) - 1;
+        // 模式 VA 宽度掩码（剥符号扩展：内核半区 VA 的高位）
+        let geo = mode::geometry(mode::mode());
+        let mask = (1usize << geo.va_bits) - 1;
         let end = va.saturating_add(size);
-        self.root.reclaim(2, 0, va & SV39_MASK, end & SV39_MASK);
+        self.root
+            .reclaim((geo.levels - 1) as usize, 0, va & mask, end & mask);
     }
 
     /// 查询覆盖 `vaddr` 的常数映射。
@@ -335,30 +339,48 @@ impl Durable {
 struct SpaceInner {
     /// 常数侧：根页表 + 中间表帧 + 常数映射表。
     durable: Durable,
-    /// 动态侧：堆 / 栈 / 帧窗口，按种类（[`DynamicKind`]）为键。
+    /// 动态侧：栈 / 帧窗口，按种类（[`DynamicKind`]）为键；堆窗口由装载期
+    /// [`Space::attach_heap`] 注册（[`DynamicKind::Heap`]）。
     ///
     /// no_std 的 alloc crate 无 `HashMap`，经 `hashbrown`（std 同源实现，
-    /// `alloc` + `default-hasher`/foldhash 特性）提供。窗口数恒 3，查表开销无关紧要。
+    /// `alloc` + `default-hasher`/foldhash 特性）提供。窗口数恒 ≤ 3，查表开销无关紧要。
     dynamic: HashMap<DynamicKind, Dynamic>,
 }
 
 impl SpaceInner {
     fn new() -> Result<Self, MapError> {
-        let mut dynamic = HashMap::from([
-            (DynamicKind::Heap(0), Dynamic::new(DynamicKind::Heap(0))),
-            (DynamicKind::Stack(0), Dynamic::new(DynamicKind::Stack(0))),
-            (DynamicKind::Frame(0), Dynamic::new(DynamicKind::Frame(0))),
+        // 栈窗口顶锚（upper 起 STACK_AREA）；帧窗口内核半区常量区。区间分配器
+        // 零 up-front（∝ 存活块）；内核空间窗口元数据在基线前稳定由 boot 顺序
+        // 保证（record_baseline 在 spawn_demos 之后——内核团队任务仅启动期创建）。
+        let top = 1usize << mode::geometry(mode::mode()).split_bit();
+        let stack = Dynamic::window(mode::upper().as_usize(), top);
+        let frame = Dynamic::window(FRAME_BASE.as_usize(), FRAME_BASE.as_usize() + FRAME_REGION_SIZE);
+        let dynamic = HashMap::from([
+            (DynamicKind::Stack(0), stack),
+            (DynamicKind::Frame(0), frame),
         ]);
-        // 窗口位图构建期立即分配（不惰性）——内核空间的窗口簿记必须先于帧基线
-        // 存在：惰性推迟到首个任务分配会使位图落在基线后、又随 'static 空间
-        // 永不归还，被关机基线检查误报为任务帧泄漏。
-        for w in dynamic.values_mut() {
-            w.allocator.eager().map_err(|_| MapError::OutOfMemory)?;
-        }
         Ok(Self {
             durable: Durable::new()?,
             dynamic,
         })
+    }
+
+    /// 登记堆窗口 `[base, upper())`（装载期注册；重复注册 → AlreadyMapped）。
+    fn attach_heap(&mut self, base: VirtAddr, upper: VirtAddr) -> Result<(), MapError> {
+        let kind = DynamicKind::Heap(0);
+        if !base.as_usize().is_multiple_of(PAGE_SIZE) || base > upper {
+            return Err(MapError::NotAligned);
+        }
+        if self.dynamic.contains_key(&kind) {
+            return Err(MapError::AlreadyMapped);
+        }
+        let size = upper.as_usize() - base.as_usize();
+        if self.durable.overlaps(base, size, &self.dynamic) {
+            return Err(MapError::AlreadyMapped);
+        }
+        self.dynamic
+            .insert(kind, Dynamic::window(base.as_usize(), upper.as_usize()));
+        Ok(())
     }
 
     /// 查询 `vaddr` 所属的映射（常数表 → 动态窗口子表），返回 Copy 摘要。
@@ -456,25 +478,15 @@ impl SpaceKind {
 
 // ── 地址空间布局常量 ────────────────────────────────────────
 
-/// 内核半区起始虚拟地址（VPN[2] = 256，VA = 2^38 符号扩展）— Sv39 用户/内核分界。
-pub(crate) const KERNEL_BASE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFC0_0000_0000);
-
-/// 用户堆窗口基址 — map syscall 的堆区起点。
-pub(crate) const USER_HEAP_BASE: VirtAddr = VirtAddr::from_raw(0x2000_0000);
-/// 用户堆窗口大小（64 MiB）。
-pub(crate) const USER_HEAP_SIZE: usize = 0x40_0000;
-/// 任务栈窗口基址（1 GiB 用户区，约 5 万窗口）。
-pub(crate) const USER_STACK_BASE: VirtAddr = VirtAddr::from_raw(0xC000_0000);
 /// 每个任务栈的大小（字节）。
 pub(crate) const TASK_STACK_SIZE: usize = 16384;
 /// 栈守护页大小（= 一页）。
 pub(crate) const STACK_GUARD_SIZE: usize = PAGE_SIZE;
-/// 任务栈窗口大小（1 GiB）。
-pub(crate) const TASK_STACK_AREA_SIZE: usize = 0x4000_0000;
-/// trap 入口 trampoline 页的固定虚拟地址（Sv39 最高页，L2[511]·L1[511]·L0[511]）。
+/// trap 入口 trampoline 页的固定虚拟地址（**任何模式最高一页**，规范形恒等）。
 ///
-/// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。
-pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::from_raw(0xFFFF_FFFF_FFFF_F000);
+/// 内核空间与所有用户空间以同一 VA 映射**同一物理帧**。顶锚定（bit63=1）在
+/// Sv39/Sv48/Sv57 下均规范。
+pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::wrap(0xFFFF_FFFF_FFFF_F000);
 
 /// trampoline 页的物理地址（纯链接符号：内核镜像恒等加载，链接地址即物理地址）。
 ///
@@ -496,47 +508,45 @@ pub(crate) const KERNEL_FRAME_SLOTS: usize = crate::machine::MAX_HART_SLOTS;
 /// per-hart 内核帧区基址（紧贴 TRAMPOLINE 之下 SLOTS 页；hart h 帧 VA =
 /// KERNEL_FRAME_BASE + h·PAGE_SIZE）。帧 PA 存 KERNEL_FRAMES[h]。
 pub(crate) const KERNEL_FRAME_BASE: VirtAddr =
-    VirtAddr::from_raw(TRAMPOLINE.as_usize() - KERNEL_FRAME_SLOTS * PAGE_SIZE);
+    VirtAddr::wrap(TRAMPOLINE.as_usize() - KERNEL_FRAME_SLOTS * PAGE_SIZE);
 
 /// 线程 trap 帧窗口大小（64 MiB − 内核帧区；帧窗口止于 KERNEL_FRAME_BASE）。
 /// 4096 槽帧区使窗口缩到 ≈48 MiB（0x300_1000 ≈ 12289 个 4 KiB 帧）。
 pub(crate) const FRAME_REGION_SIZE: usize = 0x400_0000 - (KERNEL_FRAME_SLOTS - 1) * PAGE_SIZE;
 /// 线程 trap 帧窗口基址（`KERNEL_FRAME_BASE` 之下，内核半区，S-only——用户不可触碰）。
 pub(crate) const FRAME_BASE: VirtAddr =
-    VirtAddr::from_raw(KERNEL_FRAME_BASE.as_usize() - FRAME_REGION_SIZE);
+    VirtAddr::wrap(KERNEL_FRAME_BASE.as_usize() - FRAME_REGION_SIZE);
 
-// ── 地址空间总览（Sv39）───────────────────────────────────────────
+// ── 地址空间总览（随模式；几何见 mode::lower/upper）────────────────
 //
-// 用户半区（bit 38 = 0，VPN[2] = 0..255）：
+// 用户半区 [0, 2^split_bit)（split_bit = W−1 随模式）：
 //
 //   0x0000_0000
 //     ┌─────────────────────────────────┐
-//     │             保留                │
-//     ├─────────────────────────────────┤ 0x2000_0000  USER_HEAP_BASE
-//     │  用户堆窗口 64 MiB              │ USER_HEAP_BASE + USER_HEAP_SIZE
-//     │ （BitmapAllocator 实例管理）    │
-//     ├─────────────────────────────────┤ 0x2040_0000
-//     │             保留                │
-//     ├─────────────────────────────────┤ 0xC000_0000  USER_STACK_BASE
-//     │  任务栈窗口 1 GiB               │ USER_STACK_BASE + TASK_STACK_AREA_SIZE
-//     │ （16 KiB 栈 + 守护页，约 5 万） │
-//     ├─────────────────────────────────┤ 0x1_0000_0000（低 4 GiB，设计上限）
-//     │             保留（至 2^38）     │
-//     └─────────────────────────────────┘
+//     │  程序镜像（VMA 0x10000 起）     │  loader 装载
+//     ├─────────────────────────────────┤  image_end（装载期算出）
+//     │  用户堆窗口                      │  [image_end, upper())，区间分配器
+//     │ （attach_heap 注册，∝ 存活块）   │
+//     │              ...                │
+//     ├─────────────────────────────────┤  upper() = 2^split_bit − STACK_AREA
+//     │  任务栈窗口 1 GiB（顶锚）        │  [upper(), 2^split_bit)
+//     │ （16 KiB 栈 + 守护页，约 5 万）  │
+//     └─────────────────────────────────┘ 2^split_bit（用户半区顶）
 //
-// 内核半区（bit 38 = 1，VPN[2] = 256..511，起点 KERNEL_BASE）：
+// 内核半区（canonical(2^split_bit) = lower() 起，随模式）：
 //
-//   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（页对齐）
+//   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（任何模式最高页）
 //   0xFFFF_FFFF_FFEF_F000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 4096 页（16 MiB VA 窗口）
 //   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE）
 //   0xFFFF_FFFF_FCEF_E000 — FRAME_BASE（帧窗口下界）
 //     ┌─────────────────────────────────┐
 //     │  线程 trap 帧窗口（≈48 MiB）    │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
-//     │（≈12K 并发帧，S-only，位图管理）│
+//     │（≈12K 并发帧，S-only，区间管理）│
 //     └─────────────────────────────────┘ KERNEL_FRAME_BASE
 //
-// 布局即不变量：以下断言把「对齐 / 相邻 / 不重叠」编译期锁死——
+// 布局即不变量：以下断言把「对齐 / 相邻 / 不重叠」编译期锁死（模式无关部分）——
 // 改布局必须先改这里（编译器兜底），并同步 link.ld / trampoline 汇编。
+// 模式相关部分（lower/upper/堆栈几何）由 [`validate`] 运行期校验。
 const _: () = {
     // 注意：VirtAddr 的 Add/Sub/PartialEq 非 const fn，此处一律用 as_usize() 裸算术。
     assert!(TRAMPOLINE.as_usize().is_multiple_of(PAGE_SIZE));
@@ -547,16 +557,43 @@ const _: () = {
     assert!(FRAME_REGION_SIZE.is_multiple_of(PAGE_SIZE));
     assert!(FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
     assert!(FRAME_BASE.as_usize() + FRAME_REGION_SIZE == KERNEL_FRAME_BASE.as_usize());
-    assert!(KERNEL_BASE.as_usize() == 0xFFFF_FFC0_0000_0000); // Sv39 内核半区起点（VPN[2] = 256）
-    assert!(USER_HEAP_BASE.as_usize().is_multiple_of(PAGE_SIZE));
-    assert!(USER_HEAP_SIZE.is_multiple_of(PAGE_SIZE));
-    assert!(USER_HEAP_BASE.as_usize() + USER_HEAP_SIZE <= USER_STACK_BASE.as_usize()); // 堆窗口不越过栈窗口
-    assert!(USER_STACK_BASE.as_usize().is_multiple_of(PAGE_SIZE));
-    assert!(TASK_STACK_AREA_SIZE.is_multiple_of(PAGE_SIZE));
     assert!(TASK_STACK_SIZE.is_multiple_of(PAGE_SIZE));
-    assert!(USER_STACK_BASE.as_usize() + TASK_STACK_AREA_SIZE <= 0x1_0000_0000); // 栈窗口不越出低 4 GiB
 };
-/// Sv39 虚拟地址空间。
+
+/// 运行期布局校验（boot 后经 unit::init 调用）：模式几何与布局不变量。
+///
+/// debug 构建违例 fail-fast；release 空体。const 断言块管模式无关部分，
+/// 本校验管随模式部分（lower / upper / 用户/内核几何）。
+#[cfg(debug_assertions)]
+pub(crate) fn validate() {
+    let geo = mode::geometry(mode::mode());
+    let split = geo.split_bit() as usize;
+    let top = 1usize << split;
+    let lower = mode::lower();
+    let upper = mode::upper();
+    // 几何自洽：va_bits = 12 + 9·levels
+    assert!(
+        (3..=5).contains(&geo.levels) && geo.va_bits as usize == 12 + 9 * geo.levels as usize,
+        "mode geometry incoherent: {geo:?}"
+    );
+    // lower = canonical(1 << split_bit)，处内核半区
+    assert_eq!(
+        lower.as_usize(),
+        (1usize << split) | (usize::MAX << (split + 1)),
+        "lower not canonical kernel base"
+    );
+    assert!(!lower.is_user());
+    // upper = top − STACK_AREA，处用户半区、页对齐
+    assert_eq!(top - upper.as_usize(), STACK_AREA);
+    assert!(upper.as_usize().is_multiple_of(PAGE_SIZE));
+    assert!(upper.is_user());
+    // 布局常量在全部受支持模式下规范（wrap 前置条件的运行期印证）
+    assert!(!TRAMPOLINE.is_user());
+    assert!(KERNEL_FRAME_BASE.as_usize() < TRAMPOLINE.as_usize());
+    assert!(!FRAME_BASE.is_user());
+}
+
+/// 虚拟地址空间（布局随运行模式：用户半区/内核半区几何见 [`mode`]）。
 ///
 /// 拥有根页表与**全部自有物理帧**。用户空间只映射 trampoline 叶 PTE（帧归内核、
 /// 不拥有）与自有 trap-context 帧，不复制/共享内核映射。全部可变状态
@@ -850,8 +887,8 @@ impl Space {
     ///
     /// 1. 栈窗口按 owner 摘除守护页/栈体子 Map（栈帧随 drop 归还 frame 池）；
     /// 2. 清整 slot 叶 PTE + 回收变空的中间表；
-    /// 3. 位图归还 slot VA（[`BitmapAllocator::deallocate`] 精确匹配）；
-    /// 4. 帧窗口按帧 VA 摘除帧子 Map（帧页归还）→ 清 PTE → 位图归还帧 VA。
+    /// 3. 区间树归还 slot VA（[`IntervalAllocator::deallocate`] 精确匹配）；
+    /// 4. 帧窗口按帧 VA 摘除帧子 Map（帧页归还）→ 清 PTE → 区间树归还帧 VA。
     ///
     /// **VA 复用安全的关键**：PTE 清理 + [`flush_asid`] 先于归还，杜绝复用者
     /// 摸到旧线程残留映射。
@@ -883,24 +920,23 @@ impl Space {
         }
     }
 
-    /// 用户堆分配：经 Heap 窗口位图保留页对齐 VA 块，登记空子 Map（Anonymous），
+    /// 用户堆分配：经 Heap 窗口区间树保留页对齐 VA 块，登记空子 Map（Anonymous），
     /// 逐页从 frame 分配器取物理页映射到用户区（U|R|W）并注入子 Map。返回分配 VA。
     ///
-    /// 堆窗口固定 [`USER_HEAP_BASE`] 起 [`USER_HEAP_SIZE`]；窗口耗尽 →
-    /// [`MapError::OutOfMemory`]。立即分配（非懒分配）：教学简化，页表与物理页
-    /// 当场就位，用户访问不再缺页。中途帧耗尽时回滚：清已映射页叶子 + 移除子
-    /// Map（帧随 drop 归还）+ VA 块退回复用（[`BitmapAllocator::deallocate`]；
-    /// 中间表帧已由 clear_range 回收）。
+    /// 堆窗口 = 装载期注册的 `[image_end, upper())`（区间树，∝ 存活块）；窗口
+    /// 耗尽 → [`MapError::OutOfMemory`]。立即分配（非懒分配）：教学简化，页表
+    /// 与物理页当场就位，用户访问不再缺页。中途帧耗尽时回滚：清已映射页叶子
+    /// + 移除子 Map（帧随 drop 归还）+ VA 块退回窗口
+    /// （[`IntervalAllocator::deallocate`]；中间表帧已由 clear_range 回收）。
     pub(crate) fn heap_allocate(&self, size: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         let flags =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
         let SpaceInner { durable, dynamic } = &mut *inner;
-        // 1. 窗口位图保留块 + 登记空子 Map（Anonymous）
-        let heap = {
-            let kind = DynamicKind::Heap(0);
-            dynamic.get_mut(&kind).expect("window exists")
-        };
+        // 1. 堆窗口（装载期 attach_heap 注册）保留块 + 登记空子 Map（Anonymous）
+        let heap = dynamic
+            .get_mut(&DynamicKind::Heap(0))
+            .ok_or(MapError::NoRegion)?;
         let info = heap.allocate(size, flags, MapKind::Anonymous, None)?;
         // 2. 逐页分配物理帧并映射（立即分配）+ 注入子 Map
         let pages = info.size.get() / PAGE_SIZE;
@@ -931,9 +967,10 @@ impl Space {
         }
         drop(inner);
         // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
-        // 键 = asid << 32 | VA：多个空间共享同一堆窗口 VA，须并入空间身份防碰撞。
+        // 键 = fence::key（页索引编码，VA≥2^32 不碰撞）：多个空间共享同 VA，
+        // 须并入空间身份——(asid<<44)|(va>>12) 单射（asid<2^16, va<2^56）。
         crate::memory::allocator::fence::on_alloc(
-            (self.kind.asid() << 32) | info.va.as_usize(),
+            crate::memory::allocator::fence::key(self.kind.asid(), info.va.as_usize()),
             info.size.get(),
             crate::memory::allocator::fence::OwnerKind::UserHeap,
         );
@@ -944,17 +981,17 @@ impl Space {
         Ok(info.va)
     }
 
-    /// 用户堆释放：位图精确匹配 `(addr, size)` 后清叶子 PTE（含回收中间表）并移除子 Map（帧随
+    /// 用户堆释放：窗口按 `(addr, size)` 精确匹配后清叶子 PTE（含回收中间表）并移除子 Map（帧随
     /// drop 归还 frame 池）。返回是否找到并释放（未分配/部分已释放的区间返回
     /// false，同旧块表精确匹配语义）。
     pub(crate) fn heap_deallocate(&self, addr: VirtAddr, size: usize) -> bool {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
-        let heap = {
-            let kind = DynamicKind::Heap(0);
-            dynamic.get_mut(&kind).expect("window exists")
+        let heap = match dynamic.get_mut(&DynamicKind::Heap(0)) {
+            Some(h) => h,
+            None => return false,
         };
-        // 1. 位图精确匹配释放 + 移除子 Map（未分配/部分已释放 → 返回 false）
+        // 1. 区间精确匹配释放 + 移除子 Map（未分配 → 返回 false）
         if !heap.deallocate(addr, size) {
             return false;
         }
@@ -966,13 +1003,28 @@ impl Space {
             flush_asid(self.kind.asid());
         }
         // 护栏事件：用户堆活块注销（无账 = 悬垂/双释放现行；键与 heap_allocate 相同）。
-        // UserHeap 不 poison——键 = asid<<32|va 非地址，且用户页维持清零语义。
+        // UserHeap 不 poison——键是页索引编码非地址，且用户页维持清零语义。
         crate::memory::allocator::fence::on_free(
-            (self.kind.asid() << 32) | addr.as_usize(),
+            crate::memory::allocator::fence::key(self.kind.asid(), addr.as_usize()),
             size,
             crate::memory::allocator::fence::OwnerKind::UserHeap,
         );
         true
+    }
+
+    /// 装载期注册堆窗口（loader 在文件段映射前调用）：`[base, upper())`。
+    ///
+    /// `base = image_end`（镜像段尾页对齐，装载器由 `parsed.memsz` 推出）；
+    /// 窗口挂在 `DynamicKind::Heap(0)`，区间分配器 ∝ 存活块。
+    ///
+    /// # Errors
+    ///
+    /// - `NotAligned` — base 未页对齐，或越过 `upper()`。
+    /// - `AlreadyMapped` — 已注册堆窗口，或与常数映射/窗口重叠。
+    pub(crate) fn attach_heap(&self, base: VirtAddr) -> Result<(), MapError> {
+        let mut inner = self.inner.lock();
+        let upper = mode::upper();
+        inner.attach_heap(base, upper)
     }
 
     /// 映射 `size` 字节虚拟地址到物理地址（常数映射唯一公共入口）。

@@ -121,14 +121,4 @@ impl BitmapAllocator {
             self.bits.resize(self.units().div_ceil(64), 0);
         }
     }
-
-    /// 构建期立即分配位图（不惰性）——调用方须能传播分配失败。
-    pub(crate) fn eager(&mut self) -> Result<(), AllocError> {
-        if self.bits.is_empty() && self.units() > 0 {
-            let n = self.units().div_ceil(64);
-            self.bits.try_reserve_exact(n).map_err(|_| AllocError)?;
-            self.bits.resize(n, 0);
-        }
-        Ok(())
-    }
 }

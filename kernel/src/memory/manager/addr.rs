@@ -24,13 +24,25 @@ use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
 pub struct VirtAddr(usize);
 
 impl VirtAddr {
-    /// 从原始 usize 构造虚拟地址，符号扩展到规范形式。
+    /// 从原始 usize 构造虚拟地址，按**当前模式**进位到规范形式。
     ///
-    /// 利用 bit 38 的值填充 bits 63:39（恒合法，不检查）。
-    #[inline]
-    pub const fn from_raw(addr: usize) -> Self {
-        let sign = ((addr as isize) << (63 - 38)) >> (63 - 38);
+    /// 进位位 = 分裂位（va_bits−1，见 `mode::Geo`）；对已规范输入恒等。模式
+    /// 未探测时兜底 Sv39（进位位 38 = 现状语义，低地址在任意模式进位下不变）。
+    pub fn from_raw(addr: usize) -> Self {
+        let bit = super::mode::geometry(super::mode::mode()).split_bit() as usize;
+        let sign = ((addr as isize) << (63 - bit)) >> (63 - bit);
         Self(sign as usize)
+    }
+
+    /// 纯位包装（零进位）— 布局常量构造器。
+    ///
+    /// # 前置
+    ///
+    /// 输入必须是全部受支持模式下均已规范的值（顶锚定 bit63=1，或低地址）；
+    /// 由布局 const 断言与运行期 `validate()` 验证。
+    #[inline]
+    pub const fn wrap(addr: usize) -> Self {
+        Self(addr)
     }
 
     /// 提取指定级别的 VPN（9 位索引）。
@@ -53,13 +65,14 @@ impl VirtAddr {
         Self(self.0 & !(PAGE_SIZE - 1))
     }
 
-    /// 是否为用户地址（VPN[2] <= 255，即 bit 38 = 0）
+    /// 是否为用户地址（分裂位 = 0，即地址 < 2^split_bit；分割随当前模式）。
     #[inline]
     pub fn is_user(self) -> bool {
-        (self.0 >> 38) & 1 == 0
+        let bit = super::mode::geometry(super::mode::mode()).split_bit() as usize;
+        (self.0 >> bit) & 1 == 0
     }
 
-    /// 是否为内核域地址：Sv39 高半区（bit 38 = 1），**或**内核镜像恒等区
+    /// 是否为内核域地址：分裂位以上（当前模式内核半区），**或**内核镜像恒等区
     /// [_kernel_start, _kernel_edge)。
     ///
     /// 两段都要：镜像恒等映射落在**低半区**（0x80200000 起），纯半区判定会误判。

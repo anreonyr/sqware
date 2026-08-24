@@ -11,6 +11,7 @@ use crate::console::Sink;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
+use crate::memory::manager::mode;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
@@ -106,8 +107,11 @@ pub fn init() -> ! {
     // fail-fast（panic → crash scene）。
     crate::health::run();
 
-    // 记录内核持久帧基线：spawn 用户任务前的在途帧。此后在途帧只应增用户任务
-    // 所有；关机时全部归还（零泄漏审计）。
+    // 记录内核持久帧基线：**一切任务 spawn 之前**。此后在途帧只增任务所有；
+    // 关机时全部归还（零泄漏审计）。区间窗口元数据是随任务存活的瞬态
+    // （任务栈/帧条目随 reclaim 摘除、团队 drop 归还）——基线后创建、关机前
+    // 全部释放，block 池净零回落；基线前只留静态内核结构（镜像、per-hart 帧、
+    // 内核空间 durable 映射），关机不释放，账平。
     #[cfg(debug_assertions)]
     crate::memory::allocator::fence::audit::record_baseline();
 
@@ -240,9 +244,10 @@ pub(crate) extern "C" fn boot_main() -> ! {
     let ktc = kernel_frame_pa(0);
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;
-    // Sv39 token：低 44 位 ppn、[63:44] asid/模式（字段访问器拆解，无裸位运算）
+    // 探测所得模式 token：低 44 位 ppn、[63:44] asid/模式（字段访问器拆解，
+    // 无裸位运算；模式位随 mode()，副核与主核同模式）
     unsafe {
-        satp::set(satp::Mode::Sv39, ksatp.asid(), ksatp.ppn());
+        satp::set(mode::mode(), ksatp.asid(), ksatp.ppn());
         core::arch::asm!("sfence.vma");
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
         core::arch::asm!("csrw sscratch, zero");

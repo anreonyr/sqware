@@ -314,9 +314,12 @@ impl TaskBuilder {
             frame.trap_handler = (*ktc).trap_handler;
             frame.trap_stack_corrupt = (*ktc).trap_stack_corrupt;
             frame.user_pa = frame_pa;
-            // user_satp = Sv39 模式位(8) << 60 | asid << 44 | root_ppn —— 切回本空间用
+            // user_satp = 模式位 << 60 | asid << 44 | root_ppn —— 切回本空间用；
+            // 模式位随探测所得 mode()（Sv39=8/Sv48=9/Sv57=10），非硬编码。
             frame.user_satp = satp::Satp::from_bits(
-                (8usize << 60) | (self.team.space.asid() << 44) | self.team.space.root(),
+                (crate::memory::manager::mode::mode().into_usize() << 60)
+                    | (self.team.space.asid() << 44)
+                    | self.team.space.root(),
             );
             frame.self_va = frame_va;
             frame.sepc = self.entry;

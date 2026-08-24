@@ -33,11 +33,12 @@ use crate::memory::manager::{
     addr::{PhysAddr, VirtAddr},
     entry::PteFlags,
     flush_asid,
+    mode,
 };
 
 use space::{
-    KERNEL_BASE, KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, USER_STACK_BASE,
-    init_kernel_frames, kernel_frames, trampoline_pa,
+    KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, init_kernel_frames, kernel_frames,
+    trampoline_pa,
 };
 
 // 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
@@ -49,10 +50,11 @@ unsafe extern "C" {
 /// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
 pub type MapResult<T> = erra::Result<T, MapError>;
 
-/// 初始化 MMU：创建内核地址空间，identity-map DRAM 和 MMIO，启用 Sv39 分页，
+/// 初始化 MMU：**先探测 satp 模式**（P1：最小恒等临时根，候选 57→48→39），
+/// 再创建内核地址空间，identity-map DRAM 和 MMIO，启用探测所得分页模式，
 /// 并把内核空间封包进 KERNEL_TEAM。
 ///
-/// 必须在分配器初始化之后调用。
+/// 必须在分配器初始化之后调用（探测临时根表取帧）。
 ///
 /// # Safety
 ///
@@ -64,14 +66,19 @@ pub type MapResult<T> = erra::Result<T, MapError>;
 /// - [`MapError::DramOverlap`] — DRAM 末端越过用户栈窗口（内存配置非法）。
 /// - [`MapError::OutOfMemory`] — 物理帧不足以分配根/中间页表或内核 trap-context 帧。
 /// - [`MapError::NotAligned`] / [`MapError::AlreadyMapped`] — 映射参数非法。
+/// - satp 模式探测失败（全不支持/帧耗尽）→ panic（boot 级致命）。
 pub fn init() -> MapResult<()> {
     (|| -> Result<(), MapError> {
         unsafe {
             let m = machine::info();
 
-            // 任务栈窗口 TASK_STACK_BASE=0xC0000000：恒等映射的 DRAM 必须落在其下方，
-            // 否则任务栈窗口覆盖真实内存而非专用窗口（DRAM 起点 0x80000000 → size < 1 GiB）。
-            if VirtAddr::from_raw(m.dram.base + m.dram.size) > USER_STACK_BASE {
+            // 0. 探测 satp 模式并部署（此后 mode()/几何按它派生）。失败 = 无
+            //    S 态分页或帧耗尽——boot 级致命。
+            mode::detect().unwrap_or_else(|e| panic!("satp mode detect failed: {e:?}"));
+
+            // 任务栈窗口顶锚于用户半区顶（mode::upper 起）：恒等映射的 DRAM
+            // 必须落在其下方，否则任务栈窗口覆盖真实内存而非专用窗口。
+            if VirtAddr::from_raw(m.dram.base + m.dram.size) > mode::upper() {
                 return Err(MapError::DramOverlap);
             }
 
@@ -98,9 +105,10 @@ pub fn init() -> MapResult<()> {
                 Vec::new(),
             )?;
 
-            // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备）
+            // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备；
+            //    高半区起点 = 探测模式的 lower()，随模式）
             kernel_space.map(
-                KERNEL_BASE + m.dram.base,
+                mode::lower() + m.dram.base,
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
                 ram_flags,
@@ -118,7 +126,7 @@ pub fn init() -> MapResult<()> {
             let rodata_size = kernel_edge() - rodata_start;
             let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D | PteFlags::G;
             kernel_space.protect(VirtAddr::from_raw(rodata_start), rodata_size, ro_flags)?;
-            kernel_space.protect(KERNEL_BASE + rodata_start, rodata_size, ro_flags)?;
+            kernel_space.protect(mode::lower() + rodata_start, rodata_size, ro_flags)?;
 
             // 4. 映射 trap trampoline 页（内核自有帧）：所有空间以 TRAMPOLINE VA
             //    映射同一物理页，`stvec` 指向它。G 位：内容不可变，不被 ASID 局部
@@ -153,11 +161,13 @@ pub fn init() -> MapResult<()> {
                 slot.store(pa, core::sync::atomic::Ordering::Relaxed);
             }
 
-            // 6. 启用 Sv39 分页
-            satp::set(satp::Mode::Sv39, 0, kernel_space.root());
+            // 6. 启用探测所得模式的分页（satp MODE 字段随模式）
+            satp::set(mode::mode(), 0, kernel_space.root());
 
-            // 7. 刷新 TLB
+            // 7. 刷新 TLB + 运行期布局校验（debug：违例 fail-fast）
             flush_asid(0);
+            #[cfg(debug_assertions)]
+            space::validate();
 
             // 8. 内核空间封包进内核团队。
             team::init_kernel(Arc::new(kernel_space));

@@ -1,6 +1,6 @@
-// Sv39 页表项 (Page Table Entry) — 64-bit PTE 类型定义与操作
+// 页表项 (Page Table Entry) — 64-bit PTE 类型定义与操作（Sv39/Sv48/Sv57 同格式）
 //
-// Sv39 三级页表的每个条目为 8 字节，位布局：
+// 每个条目为 8 字节，位布局：
 //   0:9   — 标志位 (V, R, W, X, U, G, A, D, RSW*2)
 //   10:53 — PPN (物理页号, 44 bits, 对应 56-bit 物理地址的 12:55)
 //   54:63 — 保留 (必须为零)
@@ -9,7 +9,7 @@ use bitflags::bitflags;
 use core::fmt;
 
 bitflags! {
-    /// Sv39 PTE 标志位 (bits 0-9)
+    /// PTE 标志位 (bits 0-9)
     #[derive(Debug, Clone, Copy)]
     pub struct PteFlags: u64 {
         /// Valid — PTE 有效
@@ -31,7 +31,7 @@ bitflags! {
     }
 }
 
-/// Sv39 页表项
+/// 页表项
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
 pub struct PageTableEntry {
