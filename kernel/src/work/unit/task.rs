@@ -18,6 +18,8 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
 use crate::work::USER_TEXT_BASE;
+use crate::work::unit::space::KERNEL_FRAME_BASE;
+use crate::work::unit::team::kernel;
 use riscv::register::{satp, sstatus};
 
 use super::team::Team;
@@ -320,7 +322,13 @@ impl TaskBuilder {
         //    kernel_sp = **本 hart** trap 栈顶（任务随后在本 hart 首次运行；若被
         //    steal 走，上台前由调度器重写）。
         unsafe {
-            let ktc = super::team::kernel_frame_pa(0).as_usize() as *const TrapContext;
+            let ktc = kernel()
+                .expect("kernel team not initialized")
+                .space
+                .translate(KERNEL_FRAME_BASE)
+                .expect("kernel frame not mapped")
+                .0
+                .as_usize() as *const TrapContext;
             let frame = &mut *(frame_pa.as_usize() as *mut TrapContext);
             frame.kernel_satp = (*ktc).kernel_satp;
             frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(me));

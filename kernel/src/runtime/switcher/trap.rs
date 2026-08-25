@@ -6,6 +6,7 @@
 
 use crate::runtime::chrono::{clock, timer};
 use crate::work::room::scheduler::{run, unpark, with_running_space};
+use crate::work::unit::team::kernel;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -22,7 +23,6 @@ use crate::runtime::switcher::trampoline::{
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
 };
 use crate::work::unit::space::KERNEL_FRAME_BASE;
-use crate::work::unit::team;
 use crate::{machine, put};
 use sbi::{TimerCall, fid::Timer, scall::SArgs};
 
@@ -88,7 +88,12 @@ pub fn init() {
     //    故障在**故障核**的帧与 trap 栈上处理。
     let ksatp = satp::read();
     for h in 0..crate::machine::hart_count() {
-        let pa = team::kernel_frame_pa(h);
+        let pa = kernel()
+            .expect("kernel team not initialized")
+            .space
+            .translate(KERNEL_FRAME_BASE + h * PAGE_SIZE)
+            .expect("kernel frame not mapped")
+            .0;
         let frame = unsafe { &mut *(pa.as_usize() as *mut TrapContext) };
         frame.kernel_satp = ksatp;
         frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(h));

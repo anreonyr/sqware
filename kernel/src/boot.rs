@@ -106,6 +106,7 @@ pub fn init() -> ! {
     // 健康检查（spare 预算验收恒跑 + PT 回收自测 debug）：任一失败
     // fail-fast（panic → crash scene）。
     crate::health::run();
+    crate::probe_main_stack();
 
     // 记录内核持久帧基线：**一切任务 spawn 之前**。此后在途帧只增任务所有；
     // 关机时全部归还（零泄漏审计）。区间窗口元数据是随任务存活的瞬态
@@ -117,6 +118,7 @@ pub fn init() -> ! {
 
     // 演示程序均为内嵌 ELF，经装载生成任务并入队；错误一律 `?` 上抛至本边界。
     spawn_demos().expect("boot spawn failed");
+    crate::probe_main_stack();
 
     // 完整性审计（debug）：boot 收尾全量核对。
     #[cfg(debug_assertions)]
@@ -124,6 +126,7 @@ pub fn init() -> ! {
 
     // 多核：HSM 拉起其余副核。
     boot_harts();
+    crate::probe_main_stack();
 
     // 主内核栈（boot 栈）将永久离开前校验 canary：boot 期栈溢出即使未越过
     // guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。
@@ -131,6 +134,13 @@ pub fn init() -> ! {
     assert!(
         boot_guard == crate::KERNEL_STACK_CANARY,
         "main kernel stack overflow during boot: canary corrupted {boot_guard:#x}",
+    );
+
+    // 主栈峰值上报（缩小 KERNEL_STACK_SIZE 的定标数据；比对 canary 未碎即安全）。
+    crate::putln!(
+        "[boot] main stack peak {} B (cap {})",
+        crate::main_stack_peak(),
+        crate::machine::KERNEL_STACK_SIZE,
     );
 
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
@@ -230,7 +240,12 @@ fn boot_harts() {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn boot_main() -> ! {
     // 副核 per-hart 初始化：satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
-    let ktc = team::kernel_frame_pa(0);
+    let ktc = kernel()
+        .expect("kernel team not initialized")
+        .space
+        .translate(KERNEL_FRAME_BASE)
+        .expect("kernel frame not mapped")
+        .0;
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;
     // 探测所得模式 token：低 44 位 ppn、[63:44] asid/模式（字段访问器拆解，

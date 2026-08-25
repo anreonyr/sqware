@@ -143,7 +143,13 @@ pub(crate) fn dram_end() -> Option<usize> {
 ///   [主栈区 KERNEL_STACK_SIZE] 向下生长，栈底 = `_kernel_edge`，栈顶 = +size
 /// free 区起点 = 栈顶。无独立 guard 帧——主栈是 boot 短命栈，下溢由栈底
 /// canary 兜底。
-pub(crate) const KERNEL_STACK_SIZE: usize = 0x10_0000; // 1 MiB
+///
+/// 尺寸 = 64 KiB（1 MiB 的 1/16）：boot 路径实测峰值 <1 KiB（探针覆盖
+/// init→spawn→HSM，release 992 B / debug 320 B），再留 boot 期 panic 现场
+/// （崩溃渲染跑在 boot 栈上）+ 未来改动余量，取 16 倍 + 整页对齐仍富余。
+/// 越界有双护栏：栈底 canary（4 KiB 内越界即暴露）+ 栈顶 `.rodata` 只读页
+/// （写保护缺页，见 link.ld 主栈守卫注释）。
+pub(crate) const KERNEL_STACK_SIZE: usize = 0x1_0000; // 64 KiB
 
 /// 主内核栈 canary 值（写在栈底）。
 pub(crate) const KERNEL_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
