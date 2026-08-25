@@ -72,32 +72,32 @@ impl UcallBuilder {
 /// 唯一碰汇编的原语：a7=调用号、a0..a5=参数 → U 态 ecall → 读回 a0/a1。
 ///
 /// unsafe：直触寄存器约定、不判错；调用方须为 U 态上下文且 call/args 已按 ABI 摆好。
+///
+/// 约束写法（勿回退为 `in(reg)` + `mv`）：输入直接绑定参数寄存器 a0..a5/a7，
+/// 输出用 `lateout` 同寄存器承接。`in(reg)` 允许分配器把某输入放进 a0/a1——
+/// 与 lateout 重叠合法，但模板若在读取前先 `mv a0, {a0}` 就会覆盖该输入
+/// （release 实测：`{a1}` 被分配进 a0，a1 收到的是 a0 的旧值而非 args.a1，
+/// 导致 Spawn 把入口当闭包指针传给子任务）。直接绑定后模板无 mv，输入在读
+/// 取后由 ecall 覆盖，与 lateout 模型一致。
 unsafe fn warpper(call: Ucall, args: UArgs) -> (usize, usize) {
     let (v0, v1);
     unsafe {
         core::arch::asm!(
-            "mv a7, {call}",
-            "mv a0, {a0}",
-            "mv a1, {a1}",
-            "mv a2, {a2}",
-            "mv a3, {a3}",
-            "mv a4, {a4}",
-            "mv a5, {a5}",
             "ecall",
-            call = in(reg) usize::from(call),
-            a0 = in(reg) args.a0,
-            a1 = in(reg) args.a1,
-            a2 = in(reg) args.a2,
-            a3 = in(reg) args.a3,
-            a4 = in(reg) args.a4,
-            a5 = in(reg) args.a5,
+            in("a7") usize::from(call),
+            in("a0") args.a0,
+            in("a1") args.a1,
+            in("a2") args.a2,
+            in("a3") args.a3,
+            in("a4") args.a4,
+            in("a5") args.a5,
             lateout("a0") v0,
             lateout("a1") v1,
-            out("a2") _,
-            out("a3") _,
-            out("a4") _,
-            out("a5") _,
-            out("a7") _,
+            lateout("a2") _,
+            lateout("a3") _,
+            lateout("a4") _,
+            lateout("a5") _,
+            lateout("a7") _,
             options(nostack),
         );
     }
