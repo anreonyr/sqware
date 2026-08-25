@@ -399,7 +399,7 @@ fn clear() {
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.team.prune_tasks(&z);
         // 锁外回收（Team.tasks 已放 → Space.inner=2 → FRAME=5 合法）
-        z.team.space.task_reclaim(z.id, z.trap.va);
+        z.team.space.retire(z.id, z.trap.va);
         drop(z);
     }
 }

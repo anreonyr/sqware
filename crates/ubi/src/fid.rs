@@ -20,14 +20,19 @@ pub enum Ucall {
     HeapAllocate = 6,
     /// 用户堆释放（a0 = VA，a1 = 字节数，页对齐）：0 或负错误码。
     HeapDeallocate = 7,
-    /// 建用户任务（a0 = 入口 VA，a1 = arg）：返回任务句柄或负错误码。
+    /// 建用户任务（a0 = 入口 VA，a1 = arg，a2 = 栈大小（0 = 缺省
+    /// `TASK_STACK_SIZE`））：返回任务句柄或负错误码。
     Spawn = 8,
     /// 用户主动内核 panic（a0 = 任意关联码；不返回）。
     Panic = 9,
-    /// 高位大段懒匿名映射（a0 = 字节数，页对齐）：返回映射 VA 或负错误码。
+    /// 高位大段懒匿名映射（a0 = 字节数，页对齐；a2 = 期望 VA，0 = 窗口自选
+    /// 高位）：返回映射 VA 或负错误码。
     Mmap = 10,
-    /// 释放 mmap 区域（a0 = VA，a1 = 字节数，页对齐）：0 或负错误码。
+    /// 释放 mmap/声明区域（a0 = VA，a1 = 字节数，页对齐）：0 或负错误码。
     Munmap = 11,
+    /// 修改映射区域保护标志（a0 = VA，a1 = 字节数，页对齐，a2 = 新权限
+    /// PteFlags 位）：0 或负错误码。
+    Mprotect = 12,
 }
 
 impl From<Ucall> for usize {
@@ -53,6 +58,7 @@ impl TryFrom<usize> for Ucall {
             9 => Ok(Self::Panic),
             10 => Ok(Self::Mmap),
             11 => Ok(Self::Munmap),
+            12 => Ok(Self::Mprotect),
             _ => Err(()),
         }
     }

@@ -107,7 +107,7 @@ impl Map {
     /// # Errors
     ///
     /// 越界（`off >= size`）或该页尚无帧（懒分配未就位）→ [`MapError::NotMapped`]。
-    #[allow(dead_code)] // munmap/mprotect 后端预留：按 VA→PA 语义直接取帧 PA
+    /// munmap/mprotect 后端预留：按 VA→PA 语义直接取帧 PA
     fn translate(&self, off: usize) -> Result<PhysAddr, MapError> {
         if off >= self.size.get() {
             return Err(MapError::NotMapped);
@@ -117,8 +117,8 @@ impl Map {
         Ok(frame.pa())
     }
 
-    /// 追加一帧（保持不变量；调用方保证序号连续且不越界）。
-    fn push_frame(&mut self, frame: Frame) {
+    /// 注入一帧（保持不变量；调用方保证序号连续且不越界）。
+    fn inject(&mut self, frame: Frame) {
         debug_assert!(
             self.frames.len() < self.size.get() / PAGE_SIZE,
             "map {:#x} frame overflow",
@@ -209,11 +209,11 @@ impl Dynamic {
         true
     }
 
-    /// 移除全部 `owner` 匹配的子 Map（帧随 drop 归还），返回被覆盖区间
+    /// 断绝与 `owner` 的全部子 Map 关系（帧随 drop 归还），返回被覆盖区间
     /// `[min_va, min_va + len)`（供调用方清 PTE 后按整区间位图归还）。
     ///
-    /// 线程退出回收用：栈 slot 的守护页/栈体两子 Map 共享同一 owner，一并摘除。
-    fn remove_owner(&mut self, owner: usize) -> Option<(VirtAddr, usize)> {
+    /// 线程退役回收用：栈 slot 的守护页/栈体两子 Map 共享同一 owner，一并摘除。
+    fn disown(&mut self, owner: usize) -> Option<(VirtAddr, usize)> {
         let mut min = usize::MAX;
         let mut max = 0usize;
         let before = self.children.len();
@@ -746,7 +746,7 @@ impl Space {
     /// 子 Map——栈溢出触碰守护页时 fault 处理器识别为「预留映射访问」而非笼统的
     /// 「无 Map」。栈体登记为 Anonymous 子 Map（帧随后经
     /// [`attach_dynamic`](Self::attach_dynamic) 注入）。两子 Map 均标 `owner`，退出时
-    /// 按 owner 一并回收（[`task_reclaim`](Self::task_reclaim)）。
+    /// 按 owner 一并回收（[`retire`](Self::retire)）。
     pub(crate) fn stack_allocate(&self, owner: usize, size: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         // 槽 = 栈体 size + 守护页；栈窗 fall 排槽（自窗口顶向下，槽下方保持空闲）。
@@ -794,7 +794,7 @@ impl Space {
     /// 预留 VA 块获得子 Map，再分配帧逐帧 attach。
     ///
     /// [`attach_durable`](Self::attach_durable) 的 dynamic 簿记变体：逐帧装 PTE
-    /// （[`map_frames`]（Durable），中间表由页表树 TableNode 持有）+ `push_frame`
+    /// （[`map_frames`]（Durable），中间表由页表树 TableNode 持有）+ `inject`
     /// （入窗口子 Map，保持「帧 i ↔ va + i·PAGE_SIZE」不变量）。中途失败返回
     /// 错误，调用方 drop Space 统一回收（已装 PTE 与已入帧随空间归还）。
     pub(crate) fn attach_dynamic(&self, va: VirtAddr, frames: Vec<Frame>) -> Result<(), MapError> {
@@ -809,7 +809,7 @@ impl Space {
         let child_flags = child.flags;
         durable.map_frames(va, &frames, child_flags)?;
         for frame in frames {
-            child.push_frame(frame);
+            child.inject(frame);
         }
         drop(inner);
         // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -857,7 +857,7 @@ impl Space {
             .iter_mut()
             .find(|m| m.va == va)
             .expect("frame child exists");
-        child.push_frame(page);
+        child.inject(page);
         drop(inner);
         // SAFETY: S-mode 下 sfence.vma 恒合法。
         unsafe {
@@ -866,7 +866,7 @@ impl Space {
         Ok((va, pa))
     }
 
-    /// 回收一个线程的全部私有资源（栈 slot + trap 帧），`owner` = 线程 id。
+    /// 线程退役：回收其全部私有资源（栈 slot + trap 帧），`owner` = 线程 id。
     ///
     /// 1. 栈窗口按 owner 摘除守护页/栈体子 Map（栈帧随 drop 归还 frame 池）；
     /// 2. 清整 slot 叶 PTE + 回收变空的中间表；
@@ -875,7 +875,7 @@ impl Space {
     ///
     /// **VA 复用安全的关键**：PTE 清理 + [`flush_asid`] 先于归还，杜绝复用者
     /// 摸到旧线程残留映射。
-    pub(crate) fn task_reclaim(&self, owner: usize, frame_va: VirtAddr) {
+    pub(crate) fn retire(&self, owner: usize, frame_va: VirtAddr) {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
         // 1+3. 栈窗口：摘 owner 子 Map → 清 PTE → 位图归还 slot
@@ -883,9 +883,9 @@ impl Space {
             let kind = DynamicKind::Stack(0);
             dynamic.get_mut(&kind).expect("window exists")
         };
-        if let Some((slot_va, slot_size)) = stack.remove_owner(owner) {
+        if let Some((slot_va, slot_size)) = stack.disown(owner) {
             durable.unmap_frames(slot_va, slot_size);
-            // 位图归还与子 Map 结构性绑定：remove_owner 命中则 dealloc 必成功
+            // 位图归还与子 Map 结构性绑定：disown 命中则 dealloc 必成功
             let _ = stack.allocator.deallocate(slot_va.as_usize(), slot_size);
         }
         // 2+4. 帧窗口：摘帧子 Map → 清 PTE → 位图归还帧 VA
@@ -945,7 +945,7 @@ impl Space {
                 .iter_mut()
                 .find(|m| m.va == va)
                 .expect("heap child exists");
-            child.push_frame(page);
+            child.inject(page);
             mapped += 1;
         }
         drop(inner);
@@ -1227,24 +1227,49 @@ impl Space {
         }
     }
 
-    /// 修改已映射区域的保护标志。
+    /// 修改已映射区域的保护标志（mprotect）。
     ///
-    /// 单次遍历，不分配中间表——叶子 PTE 不存在则返回错误。簿记侧 Map.flags
-    /// 不同步（mprotect 后端接入时一并处理）。
+    /// 懒区感知、按映射种类分流：
+    /// - **懒 Anonymous 映射**（mmap/declare/堆）：逐页经 [`Map::translate`] 判
+    ///   触态——已触页（帧在册）当场翻叶子 PTE；未触页（无帧无 PTE）只同步簿记
+    ///   `Map.flags`，后续缺页按新标志物化。
+    /// - **非懒映射**（即时/借用，如内核 .rodata 恒等区）：叶子本应在册，直接
+    ///   `walk_mut` 翻位；叶子缺失即 [`MapError::NotMapped`]。
+    ///
+    /// `V` 恒被强制置位（保护标志只表达 R/W/X/U 语义）；子区间 mprotect 整张
+    /// 覆盖 Map 的 `flags` 平铺（教学简化）。
     ///
     /// # Errors
     ///
-    /// 任一页的叶子 PTE 不存在时返回 [`MapError::NotMapped`]。
-    #[allow(dead_code)] // ecall mprotect 后端预留
-    pub fn protect(&self, vaddr: VirtAddr, size: usize, flags: PteFlags) -> Result<(), MapError> {
+    /// - 区间任一页不在任何映射内 → [`MapError::NoRegion`]；
+    /// - 非懒映射缺叶子 → [`MapError::NotMapped`]。
+    pub fn mprotect(&self, vaddr: VirtAddr, size: usize, flags: PteFlags) -> Result<(), MapError> {
         let mut inner = self.inner.lock();
-        let root = &mut inner.durable.root;
+        let flags = flags | PteFlags::V;
         let pages = size.div_ceil(PAGE_SIZE);
         for i in 0..pages {
             let va = vaddr + i * PAGE_SIZE;
-            // None = 不分配中间表：叶子缺失即 NotMapped
-            let leaf = root.walk_mut(va, false)?;
-            leaf.set_flags(flags | PteFlags::V);
+            let (kind, eager_or_touched) = {
+                let m = inner.resolve_ref(va).ok_or(MapError::NoRegion)?;
+                if m.kind == MapKind::Anonymous {
+                    // translate = 按 VA→PA 语义直接取帧：命中 = 懒区已触页（帧在册）
+                    (m.kind, m.translate(va.as_usize() - m.va.as_usize()).is_ok())
+                } else {
+                    // 非懒映射：叶子应已在册，直接走 walk_mut（缺失即 NotMapped）
+                    (m.kind, true)
+                }
+            };
+            if eager_or_touched {
+                // 已触页/即时映射必有叶子：不分配中间表（None），缺失即错误
+                let leaf = inner.durable.root.walk_mut(va, false)?;
+                leaf.set_flags(flags);
+            }
+            if kind == MapKind::Anonymous {
+                inner
+                    .resolve_mut(va)
+                    .expect("map exists (checked above)")
+                    .flags = flags;
+            }
         }
         drop(inner);
         // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -1392,7 +1417,7 @@ impl Space {
     /// 放下 `[start, start+size)` 内共享引用（Borrowed 页 Arc 计数 −1、归零归还）。
     ///
     /// 实现注记：本空间对该帧的 Arc 引用由 `Map.frames` 持有——卸映射
-    /// （unmap / task_reclaim / Space::drop）drop 整个 Map 时随帧自动释放，
+    /// （unmap / retire / Space::drop）drop 整个 Map 时随帧自动释放，
     /// 无需额外操作。本方法保留为 borrow 的反向语义锚点，本身不改变状态；
     /// 必须与 PTE 拆除路径（unmap）配对，否则共享页会悬空。
     #[allow(dead_code)] // 语义由 Map teardown 承担；borrow 成对锚点
@@ -1432,7 +1457,7 @@ impl Space {
                 durable.root.map(va, pa, PAGE_SIZE, flags)?;
             }
             let map = inner.resolve_mut(va).expect("map exists (checked above)");
-            map.push_frame(page);
+            map.inject(page);
         }
         drop(inner);
         // SAFETY: S-mode 下 sfence.vma 恒合法。

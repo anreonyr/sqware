@@ -14,10 +14,12 @@ use ubi::Ucall;
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
+use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::scheduler::{park, reap, running_team, starve, with_running_space};
+use crate::work::unit::space::MapKind;
 
 /// envcall 分发。
 ///
@@ -80,11 +82,17 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Spawn => {
-            // a0 = 入口 VA（用户 trampoline），a1 = arg（闭包指针）。当前 team 内建 U 任务。
+            // a0 = 入口 VA（用户 trampoline），a1 = arg（闭包指针），a2 = 栈大小
+            // （0 = 缺省 TASK_STACK_SIZE）。当前 team 内建 U 任务。
             let entry = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let arg = frame.gpr.x(Gprs::A1);
+            let stack = frame.gpr.x(Gprs::A2);
             let team = running_team();
-            let r = team.task().name("u-thread").entry(entry).arg(arg).spawn();
+            let mut builder = team.task().name("u-thread").entry(entry).arg(arg);
+            if stack > 0 {
+                builder = builder.stack(stack);
+            }
+            let r = builder.spawn();
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
@@ -98,9 +106,20 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             panic!("user-initiated panic (code {:#x})", frame.gpr.x(Gprs::A0));
         }
         Ucall::Mmap => {
-            // a0 = 字节数（页对齐）。高位大段懒匿名映射——触碰经缺页补零页帧。
+            // a0 = 字节数（页对齐）；a2 = 期望 VA，0 = 窗口自选高位。a2 ≠ 0 走
+            // 声明式固定地址懒映射（declare 登记常数侧：触碰经既有缺页补零页帧，
+            // 删除经 Munmap 回退 [`Space::unmap`] 摘整段）。
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
-            let va = with_running_space(|s| s.mmap(size));
+            let fixed = frame.gpr.x(Gprs::A2);
+            let va = with_running_space(|s| {
+                if fixed == 0 {
+                    s.mmap(size)
+                } else {
+                    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
+                    s.declare(VirtAddr::from_raw(fixed), size, flags, MapKind::Anonymous)
+                        .map(|()| VirtAddr::from_raw(fixed))
+                }
+            });
             frame.gpr.set_x(
                 Gprs::A0,
                 match va {
@@ -110,10 +129,32 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             );
         }
         Ucall::Munmap => {
-            // a0 = 映射 VA，a1 = 字节数（与 mmap 同源页对齐）。
-            let addr = frame.gpr.x(Gprs::A0);
+            // a0 = 映射 VA，a1 = 字节数（与 mmap 同源页对齐）。窗口区域经 munmap
+            // 精确匹配；固定地址声明区（常数侧登记）回退 Space::unmap 摘整段。
+            // 未命中任何映射仍返回错误。
+            let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
-            let ok = with_running_space(|s| s.munmap(VirtAddr::from_raw(addr), size));
+            let ok = with_running_space(|s| {
+                if s.munmap(addr, size) {
+                    true
+                } else if s.resolve_kind(addr).is_some() {
+                    // 声明区（或窗口子区间的近似覆盖）：PTE 清 + 整段摘除；窗口
+                    // 位图槽不归还——边界拆分留待 mprotect 后端细化。
+                    s.unmap(addr, size);
+                    true
+                } else {
+                    false
+                }
+            });
+            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+        }
+        Ucall::Mprotect => {
+            // a0 = 映射 VA，a1 = 字节数（页对齐），a2 = 新权限（PteFlags 位）。
+            // 懒区感知：已触页当场翻叶子 PTE，未触页仅同步簿记（Map.flags）。
+            let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
+            let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
+            let flags = PteFlags::from_bits_truncate(frame.gpr.x(Gprs::A2) as u64);
+            let ok = with_running_space(|s| s.mprotect(addr, size, flags).is_ok());
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
     };

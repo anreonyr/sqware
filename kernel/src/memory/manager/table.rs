@@ -155,7 +155,7 @@ impl TableNode {
 
     /// Walk to the leaf PTE (mutable)，沿所有权树下钻。
     ///
-    /// `alloc`：缺中间表时是否新建（map/缺页用 true；protect 等只读遍历用
+    /// `alloc`：缺中间表时是否新建（map/缺页用 true；mprotect 等只读遍历用
     /// false → [`MapError::NotMapped`]）。新建子表**先入树再写 PTE**——PTE
     /// 永不指向未登记的表；树与 PTE 同源，无第二份待同步状态。下钻层数 =
     /// 当前模式层级（[`mode::geometry`]）。

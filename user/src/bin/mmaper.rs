@@ -1,7 +1,12 @@
 #![no_std]
 #![no_main]
 
-use user::env::{exit, mmap, munmap, put};
+use user::env::{exit, mmap, mmap_at, mprotect, munmap, put};
+
+/// PTE 标志位（与内核 PteFlags 同构；mprotect 用）。
+const PTE_V: usize = 1;
+const PTE_R: usize = 2;
+const PTE_U: usize = 16;
 
 /// 打印 64 位十六进制（演示用；env 无数字打印机）。
 fn put_hex(v: usize) {
@@ -56,6 +61,44 @@ extern "C" fn main() -> ! {
         }
         Err(_) => {
             let _ = put("mmaper: munmap FAILED\n");
+        }
+    }
+
+    // 幕 4：固定地址声明式懒映射（mmap_at = declare 常数侧：不占窗口、触碰补帧）
+    // + mprotect 只读（未触页仅簿记同步）+ unmap 回收。
+    const FIXED: usize = 0x8000; // 镜像基址 0x10000 之下，无窗口覆盖
+    match mmap_at(FIXED, 4 * 4096) {
+        Ok(va) if va == FIXED => {
+            let _ = put("mmaper: mmap_at(0x8000, 16K) ok\n");
+        }
+        _ => {
+            let _ = put("mmaper: mmap_at FAILED\n");
+            exit()
+        }
+    }
+    for i in 0..4 {
+        let p = (FIXED + i * 4096) as *mut u8;
+        // SAFETY: 声明区触碰经缺页补零页帧；写单字节无别名。
+        unsafe { p.write_volatile(0x5A) };
+    }
+    let _ = put("mmaper: fixed touched 4 pages ok\n");
+
+    // mprotect 只读（V|R|U，清 W）：已触页叶子 PTE 翻位、未触页仅簿记同步。
+    if mprotect(FIXED, 4 * 4096, (PTE_V | PTE_R | PTE_U) as u64).is_ok() {
+        let _ = put("mmaper: mprotect read-only ok\n");
+    } else {
+        let _ = put("mmaper: mprotect FAILED\n");
+    }
+    // 只读语义回归：已触页读回仍合法（写会缺页，此处不写）。
+    let v = unsafe { (FIXED as *const u8).read_volatile() };
+    debug_assert_eq!(v, 0x5A);
+
+    match munmap(FIXED, 4 * 4096) {
+        Ok(()) => {
+            let _ = put("mmaper: munmap fixed ok\n");
+        }
+        Err(_) => {
+            let _ = put("mmaper: munmap fixed FAILED\n");
         }
     }
     exit()
