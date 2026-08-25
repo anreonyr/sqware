@@ -256,24 +256,43 @@ impl Durable {
         })
     }
 
-    /// 清 `[va, va+size)` 叶 PTE 并回收变空的中间表（unmap/dealloc/回滚共用）。
+    /// 逐帧装叶子 PTE（**放**）：VA 连续推进、PA 取每帧自身（物理可断）。
     ///
-    /// 回收 = 自底向上判空（512 项全无效）即摘除子树、帧当场归还——树与 PTE
-    /// 同源（`TableNode::reclaim` 先清 PTE 再摘子节点）。层级与 VA 掩码按
-    /// 当前模式几何派生。
-    fn clear_range(&mut self, va: usize, size: usize) {
+    /// 与 [`unmap_frames`](Self::unmap_frames)（**收**，按区间）成对：放按帧
+    /// （attach 持帧切片）、收按区间（teardown 不知帧清单）。簿记由调用方完成，
+    /// 本方法只装 PTE——与 `TableNode::map`（物理连续版）同族。
+    fn map_frames(
+        &mut self,
+        va: VirtAddr,
+        frames: &[Frame],
+        flags: PteFlags,
+    ) -> Result<(), MapError> {
+        for (i, frame) in frames.iter().enumerate() {
+            let pa = PhysAddr::from_raw(frame.as_ptr() as usize);
+            let addr = va + i * PAGE_SIZE;
+            self.root.map(addr, pa, PAGE_SIZE, flags)?;
+        }
+        Ok(())
+    }
+
+    /// 摘 `[va, va+size)` 叶 PTE 并回收变空的中间表（unmap/munmap/dealloc/回滚共用）。
+    ///
+    /// `map_frames` 的反向（收）；回收 = 自底向上判空（512 项全无效）即摘除子树、
+    /// 帧当场归还——树与 PTE 同源（`TableNode::reclaim` 先清 PTE 再摘子节点）。
+    /// 层级与 VA 掩码按当前模式几何派生。
+    fn unmap_frames(&mut self, va: VirtAddr, size: usize) {
         if size == 0 {
             return;
         }
         for i in 0..size.div_ceil(PAGE_SIZE) {
-            self.root.unmap(VirtAddr::from_raw(va + i * PAGE_SIZE));
+            self.root.unmap(va + i * PAGE_SIZE);
         }
         // 模式 VA 宽度掩码（剥符号扩展：内核半区 VA 的高位）
         let geo = mode::geometry(mode::mode());
         let mask = (1usize << geo.va_bits) - 1;
-        let end = va.saturating_add(size);
+        let end = va.as_usize().saturating_add(size);
         self.root
-            .reclaim((geo.levels - 1) as usize, 0, va & mask, end & mask);
+            .reclaim((geo.levels - 1) as usize, 0, va.as_usize() & mask, end & mask);
     }
 
     /// 查询覆盖 `vaddr` 的常数映射。
@@ -720,26 +739,6 @@ impl SpaceBuilder {
     }
 }
 
-/// 逐帧装叶子 PTE：VA 连续推进、PA 取每帧自身（物理可断，不假设连续）。
-///
-/// [`attach_durable`](Space::attach_durable) 与
-/// [`attach_dynamic`](Space::attach_dynamic) 共享的同一段循环——把一帧 Physical
-/// 页装配到对应 VA 的叶子 PTE（新中间表由页表树 [`TableNode`] 内部持有）。
-/// 簿记（登记 / 压入 Map）由调用方各自完成，故本函数**仅装 PTE、不动簿记**。
-fn install_frame_ptes(
-    root: &mut TableNode,
-    va: VirtAddr,
-    frames: &[Frame],
-    flags: PteFlags,
-) -> Result<(), MapError> {
-    for (i, frame) in frames.iter().enumerate() {
-        let pa = PhysAddr::from_raw(frame.as_ptr() as usize);
-        let addr = va + i * PAGE_SIZE;
-        root.map(addr, pa, PAGE_SIZE, flags)?;
-    }
-    Ok(())
-}
-
 impl Space {
     // ── 映射操作 ──────────────────────────────────────────────
 
@@ -797,7 +796,7 @@ impl Space {
     /// 预留 VA 块获得子 Map，再分配帧逐帧 attach。
     ///
     /// [`attach_durable`](Self::attach_durable) 的 dynamic 簿记变体：逐帧装 PTE
-    /// （[`install_frame_ptes`]，中间表由页表树 TableNode 持有）+ `push_frame`
+    /// （[`map_frames`]（Durable），中间表由页表树 TableNode 持有）+ `push_frame`
     /// （入窗口子 Map，保持「帧 i ↔ va + i·PAGE_SIZE」不变量）。中途失败返回
     /// 错误，调用方 drop Space 统一回收（已装 PTE 与已入帧随空间归还）。
     pub(crate) fn attach_dynamic(&self, va: VirtAddr, frames: Vec<Frame>) -> Result<(), MapError> {
@@ -810,7 +809,7 @@ impl Space {
             .find(|m| m.va == va)
             .ok_or(MapError::NoRegion)?;
         let child_flags = child.flags;
-        install_frame_ptes(&mut durable.root, va, &frames, child_flags)?;
+        durable.map_frames(va, &frames, child_flags)?;
         for frame in frames {
             child.push_frame(frame);
         }
@@ -846,7 +845,7 @@ impl Space {
         let pa = PhysAddr::from_raw(page.as_ptr() as usize);
         if durable.root.map(va, pa, PAGE_SIZE, flags).is_err() {
             // 回滚：清可能残留的中间表/PTE + VA 退回窗口（空子 Map 一并移除）
-            durable.clear_range(va.as_usize(), PAGE_SIZE);
+            durable.unmap_frames(va, PAGE_SIZE);
             frame_win.deallocate(va, PAGE_SIZE);
             drop(inner);
             // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -887,7 +886,7 @@ impl Space {
             dynamic.get_mut(&kind).expect("window exists")
         };
         if let Some((slot_va, slot_size)) = stack.remove_owner(owner) {
-            durable.clear_range(slot_va.as_usize(), slot_size);
+            durable.unmap_frames(slot_va, slot_size);
             // 位图归还与子 Map 结构性绑定：remove_owner 命中则 dealloc 必成功
             let _ = stack.allocator.deallocate(slot_va.as_usize(), slot_size);
         }
@@ -897,7 +896,7 @@ impl Space {
             dynamic.get_mut(&kind).expect("window exists")
         };
         if frames.deallocate(frame_va, PAGE_SIZE) {
-            durable.clear_range(frame_va.as_usize(), PAGE_SIZE);
+            durable.unmap_frames(frame_va, PAGE_SIZE);
         }
         drop(inner);
         // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -913,7 +912,7 @@ impl Space {
     /// 耗尽 → [`MapError::OutOfMemory`]。立即分配（非懒分配）：教学简化，页表
     /// 与物理页当场就位，用户访问不再缺页。中途帧耗尽时回滚：清已映射页叶子
     /// + 移除子 Map（帧随 drop 归还）+ VA 块退回窗口
-    /// （[`IntervalAllocator::deallocate`]；中间表帧已由 clear_range 回收）。
+    /// （[`IntervalAllocator::deallocate`]；中间表帧已由 unmap_frames 回收）。
     pub(crate) fn heap_allocate(&self, size: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         let flags =
@@ -934,7 +933,7 @@ impl Space {
             let m_va = va + mapped * PAGE_SIZE;
             if durable.root.map(m_va, pa, PAGE_SIZE, flags).is_err() {
                 // 回滚：清已映射页叶子并回收中间表 + 移除子 Map（帧随 drop 归还）+ VA 退回窗口
-                durable.clear_range(va.as_usize(), mapped * PAGE_SIZE);
+                durable.unmap_frames(va, mapped * PAGE_SIZE);
                 heap.deallocate(va, size);
                 drop(inner);
                 // SAFETY: S-mode 下 sfence.vma 恒合法。
@@ -982,7 +981,7 @@ impl Space {
             return false;
         }
         // 2. 清叶子 PTE + 回收变空的中间表（帧已随子 Map 移除 drop 归还）
-        durable.clear_range(addr.as_usize(), size);
+        durable.unmap_frames(addr, size);
         drop(inner);
         // SAFETY: S-mode 下 sfence.vma 恒合法。
         unsafe {
@@ -1149,7 +1148,7 @@ impl Space {
     ///
     /// 与 [`map`](Self::map) 的差别只在物理连续性：`map` 假定 `paddr` 起 `size`
     /// **物理连续**（一次装整段，见 [`TableNode::map`] 的 `pa = paddr + i·PAGE`），
-    /// 而本方法逐帧装 PTE（[`install_frame_ptes`]）——每帧用自身 PA，物理可断，
+    /// 而本方法逐帧装 PTE（[`map_frames`]）——每帧用自身 PA，物理可断，
     /// 与 [`attach_dynamic`](Self::attach_dynamic) 同范本。
     ///
     /// 场景：程序段装载、用户堆——帧是独立堆分配的 `Box`，物理**不连续**。若只用
@@ -1183,7 +1182,7 @@ impl Space {
         }
         // 2. 逐帧装 PTE（每帧自身 PA，物理可断）+ 3. 登记一张多页常数映射
         let SpaceInner { durable, .. } = &mut *inner;
-        install_frame_ptes(&mut durable.root, vaddr, &frames, flags)?;
+        durable.map_frames(vaddr, &frames, flags)?;
         durable.maps.push(Map::new(
             vaddr,
             size,
@@ -1212,7 +1211,7 @@ impl Space {
 
         let mut inner = self.inner.lock();
         // 页表侧：清叶子 PTE + 回收变空的中间表
-        inner.durable.clear_range(vaddr.as_usize(), size);
+        inner.durable.unmap_frames(vaddr, size);
         // 簿记侧：移除被完全覆盖的常数映射与窗口子 Map
         let covered = |m: &Map| {
             vaddr.as_usize() <= m.va.as_usize()
@@ -1562,8 +1561,8 @@ impl Drop for Space {
 /// 侧经 [`kernel_frame_pa`] 读 PA。Box::leak 进 OnceLock，先于任何帧映射分配。
 static KERNEL_FRAMES: OnceLock<&'static [AtomicPhysAddr]> = OnceLock::new();
 
-/// 按实际核数分配帧 PA 表（调用**恰好一次**，先于任何帧映射）。
-pub(crate) fn init_kernel_frames(n: usize) {
+/// 按实际核数分配帧 PA 表并返回（调用**恰好一次**，先于任何帧映射）。
+pub(crate) fn init_kernel_frames(n: usize) -> &'static [AtomicPhysAddr] {
     let table: Box<[AtomicPhysAddr]> = (0..n)
         .map(|_| AtomicPhysAddr::new(PhysAddr::from_raw(0)))
         .collect();
@@ -1571,10 +1570,6 @@ pub(crate) fn init_kernel_frames(n: usize) {
         KERNEL_FRAMES.set(Box::leak(table)).is_ok(),
         "kernel frames double init"
     );
-}
-
-/// 帧 PA 表只读视图（逐 hart 映射 per-hart 帧时迭代用）。
-pub(crate) fn kernel_frames() -> &'static [AtomicPhysAddr] {
     KERNEL_FRAMES.get().expect("kernel frames not initialized")
 }
 
@@ -1582,5 +1577,8 @@ pub(crate) fn kernel_frames() -> &'static [AtomicPhysAddr] {
 ///
 /// hart 0 的帧供用户帧构建从它拷贝内核切换信息，统一经本函数读取。
 pub fn kernel_frame_pa(hart: usize) -> PhysAddr {
-    kernel_frames()[hart].load(Ordering::Relaxed)
+    KERNEL_FRAMES
+        .get()
+        .expect("kernel frames not initialized")[hart]
+        .load(Ordering::Relaxed)
 }

@@ -148,25 +148,9 @@ fn spawn_demos() -> Result<(), MapError> {
     // team1.task().name("thread-B").entry(entry1).arg(1).spawn()?;
     // drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
 
-    // 单线程团队回归：counter/yielder/sleeper/exiter 行为不变
+    // 单线程团队回归
     for (elf, name) in [
         (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
-        // (
-        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-counter")[..],
-        //     "counter",
-        // ),
-        // (
-        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-yielder")[..],
-        //     "yielder",
-        // ),
-        // (
-        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-sleeper")[..],
-        //     "sleeper",
-        // ),
-        // (
-        //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-exiter")[..],
-        //     "exiter",
-        // ),
         (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
         (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
     ] {

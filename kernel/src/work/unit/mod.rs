@@ -37,8 +37,7 @@ use crate::memory::manager::{
 };
 
 use space::{
-    KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, init_kernel_frames, kernel_frames,
-    trampoline_pa,
+    KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, init_kernel_frames, trampoline_pa,
 };
 
 // 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
@@ -144,8 +143,7 @@ pub fn init() -> MapResult<()> {
 
             // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页。
             let n = machine::hart_count();
-            init_kernel_frames(n);
-            let frames = kernel_frames();
+            let frames = init_kernel_frames(n);
             for (h, slot) in frames.iter().enumerate() {
                 let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                     .map_err(|_| MapError::OutOfMemory)?;
