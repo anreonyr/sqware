@@ -28,22 +28,26 @@ struct Console;
 
 impl Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        write_bytes(s.as_bytes());
+        let bytes = s.as_bytes();
+        let va = bytes.as_ptr() as usize;
+        let end = va + bytes.len();
+        if va >= IDENTITY_BASE && end <= identity_edge() {
+            // 恒等区：VA 即 PA，一次直通（连续段）
+            DbcnCall::new(Dbcn::ConsoleWrite)
+                .args(SArgs {
+                    a0: bytes.len(),
+                    a1: va,
+                    ..Default::default()
+                })
+                .call()
+                .expect("Dbcn");
+        } else if scheduler::has_running_task() {
+            scheduler::with_running_space(|space| {
+                write_in(space, va, bytes.len());
+            });
+        }
         Ok(())
     }
-}
-
-/// 唯一 Dbcn 块写出口：a1 须为**物理**地址（OpenSBI 按物理地址读取）。PA 由
-/// 调用方保证：恒等区或经译段得到。
-fn dbcn_write(pa: usize, len: usize) {
-    DbcnCall::new(Dbcn::ConsoleWrite)
-        .args(SArgs {
-            a0: len,
-            a1: pa,
-            ..Default::default()
-        })
-        .call()
-        .unwrap();
 }
 
 /// 在指定空间上打印一段缓冲（已持空间锁的上下文用）：逐段翻译，段内 flags
@@ -55,32 +59,16 @@ pub(crate) fn write_in(space: &Space, va: usize, len: usize) -> bool {
             full = false;
             break;
         }
-        dbcn_write(pa.as_usize(), l);
+        DbcnCall::new(Dbcn::ConsoleWrite)
+            .args(SArgs {
+                a0: l,
+                a1: pa.as_usize(),
+                ..Default::default()
+            })
+            .call()
+            .unwrap();
     }
     full
-}
-
-/// 无空间上下文打印缓冲。
-///
-/// 整段预判二分支，**锁只取一次**：
-///   - 全段落在恒等区（内核栈/静态区）→ 无锁直通（panic 现场安全）；
-///   - 否则借当前运行空间走 [`write_in`]。
-///
-/// 会取运行空间锁。
-fn write_bytes(bytes: &[u8]) {
-    let va = bytes.as_ptr() as usize;
-    let end = va + bytes.len();
-    if va >= IDENTITY_BASE && end <= identity_edge() {
-        // 恒等区：VA 即 PA，一次直通（连续段）
-        dbcn_write(va, bytes.len());
-    } else if scheduler::has_running_task() {
-        scheduler::with_running_space(|space| {
-            write_in(space, va, bytes.len());
-        });
-    }
-    // 无运行空间（boot/panic 早期）：用户窗口 VA 无从译 PA，静默丢弃——内核
-    // 缓冲恒在恒等区（上界随 dram），此分支仅防御未来失误；宁可丢一行也不在
-    // panic 现场嵌套 panic 静默挂死。
 }
 
 /// put!/putln!/log logger 的共同出口。
