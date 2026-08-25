@@ -147,69 +147,6 @@ impl Task {
     }
 }
 
-/// 内核任务 trampoline：解包闭包、执行、跑完自动退出。
-///
-/// a0 = `Box<dyn FnOnce()>` 指针（`TaskBuilder::arg` 写入）。该函数作为内核任务的
-/// sepc 入口，SPP=1 回 S 态执行于该任务内核栈上；闭包返回后退出调度。
-///
-/// 必须以 `-> !` 返回：从 `_start`-式入口返回会跳 0 崩溃，退出必须显式执行。
-///
-/// # Safety
-/// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
-/// `Box<dyn FnOnce()>` 原始指针。
-pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
-    // 重建 tp = 实际执行 hart：内核任务被调度到任一 hart 时 tp 未必随之更新。
-    // 帧 kernel_sp 由调度器按**真实** hart 写入（trap 栈顶），据此反推实际
-    // hart 写入 tp。
-    let fr = KT_FRAME_PA.load(core::sync::atomic::Ordering::Relaxed)
-        as *const crate::runtime::switcher::context::TrapContext;
-    let ksp = unsafe { core::ptr::addr_of!((*fr).kernel_sp).read() }.as_usize();
-    let mut actual = crate::machine::hart_id();
-    for h in 0..crate::machine::hart_count() {
-        if crate::runtime::switcher::trampoline::trap_stack_top(h) == ksp {
-            actual = h;
-        }
-    }
-    // SAFETY: 写 tp（内核任务建立正确的 hartid；S 态、无 TLS，内核里 tp 恒为 hartid）。
-    unsafe {
-        core::arch::asm!("mv tp, {h}", h = in(reg) actual, options(nomem, nostack, preserves_flags));
-    }
-    // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
-    let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
-    let boxed: Box<dyn FnOnce()> = *holder; // 移出内层闭包，holder 随之 drop
-    boxed();
-    ktask_exit()
-}
-
-/// 内核任务退出：切到 per-hart trap 栈（否则栈回收会回收**正在使用**的内核栈）→
-/// 标记退出 + 取下一任务 → restore。永不返回。
-fn ktask_exit() -> ! {
-    // 切到 per-hart trap 栈再退出：回收 Reaped 任务（含其内核栈）时我们已不在
-    // 该栈上。**必须用 options(noreturn) 的 tail-jump**——在 Rust 函数中部 `mv sp` 若配
-    // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位。
-    // noreturn 保证 asm 后无编译器生成代码，`jr` 到退出函数后在**全新** trap 栈帧上执行，
-    // 无被丢弃的旧 Rust 帧。
-    let top = trap_stack_top(crate::machine::hart_id());
-    // SAFETY: `top` 是本 hart per-hart trap 栈顶（内核空间、S 态可写）；退出函数跑在其上，
-    // 永不返回（restore 是 noreturn）。
-    unsafe {
-        core::arch::asm!(
-            "mv sp, {top}",
-            "la t0, {exit}",
-            "jr t0",
-            top = in(reg) top,
-            exit = sym kstack_exit,
-            options(noreturn),
-        );
-    }
-}
-
-/// 在 per-hart trap 栈上执行退出：标记 Reaped + 取下一任务 + 恢复。永不返回。
-extern "C" fn kstack_exit() -> ! {
-    let next = scheduler::reap();
-    restore(next)
-}
-
 /// 任务构建器：在团队容器内生成线程（栈 + trap 帧 + 填帧 + 入队）。
 ///
 /// 入口参数 arg 写入用户上下文 a0。空间分配（栈/帧）
@@ -377,4 +314,67 @@ impl TaskBuilder {
         scheduler::push(task);
         Ok(frame_pa)
     }
+}
+
+/// 内核任务 trampoline：解包闭包、执行、跑完自动退出。
+///
+/// a0 = `Box<dyn FnOnce()>` 指针（`TaskBuilder::arg` 写入）。该函数作为内核任务的
+/// sepc 入口，SPP=1 回 S 态执行于该任务内核栈上；闭包返回后退出调度。
+///
+/// 必须以 `-> !` 返回：从 `_start`-式入口返回会跳 0 崩溃，退出必须显式执行。
+///
+/// # Safety
+/// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
+/// `Box<dyn FnOnce()>` 原始指针。
+pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
+    // 重建 tp = 实际执行 hart：内核任务被调度到任一 hart 时 tp 未必随之更新。
+    // 帧 kernel_sp 由调度器按**真实** hart 写入（trap 栈顶），据此反推实际
+    // hart 写入 tp。
+    let fr = KT_FRAME_PA.load(core::sync::atomic::Ordering::Relaxed)
+        as *const crate::runtime::switcher::context::TrapContext;
+    let ksp = unsafe { core::ptr::addr_of!((*fr).kernel_sp).read() }.as_usize();
+    let mut actual = crate::machine::hart_id();
+    for h in 0..crate::machine::hart_count() {
+        if crate::runtime::switcher::trampoline::trap_stack_top(h) == ksp {
+            actual = h;
+        }
+    }
+    // SAFETY: 写 tp（内核任务建立正确的 hartid；S 态、无 TLS，内核里 tp 恒为 hartid）。
+    unsafe {
+        core::arch::asm!("mv tp, {h}", h = in(reg) actual, options(nomem, nostack, preserves_flags));
+    }
+    // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
+    let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
+    let boxed: Box<dyn FnOnce()> = *holder; // 移出内层闭包，holder 随之 drop
+    boxed();
+    ktask_exit()
+}
+
+/// 内核任务退出：切到 per-hart trap 栈（否则栈回收会回收**正在使用**的内核栈）→
+/// 标记退出 + 取下一任务 → restore。永不返回。
+fn ktask_exit() -> ! {
+    // 切到 per-hart trap 栈再退出：回收 Reaped 任务（含其内核栈）时我们已不在
+    // 该栈上。**必须用 options(noreturn) 的 tail-jump**——在 Rust 函数中部 `mv sp` 若配
+    // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位。
+    // noreturn 保证 asm 后无编译器生成代码，`jr` 到退出函数后在**全新** trap 栈帧上执行，
+    // 无被丢弃的旧 Rust 帧。
+    let top = trap_stack_top(crate::machine::hart_id());
+    // SAFETY: `top` 是本 hart per-hart trap 栈顶（内核空间、S 态可写）；退出函数跑在其上，
+    // 永不返回（restore 是 noreturn）。
+    unsafe {
+        core::arch::asm!(
+            "mv sp, {top}",
+            "la t0, {exit}",
+            "jr t0",
+            top = in(reg) top,
+            exit = sym kstack_exit,
+            options(noreturn),
+        );
+    }
+}
+
+/// 在 per-hart trap 栈上执行退出：标记 Reaped + 取下一任务 + 恢复。永不返回。
+extern "C" fn kstack_exit() -> ! {
+    let next = scheduler::reap();
+    restore(next)
 }
