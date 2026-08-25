@@ -157,25 +157,16 @@ impl TableNode {
     ///
     /// `alloc`：缺中间表时是否新建（map/缺页用 true；mprotect 等只读遍历用
     /// false → [`MapError::NotMapped`]）。新建子表**先入树再写 PTE**——PTE
-    /// 永不指向未登记的表；树与 PTE 同源，无第二份待同步状态。下钻层数 =
-    /// 当前模式层级（[`mode::geometry`]）。
+    /// 永不指向未登记的表；树与 PTE 同源，无第二份待同步状态。
+    ///
+    /// `levels`：下钻层数。正常路径传当前模式层级（[`super::mode::levels`]）；
+    /// 模式探测等显式场景传候选层级。
     ///
     /// # Errors
     ///
     /// - `OutOfMemory` — `alloc` 为 true 且物理帧耗尽
     /// - `NotMapped` — `alloc` 为 false 且中间表缺失
     pub(crate) fn walk_mut(
-        &mut self,
-        vaddr: VirtAddr,
-        alloc: bool,
-    ) -> Result<&mut PageTableEntry, MapError> {
-        let levels = super::mode::geometry(super::mode::mode()).levels as usize;
-        self.walk_mut_with(vaddr, alloc, levels)
-    }
-
-    /// 指定层数下钻（模式探测等显式层数场景用；正常路径走 [`Self::walk_mut`]，
-    /// 以当前模式层级下钻）。语义与 `walk_mut` 相同。
-    pub(crate) fn walk_mut_with(
         &mut self,
         vaddr: VirtAddr,
         alloc: bool,
@@ -219,7 +210,7 @@ impl TableNode {
         page_va: VirtAddr,
         ok: impl Fn(PhysAddr) -> bool,
     ) -> Option<(PhysAddr, PteFlags)> {
-        let levels = super::mode::geometry(super::mode::mode()).levels as usize;
+        let levels = super::mode::levels();
         let mut tbl = root;
         if !ok(tbl) {
             return None;
@@ -255,7 +246,7 @@ impl TableNode {
     ///
     /// 中间表或叶 PTE 无效（含中间级 leaf 超页）时返回 [`MapError::NotMapped`]。
     pub(crate) fn walk_ref(&self, vaddr: VirtAddr) -> Result<(PhysAddr, PteFlags), MapError> {
-        let levels = super::mode::geometry(super::mode::mode()).levels as usize;
+        let levels = super::mode::levels();
         let mut node = self;
         for level in (0..levels).rev() {
             let idx = vaddr.vpn(level as u8);
@@ -310,7 +301,7 @@ impl TableNode {
         for i in 0..pages {
             let va = vaddr + i * PAGE_SIZE;
             let pa = paddr + i * PAGE_SIZE;
-            let leaf = self.walk_mut(va, true)?;
+            let leaf = self.walk_mut(va, true, super::mode::levels())?;
             if leaf.is_valid() {
                 return Err(MapError::AlreadyMapped);
             }
@@ -325,7 +316,7 @@ impl TableNode {
     /// 复用 [`Self::walk_mut`]（alloc=false）：中间表缺失时返回 NotMapped，
     /// 与本无映射一致，直接跳过。
     pub(crate) fn unmap(&mut self, vaddr: VirtAddr) {
-        if let Ok(leaf) = self.walk_mut(vaddr, false) {
+        if let Ok(leaf) = self.walk_mut(vaddr, false, super::mode::levels()) {
             leaf.clear();
         }
     }

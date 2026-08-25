@@ -104,6 +104,11 @@ pub fn geometry(mode: satp::Mode) -> Geo {
     }
 }
 
+/// 当前模式的页表层级数（3/4/5）。
+pub fn levels() -> usize {
+    geometry(mode()).levels as usize
+}
+
 /// 内核半区起点（用户/内核分界）= `canonical(1 << split_bit)`。
 ///
 /// Sv39: `0xFFFF_FFC0_0000_0000`· Sv48: `0xFFFF_8000_0000_0000`
@@ -140,7 +145,7 @@ fn try_mode(candidate: satp::Mode) -> Result<(), SatpError> {
     while va < range.1 {
         let ppn = (va >> PAGE_SHIFT) as u64;
         let leaf = root
-            .walk_mut_with(VirtAddr::wrap(va), true, geo.levels as usize)
+            .walk_mut(VirtAddr::wrap(va), true, geo.levels as usize)
             .map_err(|_| SatpError::OutOfMemory)?;
         leaf.set(ppn, PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X);
         va += crate::memory::PAGE_SIZE;

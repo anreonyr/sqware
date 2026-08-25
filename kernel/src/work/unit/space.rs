@@ -1260,7 +1260,7 @@ impl Space {
             };
             if eager_or_touched {
                 // 已触页/即时映射必有叶子：不分配中间表（None），缺失即错误
-                let leaf = inner.durable.root.walk_mut(va, false)?;
+                let leaf = inner.durable.root.walk_mut(va, false, mode::levels())?;
                 leaf.set_flags(flags);
             }
             if kind == MapKind::Anonymous {
@@ -1329,7 +1329,7 @@ impl Space {
                 let idx = (va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
                 let old = core::mem::replace(&mut map.frames[idx], FrameState::Borrowed(arc));
                 drop(old); // 旧 Owned 帧归还 frame 池
-                let leaf = durable.root.walk_mut(va, false)?;
+                let leaf = durable.root.walk_mut(va, false, mode::levels())?;
                 let ppn = (arc_pa.as_usize() >> 12) as u64;
                 leaf.set(
                     ppn,
@@ -1365,7 +1365,7 @@ impl Space {
             let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
             let flags = map.flags;
             if let FrameState::Owned(_) = &map.frames[idx] {
-                let leaf = durable.root.walk_mut(page, false)?;
+                let leaf = durable.root.walk_mut(page, false, mode::levels())?;
                 leaf.set_flags(leaf.flags() | PteFlags::W | PteFlags::V);
                 return Ok(());
             }
@@ -1381,7 +1381,7 @@ impl Space {
             let pa = PhysAddr::from_raw(new_box.as_ptr() as usize);
             let old = core::mem::replace(&mut map.frames[idx], FrameState::Owned(new_box));
             drop(old); // 放下共享 Arc（计数 −1）
-            let leaf = durable.root.walk_mut(page, false)?;
+            let leaf = durable.root.walk_mut(page, false, mode::levels())?;
             let ppn = (pa.as_usize() >> 12) as u64;
             leaf.set(ppn, flags | PteFlags::W | PteFlags::V);
         }
