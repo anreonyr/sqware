@@ -1,7 +1,8 @@
 //! elftable — 从 ELF 的 .symtab+.strtab 读出的符号表（符号化）。
 //!
 //! 职责：给定 .symtab + .strtab，产出可按地址二分查询的符号表。名字是 strtab 里
-//! 切出的 &'static str（零拷贝）；表一次建成后 Box::leak。
+//! 切出的 &'static str（零拷贝，指向镜像 .rodata）；Entry 数组由表自有
+//! （Box，随持有者回收——不泄漏）。
 
 use alloc::boxed::Box;
 use alloc::format;
@@ -16,9 +17,11 @@ pub struct Entry {
     pub name: &'static str,
 }
 
-/// 符号表 — 有序 Entry 切片（升序，二进制查找见 [`ElfTable::lookup`]）。
+/// 符号表 — 有序 Entry（升序，二进制查找见 [`ElfTable::lookup`]）。
+/// Entry 数组**自有**（随持有者回收，不泄漏）；name 仍 `&'static` 零拷贝指向
+/// 镜像 .rodata（见 [`name_in_range`]）。
 pub struct ElfTable {
-    entries: &'static [Entry],
+    entries: Box<[Entry]>,
 }
 
 // ELF64 符号表布局（Elf64_Sym，24 B/条；按字节 + LE 读取）。
@@ -72,7 +75,7 @@ fn name_in_range(nm: &str) -> bool {
 
 impl ElfTable {
     /// 从 .symtab+.strtab 构建：只留 STT_FUNC，按 addr 升序；空表 → None。
-    /// 表一次建成 Box::leak（'static，永不回收）。
+    /// Entry 数组由表自有（[`Arc`] 持有者回收），symtab/strtab 切片零拷贝。
     pub fn from_sections(symtab: &'static [u8], strtab: &'static [u8]) -> Option<ElfTable> {
         let mut entries = Vec::new();
         let n = symtab.len() / SYM_SIZE;
@@ -96,13 +99,13 @@ impl ElfTable {
         }
         entries.sort_by_key(|e| e.addr.as_usize());
         Some(ElfTable {
-            entries: Box::leak(entries.into_boxed_slice()),
+            entries: entries.into_boxed_slice(),
         })
     }
 
-    /// 从已按 addr 升序的静态切片构建（调用方保证排序；无排序检查）。
+    /// 从已按 addr 升序的切片构建（调用方保证排序；无排序检查）。
     /// 供内核关键入口表（编译期闭合）使用。
-    pub const fn from_entries(entries: &'static [Entry]) -> ElfTable {
+    pub fn from_entries(entries: Box<[Entry]>) -> ElfTable {
         ElfTable { entries }
     }
 
@@ -225,7 +228,7 @@ pub fn kernel_table() -> Option<ElfTable> {
         "page_fault"    : crate::memory::manager::fault::handle_page_fault;
     }
     v.sort_by_key(|e| e.addr.as_usize());
-    Some(ElfTable::from_entries(Box::leak(v.into_boxed_slice())))
+    Some(ElfTable::from_entries(v.into_boxed_slice()))
 }
 
 // ── 符号化（表显式传入；域路由在消费方，本模块不依赖 team）──────
