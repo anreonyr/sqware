@@ -58,20 +58,6 @@ pub enum MapKind {
     Reserved,
 }
 
-/// 映射摘要 — [`Map`] 的 Copy 视图（锁外查询用；Map 含 Vec 不可 Copy）。
-/// 不实现 `PartialEq`：`PteFlags`（bitflags）未提供该 trait。
-#[derive(Debug, Clone, Copy)]
-pub struct MapInfo {
-    /// 映射起始虚拟地址。
-    pub(crate) va: VirtAddr,
-    /// 映射大小（字节，非零）。
-    pub(crate) size: NonZeroUsize,
-    /// 映射权限标志。
-    pub(crate) flags: PteFlags,
-    /// 映射种类。
-    pub(crate) kind: MapKind,
-}
-
 /// 虚拟→物理映射 — 簿记的原子单元。
 ///
 /// 语义：本映射覆盖 VA 区间 `[va, va + size)`；`frames[i]` 是 VA
@@ -108,16 +94,6 @@ impl Map {
             kind,
             owner,
             frames,
-        }
-    }
-
-    /// Copy 摘要。
-    fn info(&self) -> MapInfo {
-        MapInfo {
-            va: self.va,
-            size: self.size,
-            flags: self.flags,
-            kind: self.kind,
         }
     }
 
@@ -196,17 +172,18 @@ impl Dynamic {
         vaddr >= self.va && vaddr.as_usize() - self.va.as_usize() < self.size.get()
     }
 
-    /// 从位图分配一块 VA，登记一个空帧子 Map（懒分配：帧由调用方随后注入）。
+    /// 从区间树分配一块 VA，登记一个空帧子 Map（懒分配：帧由调用方随后注入）。
     ///
-    /// `owner` = 所属线程 id（私有资源如线程帧 / 栈 slot 用于退出回收定位；
-    /// 共享资源如堆块传 `None`）。
+    /// 返回分配基址（Copy，可锁外使用）；`size` 由调用方自知。`owner` = 所属
+    /// 线程 id（私有资源如线程帧 / 栈 slot 用于退出回收定位；共享资源如堆块
+    /// 传 `None`）。
     fn allocate(
         &mut self,
         size: usize,
         flags: PteFlags,
         kind: MapKind,
         owner: Option<usize>,
-    ) -> Result<MapInfo, MapError> {
+    ) -> Result<VirtAddr, MapError> {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
@@ -214,17 +191,16 @@ impl Dynamic {
             .allocator
             .allocate(size, Direction::Rise)
             .map_err(|_| MapError::OutOfMemory)?;
-        let map = Map::new(
-            VirtAddr::from_raw(base),
+        let va = VirtAddr::from_raw(base);
+        self.children.push(Map::new(
+            va,
             size,
             flags,
             kind,
             Vec::new(),
             owner,
-        );
-        let info = map.info();
-        self.children.push(map);
-        Ok(info)
+        ));
+        Ok(va)
     }
 
     /// 释放一块 VA：位图精确匹配成功后移除重叠子 Map（帧随 drop 归还）。
@@ -384,16 +360,16 @@ impl SpaceInner {
         Ok(())
     }
 
-    /// 查询 `vaddr` 所属的映射（常数表 → 动态窗口子表），返回 Copy 摘要。
-    fn resolve(&self, vaddr: VirtAddr) -> Option<MapInfo> {
+    /// 查询 `vaddr` 所属的映射（常数表 → 动态窗口子表），返回借用（锁内使用）。
+    fn resolve(&self, vaddr: VirtAddr) -> Option<&Map> {
         if let Some(m) = self.durable.resolve_ref(vaddr) {
-            return Some(m.info());
+            return Some(m);
         }
         for w in self.dynamic.values() {
             if w.contains(vaddr)
                 && let Some(m) = w.children.iter().rev().find(|m| m.contains(vaddr))
             {
-                return Some(m.info());
+                return Some(m);
             }
         }
         None
@@ -863,14 +839,14 @@ impl Space {
             let kind = DynamicKind::Frame(0);
             dynamic.get_mut(&kind).expect("window exists")
         };
-        let info = frame_win.allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
+        let va = frame_win.allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
         let page =
             Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
         let pa = PhysAddr::from_raw(page.as_ptr() as usize);
-        if durable.root.map(info.va, pa, PAGE_SIZE, flags).is_err() {
-            // 回滚：清可能残留的中间表/PTE + VA 退回位图（空子 Map 一并移除）
-            durable.clear_range(info.va.as_usize(), PAGE_SIZE);
-            frame_win.deallocate(info.va, PAGE_SIZE);
+        if durable.root.map(va, pa, PAGE_SIZE, flags).is_err() {
+            // 回滚：清可能残留的中间表/PTE + VA 退回窗口（空子 Map 一并移除）
+            durable.clear_range(va.as_usize(), PAGE_SIZE);
+            frame_win.deallocate(va, PAGE_SIZE);
             drop(inner);
             // SAFETY: S-mode 下 sfence.vma 恒合法。
             unsafe {
@@ -881,7 +857,7 @@ impl Space {
         let child = frame_win
             .children
             .iter_mut()
-            .find(|m| m.va == info.va)
+            .find(|m| m.va == va)
             .expect("frame child exists");
         child.push_frame(page);
         drop(inner);
@@ -889,7 +865,7 @@ impl Space {
         unsafe {
             flush_asid(self.kind.asid());
         }
-        Ok((info.va, pa))
+        Ok((va, pa))
     }
 
     /// 回收一个线程的全部私有资源（栈 slot + trap 帧），`owner` = 线程 id。
@@ -946,19 +922,19 @@ impl Space {
         let heap = dynamic
             .get_mut(&DynamicKind::Heap(0))
             .ok_or(MapError::NoRegion)?;
-        let info = heap.allocate(size, flags, MapKind::Anonymous, None)?;
+        let va = heap.allocate(size, flags, MapKind::Anonymous, None)?;
         // 2. 逐页分配物理帧并映射（立即分配）+ 注入子 Map
-        let pages = info.size.get() / PAGE_SIZE;
+        let pages = size / PAGE_SIZE;
         let mut mapped = 0usize;
         while mapped < pages {
             let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                 .map_err(|_| MapError::OutOfMemory)?;
             let pa = PhysAddr::from_raw(page.as_ptr() as usize);
-            let va = info.va + mapped * PAGE_SIZE;
-            if durable.root.map(va, pa, PAGE_SIZE, flags).is_err() {
-                // 回滚：清已映射页叶子并回收中间表 + 移除子 Map（帧随 drop 归还）+ VA 退回位图
-                durable.clear_range(info.va.as_usize(), mapped * PAGE_SIZE);
-                heap.deallocate(info.va, info.size.get());
+            let m_va = va + mapped * PAGE_SIZE;
+            if durable.root.map(m_va, pa, PAGE_SIZE, flags).is_err() {
+                // 回滚：清已映射页叶子并回收中间表 + 移除子 Map（帧随 drop 归还）+ VA 退回窗口
+                durable.clear_range(va.as_usize(), mapped * PAGE_SIZE);
+                heap.deallocate(va, size);
                 drop(inner);
                 // SAFETY: S-mode 下 sfence.vma 恒合法。
                 unsafe {
@@ -969,7 +945,7 @@ impl Space {
             let child = heap
                 .children
                 .iter_mut()
-                .find(|m| m.va == info.va)
+                .find(|m| m.va == va)
                 .expect("heap child exists");
             child.push_frame(page);
             mapped += 1;
@@ -979,15 +955,15 @@ impl Space {
         // 键 = fence::key（页索引编码，VA≥2^32 不碰撞）：多个空间共享同 VA，
         // 须并入空间身份——(asid<<44)|(va>>12) 单射（asid<2^16, va<2^56）。
         crate::memory::allocator::fence::on_alloc(
-            crate::memory::allocator::fence::key(self.kind.asid(), info.va.as_usize()),
-            info.size.get(),
+            crate::memory::allocator::fence::key(self.kind.asid(), va.as_usize()),
+            size,
             crate::memory::allocator::fence::OwnerKind::UserHeap,
         );
         // SAFETY: S-mode 下 sfence.vma 恒合法。
         unsafe {
             flush_asid(self.kind.asid());
         }
-        Ok(info.va)
+        Ok(va)
     }
 
     /// 用户堆释放：窗口按 `(addr, size)` 精确匹配后清叶子 PTE（含回收中间表）并移除子 Map（帧随
@@ -1441,17 +1417,19 @@ impl Space {
         &self,
         vaddr: VirtAddr,
         size: usize,
-        flags: PteFlags,
     ) -> Result<(), MapError> {
         let mut inner = self.inner.lock();
         let pages = size.div_ceil(PAGE_SIZE);
         for i in 0..pages {
             let va = vaddr + i * PAGE_SIZE;
-            // 前提：地址已登记 Anonymous 映射
-            let info = inner.resolve(va).ok_or(MapError::NoRegion)?;
-            if info.kind != MapKind::Anonymous {
-                return Err(MapError::NoRegion);
-            }
+            // 前提：地址已登记 Anonymous 映射；flags 由映射自取（含 A/D）。
+            let flags = {
+                let m = inner.resolve(va).ok_or(MapError::NoRegion)?;
+                if m.kind != MapKind::Anonymous {
+                    return Err(MapError::NoRegion);
+                }
+                m.flags | PteFlags::A | PteFlags::D
+            };
             let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                 .map_err(|_| MapError::OutOfMemory)?;
             let pa = PhysAddr::from_raw(page.as_ptr() as usize);
@@ -1557,12 +1535,11 @@ impl Space {
         self.inner.lock().declare(start, size, flags, kind)
     }
 
-    /// 查询虚拟地址所属的映射（常数表 → 动态窗口子表）。
+    /// 查询虚拟地址所属映射的**种类**（常数表 → 动态窗口子表）。
     ///
-    /// 返回 `Option<MapInfo>`（Copy）而非引用：映射表在锁内，
-    /// borrow 不能跨锁返回引用。
-    pub fn resolve(&self, vaddr: VirtAddr) -> Option<MapInfo> {
-        self.inner.lock().resolve(vaddr)
+    /// 缺页分支用：Anonymous → 走懒分配；Reserved → 预留诊断；None → 无映射。
+    pub fn resolve_kind(&self, vaddr: VirtAddr) -> Option<MapKind> {
+        self.inner.lock().resolve(vaddr).map(|m| m.kind)
     }
 }
 

@@ -59,13 +59,11 @@ impl PageFault {
     }
 }
 
-/// 为用户缺页解析匿名物理页。
-fn resolve_anonymous(fault: &PageFault, space: &Space, flags: PteFlags) -> bool {
+/// 为用户缺页解析匿名物理页（flags 由 page_fault 从映射自取：`map.flags | A | D`）。
+fn resolve_anonymous(fault: &PageFault, space: &Space) -> bool {
     let vaddr = fault.addr.page_align();
-    // A/D 必须设置，否则硬件可能再次缺页
-    let flags = flags | PteFlags::A | PteFlags::D;
 
-    match space.page_fault(vaddr, PAGE_SIZE, flags) {
+    match space.page_fault(vaddr, PAGE_SIZE) {
         Ok(()) => {
             info!(
                 "resolved page fault: allocated anon page for {:?} at {:?}",
@@ -111,27 +109,26 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
         return true;
     }
 
-    // 2. 用户地址 → 查 Map（常数表 + 窗口子表）
+    // 2. 用户地址 → 查映射种类（常数表 + 窗口子表）
     if fault.addr.is_user() {
-        if let Some(map) = space.resolve(fault.addr) {
-            match map.kind {
-                MapKind::Anonymous => {
-                    return resolve_anonymous(fault, space, map.flags);
-                }
-                MapKind::Reserved => {
-                    error!(
-                        "reserved region access: {:?} at {:?}, pc={:#x}",
-                        fault.kind, fault.addr, fault.pc
-                    );
-                    return false;
-                }
+        match space.resolve_kind(fault.addr) {
+            Some(MapKind::Anonymous) => {
+                return resolve_anonymous(fault, space);
             }
-        } else {
-            error!(
-                "no map for user page fault: {:?} at {:?}, pc={:#x}",
-                fault.kind, fault.addr, fault.pc
-            );
-            return false;
+            Some(MapKind::Reserved) => {
+                error!(
+                    "reserved region access: {:?} at {:?}, pc={:#x}",
+                    fault.kind, fault.addr, fault.pc
+                );
+                return false;
+            }
+            None => {
+                error!(
+                    "no map for user page fault: {:?} at {:?}, pc={:#x}",
+                    fault.kind, fault.addr, fault.pc
+                );
+                return false;
+            }
         }
     }
 
