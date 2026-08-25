@@ -35,6 +35,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
     match call {
         Ucall::Yield => return starve() as *mut TrapContext,
         Ucall::Write => {
+            // 以后接入 operator: file system adaptor
             let len = frame.gpr.x(Gprs::A0);
             let ptr = frame.gpr.x(Gprs::A1);
             let ok = with_running_space(|space| crate::console::write_in(space, ptr, len));
