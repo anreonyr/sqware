@@ -2,8 +2,7 @@
 
 <!--toc:start-->
 - [SQware](#sqware)
-- [Workspace Layout](#workspace-layout)
-- [Call Interface Symmetry](#call-interface-symmetry)
+  - [Design Principal](#design-principal)
 <!--toc:end-->
 
 ## Design Principal

@@ -87,7 +87,6 @@ pub(crate) use depend_check;
 pub(crate) use depend_enter;
 pub(crate) use depend_release;
 
-#[allow(unused_imports)]
 // BareLock：锁体系原语，当前无用户，预留
 pub use bare::BareLock;
 // LazyLock 可用但暂未使用：crate::lock::lazy::LazyLock
@@ -96,7 +95,6 @@ pub use reentrant::RelLock;
 // RwLock：锁体系原语，当前无用户，保留 re-export
 /// 锁层级（depend 具名化；参与锁用 new_level 声明；None = exempt）。
 pub use depend::Level;
-#[allow(unused_imports)]
 pub use rw::RwLock;
 pub use spin::SpinLock;
 
