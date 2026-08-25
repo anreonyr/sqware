@@ -34,6 +34,11 @@ use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::work::unit::elftable;
 
+/// 内核团队符号表（lockdep 全在内核地址——直接查内核表，不做域路由）。
+fn ktbl() -> Option<&'static elftable::ElfTable> {
+    crate::work::unit::team::kernel()?.elftable.as_deref()
+}
+
 /// 锁层级（1 最低、9 最高）。参与锁才有 level；`None` = exempt（不参与、不校验）。
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -76,12 +81,12 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
     let held = held().expect("depend: report outside collected set");
     let mut msg = format!(
         "[depend] {what}: {}",
-        elftable::symbol(VirtAddr::from_raw(lock), None)
+        elftable::symbol(VirtAddr::from_raw(lock), ktbl())
     );
     if caller != 0 {
         msg.push_str(&format!(
             "\n  caller: {}",
-            elftable::symbol(VirtAddr::from_raw(caller), None)
+            elftable::symbol(VirtAddr::from_raw(caller), ktbl())
         ));
     }
     if held.len == 0 {
@@ -96,13 +101,13 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
                 .unwrap_or_else(|| "exempt".into());
             msg.push_str(&format!(
                 "\n    {} ({lv}){} acquired at {}",
-                elftable::symbol(VirtAddr::from_raw(held.slots[i].addr), None),
+                elftable::symbol(VirtAddr::from_raw(held.slots[i].addr), ktbl()),
                 if held.slots[i].level == max {
                     "  <-- max held"
                 } else {
                     ""
                 },
-                elftable::symbol(VirtAddr::from_raw(held.slots[i].caller), None)
+                elftable::symbol(VirtAddr::from_raw(held.slots[i].caller), ktbl())
             ));
         }
         msg.push_str("\n  rule: new level must exceed max(held); violation");

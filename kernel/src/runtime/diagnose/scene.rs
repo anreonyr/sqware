@@ -28,6 +28,12 @@ use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::scheduler::{running_task_frame, running_task_info, running_team_try};
 use crate::work::unit::elftable::{self, ElfTable};
 
+/// 内核团队符号表（`elftable::routed*` 的内核侧来源；随内核团队挂载，未装配 → None）。
+/// 路由决策归消费方（本模块），elftable 模块本身不依赖 team（环已拆）。
+fn ktbl() -> Option<&'static ElfTable> {
+    crate::work::unit::team::kernel()?.elftable.as_deref()
+}
+
 /// 回溯深度上限。
 const BT_DEPTH: usize = 32;
 /// 栈扫描窗口（从当前 sp 向上）字节数。
@@ -139,10 +145,14 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     while a < high && n < BT_DEPTH {
         // SAFETY: 只读本线程栈区间（S 态直读恒等映射内存，无副作用）。
         let w = unsafe { (a as *const usize).read_volatile() };
-        // 可执行候选 = 「能解析进符号区间」的地址（resolve 按域选表 + lookup
+        // 可执行候选 = 「能解析进符号区间」的地址（routed 按域选表 + lookup
         // 上界约束）；栈上数据字落空——不收宽镜像区间误报。
-        let code =
-            elftable::resolve(VirtAddr::from_raw(w), running_team_try().as_deref()).is_some();
+        let code = elftable::routed(
+            VirtAddr::from_raw(w),
+            ktbl(),
+            running_team_try().as_deref().and_then(|t| t.elftable.as_deref()),
+        )
+        .is_some();
         if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
             out[n] = w;
             n += 1;
@@ -248,14 +258,20 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("sepc".into()),
         Some(hex(sepc::read())),
-        Some(elftable::symbol(VirtAddr::from_raw(sepc::read()), None)),
+        Some(elftable::routed_symbol(
+            VirtAddr::from_raw(sepc::read()),
+            ktbl(),
+            None,
+        )),
     ]);
     {
         // 符号命中 → 「sym note」单空格衔接；未命中 → 仅 stval 语义。
         let a = stval::read();
-        let n = if let Some((name, off)) =
-            elftable::resolve(VirtAddr::from_raw(a), running_team_try().as_deref())
-        {
+        let n = if let Some((name, off)) = elftable::routed(
+            VirtAddr::from_raw(a),
+            ktbl(),
+            running_team_try().as_deref().and_then(|t| t.elftable.as_deref()),
+        ) {
             format!("{name}+{off:#x} {}", stval_note(int, code))
         } else {
             stval_note(int, code).to_string()
@@ -279,8 +295,9 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("stvec".into()),
         Some(hex(stvec::read().address())),
-        Some(elftable::symbol(
+        Some(elftable::routed_symbol(
             VirtAddr::from_raw(stvec::read().address()),
+            ktbl(),
             None,
         )),
     ]);
@@ -413,7 +430,7 @@ pub fn dump_crash(r: &mut Report) {
             rows.push(vec![
                 Some(format!("#{i}")),
                 Some(hex(*a)),
-                Some(elftable::symbol(VirtAddr::from_raw(*a), None)),
+                Some(elftable::routed_symbol(VirtAddr::from_raw(*a), ktbl(), None)),
             ]);
         }
         r.paragraph("kbt", None).items.extend(rows);

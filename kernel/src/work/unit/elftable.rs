@@ -9,7 +9,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::memory::manager::addr::VirtAddr;
-use crate::work::unit::team::kernel;
 
 /// 一条符号（STT_FUNC；表内按 addr 升序）。
 pub struct Entry {
@@ -229,28 +228,38 @@ pub fn kernel_table() -> Option<ElfTable> {
     Some(ElfTable::from_entries(Box::leak(v.into_boxed_slice())))
 }
 
-// ── 解析器（地址域 → 选表）────────────────────────────────────
+// ── 符号化（表显式传入；域路由在消费方，本模块不依赖 team）──────
 
-/// 地址 → (符号, 偏移)。无表/无命中 → None。
-pub fn resolve(
-    addr: VirtAddr,
-    team: Option<&crate::work::unit::team::Team>,
-) -> Option<(&'static str, usize)> {
-    if addr.is_kernel() {
-        // 内核表随内核团队挂载；未注入 → None。
-        kernel()?.elftable.as_ref()?.lookup(addr)
-    } else {
-        team?.elftable.as_ref()?.lookup(addr)
+/// 地址符号化文本：表中命中出「func+0xoff」（demangle），未命中裸 hex。
+pub(crate) fn symbol(va: VirtAddr, tbl: Option<&ElfTable>) -> String {
+    match tbl.and_then(|t| t.lookup(va)) {
+        Some((name, off)) => format!("{}+{off:#x}", rustc_demangle::demangle(name)),
+        None => format!("{:#x}", va.as_usize()),
     }
 }
 
-/// 地址符号化文本：命中出「func+0xoff」（demangle），未命中裸 hex。
-pub(crate) fn symbol(va: VirtAddr, tbl: Option<&ElfTable>) -> String {
-    let hit = match tbl {
-        Some(t) => t.lookup(va),
-        None => resolve(va, None),
-    };
-    match hit {
+/// 域路由查询：内核地址查 kernel_tbl、用户地址查 user_tbl；所选表空 → None。
+/// 路由决策（谁提供哪张表）归调用方——解掉 elftable → team 的依赖环；
+/// 内核表随内核团队挂载，由消费方取（`team::kernel().elftable`）。
+pub fn routed(
+    va: VirtAddr,
+    kernel_tbl: Option<&ElfTable>,
+    user_tbl: Option<&ElfTable>,
+) -> Option<(&'static str, usize)> {
+    if va.is_kernel() {
+        kernel_tbl?.lookup(va)
+    } else {
+        user_tbl?.lookup(va)
+    }
+}
+
+/// 域路由符号化文本（[`routed`] + 格式；未命中裸 hex）。
+pub fn routed_symbol(
+    va: VirtAddr,
+    kernel_tbl: Option<&ElfTable>,
+    user_tbl: Option<&ElfTable>,
+) -> String {
+    match routed(va, kernel_tbl, user_tbl) {
         Some((name, off)) => format!("{}+{off:#x}", rustc_demangle::demangle(name)),
         None => format!("{:#x}", va.as_usize()),
     }
