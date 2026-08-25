@@ -72,13 +72,6 @@ impl UcallBuilder {
 /// 唯一碰汇编的原语：a7=调用号、a0..a5=参数 → U 态 ecall → 读回 a0/a1。
 ///
 /// unsafe：直触寄存器约定、不判错；调用方须为 U 态上下文且 call/args 已按 ABI 摆好。
-///
-/// 约束写法（勿回退为 `in(reg)` + `mv`）：输入直接绑定参数寄存器 a0..a5/a7，
-/// 输出用 `inlateout` 同寄存器承接。`in(reg)` 允许分配器把某输入放进 a0/a1——
-/// 与 lateout 重叠合法，但模板若在读取前先 `mv a0, {a0}` 就会覆盖该输入
-/// （release 实测：`{a1}` 被分配进 a0，a1 收到的是 a0 的旧值而非 args.a1，
-/// 导致 Spawn 把入口当闭包指针传给子任务）。模板只剩裸 ecall——输入在读
-/// 取后由 ecall 覆盖，与 inlateout 的「读后写」模型一致。
 unsafe fn warpper(call: Ucall, args: UArgs) -> (usize, usize) {
     let (v0, v1);
     unsafe {

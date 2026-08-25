@@ -81,22 +81,25 @@ impl<E: Extension> ScallBuilder<E> {
     }
 }
 
+/// 唯一碰汇编的原语：a7 = 扩展号、a6 = 功能号、a0..a5 = 参数 → S 态 ecall →
+/// 读回 a0（错误码）/a1（值）。
+///
+/// unsafe：直触寄存器约定、不判错；调用方须为 S 态上下文。
 unsafe fn warpper(eid: usize, fid: usize, args: [usize; 6]) -> SResult<usize> {
     let [a0, a1, a2, a3, a4, a5] = args;
     let (error, value);
     unsafe {
         core::arch::asm!(
             "ecall",
-            in("a0") a0,
-            in("a1") a1,
-            in("a2") a2,
-            in("a3") a3,
-            in("a4") a4,
-            in("a5") a5,
-            in("a6") fid,
-            in("a7") eid,
-            lateout("a0") error,
-            lateout("a1") value,
+            inlateout("a0") a0 => error,
+            inlateout("a1") a1 => value,
+            inlateout("a2") a2 => _,
+            inlateout("a3") a3 => _,
+            inlateout("a4") a4 => _,
+            inlateout("a5") a5 => _,
+            inlateout("a6") fid => _,
+            inlateout("a7") eid => _,
+            options(nostack),
         );
     }
     let e = SError::from_raw(error);
