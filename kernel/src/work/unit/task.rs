@@ -265,12 +265,12 @@ impl TaskBuilder {
         self
     }
 
-    /// 统一闭包式任务生成：团队 + 闭包建任务（与 `std::thread::spawn` 同构——闭包装箱
+    /// 统一闭包式任务生成：团队 + 闭包建任务（闭包装箱
     /// → trampoline → 新任务栈上调用）。团队身份决定运行世界：kernel 团队 → S 态内核任务
     /// （内核堆装箱、入口 `ktask_entry`、SPP=1 由 spawn 按团队身份自动定）。
     /// 当前仅支持 kernel 团队（U 态用户闭包未接入）。
     ///
-    /// 约束与 std 一致：`FnOnce + Send + 'static`——闭包可捕获、可搬移到新执行上下文。
+    /// 约束：`FnOnce + Send + 'static`——闭包可捕获、可搬移到新执行上下文。
     /// 内核态不可抢占：闭包忙等不返回也不主动让出，将独占所在核。
     pub fn closure<F>(self, f: F) -> Result<PhysAddr, MapError>
     where

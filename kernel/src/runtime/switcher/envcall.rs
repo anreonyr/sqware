@@ -3,7 +3,6 @@
 // RISC-V 特权规范：U 态 ecall 即 "Environment Call"（riscv crate 官方枚举亦名
 // `Exception::UserEnvCall`）——本模块即该调用的内核侧 ABI，术语与规范同源。
 //
-// 调用号契约（a7 枚举）单一事实源在 `ubi::Ucall`。
 // 约定：a7 = 调用号，a0..a5 = 参数，返回值写回 a0/a1（Gprs::A0/A1）；
 // 每个调用后 sepc += 4（Exit 除外——不返回）。时间语义统一以毫秒（Duration 边界）
 // 表达（Sleep=4）；tick 计数（GetTicks=3）仅作兼容诊断，非时间单位。
@@ -75,7 +74,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             );
         }
         Ucall::HeapDeallocate => {
-            // a0 = 分配所得 VA，a1 = 字节数（与分配时同源页对齐；位图精确匹配）。
+            // a0 = 分配所得 VA，a1 = 字节数（与分配时同源页对齐；区间精确匹配）。
             let addr = frame.gpr.x(Gprs::A0);
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let ok = with_running_space(|s| s.heap_deallocate(VirtAddr::from_raw(addr), size));
@@ -107,8 +106,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
         }
         Ucall::Mmap => {
             // a0 = 字节数（页对齐）；a2 = 期望 VA，0 = 窗口自选高位。a2 ≠ 0 走
-            // 声明式固定地址懒映射（declare 登记常数侧：触碰经既有缺页补零页帧，
-            // 删除经 Munmap 回退 [`Space::unmap`] 摘整段）。
+            // 声明式固定地址懒映射。
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
             let fixed = frame.gpr.x(Gprs::A2);
             let va = with_running_space(|s| {
@@ -129,9 +127,8 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             );
         }
         Ucall::Munmap => {
-            // a0 = 映射 VA，a1 = 字节数（与 mmap 同源页对齐）。窗口区域经 munmap
-            // 精确匹配；固定地址声明区（常数侧登记）回退 Space::unmap 摘整段。
-            // 未命中任何映射仍返回错误。
+            // a0 = 映射 VA，a1 = 字节数（与 mmap 同源页对齐）。窗口区域精确匹配，
+            // 固定地址声明区回退整段摘除；未命中返回错误。
             let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let ok = with_running_space(|s| {
@@ -139,7 +136,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                     true
                 } else if s.resolve_kind(addr).is_some() {
                     // 声明区（或窗口子区间的近似覆盖）：PTE 清 + 整段摘除；窗口
-                    // 位图槽不归还——边界拆分留待 mprotect 后端细化。
+                    // 窗口槽不归还——边界拆分留待 mprotect 后端细化。
                     s.unmap(addr, size);
                     true
                 } else {

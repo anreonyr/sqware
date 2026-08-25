@@ -1,4 +1,4 @@
-// 运行模式 — satp MODE 探测（P1：最小恒等临时根）与几何派生。
+// 运行模式 — satp MODE 探测与几何派生。
 //
 // 全特性单一事实源：`MODE` 决定 层级数 / VA 宽度 / 分裂位，所有分页操作
 // （walk 深度、VirtAddr 进位、satp 令牌、布局几何）从这里派生。
@@ -7,9 +7,8 @@
 // 逐一建立**候选层级**的最小恒等临时根（覆盖内核镜像与主栈，取指可翻译），
 // `satp::set(候选, 0, ppn)` → 回读 → 立即写回 Bare；回读命中即该硬件支持。
 //
-// 顺序不变量（跨模块硬不变量）：MODE 未设时读侧一律兜底 Sv39——未探测 =
-// 现状行为，任何提前调用（DTB 解析、低地址构造）不依赖探测结果（低地址在
-// 各模式进位下恒等）。
+// 顺序不变量：MODE 未设时读侧一律兜底 Sv39——任何提前调用不依赖探测结果
+// （低地址在各模式进位下恒等）。
 
 use riscv::register::satp;
 
@@ -107,7 +106,7 @@ pub fn geometry(mode: satp::Mode) -> Geo {
 
 /// 内核半区起点（用户/内核分界）= `canonical(1 << split_bit)`。
 ///
-/// Sv39: `0xFFFF_FFC0_0000_0000`（= 原 KERNEL_BASE）· Sv48: `0xFFFF_8000_0000_0000`
+/// Sv39: `0xFFFF_FFC0_0000_0000`· Sv48: `0xFFFF_8000_0000_0000`
 /// · Sv57: `0xFFFF_FF00_0000_0000`。
 pub fn lower() -> VirtAddr {
     VirtAddr::from_raw(1usize << geometry(mode()).split_bit())
@@ -118,7 +117,6 @@ pub fn lower() -> VirtAddr {
 /// 与 [`lower()`]（内核空间下界，`canonical(1 << split_bit)`）同源自分裂位，
 /// 两者之间是各模式的规范空洞（不可访问无人区）。**必须 `wrap` 纯位**——
 /// `from_raw` 会把 `1 << split_bit`（bit split=1）进位成内核下界。
-/// 栈窗顶锚于其下缘：栈窗 `[upper − STACK_AREA, upper)`、堆/mmap 区止于栈底。
 pub fn upper() -> VirtAddr {
     VirtAddr::wrap(1usize << geometry(mode()).split_bit())
 }

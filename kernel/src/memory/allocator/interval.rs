@@ -1,12 +1,8 @@
 // 区间分配器 — 以起始地址为键的有序区间树（BTreeMap）上的连续区间分配。
 //
-// 语义对齐分配器家族（block/frame/bitmap）：`allocate` / `deallocate` + `AllocError`，
-// 但返回的是**地址区间**（管理未映射 VA 窗口，不实现 `core::alloc::Allocator`）。
-//
-// 与位图（bitmap）不同之处只在记账结构：位图付费给窗口容量（整窗物化），
-// 本分配器付费给**存活块数**（每块一条区间树条目）——窗口大到用户半区
-// （Sv48/Sv57 的 TiB 级堆窗口）也零 up-front 成本。allocated 区间互不重叠
-// （首次适配保证），故区间树即「已分配区间集合」。
+// 返回**地址区间**（管理未映射 VA 窗口，不实现 `core::alloc::Allocator`），
+// 记账按**存活块数**（每块一条区间树条目）——窗口再大也零 up-front 成本。
+// allocated 区间互不重叠（首次适配保证），故区间树即「已分配区间集合」。
 //
 // 找洞 = 有序树序遍历间隙（first-fit）；释放 = 精确键查 `(addr, size)` 匹配删除。
 
@@ -32,9 +28,9 @@ pub(crate) struct IntervalAllocator {
 /// 取段方向 — 空隙选择的倾向（隐喻作值：Rise=低端优先，Fall=高端优先）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Direction {
-    /// 底向上：取**最低**够大空隙（堆/帧等低端生长）。
+    /// 底向上：取**最低**够大空隙。
     Rise,
-    /// 顶向下：取**最高**够大空隙，块落空隙高端（栈槽自顶向下排、mmap 高位取段）。
+    /// 顶向下：取**最高**够大空隙，块落空隙高端。
     Fall,
 }
 

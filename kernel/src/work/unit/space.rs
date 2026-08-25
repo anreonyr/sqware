@@ -134,9 +134,9 @@ impl Map {
 /// 节点分区的堆），键仍唯一；当前每类各一个区级窗口。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DynamicKind {
-    /// 用户堆窗口（装载期由 [`Space::attach_heap`] 注册：`[image_end, upper())`）。
+    /// 用户堆窗口（装载期由 [`Space::attach_heap`] 注册：`[image_end, upper() - STACK_AREA)`）。
     Heap(usize),
-    /// 任务栈窗口（顶锚：`[upper(), 用户半区顶)`，约 5 万 slot）。
+    /// 任务栈窗口（顶锚：`[upper() - STACK_AREA, upper())`，约 5 万 slot）。
     Stack(usize),
     /// 线程 trap 帧窗口（[`FRAME_BASE`] 起 [`FRAME_REGION_SIZE`]，S-only 内核半区）。
     Frame(usize),
@@ -197,7 +197,7 @@ impl Dynamic {
         Ok(va)
     }
 
-    /// 释放一块 VA：位图精确匹配成功后移除重叠子 Map（帧随 drop 归还）。
+    /// 释放一块 VA：区间精确匹配成功后移除重叠子 Map（帧随 drop 归还）。
     fn deallocate(&mut self, va: VirtAddr, size: usize) -> bool {
         if self.allocator.deallocate(va.as_usize(), size).is_err() {
             return false;
@@ -210,7 +210,7 @@ impl Dynamic {
     }
 
     /// 断绝与 `owner` 的全部子 Map 关系（帧随 drop 归还），返回被覆盖区间
-    /// `[min_va, min_va + len)`（供调用方清 PTE 后按整区间位图归还）。
+    /// `[min_va, min_va + len)`（供调用方清 PTE 后按整区间归还）。
     ///
     /// 线程退役回收用：栈 slot 的守护页/栈体两子 Map 共享同一 owner，一并摘除。
     fn disown(&mut self, owner: usize) -> Option<(VirtAddr, usize)> {
@@ -451,8 +451,7 @@ unsafe impl Sync for Space {}
 /// 内核空间 ASID 恒 0、全局唯一；用户空间各自持有独立 ASID（1..=65535），
 /// 构造时经 [`super::asid::allocate`] 分配、`Drop` 释放。
 ///
-/// 用户区布局常量（堆窗口 / 任务栈窗口）收敛进本模块（`USER_HEAP_*` / `TASK_STACK_*`），
-/// 由 [`Dynamic`] 的位图分配器实例消费。
+/// 栈 / 帧区布局常量收敛进本模块；堆窗口由装载期按 image_end 派生。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpaceKind {
     /// 内核空间（ASID 0）。
@@ -520,11 +519,11 @@ pub(crate) const FRAME_BASE: VirtAddr =
 //     ┌─────────────────────────────────┐
 //     │  程序镜像（VMA 0x10000 起）     │  loader 装载
 //     ├─────────────────────────────────┤  image_end（装载期算出）
-//     │  用户堆窗口                      │  [image_end, upper())，区间分配器
+//     │  用户堆窗口                      │  [image_end, 栈底)，区间分配器
 //     │ （attach_heap 注册，∝ 存活块）   │
 //     │              ...                │
-//     ├─────────────────────────────────┤  upper() = 2^split_bit − STACK_AREA
-//     │  任务栈窗口 1 GiB（顶锚）        │  [upper(), 2^split_bit)
+//     ├─────────────────────────────────┤  栈底 = 2^split_bit − STACK_AREA
+//     │  任务栈窗口 1 GiB（顶锚）        │  [栈底, 2^split_bit)
 //     │ （16 KiB 栈 + 守护页，约 5 万）  │
 //     └─────────────────────────────────┘ 2^split_bit（用户半区顶）
 //
@@ -742,7 +741,7 @@ impl Space {
 
     /// 分配一个任务栈窗口 slot，返回栈体 VA（16 KiB，向下增长，底部守护页）。
     ///
-    /// slot = 守护页 + 栈体，一次从 Stack 窗口位图领取；守护页登记为 Reserved
+    /// slot = 守护页 + 栈体，一次从 Stack 窗口领取；守护页登记为 Reserved
     /// 子 Map——栈溢出触碰守护页时 fault 处理器识别为「预留映射访问」而非笼统的
     /// 「无 Map」。栈体登记为 Anonymous 子 Map（帧随后经
     /// [`attach_dynamic`](Self::attach_dynamic) 注入）。两子 Map 均标 `owner`，退出时
@@ -790,7 +789,7 @@ impl Space {
         Ok(body_va)
     }
 
-    /// 把帧注入映射到一段**已登记的动态窗口子 Map**：先经窗口位图 `allocate`
+    /// 把帧注入映射到一段**已登记的动态窗口子 Map**：先经窗口 `allocate`
     /// 预留 VA 块获得子 Map，再分配帧逐帧 attach。
     ///
     /// [`attach_durable`](Self::attach_durable) 的 dynamic 簿记变体：逐帧装 PTE
@@ -819,7 +818,7 @@ impl Space {
         Ok(())
     }
 
-    /// 分配一个线程 trap 帧：Frame 窗口位图取一页 VA → 分配物理帧 → 装 PTE
+    /// 分配一个线程 trap 帧：Frame 窗口取一页 VA → 分配物理帧 → 装 PTE
     /// （S-only，内核半区——用户不可触碰）→ 登记帧子 Map（`owner` = 线程 id，
     /// 退出时按 owner/VA 回收）。返回 `(帧 VA, 帧 PA)`。
     ///
@@ -878,17 +877,17 @@ impl Space {
     pub(crate) fn retire(&self, owner: usize, frame_va: VirtAddr) {
         let mut inner = self.inner.lock();
         let SpaceInner { durable, dynamic } = &mut *inner;
-        // 1+3. 栈窗口：摘 owner 子 Map → 清 PTE → 位图归还 slot
+        // 1+3. 栈窗口：摘 owner 子 Map → 清 PTE → 区间归还 slot
         let stack = {
             let kind = DynamicKind::Stack(0);
             dynamic.get_mut(&kind).expect("window exists")
         };
         if let Some((slot_va, slot_size)) = stack.disown(owner) {
             durable.unmap_frames(slot_va, slot_size);
-            // 位图归还与子 Map 结构性绑定：disown 命中则 dealloc 必成功
+            // 区间归还与子 Map 结构性绑定：disown 命中则 dealloc 必成功
             let _ = stack.allocator.deallocate(slot_va.as_usize(), slot_size);
         }
-        // 2+4. 帧窗口：摘帧子 Map → 清 PTE → 位图归还帧 VA
+        // 2+4. 帧窗口：摘帧子 Map → 清 PTE → 区间归还帧 VA
         let frames = {
             let kind = DynamicKind::Frame(0);
             dynamic.get_mut(&kind).expect("window exists")
@@ -906,7 +905,7 @@ impl Space {
     /// 用户堆分配：经 Heap 窗口区间树保留页对齐 VA 块，登记空子 Map（Anonymous），
     /// 逐页从 frame 分配器取物理页映射到用户区（U|R|W）并注入子 Map。返回分配 VA。
     ///
-    /// 堆窗口 = 装载期注册的 `[image_end, upper())`（区间树，∝ 存活块）；窗口
+    /// 堆窗口 = 装载期注册的 `[image_end, upper() - STACK_AREA)`（区间树，∝ 存活块）；窗口
     /// 耗尽 → [`MapError::OutOfMemory`]。立即分配（非懒分配）：教学简化，页表
     /// 与物理页当场就位，用户访问不再缺页。中途帧耗尽时回滚：清已映射页叶子
     /// + 移除子 Map（帧随 drop 归还）+ VA 块退回窗口

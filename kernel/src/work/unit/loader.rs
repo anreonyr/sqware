@@ -32,9 +32,8 @@ pub type LoadResult<T> = Result<T, MapError>;
 ///
 /// 帧耗尽（OutOfMemory）或映射冲突（AlreadyMapped / NotAligned，均不改动 space）。
 pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Loaded> {
-    // 0. 装载期注册堆窗口：镜像段尾（image_end）起，至用户栈窗口基址 upper()。
-    //    堆几何随映像（不魔数）——attach_heap 与 attach_durable 同落点（装载器），
-    //    须先于文件段映射。
+    // 0. 装载期注册堆窗口：镜像段尾（image_end）起，至用户栈窗口基址。
+    //    堆几何随映像（不魔数），须先于文件段映射注册。
     let image_end = parsed
         .segments
         .iter()

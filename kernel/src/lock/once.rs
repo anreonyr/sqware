@@ -113,7 +113,7 @@ impl<T> OnceLock<T> {
 
     /// 检查是否已初始化。
     ///
-    /// 预留原语 API（std OnceLock 同款）。
+    /// 预留原语 API。
     #[inline]
     #[allow(dead_code)]
     pub fn is_initialized(&self) -> bool {
