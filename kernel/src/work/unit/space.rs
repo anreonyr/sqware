@@ -360,8 +360,9 @@ impl SpaceInner {
         Ok(())
     }
 
-    /// 查询 `vaddr` 所属的映射（常数表 → 动态窗口子表），返回借用（锁内使用）。
-    fn resolve(&self, vaddr: VirtAddr) -> Option<&Map> {
+    /// 查询 `vaddr` 所属的映射（常数表 → 动态窗口子表），返回借用（锁内使用，
+    /// 与 [`resolve_mut`](Self::resolve_mut) 配对，同 `durable::resolve_ref`）。
+    fn resolve_ref(&self, vaddr: VirtAddr) -> Option<&Map> {
         if let Some(m) = self.durable.resolve_ref(vaddr) {
             return Some(m);
         }
@@ -1424,7 +1425,7 @@ impl Space {
             let va = vaddr + i * PAGE_SIZE;
             // 前提：地址已登记 Anonymous 映射；flags 由映射自取（含 A/D）。
             let flags = {
-                let m = inner.resolve(va).ok_or(MapError::NoRegion)?;
+                let m = inner.resolve_ref(va).ok_or(MapError::NoRegion)?;
                 if m.kind != MapKind::Anonymous {
                     return Err(MapError::NoRegion);
                 }
@@ -1539,7 +1540,7 @@ impl Space {
     ///
     /// 缺页分支用：Anonymous → 走懒分配；Reserved → 预留诊断；None → 无映射。
     pub fn resolve_kind(&self, vaddr: VirtAddr) -> Option<MapKind> {
-        self.inner.lock().resolve(vaddr).map(|m| m.kind)
+        self.inner.lock().resolve_ref(vaddr).map(|m| m.kind)
     }
 }
 
