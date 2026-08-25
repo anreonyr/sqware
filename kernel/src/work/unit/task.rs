@@ -9,7 +9,6 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::space::TASK_STACK_SIZE;
-use super::team;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;

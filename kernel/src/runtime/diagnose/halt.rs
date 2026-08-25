@@ -179,4 +179,3 @@ fn halt_loop() -> ! {
         unsafe { core::arch::asm!("wfi") };
     }
 }
-

@@ -26,24 +26,24 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
-use core::sync::atomic::Ordering;
 use hashbrown::HashMap;
 
-use crate::lock::OnceLock;
 use crate::memory::allocator::frame::allocator;
 use crate::memory::allocator::interval::{Direction, IntervalAllocator};
+
 use crate::{
     lock::{Level, RelLock},
-    memory::PAGE_SIZE,
-};
-
-use crate::memory::manager::{
-    addr::{PhysAddr, VirtAddr},
-    asid,
-    entry::PteFlags,
-    flush_asid,
-    mode::{self, STACK_AREA},
-    table::{Frame, FrameState, MapError, TableNode},
+    memory::{
+        PAGE_SIZE,
+        manager::{
+            addr::{PhysAddr, VirtAddr},
+            asid,
+            entry::PteFlags,
+            flush_asid,
+            mode::{self, STACK_AREA},
+            table::{Frame, FrameState, MapError, TableNode},
+        },
+    },
 };
 
 /// 映射种类 — 缺页时如何响应。
@@ -192,14 +192,8 @@ impl Dynamic {
             .allocate(size, Direction::Rise)
             .map_err(|_| MapError::OutOfMemory)?;
         let va = VirtAddr::from_raw(base);
-        self.children.push(Map::new(
-            va,
-            size,
-            flags,
-            kind,
-            Vec::new(),
-            owner,
-        ));
+        self.children
+            .push(Map::new(va, size, flags, kind, Vec::new(), owner));
         Ok(va)
     }
 
@@ -291,8 +285,12 @@ impl Durable {
         let geo = mode::geometry(mode::mode());
         let mask = (1usize << geo.va_bits) - 1;
         let end = va.as_usize().saturating_add(size);
-        self.root
-            .reclaim((geo.levels - 1) as usize, 0, va.as_usize() & mask, end & mask);
+        self.root.reclaim(
+            (geo.levels - 1) as usize,
+            0,
+            va.as_usize() & mask,
+            end & mask,
+        );
     }
 
     /// 查询覆盖 `vaddr` 的常数映射。
@@ -912,7 +910,7 @@ impl Space {
     /// 耗尽 → [`MapError::OutOfMemory`]。立即分配（非懒分配）：教学简化，页表
     /// 与物理页当场就位，用户访问不再缺页。中途帧耗尽时回滚：清已映射页叶子
     /// + 移除子 Map（帧随 drop 归还）+ VA 块退回窗口
-    /// （[`IntervalAllocator::deallocate`]；中间表帧已由 unmap_frames 回收）。
+    ///   （[`IntervalAllocator::deallocate`]；中间表帧已由 unmap_frames 回收）。
     pub(crate) fn heap_allocate(&self, size: usize) -> Result<VirtAddr, MapError> {
         let mut inner = self.inner.lock();
         let flags =
@@ -1413,11 +1411,7 @@ impl Space {
     ///
     /// - [`MapError::NoRegion`] — 地址不在任何 Anonymous 映射内
     /// - [`MapError::OutOfMemory`] — 物理帧耗尽
-    pub fn page_fault(
-        &self,
-        vaddr: VirtAddr,
-        size: usize,
-    ) -> Result<(), MapError> {
+    pub fn page_fault(&self, vaddr: VirtAddr, size: usize) -> Result<(), MapError> {
         let mut inner = self.inner.lock();
         let pages = size.div_ceil(PAGE_SIZE);
         for i in 0..pages {

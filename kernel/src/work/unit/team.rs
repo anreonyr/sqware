@@ -7,12 +7,9 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use crate::lock::{Level, OnceLock, SpinLock};
-use crate::memory::PAGE_SIZE;
-use crate::memory::manager::addr::PhysAddr;
 use crate::work::unit::space::Space;
 
 use super::elftable::ElfTable;
-use super::space::KERNEL_FRAME_BASE;
 use super::task::{Task, TaskBuilder};
 
 /// 团队（进程）— 共享地址空间的线程容器。

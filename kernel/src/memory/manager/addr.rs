@@ -1,18 +1,6 @@
 // 类型安全的虚拟地址 / 物理地址 / 物理页号
-//
-// Sv39 虚拟地址规范：
-//   bits 63:39 — 必须全等于 bit 38（符号扩展）
-//   bits 38:30 — VPN[2]  (L2 索引)
-//   bits 29:21 — VPN[1]  (L1 索引)
-//   bits 20:12 — VPN[0]  (L0 索引)
-//   bits 11:0  — 页内偏移
-//
-// VPN[2] 决定地址空间：
-//   0x000 (0-255)   — 用户半区  (0x0000_0000_0000_0000 .. 0x0000_007F_FFFF_FFFF)
-//   0x1FF (256-511) — 内核半区  (0xFFFF_FF80_0000_0000 .. 0xFFFF_FFFF_FFFF_FFFF)
 
 use core::ops::{Add, AddAssign, Sub, SubAssign};
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
 
@@ -203,32 +191,5 @@ impl core::fmt::Debug for PhysAddr {
 impl core::fmt::LowerHex for PhysAddr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::LowerHex::fmt(&self.0, f)
-    }
-}
-
-/// 物理地址的原子包装 — 全局静态状态无锁读写用。
-///
-/// core 没有泛型 `Atomic<T>`，按本模块风格做具体包装（`PhysAddr` 为
-/// `#[repr(transparent)]` 的 usize 新类型，原子性由内层 `AtomicUsize` 保证）。
-#[repr(transparent)]
-pub struct AtomicPhysAddr(AtomicUsize);
-
-impl AtomicPhysAddr {
-    /// 新建原子物理地址。
-    #[inline]
-    pub const fn new(pa: PhysAddr) -> Self {
-        Self(AtomicUsize::new(pa.as_usize()))
-    }
-
-    /// 原子读取。
-    #[inline]
-    pub fn load(&self, order: Ordering) -> PhysAddr {
-        PhysAddr::from_raw(self.0.load(order))
-    }
-
-    /// 原子写入。
-    #[inline]
-    pub fn store(&self, pa: PhysAddr, order: Ordering) {
-        self.0.store(pa.as_usize(), order);
     }
 }

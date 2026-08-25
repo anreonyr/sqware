@@ -223,4 +223,3 @@ fn check_canary(addr: usize, rec: &Record) {
         }
     }
 }
-

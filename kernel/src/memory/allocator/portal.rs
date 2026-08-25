@@ -60,4 +60,3 @@ pub fn switch(backend: Backend) {
 
 #[global_allocator]
 pub static PORTAL_ALLOCATOR: PortalAllocator = PortalAllocator;
-

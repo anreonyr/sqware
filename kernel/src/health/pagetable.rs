@@ -18,8 +18,8 @@ use crate::work::unit::space::{MapKind, SpaceBuilder};
 /// PT 回收自测（audit-only）：map/unmap 循环验证中间表当场归还。
 pub fn pagetable() {
     // 表数期望随模式层级（4 MiB = 2×L0 + 每层一个中间表 = 共 levels 张表）。
-    let levels = crate::memory::manager::mode::geometry(crate::memory::manager::mode::mode())
-        .levels as usize;
+    let levels = crate::memory::manager::mode::geometry(crate::memory::manager::mode::mode()).levels
+        as usize;
     const BASE: usize = 0x4000_0000; // 根表槽 1：堆窗口之后、栈窗口之前的空地
     const SIZE: usize = 4 * 1024 * 1024; // 4 MiB → 2×L0 + (levels−2) 中间表
     const ROUNDS: usize = 32;
@@ -88,6 +88,8 @@ pub fn pagetable() {
     drop(space);
     super::report_ok(
         "pagetable",
-        format_args!("{ROUNDS} rounds, levels {levels}, tables {base_count} → +{levels} → {base_count}"),
+        format_args!(
+            "{ROUNDS} rounds, levels {levels}, tables {base_count} → +{levels} → {base_count}"
+        ),
     );
 }

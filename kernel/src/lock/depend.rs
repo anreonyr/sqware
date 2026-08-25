@@ -285,4 +285,3 @@ pub(crate) fn release(addr: usize) {
         report("release of unheld lock", addr, 0);
     }
 }
-

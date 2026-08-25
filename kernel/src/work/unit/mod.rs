@@ -32,13 +32,10 @@ use crate::memory::manager::{
     MapError,
     addr::{PhysAddr, VirtAddr},
     entry::PteFlags,
-    flush_asid,
-    mode,
+    flush_asid, mode,
 };
 
-use space::{
-    KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, trampoline_pa,
-};
+use space::{KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, trampoline_pa};
 
 // 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
 // 兼作主栈下方的写保护 guard（栈下溢踩 .rodata 即写保护缺页）。
@@ -174,4 +171,3 @@ pub fn init() -> MapResult<()> {
     })()
     .annotate("initializing unit (kernel space + team)")
 }
-

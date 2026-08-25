@@ -150,7 +150,9 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         let code = elftable::routed(
             VirtAddr::from_raw(w),
             ktbl(),
-            running_team_try().as_deref().and_then(|t| t.elftable.as_deref()),
+            running_team_try()
+                .as_deref()
+                .and_then(|t| t.elftable.as_deref()),
         )
         .is_some();
         if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
@@ -270,7 +272,9 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         let n = if let Some((name, off)) = elftable::routed(
             VirtAddr::from_raw(a),
             ktbl(),
-            running_team_try().as_deref().and_then(|t| t.elftable.as_deref()),
+            running_team_try()
+                .as_deref()
+                .and_then(|t| t.elftable.as_deref()),
         ) {
             format!("{name}+{off:#x} {}", stval_note(int, code))
         } else {
@@ -430,7 +434,11 @@ pub fn dump_crash(r: &mut Report) {
             rows.push(vec![
                 Some(format!("#{i}")),
                 Some(hex(*a)),
-                Some(elftable::routed_symbol(VirtAddr::from_raw(*a), ktbl(), None)),
+                Some(elftable::routed_symbol(
+                    VirtAddr::from_raw(*a),
+                    ktbl(),
+                    None,
+                )),
             ]);
         }
         r.paragraph("kbt", None).items.extend(rows);

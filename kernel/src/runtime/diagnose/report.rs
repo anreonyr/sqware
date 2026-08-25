@@ -53,4 +53,3 @@ impl Report {
         self.paras.clear();
     }
 }
-

@@ -124,6 +124,7 @@ pub struct LoadSegment {
 /// 解析产物 — 入口 + 全部待装载段。
 pub struct ParsedProgram {
     pub entry: VirtAddr,
+    #[allow(unused)]
     pub pie: bool,
     pub segments: Vec<LoadSegment>,
 }

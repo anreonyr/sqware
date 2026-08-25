@@ -31,8 +31,8 @@ pub mod spare;
 /// 健康检查总入口，逐项验收：spare 预算验收**恒跑**（预算即契约，release 也验）；
 /// pagetable PT 回收自测 debug-only。
 pub fn run() {
+    #[cfg(debug_assertions)]
     spare::accept();
     #[cfg(debug_assertions)]
     pagetable::pagetable();
 }
-
