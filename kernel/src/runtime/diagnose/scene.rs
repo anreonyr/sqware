@@ -34,6 +34,10 @@ fn ktbl() -> Option<&'static ElfTable> {
     crate::work::unit::team::kernel()?.elftable.as_deref()
 }
 
+fn utbl() -> Option<Arc<ElfTable>> {
+    running_team_try()?.elftable.clone()
+}
+
 /// 回溯深度上限。
 const BT_DEPTH: usize = 32;
 /// 栈扫描窗口（从当前 sp 向上）字节数。
@@ -263,7 +267,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         Some(elftable::routed_symbol(
             VirtAddr::from_raw(sepc::read()),
             ktbl(),
-            None,
+            utbl().as_deref(),
         )),
     ]);
     {

@@ -5,7 +5,6 @@ extern crate alloc;
 
 use core::time::Duration;
 
-use ubi::ucall;
 use user::{
     env::{self, put},
     task,
@@ -16,13 +15,6 @@ use user::{
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     put("spawner\n").ok();
-    // 用户主动 panic（envcall）：a7=Panic，a0=关联码。
-    let _ = ucall::UcallBuilder::new(ubi::Ucall::Panic)
-        .args(ucall::UArgs {
-            a0: 0xDEAD,
-            ..Default::default()
-        })
-        .call();
     loop {
         let sum = task::closure(|| {
             let mut s: u64 = 0;

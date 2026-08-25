@@ -150,17 +150,9 @@ pub fn init() -> ! {
 
 /// 生成全部演示任务（用户 + 内核 ktask）；错误统一 `?` 上抛。返回前所有任务已入队。
 fn spawn_demos() -> Result<(), MapError> {
-    // Team1「threader」：双线程共享同一地址空间——线程参数 a0 分支 'A'/'B'。先 Team 后 Task。
-    // let (team1, entry1) = load_user(
-    //     &include_bytes!("../../target/riscv64gc-unknown-none-elf/debug/user-threader")[..],
-    // );
-    // team1.task().name("thread-A").entry(entry1).arg(0).spawn()?;
-    // team1.task().name("thread-B").entry(entry1).arg(1).spawn()?;
-    // drop(team1); // 构造期句柄用完即弃——团队由它的线程持有
-
     // 单线程团队回归
     for (elf, name) in [
-        (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
+        // (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
         (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
         (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
     ] {
@@ -178,7 +170,6 @@ fn spawn_demos() -> Result<(), MapError> {
         .name("ktask")
         .closure(|| {
             putln!("ktask");
-            // panic!("Shit");
         })?;
     #[cfg(debug_assertions)]
     kernel().expect("kernel team not initialized").space.audit();
