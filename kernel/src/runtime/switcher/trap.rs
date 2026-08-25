@@ -21,7 +21,8 @@ use crate::runtime::switcher::trampoline::{
     __trampoline_end, __trampoline_start, alltraps_va, establish_tp, init_trap_stacks,
     trap_stack_bottom, trap_stack_guard_hart, trap_stack_top,
 };
-use crate::work::unit::space::{KERNEL_FRAME_BASE, kernel_frame_pa};
+use crate::work::unit::space::KERNEL_FRAME_BASE;
+use crate::work::unit::team;
 use crate::{machine, put};
 use sbi::{TimerCall, fid::Timer, scall::SArgs};
 
@@ -87,7 +88,7 @@ pub fn init() {
     //    故障在**故障核**的帧与 trap 栈上处理。
     let ksatp = satp::read();
     for h in 0..crate::machine::hart_count() {
-        let pa = kernel_frame_pa(h);
+        let pa = team::kernel_frame_pa(h);
         let frame = unsafe { &mut *(pa.as_usize() as *mut TrapContext) };
         frame.kernel_satp = ksatp;
         frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(h));

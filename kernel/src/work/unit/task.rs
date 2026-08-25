@@ -8,7 +8,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use super::space::{TASK_STACK_SIZE, kernel_frame_pa};
+use super::space::TASK_STACK_SIZE;
+use super::team;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
@@ -319,7 +320,7 @@ impl TaskBuilder {
         //    kernel_sp = **本 hart** trap 栈顶（任务随后在本 hart 首次运行；若被
         //    steal 走，上台前由调度器重写）。
         unsafe {
-            let ktc = kernel_frame_pa(0).as_usize() as *const TrapContext;
+            let ktc = super::team::kernel_frame_pa(0).as_usize() as *const TrapContext;
             let frame = &mut *(frame_pa.as_usize() as *mut TrapContext);
             frame.kernel_satp = (*ktc).kernel_satp;
             frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(me));

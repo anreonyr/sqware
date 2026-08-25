@@ -19,7 +19,7 @@ use crate::runtime::switcher::trampoline::{
     alltraps_va, restore, trap_stack_bottom, trap_stack_top,
 };
 use crate::work::room::scheduler;
-use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder, kernel_frame_pa};
+use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 use crate::{machine, putln};
@@ -230,7 +230,7 @@ fn boot_harts() {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn boot_main() -> ! {
     // 副核 per-hart 初始化：satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
-    let ktc = kernel_frame_pa(0);
+    let ktc = team::kernel_frame_pa(0);
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;
     // 探测所得模式 token：低 44 位 ppn、[63:44] asid/模式（字段访问器拆解，

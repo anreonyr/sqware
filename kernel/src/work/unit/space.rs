@@ -38,7 +38,7 @@ use crate::{
 };
 
 use crate::memory::manager::{
-    addr::{AtomicPhysAddr, PhysAddr, VirtAddr},
+    addr::{PhysAddr, VirtAddr},
     asid,
     entry::PteFlags,
     flush_asid,
@@ -1553,32 +1553,4 @@ impl Drop for Space {
         // `inner` 随字段自动 drop：root（页表树，递归归还全部表帧）/maps 与窗口子 Map 的帧全部归还
         // frame 池——所有权驱动，无遍历页表树、无手写 deallocate。
     }
-}
-
-// ── 内核地址空间 ─────────────────────────────────────────────
-
-/// per-hart 内核帧物理地址表（按实际核数**动态分配**并发布）。本表仅供 Rust
-/// 侧经 [`kernel_frame_pa`] 读 PA。Box::leak 进 OnceLock，先于任何帧映射分配。
-static KERNEL_FRAMES: OnceLock<&'static [AtomicPhysAddr]> = OnceLock::new();
-
-/// 按实际核数分配帧 PA 表并返回（调用**恰好一次**，先于任何帧映射）。
-pub(crate) fn init_kernel_frames(n: usize) -> &'static [AtomicPhysAddr] {
-    let table: Box<[AtomicPhysAddr]> = (0..n)
-        .map(|_| AtomicPhysAddr::new(PhysAddr::from_raw(0)))
-        .collect();
-    assert!(
-        KERNEL_FRAMES.set(Box::leak(table)).is_ok(),
-        "kernel frames double init"
-    );
-    KERNEL_FRAMES.get().expect("kernel frames not initialized")
-}
-
-/// hart h 的内核帧物理地址。
-///
-/// hart 0 的帧供用户帧构建从它拷贝内核切换信息，统一经本函数读取。
-pub fn kernel_frame_pa(hart: usize) -> PhysAddr {
-    KERNEL_FRAMES
-        .get()
-        .expect("kernel frames not initialized")[hart]
-        .load(Ordering::Relaxed)
 }

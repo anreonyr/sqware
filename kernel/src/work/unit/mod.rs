@@ -37,7 +37,7 @@ use crate::memory::manager::{
 };
 
 use space::{
-    KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, init_kernel_frames, trampoline_pa,
+    KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, trampoline_pa,
 };
 
 // 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
@@ -141,10 +141,10 @@ pub fn init() -> MapResult<()> {
                 Vec::new(),
             )?;
 
-            // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页。
+            // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（PA 经
+            //    team::kernel_frame_pa 从本空间事实源读，无旁置表）。
             let n = machine::hart_count();
-            let frames = init_kernel_frames(n);
-            for (h, slot) in frames.iter().enumerate() {
+            for h in 0..n {
                 let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
                     .map_err(|_| MapError::OutOfMemory)?;
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
@@ -156,7 +156,6 @@ pub fn init() -> MapResult<()> {
                     MapKind::Anonymous,
                     vec![page],
                 )?;
-                slot.store(pa, core::sync::atomic::Ordering::Relaxed);
             }
 
             // 6. 启用探测所得模式的分页（satp MODE 字段随模式）

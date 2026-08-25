@@ -7,6 +7,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use crate::lock::{Level, OnceLock, SpinLock};
+use crate::memory::manager::addr::PhysAddr;
 use crate::work::unit::space::Space;
 
 use super::elftable::ElfTable;
@@ -109,4 +110,20 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
 /// 内核团队访问器（宽容形）：未注入 → None，调用方自行降级。
 pub fn kernel() -> Option<&'static Arc<Team>> {
     KERNEL_TEAM.get()
+}
+
+/// hart h 的内核帧物理地址——**事实源 = 内核团队的地址空间**（帧即其 durable
+/// 映射，见 unit::init），此处经 `space.translate(KERNEL_FRAME_BASE + h·PAGE)` 读，
+/// 无旁置 PA 表可漂移。
+///
+/// # Panics
+///
+/// 内核团队未注入，或该帧尚未映射（init 顺序错）→ panic（boot 级致命）。
+pub fn kernel_frame_pa(hart: usize) -> PhysAddr {
+    let team = kernel().expect("kernel team not initialized");
+    let va = super::space::KERNEL_FRAME_BASE + hart * crate::memory::PAGE_SIZE;
+    team.space
+        .translate(va)
+        .expect("kernel frame not mapped")
+        .0
 }
