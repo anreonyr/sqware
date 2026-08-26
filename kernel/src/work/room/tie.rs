@@ -3,10 +3,10 @@
 // 两件事：
 //   全退出停机 — PUSHED/REAPED 任务计数；相等且 PUSHED>0 即全部退出 → 发 SBI srst 复位；
 //              HALTING 做一次性互斥，防多核同时发复位。
-//   休眠唤醒   — WAITING 位图（bit h = hart h 正 WFI 等待）；入队后 wake_all
-//              按掩码一次 SBI IPI 唤醒全部睡核。
+//   休眠唤醒   — WAITING 位图（bit h = hart h 正 WFI 等待）；入队后 yell
+//              按掩码一次 SBI IPI 喊醒全部睡核。
 //
-// 命名：动词（spawn/exit/done/halt/sleep/wake/wake_all/wfi）+ 计数名词
+// 命名：动词（spawn/exit/done/halt/sleep/wake/yell/wfi）+ 计数名词
 // （PUSHED/REAPED/WAITING/HALTING）。
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -53,8 +53,8 @@ pub(super) fn done() -> bool {
 pub(super) fn halt() -> ! {
     HALT_ARRIVED.fetch_add(1, Ordering::AcqRel);
     if !HALTING.swap(true, Ordering::AcqRel) {
-        // 唤醒 WFI 睡核：它们醒来后同样会走 done → halt → 登记到达。
-        wake_all();
+        // 喊醒 WFI 睡核：它们醒来后同样会走 done → halt → 登记到达。
+        yell();
         while HALT_ARRIVED.load(Ordering::Acquire) < machine::hart_count() {
             core::hint::spin_loop();
         }
@@ -100,8 +100,8 @@ pub(super) fn wake(hart: usize) {
     );
 }
 
-/// 唤醒所有 WFI 等待中的 hart。按 64 核一组循环 SBI IPI（协议单次掩码至多 XLEN 位）。
-pub(super) fn wake_all() {
+/// 喊醒所有 WFI 等待中的 hart。按 64 核一组循环 SBI IPI（协议单次掩码至多 XLEN 位）。
+pub(super) fn yell() {
     for (w, word) in WAITING.iter().enumerate() {
         let waiting = word.load(Ordering::Acquire);
         if waiting == 0 {

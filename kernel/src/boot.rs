@@ -8,11 +8,11 @@ use alloc::vec;
 use riscv::register::{satp, sie, stvec};
 
 use crate::console::Sink;
-use crate::machine::{kernel_stack_base, KERNEL_STACK_CANARY};
+use crate::machine::{KERNEL_STACK_CANARY, kernel_stack_base};
+use crate::memory::PAGE_SIZE;
+use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::mode;
-use crate::memory::manager::MapError;
-use crate::memory::PAGE_SIZE;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
@@ -20,7 +20,7 @@ use crate::runtime::switcher::trampoline::{
     alltraps_va, restore, trap_stack_bottom, trap_stack_phys_top, trap_stack_top,
 };
 use crate::work::room::scheduler;
-use crate::work::unit::space::{SpaceBuilder, KERNEL_FRAME_BASE};
+use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 use crate::{machine, putln};
@@ -161,6 +161,7 @@ fn spawn_demos() -> Result<(), MapError> {
         .name("ktask")
         .closure(|| {
             putln!("ktask");
+            // panic!("fuck")
         })?;
     // 可抢占内核验证：常驻循环任务（每轮百万次增量 + 打印进度）。被 S-timer 抢占
     // 恢复正确 → round 顺序不重不乱、n 单调递增、hart 稳定；现场丢失则崩/乱序。
@@ -219,45 +220,41 @@ fn channel_demos() -> Result<(), MapError> {
     const MSG: usize = 3;
 
     // B（echo_server）：server 半对 move 进闭包（同空间，VA 直见；Arc 跨任务共享）。
-    kt.task()
-        .name("echo-server")
-        .closure(move || {
-            let mut out = [0usize; MSG];
-            loop {
-                let n = match server.req_rx.pull(&mut out) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        putln!("echo-server: pull err {e:?}");
-                        break;
-                    }
-                };
-                // echo：把收到的槽字原样经 resp_tx 弹回。
-                if server.resp_tx.push(&out[..n]).is_err() {
-                    putln!("echo-server: push err");
+    kt.task().name("echo-server").closure(move || {
+        let mut out = [0usize; MSG];
+        loop {
+            let n = match server.req_rx.pull(&mut out) {
+                Ok(n) => n,
+                Err(e) => {
+                    putln!("echo-server: pull err {e:?}");
                     break;
                 }
-                putln!("echo-server: echoed {n} slots");
+            };
+            // echo：把收到的槽字原样经 resp_tx 弹回。
+            if server.resp_tx.push(&out[..n]).is_err() {
+                putln!("echo-server: push err");
+                break;
             }
-            putln!("echo-server: done");
-        })?;
+            putln!("echo-server: echoed {n} slots");
+        }
+        putln!("echo-server: done");
+    })?;
 
     // A（echo_client）：发序列号请求，pull 响应校验与请求一致。
-    kt.task()
-        .name("echo-client")
-        .closure(move || {
-            let mut resp = [0usize; MSG];
-            for i in 0..ROUNDS {
-                let msg = [0xCAFE + i, i, i.wrapping_mul(i)];
-                client.req_tx.push(&msg).expect("client push");
-                let n = client.resp_rx.pull(&mut resp).expect("client pull");
-                if resp[..n] != msg[..n] {
-                    putln!("echo-client: MISMATCH round {i}: {resp:?} != {msg:?}");
-                } else {
-                    putln!("echo-client: round {i} ok ({n} slots)");
-                }
+    kt.task().name("echo-client").closure(move || {
+        let mut resp = [0usize; MSG];
+        for i in 0..ROUNDS {
+            let msg = [0xCAFE + i, i, i.wrapping_mul(i)];
+            client.req_tx.push(&msg).expect("client push");
+            let n = client.resp_rx.pull(&mut resp).expect("client pull");
+            if resp[..n] != msg[..n] {
+                putln!("echo-client: MISMATCH round {i}: {resp:?} != {msg:?}");
+            } else {
+                putln!("echo-client: round {i} ok ({n} slots)");
             }
-            putln!("echo-client: done");
-        })?;
+        }
+        putln!("echo-client: done");
+    })?;
 
     // 语义验收（独立通道 + 单任务自测，不干扰 echo 主测的通道状态）：
     //   try_push 满路径（slot_len=4，消息 1+1=2 槽 → 塞 2 条满，第 3 条 Full）
@@ -265,47 +262,51 @@ fn channel_demos() -> Result<(), MapError> {
     //   · crush 显式终止（置 Dead → 后续 push 报 Dead）
     // 语义通道：整对移入闭包（mpsc 式两端共存；对端半对不得在持有者外部 drop
     // ——Rx drop → Dead 是「拉端消逝」的真实语义，误移交给别处才合法）。
-    let semantics = ChannelBuilder::new().slot_len(4).spawn().expect("semantic channel");
+    let semantics = ChannelBuilder::new()
+        .slot_len(4)
+        .spawn()
+        .expect("semantic channel");
     // crush 测试专用独立通道（同 spawn；对端半对也移入闭包观察 Dead）
-    let semantics_crush = ChannelBuilder::new().slot_len(4).spawn().expect("crush channel");
-    kt.task()
-        .name("semantics")
-        .closure(move || {
-            use crate::work::unit::channel::ChannelError;
-            let (req_tx, resp_rx) = (semantics.client.req_tx, semantics.client.resp_rx);
-            // 对端半对随闭包持有到结束（不 drop 误杀通道）：显式借用防御
-            let _keep_server = (&semantics.server.req_rx, &semantics.server.resp_tx);
-            match req_tx.try_push(&[0xA1]) {
-                Ok(()) => putln!("semantics: push1 ok"),
-                other => putln!("semantics: push1 unexpected {other:?}"),
+    let semantics_crush = ChannelBuilder::new()
+        .slot_len(4)
+        .spawn()
+        .expect("crush channel");
+    kt.task().name("semantics").closure(move || {
+        use crate::work::unit::channel::ChannelError;
+        let (req_tx, resp_rx) = (semantics.client.req_tx, semantics.client.resp_rx);
+        // 对端半对随闭包持有到结束（不 drop 误杀通道）：显式借用防御
+        let _keep_server = (&semantics.server.req_rx, &semantics.server.resp_tx);
+        match req_tx.try_push(&[0xA1]) {
+            Ok(()) => putln!("semantics: push1 ok"),
+            other => putln!("semantics: push1 unexpected {other:?}"),
+        }
+        match req_tx.try_push(&[0xB2]) {
+            Ok(()) => putln!("semantics: push2 ok"),
+            other => putln!("semantics: push2 unexpected {other:?}"),
+        }
+        match req_tx.try_push(&[0xC3]) {
+            Err(ChannelError::Full) => putln!("semantics: try_push Full ✓"),
+            other => putln!("semantics: try_push expected Full got {other:?}"),
+        }
+        // timeout：deadline 已是过去 → 立即 Timeout
+        let past = crate::runtime::chrono::clock::now();
+        match resp_rx.timeout(&mut [0usize; 1], past) {
+            Err(ChannelError::Timeout) => putln!("semantics: timeout Timeout ✓"),
+            other => putln!("semantics: timeout expected Timeout got {other:?}"),
+        }
+        // crush：req 通道显式终止 → 对端（server 半对的 req_rx）pull 报 Dead。
+        // 消费式语义：crush 后本端已不可用，从对端观察 Dead。
+        {
+            let crushed = semantics_crush;
+            crushed.client.req_tx.crush();
+            let mut buf = [0usize; 1];
+            match crushed.server.req_rx.pull(&mut buf) {
+                Err(ChannelError::Dead) => putln!("semantics: crush Dead ✓"),
+                other => putln!("semantics: crush expected Dead got {other:?}"),
             }
-            match req_tx.try_push(&[0xB2]) {
-                Ok(()) => putln!("semantics: push2 ok"),
-                other => putln!("semantics: push2 unexpected {other:?}"),
-            }
-            match req_tx.try_push(&[0xC3]) {
-                Err(ChannelError::Full) => putln!("semantics: try_push Full ✓"),
-                other => putln!("semantics: try_push expected Full got {other:?}"),
-            }
-            // timeout：deadline 已是过去 → 立即 Timeout
-            let past = crate::runtime::chrono::clock::now();
-            match resp_rx.timeout(&mut [0usize; 1], past) {
-                Err(ChannelError::Timeout) => putln!("semantics: timeout Timeout ✓"),
-                other => putln!("semantics: timeout expected Timeout got {other:?}"),
-            }
-            // crush：req 通道显式终止 → 对端（server 半对的 req_rx）pull 报 Dead。
-            // 消费式语义：crush 后本端已不可用，从对端观察 Dead。
-            {
-                let crushed = semantics_crush;
-                crushed.client.req_tx.crush();
-                let mut buf = [0usize; 1];
-                match crushed.server.req_rx.pull(&mut buf) {
-                    Err(ChannelError::Dead) => putln!("semantics: crush Dead ✓"),
-                    other => putln!("semantics: crush expected Dead got {other:?}"),
-                }
-            }
-            putln!("semantics: done");
-        })?;
+        }
+        putln!("semantics: done");
+    })?;
     Ok(())
 }
 

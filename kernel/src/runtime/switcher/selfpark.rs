@@ -1,10 +1,11 @@
 // ktask 自切换原语 — 内核闭包任务（ktask）体内主动 park/唤醒续跑
 //
-// 背景：`scheduler::park` 只服务 trap 上下文（envcall Sleep 分支）——被中断现场
-// 已由 __alltraps/persist_kernel_preempt 落入任务帧，park 只做簿记 + 取下一帧，
-// 调用方 restore。闭包体（ktask_entry 内执行的 Rust 闭包）主动 park 时，现场在
-// 任务自己的内核栈上、不在帧里——直接调 scheduler::park 会丢现场：唤醒后 sret
-// 回旧断点（入口/上次抢占点），不是 park 调用点之后的代码。
+// 背景：`scheduler::park` 只负责「Running → Blocked + 取下一帧」的簿记；它要求
+// 调用方在调用前已把当前现场持久化到任务帧。trap 路径（envcall Sleep 分支）由
+// __alltraps/persist_kernel_preempt 完成这件事；闭包体（ktask_entry 内执行的
+// Rust 闭包）主动 park 时，现场还在任务自己的内核栈上、不在帧里——必须先经
+// `ktask_park_self` 汇编捕获现场，再复用同一个 `park_ms`/`park`。否则唤醒后
+// sret 回旧断点（入口/上次抢占点），不是 park 调用点之后的代码。
 //
 // 本原语（`ktask_park`）是 trap 路径 park 的闭包体侧对称物：
 //
@@ -108,7 +109,7 @@ global_asm!(
 // SAFETY: 纯粹另册函数桥，无 unsafe 操作；外部不可见。
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ktask_park_ms(ms: u64) -> usize {
-    crate::work::room::scheduler::park_ktask(ms)
+    crate::work::room::scheduler::park_ms(ms)
 }
 
 /// 恢复目标帧（恒等映射 PA）并进入其中。永不返回。

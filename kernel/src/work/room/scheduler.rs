@@ -367,6 +367,16 @@ fn wait() -> Option<Arc<Task>> {
         tie::halt();
     }
     loop {
+        // 每次决定重新睡下前，先复审全退出：halt 的 yell 会把本核从 WFI 拉起。
+        // 若这里不归队 halt，而 unpark 又无可唤醒任务、steal 也无活，就会清
+        // SSIP 后回睡，停机屏障将永远等不到本核的 HALT_ARRIVED。
+        if tie::done() {
+            // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
+            unsafe { sip::clear_ssoft() };
+            tie::wake(me);
+            tie::halt();
+        }
+
         let delta = match timer::next_tock() {
             Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
             None => WFI_FAR,
@@ -379,7 +389,7 @@ fn wait() -> Option<Arc<Task>> {
         if unpark() {
             break;
         }
-        // 假醒：也可能被 wake_all 的 IPI 唤来 steal（有活入队）——先复查取活，
+        // 假醒：也可能被 yell 的 IPI 唤来 steal（有活入队）——先复查取活，
         // 有任务即正常出口（清位交外层）；真无活才保持睡眠位回睡。
         if let Some(task) = schedulers()[me].pop().or_else(steal) {
             tie::wake(me);
@@ -449,8 +459,8 @@ pub(crate) fn push(task: Arc<Task>) {
     schedulers()[me].push(task);
     tie::push();
     trace::note(EventKind::Sched(SchedEvent::Spawn { tid }));
-    // 新任务出现：唤醒 WFI 休眠核（可 steal 取活）
-    tie::wake_all();
+    // 新任务出现：喊醒 WFI 休眠核（可 steal 取活）
+    tie::yell();
 }
 
 // ── 适配层：trap ──
@@ -531,7 +541,7 @@ pub fn unpark() -> bool {
         trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.id }));
         let me = machine::hart_id();
         schedulers()[me].push(task);
-        tie::wake_all();
+        tie::yell();
     }
     woke
 }
@@ -632,49 +642,21 @@ pub fn starve() -> usize {
     schedulers()[me].starve()
 }
 
-/// 当前线程睡眠入口（envcall ENV_SLEEP/ENV_MSLEEP 分支调用）：换算 deadline →
-/// 方法 park；本核 starved 空 → run() 取活。
+/// 当前任务睡眠入口（envcall ENV_SLEEP/ENV_MSLEEP 分支，以及 ktask 自切换桥
+/// 共同使用）：换算 deadline → 方法 park；本核 starved 空 → run() 取活。
 pub fn park(duration: Duration) -> usize {
     match schedulers()[machine::hart_id()].park(duration) {
         Some(pa) => pa,
-        // 无本核就绪任务：取活循环（trap 路径语义：steal/WFI）。**自切换簿记
-        // 场景（闭包体内）不得复用此路径**——wait() 是 trap 上下文的 WFI 休眠，
-        // 非 trap 上下文调用会破坏现场语义（见 switcher::selfpark 注释）。
+        // 无本核就绪任务：取活循环（steal/WFI）。trap 路径与 ktask 自切换路径
+        // 共用：调用方保证现场已持久化到任务帧（用户陷阱帧 / 自切换捕获帧），
+        // 且运行在 SIE=0 的 S 态。
         None => run(),
     }
 }
 
-/// 毫秒版 park（ktask 自切换原语的簿记桥，见 switcher::selfpark）。
+/// 毫秒版 park（envcall 与 ktask 自切换原语的簿记桥，见 switcher::selfpark）。
 pub fn park_ms(ms: u64) -> usize {
     park(Duration::from_millis(ms))
-}
-
-/// ktask 自切换簿记：running → Blocked + tock，随后在本核 starved 或跨核
-/// steal 取下一帧；无活则 WFI 挂起等待（tock 到期由他核 unpark 唤入队）。
-/// 与 trap 路径 park 的差异只有「None 分支」：不调 wait()（睡眠位/哑睡壳），
-/// 内联 WFI + steal 循环——同一语义，零 trap 上下文依赖（自切换现场在任务帧）。
-pub fn park_ktask(ms: u64) -> usize {
-    let me = machine::hart_id();
-    // 簿记（与 park 相同）：running → Blocked + tock
-    if let Some(pa) = schedulers()[me].park(Duration::from_millis(ms)) {
-        return pa;
-    }
-    // None（本核 starved 空）：
-    loop {
-        // 复查本核（可能刚被 push）；跨核 steal。
-        if let Some(pa) = schedulers()[me].pop().map(|t| schedulers()[me].replace(t)) {
-            return pa;
-        }
-        if let Some(task) = steal() {
-            let pa = schedulers()[me].replace(task);
-            return pa;
-        }
-        // 无活：WFI 等挂起中断（IPI 或 S-timer——tock 到期驱动 unpark 唤入队）。
-        // SIE=0（自切换全程关中断）：WFI 靠 pending 位唤醒，不取中断。
-        unsafe {
-            core::arch::asm!("wfi");
-        }
-    }
 }
 
 /// 当前运行任务 trap 帧 PA（闭包体自 park 用：捕获现场写入的目标帧）。
