@@ -2,5 +2,6 @@
 
 pub mod context;
 pub mod envcall;
+pub mod selfpark;
 pub mod trampoline;
 pub mod trap;

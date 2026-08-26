@@ -230,6 +230,7 @@ impl Scheduler {
     fn park(&self, duration: Duration) -> Option<usize> {
         let mut i = self.inner.lock();
         let mut task = i.running.take().expect("no running task");
+
         debug_assert!(
             matches!(task.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
@@ -524,6 +525,7 @@ pub fn unpark() -> bool {
             // 已取消/已由他路唤醒：跳过（堆项随 drain 已丢弃）
             continue;
         };
+
         woke = true;
         Task::exclusive(&mut task).transform(TaskState::Starved);
         trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.id }));
@@ -635,8 +637,61 @@ pub fn starve() -> usize {
 pub fn park(duration: Duration) -> usize {
     match schedulers()[machine::hart_id()].park(duration) {
         Some(pa) => pa,
+        // 无本核就绪任务：取活循环（trap 路径语义：steal/WFI）。**自切换簿记
+        // 场景（闭包体内）不得复用此路径**——wait() 是 trap 上下文的 WFI 休眠，
+        // 非 trap 上下文调用会破坏现场语义（见 switcher::selfpark 注释）。
         None => run(),
     }
+}
+
+/// 毫秒版 park（ktask 自切换原语的簿记桥，见 switcher::selfpark）。
+pub fn park_ms(ms: u64) -> usize {
+    park(Duration::from_millis(ms))
+}
+
+/// ktask 自切换簿记：running → Blocked + tock，随后在本核 starved 或跨核
+/// steal 取下一帧；无活则 WFI 挂起等待（tock 到期由他核 unpark 唤入队）。
+/// 与 trap 路径 park 的差异只有「None 分支」：不调 wait()（睡眠位/哑睡壳），
+/// 内联 WFI + steal 循环——同一语义，零 trap 上下文依赖（自切换现场在任务帧）。
+pub fn park_ktask(ms: u64) -> usize {
+    let me = machine::hart_id();
+    // 簿记（与 park 相同）：running → Blocked + tock
+    if let Some(pa) = schedulers()[me].park(Duration::from_millis(ms)) {
+        return pa;
+    }
+    // None（本核 starved 空）：
+    loop {
+        // 复查本核（可能刚被 push）；跨核 steal。
+        if let Some(pa) = schedulers()[me].pop().map(|t| schedulers()[me].replace(t)) {
+            return pa;
+        }
+        if let Some(task) = steal() {
+            let pa = schedulers()[me].replace(task);
+            return pa;
+        }
+        // 无活：WFI 等挂起中断（IPI 或 S-timer——tock 到期驱动 unpark 唤入队）。
+        // SIE=0（自切换全程关中断）：WFI 靠 pending 位唤醒，不取中断。
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}
+
+/// 当前运行任务 trap 帧 PA（闭包体自 park 用：捕获现场写入的目标帧）。
+///
+/// 与 `running_task_frame`（try_lock，panic 现场安全）不同：本函数走正式
+/// `lock`——调用方保证处于正常运行路径（闭包体内），running 必然存在。
+pub fn running_task_pa() -> usize {
+    let me = machine::hart_id();
+    schedulers()[me]
+        .inner
+        .lock()
+        .running
+        .as_ref()
+        .expect("no running task")
+        .trap
+        .pa
+        .as_usize()
 }
 
 /// 当前线程退出入口（envcall ENV_EXIT 分支调用）：标记 Reaped + 取下一任务

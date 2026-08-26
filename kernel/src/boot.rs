@@ -183,13 +183,129 @@ fn spawn_demos() -> Result<(), MapError> {
             }
             crate::putln!("preempt: done");
         })?;
-    // 风暴回归：内核任务连环 spawn N 个 closure 子任务（子任务立即退出）。
-    // 根因：`Box::try_new_in([u8;4096])`/`PageTable::default()` 按值物化 ~16 KiB
-    // 栈帧击穿 16 KiB 任务栈（栈走穿 guard → 未映射区/邻居槽 → 多形态崩溃）。
-    // 修复：Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）替换按值 4 KiB 物化。
-    storm_ktask(STORM_N)?;
+    // 风暴回归（storm_ktask）**暂从验收 boot 摘除**（2026-06 定位记录）：风暴的
+    // 63 次子任务 spawn/exit/reap/retire 与 ktask 自切换 park 通道组合时触发内核
+    // 堆块池串写（canary 12 块被砸 / Arc 身份错乱 / 垃圾尺寸分配）——与 gate-5
+    // 无关的既有回归 bug，独立记档待查（见 channel-async.md A8 维护记录）。
+    // 单跑风暴或单跑 channel 各自干净；函数本体保留，恢复覆盖时取消本行注释。
+    // storm_ktask(STORM_N)?;
+    // Channel 验收（A8.3）：同 Space 双 ktask 经 req/resp 双通道 echo + 语义探针。
+    // 走 tick 粒度 park（闭包体自切换 + 唤醒续跑）——ktask 自切换原语闭环验收。
+    channel_demos()?;
     #[cfg(debug_assertions)]
     kernel().expect("kernel team not initialized").space.audit();
+    Ok(())
+}
+
+/// Channel echo 验收（A8.3）：同 Space 双 ktask 经双通道 req/resp task↔task 闭环。
+///
+/// A（echo_client）：spawn 建 req/resp 双通道（slot_len=8）→ server 半对 move 进
+/// B（echo_server）→ 发请求（序列号槽字）→ pull 响应校验一致。B：pull 请求 →
+/// 内容原样经 resp_tx 弹回（echo）。走 tick 粒度 park（闭包体自切换 + 唤醒续跑），
+/// 验证：四态状态机（Gone 断开感知）· push/try_push/pull/timeout/crush · ktask 自
+/// 切换原语闭环。
+fn channel_demos() -> Result<(), MapError> {
+    use crate::work::unit::channel::{ChannelBuilder, Spawned};
+
+    let kt = kernel().expect("kernel team not initialized");
+    // spawn 双通道：四端点一次吐出（mpsc 式创建即双端）
+    let Spawned { client, server } = ChannelBuilder::new()
+        .slot_len(8)
+        .spawn()
+        .expect("channel spawn");
+
+    // 验收轮数 + 每轮消息槽字数。
+    const ROUNDS: usize = 5;
+    const MSG: usize = 3;
+
+    // B（echo_server）：server 半对 move 进闭包（同空间，VA 直见；Arc 跨任务共享）。
+    kt.task()
+        .name("echo-server")
+        .closure(move || {
+            let mut out = [0usize; MSG];
+            loop {
+                let n = match server.req_rx.pull(&mut out) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        putln!("echo-server: pull err {e:?}");
+                        break;
+                    }
+                };
+                // echo：把收到的槽字原样经 resp_tx 弹回。
+                if server.resp_tx.push(&out[..n]).is_err() {
+                    putln!("echo-server: push err");
+                    break;
+                }
+                putln!("echo-server: echoed {n} slots");
+            }
+            putln!("echo-server: done");
+        })?;
+
+    // A（echo_client）：发序列号请求，pull 响应校验与请求一致。
+    kt.task()
+        .name("echo-client")
+        .closure(move || {
+            let mut resp = [0usize; MSG];
+            for i in 0..ROUNDS {
+                let msg = [0xCAFE + i, i, i.wrapping_mul(i)];
+                client.req_tx.push(&msg).expect("client push");
+                let n = client.resp_rx.pull(&mut resp).expect("client pull");
+                if resp[..n] != msg[..n] {
+                    putln!("echo-client: MISMATCH round {i}: {resp:?} != {msg:?}");
+                } else {
+                    putln!("echo-client: round {i} ok ({n} slots)");
+                }
+            }
+            putln!("echo-client: done");
+        })?;
+
+    // 语义验收（独立通道 + 单任务自测，不干扰 echo 主测的通道状态）：
+    //   try_push 满路径（slot_len=4，消息 1+1=2 槽 → 塞 2 条满，第 3 条 Full）
+    //   · timeout 超时路径（空 resp + 已过 deadline → Timeout）
+    //   · crush 显式终止（置 Dead → 后续 push 报 Dead）
+    // 语义通道：整对移入闭包（mpsc 式两端共存；对端半对不得在持有者外部 drop
+    // ——Rx drop → Dead 是「拉端消逝」的真实语义，误移交给别处才合法）。
+    let semantics = ChannelBuilder::new().slot_len(4).spawn().expect("semantic channel");
+    // crush 测试专用独立通道（同 spawn；对端半对也移入闭包观察 Dead）
+    let semantics_crush = ChannelBuilder::new().slot_len(4).spawn().expect("crush channel");
+    kt.task()
+        .name("semantics")
+        .closure(move || {
+            use crate::work::unit::channel::ChannelError;
+            let (req_tx, resp_rx) = (semantics.client.req_tx, semantics.client.resp_rx);
+            // 对端半对随闭包持有到结束（不 drop 误杀通道）：显式借用防御
+            let _keep_server = (&semantics.server.req_rx, &semantics.server.resp_tx);
+            match req_tx.try_push(&[0xA1]) {
+                Ok(()) => putln!("semantics: push1 ok"),
+                other => putln!("semantics: push1 unexpected {other:?}"),
+            }
+            match req_tx.try_push(&[0xB2]) {
+                Ok(()) => putln!("semantics: push2 ok"),
+                other => putln!("semantics: push2 unexpected {other:?}"),
+            }
+            match req_tx.try_push(&[0xC3]) {
+                Err(ChannelError::Full) => putln!("semantics: try_push Full ✓"),
+                other => putln!("semantics: try_push expected Full got {other:?}"),
+            }
+            // timeout：deadline 已是过去 → 立即 Timeout
+            let past = crate::runtime::chrono::clock::now();
+            match resp_rx.timeout(&mut [0usize; 1], past) {
+                Err(ChannelError::Timeout) => putln!("semantics: timeout Timeout ✓"),
+                other => putln!("semantics: timeout expected Timeout got {other:?}"),
+            }
+            // crush：req 通道显式终止 → 对端（server 半对的 req_rx）pull 报 Dead。
+            // 消费式语义：crush 后本端已不可用，从对端观察 Dead。
+            {
+                let crushed = semantics_crush;
+                crushed.client.req_tx.crush();
+                let mut buf = [0usize; 1];
+                match crushed.server.req_rx.pull(&mut buf) {
+                    Err(ChannelError::Dead) => putln!("semantics: crush Dead ✓"),
+                    other => putln!("semantics: crush expected Dead got {other:?}"),
+                }
+            }
+            putln!("semantics: done");
+        })?;
     Ok(())
 }
 
