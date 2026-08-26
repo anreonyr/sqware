@@ -27,7 +27,6 @@ use riscv::register::satp;
 
 use crate::machine::{self, kernel_edge};
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::{
     MapError,
     addr::{PhysAddr, VirtAddr},
@@ -142,8 +141,11 @@ pub fn init() -> MapResult<()> {
             //    team::kernel_frame_pa 从本空间事实源读，无旁置表）。
             let n = machine::hart_count();
             for h in 0..n {
-                let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                    .map_err(|_| MapError::OutOfMemory)?;
+                let page: crate::memory::manager::table::Frame = Box::try_new_zeroed_in(
+                    crate::memory::allocator::frame::allocator(),
+                )
+                .map_err(|_| MapError::OutOfMemory)?
+                .assume_init();
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
                 kernel_space.map(
                     KERNEL_FRAME_BASE + h * PAGE_SIZE,

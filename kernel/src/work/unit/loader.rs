@@ -8,7 +8,6 @@ use alloc::vec::Vec;
 use super::parser::{LoadSegment, ParsedProgram};
 use super::space::{MapKind, Space};
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
@@ -56,8 +55,11 @@ fn map_segment(space: &Space, bytes: &[u8], seg: &LoadSegment) -> Result<(), Map
     let pages = seg.filesz.div_ceil(PAGE_SIZE);
     let mut frames = Vec::with_capacity(pages);
     for i in 0..pages {
-        let mut frame =
-            Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
+        let mut frame: crate::memory::manager::table::Frame = unsafe {
+            Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                .map_err(|_| MapError::OutOfMemory)?
+                .assume_init()
+        };
         let src = seg.offset + i * PAGE_SIZE;
         let end = seg.offset.saturating_add(seg.filesz);
         let len = end.min(src.saturating_add(PAGE_SIZE)) - src;

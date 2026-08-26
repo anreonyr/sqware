@@ -8,12 +8,10 @@ use alloc::{
     vec::Vec,
 };
 
-
-
 use super::fence::checker;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
-    memory::allocator::{InitError, InitResult, Link, bump},
+    memory::allocator::{bump, InitError, InitResult, Link},
 };
 
 struct Meta {

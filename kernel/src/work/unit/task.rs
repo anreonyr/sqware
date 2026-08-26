@@ -10,31 +10,21 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::space::TASK_STACK_SIZE;
 use crate::machine;
-use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame::allocator;
-use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::MapError;
+use crate::memory::PAGE_SIZE;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
-use crate::work::USER_TEXT_BASE;
 use crate::work::unit::space::KERNEL_FRAME_BASE;
 use crate::work::unit::team::kernel;
+use crate::work::USER_TEXT_BASE;
 use riscv::register::{satp, sstatus};
 
 use super::team::Team;
 use crate::work::room::scheduler;
 
-/// 内核任务自身的 trap 帧 PA（创建内核任务时写入一次）。
-/// 入口据此读帧内 kernel_sp（调度器按**真实** hart 写的 trap 栈顶）反推实际
-/// 执行 hart 重建 tp——内核任务的 tp 不随迁移更新，残留错误会致退出路径摸错
-/// hart。
-pub(crate) static KT_FRAME_PA: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
-
 /// 全局任务号（跨 hart 唯一）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-
-
 
 /// 任务状态：任务现在在哪 +（Running/Blocked 时）该状态特有的数据。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -230,7 +220,6 @@ impl TaskBuilder {
         // SAFETY: 闭包在本地装箱，a0 传其薄指针；SPP=1 回 S 态运行于 `ktask_entry`。
         let entry = VirtAddr::from_raw(ktask_entry as *const () as usize);
         let frame_pa = self.entry(entry).arg(ptr).spawn()?;
-        KT_FRAME_PA.store(frame_pa.as_usize(), core::sync::atomic::Ordering::Relaxed);
         Ok(frame_pa)
     }
 
@@ -246,8 +235,11 @@ impl TaskBuilder {
         let stack_va = self.team.space.stack_allocate(id, stack_size)?;
         let mut stack_frames = Vec::new();
         for _ in 0..(stack_size / PAGE_SIZE) {
-            let frame = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                .map_err(|_| MapError::OutOfMemory)?;
+            let frame = unsafe {
+                Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                    .map_err(|_| MapError::OutOfMemory)?
+                    .assume_init()
+            };
             stack_frames.push(frame);
         }
         self.team.space.attach_dynamic(stack_va, stack_frames)?;
@@ -330,22 +322,11 @@ impl TaskBuilder {
 /// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
 /// `Box<dyn FnOnce()>` 原始指针。
 pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
-    // 重建 tp = 实际执行 hart：内核任务被调度到任一 hart 时 tp 未必随之更新。
-    // 帧 kernel_sp 由调度器按**真实** hart 写入（trap 栈顶），据此反推实际
-    // hart 写入 tp。
-    let fr = KT_FRAME_PA.load(core::sync::atomic::Ordering::Relaxed)
-        as *const crate::runtime::switcher::context::TrapContext;
-    let ksp = unsafe { core::ptr::addr_of!((*fr).kernel_sp).read() }.as_usize();
-    let mut actual = crate::machine::hart_id();
-    for h in 0..crate::machine::hart_count() {
-        if crate::runtime::switcher::trampoline::trap_stack_top(h) == ksp {
-            actual = h;
-        }
-    }
-    // SAFETY: 写 tp（内核任务建立正确的 hartid；S 态、无 TLS，内核里 tp 恒为 hartid）。
-    unsafe {
-        core::arch::asm!("mv tp, {h}", h = in(reg) actual, options(nomem, nostack, preserves_flags));
-    }
+    // tp = 本 hart：每个内核任务上台时 Scheduler::prepare 已把 TP 写入其帧
+    // （frame.gpr[TP] = self.hart），__restore 恢复全部 GPR 时 tp 即已在位——此处
+    // 不再重建。历史上曾用全局 KT_FRAME_PA 反推执行 hart：被偷走的任务会读到最后
+    // spawn 任务的帧而算出错误 hart，写坏 tp 后退出路径切错核的 trap 栈、摸错核的
+    // 调度器——风暴混沌崩溃的根因（本修复即删除该重建）。
     // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
     let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
     let boxed: Box<dyn FnOnce()> = *holder; // 移出内层闭包，holder 随之 drop
@@ -361,10 +342,7 @@ fn ktask_exit() -> ! {
     // 恢复，而 trap 栈可能已被他 trap 使用——错乱。关中断使退出序列原子。
     // SAFETY: 清 sstatus.SIE（bit 1）；S 态、无并发别名。
     unsafe {
-        core::arch::asm!(
-            "csrc sstatus, 2",
-            options(nomem, nostack, preserves_flags)
-        );
+        core::arch::asm!("csrc sstatus, 2", options(nomem, nostack, preserves_flags));
     }
     // 切到 per-hart trap 栈再退出：回收 Reaped 任务（含其内核栈）时我们已不在
     // 该栈上。**必须用 options(noreturn) 的 tail-jump**——在 Rust 函数中部 `mv sp` 若配

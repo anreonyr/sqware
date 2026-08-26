@@ -102,7 +102,14 @@ impl PageTable {
     ///
     /// 物理帧耗尽时返回 [`MapError::OutOfMemory`]。
     pub(crate) fn new() -> Result<Box<PageTable, &'static dyn Allocator>, MapError> {
-        Box::try_new_in(PageTable::default(), allocator()).map_err(|_| MapError::OutOfMemory)
+        // 同 [u8;4096] 教训：PageTable::default() 按值 4 KiB 会在调用栈上物化约
+        // 16 KiB 栈帧——任务栈上建中间表同样击穿（风暴 UAF 同源）。走标准原语
+        // Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）。
+        Ok(unsafe {
+            Box::try_new_zeroed_in(allocator())
+                .map_err(|_| MapError::OutOfMemory)?
+                .assume_init()
+        })
     }
 }
 

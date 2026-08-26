@@ -10,7 +10,6 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::{MapKind, SpaceBuilder};
@@ -36,11 +35,14 @@ pub fn pagetable() {
 
     for round in 0..ROUNDS {
         // map：分配数据帧 + 中间表
-        let mut frames = Vec::new();
+        let mut frames: Vec<crate::memory::manager::table::Frame> = Vec::new();
         for _ in 0..(SIZE / PAGE_SIZE) {
             frames.push(
-                Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                    .expect("[health] pagetable: data frame"),
+                unsafe {
+                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                        .expect("[health] pagetable: data frame")
+                        .assume_init()
+                },
             );
         }
         let pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);

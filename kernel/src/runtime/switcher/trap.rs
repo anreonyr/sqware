@@ -13,8 +13,8 @@ use core::time::Duration;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sie, sip, sstatus, stval, stvec, time};
 
-use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
+use crate::memory::PAGE_SIZE;
 use crate::putln;
 use crate::runtime::diagnose::trace::{self, BootEvent, EventKind, MemEvent};
 use crate::runtime::switcher::context::TrapContext;
@@ -24,7 +24,7 @@ use crate::runtime::switcher::trampoline::{
 };
 use crate::work::unit::space::KERNEL_FRAME_BASE;
 use crate::{machine, put};
-use sbi::{TimerCall, fid::Timer, scall::SArgs};
+use sbi::{fid::Timer, scall::SArgs, TimerCall};
 
 /// per-hart trap 栈底 canary（溢出检测：破坏即 panic；boot 时写入全部 hart）。
 pub(crate) const TRAP_STACK_CANARY: usize = 0x5EED_CAFE_51A7_0000;

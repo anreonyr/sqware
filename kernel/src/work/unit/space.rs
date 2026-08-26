@@ -837,8 +837,11 @@ impl Space {
             dynamic.get_mut(&kind).expect("window exists")
         };
         let va = frame_win.allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
-        let page =
-            Box::try_new_in([0u8; PAGE_SIZE], allocator()).map_err(|_| MapError::OutOfMemory)?;
+        let page: crate::memory::manager::table::Frame = unsafe {
+            Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                .map_err(|_| MapError::OutOfMemory)?
+                .assume_init()
+        };
         let pa = PhysAddr::from_raw(page.as_ptr() as usize);
         if durable.root.map(va, pa, PAGE_SIZE, flags).is_err() {
             // 回滚：清可能残留的中间表/PTE + VA 退回窗口（空子 Map 一并移除）
@@ -924,8 +927,11 @@ impl Space {
         let pages = size / PAGE_SIZE;
         let mut mapped = 0usize;
         while mapped < pages {
-            let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                .map_err(|_| MapError::OutOfMemory)?;
+            let page: crate::memory::manager::table::Frame = unsafe {
+                Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                    .map_err(|_| MapError::OutOfMemory)?
+                    .assume_init()
+            };
             let pa = PhysAddr::from_raw(page.as_ptr() as usize);
             let m_va = va + mapped * PAGE_SIZE;
             if durable.root.map(m_va, pa, PAGE_SIZE, flags).is_err() {
@@ -1373,8 +1379,11 @@ impl Space {
                 let FrameState::Borrowed(arc) = &map.frames[idx] else {
                     unreachable!("checked above")
                 };
-                let mut nb = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                    .map_err(|_| MapError::OutOfMemory)?;
+                let mut nb: crate::memory::manager::table::Frame = unsafe {
+                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                        .map_err(|_| MapError::OutOfMemory)?
+                        .assume_init()
+                };
                 nb.copy_from_slice(&arc[..]);
                 nb
             };
@@ -1448,8 +1457,11 @@ impl Space {
                 }
                 m.flags | PteFlags::A | PteFlags::D
             };
-            let page = Box::try_new_in([0u8; PAGE_SIZE], allocator())
-                .map_err(|_| MapError::OutOfMemory)?;
+            let page: crate::memory::manager::table::Frame = unsafe {
+                Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                    .map_err(|_| MapError::OutOfMemory)?
+                    .assume_init()
+            };
             let pa = PhysAddr::from_raw(page.as_ptr() as usize);
             {
                 let SpaceInner { durable, .. } = &mut *inner;

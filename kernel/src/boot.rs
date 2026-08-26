@@ -8,11 +8,11 @@ use alloc::vec;
 use riscv::register::{satp, sie, stvec};
 
 use crate::console::Sink;
-use crate::machine::{KERNEL_STACK_CANARY, kernel_stack_base};
-use crate::memory::PAGE_SIZE;
-use crate::memory::manager::MapError;
+use crate::machine::{kernel_stack_base, KERNEL_STACK_CANARY};
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::mode;
+use crate::memory::manager::MapError;
+use crate::memory::PAGE_SIZE;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
@@ -20,7 +20,7 @@ use crate::runtime::switcher::trampoline::{
     alltraps_va, restore, trap_stack_bottom, trap_stack_top,
 };
 use crate::work::room::scheduler;
-use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder};
+use crate::work::unit::space::{SpaceBuilder, KERNEL_FRAME_BASE};
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 use crate::{machine, putln};
@@ -183,8 +183,36 @@ fn spawn_demos() -> Result<(), MapError> {
             }
             crate::putln!("preempt: done");
         })?;
+    // 风暴回归：内核任务连环 spawn N 个 closure 子任务（子任务立即退出）。
+    // 根因：`Box::try_new_in([u8;4096])`/`PageTable::default()` 按值物化 ~16 KiB
+    // 栈帧击穿 16 KiB 任务栈（栈走穿 guard → 未映射区/邻居槽 → 多形态崩溃）。
+    // 修复：Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）替换按值 4 KiB 物化。
+    storm_ktask(STORM_N)?;
     #[cfg(debug_assertions)]
     kernel().expect("kernel team not initialized").space.audit();
+    Ok(())
+}
+
+/// 风暴子任务数（回归：一次连环 spawn 全部存活并入队）。
+const STORM_N: usize = 60;
+
+/// 风暴 = 内核任务连环 spawn closure 子任务（子任务空跑即退）。
+fn storm_ktask(n: usize) -> Result<(), MapError> {
+    kernel()
+        .expect("kernel team not initialized")
+        .task()
+        .name("storm")
+        .closure(move || {
+            let kt = kernel().expect("kernel team not initialized");
+            crate::putln!("storm: begin spawn {n}");
+            for _i in 0..n {
+                kt.task()
+                    .name("child")
+                    .closure(|| {})
+                    .expect("storm spawn child");
+            }
+            crate::putln!("storm: all {n} spawned");
+        })?;
     Ok(())
 }
 
