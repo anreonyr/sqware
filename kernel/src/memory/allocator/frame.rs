@@ -8,6 +8,8 @@ use alloc::{
     vec::Vec,
 };
 
+
+
 use super::fence::checker;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
@@ -76,6 +78,19 @@ unsafe impl Allocator for FrameAllocator {
 
         let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
         let addr = frame.frame_addr(index) as *mut u8;
+        // 护栏：分配结果必须在 free 区 [base, edge)——坏地址即刻暴露
+        //（崩点如 0xffffffffff6970 来自被破坏的 freelist 节点头）。
+        checker::check_dram_addr(addr as usize, "frame alloc (split result)");
+        #[cfg(debug_assertions)]
+        {
+            let a = addr as usize;
+            assert!(
+                (a >= frame.base) && (a < frame.edge),
+                "frame alloc out of range: {a:#x} not in [{:#x}, {:#x})",
+                frame.base,
+                frame.edge
+            );
+        }
         // 护栏事件：帧由金库取出。
         super::fence::on_frame_alloc(addr as usize);
         #[cfg(debug_assertions)]
@@ -98,6 +113,18 @@ unsafe impl Allocator for FrameAllocator {
             let size = layout.size().max(PAGE_SIZE);
             let power = block_power(size);
             let addr = ptr.addr().get();
+            // 护栏：释放地址必须在 free 区（双释放/错地址释放即刻暴露）
+            checker::check_dram_addr(addr, "frame dealloc (ptr)");
+            #[cfg(debug_assertions)]
+            {
+                let a = addr;
+                assert!(
+                    (a >= frame.base) && (a < frame.edge),
+                    "frame dealloc out of range: {a:#x} not in [{:#x}, {:#x})",
+                    frame.base,
+                    frame.edge
+                );
+            }
             let index = frame.frame_index(addr);
 
             // 护栏事件：帧存入金库。

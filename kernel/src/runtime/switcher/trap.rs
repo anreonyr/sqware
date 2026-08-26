@@ -5,7 +5,7 @@
 // 帧（panic 兜底）。trap 栈底 canary 在处理器出入口校验（溢出即 panic）。
 
 use crate::runtime::chrono::{clock, timer};
-use crate::work::room::scheduler::{run, unpark, with_running_space};
+use crate::work::room::scheduler::{run, running_task_frame, unpark, with_running_space};
 use crate::work::unit::team::kernel;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
@@ -122,6 +122,27 @@ pub fn init() {
     }
 }
 
+/// 内核态被打断的现场持久化：把 per-hart 帧（仅一份）的被中断现场
+/// （gpr/sstatus/sepc）拷入当前 running 任务的专属帧。否则抢占切走后再来
+/// 陷阱会覆写 per-hart 帧——被抢占内核任务的现场将丢失。
+///
+/// 只搬三个现场字段；任务帧其余元数据（kernel_satp/kernel_sp/trap_handler/
+/// user_satp/self_va/…）由 spawn/prepare 维护，不得改动。
+fn persist_kernel_preempt(frame: &TrapContext) -> bool {
+    let Some((_tid, task_pa, _)) = running_task_frame() else {
+        return false;
+    };
+    let dst = task_pa as *mut TrapContext;
+    // SAFETY: 任务专属帧 PA 恒等映射可写；当前 running 任务独占；此后不再使用
+    // per-hart 帧（run() 切换返回下一任务帧，由 __restore 消耗）。
+    unsafe {
+        (*dst).gpr = frame.gpr;
+        (*dst).sstatus = frame.sstatus;
+        (*dst).sepc = frame.sepc;
+    }
+    true
+}
+
 /// 武装 S-timer 中断：`stimecmp = time + interval`（SBI TIME 扩展，绝对时间）。
 /// interval 为 timebase 刻度（clock 换算）。
 pub fn arm_timer(interval: u64) {
@@ -204,8 +225,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         panic!("unknown trap cause: {e:?}");
     });
     let next: *mut TrapContext = match trap {
-        // S-timer：重武装 + 抢占（仅用户态陷阱可切换——内核态陷阱须恢复被
-        // 中断的内核上下文；内核恒关中断下本不应发生，SPP 判断为防御性）
+        // S-timer：重武装 + 抢占。用户态陷阱直接切换（现场本就在任务帧）；
+        // 内核态陷阱（可抢占内核）先把现场持久化到任务专属帧再切换——per-hart
+        // 帧仅一份，不搬即被下一次 trap 覆写，被抢占内核任务现场丢失。
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             timer::tick();
             // 重武装：运行任务抢占量子。
@@ -213,7 +235,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             unpark();
             if frame.sstatus.spp() != sstatus::SPP::Supervisor {
                 run() as *mut TrapContext
+            } else if persist_kernel_preempt(frame) {
+                // 内核态被打断且确有 running 内核任务：现场已持久化 → 抢占
+                run() as *mut TrapContext
             } else {
+                // S 态空闲（无 running：取活/WFI 被 timer 打断）→ 恢复原上下文
                 frame as *mut TrapContext
             }
         }

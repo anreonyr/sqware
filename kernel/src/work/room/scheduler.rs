@@ -42,7 +42,7 @@ use crate::machine;
 use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
-use crate::runtime::switcher::context::TrapContext;
+use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
 use crate::runtime::switcher::trap::arm_timer;
 
@@ -166,6 +166,14 @@ impl Scheduler {
         unsafe {
             let frame = &mut *(t.trap.pa.as_usize() as *mut TrapContext);
             frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(self.hart));
+            // 内核任务上台即写 tp = 本 hart：被抢占恢复路径直接 sret 回打断点
+            // （不经 ktask_entry 的 tp 重建），tp 必须在上台时就绪。
+            if Arc::ptr_eq(
+                &t.team,
+                crate::work::unit::team::kernel().expect("kernel team not initialized"),
+            ) {
+                frame.gpr.set_x(Gprs::TP, self.hart);
+            }
         }
         arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
     }

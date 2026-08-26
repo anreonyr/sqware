@@ -34,6 +34,8 @@ pub(crate) static KT_FRAME_PA: core::sync::atomic::AtomicUsize =
 /// 全局任务号（跨 hart 唯一）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
+
+
 /// 任务状态：任务现在在哪 +（Running/Blocked 时）该状态特有的数据。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskState {
@@ -283,16 +285,17 @@ impl TaskBuilder {
             frame.gpr.set_x(Gprs::SP, stack_top.as_usize());
             frame.gpr.set_x(Gprs::A0, self.arg);
             let mut ss = sstatus::Sstatus::from_bits(riscv::register::sstatus::read().bits());
-            // 内核任务（挂 kernel 团队）→ S 态：SPP=S、SIE=0、SPIE=0（内核恒关
-            // 中断——协作式，从不被 S-timer 抢占；跑完即退）。其它团队 → U 态：
-            // SPP=U、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。模式由团队身份推断。
+            // 内核任务（挂 kernel 团队）→ S 态：SPP=S、SPIE=1（sret 后 SIE=1，可被
+            // S-timer 抢占——可抢占内核；临界区安全由锁的 TrapGuard 关中断保证）。
+            // 其它团队 → U 态：SPP=U、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。
+            // 模式由团队身份推断。
             ss.set_sie(false);
             if Arc::ptr_eq(
                 &self.team,
                 super::team::kernel().expect("kernel team not initialized"),
             ) {
                 ss.set_spp(sstatus::SPP::Supervisor);
-                ss.set_spie(false);
+                ss.set_spie(true);
             } else {
                 ss.set_spp(sstatus::SPP::User);
                 ss.set_spie(true);
@@ -353,6 +356,16 @@ pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
 /// 内核任务退出：切到 per-hart trap 栈（否则栈回收会回收**正在使用**的内核栈）→
 /// 标记退出 + 取下一任务 → restore。永不返回。
 fn ktask_exit() -> ! {
+    // 退出序列将在 per-hart trap 栈上执行——先关中断：可抢占内核下（SIE=1）
+    // 若在此被 S-timer 打断，被中断现场（sp = trap 栈）经 persist + 轮转后
+    // 恢复，而 trap 栈可能已被他 trap 使用——错乱。关中断使退出序列原子。
+    // SAFETY: 清 sstatus.SIE（bit 1）；S 态、无并发别名。
+    unsafe {
+        core::arch::asm!(
+            "csrc sstatus, 2",
+            options(nomem, nostack, preserves_flags)
+        );
+    }
     // 切到 per-hart trap 栈再退出：回收 Reaped 任务（含其内核栈）时我们已不在
     // 该栈上。**必须用 options(noreturn) 的 tail-jump**——在 Rust 函数中部 `mv sp` 若配
     // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位。

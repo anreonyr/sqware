@@ -162,6 +162,27 @@ fn spawn_demos() -> Result<(), MapError> {
         .closure(|| {
             putln!("ktask");
         })?;
+    // 可抢占内核验证：常驻循环任务（每轮百万次增量 + 打印进度）。被 S-timer 抢占
+    // 恢复正确 → round 顺序不重不乱、n 单调递增、hart 稳定；现场丢失则崩/乱序。
+    kernel()
+        .expect("kernel team not initialized")
+        .task()
+        .name("preempt")
+        .closure(|| {
+            let mut n: usize = 0;
+            for round in 0..10u32 {
+                let start = n;
+                for _ in 0..100_000 {
+                    n = n.wrapping_add(1);
+                }
+                crate::putln!(
+                    "preempt: round {round} n={n:#x} delta={:#x} hart={}",
+                    n.wrapping_sub(start),
+                    crate::machine::hart_id()
+                );
+            }
+            crate::putln!("preempt: done");
+        })?;
     #[cfg(debug_assertions)]
     kernel().expect("kernel team not initialized").space.audit();
     Ok(())
