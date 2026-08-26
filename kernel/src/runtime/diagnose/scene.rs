@@ -110,11 +110,10 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     // 扫描上界钳制：崩溃现场可能运行在「段顶之上是刻意未映射 guard 页」的栈上，
     // 扫描窗越过段顶即读缺页 → 嵌套 panic → 现场静默消失（幽灵 panic）。high 钳到
     // 两类段顶（trap 栈 / 内核任务栈 slot）；其余栈上方为已映射 DRAM，退回原行为。
+    // trap 栈按 sp 纯算术反推（固定 VA 窗口），不依赖 hart_id/元数据表。
     let high = {
-        let trap_top =
-            crate::runtime::switcher::trampoline::trap_stack_meta(crate::machine::hart_id())
-                .filter(|m| m.top != 0 && sp <= m.top && sp > m.bottom)
-                .map(|m| m.top);
+        let trap_top = crate::runtime::switcher::trampoline::hart_of_trap_stack(sp)
+            .map(crate::runtime::switcher::trampoline::trap_stack_top);
         // 栈窗顶锚于用户空间上界之下：[upper − STACK_AREA, upper)。
         let stack_base = crate::memory::manager::mode::upper().as_usize() - STACK_AREA;
         let stack_top = (sp >= stack_base && sp < stack_base + STACK_AREA)
@@ -310,13 +309,29 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         )),
     ]);
     {
-        // sscratch：0 = 内核态；非 0 = 用户态。
+        // sscratch 约定：内核态 = 本 hart 内核 trap 帧 VA（KERNEL_FRAME_BASE +
+        // hart·PAGE，可反推 hart）；用户态 = 当前线程帧 self_va（线程帧窗）。
+        // 值域判定：内核帧区 → 内核态帧（可推 hart）；线程帧窗 → 用户帧。
         let scr = sscratch::read();
-        let n = if scr == 0 { "Kernel" } else { "User" };
+        let kfb = crate::work::unit::space::KERNEL_FRAME_BASE.as_usize();
+        let n = if scr == 0 {
+            "Kernel (sscratch=0)".to_string()
+        } else if scr >= kfb && scr < kfb + crate::machine::MAX_HART_SLOTS * PAGE_SIZE {
+            format!(
+                "Kernel frame (hart {})",
+                (scr - kfb) / PAGE_SIZE
+            )
+        } else if scr >= crate::work::unit::space::FRAME_BASE.as_usize()
+            && scr < crate::work::unit::space::KERNEL_FRAME_BASE.as_usize()
+        {
+            "User frame".into()
+        } else {
+            "other".into()
+        };
         rows.push(vec![
             Some("sscratch".into()),
             Some(hex(scr)),
-            Some(n.into()),
+            Some(n),
         ]);
     }
     {

@@ -3,6 +3,10 @@
 // 内核态陷阱约定：现场保存在 per-hart 内核帧（KERNEL_FRAME_BASE + hart·PAGE），处理器运行在 per-hart
 // trap 栈上；入口硬件已清 SIE，处理器内嵌套陷阱仅可能是内核 bug，会覆写内核
 // 帧（panic 兜底）。trap 栈底 canary 在处理器出入口校验（溢出即 panic）。
+//
+// sscratch 约定（与 trampoline 一致）：用户态 = 当前线程帧 VA；内核态 =
+// 本 hart 内核帧 VA（KERNEL_FRAME_BASE + hart·PAGE）——boot/__restore SPP=1 维护。
+// 崩溃场景（scene.rs）按值域判定并可直接反推 hart。
 
 use crate::runtime::chrono::{clock, timer};
 use crate::work::room::scheduler::{run, running_task_frame, unpark, with_running_space};
@@ -109,14 +113,16 @@ pub fn init() {
     //    开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序难看）。
     arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
 
-    // 4. stvec → __alltraps（Direct 模式）；sscratch = 0（内核态约定）；
+    // 4. stvec → __alltraps（Direct 模式）；sscratch = 本 hart 内核帧 VA（内核态约定）；
     //    使能定时器源：sie.STIE。**不**开 sstatus.SIE（全局）——内核态恒关中断
     //    （处理器内关中断策略）：SIE 只经 sret 由帧内 SPIE 恢复，用户态 = 1，
     //    内核态 = 0。故 S-timer 只在用户态触发，内核代码永不被打断/抢占。
     //    （本步是 hart 0 的 CSR；副核各自配置。）
     unsafe {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
-        core::arch::asm!("csrw sscratch, zero");
+        let me = machine::hart_id();
+        let scr = (KERNEL_FRAME_BASE + me * PAGE_SIZE).as_usize();
+        core::arch::asm!("csrw sscratch, {}", in(reg) scr);
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠核被 SBI IPI 唤醒的前提（只唤醒不取中断）
     }

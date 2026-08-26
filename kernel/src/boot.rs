@@ -17,7 +17,7 @@ use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{
-    alltraps_va, restore, trap_stack_bottom, trap_stack_top,
+    alltraps_va, restore, trap_stack_bottom, trap_stack_phys_top, trap_stack_top,
 };
 use crate::work::room::scheduler;
 use crate::work::unit::space::{SpaceBuilder, KERNEL_FRAME_BASE};
@@ -364,7 +364,7 @@ fn boot_harts() {
         if hart == me {
             continue;
         }
-        let stack_top = crate::runtime::switcher::trampoline::trap_stack_top(hart);
+        let stack_top = trap_stack_phys_top(hart);
         // putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
         // 同事件也进 trace（hart 0 窗口）：崩溃回放可见启动序列。
         trace::note(trace::EventKind::Boot(trace::BootEvent::Launch { hart }));
@@ -401,7 +401,10 @@ pub(crate) extern "C" fn boot_main() -> ! {
         satp::set(mode::mode(), ksatp.asid(), ksatp.ppn());
         core::arch::asm!("sfence.vma");
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
-        core::arch::asm!("csrw sscratch, zero");
+        // sscratch = 本 hart 内核帧 VA（内核态约定，与 trap::init 一致）
+        let me = machine::hart_id();
+        let scr = (KERNEL_FRAME_BASE + me * PAGE_SIZE).as_usize();
+        core::arch::asm!("csrw sscratch, {}", in(reg) scr);
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
     }

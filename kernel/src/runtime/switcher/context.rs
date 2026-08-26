@@ -101,6 +101,8 @@ pub struct TrapContext {
     /// 用户线程帧 = 本空间 Frame 窗口分配的 VA；
     /// 内核帧 = per-hart 帧。alltraps 用户路径把
     /// sscratch 设为该 VA，使每线程帧可位于任意页而汇编零改动。
+    /// （sscratch 约定：用户态 = 线程帧 self_va；内核态 = 本 hart 内核帧 VA，
+    /// 见 trampoline 模块头。）
     pub self_va: VirtAddr,
 }
 

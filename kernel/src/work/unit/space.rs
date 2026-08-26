@@ -511,6 +511,17 @@ pub(crate) const FRAME_REGION_SIZE: usize = 0x400_0000 - (KERNEL_FRAME_SLOTS - 1
 pub(crate) const FRAME_BASE: VirtAddr =
     VirtAddr::wrap(KERNEL_FRAME_BASE.as_usize() - FRAME_REGION_SIZE);
 
+/// trap 栈窗口：每个 hart 64 KiB（1 页 guard + 15 页栈体）。
+pub(crate) const TRAP_STACK_SEGMENT: usize = 64 * 1024;
+pub(crate) const TRAP_STACK_SHIFT: usize = 16; // 64 KiB = 2^16
+pub(crate) const TRAP_STACK_GUARD: usize = PAGE_SIZE;
+
+/// trap 栈窗口基址：FRAME_BASE 之下，预留 MAX_HART_SLOTS * 64 KiB。
+/// 只有 VA 固定，物理页仍然 boot 时分配。
+pub(crate) const TRAP_STACK_BASE: VirtAddr = VirtAddr::wrap(
+    FRAME_BASE.as_usize() - (crate::machine::MAX_HART_SLOTS << TRAP_STACK_SHIFT),
+);
+
 // ── 地址空间总览（随模式；几何见 mode::lower/upper）────────────────
 //
 // 用户半区 [0, 2^split_bit)（split_bit = W−1 随模式）：
@@ -530,13 +541,19 @@ pub(crate) const FRAME_BASE: VirtAddr =
 // 内核半区（canonical(2^split_bit) = lower() 起，随模式）：
 //
 //   0xFFFF_FFFF_FFFF_F000 — TRAMPOLINE（任何模式最高页）
-//   0xFFFF_FFFF_FFEF_F000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 4096 页（16 MiB VA 窗口）
+//   0xFFFF_FFFF_FEFF_F000 ┬ per-hart 内核帧区：KERNEL_FRAME_BASE 起 4096 页（16 MiB VA 窗口）
 //   0xFFFF_FFFF_FFFF_F000 ┘ （hart h 帧 = BASE + h·PAGE）
-//   0xFFFF_FFFF_FCEF_E000 — FRAME_BASE（帧窗口下界）
+//   0xFFFF_FFFF_FBFF_E000 — FRAME_BASE（帧窗口下界）
 //     ┌─────────────────────────────────┐
 //     │  线程 trap 帧窗口（≈48 MiB）    │ FRAME_BASE + FRAME_REGION_SIZE = KERNEL_FRAME_BASE
 //     │（≈12K 并发帧，S-only，区间管理）│
 //     └─────────────────────────────────┘ KERNEL_FRAME_BASE
+//   0xFFFF_FFFF_EBFF_E000 — TRAP_STACK_BASE（trap 栈窗口下界）
+//     ┌─────────────────────────────────┐
+//     │  per-hart trap 栈窗口（256 MiB）│ TRAP_STACK_BASE + 4096·64 KiB = FRAME_BASE
+//     │（MAX_HART_SLOTS 段 × 64 KiB）   │ 每段 = guard 页 + 60 KiB 栈体；VA 固定、
+//     │                                │  物理页 boot 分配映射（推 hart 纯算术）
+//     └─────────────────────────────────┘ FRAME_BASE
 //
 // 布局即不变量：以下断言把「对齐 / 相邻 / 不重叠」编译期锁死（模式无关部分）——
 // 改布局必须先改这里（编译器兜底），并同步 link.ld / trampoline 汇编。
@@ -552,6 +569,16 @@ const _: () = {
     assert!(FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
     assert!(FRAME_BASE.as_usize() + FRAME_REGION_SIZE == KERNEL_FRAME_BASE.as_usize());
     assert!(TASK_STACK_SIZE.is_multiple_of(PAGE_SIZE));
+    // trap 栈窗口：base 页对齐；窗口不越过 FRAME_BASE（其下沿恰与帧窗口衔接）
+    assert!(TRAP_STACK_BASE.as_usize().is_multiple_of(PAGE_SIZE));
+    assert!(
+        TRAP_STACK_BASE.as_usize()
+            + (crate::machine::MAX_HART_SLOTS << TRAP_STACK_SHIFT)
+            == FRAME_BASE.as_usize()
+    );
+    // 段几何自洽：64 KiB = 2^16；guard = 一页；段 = guard + 栈体
+    assert!(TRAP_STACK_SEGMENT == 1usize << TRAP_STACK_SHIFT);
+    assert!(TRAP_STACK_GUARD == PAGE_SIZE);
 };
 
 /// 运行期布局校验（boot 后经 unit::init 调用）：模式几何与布局不变量。
@@ -589,6 +616,12 @@ pub(crate) fn validate() {
     assert!(!TRAMPOLINE.is_user());
     assert!(KERNEL_FRAME_BASE.as_usize() < TRAMPOLINE.as_usize());
     assert!(!FRAME_BASE.is_user());
+    // trap 栈窗口：kernel 半区（split 之上）+ 窗口恰止于 FRAME_BASE
+    assert!(!TRAP_STACK_BASE.is_user());
+    assert!(
+        TRAP_STACK_BASE.as_usize() + (crate::machine::MAX_HART_SLOTS << TRAP_STACK_SHIFT)
+            == FRAME_BASE.as_usize()
+    );
 }
 
 /// 虚拟地址空间（布局随运行模式：用户半区/内核半区几何见 [`mode`]）。

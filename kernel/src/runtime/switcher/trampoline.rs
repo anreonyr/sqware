@@ -8,24 +8,32 @@
 // （la/call 等）的目标必须在本页内；跨页符号（如 Rust 的
 // trap_handler）只能经帧内元数据（kernel_sp / trap_handler 字段）或绝对常量（LUI）
 // 寻址。本页代码无 PC 相对跨页引用，故在链接地址（0x8020_0000+）与 TRAMPOLINE VA
-// 两处取指均正确。per-hart 内核帧基址（__strap 按 TP 索引）的 LUI 立即数由
-// Rust 常量 KERNEL_FRAMES_LUI 注入（单一来源，改 KERNEL_FRAME_BASE 即可）。
+// 两处取指均正确。per-hart 内核帧基址（__restore 回内核时复原 sscratch 用）的 LUI
+// 立即数由 Rust 常量 KERNEL_FRAMES_LUI 注入（单一来源，改 KERNEL_FRAME_BASE 即可）。
 //
 // sscratch 约定：用户态 = 当前线程帧 VA（帧内 self_va 字段，帧窗口分配，无固定帧 VA）；
-// 内核态 = 0。`__restore` 按恢复的 sstatus.SPP 复原该约定
+// 内核态 = 本 hart 内核 trap 帧 VA（KERNEL_FRAME_BASE + hart·PAGE）——boot 与
+// __restore 的 SPP=1 分支维护。`__restore` 按恢复的 sstatus.SPP 复原该约定
 // （SPP=0 从帧内 self_va 字段读取——每线程帧位置可任意，`__alltraps` 零改动）。
+//
+// trap 栈与推 hart：per-hart trap 栈段位于固定 VA 窗口
+// （TRAP_STACK_BASE + hart·64 KiB，见 `space::TRAP_STACK_*`）——入口（tp 重建前）
+// 即可按当前 sp 纯算术反解 hart；不依赖任何动态元数据表。
 //
 // 帧布局与偏移见 `context.rs`（编译期偏移断言锁定，改布局必须先改两处）。
 
-use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::arch::global_asm;
-use core::cell::UnsafeCell;
 
 use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
-use crate::memory::manager::addr::VirtAddr;
-use crate::work::unit::space::{KERNEL_FRAME_BASE, TRAMPOLINE};
+use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::entry::PteFlags;
+use crate::work::unit::space::{
+    KERNEL_FRAME_BASE, TRAMPOLINE, TRAP_STACK_BASE, TRAP_STACK_GUARD, TRAP_STACK_SEGMENT,
+    TRAP_STACK_SHIFT,
+};
 
 /// KERNEL_FRAME_BASE 的 LUI 立即数（bits[31:12]）——__strap 按 TP 索引 per-hart
 /// 内核帧：sp = KERNEL_FRAME_BASE + tp·PAGE_SIZE。汇编经 `const` 注入，单一来源。
@@ -110,8 +118,10 @@ global_asm!(
     "    j     __restore",
 
     // ── 内核态陷阱（__strap）：现场存**本 hart**内核帧（TP 索引 per-hart 帧区，
-    //    栈切本 hart trap 栈。tp 约定：内核态恒为 hartid——入口/establish_tp 维持；
-    //    用户态可改写 tp，但内核陷阱只在 S 态发生）。 ──
+    //    栈切本 hart trap 栈。tp 约定：内核态恒为 hartid——入口/establish_tp 维持。
+    //    sscratch 内核态约定 = 本 hart 内核帧 VA，但**trap 入口不可靠**：用户 trap
+    //    （__utrap）入口把 sscratch 换成用户 sp，处理中若有内核缺页再次进入本路径，
+    //    sscratch 已被污染——故帧址仍由 tp 重建，不读 sscratch）。 ──
     "__strap:",
     "    csrrw sp, sscratch, sp",          // sp = 0（内核态约定）；sscratch = 被中断内核 sp
     "    slli  t0, tp, 12",               // t0 = hart · PAGE_SIZE（per-hart 帧索引）
@@ -171,7 +181,9 @@ global_asm!(
     "    csrw  sstatus, t0",
     "    ld    t0, 0x138(sp)",
     "    csrw  sepc, t0",
-    // sscratch 约定复原：SPP = 0（回用户）→ 线程帧 self_va；SPP = 1（回内核）→ 0
+    // sscratch 约定复原：SPP = 0（回用户）→ 线程帧 self_va；SPP = 1（回内核）→
+    // 本 hart 内核帧 VA（KERNEL_FRAME_BASE + hart·PAGE；tp 此刻未被帧覆盖，
+    // 仍是执行核 hartid——x4 随后才从帧恢复；跨核迁移时即取**执行核**的帧）
     "    csrr  t0, sstatus",
     "    andi  t0, t0, (1 << 8)",
     "    bnez  t0, 1f",
@@ -179,7 +191,10 @@ global_asm!(
     "    csrw  sscratch, t0",
     "    j     2f",
     "1:",
-    "    csrw  sscratch, zero",
+    "    slli  t0, tp, 12",           // t0 = hart · PAGE_SIZE
+    "    lui   t1, {kf}",             // t1 = KERNEL_FRAME_BASE（LUI 高 20 位）
+    "    add   t0, t0, t1",           // t0 = 本 hart 内核帧 VA
+    "    csrw  sscratch, t0",
     "2:",
     // 恢复 GPR（x1、x3、x4、x7..x31；x2=sp、x5=t0、x6=t1 最后经 self_va 收尾）
     "    ld    x1,  0x38(sp)",
@@ -260,65 +275,38 @@ pub fn alltraps_va() -> usize {
     TRAMPOLINE.as_usize() + (alltraps - start)
 }
 
-/// per-hart trap 栈段元数据（boot 时由 hart 0 的 [`init_trap_stacks`] 一次性
-/// 填充，此后只读；UnsafeCell：静态不可变处经原始指针写入一次）。
-#[derive(Clone, Copy, Debug)]
-pub struct TrapStackMeta {
-    /// 栈顶（向下增长，sp 初始值）。
-    pub top: usize,
-    /// 栈体底（canary 所在，guard 之上）。
-    pub bottom: usize,
-    /// guard 页起始（内核空间未映射，越过即页故障）。
-    pub guard: usize,
+// ── per-hart trap 栈：固定 VA 窗口 + 纯算术反解（无元数据表）──
+//
+// 布局（space::TRAP_STACK_*）：TRAP_STACK_BASE 起，hart h 段 =
+//   TRAP_STACK_BASE + h·SEGMENT：首页 guard（内核空间未映射，越界即页故障）、
+//   其下 60 KiB 栈体（boot 时映射物理页）。
+// 反解：段大小 = 2^SHIFT ⇒ hart = (sp − BASE) >> SHIFT（O(1)、零表、零堆依赖——
+//   堆破坏不再能经元数据表污染 hart 判定）。崩溃路径（scene 钳制、guard 识别）
+//   与正常路径同源，均不依赖任何运行时表。
+
+/// 物理块基址（boot 时 frame 连续分配 N×64 KiB，段物理首址 = base + h·SEGMENT）。
+/// 仅副核 HSM 启动栈（bare 模式，sp 必须是物理地址）使用；trap 侧一律走固定 VA。
+static TRAP_STACK_PHYS: OnceLock<usize> = OnceLock::new();
+
+/// hart h 的 trap 栈段几何（纯算术）：守卫页不映射，栈体 = [base+GUARD, base+SEGMENT)。
+fn trap_stack_seg(hart: usize) -> (usize, usize) {
+    let base = TRAP_STACK_BASE.as_usize() + hart * TRAP_STACK_SEGMENT;
+    (base + TRAP_STACK_GUARD, base + TRAP_STACK_SEGMENT) // (bottom, top)
 }
 
-/// 写一次、此后只读的 Sync 单元（trap 栈表 boot 时由 hart 0 填充）。
-struct SyncCell<T>(UnsafeCell<T>);
-
-// SAFETY: 调用方保证 boot 时单写者填充一次、此后只读。
-unsafe impl<T: Copy> Sync for SyncCell<T> {}
-
-impl<T: Copy> SyncCell<T> {
-    const fn new(v: T) -> Self {
-        Self(UnsafeCell::new(v))
-    }
-    fn get(&self) -> T {
-        // SAFETY: 只读访问（boot 后不再写）。
-        unsafe { *self.0.get() }
-    }
-    fn set(&self, v: T) {
-        // SAFETY: 仅 boot 时由 hart 0 调用一次。
-        unsafe {
-            *self.0.get() = v;
-        }
-    }
-}
-
-/// per-hart trap 栈元数据表（模块内专用；经 trap_stack_top/bottom 读取）。
+/// sp 是否落在某 hart 的 trap 栈体内（guard 之上、top 之下→含）——反解 hart。
 ///
-/// **按实际核数动态分配**（boot 时 init_trap_stacks 分配并填充；此后只读）。
-static TRAP_STACKS: OnceLock<&'static [SyncCell<TrapStackMeta>]> = OnceLock::new();
-
-/// 读取某 hart 的 trap 栈元数据：表未初始化或 hart 越界 → `None`。
-///
-/// 崩溃路径用它钳制扫描窗口，**不允许 panic**——panic
-/// 现场再 panic 会嵌套进停机自环、现场整体丢失（"幽灵 panic"）。引导期
-/// （trap::init 之前）表未装载、或 hart 号越界，都是合法的早期/损坏状态，
-/// 调用方按需降级；正常路径的访问器（[`trap_stack_top`] 等）在此之上 expect，
-/// 不变量违反 = 编程错误，fail-fast。
-pub(crate) fn trap_stack_meta(hart: usize) -> Option<TrapStackMeta> {
-    TRAP_STACKS
-        .get()
-        .and_then(|t| t.get(hart))
-        .map(SyncCell::get)
-}
-
-/// trap 栈元数据表长度（= 实际核数）。
-fn trap_stack_count() -> usize {
-    TRAP_STACKS
-        .get()
-        .expect("trap stacks not initialized")
-        .len()
+/// 崩溃路径的瘦身版 `establish_tp`：推 hart 不读表、不 panic；越出窗口/guard/
+/// 未启用核一律 None（引导期与非法现场合法返回）。正常路径恒命中：trap handler
+/// 恒在 per-hart trap 栈上执行。
+pub(crate) fn hart_of_trap_stack(sp: usize) -> Option<usize> {
+    let off = sp.checked_sub(TRAP_STACK_BASE.as_usize())?;
+    let h = off >> TRAP_STACK_SHIFT;
+    if h >= crate::machine::hart_count() {
+        return None;
+    }
+    let in_seg = off & (TRAP_STACK_SEGMENT - 1);
+    (in_seg > TRAP_STACK_GUARD && in_seg <= TRAP_STACK_SEGMENT).then_some(h)
 }
 
 /// 由当前 sp（trap 栈体内）反解 hart 并写入 tp——用户态可自由改写 tp，而内核
@@ -326,73 +314,66 @@ fn trap_stack_count() -> usize {
 ///
 /// 汇编不能做这件事：trampoline 执行于 TRAMPOLINE VA，PC 相对引用跨页符号会
 /// 算出错误地址（本页代码的寻址约束，见模块头注释）。C 代码执行于链接地址，
-/// 反解 TRAP_STACKS 表无此问题。
+/// 固定布局纯算术反解无此问题。异常 sp（窗口外/guard/早期 boot）回退 0，
+/// 与既有 `unwrap_or(0)` 语义一致。
 pub fn establish_tp() {
     let sp: usize;
     // SAFETY: 读当前栈指针，纯读无副作用。
     unsafe {
         core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
     }
-    let hart = (0..trap_stack_count())
-        .find(|&h| trap_stack_meta(h).is_some_and(|m| m.top != 0 && sp <= m.top && sp > m.bottom))
-        .unwrap_or(0);
+    let hart = hart_of_trap_stack(sp).unwrap_or(0);
     // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建内核 hartid）。
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) hart, options(nomem, nostack, preserves_flags));
     }
 }
 
-/// hart 的 trap 栈顶（__alltraps/__strap 经帧内 kernel_sp 上栈的目标）。
+/// hart 的 trap 栈顶（固定 VA；__alltraps/__strap 经帧内 kernel_sp 上栈的目标）。
 pub fn trap_stack_top(hart: usize) -> usize {
-    trap_stack_meta(hart)
-        .expect("trap stacks not initialized")
-        .top
+    trap_stack_seg(hart).1
 }
 
-/// hart 的 trap 栈体底（canary 处）。
+/// hart 的 trap 栈体底（固定 VA，canary 处）。
 pub fn trap_stack_bottom(hart: usize) -> usize {
-    trap_stack_meta(hart)
-        .expect("trap stacks not initialized")
-        .bottom
+    trap_stack_seg(hart).0
 }
 
 /// 地址是否落在某 hart 的 trap 栈 guard 页内（返回该 hart 号）——内核故障
-/// 路径据此识别「trap 栈溢出」并给出精确诊断。
+/// 路径据此识别「trap 栈溢出」并给出精确诊断。纯算术，不读表。
 pub fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
-    for h in 0..trap_stack_count() {
-        let Some(guard) = trap_stack_meta(h).map(|m| m.guard) else {
-            continue;
-        };
-        if guard != 0 && addr >= guard && addr < guard + PAGE_SIZE {
-            return Some(h);
-        }
+    let off = addr.checked_sub(TRAP_STACK_BASE.as_usize())?;
+    if off & (TRAP_STACK_SEGMENT - 1) < TRAP_STACK_GUARD {
+        let h = off >> TRAP_STACK_SHIFT;
+        (h < crate::machine::hart_count()).then_some(h)
+    } else {
+        None
     }
-    None
 }
 
-/// per-hart trap 栈段常量：每段 64 KiB = 低 4 KiB guard（未映射）+ 60 KiB 栈体；
-/// 连续块按实际核数分配（N x 64 KiB），guard 页兼作段边界。
-///
-/// 栈体须容纳 trap 处理内最深的调用链：页表 map 递归与控制台输出叠加；
-/// 60 KiB 提供充足余量。hartid 由 C 侧 `establish_tp` 按
-/// TRAP_STACKS 表扫描反解（与段滑负荷 2 的幂无关），仅保守断言段留 2 的幂以保持
-/// 段内切分可预测。
-pub const TRAP_STACK_SEGMENT: usize = 64 * 1024;
-pub const TRAP_STACK_GUARD: usize = PAGE_SIZE;
+/// 副核 HSM 启动栈顶（**物理地址**，bare 模式可用）。boot_harts 专用；点火后
+/// 恒等/固定 VA 两路均可达同一物理页，trap 侧别再经此取址。
+pub fn trap_stack_phys_top(hart: usize) -> usize {
+    TRAP_STACK_PHYS.get().expect("trap stacks not initialized") + (hart + 1) * TRAP_STACK_SEGMENT
+}
 
 /// 初始化 per-hart trap 栈（boot 时调用**恰好一次**，hart 0）。
 ///
 /// 1. 按实际核数（DTB）frame **连续**分配 N x 64 KiB（frame 按 order 支持连续块，
-///    向上取整到 2 的幂）；
-/// 2. 动态分配 TRAP_STACKS 元数据表（N 项）并置入 OnceLock；
-/// 3. 内核空间**清 guard 页 PTE**（栈体随 DRAM 恒等映射保持可访问——unmap 对
-///    部分覆盖的 DRAM 常数映射只清 PTE、保留簿记）；
-/// 4. 各段栈底写 canary；填充表项。
+///    向上取整到 2 的幂）；物理基址存入 TRAP_STACK_PHYS（副核启动栈用）；
+/// 2. 内核空间把各段**栈体**映射到固定 VA 窗口（guard 页不映射——越界即页故障）；
+/// 3. 恒等视图 guard 页清 PTE（副核 boot 栈溢出的既有护栏，行为不变）；
+/// 4. 各段栈底（固定 VA）写 canary。
 ///
-/// 块与表永不释放（静态分配，段数 = 实际核数）。
+/// 块永不释放（静态分配，段数 = 实际核数）；无元数据表。
 pub fn init_trap_stacks() {
     let segments = crate::machine::hart_count();
     assert!(segments > 0, "no harts");
+    assert_eq!(
+        TRAP_STACK_SEGMENT,
+        1 << TRAP_STACK_SHIFT,
+        "trap stack segment must be 2^SHIFT"
+    );
     let total = segments * TRAP_STACK_SEGMENT;
     let layout = core::alloc::Layout::from_size_align(total, PAGE_SIZE).expect("trap stack layout");
     // 块连续（frame 按 order 取整到 2 的幂）；boot 期帧池充足。
@@ -400,51 +381,35 @@ pub fn init_trap_stacks() {
         .allocate(layout)
         .expect("trap stack block allocation");
     let base = block.cast::<u8>().as_ptr() as usize;
-    // establish_tp 按 TRAP_STACKS 表范围扫描反解 hartid（与段大小 2 的幂解耦）；
-    // 保留幂次断言仅为段内切分可预测（段连续切分；C 侧按表范围匹配，无需 base 静态）
-    assert_eq!(
-        TRAP_STACK_SEGMENT,
-        1 << 16,
-        "trap stack segment must be 64 KiB"
-    );
-
-    // 元数据表（N 项，先置 OnceLock 再逐项填充）
-    let table: Box<[SyncCell<TrapStackMeta>]> = (0..segments)
-        .map(|_| {
-            SyncCell::new(TrapStackMeta {
-                top: 0,
-                bottom: 0,
-                guard: 0,
-            })
-        })
-        .collect();
     assert!(
-        TRAP_STACKS.set(Box::leak(table)).is_ok(),
-        "trap stacks double init"
+        TRAP_STACK_PHYS.set(base).is_ok(),
+        "trap stack phys double init"
     );
 
     let space = &crate::work::unit::team::kernel()
         .expect("kernel team not initialized")
         .space;
+    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
     for h in 0..segments {
-        let seg = base + h * TRAP_STACK_SEGMENT;
-        let guard = seg;
-        let body = seg + TRAP_STACK_GUARD;
-        // guard 页：内核空间清 PTE（未映射 → 越过即页故障）
-        space.unmap(VirtAddr::from_raw(guard), TRAP_STACK_GUARD);
-        // canary 写于栈体底（guard 之上）
+        let (body_va, top_va) = trap_stack_seg(h);
+        let phys = base + h * TRAP_STACK_SEGMENT;
+        // 段体映射（60 KiB）：固定 VA → 块内物理页；guard 页不映射（越界即页故障）
+        space
+            .map(
+                VirtAddr::from_raw(body_va),
+                PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
+                TRAP_STACK_SEGMENT - TRAP_STACK_GUARD,
+                flags,
+                crate::work::unit::space::MapKind::Reserved,
+                Vec::new(),
+            )
+            .expect("map trap stack body");
+        // 恒等视图 guard 页清 PTE 保留 boot 栈溢出护栏（固定 VA guard 管 trap 栈）
+        space.unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD);
+        // canary 写于固定 VA 栈体底（guard 之上）
         unsafe {
-            (body as *mut usize).write(crate::runtime::switcher::trap::TRAP_STACK_CANARY);
+            (body_va as *mut usize).write(crate::runtime::switcher::trap::TRAP_STACK_CANARY);
         }
-        trap_stack_cell(h).set(TrapStackMeta {
-            top: seg + TRAP_STACK_SEGMENT,
-            bottom: body,
-            guard,
-        });
+        debug_assert!(top_va == trap_stack_top(h));
     }
-}
-
-/// 表项引用（boot 填充用：SyncCell::set 取 &self）。
-fn trap_stack_cell(hart: usize) -> &'static SyncCell<TrapStackMeta> {
-    &TRAP_STACKS.get().expect("trap stacks not initialized")[hart]
 }
