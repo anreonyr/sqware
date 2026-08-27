@@ -35,7 +35,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
-use crate::work::room::conductor::core::{ident, unpark};
+use crate::work::room::conductor::core::{ident, unpark, Current};
 use crate::work::room::conductor::trap::run;
 use crate::work::unit::space::{MapKind, SpaceKind};
 use crate::work::unit::team::kernel;
@@ -240,10 +240,18 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(i) = ident() else {
         return false;
     };
-    if !matches!(i.team.space.kind(), SpaceKind::Kernel) {
+    // Live 轴才有地址空间与 trap 帧：S 态空闲（末次身份）时不得写入——帧可能
+    // 已被 clear 归还重分配，写即覆写他人帧（评审漏掉的第二个悬垂点，写侧）。
+    let Some(task) = i.live() else {
+        return false;
+    };
+    if !matches!(task.team.space.kind(), SpaceKind::Kernel) {
         return false;
     }
-    let dst = i.trap.pa.as_usize() as *mut TrapContext;
+    let Some(trap) = i.trap() else {
+        return false;
+    };
+    let dst = trap.pa.as_usize() as *mut TrapContext;
     // SAFETY: 任务专属帧 PA 恒等映射可写；当前 running 任务独占；此后不再使用
     // hart 帧（run() 切换返回下一任务帧，由 __restore 消耗）。
     unsafe {
@@ -304,7 +312,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     // 2. debug：用户态陷阱必须运行在当前 hart 的 trap 栈上（kernel_sp 每次
     //    切换写入的正确性——任务迁移后写漏即在此暴露）。用户陷阱必有任务。
     #[cfg(debug_assertions)]
-    if let Some(i) = &ident
+    if let Some(i) = ident.as_ref()
         && frame.sstatus.spp() != sstatus::SPP::Supervisor
     {
         let sp: usize;
@@ -317,7 +325,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         debug_assert!(
             sp <= top && top - sp < 0x4000,
             "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{}) — kernel_sp per-switch write missing?",
-            i.id
+            i.id()
         );
     }
 
@@ -361,7 +369,10 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         // 用户态环境调用（U 态 ecall）：envcall 表分发（ecall 必有任务）
         Trap::Exception(Exception::UserEnvCall) => crate::runtime::switcher::envcall::dispatch(
             frame,
-            ident.as_deref().expect("envcall without running task"),
+            ident
+                .as_ref()
+                .and_then(Current::live)
+                .expect("envcall without running task"),
         ),
         // 用户态缺页（解析失败即 panic）。SPP=1（内核态）缺页：guard 已在入口
         // 特判，其余内核缺页 = 内核 bug → fatal
@@ -378,7 +389,8 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             }
             let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
             let running = ident
-                .as_deref()
+                .as_ref()
+                .and_then(Current::live)
                 .expect("user page fault without running task");
             let ok = crate::memory::manager::fault::handle_page_fault(&fault, &running.team.space);
             trace::note(EventKind::Mem(MemEvent::PageFault {
