@@ -87,8 +87,8 @@ pub fn poison(addr: usize, len: usize) {
 /// （halt 的 panic 处理器再转储 crash scene；panic 路径零分配）。
 #[cfg(debug_assertions)]
 pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
-    crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Mem(
-        crate::runtime::diagnose::trace::MemEvent::Integrity {
+    crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Memory(
+        crate::runtime::diagnose::trace::MemoryEvent::Integrity {
             code: v as u8,
             addr,
         },

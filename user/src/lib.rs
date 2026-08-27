@@ -15,16 +15,22 @@ pub mod heap;
 /// 用户 task：`spawn`/`closure`/`Join`。
 pub mod task;
 
+/// 用户 mail：port 内核邮路阻塞封装。
+pub mod mail;
+
 /// 域适配层：每个域操作一段薄封装，只转发 `ubi::UcallBuilder`。
 pub mod env {
     use core::time::Duration;
-    use ubi::{UArgs, UResult, Ucall, UcallBuilder};
+    use ubi::{
+        ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, UArgs, UResult,
+        Ucall, UcallBuilder,
+    };
 
     use crate::PAGE_SIZE;
 
     /// 主动让出处理器（词族 starve；轮转）。
     pub fn starve() -> UResult<()> {
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Starve).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Starve)).call()?;
         Ok(())
     }
 
@@ -35,19 +41,19 @@ pub mod env {
             a1: s.as_ptr() as usize,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Put).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::IO(IOCall::Put)).args(args).call()?;
         Ok(())
     }
 
     /// 退出当前任务（词族 reap）；不返回。
     pub fn exit() -> ! {
-        let _ = UcallBuilder::new(Ucall::Reap).call();
+        let _ = UcallBuilder::new(Ucall::Room(RoomCall::Reap)).call();
         unsafe { core::hint::unreachable_unchecked() }
     }
 
     /// 读定时器 tick 计数（诊断，非时间单位）。
     pub fn ticks() -> UResult<usize> {
-        let (v0, _v1) = UcallBuilder::new(Ucall::Ticks).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Chrono(ChronoCall::Ticks)).call()?;
         Ok(v0)
     }
 
@@ -57,13 +63,35 @@ pub mod env {
             a0: d.as_millis() as usize,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Park).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Park)).args(args).call()?;
         Ok(())
+    }
+
+    /// 事件等待（词族 wait）：阻塞到 `wake(key)` 或超时；`ms == usize::MAX` = 永久。
+    /// 唤醒后条件未必成立——调用方须重查共享状态（防漏唤醒由内核 pend 闩保证）。
+    pub fn wait(key: usize, ms: usize) -> UResult<()> {
+        let args = UArgs {
+            a0: key,
+            a1: ms,
+            ..UArgs::default()
+        };
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Wait)).args(args).call()?;
+        Ok(())
+    }
+
+    /// 事件唤醒（词族 wake）：给 `key` 投递信号；返回是否唤醒到等待者。
+    pub fn wake(key: usize) -> UResult<usize> {
+        let args = UArgs {
+            a0: key,
+            ..UArgs::default()
+        };
+        let (v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Wake)).args(args).call()?;
+        Ok(v0)
     }
 
     /// 读单调时钟（uptime）：返回 (秒, 亚秒纳秒)。
     pub fn clock() -> UResult<(u64, u64)> {
-        let (secs, nanos) = UcallBuilder::new(Ucall::Clock).call()?;
+        let (secs, nanos) = UcallBuilder::new(Ucall::Chrono(ChronoCall::Clock)).call()?;
         Ok((secs as u64, nanos as u64))
     }
 
@@ -74,7 +102,7 @@ pub mod env {
             a0: size,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Allocate).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Allocate)).args(args).call()?;
         Ok(v0)
     }
 
@@ -86,7 +114,7 @@ pub mod env {
             a1: size,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Deallocate).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Deallocate)).args(args).call()?;
         Ok(())
     }
 
@@ -99,7 +127,7 @@ pub mod env {
             a0: size,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Mmap).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mmap)).args(args).call()?;
         Ok(v0)
     }
 
@@ -112,7 +140,7 @@ pub mod env {
             a2: addr,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Mmap).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mmap)).args(args).call()?;
         Ok(v0)
     }
 
@@ -125,7 +153,7 @@ pub mod env {
             a1: size,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Munmap).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Munmap)).args(args).call()?;
         Ok(())
     }
 
@@ -139,7 +167,7 @@ pub mod env {
             a2: flags as usize,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Mprotect).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mprotect)).args(args).call()?;
         Ok(())
     }
 
@@ -151,7 +179,7 @@ pub mod env {
             a1: arg,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Spawn).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Task(TaskCall::Spawn)).args(args).call()?;
         Ok(v0)
     }
 
@@ -164,7 +192,7 @@ pub mod env {
             a2: stack,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Spawn).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Task(TaskCall::Spawn)).args(args).call()?;
         Ok(v0)
     }
 
@@ -174,7 +202,51 @@ pub mod env {
             a0: code,
             ..UArgs::default()
         };
-        let _ = UcallBuilder::new(Ucall::Panic).args(args).call();
+        let _ = UcallBuilder::new(Ucall::Control(ControlCall::Panic)).args(args).call();
         unsafe { core::hint::unreachable_unchecked() }
+    }
+
+    /// 建 port 通道（mail 内核邮路）：返回 (句柄, 条件键)。
+    pub fn port_open() -> UResult<(usize, usize)> {
+        let (h, k) = UcallBuilder::new(Ucall::Mail(MailCall::PortOpen)).call()?;
+        Ok((h, k))
+    }
+
+    /// 终止 port 通道：0 或 UError。
+    pub fn port_shut(handle: usize) -> UResult<()> {
+        let args = UArgs {
+            a0: handle,
+            ..UArgs::default()
+        };
+        UcallBuilder::new(Ucall::Mail(MailCall::PortShut))
+            .args(args)
+            .call()?;
+        Ok(())
+    }
+
+    /// 投递尝试（非阻塞）：成功 0；`UError` 负码 -2 = 槽满（Busy）、-1 = Dead。
+    pub fn port_try_push(handle: usize, msg: *const u8) -> UResult<()> {
+        let args = UArgs {
+            a0: handle,
+            a1: msg as usize,
+            ..UArgs::default()
+        };
+        UcallBuilder::new(Ucall::Mail(MailCall::PortPush))
+            .args(args)
+            .call()?;
+        Ok(())
+    }
+
+    /// 收取尝试（非阻塞）：成功写入 `buf`；`UError` 负码 -2 = 槽空（Busy）、-1 = Dead。
+    pub fn port_try_pull(handle: usize, buf: *mut u8) -> UResult<()> {
+        let args = UArgs {
+            a0: handle,
+            a1: buf as usize,
+            ..UArgs::default()
+        };
+        UcallBuilder::new(Ucall::Mail(MailCall::PortPull))
+            .args(args)
+            .call()?;
+        Ok(())
     }
 }

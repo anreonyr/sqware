@@ -69,3 +69,10 @@ path = "src/bin/mmaper.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "user-mailer"
+path = "src/bin/mailer.rs"
+test = false
+bench = false
+doctest = false

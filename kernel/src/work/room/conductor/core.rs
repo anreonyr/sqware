@@ -48,7 +48,7 @@ use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::runtime::chrono::{clock, timer};
-use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
+use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trap::trap_stack_edge;
 use crate::work::room::tie;
@@ -272,7 +272,7 @@ impl Conductor {
             i.running = Some(cur);
             return pa;
         }
-        trace::note(EventKind::Sched(SchedEvent::Starve { tid: cur.ident.id }));
+        trace::note(EventKind::Room(RoomEvent::Starve { tid: cur.ident.id }));
         let next = self.rotate(&mut i, cur);
         drop(i);
         self.mount(next)
@@ -290,7 +290,7 @@ impl Conductor {
             "running 容器里不是 Running 任务"
         );
         let wake_at = clock::now().add(duration).as_ticks();
-        trace::note(EventKind::Sched(SchedEvent::Park {
+        trace::note(EventKind::Room(RoomEvent::Park {
             tid: task.ident.id,
             wake_at: wake_at as usize,
         }));
@@ -329,6 +329,70 @@ impl Conductor {
         Some(self.mount(next))
     }
 
+    /// 事件等待：Running → Blocked(Wait)。pend 存在 → 消费即回（不阻塞，无状态
+    /// 变更）。`dur == Duration::MAX` → 永久（无 tock）；否则登记超时（tock 句柄
+    /// 走 wait_times 旁路，任务本体只在 wait_sites 注册）。返回下一帧 PA；本核
+    /// starved 空 → None（调用方转 run() 取活）。
+    pub(super) fn wait(&self, key: WaitKey, dur: Duration) -> Option<usize> {
+        let mut i = self.inner.lock();
+        let (wake_at, tock, next) = {
+            let mut ws = wait_sites().lock();
+            let site = ws
+                .entry(key)
+                .or_insert(WaitSite { pend: false, waiters: VecDeque::new() });
+            if site.pend {
+                // 闩消费：信号已至，任务不阻塞（续跑）
+                site.pend = false;
+                let pa = i
+                    .running
+                    .as_ref()
+                    .expect("wait with no running task")
+                    .ident
+                    .trap
+                    .pa
+                    .as_usize();
+                return Some(pa);
+            }
+            let mut task = i.running.take().expect("wait with no running task");
+            let (wake_at, tock) = if dur == Duration::MAX {
+                (None, None)
+            } else {
+                let wake_at = clock::now().add(dur).as_ticks();
+                let handle = NEXT_PARK_HANDLE.fetch_add(1, Ordering::Relaxed) as u64;
+                (Some(wake_at), Some(handle))
+            };
+            trace::note(EventKind::Room(RoomEvent::Wait {
+                tid: task.ident.id,
+                key: key.0,
+            }));
+            Task::exclusive(&mut task).transform(TaskState::Blocked {
+                reason: BlockReason::Wait { wake_at },
+            });
+            // 本核队列空 → 无后继装槽：先降级（task 其后被移动，须在此前取用其
+            // 身份）。trap 不可信——身份非 running，帧不再保证存活。
+            if i.starved.is_empty() {
+                self.demote(&task.ident);
+            }
+            site.waiters.push_back(Waiter { task, tock });
+            let next = if i.starved.is_empty() {
+                None
+            } else {
+                Some(i.starved.pop_front().expect("non-empty"))
+            };
+            (wake_at, tock, next)
+        };
+        drop(i);
+        // 超时登记：先旁路簿记、后 tock（堆可见 ⇒ 簿记必在，同 park 纪律）
+        if let (Some(wake_at), Some(handle)) = (wake_at, tock) {
+            wait_times().lock().insert(handle, key);
+            timer::tock(handle, wake_at);
+        }
+        match next {
+            Some(t) => Some(self.mount(t)),
+            None => None,
+        }
+    }
+
     /// 当前任务退出：Running → Reaped 入全局 reaped 容器（延迟回收——不能在
     /// 自己正在用的栈上回收自己；计数在标记时完成）。
     pub(super) fn reap(&self) {
@@ -338,7 +402,7 @@ impl Conductor {
             matches!(exited.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
         );
-        trace::note(EventKind::Sched(SchedEvent::Exit {
+        trace::note(EventKind::Room(RoomEvent::Exit {
             tid: exited.ident.id,
         }));
         Task::exclusive(&mut exited).transform(TaskState::Reaped);
@@ -374,6 +438,50 @@ fn blocked() -> &'static SpinLock<HashMap<u64, Arc<Task>>> {
     BLOCKED.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
+// ── 核心：事件等待（wait/wake）──
+
+/// 事件等待键（newtype）：核心不解释组成，纯匹配。合成走 [`WaitKey::compose`]
+/// （适配层在 envcall 边界调用，并入空间身份）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WaitKey(usize);
+
+impl WaitKey {
+    /// 合成 = asid 高 16 位 || 用户 VA 低 48 位。单射需 va < 2^48（Sv39/48 满足；
+    /// Sv57 若启用需重定布局）。与 fence::key 同源意：跨空间同 VA 不得混淆。
+    pub fn compose(asid: usize, va: usize) -> WaitKey {
+        WaitKey(((asid & 0xFFFF) << 48) | (va & ((1usize << 48) - 1)))
+    }
+}
+
+/// 一个事件键的等待位：遗留信号（pend）+ 等待者队列。
+struct WaitSite {
+    /// 遗留信号（闩）：wake 无等待者 → 置位；wait 见位 → 消费即回（防漏唤醒）。
+    pend: bool,
+    /// 等待者（FIFO）；每项携带超时句柄（无超时 = None）。
+    waiters: VecDeque<Waiter>,
+}
+
+struct Waiter {
+    task: Arc<Task>,
+    tock: Option<u64>,
+}
+
+/// 全局事件等待表（Level::L3，与 blocked 同级；绝不 3→3 嵌套）。
+///
+/// 单一注册表 = 单一线性化点：wait/wake 与超时到期都经本表锁摘除，败者见空即弃
+/// （杜绝双唤醒）。键不主动销毁（pend 留滞为闩，语义见设计）。
+fn wait_sites() -> &'static SpinLock<HashMap<WaitKey, WaitSite>> {
+    static WAIT_SITES: OnceLock<SpinLock<HashMap<WaitKey, WaitSite>>> = OnceLock::new();
+    WAIT_SITES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
+}
+
+/// 超时旁路：tock 句柄 → 事件键（timer 到期分派用）。任务本体只在 wait_sites
+/// 注册；本表只放键（不含 Arc）——两条唤醒路仍都经 wait_sites 锁摘除。
+fn wait_times() -> &'static SpinLock<HashMap<u64, WaitKey>> {
+    static WAIT_TIMES: OnceLock<SpinLock<HashMap<u64, WaitKey>>> = OnceLock::new();
+    WAIT_TIMES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
+}
+
 struct TaskTables {
     reaped: SpinLock<VecDeque<Arc<Task>>>,
 }
@@ -400,7 +508,7 @@ pub(super) fn steal() -> Option<Arc<Task>> {
         let Some(task) = conductors()[v].try_pop() else {
             continue;
         };
-        trace::note(EventKind::Sched(SchedEvent::Steal {
+        trace::note(EventKind::Room(RoomEvent::Steal {
             tid: task.ident.id,
             src_hart: v,
         }));
@@ -479,7 +587,37 @@ pub fn unpark() -> bool {
     let due = timer::drain(clock::now());
     let mut woke = false;
     for handle in due {
-        // blocked 映射锁：摘除（锁作用域到此语句结束即释放）
+        // 事件等待超时：旁路表命中 → 从 wait-site 摘（by tock == handle）唤醒
+        let wait_key = wait_times().lock().remove(&handle);
+        if let Some(key) = wait_key {
+            let popped = {
+                let mut ws = wait_sites().lock();
+                if let Some(site) = ws.get_mut(&key) {
+                    if let Some(idx) = site
+                        .waiters
+                        .iter()
+                        .position(|w| w.tock == Some(handle))
+                    {
+                        Some(site.waiters.remove(idx).expect("idx from position"))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(w) = popped {
+                woke = true;
+                let mut task = w.task;
+                Task::exclusive(&mut task).transform(TaskState::Starved);
+                trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
+                let me = machine::hart_id();
+                conductors()[me].push(task);
+                tie::yell();
+            }
+            continue;
+        }
+        // park 到期（原路径）
         let Some(mut task) = blocked().lock().remove(&handle) else {
             // 已取消/已由他路唤醒：跳过（堆项随 drain 已丢弃）
             continue;
@@ -487,12 +625,46 @@ pub fn unpark() -> bool {
 
         woke = true;
         Task::exclusive(&mut task).transform(TaskState::Starved);
-        trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.ident.id }));
+        trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
         let me = machine::hart_id();
         conductors()[me].push(task);
         tie::yell();
     }
     woke
+}
+
+/// 事件唤醒：waiters 非空 → 唤醒队首（Blocked → Starved 推送本核 + yell）；
+/// 空 → pend 置位（防漏唤醒）。返回是否唤到人。消费方 = utask/envcall；
+/// 跨核唤醒经 steal 再平衡（与 unpark 一致）。
+pub(super) fn wake(key: WaitKey) -> bool {
+    let me = machine::hart_id();
+    let popped = {
+        let mut ws = wait_sites().lock();
+        let site = ws
+            .entry(key)
+            .or_insert(WaitSite { pend: false, waiters: VecDeque::new() });
+        match site.waiters.pop_front() {
+            Some(w) => Some(w),
+            None => {
+                site.pend = true;
+                None
+            }
+        }
+    };
+    let Some(w) = popped else {
+        return false;
+    };
+    // 摘超时旁路：堆项留至到期被 drain 空闲丢弃（不 untock——已 drain 的句柄再
+    // untock 会永久污染 cancelled 表，见 drain 语义）
+    if let Some(handle) = w.tock {
+        wait_times().lock().remove(&handle);
+    }
+    let mut task = w.task;
+    Task::exclusive(&mut task).transform(TaskState::Starved);
+    trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
+    conductors()[me].push(task);
+    tie::yell();
+    true
 }
 
 /// 回收全部 Reaped 任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：Reaped
@@ -503,7 +675,7 @@ pub(super) fn clear() {
         let Some(z) = TASK_TABLES.reaped.lock().pop_front() else {
             break;
         };
-        trace::note(EventKind::Sched(SchedEvent::Reap { tid: z.ident.id }));
+        trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);
         // 锁外回收（Team.tasks 已放 → Space.inner=2 → FRAME=5 合法）：栈 slot + trap 帧

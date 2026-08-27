@@ -2,7 +2,6 @@
 
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, Ordering};
-use core::time::Duration;
 
 use crate::env;
 use ubi::UResult;
@@ -52,6 +51,11 @@ pub struct Join<T> {
 
 impl<T> Join<T> {
     /// 等任务跑完，取回结果 `T`。
+    ///
+    /// 事件等待（词族 wait/wake）：done 未置位 → `wait(slot)` 阻塞（替代旧
+    /// `sleep(1ms)` 轮询）；子任务完成时 `wake(slot)` 唤醒。唤醒后**重查 done**
+    /// ——wait 返回 ≠ 完成（丢失唤醒由内核 pend 闩闭合；超时兜底子任务异常
+    /// panic 永不 wake 的悬死）。
     pub fn join(self) -> T {
         let slot = self.slot;
         loop {
@@ -63,7 +67,7 @@ impl<T> Join<T> {
                 unsafe { drop(Box::from_raw(slot)) };
                 return r;
             }
-            let _ = env::sleep(Duration::from_millis(1));
+            let _ = env::wait(slot as usize, 1_000);
         }
     }
 }
@@ -81,12 +85,18 @@ where
     // 完成槽：spawn 侧持有、新任务写、join 取。
     let slot = Box::into_raw(Box::new(Completion::new()));
     let send_slot = SendSlot(slot);
-    // 内部闭包（无类型 trampoline 可调）：调 f → 存结果 → 置完成。
+    // 内部闭包（无类型 trampoline 可调）：调 f → 存结果 → 置完成 → 唤醒 join。
     // send_slot 整个传给方法（whole-struct 捕获），使 SendSlot 的 Send 生效。
     let inner: Box<dyn FnOnce() + Send> = Box::new(move || {
         let r = f();
+        // SAFETY: 槽指针（Copy）先取出——`store_result` 按值消费 send_slot。
+        let slot_ptr = send_slot.0;
         // SAFETY: store_result 内部访问槽；done 栅栏保证 join 侧安全。
         unsafe { send_slot.store_result(r) }
+        // 事件唤醒（词族 wake）：join 侧阻塞于 wait(slot)。**先 done 后 wake**——
+        // 程序序保证 done 的 Release 发表于 ecall 之前，父唤醒后 Acquire 重查
+        // done 必见真值（丢失唤醒由内核 pend 闩闭合）。
+        let _ = env::wake(slot_ptr as usize);
     });
     // 双装箱瘦指针：a0 传该薄指针。
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);

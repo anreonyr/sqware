@@ -34,9 +34,9 @@ pub const TRACE_DUMP: usize = 64;
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventKind {
-    Sched(SchedEvent),
+    Room(RoomEvent),
     Env(EnvEvent),
-    Mem(MemEvent),
+    Memory(MemoryEvent),
     Halt(HaltEvent),
     Boot(BootEvent),
 }
@@ -44,12 +44,13 @@ pub enum EventKind {
 /// 调度事件。
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SchedEvent {
+pub enum RoomEvent {
     Spawn { tid: usize },
     Switch { prev_tid: usize, next_tid: usize },
     Starve { tid: usize },
     Steal { tid: usize, src_hart: usize },
     Park { tid: usize, wake_at: usize },
+    Wait { tid: usize, key: usize },
     Wake { tid: usize },
     Exit { tid: usize },
     Reap { tid: usize },
@@ -66,7 +67,7 @@ pub enum EnvEvent {
 /// 内存事件（缺页 + 完整性违例）。
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum MemEvent {
+pub enum MemoryEvent {
     PageFault {
         va: usize,
         fault: FaultKind,
@@ -104,7 +105,7 @@ pub struct Event {
 impl Event {
     const EMPTY: Event = Event {
         when: 0,
-        kind: EventKind::Sched(SchedEvent::Idle),
+        kind: EventKind::Room(RoomEvent::Idle),
     };
 }
 
@@ -253,23 +254,26 @@ pub enum TraceInitError {
 /// 事件描述文本（无时间前缀）——供表格列 1 使用。
 fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
     match e.kind {
-        EventKind::Sched(SchedEvent::Spawn { tid }) => write!(w, "spawn tid={tid}"),
-        EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }) => {
+        EventKind::Room(RoomEvent::Spawn { tid }) => write!(w, "spawn tid={tid}"),
+        EventKind::Room(RoomEvent::Switch { prev_tid, next_tid }) => {
             write!(w, "switch {prev_tid}->{next_tid}")
         }
-        EventKind::Sched(SchedEvent::Starve { tid }) => write!(w, "starve tid={tid}"),
-        EventKind::Sched(SchedEvent::Steal { tid, src_hart }) => {
+        EventKind::Room(RoomEvent::Starve { tid }) => write!(w, "starve tid={tid}"),
+        EventKind::Room(RoomEvent::Steal { tid, src_hart }) => {
             write!(w, "steal tid={tid} from hart {src_hart}")
         }
-        EventKind::Sched(SchedEvent::Park { tid, wake_at }) => {
+        EventKind::Room(RoomEvent::Park { tid, wake_at }) => {
             write!(w, "park tid={tid} @{wake_at:#x}")
         }
-        EventKind::Sched(SchedEvent::Wake { tid }) => write!(w, "wake tid={tid}"),
-        EventKind::Sched(SchedEvent::Exit { tid }) => write!(w, "exit tid={tid}"),
-        EventKind::Sched(SchedEvent::Reap { tid }) => write!(w, "reap tid={tid}"),
-        EventKind::Sched(SchedEvent::Idle) => write!(w, "idle"),
+        EventKind::Room(RoomEvent::Wait { tid, key }) => {
+            write!(w, "wait tid={tid} key={key:#x}")
+        }
+        EventKind::Room(RoomEvent::Wake { tid }) => write!(w, "wake tid={tid}"),
+        EventKind::Room(RoomEvent::Exit { tid }) => write!(w, "exit tid={tid}"),
+        EventKind::Room(RoomEvent::Reap { tid }) => write!(w, "reap tid={tid}"),
+        EventKind::Room(RoomEvent::Idle) => write!(w, "idle"),
         EventKind::Env(EnvEvent::Call { call, arg }) => write!(w, "envcall #{call} arg={arg:#x}"),
-        EventKind::Mem(MemEvent::PageFault {
+        EventKind::Memory(MemoryEvent::PageFault {
             va,
             fault,
             resolved,
@@ -280,7 +284,7 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
                 fault
             )
         }
-        EventKind::Mem(MemEvent::Integrity { code, addr }) => {
+        EventKind::Memory(MemoryEvent::Integrity { code, addr }) => {
             write!(w, "integrity code={code} addr={addr:#x}")
         }
         EventKind::Halt(HaltEvent::Halt) => write!(w, "halt"),

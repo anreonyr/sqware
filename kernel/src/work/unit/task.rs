@@ -41,6 +41,8 @@ pub enum TaskState {
 pub enum BlockReason {
     /// 睡眠：wake_at（timebase 刻度）到期后被唤醒。
     Park { wake_at: u64 },
+    /// 事件等待：被 `wake(key)` 唤醒；有 wake_at 时也可到期唤醒（None = 永久）。
+    Wait { wake_at: Option<u64> },
 }
 
 /// trap 帧句柄 — 线程 trap 帧的薄引用。

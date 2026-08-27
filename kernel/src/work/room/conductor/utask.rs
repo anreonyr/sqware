@@ -11,7 +11,7 @@ use core::time::Duration;
 
 use crate::machine;
 
-use super::core::{clear, conductors};
+use super::core::{clear, conductors, WaitKey};
 use super::trap::run;
 
 /// 主动让出入口（envcall Starve 调用）：无视剩余预算立即轮转。
@@ -43,4 +43,20 @@ pub fn reap() -> usize {
     clear();
     // 取下一任务：此刻 running 已 take，本核空闲 → run（steal / WFI）
     run()
+}
+
+/// 事件等待入口（envcall Wait 调用）：pend 存在 → 消费即回；否则阻塞挂起。
+///
+/// 返回下一帧 PA（与 park 同契约：阻塞即切走，唤醒后从调用点「第二次返回」）。
+/// `key` 为已合成的事件键（envcall 边界负责并入空间身份）。
+pub fn wait(key: WaitKey, dur: Duration) -> usize {
+    match conductors()[machine::hart_id()].wait(key, dur) {
+        Some(pa) => pa,
+        None => run(),
+    }
+}
+
+/// 事件唤醒入口（envcall Wake 调用）：给 `key` 投递信号；返回是否唤醒到等待者。
+pub fn wake(key: WaitKey) -> bool {
+    super::core::wake(key)
 }

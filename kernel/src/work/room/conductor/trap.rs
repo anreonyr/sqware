@@ -4,7 +4,7 @@
 // 槽，无锁、不设查询门面）。
 
 use crate::machine;
-use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
+use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::tie;
 use crate::work::unit::task::{Task, TaskState};
 
@@ -46,7 +46,7 @@ pub fn run() -> usize {
         // Switch 事件落在身份槽更新（mount）**之后**：窗口内崩溃不再把已下台
         // 的 prev 报成当前任务（轮转窗口 issue）。
         let pa = s.mount(next);
-        trace::note(EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }));
+        trace::note(EventKind::Room(RoomEvent::Switch { prev_tid, next_tid }));
         return pa;
     }
     drop(i);

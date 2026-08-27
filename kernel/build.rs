@@ -61,6 +61,10 @@ fn main() {
         "cargo::rustc-env=USER_MMAPER={}",
         bin_dir.join("user-mmaper").display()
     );
+    println!(
+        "cargo::rustc-env=USER_MAILER={}",
+        bin_dir.join("user-mailer").display()
+    );
     // 用户源码/清单变更 → 重跑本脚本（重建 user + 重编内核）
     println!("cargo::rerun-if-changed=../user");
 }

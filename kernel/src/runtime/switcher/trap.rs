@@ -32,7 +32,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
-use crate::runtime::diagnose::trace::{self, EventKind, MemEvent};
+use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
 use crate::work::room::conductor::core::{ident, unpark, Current};
@@ -393,7 +393,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 .and_then(Current::live)
                 .expect("user page fault without running task");
             let ok = crate::memory::manager::fault::handle_page_fault(&fault, &running.team.space);
-            trace::note(EventKind::Mem(MemEvent::PageFault {
+            trace::note(EventKind::Memory(MemoryEvent::PageFault {
                 va: fault.addr.as_usize(),
                 fault: fault.kind,
                 resolved: ok,

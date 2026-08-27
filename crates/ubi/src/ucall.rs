@@ -18,6 +18,11 @@ impl UError {
     pub fn from_raw(raw: isize) -> Self {
         Self(raw)
     }
+
+    /// 错误码（D1 负值契约：-1 = Dead、-2 = Busy 等；mail 端口语义）。
+    pub fn code(&self) -> isize {
+        self.0
+    }
 }
 
 /// 六寄存器参数载体（a0..a5）。
