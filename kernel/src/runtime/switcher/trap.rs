@@ -35,8 +35,9 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
-use crate::work::room::scheduler::{run, running_task_frame, unpark, with_running_space};
-use crate::work::unit::space::MapKind;
+use crate::work::room::conductor::core::unpark;
+use crate::work::room::conductor::trap::{run, running_task_frame, with_running_space};
+use crate::work::unit::space::{MapKind, SpaceKind};
 use crate::work::unit::team::kernel;
 use crate::{machine, put};
 
@@ -187,48 +188,7 @@ fn init_trap_stacks() {
 pub fn init() {
     // 0. per-hart trap 栈：frame 连续分配 + guard 页 + 全部 canary（先于 hart 帧
     //    元数据——帧 kernel_sp 需要指向本 hart 栈顶）。仅 hart 0 调用一次。
-    let segments = crate::machine::hart_count();
-    assert!(segments > 0, "no harts");
-    assert_eq!(
-        TRAP_STACK_SLOT_SIZE,
-        1 << TRAP_STACK_SLOT_SHIFT,
-        "trap stack segment must be 2^SHIFT"
-    );
-    let total = segments * TRAP_STACK_SLOT_SIZE;
-    let layout = core::alloc::Layout::from_size_align(total, PAGE_SIZE).expect("trap stack layout");
-    // 块连续（frame 按 order 取整到 2 的幂）；boot 期帧池充足。
-    let block = allocator()
-        .allocate(layout)
-        .expect("trap stack block allocation");
-    let base = block.cast::<u8>().as_ptr() as usize;
-    assert!(
-        TRAP_STACK_PHYS.set(base).is_ok(),
-        "trap stack phys double init"
-    );
-
-    let space = &kernel().expect("kernel team not initialized").space;
-    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
-    for h in 0..segments {
-        let (body_va, _edge) = trap_stack_seg(h);
-        let phys = base + h * TRAP_STACK_SLOT_SIZE;
-        // 段体映射（60 KiB）：固定 VA → 块内物理页；guard 页不映射（越界即页故障）
-        space
-            .map(
-                body_va,
-                PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
-                TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
-                flags,
-                MapKind::Reserved,
-                Vec::new(),
-            )
-            .expect("map trap stack body");
-        // 恒等视图 guard 页清 PTE 保留 boot 栈溢出护栏（固定 VA guard 管 trap 栈）
-        space.unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD);
-        // canary 写于固定 VA 栈体底（guard 之上）
-        unsafe {
-            (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
-        }
-    }
+    init_trap_stacks();
 
     // 1. 防呆：trampoline 汇编必须落在一页内（TRAMPOLINE 映射只覆盖一页）
     check_fits_page();
@@ -282,12 +242,19 @@ pub fn arm_hart() {
 /// （gpr/sstatus/sepc）拷入当前 running 任务的专属帧。否则抢占切走后再来
 /// 陷阱会覆写 hart 帧——被抢占内核任务的现场将丢失。
 ///
+/// 判定源（与调度域的 D2-1 收敛一致）：「running 任务是内核任务」由任务所属
+/// 空间的 kind 决定（不再读 sstatus.spp）。软陷阱（conductor::ktask）与硬件
+/// 抢占路径共用本搬移。
+///
 /// 只搬三个现场字段；任务帧其余元数据（kernel_satp/kernel_sp/trap_handler/
 /// user_satp/self_va/…）由 spawn/prepare 维护，不得改动。
-fn persist_kernel_preempt(frame: &TrapContext) -> bool {
-    let Some((_tid, task_pa, _)) = running_task_frame() else {
+pub(crate) fn persist_kernel_preempt(frame: &TrapContext) -> bool {
+    let Some((_tid, task_pa, _, kind)) = running_task_frame() else {
         return false;
     };
+    if !matches!(kind, SpaceKind::Kernel) {
+        return false;
+    }
     let dst = task_pa as *mut TrapContext;
     // SAFETY: 任务专属帧 PA 恒等映射可写；当前 running 任务独占；此后不再使用
     // hart 帧（run() 切换返回下一任务帧，由 __restore 消耗）。
@@ -353,7 +320,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         }
         let top = trap_stack_edge(me).as_usize();
         let ksp = frame.kernel_sp.as_usize();
-        let tid = crate::work::room::scheduler::running_task_id();
+        let tid = crate::work::room::conductor::trap::running_task_id();
         debug_assert!(
             sp <= top && top - sp < 0x4000,
             "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{tid}) — kernel_sp per-switch write missing?"

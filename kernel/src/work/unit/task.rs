@@ -13,13 +13,12 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::MapError;
 use crate::memory::PAGE_SIZE;
 use crate::runtime::switcher::context::TrapContext;
-use crate::runtime::switcher::trap::trap_stack_edge;
-use crate::runtime::switcher::trampoline::restore;
+use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::kernel;
 use riscv::register::satp;
 
 use super::team::Team;
-use crate::work::room::scheduler;
+use crate::work::room::conductor;
 
 /// 全局任务号（跨 hart 唯一）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -194,20 +193,21 @@ impl TaskBuilder {
 
     /// 统一闭包式任务生成：团队 + 闭包建任务（闭包装箱
     /// → trampoline → 新任务栈上调用）。团队身份决定运行世界：kernel 团队 → S 态内核任务
-    /// （内核堆装箱、入口 `ktask_entry`、SPP=1 由 spawn 按团队身份自动定）。
+    /// （内核堆装箱、入口 `ktask_trampoline`、SPP=1 由 spawn 按团队身份自动定）。
     /// 当前仅支持 kernel 团队（U 态用户闭包未接入）。
     ///
     /// 约束：`FnOnce + Send + 'static`——闭包可捕获、可搬移到新执行上下文。
-    /// 内核态不可抢占：闭包忙等不返回也不主动让出，将独占所在核。
+    /// 内核任务运行于 SIE=1（帧 SPIE=1），可被 S-timer 抢占（现场经 persist 保全），
+    /// 也可经 `conductor::ktask` 自愿让出/睡眠——忙等不返回则独占所在核。
+    ///
+    /// 闭包内可调用统一调度服务面 `conductor::ktask::{park, starve, reap}`：
+    /// 与用户任务同帧 ABI 的自愿切换（软陷阱），唤醒后闭包在调用点继续。
     pub fn closure<F>(self, f: F) -> Result<usize, MapError>
     where
         F: FnOnce() + Send + 'static,
     {
         debug_assert!(
-            Arc::ptr_eq(
-                &self.team,
-                super::team::kernel().expect("kernel team not initialized")
-            ),
+            matches!(self.team.space.kind(), SpaceKind::Kernel),
             "TaskBuilder::closure 目前仅支持 kernel 团队（内核态任务）"
         );
         // `Box<dyn FnOnce()>` 是胖指针（data+vtable），不能直接转 usize——外包一层
@@ -215,8 +215,8 @@ impl TaskBuilder {
         let inner: Box<dyn FnOnce()> = Box::new(f);
         let holder: Box<Box<dyn FnOnce()>> = Box::new(inner);
         let ptr = Box::into_raw(holder) as usize;
-        // SAFETY: 闭包在本地装箱，a0 传其薄指针；SPP=1 回 S 态运行于 `ktask_entry`。
-        let entry = VirtAddr::from_raw(ktask_entry as *const () as usize);
+        // SAFETY: 闭包在本地装箱，a0 传其薄指针；SPP=1 回 S 态运行于 `ktask_trampoline`。
+        let entry = VirtAddr::from_raw(ktask_trampoline as *const () as usize);
         self.entry(entry).arg(ptr).spawn()
     }
 
@@ -281,10 +281,8 @@ impl TaskBuilder {
                     | (self.team.space.asid() << 44)
                     | self.team.space.root(),
             );
-            let team_is_kernel = Arc::ptr_eq(
-                &self.team,
-                super::team::kernel().expect("kernel team not initialized"),
-            );
+            // 任务模式 = 所属空间 kind（单一事实源；SPP 由填帧据此定）
+            let team_is_kernel = matches!(self.team.space.kind(), SpaceKind::Kernel);
             frame.init(
                 &*ktc,
                 team_is_kernel,
@@ -308,7 +306,7 @@ impl TaskBuilder {
                 pa: frame_pa,
             },
         });
-        scheduler::push(task);
+        conductor::task::push(task);
         Ok(id)
     }
 }
@@ -323,7 +321,7 @@ impl TaskBuilder {
 /// # Safety
 /// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
 /// `Box<dyn FnOnce()>` 原始指针。
-pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
+pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
     // tp = 本 hart：每个内核任务上台时 Scheduler::prepare 已把 TP 写入其帧
     // （frame.gpr[TP] = self.hart），__restore 恢复全部 GPR 时 tp 即已在位——此处
     // 不再重建。历史上曾用全局 KT_FRAME_PA 反推执行 hart：被偷走的任务会读到最后
@@ -333,41 +331,6 @@ pub(crate) extern "C" fn ktask_entry(arg: usize) -> ! {
     let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
     let boxed: Box<dyn FnOnce()> = *holder; // 移出内层闭包，holder 随之 drop
     boxed();
-    ktask_exit()
-}
-
-/// 内核任务退出：切到 per-hart trap 栈（否则栈回收会回收**正在使用**的内核栈）→
-/// 标记退出 + 取下一任务 → restore。永不返回。
-fn ktask_exit() -> ! {
-    // 退出序列将在 per-hart trap 栈上执行——先关中断：可抢占内核下（SIE=1）
-    // 若在此被 S-timer 打断，被中断现场（sp = trap 栈）经 persist + 轮转后
-    // 恢复，而 trap 栈可能已被他 trap 使用——错乱。关中断使退出序列原子。
-    // SAFETY: 清 sstatus.SIE（bit 1）；S 态、无并发别名。
-    unsafe {
-        core::arch::asm!("csrc sstatus, 2", options(nomem, nostack, preserves_flags));
-    }
-    // 切到 per-hart trap 栈再退出：回收 Reaped 任务（含其内核栈）时我们已不在
-    // 该栈上。**必须用 options(noreturn) 的 tail-jump**——在 Rust 函数中部 `mv sp` 若配
-    // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位。
-    // noreturn 保证 asm 后无编译器生成代码，`jr` 到退出函数后在**全新** trap 栈帧上执行，
-    // 无被丢弃的旧 Rust 帧。
-    let top = trap_stack_edge(crate::machine::hart_id()).as_usize();
-    // SAFETY: `top` 是本 hart per-hart trap 栈顶（内核空间、S 态可写）；退出函数跑在其上，
-    // 永不返回（restore 是 noreturn）。
-    unsafe {
-        core::arch::asm!(
-            "mv sp, {top}",
-            "la t0, {exit}",
-            "jr t0",
-            top = in(reg) top,
-            exit = sym kstack_exit,
-            options(noreturn),
-        );
-    }
-}
-
-/// 在 per-hart trap 栈上执行退出：标记 Reaped + 取下一任务 + 恢复。永不返回。
-extern "C" fn kstack_exit() -> ! {
-    let next = scheduler::reap();
-    restore(next)
+    // 闭包返回 → 统一退出服务（终端软陷阱：关中断 + 切 trap 栈 + reap 核心）。
+    conductor::ktask::reap()
 }

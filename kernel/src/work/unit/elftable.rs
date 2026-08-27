@@ -219,12 +219,12 @@ pub fn kernel_table() -> Option<ElfTable> {
         "trap_handler"  : crate::runtime::switcher::trap::trap_handler;
         "boot_main"     : crate::boot::boot_main;
         "restore"       : crate::runtime::switcher::trampoline::restore;
-        "sched_run"     : crate::work::room::scheduler::run;
-        "sched_idle"    : crate::work::room::scheduler::idle;
-        "sched_starve"  : crate::work::room::scheduler::starve;
-        "sched_reap"    : crate::work::room::scheduler::reap;
-        "sched_park"    : crate::work::room::scheduler::park;
-        "sched_unpark"  : crate::work::room::scheduler::unpark;
+        "sched_run"     : crate::work::room::conductor::trap::run;
+        "sched_idle"    : crate::work::room::conductor::boot::idle;
+        "sched_starve"  : crate::work::room::conductor::utask::starve;
+        "sched_reap"    : crate::work::room::conductor::utask::reap;
+        "sched_park"    : crate::work::room::conductor::utask::park;
+        "sched_unpark"  : crate::work::room::conductor::core::unpark;
         "page_fault"    : crate::memory::manager::fault::handle_page_fault;
     }
     v.sort_by_key(|e| e.addr.as_usize());

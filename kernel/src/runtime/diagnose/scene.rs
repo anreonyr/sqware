@@ -25,7 +25,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::scheduler::{running_task_frame, running_task_info, running_team_try};
+use crate::work::room::conductor::trap::{running_task_frame, running_task_info, running_team_try};
 use crate::work::unit::elftable::{self, ElfTable};
 
 /// 内核团队符号表（`elftable::routed*` 的内核侧来源；随内核团队挂载，未装配 → None）。
@@ -173,7 +173,7 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
 /// 本任务自己的符号表命中 + 对齐 + 去重）。尽力而为：帧拿不到/现场非用户态 /
 /// 栈页不可读 → 0 帧（不渲染 ubt 段）。返回 (帧数, 任务符号表 Arc)。
 fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
-    let Some((_, pa, tbl)) = running_task_frame() else {
+    let Some((_, pa, tbl, _)) = running_task_frame() else {
         return (0, None);
     };
     // SAFETY: 帧 PA 在用户 Frame 窗口（DRAM，恒等映射）；崩溃现场读只读、其余核冻结。

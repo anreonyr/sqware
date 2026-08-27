@@ -17,7 +17,8 @@ use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::scheduler::{park, reap, running_team, starve, with_running_space};
+use crate::work::room::conductor::trap::{running_team, with_running_space};
+use crate::work::room::conductor::utask::{park, reap, starve};
 use crate::work::unit::space::MapKind;
 
 /// envcall 分发。

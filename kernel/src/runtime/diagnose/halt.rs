@@ -141,7 +141,7 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
             ));
         }
         let mut rows: Vec<Vec<Option<String>>> = Vec::new();
-        if let Some((tid, tname)) = crate::work::room::scheduler::running_task_info() {
+        if let Some((tid, tname)) = crate::work::room::conductor::trap::running_task_info() {
             rows.push(vec![Some(format!(
                 "running task #{tid} '{tname}' @ hart {}",
                 machine::hart_id()

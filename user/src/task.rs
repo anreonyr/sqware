@@ -91,14 +91,14 @@ where
     // 双装箱瘦指针：a0 传该薄指针。
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
-    let _task = spawn((task_trampoline as extern "C" fn(usize) -> !) as usize, ptr)
+    let _task = spawn((uktask_trampoline as extern "C" fn(usize) -> !) as usize, ptr)
         .expect("task spawn failed");
     Join { slot }
 }
 
 /// 新线程共享入口（U 态）：a0 = 双装箱闭包薄指针；调闭包 → 退出。
 #[unsafe(no_mangle)]
-pub extern "C" fn task_trampoline(arg: usize) -> ! {
+pub extern "C" fn uktask_trampoline(arg: usize) -> ! {
     // SAFETY: arg 由 `closure` 传入的双装箱瘦指针；本线程独占回收。
     let holder: Box<Box<dyn FnOnce() + Send>> =
         unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce() + Send>) };

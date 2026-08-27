@@ -19,7 +19,7 @@ use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, restore};
 use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
-use crate::work::room::scheduler;
+use crate::work::room::conductor;
 use crate::work::unit::space::SpaceBuilder;
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
@@ -101,7 +101,7 @@ pub fn banner() {
 /// 启动多任务：spawn 演示团队后进入首个线程。
 pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
-    scheduler::init();
+    conductor::boot::init();
 
     // lockdep 装配（debug 构建）：per-hart 持有集。release 为 no-op。
     // 置于调度器就绪后、spawn 演示任务/HSM 拉起副核前——正是多核 ABBA 的生效窗口。
@@ -139,8 +139,8 @@ pub fn init() -> ! {
     );
 
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
-    // 副核 steal 走，见 scheduler::enter_first_task）
-    restore(scheduler::run())
+    // 副核 steal 走，见 conductor::trap::run）
+    restore(conductor::trap::run())
 }
 
 /// 生成全部演示任务（用户 + 内核 ktask）；错误统一 `?` 上抛。返回前所有任务已入队。
@@ -187,6 +187,19 @@ fn spawn_demos() -> Result<(), MapError> {
                 );
             }
             crate::putln!("preempt: done");
+        })?;
+    // 内核任务自愿睡眠（conductor::ktask::park 软陷阱）：睡 200 ms → 唤醒后
+    // 打印 → 再睡 → 三轮回后退出。验证存帧/持久化/唤醒恢复/重武装整链。
+    kernel()
+        .expect("kernel team not initialized")
+        .task()
+        .name("sleep")
+        .closure(|| {
+            for round in 0..3u32 {
+                crate::putln!("ktask sleep: round {round} @ hart {}", crate::machine::hart_id());
+                crate::work::room::conductor::ktask::park(core::time::Duration::from_millis(200));
+            }
+            crate::putln!("ktask sleep: done");
         })?;
     // 风暴回归：内核任务连环 spawn N 个 closure 子任务（子任务立即退出）。
     // 根因：`Box::try_new_in([u8;4096])`/`PageTable::default()` 按值物化 ~16 KiB
@@ -294,5 +307,5 @@ pub(crate) extern "C" fn boot_main() -> ! {
     trace::note(trace::EventKind::Boot(trace::BootEvent::Done {
         hart: machine::hart_id(),
     }));
-    scheduler::idle()
+    conductor::boot::idle()
 }
