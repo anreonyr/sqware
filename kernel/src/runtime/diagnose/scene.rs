@@ -35,7 +35,7 @@ fn ktbl() -> Option<&'static ElfTable> {
 }
 
 fn utbl() -> Option<Arc<ElfTable>> {
-    ident()?.team.elftable.clone()
+    ident()?.elftable()
 }
 
 /// 回溯深度上限。
@@ -153,7 +153,7 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         let code = elftable::routed(
             VirtAddr::from_raw(w),
             ktbl(),
-            ident().as_deref().and_then(|i| i.team.elftable.as_deref()),
+            ident().as_ref().and_then(|i| i.elftable()).as_deref(),
         )
         .is_some();
         if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
@@ -174,9 +174,14 @@ fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
     let Some(info) = ident() else {
         return (0, None);
     };
-    let tbl = info.team.elftable.clone();
-    // SAFETY: 帧 PA 在用户 Frame 窗口（DRAM，恒等映射）；崩溃现场读只读、其余核冻结。
-    let frame = unsafe { &*(info.trap.pa.as_usize() as *const TrapContext) };
+    let tbl = info.elftable();
+    // trap 仅 Live 轴可读（Current::Last 不含 trap——帧可能已回收）；取不到 → 0 帧。
+    let Some(trap) = info.trap() else {
+        return (0, tbl);
+    };
+    // SAFETY: Live = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM，恒等
+    // 映射）；崩溃现场读只读、其余核冻结。
+    let frame = unsafe { &*(trap.pa.as_usize() as *const TrapContext) };
     if frame.sepc.is_kernel() {
         return (0, tbl);
     }
@@ -254,8 +259,8 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     let (int, code) = (sc.is_interrupt(), sc.code());
     if let Some(i) = ident() {
         rows.push(vec![
-            Some(format!("#{}", i.id)),
-            Some(format!("'{}'", i.name)),
+            Some(format!("#{}", i.id())),
+            Some(format!("'{}'", i.name())),
             None,
         ]);
     }
@@ -274,7 +279,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         let n = if let Some((name, off)) = elftable::routed(
             VirtAddr::from_raw(a),
             ktbl(),
-            ident().as_deref().and_then(|i| i.team.elftable.as_deref()),
+            ident().as_ref().and_then(|i| i.elftable()).as_deref(),
         ) {
             format!("{name}+{off:#x} {}", stval_note(int, code))
         } else {
@@ -410,10 +415,7 @@ pub fn dump_crash(r: &mut Report) {
     // 且不截断本次转储。
     #[cfg(debug_assertions)]
     {
-        if let Some(et) = ident()
-            .as_deref()
-            .and_then(|i| i.team.elftable.as_ref())
-        {
+        if let Some(et) = ident().as_ref().and_then(|i| i.elftable()).as_ref() {
             et.check_integrity();
         }
         let _ = crate::memory::allocator::fence::ledger::LEDGER.sweep_canaries();

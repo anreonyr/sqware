@@ -41,9 +41,12 @@ impl Write for Console {
                 })
                 .call()
                 .expect("Dbcn");
-        } else if let Some(info) = ident() {
-            // 当前任务身份槽：一次读（无锁）；None（boot/空闲）→ 静默丢弃。
-            write_in(&info.team.space, va, bytes.len());
+        } else if let Some(info) = ident()
+            && let Some(task) = info.live()
+        {
+            // 当前任务身份槽：一次读（无锁）。Live 才有正在用的地址空间可翻译
+            // （boot/空闲/末次身份 → 静默丢弃——写用户缓冲只发生在任务上下文）。
+            write_in(&task.team.space, va, bytes.len());
         }
         Ok(())
     }

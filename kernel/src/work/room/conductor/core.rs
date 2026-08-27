@@ -9,9 +9,11 @@
 // unpark 取到期句柄摘除唤醒（由 trap 路径在 S-timer 处理时触发）。
 //
 // 结构：Conductor = inner(SpinLock) + info(身份槽，无锁) + starved_len(AtomicUsize
-// 锁外镜像)。info 槽 = `ident()` 的事实源：写 = 本核装槽（mount），读 = 本核
-// trap/panic——同 hart 单写单读 + TaskIdent 不可变 ⇒ 无锁（跨核读是 UB，字段私有
-// 且只经 ident() 触及）。starved 字段私有，唯一修改路径是 push/pop（方法内持锁 +
+// 锁外镜像)。info 槽 = `ident()` 的事实源：带标签指针（bit0 = 载荷类型：TaskIdent
+// 在跑 / LastIdent 末次记录），写 = 本核 mount/demote 的 swap（AcqRel），读 = 本核
+// trap/panic——同 hart 单写单读 + 载荷不可变 ⇒ 无锁（跨核读是 UB，字段私有且只经
+// ident() 触及）。starved 字段私有，唯一修改
+// 路径是 push/pop（方法内持锁 +
 // 从 starved.len() 派生计数）；steal 锁外先读 starved_len 跳过空队列（不做 RMW），
 // 再 try_lock。
 //
@@ -26,7 +28,8 @@
 // Team.tasks / Space.inner（顺序获取，不嵌套）。
 //
 // 装槽（mount）：唯一装 running 的方法，自取锁，空槽由 Option::replace 返回
-// 旧值断言（绝不覆盖在跑任务）。装槽同时写 info 身份槽（写点唯一）。
+// 旧值断言（绝不覆盖在跑任务）。装槽写 info 身份槽（TaskIdent 载荷）；降级
+// （demote：reap / park 无后继）换 LastIdent 载荷——写点唯一 pair（同标签原子）。
 //
 // 可见性：`pub(super)` = 供本文件夹各适配面借用的核心表面（入口面转发点）；
 // `pub` = 供 conductor 之外消费（unpark —— trap 路径触发唤醒；ident —— 身份槽
@@ -50,14 +53,18 @@ use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trap::trap_stack_edge;
 use crate::work::room::tie;
 use crate::work::unit::{
+    elftable::ElfTable,
     space::SpaceKind,
-    task::{BlockReason, Task, TaskIdent, TaskState},
+    task::{BlockReason, Task, TaskIdent, TaskState, TrapFrame},
 };
 
 // ── 核心：常量 ──
 
 /// WFI 休眠的推远增量：无待唤醒 tock 时 arm 到「永远」。
 const WFI_FAR: u64 = 1 << 60;
+/// 身份槽载荷类型标签（bit0）：0 = TaskIdent（在跑任务），1 = LastIdent（末次
+/// 记录）。标签与指针同一原子字——载荷类型自描述，读侧无需第二读点。
+const LAST_TAG: usize = 1;
 /// sleep(tock) 的句柄分配器——调度器自管；park「先入簿、后 tock」闭合竞态。
 static NEXT_PARK_HANDLE: AtomicUsize = AtomicUsize::new(0);
 
@@ -76,12 +83,18 @@ pub(super) struct Conductor {
     hart: usize,
     /// 锁内：running + starved（本核调度决策的原子单位）。
     pub(super) inner: SpinLock<ConductorInner>,
-    /// 锁外：本核当前任务身份（`ident()` 的事实源）。原子指针 + 手工 Arc 计数：
-    /// 写 = 本核装槽（mount）swap（AcqRel，取走旧指针即 drop 其计数），读 = 本核
-    /// trap/panic 路径 load（Acquire）+ increment_strong_count——TaskIdent 不可变
-    /// ⇒ 无锁；同 hart 程序序保证读时指针恒有效（写读互不同期）。idle 保留旧值
-    /// （符号化无碍；末次身份随停机滞留，有界泄漏每核一份）；未装槽 → null。
-    info: AtomicPtr<TaskIdent>,
+    /// 锁外：本核当前任务身份（`ident()` 的事实源）。**带标签指针**：bit0 = 载荷
+    /// 类型标签（0 = TaskIdent / 1 = LastIdent）。原子指针 + 手工 Arc 计数：写 =
+    /// 本核装槽（mount，AcqRel swap，取走旧指针按标签收回归还其计数）或降级
+    /// （demote，TaskIdent → LastIdent），读 = 本核 trap/panic 路径 load（Acquire）
+    /// + increment_strong_count——载荷不可变 ⇒ 无锁；同 hart 程序序保证读时指针恒
+    /// 有效（写读互不同期）。未装槽 → null。
+    ///
+    /// 载荷语义：TaskIdent = 槽指向本核**在跑**的任务（trap 可信）；LastIdent =
+    /// 末次身份记录（id/name/符号表；trap 不可信，见 [`ident`] 的 `Current::Last`）。
+    /// 标签与指针同一原子字——载荷类型自描述，读侧无需第二读点（mount/demote
+    /// 双写点无读撕裂窗口）。
+    info: AtomicPtr<()>,
     /// 锁外：starved 长度镜像（steal 预检；与 inner 同结构体共生，不会分家）。
     starved_len: AtomicUsize,
 }
@@ -179,20 +192,54 @@ impl Conductor {
         self.prepare(&mut task);
         let pa = task.ident.trap.pa.as_usize();
         // 记身份（写点唯一）：Arc::into_raw 交出克隆的计数给槽持有；旧指针由本
-        // 槽此前持有（本核独占写），收回归还其计数。
-        let prev = self.info.swap(Arc::into_raw(task.ident.clone()).cast_mut(), Ordering::AcqRel);
+        // 槽此前持有（本核独占写），按载荷类型标签（bit0）收回归还其计数。
+        let prev = self
+            .info
+            .swap(Arc::into_raw(task.ident.clone()).cast_mut() as *mut (), Ordering::AcqRel);
         if !prev.is_null() {
+            let prev = prev as usize;
             // SAFETY: prev 是本槽上次 swap 存入的 Arc::into_raw 结果；swap 取走
             // 后槽对其不再持有，此处 from_raw 收回该份计数并释放（同 hart 程序序，
-            // 无并发的本槽读写）。
-            unsafe { drop(Arc::from_raw(prev)); }
+            // 无并发的本槽读写）。类型按标签位判定——标签与指针原子同行，无撕裂。
+            if prev & LAST_TAG != 0 {
+                unsafe { drop(Arc::from_raw((prev & !LAST_TAG) as *const LastIdent)); }
+            } else {
+                unsafe { drop(Arc::from_raw(prev as *const TaskIdent)); }
+            }
         }
         debug_assert!(
             matches!(task.state(), TaskState::Running { .. }),
             "running 容器只装 Running 任务"
         );
         debug_assert!(i.running.replace(task).is_none(), "装槽前 running 必须为空");
+        // 装槽完成 → 载荷为 TaskIdent（Live：trap 可信）。AcqRel swap 已发布
+        // prepare 写出的帧/任务状态；ident() 的 Acquire 配对。
         pa
+    }
+
+    /// 槽降级：身份载荷从 TaskIdent 换成 LastIdent（末次记录）。本核在跑任务
+    /// 离核且不接续装槽（reap / park 无后继）时调用——trap 帧不可信（clear 即将
+    /// 归还）。LastIdent 只留符号化最小集（id/name/elftable），**不持有团队/空间**
+    /// ——团队 Arc 借此归零即回收，地址空间不再被 idle 核钉住（关机零泄漏审计
+    /// 与「末次符号化」兼得）。
+    ///
+    /// # Safety
+    /// 调用方须持有本核在跑任务的身份且本核独占写槽（同 hart——mount/demote
+    /// 互斥的天然保证）；旧载荷必为未标签 TaskIdent。
+    fn demote(&self, ident: &Arc<TaskIdent>) {
+        let last = Arc::new(LastIdent {
+            id: ident.id,
+            name: ident.name,
+            elftable: ident.team.elftable.clone(),
+        });
+        let prev = self
+            .info
+            .swap((Arc::into_raw(last) as usize | LAST_TAG) as *mut (), Ordering::AcqRel);
+        if !prev.is_null() {
+            // SAFETY: 降级只在拥有在跑任务时发生——旧载荷必为未标签 TaskIdent。
+            debug_assert_eq!(prev as usize & LAST_TAG, 0, "demote 旧载荷带标签");
+            unsafe { drop(Arc::from_raw(prev as *const TaskIdent)); }
+        }
     }
 
     /// 轮转尾部（持锁、starved 非空）：Running → Starved 入队尾，队首上台。
@@ -258,6 +305,11 @@ impl Conductor {
                 );
             }
         }
+        // 本核队列空 → 无后继装槽：先降级（task 其后被 insert 移动，须在此前
+        // 取用其身份）。trap 不可信——身份非 running，帧不再保证存活。
+        if i.starved.is_empty() {
+            self.demote(&task.ident);
+        }
         blocked().lock().insert(handle, task);
         timer::tock(handle, wake_at);
         if i.starved.is_empty() {
@@ -280,6 +332,9 @@ impl Conductor {
         );
         trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.ident.id }));
         Task::exclusive(&mut exited).transform(TaskState::Reaped);
+        // 离核且无后继装槽 → 槽降级 Last（先于入队：exited 其后被移动；clear 返回
+        // 后即按 va 归还帧，trap 不可信）。团队 Arc 归零即回收——地址空间随释放。
+        self.demote(&exited.ident);
         TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
         tie::exit();
     }
@@ -457,22 +512,93 @@ pub(super) fn clear() {
 
 // ── 核心：当前任务身份（槽）──
 
-/// 本核当前任务身份：mount 装槽时定型；idle 保留旧值（符号化无碍）；未装槽 →
-/// None。无锁：写 = 本核 mount（swap AcqRel），读 = 本核 trap/panic（load
-/// Acquire + increment_strong_count）——TaskIdent 不可变 + 同 hart 程序序 ⇒
-/// 非阻塞、不 panic、读恒有效，正常路径与崩溃现场同一入口。
-pub fn ident() -> Option<Arc<TaskIdent>> {
+/// 身份槽载荷：Live = 本核**在跑**任务（trap 可信）；Last = 末次身份记录
+/// （id/name/符号表；trap **不可信**且类型上不可读）。trap 只经 Live 轴暴露——
+/// 悬垂帧读取在类型层不可表达。
+pub enum Current {
+    Live(Arc<TaskIdent>),
+    Last(Arc<LastIdent>),
+}
+
+/// 末次身份记录：降级时从 TaskIdent 复制（id/name/符号表），**不含 team/space/
+/// trap**——团队 Arc 借此归零即回收整个地址空间；trap 帧归 Space 窗口已由 clear
+/// 归还，不保存即无法误读。符号表为 heap 分配（block 池），不占帧计数，关机
+/// flush 冲掉——零泄漏审计与末次符号化兼得。
+pub struct LastIdent {
+    pub(crate) id: usize,
+    pub(crate) name: &'static str,
+    pub(crate) elftable: Option<Arc<ElfTable>>,
+}
+
+impl Current {
+    pub fn id(&self) -> usize {
+        match self {
+            Current::Live(t) => t.id,
+            Current::Last(l) => l.id,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Current::Live(t) => t.name,
+            Current::Last(l) => l.name,
+        }
+    }
+
+    /// 符号表：两臂通用（末次身份仍可符号化）。
+    pub fn elftable(&self) -> Option<Arc<ElfTable>> {
+        match self {
+            Current::Live(t) => t.team.elftable.clone(),
+            Current::Last(l) => l.elftable.clone(),
+        }
+    }
+
+    /// trap 帧：仅 Live 轴可读（本核在跑任务，帧必活）；Last → None。
+    pub fn trap(&self) -> Option<TrapFrame> {
+        match self {
+            Current::Live(t) => Some(t.trap),
+            Current::Last(_) => None,
+        }
+    }
+
+    /// Live 轴内层身份（trap 路径消费：envcall / 用户缺页 / 空间翻译必有 running
+    /// 任务；Last → None——无 running 任务时这些路径必然走不到，由调用方 expect）。
+    pub fn live(&self) -> Option<&TaskIdent> {
+        match self {
+            Current::Live(t) => Some(t),
+            Current::Last(_) => None,
+        }
+    }
+}
+
+/// 本核任务身份：mount 装槽时定型（Live 载荷 TaskIdent）；reap / park 无后继
+/// 降级（Last 载荷 LastIdent）；未装槽 → None。无锁：写 = 本核 mount/demote 的
+/// 带标签指针 swap（AcqRel），读 = 本核 trap/panic（Acquire +
+/// increment_strong_count）——载荷不可变 + 同 hart 程序序 ⇒ 非阻塞、不 panic、
+/// 读恒有效，正常路径与崩溃现场同一入口。载荷类型自描述（标签位与指针同行），
+/// 无第二读点、无读写撕裂窗口。
+pub fn ident() -> Option<Current> {
     let all = CONDUCTORS.get()?;
-    let p = all[machine::hart_id()].info.load(Ordering::Acquire);
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: 槽持有者对 p 保有一份计数（swap 取走前不释放；Acquire 与
-        // 存入侧 AcqRel 配对，Arc 数据已发布）。同 hart 程序序下本核读时无并发
-        // swap——increment 后再 from_raw 克隆，归还时计数一致。
+    let raw = all[machine::hart_id()].info.load(Ordering::Acquire) as usize;
+    if raw == 0 {
+        return None;
+    }
+    if raw & LAST_TAG != 0 {
+        // SAFETY: 标签标记 = LastIdent 载荷；槽持有者对 p 保有一份计数（Acquire
+        // 与存入侧 AcqRel 配对，记录数据已发布）。同 hart 程序序下本核读时无
+        // 并发 swap——increment 后再 from_raw 克隆，归还时计数一致。
+        let p = (raw & !LAST_TAG) as *const LastIdent;
         unsafe {
             Arc::increment_strong_count(p);
-            Some(Arc::from_raw(p))
+            Some(Current::Last(Arc::from_raw(p)))
+        }
+    } else {
+        // SAFETY: 未标签 = TaskIdent 载荷；计数协议同上一臂（Arc 数据经 AcqRel
+        // swap 发布）。
+        let p = raw as *const TaskIdent;
+        unsafe {
+            Arc::increment_strong_count(p);
+            Some(Current::Live(Arc::from_raw(p)))
         }
     }
 }

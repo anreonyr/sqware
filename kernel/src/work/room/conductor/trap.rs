@@ -28,15 +28,13 @@ pub fn run() -> usize {
             TaskState::Running { ticks_left } => ticks_left,
             _ => unreachable!("running 容器里不是 Running 任务"),
         };
-        if ticks_left > 1 {
-            // 预算未耗尽：续跑——不切走、不进 starved
-            Task::exclusive(&mut cur).dec_ticks_left();
-            let pa = cur.ident.trap.pa.as_usize();
-            i.running = Some(cur);
-            return pa;
-        }
-        if i.starved.is_empty() {
-            // 本 hart 唯一任务：预算耗尽但无处轮转，续跑
+        // 续跑两分支合并（语义等价：先判后 dec——先判是否续跑，再在分支内递减；
+        // 若先 dec 再判，pre=2 且他队非空会提前轮转一格）。两情形均不切走、
+        // 不进 starved；预算恒 ≥ 1 不落盘（唯一任务分支不减预算）。
+        if ticks_left > 1 || i.starved.is_empty() {
+            if ticks_left > 1 {
+                Task::exclusive(&mut cur).dec_ticks_left();
+            }
             let pa = cur.ident.trap.pa.as_usize();
             i.running = Some(cur);
             return pa;
@@ -45,24 +43,28 @@ pub fn run() -> usize {
         let next = s.rotate(&mut i, cur);
         let next_tid = next.ident.id;
         drop(i);
+        // Switch 事件落在身份槽更新（mount）**之后**：窗口内崩溃不再把已下台
+        // 的 prev 报成当前任务（轮转窗口 issue）。
+        let pa = s.mount(next);
         trace::note(EventKind::Sched(SchedEvent::Switch { prev_tid, next_tid }));
-        return s.mount(next);
+        return pa;
     }
     drop(i);
-    // 取活：Idle → Running 阻塞获取（自核队首 → 跨核 steal → 全退出检查 → WFI）
+    // 取活：Idle → Running 阻塞获取。顺序不可重排：done 检查须在 steal **之前**
+    // （全退出后不得再取活——链式写法会把该检查挤进 wait() 内部，halt 语义后移）；
+    // wait() 内部自带 done 复审 + 睡眠位协议（未到期/假醒自洽）。
     loop {
-        let me = machine::hart_id();
-        if let Some(pa) = conductors()[me].pop().map(|t| conductors()[me].mount(t)) {
-            return pa;
+        if let Some(task) = s.pop() {
+            return s.mount(task);
         }
         if tie::done() {
             tie::halt();
         }
         if let Some(task) = steal() {
-            return conductors()[me].mount(task);
+            return s.mount(task);
         }
         if let Some(task) = wait() {
-            return conductors()[me].mount(task);
+            return s.mount(task);
         }
     }
 }
