@@ -18,15 +18,15 @@ use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::conductor::trap::{running_team, with_running_space};
 use crate::work::room::conductor::utask::{park, reap, starve};
 use crate::work::unit::space::MapKind;
+use crate::work::unit::task::TaskIdent;
 
 /// envcall 分发。
 ///
 /// 入参 frame = 当前任务用户帧；返回待恢复帧：Yield 返回下一任务帧，
 /// Exit 返回后调用方不得再触碰 frame。
-pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
+pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext {
     let number = frame.gpr.x(Gprs::A7); // a7 = 调用号
     let call =
         Ucall::try_from(number).unwrap_or_else(|_| panic!("invalid envcall number: {number}"));
@@ -41,7 +41,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             // 以后接入 operator: file system adaptor
             let len = frame.gpr.x(Gprs::A0);
             let ptr = frame.gpr.x(Gprs::A1);
-            let ok = with_running_space(|space| crate::console::write_in(space, ptr, len));
+            let ok = crate::console::write_in(&ident.team.space, ptr, len);
             if !ok {
                 frame.gpr.set_x(Gprs::A0, usize::MAX);
             }
@@ -64,10 +64,11 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
         }
         Ucall::HeapAllocate => {
             // a0 = 字节数（页对齐向上取整——分配需页对齐）。
-            // 经 with_running_space 借出当前任务空间（锁序 1→2→5 合法）；
+            // 直取当前任务空间（ident 无锁；锁序仅 L2→L5，不再经调度锁）；
             // 堆分配即时物化帧 → with_flush（PTE 变更后刷本空间 TLB）。
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
-            let addr = with_running_space(|s| {
+            let addr = {
+                let s = &ident.team.space;
                 let r = s.with_flush(|inner| {
                     inner
                         .heap
@@ -86,7 +87,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                     );
                 }
                 r
-            });
+            };
             frame.gpr.set_x(
                 Gprs::A0,
                 match addr {
@@ -99,7 +100,8 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             // a0 = 分配所得 VA，a1 = 字节数（与分配时同源页对齐；区间精确匹配）。
             let addr = frame.gpr.x(Gprs::A0);
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
-            let ok = with_running_space(|s| {
+            let ok = {
+                let s = &ident.team.space;
                 let freed = s.with_flush(|inner| match inner.heap.as_mut() {
                     Some(h) => h.deallocate(&mut inner.durable, VirtAddr::from_raw(addr), size),
                     None => false,
@@ -113,7 +115,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                     );
                 }
                 freed
-            });
+            };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Spawn => {
@@ -122,7 +124,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             let entry = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let arg = frame.gpr.x(Gprs::A1);
             let stack = frame.gpr.x(Gprs::A2);
-            let team = running_team();
+            let team = ident.team.clone();
             let mut builder = team.task().name("u-thread").entry(entry).arg(arg);
             if stack > 0 {
                 builder = builder.stack(stack);
@@ -145,7 +147,8 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             // 声明式固定地址懒映射。
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
             let fixed = frame.gpr.x(Gprs::A2);
-            let va = with_running_space(|s| {
+            let va = {
+                let s = &ident.team.space;
                 if fixed == 0 {
                     // 窗口自选高位肯定有堆窗（若非 → NoRegion）；懒映射不改页表 → with
                     s.with(|inner| {
@@ -160,7 +163,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                     s.declare(VirtAddr::from_raw(fixed), size, flags, MapKind::Anonymous)
                         .map(|()| VirtAddr::from_raw(fixed))
                 }
-            });
+            };
             frame.gpr.set_x(
                 Gprs::A0,
                 match va {
@@ -174,7 +177,8 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             // 固定地址声明区回退整段摘除；未命中返回错误。
             let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
-            let ok = with_running_space(|s| {
+            let ok = {
+                let s = &ident.team.space;
                 if s.with_flush(|inner| match inner.heap.as_mut() {
                     Some(h) => h.munmap(&mut inner.durable, addr, size),
                     None => false,
@@ -188,7 +192,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
                 } else {
                     false
                 }
-            });
+            };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Mprotect => {
@@ -197,7 +201,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let flags = PteFlags::from_bits_truncate(frame.gpr.x(Gprs::A2) as u64);
-            let ok = with_running_space(|s| s.mprotect(addr, size, flags).is_ok());
+            let ok = ident.team.space.mprotect(addr, size, flags).is_ok();
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
     };

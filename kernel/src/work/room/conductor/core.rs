@@ -8,9 +8,12 @@
 // 栈上回收自己）；clear 统一回收。park/unpark 对偶：park 阻塞 + 登记 tock；
 // unpark 取到期句柄摘除唤醒（由 trap 路径在 S-timer 处理时触发）。
 //
-// 结构：Conductor = inner(SpinLock) + starved_len(AtomicUsize 锁外镜像)。
-// starved 字段私有，唯一修改路径是 push/pop（方法内持锁 + 从 starved.len()
-// 派生计数）；steal 锁外先读 starved_len 跳过空队列（不做 RMW），再 try_lock。
+// 结构：Conductor = inner(SpinLock) + info(身份槽，无锁) + starved_len(AtomicUsize
+// 锁外镜像)。info 槽 = `ident()` 的事实源：写 = 本核装槽（mount），读 = 本核
+// trap/panic——同 hart 单写单读 + TaskIdent 不可变 ⇒ 无锁（跨核读是 UB，字段私有
+// 且只经 ident() 触及）。starved 字段私有，唯一修改路径是 push/pop（方法内持锁 +
+// 从 starved.len() 派生计数）；steal 锁外先读 starved_len 跳过空队列（不做 RMW），
+// 再 try_lock。
 //
 // 状态互斥：无原子字段。所有状态变更都经 Task::exclusive（唯一 Arc 所有权
 // + &mut，Arc::get_mut 的 weak≥1 变体）——锁内 take/pop 出任务 → 取 &mut；
@@ -22,15 +25,16 @@
 // 堆锁/队列锁再取调度锁（防 ABBA）。clear 只持 reaped 锁出队，放锁后再取
 // Team.tasks / Space.inner（顺序获取，不嵌套）。
 //
-// 装槽（replace）：唯一装 running 的方法，自取锁，装前 running 必空（断言）。
+// 装槽（mount）：唯一装 running 的方法，自取锁，空槽由 Option::replace 返回
+// 旧值断言（绝不覆盖在跑任务）。装槽同时写 info 身份槽（写点唯一）。
 //
-// 可见性：`pub(super)` = 供本文件夹各适配面借用的核心表面（薄封装转发点）；
-// `pub` = 供 conductor 之外消费（unpark —— trap 路径触发唤醒）。
-// 核心不反向依赖任何适配面（wait 调 unpark，故 unpark 属核心而非适配）。
+// 可见性：`pub(super)` = 供本文件夹各适配面借用的核心表面（入口面转发点）；
+// `pub` = 供 conductor 之外消费（unpark —— trap 路径触发唤醒；ident —— 身份槽
+// 读取）。核心不反向依赖任何适配面（wait 调 unpark，故 unpark 属核心而非适配）。
 
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use riscv::register::sip;
@@ -47,8 +51,7 @@ use crate::runtime::switcher::trap::trap_stack_edge;
 use crate::work::room::tie;
 use crate::work::unit::{
     space::SpaceKind,
-    task::{BlockReason, Task, TaskState},
-    team::Team,
+    task::{BlockReason, Task, TaskIdent, TaskState},
 };
 
 // ── 核心：常量 ──
@@ -57,8 +60,6 @@ use crate::work::unit::{
 const WFI_FAR: u64 = 1 << 60;
 /// sleep(tock) 的句柄分配器——调度器自管；park「先入簿、后 tock」闭合竞态。
 static NEXT_PARK_HANDLE: AtomicUsize = AtomicUsize::new(0);
-/// running_task_id 无任务时的哨兵返回值（诊断用）。
-pub(super) const NO_TASK_ID: usize = usize::MAX;
 
 /// 新选中任务的满额时间片（量子数）。耗尽才轮转；定时器仍每量子打断，
 /// 只是任务不再每量子切走。park 的 ticks 语义不受影响。
@@ -66,7 +67,7 @@ const TIME_SLICE: u32 = 8;
 
 // ── 核心：per-hart 调度器结构与方法 ──
 
-/// 每核调度器：真实数据在锁内，锁外只有 starved 长度镜像。
+/// 每核调度器：真实数据在锁内，锁外只有身份槽与 starved 长度镜像。
 ///
 /// repr(align(64))：相邻 hart 的锁 / 队列不落在同一缓存行（防假共享）。
 #[repr(align(64))]
@@ -75,11 +76,12 @@ pub(super) struct Conductor {
     hart: usize,
     /// 锁内：running + starved（本核调度决策的原子单位）。
     pub(super) inner: SpinLock<ConductorInner>,
-    /// 锁外：running team 镜像（崩溃现场符号化）。与 `inner` 同结构体共生——
-    /// 写侧 = 本核装槽窗口内派生（L1→L3 递增），读侧 = `running_team_try`
-    /// 只 try_lock **本核**的这把小锁。per-hart 各一：报警核只读本核最近上台的
-    /// team（idle 时保留旧值——符号化无碍）。
-    pub(super) running_team: SpinLock<Option<Arc<Team>>>,
+    /// 锁外：本核当前任务身份（`ident()` 的事实源）。原子指针 + 手工 Arc 计数：
+    /// 写 = 本核装槽（mount）swap（AcqRel，取走旧指针即 drop 其计数），读 = 本核
+    /// trap/panic 路径 load（Acquire）+ increment_strong_count——TaskIdent 不可变
+    /// ⇒ 无锁；同 hart 程序序保证读时指针恒有效（写读互不同期）。idle 保留旧值
+    /// （符号化无碍；末次身份随停机滞留，有界泄漏每核一份）；未装槽 → null。
+    info: AtomicPtr<TaskIdent>,
     /// 锁外：starved 长度镜像（steal 预检；与 inner 同结构体共生，不会分家）。
     starved_len: AtomicUsize,
 }
@@ -102,14 +104,9 @@ impl Conductor {
                     starved: VecDeque::new(),
                 },
             ),
-            running_team: SpinLock::new_level(Level::L3, None),
+            info: AtomicPtr::new(core::ptr::null_mut()),
             starved_len: AtomicUsize::new(0),
         }
-    }
-
-    /// 装槽时同步镜像（与 inner 同锁域调用：L1 调度锁内 → L3 镜像 严格递增）。
-    fn mirror_team(&self, team: &Arc<Team>) {
-        self.running_team.lock().replace(team.clone());
     }
 
     /// 锁外读：starved 长度（steal 预检；Relaxed 提示，旧读最多少偷一次）。
@@ -161,32 +158,40 @@ impl Conductor {
         });
         // SAFETY: 帧 PA 恒等映射可写；帧属 task 独占（running 或刚从 starved 摘出）。
         unsafe {
-            let frame = &mut *(t.trap.pa.as_usize() as *mut TrapContext);
+            let frame = &mut *(t.ident.trap.pa.as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);
             // 内核任务上台即写 tp = 本 hart：被抢占恢复路径直接 sret 回打断点
             // （不经 ktask_trampoline 的 tp 重建），tp 必须在上台时就绪。
-            if matches!(t.team.space.kind(), SpaceKind::Kernel) {
+            if matches!(t.ident.team.space.kind(), SpaceKind::Kernel) {
                 frame.gpr.set_x(Gprs::TP, self.hart);
             }
         }
         timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
     }
 
-    /// 装槽：把 Starved 任务装为本 hart 的 running（自取锁）。装前 running 必空。
+    /// 装槽：把 Starved 任务装为本 hart 的 running（自取锁）并记身份槽。空槽
+    /// 由 `Option::replace` 返回旧值断言（绝不覆盖在跑任务）。
     ///
     /// 安全前提：调用方先放锁再调本方法——放锁窗口内任务已出队且唯一持有
     /// （strong == 1），无并发别名。
-    pub(super) fn replace(&self, mut task: Arc<Task>) -> usize {
+    pub(super) fn mount(&self, mut task: Arc<Task>) -> usize {
         let mut i = self.inner.lock();
-        debug_assert!(i.running.is_none(), "装槽前 running 必须为空");
         self.prepare(&mut task);
+        let pa = task.ident.trap.pa.as_usize();
+        // 记身份（写点唯一）：Arc::into_raw 交出克隆的计数给槽持有；旧指针由本
+        // 槽此前持有（本核独占写），收回归还其计数。
+        let prev = self.info.swap(Arc::into_raw(task.ident.clone()).cast_mut(), Ordering::AcqRel);
+        if !prev.is_null() {
+            // SAFETY: prev 是本槽上次 swap 存入的 Arc::into_raw 结果；swap 取走
+            // 后槽对其不再持有，此处 from_raw 收回该份计数并释放（同 hart 程序序，
+            // 无并发的本槽读写）。
+            unsafe { drop(Arc::from_raw(prev)); }
+        }
         debug_assert!(
             matches!(task.state(), TaskState::Running { .. }),
             "running 容器只装 Running 任务"
         );
-        let pa = task.trap.pa.as_usize();
-        self.mirror_team(&task.team);
-        i.running = Some(task);
+        debug_assert!(i.running.replace(task).is_none(), "装槽前 running 必须为空");
         pa
     }
 
@@ -208,14 +213,14 @@ impl Conductor {
         };
         if i.starved.is_empty() {
             // 本 hart 唯一任务：无需轮转，继续运行
-            let pa = cur.trap.pa.as_usize();
+            let pa = cur.ident.trap.pa.as_usize();
             i.running = Some(cur);
             return pa;
         }
-        trace::note(EventKind::Sched(SchedEvent::Starve { tid: cur.id }));
+        trace::note(EventKind::Sched(SchedEvent::Starve { tid: cur.ident.id }));
         let next = self.rotate(&mut i, cur);
         drop(i);
-        self.replace(next)
+        self.mount(next)
     }
 
     /// 当前任务 park：Running → Blocked(Park{wake_at})。入 timer 的 tock 堆
@@ -231,7 +236,7 @@ impl Conductor {
         );
         let wake_at = clock::now().add(duration).as_ticks();
         trace::note(EventKind::Sched(SchedEvent::Park {
-            tid: task.id,
+            tid: task.ident.id,
             wake_at: wake_at as usize,
         }));
         Task::exclusive(&mut task).transform(TaskState::Blocked {
@@ -249,7 +254,7 @@ impl Conductor {
             if b.values().any(|t| Arc::ptr_eq(t, &task)) {
                 panic!(
                     "park: task #{} '{}' already in blocked map (double park, handle {handle})",
-                    task.id, task.name
+                    task.ident.id, task.ident.name
                 );
             }
         }
@@ -261,7 +266,7 @@ impl Conductor {
         let next = i.starved.pop_front().expect("non-empty");
         self.set_len(&i);
         drop(i);
-        Some(self.replace(next))
+        Some(self.mount(next))
     }
 
     /// 当前任务退出：Running → Reaped 入全局 reaped 容器（延迟回收——不能在
@@ -273,7 +278,7 @@ impl Conductor {
             matches!(exited.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
         );
-        trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.id }));
+        trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.ident.id }));
         Task::exclusive(&mut exited).transform(TaskState::Reaped);
         TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
         tie::exit();
@@ -331,7 +336,7 @@ pub(super) fn steal() -> Option<Arc<Task>> {
             continue;
         };
         trace::note(EventKind::Sched(SchedEvent::Steal {
-            tid: task.id,
+            tid: task.ident.id,
             src_hart: v,
         }));
         return Some(task);
@@ -417,7 +422,7 @@ pub fn unpark() -> bool {
 
         woke = true;
         Task::exclusive(&mut task).transform(TaskState::Starved);
-        trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.id }));
+        trace::note(EventKind::Sched(SchedEvent::Wake { tid: task.ident.id }));
         let me = machine::hart_id();
         conductors()[me].push(task);
         tie::yell();
@@ -433,19 +438,41 @@ pub(super) fn clear() {
         let Some(z) = TASK_TABLES.reaped.lock().pop_front() else {
             break;
         };
-        trace::note(EventKind::Sched(SchedEvent::Reap { tid: z.id }));
+        trace::note(EventKind::Sched(SchedEvent::Reap { tid: z.ident.id }));
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
-        z.team.prune_tasks(&z);
+        z.ident.team.prune_tasks(&z);
         // 锁外回收（Team.tasks 已放 → Space.inner=2 → FRAME=5 合法）：栈 slot + trap 帧
         // 一次 with_flush 收回——PTE 清理 + 刷 TLB + 区间归还；帧随子 Map drop 归还。
-        z.team.space.with_flush(|inner| {
-            if let Some((slot_va, slot_size)) = inner.stack.reclaim(z.id) {
+        z.ident.team.space.with_flush(|inner| {
+            if let Some((slot_va, slot_size)) = inner.stack.reclaim(z.ident.id) {
                 inner.durable.unmap_frames(slot_va, slot_size);
             }
-            if inner.frame.reclaim(z.trap.va) {
-                inner.durable.unmap_frames(z.trap.va, PAGE_SIZE);
+            if inner.frame.reclaim(z.ident.trap.va) {
+                inner.durable.unmap_frames(z.ident.trap.va, PAGE_SIZE);
             }
         });
         drop(z);
+    }
+}
+
+// ── 核心：当前任务身份（槽）──
+
+/// 本核当前任务身份：mount 装槽时定型；idle 保留旧值（符号化无碍）；未装槽 →
+/// None。无锁：写 = 本核 mount（swap AcqRel），读 = 本核 trap/panic（load
+/// Acquire + increment_strong_count）——TaskIdent 不可变 + 同 hart 程序序 ⇒
+/// 非阻塞、不 panic、读恒有效，正常路径与崩溃现场同一入口。
+pub fn ident() -> Option<Arc<TaskIdent>> {
+    let all = CONDUCTORS.get()?;
+    let p = all[machine::hart_id()].info.load(Ordering::Acquire);
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: 槽持有者对 p 保有一份计数（swap 取走前不释放；Acquire 与
+        // 存入侧 AcqRel 配对，Arc 数据已发布）。同 hart 程序序下本核读时无并发
+        // swap——increment 后再 from_raw 克隆，归还时计数一致。
+        unsafe {
+            Arc::increment_strong_count(p);
+            Some(Arc::from_raw(p))
+        }
     }
 }

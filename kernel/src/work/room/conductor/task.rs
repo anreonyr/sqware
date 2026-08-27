@@ -17,8 +17,8 @@ use super::core::conductors;
 /// 锁序：Team.tasks 与调度锁顺序获取、不嵌套（无 3 → 1 方向）。
 pub(crate) fn push(task: Arc<Task>) {
     let me = machine::hart_id();
-    let tid = task.id;
-    task.team.push_task(&task);
+    let tid = task.ident.id;
+    task.ident.team.push_task(&task);
     conductors()[me].push(task);
     tie::push();
     trace::note(EventKind::Sched(SchedEvent::Spawn { tid }));

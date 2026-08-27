@@ -59,13 +59,24 @@ pub struct TrapFrame {
 /// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
 ///
 /// 栈 / 堆 / 帧全部归 Team.space 的窗口簿记（Window 子 Map），Task 只持
-/// trap 句柄与共享的 team 引用——无任何页所有权。
+/// 不可变身份（TaskIdent）与状态——无任何页所有权。身份可自由 clone（不影响
+/// `Arc<Task>` 的 strong_count，exclusive 纪律见下）；状态唯一可变。
 pub struct Task {
-    pub(crate) id: usize,
-    pub(crate) name: &'static str,
-    /// 状态（含载荷）。普通字段：只有经 [`Task::exclusive`] 的 &mut 能改（唯一
+    /// 不可变身份（spawn 时定型；clone 它不影响本 Task 的强持有计数）。
+    pub(crate) ident: Arc<TaskIdent>,
+    /// 状态（含载荷）。唯一可变字段：只有经 [`Task::exclusive`] 的 &mut 能改（唯一
     /// 强持有语义见 exclusive）。
     pub(crate) state: TaskState,
+}
+
+/// 不可变身份：spawn 时定型；任何人自由 clone，无需任何锁。
+///
+/// 帧存活不变量：持 `Arc<TaskIdent>` **不保** `trap` 指向的帧页存活（帧归 Space
+/// 窗口，退出由 `clear` 按 va 归还）。仅两个安全窗口使用 `trap`：同 hart trap
+/// 内（顺序执行，帧必活）；崩溃现场（全核冻结，无并发回收）。
+pub(crate) struct TaskIdent {
+    pub(crate) id: usize,
+    pub(crate) name: &'static str,
     pub(crate) team: Arc<Team>,
     pub(crate) trap: TrapFrame,
 }
@@ -127,8 +138,8 @@ impl Task {
             Arc::strong_count(t),
             1,
             "task #{} '{}': not uniquely held (strong_count != 1)",
-            t.id,
-            t.name
+            t.ident.id,
+            t.ident.name
         );
         // SAFETY: strong == 1 ⇒ 无并发 &mut（互斥由调度器锁 + 计数保证）；
         // Team 簿记弱引用不读字段。等价 Arc::get_mut（其要求 weak == 0）。
@@ -313,15 +324,18 @@ impl TaskBuilder {
         }
 
         // 4. 入队收尾（初始状态 Starved；持本 hart 调度锁完成入簿 + 入队 + 计数）
-        let task = Arc::new(Task {
+        let ident = Arc::new(TaskIdent {
             id,
             name: self.name,
-            state: TaskState::Starved, // 初始就绪：入 starved 容器等首次选中（上台重置满额预算）
             team: self.team.clone(),
             trap: TrapFrame {
                 va: frame_va,
                 pa: frame_pa,
             },
+        });
+        let task = Arc::new(Task {
+            ident,
+            state: TaskState::Starved, // 初始就绪：入 starved 容器等首次选中（上台重置满额预算）
         });
         conductor::task::push(task);
         Ok(id)

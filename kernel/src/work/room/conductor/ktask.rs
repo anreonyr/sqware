@@ -14,7 +14,7 @@
 use core::arch::naked_asm;
 use core::time::Duration;
 
-use crate::runtime::switcher::trap::{persist_kernel_preempt, trap_stack_edge};
+use crate::runtime::switcher::trap::{persist, trap_stack_edge};
 use crate::runtime::switcher::trampoline::restore;
 
 use super::utask::{park as sched_park, reap as sched_reap, starve as sched_starve};
@@ -89,7 +89,7 @@ pub extern "C" fn park(_duration: Duration) {
         "jalr  t0",                          // a0 = 下一帧 PA
         "la    t0, {restore}",
         "jalr  t0",                          // 永不返回
-        persist = sym persist_kernel_preempt,
+        persist = sym persist,
         sched_park = sym sched_park,
         restore = sym restore,
     );
@@ -154,7 +154,7 @@ pub extern "C" fn starve() {
         "jalr  t0",
         "la    t0, {restore}",
         "jalr  t0",
-        persist = sym persist_kernel_preempt,
+        persist = sym persist,
         sched_starve = sym sched_starve,
         restore = sym restore,
     );

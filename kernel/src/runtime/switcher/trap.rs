@@ -35,8 +35,8 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
-use crate::work::room::conductor::core::unpark;
-use crate::work::room::conductor::trap::{run, running_task_frame, with_running_space};
+use crate::work::room::conductor::core::{ident, unpark};
+use crate::work::room::conductor::trap::run;
 use crate::work::unit::space::{MapKind, SpaceKind};
 use crate::work::unit::team::kernel;
 use crate::{machine, put};
@@ -246,16 +246,17 @@ pub fn arm_hart() {
 /// 空间的 kind 决定（不再读 sstatus.spp）。软陷阱（conductor::ktask）与硬件
 /// 抢占路径共用本搬移。
 ///
-/// 只搬三个现场字段；任务帧其余元数据（kernel_satp/kernel_sp/trap_handler/
-/// user_satp/self_va/…）由 spawn/prepare 维护，不得改动。
-pub(crate) fn persist_kernel_preempt(frame: &TrapContext) -> bool {
-    let Some((_tid, task_pa, _, kind)) = running_task_frame() else {
+/// 自查询形态：身份经 `ident()` 无锁读槽（ktask 汇编消费者无法传参；槽读廉价、
+/// 崩溃现场安全）。只搬三个现场字段；任务帧其余元数据（kernel_satp/kernel_sp/
+/// trap_handler/user_satp/self_va/…）由 spawn/prepare 维护，不得改动。
+pub(crate) fn persist(frame: &TrapContext) -> bool {
+    let Some(i) = ident() else {
         return false;
     };
-    if !matches!(kind, SpaceKind::Kernel) {
+    if !matches!(i.team.space.kind(), SpaceKind::Kernel) {
         return false;
     }
-    let dst = task_pa as *mut TrapContext;
+    let dst = i.trap.pa.as_usize() as *mut TrapContext;
     // SAFETY: 任务专属帧 PA 恒等映射可写；当前 running 任务独占；此后不再使用
     // hart 帧（run() 切换返回下一任务帧，由 __restore 消耗）。
     unsafe {
@@ -282,6 +283,10 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     // 0. 重建内核 tp（= hartid）：用户态可能改写过 tp；一切 hart_id() 依赖它。
     //    由当前 sp（trap 栈体内）反解段号（trap_stack_hart）。
     establish_tp();
+
+    // 0.4 本核当前任务身份（一次读槽；None = 空闲/boot/早期 panic——各分支自行
+    //    降级）。TaskIdent 不可变 ⇒ 本次陷阱处理链内恒有效（切换即 restore，不回链）。
+    let ident = ident();
 
     // 0.5 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）；
     //    正常运行时恒 no-op。
@@ -310,21 +315,23 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         "kernel trap frame corrupted"
     );
     // 2. debug：用户态陷阱必须运行在当前 hart 的 trap 栈上（kernel_sp 每次
-    //    切换写入的正确性——任务迁移后写漏即在此暴露）。
+    //    切换写入的正确性——任务迁移后写漏即在此暴露）。用户陷阱必有任务。
     #[cfg(debug_assertions)]
-    if frame.sstatus.spp() != sstatus::SPP::Supervisor {
-        let sp: usize;
-        // SAFETY: 读当前栈指针，纯读无副作用。
-        unsafe {
-            core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+    if let Some(i) = &ident {
+        if frame.sstatus.spp() != sstatus::SPP::Supervisor {
+            let sp: usize;
+            // SAFETY: 读当前栈指针，纯读无副作用。
+            unsafe {
+                core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+            }
+            let top = trap_stack_edge(me).as_usize();
+            let ksp = frame.kernel_sp.as_usize();
+            debug_assert!(
+                sp <= top && top - sp < 0x4000,
+                "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{}) — kernel_sp per-switch write missing?",
+                i.id
+            );
         }
-        let top = trap_stack_edge(me).as_usize();
-        let ksp = frame.kernel_sp.as_usize();
-        let tid = crate::work::room::conductor::trap::running_task_id();
-        debug_assert!(
-            sp <= top && top - sp < 0x4000,
-            "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{tid}) — kernel_sp per-switch write missing?"
-        );
     }
 
     // 类型化分发：裸码 → riscv::interrupt 枚举（try_into 对标准集外码返回 Err，
@@ -344,7 +351,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             unpark();
             if frame.sstatus.spp() != sstatus::SPP::Supervisor {
                 run() as *mut TrapContext
-            } else if persist_kernel_preempt(frame) {
+            } else if persist(frame) {
                 // 内核态被打断且确有 running 内核任务：现场已持久化 → 抢占
                 run() as *mut TrapContext
             } else {
@@ -364,9 +371,12 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             put!("unhandled interrupt: {other:?}\n{frame:#?}\n");
             frame as *mut TrapContext
         }
-        // 用户态环境调用（U 态 ecall）：envcall 表分发
+        // 用户态环境调用（U 态 ecall）：envcall 表分发（ecall 必有任务）
         Trap::Exception(Exception::UserEnvCall) => {
-            crate::runtime::switcher::envcall::dispatch(frame)
+            crate::runtime::switcher::envcall::dispatch(
+                frame,
+                ident.as_deref().expect("envcall without running task"),
+            )
         }
         // 用户态缺页（解析失败即 panic）。SPP=1（内核态）缺页：guard 已在入口
         // 特判，其余内核缺页 = 内核 bug → fatal
@@ -382,9 +392,8 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 );
             }
             let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
-            let ok = with_running_space(|space| {
-                crate::memory::manager::fault::handle_page_fault(&fault, space)
-            });
+            let running = ident.as_deref().expect("user page fault without running task");
+            let ok = crate::memory::manager::fault::handle_page_fault(&fault, &running.team.space);
             trace::note(EventKind::Mem(MemEvent::PageFault {
                 va: fault.addr.as_usize(),
                 fault: fault.kind,

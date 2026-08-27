@@ -25,7 +25,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::conductor::trap::{running_task_frame, running_task_info, running_team_try};
+use crate::work::room::conductor::core::ident;
 use crate::work::unit::elftable::{self, ElfTable};
 
 /// 内核团队符号表（`elftable::routed*` 的内核侧来源；随内核团队挂载，未装配 → None）。
@@ -35,7 +35,7 @@ fn ktbl() -> Option<&'static ElfTable> {
 }
 
 fn utbl() -> Option<Arc<ElfTable>> {
-    running_team_try()?.elftable.clone()
+    ident()?.team.elftable.clone()
 }
 
 /// 回溯深度上限。
@@ -153,9 +153,7 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         let code = elftable::routed(
             VirtAddr::from_raw(w),
             ktbl(),
-            running_team_try()
-                .as_deref()
-                .and_then(|t| t.elftable.as_deref()),
+            ident().as_deref().and_then(|i| i.team.elftable.as_deref()),
         )
         .is_some();
         if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
@@ -173,11 +171,12 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
 /// 本任务自己的符号表命中 + 对齐 + 去重）。尽力而为：帧拿不到/现场非用户态 /
 /// 栈页不可读 → 0 帧（不渲染 ubt 段）。返回 (帧数, 任务符号表 Arc)。
 fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
-    let Some((_, pa, tbl, _)) = running_task_frame() else {
+    let Some(info) = ident() else {
         return (0, None);
     };
+    let tbl = info.team.elftable.clone();
     // SAFETY: 帧 PA 在用户 Frame 窗口（DRAM，恒等映射）；崩溃现场读只读、其余核冻结。
-    let frame = unsafe { &*(pa as *const TrapContext) };
+    let frame = unsafe { &*(info.trap.pa.as_usize() as *const TrapContext) };
     if frame.sepc.is_kernel() {
         return (0, tbl);
     }
@@ -253,10 +252,10 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     ];
     let sc = scause::read();
     let (int, code) = (sc.is_interrupt(), sc.code());
-    if let Some((tid, name)) = running_task_info() {
+    if let Some(i) = ident() {
         rows.push(vec![
-            Some(format!("#{tid}")),
-            Some(format!("'{name}'")),
+            Some(format!("#{}", i.id)),
+            Some(format!("'{}'", i.name)),
             None,
         ]);
     }
@@ -275,9 +274,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         let n = if let Some((name, off)) = elftable::routed(
             VirtAddr::from_raw(a),
             ktbl(),
-            running_team_try()
-                .as_deref()
-                .and_then(|t| t.elftable.as_deref()),
+            ident().as_deref().and_then(|i| i.team.elftable.as_deref()),
         ) {
             format!("{name}+{off:#x} {}", stval_note(int, code))
         } else {
@@ -413,9 +410,9 @@ pub fn dump_crash(r: &mut Report) {
     // 且不截断本次转储。
     #[cfg(debug_assertions)]
     {
-        if let Some(et) = running_team_try()
+        if let Some(et) = ident()
             .as_deref()
-            .and_then(|t| t.elftable.as_ref())
+            .and_then(|i| i.team.elftable.as_ref())
         {
             et.check_integrity();
         }

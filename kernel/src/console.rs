@@ -8,7 +8,7 @@ use core::fmt::{self, Write};
 use sbi::{DbcnCall, fid::Dbcn, scall::SArgs};
 
 use crate::memory::manager::addr::VirtAddr;
-use crate::work::room::conductor::trap as conductor_trap;
+use crate::work::room::conductor::core::ident;
 use crate::work::unit::space::Space;
 
 /// **恒等区**（DRAM 0x80000000.. dram 上界）：VA 即 PA，Dbcn 可直读。
@@ -41,10 +41,9 @@ impl Write for Console {
                 })
                 .call()
                 .expect("Dbcn");
-        } else if conductor_trap::has_running_task() {
-            conductor_trap::with_running_space(|space| {
-                write_in(space, va, bytes.len());
-            });
+        } else if let Some(info) = ident() {
+            // 当前任务身份槽：一次读（无锁）；None（boot/空闲）→ 静默丢弃。
+            write_in(&info.team.space, va, bytes.len());
         }
         Ok(())
     }
