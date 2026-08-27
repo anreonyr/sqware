@@ -10,7 +10,6 @@
 //   parser    — ELF 解析（含符号表抽取）
 //   elftable  — 符号表
 
-pub mod channel;
 pub mod elftable;
 pub(crate) mod loader;
 pub(crate) mod parser;

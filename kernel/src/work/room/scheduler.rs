@@ -642,38 +642,13 @@ pub fn starve() -> usize {
     schedulers()[me].starve()
 }
 
-/// 当前任务睡眠入口（envcall ENV_SLEEP/ENV_MSLEEP 分支，以及 ktask 自切换桥
-/// 共同使用）：换算 deadline → 方法 park；本核 starved 空 → run() 取活。
+/// 当前线程睡眠入口（envcall ENV_SLEEP/ENV_MSLEEP 分支调用）：换算 deadline →
+/// 方法 park；本核 starved 空 → run() 取活。
 pub fn park(duration: Duration) -> usize {
     match schedulers()[machine::hart_id()].park(duration) {
         Some(pa) => pa,
-        // 无本核就绪任务：取活循环（steal/WFI）。trap 路径与 ktask 自切换路径
-        // 共用：调用方保证现场已持久化到任务帧（用户陷阱帧 / 自切换捕获帧），
-        // 且运行在 SIE=0 的 S 态。
         None => run(),
     }
-}
-
-/// 毫秒版 park（envcall 与 ktask 自切换原语的簿记桥，见 switcher::selfpark）。
-pub fn park_ms(ms: u64) -> usize {
-    park(Duration::from_millis(ms))
-}
-
-/// 当前运行任务 trap 帧 PA（闭包体自 park 用：捕获现场写入的目标帧）。
-///
-/// 与 `running_task_frame`（try_lock，panic 现场安全）不同：本函数走正式
-/// `lock`——调用方保证处于正常运行路径（闭包体内），running 必然存在。
-pub fn running_task_pa() -> usize {
-    let me = machine::hart_id();
-    schedulers()[me]
-        .inner
-        .lock()
-        .running
-        .as_ref()
-        .expect("no running task")
-        .trap
-        .pa
-        .as_usize()
 }
 
 /// 当前线程退出入口（envcall ENV_EXIT 分支调用）：标记 Reaped + 取下一任务

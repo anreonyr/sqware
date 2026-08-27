@@ -112,9 +112,7 @@ impl Instant {
     /// 自 earlier 以来的时长；earlier 在未来 → None。
     #[allow(dead_code)] // 预留：测试与诊断用
     pub fn checked_duration_since(&self, earlier: Instant) -> Option<Duration> {
-        // `then`（惰性）而非 `then_some`（eager）：earlier 在未来时衰减式求值
-        // `self.0 - earlier.0` 会 underflow panic。
-        (self.0 >= earlier.0).then(|| ticks_to_duration(self.0 - earlier.0))
+        (self.0 >= earlier.0).then_some(ticks_to_duration(self.0 - earlier.0))
     }
 }
 
