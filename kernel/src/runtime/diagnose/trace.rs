@@ -92,8 +92,6 @@ pub enum BootEvent {
     Launch { hart: usize },
     /// 副核 trap/调度初始化完成。
     Done { hart: usize },
-    /// 该核 trap 栈峰值水位。
-    Stack { hart: usize, used: usize },
 }
 
 /// 一条事件：时间戳 + 聚合事件。仅标量、Copy，可 const 初始化。
@@ -289,9 +287,6 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         EventKind::Halt(HaltEvent::Panic) => write!(w, "panic"),
         EventKind::Boot(BootEvent::Launch { hart }) => write!(w, "launch hart {hart}"),
         EventKind::Boot(BootEvent::Done { hart }) => write!(w, "boot done hart {hart}"),
-        EventKind::Boot(BootEvent::Stack { hart, used }) => {
-            write!(w, "trap stack high-water hart {hart}: {used} B")
-        }
     }
 }
 

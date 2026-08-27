@@ -126,9 +126,6 @@ pub fn upper() -> VirtAddr {
     VirtAddr::wrap(1usize << geometry(mode()).split_bit())
 }
 
-/// 用户栈窗口面积（1 GiB，顶锚窗口宽度）。
-pub const STACK_AREA: usize = 0x4000_0000;
-
 /// 探测单个候选模式（写测回读，临时根表帧随 drop 归还）。
 fn try_mode(candidate: satp::Mode) -> Result<(), SatpError> {
     let geo = geometry(candidate);

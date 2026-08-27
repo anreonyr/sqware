@@ -14,8 +14,11 @@ use alloc::vec::Vec;
 use core::cmp::Reverse;
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use riscv::register::time;
+
 use crate::lock::{Level, SpinLock};
 use crate::runtime::chrono::clock::Instant;
+use sbi::{fid::Timer, scall::SArgs, TimerCall};
 
 /// 镜像的无 tock 哨兵（内部；对外以 next_tock() -> None 表达）。
 const NONE: u64 = u64::MAX;
@@ -78,6 +81,23 @@ pub fn tick() -> u64 {
 /// 累计定时器中断次数。
 pub fn ticks() -> u64 {
     TICKS.load(Ordering::Relaxed)
+}
+
+// ── 机器定时器（tick 发源）──────────────────────────────
+
+/// 将下一机器定时器中断安排在「当前 time 起 interval 刻度后」：
+/// stimecmp = time + interval（SBI Time 扩展，绝对时间）。interval 为
+/// timebase 刻度（调用方经 clock::duration_to_ticks 换算）。SBI 失败即
+/// panic（定时器路径不许失败，与 drain 同纪律）。
+pub fn tick_after(interval: u64) {
+    let next = (time::read() as u64).wrapping_add(interval);
+    TimerCall::new(Timer::SetTimer)
+        .args(SArgs {
+            a0: next as usize,
+            ..Default::default()
+        })
+        .call()
+        .unwrap();
 }
 
 // ── tock 日程（deadline 注册表）──────────────────────────

@@ -7,6 +7,7 @@ extern crate alloc;
 mod boot;
 mod console;
 mod health;
+mod layout;
 mod lock;
 mod machine;
 mod memory;
@@ -27,7 +28,7 @@ global_asm!(
     "_start:",
     "    mv   tp, a0", // hartid → tp：S-mode 读不到 M-mode CSR mhartid，入口处暂存
     "    csrc sstatus, 2", // 清 SIE：内核态恒关中断（boot 期 OpenSBI 可能遗留 SIE=1）
-    // 主栈布局：sp = _kernel_edge + KERNEL_STACK_SIZE，栈向低地址生长。
+    // 主栈布局：sp = _kernel_edge + BOOT_STACK_SIZE，栈向低地址生长。
     "    la   sp, _kernel_edge",
     "    ld   t0, _canary",
     "    sd   t0, 0(sp)",

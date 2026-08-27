@@ -34,7 +34,8 @@ use crate::memory::manager::{
     flush_asid, mode,
 };
 
-use space::{KERNEL_FRAME_BASE, MapKind, SpaceBuilder, TRAMPOLINE, trampoline_pa};
+use crate::layout::{HART_FRAME_BASE, TRAMPOLINE, trampoline_pa};
+use space::{MapKind, SpaceBuilder};
 
 // 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
 // 兼作主栈下方的写保护 guard（栈下溢踩 .rodata 即写保护缺页）。
@@ -137,7 +138,7 @@ pub fn init() -> MapResult<()> {
                 Vec::new(),
             )?;
 
-            // 5. per-hart 内核 trap-context 帧：KERNEL_FRAME_BASE 起 N 页（PA 经
+            // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页（PA 经
             //    team::kernel_frame_pa 从本空间事实源读，无旁置表）。
             let n = machine::hart_count();
             for h in 0..n {
@@ -148,7 +149,7 @@ pub fn init() -> MapResult<()> {
                 .assume_init();
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
                 kernel_space.map(
-                    KERNEL_FRAME_BASE + h * PAGE_SIZE,
+                    HART_FRAME_BASE + h * PAGE_SIZE,
                     pa,
                     PAGE_SIZE,
                     PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
@@ -163,7 +164,7 @@ pub fn init() -> MapResult<()> {
             // 7. 刷新 TLB + 运行期布局校验（debug：违例 fail-fast）
             flush_asid(0);
             #[cfg(debug_assertions)]
-            space::validate();
+            crate::layout::validate();
 
             // 8. 内核空间封包进内核团队。
             team::init_kernel(Arc::new(kernel_space));

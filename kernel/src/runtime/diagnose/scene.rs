@@ -19,10 +19,10 @@ use alloc::vec::Vec;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sscratch, sstatus, stval, stvec};
 
+use crate::layout::STACK_WINDOW_SIZE;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::mode::STACK_AREA;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::scheduler::{running_task_frame, running_task_info, running_team_try};
@@ -46,8 +46,7 @@ const BT_SCAN: usize = 4096;
 const ADDR_ALIGN: usize = 4;
 /// 栈窗口 slot 步长（守护页 + 栈体，见 space::stack_allocate）——内核团队任务栈
 /// 段顶对齐基准。
-const STACK_SLOT: usize =
-    crate::work::unit::space::TASK_STACK_SIZE + crate::work::unit::space::STACK_GUARD_SIZE;
+const STACK_SLOT: usize = crate::layout::TASK_STACK_SIZE + crate::layout::TASK_STACK_GUARD;
 
 /// 定宽 hex 文本（{:#018x}）——值列的通用形态。
 fn hex(x: usize) -> String {
@@ -95,7 +94,7 @@ fn gprs() -> [usize; 32] {
 
 /// 栈回溯：**帧指针链**为主（内核 `-Cforce-frame-pointers=yes` 保证 FP 存在），
 /// 脱链后 fallback 到启发式扫描（`core::panicking` 等预编译库无 FP，panic 链
-/// 可能在它们处断——其外层仍是带 FP 的内核帧，由启发式接续）。
+/// 可能在它们处断——其外层仍是带 FP 的内核栈帧，由启发式接续）。
 ///
 /// FP 链（标准 RV64 布局）：`[fp]` = 调用者 fp、`[fp+8]` = 返回地址 ra；栈向
 /// 下生长 → fp 逐帧单调递增，非单调/越界/零即脱链。每帧取 ra（非零、不重复）
@@ -112,11 +111,12 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     // 两类段顶（trap 栈 / 内核任务栈 slot）；其余栈上方为已映射 DRAM，退回原行为。
     // trap 栈按 sp 纯算术反推（固定 VA 窗口），不依赖 hart_id/元数据表。
     let high = {
-        let trap_top = crate::runtime::switcher::trampoline::hart_of_trap_stack(sp)
-            .map(crate::runtime::switcher::trampoline::trap_stack_top);
-        // 栈窗顶锚于用户空间上界之下：[upper − STACK_AREA, upper)。
-        let stack_base = crate::memory::manager::mode::upper().as_usize() - STACK_AREA;
-        let stack_top = (sp >= stack_base && sp < stack_base + STACK_AREA)
+        let trap_top = crate::runtime::switcher::trap::trap_stack_hart(sp)
+            .map(crate::runtime::switcher::trap::trap_stack_edge)
+            .map(|e| e.as_usize());
+        // 栈窗顶锚于用户空间上界之下：[upper − STACK_WINDOW_SIZE, upper)。
+        let stack_base = crate::memory::manager::mode::upper().as_usize() - STACK_WINDOW_SIZE;
+        let stack_top = (sp >= stack_base && sp < stack_base + STACK_WINDOW_SIZE)
             .then(|| (sp & !(STACK_SLOT - 1)) + STACK_SLOT);
         match trap_top.or(stack_top) {
             Some(t) => sp.saturating_add(BT_SCAN).min(t),
@@ -143,7 +143,7 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         }
         f = caller;
     }
-    // ② 启发式兜底：从链断点继续向上扫描，接续断链外层的内核帧。
+    // ② 启发式兜底：从链断点继续向上扫描，接续断链外层的内核栈帧。
     let mut a = core::cmp::max(last + 8, sp & !7usize);
     while a < high && n < BT_DEPTH {
         // SAFETY: 只读本线程栈区间（S 态直读恒等映射内存，无副作用）。
@@ -309,30 +309,23 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         )),
     ]);
     {
-        // sscratch 约定：内核态 = 本 hart 内核 trap 帧 VA（KERNEL_FRAME_BASE +
-        // hart·PAGE，可反推 hart）；用户态 = 当前线程帧 self_va（线程帧窗）。
-        // 值域判定：内核帧区 → 内核态帧（可推 hart）；线程帧窗 → 用户帧。
+        // sscratch 约定：内核态 = 本 hart trap 帧 VA（HART_FRAME_BASE +
+        // hart·PAGE，可反推 hart）；用户态 = 当前线程帧 self_va（team 帧区）。
+        // 值域判定：hart 帧区 → 内核态帧（可推 hart）；team 帧区 → 用户帧。
         let scr = sscratch::read();
-        let kfb = crate::work::unit::space::KERNEL_FRAME_BASE.as_usize();
+        let kfb = crate::layout::HART_FRAME_BASE.as_usize();
         let n = if scr == 0 {
             "Kernel (sscratch=0)".to_string()
         } else if scr >= kfb && scr < kfb + crate::machine::MAX_HART_SLOTS * PAGE_SIZE {
-            format!(
-                "Kernel frame (hart {})",
-                (scr - kfb) / PAGE_SIZE
-            )
-        } else if scr >= crate::work::unit::space::FRAME_BASE.as_usize()
-            && scr < crate::work::unit::space::KERNEL_FRAME_BASE.as_usize()
+            format!("Kernel frame (hart {})", (scr - kfb) / PAGE_SIZE)
+        } else if scr >= crate::layout::TEAM_FRAME_BASE.as_usize()
+            && scr < crate::layout::HART_FRAME_BASE.as_usize()
         {
             "User frame".into()
         } else {
             "other".into()
         };
-        rows.push(vec![
-            Some("sscratch".into()),
-            Some(hex(scr)),
-            Some(n),
-        ]);
+        rows.push(vec![Some("sscratch".into()), Some(hex(scr)), Some(n)]);
     }
     {
         // 注解只列非默认态：前特权模式恒打；布尔位置位才打缩写（SIE/SPIE/

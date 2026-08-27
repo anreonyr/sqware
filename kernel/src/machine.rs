@@ -3,6 +3,7 @@
 use core::ops;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::layout::BOOT_STACK_SIZE;
 use crate::lock::OnceLock;
 
 /// 半开物理区间 `[base, end)` — 内存池 / MMIO 设备区域通用。
@@ -23,7 +24,7 @@ impl Region {
     }
 }
 
-/// 可寻址的 per-hart 槽数上限（编译期常量 = 内核帧区 VA 窗口宽度与
+/// 可寻址的 per-hart 槽数上限（编译期常量 = hart 帧区 VA 窗口宽度与
 /// per-hart trap 栈窗口宽度，4096 段 = 高位虚拟地址。虚拟地址免费，故放得慷慨：
 /// **窗口宽度与核数解耦**——实际启用核数由 DTB 运行时决定（[`hart_count`]），
 /// 本常量只是页表槽位的编译期防呆上限（超过即 panic，不静默截断）。
@@ -138,21 +139,8 @@ pub(crate) fn dram_end() -> Option<usize> {
     MACHINE.get().map(|m| m.dram.range().end)
 }
 
-/// 主内核栈布局（镜像内单一引导栈；栈大小由 Rust 常量单一来源）：
-///   `_kernel_edge`             镜像结束（页对齐，链接脚本唯一锚点）
-///   [主栈区 KERNEL_STACK_SIZE] 向下生长，栈底 = `_kernel_edge`，栈顶 = +size
-/// free 区起点 = 栈顶。无独立 guard 帧——主栈是 boot 短命栈，下溢由栈底
-/// canary 兜底。
-///
-/// 尺寸 = 64 KiB（1 MiB 的 1/16）：boot 路径实测峰值 <1 KiB（探针覆盖
-/// init→spawn→HSM，release 992 B / debug 320 B），再留 boot 期 panic 现场
-/// （崩溃渲染跑在 boot 栈上）+ 未来改动余量，取 16 倍 + 整页对齐仍富余。
-/// 越界有双护栏：栈底 canary（4 KiB 内越界即暴露）+ 栈顶 `.rodata` 只读页
-/// （写保护缺页，见 link.ld 主栈守卫注释）。
-pub(crate) const KERNEL_STACK_SIZE: usize = 0x1_0000; // 64 KiB
-
 /// 主内核栈 canary 值（写在栈底）。
-pub(crate) const KERNEL_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
+pub(crate) const BOOT_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
 
 /// 镜像结束地址（链接脚本 `_kernel_edge`）——栈与 free 区布局的唯一基准。
 pub(crate) fn kernel_edge() -> usize {
@@ -167,10 +155,10 @@ unsafe extern "C" {
 /// no_mangle 暴露为符号，global_asm `la t0,_stack; ld t0,0(t0)` 读取，
 /// 栈大小单一来源（此处由 Rust 常量推导），链接脚本不写栈布局。
 #[unsafe(no_mangle)]
-static _stack: usize = KERNEL_STACK_SIZE;
+static _stack: usize = BOOT_STACK_SIZE;
 
 #[unsafe(no_mangle)]
-static _canary: usize = KERNEL_STACK_CANARY;
+static _canary: usize = BOOT_STACK_CANARY;
 
 /// 主内核栈底地址（canary 所在）。
 pub(crate) fn kernel_stack_base() -> usize {
@@ -179,7 +167,7 @@ pub(crate) fn kernel_stack_base() -> usize {
 
 /// 主内核栈顶地址（= free 区起点）。
 pub(crate) fn kernel_stack_edge() -> usize {
-    kernel_edge() + KERNEL_STACK_SIZE
+    kernel_edge() + BOOT_STACK_SIZE
 }
 
 /// 读取 DTB `/cpus` 的 timebase-frequency（Hz）；缺失/非法长度返回 0。

@@ -5,10 +5,11 @@ use core::arch::global_asm;
 use alloc::format;
 use alloc::sync::Arc;
 use alloc::vec;
-use riscv::register::{satp, sie, stvec};
+use riscv::register::satp;
 
 use crate::console::Sink;
-use crate::machine::{KERNEL_STACK_CANARY, kernel_stack_base};
+use crate::layout::{HART_FRAME_BASE, TRAP_STACK_SLOT_SIZE};
+use crate::machine::{BOOT_STACK_CANARY, kernel_stack_base};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
@@ -16,11 +17,10 @@ use crate::memory::manager::mode;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
-use crate::runtime::switcher::trampoline::{
-    alltraps_va, restore, trap_stack_bottom, trap_stack_phys_top, trap_stack_top,
-};
+use crate::runtime::switcher::trampoline::{alltraps_va, restore};
+use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
 use crate::work::room::scheduler;
-use crate::work::unit::space::{KERNEL_FRAME_BASE, SpaceBuilder};
+use crate::work::unit::space::SpaceBuilder;
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
 use crate::{machine, putln};
@@ -68,21 +68,25 @@ pub fn banner() {
                 "kernel frames",
                 format!(
                     "{:#x}..{:#x}",
-                    KERNEL_FRAME_BASE.as_usize(),
-                    KERNEL_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
+                    HART_FRAME_BASE.as_usize(),
+                    HART_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
                 ),
             ),
             (
                 "trap stack",
-                format!("{:#x}..{:#x}", trap_stack_bottom(0), trap_stack_top(0)),
+                format!(
+                    "{:#x}..{:#x}",
+                    trap_stack_base(0).as_usize(),
+                    trap_stack_edge(0).as_usize()
+                ),
             ),
             (
                 "trap stack this",
                 format!(
                     "{} @ {:#x}..{:#x}",
                     machine::hart_id(),
-                    trap_stack_bottom(machine::hart_id()),
-                    trap_stack_top(machine::hart_id())
+                    trap_stack_base(machine::hart_id()).as_usize(),
+                    trap_stack_edge(machine::hart_id()).as_usize()
                 ),
             ),
         ] {
@@ -111,7 +115,7 @@ pub fn init() -> ! {
     // 记录内核持久帧基线：**一切任务 spawn 之前**。此后在途帧只增任务所有；
     // 关机时全部归还（零泄漏审计）。区间窗口元数据是随任务存活的瞬态
     // （任务栈/帧条目随 reclaim 摘除、团队 drop 归还）——基线后创建、关机前
-    // 全部释放，block 池净零回落；基线前只留静态内核结构（镜像、per-hart 帧、
+    // 全部释放，block 池净零回落；基线前只留静态内核结构（镜像、hart 帧、
     // 内核空间 durable 映射），关机不释放，账平。
     #[cfg(debug_assertions)]
     crate::memory::allocator::fence::audit::record_baseline();
@@ -130,7 +134,7 @@ pub fn init() -> ! {
     // guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。
     let boot_guard = unsafe { (kernel_stack_base() as *const usize).read() };
     assert!(
-        boot_guard == KERNEL_STACK_CANARY,
+        boot_guard == BOOT_STACK_CANARY,
         "main kernel stack overflow during boot: canary corrupted {boot_guard:#x}",
     );
 
@@ -188,14 +192,11 @@ fn spawn_demos() -> Result<(), MapError> {
     // 根因：`Box::try_new_in([u8;4096])`/`PageTable::default()` 按值物化 ~16 KiB
     // 栈帧击穿 16 KiB 任务栈（栈走穿 guard → 未映射区/邻居槽 → 多形态崩溃）。
     // 修复：Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）替换按值 4 KiB 物化。
-    storm_ktask(STORM_N)?;
+    storm_ktask(64)?;
     #[cfg(debug_assertions)]
     kernel().expect("kernel team not initialized").space.audit();
     Ok(())
 }
-
-/// 风暴子任务数（回归：一次连环 spawn 全部存活并入队）。
-const STORM_N: usize = 60;
 
 /// 风暴 = 内核任务连环 spawn closure 子任务（子任务空跑即退）。
 fn storm_ktask(n: usize) -> Result<(), MapError> {
@@ -249,7 +250,8 @@ fn boot_harts() {
         if hart == me {
             continue;
         }
-        let stack_top = trap_stack_phys_top(hart);
+        // opaque = 该 hart trap 栈物理栈顶（装配产物块基址 + 布局常量段偏移组装）
+        let stack_top = trap_stack() + (hart + 1) * TRAP_STACK_SLOT_SIZE;
         // putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
         // 同事件也进 trace（hart 0 窗口）：崩溃回放可见启动序列。
         trace::note(trace::EventKind::Boot(trace::BootEvent::Launch { hart }));
@@ -271,11 +273,12 @@ fn boot_harts() {
 /// 副核主流程：per-hart CSR 配置后进入 idle。
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn boot_main() -> ! {
-    // 副核 per-hart 初始化：satp = 共享内核 token（从内核帧读）、stvec、sscratch、sie。
+    // 副核 per-hart 初始化：先取共享内核 token（从 hart 帧读）切表，其余
+    // per-hart CSR（stvec/sscratch/sie）与 hart 0 走同一原语 trap::arm_hart。
     let ktc = kernel()
         .expect("kernel team not initialized")
         .space
-        .translate(KERNEL_FRAME_BASE)
+        .translate(HART_FRAME_BASE)
         .expect("kernel frame not mapped")
         .0;
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
@@ -285,14 +288,8 @@ pub(crate) extern "C" fn boot_main() -> ! {
     unsafe {
         satp::set(mode::mode(), ksatp.asid(), ksatp.ppn());
         core::arch::asm!("sfence.vma");
-        stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
-        // sscratch = 本 hart 内核帧 VA（内核态约定，与 trap::init 一致）
-        let me = machine::hart_id();
-        let scr = (KERNEL_FRAME_BASE + me * PAGE_SIZE).as_usize();
-        core::arch::asm!("csrw sscratch, {}", in(reg) scr);
-        sie::set_stimer();
-        sie::set_ssoft(); // SSIP 使能：WFI 休眠唤醒
     }
+    arm_hart();
     // 启动完成写进 trace（直打控制台会扰 panic 现场）。
     trace::note(trace::EventKind::Boot(trace::BootEvent::Done {
         hart: machine::hart_id(),

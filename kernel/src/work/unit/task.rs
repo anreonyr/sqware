@@ -8,17 +8,15 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use super::space::TASK_STACK_SIZE;
-use crate::machine;
+use crate::layout::{HART_FRAME_BASE, TASK_STACK_SIZE, IMAGE_BASE};
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::MapError;
 use crate::memory::PAGE_SIZE;
-use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
-use crate::work::unit::space::KERNEL_FRAME_BASE;
+use crate::runtime::switcher::context::TrapContext;
+use crate::runtime::switcher::trap::trap_stack_edge;
+use crate::runtime::switcher::trampoline::restore;
 use crate::work::unit::team::kernel;
-use crate::work::USER_TEXT_BASE;
-use riscv::register::{satp, sstatus};
+use riscv::register::satp;
 
 use super::team::Team;
 use crate::work::room::scheduler;
@@ -163,7 +161,7 @@ impl TaskBuilder {
         TaskBuilder {
             team,
             name: "task",
-            entry: USER_TEXT_BASE,
+            entry: IMAGE_BASE,
             arg: 0,
             stack: TASK_STACK_SIZE,
         }
@@ -181,7 +179,7 @@ impl TaskBuilder {
         self
     }
 
-    /// 线程入口（绝对 entry；默认 USER_TEXT_BASE）。
+    /// 线程入口（绝对 entry；默认 IMAGE_BASE）。
     pub fn entry(mut self, entry: VirtAddr) -> TaskBuilder {
         self.entry = entry;
         self
@@ -201,7 +199,7 @@ impl TaskBuilder {
     ///
     /// 约束：`FnOnce + Send + 'static`——闭包可捕获、可搬移到新执行上下文。
     /// 内核态不可抢占：闭包忙等不返回也不主动让出，将独占所在核。
-    pub fn closure<F>(self, f: F) -> Result<PhysAddr, MapError>
+    pub fn closure<F>(self, f: F) -> Result<usize, MapError>
     where
         F: FnOnce() + Send + 'static,
     {
@@ -219,80 +217,84 @@ impl TaskBuilder {
         let ptr = Box::into_raw(holder) as usize;
         // SAFETY: 闭包在本地装箱，a0 传其薄指针；SPP=1 回 S 态运行于 `ktask_entry`。
         let entry = VirtAddr::from_raw(ktask_entry as *const () as usize);
-        let frame_pa = self.entry(entry).arg(ptr).spawn()?;
-        Ok(frame_pa)
+        self.entry(entry).arg(ptr).spawn()
     }
 
     /// 生成任务：栈 slot + trap 帧（入团队空间窗口簿记）→ 填帧 → 入队收尾。
-    /// 返回新线程 trap 帧 PA。
-    pub fn spawn(self) -> Result<PhysAddr, MapError> {
+    /// 返回新任务号（全局唯一）。失败时已分配资源回滚（栈/帧窗口归还）。
+    pub fn spawn(self) -> Result<usize, MapError> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let me = machine::hart_id();
 
         // 1. 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id；大小 = builder.stack）
         //    → 分配帧 attach
         let stack_size = self.stack;
-        let stack_va = self.team.space.stack_allocate(id, stack_size)?;
-        let mut stack_frames = Vec::new();
-        for _ in 0..(stack_size / PAGE_SIZE) {
-            let frame = unsafe {
-                Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
-                    .map_err(|_| MapError::OutOfMemory)?
-                    .assume_init()
-            };
-            stack_frames.push(frame);
-        }
-        self.team.space.attach_dynamic(stack_va, stack_frames)?;
-        let stack_top = stack_va + stack_size;
+        let stack_res = (|| {
+            let stack_va = self.team.space.stack_allocate(id, stack_size)?;
+            let mut stack_frames = Vec::new();
+            for _ in 0..(stack_size / PAGE_SIZE) {
+                let frame = unsafe {
+                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                        .map_err(|_| MapError::OutOfMemory)?
+                        .assume_init()
+                };
+                stack_frames.push(frame);
+            }
+            self.team.space.attach_dynamic(stack_va, stack_frames)?;
+            Ok(stack_va + stack_size)
+        })();
+        let stack_top = match stack_res {
+            Ok(top) => top,
+            Err(e) => {
+                // 栈 slot 已由 stack_allocate 登记（守护页/栈体子 Map）——失败回滚。
+                // 帧（若有）随 attach 失败/子 Map drop 归还；此处按 owner 摘整 slot。
+                self.team.space.retire_stack(id);
+                return Err(e);
+            }
+        };
 
         // 2. trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）
-        let (frame_va, frame_pa) = self.team.space.frame_allocate(id)?;
+        let frame_res = self.team.space.frame_allocate(id);
+        let (frame_va, frame_pa) = match frame_res {
+            Ok(x) => x,
+            Err(e) => {
+                // 栈已建、帧失败：按 owner 摘栈 slot（frame_allocate 失败已自回滚帧窗）。
+                self.team.space.retire_stack(id);
+                return Err(e);
+            }
+        };
 
-        // 3. 填帧：内核切换元数据从内核帧拷贝；用户上下文 = 入口/栈顶/a0/状态。
-        //    kernel_sp = **本 hart** trap 栈顶（任务随后在本 hart 首次运行；若被
-        //    steal 走，上台前由调度器重写）。
+        // 3. 填帧：`TrapContext::init` 从 per-hart 帧模板拷元数据 + 用户上下文。
+        //    kernel_sp 不在此写——`Scheduler::prepare` 对每次上台无条件重写（含 steal 迁移）。
+        let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
         unsafe {
             let ktc = kernel()
                 .expect("kernel team not initialized")
                 .space
-                .translate(KERNEL_FRAME_BASE)
+                .translate(HART_FRAME_BASE)
                 .expect("kernel frame not mapped")
                 .0
                 .as_usize() as *const TrapContext;
-            let frame = &mut *(frame_pa.as_usize() as *mut TrapContext);
-            frame.kernel_satp = (*ktc).kernel_satp;
-            frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(me));
-            frame.trap_handler = (*ktc).trap_handler;
-            frame.trap_stack_corrupt = (*ktc).trap_stack_corrupt;
-            frame.user_pa = frame_pa;
             // user_satp = 模式位 << 60 | asid << 44 | root_ppn —— 切回本空间用；
             // 模式位随探测所得 mode()（Sv39=8/Sv48=9/Sv57=10），非硬编码。
-            frame.user_satp = satp::Satp::from_bits(
+            let user_satp = satp::Satp::from_bits(
                 (crate::memory::manager::mode::mode().into_usize() << 60)
                     | (self.team.space.asid() << 44)
                     | self.team.space.root(),
             );
-            frame.self_va = frame_va;
-            frame.sepc = self.entry;
-            frame.gpr.set_x(Gprs::SP, stack_top.as_usize());
-            frame.gpr.set_x(Gprs::A0, self.arg);
-            let mut ss = sstatus::Sstatus::from_bits(riscv::register::sstatus::read().bits());
-            // 内核任务（挂 kernel 团队）→ S 态：SPP=S、SPIE=1（sret 后 SIE=1，可被
-            // S-timer 抢占——可抢占内核；临界区安全由锁的 TrapGuard 关中断保证）。
-            // 其它团队 → U 态：SPP=U、SPIE=1（sret 后 SIE=1，可被 tick 抢占）。
-            // 模式由团队身份推断。
-            ss.set_sie(false);
-            if Arc::ptr_eq(
+            let team_is_kernel = Arc::ptr_eq(
                 &self.team,
                 super::team::kernel().expect("kernel team not initialized"),
-            ) {
-                ss.set_spp(sstatus::SPP::Supervisor);
-                ss.set_spie(true);
-            } else {
-                ss.set_spp(sstatus::SPP::User);
-                ss.set_spie(true);
-            }
-            frame.sstatus = ss;
+            );
+            frame.init(
+                &*ktc,
+                team_is_kernel,
+                self.entry,
+                stack_top,
+                self.arg,
+                frame_pa,
+                user_satp,
+                frame_va,
+            );
         }
 
         // 4. 入队收尾（初始状态 Starved；持本 hart 调度锁完成入簿 + 入队 + 计数）
@@ -307,7 +309,7 @@ impl TaskBuilder {
             },
         });
         scheduler::push(task);
-        Ok(frame_pa)
+        Ok(id)
     }
 }
 
@@ -349,7 +351,7 @@ fn ktask_exit() -> ! {
     // `options(nostack)` 会对编译器撒谎（声称不碰栈却改了 sp），其后 sp 相对访问全错位。
     // noreturn 保证 asm 后无编译器生成代码，`jr` 到退出函数后在**全新** trap 栈帧上执行，
     // 无被丢弃的旧 Rust 帧。
-    let top = trap_stack_top(crate::machine::hart_id());
+    let top = trap_stack_edge(crate::machine::hart_id()).as_usize();
     // SAFETY: `top` 是本 hart per-hart trap 栈顶（内核空间、S 态可写）；退出函数跑在其上，
     // 永不返回（restore 是 noreturn）。
     unsafe {

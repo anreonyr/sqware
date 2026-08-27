@@ -5,7 +5,7 @@ ENTRY(_start)
    parser 要求 LOAD 段页对齐（外带 .text/.rodata 各自成段的 ELF 也可通过）。 */
 SECTIONS
 {
-  . = 0x10000;          /* USER_TEXT_BASE：内核 loader 按绝对 VMA 装载 */
+  . = 0x10000;          /* IMAGE_BASE：内核 loader 按绝对 VMA 装载 */
 
   .text : ALIGN(0x1000) { *(.text*) }
   .rodata : ALIGN(0x1000) { *(.rodata*) }

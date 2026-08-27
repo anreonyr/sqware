@@ -7,8 +7,3 @@
 
 pub mod room;
 pub mod unit;
-
-use crate::memory::manager::addr::VirtAddr;
-
-/// 用户程序加载基址。
-pub const USER_TEXT_BASE: VirtAddr = VirtAddr::wrap(0x1_0000);

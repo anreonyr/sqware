@@ -39,12 +39,11 @@ use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
-use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::runtime::switcher::trampoline::{restore, trap_stack_top};
-use crate::runtime::switcher::trap::arm_timer;
+use crate::runtime::switcher::trap::trap_stack_edge;
+use crate::runtime::switcher::trampoline::restore;
 
 use super::tie;
 use crate::work::unit::{
@@ -165,7 +164,7 @@ impl Scheduler {
         // SAFETY: 帧 PA 恒等映射可写；帧属 task 独占（running 或刚从 starved 摘出）。
         unsafe {
             let frame = &mut *(t.trap.pa.as_usize() as *mut TrapContext);
-            frame.kernel_sp = VirtAddr::from_raw(trap_stack_top(self.hart));
+            frame.kernel_sp = trap_stack_edge(self.hart);
             // 内核任务上台即写 tp = 本 hart：被抢占恢复路径直接 sret 回打断点
             // （不经 ktask_entry 的 tp 重建），tp 必须在上台时就绪。
             if Arc::ptr_eq(
@@ -175,7 +174,7 @@ impl Scheduler {
                 frame.gpr.set_x(Gprs::TP, self.hart);
             }
         }
-        arm_timer(clock::duration_to_ticks(Duration::from_millis(100)));
+        timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
     }
 
     /// 装槽：把 Starved 任务装为本 hart 的 running（自取锁）。装前 running 必空。
@@ -381,7 +380,7 @@ fn wait() -> Option<Arc<Task>> {
             Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
             None => WFI_FAR,
         };
-        arm_timer(delta);
+        timer::tick_after(delta);
         // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）
         unsafe {
             core::arch::asm!("wfi");

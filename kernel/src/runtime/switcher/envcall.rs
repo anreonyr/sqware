@@ -95,7 +95,7 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(pa) => pa.as_usize(), // 任务句柄（trap 帧 PA，唯一；供用户记认）
+                    Ok(id) => id, // 任务号（全局唯一句柄；供用户记认）
                     Err(_) => usize::MAX,
                 },
             );

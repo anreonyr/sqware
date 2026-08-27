@@ -1,4 +1,4 @@
-// 陷入上下文（TrapContext）— trap 入口/出口保存/恢复的帧（用户线程帧 / per-hart 内核帧）
+// 陷入上下文（TrapContext）— trap 入口/出口保存/恢复的帧（用户线程帧 / hart 帧）
 //
 // 字段布局即 trap ABI：`__alltraps`/`__restore`（trampoline 汇编）按裸偏移
 // 读写，一经固化不可随意增删——布局由本文件底部的编译期偏移断言锁定，与汇编
@@ -74,13 +74,13 @@ impl core::fmt::Debug for Gprs {
     }
 }
 
-/// 陷入上下文帧 — 存于帧页（用户线程帧 = Frame 窗口分配页；内核帧 = per-hart 帧区页）。
+/// 陷入上下文帧 — 存于帧页（用户线程帧 = Frame 窗口分配页；hart 帧 = 帧区页）。
 #[derive(Debug)]
 #[repr(C)]
 pub struct TrapContext {
     /// 切入用户态前的内核 satp token（`__alltraps`切回内核用）。
     pub kernel_satp: satp::Satp,
-    /// 切入用户态前的内核栈指针（内核帧 = per-hart trap 栈顶；用户帧 = 任务内核栈顶）。
+    /// 切入用户态前的内核栈指针（hart 帧 = per-hart trap 栈顶；用户帧 = 任务内核栈顶）。
     pub kernel_sp: VirtAddr,
     /// 陷阱处理入口地址（内核镜像链接地址，`jalr`目标）。
     pub trap_handler: VirtAddr,
@@ -99,11 +99,51 @@ pub struct TrapContext {
     /// 本帧在目标空间中的虚拟地址（restore 切表后经此 VA 收尾）。
     ///
     /// 用户线程帧 = 本空间 Frame 窗口分配的 VA；
-    /// 内核帧 = per-hart 帧。alltraps 用户路径把
+    /// hart 帧 = 帧区页。alltraps 用户路径把
     /// sscratch 设为该 VA，使每线程帧可位于任意页而汇编零改动。
-    /// （sscratch 约定：用户态 = 线程帧 self_va；内核态 = 本 hart 内核帧 VA，
+    /// （sscratch 约定：用户态 = 线程帧 self_va；内核态 = 本 hart 帧 VA，
     /// 见 trampoline 模块头。）
     pub self_va: VirtAddr,
+}
+
+impl TrapContext {
+    /// 初始化为新任务入口上下文：内核切换元数据自 per-hart 帧模板拷入；
+    /// 用户上下文 = 入口/栈顶/a0；SPP 按团队身份（内核团队 → S，其余 → U），
+    /// SPIE=1（sret 后 SIE=1，可被抢占）。kernel_sp 不在此写——`Scheduler::prepare`
+    /// 对每次上台无条件重写（含 steal 迁移）。
+    ///
+    /// # Safety
+    /// 调用方须持有对 `self` 所指帧的唯一可写引用（新任务帧未发布、S-only 映射）。
+    pub(crate) unsafe fn init(
+        &mut self,
+        template: &TrapContext,
+        team_is_kernel: bool,
+        entry: VirtAddr,
+        stack_top: VirtAddr,
+        arg: usize,
+        pa: PhysAddr,
+        user_satp: satp::Satp,
+        self_va: VirtAddr,
+    ) {
+        self.kernel_satp = template.kernel_satp;
+        self.trap_handler = template.trap_handler;
+        self.trap_stack_corrupt = template.trap_stack_corrupt;
+        self.user_pa = pa;
+        self.user_satp = user_satp;
+        self.self_va = self_va;
+        self.sepc = entry;
+        self.gpr.set_x(Gprs::SP, stack_top.as_usize());
+        self.gpr.set_x(Gprs::A0, arg);
+        // 全零起步：不继承内核当前 sstatus 的 FS/XS 等位（`__restore` 整字 csrw）。
+        let mut ss = sstatus::Sstatus::from_bits(0);
+        ss.set_spie(true);
+        ss.set_spp(if team_is_kernel {
+            sstatus::SPP::Supervisor
+        } else {
+            sstatus::SPP::User
+        });
+        self.sstatus = ss;
+    }
 }
 
 // 布局即 ABI：偏移断言与 trampoline 汇编硬编码偏移一一对应。
