@@ -9,7 +9,7 @@ pub const PAGE_SIZE: usize = 4096;
 /// 共享入口：`_start` → `main` 引导 + panic 处理（bin 只需写 `main`）。
 pub mod entry;
 
-/// 用户堆：`heap_allocate`/`heap_deallocate` envcall 后端 + `#[global_allocator]`。
+/// 用户堆：`allocate`/`deallocate` envcall 后端 + `#[global_allocator]`。
 pub mod heap;
 
 /// 用户 task：`spawn`/`closure`/`Join`。
@@ -22,9 +22,9 @@ pub mod env {
 
     use crate::PAGE_SIZE;
 
-    /// 主动让出处理器（轮转）。
+    /// 主动让出处理器（词族 starve；轮转）。
     pub fn starve() -> UResult<()> {
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Yield).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Starve).call()?;
         Ok(())
     }
 
@@ -35,58 +35,58 @@ pub mod env {
             a1: s.as_ptr() as usize,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Write).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Put).args(args).call()?;
         Ok(())
     }
 
-    /// 退出当前任务；不返回。
+    /// 退出当前任务（词族 reap）；不返回。
     pub fn exit() -> ! {
-        let _ = UcallBuilder::new(Ucall::Exit).call();
+        let _ = UcallBuilder::new(Ucall::Reap).call();
         unsafe { core::hint::unreachable_unchecked() }
     }
 
     /// 读定时器 tick 计数（诊断，非时间单位）。
-    pub fn get_ticks() -> UResult<usize> {
-        let (v0, _v1) = UcallBuilder::new(Ucall::GetTicks).call()?;
+    pub fn ticks() -> UResult<usize> {
+        let (v0, _v1) = UcallBuilder::new(Ucall::Ticks).call()?;
         Ok(v0)
     }
 
-    /// 睡眠 `d`。a0 = d.as_millis()；亚毫秒截为 0 → 立即唤醒。
+    /// 睡眠 `d`（词族 park）。a0 = d.as_millis()；亚毫秒截为 0 → 立即唤醒。
     pub fn sleep(d: Duration) -> UResult<()> {
         let args = UArgs {
             a0: d.as_millis() as usize,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Sleep).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Park).args(args).call()?;
         Ok(())
     }
 
     /// 读单调时钟（uptime）：返回 (秒, 亚秒纳秒)。
     pub fn clock() -> UResult<(u64, u64)> {
-        let (secs, nanos) = UcallBuilder::new(Ucall::ClockGetTime).call()?;
+        let (secs, nanos) = UcallBuilder::new(Ucall::Clock).call()?;
         Ok((secs as u64, nanos as u64))
     }
 
     /// 用户堆分配 `size` 字节（页对齐向上取整）：返回分配 VA，失败 UError（D1 负值）。
-    pub fn heap_allocate(size: usize) -> UResult<usize> {
+    pub fn allocate(size: usize) -> UResult<usize> {
         let size = size.max(1).next_multiple_of(PAGE_SIZE);
         let args = UArgs {
             a0: size,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::HeapAllocate).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Allocate).args(args).call()?;
         Ok(v0)
     }
 
     /// 用户堆释放 `(addr, size)`：与分配时同源页对齐；未分配/部分释放 → Err。
-    pub fn heap_deallocate(addr: usize, size: usize) -> UResult<()> {
+    pub fn deallocate(addr: usize, size: usize) -> UResult<()> {
         let size = size.max(1).next_multiple_of(PAGE_SIZE);
         let args = UArgs {
             a0: addr,
             a1: size,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::HeapDeallocate).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Deallocate).args(args).call()?;
         Ok(())
     }
 

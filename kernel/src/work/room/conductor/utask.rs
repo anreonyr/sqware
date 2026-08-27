@@ -1,7 +1,7 @@
 // ── 适配层：utask ──
 //
-// 用户任务面——envcall 服务接缝：把 U 态环境调用（Yield/Sleep/Exit）翻译为
-// 调度核心操作，返回下一帧 PA（切换由陷阱机械沿返回链完成）。内核任务面
+// 用户任务面——envcall 服务接缝：把 U 态环境调用（Starve/Park/Reap，与调度词族
+// 同词）翻译为调度核心操作，返回下一帧 PA（切换由陷阱机械沿返回链完成）。内核任务面
 // （ktask）内部复用同一接线。
 //
 // 命名：与核心/内核面同词（park/starve/reap），路径 + 签名区分——
@@ -14,13 +14,13 @@ use crate::machine;
 use super::core::{clear, conductors};
 use super::trap::run;
 
-/// 主动让出入口（envcall YIELD 调用）：无视剩余预算立即轮转。
+/// 主动让出入口（envcall Starve 调用）：无视剩余预算立即轮转。
 pub fn starve() -> usize {
     let me = machine::hart_id();
     conductors()[me].starve()
 }
 
-/// 当前线程睡眠入口（envcall ENV_SLEEP/ENV_MSLEEP 分支调用）：换算 deadline →
+/// 当前线程睡眠入口（envcall Park 调用）：换算 deadline →
 /// 方法 park；本核 starved 空 → run() 取活。
 pub fn park(duration: Duration) -> usize {
     match conductors()[machine::hart_id()].park(duration) {
@@ -29,7 +29,7 @@ pub fn park(duration: Duration) -> usize {
     }
 }
 
-/// 当前线程退出入口（envcall ENV_EXIT 分支调用）：标记 Reaped + 取下一任务
+/// 当前线程退出入口（envcall Reap 调用）：标记 Reaped + 取下一任务
 /// （run 的取活循环；拿不到就 WFI）；全部任务退出 → halt。
 pub fn reap() -> usize {
     let me = machine::hart_id();

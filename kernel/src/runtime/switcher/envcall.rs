@@ -4,8 +4,9 @@
 // `Exception::UserEnvCall`）——本模块即该调用的内核侧 ABI，术语与规范同源。
 //
 // 约定：a7 = 调用号，a0..a5 = 参数，返回值写回 a0/a1（Gprs::A0/A1）；
-// 每个调用后 sepc += 4（Exit 除外——不返回）。时间语义统一以毫秒（Duration 边界）
-// 表达（Sleep=4）；tick 计数（GetTicks=3）仅作兼容诊断，非时间单位。
+// 每个调用后 sepc += 4（Reap 除外——不返回）。时间语义统一以毫秒（Duration 边界）
+// 表达（Park=4）；tick 计数（Ticks=3）仅作兼容诊断，非时间单位。
+// 调用名与调度词族（conductor）同词：Starve/Park/Reap 即 utask 三面服务。
 
 use core::time::Duration;
 
@@ -24,8 +25,8 @@ use crate::work::unit::task::TaskIdent;
 
 /// envcall 分发。
 ///
-/// 入参 frame = 当前任务用户帧；返回待恢复帧：Yield 返回下一任务帧，
-/// Exit 返回后调用方不得再触碰 frame。
+/// 入参 frame = 当前任务用户帧；返回待恢复帧：Starve/Park 返回下一任务帧，
+/// Reap 返回后调用方不得再触碰 frame。
 pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext {
     let number = frame.gpr.x(Gprs::A7); // a7 = 调用号
     let call =
@@ -36,8 +37,8 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
     }));
     frame.sepc += 4;
     match call {
-        Ucall::Yield => return starve() as *mut TrapContext,
-        Ucall::Write => {
+        Ucall::Starve => return starve() as *mut TrapContext,
+        Ucall::Put => {
             // 以后接入 operator: file system adaptor
             let len = frame.gpr.x(Gprs::A0);
             let ptr = frame.gpr.x(Gprs::A1);
@@ -46,23 +47,23 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
                 frame.gpr.set_x(Gprs::A0, usize::MAX);
             }
         }
-        Ucall::Exit => {
+        Ucall::Reap => {
             return reap() as *mut TrapContext;
         }
-        Ucall::GetTicks => {
+        Ucall::Ticks => {
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);
         }
-        Ucall::Sleep => {
+        Ucall::Park => {
             // sepc 前进（唤醒恢复时从 ecall 之后继续）。
             // a0 = 毫秒（Duration 边界；换算按 timebase 进行）
             return park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext;
         }
-        Ucall::ClockGetTime => {
+        Ucall::Clock => {
             let up = clock::uptime();
             frame.gpr.set_x(Gprs::A0, up.as_secs() as usize);
             frame.gpr.set_x(Gprs::A1, up.subsec_nanos() as usize);
         }
-        Ucall::HeapAllocate => {
+        Ucall::Allocate => {
             // a0 = 字节数（页对齐向上取整——分配需页对齐）。
             // 直取当前任务空间（ident 无锁；锁序仅 L2→L5，不再经调度锁）；
             // 堆分配即时物化帧 → with_flush（PTE 变更后刷本空间 TLB）。
@@ -96,7 +97,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
                 },
             );
         }
-        Ucall::HeapDeallocate => {
+        Ucall::Deallocate => {
             // a0 = 分配所得 VA，a1 = 字节数（与分配时同源页对齐；区间精确匹配）。
             let addr = frame.gpr.x(Gprs::A0);
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);

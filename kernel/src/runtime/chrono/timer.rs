@@ -23,7 +23,7 @@ use sbi::{fid::Timer, scall::SArgs, TimerCall};
 /// 镜像的无 tock 哨兵（内部；对外以 next_tock() -> None 表达）。
 const NONE: u64 = u64::MAX;
 
-/// 节拍计数（ENV_GET_TICKS 兼容）。
+/// 节拍计数（ENV_TICKS 兼容）。
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
 /// tock 堆 — 全局一份。内层：锁内真值；锁外：最近 tock 原子镜像——镜像由持锁
@@ -71,7 +71,7 @@ impl TimerHeap {
     }
 }
 
-// ── 节拍计数（ENV_GET_TICKS 兼容）───
+// ── 节拍计数（ENV_TICKS 兼容）───
 
 /// 定时器中断发生一次（返回递增后的计数）。
 pub fn tick() -> u64 {
