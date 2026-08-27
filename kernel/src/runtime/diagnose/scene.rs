@@ -44,8 +44,8 @@ const BT_DEPTH: usize = 32;
 const BT_SCAN: usize = 4096;
 /// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
 const ADDR_ALIGN: usize = 4;
-/// 栈窗口 slot 步长（守护页 + 栈体，见 space::stack_allocate）——内核团队任务栈
-/// 段顶对齐基准。
+/// 栈窗口 slot 步长（守护页 + 栈体，见 space::window::StackWindow::claim）——
+/// 内核团队任务栈段顶对齐基准。
 const STACK_SLOT: usize = crate::layout::TASK_STACK_SIZE + crate::layout::TASK_STACK_GUARD;
 
 /// 定宽 hex 文本（{:#018x}）——值列的通用形态。

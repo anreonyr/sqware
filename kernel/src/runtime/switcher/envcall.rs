@@ -12,6 +12,7 @@ use core::time::Duration;
 use ubi::Ucall;
 
 use crate::memory::PAGE_SIZE;
+use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
@@ -63,9 +64,29 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
         }
         Ucall::HeapAllocate => {
             // a0 = 字节数（页对齐向上取整——分配需页对齐）。
-            // 经 with_running_space 借出当前任务空间（锁序 1→2→5 合法）。
+            // 经 with_running_space 借出当前任务空间（锁序 1→2→5 合法）；
+            // 堆分配即时物化帧 → with_flush（PTE 变更后刷本空间 TLB）。
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
-            let addr = with_running_space(|s| s.heap_allocate(size));
+            let addr = with_running_space(|s| {
+                let r = s.with_flush(|inner| {
+                    inner
+                        .heap
+                        .as_mut()
+                        .ok_or(MapError::NoRegion)?
+                        .allocate(&mut inner.durable, size)
+                });
+                // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
+                // 键 = fence::key（页索引编码）：多个空间共享同 VA，须并入空间身份——
+                // (asid<<44)|(va>>12) 单射（asid<2^16, va<2^56）。
+                if let Ok(va) = r {
+                    crate::memory::allocator::fence::on_alloc(
+                        crate::memory::allocator::fence::key(s.asid(), va.as_usize()),
+                        size,
+                        crate::memory::allocator::fence::OwnerKind::UserHeap,
+                    );
+                }
+                r
+            });
             frame.gpr.set_x(
                 Gprs::A0,
                 match addr {
@@ -78,7 +99,21 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             // a0 = 分配所得 VA，a1 = 字节数（与分配时同源页对齐；区间精确匹配）。
             let addr = frame.gpr.x(Gprs::A0);
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
-            let ok = with_running_space(|s| s.heap_deallocate(VirtAddr::from_raw(addr), size));
+            let ok = with_running_space(|s| {
+                let freed = s.with_flush(|inner| match inner.heap.as_mut() {
+                    Some(h) => h.deallocate(&mut inner.durable, VirtAddr::from_raw(addr), size),
+                    None => false,
+                });
+                // 护栏事件：用户堆活块注销（无账 = 悬垂/双释放现行；键与分配相同）。
+                if freed {
+                    crate::memory::allocator::fence::on_free(
+                        crate::memory::allocator::fence::key(s.asid(), addr),
+                        size,
+                        crate::memory::allocator::fence::OwnerKind::UserHeap,
+                    );
+                }
+                freed
+            });
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Spawn => {
@@ -112,7 +147,14 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             let fixed = frame.gpr.x(Gprs::A2);
             let va = with_running_space(|s| {
                 if fixed == 0 {
-                    s.mmap(size)
+                    // 窗口自选高位肯定有堆窗（若非 → NoRegion）；懒映射不改页表 → with
+                    s.with(|inner| {
+                        inner
+                            .heap
+                            .as_mut()
+                            .ok_or(MapError::NoRegion)?
+                            .mmap(size)
+                    })
                 } else {
                     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
                     s.declare(VirtAddr::from_raw(fixed), size, flags, MapKind::Anonymous)
@@ -133,11 +175,14 @@ pub fn dispatch(frame: &mut TrapContext) -> *mut TrapContext {
             let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let ok = with_running_space(|s| {
-                if s.munmap(addr, size) {
+                if s.with_flush(|inner| match inner.heap.as_mut() {
+                    Some(h) => h.munmap(&mut inner.durable, addr, size),
+                    None => false,
+                }) {
                     true
                 } else if s.resolve_kind(addr).is_some() {
                     // 声明区（或窗口子区间的近似覆盖）：PTE 清 + 整段摘除；窗口
-                    // 窗口槽不归还——边界拆分留待 mprotect 后端细化。
+                    // 槽不归还——边界拆分留待 mprotect 后端细化。
                     s.unmap(addr, size);
                     true
                 } else {

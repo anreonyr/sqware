@@ -39,6 +39,7 @@ use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
+use crate::memory::PAGE_SIZE;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, SchedEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
@@ -435,8 +436,16 @@ pub(super) fn clear() {
         trace::note(EventKind::Sched(SchedEvent::Reap { tid: z.id }));
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.team.prune_tasks(&z);
-        // 锁外回收（Team.tasks 已放 → Space.inner=2 → FRAME=5 合法）
-        z.team.space.retire(z.id, z.trap.va);
+        // 锁外回收（Team.tasks 已放 → Space.inner=2 → FRAME=5 合法）：栈 slot + trap 帧
+        // 一次 with_flush 收回——PTE 清理 + 刷 TLB + 区间归还；帧随子 Map drop 归还。
+        z.team.space.with_flush(|inner| {
+            if let Some((slot_va, slot_size)) = inner.stack.reclaim(z.id) {
+                inner.durable.unmap_frames(slot_va, slot_size);
+            }
+            if inner.frame.reclaim(z.trap.va) {
+                inner.durable.unmap_frames(z.trap.va, PAGE_SIZE);
+            }
+        });
         drop(z);
     }
 }

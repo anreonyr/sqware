@@ -226,10 +226,23 @@ impl TaskBuilder {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
         // 1. 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id；大小 = builder.stack）
-        //    → 分配帧 attach
+        //    → 分配帧 attach。claim 只占簿记（with，不改页表）；attach_dynamic 装 PTE
+        //    （with_flush 锁外刷 TLB）。
         let stack_size = self.stack;
+        let is_kernel = matches!(self.team.space.kind(), SpaceKind::Kernel);
+        // spawn 失败路径共用：按 owner 摘栈 slot（清 PTE + 区间归还；帧随子 Map drop 归还）
+        let rollback_stack = |space: &crate::work::unit::space::Space| {
+            space.with_flush(|inner| {
+                if let Some((slot_va, slot_size)) = inner.stack.reclaim(id) {
+                    inner.durable.unmap_frames(slot_va, slot_size);
+                }
+            });
+        };
         let stack_res = (|| {
-            let stack_va = self.team.space.stack_allocate(id, stack_size)?;
+            let stack_va = self
+                .team
+                .space
+                .with(|inner| inner.stack.claim(id, stack_size, is_kernel))?;
             let mut stack_frames = Vec::new();
             for _ in 0..(stack_size / PAGE_SIZE) {
                 let frame = unsafe {
@@ -239,26 +252,30 @@ impl TaskBuilder {
                 };
                 stack_frames.push(frame);
             }
-            self.team.space.attach_dynamic(stack_va, stack_frames)?;
+            self.team
+                .space
+                .with_flush(|inner| inner.attach_dynamic(stack_va, stack_frames))?;
             Ok(stack_va + stack_size)
         })();
         let stack_top = match stack_res {
             Ok(top) => top,
             Err(e) => {
-                // 栈 slot 已由 stack_allocate 登记（守护页/栈体子 Map）——失败回滚。
-                // 帧（若有）随 attach 失败/子 Map drop 归还；此处按 owner 摘整 slot。
-                self.team.space.retire_stack(id);
+                // 栈 slot 已由 claim 登记（守护页/栈体子 Map）——失败回滚按 owner 摘整 slot。
+                rollback_stack(&self.team.space);
                 return Err(e);
             }
         };
 
         // 2. trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）
-        let frame_res = self.team.space.frame_allocate(id);
+        let frame_res = self
+            .team
+            .space
+            .with_flush(|inner| inner.frame.claim(&mut inner.durable, id));
         let (frame_va, frame_pa) = match frame_res {
             Ok(x) => x,
             Err(e) => {
-                // 栈已建、帧失败：按 owner 摘栈 slot（frame_allocate 失败已自回滚帧窗）。
-                self.team.space.retire_stack(id);
+                // 栈已建、帧失败：按 owner 摘栈 slot（frame claim 失败已自回滚帧窗）。
+                rollback_stack(&self.team.space);
                 return Err(e);
             }
         };
