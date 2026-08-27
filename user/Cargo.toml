@@ -22,13 +22,6 @@ bench = false
 doctest = false
 
 [[bin]]
-name = "user-counter"
-path = "src/bin/counter.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
 name = "user-yielder"
 path = "src/bin/yielder.rs"
 test = false
@@ -38,13 +31,6 @@ doctest = false
 [[bin]]
 name = "user-sleeper"
 path = "src/bin/sleeper.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "user-threader"
-path = "src/bin/threader.rs"
 test = false
 bench = false
 doctest = false
@@ -73,6 +59,13 @@ doctest = false
 [[bin]]
 name = "user-mailer"
 path = "src/bin/mailer.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "user-stressor"
+path = "src/bin/stressor.rs"
 test = false
 bench = false
 doctest = false

@@ -27,12 +27,15 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 
 pub mod pagetable;
 pub mod spare;
+pub mod stress;
 
 /// 健康检查总入口，逐项验收：spare 预算验收**恒跑**（预算即契约，release 也验）；
-/// pagetable PT 回收自测 debug-only。
+/// pagetable PT 回收自测 + stress 分配器压力 debug-only。
 pub fn run() {
     #[cfg(debug_assertions)]
     spare::accept();
     #[cfg(debug_assertions)]
     pagetable::pagetable();
+    #[cfg(debug_assertions)]
+    stress::accept();
 }
