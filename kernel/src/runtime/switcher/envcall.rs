@@ -43,7 +43,6 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
     match call {
         Ucall::Room(RoomCall::Starve) => return starve() as *mut TrapContext,
         Ucall::IO(IOCall::Put) => {
-            // 以后接入 operator: file system adaptor
             let len = frame.gpr.x(Gprs::A0);
             let ptr = frame.gpr.x(Gprs::A1);
             let ok = crate::console::write_in(&ident.team.space, ptr, len);
@@ -100,9 +99,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
                         .ok_or(MapError::NoRegion)?
                         .allocate(&mut inner.durable, size)
                 });
-                // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义，不 poison/canary）。
-                // 键 = fence::key（页索引编码）：多个空间共享同 VA，须并入空间身份——
-                // (asid<<44)|(va>>12) 单射（asid<2^16, va<2^56）。
+                // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义）
                 if let Ok(va) = r {
                     crate::memory::allocator::fence::on_alloc(
                         crate::memory::allocator::fence::key(s.asid(), va.as_usize()),
@@ -204,7 +201,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
                     true
                 } else if s.resolve_kind(addr).is_some() {
                     // 声明区（或窗口子区间的近似覆盖）：PTE 清 + 整段摘除；窗口
-                    // 槽不归还——边界拆分留待 mprotect 后端细化。
+                    // 槽不归还。
                     s.unmap(addr, size);
                     true
                 } else {
@@ -270,8 +267,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
             }
         }
         Ucall::Mail(MailCall::RingOpen) | Ucall::Mail(MailCall::RingShut) => {
-            // ring 用户侧设施缓行（共享区布局待真实消费方再设计）；槽位已占，
-            // 首版不可达。
+            // TODO(ring): 用户侧设施缓行
             panic!("mail ring user-side not wired (缓行)");
         }
     };

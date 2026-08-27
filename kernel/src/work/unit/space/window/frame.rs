@@ -61,7 +61,7 @@ impl FrameWindow {
         };
         let pa = PhysAddr::from_raw(page.as_ptr() as usize);
         if durable.root.map(va, pa, PAGE_SIZE, flags).is_err() {
-            // 回滚：清可能残留的中间表/PTE + VA 退回窗口（空子 Map 一并移除）
+            // 回滚：清可能残留的中间表/PTE + VA 退回窗口
             durable.unmap_frames(va, PAGE_SIZE);
             self.inner.deallocate(va, PAGE_SIZE);
             return Err(MapError::OutOfMemory);

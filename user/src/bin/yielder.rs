@@ -1,6 +1,6 @@
 #![no_std]
 #![no_main]
-//! yielder：每迭代主动让出（用户面 starve），每 0xFFFF 次让出写 'B'（低频心跳
+//! yielder：每迭代主动让出（用户面 starve），每 2^16 次让出写 'B'（低频心跳
 //! 防刷屏）。
 
 use user::env::{put, starve};

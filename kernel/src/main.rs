@@ -26,7 +26,7 @@ global_asm!(
     ".section .text._start",
     ".globl _start",
     "_start:",
-    "    mv   tp, a0", // hartid → tp：S-mode 读不到 M-mode CSR mhartid，入口处暂存
+    "    mv   tp, a0", // hartid → tp（入口约定，见 `hart_id()`）
     "    csrc sstatus, 2",
     "    la   sp, _kernel_edge",
     "    ld   t0, _canary",

@@ -37,7 +37,7 @@ pub use map::MapKind;
 /// 内核空间 ASID 恒 0、全局唯一；用户空间各自持有独立 ASID（1..=65535），
 /// 构造时经 [`super::asid::allocate`] 分配、`Drop` 释放。
 ///
-/// 栈 / 帧区布局常量收敛进本模块；堆窗口由装载期按 image_end 派生。
+/// 布局几何常量见 `crate::layout`；堆窗口由装载期按 image_end 派生。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpaceKind {
     /// 内核空间（ASID 0）。

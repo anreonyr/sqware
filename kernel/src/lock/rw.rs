@@ -18,7 +18,7 @@ use super::trap::TrapGuard;
 // 最高位：写者持有标志
 const WRITER_BIT: usize = 1 << (usize::BITS - 1);
 // 低位掩码：读者计数
-#[allow(dead_code)] // 写路径当前无调用方，保留
+#[allow(dead_code)] // 未使用
 const READER_MASK: usize = !WRITER_BIT;
 
 pub struct RwLock<T: ?Sized> {
@@ -41,7 +41,7 @@ pub struct RwLockReadGuard<'a, T: ?Sized> {
 }
 
 /// 写守卫 — 持有期间通过 Deref/DerefMut 访问 &mut T，析构时释放写锁。
-#[allow(dead_code)] // 写路径当前无调用方，保留
+#[allow(dead_code)] // 未使用
 pub struct RwLockWriteGuard<'a, T: ?Sized> {
     lock: &'a RwLock<T>,
     _not_send: PhantomData<*const ()>,
@@ -104,7 +104,7 @@ impl<T: ?Sized> RwLock<T> {
     /// 单 hart 下两个死锁形态在此捕获：写重入（WRITER_BIT 已置位即自己）、
     /// 读→写升级（读者计数非 0 必是自己的读锁）。
     #[inline(never)] // 同 read：保证入口 ra 为调用者返回地址
-    #[allow(dead_code)] // 写路径当前无调用方，保留
+    #[allow(dead_code)] // 未使用
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         // 入口第一件事：捕获调用者返回地址
         let caller: usize;

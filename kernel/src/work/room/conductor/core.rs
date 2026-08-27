@@ -334,9 +334,8 @@ impl Conductor {
     }
 
     /// 事件等待：Running → Blocked(Wait)。pend 存在 → 消费即回（不阻塞，无状态
-    /// 变更）。`dur == Duration::MAX` → 永久（无 tock）；否则登记超时（tock 句柄
-    /// 走 wait_times 旁路，任务本体只在 wait_sites 注册）。返回下一帧 PA；本核
-    /// starved 空 → None（调用方转 run() 取活）。
+    /// 变更）。`dur == Duration::MAX` → 永久（无 tock）；否则登记超时。
+    /// 返回下一帧 PA；本核 starved 空 → None（调用方转 run() 取活）。
     pub(super) fn wait(&self, key: WaitKey, dur: Duration) -> Option<usize> {
         let mut i = self.inner.lock();
         let (wake_at, tock, next) = {
@@ -521,13 +520,8 @@ pub(super) fn steal() -> Option<Arc<Task>> {
 
 /// 本 hart 进入 WFI 休眠（Idle 自环的「阻塞点」）。
 ///
-/// 协议（闭合「置位后漏唤醒」窗口）：置睡眠位 → **复查**（自核队首 / steal——
-/// 置位前的 push 已按位补 IPI，置位后的 push 会看到位）→ 全退出检查 →
-/// 睡到最近 tock（tickless：无到期 tock 则推远）→ WFI。唤醒后：有到期任务 →
-/// 正常出口（清 SSIP 与睡眠位、round 打点、外层重扫）。
-///
-/// 护栏：睡距按 tickless 推算（无则推远 WFI_FAR）；到期假醒但无活 → 哑睡壳
-/// 回睡：保持睡眠位、不打点不清位（假醒不伪装进展）。
+/// 协议：置睡眠位 → 复查（防 push 漏唤醒）→ 全退出检查 → 睡到最近 tock → WFI。
+/// 唤醒后：有任务 → 正常出口；到期假醒但无活 → 哑睡壳回睡（保持睡眠位、不打点不清位）。
 pub(super) fn wait() -> Option<Arc<Task>> {
     let me = machine::hart_id();
     tie::sleep(me);
@@ -702,9 +696,8 @@ pub enum Current {
 }
 
 /// 末次身份记录：降级时从 TaskIdent 复制（id/name/符号表），**不含 team/space/
-/// trap**——团队 Arc 借此归零即回收整个地址空间；trap 帧归 Space 窗口已由 clear
-/// 归还，不保存即无法误读。符号表为 heap 分配（block 池），不占帧计数，关机
-/// flush 冲掉——零泄漏审计与末次符号化兼得。
+/// trap**——团队 Arc 借此归零即回收整个地址空间；符号表为 heap 分配，关机 flush
+/// 冲掉——零泄漏审计与末次符号化兼得。
 pub struct LastIdent {
     pub(crate) id: usize,
     pub(crate) name: &'static str,

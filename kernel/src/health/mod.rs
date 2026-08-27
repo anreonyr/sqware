@@ -29,8 +29,8 @@ pub mod pagetable;
 pub mod spare;
 pub mod stress;
 
-/// 健康检查总入口，逐项验收：spare 预算验收**恒跑**（预算即契约，release 也验）；
-/// pagetable PT 回收自测 + stress 分配器压力 debug-only。
+/// 健康检查总入口，逐项验收：spare / pagetable / stress 均为 debug-only（任一失败
+/// = fail-fast panic → crash scene；与生产断言分离）。
 pub fn run() {
     #[cfg(debug_assertions)]
     spare::accept();

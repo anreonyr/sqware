@@ -30,9 +30,9 @@ global_asm!(
     ".align 2",
     ".globl _boot_entry",
     "_boot_entry:",
-    "    mv   tp, a0", // hartid → tp（与 _start 一致；hart_id() 读 tp）
+    "    mv   tp, a0", // hartid → tp（入口约定，见 `hart_id()`）
     "    csrc sstatus, 2",
-    "    mv   sp, a1", // opaque = 本 hart trap 栈顶（HSM Start 传入；寄存器传递）
+    "    mv   sp, a1", // opaque = 本 hart trap 栈顶（HSM Start 传入）
     "    call boot_main",
 );
 
@@ -112,27 +112,20 @@ pub fn init() -> ! {
     // fail-fast（panic → crash scene）。
     crate::health::run();
 
-    // 记录内核持久帧基线：**一切任务 spawn 之前**。此后在途帧只增任务所有；
-    // 关机时全部归还（零泄漏审计）。区间窗口元数据是随任务存活的瞬态
-    // （任务栈/帧条目随 reclaim 摘除、团队 drop 归还）——基线后创建、关机前
-    // 全部释放，block 池净零回落；基线前只留静态内核结构（镜像、hart 帧、
-    // 内核空间 durable 映射），关机不释放，账平。
+    // 记录内核持久帧基线（一切任务 spawn 之前；关机时审计零泄漏）
     #[cfg(debug_assertions)]
     crate::memory::allocator::fence::audit::record_baseline();
 
-    // 演示程序均为内嵌 ELF，经装载生成任务并入队；错误一律 `?` 上抛至本边界。
     spawn_demos().expect("boot spawn failed");
 
-    // 完整性审计（debug）：boot 收尾全量核对。
+    // 完整性审计（debug）
     #[cfg(debug_assertions)]
     crate::memory::allocator::fence::audit::audit();
 
     // 多核：HSM 拉起其余副核。
     boot_harts();
 
-    // ROOT 栈（boot 期主栈）移交 panic 救援役前的完整性审核：boot 期栈溢出
-    // 即使未越过 guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。审核通过
-    // 后本栈永闲置，panic `home` 归巢回用（归巢入口另复读一次，见 halt::home）。
+    // ROOT 栈完整性审核：boot 期栈溢出即使未越过 guard 页（4 KiB 内）也会在此暴露。
     let boot_guard = unsafe { (root_stack_base() as *const usize).read() };
     assert!(
         boot_guard == ROOT_STACK_CANARY,
@@ -140,11 +133,11 @@ pub fn init() -> ! {
     );
 
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
-    // 副核 steal 走，见 conductor::trap::run）
+    // 副核 steal 走）
     restore(conductor::trap::run())
 }
 
-/// 生成全部演示任务（用户 + 内核 ktask）；错误统一 `?` 上抛。返回前所有任务已入队。
+/// 生成全部演示任务（用户 + 内核 ktask）；错误统一 `?` 上抛。
 fn spawn_demos() -> Result<(), MapError> {
     // 单线程团队回归
     for (elf, name) in [
@@ -171,7 +164,7 @@ fn spawn_demos() -> Result<(), MapError> {
         .name("ktask")
         .closure(|| {
             putln!("ktask");
-            // panic!("fuck")
+
         })?;
     // 可抢占内核验证：常驻循环任务（每轮百万次增量 + 打印进度）。被 S-timer 抢占
     // 恢复正确 → round 顺序不重不乱、n 单调递增、hart 稳定；现场丢失则崩/乱序。
@@ -243,7 +236,7 @@ fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
     let space = SpaceBuilder::user().build().expect("space failed");
     let loaded = loader::load(space, elf, &parsed).expect("load user elf");
     let entry = loaded.entry;
-    // 符号表：内嵌 ELF 的 .symtab/.strtab → ElfTable（失败则 None，只影响符号化不碍装载）
+    // 符号表（失败则 None，只影响符号化不碍装载）
     let elftable = crate::work::unit::parser::tables(elf)
         .ok()
         .and_then(|(s, ss)| crate::work::unit::elftable::ElfTable::from_sections(s, ss))
@@ -271,7 +264,6 @@ fn boot_harts() {
         }
         // opaque = 该 hart trap 栈物理栈顶（装配产物块基址 + 布局常量段偏移组装）
         let stack_top = trap_stack() + (hart + 1) * TRAP_STACK_SLOT_SIZE;
-        // putln!("hart {me}: starting hart {hart} @ {entry:#x}, trap stack {stack_top:#x}");
         // 同事件也进 trace（hart 0 窗口）：崩溃回放可见启动序列。
         trace::note(trace::EventKind::Boot(trace::BootEvent::Launch { hart }));
         let r = sbi::HsmCall::new(sbi::fid::Hsm::Start)

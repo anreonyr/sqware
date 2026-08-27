@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use user::env::put;
 
-// heaper：每迭代分配并释放一个非页尺寸 `Vec`；每 2^16 次写 'H'（低频心跳），
+// heaper：每迭代分配并释放一个非页尺寸 `Vec`；每 0xFFFF 次写 'H'（低频心跳），
 // 验证用户堆贯通且逐次闭环不泄漏。
 
 #[unsafe(no_mangle)]

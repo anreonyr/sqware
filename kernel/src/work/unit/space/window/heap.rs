@@ -55,7 +55,6 @@ impl HeapWindow {
         let va = self
             .inner
             .allocate(size, flags, MapKind::Anonymous, None)?;
-        // 逐页分配物理帧并映射（立即分配）+ 注入子 Map
         let pages = size / PAGE_SIZE;
         let mut mapped = 0usize;
         while mapped < pages {
@@ -133,22 +132,20 @@ impl HeapWindow {
     /// ——1 TiB 级区域不可逐页扫全段。帧按触序登记（须有序触碰；乱序由 audit 现行
     /// 暴露）；中间表回收单走一次（O(现存树)）。
     pub(crate) fn munmap(&mut self, durable: &mut Durable, addr: VirtAddr, size: usize) -> bool {
-        // 1. 已触页数（= 已登记帧数；懒触碰有序，帧 i ↔ addr + i·PAGE）
+        // 已触页数（= 已登记帧数；懒触碰有序，帧 i ↔ addr + i·PAGE）
         let mapped = match self.inner.children.iter().find(|m| m.va == addr) {
             Some(c) => c.frames.len(),
             None => return false,
         };
-        // 2. 逐已触页清叶 PTE（未触页本无 PTE，无需访问）
         for i in 0..mapped {
             durable
                 .root
                 .unmap(VirtAddr::from_raw(addr.as_usize() + i * PAGE_SIZE));
         }
-        // 3. 精确摘块摘子 Map（帧随 drop 归还）
         if !self.inner.deallocate(addr, size) {
             return false;
         }
-        // 4. 回收变空的中间表（单次遍历现存树结构）
+        // 回收变空的中间表（单次遍历现存树结构）
         let geo = mode::geometry(mode::mode());
         let mask = (1usize << geo.va_bits) - 1;
         let end = addr.as_usize().saturating_add(size);

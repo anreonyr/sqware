@@ -62,7 +62,6 @@ pub(super) fn halt() -> ! {
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,
         ));
-        // 到齐后：冲洗块池 + 断言零泄漏（debug）+ 复位。
         crate::memory::allocator::block::flush();
         #[cfg(debug_assertions)]
         crate::memory::allocator::fence::audit::check_baseline();
@@ -107,7 +106,6 @@ pub(super) fn yell() {
         if waiting == 0 {
             continue;
         }
-        // a0 = hart_mask（本组 64 位，bit b = hart w·64+b），a1 = mask_base = w·64
         let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
             .args(SArgs {
                 a0: waiting,

@@ -87,7 +87,6 @@ pub fn frontier() -> usize {
 /// Bump 分配器实例。
 pub(crate) static BUMP_ALLOCATOR: BumpAllocator = BumpAllocator::new();
 
-/// 获取 bump 分配器的 `&'static dyn Allocator` 引用。
 pub fn allocator() -> &'static dyn Allocator {
     &BUMP_ALLOCATOR
 }

@@ -40,7 +40,6 @@ pub fn accept() {
     while let Ok(b) = spare::spare().allocate(step) {
         held.push(b)
     }
-    // remaining() < 1024 间接判定，余量落在 [1024, 块开销) 区间时会误报）。
     crate::expect!(
         spare::spare().allocate(step).is_err(),
         "spare: drill did not reach exhaustion (remaining {})",

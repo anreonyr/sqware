@@ -37,9 +37,8 @@ pub type LoadResult<T> = Result<T, MapError>;
 ///
 /// 帧耗尽（OutOfMemory）或映射冲突（AlreadyMapped / NotAligned，均不改动 space）。
 pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Loaded> {
-    // 0. 装载期注册堆窗口 + 逐段装配——单个 with_flush 临界区：一次加锁、
-    //    一次 TLB 刷新；任一段失败 → 整体不落（原子装载）。
-    //    堆几何随映像（不魔数），须先于文件段映射注册。
+    // 装载期注册堆窗口 + 逐段装配——单个 with_flush 临界区：一次加锁、一次 TLB 刷新；
+    // 任一段失败 → 整体不落（原子装载）。堆几何随映像（不魔数），须先于文件段映射注册。
     let image_end = parsed
         .segments
         .iter()
@@ -47,7 +46,6 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         .max()
         .unwrap_or(0);
     space.with_flush(|inner| {
-        // 0. 堆窗口 `[image_end, 栈底)`：注册只动簿记（校验 + 重叠 + push）
         let edge = mode::upper().as_usize() - STACK_WINDOW_SIZE;
         if !image_end.is_multiple_of(PAGE_SIZE) || image_end > edge {
             return Err(MapError::NotAligned);
@@ -59,7 +57,6 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
             return Err(MapError::AlreadyMapped);
         }
         inner.heap = Some(HeapWindow::new(image_end, edge));
-        // 1. 逐段：拷帧（文件实体）+ 常数侧装配（权限 = parser 给出 flags，补 V|A|D|U）
         for seg in &parsed.segments {
             let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;
             inner
@@ -67,7 +64,6 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         }
         Ok(())
     })?;
-    // 入口：绝对 VMA。
     Ok(Loaded {
         space,
         entry: parsed.entry,

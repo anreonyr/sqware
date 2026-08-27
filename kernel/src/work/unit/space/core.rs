@@ -158,16 +158,14 @@ impl SpaceInner {
         kind: MapKind,
     ) -> Result<(), MapError> {
         let pages = frames.len();
-        // 0. 参数校验：非空帧 + VA 页对齐（先于任何页表修改）
         if pages == 0 || vaddr.offset() != 0 {
             return Err(MapError::NotAligned);
         }
         let size = pages * PAGE_SIZE;
-        // 1. 重叠检查（常数表 + 窗口区间）
         if self.overlaps(vaddr, size) {
             return Err(MapError::AlreadyMapped);
         }
-        // 2. 逐帧装 PTE（每帧自身 PA，物理可断）+ 3. 登记一张多页常数映射
+        // 逐帧装 PTE（每帧自身 PA，物理可断）+ 登记一张多页常数映射
         let SpaceInner { durable, .. } = self;
         durable.map_frames(vaddr, &frames, flags)?;
         durable.maps.push(Map::new(
@@ -424,10 +422,10 @@ impl Space {
     ///
     /// # Safety
     ///
-    /// S-mode 下 sfence.vma 恒合法。
+    /// TLB 刷新由 `flush_asid` 负责（见 `flush_asid` 的 Safety 段）。
     pub(crate) fn with_flush<R>(&self, op: impl FnOnce(&mut SpaceInner) -> R) -> R {
         let r = self.with(op);
-        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        // SAFETY: sfence.vma 见 flush_asid
         unsafe {
             flush_asid(self.kind.asid());
         }
@@ -458,11 +456,9 @@ impl Space {
         frames: Vec<Frame>,
     ) -> Result<(), MapError> {
         let mut inner = self.inner.lock();
-        // 0. 参数校验（先于任何页表修改）
         if size == 0 || vaddr.offset() != 0 || !paddr.is_aligned() || size & (PAGE_SIZE - 1) != 0 {
             return Err(MapError::NotAligned);
         }
-        // 1. 重叠检查（常数表 + 窗口区间）
         if inner.overlaps(vaddr, size) {
             return Err(MapError::AlreadyMapped);
         }
@@ -479,7 +475,7 @@ impl Space {
         ));
         drop(inner);
         // 按本空间 ASID 局部刷：只失效本地址空间的旧条目，其它任务 TLB 保留。
-        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        // SAFETY: sfence.vma 见 flush_asid
         unsafe {
             flush_asid(self.kind.asid());
         }
@@ -509,7 +505,7 @@ impl Space {
         }
         drop(inner);
 
-        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        // SAFETY: sfence.vma 见 flush_asid
         unsafe {
             flush_asid(self.kind.asid());
         }
@@ -560,7 +556,7 @@ impl Space {
             }
         }
         drop(inner);
-        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        // SAFETY: sfence.vma 见 flush_asid
         unsafe {
             flush_asid(self.kind.asid());
         }
@@ -627,7 +623,7 @@ impl Space {
             }
         }
         drop(inner);
-        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        // SAFETY: sfence.vma 见 flush_asid
         unsafe {
             flush_asid(self.kind.asid());
         }
@@ -678,7 +674,7 @@ impl Space {
             leaf.set(ppn, flags | PteFlags::W | PteFlags::V);
         }
         drop(inner);
-        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        // SAFETY: sfence.vma 见 flush_asid
         unsafe {
             flush_asid(self.kind.asid());
         }
@@ -754,7 +750,7 @@ impl Space {
             map.inject(page);
         }
         drop(inner);
-        // SAFETY: S-mode 下 sfence.vma 恒合法。
+        // SAFETY: sfence.vma 见 flush_asid
         unsafe {
             flush_asid(self.kind.asid());
         }

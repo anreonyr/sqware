@@ -38,7 +38,6 @@ fn utbl() -> Option<Arc<ElfTable>> {
     ident()?.elftable()
 }
 
-/// 回溯深度上限。
 const BT_DEPTH: usize = 32;
 /// 栈扫描窗口（从当前 sp 向上）字节数。
 const BT_SCAN: usize = 4096;
@@ -101,9 +100,8 @@ fn gprs() -> [usize; 32] {
 /// 入槽。启发式（兜底）：从链断点起按 8 字节步进向上扫描，收集「4 对齐 +
 /// 非相邻重复 + 能解析进符号区间」的可执行候选。
 fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
-    // 起扫点：panic 归巢（halt::home）后当前 sp/fp 是救援栈组稿链——kbt 须回
-    // 原始现场（SCENE = home 落盘的崩点 sp/fp）扫原栈；crash_scene! 直调（无
-    // 归巢、无 SCENE）→ 读当前 sp/fp（与历史行为一致）。
+    // 起扫点：panic 归巢后当前 sp/fp 是救援栈组稿链——kbt 须回 SCENE 扫原栈；
+    // crash_scene! 直调（无 SCENE）→ 读当前 sp/fp。
     let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
         (0, 0) => {
             let (sp, fp): (usize, usize);
@@ -444,7 +442,6 @@ pub fn dump_crash(r: &mut Report) {
     let mut bt = [0usize; BT_DEPTH];
     let n = kbacktrace(&mut bt);
     {
-        // 行 = #i / 定宽 hex / 符号。
         let mut rows: Vec<Vec<Option<String>>> = vec![vec![
             Some("#".into()),
             Some("hex".into()),
@@ -469,7 +466,6 @@ pub fn dump_crash(r: &mut Report) {
     let mut ubt = [0usize; BT_DEPTH];
     let (m, tbl_arc) = ubacktrace(&mut ubt);
     if m > 0 {
-        // 行 = #i / 定宽 hex / 符号（符号化用任务自己的表）。
         let mut rows: Vec<Vec<Option<String>>> = vec![vec![
             Some("#".into()),
             Some("hex".into()),

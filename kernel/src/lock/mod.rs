@@ -5,16 +5,7 @@
 // BareLock 不关中断，仅任务上下文（lock() 为 unsafe fn）；OnceLock / LazyLock
 // 读路径无锁。
 //
-// 锁层级（升序获取、禁止反向嵌套；OnceLock/LazyLock 读路径豁免，层级见 depend::Level）：
-//   1. SCHEDULERS[hart]
-//   2. Space.inner
-//   3. Team.tasks / TIMER_DEADLINES / blocked / reaped
-//   4. ASID_ALLOCATOR
-//   5. FRAME_ALLOCATOR
-//   6. block inner / pump
-//   7. LEDGER
-//   8. tally
-//   9. spare
+// 锁层级见 `depend::Level`（单一事实源）。
 
 #![allow(unused)]
 
@@ -87,12 +78,9 @@ pub(crate) use depend_check;
 pub(crate) use depend_enter;
 pub(crate) use depend_release;
 
-// BareLock：锁体系原语，当前无用户，预留
 pub use bare::BareLock;
-// LazyLock 可用但暂未使用：crate::lock::lazy::LazyLock
 pub use once::OnceLock;
 pub use reentrant::RelLock;
-// RwLock：锁体系原语，当前无用户，保留 re-export
 /// 锁层级（depend 具名化；参与锁用 new_level 声明；None = exempt）。
 pub use depend::Level;
 pub use rw::RwLock;

@@ -138,8 +138,7 @@ pub fn init() -> MapResult<()> {
                 Vec::new(),
             )?;
 
-            // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页（PA 经
-            //    team::kernel_frame_pa 从本空间事实源读，无旁置表）。
+            // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页
             let n = machine::hart_count();
             for h in 0..n {
                 let page: crate::memory::manager::table::Frame = Box::try_new_zeroed_in(

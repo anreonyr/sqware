@@ -16,21 +16,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 ///
 /// 与 `SpinLock<Option<T>>` 相比，`OnceLock` 在已初始化后不获取锁，
 /// 读取路径仅执行一次 `AtomicBool::load(Acquire)`，适合读多写少的场景。
-///
-/// # 示例
-///
-/// ```ignore
-/// static DRIVER: OnceLock<&'static dyn Driver> = OnceLock::new();
-///
-/// fn init() {
-///     DRIVER.set(&MyDriver).ok();
-/// }
-///
-/// fn use_driver() {
-///     let d = DRIVER.get().expect("driver not initialized");
-///     d.do_something();
-/// }
-/// ```
 pub struct OnceLock<T> {
     initialized: AtomicBool,
     data: UnsafeCell<MaybeUninit<T>>,
@@ -112,8 +97,6 @@ impl<T> OnceLock<T> {
     }
 
     /// 检查是否已初始化。
-    ///
-    /// 预留原语 API。
     #[inline]
     #[allow(dead_code)]
     pub fn is_initialized(&self) -> bool {
@@ -121,9 +104,3 @@ impl<T> OnceLock<T> {
     }
 }
 
-// Drop is intentionally not implemented: MaybeUninit does not auto-drop T.
-// In kernel context, OnceLock typically stores global statics (driver references,
-// function pointers) that live until system reset. Note that `get_or_init()` may
-// drop a value if another caller wins the initialization race — the losing
-// closure's return value is dropped via normal Rust drop semantics in that case.
-// If you need to store a type whose Drop has side effects, wrap it in ManuallyDrop<T>.

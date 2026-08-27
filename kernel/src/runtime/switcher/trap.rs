@@ -124,7 +124,7 @@ fn establish_tp() {
     }
 }
 
-/// trap 栈物理块基址（`init_trap_stacks` 的装配产物）。仅 boot_harts 组装
+/// trap 栈物理块基址（`init` 的装配产物）。仅 boot_harts 组装
 /// HSM opaque（副核启动栈物理栈顶 = base + (h+1)·SEGMENT）使用。
 pub fn trap_stack() -> usize {
     *TRAP_STACK_PHYS.get().expect("trap stacks not initialized")
@@ -279,8 +279,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     //    由当前 sp（trap 栈体内）反解段号（trap_stack_hart）。
     establish_tp();
 
-    // 0.4 本核当前任务身份（一次读槽；None = 空闲/boot/早期 panic——各分支自行
-    //    降级）。TaskIdent 不可变 ⇒ 本次陷阱处理链内恒有效（切换即 restore，不回链）。
+    // 0.4 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。
     let ident = ident();
 
     // 0.5 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）；
@@ -298,7 +297,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     }
 
     // 1. 入口校验：per-hart trap 栈 canary 与 hart 帧标记（上一次处理器若溢出，
-    //    此处立即暴露——canary 由 init_trap_stacks 写在每段栈底）
+    //    此处立即暴露——canary 由 init 写在每段栈底）
     let me = machine::hart_id();
     let canary = unsafe { (trap_stack_base(me).as_usize() as *const usize).read() };
     assert_eq!(

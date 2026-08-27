@@ -26,13 +26,11 @@ const NONE: u64 = u64::MAX;
 /// 节拍计数（ENV_TICKS 兼容）。
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
-/// tock 堆 — 全局一份。内层：锁内真值；锁外：最近 tock 原子镜像——镜像由持锁
-/// 方法 recompute_nearest 派生，唯一修改路径在 Inner 内，不变量靠构造成立。
+/// tock 堆 — 全局一份。镜像见模块头注释。
 struct TimerHeap {
-    /// 锁内真值：堆 + 惰性取消集（同一把 level-3 锁内维护）。
+    /// 锁内真值：堆 + 惰性取消集。
     inner: SpinLock<TimerInner>,
-    /// 最近未取消 tock 镜像（AcqRel 与 recompute_nearest 的 Release 配对；
-    /// u64::MAX = 无）。供锁外读。
+    /// 最近未取消 tock 镜像（u64::MAX = 无）。供锁外读。
     nearest: AtomicU64,
 }
 
@@ -134,8 +132,7 @@ pub fn next_tock() -> Option<Instant> {
 /// 镜像刷新，不持任何其它锁。
 ///
 /// **锁内零分配**：`due` 用固定栈缓冲（[`MAX_DUE`]）——持 Level::L3 锁时不得触
-/// 分配器（分配器锁均 exempt，lockdep 逃检）。到期数超 `MAX_DUE` 的极端洪峰
-/// 截断（尽力而为，timer 路径不许失败）。
+/// 分配器。超出截断（尽力而为）。
 pub fn drain(now: Instant) -> Vec<u64> {
     const MAX_DUE: usize = 64;
     let mut due: [u64; MAX_DUE] = [0; MAX_DUE];

@@ -61,11 +61,11 @@ pub fn hart_count() -> usize {
 /// 当前 hart id（**执行本代码的核**）——与 `Machine::hart`（总核数）不同。
 ///
 /// S-mode 读不到 M-mode 专属 CSR `mhartid`（读它触发 illegal instruction），故
-/// hartid 在入口处存入 `tp`。本内核不使用 TLS，`tp` 恒为入口值，不被任何子例程改写。
+/// hartid 在入口处存入 `tp`。
 #[inline]
 pub fn hart_id() -> usize {
     let id: usize;
-    // SAFETY: 读取线程指针寄存器（入口处由 `_start` 写入 hartid），纯读、无副作用。
+    // SAFETY: 纯读 tp，无副作用。
     unsafe {
         core::arch::asm!("mv {0}, tp", out(reg) id, options(nomem, nostack, preserves_flags));
     }

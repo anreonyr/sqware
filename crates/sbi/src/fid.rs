@@ -3,15 +3,12 @@
 #[derive(Clone, Copy)]
 pub enum Base {
     /// 获取 SBI 规范版本
-    /// 无参数
     GetSpecVersion = 0,
 
     /// 获取 SBI 实现 ID
-    /// 无参数
     GetImplId = 1,
 
     /// 获取 SBI 实现版本
-    /// 无参数
     GetImplVersion = 2,
 
     /// 探测扩展是否支持
@@ -19,15 +16,12 @@ pub enum Base {
     ProbeExtension = 3,
 
     /// 获取 mvendorid
-    /// 无参数
     GetMvendorid = 4,
 
     /// 获取 marchid
-    /// 无参数
     GetMarchid = 5,
 
     /// 获取 mimpid
-    /// 无参数
     GetMimpid = 6,
 }
 
@@ -158,8 +152,7 @@ pub enum Dbcn {
 #[repr(usize)]
 #[derive(Clone, Copy)]
 pub enum LegacyConsole {
-    /// 向控制台写一个字符
-    /// a0 = 字符
+    /// 向控制台写一个字符（a0 = 字符）
     PutChar = 0,
 }
 

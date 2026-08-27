@@ -9,8 +9,6 @@
 // 实现：位图分配器（[`BitmapAllocator`]）全局实例，base = 1、unit = 1。
 use crate::lock::{Level, SpinLock};
 use crate::memory::allocator::bitmap::BitmapAllocator;
-/// ASID 0 内核保留不入空间 → base = 1；1..=65535 全覆盖，unit = 1。
-/// 位图（1024 word = 65536 位）首次 allocate 时经 `ensure` 惰性分配。
 static ASID_ALLOCATOR: SpinLock<BitmapAllocator> =
     SpinLock::new_level(Level::Asid, BitmapAllocator::new(1, 65536, 1));
 /// 分配一个独立 ASID（1..=65535）。耗尽时 panic。

@@ -1,19 +1,8 @@
 // 护栏层 · checker — 分配器链式不变式的断言收容处。
 //
-// 设计：钩子恒编译、单行调用；函数体以 #[cfg(debug_assertions)] 包住，release 下
-// 为空体（#[inline(always)] 保证消除，零开销）。断言仅 debug 构建生效，命中一律
-// panic（内核 halt 处理器再转储 crash scene / 清 canary）。调用点传裸值（链头/
-// 地址/标志/next 读取闭包），本模块无状态、不触碰任何分配器内部——block（块首
-// 字挂 next）与 frame（Link.next 字段）两种链以同一套泛型原语覆盖。
-//
-// 原语对应关系（block / frame 调用点）：
-//   check_dram_addr    —— 链头/next/remove 地址回链（机器空闲 DRAM 区）；
-//   check_bounds       —— freelist/pagemeta 索引越界（越界写破坏相邻元数据）；
-//   check_frame_free   —— frame 弹出帧必须 free（pagemeta 与链一致，重叠分配现行）；
-//   check_not_in_chain —— 目标不得已在链中（double-free / double-push）；
-//   check_in_chain     —— 目标必须在链中（remove_link 摘除前核对）；
-//   dump_chain         —— 违例现场链快照（固定缓冲零分配）；
-//   log_*              —— 分配/释放逐次流水（观测）。
+// 钩子恒编译、单行调用；函数体 #[cfg(debug_assertions)] 包住，release 下空体
+// 零开销。命中一律 panic（halt 处理器再转储 crash scene）。调用点传裸值，
+// 本模块无状态、不触碰任何分配器内部。
 
 #![allow(unused_variables)] // release 下钩子为空体，参数随之未用
 

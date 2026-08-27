@@ -40,14 +40,11 @@ static HERTZ: OnceLock<u64> = OnceLock::new();
 /// 启动时刻的计数器读数（uptime 基准）。
 static CYCLE: AtomicU64 = AtomicU64::new(0);
 
-/// 初始化时钟：注入 hertz ，记录启动时刻。
-///
-/// 必须在任何时间 API 调用之前、且在 trap 武装之前调用。
+/// 初始化时钟：注入 hertz，记录启动时刻。须在任何时间 API 调用之前调用。
 ///
 /// # Errors
 ///
-/// hertz 为 0（DTB 缺失）→ ClockError::NoTimebase；重复初始化 →
-/// ClockError::AlreadyInit。
+/// 见 [`ClockError`]。
 pub fn init() -> Result<(), ClockError> {
     let hertz = machine::info().hertz;
     if hertz == 0 {
@@ -87,13 +84,13 @@ impl Instant {
     }
 
     /// 自 earlier 以来的时长（回绕安全；earlier 在未来按零处理）。
-    #[allow(dead_code)] // 预留：相对计时用
+    #[allow(dead_code)]
     pub fn elapsed_since(&self, earlier: Instant) -> Duration {
         ticks_to_duration(self.0.wrapping_sub(earlier.0))
     }
 
     /// 自本时刻以来经过的时长（= now − self）。
-    #[allow(dead_code)] // 预留：uptime 之外的相对计时用
+    #[allow(dead_code)]
     pub fn elapsed(&self) -> Duration {
         now().elapsed_since(*self)
     }
@@ -104,27 +101,25 @@ impl Instant {
     }
 
     /// 本时刻 − Duration（换算饱和防溢出；非负语义由调用方保证，wrapping 承担）。
-    #[allow(dead_code)] // 预留：超时 / deadline 计算用
+    #[allow(dead_code)]
     pub fn sub(&self, d: Duration) -> Instant {
         Instant(self.0.wrapping_sub(duration_to_ticks(d)))
     }
 
     /// 自 earlier 以来的时长；earlier 在未来 → None。
-    #[allow(dead_code)] // 预留：测试与诊断用
+    #[allow(dead_code)]
     pub fn checked_duration_since(&self, earlier: Instant) -> Option<Duration> {
         (self.0 >= earlier.0).then_some(ticks_to_duration(self.0 - earlier.0))
     }
 }
 
 /// ticks → Duration（u128 中间量、饱和到 Duration 可表达范围）。
-/// pub(crate)：供同组模块使用。
 pub(crate) fn ticks_to_duration(ticks: u64) -> Duration {
     let ns = (ticks as u128).saturating_mul(NANOS_PER_SEC) / hertz() as u128;
     Duration::from_nanos(ns.min(u64::MAX as u128) as u64)
 }
 
 /// Duration → ticks（u128 中间量、饱和到 u64::MAX）。
-/// pub(crate)：供同组模块使用。
 pub(crate) fn duration_to_ticks(d: Duration) -> u64 {
     let ns = d.as_nanos();
     let t = ns.saturating_mul(hertz() as u128) / NANOS_PER_SEC;

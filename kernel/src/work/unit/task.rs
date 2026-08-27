@@ -222,8 +222,7 @@ impl TaskBuilder {
             matches!(self.team.space.kind(), SpaceKind::Kernel),
             "TaskBuilder::closure 目前仅支持 kernel 团队（内核态任务）"
         );
-        // `Box<dyn FnOnce()>` 是胖指针（data+vtable），不能直接转 usize——外包一层
-        // `Box<Box<dyn FnOnce()>>`，对外是薄指针，a0 传该指针即可。
+        // 双装箱：`Box<dyn FnOnce()>` 是胖指针不能直接转 usize，外包一层得薄指针
         let inner: Box<dyn FnOnce()> = Box::new(f);
         let holder: Box<Box<dyn FnOnce()>> = Box::new(inner);
         let ptr = Box::into_raw(holder) as usize;
@@ -237,12 +236,10 @@ impl TaskBuilder {
     pub fn spawn(self) -> Result<usize, MapError> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
-        // 1. 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id；大小 = builder.stack）
-        //    → 分配帧 attach。claim 只占簿记（with，不改页表）；attach_dynamic 装 PTE
-        //    （with_flush 锁外刷 TLB）。
+        // 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id）
         let stack_size = self.stack;
         let is_kernel = matches!(self.team.space.kind(), SpaceKind::Kernel);
-        // spawn 失败路径共用：按 owner 摘栈 slot（清 PTE + 区间归还；帧随子 Map drop 归还）
+        // 失败回滚：按 owner 摘栈 slot（帧随子 Map drop 归还）
         let rollback_stack = |space: &crate::work::unit::space::Space| {
             space.with_flush(|inner| {
                 if let Some((slot_va, slot_size)) = inner.stack.reclaim(id) {
@@ -278,7 +275,7 @@ impl TaskBuilder {
             }
         };
 
-        // 2. trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）
+        // trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）
         let frame_res = self
             .team
             .space
@@ -286,15 +283,12 @@ impl TaskBuilder {
         let (frame_va, frame_pa) = match frame_res {
             Ok(x) => x,
             Err(e) => {
-                // 栈已建、帧失败：按 owner 摘栈 slot（frame claim 失败已自回滚帧窗）。
                 rollback_stack(&self.team.space);
                 return Err(e);
             }
         };
 
-        // 3. 填帧：`TrapContext::init` 从 per-hart 帧模板拷元数据 + 用户上下文；SPP 与
-        //    user_satp 自团队派生（init 内部）。kernel_sp 不在此写——`prepare` 对每次
-        //    上台无条件重写（含 steal 迁移）。
+        // 填帧：`TrapContext::init` 从 per-hart 帧模板拷元数据 + 用户上下文
         let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
         unsafe {
             let ktc = kernel()
@@ -307,7 +301,7 @@ impl TaskBuilder {
             frame.init(&*ktc, &self.team, self.entry, stack_top, self.arg, frame_pa, frame_va);
         }
 
-        // 4. 入队收尾（初始状态 Starved；持本 hart 调度锁完成入簿 + 入队 + 计数）
+        // 入队收尾
         let ident = Arc::new(TaskIdent {
             id,
             name: self.name,
@@ -319,7 +313,7 @@ impl TaskBuilder {
         });
         let task = Arc::new(Task {
             ident,
-            state: TaskState::Starved, // 初始就绪：入 starved 容器等首次选中（上台重置满额预算）
+            state: TaskState::Starved,
         });
         conductor::task::push(task);
         Ok(id)
@@ -339,13 +333,10 @@ impl TaskBuilder {
 pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
     // tp = 本 hart：每个内核任务上台时 Scheduler::prepare 已把 TP 写入其帧
     // （frame.gpr[TP] = self.hart），__restore 恢复全部 GPR 时 tp 即已在位——此处
-    // 不再重建。历史上曾用全局 KT_FRAME_PA 反推执行 hart：被偷走的任务会读到最后
-    // spawn 任务的帧而算出错误 hart，写坏 tp 后退出路径切错核的 trap 栈、摸错核的
-    // 调度器——风暴混沌崩溃的根因（本修复即删除该重建）。
+    // 不再重建。
     // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
     let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
-    let boxed: Box<dyn FnOnce()> = *holder; // 移出内层闭包，holder 随之 drop
+    let boxed: Box<dyn FnOnce()> = *holder;
     boxed();
-    // 闭包返回 → 统一退出服务（终端软陷阱：关中断 + 切 trap 栈 + reap 核心）。
     conductor::ktask::reap()
 }

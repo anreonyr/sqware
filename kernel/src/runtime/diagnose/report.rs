@@ -27,8 +27,7 @@ pub struct Paragraph {
 
 impl Report {
     /// 开一段并取引用（append；借用在语句/作用域结束时释放 = 收段）。
-    ///
-    /// 前置：无。契约：新段空 `items`；`name` 即档位（同报告内不强制唯一）。
+    /// 新段空 `items`；`name` 即档位（同报告内不强制唯一）。
     pub fn paragraph(&mut self, name: &'static str, title: Option<String>) -> &mut Paragraph {
         self.paras.push(Paragraph {
             name,
@@ -38,10 +37,8 @@ impl Report {
         self.paras.last_mut().expect("just pushed")
     }
 
-    /// 成册：打戳（hart, ticks），可写借用转只读引用。
-    ///
-    /// 前置：无（允许空报告）。契约：此后仅经 `&Report` 读；重刊须重新借得
-    /// `&mut` 后调 [`Report::clear`]。
+    /// 成册：打戳（hart, ticks），可写借用转只读引用。允许空报告；
+    /// 此后仅经 `&Report` 读；重刊须重新借得 `&mut` 后调 [`Report::clear`]。
     pub fn seal(&mut self) -> &Self {
         self.seal = (machine::hart_id(), clock::now().as_ticks());
         self

@@ -23,9 +23,7 @@ use crate::runtime::diagnose::report::Report;
 
 /// 每 hart 事件窗口容量。
 pub const BUFFER_SIZE: usize = 512;
-/// 崩溃转储每条 hart 倒出的事件数上限：现场只关心「崩前最近一段」，
-/// 全量 512 对控制台过长且 Table 栈预算不可承载（ROWS 编译期常量）。
-/// 多核下按 hart 平摊（hart_rows：总额恒 ≤ TRACE_DUMP，渲染预算与核数无关）。
+/// 崩溃转储每条 hart 倒出的事件数上限（多核按 hart 平摊）。
 pub const TRACE_DUMP: usize = 64;
 
 // ── 事件定义（按模块分组）────────────────────────────

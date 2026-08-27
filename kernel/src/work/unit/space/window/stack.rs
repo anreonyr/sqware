@@ -54,7 +54,7 @@ impl StackWindow {
             .allocate(slot_size, Direction::Fall)
             .map_err(|_| MapError::OutOfMemory)?;
         let slot_va = VirtAddr::from_raw(slot_va);
-        // 守护页 [slot_va, slot_va + TASK_STACK_GUARD)：Reserved → 溢出缺页可诊断
+        // 守护页 Reserved → 溢出缺页可诊断
         self.inner.children.push(Map::new(
             slot_va,
             TASK_STACK_GUARD,
@@ -63,7 +63,7 @@ impl StackWindow {
             Vec::new(),
             Some(owner),
         ));
-        // 栈体 [slot_va + GUARD, +size)：Anonymous，帧待 attach。
+        // 栈体 Anonymous，帧待 attach
         let body_flags = if kernel {
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D
         } else {

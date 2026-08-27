@@ -24,7 +24,5 @@ pub fn init() {
 
 /// 副核 idle 循环：spin + steal；拿到任务即 restore（永不返回）；全退出停机。
 pub fn idle() -> ! {
-    // restore 永不返回（切到用户态即离开内核）；拿不到任务就一直在
-    // run() 的取活循环里 spin + steal，直到全退出停机。
     restore(run())
 }

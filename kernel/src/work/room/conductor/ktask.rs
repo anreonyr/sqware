@@ -1,15 +1,8 @@
 // ── 适配层：ktask ──
 //
 // 内核任务面——与用户任务同帧 ABI 的自愿切换服务（软陷阱）。
-// 每个服务 = naked 头 + 既有调度核心 + restore 尾：
-//   park/starve：头把调用点上下文存进 hart 帧（csrrw 交换取帧址；先存原 t0/t1
-//     再用 scratch，与 __strap 同序），桥接 persist 搬进任务帧，经调度核心取
-//     下一帧后 restore——唤醒时 __restore sret 回调用点，闭包视角下服务调用
-//     像普通函数返回。
-//   reap：终端服务，无恢复点——头只做关中断 + 切 per-hart trap 栈（clear 契约：
-//     回收不在被回收的任务栈上执行），再走 reap 核心。
-// 命名：三个服务与核心/用户面同词（park/starve/reap），路径 + 签名区分——
-//   `Conductor::park`(核心方法) / `utask::starve`(用户面) / 本模块(内核面)。
+// 每个服务 = naked 头 + 既有调度核心 + restore 尾。
+// 命名见 `conductor/mod.rs`。
 
 use core::arch::naked_asm;
 use core::time::Duration;

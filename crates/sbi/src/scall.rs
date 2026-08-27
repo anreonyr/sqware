@@ -1,5 +1,3 @@
-//  S-Mode -> M-Mode
-
 use erra::ResultExt;
 use fack::prelude::Error;
 
@@ -7,7 +5,6 @@ use crate::extension::Extension;
 
 pub type SResult<T> = Result<T, erra::Error<SError>>;
 
-/// SBI 调用参数（对应 a0 ~ a5 寄存器）
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SArgs {
     pub a0: usize,

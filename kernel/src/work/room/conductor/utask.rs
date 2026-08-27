@@ -1,11 +1,7 @@
 // ── 适配层：utask ──
 //
-// 用户任务面——envcall 服务接缝：把 U 态环境调用（Starve/Park/Reap，与调度词族
-// 同词）翻译为调度核心操作，返回下一帧 PA（切换由陷阱机械沿返回链完成）。内核任务面
-// （ktask）内部复用同一接线。
-//
-// 命名：与核心/内核面同词（park/starve/reap），路径 + 签名区分——
-//   `Conductor::park`(核心方法) / `ktask::park`(内核面，软陷阱) / 本模块(用户面)。
+// 用户任务面——envcall 服务接缝：把 U 态环境调用翻译为调度核心操作，返回下一帧 PA。
+// 命名见 `conductor/mod.rs`。
 
 use core::time::Duration;
 
@@ -34,14 +30,9 @@ pub fn park(duration: Duration) -> usize {
 pub fn reap() -> usize {
     let me = machine::hart_id();
     conductors()[me].reap();
-    // 回收 Reaped：此刻执行在 per-hart trap 栈上，不触碰任务内存；Reaped 任务
-    // 不在任何核运行（running/starved 均无引用），任意核回收均安全。
-    //
     // 必须在取活（可能触发 done→halt）**之前**清空 reaped 队列——否则最后退出
-    // 的任务会带着它的栈/trap 帧及团队地址空间滞留到关机断言，被误报为帧泄漏
-    // （reap 自身先入队，clear 后置时 run() 一旦走 done→halt 路径 clear 永不执行）。
+    // 的任务会带着它的栈/trap 帧及团队地址空间滞留到关机断言，被误报为帧泄漏。
     clear();
-    // 取下一任务：此刻 running 已 take，本核空闲 → run（steal / WFI）
     run()
 }
 
