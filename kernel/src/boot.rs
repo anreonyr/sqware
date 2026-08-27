@@ -30,9 +30,9 @@ global_asm!(
     ".align 2",
     ".globl _boot_entry",
     "_boot_entry:",
-    "    mv   tp, a0",     // hartid → tp（与 _start 一致；hart_id() 读 tp）
-    "    csrc sstatus, 2", // 清 SIE：内核态恒关中断（同 _start）
-    "    mv   sp, a1",     // opaque = 本 hart trap 栈顶（HSM Start 传入；寄存器传递）
+    "    mv   tp, a0", // hartid → tp（与 _start 一致；hart_id() 读 tp）
+    "    csrc sstatus, 2",
+    "    mv   sp, a1", // opaque = 本 hart trap 栈顶（HSM Start 传入；寄存器传递）
     "    call boot_main",
 );
 

@@ -259,10 +259,6 @@ pub fn init() {
     //    开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序难看）。
     timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
 
-    // 4. 接线当前 hart 的 trap 运行时（stvec/sscratch/sie）——副核由 boot_main
-    //    在同一切换域调用同一原语。**不**开 sstatus.SIE（全局）：内核态恒关中断
-    //    （处理器内关中断策略）：SIE 只经 sret 由帧内 SPIE 恢复，用户态 = 1，
-    //    内核态 = 0。故 S-timer 只在用户态触发，内核代码永不被打断/抢占。
     arm_hart();
 }
 
