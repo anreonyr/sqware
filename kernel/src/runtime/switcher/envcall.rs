@@ -11,9 +11,7 @@
 
 use core::time::Duration;
 
-use ubi::{
-    ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall,
-};
+use ubi::{ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall};
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
@@ -22,10 +20,10 @@ use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::conductor::core::WaitKey;
-use crate::work::room::conductor::utask::{park, reap, starve, wait, wake};
 use crate::work::mail::port::{self, MSG_LEN, PortError};
 use crate::work::mail::{copy_in, copy_out};
+use crate::work::room::conductor::core::WaitKey;
+use crate::work::room::conductor::utask::{park, reap, starve, wait, wake};
 use crate::work::unit::space::MapKind;
 use crate::work::unit::task::TaskIdent;
 
@@ -68,10 +66,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
             // a0 = key（用户空间事件地址），a1 = 毫秒（usize::MAX = 永久）。
             // key 合成空间身份（asid 高 16 位 || va 低 48 位）——跨空间同 VA 不得
             // 混淆（与 fence::key 同源意；WaitKey::compose 单射要求 va < 2^48）。
-            let key = WaitKey::compose(
-                ident.team.space.asid() as usize,
-                frame.gpr.x(Gprs::A0),
-            );
+            let key = WaitKey::compose(ident.team.space.asid(), frame.gpr.x(Gprs::A0));
             let ms = frame.gpr.x(Gprs::A1);
             let dur = if ms == usize::MAX {
                 Duration::MAX
@@ -82,10 +77,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
         }
         Ucall::Room(RoomCall::Wake) => {
             // a0 = key（与 Wait 同源合成）。
-            let key = WaitKey::compose(
-                ident.team.space.asid() as usize,
-                frame.gpr.x(Gprs::A0),
-            );
+            let key = WaitKey::compose(ident.team.space.asid(), frame.gpr.x(Gprs::A0));
             let woke = wake(key);
             frame.gpr.set_x(Gprs::A0, woke as usize);
         }
@@ -183,13 +175,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
                 let s = &ident.team.space;
                 if fixed == 0 {
                     // 窗口自选高位肯定有堆窗（若非 → NoRegion）；懒映射不改页表 → with
-                    s.with(|inner| {
-                        inner
-                            .heap
-                            .as_mut()
-                            .ok_or(MapError::NoRegion)?
-                            .mmap(size)
-                    })
+                    s.with(|inner| inner.heap.as_mut().ok_or(MapError::NoRegion)?.mmap(size))
                 } else {
                     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
                     s.declare(VirtAddr::from_raw(fixed), size, flags, MapKind::Anonymous)

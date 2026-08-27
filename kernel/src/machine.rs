@@ -3,7 +3,7 @@
 use core::ops;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::layout::BOOT_STACK_SIZE;
+use crate::layout::ROOT_STACK_SIZE;
 use crate::lock::OnceLock;
 
 /// 半开物理区间 `[base, end)` — 内存池 / MMIO 设备区域通用。
@@ -108,8 +108,8 @@ pub fn init(dtp: usize) {
     let dram_size = mem.size.unwrap_or(0);
     let hertz = hertz(&fdt);
 
-    let free_base = kernel_stack_edge();
-    // 主内核栈位于镜像内（guard + 主栈区），整个空闲区
+    let free_base = root_stack_edge();
+    // ROOT 栈位于镜像内（guard + 栈区），整个空闲区
     // （free_base = 栈顶 .. dram_end）均可分配。
     let free_end = dram_base + dram_size;
     let free_size = free_end - free_base;
@@ -139,8 +139,8 @@ pub(crate) fn dram_end() -> Option<usize> {
     MACHINE.get().map(|m| m.dram.range().end)
 }
 
-/// 主内核栈 canary 值（写在栈底）。
-pub(crate) const BOOT_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
+/// ROOT 栈 canary 值（写在栈底；boot 移交审核 + panic 归巢复读共用）。
+pub(crate) const ROOT_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
 
 /// 镜像结束地址（链接脚本 `_kernel_edge`）——栈与 free 区布局的唯一基准。
 pub(crate) fn kernel_edge() -> usize {
@@ -151,23 +151,23 @@ unsafe extern "C" {
     static _kernel_edge: u8;
 }
 
-/// 主栈区偏移（栈大小）——`_start` 汇编加载它算出栈顶 sp。
+/// ROOT 栈区偏移（栈大小）——`_start` 汇编加载它算出栈顶 sp。
 /// no_mangle 暴露为符号，global_asm `la t0,_stack; ld t0,0(t0)` 读取，
 /// 栈大小单一来源（此处由 Rust 常量推导），链接脚本不写栈布局。
 #[unsafe(no_mangle)]
-static _stack: usize = BOOT_STACK_SIZE;
+static _stack: usize = ROOT_STACK_SIZE;
 
 #[unsafe(no_mangle)]
-static _canary: usize = BOOT_STACK_CANARY;
+static _canary: usize = ROOT_STACK_CANARY;
 
-/// 主内核栈底地址（canary 所在）。
-pub(crate) fn kernel_stack_base() -> usize {
+/// ROOT 栈底地址（canary 所在）。
+pub(crate) fn root_stack_base() -> usize {
     kernel_edge()
 }
 
-/// 主内核栈顶地址（= free 区起点）。
-pub(crate) fn kernel_stack_edge() -> usize {
-    kernel_edge() + BOOT_STACK_SIZE
+/// ROOT 栈顶地址（= free 区起点；panic `home` 归巢落点）。
+pub(crate) fn root_stack_edge() -> usize {
+    kernel_edge() + ROOT_STACK_SIZE
 }
 
 /// 读取 DTB `/cpus` 的 timebase-frequency（Hz）；缺失/非法长度返回 0。

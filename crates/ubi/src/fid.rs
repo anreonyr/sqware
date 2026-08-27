@@ -128,7 +128,7 @@ pub enum Ucall {
 impl From<Ucall> for usize {
     fn from(call: Ucall) -> Self {
         match call {
-            Ucall::Room(r) => (0usize << 32) | (r as usize),
+            Ucall::Room(r) => r as usize,
             Ucall::Task(t) => (1usize << 32) | (t as usize),
             Ucall::Memory(m) => (2usize << 32) | (m as usize),
             Ucall::IO(i) => (3usize << 32) | (i as usize),
@@ -182,3 +182,4 @@ index_from! {
     }
     ControlCall { Panic = 0 }
 }
+

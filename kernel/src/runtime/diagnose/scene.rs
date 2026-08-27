@@ -101,11 +101,20 @@ fn gprs() -> [usize; 32] {
 /// 入槽。启发式（兜底）：从链断点起按 8 字节步进向上扫描，收集「4 对齐 +
 /// 非相邻重复 + 能解析进符号区间」的可执行候选。
 fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
-    let (sp, fp): (usize, usize);
-    unsafe {
-        asm!("mv {0}, sp", out(reg) sp);
-        asm!("mv {0}, s0", out(reg) fp);
-    }
+    // 起扫点：panic 归巢（halt::home）后当前 sp/fp 是救援栈组稿链——kbt 须回
+    // 原始现场（SCENE = home 落盘的崩点 sp/fp）扫原栈；crash_scene! 直调（无
+    // 归巢、无 SCENE）→ 读当前 sp/fp（与历史行为一致）。
+    let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
+        (0, 0) => {
+            let (sp, fp): (usize, usize);
+            unsafe {
+                asm!("mv {0}, sp", out(reg) sp);
+                asm!("mv {0}, s0", out(reg) fp);
+            }
+            (sp, fp)
+        }
+        s => s,
+    };
     // 扫描上界钳制：崩溃现场可能运行在「段顶之上是刻意未映射 guard 页」的栈上，
     // 扫描窗越过段顶即读缺页 → 嵌套 panic → 现场静默消失（幽灵 panic）。high 钳到
     // 两类段顶（trap 栈 / 内核任务栈 slot）；其余栈上方为已映射 DRAM，退回原行为。

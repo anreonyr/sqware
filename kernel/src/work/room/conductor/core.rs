@@ -337,9 +337,10 @@ impl Conductor {
         let mut i = self.inner.lock();
         let (wake_at, tock, next) = {
             let mut ws = wait_sites().lock();
-            let site = ws
-                .entry(key)
-                .or_insert(WaitSite { pend: false, waiters: VecDeque::new() });
+            let site = ws.entry(key).or_insert(WaitSite {
+                pend: false,
+                waiters: VecDeque::new(),
+            });
             if site.pend {
                 // 闩消费：信号已至，任务不阻塞（续跑）
                 site.pend = false;
@@ -387,10 +388,7 @@ impl Conductor {
             wait_times().lock().insert(handle, key);
             timer::tock(handle, wake_at);
         }
-        match next {
-            Some(t) => Some(self.mount(t)),
-            None => None,
-        }
+        next.map(|t| self.mount(t))
     }
 
     /// 当前任务退出：Running → Reaped 入全局 reaped 容器（延迟回收——不能在
@@ -593,11 +591,7 @@ pub fn unpark() -> bool {
             let popped = {
                 let mut ws = wait_sites().lock();
                 if let Some(site) = ws.get_mut(&key) {
-                    if let Some(idx) = site
-                        .waiters
-                        .iter()
-                        .position(|w| w.tock == Some(handle))
-                    {
+                    if let Some(idx) = site.waiters.iter().position(|w| w.tock == Some(handle)) {
                         Some(site.waiters.remove(idx).expect("idx from position"))
                     } else {
                         None
@@ -640,9 +634,10 @@ pub(super) fn wake(key: WaitKey) -> bool {
     let me = machine::hart_id();
     let popped = {
         let mut ws = wait_sites().lock();
-        let site = ws
-            .entry(key)
-            .or_insert(WaitSite { pend: false, waiters: VecDeque::new() });
+        let site = ws.entry(key).or_insert(WaitSite {
+            pend: false,
+            waiters: VecDeque::new(),
+        });
         match site.waiters.pop_front() {
             Some(w) => Some(w),
             None => {

@@ -2,11 +2,13 @@
 //
 // 多核 panic 策略：**只保留报警源（第一个 panic 的）hart，其余 hart 停止**。
 //   - `alarm()`：抢占成为报警源（原子互斥，输家即 `hunker()`），置 `ALARMER`，
-//     广播 SBI IPI 唤醒/提示所有其它核，然后组成诊断报告，停机自环。
+//     广播 SBI IPI 唤醒/提示所有其它核，然后**归巢**组稿，停机自环。
 //   - 其余 hart 经 `hush()` 检测到警报后 `hunker()` 就地卧倒——关中断 + HSM 自停。
+//   - 胜出的 ALARMER `home()` 归巢：落盘原始现场（SCENE）→ 切 ROOT 栈
+//     （boot 移交的救援栈）→ 组稿——组稿不再依赖可能已损坏的触发栈。
 //
 // 命名隐喻：`alarm` 拉响警报 → 各核 `hush` 噤声（非报警源即 `hunker` 卧倒）
-// → 只剩 `ALARMER` 那一个核在继续。
+// → 只剩 ALARMER 一个核 `home` 归巢（ROOT = 巢；SCENE = 现场坐标）。
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -15,6 +17,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::layout::ROOT_STACK_SIZE;
 use crate::machine;
 use crate::runtime::diagnose::report::Report;
 use sbi::{self, fid, scall::SArgs};
@@ -105,10 +108,22 @@ fn alarm() -> bool {
     won
 }
 
+/// 归巢落盘的原始现场（`home` 写 [sp, fp]；`(0, 0)` = 未归巢——`crash_scene!`
+/// 直调无现场，kbt 回落读当前 sp/fp）。写 = ALARMER（同 hart 程序序）；asm 写
+/// 入对编译器不透明，读侧 volatile。
+static mut SCENE: [usize; 2] = [0; 2];
+
+/// 原始现场读取器（kbt 溯源）：`home` 落盘值；`(0, 0)` = 未归巢。
+pub(crate) fn scene() -> (usize, usize) {
+    // SAFETY: 单写单读同 hart（ALARMER 归巢路径）；volatile 防 asm 写入被缓存。
+    let s = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(SCENE)) };
+    (s[0], s[1])
+}
+
 #[panic_handler]
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 拉响警报：抢占报警源（唯一继续运行并打印的 hart，输家就地卧倒），
-    // 再广播停止其它核（唤醒睡核、提示用户核），随后组成诊断报告。
+    // 再广播停止其它核（唤醒睡核、提示用户核），随后归巢组稿。
     // 嵌套 panic（本 hart 已是报警源，组稿期间再 fault 的重入）：报警与
     // 广播已做过、其它核已停——不再重复组稿，直接进停机自环。
     // 幽灵指纹：重入绝不静默——把第二次 panic 的原话与现场 sepc/stval 直写
@@ -116,6 +131,8 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     // 缓冲，无堆无锁不碰分配器，崩溃路径纪律不破）。否则组稿期任意再 fault
     // 会连第二次 panic 的文本一起吞掉：控制台全静默却 exit 0（"幽灵 panic"）。
     // claim() 的 false 分支恒为「本核即报警源」的重入（输家已在内部 hunker）。
+    // 仲裁**先行**于换栈：双核同时 panic 若先换栈，输家会与胜家争夺同一
+    // ROOT 栈顶——归巢只允许胜出的 ALARMER（hunker 不碰业务内存）。
     if !alarm() {
         crate::putln!(
             "info: {} sepc={:#x} stval={:#x}",
@@ -125,6 +142,45 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
         );
         halt_loop()
     }
+    // 归巢：落盘 SCENE（原始现场）→ 跳 ROOT 栈顶 → panic_work 组稿。
+    home(info)
+}
+
+/// 归巢（naked）：落盘 SCENE（原始 sp/fp）→ 跳 ROOT 栈顶 → `tail` panic_work。
+/// 启动期 panic / 已归巢重入兜底：当前 sp 已在 ROOT 区间则不切。
+/// a0 = &PanicInfo（panic_handler 原样传入；本函数不触碰 a0，tail 移交 panic_work）。
+#[allow(improper_ctypes_definitions)]
+#[unsafe(naked)]
+extern "C" fn home(_info: &PanicInfo) -> ! {
+    core::arch::naked_asm!(
+        // SCENE：原始 sp/fp 落盘（kbt 溯源；写 = ALARMER，同 hart 程序序）
+        "la   t0, {scene}",
+        "sd   sp, 0(t0)",
+        "sd   s0, 8(t0)",
+        // ROOT 栈顶 = _kernel_edge + ROOT_STACK_SIZE（链接符号，恒等寻址）
+        "la   t0, _kernel_edge",
+        "li   t1, {size}",
+        "add  t1, t0, t1",
+        // 当前 sp 已在 [edge, edge+size)（启动期 panic / 已归巢重入）→ 不切
+        "mv   t2, sp",
+        "bltu t2, t0, 1f",
+        "bltu t2, t1, 2f",
+        "1:  mv   sp, t1",
+        "2:  tail {work}",
+        scene = sym SCENE,
+        size = const ROOT_STACK_SIZE,
+        work = sym info,
+    );
+}
+
+/// 归巢组稿：在 ROOT 栈上完成诊断报告、崩溃现场转储与停机。
+#[allow(improper_ctypes_definitions)]
+extern "C" fn info(info: &PanicInfo) -> ! {
+    // 归巢审核：ROOT 栈底 canary 复读——boot 移交后 ROOT 应无人使用；此处捕
+    // 「boot 后 ROOT 被误用 / boot 期溢出未捕」类内核 bug。报告一行，不递归。
+    // SAFETY: canary 由 `_start` 写入、boot 移交审核过；此处 volatile 复读。
+    let root_ok = unsafe { (crate::machine::root_stack_base() as *const usize).read_volatile() }
+        == crate::machine::ROOT_STACK_CANARY;
 
     // 门户后端无锁切到后备仓（spare）：不取锁，即使 panic 恰在持主堆锁现场也绝不卡死。
     crate::memory::allocator::portal::switch(crate::memory::allocator::portal::Backend::Spare);
@@ -150,6 +206,10 @@ pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
                 machine::hart_id()
             ))]);
         }
+        rows.push(vec![Some(format!(
+            "root stack: {}",
+            if root_ok { "ok" } else { "CORRUPTED" }
+        ))]);
         rows.push(vec![Some(format!("{}", info.message()))]);
         rows.push(vec![Some(format!(
             "other harts hushed only hart {} remains",

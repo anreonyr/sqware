@@ -38,7 +38,7 @@ use crate::layout::{HART_FRAME_BASE, TRAMPOLINE, trampoline_pa};
 use space::{MapKind, SpaceBuilder};
 
 // 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
-// 兼作主栈下方的写保护 guard（栈下溢踩 .rodata 即写保护缺页）。
+// 兼作 ROOT 栈下方的写保护 guard（栈下溢踩 .rodata 即写保护缺页）。
 unsafe extern "C" {
     static _rodata_start: u8;
 }
@@ -81,7 +81,7 @@ pub fn init() -> MapResult<()> {
             // 1. 创建内核地址空间
             let kernel_space = SpaceBuilder::kernel().build()?;
 
-            // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内主栈区，位于
+            // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内 ROOT 栈区，位于
             //    `_kernel_edge` 之上）都在 DRAM 内。只 map free 会在启用分页后
             //    让内核栈/内核镜像变成未映射，下一次栈访问或取指即缺页。
             let ram_flags = PteFlags::V
@@ -114,8 +114,8 @@ pub fn init() -> MapResult<()> {
 
             // 3.5 内核 .rodata 段只读化：镜像尾部 .rodata 经恒等与高半区两处都已
             //    RWX 映射，此处用 mprotect 降为只读（去 W）。作用有二：
-            //      a) 主栈位于 _kernel_edge 之上、向下生长，越界第一脚即踩 .rodata
-            //         → 写保护缺页（天然主栈 guard，省 unmap/预留帧）；
+            //      a) ROOT 栈位于 _kernel_edge 之上、向下生长，越界第一脚即踩 .rodata
+            //         → 写保护缺页（天然 ROOT 栈 guard，省 unmap/预留帧）；
             //      b) 内核只读数据获得 RO 防护（BUG 改写 .rodata 立即缺页暴露）。
             //    mprotect 只改已映射叶子 PTE，不影响中间表与 free 区；两处都要降。
             let rodata_start = (&raw const _rodata_start).addr();

@@ -27,9 +27,9 @@
 //    └─ 程序镜像 64 KiB        0x1_0000 ← IMAGE_BASE
 //
 // ┌─ 物理内存（恒等加载，从高到低）
-// ├─ free DRAM              [kernel_stack_edge, dram_end)
-// ├─ 引导主栈 64 KiB        [_kernel_edge, +BOOT_STACK_SIZE)（_kernel_edge 顶锚向下，
-// │                         栈底 BOOT_STACK_CANARY）
+// ├─ free DRAM              [root_stack_edge, dram_end)
+// ├─ ROOT 栈 64 KiB         [_kernel_edge, +ROOT_STACK_SIZE)（_kernel_edge 顶锚向下，
+// │                         栈底 ROOT_STACK_CANARY；boot 期主栈 / panic 救援栈）
 // └─ 内核镜像               [_kernel_start, _kernel_edge)（trampoline 页双映射：
 //                           链接地址 + TRAMPOLINE VA）
 
@@ -45,8 +45,8 @@ use crate::memory::manager::mode;
 pub(crate) const TASK_STACK_SIZE: usize = 16384;
 /// 任务栈守护页大小（= 一页）。
 pub(crate) const TASK_STACK_GUARD: usize = PAGE_SIZE;
-/// 主内核栈 64 KiB（`_kernel_edge` 顶锚向下生长）。
-pub(crate) const BOOT_STACK_SIZE: usize = 0x1_0000;
+/// ROOT 栈 64 KiB（`_kernel_edge` 顶锚向下；boot 期主栈，panic 时作救援栈）。
+pub(crate) const ROOT_STACK_SIZE: usize = 0x1_0000;
 
 // ── 内核半区 VA（自 TRAMPOLINE 顶锚向下排布）───────────────
 

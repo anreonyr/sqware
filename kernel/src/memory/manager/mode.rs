@@ -4,7 +4,7 @@
 // （walk 深度、VirtAddr 进位、satp 令牌、布局几何）从这里派生。
 //
 // 探测 = 写测（satp 为 WARL：不支持的模式被写入忽略）：对候选 57→48→39
-// 逐一建立**候选层级**的最小恒等临时根（覆盖内核镜像与主栈，取指可翻译），
+// 逐一建立**候选层级**的最小恒等临时根（覆盖内核镜像与 ROOT 栈，取指可翻译），
 // `satp::set(候选, 0, ppn)` → 回读 → 立即写回 Bare；回读命中即该硬件支持。
 //
 // 顺序不变量：MODE 未设时读侧一律兜底 Sv39——任何提前调用不依赖探测结果
@@ -130,13 +130,13 @@ pub fn upper() -> VirtAddr {
 fn try_mode(candidate: satp::Mode) -> Result<(), SatpError> {
     let geo = geometry(candidate);
     let mut root = TableNode::root().map_err(|_| SatpError::OutOfMemory)?;
-    // 恒等映射覆盖内核镜像 + 主栈（探测码与栈都在其中，取指可翻译）。
+    // 恒等映射覆盖内核镜像 + ROOT 栈（探测码与栈都在其中，取指可翻译）。
     unsafe extern "C" {
         static _kernel_start: u8;
     }
     let range = (
         (&raw const _kernel_start).addr(),
-        machine::kernel_stack_edge(),
+        machine::root_stack_edge(),
     );
     let mut va = range.0 & !(crate::memory::PAGE_SIZE - 1);
     while va < range.1 {

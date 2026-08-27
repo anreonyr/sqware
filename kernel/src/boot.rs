@@ -9,7 +9,7 @@ use riscv::register::satp;
 
 use crate::console::Sink;
 use crate::layout::{HART_FRAME_BASE, TRAP_STACK_SLOT_SIZE};
-use crate::machine::{BOOT_STACK_CANARY, kernel_stack_base};
+use crate::machine::{ROOT_STACK_CANARY, root_stack_base};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
@@ -130,12 +130,13 @@ pub fn init() -> ! {
     // 多核：HSM 拉起其余副核。
     boot_harts();
 
-    // 主内核栈（boot 栈）将永久离开前校验 canary：boot 期栈溢出即使未越过
-    // guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。
-    let boot_guard = unsafe { (kernel_stack_base() as *const usize).read() };
+    // ROOT 栈（boot 期主栈）移交 panic 救援役前的完整性审核：boot 期栈溢出
+    // 即使未越过 guard 页（4 KiB 内）也会在此暴露，且不必等缺页死机。审核通过
+    // 后本栈永闲置，panic `home` 归巢回用（归巢入口另复读一次，见 halt::home）。
+    let boot_guard = unsafe { (root_stack_base() as *const usize).read() };
     assert!(
-        boot_guard == BOOT_STACK_CANARY,
-        "main kernel stack overflow during boot: canary corrupted {boot_guard:#x}",
+        boot_guard == ROOT_STACK_CANARY,
+        "ROOT stack overflow during boot: canary corrupted {boot_guard:#x}",
     );
 
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
