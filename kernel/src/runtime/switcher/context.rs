@@ -117,6 +117,7 @@ impl TrapContext {
     ///
     /// # Safety
     /// 调用方须持有对 `self` 所指帧的唯一可写引用（新任务帧未发布、S-only 映射）。
+    #[allow(clippy::too_many_arguments)]
     pub(crate) unsafe fn init(
         &mut self,
         template: &TrapContext,

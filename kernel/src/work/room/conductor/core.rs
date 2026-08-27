@@ -88,7 +88,7 @@ pub(super) struct Conductor {
     /// 本核装槽（mount，AcqRel swap，取走旧指针按标签收回归还其计数）或降级
     /// （demote，TaskIdent → LastIdent），读 = 本核 trap/panic 路径 load（Acquire）
     /// + increment_strong_count——载荷不可变 ⇒ 无锁；同 hart 程序序保证读时指针恒
-    /// 有效（写读互不同期）。未装槽 → null。
+    ///   有效（写读互不同期）。未装槽 → null。
     ///
     /// 载荷语义：TaskIdent = 槽指向本核**在跑**的任务（trap 可信）；LastIdent =
     /// 末次身份记录（id/name/符号表；trap 不可信，见 [`ident`] 的 `Current::Last`）。
@@ -193,18 +193,23 @@ impl Conductor {
         let pa = task.ident.trap.pa.as_usize();
         // 记身份（写点唯一）：Arc::into_raw 交出克隆的计数给槽持有；旧指针由本
         // 槽此前持有（本核独占写），按载荷类型标签（bit0）收回归还其计数。
-        let prev = self
-            .info
-            .swap(Arc::into_raw(task.ident.clone()).cast_mut() as *mut (), Ordering::AcqRel);
+        let prev = self.info.swap(
+            Arc::into_raw(task.ident.clone()).cast_mut() as *mut (),
+            Ordering::AcqRel,
+        );
         if !prev.is_null() {
             let prev = prev as usize;
             // SAFETY: prev 是本槽上次 swap 存入的 Arc::into_raw 结果；swap 取走
             // 后槽对其不再持有，此处 from_raw 收回该份计数并释放（同 hart 程序序，
             // 无并发的本槽读写）。类型按标签位判定——标签与指针原子同行，无撕裂。
             if prev & LAST_TAG != 0 {
-                unsafe { drop(Arc::from_raw((prev & !LAST_TAG) as *const LastIdent)); }
+                unsafe {
+                    drop(Arc::from_raw((prev & !LAST_TAG) as *const LastIdent));
+                }
             } else {
-                unsafe { drop(Arc::from_raw(prev as *const TaskIdent)); }
+                unsafe {
+                    drop(Arc::from_raw(prev as *const TaskIdent));
+                }
             }
         }
         debug_assert!(
@@ -232,13 +237,16 @@ impl Conductor {
             name: ident.name,
             elftable: ident.team.elftable.clone(),
         });
-        let prev = self
-            .info
-            .swap((Arc::into_raw(last) as usize | LAST_TAG) as *mut (), Ordering::AcqRel);
+        let prev = self.info.swap(
+            (Arc::into_raw(last) as usize | LAST_TAG) as *mut (),
+            Ordering::AcqRel,
+        );
         if !prev.is_null() {
             // SAFETY: 降级只在拥有在跑任务时发生——旧载荷必为未标签 TaskIdent。
             debug_assert_eq!(prev as usize & LAST_TAG, 0, "demote 旧载荷带标签");
-            unsafe { drop(Arc::from_raw(prev as *const TaskIdent)); }
+            unsafe {
+                drop(Arc::from_raw(prev as *const TaskIdent));
+            }
         }
     }
 
@@ -330,7 +338,9 @@ impl Conductor {
             matches!(exited.state(), TaskState::Running { .. }),
             "running 容器里不是 Running 任务"
         );
-        trace::note(EventKind::Sched(SchedEvent::Exit { tid: exited.ident.id }));
+        trace::note(EventKind::Sched(SchedEvent::Exit {
+            tid: exited.ident.id,
+        }));
         Task::exclusive(&mut exited).transform(TaskState::Reaped);
         // 离核且无后继装槽 → 槽降级 Last（先于入队：exited 其后被移动；clear 返回
         // 后即按 va 归还帧，trap 不可信）。团队 Arc 归零即回收——地址空间随释放。
