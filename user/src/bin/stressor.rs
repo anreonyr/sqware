@@ -5,8 +5,8 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use user::env::{self, put};
 use user::PAGE_SIZE;
+use user::env::{self, put};
 
 // stressor：用户堆分配器压力测试（有限次、退出收尾——配合 debug 关闭时零泄漏
 // 审计）。三幕：
@@ -39,8 +39,7 @@ extern "C" fn main() -> ! {
     put("2\n").ok();
 
     // 幕 3：失败路径——超大分配返回 Err 而非 panic；归还后可再分配
-    let huge = env::allocate(usize::MAX / 2).expect_err("stressor: huge alloc must fail");
-    drop(huge);
+    env::allocate(usize::MAX / 2).expect_err("stressor: huge alloc must fail");
     let va = env::allocate(PAGE_SIZE).expect("stressor: re-alloc after oom");
     env::deallocate(va, PAGE_SIZE).expect("stressor: free 3");
     put("3\n").ok();
@@ -48,3 +47,4 @@ extern "C" fn main() -> ! {
     put("stressor: ok\n").ok();
     env::exit()
 }
+

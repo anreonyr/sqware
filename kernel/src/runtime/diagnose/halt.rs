@@ -191,13 +191,10 @@ extern "C" fn info(info: &PanicInfo) -> ! {
                 machine::hart_id()
             ))]);
         }
-        rows.push(vec![Some(format!(
-            "root stack: {}",
-            if root_ok { "ok" } else { "CORRUPTED" }
-        ))]);
         rows.push(vec![Some(format!("{}", info.message()))]);
         rows.push(vec![Some(format!(
-            "other harts hushed only hart {} remains",
+            "root stack @ {} : {}",
+            if root_ok { "ok" } else { "CORRUPTED" },
             machine::hart_id()
         ))]);
         report.paragraph("panic", Some(head)).items.extend(rows);

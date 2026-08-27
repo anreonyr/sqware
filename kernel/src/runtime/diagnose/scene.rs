@@ -27,11 +27,12 @@ use crate::runtime::diagnose::report::Report;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::conductor::core::ident;
 use crate::work::unit::elftable::{self, ElfTable};
+use crate::work::unit::team::kernel;
 
 /// 内核团队符号表（`elftable::routed*` 的内核侧来源；随内核团队挂载，未装配 → None）。
 /// 路由决策归消费方（本模块），elftable 模块本身不依赖 team（环已拆）。
 fn ktbl() -> Option<&'static ElfTable> {
-    crate::work::unit::team::kernel()?.elftable.as_deref()
+    kernel()?.elftable.as_deref()
 }
 
 fn utbl() -> Option<Arc<ElfTable>> {
@@ -260,17 +261,19 @@ fn stval_note(int: bool, code: usize) -> &'static str {
 /// try_lock 拿不到则跳过）。注解列 = 符号化 + 解码。
 fn csr_rows() -> Vec<Vec<Option<String>>> {
     let mut rows: Vec<Vec<Option<String>>> = vec![
+        if let Some(i) = ident() {
+            vec![
+                None,
+                Some(format!("#{}", i.id())),
+                Some(format!("'{}'", i.name())),
+            ]
+        } else {
+            vec![None, Some("failed to get task info".into()), None]
+        },
         vec![None, Some("hex".into()), Some("note".into())], // 首行表头
     ];
     let sc = scause::read();
     let (int, code) = (sc.is_interrupt(), sc.code());
-    if let Some(i) = ident() {
-        rows.push(vec![
-            Some(format!("#{}", i.id())),
-            Some(format!("'{}'", i.name())),
-            None,
-        ]);
-    }
     rows.push(vec![
         Some("sepc".into()),
         Some(hex(sepc::read())),
@@ -314,7 +317,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         Some(elftable::routed_symbol(
             VirtAddr::from_raw(stvec::read().address()),
             ktbl(),
-            None,
+            utbl().as_deref(),
         )),
     ]);
     {
@@ -324,9 +327,9 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         let scr = sscratch::read();
         let kfb = crate::layout::HART_FRAME_BASE.as_usize();
         let n = if scr == 0 {
-            "Kernel (sscratch=0)".to_string()
+            "Kernel frame".to_string()
         } else if scr >= kfb && scr < kfb + crate::machine::MAX_HART_SLOTS * PAGE_SIZE {
-            format!("Kernel frame (hart {})", (scr - kfb) / PAGE_SIZE)
+            format!("Kernel frame @ {}", (scr - kfb) / PAGE_SIZE)
         } else if scr >= crate::layout::TEAM_FRAME_BASE.as_usize()
             && scr < crate::layout::HART_FRAME_BASE.as_usize()
         {
@@ -443,7 +446,7 @@ pub fn dump_crash(r: &mut Report) {
     let n = kbacktrace(&mut bt);
     {
         let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-            Some("#".into()),
+            Some("kbt".into()),
             Some("hex".into()),
             Some("sym".into()),
         ]];
@@ -454,7 +457,7 @@ pub fn dump_crash(r: &mut Report) {
                 Some(elftable::routed_symbol(
                     VirtAddr::from_raw(*a),
                     ktbl(),
-                    None,
+                    utbl().as_deref(),
                 )),
             ]);
         }
@@ -467,7 +470,7 @@ pub fn dump_crash(r: &mut Report) {
     let (m, tbl_arc) = ubacktrace(&mut ubt);
     if m > 0 {
         let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-            Some("#".into()),
+            Some("ubt".into()),
             Some("hex".into()),
             Some("sym".into()),
         ]];

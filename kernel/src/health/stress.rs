@@ -1,28 +1,30 @@
-// 健康检查 · stress — 内核分配器压力演练：上游 `Allocator` 接口验收
-// （与 `hybrid::allocator()` 同一分配器）。
-//
-// 断言：
-//   · 多尺寸混合分配-立即释放循环闭环（block 池分合路径，≤ 半页）；
-//   · 持有-全释放后复验可再分配（合并闭环）；
-//   · frame 后端档位闭环（> 半页：order0..3 分配-立即释放）；
-//   · frame 持有-全释放（跨 order 分裂/合并交错）；
-//   · frame 耗尽-反还：order1 档不断分配直至帧池耗尽（AllocError），全量归还
-//     后复验可再分配——「boot 期 free 帧不足时向上找 order 无出口」的直接
-//     暴露点：耗尽后 split_block 必须返回 None 而非挂死。
-//
-// 实测结论（QEMU 双核、debug 构建全绿）：当初「frame 后端 order1+（8192B 级）
-// 分配疑似卡死」不可复现——order0..3 多档闭环、持有交错、耗尽榨干-全归复验
-// 均正常（耗尽可用 4122 块 order1 ≈ 32 MiB 后正确 Err）。该怀疑源自早期
-// 探针观察（health 后断流疑为 timeout 内未完成，非挂死），现已以本用例固化
-// 为长期回归。
+/*
+健康检查 · stress — 内核分配器压力演练：上游 `Allocator` 接口验收
+（与 `hybrid::allocator()` 同一分配器）。
+
+断言：
+  · 多尺寸混合分配-立即释放循环闭环（block 池分合路径，≤ 半页）；
+  · 持有-全释放后复验可再分配（合并闭环）；
+  · frame 后端档位闭环（> 半页：order0..3 分配-立即释放）；
+  · frame 持有-全释放（跨 order 分裂/合并交错）；
+  · frame 耗尽-反还：order1 档不断分配直至帧池耗尽（AllocError），全量归还
+    后复验可再分配——「boot 期 free 帧不足时向上找 order 无出口」的直接
+    暴露点：耗尽后 split_block 必须返回 None 而非挂死。
+
+实测结论（QEMU 双核、debug 构建全绿）：当初「frame 后端 order1+（8192B 级）
+分配疑似卡死」不可复现——order0..3 多档闭环、持有交错、耗尽榨干-全归复验
+均正常（耗尽可用 4122 块 order1 ≈ 32 MiB 后正确 Err）。该怀疑源自早期
+探针观察（health 后断流疑为 timeout 内未完成，非挂死），现已以本用例固化
+为长期回归。
+*/
 
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
 use alloc::vec::Vec;
 
-use crate::memory::allocator::hybrid;
 use crate::memory::PAGE_SIZE;
+use crate::memory::allocator::hybrid;
 
 /// 幕 1 block 档位（全部 ≤ 半页：16B..2048B 跨 size class）。
 const SIZES: [usize; 7] = [16, 64, 128, 256, 512, 1024, 2048];
@@ -98,7 +100,7 @@ pub fn accept() {
     let mut n = 0usize;
     loop {
         let l = Layout::from_size_align(PAGE_SIZE * 2, PAGE_SIZE).unwrap(); // order1
-        match unsafe { a.allocate(l) } {
+        match a.allocate(l) {
             Ok(b) => {
                 drained.push((b, l));
                 n += 1;
@@ -109,7 +111,7 @@ pub fn accept() {
     crate::expect!(n > 0, "frame drain: no blocks ever allocated");
     let l = Layout::from_size_align(PAGE_SIZE * 2, PAGE_SIZE).unwrap();
     crate::expect!(
-        unsafe { a.allocate(l) }.is_err(),
+        a.allocate(l).is_err(),
         "frame drain: alloc after exhaustion must fail"
     );
     for (b, l) in drained.drain(..) {
@@ -130,3 +132,4 @@ pub fn accept() {
         ),
     );
 }
+

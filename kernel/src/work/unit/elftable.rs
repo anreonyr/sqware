@@ -236,7 +236,7 @@ pub fn kernel_table() -> Option<ElfTable> {
 /// 地址符号化文本：表中命中出「func+0xoff」（demangle），未命中裸 hex。
 pub(crate) fn symbol(va: VirtAddr, tbl: Option<&ElfTable>) -> String {
     match tbl.and_then(|t| t.lookup(va)) {
-        Some((name, off)) => format!("{}+{off:#x}", rustc_demangle::demangle(name)),
+        Some((name, off)) => format!("{:#}+{off:#x}", rustc_demangle::demangle(name)),
         None => format!("{:#x}", va.as_usize()),
     }
 }
@@ -263,7 +263,7 @@ pub fn routed_symbol(
     user_tbl: Option<&ElfTable>,
 ) -> String {
     match routed(va, kernel_tbl, user_tbl) {
-        Some((name, off)) => format!("{}+{off:#x}", rustc_demangle::demangle(name)),
+        Some((name, off)) => format!("{:#}+{off:#x}", rustc_demangle::demangle(name)),
         None => format!("{:#x}", va.as_usize()),
     }
 }
