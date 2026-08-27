@@ -216,7 +216,11 @@ impl Conductor {
             matches!(task.state(), TaskState::Running { .. }),
             "running 容器只装 Running 任务"
         );
-        debug_assert!(i.running.replace(task).is_none(), "装槽前 running 必须为空");
+        // 装槽：replace 完成实际装槽（副作用不得藏在 debug_assert 内——release
+        // 下断言被编译掉，装槽即失效 → running 恒空）。再断言旧槽必空（mount
+        // 唯一装槽点）。
+        let prev = i.running.replace(task);
+        debug_assert!(prev.is_none(), "装槽前 running 必须为空");
         // 装槽完成 → 载荷为 TaskIdent（Live：trap 可信）。AcqRel swap 已发布
         // prepare 写出的帧/任务状态；ident() 的 Acquire 配对。
         pa
