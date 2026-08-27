@@ -59,7 +59,7 @@ static TRAP_STACK_PHYS: OnceLock<usize> = OnceLock::new();
 
 /// hart h 的 trap 栈段几何（纯算术）：守卫页不映射，栈体 = [base, edge)。
 /// base = 段首 + guard（canary 处）；edge = 段上界（排他，初始 sp 落点）。
-fn trap_stack_seg(hart: usize) -> (VirtAddr, VirtAddr) {
+fn trap_stack_segment(hart: usize) -> (VirtAddr, VirtAddr) {
     let base = TRAP_STACK_BASE.as_usize() + hart * TRAP_STACK_SLOT_SIZE;
     (
         VirtAddr::from_raw(base + TRAP_STACK_GUARD),
@@ -69,12 +69,12 @@ fn trap_stack_seg(hart: usize) -> (VirtAddr, VirtAddr) {
 
 /// hart 的 trap 栈体底（固定 VA，canary 处）。
 pub fn trap_stack_base(hart: usize) -> VirtAddr {
-    trap_stack_seg(hart).0
+    trap_stack_segment(hart).0
 }
 
 /// hart 的 trap 栈体上边界（固定 VA，排他端；初始 sp 落点）。
 pub fn trap_stack_edge(hart: usize) -> VirtAddr {
-    trap_stack_seg(hart).1
+    trap_stack_segment(hart).1
 }
 
 /// sp 是否落在某 hart 的 trap 栈体内（guard 之上、edge 之下→含）——反解 hart。
@@ -130,16 +130,10 @@ pub fn trap_stack() -> usize {
     *TRAP_STACK_PHYS.get().expect("trap stacks not initialized")
 }
 
-/// 初始化 per-hart trap 栈（boot 时调用**恰好一次**，hart 0）。
-///
-/// 1. 按实际核数（DTB）frame **连续**分配 N x 64 KiB（frame 按 order 支持连续块，
-///    向上取整到 2 的幂）；物理基址存入 TRAP_STACK_PHYS（副核启动栈用）；
-/// 2. 内核空间把各段**栈体**映射到固定 VA 窗口（guard 页不映射——越界即页故障）；
-/// 3. 恒等视图 guard 页清 PTE（副核 boot 栈溢出的既有护栏，行为不变）；
-/// 4. 各段栈底（固定 VA）写 canary。
-///
-/// 块永不释放（静态分配，段数 = 实际核数）；无元数据表。
-fn init_trap_stacks() {
+/// 初始化 trap 运行时（须在 `unit::init` 之后：hart 帧与 TRAMPOLINE 映射已就绪）。
+pub fn init() {
+    // 0. per-hart trap 栈：frame 连续分配 + guard 页 + 全部 canary（先于 hart 帧
+    //    元数据——帧 kernel_sp 需要指向本 hart 栈顶）。仅 hart 0 调用一次。
     let segments = crate::machine::hart_count();
     assert!(segments > 0, "no harts");
     assert_eq!(
@@ -162,7 +156,7 @@ fn init_trap_stacks() {
     let space = &kernel().expect("kernel team not initialized").space;
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
     for h in 0..segments {
-        let (body_va, _edge) = trap_stack_seg(h);
+        let (body_va, _edge) = trap_stack_segment(h);
         let phys = base + h * TRAP_STACK_SLOT_SIZE;
         // 段体映射（60 KiB）：固定 VA → 块内物理页；guard 页不映射（越界即页故障）
         space
@@ -182,13 +176,6 @@ fn init_trap_stacks() {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }
     }
-}
-
-/// 初始化 trap 运行时（须在 `unit::init` 之后：hart 帧与 TRAMPOLINE 映射已就绪）。
-pub fn init() {
-    // 0. per-hart trap 栈：frame 连续分配 + guard 页 + 全部 canary（先于 hart 帧
-    //    元数据——帧 kernel_sp 需要指向本 hart 栈顶）。仅 hart 0 调用一次。
-    init_trap_stacks();
 
     // 1. 防呆：trampoline 汇编必须落在一页内（TRAMPOLINE 映射只覆盖一页）
     check_fits_page();
@@ -317,21 +304,21 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     // 2. debug：用户态陷阱必须运行在当前 hart 的 trap 栈上（kernel_sp 每次
     //    切换写入的正确性——任务迁移后写漏即在此暴露）。用户陷阱必有任务。
     #[cfg(debug_assertions)]
-    if let Some(i) = &ident {
-        if frame.sstatus.spp() != sstatus::SPP::Supervisor {
-            let sp: usize;
-            // SAFETY: 读当前栈指针，纯读无副作用。
-            unsafe {
-                core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
-            }
-            let top = trap_stack_edge(me).as_usize();
-            let ksp = frame.kernel_sp.as_usize();
-            debug_assert!(
-                sp <= top && top - sp < 0x4000,
-                "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{}) — kernel_sp per-switch write missing?",
-                i.id
-            );
+    if let Some(i) = &ident
+        && frame.sstatus.spp() != sstatus::SPP::Supervisor
+    {
+        let sp: usize;
+        // SAFETY: 读当前栈指针，纯读无副作用。
+        unsafe {
+            core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
         }
+        let top = trap_stack_edge(me).as_usize();
+        let ksp = frame.kernel_sp.as_usize();
+        debug_assert!(
+            sp <= top && top - sp < 0x4000,
+            "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{}) — kernel_sp per-switch write missing?",
+            i.id
+        );
     }
 
     // 类型化分发：裸码 → riscv::interrupt 枚举（try_into 对标准集外码返回 Err，
@@ -372,12 +359,10 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             frame as *mut TrapContext
         }
         // 用户态环境调用（U 态 ecall）：envcall 表分发（ecall 必有任务）
-        Trap::Exception(Exception::UserEnvCall) => {
-            crate::runtime::switcher::envcall::dispatch(
-                frame,
-                ident.as_deref().expect("envcall without running task"),
-            )
-        }
+        Trap::Exception(Exception::UserEnvCall) => crate::runtime::switcher::envcall::dispatch(
+            frame,
+            ident.as_deref().expect("envcall without running task"),
+        ),
         // 用户态缺页（解析失败即 panic）。SPP=1（内核态）缺页：guard 已在入口
         // 特判，其余内核缺页 = 内核 bug → fatal
         Trap::Exception(
@@ -392,7 +377,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 );
             }
             let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
-            let running = ident.as_deref().expect("user page fault without running task");
+            let running = ident
+                .as_deref()
+                .expect("user page fault without running task");
             let ok = crate::memory::manager::fault::handle_page_fault(&fault, &running.team.space);
             trace::note(EventKind::Mem(MemEvent::PageFault {
                 va: fault.addr.as_usize(),
@@ -426,4 +413,3 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
 
     next
 }
-

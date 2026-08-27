@@ -17,6 +17,8 @@
 use riscv::register::{satp, sstatus};
 
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::work::unit::space::SpaceKind;
+use crate::work::unit::team::Team;
 
 /// 通用寄存器集（x0..x31）。`__restore`/`__alltraps` 按 `0x30 + i*8` 裸偏移存取数组。
 ///
@@ -108,8 +110,9 @@ pub struct TrapContext {
 
 impl TrapContext {
     /// 初始化为新任务入口上下文：内核切换元数据自 per-hart 帧模板拷入；
-    /// 用户上下文 = 入口/栈顶/a0；SPP 按团队身份（内核团队 → S，其余 → U），
-    /// SPIE=1（sret 后 SIE=1，可被抢占）。kernel_sp 不在此写——`Scheduler::prepare`
+    /// 用户上下文 = 入口/栈顶/a0。SPP 与 user_satp 均自团队空间派生——任务模式 =
+    /// 空间 kind（单一事实源），satp 位布局（模式|asid|root）为帧初始化职责，调用方
+    /// 不必知道。SPIE=1（sret 后 SIE=1，可被抢占）。kernel_sp 不在此写——`prepare`
     /// 对每次上台无条件重写（含 steal 迁移）。
     ///
     /// # Safety
@@ -117,19 +120,24 @@ impl TrapContext {
     pub(crate) unsafe fn init(
         &mut self,
         template: &TrapContext,
-        team_is_kernel: bool,
+        team: &Team,
         entry: VirtAddr,
         stack_top: VirtAddr,
         arg: usize,
         pa: PhysAddr,
-        user_satp: satp::Satp,
         self_va: VirtAddr,
     ) {
         self.kernel_satp = template.kernel_satp;
         self.trap_handler = template.trap_handler;
         self.trap_stack_corrupt = template.trap_stack_corrupt;
         self.user_pa = pa;
-        self.user_satp = user_satp;
+        // user_satp = 模式位 << 60 | asid << 44 | root_ppn —— 切回本空间用；
+        // 模式位随探测所得 mode()（Sv39=8/Sv48=9/Sv57=10），非硬编码。
+        self.user_satp = satp::Satp::from_bits(
+            (crate::memory::manager::mode::mode().into_usize() << 60)
+                | (team.space.asid() << 44)
+                | team.space.root(),
+        );
         self.self_va = self_va;
         self.sepc = entry;
         self.gpr.set_x(Gprs::SP, stack_top.as_usize());
@@ -137,7 +145,7 @@ impl TrapContext {
         // 全零起步：不继承内核当前 sstatus 的 FS/XS 等位（`__restore` 整字 csrw）。
         let mut ss = sstatus::Sstatus::from_bits(0);
         ss.set_spie(true);
-        ss.set_spp(if team_is_kernel {
+        ss.set_spp(if matches!(team.space.kind(), SpaceKind::Kernel) {
             sstatus::SPP::Supervisor
         } else {
             sstatus::SPP::User

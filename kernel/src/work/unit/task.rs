@@ -15,7 +15,6 @@ use crate::memory::PAGE_SIZE;
 use crate::runtime::switcher::context::TrapContext;
 use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::kernel;
-use riscv::register::satp;
 
 use super::team::Team;
 use crate::work::room::conductor;
@@ -291,8 +290,9 @@ impl TaskBuilder {
             }
         };
 
-        // 3. 填帧：`TrapContext::init` 从 per-hart 帧模板拷元数据 + 用户上下文。
-        //    kernel_sp 不在此写——`Scheduler::prepare` 对每次上台无条件重写（含 steal 迁移）。
+        // 3. 填帧：`TrapContext::init` 从 per-hart 帧模板拷元数据 + 用户上下文；SPP 与
+        //    user_satp 自团队派生（init 内部）。kernel_sp 不在此写——`prepare` 对每次
+        //    上台无条件重写（含 steal 迁移）。
         let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
         unsafe {
             let ktc = kernel()
@@ -302,25 +302,7 @@ impl TaskBuilder {
                 .expect("kernel frame not mapped")
                 .0
                 .as_usize() as *const TrapContext;
-            // user_satp = 模式位 << 60 | asid << 44 | root_ppn —— 切回本空间用；
-            // 模式位随探测所得 mode()（Sv39=8/Sv48=9/Sv57=10），非硬编码。
-            let user_satp = satp::Satp::from_bits(
-                (crate::memory::manager::mode::mode().into_usize() << 60)
-                    | (self.team.space.asid() << 44)
-                    | self.team.space.root(),
-            );
-            // 任务模式 = 所属空间 kind（单一事实源；SPP 由填帧据此定）
-            let team_is_kernel = matches!(self.team.space.kind(), SpaceKind::Kernel);
-            frame.init(
-                &*ktc,
-                team_is_kernel,
-                self.entry,
-                stack_top,
-                self.arg,
-                frame_pa,
-                user_satp,
-                frame_va,
-            );
+            frame.init(&*ktc, &self.team, self.entry, stack_top, self.arg, frame_pa, frame_va);
         }
 
         // 4. 入队收尾（初始状态 Starved；持本 hart 调度锁完成入簿 + 入队 + 计数）
