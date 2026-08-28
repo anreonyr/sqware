@@ -51,11 +51,11 @@ use super::window::{FrameWindow, HeapWindow, StackWindow};
 pub(crate) struct SpaceInner {
     /// 段表容器（一个 Space 一张；窗口/借用方经访问器取段）。
     pub(crate) alloc: Arc<SpinLock<IntervalInner>>,
-    /// 自由段访问器（free 段激活后有值——dock 等非窗口借用方取段用）。
+    /// 自由段访问器（free 段挂接后有值——dock 等非窗口借用方取段用）。
     pub(crate) free: Option<IntervalAllocator>,
     /// 常数侧：根页表 + 中间表帧 + 常数映射表。
     pub(crate) durable: Durable,
-    /// 任务栈窗口（自由段访问器，free 段激活时构造）。
+    /// 任务栈窗口（自由段访问器，free 段挂接时构造）。
     pub(crate) stack: Option<StackWindow>,
     /// team 帧区窗口（frame 固定段访问器）。
     pub(crate) frame: FrameWindow,
@@ -67,7 +67,7 @@ impl core::fmt::Debug for SpaceInner {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // 段表（alloc）内容在锁内不读；打印真实可查字段。
         f.debug_struct("SpaceInner")
-            .field("free_active", &self.free.is_some())
+            .field("free_attached", &self.free.is_some())
             .field("durable", &self.durable)
             .field("stack", &self.stack)
             .field("frame", &self.frame)
@@ -79,8 +79,8 @@ impl core::fmt::Debug for SpaceInner {
 impl SpaceInner {
     pub(crate) fn new() -> Result<Self, MapError> {
         // 段表：interval 零 up-front（∝ 存活块）。frame 段为布局常量域，构造即
-        // 注册；自由段由调用方按空间种类激活（内核 unit::init / 用户 loader），
-        // 激活时构造栈窗口并留 free 访问器（堆窗口由 loader 取访问器注册）。
+        // 注册；自由段由调用方按空间种类挂接（内核 unit::init / 用户 loader），
+        // 挂接时构造栈窗口并留 free 访问器（堆窗口由 loader 取访问器注册）。
         let alloc = Arc::new(SpinLock::new_level(Level::Alloc, IntervalInner::new()));
         let frame_acc = register(
             &alloc,
@@ -97,16 +97,16 @@ impl SpaceInner {
         })
     }
 
-    /// 激活自由段 `[base, upper)`（恰好一次；任何窗口分配之前）并构造栈窗口。
+    /// 挂接自由段 `[base, upper)`（恰好一次；任何窗口分配之前）并构造栈窗口。
     /// 返回自由段访问器（loader 注册堆窗口用）。
     ///
     /// # Panics
     ///
-    /// 重复激活（stack/free 已在册）或 base 非页对齐 / 越过 upper。
-    pub(crate) fn activate_free(&mut self, base: usize) -> IntervalAllocator {
+    /// 重复挂接（stack/free 已在册）或 base 非页对齐 / 越过 upper。
+    pub(crate) fn attach_free(&mut self, base: usize) -> IntervalAllocator {
         assert!(
             self.stack.is_none() && self.free.is_none(),
-            "Space: free double activation"
+            "Space: free double attach"
         );
         let edge = crate::memory::manager::mode::upper().as_usize();
         assert!(
@@ -456,15 +456,6 @@ impl Space {
     /// （调度域经 `team.space.kind()` 区分内核/用户任务路径）。
     pub fn kind(&self) -> SpaceKind {
         self.kind
-    }
-
-    /// 激活自由段（装载期/引导期恰好一次；任何窗口分配前）。适配层：内核空间
-    /// 由 `unit::init` 激活（自低区起），用户空间由 `loader` 激活（自 image_end 起）
-    /// ——loader 直接经 `inner.activate_free` 取自由段访问器注册堆窗口。
-    pub fn activate_free(&self, base: usize) {
-        self.with(|inner| {
-            inner.activate_free(base);
-        });
     }
 
     // ── 事务入口 ──────────────────────────────────────────────

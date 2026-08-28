@@ -1,6 +1,6 @@
 // 程序装载 — 把已解析的 ELF 段装进地址空间的 durable（常数映射）侧。
 //
-// 只碰 durable（静态段）与自由段激活；栈/帧窗口由任务构建时分配，正交。
+// 只碰 durable（静态段）与自由段挂接；栈/帧窗口由任务构建时分配，正交。
 // 装载整体为一个 `Space::with_flush` 事务：单临界区 + 单次 TLB 刷新，任一段失败
 // 则整体不落（原子装载）。
 
@@ -35,9 +35,9 @@ pub type LoadResult<T> = Result<T, MapError>;
 ///
 /// 帧耗尽（OutOfMemory）或映射冲突（AlreadyMapped / NotAligned，均不改动 space）。
 pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Loaded> {
-    // 装载期激活自由段 + 注册堆窗口 + 逐段装配——单个 with_flush 临界区：一次加锁、
+    // 装载期挂接自由段 + 注册堆窗口 + 逐段装配——单个 with_flush 临界区：一次加锁、
     // 一次 TLB 刷新；任一段失败 → 整体不落（原子装载）。自由段几何随映像（不魔数），
-    // 须先于文件段映射注册（激活 = 分配器可用；堆窗口注册在激活后）。
+    // 须先于文件段映射注册（挂接 = 分配器可用；堆窗口注册在挂接后）。
     let image_end = parsed
         .segments
         .iter()
@@ -51,7 +51,7 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         if inner.heap.is_some() {
             return Err(MapError::AlreadyMapped);
         }
-        let free = inner.activate_free(image_end);
+        let free = inner.attach_free(image_end);
         inner.heap = Some(HeapWindow::new(free));
         for seg in &parsed.segments {
             let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;

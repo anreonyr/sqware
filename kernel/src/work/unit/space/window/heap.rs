@@ -1,6 +1,6 @@
 // HeapWindow — 用户堆窗口（动态侧：堆 / mmap 懒区）。
 //
-// 装载期激活自由段后即用（VA 出自由段访问器，段内 lowest first-fit——与栈同池
+// 装载期挂接自由段后即用（VA 出自由段访问器，段内 lowest first-fit——与栈同池
 // 取段，地址不再分区：堆 / mmap / 栈 slot 全部自低端起见缝插针）。allocate 出块
 // （立即分配：逐页帧 + PTE + 注入）、mmap 取懒匿名段（mmap/munmap：帧空 → 懒，
 // 触碰经缺页物化）。护栏事件（fence 记账）与 TLB 刷新属空间级事务，由调用方
@@ -29,7 +29,7 @@ pub(crate) struct HeapWindow {
 }
 
 impl HeapWindow {
-    /// 构造：绑定自由段访问器（须已激活，loader 保证先激活后注册）。
+    /// 构造：绑定自由段访问器（须已挂接，loader 保证先挂接后注册）。
     pub(crate) fn new(alloc: IntervalAllocator) -> Self {
         Self {
             inner: Dynamic::new(alloc),

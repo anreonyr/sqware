@@ -25,7 +25,7 @@ pub(crate) struct StackWindow {
 }
 
 impl StackWindow {
-    /// 构造：绑定自由段访问器（free 段激活时由 `SpaceInner::activate_free` 构造）。
+    /// 构造：绑定自由段访问器（free 段挂接时由 `SpaceInner::attach_free` 构造）。
     pub(crate) fn new(alloc: IntervalAllocator) -> Self {
         Self {
             inner: Dynamic::new(alloc),

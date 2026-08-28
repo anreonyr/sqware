@@ -336,7 +336,7 @@ pub(crate) fn task_exit(task_id: usize) {
 /// 留 DockMeta（Arc 归零归还）。视图随 Space 常数 Map drop 消失。
 fn map_shared(space: &Space, meta: &DockMeta, bytes: usize) -> Result<usize, MapError> {
     let size = bytes.next_multiple_of(PAGE_SIZE);
-    // free 段访问器（SpaceInner 激活自由段时留档；dock 属非窗口借用方）
+    // free 段访问器（SpaceInner 挂接自由段时留档；dock 属非窗口借用方）
     let va = space.with(|inner| {
         let free = inner.free.as_ref().ok_or(MapError::NoRegion)?;
         let base = free.allocate(size).map_err(|_| MapError::OutOfMemory)?;

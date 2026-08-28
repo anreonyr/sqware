@@ -16,7 +16,7 @@
 //
 // VA 统一出段表访问器（`memory::allocator::interval`）：一个 Space 一张段表
 // （IntervalInner），段经 register 注册即得绑定访问器（IntervalAllocator）——
-// free 段（栈/堆/mmap/dock 共享）由装载/引导期激活注册，frame 段（线程 trap 帧）
+// free 段（栈/堆/mmap/dock 共享）由装载/引导期挂接注册，frame 段（线程 trap 帧）
 // 为布局常量域构造即注册；段内 lowest first-fit，无方向分区。
 //
 // 窗口事务统一经 `Space::with` / `Space::with_flush`（锁恰好一次 + 按需刷 TLB）；
