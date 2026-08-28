@@ -276,7 +276,7 @@ pub fn info() -> &'static Machine {
 /// DRAM 物理上界（exclusive，恒等区可直读区间的上界）。
 /// 机器信息未注入（`machine::init` 前）→ None，调用方自行退回保守值。
 /// 取 None 而非 panic：崩溃现场绝不能再 panic。
-pub(crate) fn dram_end() -> Option<usize> {
+pub(crate) fn dram_edge() -> Option<usize> {
     MACHINE.get().map(|m| m.dram.range().end)
 }
 

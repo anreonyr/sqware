@@ -21,7 +21,7 @@ const IDENTITY_BASE: usize = 0x8000_0000;
 /// 保守 256M 上界——现场缓冲全在镜像静态区（恒在区内），取小只会让个别缓冲
 /// 走丢弃分支，不误。
 fn identity_edge() -> usize {
-    crate::machine::dram_end().unwrap_or(0x9000_0000)
+    crate::machine::dram_edge().unwrap_or(0x9000_0000)
 }
 
 struct Console;

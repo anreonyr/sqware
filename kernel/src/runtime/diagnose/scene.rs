@@ -208,7 +208,7 @@ fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
     // satp 若被覆写为坏值，裸读会 fault → 嵌套 panic；此处拦下，跳页继续。未注入
     // 机器信息 → 退回保守上界。
     let in_dram = |pa: PhysAddr| {
-        (0x8000_0000..crate::machine::dram_end().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
+        (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
     };
     while page < high && n < BT_DEPTH {
         let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
