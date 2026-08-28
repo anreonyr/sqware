@@ -87,10 +87,9 @@ def config [elf: path] {
       "-m", ($env.QEMU_MEM? | default "128")
       "-smp", ($env.QEMU_SMP? | default "4")
       "-seed", $seed
-      # sleep=off：icount 下禁止宿主随 vCPU 空闲而休眠——虚拟时钟冻结会让 guest
-      # 的 time CSR 停摆/快进（多核判据、定时器唤醒系统性失真的根因，见
-      # watch.rs WALL/Suspect）；off 保持时钟连续单调，seed 复现能力不变。
-      # "-icount", "auto,sleep=off"
+      # sleep=off：icount 下禁止宿主随 vCPU 空闲而休眠
+      # off 保持时钟连续单调，seed 复现能力不变。
+      "-icount", "auto,sleep=on"
       ...$semihosting
       ...$gdb
       ...$extra

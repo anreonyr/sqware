@@ -11,6 +11,8 @@
 
 use core::time::Duration;
 
+use alloc::sync::Arc;
+
 use ubi::{ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall};
 
 use crate::memory::PAGE_SIZE;
@@ -32,9 +34,11 @@ use ubi::dock::DOCK_KEY_TAG;
 
 /// envcall 分发。
 ///
-/// 入参 frame = 当前任务用户帧；返回待恢复帧：Starve/Park 返回下一任务帧，
-/// Reap 返回后调用方不得再触碰 frame。
-pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext {
+/// 入参 frame = 当前任务用户帧；`ident` = 当前任务身份（**Arc 所有权移交**——
+/// 可能触发 halt 的分支（Reap/Park/Wait → run）须先 `drop(ident)`，否则 halt
+/// 时身份 Arc 仍持最后任务 team → space 不 drop，关机审计误报帧泄漏）。
+/// 返回待恢复帧：Starve/Park 返回下一任务帧，Reap 返回后调用方不得再触碰 frame。
+pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapContext {
     let number = frame.gpr.x(Gprs::A7); // a7 = 调用号
     let call =
         Ucall::try_from(number).unwrap_or_else(|_| panic!("invalid envcall number: {number}"));
@@ -65,6 +69,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
             );
         }
         Ucall::Room(RoomCall::Reap) => {
+            drop(ident); // run（可能 halt）前释放身份——halt 时最后任务 space 得以下落
             return reap() as *mut TrapContext;
         }
         Ucall::Chrono(ChronoCall::Ticks) => {
@@ -73,6 +78,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
         Ucall::Room(RoomCall::Park) => {
             // sepc 前进（唤醒恢复时从 ecall 之后继续）。
             // a0 = 毫秒（Duration 边界；换算按 timebase 进行）
+            drop(ident); // run（可能 halt）前释放身份
             return park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext;
         }
         Ucall::Room(RoomCall::Wait) => {
@@ -94,6 +100,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
             } else {
                 Duration::from_millis(ms as u64)
             };
+            drop(ident); // run（可能 halt）前释放身份
             return wait(key, dur) as *mut TrapContext;
         }
         Ucall::Room(RoomCall::Wake) => {

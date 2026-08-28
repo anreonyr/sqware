@@ -153,9 +153,15 @@ fn spawn_demos() -> Result<(), MapError> {
         (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
         (&include_bytes!(env!("USER_TLSER"))[..], "tlser"),
         (&include_bytes!(env!("USER_DOCKER"))[..], "docker"),
+        (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
     ] {
         let (team, entry) = load_user(elf);
-        team.task().name(name).entry(entry).spawn()?;
+        let mut task = team.task().name(name).entry(entry);
+        // lisp 解释器递归求值栈深（其余 demo 16K 缺省即可）
+        if name == "lisp" {
+            task = task.stack(256 * 1024);
+        }
+        task.spawn()?;
         // debug: 每个演示空间 簿记↔页表 一致性审计
         #[cfg(debug_assertions)]
         team.space.audit();

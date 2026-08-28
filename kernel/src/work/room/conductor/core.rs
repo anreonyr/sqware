@@ -413,7 +413,9 @@ impl Conductor {
         // 后即按 va 归还帧，trap 不可信）。团队 Arc 归零即回收——地址空间随释放。
         self.demote(&exited.ident);
         TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
-        tie::exit();
+        // 注意：回收计数（tie::exit）不在入队时递增——须等 clear() 完成栈/trap
+        // 帧/团队空间归还后再计数，否则最后任务退出时另一核见 REAPED==PUSHED
+        // 立即 halt，本核 clear 未及回收 → 关机断言误报帧泄漏。
     }
 }
 
@@ -705,6 +707,9 @@ pub(super) fn clear() {
             }
         });
         drop(z);
+        // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
+        // halt 的关机断言无滞留可验。
+        tie::exit();
     }
 }
 

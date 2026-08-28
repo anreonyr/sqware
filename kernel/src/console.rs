@@ -75,19 +75,24 @@ pub(crate) fn push(space: &Space, va: usize, len: usize) -> bool {
 
 /// 从控制台拉一个字节（**非阻塞**）：DBCN `ConsoleRead` 读 1 字节；无输入 → `None`。
 ///
-/// 缓冲用内核栈局部量（内核镜像/栈恒等映射，VA=PA——Dbcn 按物理地址写）；
-/// SBI 返回值 = 实际读到字节数（0 = 无输入可用）。
+/// 缓冲取**静态区**（原子字节防多核并发读写；栈局部量不可用——trap 栈在内核
+/// 高半区）；其物理地址经**内核空间**逐段翻译（`segments`，与 [`push`] 同机制
+/// ——不假设恒等映射；PULL_BUF 是内核地址，用户空间不可见，故取内核空间，
+/// 其 DRAM 恒等映射涵盖 .bss）。SBI 返回值 = 实际读到字节数（0 = 无输入可用）。
+static PULL_BUF: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
 pub(crate) fn pull() -> Option<u8> {
-    let mut byte = 0u8;
+    let va = VirtAddr::from_raw(&PULL_BUF as *const _ as usize);
+    let (pa, _flags, _len) = crate::work::unit::team::kernel()?.space.segments(va, 1).next()?;
     let r = DbcnCall::new(Dbcn::ConsoleRead)
         .args(SArgs {
             a0: 1,
-            a1: (&mut byte as *mut u8) as usize,
+            a1: pa.as_usize(),
             ..Default::default()
         })
         .call();
     match r {
-        Ok(n) if n > 0 => Some(byte),
+        Ok(n) if n > 0 => Some(PULL_BUF.load(core::sync::atomic::Ordering::Relaxed)),
         _ => None,
     }
 }

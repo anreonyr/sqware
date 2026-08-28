@@ -186,7 +186,7 @@ index_from! {
     RoomCall { Starve = 0, Park = 1, Reap = 2, Wait = 3, Wake = 4 }
     TaskCall { Spawn = 0 }
     MemoryCall { Allocate = 0, Deallocate = 1, Mmap = 2, Munmap = 3, Mprotect = 4 }
-    IOCall { Put = 0 }
+    IOCall { Put = 0, Get = 1 }
     ChronoCall { Ticks = 0, Clock = 1 }
     MailCall {
         PortOpen = 0, PortShut = 1, PortPush = 2, PortPull = 3,

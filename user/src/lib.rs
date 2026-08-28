@@ -24,6 +24,9 @@ pub mod mail;
 /// 用户 dock：共享内存邮路（多 pier 生产 / 唯一 quay 消费，零拷贝）。
 pub mod dock;
 
+/// 用户 lisp：教学 Lisp 语言内核 + shell 适配（独占控制台输入）。
+pub mod lisp;
+
 /// 域适配层：每个域操作一段薄封装，只转发 `ubi::UcallBuilder`。
 pub mod env {
     use core::time::Duration;

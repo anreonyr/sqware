@@ -368,14 +368,16 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             put!("unhandled interrupt: {other:?}\n{frame:#?}\n");
             frame as *mut TrapContext
         }
-        // 用户态环境调用（U 态 ecall）：envcall 表分发（ecall 必有任务）
-        Trap::Exception(Exception::UserEnvCall) => crate::runtime::switcher::envcall::dispatch(
-            frame,
-            ident
-                .as_ref()
-                .and_then(Current::live)
-                .expect("envcall without running task"),
-        ),
+        // 用户态环境调用（U 态 ecall）：envcall 表分发（ecall 必有任务）。
+        // 身份 Arc **移交**给 dispatch：其内部在可能触发 halt（run）的分支（Reap/
+        // Park/Wait）先 drop——否则 halt 时本核 trap_handler 仍持最后任务的
+        // Arc<TaskIdent> → team → space 被钉住不 drop，关机审计误报帧泄漏。
+        Trap::Exception(Exception::UserEnvCall) => {
+            let Some(Current::Live(ident_arc)) = ident else {
+                panic!("envcall without running task");
+            };
+            crate::runtime::switcher::envcall::dispatch(frame, ident_arc)
+        }
         // 用户态缺页（解析失败即 panic）。SPP=1（内核态）缺页：guard 已在入口
         // 特判，其余内核缺页 = 内核 bug → fatal
         Trap::Exception(
