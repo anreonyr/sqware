@@ -428,6 +428,18 @@ pub(super) fn conductors() -> &'static [Conductor] {
     CONDUCTORS.get().expect("conductors not initialized")
 }
 
+/// 执行核调度器（`tp → PerHart.conductor` 直达，零索引——替代
+/// `&conductors()[hart_id()]` 的「读 id → 数组索引 → 取元素」三步）。
+///
+/// # Safety
+/// 仅内核态调用；boot 期 `conductor::boot::init` 已 `set_conductor` 填充
+/// （`machine::conductor()` 的 Acquire 配对 Release store）。指向 CONDUCTORS
+/// 数组元素，'static。
+pub(super) fn current() -> &'static Conductor {
+    // SAFETY: tp 直达读出的指针非空（boot 后恒填充）且指向 CONDUCTORS 元素。
+    unsafe { &*(crate::machine::conductor() as *const Conductor) }
+}
+
 /// 全局容器：Blocked（睡眠映射 handle→Task）/ Reaped（回收队列）任务集合。
 ///
 /// blocked 以 deadline 句柄为键：条目即任务本身，阻塞原因（含 wake_at）在任务
@@ -528,7 +540,7 @@ pub(super) fn wait() -> Option<Arc<Task>> {
     let me = machine::hart_id();
     tie::sleep(me);
     // 置位后复查：防「检查完 → 置位 → 睡」窗口内的 push 漏唤醒
-    let found = conductors()[me].pop().or_else(steal);
+    let found = current().pop().or_else(steal);
     if let Some(task) = found {
         tie::wake(me);
         return Some(task);
@@ -561,7 +573,7 @@ pub(super) fn wait() -> Option<Arc<Task>> {
         }
         // 假醒：也可能被 yell 的 IPI 唤来 steal（有活入队）——先复查取活，
         // 有任务即正常出口（清位交外层）；真无活才保持睡眠位回睡。
-        if let Some(task) = conductors()[me].pop().or_else(steal) {
+        if let Some(task) = current().pop().or_else(steal) {
             tie::wake(me);
             return Some(task);
         }
@@ -605,8 +617,7 @@ pub fn unpark() -> bool {
                 let mut task = w.task;
                 Task::exclusive(&mut task).transform(TaskState::Starved);
                 trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-                let me = machine::hart_id();
-                conductors()[me].push(task);
+                current().push(task);
                 tie::yell();
             }
             continue;
@@ -620,8 +631,7 @@ pub fn unpark() -> bool {
         woke = true;
         Task::exclusive(&mut task).transform(TaskState::Starved);
         trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-        let me = machine::hart_id();
-        conductors()[me].push(task);
+        current().push(task);
         tie::yell();
     }
     woke
@@ -631,7 +641,6 @@ pub fn unpark() -> bool {
 /// 空 → pend 置位（防漏唤醒）。返回是否唤到人。消费方 = utask/envcall；
 /// 跨核唤醒经 steal 再平衡（与 unpark 一致）。
 pub(super) fn wake(key: WaitKey) -> bool {
-    let me = machine::hart_id();
     let popped = {
         let mut ws = wait_sites().lock();
         let site = ws.entry(key).or_insert(WaitSite {
@@ -657,7 +666,7 @@ pub(super) fn wake(key: WaitKey) -> bool {
     let mut task = w.task;
     Task::exclusive(&mut task).transform(TaskState::Starved);
     trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-    conductors()[me].push(task);
+    current().push(task);
     tie::yell();
     true
 }

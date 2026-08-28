@@ -31,7 +31,7 @@ global_asm!(
     ".globl _boot_entry",
     "_boot_entry:",
     "    la   t0, PER_HART", // &PER_HART[0]（恒等映射，Bare 下 PC 相对即物理地址）
-    "    slli t1, a0, 4",    // a0 = hartid（HSM Start 传入）· 16（PerHart 槽宽）
+    "    slli t1, a0, 5",    // a0 = hartid（HSM Start 传入）· 32（PerHart 槽宽 2⁵）
     "    add  tp, t0, t1",   // tp = 本 hart PerHart 指针（入口约定，见 `hart_id()`）
     "    csrc sstatus, 2",
     "    mv   sp, a1", // opaque = 本 hart trap 栈顶（HSM Start 传入）

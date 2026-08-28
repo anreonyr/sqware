@@ -3,12 +3,11 @@
 // 陷阱路径入口：run——取活/轮转统一入口。运行状态查询已并入核心（ident() 身份
 // 槽，无锁、不设查询门面）。
 
-use crate::machine;
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::tie;
 use crate::work::unit::task::{Task, TaskState};
 
-use super::core::{conductors, steal, wait};
+use super::core::{current, steal, wait};
 
 /// 统一入口：running 预算 > 1 → 续跑（只减计数不重排）；== 1 → 转 Starved
 /// 轮转；无 running → 取活（自核队首 → 跨核 steal → WFI）。
@@ -20,8 +19,7 @@ pub fn run() -> usize {
     //    覆盖空闲/WFI 核经 wait() 在**内核态**处理 IPI 唤醒的路径；常运行
     //    时恒 no-op。
     crate::runtime::diagnose::halt::hush();
-    let me = machine::hart_id();
-    let s = &conductors()[me];
+    let s = current();
     let mut i = s.inner.lock();
     if let Some(mut cur) = i.running.take() {
         let ticks_left = match cur.state() {

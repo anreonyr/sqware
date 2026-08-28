@@ -1,7 +1,7 @@
 // 机器设备信息 — 启动时从设备树一次性解析出的纯值（无引用、无 fdt 依赖）
 
 use core::ops;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::layout::{HART_FRAME_BASE, ROOT_STACK_SIZE};
 use crate::lock::OnceLock;
@@ -85,19 +85,28 @@ pub fn hart_id() -> usize {
 
 /// per-hart 上下文块——内核态 tp 指向本结构（替代旧「tp 存裸 hartid」约定）。
 ///
-/// 汇编消费端（`__strap`/`__restore` 定位本 hart 帧 VA、`reap` 读 hartid）
+/// 汇编消费端（`__strap`/`__restore` 定位本 hart 帧 VA、调度器经 tp 直达）
 /// 按本结构裸偏移访问，布局由编译期断言锁死（`offset_of` 检查）。
 ///
 /// 为什么是常量数组而非运行时分配：boot 汇编（`_start`/`_boot_entry`）在
 /// 机器信息注入前就要设 tp，数组必须是链接期已知符号；槽数= MAX_HART_SLOTS
 /// （VA 布局表达上限）；物理支撑由 boot 期 per-hart 开销校验保证（见 trap::init）。
+/// 槽宽 32 B = 2⁵：boot 汇编单条 `slli` 索引（id·32），pad 字段仅为凑宽。
+///
+/// 无 `Clone`/`Copy`（`AtomicPtr` 不支持）——const 构造逐元素填数组，
+/// 消费端经指针/原子访问，不整值传递。
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub struct PerHart {
     /// 本 hart 编号（offset 0x00；`hart_id()` 读这里）。
     pub id: usize,
     /// 本 hart 帧 VA（offset 0x08；`HART_FRAME_BASE + id·PAGE`，`__strap` 帧定位）。
     pub frame: VirtAddr,
+    /// 本 hart 调度器指针（offset 0x10；boot 期 `conductor::boot::init` 经
+    /// [`set_conductor`] 原子 store——调度器在堆上动态分配，运行时才知道地址，
+    /// 故为 PerHart 唯一运行时填充字段；`current()` 经 tp 直达零索引）。
+    pub conductor: AtomicPtr<()>,
+    /// 槽对齐保留（offset 0x18）：凑 32 B 使 boot 汇编 `slli a0, 5` 单条索引。
+    _pad: usize,
 }
 
 impl PerHart {
@@ -106,23 +115,31 @@ impl PerHart {
             id,
             // 布局常量纯算术：帧区基址 + 槽位偏移（同 layout.rs 推导）。
             frame: VirtAddr::wrap(HART_FRAME_BASE.as_usize() + id * PAGE_SIZE),
+            conductor: AtomicPtr::new(core::ptr::null_mut()),
+            _pad: 0,
         }
     }
 }
 
-/// per-hart 上下文数组（4096 槽 × 16 B = 64 KiB 静态数据）。
+/// per-hart 上下文数组（4096 槽 × 32 B = 128 KiB 静态数据）。
 ///
 /// `no_mangle`：boot 汇编经 `la t0, PER_HART` PC 相对定位（恒等映射，Bare 期
 /// PC 相对即物理地址）。槽位随 `MAX_HART_SLOTS`（VA 布局表达上限）。
 #[unsafe(no_mangle)]
 static PER_HART: [PerHart; MAX_HART_SLOTS] = {
-    let mut a = [PerHart::at(0); MAX_HART_SLOTS];
-    let mut i = 1;
+    // const 逐元素构造（PerHart 无 Copy，`[expr; N]` 复制初始化不可用）：
+    // MaybeUninit 数组 + 循环写，全部槽位填满后 assume_init。
+    let mut a: core::mem::MaybeUninit<[PerHart; MAX_HART_SLOTS]> = core::mem::MaybeUninit::uninit();
+    // 逐元素写：先把数组槽指针升为 PerHart 指针（stride 同数组元素）。
+    let ptr = a.as_mut_ptr().cast::<PerHart>();
+    let mut i = 0;
     while i < MAX_HART_SLOTS {
-        a[i] = PerHart::at(i);
+        // SAFETY: 逐元素写，i 恒 < MAX_HART_SLOTS。
+        unsafe { ptr.add(i).write(PerHart::at(i)) };
         i += 1;
     }
-    a
+    // SAFETY: MAX_HART_SLOTS 个元素已全部写入。
+    unsafe { a.assume_init() }
 };
 
 /// 指定 hart 的 PerHart 指针（`tp` 装载值 / 帧 TP 装配共用）。
@@ -135,11 +152,45 @@ pub fn per_hart_ptr(id: usize) -> usize {
     core::ptr::addr_of!(PER_HART[id]) as usize
 }
 
-/// 编译期断言：PerHart 布局即 ABI（`__strap`/`__restore`/`reap` 汇编按偏移访问）。
+/// boot 期填充本 hart 调度器指针（`conductor::boot::init` 调用，每个 hart 恰好
+/// 一次；Release 发布 Conductor 构建完成——后续所有读取出现在 boot 流程之后
+/// （CONDUCTORS OnceLock、任务 spawn、HSM 启动等系统级屏障之后），Relaxed 读
+/// 亦见稳定值）。
+pub fn set_conductor(id: usize, p: *mut ()) {
+    debug_assert!(
+        id < MAX_HART_SLOTS,
+        "set_conductor: id {id} beyond MAX_HART_SLOTS"
+    );
+    PER_HART[id].conductor.store(p, Ordering::Release);
+}
+
+/// 执行核调度器指针（**tp 直达零索引**：`ld 0x10(tp)`，替代
+/// `conductors()[hart_id()]` 的「读 id → 数组索引 → 取元素」三步）。
+///
+/// # Safety
+/// 仅内核态（tp 恒为本 hart PerHart 指针）调用；boot 填充后恒非空（调度器
+/// 运行期必已初始化）。返回指针须由调用方 cast 回具体类型使用。
+#[inline]
+pub fn conductor() -> *mut () {
+    let p: usize;
+    // SAFETY: 读 tp 指向的 PerHart.conductor（内核态 tp 恒为本 hart PerHart 指针）。
+    unsafe {
+        core::arch::asm!(
+            "ld {0}, 0x10(tp)",
+            out(reg) p,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    p as *mut ()
+}
+
+/// 编译期断言：PerHart 布局即 ABI（`__strap`/`__restore` 帧定位、调度器 tp 直达
+/// 按偏移访问；槽宽 2⁵ 供 boot 汇编 `slli` 索引）。
 const _: () = {
     assert!(core::mem::offset_of!(PerHart, id) == 0x00);
     assert!(core::mem::offset_of!(PerHart, frame) == 0x08);
-    assert!(core::mem::size_of::<PerHart>() == 16);
+    assert!(core::mem::offset_of!(PerHart, conductor) == 0x10);
+    assert!(core::mem::size_of::<PerHart>() == 32);
 };
 
 /// 启动时从 DTB 解析出的机器设备信息（纯值，Copy，可安全存入 static）。

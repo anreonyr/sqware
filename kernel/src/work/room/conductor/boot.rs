@@ -15,7 +15,13 @@ use super::trap::run;
 pub fn init() {
     let n = machine::hart_count();
     assert!(n > 0, "no harts");
-    let sched: Box<[Conductor]> = (0..n).map(Conductor::new).collect();
+    let mut sched: Box<[Conductor]> = (0..n).map(Conductor::new).collect();
+    // per-hart 直达挂接：tp → PerHart.conductor——借未发布前的 `&mut` 切片回填
+    // 每核调度器指针（随后 Box::leak 进 CONDUCTORS；current() 零索引依赖此项，
+    // 先于任何调度器访问）。
+    for (h, c) in sched.iter_mut().enumerate() {
+        machine::set_conductor(h, c as *mut Conductor as *mut ());
+    }
     assert!(
         CONDUCTORS.set(Box::leak(sched)).is_ok(),
         "conductors double init"
