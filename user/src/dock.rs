@@ -107,7 +107,10 @@ impl Shared {
     fn slot_ptr(&self, idx: usize) -> *mut u8 {
         let mask = self.slots() - 1;
         // SAFETY: 偏移在共享区内（buffer 起点 + 槽位）；调用方按槽长访问。
-        unsafe { self.base.add(dock::OFF_BUFFER + (idx & mask) * self.item_len()) }
+        unsafe {
+            self.base
+                .add(dock::OFF_BUFFER + (idx & mask) * self.item_len())
+        }
     }
 
     /// 取锁（自旋：swap 1 → 持锁）。

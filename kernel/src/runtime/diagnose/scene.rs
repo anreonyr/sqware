@@ -193,17 +193,15 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
 fn kbt_read(f: usize) -> Option<(usize, usize)> {
     let page = f & !(PAGE_SIZE - 1);
     let satp_val = satp::read().bits();
-    let ppn = (satp_val & ((1usize << 44) - 1)) >> 0; // satp.PPN（宽 44）
+    let ppn = satp_val & ((1usize << 44) - 1); // satp.PPN（宽 44）
     let in_dram = |pa: PhysAddr| {
         (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
     };
-    let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
+    let (pa0, flags) = crate::memory::manager::table::TableNode::walk_raw(
         PhysAddr::from_raw(ppn << 12),
         VirtAddr::from_raw(page),
         in_dram,
-    ) else {
-        return None;
-    };
+    )?;
     if !flags.contains(PteFlags::R) {
         return None;
     }
@@ -220,17 +218,15 @@ fn kbt_read(f: usize) -> Option<(usize, usize)> {
 fn kbt_word(a: usize) -> Option<usize> {
     let page = a & !(PAGE_SIZE - 1);
     let satp_val = satp::read().bits();
-    let ppn = (satp_val & ((1usize << 44) - 1)) >> 0;
+    let ppn = satp_val & ((1usize << 44) - 1);
     let in_dram = |pa: PhysAddr| {
         (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
     };
-    let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
+    let (pa0, flags) = crate::memory::manager::table::TableNode::walk_raw(
         PhysAddr::from_raw(ppn << 12),
         VirtAddr::from_raw(page),
         in_dram,
-    ) else {
-        return None;
-    };
+    )?;
     if !flags.contains(PteFlags::R) {
         return None;
     }

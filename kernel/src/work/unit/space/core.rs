@@ -28,7 +28,7 @@ use crate::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE, TRAMPOLINE};
 use crate::lock::{Level, RelLock, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
-use crate::memory::allocator::interval::{register, IntervalAllocator, IntervalInner};
+use crate::memory::allocator::interval::{IntervalAllocator, IntervalInner, register};
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
@@ -81,10 +81,7 @@ impl SpaceInner {
         // 段表：interval 零 up-front（∝ 存活块）。frame 段为布局常量域，构造即
         // 注册；自由段由调用方按空间种类激活（内核 unit::init / 用户 loader），
         // 激活时构造栈窗口并留 free 访问器（堆窗口由 loader 取访问器注册）。
-        let alloc = Arc::new(SpinLock::new_level(
-            Level::Alloc,
-            IntervalInner::new(),
-        ));
+        let alloc = Arc::new(SpinLock::new_level(Level::Alloc, IntervalInner::new()));
         let frame_acc = register(
             &alloc,
             TEAM_FRAME_BASE.as_usize(),
@@ -129,7 +126,7 @@ impl SpaceInner {
         self.stack
             .iter()
             .map(|s| &s.inner)
-            .chain([&self.frame.inner].into_iter())
+            .chain([&self.frame.inner])
             .chain(self.heap.iter().map(|h| &h.inner))
     }
 
@@ -138,7 +135,7 @@ impl SpaceInner {
         self.stack
             .iter_mut()
             .map(|s| &mut s.inner)
-            .chain([&mut self.frame.inner].into_iter())
+            .chain([&mut self.frame.inner])
             .chain(self.heap.iter_mut().map(|h| &mut h.inner))
     }
 
@@ -164,7 +161,7 @@ impl SpaceInner {
         let child = stack
             .iter_mut()
             .map(|s| &mut s.inner)
-            .chain([&mut frame.inner].into_iter())
+            .chain([&mut frame.inner])
             .chain(heap.iter_mut().map(|h| &mut h.inner))
             .flat_map(|w| w.children.iter_mut())
             .find(|m| m.va == va)

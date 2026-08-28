@@ -103,7 +103,7 @@ where
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
     let _task = spawn(
-        (uktask_trampoline as extern "C" fn(usize) -> !) as usize,
+        (utask_trampoline as extern "C" fn(usize) -> !) as usize,
         ptr,
     )
     .expect("task spawn failed");
@@ -113,7 +113,7 @@ where
 /// 新线程共享入口（U 态）：a0 = 双装箱闭包薄指针；先装配本线程 TLS（tp → 块），
 /// 再调闭包 → 退出。
 #[unsafe(no_mangle)]
-pub extern "C" fn uktask_trampoline(arg: usize) -> ! {
+pub extern "C" fn utask_trampoline(arg: usize) -> ! {
     // 本线程 TLS 装配（与主线程 bootstrap 同位）：tp = 本线程 TLS 块基址
     let tls_base = tls::alloc().expect("tls alloc failed");
     // SAFETY: 写 tp（用户态自由；本线程刚出生，无旧值需保留）。

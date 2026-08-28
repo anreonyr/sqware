@@ -53,9 +53,7 @@ impl HeapWindow {
     ) -> Result<VirtAddr, MapError> {
         let flags =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-        let va = self
-            .inner
-            .allocate(size, flags, MapKind::Anonymous, None)?;
+        let va = self.inner.allocate(size, flags, MapKind::Anonymous, None)?;
         let pages = size / PAGE_SIZE;
         let mut mapped = 0usize;
         while mapped < pages {

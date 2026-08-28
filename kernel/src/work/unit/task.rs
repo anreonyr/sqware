@@ -242,8 +242,7 @@ impl TaskBuilder {
         // 失败回滚：按 owner 摘栈 slot（帧随子 Map drop 归还）
         let rollback_stack = |space: &crate::work::unit::space::Space| {
             space.with_flush(|inner| {
-                if let Some((slot_va, slot_size)) =
-                    inner.stack.as_mut().and_then(|s| s.reclaim(id))
+                if let Some((slot_va, slot_size)) = inner.stack.as_mut().and_then(|s| s.reclaim(id))
                 {
                     inner.durable.unmap_frames(slot_va, slot_size);
                 }

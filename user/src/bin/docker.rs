@@ -3,10 +3,10 @@
 
 extern crate alloc;
 
-use user::dock::{open, Pier};
+use user::dock::{Pier, open};
 use user::env::{self, put};
-use user::task;
 use user::mail::MSG_LEN;
+use user::task;
 
 // docker：dock 共享内存邮路全链路——主任务建 dock（1 pier + 1 quay），子任务
 // clone 第二个 pier 并发 push 序号消息（槽满 → wait 阻塞），quay 主任务 pull

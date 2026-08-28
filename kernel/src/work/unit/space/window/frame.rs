@@ -48,7 +48,9 @@ impl FrameWindow {
         owner: usize,
     ) -> Result<(VirtAddr, PhysAddr), MapError> {
         let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
-        let va = self.inner.allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
+        let va = self
+            .inner
+            .allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
         let page: Frame = unsafe {
             Box::try_new_zeroed_in(allocator())
                 .map_err(|_| MapError::OutOfMemory)?

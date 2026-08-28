@@ -22,9 +22,9 @@ use hashbrown::HashMap;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame;
+use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::MapError;
 use crate::work::unit::space::{MapKind, Space};
 
 use ubi::dock;
@@ -208,8 +208,8 @@ impl DockMeta {
     /// 从 frame 分配器分配共享区（单次 allocate = 物理连续），清零后初始化状态。
     fn allocate_shared(item_len: usize, slots: usize) -> Result<(NonNull<u8>, usize), MapError> {
         let bytes = (dock::OFF_BUFFER + item_len * slots).next_multiple_of(PAGE_SIZE);
-        let layout =
-            core::alloc::Layout::from_size_align(bytes, PAGE_SIZE).map_err(|_| MapError::NotAligned)?;
+        let layout = core::alloc::Layout::from_size_align(bytes, PAGE_SIZE)
+            .map_err(|_| MapError::NotAligned)?;
         let ptr = frame::allocator()
             .allocate(layout)
             .map_err(|_| MapError::OutOfMemory)?;
