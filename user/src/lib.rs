@@ -15,6 +15,9 @@ pub mod heap;
 /// 用户 task：`spawn`/`closure`/`Join`。
 pub mod task;
 
+/// 用户 TLS 地基：每线程独立 tp → TLS 块（alloc/base/bootstrap）。
+pub mod tls;
+
 /// 用户 mail：port 内核邮路阻塞封装。
 pub mod mail;
 

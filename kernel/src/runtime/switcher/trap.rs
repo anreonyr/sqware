@@ -104,28 +104,6 @@ fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
     }
 }
 
-/// 由当前 sp（trap 栈体内）反解 hart 并写入 tp = 本 hart PerHart 指针——用户态
-/// 可自由改写 tp，而内核调度/锁/canary 全部依赖 hart_id()（经 tp 读 PerHart.id）；
-/// trap 入口必须先重建。
-///
-/// 汇编不能做这件事：trampoline 执行于 TRAMPOLINE VA，PC 相对引用跨页符号会
-/// 算出错误地址（页身份模块的寻址约束）。C 代码执行于链接地址，固定布局纯算术
-/// 反解无此问题。异常 sp（窗口外/guard/早期 boot）回退 hart 0，与既有
-/// `unwrap_or(0)` 语义一致（hart 0 的 PerHart 指针恒有效）。
-fn establish_tp() {
-    let sp: usize;
-    // SAFETY: 读当前栈指针，纯读无副作用。
-    unsafe {
-        core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
-    }
-    let hart = trap_stack_hart(sp).unwrap_or(0);
-    let tp = crate::machine::per_hart_ptr(hart);
-    // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建本 hart PerHart 指针）。
-    unsafe {
-        core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
-    }
-}
-
 /// trap 栈物理块基址（`init` 的装配产物）。仅 boot_harts 组装
 /// HSM opaque（副核启动栈物理栈顶 = base + (h+1)·SEGMENT）使用。
 pub fn trap_stack() -> usize {
@@ -292,7 +270,17 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
 pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
     // 0. 重建内核 tp（= 本 hart PerHart 指针）：用户态可能改写过 tp；一切
     //    hart_id() 依赖它。由当前 sp（trap 栈体内）反解段号（trap_stack_hart）。
-    establish_tp();
+    let sp: usize;
+    // SAFETY: 读当前栈指针，纯读无副作用。
+    unsafe {
+        core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+    }
+    let hart = trap_stack_hart(sp).unwrap_or(0);
+    let tp = crate::machine::per_hart_ptr(hart);
+    // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建本 hart PerHart 指针）。
+    unsafe {
+        core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
+    }
 
     // 0.4 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。
     let ident = ident();

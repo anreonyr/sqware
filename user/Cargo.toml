@@ -69,3 +69,10 @@ path = "src/bin/stressor.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "user-tlser"
+path = "src/bin/tlser.rs"
+test = false
+bench = false
+doctest = false

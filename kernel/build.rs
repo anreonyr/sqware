@@ -81,6 +81,10 @@ fn main() {
         "cargo::rustc-env=USER_EXITER={}",
         bin_dir.join("user-exiter").display()
     );
+    println!(
+        "cargo::rustc-env=USER_TLSER={}",
+        bin_dir.join("user-tlser").display()
+    );
     // 用户源码/清单变更 → 重跑本脚本（重建 user + 重编内核）
     println!("cargo::rerun-if-changed=../user");
 }

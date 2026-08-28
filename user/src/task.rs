@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::env;
+use crate::tls;
 use ubi::UResult;
 
 /// 完成槽 — spawn/join 共享的接缝（新任务单写、join 单读，done 作完成栅栏）。
@@ -98,7 +99,7 @@ where
         // done 必见真值（丢失唤醒由内核 pend 闩闭合）。
         let _ = env::wake(slot_ptr as usize);
     });
-    // 双装箱瘦指针：a0 传该薄指针。
+    // 双装箱瘦指针：a0 传该薄指针；TLS 块地址随线程出生装配（trampoline 设 tp）。
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
     let _task = spawn(
@@ -109,9 +110,16 @@ where
     Join { slot }
 }
 
-/// 新线程共享入口（U 态）：a0 = 双装箱闭包薄指针；调闭包 → 退出。
+/// 新线程共享入口（U 态）：a0 = 双装箱闭包薄指针；先装配本线程 TLS（tp → 块），
+/// 再调闭包 → 退出。
 #[unsafe(no_mangle)]
 pub extern "C" fn uktask_trampoline(arg: usize) -> ! {
+    // 本线程 TLS 装配（与主线程 bootstrap 同位）：tp = 本线程 TLS 块基址
+    let tls_base = tls::alloc().expect("tls alloc failed");
+    // SAFETY: 写 tp（用户态自由；本线程刚出生，无旧值需保留）。
+    unsafe {
+        core::arch::asm!("mv tp, {}", in(reg) tls_base, options(nomem, nostack, preserves_flags));
+    }
     // SAFETY: arg 由 `closure` 传入的双装箱瘦指针；本线程独占回收。
     let holder: Box<Box<dyn FnOnce() + Send>> =
         unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce() + Send>) };
