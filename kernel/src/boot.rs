@@ -289,12 +289,14 @@ fn boot_harts() {
 /// 副核主流程：per-hart CSR 配置后进入 idle。
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn boot_main() -> ! {
-    // 副核 per-hart 初始化：先取共享内核 token（从 hart 帧读）切表，其余
-    // per-hart CSR（stvec/sscratch/sie）与 hart 0 走同一原语 trap::arm_hart。
+    // 副核 per-hart 初始化：先取共享内核 token（从**本 hart** 帧读——所有先上
+    // 台的核都在 trap::init 填过相同的 kernel_satp，读自身帧语义最贴 per-hart；
+    // 其余 per-hart CSR（stvec/sscratch/sie）与 hart 0 走同一原语 trap::arm_hart。
+    let me = machine::hart_id();
     let ktc = kernel()
         .expect("kernel team not initialized")
         .space
-        .translate(HART_FRAME_BASE)
+        .translate(machine::hart_frame())
         .expect("kernel frame not mapped")
         .0;
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
@@ -307,8 +309,6 @@ pub(crate) extern "C" fn boot_main() -> ! {
     }
     arm_hart();
     // 启动完成写进 trace（直打控制台会扰 panic 现场）。
-    trace::note(trace::EventKind::Boot(trace::BootEvent::Done {
-        hart: machine::hart_id(),
-    }));
+    trace::note(trace::EventKind::Boot(trace::BootEvent::Done { hart: me }));
     conductor::boot::idle()
 }

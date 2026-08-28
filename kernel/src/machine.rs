@@ -184,6 +184,26 @@ pub fn conductor() -> *mut () {
     p as *mut ()
 }
 
+/// 执行核 trap 帧 VA（**tp 直达**：`ld 0x08(tp)`，替代
+/// `HART_FRAME_BASE + hart_id()·PAGE` 的「读 id → 多重 → 加法」三步）。
+///
+/// 与 [`conductor`] 同款：内核态 tp 恒为本 hart PerHart 指针，编译期断言锁
+/// 偏移 0x08。消费：`arm_hart` 的 sscratch 接线（hart 0/副核统一原语，
+/// 执行时 tp 即在位）、boot 副核样板读取可先经 `translate` 取本 hart 帧。
+#[inline]
+pub fn hart_frame() -> VirtAddr {
+    let f: usize;
+    // SAFETY: 读 tp 指向的 PerHart.frame（内核态 tp 恒为本 hart PerHart 指针）。
+    unsafe {
+        core::arch::asm!(
+            "ld {0}, 0x08(tp)",
+            out(reg) f,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    VirtAddr::wrap(f)
+}
+
 /// 编译期断言：PerHart 布局即 ABI（`__strap`/`__restore` 帧定位、调度器 tp 直达
 /// 按偏移访问；槽宽 2⁵ 供 boot 汇编 `slli` 索引）。
 const _: () = {

@@ -210,8 +210,8 @@ pub fn init() {
 pub fn arm_hart() {
     unsafe {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
-        let me = machine::hart_id();
-        let scr = (HART_FRAME_BASE + me * PAGE_SIZE).as_usize();
+        // PerHart.frame 经 tp 直达（执行核帧 VA；与 __strap 帧定位同源）。
+        let scr = crate::machine::hart_frame().as_usize();
         core::arch::asm!("csrw sscratch, {}", in(reg) scr);
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠核被 SBI IPI 唤醒的前提（只唤醒不取中断）
