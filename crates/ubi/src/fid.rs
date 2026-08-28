@@ -182,4 +182,3 @@ index_from! {
     }
     ControlCall { Panic = 0 }
 }
-

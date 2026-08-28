@@ -52,9 +52,7 @@ impl HeapWindow {
     ) -> Result<VirtAddr, MapError> {
         let flags =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-        let va = self
-            .inner
-            .allocate(size, flags, MapKind::Anonymous, None)?;
+        let va = self.inner.allocate(size, flags, MapKind::Anonymous, None)?;
         let pages = size / PAGE_SIZE;
         let mut mapped = 0usize;
         while mapped < pages {
@@ -86,7 +84,12 @@ impl HeapWindow {
     /// 用户堆释放：窗口按 `(addr, size)` 精确匹配后移除子 Map（帧随 drop 归还）+
     /// 清叶子 PTE（含回收变空的中间表）。返回是否找到并释放（未分配/部分已释放的
     /// 区间返回 false，同旧块表精确匹配语义）。
-    pub(crate) fn deallocate(&mut self, durable: &mut Durable, addr: VirtAddr, size: usize) -> bool {
+    pub(crate) fn deallocate(
+        &mut self,
+        durable: &mut Durable,
+        addr: VirtAddr,
+        size: usize,
+    ) -> bool {
         // 1. 区间精确匹配释放 + 移除子 Map（未分配 → 返回 false）
         if !self.inner.deallocate(addr, size) {
             return false;

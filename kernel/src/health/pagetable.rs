@@ -37,13 +37,11 @@ pub fn pagetable() {
         // map：分配数据帧 + 中间表
         let mut frames: Vec<crate::memory::manager::table::Frame> = Vec::new();
         for _ in 0..(SIZE / PAGE_SIZE) {
-            frames.push(
-                unsafe {
-                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
-                        .expect("[health] pagetable: data frame")
-                        .assume_init()
-                },
-            );
+            frames.push(unsafe {
+                Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                    .expect("[health] pagetable: data frame")
+                    .assume_init()
+            });
         }
         let pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
         space

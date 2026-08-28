@@ -47,4 +47,3 @@ extern "C" fn main() -> ! {
     put("stressor: ok\n").ok();
     env::exit()
 }
-

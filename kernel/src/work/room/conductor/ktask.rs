@@ -7,8 +7,8 @@
 use core::arch::naked_asm;
 use core::time::Duration;
 
-use crate::runtime::switcher::trap::{persist, trap_stack_edge};
 use crate::runtime::switcher::trampoline::restore;
+use crate::runtime::switcher::trap::{persist, trap_stack_edge};
 
 use super::utask::{park as sched_park, reap as sched_reap, starve as sched_starve};
 

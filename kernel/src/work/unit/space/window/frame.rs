@@ -10,10 +10,10 @@ use alloc::boxed::Box;
 use crate::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
+use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::Frame;
-use crate::memory::manager::MapError;
 
 use super::super::durable::Durable;
 use super::super::dynamic::Dynamic;

@@ -176,7 +176,9 @@ impl Conductor {
             // 内核任务上台即写 tp = 本 hart PerHart 指针：被抢占恢复路径直接 sret
             // 回打断点（不经 ktask_trampoline 的 tp 重建），tp 必须在上台时就绪。
             if matches!(t.ident.team.space.kind(), SpaceKind::Kernel) {
-                frame.gpr.set_x(Gprs::TP, crate::machine::per_hart_ptr(self.hart));
+                frame
+                    .gpr
+                    .set_x(Gprs::TP, crate::machine::per_hart_ptr(self.hart));
             }
         }
         timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));

@@ -59,8 +59,12 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         inner.heap = Some(HeapWindow::new(image_end, edge));
         for seg in &parsed.segments {
             let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;
-            inner
-                .attach_durable(seg.vaddr, frames_for_segment(bytes, seg)?, flags, MapKind::Anonymous)?;
+            inner.attach_durable(
+                seg.vaddr,
+                frames_for_segment(bytes, seg)?,
+                flags,
+                MapKind::Anonymous,
+            )?;
         }
         Ok(())
     })?;

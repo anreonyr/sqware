@@ -101,8 +101,11 @@ where
     // 双装箱瘦指针：a0 传该薄指针。
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
-    let _task = spawn((uktask_trampoline as extern "C" fn(usize) -> !) as usize, ptr)
-        .expect("task spawn failed");
+    let _task = spawn(
+        (uktask_trampoline as extern "C" fn(usize) -> !) as usize,
+        ptr,
+    )
+    .expect("task spawn failed");
     Join { slot }
 }
 

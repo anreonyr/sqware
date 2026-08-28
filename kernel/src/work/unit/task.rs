@@ -8,10 +8,10 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::layout::{HART_FRAME_BASE, TASK_STACK_SIZE, IMAGE_BASE};
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::memory::manager::MapError;
+use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::memory::PAGE_SIZE;
+use crate::memory::manager::MapError;
+use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::runtime::switcher::context::TrapContext;
 use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::kernel;
@@ -298,7 +298,9 @@ impl TaskBuilder {
                 .expect("kernel frame not mapped")
                 .0
                 .as_usize() as *const TrapContext;
-            frame.init(&*ktc, &self.team, self.entry, stack_top, self.arg, frame_pa, frame_va);
+            frame.init(
+                &*ktc, &self.team, self.entry, stack_top, self.arg, frame_pa, frame_va,
+            );
         }
 
         // 入队收尾

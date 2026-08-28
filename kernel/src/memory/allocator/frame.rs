@@ -11,7 +11,7 @@ use alloc::{
 use super::fence::checker;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
-    memory::allocator::{bump, InitError, InitResult, Link},
+    memory::allocator::{InitError, InitResult, Link, bump},
 };
 
 struct Meta {

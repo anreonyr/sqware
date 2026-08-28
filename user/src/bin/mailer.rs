@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use user::env::{self, put};
-use user::mail::{Port, MSG_LEN};
+use user::mail::{MSG_LEN, Port};
 use user::task;
 
 // mailer：port 内核邮路全链路——子任务 push 10 轮序号消息（槽满 → wait 阻塞），

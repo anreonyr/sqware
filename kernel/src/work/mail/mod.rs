@@ -28,7 +28,11 @@ pub(crate) fn copy_in(space: &Space, dst: &mut [u8], va: usize) -> bool {
         // SAFETY: pa 为恒等映射物理地址（教学内核直接解引用）；l 在段界与
         // dst 剩余长度内。
         unsafe {
-            core::ptr::copy_nonoverlapping(pa.as_usize() as *const u8, dst.as_mut_ptr().add(off), l);
+            core::ptr::copy_nonoverlapping(
+                pa.as_usize() as *const u8,
+                dst.as_mut_ptr().add(off),
+                l,
+            );
         }
         off += l;
     }

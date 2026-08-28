@@ -35,7 +35,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
-use crate::work::room::conductor::core::{ident, unpark, Current};
+use crate::work::room::conductor::core::{Current, ident, unpark};
 use crate::work::room::conductor::trap::run;
 use crate::work::unit::space::{MapKind, SpaceKind};
 use crate::work::unit::team::kernel;

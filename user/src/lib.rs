@@ -41,7 +41,9 @@ pub mod env {
             a1: s.as_ptr() as usize,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::IO(IOCall::Put)).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::IO(IOCall::Put))
+            .args(args)
+            .call()?;
         Ok(())
     }
 
@@ -63,7 +65,9 @@ pub mod env {
             a0: d.as_millis() as usize,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Park)).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Park))
+            .args(args)
+            .call()?;
         Ok(())
     }
 
@@ -75,7 +79,9 @@ pub mod env {
             a1: ms,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Wait)).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Wait))
+            .args(args)
+            .call()?;
         Ok(())
     }
 
@@ -85,7 +91,9 @@ pub mod env {
             a0: key,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Wake)).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Room(RoomCall::Wake))
+            .args(args)
+            .call()?;
         Ok(v0)
     }
 
@@ -102,7 +110,9 @@ pub mod env {
             a0: size,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Allocate)).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Allocate))
+            .args(args)
+            .call()?;
         Ok(v0)
     }
 
@@ -114,7 +124,9 @@ pub mod env {
             a1: size,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Deallocate)).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Deallocate))
+            .args(args)
+            .call()?;
         Ok(())
     }
 
@@ -127,7 +139,9 @@ pub mod env {
             a0: size,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mmap)).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mmap))
+            .args(args)
+            .call()?;
         Ok(v0)
     }
 
@@ -140,7 +154,9 @@ pub mod env {
             a2: addr,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mmap)).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mmap))
+            .args(args)
+            .call()?;
         Ok(v0)
     }
 
@@ -153,7 +169,9 @@ pub mod env {
             a1: size,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Munmap)).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Munmap))
+            .args(args)
+            .call()?;
         Ok(())
     }
 
@@ -167,7 +185,9 @@ pub mod env {
             a2: flags as usize,
             ..UArgs::default()
         };
-        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mprotect)).args(args).call()?;
+        let (_v0, _v1) = UcallBuilder::new(Ucall::Memory(MemoryCall::Mprotect))
+            .args(args)
+            .call()?;
         Ok(())
     }
 
@@ -179,7 +199,9 @@ pub mod env {
             a1: arg,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Task(TaskCall::Spawn)).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Task(TaskCall::Spawn))
+            .args(args)
+            .call()?;
         Ok(v0)
     }
 
@@ -192,7 +214,9 @@ pub mod env {
             a2: stack,
             ..UArgs::default()
         };
-        let (v0, _v1) = UcallBuilder::new(Ucall::Task(TaskCall::Spawn)).args(args).call()?;
+        let (v0, _v1) = UcallBuilder::new(Ucall::Task(TaskCall::Spawn))
+            .args(args)
+            .call()?;
         Ok(v0)
     }
 
@@ -202,7 +226,9 @@ pub mod env {
             a0: code,
             ..UArgs::default()
         };
-        let _ = UcallBuilder::new(Ucall::Control(ControlCall::Panic)).args(args).call();
+        let _ = UcallBuilder::new(Ucall::Control(ControlCall::Panic))
+            .args(args)
+            .call();
         unsafe { core::hint::unreachable_unchecked() }
     }
 

@@ -18,7 +18,7 @@ use riscv::register::time;
 
 use crate::lock::{Level, SpinLock};
 use crate::runtime::chrono::clock::Instant;
-use sbi::{fid::Timer, scall::SArgs, TimerCall};
+use sbi::{TimerCall, fid::Timer, scall::SArgs};
 
 /// 镜像的无 tock 哨兵（内部；对外以 next_tock() -> None 表达）。
 const NONE: u64 = u64::MAX;

@@ -103,4 +103,3 @@ impl<T> OnceLock<T> {
         self.initialized.load(Ordering::Acquire)
     }
 }
-

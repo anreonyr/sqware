@@ -166,7 +166,6 @@ fn spawn_demos() -> Result<(), MapError> {
         .name("ktask")
         .closure(|| {
             putln!("ktask");
-
         })?;
     // 可抢占内核验证：常驻循环任务（每轮百万次增量 + 打印进度）。被 S-timer 抢占
     // 恢复正确 → round 顺序不重不乱、n 单调递增、hart 稳定；现场丢失则崩/乱序。
@@ -197,7 +196,10 @@ fn spawn_demos() -> Result<(), MapError> {
         .name("sleep")
         .closure(|| {
             for round in 0..3u32 {
-                crate::putln!("ktask sleep: round {round} @ hart {}", crate::machine::hart_id());
+                crate::putln!(
+                    "ktask sleep: round {round} @ hart {}",
+                    crate::machine::hart_id()
+                );
                 crate::work::room::conductor::ktask::park(core::time::Duration::from_millis(200));
             }
             crate::putln!("ktask sleep: done");

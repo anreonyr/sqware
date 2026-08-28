@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use crate::machine;
 use crate::runtime::switcher::trampoline::restore;
 
-use super::core::{Conductor, CONDUCTORS};
+use super::core::{CONDUCTORS, Conductor};
 use super::trap::run;
 
 /// 按实际核数（DTB）动态分配 per-hart 调度器状态（调用**恰好一次**，先于任何

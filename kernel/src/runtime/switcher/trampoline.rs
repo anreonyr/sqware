@@ -26,20 +26,18 @@ global_asm!(
     ".align 12",
     ".globl __trampoline_start",
     "__trampoline_start:",
-
     // ── 陷阱入口（stvec Direct 目标）──────────────────────────────────
     ".globl __alltraps",
     "__alltraps:",
     "    csrr  t0, sstatus",
-    "    andi  t0, t0, (1 << 8)",          // SPP：0 = 来自用户态，1 = 来自内核态
+    "    andi  t0, t0, (1 << 8)", // SPP：0 = 来自用户态，1 = 来自内核态
     "    bnez  t0, __strap",
-
     // ── 用户态陷阱（__utrap）：现场存当前线程帧（sscratch 交换）────────────
     "__utrap:",
-    "    csrrw sp, sscratch, sp",          // sp = 本线程帧 VA；sscratch = 用户 sp
-    "    sd    x1,  0x38(sp)",             // gpr[1] = ra
+    "    csrrw sp, sscratch, sp", // sp = 本线程帧 VA；sscratch = 用户 sp
+    "    sd    x1,  0x38(sp)",    // gpr[1] = ra
     "    csrr  t0, sscratch",
-    "    sd    t0,  0x40(sp)",             // gpr[2] = 用户 sp
+    "    sd    t0,  0x40(sp)", // gpr[2] = 用户 sp
     "    sd    x3,  0x48(sp)",
     "    sd    x4,  0x50(sp)",
     "    sd    x5,  0x58(sp)",
@@ -70,14 +68,14 @@ global_asm!(
     "    sd    x30, 0x120(sp)",
     "    sd    x31, 0x128(sp)",
     "    csrr  t0, sstatus",
-    "    sd    t0,  0x130(sp)",            // sstatus
+    "    sd    t0,  0x130(sp)", // sstatus
     "    csrr  t0, sepc",
-    "    sd    t0,  0x138(sp)",            // sepc
+    "    sd    t0,  0x138(sp)", // sepc
     // 读内核切换元数据（趁 sp 仍是用户帧、用户 satp 有效）
-    "    ld    t0,  0x00(sp)",             // kernel_satp
-    "    ld    t1,  0x08(sp)",             // kernel_sp
-    "    ld    t2,  0x10(sp)",             // trap_handler
-    "    ld    a0,  0x20(sp)",             // self_pa
+    "    ld    t0,  0x00(sp)", // kernel_satp
+    "    ld    t1,  0x08(sp)", // kernel_sp
+    "    ld    t2,  0x10(sp)", // trap_handler
+    "    ld    a0,  0x20(sp)", // self_pa
     // 切内核页表（PC 仍在 trampoline，两空间同 VA，安全）
     "    csrw  satp, t0",
     "    sfence.vma",
@@ -85,9 +83,8 @@ global_asm!(
     // （tp 由 C 侧 trap_handler 入口按 sp 反解重建——见 establish_tp；汇编
     //   不能 PC 相对引用跨页符号，TRAMPOLINE VA 下 la 会算出错误地址）
     "    mv    sp, t1",
-    "    jalr  t2",                        // handler(frame_pa) -> frame_pa（续跑时恒为原帧）
+    "    jalr  t2", // handler(frame_pa) -> frame_pa（续跑时恒为原帧）
     "    j     __restore",
-
     // ── 内核态陷阱（__strap）：现场存**本 hart**帧（PerHart.frame 定位——tp
     //    指向本 hart 上下文块，帧 VA 取块内字段，见 machine::PerHart；栈切本
     //    hart trap 栈。tp 约定：内核态恒为本 hart PerHart 指针——入口/
@@ -96,8 +93,8 @@ global_asm!(
     //    内核缺页再次进入本路径，sscratch 已被污染——故帧址仍由 tp 重建，
     //    不读 sscratch）。 ──
     "__strap:",
-    "    csrrw sp, sscratch, sp",         // sp = 0（内核态约定）；sscratch = 被中断内核 sp
-    "    ld    sp, 0x08(tp)",            // sp = PerHart.frame（本 hart 帧 VA）
+    "    csrrw sp, sscratch, sp", // sp = 0（内核态约定）；sscratch = 被中断内核 sp
+    "    ld    sp, 0x08(tp)",     // sp = PerHart.frame（本 hart 帧 VA）
     "    sd    x1,  0x38(sp)",
     "    sd    x3,  0x48(sp)",
     "    sd    x4,  0x50(sp)",
@@ -129,18 +126,17 @@ global_asm!(
     "    sd    x30, 0x120(sp)",
     "    sd    x31, 0x128(sp)",
     "    csrr  t0, sscratch",
-    "    sd    t0,  0x40(sp)",             // gpr[2] = 被中断内核 sp
+    "    sd    t0,  0x40(sp)", // gpr[2] = 被中断内核 sp
     "    csrr  t0, sstatus",
     "    sd    t0,  0x130(sp)",
     "    csrr  t0, sepc",
     "    sd    t0,  0x138(sp)",
     // 经帧内元数据切到 per-hart trap 栈并进入 Rust handler
-    "    ld    t2,  0x10(sp)",             // trap_handler
-    "    ld    a0,  0x20(sp)",             // self_pa
-    "    ld    sp,  0x08(sp)",             // kernel_sp = per-hart trap 栈顶
+    "    ld    t2,  0x10(sp)", // trap_handler
+    "    ld    a0,  0x20(sp)", // self_pa
+    "    ld    sp,  0x08(sp)", // kernel_sp = per-hart trap 栈顶
     "    jalr  t2",
     "    j     __restore",
-
     // ── 上下文恢复：a0 = 目标帧 self_pa（物理地址）────────────────────
     // 用户帧 / hart 帧统一走此路径：切表前（物理访问有效）读帧内 self_va，切表
     // 后经该 VA 访问同一物理页收尾。
@@ -148,7 +144,7 @@ global_asm!(
     "__restore:",
     "    mv    sp, a0",
     "    ld    t0, 0x130(sp)",
-    "    andi  t0, t0, -3",            // 清 sstatus.SIE：恢复后到 sret 之间不得被中断打断
+    "    andi  t0, t0, -3", // 清 sstatus.SIE：恢复后到 sret 之间不得被中断打断
     "    csrw  sstatus, t0",
     "    ld    t0, 0x138(sp)",
     "    csrw  sepc, t0",
@@ -158,11 +154,11 @@ global_asm!(
     "    csrr  t0, sstatus",
     "    andi  t0, t0, (1 << 8)",
     "    bnez  t0, 1f",
-    "    ld    t0,  0x140(sp)",        // self_va（物理访问，切表前）
+    "    ld    t0,  0x140(sp)", // self_va（物理访问，切表前）
     "    csrw  sscratch, t0",
     "    j     2f",
     "1:",
-    "    ld    t0, 0x08(tp)",          // t0 = PerHart.frame（本 hart 帧 VA）
+    "    ld    t0, 0x08(tp)", // t0 = PerHart.frame（本 hart 帧 VA）
     "    csrw  sscratch, t0",
     "2:",
     // 恢复 GPR（x1、x3、x4、x7..x31；x2=sp、x5=t0、x6=t1 最后经 self_va 收尾）
@@ -194,16 +190,15 @@ global_asm!(
     "    ld    x29, 0x118(sp)",
     "    ld    x30, 0x120(sp)",
     "    ld    x31, 0x128(sp)",
-    "    ld    t0,  0x28(sp)",             // user_satp
-    "    ld    t1,  0x140(sp)",            // self_va（切表前取，物理访问）
+    "    ld    t0,  0x28(sp)",  // user_satp
+    "    ld    t1,  0x140(sp)", // self_va（切表前取，物理访问）
     "    csrw  satp, t0",
     "    sfence.vma",
-    "    mv    x5,  t1",                   // x5 = self_va（目标空间帧 VA）
-    "    ld    x6,  0x60(x5)",             // 原 t1
-    "    ld    x2,  0x40(x5)",             // 目标 sp（用户栈 / 内核栈）
-    "    ld    x5,  0x58(x5)",             // 原 t0（基址先读后写，合法）
+    "    mv    x5,  t1",       // x5 = self_va（目标空间帧 VA）
+    "    ld    x6,  0x60(x5)", // 原 t1
+    "    ld    x2,  0x40(x5)", // 目标 sp（用户栈 / 内核栈）
+    "    ld    x5,  0x58(x5)", // 原 t0（基址先读后写，合法）
     "    sret",
-
     ".globl __trampoline_end",
     "__trampoline_end:",
 );

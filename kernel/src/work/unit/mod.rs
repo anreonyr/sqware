@@ -141,11 +141,10 @@ pub fn init() -> MapResult<()> {
             // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页
             let n = machine::hart_count();
             for h in 0..n {
-                let page: crate::memory::manager::table::Frame = Box::try_new_zeroed_in(
-                    crate::memory::allocator::frame::allocator(),
-                )
-                .map_err(|_| MapError::OutOfMemory)?
-                .assume_init();
+                let page: crate::memory::manager::table::Frame =
+                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                        .map_err(|_| MapError::OutOfMemory)?
+                        .assume_init();
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
                 kernel_space.map(
                     HART_FRAME_BASE + h * PAGE_SIZE,

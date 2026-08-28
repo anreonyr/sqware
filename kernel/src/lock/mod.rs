@@ -79,10 +79,10 @@ pub(crate) use depend_enter;
 pub(crate) use depend_release;
 
 pub use bare::BareLock;
-pub use once::OnceLock;
-pub use reentrant::RelLock;
 /// 锁层级（depend 具名化；参与锁用 new_level 声明；None = exempt）。
 pub use depend::Level;
+pub use once::OnceLock;
+pub use reentrant::RelLock;
 pub use rw::RwLock;
 pub use spin::SpinLock;
 

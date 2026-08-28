@@ -4,7 +4,5 @@
 pub mod fid;
 pub mod ucall;
 
-pub use fid::{
-    ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall,
-};
+pub use fid::{ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall};
 pub use ucall::{UArgs, UError, UResult, UcallBuilder};

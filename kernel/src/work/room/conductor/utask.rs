@@ -7,7 +7,7 @@ use core::time::Duration;
 
 use crate::machine;
 
-use super::core::{clear, conductors, WaitKey};
+use super::core::{WaitKey, clear, conductors};
 use super::trap::run;
 
 /// 主动让出入口（envcall Starve 调用）：无视剩余预算立即轮转。

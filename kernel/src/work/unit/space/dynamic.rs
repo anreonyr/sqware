@@ -15,9 +15,9 @@ use alloc::vec::Vec;
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::interval::{Direction, IntervalAllocator};
+use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::MapError;
 
 use super::map::{Map, MapKind};
 
