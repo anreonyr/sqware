@@ -5,15 +5,17 @@
 //
 // 总览（**从高到低**排布；几何随模式，见 memory::manager::mode::lower/upper）：
 //
-// ┌─ 虚拟地址空间（顶锚 = TRAMPOLINE）
+// ┌─ 虚拟地址空间（顶锚 = TRAMPOLINE；Sv39 高半区顶部 336 MiB 窗口区）
 // │
 // ├─ [内核半区] lower .. TRAMPOLINE（段间相接不重叠）
 // │  ├─ TRAMPOLINE 页 4 KiB    0xFFFF_FFFF_FFFF_F000 ← 最高页（任何模式）
-// │  ├─ hart 帧区 16 MiB   0xFFFF_FFFF_FEFF_F000 ← HART_FRAME_BASE
+// │  │   （其上 2 MiB−4KiB 间隙留空：TRAMPOLINE 独占最后 2 MiB 区顶部，
+// │  │     下方窗口区自 2 MiB 边界起排——全部对齐，页表层级干净）
+// │  ├─ hart 帧区 16 MiB   0xFFFF_FFFF_FEE0_0000 ← HART_FRAME_BASE
 // │  │  └─ 4096 槽 × 4 KiB     HART_FRAME_SLOTS（每 hart 一帧）
-// │  ├─ team 帧区 ≈48 MiB     0xFFFF_FFFF_FBFF_E000 ← TEAM_FRAME_BASE
-// │  │  └─ 12289 页            TEAM_FRAME_WINDOW_SIZE（线程 trap 帧）
-// │  └─ trap 栈区 256 MiB    0xFFFF_FFFF_EBFF_E000 ← TRAP_STACK_BASE
+// │  ├─ team 帧区 64 MiB    0xFFFF_FFFF_FAE0_0000 ← TEAM_FRAME_BASE
+// │  │  └─ 16384 页            TEAM_FRAME_WINDOW_SIZE（线程 trap 帧）
+// │  └─ trap 栈区 256 MiB   0xFFFF_FFFF_EAE0_0000 ← TRAP_STACK_BASE
 // │     └─ 4096 槽 × 64 KiB    TRAP_STACK_SLOT_SIZE（guard 4 KiB + 栈体 60 KiB）
 // │
 // ├─（lower/upper：内核半区 ∥ 用户半区分界，处规范空洞）
@@ -53,6 +55,16 @@ pub(crate) const ROOT_STACK_SIZE: usize = 0x1_0000;
 /// trap 入口页固定 VA（任何模式最高页，规范）。
 pub(crate) const TRAMPOLINE: VirtAddr = VirtAddr::wrap(0xFFFF_FFFF_FFFF_F000);
 
+/// 窗口区顶锚 = TRAMPOLINE 页之下首个 2 MiB 边界（TRAMPOLINE 独占最后 2 MiB
+/// 区顶部 4 KiB；窗口区自 0xFFFF_FFFF_FFE0_0000 起，**全部窗口 2 MiB 对齐**）。
+///
+/// 为何对齐：Sv39 页表层级中 2 MiB 是 level-1 大页粒度（1 GiB 是 level-2 粒度）——
+/// 窗口基址对齐 2 MiB 让页表子树边界干净、可整窗用到 level-1 大页；且三窗口 +
+/// TRAMPOLINE 全落顶部 1 GiB 区（0xFFFF_FFFF_C000_0000 之上 336 MiB），level-2
+/// 单条覆盖全部窗口，中间表共享最大化。
+pub(crate) const KERNEL_TOP: VirtAddr =
+    VirtAddr::wrap(TRAMPOLINE.as_usize() - (2 * 1024 * 1024 - PAGE_SIZE));
+
 /// trampoline 页物理地址（链接符号 __trampoline_start）。
 pub(crate) fn trampoline_pa() -> PhysAddr {
     unsafe extern "C" {
@@ -63,12 +75,12 @@ pub(crate) fn trampoline_pa() -> PhysAddr {
 
 /// hart 帧槽数 = MAX_HART_SLOTS（4096 页 = 16 MiB 窗口）。
 pub(crate) const HART_FRAME_SLOTS: usize = MAX_HART_SLOTS;
-/// hart 帧区基址 = TRAMPOLINE − SLOTS·PAGE_SIZE。
+/// hart 帧区基址 = KERNEL_TOP − SLOTS·PAGE_SIZE（16 MiB，2 MiB 对齐）。
 pub(crate) const HART_FRAME_BASE: VirtAddr =
-    VirtAddr::wrap(TRAMPOLINE.as_usize() - HART_FRAME_SLOTS * PAGE_SIZE);
-/// team 帧区大小（≈48 MiB，止于 HART_FRAME_BASE）。
-pub(crate) const TEAM_FRAME_WINDOW_SIZE: usize = 0x400_0000 - (HART_FRAME_SLOTS - 1) * PAGE_SIZE;
-/// team 帧区基址 = HART_FRAME_BASE − TEAM_FRAME_WINDOW_SIZE。
+    VirtAddr::wrap(KERNEL_TOP.as_usize() - HART_FRAME_SLOTS * PAGE_SIZE);
+/// team 帧区大小 = 64 MiB（16384 帧；2 MiB 倍数，整窗可用 level-1 大页）。
+pub(crate) const TEAM_FRAME_WINDOW_SIZE: usize = 64 * 1024 * 1024;
+/// team 帧区基址 = HART_FRAME_BASE − TEAM_FRAME_WINDOW_SIZE（64 MiB，2 MiB 对齐）。
 pub(crate) const TEAM_FRAME_BASE: VirtAddr =
     VirtAddr::wrap(HART_FRAME_BASE.as_usize() - TEAM_FRAME_WINDOW_SIZE);
 
@@ -78,7 +90,7 @@ pub(crate) const TRAP_STACK_SLOT_SIZE: usize = 64 * 1024;
 pub(crate) const TRAP_STACK_SLOT_SHIFT: usize = 16;
 /// trap 栈段 guard 页（= 一页）。
 pub(crate) const TRAP_STACK_GUARD: usize = PAGE_SIZE;
-/// trap 栈窗口基址 = TEAM_FRAME_BASE − MAX_HART_SLOTS·64 KiB（256 MiB）。
+/// trap 栈窗口基址 = TEAM_FRAME_BASE − MAX_HART_SLOTS·64 KiB（256 MiB，2 MiB 对齐）。
 pub(crate) const TRAP_STACK_BASE: VirtAddr =
     VirtAddr::wrap(TEAM_FRAME_BASE.as_usize() - (MAX_HART_SLOTS << TRAP_STACK_SLOT_SHIFT));
 
@@ -97,15 +109,20 @@ const _: () = {
     // 注意：VirtAddr 的 Add/Sub/PartialEq 非 const fn，此处一律用 as_usize() 裸算术。
     assert!(TRAMPOLINE.as_usize().is_multiple_of(PAGE_SIZE));
     assert!(HART_FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
-    // hart 帧区：HART_FRAME_BASE 起 SLOTS 页，恰止于 TRAMPOLINE（相邻、不重叠）
-    assert!(HART_FRAME_BASE.as_usize() + HART_FRAME_SLOTS * PAGE_SIZE == TRAMPOLINE.as_usize());
-    // 帧窗口：页对齐、恰止于 HART_FRAME_BASE（hart 帧区在其上方，互不重叠）
-    assert!(TEAM_FRAME_WINDOW_SIZE.is_multiple_of(PAGE_SIZE));
-    assert!(TEAM_FRAME_BASE.as_usize().is_multiple_of(PAGE_SIZE));
+    // 窗口区顶锚：TRAMPOLINE 之下 2 MiB 边界（TRAMPOLINE 独占最后 2 MiB 区顶部
+    // 4 KiB，间隙 2 MiB−4 KiB 留空——VA 免费，换取全部窗口 2 MiB 对齐）。
+    assert!(KERNEL_TOP.as_usize().is_multiple_of(2 * 1024 * 1024));
+    assert!(TRAMPOLINE.as_usize() - KERNEL_TOP.as_usize() == 2 * 1024 * 1024 - PAGE_SIZE);
+    // hart 帧区：KERNEL_TOP 起 SLOTS 页向下排布，恰止于 HART_FRAME_BASE
+    assert!(HART_FRAME_BASE.as_usize() + HART_FRAME_SLOTS * PAGE_SIZE == KERNEL_TOP.as_usize());
+    // 帧窗口：2 MiB 对齐、恰止于 HART_FRAME_BASE（hart 帧区在其上方，互不重叠）
+    assert!(HART_FRAME_BASE.as_usize().is_multiple_of(2 * 1024 * 1024));
+    assert!(TEAM_FRAME_WINDOW_SIZE.is_multiple_of(2 * 1024 * 1024));
+    assert!(TEAM_FRAME_BASE.as_usize().is_multiple_of(2 * 1024 * 1024));
     assert!(TEAM_FRAME_BASE.as_usize() + TEAM_FRAME_WINDOW_SIZE == HART_FRAME_BASE.as_usize());
     assert!(TASK_STACK_SIZE.is_multiple_of(PAGE_SIZE));
-    // trap 栈窗口：base 页对齐；窗口不越过 TEAM_FRAME_BASE（其下沿恰与帧窗口衔接）
-    assert!(TRAP_STACK_BASE.as_usize().is_multiple_of(PAGE_SIZE));
+    // trap 栈窗口：base 2 MiB 对齐；窗口不越过 TEAM_FRAME_BASE（下沿恰与帧窗口衔接）
+    assert!(TRAP_STACK_BASE.as_usize().is_multiple_of(2 * 1024 * 1024));
     assert!(
         TRAP_STACK_BASE.as_usize() + (MAX_HART_SLOTS << TRAP_STACK_SLOT_SHIFT)
             == TEAM_FRAME_BASE.as_usize()
