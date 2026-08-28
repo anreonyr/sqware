@@ -53,6 +53,27 @@ pub mod env {
         Ok(())
     }
 
+    /// 非阻塞输出尝试（现等价 put；词族 try_ 标"试探一次"）。
+    pub fn try_put(s: &str) -> UResult<()> {
+        put(s)
+    }
+
+    /// 非阻塞读一个字节（IOCall::Get）：无输入 → None（内核 -2 Busy 转判）。
+    pub fn try_get() -> Option<u8> {
+        let (v0, _v1) = UcallBuilder::new(Ucall::IO(IOCall::Get)).call().ok()?;
+        Some(v0 as u8)
+    }
+
+    /// 阻塞读一个字节：`try_get` 循环 + `park(1ms)` 背压（等待时让出调度）。
+    pub fn get() -> u8 {
+        loop {
+            if let Some(b) = try_get() {
+                return b;
+            }
+            let _ = sleep(Duration::from_millis(1));
+        }
+    }
+
     /// 退出当前任务（词族 reap）；不返回。
     pub fn exit() -> ! {
         let _ = UcallBuilder::new(Ucall::Room(RoomCall::Reap)).call();

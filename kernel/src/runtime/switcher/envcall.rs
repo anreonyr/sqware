@@ -48,10 +48,21 @@ pub fn dispatch(frame: &mut TrapContext, ident: &TaskIdent) -> *mut TrapContext 
         Ucall::IO(IOCall::Put) => {
             let len = frame.gpr.x(Gprs::A0);
             let ptr = frame.gpr.x(Gprs::A1);
-            let ok = crate::console::write_in(&ident.team.space, ptr, len);
+            let ok = crate::console::push(&ident.team.space, ptr, len);
             if !ok {
                 frame.gpr.set_x(Gprs::A0, usize::MAX);
             }
+        }
+        Ucall::IO(IOCall::Get) => {
+            // 非阻塞读一字节（console::pull）：有输入 → a0 = 字节；无输入 → -2
+            // （Busy，用户侧 try_get 转 None）。
+            frame.gpr.set_x(
+                Gprs::A0,
+                match crate::console::pull() {
+                    Some(b) => b as usize,
+                    None => -2isize as usize,
+                },
+            );
         }
         Ucall::Room(RoomCall::Reap) => {
             return reap() as *mut TrapContext;

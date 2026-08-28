@@ -46,7 +46,7 @@ impl Write for Console {
         {
             // 当前任务身份槽：一次读（无锁）。Live 才有正在用的地址空间可翻译
             // （boot/空闲/末次身份 → 静默丢弃——写用户缓冲只发生在任务上下文）。
-            write_in(&task.team.space, va, bytes.len());
+            push(&task.team.space, va, bytes.len());
         }
         Ok(())
     }
@@ -54,7 +54,7 @@ impl Write for Console {
 
 /// 在指定空间上打印一段缓冲（已持空间锁的上下文用）：逐段翻译，段内 flags
 /// 做 R 位检查；不重取锁。返回是否完整写出（某页未映射/不可读即中断）。
-pub(crate) fn write_in(space: &Space, va: usize, len: usize) -> bool {
+pub(crate) fn push(space: &Space, va: usize, len: usize) -> bool {
     let mut full = true;
     for (pa, flags, l) in space.segments(VirtAddr::from_raw(va), len) {
         if !flags.intersects(crate::memory::manager::entry::PteFlags::R) {
@@ -71,6 +71,25 @@ pub(crate) fn write_in(space: &Space, va: usize, len: usize) -> bool {
             .unwrap();
     }
     full
+}
+
+/// 从控制台拉一个字节（**非阻塞**）：DBCN `ConsoleRead` 读 1 字节；无输入 → `None`。
+///
+/// 缓冲用内核栈局部量（内核镜像/栈恒等映射，VA=PA——Dbcn 按物理地址写）；
+/// SBI 返回值 = 实际读到字节数（0 = 无输入可用）。
+pub(crate) fn pull() -> Option<u8> {
+    let mut byte = 0u8;
+    let r = DbcnCall::new(Dbcn::ConsoleRead)
+        .args(SArgs {
+            a0: 1,
+            a1: (&mut byte as *mut u8) as usize,
+            ..Default::default()
+        })
+        .call();
+    match r {
+        Ok(n) if n > 0 => Some(byte),
+        _ => None,
+    }
 }
 
 /// put!/putln!/log logger 的共同出口。

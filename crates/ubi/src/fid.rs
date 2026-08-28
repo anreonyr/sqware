@@ -8,7 +8,7 @@
 //!   Room    调度词族   Starve Park Reap Wait Wake
 //!   Task    任务       Spawn
 //!   Memory  内存       Allocate Deallocate Mmap Munmap Mprotect
-//!   IO      IO         Put
+//!   IO      IO         Put Get
 //!   Chrono  时钟       Ticks Clock
 //!   Mail    通信       PortOpen PortShut PortPush PortPull RingOpen RingShut
 //!   Control 控制       Panic
@@ -66,6 +66,8 @@ pub enum MemoryCall {
 pub enum IOCall {
     /// 写缓冲（a0 = len，a1 = 缓冲 VA）。
     Put = 0,
+    /// 非阻塞读一字节（a0 = 字节；无输入 → -2 Busy）。
+    Get = 1,
 }
 
 /// 时钟调用（class 4；域 = runtime::chrono）。
