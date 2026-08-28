@@ -54,6 +54,9 @@ fn hex(x: usize) -> String {
 }
 
 /// 读全部 31 个非零 GPR（x0 恒 0；ra/sp/gp/tp 首页）。
+///
+/// 注：tp 原值转储（内核态 = PerHart 指针，非裸 hartid；hart 号经
+/// `machine::hart_id()` 读取）。
 fn gprs() -> [usize; 32] {
     let mut r = [0usize; 32];
     unsafe {

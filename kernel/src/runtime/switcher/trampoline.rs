@@ -8,8 +8,9 @@
 // （la/call 等）的目标必须在本页内；跨页符号（如 Rust 的
 // trap_handler）只能经帧内元数据（kernel_sp / trap_handler 字段）或绝对常量（LUI）
 // 寻址。本页代码无 PC 相对跨页引用，故在链接地址（0x8020_0000+）与 TRAMPOLINE VA
-// 两处取指均正确。hart 帧基址（__restore 回内核时复原 sscratch 用）的 LUI
-// 立即数由 Rust 常量 HART_FRAMES_LUI 注入（单一来源，改 HART_FRAME_BASE 即可）。
+// 两处取指均正确。hart 帧基址不再需要汇编常量：`__restore` 回内核复原 sscratch
+// 时经 `tp` 指向的 `PerHart.frame` 字段单条 load 取本 hart 帧 VA（见 machine.rs，
+// 布局偏移由编译期断言锁死）。
 //
 // 页的固有义务：汇编段必须落在一页内（TRAMPOLINE 映射只覆盖一页）——
 // `check_fits_page` 在 boot 装配时校验（链接期才知尺寸，故为运行期断言）。
@@ -17,23 +18,8 @@
 
 use core::arch::global_asm;
 
-use crate::layout::{HART_FRAME_BASE, TRAMPOLINE};
+use crate::layout::TRAMPOLINE;
 use crate::memory::PAGE_SIZE;
-
-/// HART_FRAME_BASE 的 LUI 立即数（bits[31:12]）——__strap 按 TP 索引 hart
-/// 帧：sp = HART_FRAME_BASE + tp·PAGE_SIZE。汇编经 `const` 注入，单一来源。
-///
-/// LUI 把 20 位立即数符号扩展后左移 12 位，与 `VirtAddr::from_raw` 的符号扩展
-/// 语义一致；改 `HART_FRAME_BASE` 即可，勿手改汇编。
-const HART_FRAMES_LUI: usize = (HART_FRAME_BASE.as_usize() >> 12) & 0xFFFFF;
-
-// 编码断言：LUI 立即数符号扩展必须能还原 HART_FRAME_BASE（VA 不再满足 LUI
-// 编码时编译期报错）。
-const _: () = {
-    let shift = usize::BITS as usize - 20;
-    let imm = ((HART_FRAMES_LUI as isize) << shift) >> shift;
-    assert!(((imm as usize) << 12) == HART_FRAME_BASE.as_usize());
-};
 
 global_asm!(
     ".section .trampoline, \"ax\"",
@@ -102,16 +88,16 @@ global_asm!(
     "    jalr  t2",                        // handler(frame_pa) -> frame_pa（续跑时恒为原帧）
     "    j     __restore",
 
-    // ── 内核态陷阱（__strap）：现场存**本 hart**帧（TP 索引 hart 帧区，
-    //    栈切本 hart trap 栈。tp 约定：内核态恒为 hartid——入口/establish_tp 维持。
-    //    sscratch 内核态约定 = 本 hart 帧 VA，但**trap 入口不可靠**：用户 trap
-    //    （__utrap）入口把 sscratch 换成用户 sp，处理中若有内核缺页再次进入本路径，
-    //    sscratch 已被污染——故帧址仍由 tp 重建，不读 sscratch）。 ──
+    // ── 内核态陷阱（__strap）：现场存**本 hart**帧（PerHart.frame 定位——tp
+    //    指向本 hart 上下文块，帧 VA 取块内字段，见 machine::PerHart；栈切本
+    //    hart trap 栈。tp 约定：内核态恒为本 hart PerHart 指针——入口/
+    //    establish_tp 维持。sscratch 内核态约定 = 本 hart 帧 VA，但**trap 入口
+    //    不可靠**：用户 trap（__utrap）入口把 sscratch 换成用户 sp，处理中若有
+    //    内核缺页再次进入本路径，sscratch 已被污染——故帧址仍由 tp 重建，
+    //    不读 sscratch）。 ──
     "__strap:",
     "    csrrw sp, sscratch, sp",         // sp = 0（内核态约定）；sscratch = 被中断内核 sp
-    "    slli  t0, tp, 12",               // t0 = hart · PAGE_SIZE（hart 帧索引）
-    "    lui   sp, {kf}",                 // sp = HART_FRAME_BASE（LUI 高 20 位）
-    "    add   sp, sp, t0",               // sp = 本 hart 帧 VA（内核空间映射）
+    "    ld    sp, 0x08(tp)",            // sp = PerHart.frame（本 hart 帧 VA）
     "    sd    x1,  0x38(sp)",
     "    sd    x3,  0x48(sp)",
     "    sd    x4,  0x50(sp)",
@@ -167,8 +153,8 @@ global_asm!(
     "    ld    t0, 0x138(sp)",
     "    csrw  sepc, t0",
     // sscratch 约定复原：SPP = 0（回用户）→ 线程帧 self_va；SPP = 1（回内核）→
-    // 本 hart 帧 VA（HART_FRAME_BASE + hart·PAGE；tp 此刻未被帧覆盖，
-    // 仍是执行核 hartid——x4 随后才从帧恢复；跨核迁移时即取**执行核**的帧）
+    // 本 hart 帧 VA（PerHart.frame；tp 此刻未被帧覆盖，仍是执行核 PerHart 指针
+    // ——x4 随后才从帧恢复；跨核迁移时即取**执行核**的帧）
     "    csrr  t0, sstatus",
     "    andi  t0, t0, (1 << 8)",
     "    bnez  t0, 1f",
@@ -176,9 +162,7 @@ global_asm!(
     "    csrw  sscratch, t0",
     "    j     2f",
     "1:",
-    "    slli  t0, tp, 12",           // t0 = hart · PAGE_SIZE
-    "    lui   t1, {kf}",             // t1 = HART_FRAME_BASE（LUI 高 20 位）
-    "    add   t0, t0, t1",           // t0 = 本 hart 帧 VA
+    "    ld    t0, 0x08(tp)",          // t0 = PerHart.frame（本 hart 帧 VA）
     "    csrw  sscratch, t0",
     "2:",
     // 恢复 GPR（x1、x3、x4、x7..x31；x2=sp、x5=t0、x6=t1 最后经 self_va 收尾）
@@ -222,7 +206,6 @@ global_asm!(
 
     ".globl __trampoline_end",
     "__trampoline_end:",
-    kf = const HART_FRAMES_LUI,
 );
 
 unsafe extern "C" {

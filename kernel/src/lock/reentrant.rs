@@ -93,7 +93,7 @@ impl<T: ?Sized> RelLock<T> {
         unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
-        // SAFETY: 读 tp（入口 `_start` 写入的 hartid）无副作用；多 hart 时各核 tp 各异。
+        // SAFETY: 读 tp 指向的 PerHart.id（经 hart_id()）无副作用；多 hart 时各核各异。
         let me = machine::hart_id() + 1;
 
         // lockdep：非重入（本核尚未持有）才做取前校验；同锁重入合法，跳过。

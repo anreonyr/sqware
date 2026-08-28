@@ -3,8 +3,10 @@
 use core::ops;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::layout::ROOT_STACK_SIZE;
+use crate::layout::{HART_FRAME_BASE, ROOT_STACK_SIZE};
 use crate::lock::OnceLock;
+use crate::memory::PAGE_SIZE;
+use crate::memory::manager::addr::VirtAddr;
 
 /// 半开物理区间 `[base, end)` — 内存池 / MMIO 设备区域通用。
 ///
@@ -28,6 +30,10 @@ impl Region {
 /// per-hart trap 栈窗口宽度，4096 段 = 高位虚拟地址。虚拟地址免费，故放得慷慨：
 /// **窗口宽度与核数解耦**——实际启用核数由 DTB 运行时决定（[`hart_count`]），
 /// 本常量只是页表槽位的编译期防呆上限（超过即 panic，不静默截断）。
+///
+/// 定位即两层制约：本常量 = **VA 布局表达上限**（窗口撑不下即 panic）；
+/// **物理养活上限**由 boot 期 per-hart 开销校验把握（trap::init，内存制约核数
+/// 的运行时落点）。两者之上以 DTB 上报核数为运行真值。
 ///
 /// 注意：这不是 SBI 协议边界。SBI 的 `sbi_send_ipi` 每次调用至多寻址
 /// XLEN(=64) 个 hart（掩码寄存器位宽），超过需按 64 核一组多次调用；
@@ -61,16 +67,80 @@ pub fn hart_count() -> usize {
 /// 当前 hart id（**执行本代码的核**）——与 `Machine::hart`（总核数）不同。
 ///
 /// S-mode 读不到 M-mode 专属 CSR `mhartid`（读它触发 illegal instruction），故
-/// hartid 在入口处存入 `tp`。
+/// hartid 经 `tp` 指向的 [`PerHart`] 读取：`tp` = 本 hart 的 `PerHart` 指针
+/// （入口/陷阱重建维护，见 `main.rs`/`_boot_entry`/`establish_tp`）。
 #[inline]
 pub fn hart_id() -> usize {
     let id: usize;
-    // SAFETY: 纯读 tp，无副作用。
+    // SAFETY: 读 tp 指向的 PerHart.id（内核态 tp 恒为本 hart PerHart 指针，无副作用）。
     unsafe {
-        core::arch::asm!("mv {0}, tp", out(reg) id, options(nomem, nostack, preserves_flags));
+        core::arch::asm!(
+            "ld {0}, 0(tp)",
+            out(reg) id,
+            options(nomem, nostack, preserves_flags),
+        );
     }
     id
 }
+
+/// per-hart 上下文块——内核态 tp 指向本结构（替代旧「tp 存裸 hartid」约定）。
+///
+/// 汇编消费端（`__strap`/`__restore` 定位本 hart 帧 VA、`reap` 读 hartid）
+/// 按本结构裸偏移访问，布局由编译期断言锁死（`offset_of` 检查）。
+///
+/// 为什么是常量数组而非运行时分配：boot 汇编（`_start`/`_boot_entry`）在
+/// 机器信息注入前就要设 tp，数组必须是链接期已知符号；槽数= MAX_HART_SLOTS
+/// （VA 布局表达上限）；物理支撑由 boot 期 per-hart 开销校验保证（见 trap::init）。
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PerHart {
+    /// 本 hart 编号（offset 0x00；`hart_id()` 读这里）。
+    pub id: usize,
+    /// 本 hart 帧 VA（offset 0x08；`HART_FRAME_BASE + id·PAGE`，`__strap` 帧定位）。
+    pub frame: VirtAddr,
+}
+
+impl PerHart {
+    const fn at(id: usize) -> Self {
+        Self {
+            id,
+            // 布局常量纯算术：帧区基址 + 槽位偏移（同 layout.rs 推导）。
+            frame: VirtAddr::wrap(HART_FRAME_BASE.as_usize() + id * PAGE_SIZE),
+        }
+    }
+}
+
+/// per-hart 上下文数组（4096 槽 × 16 B = 64 KiB 静态数据）。
+///
+/// `no_mangle`：boot 汇编经 `la t0, PER_HART` PC 相对定位（恒等映射，Bare 期
+/// PC 相对即物理地址）。槽位随 `MAX_HART_SLOTS`（VA 布局表达上限）。
+#[unsafe(no_mangle)]
+static PER_HART: [PerHart; MAX_HART_SLOTS] = {
+    let mut a = [PerHart::at(0); MAX_HART_SLOTS];
+    let mut i = 1;
+    while i < MAX_HART_SLOTS {
+        a[i] = PerHart::at(i);
+        i += 1;
+    }
+    a
+};
+
+/// 指定 hart 的 PerHart 指针（`tp` 装载值 / 帧 TP 装配共用）。
+#[inline]
+pub fn per_hart_ptr(id: usize) -> usize {
+    debug_assert!(
+        id < MAX_HART_SLOTS,
+        "per_hart_ptr: id {id} beyond MAX_HART_SLOTS"
+    );
+    core::ptr::addr_of!(PER_HART[id]) as usize
+}
+
+/// 编译期断言：PerHart 布局即 ABI（`__strap`/`__restore`/`reap` 汇编按偏移访问）。
+const _: () = {
+    assert!(core::mem::offset_of!(PerHart, id) == 0x00);
+    assert!(core::mem::offset_of!(PerHart, frame) == 0x08);
+    assert!(core::mem::size_of::<PerHart>() == 16);
+};
 
 /// 启动时从 DTB 解析出的机器设备信息（纯值，Copy，可安全存入 static）。
 #[derive(Clone, Copy, Debug)]

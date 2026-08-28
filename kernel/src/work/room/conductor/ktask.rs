@@ -162,7 +162,7 @@ pub extern "C" fn starve() {
 pub extern "C" fn reap() -> ! {
     naked_asm!(
         "csrc sstatus, 2",                  // 退出序列原子
-        "mv    a0, tp",                     // hart id → 栈顶查询
+        "ld    a0, 0(tp)",                  // PerHart.id → 栈顶查询
         "la    t0, {edge}",
         "jalr  t0",                          // a0 = 本 hart trap 栈顶 VA
         "mv    sp, a0",                      // clear() 契约：回收不在任务栈上执行

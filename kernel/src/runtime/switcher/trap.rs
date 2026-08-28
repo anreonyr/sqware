@@ -104,13 +104,14 @@ fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
     }
 }
 
-/// 由当前 sp（trap 栈体内）反解 hart 并写入 tp——用户态可自由改写 tp，而内核
-/// 调度/锁/canary 全部依赖 hart_id()（读 tp）；trap 入口必须先重建。
+/// 由当前 sp（trap 栈体内）反解 hart 并写入 tp = 本 hart PerHart 指针——用户态
+/// 可自由改写 tp，而内核调度/锁/canary 全部依赖 hart_id()（经 tp 读 PerHart.id）；
+/// trap 入口必须先重建。
 ///
 /// 汇编不能做这件事：trampoline 执行于 TRAMPOLINE VA，PC 相对引用跨页符号会
 /// 算出错误地址（页身份模块的寻址约束）。C 代码执行于链接地址，固定布局纯算术
-/// 反解无此问题。异常 sp（窗口外/guard/早期 boot）回退 0，与既有
-/// `unwrap_or(0)` 语义一致。
+/// 反解无此问题。异常 sp（窗口外/guard/早期 boot）回退 hart 0，与既有
+/// `unwrap_or(0)` 语义一致（hart 0 的 PerHart 指针恒有效）。
 fn establish_tp() {
     let sp: usize;
     // SAFETY: 读当前栈指针，纯读无副作用。
@@ -118,9 +119,10 @@ fn establish_tp() {
         core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
     }
     let hart = trap_stack_hart(sp).unwrap_or(0);
-    // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建内核 hartid）。
+    let tp = crate::machine::per_hart_ptr(hart);
+    // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建本 hart PerHart 指针）。
     unsafe {
-        core::arch::asm!("mv tp, {}", in(reg) hart, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
     }
 }
 
@@ -132,7 +134,20 @@ pub fn trap_stack() -> usize {
 
 /// 初始化 trap 运行时（须在 `unit::init` 之后：hart 帧与 TRAMPOLINE 映射已就绪）。
 pub fn init() {
-    // 0. per-hart trap 栈：frame 连续分配 + guard 页 + 全部 canary（先于 hart 帧
+    // 0. 物理支撑校验：per-hart 固定开销（trap 栈段 64 KiB + hart 帧页 4 KiB）
+    //    必须不超出 free 物理池——「内存制约最大核数」的运行时落点（编译期
+    //    MAX_HART_SLOTS 只是 VA 布局表达上限，物理养活上限由本校验把握）。
+    let per_hart = TRAP_STACK_SLOT_SIZE + PAGE_SIZE;
+    let need = crate::machine::hart_count() * per_hart;
+    assert!(
+        crate::machine::info().free.size >= need,
+        "hart_count {} needs {need:#x} B ({}×{per_hart:#x}) but free pool is {:#x} B",
+        crate::machine::hart_count(),
+        crate::machine::hart_count(),
+        crate::machine::info().free.size,
+    );
+
+    // 1. per-hart trap 栈：frame 连续分配 + guard 页 + 全部 canary（先于 hart 帧
     //    元数据——帧 kernel_sp 需要指向本 hart 栈顶）。仅 hart 0 调用一次。
     let segments = crate::machine::hart_count();
     assert!(segments > 0, "no harts");
@@ -177,10 +192,10 @@ pub fn init() {
         }
     }
 
-    // 1. 防呆：trampoline 汇编必须落在一页内（TRAMPOLINE 映射只覆盖一页）
+    // 2. 防呆：trampoline 汇编必须落在一页内（TRAMPOLINE 映射只覆盖一页）
     check_fits_page();
 
-    // 2. per-hart trap-context 帧元数据（帧已逐页映射，PA 已发布）。每 hart
+    // 3. per-hart trap-context 帧元数据（帧已逐页映射，PA 已发布）。每 hart
     //    一份——kernel_sp = 本 hart trap 栈顶，__strap 按 TP 索引帧页；内核态
     //    故障在**故障核**的帧与 trap 栈上处理。
     let ksatp = satp::read();
@@ -202,7 +217,7 @@ pub fn init() {
         frame.self_va = HART_FRAME_BASE + h * PAGE_SIZE;
     }
 
-    // 3. 先武装定时器：OpenSBI 可能遗留一个已到期的 stimecmp，若不清掉，
+    // 4. 先武装定时器：OpenSBI 可能遗留一个已到期的 stimecmp，若不清掉，
     //    开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序难看）。
     timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
 
@@ -275,8 +290,8 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
 /// 上下文（中断屏蔽、CSR 已由硬件保存）。
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
-    // 0. 重建内核 tp（= hartid）：用户态可能改写过 tp；一切 hart_id() 依赖它。
-    //    由当前 sp（trap 栈体内）反解段号（trap_stack_hart）。
+    // 0. 重建内核 tp（= 本 hart PerHart 指针）：用户态可能改写过 tp；一切
+    //    hart_id() 依赖它。由当前 sp（trap 栈体内）反解段号（trap_stack_hart）。
     establish_tp();
 
     // 0.4 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。

@@ -331,9 +331,9 @@ impl TaskBuilder {
 /// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
 /// `Box<dyn FnOnce()>` 原始指针。
 pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
-    // tp = 本 hart：每个内核任务上台时 Scheduler::prepare 已把 TP 写入其帧
-    // （frame.gpr[TP] = self.hart），__restore 恢复全部 GPR 时 tp 即已在位——此处
-    // 不再重建。
+    // tp = 本 hart PerHart 指针：每个内核任务上台时 Scheduler::prepare 已把 TP
+    // 写入其帧（frame.gpr[TP] = per_hart_ptr(self.hart)），__restore 恢复全部 GPR
+    // 时 tp 即已在位——此处不再重建。
     // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
     let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
     let boxed: Box<dyn FnOnce()> = *holder;
