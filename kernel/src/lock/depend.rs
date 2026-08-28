@@ -39,7 +39,7 @@ fn ktbl() -> Option<&'static elftable::ElfTable> {
     crate::work::unit::team::kernel()?.elftable.as_deref()
 }
 
-/// 锁层级（1 最低、9 最高）。参与锁才有 level；`None` = exempt（不参与、不校验）。
+/// 锁层级（1 最低、10 最高）。参与锁才有 level；`None` = exempt（不参与、不校验）。
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]
@@ -48,20 +48,22 @@ pub enum Level {
     Scheduler = 1,
     /// Space.inner (RelLock)
     Space = 2,
+    /// IntervalInner（统一 VA 分配器段表；窗口方法在 Space 事务内取 → 须高于 Space）
+    Alloc = 3,
     /// Team.tasks / TIMER_DEADLINES / blocked / reaped
-    L3 = 3,
+    L3 = 4,
     /// ASID_ALLOCATOR
-    Asid = 4,
+    Asid = 5,
     /// FRAME_ALLOCATOR
-    Frame = 5,
+    Frame = 6,
     /// block 的 `inner`/`pump`
-    Block = 6,
+    Block = 7,
     /// allocator::fence::ledger::LEDGER
-    Ledger = 7,
+    Ledger = 8,
     /// block 簿记表（tally）
-    Tally = 8,
+    Tally = 9,
     /// allocator::spare（后备仓）
-    Spare = 9,
+    Spare = 10,
 }
 
 /// 锁违规统一报警：明细拼进 `[depend]` panic 消息后 panic → halt（其余核由

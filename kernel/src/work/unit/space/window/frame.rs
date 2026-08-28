@@ -7,9 +7,9 @@
 
 use alloc::boxed::Box;
 
-use crate::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
+use crate::memory::allocator::interval::IntervalAllocator;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
@@ -22,38 +22,33 @@ use super::super::map::MapKind;
 /// 帧区窗口。
 #[derive(Debug)]
 pub(crate) struct FrameWindow {
-    /// 公共窗口核心（区间分配器 + 子 Map 表）。
+    /// 窗口簿记核心（frame 段访问器 + 子 Map 表）。
     pub(crate) inner: Dynamic,
 }
 
 impl FrameWindow {
-    /// 构造：内核半区常量区 `[TEAM_FRAME_BASE, +TEAM_FRAME_WINDOW_SIZE)`。
-    pub(crate) fn new() -> Self {
+    /// 构造：绑定 frame 段访问器（`SpaceInner::new` 注册布局常量域后构造）。
+    pub(crate) fn new(alloc: IntervalAllocator) -> Self {
         Self {
-            inner: Dynamic::window(
-                TEAM_FRAME_BASE.as_usize(),
-                TEAM_FRAME_BASE.as_usize() + TEAM_FRAME_WINDOW_SIZE,
-            ),
+            inner: Dynamic::new(alloc),
         }
     }
 
-    /// 领一个线程 trap 帧：窗口取一页 VA → 分配物理帧 → 装 PTE（S-only）→ 登记帧
-    /// 子 Map（owner = 线程 id）。返回 `(帧 VA, 帧 PA)`；帧元数据（内核切换信息 +
-    /// 用户上下文）由调用方随后经 PA 填充。
+    /// 领一个线程 trap 帧：box 分配器取一页 VA → 分配物理帧 → 装 PTE（S-only）→
+    /// 登记帧子 Map（owner = 线程 id）。返回 `(帧 VA, 帧 PA)`；帧元数据（内核
+    /// 切换信息 + 用户上下文）由调用方随后经 PA 填充。
     ///
     /// # Errors
     ///
     /// 窗口耗尽或物理帧耗尽 → [`MapError::OutOfMemory`]（后者回滚：清残留 PTE +
-    /// VA 退回窗口，空子 Map 一并移除）。
+    /// VA 退回分配器，空子 Map 一并移除）。
     pub(crate) fn claim(
         &mut self,
         durable: &mut Durable,
         owner: usize,
     ) -> Result<(VirtAddr, PhysAddr), MapError> {
         let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
-        let va = self
-            .inner
-            .allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
+        let va = self.inner.allocate(PAGE_SIZE, flags, MapKind::Anonymous, Some(owner))?;
         let page: Frame = unsafe {
             Box::try_new_zeroed_in(allocator())
                 .map_err(|_| MapError::OutOfMemory)?
@@ -76,7 +71,7 @@ impl FrameWindow {
         Ok((va, pa))
     }
 
-    /// 退役回收：精确摘帧 VA（子 Map 移除，帧随 drop 归还 frame 池）+ 区间树归还。
+    /// 退役回收：精确摘帧 VA（子 Map 移除，帧随 drop 归还 frame 池）+ 分配器归还。
     /// 返回是否命中（未分配/已回收 → false）。PTE 清理由调用方经 `unmap_frames` 完成。
     pub(crate) fn reclaim(&mut self, va: VirtAddr) -> bool {
         self.inner.deallocate(va, PAGE_SIZE)

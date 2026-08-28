@@ -81,6 +81,11 @@ pub fn init() -> MapResult<()> {
             // 1. 创建内核地址空间
             let kernel_space = SpaceBuilder::kernel().build()?;
 
+            // 1.5 激活内核空间自由段：从低区起覆盖整个用户半区（段表 lowest
+            //     first-fit——内核心任务栈与用户栈同池自低端起排槽；诊断侧 scene
+            //     已按「自由段内 + slot 对齐」降级重估段顶，见 scene.rs kbacktrace）。
+            kernel_space.activate_free(crate::layout::IMAGE_BASE.as_usize());
+
             // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内 ROOT 栈区，位于
             //    `_kernel_edge` 之上）都在 DRAM 内。只 map free 会在启用分页后
             //    让内核栈/内核镜像变成未映射，下一次栈访问或取指即缺页。

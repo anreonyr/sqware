@@ -21,6 +21,9 @@ pub mod tls;
 /// 用户 mail：port 内核邮路阻塞封装。
 pub mod mail;
 
+/// 用户 dock：共享内存邮路（多 pier 生产 / 唯一 quay 消费，零拷贝）。
+pub mod dock;
+
 /// 域适配层：每个域操作一段薄封装，只转发 `ubi::UcallBuilder`。
 pub mod env {
     use core::time::Duration;
@@ -274,6 +277,70 @@ pub mod env {
             ..UArgs::default()
         };
         UcallBuilder::new(Ucall::Mail(MailCall::PortPull))
+            .args(args)
+            .call()?;
+        Ok(())
+    }
+
+    /// 建 dock 通道（共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
+    /// (dock id, 视图基址)。id 即条件键（+最高位标记，见 [`crate::dock`]）。
+    pub fn dock_open(item_len: usize, slots: usize) -> UResult<(usize, usize)> {
+        let args = UArgs {
+            a0: item_len,
+            a1: slots,
+            ..UArgs::default()
+        };
+        let (id, view) = UcallBuilder::new(Ucall::Mail(MailCall::RingOpen))
+            .args(args)
+            .call()?;
+        Ok((id, view))
+    }
+
+    /// 加入已有 dock：a0 = id，a1 = side（0 = Pier / 1 = Quay）→ 本地视图基址。
+    pub fn dock_join(id: usize, side: usize) -> UResult<usize> {
+        let args = UArgs {
+            a0: id,
+            a1: side,
+            ..UArgs::default()
+        };
+        let (view, _) = UcallBuilder::new(Ucall::Mail(MailCall::RingJoin))
+            .args(args)
+            .call()?;
+        Ok(view)
+    }
+
+    /// 终止 dock：置 Dead（对端感知断开）。
+    pub fn dock_shut(id: usize) -> UResult<()> {
+        let args = UArgs {
+            a0: id,
+            ..UArgs::default()
+        };
+        UcallBuilder::new(Ucall::Mail(MailCall::RingShut))
+            .args(args)
+            .call()?;
+        Ok(())
+    }
+
+    /// 复制生产端（pier 计数 +1）。
+    pub fn dock_clone(id: usize) -> UResult<()> {
+        let args = UArgs {
+            a0: id,
+            ..UArgs::default()
+        };
+        UcallBuilder::new(Ucall::Mail(MailCall::RingClone))
+            .args(args)
+            .call()?;
+        Ok(())
+    }
+
+    /// 释放一端（pier −1 / quay 离场）。
+    pub fn dock_drop(id: usize, side: usize) -> UResult<()> {
+        let args = UArgs {
+            a0: id,
+            a1: side,
+            ..UArgs::default()
+        };
+        UcallBuilder::new(Ucall::Mail(MailCall::RingDrop))
             .args(args)
             .call()?;
         Ok(())

@@ -242,16 +242,21 @@ impl TaskBuilder {
         // 失败回滚：按 owner 摘栈 slot（帧随子 Map drop 归还）
         let rollback_stack = |space: &crate::work::unit::space::Space| {
             space.with_flush(|inner| {
-                if let Some((slot_va, slot_size)) = inner.stack.reclaim(id) {
+                if let Some((slot_va, slot_size)) =
+                    inner.stack.as_mut().and_then(|s| s.reclaim(id))
+                {
                     inner.durable.unmap_frames(slot_va, slot_size);
                 }
             });
         };
         let stack_res = (|| {
-            let stack_va = self
-                .team
-                .space
-                .with(|inner| inner.stack.claim(id, stack_size, is_kernel))?;
+            let stack_va = self.team.space.with(|inner| {
+                inner
+                    .stack
+                    .as_mut()
+                    .ok_or(MapError::NoRegion)?
+                    .claim(id, stack_size, is_kernel)
+            })?;
             let mut stack_frames = Vec::new();
             for _ in 0..(stack_size / PAGE_SIZE) {
                 let frame = unsafe {

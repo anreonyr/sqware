@@ -19,7 +19,6 @@ use alloc::vec::Vec;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sscratch, sstatus, stval, stvec};
 
-use crate::layout::STACK_WINDOW_SIZE;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
@@ -44,9 +43,6 @@ const BT_DEPTH: usize = 32;
 const BT_SCAN: usize = 4096;
 /// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
 const ADDR_ALIGN: usize = 4;
-/// 栈窗口 slot 步长（守护页 + 栈体，见 space::window::StackWindow::claim）——
-/// 内核团队任务栈段顶对齐基准。
-const STACK_SLOT: usize = crate::layout::TASK_STACK_SIZE + crate::layout::TASK_STACK_GUARD;
 
 /// 定宽 hex 文本（{:#018x}）——值列的通用形态。
 fn hex(x: usize) -> String {
@@ -103,6 +99,11 @@ fn gprs() -> [usize; 32] {
 /// 下生长 → fp 逐帧单调递增，非单调/越界/零即脱链。每帧取 ra（非零、不重复）
 /// 入槽。启发式（兜底）：从链断点起按 8 字节步进向上扫描，收集「4 对齐 +
 /// 非相邻重复 + 能解析进符号区间」的可执行候选。
+///
+/// 统一分配器后（方案 A）任务栈不再独占固定窗口：`high` 只按 trap 栈精确钳制
+/// （固定 VA 窗口，可纯算术反推），任务栈 slot 的上界未知——扫描改用**逐页安全
+/// 读**（walk_raw + R 检查，见 [`scan_one`]）：越 guard 页即 walk 落空 → 停页
+/// 继续，不产生缺页 → 封死「扫越段顶 → 嵌套 panic → 现场静默」的幽灵 panic。
 fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     // 起扫点：panic 归巢后当前 sp/fp 是救援栈组稿链——kbt 须回 SCENE 扫原栈；
     // crash_scene! 直调（无 SCENE）→ 读当前 sp/fp。
@@ -118,22 +119,24 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         s => s,
     };
     // 扫描上界钳制：崩溃现场可能运行在「段顶之上是刻意未映射 guard 页」的栈上，
-    // 扫描窗越过段顶即读缺页 → 嵌套 panic → 现场静默消失（幽灵 panic）。high 钳到
-    // 两类段顶（trap 栈 / 内核任务栈 slot）；其余栈上方为已映射 DRAM，退回原行为。
-    // trap 栈按 sp 纯算术反推（固定 VA 窗口），不依赖 hart_id/元数据表。
+    // 扫描窗越过段顶即读缺页 → 嵌套 panic → 现场静默消失（幽灵 panic）。
+    //
+    // 统一分配器（方案 A：栈不独占固定窗口）后任务栈 slot 上界不再可纯算术推算，
+    // 故：trap 栈仍按固定 VA 窗口精确钳制（不依赖元数据表）；任务栈 slot 改由
+    // 逐页安全读兜底（见下 scan 的 walk_raw 守卫）——越 guard 落空即停页，不读
+    // 不崩。high 只钳 trap 场景，其余退回 sp+BT_SCAN（页守卫兜底越界）。
     let high = {
         let trap_top = crate::runtime::switcher::trap::trap_stack_hart(sp)
             .map(crate::runtime::switcher::trap::trap_stack_edge)
             .map(|e| e.as_usize());
-        // 栈窗顶锚于用户空间上界之下：[upper − STACK_WINDOW_SIZE, upper)。
-        let stack_base = crate::memory::manager::mode::upper().as_usize() - STACK_WINDOW_SIZE;
-        let stack_top = (sp >= stack_base && sp < stack_base + STACK_WINDOW_SIZE)
-            .then(|| (sp & !(STACK_SLOT - 1)) + STACK_SLOT);
-        match trap_top.or(stack_top) {
+        match trap_top {
             Some(t) => sp.saturating_add(BT_SCAN).min(t),
             None => sp.saturating_add(BT_SCAN),
         }
     };
+    // 任务栈安全读守卫：读侧的 VA→PA 逐页验证（缺页即停页；页可读才直读）。
+    // 与 ubacktrace 同法（walk_raw + R 检查），内核侧崩溃现场用同样守卫封死
+    // 扫越 guard 的幽灵 panic（根表 = 当前 satp 根，崩溃时 S 态直读不返回用户）。
     let mut n = 0usize;
     let mut prev = 0usize;
     // ① 帧指针链：每帧取 ra 与调用者 fp（单调增，栈向下生长）。
@@ -141,9 +144,11 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     let mut last = fp; // 最后有效帧地址（fallback 扫描起点）
     while n < BT_DEPTH && f >= sp && f + 16 <= high {
         last = f;
-        // SAFETY: f 落在 [sp, sp+BT_SCAN)（S 态直读本线程栈，无副作用）。
-        let caller = unsafe { *(f as *const usize) };
-        let ra = unsafe { *((f + 8) as *const usize) };
+        // SAFETY: f 落在 [sp, sp+BT_SCAN)；只读本线程栈区间（S 态直读恒等映射
+        // 内存，无副作用）。guard 页（未映射）由 kbt_read 判停，不缺页不 panic。
+        let Some((caller, ra)) = kbt_read(f) else {
+            break;
+        };
         if ra != 0 && ra != prev {
             out[n] = ra;
             n += 1;
@@ -157,8 +162,11 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     // ② 启发式兜底：从链断点继续向上扫描，接续断链外层的内核栈帧。
     let mut a = core::cmp::max(last + 8, sp & !7usize);
     while a < high && n < BT_DEPTH {
-        // SAFETY: 只读本线程栈区间（S 态直读恒等映射内存，无副作用）。
-        let w = unsafe { (a as *const usize).read_volatile() };
+        // SAFETY: 只读本线程栈区间（S 态直读恒等映射内存，无副作用）；逐页守卫
+        // 同 ①：未映射页 → kbt_read 判 None → 停扫（不读不崩）。
+        let Some(w) = kbt_word(a) else {
+            break;
+        };
         // 可执行候选 = 「能解析进符号区间」的地址（routed 按域选表 + lookup
         // 上界约束）；栈上数据字落空——不收宽镜像区间误报。
         let code = elftable::routed(
@@ -175,6 +183,61 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         a += 8;
     }
     n
+}
+
+/// 任务栈逐页安全读（内核崩溃现场）：读 `f` 处的一对栈字 (caller, ra)。
+///
+/// 守卫：整页 walk_raw 判可读再读（当前 satp 根直译；崩溃时本核仍在 S 态，根表
+/// 经当前 satp 取）。guard 页/未映射 → None（停页），绝不产生缺页——封死幽灵
+/// panic。DRAM 恒等区守卫（walk_raw 的物理地址校验）同 ubacktrace。
+fn kbt_read(f: usize) -> Option<(usize, usize)> {
+    let page = f & !(PAGE_SIZE - 1);
+    let satp_val = satp::read().bits();
+    let ppn = (satp_val & ((1usize << 44) - 1)) >> 0; // satp.PPN（宽 44）
+    let in_dram = |pa: PhysAddr| {
+        (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
+    };
+    let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
+        PhysAddr::from_raw(ppn << 12),
+        VirtAddr::from_raw(page),
+        in_dram,
+    ) else {
+        return None;
+    };
+    if !flags.contains(PteFlags::R) {
+        return None;
+    }
+    let off = f - page;
+    // SAFETY: 该页 walk 命中且带 R；off 与 off+8 恒在页内（f+8 <= high 由调用方
+    // 保证，且读字按页裁剪——此处页内偏移 +8 不会越出页界之外的假设由 f+16 检查
+    // 兜底，见调用方）。S 态直读恒等映射。
+    let caller = unsafe { ((pa0.as_usize() + off) as *const usize).read_volatile() };
+    let ra = unsafe { ((pa0.as_usize() + off + 8) as *const usize).read_volatile() };
+    Some((caller, ra))
+}
+
+/// 任务栈逐页安全读（单字版，启发式扫描用）：同 [`kbt_read`] 守卫，单字读取。
+fn kbt_word(a: usize) -> Option<usize> {
+    let page = a & !(PAGE_SIZE - 1);
+    let satp_val = satp::read().bits();
+    let ppn = (satp_val & ((1usize << 44) - 1)) >> 0;
+    let in_dram = |pa: PhysAddr| {
+        (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
+    };
+    let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
+        PhysAddr::from_raw(ppn << 12),
+        VirtAddr::from_raw(page),
+        in_dram,
+    ) else {
+        return None;
+    };
+    if !flags.contains(PteFlags::R) {
+        return None;
+    }
+    let off = a - page;
+    // SAFETY: 页内偏移恒 < PAGE_SIZE；该页可读，S 态直读。
+    let w = unsafe { ((pa0.as_usize() + off) as *const usize).read_volatile() };
+    Some(w)
 }
 
 /// 用户侧回溯：崩溃时 running 任务的**用户 trap 帧**里有该任务最近一次用户态

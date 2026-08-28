@@ -13,6 +13,7 @@ doctest = false
 
 [dependencies]
 ubi = { path = "../crates/ubi" }
+erra = { version = "0.2.0", default-features = false }
 
 [["bin"]]
 name = "user-exiter"
@@ -73,6 +74,13 @@ doctest = false
 [[bin]]
 name = "user-tlser"
 path = "src/bin/tlser.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "user-docker"
+path = "src/bin/docker.rs"
 test = false
 bench = false
 doctest = false

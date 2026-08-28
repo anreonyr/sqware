@@ -1,6 +1,6 @@
 // 程序装载 — 把已解析的 ELF 段装进地址空间的 durable（常数映射）侧。
 //
-// 只碰 durable（静态段）与堆窗口装载期注册；栈/帧窗口由任务构建时分配，正交。
+// 只碰 durable（静态段）与自由段激活；栈/帧窗口由任务构建时分配，正交。
 // 装载整体为一个 `Space::with_flush` 事务：单临界区 + 单次 TLB 刷新，任一段失败
 // 则整体不落（原子装载）。
 
@@ -10,12 +10,10 @@ use alloc::vec::Vec;
 use super::parser::{LoadSegment, ParsedProgram};
 use super::space::window::HeapWindow;
 use super::space::{MapKind, Space};
-use crate::layout::STACK_WINDOW_SIZE;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::mode;
 use crate::memory::manager::table::Frame;
 
 /// 装载产物 — 已装完的空间 + 绝对入口。
@@ -37,8 +35,9 @@ pub type LoadResult<T> = Result<T, MapError>;
 ///
 /// 帧耗尽（OutOfMemory）或映射冲突（AlreadyMapped / NotAligned，均不改动 space）。
 pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Loaded> {
-    // 装载期注册堆窗口 + 逐段装配——单个 with_flush 临界区：一次加锁、一次 TLB 刷新；
-    // 任一段失败 → 整体不落（原子装载）。堆几何随映像（不魔数），须先于文件段映射注册。
+    // 装载期激活自由段 + 注册堆窗口 + 逐段装配——单个 with_flush 临界区：一次加锁、
+    // 一次 TLB 刷新；任一段失败 → 整体不落（原子装载）。自由段几何随映像（不魔数），
+    // 须先于文件段映射注册（激活 = 分配器可用；堆窗口注册在激活后）。
     let image_end = parsed
         .segments
         .iter()
@@ -46,17 +45,14 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         .max()
         .unwrap_or(0);
     space.with_flush(|inner| {
-        let edge = mode::upper().as_usize() - STACK_WINDOW_SIZE;
-        if !image_end.is_multiple_of(PAGE_SIZE) || image_end > edge {
+        if !image_end.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
         if inner.heap.is_some() {
             return Err(MapError::AlreadyMapped);
         }
-        if inner.overlaps(VirtAddr::from_raw(image_end), edge - image_end) {
-            return Err(MapError::AlreadyMapped);
-        }
-        inner.heap = Some(HeapWindow::new(image_end, edge));
+        let free = inner.activate_free(image_end);
+        inner.heap = Some(HeapWindow::new(free));
         for seg in &parsed.segments {
             let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;
             inner.attach_durable(

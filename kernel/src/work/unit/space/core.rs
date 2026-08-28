@@ -24,10 +24,11 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::layout::TRAMPOLINE;
-use crate::lock::{Level, RelLock};
+use crate::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE, TRAMPOLINE};
+use crate::lock::{Level, RelLock, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
+use crate::memory::allocator::interval::{register, IntervalAllocator, IntervalInner};
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
@@ -42,47 +43,102 @@ use super::window::{FrameWindow, HeapWindow, StackWindow};
 
 /// 地址空间的可变状态 — 由 [`Space::inner`] 这把 [`RelLock`] 保护。
 ///
-/// 只做组合：`durable`（常数侧）+ 三个窗口（`stack` / `frame` / `heap`）覆盖空间
-/// 全部簿记；窗口按种类类型化（`window` 子模块，各窗口自带构造与生命周期操作），
-/// `Space` 只经 `with` / `with_flush` 锁一次并编排事务。与页表操作同锁互斥
-/// （锁约定见 [`Space`]）。
-#[derive(Debug)]
+/// 只做组合：`durable`（常数侧）+ 段表（`alloc`）+ 三个窗口（`stack` / `frame` /
+/// `heap`）覆盖空间全部簿记；窗口各自持**段访问器**（`IntervalAllocator`，共享
+/// 同一张段表——窗口不是独立 VA 域，只留各自的子 Map 表）。窗口按种类类型化
+/// （`window` 子模块），`Space` 只经 `with` / `with_flush` 锁一次并编排事务。
+/// 与页表操作同锁互斥（锁约定见 [`Space`]）。
 pub(crate) struct SpaceInner {
+    /// 段表容器（一个 Space 一张；窗口/借用方经访问器取段）。
+    pub(crate) alloc: Arc<SpinLock<IntervalInner>>,
+    /// 自由段访问器（free 段激活后有值——dock 等非窗口借用方取段用）。
+    pub(crate) free: Option<IntervalAllocator>,
     /// 常数侧：根页表 + 中间表帧 + 常数映射表。
     pub(crate) durable: Durable,
-    /// 任务栈窗口（恒 1 区：顶锚 `[upper() − STACK_WINDOW_SIZE, upper())`）。
-    pub(crate) stack: StackWindow,
-    /// team 帧区窗口（恒 1 区：内核半区 `[TEAM_FRAME_BASE, +TEAM_FRAME_WINDOW_SIZE)`）。
+    /// 任务栈窗口（自由段访问器，free 段激活时构造）。
+    pub(crate) stack: Option<StackWindow>,
+    /// team 帧区窗口（frame 固定段访问器）。
     pub(crate) frame: FrameWindow,
-    /// 用户堆窗口（装载期由 loader 注册一次：`[image_end, 栈底)`；未装载 = `None`）。
+    /// 用户堆窗口（装载期由 loader 注册一次；未装载 = `None`）。
     pub(crate) heap: Option<HeapWindow>,
+}
+
+impl core::fmt::Debug for SpaceInner {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // 段表（alloc）内容在锁内不读；打印真实可查字段。
+        f.debug_struct("SpaceInner")
+            .field("free_active", &self.free.is_some())
+            .field("durable", &self.durable)
+            .field("stack", &self.stack)
+            .field("frame", &self.frame)
+            .field("heap", &self.heap)
+            .finish()
+    }
 }
 
 impl SpaceInner {
     pub(crate) fn new() -> Result<Self, MapError> {
-        // 区间分配器零 up-front（∝ 存活块）；内核空间窗口元数据在基线前稳定由 boot
-        // 顺序保证（record_baseline 在 spawn 前）。窗口几何在各窗口类型的 new() 内。
+        // 段表：interval 零 up-front（∝ 存活块）。frame 段为布局常量域，构造即
+        // 注册；自由段由调用方按空间种类激活（内核 unit::init / 用户 loader），
+        // 激活时构造栈窗口并留 free 访问器（堆窗口由 loader 取访问器注册）。
+        let alloc = Arc::new(SpinLock::new_level(
+            Level::Alloc,
+            IntervalInner::new(),
+        ));
+        let frame_acc = register(
+            &alloc,
+            TEAM_FRAME_BASE.as_usize(),
+            TEAM_FRAME_BASE.as_usize() + TEAM_FRAME_WINDOW_SIZE,
+        );
         Ok(Self {
+            alloc,
+            free: None,
             durable: Durable::new()?,
-            stack: StackWindow::new(),
-            frame: FrameWindow::new(),
+            stack: None,
+            frame: FrameWindow::new(frame_acc),
             heap: None,
         })
+    }
+
+    /// 激活自由段 `[base, upper)`（恰好一次；任何窗口分配之前）并构造栈窗口。
+    /// 返回自由段访问器（loader 注册堆窗口用）。
+    ///
+    /// # Panics
+    ///
+    /// 重复激活（stack/free 已在册）或 base 非页对齐 / 越过 upper。
+    pub(crate) fn activate_free(&mut self, base: usize) -> IntervalAllocator {
+        assert!(
+            self.stack.is_none() && self.free.is_none(),
+            "Space: free double activation"
+        );
+        let edge = crate::memory::manager::mode::upper().as_usize();
+        assert!(
+            base.is_multiple_of(PAGE_SIZE) && base <= edge,
+            "Space: bad free segment [{base:#x}, {edge:#x})"
+        );
+        let free = register(&self.alloc, base, edge);
+        self.free = Some(free.clone());
+        self.stack = Some(StackWindow::new(free.clone()));
+        free
     }
 
     /// 全窗口只读视图（resolve / audit / unmap / 重叠检查用）。
     ///
     /// 新窗口种类在此登记一处，其余遍历点（resolve/audit/unmap/overlap）自动覆盖。
     pub(crate) fn windows_ref(&self) -> impl Iterator<Item = &Dynamic> {
-        [&self.stack.inner, &self.frame.inner]
-            .into_iter()
+        self.stack
+            .iter()
+            .map(|s| &s.inner)
+            .chain([&self.frame.inner].into_iter())
             .chain(self.heap.iter().map(|h| &h.inner))
     }
 
     /// 全窗口可变视图（unmap 摘子 Map 用）。
     pub(crate) fn windows_mut(&mut self) -> impl Iterator<Item = &mut Dynamic> {
-        [&mut self.stack.inner, &mut self.frame.inner]
-            .into_iter()
+        self.stack
+            .iter_mut()
+            .map(|s| &mut s.inner)
+            .chain([&mut self.frame.inner].into_iter())
             .chain(self.heap.iter_mut().map(|h| &mut h.inner))
     }
 
@@ -103,9 +159,12 @@ impl SpaceInner {
             stack,
             frame,
             heap,
+            ..
         } = self;
-        let child = [&mut stack.inner, &mut frame.inner]
-            .into_iter()
+        let child = stack
+            .iter_mut()
+            .map(|s| &mut s.inner)
+            .chain([&mut frame.inner].into_iter())
             .chain(heap.iter_mut().map(|h| &mut h.inner))
             .flat_map(|w| w.children.iter_mut())
             .find(|m| m.va == va)
@@ -118,7 +177,7 @@ impl SpaceInner {
         Ok(())
     }
 
-    /// `[start, start+size)` 是否与**常数映射或任何窗口区间**重叠（空间级簿记查询）。
+    /// `[start, start+size)` 是否与**常数映射或任何窗口已分配块**重叠（空间级簿记查询）。
     ///
     /// 边界用 saturating 算术：TRAMPOLINE 等最高页映射的 `va + size` 会溢出 2^64，
     /// 饱和到 `usize::MAX` 即「延伸到地址空间尽头」——比较仍正确。
@@ -127,7 +186,10 @@ impl SpaceInner {
         self.durable.maps.iter().any(|m| {
             start.as_usize() < m.va.as_usize().saturating_add(m.size.get()) && end > m.va.as_usize()
         }) || self.windows_ref().any(|w| {
-            start.as_usize() < w.va.as_usize().saturating_add(w.size.get()) && end > w.va.as_usize()
+            w.children.iter().any(|m| {
+                start.as_usize() < m.va.as_usize().saturating_add(m.size.get())
+                    && end > m.va.as_usize()
+            })
         })
     }
 
@@ -186,9 +248,7 @@ impl SpaceInner {
             return Some(m);
         }
         for w in self.windows_ref() {
-            if w.contains(vaddr)
-                && let Some(m) = w.children.iter().rev().find(|m| m.contains(vaddr))
-            {
+            if let Some(m) = w.children.iter().rev().find(|m| m.contains(vaddr)) {
                 return Some(m);
             }
         }
@@ -201,9 +261,7 @@ impl SpaceInner {
             return Some(m);
         }
         for w in self.windows_mut() {
-            if w.contains(vaddr)
-                && let Some(m) = w.children.iter_mut().rev().find(|m| m.contains(vaddr))
-            {
+            if let Some(m) = w.children.iter_mut().rev().find(|m| m.contains(vaddr)) {
                 return Some(m);
             }
         }
@@ -401,6 +459,15 @@ impl Space {
     /// （调度域经 `team.space.kind()` 区分内核/用户任务路径）。
     pub fn kind(&self) -> SpaceKind {
         self.kind
+    }
+
+    /// 激活自由段（装载期/引导期恰好一次；任何窗口分配前）。适配层：内核空间
+    /// 由 `unit::init` 激活（自低区起），用户空间由 `loader` 激活（自 image_end 起）
+    /// ——loader 直接经 `inner.activate_free` 取自由段访问器注册堆窗口。
+    pub fn activate_free(&self, base: usize) {
+        self.with(|inner| {
+            inner.activate_free(base);
+        });
     }
 
     // ── 事务入口 ──────────────────────────────────────────────

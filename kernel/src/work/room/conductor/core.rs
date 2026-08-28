@@ -466,6 +466,12 @@ impl WaitKey {
     pub fn compose(asid: usize, va: usize) -> WaitKey {
         WaitKey(((asid & 0xFFFF) << 48) | (va & ((1usize << 48) - 1)))
     }
+
+    /// 直接以本体值构造事件键（dock 键路径：`DOCK_KEY_TAG | id` 全局唯一，不经
+    /// compose——调用方（envcall 边界）已按标记位分流）。
+    pub fn from_raw(raw: usize) -> WaitKey {
+        WaitKey(raw)
+    }
 }
 
 /// 一个事件键的等待位：遗留信号（pend）+ 等待者队列。
@@ -680,12 +686,18 @@ pub(super) fn clear() {
             break;
         };
         trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
+        // dock 退出钩子（B3）：任务名下全部 dock 引用逐条递减（pier → Hang 判据、
+        // quay → Dead 判据）；与显式 RingDrop 同路径。需在簿记清理前执行（锁外，
+        // 只经 dock 注册表 L3 —— spawn 路径 1→3 合法，clear 同）。
+        crate::work::mail::ring::task_exit(z.ident.id);
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);
         // 锁外回收（Team.tasks 已放 → Space.inner=2 → FRAME=5 合法）：栈 slot + trap 帧
         // 一次 with_flush 收回——PTE 清理 + 刷 TLB + 区间归还；帧随子 Map drop 归还。
         z.ident.team.space.with_flush(|inner| {
-            if let Some((slot_va, slot_size)) = inner.stack.reclaim(z.ident.id) {
+            if let Some((slot_va, slot_size)) =
+                inner.stack.as_mut().and_then(|s| s.reclaim(z.ident.id))
+            {
                 inner.durable.unmap_frames(slot_va, slot_size);
             }
             if inner.frame.reclaim(z.ident.trap.va) {

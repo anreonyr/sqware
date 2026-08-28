@@ -1,16 +1,17 @@
 // HeapWindow — 用户堆窗口（动态侧：堆 / mmap 懒区）。
 //
-// 装载期注册 `[image_end, 栈底 = upper() − STACK_WINDOW_SIZE)`，区间分配器 ∝ 存活块。
-// 同一窗口方向分区：allocate rise 出块（立即分配：逐页帧 + PTE + 注入）、mmap fall
-// 取高位懒匿名段（mmap/munmap：帧空 → 懒，触碰经缺页物化）。护栏事件（fence
-// 记账）与 TLB 刷新属空间级事务，由调用方（envcall，经 `Space::with_flush`）负责。
+// 装载期激活自由段后即用（VA 出自由段访问器，段内 lowest first-fit——与栈同池
+// 取段，地址不再分区：堆 / mmap / 栈 slot 全部自低端起见缝插针）。allocate 出块
+// （立即分配：逐页帧 + PTE + 注入）、mmap 取懒匿名段（mmap/munmap：帧空 → 懒，
+// 触碰经缺页物化）。护栏事件（fence 记账）与 TLB 刷新属空间级事务，由调用方
+// （envcall，经 `Space::with_flush`）负责。
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame::allocator;
-use crate::memory::allocator::interval::Direction;
+use crate::memory::allocator::interval::IntervalAllocator;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::Frame;
@@ -23,28 +24,28 @@ use super::super::map::{Map, MapKind};
 /// 堆窗口。
 #[derive(Debug)]
 pub(crate) struct HeapWindow {
-    /// 公共窗口核心（区间分配器 + 子 Map 表）。
+    /// 窗口簿记核心（自由段访问器 + 子 Map 表）。
     pub(crate) inner: Dynamic,
 }
 
 impl HeapWindow {
-    /// 装载期注册：`[base, edge)`（通常 `[image_end, upper() − STACK_WINDOW_SIZE)`）。
-    /// 调用方保证 base 页对齐、base ≤ edge 且不与已映射区/窗口重叠（见 loader）。
-    pub(crate) fn new(base: usize, edge: usize) -> Self {
+    /// 构造：绑定自由段访问器（须已激活，loader 保证先激活后注册）。
+    pub(crate) fn new(alloc: IntervalAllocator) -> Self {
         Self {
-            inner: Dynamic::window(base, edge),
+            inner: Dynamic::new(alloc),
         }
     }
 
-    /// 用户堆分配：窗口 rise 保留页对齐 VA 块，登记空子 Map（Anonymous），逐页从
-    /// frame 分配器取物理页映射（U|R|W，**立即分配**非懒）并注入子 Map。返回分配 VA。
+    /// 用户堆分配：自由段 lowest first-fit 出一页对齐 VA 块，登记空子 Map
+    /// （Anonymous），逐页从 frame 分配器取物理页映射（U|R|W，**立即分配**非懒）
+    /// 并注入子 Map。返回分配 VA。
     ///
     /// 中途帧耗尽时回滚：清已映射页叶子 + 移除子 Map（帧随 drop 归还）+ VA 块退回
-    /// 窗口（中间表帧已由 unmap_frames 回收）。
+    /// 分配器（中间表帧已由 unmap_frames 回收）。
     ///
     /// # Errors
     ///
-    /// 窗口耗尽 / 物理帧耗尽 → [`MapError::OutOfMemory`]。
+    /// 自由段耗尽 / 物理帧耗尽 → [`MapError::OutOfMemory`]。
     pub(crate) fn allocate(
         &mut self,
         durable: &mut Durable,
@@ -52,7 +53,9 @@ impl HeapWindow {
     ) -> Result<VirtAddr, MapError> {
         let flags =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-        let va = self.inner.allocate(size, flags, MapKind::Anonymous, None)?;
+        let va = self
+            .inner
+            .allocate(size, flags, MapKind::Anonymous, None)?;
         let pages = size / PAGE_SIZE;
         let mut mapped = 0usize;
         while mapped < pages {
@@ -64,7 +67,7 @@ impl HeapWindow {
             let pa = PhysAddr::from_raw(page.as_ptr() as usize);
             let m_va = va + mapped * PAGE_SIZE;
             if durable.root.map(m_va, pa, PAGE_SIZE, flags).is_err() {
-                // 回滚：清已映射页叶子并回收中间表 + 移除子 Map（帧随 drop 归还）+ VA 退回窗口
+                // 回滚：清已映射页叶子并回收中间表 + 移除子 Map（帧随 drop 归还）+ VA 退回分配器
                 durable.unmap_frames(va, mapped * PAGE_SIZE);
                 self.inner.deallocate(va, size);
                 return Err(MapError::OutOfMemory);
@@ -81,7 +84,7 @@ impl HeapWindow {
         Ok(va)
     }
 
-    /// 用户堆释放：窗口按 `(addr, size)` 精确匹配后移除子 Map（帧随 drop 归还）+
+    /// 用户堆释放：分配器按 `(addr, size)` 精确匹配后移除子 Map（帧随 drop 归还）+
     /// 清叶子 PTE（含回收变空的中间表）。返回是否找到并释放（未分配/部分已释放的
     /// 区间返回 false，同旧块表精确匹配语义）。
     pub(crate) fn deallocate(
@@ -99,34 +102,34 @@ impl HeapWindow {
         true
     }
 
-    /// 高位大段懒匿名映射（mmap）：窗口 `fall` 取高位段 + Anonymous 子 Map（帧空 →
-    /// 懒）。触碰经既有缺页懒分配零页帧（page_fault → Anonymous 分支）；返回高位 VA
-    /// （Sv39 ≈ 254 GiB / Sv48 ≈ 128 TiB / Sv57 ≈ 64 PiB）。与堆共用同一窗口，
-    /// 方向分区：堆 rise、mmap fall。
+    /// 懒匿名映射（mmap）：自由段 lowest first-fit 取段 + Anonymous 子 Map
+    /// （帧空 → 懒）。触碰经既有缺页懒分配零页帧（page_fault → Anonymous 分支）。
+    /// 与堆/栈同池取段，无方向分区；返回自由段内任意空隙基址（不再保证高位）。
     ///
     /// # Errors
     ///
     /// - `NotAligned` — size 未页对齐或为零。
-    /// - `OutOfMemory` — 窗口空隙不足。
+    /// - `OutOfMemory` — 自由段空隙不足。
     pub(crate) fn mmap(&mut self, size: usize) -> Result<VirtAddr, MapError> {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
-        let (base, size) = self
+        let base = self
             .inner
-            .allocator
-            .allocate(size, Direction::Fall)
+            .alloc
+            .allocate(size)
             .map_err(|_| MapError::OutOfMemory)?;
+        let va = VirtAddr::from_raw(base);
         let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
         self.inner.children.push(Map::new(
-            VirtAddr::from_raw(base),
+            va,
             size,
             flags,
             MapKind::Anonymous,
             Vec::new(),
             None,
         ));
-        Ok(VirtAddr::from_raw(base))
+        Ok(va)
     }
 
     /// 释放 mmap 区域：精确匹配摘块摘子 Map（帧随 drop 归还）+ 清已触页 PTE/中间表。

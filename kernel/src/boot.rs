@@ -152,6 +152,7 @@ fn spawn_demos() -> Result<(), MapError> {
         (&include_bytes!(env!("USER_STRESSOR"))[..], "stressor"),
         (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
         (&include_bytes!(env!("USER_TLSER"))[..], "tlser"),
+        (&include_bytes!(env!("USER_DOCKER"))[..], "docker"),
     ] {
         let (team, entry) = load_user(elf);
         team.task().name(name).entry(entry).spawn()?;

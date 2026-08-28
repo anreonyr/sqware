@@ -91,10 +91,19 @@ pub enum MailCall {
     PortPush = 2,
     /// 收取消息（内核拷贝）：a0 = 句柄，a1 = 消息缓冲 VA。
     PortPull = 3,
-    /// 建 ring 连接（共享内存邮路；首版缓行）。
+    /// 建 dock 通道（共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
+    /// a0 = dock id（兼作 wait/wake 键），a1 = 视图基址（同 team 两端同源）。
     RingOpen = 4,
-    /// 终止 ring 连接（首版缓行）。
+    /// 终止 dock 通道：置 Dead（对端感知断开）：a0 = dock id。
     RingShut = 5,
+    /// 加入已有 dock（跨 team）：a0 = dock id，a1 = side（0 = Pier / 1 = Quay）→
+    /// a0 = 本地视图基址；Quay 已被占用 → Busy。
+    RingJoin = 6,
+    /// 复制生产端（pier）：a0 = dock id → 计数 +1（0 或负码）。
+    RingClone = 7,
+    /// 释放一端：a0 = dock id，a1 = side → pier_count −1（归零 → Hang）；
+    /// quay → 清在场位 + Dead。
+    RingDrop = 8,
 }
 
 /// 控制调用（class 6）。
@@ -178,7 +187,8 @@ index_from! {
     IOCall { Put = 0 }
     ChronoCall { Ticks = 0, Clock = 1 }
     MailCall {
-        PortOpen = 0, PortShut = 1, PortPush = 2, PortPull = 3, RingOpen = 4, RingShut = 5
+        PortOpen = 0, PortShut = 1, PortPush = 2, PortPull = 3,
+        RingOpen = 4, RingShut = 5, RingJoin = 6, RingClone = 7, RingDrop = 8
     }
     ControlCall { Panic = 0 }
 }
