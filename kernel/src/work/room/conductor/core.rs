@@ -686,13 +686,21 @@ pub(super) fn wake(key: WaitKey) -> bool {
 /// 出队，放锁后再取 Team.tasks / Space.inner（顺序获取、不嵌套）。
 pub(super) fn clear() {
     loop {
-        let Some(z) = TASK_TABLES.reaped.lock().pop_front() else {
-            break;
+        // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
+        // 导致 reaped(L3) 锁跨 dock/ring 的 task_exit（内部取 task_docks/task_rings
+        // 同为 L3）——同层嵌套 lockdep 违规。块结束即释放 reaped 锁。
+        let z = {
+            let mut reaped = TASK_TABLES.reaped.lock();
+            let Some(z) = reaped.pop_front() else {
+                break;
+            };
+            z
         };
         trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
-        // dock 退出钩子（B3）：任务名下全部 dock 引用逐条递减（pier → Hang 判据、
-        // quay → Dead 判据）；与显式 RingDrop 同路径。需在簿记清理前执行（锁外，
-        // 只经 dock 注册表 L3 —— spawn 路径 1→3 合法，clear 同）。
+        // dock/ring 退出钩子（B3）：任务名下全部通道引用逐条递减（dock pier → Hang
+        // 判据、quay → Dead 判据；ring → Dead）。与显式 drop 同路径。需在簿记清理
+        // 前执行（锁外，只经通道注册表 L3 —— spawn 路径 1→3 合法，clear 同）。
+        crate::work::mail::dock::task_exit(z.ident.id);
         crate::work::mail::ring::task_exit(z.ident.id);
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);

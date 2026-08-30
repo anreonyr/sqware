@@ -21,6 +21,7 @@ use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
+use crate::work::mail::dock;
 use crate::work::mail::port::{self, MSG_LEN, PortError};
 use crate::work::mail::ring;
 use crate::work::mail::{copy_in, copy_out};
@@ -31,6 +32,7 @@ use crate::work::unit::space::Pending;
 use crate::work::unit::task::TaskIdent;
 
 use ubi::dock::DOCK_KEY_TAG;
+use ubi::ring::RING_KEY_TAG;
 
 /// envcall 分发。
 ///
@@ -82,14 +84,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             return park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext;
         }
         Ucall::Room(RoomCall::Wait) => {
-            // a0 = key（用户空间事件地址 或 dock 键带标记位），a1 = 毫秒
+            // a0 = key（用户空间事件地址 或 dock/ring 键带标记位），a1 = 毫秒
             // （usize::MAX = 永久）。
-            // key 合成：dock 键（最高位标记）→ 本体不经 compose（跨 team asid
-            // 不同，经 compose 必失配；dock id 全局唯一即防撞）；否则合成空间身份
-            // （asid 高 16 位 || va 低 48 位）——跨空间同 VA 不得混淆（与
-            // fence::key 同源意；单射要求 va < 2^48）。
+            // key 合成：dock 键（DOCK_KEY_TAG）/ ring 键（RING_KEY_TAG）→ 本体
+            // 不经 compose（跨 team asid 不同，经 compose 必失配；id 全局唯一即
+            // 防撞）；否则合成空间身份（asid 高 16 位 || va 低 48 位）——跨空间
+            // 同 VA 不得混淆（与 fence::key 同源意；单射要求 va < 2^48）。
             let raw = frame.gpr.x(Gprs::A0);
-            let key = if raw & DOCK_KEY_TAG != 0 {
+            let key = if raw & (DOCK_KEY_TAG | RING_KEY_TAG) != 0 {
                 WaitKey::from_raw(raw)
             } else {
                 WaitKey::compose(ident.team.space.asid(), raw)
@@ -104,9 +106,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             return wait(key, dur) as *mut TrapContext;
         }
         Ucall::Room(RoomCall::Wake) => {
-            // a0 = key（与 Wait 同源合成：dock 键带标记 / 地址键 compose）。
+            // a0 = key（与 Wait 同源合成：dock/ring 键带标记 / 地址键 compose）。
             let raw = frame.gpr.x(Gprs::A0);
-            let key = if raw & DOCK_KEY_TAG != 0 {
+            let key = if raw & (DOCK_KEY_TAG | RING_KEY_TAG) != 0 {
                 WaitKey::from_raw(raw)
             } else {
                 WaitKey::compose(ident.team.space.asid(), raw)
@@ -288,8 +290,49 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Err(PortError::Dead) => frame.gpr.set_x(Gprs::A0, -1isize as usize),
             }
         }
-        Ucall::Mail(MailCall::RingOpen) => {
+        Ucall::Mail(MailCall::DockOpen) => {
             // a0 = item_len，a1 = slots（2 的幂）→ a0 = dock id，a1 = 视图基址。
+            let item_len = frame.gpr.x(Gprs::A0);
+            let slots = frame.gpr.x(Gprs::A1);
+            let r = dock::open(&ident.team.space, item_len, slots);
+            match r {
+                Ok((id, view)) => {
+                    frame.gpr.set_x(Gprs::A0, id);
+                    frame.gpr.set_x(Gprs::A1, view);
+                }
+                Err(_) => frame.gpr.set_x(Gprs::A0, usize::MAX),
+            }
+        }
+        Ucall::Mail(MailCall::DockJoin) => {
+            // a0 = dock id，a1 = side（0 = Pier / 1 = Quay）→ a0 = 本地视图基址。
+            let id = frame.gpr.x(Gprs::A0);
+            let side = frame.gpr.x(Gprs::A1);
+            let r = dock::join(&ident.team.space, id, side);
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(view) => view,
+                    Err(e) => e.code() as usize,
+                },
+            );
+        }
+        Ucall::Mail(MailCall::DockShut) => {
+            // a0 = dock id → 0 或负码。
+            let ok = dock::shut(frame.gpr.x(Gprs::A0));
+            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+        }
+        Ucall::Mail(MailCall::DockClone) => {
+            // a0 = dock id → 0 或负码。
+            let ok = dock::clone_pier(frame.gpr.x(Gprs::A0));
+            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+        }
+        Ucall::Mail(MailCall::DockDrop) => {
+            // a0 = dock id，a1 = side。
+            let ok = dock::drop_end(frame.gpr.x(Gprs::A0), frame.gpr.x(Gprs::A1));
+            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+        }
+        Ucall::Mail(MailCall::RingOpen) => {
+            // a0 = item_len，a1 = slots（2 的幂）→ a0 = ring id，a1 = 视图基址。
             let item_len = frame.gpr.x(Gprs::A0);
             let slots = frame.gpr.x(Gprs::A1);
             let r = ring::open(&ident.team.space, item_len, slots);
@@ -302,10 +345,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }
         }
         Ucall::Mail(MailCall::RingJoin) => {
-            // a0 = dock id，a1 = side（0 = Pier / 1 = Quay）→ a0 = 本地视图基址。
+            // a0 = ring id → a0 = 本地视图基址。
             let id = frame.gpr.x(Gprs::A0);
-            let side = frame.gpr.x(Gprs::A1);
-            let r = ring::join(&ident.team.space, id, side);
+            let r = ring::join(&ident.team.space, id);
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
@@ -314,19 +356,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::RingShut) => {
-            // a0 = dock id → 0 或负码。
-            let ok = ring::shut(frame.gpr.x(Gprs::A0));
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
-        }
-        Ucall::Mail(MailCall::RingClone) => {
-            // a0 = dock id → 0 或负码。
-            let ok = ring::clone_pier(frame.gpr.x(Gprs::A0));
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
-        }
-        Ucall::Mail(MailCall::RingDrop) => {
-            // a0 = dock id，a1 = side。
-            let ok = ring::drop_end(frame.gpr.x(Gprs::A0), frame.gpr.x(Gprs::A1));
+        Ucall::Mail(MailCall::RingClose) => {
+            // a0 = ring id → 0 或负码。
+            let ok = ring::close(frame.gpr.x(Gprs::A0));
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
     };

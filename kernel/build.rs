@@ -90,6 +90,10 @@ fn main() {
         bin_dir.join("user-docker").display()
     );
     println!(
+        "cargo::rustc-env=USER_RINGER={}",
+        bin_dir.join("user-ringer").display()
+    );
+    println!(
         "cargo::rustc-env=USER_LISP={}",
         bin_dir.join("user-lisp").display()
     );

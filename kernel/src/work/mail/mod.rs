@@ -1,8 +1,8 @@
-// 任务间通信（mail）— 双通道（unit / room 之后的第三域）。
+// 任务间通信（mail）— 三通道（unit / room 之后的第三域）。
 //
 //   port.rs — 内核邮路：消息拷贝经内核（定长小消息、单槽）；
-//   ring.rs — 共享内存邮路：数据/索引全在用户态共享内存（零拷贝），内核只做
-//             同步。
+//   dock.rs — 多对一共享内存邮路（多 pier 生产 / 唯一 quay 消费，零拷贝）；
+//   ring.rs — 一对一共享内存邮路（两端固定，零拷贝）。
 //
 // 词族：open/shut/push/pull 成对；阻塞统一走调度域 wait/wake（conductor 词族）
 // ——mail 消费调度器，不重造调度器。
@@ -14,6 +14,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::Space;
 
+pub mod dock;
 pub mod port;
 pub mod ring;
 

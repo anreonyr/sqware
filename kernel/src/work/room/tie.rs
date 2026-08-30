@@ -62,6 +62,10 @@ pub(super) fn halt() -> ! {
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,
         ));
+        // 关机清理：dock/ring 注册表清空（全部任务已退、space 已 drop），触发
+        // Meta drop 归还共享区帧——必须在帧基线审计前，否则残留 Arc 计入泄漏。
+        crate::work::mail::dock::shutdown();
+        crate::work::mail::ring::shutdown();
         crate::memory::allocator::block::flush();
         #[cfg(debug_assertions)]
         crate::memory::allocator::fence::audit::check_baseline();

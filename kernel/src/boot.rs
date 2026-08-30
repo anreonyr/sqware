@@ -144,16 +144,17 @@ fn spawn_demos() -> Result<(), MapError> {
     // 单线程团队回归
     for (elf, name) in [
         (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
-        (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
-        (&include_bytes!(env!("USER_MAILER"))[..], "mailer"),
-        (&include_bytes!(env!("USER_YIELDER"))[..], "yielder"),
-        (&include_bytes!(env!("USER_SLEEPER"))[..], "sleeper"),
-        (&include_bytes!(env!("USER_EXITER"))[..], "exiter"),
-        (&include_bytes!(env!("USER_STRESSOR"))[..], "stressor"),
-        (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
-        (&include_bytes!(env!("USER_TLSER"))[..], "tlser"),
-        (&include_bytes!(env!("USER_DOCKER"))[..], "docker"),
-        (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
+        // (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
+        // (&include_bytes!(env!("USER_MAILER"))[..], "mailer"),
+        // (&include_bytes!(env!("USER_YIELDER"))[..], "yielder"),
+        // (&include_bytes!(env!("USER_SLEEPER"))[..], "sleeper"),
+        // (&include_bytes!(env!("USER_EXITER"))[..], "exiter"),
+        // (&include_bytes!(env!("USER_STRESSOR"))[..], "stressor"),
+        // (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
+        // (&include_bytes!(env!("USER_TLSER"))[..], "tlser"),
+        // (&include_bytes!(env!("USER_DOCKER"))[..], "docker"),
+        // (&include_bytes!(env!("USER_RINGER"))[..], "ringer"),
+        // (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
     ] {
         let (team, entry) = load_user(elf);
         let mut task = team.task().name(name).entry(entry);

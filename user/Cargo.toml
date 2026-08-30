@@ -86,6 +86,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "user-ringer"
+path = "src/bin/ringer.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "user-lisp"
 path = "src/bin/lisp.rs"
 test = false

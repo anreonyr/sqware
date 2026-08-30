@@ -10,7 +10,8 @@
 //!   Memory  内存       Allocate Deallocate Mmap Munmap Mprotect
 //!   IO      IO         Put Get
 //!   Chrono  时钟       Ticks Clock
-//!   Mail    通信       PortOpen PortShut PortPush PortPull RingOpen RingShut
+//!   Mail    通信       PortOpen PortShut PortPush PortPull DockOpen DockShut
+//!                     DockJoin DockClone DockDrop RingOpen RingClose RingJoin
 //!   Control 控制       Panic
 //!
 //! 命名与调度词族（conductor）、`runtime::chrono` 域及用户侧 API
@@ -80,8 +81,9 @@ pub enum ChronoCall {
     Clock = 1,
 }
 
-/// 通信调用（class 5，mail）。成员带 Port/Ring 前缀区分双通道（wait/wake 不进
-/// 本类——ring 同步直用调度词族 `Ucall::Room::Wait/Wake`）。
+/// 通信调用（class 5，mail）。成员按通道形态分三族：`Port`（内核拷贝邮路）、
+/// `Dock`（多对一共享内存通道）、`Ring`（一对一共享内存通道）。wait/wake 不进
+/// 本类——mail 同步直用调度词族 `Ucall::Room::Wait/Wake`。
 #[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
@@ -93,19 +95,29 @@ pub enum MailCall {
     PortPush = 2,
     /// 收取消息（内核拷贝）：a0 = 句柄，a1 = 消息缓冲 VA。
     PortPull = 3,
-    /// 建 dock 通道（共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
-    /// a0 = dock id（兼作 wait/wake 键），a1 = 视图基址（同 team 两端同源）。
-    RingOpen = 4,
+    /// 建 dock 通道（多对一共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
+    /// a0 = dock id（兼作 wait/wake 键，带 DOCK_KEY_TAG），a1 = 视图基址
+    /// （同 team 两端同源）。
+    DockOpen = 4,
     /// 终止 dock 通道：置 Dead（对端感知断开）：a0 = dock id。
-    RingShut = 5,
+    DockShut = 5,
     /// 加入已有 dock（跨 team）：a0 = dock id，a1 = side（0 = Pier / 1 = Quay）→
     /// a0 = 本地视图基址；Quay 已被占用 → Busy。
-    RingJoin = 6,
+    DockJoin = 6,
     /// 复制生产端（pier）：a0 = dock id → 计数 +1（0 或负码）。
-    RingClone = 7,
+    DockClone = 7,
     /// 释放一端：a0 = dock id，a1 = side → pier_count −1（归零 → Hang）；
     /// quay → 清在场位 + Dead。
-    RingDrop = 8,
+    DockDrop = 8,
+    /// 建 ring 通道（一对一共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
+    /// a0 = ring id（兼作 wait/wake 键，带 RING_KEY_TAG），a1 = 视图基址
+    /// （两端同源）。open 即双端固定，无 pier/quay 计数。
+    RingOpen = 9,
+    /// 终止 ring 通道：置 Dead（对端感知断开）：a0 = ring id。
+    RingClose = 10,
+    /// 加入已有 ring（跨 team）：a0 = ring id → a0 = 本地视图基址。一对一无
+    /// 端选择；已满员 → Busy。
+    RingJoin = 11,
 }
 
 /// 控制调用（class 6）。
@@ -190,7 +202,8 @@ index_from! {
     ChronoCall { Ticks = 0, Clock = 1 }
     MailCall {
         PortOpen = 0, PortShut = 1, PortPush = 2, PortPull = 3,
-        RingOpen = 4, RingShut = 5, RingJoin = 6, RingClone = 7, RingDrop = 8
+        DockOpen = 4, DockShut = 5, DockJoin = 6, DockClone = 7, DockDrop = 8,
+        RingOpen = 9, RingClose = 10, RingJoin = 11
     }
     ControlCall { Panic = 0 }
 }

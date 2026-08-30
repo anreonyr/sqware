@@ -24,6 +24,9 @@ pub mod mail;
 /// 用户 dock：共享内存邮路（多 pier 生产 / 唯一 quay 消费，零拷贝）。
 pub mod dock;
 
+/// 用户 ring：一对一共享内存邮路（两端固定，零拷贝）。
+pub mod ring;
+
 /// 用户 lisp：教学 Lisp 语言内核 + shell 适配（独占控制台输入）。
 pub mod lisp;
 
@@ -251,7 +254,7 @@ pub mod env {
     }
 
     /// 用户主动内核 panic（a0 = 任意关联码；不返回）。
-    pub fn panic_me(code: usize) -> ! {
+    pub fn panic(code: usize) -> ! {
         let args = UArgs {
             a0: code,
             ..UArgs::default()
@@ -314,7 +317,7 @@ pub mod env {
             a1: slots,
             ..UArgs::default()
         };
-        let (id, view) = UcallBuilder::new(Ucall::Mail(MailCall::RingOpen))
+        let (id, view) = UcallBuilder::new(Ucall::Mail(MailCall::DockOpen))
             .args(args)
             .call()?;
         Ok((id, view))
@@ -327,7 +330,7 @@ pub mod env {
             a1: side,
             ..UArgs::default()
         };
-        let (view, _) = UcallBuilder::new(Ucall::Mail(MailCall::RingJoin))
+        let (view, _) = UcallBuilder::new(Ucall::Mail(MailCall::DockJoin))
             .args(args)
             .call()?;
         Ok(view)
@@ -339,7 +342,7 @@ pub mod env {
             a0: id,
             ..UArgs::default()
         };
-        UcallBuilder::new(Ucall::Mail(MailCall::RingShut))
+        UcallBuilder::new(Ucall::Mail(MailCall::DockShut))
             .args(args)
             .call()?;
         Ok(())
@@ -351,7 +354,7 @@ pub mod env {
             a0: id,
             ..UArgs::default()
         };
-        UcallBuilder::new(Ucall::Mail(MailCall::RingClone))
+        UcallBuilder::new(Ucall::Mail(MailCall::DockClone))
             .args(args)
             .call()?;
         Ok(())
@@ -364,7 +367,46 @@ pub mod env {
             a1: side,
             ..UArgs::default()
         };
-        UcallBuilder::new(Ucall::Mail(MailCall::RingDrop))
+        UcallBuilder::new(Ucall::Mail(MailCall::DockDrop))
+            .args(args)
+            .call()?;
+        Ok(())
+    }
+
+    /// 建 ring 通道（一对一共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
+    /// (ring id, 视图基址)。id 即条件键（+最高位标记 RING_KEY_TAG，见
+    /// [`crate::ring`]）。
+    pub fn ring_open(item_len: usize, slots: usize) -> UResult<(usize, usize)> {
+        let args = UArgs {
+            a0: item_len,
+            a1: slots,
+            ..UArgs::default()
+        };
+        let (id, view) = UcallBuilder::new(Ucall::Mail(MailCall::RingOpen))
+            .args(args)
+            .call()?;
+        Ok((id, view))
+    }
+
+    /// 加入已有 ring（一对一）：a0 = id → 本地视图基址。
+    pub fn ring_join(id: usize) -> UResult<usize> {
+        let args = UArgs {
+            a0: id,
+            ..UArgs::default()
+        };
+        let (view, _) = UcallBuilder::new(Ucall::Mail(MailCall::RingJoin))
+            .args(args)
+            .call()?;
+        Ok(view)
+    }
+
+    /// 终止 ring：置 Dead（对端感知断开）。
+    pub fn ring_close(id: usize) -> UResult<()> {
+        let args = UArgs {
+            a0: id,
+            ..UArgs::default()
+        };
+        UcallBuilder::new(Ucall::Mail(MailCall::RingClose))
             .args(args)
             .call()?;
         Ok(())
