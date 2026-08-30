@@ -62,7 +62,10 @@ pub fn check_baseline() {
     let blocks = crate::memory::allocator::block::held_pages();
     let base = FRAME_BASELINE.load(Ordering::Relaxed);
     let bbase = BLOCK_BASELINE.load(Ordering::Relaxed);
-    if now - blocks != base - bbase {
+    // wrapping_sub：防回归早期 `now < blocks` 下溢（现全部实现已保证不越，防御性）。
+    let lhs = now.wrapping_sub(blocks);
+    let rhs = base.wrapping_sub(bbase);
+    if lhs != rhs {
         report(
             IntegrityViolation::AuditDivergence,
             0,

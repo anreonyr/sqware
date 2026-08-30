@@ -206,11 +206,50 @@ fn kbt_read(f: usize) -> Option<(usize, usize)> {
         return None;
     }
     let off = f - page;
-    // SAFETY: 该页 walk 命中且带 R；off 与 off+8 恒在页内（f+8 <= high 由调用方
-    // 保证，且读字按页裁剪——此处页内偏移 +8 不会越出页界之外的假设由 f+16 检查
-    // 兜底，见调用方）。S 态直读恒等映射。
-    let caller = unsafe { ((pa0.as_usize() + off) as *const usize).read_volatile() };
-    let ra = unsafe { ((pa0.as_usize() + off + 8) as *const usize).read_volatile() };
+    // 第二字（ra）跨页守卫：调用方 `f + 16 <= high` 钳制只保证 16 字节在扫描窗内，
+    // 不保证 off+8 在页内。当前 fp 链 + ABI 实际让 off+8 恒页内（f 16 字节对齐
+    // → off ∈ 16 步进 → off+8 ≤ 4088 < 4096），trap 栈亦同（edge 64 KiB 对齐
+    // 强制页内）；但契约是"绝不产生缺页"——一旦 off 越界任何 off≥4096 写裸读即
+    // fault。新模型下任务栈槽不再独占固定窗口，pa0+PAGE_SIZE 落在未映射 / 邻居
+    // 槽页时缺页 → 嵌套 panic → 现场静默消失（幽灵 panic）。此处补契约缺口：
+    // off+8 越页则单独 walk 第二页（同 in_dram + R 双重守卫），不可读即停链。
+    //
+    // SAFETY: caller 页已 walk 命中带 R；ra 页单独 walk（in_dram + R 双重检查），
+    // 任一未通过即停链（不读不崩）。S 态直读恒等映射。读侧一律 `read_unaligned`：
+    // fp 链跨 `core::panicking` 等无 FP 预编译库时 `*f` 是任意 callee-saved
+    // 保存值（ABI 不保证 8 字节对齐），`read_volatile::<usize>` 会触发 LLVM
+    // 「aligned」precondition → UB → 嵌套 panic 现场静默。`read_unaligned` 走
+    // 非对齐 load，零 precondition，代价是单次 load 裂字（无 volatile 语义——
+    // 单核 panic 现场其他核已停，编译器无外部写可优化）。
+    let caller = unsafe { (pa0.as_usize() as *const u8).add(off).cast::<usize>().read_unaligned() };
+    let ra = if off + 8 < PAGE_SIZE {
+        // 同行：页内直读
+        unsafe {
+            (pa0.as_usize() as *const u8)
+                .add(off + 8)
+                .cast::<usize>()
+                .read_unaligned()
+        }
+    } else {
+        // 跨页：单独 walk 第二页（同 in_dram + R 守卫），不可读即停链
+        let page2 = page + PAGE_SIZE;
+        let Some((pa1, flags1)) = crate::memory::manager::table::TableNode::walk_raw(
+            PhysAddr::from_raw(ppn << 12),
+            VirtAddr::from_raw(page2),
+            in_dram,
+        ) else {
+            return None;
+        };
+        if !flags1.contains(PteFlags::R) {
+            return None;
+        }
+        unsafe {
+            (pa1.as_usize() as *const u8)
+                .add(f + 8 - page2)
+                .cast::<usize>()
+                .read_unaligned()
+        }
+    };
     Some((caller, ra))
 }
 
@@ -231,8 +270,11 @@ fn kbt_word(a: usize) -> Option<usize> {
         return None;
     }
     let off = a - page;
-    // SAFETY: 页内偏移恒 < PAGE_SIZE；该页可读，S 态直读。
-    let w = unsafe { ((pa0.as_usize() + off) as *const usize).read_volatile() };
+    // SAFETY: 页内偏移恒 < PAGE_SIZE；该页可读，S 态直读。`read_unaligned` 理由
+    // 同 kbt_read：启发式扫描起点 `last + 8` / `sp & !7` 步进 8 字节，理论 8
+    // 字节对齐，但脱链后 `last` 是任意对齐的 callee-saved 保存值（详见 kbt_read
+    // 注释），`a` 起点继承未对齐 → 裸 load UB。
+    let w = unsafe { (pa0.as_usize() as *const u8).add(off).cast::<usize>().read_unaligned() };
     Some(w)
 }
 
@@ -288,7 +330,17 @@ fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
         let mut a = start;
         while a < end && n < BT_DEPTH {
             // SAFETY: 该页已 walk 命中且带 R；offset 恒在页内，S 态直读。
-            let w = unsafe { ((pa0.as_usize() + (a - page)) as *const usize).read_volatile() };
+            // `read_unaligned`：用户 trap 帧 sp 不强制 8 字节对齐（仅 sp 16 字
+            // 节对齐 ABI 约束，但入口 sp 来自用户态任意切换点 + 任务 trap 帧
+            // 模板），a 起点 +8 步进可能落到非 8 字节边界（ubacktrace 起扫点
+            // 也只是 `sp & !7`）；`read_volatile::<usize>` 触发 LLVM aligned
+            // precondition → UB。`read_unaligned` 零 precondition。
+            let w = unsafe {
+                (pa0.as_usize() as *const u8)
+                    .add(a - page)
+                    .cast::<usize>()
+                    .read_unaligned()
+            };
             let code = tbl
                 .as_deref()
                 .is_some_and(|t| t.lookup(VirtAddr::from_raw(w)).is_some());

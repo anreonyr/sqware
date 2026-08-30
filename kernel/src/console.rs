@@ -41,6 +41,18 @@ impl Write for Console {
                 })
                 .call()
                 .expect("Dbcn");
+        } else if let Some(pa) = translate_kernel(va, bytes.len()) {
+            // 内核空间映射（高半区 trap 栈 / 内核堆 / 镜像恒等区外物理帧）：
+            // 无锁 walk 页表树——关机审计（trap 栈，任务全退 ident=Last）与
+            // panic 现场（其他核已停）都依赖这条路径。
+            DbcnCall::new(Dbcn::ConsoleWrite)
+                .args(SArgs {
+                    a0: bytes.len(),
+                    a1: pa,
+                    ..Default::default()
+                })
+                .call()
+                .expect("Dbcn");
         } else if let Some(info) = ident()
             && let Some(task) = info.live()
         {
@@ -50,6 +62,37 @@ impl Write for Console {
         }
         Ok(())
     }
+}
+
+/// 内核空间无锁翻译 `[va, va+len)`：整段须在同一物理连续块内（每页 walk 检查
+/// 连续性），否则 None。内核空间构造后页表树只读，`translate_unlocked` 安全。
+/// 用于非恒等区、且无活任务身份可译的高半区内核地址（trap 栈 / 内核堆缓冲）。
+///
+/// **仅限内核半区地址**：用户半区 VA（如用户堆 0x87xxxxxx）在内核空间虽也有
+/// identity 映射，但用户空间的该 VA 映射到**不同的物理帧**（独立分配）——用
+/// 内核空间翻译会得到错误的 PA。用户地址一律回退活任务空间路径（`push`）。
+fn translate_kernel(va: usize, len: usize) -> Option<usize> {
+    // 用户半区地址：内核空间翻译无意义（见 doc 注释），直接回退。
+    if VirtAddr::from_raw(va).is_user() {
+        return None;
+    }
+    let space = &crate::work::unit::team::kernel()?.space;
+    // SAFETY: 内核空间装配后只读；诊断路径不持 Space 锁（多核 panic 现场其他核
+    // 已停，持锁会死锁）。
+    let (pa0, _) = unsafe { space.translate_unlocked(VirtAddr::from_raw(va)) }?;
+    // 逐页校验物理连续性：物理帧可能不连续，须整段连续方可一次 Dbcn 直读。
+    let mut va_cur = va;
+    let end = va + len;
+    while va_cur < end {
+        // SAFETY: 同上。
+        let (pa, _) = unsafe { space.translate_unlocked(VirtAddr::from_raw(va_cur)) }?;
+        if pa.as_usize() != pa0.as_usize() + (va_cur - va) {
+            return None; // 物理不连续：退回静默（不逐段拼）
+        }
+        // 跳到下一页（跨过本页剩余部分）
+        va_cur = (va_cur & !(crate::memory::PAGE_SIZE - 1)) + crate::memory::PAGE_SIZE;
+    }
+    Some(pa0.as_usize())
 }
 
 /// 在指定空间上打印一段缓冲（已持空间锁的上下文用）：逐段翻译，段内 flags

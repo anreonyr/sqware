@@ -74,6 +74,12 @@ impl<T> RelLock<T> {
 }
 
 impl<T: ?Sized> RelLock<T> {
+    /// 无锁只读访问指针（诊断/打印路径专用）：调用方必须保证此刻无并发写
+    /// （内核空间装配后只读；故障现场其他核已停）。正常路径勿用——会绕过锁。
+    pub(crate) fn read_unlocked(&self) -> *const T {
+        self.data.get()
+    }
+
     /// Acquire the lock, returning a guard. Reentrant on the same hart.
     ///
     /// On first acquisition, spins until the lock is free. If already held by this

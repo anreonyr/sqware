@@ -703,6 +703,19 @@ impl Space {
         self.with(|inner| inner.translate(vaddr))
     }
 
+    /// 无锁页表读翻译（诊断/打印路径专用）：不经 `inner` 锁，直接读页表树。
+    ///
+    /// 仅当本空间装配完成后不再写（内核空间）或在故障现场（其他核已停）可安全
+    /// 使用；正常路径必须走 [`translate`](Self::translate)（取锁）。
+    ///
+    /// # Safety
+    /// 调用方须保证此刻无并发写 `inner`（页表树不在变动）。
+    pub(crate) unsafe fn translate_unlocked(&self, vaddr: VirtAddr) -> Option<(PhysAddr, PteFlags)> {
+        // SAFETY: 调用方保证无并发写；只读 walk 页表树。
+        let inner = unsafe { &*self.inner.read_unlocked() };
+        inner.translate(vaddr)
+    }
+
     /// 返回根页表页号（写入 `satp` 用）。
     pub fn root(&self) -> usize {
         self.with(|inner| inner.root.ppn())
