@@ -1,92 +1,101 @@
-// StackWindow — 任务栈 slot（动态侧窗口：栈体 + 守护页）。
+// StackWindow — 任务栈 slot（窗口适配层：user 段上的栈领域策略）。
 //
-// VA 出自由段访问器（段内 lowest first-fit——自低向上排槽；栈与堆/懒区同池取
-// 段，地址序不再分区）；slot = 守护页 + 栈体两个子 Map（owner = 线程 id）：守护
-// 页 Reserved（溢出缺页可诊断）、栈体 Anonymous（帧随后经 `SpaceInner::attach_dynamic`
-// 注入）——claim 只占 VA 簿记、不物化帧。生命周期 owner 制：claim(owner) /
-// reclaim(owner) 成对，线程退役回收。
+// slot = 守护页 + 栈体，一次从 user 段取段（lowest first-fit 自低端起排槽）：
+// 守护页登记 `Pending::Guard`（溢出缺页可诊断）、栈体**立即物化**（Eager——
+// 内核任务栈在 S 态运行，若懒分配缺页会走内核地址 fatal 路径，故必须预分配帧）。
+// 产物是 [`Span`]（**覆盖整个 slot**：va = slot 基址、size = guard + 栈体），
+// 经 [`Space::release`] 按 Task 退役一次精确归还。
 
-use alloc::vec::Vec;
+use alloc::boxed::Box;
 
 use crate::layout::TASK_STACK_GUARD;
-use crate::memory::allocator::interval::IntervalAllocator;
+use crate::memory::PAGE_SIZE;
+use crate::memory::allocator::frame::allocator;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::VirtAddr;
+use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
+use crate::memory::manager::table::Frame;
 
-use super::super::dynamic::Dynamic;
-use super::super::map::{Map, MapKind};
+use super::super::{Seg, Space};
+use super::super::core::Span;
+use super::super::map::{Map, Pending};
 
-/// 栈窗口。
-#[derive(Debug)]
-pub(crate) struct StackWindow {
-    /// 窗口簿记核心（自由段访问器 + 子 Map 表）。
-    pub(crate) inner: Dynamic,
-}
+/// 栈窗口（零状态策略）。
+pub(crate) struct StackWindow;
 
 impl StackWindow {
-    /// 构造：绑定自由段访问器（free 段挂接时由 `SpaceInner::attach_free` 构造）。
-    pub(crate) fn new(alloc: IntervalAllocator) -> Self {
-        Self {
-            inner: Dynamic::new(alloc),
-        }
-    }
-
-    /// 领一个任务栈 slot，返回栈体 VA（向下增长，底部守护页）。
+    /// 领一个任务栈 slot，返回 **slot 全区间** Span（含守护页）。
     ///
-    /// slot = 守护页 + 栈体，一次从自由段访问器领取（lowest first-fit 排槽）；
-    /// 守护页登记 Reserved、栈体登记 Anonymous（帧随后经 attach_dynamic 注入）——
-    /// claim 只占簿记、不物化帧。两子 Map 均标 `owner`，退出时按 owner 一并回收
-    /// （[`Self::reclaim`]）。
+    /// `size` = 栈体大小（页对齐；guard 由本方法附加）。`kernel` = 所属空间
+    /// 种类：用户空间栈需 U（用户 push）；内核空间栈不得带 U——S 态 SUM=0 下
+    /// 访问 U 页会页故障，而内核任务跑 S 态。
     ///
-    /// `kernel` = 所属空间种类：用户空间栈需 U（用户 push）；内核空间栈不得带
-    /// U——S 态 SUM=0 下访问 U 页会页故障，而内核任务跑 S 态。
+    /// 栈体立即物化（Eager）：逐页分配物理帧 + 装 PTE + 注入 map。守护页只
+    /// 占簿记（Guard，不物化）。
+    ///
+    /// 返回 Span：`va` = slot 基址（守护页底）、`size` = guard + 栈体总长、
+    /// `pa` = None。栈体基址（供调用方算 stack_top）= `va + TASK_STACK_GUARD`。
+    ///
+    /// # Errors
+    ///
+    /// 段未就绪 / 段耗尽 / 物理帧耗尽 → [`MapError`]（回滚：已分配帧与段归还）。
     pub(crate) fn claim(
-        &mut self,
-        owner: usize,
+        space: &Space,
         size: usize,
         kernel: bool,
-    ) -> Result<VirtAddr, MapError> {
-        // 槽 = 栈体 size + 守护页；lowest first-fit 取段（自由段低端起）。
+    ) -> Result<Span, MapError> {
         let slot_size = size + TASK_STACK_GUARD;
-        let slot_base = self
-            .inner
-            .alloc
-            .allocate(slot_size)
-            .map_err(|_| MapError::OutOfMemory)?;
-        let slot_va = VirtAddr::from_raw(slot_base);
-        // 守护页 Reserved → 溢出缺页可诊断
-        self.inner.children.push(Map::new(
-            slot_va,
-            TASK_STACK_GUARD,
-            PteFlags::V | PteFlags::R | PteFlags::W,
-            MapKind::Reserved,
-            Vec::new(),
-            Some(owner),
-        ));
-        // 栈体 Anonymous，帧待 attach
-        let body_flags = if kernel {
-            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D
-        } else {
-            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D
-        };
-        let body_va = slot_va + TASK_STACK_GUARD;
-        self.inner.children.push(Map::new(
-            body_va,
-            size,
-            body_flags,
-            MapKind::Anonymous,
-            Vec::new(),
-            Some(owner),
-        ));
-        Ok(body_va)
-    }
-
-    /// 按 owner 摘全部子 Map（守护页/栈体一并）并归还 slot 区间（退役/回滚共用）。
-    ///
-    /// 区间归还与子 Map 结构性绑定：disown 命中则 alloc 归还必成功。返回被覆盖
-    /// 区间 `[va, va + len)`（供调用方清 PTE）。
-    pub(crate) fn reclaim(&mut self, owner: usize) -> Option<(VirtAddr, usize)> {
-        self.inner.disown(owner)
+        space.with_flush(|inner| {
+            let user = inner.user.as_mut().ok_or(MapError::NoRegion)?;
+            let slot_base = user.allocate(slot_size).map_err(|_| MapError::OutOfMemory)?;
+            let slot_va = VirtAddr::from_raw(slot_base);
+            // 守护页 Guard → 溢出缺页可诊断
+            inner.maps.push(Map::new(
+                slot_va,
+                TASK_STACK_GUARD,
+                PteFlags::V | PteFlags::R | PteFlags::W,
+                Some(Pending::Guard),
+                alloc::vec::Vec::new(),
+            ));
+            // 栈体：立即物化（Eager）。逐页分配帧 + 装 PTE + 注入。
+            let body_flags = if kernel {
+                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D
+            } else {
+                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D
+            };
+            let body_va = slot_va + TASK_STACK_GUARD;
+            inner.maps.push(Map::new(
+                body_va,
+                size,
+                body_flags,
+                None, // Eager（全物化）
+                alloc::vec::Vec::new(),
+            ));
+            let pages = size / PAGE_SIZE;
+            for i in 0..pages {
+                let page: Frame = unsafe {
+                    Box::try_new_zeroed_in(allocator())
+                        .map_err(|_| MapError::OutOfMemory)?
+                        .assume_init()
+                };
+                let pa = PhysAddr::from_raw(page.as_ptr() as usize);
+                let m_va = body_va + i * PAGE_SIZE;
+                if inner.root.map(m_va, pa, PAGE_SIZE, body_flags).is_err() {
+                    // 回滚：清已映射叶 + 摘 map + 段归还
+                    for j in 0..i {
+                        inner.root.unmap(body_va + j * PAGE_SIZE);
+                    }
+                    inner.user.as_mut().expect("user exists").deallocate(slot_base, slot_size);
+                    return Err(MapError::OutOfMemory);
+                }
+                inner
+                    .maps
+                    .iter_mut()
+                    .find(|m| m.va == body_va)
+                    .expect("body map exists")
+                    .inject(page);
+            }
+            Ok(Span::new(Seg::User, slot_va, slot_size, None))
+        })
     }
 }

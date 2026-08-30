@@ -11,7 +11,7 @@ use riscv::register::{scause, sepc, stval};
 use crate::memory::PAGE_SIZE;
 
 use super::{addr::VirtAddr, entry::PteFlags};
-use crate::work::unit::space::{MapKind, Space};
+use crate::work::unit::space::{Pending, Space};
 
 /// 从机器 CSR 捕获的缺页信息。
 #[derive(Debug)]
@@ -109,15 +109,24 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
         return true;
     }
 
-    // 2. 用户地址 → 查映射种类（常数表 + 窗口子表）
+    // 2. 用户地址 → 查映射物化态（Lazy 物化零页；Guard 预留触碰；None 无映射）
     if fault.addr.is_user() {
-        match space.resolve_kind(fault.addr) {
-            Some(MapKind::Anonymous) => {
+        match space.resolve_pending(fault.addr) {
+            Some(Some(Pending::Lazy)) => {
                 return resolve_anonymous(fault, space);
             }
-            Some(MapKind::Reserved) => {
+            Some(Some(Pending::Guard)) => {
                 error!(
                     "reserved region access: {:?} at {:?}, pc={:#x}",
+                    fault.kind, fault.addr, fault.pc
+                );
+                return false;
+            }
+            Some(None) => {
+                // 全物化映射（含借用）不该缺页：re-walk 已排除 A/D 竞争，到此处 =
+                // 内核簿记错误。
+                error!(
+                    "page fault on materialized map: {:?} at {:?}, pc={:#x}",
                     fault.kind, fault.addr, fault.pc
                 );
                 return false;

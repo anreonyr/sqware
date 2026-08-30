@@ -246,12 +246,12 @@ fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
     };
     let tbl = info.elftable();
     // trap 仅 Live 轴可读（Current::Last 不含 trap——帧可能已回收）；取不到 → 0 帧。
-    let Some(trap) = info.trap() else {
+    let Some(pa) = info.trap() else {
         return (0, tbl);
     };
     // SAFETY: Live = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM，恒等
     // 映射）；崩溃现场读只读、其余核冻结。
-    let frame = unsafe { &*(trap.pa.as_usize() as *const TrapContext) };
+    let frame = unsafe { &*(pa.as_usize() as *const TrapContext) };
     if frame.sepc.is_kernel() {
         return (0, tbl);
     }

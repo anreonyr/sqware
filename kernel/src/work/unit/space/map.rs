@@ -1,48 +1,46 @@
-// Map — VA→PA 簿记的原子单元（簿记模型第三层）。
+// Map — VA→PA 簿记的原子单元。
 //
 // 语义：本映射覆盖 VA 区间 `[va, va + size)`；`frames[i]` 是 VA
-// `va + i·PAGE_SIZE` 处物理帧的持有者（**不变量**：帧 i ↔ va + i·PAGE_SIZE）。
-// 借用映射（DRAM 恒等、trampoline 叶：物理帧归内核/机器）frames 为空，PA 由
-// 页表维护；拥有映射（文本、trap-context、堆块、栈体）帧随 Map drop 归还 frame
-// 池——所有权即回收，无遍历页表树、无手写 deallocate。
+// `va + i·PAGE_SIZE` 处**已物化**页的物理帧持有者（**不变量**：帧 i ↔ va + i·PAGE_SIZE，
+// 未物化页不在数组里——懒映射按触序前缀登记，guard 页永不入帧）。
+// `pending` 表达**未物化页的行为**（与帧所有权正交）：
+//   None       — 无未物化页（全物化）。拥有映射满帧；借用映射（DRAM 恒等、
+//                 trampoline、dock 视图）空帧——leaf 在册、物理帧归外部。
+//   Some(Lazy) — 未物化页缺页时分配零页（懒映射：mmap/declare/栈体）。
+//   Some(Guard)— 未物化且禁止物化：触碰即「预留映射访问」（栈守护页）。
+//
+// 帧随 Map drop 归还 frame 池（Owned）或 Arc 计数归零归还（Borrowed）——
+// 所有权即回收，无遍历页表树、无手写 deallocate。
 
 use core::num::NonZeroUsize;
 
 use alloc::vec::Vec;
 
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::table::{Frame, FrameState, MapError};
+use crate::memory::manager::table::{Frame, FrameState};
 
-/// 映射种类 — 缺页时如何响应。
+/// 未物化页的行为（Map 级）— 与帧所有权正交。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MapKind {
-    /// 匿名映射 — 缺页时分配零页
-    Anonymous,
-    /// 预留映射 — 不可访问，缺页时返回错误
-    ///
-    /// 任务栈守护页与内核借用映射（DRAM 恒等、trampoline 叶）以 Reserved 登记：
-    /// 越权触碰时返回「预留映射访问」而非笼统的「无 Map」。
-    Reserved,
+pub(crate) enum Pending {
+    /// 缺页时物化零页（懒分配，帧按触序注入 `frames` 前缀）。
+    Lazy,
+    /// 禁止物化：触碰即「预留映射访问」（栈守护页）。
+    Guard,
 }
 
 /// 虚拟→物理映射 — 簿记的原子单元。
 ///
-/// 语义：本映射覆盖 VA 区间 `[va, va + size)`；`frames[i]` 是 VA
-/// `va + i·PAGE_SIZE` 处物理帧的持有者（**不变量**：帧 i ↔ va + i·PAGE_SIZE）。
-/// 借用映射（DRAM 恒等、trampoline 叶：物理帧归内核/机器）frames 为空，PA 由
-/// 页表维护；拥有映射（文本、trap-context、堆块、栈体）帧随 Map drop 归还 frame
-/// 池——所有权即回收，无遍历页表树、无手写 deallocate。
+/// 语义见文件头。`frames` 只含已物化页（按序前缀）；`pending` 描述未物化页行为。
 #[derive(Debug)]
-pub struct Map {
+pub(crate) struct Map {
     pub(super) va: VirtAddr,
     pub(super) size: NonZeroUsize,
     pub(super) flags: PteFlags,
-    pub(super) kind: MapKind,
-    /// 所属线程 id（线程私有映射：栈 guard/体、trap 帧）——退出时按 owner 定位回收；
-    /// 共享/空间级映射（文本、DRAM、trampoline、堆块）为 `None`。
-    pub(super) owner: Option<usize>,
+    /// 未物化页行为（None = 全物化：拥有满帧 / 借用空帧）。
+    pub(super) pending: Option<Pending>,
+    /// 已物化页帧（按序前缀；未物化页不在数组）。
     pub(super) frames: Vec<FrameState>,
 }
 
@@ -52,16 +50,14 @@ impl Map {
         va: VirtAddr,
         size: usize,
         flags: PteFlags,
-        kind: MapKind,
+        pending: Option<Pending>,
         frames: Vec<FrameState>,
-        owner: Option<usize>,
     ) -> Self {
         Self {
             va,
             size: NonZeroUsize::new(size).expect("map size must be non-zero"),
             flags,
-            kind,
-            owner,
+            pending,
             frames,
         }
     }
@@ -71,19 +67,19 @@ impl Map {
         vaddr >= self.va && vaddr.as_usize() - self.va.as_usize() < self.size.get()
     }
 
-    /// 偏移 `off`（页内偏移无关，按页取帧）处的物理地址。
+    /// 第 `idx` 页是否已物化（已在页表）。
     ///
-    /// # Errors
+    /// - `pending: None` → 全物化（拥有映射满帧 / 借用映射 leaf 在册）→ true。
+    /// - `Some(Lazy)` → 已触页（`frames.len() > idx`）→ true；未触 → false。
+    /// - `Some(Guard)` → 永不物化 → false。
     ///
-    /// 越界（`off >= size`）或该页尚无帧（懒分配未就位）→ [`MapError::NotMapped`]。
-    /// munmap/mprotect 后端预留：按 VA→PA 语义直接取帧 PA
-    pub(super) fn translate(&self, off: usize) -> Result<PhysAddr, MapError> {
-        if off >= self.size.get() {
-            return Err(MapError::NotMapped);
+    /// 缺页 / mprotect 判「该页已物化」用；借用映射恒 true（leaf 在册）。
+    pub(super) fn is_materialized(&self, idx: usize) -> bool {
+        match self.pending {
+            None => true,
+            Some(Pending::Lazy) => idx < self.frames.len(),
+            Some(Pending::Guard) => false,
         }
-        let idx = off / PAGE_SIZE;
-        let frame = self.frames.get(idx).ok_or(MapError::NotMapped)?;
-        Ok(frame.pa())
     }
 
     /// 注入一帧（保持不变量；调用方保证序号连续且不越界）。

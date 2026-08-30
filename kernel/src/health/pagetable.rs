@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::work::unit::space::{MapKind, SpaceBuilder};
+use crate::work::unit::space::SpaceBuilder;
 
 /// PT 回收自测（audit-only）：map/unmap 循环验证中间表当场归还。
 pub fn pagetable() {
@@ -50,7 +50,6 @@ pub fn pagetable() {
                 pa,
                 SIZE,
                 flags,
-                MapKind::Anonymous,
                 frames,
             )
             .expect("[health] pagetable: map");

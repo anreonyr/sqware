@@ -35,7 +35,7 @@ use crate::memory::manager::{
 };
 
 use crate::layout::{HART_FRAME_BASE, TRAMPOLINE, trampoline_pa};
-use space::{MapKind, SpaceBuilder};
+use space::SpaceBuilder;
 
 // 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
 // 兼作 ROOT 栈下方的写保护 guard（栈下溢踩 .rodata 即写保护缺页）。
@@ -81,16 +81,10 @@ pub fn init() -> MapResult<()> {
             // 1. 创建内核地址空间
             let kernel_space = SpaceBuilder::kernel().build()?;
 
-            // 1.5 挂接内核空间自由段：从低区起覆盖整个用户半区（段表 lowest
+            // 1.5 设置内核空间 user 段：从低区起覆盖整个用户半区（段 lowest
             //     first-fit——内核心任务栈与用户栈同池自低端起排槽；诊断侧 scene
-            //     已按「自由段内 + slot 对齐」降级重估段顶，见 scene.rs kbacktrace）。
-            {
-                let this = &kernel_space;
-                let base = crate::layout::IMAGE_BASE.as_usize();
-                this.with(|inner| {
-                    inner.attach_free(base);
-                });
-            };
+            //     已按「段内 + slot 对齐」降级重估段顶，见 scene.rs kbacktrace）。
+            kernel_space.attach_free(crate::layout::IMAGE_BASE.as_usize());
 
             // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内 ROOT 栈区，位于
             //    `_kernel_edge` 之上）都在 DRAM 内。只 map free 会在启用分页后
@@ -108,8 +102,7 @@ pub fn init() -> MapResult<()> {
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
                 ram_flags,
-                MapKind::Reserved, // 借用映射：帧归机器/内核；user 半区触碰 → 预留诊断
-                Vec::new(),
+                Vec::new(), // 借用映射：帧归机器/内核
             )?;
 
             // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备；
@@ -119,7 +112,6 @@ pub fn init() -> MapResult<()> {
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
                 ram_flags,
-                MapKind::Reserved,
                 Vec::new(),
             )?;
 
@@ -145,7 +137,6 @@ pub fn init() -> MapResult<()> {
                 trampoline_pa(),
                 PAGE_SIZE,
                 tramp_flags,
-                MapKind::Reserved,
                 Vec::new(),
             )?;
 
@@ -162,7 +153,6 @@ pub fn init() -> MapResult<()> {
                     pa,
                     PAGE_SIZE,
                     PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
-                    MapKind::Anonymous,
                     vec![page],
                 )?;
             }

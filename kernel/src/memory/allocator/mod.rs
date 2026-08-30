@@ -12,7 +12,6 @@ pub mod bump;
 pub mod fence;
 pub mod frame;
 pub mod hybrid;
-pub mod interval;
 pub mod portal;
 /// 后备仓（日志 + panic 打印专用）。
 pub mod spare;

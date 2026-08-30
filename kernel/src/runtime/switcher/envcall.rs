@@ -16,7 +16,6 @@ use alloc::sync::Arc;
 use ubi::{ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall};
 
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
@@ -27,7 +26,8 @@ use crate::work::mail::ring;
 use crate::work::mail::{copy_in, copy_out};
 use crate::work::room::conductor::core::WaitKey;
 use crate::work::room::conductor::utask::{park, reap, starve, wait, wake};
-use crate::work::unit::space::MapKind;
+use crate::work::unit::space::window::{HeapWindow, ShareWindow};
+use crate::work::unit::space::Pending;
 use crate::work::unit::task::TaskIdent;
 
 use ubi::dock::DOCK_KEY_TAG;
@@ -126,13 +126,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
             let addr = {
                 let s = &ident.team.space;
-                let r = s.with_flush(|inner| {
-                    inner
-                        .heap
-                        .as_mut()
-                        .ok_or(MapError::NoRegion)?
-                        .allocate(&mut inner.durable, size)
-                });
+                let r = HeapWindow::allocate(s, size).map(|span| span.va);
                 // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义）
                 if let Ok(va) = r {
                     crate::memory::allocator::fence::on_alloc(
@@ -157,10 +151,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let ok = {
                 let s = &ident.team.space;
-                let freed = s.with_flush(|inner| match inner.heap.as_mut() {
-                    Some(h) => h.deallocate(&mut inner.durable, VirtAddr::from_raw(addr), size),
-                    None => false,
-                });
+                let freed = HeapWindow::deallocate(s, VirtAddr::from_raw(addr), size);
                 // 护栏事件：用户堆活块注销（无账 = 悬垂/双释放现行；键与分配相同）。
                 if freed {
                     crate::memory::allocator::fence::on_free(
@@ -205,11 +196,11 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let va = {
                 let s = &ident.team.space;
                 if fixed == 0 {
-                    // 窗口自选高位肯定有堆窗（若非 → NoRegion）；懒映射不改页表 → with
-                    s.with(|inner| inner.heap.as_mut().ok_or(MapError::NoRegion)?.mmap(size))
+                    // 懒映射（不改页表 → ShareWindow::mmap 内部 with）
+                    ShareWindow::mmap(s, size).map(|span| span.va)
                 } else {
                     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
-                    s.declare(VirtAddr::from_raw(fixed), size, flags, MapKind::Anonymous)
+                    s.declare(VirtAddr::from_raw(fixed), size, flags, Pending::Lazy)
                         .map(|()| VirtAddr::from_raw(fixed))
                 }
             };
@@ -228,12 +219,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let ok = {
                 let s = &ident.team.space;
-                if s.with_flush(|inner| match inner.heap.as_mut() {
-                    Some(h) => h.munmap(&mut inner.durable, addr, size),
-                    None => false,
-                }) {
+                if ShareWindow::munmap(s, addr, size) {
                     true
-                } else if s.resolve_kind(addr).is_some() {
+                } else if s.resolve_pending(addr).is_some() {
                     // 声明区（或窗口子区间的近似覆盖）：PTE 清 + 整段摘除；窗口
                     // 槽不归还。
                     s.unmap(addr, size);

@@ -37,7 +37,7 @@ use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
 use crate::work::room::conductor::core::{Current, ident, unpark};
 use crate::work::room::conductor::trap::run;
-use crate::work::unit::space::{MapKind, SpaceKind};
+use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::kernel;
 use crate::{machine, put};
 
@@ -158,7 +158,6 @@ pub fn init() {
                 PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
                 TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
                 flags,
-                MapKind::Reserved,
                 Vec::new(),
             )
             .expect("map trap stack body");
@@ -241,10 +240,10 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
     if !matches!(task.team.space.kind(), SpaceKind::Kernel) {
         return false;
     }
-    let Some(trap) = i.trap() else {
+    let Some(pa) = i.trap() else {
         return false;
     };
-    let dst = trap.pa.as_usize() as *mut TrapContext;
+    let dst = pa.as_usize() as *mut TrapContext;
     // SAFETY: 任务专属帧 PA 恒等映射可写；当前 running 任务独占；此后不再使用
     // hart 帧（run() 切换返回下一任务帧，由 __restore 消耗）。
     unsafe {

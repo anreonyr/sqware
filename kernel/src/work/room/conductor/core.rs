@@ -46,7 +46,7 @@ use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
-use crate::memory::PAGE_SIZE;
+use crate::memory::manager::addr::PhysAddr;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
@@ -55,7 +55,7 @@ use crate::work::room::tie;
 use crate::work::unit::{
     elftable::ElfTable,
     space::SpaceKind,
-    task::{BlockReason, Task, TaskIdent, TaskState, TrapFrame},
+    task::{BlockReason, Task, TaskIdent, TaskState},
 };
 
 // ── 核心：常量 ──
@@ -171,7 +171,8 @@ impl Conductor {
         });
         // SAFETY: 帧 PA 恒等映射可写；帧属 task 独占（running 或刚从 starved 摘出）。
         unsafe {
-            let frame = &mut *(t.ident.trap.pa.as_usize() as *mut TrapContext);
+            let frame =
+                &mut *(t.ident.frame.pa.expect("frame span has pa").as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);
             // 内核任务上台即写 tp = 本 hart PerHart 指针：被抢占恢复路径直接 sret
             // 回打断点（不经 ktask_trampoline 的 tp 重建），tp 必须在上台时就绪。
@@ -192,7 +193,7 @@ impl Conductor {
     pub(super) fn mount(&self, mut task: Arc<Task>) -> usize {
         let mut i = self.inner.lock();
         self.prepare(&mut task);
-        let pa = task.ident.trap.pa.as_usize();
+        let pa = task.ident.frame.pa.expect("frame span has pa").as_usize();
         // 记身份（写点唯一）：Arc::into_raw 交出克隆的计数给槽持有；旧指针由本
         // 槽此前持有（本核独占写），按载荷类型标签（bit0）收回归还其计数。
         let prev = self.info.swap(
@@ -274,7 +275,7 @@ impl Conductor {
         };
         if i.starved.is_empty() {
             // 本 hart 唯一任务：无需轮转，继续运行
-            let pa = cur.ident.trap.pa.as_usize();
+            let pa = cur.ident.frame.pa.expect("frame span has pa").as_usize();
             i.running = Some(cur);
             return pa;
         }
@@ -354,8 +355,9 @@ impl Conductor {
                     .as_ref()
                     .expect("wait with no running task")
                     .ident
-                    .trap
+                    .frame
                     .pa
+                    .expect("frame span has pa")
                     .as_usize();
                 return Some(pa);
             }
@@ -694,18 +696,12 @@ pub(super) fn clear() {
         crate::work::mail::ring::task_exit(z.ident.id);
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);
-        // 锁外回收（Team.tasks 已放 → Space.inner=2 → FRAME=5 合法）：栈 slot + trap 帧
-        // 一次 with_flush 收回——PTE 清理 + 刷 TLB + 区间归还；帧随子 Map drop 归还。
-        z.ident.team.space.with_flush(|inner| {
-            if let Some((slot_va, slot_size)) =
-                inner.stack.as_mut().and_then(|s| s.reclaim(z.ident.id))
-            {
-                inner.durable.unmap_frames(slot_va, slot_size);
-            }
-            if inner.frame.reclaim(z.ident.trap.va) {
-                inner.durable.unmap_frames(z.ident.trap.va, PAGE_SIZE);
-            }
-        });
+        // 锁外回收（Team.tasks 已放 → Space.inner=2 合法）：栈 slot + trap 帧
+        // 一次 with_flush 经 `Space::release(Span)` 收回——段归还 + PTE 清理 + 刷
+        // TLB；帧随 map drop 归还 frame 池。Span 是 claim 时存进 TaskIdent 的
+        // 区间身份（类型同一，不 re-find）。
+        z.ident.team.space.release(z.ident.stack);
+        z.ident.team.space.release(z.ident.frame);
         drop(z);
         // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
         // halt 的关机断言无滞留可验。
@@ -755,10 +751,10 @@ impl Current {
         }
     }
 
-    /// trap 帧：仅 Live 轴可读（本核在跑任务，帧必活）；Last → None。
-    pub fn trap(&self) -> Option<TrapFrame> {
+    /// trap 帧物理地址：仅 Live 轴可读（本核在跑任务，帧必活）；Last → None。
+    pub fn trap(&self) -> Option<PhysAddr> {
         match self {
-            Current::Live(t) => Some(t.trap),
+            Current::Live(t) => Some(t.frame.pa.expect("frame span has pa")),
             Current::Last(_) => None,
         }
     }

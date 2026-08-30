@@ -23,9 +23,9 @@ use crate::lock::{Level, OnceLock, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::addr::PhysAddr;
 use crate::memory::manager::entry::PteFlags;
-use crate::work::unit::space::{MapKind, Space};
+use crate::work::unit::space::{Seg, Space};
 
 use ubi::dock;
 
@@ -331,23 +331,18 @@ pub(crate) fn task_exit(task_id: usize) {
 
 // ── 共享区借用映射 ──────────────────────────────────────────
 
-/// 把共享物理块借用映射进 `space`（帧空 = 借用；VA 出自由段）。
+/// 把共享物理块借用映射进 `space`（帧空 = 借用；VA 出 user 段）。
 /// 与 trampoline 借用映射同式（Space::map 无帧）：PTE 直指共享物理块，帧所有权
 /// 留 DockMeta（Arc 归零归还）。视图随 Space 常数 Map drop 消失。
 fn map_shared(space: &Space, meta: &DockMeta, bytes: usize) -> Result<usize, MapError> {
     let size = bytes.next_multiple_of(PAGE_SIZE);
-    // free 段访问器（SpaceInner 挂接自由段时留档；dock 属非窗口借用方）
-    let va = space.with(|inner| {
-        let free = inner.free.as_ref().ok_or(MapError::NoRegion)?;
-        let base = free.allocate(size).map_err(|_| MapError::OutOfMemory)?;
-        Ok(VirtAddr::from_raw(base))
-    })?;
+    // user 段取段（dock 属非窗口借用方，经 Space 公开原语）
+    let va = space.alloc(Seg::User, size)?;
     space.map(
         va,
         PhysAddr::from_raw(meta.base.as_ptr() as usize),
         size,
         PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D,
-        MapKind::Anonymous,
         Vec::new(), // 借用：无帧
     )?;
     Ok(va.as_usize())

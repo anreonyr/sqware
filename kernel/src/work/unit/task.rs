@@ -5,14 +5,14 @@
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::switcher::context::TrapContext;
+use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::kernel;
 
@@ -45,22 +45,10 @@ pub enum BlockReason {
     Wait { wake_at: Option<u64> },
 }
 
-/// trap 帧句柄 — 线程 trap 帧的薄引用。
-///
-/// 帧页由所属 Space 的 Frame 窗口子 Map **持有**（随线程退出回收），本句柄只
-/// 携带 VA/PA 两个数：PA 供直接取帧，VA 供退出时按位归还窗口。
-#[derive(Clone, Copy, Debug)]
-pub struct TrapFrame {
-    /// 帧在本空间中的虚拟地址（Frame 窗口分配，S-only）。
-    pub(crate) va: VirtAddr,
-    /// 帧物理地址（restore 的 a0）。
-    pub(crate) pa: PhysAddr,
-}
-
 /// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
 ///
-/// 栈 / 堆 / 帧全部归 Team.space 的窗口簿记（Window 子 Map），Task 只持
-/// 不可变身份（TaskIdent）与状态——无任何页所有权。身份可自由 clone（不影响
+/// 栈 / 帧全部归 Team.space 的映射簿记，Task 只持不可变身份（TaskIdent，含
+/// 栈/帧的 [`Span`] 区间）与状态——无任何页所有权。身份可自由 clone（不影响
 /// `Arc<Task>` 的 strong_count，exclusive 纪律见下）；状态唯一可变。
 pub struct Task {
     /// 不可变身份（spawn 时定型；clone 它不影响本 Task 的强持有计数）。
@@ -72,14 +60,18 @@ pub struct Task {
 
 /// 不可变身份：spawn 时定型；任何人自由 clone，无需任何锁。
 ///
-/// 帧存活不变量：持 `Arc<TaskIdent>` **不保** `trap` 指向的帧页存活（帧归 Space
-/// 窗口，退出由 `clear` 按 va 归还）。仅两个安全窗口使用 `trap`：同 hart trap
-/// 内（顺序执行，帧必活）；崩溃现场（全核冻结，无并发回收）。
+/// 资源存活不变量：持 `Arc<TaskIdent>` **不保** `stack`/`frame` 指向的映射存活
+/// （映射归 Space，退役由 `clear` 经 [`Space::release`] 按 Span 归还）。仅两个
+/// 安全窗口使用 `frame.pa`：同 hart trap 内（顺序执行，帧必活）；崩溃现场
+/// （全核冻结，无并发回收）。
 pub(crate) struct TaskIdent {
     pub(crate) id: usize,
     pub(crate) name: &'static str,
     pub(crate) team: Arc<Team>,
-    pub(crate) trap: TrapFrame,
+    /// 栈 slot 区间（user 段，pa=None）——回收经 [`Space::release`]。
+    pub(crate) stack: crate::work::unit::space::Span,
+    /// 帧（kernel 段，pa=Some）——restore 取帧、回收经 [`Space::release`]。
+    pub(crate) frame: crate::work::unit::space::Span,
 }
 
 impl Task {
@@ -232,65 +224,29 @@ impl TaskBuilder {
     }
 
     /// 生成任务：栈 slot + trap 帧（入团队空间窗口簿记）→ 填帧 → 入队收尾。
-    /// 返回新任务号（全局唯一）。失败时已分配资源回滚（栈/帧窗口归还）。
+    /// 返回新任务号（全局唯一）。失败时已分配资源回滚（栈/帧经 `Space::release`）。
     pub fn spawn(self) -> Result<usize, MapError> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
-        // 栈：Stack 窗口 slot（守护页 + 栈体子 Map，owner = id）
+        // 栈：StackWindow::claim 取 slot（user 段 + guard，立即物化）
         let stack_size = self.stack;
         let is_kernel = matches!(self.team.space.kind(), SpaceKind::Kernel);
-        // 失败回滚：按 owner 摘栈 slot（帧随子 Map drop 归还）
-        let rollback_stack = |space: &crate::work::unit::space::Space| {
-            space.with_flush(|inner| {
-                if let Some((slot_va, slot_size)) = inner.stack.as_mut().and_then(|s| s.reclaim(id))
-                {
-                    inner.durable.unmap_frames(slot_va, slot_size);
-                }
-            });
-        };
-        let stack_res = (|| {
-            let stack_va = self.team.space.with(|inner| {
-                inner
-                    .stack
-                    .as_mut()
-                    .ok_or(MapError::NoRegion)?
-                    .claim(id, stack_size, is_kernel)
-            })?;
-            let mut stack_frames = Vec::new();
-            for _ in 0..(stack_size / PAGE_SIZE) {
-                let frame = unsafe {
-                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
-                        .map_err(|_| MapError::OutOfMemory)?
-                        .assume_init()
-                };
-                stack_frames.push(frame);
-            }
-            self.team
-                .space
-                .with_flush(|inner| inner.attach_dynamic(stack_va, stack_frames))?;
-            Ok(stack_va + stack_size)
-        })();
-        let stack_top = match stack_res {
-            Ok(top) => top,
-            Err(e) => {
-                // 栈 slot 已由 claim 登记（守护页/栈体子 Map）——失败回滚按 owner 摘整 slot。
-                rollback_stack(&self.team.space);
-                return Err(e);
-            }
-        };
+        let stack_span = StackWindow::claim(&self.team.space, stack_size, is_kernel)?;
+        // 栈体基址（供填帧算 stack_top）= slot 基址 + guard
+        let stack_body = stack_span.va + crate::layout::TASK_STACK_GUARD;
+        let stack_top = stack_body + stack_size;
 
-        // trap 帧：Frame 窗口取一页 VA + 物理帧 + 映射（S-only，owner = id）
-        let frame_res = self
-            .team
-            .space
-            .with_flush(|inner| inner.frame.claim(&mut inner.durable, id));
-        let (frame_va, frame_pa) = match frame_res {
-            Ok(x) => x,
+        // trap 帧：FrameWindow::claim（kernel 段，立即物化）
+        let frame_span = match FrameWindow::claim(&self.team.space) {
+            Ok(s) => s,
             Err(e) => {
-                rollback_stack(&self.team.space);
+                // 栈已领——用局部 Span 回滚（不读 TaskIdent，此时未构造）
+                self.team.space.release(stack_span);
                 return Err(e);
             }
         };
+        let frame_pa = frame_span.pa.expect("frame span has pa");
+        let frame_va = frame_span.va;
 
         // 填帧：`TrapContext::init` 从 per-hart 帧模板拷元数据 + 用户上下文
         let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
@@ -312,10 +268,8 @@ impl TaskBuilder {
             id,
             name: self.name,
             team: self.team.clone(),
-            trap: TrapFrame {
-                va: frame_va,
-                pa: frame_pa,
-            },
+            stack: stack_span,
+            frame: frame_span,
         });
         let task = Arc::new(Task {
             ident,

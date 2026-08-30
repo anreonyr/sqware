@@ -33,7 +33,7 @@ pub fn run() -> usize {
             if ticks_left > 1 {
                 Task::exclusive(&mut cur).dec_ticks_left();
             }
-            let pa = cur.ident.trap.pa.as_usize();
+            let pa = cur.ident.frame.pa.expect("frame span has pa").as_usize();
             i.running = Some(cur);
             return pa;
         }

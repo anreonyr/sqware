@@ -46,10 +46,8 @@ fn ktbl() -> Option<&'static elftable::ElfTable> {
 pub enum Level {
     /// SCHEDULERS[hart]
     Scheduler = 1,
-    /// Space.inner (RelLock)
+    /// Space.inner (RelLock) — 含段表（Segment 并入 Space 锁，无独立 Alloc 层级）
     Space = 2,
-    /// IntervalInner（统一 VA 分配器段表；窗口方法在 Space 事务内取 → 须高于 Space）
-    Alloc = 3,
     /// Team.tasks / TIMER_DEADLINES / blocked / reaped
     L3 = 4,
     /// ASID_ALLOCATOR

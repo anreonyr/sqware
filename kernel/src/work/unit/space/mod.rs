@@ -5,38 +5,28 @@
 // （ASID 0，全局唯一）与用户空间（独立 ASID），构造统一走 [`SpaceBuilder`]。
 // 布局几何随模式（lower/upper，见 `memory::manager::mode`）。
 //
-// 文件夹结构（簿记模型 + 段表访问器 + 窗口 + 主类型）：
-//   map       — VA→PA 簿记的原子单元（[`Map`] / [`MapKind`]）
-//   dynamic   — 窗口簿记核心（段访问器 + 子 Map 表，[`Dynamic`]）
-//   window    — 按种类的窗口类型（[`StackWindow`] / [`FrameWindow`] / [`HeapWindow`]，
-//                各自构造与生命周期操作，见 `window/mod.rs`）
-//   durable   — 常数侧：页表树 + 常数映射表（[`Durable`]）
-//   core      — 主类型 [`Space`] / [`SpaceBuilder`] / [`Segments`] + 业务流程
-//                （含内部组合层 [`SpaceInner`] + 锁约定 + `with`/`with_flush` 事务入口）
+// 文件夹结构（纯映射簿记 + 段实体 + 窗口适配层）：
+//   seg       — 段实体（[`Segment`]，几何 + 已分配块表）+ 选段枚举（[`Seg`]）
+//   map       — VA→PA 簿记的原子单元（[`Map`] / [`Pending`]）
+//   core      — 主类型 [`Space`] / [`SpaceBuilder`] / [`SpaceInner`] + 映射原语
+//   window    — 窗口适配层（[`StackWindow`] / [`FrameWindow`] / [`HeapWindow`] /
+//                 [`ShareWindow`]，操作 `Space` 的领域策略，产物统一 [`Span`]）
 //
-// VA 统一出段表访问器（`memory::allocator::interval`）：一个 Space 一张段表
-// （IntervalInner），段经 register 注册即得绑定访问器（IntervalAllocator）——
-// free 段（栈/堆/mmap/dock 共享）由装载/引导期挂接注册，frame 段（线程 trap 帧）
-// 为布局常量域构造即注册；段内 lowest first-fit，无方向分区。
-//
-// 窗口事务统一经 `Space::with` / `Space::with_flush`（锁恰好一次 + 按需刷 TLB）；
-// 增加新窗口种类 = `window/` 下新类型 + `SpaceInner` 字段 + `windows()`/
-// `windows_mut()` 登记一处——`Space` 的 impl 零改动。
-//
-// 簿记模型（三层语义，详见各子文件）：
-//   Durable    — 常数侧（页表树 + 常数映射）
-//   IntervalAllocator — 段访问器（内涵段信息；段内 lowest first-fit，见 interval.rs）
-//   Dynamic    — 窗口簿记（段访问器 + 子 Map 表）；窗口种类语义在其上包装（`window/`）
-//   Map        — VA→PA 原子单元（不变量：frames[i] ↔ va + i·PAGE_SIZE）
+// 簿记模型（三层语义）：
+//   Segment — 一段 VA（user 半区 / kernel 帧区），lowest first-fit 出块
+//   Span    — 分配/映射的产物（段 + VA + size + 物化帧 PA），回收的输入
+//   Map     — VA→PA 原子单元（区间 + 访问属性 + 物化态 + 帧所有权）
+//   SpaceInner 持 root 页表树 + 两段 + 唯一 maps 表；窗口方法操作它。
 
 mod core;
-mod durable;
-mod dynamic;
 mod map;
+mod seg;
 pub(crate) mod window;
 
 pub use core::{Space, SpaceBuilder};
-pub use map::MapKind;
+pub(crate) use core::Span;
+pub(crate) use map::Pending;
+pub(crate) use seg::Seg;
 
 /// 空间种类 — 显式区分内核空间与用户空间。
 ///
