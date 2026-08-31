@@ -95,8 +95,10 @@ fn gprs() -> [usize; 32] {
 /// 脱链后 fallback 到启发式扫描（`core::panicking` 等预编译库无 FP，panic 链
 /// 可能在它们处断——其外层仍是带 FP 的内核栈帧，由启发式接续）。
 ///
-/// FP 链（标准 RV64 布局）：`[fp]` = 调用者 fp、`[fp+8]` = 返回地址 ra；栈向
-/// 下生长 → fp 逐帧单调递增，非单调/越界/零即脱链。每帧取 ra（非零、不重复）
+/// FP 链（标准 RV64 布局）：`[fp-16]` = 调用者 fp、`[fp-8]` = 返回地址 ra——保存对
+/// 在 fp **下方**（序言 `sd ra, N-8(sp); sd s0, N-16(sp); s0 = sp+N`，反汇编实证，
+/// 同 fence::alloc_site）；栈向下生长 → fp 逐帧单调递增，非单调/越界/零即脱链。
+/// 每帧取 ra（非零、不重复）
 /// 入槽。启发式（兜底）：从链断点起按 8 字节步进向上扫描，收集「4 对齐 +
 /// 非相邻重复 + 能解析进符号区间」的可执行候选。
 ///
@@ -139,10 +141,12 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     // 扫越 guard 的幽灵 panic（根表 = 当前 satp 根，崩溃时 S 态直读不返回用户）。
     let mut n = 0usize;
     let mut prev = 0usize;
-    // ① 帧指针链：每帧取 ra 与调用者 fp（单调增，栈向下生长）。
+    // ① 帧指针链：每帧取 ra 与调用者 fp（单调增，栈向下生长）。保存对在
+    // fp-16/fp-8（psABI，见 kbt_read）——读窗 [f-16, f)，守卫取 f ≥ sp+16
+    // （读窗下界贴 sp 之上）与 f ≤ high（读窗上界 f-8 之内）。
     let mut f = fp;
     let mut last = fp; // 最后有效帧地址（fallback 扫描起点）
-    while n < BT_DEPTH && f >= sp && f + 16 <= high {
+    while n < BT_DEPTH && f >= sp + 16 && f <= high {
         last = f;
         // SAFETY: f 落在 [sp, sp+BT_SCAN)；只读本线程栈区间（S 态直读恒等映射
         // 内存，无副作用）。guard 页（未映射）由 kbt_read 判停，不缺页不 panic。
@@ -185,13 +189,22 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
     n
 }
 
-/// 任务栈逐页安全读（内核崩溃现场）：读 `f` 处的一对栈字 (caller, ra)。
+/// 任务栈逐页安全读（内核崩溃现场）：读帧指针 `f` 的保存对 (caller fp, ra)。
+///
+/// 标准 RV64 psABI 帧布局（反汇编实证，同 fence::alloc_site）：序言
+/// `sd ra, N-8(sp); sd s0, N-16(sp); s0 = sp+N`——保存对在 fp **下方**：
+/// caller fp 在 [f-16]、ra 在 [f-8]。旧读窗 [f]/[f+8] 取的是帧顶上方调用者
+/// 的栈数据——链立即失真（崩溃栈不可用根因，偏移 bug）。
 ///
 /// 守卫：整页 walk_raw 判可读再读（当前 satp 根直译；崩溃时本核仍在 S 态，根表
 /// 经当前 satp 取）。guard 页/未映射 → None（停页），绝不产生缺页——封死幽灵
 /// panic。DRAM 恒等区守卫（walk_raw 的物理地址校验）同 ubacktrace。
 fn kbt_read(f: usize) -> Option<(usize, usize)> {
-    let page = f & !(PAGE_SIZE - 1);
+    // 读窗 = [f-16, f)：f 恒 16 对齐（ABI sp/s0 16 对齐、帧尺寸 16 步进），
+    // base 亦 16 对齐 → 页内偏移 off ∈ 16 步进 → 两字恒同页（off+8 ≤ 4088 <
+    // 4096）——旧 [f, f+8] 读窗的跨页守卫分支随偏移修正一并移除（结构不可达）。
+    let base = f - 16;
+    let page = base & !(PAGE_SIZE - 1);
     let satp_val = satp::read().bits();
     let ppn = satp_val & ((1usize << 44) - 1); // satp.PPN（宽 44）
     let in_dram = |pa: PhysAddr| {
@@ -205,50 +218,23 @@ fn kbt_read(f: usize) -> Option<(usize, usize)> {
     if !flags.contains(PteFlags::R) {
         return None;
     }
-    let off = f - page;
-    // 第二字（ra）跨页守卫：调用方 `f + 16 <= high` 钳制只保证 16 字节在扫描窗内，
-    // 不保证 off+8 在页内。当前 fp 链 + ABI 实际让 off+8 恒页内（f 16 字节对齐
-    // → off ∈ 16 步进 → off+8 ≤ 4088 < 4096），trap 栈亦同（edge 64 KiB 对齐
-    // 强制页内）；但契约是"绝不产生缺页"——一旦 off 越界任何 off≥4096 写裸读即
-    // fault。新模型下任务栈槽不再独占固定窗口，pa0+PAGE_SIZE 落在未映射 / 邻居
-    // 槽页时缺页 → 嵌套 panic → 现场静默消失（幽灵 panic）。此处补契约缺口：
-    // off+8 越页则单独 walk 第二页（同 in_dram + R 双重守卫），不可读即停链。
-    //
-    // SAFETY: caller 页已 walk 命中带 R；ra 页单独 walk（in_dram + R 双重检查），
-    // 任一未通过即停链（不读不崩）。S 态直读恒等映射。读侧一律 `read_unaligned`：
-    // fp 链跨 `core::panicking` 等无 FP 预编译库时 `*f` 是任意 callee-saved
-    // 保存值（ABI 不保证 8 字节对齐），`read_volatile::<usize>` 会触发 LLVM
-    // 「aligned」precondition → UB → 嵌套 panic 现场静默。`read_unaligned` 走
-    // 非对齐 load，零 precondition，代价是单次 load 裂字（无 volatile 语义——
-    // 单核 panic 现场其他核已停，编译器无外部写可优化）。
-    let caller = unsafe { (pa0.as_usize() as *const u8).add(off).cast::<usize>().read_unaligned() };
-    let ra = if off + 8 < PAGE_SIZE {
-        // 同行：页内直读
-        unsafe {
-            (pa0.as_usize() as *const u8)
-                .add(off + 8)
-                .cast::<usize>()
-                .read_unaligned()
-        }
-    } else {
-        // 跨页：单独 walk 第二页（同 in_dram + R 守卫），不可读即停链
-        let page2 = page + PAGE_SIZE;
-        let Some((pa1, flags1)) = crate::memory::manager::table::TableNode::walk_raw(
-            PhysAddr::from_raw(ppn << 12),
-            VirtAddr::from_raw(page2),
-            in_dram,
-        ) else {
-            return None;
-        };
-        if !flags1.contains(PteFlags::R) {
-            return None;
-        }
-        unsafe {
-            (pa1.as_usize() as *const u8)
-                .add(f + 8 - page2)
-                .cast::<usize>()
-                .read_unaligned()
-        }
+    let off = base - page;
+    // SAFETY: 该页已 walk 命中带 R；off ∈ 16 步进 ≤ 4080，两字恒页内。S 态直读
+    // 恒等映射。读侧 `read_unaligned`（理由同旧注释）：链跨 `core::panicking` 等
+    // 无 FP 预编译库时 f 是任意 callee-saved 保存值（ABI 不保证 8 字节对齐），
+    // `read_volatile::<usize>` 会触发 LLVM「aligned」precondition → UB → 嵌套
+    // panic 现场静默。
+    let caller = unsafe {
+        (pa0.as_usize() as *const u8)
+            .add(off)
+            .cast::<usize>()
+            .read_unaligned()
+    };
+    let ra = unsafe {
+        (pa0.as_usize() as *const u8)
+            .add(off + 8)
+            .cast::<usize>()
+            .read_unaligned()
     };
     Some((caller, ra))
 }
