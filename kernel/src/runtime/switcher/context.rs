@@ -36,6 +36,7 @@ impl Gprs {
     pub const SP: usize = 2; // 栈指针
     pub const GP: usize = 3; // 全局指针
     pub const TP: usize = 4; // 线程指针（内核 = hartid）
+    pub const S0: usize = 8; // 帧指针（回溯起点）
     pub const A0: usize = 10; // 环境调用参数/返回值 0
     pub const A1: usize = 11; // 环境调用参数/返回值 1
     pub const A2: usize = 12;

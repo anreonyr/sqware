@@ -103,18 +103,7 @@ impl ElfTable {
         })
     }
 
-    /// 从已按 addr 升序的切片构建（调用方保证排序；无排序检查）。
-    /// 供内核关键入口表（编译期闭合）使用。
-    pub fn from_entries(entries: Box<[Entry]>) -> ElfTable {
-        ElfTable { entries }
-    }
-
     /// 二分查最近 ≤ a 的符号；命中 → (名字, 距符号头偏移)。
-    ///
-    /// 上界约束：a 必须落在符号的「活动区间」内——下一符号起点之前；表尾符号
-    /// 用 [`TAIL_SPAN`] 兜底。超出即 None（调用方打印裸 hex）：地址高于表内
-    /// 全部符号时不再回退到「表尾符号 + 无意义大偏移」（回溯扫描把栈数据当
-    /// 返回地址、以及 `memset+0x8fc5d834` 式标签的病根）。
     pub fn lookup(&self, a: VirtAddr) -> Option<(&'static str, usize)> {
         let target = a.as_usize();
         let mut lo = 0usize;
@@ -131,7 +120,6 @@ impl ElfTable {
         }
         let i = found?;
         let base = self.entries[i].addr.as_usize();
-        // 活动区间：下一符号起点；表尾（无下一符号）→ 保守跨度兜底。
         let end = self
             .entries
             .get(i + 1)
@@ -140,26 +128,13 @@ impl ElfTable {
         if target >= end {
             return None;
         }
-        // name 防御：条目内存可能被越界写破坏（name 的 ptr/len 坏值会在符号
-        // 打印时 OOB 读 → 崩溃现场嵌套 fault → panic 卡死/不停机）。合法 name
-        // 必指向**镜像 .rodata**（嵌入 ELF 的 strtab 所在区 [_rodata_start,
-        // _kernel_edge)）——超出即拒绝（降级裸 hex）。DRAM 宽范围不够：坏 ptr
-        // 可落在恒等区内未映射/不可读页（如 128M 机器 0x88000000 之上）。
         let nm = self.entries[i].name;
-        // str 引用（含 len）须完全落入 .rodata（符号名 ≤ 几十字节，长度上限
-        // 只防破坏值失控）。坏条目降级为 None（裸 hex）——不打印坏 name，
-        // 避免崩溃现场 OOB 读触发嵌套 fault 截断转储。
         if !name_in_range(nm) {
             return None;
         }
         Some((nm, target - base))
     }
 
-    /// 完整性体检（debug-only；panic 现场 drop-in 探针）：核对全表条目
-    /// name 防御不变量（[`name_in_range`]）+ addr 排序/非零，坏条目计数并打印
-    /// 首例地址——**越界写破坏 entries 时自我报告**（写穿源无处可查时，崩溃
-    /// 现场至少自报「表已坏、坏在哪」）。纯读零分配（只经 putln! 直写 SBI
-    /// 控制台，无锁安全）；release 编译为空、零开销。返回坏条目数。
     #[cfg(debug_assertions)]
     pub fn check_integrity(&self) -> usize {
         let mut bad = 0usize;
@@ -191,78 +166,78 @@ impl ElfTable {
     }
 }
 
-/// 表尾符号的保守活动跨度（有下一符号时不用）：函数体最大限度，超出即视为
-/// 「地址不在任何符号区间内」（栈数据/垃圾字走同一判定）→ [`ElfTable::lookup`]
-/// 返回 None。溢出位仅 4B 对齐指令，16 KiB 远超任何单函数尾部的现实跨度。
 const TAIL_SPAN: usize = 0x4000;
 
-// ── 地址域判定 ─────────────────────────────────────────────────
+// ── 内核表（xtask 嵌入的崩溃诊断用副本） ──
 //
-// 内核/用户域判定走 [`VirtAddr::is_kernel`]（高半区 + 镜像恒等区）。
+// 格式（xtask::encode 同步）：
+//   头      magic[4] | count: u32 | namesoff: u32 | nameslen: u32   (16 B)
+//   地址    [u64; count]                                              (8N B)
+//   索引    [(off: u32, len: u32); count]                             (8N B)
+//   名字区  连续 UTF-8，无 NUL                                        (nameslen B)
 
-// ── 内核表 ──
+pub fn from_syms(bytes: &'static [u8]) -> Option<ElfTable> {
+    const HEADER: usize = 16;
+    const ENTRY: usize = 8;
+    let u = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let u64_ = |b: &[u8]| u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
 
-/// 构建内核关键入口表（编译期闭合的小表：直接对函数 `$f as usize` 取址，
-/// 不扫 .symtab）。只列调试最关心的入口；深层 helper 查不到（打印裸 hex）。
-pub fn kernel_table() -> Option<ElfTable> {
-    let mut v = Vec::new();
-    macro_rules! sym {
-        ($($n:literal : $f:expr);+ $(;)?) => {$(
-            v.push(Entry {
-                addr: VirtAddr::from_raw($f as *const () as usize),
-                name: $n,
-            });
-        )*};
+    if bytes.len() < HEADER || &bytes[..4] != b"KSYM" {
+        return None;
     }
-    sym! {
-        "panic_handler" : crate::runtime::diagnose::halt::panic_handler;
-        "trap_handler"  : crate::runtime::switcher::trap::trap_handler;
-        "boot_main"     : crate::boot::boot_main;
-        "restore"       : crate::runtime::switcher::trampoline::restore;
-        "sched_run"     : crate::work::room::conductor::trap::run;
-        "sched_idle"    : crate::work::room::conductor::boot::idle;
-        "sched_starve"  : crate::work::room::conductor::utask::starve;
-        "sched_reap"    : crate::work::room::conductor::utask::reap;
-        "sched_park"    : crate::work::room::conductor::utask::park;
-        "sched_unpark"  : crate::work::room::conductor::core::unpark;
-        "page_fault"    : crate::memory::manager::fault::handle_page_fault;
+    let count = u(&bytes[4..8]) as usize;
+    let namesoff = u(&bytes[8..12]) as usize;
+    let nameslen = u(&bytes[12..16]) as usize;
+
+    let addr_end = HEADER + count * 8;
+    let index_end = addr_end + count * ENTRY;
+    let names_end = namesoff + nameslen;
+    if namesoff != index_end || names_end != bytes.len() {
+        return None;
     }
-    v.sort_by_key(|e| e.addr.as_usize());
-    Some(ElfTable::from_entries(v.into_boxed_slice()))
+
+    let mut addrs = Vec::with_capacity(count);
+    for i in 0..count {
+        addrs.push(u64_(&bytes[HEADER + i * 8..HEADER + i * 8 + 8]));
+    }
+    let mut entries = Vec::with_capacity(count);
+    for i in 0..count {
+        let idx = &bytes[addr_end + i * ENTRY..addr_end + (i + 1) * ENTRY];
+        let off = u(&idx[..4]) as usize;
+        let len = u(&idx[4..]) as usize;
+        if off + len > nameslen {
+            return None;
+        }
+        let name_bytes = &bytes[namesoff + off..namesoff + off + len];
+        // SAFETY: xtask encode 保证 names 区为合法 UTF-8。
+        let name = unsafe { core::str::from_utf8_unchecked(name_bytes) };
+        entries.push(Entry {
+            addr: VirtAddr::from_raw(addrs[i] as usize),
+            name,
+        });
+    }
+    Some(ElfTable {
+        entries: entries.into_boxed_slice(),
+    })
 }
 
-// ── 符号化（表显式传入；域路由在消费方，本模块不依赖 team）──────
+pub fn kernel_syms() -> Option<ElfTable> {
+    let bytes = ksyms_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    from_syms(bytes)
+}
 
-/// 地址符号化文本：表中命中出「func+0xoff」（demangle），未命中裸 hex。
+/// xtask pass-2 嵌入的崩溃诊断用符号表字节。
+
+pub fn ksyms_bytes() -> &'static [u8] {
+    // 符号表嵌入未启用（xtask 未集成）→ 返回空切片，kernel_syms() 返回 None。
+    &[]
+}
+
 pub(crate) fn symbol(va: VirtAddr, tbl: Option<&ElfTable>) -> String {
     match tbl.and_then(|t| t.lookup(va)) {
-        Some((name, off)) => format!("{:#}+{off:#x}", rustc_demangle::demangle(name)),
-        None => format!("{:#x}", va.as_usize()),
-    }
-}
-
-/// 域路由查询：内核地址查 kernel_tbl、用户地址查 user_tbl；所选表空 → None。
-/// 路由决策（谁提供哪张表）归调用方——解掉 elftable → team 的依赖环；
-/// 内核表随内核团队挂载，由消费方取（`team::kernel().elftable`）。
-pub fn routed(
-    va: VirtAddr,
-    kernel_tbl: Option<&ElfTable>,
-    user_tbl: Option<&ElfTable>,
-) -> Option<(&'static str, usize)> {
-    if va.is_kernel() {
-        kernel_tbl?.lookup(va)
-    } else {
-        user_tbl?.lookup(va)
-    }
-}
-
-/// 域路由符号化文本（[`routed`] + 格式；未命中裸 hex）。
-pub fn routed_symbol(
-    va: VirtAddr,
-    kernel_tbl: Option<&ElfTable>,
-    user_tbl: Option<&ElfTable>,
-) -> String {
-    match routed(va, kernel_tbl, user_tbl) {
         Some((name, off)) => format!("{:#}+{off:#x}", rustc_demangle::demangle(name)),
         None => format!("{:#x}", va.as_usize()),
     }

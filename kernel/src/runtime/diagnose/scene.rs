@@ -28,21 +28,20 @@ use crate::work::room::conductor::core::ident;
 use crate::work::unit::elftable::{self, ElfTable};
 use crate::work::unit::team::kernel;
 
-/// 内核团队符号表（`elftable::routed*` 的内核侧来源；随内核团队挂载，未装配 → None）。
-/// 路由决策归消费方（本模块），elftable 模块本身不依赖 team（环已拆）。
-fn ktbl() -> Option<&'static ElfTable> {
-    kernel()?.elftable.as_deref()
+/// 按地址域取符号表：内核地址取内核团队表，用户地址取当前任务表。
+fn table(va: VirtAddr) -> Option<Arc<ElfTable>> {
+    if va.is_kernel() {
+        kernel()?.elftable.clone()
+    } else {
+        ident()?.elftable()
+    }
 }
 
-fn utbl() -> Option<Arc<ElfTable>> {
-    ident()?.elftable()
-}
-
-const BT_DEPTH: usize = 32;
+const DEPTH: usize = 32;
 /// 栈扫描窗口（从当前 sp 向上）字节数。
-const BT_SCAN: usize = 4096;
+const SPAN: usize = 4096;
 /// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
-const ADDR_ALIGN: usize = 4;
+const ALIGN: usize = 4;
 
 /// 定宽 hex 文本（{:#018x}）——值列的通用形态。
 fn hex(x: usize) -> String {
@@ -91,27 +90,174 @@ fn gprs() -> [usize; 32] {
     r
 }
 
-/// 栈回溯：**帧指针链**为主（内核 `-Cforce-frame-pointers=yes` 保证 FP 存在），
-/// 脱链后 fallback 到启发式扫描（`core::panicking` 等预编译库无 FP，panic 链
-/// 可能在它们处断——其外层仍是带 FP 的内核栈帧，由启发式接续）。
-///
-/// FP 链（标准 RV64 布局）：`[fp-16]` = 调用者 fp、`[fp-8]` = 返回地址 ra——保存对
-/// 在 fp **下方**（序言 `sd ra, N-8(sp); sd s0, N-16(sp); s0 = sp+N`，反汇编实证，
-/// 同 fence::alloc_site）；栈向下生长 → fp 逐帧单调递增，非单调/越界/零即脱链。
-/// 每帧取 ra（非零、不重复）
-/// 入槽。启发式（兜底）：从链断点起按 8 字节步进向上扫描，收集「4 对齐 +
-/// 非相邻重复 + 能解析进符号区间」的可执行候选。
-///
-/// 统一分配器后（方案 A）任务栈不再独占固定窗口：`high` 只按 trap 栈精确钳制
-/// （固定 VA 窗口，可纯算术反推），任务栈 slot 的上界未知——扫描改用**逐页安全
-/// 读**（walk_raw + R 检查，见 [`scan_one`]）：越 guard 页即 walk 落空 → 停页
-/// 继续，不产生缺页 → 封死「扫越段顶 → 嵌套 panic → 现场静默」的幽灵 panic。
-fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
-    // 起扫点：panic 归巢后当前 sp/fp 是救援栈组稿链——kbt 须回 SCENE 扫原栈；
-    // crash_scene! 直调（无 SCENE）→ 读当前 sp/fp。
+/// 崩溃现场栈的只读通道：逐页 walk_raw + R 校验后直读，绝不触发缺页。
+struct Stack {
+    root: PhysAddr,
+    page: Option<(usize, PhysAddr)>,
+}
+
+impl Stack {
+    fn kernel() -> Stack {
+        let ppn = satp::read().bits() & ((1usize << 44) - 1);
+        Stack {
+            root: PhysAddr::from_raw(ppn << 12),
+            page: None,
+        }
+    }
+
+    fn user(root: usize) -> Stack {
+        Stack {
+            root: PhysAddr::from_raw(root << 12),
+            page: None,
+        }
+    }
+
+    fn leaf(&mut self, page: usize) -> Option<PhysAddr> {
+        if let Some((cached, base)) = self.page
+            && cached == page
+        {
+            return Some(base);
+        }
+        let edge = crate::machine::dram_edge().unwrap_or(0x9000_0000);
+        let (base, flags) = crate::memory::manager::table::TableNode::walk_raw(
+            self.root,
+            VirtAddr::from_raw(page),
+            |pa| (0x8000_0000..edge).contains(&pa.as_usize()),
+        )?;
+        if !flags.contains(PteFlags::R) {
+            return None;
+        }
+        self.page = Some((page, base));
+        Some(base)
+    }
+
+    fn word(&mut self, addr: usize) -> Option<usize> {
+        let page = addr & !(PAGE_SIZE - 1);
+        let base = self.leaf(page)?;
+        // SAFETY: 该页已 walk 命中且带 R；偏移恒在页内，S 态直读。脱链后地址
+        // 继承任意 callee-saved 保存值，无对齐保证 → read_unaligned。
+        Some(unsafe {
+            (base.as_usize() as *const u8)
+                .add(addr - page)
+                .cast::<usize>()
+                .read_unaligned()
+        })
+    }
+
+    /// RV64 psABI：序言 `sd ra, N-8(sp); sd s0, N-16(sp); s0 = sp+N`，
+    /// 保存对在 fp 下方——caller 在 [frame-16]、ra 在 [frame-8]。
+    fn pair(&mut self, frame: usize) -> Option<(usize, usize)> {
+        Some((self.word(frame - 16)?, self.word(frame - 8)?))
+    }
+}
+
+/// 回溯轨迹：对齐、去重、封顶三条纪律在 push 内闭合。
+struct Trail {
+    frames: [usize; DEPTH],
+    count: usize,
+    last: usize,
+}
+
+impl Trail {
+    fn new() -> Trail {
+        Trail {
+            frames: [0; DEPTH],
+            count: 0,
+            last: 0,
+        }
+    }
+
+    fn push(&mut self, addr: usize) -> bool {
+        if self.full() || addr == 0 || addr & (ALIGN - 1) != 0 || addr == self.last {
+            return false;
+        }
+        self.frames[self.count] = addr;
+        self.count += 1;
+        self.last = addr;
+        true
+    }
+
+    fn full(&self) -> bool {
+        self.count == DEPTH
+    }
+
+    fn frames(&self) -> &[usize] {
+        &self.frames[..self.count]
+    }
+}
+
+/// 扫描期筛法：候选是否属本域代码，以及撞不可读页时跳页还是停扫。
+struct Sift<'a> {
+    code: &'a dyn Fn(usize) -> bool,
+    gaps: bool,
+}
+
+/// 一次勘探：轨迹与解释它所需的符号表同生共死。
+struct Trace {
+    trail: Trail,
+    table: Arc<ElfTable>,
+}
+
+impl Trace {
+    fn rows(&self, head: &str) -> Vec<Vec<Option<String>>> {
+        let mut rows: Vec<Vec<Option<String>>> = vec![vec![
+            Some(head.into()),
+            Some("hex".into()),
+            Some("sym".into()),
+        ]];
+        for (i, a) in self.trail.frames().iter().enumerate() {
+            rows.push(vec![
+                Some(format!("#{i}")),
+                Some(hex(*a)),
+                Some(elftable::symbol(VirtAddr::from_raw(*a), Some(&self.table))),
+            ]);
+        }
+        rows
+    }
+}
+
+/// 沿帧指针链收 ra，返回断链处帧地址（一帧未走则返回入参）。
+fn chain(stack: &mut Stack, trail: &mut Trail, frame: usize, floor: usize, ceiling: usize) -> usize {
+    let mut f = frame;
+    let mut broke = frame;
+    while !trail.full() && f >= floor && f <= ceiling {
+        broke = f;
+        let Some((caller, ra)) = stack.pair(f) else {
+            break;
+        };
+        trail.push(ra);
+        if caller == 0 || caller <= f {
+            break;
+        }
+        f = caller;
+    }
+    broke
+}
+
+/// 区间内按字步进，收筛法认可的候选。
+fn scan(stack: &mut Stack, trail: &mut Trail, sift: &Sift, from: usize, to: usize) {
+    let mut a = from;
+    while a < to && !trail.full() {
+        match stack.word(a) {
+            Some(w) => {
+                if (sift.code)(w) {
+                    trail.push(w);
+                }
+                a += 8;
+            }
+            None if sift.gaps => a = (a & !(PAGE_SIZE - 1)) + PAGE_SIZE,
+            None => break,
+        }
+    }
+}
+
+/// 内核现场：起点取归巢落盘的原始 sp/fp，未归巢（crash_scene! 直调）读当前。
+fn ktrace() -> Option<Trace> {
+    let table = kernel()?.elftable.clone()?;
     let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
         (0, 0) => {
             let (sp, fp): (usize, usize);
+            // SAFETY: 只读本 hart 当前 sp/s0，无副作用。
             unsafe {
                 asm!("mv {0}, sp", out(reg) sp);
                 asm!("mv {0}, s0", out(reg) fp);
@@ -120,226 +266,49 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         }
         s => s,
     };
-    // 扫描上界钳制：崩溃现场可能运行在「段顶之上是刻意未映射 guard 页」的栈上，
-    // 扫描窗越过段顶即读缺页 → 嵌套 panic → 现场静默消失（幽灵 panic）。
-    //
-    // 统一分配器（方案 A：栈不独占固定窗口）后任务栈 slot 上界不再可纯算术推算，
-    // 故：trap 栈仍按固定 VA 窗口精确钳制（不依赖元数据表）；任务栈 slot 改由
-    // 逐页安全读兜底（见下 scan 的 walk_raw 守卫）——越 guard 落空即停页，不读
-    // 不崩。high 只钳 trap 场景，其余退回 sp+BT_SCAN（页守卫兜底越界）。
-    let high = {
-        let trap_top = crate::runtime::switcher::trap::trap_stack_hart(sp)
-            .map(crate::runtime::switcher::trap::trap_stack_edge)
-            .map(|e| e.as_usize());
-        match trap_top {
-            Some(t) => sp.saturating_add(BT_SCAN).min(t),
-            None => sp.saturating_add(BT_SCAN),
-        }
+    let ceiling = match crate::runtime::switcher::trap::trap_stack_hart(sp)
+        .map(crate::runtime::switcher::trap::trap_stack_edge)
+    {
+        Some(edge) => sp.saturating_add(SPAN).min(edge.as_usize()),
+        None => sp.saturating_add(SPAN),
     };
-    // 任务栈安全读守卫：读侧的 VA→PA 逐页验证（缺页即停页；页可读才直读）。
-    // 与 ubacktrace 同法（walk_raw + R 检查），内核侧崩溃现场用同样守卫封死
-    // 扫越 guard 的幽灵 panic（根表 = 当前 satp 根，崩溃时 S 态直读不返回用户）。
-    let mut n = 0usize;
-    let mut prev = 0usize;
-    // ① 帧指针链：每帧取 ra 与调用者 fp（单调增，栈向下生长）。保存对在
-    // fp-16/fp-8（psABI，见 kbt_read）——读窗 [f-16, f)，守卫取 f ≥ sp+16
-    // （读窗下界贴 sp 之上）与 f ≤ high（读窗上界 f-8 之内）。
-    let mut f = fp;
-    let mut last = fp; // 最后有效帧地址（fallback 扫描起点）
-    while n < BT_DEPTH && f >= sp + 16 && f <= high {
-        last = f;
-        // SAFETY: f 落在 [sp, sp+BT_SCAN)；只读本线程栈区间（S 态直读恒等映射
-        // 内存，无副作用）。guard 页（未映射）由 kbt_read 判停，不缺页不 panic。
-        let Some((caller, ra)) = kbt_read(f) else {
-            break;
-        };
-        if ra != 0 && ra != prev {
-            out[n] = ra;
-            n += 1;
-            prev = ra;
-        }
-        if caller == 0 || caller <= f {
-            break; // 脱链：根帧 / 帧损坏 / 无 FP 链段（如 core::panicking）
-        }
-        f = caller;
-    }
-    // ② 启发式兜底：从链断点继续向上扫描，接续断链外层的内核栈帧。
-    let mut a = core::cmp::max(last + 8, sp & !7usize);
-    while a < high && n < BT_DEPTH {
-        // SAFETY: 只读本线程栈区间（S 态直读恒等映射内存，无副作用）；逐页守卫
-        // 同 ①：未映射页 → kbt_read 判 None → 停扫（不读不崩）。
-        let Some(w) = kbt_word(a) else {
-            break;
-        };
-        // 可执行候选 = 「能解析进符号区间」的地址（routed 按域选表 + lookup
-        // 上界约束）；栈上数据字落空——不收宽镜像区间误报。
-        let code = elftable::routed(VirtAddr::from_raw(w), None, None).is_some();
-        if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
-            out[n] = w;
-            n += 1;
-            prev = w;
-        }
-        a += 8;
-    }
-    n
+    let mut stack = Stack::kernel();
+    let mut trail = Trail::new();
+    let broke = chain(&mut stack, &mut trail, fp, sp + 16, ceiling);
+    let sift = Sift {
+        code: &|w| table.lookup(VirtAddr::from_raw(w)).is_some(),
+        gaps: false,
+    };
+    scan(&mut stack, &mut trail, &sift, broke + 8, ceiling);
+    Some(Trace { trail, table })
 }
 
-/// 任务栈逐页安全读（内核崩溃现场）：读帧指针 `f` 的保存对 (caller fp, ra)。
-///
-/// 标准 RV64 psABI 帧布局（反汇编实证，同 fence::alloc_site）：序言
-/// `sd ra, N-8(sp); sd s0, N-16(sp); s0 = sp+N`——保存对在 fp **下方**：
-/// caller fp 在 [f-16]、ra 在 [f-8]。旧读窗 [f]/[f+8] 取的是帧顶上方调用者
-/// 的栈数据——链立即失真（崩溃栈不可用根因，偏移 bug）。
-///
-/// 守卫：整页 walk_raw 判可读再读（当前 satp 根直译；崩溃时本核仍在 S 态，根表
-/// 经当前 satp 取）。guard 页/未映射 → None（停页），绝不产生缺页——封死幽灵
-/// panic。DRAM 恒等区守卫（walk_raw 的物理地址校验）同 ubacktrace。
-fn kbt_read(f: usize) -> Option<(usize, usize)> {
-    // 读窗 = [f-16, f)：f 恒 16 对齐（ABI sp/s0 16 对齐、帧尺寸 16 步进），
-    // base 亦 16 对齐 → 页内偏移 off ∈ 16 步进 → 两字恒同页（off+8 ≤ 4088 <
-    // 4096）——旧 [f, f+8] 读窗的跨页守卫分支随偏移修正一并移除（结构不可达）。
-    let base = f - 16;
-    let page = base & !(PAGE_SIZE - 1);
-    let satp_val = satp::read().bits();
-    let ppn = satp_val & ((1usize << 44) - 1); // satp.PPN（宽 44）
-    let in_dram = |pa: PhysAddr| {
-        (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
-    };
-    let (pa0, flags) = crate::memory::manager::table::TableNode::walk_raw(
-        PhysAddr::from_raw(ppn << 12),
-        VirtAddr::from_raw(page),
-        in_dram,
-    )?;
-    if !flags.contains(PteFlags::R) {
-        return None;
-    }
-    let off = base - page;
-    // SAFETY: 该页已 walk 命中带 R；off ∈ 16 步进 ≤ 4080，两字恒页内。S 态直读
-    // 恒等映射。读侧 `read_unaligned`（理由同旧注释）：链跨 `core::panicking` 等
-    // 无 FP 预编译库时 f 是任意 callee-saved 保存值（ABI 不保证 8 字节对齐），
-    // `read_volatile::<usize>` 会触发 LLVM「aligned」precondition → UB → 嵌套
-    // panic 现场静默。
-    let caller = unsafe {
-        (pa0.as_usize() as *const u8)
-            .add(off)
-            .cast::<usize>()
-            .read_unaligned()
-    };
-    let ra = unsafe {
-        (pa0.as_usize() as *const u8)
-            .add(off + 8)
-            .cast::<usize>()
-            .read_unaligned()
-    };
-    Some((caller, ra))
-}
-
-/// 任务栈逐页安全读（单字版，启发式扫描用）：同 [`kbt_read`] 守卫，单字读取。
-fn kbt_word(a: usize) -> Option<usize> {
-    let page = a & !(PAGE_SIZE - 1);
-    let satp_val = satp::read().bits();
-    let ppn = satp_val & ((1usize << 44) - 1);
-    let in_dram = |pa: PhysAddr| {
-        (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
-    };
-    let (pa0, flags) = crate::memory::manager::table::TableNode::walk_raw(
-        PhysAddr::from_raw(ppn << 12),
-        VirtAddr::from_raw(page),
-        in_dram,
-    )?;
-    if !flags.contains(PteFlags::R) {
-        return None;
-    }
-    let off = a - page;
-    // SAFETY: 页内偏移恒 < PAGE_SIZE；该页可读，S 态直读。`read_unaligned` 理由
-    // 同 kbt_read：启发式扫描起点 `last + 8` / `sp & !7` 步进 8 字节，理论 8
-    // 字节对齐，但脱链后 `last` 是任意对齐的 callee-saved 保存值（详见 kbt_read
-    // 注释），`a` 起点继承未对齐 → 裸 load UB。
-    let w = unsafe {
-        (pa0.as_usize() as *const u8)
-            .add(off)
-            .cast::<usize>()
-            .read_unaligned()
-    };
-    Some(w)
-}
-
-/// 用户侧回溯：崩溃时 running 任务的**用户 trap 帧**里有该任务最近一次用户态
-/// 现场。取用户 sp 按用户页表逐页安全读栈窗口，收集可执行候选返回地址（判定 =
-/// 本任务自己的符号表命中 + 对齐 + 去重）。尽力而为：帧拿不到/现场非用户态 /
-/// 栈页不可读 → 0 帧（不渲染 ubt 段）。返回 (帧数, 任务符号表 Arc)。
-fn ubacktrace(out: &mut [usize; BT_DEPTH]) -> (usize, Option<Arc<ElfTable>>) {
-    let Some(info) = ident() else {
-        return (0, None);
-    };
-    let tbl = info.elftable();
-    // trap 仅 Live 轴可读（Current::Last 不含 trap——帧可能已回收）；取不到 → 0 帧。
-    let Some(pa) = info.trap() else {
-        return (0, tbl);
-    };
-    // SAFETY: Live = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM，恒等
-    // 映射）；崩溃现场读只读、其余核冻结。
+/// 用户现场：running 任务的用户 trap 帧存着最近一次用户态 sp/fp。
+fn utrace() -> Option<Trace> {
+    let info = ident()?;
+    let table = info.elftable()?;
+    let pa = info.trap()?;
+    // SAFETY: Live 轴 = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM
+    // 恒等映射）；崩溃现场只读，其余核已冻结。
     let frame = unsafe { &*(pa.as_usize() as *const TrapContext) };
     if frame.sepc.is_kernel() {
-        return (0, tbl);
+        return None;
     }
-    let (sp, root_ppn) = (frame.gpr.x(Gprs::SP), frame.user_satp.ppn());
+    let sp = frame.gpr.x(Gprs::SP);
     if sp == 0 {
-        return (0, tbl);
+        return None;
     }
-    let high = sp.saturating_add(BT_SCAN);
-    let mut n = 0usize;
-    let mut prev = 0usize;
-    let mut page = sp & !(PAGE_SIZE - 1);
-    // DRAM 恒等区守卫（上界随机器 dram 取）：walk_raw 逐级 PA 都过此校验——用户
-    // satp 若被覆写为坏值，裸读会 fault → 嵌套 panic；此处拦下，跳页继续。未注入
-    // 机器信息 → 退回保守上界。
-    let in_dram = |pa: PhysAddr| {
-        (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
+    let fp = frame.gpr.x(Gprs::S0);
+    let ceiling = sp.saturating_add(SPAN);
+    let mut stack = Stack::user(frame.user_satp.ppn());
+    let mut trail = Trail::new();
+    let broke = chain(&mut stack, &mut trail, fp, sp + 16, ceiling);
+    let sift = Sift {
+        code: &|w| table.lookup(VirtAddr::from_raw(w)).is_some(),
+        gaps: true,
     };
-    while page < high && n < BT_DEPTH {
-        let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
-            PhysAddr::from_raw(root_ppn << 12),
-            VirtAddr::from_raw(page),
-            in_dram,
-        ) else {
-            page += PAGE_SIZE;
-            continue;
-        };
-        if !flags.contains(PteFlags::R) {
-            // 无读权（诊断只读栈）——本页不可读，跳页继续。
-            page += PAGE_SIZE;
-            continue;
-        }
-        let start = core::cmp::max(page, sp & !7);
-        let end = core::cmp::min(page + PAGE_SIZE, high);
-        let mut a = start;
-        while a < end && n < BT_DEPTH {
-            // SAFETY: 该页已 walk 命中且带 R；offset 恒在页内，S 态直读。
-            // `read_unaligned`：用户 trap 帧 sp 不强制 8 字节对齐（仅 sp 16 字
-            // 节对齐 ABI 约束，但入口 sp 来自用户态任意切换点 + 任务 trap 帧
-            // 模板），a 起点 +8 步进可能落到非 8 字节边界（ubacktrace 起扫点
-            // 也只是 `sp & !7`）；`read_volatile::<usize>` 触发 LLVM aligned
-            // precondition → UB。`read_unaligned` 零 precondition。
-            let w = unsafe {
-                (pa0.as_usize() as *const u8)
-                    .add(a - page)
-                    .cast::<usize>()
-                    .read_unaligned()
-            };
-            let code = tbl
-                .as_deref()
-                .is_some_and(|t| t.lookup(VirtAddr::from_raw(w)).is_some());
-            if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
-                out[n] = w;
-                n += 1;
-                prev = w;
-            }
-            a += 8;
-        }
-        page += PAGE_SIZE;
-    }
-    (n, tbl)
+    scan(&mut stack, &mut trail, &sift, broke + 8, ceiling);
+    Some(Trace { trail, table })
 }
 
 /// stval 解码：按 scause 的语义注解（fault 地址 / 指令位 / 断点地址）；
@@ -377,18 +346,16 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("sepc".into()),
         Some(hex(sepc::read())),
-        Some(elftable::routed_symbol(
-            VirtAddr::from_raw(sepc::read()),
-            None,
-            utbl().as_deref(),
-        )),
+        Some({
+            let va = VirtAddr::from_raw(sepc::read());
+            elftable::symbol(va, table(va).as_deref())
+        }),
     ]);
     {
         // 符号命中 → 「sym note」单空格衔接；未命中 → 仅 stval 语义。
         let a = stval::read();
-        let n = if let Some((name, off)) =
-            elftable::routed(VirtAddr::from_raw(a), ktbl(), utbl().as_deref())
-        {
+        let va = VirtAddr::from_raw(a);
+        let n = if let Some((name, off)) = table(va).and_then(|t| t.lookup(va)) {
             format!("{name}+{off:#x} {}", stval_note(int, code))
         } else {
             stval_note(int, code).to_string()
@@ -412,11 +379,10 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("stvec".into()),
         Some(hex(stvec::read().address())),
-        Some(elftable::routed_symbol(
-            VirtAddr::from_raw(stvec::read().address()),
-            None,
-            utbl().as_deref(),
-        )),
+        Some({
+            let va = VirtAddr::from_raw(stvec::read().address());
+            elftable::symbol(va, table(va).as_deref())
+        }),
     ]);
     {
         // sscratch 约定：内核态 = 本 hart trap 帧 VA（HART_FRAME_BASE +
@@ -540,46 +506,11 @@ pub fn dump_crash(r: &mut Report) {
     .extend(csr_rows());
     r.paragraph("gpr", None).items.extend(gpr_rows());
 
-    let mut bt = [0usize; BT_DEPTH];
-    let n = kbacktrace(&mut bt);
-    {
-        let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-            Some("kbt".into()),
-            Some("hex".into()),
-            Some("sym".into()),
-        ]];
-        for (i, a) in bt[..n].iter().enumerate() {
-            rows.push(vec![
-                Some(format!("#{i}")),
-                Some(hex(*a)),
-                Some(elftable::routed_symbol(
-                    VirtAddr::from_raw(*a),
-                    ktbl(),
-                    utbl().as_deref(),
-                )),
-            ]);
-        }
-        r.paragraph("kbt", None).items.extend(rows);
+    if let Some(t) = ktrace() {
+        r.paragraph("kbt", None).items.extend(t.rows("kbt"));
     }
-
-    // 用户侧回溯（kbt = 内核栈；ubt = 用户栈）——被中断上下文为用户态、能取到
-    // running 任务帧时附加；0 帧不渲染。符号化用任务自己的表。
-    let mut ubt = [0usize; BT_DEPTH];
-    let (m, tbl_arc) = ubacktrace(&mut ubt);
-    if m > 0 {
-        let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-            Some("ubt".into()),
-            Some("hex".into()),
-            Some("sym".into()),
-        ]];
-        for (i, a) in ubt[..m].iter().enumerate() {
-            rows.push(vec![
-                Some(format!("#{i}")),
-                Some(hex(*a)),
-                Some(elftable::symbol(VirtAddr::from_raw(*a), tbl_arc.as_deref())),
-            ]);
-        }
-        r.paragraph("ubt", None).items.extend(rows);
+    if let Some(t) = utrace() {
+        r.paragraph("ubt", None).items.extend(t.rows("ubt"));
     }
 
     // 每 hart 最近事件窗口（人读对照）。
