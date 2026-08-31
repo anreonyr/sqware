@@ -142,7 +142,10 @@ static FRAME_CLASS_BASE: AtomicUsize = AtomicUsize::new(0);
 pub(crate) fn init_frame_class(base: usize, pages: usize) {
     let table: Box<[AtomicU8]> = (0..pages).map(|_| AtomicU8::new(0)).collect();
     FRAME_CLASS_BASE.store(base, Ordering::Relaxed);
-    assert!(FRAME_CLASS.set(table).is_ok(), "frame class table double init");
+    assert!(
+        FRAME_CLASS.set(table).is_ok(),
+        "frame class table double init"
+    );
 }
 
 /// 表下标（与 banker.idx 同算式）。
@@ -167,7 +170,9 @@ pub(crate) fn tag(addr: usize, class: Class) {
     } else {
         // 帧侧：表 + 计数。
         let slot = frame_class_slot(addr);
-        let table = FRAME_CLASS.get().expect("frame class table not initialized");
+        let table = FRAME_CLASS
+            .get()
+            .expect("frame class table not initialized");
         let cur = table[slot].load(Ordering::Relaxed);
         assert!(
             cur == 0 || cur == class as u8,
@@ -185,7 +190,9 @@ pub(crate) fn tag(addr: usize, class: Class) {
 #[cfg(feature = "audit")]
 fn untag_frame(addr: usize) -> Class {
     let slot = frame_class_slot(addr);
-    let table = FRAME_CLASS.get().expect("frame class table not initialized");
+    let table = FRAME_CLASS
+        .get()
+        .expect("frame class table not initialized");
     let class = Class::from_u8(table[slot].load(Ordering::Relaxed));
     table[slot].store(0, Ordering::Relaxed);
     class
@@ -531,19 +538,19 @@ static RALLOC_SIE: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 pub fn begin_realloc(old: usize) {
     #[cfg(feature = "audit")]
     {
-        let hart = crate::machine::hart_id().min(15) as usize;
-        if let Some(class) = ledger::LEDGER.class_of(old) {
-            if class != Class::Persistent {
-                // 关 SIE：窗口内不可抢占（见 IN_REALLOC 注释——抢占污染配对）。
-                let sie = riscv::register::sstatus::read().sie() as usize;
-                // SAFETY: 关/开 SIE 仅改本 hart 中断使能位，窗口极短；end_realloc 恢复。
-                unsafe { riscv::register::sstatus::clear_sie() };
-                RALLOC_SIE[hart].store(sie, Ordering::Relaxed);
-                IN_REALLOC[hart].store(true, Ordering::Relaxed);
-                RALLOC_OLD[hart].store(old, Ordering::Relaxed);
-                RALLOC_NEW[hart].store(0, Ordering::Relaxed);
-                RALLOC_CLASS[hart].store(class as u8, Ordering::Relaxed);
-            }
+        let hart = crate::machine::hart_id().min(15);
+        if let Some(class) = ledger::LEDGER.class_of(old)
+            && class != Class::Persistent
+        {
+            // 关 SIE：窗口内不可抢占（见 IN_REALLOC 注释——抢占污染配对）。
+            let sie = riscv::register::sstatus::read().sie() as usize;
+            // SAFETY: 关/开 SIE 仅改本 hart 中断使能位，窗口极短；end_realloc 恢复。
+            unsafe { riscv::register::sstatus::clear_sie() };
+            RALLOC_SIE[hart].store(sie, Ordering::Relaxed);
+            IN_REALLOC[hart].store(true, Ordering::Relaxed);
+            RALLOC_OLD[hart].store(old, Ordering::Relaxed);
+            RALLOC_NEW[hart].store(0, Ordering::Relaxed);
+            RALLOC_CLASS[hart].store(class as u8, Ordering::Relaxed);
         }
     }
 }
@@ -553,7 +560,7 @@ pub fn begin_realloc(old: usize) {
 pub fn end_realloc() {
     #[cfg(feature = "audit")]
     {
-        let hart = crate::machine::hart_id().min(15) as usize;
+        let hart = crate::machine::hart_id().min(15);
         IN_REALLOC[hart].store(false, Ordering::Relaxed);
         let sie = RALLOC_SIE[hart].swap(0, Ordering::Relaxed);
         if sie != 0 {
@@ -580,7 +587,7 @@ pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
         // realloc 窗口：记首笔新块（grow 内第一笔 alloc；窗口关 SIE，后续分配
         // 必属同 grow 链，首笔即 allocate 新块）并继承旧块类别（begin_realloc
         // 已从 ledger 读出存入 RALLOC_CLASS）。
-        let hart = crate::machine::hart_id().min(15) as usize;
+        let hart = crate::machine::hart_id().min(15);
         let first_new = IN_REALLOC[hart].load(Ordering::Relaxed)
             && RALLOC_NEW[hart].load(Ordering::Relaxed) == 0;
         if first_new {
