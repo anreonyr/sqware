@@ -80,12 +80,13 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
     crate::memory::allocator::portal::switch(crate::memory::allocator::portal::Backend::Spare);
     let held = held().expect("depend: report outside collected set");
     let mut msg = format!(
-        "[depend] {what}: {}",
+        "[depend] {what}: {lock:#x} ({})",
         elftable::symbol(VirtAddr::from_raw(lock), ktbl())
     );
     if caller != 0 {
         msg.push_str(&format!(
-            "\n  caller: {}",
+            "\n  caller: {:#x} ({})",
+            caller,
             elftable::symbol(VirtAddr::from_raw(caller), ktbl())
         ));
     }
@@ -100,13 +101,15 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
                 .map(|l| format!("{l:?}"))
                 .unwrap_or_else(|| "exempt".into());
             msg.push_str(&format!(
-                "\n    {} ({lv}){} acquired at {}",
+                "\n    {:#x} {} ({lv}){} acquired at {:#x} ({})",
+                held.slots[i].addr,
                 elftable::symbol(VirtAddr::from_raw(held.slots[i].addr), ktbl()),
                 if held.slots[i].level == max {
                     "  <-- max held"
                 } else {
                     ""
                 },
+                held.slots[i].caller,
                 elftable::symbol(VirtAddr::from_raw(held.slots[i].caller), ktbl())
             ));
         }

@@ -12,8 +12,8 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::switcher::context::TrapContext;
-use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::space::SpaceKind;
+use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
 
 use super::team::Team;
@@ -296,7 +296,6 @@ pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
     // 时 tp 即已在位——此处不再重建。
     // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
     let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
-    let boxed: Box<dyn FnOnce()> = *holder;
-    boxed();
+    holder();
     conductor::ktask::reap()
 }

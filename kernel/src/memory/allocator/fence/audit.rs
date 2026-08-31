@@ -66,6 +66,38 @@ pub fn check_baseline() {
     let lhs = now.wrapping_sub(blocks);
     let rhs = base.wrapping_sub(bbase);
     if lhs != rhs {
+        // 诊断：枚举游离帧（`banker.held - block.owned`）— 逐条 PA 打印，
+        // 把"差几帧"具体到"哪几页没归还"，便于按 VA/类别定位泄漏源。
+        // 锁序：先收 banker.held（无锁位图，逐字 Relaxed 读），再收 block.owned
+        // （tally 锁内）。owned/strays 必须**预分配**——collect_owned_pa 持
+        // tally 锁时 Vec::push 触发的 alloc 会重入 tally 锁（同锁重入 = depend
+        // 误报 panic）；预分配到 held_count 上界可让 push 不再调 alloc。
+        let mut strays: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
+        {
+            // 预分配 held 容量 = banker 全集大小（held_count() 上界），避免
+            // collect_held 内 push 多次 realloc。release 下 held_count() = 0，
+            // 故用 `with_capacity` 给一个宽松上界即可。
+            let cap = super::banker::BANKER.held_count().max(64);
+            let mut held: alloc::vec::Vec<usize> = alloc::vec::Vec::with_capacity(cap);
+            super::banker::BANKER.collect_held(&mut held);
+            let mut owned: alloc::vec::Vec<usize> =
+                alloc::vec::Vec::with_capacity(held.len());
+            crate::memory::allocator::block::collect_owned_pa(&mut owned);
+            owned.sort_unstable();
+            strays.reserve(held.len());
+            for &pa in &held {
+                if owned.binary_search(&pa).is_err() {
+                    strays.push(pa);
+                }
+            }
+        }
+        crate::putln!(
+            "[audit] {} stray frame(s) at shutdown:",
+            strays.len()
+        );
+        for (i, pa) in strays.iter().enumerate() {
+            crate::putln!("  stray[{i}] = {pa:#x}");
+        }
         report(
             IntegrityViolation::AuditDivergence,
             0,

@@ -169,50 +169,50 @@ fn spawn_demos() -> Result<(), MapError> {
     }
 
     // 内核任务（ktask）：挂 kernel 团队单例。
-    kernel()
-        .expect("kernel team not initialized")
-        .task()
-        .name("ktask")
-        .closure(|| {
-            putln!("ktask");
-        })?;
+    // kernel()
+    //     .expect("kernel team not initialized")
+    //     .task()
+    //     .name("ktask")
+    //     .closure(|| {
+    //         putln!("ktask");
+    //     })?;
     // 可抢占内核验证：常驻循环任务（每轮百万次增量 + 打印进度）。被 S-timer 抢占
     // 恢复正确 → round 顺序不重不乱、n 单调递增、hart 稳定；现场丢失则崩/乱序。
-    kernel()
-        .expect("kernel team not initialized")
-        .task()
-        .name("preempt")
-        .closure(|| {
-            let mut n: usize = 0;
-            for round in 0..10u32 {
-                let start = n;
-                for _ in 0..100_000 {
-                    n = n.wrapping_add(1);
-                }
-                crate::putln!(
-                    "preempt: round {round} n={n:#x} delta={:#x} hart={}",
-                    n.wrapping_sub(start),
-                    crate::machine::hart_id()
-                );
-            }
-            crate::putln!("preempt: done");
-        })?;
+    // kernel()
+    //     .expect("kernel team not initialized")
+    //     .task()
+    //     .name("preempt")
+    //     .closure(|| {
+    //         let mut n: usize = 0;
+    //         for round in 0..10u32 {
+    //             let start = n;
+    //             for _ in 0..100_000 {
+    //                 n = n.wrapping_add(1);
+    //             }
+    //             crate::putln!(
+    //                 "preempt: round {round} n={n:#x} delta={:#x} hart={}",
+    //                 n.wrapping_sub(start),
+    //                 crate::machine::hart_id()
+    //             );
+    //         }
+    //         crate::putln!("preempt: done");
+    //     })?;
     // 内核任务自愿睡眠（conductor::ktask::park 软陷阱）：睡 200 ms → 唤醒后
     // 打印 → 再睡 → 三轮回后退出。验证存帧/持久化/唤醒恢复/重武装整链。
-    kernel()
-        .expect("kernel team not initialized")
-        .task()
-        .name("sleep")
-        .closure(|| {
-            for round in 0..3u32 {
-                crate::putln!(
-                    "ktask sleep: round {round} @ hart {}",
-                    crate::machine::hart_id()
-                );
-                crate::work::room::conductor::ktask::park(core::time::Duration::from_millis(200));
-            }
-            crate::putln!("ktask sleep: done");
-        })?;
+    // kernel()
+    //     .expect("kernel team not initialized")
+    //     .task()
+    //     .name("sleep")
+    //     .closure(|| {
+    //         for round in 0..3u32 {
+    //             crate::putln!(
+    //                 "ktask sleep: round {round} @ hart {}",
+    //                 crate::machine::hart_id()
+    //             );
+    //             crate::work::room::conductor::ktask::park(core::time::Duration::from_millis(200));
+    //         }
+    //         crate::putln!("ktask sleep: done");
+    //     })?;
     // 风暴回归：内核任务连环 spawn N 个 closure 子任务（子任务立即退出）。
     // 根因：`Box::try_new_in([u8;4096])`/`PageTable::default()` 按值物化 ~16 KiB
     // 栈帧击穿 16 KiB 任务栈（栈走穿 guard → 未映射区/邻居槽 → 多形态崩溃）。

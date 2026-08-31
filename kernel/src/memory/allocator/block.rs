@@ -162,6 +162,22 @@ impl Tally {
         unsafe { self.cells.add(idx).read() }
     }
 
+    /// 收集全部「有主」页 PA — 审计/诊断专用（基线差集核对）。
+    ///
+    /// 闭包在 tally 锁内逐项读取（O(表长)），对每条 owner.is_some() 的表项
+    /// 反算 PA 推入 out。注意本函数持 tally 锁期间调用方不得持 frame 锁
+    /// （持锁顺序 tally < frame，与 prime/drain 同向；见模块头锁序）。
+    pub(crate) fn collect_owned_pa(&self, out: &mut Vec<usize>) {
+        let _g = self.lock.lock();
+        for idx in 0..self.len {
+            // SAFETY: idx < len 由循环保证；lock 串行。
+            let m = unsafe { self.cells.add(idx).read() };
+            if m.owner.is_some() {
+                out.push(self.frame_of(idx));
+            }
+        }
+    }
+
     /// 写表项。
     fn write(&self, page: usize, m: Meta) {
         let _g = self.lock.lock();
@@ -245,9 +261,15 @@ pub(crate) struct BlockAllocator {
 
 impl BlockAllocator {
     /// 物理地址 → 归属池 id（deallocate 路由前提）。查簿记表：表项有主 →
-    /// Some(owner)；区外或无主 → None（调用方静默丢弃，沿用旧 pool_of 语义）。
+    /// Some(owner）；区外或无主 → None（调用方静默丢弃，沿用旧 pool_of 语义）。
     fn own(&self, pa: usize) -> Option<usize> {
         self.tally.owner_of(pa)
+    }
+
+    /// 收集全部「有主」页 PA（任何池 owned；本块堆全部持有页）。
+    /// 审计差集核对用：`banker.held - block.owned = 任务/系统侧游离帧`。
+    pub(crate) fn collect_owned(&self, out: &mut Vec<usize>) {
+        self.tally.collect_owned_pa(out);
     }
 
     /// 构建块分配器：按核数建池集合 + bump 分配簿记表（池从 0 页起，页经 prime 向 frame 借）。
@@ -633,6 +655,12 @@ pub(crate) fn pool_includes(pa: usize) -> bool {
 #[cfg(debug_assertions)]
 pub(crate) fn held_pages() -> usize {
     heap().blocks.iter().map(|b| b.pool.lock().pages).sum()
+}
+
+/// 全池 owned 页 PA 清单（块堆持有的全部物理页）— 审计差集用。
+#[cfg(debug_assertions)]
+pub(crate) fn collect_owned_pa(out: &mut Vec<usize>) {
+    heap().collect_owned(out);
 }
 
 pub fn allocator() -> &'static dyn Allocator {
