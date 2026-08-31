@@ -434,13 +434,11 @@ pub fn allocator() -> &'static dyn Allocator {
         .expect("frame allocator not initialized")
 }
 
-/// 在途（未归还）物理帧数。
-#[cfg(feature = "audit")]
-pub(crate) fn outstanding() -> usize {
+/// 帧分配器本体存取器（审计/health 直调自身方法——分配器文件不设审计适配层）。
+pub(crate) fn heap() -> &'static FrameAllocator {
     FRAME_ALLOCATOR
         .get()
         .expect("frame allocator not initialized")
-        .outstanding()
 }
 
 /// 初始化 frame 分配器。基址取自 bump frontier，须在所有 bump 分配之后调用。

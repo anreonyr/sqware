@@ -192,7 +192,7 @@ pub fn check_baseline() {
     }
 
     // ④ 块池页：计数诊断（正常周转，非违规——池页属 Pool 类自由周转）。
-    crate::memory::allocator::block::collect_owned_pa(&mut now_pool);
+    crate::memory::allocator::block::heap().collect_owned(&mut now_pool);
     let pool_pages = now_pool.len();
     crate::putln!(
         "[audit] block-pool pages: {pool_pages} (turnover, not a violation)"
@@ -200,7 +200,7 @@ pub fn check_baseline() {
 
     // ⑤ 一致性：banker held 与 frame outstanding 必须相符（簿记不变量）。
     let held = super::banker::BANKER.held_count();
-    let outstanding = crate::memory::allocator::frame::outstanding();
+    let outstanding = crate::memory::allocator::frame::heap().outstanding();
     let held_ok = held == outstanding;
     if !held_ok {
         crate::putln!("[audit] banker held {held} != frame outstanding {outstanding}");
@@ -273,7 +273,7 @@ pub fn page_clear(pa: usize) {
 ///   每条 KernelHeap 记录地址须落在某池持有页，且所在页须 held。
 pub fn audit() {
     let held = super::banker::BANKER.held_count();
-    let frames = crate::memory::allocator::frame::outstanding();
+    let frames = crate::memory::allocator::frame::heap().outstanding();
     if held != frames {
         report(
             IntegrityViolation::AuditDivergence,
@@ -309,7 +309,7 @@ pub fn audit() {
     super::ledger::LEDGER.for_each(|addr, rec| {
         let page = addr & !(crate::memory::PAGE_SIZE - 1);
         if rec.kind == OwnerKind::KernelHeap {
-            if !crate::memory::allocator::block::pool_includes(addr) {
+            if !crate::memory::allocator::block::heap().own(addr).is_some() {
                 report(
                     IntegrityViolation::WildAddress,
                     addr,

@@ -265,7 +265,7 @@ pub(crate) struct BlockAllocator {
 impl BlockAllocator {
     /// 物理地址 → 归属池 id（deallocate 路由前提）。查簿记表：表项有主 →
     /// Some(owner）；区外或无主 → None（调用方静默丢弃，沿用旧 pool_of 语义）。
-    fn own(&self, pa: usize) -> Option<usize> {
+    pub(crate) fn own(&self, pa: usize) -> Option<usize> {
         self.tally.owner_of(pa)
     }
 
@@ -274,6 +274,12 @@ impl BlockAllocator {
     #[cfg(feature = "audit")]
     pub(crate) fn collect_owned(&self, out: &mut Vec<usize, &'static dyn Allocator>) {
         self.tally.collect_owned_pa(out);
+    }
+
+    /// 全池持页总数（prime 借出未还）。health 自测（debug-only）用——非审计链。
+    #[cfg(debug_assertions)]
+    pub(crate) fn held_pages(&self) -> usize {
+        self.blocks.iter().map(|b| b.pool.lock().pages).sum()
     }
 
     /// 构建块分配器：按核数建池集合 + bump 分配簿记表（池从 0 页起，页经 prime 向 frame 借）。
@@ -636,7 +642,8 @@ impl Pool {
 
 static BLOCK_ALLOCATOR: OnceLock<BlockAllocator> = OnceLock::new();
 
-fn heap() -> &'static BlockAllocator {
+/// 块堆本体存取器（审计/health 直调自身方法——分配器文件不设审计适配层）。
+pub(crate) fn heap() -> &'static BlockAllocator {
     BLOCK_ALLOCATOR.get().expect("block heap not initialized")
 }
 
@@ -646,26 +653,6 @@ pub(crate) fn flush() {
         pool.suck();
         pool.clear();
     }
-}
-
-// ── 适配层 ──
-
-/// 地址是否为某池持有的块内存。未初始化返回 false。
-#[cfg(feature = "audit")]
-pub(crate) fn pool_includes(pa: usize) -> bool {
-    heap().own(pa).is_some()
-}
-
-/// 全池持页总数（prime 借出未还）。仅 health 自测（debug-only）用——非审计链。
-#[cfg(debug_assertions)]
-pub(crate) fn held_pages() -> usize {
-    heap().blocks.iter().map(|b| b.pool.lock().pages).sum()
-}
-
-/// 全池 owned 页 PA 清单（块堆持有的全部物理页）— 关机池页计数诊断用。
-#[cfg(feature = "audit")]
-pub(crate) fn collect_owned_pa(out: &mut Vec<usize, &'static dyn Allocator>) {
-    heap().collect_owned(out);
 }
 
 pub fn allocator() -> &'static dyn Allocator {
