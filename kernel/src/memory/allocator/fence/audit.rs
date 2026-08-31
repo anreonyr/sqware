@@ -268,8 +268,8 @@ pub fn page_clear(pa: usize) {
 
 /// 全量审计（boot 收尾调用一次；三源交叉核对 + 类别计数 sanity，违例即 report）：
 ///   Banker.held_count == frame.outstanding；
-///   帧类别计数之和 == held（每帧分配恰记入一个类别计数；Audit 类 boot 期无分配）；
-///   块类别计数之和 == ledger 在册数（同帧侧；Audit 类 boot 期无登记）；
+///   帧类别计数之和 == held（每帧分配恰记入一个类别计数）；
+///   块类别计数之和 == ledger 在册数（同帧侧）；
 ///   每条 KernelHeap 记录地址须落在某池持有页，且所在页须 held。
 pub fn audit() {
     let held = super::banker::BANKER.held_count();
@@ -281,8 +281,9 @@ pub fn audit() {
             format_args!("banker {held} != frames {frames}"),
         );
     }
-    // 类别计数 sanity：分配事件与类别记账一一对应（Audit 类跳过——boot 期无
-    // 审计分配），类别计数之和必须等于 held / ledger 在册数。
+    // 类别计数 sanity：分配事件与类别记账一一对应（每帧/每块分配恰记入一个
+    // 类别计数——装饰器/打标分配器/默认 Persistent 全覆盖），类别计数之和
+    // 必须等于 held / ledger 在册数。
     let ftotal: usize = super::FRAME_COUNTS
         .iter()
         .map(|c| c.load(Ordering::Relaxed))
