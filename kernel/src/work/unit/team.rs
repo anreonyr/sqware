@@ -101,7 +101,7 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
         Arc::new(Team {
             space,
             tasks: SpinLock::new_level(Level::L3, Vec::new()),
-            elftable: crate::work::unit::elftable::kernel_syms().map(Arc::new),
+            elftable: None,
         })
     })
 }
