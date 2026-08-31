@@ -6,14 +6,14 @@
 //!
 //! # 设计：所有权类别记账（替代旧「boot 身份快照 vs 关机差集」）
 //!
-//! 每帧/每块按生命周期归属一个类别（[`FrameClass`] / [`BlockClass`]），计数由
-//! fence 事件入口维护（帧类别存 pagemeta、块类别存 ledger 记录）。合法形态
-//! 演化——容器扩容、realloc 搬家（类别继承）、池页周转、审计工具自身分配
-//! （Audit 类豁免）——只是类别内部的变化，**不需要任何赦免机制**。旧框架的
-//! 基线快照（LEDGER/POOL/TABLES/PERSISTENT）、rehome_baseline / adopt_baseline、
-//! 快照余量、AUDITING 豁免标志全部删除（1634c36 教训：快照物化 prime 自扰 →
-//! mid-collection realloc → 孤儿帧——类别记账从根上免疫该类问题：审计期分配
-//! 是 Audit 类，不参与任何归零检查）。
+//! 每帧/每块按生命周期归属一个类别（[`super::Class`]），计数由 fence 事件入口
+//! 维护（帧类别存 FRAME_CLASS 表、块类别存 ledger 记录；装饰器 `tag!` 在分配
+//! 点标注、释放路径摘标）。合法形态演化——容器扩容、realloc 搬家（类别继承）、
+//! 池页周转、审计工具自身分配——只是类别内部的变化，**不需要任何赦免机制**。
+//! 旧框架的基线快照（LEDGER/POOL/TABLES/PERSISTENT）、rehome_baseline /
+//! adopt_baseline、快照余量、AUDITING 豁免标志全部删除（1634c36 教训：快照
+//! 物化 prime 自扰 → mid-collection realloc → 孤儿帧——类别记账从根上免疫
+//! 该类问题：审计期分配是默认 Persistent 类，不参与任何归零检查）。
 //!
 //! 关机检查 [`check_baseline`] 五步：
 //!   ① TASK_FRAMES == 0 && TASK_BLOCKS == 0   真泄漏（替代旧孤儿 + 块差集）。
@@ -33,7 +33,7 @@ use core::sync::atomic::Ordering;
 use crate::lock::OnceLock;
 use crate::memory::manager::addr::PhysAddr;
 
-use super::{BlockClass, FrameClass, IntegrityViolation, OwnerKind, report};
+use super::{Class, IntegrityViolation, OwnerKind, report};
 
 // ── 统计 ──────────────────────────────────────────────
 
@@ -132,8 +132,8 @@ fn collect_kernel_tables(out: &mut alloc::vec::Vec<usize, &'static dyn Allocator
 /// 断言关机时任务生命周期帧/块已全部归还（类别记账五步，见模块头）。
 ///
 /// 与旧框架（boot 快照差集）不同：本检查对「合法形态演化」天然免疫——容器
-/// 扩容、realloc 搬家（新块继承类别）、池页周转、审计工具自身分配（Audit 类
-/// 豁免）都只是类别内部的变化，不构成违规、不需要赦免。
+/// 扩容、realloc 搬家（新块继承类别）、池页周转、审计工具自身分配都只是类别
+/// 内部的变化，不构成违规、不需要赦免。
 #[track_caller]
 pub fn check_baseline() {
     // 收集存储物化：普通记账（默认 Persistent 类）——审计暂态分配与归还在本
@@ -152,8 +152,8 @@ pub fn check_baseline() {
         );
 
     // ① 任务类泄漏：帧/块类别计数归零（真泄漏判据——替代旧孤儿 + 块差集）。
-    let task_frames = super::frame_count(FrameClass::Task);
-    let task_blocks = super::block_count(BlockClass::Task);
+    let task_frames = super::frame_count(Class::Task);
+    let task_blocks = super::block_count(Class::Task);
     if task_frames > 0 || task_blocks > 0 {
         crate::putln!(
             "[audit] task lifecycle leak at shutdown: {task_frames} frames, {task_blocks} blocks"
@@ -179,7 +179,7 @@ pub fn check_baseline() {
     // 数必须相符——任务表遗留（计数 > walk）或内核表被摘（计数 < walk）皆违例。
     collect_kernel_tables(&mut now_tables);
     let walk_tables = now_tables.len();
-    let table_frames = super::frame_count(FrameClass::Table);
+    let table_frames = super::frame_count(Class::Table);
     if table_frames != walk_tables {
         crate::putln!(
             "[audit] table frames {table_frames} != kernel-walk count {walk_tables}:"

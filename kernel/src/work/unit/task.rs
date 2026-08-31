@@ -217,13 +217,12 @@ impl TaskBuilder {
         );
         // 双装箱：`Box<dyn FnOnce()>` 是胖指针不能直接转 usize，外包一层得薄指针。
         // 类别 = Task：闭包装箱属任务生命周期——关机 TASK_BLOCKS 归零（①）。
-        // 分配器类型 = &'static dyn Allocator（fence::alloc_block(Task)）——与 trampoline
-        // 的 Box::from_raw 类型一致；释放经地址路由 + ledger 类别记账，不依赖
-        // 分配器类型。
+        // 装饰器标注（块侧：mark 默认 Persistent 后 relabel）；释放经地址路由 +
+        // ledger 类别记账，不依赖分配器类型。
         let inner: Box<dyn FnOnce(), &'static dyn Allocator> =
-            Box::new_in(f, crate::memory::allocator::fence::alloc_block(crate::memory::allocator::fence::BlockClass::Task));
+            crate::tag!(Task, Box::new_in(f, crate::memory::allocator::block::allocator()));
         let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>, &'static dyn Allocator> =
-            Box::new_in(inner, crate::memory::allocator::fence::alloc_block(crate::memory::allocator::fence::BlockClass::Task));
+            crate::tag!(Task, Box::new_in(inner, crate::memory::allocator::block::allocator()));
         // into_raw_with_allocator（非 Global 的 Box 无 into_raw）——alloc 是
         // 引用（drop 空操作），ptr 交 trampoline 的 Box::from_raw（Global 型，
         // 释放按地址路由 + ledger 类别记账）。
@@ -276,11 +275,14 @@ impl TaskBuilder {
 
         // 入队收尾
         // 类别 = Task：Arc<TaskIdent>/Arc<Task> 属任务生命周期——关机 TASK_BLOCKS
-        // 归零（①）。Arc::new_in 产 Arc<T, &'static dyn Allocator>，经
-        // into_raw_with_allocator/from_raw 转回默认分配器型 Arc<T>（同布局；
-        // 释放路径按地址路由 + ledger 类别记账，不依赖分配器类型——见
-        // fence::on_free）。
-        let tag = crate::memory::allocator::fence::alloc_block(crate::memory::allocator::fence::BlockClass::Task);
+        // 归零（①）。Arc 数据指针 ≠ 分配基址，装饰器无法覆盖——经标注块分配器
+        // （tagged_alloc）在分配器侧标注；Arc::new_in 产 Arc<T, &'static dyn
+        // Allocator>，经 into_raw_with_allocator/from_raw 转回默认分配器型
+        // Arc<T>（同布局；释放路径按地址路由 + ledger 类别记账，不依赖分配器
+        // 类型——见 fence::on_free）。
+        let alloc = crate::memory::allocator::fence::tagged_alloc(
+            crate::memory::allocator::fence::Class::Task,
+        );
         let ident: Arc<TaskIdent> = unsafe {
             let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(
                 TaskIdent {
@@ -290,7 +292,7 @@ impl TaskBuilder {
                     stack: stack_span,
                     frame: frame_span,
                 },
-                tag,
+                alloc,
             ));
             Arc::from_raw(ptr)
         };
@@ -300,7 +302,7 @@ impl TaskBuilder {
                     ident,
                     state: TaskState::Starved,
                 },
-                tag,
+                alloc,
             ));
             Arc::from_raw(ptr)
         };

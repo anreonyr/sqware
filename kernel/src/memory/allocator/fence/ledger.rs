@@ -18,7 +18,7 @@ use hashbrown::HashMap;
 
 use crate::lock::{Level, SpinLock};
 
-use super::{CANARY_MAGIC, CANARY_MIN_SLACK, BlockClass, IntegrityViolation, OwnerKind, report};
+use super::{CANARY_MAGIC, CANARY_MIN_SLACK, Class, IntegrityViolation, OwnerKind, report};
 
 /// 一条活块登记。
 pub struct Record {
@@ -37,7 +37,7 @@ pub struct Record {
     /// 登记类别。
     pub(crate) kind: OwnerKind,
     /// 生命周期类别（mark 时定型；unmark 读出减类别计数——见 fence::on_free）。
-    pub(crate) class: BlockClass,
+    pub(crate) class: Class,
 }
 
 /// 活块账本：地址 → 记录（锁内；容量 init 预留，运行期零分配）。
@@ -63,7 +63,7 @@ impl Ledger {
     /// 活块入账。前置：已 init、容量充足、地址未登记（DuplicateMark 现行）。
     /// KernelHeap 且 slack ≥ 8 时顺带写 slack canary。**零分配**。
     /// `class` = 生命周期类别（mark 时定型；unmark 读出减类别计数）。
-    pub fn mark(&self, addr: usize, size: usize, site: usize, site2: usize, kind: OwnerKind, class: BlockClass) {
+    pub fn mark(&self, addr: usize, size: usize, site: usize, site2: usize, kind: OwnerKind, class: Class) {
         let mut g = self.inner.lock();
         let Some((map, soft)) = g.as_mut() else {
             report(
@@ -132,8 +132,8 @@ impl Ledger {
     }
 
     /// 唯一注销入口：先证（存在 + canary 完好 + 尺寸一致）再移除；移除后该地址
-    /// 即「无账」。返回记录类别（fence::on_free 按类减计数——Audit 类豁免）。
-    pub fn unmark(&self, addr: usize, size: usize) -> BlockClass {
+    /// 即「无账」。返回记录类别（fence::on_free 按类减计数）。
+    pub fn unmark(&self, addr: usize, size: usize) -> Class {
         let mut g = self.inner.lock();
         let Some((map, _)) = g.as_mut() else {
             report(
@@ -164,17 +164,17 @@ impl Ledger {
     }
 
     /// 按地址查登记类别（realloc 窗口类别继承用；无账 → None）。
-    pub fn class_of(&self, addr: usize) -> Option<BlockClass> {
+    pub fn class_of(&self, addr: usize) -> Option<Class> {
         let g = self.inner.lock();
         g.as_ref()
             .and_then(|(m, _)| m.get(&addr))
             .map(|r| r.class)
     }
 
-    /// 类别改标（打标分配器 / realloc 继承；fence::relabel_block 调用）：更新记录
+    /// 类别改标（装饰器标注 / realloc 继承；fence::tag 调用）：更新记录
     /// 类别，返回旧类——计数迁移由调用方完成（mark 已按默认 Persistent +1）。
     /// 无账 → report（mark 必须先行）。
-    pub fn relabel(&self, addr: usize, class: BlockClass) -> BlockClass {
+    pub fn relabel(&self, addr: usize, class: Class) -> Class {
         let mut g = self.inner.lock();
         let Some((map, _)) = g.as_mut() else {
             report(

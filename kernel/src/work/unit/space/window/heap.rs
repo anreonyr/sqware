@@ -47,11 +47,11 @@ impl HeapWindow {
             let mut mapped = 0usize;
             while mapped < pages {
                 // 类别 = Task：用户堆页属任务生命周期——关机必须归零（①）。
-                let page: Frame = unsafe {
-                    Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task))
+                let page: Frame = crate::tag!(Task, unsafe {
+                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
-                };
+                });
                 let pa = crate::memory::manager::addr::PhysAddr::from_raw(page.as_ptr() as usize);
                 let m_va = va + mapped * PAGE_SIZE;
                 if inner.root.map(m_va, pa, PAGE_SIZE, flags).is_err() {

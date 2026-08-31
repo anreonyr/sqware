@@ -579,7 +579,7 @@ impl Space {
                 };
                 // 类别 = Task：COW 共享帧（Borrowed）属任务生命周期——关机归零。
                 let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> =
-                    Arc::new_in([0u8; PAGE_SIZE], crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task));
+                    crate::tag!(Task, Arc::new_in([0u8; PAGE_SIZE], crate::memory::allocator::frame::allocator()));
                 Arc::get_mut(&mut arc)
                     .expect("fresh arc")
                     .copy_from_slice(bytes_src);
@@ -621,11 +621,11 @@ impl Space {
                     unreachable!("checked above")
                 };
                 // 类别 = Task：COW 分裂新帧属任务生命周期——关机归零。
-                let mut nb: Frame = unsafe {
-                    Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task))
+                let mut nb: Frame = crate::tag!(Task, unsafe {
+                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
-                };
+                });
                 nb.copy_from_slice(&arc[..]);
                 nb
             };
@@ -676,11 +676,11 @@ impl Space {
                     return Err(MapError::NoRegion);
                 }
                 // 类别 = Task：懒页物化帧属任务生命周期——关机归零。
-                let page: Frame = unsafe {
-                    Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task))
+                let page: Frame = crate::tag!(Task, unsafe {
+                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
-                };
+                });
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
                 inner.root.map(va, pa, PAGE_SIZE, flags)?;
                 let map = inner.resolve_mut(va).expect("map exists (checked above)");

@@ -36,11 +36,11 @@ impl FrameWindow {
             let flags =
                 PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
             // 类别 = Task：trap 帧属任务生命周期——关机必须归零（①）。
-            let page: Frame = unsafe {
-                Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task))
+            let page: Frame = crate::tag!(Task, unsafe {
+                Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                     .map_err(|_| MapError::OutOfMemory)?
                     .assume_init()
-            };
+            });
             let pa = PhysAddr::from_raw(page.as_ptr() as usize);
             if inner.root.map(va, pa, PAGE_SIZE, flags).is_err() {
                 // 回滚：清残留 PTE + VA 退回段

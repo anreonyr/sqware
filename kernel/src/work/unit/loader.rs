@@ -65,13 +65,11 @@ fn frames_for_segment(bytes: &[u8], seg: &LoadSegment) -> Result<Vec<Frame>, Map
     let mut frames = Vec::with_capacity(pages);
     for i in 0..pages {
         // 类别 = Task：装载段帧（owned 数据帧）属任务生命周期——关机归零。
-        let mut frame: Frame = unsafe {
-            Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(
-                crate::memory::allocator::fence::FrameClass::Task,
-            ))
-            .map_err(|_| MapError::OutOfMemory)?
-            .assume_init()
-        };
+        let mut frame: Frame = crate::tag!(Task, unsafe {
+            Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+                .map_err(|_| MapError::OutOfMemory)?
+                .assume_init()
+        });
         let src = seg.offset + i * PAGE_SIZE;
         let end = seg.offset.saturating_add(seg.filesz);
         let len = end.min(src.saturating_add(PAGE_SIZE)) - src;

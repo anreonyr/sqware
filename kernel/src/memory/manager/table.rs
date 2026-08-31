@@ -106,11 +106,11 @@ impl PageTable {
         // Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）。
         // 类别 = Table：页表页（root 与 walk_mut 子表）——关机与内核根表 walk
         // 计数核对（audit::check_baseline ③）。
-        Ok(unsafe {
-            Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Table))
+        Ok(crate::tag!(Table, unsafe {
+            Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                 .map_err(|_| MapError::OutOfMemory)?
                 .assume_init()
-        })
+        }))
     }
 }
 

@@ -437,9 +437,7 @@ impl BlockInner {
     fn prime(&self, inner: &mut Pool, power: usize) -> Result<NonNull<u8>, AllocError> {
         // 借 1 页（order0）。
         let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
-        let page = super::fence::alloc_frame(super::fence::FrameClass::Pool)
-            .allocate(layout)
-            .map_err(|_| AllocError)?;
+        let page = crate::tag!(Pool, frame::allocator().allocate(layout).map_err(|_| AllocError)?);
         let base = page.as_ptr() as *mut u8 as usize;
         checker::check_dram_addr(base, "block prime (frame page)");
 

@@ -73,11 +73,11 @@ impl StackWindow {
             let pages = size / PAGE_SIZE;
             for i in 0..pages {
                 // 类别 = Task：栈体页属任务生命周期——关机必须归零（①）。
-                let page: Frame = unsafe {
-                    Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task))
+                let page: Frame = crate::tag!(Task, unsafe {
+                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
-                };
+                });
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
                 let m_va = body_va + i * PAGE_SIZE;
                 if inner.root.map(m_va, pa, PAGE_SIZE, body_flags).is_err() {
