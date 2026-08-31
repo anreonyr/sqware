@@ -14,6 +14,7 @@ use alloc::vec::Vec;
 use crate::machine;
 use crate::memory::allocator::spare;
 use crate::memory::allocator::spare::DUMP_BUDGET;
+use crate::memory::allocator::statistics;
 use crate::runtime::diagnose::trace;
 
 /// spare 预算验收（失败即 halt）。
@@ -21,45 +22,47 @@ pub fn accept() {
     let h = machine::hart_count();
     let ring = trace::ring_bytes(h);
 
-    // ring 常驻：used ≥ 载荷（used 含块头 32B，故用 ≥；精确值不与分配器开销耦合）。
+    let view = statistics::view_spare();
     crate::expect!(
-        spare::spare().used() >= ring,
-        "spare: ring {ring} B not resident (used {})",
-        spare::spare().used()
+        view.occupied >= ring,
+        "spare: ring {ring} B not resident (occupied {})",
+        view.occupied
     );
     crate::expect!(
-        spare::spare().remaining() >= DUMP_BUDGET,
-        "spare: dump budget {DUMP_BUDGET} B not reserved (remaining {})",
-        spare::spare().remaining()
+        view.available >= DUMP_BUDGET,
+        "spare: dump budget {DUMP_BUDGET} B not reserved (available {})",
+        view.available
     );
 
-    // 溢出演练：拉满到 Err 再全还——证明分配/释放/合并闭环且失败路径返回 Err。
     let step = Layout::from_size_align(1024, 16).unwrap();
-    let (used_before, remaining_before) = (spare::spare().used(), spare::spare().remaining());
+    let before = *statistics::view_spare();
     let mut held: Vec<NonNull<[u8]>> = Vec::new();
     while let Ok(b) = spare::spare().allocate(step) {
         held.push(b)
     }
     crate::expect!(
         spare::spare().allocate(step).is_err(),
-        "spare: drill did not reach exhaustion (remaining {})",
-        spare::spare().remaining()
+        "spare: drill did not reach exhaustion (available {})",
+        statistics::view_spare().available
     );
-    // 逆序归还（相邻块逆序释放 → 合并链仍应还原为单块）。
     for b in held.iter().rev() {
-        // SAFETY: b 来自本演练 allocate，layout 同源。
         unsafe { spare::spare().deallocate(b.cast(), step) };
     }
+    let after = *statistics::view_spare();
     crate::expect!(
-        spare::spare().remaining() == remaining_before,
-        "spare: drill leaked budget (remaining {remaining_before} → {})",
-        spare::spare().remaining()
+        after.available == before.available,
+        "spare: drill leaked budget (available {0} → {1})",
+        before.available,
+        after.available
     );
     crate::expect!(
-        spare::spare().used() == used_before,
-        "spare: drill left residue (used {}), want {used_before}",
-        spare::spare().used()
+        after.occupied == before.occupied,
+        "spare: drill left residue (occupied {0}), want {1}",
+        after.occupied,
+        before.occupied
     );
 
-    crate::putln!("[health] spare: ok (ring {ring} B, dump budget {DUMP_BUDGET} B, drill clean)");
+    crate::putln!(
+        "[health] spare: ok (ring {ring} B, dump budget {DUMP_BUDGET} B, drill clean)"
+    );
 }

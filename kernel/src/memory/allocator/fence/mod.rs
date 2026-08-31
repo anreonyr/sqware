@@ -114,19 +114,9 @@ impl Class {
     }
 }
 
-/// 帧类别计数（标注 +1 / 释放摘标 −1）。关机只断言 Task 归零，其余诊断。
-pub(crate) static FRAME_COUNTS: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
-/// 块类别计数（mark +1 / unmark −1；编码下仅 Persistent/Task 两档实际使用）。
-pub(crate) static BLOCK_COUNTS: [AtomicUsize; 2] = [const { AtomicUsize::new(0) }; 2];
-
-/// 类别计数读取（audit 读侧）。
-pub(crate) fn frame_count(c: Class) -> usize {
-    FRAME_COUNTS[c as usize].load(Ordering::Relaxed)
-}
-/// 类别计数读取（audit 读侧）。
-pub(crate) fn block_count(c: Class) -> usize {
-    BLOCK_COUNTS[c as usize].load(Ordering::Relaxed)
-}
+// 类别计数已迁至 statistics::Stats.frame.classes / block.classes——本模块不再
+// 维护 FRAME_COUNTS / BLOCK_COUNTS,frame_count / block_count 也删除。
+// audit 读侧改用 statistics::view_frame().classes / view_block().classes。
 
 // ── 帧类别表（fence 所有；分配器文件零类别词汇）──
 
@@ -158,17 +148,17 @@ fn frame_class_slot(pa: usize) -> usize {
 /// （计数迁移）；帧地址（永不入账）→ FRAME_CLASS 表 + 计数。判别由「块必
 /// mark、帧永不 mark」保证确定。帧侧 Persistent 标注写 0（表全零即默认语义），
 /// 表项非 0 同类幂等、异类重复标注防御 panic。
+/// 类别计数（含 audit-feature 解耦的常驻字段）由 statistics 维护,见 record_frame_take。
+/// audit-feature-gated：audit 关闭时 ledger / FRAME_CLASS 整体 cfg out,
+/// tag 调用方由装饰器 tag! 宏展开——audit 关闭时该宏退化为裸表达式,不调 tag。
 #[cfg(feature = "audit")]
 pub(crate) fn tag(addr: usize, class: Class) {
     if ledger::LEDGER.class_of(addr).is_some() {
-        // 块侧：relabel（mark 已按默认 Persistent +1——计数迁移）。
         let old = ledger::LEDGER.relabel(addr, class);
         if old != class {
-            BLOCK_COUNTS[old as usize].fetch_sub(1, Ordering::Relaxed);
-            BLOCK_COUNTS[class as usize].fetch_add(1, Ordering::Relaxed);
+            crate::memory::allocator::statistics::record_block_relabel(old, class);
         }
     } else {
-        // 帧侧：表 + 计数。
         let slot = frame_class_slot(addr);
         let table = FRAME_CLASS
             .get()
@@ -181,21 +171,30 @@ pub(crate) fn tag(addr: usize, class: Class) {
         if class != Class::Persistent {
             table[slot].store(class as u8, Ordering::Relaxed);
         }
-        FRAME_COUNTS[class as usize].fetch_add(1, Ordering::Relaxed);
+        crate::memory::allocator::statistics::record_frame_relabel(Class::Persistent, class);
     }
 }
 
-/// 摘标（untag——tag 的对偶）：帧释放路径读类别并清表项（按类减计数由
-/// on_frame_free 完成）。块侧对偶 = ledger 的 mark/unmark（unmark 返回类别）。
-#[cfg(feature = "audit")]
+/// 摘标（untag——tag 的对偶）：帧释放路径读类别并清表项,按类减计数
+/// （statistics::record_frame_give）。块侧对偶 = ledger 的 mark/unmark
+/// （unmark 返回类别）。
 fn untag_frame(addr: usize) -> Class {
-    let slot = frame_class_slot(addr);
-    let table = FRAME_CLASS
-        .get()
-        .expect("frame class table not initialized");
-    let class = Class::from_u8(table[slot].load(Ordering::Relaxed));
-    table[slot].store(0, Ordering::Relaxed);
-    class
+    #[cfg(feature = "audit")]
+    {
+        let slot = frame_class_slot(addr);
+        let table = FRAME_CLASS
+            .get()
+            .expect("frame class table not initialized");
+        let class = Class::from_u8(table[slot].load(Ordering::Relaxed));
+        table[slot].store(0, Ordering::Relaxed);
+        crate::memory::allocator::statistics::record_frame_give(class);
+        class
+    }
+    #[cfg(not(feature = "audit"))]
+    {
+        let _ = addr;
+        Class::Persistent
+    }
 }
 
 // ── 装饰器（tag!——tag 原语的宏形式；audit 关闭时退化为裸表达式，零开销）──
@@ -597,7 +596,7 @@ pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
             poison(addr, size);
         }
         ledger::LEDGER.mark(addr, size, site, site2, kind, Class::Persistent);
-        BLOCK_COUNTS[Class::Persistent as usize].fetch_add(1, Ordering::Relaxed);
+        crate::memory::allocator::statistics::record_block_take_for_class(Class::Persistent);
         if first_new {
             let inherited = Class::from_u8(RALLOC_CLASS[hart].load(Ordering::Relaxed));
             if inherited != Class::Persistent {
@@ -617,7 +616,7 @@ pub fn on_free(addr: usize, size: usize, kind: OwnerKind) {
     #[cfg(feature = "audit")]
     {
         let class = ledger::LEDGER.unmark(addr, size);
-        BLOCK_COUNTS[class as usize].fetch_sub(1, Ordering::Relaxed);
+        crate::memory::allocator::statistics::record_block_give_for_class(class);
         if let OwnerKind::KernelHeap = kind {
             poison(addr, size);
         }
@@ -636,14 +635,18 @@ pub fn on_frame_alloc(addr: usize) {
 }
 
 /// 帧释放事件：页金库存入（held→Free；存入陌生页 / 双释放现行）。
-/// 摘标（untag——tag 的对偶）：自 FRAME_CLASS 表读出类别、清表项、按类减
-/// 计数；credit 恒发生、与类别无关（banker 配对不受类别错乱影响）。
+/// 摘标（untag——tag 的对偶）：自 FRAME_CLASS 表读出类别、清表项,按类减
+/// 计数由 [`untag_frame`] 内部 record_frame_give 完成；credit 恒发生、
+/// 与类别无关（banker 配对不受类别错乱影响）。
 #[inline]
 pub fn on_frame_free(addr: usize) {
     #[cfg(feature = "audit")]
     {
-        let class = untag_frame(addr);
-        FRAME_COUNTS[class as usize].fetch_sub(1, Ordering::Relaxed);
+        let _class = untag_frame(addr);
         banker::BANKER.credit(addr);
+    }
+    #[cfg(not(feature = "audit"))]
+    {
+        crate::memory::allocator::statistics::record_frame_give(Class::Persistent);
     }
 }

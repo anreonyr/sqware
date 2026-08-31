@@ -71,22 +71,21 @@ impl Blk {
 }
 
 /// 仓内状态（SpinLock 壳内；Level::Spare，见 lock::depend）。
+/// `used` 由 statistics::Stats.spare.occupied 唯一权威,本结构不再保留。
 struct SpareInner {
     base: usize,
     edge: usize,
     head: Option<NonNull<Blk>>,
-    used: usize,
 }
 
 impl SpareInner {
-    /// 建仓：整块区作为一个空闲块入链，记账清零。
+    /// 建仓：整块区作为一个空闲块入链,记账清零。
     fn new(base: usize, edge: usize) -> Self {
         let head = unsafe { Blk::write(base, edge - base) };
         Self {
             base,
             edge,
             head: Some(head),
-            used: 0,
         }
     }
 
@@ -238,15 +237,10 @@ impl SpareAllocator {
         })
     }
 
-    /// 在册字节（含块头）。
-    pub fn used(&self) -> usize {
-        self.inner.lock().used
-    }
-
-    /// 余量字节（仓容 − 在册；诊断打印的可用预算）。
-    pub fn remaining(&self) -> usize {
-        let inner = self.inner.lock();
-        (inner.edge - inner.base) - inner.used
+    /// 仓总容量（edge − base 字节）。statistics::view_spare().total 派生于此。
+    pub(crate) fn total_bytes(&self) -> usize {
+        let g = self.inner.lock();
+        g.edge - g.base
     }
 }
 
@@ -265,7 +259,7 @@ unsafe impl Allocator for SpareAllocator {
         // SAFETY: blk 在链中，size 为块首真实总长（split 后 = HEADER + need）。
         let size = unsafe { blk.read() }.size;
         checker::check_dram_addr(addr, "spare pull");
-        inner.used += size;
+        super::statistics::record_spare_take(size);
         // SAFETY: addr + HEADER 为仓内空闲块载荷首（16B 对齐，块已出链）。
         Ok(NonNull::slice_from_raw_parts(
             NonNull::new((addr + HEADER) as *mut u8).ok_or(AllocError)?,
@@ -285,7 +279,7 @@ unsafe impl Allocator for SpareAllocator {
             checker::check_dram_addr(blk_addr, "spare put");
             let blk = NonNull::new_unchecked(blk_addr as *mut Blk);
             let size = blk.read().size;
-            inner.used = inner.used.saturating_sub(size);
+            super::statistics::record_spare_give(size);
             inner.push(blk);
         }
     }
@@ -296,7 +290,7 @@ unsafe impl Allocator for SpareAllocator {
 static SPARE_ALLOCATOR: OnceLock<&'static SpareAllocator> = OnceLock::new();
 
 /// 后备仓入口（统一暴露）：返回具体 `SpareAllocator`——调用方直接
-/// `spare().allocate(...)` / `spare().used()` / `spare().remaining()`。
+/// `spare().allocate(...)`。`occupied` / `available` 走 `statistics::view_spare()`。
 pub fn spare() -> &'static SpareAllocator {
     SPARE_ALLOCATOR
         .get()

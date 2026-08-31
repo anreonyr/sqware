@@ -28,10 +28,9 @@ pub fn pagetable() {
         .expect("[health] pagetable: build space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
     let base_count = space.table_count();
-    // 全动态下块池页已计入 frame outstanding，剔除块池持页——期间 spare 迟滞
-    // 保留的页会净增 outstanding，不误报。
-    let held_before = crate::memory::allocator::frame::heap().outstanding()
-        - crate::memory::allocator::block::heap().held_pages();
+    // 全动态下块池页已计入 frame.occupied,剔除块池持页得"非块池用途在途帧"。
+    let held_before = crate::memory::allocator::statistics::view_frame().occupied
+        - crate::memory::allocator::statistics::view_block().occupied;
 
     for round in 0..ROUNDS {
         // map：分配数据帧 + 中间表
@@ -78,8 +77,8 @@ pub fn pagetable() {
         );
     }
 
-    let held_after = crate::memory::allocator::frame::heap().outstanding()
-        - crate::memory::allocator::block::heap().held_pages();
+    let held_after = crate::memory::allocator::statistics::view_frame().occupied
+        - crate::memory::allocator::statistics::view_block().occupied;
     crate::expect!(
         held_before == held_after,
         "net frames leaked: {held_before} → {held_after}"

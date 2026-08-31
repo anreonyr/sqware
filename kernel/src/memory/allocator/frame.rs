@@ -43,14 +43,10 @@ impl FrameAllocator {
         })
     }
 
-    /// 在途（未归还）物理帧数。
-    ///
-    /// 与 `feature = "audit"` **解耦**：作为健康检查（health/pagetable）的 metric
-    /// 总要可读,audit 关闭 + debug 下若返回 0 会与 [`crate::memory::allocator::block::held_pages`]
-    /// 在 `0 - N` 处减下溢。增减维护同样常驻（锁内单原子 +,锁序同 frame 主体）,
-    /// 关闭 audit 时此字段就是"在途帧数"本身,审计路径只是另作读用。
-    pub fn outstanding(&self) -> usize {
-        self.inner.lock().outstanding
+    /// 帧分配器 free 区总页数（statistics::init 拍 total / available 用）。
+    pub(crate) fn total_pages(&self) -> usize {
+        let g = self.inner.lock();
+        (g.edge - g.base) / PAGE_SIZE
     }
 }
 
@@ -96,7 +92,9 @@ impl FrameAllocator {
         }
         // 护栏事件：帧由金库取出。
         super::fence::on_frame_alloc(addr as usize);
-        frame.outstanding += 1;
+        // 类别：alloc 时尚未打标,记为默认 Persistent;relabel 后 fence::tag 内
+        // record_block_relabel 迁移计数。
+        super::statistics::record_frame_take(super::fence::Class::Persistent);
 
         checker::log_frame_alloc(addr as usize, index, power);
 
@@ -136,7 +134,9 @@ unsafe impl Allocator for FrameAllocator {
             // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);
             frame.merge_block(index, power);
-            frame.outstanding = frame.outstanding.saturating_sub(1);
+            // 类别：untag 在 fence::on_frame_free 内完成,class 由 untag 路径同步 record;
+            // 非 audit 时 fence::on_frame_free 内部直接 record_frame_give(Persistent)。
+            // 此处无需再调 record_frame_give,避免重复。
 
             checker::log_frame_dealloc(addr, index, power);
         }
@@ -148,15 +148,6 @@ struct FrameInner {
     pagemeta: Vec<Option<Meta>>,
     base: usize,
     edge: usize,
-    /// 在途（未归还）物理帧数。
-    ///
-    /// 常驻维护（与 `feature = "audit"` 解耦）——作为 health 检查的 metric
-    /// 总是需要可读；audit 关闭 + debug 下若不维护,health/pagetable 的
-    /// `outstanding - held_pages` 会在 `0 - N` 处减下溢。审计路径只是
-    /// 另作读用,无 audit 专属语义。增减发生在 frame allocate/deallocate
-    /// 持锁期（锁内单原子 +,锁序同 frame 主体——`saturating_sub` 防异常
-    /// 路径下溢出,不应发生但兜底）。
-    outstanding: usize,
 }
 
 impl FrameInner {
@@ -166,7 +157,6 @@ impl FrameInner {
             pagemeta: Vec::new(),
             base: 0,
             edge: 0,
-            outstanding: 0,
         }
     }
 

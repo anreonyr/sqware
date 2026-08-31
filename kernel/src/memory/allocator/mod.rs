@@ -15,6 +15,8 @@ pub mod hybrid;
 pub mod portal;
 /// 后备仓（日志 + panic 打印专用）。
 pub mod spare;
+/// 统计出口：统一读 frame / block / spare 的占用视图与基线/差集。
+pub mod statistics;
 
 /// 分配器初始化错误 — 与 `erra::Error<InitError>` 配对使用（见 [`InitResult`]）。
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,5 +70,17 @@ pub fn init() -> InitResult<()> {
     hybrid::init()?;
     portal::switch(portal::Backend::Hybrid);
     spare::init()?;
+    statistics::init().expect("statistics init: already initialized");
+
+    // 三分配器全部 init 后,捕获各自的 total / available 作为 baseline。
+    let total_frames = frame::heap().total_pages();
+    statistics::record_frame_total(total_frames);
+    statistics::record_frame_available(total_frames);
+
+    let spare_total = spare::spare().total_bytes();
+    statistics::record_spare_total(spare_total);
+    statistics::record_spare_available(spare_total);
+
+    statistics::rebaseline().expect("statistics rebaseline: not initialized");
     Ok(())
 }

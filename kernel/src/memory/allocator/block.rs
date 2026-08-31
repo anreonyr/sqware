@@ -276,12 +276,6 @@ impl BlockAllocator {
         self.tally.collect_owned_pa(out);
     }
 
-    /// 全池持页总数（prime 借出未还）。health 自测（debug-only）用——非审计链。
-    #[cfg(debug_assertions)]
-    pub(crate) fn held_pages(&self) -> usize {
-        self.blocks.iter().map(|b| b.pool.lock().pages).sum()
-    }
-
     /// 构建块分配器：按核数建池集合 + bump 分配簿记表（池从 0 页起，页经 prime 向 frame 借）。
     ///
     /// 必须在任何堆分配之前调用恰好一次，且须在 frame 初始化之前。
@@ -444,6 +438,7 @@ impl BlockInner {
         // 借 1 页（order0）。
         let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
         let page = crate::tag!(Pool, frame::allocator().allocate(layout).map_err(|_| AllocError)?);
+        super::statistics::record_block_take(self.id);
         let base = page.as_ptr() as *mut u8 as usize;
         checker::check_dram_addr(base, "block prime (frame page)");
 
@@ -471,7 +466,6 @@ impl BlockInner {
             let first = NonNull::new_unchecked(base as *mut u8);
             inner.freepool[power] = first.cast::<Option<NonNull<u8>>>().read();
             first.cast::<Option<NonNull<u8>>>().write(None);
-            inner.pages += 1;
             Ok(first)
         }
     }
@@ -513,7 +507,7 @@ impl BlockInner {
         unsafe {
             frame::allocator().deallocate(NonNull::new_unchecked(page as *mut u8).cast(), layout);
         }
-        inner.pages -= 1;
+        super::statistics::record_block_give(self.id);
     }
 
     /// 推回本池：写 freelist 链 + 递减表项计数；归零走 spare/drain 决策。
@@ -614,8 +608,6 @@ impl BlockInner {
 
 struct Pool {
     freepool: Vec<Option<NonNull<u8>>>,
-    /// 持页总数（prime +1 / drain -1）。
-    pages: usize,
     /// 每 size class 保留的空闲页（迟滞）；见模块头"分配策略"。
     spare: [Option<usize>; MAX_POWER + 1],
 }
@@ -624,7 +616,6 @@ impl Pool {
     fn new() -> Self {
         Self {
             freepool: Vec::new(),
-            pages: 0,
             spare: [None; MAX_POWER + 1],
         }
     }
