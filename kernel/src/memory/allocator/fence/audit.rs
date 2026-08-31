@@ -140,15 +140,17 @@ pub fn check_baseline() {
     // 函数内成对，新框架无差集检查对其天然免疫（无需任何豁免；旧框架的
     // AUDITING 豁免与 drain 守卫是差集模型的遗留，已删除）。容量 ≥ 全集
     // （held_count 上界），push 零分配、无 realloc（关机单核无并发分配）。
+    // 经全局分配器（hybrid 按大小路由）：held ≥ 257 时容量超半页——块分配器
+    // 拒绝 >2048 请求（已实证：MEM≥229M 时 held 283 → 2264B 全局 OOM panic）。
     let mut now_tables: alloc::vec::Vec<usize, &'static dyn Allocator> =
         alloc::vec::Vec::with_capacity_in(
             super::banker::BANKER.held_count().max(64),
-            crate::memory::allocator::block::allocator(),
+            crate::memory::allocator::hybrid::allocator(),
         );
     let mut now_pool: alloc::vec::Vec<usize, &'static dyn Allocator> =
         alloc::vec::Vec::with_capacity_in(
             super::banker::BANKER.held_count().max(64),
-            crate::memory::allocator::block::allocator(),
+            crate::memory::allocator::hybrid::allocator(),
         );
 
     // ① 任务类泄漏：帧/块类别计数归零（真泄漏判据——替代旧孤儿 + 块差集）。
