@@ -142,8 +142,11 @@ impl RingMeta {
         let layout = core::alloc::Layout::from_size_align(bytes, PAGE_SIZE)
             .map_err(|_| MapError::NotAligned)?;
         // 类别 = Task：共享区帧归通道元数据（任务生命周期）——关机归零。
-        let ptr = frame::alloc_classed(layout, frame::FrameClass::Task)
-            .map_err(|_| MapError::OutOfMemory)?;
+        let ptr = crate::memory::allocator::fence::alloc_frame(
+            crate::memory::allocator::fence::FrameClass::Task,
+        )
+        .allocate(layout)
+        .map_err(|_| MapError::OutOfMemory)?;
         // SAFETY: 分配返回的切片指针非空；转成字节指针（长度无关，仅取首址）。
         let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };
         // SAFETY: 刚分配的合法块（fresh），全长度可写；清零初始化共享区。

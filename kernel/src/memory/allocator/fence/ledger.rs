@@ -171,15 +171,35 @@ impl Ledger {
             .map(|r| r.class)
     }
 
-    /// 锁内遍历；回调签名 (addr, &Record)。**Audit 类记录不可见**（审计工具
-    /// 自身分配的临时登记——不参与任何遍历核对：page_clear / stats / audit）。
+    /// 类别改标（打标分配器 / realloc 继承；fence::relabel_block 调用）：更新记录
+    /// 类别，返回旧类——计数迁移由调用方完成（mark 已按默认 Persistent +1）。
+    /// 无账 → report（mark 必须先行）。
+    pub fn relabel(&self, addr: usize, class: BlockClass) -> BlockClass {
+        let mut g = self.inner.lock();
+        let Some((map, _)) = g.as_mut() else {
+            report(
+                IntegrityViolation::NotInitialized,
+                addr,
+                format_args!("ledger relabel before init"),
+            );
+        };
+        let rec = map.get_mut(&addr).unwrap_or_else(|| {
+            report(
+                IntegrityViolation::UnregisteredFree,
+                addr,
+                format_args!("relabel: no record"),
+            );
+        });
+        let old = rec.class;
+        rec.class = class;
+        old
+    }
+
+    /// 锁内遍历；回调签名 (addr, &Record)。
     pub fn for_each(&self, mut f: impl FnMut(usize, &Record)) {
         let g = self.inner.lock();
         let Some((map, _)) = g.as_ref() else { return };
         for (addr, rec) in map.iter() {
-            if rec.class == BlockClass::Audit {
-                continue;
-            }
             f(*addr, rec);
         }
     }
@@ -201,9 +221,6 @@ impl Ledger {
         };
         let mut bad = 0usize;
         for (addr, rec) in map.iter() {
-            if rec.class == BlockClass::Audit {
-                continue; // 审计临时登记不入清查
-            }
             if rec.canary.is_none() {
                 continue; // UserHeap 不设 canary
             }

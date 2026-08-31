@@ -30,7 +30,6 @@ use core::num::NonZeroUsize;
 use crate::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE, TRAMPOLINE};
 use crate::lock::{Level, RelLock};
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
@@ -580,7 +579,7 @@ impl Space {
                 };
                 // 类别 = Task：COW 共享帧（Borrowed）属任务生命周期——关机归零。
                 let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> =
-                    Arc::new_in([0u8; PAGE_SIZE], frame::tag_task());
+                    Arc::new_in([0u8; PAGE_SIZE], crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task));
                 Arc::get_mut(&mut arc)
                     .expect("fresh arc")
                     .copy_from_slice(bytes_src);
@@ -623,7 +622,7 @@ impl Space {
                 };
                 // 类别 = Task：COW 分裂新帧属任务生命周期——关机归零。
                 let mut nb: Frame = unsafe {
-                    Box::try_new_zeroed_in(frame::tag_task())
+                    Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task))
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
                 };
@@ -678,7 +677,7 @@ impl Space {
                 }
                 // 类别 = Task：懒页物化帧属任务生命周期——关机归零。
                 let page: Frame = unsafe {
-                    Box::try_new_zeroed_in(frame::tag_task())
+                    Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task))
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
                 };

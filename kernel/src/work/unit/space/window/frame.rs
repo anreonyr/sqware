@@ -8,7 +8,6 @@
 use alloc::boxed::Box;
 
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
@@ -38,7 +37,7 @@ impl FrameWindow {
                 PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
             // 类别 = Task：trap 帧属任务生命周期——关机必须归零（①）。
             let page: Frame = unsafe {
-                Box::try_new_zeroed_in(frame::tag_task())
+                Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Task))
                     .map_err(|_| MapError::OutOfMemory)?
                     .assume_init()
             };

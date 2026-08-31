@@ -12,33 +12,54 @@
 // IntegrityViolation（违例类目）、poison（毒化标记）、OwnerKind（登记类别）、
 // **所有权类别**（FrameClass/BlockClass，见下）与相关常量，以及**事件入口**
 // （on_alloc/on_free/on_frame_alloc/on_frame_free）——分配器热路径对其的调用是
-// 一行无 cfg 的语义事件，asm 读 ra、poison、记账全部收在本层内部（纯功能文件
-// 零审计词汇）。
+// 一行无 cfg 的语义事件，asm 读 ra、poison、记账全部收在本层内部。
+//
+// # 解耦纪律：类别机制收在本层，分配器文件零审计词汇
+//
+// 帧类别表（FRAME_CLASS per-page 字节表，与 banker 位图同构）、块类别（ledger
+// 记录 class 字段）、类别计数、打标分配器（alloc_frame / alloc_block——ZST
+// 包装委托分配器 + 返回前标注）、realloc 类别继承全部在本层实现。frame/block
+// 分配器**不携带任何类别参数**：分配点经 `alloc_frame(class)` /
+// `alloc_block(class)` 取打标分配器（唯一 fence 词汇入口），释放路径类别由本层
+// 自存表/账本读出。debit/credit 恒发生、与类别无关——类别只影响计数维度，
+// 类别错乱只失真计数（boot sanity 可抓），不破坏 banker 配对。
 //
 // gate 语义：**audit 是 cargo feature**（kernel/Cargo.toml `audit`，default 引入）
 // ——debug 构建默认开启（任务验收命令 `cargo run -p kernel` 即带），release 可
 // 显式 `--features audit` 开启、`--no-default-features` 关闭。checker 独立
-// （debug-only）；banker/ledger/audit → 模块根（feature-gated）。
+// （debug-only）；banker/ledger/audit → 模块根（feature-gated）。feature 关闭时
+// 打标分配器退化为裸委托（零开销）。
 //
 // 依赖方向（无环）：checker 独立；banker/ledger → 模块根；audit → 模块根 + banker + ledger。
 
 // ── 所有权类别（关机审计的记账维度）──
 //
-// 每帧/每块按生命周期归属一个类别；类别计数（FRAME_COUNTS/BLOCK_COUNTS）由四个
-// 事件入口维护，关机检查（audit::check_baseline）只对「任务类归零」做断言——
-// 合法形态演化（容器扩容、realloc 搬家、池页周转、审计工具自身分配）只是类别
-// 内部的变化，不需要任何赦免机制（替代旧「boot 身份快照 vs 关机差集」的
-// rehome/adopt/基线余量/AUDITING 豁免——见 1634c36 教训：快照物化 prime 自扰
-// 即 mid-collection realloc → 孤儿帧）。
+// 每帧/每块按生命周期归属一个类别；类别计数（FRAME_COUNTS/BLOCK_COUNTS）由
+// 打标路径（alloc_frame/alloc_block 分配后标注）与释放路径（on_frame_free 查
+// FRAME_CLASS 表 / on_free 经 unmark 读出）成对维护。关机检查
+// （audit::check_baseline）只对「任务类归零」做断言——合法形态演化（容器扩容、
+// realloc 搬家（类别继承）、池页周转、审计工具自身分配）只是类别内部的变化，
+// 不需要任何赦免机制（替代旧「boot 身份快照 vs 关机差集」的 rehome/adopt/
+// 基线余量/AUDITING 豁免——见 1634c36 教训：快照物化 prime 自扰即
+// mid-collection realloc → 孤儿帧）。审计工具自身的暂态分配走默认 Persistent
+// 类、在检查内成对归还——新框架无差集检查，对其天然免疫（旧框架的豁免与
+// drain 守卫是差集模型的遗留，已全部删除）。
 //
-// 帧类别写在 frame pagemeta（分配时写入、释放时读出），块类别写在 ledger 记录
-// （mark 时定型、unmark 时读出）——释放路径无需调用方补传类别。
-// Audit 类 = 审计工具自身分配：跳过 debit/credit、outstanding 与类别计数
-// （mark/unmark 照常，但记录不可见、不计数——见 ledger::for_each）。
+// 帧类别存 fence 自己的 per-page 字节表（FRAME_CLASS，与 banker 位图同构）；
+// 块类别存 ledger 记录（mark 默认 Persistent、relabel 改类）——分配器文件
+// 零类别词汇（解耦纪律见模块头）。
+//
+// 编码即 ABI：0 = Persistent 为默认（表全零即「未标注」语义，Persistent 标注
+// 幂等）；from_u8 对未知值防御归 Persistent。
 
 #![allow(unused)]
+use alloc::boxed::Box;
 use alloc::fmt;
+use core::alloc::{AllocError, Allocator};
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+
+use crate::lock::OnceLock;
 
 pub mod audit;
 pub mod banker;
@@ -65,36 +86,32 @@ pub enum OwnerKind {
     UserHeap,
 }
 
-/// 帧生命周期类别（关机审计维度；编码写 frame pagemeta，`as usize` 作计数下标，
-/// **编码即 ABI**——frame.rs 读出后经 [`FrameClass::from_u8`] 还原）。
+/// 帧生命周期类别（关机审计维度；编码写 FRAME_CLASS 表，`as usize` 作计数下标）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum FrameClass {
-    /// 块池 prime 借页（block.rs `prime`）——自由周转，仅诊断计数。
-    Pool = 0,
-    /// 页表页（table.rs `PageTable::new`：root 与 walk_mut 子表）——关机与
-    /// kernel-root walk 计数核对（audit::check_baseline ③）。
-    Table = 1,
-    /// 任务生命周期帧（栈体 / trap 帧 / 懒页 / owned 数据帧 / COW 页）——
-    /// **关机必须归零**（①）。
-    Task = 2,
     /// boot 持久帧（trap 栈 / spare 仓 / 内核窗口帧；未显式标注的默认类）——
     /// 持久注册表逐项核 held（②）。
-    Persistent = 3,
-    /// 审计工具自身分配——豁免记账（不 debit/credit、不计数；等价旧 AUDITING
-    /// 标志语义，但按类别判定）。
-    Audit = 4,
+    Persistent = 0,
+    /// 块池 prime 借页（block.rs `prime`）——自由周转，仅诊断计数。
+    Pool = 1,
+    /// 页表页（table.rs `PageTable::new`：root 与 walk_mut 子表）——关机与
+    /// kernel-root walk 计数核对（audit::check_baseline ③）。
+    Table = 2,
+    /// 任务生命周期帧（栈体 / trap 帧 / 懒页 / owned 数据帧 / COW 页）——
+    /// **关机必须归零**（①）。
+    Task = 3,
 }
 
 impl FrameClass {
-    /// 编码还原（pagemeta 存 u8）。未知值防御性归 Persistent——credit 必须发生
-    /// （归 Audit 会跳过 credit，破坏 banker 配对）。
+    /// 表值还原。未知值（表损坏）防御归 Persistent——只失真计数维度（boot
+    /// sanity 可抓），banker 配对不受影响（debit/credit 与类别无关）。
     pub(crate) fn from_u8(v: u8) -> FrameClass {
         match v {
-            0 => FrameClass::Pool,
-            1 => FrameClass::Table,
-            2 => FrameClass::Task,
-            3 => FrameClass::Persistent,
+            0 => FrameClass::Persistent,
+            1 => FrameClass::Pool,
+            2 => FrameClass::Table,
+            3 => FrameClass::Task,
             _ => FrameClass::Persistent,
         }
     }
@@ -104,31 +121,29 @@ impl FrameClass {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum BlockClass {
+    /// 默认——boot 期容器、调度器、Team/Space 簿记。
+    Persistent = 0,
     /// 任务生命周期块（Arc<Task>/Arc<TaskIdent>/闭包装箱/用户堆记录）——
     /// **关机必须归零**（①）。
-    Task = 0,
-    /// 默认——boot 期容器、调度器、Team/Space 簿记。
-    Persistent = 1,
-    /// 审计工具自身分配——豁免计数（mark/unmark 照常但不计数、不可见）。
-    Audit = 2,
+    Task = 1,
 }
 
 impl BlockClass {
     /// 编码还原（realloc 窗口存 u8）。未知值防御性归 Persistent。
     pub(crate) fn from_u8(v: u8) -> BlockClass {
         match v {
-            0 => BlockClass::Task,
-            1 => BlockClass::Persistent,
+            0 => BlockClass::Persistent,
+            1 => BlockClass::Task,
             _ => BlockClass::Persistent,
         }
     }
 }
 
-/// 帧类别计数（分配 +1 / 释放 −1；Audit 类不计数）。关机只断言 Task 归零，
+/// 帧类别计数（标注 +1 / 释放查表 −1）。关机只断言 Task 归零，
 /// 其余类别为诊断/未来检查用。
-pub(crate) static FRAME_COUNTS: [AtomicUsize; 5] = [const { AtomicUsize::new(0) }; 5];
-/// 块类别计数（同帧侧）。
-pub(crate) static BLOCK_COUNTS: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
+pub(crate) static FRAME_COUNTS: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+/// 块类别计数（mark/relabel +1 / unmark −1）。
+pub(crate) static BLOCK_COUNTS: [AtomicUsize; 2] = [const { AtomicUsize::new(0) }; 2];
 
 /// 类别计数读取（audit 读侧）。
 pub(crate) fn frame_count(c: FrameClass) -> usize {
@@ -139,12 +154,141 @@ pub(crate) fn block_count(c: BlockClass) -> usize {
     BLOCK_COUNTS[c as usize].load(Ordering::Relaxed)
 }
 
-/// 审计进行中标记——**仅**块池 drain 守卫消费（block.rs drain 开头检查：审计期
-/// 不归还池页。见 1634c36 教训：审计前 debit 的池页在审计中被 drain，若审计的
-/// 分配经豁免路径 debit/credit 不同步，即 credit 无 debit 页 / 位图脏孤儿）。
-/// 审计的收集存储本身按 **Audit 类**豁免记账（见模块头），本标记是 drain 侧的
-/// 双保险：审计期池页留在池内，关机现场计数不受暂态周转扰动。
-pub(crate) static AUDITING: AtomicBool = AtomicBool::new(false);
+// ── 帧类别表（fence 所有；分配器文件零类别词汇）──
+
+/// 帧类别表：free 区每页 1 字节（0 = Persistent 默认），与 banker 位图同构
+/// （idx = (pa − base)/PAGE_SIZE，base 同 banker.init）。init 由 banker.init
+/// 同步装配（bump 后端，boot 单核）。
+static FRAME_CLASS: OnceLock<Box<[AtomicU8]>> = OnceLock::new();
+/// 表基址（与 banker 同源）。
+static FRAME_CLASS_BASE: AtomicUsize = AtomicUsize::new(0);
+
+/// 装配帧类别表（banker.init 同点调用；先于任何帧分配）。
+#[cfg(feature = "audit")]
+pub(crate) fn init_frame_class(base: usize, pages: usize) {
+    let table: Box<[AtomicU8]> = (0..pages).map(|_| AtomicU8::new(0)).collect();
+    FRAME_CLASS_BASE.store(base, Ordering::Relaxed);
+    assert!(FRAME_CLASS.set(table).is_ok(), "frame class table double init");
+}
+
+/// 表下标（与 banker.idx 同算式）。
+fn frame_class_slot(pa: usize) -> usize {
+    let base = FRAME_CLASS_BASE.load(Ordering::Relaxed);
+    (pa - base) / crate::memory::PAGE_SIZE
+}
+
+/// 帧类别标注（打标分配器在委托返回后调用；分配点 → fence 的唯一标注入口）。
+/// 计数 +1；表项已是非 0 同类 = 幂等，异类 = 重复标注（防御 panic）。
+/// Persistent 标注写 0（表全零即默认语义）。
+#[cfg(feature = "audit")]
+pub(crate) fn tag_frame(pa: usize, class: FrameClass) {
+    let slot = frame_class_slot(pa);
+    let table = FRAME_CLASS.get().expect("frame class table not initialized");
+    let cur = table[slot].load(Ordering::Relaxed);
+    assert!(
+        cur == 0 || cur == class as u8,
+        "frame {pa:#x} re-tagged: {cur} then {class:?}"
+    );
+    if class != FrameClass::Persistent {
+        table[slot].store(class as u8, Ordering::Relaxed);
+    }
+    FRAME_COUNTS[class as usize].fetch_add(1, Ordering::Relaxed);
+}
+
+/// 块类别标注（打标分配器 / realloc 继承 / 用户堆记录等直接调用点）：ledger
+/// 记录改类并做计数迁移（mark 已按默认 Persistent +1）。fence 对外的块标注入口。
+#[cfg(feature = "audit")]
+pub(crate) fn tag_block(addr: usize, class: BlockClass) {
+    let old = ledger::LEDGER.relabel(addr, class);
+    if old != class {
+        BLOCK_COUNTS[old as usize].fetch_sub(1, Ordering::Relaxed);
+        BLOCK_COUNTS[class as usize].fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+// ── 打标分配器（ZST；审计词汇的唯一出口——分配点经 alloc_frame/alloc_block 取）──
+
+/// 打标帧分配器：委托 frame 分配器，返回前标注类别（表 + 计数）。释放侧类别
+/// 由 on_frame_free 查表读出——frame 分配器文件不携带类别。
+struct TaggedFrameAllocator(FrameClass);
+
+unsafe impl Allocator for TaggedFrameAllocator {
+    fn allocate(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let p = crate::memory::allocator::frame::allocator().allocate(layout)?;
+        #[cfg(feature = "audit")]
+        tag_frame(p.as_ptr().cast::<u8>() as usize, self.0);
+        Ok(p)
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
+        // SAFETY: 同 frame 分配器契约（Box drop 同源 layout）。
+        unsafe { crate::memory::allocator::frame::allocator().deallocate(ptr, layout) };
+    }
+}
+
+static FRAME_TAGGED: [TaggedFrameAllocator; 4] = [
+    TaggedFrameAllocator(FrameClass::Persistent),
+    TaggedFrameAllocator(FrameClass::Pool),
+    TaggedFrameAllocator(FrameClass::Table),
+    TaggedFrameAllocator(FrameClass::Task),
+];
+
+/// 取打标帧分配器（分配点入口；feature 关闭时退化为裸 frame 分配器——零开销）。
+pub(crate) fn alloc_frame(class: FrameClass) -> &'static dyn Allocator {
+    #[cfg(feature = "audit")]
+    {
+        &FRAME_TAGGED[class as usize]
+    }
+    #[cfg(not(feature = "audit"))]
+    {
+        let _ = class;
+        crate::memory::allocator::frame::allocator()
+    }
+}
+
+/// 打标块分配器：委托块分配器（≤ 半页块域；Task 类当前无帧级缓冲用例），返回前
+/// relabel 类别（mark 已按默认 Persistent 入账）。释放侧类别由 on_free 经
+/// unmark 读出——block 分配器文件不携带类别。
+struct TaggedBlockAllocator(BlockClass);
+
+unsafe impl Allocator for TaggedBlockAllocator {
+    fn allocate(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, AllocError> {
+        // 块域守卫：> 半页走 frame 后端（帧侧类别经 alloc_frame 标注，块侧
+        // relabel 无法覆盖）——Task 类当前无帧级缓冲用例，防御性拒绝。
+        if layout.size() > crate::memory::PAGE_SIZE / 2 {
+            return Err(AllocError);
+        }
+        let p = crate::memory::allocator::block::allocator().allocate(layout)?;
+        #[cfg(feature = "audit")]
+        if self.0 != BlockClass::Persistent {
+            tag_block(p.as_ptr().cast::<u8>() as usize, self.0);
+        }
+        Ok(p)
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
+        // SAFETY: 同块分配器契约（Box drop 同源 layout）。
+        unsafe { crate::memory::allocator::block::allocator().deallocate(ptr, layout) };
+    }
+}
+
+static BLOCK_TAGGED: [TaggedBlockAllocator; 2] = [
+    TaggedBlockAllocator(BlockClass::Persistent),
+    TaggedBlockAllocator(BlockClass::Task),
+];
+
+/// 取打标块分配器（分配点入口；feature 关闭时退化为裸块分配器——零开销）。
+pub(crate) fn alloc_block(class: BlockClass) -> &'static dyn Allocator {
+    #[cfg(feature = "audit")]
+    {
+        &BLOCK_TAGGED[class as usize]
+    }
+    #[cfg(not(feature = "audit"))]
+    {
+        let _ = class;
+        crate::memory::allocator::block::allocator()
+    }
+}
 
 /// 完整性违例类别（report 的字段；repr(u8) 供 trace 事件编码，**顺序即 ABI**）。
 #[cfg(feature = "audit")]
@@ -406,9 +550,11 @@ pub fn end_realloc() {
 /// 返回地址，分配现场符号化用）。
 /// 用户堆不 poison（键 = [`key`] 页索引编码，非地址；且用户页维持清零语义，见
 /// [`OwnerKind`]）——只入 ledger 账。
-/// `class` = 块生命周期类别（打标分配器携带；关机类别归零检查的记账维度）。
+/// 类别：mark 按默认 Persistent 入账并计数；realloc 窗口内首笔新块经
+/// [`relabel_block`] 继承旧块类别（计数迁移）——打标分配器的显式类别在委托
+/// 返回后走同一 relabel 路径。
 #[inline]
-pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind, class: BlockClass) {
+pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
     #[cfg(feature = "audit")]
     {
         // site 须先于任何函数调用捕获（jalr 覆写 ra——已实证：ra 读数曾是
@@ -418,20 +564,21 @@ pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind, class: BlockClass) {
         // 必属同 grow 链，首笔即 allocate 新块）并继承旧块类别（begin_realloc
         // 已从 ledger 读出存入 RALLOC_CLASS）。
         let hart = crate::machine::hart_id().min(15) as usize;
-        let mut class = class;
-        if IN_REALLOC[hart].load(Ordering::Relaxed)
-            && RALLOC_NEW[hart].load(Ordering::Relaxed) == 0
-        {
+        let first_new = IN_REALLOC[hart].load(Ordering::Relaxed)
+            && RALLOC_NEW[hart].load(Ordering::Relaxed) == 0;
+        if first_new {
             RALLOC_NEW[hart].store(addr, Ordering::Relaxed);
-            class = BlockClass::from_u8(RALLOC_CLASS[hart].load(Ordering::Relaxed));
         }
         if let OwnerKind::KernelHeap = kind {
             poison(addr, size);
         }
-        ledger::LEDGER.mark(addr, size, site, site2, kind, class);
-        // 类别计数：Audit 类豁免（不计数——审计工具不自扰关机归零检查）。
-        if class != BlockClass::Audit {
-            BLOCK_COUNTS[class as usize].fetch_add(1, Ordering::Relaxed);
+        ledger::LEDGER.mark(addr, size, site, site2, kind, BlockClass::Persistent);
+        BLOCK_COUNTS[BlockClass::Persistent as usize].fetch_add(1, Ordering::Relaxed);
+        if first_new {
+            let inherited = BlockClass::from_u8(RALLOC_CLASS[hart].load(Ordering::Relaxed));
+            if inherited != BlockClass::Persistent {
+                tag_block(addr, inherited);
+            }
         }
     }
 }
@@ -439,16 +586,14 @@ pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind, class: BlockClass) {
 /// 释放事件：活块注销 + KernelHeap 本体毒化复写（头 8B 随后被 freelist 头插
 /// 覆盖，其余保持毒化——UAF 读数变 0xCD）。用户堆不 poison（同 [`on_alloc`]：
 /// 键非地址、维持清零语义）——只注销账目。
-/// 类别自 ledger 记录读出（mark 时定型）：注销后按类减计数——realloc 搬家旧块
-/// 同样走本路径（新块已在窗口内继承类别，账目平衡）。
+/// 类别自 ledger 记录读出（mark/relabel 时定型）：注销后按类减计数——realloc
+/// 搬家旧块同样走本路径（新块已在窗口内继承类别，账目平衡）。
 #[inline]
 pub fn on_free(addr: usize, size: usize, kind: OwnerKind) {
     #[cfg(feature = "audit")]
     {
         let class = ledger::LEDGER.unmark(addr, size);
-        if class != BlockClass::Audit {
-            BLOCK_COUNTS[class as usize].fetch_sub(1, Ordering::Relaxed);
-        }
+        BLOCK_COUNTS[class as usize].fetch_sub(1, Ordering::Relaxed);
         if let OwnerKind::KernelHeap = kind {
             poison(addr, size);
         }
@@ -456,30 +601,28 @@ pub fn on_free(addr: usize, size: usize, kind: OwnerKind) {
 }
 
 /// 帧分配事件：页金库取出（Free→held；双取出 / 活堆页泄漏进池现行）。
-/// `class` = 帧类别（打标分配器/块池 prime 携带；裸调用者默认 Persistent）。
-/// Audit 类跳过 debit（分配时未取出，释放时对偶跳过 credit——见
-/// [`on_frame_free`]）。
+/// debit 恒发生、与类别无关——类别标注与计数由打标分配器（[`alloc_frame`]）在
+/// 委托返回后经 [`tag_frame`] 完成（frame 分配器文件零类别词汇）。
 #[inline]
-pub fn on_frame_alloc(addr: usize, class: FrameClass) {
+pub fn on_frame_alloc(addr: usize) {
     #[cfg(feature = "audit")]
     {
-        if class != FrameClass::Audit {
-            banker::BANKER.debit(addr);
-            FRAME_COUNTS[class as usize].fetch_add(1, Ordering::Relaxed);
-        }
+        banker::BANKER.debit(addr);
     }
 }
 
 /// 帧释放事件：页金库存入（held→Free；存入陌生页 / 双释放现行）。
-/// 类别由 frame.rs 在 merge 前自 pagemeta 读出传入——按类减计数；合并清
-/// pagemeta 的页不丢计数（计数在本调用即已减）。
+/// 类别自 FRAME_CLASS 表读出（标注时写入）——按类减计数后清表项；credit 恒
+/// 发生、与类别无关（banker 配对不受类别错乱影响）。
 #[inline]
-pub fn on_frame_free(addr: usize, class: FrameClass) {
+pub fn on_frame_free(addr: usize) {
     #[cfg(feature = "audit")]
     {
-        if class != FrameClass::Audit {
-            banker::BANKER.credit(addr);
-            FRAME_COUNTS[class as usize].fetch_sub(1, Ordering::Relaxed);
-        }
+        let slot = frame_class_slot(addr);
+        let table = FRAME_CLASS.get().expect("frame class table not initialized");
+        let class = FrameClass::from_u8(table[slot].load(Ordering::Relaxed));
+        table[slot].store(0, Ordering::Relaxed);
+        FRAME_COUNTS[class as usize].fetch_sub(1, Ordering::Relaxed);
+        banker::BANKER.credit(addr);
     }
 }

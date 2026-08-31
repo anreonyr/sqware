@@ -16,7 +16,6 @@ use alloc::vec::Vec;
 use alloc::{alloc::Allocator, boxed::Box, sync::Arc};
 use fack::prelude::Error;
 
-use crate::memory::allocator::frame;
 use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
 
 use super::{
@@ -108,7 +107,7 @@ impl PageTable {
         // 类别 = Table：页表页（root 与 walk_mut 子表）——关机与内核根表 walk
         // 计数核对（audit::check_baseline ③）。
         Ok(unsafe {
-            Box::try_new_zeroed_in(frame::tag_table())
+            Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(crate::memory::allocator::fence::FrameClass::Table))
                 .map_err(|_| MapError::OutOfMemory)?
                 .assume_init()
         })

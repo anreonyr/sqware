@@ -132,10 +132,17 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义）。
                 // 类别 = Task：用户堆记录属任务生命周期——关机 TASK_BLOCKS 归零。
                 if let Ok(va) = r {
+                    let key = crate::memory::allocator::fence::key(s.asid(), va.as_usize());
                     crate::memory::allocator::fence::on_alloc(
-                        crate::memory::allocator::fence::key(s.asid(), va.as_usize()),
+                        key,
                         size,
                         crate::memory::allocator::fence::OwnerKind::UserHeap,
+                    );
+                    // 类别 = Task：用户堆记录属任务生命周期——关机 TASK_BLOCKS
+                    // 归零（mark 默认 Persistent，此处标注迁移）。
+                    #[cfg(feature = "audit")]
+                    crate::memory::allocator::fence::tag_block(
+                        key,
                         crate::memory::allocator::fence::BlockClass::Task,
                     );
                 }

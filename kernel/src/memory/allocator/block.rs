@@ -27,7 +27,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use erra::ResultExt;
 
-use super::fence::{BlockClass, checker};
+use super::fence::checker;
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::{
@@ -331,11 +331,8 @@ impl BlockAllocator {
     }
 }
 
-impl BlockAllocator {
-    /// 带类别分配：与 [`Allocator::allocate`] 同语义，额外把类别传给 on_alloc
-    /// （ledger 记录 + 类别计数）。裸调用者（Allocator trait / 全局路径）归
-    /// Persistent；打标分配器（Task/Audit）传显式类别。
-    fn allocate_classed(&self, layout: Layout, class: BlockClass) -> Result<NonNull<[u8]>, AllocError> {
+unsafe impl Allocator for BlockAllocator {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let power = layout
             .size()
             .max(1usize << MIN_POWER)
@@ -348,20 +345,14 @@ impl BlockAllocator {
         let me = machine::hart_id();
         let pool = &self.blocks[me];
         let addr = pool.pull(power).ok_or(AllocError)?;
-        // 护栏事件：活块入账（类别记账；realloc 窗口内继承旧块类别）。
-        super::fence::on_alloc(addr, layout.size(), super::fence::OwnerKind::KernelHeap, class);
+        // 护栏事件：活块入账（类别记账收在 fence：mark 默认 Persistent，打标
+        // 分配器 relabel——本文件零类别词汇，见 fence 模块头解耦纪律）。
+        super::fence::on_alloc(addr, layout.size(), super::fence::OwnerKind::KernelHeap);
         // SAFETY: pull 返回的地址必非零（分配器保证）。
         Ok(NonNull::slice_from_raw_parts(
             unsafe { NonNull::new_unchecked(addr as *mut u8) },
             1usize << power,
         ))
-    }
-}
-
-unsafe impl Allocator for BlockAllocator {
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        // 裸调用者默认 Persistent（boot 期容器、调度器、Team/Space 簿记）。
-        self.allocate_classed(layout, BlockClass::Persistent)
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
@@ -441,11 +432,13 @@ impl BlockInner {
 
     /// 借一页拆块入链（arena 扩展：池无自有区段，页即向 frame 借）。
     /// 调用方须已持本池 inner 锁（pull 内调用）。锁序：inner → frame（单向）。
-    /// 页类别 = Pool（自由周转——关机只做诊断计数，不参与归零检查）。
+    /// 页类别 = Pool（fence 打标分配器——自由周转，关机只做诊断计数，
+    /// 不参与归零检查；本文件对类别词汇仅此一处）。
     fn prime(&self, inner: &mut Pool, power: usize) -> Result<NonNull<u8>, AllocError> {
         // 借 1 页（order0）。
         let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
-        let page = frame::alloc_classed(layout, super::fence::FrameClass::Pool)
+        let page = super::fence::alloc_frame(super::fence::FrameClass::Pool)
+            .allocate(layout)
             .map_err(|_| AllocError)?;
         let base = page.as_ptr() as *mut u8 as usize;
         checker::check_dram_addr(base, "block prime (frame page)");
@@ -482,18 +475,7 @@ impl BlockInner {
     /// 归一页：把本页全部块从 freepool[power] 摘除并归还 frame。
     /// 调用方须已持本池 inner 锁；前置：表项 used==0（全块 push 归位，pump 无残留，
     /// 见模块头不变·硬）。摘链 O(链长)。锁序：inner → frame（单向，同 prime）。
-    ///
-    /// 审计期守卫（fence::AUDITING）**不归还**：check_baseline 的收集存储分配/
-    /// 释放成对发生（Audit 类豁免记账），期间 drain 会让审计期暂态池页在关机
-    /// 现场计数漂移；且审计若经豁免路径（Audit 帧）debit/credit 不同步，drain
-    /// 即 credit 无 debit 页（已实证：1634c36 期 2 个孤儿池页误报）。页留池内
-    /// （used==0 仍属池持有），关机现场计数不受扰，reset 前无需收回。
     fn drain(&self, inner: &mut Pool, power: usize, page: usize) {
-        // 审计期守卫：见上。
-        #[cfg(feature = "audit")]
-        if super::fence::AUDITING.load(core::sync::atomic::Ordering::Relaxed) {
-            return;
-        }
         // 1. 摘除本页全部块（首块 next 覆盖前先读；重链其余块）
         let mut keep: Option<NonNull<u8>> = None;
         let mut head = inner.freepool[power];
@@ -690,69 +672,6 @@ pub(crate) fn collect_owned_pa(out: &mut Vec<usize, &'static dyn Allocator>) {
 
 pub fn allocator() -> &'static dyn Allocator {
     BLOCK_ALLOCATOR.get().expect("block heap not initialized")
-}
-
-/// 打标块分配器（ZST，携带类别）：委托混合路由（≤ 半页 → 块池；> 半页 →
-/// frame，块类映射为帧类——任务生命周期的大块即是 Task 帧）。分配时类别传入
-/// on_alloc（ledger 记录 + 类别计数）；释放（Box/Arc/Vec drop）经本类型委托回
-/// 原后端——类别自 ledger 记录 / pagemeta 读出，不依赖分配器类型。
-pub(crate) struct TaggedBlockAllocator(BlockClass);
-
-unsafe impl Allocator for TaggedBlockAllocator {
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        if layout.size() <= PAGE_SIZE / 2 {
-            alloc_classed(layout, self.0)
-        } else {
-            // 大块路由 frame：块类 → 帧类（按生命周期对应）。
-            let fclass = match self.0 {
-                BlockClass::Task => super::fence::FrameClass::Task,
-                BlockClass::Audit => super::fence::FrameClass::Audit,
-                BlockClass::Persistent => super::fence::FrameClass::Persistent,
-            };
-            frame::alloc_classed(layout, fclass)
-        }
-    }
-
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        unsafe {
-            if layout.size() <= PAGE_SIZE / 2 {
-                allocator().deallocate(ptr, layout);
-            } else {
-                frame::allocator().deallocate(ptr, layout);
-            }
-        }
-    }
-}
-
-/// 各类别打标块分配器实例（const 初始化；下标 = BlockClass 编码）。
-pub(crate) static TAGGED: [TaggedBlockAllocator; 3] = [
-    TaggedBlockAllocator(BlockClass::Task),
-    TaggedBlockAllocator(BlockClass::Persistent),
-    TaggedBlockAllocator(BlockClass::Audit),
-];
-
-/// 按类别取打标块分配器（trait 对象；分配结果即该类别）。
-pub(crate) fn tagged(class: BlockClass) -> &'static dyn Allocator {
-    &TAGGED[class as usize]
-}
-
-/// 任务类块分配器（Arc<Task>/TaskIdent、闭包装箱、用户堆记录——任务生命周期）。
-pub(crate) fn tag_task() -> &'static dyn Allocator {
-    tagged(BlockClass::Task)
-}
-
-/// 审计类块分配器（check_baseline 收集存储——记账豁免）。仅 audit（debug-gated）用。
-#[cfg(feature = "audit")]
-pub(crate) fn tag_audit() -> &'static dyn Allocator {
-    tagged(BlockClass::Audit)
-}
-
-/// 带类别分配块（打标分配器共用入口；≤ 半页）。
-pub(crate) fn alloc_classed(layout: Layout, class: BlockClass) -> Result<NonNull<[u8]>, AllocError> {
-    BLOCK_ALLOCATOR
-        .get()
-        .expect("block heap not initialized")
-        .allocate_classed(layout, class)
 }
 
 // ── 初始化 ──

@@ -32,12 +32,14 @@ impl Banker {
         }
     }
 
-    /// 登记金库范围（须先于任何 debit/credit）。
+    /// 登记金库范围（须先于任何 debit/credit）。帧类别表（fence 根）同点装配
+    /// ——两者同构同范围（idx 同算式），类别标注先于任何帧分配即可用。
     pub fn init(&self, base: usize, pages: usize) {
         self.base.store(base, Ordering::Relaxed);
         let words = pages.div_ceil(64);
         let table: Box<[AtomicU64]> = (0..words).map(|_| AtomicU64::new(0)).collect();
         assert!(self.words.set(table).is_ok(), "banker double init");
+        super::init_frame_class(base, pages);
     }
 
     fn idx(&self, pa: usize) -> usize {

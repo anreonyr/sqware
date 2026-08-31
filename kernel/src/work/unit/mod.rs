@@ -144,9 +144,11 @@ pub fn init() -> MapResult<()> {
             let n = machine::hart_count();
             for h in 0..n {
                 let page: crate::memory::manager::table::Frame =
-                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
-                        .map_err(|_| MapError::OutOfMemory)?
-                        .assume_init();
+                    Box::try_new_zeroed_in(crate::memory::allocator::fence::alloc_frame(
+                        crate::memory::allocator::fence::FrameClass::Persistent,
+                    ))
+                    .map_err(|_| MapError::OutOfMemory)?
+                    .assume_init();
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
                 // 持久注册表：内核窗口帧永不归还——登记以便关机逐项核 held（②）。
                 #[cfg(feature = "audit")]

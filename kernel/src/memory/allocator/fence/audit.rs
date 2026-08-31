@@ -136,21 +136,19 @@ fn collect_kernel_tables(out: &mut alloc::vec::Vec<usize, &'static dyn Allocator
 /// 豁免）都只是类别内部的变化，不构成违规、不需要赦免。
 #[track_caller]
 pub fn check_baseline() {
-    // 审计期标记：仅块池 drain 守卫消费（见 block::drain 注释）。
-    super::AUDITING.store(true, Ordering::Relaxed);
-
-    // 收集存储物化（Audit 类：记账豁免——审计工具不自扰归零检查/簿记核对）。
-    // 容量 ≥ 全集（held_count 上界），push 零分配、无 realloc（关机单核无并发
-    // 分配）；即使 realloc，新缓冲经打标分配器同样 Audit 类。
+    // 收集存储物化：普通记账（默认 Persistent 类）——审计暂态分配与归还在本
+    // 函数内成对，新框架无差集检查对其天然免疫（无需任何豁免；旧框架的
+    // AUDITING 豁免与 drain 守卫是差集模型的遗留，已删除）。容量 ≥ 全集
+    // （held_count 上界），push 零分配、无 realloc（关机单核无并发分配）。
     let mut now_tables: alloc::vec::Vec<usize, &'static dyn Allocator> =
         alloc::vec::Vec::with_capacity_in(
             super::banker::BANKER.held_count().max(64),
-            crate::memory::allocator::block::tag_audit(),
+            crate::memory::allocator::block::allocator(),
         );
     let mut now_pool: alloc::vec::Vec<usize, &'static dyn Allocator> =
         alloc::vec::Vec::with_capacity_in(
             super::banker::BANKER.held_count().max(64),
-            crate::memory::allocator::block::tag_audit(),
+            crate::memory::allocator::block::allocator(),
         );
 
     // ① 任务类泄漏：帧/块类别计数归零（真泄漏判据——替代旧孤儿 + 块差集）。
@@ -206,11 +204,10 @@ pub fn check_baseline() {
         crate::putln!("[audit] banker held {held} != frame outstanding {outstanding}");
     }
 
-    // 收尾：释放审计期收集存储（Audit 类豁免成对——unmark 不计数、drain 守卫
-    // 保池页不归还），随后关审计期标记。report 路径（panic 现场）不依赖标记。
+    // 收尾：释放审计期收集存储（普通记账成对归还——unmark 减计数、池页 drain
+    // 归还帧均正常配对）。report 路径（panic 现场）不依赖任何审计期标记。
     drop(now_tables);
     drop(now_pool);
-    super::AUDITING.store(false, Ordering::Relaxed);
 
     // 违例汇总（report panic 前全部诊断已落屏）。
     if task_frames > 0 || task_blocks > 0 {

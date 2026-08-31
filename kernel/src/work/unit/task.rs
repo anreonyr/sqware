@@ -217,13 +217,13 @@ impl TaskBuilder {
         );
         // 双装箱：`Box<dyn FnOnce()>` 是胖指针不能直接转 usize，外包一层得薄指针。
         // 类别 = Task：闭包装箱属任务生命周期——关机 TASK_BLOCKS 归零（①）。
-        // 分配器类型 = &'static dyn Allocator（block::tag_task）——与 trampoline
+        // 分配器类型 = &'static dyn Allocator（fence::alloc_block(Task)）——与 trampoline
         // 的 Box::from_raw 类型一致；释放经地址路由 + ledger 类别记账，不依赖
         // 分配器类型。
         let inner: Box<dyn FnOnce(), &'static dyn Allocator> =
-            Box::new_in(f, crate::memory::allocator::block::tag_task());
+            Box::new_in(f, crate::memory::allocator::fence::alloc_block(crate::memory::allocator::fence::BlockClass::Task));
         let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>, &'static dyn Allocator> =
-            Box::new_in(inner, crate::memory::allocator::block::tag_task());
+            Box::new_in(inner, crate::memory::allocator::fence::alloc_block(crate::memory::allocator::fence::BlockClass::Task));
         // into_raw_with_allocator（非 Global 的 Box 无 into_raw）——alloc 是
         // 引用（drop 空操作），ptr 交 trampoline 的 Box::from_raw（Global 型，
         // 释放按地址路由 + ledger 类别记账）。
@@ -280,7 +280,7 @@ impl TaskBuilder {
         // into_raw_with_allocator/from_raw 转回默认分配器型 Arc<T>（同布局；
         // 释放路径按地址路由 + ledger 类别记账，不依赖分配器类型——见
         // fence::on_free）。
-        let tag = crate::memory::allocator::block::tag_task();
+        let tag = crate::memory::allocator::fence::alloc_block(crate::memory::allocator::fence::BlockClass::Task);
         let ident: Arc<TaskIdent> = unsafe {
             let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(
                 TaskIdent {

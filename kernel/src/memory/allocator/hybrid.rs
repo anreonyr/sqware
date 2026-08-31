@@ -38,7 +38,9 @@ unsafe impl Allocator for HybridAllocator {
         if layout.size() <= PAGE_SIZE / 2 {
             block::allocator().allocate(layout)
         } else {
-            frame::allocator().allocate(layout)
+            // 帧级默认 Persistent（全局容器缓冲/健康检查直取——类别记账走
+            // fence 打标分配器；本文件对类别词汇仅此一处）。
+            super::fence::alloc_frame(super::fence::FrameClass::Persistent).allocate(layout)
         }
     }
 
