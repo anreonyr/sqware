@@ -173,12 +173,7 @@ fn kbacktrace(out: &mut [usize; BT_DEPTH]) -> usize {
         };
         // 可执行候选 = 「能解析进符号区间」的地址（routed 按域选表 + lookup
         // 上界约束）；栈上数据字落空——不收宽镜像区间误报。
-        let code = elftable::routed(
-            VirtAddr::from_raw(w),
-            ktbl(),
-            ident().as_ref().and_then(|i| i.elftable()).as_deref(),
-        )
-        .is_some();
+        let code = elftable::routed(VirtAddr::from_raw(w), None, None).is_some();
         if w & (ADDR_ALIGN - 1) == 0 && w != prev && code {
             out[n] = w;
             n += 1;
@@ -260,7 +255,12 @@ fn kbt_word(a: usize) -> Option<usize> {
     // 同 kbt_read：启发式扫描起点 `last + 8` / `sp & !7` 步进 8 字节，理论 8
     // 字节对齐，但脱链后 `last` 是任意对齐的 callee-saved 保存值（详见 kbt_read
     // 注释），`a` 起点继承未对齐 → 裸 load UB。
-    let w = unsafe { (pa0.as_usize() as *const u8).add(off).cast::<usize>().read_unaligned() };
+    let w = unsafe {
+        (pa0.as_usize() as *const u8)
+            .add(off)
+            .cast::<usize>()
+            .read_unaligned()
+    };
     Some(w)
 }
 
@@ -379,18 +379,16 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         Some(hex(sepc::read())),
         Some(elftable::routed_symbol(
             VirtAddr::from_raw(sepc::read()),
-            ktbl(),
+            None,
             utbl().as_deref(),
         )),
     ]);
     {
         // 符号命中 → 「sym note」单空格衔接；未命中 → 仅 stval 语义。
         let a = stval::read();
-        let n = if let Some((name, off)) = elftable::routed(
-            VirtAddr::from_raw(a),
-            ktbl(),
-            ident().as_ref().and_then(|i| i.elftable()).as_deref(),
-        ) {
+        let n = if let Some((name, off)) =
+            elftable::routed(VirtAddr::from_raw(a), ktbl(), utbl().as_deref())
+        {
             format!("{name}+{off:#x} {}", stval_note(int, code))
         } else {
             stval_note(int, code).to_string()
@@ -416,7 +414,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         Some(hex(stvec::read().address())),
         Some(elftable::routed_symbol(
             VirtAddr::from_raw(stvec::read().address()),
-            ktbl(),
+            None,
             utbl().as_deref(),
         )),
     ]);
