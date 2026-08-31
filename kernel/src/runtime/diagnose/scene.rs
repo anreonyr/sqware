@@ -217,7 +217,13 @@ impl Trace {
 }
 
 /// 沿帧指针链收 ra，返回断链处帧地址（一帧未走则返回入参）。
-fn chain(stack: &mut Stack, trail: &mut Trail, frame: usize, floor: usize, ceiling: usize) -> usize {
+fn chain(
+    stack: &mut Stack,
+    trail: &mut Trail,
+    frame: usize,
+    floor: usize,
+    ceiling: usize,
+) -> usize {
     let mut f = frame;
     let mut broke = frame;
     while !trail.full() && f >= floor && f <= ceiling {
@@ -492,6 +498,11 @@ pub fn dump_crash(r: &mut Report) {
         if let Some(et) = ident().as_ref().and_then(|i| i.elftable()).as_ref() {
             et.check_integrity();
         }
+    }
+    // canary 现场清查依赖 ledger 模块（audit-feature-gated）；非 audit 构建
+    // 下 ledger 整体未编译，本调用也必须 gate 同步，否则 E0433。
+    #[cfg(feature = "audit")]
+    {
         let _ = crate::memory::allocator::fence::ledger::LEDGER.sweep_canaries();
     }
     // 投稿：CSR/GPR/回溯段入报告（[scene] 标题挂首段，其余段空标题同段落）。

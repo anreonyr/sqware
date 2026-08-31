@@ -24,11 +24,11 @@
 // 自存表/账本读出。debit/credit 恒发生、与类别无关——类别只影响计数维度，
 // 类别错乱只失真计数（boot sanity 可抓），不破坏 banker 配对。
 //
-// gate 语义：**audit 是 cargo feature**（kernel/Cargo.toml `audit`，default 引入）
-// ——debug 构建默认开启（任务验收命令 `cargo run -p kernel` 即带），release 可
-// 显式 `--features audit` 开启、`--no-default-features` 关闭。checker 独立
-// （debug-only）；banker/ledger/audit → 模块根（feature-gated）。feature 关闭时
-// 装饰器（tag!）退化为裸表达式（零开销）。
+// gate 语义：**audit 是 cargo feature**（kernel/Cargo.toml `audit`，**非默认**，
+// 需显式 `--features audit` 开启；与 debug_assertions 无关，release 也能跑审计）。
+// checker 独立（debug-only）；banker/ledger/audit → 模块根（feature-gated）。
+// feature 关闭时装饰器（tag!）退化为裸表达式（零开销），ledger 模块整体 cfg out，
+// scene 中 sweep_canaries 等调用也必须同步 gate 在 audit feature 下。
 //
 // 依赖方向（无环）：checker 独立；banker/ledger → 模块根；audit → 模块根 + banker + ledger。
 

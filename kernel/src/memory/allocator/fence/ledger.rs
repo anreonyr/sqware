@@ -63,7 +63,15 @@ impl Ledger {
     /// 活块入账。前置：已 init、容量充足、地址未登记（DuplicateMark 现行）。
     /// KernelHeap 且 slack ≥ 8 时顺带写 slack canary。**零分配**。
     /// `class` = 生命周期类别（mark 时定型；unmark 读出减类别计数）。
-    pub fn mark(&self, addr: usize, size: usize, site: usize, site2: usize, kind: OwnerKind, class: Class) {
+    pub fn mark(
+        &self,
+        addr: usize,
+        size: usize,
+        site: usize,
+        site2: usize,
+        kind: OwnerKind,
+        class: Class,
+    ) {
         let mut g = self.inner.lock();
         let Some((map, soft)) = g.as_mut() else {
             report(
@@ -90,8 +98,8 @@ impl Ledger {
         // canary 槽位按 8 对齐（块首 + 请求尺寸可能不对齐；u64 读写必须对齐——
         // 未对齐会触发 misaligned trap 进 OpenSBI 模拟，极慢/卡死）。
         let aligned = (size + 7) & !7;
-        let canary =
-            (kind == OwnerKind::KernelHeap && size_class - aligned >= CANARY_MIN_SLACK).then(|| {
+        let canary = (kind == OwnerKind::KernelHeap && size_class - aligned >= CANARY_MIN_SLACK)
+            .then(|| {
                 let at = addr + aligned;
                 // SAFETY: at..at+8 落在块 slack 区（size_class ≥ aligned+8），块此刻独占（分配未交付）。
                 unsafe { (at as *mut u64).write_volatile(CANARY_MAGIC) };
@@ -166,9 +174,7 @@ impl Ledger {
     /// 按地址查登记类别（realloc 窗口类别继承用；无账 → None）。
     pub fn class_of(&self, addr: usize) -> Option<Class> {
         let g = self.inner.lock();
-        g.as_ref()
-            .and_then(|(m, _)| m.get(&addr))
-            .map(|r| r.class)
+        g.as_ref().and_then(|(m, _)| m.get(&addr)).map(|r| r.class)
     }
 
     /// 类别改标（装饰器标注 / realloc 继承；fence::tag 调用）：更新记录

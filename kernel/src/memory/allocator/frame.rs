@@ -44,14 +44,13 @@ impl FrameAllocator {
     }
 
     /// 在途（未归还）物理帧数。
-    #[cfg_attr(not(feature = "audit"), allow(dead_code))]
+    ///
+    /// 与 `feature = "audit"` **解耦**：作为健康检查（health/pagetable）的 metric
+    /// 总要可读,audit 关闭 + debug 下若返回 0 会与 [`crate::memory::allocator::block::held_pages`]
+    /// 在 `0 - N` 处减下溢。增减维护同样常驻（锁内单原子 +,锁序同 frame 主体）,
+    /// 关闭 audit 时此字段就是"在途帧数"本身,审计路径只是另作读用。
     pub fn outstanding(&self) -> usize {
-        #[cfg(feature = "audit")]
-        {
-            return self.inner.lock().outstanding;
-        }
-        #[allow(unused)]
-        0
+        self.inner.lock().outstanding
     }
 }
 
@@ -97,10 +96,7 @@ impl FrameAllocator {
         }
         // 护栏事件：帧由金库取出。
         super::fence::on_frame_alloc(addr as usize);
-        #[cfg(feature = "audit")]
-        {
-            frame.outstanding += 1;
-        }
+        frame.outstanding += 1;
 
         checker::log_frame_alloc(addr as usize, index, power);
 
@@ -140,10 +136,7 @@ unsafe impl Allocator for FrameAllocator {
             // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);
             frame.merge_block(index, power);
-            #[cfg(feature = "audit")]
-            {
-                frame.outstanding = frame.outstanding.saturating_sub(1);
-            }
+            frame.outstanding = frame.outstanding.saturating_sub(1);
 
             checker::log_frame_dealloc(addr, index, power);
         }
@@ -155,8 +148,14 @@ struct FrameInner {
     pagemeta: Vec<Option<Meta>>,
     base: usize,
     edge: usize,
-    /// 在途（未归还）物理帧数（仅 debug；锁内不得分配）。
-    #[cfg(feature = "audit")]
+    /// 在途（未归还）物理帧数。
+    ///
+    /// 常驻维护（与 `feature = "audit"` 解耦）——作为 health 检查的 metric
+    /// 总是需要可读；audit 关闭 + debug 下若不维护,health/pagetable 的
+    /// `outstanding - held_pages` 会在 `0 - N` 处减下溢。审计路径只是
+    /// 另作读用,无 audit 专属语义。增减发生在 frame allocate/deallocate
+    /// 持锁期（锁内单原子 +,锁序同 frame 主体——`saturating_sub` 防异常
+    /// 路径下溢出,不应发生但兜底）。
     outstanding: usize,
 }
 
@@ -167,7 +166,6 @@ impl FrameInner {
             pagemeta: Vec::new(),
             base: 0,
             edge: 0,
-            #[cfg(feature = "audit")]
             outstanding: 0,
         }
     }
