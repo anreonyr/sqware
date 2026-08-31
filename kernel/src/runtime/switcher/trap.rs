@@ -141,6 +141,9 @@ pub fn init() {
         .allocate(layout)
         .expect("trap stack block allocation");
     let base = block.cast::<u8>().as_ptr() as usize;
+    // 持久注册表：trap 栈块永不归还——登记以便关机逐项核 held（②）。
+    #[cfg(feature = "audit")]
+    crate::memory::allocator::fence::audit::register_persistent(base, "trap-stack");
     assert!(
         TRAP_STACK_PHYS.set(base).is_ok(),
         "trap stack phys double init"

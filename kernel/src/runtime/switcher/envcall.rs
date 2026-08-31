@@ -129,12 +129,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let addr = {
                 let s = &ident.team.space;
                 let r = HeapWindow::allocate(s, size).map(|span| span.va);
-                // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义）
+                // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义）。
+                // 类别 = Task：用户堆记录属任务生命周期——关机 TASK_BLOCKS 归零。
                 if let Ok(va) = r {
                     crate::memory::allocator::fence::on_alloc(
                         crate::memory::allocator::fence::key(s.asid(), va.as_usize()),
                         size,
                         crate::memory::allocator::fence::OwnerKind::UserHeap,
+                        crate::memory::allocator::fence::BlockClass::Task,
                     );
                 }
                 r

@@ -148,6 +148,12 @@ pub fn init() -> MapResult<()> {
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init();
                 let pa = PhysAddr::from_raw(page.as_ptr() as usize);
+                // 持久注册表：内核窗口帧永不归还——登记以便关机逐项核 held（②）。
+                #[cfg(feature = "audit")]
+                crate::memory::allocator::fence::audit::register_persistent(
+                    pa.as_usize(),
+                    "hart-frame",
+                );
                 kernel_space.map(
                     HART_FRAME_BASE + h * PAGE_SIZE,
                     pa,

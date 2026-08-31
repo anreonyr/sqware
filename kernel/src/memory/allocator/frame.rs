@@ -9,19 +9,32 @@ use alloc::{
 };
 
 use super::fence::checker;
+// 类别打标（pagemeta 记录 + 事件入口）与再导出：分配点经 `frame::FrameClass`
+// 引用类别（dock/ring/block prime）。
+pub(crate) use super::fence::FrameClass;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
     memory::allocator::{InitError, InitResult, Link, bump},
 };
 
+/// 页元数据：free 区每页一条（仅**块首帧**有表项——伙伴块内其余页无独立条目）。
 struct Meta {
     free: bool,
     power: u8,
+    /// 生命周期类别（[`FrameClass`] 编码）：分配时写入（打标分配器 / 块池 prime），
+    /// 释放路径在 merge **前**读出传给 on_frame_free 减计数——合并把伙伴页
+    /// pagemeta 清 None 不丢计数（计数在 free 时已读走）。块首帧条目在 merge
+    /// 后由 push_link 重写（free 态，类别无意义）。
+    class: u8,
 }
 
 impl Meta {
     fn new(free: bool, power: u8) -> Self {
-        Self { free, power }
+        Self {
+            free,
+            power,
+            class: 0, // 分配路径随后覆写（allocate_classed）；free 态不读类别
+        }
     }
 }
 
@@ -43,9 +56,9 @@ impl FrameAllocator {
     }
 
     /// 在途（未归还）物理帧数。
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    #[cfg_attr(not(feature = "audit"), allow(dead_code))]
     pub fn outstanding(&self) -> usize {
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "audit")]
         {
             return self.inner.lock().outstanding;
         }
@@ -66,8 +79,15 @@ fn block_power(size: usize) -> usize {
         - PAGE_SIZE.ilog2() as usize
 }
 
-unsafe impl Allocator for FrameAllocator {
-    fn allocate(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, AllocError> {
+impl FrameAllocator {
+    /// 带类别分配：与 [`Allocator::allocate`] 同语义，额外把 `class` 写入块首帧
+    /// pagemeta 并传给 on_frame_alloc（类别记账）。裸调用者（Allocator trait /
+    /// 默认路径）归 Persistent；打标分配器与块池 prime 传显式类别。
+    pub(crate) fn allocate_classed(
+        &self,
+        layout: core::alloc::Layout,
+        class: FrameClass,
+    ) -> Result<NonNull<[u8]>, AllocError> {
         let size = layout.size().max(PAGE_SIZE);
         let power = block_power(size);
 
@@ -76,10 +96,16 @@ unsafe impl Allocator for FrameAllocator {
 
         let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
         let addr = frame.frame_addr(index) as *mut u8;
+        // 类别打标：写块首帧 pagemeta——释放路径（deallocate）在此读出减计数。
+        // 合并清的是伙伴页条目，本块首帧条目在 merge 前仍专属本块。
+        {
+            let m = frame.pagemeta[index].as_mut().expect("just split");
+            m.class = class as u8;
+        }
         // 护栏：分配结果必须在 free 区 [base, edge)——坏地址即刻暴露
         //（崩点如 0xffffffffff6970 来自被破坏的 freelist 节点头）。
         checker::check_dram_addr(addr as usize, "frame alloc (split result)");
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "audit")]
         {
             let a = addr as usize;
             assert!(
@@ -89,11 +115,14 @@ unsafe impl Allocator for FrameAllocator {
                 frame.edge
             );
         }
-        // 护栏事件：帧由金库取出。
-        super::fence::on_frame_alloc(addr as usize);
-        #[cfg(debug_assertions)]
+        // 护栏事件：帧由金库取出（类别记账；Audit 类豁免）。
+        super::fence::on_frame_alloc(addr as usize, class);
+        #[cfg(feature = "audit")]
         {
-            frame.outstanding += 1;
+            // Audit 类豁免 outstanding（分配时未 debit，释放对偶不加不减）。
+            if class != FrameClass::Audit {
+                frame.outstanding += 1;
+            }
         }
 
         checker::log_frame_alloc(addr as usize, index, power);
@@ -102,6 +131,14 @@ unsafe impl Allocator for FrameAllocator {
             NonNull::new(addr).ok_or(AllocError)?,
             size,
         ))
+    }
+}
+
+unsafe impl Allocator for FrameAllocator {
+    fn allocate(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, AllocError> {
+        // 裸调用者默认 Persistent（boot 持久结构与未标注分配；显式类别走
+        // allocate_classed / 打标分配器）。
+        self.allocate_classed(layout, FrameClass::Persistent)
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
@@ -113,7 +150,7 @@ unsafe impl Allocator for FrameAllocator {
             let addr = ptr.addr().get();
             // 护栏：释放地址必须在 free 区（双释放/错地址释放即刻暴露）
             checker::check_dram_addr(addr, "frame dealloc (ptr)");
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "audit")]
             {
                 let a = addr;
                 assert!(
@@ -124,13 +161,19 @@ unsafe impl Allocator for FrameAllocator {
                 );
             }
             let index = frame.frame_index(addr);
+            // 类别读出（merge 前）：本块在册类别——on_frame_free 按类减计数；
+            // Audit 类对偶跳过 credit（分配时未 debit）。合并清 pagemeta 不丢
+            // 计数（计数在本调用即已减走）。
+            let class = frame.pagemeta[index].as_ref().map(|m| m.class).unwrap_or(0);
 
             // 护栏事件：帧存入金库。
-            super::fence::on_frame_free(addr);
+            super::fence::on_frame_free(addr, FrameClass::from_u8(class));
             frame.merge_block(index, power);
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "audit")]
             {
-                frame.outstanding = frame.outstanding.saturating_sub(1);
+                if FrameClass::from_u8(class) != FrameClass::Audit {
+                    frame.outstanding = frame.outstanding.saturating_sub(1);
+                }
             }
 
             checker::log_frame_dealloc(addr, index, power);
@@ -144,7 +187,7 @@ struct FrameInner {
     base: usize,
     edge: usize,
     /// 在途（未归还）物理帧数（仅 debug；锁内不得分配）。
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "audit")]
     outstanding: usize,
 }
 
@@ -155,7 +198,7 @@ impl FrameInner {
             pagemeta: Vec::new(),
             base: 0,
             edge: 0,
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "audit")]
             outstanding: 0,
         }
     }
@@ -422,8 +465,62 @@ pub fn allocator() -> &'static dyn Allocator {
         .expect("frame allocator not initialized")
 }
 
+/// 打标帧分配器（ZST，携带类别）：委托 [`FrameAllocator`]，分配时经
+/// [`allocate_classed`] 把类别写入 pagemeta 并记账。用法：
+/// `Box::try_new_zeroed_in(tagged(FrameClass::Task))`——返回的分配器类型是
+/// `&'static dyn Allocator`（本类型经引用强转），与裸 [`allocator()`] 同型，
+/// Box 类型不变（`Frame` 可直接声明）。
+pub(crate) struct TaggedFrameAllocator(FrameClass);
+
+unsafe impl Allocator for TaggedFrameAllocator {
+    fn allocate(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, AllocError> {
+        alloc_classed(layout, self.0)
+    }
+
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
+        unsafe {
+            allocator().deallocate(ptr, layout);
+        }
+    }
+}
+
+/// 各类别打标分配器实例（const 初始化；下标 = FrameClass 编码）。
+pub(crate) static TAGGED: [TaggedFrameAllocator; 5] = [
+    TaggedFrameAllocator(FrameClass::Pool),
+    TaggedFrameAllocator(FrameClass::Table),
+    TaggedFrameAllocator(FrameClass::Task),
+    TaggedFrameAllocator(FrameClass::Persistent),
+    TaggedFrameAllocator(FrameClass::Audit),
+];
+
+/// 按类别取打标分配器（trait 对象；分配结果即该类别）。
+pub(crate) fn tagged(class: FrameClass) -> &'static dyn Allocator {
+    &TAGGED[class as usize]
+}
+
+/// 任务类帧分配器（栈体 / trap 帧 / 懒页 / owned 数据帧 / COW 页——任务生命周期）。
+pub(crate) fn tag_task() -> &'static dyn Allocator {
+    tagged(FrameClass::Task)
+}
+
+/// 表类帧分配器（页表页：root 与 walk_mut 子表）。
+pub(crate) fn tag_table() -> &'static dyn Allocator {
+    tagged(FrameClass::Table)
+}
+
+/// 带类别分配帧（直接调用点用：块池 prime 传 Pool；dock/ring 共享区传 Task）。
+pub(crate) fn alloc_classed(
+    layout: core::alloc::Layout,
+    class: FrameClass,
+) -> Result<NonNull<[u8]>, AllocError> {
+    FRAME_ALLOCATOR
+        .get()
+        .expect("frame allocator not initialized")
+        .allocate_classed(layout, class)
+}
+
 /// 在途（未归还）物理帧数。
-#[cfg(debug_assertions)]
+#[cfg(feature = "audit")]
 pub(crate) fn outstanding() -> usize {
     FRAME_ALLOCATOR
         .get()

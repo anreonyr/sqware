@@ -15,6 +15,9 @@ SECTIONS
   .trampoline ALIGN(0x1000) : {
     KEEP(*(.trampoline))
   }
+  /* 代码段尾：alloc-site 回溯守卫用（候选 ra 须落在 [_kernel_start, _text_end)，
+     .data/.bss 的静态符号地址不在其内——防 site 失真）。 */
+  _text_end = .;
 
   .data : {
     *(.data*)

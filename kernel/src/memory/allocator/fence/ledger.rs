@@ -9,20 +9,21 @@
 //!     违例统一经 `report` 处置（见 fence/mod）。
 //!
 //! 分配/释放记账经 fence 根事件入口（`on_alloc`/`on_free`）调用，本模块为
-//! debug-gated（release 空），事件函数体内 cfg 包住对本模块的使用。
+//! audit-feature-gated（`feature = "audit"`；debug 默认开，release 可显式开启），
+//! 事件函数体内 cfg 包住对本模块的使用。
 
-#![cfg(debug_assertions)] // 与 fence 根同 gate（debug 构建生效；release 空体零开销）
+#![cfg(feature = "audit")] // 与 fence 根同 gate（audit feature，见 fence/mod）
 
 use hashbrown::HashMap;
 
 use crate::lock::{Level, SpinLock};
 
-use super::{CANARY_MAGIC, CANARY_MIN_SLACK, IntegrityViolation, OwnerKind, report};
+use super::{CANARY_MAGIC, CANARY_MIN_SLACK, BlockClass, IntegrityViolation, OwnerKind, report};
 
 /// 一条活块登记。
 pub struct Record {
-    /// 块类（2 的幂字节；canary slack 判定）。
-    class: usize,
+    /// 块尺寸类（2 的幂字节；canary slack 判定）。
+    size_class: usize,
     /// 登记时请求字节数（canary 位置 = addr + size；unmark 校 SizeMismatch）。
     /// pub(crate)：audit 关机差集报告引用（泄漏块详情转储）。
     pub(crate) size: usize,
@@ -35,6 +36,8 @@ pub struct Record {
     canary: Option<u64>,
     /// 登记类别。
     pub(crate) kind: OwnerKind,
+    /// 生命周期类别（mark 时定型；unmark 读出减类别计数——见 fence::on_free）。
+    pub(crate) class: BlockClass,
 }
 
 /// 活块账本：地址 → 记录（锁内；容量 init 预留，运行期零分配）。
@@ -59,7 +62,8 @@ impl Ledger {
 
     /// 活块入账。前置：已 init、容量充足、地址未登记（DuplicateMark 现行）。
     /// KernelHeap 且 slack ≥ 8 时顺带写 slack canary。**零分配**。
-    pub fn mark(&self, addr: usize, size: usize, site: usize, site2: usize, kind: OwnerKind) {
+    /// `class` = 生命周期类别（mark 时定型；unmark 读出减类别计数）。
+    pub fn mark(&self, addr: usize, size: usize, site: usize, site2: usize, kind: OwnerKind, class: BlockClass) {
         let mut g = self.inner.lock();
         let Some((map, soft)) = g.as_mut() else {
             report(
@@ -82,26 +86,27 @@ impl Ledger {
                 format_args!("site {site:#x}"),
             );
         }
-        let class = size.max(8).next_power_of_two();
+        let size_class = size.max(8).next_power_of_two();
         // canary 槽位按 8 对齐（块首 + 请求尺寸可能不对齐；u64 读写必须对齐——
         // 未对齐会触发 misaligned trap 进 OpenSBI 模拟，极慢/卡死）。
         let aligned = (size + 7) & !7;
         let canary =
-            (kind == OwnerKind::KernelHeap && class - aligned >= CANARY_MIN_SLACK).then(|| {
+            (kind == OwnerKind::KernelHeap && size_class - aligned >= CANARY_MIN_SLACK).then(|| {
                 let at = addr + aligned;
-                // SAFETY: at..at+8 落在块 slack 区（class ≥ aligned+8），块此刻独占（分配未交付）。
+                // SAFETY: at..at+8 落在块 slack 区（size_class ≥ aligned+8），块此刻独占（分配未交付）。
                 unsafe { (at as *mut u64).write_volatile(CANARY_MAGIC) };
                 CANARY_MAGIC
             });
         map.insert(
             addr,
             Record {
-                class,
+                size_class,
                 size,
                 site,
                 site2,
                 canary,
                 kind,
+                class,
             },
         );
     }
@@ -126,8 +131,9 @@ impl Ledger {
         check_canary(addr, rec);
     }
 
-    /// 唯一注销入口：先证（存在 + canary 完好 + 尺寸一致）再移除；移除后该地址即「无账」。
-    pub fn unmark(&self, addr: usize, size: usize) {
+    /// 唯一注销入口：先证（存在 + canary 完好 + 尺寸一致）再移除；移除后该地址
+    /// 即「无账」。返回记录类别（fence::on_free 按类减计数——Audit 类豁免）。
+    pub fn unmark(&self, addr: usize, size: usize) -> BlockClass {
         let mut g = self.inner.lock();
         let Some((map, _)) = g.as_mut() else {
             report(
@@ -152,14 +158,28 @@ impl Ledger {
             );
         }
         check_canary(addr, rec);
+        let class = rec.class;
         map.remove(&addr);
+        class
     }
 
-    /// 锁内遍历；回调签名 (addr, &Record)。
+    /// 按地址查登记类别（realloc 窗口类别继承用；无账 → None）。
+    pub fn class_of(&self, addr: usize) -> Option<BlockClass> {
+        let g = self.inner.lock();
+        g.as_ref()
+            .and_then(|(m, _)| m.get(&addr))
+            .map(|r| r.class)
+    }
+
+    /// 锁内遍历；回调签名 (addr, &Record)。**Audit 类记录不可见**（审计工具
+    /// 自身分配的临时登记——不参与任何遍历核对：page_clear / stats / audit）。
     pub fn for_each(&self, mut f: impl FnMut(usize, &Record)) {
         let g = self.inner.lock();
         let Some((map, _)) = g.as_ref() else { return };
         for (addr, rec) in map.iter() {
+            if rec.class == BlockClass::Audit {
+                continue;
+            }
             f(*addr, rec);
         }
     }
@@ -181,6 +201,9 @@ impl Ledger {
         };
         let mut bad = 0usize;
         for (addr, rec) in map.iter() {
+            if rec.class == BlockClass::Audit {
+                continue; // 审计临时登记不入清查
+            }
             if rec.canary.is_none() {
                 continue; // UserHeap 不设 canary
             }

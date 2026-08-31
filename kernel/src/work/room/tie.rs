@@ -69,7 +69,7 @@ pub(super) fn halt() -> ! {
         // 调度器槽载荷（per-hart LastIdent Arc）——同纪律：残留即误报泄漏。
         crate::work::room::conductor::core::shutdown_slots();
         crate::memory::allocator::block::flush();
-        #[cfg(debug_assertions)]
+        #[cfg(feature = "audit")]
         crate::memory::allocator::fence::audit::check_baseline();
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }

@@ -10,7 +10,7 @@ use alloc::boxed::Box;
 
 use crate::layout::TASK_STACK_GUARD;
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame::allocator;
+use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
@@ -73,8 +73,9 @@ impl StackWindow {
             ));
             let pages = size / PAGE_SIZE;
             for i in 0..pages {
+                // 类别 = Task：栈体页属任务生命周期——关机必须归零（①）。
                 let page: Frame = unsafe {
-                    Box::try_new_zeroed_in(allocator())
+                    Box::try_new_zeroed_in(frame::tag_task())
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
                 };

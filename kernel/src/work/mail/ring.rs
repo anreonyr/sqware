@@ -141,8 +141,8 @@ impl RingMeta {
         let bytes = (ring::OFF_BUFFER + item_len * slots).next_multiple_of(PAGE_SIZE);
         let layout = core::alloc::Layout::from_size_align(bytes, PAGE_SIZE)
             .map_err(|_| MapError::NotAligned)?;
-        let ptr = frame::allocator()
-            .allocate(layout)
+        // 类别 = Task：共享区帧归通道元数据（任务生命周期）——关机归零。
+        let ptr = frame::alloc_classed(layout, frame::FrameClass::Task)
             .map_err(|_| MapError::OutOfMemory)?;
         // SAFETY: 分配返回的切片指针非空；转成字节指针（长度无关，仅取首址）。
         let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };

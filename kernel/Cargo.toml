@@ -4,11 +4,16 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = []
+default = ["audit"]
 # diagnose 结构化记录经 semihosting fs 导出宿主文件（JSON Lines，自描述长度；文件
 # sqware-diagnose.jsonl 落在 qemu CWD，runner 归档）。**默认开启**（default 引入）——
 # 要关则把 default 里的 semihosting 拿掉。依赖 QEMU -semihosting（runner 恒加）。
 semihosting = []
+# 审计框架（fence 的 banker/ledger/audit + 关机类别记账检查）——**cargo feature 门控**：
+# debug 构建默认开启（default 引入；任务验收命令 `cargo run -p kernel` 即带审计）；
+# release 同样默认开启，可用 `--no-default-features` 关闭，或显式 `--features audit`
+# 开启——审计不依赖 debug_assertions 硬化开关，release 也能跑审计。
+audit = []
 
 [dependencies]
 ubi = { path = "../crates/ubi" }

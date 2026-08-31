@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 use alloc::{alloc::Allocator, boxed::Box, sync::Arc};
 use fack::prelude::Error;
 
-use crate::memory::allocator::frame::allocator;
+use crate::memory::allocator::frame;
 use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
 
 use super::{
@@ -105,8 +105,10 @@ impl PageTable {
         // 同 [u8;4096] 教训：PageTable::default() 按值 4 KiB 会在调用栈上物化约
         // 16 KiB 栈帧——任务栈上建中间表同样击穿（风暴 UAF 同源）。走标准原语
         // Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）。
+        // 类别 = Table：页表页（root 与 walk_mut 子表）——关机与内核根表 walk
+        // 计数核对（audit::check_baseline ③）。
         Ok(unsafe {
-            Box::try_new_zeroed_in(allocator())
+            Box::try_new_zeroed_in(frame::tag_table())
                 .map_err(|_| MapError::OutOfMemory)?
                 .assume_init()
         })
@@ -140,7 +142,7 @@ impl TableNode {
         Box::as_ptr(&self.page) as usize >> PAGE_SHIFT
     }
 
-    /// 树中节点总数（根 + 全部子孙；debug 统计/自测用）。
+    /// 树中节点总数（根 + 全部子孙；health/自测用，debug-only——非审计链）。
     #[cfg(debug_assertions)]
     pub(crate) fn count(&self) -> usize {
         1 + self.children.iter().map(|(_, c)| c.count()).sum::<usize>()

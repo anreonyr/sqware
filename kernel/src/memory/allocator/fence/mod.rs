@@ -3,38 +3,58 @@
 // 与「自测（selftest，out-of-path 验收用例）」相对：护栏是功能运行的自我证明，
 // 命中即 halt（panic → crash scene）。四个成员：
 //   checker  — 分配器链式不变式断言（block/frame 的 freepool 判重、越界、环与
-//              流水观测）。钩子恒编译、单行调用，release 空体零开销（debug gate）。
+//              流水观测）。钩子恒编译、单行调用；函数体 debug-gated。
 //   banker   — 页金库占位（无锁原子位图；free 区每页 1 bit，debit/credit/is_held）。
 //   ledger   — 活块账本（hashbrown 登记表；mark/unmark/verify/canary，锁内零分配）。
-//   audit    — 核查侧（多源交叉核对 audit()、关机基线 record/check_baseline、
-//              页清残留 page_clear、基线快照 stats）。
+//   audit    — 核查侧（多源交叉核对 audit()、关机类别记账检查 check_baseline、
+//              持久注册表、页清残留 page_clear、统计 stats）。
 // 模块根 = banker/ledger/checker/audit 共享的处置原语：report（违例→trace→panic）、
-// IntegrityViolation（违例类目）、poison（毒化标记）、OwnerKind（登记类别）与相关
-// 常量，以及**事件入口**（on_alloc/on_free/on_frame_alloc/on_frame_free）——
-// 分配器热路径对其的调用是一行无 cfg 的语义事件，asm 读 ra、poison、记账全部
-// 收在本层内部（纯功能文件零审计词汇）。
+// IntegrityViolation（违例类目）、poison（毒化标记）、OwnerKind（登记类别）、
+// **所有权类别**（FrameClass/BlockClass，见下）与相关常量，以及**事件入口**
+// （on_alloc/on_free/on_frame_alloc/on_frame_free）——分配器热路径对其的调用是
+// 一行无 cfg 的语义事件，asm 读 ra、poison、记账全部收在本层内部（纯功能文件
+// 零审计词汇）。
+//
+// gate 语义：**audit 是 cargo feature**（kernel/Cargo.toml `audit`，default 引入）
+// ——debug 构建默认开启（任务验收命令 `cargo run -p kernel` 即带），release 可
+// 显式 `--features audit` 开启、`--no-default-features` 关闭。checker 独立
+// （debug-only）；banker/ledger/audit → 模块根（feature-gated）。
 //
 // 依赖方向（无环）：checker 独立；banker/ledger → 模块根；audit → 模块根 + banker + ledger。
 
+// ── 所有权类别（关机审计的记账维度）──
+//
+// 每帧/每块按生命周期归属一个类别；类别计数（FRAME_COUNTS/BLOCK_COUNTS）由四个
+// 事件入口维护，关机检查（audit::check_baseline）只对「任务类归零」做断言——
+// 合法形态演化（容器扩容、realloc 搬家、池页周转、审计工具自身分配）只是类别
+// 内部的变化，不需要任何赦免机制（替代旧「boot 身份快照 vs 关机差集」的
+// rehome/adopt/基线余量/AUDITING 豁免——见 1634c36 教训：快照物化 prime 自扰
+// 即 mid-collection realloc → 孤儿帧）。
+//
+// 帧类别写在 frame pagemeta（分配时写入、释放时读出），块类别写在 ledger 记录
+// （mark 时定型、unmark 时读出）——释放路径无需调用方补传类别。
+// Audit 类 = 审计工具自身分配：跳过 debit/credit、outstanding 与类别计数
+// （mark/unmark 照常，但记录不可见、不计数——见 ledger::for_each）。
+
 #![allow(unused)]
 use alloc::fmt;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 pub mod audit;
 pub mod banker;
 pub mod checker;
 pub mod ledger;
 
-// ── 公共处置原语（debug-gated；release 编译为空，零开销）──
+// ── 公共处置原语（audit-feature-gated；feature 关闭时编译为空，零开销）──
 
 /// 毒化模式字节（分配/释放填充：未初始化读、UAF 读数的现行标记）。
-#[cfg(debug_assertions)]
+#[cfg(feature = "audit")]
 pub const POISON: u8 = 0xCD;
 /// slack canary 期望值（写进块尾 slack 8 字节；释放时核对）。
-#[cfg(debug_assertions)]
+#[cfg(feature = "audit")]
 pub(crate) const CANARY_MAGIC: u64 = 0x51A7_0D1E_CAFE_BEEF;
 /// canary 所需最小 slack 字节数（不足则本块不设 canary）。
-#[cfg(debug_assertions)]
+#[cfg(feature = "audit")]
 pub(crate) const CANARY_MIN_SLACK: usize = 8;
 
 /// 登记类别（Ledger 记录归属；用户堆不 poison/canary——维持清零语义）。
@@ -45,8 +65,89 @@ pub enum OwnerKind {
     UserHeap,
 }
 
+/// 帧生命周期类别（关机审计维度；编码写 frame pagemeta，`as usize` 作计数下标，
+/// **编码即 ABI**——frame.rs 读出后经 [`FrameClass::from_u8`] 还原）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum FrameClass {
+    /// 块池 prime 借页（block.rs `prime`）——自由周转，仅诊断计数。
+    Pool = 0,
+    /// 页表页（table.rs `PageTable::new`：root 与 walk_mut 子表）——关机与
+    /// kernel-root walk 计数核对（audit::check_baseline ③）。
+    Table = 1,
+    /// 任务生命周期帧（栈体 / trap 帧 / 懒页 / owned 数据帧 / COW 页）——
+    /// **关机必须归零**（①）。
+    Task = 2,
+    /// boot 持久帧（trap 栈 / spare 仓 / 内核窗口帧；未显式标注的默认类）——
+    /// 持久注册表逐项核 held（②）。
+    Persistent = 3,
+    /// 审计工具自身分配——豁免记账（不 debit/credit、不计数；等价旧 AUDITING
+    /// 标志语义，但按类别判定）。
+    Audit = 4,
+}
+
+impl FrameClass {
+    /// 编码还原（pagemeta 存 u8）。未知值防御性归 Persistent——credit 必须发生
+    /// （归 Audit 会跳过 credit，破坏 banker 配对）。
+    pub(crate) fn from_u8(v: u8) -> FrameClass {
+        match v {
+            0 => FrameClass::Pool,
+            1 => FrameClass::Table,
+            2 => FrameClass::Task,
+            3 => FrameClass::Persistent,
+            _ => FrameClass::Persistent,
+        }
+    }
+}
+
+/// 块生命周期类别（Ledger 记录字段；`as usize` 作计数下标，编码即 ABI）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum BlockClass {
+    /// 任务生命周期块（Arc<Task>/Arc<TaskIdent>/闭包装箱/用户堆记录）——
+    /// **关机必须归零**（①）。
+    Task = 0,
+    /// 默认——boot 期容器、调度器、Team/Space 簿记。
+    Persistent = 1,
+    /// 审计工具自身分配——豁免计数（mark/unmark 照常但不计数、不可见）。
+    Audit = 2,
+}
+
+impl BlockClass {
+    /// 编码还原（realloc 窗口存 u8）。未知值防御性归 Persistent。
+    pub(crate) fn from_u8(v: u8) -> BlockClass {
+        match v {
+            0 => BlockClass::Task,
+            1 => BlockClass::Persistent,
+            _ => BlockClass::Persistent,
+        }
+    }
+}
+
+/// 帧类别计数（分配 +1 / 释放 −1；Audit 类不计数）。关机只断言 Task 归零，
+/// 其余类别为诊断/未来检查用。
+pub(crate) static FRAME_COUNTS: [AtomicUsize; 5] = [const { AtomicUsize::new(0) }; 5];
+/// 块类别计数（同帧侧）。
+pub(crate) static BLOCK_COUNTS: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
+
+/// 类别计数读取（audit 读侧）。
+pub(crate) fn frame_count(c: FrameClass) -> usize {
+    FRAME_COUNTS[c as usize].load(Ordering::Relaxed)
+}
+/// 类别计数读取（audit 读侧）。
+pub(crate) fn block_count(c: BlockClass) -> usize {
+    BLOCK_COUNTS[c as usize].load(Ordering::Relaxed)
+}
+
+/// 审计进行中标记——**仅**块池 drain 守卫消费（block.rs drain 开头检查：审计期
+/// 不归还池页。见 1634c36 教训：审计前 debit 的池页在审计中被 drain，若审计的
+/// 分配经豁免路径 debit/credit 不同步，即 credit 无 debit 页 / 位图脏孤儿）。
+/// 审计的收集存储本身按 **Audit 类**豁免记账（见模块头），本标记是 drain 侧的
+/// 双保险：审计期池页留在池内，关机现场计数不受暂态周转扰动。
+pub(crate) static AUDITING: AtomicBool = AtomicBool::new(false);
+
 /// 完整性违例类别（report 的字段；repr(u8) 供 trace 事件编码，**顺序即 ABI**）。
-#[cfg(debug_assertions)]
+#[cfg(feature = "audit")]
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum IntegrityViolation {
@@ -75,7 +176,7 @@ pub enum IntegrityViolation {
 /// 毒化填充 [addr, addr+len)。前置：区间此刻归调用方独占（刚分配未交付 / 已取出未复用）。
 ///
 /// SAFETY: 前置条件保证区间独占可写；volatile 写防写合并吞掉标记。
-#[cfg(debug_assertions)]
+#[cfg(feature = "audit")]
 pub fn poison(addr: usize, len: usize) {
     // SAFETY: 调用方保证区间独占；volatile 写。
     let p = addr as *mut u8;
@@ -86,7 +187,7 @@ pub fn poison(addr: usize, len: usize) {
 
 /// 统一处置（不返回）：trace 记 Mem(Integrity) → 现场直写 → panic
 /// （halt 的 panic 处理器再转储 crash scene；panic 路径零分配）。
-#[cfg(debug_assertions)]
+#[cfg(feature = "audit")]
 pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
     crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Memory(
         crate::runtime::diagnose::trace::MemoryEvent::Integrity {
@@ -101,11 +202,11 @@ pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
     panic!("memory integrity violation: {v:?}");
 }
 
-// ── 事件入口（恒编译；体内 debug-gated，release 空体零开销）──
+// ── 事件入口（恒编译；体内 audit-feature-gated，feature 关闭时空体零开销）──
 //
 // 分配器热路径唯一可见的护栏痕迹：一行语义调用。asm 读 ra、poison 填充、
 // ledger/banker 记账全部收在本层内部——纯功能文件（block/frame/space）不见
-// 任何 cfg、编译器内联指令或审计词汇。debug 构建做账，release 空体经
+// 任何 cfg、编译器内联指令或审计词汇。audit-feature 构建做账，feature 关闭时空体经
 // #[inline] 消除。
 
 /// 用户堆活块账键（**跨模块硬不变量：键必须单射**）。
@@ -116,11 +217,11 @@ pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
 /// 恒编译（release 返回 0 空体，与事件入口同惯例）。
 #[inline]
 pub(crate) fn key(asid: usize, va: usize) -> usize {
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "audit")]
     {
         (asid << 44) | (va >> 12)
     }
-    #[cfg(not(debug_assertions))]
+    #[cfg(not(feature = "audit"))]
     {
         0
     }
@@ -133,15 +234,17 @@ pub(crate) fn key(asid: usize, va: usize) -> usize {
 /// （见 scene::kbacktrace 注释），链在彼处即断——断点前最后有效 ra 即 site。
 ///
 unsafe extern "C" {
-    /// .rodata 段起点（link.ld `_rodata_start`）：候选 ra 须落在其下（.text 区）
-    /// ——.rodata 上的 vtable/常量指针是栈上常见数据，误收即 site 失真。
-    static _rodata_start: u8;
+    /// 代码段尾（link.ld `_text_end`，.trampoline 之后）：候选 ra 须落在其下
+    /// ——.data/.bss 的静态符号地址（LEDGER/FRAME_ALLOCATOR 等）与 .rodata 上的
+    /// vtable/常量指针是栈上常见数据，误收即 site 失真。旧守卫用 _rodata_start
+    /// （.rodata 在镜像尾）会放 .data/.bss 进来——已实证 site 全失真。
+    static _text_end: u8;
 }
 
-/// .text 段上界（.rodata 起点）。
+/// .text 段上界（.trampoline 之后）。
 fn text_end() -> usize {
     // SAFETY: 链接脚本符号，恒存在。
-    unsafe { (&raw const _rodata_start).addr() }
+    unsafe { (&raw const _text_end).addr() }
 }
 
 /// 分配点回溯（诊断 site）：从当前 fp 沿标准 RV64 帧链上溯 depth 帧；链在 core
@@ -159,7 +262,7 @@ fn text_end() -> usize {
 /// 读侧逐页翻译（当前 satp 根，DRAM 守卫）：栈 slot 顶上是 guard/窗口边界
 /// （未映射），扫描越界须停而非缺页 panic。SCAN_WINDOW 内最多两页，按页
 /// 缓存翻译结果（每页一次 walk）。
-#[cfg(debug_assertions)]
+#[cfg(feature = "audit")]
 fn alloc_site(depth: usize) -> (usize, usize) {
     let mut fp: usize;
     // SAFETY: 读 s0 无副作用。
@@ -246,45 +349,56 @@ fn alloc_site(depth: usize) -> (usize, usize) {
 
 /// realloc 窗口（per-hart）：portal::grow 显式 begin/end 标记。grow 默认路径 =
 /// 同 hart「allocate 新 → copy → deallocate 旧」——窗口内 on_alloc 记首笔新块、
-/// on_free 见旧块即判定搬家（基线 rehome）而非错释。仅旧块在基线时才设窗
-/// （普通对象 realloc 不涉及基线判定，零开销）。
+/// 新块**继承旧块类别**（[`BlockClass`]：任务类缓冲 grow 搬家后仍是任务类——
+/// 关机类别归零检查才不会因搬家而漏报/误报）。仅旧块类别非 Persistent 时设窗
+/// （默认类 grow 继承无意义，零开销）。
 ///
 /// 窗口内**关 SIE**（临界区微秒级）：S-timer 抢占会让同 hart 其它任务在窗口内
-/// 分配——RALLOC_NEW 被覆盖即错配 rehome（已实证：rehome 落到无关块，基线
-/// 失配误报 missing）。关中断后窗口内分配必属本 grow。
+/// 分配——RALLOC_NEW 被覆盖即错配继承（旧基线 rehome 同源教训：抢占污染配对
+/// 已实证）。关中断后窗口内分配必属本 grow。
 static IN_REALLOC: [AtomicBool; 16] = [const { AtomicBool::new(false) }; 16];
 static RALLOC_OLD: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 static RALLOC_NEW: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
+/// 待继承类别（begin 从 ledger 读出旧块类别；窗口内首笔新块 mark 时采用）。
+static RALLOC_CLASS: [AtomicU8; 16] = [const { AtomicU8::new(0) }; 16];
 /// SIE 恢复标记（0 = 无需恢复；非 0 = begin 关过 SIE，end 恢复）。
 static RALLOC_SIE: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 
 /// 进入 realloc 窗口（portal::grow 调用；须与 [`end_realloc`] 配对）。
-/// 旧块在基线才设窗——其 free 将 rehome 基线而非报错释。
-#[cfg(debug_assertions)]
+/// 旧块类别非 Persistent 才设窗——其 grow 的新块继承类别（默认类无继承语义）。
+/// 恒编译（体内 audit-feature-gated，与事件入口同惯例——feature 关闭时空体零开销）。
 pub fn begin_realloc(old: usize) {
-    let hart = crate::machine::hart_id().min(15) as usize;
-    if crate::memory::allocator::fence::audit::is_baseline_block(old) {
-        // 关 SIE：窗口内不可抢占（见 IN_REALLOC 注释——抢占污染配对）。
-        let sie = riscv::register::sstatus::read().sie() as usize;
-        // SAFETY: 关/开 SIE 仅改本 hart 中断使能位，窗口极短；end_realloc 恢复。
-        unsafe { riscv::register::sstatus::clear_sie() };
-        RALLOC_SIE[hart].store(sie, Ordering::Relaxed);
-        IN_REALLOC[hart].store(true, Ordering::Relaxed);
-        RALLOC_OLD[hart].store(old, Ordering::Relaxed);
-        RALLOC_NEW[hart].store(0, Ordering::Relaxed);
+    #[cfg(feature = "audit")]
+    {
+        let hart = crate::machine::hart_id().min(15) as usize;
+        if let Some(class) = ledger::LEDGER.class_of(old) {
+            if class != BlockClass::Persistent {
+                // 关 SIE：窗口内不可抢占（见 IN_REALLOC 注释——抢占污染配对）。
+                let sie = riscv::register::sstatus::read().sie() as usize;
+                // SAFETY: 关/开 SIE 仅改本 hart 中断使能位，窗口极短；end_realloc 恢复。
+                unsafe { riscv::register::sstatus::clear_sie() };
+                RALLOC_SIE[hart].store(sie, Ordering::Relaxed);
+                IN_REALLOC[hart].store(true, Ordering::Relaxed);
+                RALLOC_OLD[hart].store(old, Ordering::Relaxed);
+                RALLOC_NEW[hart].store(0, Ordering::Relaxed);
+                RALLOC_CLASS[hart].store(class as u8, Ordering::Relaxed);
+            }
+        }
     }
 }
 
 /// 退出 realloc 窗口（portal::grow 收尾；grow 失败/in-place 成功时旧块未 free，
-/// 窗口在此清）。恢复 SIE（begin 关过才恢复）。
-#[cfg(debug_assertions)]
+/// 窗口在此清）。恢复 SIE（begin 关过才恢复）。恒编译（同 [`begin_realloc`]）。
 pub fn end_realloc() {
-    let hart = crate::machine::hart_id().min(15) as usize;
-    IN_REALLOC[hart].store(false, Ordering::Relaxed);
-    let sie = RALLOC_SIE[hart].swap(0, Ordering::Relaxed);
-    if sie != 0 {
-        // SAFETY: begin_realloc 关的 SIE，成对恢复。
-        unsafe { riscv::register::sstatus::set_sie() };
+    #[cfg(feature = "audit")]
+    {
+        let hart = crate::machine::hart_id().min(15) as usize;
+        IN_REALLOC[hart].store(false, Ordering::Relaxed);
+        let sie = RALLOC_SIE[hart].swap(0, Ordering::Relaxed);
+        if sie != 0 {
+            // SAFETY: begin_realloc 关的 SIE，成对恢复。
+            unsafe { riscv::register::sstatus::set_sie() };
+        }
     }
 }
 
@@ -292,55 +406,49 @@ pub fn end_realloc() {
 /// 返回地址，分配现场符号化用）。
 /// 用户堆不 poison（键 = [`key`] 页索引编码，非地址；且用户页维持清零语义，见
 /// [`OwnerKind`]）——只入 ledger 账。
+/// `class` = 块生命周期类别（打标分配器携带；关机类别归零检查的记账维度）。
 #[inline]
-pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
-    #[cfg(debug_assertions)]
+pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind, class: BlockClass) {
+    #[cfg(feature = "audit")]
     {
         // site 须先于任何函数调用捕获（jalr 覆写 ra——已实证：ra 读数曾是
         // poison 返回点，全部块 site 同址失真）。
         let (site, site2) = alloc_site(4);
         // realloc 窗口：记首笔新块（grow 内第一笔 alloc；窗口关 SIE，后续分配
-        // 必属同 grow 链，首笔即 allocate 新块）。
+        // 必属同 grow 链，首笔即 allocate 新块）并继承旧块类别（begin_realloc
+        // 已从 ledger 读出存入 RALLOC_CLASS）。
         let hart = crate::machine::hart_id().min(15) as usize;
+        let mut class = class;
         if IN_REALLOC[hart].load(Ordering::Relaxed)
             && RALLOC_NEW[hart].load(Ordering::Relaxed) == 0
         {
             RALLOC_NEW[hart].store(addr, Ordering::Relaxed);
+            class = BlockClass::from_u8(RALLOC_CLASS[hart].load(Ordering::Relaxed));
         }
         if let OwnerKind::KernelHeap = kind {
             poison(addr, size);
         }
-        ledger::LEDGER.mark(addr, size, site, site2, kind);
+        ledger::LEDGER.mark(addr, size, site, site2, kind, class);
+        // 类别计数：Audit 类豁免（不计数——审计工具不自扰关机归零检查）。
+        if class != BlockClass::Audit {
+            BLOCK_COUNTS[class as usize].fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
 /// 释放事件：活块注销 + KernelHeap 本体毒化复写（头 8B 随后被 freelist 头插
 /// 覆盖，其余保持毒化——UAF 读数变 0xCD）。用户堆不 poison（同 [`on_alloc`]：
 /// 键非地址、维持清零语义）——只注销账目。
+/// 类别自 ledger 记录读出（mark 时定型）：注销后按类减计数——realloc 搬家旧块
+/// 同样走本路径（新块已在窗口内继承类别，账目平衡）。
 #[inline]
 pub fn on_free(addr: usize, size: usize, kind: OwnerKind) {
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "audit")]
     {
-        // 持久块释放判定（基线记录后）：基线块被 free 只有两种来源——realloc
-        // 搬家（合法：portal::grow 窗口内，新块已 mark，账目迁址）或错释。
-        // 窗口命中 → rehome；窗口外命中 → report panic 转储带完整调用栈
-        // （第一现场——关机差集只能报「哪块没了」，这里报「谁放的」）。
-        let hart = crate::machine::hart_id().min(15) as usize;
-        if IN_REALLOC[hart].load(Ordering::Relaxed) && addr == RALLOC_OLD[hart].load(Ordering::Relaxed)
-        {
-            IN_REALLOC[hart].store(false, Ordering::Relaxed);
-            crate::memory::allocator::fence::audit::rehome_baseline(
-                addr,
-                RALLOC_NEW[hart].load(Ordering::Relaxed),
-            );
-        } else if crate::memory::allocator::fence::audit::is_baseline_block(addr) {
-            report(
-                IntegrityViolation::UnregisteredFree,
-                addr,
-                format_args!("persistent baseline block freed: {addr:#x} size {size}"),
-            );
+        let class = ledger::LEDGER.unmark(addr, size);
+        if class != BlockClass::Audit {
+            BLOCK_COUNTS[class as usize].fetch_sub(1, Ordering::Relaxed);
         }
-        ledger::LEDGER.unmark(addr, size);
         if let OwnerKind::KernelHeap = kind {
             poison(addr, size);
         }
@@ -348,19 +456,30 @@ pub fn on_free(addr: usize, size: usize, kind: OwnerKind) {
 }
 
 /// 帧分配事件：页金库取出（Free→held；双取出 / 活堆页泄漏进池现行）。
+/// `class` = 帧类别（打标分配器/块池 prime 携带；裸调用者默认 Persistent）。
+/// Audit 类跳过 debit（分配时未取出，释放时对偶跳过 credit——见
+/// [`on_frame_free`]）。
 #[inline]
-pub fn on_frame_alloc(addr: usize) {
-    #[cfg(debug_assertions)]
+pub fn on_frame_alloc(addr: usize, class: FrameClass) {
+    #[cfg(feature = "audit")]
     {
-        banker::BANKER.debit(addr);
+        if class != FrameClass::Audit {
+            banker::BANKER.debit(addr);
+            FRAME_COUNTS[class as usize].fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
 /// 帧释放事件：页金库存入（held→Free；存入陌生页 / 双释放现行）。
+/// 类别由 frame.rs 在 merge 前自 pagemeta 读出传入——按类减计数；合并清
+/// pagemeta 的页不丢计数（计数在本调用即已减）。
 #[inline]
-pub fn on_frame_free(addr: usize) {
-    #[cfg(debug_assertions)]
+pub fn on_frame_free(addr: usize, class: FrameClass) {
+    #[cfg(feature = "audit")]
     {
-        banker::BANKER.credit(addr);
+        if class != FrameClass::Audit {
+            banker::BANKER.credit(addr);
+            FRAME_COUNTS[class as usize].fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }

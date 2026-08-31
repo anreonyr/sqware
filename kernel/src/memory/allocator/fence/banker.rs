@@ -7,12 +7,11 @@
 //! 硬不变量（贴结构）：debit 前置 held==false（双取出 = 违例）；credit 前置
 //! held==true（存陌生页 = 违例）——表项是「谁借了这页」的唯一权威。
 
-#![cfg(debug_assertions)] // debug 构建生效；release 空体零开销
+#![cfg(feature = "audit")] // audit feature（debug 默认开；release 可显式 --features audit）
 
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 
 use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
@@ -102,24 +101,6 @@ impl Banker {
             .iter()
             .map(|w| w.load(Ordering::Relaxed).count_ones() as usize)
             .sum()
-    }
-
-    /// 遍历所有 held 页（PA）— 诊断/审计专用。
-    ///
-    /// 闭包在持锁外调用（每字读一次后即释放），故闭包可重入其它非 frame/tally
-    /// 路径。`Vec` 由调用方传入——本函数零分配；规模按 held_count() 上界预估。
-    pub fn collect_held(&self, out: &mut Vec<usize>) {
-        let base = self.base.load(Ordering::Relaxed);
-        let words = self.words.get().expect("banker not initialized");
-        for (wi, w) in words.iter().enumerate() {
-            let mut bits = w.load(Ordering::Relaxed);
-            while bits != 0 {
-                let bit = bits.trailing_zeros() as usize;
-                bits &= bits - 1; // 清最低位
-                let n = wi * 64 + bit;
-                out.push(base + n * PAGE_SIZE);
-            }
-        }
     }
 }
 

@@ -3,6 +3,7 @@
 // Task = 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
 // TaskBuilder 在团队容器内生成任务：栈 + trap 帧 + 填帧 + 入队。
 
+use alloc::alloc::Allocator;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -214,10 +215,20 @@ impl TaskBuilder {
             matches!(self.team.space.kind(), SpaceKind::Kernel),
             "TaskBuilder::closure 目前仅支持 kernel 团队（内核态任务）"
         );
-        // 双装箱：`Box<dyn FnOnce()>` 是胖指针不能直接转 usize，外包一层得薄指针
-        let inner: Box<dyn FnOnce()> = Box::new(f);
-        let holder: Box<Box<dyn FnOnce()>> = Box::new(inner);
-        let ptr = Box::into_raw(holder) as usize;
+        // 双装箱：`Box<dyn FnOnce()>` 是胖指针不能直接转 usize，外包一层得薄指针。
+        // 类别 = Task：闭包装箱属任务生命周期——关机 TASK_BLOCKS 归零（①）。
+        // 分配器类型 = &'static dyn Allocator（block::tag_task）——与 trampoline
+        // 的 Box::from_raw 类型一致；释放经地址路由 + ledger 类别记账，不依赖
+        // 分配器类型。
+        let inner: Box<dyn FnOnce(), &'static dyn Allocator> =
+            Box::new_in(f, crate::memory::allocator::block::tag_task());
+        let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>, &'static dyn Allocator> =
+            Box::new_in(inner, crate::memory::allocator::block::tag_task());
+        // into_raw_with_allocator（非 Global 的 Box 无 into_raw）——alloc 是
+        // 引用（drop 空操作），ptr 交 trampoline 的 Box::from_raw（Global 型，
+        // 释放按地址路由 + ledger 类别记账）。
+        let (ptr, _alloc) = Box::into_raw_with_allocator(holder);
+        let ptr = ptr as usize;
         // SAFETY: 闭包在本地装箱，a0 传其薄指针；SPP=1 回 S 态运行于 `ktask_trampoline`。
         let entry = VirtAddr::from_raw(ktask_trampoline as *const () as usize);
         self.entry(entry).arg(ptr).spawn()
@@ -264,17 +275,35 @@ impl TaskBuilder {
         }
 
         // 入队收尾
-        let ident = Arc::new(TaskIdent {
-            id,
-            name: self.name,
-            team: self.team.clone(),
-            stack: stack_span,
-            frame: frame_span,
-        });
-        let task = Arc::new(Task {
-            ident,
-            state: TaskState::Starved,
-        });
+        // 类别 = Task：Arc<TaskIdent>/Arc<Task> 属任务生命周期——关机 TASK_BLOCKS
+        // 归零（①）。Arc::new_in 产 Arc<T, &'static dyn Allocator>，经
+        // into_raw_with_allocator/from_raw 转回默认分配器型 Arc<T>（同布局；
+        // 释放路径按地址路由 + ledger 类别记账，不依赖分配器类型——见
+        // fence::on_free）。
+        let tag = crate::memory::allocator::block::tag_task();
+        let ident: Arc<TaskIdent> = unsafe {
+            let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(
+                TaskIdent {
+                    id,
+                    name: self.name,
+                    team: self.team.clone(),
+                    stack: stack_span,
+                    frame: frame_span,
+                },
+                tag,
+            ));
+            Arc::from_raw(ptr)
+        };
+        let task: Arc<Task> = unsafe {
+            let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(
+                Task {
+                    ident,
+                    state: TaskState::Starved,
+                },
+                tag,
+            ));
+            Arc::from_raw(ptr)
+        };
         conductor::task::push(task);
         Ok(id)
     }
@@ -295,7 +324,11 @@ pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
     // 写入其帧（frame.gpr[TP] = per_hart_ptr(self.hart)），__restore 恢复全部 GPR
     // 时 tp 即已在位——此处不再重建。
     // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
-    let holder: Box<Box<dyn FnOnce()>> = unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce()>) };
+    // 外层 Box 以默认分配器型（Global）重建（closure 侧为 &'static dyn Allocator
+    // ——同布局；释放经地址路由 + ledger 类别记账）。
+    let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>> = unsafe {
+        Box::from_raw(arg as *mut Box<dyn FnOnce(), &'static dyn Allocator>)
+    };
     holder();
     conductor::ktask::reap()
 }

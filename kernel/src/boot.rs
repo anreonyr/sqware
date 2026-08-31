@@ -114,14 +114,11 @@ pub fn init() -> ! {
     // fail-fast（panic → crash scene）。
     crate::health::run();
 
-    // 记录内核持久帧基线（一切任务 spawn 之前；关机时审计零泄漏）
-    #[cfg(debug_assertions)]
-    crate::memory::allocator::fence::audit::record_baseline();
-
     spawn_demos().expect("boot spawn failed");
 
-    // 完整性审计（debug）
-    #[cfg(debug_assertions)]
+    // 完整性审计（audit feature，debug 恒开）：三源交叉核对 + 类别计数 sanity
+    // （类别记账替代旧 boot 基线快照——见 fence/audit 模块头）。
+    #[cfg(feature = "audit")]
     crate::memory::allocator::fence::audit::audit();
 
     // 多核：HSM 拉起其余副核。
@@ -163,8 +160,8 @@ fn spawn_demos() -> Result<(), MapError> {
             task = task.stack(256 * 1024);
         }
         task.spawn()?;
-        // debug: 每个演示空间 簿记↔页表 一致性审计
-        #[cfg(debug_assertions)]
+        // audit: 每个演示空间 簿记↔页表 一致性审计
+        #[cfg(feature = "audit")]
         team.space.audit();
     }
 
@@ -218,7 +215,7 @@ fn spawn_demos() -> Result<(), MapError> {
     // 栈帧击穿 16 KiB 任务栈（栈走穿 guard → 未映射区/邻居槽 → 多形态崩溃）。
     // 修复：Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）替换按值 4 KiB 物化。
     storm_ktask(64)?;
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "audit")]
     kernel().expect("kernel team not initialized").space.audit();
     Ok(())
 }

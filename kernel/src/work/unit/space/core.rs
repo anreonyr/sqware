@@ -30,7 +30,7 @@ use core::num::NonZeroUsize;
 use crate::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE, TRAMPOLINE};
 use crate::lock::{Level, RelLock};
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame::allocator;
+use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
@@ -578,8 +578,9 @@ impl Space {
                         }
                     }
                 };
+                // 类别 = Task：COW 共享帧（Borrowed）属任务生命周期——关机归零。
                 let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> =
-                    Arc::new_in([0u8; PAGE_SIZE], allocator());
+                    Arc::new_in([0u8; PAGE_SIZE], frame::tag_task());
                 Arc::get_mut(&mut arc)
                     .expect("fresh arc")
                     .copy_from_slice(bytes_src);
@@ -620,8 +621,9 @@ impl Space {
                 let FrameState::Borrowed(arc) = &map.frames[idx] else {
                     unreachable!("checked above")
                 };
+                // 类别 = Task：COW 分裂新帧属任务生命周期——关机归零。
                 let mut nb: Frame = unsafe {
-                    Box::try_new_zeroed_in(allocator())
+                    Box::try_new_zeroed_in(frame::tag_task())
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
                 };
@@ -674,8 +676,9 @@ impl Space {
                     // Guard → 预留触碰；None → 不该缺页（内核 bug）
                     return Err(MapError::NoRegion);
                 }
+                // 类别 = Task：懒页物化帧属任务生命周期——关机归零。
                 let page: Frame = unsafe {
-                    Box::try_new_zeroed_in(allocator())
+                    Box::try_new_zeroed_in(frame::tag_task())
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
                 };
@@ -733,14 +736,14 @@ impl Space {
         }
     }
 
-    /// 页表树节点总数（debug 统计）。
+    /// 页表树节点总数（health 自测用，debug-only——非审计链）。
     #[cfg(debug_assertions)]
     pub fn table_count(&self) -> usize {
         self.with(|inner| inner.root.count())
     }
 
     /// 簿记↔页表一致性审计（boot / 压力测试后调用；不一致即 panic）。
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "audit")]
     pub(crate) fn audit(&self) {
         self.with(|inner| {
             for m in &inner.maps {

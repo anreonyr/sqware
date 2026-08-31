@@ -228,6 +228,10 @@ impl SpareAllocator {
             .allocate(align)
             .map_err(|_| InitError::OutOfMemory)?;
         let base = chunk.as_ptr() as *mut u8 as usize;
+        // 持久注册表：spare 仓块（日志 + panic 打印专用）永不归还——登记以便
+        // 关机逐项核 held（②）。
+        #[cfg(feature = "audit")]
+        crate::memory::allocator::fence::audit::register_persistent(base, "spare");
         let edge = base + chunk.len();
         Ok(Self {
             inner: SpinLock::new_level(Level::Spare, SpareInner::new(base, edge)),
