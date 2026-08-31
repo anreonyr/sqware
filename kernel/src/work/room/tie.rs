@@ -66,6 +66,8 @@ pub(super) fn halt() -> ! {
         // Meta drop 归还共享区帧——必须在帧基线审计前，否则残留 Arc 计入泄漏。
         crate::work::mail::dock::shutdown();
         crate::work::mail::ring::shutdown();
+        // 调度器槽载荷（per-hart LastIdent Arc）——同纪律：残留即误报泄漏。
+        crate::work::room::conductor::core::shutdown_slots();
         crate::memory::allocator::block::flush();
         #[cfg(debug_assertions)]
         crate::memory::allocator::fence::audit::check_baseline();

@@ -24,9 +24,13 @@ pub struct Record {
     /// 块类（2 的幂字节；canary slack 判定）。
     class: usize,
     /// 登记时请求字节数（canary 位置 = addr + size；unmark 校 SizeMismatch）。
-    size: usize,
+    /// pub(crate)：audit 关机差集报告引用（泄漏块详情转储）。
+    pub(crate) size: usize,
     /// 分配点返回地址（alloc-site，violation 报告转储）。
     pub(crate) site: usize,
+    /// 分配点第二候选（回溯扫描候选第 4 个——业务帧；与 site 一并转储，离线
+    /// addr2line 择真。0 = 候选不足）。
+    pub(crate) site2: usize,
     /// slack canary（Some = 在 addr+size 处写入 8 字节；UserHeap 恒 None）。
     canary: Option<u64>,
     /// 登记类别。
@@ -55,7 +59,7 @@ impl Ledger {
 
     /// 活块入账。前置：已 init、容量充足、地址未登记（DuplicateMark 现行）。
     /// KernelHeap 且 slack ≥ 8 时顺带写 slack canary。**零分配**。
-    pub fn mark(&self, addr: usize, size: usize, site: usize, kind: OwnerKind) {
+    pub fn mark(&self, addr: usize, size: usize, site: usize, site2: usize, kind: OwnerKind) {
         let mut g = self.inner.lock();
         let Some((map, soft)) = g.as_mut() else {
             report(
@@ -95,6 +99,7 @@ impl Ledger {
                 class,
                 size,
                 site,
+                site2,
                 canary,
                 kind,
             },
@@ -193,6 +198,15 @@ impl Ledger {
             }
         }
         bad
+    }
+
+    /// 账目存活查询（不报违例——realloc 搬家配对用：新块先 mark，旧块 free 时
+    /// 验证候选仍在账）。
+    pub fn is_live(&self, addr: usize) -> bool {
+        let g = self.inner.lock();
+        g.as_ref()
+            .map(|(m, _)| m.contains_key(&addr))
+            .unwrap_or(false)
     }
 
     pub fn len(&self) -> usize {

@@ -257,6 +257,27 @@ impl Conductor {
         }
     }
 
+    /// 关机清理：清空槽载荷（LastIdent/TaskIdent Arc 归还）——关机基线审计前
+    /// 调用，否则每 hart 末次 LastIdent 计入块差集误报泄漏（已实证：4 hart =
+    /// 4 个 48B 假泄漏）。
+    pub(crate) fn clear_slot(&self) {
+        let prev = self.info.swap(core::ptr::null_mut(), Ordering::AcqRel);
+        if prev.is_null() {
+            return;
+        }
+        let prev = prev as usize;
+        // SAFETY: 同 mount/demote 的 prev 回收纪律（swap 取走即独占；关机单核）。
+        if prev & LAST_TAG != 0 {
+            unsafe {
+                drop(Arc::from_raw((prev & !LAST_TAG) as *const LastIdent));
+            }
+        } else {
+            unsafe {
+                drop(Arc::from_raw(prev as *const TaskIdent));
+            }
+        }
+    }
+
     /// 轮转尾部（持锁、starved 非空）：Running → Starved 入队尾，队首上台。
     /// 调用方负责空队列判断（空 → 唯一任务续跑，不走本方法）。
     pub(super) fn rotate(&self, i: &mut ConductorInner, mut cur: Arc<Task>) -> Arc<Task> {
@@ -427,6 +448,15 @@ impl Conductor {
 // ── 核心：全局表（CONDUCTORS / blocked / reaped）──
 
 pub(super) static CONDUCTORS: OnceLock<&'static [Conductor]> = OnceLock::new();
+
+/// 关机清理：全部 hart 槽载荷归还（halt 路径、基线审计前调用——同 dock/ring
+/// shutdown 纪律：残留 Arc 计入差集即误报泄漏）。
+pub(crate) fn shutdown_slots() {
+    let Some(cs) = CONDUCTORS.get() else { return };
+    for c in cs.iter() {
+        c.clear_slot();
+    }
+}
 
 pub(super) fn conductors() -> &'static [Conductor] {
     CONDUCTORS.get().expect("conductors not initialized")

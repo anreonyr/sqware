@@ -18,6 +18,7 @@
 
 #![allow(unused)]
 use alloc::fmt;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub mod audit;
 pub mod banker;
@@ -125,20 +126,191 @@ pub(crate) fn key(asid: usize, va: usize) -> usize {
     }
 }
 
-/// 分配事件：活块入账（KernelHeap 整块毒化）。caller = 调用点 ra（分配现场符号化用）。
+/// 分配点回溯（诊断 site）：从当前 fp 沿标准 RV64 帧链上溯 depth 帧，取返回地址。
+///
+/// debug O0 调用链稳定：帧 0 = block 分配器（on_alloc 的调用者）、再上是
+/// core::alloc 与装箱/容器/业务帧。core 预编译库（__rust_alloc 等）无 FP
+/// （见 scene::kbacktrace 注释），链在彼处即断——断点前最后有效 ra 即 site。
+///
+unsafe extern "C" {
+    /// .rodata 段起点（link.ld `_rodata_start`）：候选 ra 须落在其下（.text 区）
+    /// ——.rodata 上的 vtable/常量指针是栈上常见数据，误收即 site 失真。
+    static _rodata_start: u8;
+}
+
+/// .text 段上界（.rodata 起点）。
+fn text_end() -> usize {
+    // SAFETY: 链接脚本符号，恒存在。
+    unsafe { (&raw const _rodata_start).addr() }
+}
+
+/// 分配点回溯（诊断 site）：从当前 fp 沿标准 RV64 帧链上溯 depth 帧；链在 core
+/// 预编译库处断（无 FP，见 scene::kbacktrace 同款问题）后，从断点帧顶向上扫描
+/// 收集候选 ra（4 对齐 + 镜像 .text + 非重复；连续 SCAN_GAP 字无候选 = 已越
+/// 活跃帧区，停）。返回 (site, site2) = 扫描候选第 3、4 个（第 1、2 个 ≈ core
+/// 帧保存 ra，无区分度）：候选序列 ≈ [core 帧 ra]×2、[装箱/容器帧 ra]、[业务
+/// 帧 ra]、…——两条一并打印，离线 addr2line 择真。
+///
+/// 守卫轻量（热路径）：fp 单调增（栈向下生长，必终止）+ 同栈窗（链帧必在本栈，
+/// 跨度 < 1 MiB——任务栈最大 256 KiB）+ 帧顶 16 对齐 + ra 落在 .text。读的
+/// 是当前栈的调用者帧（执行必经过，帧已物化）——栈窗 VA 在**用户半区**（见
+/// layout 栈窗），不可用 is_user 过滤。
+///
+/// 读侧逐页翻译（当前 satp 根，DRAM 守卫）：栈 slot 顶上是 guard/窗口边界
+/// （未映射），扫描越界须停而非缺页 panic。SCAN_WINDOW 内最多两页，按页
+/// 缓存翻译结果（每页一次 walk）。
+#[cfg(debug_assertions)]
+fn alloc_site(depth: usize) -> (usize, usize) {
+    let mut fp: usize;
+    // SAFETY: 读 s0 无副作用。
+    unsafe { core::arch::asm!("mv {0}, s0", out(reg) fp) };
+    let mut ra = 0usize;
+    let mut prev = 0usize;
+    for _ in 0..depth {
+        // SAFETY: fp 指向当前栈的调用者帧（帧指针链），只读两个字。
+        // 标准 RV64 布局：ra 在 [fp-8]、调用者 fp 在 [fp-16]（反汇编实证：
+        // 序言 st ra, N-8(sp); st s0, N-16(sp); s0 = sp+N）。
+        let (next, ret) = unsafe {
+            (
+                (fp as *const usize).sub(2).read_unaligned(),
+                (fp as *const usize).sub(1).read_unaligned(),
+            )
+        };
+        if next <= fp
+            || next - fp > 0x10_0000
+            || next & 0xF != 0
+            || ret & 3 != 0
+            || ret < 0x8020_0000
+            || ret >= text_end()
+        {
+            break; // 脱链 / 出栈窗 / 非对齐 / 非 .text 可执行地址
+        }
+        ra = ret;
+        prev = ret;
+        fp = next;
+    }
+    // ② 启发式接续：链在 core 预编译库处断（无 FP），其外层业务帧仍在栈上——
+    // 从断点帧顶向上逐字扫描收集候选 ra；收满 8 个或越活跃帧区即停。
+    let mut a = fp;
+    let mut gap = 0usize;
+    let mut cands: [usize; 8] = [0; 8];
+    let mut n = 0usize;
+    let mut cache: Option<(usize, usize)> = None; // (va 页基, pa 页基)
+    while a - fp < 0x4000 && gap < 96 && n < 8 {
+        let page = a & !(crate::memory::PAGE_SIZE - 1);
+        let pa_page = match cache {
+            Some((p, pa)) if p == page => pa,
+            _ => {
+                let satp_val = riscv::register::satp::read().bits();
+                let ppn = satp_val & ((1usize << 44) - 1);
+                let in_dram = |pa: crate::memory::manager::addr::PhysAddr| {
+                    (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000))
+                        .contains(&pa.as_usize())
+                };
+                // SAFETY: walk_raw 只读页表（S 态当前根表），无副作用。
+                let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
+                    crate::memory::manager::addr::PhysAddr::from_raw(ppn << 12),
+                    crate::memory::manager::addr::VirtAddr::from_raw(page),
+                    in_dram,
+                ) else {
+                    break; // 未映射页：越 slot 顶，停扫（不读不崩）
+                };
+                if !flags.contains(crate::memory::manager::entry::PteFlags::R) {
+                    break;
+                }
+                let pa = pa0.as_usize();
+                cache = Some((page, pa));
+                pa
+            }
+        };
+        // SAFETY: 页已翻译且 R 可读（上）；读侧 read_unaligned 无对齐 precondition。
+        let w = unsafe { ((pa_page + (a - page)) as *const usize).read_unaligned() };
+        if w & 3 == 0 && w >= 0x8020_0000 && w < text_end() && w != prev {
+            cands[n] = w;
+            n += 1;
+            prev = w;
+            gap = 0;
+        } else {
+            gap += 1;
+        }
+        a += 8;
+    }
+    // site = 候选第 5、6 个（跳过 4 层 core/分配器帧——实证候选序 ≈
+    // [fmt::num, block:345, block:632, hybrid, 业务帧…]）；不足则回退链尾 ra。
+    if n >= 5 {
+        (cands[4], if n >= 6 { cands[5] } else { 0 })
+    } else {
+        (ra, 0)
+    }
+}
+
+/// realloc 窗口（per-hart）：portal::grow 显式 begin/end 标记。grow 默认路径 =
+/// 同 hart「allocate 新 → copy → deallocate 旧」——窗口内 on_alloc 记首笔新块、
+/// on_free 见旧块即判定搬家（基线 rehome）而非错释。仅旧块在基线时才设窗
+/// （普通对象 realloc 不涉及基线判定，零开销）。
+///
+/// 窗口内**关 SIE**（临界区微秒级）：S-timer 抢占会让同 hart 其它任务在窗口内
+/// 分配——RALLOC_NEW 被覆盖即错配 rehome（已实证：rehome 落到无关块，基线
+/// 失配误报 missing）。关中断后窗口内分配必属本 grow。
+static IN_REALLOC: [AtomicBool; 16] = [const { AtomicBool::new(false) }; 16];
+static RALLOC_OLD: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
+static RALLOC_NEW: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
+/// SIE 恢复标记（0 = 无需恢复；非 0 = begin 关过 SIE，end 恢复）。
+static RALLOC_SIE: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
+
+/// 进入 realloc 窗口（portal::grow 调用；须与 [`end_realloc`] 配对）。
+/// 旧块在基线才设窗——其 free 将 rehome 基线而非报错释。
+#[cfg(debug_assertions)]
+pub fn begin_realloc(old: usize) {
+    let hart = crate::machine::hart_id().min(15) as usize;
+    if crate::memory::allocator::fence::audit::is_baseline_block(old) {
+        // 关 SIE：窗口内不可抢占（见 IN_REALLOC 注释——抢占污染配对）。
+        let sie = riscv::register::sstatus::read().sie() as usize;
+        // SAFETY: 关/开 SIE 仅改本 hart 中断使能位，窗口极短；end_realloc 恢复。
+        unsafe { riscv::register::sstatus::clear_sie() };
+        RALLOC_SIE[hart].store(sie, Ordering::Relaxed);
+        IN_REALLOC[hart].store(true, Ordering::Relaxed);
+        RALLOC_OLD[hart].store(old, Ordering::Relaxed);
+        RALLOC_NEW[hart].store(0, Ordering::Relaxed);
+    }
+}
+
+/// 退出 realloc 窗口（portal::grow 收尾；grow 失败/in-place 成功时旧块未 free，
+/// 窗口在此清）。恢复 SIE（begin 关过才恢复）。
+#[cfg(debug_assertions)]
+pub fn end_realloc() {
+    let hart = crate::machine::hart_id().min(15) as usize;
+    IN_REALLOC[hart].store(false, Ordering::Relaxed);
+    let sie = RALLOC_SIE[hart].swap(0, Ordering::Relaxed);
+    if sie != 0 {
+        // SAFETY: begin_realloc 关的 SIE，成对恢复。
+        unsafe { riscv::register::sstatus::set_sie() };
+    }
+}
+
+/// 分配事件：活块入账（KernelHeap 整块毒化）。caller = 分配点回溯（业务调用帧
+/// 返回地址，分配现场符号化用）。
 /// 用户堆不 poison（键 = [`key`] 页索引编码，非地址；且用户页维持清零语义，见
 /// [`OwnerKind`]）——只入 ledger 账。
 #[inline]
 pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
     #[cfg(debug_assertions)]
     {
+        // site 须先于任何函数调用捕获（jalr 覆写 ra——已实证：ra 读数曾是
+        // poison 返回点，全部块 site 同址失真）。
+        let (site, site2) = alloc_site(4);
+        // realloc 窗口：记首笔新块（grow 内第一笔 alloc；窗口关 SIE，后续分配
+        // 必属同 grow 链，首笔即 allocate 新块）。
+        let hart = crate::machine::hart_id().min(15) as usize;
+        if IN_REALLOC[hart].load(Ordering::Relaxed)
+            && RALLOC_NEW[hart].load(Ordering::Relaxed) == 0
+        {
+            RALLOC_NEW[hart].store(addr, Ordering::Relaxed);
+        }
         if let OwnerKind::KernelHeap = kind {
             poison(addr, size);
         }
-        let caller: usize;
-        // SAFETY: 读 ra 无副作用；asm 未声明 ra 视为 clobber，编译器不假设它保持。
-        unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
-        ledger::LEDGER.mark(addr, size, caller, kind);
+        ledger::LEDGER.mark(addr, size, site, site2, kind);
     }
 }
 
@@ -149,6 +321,25 @@ pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
 pub fn on_free(addr: usize, size: usize, kind: OwnerKind) {
     #[cfg(debug_assertions)]
     {
+        // 持久块释放判定（基线记录后）：基线块被 free 只有两种来源——realloc
+        // 搬家（合法：portal::grow 窗口内，新块已 mark，账目迁址）或错释。
+        // 窗口命中 → rehome；窗口外命中 → report panic 转储带完整调用栈
+        // （第一现场——关机差集只能报「哪块没了」，这里报「谁放的」）。
+        let hart = crate::machine::hart_id().min(15) as usize;
+        if IN_REALLOC[hart].load(Ordering::Relaxed) && addr == RALLOC_OLD[hart].load(Ordering::Relaxed)
+        {
+            IN_REALLOC[hart].store(false, Ordering::Relaxed);
+            crate::memory::allocator::fence::audit::rehome_baseline(
+                addr,
+                RALLOC_NEW[hart].load(Ordering::Relaxed),
+            );
+        } else if crate::memory::allocator::fence::audit::is_baseline_block(addr) {
+            report(
+                IntegrityViolation::UnregisteredFree,
+                addr,
+                format_args!("persistent baseline block freed: {addr:#x} size {size}"),
+            );
+        }
         ledger::LEDGER.unmark(addr, size);
         if let OwnerKind::KernelHeap = kind {
             poison(addr, size);
