@@ -88,12 +88,16 @@ impl HeapWindow {
                 return false;
             }
             let end = addr.as_usize().saturating_add(size);
+            // 2. 清叶 PTE + 回收变空的中间表（必须在 maps.retain 之前——
+            //    clear_ptes 按 map 的 is_materialized 决定 unmap 哪些页；
+            //    retain 把 Map 摘了，clear_ptes 就找不到本次释放的页，叶 PTE 漏 unmap，
+            //    下次同 VA alloc 触发 root.map 返 AlreadyMapped）。
+            inner.clear_ptes(addr, size);
+            // 3. 摘 map（帧随 Map drop 归还）。
             inner.maps.retain(|m| {
                 !(addr.as_usize() < m.va.as_usize().saturating_add(m.size.get())
                     && end > m.va.as_usize())
             });
-            // 2. 清叶 PTE + 回收变空的中间表（帧已随 map 移除 drop 归还）
-            inner.clear_ptes(addr, size);
             true
         })
     }

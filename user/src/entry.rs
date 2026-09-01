@@ -1,7 +1,6 @@
 //! 共享入口（user-bin 引导 + panic 处理）。
 
 use core::arch::global_asm;
-use core::fmt::{self, Write};
 
 use crate::env::{io::put, room::exit};
 
@@ -9,9 +8,9 @@ global_asm!(
     ".section .text._start",
     ".globl _start",
     "_start:",
-    "    call tls_bootstrap", // 主线程 TLS：tp → 本线程块（装配点）
+    "    call tls_bootstrap",
     "    call main",
-    "    call exit_trampoline", // main 返回（理论上 !，兜底） → room::exit
+    "    call exit_trampoline", // main 返回（理论上 !，兜底）→ room::exit
     "1: j 1b", // ec 返回则兜底循环
 );
 
@@ -25,24 +24,30 @@ extern "C" fn exit_trampoline() -> ! {
     exit()
 }
 
-/// 把 `put` 包成 `fmt::Write`—— panic_handler 唯一消费者。
-struct PanicWriter;
-
-impl Write for PanicWriter {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let _ = put(s);
-        Ok(())
-    }
-}
-
+// panic_handler 路径禁忌：不能走 writeln!/format!（潜在分配 → 双重 panic）。
+// 走直接 put 字符串 + 整数的十进制逐位写。
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    let mut w = PanicWriter;
+    let _ = put("user paniced\n");
     if let Some(loc) = info.location() {
-        let _ = writeln!(w, "panicked at {loc}");
-    } else {
-        let _ = writeln!(w, "panicked at <unknown location>");
+        let _ = put("  at ");
+        let _ = put(loc.file());
+        let _ = put(":");
+        let mut n = loc.line();
+        if n == 0 {
+            let _ = put("0");
+        } else {
+            let mut buf = [0u8; 20];
+            let mut i = 20;
+            while n > 0 && i > 0 {
+                i -= 1;
+                buf[i] = b'0' + (n % 10) as u8;
+                n /= 10;
+            }
+            let _ = put(core::str::from_utf8(&buf[i..]).unwrap_or("?"));
+        }
+        let _ = put("\n");
     }
-    let _ = writeln!(w, "{}", info.message());
     exit()
 }
+
