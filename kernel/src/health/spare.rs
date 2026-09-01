@@ -62,7 +62,5 @@ pub fn accept() {
         before.occupied
     );
 
-    crate::putln!(
-        "[health] spare: ok (ring {ring} B, dump budget {DUMP_BUDGET} B, drill clean)"
-    );
+    crate::putln!("[health] spare: ok (ring {ring} B, dump budget {DUMP_BUDGET} B, drill clean)");
 }

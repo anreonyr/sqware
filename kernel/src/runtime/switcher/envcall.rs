@@ -27,8 +27,8 @@ use crate::work::mail::ring;
 use crate::work::mail::{copy_in, copy_out};
 use crate::work::room::conductor::core::WaitKey;
 use crate::work::room::conductor::utask::{park, reap, starve, wait, wake};
-use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::Pending;
+use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::task::TaskIdent;
 
 use ubi::dock::DOCK_KEY_TAG;

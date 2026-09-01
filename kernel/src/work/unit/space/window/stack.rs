@@ -15,9 +15,9 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::Frame;
 
-use super::super::{Seg, Space};
 use super::super::core::Span;
 use super::super::map::{Map, Pending};
+use super::super::{Seg, Space};
 
 /// 栈窗口（零状态策略）。
 pub(crate) struct StackWindow;
@@ -38,15 +38,13 @@ impl StackWindow {
     /// # Errors
     ///
     /// 段未就绪 / 段耗尽 / 物理帧耗尽 → [`MapError`]（回滚：已分配帧与段归还）。
-    pub(crate) fn claim(
-        space: &Space,
-        size: usize,
-        kernel: bool,
-    ) -> Result<Span, MapError> {
+    pub(crate) fn claim(space: &Space, size: usize, kernel: bool) -> Result<Span, MapError> {
         let slot_size = size + TASK_STACK_GUARD;
         space.with_flush(|inner| {
             let user = inner.user.as_mut().ok_or(MapError::NoRegion)?;
-            let slot_base = user.allocate(slot_size).map_err(|_| MapError::OutOfMemory)?;
+            let slot_base = user
+                .allocate(slot_size)
+                .map_err(|_| MapError::OutOfMemory)?;
             let slot_va = VirtAddr::from_raw(slot_base);
             // 守护页 Guard → 溢出缺页可诊断
             inner.maps.push(Map::new(
@@ -85,7 +83,11 @@ impl StackWindow {
                     for j in 0..i {
                         inner.root.unmap(body_va + j * PAGE_SIZE);
                     }
-                    inner.user.as_mut().expect("user exists").deallocate(slot_base, slot_size);
+                    inner
+                        .user
+                        .as_mut()
+                        .expect("user exists")
+                        .deallocate(slot_base, slot_size);
                     return Err(MapError::OutOfMemory);
                 }
                 inner

@@ -17,9 +17,9 @@ use core::ptr::NonNull;
 use alloc::boxed::Box;
 use erra::ResultExt;
 
-use crate::machine;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
+    machine,
     memory::{
         PAGE_SIZE,
         allocator::{InitError, InitResult, Link, hybrid},

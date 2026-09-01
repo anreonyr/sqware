@@ -424,10 +424,9 @@ fn map_shared(space: &Arc<Space>, meta: &DockMeta, bytes: usize) -> Result<usize
         Vec::new(), // 借用：无帧
     )?;
     // 登记视图（回收身份：弱引用 + 段区间）
-    meta.views.lock().push((
-        Arc::downgrade(space),
-        Span::new(Seg::User, va, size, None),
-    ));
+    meta.views
+        .lock()
+        .push((Arc::downgrade(space), Span::new(Seg::User, va, size, None)));
     Ok(va.as_usize())
 }
 

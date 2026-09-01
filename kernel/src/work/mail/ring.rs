@@ -260,11 +260,7 @@ fn current_task_id() -> usize {
 
 fn register_task_ring(id: usize) {
     let task_id = current_task_id();
-    task_rings()
-        .lock()
-        .entry(task_id)
-        .or_default()
-        .push(id);
+    task_rings().lock().entry(task_id).or_default().push(id);
 }
 
 #[allow(dead_code)] // 契约文档：一对一 close 为全局操作，端级 unregister 预留
@@ -325,10 +321,9 @@ fn map_shared(space: &Arc<Space>, meta: &RingMeta, bytes: usize) -> Result<usize
         PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D,
         Vec::new(), // 借用：无帧
     )?;
-    meta.views.lock().push((
-        Arc::downgrade(space),
-        Span::new(Seg::User, va, size, None),
-    ));
+    meta.views
+        .lock()
+        .push((Arc::downgrade(space), Span::new(Seg::User, va, size, None)));
     Ok(va.as_usize())
 }
 

@@ -10,6 +10,6 @@ pub use dock::{
     DOCK_KEY_TAG, OFF_BUFFER, OFF_ITEM_LEN, OFF_LOCK, OFF_PIER_COUNT, OFF_QUAY, OFF_READ,
     OFF_SLOTS, OFF_STATE, OFF_WRITE,
 };
-pub use ring::RING_KEY_TAG;
 pub use fid::{ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall};
+pub use ring::RING_KEY_TAG;
 pub use ucall::{UArgs, UError, UResult, UcallBuilder};

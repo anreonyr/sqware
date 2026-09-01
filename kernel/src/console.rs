@@ -126,7 +126,10 @@ static PULL_BUF: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::ne
 
 pub(crate) fn pull() -> Option<u8> {
     let va = VirtAddr::from_raw(&PULL_BUF as *const _ as usize);
-    let (pa, _flags, _len) = crate::work::unit::team::kernel()?.space.segments(va, 1).next()?;
+    let (pa, _flags, _len) = crate::work::unit::team::kernel()?
+        .space
+        .segments(va, 1)
+        .next()?;
     let r = DbcnCall::new(Dbcn::ConsoleRead)
         .args(SArgs {
             a0: 1,

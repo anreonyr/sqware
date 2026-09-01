@@ -198,9 +198,15 @@ const ZERO_SPARE_VIEW: SpareView = SpareView {
 
 const ZERO_BASELINE: Baseline = Baseline {
     captured_at: 0,
-    frame: BaselineFrame { total: 0, occupied: 0 },
+    frame: BaselineFrame {
+        total: 0,
+        occupied: 0,
+    },
     block: BaselineBlock { occupied: 0 },
-    spare: BaselineSpare { total: 0, occupied: 0 },
+    spare: BaselineSpare {
+        total: 0,
+        occupied: 0,
+    },
 };
 
 // ── 装配 ──
@@ -417,7 +423,8 @@ pub fn delta() -> Result<Delta, Error> {
     Ok(Delta {
         frame: FrameDiff {
             total: cur.frame.total as isize - bl.frame.total as isize,
-            available: cur.frame.available as isize - (bl.frame.total as isize - bl.frame.occupied as isize),
+            available: cur.frame.available as isize
+                - (bl.frame.total as isize - bl.frame.occupied as isize),
             occupied: cur.frame.occupied as isize - bl.frame.occupied as isize,
         },
         block: BlockDiff {

@@ -67,10 +67,18 @@ pub fn init() -> InitResult<()> {
     bump::init()?;
     portal::switch(portal::Backend::Bump);
 
+    // statistics::init() 必须在任何走 hybrid 后端的分配之前——分配器热路径
+    // （frame.allocate / block.prime / spare.allocate）已统一收敛至 record_*
+    // 钩子调用 stats()，stats() 在 STATS 未装配时 panic "statistics not
+    // initialized"。先装配 stats：本次 Box::leak 经 bump 后端，不触发 record_*
+    // 自扰；hybrid init 内的 Box::leak / try_reserve 同样走 bump，无 record_*
+    // 触点。spare::init() 是首个走 hybrid 后端、必经 frame.allocate → record_frame_take
+    // 的调用，故 stats 必须在此之前就绪。
+    statistics::init().expect("statistics init: already initialized");
+
     hybrid::init()?;
     portal::switch(portal::Backend::Hybrid);
     spare::init()?;
-    statistics::init().expect("statistics init: already initialized");
 
     // 三分配器全部 init 后,捕获各自的 total / available 作为 baseline。
     let total_frames = frame::heap().total_pages();

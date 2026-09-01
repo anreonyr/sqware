@@ -9,9 +9,9 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
-use super::super::{Seg, Space};
 use super::super::core::Span;
 use super::super::map::{Map, Pending};
+use super::super::{Seg, Space};
 
 /// 共享懒窗口（零状态策略）。
 pub(crate) struct ShareWindow;

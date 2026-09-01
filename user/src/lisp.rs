@@ -615,4 +615,3 @@ fn err_line(e: LispError) {
     let _ = env::put(msg);
     let _ = env::put("\n");
 }
-

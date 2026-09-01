@@ -36,8 +36,8 @@ use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::{Frame, FrameState, TableNode};
 use crate::memory::manager::{asid, flush_asid, mode};
 
-use super::{Seg, SpaceKind};
 use super::map::{Map, Pending};
+use super::{Seg, SpaceKind};
 
 /// 一段 VA 区间 — 分配/映射动作的产物 = 回收的输入（类型同一）。
 ///
@@ -56,12 +56,7 @@ pub(crate) struct Span {
 }
 
 impl Span {
-    pub(crate) fn new(
-        seg: Seg,
-        va: VirtAddr,
-        size: usize,
-        pa: Option<PhysAddr>,
-    ) -> Self {
+    pub(crate) fn new(seg: Seg, va: VirtAddr, size: usize, pa: Option<PhysAddr>) -> Self {
         Self {
             seg,
             va,
@@ -115,10 +110,7 @@ impl SpaceInner {
     ///
     /// 重复设置（user 段已在册）或 base 非页对齐 / 越过 upper。
     pub(crate) fn attach_free(&mut self, base: usize) {
-        assert!(
-            self.user.is_none(),
-            "Space: user segment double attach"
-        );
+        assert!(self.user.is_none(), "Space: user segment double attach");
         let edge = mode::upper().as_usize();
         assert!(
             base.is_multiple_of(PAGE_SIZE) && base <= edge,
@@ -199,8 +191,7 @@ impl SpaceInner {
     pub(crate) fn overlaps(&self, start: VirtAddr, size: usize) -> bool {
         let end = start.as_usize().saturating_add(size);
         self.maps.iter().any(|m| {
-            start.as_usize() < m.va.as_usize().saturating_add(m.size.get())
-                && end > m.va.as_usize()
+            start.as_usize() < m.va.as_usize().saturating_add(m.size.get()) && end > m.va.as_usize()
         })
     }
 
@@ -267,9 +258,7 @@ impl Iterator for Segments<'_> {
         if self.va >= self.end {
             return None;
         }
-        let (pa, flags) = self
-            .space
-            .translate(VirtAddr::from_raw(self.va))?;
+        let (pa, flags) = self.space.translate(VirtAddr::from_raw(self.va))?;
         let page = self.va & !(PAGE_SIZE - 1);
         let chunk = (page + PAGE_SIZE - self.va).min(self.end - self.va);
         self.va += chunk;
@@ -324,13 +313,7 @@ impl SpaceBuilder {
                 .lock();
             ks_inner.root.walk_ref(TRAMPOLINE)?
         };
-        space.map(
-            TRAMPOLINE,
-            tramp_pa,
-            PAGE_SIZE,
-            tramp_flags,
-            Vec::new(),
-        )?;
+        space.map(TRAMPOLINE, tramp_pa, PAGE_SIZE, tramp_flags, Vec::new())?;
         Ok(())
     }
 }
@@ -484,7 +467,10 @@ impl Space {
         frames: Vec<Frame>,
     ) -> Result<(), MapError> {
         self.with_flush(|inner| {
-            if size == 0 || vaddr.offset() != 0 || !paddr.is_aligned() || size & (PAGE_SIZE - 1) != 0
+            if size == 0
+                || vaddr.offset() != 0
+                || !paddr.is_aligned()
+                || size & (PAGE_SIZE - 1) != 0
             {
                 return Err(MapError::NotAligned);
             }
@@ -606,9 +592,7 @@ impl Space {
     pub fn to_mut(&self, va: VirtAddr) -> Result<(), MapError> {
         let page = va.page_align();
         self.with_flush(|inner| {
-            let map = inner
-                .resolve_mut(page)
-                .ok_or(MapError::NotMapped)?;
+            let map = inner.resolve_mut(page).ok_or(MapError::NotMapped)?;
             let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
             let flags = map.flags;
             if let FrameState::Owned(_) = &map.frames[idx] {
@@ -712,7 +696,10 @@ impl Space {
     ///
     /// # Safety
     /// 调用方须保证此刻无并发写 `inner`（页表树不在变动）。
-    pub(crate) unsafe fn translate_unlocked(&self, vaddr: VirtAddr) -> Option<(PhysAddr, PteFlags)> {
+    pub(crate) unsafe fn translate_unlocked(
+        &self,
+        vaddr: VirtAddr,
+    ) -> Option<(PhysAddr, PteFlags)> {
         // SAFETY: 调用方保证无并发写；只读 walk 页表树。
         let inner = unsafe { &*self.inner.read_unlocked() };
         inner.translate(vaddr)

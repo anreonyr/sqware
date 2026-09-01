@@ -68,8 +68,7 @@ struct PersistEntry {
     name: &'static str,
 }
 
-static PERSISTENT: OnceLock<crate::lock::SpinLock<alloc::vec::Vec<PersistEntry>>> =
-    OnceLock::new();
+static PERSISTENT: OnceLock<crate::lock::SpinLock<alloc::vec::Vec<PersistEntry>>> = OnceLock::new();
 
 /// 登记持久帧（boot 调用；add-only）。`pa` = 帧块基址（分配事件首地址——banker
 /// held 位与类别记账均按分配事件首页）。
@@ -115,8 +114,7 @@ fn collect_kernel_tables(out: &mut alloc::vec::Vec<usize, &'static dyn Allocator
     let satp_val = riscv::register::satp::read().bits();
     let root = (satp_val & ((1usize << 44) - 1)) << 12;
     let ok = |pa: PhysAddr| {
-        (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000))
-            .contains(&pa.as_usize())
+        (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000)).contains(&pa.as_usize())
     };
     if ok(PhysAddr::from_raw(root)) {
         descend(root, crate::memory::manager::mode::levels(), &ok, out);
@@ -178,9 +176,7 @@ pub fn check_baseline() {
     let walk_tables = now_tables.len();
     let table_frames = frame.classes[Class::Table as usize];
     if table_frames != walk_tables {
-        crate::putln!(
-            "[audit] table frames {table_frames} != kernel-walk count {walk_tables}:"
-        );
+        crate::putln!("[audit] table frames {table_frames} != kernel-walk count {walk_tables}:");
         for (i, &pa) in now_tables.iter().take(16).enumerate() {
             crate::putln!("  walk[{i}] = {pa:#x}");
         }
@@ -189,9 +185,7 @@ pub fn check_baseline() {
     // ④ 块池页：计数诊断（正常周转，非违规）。
     crate::memory::allocator::block::heap().collect_owned(&mut now_pool);
     let pool_pages = now_pool.len();
-    crate::putln!(
-        "[audit] block-pool pages: {pool_pages} (turnover, not a violation)"
-    );
+    crate::putln!("[audit] block-pool pages: {pool_pages} (turnover, not a violation)");
 
     // ⑤ 一致性：banker held 与 frame.occupied 必须相符（簿记不变量）。
     let held = super::banker::BANKER.held_count();

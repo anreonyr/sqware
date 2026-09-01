@@ -12,9 +12,9 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::Frame;
 
-use super::super::{Seg, Space};
 use super::super::core::Span;
 use super::super::map::Map;
+use super::super::{Seg, Space};
 
 /// 堆窗口（零状态策略）。
 pub(crate) struct HeapWindow;
@@ -36,13 +36,9 @@ impl HeapWindow {
             let base = user.allocate(size).map_err(|_| MapError::OutOfMemory)?;
             let va = VirtAddr::from_raw(base);
             // 先登记空 map（堆立即物化：pending None），再逐页装 PTE + 注入
-            inner.maps.push(Map::new(
-                va,
-                size,
-                flags,
-                None,
-                alloc::vec::Vec::new(),
-            ));
+            inner
+                .maps
+                .push(Map::new(va, size, flags, None, alloc::vec::Vec::new()));
             let pages = size / PAGE_SIZE;
             let mut mapped = 0usize;
             while mapped < pages {
@@ -60,7 +56,11 @@ impl HeapWindow {
                         inner.root.unmap(va + i * PAGE_SIZE);
                     }
                     inner.maps.retain(|m| m.va != va);
-                    inner.user.as_mut().expect("user exists").deallocate(base, size);
+                    inner
+                        .user
+                        .as_mut()
+                        .expect("user exists")
+                        .deallocate(base, size);
                     return Err(MapError::OutOfMemory);
                 }
                 // 逐页注入帧（保持「帧 i ↔ va + i·PAGE」不变量）

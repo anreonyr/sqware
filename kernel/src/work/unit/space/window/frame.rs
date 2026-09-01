@@ -13,9 +13,9 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::{Frame, FrameState};
 
-use super::super::{Seg, Space};
 use super::super::core::Span;
 use super::super::map::Map;
+use super::super::{Seg, Space};
 
 /// 帧窗口（零状态策略）。
 pub(crate) struct FrameWindow;
@@ -31,10 +31,11 @@ impl FrameWindow {
     pub(crate) fn claim(space: &Space) -> Result<Span, MapError> {
         space.with_flush(|inner| {
             let kernel = &mut inner.kernel;
-            let va = kernel.allocate(PAGE_SIZE).map_err(|_| MapError::OutOfMemory)?;
+            let va = kernel
+                .allocate(PAGE_SIZE)
+                .map_err(|_| MapError::OutOfMemory)?;
             let va = VirtAddr::from_raw(va);
-            let flags =
-                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
+            let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
             // 类别 = Task：trap 帧属任务生命周期——关机必须归零（①）。
             let page: Frame = crate::tag!(Task, unsafe {
                 Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())

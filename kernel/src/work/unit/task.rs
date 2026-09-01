@@ -219,10 +219,14 @@ impl TaskBuilder {
         // 类别 = Task：闭包装箱属任务生命周期——关机 TASK_BLOCKS 归零（①）。
         // 装饰器标注（块侧：mark 默认 Persistent 后 relabel）；释放经地址路由 +
         // ledger 类别记账，不依赖分配器类型。
-        let inner: Box<dyn FnOnce(), &'static dyn Allocator> =
-            crate::tag!(Task, Box::new_in(f, crate::memory::allocator::block::allocator()));
-        let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>, &'static dyn Allocator> =
-            crate::tag!(Task, Box::new_in(inner, crate::memory::allocator::block::allocator()));
+        let inner: Box<dyn FnOnce(), &'static dyn Allocator> = crate::tag!(
+            Task,
+            Box::new_in(f, crate::memory::allocator::block::allocator())
+        );
+        let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>, &'static dyn Allocator> = crate::tag!(
+            Task,
+            Box::new_in(inner, crate::memory::allocator::block::allocator())
+        );
         // into_raw_with_allocator（非 Global 的 Box 无 into_raw）——alloc 是
         // 引用（drop 空操作），ptr 交 trampoline 的 Box::from_raw（Global 型，
         // 释放按地址路由 + ledger 类别记账）。
@@ -328,9 +332,8 @@ pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
     // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
     // 外层 Box 以默认分配器型（Global）重建（closure 侧为 &'static dyn Allocator
     // ——同布局；释放经地址路由 + ledger 类别记账）。
-    let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>> = unsafe {
-        Box::from_raw(arg as *mut Box<dyn FnOnce(), &'static dyn Allocator>)
-    };
+    let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>> =
+        unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce(), &'static dyn Allocator>) };
     holder();
     conductor::ktask::reap()
 }

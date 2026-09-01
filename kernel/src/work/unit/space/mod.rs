@@ -23,8 +23,8 @@ mod map;
 mod seg;
 pub(crate) mod window;
 
-pub use core::{Space, SpaceBuilder};
 pub(crate) use core::Span;
+pub use core::{Space, SpaceBuilder};
 pub(crate) use map::Pending;
 pub(crate) use seg::Seg;
 

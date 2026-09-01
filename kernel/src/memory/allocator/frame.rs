@@ -62,52 +62,35 @@ fn block_power(size: usize) -> usize {
         - PAGE_SIZE.ilog2() as usize
 }
 
-impl FrameAllocator {
-    /// 分配一帧（语义同 [`Allocator::allocate`] 主体；类别标注由 fence 打标分配器
-    /// 在委托返回后完成——本文件零审计词汇，见 fence 模块头解耦纪律）。
-    fn allocate_frame(
-        &self,
-        layout: core::alloc::Layout,
-    ) -> Result<NonNull<[u8]>, AllocError> {
-        let size = layout.size().max(PAGE_SIZE);
-        let power = block_power(size);
-
-        let mut guard = self.inner.lock();
-        let frame = &mut *guard;
-
-        let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
-        let addr = frame.frame_addr(index) as *mut u8;
-        // 护栏：分配结果必须在 free 区 [base, edge)——坏地址即刻暴露
-        //（崩点如 0xffffffffff6970 来自被破坏的 freelist 节点头）。
-        checker::check_dram_addr(addr as usize, "frame alloc (split result)");
-        #[cfg(feature = "audit")]
-        {
-            let a = addr as usize;
-            assert!(
-                (a >= frame.base) && (a < frame.edge),
-                "frame alloc out of range: {a:#x} not in [{:#x}, {:#x})",
-                frame.base,
-                frame.edge
-            );
-        }
-        // 护栏事件：帧由金库取出。
-        super::fence::on_frame_alloc(addr as usize);
-        // 类别：alloc 时尚未打标,记为默认 Persistent;relabel 后 fence::tag 内
-        // record_block_relabel 迁移计数。
-        super::statistics::record_frame_take(super::fence::Class::Persistent);
-
-        checker::log_frame_alloc(addr as usize, index, power);
-
-        Ok(NonNull::slice_from_raw_parts(
-            NonNull::new(addr).ok_or(AllocError)?,
-            size,
-        ))
-    }
-}
-
 unsafe impl Allocator for FrameAllocator {
     fn allocate(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, AllocError> {
-        self.allocate_frame(layout)
+        {
+            let this = &self;
+            let size = layout.size().max(PAGE_SIZE);
+            let power = block_power(size);
+            let mut guard = this.inner.lock();
+            let frame = &mut *guard;
+            let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
+            let addr = frame.frame_addr(index) as *mut u8;
+            checker::check_dram_addr(addr as usize, "frame alloc (split result)");
+            #[cfg(feature = "audit")]
+            {
+                let a = addr as usize;
+                assert!(
+                    (a >= frame.base) && (a < frame.edge),
+                    "frame alloc out of range: {a:#x} not in [{:#x}, {:#x})",
+                    frame.base,
+                    frame.edge
+                );
+            }
+            super::fence::on_frame_alloc(addr as usize);
+            super::statistics::record_frame_take(super::fence::Class::Persistent);
+            checker::log_frame_alloc(addr as usize, index, power);
+            Ok(NonNull::slice_from_raw_parts(
+                NonNull::new(addr).ok_or(AllocError)?,
+                size,
+            ))
+        }
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
@@ -232,7 +215,7 @@ impl FrameInner {
     // # Safety
     //
     // 调用者需确保 freelist[order] 的链表节点指向有效的已映射物理内存。
-    unsafe fn pop_link(&mut self, power: usize) -> Option<usize> {
+    unsafe fn pull_link(&mut self, power: usize) -> Option<usize> {
         unsafe {
             let head = self.freelist[power]?;
             checker::check_dram_addr(head.as_ptr() as usize, "frame pop_link (head)");
@@ -344,7 +327,7 @@ impl FrameInner {
                 return None;
             }
 
-            let index = self.pop_link(k)?;
+            let index = self.pull_link(k)?;
 
             // 逐级拆分：每级把 frame 推入 freelist
             while k > power {
