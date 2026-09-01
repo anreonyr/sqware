@@ -5,12 +5,12 @@ extern crate alloc;
 
 use user::core::mail::{MSG_LEN, Port};
 use user::core::task;
-use user::env::{io::put, room::exit};
+use user::env::io::put;
 
 // mailer：port 内核邮路全链路——子任务 push 10 轮，主任务 pull 10 轮校验。
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let _ = put("mailer\n");
     let port = Port::open().expect("port open");
 
@@ -30,6 +30,4 @@ extern "C" fn main() -> ! {
             let _ = put("P\n");
         }
     }
-
-    exit()
 }

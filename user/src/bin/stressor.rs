@@ -6,12 +6,12 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use user::PAGE_SIZE;
-use user::env::{io::put, memory, room::exit};
+use user::env::{io::put, memory};
 
 // stressor：用户堆分配器压力测试——三幕：多尺寸混合 / 持有-全释放 / 失败路径。
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let _ = put("stressor\n");
 
     for i in 0..256usize {
@@ -37,5 +37,4 @@ extern "C" fn main() -> ! {
     let _ = put("3\n");
 
     let _ = put("stressor: ok\n");
-    exit()
 }

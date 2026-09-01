@@ -9,7 +9,7 @@ use user::env::io::put;
 use user::lisp::{Core, repl};
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let _ = put("lisp\n");
     let mut core = Core::new();
     selftest(&mut core);

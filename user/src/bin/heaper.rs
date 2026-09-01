@@ -10,7 +10,7 @@ use user::env::io::put;
 // heaper：每迭代分配并释放一个非页尺寸 `Vec`；每 0xF 次写 'H'。
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let mut n: u64 = 0;
     let _ = put("heaper\n");
     loop {

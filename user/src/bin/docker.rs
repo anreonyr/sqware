@@ -6,12 +6,12 @@ extern crate alloc;
 use user::core::dock::{open, Pier};
 use user::core::mail::MSG_LEN;
 use user::core::task;
-use user::env::{io::put, room::exit};
+use user::env::io::put;
 
 // docker：dock 共享内存邮路全链路——主任务建 dock，子任务并发 push，quay 校验。
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let _ = put("docker\n");
     let (pier, quay) = open(MSG_LEN, 8).expect("dock open");
 
@@ -53,5 +53,4 @@ extern "C" fn main() -> ! {
 
     drop(pier);
     drop(quay);
-    exit()
 }

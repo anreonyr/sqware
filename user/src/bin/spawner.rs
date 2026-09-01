@@ -11,7 +11,7 @@ use user::env::{io::put, room::sleep};
 // spawner：反复派一个算 `0..1000` 的闭包并 join 取回。
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let _ = put("spawner\n");
     loop {
         let sum = task::closure(|| {

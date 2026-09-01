@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use user::env::{io::put, memory, room::exit};
+use user::env::{io::put, memory};
 
 const PTE_V: usize = 1;
 const PTE_R: usize = 2;
@@ -24,12 +24,12 @@ fn put_hex(v: usize) {
 // mmaper：mmap 三幕演示——高位懒映射 / 触碰补帧 / 精确释放。
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let region = match memory::mmap(1usize << 40, None) {
         Ok(va) => va,
         Err(_) => {
             let _ = put("mmaper: mmap FAILED\n");
-            exit()
+            return;
         }
     };
     let _ = put("mmaper: mmap(1 TiB) @ ");
@@ -57,7 +57,7 @@ extern "C" fn main() -> ! {
         Ok(va) if va == FIXED => { let _ = put("mmaper: mmap_at(0x8000, 16K) ok\n"); }
         _ => {
             let _ = put("mmaper: mmap_at FAILED\n");
-            exit()
+            return;
         }
     }
     for i in 0..4 {
@@ -78,5 +78,4 @@ extern "C" fn main() -> ! {
         Ok(()) => { let _ = put("mmaper: munmap fixed ok\n"); }
         Err(_) => { let _ = put("mmaper: munmap fixed FAILED\n"); }
     }
-    exit()
 }

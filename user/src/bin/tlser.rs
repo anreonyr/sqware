@@ -5,14 +5,14 @@ extern crate alloc;
 
 use user::core::task;
 use user::core::tls;
-use user::env::{io::put, room::exit};
+use user::env::io::put;
 
 // tlser：TLS 地基验收——主线程 + 子线程各自独立 TLS 块。
 
 const SLOT: usize = 0;
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let _ = put("tlser\n");
     let mine = tls::base();
 
@@ -38,5 +38,4 @@ extern "C" fn main() -> ! {
     } else {
         let _ = put("tlser: FAILED\n");
     }
-    exit()
 }

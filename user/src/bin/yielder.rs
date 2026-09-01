@@ -5,7 +5,7 @@
 use user::env::{io::put, room::starve};
 
 #[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn main() {
     let mut n: u64 = 0;
     loop {
         n = n.wrapping_add(1);
