@@ -5,16 +5,14 @@ extern crate alloc;
 
 use core::time::Duration;
 
-use user::{
-    env::{self, put},
-    task,
-};
+use user::core::task;
+use user::env::{io::put, room::sleep};
 
-// spawner：验证 task::closure + Join：反复派一个算 `0..1000` 的闭包并 join 取回，成功则写 'J'。
+// spawner：反复派一个算 `0..1000` 的闭包并 join 取回。
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
-    put("spawner\n").ok();
+    let _ = put("spawner\n");
     loop {
         let sum = task::closure(|| {
             let mut s: u64 = 0;
@@ -26,8 +24,8 @@ extern "C" fn main() -> ! {
         .join();
 
         if sum == 499_500 {
-            env::put("S\n").ok();
+            let _ = put("S\n");
         }
-        env::sleep(Duration::from_millis(1000)).ok();
+        let _ = sleep(Duration::from_millis(1000));
     }
 }

@@ -1,9 +1,9 @@
 #![no_std]
 #![no_main]
-//! sleeper：睡眠 16 毫秒循环（用户面 park），每 64 次唤醒写 'E'（低频心跳防刷屏）。
+//! sleeper：睡眠 16 毫秒循环，每 64 次唤醒写 'E'。
 
 use core::time::Duration;
-use user::env::{put, sleep};
+use user::env::{io::put, room::sleep};
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {

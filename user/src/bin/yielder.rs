@@ -1,9 +1,8 @@
 #![no_std]
 #![no_main]
-//! yielder：每迭代主动让出（用户面 starve），每 2^16 次让出写 'B'（低频心跳
-//! 防刷屏）。
+//! yielder：每迭代主动让出（用户面 starve），每 2^16 次让出写 'B'。
 
-use user::env::{put, starve};
+use user::env::{io::put, room::starve};
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {

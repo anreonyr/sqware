@@ -5,25 +5,17 @@ extern crate alloc;
 
 use alloc::format;
 
-use user::env;
+use user::env::io::put;
 use user::lisp::{Core, repl};
-
-// lisp：教学 Lisp shell——独占控制台输入（唯一 get 消费者），REPL 常驻直到
-// (exit) 或 Ctrl+D。语言子集（无闭包）：整数/符号/nil/t + quote/car/cdr/cons/
-// eq?/+/-/*/(整除)/if/define/lambda + 递归。
-//
-// 先跑语言自测（不依赖控制台输入，冒烟可验证 read/eval/print 链路），
-// 再进入 repl。
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
-    env::put("lisp\n").ok();
+    let _ = put("lisp\n");
     let mut core = Core::new();
     selftest(&mut core);
     repl(&mut core)
 }
 
-/// 语言自测：求值一组表达式，与期望文本比对；逐项打 "ok"（失败打 FAIL 明细）。
 fn selftest(core: &mut Core) {
     for (src, expect) in [
         ("(+ 1 2)", "3"),
@@ -59,8 +51,8 @@ fn selftest(core: &mut Core) {
                 }
             },
         };
-        let _ = env::put(&report);
-        let _ = env::put("\n");
+        let _ = put(&report);
+        let _ = put("\n");
     }
-    let _ = env::put("selftest done\n");
+    let _ = put("selftest done\n");
 }
