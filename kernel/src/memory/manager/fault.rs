@@ -91,6 +91,8 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
     // 0. COW：写缺页命中共享（Shared）页 → 分裂为私有可写（保留共享内容）。
     //    必须先于 Re-walk：共享页 PTE 有效（置了 A/D、清了 W），若不拦会在
     //    步骤 1 被当成 A/D 竞争而重试 → 无限缺页循环。
+    //    注：Lazy 区在 `SpaceInner::share` 时未触页被跳过（见其注释），
+    //    首次写缺页仍走 own 分裂，非 COW。
     if fault.addr.is_user() && matches!(fault.kind, FaultKind::Store) && space.is_shared(fault.addr)
     {
         return space.own(fault.addr).is_ok();

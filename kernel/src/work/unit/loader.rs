@@ -8,7 +8,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::parser::{LoadSegment, ParsedProgram};
-use super::space::Space;
+use super::space::{Pending, Space};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
@@ -50,6 +50,15 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         for seg in &parsed.segments {
             let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;
             inner.attach(seg.vaddr, frames_for_segment(bytes, seg)?, flags)?;
+            // BSS 尾段（filesz 后的整页零区）：懒登记——首访缺页物化零页。
+            // mem_pages == file_pages 时无差额（当前 ELF 即此情形）。
+            let file_pages = seg.filesz.div_ceil(PAGE_SIZE);
+            let mem_pages = seg.memsz.div_ceil(PAGE_SIZE);
+            if mem_pages > file_pages {
+                let bss_va = seg.vaddr + file_pages * PAGE_SIZE;
+                let bss_size = (mem_pages - file_pages) * PAGE_SIZE;
+                inner.reserve(bss_va, bss_size, flags, Some(Pending::Lazy))?;
+            }
         }
         Ok(())
     })?;

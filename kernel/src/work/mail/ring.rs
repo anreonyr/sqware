@@ -314,7 +314,7 @@ fn map_shared(space: &Arc<Space>, meta: &RingMeta, bytes: usize) -> Result<usize
     }
     let size = bytes.next_multiple_of(PAGE_SIZE);
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-    // 空间事务内取段 + 借帧装配（一次加锁；与 dock 同构）
+    // 模式同 dock（取段 + 借帧装配）；不收回窗口类型——见 window/mod.rs 注。
     let va = space.with_flush(|inner| {
         let va = inner.allocate(Seg::User, size)?;
         inner.borrow(

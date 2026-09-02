@@ -415,8 +415,7 @@ fn map_shared(space: &Arc<Space>, meta: &DockMeta, bytes: usize) -> Result<usize
     }
     let size = bytes.next_multiple_of(PAGE_SIZE);
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-    // 空间事务内取段 + 借帧装配（一次加锁；dock 属非窗口借用方，走事务闭包
-    // 组合 inner 原语——与窗口同构）
+    // 模式同窗口（取段 + 借帧装配）；不收回窗口类型——见 window/mod.rs 注。
     let va = space.with_flush(|inner| {
         let va = inner.allocate(Seg::User, size)?;
         inner.borrow(

@@ -6,15 +6,6 @@
 // - [`Space`] = 适配：`RelLock` 门（[`with`]/[`with_flush`]）+ 每操作 ≤3 行转发；
 //   锁外按本空间 ASID 刷 TLB。`Space` 不知道栈/帧/堆/mmap 是什么。
 //
-// 原语分族（装配 / 拆除 / 物化 / 保护 / 共享 / 段 / 查询）：
-//   装配   reserve（只登记）/ claim（自配帧）/ attach（已备帧）/ borrow（借帧）
-//   拆除   remove（唯一，不碰段——段由调用方 deallocate）
-//   物化   materialize（懒页零帧）/ frame（唯一帧分配点）
-//   保护   protect
-//   共享   share ⇄ own（COW：共享只读 ⇄ 写时分裂私有）
-//   段     allocate ⇄ deallocate（lowest first-fit / 精确匹配还）
-//   查询   overlaps / resolve_ref / resolve_mut / translate / audit
-//
 // # 锁约定（`Space::inner`，RelLock）
 //
 // 全部可变状态由 `RelLock` 互斥（跨 hart 真自旋，同 hart 可重入）。`kind`
@@ -197,8 +188,7 @@ impl SpaceInner {
     /// 立即装配（Eager）：登记全物化 Map + 逐页 [`Self::frame`]() 分配帧、
     /// 装叶、注入（帧自产，物理可断）。
     ///
-    /// 中途帧耗尽回滚**装配**（清已装叶 + 摘自身 Map）；段由调用方负责退还
-    /// （`claim` 不碰段——段是调用方取的）。
+    /// 中途帧耗尽回滚**装配**（清已装叶 + 摘自身 Map）。
     pub(crate) fn claim(
         &mut self,
         va: VirtAddr,
@@ -212,29 +202,10 @@ impl SpaceInner {
             return Err(MapError::AlreadyMapped);
         }
         let pages = size / PAGE_SIZE;
-        // 先登记空 map（全物化 pending None），再逐页装叶 + 注入
+        // 先登记空 map（全物化 pending None），再走 install 装帧
         self.maps
             .push(Map::new(va, size, flags, None, BTreeMap::new()));
-        let mut mapped = 0usize;
-        while mapped < pages {
-            let m_va = va + mapped * PAGE_SIZE;
-            let page = Self::frame()?;
-            let pa = PhysAddr::from_raw(page.as_ptr() as usize);
-            if self.root.map(m_va, pa, PAGE_SIZE, flags).is_err() {
-                // 回滚装配：清已装叶 + 摘自身 Map（段由调用方退）
-                for j in 0..mapped {
-                    self.root.unmap(va + j * PAGE_SIZE);
-                }
-                self.maps.retain(|m| m.va != va);
-                return Err(MapError::OutOfMemory);
-            }
-            self.maps
-                .last_mut()
-                .expect("claim map exists")
-                .inject(mapped, page);
-            mapped += 1;
-        }
-        Ok(())
+        self.install(va, pages, flags, MapMode::Claim(va), || Self::frame())
     }
 
     /// 装配调用方配好的帧（物理可断，逐帧装叶）+ 登记全物化 Map。
@@ -253,23 +224,13 @@ impl SpaceInner {
         if self.overlaps(vaddr, size) {
             return Err(MapError::AlreadyMapped);
         }
-        let mut owned: BTreeMap<usize, FrameState> = BTreeMap::new();
-        for (i, frame) in frames.into_iter().enumerate() {
-            let pa = PhysAddr::from_raw(frame.as_ptr() as usize);
-            if self
-                .root
-                .map(vaddr + i * PAGE_SIZE, pa, PAGE_SIZE, flags)
-                .is_err()
-            {
-                for j in 0..i {
-                    self.root.unmap(vaddr + j * PAGE_SIZE);
-                }
-                return Err(MapError::OutOfMemory);
-            }
-            owned.insert(i, FrameState::Owned(frame));
-        }
-        self.maps.push(Map::new(vaddr, size, flags, None, owned));
-        Ok(())
+        // 先登记空 map（全物化 pending None），再走 install 用外部帧装叶
+        self.maps
+            .push(Map::new(vaddr, size, flags, None, BTreeMap::new()));
+        let mut iter = frames.into_iter();
+        self.install(vaddr, pages, flags, MapMode::Claim(vaddr), move || {
+            Ok(iter.next().expect("attach: frame iter exhausted"))
+        })
     }
 
     /// 借帧连续映射：物理地址已知、一次装连续段，不持帧（帧归外部：机器/
@@ -387,26 +348,19 @@ impl SpaceInner {
     /// 懒页物化：查 Lazy 映射 → 分配零页 → 装叶 + 注入帧。
     ///
     /// `pending` 非 Lazy（Guard / None）或无映射 → 错误。
+    /// 循环失败时 [`InstallGuard`] 按 [`MapMode::Materialize`] 自动拆 PTE +
+    /// 摘 frames 键；收尾成功须 `commit()` 拆雷。
     pub(crate) fn materialize(&mut self, va: VirtAddr, size: usize) -> Result<(), MapError> {
         let pages = size.div_ceil(PAGE_SIZE);
-        for i in 0..pages {
-            let m_va = va + i * PAGE_SIZE;
-            let (pending, flags) = {
-                let m = self.resolve_ref(m_va).ok_or(MapError::NoRegion)?;
-                (m.pending, m.flags | PteFlags::A | PteFlags::D)
-            };
-            if pending != Some(Pending::Lazy) {
-                // Guard → 预留触碰；None → 不该缺页（内核 bug）
+        // 前置：从已存在的 Lazy map 拿 flags + 校验 pending
+        let flags = {
+            let m = self.resolve_ref(va).ok_or(MapError::NoRegion)?;
+            if m.pending != Some(Pending::Lazy) {
                 return Err(MapError::NoRegion);
             }
-            let page = Self::frame()?;
-            let pa = PhysAddr::from_raw(page.as_ptr() as usize);
-            self.root.map(m_va, pa, PAGE_SIZE, flags)?;
-            let map = self.resolve_mut(m_va).expect("map exists (checked above)");
-            let idx = (m_va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-            map.inject(idx, page);
-        }
-        Ok(())
+            m.flags | PteFlags::A | PteFlags::D
+        };
+        self.install(va, pages, flags, MapMode::Materialize, || Self::frame())
     }
 
     /// 修改已映射区域的保护标志：按物化态分流——全物化（含借用）→ `walk_mut`
@@ -441,6 +395,10 @@ impl SpaceInner {
 
     /// 把 `[start, start+size)` 内可写页提升为共享只读：Owned → Shared(Arc)。
     /// 写缺页将触发 [`Self::own`] 分裂。
+    ///
+    /// **Lazy 区行为**：未触页（`frames` 无键）跳过——首次写缺页命中 Owned
+    /// 而非 Shared，触发 [`Self::own`] 从 Owned 直接分裂（不走 COW 路径）。
+    /// 这是 fork 后端语义，不为 bug。
     #[allow(dead_code)] // fork 后端预留
     pub(crate) fn share(&mut self, start: VirtAddr, size: usize) -> Result<(), MapError> {
         for i in 0..size.div_ceil(PAGE_SIZE) {
@@ -570,6 +528,108 @@ impl SpaceInner {
                 }
             }
         }
+    }
+}
+
+// ── 安装回滚 ────────────────────────────────────────────
+
+/// 失败时 maps 簿记的两种处置（由"map 是谁 push 的"决定）。
+#[derive(Clone, Copy)]
+enum MapMode {
+    /// map 由外部预存（materialize 的 Lazy 区——reserve 时已 push）
+    /// 失败：保留 map，只摘 frames 键
+    Materialize,
+    /// map 由当前函数 push（claim / attach——循环前 push 空 map）
+    /// 失败：按 va 摘整张
+    Claim(VirtAddr),
+}
+
+/// 安装回滚守卫——循环失败时按已装页数清叶 + 按 [`MapMode`] 处置 maps。
+///
+/// `installed: usize` = 已装页数；`commit()` 归零 → drop 循环 0 次 = no-op。
+/// 成功路径必须 `commit()`，否则 drop 会拆掉刚装的页。
+struct InstallGuard<'a> {
+    inner: &'a mut SpaceInner,
+    va: VirtAddr,
+    installed: usize,
+    book: MapMode,
+}
+
+impl<'a> InstallGuard<'a> {
+    fn new(inner: &'a mut SpaceInner, va: VirtAddr, book: MapMode) -> Self {
+        Self { inner, va, installed: 0, book }
+    }
+    fn mark(&mut self) {
+        self.installed += 1;
+    }
+    /// 拆雷：drop 整体 no-op（installed=0 清叶循环空 + book 改 Materialize 跳过 retain）。
+    /// 消费 self。
+    fn commit(mut self) {
+        self.installed = 0;
+        self.book = MapMode::Materialize;
+    }
+}
+
+impl Drop for InstallGuard<'_> {
+    fn drop(&mut self) {
+        // 1. 清已装叶
+        for j in 0..self.installed {
+            self.inner.root.unmap(self.va + j * PAGE_SIZE);
+        }
+        // 2. 按策略动 maps
+        match self.book {
+            MapMode::Materialize => {
+                for j in 0..self.installed {
+                    if let Some(m) = self.inner.resolve_mut(self.va + j * PAGE_SIZE) {
+                        m.frames.remove(&j);
+                    }
+                }
+            }
+            MapMode::Claim(va) => {
+                self.inner.maps.retain(|m| m.va != va);
+            }
+        }
+    }
+}
+
+impl SpaceInner {
+    /// 装配 N 页——materialize / claim / attach 三动作的统一核心。
+    ///
+    /// 前置：调用方已 push 一张覆盖 `[va, va+pages*PAGE_SIZE)` 的 map：
+    /// - materialize：Lazy 区（reserve 时已 push）
+    /// - claim / attach：本函数循环前 push 空 map
+    ///
+    /// `next_frame` 按页提供帧；`flags` 直接装入 PTE。
+    /// 失败时 [`InstallGuard`] 按 `book` 处置：清叶 + 摘 frames 键或摘整张 map。
+    fn install<F>(
+        &mut self,
+        va: VirtAddr,
+        pages: usize,
+        flags: PteFlags,
+        book: MapMode,
+        mut next_frame: F,
+    ) -> Result<(), MapError>
+    where
+        F: FnMut() -> Result<Frame, MapError>,
+    {
+        let mut guard = InstallGuard::new(self, va, book);
+        let result: Result<(), MapError> = (|| {
+            for i in 0..pages {
+                let m_va = va + i * PAGE_SIZE;
+                let page = next_frame()?;
+                let pa = PhysAddr::from_raw(page.as_ptr() as usize);
+                guard.inner.root.map(m_va, pa, PAGE_SIZE, flags)?;
+                let map = guard.inner.resolve_mut(m_va).expect("map exists");
+                let idx = (m_va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+                map.inject(idx, page);
+                guard.mark();
+            }
+            Ok(())
+        })();
+        if result.is_ok() {
+            guard.commit();
+        }
+        result
     }
 }
 
