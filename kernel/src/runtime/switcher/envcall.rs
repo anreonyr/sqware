@@ -27,8 +27,8 @@ use crate::work::mail::ring;
 use crate::work::mail::{copy_in, copy_out};
 use crate::work::room::conductor::core::WaitKey;
 use crate::work::room::conductor::utask::{park, reap, starve, wait, wake};
-use crate::work::unit::space::Pending;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
+use crate::work::unit::space::{Pending, PendingState};
 use crate::work::unit::task::TaskIdent;
 
 use ubi::dock::DOCK_KEY_TAG;
@@ -211,7 +211,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     ShareWindow::mmap(s, size).map(|span| span.va)
                 } else {
                     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
-                    s.declare(VirtAddr::from_raw(fixed), size, flags, Pending::Lazy)
+                    s.reserve(VirtAddr::from_raw(fixed), size, flags, Some(Pending::Lazy))
                         .map(|()| VirtAddr::from_raw(fixed))
                 }
             };
@@ -232,10 +232,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let s = &ident.team.space;
                 if ShareWindow::munmap(s, addr, size) {
                     true
-                } else if s.resolve_pending(addr).is_some() {
-                    // 声明区（或窗口子区间的近似覆盖）：PTE 清 + 整段摘除；窗口
-                    // 槽不归还。
-                    s.unmap(addr, size);
+                } else if s.pending_state(addr) != PendingState::Absent {
+                    // 声明区（或窗口子区间的近似覆盖）：统一拆除（清叶+摘/裂
+                    // map）；窗口槽不归还。
+                    s.remove(addr, size);
                     true
                 } else {
                     false
@@ -249,7 +249,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let flags = PteFlags::from_bits_truncate(frame.gpr.x(Gprs::A2) as u64);
-            let ok = ident.team.space.mprotect(addr, size, flags).is_ok();
+            let ok = ident.team.space.protect(addr, size, flags).is_ok();
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Mail(MailCall::PortOpen) => {

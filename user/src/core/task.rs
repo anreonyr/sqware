@@ -18,7 +18,10 @@ pub struct Completion<T> {
 
 impl<T> Completion<T> {
     const fn new() -> Self {
-        Self { done: AtomicBool::new(false), result: None }
+        Self {
+            done: AtomicBool::new(false),
+            result: None,
+        }
     }
 }
 
@@ -65,7 +68,11 @@ pub struct Builder {
 
 impl Builder {
     pub const fn new(entry: usize, arg: usize) -> Self {
-        Self { entry, arg, stack: 0 }
+        Self {
+            entry,
+            arg,
+            stack: 0,
+        }
     }
 
     pub const fn stack(mut self, s: usize) -> Self {
@@ -83,7 +90,8 @@ pub fn spawn(entry: usize, arg: usize) -> UResult<usize> {
 }
 
 pub fn closure<F, T>(f: F) -> Join<T>
-where F: FnOnce() -> T + Send + 'static
+where
+    F: FnOnce() -> T + Send + 'static,
 {
     let slot = Box::into_raw(Box::new(Completion::new()));
     let send_slot = SendSlot(slot);

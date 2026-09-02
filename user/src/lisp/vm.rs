@@ -213,11 +213,19 @@ fn take_ref(v: &Val) -> Result<(&Val, &Val), LispError> {
 }
 
 fn one<'a>(args: &'a [Val]) -> Result<&'a Val, LispError> {
-    if args.len() == 1 { Ok(&args[0]) } else { Err(LispError::Arity) }
+    if args.len() == 1 {
+        Ok(&args[0])
+    } else {
+        Err(LispError::Arity)
+    }
 }
 
 fn two<'a>(args: &'a [Val]) -> Result<(&'a Val, &'a Val), LispError> {
-    if args.len() == 2 { Ok((&args[0], &args[1])) } else { Err(LispError::Arity) }
+    if args.len() == 2 {
+        Ok((&args[0], &args[1]))
+    } else {
+        Err(LispError::Arity)
+    }
 }
 
 fn int(v: Option<&Val>) -> Result<i64, LispError> {

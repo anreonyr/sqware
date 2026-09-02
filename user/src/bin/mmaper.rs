@@ -48,13 +48,19 @@ extern "C" fn main() {
     let _ = put("mmaper: touched 4 pages ok\n");
 
     match memory::munmap(region, 1usize << 40) {
-        Ok(()) => { let _ = put("mmaper: munmap ok\n"); }
-        Err(_) => { let _ = put("mmaper: munmap FAILED\n"); }
+        Ok(()) => {
+            let _ = put("mmaper: munmap ok\n");
+        }
+        Err(_) => {
+            let _ = put("mmaper: munmap FAILED\n");
+        }
     }
 
     const FIXED: usize = 0x8000;
     match memory::mmap(4 * 4096, Some(FIXED)) {
-        Ok(va) if va == FIXED => { let _ = put("mmaper: mmap_at(0x8000, 16K) ok\n"); }
+        Ok(va) if va == FIXED => {
+            let _ = put("mmaper: mmap_at(0x8000, 16K) ok\n");
+        }
         _ => {
             let _ = put("mmaper: mmap_at FAILED\n");
             return;
@@ -75,7 +81,11 @@ extern "C" fn main() {
     debug_assert_eq!(v, 0x5A);
 
     match memory::munmap(FIXED, 4 * 4096) {
-        Ok(()) => { let _ = put("mmaper: munmap fixed ok\n"); }
-        Err(_) => { let _ = put("mmaper: munmap fixed FAILED\n"); }
+        Ok(()) => {
+            let _ = put("mmaper: munmap fixed ok\n");
+        }
+        Err(_) => {
+            let _ = put("mmaper: munmap fixed FAILED\n");
+        }
     }
 }

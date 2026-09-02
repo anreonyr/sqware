@@ -15,19 +15,35 @@ pub fn exit() -> ! {
 }
 
 pub fn sleep(d: Duration) -> UResult<()> {
-    let args = UArgs { a0: d.as_millis() as usize, ..UArgs::default() };
-    let _ = UcallBuilder::new(Ucall::Room(RoomCall::Park)).args(args).call();
+    let args = UArgs {
+        a0: d.as_millis() as usize,
+        ..UArgs::default()
+    };
+    let _ = UcallBuilder::new(Ucall::Room(RoomCall::Park))
+        .args(args)
+        .call();
     Ok(())
 }
 
 pub fn wait(key: usize, ms: usize) -> UResult<()> {
-    let args = UArgs { a0: key, a1: ms, ..UArgs::default() };
-    let _ = UcallBuilder::new(Ucall::Room(RoomCall::Wait)).args(args).call();
+    let args = UArgs {
+        a0: key,
+        a1: ms,
+        ..UArgs::default()
+    };
+    let _ = UcallBuilder::new(Ucall::Room(RoomCall::Wait))
+        .args(args)
+        .call();
     Ok(())
 }
 
 pub fn wake(key: usize) -> UResult<usize> {
-    let args = UArgs { a0: key, ..UArgs::default() };
-    let (v0, _) = UcallBuilder::new(Ucall::Room(RoomCall::Wake)).args(args).call()?;
+    let args = UArgs {
+        a0: key,
+        ..UArgs::default()
+    };
+    let (v0, _) = UcallBuilder::new(Ucall::Room(RoomCall::Wake))
+        .args(args)
+        .call()?;
     Ok(v0)
 }

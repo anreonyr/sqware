@@ -46,10 +46,10 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         if !image_end.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
-        inner.attach_free(image_end);
+        inner.dynamic(image_end);
         for seg in &parsed.segments {
             let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;
-            inner.map_frames(seg.vaddr, frames_for_segment(bytes, seg)?, flags)?;
+            inner.attach(seg.vaddr, frames_for_segment(bytes, seg)?, flags)?;
         }
         Ok(())
     })?;
@@ -59,7 +59,7 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
     })
 }
 
-/// 为段分配帧并拷文件字节（一次性造好帧清单；装配由 `map_frames` 完成）。
+/// 为段分配帧并拷文件字节（一次性造好帧清单；装配由 `attach` 完成）。
 fn frames_for_segment(bytes: &[u8], seg: &LoadSegment) -> Result<Vec<Frame>, MapError> {
     let pages = seg.filesz.div_ceil(PAGE_SIZE);
     let mut frames = Vec::with_capacity(pages);

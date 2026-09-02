@@ -2,12 +2,12 @@
 
 extern crate alloc;
 
-mod kernel;
 mod core;
+mod kernel;
 mod parse;
-mod vm;
 mod repl;
+mod vm;
 
-pub use kernel::{FnDef, LispError, Sym, Val};
 pub use core::Core;
+pub use kernel::{FnDef, LispError, Sym, Val};
 pub use repl::repl;

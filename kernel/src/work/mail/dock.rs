@@ -9,9 +9,9 @@
 // 共享区布局 = `ubi::dock`（编译期 ABI，两端同源；锁/索引/计数字段偏移）。
 // 一对一形态见 `mail::ring`（独立布局 `ubi::ring`，无 pier/quay 计数）。
 //
-// 视图回收：每个 space 的共享区借用映射各占一段 user 段 VA（`Space::alloc`），
-// 持有者登记 `Weak<Space>` + 视图 Span——Arc<DockMeta> 归零 drop 时逐视图
-// `unmap_range` 还段（不拖住地址空间生命周期）。
+// 视图回收：每个 space 的共享区借用映射各占一段 user 段 VA（空间事务内取段 +
+// `borrow`），持有者登记 `Weak<Space>` + 视图 Span——Arc<DockMeta> 归零 drop 时
+// 逐视图 `unmap_range` 还段（不拖住地址空间生命周期）。
 //
 // 键面：dock 键 = `DOCK_KEY_TAG | id`（不经 WaitKey::compose——跨 team asid
 // 不同，经 compose 必失配；见 envcall 的 Wait/Wake 分发）。
@@ -400,7 +400,7 @@ pub(crate) fn task_exit(task_id: usize) {
 
 /// 把共享物理块借用映射进 `space`（帧空 = 借用；VA 出 user 段），并登记视图
 /// 到 `meta`（回收身份）。同一 space 重复映射 → 复用既有视图（不重复取段）。
-/// 与 trampoline 借用映射同式（Space::map 无帧）：PTE 直指共享物理块，帧所有权
+/// 与 trampoline 借用映射同式（`borrow` 借帧）：PTE 直指共享物理块，帧所有权
 /// 留 DockMeta（Arc 归零归还）。视图 Span 随 DockMeta drop 逐 space 归还。
 fn map_shared(space: &Arc<Space>, meta: &DockMeta, bytes: usize) -> Result<usize, MapError> {
     // 同 space 复用：open 方 pier+quay 同空间，第二次 map_shared 不重复取段。
@@ -414,15 +414,19 @@ fn map_shared(space: &Arc<Space>, meta: &DockMeta, bytes: usize) -> Result<usize
         }
     }
     let size = bytes.next_multiple_of(PAGE_SIZE);
-    // user 段取段（dock 属非窗口借用方，经 Space 公开原语）
-    let va = space.alloc(Seg::User, size)?;
-    space.map(
-        va,
-        PhysAddr::from_raw(meta.base.as_ptr() as usize),
-        size,
-        PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D,
-        Vec::new(), // 借用：无帧
-    )?;
+    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
+    // 空间事务内取段 + 借帧装配（一次加锁；dock 属非窗口借用方，走事务闭包
+    // 组合 inner 原语——与窗口同构）
+    let va = space.with_flush(|inner| {
+        let va = inner.allocate(Seg::User, size)?;
+        inner.borrow(
+            va,
+            PhysAddr::from_raw(meta.base.as_ptr() as usize),
+            size,
+            flags,
+        )?;
+        Ok::<_, MapError>(va)
+    })?;
     // 登记视图（回收身份：弱引用 + 段区间）
     meta.views
         .lock()

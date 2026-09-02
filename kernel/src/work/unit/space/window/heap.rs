@@ -1,19 +1,14 @@
 // HeapWindow — 用户堆（窗口适配层：user 段上的堆领域策略，立即物化）。
 //
-// allocate 出块：user 段取段 + 逐页物化帧（Eager，立即分配非懒）+ 登记 map。
-// deallocate 精确匹配释放：摘 map（帧随 drop 归还）+ 清叶 PTE + 归还段。
+// allocate 出块：user 段取段 + `claim`（Eager，立即分配非懒）+ 登记 map。
+// deallocate 精确匹配释放：还段 + 统一拆除（摘 map 帧随 drop 归还 + 清叶 PTE）。
 // 与栈/懒区同池取段（user 段 lowest first-fit），无方向分区。
 
-use alloc::boxed::Box;
-
-use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::table::Frame;
 
 use super::super::core::Span;
-use super::super::map::Map;
 use super::super::{Seg, Space};
 
 /// 堆窗口（零状态策略）。
@@ -23,7 +18,7 @@ impl HeapWindow {
     /// 用户堆分配：user 段取一页对齐 VA 块，逐页从 frame 分配器取物理页
     /// 映射（U|R|W，**立即分配**非懒）并注入 map。返回 Span。
     ///
-    /// 中途帧耗尽时回滚：清已映射页叶 + 摘 map + VA 退回段。
+    /// 中途帧耗尽时回滚：`claim` 自清已映射页叶 + 摘 map，本方法退 VA 回段。
     ///
     /// # Errors
     ///
@@ -32,72 +27,27 @@ impl HeapWindow {
         let flags =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
         space.with_flush(|inner| {
-            let user = inner.user.as_mut().ok_or(MapError::NoRegion)?;
-            let base = user.allocate(size).map_err(|_| MapError::OutOfMemory)?;
-            let va = VirtAddr::from_raw(base);
-            // 先登记空 map（堆立即物化：pending None），再逐页装 PTE + 注入
-            inner
-                .maps
-                .push(Map::new(va, size, flags, None, alloc::vec::Vec::new()));
-            let pages = size / PAGE_SIZE;
-            let mut mapped = 0usize;
-            while mapped < pages {
-                // 类别 = Task：用户堆页属任务生命周期——关机必须归零（①）。
-                let page: Frame = crate::tag!(Task, unsafe {
-                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
-                        .map_err(|_| MapError::OutOfMemory)?
-                        .assume_init()
-                });
-                let pa = crate::memory::manager::addr::PhysAddr::from_raw(page.as_ptr() as usize);
-                let m_va = va + mapped * PAGE_SIZE;
-                if inner.root.map(m_va, pa, PAGE_SIZE, flags).is_err() {
-                    // 回滚：清已映射页叶 + 摘 map + VA 退回段
-                    for i in 0..mapped {
-                        inner.root.unmap(va + i * PAGE_SIZE);
-                    }
-                    inner.maps.retain(|m| m.va != va);
-                    inner
-                        .user
-                        .as_mut()
-                        .expect("user exists")
-                        .deallocate(base, size);
-                    return Err(MapError::OutOfMemory);
-                }
-                // 逐页注入帧（保持「帧 i ↔ va + i·PAGE」不变量）
-                inner
-                    .maps
-                    .iter_mut()
-                    .find(|m| m.va == va)
-                    .expect("heap map exists")
-                    .inject(page);
-                mapped += 1;
+            let va = inner.allocate(Seg::User, size)?;
+            if let Err(e) = inner.claim(va, size, flags) {
+                // claim 已自回滚装配；段退回
+                inner.deallocate(Seg::User, va.as_usize(), size);
+                return Err(e);
             }
             Ok(Span::new(Seg::User, va, size, None))
         })
     }
 
-    /// 用户堆释放：分配器按 `(addr, size)` 精确匹配后摘 map（帧随 drop 归还）+
-    /// 清叶 PTE（含回收变空的中间表）+ 归还段。返回是否找到并释放。
+    /// 用户堆释放：分配器按 `(addr, size)` 精确匹配还段，成功 → 统一拆除
+    /// （清叶 PTE + 摘 map，帧随 drop 归还）。返回是否找到并释放。
     pub(crate) fn deallocate(space: &Space, addr: VirtAddr, size: usize) -> bool {
         space.with_flush(|inner| {
             // 1. 精确匹配释放（未分配 → false）
-            let Some(user) = inner.user.as_mut() else {
-                return false;
-            };
-            if !user.deallocate(addr.as_usize(), size) {
+            if !inner.deallocate(Seg::User, addr.as_usize(), size) {
                 return false;
             }
-            let end = addr.as_usize().saturating_add(size);
-            // 2. 清叶 PTE + 回收变空的中间表（必须在 maps.retain 之前——
-            //    clear_ptes 按 map 的 is_materialized 决定 unmap 哪些页；
-            //    retain 把 Map 摘了，clear_ptes 就找不到本次释放的页，叶 PTE 漏 unmap，
-            //    下次同 VA alloc 触发 root.map 返 AlreadyMapped）。
-            inner.clear_ptes(addr, size);
-            // 3. 摘 map（帧随 Map drop 归还）。
-            inner.maps.retain(|m| {
-                !(addr.as_usize() < m.va.as_usize().saturating_add(m.size.get())
-                    && end > m.va.as_usize())
-            });
+            // 2. 统一拆除：清叶（必须先于摘 map——clear 按 map 的
+            //    is_materialized 决定 unmap 哪些页）+ 摘 map（帧随 drop 归还）。
+            inner.remove(addr, size);
             true
         })
     }

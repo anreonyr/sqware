@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use user::core::dock::{open, Pier};
+use user::core::dock::{Pier, open};
 use user::core::mail::MSG_LEN;
 use user::core::task;
 use user::env::io::put;

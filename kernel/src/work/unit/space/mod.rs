@@ -25,7 +25,7 @@ pub(crate) mod window;
 
 pub(crate) use core::Span;
 pub use core::{Space, SpaceBuilder};
-pub(crate) use map::Pending;
+pub(crate) use map::{Pending, PendingState};
 pub(crate) use seg::Seg;
 
 /// 空间种类 — 显式区分内核空间与用户空间。

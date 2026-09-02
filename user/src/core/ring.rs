@@ -11,7 +11,8 @@ use crate::shared::{RingLayout, SharedBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RingState {
-    Live, Dead,
+    Live,
+    Dead,
 }
 
 impl RingState {
@@ -40,8 +41,7 @@ pub struct Consumer {
 pub fn open(item_len: usize, slots: usize) -> UResult<(Producer, Consumer)> {
     let (id, view) = env_mail::ring_open(item_len, slots)?;
     let shared = SharedBuf::new(view);
-    Ok((Producer { id, shared }, Consumer { id, shared })
-    )
+    Ok((Producer { id, shared }, Consumer { id, shared }))
 }
 
 pub fn close(id: usize) -> UResult<()> {
@@ -49,19 +49,28 @@ pub fn close(id: usize) -> UResult<()> {
 }
 
 impl Drop for Producer {
-    fn drop(&mut self) { let _ = env_mail::ring_close(self.id); }
+    fn drop(&mut self) {
+        let _ = env_mail::ring_close(self.id);
+    }
 }
 
 impl Drop for Consumer {
-    fn drop(&mut self) { let _ = env_mail::ring_close(self.id); }
+    fn drop(&mut self) {
+        let _ = env_mail::ring_close(self.id);
+    }
 }
 
 impl Producer {
-    pub fn id(&self) -> usize { self.id }
+    pub fn id(&self) -> usize {
+        self.id
+    }
 
     pub fn join(id: usize) -> UResult<Producer> {
         let view = env_mail::ring_join(id)?;
-        Ok(Producer { id, shared: SharedBuf::new(view) })
+        Ok(Producer {
+            id,
+            shared: SharedBuf::new(view),
+        })
     }
 
     pub fn key(&self) -> usize {
@@ -69,7 +78,11 @@ impl Producer {
     }
 
     pub fn try_push(&self, msg: &[u8]) -> UResult<()> {
-        let st = RingState::from_code(self.shared.state().load(core::sync::atomic::Ordering::Acquire));
+        let st = RingState::from_code(
+            self.shared
+                .state()
+                .load(core::sync::atomic::Ordering::Acquire),
+        );
         if !matches!(st, RingState::Live) {
             return Err(UError::from_raw(ring::err::DEAD)).annotate("ring push (state)");
         }
@@ -88,7 +101,9 @@ impl Producer {
         loop {
             match self.try_push(msg) {
                 Ok(()) => return Ok(()),
-                Err(e) if e.source.code() == ring::err::BUSY => { let _ = room::wait(self.key(), usize::MAX); }
+                Err(e) if e.source.code() == ring::err::BUSY => {
+                    let _ = room::wait(self.key(), usize::MAX);
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -96,11 +111,16 @@ impl Producer {
 }
 
 impl Consumer {
-    pub fn id(&self) -> usize { self.id }
+    pub fn id(&self) -> usize {
+        self.id
+    }
 
     pub fn join(id: usize) -> UResult<Consumer> {
         let view = env_mail::ring_join(id)?;
-        Ok(Consumer { id, shared: SharedBuf::new(view) })
+        Ok(Consumer {
+            id,
+            shared: SharedBuf::new(view),
+        })
     }
 
     pub fn key(&self) -> usize {
@@ -123,7 +143,9 @@ impl Consumer {
         loop {
             match self.try_pull(buf) {
                 Ok(()) => return Ok(()),
-                Err(e) if e.source.code() == ring::err::BUSY => { let _ = room::wait(self.key(), usize::MAX); }
+                Err(e) if e.source.code() == ring::err::BUSY => {
+                    let _ = room::wait(self.key(), usize::MAX);
+                }
                 Err(e) => return Err(e),
             }
         }

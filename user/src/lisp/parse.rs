@@ -90,7 +90,11 @@ fn is_number(tok: &[u8]) -> bool {
 
 impl Core {
     pub fn read(&mut self, line: &[u8]) -> Result<Val, LispError> {
-        let mut p = Parser { core: self, line, pos: 0 };
+        let mut p = Parser {
+            core: self,
+            line,
+            pos: 0,
+        };
         let v = p.form()?;
         p.skip_ws();
         if p.pos != p.line.len() {

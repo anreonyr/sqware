@@ -20,7 +20,6 @@ pub(crate) mod team;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
-use alloc::vec::Vec;
 use erra::ResultExt;
 
 use riscv::register::satp;
@@ -84,7 +83,11 @@ pub fn init() -> MapResult<()> {
             // 1.5 设置内核空间 user 段：从低区起覆盖整个用户半区（段 lowest
             //     first-fit——内核心任务栈与用户栈同池自低端起排槽；诊断侧 scene
             //     已按「段内 + slot 对齐」降级重估段顶，见 scene.rs kbacktrace）。
-            kernel_space.attach_free(crate::layout::IMAGE_BASE.as_usize());
+            {
+                let this = &kernel_space;
+                let base = crate::layout::IMAGE_BASE.as_usize();
+                this.with(|inner| inner.dynamic(base));
+            };
 
             // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内 ROOT 栈区，位于
             //    `_kernel_edge` 之上）都在 DRAM 内。只 map free 会在启用分页后
@@ -97,48 +100,40 @@ pub fn init() -> MapResult<()> {
                 | PteFlags::D
                 | PteFlags::G;
 
-            kernel_space.map(
+            kernel_space.borrow(
                 VirtAddr::from_raw(m.dram.base),
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
                 ram_flags,
-                Vec::new(), // 借用映射：帧归机器/内核
             )?;
 
             // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备；
             //    高半区起点 = 探测模式的 lower()，随模式）
-            kernel_space.map(
+            kernel_space.borrow(
                 mode::lower() + m.dram.base,
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
                 ram_flags,
-                Vec::new(),
             )?;
 
             // 3.5 内核 .rodata 段只读化：镜像尾部 .rodata 经恒等与高半区两处都已
-            //    RWX 映射，此处用 mprotect 降为只读（去 W）。作用有二：
+            //    RWX 映射，此处用 protect 降为只读（去 W）。作用有二：
             //      a) ROOT 栈位于 _kernel_edge 之上、向下生长，越界第一脚即踩 .rodata
             //         → 写保护缺页（天然 ROOT 栈 guard，省 unmap/预留帧）；
             //      b) 内核只读数据获得 RO 防护（BUG 改写 .rodata 立即缺页暴露）。
-            //    mprotect 只改已映射叶子 PTE，不影响中间表与 free 区；两处都要降。
+            //    protect 只改已映射叶子 PTE，不影响中间表与 free 区；两处都要降。
             let rodata_start = (&raw const _rodata_start).addr();
             let rodata_size = kernel_edge() - rodata_start;
             let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D | PteFlags::G;
-            kernel_space.mprotect(VirtAddr::from_raw(rodata_start), rodata_size, ro_flags)?;
-            kernel_space.mprotect(mode::lower() + rodata_start, rodata_size, ro_flags)?;
+            kernel_space.protect(VirtAddr::from_raw(rodata_start), rodata_size, ro_flags)?;
+            kernel_space.protect(mode::lower() + rodata_start, rodata_size, ro_flags)?;
 
             // 4. 映射 trap trampoline 页（内核自有帧）：所有空间以 TRAMPOLINE VA
             //    映射同一物理页，`stvec` 指向它。G 位：内容不可变，不被 ASID 局部
             //    sfence 刷掉也安全。
             let tramp_flags =
                 PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
-            kernel_space.map(
-                TRAMPOLINE,
-                trampoline_pa(),
-                PAGE_SIZE,
-                tramp_flags,
-                Vec::new(),
-            )?;
+            kernel_space.borrow(TRAMPOLINE, trampoline_pa(), PAGE_SIZE, tramp_flags)?;
 
             // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页
             let n = machine::hart_count();
@@ -148,19 +143,16 @@ pub fn init() -> MapResult<()> {
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
                 });
-                let pa = PhysAddr::from_raw(page.as_ptr() as usize);
                 // 持久注册表：内核窗口帧永不归还——登记以便关机逐项核 held（②）。
                 #[cfg(feature = "audit")]
                 crate::memory::allocator::fence::audit::register_persistent(
-                    pa.as_usize(),
+                    PhysAddr::from_raw(page.as_ptr() as usize).as_usize(),
                     "hart-frame",
                 );
-                kernel_space.map(
+                kernel_space.attach(
                     HART_FRAME_BASE + h * PAGE_SIZE,
-                    pa,
-                    PAGE_SIZE,
-                    PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
                     vec![page],
+                    PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
                 )?;
             }
 

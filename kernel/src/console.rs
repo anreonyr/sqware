@@ -64,8 +64,8 @@ impl Write for Console {
     }
 }
 
-/// 内核空间无锁翻译 `[va, va+len)`：整段须在同一物理连续块内（每页 walk 检查
-/// 连续性），否则 None。内核空间构造后页表树只读，`translate_unlocked` 安全。
+/// 内核空间翻译 `[va, va+len)`：整段须在同一物理连续块内（每页 walk 检查
+/// 连续性），否则 None。内核空间构造后页表树只读，`translate` 安全。
 /// 用于非恒等区、且无活任务身份可译的高半区内核地址（trap 栈 / 内核堆缓冲）。
 ///
 /// **仅限内核半区地址**：用户半区 VA（如用户堆 0x87xxxxxx）在内核空间虽也有
@@ -77,15 +77,12 @@ fn translate_kernel(va: usize, len: usize) -> Option<usize> {
         return None;
     }
     let space = &crate::work::unit::team::kernel()?.space;
-    // SAFETY: 内核空间装配后只读；诊断路径不持 Space 锁（多核 panic 现场其他核
-    // 已停，持锁会死锁）。
-    let (pa0, _) = unsafe { space.translate_unlocked(VirtAddr::from_raw(va)) }?;
+    let (pa0, _) = space.translate(VirtAddr::from_raw(va))?;
     // 逐页校验物理连续性：物理帧可能不连续，须整段连续方可一次 Dbcn 直读。
     let mut va_cur = va;
     let end = va + len;
     while va_cur < end {
-        // SAFETY: 同上。
-        let (pa, _) = unsafe { space.translate_unlocked(VirtAddr::from_raw(va_cur)) }?;
+        let (pa, _) = space.translate(VirtAddr::from_raw(va_cur))?;
         if pa.as_usize() != pa0.as_usize() + (va_cur - va) {
             return None; // 物理不连续：退回静默（不逐段拼）
         }

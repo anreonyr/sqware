@@ -16,7 +16,9 @@ pub fn repl(core: &mut Core) -> ! {
             let b = io::get();
             match b {
                 0x0a | 0x0d => break,
-                0x08 | 0x7f => { line.pop(); }
+                0x08 | 0x7f => {
+                    line.pop();
+                }
                 0x03 => line.clear(),
                 0x04 => room::exit(),
                 b => line.push(b),

@@ -20,9 +20,13 @@ impl Port {
         Ok(Port { handle, key })
     }
 
-    pub fn key(&self) -> usize { self.key }
+    pub fn key(&self) -> usize {
+        self.key
+    }
 
-    pub fn close(&self) -> UResult<()> { env_mail::port_shut(self.handle) }
+    pub fn close(&self) -> UResult<()> {
+        env_mail::port_shut(self.handle)
+    }
 
     pub fn try_push(&self, msg: &[u8]) -> UResult<()> {
         env_mail::port_try_push(self.handle, msg.as_ptr())
@@ -36,8 +40,13 @@ impl Port {
         debug_assert_eq!(msg.len(), MSG_LEN);
         loop {
             match self.try_push(msg) {
-                Ok(()) => { let _ = room::wake(self.key); return Ok(()); }
-                Err(e) if e.source.code() == -2 => { let _ = room::wait(self.key, usize::MAX); }
+                Ok(()) => {
+                    let _ = room::wake(self.key);
+                    return Ok(());
+                }
+                Err(e) if e.source.code() == -2 => {
+                    let _ = room::wait(self.key, usize::MAX);
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -47,8 +56,13 @@ impl Port {
         debug_assert_eq!(buf.len(), MSG_LEN);
         loop {
             match self.try_pull(buf) {
-                Ok(()) => { let _ = room::wake(self.key); return Ok(()); }
-                Err(e) if e.source.code() == -2 => { let _ = room::wait(self.key, usize::MAX); }
+                Ok(()) => {
+                    let _ = room::wake(self.key);
+                    return Ok(());
+                }
+                Err(e) if e.source.code() == -2 => {
+                    let _ = room::wait(self.key, usize::MAX);
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -56,5 +70,7 @@ impl Port {
 }
 
 impl Drop for Port {
-    fn drop(&mut self) { let _ = env_mail::port_shut(self.handle); }
+    fn drop(&mut self) {
+        let _ = env_mail::port_shut(self.handle);
+    }
 }

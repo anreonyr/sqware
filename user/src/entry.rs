@@ -11,7 +11,7 @@ global_asm!(
     "    call tls_bootstrap",
     "    call main",
     "    call exit_trampoline", // main 返回（理论上 !，兜底）→ room::exit
-    "1: j 1b", // ec 返回则兜底循环
+    "1: j 1b",                  // ec 返回则兜底循环
 );
 
 #[unsafe(no_mangle)]
@@ -50,4 +50,3 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     }
     exit()
 }
-

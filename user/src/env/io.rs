@@ -10,14 +10,26 @@ use crate::env::room;
 //             IOCall::Get 已非阻塞，try_get 直接复用。
 
 pub fn put(s: &str) -> UResult<()> {
-    let args = UArgs { a0: s.len(), a1: s.as_ptr() as usize, ..UArgs::default() };
-    let _ = UcallBuilder::new(Ucall::IO(IOCall::Put)).args(args).call()?;
+    let args = UArgs {
+        a0: s.len(),
+        a1: s.as_ptr() as usize,
+        ..UArgs::default()
+    };
+    let _ = UcallBuilder::new(Ucall::IO(IOCall::Put))
+        .args(args)
+        .call()?;
     Ok(())
 }
 
 pub fn try_put(s: &str) -> UResult<()> {
-    let args = UArgs { a0: s.len(), a1: s.as_ptr() as usize, ..UArgs::default() };
-    UcallBuilder::new(Ucall::IO(IOCall::Put)).args(args).call()?;
+    let args = UArgs {
+        a0: s.len(),
+        a1: s.as_ptr() as usize,
+        ..UArgs::default()
+    };
+    UcallBuilder::new(Ucall::IO(IOCall::Put))
+        .args(args)
+        .call()?;
     Ok(())
 }
 
@@ -28,7 +40,9 @@ pub fn try_get() -> Option<u8> {
 
 pub fn get() -> u8 {
     loop {
-        if let Some(b) = try_get() { return b; }
+        if let Some(b) = try_get() {
+            return b;
+        }
         let _ = room::sleep(Duration::from_millis(1));
     }
 }

@@ -11,7 +11,7 @@ use riscv::register::{scause, sepc, stval};
 use crate::memory::PAGE_SIZE;
 
 use super::{addr::VirtAddr, entry::PteFlags};
-use crate::work::unit::space::{Pending, Space};
+use crate::work::unit::space::{PendingState, Space};
 
 /// 从机器 CSR 捕获的缺页信息。
 #[derive(Debug)]
@@ -59,11 +59,11 @@ impl PageFault {
     }
 }
 
-/// 为用户缺页解析匿名物理页（flags 由 page_fault 从映射自取：`map.flags | A | D`）。
+/// 为用户缺页解析匿名物理页（flags 由 materialize 从映射自取：`map.flags | A | D`）。
 fn resolve_anonymous(fault: &PageFault, space: &Space) -> bool {
     let vaddr = fault.addr.page_align();
 
-    match space.page_fault(vaddr, PAGE_SIZE) {
+    match space.materialize(vaddr, PAGE_SIZE) {
         Ok(()) => {
             info!(
                 "resolved page fault: allocated anon page for {:?} at {:?}",
@@ -88,14 +88,12 @@ fn resolve_anonymous(fault: &PageFault, space: &Space) -> bool {
 /// 2. 用户地址 → 查 Map：Anonymous 分配零页，Reserved/无 Map 返回 false
 /// 3. 内核地址 → fatal（内核页必须预映射）
 pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
-    // 0. COW：写缺页命中共享（Borrowed）页 → 分裂为私有可写（保留共享内容）。
+    // 0. COW：写缺页命中共享（Shared）页 → 分裂为私有可写（保留共享内容）。
     //    必须先于 Re-walk：共享页 PTE 有效（置了 A/D、清了 W），若不拦会在
     //    步骤 1 被当成 A/D 竞争而重试 → 无限缺页循环。
-    if fault.addr.is_user()
-        && matches!(fault.kind, FaultKind::Store)
-        && space.is_borrowed(fault.addr)
+    if fault.addr.is_user() && matches!(fault.kind, FaultKind::Store) && space.is_shared(fault.addr)
     {
-        return space.to_mut(fault.addr).is_ok();
+        return space.own(fault.addr).is_ok();
     }
     // 1. Re-walk 页表 (A/D 位竞争检查)
     if let Some((_paddr, flags)) = space.translate(fault.addr)
@@ -109,20 +107,20 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
         return true;
     }
 
-    // 2. 用户地址 → 查映射物化态（Lazy 物化零页；Guard 预留触碰；None 无映射）
+    // 2. 用户地址 → 查映射物化态（Lazy 物化零页；Guard 预留触碰；Absent 无映射）
     if fault.addr.is_user() {
-        match space.resolve_pending(fault.addr) {
-            Some(Some(Pending::Lazy)) => {
+        match space.pending_state(fault.addr) {
+            PendingState::Lazy => {
                 return resolve_anonymous(fault, space);
             }
-            Some(Some(Pending::Guard)) => {
+            PendingState::Guard => {
                 error!(
                     "reserved region access: {:?} at {:?}, pc={:#x}",
                     fault.kind, fault.addr, fault.pc
                 );
                 return false;
             }
-            Some(None) => {
+            PendingState::Materialized => {
                 // 全物化映射（含借用）不该缺页：re-walk 已排除 A/D 竞争，到此处 =
                 // 内核簿记错误。
                 error!(
@@ -131,7 +129,7 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
                 );
                 return false;
             }
-            None => {
+            PendingState::Absent => {
                 error!(
                     "no map for user page fault: {:?} at {:?}, pc={:#x}",
                     fault.kind, fault.addr, fault.pc

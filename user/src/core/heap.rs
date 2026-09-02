@@ -2,8 +2,8 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 
-use crate::env::memory;
 use crate::PAGE_SIZE;
+use crate::env::memory;
 
 pub struct Heap;
 

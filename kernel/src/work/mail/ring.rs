@@ -313,14 +313,18 @@ fn map_shared(space: &Arc<Space>, meta: &RingMeta, bytes: usize) -> Result<usize
         }
     }
     let size = bytes.next_multiple_of(PAGE_SIZE);
-    let va = space.alloc(Seg::User, size)?;
-    space.map(
-        va,
-        PhysAddr::from_raw(meta.base.as_ptr() as usize),
-        size,
-        PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D,
-        Vec::new(), // 借用：无帧
-    )?;
+    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
+    // 空间事务内取段 + 借帧装配（一次加锁；与 dock 同构）
+    let va = space.with_flush(|inner| {
+        let va = inner.allocate(Seg::User, size)?;
+        inner.borrow(
+            va,
+            PhysAddr::from_raw(meta.base.as_ptr() as usize),
+            size,
+            flags,
+        )?;
+        Ok::<_, MapError>(va)
+    })?;
     meta.views
         .lock()
         .push((Arc::downgrade(space), Span::new(Seg::User, va, size, None)));

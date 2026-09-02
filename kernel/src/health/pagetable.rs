@@ -42,10 +42,10 @@ pub fn pagetable() {
                     .assume_init()
             }));
         }
-        let pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
+        let _pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
         space
-            .map(VirtAddr::from_raw(BASE), pa, SIZE, flags, frames)
-            .expect("[health] pagetable: map");
+            .attach(VirtAddr::from_raw(BASE), frames, flags)
+            .expect("[health] pagetable: attach");
         crate::expect!(
             space.table_count() == base_count + levels,
             "round {round}: tables after map (got {} want {})",
@@ -57,8 +57,8 @@ pub fn pagetable() {
             "round {round}: map hit"
         );
 
-        // unmap：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）
-        space.unmap(VirtAddr::from_raw(BASE), SIZE);
+        // 拆除：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）
+        space.remove(VirtAddr::from_raw(BASE), SIZE);
         crate::expect!(
             space.table_count() == base_count,
             "round {round}: tables after unmap (got {} want {})",

@@ -2,8 +2,8 @@
 
 use ubi::UResult;
 
-use crate::env::memory;
 use crate::PAGE_SIZE;
+use crate::env::memory;
 
 // 硬不变量：base() 仅在装配点后有效；bootstrap 仅在主线程出生点调用恰好一次。
 

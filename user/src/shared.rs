@@ -46,7 +46,9 @@ pub(crate) struct SharedBuf<L: Offsets> {
 
 impl<L: Offsets> Copy for SharedBuf<L> {}
 impl<L: Offsets> Clone for SharedBuf<L> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 // SAFETY: 多任务多核共享同一物理帧；原子协议同步；base 页对齐、偏移按类型对齐。
@@ -55,7 +57,10 @@ unsafe impl<L: Offsets> Sync for SharedBuf<L> {}
 
 impl<L: Offsets> SharedBuf<L> {
     pub(crate) fn new(base: usize) -> Self {
-        Self { base: base as *mut u8, _marker: PhantomData }
+        Self {
+            base: base as *mut u8,
+            _marker: PhantomData,
+        }
     }
 
     #[inline]

@@ -16,7 +16,6 @@
 // per-hart trap 栈上；入口硬件已清 SIE，处理器内嵌套陷阱仅可能是内核 bug，会覆写
 // per-hart 帧（panic 兜底）。trap 栈底 canary 在处理器出入口校验（溢出即 panic）。
 
-use alloc::vec::Vec;
 use core::time::Duration;
 
 use riscv::interrupt::{Exception, Interrupt, Trap};
@@ -159,16 +158,15 @@ pub fn init() {
         let phys = base + h * TRAP_STACK_SLOT_SIZE;
         // 段体映射（60 KiB）：固定 VA → 块内物理页；guard 页不映射（越界即页故障）
         space
-            .map(
+            .borrow(
                 body_va,
                 PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
                 TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
                 flags,
-                Vec::new(),
             )
             .expect("map trap stack body");
         // 恒等视图 guard 页清 PTE 保留 boot 栈溢出护栏（固定 VA guard 管 trap 栈）
-        space.unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD);
+        space.remove(VirtAddr::from_raw(phys), TRAP_STACK_GUARD);
         // canary 写于固定 VA 栈体底（guard 之上）
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
