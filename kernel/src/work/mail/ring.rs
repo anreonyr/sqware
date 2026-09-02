@@ -179,7 +179,7 @@ impl Drop for RingMeta {
         let views: Vec<(Weak<Space>, Span)> = core::mem::take(&mut *self.views.lock());
         for (weak, span) in views {
             if let Some(space) = weak.upgrade() {
-                space.release(span);
+                space.release(span).expect("release: span mismatch");
             }
         }
         // 2. 共享区归还 frame 池（Arc 归零 = 双端全 drop → B2 钩子）。

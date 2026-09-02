@@ -95,7 +95,7 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
     //    首次写缺页仍走 own 分裂，非 COW。
     if fault.addr.is_user() && matches!(fault.kind, FaultKind::Store) && space.is_shared(fault.addr)
     {
-        return space.own(fault.addr).is_ok();
+        return space.own(fault.addr, PAGE_SIZE).is_ok();
     }
     // 1. Re-walk 页表 (A/D 位竞争检查)
     if let Some((_paddr, flags)) = space.translate(fault.addr)

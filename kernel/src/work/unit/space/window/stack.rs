@@ -39,8 +39,7 @@ impl StackWindow {
             let slot_va = inner.allocate(Seg::User, slot_size)?;
             // 守护页 Guard → 溢出缺页可诊断（只登记，不物化）
             let guard_flags = PteFlags::V | PteFlags::R | PteFlags::W;
-            if let Err(e) =
-                inner.reserve_map(slot_va, TASK_STACK_GUARD, guard_flags, Some(Pending::Guard))
+            if let Err(e) = inner.map(slot_va, TASK_STACK_GUARD, guard_flags, Some(Pending::Guard))
             {
                 // 装配失败：段退回（reserve 未落任何 PTE/帧）
                 inner.deallocate(Seg::User, slot_va.as_usize(), slot_size);

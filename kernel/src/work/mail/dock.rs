@@ -260,7 +260,7 @@ impl Drop for DockMeta {
         let views: Vec<(Weak<Space>, Span)> = core::mem::take(&mut *self.views.lock());
         for (weak, span) in views {
             if let Some(space) = weak.upgrade() {
-                space.release(span);
+                space.release(span).expect("release: span mismatch");
             }
             // upgrade 失败 = Arc<Space> 已死 → 空间已 drop，视图随 Space drop 消失。
         }

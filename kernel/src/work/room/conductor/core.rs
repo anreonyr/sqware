@@ -738,8 +738,8 @@ pub(super) fn clear() {
         // 一次 with_flush 经 `Space::release(Span)` 收回——段归还 + PTE 清理 + 刷
         // TLB；帧随 map drop 归还 frame 池。Span 是 claim 时存进 TaskIdent 的
         // 区间身份（类型同一，不 re-find）。
-        z.ident.team.space.release(z.ident.stack);
-        z.ident.team.space.release(z.ident.frame);
+        z.ident.team.space.release(z.ident.stack).expect("release: span mismatch");
+        z.ident.team.space.release(z.ident.frame).expect("release: span mismatch");
         drop(z);
         // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
         // halt 的关机断言无滞留可验。

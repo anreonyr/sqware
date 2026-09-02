@@ -166,7 +166,7 @@ impl SpaceInner {
     ///
     /// `pending: Some(Lazy)` = 缺页物化；`Some(Guard)` = 禁止触碰；
     /// `None` + 空帧 = 借用占位（leaf 由调用方另装，见 [`Self::borrow`]）。
-    pub(crate) fn reserve_map(
+    pub(crate) fn map(
         &mut self,
         va: VirtAddr,
         size: usize,
@@ -427,41 +427,60 @@ impl SpaceInner {
         result
     }
 
-    /// 写缺页分裂：保证该页私有可写。Shared → 分新 Owned 拷字节。
+    /// COW 写缺页分裂：保证 `[start, start+size)` 内每页私有可写。
+    /// Shared → 分新 Owned 拷字节；Owned + 只读 → 翻 W；其它页**静默跳过**
+    /// （无 map / 帧未触——与 [`Self::share`] 跳过非 Owned 对称）。
     #[allow(clippy::wrong_self_convention)] // Space 跨核 Arc 共享，&mut self 在事务内
-    pub(crate) fn own(&mut self, va: VirtAddr) -> Result<(), MapError> {
-        let page = va.page_align();
-        let (flags, shared_index) = {
-            let map = self.resolve_mut(page).ok_or(MapError::NotMapped)?;
-            let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-            let flags = map.flags;
-            if let Some(FrameState::Owned(_)) = &map.frames.get(&idx) {
-                let leaf = self.root.walk_mut(page, false, mode::levels())?;
-                leaf.set_flags(leaf.flags() | PteFlags::W | PteFlags::V);
-                return Ok(());
-            }
-            (flags, idx)
-        };
-        let new_box = {
-            let map = self.resolve_mut(page).expect("map exists (checked)");
-            match map.frames.get(&shared_index) {
-                Some(FrameState::Shared(arc)) => {
+    pub(crate) fn own(&mut self, start: VirtAddr, size: usize) -> Result<(), MapError> {
+        enum Step {
+            /// Owned 页 PTE 翻 W（已 Owned + 只读）
+            SetW,
+            /// Shared 页分裂：新 Owned 帧 + 写可 PTE
+            Split(PteFlags),
+        }
+        let pages = size.div_ceil(PAGE_SIZE);
+        for i in 0..pages {
+            let page = start + i * PAGE_SIZE;
+            // 1. 探：决定本页动作（静默跳过 no-map / 帧未触）
+            let step: Step = match self.resolve_mut(page) {
+                Some(map) => {
+                    let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+                    let flags = map.flags;
+                    match map.frames.get(&idx) {
+                        Some(FrameState::Owned(_)) => Step::SetW,
+                        Some(FrameState::Shared(_)) => Step::Split(flags),
+                        None => continue,
+                    }
+                }
+                None => continue,
+            };
+            // 2. 行
+            match step {
+                Step::SetW => {
+                    let leaf = self.root.walk_mut(page, false, mode::levels())?;
+                    leaf.set_flags(leaf.flags() | PteFlags::W | PteFlags::V);
+                }
+                Step::Split(flags) => {
+                    let arc = {
+                        let map = self.resolve_mut(page).expect("map exists (checked)");
+                        let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+                        match &map.frames.get(&idx) {
+                            Some(FrameState::Shared(a)) => a.clone(),
+                            _ => continue, // 并发下变 Owned——跳过
+                        }
+                    };
                     // 类别 = Task：COW 分裂新帧属任务生命周期——关机归零。
                     let mut nb: Frame = Self::frame()?;
                     nb.copy_from_slice(&arc[..]);
-                    nb
+                    let ppn = (PhysAddr::from_raw(nb.as_ptr() as usize).as_usize() >> 12) as u64;
+                    let map = self.resolve_mut(page).expect("map exists (checked)");
+                    let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+                    let old = map.frames.insert(idx, FrameState::Owned(nb));
+                    drop(old);
+                    let leaf = self.root.walk_mut(page, false, mode::levels())?;
+                    leaf.set(ppn, flags | PteFlags::W | PteFlags::V);
                 }
-                _ => return Err(MapError::NotMapped),
             }
-        };
-        let pa = PhysAddr::from_raw(new_box.as_ptr() as usize);
-        {
-            let map = self.resolve_mut(page).expect("map exists (checked)");
-            let old = map.frames.insert(shared_index, FrameState::Owned(new_box));
-            drop(old);
-            let leaf = self.root.walk_mut(page, false, mode::levels())?;
-            let ppn = (pa.as_usize() >> 12) as u64;
-            leaf.set(ppn, flags | PteFlags::W | PteFlags::V);
         }
         Ok(())
     }
@@ -773,14 +792,14 @@ impl Space {
     // ── 适配层（转发 inner 原语 + 刷）───────────────────────
 
     /// 只登记簿记（懒/守卫/借用占位），不装 PTE，不需刷 TLB。
-    pub(crate) fn reserve_map(
+    pub(crate) fn map(
         &self,
         va: VirtAddr,
         size: usize,
         flags: PteFlags,
         pending: Option<Pending>,
     ) -> Result<(), MapError> {
-        self.with(|inner| inner.reserve_map(va, size, flags, pending))
+        self.with(|inner| inner.map(va, size, flags, pending))
     }
 
     /// 借帧连续映射（DRAM 恒等 / trampoline / dock·ring 视图）。
@@ -812,11 +831,11 @@ impl Space {
     /// Span 回收门：还段 + 统一拆除 + 刷 TLB。
     ///
     /// `Span` 由 claim/allocate/mmap 产出（`release` 只收它——分配与回收同一
-    /// 类型，杜绝 re-find）。段归还失败（精确匹配不中）即 **panic**：绝不静默
-    /// 泄漏（Span 与分配恒一致，失败 = 调用方错误）。
-    pub(crate) fn release(&self, span: Span) {
+    /// 类型，杜绝 re-find）。失败域：`MapError::SegmentMismatch` = Span 与段状态
+    /// 不一致（调用方 bug——绝大多数调用方用 `.expect()` 保留 panic 语义）。
+    pub(crate) fn release(&self, span: Span) -> Result<(), MapError> {
         self.with_flush(|inner| {
-            // 1. 先还段（失败即 panic，状态未动）
+            // 1. 先还段（失败即 SegmentMismatch，状态未动）
             let seg_ok = match span.seg {
                 Seg::User => match inner.user.as_mut() {
                     Some(u) => u.deallocate(span.va.as_usize(), span.size.get()),
@@ -824,15 +843,13 @@ impl Space {
                 },
                 Seg::Kernel => inner.kernel.deallocate(span.va.as_usize(), span.size.get()),
             };
-            assert!(
-                seg_ok,
-                "release: segment deallocate mismatch for span {:#x}+{}",
-                span.va.as_usize(),
-                span.size.get()
-            );
+            if !seg_ok {
+                return Err(MapError::SegmentMismatch);
+            }
             // 2. 再统一拆除（清叶 / 摘·裂 map，帧随 drop 归还）
             inner.unmap(span.va, span.size.get());
-        });
+            Ok(())
+        })
     }
 
     /// 懒页物化（缺页处理：分配零页装叶注入 + 刷 TLB）。
@@ -851,10 +868,11 @@ impl Space {
         self.with_flush(|inner| inner.share(start, size))
     }
 
-    /// 写时分裂私有（COW 写缺页：Shared → 新 Owned）。
+    /// 写时分裂私有（COW 写缺页：Shared → 新 Owned；写缺页调用传 `PAGE_SIZE`）。
+    /// 非 Shared 页静默跳过——与 [`Self::share`] 跳过非 Owned 对称。
     #[allow(clippy::wrong_self_convention)] // Space 跨核 Arc 共享，&self 刻意为之
-    pub fn own(&self, va: VirtAddr) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.own(va))
+    pub fn own(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
+        self.with_flush(|inner| inner.own(start, size))
     }
 
     /// 判别 va 所在页是否 Shared 共享态。

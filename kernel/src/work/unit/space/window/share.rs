@@ -32,7 +32,7 @@ impl ShareWindow {
         space.with(|inner| {
             let va = inner.allocate(Seg::User, size)?;
             let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
-            if let Err(e) = inner.reserve_map(va, size, flags, Some(Pending::Lazy)) {
+            if let Err(e) = inner.map(va, size, flags, Some(Pending::Lazy)) {
                 // reserve 未落任何 PTE/帧；段退回
                 inner.deallocate(Seg::User, va.as_usize(), size);
                 return Err(e);

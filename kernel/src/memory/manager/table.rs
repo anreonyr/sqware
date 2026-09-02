@@ -75,6 +75,9 @@ pub enum MapError {
     /// DRAM 恒等映射越过用户栈窗口（内存配置非法）。
     #[error("DRAM identity map overlaps the user stack window")]
     DramOverlap,
+    /// Span 与段状态不一致（释放时 VA/size 不匹配——调用方 bug）。
+    #[error("span does not match segment state")]
+    SegmentMismatch,
 }
 
 /// 页表页 — 512 条目 × 8 字节 = 4 KiB，对齐到页边界（三类模式同宽）。

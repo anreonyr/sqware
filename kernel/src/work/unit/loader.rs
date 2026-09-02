@@ -57,7 +57,7 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
             if mem_pages > file_pages {
                 let bss_va = seg.vaddr + file_pages * PAGE_SIZE;
                 let bss_size = (mem_pages - file_pages) * PAGE_SIZE;
-                inner.reserve_map(bss_va, bss_size, flags, Some(Pending::Lazy))?;
+                inner.map(bss_va, bss_size, flags, Some(Pending::Lazy))?;
             }
         }
         Ok(())

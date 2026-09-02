@@ -211,7 +211,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     ShareWindow::mmap(s, size).map(|span| span.va)
                 } else {
                     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
-                    s.reserve_map(VirtAddr::from_raw(fixed), size, flags, Some(Pending::Lazy))
+                    s.map(VirtAddr::from_raw(fixed), size, flags, Some(Pending::Lazy))
                         .map(|()| VirtAddr::from_raw(fixed))
                 }
             };
