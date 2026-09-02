@@ -105,7 +105,8 @@ def run_qemu [cfg: record] {
   let cap = $"sqware-($cfg.seed).cap"
   # 勿包进 let —— let 会把外部输出吞掉，终端看不到（"我看不到输出"的根因）。
   if ($cfg.timeout | is-empty) {
-      ^qemu-system-riscv64 ...$cfg.qemu_args | tee { save --force $cap }
+      # ^qemu-system-riscv64 ...$cfg.qemu_args | tee { save --force $cap }
+      ^qemu-system-riscv64 ...$cfg.qemu_args
   } else {
       ^timeout $cfg.timeout qemu-system-riscv64 ...$cfg.qemu_args | tee { save --force $cap }
   }
