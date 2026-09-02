@@ -104,6 +104,16 @@ impl Banker {
             .map(|w| w.load(Ordering::Relaxed).count_ones() as usize)
             .sum()
     }
+
+    /// 帧基址（held 位图覆盖的 DRAM 起点）。
+    pub(crate) fn base(&self) -> usize {
+        self.base.load(Ordering::Relaxed)
+    }
+
+    /// 位图原子字切片（只读视图，原子访问仍走 `load`）。
+    pub(crate) fn words(&self) -> Option<&[AtomicU64]> {
+        self.words.get().map(|b| &**b)
+    }
 }
 
 /// 金库全局单例。

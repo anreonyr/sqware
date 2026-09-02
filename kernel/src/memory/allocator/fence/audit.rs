@@ -25,6 +25,7 @@
 #![cfg(feature = "audit")] // audit feature（debug 默认开；release 可显式 --features audit）
 
 use core::alloc::Allocator;
+use core::sync::atomic::Ordering;
 
 use crate::lock::OnceLock;
 use crate::memory::manager::addr::PhysAddr;
@@ -188,12 +189,14 @@ pub fn check_baseline() {
     crate::putln!("[audit] block-pool pages: {pool_pages} (turnover, not a violation)");
 
     // ⑤ 一致性：banker held 与 frame.occupied 必须相符（簿记不变量）。
+    //
+    // 重取快照：本函数 now_tables / now_pool 三次 Vec 分配自扰会增减 held
+    // 与 occupied，line 134 的 frame 是分配前的快照——drift 检查用它会把自扰
+    // 当违例。view_frame() 重读 occupied，audit 自扰归零，!held_ok 触发条件
+    // 只对真违例（漏 take / 漏 give / 帧重叠 / OOB 等）开放。
     let held = super::banker::BANKER.held_count();
-    let occupied = frame.occupied;
+    let occupied = statistics::view_frame().occupied;
     let held_ok = held == occupied;
-    if !held_ok {
-        crate::putln!("[audit] banker held {held} != frame occupied {occupied}");
-    }
 
     drop(now_tables);
     drop(now_pool);

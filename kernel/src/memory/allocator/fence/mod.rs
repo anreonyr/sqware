@@ -144,6 +144,23 @@ fn frame_class_slot(pa: usize) -> usize {
     (pa - base) / crate::memory::PAGE_SIZE
 }
 
+/// 帧类别查（审计/诊断用）：未装配返回 `u8::MAX`（哨兵值）；越界同样。
+pub(crate) fn frame_class_of(pa: usize) -> u8 {
+    let Some(table) = FRAME_CLASS.get() else {
+        return u8::MAX;
+    };
+    let base = FRAME_CLASS_BASE.load(Ordering::Relaxed);
+    if pa < base {
+        return u8::MAX;
+    }
+    let idx = (pa - base) / crate::memory::PAGE_SIZE;
+    let bits = table.len();
+    if idx >= bits {
+        return u8::MAX;
+    }
+    table[idx].load(Ordering::Relaxed)
+}
+
 /// 标注（tag）：按地址判别后把类别记入归属账——块地址（ledger 有账）→ relabel
 /// （计数迁移）；帧地址（永不入账）→ FRAME_CLASS 表 + 计数。判别由「块必
 /// mark、帧永不 mark」保证确定。帧侧 Persistent 标注写 0（表全零即默认语义），
