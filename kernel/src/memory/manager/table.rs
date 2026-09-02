@@ -149,18 +149,20 @@ impl TableNode {
         1 + self.children.iter().map(|(_, c)| c.count()).sum::<usize>()
     }
 
-    /// 分配一个零页表子节点。
-    fn new_child() -> Result<Self, MapError> {
-        Ok(Self {
+    /// 创建一个零页表子节点 + 把它的 PPN 装入 `pte`（V 位；非叶，非超页）。
+    ///
+    /// 一步完成"建表 + 装 PTE 引用"——保证新子节点在 tree 入册前 PTE 已 V，
+    /// 永不指向未登记的表。返回的 child 由调用方 push 进父的 `children`。
+    ///
+    /// 命名"leaf"——PTE 视角看这是叶子表节点（被 PTE 指向的下一层表）。
+    fn leaf(pte: &mut PageTableEntry) -> Result<Self, MapError> {
+        let child = Self {
             page: PageTable::new()?,
             children: Vec::new(),
-        })
-    }
-
-    /// 把子节点页表的 PPN 装入 `pte`（V 位；非叶，非超页）。
-    fn set_child_pte(pte: &mut PageTableEntry, child: &Self) {
+        };
         let ppn = (Box::as_ptr(&child.page) as usize >> PAGE_SHIFT) as u64;
         pte.set(ppn, PteFlags::V);
+        Ok(child)
     }
 
     /// Walk to the leaf PTE (mutable)，沿所有权树下钻。
@@ -193,11 +195,8 @@ impl TableNode {
                 if !alloc {
                     return Err(MapError::NotMapped);
                 }
-                let child = Self::new_child()?;
+                let child = Self::leaf(&mut node.page.entries[idx])?;
                 node.children.push((idx, child));
-                let child = node.children.last().expect("just pushed");
-                let e = &mut node.page.entries[idx];
-                Self::set_child_pte(e, &child.1);
             }
             node = &mut node
                 .children
@@ -321,32 +320,67 @@ impl TableNode {
         Ok(())
     }
 
-    /// 清一个叶 PTE（不回收中间表；回收见 [`Self::reclaim`]）。
+    /// 改 `[vaddr, vaddr+size)` 内每页的叶 PTE flags（不动中间表结构）。
     ///
-    /// 复用 [`Self::walk_mut`]（alloc=false）：中间表缺失时返回 NotMapped，
-    /// 与本无映射一致，直接跳过。
-    pub(crate) fn unmap(&mut self, vaddr: VirtAddr) {
-        if let Ok(leaf) = self.walk_mut(vaddr, false, super::mode::levels()) {
-            leaf.clear();
+    /// 已触页 / Eager 全物化页：walk 到叶 PTE 翻 flags。
+    /// 中间表缺失：walk_mut(false) 返回 NotMapped（错误传播）。
+    ///
+    /// 簿记同步（Lazy 区未触页改 map.flags）由 `SpaceInner::protect` 处理——本函数
+    /// 只动页表。
+    pub(crate) fn protect(
+        &mut self,
+        vaddr: VirtAddr,
+        size: usize,
+        flags: PteFlags,
+    ) -> Result<(), MapError> {
+        if size == 0 || vaddr.offset() != 0 || size & (PAGE_SIZE - 1) != 0 {
+            return Err(MapError::NotAligned);
         }
+        let pages = size / PAGE_SIZE;
+        for i in 0..pages {
+            let va = vaddr + i * PAGE_SIZE;
+            let leaf = self.walk_mut(va, false, super::mode::levels())?;
+            leaf.set_flags(flags);
+        }
+        Ok(())
     }
 
-    /// 回收 `[start, end)` 范围内变空的中间表（自底向上），返回本节点是否已全空。
+    /// 清理 `[vaddr, vaddr+size)` 范围内的叶 PTE + 回收变空的中间表。
     ///
-    /// - `level`：本节点层级（根 = 2，逐层递减；叶层 0 无子节点，直接判空）
-    /// - `node_va`：本节点槽 0 覆盖的虚拟地址（39 位空间，调用方先掩码）
-    /// - `start` / `end`：unmap 范围（39 位掩码，`[start, end)`）
+    /// 多页版：逐页 `walk_mut(false)` 清叶（中间表缺失返回 NotMapped = 与无映射
+    /// 一致，直接跳过），再自底向上回收变空中间表。一次调用完成完整清理——
+    /// 不再需要单独的 `reclaim`。
+    pub(crate) fn unmap(&mut self, vaddr: VirtAddr, size: usize) {
+        if size == 0 || vaddr.offset() != 0 || size & (PAGE_SIZE - 1) != 0 {
+            return;
+        }
+        let pages = size / PAGE_SIZE;
+        // 1. 清叶 PTE
+        for i in 0..pages {
+            if let Ok(leaf) = self.walk_mut(vaddr + i * PAGE_SIZE, false, super::mode::levels()) {
+                leaf.clear();
+            }
+        }
+        // 2. 拆空中间表（自底向上）
+        let geo = super::mode::geometry(super::mode::mode());
+        let mask = (1usize << geo.va_bits) - 1;
+        Self::recycle(
+            self,
+            (geo.levels - 1) as usize,
+            0,
+            vaddr.as_usize() & mask,
+            (vaddr.as_usize() + size) & mask,
+        );
+    }
+
+    /// 自底向上回收 `[start, end)` 范围内变空的中间表，返回本节点是否全空。
     ///
     /// 只下钻与范围相交的槽位；子节点全空时**先清本层 PTE 再摘除**（drop 归还
     /// 帧）。范围不相交的子树不会被触及（树中节点只在创建时带有效项、只在变空
     /// 时被摘除——未触及即非空）。root 永不摘——调用方忽略返回值。
-    pub(crate) fn reclaim(
-        &mut self,
-        level: usize,
-        node_va: usize,
-        start: usize,
-        end: usize,
-    ) -> bool {
+    ///
+    /// 仅 [`Self::unmap`] 内部调用——不对外暴露。
+    fn recycle(&mut self, level: usize, node_va: usize, start: usize, end: usize) -> bool {
         if level > 0 {
             let span = 1usize << (12 + 9 * level);
             let node_end = node_va.saturating_add(span << 9);
@@ -371,7 +405,7 @@ impl TableNode {
                     continue;
                 }
                 let child_va = node_va + (*slot << shift);
-                if child.reclaim(level - 1, child_va, start, end) {
+                if child.recycle(level - 1, child_va, start, end) {
                     self.page.entries[*slot].clear();
                     remove.push(i);
                 }

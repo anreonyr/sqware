@@ -211,7 +211,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     ShareWindow::mmap(s, size).map(|span| span.va)
                 } else {
                     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
-                    s.reserve(VirtAddr::from_raw(fixed), size, flags, Some(Pending::Lazy))
+                    s.reserve_map(VirtAddr::from_raw(fixed), size, flags, Some(Pending::Lazy))
                         .map(|()| VirtAddr::from_raw(fixed))
                 }
             };
@@ -235,7 +235,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 } else if s.pending_state(addr) != PendingState::Absent {
                     // 声明区（或窗口子区间的近似覆盖）：统一拆除（清叶+摘/裂
                     // map）；窗口槽不归还。
-                    s.remove(addr, size);
+                    s.unmap(addr, size);
                     true
                 } else {
                     false

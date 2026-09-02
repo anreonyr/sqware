@@ -100,7 +100,7 @@ pub fn init() -> MapResult<()> {
                 | PteFlags::D
                 | PteFlags::G;
 
-            kernel_space.borrow(
+            kernel_space.borrow_map(
                 VirtAddr::from_raw(m.dram.base),
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
@@ -109,7 +109,7 @@ pub fn init() -> MapResult<()> {
 
             // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备；
             //    高半区起点 = 探测模式的 lower()，随模式）
-            kernel_space.borrow(
+            kernel_space.borrow_map(
                 mode::lower() + m.dram.base,
                 PhysAddr::from_raw(m.dram.base),
                 m.dram.size,
@@ -133,7 +133,7 @@ pub fn init() -> MapResult<()> {
             //    sfence 刷掉也安全。
             let tramp_flags =
                 PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
-            kernel_space.borrow(TRAMPOLINE, trampoline_pa(), PAGE_SIZE, tramp_flags)?;
+            kernel_space.borrow_map(TRAMPOLINE, trampoline_pa(), PAGE_SIZE, tramp_flags)?;
 
             // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页
             let n = machine::hart_count();
@@ -149,7 +149,7 @@ pub fn init() -> MapResult<()> {
                     PhysAddr::from_raw(page.as_ptr() as usize).as_usize(),
                     "hart-frame",
                 );
-                kernel_space.attach(
+                kernel_space.attach_map(
                     HART_FRAME_BASE + h * PAGE_SIZE,
                     vec![page],
                     PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,

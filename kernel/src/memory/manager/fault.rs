@@ -63,7 +63,7 @@ impl PageFault {
 fn resolve_anonymous(fault: &PageFault, space: &Space) -> bool {
     let vaddr = fault.addr.page_align();
 
-    match space.materialize(vaddr, PAGE_SIZE) {
+    match space.materialize_map(vaddr, PAGE_SIZE) {
         Ok(()) => {
             info!(
                 "resolved page fault: allocated anon page for {:?} at {:?}",

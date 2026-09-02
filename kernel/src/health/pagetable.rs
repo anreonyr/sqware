@@ -44,7 +44,7 @@ pub fn pagetable() {
         }
         let _pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
         space
-            .attach(VirtAddr::from_raw(BASE), frames, flags)
+            .attach_map(VirtAddr::from_raw(BASE), frames, flags)
             .expect("[health] pagetable: attach");
         crate::expect!(
             space.table_count() == base_count + levels,
@@ -58,7 +58,7 @@ pub fn pagetable() {
         );
 
         // 拆除：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）
-        space.remove(VirtAddr::from_raw(BASE), SIZE);
+        space.unmap(VirtAddr::from_raw(BASE), SIZE);
         crate::expect!(
             space.table_count() == base_count,
             "round {round}: tables after unmap (got {} want {})",

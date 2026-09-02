@@ -27,7 +27,7 @@ impl FrameWindow {
         space.with_flush(|inner| {
             let va = inner.allocate(Seg::Kernel, PAGE_SIZE)?;
             let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
-            if let Err(e) = inner.claim(va, PAGE_SIZE, flags) {
+            if let Err(e) = inner.claim_map(va, PAGE_SIZE, flags) {
                 // claim 已自回滚装配；段退回
                 inner.deallocate(Seg::Kernel, va.as_usize(), PAGE_SIZE);
                 return Err(e);

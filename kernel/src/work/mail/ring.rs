@@ -317,7 +317,7 @@ fn map_shared(space: &Arc<Space>, meta: &RingMeta, bytes: usize) -> Result<usize
     // 模式同 dock（取段 + 借帧装配）；不收回窗口类型——见 window/mod.rs 注。
     let va = space.with_flush(|inner| {
         let va = inner.allocate(Seg::User, size)?;
-        inner.borrow(
+        inner.borrow_map(
             va,
             PhysAddr::from_raw(meta.base.as_ptr() as usize),
             size,

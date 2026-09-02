@@ -158,7 +158,7 @@ pub fn init() {
         let phys = base + h * TRAP_STACK_SLOT_SIZE;
         // 段体映射（60 KiB）：固定 VA → 块内物理页；guard 页不映射（越界即页故障）
         space
-            .borrow(
+            .borrow_map(
                 body_va,
                 PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
                 TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
@@ -166,7 +166,7 @@ pub fn init() {
             )
             .expect("map trap stack body");
         // 恒等视图 guard 页清 PTE 保留 boot 栈溢出护栏（固定 VA guard 管 trap 栈）
-        space.remove(VirtAddr::from_raw(phys), TRAP_STACK_GUARD);
+        space.unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD);
         // canary 写于固定 VA 栈体底（guard 之上）
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);

@@ -23,7 +23,7 @@
 // 同时借 `durable` 的不同字段时，先绑定局部变量（字段级拆借），再调用方法。
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
@@ -166,7 +166,7 @@ impl SpaceInner {
     ///
     /// `pending: Some(Lazy)` = 缺页物化；`Some(Guard)` = 禁止触碰；
     /// `None` + 空帧 = 借用占位（leaf 由调用方另装，见 [`Self::borrow`]）。
-    pub(crate) fn reserve(
+    pub(crate) fn reserve_map(
         &mut self,
         va: VirtAddr,
         size: usize,
@@ -189,7 +189,7 @@ impl SpaceInner {
     /// 装叶、注入（帧自产，物理可断）。
     ///
     /// 中途帧耗尽回滚**装配**（清已装叶 + 摘自身 Map）。
-    pub(crate) fn claim(
+    pub(crate) fn claim_map(
         &mut self,
         va: VirtAddr,
         size: usize,
@@ -210,7 +210,7 @@ impl SpaceInner {
 
     /// 装配调用方配好的帧（物理可断，逐帧装叶）+ 登记全物化 Map。
     /// 帧随 Map drop 归还。`frames` 非空；失败回滚清已装叶。
-    pub(crate) fn attach(
+    pub(crate) fn attach_map(
         &mut self,
         vaddr: VirtAddr,
         frames: Vec<Frame>,
@@ -235,7 +235,7 @@ impl SpaceInner {
 
     /// 借帧连续映射：物理地址已知、一次装连续段，不持帧（帧归外部：机器/
     /// 内核/DockMeta）。DRAM 恒等、trampoline、dock/ring 视图走这。
-    pub(crate) fn borrow(
+    pub(crate) fn borrow_map(
         &mut self,
         vaddr: VirtAddr,
         paddr: PhysAddr,
@@ -259,7 +259,7 @@ impl SpaceInner {
     /// 统一拆除 `[va, va+size)`：清相交已物化叶 PTE + 回收变空的中间表；
     /// **全覆盖**的 Map 整张摘除（帧随 drop 归还）；**部分覆盖**的 Map 按洞
     /// 分裂（洞内帧随 drop 归还）——拆不齐问题（R2）在此根除。不碰段。
-    pub(crate) fn remove(&mut self, va: VirtAddr, size: usize) {
+    pub(crate) fn unmap(&mut self, va: VirtAddr, size: usize) {
         if size == 0 {
             return;
         }
@@ -294,38 +294,16 @@ impl SpaceInner {
         self.maps = survivors;
     }
 
-    /// 清 `[va, va+size)` 内**已物化页**的叶 PTE + 回收变空的中间表。
+    /// 清 `[va, va+size)` 内的叶 PTE + 回收变空的中间表。
     ///
-    /// 懒区只有已触页有 PTE/帧：按覆盖 map 的稀疏帧表走（O(触页数)，非
-    /// O(段大小)）——1 TiB 级懒区不可逐页扫全段。帧已随 map 摘除 drop 归还。
+    /// 一次调用 [`TableNode::unmap`] 完成完整清理（含清叶 + 拆空中间表）；
+    /// 未物化页 `walk_mut(false)` 缺失中间表返回 NotMapped = 与无映射一致，
+    /// 直接跳过——不需按稀疏帧表预过滤。
     pub(crate) fn clear(&mut self, va: VirtAddr, size: usize) {
         if size == 0 {
             return;
         }
-        let end = va.as_usize().saturating_add(size);
-        for m in &self.maps {
-            let s = m.va.as_usize();
-            let m_end = s.saturating_add(m.size.get());
-            if va.as_usize() >= m_end || end <= s {
-                continue;
-            }
-            for i in
-                (va.as_usize().max(s) - s) / PAGE_SIZE..(end.min(m_end) - s).div_ceil(PAGE_SIZE)
-            {
-                if m.is_materialized(i) {
-                    self.root.unmap(VirtAddr::from_raw(s + i * PAGE_SIZE));
-                }
-            }
-        }
-        // 单次回收变空的中间表
-        let geo = mode::geometry(mode::mode());
-        let mask = (1usize << geo.va_bits) - 1;
-        self.root.reclaim(
-            (geo.levels - 1) as usize,
-            0,
-            va.as_usize() & mask,
-            end & mask,
-        );
+        self.root.unmap(va, size);
     }
 
     // ── 帧 ──────────────────────────────────────────────────
@@ -350,7 +328,7 @@ impl SpaceInner {
     /// `pending` 非 Lazy（Guard / None）或无映射 → 错误。
     /// 循环失败时 [`InstallGuard`] 按 [`MapMode::Materialize`] 自动拆 PTE +
     /// 摘 frames 键；收尾成功须 `commit()` 拆雷。
-    pub(crate) fn materialize(&mut self, va: VirtAddr, size: usize) -> Result<(), MapError> {
+    pub(crate) fn materialize_map(&mut self, va: VirtAddr, size: usize) -> Result<(), MapError> {
         let pages = size.div_ceil(PAGE_SIZE);
         // 前置：从已存在的 Lazy map 拿 flags + 校验 pending
         let flags = {
@@ -382,9 +360,8 @@ impl SpaceInner {
                 (m.pending, m.is_materialized(idx))
             };
             if materialized {
-                // 已物化页必有叶：不分配中间表（false），缺失即错误
-                let leaf = self.root.walk_mut(m_va, false, mode::levels())?;
-                leaf.set_flags(flags);
+                // 改叶 PTE flags——下沉到 TableNode
+                self.root.protect(m_va, PAGE_SIZE, flags)?;
             }
             if pending == Some(Pending::Lazy) {
                 self.resolve_mut(m_va).expect("map exists").flags = flags;
@@ -401,46 +378,53 @@ impl SpaceInner {
     /// 这是 fork 后端语义，不为 bug。
     #[allow(dead_code)] // fork 后端预留
     pub(crate) fn share(&mut self, start: VirtAddr, size: usize) -> Result<(), MapError> {
-        for i in 0..size.div_ceil(PAGE_SIZE) {
-            let va = start + i * PAGE_SIZE;
-            let (bytes_src, flags) = {
-                let map = self.resolve_ref(va).ok_or(MapError::NotMapped)?;
-                let idx = (va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-                match &map.frames.get(&idx) {
-                    Some(FrameState::Shared(_)) => continue,
-                    Some(FrameState::Owned(b)) => {
-                        let bytes: &[u8] = &**b;
-                        (bytes, map.flags)
+        let pages = size.div_ceil(PAGE_SIZE);
+        let mut guard = InstallGuard::new(self, start, MapMode::Materialize);
+        let result: Result<(), MapError> = (|| {
+            for i in 0..pages {
+                let va = start + i * PAGE_SIZE;
+                // 拿原 Owned 字节 + flags + idx
+                let (bytes_src, flags, idx) = {
+                    let map = guard.inner.resolve_ref(va).ok_or(MapError::NotMapped)?;
+                    let idx = (va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
+                    match &map.frames.get(&idx) {
+                        // 跳过的页不 mark——保留原 Shared/None 状态
+                        Some(FrameState::Shared(_)) => continue,
+                        Some(FrameState::Owned(b)) => (b.as_slice(), map.flags, idx),
+                        None => continue,
                     }
-                    None => continue, // 未物化页：无帧可共享
-                }
-            };
-            // 类别 = Task：COW 共享帧（Shared）属任务生命周期——关机归零。
-            let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> = crate::tag!(
-                Task,
-                Arc::new_in(
-                    [0u8; PAGE_SIZE],
-                    crate::memory::allocator::frame::allocator()
-                )
-            );
-            Arc::get_mut(&mut arc)
-                .expect("fresh arc")
-                .copy_from_slice(bytes_src);
-            let arc_pa = PhysAddr::from_raw(Arc::as_ptr(&arc) as usize);
-            {
-                let map = self.resolve_mut(va).ok_or(MapError::NotMapped)?;
-                let idx = (va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-                let old = map.frames.insert(idx, FrameState::Shared(arc));
-                drop(old);
-                let leaf = self.root.walk_mut(va, false, mode::levels())?;
-                let ppn = (arc_pa.as_usize() >> 12) as u64;
-                leaf.set(
-                    ppn,
-                    (flags & !PteFlags::W) | PteFlags::A | PteFlags::D | PteFlags::V,
+                };
+                // 类别 = Task：COW 共享帧（Shared）属任务生命周期——关机归零。
+                let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> = crate::tag!(
+                    Task,
+                    Arc::new_in(
+                        [0u8; PAGE_SIZE],
+                        crate::memory::allocator::frame::allocator()
+                    )
                 );
+                Arc::get_mut(&mut arc)
+                    .expect("fresh arc")
+                    .copy_from_slice(bytes_src);
+                let arc_pa = PhysAddr::from_raw(Arc::as_ptr(&arc) as usize);
+                {
+                    let map = guard.inner.resolve_mut(va).ok_or(MapError::NotMapped)?;
+                    let old = map.frames.insert(idx, FrameState::Shared(arc));
+                    drop(old); // 原 Owned 帧归还 frame 池
+                    let leaf = guard.inner.root.walk_mut(va, false, mode::levels())?;
+                    let ppn = (arc_pa.as_usize() >> 12) as u64;
+                    leaf.set(
+                        ppn,
+                        (flags & !PteFlags::W) | PteFlags::A | PteFlags::D | PteFlags::V,
+                    );
+                }
+                guard.mark(i); // 已 set PTE：登记回滚页号（跳过的页不登记）
             }
+            Ok(())
+        })();
+        if result.is_ok() {
+            guard.commit();
         }
-        Ok(())
+        result
     }
 
     /// 写缺页分裂：保证该页私有可写。Shared → 分新 Owned 拷字节。
@@ -551,35 +535,43 @@ enum MapMode {
 struct InstallGuard<'a> {
     inner: &'a mut SpaceInner,
     va: VirtAddr,
-    installed: usize,
+    installed: BTreeSet<usize>,
     book: MapMode,
 }
 
 impl<'a> InstallGuard<'a> {
     fn new(inner: &'a mut SpaceInner, va: VirtAddr, book: MapMode) -> Self {
-        Self { inner, va, installed: 0, book }
+        Self {
+            inner,
+            va,
+            installed: BTreeSet::new(),
+            book,
+        }
     }
-    fn mark(&mut self) {
-        self.installed += 1;
+    fn mark(&mut self, at: usize) {
+        self.installed.insert(at);
     }
-    /// 拆雷：drop 整体 no-op（installed=0 清叶循环空 + book 改 Materialize 跳过 retain）。
+    /// 拆雷：drop 时 installed=0 不调 unmap；book 不动——Claim 仍按原策略摘整张 map。
     /// 消费 self。
     fn commit(mut self) {
-        self.installed = 0;
-        self.book = MapMode::Materialize;
+        self.installed.clear();
     }
 }
 
 impl Drop for InstallGuard<'_> {
     fn drop(&mut self) {
-        // 1. 清已装叶
-        for j in 0..self.installed {
-            self.inner.root.unmap(self.va + j * PAGE_SIZE);
+        // commit() 已归零 → 成功路径，整个 drop 不做任何动作
+        if self.installed.is_empty() {
+            return;
         }
-        // 2. 按策略动 maps
+        // 1. 按精确页号清已 set 叶 PTE（单页 unmap，各自拆空中间表）
+        for &j in &self.installed {
+            self.inner.root.unmap(self.va + j * PAGE_SIZE, PAGE_SIZE);
+        }
+        // 2. 按策略动 maps（精确页号——share 跳过的页保留原状态）
         match self.book {
             MapMode::Materialize => {
-                for j in 0..self.installed {
+                for &j in &self.installed {
                     if let Some(m) = self.inner.resolve_mut(self.va + j * PAGE_SIZE) {
                         m.frames.remove(&j);
                     }
@@ -622,7 +614,7 @@ impl SpaceInner {
                 let map = guard.inner.resolve_mut(m_va).expect("map exists");
                 let idx = (m_va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
                 map.inject(idx, page);
-                guard.mark();
+                guard.mark(i);
             }
             Ok(())
         })();
@@ -732,7 +724,7 @@ impl SpaceBuilder {
                 .lock();
             ks_inner.root.walk_ref(TRAMPOLINE)?
         };
-        space.borrow(TRAMPOLINE, tramp_pa, PAGE_SIZE, tramp_flags)?;
+        space.borrow_map(TRAMPOLINE, tramp_pa, PAGE_SIZE, tramp_flags)?;
         Ok(())
     }
 }
@@ -781,40 +773,40 @@ impl Space {
     // ── 适配层（转发 inner 原语 + 刷）───────────────────────
 
     /// 只登记簿记（懒/守卫/借用占位），不装 PTE，不需刷 TLB。
-    pub(crate) fn reserve(
+    pub(crate) fn reserve_map(
         &self,
         va: VirtAddr,
         size: usize,
         flags: PteFlags,
         pending: Option<Pending>,
     ) -> Result<(), MapError> {
-        self.with(|inner| inner.reserve(va, size, flags, pending))
+        self.with(|inner| inner.reserve_map(va, size, flags, pending))
     }
 
     /// 借帧连续映射（DRAM 恒等 / trampoline / dock·ring 视图）。
-    pub fn borrow(
+    pub fn borrow_map(
         &self,
         vaddr: VirtAddr,
         paddr: PhysAddr,
         size: usize,
         flags: PteFlags,
     ) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.borrow(vaddr, paddr, size, flags))
+        self.with_flush(|inner| inner.borrow_map(vaddr, paddr, size, flags))
     }
 
     /// 已备帧装配（loader 逐段 / hart 帧 / health 压测）。
-    pub(crate) fn attach(
+    pub(crate) fn attach_map(
         &self,
         vaddr: VirtAddr,
         frames: Vec<Frame>,
         flags: PteFlags,
     ) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.attach(vaddr, frames, flags))
+        self.with_flush(|inner| inner.attach_map(vaddr, frames, flags))
     }
 
     /// 统一拆除（munmap 后端 / guard 打洞）：清叶 + 摘/裂 Map + 刷 TLB。
-    pub fn remove(&self, vaddr: VirtAddr, size: usize) {
-        self.with_flush(|inner| inner.remove(vaddr, size));
+    pub fn unmap(&self, vaddr: VirtAddr, size: usize) {
+        self.with_flush(|inner| inner.unmap(vaddr, size));
     }
 
     /// Span 回收门：还段 + 统一拆除 + 刷 TLB。
@@ -839,13 +831,13 @@ impl Space {
                 span.size.get()
             );
             // 2. 再统一拆除（清叶 / 摘·裂 map，帧随 drop 归还）
-            inner.remove(span.va, span.size.get());
+            inner.unmap(span.va, span.size.get());
         });
     }
 
     /// 懒页物化（缺页处理：分配零页装叶注入 + 刷 TLB）。
-    pub fn materialize(&self, vaddr: VirtAddr, size: usize) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.materialize(vaddr, size))
+    pub fn materialize_map(&self, vaddr: VirtAddr, size: usize) -> Result<(), MapError> {
+        self.with_flush(|inner| inner.materialize_map(vaddr, size))
     }
 
     /// 修改保护标志（mprotect 后端）。

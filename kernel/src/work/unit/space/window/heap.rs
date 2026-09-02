@@ -28,7 +28,7 @@ impl HeapWindow {
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
         space.with_flush(|inner| {
             let va = inner.allocate(Seg::User, size)?;
-            if let Err(e) = inner.claim(va, size, flags) {
+            if let Err(e) = inner.claim_map(va, size, flags) {
                 // claim 已自回滚装配；段退回
                 inner.deallocate(Seg::User, va.as_usize(), size);
                 return Err(e);
@@ -47,7 +47,7 @@ impl HeapWindow {
             }
             // 2. 统一拆除：清叶（必须先于摘 map——clear 按 map 的
             //    is_materialized 决定 unmap 哪些页）+ 摘 map（帧随 drop 归还）。
-            inner.remove(addr, size);
+            inner.unmap(addr, size);
             true
         })
     }
