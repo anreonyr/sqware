@@ -325,9 +325,7 @@ impl Scheduler {
     pub(super) fn rotate(&self, i: &mut SchedulerInner, mut cur: Arc<Task>) -> Arc<Task> {
         Task::exclusive(&mut cur).transform(TaskState::Starved);
         i.starved.push_back(cur);
-        let next = i.starved.pop_front().expect("non-empty");
-        self.set_len(i);
-        next
+        i.starved.pop_front().expect("non-empty")
     }
 
     /// 主动让出：无视剩余预算立即轮转（Running → Starved）。
@@ -342,10 +340,12 @@ impl Scheduler {
             i.running = Some(cur);
             return pa;
         }
-        trace::note(EventKind::Room(RoomEvent::Starve { tid: cur.ident.id }));
+        let prev_tid = cur.ident.id;
         let next = self.rotate(&mut i, cur);
         drop(i);
-        self.mount(next)
+        let pa = self.mount(next);
+        trace::note(EventKind::Room(RoomEvent::Starve { tid: prev_tid }));
+        pa
     }
 
     // 注：park / wait / reap 三个 Scheduler 方法已移至 [`crate::work::room::messenger`]，
