@@ -102,7 +102,8 @@ impl SharedBuf {
             }
         }
         let size = self.bytes.next_multiple_of(PAGE_SIZE);
-        let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
+        let flags =
+            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
         // 模式同窗口（取段 + 借帧装配）；不收回窗口类型——见 window/mod.rs 注。
         let va = space.with_flush(|inner| {
             let va = inner.allocate(Seg::User, size)?;

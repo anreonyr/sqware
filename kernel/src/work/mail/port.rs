@@ -164,7 +164,7 @@ pub fn try_push(handle: usize, msg: &[u8; MSG_LEN]) -> Result<(), PortError> {
     // 借出 PortMeta Arc 后立即放 mail 锁——再锁 inner（L3）。mail 锁护的仅是
     // ports Vec，inner 自带锁，顺序获取不嵌套 → 3→3 同层不冲突。
     let meta = {
-        let mut mail = task.mail.lock();
+        let mail = task.mail.lock();
         let Some(p) = mail.ports.iter().find(|p| p.handle == handle) else {
             return Err(PortError::Dead);
         };
@@ -187,7 +187,7 @@ pub fn try_pull(handle: usize) -> Result<[u8; MSG_LEN], PortError> {
         return Err(PortError::Dead);
     };
     let meta = {
-        let mut mail = task.mail.lock();
+        let mail = task.mail.lock();
         let Some(p) = mail.ports.iter().find(|p| p.handle == handle) else {
             return Err(PortError::Dead);
         };

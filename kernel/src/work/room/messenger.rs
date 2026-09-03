@@ -27,9 +27,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
-use crate::work::unit::{
-    task::{BlockReason, Task, TaskState},
-};
+use crate::work::unit::task::{BlockReason, Task, TaskState};
 
 // ── 句柄分配 ──
 
@@ -149,9 +147,7 @@ pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
         let site = sites.entry(key).or_insert_with(WaitSite::new);
         if site.pend {
             site.pend = false;
-            let pa = cond
-                .running_frame_pa()
-                .expect("wait with no running task");
+            let pa = cond.running_frame_pa().expect("wait with no running task");
             return Some(pa);
         }
     }
@@ -326,8 +322,16 @@ pub fn clear_loop() {
         // 一次 with_flush 经 `Space::release(Span)` 收回——段归还 + PTE 清理 +
         // 刷 TLB；帧随 map drop 归还 frame 池。Span 是 claim 时存进 TaskIdent 的
         // 区间身份（类型同一，不 re-find）。
-        z.ident.team.space.release(z.ident.stack).expect("release: span mismatch");
-        z.ident.team.space.release(z.ident.frame).expect("release: span mismatch");
+        z.ident
+            .team
+            .space
+            .release(z.ident.stack)
+            .expect("release: span mismatch");
+        z.ident
+            .team
+            .space
+            .release(z.ident.frame)
+            .expect("release: span mismatch");
         drop(z);
         // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
         // halt 的关机断言无滞留可验。

@@ -4,6 +4,6 @@
 //   messenger  — 事件队列（park / wait-by-key / wake / reap / clear）
 //   conductor  — 多核协调（任务计数/全退出停机、休眠核位图/IPI 唤醒）
 
-pub mod scheduler;
-pub mod messenger;
 pub(crate) mod conductor;
+pub mod messenger;
+pub mod scheduler;

@@ -217,10 +217,8 @@ impl Trace {
             }
             rows
         } else {
-            let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-                Some(head.into()),
-                Some("hex".into()),
-            ]];
+            let mut rows: Vec<Vec<Option<String>>> =
+                vec![vec![Some(head.into()), Some("hex".into())]];
             for (i, a) in self.trail.frames().iter().enumerate() {
                 rows.push(vec![Some(format!("#{i}")), Some(hex(*a))]);
             }

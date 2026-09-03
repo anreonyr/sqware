@@ -274,7 +274,10 @@ impl TaskBuilder {
             Ok(s) => s,
             Err(e) => {
                 // 栈已领——用局部 Span 回滚（不读 TaskIdent，此时未构造）
-                self.team.space.release(stack_span).expect("release: rollback");
+                self.team
+                    .space
+                    .release(stack_span)
+                    .expect("release: rollback");
                 return Err(e);
             }
         };
