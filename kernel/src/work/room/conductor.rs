@@ -119,19 +119,31 @@ pub(super) fn wake(hart: usize) {
     );
 }
 
-/// 喊醒所有 WFI 等待中的 hart。按 64 核一组循环 SBI IPI（协议单次掩码至多 XLEN 位）。
+/// 唤醒一个 WFI 等待中的 hart（单点化）：从 WAITING 位图选最低 set bit 发
+/// SBI IPI，唤醒后立即返回。原广播语义会触发雷鸣群——N 个 hart 同时醒 → 同
+/// 时抢源 hart 的 L1 锁 → cache line 乒乓。单点化后每次 push / wake / drain
+/// 只唤醒 1 个等待 hart，其他仍在 WFI；被选 hart 抢到活走 wait() 路径自然
+/// 清睡眠位，没抢到的哑睡壳保留位（下次事件还可再吼）。
+///
+/// 失败兜底：被唤醒 hart 抢失败时 work 仍在源 hart 的 starved queue——源
+/// hart 下次 yield 时自取，最坏延迟 ≤ 1 个时间片（100ms）。
+///
+/// 风险：单点偏向最低位 hart（公平性可加 `YELL_CURSOR` 旋转，本次未引入）。
 pub(super) fn yell() {
     for (w, word) in WAITING.iter().enumerate() {
         let waiting = word.load(Ordering::Acquire);
         if waiting == 0 {
             continue;
         }
+        // 选最低 set bit（cache locality 好；低位 hart 通常先 idle）。
+        let pick = waiting & waiting.wrapping_neg();
         let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
             .args(SArgs {
-                a0: waiting,
+                a0: pick,
                 a1: w * (usize::BITS as usize),
                 ..Default::default()
             })
             .call();
+        return;
     }
 }

@@ -89,6 +89,11 @@ pub(crate) struct Scheduler {
     info: AtomicPtr<()>,
     /// 锁外：starved 长度镜像（steal 预检；与 inner 同结构体共生，不会分家）。
     starved_len: AtomicUsize,
+    /// 锁外：steal 起点游标（每次 steal 调用 fetch_add(1) % hart_count 拿起点）。
+    /// 多核同时醒来时用本地游标派生不同起点——避免全从 hart 0 起步造成的 cache
+    /// 热点（多 hart 同时对同一目标的 L1 锁 RMW → cache line 乒乓 = 雷鸣群）。
+    /// per-hart 独立，每核 fetch_add 是 Relaxed 无需同步。
+    steal_cursor: AtomicUsize,
 }
 
 /// 锁内核心：running（运行中，不在队列）+ starved（就绪队列，FIFO）。
@@ -111,6 +116,7 @@ impl Scheduler {
             ),
             info: AtomicPtr::new(core::ptr::null_mut()),
             starved_len: AtomicUsize::new(0),
+            steal_cursor: AtomicUsize::new(0),
         }
     }
 
@@ -403,10 +409,20 @@ pub(crate) fn current() -> &'static Scheduler {
 /// 非阻塞偷取：先读 starved_len（锁外原子读，S 态共享不失效缓存行）——空队列
 /// 不做 RMW，避免对受害者锁行乒乓；有活才 try_lock（失败即跳过——victim 忙时
 /// 不等待，无锁序规则）。锁内 pull 复查队列防竞态。
+///
+/// 起点随机化：每核持 `steal_cursor` 本地 fetch_add(1) % hart_count 派生起点，
+/// 多核同时醒来时各 hart 起点天然分散——避免全从 hart 0 起步造成的 cache
+/// 热点（多 hart 同时对同目标的 L1 锁 RMW → cache line 乒乓 = 雷鸣群）。
 pub(super) fn steal() -> Option<Arc<Task>> {
     let me = machine::hart_id();
     let n = machine::hart_count();
-    for v in 0..n {
+    if n <= 1 {
+        return None;
+    }
+    // 每核独立游标派生起点：fetch_add 是 Relaxed，无内存序代价。
+    let start = current().steal_cursor.fetch_add(1, Ordering::Relaxed) % n;
+    for off in 0..n {
+        let v = (start + off) % n;
         if v == me {
             continue;
         }

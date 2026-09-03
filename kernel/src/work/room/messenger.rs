@@ -15,8 +15,10 @@
 // 反向耦合清零：dock / ring 的 task_exit 反向耦合走两步拆——step 5 引入 exit
 // hook 注册面后，clear_loop 不再硬编码子系统名。本 step 暂留直调作为过渡。
 
+use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -78,13 +80,36 @@ fn parked() -> &'static SpinLock<HashMap<u64, Arc<Task>>> {
     PARKED.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
-/// 事件等待表（Level::L3，与 parked 同级；绝不 3→3 嵌套）。
+/// 事件等待表的分片数。每片 = 一把 L3 锁 + 一个 HashMap；wait/wake/drain
+/// 按 [`site_shard`] 纯函数路由到同片，跨片互不阻塞——把单点串行竞争降到
+/// 1/SITE_SHARDS（典型 16）。分片数取 2 的幂：位与替代 mod。
+const SITE_SHARDS: usize = 16;
+const SITE_SHARDS_MASK: usize = SITE_SHARDS - 1;
+
+/// 事件键 → 分片（pure function，所有路径一致：wait / wake / drain 都经此）。
+/// splitmix64 折叠 64→32 后按位与 SHARDS 掩码——高位低位的熵都被采样。
+#[inline]
+fn site_shard(key: WaitKey) -> usize {
+    let h = (key.0 as u64).wrapping_mul(0x9E3779B97F4A7C15);
+    ((h >> 32) ^ h) as usize & SITE_SHARDS_MASK
+}
+
+/// 事件等待表（Level::L3，与 parked 同级；绝不 3→3 嵌套）。**分片版**：每片
+/// 一把 L3 锁 + HashMap，单一线性化点缩小到一片——wait/wake 跨片并行。
 ///
-/// 单一注册表 = 单一线性化点：wait / wake 与超时到期都经本表锁摘除，败者见空即弃
-/// （杜绝双唤醒）。键不主动销毁（pend 留滞为闩，语义见设计）。
-fn wait_sites() -> &'static SpinLock<HashMap<WaitKey, WaitSite>> {
-    static SITES: OnceLock<SpinLock<HashMap<WaitKey, WaitSite>>> = OnceLock::new();
-    SITES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
+/// 锁纪律（与原版同级）：仍是 L3、与 parked 同级、可与 timer 锁共存但**绝不
+/// 3→3 嵌套**（rip 路径循环逐片清，禁持跨片锁）。同 key 的所有 waiters 必落
+/// 在同一分片（`site_shard` 纯函数保证），wake 不必跨片扫描。
+fn wait_sites(shard: usize) -> &'static SpinLock<HashMap<WaitKey, WaitSite>> {
+    static SHARDS: OnceLock<Box<[SpinLock<HashMap<WaitKey, WaitSite>>]>> = OnceLock::new();
+    let arr: &'static [SpinLock<HashMap<WaitKey, WaitSite>>] = SHARDS.get_or_init(|| {
+        let mut v: Vec<SpinLock<HashMap<WaitKey, WaitSite>>> = Vec::with_capacity(SITE_SHARDS);
+        for _ in 0..SITE_SHARDS {
+            v.push(SpinLock::new_level(Level::L3, HashMap::new()));
+        }
+        v.into_boxed_slice()
+    });
+    &arr[shard]
 }
 
 /// 超时旁路：tock 句柄 → 事件键（timer 到期分派用）。任务本体只在 wait_sites
@@ -143,7 +168,7 @@ pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
 
     // pend 消费路径：信号已至 → 任务不阻塞（续跑）；锁 sites 短暂。
     {
-        let mut sites = wait_sites().lock();
+        let mut sites = wait_sites(site_shard(key)).lock();
         let site = sites.entry(key).or_insert_with(WaitSite::new);
         if site.pend {
             site.pend = false;
@@ -168,7 +193,7 @@ pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
         reason: BlockReason::Wait { wake_at },
     });
     // 入 sites[].waiters]队尾
-    wait_sites()
+    wait_sites(site_shard(key))
         .lock()
         .get_mut(&key)
         .expect("site just observed")
@@ -212,7 +237,7 @@ pub fn mark_reaped() -> Option<usize> {
 /// 跨核唤醒经 steal 再平衡（与 drain_expired 一致）。
 pub fn wake(key: WaitKey) -> bool {
     let popped = {
-        let mut sites = wait_sites().lock();
+        let mut sites = wait_sites(site_shard(key)).lock();
         let site = sites.entry(key).or_insert_with(WaitSite::new);
         match site.waiters.pop_front() {
             Some(w) => Some(w),
@@ -252,7 +277,7 @@ pub fn drain_expired() -> bool {
         let wait_key = wait_times().lock().remove(&handle);
         if let Some(key) = wait_key {
             let popped = {
-                let mut ws = wait_sites().lock();
+                let mut ws = wait_sites(site_shard(key)).lock();
                 if let Some(site) = ws.get_mut(&key) {
                     if let Some(idx) = site.waiters.iter().position(|w| w.tock == Some(handle)) {
                         Some(site.waiters.remove(idx).expect("idx from position"))
@@ -263,14 +288,13 @@ pub fn drain_expired() -> bool {
                     None
                 }
             };
-            if let Some(w) = popped {
-                woke = true;
-                let mut task = w.task;
-                Task::exclusive(&mut task).transform(TaskState::Starved);
-                trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-                current().push(task);
-                conductor::yell();
-            }
+            // 空 popped 不吼：句柄已被他路唤醒，事件已消化（woke 不置位）。
+            let Some(w) = popped else { continue };
+            woke = true;
+            let mut task = w.task;
+            Task::exclusive(&mut task).transform(TaskState::Starved);
+            trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
+            current().push(task);
             continue;
         }
         // park 到期（原路径）
@@ -283,6 +307,13 @@ pub fn drain_expired() -> bool {
         Task::exclusive(&mut task).transform(TaskState::Starved);
         trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
         current().push(task);
+    }
+    // 批量吼：循环外一次 SBI IPI（替代原每条吼）。
+    // 任务已全部入本核 starved（push 先于吼 = 唤醒方进入 steal 必可见），
+    // 单次 yell 把当前所有等待 hart 拉起即可——单 tick IPI 量从 O(N) → O(1)。
+    // `woke` 与"是否真唤醒过"等价：false = 全是空 popped/已被取消，无需吼。
+    // wake 路径（messenger::wake）单次入单吼，本函数不涉及。
+    if woke {
         conductor::yell();
     }
     woke
@@ -361,10 +392,13 @@ fn exit_hooks() -> &'static [ExitHook] {
 /// 终末释放：清空 messenger 持有的全部 Arc<Task>（parked / sites / times /
 /// reaped 四张表）——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。
 /// 由 [`scheduler::core::rip`] 在 halt 路径调用；mail 接入点由 task.mail
-/// 析构透传释放（无需 mail 自有关闭钩子）。
+/// 析构透传释放（无需 mail 自有关闭钩子）。wait_sites 分片版循环逐片清——
+/// 不持跨片锁（与 L3 锁纪律同级）；其余表维持单锁。
 pub(crate) fn rip() {
     parked().lock().clear();
-    wait_sites().lock().clear();
+    for shard in 0..SITE_SHARDS {
+        wait_sites(shard).lock().clear();
+    }
     wait_times().lock().clear();
     REAPED.lock().clear();
 }
