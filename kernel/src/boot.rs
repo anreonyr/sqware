@@ -177,7 +177,7 @@ fn spawn_demos() -> Result<(), MapError> {
     for (elf, name) in [
         // (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
         // (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
-        // (&include_bytes!(env!("USER_MAILER"))[..], "mailer"),
+        (&include_bytes!(env!("USER_MAILER"))[..], "mailer"),
         // (&include_bytes!(env!("USER_YIELDER"))[..], "yielder"),
         // (&include_bytes!(env!("USER_SLEEPER"))[..], "sleeper"),
         // (&include_bytes!(env!("USER_EXITER"))[..], "exiter"),
@@ -200,45 +200,45 @@ fn spawn_demos() -> Result<(), MapError> {
         team.space.audit();
     }
 
-    kernel()
-        .expect("kernel team not initialized")
-        .task()
-        .name("ktask")
-        .closure(|| {})?;
-    kernel()
-        .expect("kernel team not initialized")
-        .task()
-        .name("preempt")
-        .closure(|| {
-            let mut n: usize = 0;
-            for round in 0..10u32 {
-                let start = n;
-                for _ in 0..100_000 {
-                    n = n.wrapping_add(1);
-                }
-                crate::putln!(
-                    "preempt: round {round} n={n:#x} delta={:#x} hart={}",
-                    n.wrapping_sub(start),
-                    crate::machine::hart_id()
-                );
-            }
-            crate::putln!("preempt: done");
-        })?;
-    kernel()
-        .expect("kernel team not initialized")
-        .task()
-        .name("sleep")
-        .closure(|| {
-            for round in 0..3u32 {
-                crate::putln!(
-                    "ktask sleep: round {round} @ hart {}",
-                    crate::machine::hart_id()
-                );
-                crate::work::room::scheduler::ktask::park(core::time::Duration::from_millis(200));
-            }
-            crate::putln!("ktask sleep: done");
-        })?;
-    storm_ktask(64)?;
+    // kernel()
+    //     .expect("kernel team not initialized")
+    //     .task()
+    //     .name("ktask")
+    //     .closure(|| {})?;
+    // kernel()
+    //     .expect("kernel team not initialized")
+    //     .task()
+    //     .name("preempt")
+    //     .closure(|| {
+    //         let mut n: usize = 0;
+    //         for round in 0..10u32 {
+    //             let start = n;
+    //             for _ in 0..100_000 {
+    //                 n = n.wrapping_add(1);
+    //             }
+    //             crate::putln!(
+    //                 "preempt: round {round} n={n:#x} delta={:#x} hart={}",
+    //                 n.wrapping_sub(start),
+    //                 crate::machine::hart_id()
+    //             );
+    //         }
+    //         crate::putln!("preempt: done");
+    //     })?;
+    // kernel()
+    //     .expect("kernel team not initialized")
+    //     .task()
+    //     .name("sleep")
+    //     .closure(|| {
+    //         for round in 0..3u32 {
+    //             crate::putln!(
+    //                 "ktask sleep: round {round} @ hart {}",
+    //                 crate::machine::hart_id()
+    //             );
+    //             crate::work::room::scheduler::ktask::park(core::time::Duration::from_millis(200));
+    //         }
+    //         crate::putln!("ktask sleep: done");
+    //     })?;
+    // storm_ktask(64)?;
     #[cfg(feature = "audit")]
     kernel().expect("kernel team not initialized").space.audit();
     Ok(())

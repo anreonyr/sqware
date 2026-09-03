@@ -14,28 +14,24 @@
 // 逐视图 `unmap_range` 还段（不拖住地址空间生命周期）。
 //
 // 生命周期（Gate 5 设计）：mail 接入点由 Task.mail 直接持有，无中间簿记——
-// 任务死 → MailHolds::drop → Dock::drop → Rx/Tx::drop → clear_quay / dec_pier
-// → Arc<DockMeta> 归零 → Meta::drop（视图 + 帧归还）。注册表仅供 id→meta 弱查。
+// 任务死 → MailHolds::drop → Dock::drop → clear_quay / dec_pier
+// → Arc<DockMeta> 归零 → Meta::drop（共享帧归还，视图由 SharedBuf::drop 跑）。
+// 注册表仅供 id→meta 弱查。
 //
 // 键面：dock 键 = `DOCK_KEY_TAG | id`（不经 WaitKey::compose——跨 team asid
 // 不同，经 compose 必失配；见 envcall 的 Wait/Wake 分发）。
 
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use alloc::sync::{Arc, Weak};
-use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
-use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::PhysAddr;
-use crate::memory::manager::entry::PteFlags;
+use crate::work::mail::SharedBuf;
 use crate::work::room::scheduler::core::current_task;
-use crate::work::unit::space::{Seg, Space, Span};
+use crate::work::unit::space::Space;
 
 use ubi::dock;
 
@@ -83,7 +79,6 @@ impl DockError {
         match self {
             DockError::Dead => dock::err::DEAD,
             DockError::Busy => dock::err::BUSY,
-            _ => dock::err::GONE, // 占位；构造点在用户库
         }
     }
 }
@@ -103,7 +98,7 @@ impl<'a> DockShared<'a> {
     unsafe fn new_unchecked(base: *const u8) -> Self {
         // SAFETY: 调用方保证；读侧字段在页内，块大小 ≥ 一页。
         Self {
-            base: unsafe { core::slice::from_raw_parts(base, PAGE_SIZE) },
+            base: unsafe { core::slice::from_raw_parts(base, crate::memory::PAGE_SIZE) },
         }
     }
 
@@ -159,56 +154,11 @@ impl<'a> DockShared<'a> {
             Ordering::Acquire,
         );
     }
-}
 
-/// dock 内核登记元数据：共享区所有权（Arc 归零归还）+ 全局身份 + 视图登记。
-pub(crate) struct DockMeta {
-    /// 全局唯一 id（兼作 wait/wake 键 = `DOCK_KEY_TAG | id`）。
-    pub(crate) id: usize,
-    /// 共享区物理连续块（首地址 + 字节长），双端借用映射此块。
-    pub(crate) base: NonNull<u8>,
-    pub(crate) bytes: usize,
-    /// 各持有 space 的视图（弱引用 + 段区间）——drop 时逐视图归还 user 段。
-    /// 弱引用不拖住地址空间生命周期；Arc<Space> 已死则视图随 Space drop 消失。
-    /// 锁序：exempt（SpinLock::new）——视图是 dock 私有数据，保护它的锁不参与
-    /// 层级校验。
-    pub(crate) views: SpinLock<Vec<(Weak<Space>, Span)>>,
-}
-
-// SAFETY: DockMeta 经 Arc 跨任务/跨 hart 共享；base 指向共享物理帧（恒等映射
-// 下语义 = 裸物理地址），无 Rust 对象别名，只读/原子访问——Send/Sync 安全
-//（读写同步由共享区内原子协议保证）。views 由 SpinLock 互斥（见字段）。
-unsafe impl Send for DockMeta {}
-unsafe impl Sync for DockMeta {}
-
-impl DockMeta {
-    /// 从 frame 分配器分配共享区（单次 allocate = 物理连续），清零后初始化状态。
-    fn allocate_shared(item_len: usize, slots: usize) -> Result<(NonNull<u8>, usize), MapError> {
-        let bytes = (dock::OFF_BUFFER + item_len * slots).next_multiple_of(PAGE_SIZE);
-        let layout = core::alloc::Layout::from_size_align(bytes, PAGE_SIZE)
-            .map_err(|_| MapError::NotAligned)?;
-        // 类别 = Task：共享区帧归通道元数据（任务生命周期）——关机归零。
-        let ptr = crate::tag!(
-            Task,
-            crate::memory::allocator::frame::allocator()
-                .allocate(layout)
-                .map_err(|_| MapError::OutOfMemory)?
-        );
-        // SAFETY: 分配返回的切片指针非空；转成字节指针（长度无关，仅取首址）。
-        let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };
-        // SAFETY: 刚分配的合法块（fresh），全长度可写；清零初始化共享区。
-        unsafe { core::ptr::write_bytes(base.as_ptr(), 0, bytes) };
-        Ok((base, bytes))
-    }
-
-    /// 初始化状态槽与只读字段（open 定型后写一次）。
-    fn init_state(&self, item_len: usize, slots: usize) {
-        // SAFETY: base 为本 dock 共享区（恒等映射直指物理块）；布局契约。
-        let sh = unsafe { DockShared::new_unchecked(self.base.as_ptr()) };
-        sh.state().store(DockState::Live.code(), Ordering::Release);
-        sh.quay().store(true, Ordering::Release); // open 即两端同持（pier + quay 在场）
-        // 供用户侧读的只读字段：item_len / slots（open 定型后只读；写先于
-        // 状态槽 Release 发布——fence 见下）。
+    /// 写状态槽 + item_len / slots 定型字段（open 时一次）。
+    fn init_layout(&self, item_len: usize, slots: usize) {
+        self.state().store(DockState::Live.code(), Ordering::Release);
+        self.quay().store(true, Ordering::Release);
         // SAFETY: 固定偏移 usize 写，块内对齐。
         unsafe {
             (self.base.as_ptr().add(dock::OFF_ITEM_LEN) as *mut usize).write(item_len);
@@ -219,26 +169,23 @@ impl DockMeta {
     }
 }
 
-impl Drop for DockMeta {
-    fn drop(&mut self) {
-        // 1. 逐视图归还 user 段（取空后放锁再回收——Space::release 经 Space 锁，
-        //    不得在 L3 持锁内调用）。
-        let views: Vec<(Weak<Space>, Span)> = core::mem::take(&mut *self.views.lock());
-        for (weak, span) in views {
-            if let Some(space) = weak.upgrade() {
-                space.release(span).expect("release: span mismatch");
-            }
-            // upgrade 失败 = Arc<Space> 已死 → 空间已 drop，视图随 Space drop 消失。
-        }
-        // 2. 共享区归还 frame 池（Arc 归零 = 双端全 drop → B2 钩子）。
-        let layout = core::alloc::Layout::from_size_align(self.bytes, PAGE_SIZE)
-            .expect("dock frame layout valid");
-        // SAFETY: base/bytes 与 allocate 时同源（Layout 可复原）。
-        unsafe {
-            frame::allocator().deallocate(self.base, layout);
-        }
-    }
+/// dock 内核登记元数据：全局身份 + 共享内存邮路（沿用 [`SharedBuf`]）。
+///
+/// 不显式 `impl Drop`——`shared: SharedBuf` 字段 drop 时触发 `SharedBuf::drop`
+///（视图回收 + 帧归还）。`Dock::drop` 负责 Dock 特有状态字段（state/pier/quay
+/// 原子槽）的离场迁移，二者解耦。
+pub(crate) struct DockMeta {
+    /// 全局唯一 id（兼作 wait/wake 键 = `DOCK_KEY_TAG | id`）。
+    pub(crate) id: usize,
+    /// 共享内存邮路（帧 + 视图 + Drop 链）。
+    pub(crate) shared: SharedBuf,
 }
+
+// SAFETY: DockMeta 经 Arc 跨任务/跨 hart 共享；shared.base 指向共享物理帧
+//（恒等映射下语义 = 裸物理地址），无 Rust 对象别名，只读/原子访问——
+// Send/Sync 安全（读写同步由共享区内原子协议保证）。
+unsafe impl Send for DockMeta {}
+unsafe impl Sync for DockMeta {}
 
 // ── 注册表（弱查：id → Weak<DockMeta>）──
 
@@ -250,43 +197,6 @@ fn docks() -> &'static SpinLock<HashMap<usize, Weak<DockMeta>>> {
 
 /// dock 全局 id 分配器（自 1；0 保留）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-
-// ── 共享区借用映射 ──────────────────────────────────────────
-
-/// 把共享物理块借用映射进 `space`（帧空 = 借用；VA 出 user 段），并登记视图
-/// 到 `meta`（回收身份）。同一 space 重复映射 → 复用既有视图（不重复取段）。
-/// 与 trampoline 借用映射同式（`borrow` 借帧）：PTE 直指共享物理块，帧所有权
-/// 留 DockMeta（Arc 归零归还）。视图 Span 随 DockMeta drop 逐 space 归还。
-fn map_shared(space: &Arc<Space>, meta: &DockMeta, bytes: usize) -> Result<usize, MapError> {
-    // 同 space 复用：open 方 pier+quay 同空间，第二次 map_shared 不重复取段。
-    {
-        let views = meta.views.lock();
-        if let Some((_, span)) = views
-            .iter()
-            .find(|(w, _)| w.upgrade().map_or(false, |s| Arc::ptr_eq(&s, space)))
-        {
-            return Ok(span.va.as_usize());
-        }
-    }
-    let size = bytes.next_multiple_of(PAGE_SIZE);
-    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-    // 模式同窗口（取段 + 借帧装配）；不收回窗口类型——见 window/mod.rs 注。
-    let va = space.with_flush(|inner| {
-        let va = inner.allocate(Seg::User, size)?;
-        inner.borrow_map(
-            va,
-            PhysAddr::from_raw(meta.base.as_ptr() as usize),
-            size,
-            flags,
-        )?;
-        Ok::<_, MapError>(va)
-    })?;
-    // 登记视图（回收身份：弱引用 + 段区间）
-    meta.views
-        .lock()
-        .push((Arc::downgrade(space), Span::new(Seg::User, va, size, None)));
-    Ok(va.as_usize())
-}
 
 // ── 核心 API ────────────────────────────────────────────────
 
@@ -302,24 +212,23 @@ pub fn open(space: &Arc<Space>, item_len: usize, slots: usize) -> Result<(usize,
     if item_len == 0 || slots == 0 || !slots.is_power_of_two() {
         return Err(MapError::NotAligned);
     }
-    let (base, bytes) = DockMeta::allocate_shared(item_len, slots)?;
+    let bytes = (dock::OFF_BUFFER + item_len * slots).next_multiple_of(crate::memory::PAGE_SIZE);
+    let shared = SharedBuf::allocate(bytes)?;
+    // SAFETY: shared.base 在 allocate 后有效；DockShared::init_layout 写定型字段。
+    unsafe {
+        DockShared::new_unchecked(shared.base.as_ptr()).init_layout(item_len, slots);
+    }
+
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let meta = Arc::new(DockMeta {
-        id,
-        base,
-        bytes,
-        views: SpinLock::new(Vec::new()),
-    });
-    meta.init_state(item_len, slots);
+    let meta = Arc::new(DockMeta { id, shared });
     {
         let mut reg = docks().lock();
         reg.insert(id, Arc::downgrade(&meta));
-    } // reg drop：DOCKS 锁在此释放（不跨到 map_shared / push）
+    } // reg drop：DOCKS 锁在此释放（不跨到 map_into / push）
 
-    let view = map_shared(space, &meta, bytes)?;
+    let view = meta.shared.map_into(space)?;
 
-    // 创建者持两端——接入点（rx + tx）move 到当前 task.mail。
-    // 接入点仅由 mail 持有，envcall 适配只用 id + view 整数返回。
+    // 创建者持两端——接入点 move 到当前 task.mail。
     let task = current_task().expect("dock::open: envcall context");
     task.mail.lock().docks.push(Dock::Bundle {
         meta: meta.clone(),
@@ -346,7 +255,7 @@ pub fn join(space: &Arc<Space>, id: usize, side: usize) -> Result<usize, DockErr
     if side == ubi::dock::side::QUAY {
         // 唯一性 CAS：quay 在场位。open 方已持 quay → 跨任务 join as quay 需
         // open 方先 shut。
-        let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
+        let sh = unsafe { DockShared::new_unchecked(meta.shared.base.as_ptr()) };
         if sh
             .quay()
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -355,7 +264,7 @@ pub fn join(space: &Arc<Space>, id: usize, side: usize) -> Result<usize, DockErr
             return Err(DockError::Busy);
         }
     }
-    let view = map_shared(space, &meta, meta.bytes).map_err(|_| DockError::Dead)?;
+    let view = meta.shared.map_into(space).map_err(|_| DockError::Dead)?;
 
     let task = current_task().expect("dock::join: envcall context");
     let dock = match side {
@@ -387,7 +296,8 @@ pub fn shut(id: usize) -> bool {
 /// dock 接入点（任务持有）：创建者两端（Bundle）或单端加入者（Pier / Quay）。
 ///
 /// Drop 自动透传：Bundle 字段 drop（meta Arc 递减，最后一份时 Meta::drop 跑——
-/// 视图回收 + 帧归还）；Pier::drop 触发 `dec_pier`；Quay::drop 触发 `clear_quay`。
+/// shared 字段 drop → SharedBuf::drop → 视图回收 + 帧归还）；Pier::drop 触发
+/// `dec_pier`；Quay::drop 触发 `clear_quay`。
 pub enum Dock {
     /// 创建者两端——open 返回此变体。
     Bundle { meta: Arc<DockMeta> },
@@ -415,8 +325,8 @@ impl Drop for Dock {
             Dock::Pier { meta } => meta,
             Dock::Quay { meta } => meta,
         };
-        // SAFETY: base 在 Arc 持有期间恒有效；本 Drop 是 Arc 释放前最后一次访问。
-        let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
+        // SAFETY: shared.base 在 Arc 持有期间恒有效；本 Drop 是 Arc 释放前最后一次访问。
+        let sh = unsafe { DockShared::new_unchecked(meta.shared.base.as_ptr()) };
         match self {
             Dock::Bundle { .. } => {
                 // 创建者持两端——两端 drop 都跑一次（saturating 处理重复）。

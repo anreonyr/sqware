@@ -14,27 +14,23 @@
 //
 // 生命周期（Gate 5 设计）：mail 接入点由 Task.mail 直接持有，无中间簿记——
 // 任务死 → MailHolds::drop → Ring::drop → `dead` → Arc<RingMeta> 归零 →
-// Meta::drop（视图 + 帧归还）。注册表仅供 id→meta 弱查。
+// Meta::drop（shared 字段 drop → SharedBuf::drop → 视图 + 帧归还）。
+// 注册表仅供 id→meta 弱查。
 //
 // 键面：ring 键 = `RING_KEY_TAG | id`（不经 WaitKey::compose——跨 team asid
 // 不同，经 compose 必失配；见 envcall 的 Wait/Wake 分发）。
 
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use alloc::sync::{Arc, Weak};
-use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
-use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::PhysAddr;
-use crate::memory::manager::entry::PteFlags;
+use crate::work::mail::SharedBuf;
 use crate::work::room::scheduler::core::current_task;
-use crate::work::unit::space::{Seg, Space, Span};
+use crate::work::unit::space::Space;
 
 use ubi::ring;
 
@@ -71,7 +67,6 @@ impl RingError {
     pub(crate) const fn code(self) -> isize {
         match self {
             RingError::Dead => ring::err::DEAD,
-            _ => ring::err::BUSY, // 占位；构造点在用户库
         }
     }
 }
@@ -91,7 +86,7 @@ impl<'a> RingShared<'a> {
     unsafe fn new_unchecked(base: *const u8) -> Self {
         // SAFETY: 调用方保证；读侧字段在页内，块大小 ≥ 一页。
         Self {
-            base: unsafe { core::slice::from_raw_parts(base, PAGE_SIZE) },
+            base: unsafe { core::slice::from_raw_parts(base, crate::memory::PAGE_SIZE) },
         }
     }
 
@@ -109,53 +104,10 @@ impl<'a> RingShared<'a> {
             Ordering::Acquire,
         );
     }
-}
 
-/// ring 内核登记元数据：共享区所有权（Arc 归零归还）+ 全局身份 + 视图登记。
-pub(crate) struct RingMeta {
-    /// 全局唯一 id（兼作 wait/wake 键 = `RING_KEY_TAG | id`）。
-    pub(crate) id: usize,
-    /// 共享区物理连续块（首地址 + 字节长），双端借用映射此块。
-    pub(crate) base: NonNull<u8>,
-    pub(crate) bytes: usize,
-    /// 各持有 space 的视图（弱引用 + 段区间）——drop 时逐视图归还 user 段。
-    /// 同 dock：弱引用不拖住地址空间生命周期。锁序：exempt（不参与层级校验，
-    /// map_shared 可能在持 RINGS 锁时取它）。
-    pub(crate) views: SpinLock<Vec<(Weak<Space>, Span)>>,
-}
-
-// SAFETY: RingMeta 经 Arc 跨任务/跨 hart 共享；base 指向共享物理帧（恒等映射
-// 下语义 = 裸物理地址），无 Rust 对象别名，只读/原子访问——Send/Sync 安全。
-unsafe impl Send for RingMeta {}
-unsafe impl Sync for RingMeta {}
-
-impl RingMeta {
-    /// 从 frame 分配器分配共享区（单次 allocate = 物理连续），清零后初始化状态。
-    fn allocate_shared(item_len: usize, slots: usize) -> Result<(NonNull<u8>, usize), MapError> {
-        let bytes = (ring::OFF_BUFFER + item_len * slots).next_multiple_of(PAGE_SIZE);
-        let layout = core::alloc::Layout::from_size_align(bytes, PAGE_SIZE)
-            .map_err(|_| MapError::NotAligned)?;
-        // 类别 = Task：共享区帧归通道元数据（任务生命周期）——关机归零。
-        let ptr = crate::tag!(
-            Task,
-            crate::memory::allocator::frame::allocator()
-                .allocate(layout)
-                .map_err(|_| MapError::OutOfMemory)?
-        );
-        // SAFETY: 分配返回的切片指针非空；转成字节指针（长度无关，仅取首址）。
-        let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };
-        // SAFETY: 刚分配的合法块（fresh），全长度可写；清零初始化共享区。
-        unsafe { core::ptr::write_bytes(base.as_ptr(), 0, bytes) };
-        Ok((base, bytes))
-    }
-
-    /// 初始化状态槽与只读字段（open 定型后写一次）。
-    fn init_state(&self, item_len: usize, slots: usize) {
-        // SAFETY: base 为本 ring 共享区（恒等映射直指物理块）；布局契约。
-        let sh = unsafe { RingShared::new_unchecked(self.base.as_ptr()) };
-        sh.state().store(RingState::Live.code(), Ordering::Release);
-        // 供用户侧读的只读字段：item_len / slots（open 定型后只读；写先于
-        // 状态槽 Release 发布——fence 见下）。
+    /// 写状态槽 + item_len / slots 定型字段（open 时一次）。
+    fn init_layout(&self, item_len: usize, slots: usize) {
+        self.state().store(RingState::Live.code(), Ordering::Release);
         // SAFETY: 固定偏移 usize 写，块内对齐。
         unsafe {
             (self.base.as_ptr().add(ring::OFF_ITEM_LEN) as *mut usize).write(item_len);
@@ -166,25 +118,19 @@ impl RingMeta {
     }
 }
 
-impl Drop for RingMeta {
-    fn drop(&mut self) {
-        // 1. 逐视图归还 user 段（取空后放锁再回收——Space::release 经 Space 锁，
-        //    不得在 L3 持锁内调用）。
-        let views: Vec<(Weak<Space>, Span)> = core::mem::take(&mut *self.views.lock());
-        for (weak, span) in views {
-            if let Some(space) = weak.upgrade() {
-                space.release(span).expect("release: span mismatch");
-            }
-        }
-        // 2. 共享区归还 frame 池（Arc 归零 = 双端全 drop → B2 钩子）。
-        let layout = core::alloc::Layout::from_size_align(self.bytes, PAGE_SIZE)
-            .expect("ring frame layout valid");
-        // SAFETY: base/bytes 与 allocate 时同源（Layout 可复原）。
-        unsafe {
-            frame::allocator().deallocate(self.base, layout);
-        }
-    }
+/// ring 内核登记元数据：全局身份 + 共享内存邮路（沿用 [`SharedBuf`]）。
+pub(crate) struct RingMeta {
+    /// 全局唯一 id（兼作 wait/wake 键 = `RING_KEY_TAG | id`）。
+    pub(crate) id: usize,
+    /// 共享内存邮路（帧 + 视图 + Drop 链）。
+    pub(crate) shared: SharedBuf,
 }
+
+// SAFETY: RingMeta 经 Arc 跨任务/跨 hart 共享；shared.base 指向共享物理帧
+//（恒等映射下语义 = 裸物理地址），无 Rust 对象别名，只读/原子访问——
+// Send/Sync 安全。
+unsafe impl Send for RingMeta {}
+unsafe impl Sync for RingMeta {}
 
 // ── 注册表（弱查：id → Weak<RingMeta>）──
 
@@ -196,40 +142,6 @@ fn rings() -> &'static SpinLock<HashMap<usize, Weak<RingMeta>>> {
 
 /// ring 全局 id 分配器（自 1；0 保留，与 dock 独立空间）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-
-// ── 共享区借用映射 ──────────────────────────────────────────
-
-/// 把共享物理块借用映射进 `space`（帧空 = 借用；VA 出 user 段），并登记视图
-/// 到 `meta`（回收身份）。同一 space 重复映射 → 复用既有视图（不重复取段）。
-/// 与 dock 同式：PTE 直指共享物理块，帧所有权留 RingMeta（Arc 归零归还）。
-fn map_shared(space: &Arc<Space>, meta: &RingMeta, bytes: usize) -> Result<usize, MapError> {
-    {
-        let views = meta.views.lock();
-        if let Some((_, span)) = views
-            .iter()
-            .find(|(w, _)| w.upgrade().map_or(false, |s| Arc::ptr_eq(&s, space)))
-        {
-            return Ok(span.va.as_usize());
-        }
-    }
-    let size = bytes.next_multiple_of(PAGE_SIZE);
-    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-    // 模式同 dock（取段 + 借帧装配）；不收回窗口类型——见 window/mod.rs 注。
-    let va = space.with_flush(|inner| {
-        let va = inner.allocate(Seg::User, size)?;
-        inner.borrow_map(
-            va,
-            PhysAddr::from_raw(meta.base.as_ptr() as usize),
-            size,
-            flags,
-        )?;
-        Ok::<_, MapError>(va)
-    })?;
-    meta.views
-        .lock()
-        .push((Arc::downgrade(space), Span::new(Seg::User, va, size, None)));
-    Ok(va.as_usize())
-}
 
 // ── 核心 API ────────────────────────────────────────────────
 
@@ -245,21 +157,21 @@ pub fn open(space: &Arc<Space>, item_len: usize, slots: usize) -> Result<(usize,
     if item_len == 0 || slots == 0 || !slots.is_power_of_two() {
         return Err(MapError::NotAligned);
     }
-    let (base, bytes) = RingMeta::allocate_shared(item_len, slots)?;
+    let bytes = (ring::OFF_BUFFER + item_len * slots).next_multiple_of(crate::memory::PAGE_SIZE);
+    let shared = SharedBuf::allocate(bytes)?;
+    // SAFETY: shared.base 在 allocate 后有效；RingShared::init_layout 写定型字段。
+    unsafe {
+        RingShared::new_unchecked(shared.base.as_ptr()).init_layout(item_len, slots);
+    }
+
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let meta = Arc::new(RingMeta {
-        id,
-        base,
-        bytes,
-        views: SpinLock::new(Vec::new()),
-    });
-    meta.init_state(item_len, slots);
+    let meta = Arc::new(RingMeta { id, shared });
     {
         let mut reg = rings().lock();
         reg.insert(id, Arc::downgrade(&meta));
-    } // reg drop：RINGS 锁在此释放（不跨到 map_shared / push）
+    } // reg drop：RINGS 锁在此释放（不跨到 map_into / push）
 
-    let view = map_shared(space, &meta, bytes)?;
+    let view = meta.shared.map_into(space)?;
 
     // 接入点（单端）move 到当前 task.mail。
     let task = current_task().expect("ring::open: envcall context");
@@ -280,7 +192,7 @@ pub fn join(space: &Arc<Space>, id: usize) -> Result<usize, RingError> {
         .get(&id)
         .and_then(Weak::upgrade)
         .ok_or(RingError::Dead)?;
-    let view = map_shared(space, &meta, meta.bytes).map_err(|_| RingError::Dead)?;
+    let view = meta.shared.map_into(space).map_err(|_| RingError::Dead)?;
 
     let task = current_task().expect("ring::join: envcall context");
     task.mail.lock().rings.push(Ring { meta });
@@ -305,7 +217,7 @@ pub fn shut(id: usize) -> bool {
 // ── ring 接入点（mail 持有；类型即义务）────────────────────
 
 /// ring 接入点（任务持有）。`Drop` 自动 `dead`——Arc 归零触发 Meta::drop
-/// （视图回收 + 帧归还）。
+/// （shared 字段 drop → SharedBuf::drop → 视图 + 帧归还）。
 pub struct Ring {
     meta: Arc<RingMeta>,
 }
@@ -319,8 +231,8 @@ impl Ring {
 
 impl Drop for Ring {
     fn drop(&mut self) {
-        // SAFETY: base 在 Arc 持有期间恒有效；本 Drop 是 Arc 释放前最后一次访问。
-        let sh = unsafe { RingShared::new_unchecked(self.meta.base.as_ptr()) };
+        // SAFETY: shared.base 在 Arc 持有期间恒有效；本 Drop 是 Arc 释放前最后一次访问。
+        let sh = unsafe { RingShared::new_unchecked(self.meta.shared.base.as_ptr()) };
         sh.dead();
     }
 }
