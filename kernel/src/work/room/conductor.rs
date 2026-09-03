@@ -1,13 +1,14 @@
 // 系统级生命周期：跨核共享的原子状态与编排。
 //
 // 两件事：
-//   全退出停机 — PUSHED/REAPED 任务计数；相等且 PUSHED>0 即全部退出 → 发 SBI srst 复位；
+//   全退出停机 — PUSHED/REAPED 任务计数 + BOOT_DONE 守门；BOOT_DONE=true 且
+//              （PUSHED==0 或 REAPED==PUSHED）= 全部退出 → 发 SBI srst 复位；
 //              HALTING 做一次性互斥，防多核同时发复位。
-//   休眠唤醒   — WAITING 位图（bit h = hart h 正 WFI 等待）；入队后 yell
-//              按掩码一次 SBI IPI 喊醒全部睡核。
+//   休眠唤醒   — WAITING 位图（bit h = hart h 正 WFI 等待）；入队后 kick
+//              单点唤醒（消雷鸣群），halt 屏障由 yell 广播喊全员归队。
 //
-// 命名：动词（spawn/exit/done/halt/sleep/wake/yell/wfi）+ 计数名词
-// （PUSHED/REAPED/WAITING/HALTING）。
+// 命名：动词（spawn/exit/done/halt/sleep/wake/**kick**/**yell**/wfi/boot_done）+
+// 计数名词（PUSHED/REAPED/WAITING/HALTING/BOOT_DONE）。
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -20,6 +21,10 @@ use sbi::{self, fid};
 /// 已入队（创建）任务计数（全退出检测：REAPED == PUSHED → 停机）。
 static PUSHED: AtomicUsize = AtomicUsize::new(0);
 static REAPED: AtomicUsize = AtomicUsize::new(0);
+/// Boot 装配完成标记（push 通道关门）。一旦置位，`done()` 才允许 true——
+/// 防 PUSHED 永久为 0 时被误判"全部结束"。一次性：`boot::init` 在
+/// `spawn_demos()` 返回后立即置位（之后不再有 spawn）。
+static BOOT_DONE: AtomicBool = AtomicBool::new(false);
 /// 停机互斥：第一个触发 srst 的核胜出，其余 wfi（避免双 srst）。
 static HALTING: AtomicBool = AtomicBool::new(false);
 /// 已到达 halt 的核数 — 关机屏障：胜出核须等**全部**核到达后再断言帧基线。
@@ -42,10 +47,25 @@ pub(super) fn exit() {
     REAPED.fetch_add(1, Ordering::Relaxed);
 }
 
-/// 全部任务是否已退出（PUSHED > 0 防 boot 早期误判）。
+/// 全部任务是否已退出。
+///
+/// 守门 `BOOT_DONE == true`（防 boot 早期 PUSHED==0 误判"全部结束"——
+/// 当时 PUSHED 尚未增长就被 read，会永久返 false → 无任务场景无法停机）。
+///
+/// 守门后：`PUSHED == 0`（boot 没 spawn，过期 PUSHED==0 仍可停机）或
+/// `REAPED == PUSHED`（全部回收）。
 pub(super) fn done() -> bool {
+    if !BOOT_DONE.load(Ordering::Acquire) {
+        return false;
+    }
     let pushed = PUSHED.load(Ordering::Relaxed);
-    pushed > 0 && REAPED.load(Ordering::Relaxed) == pushed
+    pushed == 0 || REAPED.load(Ordering::Relaxed) == pushed
+}
+
+/// 标记 boot 装配完成（push 通道关门）。由 `boot::init` 在 `spawn_demos()`
+/// 返回后立即置位（一次性）。守门 `done()` 必须见位才认 true。
+pub(crate) fn boot_done() {
+    BOOT_DONE.store(true, Ordering::Release);
 }
 
 /// 全部任务已退出：显式停机（srst；AtomicBool 防双核同时触发——后到者 wfi）。
@@ -56,7 +76,9 @@ pub(super) fn done() -> bool {
 pub(super) fn halt() -> ! {
     HALT_ARRIVED.fetch_add(1, Ordering::AcqRel);
     if !HALTING.swap(true, Ordering::AcqRel) {
-        // 喊醒 WFI 睡核：它们醒来后同样会走 done → halt → 登记到达。
+        // 喊醒所有 WFI 睡核：它们醒来后同样会走 done → halt → 登记到达。
+        // **必须用广播 `yell`**——屏障要求全员到齐，单点 `kick` 会让部分
+        // hart 留 WFI 不归队、屏障永远释放不了。
         yell();
         while HALT_ARRIVED.load(Ordering::Acquire) < machine::hart_count() {
             core::hint::spin_loop();
@@ -119,23 +141,22 @@ pub(super) fn wake(hart: usize) {
     );
 }
 
-/// 唤醒一个 WFI 等待中的 hart（单点化）：从 WAITING 位图选最低 set bit 发
-/// SBI IPI，唤醒后立即返回。原广播语义会触发雷鸣群——N 个 hart 同时醒 → 同
-/// 时抢源 hart 的 L1 锁 → cache line 乒乓。单点化后每次 push / wake / drain
-/// 只唤醒 1 个等待 hart，其他仍在 WFI；被选 hart 抢到活走 wait() 路径自然
-/// 清睡眠位，没抢到的哑睡壳保留位（下次事件还可再吼）。
+/// 单点唤醒 1 个 WFI 等待 hart（push / wake / drain 热路径）。从 WAITING 位
+/// 图选最低 set bit 发 1-bit IPI——唤醒单 hart，**避免雷鸣群**（多 hart 同
+/// 醒 → 同时抢源 hart 的 L1 → cache 行乒乓）。
 ///
-/// 失败兜底：被唤醒 hart 抢失败时 work 仍在源 hart 的 starved queue——源
-/// hart 下次 yield 时自取，最坏延迟 ≤ 1 个时间片（100ms）。
+/// 失败兜底：被踢醒 hart 抢失败 → 哑睡壳（保留 sleep 位，等下次事件）；work
+/// 仍留在源 hart 的 starved queue——源 hart 下次 yield 自取（≤ 1 个时间片）。
 ///
-/// 风险：单点偏向最低位 hart（公平性可加 `YELL_CURSOR` 旋转，本次未引入）。
-pub(super) fn yell() {
+/// 公平性：单点偏向最低位 hart。大量 push 风暴下喂每个等待 hart 的耗时分布
+/// 不均；可加旋转游标（`YELL_CURSOR`）改进，本次保留单点最简版。
+pub(super) fn kick() {
     for (w, word) in WAITING.iter().enumerate() {
         let waiting = word.load(Ordering::Acquire);
         if waiting == 0 {
             continue;
         }
-        // 选最低 set bit（cache locality 好；低位 hart 通常先 idle）。
+        // 选最低 set bit（cache locality；低位 hart 通常先 idle）。
         let pick = waiting & waiting.wrapping_neg();
         let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
             .args(SArgs {
@@ -145,5 +166,28 @@ pub(super) fn yell() {
             })
             .call();
         return;
+    }
+}
+
+/// 广播唤醒所有 WFI 等待 hart（**halt 屏障专用**）。mask = waiting 字保
+/// 留 XLEN 位全部 set——保证全员到达 `halt()` 登记屏障。
+///
+/// **不可用于 push / wake / drain**——单次 push 多 hart 醒 = 雷鸣群 = 同
+/// 时抢同 L1 锁 = cache 行乒乓，与 `kick()` 单点化目的背道而驰。
+///
+/// 命名：动词（kick = 单点轻踢；yell = 喊全员；语义对仗）。
+pub(super) fn yell() {
+    for (w, word) in WAITING.iter().enumerate() {
+        let waiting = word.load(Ordering::Acquire);
+        if waiting == 0 {
+            continue;
+        }
+        let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
+            .args(SArgs {
+                a0: waiting,
+                a1: w * (usize::BITS as usize),
+                ..Default::default()
+            })
+            .call();
     }
 }

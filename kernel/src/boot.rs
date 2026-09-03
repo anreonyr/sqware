@@ -124,6 +124,12 @@ pub fn init() -> ! {
 
     spawn_demos().expect("boot spawn failed");
 
+    // boot 装配收尾（push 通道关门）：标记 `BOOT_DONE` 让 `done()` 守门放
+    // 行——防 PUSHED==0（0 任务）永久误判为"全部结束"，系统永远停不了机。
+    // **必须在 HSM 拉起副核之前**——副核从 idle() 进 run()/wait() 读 done()
+    // 时见到 true，则 PUSHED==0 立即 halt；否则一直 WFI 等不会到达的 IPI。
+    crate::work::room::conductor::boot_done();
+
     // 完整性审计（audit feature，debug 恒开）：三源交叉核对 + 类别计数 sanity
     // （类别记账替代旧 boot 基线快照——见 fence/audit 模块头）。
     #[cfg(feature = "audit")]

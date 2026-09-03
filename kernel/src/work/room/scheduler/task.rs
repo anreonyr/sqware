@@ -20,6 +20,7 @@ pub(crate) fn push(task: Arc<Task>) {
     current().push(task);
     conductor::push();
     trace::note(EventKind::Room(RoomEvent::Spawn { tid }));
-    // 新任务出现：喊醒 WFI 休眠核（可 steal 取活）
-    conductor::yell();
+    // 新任务出现：单点踢醒 1 个 WFI 休眠核（可 steal 取活；多核广播会触发
+    // 雷鸣群，多 hart 同时抢源 L1 → cache 行乒乓）。
+    conductor::kick();
 }

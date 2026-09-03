@@ -4,7 +4,7 @@
 // reap（退出）。三种共用 [`scheduler::core::Scheduler::disown_and_install_next`]
 // 跨边界原语——先借 scheduler 把 running 卸下（槽位 settled：装下一 starved 或
 // 降级 Last），再挂到本域的簿记/计时器上。恢复路径分两类：wake_by_event（信号到）
-// 和 drain_expired（timer 到期），都把任务转 Starved 推回 scheduler 本核 + yell。
+// 和 drain_expired（timer 到期），都把任务转 Starved 推回 scheduler 本核 + kick。
 //
 // 簿记：parked（deadline 句柄 → task）、sites（key → pend+waiters）、times
 // （tock 句柄 → key）、reaped（Arc<Task> 队列）。四张表全 L3，3→3 嵌套禁止。
@@ -232,7 +232,7 @@ pub fn mark_reaped() -> Option<usize> {
 
 // ── 操作：唤醒 ──
 
-/// wake_by_event：waiters 非空 → 唤醒队首（Blocked → Starved 推送本核 + yell）；
+/// wake_by_event：waiters 非空 → 唤醒队首（Blocked → Starved 推送本核 + kick）；
 /// 空 → pend 置位（防漏唤醒）。返回是否唤到人。消费方 = utask/envcall；
 /// 跨核唤醒经 steal 再平衡（与 drain_expired 一致）。
 pub fn wake(key: WaitKey) -> bool {
@@ -259,7 +259,7 @@ pub fn wake(key: WaitKey) -> bool {
     Task::exclusive(&mut task).transform(TaskState::Starved);
     trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
     current().push(task);
-    conductor::yell();
+    conductor::kick();
     true
 }
 
@@ -308,13 +308,13 @@ pub fn drain_expired() -> bool {
         trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
         current().push(task);
     }
-    // 批量吼：循环外一次 SBI IPI（替代原每条吼）。
-    // 任务已全部入本核 starved（push 先于吼 = 唤醒方进入 steal 必可见），
-    // 单次 yell 把当前所有等待 hart 拉起即可——单 tick IPI 量从 O(N) → O(1)。
-    // `woke` 与"是否真唤醒过"等价：false = 全是空 popped/已被取消，无需吼。
-    // wake 路径（messenger::wake）单次入单吼，本函数不涉及。
+    // 批量踢：循环外一次 SBI IPI（替代原每条吼）。
+    // 任务已全部入本核 starved（push 先于踢 = 唤醒方进入 steal 必可见），
+    // 单次 kick 把当前最低 set bit 的等待 hart 拉起即可——单 tick IPI 量
+    // 从 O(N) → O(1)。`woke` 与"是否真唤醒过"等价：false = 全是空
+    // popped/已被取消，无需踢。wake 路径（messenger::wake）单次入单踢。
     if woke {
-        conductor::yell();
+        conductor::kick();
     }
     woke
 }
