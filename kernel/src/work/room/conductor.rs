@@ -68,7 +68,9 @@ pub(super) fn halt() -> ! {
         run_shutdown_hooks();
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }
-    wfi()
+    loop {
+        unsafe { core::arch::asm!("wfi") };
+    }
 }
 
 // ── 关机钩子注册面 ──
@@ -92,13 +94,6 @@ fn run_shutdown_hooks() {
         for hook in hooks.iter() {
             hook();
         }
-    }
-}
-
-/// WFI 自环直到系统复位（halt 两分支共用；复位由 SBI 重新拉起）。
-fn wfi() -> ! {
-    loop {
-        unsafe { core::arch::asm!("wfi") };
     }
 }
 

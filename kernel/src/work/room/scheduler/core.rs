@@ -314,6 +314,15 @@ impl Scheduler {
         })
     }
 
+    /// 当前 running 任务的 Arc 克隆（mail 模块持有 mail 接入点用——Arc 共享
+    /// 借出，不取走 running 槽）。**调用方负责 push 到 task.mail；不允许持锁
+    /// 跨调用**（inner L1 与 mail L3 同层嵌套会 lockdep 违规——先克隆 Arc 再
+    /// 放 inner 锁，再去取 mail 锁）。
+    pub(crate) fn running_task(&self) -> Option<Arc<Task>> {
+        let i = self.inner.lock();
+        i.running.as_ref().map(Arc::clone)
+    }
+
     /// 轮转尾部（持锁、starved 非空）：Running → Starved 入队尾，队首上台。
     /// 调用方负责空队列判断（空 → 唯一任务续跑，不走本方法）。
     pub(super) fn rotate(&self, i: &mut SchedulerInner, mut cur: Arc<Task>) -> Arc<Task> {
@@ -355,10 +364,25 @@ impl Scheduler {
 
 pub(super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
-/// 关机清理：全部 hart 槽载荷归还（halt 路径、基线审计前调用——同 dock/ring
-/// shutdown 纪律：残留 Arc 计入差集即误报泄漏）。
-pub(crate) fn shutdown_slots() {
+/// 终末释放：halt 路径的关闭钩子——强制释放 scheduler 持有的全部 task 引用，
+/// 触发 MailHolds::drop 链透传 mail Arcs 归零（DockMeta::drop → 共享区帧还）。
+///
+/// 关闭顺序（conductor::halt → run_shutdown_hooks）：
+///   1. scheduler::rip              ← 本函数：星等任务强制释放 → mail 透传
+///   2. block::flush                 ← block 池冲洗
+///   3. audit::check_baseline        ← 帧/block 基线核对
+///
+/// 注：本函数只清 scheduler 持有的 Arc<Task> + info 槽。messenger 簿记
+/// （parked / sites / reaped）由 [`messenger::rip`] 清——本函数连调之。
+pub(crate) fn rip() {
+    // 清各 hart 内核的 starved 队列（running 不动——halt 时本 hart 不再调度）
     let Some(cs) = SCHEDULERS.get() else { return };
+    for c in cs.iter() {
+        c.inner.lock().starved.clear();
+    }
+    // 清 messenger 簿记（parked / sites / times / reaped）
+    messenger::rip();
+    // 清 info 槽（原 shutdown_slots 职责）
     for c in cs.iter() {
         c.clear_slot();
     }
@@ -366,6 +390,13 @@ pub(crate) fn shutdown_slots() {
 
 pub(super) fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
+}
+
+/// 当前 hart running 任务的 Arc 克隆（mail 模块 push 接入点用）。envcall 边界
+/// 必有 running 任务（trap 路径进入），返回 None 仅在 hart idle 时期——mail 适
+/// 配面应在 idle 路径前不调此函数。
+pub(crate) fn current_task() -> Option<Arc<Task>> {
+    current().running_task()
 }
 
 /// 执行核调度器（`tp → PerHart.scheduler` 直达，零索引——替代

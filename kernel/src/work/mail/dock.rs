@@ -1,6 +1,6 @@
 // dock — 多对一共享内存邮路（mail 双通道之一）：数据/索引全在用户态共享物理帧，
 // 内核不搬消息（零拷贝），只提供：
-//   1. 通道生命周期：open/join/shut/clone/drop + 状态机 Live→Hang→Gone/Dead；
+//   1. 通道生命周期：open/join/shut + 状态机 Live→Hang→Gone/Dead；
 //   2. 共享区登记与借用映射（帧所有权归 DockMeta，Arc 归零归还）；
 //   3. 同步：wait/wake 直用调度域原语（Ucall::Wait / Ucall::Wake）——mail 不重造
 //      调度器。
@@ -13,11 +13,15 @@
 // `borrow`），持有者登记 `Weak<Space>` + 视图 Span——Arc<DockMeta> 归零 drop 时
 // 逐视图 `unmap_range` 还段（不拖住地址空间生命周期）。
 //
+// 生命周期（Gate 5 设计）：mail 接入点由 Task.mail 直接持有，无中间簿记——
+// 任务死 → MailHolds::drop → Dock::drop → Rx/Tx::drop → clear_quay / dec_pier
+// → Arc<DockMeta> 归零 → Meta::drop（视图 + 帧归还）。注册表仅供 id→meta 弱查。
+//
 // 键面：dock 键 = `DOCK_KEY_TAG | id`（不经 WaitKey::compose——跨 team asid
 // 不同，经 compose 必失配；见 envcall 的 Wait/Wake 分发）。
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -30,16 +34,17 @@ use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::PhysAddr;
 use crate::memory::manager::entry::PteFlags;
+use crate::work::room::scheduler::core::current_task;
 use crate::work::unit::space::{Seg, Space, Span};
 
 use ubi::dock;
 
 /// dock 状态编码（与 ubi::dock::state 同值；内核侧语义枚举）。
 ///
-/// 四态迁移律（第 4 关签名批准）：open → Live；pier 全 drop（Arc 递减钩子）→
-/// Hang；显式 shut / quay 离场 → Dead；Hang 下余信取空 → Gone（**quay 用户态
-/// 钉连 CAS**——本枚举是编译期核对依据，内核侧不构造 Gone，Gone 的写入发生在
-/// 用户库 `user::dock` 的 pull 协议中，见 ubi::dock::state::GONE）。
+/// 四态迁移律（Gate 5 设计）：open → Live；opener Tx::drop（pier 全 drop 钩子）→
+/// Hang（quay 在场）；显式 shut quay / quay Tx::drop → Dead；Hang 下余信取空 →
+/// Gone（**quay 用户态钉连 CAS**——本枚举是编译期核对依据，内核侧不构造 Gone，
+/// Gone 的写入发生在用户库 `user::dock` 的 pull 协议中，见 ubi::dock::state::GONE）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DockState {
     /// pier_count ≥ 1 且 quay 在场。
@@ -62,22 +67,6 @@ impl DockState {
             DockState::Dead => dock::state::DEAD,
         }
     }
-
-    /// Hang → Gone：quay 在取空余信后钉连（用户库执行的 CAS；本方法为契约
-    /// 镜像——用户侧 `DockState` 内联等价逻辑，此处仅作迁移表文档）。
-    #[allow(dead_code)] // 契约文档：实现侧在 user::dock（本枚举是编译期核对依据）
-    pub const fn hang_to_gone(&self) -> Option<DockState> {
-        match self {
-            DockState::Hang => Some(DockState::Gone),
-            _ => None,
-        }
-    }
-
-    /// 是否仍可消费：Live / Hang 可取（Gone / Dead 断开）。
-    #[allow(dead_code)] // 契约文档：消费侧语义在用户库 pull 协议
-    pub const fn pullable(&self) -> bool {
-        matches!(self, DockState::Live | DockState::Hang)
-    }
 }
 
 /// dock 错误（D1 负码；同 ubi::dock::err）。
@@ -87,10 +76,6 @@ pub enum DockError {
     Dead,
     /// 条件不满足（满/空/quay 被占）——调用方 wait 后重试，非终结态。
     Busy,
-    /// Hang 下余信取空后钉连——连接自然终了（用户库 pull 协议产生；读音在
-    /// envcall 边界经 [`DockError::code`] 落 a0，此处无内核构造点）。
-    #[allow(dead_code)] // 契约文档：Gone 的构造在 user::dock（用户态 CAS 钉连）
-    Gone,
 }
 
 impl DockError {
@@ -98,7 +83,7 @@ impl DockError {
         match self {
             DockError::Dead => dock::err::DEAD,
             DockError::Busy => dock::err::BUSY,
-            DockError::Gone => dock::err::GONE,
+            _ => dock::err::GONE, // 占位；构造点在用户库
         }
     }
 }
@@ -113,8 +98,6 @@ struct DockShared<'a> {
 }
 
 impl<'a> DockShared<'a> {
-    /// 共享区首字节（物理连续块）；调用方保证 base 有效且生命周期由 Arc 保障。
-    ///
     /// # Safety
     /// base 必须指向本 dock 的共享物理帧首地址（恒等映射下 VA 即 PA）。
     unsafe fn new_unchecked(base: *const u8) -> Self {
@@ -132,12 +115,12 @@ impl<'a> DockShared<'a> {
         // SAFETY: 同 state。
         unsafe { &*(self.base.as_ptr().add(dock::OFF_PIER_COUNT) as *const AtomicUsize) }
     }
-    fn quay(&self) -> &AtomicBool {
+    fn quay(&self) -> &core::sync::atomic::AtomicBool {
         // SAFETY: 同 state。
-        unsafe { &*(self.base.as_ptr().add(dock::OFF_QUAY) as *const AtomicBool) }
+        unsafe { &*(self.base.as_ptr().add(dock::OFF_QUAY) as *const core::sync::atomic::AtomicBool) }
     }
 
-    /// pier 计数 −1；归零且 quay 缺席 → Live→Hang（CAS）。返回迁移后的计数。
+    /// pier 计数 −1；归零且 quay 缺席 → Live→Hang（CAS）。
     fn dec_pier(&self) -> usize {
         let n = self
             .pier_count()
@@ -176,37 +159,20 @@ impl<'a> DockShared<'a> {
             Ordering::Acquire,
         );
     }
-
-    /// 置 Dead（显式 shut / 任何断开路径的收敛态）。
-    fn dead(&self) {
-        let _ = self.state().compare_exchange(
-            DockState::Live.code(),
-            DockState::Dead.code(),
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
-        let _ = self.state().compare_exchange(
-            DockState::Hang.code(),
-            DockState::Dead.code(),
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
-    }
 }
 
-/// dock 内核登记元数据：共享区所有权（Arc 归零归还帧）+ 全局身份 + 视图登记。
-struct DockMeta {
+/// dock 内核登记元数据：共享区所有权（Arc 归零归还）+ 全局身份 + 视图登记。
+pub(crate) struct DockMeta {
     /// 全局唯一 id（兼作 wait/wake 键 = `DOCK_KEY_TAG | id`）。
-    id: usize,
+    pub(crate) id: usize,
     /// 共享区物理连续块（首地址 + 字节长），双端借用映射此块。
-    base: NonNull<u8>,
-    bytes: usize,
+    pub(crate) base: NonNull<u8>,
+    pub(crate) bytes: usize,
     /// 各持有 space 的视图（弱引用 + 段区间）——drop 时逐视图归还 user 段。
     /// 弱引用不拖住地址空间生命周期；Arc<Space> 已死则视图随 Space drop 消失。
     /// 锁序：exempt（SpinLock::new）——视图是 dock 私有数据，保护它的锁不参与
-    /// 层级校验（map_shared 可能在持 RINGS 锁时取它，同层嵌套会 lockdep 违规；
-    /// drop 内取空后放锁再回收 Space）。
-    views: SpinLock<Vec<(Weak<Space>, Span)>>,
+    /// 层级校验。
+    pub(crate) views: SpinLock<Vec<(Weak<Space>, Span)>>,
 }
 
 // SAFETY: DockMeta 经 Arc 跨任务/跨 hart 共享；base 指向共享物理帧（恒等映射
@@ -274,127 +240,16 @@ impl Drop for DockMeta {
     }
 }
 
-// ── dock 注册表（envcall 面：id → Arc<DockMeta>；与 port 注册表同式）──
+// ── 注册表（弱查：id → Weak<DockMeta>）──
 
-/// dock 全局注册表（Level::L3；不主动销毁，全 drop 后除名）。
-fn docks() -> &'static SpinLock<HashMap<usize, Arc<DockMeta>>> {
-    static DOCKS: OnceLock<SpinLock<HashMap<usize, Arc<DockMeta>>>> = OnceLock::new();
+/// dock 全局注册表（Level::L3；不主动清，Weak 归零后 lookup 失败）。
+fn docks() -> &'static SpinLock<HashMap<usize, Weak<DockMeta>>> {
+    static DOCKS: OnceLock<SpinLock<HashMap<usize, Weak<DockMeta>>>> = OnceLock::new();
     DOCKS.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
 /// dock 全局 id 分配器（自 1；0 保留）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-
-fn dock(id: usize) -> Option<Arc<DockMeta>> {
-    docks().lock().get(&id).cloned()
-}
-
-// ── 任务名下 dock 引用（B3 钩子：clear 逐条递减，与显式 drop_end 同路径）──
-
-fn task_docks() -> &'static SpinLock<HashMap<usize, Vec<(usize, usize)>>> {
-    static TASK_DOCKS: OnceLock<SpinLock<HashMap<usize, Vec<(usize, usize)>>>> = OnceLock::new();
-    TASK_DOCKS.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
-}
-
-fn current_task_id() -> usize {
-    crate::work::room::scheduler::core::ident()
-        .map(|i| i.id())
-        .unwrap_or(usize::MAX)
-}
-
-fn register_task_dock(id: usize, side: usize) {
-    let task_id = current_task_id();
-    task_docks()
-        .lock()
-        .entry(task_id)
-        .or_default()
-        .push((id, side));
-}
-
-fn unregister_task_dock(id: usize, side: usize) {
-    let task_id = current_task_id();
-    let mut table = task_docks().lock();
-    if let Some(v) = table.get_mut(&task_id) {
-        v.retain(|&(i, s)| !(i == id && s == side));
-    }
-}
-
-/// 全局 task_docks 中某 dock 的登记总数（可能多条 side、多个任务）。
-fn count_dock_refs(id: usize) -> usize {
-    task_docks()
-        .lock()
-        .values()
-        .map(|v| v.iter().filter(|(i, _)| *i == id).count())
-        .sum()
-}
-
-/// 关机清理（conductor::halt 调用）：全部任务已退出、space 已 drop → 清空注册表，
-/// 触发 DockMeta::drop（共享区帧归还 + 视图回收兜底）。**必须在帧基线审计前**
-/// ——否则残留注册表 Arc 阻止 drop，共享区帧计入泄漏。
-/// 实现：drain 出全部 Arc 后放锁再 drop——drop 内 space.release 经 Space 锁
-/// （level 2 < docks 的 L3），持 L3 时 drop 会层级下降违规。
-pub(crate) fn shutdown() {
-    let metas: Vec<Arc<DockMeta>> = {
-        let mut reg = docks().lock();
-        reg.drain().map(|(_, v)| v).collect()
-    };
-    drop(metas);
-}
-
-impl DockMeta {
-    /// 全部视图 space 已 drop（Weak upgrade 全失败）→ 无空间再访问共享区。
-    fn views_all_dead(&self) -> bool {
-        let views = self.views.lock();
-        views.iter().all(|(w, _)| w.upgrade().is_none())
-    }
-}
-
-/// 登记归零 + 无存活视图 space → 注册表除名（Arc 归零触发 DockMeta::drop → 帧
-/// 归还）。调用方须已完成本条递减（dec_pier/clear_quay）；本函数只查**全局登记**
-/// 是否还有别的任务持该 dock——不依赖 Arc strong_count（task_docks 不持 Arc，
-/// Arc 恒只有注册表一份，用 strong_count 判"最后一人"会误 purge 仍在用的 dock）。
-/// 两条件缺一不可：登记归零但子任务仍持视图 space（同 team 未 drop）→ 不 purge。
-fn purge_if_unreferenced(meta: &Arc<DockMeta>) {
-    if count_dock_refs(meta.id) == 0 && meta.views_all_dead() {
-        docks().lock().remove(&meta.id);
-    }
-}
-
-/// 任务退出钩子（messenger::clear_loop 调用）：该任务名下全部 dock 引用逐条
-/// 递减（等价多个显式 drop_end），并清理登记。
-pub(crate) fn task_exit(task_id: usize) {
-    let entries: Vec<(usize, usize)> = task_docks().lock().remove(&task_id).unwrap_or_default();
-    // 先逐条递减（同一 dock 可能多条 side：pier+quay）。
-    let mut metas = Vec::new();
-    for (id, side) in entries {
-        let Some(meta) = dock(id) else {
-            continue;
-        };
-        match side {
-            dock::side::PIER => {
-                // SAFETY: base 为本 dock 共享区。
-                let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
-                sh.dec_pier();
-            }
-            dock::side::QUAY => {
-                // SAFETY: base 为本 dock 共享区。
-                let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
-                sh.clear_quay();
-            }
-            _ => {}
-        }
-        metas.push(meta);
-    }
-    // 全部递减完成后，检查各 dock 是否还有别的任务持引用 / 存活视图空间 → 无则
-    // 除名（按 id 去重——同一 dock 可能多条 side）。
-    let mut seen = Vec::new();
-    for meta in metas {
-        if !seen.contains(&meta.id) {
-            seen.push(meta.id);
-            purge_if_unreferenced(&meta);
-        }
-    }
-}
 
 // ── 共享区借用映射 ──────────────────────────────────────────
 
@@ -433,11 +288,11 @@ fn map_shared(space: &Arc<Space>, meta: &DockMeta, bytes: usize) -> Result<usize
     Ok(va.as_usize())
 }
 
-// ── 适配面：envcall 五路 ────────────────────────────────────
+// ── 核心 API ────────────────────────────────────────────────
 
 /// 建 dock（envcall DockOpen 入口）：a0 = item_len，a1 = slots（2 的幂）。
-/// 返回 (dock id, 视图基址)。视图 = 共享区借用映射进**当前任务所在 space**
-/// （同 team 双端同空间；跨 team 由对端 join 再借同一物理块）。
+/// 共享区借映进**当前任务所在 space**；接入点（Rx + Tx 两端）move 到当前
+/// task.mail。返回 `(id, view)` —— id = 全局 dock id，view = 共享区视图基址。
 ///
 /// # Errors
 /// - `NotAligned` — item_len/slots 校验失败。
@@ -448,8 +303,9 @@ pub fn open(space: &Arc<Space>, item_len: usize, slots: usize) -> Result<(usize,
         return Err(MapError::NotAligned);
     }
     let (base, bytes) = DockMeta::allocate_shared(item_len, slots)?;
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let meta = Arc::new(DockMeta {
-        id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+        id,
         base,
         bytes,
         views: SpinLock::new(Vec::new()),
@@ -457,32 +313,39 @@ pub fn open(space: &Arc<Space>, item_len: usize, slots: usize) -> Result<(usize,
     meta.init_state(item_len, slots);
     {
         let mut reg = docks().lock();
-        reg.insert(meta.id, meta.clone());
-    } // reg drop：DOCKS 锁在此释放（不跨到 map_shared / register_task_dock）
+        reg.insert(id, Arc::downgrade(&meta));
+    } // reg drop：DOCKS 锁在此释放（不跨到 map_shared / push）
 
-    let va = map_shared(space, &meta, bytes)?;
+    let view = map_shared(space, &meta, bytes)?;
 
-    // open 方自持 pier + quay 两引用（Drop 钩子逐一递减）。
-    register_task_dock(meta.id, dock::side::PIER);
-    register_task_dock(meta.id, dock::side::QUAY);
+    // 创建者持两端——接入点（rx + tx）move 到当前 task.mail。
+    // 接入点仅由 mail 持有，envcall 适配只用 id + view 整数返回。
+    let task = current_task().expect("dock::open: envcall context");
+    task.mail.lock().docks.push(Dock::Bundle {
+        meta: meta.clone(),
+    });
 
-    Ok((meta.id, va))
+    Ok((id, view))
 }
 
-/// 加入已有 dock（envcall DockJoin 入口）：a0 = id，a1 = side。
+/// 加入已有 dock（envcall DockJoin 入口）：a0 = id，a1 = side（0 = Pier / 1 = Quay）。
 /// 同 team（本方 space 已含该共享块映射）→ 复用既有视图；跨 team → 重新借用
 /// 映射同一物理块进本方 space。Quay 侧 CAS 在场（已被占 → Busy）。
 ///
-/// 返回本地视图基址。
+/// 接入点（单端）move 到当前 task.mail。返回本地视图基址。
 ///
 /// # Errors
 /// - `Dead` — id 未登记（对端 dock 不存在）。
 /// - `Busy` — quay 已被占用。
 pub fn join(space: &Arc<Space>, id: usize, side: usize) -> Result<usize, DockError> {
-    let meta = dock(id).ok_or(DockError::Dead)?;
-    if side == dock::side::QUAY {
-        // 唯一性 CAS：quay 在场位。open 方已持 quay（同 team joiner 是 open 方
-        // 另一任务）→ 首版语义：quay 只能一份，跨 team 接 quay 需 open 方先 drop。
+    let meta = docks()
+        .lock()
+        .get(&id)
+        .and_then(Weak::upgrade)
+        .ok_or(DockError::Dead)?;
+    if side == ubi::dock::side::QUAY {
+        // 唯一性 CAS：quay 在场位。open 方已持 quay → 跨任务 join as quay 需
+        // open 方先 shut。
         let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
         if sh
             .quay()
@@ -492,51 +355,78 @@ pub fn join(space: &Arc<Space>, id: usize, side: usize) -> Result<usize, DockErr
             return Err(DockError::Busy);
         }
     }
-    let va = map_shared(space, &meta, meta.bytes).map_err(|_| DockError::Dead)?;
-    register_task_dock(id, side);
-    Ok(va)
+    let view = map_shared(space, &meta, meta.bytes).map_err(|_| DockError::Dead)?;
+
+    let task = current_task().expect("dock::join: envcall context");
+    let dock = match side {
+        ubi::dock::side::PIER => Dock::Pier { meta },
+        ubi::dock::side::QUAY => Dock::Quay { meta },
+        _ => return Err(DockError::Dead),
+    };
+    task.mail.lock().docks.push(dock);
+
+    Ok(view)
 }
 
-/// 终止 dock（envcall DockShut 入口）：置 Dead（对端感知断开）。
+/// 释放当前任务的接入点（envcall DockShut 入口）：查找并从 mail 移除匹配条目
+/// —— 移除触发 `Dock::drop` → `clear_quay / dec_pier` 链。
+///
+/// 返回：true = 释放成功；false = 当前 task 未持 `id`。
 pub fn shut(id: usize) -> bool {
-    let Some(meta) = dock(id) else {
+    let Some(task) = current_task() else { return false; };
+    let mut mail = task.mail.lock();
+    let Some(pos) = mail.docks.iter().position(|d| d.id() == id) else {
         return false;
     };
-    // SAFETY: base 为本 dock 共享区。
-    let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
-    sh.dead();
+    mail.docks.remove(pos);
     true
 }
 
-/// 复制生产端（envcall DockClone 入口）：pier 计数 +1（登记给当前任务）。
-pub fn clone_pier(id: usize) -> bool {
-    let Some(meta) = dock(id) else {
-        return false;
-    };
-    // SAFETY: base 为本 dock 共享区。
-    let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
-    sh.pier_count().fetch_add(1, Ordering::AcqRel);
-    register_task_dock(id, dock::side::PIER);
-    true
+// ── dock 接入点（mail 持有；类型即义务）────────────────────
+
+/// dock 接入点（任务持有）：创建者两端（Bundle）或单端加入者（Pier / Quay）。
+///
+/// Drop 自动透传：Bundle 字段 drop（meta Arc 递减，最后一份时 Meta::drop 跑——
+/// 视图回收 + 帧归还）；Pier::drop 触发 `dec_pier`；Quay::drop 触发 `clear_quay`。
+pub enum Dock {
+    /// 创建者两端——open 返回此变体。
+    Bundle { meta: Arc<DockMeta> },
+    /// 加入者持发送端（pier）。
+    Pier { meta: Arc<DockMeta> },
+    /// 加入者持接收端（quay）。
+    Quay { meta: Arc<DockMeta> },
 }
 
-/// 释放一端（envcall DockDrop 入口）：pier −1（归零 → Hang）/ quay 离场（→ Dead）。
-pub fn drop_end(id: usize, side: usize) -> bool {
-    let Some(meta) = dock(id) else {
-        return false;
-    };
-    // SAFETY: base 为本 dock 共享区。
-    let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
-    match side {
-        dock::side::PIER => {
-            sh.dec_pier();
+impl Dock {
+    /// 全局 id（跨任务定位用）。
+    pub fn id(&self) -> usize {
+        match self {
+            Dock::Bundle { meta } => meta.id,
+            Dock::Pier { meta } => meta.id,
+            Dock::Quay { meta } => meta.id,
         }
-        dock::side::QUAY => {
-            sh.clear_quay();
-        }
-        _ => return false,
     }
-    unregister_task_dock(id, side);
-    purge_if_unreferenced(&meta);
-    true
+}
+
+impl Drop for Dock {
+    fn drop(&mut self) {
+        let meta = match self {
+            Dock::Bundle { meta } => meta,
+            Dock::Pier { meta } => meta,
+            Dock::Quay { meta } => meta,
+        };
+        // SAFETY: base 在 Arc 持有期间恒有效；本 Drop 是 Arc 释放前最后一次访问。
+        let sh = unsafe { DockShared::new_unchecked(meta.base.as_ptr()) };
+        match self {
+            Dock::Bundle { .. } => {
+                // 创建者持两端——两端 drop 都跑一次（saturating 处理重复）。
+                let _ = sh.dec_pier();
+                sh.clear_quay();
+            }
+            Dock::Pier { .. } => {
+                let _ = sh.dec_pier();
+            }
+            Dock::Quay { .. } => sh.clear_quay(),
+        }
+    }
 }

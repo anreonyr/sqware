@@ -354,6 +354,17 @@ fn exit_hooks() -> &'static [ExitHook] {
     EXIT_HOOKS.get().copied().unwrap_or(EMPTY)
 }
 
+/// 终末释放：清空 messenger 持有的全部 Arc<Task>（parked / sites / times /
+/// reaped 四张表）——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。
+/// 由 [`scheduler::core::rip`] 在 halt 路径调用；mail 接入点由 task.mail
+/// 析构透传释放（无需 mail 自有关闭钩子）。
+pub(crate) fn rip() {
+    parked().lock().clear();
+    wait_sites().lock().clear();
+    wait_times().lock().clear();
+    REAPED.lock().clear();
+}
+
 // ── 内部辅助 ──
 
 impl WaitSite {

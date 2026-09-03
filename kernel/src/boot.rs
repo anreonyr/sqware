@@ -150,27 +150,22 @@ fn register_runtime_hooks() {
     use crate::work::room::conductor;
     use crate::work::room::messenger;
 
-    // 每条 reaped 任务：mail 的 dock / ring task_exit
-    static EXIT_HOOKS: &[fn(usize)] = &[
-        crate::work::mail::dock::task_exit,
-        crate::work::mail::ring::task_exit,
-    ];
+    // 每条 reaped 任务：mail 不再需要 task_exit——Task::drop 链已透传释放。
+    // 钩子表留空（保持 messenger::clear_loop 的统一出口，便于将来扩展）。
+    static EXIT_HOOKS: &[fn(usize)] = &[];
     messenger::register_exit_hooks(EXIT_HOOKS);
 
-    // 关机序列：mail（dock/ ring shutdown）→ 调度器槽清空 → block 池冲洗 → audit
+    // 关机序列：scheduler::rip（清任务队列 + info 槽 + messenger 簿记）→
+    //   mail 由 drop 链透传（DockMeta::drop / RingMeta::drop）→ block 池冲洗 → audit
     #[cfg(feature = "audit")]
     const SHUTDOWN_HOOKS: &[fn()] = &[
-        crate::work::mail::dock::shutdown,
-        crate::work::mail::ring::shutdown,
-        crate::work::room::scheduler::core::shutdown_slots,
+        crate::work::room::scheduler::core::rip,
         crate::memory::allocator::block::flush,
         crate::memory::allocator::fence::audit::check_baseline,
     ];
     #[cfg(not(feature = "audit"))]
     const SHUTDOWN_HOOKS: &[fn()] = &[
-        crate::work::mail::dock::shutdown,
-        crate::work::mail::ring::shutdown,
-        crate::work::room::scheduler::core::shutdown_slots,
+        crate::work::room::scheduler::core::rip,
         crate::memory::allocator::block::flush,
     ];
     conductor::register_shutdown_hooks(SHUTDOWN_HOOKS);

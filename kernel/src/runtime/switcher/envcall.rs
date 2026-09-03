@@ -331,14 +331,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Mail(MailCall::DockClone) => {
-            // a0 = dock id → 0 或负码。
-            let ok = dock::clone_pier(frame.gpr.x(Gprs::A0));
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+            // pier 操作已删除（Gate 5：多生产者走多次 join）——返负码提示。
+            frame.gpr.set_x(Gprs::A0, -1isize as usize);
         }
         Ucall::Mail(MailCall::DockDrop) => {
-            // a0 = dock id，a1 = side。
-            let ok = dock::drop_end(frame.gpr.x(Gprs::A0), frame.gpr.x(Gprs::A1));
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+            // Gate 5：端释放走 dock::shut(id)（Bundle 是创建者双端的原子单位）；
+            // 单端释放对 Bundle 而言 = 整体释放。原始 DockDrop(id, side) 语义
+            // 现在通过 DockShut(id) 实现——保留此 envcall 入口返负码以兼容旧用户态。
+            frame.gpr.set_x(Gprs::A0, -1isize as usize);
         }
         Ucall::Mail(MailCall::RingOpen) => {
             // a0 = item_len，a1 = slots（2 的幂）→ a0 = ring id，a1 = 视图基址。
@@ -367,7 +367,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         }
         Ucall::Mail(MailCall::RingClose) => {
             // a0 = ring id → 0 或负码。
-            let ok = ring::close(frame.gpr.x(Gprs::A0));
+            let ok = ring::shut(frame.gpr.x(Gprs::A0));
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
     };
