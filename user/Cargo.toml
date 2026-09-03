@@ -58,8 +58,8 @@ bench = false
 doctest = false
 
 [[bin]]
-name = "user-mailer"
-path = "src/bin/mailer.rs"
+name = "user-porter"
+path = "src/bin/porter.rs"
 test = false
 bench = false
 doctest = false

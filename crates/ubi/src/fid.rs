@@ -95,6 +95,9 @@ pub enum MailCall {
     PortPush = 2,
     /// 收取消息（内核拷贝）：a0 = 句柄，a1 = 消息缓冲 VA。
     PortPull = 3,
+    /// 加入已有 port（跨任务，把句柄绑进当前 task.mail）：a0 = 句柄 →
+    /// a0 = 条件键。两端各持一份，Arc 计数保活；最后一份 drop 置 Dead。
+    PortJoin = 12,
     /// 建 dock 通道（多对一共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
     /// a0 = dock id（兼作 wait/wake 键，带 DOCK_KEY_TAG），a1 = 视图基址
     /// （同 team 两端同源）。
@@ -203,7 +206,7 @@ index_from! {
     MailCall {
         PortOpen = 0, PortShut = 1, PortPush = 2, PortPull = 3,
         DockOpen = 4, DockShut = 5, DockJoin = 6, DockClone = 7, DockDrop = 8,
-        RingOpen = 9, RingClose = 10, RingJoin = 11
+        RingOpen = 9, RingClose = 10, RingJoin = 11, PortJoin = 12
     }
     ControlCall { Panic = 0 }
 }

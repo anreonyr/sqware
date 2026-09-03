@@ -42,6 +42,17 @@ pub fn port_try_pull(handle: usize, buf: *mut u8) -> UResult<()> {
     Ok(())
 }
 
+pub fn port_join(handle: usize) -> UResult<usize> {
+    let args = UArgs {
+        a0: handle,
+        ..UArgs::default()
+    };
+    let (key, _) = UcallBuilder::new(Ucall::Mail(MailCall::PortJoin))
+        .args(args)
+        .call()?;
+    Ok(key)
+}
+
 pub fn dock_open(item_len: usize, slots: usize) -> UResult<(usize, usize)> {
     let args = UArgs {
         a0: item_len,

@@ -29,7 +29,7 @@ use hashbrown::HashMap;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::memory::manager::MapError;
 use crate::work::mail::SharedBuf;
-use crate::work::room::scheduler::core::current_task;
+use crate::work::room::scheduler::core::current;
 use crate::work::unit::space::Space;
 
 use ubi::ring;
@@ -107,7 +107,8 @@ impl<'a> RingShared<'a> {
 
     /// 写状态槽 + item_len / slots 定型字段（open 时一次）。
     fn init_layout(&self, item_len: usize, slots: usize) {
-        self.state().store(RingState::Live.code(), Ordering::Release);
+        self.state()
+            .store(RingState::Live.code(), Ordering::Release);
         // SAFETY: 固定偏移 usize 写，块内对齐。
         unsafe {
             (self.base.as_ptr().add(ring::OFF_ITEM_LEN) as *mut usize).write(item_len);
@@ -174,7 +175,9 @@ pub fn open(space: &Arc<Space>, item_len: usize, slots: usize) -> Result<(usize,
     let view = meta.shared.map_into(space)?;
 
     // 接入点（单端）move 到当前 task.mail。
-    let task = current_task().expect("ring::open: envcall context");
+    let task = current()
+        .running_task()
+        .expect("ring::open: envcall context");
     task.mail.lock().rings.push(Ring { meta });
 
     Ok((id, view))
@@ -194,7 +197,9 @@ pub fn join(space: &Arc<Space>, id: usize) -> Result<usize, RingError> {
         .ok_or(RingError::Dead)?;
     let view = meta.shared.map_into(space).map_err(|_| RingError::Dead)?;
 
-    let task = current_task().expect("ring::join: envcall context");
+    let task = current()
+        .running_task()
+        .expect("ring::join: envcall context");
     task.mail.lock().rings.push(Ring { meta });
 
     Ok(view)
@@ -205,7 +210,9 @@ pub fn join(space: &Arc<Space>, id: usize) -> Result<usize, RingError> {
 ///
 /// 返回：true = 释放成功；false = 当前 task 未持 `id`。
 pub fn shut(id: usize) -> bool {
-    let Some(task) = current_task() else { return false; };
+    let Some(task) = current().running_task() else {
+        return false;
+    };
     let mut mail = task.mail.lock();
     let Some(pos) = mail.rings.iter().position(|r| r.id() == id) else {
         return false;

@@ -21,6 +21,7 @@
 // 键面：dock 键 = `DOCK_KEY_TAG | id`（不经 WaitKey::compose——跨 team asid
 // 不同，经 compose 必失配；见 envcall 的 Wait/Wake 分发）。
 
+use crate::work::room::scheduler::core::current;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use alloc::sync::{Arc, Weak};
@@ -30,7 +31,6 @@ use hashbrown::HashMap;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::memory::manager::MapError;
 use crate::work::mail::SharedBuf;
-use crate::work::room::scheduler::core::current_task;
 use crate::work::unit::space::Space;
 
 use ubi::dock;
@@ -112,7 +112,9 @@ impl<'a> DockShared<'a> {
     }
     fn quay(&self) -> &core::sync::atomic::AtomicBool {
         // SAFETY: 同 state。
-        unsafe { &*(self.base.as_ptr().add(dock::OFF_QUAY) as *const core::sync::atomic::AtomicBool) }
+        unsafe {
+            &*(self.base.as_ptr().add(dock::OFF_QUAY) as *const core::sync::atomic::AtomicBool)
+        }
     }
 
     /// pier 计数 −1；归零且 quay 缺席 → Live→Hang（CAS）。
@@ -157,7 +159,8 @@ impl<'a> DockShared<'a> {
 
     /// 写状态槽 + item_len / slots 定型字段（open 时一次）。
     fn init_layout(&self, item_len: usize, slots: usize) {
-        self.state().store(DockState::Live.code(), Ordering::Release);
+        self.state()
+            .store(DockState::Live.code(), Ordering::Release);
         self.quay().store(true, Ordering::Release);
         // SAFETY: 固定偏移 usize 写，块内对齐。
         unsafe {
@@ -229,10 +232,13 @@ pub fn open(space: &Arc<Space>, item_len: usize, slots: usize) -> Result<(usize,
     let view = meta.shared.map_into(space)?;
 
     // 创建者持两端——接入点 move 到当前 task.mail。
-    let task = current_task().expect("dock::open: envcall context");
-    task.mail.lock().docks.push(Dock::Bundle {
-        meta: meta.clone(),
-    });
+    let task = current()
+        .running_task()
+        .expect("dock::open: envcall context");
+    task.mail
+        .lock()
+        .docks
+        .push(Dock::Bundle { meta: meta.clone() });
 
     Ok((id, view))
 }
@@ -266,7 +272,9 @@ pub fn join(space: &Arc<Space>, id: usize, side: usize) -> Result<usize, DockErr
     }
     let view = meta.shared.map_into(space).map_err(|_| DockError::Dead)?;
 
-    let task = current_task().expect("dock::join: envcall context");
+    let task = current()
+        .running_task()
+        .expect("dock::join: envcall context");
     let dock = match side {
         ubi::dock::side::PIER => Dock::Pier { meta },
         ubi::dock::side::QUAY => Dock::Quay { meta },
@@ -282,7 +290,9 @@ pub fn join(space: &Arc<Space>, id: usize, side: usize) -> Result<usize, DockErr
 ///
 /// 返回：true = 释放成功；false = 当前 task 未持 `id`。
 pub fn shut(id: usize) -> bool {
-    let Some(task) = current_task() else { return false; };
+    let Some(task) = current().running_task() else {
+        return false;
+    };
     let mut mail = task.mail.lock();
     let Some(pos) = mail.docks.iter().position(|d| d.id() == id) else {
         return false;

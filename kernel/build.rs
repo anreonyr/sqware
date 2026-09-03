@@ -62,8 +62,8 @@ fn main() {
         bin_dir.join("user-mmaper").display()
     );
     println!(
-        "cargo::rustc-env=USER_MAILER={}",
-        bin_dir.join("user-mailer").display()
+        "cargo::rustc-env=USER_PORTER={}",
+        bin_dir.join("user-porter").display()
     );
     println!(
         "cargo::rustc-env=USER_STRESSOR={}",

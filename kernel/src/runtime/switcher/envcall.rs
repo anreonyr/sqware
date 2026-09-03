@@ -299,6 +299,16 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Err(PortError::Dead) => frame.gpr.set_x(Gprs::A0, -1isize as usize),
             }
         }
+        Ucall::Mail(MailCall::PortJoin) => {
+            // a0 = 句柄 → a0 = 条件键（同一 inner Arc 入本方 mail，Arc 保活）。
+            // 返回：键；-1 = Dead（原句柄已死 / 注册表查不到）。
+            let handle = frame.gpr.x(Gprs::A0);
+            match port::join(handle) {
+                Ok(key) => frame.gpr.set_x(Gprs::A0, key),
+                Err(PortError::Dead) => frame.gpr.set_x(Gprs::A0, -1isize as usize),
+                Err(PortError::Busy) => frame.gpr.set_x(Gprs::A0, -2isize as usize),
+            }
+        }
         Ucall::Mail(MailCall::DockOpen) => {
             // a0 = item_len，a1 = slots（2 的幂）→ a0 = dock id，a1 = 视图基址。
             let item_len = frame.gpr.x(Gprs::A0);

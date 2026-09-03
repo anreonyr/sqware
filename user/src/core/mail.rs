@@ -20,6 +20,15 @@ impl Port {
         Ok(Port { handle, key })
     }
 
+    pub fn join(handle: usize) -> UResult<Port> {
+        let key = env_mail::port_join(handle)?;
+        Ok(Port { handle, key })
+    }
+
+    pub fn handle(&self) -> usize {
+        self.handle
+    }
+
     pub fn key(&self) -> usize {
         self.key
     }

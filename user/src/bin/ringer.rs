@@ -37,5 +37,10 @@ extern "C" fn main() {
         msg[0] = i;
         producer.push(&msg).expect("producer push failed");
     }
+    // 关键：等子任务跑完再 drop(producer)——producer 的 Drop 触发
+    // ring_close → 移出 task.mail 中的 Ring → Arc<RingMeta> 归零 → unmap。
+    // 子任务的 Consumer 是 Copy 数据（不持 kernel Arc），若先 drop 父端
+    // Ring，shared 帧在子任务下次 pull 时被释放 → 缺页。
+    let _ = _child.join();
     drop(producer);
 }

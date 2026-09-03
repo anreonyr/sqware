@@ -286,12 +286,7 @@ impl Scheduler {
         }
         drop(i);
         let next_pa = if let Some(next) = next {
-            let pa = next
-                .ident
-                .frame
-                .pa
-                .expect("frame span has pa")
-                .as_usize();
+            let pa = next.ident.frame.pa.expect("frame span has pa").as_usize();
             self.mount(next);
             Some(pa)
         } else {
@@ -305,13 +300,9 @@ impl Scheduler {
     /// running，仅读取 frame 物理地址）。
     pub(crate) fn running_frame_pa(&self) -> Option<usize> {
         let i = self.inner.lock();
-        i.running.as_ref().map(|t| {
-            t.ident
-                .frame
-                .pa
-                .expect("frame span has pa")
-                .as_usize()
-        })
+        i.running
+            .as_ref()
+            .map(|t| t.ident.frame.pa.expect("frame span has pa").as_usize())
     }
 
     /// 当前 running 任务的 Arc 克隆（mail 模块持有 mail 接入点用——Arc 共享
@@ -352,9 +343,8 @@ impl Scheduler {
     }
 
     // 注：park / wait / reap 三个 Scheduler 方法已移至 [`crate::work::room::messenger`]，
-// 任务"离开 running 槽"的所有过渡归 messenger 管理——它们借 Scheduler::disown_and_install_next
-// 跨边界原语完成槽位 settled，再在 messenger 域内做 parked / sites / reaped 簿记。
-
+    // 任务"离开 running 槽"的所有过渡归 messenger 管理——它们借 Scheduler::disown_and_install_next
+    // 跨边界原语完成槽位 settled，再在 messenger 域内做 parked / sites / reaped 簿记。
 }
 
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
@@ -390,13 +380,6 @@ pub(crate) fn rip() {
 
 pub(super) fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
-}
-
-/// 当前 hart running 任务的 Arc 克隆（mail 模块 push 接入点用）。envcall 边界
-/// 必有 running 任务（trap 路径进入），返回 None 仅在 hart idle 时期——mail 适
-/// 配面应在 idle 路径前不调此函数。
-pub(crate) fn current_task() -> Option<Arc<Task>> {
-    current().running_task()
 }
 
 /// 执行核调度器（`tp → PerHart.scheduler` 直达，零索引——替代
