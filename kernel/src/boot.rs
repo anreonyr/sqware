@@ -177,7 +177,7 @@ fn spawn_demos() -> Result<(), MapError> {
     for (elf, name) in [
         // (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
         // (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
-        (&include_bytes!(env!("USER_MAILER"))[..], "mailer"),
+        // (&include_bytes!(env!("USER_MAILER"))[..], "mailer"),
         // (&include_bytes!(env!("USER_YIELDER"))[..], "yielder"),
         // (&include_bytes!(env!("USER_SLEEPER"))[..], "sleeper"),
         // (&include_bytes!(env!("USER_EXITER"))[..], "exiter"),
@@ -241,6 +241,7 @@ fn spawn_demos() -> Result<(), MapError> {
     // storm_ktask(64)?;
     #[cfg(feature = "audit")]
     kernel().expect("kernel team not initialized").space.audit();
+    panic!("test");
     Ok(())
 }
 

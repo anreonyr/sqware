@@ -7,7 +7,8 @@
 //! （trap 进入后持续有效）与栈回溯。
 //!
 //! 回溯 = 无帧指针启发式：扫描当前栈区间，收集可执行地址的候选返回地址（去重、
-//! 深度封顶）。每条经 `elftable::resolve` 符号化，未命中打印裸 hex。
+//! 深度封顶）。有符号表则 hex + sym 双列；无表则仅 hex（chain 跟 fp 链即出轨迹，
+//! 扫描依赖域筛法跳）。
 
 use core::arch::asm;
 
@@ -192,27 +193,39 @@ struct Sift<'a> {
     gaps: bool,
 }
 
-/// 一次勘探：轨迹与解释它所需的符号表同生共死。
+/// 一次勘探：轨迹与解释它所需的符号表（同源同死；None = 仅 hex，不符号化）。
 struct Trace {
     trail: Trail,
-    table: Arc<ElfTable>,
+    table: Option<Arc<ElfTable>>,
 }
 
 impl Trace {
     fn rows(&self, head: &str) -> Vec<Vec<Option<String>>> {
-        let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-            Some(head.into()),
-            Some("hex".into()),
-            Some("sym".into()),
-        ]];
-        for (i, a) in self.trail.frames().iter().enumerate() {
-            rows.push(vec![
-                Some(format!("#{i}")),
-                Some(hex(*a)),
-                Some(elftable::symbol(VirtAddr::from_raw(*a), Some(&self.table))),
-            ]);
+        // 表 = None → 仅 hex 列（无符号化）；否则 hex + sym 双列。
+        if let Some(table) = self.table.as_deref() {
+            let mut rows: Vec<Vec<Option<String>>> = vec![vec![
+                Some(head.into()),
+                Some("hex".into()),
+                Some("sym".into()),
+            ]];
+            for (i, a) in self.trail.frames().iter().enumerate() {
+                rows.push(vec![
+                    Some(format!("#{i}")),
+                    Some(hex(*a)),
+                    Some(elftable::symbol(VirtAddr::from_raw(*a), Some(table))),
+                ]);
+            }
+            rows
+        } else {
+            let mut rows: Vec<Vec<Option<String>>> = vec![vec![
+                Some(head.into()),
+                Some("hex".into()),
+            ]];
+            for (i, a) in self.trail.frames().iter().enumerate() {
+                rows.push(vec![Some(format!("#{i}")), Some(hex(*a))]);
+            }
+            rows
         }
-        rows
     }
 }
 
@@ -258,8 +271,11 @@ fn scan(stack: &mut Stack, trail: &mut Trail, sift: &Sift, from: usize, to: usiz
 }
 
 /// 内核现场：起点取归巢落盘的原始 sp/fp，未归巢（crash_scene! 直调）读当前。
+///
+/// 无符号表 = 仅 hex：chain 跟 fp 链收 ra 即可（不依赖符号筛法）；扫描步
+///（按代码地址域筛候选）跳过——没有符号表就判不了「属本域代码」。
 fn ktrace() -> Option<Trace> {
-    let table = kernel()?.elftable.clone()?;
+    let table = kernel()?.elftable.clone();
     let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
         (0, 0) => {
             let (sp, fp): (usize, usize);
@@ -281,18 +297,22 @@ fn ktrace() -> Option<Trace> {
     let mut stack = Stack::kernel();
     let mut trail = Trail::new();
     let broke = chain(&mut stack, &mut trail, fp, sp + 16, ceiling);
-    let sift = Sift {
-        code: &|w| table.lookup(VirtAddr::from_raw(w)).is_some(),
-        gaps: false,
-    };
-    scan(&mut stack, &mut trail, &sift, broke + 8, ceiling);
+    if let Some(table) = table.as_deref() {
+        let sift = Sift {
+            code: &|w| table.lookup(VirtAddr::from_raw(w)).is_some(),
+            gaps: false,
+        };
+        scan(&mut stack, &mut trail, &sift, broke + 8, ceiling);
+    }
     Some(Trace { trail, table })
 }
 
 /// 用户现场：running 任务的用户 trap 帧存着最近一次用户态 sp/fp。
+///
+/// 无符号表 = 仅 hex：同 ktrace——chain 收 ra 即出轨迹，扫描依赖域筛法跳。
 fn utrace() -> Option<Trace> {
     let info = ident()?;
-    let table = info.elftable()?;
+    let table = info.elftable();
     let pa = info.trap()?;
     // SAFETY: Live 轴 = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM
     // 恒等映射）；崩溃现场只读，其余核已冻结。
@@ -309,11 +329,13 @@ fn utrace() -> Option<Trace> {
     let mut stack = Stack::user(frame.user_satp.ppn());
     let mut trail = Trail::new();
     let broke = chain(&mut stack, &mut trail, fp, sp + 16, ceiling);
-    let sift = Sift {
-        code: &|w| table.lookup(VirtAddr::from_raw(w)).is_some(),
-        gaps: true,
-    };
-    scan(&mut stack, &mut trail, &sift, broke + 8, ceiling);
+    if let Some(table) = table.as_deref() {
+        let sift = Sift {
+            code: &|w| table.lookup(VirtAddr::from_raw(w)).is_some(),
+            gaps: true,
+        };
+        scan(&mut stack, &mut trail, &sift, broke + 8, ceiling);
+    }
     Some(Trace { trail, table })
 }
 
