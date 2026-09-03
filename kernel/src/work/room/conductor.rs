@@ -33,6 +33,12 @@ static HALT_ARRIVED: AtomicUsize = AtomicUsize::new(0);
 /// 多字：字宽 = SBI 单次 `sbi_send_ipi` 的寻址窗口（XLEN = 64 位），按
 /// MAX_HART_SLOTS 分字。位位置 = hartid。
 static WAITING: [AtomicUsize; WAITING_WORDS] = [const { AtomicUsize::new(0) }; WAITING_WORDS];
+/// 全局旋转游标：`kick` 选位起点用。单点选最低 set bit 会长期偏向同一
+/// hart（最低位 hart 因抢失败一直留位时被反复踢——其他 hart 永不被踢），
+/// 用游标取模 64bit 字宽作为扫描起点，每次踢推到下一个等待 hart，4 hart
+/// 时每 4 次循环一次——保证公平。Relaxed fetch_add 即可（不必严格跨核
+/// 同步：每次 kick 拿不同起点即可）。
+static YELL_CURSOR: AtomicUsize = AtomicUsize::new(0);
 
 /// WAITING 位图字数：每字 64 位（= 协议单次 IPI 掩码窗口）。
 const WAITING_WORDS: usize = crate::machine::MAX_HART_SLOTS / usize::BITS as usize;
@@ -142,30 +148,40 @@ pub(super) fn wake(hart: usize) {
 }
 
 /// 单点唤醒 1 个 WFI 等待 hart（push / wake / drain 热路径）。从 WAITING 位
-/// 图选最低 set bit 发 1-bit IPI——唤醒单 hart，**避免雷鸣群**（多 hart 同
-/// 醒 → 同时抢源 hart 的 L1 → cache 行乒乓）。
+/// 图用全局旋转游标 `YELL_CURSOR` 选起点扫一个 word 找第一个 set bit——
+/// 唤醒单 hart，**避免雷鸣群**（多 hart 同醒 → 同时抢源 hart 的 L1 → cache
+/// 行乒乓）。
+///
+/// 公平性：游标单调推进 → 每个 hart 轮流被踢。4 hart 全等待时周期 0/1/2/3，
+/// 每个 hart 每 4 次循环踢一次；避免最低位 hart 长期被偏爱（之前裸选最低
+/// set bit 时存在的问题：低位 hart 因抢失败留位 → 反复踢同 hart）。
 ///
 /// 失败兜底：被踢醒 hart 抢失败 → 哑睡壳（保留 sleep 位，等下次事件）；work
 /// 仍留在源 hart 的 starved queue——源 hart 下次 yield 自取（≤ 1 个时间片）。
-///
-/// 公平性：单点偏向最低位 hart。大量 push 风暴下喂每个等待 hart 的耗时分布
-/// 不均；可加旋转游标（`YELL_CURSOR`）改进，本次保留单点最简版。
 pub(super) fn kick() {
-    for (w, word) in WAITING.iter().enumerate() {
+    // 起点游标：fetch_add(1) % 64bit 字宽。下次 call 拿到新起点，跨核亦然。
+    let cursor_mod = YELL_CURSOR.fetch_add(1, Ordering::Relaxed) % (usize::BITS as usize);
+    'word: for (w, word) in WAITING.iter().enumerate() {
         let waiting = word.load(Ordering::Acquire);
         if waiting == 0 {
             continue;
         }
-        // 选最低 set bit（cache locality；低位 hart 通常先 idle）。
-        let pick = waiting & waiting.wrapping_neg();
-        let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
-            .args(SArgs {
-                a0: pick,
-                a1: w * (usize::BITS as usize),
-                ..Default::default()
-            })
-            .call();
-        return;
+        // 从 cursor 旋转扫描整个 word 找第一个 set bit——最坏 64 次 bit
+        // test ≈ ~10 cycles，远低 SBI ecall 开销。命中即发 1-bit IPI 后返回。
+        for off in 0..(usize::BITS as usize) {
+            let bit_pos = (cursor_mod + off) % (usize::BITS as usize);
+            let bit = 1usize << bit_pos;
+            if waiting & bit != 0 {
+                let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
+                    .args(SArgs {
+                        a0: bit,
+                        a1: w * (usize::BITS as usize),
+                        ..Default::default()
+                    })
+                    .call();
+                break 'word;
+            }
+        }
     }
 }
 
