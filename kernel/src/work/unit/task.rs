@@ -18,7 +18,7 @@ use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
 
 use super::team::Team;
-use crate::work::room::conductor;
+use crate::work::room::scheduler;
 
 /// 全局任务号（跨 hart 唯一）。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
@@ -145,7 +145,7 @@ impl Task {
 ///
 /// 入口参数 arg 写入用户上下文 a0。空间分配（栈/帧）
 /// 在调度器锁外完成（id 已原子化、空间自有锁）——锁只保护本 hart 队列的
-/// push（与偷取者的 pop 互斥）与入簿（1 → 3 合法）。
+/// push（与偷取者的 pull 互斥）与入簿（1 → 3 合法）。
 ///
 /// # Errors
 ///
@@ -203,9 +203,9 @@ impl TaskBuilder {
     ///
     /// 约束：`FnOnce + Send + 'static`——闭包可捕获、可搬移到新执行上下文。
     /// 内核任务运行于 SIE=1（帧 SPIE=1），可被 S-timer 抢占（现场经 persist 保全），
-    /// 也可经 `conductor::ktask` 自愿让出/睡眠——忙等不返回则独占所在核。
+    /// 也可经 `scheduler::ktask` 自愿让出/睡眠——忙等不返回则独占所在核。
     ///
-    /// 闭包内可调用统一调度服务面 `conductor::ktask::{park, starve, reap}`：
+    /// 闭包内可调用统一调度服务面 `scheduler::ktask::{park, starve, reap}`：
     /// 与用户任务同帧 ABI 的自愿切换（软陷阱），唤醒后闭包在调用点继续。
     pub fn closure<F>(self, f: F) -> Result<usize, MapError>
     where
@@ -310,7 +310,7 @@ impl TaskBuilder {
             ));
             Arc::from_raw(ptr)
         };
-        conductor::task::push(task);
+        scheduler::task::push(task);
         Ok(id)
     }
 }
@@ -335,5 +335,5 @@ pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
     let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>> =
         unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce(), &'static dyn Allocator>) };
     holder();
-    conductor::ktask::reap()
+    scheduler::ktask::reap()
 }

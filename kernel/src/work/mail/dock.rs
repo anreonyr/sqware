@@ -297,7 +297,7 @@ fn task_docks() -> &'static SpinLock<HashMap<usize, Vec<(usize, usize)>>> {
 }
 
 fn current_task_id() -> usize {
-    crate::work::room::conductor::core::ident()
+    crate::work::room::scheduler::core::ident()
         .map(|i| i.id())
         .unwrap_or(usize::MAX)
 }
@@ -328,7 +328,7 @@ fn count_dock_refs(id: usize) -> usize {
         .sum()
 }
 
-/// 关机清理（tie::halt 调用）：全部任务已退出、space 已 drop → 清空注册表，
+/// 关机清理（conductor::halt 调用）：全部任务已退出、space 已 drop → 清空注册表，
 /// 触发 DockMeta::drop（共享区帧归还 + 视图回收兜底）。**必须在帧基线审计前**
 /// ——否则残留注册表 Arc 阻止 drop，共享区帧计入泄漏。
 /// 实现：drain 出全部 Arc 后放锁再 drop——drop 内 space.release 经 Space 锁
@@ -360,7 +360,7 @@ fn purge_if_unreferenced(meta: &Arc<DockMeta>) {
     }
 }
 
-/// 任务退出钩子（conductor::core::clear 调用）：该任务名下全部 dock 引用逐条
+/// 任务退出钩子（messenger::clear_loop 调用）：该任务名下全部 dock 引用逐条
 /// 递减（等价多个显式 drop_end），并清理登记。
 pub(crate) fn task_exit(task_id: usize) {
     let entries: Vec<(usize, usize)> = task_docks().lock().remove(&task_id).unwrap_or_default();

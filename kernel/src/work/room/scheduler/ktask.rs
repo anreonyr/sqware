@@ -2,7 +2,7 @@
 //
 // 内核任务面——与用户任务同帧 ABI 的自愿切换服务（软陷阱）。
 // 每个服务 = naked 头 + 既有调度核心 + restore 尾。
-// 命名见 `conductor/mod.rs`。
+// 命名见 `scheduler/mod.rs`。
 
 use core::arch::naked_asm;
 use core::time::Duration;

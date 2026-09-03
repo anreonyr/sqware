@@ -1,39 +1,34 @@
-// 指令调度核心（conductor::core）— 多核任务调度：纯功能，无适配代码
+// 指令调度核心（scheduler::core）— per-hart 调度：纯功能，无适配代码。
 //
 // 时间片记账：新选中任务获得满额 TIME_SLICE 预算；run 时 Running 预算 > 1 →
 // 递减续跑（不重排），== 1 → 转 Starved 轮转。主动让出走 starve：无视剩余
 // 预算立即轮转——抢占与让出各自独立。
 //
-// 退出回收：reap 标记 Reaped 入全局 reaped 容器（延迟回收——不能在自己正在用的
-// 栈上回收自己）；clear 统一回收。park/unpark 对偶：park 阻塞 + 登记 tock；
-// unpark 取到期句柄摘除唤醒（由 trap 路径在 S-timer 处理时触发）。
-//
-// 结构：Conductor = inner(SpinLock) + info(身份槽，无锁) + starved_len(AtomicUsize
+// 结构：Scheduler = inner(SpinLock) + info(身份槽，无锁) + starved_len(AtomicUsize
 // 锁外镜像)。info 槽 = `ident()` 的事实源：带标签指针（bit0 = 载荷类型：TaskIdent
 // 在跑 / LastIdent 末次记录），写 = 本核 mount/demote 的 swap（AcqRel），读 = 本核
 // trap/panic——同 hart 单写单读 + 载荷不可变 ⇒ 无锁（跨核读是 UB，字段私有且只经
 // ident() 触及）。starved 字段私有，唯一修改
-// 路径是 push/pop（方法内持锁 +
+// 路径是 push/pull（方法内持锁 +
 // 从 starved.len() 派生计数）；steal 锁外先读 starved_len 跳过空队列（不做 RMW），
 // 再 try_lock。
 //
 // 状态互斥：无原子字段。所有状态变更都经 Task::exclusive（唯一 Arc 所有权
-// + &mut，Arc::get_mut 的 weak≥1 变体）——锁内 take/pop 出任务 → 取 &mut；
+// + &mut，Arc::get_mut 的 weak≥1 变体）——锁内 take/pull 出任务 → 取 &mut；
 // 锁 + 所有权保证互斥，编译器强制。
 //
 // 锁纪律：inner = level 1 每核一把；Team.tasks(3) 与 Space.inner(2) 禁止嵌套
-// ——锁内只做纯 Vec 操作，绝不调 space 方法。blocked / reaped / timer 的 tock
-// 堆同级（3）：park 路径 1 → 3 嵌套合法（绝不 3 → 3 嵌套）；unpark 路径先放
-// 堆锁/队列锁再取调度锁（防 ABBA）。clear 只持 reaped 锁出队，放锁后再取
-// Team.tasks / Space.inner（顺序获取，不嵌套）。
+// ——锁内只做纯 Vec 操作，绝不调 space 方法。task "离开 running" 的过渡（park /
+// wait / reap）借 disown_and_install_next 跨边界原语交给 messenger 处理，本核
+// 只负责 settled 槽位（Live=next 或 Last）；唤醒（drain_expired）也在 messenger。
 //
 // 装槽（mount）：唯一装 running 的方法，自取锁，空槽由 Option::replace 返回
 // 旧值断言（绝不覆盖在跑任务）。装槽写 info 身份槽（TaskIdent 载荷）；降级
 // （demote：reap / park 无后继）换 LastIdent 载荷——写点唯一 pair（同标签原子）。
 //
 // 可见性：`pub(super)` = 供本文件夹各适配面借用的核心表面（入口面转发点）；
-// `pub` = 供 conductor 之外消费（unpark —— trap 路径触发唤醒；ident —— 身份槽
-// 读取）。核心不反向依赖任何适配面（wait 调 unpark，故 unpark 属核心而非适配）。
+// `pub` = 供 scheduler 之外消费（ident —— 身份槽读取）。wait() 是 WFI 入口
+// 借 messenger::drain_expired 处理 timer 到期；clear_loop 不归本核管。
 
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
@@ -42,8 +37,6 @@ use core::time::Duration;
 
 use riscv::register::sip;
 
-use hashbrown::HashMap;
-
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::machine;
 use crate::memory::manager::addr::PhysAddr;
@@ -51,11 +44,12 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trap::trap_stack_edge;
-use crate::work::room::tie;
+use crate::work::room::conductor;
+use crate::work::room::messenger;
 use crate::work::unit::{
     elftable::ElfTable,
     space::SpaceKind,
-    task::{BlockReason, Task, TaskIdent, TaskState},
+    task::{Task, TaskIdent, TaskState},
 };
 
 // ── 核心：常量 ──
@@ -65,8 +59,6 @@ const WFI_FAR: u64 = 1 << 60;
 /// 身份槽载荷类型标签（bit0）：0 = TaskIdent（在跑任务），1 = LastIdent（末次
 /// 记录）。标签与指针同一原子字——载荷类型自描述，读侧无需第二读点。
 const LAST_TAG: usize = 1;
-/// sleep(tock) 的句柄分配器——调度器自管；park「先入簿、后 tock」闭合竞态。
-static NEXT_PARK_HANDLE: AtomicUsize = AtomicUsize::new(0);
 
 /// 新选中任务的满额时间片（量子数）。耗尽才轮转；定时器仍每量子打断，
 /// 只是任务不再每量子切走。park 的 ticks 语义不受影响。
@@ -78,11 +70,11 @@ const TIME_SLICE: u32 = 8;
 ///
 /// repr(align(64))：相邻 hart 的锁 / 队列不落在同一缓存行（防假共享）。
 #[repr(align(64))]
-pub(super) struct Conductor {
+pub(crate) struct Scheduler {
     /// 所属 hart（决定 trap 栈顶）。
     hart: usize,
     /// 锁内：running + starved（本核调度决策的原子单位）。
-    pub(super) inner: SpinLock<ConductorInner>,
+    pub(super) inner: SpinLock<SchedulerInner>,
     /// 锁外：本核当前任务身份（`ident()` 的事实源）。**带标签指针**：bit0 = 载荷
     /// 类型标签（0 = TaskIdent / 1 = LastIdent）。原子指针 + 手工 Arc 计数：写 =
     /// 本核装槽（mount，AcqRel swap，取走旧指针按标签收回归还其计数）或降级
@@ -100,19 +92,19 @@ pub(super) struct Conductor {
 }
 
 /// 锁内核心：running（运行中，不在队列）+ starved（就绪队列，FIFO）。
-pub(super) struct ConductorInner {
+pub(super) struct SchedulerInner {
     pub(super) running: Option<Arc<Task>>,
     pub(super) starved: VecDeque<Arc<Task>>,
 }
 
-impl Conductor {
+impl Scheduler {
     /// 构造（boot 适配面按实际核数逐 hart 建）。
-    pub(super) const fn new(hart: usize) -> Conductor {
-        Conductor {
+    pub(super) const fn new(hart: usize) -> Scheduler {
+        Scheduler {
             hart,
             inner: SpinLock::new_level(
                 Level::Scheduler,
-                ConductorInner {
+                SchedulerInner {
                     running: None,
                     starved: VecDeque::new(),
                 },
@@ -128,14 +120,14 @@ impl Conductor {
     }
 
     /// 从唯一事实来源（starved.len()）重派生计数——须在持 inner 锁时调用。
-    fn set_len(&self, inner: &ConductorInner) {
+    fn set_len(&self, inner: &SchedulerInner) {
         self.starved_len
             .store(inner.starved.len(), Ordering::Relaxed);
     }
 
     /// 队尾入队（spawn / 轮转 / 唤醒共用）：push + 派生计数。
     /// 只收 Starved 任务——容器 ⇔ 状态由断言强制。
-    pub(super) fn push(&self, task: Arc<Task>) {
+    pub(crate) fn push(&self, task: Arc<Task>) {
         debug_assert_eq!(
             task.state(),
             TaskState::Starved,
@@ -147,7 +139,7 @@ impl Conductor {
     }
 
     /// 队首出队（run / reap / park 共用）：派生计数；空队列返回 None。
-    pub(super) fn pop(&self) -> Option<Arc<Task>> {
+    pub(super) fn pull(&self) -> Option<Arc<Task>> {
         let mut i = self.inner.lock();
         let t = i.starved.pop_front();
         self.set_len(&i);
@@ -155,7 +147,7 @@ impl Conductor {
     }
 
     /// steal 用：非阻塞取队首（锁外预检后调用）。None = 队列空或锁忙。
-    fn try_pop(&self) -> Option<Arc<Task>> {
+    fn try_pull(&self) -> Option<Arc<Task>> {
         let mut i = self.inner.try_lock()?;
         let t = i.starved.pop_front();
         self.set_len(&i);
@@ -278,9 +270,53 @@ impl Conductor {
         }
     }
 
+    /// 跨边界原语（messenger 三种过渡共用）：取走 running + 装下一 starved 或
+    /// demote 槽位。返回 (取走的 Arc<Task>, Optional 下一帧 PA)。
+    ///
+    /// 锁纪律：内锁取 running / 弹 starved 后立即放；mount 重新取内锁。
+    /// messenger 在两次取锁之间做自己的簿记（parked / sites / times / reaped
+    /// 各自 L3 锁，绝不持 L3 取 L1）。
+    pub(crate) fn disown_and_install_next(&self) -> (Arc<Task>, Option<usize>) {
+        let mut i = self.inner.lock();
+        let task = i.running.take().expect("no running task");
+        let ident = task.ident.clone();
+        let next = i.starved.pop_front();
+        if next.is_some() {
+            self.set_len(&i);
+        }
+        drop(i);
+        let next_pa = if let Some(next) = next {
+            let pa = next
+                .ident
+                .frame
+                .pa
+                .expect("frame span has pa")
+                .as_usize();
+            self.mount(next);
+            Some(pa)
+        } else {
+            self.demote(&ident);
+            None
+        };
+        (task, next_pa)
+    }
+
+    /// 当前 running 任务的帧 PA（messenger::wait 的 pend 消费路径用——不取走
+    /// running，仅读取 frame 物理地址）。
+    pub(crate) fn running_frame_pa(&self) -> Option<usize> {
+        let i = self.inner.lock();
+        i.running.as_ref().map(|t| {
+            t.ident
+                .frame
+                .pa
+                .expect("frame span has pa")
+                .as_usize()
+        })
+    }
+
     /// 轮转尾部（持锁、starved 非空）：Running → Starved 入队尾，队首上台。
     /// 调用方负责空队列判断（空 → 唯一任务续跑，不走本方法）。
-    pub(super) fn rotate(&self, i: &mut ConductorInner, mut cur: Arc<Task>) -> Arc<Task> {
+    pub(super) fn rotate(&self, i: &mut SchedulerInner, mut cur: Arc<Task>) -> Arc<Task> {
         Task::exclusive(&mut cur).transform(TaskState::Starved);
         i.starved.push_back(cur);
         let next = i.starved.pop_front().expect("non-empty");
@@ -306,250 +342,53 @@ impl Conductor {
         self.mount(next)
     }
 
-    /// 当前任务 park：Running → Blocked(Park{wake_at})。入 timer 的 tock 堆
-    /// （句柄 → blocked 映射）。返回下一帧 PA；本核 starved 空 → None（调用方
-    /// 转 run() 取活）。
-    pub(super) fn park(&self, duration: Duration) -> Option<usize> {
-        let mut i = self.inner.lock();
-        let mut task = i.running.take().expect("no running task");
+    // 注：park / wait / reap 三个 Scheduler 方法已移至 [`crate::work::room::messenger`]，
+// 任务"离开 running 槽"的所有过渡归 messenger 管理——它们借 Scheduler::disown_and_install_next
+// 跨边界原语完成槽位 settled，再在 messenger 域内做 parked / sites / reaped 簿记。
 
-        debug_assert!(
-            matches!(task.state(), TaskState::Running { .. }),
-            "running 容器里不是 Running 任务"
-        );
-        let wake_at = clock::now().add(duration).as_ticks();
-        trace::note(EventKind::Room(RoomEvent::Park {
-            tid: task.ident.id,
-            wake_at: wake_at as usize,
-        }));
-        Task::exclusive(&mut task).transform(TaskState::Blocked {
-            reason: BlockReason::Park { wake_at },
-        });
-        // 注册 tock（防跨锁竞态，锁序 1 → 3 顺序获取、不嵌套）：
-        //   NEXT_PARK_HANDLE（原子）→ blocked 入簿（blocked 锁）→ tock（timer 锁）。
-        // 不变量：堆可见 ⇒ 簿记必在——unpark 按句柄摘除绝不会命中空簿记。
-        let handle = NEXT_PARK_HANDLE.fetch_add(1, Ordering::Relaxed) as u64;
-        // debug: 同一任务不得在 blocked 簿记中重复登记（两次 park 同一任务 =
-        // 唤醒后重复入队 → 多容器强持有）。持 blocked 锁遍历核对（锁内不做分配）。
-        #[cfg(debug_assertions)]
-        {
-            let b = blocked().lock();
-            if b.values().any(|t| Arc::ptr_eq(t, &task)) {
-                panic!(
-                    "park: task #{} '{}' already in blocked map (double park, handle {handle})",
-                    task.ident.id, task.ident.name
-                );
-            }
-        }
-        // 本核队列空 → 无后继装槽：先降级（task 其后被 insert 移动，须在此前
-        // 取用其身份）。trap 不可信——身份非 running，帧不再保证存活。
-        if i.starved.is_empty() {
-            self.demote(&task.ident);
-        }
-        blocked().lock().insert(handle, task);
-        timer::tock(handle, wake_at);
-        if i.starved.is_empty() {
-            return None;
-        }
-        let next = i.starved.pop_front().expect("non-empty");
-        self.set_len(&i);
-        drop(i);
-        Some(self.mount(next))
-    }
-
-    /// 事件等待：Running → Blocked(Wait)。pend 存在 → 消费即回（不阻塞，无状态
-    /// 变更）。`dur == Duration::MAX` → 永久（无 tock）；否则登记超时。
-    /// 返回下一帧 PA；本核 starved 空 → None（调用方转 run() 取活）。
-    pub(super) fn wait(&self, key: WaitKey, dur: Duration) -> Option<usize> {
-        let mut i = self.inner.lock();
-        let (wake_at, tock, next) = {
-            let mut ws = wait_sites().lock();
-            let site = ws.entry(key).or_insert(WaitSite {
-                pend: false,
-                waiters: VecDeque::new(),
-            });
-            if site.pend {
-                // 闩消费：信号已至，任务不阻塞（续跑）
-                site.pend = false;
-                let pa = i
-                    .running
-                    .as_ref()
-                    .expect("wait with no running task")
-                    .ident
-                    .frame
-                    .pa
-                    .expect("frame span has pa")
-                    .as_usize();
-                return Some(pa);
-            }
-            let mut task = i.running.take().expect("wait with no running task");
-            let (wake_at, tock) = if dur == Duration::MAX {
-                (None, None)
-            } else {
-                let wake_at = clock::now().add(dur).as_ticks();
-                let handle = NEXT_PARK_HANDLE.fetch_add(1, Ordering::Relaxed) as u64;
-                (Some(wake_at), Some(handle))
-            };
-            trace::note(EventKind::Room(RoomEvent::Wait {
-                tid: task.ident.id,
-                key: key.0,
-            }));
-            Task::exclusive(&mut task).transform(TaskState::Blocked {
-                reason: BlockReason::Wait { wake_at },
-            });
-            // 本核队列空 → 无后继装槽：先降级（task 其后被移动，须在此前取用其
-            // 身份）。trap 不可信——身份非 running，帧不再保证存活。
-            if i.starved.is_empty() {
-                self.demote(&task.ident);
-            }
-            site.waiters.push_back(Waiter { task, tock });
-            let next = if i.starved.is_empty() {
-                None
-            } else {
-                Some(i.starved.pop_front().expect("non-empty"))
-            };
-            (wake_at, tock, next)
-        };
-        drop(i);
-        // 超时登记：先旁路簿记、后 tock（堆可见 ⇒ 簿记必在，同 park 纪律）
-        if let (Some(wake_at), Some(handle)) = (wake_at, tock) {
-            wait_times().lock().insert(handle, key);
-            timer::tock(handle, wake_at);
-        }
-        next.map(|t| self.mount(t))
-    }
-
-    /// 当前任务退出：Running → Reaped 入全局 reaped 容器（延迟回收——不能在
-    /// 自己正在用的栈上回收自己；计数在标记时完成）。
-    pub(super) fn reap(&self) {
-        let mut i = self.inner.lock();
-        let mut exited = i.running.take().expect("no running task");
-        debug_assert!(
-            matches!(exited.state(), TaskState::Running { .. }),
-            "running 容器里不是 Running 任务"
-        );
-        trace::note(EventKind::Room(RoomEvent::Exit {
-            tid: exited.ident.id,
-        }));
-        Task::exclusive(&mut exited).transform(TaskState::Reaped);
-        // 离核且无后继装槽 → 槽降级 Last（先于入队：exited 其后被移动；clear 返回
-        // 后即按 va 归还帧，trap 不可信）。团队 Arc 归零即回收——地址空间随释放。
-        self.demote(&exited.ident);
-        TASK_TABLES.reaped.lock().push_back(exited); // 1 → 3 合法
-        // 注意：回收计数（tie::exit）不在入队时递增——须等 clear() 完成栈/trap
-        // 帧/团队空间归还后再计数，否则最后任务退出时另一核见 REAPED==PUSHED
-        // 立即 halt，本核 clear 未及回收 → 关机断言误报帧泄漏。
-    }
 }
 
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
 // （MAX_HART_SLOTS=4096 仅为编译期 VA 窗口上限，不固定静态数组）。长度镜像随结构体共生。
 
-// ── 核心：全局表（CONDUCTORS / blocked / reaped）──
+// ── 核心：全局表（SCHEDULERS / blocked / reaped）──
 
-pub(super) static CONDUCTORS: OnceLock<&'static [Conductor]> = OnceLock::new();
+pub(super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
 /// 关机清理：全部 hart 槽载荷归还（halt 路径、基线审计前调用——同 dock/ring
 /// shutdown 纪律：残留 Arc 计入差集即误报泄漏）。
 pub(crate) fn shutdown_slots() {
-    let Some(cs) = CONDUCTORS.get() else { return };
+    let Some(cs) = SCHEDULERS.get() else { return };
     for c in cs.iter() {
         c.clear_slot();
     }
 }
 
-pub(super) fn conductors() -> &'static [Conductor] {
-    CONDUCTORS.get().expect("conductors not initialized")
+pub(super) fn schedulers() -> &'static [Scheduler] {
+    SCHEDULERS.get().expect("schedulers not initialized")
 }
 
-/// 执行核调度器（`tp → PerHart.conductor` 直达，零索引——替代
-/// `&conductors()[hart_id()]` 的「读 id → 数组索引 → 取元素」三步）。
+/// 执行核调度器（`tp → PerHart.scheduler` 直达，零索引——替代
+/// `&schedulers()[hart_id()]` 的「读 id → 数组索引 → 取元素」三步）。
 ///
 /// # Safety
-/// 仅内核态调用；boot 期 `conductor::boot::init` 已 `set_conductor` 填充
-/// （`machine::conductor()` 的 Acquire 配对 Release store）。指向 CONDUCTORS
+/// 仅内核态调用；boot 期 `scheduler::boot::init` 已 `set_scheduler` 填充
+/// （`machine::scheduler()` 的 Acquire 配对 Release store）。指向 SCHEDULERS
 /// 数组元素，'static。
-pub(super) fn current() -> &'static Conductor {
-    // SAFETY: tp 直达读出的指针非空（boot 后恒填充）且指向 CONDUCTORS 元素。
-    unsafe { &*(crate::machine::conductor() as *const Conductor) }
+pub(crate) fn current() -> &'static Scheduler {
+    // SAFETY: tp 直达读出的指针非空（boot 后恒填充）且指向 SCHEDULERS 元素。
+    unsafe { &*(crate::machine::scheduler() as *const Scheduler) }
 }
 
-/// 全局容器：Blocked（睡眠映射 handle→Task）/ Reaped（回收队列）任务集合。
-///
-/// blocked 以 deadline 句柄为键：条目即任务本身，阻塞原因（含 wake_at）在任务
-/// 的 Blocked(Park) 载荷里，映射退化为「句柄 → 唯一 Arc<Task>」；unpark 按句柄
-/// 摘除并唤醒。锁级 3（与 Team.tasks 同级）：park 路径 1 → 3 嵌套合法（blocked
-/// 与 clock 锁顺序获取、不嵌套）；unpark 先放堆锁/队列锁再取调度锁（防 ABBA）。
-/// 惰性初始化：hashbrown 的 HashMap::new 非 const，无法进 static（单独 static
-/// 保证 get_or_init 的 'static 借用）。
-fn blocked() -> &'static SpinLock<HashMap<u64, Arc<Task>>> {
-    static BLOCKED: OnceLock<SpinLock<HashMap<u64, Arc<Task>>>> = OnceLock::new();
-    BLOCKED.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
-}
-
-// ── 核心：事件等待（wait/wake）──
-
-/// 事件等待键（newtype）：核心不解释组成，纯匹配。合成走 [`WaitKey::compose`]
-/// （适配层在 envcall 边界调用，并入空间身份）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct WaitKey(usize);
-
-impl WaitKey {
-    /// 合成 = asid 高 16 位 || 用户 VA 低 48 位。单射需 va < 2^48（Sv39/48 满足；
-    /// Sv57 若启用需重定布局）。与 fence::key 同源意：跨空间同 VA 不得混淆。
-    pub fn compose(asid: usize, va: usize) -> WaitKey {
-        WaitKey(((asid & 0xFFFF) << 48) | (va & ((1usize << 48) - 1)))
-    }
-
-    /// 直接以本体值构造事件键（dock 键路径：`DOCK_KEY_TAG | id` 全局唯一，不经
-    /// compose——调用方（envcall 边界）已按标记位分流）。
-    pub fn from_raw(raw: usize) -> WaitKey {
-        WaitKey(raw)
-    }
-}
-
-/// 一个事件键的等待位：遗留信号（pend）+ 等待者队列。
-struct WaitSite {
-    /// 遗留信号（闩）：wake 无等待者 → 置位；wait 见位 → 消费即回（防漏唤醒）。
-    pend: bool,
-    /// 等待者（FIFO）；每项携带超时句柄（无超时 = None）。
-    waiters: VecDeque<Waiter>,
-}
-
-struct Waiter {
-    task: Arc<Task>,
-    tock: Option<u64>,
-}
-
-/// 全局事件等待表（Level::L3，与 blocked 同级；绝不 3→3 嵌套）。
-///
-/// 单一注册表 = 单一线性化点：wait/wake 与超时到期都经本表锁摘除，败者见空即弃
-/// （杜绝双唤醒）。键不主动销毁（pend 留滞为闩，语义见设计）。
-fn wait_sites() -> &'static SpinLock<HashMap<WaitKey, WaitSite>> {
-    static WAIT_SITES: OnceLock<SpinLock<HashMap<WaitKey, WaitSite>>> = OnceLock::new();
-    WAIT_SITES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
-}
-
-/// 超时旁路：tock 句柄 → 事件键（timer 到期分派用）。任务本体只在 wait_sites
-/// 注册；本表只放键（不含 Arc）——两条唤醒路仍都经 wait_sites 锁摘除。
-fn wait_times() -> &'static SpinLock<HashMap<u64, WaitKey>> {
-    static WAIT_TIMES: OnceLock<SpinLock<HashMap<u64, WaitKey>>> = OnceLock::new();
-    WAIT_TIMES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
-}
-
-struct TaskTables {
-    reaped: SpinLock<VecDeque<Arc<Task>>>,
-}
-
-static TASK_TABLES: TaskTables = TaskTables {
-    reaped: SpinLock::new_level(Level::L3, VecDeque::new()),
-};
+// 注：parked / wait_sites / wait_times / reaped 四张表与 WaitKey / WaitSite / Waiter
+// 类型已全部移至 [`crate::work::room::messenger`]——"任务不在 running 槽"的状态机归
+// messenger 所有。详见 messenger 模块头注。
 
 // ── 核心：取活 / 休眠 / 回收机制（内部）──
 
 /// 非阻塞偷取：先读 starved_len（锁外原子读，S 态共享不失效缓存行）——空队列
 /// 不做 RMW，避免对受害者锁行乒乓；有活才 try_lock（失败即跳过——victim 忙时
-/// 不等待，无锁序规则）。锁内 pop 复查队列防竞态。
+/// 不等待，无锁序规则）。锁内 pull 复查队列防竞态。
 pub(super) fn steal() -> Option<Arc<Task>> {
     let me = machine::hart_id();
     let n = machine::hart_count();
@@ -557,10 +396,10 @@ pub(super) fn steal() -> Option<Arc<Task>> {
         if v == me {
             continue;
         }
-        if conductors()[v].get_len() == 0 {
+        if schedulers()[v].get_len() == 0 {
             continue;
         }
-        let Some(task) = conductors()[v].try_pop() else {
+        let Some(task) = schedulers()[v].try_pull() else {
             continue;
         };
         trace::note(EventKind::Room(RoomEvent::Steal {
@@ -578,25 +417,25 @@ pub(super) fn steal() -> Option<Arc<Task>> {
 /// 唤醒后：有任务 → 正常出口；到期假醒但无活 → 哑睡壳回睡（保持睡眠位、不打点不清位）。
 pub(super) fn wait() -> Option<Arc<Task>> {
     let me = machine::hart_id();
-    tie::sleep(me);
+    conductor::sleep(me);
     // 置位后复查：防「检查完 → 置位 → 睡」窗口内的 push 漏唤醒
-    let found = current().pop().or_else(steal);
+    let found = current().pull().or_else(steal);
     if let Some(task) = found {
-        tie::wake(me);
+        conductor::wake(me);
         return Some(task);
     }
-    if tie::done() {
-        tie::halt();
+    if conductor::done() {
+        conductor::halt();
     }
     loop {
         // 每次决定重新睡下前，先复审全退出：halt 的 yell 会把本核从 WFI 拉起。
-        // 若这里不归队 halt，而 unpark 又无可唤醒任务、steal 也无活，就会清
-        // SSIP 后回睡，停机屏障将永远等不到本核的 HALT_ARRIVED。
-        if tie::done() {
+        // 若这里不归队 halt，而 drain_expired 又无可唤醒任务、steal 也无活，
+        // 就会清 SSIP 后回睡，停机屏障将永远等不到本核的 HALT_ARRIVED。
+        if conductor::done() {
             // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
             unsafe { sip::clear_ssoft() };
-            tie::wake(me);
-            tie::halt();
+            conductor::wake(me);
+            conductor::halt();
         }
 
         let delta = match timer::next_tock() {
@@ -608,13 +447,14 @@ pub(super) fn wait() -> Option<Arc<Task>> {
         unsafe {
             core::arch::asm!("wfi");
         }
-        if unpark() {
+        // timer 到期分派由 messenger 处理（sites + parked 两路）
+        if messenger::drain_expired() {
             break;
         }
         // 假醒：也可能被 yell 的 IPI 唤来 steal（有活入队）——先复查取活，
         // 有任务即正常出口（清位交外层）；真无活才保持睡眠位回睡。
-        if let Some(task) = current().pop().or_else(steal) {
-            tie::wake(me);
+        if let Some(task) = current().pull().or_else(steal) {
+            conductor::wake(me);
             return Some(task);
         }
         // 哑睡壳（假醒无活）：保持睡眠位、不打点不清位，清残留 SSIP 后回睡。
@@ -624,128 +464,15 @@ pub(super) fn wait() -> Option<Arc<Task>> {
     // 正常出口：清 SSIP（防残留位导致下次 WFI 立即重醒）与睡眠位
     // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
     unsafe { sip::clear_ssoft() };
-    tie::wake(me);
+    conductor::wake(me);
     None
 }
 
-/// 唤醒：从到期句柄按 blocked 映射摘除任务，Blocked → Starved 入本核 starved。
-///
-/// 按 tock 堆取到期者（与入队顺序无关）；队列锁/堆锁先放后取，绝不持队列锁取
-/// 调度锁（防 ABBA）。返回：本次是否撤出过任务（wait 的哑睡壳判定用）。
-/// 由 trap 路径（S-timer 处理）在本 hart 触发；`pub`（conductor 之外消费）。
-pub fn unpark() -> bool {
-    let due = timer::drain(clock::now());
-    let mut woke = false;
-    for handle in due {
-        // 事件等待超时：旁路表命中 → 从 wait-site 摘（by tock == handle）唤醒
-        let wait_key = wait_times().lock().remove(&handle);
-        if let Some(key) = wait_key {
-            let popped = {
-                let mut ws = wait_sites().lock();
-                if let Some(site) = ws.get_mut(&key) {
-                    if let Some(idx) = site.waiters.iter().position(|w| w.tock == Some(handle)) {
-                        Some(site.waiters.remove(idx).expect("idx from position"))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-            if let Some(w) = popped {
-                woke = true;
-                let mut task = w.task;
-                Task::exclusive(&mut task).transform(TaskState::Starved);
-                trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-                current().push(task);
-                tie::yell();
-            }
-            continue;
-        }
-        // park 到期（原路径）
-        let Some(mut task) = blocked().lock().remove(&handle) else {
-            // 已取消/已由他路唤醒：跳过（堆项随 drain 已丢弃）
-            continue;
-        };
-
-        woke = true;
-        Task::exclusive(&mut task).transform(TaskState::Starved);
-        trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-        current().push(task);
-        tie::yell();
-    }
-    woke
-}
-
-/// 事件唤醒：waiters 非空 → 唤醒队首（Blocked → Starved 推送本核 + yell）；
-/// 空 → pend 置位（防漏唤醒）。返回是否唤到人。消费方 = utask/envcall；
-/// 跨核唤醒经 steal 再平衡（与 unpark 一致）。
-pub(super) fn wake(key: WaitKey) -> bool {
-    let popped = {
-        let mut ws = wait_sites().lock();
-        let site = ws.entry(key).or_insert(WaitSite {
-            pend: false,
-            waiters: VecDeque::new(),
-        });
-        match site.waiters.pop_front() {
-            Some(w) => Some(w),
-            None => {
-                site.pend = true;
-                None
-            }
-        }
-    };
-    let Some(w) = popped else {
-        return false;
-    };
-    // 摘超时旁路：堆项留至到期被 drain 空闲丢弃（不 untock——已 drain 的句柄再
-    // untock 会永久污染 cancelled 表，见 drain 语义）
-    if let Some(handle) = w.tock {
-        wait_times().lock().remove(&handle);
-    }
-    let mut task = w.task;
-    Task::exclusive(&mut task).transform(TaskState::Starved);
-    trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-    current().push(task);
-    tie::yell();
-    true
-}
-
-/// 回收全部 Reaped 任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：Reaped
-/// 任务不在任何核运行（running/starved 均无引用）。锁纪律：只持 reaped 锁
-/// 出队，放锁后再取 Team.tasks / Space.inner（顺序获取、不嵌套）。
-pub(super) fn clear() {
-    loop {
-        // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
-        // 导致 reaped(L3) 锁跨 dock/ring 的 task_exit（内部取 task_docks/task_rings
-        // 同为 L3）——同层嵌套 lockdep 违规。块结束即释放 reaped 锁。
-        let z = {
-            let mut reaped = TASK_TABLES.reaped.lock();
-            let Some(z) = reaped.pop_front() else {
-                break;
-            };
-            z
-        };
-        trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
-        // dock/ring 退出钩子（B3）：任务名下全部通道引用逐条递减（dock pier → Hang
-        // 判据、quay → Dead 判据；ring → Dead）。与显式 drop 同路径。需在簿记清理
-        // 前执行（锁外，只经通道注册表 L3 —— spawn 路径 1→3 合法，clear 同）。
-        crate::work::mail::dock::task_exit(z.ident.id);
-        crate::work::mail::ring::task_exit(z.ident.id);
-        // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
-        z.ident.team.prune_tasks(&z);
-        // 锁外回收（Team.tasks 已放 → Space.inner=2 合法）：栈 slot + trap 帧
-        // 一次 with_flush 经 `Space::release(Span)` 收回——段归还 + PTE 清理 + 刷
-        // TLB；帧随 map drop 归还 frame 池。Span 是 claim 时存进 TaskIdent 的
-        // 区间身份（类型同一，不 re-find）。
-        z.ident.team.space.release(z.ident.stack).expect("release: span mismatch");
-        z.ident.team.space.release(z.ident.frame).expect("release: span mismatch");
-        drop(z);
-        // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
-        // halt 的关机断言无滞留可验。
-        tie::exit();
-    }
-}
+// 注：drain_expired / wake_by_event / clear_loop 三个函数已移至
+// [`crate::work::room::messenger`]：
+// - drain_expired：按 timer 到期分派到 sites / parked
+// - wake_by_event：按事件键唤醒
+// - clear_loop：排空 reaped 队列 + 清理钩子
 
 // ── 核心：当前任务身份（槽）──
 
@@ -814,7 +541,7 @@ impl Current {
 /// 读恒有效，正常路径与崩溃现场同一入口。载荷类型自描述（标签位与指针同行），
 /// 无第二读点、无读写撕裂窗口。
 pub fn ident() -> Option<Current> {
-    let all = CONDUCTORS.get()?;
+    let all = SCHEDULERS.get()?;
     let raw = all[machine::hart_id()].info.load(Ordering::Acquire) as usize;
     if raw == 0 {
         return None;

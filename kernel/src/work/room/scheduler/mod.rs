@@ -1,4 +1,4 @@
-// 指令调度（conductor）— 多核任务调度：纯核心 + 按面对齐的适配层
+// 指令调度（scheduler）— 多核任务调度：纯核心 + 按面对齐的适配层
 //
 // 文件夹结构（核心与适配分离，见 design-pipeline）：
 //   mod.rs — 薄壳：仅声明子模块（本文件不装调度代码）
@@ -14,7 +14,7 @@
 //
 // 术语：tick/tock 属计时域；调度域词族 = run/starve/park/reap/steal/wait/
 // rotate/prepare/mount/unpark。命名三面同词（park/starve/reap），路径 +
-// 签名区分——`Conductor::park`(核心方法) / `utask::park`(用户面) /
+// 签名区分——`Scheduler::park`(核心方法，原 Conductor::park) / `utask::park`(用户面) /
 // `ktask::park`(内核面)。
 
 pub mod boot;

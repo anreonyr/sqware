@@ -5,7 +5,7 @@
 use alloc::sync::Arc;
 
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
-use crate::work::room::tie;
+use crate::work::room::conductor;
 use crate::work::unit::task::Task;
 
 use super::core::current;
@@ -18,8 +18,8 @@ pub(crate) fn push(task: Arc<Task>) {
     let tid = task.ident.id;
     task.ident.team.push_task(&task);
     current().push(task);
-    tie::push();
+    conductor::push();
     trace::note(EventKind::Room(RoomEvent::Spawn { tid }));
     // 新任务出现：喊醒 WFI 休眠核（可 steal 取活）
-    tie::yell();
+    conductor::yell();
 }

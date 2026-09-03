@@ -8,7 +8,7 @@ use core::fmt::{self, Write};
 use sbi::{DbcnCall, fid::Dbcn, scall::SArgs};
 
 use crate::memory::manager::addr::VirtAddr;
-use crate::work::room::conductor::core::ident;
+use crate::work::room::scheduler::core::ident;
 use crate::work::unit::space::Space;
 
 /// **恒等区**（DRAM 0x80000000.. dram 上界）：VA 即 PA，Dbcn 可直读。

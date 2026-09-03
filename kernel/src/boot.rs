@@ -20,7 +20,7 @@ use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, restore};
 use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
-use crate::work::room::conductor;
+use crate::work::room::scheduler;
 use crate::work::unit::space::SpaceBuilder;
 use crate::work::unit::team::kernel;
 use crate::work::unit::{loader, team};
@@ -103,7 +103,15 @@ pub fn banner() {
 /// 启动多任务：spawn 演示团队后进入首个线程。
 pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
-    conductor::boot::init();
+    scheduler::boot::init();
+
+    // 钩子注册（一次性；顺序即 halt 时执行顺序）：
+    //   1) dock / ring 注册表清空（触发 Meta drop 归还共享区帧）
+    //   2) 调度器槽载荷归还（per-hart LastIdent Arc）
+    //   3) block 池冲洗（所有 Arc 已归还后帧基线才稳定）
+    //   4) audit 基线核对（仅 audit feature）
+    // exit 钩子（每条 reaped 任务）：dock::task_exit + ring::task_exit
+    register_runtime_hooks();
 
     // lockdep 装配（debug 构建）：per-hart 持有集。release 为 no-op。
     // 置于调度器就绪后、spawn 演示任务/HSM 拉起副核前——正是多核 ABBA 的生效窗口。
@@ -133,7 +141,39 @@ pub fn init() -> ! {
 
     // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
     // 副核 steal 走）
-    restore(conductor::trap::run())
+    restore(scheduler::trap::run())
+}
+
+/// 注册关机 / 退出钩子——一次性把"哪个子系统要在什么时机清什么"的目录
+/// 从 conductor / messenger 转移到此处；mail 内部不再被 core 直接命名。
+fn register_runtime_hooks() {
+    use crate::work::room::conductor;
+    use crate::work::room::messenger;
+
+    // 每条 reaped 任务：mail 的 dock / ring task_exit
+    static EXIT_HOOKS: &[fn(usize)] = &[
+        crate::work::mail::dock::task_exit,
+        crate::work::mail::ring::task_exit,
+    ];
+    messenger::register_exit_hooks(EXIT_HOOKS);
+
+    // 关机序列：mail（dock/ ring shutdown）→ 调度器槽清空 → block 池冲洗 → audit
+    #[cfg(feature = "audit")]
+    const SHUTDOWN_HOOKS: &[fn()] = &[
+        crate::work::mail::dock::shutdown,
+        crate::work::mail::ring::shutdown,
+        crate::work::room::scheduler::core::shutdown_slots,
+        crate::memory::allocator::block::flush,
+        crate::memory::allocator::fence::audit::check_baseline,
+    ];
+    #[cfg(not(feature = "audit"))]
+    const SHUTDOWN_HOOKS: &[fn()] = &[
+        crate::work::mail::dock::shutdown,
+        crate::work::mail::ring::shutdown,
+        crate::work::room::scheduler::core::shutdown_slots,
+        crate::memory::allocator::block::flush,
+    ];
+    conductor::register_shutdown_hooks(SHUTDOWN_HOOKS);
 }
 
 /// 生成全部演示任务（用户 + 内核 ktask）；错误统一 `?` 上抛。
@@ -199,7 +239,7 @@ fn spawn_demos() -> Result<(), MapError> {
                     "ktask sleep: round {round} @ hart {}",
                     crate::machine::hart_id()
                 );
-                crate::work::room::conductor::ktask::park(core::time::Duration::from_millis(200));
+                crate::work::room::scheduler::ktask::park(core::time::Duration::from_millis(200));
             }
             crate::putln!("ktask sleep: done");
         })?;
@@ -304,5 +344,5 @@ pub(crate) extern "C" fn boot_main() -> ! {
     arm_hart();
     // 启动完成写进 trace（直打控制台会扰 panic 现场）。
     trace::note(trace::EventKind::Boot(trace::BootEvent::Done { hart: me }));
-    conductor::boot::idle()
+    scheduler::boot::idle()
 }

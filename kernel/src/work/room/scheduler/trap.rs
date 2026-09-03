@@ -4,7 +4,7 @@
 // 槽，无锁、不设查询门面）。
 
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
-use crate::work::room::tie;
+use crate::work::room::conductor;
 use crate::work::unit::task::{Task, TaskState};
 
 use super::core::{current, steal, wait};
@@ -52,11 +52,11 @@ pub fn run() -> usize {
     // （全退出后不得再取活——链式写法会把该检查挤进 wait() 内部，halt 语义后移）；
     // wait() 内部自带 done 复审 + 睡眠位协议（未到期/假醒自洽）。
     loop {
-        if let Some(task) = s.pop() {
+        if let Some(task) = s.pull() {
             return s.mount(task);
         }
-        if tie::done() {
-            tie::halt();
+        if conductor::done() {
+            conductor::halt();
         }
         if let Some(task) = steal() {
             return s.mount(task);

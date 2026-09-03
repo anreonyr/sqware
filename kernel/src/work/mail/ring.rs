@@ -216,7 +216,7 @@ fn count_ring_refs(id: usize) -> usize {
         .sum()
 }
 
-/// 关机清理（tie::halt 调用）：同 dock::shutdown——drain 出全部 Arc 后放锁再
+/// 关机清理（conductor::halt 调用）：同 dock::shutdown——drain 出全部 Arc 后放锁再
 /// drop（drop 内 space.release 经 Space 锁，持 L3 时 drop 会层级下降违规）。
 pub(crate) fn shutdown() {
     let metas: Vec<Arc<RingMeta>> = {
@@ -253,7 +253,7 @@ fn task_rings() -> &'static SpinLock<HashMap<usize, Vec<usize>>> {
 }
 
 fn current_task_id() -> usize {
-    crate::work::room::conductor::core::ident()
+    crate::work::room::scheduler::core::ident()
         .map(|i| i.id())
         .unwrap_or(usize::MAX)
 }
@@ -272,7 +272,7 @@ fn unregister_task_ring(id: usize) {
     }
 }
 
-/// 任务退出钩子（conductor::core::clear 调用）：该任务名下全部 ring 引用逐条
+/// 任务退出钩子（messenger::clear_loop 调用）：该任务名下全部 ring 引用逐条
 /// 关闭（等价多个显式 drop），并清理登记。
 pub(crate) fn task_exit(task_id: usize) {
     let entries: Vec<usize> = task_rings().lock().remove(&task_id).unwrap_or_default();

@@ -101,10 +101,10 @@ pub struct PerHart {
     pub id: usize,
     /// 本 hart 帧 VA（offset 0x08；`HART_FRAME_BASE + id·PAGE`，`__strap` 帧定位）。
     pub frame: VirtAddr,
-    /// 本 hart 调度器指针（offset 0x10；boot 期 `conductor::boot::init` 经
-    /// [`set_conductor`] 原子 store——调度器在堆上动态分配，运行时才知道地址，
+    /// 本 hart 调度器指针（offset 0x10；boot 期 `scheduler::boot::init` 经
+    /// [`set_scheduler`] 原子 store——调度器在堆上动态分配，运行时才知道地址，
     /// 故为 PerHart 唯一运行时填充字段；`current()` 经 tp 直达零索引）。
-    pub conductor: AtomicPtr<()>,
+    pub scheduler: AtomicPtr<()>,
     /// 槽对齐保留（offset 0x18）：凑 32 B 使 boot 汇编 `slli a0, 5` 单条索引。
     _pad: usize,
 }
@@ -115,7 +115,7 @@ impl PerHart {
             id,
             // 布局常量纯算术：帧区基址 + 槽位偏移（同 layout.rs 推导）。
             frame: VirtAddr::wrap(HART_FRAME_BASE.as_usize() + id * PAGE_SIZE),
-            conductor: AtomicPtr::new(core::ptr::null_mut()),
+            scheduler: AtomicPtr::new(core::ptr::null_mut()),
             _pad: 0,
         }
     }
@@ -152,28 +152,28 @@ pub fn per_hart_ptr(id: usize) -> usize {
     core::ptr::addr_of!(PER_HART[id]) as usize
 }
 
-/// boot 期填充本 hart 调度器指针（`conductor::boot::init` 调用，每个 hart 恰好
-/// 一次；Release 发布 Conductor 构建完成——后续所有读取出现在 boot 流程之后
-/// （CONDUCTORS OnceLock、任务 spawn、HSM 启动等系统级屏障之后），Relaxed 读
+/// boot 期填充本 hart 调度器指针（`scheduler::boot::init` 调用，每个 hart 恰好
+/// 一次；Release 发布 Scheduler 构建完成——后续所有读取出现在 boot 流程之后
+/// （SCHEDULERS OnceLock、任务 spawn、HSM 启动等系统级屏障之后），Relaxed 读
 /// 亦见稳定值）。
-pub fn set_conductor(id: usize, p: *mut ()) {
+pub fn set_scheduler(id: usize, p: *mut ()) {
     debug_assert!(
         id < MAX_HART_SLOTS,
-        "set_conductor: id {id} beyond MAX_HART_SLOTS"
+        "set_scheduler: id {id} beyond MAX_HART_SLOTS"
     );
-    PER_HART[id].conductor.store(p, Ordering::Release);
+    PER_HART[id].scheduler.store(p, Ordering::Release);
 }
 
 /// 执行核调度器指针（**tp 直达零索引**：`ld 0x10(tp)`，替代
-/// `conductors()[hart_id()]` 的「读 id → 数组索引 → 取元素」三步）。
+/// `schedulers()[hart_id()]` 的「读 id → 数组索引 → 取元素」三步）。
 ///
 /// # Safety
 /// 仅内核态（tp 恒为本 hart PerHart 指针）调用；boot 填充后恒非空（调度器
 /// 运行期必已初始化）。返回指针须由调用方 cast 回具体类型使用。
 #[inline]
-pub fn conductor() -> *mut () {
+pub fn scheduler() -> *mut () {
     let p: usize;
-    // SAFETY: 读 tp 指向的 PerHart.conductor（内核态 tp 恒为本 hart PerHart 指针）。
+    // SAFETY: 读 tp 指向的 PerHart.scheduler（内核态 tp 恒为本 hart PerHart 指针）。
     unsafe {
         core::arch::asm!(
             "ld {0}, 0x10(tp)",
@@ -187,7 +187,7 @@ pub fn conductor() -> *mut () {
 /// 执行核 trap 帧 VA（**tp 直达**：`ld 0x08(tp)`，替代
 /// `HART_FRAME_BASE + hart_id()·PAGE` 的「读 id → 多重 → 加法」三步）。
 ///
-/// 与 [`conductor`] 同款：内核态 tp 恒为本 hart PerHart 指针，编译期断言锁
+/// 与 [`scheduler`] 同款：内核态 tp 恒为本 hart PerHart 指针，编译期断言锁
 /// 偏移 0x08。消费：`arm_hart` 的 sscratch 接线（hart 0/副核统一原语，
 /// 执行时 tp 即在位）、boot 副核样板读取可先经 `translate` 取本 hart 帧。
 #[inline]
@@ -209,7 +209,7 @@ pub fn hart_frame() -> VirtAddr {
 const _: () = {
     assert!(core::mem::offset_of!(PerHart, id) == 0x00);
     assert!(core::mem::offset_of!(PerHart, frame) == 0x08);
-    assert!(core::mem::offset_of!(PerHart, conductor) == 0x10);
+    assert!(core::mem::offset_of!(PerHart, scheduler) == 0x10);
     assert!(core::mem::size_of::<PerHart>() == 32);
 };
 

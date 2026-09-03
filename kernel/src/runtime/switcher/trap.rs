@@ -33,8 +33,9 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
-use crate::work::room::conductor::core::{Current, ident, unpark};
-use crate::work::room::conductor::trap::run;
+use crate::work::room::messenger::drain_expired;
+use crate::work::room::scheduler::core::{Current, ident};
+use crate::work::room::scheduler::trap::run;
 use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::kernel;
 use crate::{machine, put};
@@ -226,7 +227,7 @@ pub fn arm_hart() {
 /// 陷阱会覆写 hart 帧——被抢占内核任务的现场将丢失。
 ///
 /// 判定源（与调度域的 D2-1 收敛一致）：「running 任务是内核任务」由任务所属
-/// 空间的 kind 决定（不再读 sstatus.spp）。软陷阱（conductor::ktask）与硬件
+/// 空间的 kind 决定（不再读 sstatus.spp）。软陷阱（scheduler::ktask）与硬件
 /// 抢占路径共用本搬移。
 ///
 /// 自查询形态：身份经 `ident()` 无锁读槽（ktask 汇编消费者无法传参；槽读廉价、
@@ -348,7 +349,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             timer::tick();
             // 重武装：运行任务抢占量子。
             timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
-            unpark();
+            drain_expired();
             if frame.sstatus.spp() != sstatus::SPP::Supervisor {
                 run() as *mut TrapContext
             } else if persist(frame) {

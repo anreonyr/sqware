@@ -11,6 +11,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use crate::lock::OnceLock;
 use crate::machine;
 use crate::putln;
 use sbi::scall::SArgs;
@@ -49,7 +50,9 @@ pub(super) fn done() -> bool {
 
 /// 全部任务已退出：显式停机（srst；AtomicBool 防双核同时触发——后到者 wfi）。
 ///
-/// 关机屏障：胜出核等全部核到齐后冲洗块池、断言帧基线，最后复位。
+/// 关机屏障：胜出核等全部核到齐后跑注册关机钩子、最后复位。钩子按注册顺序：
+/// dock/ring shutdown → 调度器槽清空 → block flush → audit 基线。
+/// 钩子由 `boot::init` 一次性注册，conductor 不直接命名任何子系统。
 pub(super) fn halt() -> ! {
     HALT_ARRIVED.fetch_add(1, Ordering::AcqRel);
     if !HALTING.swap(true, Ordering::AcqRel) {
@@ -62,18 +65,34 @@ pub(super) fn halt() -> ! {
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,
         ));
-        // 关机清理：dock/ring 注册表清空（全部任务已退、space 已 drop），触发
-        // Meta drop 归还共享区帧——必须在帧基线审计前，否则残留 Arc 计入泄漏。
-        crate::work::mail::dock::shutdown();
-        crate::work::mail::ring::shutdown();
-        // 调度器槽载荷（per-hart LastIdent Arc）——同纪律：残留即误报泄漏。
-        crate::work::room::conductor::core::shutdown_slots();
-        crate::memory::allocator::block::flush();
-        #[cfg(feature = "audit")]
-        crate::memory::allocator::fence::audit::check_baseline();
+        run_shutdown_hooks();
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }
     wfi()
+}
+
+// ── 关机钩子注册面 ──
+//
+// 子系统（mail::dock / mail::ring / scheduler / allocator）在 `boot::init` 把
+// 自己的关机函数挂到这里——conductor 不再硬编码子系统名。每条钩子调一次，
+// 顺序 = 注册顺序（mail → scheduler → block::flush → audit），由 boot::init
+// 装配时定。
+type ShutdownHook = fn();
+
+static SHUTDOWN_HOOKS: OnceLock<&'static [ShutdownHook]> = OnceLock::new();
+
+/// 注册关机钩子（一次性；由 `boot::init` 调用）。
+pub(crate) fn register_shutdown_hooks(hooks: &'static [ShutdownHook]) {
+    let _ = SHUTDOWN_HOOKS.set(hooks);
+}
+
+/// 跑注册关的（halt 屏障之后调）。
+fn run_shutdown_hooks() {
+    if let Some(hooks) = SHUTDOWN_HOOKS.get() {
+        for hook in hooks.iter() {
+            hook();
+        }
+    }
 }
 
 /// WFI 自环直到系统复位（halt 两分支共用；复位由 SBI 重新拉起）。

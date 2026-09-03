@@ -183,7 +183,7 @@ extern "C" fn info(info: &PanicInfo) -> ! {
         }
         let mut rows: Vec<Vec<Option<String>>> = Vec::new();
         // 身份槽读一次（无锁）：Live = 正在跑的任务；Last = 末次任务（idle 核崩溃）。
-        if let Some(i) = crate::work::room::conductor::core::ident() {
+        if let Some(i) = crate::work::room::scheduler::core::ident() {
             rows.push(vec![Some(format!(
                 "task #{} '{}' @ hart {}",
                 i.id(),

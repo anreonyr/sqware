@@ -24,7 +24,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::conductor::core::ident;
+use crate::work::room::scheduler::core::ident;
 use crate::work::unit::elftable::{self, ElfTable};
 use crate::work::unit::team::kernel;
 
