@@ -100,6 +100,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "user-pair-pole"
+path = "src/bin/pair_pole.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "user-lisp"
 path = "src/bin/lisp.rs"
 test = false

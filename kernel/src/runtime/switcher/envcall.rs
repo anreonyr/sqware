@@ -30,6 +30,25 @@ use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState};
 use crate::work::unit::task::TaskIdent;
 
+/// Permission 子集 → PteFlags（cap ⊆ 页表的翻译：subset 决定页表实际权限）。
+///
+/// | subset                  | PteFlags                |
+/// |-------------------------|-------------------------|
+/// | READ                    | V\|R\|U\|A\|D           |
+/// | READ \| WRITE           | V\|R\|W\|U\|A\|D        |
+/// | other（含空 / 仅 WRITE）| Denied                  |
+fn subset_to_pte(subset: Permission) -> Result<PteFlags, MailError> {
+    if !subset.contains(Permission::READ) {
+        return Err(MailError::Denied);
+    }
+    let mut f = PteFlags::V | PteFlags::U | PteFlags::A | PteFlags::D;
+    f |= PteFlags::R;
+    if subset.contains(Permission::WRITE) {
+        f |= PteFlags::W;
+    }
+    Ok(f)
+}
+
 /// envcall 分发。
 ///
 /// 入参 frame = 当前任务用户帧；`ident` = 当前任务身份（**Arc 所有权移交**——
@@ -302,15 +321,18 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.get(idx)?;
                 if pie.kind() != PieKind::Pole { return None; }
-                if !pie.permission().contains(Permission::READ | Permission::WRITE) { return Some(Err(MailError::Denied)); }
+                if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
                 let arc = match pie {
                     mail::AnyPie::Pole(p) => p.weak.upgrade(),
                     _ => return None,
                 };
-                arc.map(|a| Ok(a))
+                // cap ⊆ 页表：subset 决定 flags（READ→R，READ|WRITE→R|W，其他→Denied）
+                let flags = subset_to_pte(pie.permission());
+                arc.map(|a| Ok((a, flags)))
             }) {
-                Some(Ok(meta)) => mail::pole::pole_map(&meta, &ident.team.space),
+                Some(Ok((meta, Ok(flags)))) => mail::pole::pole_map(&meta, &ident.team.space, flags),
+                Some(Ok((_, Err(e)))) => Err(e),
                 Some(Err(e)) => Err(e),
                 None => Err(MailError::Denied),
             };
@@ -329,7 +351,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.get(idx)?;
                 if pie.kind() != PieKind::Pole { return None; }
-                if !pie.permission().contains(Permission::READ | Permission::WRITE) { return Some(Err(MailError::Denied)); }
+                if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
                 let arc = match pie {
                     mail::AnyPie::Pole(p) => p.weak.upgrade(),

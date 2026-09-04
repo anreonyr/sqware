@@ -77,7 +77,10 @@ impl PoleMeta {
     }
 
     /// 把物理块借映进 `space`，并登记视图。同一 space 复用既有视图。
-    fn map_into(&self, space: &Arc<Space>) -> Result<usize, MailError> {
+    ///
+    /// `flags` 由 caller 算（envcall 入口按 pie subset 决定：READ→R，READ\|WRITE→R\|W），
+    /// 本函数不读权限——cap ⊆ 页表的语义靠 caller 守。
+    fn map_into(&self, space: &Arc<Space>, flags: PteFlags) -> Result<usize, MailError> {
         {
             let m = self.mappings.lock();
             if let Some((_, span)) = m
@@ -87,7 +90,6 @@ impl PoleMeta {
                 return Ok(span.va.as_usize());
             }
         }
-        let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
         let va = space
             .with_flush(|inner| {
                 let va = inner.allocate(Seg::User, self.bytes)?;
@@ -141,12 +143,16 @@ impl Drop for PoleMeta {
 
 // ── 数据面原语 ──
 
-/// 把物理页借映进 `space`（需 rights & (R | W)）。
-pub(crate) fn pole_map(meta: &PoleMeta, space: &Arc<Space>) -> Result<usize, MailError> {
+/// 把物理页借映进 `space`（需 rights & R，flags 由 caller 按 subset 决定）。
+pub(crate) fn pole_map(
+    meta: &PoleMeta,
+    space: &Arc<Space>,
+    flags: PteFlags,
+) -> Result<usize, MailError> {
     if !meta.alive() {
         return Err(MailError::Dead);
     }
-    meta.map_into(space)
+    meta.map_into(space, flags)
 }
 
 /// 从 `space` 解除映射（幂等；需 rights & (R | W)）。
@@ -176,7 +182,9 @@ pub(crate) fn pole_create(space: &Arc<Space>, bytes: usize) -> Result<usize, Mai
 
     let task = current().running_task().ok_or(MailError::Denied)?;
     let task_space = task.ident.team.space.clone();
-    arc.map_into(&task_space)?;
+    // 创建者自留 pie 全权（R|W|VEST）→ map 走 R|W。
+    let creator_flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
+    arc.map_into(&task_space, creator_flags)?;
 
     let pie = super::pie::new_pie::<super::pie::Pole>(
         id,

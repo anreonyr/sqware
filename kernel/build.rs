@@ -98,6 +98,10 @@ fn main() {
         bin_dir.join("user-pair").display()
     );
     println!(
+        "cargo::rustc-env=USER_PAIR_POLE={}",
+        bin_dir.join("user-pair-pole").display()
+    );
+    println!(
         "cargo::rustc-env=USER_LISP={}",
         bin_dir.join("user-lisp").display()
     );
