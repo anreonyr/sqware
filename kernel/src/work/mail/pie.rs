@@ -73,10 +73,14 @@ impl ResourceKind for Pole {
 
 // ── Pie<T> ──
 
-/// 单个门闩：`resource` 指向门洞、`permission` 控授权、`weak` 检存活。
+/// 单个门闩：`resource` 指向门洞、`permission` 控授权、`vestor` 是 VEST 来源
+///（BACK 验 target == src.vestor）、`weak` 检存活。
 pub struct Pie<T: ResourceKind> {
     pub(crate) resource: ResourceId,
     pub(crate) permission: Permission,
+    /// VEST 本 pie 的人：None = 原始创建者；Some(id) = 经 VEST 来自 task id。
+    /// BACK 权限用此字段守门：target 必须 == src.vestor。
+    pub(crate) vestor: Option<usize>,
     pub(crate) weak: Weak<T::Meta>,
     _t: PhantomData<T>,
 }
@@ -87,6 +91,7 @@ impl<T: ResourceKind> Clone for Pie<T> {
         Self {
             resource: self.resource,
             permission: self.permission,
+            vestor: self.vestor,
             weak: self.weak.clone(),
             _t: PhantomData,
         }
@@ -100,6 +105,10 @@ impl<T: ResourceKind> Pie<T> {
 
     pub fn permission(&self) -> Permission {
         self.permission
+    }
+
+    pub fn vestor(&self) -> Option<usize> {
+        self.vestor
     }
 
     /// L1 存活：`Weak::upgrade` 成功 = Meta 仍活。
@@ -139,6 +148,13 @@ impl AnyPie {
         }
     }
 
+    pub fn vestor(&self) -> Option<usize> {
+        match self {
+            AnyPie::Hole(p) => p.vestor,
+            AnyPie::Pole(p) => p.vestor,
+        }
+    }
+
     pub fn alive(&self) -> bool {
         match self {
             AnyPie::Hole(p) => p.alive(),
@@ -148,14 +164,17 @@ impl AnyPie {
 }
 
 /// 测试 / 内部用：从 Arc 派生 Weak 包装 Pie。
+/// `vestor` = 原始创建者传 None；VEST 数据面传 Some(current_task_id)。
 pub(super) fn new_pie<T: ResourceKind>(
     resource: ResourceId,
     permission: Permission,
+    vestor: Option<usize>,
     weak: Weak<T::Meta>,
 ) -> Pie<T> {
     Pie {
         resource,
         permission,
+        vestor,
         weak,
         _t: PhantomData,
     }
@@ -165,9 +184,10 @@ pub(super) fn new_pie<T: ResourceKind>(
 pub(super) fn pie_from_arc<T: ResourceKind>(
     resource: ResourceId,
     permission: Permission,
+    vestor: Option<usize>,
     arc: &Arc<T::Meta>,
 ) -> Pie<T> {
-    new_pie(resource, permission, Arc::downgrade(arc))
+    new_pie(resource, permission, vestor, Arc::downgrade(arc))
 }
 
 // ── MailError ──

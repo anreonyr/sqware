@@ -99,7 +99,8 @@ pub(crate) fn hole_create() -> Result<usize, MailError> {
 
     let pie = super::pie::new_pie::<super::pie::Hole>(
         id,
-        Permission::READ | Permission::WRITE | Permission::VEST,
+        Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+        None, // 原始创建者：无 vestor
         alloc::sync::Arc::downgrade(&arc),
     );
 

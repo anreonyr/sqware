@@ -8,7 +8,8 @@
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use ubi::UResult;
+use ubi::{UArgs, UResult, Ucall, UcallBuilder};
+use ubi::fid::TaskCall;
 
 use crate::core::tls;
 use crate::env::{room, task as env_task};
@@ -145,6 +146,16 @@ where
     )
     .expect("task spawn failed");
     Join { slot, id: task_id }
+}
+
+/// 读当前 task id（`TaskCall::SelfId` envcall 包装）。
+/// 无上下文返 0。
+pub fn self_id() -> UResult<usize> {
+    let args = UArgs::default();
+    let (id, _) = UcallBuilder::new(Ucall::Task(TaskCall::SelfId))
+        .args(args)
+        .call()?;
+    Ok(id)
 }
 
 #[unsafe(no_mangle)]

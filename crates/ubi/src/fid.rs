@@ -41,6 +41,8 @@ pub enum TaskCall {
     /// 建用户任务（a0 = 入口 VA，a1 = arg，a2 = 栈大小（0 = 缺省
     /// `TASK_STACK_SIZE`））：返回任务句柄或负错误码。
     Spawn = 0,
+    /// 取当前 task id（无参 → a0 = task_id 或 0 = 无上下文）。
+    SelfId = 1,
 }
 
 /// 内存调用（class 2；trace 事件名 `MemoryEvent` 同词）。
@@ -182,7 +184,7 @@ macro_rules! index_from {
 
 index_from! {
     RoomCall { Starve = 0, Park = 1, Reap = 2, Wait = 3, Wake = 4 }
-    TaskCall { Spawn = 0 }
+    TaskCall { Spawn = 0, SelfId = 1 }
     MemoryCall { Allocate = 0, Deallocate = 1, Mmap = 2, Munmap = 3, Mprotect = 4 }
     IOCall { Put = 0, Get = 1 }
     ChronoCall { Ticks = 0, Clock = 1 }

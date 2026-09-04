@@ -107,6 +107,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "user-back"
+path = "src/bin/back.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "user-lisp"
 path = "src/bin/lisp.rs"
 test = false

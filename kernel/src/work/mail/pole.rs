@@ -196,7 +196,8 @@ pub(crate) fn pole_create(space: &Arc<Space>, bytes: usize) -> Result<usize, Mai
 
     let pie = super::pie::new_pie::<super::pie::Pole>(
         id,
-        Permission::READ | Permission::WRITE | Permission::VEST,
+        Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+        None, // 原始创建者：无 vestor
         alloc::sync::Arc::downgrade(&arc),
     );
     let mut pies = task.pies.lock();

@@ -22,6 +22,8 @@ use crate::work::unit::task::Task;
 /// scheduler transform 的 strong_count == 1 断言冲突——内部短暂升级为 Arc，仅
 /// 持锁 push 期间。
 ///
+/// `current_task_id` 写入新 pie.vestor——BACK 权限据此验"只能还给我"。
+///
 /// # Errors
 /// - `Denied` — Weak 升级失败（target 已死 / id 不存在）
 /// - `OOM` — target.pies push 失败（Vec 扩容耗尽）
@@ -29,9 +31,11 @@ pub fn vest(
     src: &AnyPie,
     target: &Weak<Task>,
     subset: Permission,
+    current_task_id: usize,
 ) -> Result<usize, MailError> {
     let target = target.upgrade().ok_or(MailError::Denied)?;
     let resource = src.resource();
+    let vestor = Some(current_task_id);
     let new_pie = match src {
         AnyPie::Hole(_) => {
             // clone Arc<HoleMeta> → 派生 Weak → 造新 Pie<Hole>
@@ -39,14 +43,14 @@ pub fn vest(
                 AnyPie::Hole(p) => p.weak.upgrade().ok_or(MailError::Dead)?,
                 _ => unreachable!(),
             };
-            AnyPie::Hole(make_pie::<pie::Hole>(resource, subset, &arc))
+            AnyPie::Hole(make_pie::<pie::Hole>(resource, subset, vestor, &arc))
         }
         AnyPie::Pole(_) => {
             let arc = match src {
                 AnyPie::Pole(p) => p.weak.upgrade().ok_or(MailError::Dead)?,
                 _ => unreachable!(),
             };
-            AnyPie::Pole(make_pie::<pie::Pole>(resource, subset, &arc))
+            AnyPie::Pole(make_pie::<pie::Pole>(resource, subset, vestor, &arc))
         }
     };
     let mut pies = target.pies.lock();
@@ -58,9 +62,10 @@ pub fn vest(
 fn make_pie<T: ResourceKind>(
     resource: super::resource_table::ResourceId,
     permission: Permission,
+    vestor: Option<usize>,
     arc: &Arc<T::Meta>,
 ) -> Pie<T> {
-    new_pie::<T>(resource, permission, alloc::sync::Arc::downgrade(arc))
+    new_pie::<T>(resource, permission, vestor, alloc::sync::Arc::downgrade(arc))
 }
 
 // 让 PieKind 在本模块内可用（type 拼写给 src kind 校验用）。

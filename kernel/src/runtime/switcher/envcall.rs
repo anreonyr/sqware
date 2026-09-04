@@ -182,6 +182,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
+        Ucall::Task(TaskCall::SelfId) => {
+            // 返当前 task id（无参；demo 用作"已知非-vestor" 或与共享 vestor 槽配对）。
+            let id = current()
+                .running_task()
+                .map(|t| t.ident.id)
+                .unwrap_or(0);
+            frame.gpr.set_x(Gprs::A0, id);
+        }
         Ucall::Control(ControlCall::Panic) => {
             panic!("user-initiated panic (code {:#x})", frame.gpr.x(Gprs::A0));
         }
@@ -425,7 +433,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let subset_bits = frame.gpr.x(Gprs::A2) as u32;
 
             let src_task = current().running_task();
-            // 1. 取 src pie + 鉴权（VEST 权、subset 合法、alive）
+            // 提前取 id（src_task 在 and_then 闭包里被 move 消费）
+            let current_id = src_task.as_ref().map(|t| t.ident.id).unwrap_or(0);
+            // 1. 取 src pie + 鉴权（VEST 或 BACK 权、subset 合法、alive）
             let src = match src_task.and_then(|t| t.pies.lock().get(src_idx).cloned()) {
                 Some(p) => p,
                 None => {
@@ -437,7 +447,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 frame.gpr.set_x(Gprs::A0, MailError::Dead.code() as usize);
                 return frame as *mut TrapContext;
             }
-            if !src.permission().contains(Permission::VEST) {
+            // 含 VEST 或 BACK 任一即能 vest（BACK 是受限 vest，详下）。
+            if !src.permission().contains(Permission::VEST)
+                && !src.permission().contains(Permission::BACK)
+            {
                 frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
                 return frame as *mut TrapContext;
             }
@@ -445,6 +458,17 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             if subset.is_empty() || (subset & src.permission()) != subset {
                 frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
                 return frame as *mut TrapContext;
+            }
+            // BACK 验：源 pie 有 BACK 必 target == src.vestor。
+            //   src.vestor() = None  ⇒ 原始创者（无上一手），BACK 退化为"VEST 同效"——可发给任意 target。
+            //   src.vestor() = Some(g) ⇒ BACK 守门 target == g。
+            if src.permission().contains(Permission::BACK) {
+                if let Some(vestor) = src.vestor() {
+                    if vestor != target_id {
+                        frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
+                        return frame as *mut TrapContext;
+                    }
+                }
             }
             // 2. 查 target task（持 Weak，避开 scheduler transform 的
             //    strong_count == 1 断言；数据面内部短暂升级为 Arc）。
@@ -455,8 +479,8 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     return frame as *mut TrapContext;
                 }
             };
-            // 3. 调 vest 数据面原语
-            let r = mail::vest::vest(&src, &target, subset);
+            // 3. 调 vest 数据面原语（传 current_task_id 作新 pie 的 vestor）
+            let r = mail::vest::vest(&src, &target, subset, current_id);
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
