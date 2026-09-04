@@ -84,16 +84,48 @@ impl Map {
         vaddr >= self.va && vaddr.as_usize() - self.va.as_usize() < self.size.get()
     }
 
-    /// 第 `idx` 页是否已物化（已在页表）。
+    /// 第 `idx` 页是否已物化（已在页表）——**点查询**。
     ///
     /// - `pending: None` → 全物化（拥有映射满帧 / 借用映射 leaf 在册）→ true。
     /// - `Some(Lazy)` → 已触页（`frames` 含键）→ true；未触 → false。
     /// - `Some(Guard)` → 永不物化 → false。
+    ///
+    /// 运行路径（拆除 / 改权）不用点查询逐页问，用 [`Self::runs`] 的段枚举。
+    #[cfg(feature = "audit")]
     pub(super) fn is_materialized(&self, idx: usize) -> bool {
         match self.pending {
             None => true,
             Some(Pending::Lazy) => self.frames.contains_key(&idx),
             Some(Pending::Guard) => false,
+        }
+    }
+
+    /// 把 `[lo_pg, hi_pg)` 内**已物化**的页折叠成连续段，逐段交 `apply`——
+    /// [`Self::is_materialized`] 的**区间版**，同一判据的唯一另一种形态。
+    ///
+    /// 借用/全物化 = 整段一次；懒区 = `frames` 的键（BTreeMap 有序，天然可折叠）；
+    /// guard = 空集。折叠即复杂度：调用次数随**触页段数**走、不随区间大小走
+    /// （1 TiB 懒区触 4 页 = 1 段），拆除/改权因此与段大小解耦。
+    pub(super) fn runs(&self, lo_pg: usize, hi_pg: usize, mut apply: impl FnMut(VirtAddr, usize)) {
+        match self.pending {
+            None => apply(self.va + lo_pg * PAGE_SIZE, (hi_pg - lo_pg) * PAGE_SIZE),
+            Some(Pending::Lazy) => {
+                let mut run: Option<(usize, usize)> = None;
+                for (&pg, _) in self.frames.range(lo_pg..hi_pg) {
+                    run = match run {
+                        Some((start, len)) if start + len == pg => Some((start, len + 1)),
+                        Some((start, len)) => {
+                            apply(self.va + start * PAGE_SIZE, len * PAGE_SIZE);
+                            Some((pg, 1))
+                        }
+                        None => Some((pg, 1)),
+                    };
+                }
+                if let Some((start, len)) = run {
+                    apply(self.va + start * PAGE_SIZE, len * PAGE_SIZE);
+                }
+            }
+            Some(Pending::Guard) => {}
         }
     }
 

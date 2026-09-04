@@ -152,6 +152,27 @@ impl TableNode {
         1 + self.children.iter().map(|(_, c)| c.count()).sum::<usize>()
     }
 
+    /// 枚举本树全部已装叶的页 VA（审计反向核对用：PTE ⇒ 有簿记）。
+    ///
+    /// `level` = 本节点层号（根传 `levels - 1`）；`node_va` = 本节点覆盖区间的起始
+    /// 地址（掩码空间——叶 VA 经 `VirtAddr::from_raw` 规范化回符号扩展形式）。
+    /// 只走**存在的**子节点：代价 O(树中节点数)，与地址空间大小无关。
+    #[cfg(feature = "audit")]
+    pub(crate) fn mapped(&self, level: usize, node_va: usize, visit: &mut impl FnMut(VirtAddr)) {
+        if level == 0 {
+            for (i, e) in self.page.entries.iter().enumerate() {
+                if e.is_valid() {
+                    visit(VirtAddr::from_raw(node_va + (i << PAGE_SHIFT)));
+                }
+            }
+            return;
+        }
+        let shift = PAGE_SHIFT + 9 * level;
+        for (slot, child) in &self.children {
+            child.mapped(level - 1, node_va + (slot << shift), visit);
+        }
+    }
+
     /// 创建一个零页表子节点 + 把它的 PPN 装入 `pte`（V 位；非叶，非超页）。
     ///
     /// 一步完成"建表 + 装 PTE 引用"——保证新子节点在 tree 入册前 PTE 已 V，

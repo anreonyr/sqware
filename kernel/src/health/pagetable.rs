@@ -69,6 +69,10 @@ pub fn pagetable() {
             space.translate(VirtAddr::from_raw(BASE)).is_none(),
             "round {round}: unmap hit"
         );
+        // 双向核对：拆除只碰「簿记说有 PTE」的页，反向审计正是守这条不变量——
+        // 装/拆之后立刻验，不留到 boot 一次性快照。
+        #[cfg(feature = "audit")]
+        space.audit();
     }
 
     let held_after = crate::memory::allocator::statistics::view_frame().occupied

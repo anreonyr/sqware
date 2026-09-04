@@ -327,18 +327,13 @@ impl SpaceInner {
 
     // ── 拆除 ────────────────────────────────────────────────
 
-    /// 统一拆除 `[va, va+size)`：清相交已物化叶 PTE + 回收变空的中间表；
-    /// **全覆盖**的 Map 整张摘除、**部分覆盖**的 Map 按洞分裂——摘下的帧一律
-    /// **交料箱**（`salvage`），清退到齐后才归还（远核可能仍持旧条目）。不碰段。
+    /// 统一拆除 `[va, va+size)`：逐 map 清其相交且**真有 PTE** 的页（中间表随之
+    /// 回收）→ **全覆盖**的 Map 整张摘除、**部分覆盖**的 Map 按洞分裂——摘下的帧
+    /// 一律**交料箱**（`salvage`），清退到齐后才归还（远核可能仍持旧条目）。不碰段。
     pub(crate) fn unmap(&mut self, va: VirtAddr, size: usize, salvage: &mut Salvage) {
         if size == 0 {
             return;
         }
-        // 1. 先清已物化 PTE（map 还在册，能判哪些页已物化；懒区按帧数走）。
-        //    必须**先于**摘 map——摘后 map 消失，clear 找不到覆盖 map，
-        //    PTE 残留成悬垂（指向已归还帧，复用即错乱）。
-        self.clear(va, size);
-        // 2. 摘/裂 map（帧交料箱）
         let end = va.as_usize().saturating_add(size);
         let mut survivors: Vec<Map> = Vec::new();
         for mut m in core::mem::take(&mut self.maps) {
@@ -350,13 +345,16 @@ impl SpaceInner {
                 survivors.push(m); // 不相交
                 continue;
             }
+            let lo_pg = (lo - s) / PAGE_SIZE;
+            let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
+            // 清叶与摘 map 同一趟：拿着 map 才能问它哪些页有 PTE，顺序不可能写反。
+            let root = &mut self.root;
+            m.runs(lo_pg, hi_pg, |rva, rsize| root.unmap(rva, rsize));
             if va.as_usize() <= s && end >= m_end {
                 salvage.take_map(m); // 全覆盖：整张摘除交料箱
                 continue;
             }
             // 部分覆盖：挖洞分裂（洞内帧由 carve 交料箱）
-            let lo_pg = (lo - s) / PAGE_SIZE;
-            let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
             let right = m.carve(lo_pg, hi_pg, salvage);
             survivors.push(m); // 左段（carve 收缩 self）
             if let Some(right) = right {
@@ -373,18 +371,6 @@ impl SpaceInner {
             Seg::User => self.user.as_ref().is_some_and(|u| u.holds(addr, size)),
             Seg::Kernel => self.kernel.holds(addr, size),
         }
-    }
-
-    /// 清 `[va, va+size)` 内的叶 PTE + 回收变空的中间表。
-    ///
-    /// 一次调用 [`TableNode::unmap`] 完成完整清理（含清叶 + 拆空中间表）；
-    /// 未物化页 `walk_mut(false)` 缺失中间表返回 NotMapped = 与无映射一致，
-    /// 直接跳过——不需按稀疏帧表预过滤。
-    pub(crate) fn clear(&mut self, va: VirtAddr, size: usize) {
-        if size == 0 {
-            return;
-        }
-        self.root.unmap(va, size);
     }
 
     // ── 帧 ──────────────────────────────────────────────────
@@ -422,33 +408,65 @@ impl SpaceInner {
         self.install(va, pages, flags, MapMode::Materialize, || Self::frame())
     }
 
-    /// 修改已映射区域的保护标志：按物化态分流——全物化（含借用）→ `walk_mut`
-    /// 翻叶 PTE；懒区 → 已触页翻叶 + 同步 flags、未触页只同步 flags；
-    /// guard → 只同步 flags。
+    /// 修改已映射区域的保护标志：逐 map 分流——**真有 PTE** 的页翻叶 PTE（借用/
+    /// 全物化整段、懒区只走触过的页，见 [`Self::runs`]）；懒区另同步 `map.flags`
+    /// （未触页将来物化时按新标志装）；guard 只同步 flags。
+    ///
+    /// 先校验覆盖、后落改（`maps` 互不重叠 ⇒ 相交长度之和 == size ⟺ 全覆盖）。
+    ///
+    /// # Errors
+    ///
+    /// - `NoRegion` — 区间内有页不落在任何 map（此时尚未落任何改动）
+    /// - 叶操作失败 — 簿记与页表分叉（不变量违反，见 `audit` 的反向核对）
     pub(crate) fn protect(
         &mut self,
         va: VirtAddr,
         size: usize,
         flags: PteFlags,
     ) -> Result<(), MapError> {
+        if size == 0 {
+            return Ok(());
+        }
         let flags = flags | PteFlags::V;
-        let pages = size.div_ceil(PAGE_SIZE);
-        for i in 0..pages {
-            let m_va = va + i * PAGE_SIZE;
-            let (pending, materialized) = {
-                let m = self.resolve_ref(m_va).ok_or(MapError::NoRegion)?;
-                let idx = (m_va.as_usize() - m.va.as_usize()) / PAGE_SIZE;
-                (m.pending, m.is_materialized(idx))
-            };
-            if materialized {
-                // 改叶 PTE flags——下沉到 TableNode
-                self.root.protect(m_va, PAGE_SIZE, flags)?;
-            }
-            if pending == Some(Pending::Lazy) {
-                self.resolve_mut(m_va).expect("map exists").flags = flags;
+        let end = va.as_usize().saturating_add(size);
+        let span = |m: &Map| {
+            let s = m.va.as_usize();
+            let lo = va.as_usize().max(s);
+            let hi = end.min(s.saturating_add(m.size.get()));
+            (lo < hi).then_some((s, lo, hi))
+        };
+        // 1. 覆盖校验先行：不足即整体失败，状态未动。
+        let covered: usize = self
+            .maps
+            .iter()
+            .filter_map(&span)
+            .map(|(_, lo, hi)| hi - lo)
+            .sum();
+        if covered != size {
+            return Err(MapError::NoRegion);
+        }
+        // 2. 落改（root 与 maps 是不同字段，可同时可变借出）
+        let mut fault: Option<MapError> = None;
+        let root = &mut self.root;
+        for m in self.maps.iter_mut() {
+            let Some((s, lo, hi)) = span(m) else { continue };
+            let lo_pg = (lo - s) / PAGE_SIZE;
+            let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
+            m.runs(lo_pg, hi_pg, |rva, rsize| {
+                if fault.is_none()
+                    && let Err(e) = root.protect(rva, rsize, flags)
+                {
+                    fault = Some(e);
+                }
+            });
+            if m.pending == Some(Pending::Lazy) {
+                m.flags = flags;
             }
         }
-        Ok(())
+        match fault {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     /// 把 `[start, start+size)` 内可写页提升为共享只读：Owned → Shared(Arc)。
@@ -594,7 +612,12 @@ impl SpaceInner {
             .ok()
     }
 
-    /// 簿记↔页表一致性核对（boot / 压力测试后调用；不一致即 panic）。
+    /// 簿记↔页表**双向**一致性核对（boot / 压力测试后调用；不一致即 panic）。
+    ///
+    /// 正向（map ⇒ PTE）：每条簿记帧都能在页表里翻到同一物理页。
+    /// 反向（PTE ⇒ map）：每个已装叶都落在某张 map 内、且该页确实"已物化"——
+    /// 拆除与改权只碰**簿记说有 PTE** 的页（[`Self::runs`]），这条一破，PTE 就会
+    /// 残留成悬垂（指向已归还帧，复用即错乱）。
     #[cfg(feature = "audit")]
     pub(crate) fn audit(&self) {
         for m in &self.maps {
@@ -612,6 +635,24 @@ impl SpaceInner {
                 }
             }
         }
+        self.root
+            .mapped(mode::levels() - 1, 0, &mut |va: VirtAddr| {
+                let Some(m) = self.resolve_ref(va) else {
+                    panic!(
+                        "space audit @{:#x}: leaf pte outside every map",
+                        va.as_usize()
+                    );
+                };
+                let idx = (va.as_usize() - m.va.as_usize()) / PAGE_SIZE;
+                assert!(
+                    m.is_materialized(idx),
+                    "space audit @{:#x}: leaf pte on unmaterialized page (map {:#x}+{}, {:?})",
+                    va.as_usize(),
+                    m.va.as_usize(),
+                    m.size.get(),
+                    m.pending
+                );
+            });
     }
 }
 
