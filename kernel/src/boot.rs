@@ -192,6 +192,7 @@ fn spawn_demos() -> Result<(), MapError> {
         (&include_bytes!(env!("USER_DOCKER"))[..], "docker"),
         (&include_bytes!(env!("USER_RINGER"))[..], "ringer"),
         (&include_bytes!(env!("USER_PORTER"))[..], "porter"),
+        (&include_bytes!(env!("USER_PAIR"))[..], "pair"),
         // (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
     ] {
         let (team, entry) = load_user(elf);

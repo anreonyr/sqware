@@ -160,6 +160,12 @@ impl Scheduler {
         self.by_id.lock().get(&id).and_then(Weak::upgrade)
     }
 
+    /// 按 id 查 Weak<Task>（不持 strong，调用方按需短升升级）。用于 envcall::Vest
+    /// 等需跨核访问目标 task 但不愿违反"uniquely held"不变量的场景。
+    pub(crate) fn lookup_id_weak(&self, id: usize) -> Option<Weak<Task>> {
+        self.by_id.lock().get(&id).map(Weak::clone)
+    }
+
     /// 队首出队（run / reap / park 共用）：派生计数；空队列返回 None。
     pub(super) fn pull(&self) -> Option<Arc<Task>> {
         let mut i = self.inner.lock();
@@ -409,6 +415,17 @@ pub(crate) fn lookup_task_by_id(id: usize) -> Option<Arc<Task>> {
     for s in schedulers() {
         if let Some(t) = s.lookup_id(id) {
             return Some(t);
+        }
+    }
+    None
+}
+
+/// 按 id 查 Weak<Task>（不持 strong；envcall::Vest 借此避免长寿命 Arc 跨核
+/// 撞上 scheduler transform 的 strong_count == 1 断言）。
+pub(crate) fn lookup_task_by_id_weak(id: usize) -> Option<Weak<Task>> {
+    for s in schedulers() {
+        if let Some(w) = s.lookup_id_weak(id) {
+            return Some(w);
         }
     }
     None

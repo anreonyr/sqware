@@ -11,20 +11,26 @@
 //   - subset ⊆ src.permission
 //   - target 任务存在（Weak::upgrade 成功）
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 
 use super::pie::{new_pie, AnyPie, MailError, Permission, Pie, ResourceKind};
 use crate::work::unit::task::Task;
 
 /// Vest 数据面原语。
 ///
+/// `target: &Weak<Task>` 避免 envcall 路径长寿命持有 `Arc<Task>`，跨核时与
+/// scheduler transform 的 strong_count == 1 断言冲突——内部短暂升级为 Arc，仅
+/// 持锁 push 期间。
+///
 /// # Errors
+/// - `Denied` — Weak 升级失败（target 已死 / id 不存在）
 /// - `OOM` — target.pies push 失败（Vec 扩容耗尽）
 pub fn vest(
     src: &AnyPie,
-    target: &Arc<Task>,
+    target: &Weak<Task>,
     subset: Permission,
 ) -> Result<usize, MailError> {
+    let target = target.upgrade().ok_or(MailError::Denied)?;
     let resource = src.resource();
     let new_pie = match src {
         AnyPie::Hole(_) => {

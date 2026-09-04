@@ -93,6 +93,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "user-pair"
+path = "src/bin/pair.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "user-lisp"
 path = "src/bin/lisp.rs"
 test = false

@@ -424,9 +424,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
                 return frame as *mut TrapContext;
             }
-            // 2. 查 target task
-            let target = match crate::work::room::scheduler::core::lookup_task_by_id(target_id) {
-                Some(t) => t,
+            // 2. 查 target task（持 Weak，避开 scheduler transform 的
+            //    strong_count == 1 断言；数据面内部短暂升级为 Arc）。
+            let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(target_id) {
+                Some(w) => w,
                 None => {
                     frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
                     return frame as *mut TrapContext;
