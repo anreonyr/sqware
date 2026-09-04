@@ -10,7 +10,7 @@ use crate::layout::TASK_STACK_GUARD;
 use crate::memory::manager::MapError;
 use crate::memory::manager::entry::PteFlags;
 
-use super::super::core::Span;
+use super::super::core::{Salvage, Span};
 use super::super::map::Pending;
 use super::super::{Seg, Space};
 
@@ -35,7 +35,8 @@ impl StackWindow {
     /// 段未就绪 / 段耗尽 / 物理帧耗尽 → [`MapError`]（回滚：已分配帧与段归还）。
     pub(crate) fn claim(space: &Space, size: usize, kernel: bool) -> Result<Span, MapError> {
         let slot_size = size + TASK_STACK_GUARD;
-        space.with_flush(|inner| {
+        let mut salvage = Salvage::new();
+        let claimed = space.with_flush(|inner| {
             let slot_va = inner.allocate(Seg::User, slot_size)?;
             // 守护页 Guard → 溢出缺页可诊断（只登记，不物化）
             let guard_flags = PteFlags::V | PteFlags::R | PteFlags::W;
@@ -54,12 +55,17 @@ impl StackWindow {
             let body_va = slot_va + TASK_STACK_GUARD;
             if let Err(e) = inner.claim_map(body_va, size, body_flags) {
                 // claim 已自回滚装配（清已装叶 + 摘 body map）；guard map 与段
-                // 需整体退回——直接 remove slot 区间（清 guard 叶 + 摘 guard map）
-                inner.unmap(slot_va, slot_size);
-                inner.deallocate(Seg::User, slot_va.as_usize(), slot_size);
+                // 整体退回——拆 slot 区间（清 guard 叶 + 摘 guard map，入料箱）
+                // 后把段也交料箱：VA 一旦还段即可被复用，须等清退到齐。
+                inner.unmap(slot_va, slot_size, &mut salvage);
+                salvage.take_span(Span::new(Seg::User, slot_va, slot_size, None));
                 return Err(e);
             }
             Ok(Span::new(Seg::User, slot_va, slot_size, None))
-        })
+        });
+        salvage
+            .reclaim(space)
+            .expect("stack claim rollback: evict deaf");
+        claimed
     }
 }

@@ -23,6 +23,8 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::{Frame, FrameState};
 
+use super::core::Salvage;
+
 /// 未物化页的行为（Map 级）— 与帧所有权正交。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pending {
@@ -112,19 +114,30 @@ impl Map {
 
     /// 把洞 `[lo_pg, hi_pg)`（页序，半开）挖掉——统一拆除中**部分覆盖**的 Map。
     ///
-    /// 洞内帧随 drop 归还（Owned → frame 池 / Shared → Arc 计数归零）；本 Map
-    /// 收缩为洞左段（`lo_pg == 0` 时本 Map 重绕成洞右段，帧键重排 −hi_pg）；
-    /// 洞右段存在时作为新 Map 返回（键已重排）。
+    /// 洞内帧**交料箱**（`salvage`）：清退到齐后才归还，不得在此 drop（远核可能
+    /// 仍持旧条目）。本 Map 收缩为洞左段（`lo_pg == 0` 时本 Map 重绕成洞右段，
+    /// 帧键重排 −hi_pg）；洞右段存在时作为新 Map 返回（键已重排）。
     ///
     /// 前置：`lo_pg < hi_pg ≤ pages` 且**非全覆盖**（全覆盖由调用方直接整张
     /// 摘除，不至此）——返回后本 Map 恒存活，右段与否看返回值。
-    pub(super) fn carve(&mut self, lo_pg: usize, hi_pg: usize) -> Option<Map> {
+    pub(super) fn carve(
+        &mut self,
+        lo_pg: usize,
+        hi_pg: usize,
+        salvage: &mut Salvage,
+    ) -> Option<Map> {
         let pages = self.size.get() / PAGE_SIZE;
         debug_assert!(lo_pg < hi_pg && hi_pg <= pages);
-        // 洞内帧摘除（drop 归还 frame 池 / Arc 计数归零）
         let tail = self.frames.split_off(&hi_pg); // 键 ≥ hi_pg → 右段
-        let mut hole = self.frames.split_off(&lo_pg); // [lo_pg, hi_pg) → 洞
-        hole.clear();
+        let hole = self.frames.split_off(&lo_pg); // [lo_pg, hi_pg) → 洞
+        // 洞内帧交料箱（键重排 −lo_pg，与洞基址对齐）
+        salvage.take_map(Map::new(
+            self.va + lo_pg * PAGE_SIZE,
+            (hi_pg - lo_pg) * PAGE_SIZE,
+            self.flags,
+            self.pending,
+            hole.into_iter().map(|(k, v)| (k - lo_pg, v)).collect(),
+        ));
         // 右段帧键重排：k − hi_pg
         let right_frames: BTreeMap<usize, FrameState> =
             tail.into_iter().map(|(k, v)| (k - hi_pg, v)).collect();

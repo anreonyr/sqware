@@ -20,6 +20,8 @@ use core::arch::global_asm;
 
 use crate::layout::TRAMPOLINE;
 use crate::memory::PAGE_SIZE;
+use crate::memory::manager::evict;
+use crate::runtime::switcher::context::TrapContext;
 
 global_asm!(
     ".section .trampoline, \"ax\"",
@@ -219,6 +221,10 @@ unsafe extern "C" {
 /// 必须在 TRAMPOLINE VA 执行 `__restore`：切换用户页表后，链接地址（内核镜像）
 /// 不再映射，只有 TRAMPOLINE VA 在目标空间恒映射（G 位）。
 pub fn restore(frame_pa: usize) -> ! {
+    // 出场公布：必须先于 `__restore` 的 sfence（不变量 2）。boot 路径与
+    // `trap_handler` 出口同款——凡进 `__restore` 必先 settle。
+    // SAFETY: frame_pa 为有效帧物理地址，恒等映射下可解引用。
+    evict::settle(unsafe { (*(frame_pa as *const TrapContext)).user_satp.asid() });
     let link = core::ptr::addr_of!(__restore) as usize;
     let va = TRAMPOLINE.as_usize() + (link - core::ptr::addr_of!(__trampoline_start) as usize);
     unsafe {

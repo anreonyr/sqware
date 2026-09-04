@@ -477,6 +477,9 @@ pub(super) fn wait() -> Option<Arc<Task>> {
         unsafe {
             core::arch::asm!("wfi");
         }
+        // 清退应答点：内核态 SIE=0 的空闲核不吃 trap，这是它唯一的刷点
+        // （被清退 IPI 唤起时在此兑现「世代递增 ⟺ 已整表刷过」）。
+        crate::memory::manager::evict::sweep();
         // timer 到期分派由 messenger 处理（sites + parked 两路）
         if messenger::drain_expired() {
             break;

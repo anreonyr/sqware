@@ -91,11 +91,12 @@ pub fn hart_id() -> usize {
 /// 为什么是常量数组而非运行时分配：boot 汇编（`_start`/`_boot_entry`）在
 /// 机器信息注入前就要设 tp，数组必须是链接期已知符号；槽数= MAX_HART_SLOTS
 /// （VA 布局表达上限）；物理支撑由 boot 期 per-hart 开销校验保证（见 trap::init）。
-/// 槽宽 32 B = 2⁵：boot 汇编单条 `slli` 索引（id·32），pad 字段仅为凑宽。
+/// 槽宽 64 B = 2⁶：boot 汇编单条 `slli` 索引（id·64），且**每核槽独占一条
+/// cache 行**——`lease` 在每次 trap 都写，与邻核共享行会乒乓。
 ///
 /// 无 `Clone`/`Copy`（`AtomicPtr` 不支持）——const 构造逐元素填数组，
 /// 消费端经指针/原子访问，不整值传递。
-#[repr(C)]
+#[repr(C, align(64))]
 pub struct PerHart {
     /// 本 hart 编号（offset 0x00；`hart_id()` 读这里）。
     pub id: usize,
@@ -105,8 +106,11 @@ pub struct PerHart {
     /// [`set_scheduler`] 原子 store——调度器在堆上动态分配，运行时才知道地址，
     /// 故为 PerHart 唯一运行时填充字段；`current()` 经 tp 直达零索引）。
     pub scheduler: AtomicPtr<()>,
-    /// 槽对齐保留（offset 0x18）：凑 32 B 使 boot 汇编 `slli a0, 5` 单条索引。
-    _pad: usize,
+    /// 本 hart 租约字（offset 0x18；见 `memory::manager::evict`）：本核写
+    /// （[`lease_store`]）、他核读（[`lease_load`]），静态初值 = 退租。
+    pub lease: AtomicUsize,
+    /// 槽对齐保留（offset 0x20..0x40）：凑 64 B 使 boot 汇编 `slli a0, 6` 单条索引。
+    _pad: [usize; 4],
 }
 
 impl PerHart {
@@ -116,12 +120,13 @@ impl PerHart {
             // 布局常量纯算术：帧区基址 + 槽位偏移（同 layout.rs 推导）。
             frame: VirtAddr::wrap(HART_FRAME_BASE.as_usize() + id * PAGE_SIZE),
             scheduler: AtomicPtr::new(core::ptr::null_mut()),
-            _pad: 0,
+            lease: AtomicUsize::new(crate::memory::manager::evict::VACANT),
+            _pad: [0; 4],
         }
     }
 }
 
-/// per-hart 上下文数组（4096 槽 × 32 B = 128 KiB 静态数据）。
+/// per-hart 上下文数组（4096 槽 × 64 B = 256 KiB 静态数据）。
 ///
 /// `no_mangle`：boot 汇编经 `la t0, PER_HART` PC 相对定位（恒等映射，Bare 期
 /// PC 相对即物理地址）。槽位随 `MAX_HART_SLOTS`（VA 布局表达上限）。
@@ -204,13 +209,28 @@ pub fn hart_frame() -> VirtAddr {
     VirtAddr::wrap(f)
 }
 
+/// 读 hart `hart` 的租约字（他核读，Acquire）。清退协议的唯一跨核读点。
+pub(crate) fn lease_load(hart: usize) -> usize {
+    debug_assert!(
+        hart < MAX_HART_SLOTS,
+        "lease_load: hart {hart} beyond MAX_HART_SLOTS"
+    );
+    PER_HART[hart].lease.load(Ordering::Acquire)
+}
+
+/// 写**本核**租约字（Release）。不收 hart 参数——签名即"只能写自己"。
+pub(crate) fn lease_store(value: usize) {
+    PER_HART[hart_id()].lease.store(value, Ordering::Release);
+}
+
 /// 编译期断言：PerHart 布局即 ABI（`__strap`/`__restore` 帧定位、调度器 tp 直达
-/// 按偏移访问；槽宽 2⁵ 供 boot 汇编 `slli` 索引）。
+/// 按偏移访问；槽宽 2⁶ 供 boot 汇编 `slli` 索引）。
 const _: () = {
     assert!(core::mem::offset_of!(PerHart, id) == 0x00);
     assert!(core::mem::offset_of!(PerHart, frame) == 0x08);
     assert!(core::mem::offset_of!(PerHart, scheduler) == 0x10);
-    assert!(core::mem::size_of::<PerHart>() == 32);
+    assert!(core::mem::offset_of!(PerHart, lease) == 0x18);
+    assert!(core::mem::size_of::<PerHart>() == 64);
 };
 
 /// 启动时从 DTB 解析出的机器设备信息（纯值，Copy，可安全存入 static）。

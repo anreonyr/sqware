@@ -31,7 +31,7 @@ global_asm!(
     ".globl _boot_entry",
     "_boot_entry:",
     "    la   t0, PER_HART", // &PER_HART[0]（恒等映射，Bare 下 PC 相对即物理地址）
-    "    slli t1, a0, 5",    // a0 = hartid（HSM Start 传入）· 32（PerHart 槽宽 2⁵）
+    "    slli t1, a0, 6",    // a0 = hartid（HSM Start 传入）· 64（PerHart 槽宽 2⁶）
     "    add  tp, t0, t1",   // tp = 本 hart PerHart 指针（入口约定，见 `hart_id()`）
     "    csrc sstatus, 2",
     "    mv   sp, a1", // opaque = 本 hart trap 栈顶（HSM Start 传入）
@@ -192,7 +192,7 @@ fn spawn_demos() -> Result<(), MapError> {
         // (&include_bytes!(env!("USER_DOCKER"))[..], "docker"),
         // (&include_bytes!(env!("USER_RINGER"))[..], "ringer"),
         // (&include_bytes!(env!("USER_PORTER"))[..], "porter"),
-        // (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
+        (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
     ] {
         let (team, entry) = load_user(elf);
         let mut task = team.task().name(name).entry(entry);
@@ -343,6 +343,9 @@ pub(crate) extern "C" fn boot_main() -> ! {
         core::arch::asm!("sfence.vma");
     }
     arm_hart();
+    // 入册（内核租户）：本核刚 `sfence.vma` 过，满足不变量 1。副核在此之前
+    // 是退租态，不会被任何清退选中。
+    crate::memory::manager::evict::settle(0);
     // 启动完成写进 trace（直打控制台会扰 panic 现场）。
     trace::note(trace::EventKind::Boot(trace::BootEvent::Done { hart: me }));
     scheduler::boot::idle()

@@ -28,6 +28,7 @@ use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
+use crate::memory::manager::evict;
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent};
@@ -286,10 +287,13 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
     }
 
-    // 0.4 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。
+    // 0.4 入场入册：`__utrap`/`__strap` 已整表刷（不变量 1），本核转为内核租户。
+    evict::settle(0);
+
+    // 0.5 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。
     let ident = ident();
 
-    // 0.5 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）；
+    // 0.6 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）；
     //    正常运行时恒 no-op。
     crate::runtime::diagnose::halt::hush();
 
@@ -430,6 +434,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         canary, TRAP_STACK_CANARY,
         "trap stack corrupted on hart {me} after handler"
     );
+
+    // 出场公布：租约取**将要返回的帧**（`run()` 可能已换任务），且必须在返回
+    // 之前——不变量 2（先公布，后 `__restore` 的 sfence）。
+    // SAFETY: next 恒指向本核有效帧（分发各分支的产物），恒等映射下可解引用。
+    evict::settle(unsafe { (*next).user_satp.asid() });
 
     next
 }

@@ -9,7 +9,7 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
-use super::super::core::Span;
+use super::super::core::{Salvage, Span};
 use super::super::map::Pending;
 use super::super::{Seg, Space};
 
@@ -41,20 +41,27 @@ impl ShareWindow {
         })
     }
 
-    /// 释放 mmap 区域：精确匹配还段 → 统一拆除（摘 map 帧随 drop +
-    /// 清已触页 PTE + 回收中间表）。返回是否找到并释放。
+    /// 释放 mmap 区域：精确匹配**校验**段 → 统一拆除（摘 map 帧交料箱 + 清已
+    /// 触页 PTE + 回收中间表）→ 结清（跨核清退到齐后才还段与帧）。返回是否
+    /// 找到并释放。
     ///
     /// **懒区只有已触页有 PTE/帧**：PTE 清理按已物化帧数逐页走（O(触页数)，
     /// 非 O(段大小)）——1 TiB 级区域不可逐页扫全段。
     pub(crate) fn munmap(space: &Space, addr: VirtAddr, size: usize) -> bool {
-        space.with_flush(|inner| {
-            // 1. 精确匹配还段（未分配 → false）
-            if !inner.deallocate(Seg::User, addr.as_usize(), size) {
+        let mut salvage = Salvage::new();
+        let found = space.with_flush(|inner| {
+            // 1. 只读校验（未分配 → false，状态未动）
+            if !inner.holds(Seg::User, addr.as_usize(), size) {
                 return false;
             }
-            // 2. 统一拆除（清叶先于摘 map；帧随 drop 归还）
-            inner.unmap(addr, size);
+            // 2. 统一拆除（清叶先于摘 map；帧与段一并入箱）
+            inner.unmap(addr, size, &mut salvage);
+            salvage.take_span(Span::new(Seg::User, addr, size, None));
             true
-        })
+        });
+        if found {
+            salvage.reclaim(space).expect("munmap: evict deaf");
+        }
+        found
     }
 }

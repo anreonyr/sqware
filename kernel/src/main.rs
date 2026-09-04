@@ -27,7 +27,7 @@ global_asm!(
     ".globl _start",
     "_start:",
     "    la   t0, PER_HART", // &PER_HART[0]（恒等映射，Bare 下 PC 相对即物理地址）
-    "    slli t1, a0, 5",    // hartid · 32（PerHart 槽宽 2⁵，编译期断言锁死）
+    "    slli t1, a0, 6",    // hartid · 64（PerHart 槽宽 2⁶，编译期断言锁死）
     "    add  tp, t0, t1",   // tp = 本 hart PerHart 指针（入口约定，见 `hart_id()`）
     "    csrc sstatus, 2",
     "    la   sp, _kernel_edge",

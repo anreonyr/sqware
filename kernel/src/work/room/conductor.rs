@@ -80,6 +80,9 @@ pub(crate) fn boot_done() {
 /// dock/ring shutdown → 调度器槽清空 → block flush → audit 基线。
 /// 钩子由 `boot::init` 一次性注册，conductor 不直接命名任何子系统。
 pub(super) fn halt() -> ! {
+    // 退租：本核即将卧倒，永不再应答清退——必须先从名册消失，否则关机钩子
+    // （`rip` 拆任务 → 拆空间 → 清退）会死等本核。
+    crate::memory::manager::evict::vacate();
     HALT_ARRIVED.fetch_add(1, Ordering::AcqRel);
     if !HALTING.swap(true, Ordering::AcqRel) {
         // 喊醒所有 WFI 睡核：它们醒来后同样会走 done → halt → 登记到达。

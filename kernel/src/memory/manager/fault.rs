@@ -78,13 +78,28 @@ fn resolve_anonymous(fault: &PageFault, space: &Space) -> bool {
     }
 }
 
+/// 该 PTE 权限是否满足此次访问（Instruction→X / Load→R / Store→W）。
+///
+/// 陈旧条目的判据：PTE 已满足本次访问却仍缺页 ⇒ 硬件持旧 TLB 条目（或 A/D 位
+/// 瞬时竞争），重试即成——远核「新增 / 放宽」类页表变更靠这条 + trap 两侧整表刷
+/// 自愈，无需跨核清退（见 `manager::evict` 模块头）。只有 V 而权限不足则是
+/// **真实违例**，不得判 resolved（否则重试立即再缺页 = 无限缺页循环）。
+fn satisfies(flags: PteFlags, kind: FaultKind) -> bool {
+    let need = match kind {
+        FaultKind::Instruction => PteFlags::X,
+        FaultKind::Load => PteFlags::R,
+        FaultKind::Store => PteFlags::W,
+    };
+    flags.contains(PteFlags::V | need)
+}
+
 /// 处理缺页异常。
 ///
 /// 返回 `true` 表示已解决（可以 sret 重试），`false` 表示无法处理。
 ///
 /// # 处理策略
 ///
-/// 1. Re-walk 页表 — 排除 A/D 位竞争
+/// 1. Re-walk 页表 — 排除陈旧 TLB 条目 / A-D 位竞争
 /// 2. 用户地址 → 查 Map：Anonymous 分配零页，Reserved/无 Map 返回 false
 /// 3. 内核地址 → fatal（内核页必须预映射）
 pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
@@ -97,11 +112,10 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
     {
         return space.own(fault.addr, PAGE_SIZE).is_ok();
     }
-    // 1. Re-walk 页表 (A/D 位竞争检查)
+    // 1. Re-walk 页表（陈旧 TLB 条目 / A-D 位竞争：PTE 已满足本次访问）
     if let Some((_paddr, flags)) = space.translate(fault.addr)
-        && flags.contains(PteFlags::V)
+        && satisfies(flags, fault.kind)
     {
-        // 映射存在 — 可能是 A/D 位的瞬时竞争，直接重试
         info!(
             "page fault resolved by re-walk: {:?} at {:?}",
             fault.kind, fault.addr

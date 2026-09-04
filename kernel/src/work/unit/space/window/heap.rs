@@ -8,7 +8,7 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
-use super::super::core::Span;
+use super::super::core::{Salvage, Span};
 use super::super::{Seg, Space};
 
 /// 堆窗口（零状态策略）。
@@ -37,18 +37,24 @@ impl HeapWindow {
         })
     }
 
-    /// 用户堆释放：分配器按 `(addr, size)` 精确匹配还段，成功 → 统一拆除
-    /// （清叶 PTE + 摘 map，帧随 drop 归还）。返回是否找到并释放。
+    /// 用户堆释放：按 `(addr, size)` 精确匹配**校验**段 → 统一拆除（清叶 PTE +
+    /// 摘 map，帧交料箱）→ 结清（跨核清退到齐后才还段与帧）。返回是否找到并释放。
     pub(crate) fn deallocate(space: &Space, addr: VirtAddr, size: usize) -> bool {
-        space.with_flush(|inner| {
-            // 1. 精确匹配释放（未分配 → false）
-            if !inner.deallocate(Seg::User, addr.as_usize(), size) {
+        let mut salvage = Salvage::new();
+        let found = space.with_flush(|inner| {
+            // 1. 只读校验（未分配 → false，状态未动）
+            if !inner.holds(Seg::User, addr.as_usize(), size) {
                 return false;
             }
             // 2. 统一拆除：清叶（必须先于摘 map——clear 按 map 的
-            //    is_materialized 决定 unmap 哪些页）+ 摘 map（帧随 drop 归还）。
-            inner.unmap(addr, size);
+            //    is_materialized 决定 unmap 哪些页）+ 摘 map + 段一并入箱。
+            inner.unmap(addr, size, &mut salvage);
+            salvage.take_span(Span::new(Seg::User, addr, size, None));
             true
-        })
+        });
+        if found {
+            salvage.reclaim(space).expect("heap deallocate: evict deaf");
+        }
+        found
     }
 }

@@ -89,4 +89,12 @@ impl Segment {
             _ => false,
         }
     }
+
+    /// 只读校验：`(addr, size)` 当前是否为本段的一个已分配块。
+    ///
+    /// 存在理由：把拆除路径的失败域**前移到事务内**，使真正的 [`Self::deallocate`]
+    /// 能延后到跨核清退之后（还段 = VA 可被复用，远核旧条目会污染新映射）。
+    pub(crate) fn holds(&self, addr: usize, size: usize) -> bool {
+        matches!(self.allocated.get(&addr), Some(&len) if len == size)
+    }
 }

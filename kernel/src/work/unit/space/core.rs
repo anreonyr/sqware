@@ -34,6 +34,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
+use crate::memory::manager::evict::{self, Deaf};
 use crate::memory::manager::table::{Frame, FrameState, TableNode};
 use crate::memory::manager::{asid, flush_asid, mode};
 
@@ -64,6 +65,76 @@ impl Span {
             size: NonZeroUsize::new(size).expect("span size must be non-zero"),
             pa,
         }
+    }
+}
+
+/// 拆除产出的待回收料 —— 摘下的帧（整张 [`Map`]）与待还的段（[`Span`]）。
+///
+/// 硬不变量：**清退到齐之前不得易主**。帧归还即可被别的空间拿到、还段即 VA 可
+/// 被本空间复用，而远核此刻可能仍持旧 TLB 条目 —— 两者都必须等在
+/// [`Self::reclaim`] 里的清退之后。故 `Drop` 断言料箱已空（非空即被绕过）。
+#[must_use = "salvage holds frames/segments that must be reclaimed after eviction"]
+pub(crate) struct Salvage {
+    /// 摘下的映射（帧随其 drop 归还 frame 池 / Arc 计数归零）。
+    maps: Vec<Map>,
+    /// 待还的段区间（`release` 类拆除；`unmap` 类不还段则为空）。
+    spans: Vec<Span>,
+}
+
+impl Salvage {
+    /// 空料箱（拆除事务前构造，事务内收料）。
+    pub(crate) const fn new() -> Self {
+        Self {
+            maps: Vec::new(),
+            spans: Vec::new(),
+        }
+    }
+
+    /// 收帧（`SpaceInner::unmap` / `Map::carve` 调用）。
+    pub(super) fn take_map(&mut self, map: Map) {
+        self.maps.push(map);
+    }
+
+    /// 收段（拆除入口在校验通过后调用）。
+    pub(super) fn take_span(&mut self, span: Span) {
+        self.spans.push(span);
+    }
+
+    /// 结清：清退本空间 ASID → 还段 → 帧 drop。顺序即安全性。
+    ///
+    /// 空料箱直接返回（无易主 = 无清退义务），故装配回滚路径零成本。
+    ///
+    /// 前置：调用时**不得持 Space 锁**（本方法自行取锁还段；清退在锁外）。
+    ///
+    /// # Errors
+    ///
+    /// [`Deaf`] = 某核未在耐心内到齐（致命级，适配层裁定策略）。
+    pub(crate) fn reclaim(mut self, space: &Space) -> Result<(), Deaf> {
+        let maps = core::mem::take(&mut self.maps);
+        let spans = core::mem::take(&mut self.spans);
+        if maps.is_empty() && spans.is_empty() {
+            return Ok(());
+        }
+        evict::evict(space.asid())?;
+        space.with(|inner| {
+            for span in &spans {
+                let ok = inner.deallocate(span.seg, span.va.as_usize(), span.size.get());
+                debug_assert!(ok, "salvage: segment mismatch on reclaim {:?}", span.va);
+            }
+        });
+        drop(maps);
+        Ok(())
+    }
+}
+
+impl Drop for Salvage {
+    fn drop(&mut self) {
+        debug_assert!(
+            self.maps.is_empty() && self.spans.is_empty(),
+            "salvage dropped unreclaimed: {} maps, {} spans",
+            self.maps.len(),
+            self.spans.len()
+        );
     }
 }
 
@@ -257,9 +328,9 @@ impl SpaceInner {
     // ── 拆除 ────────────────────────────────────────────────
 
     /// 统一拆除 `[va, va+size)`：清相交已物化叶 PTE + 回收变空的中间表；
-    /// **全覆盖**的 Map 整张摘除（帧随 drop 归还）；**部分覆盖**的 Map 按洞
-    /// 分裂（洞内帧随 drop 归还）——拆不齐问题（R2）在此根除。不碰段。
-    pub(crate) fn unmap(&mut self, va: VirtAddr, size: usize) {
+    /// **全覆盖**的 Map 整张摘除、**部分覆盖**的 Map 按洞分裂——摘下的帧一律
+    /// **交料箱**（`salvage`），清退到齐后才归还（远核可能仍持旧条目）。不碰段。
+    pub(crate) fn unmap(&mut self, va: VirtAddr, size: usize, salvage: &mut Salvage) {
         if size == 0 {
             return;
         }
@@ -267,7 +338,7 @@ impl SpaceInner {
         //    必须**先于**摘 map——摘后 map 消失，clear 找不到覆盖 map，
         //    PTE 残留成悬垂（指向已归还帧，复用即错乱）。
         self.clear(va, size);
-        // 2. 摘/裂 map（帧随 drop 归还）
+        // 2. 摘/裂 map（帧交料箱）
         let end = va.as_usize().saturating_add(size);
         let mut survivors: Vec<Map> = Vec::new();
         for mut m in core::mem::take(&mut self.maps) {
@@ -280,18 +351,28 @@ impl SpaceInner {
                 continue;
             }
             if va.as_usize() <= s && end >= m_end {
-                continue; // 全覆盖：摘除（帧随 drop 归还）
+                salvage.take_map(m); // 全覆盖：整张摘除交料箱
+                continue;
             }
-            // 部分覆盖：挖洞分裂（洞内帧随 drop 归还）
+            // 部分覆盖：挖洞分裂（洞内帧由 carve 交料箱）
             let lo_pg = (lo - s) / PAGE_SIZE;
             let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
-            let right = m.carve(lo_pg, hi_pg);
+            let right = m.carve(lo_pg, hi_pg, salvage);
             survivors.push(m); // 左段（carve 收缩 self）
             if let Some(right) = right {
                 survivors.push(right);
             }
         }
         self.maps = survivors;
+    }
+
+    /// 只读校验：`(addr, size)` 是否为该段的一个已分配块（拆除路径的失败域
+    /// 前移，见 [`super::seg::Segment::holds`]）。
+    pub(crate) fn holds(&self, seg: Seg, addr: usize, size: usize) -> bool {
+        match seg {
+            Seg::User => self.user.as_ref().is_some_and(|u| u.holds(addr, size)),
+            Seg::Kernel => self.kernel.holds(addr, size),
+        }
     }
 
     /// 清 `[va, va+size)` 内的叶 PTE + 回收变空的中间表。
@@ -779,7 +860,9 @@ impl Space {
         r
     }
 
-    /// 写页表事务：同 [`with`](Self::with)，锁外按本空间 ASID 刷 TLB。
+    /// 写页表事务（新增 / 放宽 / 换帧）：同 [`with`](Self::with)，锁外按本空间
+    /// ASID 刷 TLB。**无远核义务**——远核最坏持陈旧无效条目或旧窄权限条目，
+    /// 会吃一次伪缺页，由 `fault` 的 re-walk 判 resolved + trap 两侧整表刷自愈。
     pub(crate) fn with_flush<R>(&self, op: impl FnOnce(&mut SpaceInner) -> R) -> R {
         let r = self.with(op);
         // SAFETY: sfence.vma 见 flush_asid
@@ -787,6 +870,18 @@ impl Space {
             flush_asid(self.kind.asid());
         }
         r
+    }
+
+    /// 写页表事务（**收紧**：降权 / 只读化）：同 [`with`](Self::with)，锁外
+    /// **就地跨核清退**——远核仍持旧宽权限条目 = 写不缺页 = 丢失更新。
+    ///
+    /// # Errors
+    ///
+    /// [`Deaf`] = 某核未在耐心内到齐（致命级，适配层裁定策略）。
+    pub(crate) fn with_evict<R>(&self, op: impl FnOnce(&mut SpaceInner) -> R) -> Result<R, Deaf> {
+        let r = self.with(op);
+        evict::evict(self.kind.asid())?;
+        Ok(r)
     }
 
     // ── 适配层（转发 inner 原语 + 刷）───────────────────────
@@ -823,33 +918,34 @@ impl Space {
         self.with_flush(|inner| inner.attach_map(vaddr, frames, flags))
     }
 
-    /// 统一拆除（munmap 后端 / guard 打洞）：清叶 + 摘/裂 Map + 刷 TLB。
+    /// 统一拆除（munmap 后端 / guard 打洞）：清叶 + 摘/裂 Map + 刷本核 + 结清
+    /// （清退到齐后帧才归还）。不还段——段由 [`Self::release`] 收。
     pub fn unmap(&self, vaddr: VirtAddr, size: usize) {
-        self.with_flush(|inner| inner.unmap(vaddr, size));
+        let mut salvage = Salvage::new();
+        self.with_flush(|inner| inner.unmap(vaddr, size, &mut salvage));
+        salvage.reclaim(self).expect("unmap: evict deaf");
     }
 
-    /// Span 回收门：还段 + 统一拆除 + 刷 TLB。
+    /// Span 回收门：校验段 + 统一拆除 + 刷本核 + 结清（清退到齐后**才**还段与帧
+    /// ——还段即 VA 可复用，远核旧条目会污染新映射）。
     ///
     /// `Span` 由 claim/allocate/mmap 产出（`release` 只收它——分配与回收同一
     /// 类型，杜绝 re-find）。失败域：`MapError::SegmentMismatch` = Span 与段状态
     /// 不一致（调用方 bug——绝大多数调用方用 `.expect()` 保留 panic 语义）。
     pub(crate) fn release(&self, span: Span) -> Result<(), MapError> {
+        let mut salvage = Salvage::new();
         self.with_flush(|inner| {
-            // 1. 先还段（失败即 SegmentMismatch，状态未动）
-            let seg_ok = match span.seg {
-                Seg::User => match inner.user.as_mut() {
-                    Some(u) => u.deallocate(span.va.as_usize(), span.size.get()),
-                    None => false,
-                },
-                Seg::Kernel => inner.kernel.deallocate(span.va.as_usize(), span.size.get()),
-            };
-            if !seg_ok {
+            // 1. 只读校验（失败即 SegmentMismatch，状态未动）
+            if !inner.holds(span.seg, span.va.as_usize(), span.size.get()) {
                 return Err(MapError::SegmentMismatch);
             }
-            // 2. 再统一拆除（清叶 / 摘·裂 map，帧随 drop 归还）
-            inner.unmap(span.va, span.size.get());
+            // 2. 统一拆除（清叶 / 摘·裂 map，帧交料箱）+ 段一并入箱
+            inner.unmap(span.va, span.size.get(), &mut salvage);
+            salvage.take_span(span);
             Ok(())
-        })
+        })?;
+        salvage.reclaim(self).expect("release: evict deaf");
+        Ok(())
     }
 
     /// 懒页物化（缺页处理：分配零页装叶注入 + 刷 TLB）。
@@ -857,19 +953,26 @@ impl Space {
         self.with_flush(|inner| inner.materialize_map(vaddr, size))
     }
 
-    /// 修改保护标志（mprotect 后端）。
+    /// 修改保护标志（mprotect 后端）：收紧类，就地跨核清退。
     pub fn protect(&self, vaddr: VirtAddr, size: usize, flags: PteFlags) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.protect(vaddr, size, flags))
+        self.with_evict(|inner| inner.protect(vaddr, size, flags))
+            .expect("protect: evict deaf")
     }
 
-    /// 共享只读化（COW fork 前置：Owned → Shared）。
+    /// 共享只读化（COW fork 前置：Owned → Shared）：收紧类，就地跨核清退。
     #[allow(dead_code)] // fork 后端预留
     pub fn share(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.share(start, size))
+        self.with_evict(|inner| inner.share(start, size))
+            .expect("share: evict deaf")
     }
 
     /// 写时分裂私有（COW 写缺页：Shared → 新 Owned；写缺页调用传 `PAGE_SIZE`）。
     /// 非 Shared 页静默跳过——与 [`Self::share`] 跳过非 Owned 对称。
+    ///
+    /// 抵押（fork 未接通期成立）：归"只刷本核"档的前提是 `share` 仍是 dead code
+    /// ——今天没有任何页是 Shared，本方法不可达。fork 接通后同空间多线程会出现
+    /// 「他核持旧共享帧的只读陈旧条目 → 读不到本核的写」，届时必须改走
+    /// [`Self::with_evict`]。
     #[allow(clippy::wrong_self_convention)] // Space 跨核 Arc 共享，&self 刻意为之
     pub fn own(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
         self.with_flush(|inner| inner.own(start, size))
@@ -933,9 +1036,11 @@ impl Space {
 
 impl Drop for Space {
     fn drop(&mut self) {
-        // 先释放本空间的 ASID。
+        // 先释放本空间的 ASID（内含清退：ASID 立即可被复用，残留条目会让新
+        // 空间同 VA 命中旧映射）。此路径恒走快路径——Arc 归零 ⇒ 无任务持有本
+        // 空间 ⇒ 没有任何核驻留该 ASID。
         if let SpaceKind::User { asid } = self.kind {
-            asid::deallocate(asid);
+            asid::deallocate(asid).expect("space drop: evict deaf");
         }
         // `inner` 随字段自动 drop：root（页表树）/maps 帧全部归还 frame 池。
     }
