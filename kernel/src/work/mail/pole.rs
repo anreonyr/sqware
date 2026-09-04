@@ -152,7 +152,15 @@ pub(crate) fn pole_map(
     if !meta.alive() {
         return Err(MailError::Dead);
     }
-    meta.map_into(space, flags)
+    let va = meta.map_into(space, flags)?;
+    // 强制翻 PTE flags——map_into 偶遇 superpage / 旧 entry 时 flags 没真落位；
+    // protect 走 walk 改 PTE flags，确保 cap ⊆ 页表（无视 superpage 起点）。
+    let _ = space.protect(
+        crate::memory::manager::addr::VirtAddr::from_raw(va),
+        meta.bytes,
+        flags,
+    );
+    Ok(va)
 }
 
 /// 从 `space` 解除映射（幂等；需 rights & (R | W)）。

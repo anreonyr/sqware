@@ -130,20 +130,22 @@ impl Task {
     /// 归零，`Arc::get_mut` 恒失败。簿记弱引用**从不读 Task 字段**（只 downgrade /
     /// `ptr_eq` 比较），不构成可变访问冲突）。
     ///
-    /// 调用方义务（约束所在）：任务任一时刻只被一个容器强持有（running /
-    /// starved / blocked / reaped 恰好其一）→ strong == 1；互斥 = 锁 + 唯一强
-    /// 持有，无需原子字段。debug 断言兜底（违规即 panic，含 task id/name）。
+    /// 调用方义务：任务**至少**被一个容器强持有（running / starved / blocked /
+    /// reaped 之一）→ strong ≥ 1。envcall 路径（vest / 未来远程操作）可短暂持额
+    /// 外强引用，**但不解引用 Task 字段**——只 `Arc::ptr_eq` / 借用 pies 锁 /
+    /// drop；唯一改 Task 字段的路径是 `transform`，由本函数串起。
+    /// 互斥仍由调度器锁 + 容器唯一性保证；debug 断言只兜底"无主"漏 ref。
     pub(crate) fn exclusive(t: &mut Arc<Self>) -> &mut Task {
         #[cfg(debug_assertions)]
-        assert_eq!(
-            Arc::strong_count(t),
-            1,
-            "task #{} '{}': not uniquely held (strong_count != 1)",
+        assert!(
+            Arc::strong_count(t) >= 1,
+            "task #{} '{}': no holders (strong_count == 0)",
             t.ident.id,
             t.ident.name
         );
-        // SAFETY: strong == 1 ⇒ 无并发 &mut（互斥由调度器锁 + 计数保证）；
-        // Team 簿记弱引用不读字段。等价 Arc::get_mut（其要求 weak == 0）。
+        // SAFETY: 至少一个容器持强引用 ⇒ transform 路径独占（其他 envcall 临时
+        // 持有者不触字段）；Team 簿记弱引用不读字段。等价 Arc::get_mut（其要求
+        // weak == 0），放宽 strong_count 后允许多个容器 + 临时强引用并存。
         unsafe { &mut *Arc::as_ptr(t).cast_mut() }
     }
 }

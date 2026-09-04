@@ -31,7 +31,7 @@ use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::evict;
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
-use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent};
+use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
 use crate::work::room::messenger::drain_expired;
@@ -386,8 +386,8 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             };
             crate::runtime::switcher::envcall::dispatch(frame, ident_arc)
         }
-        // 用户态缺页（解析失败即 panic）。SPP=1（内核态）缺页：guard 已在入口
-        // 特判，其余内核缺页 = 内核 bug → fatal
+        // 用户态缺页：解析成功 → 续跑；解析失败 → fault isolation 杀 task。
+        // SPP=Supervisor（内核态）缺页 = 内核 bug → 仍 panic。
         Trap::Exception(
             Exception::InstructionPageFault | Exception::LoadPageFault | Exception::StorePageFault,
         ) => {
@@ -412,13 +412,45 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             }));
             if ok {
                 putln!("user page fault resolved: {fault:?}");
-            } else {
-                panic!("unresolved page fault: {fault:?}");
+                return frame as *mut TrapContext;
             }
-            frame as *mut TrapContext
+            // 不可解析 → 杀 task（不复用 frame：reap 取下一任务的 frame PA）。
+            let tid = running.id;
+            let cause_bits = scause::read().bits();
+            let stval_bits = stval::read();
+            trace::note(EventKind::Room(RoomEvent::FaultKilled {
+                tid,
+                cause: cause_bits,
+                stval: stval_bits,
+            }));
+            putln!(
+                "user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}"
+            );
+            drop(ident);
+            return crate::work::room::scheduler::utask::reap() as *mut TrapContext;
         }
-        // 其余异常（含 S-mode envcall = 内核 bug）：fatal
+        // 异常：SPP=User → fault isolation 杀 task；SPP=Supervisor → 内核 bug → fatal。
         Trap::Exception(other) => {
+            if frame.sstatus.spp() == sstatus::SPP::User {
+                let running = ident
+                    .as_ref()
+                    .and_then(Current::live)
+                    .expect("user exception without running task");
+                let tid = running.id;
+                let cause_bits = scause::read().bits();
+                let stval_bits = stval::read();
+                trace::note(EventKind::Room(RoomEvent::FaultKilled {
+                    tid,
+                    cause: cause_bits,
+                    stval: stval_bits,
+                }));
+                putln!(
+                    "user exception killed: tid={tid} cause={:?} stval={stval_bits:#x}",
+                    other
+                );
+                drop(ident);
+                return crate::work::room::scheduler::utask::reap() as *mut TrapContext;
+            }
             panic!(
                 "unhandled kernel exception: {other:?} at sepc={:#x}, stval={:#x}",
                 sepc::read(),

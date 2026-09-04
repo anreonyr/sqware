@@ -52,6 +52,8 @@ pub enum RoomEvent {
     Wake { tid: usize },
     Exit { tid: usize },
     Reap { tid: usize },
+    /// user 异常隔离杀（page fault 不可解析 / 非法指令等）：task 死、kernel 活。
+    FaultKilled { tid: usize, cause: usize, stval: usize },
     Idle,
 }
 
@@ -269,6 +271,9 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         EventKind::Room(RoomEvent::Wake { tid }) => write!(w, "wake tid={tid}"),
         EventKind::Room(RoomEvent::Exit { tid }) => write!(w, "exit tid={tid}"),
         EventKind::Room(RoomEvent::Reap { tid }) => write!(w, "reap tid={tid}"),
+        EventKind::Room(RoomEvent::FaultKilled { tid, cause, stval }) => {
+            write!(w, "fault-killed tid={tid} cause={cause} stval={stval:#x}")
+        }
         EventKind::Room(RoomEvent::Idle) => write!(w, "idle"),
         EventKind::Env(EnvEvent::Call { call, arg }) => write!(w, "envcall #{call} arg={arg:#x}"),
         EventKind::Memory(MemoryEvent::PageFault {
