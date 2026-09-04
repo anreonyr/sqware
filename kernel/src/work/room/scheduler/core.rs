@@ -31,9 +31,10 @@
 // 借 messenger::drain_expired 处理 timer 到期；clear_loop 不归本核管。
 
 use alloc::collections::VecDeque;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use core::time::Duration;
+use hashbrown::HashMap;
 
 use riscv::register::sip;
 
@@ -94,6 +95,9 @@ pub(crate) struct Scheduler {
     /// 热点（多 hart 同时对同一目标的 L1 锁 RMW → cache line 乒乓 = 雷鸣群）。
     /// per-hart 独立，每核 fetch_add 是 Relaxed 无需同步。
     steal_cursor: AtomicUsize,
+    /// 锁外：id → Weak<Task> 索引（cross-task 寻址——envcall::Vest 找目标 Task 用）。
+    /// Weak<Task> 升级失败 = task 已死 = 自动失效，无需显式清理。
+    by_id: SpinLock<hashbrown::HashMap<usize, alloc::sync::Weak<Task>>>,
 }
 
 /// 锁内核心：running（运行中，不在队列）+ starved（就绪队列，FIFO）。
@@ -104,7 +108,7 @@ pub(super) struct SchedulerInner {
 
 impl Scheduler {
     /// 构造（boot 适配面按实际核数逐 hart 建）。
-    pub(super) const fn new(hart: usize) -> Scheduler {
+    pub(super) fn new(hart: usize) -> Scheduler {
         Scheduler {
             hart,
             inner: SpinLock::new_level(
@@ -117,6 +121,7 @@ impl Scheduler {
             info: AtomicPtr::new(core::ptr::null_mut()),
             starved_len: AtomicUsize::new(0),
             steal_cursor: AtomicUsize::new(0),
+            by_id: SpinLock::new_level(Level::L3, HashMap::new()),
         }
     }
 
@@ -142,6 +147,17 @@ impl Scheduler {
         let mut i = self.inner.lock();
         i.starved.push_back(task);
         self.set_len(&i);
+    }
+
+    /// 注册 task id → Weak<Task>（Task::spawn 末尾调用）。
+    /// Weak<Task> 升级失败 = task 死 = 自动失效，无需显式清理。
+    pub(crate) fn register_id(&self, id: usize, task: &Arc<Task>) {
+        self.by_id.lock().insert(id, Arc::downgrade(task));
+    }
+
+    /// 按 id 查 task（envcall::Vest 入口调用）。None = id 不存在 / task 已死。
+    pub(crate) fn lookup_id(&self, id: usize) -> Option<Arc<Task>> {
+        self.by_id.lock().get(&id).and_then(Weak::upgrade)
     }
 
     /// 队首出队（run / reap / park 共用）：派生计数；空队列返回 None。
@@ -377,6 +393,25 @@ pub(crate) fn rip() {
 
 pub(super) fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
+}
+
+/// 注册 task id → task 索引（Task::spawn 末尾调用）。
+/// 遍历所有 hart 的 by_id 插入——task 落在哪个 hart 都行（不绑定 hart）。
+pub(crate) fn register_task_id(id: usize, task: &Arc<Task>) {
+    for s in schedulers() {
+        s.register_id(id, task);
+    }
+}
+
+/// 按 id 查 task（envcall::Vest 入口调用）。None = id 不存在 / task 已死。
+/// 遍历所有 hart 的 by_id 找——慢路径但简单。
+pub(crate) fn lookup_task_by_id(id: usize) -> Option<Arc<Task>> {
+    for s in schedulers() {
+        if let Some(t) = s.lookup_id(id) {
+            return Some(t);
+        }
+    }
+    None
 }
 
 /// 执行核调度器（`tp → PerHart.scheduler` 直达，零索引——替代

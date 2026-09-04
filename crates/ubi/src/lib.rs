@@ -2,7 +2,9 @@
 //! U-mode → S-mode 环境调用封装（ubi），独立共享 crate。
 
 pub mod fid;
+pub mod permission;
 pub mod ucall;
 
 pub use fid::{ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall};
+pub use permission::Permission;
 pub use ucall::{UArgs, UError, UResult, UcallBuilder};

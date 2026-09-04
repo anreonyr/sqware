@@ -53,9 +53,16 @@ impl<T> SendSlot<T> {
 
 pub struct Join<T> {
     slot: *mut Completion<T>,
+    /// 子任务全局 id（spawn 时 envcall 返的，存于此供 `vest(target_task_id, ...)` 用）。
+    id: usize,
 }
 
 impl<T> Join<T> {
+    /// 子任务全局 id（用于 `pie.vest(join.id(), subset)` 派门闩给子任务）。
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
     /// 等结果并取走。等到 DONE 说明子任务已完工且**未**释放盒子（它当时看不到
     /// LEFT——本方走 join 就不会置 LEFT），故由本方释放。
     pub fn join(self) -> T {
@@ -131,13 +138,13 @@ where
     });
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
-    let _task = env_task::spawn(
+    let task_id = env_task::spawn(
         (utask_trampoline as extern "C" fn(usize) -> !) as usize,
         ptr,
         0,
     )
     .expect("task spawn failed");
-    Join { slot }
+    Join { slot, id: task_id }
 }
 
 #[unsafe(no_mangle)]
@@ -146,8 +153,10 @@ pub extern "C" fn utask_trampoline(arg: usize) -> ! {
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) tls_base, options(nomem, nostack, preserves_flags));
     }
-    let holder: Box<Box<dyn FnOnce() + Send>> =
-        unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce() + Send>) };
-    holder();
+    let holder: Box<Box<dyn FnOnce(usize) + Send>> =
+        unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce(usize) + Send>) };
+    // task 的 a0 是 holder 指针；arg 参数（user 传的）需由 closure 自行设计——本
+    // trampoline 传 0 占位（arg 信息已封进 closure captures）。
+    holder(0);
     room::exit()
 }

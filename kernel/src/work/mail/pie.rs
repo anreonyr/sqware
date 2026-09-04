@@ -3,15 +3,15 @@
 // 类型级见证：T 决定 Pie 持哪个 Meta 的 Weak（`Pie<Hole>::weak: Weak<HoleMeta>`，
 // `Pie<Pole>::weak: Weak<PoleMeta>`），编译期保证类型义务，运行时不可混淆。
 //
-// 运行时身份：每个 Pie 持 resource_id（全局 Hole/Pole id）+ rights (R|W)；alive()
-// 经 Weak::upgrade 检测 Meta 是否仍活。
+// 运行时身份：每个 Pie 持 resource_id（全局 Hole/Pole id）+ permission
+// （READ/WRITE/VEST 已用，BACK 留位）；alive() 经 Weak::upgrade 检测 Meta 是否仍活。
 //
 // 用户态用法：Task 持 `Vec<AnyPie>`，每条 AnyPie 是 `Hole(Pie<Hole>)` 或
 // `Pole(Pie<Pole>)`。envcall 入口 dispatch 通过 pie_idx 索引 Vec，按 kind 分派
-// 到 hole:: 或 pole:: 数据面。
+// 到 hole:: / pole:: / vest 数据面。
 
+use bitflags::bitflags;
 use core::marker::PhantomData;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::{Arc, Weak};
 
@@ -19,23 +19,33 @@ use super::hole::HoleMeta;
 use super::pole::PoleMeta;
 use super::resource_table::ResourceId;
 
-// ── 权利位 ──
+// ── 权限位（bitflags）──
 
-/// Read 权：观察 / 接收 / 重读。
-pub const R: u32 = 1 << 0;
-/// Write 权：修改 / 投递 / 写入。
-pub const W: u32 = 1 << 1;
-/// Grant 权（预留，v1 不实现）。
-pub const G: u32 = 1 << 2;
-/// GrantReply 权（预留，v1 不实现）。
-pub const GR: u32 = 1 << 3;
+bitflags! {
+    /// 门闩权限位掩码。
+    ///
+    /// v1.1：`READ | WRITE | VEST` 已实现（创建者天然能 Vest）；`BACK` 留位未实现。
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct Permission: u32 {
+        /// Read 权：观察 / 接收 / 重读。
+        const READ  = 1 << 0;
+        /// Write 权：修改 / 投递 / 写入。
+        const WRITE = 1 << 1;
+        /// Vest 权：把 pie 复制给其他 Task（自身 permission 不变）。
+        const VEST  = 1 << 2;
+        /// Back 权（预留，v1.1 不实现）：只能 Vest 回 grantor。
+        const BACK  = 1 << 3;
+    }
+}
 
 /// Hole 单消息字节数（内核邮路槽字大小；栈拷贝，无动态分配）。
 pub const HOLE_MSG_LEN: usize = 64;
 
 /// Hole marker——零大小，编译期区分 Hole 类 pie。
+#[derive(Clone, Copy)]
 pub struct Hole;
 /// Pole marker——零大小，编译期区分 Pole 类 pie。
+#[derive(Clone, Copy)]
 pub struct Pole;
 
 /// 资源种类（运行时 tag）。
@@ -63,12 +73,24 @@ impl ResourceKind for Pole {
 
 // ── Pie<T> ──
 
-/// 单个门闩：`resource` 指向门洞、`rights` 控授权、`weak` 检存活。
+/// 单个门闩：`resource` 指向门洞、`permission` 控授权、`weak` 检存活。
 pub struct Pie<T: ResourceKind> {
     pub(crate) resource: ResourceId,
-    pub(crate) rights: u32,
+    pub(crate) permission: Permission,
     pub(crate) weak: Weak<T::Meta>,
     _t: PhantomData<T>,
+}
+
+// 手动 impl Clone：避免 derive 加上 T::Meta: Clone 约束（Meta 含 SpinLock 不能 Clone）。
+impl<T: ResourceKind> Clone for Pie<T> {
+    fn clone(&self) -> Self {
+        Self {
+            resource: self.resource,
+            permission: self.permission,
+            weak: self.weak.clone(),
+            _t: PhantomData,
+        }
+    }
 }
 
 impl<T: ResourceKind> Pie<T> {
@@ -76,8 +98,8 @@ impl<T: ResourceKind> Pie<T> {
         self.resource
     }
 
-    pub fn rights(&self) -> u32 {
-        self.rights
+    pub fn permission(&self) -> Permission {
+        self.permission
     }
 
     /// L1 存活：`Weak::upgrade` 成功 = Meta 仍活。
@@ -89,6 +111,7 @@ impl<T: ResourceKind> Pie<T> {
 // ── AnyPie ──
 
 /// `Vec<AnyPie>` 元素：variant 即 T 标签，运行时 kind 由 variant 决定。
+#[derive(Clone)]
 pub enum AnyPie {
     Hole(Pie<Hole>),
     Pole(Pie<Pole>),
@@ -109,10 +132,10 @@ impl AnyPie {
         }
     }
 
-    pub fn rights(&self) -> u32 {
+    pub fn permission(&self) -> Permission {
         match self {
-            AnyPie::Hole(p) => p.rights,
-            AnyPie::Pole(p) => p.rights,
+            AnyPie::Hole(p) => p.permission,
+            AnyPie::Pole(p) => p.permission,
         }
     }
 
@@ -124,21 +147,15 @@ impl AnyPie {
     }
 }
 
-/// 全局 pie_idx 分配器（每个 Task 内独立计数；envcall 返给用户）。
-pub(crate) fn next_pie_idx() -> usize {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
-
 /// 测试 / 内部用：从 Arc 派生 Weak 包装 Pie。
 pub(super) fn new_pie<T: ResourceKind>(
     resource: ResourceId,
-    rights: u32,
+    permission: Permission,
     weak: Weak<T::Meta>,
 ) -> Pie<T> {
     Pie {
         resource,
-        rights,
+        permission,
         weak,
         _t: PhantomData,
     }
@@ -147,10 +164,10 @@ pub(super) fn new_pie<T: ResourceKind>(
 /// 测试 / 内部用：从 Arc 直接派生 Pie。
 pub(super) fn pie_from_arc<T: ResourceKind>(
     resource: ResourceId,
-    rights: u32,
+    permission: Permission,
     arc: &Arc<T::Meta>,
 ) -> Pie<T> {
-    new_pie(resource, rights, Arc::downgrade(arc))
+    new_pie(resource, permission, Arc::downgrade(arc))
 }
 
 // ── MailError ──

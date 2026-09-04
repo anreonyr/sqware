@@ -15,8 +15,9 @@ pub mod hole;
 pub mod pie;
 pub mod pole;
 pub mod resource_table;
+pub mod vest;
 
-pub use pie::{AnyPie, Hole, MailError, Pie, PieKind, Pole, R, W, GR, G, HOLE_MSG_LEN};
+pub use pie::{AnyPie, Hole, MailError, Permission, Pie, PieKind, Pole, HOLE_MSG_LEN};
 pub use resource_table::ResourceId;
 
 use pie::ResourceKind;

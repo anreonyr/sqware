@@ -20,7 +20,7 @@ use crate::memory::manager::addr::PhysAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::{Seg, Space, Span};
 
-use super::pie::{MailError, R, W};
+use super::pie::{MailError, Permission};
 use super::resource_table::{self, ResourceId};
 
 /// Pole 状态。
@@ -180,11 +180,11 @@ pub(crate) fn pole_create(space: &Arc<Space>, bytes: usize) -> Result<usize, Mai
 
     let pie = super::pie::new_pie::<super::pie::Pole>(
         id,
-        R | W,
+        Permission::READ | Permission::WRITE | Permission::VEST,
         alloc::sync::Arc::downgrade(&arc),
     );
-    let idx = super::pie::next_pie_idx();
-    task.pies.lock().push(super::pie::AnyPie::Pole(pie));
+    let mut pies = task.pies.lock();
+    pies.push(super::pie::AnyPie::Pole(pie));
     let _ = space; // suppress unused; auto-map 用 task.ident.team.space
-    Ok(idx)
+    Ok(pies.len() - 1)
 }

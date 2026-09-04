@@ -101,6 +101,9 @@ pub enum MailCall {
     Unmap = 5,
     /// 终止资源（generic on Hole/Pole）：a0 = pie_idx。
     Shut = 6,
+    /// 派门闩（Vest）：a0 = src_pie_idx, a1 = target_task_id, a2 = subset bits →
+    /// a0 = 新 pie 在 target.pies 的索引。
+    Vest = 7,
 }
 
 /// 控制调用（class 6）。
@@ -185,7 +188,7 @@ index_from! {
     ChronoCall { Ticks = 0, Clock = 1 }
     MailCall {
         OpenHole = 0, OpenPole = 1, Push = 2, Pull = 3,
-        Map = 4, Unmap = 5, Shut = 6
+        Map = 4, Unmap = 5, Shut = 6, Vest = 7
     }
     ControlCall { Panic = 0 }
 }

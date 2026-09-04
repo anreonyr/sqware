@@ -22,7 +22,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
-use crate::work::mail::{HOLE_MSG_LEN, MailError, Pie, PieKind, R, W};
+use crate::work::mail::{HOLE_MSG_LEN, MailError, Permission, Pie, PieKind};
 use crate::work::room::messenger::WaitKey;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
@@ -231,7 +231,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.get(idx)?;
                 if pie.kind() != PieKind::Hole { return None; }
-                if pie.rights() & W == 0 { return Some(Err(MailError::Denied)); }
+                if !pie.permission().contains(Permission::WRITE) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
                 let arc = match pie {
                     mail::AnyPie::Hole(p) => p.weak.upgrade(),
@@ -266,7 +266,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.get(idx)?;
                 if pie.kind() != PieKind::Hole { return None; }
-                if pie.rights() & R == 0 { return Some(Err(MailError::Denied)); }
+                if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
                 let arc = match pie {
                     mail::AnyPie::Hole(p) => p.weak.upgrade(),
@@ -302,7 +302,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.get(idx)?;
                 if pie.kind() != PieKind::Pole { return None; }
-                if pie.rights() & (R | W) == 0 { return Some(Err(MailError::Denied)); }
+                if !pie.permission().contains(Permission::READ | Permission::WRITE) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
                 let arc = match pie {
                     mail::AnyPie::Pole(p) => p.weak.upgrade(),
@@ -329,7 +329,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.get(idx)?;
                 if pie.kind() != PieKind::Pole { return None; }
-                if pie.rights() & (R | W) == 0 { return Some(Err(MailError::Denied)); }
+                if !pie.permission().contains(Permission::READ | Permission::WRITE) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
                 let arc = match pie {
                     mail::AnyPie::Pole(p) => p.weak.upgrade(),
@@ -357,7 +357,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 .and_then(|t| {
                     let pies = t.pies.lock();
                     let pie = pies.get(idx)?;
-                    if pie.rights() == 0 { return Some(Err(MailError::Denied)); }
+                    if pie.permission().is_empty() { return Some(Err(MailError::Denied)); }
                     if !pie.alive() { return Some(Err(MailError::Dead)); }
                     Some(Ok((pie.kind(), pie.resource())))
                 })
@@ -372,9 +372,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             };
             let r = match kind {
                 PieKind::Hole => {
-                    if let Some(meta) =
-                        mail::resource_table::lookup_hole(resource).and_then(|w| w.upgrade())
-                    {
+                    if let Some(meta) = mail::resource_table::lookup_hole(resource) {
                         mail::hole::hole_shut(&meta, resource);
                         Ok(())
                     } else {
@@ -382,9 +380,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     }
                 }
                 PieKind::Pole => {
-                    if let Some(meta) =
-                        mail::resource_table::lookup_pole(resource).and_then(|w| w.upgrade())
-                    {
+                    if let Some(meta) = mail::resource_table::lookup_pole(resource) {
                         mail::pole::pole_shut(&meta, resource);
                         Ok(())
                     } else {
@@ -396,6 +392,52 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Gprs::A0,
                 match r {
                     Ok(()) => 0,
+                    Err(e) => e.code() as usize,
+                },
+            );
+        }
+        Ucall::Mail(MailCall::Vest) => {
+            // a0 = src_pie_idx, a1 = target_task_id, a2 = subset bits。
+            let src_idx = frame.gpr.x(Gprs::A0);
+            let target_id = frame.gpr.x(Gprs::A1);
+            let subset_bits = frame.gpr.x(Gprs::A2) as u32;
+
+            let src_task = current().running_task();
+            // 1. 取 src pie + 鉴权（VEST 权、subset 合法、alive）
+            let src = match src_task.and_then(|t| t.pies.lock().get(src_idx).cloned()) {
+                Some(p) => p,
+                None => {
+                    frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
+                    return frame as *mut TrapContext;
+                }
+            };
+            if !src.alive() {
+                frame.gpr.set_x(Gprs::A0, MailError::Dead.code() as usize);
+                return frame as *mut TrapContext;
+            }
+            if !src.permission().contains(Permission::VEST) {
+                frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
+                return frame as *mut TrapContext;
+            }
+            let subset = Permission::from_bits_truncate(subset_bits);
+            if subset.is_empty() || (subset & src.permission()) != subset {
+                frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
+                return frame as *mut TrapContext;
+            }
+            // 2. 查 target task
+            let target = match crate::work::room::scheduler::core::lookup_task_by_id(target_id) {
+                Some(t) => t,
+                None => {
+                    frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
+                    return frame as *mut TrapContext;
+                }
+            };
+            // 3. 调 vest 数据面原语
+            let r = mail::vest::vest(&src, &target, subset);
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(idx) => idx,
                     Err(e) => e.code() as usize,
                 },
             );

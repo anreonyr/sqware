@@ -14,7 +14,7 @@ use core::sync::atomic::Ordering;
 
 use crate::lock::{Level, SpinLock};
 
-use super::pie::{HOLE_MSG_LEN, MailError, R, W};
+use super::pie::{HOLE_MSG_LEN, MailError, Permission};
 use super::resource_table::{self, ResourceId};
 
 /// Hole 状态。
@@ -99,16 +99,16 @@ pub(crate) fn hole_create() -> Result<usize, MailError> {
 
     let pie = super::pie::new_pie::<super::pie::Hole>(
         id,
-        R | W,
+        Permission::READ | Permission::WRITE | Permission::VEST,
         alloc::sync::Arc::downgrade(&arc),
     );
 
     let task = current()
         .running_task()
         .ok_or(MailError::Denied)?;
-    let idx = super::pie::next_pie_idx();
-    task.pies.lock().push(super::pie::AnyPie::Hole(pie));
-    Ok(idx)
+    let mut pies = task.pies.lock();
+    pies.push(super::pie::AnyPie::Hole(pie));
+    Ok(pies.len() - 1)
 }
 
 #[allow(dead_code)]

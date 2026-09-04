@@ -321,6 +321,7 @@ impl TaskBuilder {
             ));
             Arc::from_raw(ptr)
         };
+        scheduler::core::register_task_id(id, &task);
         scheduler::task::push(task);
         Ok(id)
     }
