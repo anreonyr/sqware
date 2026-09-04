@@ -5,7 +5,7 @@
 //   · boot 切换（Bump → Hybrid）发生在单核期，store 天然安全；
 //   · 崩溃切换（→ Spare）发生在报警核，原子 store 无锁。
 
-use core::alloc::{AllocError, Allocator, GlobalAllocator, Layout};
+use core::alloc::{AllocError, Allocator, GlobalAllocator, Layout, StaticAllocator};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -35,6 +35,8 @@ fn backend() -> Option<&'static dyn Allocator> {
 pub struct PortalAllocator;
 
 unsafe impl Sync for PortalAllocator {}
+
+unsafe impl StaticAllocator for PortalAllocator {}
 
 unsafe impl GlobalAllocator for PortalAllocator {}
 

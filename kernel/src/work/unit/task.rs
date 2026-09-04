@@ -15,9 +15,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::switcher::context::TrapContext;
-use crate::work::mail::dock::Dock;
-use crate::work::mail::port::Port;
-use crate::work::mail::ring::Ring;
+use crate::work::mail::AnyPie;
 use crate::work::unit::space::SpaceKind;
 use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
@@ -51,17 +49,6 @@ pub enum BlockReason {
     Wait { wake_at: Option<u64> },
 }
 
-/// 任务持有的 mail 接入点集合（dock / ring / port 句柄集中点）。
-///
-/// Task::drop 触发 MailHolds::drop → 每个 `Dock` / `Ring` 字段析构 → 各自 Drop
-/// 跑 `clear_quay` / `dec_pier` / `dead`（共享区帧 / 视图由此透传归还）。这是
-/// mail 的**唯一正常释放路径**。
-pub(crate) struct MailHolds {
-    pub(crate) docks: Vec<Dock>,
-    pub(crate) rings: Vec<Ring>,
-    pub(crate) ports: Vec<Port>,
-}
-
 /// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
 ///
 /// 栈 / 帧全部归 Team.space 的映射簿记，Task 只持不可变身份（TaskIdent，含
@@ -73,9 +60,10 @@ pub struct Task {
     /// 状态（含载荷）。唯一可变字段：只有经 [`Task::exclusive`] 的 &mut 能改（唯一
     /// 强持有语义见 exclusive）。
     pub(crate) state: TaskState,
-    /// mail 接入点集合（dock / ring / port 强 Arc 集中点）。envcall 适配 push，
-    /// Task::drop 时透传释放。锁级 = L3（与 messenger 簿记同级，绝不嵌套）。
-    pub(crate) mail: SpinLock<MailHolds>,
+    /// mail 门闩集合（每个门闩持 Arc<Meta>）。envcall 适配 push/pull，
+    /// Task::drop 时 Arc 递减——最后 Arc drop 时 Meta 自然析构。锁级 = L3
+    ///（与 messenger 簿记同级，绝不嵌套）。
+    pub(crate) pies: SpinLock<Vec<AnyPie>>,
 }
 
 /// 不可变身份：spawn 时定型；任何人自由 clone，无需任何锁。
@@ -327,11 +315,7 @@ impl TaskBuilder {
                 Task {
                     ident,
                     state: TaskState::Starved,
-                    mail: SpinLock::new(MailHolds {
-                        docks: Vec::new(),
-                        rings: Vec::new(),
-                        ports: Vec::new(),
-                    }),
+                    pies: SpinLock::new(Vec::new()),
                 },
                 alloc,
             ));

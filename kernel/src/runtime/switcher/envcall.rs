@@ -21,18 +21,14 @@ use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::mail::dock;
-use crate::work::mail::port::{self, MSG_LEN, PortError};
-use crate::work::mail::ring;
-use crate::work::mail::{copy_in, copy_out};
+use crate::work::mail;
+use crate::work::mail::{HOLE_MSG_LEN, MailError, Pie, PieKind, R, W};
 use crate::work::room::messenger::WaitKey;
+use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState};
 use crate::work::unit::task::TaskIdent;
-
-use ubi::dock::DOCK_KEY_TAG;
-use ubi::ring::RING_KEY_TAG;
 
 /// envcall 分发。
 ///
@@ -41,7 +37,7 @@ use ubi::ring::RING_KEY_TAG;
 /// 时身份 Arc 仍持最后任务 team → space 不 drop，关机审计误报帧泄漏）。
 /// 返回待恢复帧：Starve/Park 返回下一任务帧，Reap 返回后调用方不得再触碰 frame。
 pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapContext {
-    let number = frame.gpr.x(Gprs::A7); // a7 = 调用号
+    let number = frame.gpr.x(Gprs::A7);
     let call =
         Ucall::try_from(number).unwrap_or_else(|_| panic!("invalid envcall number: {number}"));
     trace::note(EventKind::Env(EnvEvent::Call {
@@ -60,8 +56,6 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }
         }
         Ucall::IO(IOCall::Get) => {
-            // 非阻塞读一字节（console::pull）：有输入 → a0 = 字节；无输入 → -2
-            // （Busy，用户侧 try_get 转 None）。
             frame.gpr.set_x(
                 Gprs::A0,
                 match crate::console::pull() {
@@ -71,52 +65,33 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         Ucall::Room(RoomCall::Reap) => {
-            drop(ident); // run（可能 halt）前释放身份——halt 时最后任务 space 得以下落
+            drop(ident);
             return reap() as *mut TrapContext;
         }
         Ucall::Chrono(ChronoCall::Ticks) => {
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);
         }
         Ucall::Room(RoomCall::Park) => {
-            // sepc 前进（唤醒恢复时从 ecall 之后继续）。
-            // a0 = 毫秒（Duration 边界；换算按 timebase 进行）
-            drop(ident); // run（可能 halt）前释放身份
+            drop(ident);
             return park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext;
         }
         Ucall::Room(RoomCall::Wait) => {
-            // a0 = key（用户空间事件地址 或 dock/ring 键带标记位），a1 = 毫秒
-            // （usize::MAX = 永久）。
-            // key 合成：dock 键（DOCK_KEY_TAG）/ ring 键（RING_KEY_TAG）→ 本体
-            // 不经 compose（跨 team asid 不同，经 compose 必失配；id 全局唯一即
-            // 防撞）；否则合成空间身份（asid 高 16 位 || va 低 48 位）——跨空间
-            // 同 VA 不得混淆（与 fence::key 同源意；单射要求 va < 2^48）。
             let raw = frame.gpr.x(Gprs::A0);
-            let key = if raw & (DOCK_KEY_TAG | RING_KEY_TAG) != 0 {
-                WaitKey::from_raw(raw)
-            } else {
-                WaitKey::compose(ident.team.space.asid(), raw)
-            };
+            let key = WaitKey::compose(ident.team.space.asid(), raw);
             let ms = frame.gpr.x(Gprs::A1);
             let dur = if ms == usize::MAX {
                 Duration::MAX
             } else {
                 Duration::from_millis(ms as u64)
             };
-            drop(ident); // run（可能 halt）前释放身份
-            // 切走 → 直接返回目标帧；续跑（pend 命中）→ 落到统一出口返回本帧
-            // （与 Wake 等「不切走」分支同一条出路）。
+            drop(ident);
             if let Some(pa) = wait(key, dur) {
                 return pa as *mut TrapContext;
             }
         }
         Ucall::Room(RoomCall::Wake) => {
-            // a0 = key（与 Wait 同源合成：dock/ring 键带标记 / 地址键 compose）。
             let raw = frame.gpr.x(Gprs::A0);
-            let key = if raw & (DOCK_KEY_TAG | RING_KEY_TAG) != 0 {
-                WaitKey::from_raw(raw)
-            } else {
-                WaitKey::compose(ident.team.space.asid(), raw)
-            };
+            let key = WaitKey::compose(ident.team.space.asid(), raw);
             let woke = wake(key);
             frame.gpr.set_x(Gprs::A0, woke as usize);
         }
@@ -126,15 +101,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame.gpr.set_x(Gprs::A1, up.subsec_nanos() as usize);
         }
         Ucall::Memory(MemoryCall::Allocate) => {
-            // a0 = 字节数（页对齐向上取整——分配需页对齐）。
-            // 直取当前任务空间（ident 无锁；锁序仅 L2→L5，不再经调度锁）；
-            // 堆分配即时物化帧 → with_flush（PTE 变更后刷本空间 TLB）。
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
             let addr = {
                 let s = &ident.team.space;
                 let r = HeapWindow::allocate(s, size).map(|span| span.va);
-                // 护栏事件：用户堆活块入账（alloc-site；用户侧清零语义）。
-                // 类别 = Task：用户堆记录属任务生命周期——关机 TASK_BLOCKS 归零。
                 if let Ok(va) = r {
                     let key = crate::memory::allocator::fence::key(s.asid(), va.as_usize());
                     crate::memory::allocator::fence::on_alloc(
@@ -142,8 +112,6 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                         size,
                         crate::memory::allocator::fence::OwnerKind::UserHeap,
                     );
-                    // 类别 = Task：用户堆记录属任务生命周期——关机 TASK_BLOCKS
-                    // 归零（mark 默认 Persistent，此处标注迁移）。
                     #[cfg(feature = "audit")]
                     crate::memory::allocator::fence::tag(
                         key,
@@ -156,18 +124,16 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Gprs::A0,
                 match addr {
                     Ok(va) => va.as_usize(),
-                    Err(_) => usize::MAX, // 负错误码（D1）：用户侧 (a0 as isize) < 0 判为 Err
+                    Err(_) => usize::MAX,
                 },
             );
         }
         Ucall::Memory(MemoryCall::Deallocate) => {
-            // a0 = 分配所得 VA，a1 = 字节数（与分配时同源页对齐；区间精确匹配）。
             let addr = frame.gpr.x(Gprs::A0);
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let ok = {
                 let s = &ident.team.space;
                 let freed = HeapWindow::deallocate(s, VirtAddr::from_raw(addr), size);
-                // 护栏事件：用户堆活块注销（无账 = 悬垂/双释放现行；键与分配相同）。
                 if freed {
                     crate::memory::allocator::fence::on_free(
                         crate::memory::allocator::fence::key(s.asid(), addr),
@@ -180,8 +146,6 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Task(TaskCall::Spawn) => {
-            // a0 = 入口 VA（用户 trampoline），a1 = arg（闭包指针），a2 = 栈大小
-            // （0 = 缺省 TASK_STACK_SIZE）。当前 team 内建 U 任务。
             let entry = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let arg = frame.gpr.x(Gprs::A1);
             let stack = frame.gpr.x(Gprs::A2);
@@ -194,24 +158,20 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(id) => id, // 任务号（全局唯一句柄；供用户记认）
+                    Ok(id) => id,
                     Err(_) => usize::MAX,
                 },
             );
         }
         Ucall::Control(ControlCall::Panic) => {
-            // 用户主动 panic：a0 = 呼叫人指定的关联码。
             panic!("user-initiated panic (code {:#x})", frame.gpr.x(Gprs::A0));
         }
         Ucall::Memory(MemoryCall::Mmap) => {
-            // a0 = 字节数（页对齐）；a2 = 期望 VA，0 = 窗口自选高位。a2 ≠ 0 走
-            // 声明式固定地址懒映射。
             let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
             let fixed = frame.gpr.x(Gprs::A2);
             let va = {
                 let s = &ident.team.space;
                 if fixed == 0 {
-                    // 懒映射（不改页表 → ShareWindow::mmap 内部 with）
                     ShareWindow::mmap(s, size).map(|span| span.va)
                 } else {
                     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
@@ -223,13 +183,11 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Gprs::A0,
                 match va {
                     Ok(va) => va.as_usize(),
-                    Err(_) => usize::MAX, // D1：负值错误码
+                    Err(_) => usize::MAX,
                 },
             );
         }
         Ucall::Memory(MemoryCall::Munmap) => {
-            // a0 = 映射 VA，a1 = 字节数（与 mmap 同源页对齐）。窗口区域精确匹配，
-            // 固定地址声明区回退整段摘除；未命中返回错误。
             let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let ok = {
@@ -237,8 +195,6 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 if ShareWindow::munmap(s, addr, size) {
                     true
                 } else if s.pending_state(addr) != PendingState::Absent {
-                    // 声明区（或窗口子区间的近似覆盖）：统一拆除（清叶+摘/裂
-                    // map）；窗口槽不归还。
                     s.unmap(addr, size);
                     true
                 } else {
@@ -248,141 +204,201 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         Ucall::Memory(MemoryCall::Mprotect) => {
-            // a0 = 映射 VA，a1 = 字节数（页对齐），a2 = 新权限（PteFlags 位）。
-            // 懒区感知：已触页当场翻叶子 PTE，未触页仅同步簿记（Map.flags）。
             let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
             let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
             let flags = PteFlags::from_bits_truncate(frame.gpr.x(Gprs::A2) as u64);
             let ok = ident.team.space.protect(addr, size, flags).is_ok();
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        Ucall::Mail(MailCall::PortOpen) => {
-            // 建 port（内核邮路）：a0 = 句柄，a1 = 条件键（用户侧 wait/wake 用）。
-            let (handle, key) = port::open();
-            frame.gpr.set_x(Gprs::A0, handle);
-            frame.gpr.set_x(Gprs::A1, key);
-        }
-        Ucall::Mail(MailCall::PortShut) => {
-            // 终止 port：置 Dead（对端 push/pull 感知断开）。a0 = 句柄。
-            let ok = port::shut(frame.gpr.x(Gprs::A0));
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
-        }
-        Ucall::Mail(MailCall::PortPush) => {
-            // a0 = 句柄，a1 = 消息 VA（定长 [MSG_LEN] 字节拷贝进内核槽）。
-            // 返回：0 = 存入；负码 -2 = 槽满（Busy，调用方 wait 后重试）；-1 = Dead。
-            let handle = frame.gpr.x(Gprs::A0);
-            let va = frame.gpr.x(Gprs::A1);
-            let mut msg = [0u8; MSG_LEN];
-            if !copy_in(&ident.team.space, &mut msg, va) {
-                frame.gpr.set_x(Gprs::A0, usize::MAX); // 缓冲不可读（D1 负值）
-            } else {
-                frame.gpr.set_x(
-                    Gprs::A0,
-                    match port::try_push(handle, &msg) {
-                        Ok(()) => 0,
-                        Err(PortError::Busy) => -2isize as usize,
-                        Err(PortError::Dead) => -1isize as usize,
-                    },
-                );
+        Ucall::Mail(MailCall::OpenHole) => {
+            match mail::hole::hole_create() {
+                Ok(idx) => frame.gpr.set_x(Gprs::A0, idx),
+                Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
-        Ucall::Mail(MailCall::PortPull) => {
-            // a0 = 句柄，a1 = 缓冲 VA（槽内消息拷贝出内核）。
-            // 返回：0 = 取出；-2 = 槽空（Busy，wait 后重试）；-1 = Dead。
-            let handle = frame.gpr.x(Gprs::A0);
+        Ucall::Mail(MailCall::OpenPole) => {
+            let bytes = frame.gpr.x(Gprs::A0);
+            match mail::pole::pole_create(&ident.team.space, bytes) {
+                Ok(idx) => frame.gpr.set_x(Gprs::A0, idx),
+                Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+            }
+        }
+        Ucall::Mail(MailCall::Push) => {
+            let idx = frame.gpr.x(Gprs::A0);
             let va = frame.gpr.x(Gprs::A1);
-            match port::try_pull(handle) {
-                Ok(msg) => {
-                    if copy_out(&ident.team.space, &msg, va) {
-                        frame.gpr.set_x(Gprs::A0, 0);
+            let task = current().running_task();
+            let r = match task.and_then(|t| {
+                let pies = t.pies.lock();
+                let pie = pies.get(idx)?;
+                if pie.kind() != PieKind::Hole { return None; }
+                if pie.rights() & W == 0 { return Some(Err(MailError::Denied)); }
+                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                let arc = match pie {
+                    mail::AnyPie::Hole(p) => p.weak.upgrade(),
+                    _ => return None,
+                };
+                arc.map(|a| Ok(a))
+            }) {
+                Some(Ok(meta)) => {
+                    let mut msg = [0u8; HOLE_MSG_LEN];
+                    if !mail::copy_in(&ident.team.space, &mut msg, va) {
+                        Err(MailError::Denied)
                     } else {
-                        frame.gpr.set_x(Gprs::A0, usize::MAX); // 缓冲不可写
+                        mail::hole::hole_push(&meta, &msg)
                     }
                 }
-                Err(PortError::Busy) => frame.gpr.set_x(Gprs::A0, -2isize as usize),
-                Err(PortError::Dead) => frame.gpr.set_x(Gprs::A0, -1isize as usize),
-            }
-        }
-        Ucall::Mail(MailCall::PortJoin) => {
-            // a0 = 句柄 → a0 = 条件键（同一 inner Arc 入本方 mail，Arc 保活）。
-            // 返回：键；-1 = Dead（原句柄已死 / 注册表查不到）。
-            let handle = frame.gpr.x(Gprs::A0);
-            match port::join(handle) {
-                Ok(key) => frame.gpr.set_x(Gprs::A0, key),
-                Err(PortError::Dead) => frame.gpr.set_x(Gprs::A0, -1isize as usize),
-                Err(PortError::Busy) => frame.gpr.set_x(Gprs::A0, -2isize as usize),
-            }
-        }
-        Ucall::Mail(MailCall::DockOpen) => {
-            // a0 = item_len，a1 = slots（2 的幂）→ a0 = dock id，a1 = 视图基址。
-            let item_len = frame.gpr.x(Gprs::A0);
-            let slots = frame.gpr.x(Gprs::A1);
-            let r = dock::open(&ident.team.space, item_len, slots);
-            match r {
-                Ok((id, view)) => {
-                    frame.gpr.set_x(Gprs::A0, id);
-                    frame.gpr.set_x(Gprs::A1, view);
-                }
-                Err(_) => frame.gpr.set_x(Gprs::A0, usize::MAX),
-            }
-        }
-        Ucall::Mail(MailCall::DockJoin) => {
-            // a0 = dock id，a1 = side（0 = Pier / 1 = Quay）→ a0 = 本地视图基址。
-            let id = frame.gpr.x(Gprs::A0);
-            let side = frame.gpr.x(Gprs::A1);
-            let r = dock::join(&ident.team.space, id, side);
+                Some(Err(e)) => Err(e),
+                None => Err(MailError::Denied),
+            };
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(view) => view,
+                    Ok(()) => 0,
                     Err(e) => e.code() as usize,
                 },
             );
         }
-        Ucall::Mail(MailCall::DockShut) => {
-            // a0 = dock id → 0 或负码。
-            let ok = dock::shut(frame.gpr.x(Gprs::A0));
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
-        }
-        Ucall::Mail(MailCall::DockClone) => {
-            // pier 操作已删除（Gate 5：多生产者走多次 join）——返负码提示。
-            frame.gpr.set_x(Gprs::A0, -1isize as usize);
-        }
-        Ucall::Mail(MailCall::DockDrop) => {
-            // Gate 5：端释放走 dock::shut(id)（Bundle 是创建者双端的原子单位）；
-            // 单端释放对 Bundle 而言 = 整体释放。原始 DockDrop(id, side) 语义
-            // 现在通过 DockShut(id) 实现——保留此 envcall 入口返负码以兼容旧用户态。
-            frame.gpr.set_x(Gprs::A0, -1isize as usize);
-        }
-        Ucall::Mail(MailCall::RingOpen) => {
-            // a0 = item_len，a1 = slots（2 的幂）→ a0 = ring id，a1 = 视图基址。
-            let item_len = frame.gpr.x(Gprs::A0);
-            let slots = frame.gpr.x(Gprs::A1);
-            let r = ring::open(&ident.team.space, item_len, slots);
-            match r {
-                Ok((id, view)) => {
-                    frame.gpr.set_x(Gprs::A0, id);
-                    frame.gpr.set_x(Gprs::A1, view);
+        Ucall::Mail(MailCall::Pull) => {
+            let idx = frame.gpr.x(Gprs::A0);
+            let va = frame.gpr.x(Gprs::A1);
+            let task = current().running_task();
+            let r = match task.and_then(|t| {
+                let pies = t.pies.lock();
+                let pie = pies.get(idx)?;
+                if pie.kind() != PieKind::Hole { return None; }
+                if pie.rights() & R == 0 { return Some(Err(MailError::Denied)); }
+                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                let arc = match pie {
+                    mail::AnyPie::Hole(p) => p.weak.upgrade(),
+                    _ => return None,
+                };
+                arc.map(|a| Ok(a))
+            }) {
+                Some(Ok(meta)) => match mail::hole::hole_pull(&meta) {
+                    Ok(m) => {
+                        if !mail::copy_out(&ident.team.space, &m, va) {
+                            Err(MailError::Denied)
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    Err(e) => Err(e),
                 }
-                Err(_) => frame.gpr.set_x(Gprs::A0, usize::MAX),
-            }
-        }
-        Ucall::Mail(MailCall::RingJoin) => {
-            // a0 = ring id → a0 = 本地视图基址。
-            let id = frame.gpr.x(Gprs::A0);
-            let r = ring::join(&ident.team.space, id);
+                Some(Err(e)) => Err(e),
+                None => Err(MailError::Denied),
+            };
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(view) => view,
+                    Ok(()) => 0,
                     Err(e) => e.code() as usize,
                 },
             );
         }
-        Ucall::Mail(MailCall::RingClose) => {
-            // a0 = ring id → 0 或负码。
-            let ok = ring::shut(frame.gpr.x(Gprs::A0));
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+        Ucall::Mail(MailCall::Map) => {
+            let idx = frame.gpr.x(Gprs::A0);
+            let task = current().running_task();
+            let r = match task.and_then(|t| {
+                let pies = t.pies.lock();
+                let pie = pies.get(idx)?;
+                if pie.kind() != PieKind::Pole { return None; }
+                if pie.rights() & (R | W) == 0 { return Some(Err(MailError::Denied)); }
+                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                let arc = match pie {
+                    mail::AnyPie::Pole(p) => p.weak.upgrade(),
+                    _ => return None,
+                };
+                arc.map(|a| Ok(a))
+            }) {
+                Some(Ok(meta)) => mail::pole::pole_map(&meta, &ident.team.space),
+                Some(Err(e)) => Err(e),
+                None => Err(MailError::Denied),
+            };
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(v) => v,
+                    Err(e) => e.code() as usize,
+                },
+            );
+        }
+        Ucall::Mail(MailCall::Unmap) => {
+            let idx = frame.gpr.x(Gprs::A0);
+            let task = current().running_task();
+            let r = match task.and_then(|t| {
+                let pies = t.pies.lock();
+                let pie = pies.get(idx)?;
+                if pie.kind() != PieKind::Pole { return None; }
+                if pie.rights() & (R | W) == 0 { return Some(Err(MailError::Denied)); }
+                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                let arc = match pie {
+                    mail::AnyPie::Pole(p) => p.weak.upgrade(),
+                    _ => return None,
+                };
+                arc.map(|a| Ok(a))
+            }) {
+                Some(Ok(meta)) => mail::pole::pole_unmap(&meta, &ident.team.space),
+                Some(Err(e)) => Err(e),
+                None => Err(MailError::Denied),
+            };
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(()) => 0,
+                    Err(e) => e.code() as usize,
+                },
+            );
+        }
+        Ucall::Mail(MailCall::Shut) => {
+            let idx = frame.gpr.x(Gprs::A0);
+            let task = current().running_task();
+            // 取 (kind, resource)：kind 决定 shut 分派；resource 给资源表查 Meta。
+            let (kind, resource) = match task.as_ref()
+                .and_then(|t| {
+                    let pies = t.pies.lock();
+                    let pie = pies.get(idx)?;
+                    if pie.rights() == 0 { return Some(Err(MailError::Denied)); }
+                    if !pie.alive() { return Some(Err(MailError::Dead)); }
+                    Some(Ok((pie.kind(), pie.resource())))
+                })
+                .transpose()
+            {
+                Ok(Some((k, r))) => (k, r),
+                Ok(None) => (PieKind::Hole, mail::ResourceId(0)), // 不会到 Shut 分派
+                Err(e) => {
+                    frame.gpr.set_x(Gprs::A0, e.code() as usize);
+                    return frame as *mut TrapContext;
+                }
+            };
+            let r = match kind {
+                PieKind::Hole => {
+                    if let Some(meta) =
+                        mail::resource_table::lookup_hole(resource).and_then(|w| w.upgrade())
+                    {
+                        mail::hole::hole_shut(&meta, resource);
+                        Ok(())
+                    } else {
+                        Err(MailError::Dead)
+                    }
+                }
+                PieKind::Pole => {
+                    if let Some(meta) =
+                        mail::resource_table::lookup_pole(resource).and_then(|w| w.upgrade())
+                    {
+                        mail::pole::pole_shut(&meta, resource);
+                        Ok(())
+                    } else {
+                        Err(MailError::Dead)
+                    }
+                }
+            };
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(()) => 0,
+                    Err(e) => e.code() as usize,
+                },
+            );
         }
     };
     frame as *mut TrapContext

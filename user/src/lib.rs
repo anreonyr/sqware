@@ -7,6 +7,5 @@ pub mod core;
 pub mod entry;
 pub mod env;
 pub mod lisp;
-pub(crate) mod shared;
 
 pub const PAGE_SIZE: usize = 4096;

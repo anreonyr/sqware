@@ -1,146 +1,139 @@
-//! Mail 域：`MailCall::*` 转发（port / dock / ring 三族）。
+//! Mail 域：pie 门闩操作（Hole 数据过内核、Pole 页级安全内存）。
+//!
+//! 每个调用都是一次 envcall，由内核侧 dispatch 做 alive + rights + 分派。
 
 use ubi::{MailCall, UArgs, UResult, Ucall, UcallBuilder};
 
-pub fn port_open() -> UResult<(usize, usize)> {
-    let (h, k) = UcallBuilder::new(Ucall::Mail(MailCall::PortOpen)).call()?;
-    Ok((h, k))
+/// Hole 单消息字节数（与内核侧 `HOLE_MSG_LEN` 一致）。
+pub const HOLE_MSG_LEN: usize = 64;
+
+// ── Hole 门闩 ──
+
+pub fn hole_open() -> UResult<usize> {
+    let (idx, _) = UcallBuilder::new(Ucall::Mail(MailCall::OpenHole)).call()?;
+    Ok(idx)
 }
 
-pub fn port_shut(handle: usize) -> UResult<()> {
+pub fn pole_open(bytes: usize) -> UResult<usize> {
     let args = UArgs {
-        a0: handle,
+        a0: bytes,
         ..UArgs::default()
     };
-    UcallBuilder::new(Ucall::Mail(MailCall::PortShut))
+    let (idx, _) = UcallBuilder::new(Ucall::Mail(MailCall::OpenPole))
         .args(args)
         .call()?;
-    Ok(())
+    Ok(idx)
 }
 
-pub fn port_try_push(handle: usize, msg: *const u8) -> UResult<()> {
+pub fn hole_push(idx: usize, msg: *const [u8; HOLE_MSG_LEN]) -> UResult<()> {
     let args = UArgs {
-        a0: handle,
+        a0: idx,
         a1: msg as usize,
         ..UArgs::default()
     };
-    UcallBuilder::new(Ucall::Mail(MailCall::PortPush))
+    UcallBuilder::new(Ucall::Mail(MailCall::Push))
         .args(args)
         .call()?;
     Ok(())
 }
 
-pub fn port_try_pull(handle: usize, buf: *mut u8) -> UResult<()> {
+pub fn hole_pull(idx: usize, buf: *mut [u8; HOLE_MSG_LEN]) -> UResult<()> {
     let args = UArgs {
-        a0: handle,
+        a0: idx,
         a1: buf as usize,
         ..UArgs::default()
     };
-    UcallBuilder::new(Ucall::Mail(MailCall::PortPull))
+    UcallBuilder::new(Ucall::Mail(MailCall::Pull))
         .args(args)
         .call()?;
     Ok(())
 }
 
-pub fn port_join(handle: usize) -> UResult<usize> {
+pub fn pole_map(idx: usize) -> UResult<usize> {
     let args = UArgs {
-        a0: handle,
+        a0: idx,
         ..UArgs::default()
     };
-    let (key, _) = UcallBuilder::new(Ucall::Mail(MailCall::PortJoin))
+    let (va, _) = UcallBuilder::new(Ucall::Mail(MailCall::Map))
         .args(args)
         .call()?;
-    Ok(key)
+    Ok(va)
 }
 
-pub fn dock_open(item_len: usize, slots: usize) -> UResult<(usize, usize)> {
+pub fn pole_unmap(idx: usize) -> UResult<()> {
     let args = UArgs {
-        a0: item_len,
-        a1: slots,
+        a0: idx,
         ..UArgs::default()
     };
-    let (id, view) = UcallBuilder::new(Ucall::Mail(MailCall::DockOpen))
-        .args(args)
-        .call()?;
-    Ok((id, view))
-}
-
-pub fn dock_join(id: usize, side: usize) -> UResult<usize> {
-    let args = UArgs {
-        a0: id,
-        a1: side,
-        ..UArgs::default()
-    };
-    let (view, _) = UcallBuilder::new(Ucall::Mail(MailCall::DockJoin))
-        .args(args)
-        .call()?;
-    Ok(view)
-}
-
-pub fn dock_shut(id: usize) -> UResult<()> {
-    let args = UArgs {
-        a0: id,
-        ..UArgs::default()
-    };
-    UcallBuilder::new(Ucall::Mail(MailCall::DockShut))
+    UcallBuilder::new(Ucall::Mail(MailCall::Unmap))
         .args(args)
         .call()?;
     Ok(())
 }
 
-pub fn dock_clone(id: usize) -> UResult<()> {
+pub fn shut(idx: usize) -> UResult<()> {
     let args = UArgs {
-        a0: id,
+        a0: idx,
         ..UArgs::default()
     };
-    UcallBuilder::new(Ucall::Mail(MailCall::DockClone))
+    UcallBuilder::new(Ucall::Mail(MailCall::Shut))
         .args(args)
         .call()?;
     Ok(())
 }
 
-pub fn dock_drop(id: usize, side: usize) -> UResult<()> {
-    let args = UArgs {
-        a0: id,
-        a1: side,
-        ..UArgs::default()
-    };
-    UcallBuilder::new(Ucall::Mail(MailCall::DockDrop))
-        .args(args)
-        .call()?;
-    Ok(())
+// ── 类型化句柄（编译期区分 Hole / Pole）──
+
+/// Hole 门闩用户态句柄。
+pub struct HolePie {
+    idx: usize,
 }
 
-pub fn ring_open(item_len: usize, slots: usize) -> UResult<(usize, usize)> {
-    let args = UArgs {
-        a0: item_len,
-        a1: slots,
-        ..UArgs::default()
-    };
-    let (id, view) = UcallBuilder::new(Ucall::Mail(MailCall::RingOpen))
-        .args(args)
-        .call()?;
-    Ok((id, view))
+impl HolePie {
+    pub fn open() -> UResult<Self> {
+        Ok(Self { idx: hole_open()? })
+    }
+
+    pub fn push(&self, msg: &[u8; HOLE_MSG_LEN]) -> UResult<()> {
+        hole_push(self.idx, msg as *const [u8; HOLE_MSG_LEN])
+    }
+
+    pub fn pull(&self, buf: &mut [u8; HOLE_MSG_LEN]) -> UResult<()> {
+        hole_pull(self.idx, buf as *mut [u8; HOLE_MSG_LEN])
+    }
+
+    pub fn shut(&self) -> UResult<()> {
+        shut(self.idx)
+    }
+
+    pub fn idx(&self) -> usize {
+        self.idx
+    }
 }
 
-pub fn ring_join(id: usize) -> UResult<usize> {
-    let args = UArgs {
-        a0: id,
-        ..UArgs::default()
-    };
-    let (view, _) = UcallBuilder::new(Ucall::Mail(MailCall::RingJoin))
-        .args(args)
-        .call()?;
-    Ok(view)
+/// Pole 门闩用户态句柄。
+pub struct PolePie {
+    idx: usize,
 }
 
-pub fn ring_close(id: usize) -> UResult<()> {
-    let args = UArgs {
-        a0: id,
-        ..UArgs::default()
-    };
-    UcallBuilder::new(Ucall::Mail(MailCall::RingClose))
-        .args(args)
-        .call()?;
-    Ok(())
+impl PolePie {
+    pub fn open(bytes: usize) -> UResult<Self> {
+        Ok(Self { idx: pole_open(bytes)? })
+    }
+
+    pub fn map(&self) -> UResult<usize> {
+        pole_map(self.idx)
+    }
+
+    pub fn unmap(&self) -> UResult<()> {
+        pole_unmap(self.idx)
+    }
+
+    pub fn shut(&self) -> UResult<()> {
+        shut(self.idx)
+    }
+
+    pub fn idx(&self) -> usize {
+        self.idx
+    }
 }

@@ -81,46 +81,26 @@ pub enum ChronoCall {
     Clock = 1,
 }
 
-/// 通信调用（class 5，mail）。成员按通道形态分三族：`Port`（内核拷贝邮路）、
-/// `Dock`（多对一共享内存通道）、`Ring`（一对一共享内存通道）。wait/wake 不进
-/// 本类——mail 同步直用调度词族 `Ucall::Room::Wait/Wake`。
+/// 通信调用（class 5，mail）。v1 七个：OpenHole / OpenPole 创建资源（返 pie_idx），
+/// Push / Pull / Map / Unmap / Shut 走 pie 门闩。wait/wake 不进本类——
+/// mail 同步直用调度词族 `Ucall::Room::Wait/Wake`。
 #[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
-    /// 建 port 通道（内核邮路）：返回 (句柄, 条件键)。
-    PortOpen = 0,
-    /// 终止 port 通道：置 Dead（对端感知断开）。
-    PortShut = 1,
-    /// 投递消息（内核拷贝）：a0 = 句柄，a1 = 消息 VA。
-    PortPush = 2,
-    /// 收取消息（内核拷贝）：a0 = 句柄，a1 = 消息缓冲 VA。
-    PortPull = 3,
-    /// 加入已有 port（跨任务，把句柄绑进当前 task.mail）：a0 = 句柄 →
-    /// a0 = 条件键。两端各持一份，Arc 计数保活；最后一份 drop 置 Dead。
-    PortJoin = 12,
-    /// 建 dock 通道（多对一共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
-    /// a0 = dock id（兼作 wait/wake 键，带 DOCK_KEY_TAG），a1 = 视图基址
-    /// （同 team 两端同源）。
-    DockOpen = 4,
-    /// 终止 dock 通道：置 Dead（对端感知断开）：a0 = dock id。
-    DockShut = 5,
-    /// 加入已有 dock（跨 team）：a0 = dock id，a1 = side（0 = Pier / 1 = Quay）→
-    /// a0 = 本地视图基址；Quay 已被占用 → Busy。
-    DockJoin = 6,
-    /// 复制生产端（pier）：a0 = dock id → 计数 +1（0 或负码）。
-    DockClone = 7,
-    /// 释放一端：a0 = dock id，a1 = side → pier_count −1（归零 → Hang）；
-    /// quay → 清在场位 + Dead。
-    DockDrop = 8,
-    /// 建 ring 通道（一对一共享内存邮路）：a0 = item_len，a1 = slots（2 的幂）→
-    /// a0 = ring id（兼作 wait/wake 键，带 RING_KEY_TAG），a1 = 视图基址
-    /// （两端同源）。open 即双端固定，无 pier/quay 计数。
-    RingOpen = 9,
-    /// 终止 ring 通道：置 Dead（对端感知断开）：a0 = ring id。
-    RingClose = 10,
-    /// 加入已有 ring（跨 team）：a0 = ring id → a0 = 本地视图基址。一对一无
-    /// 端选择；已满员 → Busy。
-    RingJoin = 11,
+    /// 创建 Hole（数据过内核管道）：无参 → a0 = pie_idx。
+    OpenHole = 0,
+    /// 创建 Pole（页级安全内存）：a0 = 字节数（页对齐）→ a0 = pie_idx。
+    OpenPole = 1,
+    /// push msg：a0 = pie_idx，a1 = msg VA。
+    Push = 2,
+    /// pull msg：a0 = pie_idx，a1 = 缓冲 VA。
+    Pull = 3,
+    /// 借映 Pole 物理页进当前 task.space：a0 = pie_idx → a0 = VA。
+    Map = 4,
+    /// 从当前 task.space 解除映射：a0 = pie_idx。
+    Unmap = 5,
+    /// 终止资源（generic on Hole/Pole）：a0 = pie_idx。
+    Shut = 6,
 }
 
 /// 控制调用（class 6）。
@@ -204,9 +184,8 @@ index_from! {
     IOCall { Put = 0, Get = 1 }
     ChronoCall { Ticks = 0, Clock = 1 }
     MailCall {
-        PortOpen = 0, PortShut = 1, PortPush = 2, PortPull = 3,
-        DockOpen = 4, DockShut = 5, DockJoin = 6, DockClone = 7, DockDrop = 8,
-        RingOpen = 9, RingClose = 10, RingJoin = 11, PortJoin = 12
+        OpenHole = 0, OpenPole = 1, Push = 2, Pull = 3,
+        Map = 4, Unmap = 5, Shut = 6
     }
     ControlCall { Panic = 0 }
 }
