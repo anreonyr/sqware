@@ -6,7 +6,7 @@
 
 use core::time::Duration;
 
-use crate::work::room::messenger::{self, WaitKey};
+use crate::work::room::messenger::{self, Handoff, WaitKey};
 
 use super::core::current;
 use super::trap::run;
@@ -37,12 +37,14 @@ pub fn reap() -> usize {
 
 /// 事件等待入口（envcall Wait 调用）：pend 存在 → 消费即回；否则阻塞挂起。
 ///
-/// 返回下一帧 PA（与 park 同契约：阻塞即切走，唤醒后从调用点「第二次返回」）。
-/// `key` 为已合成的事件键（envcall 边界负责并入空间身份）。
-pub fn wait(key: WaitKey, dur: Duration) -> usize {
+/// 返回**是否切走**：`None` = 未离核（调用方续用当前帧）；`Some(pa)` = 切到该帧
+/// （本核已装槽的下一位，或本核空时 `run()` 取来的）。`key` 为已合成的事件键
+/// （envcall 边界负责并入空间身份）。
+pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
     match messenger::wait(key, dur) {
-        Some(pa) => pa,
-        None => run(),
+        Handoff::Resume => None,
+        Handoff::Switch(pa) => Some(pa),
+        Handoff::Idle => Some(run()),
     }
 }
 

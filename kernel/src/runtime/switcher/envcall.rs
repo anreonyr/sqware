@@ -103,7 +103,11 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Duration::from_millis(ms as u64)
             };
             drop(ident); // run（可能 halt）前释放身份
-            return wait(key, dur) as *mut TrapContext;
+            // 切走 → 直接返回目标帧；续跑（pend 命中）→ 落到统一出口返回本帧
+            // （与 Wake 等「不切走」分支同一条出路）。
+            if let Some(pa) = wait(key, dur) {
+                return pa as *mut TrapContext;
+            }
         }
         Ucall::Room(RoomCall::Wake) => {
             // a0 = key（与 Wait 同源合成：dock/ring 键带标记 / 地址键 compose）。

@@ -8,9 +8,11 @@
 //
 // 簿记：parked（deadline 句柄 → task）、sites（key → pend+waiters）、times
 // （tock 句柄 → key）、reaped（Arc<Task> 队列）。四张表全 L3，3→3 嵌套禁止。
-// 锁序：park / wait / reap 路径 1 → 3 嵌套合法（持调度锁时入簿）；drain_expired
-// 先放堆锁再取 sites/times/parked，再 push 到 scheduler（push 仅持调度锁），
-// 绝不持任 L3 取调度锁（防 ABBA）。
+// 锁序：**L1（调度器）与 L3（本域四表）任何方向都不得嵌套**——持任一 L3 期间
+// 不得调用 scheduler 的任何加锁方法，也不得在锁内 drop `Arc<Task>`（drop 链会
+// 取 Space 锁 L2）。各路径的写法统一为「作用域内取、作用域外用」：wait/wake/
+// drain_expired 在块内摘出 Waiter、块外 push 回 scheduler；clear_loop 块内出队、
+// 块外回收；rip 块内 take 整表、块外 drop。
 //
 // 反向耦合清零：dock / ring 的 task_exit 反向耦合走两步拆——step 5 引入 exit
 // hook 注册面后，clear_loop 不再硬编码子系统名。本 step 暂留直调作为过渡。
@@ -64,6 +66,20 @@ struct WaitSite {
     pend: bool,
     /// 等待者（FIFO）；每项携带超时句柄（无超时 = None）。
     waiters: VecDeque<Waiter>,
+}
+
+/// 交接：本次调用之后由谁占住处理器。
+///
+/// 三态各自独立，不可合并：`Resume` 是**没离核**（当前帧由调用方持有——
+/// messenger 不知道也不该知道当前帧是什么），另两态是**已离核**，区别只在本核
+/// starved 是否装得上下一位。
+pub enum Handoff {
+    /// 未离核：继续跑调用方的当前帧。
+    Resume,
+    /// 已离核：切到该帧（本核 starved 队首已装槽）。
+    Switch(usize),
+    /// 已离核且本核无后继：由适配层取活（`run()`）。
+    Idle,
 }
 
 struct Waiter {
@@ -161,19 +177,19 @@ pub fn park(duration: Duration) -> Option<usize> {
 }
 
 /// 事件等待：Running → Blocked(Wait)。pend 存在 → 消费即回（不阻塞，无状态
-/// 变更）。`dur == Duration::MAX` → 永久（无 tock）；否则登记超时。
-/// 返回下一帧 PA（若 scheduler 装了下一 starved）。
-pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
+/// 变更，[`Handoff::Resume`]）。`dur == Duration::MAX` → 永久（无 tock）；否则
+/// 登记超时。
+pub fn wait(key: WaitKey, dur: Duration) -> Handoff {
     let cond = current();
 
-    // pend 消费路径：信号已至 → 任务不阻塞（续跑）；锁 sites 短暂。
+    // pend 消费路径：信号已至 → 任务不阻塞（续跑）；锁 sites 短暂，锁内不问
+    // 调度器（当前帧是调用方的知识，不是本域的）。
     {
         let mut sites = wait_sites(site_shard(key)).lock();
         let site = sites.entry(key).or_insert_with(WaitSite::new);
         if site.pend {
             site.pend = false;
-            let pa = cond.running_frame_pa().expect("wait with no running task");
-            return Some(pa);
+            return Handoff::Resume;
         }
     }
 
@@ -205,7 +221,10 @@ pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
         timer::tock(handle, wake_at);
     }
 
-    next_pa
+    match next_pa {
+        Some(pa) => Handoff::Switch(pa),
+        None => Handoff::Idle,
+    }
 }
 
 /// mark_reaped：Running → Reaped 入全局 reaped 队列（延迟回收——不能在
@@ -392,15 +411,20 @@ fn exit_hooks() -> &'static [ExitHook] {
 /// 终末释放：清空 messenger 持有的全部 Arc<Task>（parked / sites / times /
 /// reaped 四张表）——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。
 /// 由 [`scheduler::core::rip`] 在 halt 路径调用；mail 接入点由 task.mail
-/// 析构透传释放（无需 mail 自有关闭钩子）。wait_sites 分片版循环逐片清——
-/// 不持跨片锁（与 L3 锁纪律同级）；其余表维持单锁。
+/// 析构透传释放（无需 mail 自有关闭钩子）。
+///
+/// 逐表 `take` 出内容、**锁外 drop**：drop 链会取 Space 锁（L2），锁内 drop 即
+/// L3→L2 嵌套。wait_sites 分片版循环逐片取——不持跨片锁。
 pub(crate) fn rip() {
-    parked().lock().clear();
+    let parked_out = core::mem::take(&mut *parked().lock());
+    drop(parked_out);
     for shard in 0..SITE_SHARDS {
-        wait_sites(shard).lock().clear();
+        let sites_out = core::mem::take(&mut *wait_sites(shard).lock());
+        drop(sites_out);
     }
-    wait_times().lock().clear();
-    REAPED.lock().clear();
+    wait_times().lock().clear(); // 只存键，无 Arc，无 drop 链
+    let reaped_out = core::mem::take(&mut *REAPED.lock());
+    drop(reaped_out);
 }
 
 // ── 内部辅助 ──

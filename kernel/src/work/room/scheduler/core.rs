@@ -302,15 +302,6 @@ impl Scheduler {
         (task, next_pa)
     }
 
-    /// 当前 running 任务的帧 PA（messenger::wait 的 pend 消费路径用——不取走
-    /// running，仅读取 frame 物理地址）。
-    pub(crate) fn running_frame_pa(&self) -> Option<usize> {
-        let i = self.inner.lock();
-        i.running
-            .as_ref()
-            .map(|t| t.ident.frame.pa.expect("frame span has pa").as_usize())
-    }
-
     /// 当前 running 任务的 Arc 克隆（mail 模块持有 mail 接入点用——Arc 共享
     /// 借出，不取走 running 槽）。**调用方负责 push 到 task.mail；不允许持锁
     /// 跨调用**（inner L1 与 mail L3 同层嵌套会 lockdep 违规——先克隆 Arc 再
