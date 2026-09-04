@@ -210,6 +210,31 @@ impl Ledger {
         }
     }
 
+    /// 空间死亡：注销 `asid` 名下全部用户堆账，返回注销条数。
+    ///
+    /// 用户堆账的键是 `(asid << 44) | (va >> 12)`（见 `fence::key`）——所有者是
+    /// **空间**而非任务：任务退出不 unwind、退出时仍持堆是常态（TLS 块由构造
+    /// 决定永不释放），账只能随空间整体作废。只认 `UserHeap`：内核堆记录的键是
+    /// 物理地址（DRAM 高位恒 0），不会与 `asid ≥ 1` 相撞。
+    ///
+    /// 单趟 `retain`：一次加锁、零分配。**不可**用 `for_each` + `unmark` 实现
+    /// ——同一把 Ledger 锁会自锁死。类别计数在同趟内按记录扣减，与 `unmark` →
+    /// `record_block_give_for_class` 的语义一致。
+    pub fn retire(&self, asid: usize) -> usize {
+        let mut g = self.inner.lock();
+        let Some((map, _)) = g.as_mut() else { return 0 };
+        let mut retired = 0usize;
+        map.retain(|&addr, rec| {
+            let mine = matches!(rec.kind, OwnerKind::UserHeap) && (addr >> 44) == asid;
+            if mine {
+                crate::memory::allocator::statistics::record_block_give_for_class(rec.class);
+                retired += 1;
+            }
+            !mine
+        });
+        retired
+    }
+
     /// 活块 canary 清查（panic 现场 drop-in；只报不 panic——诊断不截断转储）。
     ///
     /// 平时 canary 只在释放（[`unmark`]）时核对；**永不释放的泄漏块**（符号表

@@ -1077,10 +1077,14 @@ impl Space {
 
 impl Drop for Space {
     fn drop(&mut self) {
-        // 先释放本空间的 ASID（内含清退：ASID 立即可被复用，残留条目会让新
-        // 空间同 VA 命中旧映射）。此路径恒走快路径——Arc 归零 ⇒ 无任务持有本
-        // 空间 ⇒ 没有任何核驻留该 ASID。
         if let SpaceKind::User { asid } = self.kind {
+            // 1. 注销本空间名下的用户堆账：账的所有者是空间（键含 asid），任务
+            //    退出不 unwind、退出时仍持堆是常态（TLS 由构造决定永不释放）
+            //    ——账只能随空间作废。必须先于 ASID 归还：复用后键即换主。
+            crate::memory::allocator::fence::retire(asid);
+            // 2. 释放 ASID（内含清退：ASID 立即可被复用，残留条目会让新空间同
+            //    VA 命中旧映射）。此路径恒走快路径——Arc 归零 ⇒ 无任务持有本
+            //    空间 ⇒ 没有任何核驻留该 ASID。
             asid::deallocate(asid).expect("space drop: evict deaf");
         }
         // `inner` 随字段自动 drop：root（页表树）/maps 帧全部归还 frame 池。

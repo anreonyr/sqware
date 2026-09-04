@@ -411,6 +411,25 @@ pub(crate) fn key(asid: usize, va: usize) -> usize {
     }
 }
 
+/// 空间死亡事件：注销该 asid 名下全部用户堆账（与 [`on_free`] 同域的销账入口，
+/// 只是批量、由**空间**而非任务触发——见 `ledger::Ledger::retire`）。
+///
+/// 调用点：`Space::drop`，须先于 ASID 归还（asid 一旦复用，键即换主）。
+#[inline]
+pub(crate) fn retire(asid: usize) {
+    #[cfg(feature = "audit")]
+    {
+        let n = ledger::LEDGER.retire(asid);
+        if n > 0 {
+            crate::putln!("[audit] space asid {asid} retired {n} user-heap records");
+        }
+    }
+    #[cfg(not(feature = "audit"))]
+    {
+        let _ = asid;
+    }
+}
+
 /// 分配点回溯（诊断 site）：从当前 fp 沿标准 RV64 帧链上溯 depth 帧，取返回地址。
 ///
 /// debug O0 调用链稳定：帧 0 = block 分配器（on_alloc 的调用者）、再上是

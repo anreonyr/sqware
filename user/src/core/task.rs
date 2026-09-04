@@ -1,25 +1,32 @@
 //! 用户 task 模块：`spawn`/`closure`/`Join`/`Builder`。
 
-// 硬不变量：done 释放写由新任务侧、Acquire 读由 join 侧；result 单写单取。
+// 硬不变量：result 单写单取；盒子的释放由 `state` 两位仲裁——子任务完工（DONE）
+//             与父方弃权（LEFT）各置一位，**后到者**释放；fetch_or 的原子性同时
+//             排除双释放与漏释放。
 //             SendSlot 整个传给方法走（whole-struct 捕获，使 Send 生效）。
 
 use alloc::boxed::Box;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use ubi::UResult;
 
 use crate::core::tls;
 use crate::env::{room, task as env_task};
 
+/// 子任务已完工（result 可取）。
+const DONE: usize = 1;
+/// 父方已弃权（不再取 result）。
+const LEFT: usize = 2;
+
 pub struct Completion<T> {
-    done: AtomicBool,
+    state: AtomicUsize,
     result: Option<T>,
 }
 
 impl<T> Completion<T> {
     const fn new() -> Self {
         Self {
-            done: AtomicBool::new(false),
+            state: AtomicUsize::new(0),
             result: None,
         }
     }
@@ -32,10 +39,14 @@ unsafe impl<T> Send for SendSlot<T> {}
 unsafe impl<T> Sync for SendSlot<T> {}
 
 impl<T> SendSlot<T> {
+    /// 完工：写结果 → 置 DONE。若父方已弃权（LEFT 在前），本方是后到者 → 释放盒子。
     unsafe fn store_result(self, r: T) {
         unsafe {
             (*self.0).result = Some(r);
-            (*self.0).done.store(true, Ordering::Release);
+            let prev = (*self.0).state.fetch_or(DONE, Ordering::AcqRel);
+            if prev & LEFT != 0 {
+                drop(Box::from_raw(self.0));
+            }
         }
     }
 }
@@ -45,17 +56,33 @@ pub struct Join<T> {
 }
 
 impl<T> Join<T> {
+    /// 等结果并取走。等到 DONE 说明子任务已完工且**未**释放盒子（它当时看不到
+    /// LEFT——本方走 join 就不会置 LEFT），故由本方释放。
     pub fn join(self) -> T {
         let slot = self.slot;
+        core::mem::forget(self); // 结果本方取走，不再走弃权路径（Drop）
         loop {
-            // SAFETY: Join 独占；done 未置位前不读 result。
-            if unsafe { (*slot).done.load(Ordering::Acquire) } {
-                // SAFETY: done 置位 ⇒ result 已写入。
+            // SAFETY: DONE 未置位前不读 result。
+            if unsafe { (*slot).state.load(Ordering::Acquire) } & DONE != 0 {
+                // SAFETY: DONE 置位 ⇒ result 已写入且子任务不再触碰盒子。
                 let r = unsafe { (*slot).result.take() }.expect("joined task lost result");
                 unsafe { drop(Box::from_raw(slot)) };
                 return r;
             }
             let _ = room::wait(slot as usize, 1_000);
+        }
+    }
+}
+
+impl<T> Drop for Join<T> {
+    /// 弃权：不等结果。置 LEFT；若子任务已完工（DONE 在前），本方是后到者 →
+    /// 释放盒子，否则留给子任务释放。子任务随后的 `wake(slot)` 只把地址当**键**
+    /// 用、不解引用，故先释放亦安全。
+    fn drop(&mut self) {
+        // SAFETY: slot 由 closure 分配、生命周期由本仲裁协议管辖。
+        let prev = unsafe { (*self.slot).state.fetch_or(LEFT, Ordering::AcqRel) };
+        if prev & DONE != 0 {
+            unsafe { drop(Box::from_raw(self.slot)) };
         }
     }
 }
