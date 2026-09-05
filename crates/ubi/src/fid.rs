@@ -83,32 +83,35 @@ pub enum ChronoCall {
     Clock = 1,
 }
 
-/// 通信调用（class 5，mail）。v1 七个：OpenHole / OpenPole 创建资源（返 pie_idx），
-/// Push / Pull / Map / Unmap / Shut 走 pie 门闩。wait/wake 不进本类——
-/// mail 同步直用调度词族 `Ucall::Room::Wait/Wake`。
+/// 通信调用（class 5，mail）。用户句柄统一为 per-pie `token`（全局唯一）。
+/// UnsealHole / UnsealPole 创建资源（返 token）；Push / Pull / Map / Unmap / Seal
+/// / Accord / Narrow / Revoke 走 pie 门闩。wait/wake 不进本类——mail 同步直用
+/// 调度词族 `Ucall::Room::Wait/Wake`。
 #[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
-    /// 创建 Hole（数据过内核管道）：无参 → a0 = pie_idx。
-    OpenHole = 0,
-    /// 创建 Pole（页级安全内存）：a0 = 字节数（页对齐）→ a0 = pie_idx。
-    OpenPole = 1,
-    /// push msg：a0 = pie_idx，a1 = msg VA。
+    /// 解封 Hole（数据过内核管道）：无参 → a0 = token。
+    UnsealHole = 0,
+    /// 解封 Pole（页级安全内存）：a0 = 字节数（页对齐）→ a0 = token。
+    UnsealPole = 1,
+    /// push msg：a0 = token，a1 = msg VA。
     Push = 2,
-    /// pull msg：a0 = pie_idx，a1 = 缓冲 VA。
+    /// pull msg：a0 = token，a1 = 缓冲 VA。
     Pull = 3,
-    /// 借映 Pole 物理页进当前 task.space：a0 = pie_idx → a0 = VA。
+    /// 借映 Pole 物理页进当前 task.space：a0 = token → a0 = VA。
     Map = 4,
-    /// 从当前 task.space 解除映射：a0 = pie_idx。
+    /// 从当前 task.space 解除映射：a0 = token。
     Unmap = 5,
-    /// 终止资源（generic on Hole/Pole）：a0 = pie_idx。
-    Shut = 6,
-    /// 派门闩（Vest）：a0 = src_pie_idx, a1 = target_task_id, a2 = subset bits →
-    /// a0 = 新 pie 在 target.pies 的索引。
-    Vest = 7,
-    /// 收窄本 pie 权限（就地改写；Pole 同步降页表）：a0 = src_pie_idx,
+    /// 封印资源（generic on Hole/Pole）：a0 = token。
+    Seal = 6,
+    /// 转授子集给其他 Task：a0 = src_token, a1 = dst_id, a2 = subset bits →
+    /// a0 = 新 pie 的 token（撤销句柄）。
+    Accord = 7,
+    /// 收窄本 pie 权限（就地改写；Pole 同步降页表）：a0 = token,
     /// a1 = subset bits → a0 = 0 / err.code()。
-    Restrict = 8,
+    Narrow = 8,
+    /// 收回授与他人的副本：a0 = dst_id, a1 = token → a0 = 0 / err.code()。
+    Revoke = 9,
 }
 
 /// 控制调用（class 6）。
@@ -192,8 +195,8 @@ index_from! {
     IOCall { Put = 0, Get = 1 }
     ChronoCall { Ticks = 0, Clock = 1 }
     MailCall {
-        OpenHole = 0, OpenPole = 1, Push = 2, Pull = 3,
-        Map = 4, Unmap = 5, Shut = 6, Vest = 7, Restrict = 8
+        UnsealHole = 0, UnsealPole = 1, Push = 2, Pull = 3,
+        Map = 4, Unmap = 5, Seal = 6, Accord = 7, Narrow = 8, Revoke = 9
     }
     ControlCall { Panic = 0 }
 }

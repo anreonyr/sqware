@@ -1,29 +1,28 @@
-// 任务间通信（mail）— 两通道 + 门闩。
+// 任务间通信（mail）— Hole/Pole 两通道 + 门闩 + 授权谱系。
 //
-//   pie.rs           — 门闩类型（Pie<T>, AnyPie, ResourceKind, rights, MailError）
-//   resource_table.rs — 全局 id → Weak<Meta> 注册表
-//   hole.rs          — Hole 数据面（数据过内核，单槽缓冲）
-//   pole.rs          — Pole 数据面（页级安全内存，物理帧 + 视图）
+//   pie.rs    — 门闩类型（Pie<M>, AnyPie, MailError, HOLE_MSG_LEN）
+//   memo.rs   — 全局资源备忘（id → Arc<Meta>）
+//   hole.rs   — Hole 数据面（数据过内核，单槽缓冲）
+//   pole.rs   — Pole 数据面（页级安全内存，物理帧 + 视图）
+//   accord.rs — 转授子集给其他 Task
+//   narrow.rs — 就地单调收窄本 pie 权限
+//   revoke.rs — 收回授与他人的副本
 //
 // 数据面不感知 rights；门闩在 envcall 入口 dispatch 时检查。
 // 阻塞语义在调度域 wait/wake，mail 不重造调度器。
 //
-// 权限四元：READ / WRITE / VEST / BACK 均已实现（单一真相在 `ubi::Permission`）。
-// 每 Task 持 `Vec<AnyPie>` 独立维护，跨 Task 共享经 VEST 造新 pie。
+// 权限四元：READ / WRITE / VEST / BACK（单一真相在 `ubi::Permission`）。
+// 用户句柄 = per-pie token（全局唯一），envcall 以 token 寻址。
 
+pub mod accord;
 pub mod hole;
+pub mod memo;
+pub mod narrow;
 pub mod pie;
 pub mod pole;
-pub mod resource_table;
-pub mod restrict;
-pub mod vest;
+pub mod revoke;
 
-pub use pie::{AnyPie, Hole, MailError, Permission, Pie, PieKind, Pole, HOLE_MSG_LEN};
-pub use resource_table::ResourceId;
-
-use pie::ResourceKind;
-
-use core::ptr::NonNull;
+pub use pie::{AnyPie, MailError, Permission, HOLE_MSG_LEN};
 
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
@@ -65,6 +64,3 @@ pub(crate) fn copy_out(space: &Space, src: &[u8], va: usize) -> bool {
     }
     off == src.len()
 }
-
-#[allow(dead_code)]
-fn _anchor(_: NonNull<u8>) {}

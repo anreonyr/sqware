@@ -15,7 +15,7 @@ use user::env::mail::PolePie;
 extern "C" fn main() {
     let _ = put("docker\n");
 
-    let pole = PolePie::open(4096).expect("pole open");
+    let pole = PolePie::unseal(4096).expect("pole unseal");
     let va = pole.map().expect("map");
     let ptr = va as *mut u8;
 

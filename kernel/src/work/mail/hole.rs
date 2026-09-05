@@ -1,21 +1,20 @@
 // Hole — 数据过内核的管道。
 //
-// HoleMeta 是内核侧"门洞"：单槽消息缓冲 + 状态。
-// 用户态 Pie<Hole>（含 Weak<HoleMeta>）只持门闩，不参与数据。
+// HoleMeta 是内核侧"门洞"：单槽消息缓冲 + 状态。用户态 Pie<HoleMeta>（含
+// Weak<HoleMeta>）只持门闩，不参与数据。
 //
-// 数据面原语：`hole_push` / `hole_pull` / `hole_shut`。
-// 创建：`hole_create()` —— 建 Meta + 注册 + 推 AnyPie::Hole 到当前 Task.pies。
+// 数据面原语：`push` / `pull` / `seal`。创建：`unseal()` —— 建 Meta + 注册 memo +
+// 全权 pie 落 self（返 token）。
 //
 // 阻塞语义不在 HoleMeta 内（v1 简化）：push/pull 槽满/槽空 → 立即返 Busy，调用方
-// 经调度域 wait/wake 自旋（与现行一致）。wait 键可基于 pie_idx（每个 Task 独立）。
+// 经调度域 wait/wake 自旋。
 
 use alloc::sync::Arc;
-use core::sync::atomic::Ordering;
 
 use crate::lock::{Level, SpinLock};
 
-use super::pie::{HOLE_MSG_LEN, MailError, Permission};
-use super::resource_table::{self, ResourceId};
+use super::memo::{self, Meta, ResourceId};
+use super::pie::{AnyPie, HOLE_MSG_LEN, MailError, Permission};
 
 /// Hole 状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,8 +53,8 @@ impl Drop for HoleMeta {
 // ── 数据面原语 ──
 
 /// 写消息入槽（需 rights & W）。
-/// `Denied` = rights 不够；`Dead` = 已 shut；`Busy` = 槽满。
-pub(crate) fn hole_push(meta: &HoleMeta, msg: &[u8; HOLE_MSG_LEN]) -> Result<(), MailError> {
+/// `Denied` = rights 不够；`Dead` = 已 seal；`Busy` = 槽满。
+pub(crate) fn push(meta: &HoleMeta, msg: &[u8; HOLE_MSG_LEN]) -> Result<(), MailError> {
     if !meta.alive() {
         return Err(MailError::Dead);
     }
@@ -68,8 +67,8 @@ pub(crate) fn hole_push(meta: &HoleMeta, msg: &[u8; HOLE_MSG_LEN]) -> Result<(),
 }
 
 /// 取消息出槽（需 rights & R）。
-/// `Denied` = rights 不够；`Dead` = 已 shut；`Busy` = 槽空。
-pub(crate) fn hole_pull(meta: &HoleMeta) -> Result<[u8; HOLE_MSG_LEN], MailError> {
+/// `Denied` = rights 不够；`Dead` = 已 seal；`Busy` = 槽空。
+pub(crate) fn pull(meta: &HoleMeta) -> Result<[u8; HOLE_MSG_LEN], MailError> {
     if !meta.alive() {
         return Err(MailError::Dead);
     }
@@ -80,37 +79,32 @@ pub(crate) fn hole_pull(meta: &HoleMeta) -> Result<[u8; HOLE_MSG_LEN], MailError
     }
 }
 
-/// 终止 Hole（state = Dead + 资源表移除）。
-pub(crate) fn hole_shut(meta: &HoleMeta, id: ResourceId) {
+/// 封印 Hole（state = Dead + memo 移除）。
+pub(crate) fn seal(meta: &HoleMeta, id: ResourceId) {
     *meta.state.lock() = HoleState::Dead;
-    resource_table::remove(id, super::pie::PieKind::Hole);
+    memo::remove(id);
 }
 
 // ── 创建 ──
 
 use crate::work::room::scheduler::core::current;
 
-/// 创建 Hole：建 Meta + 注册 + 推 AnyPie::Hole 到当前 Task.pies。
-/// 返 pie_idx（Task 内 Vec 索引）。
-pub(crate) fn hole_create() -> Result<usize, MailError> {
+/// 解封 Hole：建 Meta + 注册 memo + 全权 pie 落 self（vestor=None）。返 token。
+pub(crate) fn unseal() -> Result<u64, MailError> {
     let arc = HoleMeta::new();
-    let id = resource_table::alloc_id();
-    resource_table::insert_hole(id, &arc);
+    let id = memo::alloc_id();
+    memo::insert(id, Meta::Hole(arc.clone()));
 
-    let pie = super::pie::new_pie::<super::pie::Hole>(
+    let pie = super::pie::new_pie(
         id,
         Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
-        None, // 原始创建者：无 vestor
-        alloc::sync::Arc::downgrade(&arc),
+        None, // 原始自持：无 vestor
+        Arc::downgrade(&arc),
     );
+    let token = pie.token();
 
-    let task = current()
-        .running_task()
-        .ok_or(MailError::Denied)?;
+    let task = current().running_task().ok_or(MailError::Denied)?;
     let mut pies = task.pies.lock();
-    pies.push(super::pie::AnyPie::Hole(pie));
-    Ok(pies.len() - 1)
+    pies.push(AnyPie::Hole(pie));
+    Ok(token)
 }
-
-#[allow(dead_code)]
-fn _ordering_anchor(_: Ordering) {}

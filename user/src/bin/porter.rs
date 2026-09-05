@@ -14,7 +14,7 @@ use user::env::mail::HolePie;
 extern "C" fn main() {
     let _ = put("porter\n");
 
-    let pie = HolePie::open().expect("hole open");
+    let pie = HolePie::unseal().expect("hole unseal");
 
     // push 10 轮 + 立即 pull（单槽必须交替，否则 slot 满返 Busy）
     let mut ok = true;

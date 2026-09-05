@@ -59,7 +59,7 @@ pub struct Join<T> {
 }
 
 impl<T> Join<T> {
-    /// 子任务全局 id（用于 `pie.vest(join.id(), subset)` 派门闩给子任务）。
+    /// 子任务全局 id（用于 `pie.accord(token, join.id(), subset)` 转授给子任务）。
     pub fn id(&self) -> usize {
         self.id
     }

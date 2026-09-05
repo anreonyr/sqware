@@ -196,6 +196,7 @@ fn spawn_demos() -> Result<(), MapError> {
         (&include_bytes!(env!("USER_PAIR_POLE"))[..], "pair_pole"),
         (&include_bytes!(env!("USER_BACK"))[..], "back"),
         (&include_bytes!(env!("USER_RESTRICT"))[..], "restrict"),
+        (&include_bytes!(env!("USER_REVOKE"))[..], "revoke"),
         // (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
     ] {
         let (team, entry) = load_user(elf);

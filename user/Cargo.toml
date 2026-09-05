@@ -121,6 +121,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "user-revoke"
+path = "src/bin/revoke.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "user-lisp"
 path = "src/bin/lisp.rs"
 test = false

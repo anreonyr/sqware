@@ -1,12 +1,10 @@
 // Pole — 页级安全内存。
 //
-// PoleMeta 是内核侧"地基"：物理页块 + 各 Space 的视图登记。
-// 用户态 Pie<Pole>（含 Weak<PoleMeta>）只持门闩；map 后用户直接读写页。
+// PoleMeta 是内核侧"地基"：物理页块 + 各 pie 的视图登记（键 = token）。
+// 用户态 Pie<PoleMeta>（含 Weak<PoleMeta>）只持门闩；map 后用户直接读写页。
 //
-// 数据面原语：`pole_map` / `pole_unmap` / `pole_shut`。
-// 创建：`pole_create(space, bytes)` —— 分配物理页 + 建 Meta + 注册 + auto-map 当前 Space。
-//
-// PoleMeta 拥有物理帧；Arc 归零时由 `Drop` 链逐视图 unmap + 还帧。
+// 数据面原语：`map` / `unmap` / `narrow` / `seal`。创建：`unseal(bytes)`。
+// PoleMeta 拥有物理帧；Arc 归零时 `Drop` 链逐视图 unmap + 还帧。
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -20,8 +18,8 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::{Seg, Space, Span};
 
-use super::pie::{MailError, Permission};
-use super::resource_table::{self, ResourceId};
+use super::memo::{self, Meta, ResourceId};
+use super::pie::{AnyPie, MailError, Permission};
 
 /// Pole 状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,11 +35,9 @@ pub struct PoleMeta {
     base: NonNull<u8>,
     /// 字节数（页对齐）。
     bytes: usize,
-    /// 已映射 (pie_token, Space, Span)。
-    ///
-    /// 键是 **per-pie 身份**（`Pie::token`，全局唯一）而非 per-space：同一物理页
-    /// 借映给同一 Team 里多个 Task（共享 Space）时，每个 pie 一条独立映射、独立
-    /// PTE——restrict/map 只动自己的那条，保证 cap ⊆ 页表不被共享 PTE 击穿。
+    /// 已映射 (token, Space, Span)。键是 per-pie 身份（全局唯一）而非 per-space：
+    /// 同一物理页借映给共享 Space 的多 Task 时，每个 pie 一条独立映射、独立 PTE，
+    /// narrow/map 只动自己的那条——cap ⊆ 页表不被共享 PTE 击穿。
     mappings: SpinLock<Vec<(u64, alloc::sync::Weak<Space>, Span)>>,
 }
 
@@ -90,10 +86,7 @@ impl PoleMeta {
     fn map_into(&self, token: u64, space: &Arc<Space>, flags: PteFlags) -> Result<usize, MailError> {
         {
             let m = self.mappings.lock();
-            if let Some((_, _, span)) = m
-                .iter()
-                .find(|(t, _, _)| *t == token)
-            {
+            if let Some((_, _, span)) = m.iter().find(|(t, _, _)| *t == token) {
                 return Ok(span.va.as_usize());
             }
         }
@@ -115,11 +108,11 @@ impl PoleMeta {
         Ok(va.as_usize())
     }
 
-    /// Restrict 降权：把 `token` 对应映射段 `protect` 到新 flags。
+    /// Narrow 降权：把 `token` 对应映射段 `protect` 到新 flags。
     ///
-    /// cap ⊆ 页表：restrict 收窄 pie 权限后，该 pie 的映射段 PTE 必须同步降权。
+    /// cap ⊆ 页表：narrow 收窄 pie 权限后，该 pie 的映射段 PTE 必须同步降权。
     /// 只动 `token` 自己的映射（未映射则无事）；其他 pie（含同 space 的）不受影响。
-    fn restrict_into(&self, token: u64, flags: PteFlags) -> Result<(), MailError> {
+    fn narrow_into(&self, token: u64, flags: PteFlags) -> Result<(), MailError> {
         // 锁内只查 + 升级 Arc（锁序纪律：mappings 锁不跨 space 操作）。
         let target = {
             let m = self.mappings.lock();
@@ -176,7 +169,7 @@ impl Drop for PoleMeta {
 
 /// 把物理页借映进 `space`（需 rights & R，flags 由 caller 按 subset 决定）。
 /// `token` = 调用方 pie 的映射身份；同 token 幂等复用，异 token 独立映射。
-pub(crate) fn pole_map(
+pub(crate) fn map(
     meta: &PoleMeta,
     token: u64,
     space: &Arc<Space>,
@@ -188,63 +181,58 @@ pub(crate) fn pole_map(
     let va = meta.map_into(token, space, flags)?;
     // 强制翻 PTE flags——map_into 偶遇 superpage / 旧 entry 时 flags 没真落位；
     // protect 走 walk 改 PTE flags，确保 cap ⊆ 页表（无视 superpage 起点）。
-    let _ = space.protect(
-        crate::memory::manager::addr::VirtAddr::from_raw(va),
-        meta.bytes,
-        flags,
-    );
+    let _ = space.protect(VirtAddr::from_raw(va), meta.bytes, flags);
     Ok(va)
 }
 
 /// 从 `space` 解除映射（幂等；需 rights & (R | W)）。`token` 定位该 pie 的映射。
-pub(crate) fn pole_unmap(meta: &PoleMeta, token: u64) -> Result<(), MailError> {
+pub(crate) fn unmap(meta: &PoleMeta, token: u64) -> Result<(), MailError> {
     if !meta.alive() {
         return Err(MailError::Dead);
     }
     meta.unmap_from(token)
 }
 
-/// Restrict 降权：把 `token` 对应映射段降权到新 `flags`（cap ⊆ 页表）。未映射则无事。
-pub(crate) fn pole_restrict(meta: &PoleMeta, token: u64, flags: PteFlags) -> Result<(), MailError> {
+/// Narrow 降权：把 `token` 对应映射段降权到新 `flags`（cap ⊆ 页表）。未映射则无事。
+pub(crate) fn narrow(meta: &PoleMeta, token: u64, flags: PteFlags) -> Result<(), MailError> {
     if !meta.alive() {
         return Err(MailError::Dead);
     }
-    meta.restrict_into(token, flags)
+    meta.narrow_into(token, flags)
 }
 
-/// 终止 Pole（state = Dead + 资源表移除；Arc drop 时归还物理帧）。
-pub(crate) fn pole_shut(meta: &PoleMeta, id: ResourceId) {
+/// 封印 Pole（state = Dead + memo 移除；Arc drop 时归还物理帧）。
+pub(crate) fn seal(meta: &PoleMeta, id: ResourceId) {
     *meta.state.lock() = PoleState::Dead;
-    resource_table::remove(id, super::pie::PieKind::Pole);
+    memo::remove(id);
 }
 
 // ── 创建 ──
 
 use crate::work::room::scheduler::core::current;
 
-/// 创建 Pole：分配物理页 + 建 Meta + 注册 + auto-map 进当前 task 所在 Space +
-/// 推 AnyPie::Pole 到 task.pies。
-pub(crate) fn pole_create(space: &Arc<Space>, bytes: usize) -> Result<usize, MailError> {
+/// 解封 Pole：分配物理页 + 建 Meta + 注册 memo + 全权 pie 落 self + auto-map。返 token。
+pub(crate) fn unseal(bytes: usize) -> Result<u64, MailError> {
     let arc = PoleMeta::allocate(bytes)?;
-    let id = resource_table::alloc_id();
-    resource_table::insert_pole(id, &arc);
+    let id = memo::alloc_id();
+    memo::insert(id, Meta::Pole(arc.clone()));
 
     let task = current().running_task().ok_or(MailError::Denied)?;
     let task_space = task.ident.team.space.clone();
     // 先造 pie（拿到 per-pie token），再用该 token auto-map 创建者的视图——
-    // 创建者 pie 的映射独立成条，后续 restrict 只降它自己的 PTE。
-    let pie = super::pie::new_pie::<super::pie::Pole>(
+    // 创建者 pie 的映射独立成条，后续 narrow 只降它自己的 PTE。
+    let pie = super::pie::new_pie(
         id,
         Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
-        None, // 原始创建者：无 vestor
-        alloc::sync::Arc::downgrade(&arc),
+        None, // 原始自持：无 vestor
+        Arc::downgrade(&arc),
     );
+    let token = pie.token();
     // 创建者自留 pie 全权（R|W|VEST）→ map 走 R|W。
     let creator_flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-    arc.map_into(pie.token, &task_space, creator_flags)?;
+    arc.map_into(token, &task_space, creator_flags)?;
 
     let mut pies = task.pies.lock();
-    pies.push(super::pie::AnyPie::Pole(pie));
-    let _ = space; // suppress unused; auto-map 用 task.ident.team.space
-    Ok(pies.len() - 1)
+    pies.push(AnyPie::Pole(pie));
+    Ok(token)
 }

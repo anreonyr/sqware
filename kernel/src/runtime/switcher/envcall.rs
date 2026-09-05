@@ -22,7 +22,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
-use crate::work::mail::{HOLE_MSG_LEN, MailError, Permission, PieKind};
+use crate::work::mail::{AnyPie, HOLE_MSG_LEN, MailError, Permission};
 use crate::work::room::messenger::WaitKey;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
@@ -237,41 +237,39 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let ok = ident.team.space.protect(addr, size, flags).is_ok();
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        Ucall::Mail(MailCall::OpenHole) => {
-            match mail::hole::hole_create() {
-                Ok(idx) => frame.gpr.set_x(Gprs::A0, idx),
+        Ucall::Mail(MailCall::UnsealHole) => {
+            match mail::hole::unseal() {
+                Ok(token) => frame.gpr.set_x(Gprs::A0, token as usize),
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
-        Ucall::Mail(MailCall::OpenPole) => {
+        Ucall::Mail(MailCall::UnsealPole) => {
             let bytes = frame.gpr.x(Gprs::A0);
-            match mail::pole::pole_create(&ident.team.space, bytes) {
-                Ok(idx) => frame.gpr.set_x(Gprs::A0, idx),
+            match mail::pole::unseal(bytes) {
+                Ok(token) => frame.gpr.set_x(Gprs::A0, token as usize),
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
         Ucall::Mail(MailCall::Push) => {
-            let idx = frame.gpr.x(Gprs::A0);
+            let token = frame.gpr.x(Gprs::A0) as u64;
             let va = frame.gpr.x(Gprs::A1);
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
-                let pie = pies.get(idx)?;
-                if pie.kind() != PieKind::Hole { return None; }
+                let pie = pies.iter().find(|p| p.token() == token)?;
                 if !pie.permission().contains(Permission::WRITE) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
-                let arc = match pie {
-                    mail::AnyPie::Hole(p) => p.weak.upgrade(),
-                    _ => return None,
-                };
-                arc.map(|a| Ok(a))
+                match pie {
+                    AnyPie::Hole(p) => p.weak.upgrade().map(|a| Ok(a)),
+                    _ => None,
+                }
             }) {
                 Some(Ok(meta)) => {
                     let mut msg = [0u8; HOLE_MSG_LEN];
                     if !mail::copy_in(&ident.team.space, &mut msg, va) {
                         Err(MailError::Denied)
                     } else {
-                        mail::hole::hole_push(&meta, &msg)
+                        mail::hole::push(&meta, &msg)
                     }
                 }
                 Some(Err(e)) => Err(e),
@@ -286,22 +284,20 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         Ucall::Mail(MailCall::Pull) => {
-            let idx = frame.gpr.x(Gprs::A0);
+            let token = frame.gpr.x(Gprs::A0) as u64;
             let va = frame.gpr.x(Gprs::A1);
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
-                let pie = pies.get(idx)?;
-                if pie.kind() != PieKind::Hole { return None; }
+                let pie = pies.iter().find(|p| p.token() == token)?;
                 if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
-                let arc = match pie {
-                    mail::AnyPie::Hole(p) => p.weak.upgrade(),
-                    _ => return None,
-                };
-                arc.map(|a| Ok(a))
+                match pie {
+                    AnyPie::Hole(p) => p.weak.upgrade().map(|a| Ok(a)),
+                    _ => None,
+                }
             }) {
-                Some(Ok(meta)) => match mail::hole::hole_pull(&meta) {
+                Some(Ok(meta)) => match mail::hole::pull(&meta) {
                     Ok(m) => {
                         if !mail::copy_out(&ident.team.space, &m, va) {
                             Err(MailError::Denied)
@@ -323,23 +319,23 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         Ucall::Mail(MailCall::Map) => {
-            let idx = frame.gpr.x(Gprs::A0);
+            let token = frame.gpr.x(Gprs::A0) as u64;
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
-                let pie = pies.get(idx)?;
-                if pie.kind() != PieKind::Pole { return None; }
+                let pie = pies.iter().find(|p| p.token() == token)?;
                 if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
-                let (token, arc) = match pie {
-                    mail::AnyPie::Pole(p) => (p.token(), p.weak.upgrade()),
-                    _ => return None,
-                };
-                // cap ⊆ 页表：subset 决定 flags（READ→R，READ|WRITE→R|W，其他→Denied）
-                let flags = subset_to_pte(pie.permission());
-                arc.map(|a| Ok((a, token, flags)))
+                match pie {
+                    AnyPie::Pole(p) => {
+                        // cap ⊆ 页表：subset 决定 flags（READ→R，READ|WRITE→R|W）
+                        let flags = subset_to_pte(pie.permission());
+                        p.weak.upgrade().map(|a| Ok((a, token, flags)))
+                    }
+                    _ => None,
+                }
             }) {
-                Some(Ok((meta, token, Ok(flags)))) => mail::pole::pole_map(&meta, token, &ident.team.space, flags),
+                Some(Ok((meta, token, Ok(flags)))) => mail::pole::map(&meta, token, &ident.team.space, flags),
                 Some(Ok((_, _, Err(e)))) => Err(e),
                 Some(Err(e)) => Err(e),
                 None => Err(MailError::Denied),
@@ -353,21 +349,19 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         Ucall::Mail(MailCall::Unmap) => {
-            let idx = frame.gpr.x(Gprs::A0);
+            let token = frame.gpr.x(Gprs::A0) as u64;
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
-                let pie = pies.get(idx)?;
-                if pie.kind() != PieKind::Pole { return None; }
+                let pie = pies.iter().find(|p| p.token() == token)?;
                 if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
-                let (token, arc) = match pie {
-                    mail::AnyPie::Pole(p) => (p.token(), p.weak.upgrade()),
-                    _ => return None,
-                };
-                arc.map(|a| Ok((a, token)))
+                match pie {
+                    AnyPie::Pole(p) => p.weak.upgrade().map(|a| Ok((a, token))),
+                    _ => None,
+                }
             }) {
-                Some(Ok((meta, token))) => mail::pole::pole_unmap(&meta, token),
+                Some(Ok((meta, token))) => mail::pole::unmap(&meta, token),
                 Some(Err(e)) => Err(e),
                 None => Err(MailError::Denied),
             };
@@ -379,45 +373,30 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Shut) => {
-            let idx = frame.gpr.x(Gprs::A0);
+        Ucall::Mail(MailCall::Seal) => {
+            let token = frame.gpr.x(Gprs::A0) as u64;
             let task = current().running_task();
-            // 取 (kind, resource)：kind 决定 shut 分派；resource 给资源表查 Meta。
-            // shut 无需权限位（任何 alive pie 持有者皆可关；与 restrict 的"免费允许"
-            // 同族）。非空权限门是恒真死码（创建=全集、restrict 拒空）——不设。
-            let (kind, resource) = match task.as_ref()
-                .and_then(|t| {
-                    let pies = t.pies.lock();
-                    let pie = pies.get(idx)?;
-                    if !pie.alive() { return Some(Err(MailError::Dead)); }
-                    Some(Ok((pie.kind(), pie.resource())))
-                })
-                .transpose()
-            {
-                Ok(Some((k, r))) => (k, r),
-                Ok(None) => (PieKind::Hole, mail::ResourceId(0)), // 不会到 Shut 分派
-                Err(e) => {
-                    frame.gpr.set_x(Gprs::A0, e.code() as usize);
+            // 取 resource：token 定位自己 pie。seal 免费（任何持有者皆可封印）。
+            let resource = match task.as_ref().and_then(|t| {
+                let pies = t.pies.lock();
+                pies.iter().find(|p| p.token() == token).map(|p| p.resource())
+            }) {
+                Some(r) => r,
+                None => {
+                    frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
                     return frame as *mut TrapContext;
                 }
             };
-            let r = match kind {
-                PieKind::Hole => {
-                    if let Some(meta) = mail::resource_table::lookup_hole(resource) {
-                        mail::hole::hole_shut(&meta, resource);
-                        Ok(())
-                    } else {
-                        Err(MailError::Dead)
-                    }
+            let r = match mail::memo::lookup(resource) {
+                Some(mail::memo::Meta::Hole(m)) => {
+                    mail::hole::seal(&m, resource);
+                    Ok(())
                 }
-                PieKind::Pole => {
-                    if let Some(meta) = mail::resource_table::lookup_pole(resource) {
-                        mail::pole::pole_shut(&meta, resource);
-                        Ok(())
-                    } else {
-                        Err(MailError::Dead)
-                    }
+                Some(mail::memo::Meta::Pole(m)) => {
+                    mail::pole::seal(&m, resource);
+                    Ok(())
                 }
+                None => Err(MailError::Dead),
             };
             frame.gpr.set_x(
                 Gprs::A0,
@@ -427,17 +406,19 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Vest) => {
-            // a0 = src_pie_idx, a1 = target_task_id, a2 = subset bits。
-            let src_idx = frame.gpr.x(Gprs::A0);
-            let target_id = frame.gpr.x(Gprs::A1);
+        Ucall::Mail(MailCall::Accord) => {
+            // a0 = src_token, a1 = dst_id, a2 = subset bits。
+            let src_token = frame.gpr.x(Gprs::A0) as u64;
+            let dst_id = frame.gpr.x(Gprs::A1);
             let subset_bits = frame.gpr.x(Gprs::A2) as u32;
 
             let src_task = current().running_task();
             // 提前取 id（src_task 在 and_then 闭包里被 move 消费）
             let current_id = src_task.as_ref().map(|t| t.ident.id).unwrap_or(0);
             // 1. 取 src pie + 鉴权（VEST 或 BACK 权、subset 合法、alive）
-            let src = match src_task.and_then(|t| t.pies.lock().get(src_idx).cloned()) {
+            let src = match src_task
+                .and_then(|t| t.pies.lock().iter().find(|p| p.token() == src_token).cloned())
+            {
                 Some(p) => p,
                 None => {
                     frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
@@ -448,7 +429,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 frame.gpr.set_x(Gprs::A0, MailError::Dead.code() as usize);
                 return frame as *mut TrapContext;
             }
-            // 含 VEST 或 BACK 任一即能 vest（BACK 是受限 vest，详下）。
+            // 含 VEST 或 BACK 任一即能 accord（BACK 是受限 accord，详下）。
             if !src.permission().contains(Permission::VEST)
                 && !src.permission().contains(Permission::BACK)
             {
@@ -460,73 +441,67 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
                 return frame as *mut TrapContext;
             }
-            // BACK 验：源 pie 有 BACK 必 target == src.vestor。
-            //   src.vestor() = None  ⇒ 原始创者（无上一手），BACK 退化为"VEST 同效"——可发给任意 target。
-            //   src.vestor() = Some(g) ⇒ BACK 守门 target == g。
+            // BACK 验：源 pie 有 BACK 必 dst == src.vestor。
+            //   src.vestor() = None  ⇒ 原始自持（无上一手），BACK 退化为"accord 同效"。
+            //   src.vestor() = Some(g) ⇒ BACK 守门 dst == g。
             if src.permission().contains(Permission::BACK) {
                 if let Some(vestor) = src.vestor() {
-                    if vestor != target_id {
+                    if vestor != dst_id {
                         frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
                         return frame as *mut TrapContext;
                     }
                 }
             }
-            // 2. 查 target task（持 Weak，避开 scheduler transform 的
-            //    strong_count == 1 断言；数据面内部短暂升级为 Arc）。
-            let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(target_id) {
+            // 2. 查 dst task（持 Weak，避开 scheduler transform 的 strong_count==1 断言）。
+            let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
                 Some(w) => w,
                 None => {
                     frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
                     return frame as *mut TrapContext;
                 }
             };
-            // 3. 调 vest 数据面原语（传 current_task_id 作新 pie 的 vestor）
-            let r = mail::vest::vest(&src, &target, subset, current_id);
+            // 3. 调 accord 数据面原语（传 current_id 作新 pie 的 vestor）。返新 token（撤销句柄）。
+            let r = mail::accord::accord(&src, &target, subset, current_id);
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(idx) => idx,
+                    Ok(token) => token as usize,
                     Err(e) => e.code() as usize,
                 },
             );
         }
-        Ucall::Mail(MailCall::Restrict) => {
-            // a0 = src_pie_idx, a1 = subset bits。就地改写本 pie 权限（单调收窄）;
-            // Pole 额外把当前 space 里该 meta 的映射段降权——cap ⊆ 页表。
-            let idx = frame.gpr.x(Gprs::A0);
+        Ucall::Mail(MailCall::Narrow) => {
+            // a0 = token, a1 = subset bits。就地改写本 pie 权限（单调收窄）;
+            // Pole 额外把该 pie 的映射段降权——cap ⊆ 页表。
+            let token = frame.gpr.x(Gprs::A0) as u64;
             let subset = Permission::from_bits_truncate(frame.gpr.x(Gprs::A1) as u32);
 
-            // Phase A：锁内校验（非空 / 单调）+ 取 per-pie token 与 Pole meta Arc。
+            // Phase A：锁内校验（非空 / 单调）+ 取 Pole meta Arc。
             // 锁内只做 Arc clone，不做空间操作（锁序纪律：pids 锁不跨 space 锁）。
-            // 存活判定与 meta 升级合并为单次 upgrade（Pole），避免重复升级。
             let task = current().running_task();
-            let fetched = match task.as_ref().and_then(|t| {
+            let meta = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
-                let pie = pies.get(idx)?;
+                let pie = pies.iter().find(|p| p.token() == token)?;
                 if subset.is_empty() || (subset & pie.permission()) != subset {
                     return Some(Err(MailError::Denied));
                 }
-                let token = pie.token();
-                let m = match pie {
-                    // Hole：无 meta，仅查存活（单次 upgrade）。
-                    mail::AnyPie::Hole(p) => {
+                match pie {
+                    AnyPie::Hole(p) => {
                         if !p.alive() { return Some(Err(MailError::Dead)); }
-                        None
+                        Some(Ok(None))
                     }
-                    // Pole：单次 upgrade 同时完成存活判定 + 取 meta。
-                    mail::AnyPie::Pole(p) => match p.weak.upgrade() {
-                        Some(arc) => Some(arc),
-                        None => return Some(Err(MailError::Dead)),
+                    AnyPie::Pole(p) => match p.weak.upgrade() {
+                        Some(arc) => Some(Ok(Some(arc))),
+                        None => Some(Err(MailError::Dead)),
                     },
-                };
-                Some(Ok((token, m)))
+                }
             }) {
                 None => Err(MailError::Denied),
                 Some(Err(e)) => Err(e),
                 Some(Ok(v)) => Ok(v),
             };
-            let (token, meta) = match fetched {
-                Ok(v) => v,
+            let meta = match meta {
+                Ok(m) => m,
                 Err(e) => {
                     frame.gpr.set_x(Gprs::A0, e.code() as usize);
                     return frame as *mut TrapContext;
@@ -536,7 +511,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // Phase B：Pole 同步降权（该 pie token 的映射段）。成功才改写。
             if let Some(meta) = meta {
                 // RISC-V PTE 无 R=0,W=0 合法数据叶子 ⇒ 无 READ 的 subset 不可作为
-                // Pole 降权目标（决策 B2′）。subset_to_pte 即守此门。
+                // Pole 降权目标。subset_to_pte 即守此门。
                 let flags = match subset_to_pte(subset) {
                     Ok(f) => f,
                     Err(e) => {
@@ -544,7 +519,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                         return frame as *mut TrapContext;
                     }
                 };
-                if let Err(e) = mail::pole::pole_restrict(&meta, token, flags) {
+                if let Err(e) = mail::pole::narrow(&meta, token, flags) {
                     frame.gpr.set_x(Gprs::A0, e.code() as usize);
                     return frame as *mut TrapContext;
                 }
@@ -553,7 +528,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // Phase C：改写 permission（数据面做单调校验 + 落值）。
             let ok = task.and_then(|t| {
                 let mut pies = t.pies.lock();
-                pies.get_mut(idx).map(|p| mail::restrict::restrict(p, subset))
+                pies.iter_mut().find(|p| p.token() == token).map(|p| mail::narrow::narrow(p, subset))
             });
             frame.gpr.set_x(
                 Gprs::A0,
@@ -561,6 +536,28 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     Some(Ok(())) => 0,
                     Some(Err(e)) => e.code() as usize,
                     None => MailError::Denied.code() as usize,
+                },
+            );
+        }
+        Ucall::Mail(MailCall::Revoke) => {
+            // a0 = dst_id, a1 = token。收回授与 dst 的、token 标识的副本。
+            let dst_id = frame.gpr.x(Gprs::A0);
+            let token = frame.gpr.x(Gprs::A1) as u64;
+            let current_id = current().running_task().map(|t| t.ident.id).unwrap_or(0);
+
+            let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
+                Some(w) => w,
+                None => {
+                    frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
+                    return frame as *mut TrapContext;
+                }
+            };
+            let r = mail::revoke::revoke(&target, token, current_id);
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(()) => 0,
+                    Err(e) => e.code() as usize,
                 },
             );
         }
