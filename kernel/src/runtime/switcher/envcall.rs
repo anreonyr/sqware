@@ -383,11 +383,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let idx = frame.gpr.x(Gprs::A0);
             let task = current().running_task();
             // 取 (kind, resource)：kind 决定 shut 分派；resource 给资源表查 Meta。
+            // shut 无需权限位（任何 alive pie 持有者皆可关；与 restrict 的"免费允许"
+            // 同族）。非空权限门是恒真死码（创建=全集、restrict 拒空）——不设。
             let (kind, resource) = match task.as_ref()
                 .and_then(|t| {
                     let pies = t.pies.lock();
                     let pie = pies.get(idx)?;
-                    if pie.permission().is_empty() { return Some(Err(MailError::Denied)); }
                     if !pie.alive() { return Some(Err(MailError::Dead)); }
                     Some(Ok((pie.kind(), pie.resource())))
                 })
@@ -495,20 +496,28 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let idx = frame.gpr.x(Gprs::A0);
             let subset = Permission::from_bits_truncate(frame.gpr.x(Gprs::A1) as u32);
 
-            // Phase A：锁内校验（alive / 非空 / 单调）+ 取 per-pie token 与 Pole meta Arc。
+            // Phase A：锁内校验（非空 / 单调）+ 取 per-pie token 与 Pole meta Arc。
             // 锁内只做 Arc clone，不做空间操作（锁序纪律：pids 锁不跨 space 锁）。
+            // 存活判定与 meta 升级合并为单次 upgrade（Pole），避免重复升级。
             let task = current().running_task();
             let fetched = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.get(idx)?;
-                if !pie.alive() { return Some(Err(MailError::Dead)); }
                 if subset.is_empty() || (subset & pie.permission()) != subset {
                     return Some(Err(MailError::Denied));
                 }
                 let token = pie.token();
                 let m = match pie {
-                    mail::AnyPie::Hole(_) => None,
-                    mail::AnyPie::Pole(p) => p.weak.upgrade(),
+                    // Hole：无 meta，仅查存活（单次 upgrade）。
+                    mail::AnyPie::Hole(p) => {
+                        if !p.alive() { return Some(Err(MailError::Dead)); }
+                        None
+                    }
+                    // Pole：单次 upgrade 同时完成存活判定 + 取 meta。
+                    mail::AnyPie::Pole(p) => match p.weak.upgrade() {
+                        Some(arc) => Some(arc),
+                        None => return Some(Err(MailError::Dead)),
+                    },
                 };
                 Some(Ok((token, m)))
             }) {
