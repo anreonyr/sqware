@@ -82,7 +82,7 @@ fn resolve_anonymous(fault: &PageFault, space: &Space) -> bool {
 ///
 /// 陈旧条目的判据：PTE 已满足本次访问却仍缺页 ⇒ 硬件持旧 TLB 条目（或 A/D 位
 /// 瞬时竞争），重试即成——远核「新增 / 放宽」类页表变更靠这条 + trap 两侧整表刷
-/// 自愈，无需跨核清退（见 `manager::evict` 模块头）。只有 V 而权限不足则是
+/// 自愈，无需跨核 shootdown（见 `manager::asid` 清退语义）。只有 V 而权限不足则是
 /// **真实违例**，不得判 resolved（否则重试立即再缺页 = 无限缺页循环）。
 fn satisfies(flags: PteFlags, kind: FaultKind) -> bool {
     let need = match kind {

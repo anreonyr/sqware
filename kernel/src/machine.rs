@@ -106,7 +106,7 @@ pub struct PerHart {
     /// [`set_scheduler`] 原子 store——调度器在堆上动态分配，运行时才知道地址，
     /// 故为 PerHart 唯一运行时填充字段；`current()` 经 tp 直达零索引）。
     pub scheduler: AtomicPtr<()>,
-    /// 本 hart 租约字（offset 0x18；见 `memory::manager::evict`）：本核写
+    /// 本 hart 宿住槽（offset 0x18；见 `memory::manager::asid`）：本核写
     /// （[`lease_store`]）、他核读（[`lease_load`]），静态初值 = 退租。
     pub lease: AtomicUsize,
     /// 槽对齐保留（offset 0x20..0x40）：凑 64 B 使 boot 汇编 `slli a0, 6` 单条索引。
@@ -120,7 +120,7 @@ impl PerHart {
             // 布局常量纯算术：帧区基址 + 槽位偏移（同 layout.rs 推导）。
             frame: VirtAddr::wrap(HART_FRAME_BASE.as_usize() + id * PAGE_SIZE),
             scheduler: AtomicPtr::new(core::ptr::null_mut()),
-            lease: AtomicUsize::new(crate::memory::manager::evict::VACANT),
+            lease: AtomicUsize::new(crate::memory::manager::asid::VACANT),
             _pad: [0; 4],
         }
     }

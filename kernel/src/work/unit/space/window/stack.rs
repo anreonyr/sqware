@@ -65,7 +65,7 @@ impl StackWindow {
         });
         salvage
             .reclaim(space)
-            .expect("stack claim rollback: evict deaf");
+            .expect("stack claim rollback: shootdown deaf");
         claimed
     }
 }

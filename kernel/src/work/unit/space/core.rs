@@ -34,9 +34,9 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::evict::{self, Deaf};
+use crate::memory::manager::asid::{self, Deaf};
 use crate::memory::manager::table::{Frame, FrameState, TableNode};
-use crate::memory::manager::{asid, flush_asid, mode};
+use crate::memory::manager::{flush_asid, mode};
 
 use super::map::{Map, Pending, PendingState};
 use super::{Seg, SpaceKind};
@@ -108,14 +108,14 @@ impl Salvage {
     ///
     /// # Errors
     ///
-    /// [`Deaf`] = 某核未在耐心内到齐（致命级，适配层裁定策略）。
+    /// [`Deaf`] = RFENCE 清退失败（致命级，适配层裁定策略）。
     pub(crate) fn reclaim(mut self, space: &Space) -> Result<(), Deaf> {
         let maps = core::mem::take(&mut self.maps);
         let spans = core::mem::take(&mut self.spans);
         if maps.is_empty() && spans.is_empty() {
             return Ok(());
         }
-        evict::evict(space.asid())?;
+        asid::shootdown(space.asid())?;
         space.with(|inner| {
             for span in &spans {
                 let ok = inner.deallocate(span.seg, span.va.as_usize(), span.size.get());
@@ -918,10 +918,10 @@ impl Space {
     ///
     /// # Errors
     ///
-    /// [`Deaf`] = 某核未在耐心内到齐（致命级，适配层裁定策略）。
-    pub(crate) fn with_evict<R>(&self, op: impl FnOnce(&mut SpaceInner) -> R) -> Result<R, Deaf> {
+    /// [`Deaf`] = RFENCE 清退失败（致命级，适配层裁定策略）。
+    pub(crate) fn with_shootdown<R>(&self, op: impl FnOnce(&mut SpaceInner) -> R) -> Result<R, Deaf> {
         let r = self.with(op);
-        evict::evict(self.kind.asid())?;
+        asid::shootdown(self.kind.asid())?;
         Ok(r)
     }
 
@@ -964,7 +964,7 @@ impl Space {
     pub fn unmap(&self, vaddr: VirtAddr, size: usize) {
         let mut salvage = Salvage::new();
         self.with_flush(|inner| inner.unmap(vaddr, size, &mut salvage));
-        salvage.reclaim(self).expect("unmap: evict deaf");
+        salvage.reclaim(self).expect("unmap: shootdown deaf");
     }
 
     /// Span 回收门：校验段 + 统一拆除 + 刷本核 + 结清（清退到齐后**才**还段与帧
@@ -985,7 +985,7 @@ impl Space {
             salvage.take_span(span);
             Ok(())
         })?;
-        salvage.reclaim(self).expect("release: evict deaf");
+        salvage.reclaim(self).expect("release: shootdown deaf");
         Ok(())
     }
 
@@ -996,15 +996,15 @@ impl Space {
 
     /// 修改保护标志（mprotect 后端）：收紧类，就地跨核清退。
     pub fn protect(&self, vaddr: VirtAddr, size: usize, flags: PteFlags) -> Result<(), MapError> {
-        self.with_evict(|inner| inner.protect(vaddr, size, flags))
-            .expect("protect: evict deaf")
+        self.with_shootdown(|inner| inner.protect(vaddr, size, flags))
+            .expect("protect: shootdown deaf")
     }
 
     /// 共享只读化（COW fork 前置：Owned → Shared）：收紧类，就地跨核清退。
     #[allow(dead_code)] // fork 后端预留
     pub fn share(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
-        self.with_evict(|inner| inner.share(start, size))
-            .expect("share: evict deaf")
+        self.with_shootdown(|inner| inner.share(start, size))
+            .expect("share: shootdown deaf")
     }
 
     /// 写时分裂私有（COW 写缺页：Shared → 新 Owned；写缺页调用传 `PAGE_SIZE`）。
@@ -1013,7 +1013,7 @@ impl Space {
     /// 抵押（fork 未接通期成立）：归"只刷本核"档的前提是 `share` 仍是 dead code
     /// ——今天没有任何页是 Shared，本方法不可达。fork 接通后同空间多线程会出现
     /// 「他核持旧共享帧的只读陈旧条目 → 读不到本核的写」，届时必须改走
-    /// [`Self::with_evict`]。
+    /// [`Self::with_shootdown`]。
     #[allow(clippy::wrong_self_convention)] // Space 跨核 Arc 共享，&self 刻意为之
     pub fn own(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
         self.with_flush(|inner| inner.own(start, size))
@@ -1085,7 +1085,7 @@ impl Drop for Space {
             // 2. 释放 ASID（内含清退：ASID 立即可被复用，残留条目会让新空间同
             //    VA 命中旧映射）。此路径恒走快路径——Arc 归零 ⇒ 无任务持有本
             //    空间 ⇒ 没有任何核驻留该 ASID。
-            asid::deallocate(asid).expect("space drop: evict deaf");
+            asid::deallocate(asid).expect("space drop: shootdown deaf");
         }
         // `inner` 随字段自动 drop：root（页表树）/maps 帧全部归还 frame 池。
     }

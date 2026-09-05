@@ -28,7 +28,7 @@ use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::evict;
+use crate::memory::manager::asid;
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent, RoomEvent};
@@ -288,7 +288,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     }
 
     // 0.4 入场入册：`__utrap`/`__strap` 已整表刷（不变量 1），本核转为内核租户。
-    evict::settle(0);
+    asid::set_asid(0);
 
     // 0.5 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。
     let ident = ident();
@@ -467,10 +467,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         "trap stack corrupted on hart {me} after handler"
     );
 
-    // 出场公布：租约取**将要返回的帧**（`run()` 可能已换任务），且必须在返回
-    // 之前——不变量 2（先公布，后 `__restore` 的 sfence）。
+    // 出场登记：本核将驻留**下一帧**的空间（`run()` 可能已换任务），且必须在
+    // 返回之前——`__restore` 的 sfence 后本核就带新 ASID 的 TLB，RFENCE 清退
+    // 需能在该时刻正确发现本核驻留该 ASID。
     // SAFETY: next 恒指向本核有效帧（分发各分支的产物），恒等映射下可解引用。
-    evict::settle(unsafe { (*next).user_satp.asid() });
+    asid::set_asid(unsafe { (*next).user_satp.asid() });
 
     next
 }

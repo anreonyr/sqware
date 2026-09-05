@@ -516,13 +516,12 @@ pub(super) fn wait() -> Option<Arc<Task>> {
             None => WFI_FAR,
         };
         timer::tick_after(delta);
-        // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）
+        // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）。
+        // 注意：不再有清退应答点——RFENCE 由固件强制打断空闲核（含 WFI 态），
+        // 目标核进 trap 执行 sfence，无需空闲核主动 sweep。
         unsafe {
             core::arch::asm!("wfi");
         }
-        // 清退应答点：内核态 SIE=0 的空闲核不吃 trap，这是它唯一的刷点
-        // （被清退 IPI 唤起时在此兑现「世代递增 ⟺ 已整表刷过」）。
-        crate::memory::manager::evict::sweep();
         // timer 到期分派由 messenger 处理（sites + parked 两路）
         if messenger::drain_expired() {
             break;

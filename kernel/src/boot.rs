@@ -348,9 +348,9 @@ pub(crate) extern "C" fn boot_main() -> ! {
         core::arch::asm!("sfence.vma");
     }
     arm_hart();
-    // 入册（内核租户）：本核刚 `sfence.vma` 过，满足不变量 1。副核在此之前
-    // 是退租态，不会被任何清退选中。
-    crate::memory::manager::evict::settle(0);
+    // 登记内核驻留（ASID 0）：本核刚 `sfence.vma` 过。副核在此之前是 VACANT 态
+    // （PerHart 静态初值），不会被任何清退选中。
+    crate::memory::manager::asid::set_asid(0);
     // 启动完成写进 trace（直打控制台会扰 panic 现场）。
     trace::note(trace::EventKind::Boot(trace::BootEvent::Done { hart: me }));
     scheduler::boot::idle()
