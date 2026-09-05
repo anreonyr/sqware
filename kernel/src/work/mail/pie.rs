@@ -10,8 +10,8 @@
 // `Pole(Pie<Pole>)`。envcall 入口 dispatch 通过 pie_idx 索引 Vec，按 kind 分派
 // 到 hole:: / pole:: / vest 数据面。
 
-use bitflags::bitflags;
 use core::marker::PhantomData;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use alloc::sync::{Arc, Weak};
 
@@ -20,22 +20,20 @@ use super::pole::PoleMeta;
 use super::resource_table::ResourceId;
 
 // ── 权限位（bitflags）──
+//
+// 单一真相在 `ubi::Permission`（用户态/内核态共用），本处 re-export 以维持
+// `mail::Permission` 的既有引用路径，避免双定义漂移。
 
-bitflags! {
-    /// 门闩权限位掩码。
-    ///
-    /// v1.1：`READ | WRITE | VEST` 已实现（创建者天然能 Vest）；`BACK` 留位未实现。
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct Permission: u32 {
-        /// Read 权：观察 / 接收 / 重读。
-        const READ  = 1 << 0;
-        /// Write 权：修改 / 投递 / 写入。
-        const WRITE = 1 << 1;
-        /// Vest 权：把 pie 复制给其他 Task（自身 permission 不变）。
-        const VEST  = 1 << 2;
-        /// Back 权（预留，v1.1 不实现）：只能 Vest 回 grantor。
-        const BACK  = 1 << 3;
-    }
+pub use ubi::Permission;
+
+/// 全局 pie 身份序列号（自 1 递增）。
+///
+/// 用作 `PoleMeta::mappings` 的 per-pie 映射键：同一物理页借映给同一 Team 里
+/// 多个 Task（共享 Space）时，每个 pie 一条独立映射、独立 PTE，restrict/map 只
+/// 动自己的那条——避免「per-pie 权限 vs per-space PTE」粒度错位击穿 cap ⊆ 页表。
+fn next_pie_token() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Hole 单消息字节数（内核邮路槽字大小；栈拷贝，无动态分配）。
@@ -82,6 +80,8 @@ pub struct Pie<T: ResourceKind> {
     /// BACK 权限用此字段守门：target 必须 == src.vestor。
     pub(crate) vestor: Option<usize>,
     pub(crate) weak: Weak<T::Meta>,
+    /// per-pie 映射身份（全局唯一；Pole 用它作 `mappings` 键，Hole 闲置）。
+    pub(crate) token: u64,
     _t: PhantomData<T>,
 }
 
@@ -93,6 +93,7 @@ impl<T: ResourceKind> Clone for Pie<T> {
             permission: self.permission,
             vestor: self.vestor,
             weak: self.weak.clone(),
+            token: self.token,
             _t: PhantomData,
         }
     }
@@ -109,6 +110,11 @@ impl<T: ResourceKind> Pie<T> {
 
     pub fn vestor(&self) -> Option<usize> {
         self.vestor
+    }
+
+    /// per-pie 映射身份（Pole 用；全局唯一）。
+    pub fn token(&self) -> u64 {
+        self.token
     }
 
     /// L1 存活：`Weak::upgrade` 成功 = Meta 仍活。
@@ -161,6 +167,14 @@ impl AnyPie {
             AnyPie::Pole(p) => p.alive(),
         }
     }
+
+    /// per-pie 映射身份（Pole 用；全局唯一）。
+    pub fn token(&self) -> u64 {
+        match self {
+            AnyPie::Hole(p) => p.token,
+            AnyPie::Pole(p) => p.token,
+        }
+    }
 }
 
 /// 测试 / 内部用：从 Arc 派生 Weak 包装 Pie。
@@ -176,6 +190,7 @@ pub(super) fn new_pie<T: ResourceKind>(
         permission,
         vestor,
         weak,
+        token: next_pie_token(),
         _t: PhantomData,
     }
 }

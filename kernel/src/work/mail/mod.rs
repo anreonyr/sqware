@@ -8,8 +8,8 @@
 // 数据面不感知 rights；门闩在 envcall 入口 dispatch 时检查。
 // 阻塞语义在调度域 wait/wake，mail 不重造调度器。
 //
-// v1 硬不变量：rights ∈ {R, W}（bit 2/3 预留 G/GR）；无 grant 协议；
-// 每 Task 持 `Vec<AnyPie>` 独立维护，跨 Task 共享需显式 Arc clone。
+// 权限四元：READ / WRITE / VEST / BACK 均已实现（单一真相在 `ubi::Permission`）。
+// 每 Task 持 `Vec<AnyPie>` 独立维护，跨 Task 共享经 VEST 造新 pie。
 
 pub mod hole;
 pub mod pie;

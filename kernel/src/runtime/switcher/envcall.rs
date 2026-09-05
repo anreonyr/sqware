@@ -331,16 +331,16 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 if pie.kind() != PieKind::Pole { return None; }
                 if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
-                let arc = match pie {
-                    mail::AnyPie::Pole(p) => p.weak.upgrade(),
+                let (token, arc) = match pie {
+                    mail::AnyPie::Pole(p) => (p.token(), p.weak.upgrade()),
                     _ => return None,
                 };
                 // cap ⊆ 页表：subset 决定 flags（READ→R，READ|WRITE→R|W，其他→Denied）
                 let flags = subset_to_pte(pie.permission());
-                arc.map(|a| Ok((a, flags)))
+                arc.map(|a| Ok((a, token, flags)))
             }) {
-                Some(Ok((meta, Ok(flags)))) => mail::pole::pole_map(&meta, &ident.team.space, flags),
-                Some(Ok((_, Err(e)))) => Err(e),
+                Some(Ok((meta, token, Ok(flags)))) => mail::pole::pole_map(&meta, token, &ident.team.space, flags),
+                Some(Ok((_, _, Err(e)))) => Err(e),
                 Some(Err(e)) => Err(e),
                 None => Err(MailError::Denied),
             };
@@ -361,13 +361,13 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 if pie.kind() != PieKind::Pole { return None; }
                 if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
-                let arc = match pie {
-                    mail::AnyPie::Pole(p) => p.weak.upgrade(),
+                let (token, arc) = match pie {
+                    mail::AnyPie::Pole(p) => (p.token(), p.weak.upgrade()),
                     _ => return None,
                 };
-                arc.map(|a| Ok(a))
+                arc.map(|a| Ok((a, token)))
             }) {
-                Some(Ok(meta)) => mail::pole::pole_unmap(&meta, &ident.team.space),
+                Some(Ok((meta, token))) => mail::pole::pole_unmap(&meta, token),
                 Some(Err(e)) => Err(e),
                 None => Err(MailError::Denied),
             };
@@ -495,35 +495,36 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let idx = frame.gpr.x(Gprs::A0);
             let subset = Permission::from_bits_truncate(frame.gpr.x(Gprs::A1) as u32);
 
-            // Phase A：锁内校验（alive / 非空 / 单调）+ 取 Pole meta Arc。
+            // Phase A：锁内校验（alive / 非空 / 单调）+ 取 per-pie token 与 Pole meta Arc。
             // 锁内只做 Arc clone，不做空间操作（锁序纪律：pids 锁不跨 space 锁）。
             let task = current().running_task();
-            let meta = match task.as_ref().and_then(|t| {
+            let fetched = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.get(idx)?;
                 if !pie.alive() { return Some(Err(MailError::Dead)); }
                 if subset.is_empty() || (subset & pie.permission()) != subset {
                     return Some(Err(MailError::Denied));
                 }
+                let token = pie.token();
                 let m = match pie {
                     mail::AnyPie::Hole(_) => None,
                     mail::AnyPie::Pole(p) => p.weak.upgrade(),
                 };
-                Some(Ok(m))
+                Some(Ok((token, m)))
             }) {
                 None => Err(MailError::Denied),
                 Some(Err(e)) => Err(e),
-                Some(Ok(m)) => Ok(m),
+                Some(Ok(v)) => Ok(v),
             };
-            let meta = match meta {
-                Ok(m) => m,
+            let (token, meta) = match fetched {
+                Ok(v) => v,
                 Err(e) => {
                     frame.gpr.set_x(Gprs::A0, e.code() as usize);
                     return frame as *mut TrapContext;
                 }
             };
 
-            // Phase B：Pole 同步降权（当前 space 里该 meta 的映射段）。成功才改写。
+            // Phase B：Pole 同步降权（该 pie token 的映射段）。成功才改写。
             if let Some(meta) = meta {
                 // RISC-V PTE 无 R=0,W=0 合法数据叶子 ⇒ 无 READ 的 subset 不可作为
                 // Pole 降权目标（决策 B2′）。subset_to_pte 即守此门。
@@ -534,7 +535,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                         return frame as *mut TrapContext;
                     }
                 };
-                if let Err(e) = mail::pole::pole_restrict(&meta, &ident.team.space, flags) {
+                if let Err(e) = mail::pole::pole_restrict(&meta, token, flags) {
                     frame.gpr.set_x(Gprs::A0, e.code() as usize);
                     return frame as *mut TrapContext;
                 }
