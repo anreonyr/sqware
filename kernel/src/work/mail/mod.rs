@@ -15,6 +15,7 @@ pub mod hole;
 pub mod pie;
 pub mod pole;
 pub mod resource_table;
+pub mod restrict;
 pub mod vest;
 
 pub use pie::{AnyPie, Hole, MailError, Permission, Pie, PieKind, Pole, HOLE_MSG_LEN};

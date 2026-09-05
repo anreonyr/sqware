@@ -106,6 +106,10 @@ fn main() {
         bin_dir.join("user-back").display()
     );
     println!(
+        "cargo::rustc-env=USER_RESTRICT={}",
+        bin_dir.join("user-restrict").display()
+    );
+    println!(
         "cargo::rustc-env=USER_LISP={}",
         bin_dir.join("user-lisp").display()
     );

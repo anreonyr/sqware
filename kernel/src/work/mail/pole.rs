@@ -16,7 +16,7 @@ use crate::lock::{Level, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::PhysAddr;
+use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::{Seg, Space, Span};
 
@@ -108,6 +108,26 @@ impl PoleMeta {
         Ok(va.as_usize())
     }
 
+    /// Restrict 降权：把 `space` 里本 meta 的映射段 `protect` 到新 flags。
+    ///
+    /// cap ⊆ 页表：restrict 收窄 pie 权限后，已映射段 PTE 必须同步降权，否则 cap
+    /// 说只读、页表可写。本方法只在**当前 space 恰好映射了本 meta** 时降权；未映射
+    /// 则无事（map 时按新权限装 flags）。
+    fn restrict_into(&self, space: &Arc<Space>, flags: PteFlags) -> Result<(), MailError> {
+        let span = {
+            let m = self.mappings.lock();
+            m.iter()
+                .find(|(w, _)| w.upgrade().is_some_and(|s| Arc::ptr_eq(&s, space)))
+                .map(|(_, s)| (s.va.as_usize(), s.size.get()))
+        };
+        if let Some((va, bytes)) = span {
+            space
+                .protect(VirtAddr::from_raw(va), bytes, flags)
+                .map_err(|_| MailError::Denied)?;
+        }
+        Ok(())
+    }
+
     fn unmap_from(&self, space: &Arc<Space>) -> Result<(), MailError> {
         let span = {
             let mut m = self.mappings.lock();
@@ -169,6 +189,16 @@ pub(crate) fn pole_unmap(meta: &PoleMeta, space: &Arc<Space>) -> Result<(), Mail
         return Err(MailError::Dead);
     }
     meta.unmap_from(space)
+}
+
+/// Restrict 降权：把 `space` 里本 meta 的映射段降权到新 `flags`（cap ⊆ 页表）。
+///
+/// `space` 为当前 task 所在 Space（envcall 适配层传入）。未映射则无事。
+pub(crate) fn pole_restrict(meta: &PoleMeta, space: &Arc<Space>, flags: PteFlags) -> Result<(), MailError> {
+    if !meta.alive() {
+        return Err(MailError::Dead);
+    }
+    meta.restrict_into(space, flags)
 }
 
 /// 终止 Pole（state = Dead + 资源表移除；Arc drop 时归还物理帧）。

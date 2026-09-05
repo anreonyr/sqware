@@ -22,7 +22,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
-use crate::work::mail::{HOLE_MSG_LEN, MailError, Permission, Pie, PieKind};
+use crate::work::mail::{HOLE_MSG_LEN, MailError, Permission, PieKind};
 use crate::work::room::messenger::WaitKey;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
@@ -486,6 +486,71 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 match r {
                     Ok(idx) => idx,
                     Err(e) => e.code() as usize,
+                },
+            );
+        }
+        Ucall::Mail(MailCall::Restrict) => {
+            // a0 = src_pie_idx, a1 = subset bits。就地改写本 pie 权限（单调收窄）;
+            // Pole 额外把当前 space 里该 meta 的映射段降权——cap ⊆ 页表。
+            let idx = frame.gpr.x(Gprs::A0);
+            let subset = Permission::from_bits_truncate(frame.gpr.x(Gprs::A1) as u32);
+
+            // Phase A：锁内校验（alive / 非空 / 单调）+ 取 Pole meta Arc。
+            // 锁内只做 Arc clone，不做空间操作（锁序纪律：pids 锁不跨 space 锁）。
+            let task = current().running_task();
+            let meta = match task.as_ref().and_then(|t| {
+                let pies = t.pies.lock();
+                let pie = pies.get(idx)?;
+                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                if subset.is_empty() || (subset & pie.permission()) != subset {
+                    return Some(Err(MailError::Denied));
+                }
+                let m = match pie {
+                    mail::AnyPie::Hole(_) => None,
+                    mail::AnyPie::Pole(p) => p.weak.upgrade(),
+                };
+                Some(Ok(m))
+            }) {
+                None => Err(MailError::Denied),
+                Some(Err(e)) => Err(e),
+                Some(Ok(m)) => Ok(m),
+            };
+            let meta = match meta {
+                Ok(m) => m,
+                Err(e) => {
+                    frame.gpr.set_x(Gprs::A0, e.code() as usize);
+                    return frame as *mut TrapContext;
+                }
+            };
+
+            // Phase B：Pole 同步降权（当前 space 里该 meta 的映射段）。成功才改写。
+            if let Some(meta) = meta {
+                // RISC-V PTE 无 R=0,W=0 合法数据叶子 ⇒ 无 READ 的 subset 不可作为
+                // Pole 降权目标（决策 B2′）。subset_to_pte 即守此门。
+                let flags = match subset_to_pte(subset) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        frame.gpr.set_x(Gprs::A0, e.code() as usize);
+                        return frame as *mut TrapContext;
+                    }
+                };
+                if let Err(e) = mail::pole::pole_restrict(&meta, &ident.team.space, flags) {
+                    frame.gpr.set_x(Gprs::A0, e.code() as usize);
+                    return frame as *mut TrapContext;
+                }
+            }
+
+            // Phase C：改写 permission（数据面做单调校验 + 落值）。
+            let ok = task.and_then(|t| {
+                let mut pies = t.pies.lock();
+                pies.get_mut(idx).map(|p| mail::restrict::restrict(p, subset))
+            });
+            frame.gpr.set_x(
+                Gprs::A0,
+                match ok {
+                    Some(Ok(())) => 0,
+                    Some(Err(e)) => e.code() as usize,
+                    None => MailError::Denied.code() as usize,
                 },
             );
         }

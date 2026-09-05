@@ -97,6 +97,20 @@ pub fn vest(src_idx: usize, target_task_id: usize, subset: ubi::Permission) -> U
     Ok(idx)
 }
 
+/// 收窄本 pie 权限（就地改写；Pole 同步降页表）。
+/// a0 = src_idx, a1 = subset bits → a0 = 0 / err.code()
+pub fn restrict(src_idx: usize, subset: ubi::Permission) -> UResult<()> {
+    let args = UArgs {
+        a0: src_idx,
+        a1: subset.bits() as usize,
+        ..UArgs::default()
+    };
+    UcallBuilder::new(Ucall::Mail(MailCall::Restrict))
+        .args(args)
+        .call()?;
+    Ok(())
+}
+
 // ── 类型化句柄（编译期区分 Hole / Pole）──
 
 /// Hole 门闩用户态句柄。
@@ -124,6 +138,11 @@ impl HolePie {
 
     pub fn shut(&self) -> UResult<()> {
         shut(self.idx)
+    }
+
+    /// 收窄本 pie 权限（就地改写，单调；subset ⊆ 当前权限）。
+    pub fn restrict(&self, subset: ubi::Permission) -> UResult<()> {
+        restrict(self.idx, subset)
     }
 
     /// 把本 pie 复制给 target_task。subset ⊆ self.permission。
@@ -166,6 +185,12 @@ impl PolePie {
 
     pub fn shut(&self) -> UResult<()> {
         shut(self.idx)
+    }
+
+    /// 收窄本 pie 权限（就地改写，单调；subset ⊆ 当前权限且须含 READ——RISC-V
+    /// PTE 无 R=0 合法数据叶子）。Pole 会同步把当前 space 的映射段降权。
+    pub fn restrict(&self, subset: ubi::Permission) -> UResult<()> {
+        restrict(self.idx, subset)
     }
 
     /// 把本 pie 复制给 target_task。subset ⊆ self.permission。

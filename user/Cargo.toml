@@ -114,6 +114,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "user-restrict"
+path = "src/bin/restrict.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "user-lisp"
 path = "src/bin/lisp.rs"
 test = false
