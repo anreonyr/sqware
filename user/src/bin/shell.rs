@@ -113,13 +113,15 @@ extern "C" fn main() {
 
     loop {
         term.fg(Color::Cyan);
-        // 提示符不加换行：裸写（不输出 \n）。
-        term.write("sq > ");
-        term.reset();
-        let line = match term.readline() {
+        // readline 收纳 prompt：Terminal 内部打 prompt + 行编辑 + 清行重绘含 prompt。
+        let line = match term.readline("sq > ") {
             Readline::Line(s) => s,
-            Readline::Eof | Readline::Interrupt => continue,
+            Readline::Eof | Readline::Interrupt => {
+                term.reset();
+                continue;
+            }
         };
+        term.reset();
         let args = split(&line);
         if args.is_empty() {
             continue;

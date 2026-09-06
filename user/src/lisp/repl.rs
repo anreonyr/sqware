@@ -10,8 +10,8 @@ use super::kernel::{LispError, Val};
 
 pub fn repl(core: &mut Core, term: &Terminal) -> ! {
     loop {
-        term.write("> ");
-        let line = match term.readline() {
+        // readline 收纳 prompt：Terminal 内部打 prompt + 行编辑 + 清行重绘含 prompt。
+        let line = match term.readline("> ") {
             Readline::Line(s) => s,
             Readline::Interrupt => continue,
             Readline::Eof => room::exit(),

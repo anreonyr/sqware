@@ -1,14 +1,15 @@
 //! Terminal（term）— 宿主终端的 ANSI 渲壳 + 键盘输入的行编辑。
 //!
 //! 分层：Terminal 是**唯一**与宿主 console 打交道的中间层。Shell / Lisp 等
-//! 交互程序都**经本模块**读写：输出用 [`Terminal::put`]（及其转义方法），输入用
-//! [`Terminal::readline`]（内置行编辑：方向键/退格/Delete/Home/End/Ctrl-C/Ctrl-D）。
+//! 交互程序都**经本模块**读写。输入侧成对：
+//!   - `read` ↔ `write`：读/写原始字节片段；
+//!   - `readline(prompt)` ↔ `writeline`：读/写一行。`readline` 收纳 prompt
+//!     （打提示符 + 行编辑 + 清行时**重绘含 prompt**，不再丢失）。
 //!
-//! 本模块持有三段：
-//!   1. 输出——生成 ANSI 转义（清屏/光标/前景色/复位），直写宿主终端；
-//!   2. 输入解码——`anstyle_parse`（纯 no_std VTE 解析器）逐字节把键盘序列译成
-//!     [`Key`]，多字节转义（方向键等）在 Parser 内部攒状态；
-//!   3. 行编辑——[`Line`]（`Vec<char>` 缓冲 + 光标 pos），`readline` 把它消费完。
+//! 本模块持有：
+//!   1. 输出——ANSI 转义（清屏/光标/前景色/复位）+ 裸写/写行；
+//!   2. 输入——`read`（原始字节）地基 + `readline`（行编辑，VTE 解码）；
+//!   3. 行编辑——[`Line`]（`Vec<char>` 缓冲 + 光标 pos）。
 //!
 //! 关键：宿主终端（QEMU -nographic 所在的真实终端）**本身就是 ANSI 渲染器**，
 //! 无需自绘屏幕 buffer。我们只产转义、不解析渲染。
@@ -60,7 +61,7 @@ impl Color {
 pub struct Terminal;
 
 impl Terminal {
-    /// 裸写（不加 `\n`）：供提示符等「无需换行的片段」输出。
+    /// 裸写（不加 `\n`）：供提示符等「无需换行的片段」输出。与 [`read`] 对称。
     pub fn write(&self, s: &str) {
         put(s).ok();
     }
@@ -98,11 +99,26 @@ impl Terminal {
         self.write(&format!("{s}\n"));
     }
 
-    /// 读一整行（带行编辑）。调用方**先打提示符**，再调此方法。
+    /// 读一个字节（阻塞）。与 [`Terminal::write`] 对称的输入地基。
+    pub fn read(&self) -> u8 {
+        loop {
+            if let Some(b) = crate::env::io::try_get() {
+                return b;
+            }
+            // 无输入避忙等（同 io::get 的 sleep 策略）。
+            let _ = sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// 读一整行（带行编辑），**收纳 prompt**。
     ///
-    /// 阻塞直到回车提交（[`Readline::Line`]）、Ctrl-C 清行（[`Readline::Interrupt`]）
-    /// 或 Ctrl-D 退出（[`Readline::Eof`]）。
-    pub fn readline(&self) -> Readline {
+    /// 先打 `prompt`，行编辑过程中每次重绘都用 `\r\x1b[K + prompt + 输入串`
+    /// （清行/退格/光标移动时 prompt 不丢）。阻塞直到：
+    /// - 回车提交 → [`Readline::Line`]；
+    /// - Ctrl-C 清行 → [`Readline::Interrupt`]；
+    /// - Ctrl-D 退出 → [`Readline::Eof`]。
+    pub fn readline(&self, prompt: &str) -> Readline {
+        self.write(prompt);
         let mut ed = Line::new();
         let submitted = core::cell::Cell::new(false);
         let interrupt = core::cell::Cell::new(false);
@@ -110,6 +126,7 @@ impl Terminal {
         {
             let mut dec = Decoder::new(LineSink {
                 term: self,
+                prompt,
                 line: &mut ed,
                 submitted: &submitted,
                 interrupt: &interrupt,
@@ -119,7 +136,6 @@ impl Terminal {
                 if let Some(b) = crate::env::io::try_get() {
                     dec.advance(b);
                 } else {
-                    // 无输入避忙等（同 io::get 的 sleep 策略）。
                     let _ = sleep(Duration::from_millis(1));
                 }
                 if submitted.get() {
@@ -157,7 +173,6 @@ pub enum Readline {
     Interrupt,
 }
 
-/// 行缓冲 + 光标 + 终止标志。`Sink` 把按键写进这里并回显。
 /// 行缓冲 + 光标。终止标志（回车/Ctrl-C/Ctrl-D）放 [`Cell`]（独立共享引用，
 /// `LineSink` 写、`readline` 读——避开 `&mut Line` 的借用冲突）。
 struct Line {
@@ -210,6 +225,7 @@ impl Line {
 /// 按键 → 行编辑 + 回显（经 Terminal 输出）。终止标志经 [`Cell`] 写，`readline` 读。
 struct LineSink<'a> {
     term: &'a Terminal,
+    prompt: &'a str,
     line: &'a mut Line,
     submitted: &'a core::cell::Cell<bool>,
     interrupt: &'a core::cell::Cell<bool>,
@@ -221,31 +237,31 @@ impl Sink for LineSink<'_> {
         match key {
             Key::Char(c) => {
                 self.line.insert(c);
-                redraw(self.term, self.line);
+                redraw(self.term, self.prompt, self.line);
             }
             Key::Backspace => {
                 self.line.backspace();
-                redraw(self.term, self.line);
+                redraw(self.term, self.prompt, self.line);
             }
             Key::Delete => {
                 self.line.delete();
-                redraw(self.term, self.line);
+                redraw(self.term, self.prompt, self.line);
             }
             Key::Left => {
                 self.line.left();
-                redraw(self.term, self.line);
+                redraw(self.term, self.prompt, self.line);
             }
             Key::Right => {
                 self.line.right();
-                redraw(self.term, self.line);
+                redraw(self.term, self.prompt, self.line);
             }
             Key::Home => {
                 self.line.home();
-                redraw(self.term, self.line);
+                redraw(self.term, self.prompt, self.line);
             }
             Key::End => {
                 self.line.end();
-                redraw(self.term, self.line);
+                redraw(self.term, self.prompt, self.line);
             }
             Key::Enter => {
                 self.submitted.set(true);
@@ -259,7 +275,7 @@ impl Sink for LineSink<'_> {
             }
             Key::Tab => {
                 self.line.insert('\t');
-                redraw(self.term, self.line);
+                redraw(self.term, self.prompt, self.line);
             }
             // 方向键上/下对单行缓冲区无操作（v1 无历史）。
             Key::Up | Key::Down => {}
@@ -267,10 +283,11 @@ impl Sink for LineSink<'_> {
     }
 }
 
-/// 重绘当前行：光标回行首 → 清到行尾 → 打印缓冲 → 光标定位到 pos。
-fn redraw(term: &Terminal, line: &Line) {
+/// 重绘当前行：光标回行首 → 清到行尾 → 打印 prompt + 缓冲 → 光标定位到 pos。
+fn redraw(term: &Terminal, prompt: &str, line: &Line) {
     let s: String = line.buf.iter().collect();
     term.write("\r\x1b[K");
+    term.write(prompt);
     term.write(&s);
     let back = (line.buf.len() - line.pos) as u16;
     if back > 0 {
