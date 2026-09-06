@@ -4,7 +4,8 @@
 //! shell — 命令解释器，经 Terminal（term 模块）显示、读命令并分发给系统能力。
 //!
 //! 分层：本 bin 是 Shell；`user::term::{Terminal, Readline}` 是渲壳 + 行编辑宿主。
-//! Shell 经 `Terminal::put` 输出、`Terminal::readline` 读输入，不再自建行编辑。
+//! **Terminal 是唯一 console 出口**——Shell 的一切输出经 `Terminal::put`、一切
+//! 输入经 `Terminal::readline`，不再直接 `io::put`。
 //!
 //! 命令（系统能力巡演）：
 //!   help  — 列命令
@@ -31,44 +32,39 @@ use user::env::mail::HolePie;
 use user::env::room::{self, sleep};
 use user::term::{Color, Readline, Terminal};
 
-/// 打印（消费 EnvResult，免 must_use 警告）。
-fn put(s: &str) {
-    let _ = user::env::io::put(s);
-}
-
 /// 按空白切词（保留空输入 = 空 Vec）。
 fn split(line: &str) -> Vec<String> {
     line.split_whitespace().map(str::to_string).collect()
 }
 
-/// 各系统能力命令。
-fn exec(cmd: &str, args: &[String]) -> bool {
-    // 返回 false = 退出（exit 命令）。
+/// 各系统能力命令。全部输出经 `term`（唯一 console 出口）。
+/// 返回 false = 退出（exit 命令）。
+fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
-            put("help / clock / ticks / alloc / echo / sleep / spawn / hole / exit\n");
+            term.put("help / clock / ticks / alloc / echo / sleep / spawn / hole / exit\n");
         }
         "clock" => {
             let (s, n) = clock().unwrap_or((0, 0));
-            put(&format!("clock {s}.{:09} sec\n", n));
+            term.put(&format!("clock {s}.{:09} sec\n", n));
         }
         "ticks" => {
             let t = chrono::ticks().unwrap_or(0);
-            put(&format!("ticks {t}\n"));
+            term.put(&format!("ticks {t}\n"));
         }
         "alloc" => {
             let addr = user::env::memory::allocate(4096).unwrap_or(0);
-            put(&format!("alloc -> {addr:#x}\n"));
+            term.put(&format!("alloc -> {addr:#x}\n"));
         }
         "echo" => {
-            put(&args.join(" "));
-            put("\n");
+            term.put(&args.join(" "));
+            term.put("\n");
         }
         "sleep" => {
             let ms = args.first().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-            put(&format!("sleep {ms}ms\n"));
+            term.put(&format!("sleep {ms}ms\n"));
             let _ = sleep(Duration::from_millis(ms));
-            put("woke\n");
+            term.put("woke\n");
         }
         "spawn" => {
             let n = args.first().and_then(|s| s.parse::<u64>().ok()).unwrap_or(1000);
@@ -80,7 +76,7 @@ fn exec(cmd: &str, args: &[String]) -> bool {
                 acc
             })
             .join();
-            put(&format!("spawnjoin -> {sum}\n"));
+            term.put(&format!("spawnjoin -> {sum}\n"));
         }
         "hole" => {
             let msg = b"hi from shell";
@@ -90,15 +86,18 @@ fn exec(cmd: &str, args: &[String]) -> bool {
             m[..msg.len()].copy_from_slice(msg);
             pie.push(&m).ok();
             pie.pull(&mut buf).ok();
-            put(&format!("hole got {:?}\n", core::str::from_utf8(&buf).unwrap_or("?")));
+            term.put(&format!(
+                "hole got {:?}\n",
+                core::str::from_utf8(&buf).unwrap_or("?")
+            ));
             pie.seal().ok();
         }
         "exit" => {
-            put("bye\n");
+            term.put("bye\n");
             return false;
         }
         _ => {
-            put(&format!("unknown: {cmd} (try help)\n"));
+            term.put(&format!("unknown: {cmd} (try help)\n"));
         }
     }
     true
@@ -109,13 +108,13 @@ extern "C" fn main() {
     let term = Terminal::default();
     term.clear();
     term.fg(Color::Green);
-    put("SQware shell\n");
+    term.put("SQware shell\n");
     term.reset();
-    put("type 'help' for commands.\n");
+    term.put("type 'help' for commands.\n");
 
     loop {
         term.fg(Color::Cyan);
-        put("sq > ");
+        term.put("sq > ");
         term.reset();
         let line = match term.readline() {
             Readline::Line(s) => s,
@@ -127,7 +126,7 @@ extern "C" fn main() {
         }
         let cmd = args[0].clone();
         let rest = &args[1..];
-        if !exec(&cmd, rest) {
+        if !exec(&cmd, rest, &term) {
             break;
         }
     }

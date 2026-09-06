@@ -1,4 +1,4 @@
-//! REPL：经 Terminal 读行、解释执行，常驻循环。
+//! REPL：经 Terminal 读行、解释执行，常驻循环。Terminal 是唯一 console 出口。
 
 use alloc::format;
 
@@ -10,7 +10,7 @@ use super::kernel::{LispError, Val};
 
 pub fn repl(core: &mut Core, term: &Terminal) -> ! {
     loop {
-        let _ = crate::env::io::put("> ");
+        term.put("> ");
         let line = match term.readline() {
             Readline::Line(s) => s,
             Readline::Interrupt => continue,
@@ -22,7 +22,7 @@ pub fn repl(core: &mut Core, term: &Terminal) -> ! {
         }
         match core.read(&line) {
             Err(e) => {
-                let _ = crate::env::io::put(&format!("parse error({e:?}): {line:02x?}\n"));
+                term.put(&format!("parse error({e:?}): {line:02x?}\n"));
             }
             Ok(v) => {
                 if is_command(core, &v, "exit") {
@@ -30,10 +30,10 @@ pub fn repl(core: &mut Core, term: &Terminal) -> ! {
                 }
                 let defined = is_command(core, &v, "define");
                 match core.eval(v) {
-                    Err(e) => err_line(e),
+                    Err(e) => err_line(term, e),
                     Ok(r) if !defined => {
-                        let _ = crate::env::io::put(&core.print(&r));
-                        let _ = crate::env::io::put("\n");
+                        term.put(&core.print(&r));
+                        term.put("\n");
                     }
                     Ok(_) => {}
                 }
@@ -49,7 +49,7 @@ fn is_command(core: &Core, v: &Val, name: &str) -> bool {
     }
 }
 
-fn err_line(e: LispError) {
+fn err_line(term: &Terminal, e: LispError) {
     let msg = match e {
         LispError::Parse => "parse error",
         LispError::Unbound => "unbound symbol",
@@ -57,6 +57,6 @@ fn err_line(e: LispError) {
         LispError::BadForm => "bad form",
         LispError::NotCallable => "not callable",
     };
-    let _ = crate::env::io::put(msg);
-    let _ = crate::env::io::put("\n");
+    term.put(msg);
+    term.put("\n");
 }
