@@ -7,5 +7,6 @@ pub mod core;
 pub mod entry;
 pub mod env;
 pub mod lisp;
+pub mod term;
 
 pub const PAGE_SIZE: usize = 4096;

@@ -113,6 +113,10 @@ fn main() {
         "cargo::rustc-env=USER_LISP={}",
         bin_dir.join("user-lisp").display()
     );
+    println!(
+        "cargo::rustc-env=USER_SHELL={}",
+        bin_dir.join("user-shell").display()
+    );
     // 用户源码/清单变更 → 重跑本脚本（重建 user + 重编内核）
     println!("cargo::rerun-if-changed=../user");
 }

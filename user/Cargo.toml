@@ -14,6 +14,9 @@ doctest = false
 [dependencies]
 ubi = { path = "../crates/ubi" }
 erra = { version = "0.2.0", default-features = false }
+# ANSI 转义序列解析器（纯 no_std）：Terminal 层解码键盘方向键/退格（行编辑）。
+# default-features = false → 不带 utf8/codegen 特性，适配裸机 user 环境。
+anstyle-parse = { version = "1.0.0", default-features = false }
 
 [["bin"]]
 name = "user-exiter"
@@ -123,6 +126,13 @@ doctest = false
 [[bin]]
 name = "user-lisp"
 path = "src/bin/lisp.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "user-shell"
+path = "src/bin/shell.rs"
 test = false
 bench = false
 doctest = false

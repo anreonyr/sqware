@@ -7,13 +7,14 @@ use alloc::format;
 
 use user::env::io::put;
 use user::lisp::{Core, repl};
+use user::term::Terminal;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() {
     let _ = put("lisp\n");
     let mut core = Core::new();
     selftest(&mut core);
-    repl(&mut core)
+    repl(&mut core, &Terminal::default())
 }
 
 fn selftest(core: &mut Core) {

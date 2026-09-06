@@ -196,6 +196,8 @@ fn spawn_demos() -> Result<(), MapError> {
         (&include_bytes!(env!("USER_BACK"))[..], "back"),
         (&include_bytes!(env!("USER_NARROW"))[..], "narrow"),
         (&include_bytes!(env!("USER_REVOKE"))[..], "revoke"),
+        // shell：常驻交互任务（其余 demo 跑完退出后仍在，系统不 halt）。
+        (&include_bytes!(env!("USER_SHELL"))[..], "shell"),
         // (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
     ] {
         let (team, entry) = load_user(elf);

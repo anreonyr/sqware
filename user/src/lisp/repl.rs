@@ -1,35 +1,28 @@
-//! REPL：独占控制台输入，常驻循环。
+//! REPL：经 Terminal 读行、解释执行，常驻循环。
 
 use alloc::format;
-use alloc::vec::Vec;
 
-use crate::env::{io, room};
+use crate::env::room;
+use crate::term::{Readline, Terminal};
 
 use super::core::Core;
 use super::kernel::{LispError, Val};
 
-pub fn repl(core: &mut Core) -> ! {
+pub fn repl(core: &mut Core, term: &Terminal) -> ! {
     loop {
-        let _ = io::put("> ");
-        let mut line = Vec::new();
-        loop {
-            let b = io::get();
-            match b {
-                0x0a | 0x0d => break,
-                0x08 | 0x7f => {
-                    line.pop();
-                }
-                0x03 => line.clear(),
-                0x04 => room::exit(),
-                b => line.push(b),
-            }
-        }
+        let _ = crate::env::io::put("> ");
+        let line = match term.readline() {
+            Readline::Line(s) => s,
+            Readline::Interrupt => continue,
+            Readline::Eof => room::exit(),
+        };
+        let line = line.into_bytes();
         if line.iter().all(|b| matches!(b, b' ' | b'\t')) {
             continue;
         }
         match core.read(&line) {
             Err(e) => {
-                let _ = io::put(&format!("parse error({e:?}): {line:02x?}\n"));
+                let _ = crate::env::io::put(&format!("parse error({e:?}): {line:02x?}\n"));
             }
             Ok(v) => {
                 if is_command(core, &v, "exit") {
@@ -39,8 +32,8 @@ pub fn repl(core: &mut Core) -> ! {
                 match core.eval(v) {
                     Err(e) => err_line(e),
                     Ok(r) if !defined => {
-                        let _ = io::put(&core.print(&r));
-                        let _ = io::put("\n");
+                        let _ = crate::env::io::put(&core.print(&r));
+                        let _ = crate::env::io::put("\n");
                     }
                     Ok(_) => {}
                 }
@@ -64,6 +57,6 @@ fn err_line(e: LispError) {
         LispError::BadForm => "bad form",
         LispError::NotCallable => "not callable",
     };
-    let _ = io::put(msg);
-    let _ = io::put("\n");
+    let _ = crate::env::io::put(msg);
+    let _ = crate::env::io::put("\n");
 }
