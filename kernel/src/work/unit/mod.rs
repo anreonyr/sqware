@@ -4,6 +4,7 @@
 // 自己的 trap 帧（Frame 窗口分配）。
 //
 //   space     — 地址空间（Space/SpaceBuilder、Map/Window/Durable 簿记模型、内核布局）
+//   gate      — 能力门闩（Pie/AnyPie/授权；单向依赖 mail 的资源实体）
 //   team      — 团队容器（Team/TeamBuilder/kernel 单例）
 //   task      — 线程单元（Task/TaskBuilder）
 //   loader    — 程序装载（ELF → Space durable）
@@ -11,6 +12,7 @@
 //   elftable  — 符号表
 
 pub mod elftable;
+pub(crate) mod gate;
 pub(crate) mod loader;
 pub(crate) mod parser;
 pub mod space;

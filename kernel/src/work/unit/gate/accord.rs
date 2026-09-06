@@ -11,7 +11,7 @@
 
 use alloc::sync::Weak;
 
-use super::pie::{new_pie, AnyPie, MailError, Permission};
+use super::pie::{new_pie, AnyPie, GateError, Permission};
 use crate::work::unit::task::Task;
 
 /// Accord 数据面原语：Arc clone + 造新 Pie + push 到 target.pies。返新 token（撤销句柄）。
@@ -22,22 +22,22 @@ use crate::work::unit::task::Task;
 /// # Errors
 /// - `Denied` — Weak 升级失败（target 已死 / id 不存在）
 /// - `Dead` — src pie 的 Meta 已 seal
-pub fn accord(
+pub(crate) fn accord(
     src: &AnyPie,
     target: &Weak<Task>,
     subset: Permission,
     current_id: usize,
-) -> Result<u64, MailError> {
-    let target = target.upgrade().ok_or(MailError::Denied)?;
+) -> Result<u64, GateError> {
+    let target = target.upgrade().ok_or(GateError::Denied)?;
     let resource = src.resource();
     let vestor = Some(current_id);
     let granted = match src {
         AnyPie::Hole(p) => {
-            let arc = p.weak.upgrade().ok_or(MailError::Dead)?;
+            let arc = p.weak.upgrade().ok_or(GateError::Dead)?;
             AnyPie::Hole(new_pie(resource, subset, vestor, alloc::sync::Arc::downgrade(&arc)))
         }
         AnyPie::Pole(p) => {
-            let arc = p.weak.upgrade().ok_or(MailError::Dead)?;
+            let arc = p.weak.upgrade().ok_or(GateError::Dead)?;
             AnyPie::Pole(new_pie(resource, subset, vestor, alloc::sync::Arc::downgrade(&arc)))
         }
     };

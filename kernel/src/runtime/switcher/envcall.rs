@@ -28,13 +28,14 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
-use crate::work::mail::{AnyPie, HOLE_MSG_LEN, MailError, Permission};
-use crate::work::room::messenger::WaitKey;
-use crate::work::room::scheduler::core::current;
-use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
+use crate::work::mail::HOLE_MSG_LEN;
+use crate::work::unit::gate::{self, AnyPie, GateError, Permission, Pie};
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState};
 use crate::work::unit::task::TaskIdent;
+use crate::work::room::messenger::WaitKey;
+use crate::work::room::scheduler::core::current;
+use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
 
 /// Permission 子集 → PteFlags（cap ⊆ 页表的翻译：subset 决定页表实际权限）。
 ///
@@ -43,9 +44,9 @@ use crate::work::unit::task::TaskIdent;
 /// | READ                    | V\|R\|U\|A\|D           |
 /// | READ \| WRITE           | V\|R\|W\|U\|A\|D        |
 /// | other（含空 / 仅 WRITE）| Denied                  |
-fn subset_to_pte(subset: Permission) -> Result<PteFlags, MailError> {
+fn subset_to_pte(subset: Permission) -> Result<PteFlags, GateError> {
     if !subset.contains(Permission::READ) {
-        return Err(MailError::Denied);
+        return Err(GateError::Denied);
     }
     let mut f = PteFlags::V | PteFlags::U | PteFlags::A | PteFlags::D;
     f |= PteFlags::R;
@@ -56,7 +57,7 @@ fn subset_to_pte(subset: Permission) -> Result<PteFlags, MailError> {
 }
 
 /// 写回错误码并返回待恢复帧。
-fn ret_err(frame: &mut TrapContext, e: MailError) -> *mut TrapContext {
+fn ret_err(frame: &mut TrapContext, e: GateError) -> *mut TrapContext {
     frame.gpr.set_x(Gprs::A0, e.code() as usize);
     frame as *mut TrapContext
 }
@@ -260,13 +261,48 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         EnvCall::Mail(MailCall::UnsealHole) => {
-            match mail::hole::unseal() {
+            // 编排创建：mail::hole::meta() 建实体 → gate::new_pie 建门闩 → 落 pies。
+            // meta() 只建 HoleMeta + 注册 memo；门闩/落 task.pies 是能力模型的事。
+            let r = (|| -> Result<u64, GateError> {
+                let task = current().running_task().ok_or(GateError::Denied)?;
+                let (meta, id) = mail::hole::meta()?;
+                let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
+                    id,
+                    Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+                    None, // 原始自持：无 vestor
+                    alloc::sync::Arc::downgrade(&meta),
+                );
+                let token = pie.token();
+                task.pies.lock().push(AnyPie::Hole(pie));
+                Ok(token)
+            })();
+            match r {
                 Ok(token) => frame.gpr.set_x(Gprs::A0, token as usize),
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
         EnvCall::Mail(MailCall::UnsealPole { bytes }) => {
-            match mail::pole::unseal(bytes) {
+            // 编排创建：mail::pole::meta() 建实体 → gate::new_pie 建门闩 → 落 pies →
+            // auto-map 创建者视图（创建者 pie 全权 → R|W）。
+            let r = (|| -> Result<u64, GateError> {
+                let task = current().running_task().ok_or(GateError::Denied)?;
+                let (meta, id) = mail::pole::meta(bytes)?;
+                let task_space = task.ident.team.space.clone();
+                let pie: Pie<mail::pole::PoleMeta> = gate::new_pie(
+                    id,
+                    Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+                    None, // 原始自持：无 vestor
+                    alloc::sync::Arc::downgrade(&meta),
+                );
+                let token = pie.token();
+                // 创建者自留 pie 全权 → map 走 R|W。
+                let creator_flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U
+                    | PteFlags::A | PteFlags::D;
+                mail::pole::map(&meta, token, &task_space, creator_flags)?;
+                task.pies.lock().push(AnyPie::Pole(pie));
+                Ok(token)
+            })();
+            match r {
                 Ok(token) => frame.gpr.set_x(Gprs::A0, token as usize),
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
@@ -279,10 +315,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
                 if !pie.permission().contains(Permission::WRITE) {
-                    return Some(Err(MailError::Denied));
+                    return Some(Err(GateError::Denied));
                 }
                 if !pie.alive() {
-                    return Some(Err(MailError::Dead));
+                    return Some(Err(GateError::Dead));
                 }
                 match pie {
                     AnyPie::Hole(p) => p.weak.upgrade().map(|a| Ok(a)),
@@ -292,13 +328,13 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Some(Ok(meta)) => {
                     let mut msg = [0u8; HOLE_MSG_LEN];
                     if !mail::copy_in(&ident.team.space, &mut msg, va) {
-                        Err(MailError::Denied)
+                        Err(GateError::Denied)
                     } else {
                         mail::hole::push(&meta, &msg)
                     }
                 }
                 Some(Err(e)) => Err(e),
-                None => Err(MailError::Denied),
+                None => Err(GateError::Denied),
             };
             frame.gpr.set_x(
                 Gprs::A0,
@@ -316,10 +352,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
                 if !pie.permission().contains(Permission::READ) {
-                    return Some(Err(MailError::Denied));
+                    return Some(Err(GateError::Denied));
                 }
                 if !pie.alive() {
-                    return Some(Err(MailError::Dead));
+                    return Some(Err(GateError::Dead));
                 }
                 match pie {
                     AnyPie::Hole(p) => p.weak.upgrade().map(|a| Ok(a)),
@@ -329,7 +365,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Some(Ok(meta)) => match mail::hole::pull(&meta) {
                     Ok(m) => {
                         if !mail::copy_out(&ident.team.space, &m, va) {
-                            Err(MailError::Denied)
+                            Err(GateError::Denied)
                         } else {
                             Ok(())
                         }
@@ -337,7 +373,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     Err(e) => Err(e),
                 },
                 Some(Err(e)) => Err(e),
-                None => Err(MailError::Denied),
+                None => Err(GateError::Denied),
             };
             frame.gpr.set_x(
                 Gprs::A0,
@@ -354,10 +390,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
                 if !pie.permission().contains(Permission::READ) {
-                    return Some(Err(MailError::Denied));
+                    return Some(Err(GateError::Denied));
                 }
                 if !pie.alive() {
-                    return Some(Err(MailError::Dead));
+                    return Some(Err(GateError::Dead));
                 }
                 match pie {
                     AnyPie::Pole(p) => {
@@ -372,7 +408,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 }
                 Some(Ok((_, _, Err(e)))) => Err(e),
                 Some(Err(e)) => Err(e),
-                None => Err(MailError::Denied),
+                None => Err(GateError::Denied),
             };
             frame.gpr.set_x(
                 Gprs::A0,
@@ -389,10 +425,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
                 if !pie.permission().contains(Permission::READ) {
-                    return Some(Err(MailError::Denied));
+                    return Some(Err(GateError::Denied));
                 }
                 if !pie.alive() {
-                    return Some(Err(MailError::Dead));
+                    return Some(Err(GateError::Dead));
                 }
                 match pie {
                     AnyPie::Pole(p) => p.weak.upgrade().map(|a| Ok((a, token))),
@@ -401,7 +437,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }) {
                 Some(Ok((meta, token))) => mail::pole::unmap(&meta, token),
                 Some(Err(e)) => Err(e),
-                None => Err(MailError::Denied),
+                None => Err(GateError::Denied),
             };
             frame.gpr.set_x(
                 Gprs::A0,
@@ -421,7 +457,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     .map(|p| p.resource())
             }) {
                 Some(r) => r,
-                None => return ret_err(frame, MailError::Denied),
+                None => return ret_err(frame, GateError::Denied),
             };
             let r = match mail::memo::lookup(resource) {
                 Some(mail::memo::Meta::Hole(m)) => {
@@ -432,7 +468,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     mail::pole::seal(&m, resource);
                     Ok(())
                 }
-                None => Err(MailError::Dead),
+                None => Err(GateError::Dead),
             };
             frame.gpr.set_x(
                 Gprs::A0,
@@ -452,33 +488,33 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 .and_then(|t| t.pies.lock().iter().find(|p| p.token() == src_token).cloned())
             {
                 Some(p) => p,
-                None => return ret_err(frame, MailError::Denied),
+                None => return ret_err(frame, GateError::Denied),
             };
             if !src.alive() {
-                return ret_err(frame, MailError::Dead);
+                return ret_err(frame, GateError::Dead);
             }
             if !src.permission().contains(Permission::VEST)
                 && !src.permission().contains(Permission::BACK)
             {
-                return ret_err(frame, MailError::Denied);
+                return ret_err(frame, GateError::Denied);
             }
             // subset 已由 Wire 校验式 unpack（非法位 → Err），此处仅查非空 & ⊆ 当前权限。
             if subset.is_empty() || (subset & src.permission()) != subset {
-                return ret_err(frame, MailError::Denied);
+                return ret_err(frame, GateError::Denied);
             }
             if src.permission().contains(Permission::BACK) {
                 if let Some(vestor) = src.vestor() {
                     if vestor != dst_id {
-                        return ret_err(frame, MailError::Denied);
+                        return ret_err(frame, GateError::Denied);
                     }
                 }
             }
             let target =
                 match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
                     Some(w) => w,
-                    None => return ret_err(frame, MailError::Denied),
+                    None => return ret_err(frame, GateError::Denied),
                 };
-            let r = mail::accord::accord(&src, &target, subset, current_id);
+            let r = gate::accord(&src, &target, subset, current_id);
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
@@ -494,22 +530,22 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
                 if subset.is_empty() || (subset & pie.permission()) != subset {
-                    return Some(Err(MailError::Denied));
+                    return Some(Err(GateError::Denied));
                 }
                 match pie {
                     AnyPie::Hole(p) => {
                         if !p.alive() {
-                            return Some(Err(MailError::Dead));
+                            return Some(Err(GateError::Dead));
                         }
                         Some(Ok(None))
                     }
                     AnyPie::Pole(p) => match p.weak.upgrade() {
                         Some(arc) => Some(Ok(Some(arc))),
-                        None => Some(Err(MailError::Dead)),
+                        None => Some(Err(GateError::Dead)),
                     },
                 }
             }) {
-                None => Err(MailError::Denied),
+                None => Err(GateError::Denied),
                 Some(Err(e)) => Err(e),
                 Some(Ok(v)) => Ok(v),
             };
@@ -530,14 +566,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let mut pies = t.pies.lock();
                 pies.iter_mut()
                     .find(|p| p.token() == token)
-                    .map(|p| mail::narrow::narrow(p, subset))
+                    .map(|p| gate::narrow(p, subset))
             });
             frame.gpr.set_x(
                 Gprs::A0,
                 match ok {
                     Some(Ok(())) => 0,
                     Some(Err(e)) => e.code() as usize,
-                    None => MailError::Denied.code() as usize,
+                    None => GateError::Denied.code() as usize,
                 },
             );
         }
@@ -548,9 +584,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let target =
                 match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
                     Some(w) => w,
-                    None => return ret_err(frame, MailError::Denied),
+                    None => return ret_err(frame, GateError::Denied),
                 };
-            let r = mail::revoke::revoke(&target, token, current_id);
+            let r = gate::revoke(&target, token, current_id);
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {

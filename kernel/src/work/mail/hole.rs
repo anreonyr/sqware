@@ -3,8 +3,8 @@
 // HoleMeta 是内核侧"门洞"：单槽消息缓冲 + 状态。用户态 Pie<HoleMeta>（含
 // Weak<HoleMeta>）只持门闩，不参与数据。
 //
-// 数据面原语：`push` / `pull` / `seal`。创建：`unseal()` —— 建 Meta + 注册 memo +
-// 全权 pie 落 self（返 token）。
+// 数据面原语：`push` / `pull` / `seal`。创建：`meta()` —— 只建 Meta + 注册 memo
+//（不落 pies；建门闩 + 落 task.pies 由 envcall 编排）。
 //
 // 阻塞语义不在 HoleMeta 内（v1 简化）：push/pull 槽满/槽空 → 立即返 Busy，调用方
 // 经调度域 wait/wake 自旋。
@@ -14,7 +14,8 @@ use alloc::sync::Arc;
 use crate::lock::{Level, SpinLock};
 
 use super::memo::{self, Meta, ResourceId};
-use super::pie::{AnyPie, HOLE_MSG_LEN, MailError, Permission};
+use super::HOLE_MSG_LEN;
+use crate::work::unit::gate::GateError;
 
 /// Hole 状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,13 +55,13 @@ impl Drop for HoleMeta {
 
 /// 写消息入槽（需 rights & W）。
 /// `Denied` = rights 不够；`Dead` = 已 seal；`Busy` = 槽满。
-pub(crate) fn push(meta: &HoleMeta, msg: &[u8; HOLE_MSG_LEN]) -> Result<(), MailError> {
+pub(crate) fn push(meta: &HoleMeta, msg: &[u8; HOLE_MSG_LEN]) -> Result<(), GateError> {
     if !meta.alive() {
-        return Err(MailError::Dead);
+        return Err(GateError::Dead);
     }
     let mut slot = meta.slot.lock();
     if slot.is_some() {
-        return Err(MailError::Busy);
+        return Err(GateError::Busy);
     }
     *slot = Some(*msg);
     Ok(())
@@ -68,14 +69,14 @@ pub(crate) fn push(meta: &HoleMeta, msg: &[u8; HOLE_MSG_LEN]) -> Result<(), Mail
 
 /// 取消息出槽（需 rights & R）。
 /// `Denied` = rights 不够；`Dead` = 已 seal；`Busy` = 槽空。
-pub(crate) fn pull(meta: &HoleMeta) -> Result<[u8; HOLE_MSG_LEN], MailError> {
+pub(crate) fn pull(meta: &HoleMeta) -> Result<[u8; HOLE_MSG_LEN], GateError> {
     if !meta.alive() {
-        return Err(MailError::Dead);
+        return Err(GateError::Dead);
     }
     let mut slot = meta.slot.lock();
     match slot.take() {
         Some(msg) => Ok(msg),
-        None => Err(MailError::Busy),
+        None => Err(GateError::Busy),
     }
 }
 
@@ -87,24 +88,12 @@ pub(crate) fn seal(meta: &HoleMeta, id: ResourceId) {
 
 // ── 创建 ──
 
-use crate::work::room::scheduler::core::current;
-
-/// 解封 Hole：建 Meta + 注册 memo + 全权 pie 落 self（vestor=None）。返 token。
-pub(crate) fn unseal() -> Result<u64, MailError> {
+/// 解封 Hole 的资源实体：建 Meta + 注册 memo。**不落 pies**——建门闩与落
+/// `task.pies` 由 envcall 编排（gate::new_pie + pies.push）。返 `(Arc, ResourceId)`：
+/// `ResourceId` 供 gate::new_pie 第一参，`Arc` 供 Weak<HoleMeta>。
+pub(crate) fn meta() -> Result<(Arc<HoleMeta>, ResourceId), GateError> {
     let arc = HoleMeta::new();
     let id = memo::alloc_id();
     memo::insert(id, Meta::Hole(arc.clone()));
-
-    let pie = super::pie::new_pie(
-        id,
-        Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
-        None, // 原始自持：无 vestor
-        Arc::downgrade(&arc),
-    );
-    let token = pie.token();
-
-    let task = current().running_task().ok_or(MailError::Denied)?;
-    let mut pies = task.pies.lock();
-    pies.push(AnyPie::Hole(pie));
-    Ok(token)
+    Ok((arc, id))
 }

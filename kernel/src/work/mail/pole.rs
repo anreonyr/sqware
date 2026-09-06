@@ -19,7 +19,7 @@ use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::{Seg, Space, Span};
 
 use super::memo::{self, Meta, ResourceId};
-use super::pie::{AnyPie, MailError, Permission};
+use crate::work::unit::gate::GateError;
 
 /// Pole 状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,17 +47,17 @@ unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
 impl PoleMeta {
-    pub(super) fn allocate(bytes: usize) -> Result<Arc<Self>, MailError> {
+    pub(super) fn allocate(bytes: usize) -> Result<Arc<Self>, GateError> {
         if bytes == 0 || !bytes.is_multiple_of(PAGE_SIZE) {
-            return Err(MailError::NotAligned);
+            return Err(GateError::NotAligned);
         }
         let layout = core::alloc::Layout::from_size_align(bytes, PAGE_SIZE)
-            .map_err(|_| MailError::NotAligned)?;
+            .map_err(|_| GateError::NotAligned)?;
         let ptr = crate::tag!(
             Task,
             frame::allocator()
                 .allocate(layout)
-                .map_err(|_| MailError::OOM)?
+                .map_err(|_| GateError::OOM)?
         );
         // SAFETY: 分配返回非空；清零。
         let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };
@@ -83,7 +83,7 @@ impl PoleMeta {
     ///
     /// `token` 唯一标识调用方 pie；同 token 复用既有视图（幂等 map），异 token
     /// 各自独立映射（同一物理页可出现在同 space 的多个 VA）。
-    fn map_into(&self, token: u64, space: &Arc<Space>, flags: PteFlags) -> Result<usize, MailError> {
+    fn map_into(&self, token: u64, space: &Arc<Space>, flags: PteFlags) -> Result<usize, GateError> {
         {
             let m = self.mappings.lock();
             if let Some((_, _, span)) = m.iter().find(|(t, _, _)| *t == token) {
@@ -101,7 +101,7 @@ impl PoleMeta {
                 )?;
                 Ok::<_, MapError>(va)
             })
-            .map_err(|_| MailError::OOM)?;
+            .map_err(|_| GateError::OOM)?;
         self.mappings
             .lock()
             .push((token, Arc::downgrade(space), Span::new(Seg::User, va, self.bytes, None)));
@@ -112,7 +112,7 @@ impl PoleMeta {
     ///
     /// cap ⊆ 页表：narrow 收窄 pie 权限后，该 pie 的映射段 PTE 必须同步降权。
     /// 只动 `token` 自己的映射（未映射则无事）；其他 pie（含同 space 的）不受影响。
-    fn narrow_into(&self, token: u64, flags: PteFlags) -> Result<(), MailError> {
+    fn narrow_into(&self, token: u64, flags: PteFlags) -> Result<(), GateError> {
         // 锁内只查 + 升级 Arc（锁序纪律：mappings 锁不跨 space 操作）。
         let target = {
             let m = self.mappings.lock();
@@ -123,12 +123,12 @@ impl PoleMeta {
         if let Some((space, va, bytes)) = target {
             space
                 .protect(VirtAddr::from_raw(va), bytes, flags)
-                .map_err(|_| MailError::Denied)?;
+                .map_err(|_| GateError::Denied)?;
         }
         Ok(())
     }
 
-    fn unmap_from(&self, token: u64) -> Result<(), MailError> {
+    fn unmap_from(&self, token: u64) -> Result<(), GateError> {
         let (space, span) = {
             let mut m = self.mappings.lock();
             let pos = m.iter().position(|(t, _, _)| *t == token);
@@ -143,7 +143,7 @@ impl PoleMeta {
                 None => return Ok(()), // 幂等
             }
         };
-        space.release(span).map_err(|_| MailError::Denied)
+        space.release(span).map_err(|_| GateError::Denied)
     }
 }
 
@@ -174,9 +174,9 @@ pub(crate) fn map(
     token: u64,
     space: &Arc<Space>,
     flags: PteFlags,
-) -> Result<usize, MailError> {
+) -> Result<usize, GateError> {
     if !meta.alive() {
-        return Err(MailError::Dead);
+        return Err(GateError::Dead);
     }
     let va = meta.map_into(token, space, flags)?;
     // 强制翻 PTE flags——map_into 偶遇 superpage / 旧 entry 时 flags 没真落位；
@@ -186,17 +186,17 @@ pub(crate) fn map(
 }
 
 /// 从 `space` 解除映射（幂等；需 rights & (R | W)）。`token` 定位该 pie 的映射。
-pub(crate) fn unmap(meta: &PoleMeta, token: u64) -> Result<(), MailError> {
+pub(crate) fn unmap(meta: &PoleMeta, token: u64) -> Result<(), GateError> {
     if !meta.alive() {
-        return Err(MailError::Dead);
+        return Err(GateError::Dead);
     }
     meta.unmap_from(token)
 }
 
 /// Narrow 降权：把 `token` 对应映射段降权到新 `flags`（cap ⊆ 页表）。未映射则无事。
-pub(crate) fn narrow(meta: &PoleMeta, token: u64, flags: PteFlags) -> Result<(), MailError> {
+pub(crate) fn narrow(meta: &PoleMeta, token: u64, flags: PteFlags) -> Result<(), GateError> {
     if !meta.alive() {
-        return Err(MailError::Dead);
+        return Err(GateError::Dead);
     }
     meta.narrow_into(token, flags)
 }
@@ -209,30 +209,12 @@ pub(crate) fn seal(meta: &PoleMeta, id: ResourceId) {
 
 // ── 创建 ──
 
-use crate::work::room::scheduler::core::current;
-
-/// 解封 Pole：分配物理页 + 建 Meta + 注册 memo + 全权 pie 落 self + auto-map。返 token。
-pub(crate) fn unseal(bytes: usize) -> Result<u64, MailError> {
+/// 解封 Pole 的资源实体：分配物理页 + 建 Meta + 注册 memo。**不落 pies、不
+/// auto-map**——建门闩 + 落 `task.pies` + map 创建者视图由 envcall 编排
+/// （gate::new_pie + pies.push + pole::map）。返 `(Arc, ResourceId)`。
+pub(crate) fn meta(bytes: usize) -> Result<(Arc<PoleMeta>, ResourceId), GateError> {
     let arc = PoleMeta::allocate(bytes)?;
     let id = memo::alloc_id();
     memo::insert(id, Meta::Pole(arc.clone()));
-
-    let task = current().running_task().ok_or(MailError::Denied)?;
-    let task_space = task.ident.team.space.clone();
-    // 先造 pie（拿到 per-pie token），再用该 token auto-map 创建者的视图——
-    // 创建者 pie 的映射独立成条，后续 narrow 只降它自己的 PTE。
-    let pie = super::pie::new_pie(
-        id,
-        Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
-        None, // 原始自持：无 vestor
-        Arc::downgrade(&arc),
-    );
-    let token = pie.token();
-    // 创建者自留 pie 全权（R|W|VEST）→ map 走 R|W。
-    let creator_flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
-    arc.map_into(token, &task_space, creator_flags)?;
-
-    let mut pies = task.pies.lock();
-    pies.push(AnyPie::Pole(pie));
-    Ok(token)
+    Ok((arc, id))
 }

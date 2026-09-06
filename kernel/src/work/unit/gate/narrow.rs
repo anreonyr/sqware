@@ -12,22 +12,22 @@
 // - `Denied` — 空子集 / 非单调
 // - `Dead`   — pie 已死
 
-use super::pie::{AnyPie, MailError, Permission, Pie};
+use super::pie::{AnyPie, GateError, Permission, Pie};
 
 /// 就地改写一张 pie 的权限为 `subset`（含单调校验）。
-fn set_perm<M>(pie: &mut Pie<M>, subset: Permission) -> Result<(), MailError> {
+fn set_perm<M>(pie: &mut Pie<M>, subset: Permission) -> Result<(), GateError> {
     if !pie.alive() {
-        return Err(MailError::Dead);
+        return Err(GateError::Dead);
     }
     if subset.is_empty() || (subset & pie.permission) != subset {
-        return Err(MailError::Denied);
+        return Err(GateError::Denied);
     }
     pie.permission = subset;
     Ok(())
 }
 
 /// Narrow 数据面原语：按 variant 分派改写。
-pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), MailError> {
+pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), GateError> {
     match src {
         AnyPie::Hole(p) => set_perm(p, subset),
         AnyPie::Pole(p) => set_perm(p, subset),

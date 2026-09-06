@@ -1,4 +1,4 @@
-// Pie<M> — mail 的门闩，泛型直指 Meta 类型。
+// Pie<M> — 能力门闩，泛型直指资源 Meta 类型（mail 的 HoleMeta | PoleMeta）。
 //
 // 编译期类型安全：M = HoleMeta | PoleMeta，`weak: Weak<M>` 精确指资源 Meta，
 // 拿 Hole pie 当 Pole 用在编译期即被拦。运行时擦除由 [`AnyPie`] 的 variant 承担
@@ -7,19 +7,17 @@
 // 运行时身份：每 Pie 持 resource（全局 id）+ permission + vestor（授与来源，
 // None=原始自持）+ token（全局唯一，用户句柄 + accord 撤销句柄）+ weak（检存活）。
 //
-// 用户态：Task 持 `Vec<AnyPie>`；envcall 以 token 寻址。
+// 用户态：Task 持 `Vec<AnyPie>`（`unit::task::pies`）；envcall 以 token 寻址。
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use alloc::sync::Weak;
 
-use super::hole::HoleMeta;
-use super::memo::ResourceId;
-use super::pole::PoleMeta;
+use crate::work::mail::{HoleMeta, PoleMeta, ResourceId};
 
 // ── 权限位（bitflags）──
 //
-// 单一真相在 `ubi::Permission`，本处 re-export 维持 `mail::Permission` 引用路径。
+// 单一真相在 `ubi::Permission`，本处 re-export 维持 `gate::Permission` 引用路径。
 
 pub use ubi::Permission;
 
@@ -28,9 +26,6 @@ fn next_pie_token() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
-
-/// Hole 单消息字节数。
-pub const HOLE_MSG_LEN: usize = 64;
 
 /// 单个门闩：`resource` 指向门洞、`permission` 控授权、`vestor` 是授与来源
 /// （revoke 验 vestor == me）、`token` 是用户句柄、`weak` 检存活。
@@ -125,8 +120,8 @@ impl AnyPie {
     }
 }
 
-/// 造 pie（accord / unseal 共用）：token 在此分配。
-pub(super) fn new_pie<M>(
+/// 造 pie（accord / envcall 创建共用）：token 在此分配。
+pub(crate) fn new_pie<M>(
     resource: ResourceId,
     permission: Permission,
     vestor: Option<usize>,
@@ -141,11 +136,11 @@ pub(super) fn new_pie<M>(
     }
 }
 
-// ── MailError ──
+// ── GateError ──
 
-/// mail 错误类型（D1 负码：见 `MailError::code`）。
+/// 能力门闩错误类型（D1 负码：见 `GateError::code`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MailError {
+pub enum GateError {
     /// 权限不足 / pie 不存在 / 类型不匹配。
     Denied,
     /// Meta 已 seal 或 Weak upgrade 失败。
@@ -158,14 +153,14 @@ pub enum MailError {
     NotAligned,
 }
 
-impl MailError {
+impl GateError {
     pub const fn code(self) -> isize {
         match self {
-            MailError::Denied => -1,
-            MailError::Dead => -2,
-            MailError::Busy => -3,
-            MailError::OOM => -4,
-            MailError::NotAligned => -5,
+            GateError::Denied => -1,
+            GateError::Dead => -2,
+            GateError::Busy => -3,
+            GateError::OOM => -4,
+            GateError::NotAligned => -5,
         }
     }
 }

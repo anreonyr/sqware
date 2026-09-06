@@ -1,12 +1,12 @@
-// 任务间通信（mail）— Hole/Pole 两通道 + 门闩 + 授权谱系。
+// 任务间通信（mail）— Hole/Pole 两通道的资源实体 + IPC 数据面。
 //
-//   pie.rs    — 门闩类型（Pie<M>, AnyPie, MailError, HOLE_MSG_LEN）
+// 与 `unit::gate` 的分工：mail 只持**资源实体**（HoleMeta/PoleMeta）+ IPC 数据面
+// （push/pull/map/unmap）+ 资源备份表（memo）+ 用户空间拷贝（copy_in/out）；
+// 能力模型（Pie/AnyPie/授权）在 `unit::gate`（gate 单向依赖 mail）。
+//
 //   memo.rs   — 全局资源备忘（id → Arc<Meta>）
-//   hole.rs   — Hole 数据面（数据过内核，单槽缓冲）
-//   pole.rs   — Pole 数据面（页级安全内存，物理帧 + 视图）
-//   accord.rs — 转授子集给其他 Task
-//   narrow.rs — 就地单调收窄本 pie 权限
-//   revoke.rs — 收回授与他人的副本
+//   hole.rs   — Hole 数据面（数据过内核，单槽缓冲）+ meta()
+//   pole.rs   — Pole 数据面（页级安全内存，物理帧 + 视图）+ meta()
 //
 // 数据面不感知 rights；门闩在 envcall 入口 dispatch 时检查。
 // 阻塞语义在调度域 wait/wake，mail 不重造调度器。
@@ -14,15 +14,17 @@
 // 权限四元：READ / WRITE / VEST / BACK（单一真相在 `ubi::Permission`）。
 // 用户句柄 = per-pie token（全局唯一），envcall 以 token 寻址。
 
-pub mod accord;
 pub mod hole;
 pub mod memo;
-pub mod narrow;
-pub mod pie;
 pub mod pole;
-pub mod revoke;
 
-pub use pie::{AnyPie, MailError, Permission, HOLE_MSG_LEN};
+// 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（gate → mail 单向依赖）。
+pub(crate) use hole::HoleMeta;
+pub(crate) use memo::ResourceId;
+pub(crate) use pole::PoleMeta;
+
+/// Hole 单消息字节数（Data-plane 与 Pie<HoleMeta> 的缓冲尺寸；`unit::gate` 也经此）。
+pub const HOLE_MSG_LEN: usize = 64;
 
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
