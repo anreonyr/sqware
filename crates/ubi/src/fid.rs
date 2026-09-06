@@ -20,7 +20,7 @@
 
 use envmacros::Envcall;
 
-use crate::wire::{PieToken, TaskId, VirtAddr};
+use crate::wire::{PieToken, TaskId, TeamId, VirtAddr};
 
 /// 调度词族调用（class 0；域 = work/room）。
 #[derive(Envcall)]
@@ -44,12 +44,12 @@ pub enum RoomCall {
     Wake { key: usize },
 }
 
-/// 任务调用（class 1）。
+/// 执行单元调用（class 1）—— unit 域：team（域）与 task（线程）两个建单元操作。
 #[derive(Envcall)]
 #[call(class = 1)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TaskCall {
-    /// 建用户任务（entry VA，arg，stack（0 = 缺省 `TASK_STACK_SIZE`））。
+pub enum UnitCall {
+    /// 建用户任务（在**当前** team 里产线程）：entry VA，arg，stack（0 = 缺省）。
     #[ret(TaskId)]
     Spawn {
         entry: usize,
@@ -59,6 +59,16 @@ pub enum TaskCall {
     /// 取当前 task id（无参 → 0 = 无上下文）。
     #[ret(TaskId)]
     SelfId,
+    /// 装载镜像成独立域（建 Space+Team，不产 task）：`which` 指定镜像 → TeamId。
+    #[ret(TeamId)]
+    SpawnTeam { which: crate::spawnee::Spawnee },
+    /// 在给定 team 下建线程（域内产 task）：team + entry + arg → TaskId。
+    #[ret(TaskId)]
+    SpawnTask {
+        team: TeamId,
+        entry: usize,
+        arg: usize,
+    },
 }
 
 /// 内存调用（class 2；trace 事件名 `MemoryEvent` 同词）。
@@ -174,7 +184,7 @@ pub enum ControlCall {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EnvCall {
     Room(RoomCall),
-    Task(TaskCall),
+    Unit(UnitCall),
     Memory(MemoryCall),
     IO(IOCall),
     Chrono(ChronoCall),
@@ -188,7 +198,7 @@ impl EnvCall {
         let class = slot >> 32;
         match class {
             0 => Ok(EnvCall::Room(RoomCall::from_wire(slot, regs)?)),
-            1 => Ok(EnvCall::Task(TaskCall::from_wire(slot, regs)?)),
+            1 => Ok(EnvCall::Unit(UnitCall::from_wire(slot, regs)?)),
             2 => Ok(EnvCall::Memory(MemoryCall::from_wire(slot, regs)?)),
             3 => Ok(EnvCall::IO(IOCall::from_wire(slot, regs)?)),
             4 => Ok(EnvCall::Chrono(ChronoCall::from_wire(slot, regs)?)),

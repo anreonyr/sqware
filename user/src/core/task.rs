@@ -115,12 +115,12 @@ impl Builder {
     }
 
     pub fn spawn(self) -> EnvResult<usize> {
-        env_task::spawn(self.entry, self.arg, self.stack)
+        env_task::spawn(self.entry, self.arg, self.stack).map(|id| id.get())
     }
 }
 
 pub fn spawn(entry: usize, arg: usize) -> EnvResult<usize> {
-    env_task::spawn(entry, arg, 0)
+    env_task::spawn(entry, arg, 0).map(|id| id.get())
 }
 
 pub fn closure<F, T>(f: F) -> Join<T>
@@ -144,14 +144,14 @@ where
         0,
     )
     .expect("task spawn failed");
-    Join { slot, id: task_id }
+    Join { slot, id: task_id.get() }
 }
 
-/// 读当前 task id（`TaskCall::SelfId` envcall 包装）。
+/// 读当前 task id（`UnitCall::SelfId` envcall 包装）。
 /// 无上下文返 0。
 pub fn self_id() -> EnvResult<usize> {
-    match ubi::TaskCall::SelfId.call()? {
-        ubi::TaskCallRet::SelfId(id) => Ok(id.get()),
+    match ubi::UnitCall::SelfId.call()? {
+        ubi::UnitCallRet::SelfId(id) => Ok(id.get()),
         _ => unreachable!(),
     }
 }

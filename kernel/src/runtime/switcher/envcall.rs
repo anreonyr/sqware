@@ -18,7 +18,7 @@ use core::time::Duration;
 use alloc::sync::Arc;
 
 use ubi::{
-    ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, TaskCall,
+    ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, UnitCall,
 };
 
 use crate::memory::PAGE_SIZE;
@@ -187,7 +187,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        EnvCall::Task(TaskCall::Spawn { entry, arg, stack }) => {
+        EnvCall::Unit(UnitCall::Spawn { entry, arg, stack }) => {
             let entry = KVirt::from_raw(entry);
             let team = ident.team.clone();
             let mut builder = team.task().name("u-thread").entry(entry).arg(arg);
@@ -203,12 +203,48 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        EnvCall::Task(TaskCall::SelfId) => {
+        EnvCall::Unit(UnitCall::SelfId) => {
             let id = current()
                 .running_task()
                 .map(|t| t.ident.id)
                 .unwrap_or(0);
             frame.gpr.set_x(Gprs::A0, id);
+        }
+        EnvCall::Unit(UnitCall::SpawnTeam { which }) => {
+            // 装载镜像成独立域（建 Space+Team，不产 task）。血缘：当前运行 task 为 sire。
+            let sire = current()
+                .running_task()
+                .map(|t| alloc::sync::Arc::downgrade(&t))
+                .unwrap_or_default();
+            let r = crate::work::unit::domain::spawn_team(which, sire);
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(team) => team.id.get(),
+                    Err(_) => usize::MAX,
+                },
+            );
+        }
+        EnvCall::Unit(UnitCall::SpawnTask { team, entry, arg }) => {
+            // 在指定 team 下建线程（域内产 task）。
+            let team_arc = crate::work::unit::team::lookup_team(team);
+            let team_arc = match team_arc {
+                Some(t) => t,
+                None => {
+                    frame.gpr.set_x(Gprs::A0, usize::MAX);
+                    return frame as *mut TrapContext;
+                }
+            };
+            // entry=0 用域默认入口（spawn_team 装载的镜像 e_entry）；否则用户指定。
+            let entry = if entry == 0 { team_arc.default_entry() } else { entry };
+            let r = team_arc.task().name("u-thread").entry(KVirt::from_raw(entry)).arg(arg).spawn();
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(id) => id,
+                    Err(_) => usize::MAX,
+                },
+            );
         }
         EnvCall::Control(ControlCall::Panic { code }) => {
             panic!("user-initiated panic (code {code:#x})");

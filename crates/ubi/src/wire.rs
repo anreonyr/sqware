@@ -168,6 +168,38 @@ impl Wire for VirtAddr {
     }
 }
 
+/// 团队句柄（域标识；0 = 无效哨兵）。
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
+pub struct TeamId(pub usize);
+
+impl TeamId {
+    pub const fn new(v: usize) -> Self {
+        Self(v)
+    }
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl From<TeamId> for usize {
+    fn from(t: TeamId) -> Self {
+        t.0
+    }
+}
+
+impl Wire for TeamId {
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        s[*i] = self.0;
+        *i += 1;
+    }
+    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
+        let v = *s.get(*i).ok_or(Decode::Overflow)?;
+        *i += 1;
+        Ok(TeamId(v))
+    }
+}
+
 /// 权限位掩码（ubi 单一真相；unpack 走 `from_bits` 校验，非法位 → `Invalid`，
 /// 替代旧 `from_bits_truncate` 的静默截断）。
 impl Wire for crate::permission::Permission {
@@ -234,6 +266,12 @@ impl FromPair for PieToken {
 impl FromPair for TaskId {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         TaskId(v0)
+    }
+}
+
+impl FromPair for TeamId {
+    fn from_pair(v0: usize, _v1: usize) -> Self {
+        TeamId(v0)
     }
 }
 

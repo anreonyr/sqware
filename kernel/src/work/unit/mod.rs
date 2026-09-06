@@ -12,6 +12,7 @@
 //   elftable  — 符号表
 
 pub mod elftable;
+pub(crate) mod domain;
 pub(crate) mod gate;
 pub(crate) mod loader;
 pub(crate) mod parser;

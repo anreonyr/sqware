@@ -8,14 +8,16 @@
 
 pub mod fid;
 pub mod permission;
+pub mod spawnee;
 pub mod ucall;
 pub mod wire;
 
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, IOCall, IOCallRet,
-    MailCall, MailCallRet, MemoryCall, MemoryCallRet, RoomCall, RoomCallRet, TaskCall,
-    TaskCallRet,
+    MailCall, MailCallRet, MemoryCall, MemoryCallRet, RoomCall, RoomCallRet, UnitCall,
+    UnitCallRet,
 };
 pub use permission::Permission;
+pub use spawnee::Spawnee;
 pub use ucall::{EnvError, EnvResult};
-pub use wire::{Decode, FromPair, PieToken, TaskId, VirtAddr, Wire};
+pub use wire::{Decode, FromPair, PieToken, TaskId, TeamId, VirtAddr, Wire};

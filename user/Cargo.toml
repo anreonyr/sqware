@@ -136,3 +136,10 @@ path = "src/bin/shell.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "user-spawn-test"
+path = "src/bin/spawn_test.rs"
+test = false
+bench = false
+doctest = false

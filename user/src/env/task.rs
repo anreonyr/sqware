@@ -1,11 +1,30 @@
-//! Task 域：`TaskCall::*` 转发。
+//! Unit 域：`UnitCall::*` 转发（执行单元：team 建域 / task 建线程）。
 
-use ubi::{TaskCall, TaskCallRet, EnvResult};
+use ubi::{Spawnee, TeamId, TaskId, UnitCall, UnitCallRet, EnvResult};
 
-pub fn spawn(entry: usize, arg: usize, stack: usize) -> EnvResult<usize> {
-    let r = TaskCall::Spawn { entry, arg, stack }.call()?;
+/// 在**当前** team 里建线程。
+pub fn spawn(entry: usize, arg: usize, stack: usize) -> EnvResult<TaskId> {
+    let r = UnitCall::Spawn { entry, arg, stack }.call()?;
     match r {
-        TaskCallRet::Spawn(id) => Ok(id.get()),
+        UnitCallRet::Spawn(id) => Ok(id),
+        _ => unreachable!(),
+    }
+}
+
+/// 装载镜像成独立域（建 Space+Team，不产 task）。返 TeamId。
+pub fn spawn_team(which: Spawnee) -> EnvResult<TeamId> {
+    let r = UnitCall::SpawnTeam { which }.call()?;
+    match r {
+        UnitCallRet::SpawnTeam(id) => Ok(id),
+        _ => unreachable!(),
+    }
+}
+
+/// 在给定 team 下建线程（域内产 task）。返 TaskId。
+pub fn spawn_task(team: TeamId, entry: usize, arg: usize) -> EnvResult<TaskId> {
+    let r = UnitCall::SpawnTask { team, entry, arg }.call()?;
+    match r {
+        UnitCallRet::SpawnTask(id) => Ok(id),
         _ => unreachable!(),
     }
 }
