@@ -24,7 +24,9 @@ use user::env::{io::put, mail::HolePie, room};
 // 跨模块不变量：A 把 token 存进 boxed 槽，B 读槽拿；A 用 B 的 task_id + token 撤销。
 
 const HOLE_MSG_LEN: usize = 64;
-const WAIT_MS: usize = 1000;
+// 握手等待 watchdog：协议保证 wake 必到（wait/wake 已闭环防丢唤醒），取 5s 大余量
+// 防并发下瞬时延迟误报，同时有限有界——若协议未来又出错，5s 内即可暴露。
+const WAIT: usize = 5_000;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() {
@@ -40,7 +42,7 @@ extern "C" fn main() {
     // spawn B。closure 捕获 key + token 槽。
     let join: task::Join<()> = task::closure(move || {
         // 等 A accord 完 + 存 token。
-        let _ = room::wait(key_grant, WAIT_MS).expect("wait grant");
+        let _ = room::wait(key_grant, WAIT).expect("wait grant");
         let token = unsafe { (*(token_slot_ptr as *const AtomicU64)).load(Ordering::Relaxed) };
         let hole = HolePie::from_token(token);
 
@@ -58,7 +60,7 @@ extern "C" fn main() {
 
         // 2. revoke 后再 push → Denied（副本已摘除）。
         // 但 B 需要知道 A 已 revoke 完。用独立 key。
-        let _ = room::wait(key_grant, WAIT_MS).expect("wait revoked");
+        let _ = room::wait(key_grant, WAIT).expect("wait revoked");
         if hole.push(&msg).is_err() {
             let _ = put("F1\n"); // 预期：Denied
         } else {
@@ -75,7 +77,7 @@ extern "C" fn main() {
     // 通知 B accord 完。
     let _ = room::wake(key_grant).expect("wake consumer");
     // 等 B push 完（B 会 wake key_done）。
-    let _ = room::wait(key_done, WAIT_MS).expect("wait push");
+    let _ = room::wait(key_done, WAIT).expect("wait push");
 
     // revoke：收回授与 B 的副本。
     if hole.revoke(join.id(), token).is_ok() {
@@ -87,7 +89,7 @@ extern "C" fn main() {
     // 通知 B 已 revoke（复用 key_grant）。
     let _ = room::wake(key_grant).expect("wake revoked");
     // 等 B 测完。
-    let _ = room::wait(key_done, WAIT_MS).expect("wait done");
+    let _ = room::wait(key_done, WAIT).expect("wait done");
     let _ = join.join();
     let _ = hole.seal();
     let _ = put("revoke: done\n");

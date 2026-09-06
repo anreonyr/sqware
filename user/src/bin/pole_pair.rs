@@ -10,7 +10,7 @@ use ubi::Permission;
 use user::core::task;
 use user::env::{io::put, mail::PolePie, room};
 
-// pair_pole: 跨 Task 真共享 Pole（页级安全内存 + accord 派门闩 + fault isolation）。
+// pole_pair: 跨 Task 真共享 Pole（页级安全内存 + accord 派门闩 + fault isolation）。
 //
 // 主任务 = producer：unseal Pole、spawn consumer、accord 给 consumer（subset=READ）、
 //   map 自己 space（自有 pie 全权 R|W），按 offset 写 16 字节，wake(key_data)，
@@ -27,11 +27,13 @@ use user::env::{io::put, mail::PolePie, room};
 
 const N: u8 = 16;
 const POLE_BYTES: usize = 4096;
-const WAIT_MS: usize = 1000;
+// 握手等待 watchdog：协议保证 wake 必到（wait/wake 已闭环防丢唤醒），取 5s 大余量
+// 防并发下瞬时延迟误报，同时有限有界——若协议未来又出错，5s 内即可暴露。
+const WAIT: usize = 5_000;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() {
-    let _ = put("pair_pole\n");
+    let _ = put("pole_pair\n");
 
     let pole = PolePie::unseal(POLE_BYTES).expect("unseal");
 
@@ -45,7 +47,7 @@ extern "C" fn main() {
     // fault isolation，被内核杀掉，**不会**走完 closure——producer 不可 join。
     let _join: task::Join<()> = task::closure(move || {
         // 等 producer accord + 存 token（先于第一次 wake key_data）。
-        let _ = room::wait(key_data, WAIT_MS).expect("wait data");
+        let _ = room::wait(key_data, WAIT).expect("wait data");
         let token = unsafe { (*(token_slot_ptr as *const AtomicU64)).load(Ordering::Relaxed) };
         let pole = PolePie::from_token(token);
         let va = pole.map().expect("map r-only");
@@ -80,9 +82,9 @@ extern "C" fn main() {
     let _ = room::wake(key_data).expect("wake data");
 
     // 等 consumer 读完（不是 join：consumer 写 trap 后被清掉，不会自然返回）。
-    let _ = room::wait(key_done, WAIT_MS).expect("wait done");
+    let _ = room::wait(key_done, WAIT).expect("wait done");
 
     // 收尾：不 join（consumer 已死）；直接 seal + done。
     let _ = pole.seal();
-    let _ = put("pair_pole: done\n");
+    let _ = put("pole_pair: done\n");
 }

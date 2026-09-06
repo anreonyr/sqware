@@ -137,12 +137,33 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
                 return false;
             }
             PendingState::Materialized => {
-                // 全物化映射（含借用）不该缺页：re-walk 已排除 A/D 竞争，到此处 =
-                // 内核簿记错误。
-                error!(
-                    "page fault on materialized map: {:?} at {:?}, pc={:#x}",
-                    fault.kind, fault.addr, fault.pc
-                );
+                // 已物化映射页缺页。步骤 1 的 re-walk 已把「PTE 满足访问却仍缺页」
+                //（A/D 竞争 / 陈旧 TLB）判为 resolved，所以到此处 PTE **不满足**
+                // 本次访问 ⇒ 权限违例（如写 R-only 的 cap⊆页表场景），或物化簿记与
+                // 页表不一致。前者是 fault isolation 的正常触发，后者才是内核 bug。
+                match space.translate(fault.addr) {
+                    Some((_paddr, flags)) if !satisfies(flags, fault.kind) => {
+                        // PTE 在但权限不足 ⇒ 真实访问违例，杀 task（非法越权访问）。
+                        error!(
+                            "permission violation on materialized map: {:?} at {:?}, pc={:#x}",
+                            fault.kind, fault.addr, fault.pc
+                        );
+                    }
+                    Some((_paddr, _flags)) => {
+                        // PTE 满足访问却仍缺页（re-walk 未捕捉到）⇒ 簿记不一致。
+                        error!(
+                            "materialized map re-walk inconsistency: {:?} at {:?}, pc={:#x}",
+                            fault.kind, fault.addr, fault.pc
+                        );
+                    }
+                    None => {
+                        // 物化簿记但页表无映射 ⇒ 内核 bug。
+                        error!(
+                            "materialized map missing PTE (kernel bug): {:?} at {:?}, pc={:#x}",
+                            fault.kind, fault.addr, fault.pc
+                        );
+                    }
+                }
                 return false;
             }
             PendingState::Absent => {

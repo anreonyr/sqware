@@ -6,14 +6,14 @@ extern crate alloc;
 use user::env::io::put;
 use user::env::mail::PolePie;
 
-// docker: Pole 共享内存邮路单端压力测试——主任务开 Pole、map 自己 space，
+// pole_solo: Pole 页级共享内存单端压力测试——主任务开 Pole、map 自己 space，
 // 写 64 字节、读回校验。
-// （跨 Task 共享场景：N pier 各自凭 vest 来的 Pole<R/W> pie 写，quay 自留 pie
+// （跨 Task 共享场景：N pier 各自凭 accord 来的 Pole<R/W> pie 写，quay 自留 pie
 // 读——权限子集即隔离。本 demo 跑单端验证 Pole 端到端通路。）
 
 #[unsafe(no_mangle)]
 extern "C" fn main() {
-    let _ = put("docker\n");
+    let _ = put("pole_solo\n");
 
     let pole = PolePie::unseal(4096).expect("pole unseal");
     let va = pole.map().expect("map");
@@ -36,7 +36,7 @@ extern "C" fn main() {
             let _ = put("D\n");
         }
     } else {
-        let _ = put("docker: mismatch!\n");
+        let _ = put("pole_solo: mismatch!\n");
     }
-    let _ = put("docker: done\n");
+    let _ = put("pole_solo: done\n");
 }

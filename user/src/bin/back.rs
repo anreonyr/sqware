@@ -23,9 +23,14 @@ use user::env::{io::put, mail::HolePie, room};
 //
 // 跨模块不变量：B 需知道 A 的 task_id（即副本 vestor）与两个副本的 token；
 // A 把它们存进 boxed 槽，B 读槽拿。
+//
+// 双 key 协议（防单 key 自产自销）：key_ready = A→B "token 已存槽";
+//   key_done = B→A "B 测完一轮"。A 不 join（B 走完即醒 key_done）。
 
 const HOLE_MSG_LEN: usize = 64;
-const WAIT_MS: usize = 1000;
+// 握手等待 watchdog：协议保证 wake 必到（wait/wake 已闭环防丢唤醒），取 5s 大余量
+// 防并发下瞬时延迟误报，同时有限有界——若协议未来又出错，5s 内即可暴露。
+const WAIT: usize = 5_000;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() {
@@ -39,14 +44,17 @@ extern "C" fn main() {
     let tokens_slot: &'static [AtomicU64; 2] = Box::leak(Box::new([const { AtomicU64::new(0) }; 2]));
     let tokens_slot_ptr = tokens_slot.as_ptr() as usize;
 
-    let key: usize = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    // 双 key 协议（防自产自销）：key_ready = A→B "token 已存槽";
+    //   key_done = B→A "B 测完一轮"。
+    let key_ready: usize = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    let key_done: usize = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
 
     // spawn consumer，捕获槽指针 + key。
     let join: task::Join<()> = task::closure(move || {
         let vestor_id = unsafe { (*(vestor_slot_ptr as *const AtomicUsize)).load(Ordering::Relaxed) };
         let my_own_id = task::self_id().expect("self_id");
         // 等 A accord 完两个 pie + 存 token。
-        let _ = room::wait(key, WAIT_MS).expect("wait");
+        let _ = room::wait(key_ready, WAIT).expect("wait ready");
 
         let tokens = unsafe { &*(tokens_slot_ptr as *const [AtomicU64; 2]) };
         let t1 = tokens[0].load(Ordering::Relaxed);
@@ -92,7 +100,7 @@ extern "C" fn main() {
             let _ = put("B5\n");
         }
 
-        let _ = room::wake(key).expect("wake");
+        let _ = room::wake(key_done).expect("wake done");
     });
 
     // 主线：unseal 两个 Hole、写、accord(BACK / VEST|BACK)、起 consumer、等、收尾
@@ -109,8 +117,8 @@ extern "C" fn main() {
     tokens_slot[1].store(t2, Ordering::Relaxed);
     put("V\n");
 
-    let _ = room::wake(key).expect("wake consumer");
-    let _ = room::wait(key, WAIT_MS).expect("wait consumer");
+    let _ = room::wake(key_ready).expect("wake consumer");
+    let _ = room::wait(key_done, WAIT).expect("wait consumer");
     let _ = join.join();
     let _ = hole1.seal();
     let _ = hole2.seal();

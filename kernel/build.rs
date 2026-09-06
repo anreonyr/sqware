@@ -62,8 +62,8 @@ fn main() {
         bin_dir.join("user-mmaper").display()
     );
     println!(
-        "cargo::rustc-env=USER_PORTER={}",
-        bin_dir.join("user-porter").display()
+        "cargo::rustc-env=USER_HOLE_SOLO={}",
+        bin_dir.join("user-hole-solo").display()
     );
     println!(
         "cargo::rustc-env=USER_STRESSOR={}",
@@ -86,28 +86,24 @@ fn main() {
         bin_dir.join("user-tlser").display()
     );
     println!(
-        "cargo::rustc-env=USER_DOCKER={}",
-        bin_dir.join("user-docker").display()
+        "cargo::rustc-env=USER_POLE_SOLO={}",
+        bin_dir.join("user-pole-solo").display()
     );
     println!(
-        "cargo::rustc-env=USER_RINGER={}",
-        bin_dir.join("user-ringer").display()
+        "cargo::rustc-env=USER_HOLE_PAIR={}",
+        bin_dir.join("user-hole-pair").display()
     );
     println!(
-        "cargo::rustc-env=USER_PAIR={}",
-        bin_dir.join("user-pair").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_PAIR_POLE={}",
-        bin_dir.join("user-pair-pole").display()
+        "cargo::rustc-env=USER_POLE_PAIR={}",
+        bin_dir.join("user-pole-pair").display()
     );
     println!(
         "cargo::rustc-env=USER_BACK={}",
         bin_dir.join("user-back").display()
     );
     println!(
-        "cargo::rustc-env=USER_RESTRICT={}",
-        bin_dir.join("user-restrict").display()
+        "cargo::rustc-env=USER_NARROW={}",
+        bin_dir.join("user-narrow").display()
     );
     println!(
         "cargo::rustc-env=USER_REVOKE={}",

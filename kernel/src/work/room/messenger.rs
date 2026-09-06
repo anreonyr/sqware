@@ -205,16 +205,31 @@ pub fn wait(key: WaitKey, dur: Duration) -> Handoff {
         tid: task.ident.id,
         key: key.0,
     }));
+    // 入 sites[].waiters]队尾。此处**必须再查 pend**：首段 pend 检查与派单之间
+    // 有窗口（disown_and_install_next 取调度锁 L1，持 sites L3 期间不可取），
+    // wake 可能在此窗口置 pend——若此刻已注册 waiter 而不消费 pend，该 waiter 永
+    // 不被唤醒（pend 只会被"下一次 wait"消费）。闭环：注册入锁后见 pend → 消费、
+    // 撤销本次阻塞（任务已在槽外，回收为 Starved 即可——由 run 再接走）。
+    let mut sites = wait_sites(site_shard(key)).lock();
+    let site = sites.get_mut(&key).expect("site just observed");
+    if site.pend {
+        // 窗口内 wake 已至——本任务按「已唤醒」处理，不阻塞。
+        site.pend = false;
+        drop(sites);
+        Task::exclusive(&mut task).transform(TaskState::Starved);
+        trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
+        current().push(task);
+        // 已入本核 starved（run 会再接走）；无后备帧则交 run 取活。
+        return match next_pa {
+            Some(pa) => Handoff::Switch(pa),
+            None => Handoff::Idle,
+        };
+    }
     Task::exclusive(&mut task).transform(TaskState::Blocked {
         reason: BlockReason::Wait { wake_at },
     });
-    // 入 sites[].waiters]队尾
-    wait_sites(site_shard(key))
-        .lock()
-        .get_mut(&key)
-        .expect("site just observed")
-        .waiters
-        .push_back(Waiter { task, tock });
+    site.waiters.push_back(Waiter { task, tock });
+    drop(sites);
     // 超时登记：先旁路簿记、后 tock（堆可见 ⇒ 簿记必在，同 park 纪律）
     if let (Some(wake_at), Some(handle)) = (wake_at, tock) {
         wait_times().lock().insert(handle, key);

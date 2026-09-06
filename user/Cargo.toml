@@ -58,8 +58,8 @@ bench = false
 doctest = false
 
 [[bin]]
-name = "user-porter"
-path = "src/bin/porter.rs"
+name = "user-hole-solo"
+path = "src/bin/hole_solo.rs"
 test = false
 bench = false
 doctest = false
@@ -79,29 +79,22 @@ bench = false
 doctest = false
 
 [[bin]]
-name = "user-docker"
-path = "src/bin/docker.rs"
+name = "user-pole-solo"
+path = "src/bin/pole_solo.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
-name = "user-ringer"
-path = "src/bin/ringer.rs"
+name = "user-hole-pair"
+path = "src/bin/hole_pair.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
-name = "user-pair"
-path = "src/bin/pair.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "user-pair-pole"
-path = "src/bin/pair_pole.rs"
+name = "user-pole-pair"
+path = "src/bin/pole_pair.rs"
 test = false
 bench = false
 doctest = false
@@ -114,8 +107,8 @@ bench = false
 doctest = false
 
 [[bin]]
-name = "user-restrict"
-path = "src/bin/restrict.rs"
+name = "user-narrow"
+path = "src/bin/narrow.rs"
 test = false
 bench = false
 doctest = false
