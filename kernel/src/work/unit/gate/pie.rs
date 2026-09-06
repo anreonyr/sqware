@@ -21,6 +21,17 @@ use crate::work::mail::{HoleMeta, PoleMeta, ResourceId};
 
 pub use ubi::Permission;
 
+/// 数据面操作所需的权利位（gate 核心判定授权，不感知资源实体）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Need {
+    /// pull / map / unmap —— 需 R。
+    Read,
+    /// push —— 需 W。
+    Write,
+    /// accord 转授 —— 需 VEST 或 BACK。
+    Grant,
+}
+
 /// 全局 pie 身份序列号（自 1 递增）。用户句柄 + accord 撤销句柄。
 fn next_pie_token() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -72,6 +83,24 @@ impl<M> Pie<M> {
     pub fn alive(&self) -> bool {
         self.weak.upgrade().is_some()
     }
+
+    /// 单权利位检查（**不含 alive**：Denied/Dead 语义仍由调用方逐条区分）。
+    pub fn allows(&self, need: Need) -> bool {
+        match need {
+            Need::Read => self.permission.contains(Permission::READ),
+            Need::Write => self.permission.contains(Permission::WRITE),
+            // Grant = VEST 或 BACK（原始鉴权 OR 语义：有其一即转授）。
+            Need::Grant => {
+                self.permission.contains(Permission::VEST)
+                    || self.permission.contains(Permission::BACK)
+            }
+        }
+    }
+
+    /// 子集合法：非空且 ⊆ 当前权限。
+    pub fn allows_subset(&self, subset: Permission) -> bool {
+        self.permission.contains(subset) && !subset.is_empty()
+    }
 }
 
 // ── AnyPie ──
@@ -116,6 +145,22 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.alive(),
             AnyPie::Pole(p) => p.alive(),
+        }
+    }
+
+    /// 单权利位检查（**不含 alive**：Denied/Dead 语义仍由调用方逐条区分）。
+    pub fn allows(&self, need: Need) -> bool {
+        match self {
+            AnyPie::Hole(p) => p.allows(need),
+            AnyPie::Pole(p) => p.allows(need),
+        }
+    }
+
+    /// 子集合法：非空且 ⊆ 当前权限。
+    pub fn allows_subset(&self, subset: Permission) -> bool {
+        match self {
+            AnyPie::Hole(p) => p.allows_subset(subset),
+            AnyPie::Pole(p) => p.allows_subset(subset),
         }
     }
 }

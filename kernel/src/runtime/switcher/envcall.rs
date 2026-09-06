@@ -29,7 +29,7 @@ use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
 use crate::work::mail::HOLE_MSG_LEN;
-use crate::work::unit::gate::{self, AnyPie, GateError, Permission, Pie};
+use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie};
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState};
 use crate::work::unit::task::TaskIdent;
@@ -314,7 +314,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.permission().contains(Permission::WRITE) {
+                if !pie.allows(Need::Write) {
                     return Some(Err(GateError::Denied));
                 }
                 if !pie.alive() {
@@ -351,7 +351,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.permission().contains(Permission::READ) {
+                if !pie.allows(Need::Read) {
                     return Some(Err(GateError::Denied));
                 }
                 if !pie.alive() {
@@ -389,7 +389,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.permission().contains(Permission::READ) {
+                if !pie.allows(Need::Read) {
                     return Some(Err(GateError::Denied));
                 }
                 if !pie.alive() {
@@ -424,7 +424,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.permission().contains(Permission::READ) {
+                if !pie.allows(Need::Read) {
                     return Some(Err(GateError::Denied));
                 }
                 if !pie.alive() {
@@ -493,13 +493,11 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             if !src.alive() {
                 return ret_err(frame, GateError::Dead);
             }
-            if !src.permission().contains(Permission::VEST)
-                && !src.permission().contains(Permission::BACK)
-            {
+            if !src.allows(Need::Grant) {
                 return ret_err(frame, GateError::Denied);
             }
             // subset 已由 Wire 校验式 unpack（非法位 → Err），此处仅查非空 & ⊆ 当前权限。
-            if subset.is_empty() || (subset & src.permission()) != subset {
+            if !src.allows_subset(subset) {
                 return ret_err(frame, GateError::Denied);
             }
             if src.permission().contains(Permission::BACK) {
@@ -529,7 +527,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let meta = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if subset.is_empty() || (subset & pie.permission()) != subset {
+                if !pie.allows_subset(subset) {
                     return Some(Err(GateError::Denied));
                 }
                 match pie {
