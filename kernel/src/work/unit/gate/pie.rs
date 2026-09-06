@@ -101,6 +101,18 @@ impl<M> Pie<M> {
     pub fn allows_subset(&self, subset: Permission) -> bool {
         self.permission.contains(subset) && !subset.is_empty()
     }
+
+    /// 能否授给 `dst`：BACK 守门——带 BACK 只能回授 vestor；原始自持（vestor
+    /// None）带 BACK 不受限（回授目标自由）。
+    pub fn can_grant_to(&self, dst: usize) -> bool {
+        if !self.permission.contains(Permission::BACK) {
+            return true;
+        }
+        match self.vestor {
+            Some(v) => v == dst,
+            None => true,
+        }
+    }
 }
 
 // ── AnyPie ──
@@ -161,6 +173,15 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.allows_subset(subset),
             AnyPie::Pole(p) => p.allows_subset(subset),
+        }
+    }
+
+    /// 能否授给 `dst`：BACK 守门——带 BACK 只能回授 vestor；原始自持（vestor
+    /// None）带 BACK 不受限（回授目标自由）。
+    pub fn can_grant_to(&self, dst: usize) -> bool {
+        match self {
+            AnyPie::Hole(p) => p.can_grant_to(dst),
+            AnyPie::Pole(p) => p.can_grant_to(dst),
         }
     }
 }

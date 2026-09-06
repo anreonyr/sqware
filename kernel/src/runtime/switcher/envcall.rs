@@ -500,12 +500,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             if !src.allows_subset(subset) {
                 return ret_err(frame, GateError::Denied);
             }
-            if src.permission().contains(Permission::BACK) {
-                if let Some(vestor) = src.vestor() {
-                    if vestor != dst_id {
-                        return ret_err(frame, GateError::Denied);
-                    }
-                }
+            // BACK 守门：带 BACK 只能回授 vestor（原始自持 None 不受限）。
+            if !src.can_grant_to(dst_id) {
+                return ret_err(frame, GateError::Denied);
             }
             let target =
                 match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
