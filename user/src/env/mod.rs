@@ -1,4 +1,5 @@
-//! env 适配层 —— 每个 Ucall 域一个子模块，函数转发 `UcallBuilder`，零业务逻辑。
+//! env 适配层 —— 每个调用域一个子模块，函数封 `*Call::X{..}.call()` 的域 Ret，
+//! 零业务逻辑。
 
 pub mod chrono;
 pub mod control;

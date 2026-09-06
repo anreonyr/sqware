@@ -3,20 +3,26 @@
 // RISC-V 特权规范：U 态 ecall 即 "Environment Call"（riscv crate 官方枚举亦名
 // `Exception::UserEnvCall`）——本模块即该调用的内核侧 ABI，术语与规范同源。
 //
-// 约定：a7 = 调用号（slot = 前一半 usize 功能分类 || 后一半序号，见 ubi::Ucall），
-// a0..a5 = 参数，返回值写回 a0/a1（Gprs::A0/A1）；每个调用后 sepc += 4（Reap
-// 除外——不返回）。时间语义统一以毫秒（Duration 边界）表达（Park / Wait）；
-// Ticks 仅作兼容诊断，非时间单位。调用名与调度词族（conductor）同词：
-// Starve/Park/Reap/Wait/Wake 即 utask 各服务。
+// 方案 3（typed payload）：a7 = 调用号（slot = class << 32 | index，由
+// derive(Envcall) 的 slot() 现算），a0..a5 = 参数按 `Wire` 校验式 unpack。
+// 本模块不再手读 `frame.gpr.x(A0) as u64`，而是 `EnvCall::from_wire(slot, &regs)`
+// 一次解码出带类型载荷的 variant，match 各 arm 直接消费类型化字段。
+// `Permission` 子集在 decode 时已过 `from_bits(...).ok_or(...)` 校验（非法位 → Err），
+// 根除旧 `from_bits_truncate` 的静默截断；`PteFlags` 仍在 `Mprotect` arm 校验。
+// 返回值写回 a0（`Gprs::A0`）；每个调用后 sepc += 4（Reap 除外——不返回）。
+// 时间语义统一以毫秒（Duration 边界）表达（Park / Wait）；Ticks 仅作兼容诊断。
+// 调用名与调度词族（conductor）同词：Starve/Park/Reap/Wait/Wake 即 utask 各服务。
 
 use core::time::Duration;
 
 use alloc::sync::Arc;
 
-use ubi::{ChronoCall, ControlCall, IOCall, MailCall, MemoryCall, RoomCall, TaskCall, Ucall};
+use ubi::{
+    ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, TaskCall,
+};
 
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::addr::VirtAddr;
+use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
@@ -49,6 +55,17 @@ fn subset_to_pte(subset: Permission) -> Result<PteFlags, MailError> {
     Ok(f)
 }
 
+/// 写回错误码并返回待恢复帧。
+fn ret_err(frame: &mut TrapContext, e: MailError) -> *mut TrapContext {
+    frame.gpr.set_x(Gprs::A0, e.code() as usize);
+    frame as *mut TrapContext
+}
+
+/// 从 pie 句柄取 u64 token。
+fn tok(t: PieToken) -> u64 {
+    t.get()
+}
+
 /// envcall 分发。
 ///
 /// 入参 frame = 当前任务用户帧；`ident` = 当前任务身份（**Arc 所有权移交**——
@@ -57,24 +74,32 @@ fn subset_to_pte(subset: Permission) -> Result<PteFlags, MailError> {
 /// 返回待恢复帧：Starve/Park 返回下一任务帧，Reap 返回后调用方不得再触碰 frame。
 pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapContext {
     let number = frame.gpr.x(Gprs::A7);
-    let call =
-        Ucall::try_from(number).unwrap_or_else(|_| panic!("invalid envcall number: {number}"));
+    let regs = [
+        frame.gpr.x(Gprs::A0),
+        frame.gpr.x(Gprs::A1),
+        frame.gpr.x(Gprs::A2),
+        frame.gpr.x(Gprs::A3),
+        frame.gpr.x(Gprs::A4),
+        frame.gpr.x(Gprs::A5),
+    ];
+    let envcall = match EnvCall::from_wire(number, &regs) {
+        Ok(c) => c,
+        Err(_) => panic!("invalid envcall number: {number}"),
+    };
     trace::note(EventKind::Env(EnvEvent::Call {
         call: number,
         arg: frame.gpr.x(Gprs::A0),
     }));
     frame.sepc += 4;
-    match call {
-        Ucall::Room(RoomCall::Starve) => return starve() as *mut TrapContext,
-        Ucall::IO(IOCall::Put) => {
-            let len = frame.gpr.x(Gprs::A0);
-            let ptr = frame.gpr.x(Gprs::A1);
-            let ok = crate::console::push(&ident.team.space, ptr, len);
+    match envcall {
+        EnvCall::Room(RoomCall::Starve) => return starve() as *mut TrapContext,
+        EnvCall::IO(IOCall::Put { len, buf }) => {
+            let ok = crate::console::push(&ident.team.space, buf.get(), len);
             if !ok {
                 frame.gpr.set_x(Gprs::A0, usize::MAX);
             }
         }
-        Ucall::IO(IOCall::Get) => {
+        EnvCall::IO(IOCall::Get) => {
             frame.gpr.set_x(
                 Gprs::A0,
                 match crate::console::pull() {
@@ -83,44 +108,41 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Room(RoomCall::Reap) => {
+        EnvCall::Room(RoomCall::Reap) => {
             drop(ident);
             return reap() as *mut TrapContext;
         }
-        Ucall::Chrono(ChronoCall::Ticks) => {
+        EnvCall::Chrono(ChronoCall::Ticks) => {
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);
         }
-        Ucall::Room(RoomCall::Park) => {
+        EnvCall::Room(RoomCall::Park { millis }) => {
             drop(ident);
-            return park(Duration::from_millis(frame.gpr.x(Gprs::A0) as u64)) as *mut TrapContext;
+            return park(Duration::from_millis(millis as u64)) as *mut TrapContext;
         }
-        Ucall::Room(RoomCall::Wait) => {
-            let raw = frame.gpr.x(Gprs::A0);
-            let key = WaitKey::compose(ident.team.space.asid(), raw);
-            let ms = frame.gpr.x(Gprs::A1);
-            let dur = if ms == usize::MAX {
+        EnvCall::Room(RoomCall::Wait { key, millis }) => {
+            let wkey = WaitKey::compose(ident.team.space.asid(), key);
+            let dur = if millis == usize::MAX {
                 Duration::MAX
             } else {
-                Duration::from_millis(ms as u64)
+                Duration::from_millis(millis as u64)
             };
             drop(ident);
-            if let Some(pa) = wait(key, dur) {
+            if let Some(pa) = wait(wkey, dur) {
                 return pa as *mut TrapContext;
             }
         }
-        Ucall::Room(RoomCall::Wake) => {
-            let raw = frame.gpr.x(Gprs::A0);
-            let key = WaitKey::compose(ident.team.space.asid(), raw);
-            let woke = wake(key);
+        EnvCall::Room(RoomCall::Wake { key }) => {
+            let wkey = WaitKey::compose(ident.team.space.asid(), key);
+            let woke = wake(wkey);
             frame.gpr.set_x(Gprs::A0, woke as usize);
         }
-        Ucall::Chrono(ChronoCall::Clock) => {
+        EnvCall::Chrono(ChronoCall::Clock) => {
             let up = clock::uptime();
             frame.gpr.set_x(Gprs::A0, up.as_secs() as usize);
             frame.gpr.set_x(Gprs::A1, up.subsec_nanos() as usize);
         }
-        Ucall::Memory(MemoryCall::Allocate) => {
-            let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
+        EnvCall::Memory(MemoryCall::Allocate { size }) => {
+            let size = size.max(1).next_multiple_of(PAGE_SIZE);
             let addr = {
                 let s = &ident.team.space;
                 let r = HeapWindow::allocate(s, size).map(|span| span.va);
@@ -147,12 +169,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Memory(MemoryCall::Deallocate) => {
-            let addr = frame.gpr.x(Gprs::A0);
-            let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
+        EnvCall::Memory(MemoryCall::Deallocate { addr, size }) => {
+            let addr = addr.get();
+            let size = size.max(1).next_multiple_of(PAGE_SIZE);
             let ok = {
                 let s = &ident.team.space;
-                let freed = HeapWindow::deallocate(s, VirtAddr::from_raw(addr), size);
+                let freed = HeapWindow::deallocate(s, KVirt::from_raw(addr), size);
                 if freed {
                     crate::memory::allocator::fence::on_free(
                         crate::memory::allocator::fence::key(s.asid(), addr),
@@ -164,10 +186,8 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        Ucall::Task(TaskCall::Spawn) => {
-            let entry = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
-            let arg = frame.gpr.x(Gprs::A1);
-            let stack = frame.gpr.x(Gprs::A2);
+        EnvCall::Task(TaskCall::Spawn { entry, arg, stack }) => {
+            let entry = KVirt::from_raw(entry);
             let team = ident.team.clone();
             let mut builder = team.task().name("u-thread").entry(entry).arg(arg);
             if stack > 0 {
@@ -182,28 +202,27 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Task(TaskCall::SelfId) => {
-            // 返当前 task id（无参；demo 用作"已知非-vestor" 或与共享 vestor 槽配对）。
+        EnvCall::Task(TaskCall::SelfId) => {
             let id = current()
                 .running_task()
                 .map(|t| t.ident.id)
                 .unwrap_or(0);
             frame.gpr.set_x(Gprs::A0, id);
         }
-        Ucall::Control(ControlCall::Panic) => {
-            panic!("user-initiated panic (code {:#x})", frame.gpr.x(Gprs::A0));
+        EnvCall::Control(ControlCall::Panic { code }) => {
+            panic!("user-initiated panic (code {code:#x})");
         }
-        Ucall::Memory(MemoryCall::Mmap) => {
-            let size = frame.gpr.x(Gprs::A0).max(1).next_multiple_of(PAGE_SIZE);
-            let fixed = frame.gpr.x(Gprs::A2);
+        EnvCall::Memory(MemoryCall::Mmap { size, at }) => {
+            let size = size.max(1).next_multiple_of(PAGE_SIZE);
+            let fixed = at.get();
             let va = {
                 let s = &ident.team.space;
                 if fixed == 0 {
                     ShareWindow::mmap(s, size).map(|span| span.va)
                 } else {
                     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
-                    s.map(VirtAddr::from_raw(fixed), size, flags, Some(Pending::Lazy))
-                        .map(|()| VirtAddr::from_raw(fixed))
+                    s.map(KVirt::from_raw(fixed), size, flags, Some(Pending::Lazy))
+                        .map(|()| KVirt::from_raw(fixed))
                 }
             };
             frame.gpr.set_x(
@@ -214,9 +233,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Memory(MemoryCall::Munmap) => {
-            let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
-            let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
+        EnvCall::Memory(MemoryCall::Munmap { addr, size }) => {
+            let addr = KVirt::from_raw(addr.get());
+            let size = size.max(1).next_multiple_of(PAGE_SIZE);
             let ok = {
                 let s = &ident.team.space;
                 if ShareWindow::munmap(s, addr, size) {
@@ -230,35 +249,41 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        Ucall::Memory(MemoryCall::Mprotect) => {
-            let addr = VirtAddr::from_raw(frame.gpr.x(Gprs::A0));
-            let size = frame.gpr.x(Gprs::A1).max(1).next_multiple_of(PAGE_SIZE);
-            let flags = PteFlags::from_bits_truncate(frame.gpr.x(Gprs::A2) as u64);
-            let ok = ident.team.space.protect(addr, size, flags).is_ok();
+        EnvCall::Memory(MemoryCall::Mprotect { addr, size, flags }) => {
+            let addr = KVirt::from_raw(addr.get());
+            let size = size.max(1).next_multiple_of(PAGE_SIZE);
+            // 校验式：非法位 → 拒绝（不再 from_bits_truncate 静默截断）。
+            let ok = match PteFlags::from_bits(flags) {
+                Some(f) => ident.team.space.protect(addr, size, f).is_ok(),
+                None => false,
+            };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        Ucall::Mail(MailCall::UnsealHole) => {
+        EnvCall::Mail(MailCall::UnsealHole) => {
             match mail::hole::unseal() {
                 Ok(token) => frame.gpr.set_x(Gprs::A0, token as usize),
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
-        Ucall::Mail(MailCall::UnsealPole) => {
-            let bytes = frame.gpr.x(Gprs::A0);
+        EnvCall::Mail(MailCall::UnsealPole { bytes }) => {
             match mail::pole::unseal(bytes) {
                 Ok(token) => frame.gpr.set_x(Gprs::A0, token as usize),
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
-        Ucall::Mail(MailCall::Push) => {
-            let token = frame.gpr.x(Gprs::A0) as u64;
-            let va = frame.gpr.x(Gprs::A1);
+        EnvCall::Mail(MailCall::Push { token, msg }) => {
+            let token = tok(token);
+            let va = msg.get();
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.permission().contains(Permission::WRITE) { return Some(Err(MailError::Denied)); }
-                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                if !pie.permission().contains(Permission::WRITE) {
+                    return Some(Err(MailError::Denied));
+                }
+                if !pie.alive() {
+                    return Some(Err(MailError::Dead));
+                }
                 match pie {
                     AnyPie::Hole(p) => p.weak.upgrade().map(|a| Ok(a)),
                     _ => None,
@@ -283,15 +308,19 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Pull) => {
-            let token = frame.gpr.x(Gprs::A0) as u64;
-            let va = frame.gpr.x(Gprs::A1);
+        EnvCall::Mail(MailCall::Pull { token, buf }) => {
+            let token = tok(token);
+            let va = buf.get();
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
-                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                if !pie.permission().contains(Permission::READ) {
+                    return Some(Err(MailError::Denied));
+                }
+                if !pie.alive() {
+                    return Some(Err(MailError::Dead));
+                }
                 match pie {
                     AnyPie::Hole(p) => p.weak.upgrade().map(|a| Ok(a)),
                     _ => None,
@@ -306,7 +335,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                         }
                     }
                     Err(e) => Err(e),
-                }
+                },
                 Some(Err(e)) => Err(e),
                 None => Err(MailError::Denied),
             };
@@ -318,24 +347,29 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Map) => {
-            let token = frame.gpr.x(Gprs::A0) as u64;
+        EnvCall::Mail(MailCall::Map { token }) => {
+            let token = tok(token);
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
-                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                if !pie.permission().contains(Permission::READ) {
+                    return Some(Err(MailError::Denied));
+                }
+                if !pie.alive() {
+                    return Some(Err(MailError::Dead));
+                }
                 match pie {
                     AnyPie::Pole(p) => {
-                        // cap ⊆ 页表：subset 决定 flags（READ→R，READ|WRITE→R|W）
                         let flags = subset_to_pte(pie.permission());
                         p.weak.upgrade().map(|a| Ok((a, token, flags)))
                     }
                     _ => None,
                 }
             }) {
-                Some(Ok((meta, token, Ok(flags)))) => mail::pole::map(&meta, token, &ident.team.space, flags),
+                Some(Ok((meta, token, Ok(flags)))) => {
+                    mail::pole::map(&meta, token, &ident.team.space, flags)
+                }
                 Some(Ok((_, _, Err(e)))) => Err(e),
                 Some(Err(e)) => Err(e),
                 None => Err(MailError::Denied),
@@ -348,14 +382,18 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Unmap) => {
-            let token = frame.gpr.x(Gprs::A0) as u64;
+        EnvCall::Mail(MailCall::Unmap { token }) => {
+            let token = tok(token);
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.permission().contains(Permission::READ) { return Some(Err(MailError::Denied)); }
-                if !pie.alive() { return Some(Err(MailError::Dead)); }
+                if !pie.permission().contains(Permission::READ) {
+                    return Some(Err(MailError::Denied));
+                }
+                if !pie.alive() {
+                    return Some(Err(MailError::Dead));
+                }
                 match pie {
                     AnyPie::Pole(p) => p.weak.upgrade().map(|a| Ok((a, token))),
                     _ => None,
@@ -373,19 +411,17 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Seal) => {
-            let token = frame.gpr.x(Gprs::A0) as u64;
+        EnvCall::Mail(MailCall::Seal { token }) => {
+            let token = tok(token);
             let task = current().running_task();
-            // 取 resource：token 定位自己 pie。seal 免费（任何持有者皆可封印）。
             let resource = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
-                pies.iter().find(|p| p.token() == token).map(|p| p.resource())
+                pies.iter()
+                    .find(|p| p.token() == token)
+                    .map(|p| p.resource())
             }) {
                 Some(r) => r,
-                None => {
-                    frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
-                    return frame as *mut TrapContext;
-                }
+                None => return ret_err(frame, MailError::Denied),
             };
             let r = match mail::memo::lookup(resource) {
                 Some(mail::memo::Meta::Hole(m)) => {
@@ -406,61 +442,42 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Accord) => {
-            // a0 = src_token, a1 = dst_id, a2 = subset bits。
-            let src_token = frame.gpr.x(Gprs::A0) as u64;
-            let dst_id = frame.gpr.x(Gprs::A1);
-            let subset_bits = frame.gpr.x(Gprs::A2) as u32;
+        EnvCall::Mail(MailCall::Accord { src, dst, subset }) => {
+            let src_token = tok(src);
+            let dst_id = dst.get();
 
             let src_task = current().running_task();
-            // 提前取 id（src_task 在 and_then 闭包里被 move 消费）
             let current_id = src_task.as_ref().map(|t| t.ident.id).unwrap_or(0);
-            // 1. 取 src pie + 鉴权（VEST 或 BACK 权、subset 合法、alive）
             let src = match src_task
                 .and_then(|t| t.pies.lock().iter().find(|p| p.token() == src_token).cloned())
             {
                 Some(p) => p,
-                None => {
-                    frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
-                    return frame as *mut TrapContext;
-                }
+                None => return ret_err(frame, MailError::Denied),
             };
             if !src.alive() {
-                frame.gpr.set_x(Gprs::A0, MailError::Dead.code() as usize);
-                return frame as *mut TrapContext;
+                return ret_err(frame, MailError::Dead);
             }
-            // 含 VEST 或 BACK 任一即能 accord（BACK 是受限 accord，详下）。
             if !src.permission().contains(Permission::VEST)
                 && !src.permission().contains(Permission::BACK)
             {
-                frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
-                return frame as *mut TrapContext;
+                return ret_err(frame, MailError::Denied);
             }
-            let subset = Permission::from_bits_truncate(subset_bits);
+            // subset 已由 Wire 校验式 unpack（非法位 → Err），此处仅查非空 & ⊆ 当前权限。
             if subset.is_empty() || (subset & src.permission()) != subset {
-                frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
-                return frame as *mut TrapContext;
+                return ret_err(frame, MailError::Denied);
             }
-            // BACK 验：源 pie 有 BACK 必 dst == src.vestor。
-            //   src.vestor() = None  ⇒ 原始自持（无上一手），BACK 退化为"accord 同效"。
-            //   src.vestor() = Some(g) ⇒ BACK 守门 dst == g。
             if src.permission().contains(Permission::BACK) {
                 if let Some(vestor) = src.vestor() {
                     if vestor != dst_id {
-                        frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
-                        return frame as *mut TrapContext;
+                        return ret_err(frame, MailError::Denied);
                     }
                 }
             }
-            // 2. 查 dst task（持 Weak，避开 scheduler transform 的 strong_count==1 断言）。
-            let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
-                Some(w) => w,
-                None => {
-                    frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
-                    return frame as *mut TrapContext;
-                }
-            };
-            // 3. 调 accord 数据面原语（传 current_id 作新 pie 的 vestor）。返新 token（撤销句柄）。
+            let target =
+                match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
+                    Some(w) => w,
+                    None => return ret_err(frame, MailError::Denied),
+                };
             let r = mail::accord::accord(&src, &target, subset, current_id);
             frame.gpr.set_x(
                 Gprs::A0,
@@ -470,14 +487,8 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Narrow) => {
-            // a0 = token, a1 = subset bits。就地改写本 pie 权限（单调收窄）;
-            // Pole 额外把该 pie 的映射段降权——cap ⊆ 页表。
-            let token = frame.gpr.x(Gprs::A0) as u64;
-            let subset = Permission::from_bits_truncate(frame.gpr.x(Gprs::A1) as u32);
-
-            // Phase A：锁内校验（非空 / 单调）+ 取 Pole meta Arc。
-            // 锁内只做 Arc clone，不做空间操作（锁序纪律：pids 锁不跨 space 锁）。
+        EnvCall::Mail(MailCall::Narrow { token, subset }) => {
+            let token = tok(token);
             let task = current().running_task();
             let meta = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
@@ -487,7 +498,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 }
                 match pie {
                     AnyPie::Hole(p) => {
-                        if !p.alive() { return Some(Err(MailError::Dead)); }
+                        if !p.alive() {
+                            return Some(Err(MailError::Dead));
+                        }
                         Some(Ok(None))
                     }
                     AnyPie::Pole(p) => match p.weak.upgrade() {
@@ -502,33 +515,22 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             };
             let meta = match meta {
                 Ok(m) => m,
-                Err(e) => {
-                    frame.gpr.set_x(Gprs::A0, e.code() as usize);
-                    return frame as *mut TrapContext;
-                }
+                Err(e) => return ret_err(frame, e),
             };
-
-            // Phase B：Pole 同步降权（该 pie token 的映射段）。成功才改写。
             if let Some(meta) = meta {
-                // RISC-V PTE 无 R=0,W=0 合法数据叶子 ⇒ 无 READ 的 subset 不可作为
-                // Pole 降权目标。subset_to_pte 即守此门。
                 let flags = match subset_to_pte(subset) {
                     Ok(f) => f,
-                    Err(e) => {
-                        frame.gpr.set_x(Gprs::A0, e.code() as usize);
-                        return frame as *mut TrapContext;
-                    }
+                    Err(e) => return ret_err(frame, e),
                 };
                 if let Err(e) = mail::pole::narrow(&meta, token, flags) {
-                    frame.gpr.set_x(Gprs::A0, e.code() as usize);
-                    return frame as *mut TrapContext;
+                    return ret_err(frame, e);
                 }
             }
-
-            // Phase C：改写 permission（数据面做单调校验 + 落值）。
             let ok = task.and_then(|t| {
                 let mut pies = t.pies.lock();
-                pies.iter_mut().find(|p| p.token() == token).map(|p| mail::narrow::narrow(p, subset))
+                pies.iter_mut()
+                    .find(|p| p.token() == token)
+                    .map(|p| mail::narrow::narrow(p, subset))
             });
             frame.gpr.set_x(
                 Gprs::A0,
@@ -539,19 +541,15 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        Ucall::Mail(MailCall::Revoke) => {
-            // a0 = dst_id, a1 = token。收回授与 dst 的、token 标识的副本。
-            let dst_id = frame.gpr.x(Gprs::A0);
-            let token = frame.gpr.x(Gprs::A1) as u64;
+        EnvCall::Mail(MailCall::Revoke { dst, token }) => {
+            let dst_id = dst.get();
+            let token = tok(token);
             let current_id = current().running_task().map(|t| t.ident.id).unwrap_or(0);
-
-            let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
-                Some(w) => w,
-                None => {
-                    frame.gpr.set_x(Gprs::A0, MailError::Denied.code() as usize);
-                    return frame as *mut TrapContext;
-                }
-            };
+            let target =
+                match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
+                    Some(w) => w,
+                    None => return ret_err(frame, MailError::Denied),
+                };
             let r = mail::revoke::revoke(&target, token, current_id);
             frame.gpr.set_x(
                 Gprs::A0,

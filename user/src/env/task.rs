@@ -1,16 +1,11 @@
 //! Task 域：`TaskCall::*` 转发。
 
-use ubi::{TaskCall, UArgs, UResult, Ucall, UcallBuilder};
+use ubi::{TaskCall, TaskCallRet, EnvResult};
 
-pub fn spawn(entry: usize, arg: usize, stack: usize) -> UResult<usize> {
-    let args = UArgs {
-        a0: entry,
-        a1: arg,
-        a2: stack,
-        ..UArgs::default()
-    };
-    let (v0, _) = UcallBuilder::new(Ucall::Task(TaskCall::Spawn))
-        .args(args)
-        .call()?;
-    Ok(v0)
+pub fn spawn(entry: usize, arg: usize, stack: usize) -> EnvResult<usize> {
+    let r = TaskCall::Spawn { entry, arg, stack }.call()?;
+    match r {
+        TaskCallRet::Spawn(id) => Ok(id.get()),
+        _ => unreachable!(),
+    }
 }

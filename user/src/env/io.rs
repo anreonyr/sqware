@@ -2,40 +2,43 @@
 
 use core::time::Duration;
 
-use ubi::{IOCall, UArgs, UResult, Ucall, UcallBuilder};
+use ubi::{IOCall, IOCallRet, EnvResult, VirtAddr};
 
 use crate::env::room;
 
 // 硬不变量：put / try_put 共用 IOCall::Put（best-effort 直写），差异在错误传播；
 //             IOCall::Get 已非阻塞，try_get 直接复用。
 
-pub fn put(s: &str) -> UResult<()> {
-    let args = UArgs {
-        a0: s.len(),
-        a1: s.as_ptr() as usize,
-        ..UArgs::default()
-    };
-    let _ = UcallBuilder::new(Ucall::IO(IOCall::Put))
-        .args(args)
-        .call()?;
-    Ok(())
+pub fn put(s: &str) -> EnvResult<()> {
+    let r = IOCall::Put {
+        len: s.len(),
+        buf: VirtAddr::new(s.as_ptr() as usize),
+    }
+    .call()?;
+    match r {
+        IOCallRet::Put(()) => Ok(()),
+        _ => unreachable!(),
+    }
 }
 
-pub fn try_put(s: &str) -> UResult<()> {
-    let args = UArgs {
-        a0: s.len(),
-        a1: s.as_ptr() as usize,
-        ..UArgs::default()
-    };
-    UcallBuilder::new(Ucall::IO(IOCall::Put))
-        .args(args)
-        .call()?;
-    Ok(())
+pub fn try_put(s: &str) -> EnvResult<()> {
+    let r = IOCall::Put {
+        len: s.len(),
+        buf: VirtAddr::new(s.as_ptr() as usize),
+    }
+    .call()?;
+    match r {
+        IOCallRet::Put(()) => Ok(()),
+        _ => unreachable!(),
+    }
 }
 
 pub fn try_get() -> Option<u8> {
-    let (v0, _) = UcallBuilder::new(Ucall::IO(IOCall::Get)).call().ok()?;
-    Some(v0 as u8)
+    let r = IOCall::Get.call().ok()?;
+    match r {
+        IOCallRet::Get(b) => Some(b),
+        _ => unreachable!(),
+    }
 }
 
 pub fn get() -> u8 {

@@ -1,6 +1,6 @@
 //! 用户 TLS 地基 — 每线程独立 tp 指向的 TLS 块。
 
-use ubi::UResult;
+use ubi::EnvResult;
 
 use crate::PAGE_SIZE;
 use crate::env::memory;
@@ -19,7 +19,7 @@ pub fn base() -> usize {
     tp
 }
 
-pub fn alloc() -> UResult<usize> {
+pub fn alloc() -> EnvResult<usize> {
     memory::allocate(TLS_SIZE)
 }
 

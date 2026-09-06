@@ -1,202 +1,200 @@
-//! 环境调用号（Ucall）枚举 + usize 往返。
+//! 环境调用号（EnvCall）枚举 + 载荷 codec。
 //!
-//! 槽号编码 = `(class << 32) | index`——高半 usize 是功能分类（外层 [`Ucall`]
-//! 成员），低半是类内序号（子枚举判别式）。分类与功能域一一对应，**分类进
-//! 类型层**（载荷形式 Type(Name)，与 trace 的 `EventKind::Room(RoomEvent)` 聚合
-//! 同构；trace 事件名同步同词）：
+//! 方案 3（typed payload）：每个原语是一个**带类型载荷的 variant**，字段类型是
+//! ubi 语义句柄（`PieToken`/`TaskId`/`VirtAddr`）或 `Permission`/裸量。调用号
+//! （a7）不再 `#[repr(usize)]`+手写 `as usize`，而由 `[derive(Envcall)]` 生成的
+//! codec 现算：`(class << 32) | index`，`index` 是**声明顺序**判别号（重排即改
+//! ABI，写进本文件注释即文档）。
 //!
-//!   Room    调度词族   Starve Park Reap Wait Wake
-//!   Task    任务       Spawn
-//!   Memory  内存       Allocate Deallocate Mmap Munmap Mprotect
-//!   IO      IO         Put Get
-//!   Chrono  时钟       Ticks Clock
-//!   Mail    通信       PortOpen PortShut PortPush PortPull DockOpen DockShut
-//!                     DockJoin DockClone DockDrop RingOpen RingClose RingJoin
-//!   Control 控制       Panic
+//! 返回类型（R3）：每个 variant 标 `#[ret(T)]`，derive 生成域 `*Ret` 枚举与
+//! `call()`（负值即 `EnvError`，非负蒸馏为 Ret）。`call()` 绑定 ubi 汇编入口，
+//! `slot/pack/unpack` 只依赖 `Wire`——sbi 未来可复用同一 derive。
 //!
-//! 命名与调度词族（conductor）、`runtime::chrono` 域及用户侧 API
-//! （`user::env`）同词；`Room`/`Memory` 与 trace 的 `RoomEvent`/`MemoryEvent`
-//! 同词。
+//! 分类与功能域一一对应（class=高 32 位）：Room=0, Task=1, Memory=2, IO=3,
+//! Chrono=4, Mail=5, Control=6。命名与调度词族（conductor）、`runtime::chrono`
+//! 域及用户侧 `user::env` 同词。
+//!
+//! 根除的两处 L3' 漏洞：`Permission`/`PteFlags` 的 unpack 走 `from_bits(...)`
+//! `.ok_or(...)` 校验（见 [`Wire`](crate::wire::Wire)），非法位 → `Err`，不再
+//! `from_bits_truncate` 静默截断。
+
+use envmacros::Envcall;
+
+use crate::wire::{PieToken, TaskId, VirtAddr};
 
 /// 调度词族调用（class 0；域 = work/room）。
-#[repr(usize)]
+#[derive(Envcall)]
+#[call(class = 0)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RoomCall {
     /// 主动让出处理器（词族 starve）。
-    Starve = 0,
-    /// 睡眠指定毫秒数（a0 = ms；词族 park）。
-    Park = 1,
-    /// 退出当前任务（不返回；词族 reap）。
-    Reap = 2,
-    /// 事件等待（词族 wait）：a0 = key，a1 = 毫秒（usize::MAX = 永久）。
-    Wait = 3,
-    /// 事件唤醒（词族 wake）：a0 = key；返回是否唤到人。
-    Wake = 4,
+    #[ret(())]
+    Starve,
+    /// 睡眠指定毫秒数（词族 park）。
+    #[ret(())]
+    Park { millis: usize },
+    /// 退出当前任务（不返回；词族 reap）。发散，无 Ret。
+    #[ret(())]
+    Reap,
+    /// 事件等待（词族 wait）：key + 毫秒（usize::MAX = 永久）。
+    #[ret(())]
+    Wait { key: usize, millis: usize },
+    /// 事件唤醒（词族 wake）：key；返回是否唤到人。
+    #[ret(bool)]
+    Wake { key: usize },
 }
 
 /// 任务调用（class 1）。
-#[repr(usize)]
+#[derive(Envcall)]
+#[call(class = 1)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TaskCall {
-    /// 建用户任务（a0 = 入口 VA，a1 = arg，a2 = 栈大小（0 = 缺省
-    /// `TASK_STACK_SIZE`））：返回任务句柄或负错误码。
-    Spawn = 0,
-    /// 取当前 task id（无参 → a0 = task_id 或 0 = 无上下文）。
-    SelfId = 1,
+    /// 建用户任务（entry VA，arg，stack（0 = 缺省 `TASK_STACK_SIZE`））。
+    #[ret(TaskId)]
+    Spawn {
+        entry: usize,
+        arg: usize,
+        stack: usize,
+    },
+    /// 取当前 task id（无参 → 0 = 无上下文）。
+    #[ret(TaskId)]
+    SelfId,
 }
 
 /// 内存调用（class 2；trace 事件名 `MemoryEvent` 同词）。
-#[repr(usize)]
+#[derive(Envcall)]
+#[call(class = 2)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MemoryCall {
-    /// 用户堆分配（a0 = 字节数，页对齐向上取整）：返回分配 VA 或负错误码。
-    Allocate = 0,
-    /// 用户堆释放（a0 = VA，a1 = 字节数，页对齐）：0 或负错误码。
-    Deallocate = 1,
-    /// 高位大段懒匿名映射（a0 = 字节数，页对齐；a2 = 期望 VA，0 = 窗口自选
-    /// 高位）：返回映射 VA 或负错误码。
-    Mmap = 2,
-    /// 释放 mmap/声明区域（a0 = VA，a1 = 字节数，页对齐）：0 或负错误码。
-    Munmap = 3,
-    /// 修改映射区域保护标志（a0 = VA，a1 = 字节数，页对齐，a2 = 新权限
-    /// PteFlags 位）：0 或负错误码。
-    Mprotect = 4,
+    /// 用户堆分配（字节数，页对齐向上取整）。
+    #[ret(VirtAddr)]
+    Allocate { size: usize },
+    /// 用户堆释放（VA，字节数，页对齐）。
+    #[ret(())]
+    Deallocate { addr: VirtAddr, size: usize },
+    /// 高位大段懒匿名映射（字节数页对齐；at = 期望 VA，VirtAddr(0) = 窗口自选）。
+    #[ret(VirtAddr)]
+    Mmap { size: usize, at: VirtAddr },
+    /// 释放 mmap/声明区域（VA，字节数，页对齐）。
+    #[ret(())]
+    Munmap { addr: VirtAddr, size: usize },
+    /// 修改映射区域保护标志（VA，字节数页对齐，新权限 PteFlags 位）。
+    #[ret(())]
+    Mprotect { addr: VirtAddr, size: usize, flags: u64 },
 }
 
 /// IO 调用（class 3）。
-#[repr(usize)]
+#[derive(Envcall)]
+#[call(class = 3)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum IOCall {
-    /// 写缓冲（a0 = len，a1 = 缓冲 VA）。
-    Put = 0,
-    /// 非阻塞读一字节（a0 = 字节；无输入 → -2 Busy）。
-    Get = 1,
+    /// 写缓冲（len，缓冲 VA）。
+    #[ret(())]
+    Put { len: usize, buf: VirtAddr },
+    /// 非阻塞读一字节；无输入 → -2 Busy。
+    #[ret(u8)]
+    Get,
 }
 
 /// 时钟调用（class 4；域 = runtime::chrono）。
-#[repr(usize)]
+#[derive(Envcall)]
+#[call(class = 4)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ChronoCall {
     /// 读取定时器 tick 计数（诊断，非时间单位）。
-    Ticks = 0,
-    /// 读取单调时钟（uptime）：a0 = 秒，a1 = 亚秒纳秒。
-    Clock = 1,
+    #[ret(usize)]
+    Ticks,
+    /// 读取单调时钟（uptime）：(秒, 亚秒纳秒)。
+    #[ret((u64, u64))]
+    Clock,
 }
 
 /// 通信调用（class 5，mail）。用户句柄统一为 per-pie `token`（全局唯一）。
 /// UnsealHole / UnsealPole 创建资源（返 token）；Push / Pull / Map / Unmap / Seal
 /// / Accord / Narrow / Revoke 走 pie 门闩。wait/wake 不进本类——mail 同步直用
-/// 调度词族 `Ucall::Room::Wait/Wake`。
-#[repr(usize)]
+/// 调度词族 `RoomCall::Wait/Wake`。
+#[derive(Envcall)]
+#[call(class = 5)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
-    /// 解封 Hole（数据过内核管道）：无参 → a0 = token。
-    UnsealHole = 0,
-    /// 解封 Pole（页级安全内存）：a0 = 字节数（页对齐）→ a0 = token。
-    UnsealPole = 1,
-    /// push msg：a0 = token，a1 = msg VA。
-    Push = 2,
-    /// pull msg：a0 = token，a1 = 缓冲 VA。
-    Pull = 3,
-    /// 借映 Pole 物理页进当前 task.space：a0 = token → a0 = VA。
-    Map = 4,
-    /// 从当前 task.space 解除映射：a0 = token。
-    Unmap = 5,
-    /// 封印资源（generic on Hole/Pole）：a0 = token。
-    Seal = 6,
-    /// 转授子集给其他 Task：a0 = src_token, a1 = dst_id, a2 = subset bits →
-    /// a0 = 新 pie 的 token（撤销句柄）。
-    Accord = 7,
-    /// 收窄本 pie 权限（就地改写；Pole 同步降页表）：a0 = token,
-    /// a1 = subset bits → a0 = 0 / err.code()。
-    Narrow = 8,
-    /// 收回授与他人的副本：a0 = dst_id, a1 = token → a0 = 0 / err.code()。
-    Revoke = 9,
+    /// 解封 Hole（数据过内核管道）。
+    #[ret(PieToken)]
+    UnsealHole,
+    /// 解封 Pole（页级安全内存；字节数页对齐）。
+    #[ret(PieToken)]
+    UnsealPole { bytes: usize },
+    /// push msg：token + msg VA。
+    #[ret(())]
+    Push { token: PieToken, msg: VirtAddr },
+    /// pull msg：token + 缓冲 VA。
+    #[ret(())]
+    Pull { token: PieToken, buf: VirtAddr },
+    /// 借映 Pole 物理页进当前 task.space：token → VA。
+    #[ret(VirtAddr)]
+    Map { token: PieToken },
+    /// 从当前 task.space 解除映射：token。
+    #[ret(())]
+    Unmap { token: PieToken },
+    /// 封印资源（generic on Hole/Pole）：token。
+    #[ret(())]
+    Seal { token: PieToken },
+    /// 转授子集给其他 Task：src_token + dst_id + subset → 新 pie 的 token（撤销句柄）。
+    #[ret(PieToken)]
+    Accord {
+        src: PieToken,
+        dst: TaskId,
+        subset: crate::permission::Permission,
+    },
+    /// 收窄本 pie 权限（就地改写；Pole 同步降页表）：token + subset。
+    #[ret(())]
+    Narrow {
+        token: PieToken,
+        subset: crate::permission::Permission,
+    },
+    /// 收回授与他人的副本：dst_id + token。
+    #[ret(())]
+    Revoke { dst: TaskId, token: PieToken },
 }
 
 /// 控制调用（class 6）。
-#[repr(usize)]
+#[derive(Envcall)]
+#[call(class = 6)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ControlCall {
-    /// 用户主动内核 panic（a0 = 任意关联码；不返回）。
-    Panic = 0,
+    /// 用户主动内核 panic（任意关联码；不返回）。发散，无 Ret。
+    #[ret(())]
+    Panic { code: usize },
 }
 
-/// 环境调用号（a7）：外层按功能分类、载荷为类内调用（Type(Name) 聚合）。
-#[repr(usize)]
+/// 环境调用号聚合（内核侧解码总入口）。
+///
+/// `from_wire(slot, regs)` 按 class（高 32 位）分派到各域的 `from_wire`，得到
+/// `MailCall::Push { .. }` 等带载荷 variant，供 `dispatch` match。用户侧不再构造
+/// 本枚举——直接 `MailCall::X.call()` 发起（R3+B）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Ucall {
-    /// 调度词族（work/room）。
+pub enum EnvCall {
     Room(RoomCall),
-    /// 任务。
     Task(TaskCall),
-    /// 内存。
     Memory(MemoryCall),
-    /// IO。
     IO(IOCall),
-    /// 时钟（runtime/chrono）。
     Chrono(ChronoCall),
-    /// 通信（mail）。
     Mail(MailCall),
-    /// 控制。
     Control(ControlCall),
 }
 
-impl From<Ucall> for usize {
-    fn from(call: Ucall) -> Self {
-        match call {
-            Ucall::Room(r) => r as usize,
-            Ucall::Task(t) => (1usize << 32) | (t as usize),
-            Ucall::Memory(m) => (2usize << 32) | (m as usize),
-            Ucall::IO(i) => (3usize << 32) | (i as usize),
-            Ucall::Chrono(c) => (4usize << 32) | (c as usize),
-            Ucall::Mail(m) => (5usize << 32) | (m as usize),
-            Ucall::Control(c) => (6usize << 32) | (c as usize),
-        }
-    }
-}
-
-impl TryFrom<usize> for Ucall {
-    type Error = ();
-
-    fn try_from(slot: usize) -> Result<Self, ()> {
+impl EnvCall {
+    /// 由调用号 + 寄存器组解码回带载荷的聚合枚举。
+    pub fn from_wire(slot: usize, regs: &[usize; 6]) -> Result<Self, crate::wire::Decode> {
         let class = slot >> 32;
-        let index = slot & 0xFFFF_FFFF;
         match class {
-            0 => Ok(Ucall::Room(RoomCall::try_from(index)?)),
-            1 => Ok(Ucall::Task(TaskCall::try_from(index)?)),
-            2 => Ok(Ucall::Memory(MemoryCall::try_from(index)?)),
-            3 => Ok(Ucall::IO(IOCall::try_from(index)?)),
-            4 => Ok(Ucall::Chrono(ChronoCall::try_from(index)?)),
-            5 => Ok(Ucall::Mail(MailCall::try_from(index)?)),
-            6 => Ok(Ucall::Control(ControlCall::try_from(index)?)),
-            _ => Err(()),
+            0 => Ok(EnvCall::Room(RoomCall::from_wire(slot, regs)?)),
+            1 => Ok(EnvCall::Task(TaskCall::from_wire(slot, regs)?)),
+            2 => Ok(EnvCall::Memory(MemoryCall::from_wire(slot, regs)?)),
+            3 => Ok(EnvCall::IO(IOCall::from_wire(slot, regs)?)),
+            4 => Ok(EnvCall::Chrono(ChronoCall::from_wire(slot, regs)?)),
+            5 => Ok(EnvCall::Mail(MailCall::from_wire(slot, regs)?)),
+            6 => Ok(EnvCall::Control(ControlCall::from_wire(slot, regs)?)),
+            _ => Err(crate::wire::Decode::BadSlot),
         }
     }
-}
-
-macro_rules! index_from {
-    ($($e:ident { $($n:ident = $v:literal),+ $(,)? })+) => {
-        $(
-            impl TryFrom<usize> for $e {
-                type Error = ();
-                fn try_from(index: usize) -> Result<Self, ()> {
-                    match index { $($v => Ok(Self::$n),)+ _ => Err(()) }
-                }
-            }
-        )+
-    };
-}
-
-index_from! {
-    RoomCall { Starve = 0, Park = 1, Reap = 2, Wait = 3, Wake = 4 }
-    TaskCall { Spawn = 0, SelfId = 1 }
-    MemoryCall { Allocate = 0, Deallocate = 1, Mmap = 2, Munmap = 3, Mprotect = 4 }
-    IOCall { Put = 0, Get = 1 }
-    ChronoCall { Ticks = 0, Clock = 1 }
-    MailCall {
-        UnsealHole = 0, UnsealPole = 1, Push = 2, Pull = 3,
-        Map = 4, Unmap = 5, Seal = 6, Accord = 7, Narrow = 8, Revoke = 9
-    }
-    ControlCall { Panic = 0 }
 }

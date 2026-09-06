@@ -1,13 +1,19 @@
 //! Chrono 域：`ChronoCall::*` 转发。
 
-use ubi::{ChronoCall, UResult, Ucall, UcallBuilder};
+use ubi::{ChronoCall, ChronoCallRet, EnvResult};
 
-pub fn ticks() -> UResult<usize> {
-    let (v0, _) = UcallBuilder::new(Ucall::Chrono(ChronoCall::Ticks)).call()?;
-    Ok(v0)
+pub fn ticks() -> EnvResult<usize> {
+    let r = ChronoCall::Ticks.call()?;
+    match r {
+        ChronoCallRet::Ticks(t) => Ok(t),
+        _ => unreachable!(),
+    }
 }
 
-pub fn clock() -> UResult<(u64, u64)> {
-    let (secs, nanos) = UcallBuilder::new(Ucall::Chrono(ChronoCall::Clock)).call()?;
-    Ok((secs as u64, nanos as u64))
+pub fn clock() -> EnvResult<(u64, u64)> {
+    let r = ChronoCall::Clock.call()?;
+    match r {
+        ChronoCallRet::Clock(secs) => Ok(secs),
+        _ => unreachable!(),
+    }
 }

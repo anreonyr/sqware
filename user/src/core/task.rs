@@ -8,8 +8,7 @@
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use ubi::{UArgs, UResult, Ucall, UcallBuilder};
-use ubi::fid::TaskCall;
+use ubi::EnvResult;
 
 use crate::core::tls;
 use crate::env::{room, task as env_task};
@@ -115,12 +114,12 @@ impl Builder {
         self
     }
 
-    pub fn spawn(self) -> UResult<usize> {
+    pub fn spawn(self) -> EnvResult<usize> {
         env_task::spawn(self.entry, self.arg, self.stack)
     }
 }
 
-pub fn spawn(entry: usize, arg: usize) -> UResult<usize> {
+pub fn spawn(entry: usize, arg: usize) -> EnvResult<usize> {
     env_task::spawn(entry, arg, 0)
 }
 
@@ -150,12 +149,11 @@ where
 
 /// 读当前 task id（`TaskCall::SelfId` envcall 包装）。
 /// 无上下文返 0。
-pub fn self_id() -> UResult<usize> {
-    let args = UArgs::default();
-    let (id, _) = UcallBuilder::new(Ucall::Task(TaskCall::SelfId))
-        .args(args)
-        .call()?;
-    Ok(id)
+pub fn self_id() -> EnvResult<usize> {
+    match ubi::TaskCall::SelfId.call()? {
+        ubi::TaskCallRet::SelfId(id) => Ok(id.get()),
+        _ => unreachable!(),
+    }
 }
 
 #[unsafe(no_mangle)]

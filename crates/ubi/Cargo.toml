@@ -11,4 +11,4 @@ doctest = false
 [dependencies]
 bitflags = "2"
 erra = { version = "0.2.0", default-features = false }
-fack = { version = "0.2.0", default-features = false }
+envmacros = { path = "../envmacros" }
