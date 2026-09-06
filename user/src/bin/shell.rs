@@ -42,29 +42,28 @@ fn split(line: &str) -> Vec<String> {
 fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
-            term.put("help / clock / ticks / alloc / echo / sleep / spawn / hole / exit\n");
+            term.writeline("help / clock / ticks / alloc / echo / sleep / spawn / hole / exit");
         }
         "clock" => {
             let (s, n) = clock().unwrap_or((0, 0));
-            term.put(&format!("clock {s}.{:09} sec\n", n));
+            term.writeline(&format!("clock {s}.{:09} sec", n));
         }
         "ticks" => {
             let t = chrono::ticks().unwrap_or(0);
-            term.put(&format!("ticks {t}\n"));
+            term.writeline(&format!("ticks {t}"));
         }
         "alloc" => {
             let addr = user::env::memory::allocate(4096).unwrap_or(0);
-            term.put(&format!("alloc -> {addr:#x}\n"));
+            term.writeline(&format!("alloc -> {addr:#x}"));
         }
         "echo" => {
-            term.put(&args.join(" "));
-            term.put("\n");
+            term.writeline(&args.join(" "));
         }
         "sleep" => {
             let ms = args.first().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-            term.put(&format!("sleep {ms}ms\n"));
+            term.writeline(&format!("sleep {ms}ms"));
             let _ = sleep(Duration::from_millis(ms));
-            term.put("woke\n");
+            term.writeline("woke");
         }
         "spawn" => {
             let n = args.first().and_then(|s| s.parse::<u64>().ok()).unwrap_or(1000);
@@ -76,7 +75,7 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
                 acc
             })
             .join();
-            term.put(&format!("spawnjoin -> {sum}\n"));
+            term.writeline(&format!("spawnjoin -> {sum}"));
         }
         "hole" => {
             let msg = b"hi from shell";
@@ -86,18 +85,18 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
             m[..msg.len()].copy_from_slice(msg);
             pie.push(&m).ok();
             pie.pull(&mut buf).ok();
-            term.put(&format!(
-                "hole got {:?}\n",
+            term.writeline(&format!(
+                "hole got {:?}",
                 core::str::from_utf8(&buf).unwrap_or("?")
             ));
             pie.seal().ok();
         }
         "exit" => {
-            term.put("bye\n");
+            term.writeline("bye");
             return false;
         }
         _ => {
-            term.put(&format!("unknown: {cmd} (try help)\n"));
+            term.writeline(&format!("unknown: {cmd} (try help)"));
         }
     }
     true
@@ -108,13 +107,14 @@ extern "C" fn main() {
     let term = Terminal::default();
     term.clear();
     term.fg(Color::Green);
-    term.put("SQware shell\n");
+    term.writeline("SQware shell");
     term.reset();
-    term.put("type 'help' for commands.\n");
+    term.writeline("type 'help' for commands.");
 
     loop {
         term.fg(Color::Cyan);
-        term.put("sq > ");
+        // 提示符不加换行：裸写（不输出 \n）。
+        term.write("sq > ");
         term.reset();
         let line = match term.readline() {
             Readline::Line(s) => s,

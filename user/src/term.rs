@@ -60,37 +60,42 @@ impl Color {
 pub struct Terminal;
 
 impl Terminal {
+    /// 裸写（不加 `\n`）：供提示符等「无需换行的片段」输出。
+    pub fn write(&self, s: &str) {
+        put(s).ok();
+    }
+
     /// 清屏 + 光标回 home（`ESC[2J` + `ESC[H`）。
     pub fn clear(&self) {
-        put("\x1b[2J\x1b[H").ok();
+        self.write("\x1b[2J\x1b[H");
     }
 
     /// 光标定位到 1-based (row, col)（`ESC[row;colH`）。
     pub fn set_cursor(&self, row: u16, col: u16) {
-        put(&format!("\x1b[{row};{col}H")).ok();
+        self.write(&format!("\x1b[{row};{col}H"));
     }
 
     /// 前景色（`ESC[3xm`）。
     pub fn fg(&self, color: Color) {
-        put(&format!("\x1b[{}m", color.code())).ok();
+        self.write(&format!("\x1b[{}m", color.code()));
     }
 
     /// 复位 SGR（`ESC[0m`）。
     pub fn reset(&self) {
-        put("\x1b[0m").ok();
+        self.write("\x1b[0m");
     }
 
     /// 隐藏/显示光标（`ESC[?25l` / `ESC[?25h`）。
     pub fn hide_cursor(&self) {
-        put("\x1b[?25l").ok();
+        self.write("\x1b[?25l");
     }
     pub fn show_cursor(&self) {
-        put("\x1b[?25h").ok();
+        self.write("\x1b[?25h");
     }
 
-    /// 原始输出（不附加转义）。所有再明转义的底层出口。
-    pub fn put(&self, s: &str) {
-        put(s).ok();
+    /// 写一行（自动追加 `\n`）。与 [`Terminal::readline`]（读一行、不含 `\n`）对称。
+    pub fn writeline(&self, s: &str) {
+        self.write(&format!("{s}\n"));
     }
 
     /// 读一整行（带行编辑）。调用方**先打提示符**，再调此方法。
@@ -121,7 +126,7 @@ impl Terminal {
                     break;
                 }
                 if interrupt.get() {
-                    self.put("\r\n");
+                    self.write("\r\n");
                     break;
                 }
                 if eof.get() {
@@ -244,7 +249,7 @@ impl Sink for LineSink<'_> {
             }
             Key::Enter => {
                 self.submitted.set(true);
-                self.term.put("\r\n");
+                self.term.write("\r\n");
             }
             Key::Interrupt => {
                 self.interrupt.set(true);
@@ -265,11 +270,11 @@ impl Sink for LineSink<'_> {
 /// 重绘当前行：光标回行首 → 清到行尾 → 打印缓冲 → 光标定位到 pos。
 fn redraw(term: &Terminal, line: &Line) {
     let s: String = line.buf.iter().collect();
-    term.put("\r\x1b[K");
-    term.put(&s);
+    term.write("\r\x1b[K");
+    term.write(&s);
     let back = (line.buf.len() - line.pos) as u16;
     if back > 0 {
-        term.put(&format!("\x1b[{back}D"));
+        term.write(&format!("\x1b[{back}D"));
     }
 }
 

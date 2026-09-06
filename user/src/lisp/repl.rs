@@ -10,7 +10,7 @@ use super::kernel::{LispError, Val};
 
 pub fn repl(core: &mut Core, term: &Terminal) -> ! {
     loop {
-        term.put("> ");
+        term.write("> ");
         let line = match term.readline() {
             Readline::Line(s) => s,
             Readline::Interrupt => continue,
@@ -22,7 +22,7 @@ pub fn repl(core: &mut Core, term: &Terminal) -> ! {
         }
         match core.read(&line) {
             Err(e) => {
-                term.put(&format!("parse error({e:?}): {line:02x?}\n"));
+                term.writeline(&format!("parse error({e:?}): {line:02x?}"));
             }
             Ok(v) => {
                 if is_command(core, &v, "exit") {
@@ -32,8 +32,7 @@ pub fn repl(core: &mut Core, term: &Terminal) -> ! {
                 match core.eval(v) {
                     Err(e) => err_line(term, e),
                     Ok(r) if !defined => {
-                        term.put(&core.print(&r));
-                        term.put("\n");
+                        term.writeline(&core.print(&r));
                     }
                     Ok(_) => {}
                 }
@@ -57,6 +56,5 @@ fn err_line(term: &Terminal, e: LispError) {
         LispError::BadForm => "bad form",
         LispError::NotCallable => "not callable",
     };
-    term.put(msg);
-    term.put("\n");
+    term.writeline(msg);
 }
