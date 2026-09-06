@@ -497,11 +497,11 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 return ret_err(frame, GateError::Denied);
             }
             // subset 已由 Wire 校验式 unpack（非法位 → Err），此处仅查非空 & ⊆ 当前权限。
-            if !src.allows_subset(subset) {
+            if !src.covers(subset) {
                 return ret_err(frame, GateError::Denied);
             }
             // BACK 守门：带 BACK 只能回授 vestor（原始自持 None 不受限）。
-            if !src.can_grant_to(dst_id) {
+            if !src.vestable_to(dst_id) {
                 return ret_err(frame, GateError::Denied);
             }
             let target =
@@ -524,7 +524,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let meta = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
-                if !pie.allows_subset(subset) {
+                if !pie.covers(subset) {
                     return Some(Err(GateError::Denied));
                 }
                 match pie {

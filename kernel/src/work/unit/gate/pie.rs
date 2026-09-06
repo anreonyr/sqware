@@ -97,14 +97,14 @@ impl<M> Pie<M> {
         }
     }
 
-    /// 子集合法：非空且 ⊆ 当前权限。
-    pub fn allows_subset(&self, subset: Permission) -> bool {
+    /// 覆盖子集：非空且 ⊆ 当前权限。
+    pub fn covers(&self, subset: Permission) -> bool {
         self.permission.contains(subset) && !subset.is_empty()
     }
 
-    /// 能否授给 `dst`：BACK 守门——带 BACK 只能回授 vestor；原始自持（vestor
+    /// 能否 vest 给 `dst`：BACK 守门——带 BACK 只能回授 vestor；原始自持（vestor
     /// None）带 BACK 不受限（回授目标自由）。
-    pub fn can_grant_to(&self, dst: usize) -> bool {
+    pub fn vestable_to(&self, dst: usize) -> bool {
         if !self.permission.contains(Permission::BACK) {
             return true;
         }
@@ -168,20 +168,20 @@ impl AnyPie {
         }
     }
 
-    /// 子集合法：非空且 ⊆ 当前权限。
-    pub fn allows_subset(&self, subset: Permission) -> bool {
+    /// 覆盖子集：非空且 ⊆ 当前权限。
+    pub fn covers(&self, subset: Permission) -> bool {
         match self {
-            AnyPie::Hole(p) => p.allows_subset(subset),
-            AnyPie::Pole(p) => p.allows_subset(subset),
+            AnyPie::Hole(p) => p.covers(subset),
+            AnyPie::Pole(p) => p.covers(subset),
         }
     }
 
-    /// 能否授给 `dst`：BACK 守门——带 BACK 只能回授 vestor；原始自持（vestor
+    /// 能否 vest 给 `dst`：BACK 守门——带 BACK 只能回授 vestor；原始自持（vestor
     /// None）带 BACK 不受限（回授目标自由）。
-    pub fn can_grant_to(&self, dst: usize) -> bool {
+    pub fn vestable_to(&self, dst: usize) -> bool {
         match self {
-            AnyPie::Hole(p) => p.can_grant_to(dst),
-            AnyPie::Pole(p) => p.can_grant_to(dst),
+            AnyPie::Hole(p) => p.vestable_to(dst),
+            AnyPie::Pole(p) => p.vestable_to(dst),
         }
     }
 }
