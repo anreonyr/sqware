@@ -1,6 +1,12 @@
 use std::env;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// initrd 承载的唯一用户程序（shell）。boot 把整个 initrd 当作单个 ELF 装载。
+/// 其余 demo 不再装入内核镜像/initrd——保留为用户 crate 的独立 bin，供后续
+/// 「字节内嵌 shell + SpawnTeam」机制按需装载。
+const INITRD_BIN: &str = "user-shell";
 
 fn main() {
     // 内核链接脚本：workspace 化后不同 crate 用不同 -Tlink.ld（内核 0x80200000 /
@@ -10,10 +16,10 @@ fn main() {
     println!("cargo::rustc-link-arg=-T{ld}");
     println!("cargo::rerun-if-changed=link.ld"); // link.ld 变更自动重链
 
-    // 用户程序 ELF 嵌入（boot::spawn_demos 的 include_bytes!）：工作区没有
+    // 用户程序 ELF 打包进 initrd（boot 不再 include_bytes 内嵌）：工作区没有
     // kernel→user 的依赖边，`cargo clean` 后可能先编 kernel 而 user 产物尚不存在
-    // → include_bytes 报"文件缺失"。这里在编译前显式构建 user crate，并把产物
-    // 路径经 cargo:rustc-env 暴露给 include_bytes!(env!(...))（boot.rs 消费）。
+    // → initrd 打包报"文件缺失"。这里在编译前显式构建 user crate，并从产物
+    // 路径读字节写 initrd。
     //
     // 嵌套 cargo 必须用**独立 target 目录**（$OUT_DIR/user）：宿主 cargo 会在
     // target 根持有 .cargo-build-lock，同目录再起 cargo 会互锁死等。隔离目录无此问题，
@@ -43,88 +49,29 @@ fn main() {
         .expect("failed to spawn cargo for user crate");
     assert!(
         status.success(),
-        "user crate build failed (kernel embeds its ELFs via include_bytes!)"
+        "user crate build failed (kernel packs shell ELF into initrd)"
     );
 
-    // 暴露各用户二进制绝对路径：boot.rs include_bytes!(env!(...)) 使用。
-    // 顺带消除 boot.rs 里硬编码 "/debug/" 的脆弱点（release 构建同样可用）。
+    // 写 initrd（= shell ELF 原样拷贝，无清单）：与内核 ELF 同目录，runner 从
+    // 内核 ELF 的父目录取它传给 QEMU `-initrd`。
     let bin_dir = user_target.join(&target).join(&profile);
-    println!(
-        "cargo::rustc-env=USER_HEAPER={}",
-        bin_dir.join("user-heaper").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_SPAWNER={}",
-        bin_dir.join("user-spawner").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_MMAPER={}",
-        bin_dir.join("user-mmaper").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_HOLE_SOLO={}",
-        bin_dir.join("user-hole-solo").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_STRESSOR={}",
-        bin_dir.join("user-stressor").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_YIELDER={}",
-        bin_dir.join("user-yielder").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_SLEEPER={}",
-        bin_dir.join("user-sleeper").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_EXITER={}",
-        bin_dir.join("user-exiter").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_TLSER={}",
-        bin_dir.join("user-tlser").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_POLE_SOLO={}",
-        bin_dir.join("user-pole-solo").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_HOLE_PAIR={}",
-        bin_dir.join("user-hole-pair").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_POLE_PAIR={}",
-        bin_dir.join("user-pole-pair").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_BACK={}",
-        bin_dir.join("user-back").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_NARROW={}",
-        bin_dir.join("user-narrow").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_REVOKE={}",
-        bin_dir.join("user-revoke").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_LISP={}",
-        bin_dir.join("user-lisp").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_SHELL={}",
-        bin_dir.join("user-shell").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_SPAWN_TEST={}",
-        bin_dir.join("user-spawn-test").display()
-    );
-    println!(
-        "cargo::rustc-env=USER_SIRE={}",
-        bin_dir.join("user-sire").display()
-    );
-    // 用户源码/清单变更 → 重跑本脚本（重建 user + 重编内核）
+    let main_profile = main_profile_dir(&env::var("OUT_DIR").expect("OUT_DIR env missing"));
+    let blob_path = main_profile.join("initrd.img");
+    let elf_path = bin_dir.join(INITRD_BIN);
+    let bytes = fs::read(&elf_path)
+        .unwrap_or_else(|e| panic!("initrd: read {INITRD_BIN} from {}: {e}", elf_path.display()));
+    fs::write(&blob_path, &bytes)
+        .unwrap_or_else(|e| panic!("initrd: write {}: {e}", blob_path.display()));
+    println!("initrd packed: {} ({} B)", blob_path.display(), bytes.len());
     println!("cargo::rerun-if-changed=../user");
+}
+
+/// 从 OUT_DIR（`.../<profile>/build/<pkg>/<hash>/out`）向上找到 `<profile>` 目录：
+/// 它是**唯一**直接包含 `build` 子目录的祖先（内核 ELF 与 runner 读 initrd 均在此）。
+fn main_profile_dir(out_dir: &str) -> PathBuf {
+    let mut cur: &Path = Path::new(out_dir);
+    while !cur.join("build").is_dir() {
+        cur = cur.parent().expect("OUT_DIR layout too shallow");
+    }
+    cur.to_path_buf()
 }

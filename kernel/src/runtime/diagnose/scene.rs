@@ -18,7 +18,6 @@ use core::arch::asm;
 
 use alloc::format;
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -31,17 +30,11 @@ use crate::runtime::diagnose::frame::{self, Frame, ResolveCfg, StackReader};
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::scheduler::core::ident;
-use crate::work::unit::elftable::{self, ElfTable};
 use crate::work::unit::space::SpaceKind;
-use crate::work::unit::team::kernel;
 
-/// 按地址域取符号表：内核地址取内核团队表，用户地址取当前任务表。
-fn table(va: VirtAddr) -> Option<Arc<ElfTable>> {
-    if va.is_kernel() {
-        kernel()?.elftable.clone()
-    } else {
-        ident()?.elftable()
-    }
+/// 符号化已移除（Team 不再挂符号表）：统一渲染裸地址。
+fn symbol(va: VirtAddr) -> String {
+    format!("{:#x}", va.as_usize())
 }
 
 const DEPTH: usize = 32;
@@ -144,9 +137,8 @@ impl Backtrace {
 /// 解析当前域的一套地址语义（`classify`/`executable`）。
 ///
 /// 语义：不问 `&Space`，只持由现场采集层决定的**域归属**（`world`）与回溯表，
-/// 据 `VirtAddr::is_kernel/is_user` 与符号表命中判 `FrameKind`。地址的可执行性
-/// 由符号表（`ElfTable::lookup`）承担——这是「Space 回答这个地址是什么」在
-/// **分类层面**的落点（翻译仍走 `Stack` 裸读）。
+/// 据 `VirtAddr::is_kernel/is_user` 与符号表命中判 `FrameKind`。符号表已移除：
+/// 地址域归属由 `is_kernel/is_user` 定，规范空洞地址按 Unknown 兜底。
 #[derive(Debug, Clone, Copy)]
 pub struct FrameResolver {
     world: SpaceKind,
@@ -192,9 +184,10 @@ impl FrameResolver {
         FrameKind::Unknown
     }
 
-    /// 该地址是否属本域代码（符号表命中）。
-    fn executable(&self, pc: VirtAddr) -> bool {
-        table(pc).and_then(|t| t.lookup(pc)).is_some()
+    /// 该地址是否属本域代码。符号表已移除：无法凭符号命中判定规范空洞地址归属，
+    /// 统一按 Unknown 处理（`is_kernel/is_user` 已在上游定域）。
+    fn executable(&self, _pc: VirtAddr) -> bool {
+        false
     }
 }
 
@@ -254,7 +247,7 @@ impl Scene {
         };
         let mut reader = StackReader::new(satp::read().bits() & ((1usize << 44) - 1));
         let cfg = ResolveCfg::kernel(ceiling);
-        let code = |w: usize| table(VirtAddr::from_raw(w)).is_some();
+        let code = |w: usize| VirtAddr::from_raw(w).is_kernel();
         let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
         let backtrace = Backtrace::from_walk(r);
         Some(Scene {
@@ -293,7 +286,7 @@ impl Scene {
         // 根表 = 用户根表（user_satp）；域 = 该任务空间；上界 = sp+SPAN。
         let mut reader = StackReader::new(frame.user_satp.ppn());
         let cfg = ResolveCfg::user(world, sp.saturating_add(frame::SPAN));
-        let code = |w: usize| table(VirtAddr::from_raw(w)).is_some();
+        let code = |w: usize| VirtAddr::from_raw(w).is_user();
         let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
         let backtrace = Backtrace::from_walk(r);
         Some(Scene {
@@ -348,20 +341,12 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("sepc".into()),
         Some(hex(sepc::read())),
-        Some({
-            let va = VirtAddr::from_raw(sepc::read());
-            elftable::symbol(va, table(va).as_deref())
-        }),
+        Some(symbol(VirtAddr::from_raw(sepc::read()))),
     ]);
     {
         // 符号命中 → 「sym note」单空格衔接；未命中 → 仅 stval 语义。
         let a = stval::read();
-        let va = VirtAddr::from_raw(a);
-        let n = if let Some((name, off)) = table(va).and_then(|t| t.lookup(va)) {
-            format!("{name}+{off:#x} {}", stval_note(int, code))
-        } else {
-            stval_note(int, code).to_string()
-        };
+        let n = stval_note(int, code).to_string();
         rows.push(vec![Some("stval".into()), Some(hex(a)), Some(n)]);
     }
     {
@@ -381,10 +366,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("stvec".into()),
         Some(hex(stvec::read().address())),
-        Some({
-            let va = VirtAddr::from_raw(stvec::read().address());
-            elftable::symbol(va, table(va).as_deref())
-        }),
+        Some(symbol(VirtAddr::from_raw(stvec::read().address()))),
     ]);
     {
         // sscratch 约定：内核态 = 本 hart trap 帧 VA（HART_FRAME_BASE +
@@ -534,71 +516,32 @@ fn scene_rows(scene: &Scene) -> Vec<Vec<Option<String>>> {
 fn backtrace_rows(scene: &Scene, head: &str) -> Vec<Vec<Option<String>>> {
     let resolver = FrameResolver::new(scene.space);
     let frames = scene.backtrace.frames();
-    // 取符号表：内核场景取内核团队表，用户场景取当前任务表。
-    let table: Option<Arc<ElfTable>> = if scene.space == SpaceKind::Kernel {
-        kernel().and_then(|k| k.elftable.clone())
-    } else {
-        ident().and_then(|i| i.elftable())
-    };
-    if let Some(table) = table.as_deref() {
-        let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-            Some(head.into()),
-            Some("kind".into()),
-            Some("pc".into()),
-            Some("sym".into()),
-            Some("space".into()),
-            Some("sp".into()),
-            Some("fp".into()),
-        ]];
-        for (i, f) in frames.iter().enumerate() {
-            let kind = resolver.classify(f.pc);
-            rows.push(vec![
-                Some(format!("#{i}")),
-                Some(kind_label(kind).into()),
-                Some(hex(f.pc.as_usize())),
-                Some(elftable::symbol(f.pc, Some(table))),
-                Some(format!("{:?}", f.space)),
-                Some(hex(f.sp.as_usize())),
-                Some(f.fp.map(|v| hex(v.as_usize())).unwrap_or_else(|| "-".into())),
-            ]);
-        }
-        rows
-    } else {
-        let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-            Some(head.into()),
-            Some("kind".into()),
-            Some("pc".into()),
-            Some("space".into()),
-            Some("sp".into()),
-            Some("fp".into()),
-        ]];
-        for (i, f) in frames.iter().enumerate() {
-            let kind = resolver.classify(f.pc);
-            rows.push(vec![
-                Some(format!("#{i}")),
-                Some(kind_label(kind).into()),
-                Some(hex(f.pc.as_usize())),
-                Some(format!("{:?}", f.space)),
-                Some(hex(f.sp.as_usize())),
-                Some(f.fp.map(|v| hex(v.as_usize())).unwrap_or_else(|| "-".into())),
-            ]);
-        }
-        rows
+    // 符号化已移除（Team 不再挂符号表）：回溯只显裸地址，无 sym 列。
+    let mut rows: Vec<Vec<Option<String>>> = vec![vec![
+        Some(head.into()),
+        Some("kind".into()),
+        Some("pc".into()),
+        Some("space".into()),
+        Some("sp".into()),
+        Some("fp".into()),
+    ]];
+    for (i, f) in frames.iter().enumerate() {
+        let kind = resolver.classify(f.pc);
+        rows.push(vec![
+            Some(format!("#{i}")),
+            Some(kind_label(kind).into()),
+            Some(hex(f.pc.as_usize())),
+            Some(format!("{:?}", f.space)),
+            Some(hex(f.sp.as_usize())),
+            Some(f.fp.map(|v| hex(v.as_usize())).unwrap_or_else(|| "-".into())),
+        ]);
     }
+    rows
 }
 
 /// 统一崩溃现场组稿：CSR 三列表 + GPR 两列表 + 回溯表（内核栈 kbt + 用户栈 ubt）。
 /// 末尾倒出每 hart 最近事件窗口。
 pub fn dump(r: &mut Report) {
-    // 探针：panic 现场 drop-in 完整性体检——越界写破坏用户符号表/相邻活块
-    // 时自报。两者均纯读零分配、只经 putln! 直写控制台——panic 现场安全，
-    // 且不截断本次转储。
-    #[cfg(debug_assertions)]
-    {
-        if let Some(et) = ident().as_ref().and_then(|i| i.elftable()).as_ref() {
-            et.check_integrity();
-        }
-    }
     // canary 现场清查依赖 ledger 模块（audit-feature-gated）；非 audit 构建
     // 下 ledger 整体未编译，本调用也必须 gate 同步，否则 E0433。
     #[cfg(feature = "audit")]

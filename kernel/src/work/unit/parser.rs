@@ -46,13 +46,6 @@ const PH_FILESZ: usize = 32;
 const PH_MEMSZ: usize = 40;
 const PH_ENTSIZE: usize = 56;
 
-// Elf64_Shdr 内字段偏移（64 B 条目；仅符号表读取所需）。
-const SH_TYPE: usize = 4;
-const SH_OFFSET: usize = 24;
-const SH_SIZE: usize = 32;
-const SH_LINK: usize = 40;
-const SHT_SYMTAB: u32 = 2;
-
 // ── 字节读取（带越界由调用方保证）─────────────────────────────
 
 fn u16(bytes: &[u8], off: usize) -> u16 {
@@ -94,8 +87,6 @@ pub enum ParseError {
     BssUnderflow,
     #[error("segment range overflows address space")]
     Overflow,
-    #[error("no .symtab section")]
-    NoSymtab,
 }
 
 /// 解析结果 — erra 带调用点上下文（匹配 MapResult/SResult 组合）。
@@ -244,49 +235,4 @@ pub fn parse(bytes: &[u8]) -> ParseResult<ParsedProgram> {
         })
     })()
     .annotate("parsing ELF program")
-}
-
-/// 抽取 .symtab / 关联 .strtab 两个节切片（用户程序符号化用）。
-///
-/// 纯读取、零拷贝；不含 .symtab → NoSymtab。切片生命周期绑定入参 bytes，
-/// 调用方保证其存活至消费结束。
-pub fn tables(bytes: &[u8]) -> ParseResult<(&[u8], &[u8])> {
-    (|| -> Result<(&[u8], &[u8]), ParseError> {
-        check(bytes)?;
-        let shoff = u64(bytes, 40) as usize;
-        let shentsize = u16(bytes, 58) as usize;
-        let shnum = u16(bytes, 60) as usize;
-        if shentsize < SH_LINK + 4 {
-            return Err(ParseError::Truncated(SH_LINK + 4, shentsize));
-        }
-        let table_end = shoff
-            .checked_add(shentsize.saturating_mul(shnum))
-            .ok_or(ParseError::Overflow)?;
-        if table_end > bytes.len() {
-            return Err(ParseError::Truncated(table_end, bytes.len()));
-        }
-        for i in 0..shnum {
-            let base = shoff + i * shentsize;
-            if u32(bytes, base + SH_TYPE) != SHT_SYMTAB {
-                continue;
-            }
-            let sym_off = u64(bytes, base + SH_OFFSET) as usize;
-            let sym_size = u64(bytes, base + SH_SIZE) as usize;
-            let str_idx = u32(bytes, base + SH_LINK) as usize;
-            let sym_end = sym_off.checked_add(sym_size).ok_or(ParseError::Overflow)?;
-            if sym_end > bytes.len() {
-                return Err(ParseError::Truncated(sym_end, bytes.len()));
-            }
-            let sbase = shoff + str_idx * shentsize;
-            let str_off = u64(bytes, sbase + SH_OFFSET) as usize;
-            let str_size = u64(bytes, sbase + SH_SIZE) as usize;
-            let str_end = str_off.checked_add(str_size).ok_or(ParseError::Overflow)?;
-            if str_end > bytes.len() {
-                return Err(ParseError::Truncated(str_end, bytes.len()));
-            }
-            return Ok((&bytes[sym_off..sym_end], &bytes[str_off..str_end]));
-        }
-        Err(ParseError::NoSymtab)
-    })()
-    .annotate("reading ELF symbol table")
 }

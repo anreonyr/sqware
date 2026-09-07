@@ -5,14 +5,12 @@ use user::core::task::self_id;
 use user::env::io::put;
 use user::env::task::sire;
 
-// sire_demo: 血缘溯源验证——作为 spawn_team 的子镜像运行，读自己的 self_id 与
-// sire（生我者的 task id）。
+// sire_demo: 血缘溯源验证——读自己的 self_id 与 sire（生我者的 task id）。
 //
-//   self_id() → 本 task id（> 0，是 spawn_task 在子域里产出的线程）
-//   sire()    → 生我者的 task id（= 执行 spawn_team 的父 task；> 0 表示血缘成立）
+//   self_id() → 本 task id（> 0）
+//   sire()    → 生我者的 task id；顶级域（直接 boot 装载）的 sire() 应返 0。
 //
-// 期望：sire() 返回的 id 与父（shell 里 spawn sire 的那个 task）一致；顶级域
-// （直接 boot 装载）的 sire() 应返 0。
+// 期望：sire() 返回的 id 与父 task 一致。
 
 fn put_hex(v: usize) {
     let mut buf = [b'0'; 18];

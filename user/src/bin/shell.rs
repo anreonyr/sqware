@@ -26,13 +26,11 @@ use alloc::vec::Vec;
 
 use core::time::Duration;
 
-use ubi::Spawnee;
-
 use user::core::task;
 use user::env::chrono::{self, clock};
 use user::env::mail::HolePie;
 use user::env::room::{self, sleep};
-use user::env::task::{heir_at, heir_count, spawn_task, spawn_team};
+use user::env::task::{heir_at, heir_count};
 use user::term::{Color, Readline, Terminal};
 
 /// 按空白切词（保留空输入 = 空 Vec）。
@@ -69,20 +67,7 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
             term.writeline("woke");
         }
         "spawn" => {
-            // 镜像 spawn：spawn lisp / spawn back → 建独立域 + 域内产线程。
-            let which = match args.first().map(|s| s.as_str()) {
-                Some("lisp") => Some(Spawnee::Lisp),
-                Some("back") => Some(Spawnee::Back),
-                Some("sire") => Some(Spawnee::Sire),
-                _ => None,
-            };            if let Some(which) = which {
-                match spawn_team(which).and_then(|tid| spawn_task(tid, 0, 0)) {
-                    Ok(id) => term.writeline(&format!("spawn {which:?} -> task {id:?}")),
-                    Err(e) => term.writeline(&format!("spawn {which:?} failed: {e:?}")),
-                }
-                return true;
-            }
-            // 原闭包 join：算 0..N。
+            // 闭包 join：算 0..N。
             let n = args.first().and_then(|s| s.parse::<u64>().ok()).unwrap_or(1000);
             let sum = task::closure(move || {
                 let mut acc: u64 = 0;

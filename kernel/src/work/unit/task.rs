@@ -159,7 +159,7 @@ impl Task {
         unsafe { &mut *Arc::as_ptr(t).cast_mut() }
     }
 
-    /// 记我生的子域（强持有）。`spawn_team` 建域时由生我者调用。
+    /// 记我生的子域（强持有）。`spawn_task` 建域时由生我者调用。
     pub(crate) fn adopt(&self, child: Arc<Team>) {
         self.heir.lock().push(child);
     }

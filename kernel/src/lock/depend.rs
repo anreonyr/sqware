@@ -31,13 +31,7 @@ use alloc::vec::Vec;
 
 use super::OnceLock;
 use crate::machine;
-use crate::memory::manager::addr::VirtAddr;
-use crate::work::unit::elftable;
 
-/// 内核团队符号表（lockdep 全在内核地址——直接查内核表，不做域路由）。
-fn ktbl() -> Option<&'static elftable::ElfTable> {
-    crate::work::unit::team::kernel()?.elftable.as_deref()
-}
 
 /// 锁层级（1 最低、10 最高）。参与锁才有 level；`None` = exempt（不参与、不校验）。
 #[allow(dead_code)]
@@ -80,14 +74,12 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
     crate::memory::allocator::portal::switch(crate::memory::allocator::portal::Backend::Spare);
     let held = held().expect("depend: report outside collected set");
     let mut msg = format!(
-        "[depend] {what}: {lock:#x} ({})",
-        elftable::symbol(VirtAddr::from_raw(lock), ktbl())
+        "[depend] {what}: {lock:#x} ({lock:#x})",
     );
     if caller != 0 {
         msg.push_str(&format!(
-            "\n  caller: {:#x} ({})",
+            "\n  caller: {:#x} ({caller:#x})",
             caller,
-            elftable::symbol(VirtAddr::from_raw(caller), ktbl())
         ));
     }
     if held.len == 0 {
@@ -101,16 +93,16 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
                 .map(|l| format!("{l:?}"))
                 .unwrap_or_else(|| "exempt".into());
             msg.push_str(&format!(
-                "\n    {:#x} {} ({lv}){} acquired at {:#x} ({})",
+                "\n    {:#x} {:#x} ({lv}){} acquired at {:#x} ({:#x})",
                 held.slots[i].addr,
-                elftable::symbol(VirtAddr::from_raw(held.slots[i].addr), ktbl()),
+                held.slots[i].addr,
                 if held.slots[i].level == max {
                     "  <-- max held"
                 } else {
                     ""
                 },
                 held.slots[i].caller,
-                elftable::symbol(VirtAddr::from_raw(held.slots[i].caller), ktbl())
+                held.slots[i].caller
             ));
         }
         msg.push_str("\n  rule: new level must exceed max(held); violation");

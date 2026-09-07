@@ -5,13 +5,11 @@
 //
 //   space     — 地址空间（Space/SpaceBuilder、Map/Window/Durable 簿记模型、内核布局）
 //   gate      — 能力门闩（Pie/AnyPie/授权；单向依赖 mail 的资源实体）
-//   team      — 团队容器（Team/TeamBuilder/kernel 单例 + 运行期装载 spawn_team）
+//   team      — 团队容器（Team/TeamBuilder/kernel 单例 + 运行期装载）
 //   task      — 线程单元（Task/TaskBuilder）
 //   loader    — 程序装载（ELF → Space durable）
-//   parser    — ELF 解析（含符号表抽取）
-//   elftable  — 符号表
+//   parser    — ELF 解析（段配方）
 
-pub mod elftable;
 pub(crate) mod gate;
 pub(crate) mod loader;
 pub(crate) mod parser;
@@ -48,11 +46,11 @@ unsafe extern "C" {
 pub type MapResult<T> = erra::Result<T, MapError>;
 
 /// 拼装一条 ELF 成独立团队（parse → SpaceBuilder::user → loader::load →
-/// 符号表 → TeamBuilder::spawn）。boot 与 spawn_team 共用。
+/// 符号表 → TeamBuilder::spawn）。boot 装载（initrd 单一 shell ELF）使用。
 ///
 /// 只做「字节 → 域」的纯装载，不建 task、不挂 heir、不做强持有——那些是
-/// 各自调用方的责任（boot 立即产 task；spawn_team 记默认入口 + adopt 挂 heir）。
-/// `sire` 构造期定型进 Team（boot 顶级域传空 Weak）。
+/// 各自调用方的责任（boot 立即产 task）。`sire` 构造期定型进 Team
+/// （boot 顶级域传空 Weak）。
 pub(crate) fn assemble(
     elf: &'static [u8],
     sire: Weak<task::Task>,
@@ -60,14 +58,7 @@ pub(crate) fn assemble(
     let parsed = parser::parse(elf).map_err(|_| team::UnitError::Load)?;
     let space = SpaceBuilder::user().build().map_err(|_| team::UnitError::Load)?;
     let loaded = loader::load(space, elf, &parsed).map_err(|_| team::UnitError::Load)?;
-    let elftable = parser::tables(elf)
-        .ok()
-        .and_then(|(s, ss)| elftable::ElfTable::from_sections(s, ss))
-        .map(Arc::new);
-    let team = team::TeamBuilder::new(loaded.space)
-        .elftable(elftable)
-        .sire(sire)
-        .spawn();
+    let team = team::TeamBuilder::new(loaded.space).sire(sire).spawn();
     Ok((team, loaded.entry))
 }
 

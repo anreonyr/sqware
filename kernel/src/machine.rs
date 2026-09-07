@@ -250,6 +250,10 @@ pub struct Machine {
     pub plic: Region,
     #[allow(dead_code)]
     pub clint: Region,
+    /// initrd 载荷区（`/chosen` 的 `linux,initrd-start/end`；QEMU `-initrd` 传递的
+    /// 独立 payload）。无 initrd（未传参）→ None。作为**持久保留区**：其物理页在
+    /// frame 分配器中永不分配（符号表 `&'static` 名字指向其 strtab，须终身存活）。
+    pub initrd: Option<Region>,
 }
 
 static MACHINE: OnceLock<Machine> = OnceLock::new();
@@ -275,6 +279,8 @@ pub fn init(dtp: usize) {
     let free_end = dram_base + dram_size;
     let free_size = free_end - free_base;
 
+    let initrd = initrd_region(&fdt);
+
     MACHINE
         .set(Machine {
             dram: Region::new(dram_base, dram_size),
@@ -284,6 +290,7 @@ pub fn init(dtp: usize) {
             uart: Region::new(0, 0),
             plic: Region::new(0, 0),
             clint: Region::new(0, 0),
+            initrd,
         })
         .unwrap()
 }
@@ -344,4 +351,20 @@ fn hertz(fdt: &fdt::Fdt) -> usize {
             _ => 0,
         })
         .unwrap_or(0)
+}
+
+/// 读取 `/chosen` 的 initrd 载荷区（`linux,initrd-start/end`，QEMU `-initrd` 填）。
+///
+/// 无配置（FDT 无该对属性）→ None（不启动 initrd 装载路径）。属性值为 64 位
+/// 大端物理地址。`start` 须页对齐（QEMU 保证）；`end` 常非页对齐（实为字节长
+/// 边界），向上取整到页界以覆盖完整区间。`end <= start` 按无配置处理（不 panic）。
+fn initrd_region(fdt: &fdt::Fdt) -> Option<Region> {
+    let chosen = fdt.find_node("/chosen")?;
+    let start = chosen.property("linux,initrd-start")?.as_usize()?;
+    let end = chosen.property("linux,initrd-end")?.as_usize()?;
+    if start == 0 || end <= start || !start.is_multiple_of(PAGE_SIZE) {
+        return None;
+    }
+    let end = end.next_multiple_of(PAGE_SIZE);
+    Some(Region::new(start, end - start))
 }

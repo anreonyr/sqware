@@ -72,6 +72,10 @@ def config [elf: path] {
   mkdir $trapdir
   let timeout = ($env.QEMU_TIMEOUT? | default "")
 
+  # initrd blob（build.rs 打包，与内核 ELF 同目录）：存在才传 -initrd。
+  let initrd = ($elf | path dirname | path join "initrd.img")
+  let initrd_arg = if ($initrd | path exists) { ["-initrd", $initrd] } else { [] }
+
   {
     proj_root: $proj_root
     trapdir: $trapdir
@@ -91,6 +95,7 @@ def config [elf: path] {
       # off 保持时钟连续单调，seed 复现能力不变。
       "-icount", "auto,sleep=on"
       ...$semihosting
+      ...$initrd_arg
       ...$gdb
       ...$extra
     ]

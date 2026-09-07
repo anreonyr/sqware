@@ -8,7 +8,6 @@
 
 pub mod fid;
 pub mod permission;
-pub mod spawnee;
 pub mod ucall;
 pub mod wire;
 
@@ -18,6 +17,5 @@ pub use fid::{
     UnitCallRet,
 };
 pub use permission::Permission;
-pub use spawnee::Spawnee;
 pub use ucall::{EnvError, EnvResult};
 pub use wire::{Decode, FromPair, PieToken, TaskId, TeamId, VirtAddr, Wire};

@@ -3,7 +3,6 @@
 use core::arch::global_asm;
 
 use alloc::format;
-use alloc::sync::Arc;
 use alloc::vec;
 use riscv::register::satp;
 
@@ -13,7 +12,6 @@ use crate::machine;
 use crate::machine::{ROOT_STACK_CANARY, root_stack_base};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::mode;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
@@ -21,7 +19,6 @@ use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, restore};
 use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
 use crate::work::room::scheduler;
-use crate::work::unit::team;
 use crate::work::unit::team::kernel;
 
 global_asm!(
@@ -176,109 +173,29 @@ fn register_runtime_hooks() {
     conductor::register_shutdown_hooks(SHUTDOWN_HOOKS);
 }
 
-/// 生成全部演示任务（用户 + 内核 ktask）；错误统一 `?` 上抛。
+/// 生成全部启动任务：initrd 只承载 shell 一个 ELF，整块 blob 直接装载为 shell 域。
+/// 错误统一 `?` 上抛。
 fn spawn_demos() -> Result<(), MapError> {
-    // 单线程团队回归
-    for (elf, name) in [
-        // (&include_bytes!(env!("USER_HEAPER"))[..], "heaper"),
-        // (&include_bytes!(env!("USER_SPAWNER"))[..], "spawner"),
-        // (&include_bytes!(env!("USER_YIELDER"))[..], "yielder"),
-        // (&include_bytes!(env!("USER_SLEEPER"))[..], "sleeper"),
-        // (&include_bytes!(env!("USER_EXITER"))[..], "exiter"),
-        // (&include_bytes!(env!("USER_STRESSOR"))[..], "stressor"),
-        // (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
-        // (&include_bytes!(env!("USER_TLSER"))[..], "tlser"),
-        // (&include_bytes!(env!("USER_POLE_SOLO"))[..], "pole_solo"),
-        // (&include_bytes!(env!("USER_HOLE_SOLO"))[..], "hole_solo"),
-        // (&include_bytes!(env!("USER_HOLE_PAIR"))[..], "hole_pair"),
-        // (&include_bytes!(env!("USER_POLE_PAIR"))[..], "pole_pair"),
-        // (&include_bytes!(env!("USER_BACK"))[..], "back"),
-        // (&include_bytes!(env!("USER_NARROW"))[..], "narrow"),
-        // (&include_bytes!(env!("USER_REVOKE"))[..], "revoke"),
-        // (&include_bytes!(env!("USER_SPAWN_TEST"))[..], "spawn_test"),
-        // shell：常驻交互任务（其余 demo 跑完退出后仍在，系统不 halt）。
-        (&include_bytes!(env!("USER_SHELL"))[..], "shell"),
-        // (&include_bytes!(env!("USER_LISP"))[..], "lisp"),
-    ] {
-        let (team, entry) = load_user(elf);
-        let mut task = team.task().name(name).entry(entry);
-        // lisp 解释器递归求值栈深（其余 demo 16K 缺省即可）
-        if name == "lisp" {
-            task = task.stack(256 * 1024);
-        }
-        task.spawn()?;
-        // audit: 每个演示空间 簿记↔页表 一致性审计
-        #[cfg(feature = "audit")]
-        team.space.audit();
+    // 读 initrd 字节来源（QEMU `-initrd` 经 `/chosen` 暴露；无配置 → 无程序）。
+    // initrd 区恒等映射（=物理地址），直接按其物理基址读。
+    let blob: &'static [u8] = match machine::info().initrd {
+        Some(r) => unsafe { core::slice::from_raw_parts(r.base as *const u8, r.size) },
+        None => &[],
+    };
+    if blob.is_empty() {
+        return Ok(());
     }
 
-    // kernel()
-    //     .expect("kernel team not initialized")
-    //     .task()
-    //     .name("ktask")
-    //     .closure(|| {})?;
-    // kernel()
-    //     .expect("kernel team not initialized")
-    //     .task()
-    //     .name("preempt")
-    //     .closure(|| {
-    //         let mut n: usize = 0;
-    //         for round in 0..10u32 {
-    //             let start = n;
-    //             for _ in 0..100_000 {
-    //                 n = n.wrapping_add(1);
-    //             }
-    //             crate::putln!(
-    //                 "preempt: round {round} n={n:#x} delta={:#x} hart={}",
-    //                 n.wrapping_sub(start),
-    //                 crate::machine::hart_id()
-    //             );
-    //         }
-    //         crate::putln!("preempt: done");
-    //     })?;
-    // kernel()
-    //     .expect("kernel team not initialized")
-    //     .task()
-    //     .name("sleep")
-    //     .closure(|| {
-    //         for round in 0..3u32 {
-    //             crate::putln!(
-    //                 "ktask sleep: round {round} @ hart {}",
-    //                 crate::machine::hart_id()
-    //             );
-    //             crate::work::room::scheduler::ktask::park(core::time::Duration::from_millis(200));
-    //         }
-    //         crate::putln!("ktask sleep: done");
-    //     })?;
-    // storm_ktask(64)?;
+    // initrd = 单个 shell ELF，整块喂给 assemble。
+    let (team, entry) =
+        crate::work::unit::assemble(blob, alloc::sync::Weak::new()).expect("assemble shell elf");
+    team.task().name("shell").entry(entry).spawn()?;
+    #[cfg(feature = "audit")]
+    team.space.audit();
+
     #[cfg(feature = "audit")]
     kernel().expect("kernel team not initialized").space.audit();
     Ok(())
-}
-
-/// 风暴 = 内核任务连环 spawn closure 子任务（子任务空跑即退）。
-fn storm_ktask(n: usize) -> Result<(), MapError> {
-    kernel()
-        .expect("kernel team not initialized")
-        .task()
-        .name("storm")
-        .closure(move || {
-            let kt = kernel().expect("kernel team not initialized");
-            crate::putln!("storm: begin spawn {n}");
-            for _i in 0..n {
-                kt.task()
-                    .name("child")
-                    .closure(|| {})
-                    .expect("storm spawn child");
-            }
-            crate::putln!("storm: all {n} spawned");
-        })?;
-    Ok(())
-}
-
-/// 内嵌用户 ELF 经解析装载生成 Team；返回 (Team, 绝对入口)。
-fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
-    crate::work::unit::assemble(elf, alloc::sync::Weak::new()).expect("assemble user elf")
 }
 
 /// boot 启动：HSM `hart_start` 逐个拉起 hart 1..count-1。

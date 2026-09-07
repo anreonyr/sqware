@@ -47,11 +47,8 @@ use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trap::trap_stack_edge;
 use crate::work::room::conductor;
 use crate::work::room::messenger;
-use crate::work::unit::{
-    elftable::ElfTable,
-    space::SpaceKind,
-    task::{Task, TaskIdent, TaskState},
-};
+use crate::work::unit::space::SpaceKind;
+use crate::work::unit::task::{Task, TaskIdent, TaskState};
 
 // ── 核心：常量 ──
 
@@ -251,7 +248,7 @@ impl Scheduler {
 
     /// 槽降级：身份载荷从 TaskIdent 换成 LastIdent（末次记录）。本核在跑任务
     /// 离核且不接续装槽（reap / park 无后继）时调用——trap 帧不可信（clear 即将
-    /// 归还）。LastIdent 只留符号化最小集（id/name/elftable），**不持有团队/空间**
+    /// 归还）。LastIdent 只留符号化最小集（id/name），**不持有团队/空间**
     /// ——团队 Arc 借此归零即回收，地址空间不再被 idle 核钉住（关机零泄漏审计
     /// 与「末次符号化」兼得）。
     ///
@@ -262,7 +259,6 @@ impl Scheduler {
         let last = Arc::new(LastIdent {
             id: ident.id,
             name: ident.name,
-            elftable: ident.team.elftable.clone(),
         });
         let prev = self.info.swap(
             (Arc::into_raw(last) as usize | LAST_TAG) as *mut (),
@@ -588,13 +584,11 @@ pub enum Current {
     Last(Arc<LastIdent>),
 }
 
-/// 末次身份记录：降级时从 TaskIdent 复制（id/name/符号表），**不含 team/space/
-/// trap**——团队 Arc 借此归零即回收整个地址空间；符号表为 heap 分配，关机 flush
-/// 冲掉——零泄漏审计与末次符号化兼得。
+/// 末次身份记录：降级时从 TaskIdent 复制（id/name），**不含 team/space/trap**——
+/// 团队 Arc 借此归零即回收整个地址空间。
 pub struct LastIdent {
     pub(crate) id: usize,
     pub(crate) name: &'static str,
-    pub(crate) elftable: Option<Arc<ElfTable>>,
 }
 
 impl Current {
@@ -609,14 +603,6 @@ impl Current {
         match self {
             Current::Live(t) => t.name,
             Current::Last(l) => l.name,
-        }
-    }
-
-    /// 符号表：两臂通用（末次身份仍可符号化）。
-    pub fn elftable(&self) -> Option<Arc<ElfTable>> {
-        match self {
-            Current::Live(t) => t.team.elftable.clone(),
-            Current::Last(l) => l.elftable.clone(),
         }
     }
 

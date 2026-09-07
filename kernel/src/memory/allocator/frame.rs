@@ -182,10 +182,27 @@ impl FrameInner {
 
         let mut index = 0usize;
         let mut remaining = max_frame;
+        // 持久保留区（initrd）的帧索引范围：`[hole_start, hole_end)` 的帧绝不出现在
+        // 任何 free bucket。initrd 物理页承载符号表 strtab（`&'static` 名字），须
+        // 终身存活——一旦被分配器复用，崩溃现场符号化即悬垂/OOB。预留帧的
+        // pagemeta 置 non-free（free=false），`merge_block` 不会并入（伙伴侧检查
+        // `is_some_and(|m| m.free)` 失败即停），也不会被 split 产出（不在链中）。
+        let (hole_start, hole_end) = self.hole_range(self.base, self.edge, max_frame);
         while remaining > 0 {
-            let power = (index.trailing_zeros() as usize)
+            // 起始帧落在洞内：整段跳过洞（跳到洞尾，含洞的帧永不入链）。
+            if index < hole_end && index >= hole_start {
+                let skip = hole_end - index;
+                index += skip;
+                remaining -= skip;
+                continue;
+            }
+            // 候选块 [index, index + 2^power)：若不跨洞、不越上界。
+            let mut power = (index.trailing_zeros() as usize)
                 .min(remaining.ilog2() as usize)
                 .min(max_power - 1);
+            while index < hole_start && index + (1 << power) > hole_start {
+                power -= 1;
+            }
             unsafe {
                 self.push_link(index, power);
             }
@@ -203,6 +220,24 @@ impl FrameInner {
     // 帧索引 → 物理地址
     fn frame_addr(&self, index: usize) -> usize {
         self.base + index * PAGE_SIZE
+    }
+
+    /// 持久保留区（initrd）在本分配器窗口内的帧索引范围 `[start, end)`。
+    ///
+    /// initrd 物理区可能部分落在窗口外（防御性地截断到 `[base, edge)`）；无
+    /// initrd 配置 → `(max_frame, max_frame)`（空洞，表示无跳过）。
+    fn hole_range(&self, base: usize, edge: usize, max_frame: usize) -> (usize, usize) {
+        let Some(r) = crate::machine::info().initrd else {
+            return (max_frame, max_frame);
+        };
+        let (hs, he) = (r.base, r.base + r.size);
+        // 洞边界不在窗口内 → 空洞。
+        if he <= base || hs >= edge {
+            return (max_frame, max_frame);
+        }
+        let start = (hs.max(base) - base) / PAGE_SIZE;
+        let end = (he.min(edge) - base).div_ceil(PAGE_SIZE);
+        (start.min(max_frame), end.min(max_frame))
     }
 
     // frame 索引：翻转 order 对应的位

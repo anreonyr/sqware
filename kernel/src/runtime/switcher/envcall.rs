@@ -236,20 +236,6 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 .unwrap_or(0);
             frame.gpr.set_x(Gprs::A0, id);
         }
-        EnvCall::Unit(UnitCall::SpawnTeam { which }) => {
-            // 装载镜像成独立域（建 Space+Team，不产 task）。血缘：当前运行 task 为 sire。
-            let sire = current()
-                .running_task()
-                .unwrap_or_else(|| unreachable!("spawn_team without running task"));
-            let r = crate::work::unit::team::spawn_team(which, &sire);
-            frame.gpr.set_x(
-                Gprs::A0,
-                match r {
-                    Ok(id) => id.get(),
-                    Err(_) => usize::MAX,
-                },
-            );
-        }
         EnvCall::Unit(UnitCall::SpawnTask { team, entry, arg }) => {
             // 在指定 team 下建线程（域内产 task）。授权：team 必须是当前 task 的
             // heir（查到 = 我是 sire）；否则 Denied。
@@ -263,7 +249,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     return frame as *mut TrapContext;
                 }
             };
-            // entry=0 用域默认入口（spawn_team 装载的镜像 e_entry）；否则用户指定。
+            // entry=0 用域默认入口（装载 ELF 的 e_entry）；否则用户指定。
             let entry = if entry == 0 { team_arc.default_entry() } else { entry };
             let r = team_arc.task().name("u-thread").entry(KVirt::from_raw(entry)).arg(arg).spawn();
             frame.gpr.set_x(
@@ -286,11 +272,8 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let fp = frame.gpr.x(Gprs::S0);
             let mut reader = StackReader::new(frame.user_satp.ppn());
             let cfg = ResolveCfg::user(world, sp.saturating_add(frame::SPAN));
-            // 域筛：候选 pc 是否属本域代码（用户符号表命中）。
-            let table = ident.team.elftable.as_deref();
-            let code = move |w: usize| {
-                table.and_then(|t| t.lookup(KVirt::from_raw(w))).is_some()
-            };
+            // 域筛：候选 pc 是否属本域代码。符号表已移除：不再做符号命中域筛。
+            let code = move |_w: usize| true;
             let (pc_arr, count) = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
             // 打包 pc 数组字节（仅前 min(count, frames) 帧），copy_out 写用户 buf。
             let keep = count.min(frames);

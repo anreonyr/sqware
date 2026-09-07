@@ -11,12 +11,11 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use ubi::{Spawnee, TeamId};
+use ubi::TeamId;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;
 
-use super::elftable::ElfTable;
 use super::task::{Task, TaskBuilder};
 
 /// 团队（进程）— 共享地址空间的线程容器。
@@ -33,8 +32,6 @@ pub struct Team {
     pub(crate) space: Arc<Space>,
     /// 成员簿记（弱引用条目；死条目在下次清理时摘除）。
     pub(crate) tasks: SpinLock<Vec<Weak<Task>>>,
-    /// 本团队程序的符号表（内核团队 = 内核表；用户团队 = 装载时构建）。None = 未建。
-    pub(crate) elftable: Option<Arc<ElfTable>>,
     /// 本域全局唯一标识（0 = 无效哨兵）。纯身份标识：诊断 + heir 内匹配，不承担
     /// 全局反查（授权走父 task 的 `heir` 表）。
     pub(crate) id: TeamId,
@@ -42,7 +39,7 @@ pub struct Team {
     /// 保持 Weak 是防环唯一边：`Task →(heir 强)→ Team →(sire 弱)→ Task`。
     pub(crate) sire: Weak<Task>,
     /// 本域默认执行入口（= 装载 ELF 的 `e_entry`，即镜像 `_start` VA）。
-    /// `spawn_team` 子域 set；`spawn_task` 的 `entry=0` 时用它。`OnceLock` 单次写。
+    /// `spawn_task` 的 `entry=0` 时用它。`OnceLock` 单次写。
     default_entry: OnceLock<usize>,
 }
 
@@ -81,18 +78,13 @@ impl Team {
         TaskBuilder::new(self.clone())
     }
 
-    /// 本域默认执行入口（`spawn_team` 装载时设；供 `spawn_task` 的 `entry=0` 用）。
-    pub(crate) fn set_default_entry(&self, entry: usize) {
-        let _ = self.default_entry.set(entry);
-    }
-
     /// 本域默认执行入口（`spawn_task` 的 `entry=0` 时取）。未设（boot 顶级域）→ 0。
     pub(crate) fn default_entry(&self) -> usize {
         self.default_entry.get().copied().unwrap_or(0)
     }
 
-    /// 溯源：生我者的 task id（`spawn_team` 子域才有；boot 顶级域 / 内核域 → None）。
-    /// 这是「不可伪造的父身份源」——由内核在 spawn_team 时强制，非父自愿告知。
+    /// 溯源：生我者的 task id（boot 顶级域 / 内核域 → None）。
+    /// 这是「不可伪造的父身份源」——由内核在建域时强制，非父自愿告知。
     pub(crate) fn sire(&self) -> Option<usize> {
         self.sire.upgrade().map(|t| t.ident.id)
     }
@@ -101,7 +93,6 @@ impl Team {
 /// 团队构建器：把已装载程序的地址空间容器化为团队。
 pub struct TeamBuilder {
     space: Space,
-    elftable: Option<Arc<ElfTable>>,
     sire: Weak<Task>,
 }
 
@@ -110,19 +101,11 @@ impl TeamBuilder {
     pub fn new(space: Space) -> TeamBuilder {
         TeamBuilder {
             space,
-            elftable: None,
             sire: Weak::new(),
         }
     }
 
-    /// 绑定本团队程序的符号表（可选；装载后由调用方传入）。
-    pub fn elftable(mut self, elftable: Option<Arc<ElfTable>>) -> TeamBuilder {
-        self.elftable = elftable;
-        self
-    }
-
-    /// 定生我者（spawn_team 子域才设；boot 顶级域 / 内核域默认空 Weak）。
-    /// 构造期定型：sire 不可后改。
+    /// 定生我者（boot 顶级域 / 内核域默认空 Weak）。构造期定型：sire 不可后改。
     pub fn sire(mut self, sire: Weak<Task>) -> TeamBuilder {
         self.sire = sire;
         self
@@ -134,7 +117,6 @@ impl TeamBuilder {
         Arc::new(Team {
             space: Arc::new(self.space),
             tasks: SpinLock::new_level(Level::L3, Vec::new()),
-            elftable: self.elftable,
             id,
             sire: self.sire,
             default_entry: OnceLock::new(),
@@ -152,7 +134,6 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
         Arc::new(Team {
             space,
             tasks: SpinLock::new_level(Level::L3, Vec::new()),
-            elftable: None,
             id,
             sire: Weak::new(),
             default_entry: OnceLock::new(),
@@ -173,7 +154,7 @@ pub(crate) fn alloc_team_id() -> TeamId {
     TeamId::new(NEXT_TEAM_ID.fetch_add(1, Ordering::Relaxed))
 }
 
-// ── 运行期装载（spawn_team）────────────────────────────────────
+// ── 装载错误（UnitError）──────────────────────────────────────
 
 /// 镜像拼装结果错误（parse / build / load 任一步失败）。
 ///
@@ -183,33 +164,4 @@ pub(crate) fn alloc_team_id() -> TeamId {
 pub enum UnitError {
     /// parser / SpaceBuilder / loader 任一步失败（不落，无脏域）。
     Load,
-}
-
-/// Spawnee → 内嵌 ELF 字节（编译期 match；文件系统出现后此函数弃用）。
-/// 独立自由函数（非 `impl Spawnee`——`elf()` 不能是 ubi 类型的 inherent impl；
-/// 且 `USER_*` env 只在 `kernel/build.rs` 定义，取字节只能落在内核侧）。
-fn spawnee_elf(which: Spawnee) -> &'static [u8] {
-    match which {
-        Spawnee::Lisp => include_bytes!(env!("USER_LISP")),
-        Spawnee::Shell => include_bytes!(env!("USER_SHELL")),
-        Spawnee::Back => include_bytes!(env!("USER_BACK")),
-        Spawnee::Narrow => include_bytes!(env!("USER_NARROW")),
-        Spawnee::Sire => include_bytes!(env!("USER_SIRE")),
-    }
-}
-
-/// 装载镜像成独立域（新 Space+Team，不产 task），挂血缘，成功返回 TeamId。
-///
-/// 血缘：`child.sire`（构造期已定）← `sire`；`sire.adopt(child)`（heir 强持有，
-/// 撑命 + spawn_task 授权凭证 + doom 遍历源）。
-///
-/// # Errors
-/// - `Load` — 拼装任一步失败（不落，无脏域）。
-pub(crate) fn spawn_team(which: Spawnee, sire: &Arc<Task>) -> Result<TeamId, UnitError> {
-    let (team, entry) = super::assemble(spawnee_elf(which), Arc::downgrade(sire))?;
-    // 域记住默认执行入口（装载 ELF 的 e_entry；spawn_task 的 entry=0 时用它）。
-    team.set_default_entry(entry.as_usize());
-    // 血缘：sire 强持有子域（heir）。
-    sire.adopt(team.clone());
-    Ok(team.id)
 }
