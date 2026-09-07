@@ -21,9 +21,8 @@ use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, restore};
 use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
 use crate::work::room::scheduler;
-use crate::work::unit::space::SpaceBuilder;
 use crate::work::unit::team::kernel;
-use crate::work::unit::{loader, team};
+use crate::work::unit::team;
 
 global_asm!(
     ".section .text.boot",
@@ -156,9 +155,9 @@ fn register_runtime_hooks() {
     use crate::work::room::conductor;
     use crate::work::room::messenger;
 
-    // 每条 reaped 任务：mail 不再需要 task_exit——Task::drop 链已透传释放。
-    // 钩子表留空（保持 messenger::clear_loop 的统一出口，便于将来扩展）。
-    static EXIT_HOOKS: &[fn(usize)] = &[];
+    // 每条 reaped 任务：doom 级联（父删子随）——读该 task 的 heir → cull 子域。
+    // mail 资源释放走 Task::drop 链透传，无需 task_exit。
+    static EXIT_HOOKS: &[fn(usize)] = &[crate::work::room::messenger::doom];
     messenger::register_exit_hooks(EXIT_HOOKS);
 
     // 关机序列：scheduler::rip（清任务队列 + info 槽 + messenger 簿记）→
@@ -279,19 +278,7 @@ fn storm_ktask(n: usize) -> Result<(), MapError> {
 
 /// 内嵌用户 ELF 经解析装载生成 Team；返回 (Team, 绝对入口)。
 fn load_user(elf: &'static [u8]) -> (Arc<team::Team>, VirtAddr) {
-    let parsed = crate::work::unit::parser::parse(elf).expect("parse user elf");
-    let space = SpaceBuilder::user().build().expect("space failed");
-    let loaded = loader::load(space, elf, &parsed).expect("load user elf");
-    let entry = loaded.entry;
-    // 符号表（失败则 None，只影响符号化不碍装载）
-    let elftable = crate::work::unit::parser::tables(elf)
-        .ok()
-        .and_then(|(s, ss)| crate::work::unit::elftable::ElfTable::from_sections(s, ss))
-        .map(Arc::new);
-    let team = team::TeamBuilder::new(loaded.space)
-        .elftable(elftable)
-        .spawn();
-    (team, entry)
+    crate::work::unit::assemble(elf, alloc::sync::Weak::new()).expect("assemble user elf")
 }
 
 /// boot 启动：HSM `hart_start` 逐个拉起 hart 1..count-1。

@@ -191,9 +191,6 @@ pub(super) fn kick() {
 /// 广播唤醒所有 WFI 等待 hart（**halt 屏障专用**）。mask = waiting 字保
 /// 留 XLEN 位全部 set——保证全员到达 `halt()` 登记屏障。
 ///
-/// **不可用于 push / wake / drain**——单次 push 多 hart 醒 = 雷鸣群 = 同
-/// 时抢同 L1 锁 = cache 行乒乓，与 `kick()` 单点化目的背道而驰。
-///
 /// 命名：动词（kick = 单点轻踢；yell = 喊全员；语义对仗）。
 pub(super) fn yell() {
     for (w, word) in WAITING.iter().enumerate() {
@@ -209,4 +206,19 @@ pub(super) fn yell() {
             })
             .call();
     }
+}
+
+/// 定向轻踢单个 hart（kill 的 Running 分支）：给指定 hart 发 1-bit SSIP，迫使
+/// 它在 trap 里查 `doomed` 集合自退。与 `kick`（只踢 WFI 等待者）不同——目标
+/// hart 可能在跑任务，SSIP 直接打断它。a0=1<<bit、a1=word·64，与 kick 同协议。
+pub(super) fn nudge(hart: usize) {
+    let bit = 1usize << (hart % (usize::BITS as usize));
+    let word = hart / (usize::BITS as usize);
+    let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
+        .args(SArgs {
+            a0: bit,
+            a1: word * (usize::BITS as usize),
+            ..Default::default()
+        })
+        .call();
 }

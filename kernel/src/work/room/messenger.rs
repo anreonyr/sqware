@@ -24,14 +24,15 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
-use crate::work::room::scheduler::core::current;
+use crate::work::room::scheduler::core::{current, lookup_task_by_id};
 use crate::work::unit::task::{BlockReason, Task, TaskState};
+use crate::work::unit::team::Team;
 
 // ── 句柄分配 ──
 
@@ -139,6 +140,14 @@ fn wait_times() -> &'static SpinLock<HashMap<u64, WaitKey>> {
 /// 自己正在用的栈上回收自己；clear_loop  统一回收。
 pub(super) static REAPED: SpinLock<VecDeque<Arc<Task>>> =
     SpinLock::new_level(Level::L3, VecDeque::new());
+
+/// 待杀集合（doomed）：`kill` 点名他核 Running 任务时记入，目标核 trap 自查
+/// 自退。无主簿记——只存 task_id，不持 `Arc<Task>`（防「杀者撑着被杀者」）。
+/// Level::L3，与 parked/sites 同级。
+fn doomed() -> &'static SpinLock<HashSet<usize>> {
+    static T: OnceLock<SpinLock<HashSet<usize>>> = OnceLock::new();
+    T.get_or_init(|| SpinLock::new_level(Level::L3, HashSet::new()))
+}
 
 // ── 操作：挂起（用 scheduler::core::disown_and_install_next） ──
 
@@ -440,6 +449,123 @@ pub(crate) fn rip() {
     wait_times().lock().clear(); // 只存键，无 Arc，无 drop 链
     let reaped_out = core::mem::take(&mut *REAPED.lock());
     drop(reaped_out);
+    doomed().lock().clear(); // 只存 id，无 Arc
+}
+
+// ── 操作：扑杀（kill / cull / doom）──
+//
+// 血缘级联的「杀」侧：`kill` 强杀单线程（按状态分派）、`cull` 扑杀整域（递归
+// 沿 heir）、`doom` 是 exit_hook 里的触发面（读父 task 的 heir → 逐个 cull）。
+// 他核 Running 任务无法被本核同步拉走（会破坏「Reaped 不在 running 槽」不变量），
+// 故走 `doomed` 待杀集合 + SSIP 单点，目标核 trap 自查自退——最终一致。
+
+/// 强杀单线程：按状态分派。
+///
+/// - Reaped：no-op（已在 reaped 队列，clear_loop 会回收）。
+/// - Starved：从 starved 队列摘除 → Reaped → push REAPED。
+/// - Blocked：摘 parked / wait_sites / wait_times（+ untock）→ Reaped → push REAPED。
+/// - Running：记 doomed + SSIP 单点目标 hart，待其 trap 自退。
+///
+/// 锁纪律：只持 L3 表，逐表取、放锁后再取下一表（L3 同层绝不嵌套）；摘出的
+/// Arc<Task> 在锁外 transform + push REAPED；锁内不 drop Arc（drop 链触 L2）。
+pub(crate) fn kill(task: &Arc<Task>) {
+    match task.state() {
+        TaskState::Reaped => {}
+        TaskState::Starved => {
+            if crate::work::room::scheduler::core::remove_from_starved(task) {
+                let mut t = task.clone();
+                Task::exclusive(&mut t).transform(TaskState::Reaped);
+                REAPED.lock().push_back(t);
+            }
+        }
+        TaskState::Blocked { reason } => {
+            match reason {
+                BlockReason::Park { .. } => {
+                    // parked 按 handle 键存；按 ptr_eq 扫出句柄后摘。
+                    let handle = {
+                        let p = parked().lock();
+                        p.iter()
+                            .find(|(_, t)| Arc::ptr_eq(t, task))
+                            .map(|(h, _)| *h)
+                    };
+                    if let Some(h) = handle {
+                        let t = parked().lock().remove(&h);
+                        timer::untock(h);
+                        if let Some(mut t) = t {
+                            Task::exclusive(&mut t).transform(TaskState::Reaped);
+                            REAPED.lock().push_back(t);
+                        }
+                    }
+                }
+                BlockReason::Wait { .. } => {
+                    // wait_sites 分片存 Waiter{task, tock}；按 ptr_eq 扫出 tock 后摘。
+                    let mut tock: Option<Option<u64>> = None;
+                    for shard in 0..SITE_SHARDS {
+                        let mut ws = wait_sites(shard).lock();
+                        for site in ws.values_mut() {
+                            if let Some(idx) = site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task)) {
+                                let w = site.waiters.remove(idx).expect("idx from position");
+                                tock = Some(w.tock);
+                                break;
+                            }
+                        }
+                        if tock.is_some() {
+                            break;
+                        }
+                    }
+                    if let Some(tock) = tock {
+                        // 摘 times 旁路 + untock（先摘簿记、后 untock，同 park 纪律）。
+                        if let Some(h) = tock {
+                            wait_times().lock().remove(&h);
+                            timer::untock(h);
+                        }
+                        let mut t = task.clone();
+                        Task::exclusive(&mut t).transform(TaskState::Reaped);
+                        REAPED.lock().push_back(t);
+                    }
+                }
+            }
+        }
+        TaskState::Running { .. } => {
+            if let Some(hart) = crate::work::room::scheduler::core::running_hart(task) {
+                doomed().lock().insert(task.ident.id);
+                crate::work::room::conductor::nudge(hart);
+            }
+        }
+    }
+}
+
+/// 扑杀整域：遍历 team.tasks → kill → 递归（显式工作栈防爆栈）沿 heir。
+///
+/// 每个被杀 task 的子域（heir）也入栈扑杀——父删子随的递归闭包。栈是局部
+/// Vec（锁外分配），不持任何锁时展开。
+pub(crate) fn cull(team: &Arc<Team>) {
+    let mut work: Vec<Arc<Team>> = alloc::vec![team.clone()];
+    while let Some(t) = work.pop() {
+        // 先取本域成员快照（放锁），再逐个 kill；kill 期间不持 team.tasks 锁。
+        for weak_task in t.tasks_snapshot() {
+            if let Some(task) = weak_task.upgrade() {
+                // 递归：先收其 heir 入栈（扑杀其子域），再杀本任务。
+                work.extend(task.heirs());
+                kill(&task);
+            }
+        }
+    }
+}
+
+/// 级联触发（挂 exit_hook）：读父 task 的 heir → 逐个 cull。父删子随的入口。
+pub(crate) fn doom(tid: usize) {
+    if let Some(task) = lookup_task_by_id(tid) {
+        for child in task.heirs() {
+            cull(&child);
+        }
+    }
+}
+
+/// trap(SupervisorSoft) 自退查询：本 hart 当前 running 任务是否被判死。
+/// 在则摘出待杀标记并返回 true（调用方 mark_reaped）；否则 false。
+pub(crate) fn take_doomed(tid: usize) -> bool {
+    doomed().lock().remove(&tid)
 }
 
 // ── 内部辅助 ──

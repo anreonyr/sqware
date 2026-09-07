@@ -431,6 +431,35 @@ pub(crate) fn lookup_task_by_id_weak(id: usize) -> Option<Weak<Task>> {
     None
 }
 
+/// 从全部 hart 的 starved 队列摘除指定任务（kill 的 Starved 分支）。返回是否
+/// 摘到。只持本 hart 的 inner(L1)，逐 hart 顺序取、不嵌套其它锁。
+pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
+    for s in schedulers() {
+        let mut i = s.inner.lock();
+        if let Some(pos) = i.starved.iter().position(|t| Arc::ptr_eq(t, target)) {
+            i.starved.remove(pos);
+            s.set_len(&i);
+            drop(i);
+            return true;
+        }
+    }
+    false
+}
+
+/// 定位指定任务当前 running 于哪个 hart（kill 的 Running 分支）。None = 不在
+/// 任何核 running 槽。逐 hart 锁内 ptr_eq 比较（短暂持 L1）。
+pub(crate) fn running_hart(target: &Arc<Task>) -> Option<usize> {
+    for s in schedulers() {
+        let i = s.inner.lock();
+        if i.running.as_ref().is_some_and(|t| Arc::ptr_eq(t, target)) {
+            let h = s.hart;
+            drop(i);
+            return Some(h);
+        }
+    }
+    None
+}
+
 /// 执行核调度器（`tp → PerHart.scheduler` 直达，零索引——替代
 /// `&schedulers()[hart_id()]` 的「读 id → 数组索引 → 取元素」三步）。
 ///

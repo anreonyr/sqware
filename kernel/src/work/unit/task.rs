@@ -21,6 +21,7 @@ use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
 
 use super::team::Team;
+use ubi::TeamId;
 use crate::work::room::scheduler;
 
 /// 全局任务号（跨 hart 唯一）。
@@ -64,6 +65,10 @@ pub struct Task {
     /// Task::drop 时 Arc 递减——最后 Arc drop 时 Meta 自然析构。锁级 = L3
     ///（与 messenger 簿记同级，绝不嵌套）。
     pub(crate) pies: SpinLock<Vec<AnyPie>>,
+    /// 我生的子域（强持有，血缘清单）。三合一角色：撑命（无线程子域靠它活）、
+    /// `spawn_task` 授权凭证（能在我 heir 里查到 = 我是 sire）、`doom` 级联遍历源。
+    /// 锁级 = L3（与 pies 同级）。强持有与 `Team.sire`（弱）配对断环。
+    pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
 }
 
 /// 不可变身份：spawn 时定型；任何人自由 clone，无需任何锁。
@@ -91,6 +96,8 @@ impl Task {
     ///   Running → Blocked(原因)（阻塞：如睡眠）
     ///   Blocked(_) → Starved（唤醒：回到就绪容器）
     ///   Running → Reaped（退出：标记收割，延迟回收）
+    ///   Starved → Reaped（被 kill：摘队列后标记收割）
+    ///   Blocked(_) → Reaped（被 kill：摘阻塞簿记后标记收割）
     pub(crate) fn transform(&mut self, next: TaskState) {
         let legal = matches!(
             (self.state, next),
@@ -99,6 +106,8 @@ impl Task {
                 | (TaskState::Running { .. }, TaskState::Blocked { .. })
                 | (TaskState::Blocked { .. }, TaskState::Starved)
                 | (TaskState::Running { .. }, TaskState::Reaped)
+                | (TaskState::Starved, TaskState::Reaped)
+                | (TaskState::Blocked { .. }, TaskState::Reaped)
         );
         assert!(
             legal,
@@ -147,6 +156,21 @@ impl Task {
         // 持有者不触字段）；Team 簿记弱引用不读字段。等价 Arc::get_mut（其要求
         // weak == 0），放宽 strong_count 后允许多个容器 + 临时强引用并存。
         unsafe { &mut *Arc::as_ptr(t).cast_mut() }
+    }
+
+    /// 记我生的子域（强持有）。`spawn_team` 建域时由生我者调用。
+    pub(crate) fn adopt(&self, child: Arc<Team>) {
+        self.heir.lock().push(child);
+    }
+
+    /// 快照我的全部子域（doom 级联遍历用：快照后放锁，锁外逐条处理）。
+    pub(crate) fn heirs(&self) -> Vec<Arc<Team>> {
+        self.heir.lock().clone()
+    }
+
+    /// 在我生的子域里按 id 查（spawn_task 授权：查到 = 我是 sire）。
+    pub(crate) fn heir(&self, id: TeamId) -> Option<Arc<Team>> {
+        self.heir.lock().iter().find(|t| t.id == id).cloned()
     }
 }
 
@@ -318,6 +342,7 @@ impl TaskBuilder {
                     ident,
                     state: TaskState::Starved,
                     pies: SpinLock::new(Vec::new()),
+                    heir: SpinLock::new(Vec::new()),
                 },
                 alloc,
             ));

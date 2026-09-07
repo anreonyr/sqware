@@ -214,21 +214,23 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // 装载镜像成独立域（建 Space+Team，不产 task）。血缘：当前运行 task 为 sire。
             let sire = current()
                 .running_task()
-                .map(|t| alloc::sync::Arc::downgrade(&t))
-                .unwrap_or_default();
-            let r = crate::work::unit::domain::spawn_team(which, sire);
+                .unwrap_or_else(|| unreachable!("spawn_team without running task"));
+            let r = crate::work::unit::team::spawn_team(which, &sire);
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(team) => team.id.get(),
+                    Ok(id) => id.get(),
                     Err(_) => usize::MAX,
                 },
             );
         }
         EnvCall::Unit(UnitCall::SpawnTask { team, entry, arg }) => {
-            // 在指定 team 下建线程（域内产 task）。
-            let team_arc = crate::work::unit::team::lookup_team(team);
-            let team_arc = match team_arc {
+            // 在指定 team 下建线程（域内产 task）。授权：team 必须是当前 task 的
+            // heir（查到 = 我是 sire）；否则 Denied。
+            let me = current()
+                .running_task()
+                .unwrap_or_else(|| unreachable!("spawn_task without running task"));
+            let team_arc = match me.heir(team) {
                 Some(t) => t,
                 None => {
                     frame.gpr.set_x(Gprs::A0, usize::MAX);
