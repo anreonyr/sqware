@@ -121,6 +121,10 @@ fn main() {
         "cargo::rustc-env=USER_SPAWN_TEST={}",
         bin_dir.join("user-spawn-test").display()
     );
+    println!(
+        "cargo::rustc-env=USER_SIRE={}",
+        bin_dir.join("user-sire").display()
+    );
     // 用户源码/清单变更 → 重跑本脚本（重建 user + 重编内核）
     println!("cargo::rerun-if-changed=../user");
 }

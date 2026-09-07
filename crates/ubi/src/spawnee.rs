@@ -22,6 +22,8 @@ pub enum Spawnee {
     Back = 2,
     /// narrow demo（`user/src/bin/narrow.rs`）。
     Narrow = 3,
+    /// sire 溯源 demo（`user/src/bin/sire_demo.rs`）：读自己的 sire()/self_id()。
+    Sire = 4,
 }
 
 impl Spawnee {
@@ -32,6 +34,7 @@ impl Spawnee {
             Spawnee::Shell => "shell",
             Spawnee::Back => "back",
             Spawnee::Narrow => "narrow",
+            Spawnee::Sire => "sire",
         }
     }
 }
@@ -49,6 +52,7 @@ impl Wire for Spawnee {
             1 => Ok(Spawnee::Shell),
             2 => Ok(Spawnee::Back),
             3 => Ok(Spawnee::Narrow),
+            4 => Ok(Spawnee::Sire),
             _ => Err(Decode::Invalid),
         }
     }

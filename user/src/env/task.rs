@@ -37,3 +37,21 @@ pub fn sire() -> EnvResult<TaskId> {
         _ => unreachable!(),
     }
 }
+
+/// 我生的子域数量（heir 枚举 first pass）。
+pub fn heir_count() -> EnvResult<usize> {
+    let r = UnitCall::HeirCount.call()?;
+    match r {
+        UnitCallRet::HeirCount(n) => Ok(n),
+        _ => unreachable!(),
+    }
+}
+
+/// 按索引取子域 TeamId（heir 枚举 second pass；越界 → 0）。
+pub fn heir_at(index: usize) -> EnvResult<TeamId> {
+    let r = UnitCall::Heir { index }.call()?;
+    match r {
+        UnitCallRet::Heir(id) => Ok(id),
+        _ => unreachable!(),
+    }
+}

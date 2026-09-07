@@ -24,8 +24,9 @@ use super::team::Team;
 use ubi::TeamId;
 use crate::work::room::scheduler;
 
-/// 全局任务号（跨 hart 唯一）。
-static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+/// 全局任务号（跨 hart 唯一）。自 1 起：0 保留作「无任务」哨兵——`SelfId`/
+/// `sire()` 等以 0 表「无上下文 / 无父」，真实 task id 恒 ≥ 1，哨兵无歧义。
+static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 /// 任务状态：任务现在在哪 +（Running/Blocked 时）该状态特有的数据。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +172,16 @@ impl Task {
     /// 在我生的子域里按 id 查（spawn_task 授权：查到 = 我是 sire）。
     pub(crate) fn heir(&self, id: TeamId) -> Option<Arc<Team>> {
         self.heir.lock().iter().find(|t| t.id == id).cloned()
+    }
+
+    /// 我生的子域数量（heir 枚举 first pass）。
+    pub(crate) fn heir_count(&self) -> usize {
+        self.heir.lock().len()
+    }
+
+    /// 按索引取子域 TeamId（heir 枚举 second pass；越界 → None）。
+    pub(crate) fn heir_at(&self, index: usize) -> Option<TeamId> {
+        self.heir.lock().get(index).map(|t| t.id)
     }
 }
 

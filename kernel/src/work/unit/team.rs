@@ -194,6 +194,7 @@ fn spawnee_elf(which: Spawnee) -> &'static [u8] {
         Spawnee::Shell => include_bytes!(env!("USER_SHELL")),
         Spawnee::Back => include_bytes!(env!("USER_BACK")),
         Spawnee::Narrow => include_bytes!(env!("USER_NARROW")),
+        Spawnee::Sire => include_bytes!(env!("USER_SIRE")),
     }
 }
 

@@ -32,7 +32,7 @@ use user::core::task;
 use user::env::chrono::{self, clock};
 use user::env::mail::HolePie;
 use user::env::room::{self, sleep};
-use user::env::task::{spawn_task, spawn_team};
+use user::env::task::{heir_at, heir_count, spawn_task, spawn_team};
 use user::term::{Color, Readline, Terminal};
 
 /// 按空白切词（保留空输入 = 空 Vec）。
@@ -45,7 +45,7 @@ fn split(line: &str) -> Vec<String> {
 fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
-            term.writeline("help / clock / ticks / alloc / echo / sleep / spawn / hole / exit");
+            term.writeline("help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / exit");
         }
         "clock" => {
             let (s, n) = clock().unwrap_or((0, 0));
@@ -73,9 +73,9 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
             let which = match args.first().map(|s| s.as_str()) {
                 Some("lisp") => Some(Spawnee::Lisp),
                 Some("back") => Some(Spawnee::Back),
+                Some("sire") => Some(Spawnee::Sire),
                 _ => None,
-            };
-            if let Some(which) = which {
+            };            if let Some(which) = which {
                 match spawn_team(which).and_then(|tid| spawn_task(tid, 0, 0)) {
                     Ok(id) => term.writeline(&format!("spawn {which:?} -> task {id:?}")),
                     Err(e) => term.writeline(&format!("spawn {which:?} failed: {e:?}")),
@@ -93,6 +93,19 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
             })
             .join();
             term.writeline(&format!("spawnjoin -> {sum}"));
+        }
+        "heir" => {
+            // 血缘枚举：我生的子域（heir）——先 count 再逐个取 TeamId。
+            let n = heir_count().unwrap_or(0);
+            if n == 0 {
+                term.writeline("heir: none");
+            } else {
+                term.writeline(&format!("heir: {n} children"));
+                for i in 0..n {
+                    let tid = heir_at(i).unwrap_or(ubi::TeamId::new(0));
+                    term.writeline(&format!("  heir[{i}] = team {tid:?}"));
+                }
+            }
         }
         "hole" => {
             let msg = b"hi from shell";

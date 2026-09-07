@@ -219,6 +219,23 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 .unwrap_or(0);
             frame.gpr.set_x(Gprs::A0, id);
         }
+        EnvCall::Unit(UnitCall::HeirCount) => {
+            // 我生的子域数量（heir 枚举 first pass）。
+            let n = current()
+                .running_task()
+                .map(|t| t.heir_count())
+                .unwrap_or(0);
+            frame.gpr.set_x(Gprs::A0, n);
+        }
+        EnvCall::Unit(UnitCall::Heir { index }) => {
+            // 按索引取子域 TeamId（heir 枚举 second pass；越界 → 0）。
+            let id = current()
+                .running_task()
+                .and_then(|t| t.heir_at(index))
+                .map(|t| t.get())
+                .unwrap_or(0);
+            frame.gpr.set_x(Gprs::A0, id);
+        }
         EnvCall::Unit(UnitCall::SpawnTeam { which }) => {
             // 装载镜像成独立域（建 Space+Team，不产 task）。血缘：当前运行 task 为 sire。
             let sire = current()
