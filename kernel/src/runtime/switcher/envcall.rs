@@ -210,6 +210,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 .unwrap_or(0);
             frame.gpr.set_x(Gprs::A0, id);
         }
+        EnvCall::Unit(UnitCall::Sire) => {
+            // 溯源：生我者的 task id。0 = 顶级域（boot）或父已亡。
+            let id = current()
+                .running_task()
+                .and_then(|t| t.ident.team.sire())
+                .unwrap_or(0);
+            frame.gpr.set_x(Gprs::A0, id);
+        }
         EnvCall::Unit(UnitCall::SpawnTeam { which }) => {
             // 装载镜像成独立域（建 Space+Team，不产 task）。血缘：当前运行 task 为 sire。
             let sire = current()

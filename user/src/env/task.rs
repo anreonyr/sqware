@@ -28,3 +28,12 @@ pub fn spawn_task(team: TeamId, entry: usize, arg: usize) -> EnvResult<TaskId> {
         _ => unreachable!(),
     }
 }
+
+/// 溯源：生我者的 task id（`spawn_team` 子域才有；0 = 顶级域 / 父已亡）。
+pub fn sire() -> EnvResult<TaskId> {
+    let r = UnitCall::Sire.call()?;
+    match r {
+        UnitCallRet::Sire(id) => Ok(id),
+        _ => unreachable!(),
+    }
+}

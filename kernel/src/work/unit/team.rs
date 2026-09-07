@@ -40,11 +40,6 @@ pub struct Team {
     pub(crate) id: TeamId,
     /// 生我者的 task（弱引用，溯源；构造期定型，boot 顶级域 / 内核域 = 空 Weak）。
     /// 保持 Weak 是防环唯一边：`Task →(heir 强)→ Team →(sire 弱)→ Task`。
-    ///
-    /// 溯源占位：当前无读者（授权走父侧 `heir`，不查本字段）；留待诊断场景
-    /// （panic 现场打印血缘树 / 孤儿域溯源）消费。显式 `allow(dead_code)` 标记
-    /// 「有意保留、尚未接入」。
-    #[allow(dead_code)]
     pub(crate) sire: Weak<Task>,
     /// 本域默认执行入口（= 装载 ELF 的 `e_entry`，即镜像 `_start` VA）。
     /// `spawn_team` 子域 set；`spawn_task` 的 `entry=0` 时用它。`OnceLock` 单次写。
@@ -94,6 +89,12 @@ impl Team {
     /// 本域默认执行入口（`spawn_task` 的 `entry=0` 时取）。未设（boot 顶级域）→ 0。
     pub(crate) fn default_entry(&self) -> usize {
         self.default_entry.get().copied().unwrap_or(0)
+    }
+
+    /// 溯源：生我者的 task id（`spawn_team` 子域才有；boot 顶级域 / 内核域 → None）。
+    /// 这是「不可伪造的父身份源」——由内核在 spawn_team 时强制，非父自愿告知。
+    pub(crate) fn sire(&self) -> Option<usize> {
+        self.sire.upgrade().map(|t| t.ident.id)
     }
 }
 

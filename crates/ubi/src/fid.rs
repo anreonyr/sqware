@@ -59,6 +59,9 @@ pub enum UnitCall {
     /// 取当前 task id（无参 → 0 = 无上下文）。
     #[ret(TaskId)]
     SelfId,
+    /// 溯源：生我者的 task id（`spawn_team` 子域才有；0 = 顶级域 / 父已亡）。
+    #[ret(TaskId)]
+    Sire,
     /// 装载镜像成独立域（建 Space+Team，不产 task）：`which` 指定镜像 → TeamId。
     #[ret(TeamId)]
     SpawnTeam { which: crate::spawnee::Spawnee },
