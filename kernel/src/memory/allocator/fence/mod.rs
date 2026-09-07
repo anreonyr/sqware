@@ -56,6 +56,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 use crate::lock::OnceLock;
+use crate::runtime::diagnose::frame::StackReader;
 
 pub mod audit;
 pub mod banker;
@@ -434,7 +435,7 @@ pub(crate) fn retire(asid: usize) {
 ///
 /// debug O0 调用链稳定：帧 0 = block 分配器（on_alloc 的调用者）、再上是
 /// core::alloc 与装箱/容器/业务帧。core 预编译库（__rust_alloc 等）无 FP
-/// （见 scene::kbacktrace 注释），链在彼处即断——断点前最后有效 ra 即 site。
+/// （与 diagnose::scene 回溯同款现象），链在彼处即断——断点前最后有效 ra 即 site。
 ///
 unsafe extern "C" {
     /// 代码段尾（link.ld `_text_end`，.trampoline 之后）：候选 ra 须落在其下
@@ -451,7 +452,7 @@ fn text_end() -> usize {
 }
 
 /// 分配点回溯（诊断 site）：从当前 fp 沿标准 RV64 帧链上溯 depth 帧；链在 core
-/// 预编译库处断（无 FP，见 scene::kbacktrace 同款问题）后，从断点帧顶向上扫描
+/// 预编译库处断（无 FP，与 diagnose::scene 回溯同款问题）后，从断点帧顶向上扫描
 /// 收集候选 ra（4 对齐 + 镜像 .text + 非重复；连续 SCAN_GAP 字无候选 = 已越
 /// 活跃帧区，停）。返回 (site, site2) = 扫描候选第 3、4 个（第 1、2 个 ≈ core
 /// 帧保存 ra，无区分度）：候选序列 ≈ [core 帧 ra]×2、[装箱/容器帧 ra]、[业务
@@ -497,40 +498,17 @@ fn alloc_site(depth: usize) -> (usize, usize) {
     }
     // ② 启发式接续：链在 core 预编译库处断（无 FP），其外层业务帧仍在栈上——
     // 从断点帧顶向上逐字扫描收集候选 ra；收满 8 个或越活跃帧区即停。
+    // 采样经 frame::StackReader（领域无关采样通道：walk_raw 翻译 + DRAM 守卫 +
+    // 页缓存 + unaligned 读）——与 scene 回溯同源底层，不重复实现。
+    let mut reader = StackReader::new(riscv::register::satp::read().bits() & ((1usize << 44) - 1));
     let mut a = fp;
     let mut gap = 0usize;
     let mut cands: [usize; 8] = [0; 8];
     let mut n = 0usize;
-    let mut cache: Option<(usize, usize)> = None; // (va 页基, pa 页基)
     while a - fp < 0x4000 && gap < 96 && n < 8 {
-        let page = a & !(crate::memory::PAGE_SIZE - 1);
-        let pa_page = match cache {
-            Some((p, pa)) if p == page => pa,
-            _ => {
-                let satp_val = riscv::register::satp::read().bits();
-                let ppn = satp_val & ((1usize << 44) - 1);
-                let in_dram = |pa: crate::memory::manager::addr::PhysAddr| {
-                    (0x8000_0000..crate::machine::dram_edge().unwrap_or(0x9000_0000))
-                        .contains(&pa.as_usize())
-                };
-                // SAFETY: walk_raw 只读页表（S 态当前根表），无副作用。
-                let Some((pa0, flags)) = crate::memory::manager::table::TableNode::walk_raw(
-                    crate::memory::manager::addr::PhysAddr::from_raw(ppn << 12),
-                    crate::memory::manager::addr::VirtAddr::from_raw(page),
-                    in_dram,
-                ) else {
-                    break; // 未映射页：越 slot 顶，停扫（不读不崩）
-                };
-                if !flags.contains(crate::memory::manager::entry::PteFlags::R) {
-                    break;
-                }
-                let pa = pa0.as_usize();
-                cache = Some((page, pa));
-                pa
-            }
+        let Some(w) = reader.word(a) else {
+            break; // 未映射/非 R 页：越 slot 顶，停扫（不读不崩）
         };
-        // SAFETY: 页已翻译且 R 可读（上）；读侧 read_unaligned 无对齐 precondition。
-        let w = unsafe { ((pa_page + (a - page)) as *const usize).read_unaligned() };
         if w & 3 == 0 && w >= 0x8020_0000 && w < text_end() && w != prev {
             cands[n] = w;
             n += 1;

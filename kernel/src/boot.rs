@@ -21,8 +21,8 @@ use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, restore};
 use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
 use crate::work::room::scheduler;
-use crate::work::unit::team::kernel;
 use crate::work::unit::team;
+use crate::work::unit::team::kernel;
 
 global_asm!(
     ".section .text.boot",
@@ -188,14 +188,14 @@ fn spawn_demos() -> Result<(), MapError> {
         // (&include_bytes!(env!("USER_STRESSOR"))[..], "stressor"),
         // (&include_bytes!(env!("USER_MMAPER"))[..], "mmaper"),
         // (&include_bytes!(env!("USER_TLSER"))[..], "tlser"),
-        (&include_bytes!(env!("USER_POLE_SOLO"))[..], "pole_solo"),
-        (&include_bytes!(env!("USER_HOLE_SOLO"))[..], "hole_solo"),
-        (&include_bytes!(env!("USER_HOLE_PAIR"))[..], "hole_pair"),
-        (&include_bytes!(env!("USER_POLE_PAIR"))[..], "pole_pair"),
-        (&include_bytes!(env!("USER_BACK"))[..], "back"),
-        (&include_bytes!(env!("USER_NARROW"))[..], "narrow"),
-        (&include_bytes!(env!("USER_REVOKE"))[..], "revoke"),
-        (&include_bytes!(env!("USER_SPAWN_TEST"))[..], "spawn_test"),
+        // (&include_bytes!(env!("USER_POLE_SOLO"))[..], "pole_solo"),
+        // (&include_bytes!(env!("USER_HOLE_SOLO"))[..], "hole_solo"),
+        // (&include_bytes!(env!("USER_HOLE_PAIR"))[..], "hole_pair"),
+        // (&include_bytes!(env!("USER_POLE_PAIR"))[..], "pole_pair"),
+        // (&include_bytes!(env!("USER_BACK"))[..], "back"),
+        // (&include_bytes!(env!("USER_NARROW"))[..], "narrow"),
+        // (&include_bytes!(env!("USER_REVOKE"))[..], "revoke"),
+        // (&include_bytes!(env!("USER_SPAWN_TEST"))[..], "spawn_test"),
         // shell：常驻交互任务（其余 demo 跑完退出后仍在，系统不 halt）。
         (&include_bytes!(env!("USER_SHELL"))[..], "shell"),
         // (&include_bytes!(env!("USER_LISP"))[..], "lisp"),

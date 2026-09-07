@@ -177,6 +177,13 @@ pub enum ControlCall {
     /// 用户主动内核 panic（任意关联码；不返回）。发散，无 Ret。
     #[ret(())]
     Panic { code: usize },
+    /// 用户自诊断：采样当前任务调用栈，把 pc 地址数组写进用户 buf，返回帧数。
+    ///
+    /// `buf` = 用户预分配的 `[usize; N]` 数组 VA；`frames` = 该数组最大容量。
+    /// 内核经 `mail::copy_out` 写 `frames` 个 pc 到 buf；返回实际捕获帧数（`usize`），
+    /// buf 非法（未映射/不可写）→ 负值（EnvError）。
+    #[ret(usize)]
+    Backtrace { buf: usize, frames: usize },
 }
 
 /// 环境调用号聚合（内核侧解码总入口）。

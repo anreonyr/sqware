@@ -2,6 +2,8 @@
 
 #[cfg(feature = "semihosting")]
 pub mod export;
+/// 领域无关的执行链投影引擎（栈采样 + 链投影）。
+pub mod frame;
 pub mod halt;
 /// 表格渲染适配：stanza 定宽栅格（列宽自适应）；报告印发。
 pub mod render;

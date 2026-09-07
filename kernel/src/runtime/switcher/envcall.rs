@@ -25,6 +25,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
+use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
@@ -258,6 +259,42 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         }
         EnvCall::Control(ControlCall::Panic { code }) => {
             panic!("user-initiated panic (code {code:#x})");
+        }
+        EnvCall::Control(ControlCall::Backtrace { buf, frames }) => {
+            // 用户自诊断回溯：采样当前任务用户栈（user_satp 根表，零锁不触缺页），
+            // 把 pc 数组经 mail::copy_out 写进用户 buf。buf 非法（未映射/不可写）→
+            // copy_out 返 false → A0 = 负值（EnvError）。
+            let world = ident.team.space.kind();
+            let sp = frame.gpr.x(Gprs::SP);
+            let fp = frame.gpr.x(Gprs::S0);
+            let mut reader = StackReader::new(frame.user_satp.ppn());
+            let cfg = ResolveCfg::user(world, sp.saturating_add(frame::SPAN));
+            // 域筛：候选 pc 是否属本域代码（用户符号表命中）。
+            let table = ident.team.elftable.as_deref();
+            let code = move |w: usize| {
+                table.and_then(|t| t.lookup(KVirt::from_raw(w))).is_some()
+            };
+            let (pc_arr, count) = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
+            // 打包 pc 数组字节（仅前 min(count, frames) 帧），copy_out 写用户 buf。
+            let keep = count.min(frames);
+            let mut bytes = [0u8; frame::DEPTH * core::mem::size_of::<usize>()];
+            for i in 0..keep {
+                bytes[i * core::mem::size_of::<usize>()..][..core::mem::size_of::<usize>()]
+                    .copy_from_slice(&pc_arr[i].pc.as_usize().to_le_bytes());
+            }
+            let ok = mail::copy_out(
+                &ident.team.space,
+                &bytes[..keep * core::mem::size_of::<usize>()],
+                buf,
+            );
+            frame.gpr.set_x(
+                Gprs::A0,
+                if ok {
+                    keep
+                } else {
+                    -1isize as usize
+                },
+            );
         }
         EnvCall::Memory(MemoryCall::Mmap { size, at }) => {
             let size = size.max(1).next_multiple_of(PAGE_SIZE);

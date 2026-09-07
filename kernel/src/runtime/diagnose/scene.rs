@@ -1,32 +1,38 @@
-//! scene — 崩溃现场转储（定位错误的统一诊断）。
+//! scene — 崩溃现场（可诊断的执行现场快照）+ 执行历史投影（backtrace）。
 //!
-//! 职责：回答「崩在哪个地址 / 哪条调用链」。本模块只产行
-//! （`Vec<Vec<Option<String>>>`）投进 [`Report`] 的段落。
+//! 领域意象（单一隐喻贯穿）：**场景**。一次 [`Scene`] 是一次可诊断的现场快照，
+//! 它的 [`Backtrace`] 是 Scene 对执行历史的一次投影。Scene 是「现场」，Backtrace
+//! 是「投影」——两者是拥有关系，不是并列关系。
+//!
+//! 职责分离（核心/适配）：
+//! - 核心（本模块下半部）：[`Backtrace`] / [`Frame`] / [`FrameResolver`]——
+//!   回答「执行链是什么」与「这个地址是什么」，**零分配、不拥有 Space**。
+//! - 适配（上半部）：[`Scene`] / `dump`——取本 hart/world 现场，转发核心回溯，
+//!   组稿进 [`Report`]。可独立推理核心，不知道 report/panic 是什么。
 //!
 //! 现场语义：GPR 是处理器已压栈损坏的现场；真正可定位的是 CSR 的 sepc/scause/stval
-//! （trap 进入后持续有效）与栈回溯。
-//!
-//! 回溯 = 无帧指针启发式：扫描当前栈区间，收集可执行地址的候选返回地址（去重、
-//! 深度封顶）。有符号表则 hex + sym 双列；无表则仅 hex（chain 跟 fp 链即出轨迹，
-//! 扫描依赖域筛法跳）。
+//! （trap 进入后持续有效）与栈回溯。回溯 = 无帧指针启发式：`chain`（fp 链）+ `scan`
+//! （无表时对断点附近扫描候选 ra，去重、深度封顶）。
 
 use core::arch::asm;
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{satp, scause, sepc, sscratch, sstatus, stval, stvec};
 
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::memory::manager::entry::PteFlags;
+use crate::memory::manager::addr::VirtAddr;
+use crate::runtime::diagnose::frame::{self, Frame, ResolveCfg, StackReader};
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::scheduler::core::ident;
 use crate::work::unit::elftable::{self, ElfTable};
+use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::kernel;
 
 /// 按地址域取符号表：内核地址取内核团队表，用户地址取当前任务表。
@@ -39,10 +45,6 @@ fn table(va: VirtAddr) -> Option<Arc<ElfTable>> {
 }
 
 const DEPTH: usize = 32;
-/// 栈扫描窗口（从当前 sp 向上）字节数。
-const SPAN: usize = 4096;
-/// 候选返回地址需 4 字节对齐（RISC-V 指令 2/4 字节）。
-const ALIGN: usize = 4;
 
 /// 定宽 hex 文本（{:#018x}）——值列的通用形态。
 fn hex(x: usize) -> String {
@@ -91,251 +93,225 @@ fn gprs() -> [usize; 32] {
     r
 }
 
-/// 崩溃现场栈的只读通道：逐页 walk_raw + R 校验后直读，绝不触发缺页。
-struct Stack {
-    root: PhysAddr,
-    page: Option<(usize, PhysAddr)>,
+// ── 地址语义（FrameKind）─────────────────────────────────────────────
+
+/// 地址语义分类 — 由 [`FrameResolver::classify`] 产出，**不挂在 [`Frame`] 上**。
+///
+/// `Frame` 只存裸地址（pc/sp/fp），不携带任何地址语义——语义是 resolve 的产物，
+/// 属于独立通道。`Kind` 与 `Frame` 的解耦是「walk 与 resolve 分离」的类型化。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    /// ROOT 栈区（`[_kernel_edge, +ROOT_STACK_SIZE)`，panic 救援栈）。
+    Root,
+    /// 内核域（高半区 或 镜像恒等区 `[_kernel_start, _kernel_edge)`）。
+    Kernel,
+    /// 用户域（分裂位以下，`is_user`）。
+    User,
+    /// 无法判定（无表 / 域外 / 未知）。
+    Unknown,
 }
 
-impl Stack {
-    fn kernel() -> Stack {
-        let ppn = satp::read().bits() & ((1usize << 44) - 1);
-        Stack {
-            root: PhysAddr::from_raw(ppn << 12),
-            page: None,
-        }
+// ── Backtrace — 执行历史投影容器（scene 侧，定长零分配）──────────────
+
+/// 回溯投影 — 执行历史的定长投影（panic 现场**零分配**为类型义务）。
+///
+/// `frames` 是定长数组（非 `Vec`）——把「回溯层不分配」做成类型约束而非纪律。
+/// `Frame`（来自 `frame` 模块）只存裸地址，`FrameKind` 由 [`FrameResolver`] 在
+/// assemble 时逐帧另算。
+#[derive(Debug)]
+pub struct Backtrace {
+    frames: [Frame; DEPTH],
+    count: usize,
+}
+
+impl Backtrace {
+    /// 已捕获帧切片（只读）。
+    fn frames(&self) -> &[Frame] {
+        &self.frames[..self.count]
     }
 
-    fn user(root: usize) -> Stack {
-        Stack {
-            root: PhysAddr::from_raw(root << 12),
-            page: None,
+    /// 由 `frame::walk` 的返回 `(frames, count)` 构造（定长零分配转移所有权）。
+    fn from_walk(r: ([Frame; DEPTH], usize)) -> Backtrace {
+        Backtrace {
+            frames: r.0,
+            count: r.1,
         }
     }
+}
 
-    fn leaf(&mut self, page: usize) -> Option<PhysAddr> {
-        if let Some((cached, base)) = self.page
-            && cached == page
+// ── FrameResolver — 地址语义通道（不拥有 Space）───────────────────────
+
+/// 解析当前域的一套地址语义（`classify`/`executable`）。
+///
+/// 语义：不问 `&Space`，只持由现场采集层决定的**域归属**（`world`）与回溯表，
+/// 据 `VirtAddr::is_kernel/is_user` 与符号表命中判 `FrameKind`。地址的可执行性
+/// 由符号表（`ElfTable::lookup`）承担——这是「Space 回答这个地址是什么」在
+/// **分类层面**的落点（翻译仍走 `Stack` 裸读）。
+#[derive(Debug, Clone, Copy)]
+pub struct FrameResolver {
+    world: SpaceKind,
+}
+
+impl FrameResolver {
+    /// 由 Scene 的现场世界构造（内核/用户域的单一事实源）。
+    fn new(world: SpaceKind) -> FrameResolver {
+        FrameResolver { world }
+    }
+
+    /// 分类：根/内核/用户/未知。
+    ///
+    /// 三档裁决，`world` 与 `executable` 都参与：
+    /// 1. ROOT 栈区（panic 救援栈）→ [`FrameKind::Root`]。
+    /// 2. 地址域本身（`is_kernel`/`is_user` → Kernel/User）——`world` 在**域可自定**
+    ///    时不作用；仅当地址落在**规范空洞**（既非用户也非内核）才由 `world` 兜底。
+    /// 3. 都不中 → 非代码地址（数据指针不足以判执行链）→ [`FrameKind::Unknown`]，
+    ///    但若 `executable`（符号表命中）成立则视为本域代码，避免误杀有效的
+    ///    `.text` 地址。
+    fn classify(&self, pc: VirtAddr) -> FrameKind {
+        // ROOT 栈区（panic 救援栈）：[_kernel_edge, +ROOT_STACK_SIZE)。
+        let k = crate::machine::kernel_edge();
+        if pc.as_usize() >= k && pc.as_usize() < k + crate::layout::ROOT_STACK_SIZE {
+            return FrameKind::Root;
+        }
+        if pc.is_kernel() {
+            return FrameKind::Kernel;
+        }
+        if pc.is_user() {
+            return FrameKind::User;
+        }
+        // 规范的地址本身已能定域；此处不落 `self.world`。
+        // 空域（既非用户也非内核）地址：若符号表命中（本域代码）则归本域，否则 Unknown。
+        // `self.world` 在域可自定时不作用——本分支只处理 `is_kernel/is_user` 都判不了的
+        // 规范空洞，此时以现场世界兜底，避免把有效的镜像恒等区地址判成 Unknown。
+        if self.executable(pc) {
+            return match self.world {
+                SpaceKind::Kernel => FrameKind::Kernel,
+                SpaceKind::User { .. } => FrameKind::User,
+            };
+        }
+        FrameKind::Unknown
+    }
+
+    /// 该地址是否属本域代码（符号表命中）。
+    fn executable(&self, pc: VirtAddr) -> bool {
+        table(pc).and_then(|t| t.lookup(pc)).is_some()
+    }
+}
+
+// ── Scene — 可诊断的执行现场快照（适配层）────────────────────────────
+
+/// 现场寄存器 — 快照的「当前点」（pc/sp/fp 独立于全量 GPR）。
+#[derive(Debug, Clone, Copy)]
+pub struct Registers {
+    pub pc: VirtAddr,
+    pub sp: VirtAddr,
+    pub fp: VirtAddr,
+}
+
+/// 一次可诊断的执行现场快照。
+///
+/// `Scene` 是「现场」，`Backtrace` 是现场对执行历史的一次投影。`Scene` 拥有
+/// Backtrace（而非 Backtrace 去反推整个内核）；`space` 是 `SpaceKind`，不是
+/// `&Space`——`Scene` 不拥有任何内存管理权。
+#[derive(Debug)]
+pub struct Scene {
+    /// 现场所属 hart。
+    pub hart: usize,
+    /// 现场任务（idle/启动期无任务 → None，不 panic）。
+    pub task: Option<usize>,
+    /// 现场地址空间（按域归属分类，非 &Space）。
+    pub space: SpaceKind,
+    /// 现场寄存器（当前点 pc/sp/fp）。
+    pub reg: Registers,
+    /// 现场回溯投影。
+    pub backtrace: Backtrace,
+    /// trap 现场（内核态可由 CSR 重建；用户态由 TrapContext 采读）。
+    cause: Option<Trap<Interrupt, Exception>>,
+}
+
+impl Scene {
+    /// 内核现场采集：经 per-hart 帧（`machine::hart_frame()`）或归巢落盘值取 sp/fp。
+    fn capture_kernel() -> Option<Scene> {
+        // 内核现场起点：归巢落盘 [sp,fp]（`halt::scene()`；(0,0)=未归巢）。
+        let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
+            (0, 0) => {
+                let (sp, fp): (usize, usize);
+                // SAFETY: 只读本 hart 当前 sp/s0，无副作用。
+                unsafe {
+                    asm!("mv {0}, sp", out(reg) sp);
+                    asm!("mv {0}, s0", out(reg) fp);
+                }
+                (sp, fp)
+            }
+            s => s,
+        };
+        // 内核现场：根表 = 当前 satp；扫描上界 = per-hart trap 栈边钳制（sp 落 trap 栈内）。
+        let ceiling = match crate::runtime::switcher::trap::trap_stack_hart(sp)
+            .map(crate::runtime::switcher::trap::trap_stack_edge)
         {
-            return Some(base);
-        }
-        let edge = crate::machine::dram_edge().unwrap_or(0x9000_0000);
-        let (base, flags) = crate::memory::manager::table::TableNode::walk_raw(
-            self.root,
-            VirtAddr::from_raw(page),
-            |pa| (0x8000_0000..edge).contains(&pa.as_usize()),
-        )?;
-        if !flags.contains(PteFlags::R) {
-            return None;
-        }
-        self.page = Some((page, base));
-        Some(base)
-    }
-
-    fn word(&mut self, addr: usize) -> Option<usize> {
-        let page = addr & !(PAGE_SIZE - 1);
-        let base = self.leaf(page)?;
-        // SAFETY: 该页已 walk 命中且带 R；偏移恒在页内，S 态直读。脱链后地址
-        // 继承任意 callee-saved 保存值，无对齐保证 → read_unaligned。
-        Some(unsafe {
-            (base.as_usize() as *const u8)
-                .add(addr - page)
-                .cast::<usize>()
-                .read_unaligned()
+            Some(edge) => sp.saturating_add(frame::SPAN).min(edge.as_usize()),
+            None => sp.saturating_add(frame::SPAN),
+        };
+        let mut reader = StackReader::new(satp::read().bits() & ((1usize << 44) - 1));
+        let cfg = ResolveCfg::kernel(ceiling);
+        let code = |w: usize| table(VirtAddr::from_raw(w)).is_some();
+        let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
+        let backtrace = Backtrace::from_walk(r);
+        Some(Scene {
+            hart: crate::machine::hart_id(),
+            task: ident().map(|i| i.id()),
+            space: SpaceKind::Kernel,
+            reg: Registers {
+                pc: VirtAddr::from_raw(sepc::read()),
+                sp: VirtAddr::from_raw(sp),
+                fp: VirtAddr::from_raw(fp),
+            },
+            cause: scause::read().cause().try_into().ok(),
+            backtrace,
         })
     }
 
-    /// RV64 psABI：序言 `sd ra, N-8(sp); sd s0, N-16(sp); s0 = sp+N`，
-    /// 保存对在 fp 下方——caller 在 [frame-16]、ra 在 [frame-8]。
-    fn pair(&mut self, frame: usize) -> Option<(usize, usize)> {
-        Some((self.word(frame - 16)?, self.word(frame - 8)?))
-    }
-}
-
-/// 回溯轨迹：对齐、去重、封顶三条纪律在 push 内闭合。
-struct Trail {
-    frames: [usize; DEPTH],
-    count: usize,
-    last: usize,
-}
-
-impl Trail {
-    fn new() -> Trail {
-        Trail {
-            frames: [0; DEPTH],
-            count: 0,
-            last: 0,
+    /// 用户现场采集：running 任务的用户 trap 帧（`ident().trap()`）。
+    fn capture_user() -> Option<Scene> {
+        let info = ident()?;
+        let pa = info.trap()?;
+        // SAFETY: Live 轴 = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM
+        // 恒等映射）；崩溃现场只读，其余核已冻结。
+        let frame = unsafe { &*(pa.as_usize() as *const TrapContext) };
+        if frame.sepc.is_kernel() {
+            return None;
         }
-    }
-
-    fn push(&mut self, addr: usize) -> bool {
-        if self.full() || addr == 0 || addr & (ALIGN - 1) != 0 || addr == self.last {
-            return false;
+        let sp = frame.gpr.x(Gprs::SP);
+        if sp == 0 {
+            return None;
         }
-        self.frames[self.count] = addr;
-        self.count += 1;
-        self.last = addr;
-        true
-    }
-
-    fn full(&self) -> bool {
-        self.count == DEPTH
-    }
-
-    fn frames(&self) -> &[usize] {
-        &self.frames[..self.count]
-    }
-}
-
-/// 扫描期筛法：候选是否属本域代码，以及撞不可读页时跳页还是停扫。
-struct Sift<'a> {
-    code: &'a dyn Fn(usize) -> bool,
-    gaps: bool,
-}
-
-/// 一次勘探：轨迹与解释它所需的符号表（同源同死；None = 仅 hex，不符号化）。
-struct Trace {
-    trail: Trail,
-    table: Option<Arc<ElfTable>>,
-}
-
-impl Trace {
-    fn rows(&self, head: &str) -> Vec<Vec<Option<String>>> {
-        // 表 = None → 仅 hex 列（无符号化）；否则 hex + sym 双列。
-        if let Some(table) = self.table.as_deref() {
-            let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-                Some(head.into()),
-                Some("hex".into()),
-                Some("sym".into()),
-            ]];
-            for (i, a) in self.trail.frames().iter().enumerate() {
-                rows.push(vec![
-                    Some(format!("#{i}")),
-                    Some(hex(*a)),
-                    Some(elftable::symbol(VirtAddr::from_raw(*a), Some(table))),
-                ]);
-            }
-            rows
-        } else {
-            let mut rows: Vec<Vec<Option<String>>> =
-                vec![vec![Some(head.into()), Some("hex".into())]];
-            for (i, a) in self.trail.frames().iter().enumerate() {
-                rows.push(vec![Some(format!("#{i}")), Some(hex(*a))]);
-            }
-            rows
-        }
+        let fp = frame.gpr.x(Gprs::S0);
+        let world = info
+            .live()
+            .map(|t| t.team.space.kind())
+            .unwrap_or(SpaceKind::User { asid: 0 });
+        // 根表 = 用户根表（user_satp）；域 = 该任务空间；上界 = sp+SPAN。
+        let mut reader = StackReader::new(frame.user_satp.ppn());
+        let cfg = ResolveCfg::user(world, sp.saturating_add(frame::SPAN));
+        let code = |w: usize| table(VirtAddr::from_raw(w)).is_some();
+        let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
+        let backtrace = Backtrace::from_walk(r);
+        Some(Scene {
+            hart: crate::machine::hart_id(),
+            task: Some(info.id()),
+            space: world,
+            reg: Registers {
+                pc: frame.sepc,
+                sp: VirtAddr::from_raw(sp),
+                fp: VirtAddr::from_raw(fp),
+            },
+            cause: None,
+            backtrace,
+        })
     }
 }
 
-/// 沿帧指针链收 ra，返回断链处帧地址（一帧未走则返回入参）。
-fn chain(
-    stack: &mut Stack,
-    trail: &mut Trail,
-    frame: usize,
-    floor: usize,
-    ceiling: usize,
-) -> usize {
-    let mut f = frame;
-    let mut broke = frame;
-    while !trail.full() && f >= floor && f <= ceiling {
-        broke = f;
-        let Some((caller, ra)) = stack.pair(f) else {
-            break;
-        };
-        trail.push(ra);
-        if caller == 0 || caller <= f {
-            break;
-        }
-        f = caller;
-    }
-    broke
-}
-
-/// 区间内按字步进，收筛法认可的候选。
-fn scan(stack: &mut Stack, trail: &mut Trail, sift: &Sift, from: usize, to: usize) {
-    let mut a = from;
-    while a < to && !trail.full() {
-        match stack.word(a) {
-            Some(w) => {
-                if (sift.code)(w) {
-                    trail.push(w);
-                }
-                a += 8;
-            }
-            None if sift.gaps => a = (a & !(PAGE_SIZE - 1)) + PAGE_SIZE,
-            None => break,
-        }
-    }
-}
-
-/// 内核现场：起点取归巢落盘的原始 sp/fp，未归巢（crash_scene! 直调）读当前。
-///
-/// 无符号表 = 仅 hex：chain 跟 fp 链收 ra 即可（不依赖符号筛法）；扫描步
-///（按代码地址域筛候选）跳过——没有符号表就判不了「属本域代码」。
-fn ktrace() -> Option<Trace> {
-    let table = kernel()?.elftable.clone();
-    let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
-        (0, 0) => {
-            let (sp, fp): (usize, usize);
-            // SAFETY: 只读本 hart 当前 sp/s0，无副作用。
-            unsafe {
-                asm!("mv {0}, sp", out(reg) sp);
-                asm!("mv {0}, s0", out(reg) fp);
-            }
-            (sp, fp)
-        }
-        s => s,
-    };
-    let ceiling = match crate::runtime::switcher::trap::trap_stack_hart(sp)
-        .map(crate::runtime::switcher::trap::trap_stack_edge)
-    {
-        Some(edge) => sp.saturating_add(SPAN).min(edge.as_usize()),
-        None => sp.saturating_add(SPAN),
-    };
-    let mut stack = Stack::kernel();
-    let mut trail = Trail::new();
-    let broke = chain(&mut stack, &mut trail, fp, sp + 16, ceiling);
-    if let Some(table) = table.as_deref() {
-        let sift = Sift {
-            code: &|w| table.lookup(VirtAddr::from_raw(w)).is_some(),
-            gaps: false,
-        };
-        scan(&mut stack, &mut trail, &sift, broke + 8, ceiling);
-    }
-    Some(Trace { trail, table })
-}
-
-/// 用户现场：running 任务的用户 trap 帧存着最近一次用户态 sp/fp。
-///
-/// 无符号表 = 仅 hex：同 ktrace——chain 收 ra 即出轨迹，扫描依赖域筛法跳。
-fn utrace() -> Option<Trace> {
-    let info = ident()?;
-    let table = info.elftable();
-    let pa = info.trap()?;
-    // SAFETY: Live 轴 = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM
-    // 恒等映射）；崩溃现场只读，其余核已冻结。
-    let frame = unsafe { &*(pa.as_usize() as *const TrapContext) };
-    if frame.sepc.is_kernel() {
-        return None;
-    }
-    let sp = frame.gpr.x(Gprs::SP);
-    if sp == 0 {
-        return None;
-    }
-    let fp = frame.gpr.x(Gprs::S0);
-    let ceiling = sp.saturating_add(SPAN);
-    let mut stack = Stack::user(frame.user_satp.ppn());
-    let mut trail = Trail::new();
-    let broke = chain(&mut stack, &mut trail, fp, sp + 16, ceiling);
-    if let Some(table) = table.as_deref() {
-        let sift = Sift {
-            code: &|w| table.lookup(VirtAddr::from_raw(w)).is_some(),
-            gaps: true,
-        };
-        scan(&mut stack, &mut trail, &sift, broke + 8, ceiling);
-    }
-    Some(Trace { trail, table })
-}
+// ── 组稿（适配层）────────────────────────────────────────────────────
 
 /// stval 解码：按 scause 的语义注解（fault 地址 / 指令位 / 断点地址）；
 /// 无有价值语义时输出 Unknown（中断 / ecall / 保留码 stval 均无定义）。
@@ -507,9 +483,113 @@ fn gpr_rows() -> Vec<Vec<Option<String>>> {
     rows
 }
 
+/// [`FrameKind`] 的单字符标签（K 列用；Root/Kernel/User/Unknown → R/K/U/?）。
+fn kind_label(k: FrameKind) -> &'static str {
+    match k {
+        FrameKind::Root => "R",
+        FrameKind::Kernel => "K",
+        FrameKind::User => "U",
+        FrameKind::Unknown => "?",
+    }
+}
+
+/// Scene 快照行集（首行表头）：hart / task / pc / sp / fp / cause。
+///
+/// 让 `Scene` 的快照字段（`hart`/`task`/`reg`/`cause`）真正落列——`Scene` 是
+/// 「现场」，此处就是现场身份与当前点的渲染（`csr` 段首行的现场戳源头）。
+fn scene_rows(scene: &Scene) -> Vec<Vec<Option<String>>> {
+    let mut rows: Vec<Vec<Option<String>>> = vec![vec![
+        Some("scene".into()),
+        Some("hart".into()),
+        Some("task".into()),
+        Some("pc".into()),
+        Some("sp".into()),
+        Some("fp".into()),
+        Some("cause".into()),
+    ]];
+    let cause = scene.cause.map(|c| format!("{c:?}")).unwrap_or_else(|| "-".into());
+    rows.push(vec![
+        Some("edge".into()),
+        Some(scene.hart.to_string()),
+        Some(
+            scene
+                .task
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "-".into()),
+        ),
+        Some(hex(scene.reg.pc.as_usize())),
+        Some(hex(scene.reg.sp.as_usize())),
+        Some(hex(scene.reg.fp.as_usize())),
+        Some(cause),
+    ]);
+    rows
+}
+
+/// 回溯行集（富化格式）：每帧打 `kind | pc hex | sym | space | sp | fp`。
+///
+/// `Scene` 的 `Frame` 存了 sp/fp/space 语义字段 + [`FrameResolver::classify`] 逐帧
+/// 计算的 `kind` —— **富化输出**让这些模型字段真正被消费（而非只打 pc、字段闲置）。
+/// 列集的可读性取舍：`kind`（域穿越一眼可见）、`space`（用户态多任务共享空间）、
+/// `sp`/`fp`（栈位置）三组语义字段都落列，`pc` 仍是核心定位点。
+fn backtrace_rows(scene: &Scene, head: &str) -> Vec<Vec<Option<String>>> {
+    let resolver = FrameResolver::new(scene.space);
+    let frames = scene.backtrace.frames();
+    // 取符号表：内核场景取内核团队表，用户场景取当前任务表。
+    let table: Option<Arc<ElfTable>> = if scene.space == SpaceKind::Kernel {
+        kernel().and_then(|k| k.elftable.clone())
+    } else {
+        ident().and_then(|i| i.elftable())
+    };
+    if let Some(table) = table.as_deref() {
+        let mut rows: Vec<Vec<Option<String>>> = vec![vec![
+            Some(head.into()),
+            Some("kind".into()),
+            Some("pc".into()),
+            Some("sym".into()),
+            Some("space".into()),
+            Some("sp".into()),
+            Some("fp".into()),
+        ]];
+        for (i, f) in frames.iter().enumerate() {
+            let kind = resolver.classify(f.pc);
+            rows.push(vec![
+                Some(format!("#{i}")),
+                Some(kind_label(kind).into()),
+                Some(hex(f.pc.as_usize())),
+                Some(elftable::symbol(f.pc, Some(table))),
+                Some(format!("{:?}", f.space)),
+                Some(hex(f.sp.as_usize())),
+                Some(f.fp.map(|v| hex(v.as_usize())).unwrap_or_else(|| "-".into())),
+            ]);
+        }
+        rows
+    } else {
+        let mut rows: Vec<Vec<Option<String>>> = vec![vec![
+            Some(head.into()),
+            Some("kind".into()),
+            Some("pc".into()),
+            Some("space".into()),
+            Some("sp".into()),
+            Some("fp".into()),
+        ]];
+        for (i, f) in frames.iter().enumerate() {
+            let kind = resolver.classify(f.pc);
+            rows.push(vec![
+                Some(format!("#{i}")),
+                Some(kind_label(kind).into()),
+                Some(hex(f.pc.as_usize())),
+                Some(format!("{:?}", f.space)),
+                Some(hex(f.sp.as_usize())),
+                Some(f.fp.map(|v| hex(v.as_usize())).unwrap_or_else(|| "-".into())),
+            ]);
+        }
+        rows
+    }
+}
+
 /// 统一崩溃现场组稿：CSR 三列表 + GPR 两列表 + 回溯表（内核栈 kbt + 用户栈 ubt）。
 /// 末尾倒出每 hart 最近事件窗口。
-pub fn dump_crash(r: &mut Report) {
+pub fn dump(r: &mut Report) {
     // 探针：panic 现场 drop-in 完整性体检——越界写破坏用户符号表/相邻活块
     // 时自报。两者均纯读零分配、只经 putln! 直写控制台——panic 现场安全，
     // 且不截断本次转储。
@@ -526,22 +606,30 @@ pub fn dump_crash(r: &mut Report) {
         let _ = crate::memory::allocator::fence::ledger::LEDGER.sweep_canaries();
     }
     // 投稿：CSR/GPR/回溯段入报告（[scene] 标题挂首段，其余段空标题同段落）。
-    r.paragraph(
-        "csr",
-        Some(format!(
-            "[scene] crash scene, hart {}",
-            crate::machine::hart_id()
-        )),
-    )
-    .items
-    .extend(csr_rows());
+    let kernel_scene = Scene::capture_kernel();
+    let hart = kernel_scene.as_ref().map(|s| s.hart).unwrap_or_else(crate::machine::hart_id);
+    let scene_head = kernel_scene
+        .as_ref()
+        .and_then(|s| s.task.map(|t| format!("[scene] crash scene, hart {hart}, task #{t}")))
+        .unwrap_or_else(|| format!("[scene] crash scene, hart {hart}"));
+    r.paragraph("csr", Some(scene_head))
+        .items
+        .extend(csr_rows());
+    // Scene 快照行（hart/task/pc/sp/fp/cause）并入 csr 段最前。
+    if let Some(scene) = kernel_scene.as_ref() {
+        r.paragraph("scene", None).items.extend(scene_rows(scene));
+    }
     r.paragraph("gpr", None).items.extend(gpr_rows());
 
-    if let Some(t) = ktrace() {
-        r.paragraph("kbt", None).items.extend(t.rows("kbt"));
+    if let Some(scene) = kernel_scene.as_ref() {
+        r.paragraph("kbt", None)
+            .items
+            .extend(backtrace_rows(scene, "kbt"));
     }
-    if let Some(t) = utrace() {
-        r.paragraph("ubt", None).items.extend(t.rows("ubt"));
+    if let Some(scene) = Scene::capture_user() {
+        r.paragraph("ubt", None)
+            .items
+            .extend(backtrace_rows(&scene, "ubt"));
     }
 
     // 每 hart 最近事件窗口（人读对照）。
@@ -554,7 +642,7 @@ pub fn dump_crash(r: &mut Report) {
 macro_rules! crash_scene {
     () => {{
         let mut __r = $crate::runtime::diagnose::report::Report::default();
-        $crate::runtime::diagnose::scene::dump_crash(&mut __r);
+        $crate::runtime::diagnose::scene::dump(&mut __r);
         let __sealed = __r.seal();
         let mut __sink = $crate::console::Sink;
         $crate::runtime::diagnose::render::render(__sealed, &mut __sink, 2);

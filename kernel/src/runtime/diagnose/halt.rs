@@ -206,7 +206,7 @@ extern "C" fn info(info: &PanicInfo) -> ! {
     crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
         crate::runtime::diagnose::trace::HaltEvent::Panic,
     ));
-    crate::runtime::diagnose::scene::dump_crash(&mut report);
+    crate::runtime::diagnose::scene::dump(&mut report);
 
     let sealed = report.seal();
     crate::putln!();
