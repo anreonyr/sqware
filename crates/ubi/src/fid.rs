@@ -189,6 +189,41 @@ pub enum ControlCall {
     Backtrace { buf: usize, frames: usize },
 }
 
+/// 服务调用（class 7）—— 用户态向内核驻留服务发起连接 / 请求。
+///
+/// 与 `ipc` 无涉：`Service` 是 sqware 词族。连接发放由内核处理（类似 DHCP 服务器）：
+/// 用户经 `ServiceConnect` 拿到内核驻留服务 Hole 的 Pie，重建句柄后收发数据。
+#[derive(Envcall)]
+#[call(class = 7)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServiceCall {
+    /// 拿 dispatcher 的 req/rep Pies（service 参数当前忽照；，固定返回 dispatcher）。
+    /// dispatcher 沿 req/rep hole 处理 service name 查找，将 Pies 进 caller.pies。
+    #[ret((PieToken, PieToken))]
+    Connect { service: ServiceId },
+}
+
+/// 服务号（dispatcher 按 name 查找，ServiceId 是 uABI 边界标识）。
+///
+/// **0 保留**（未来 dispatcher 可服务 0——目前，
+/// dispatcher 不接 ServiceId，Service::Connect 固定返 dispatcher Pies）。
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServiceId {
+    /// echo 服务（字节 +1 测试）。
+    Echo = 1,
+    // 后续：Logger = 2, Fs = 3, ...
+}
+
+impl ServiceId {
+    /// 服务名（UTF-8，null-padded，dispatcher 查找用）。
+    pub const fn name_bytes(self) -> &'static [u8] {
+        match self {
+            ServiceId::Echo => b"echo\0",
+        }
+    }
+}
+
 /// 环境调用号聚合（内核侧解码总入口）。
 ///
 /// `from_wire(slot, regs)` 按 class（高 32 位）分派到各域的 `from_wire`，得到
@@ -203,6 +238,7 @@ pub enum EnvCall {
     Chrono(ChronoCall),
     Mail(MailCall),
     Control(ControlCall),
+    Service(ServiceCall),
 }
 
 impl EnvCall {
@@ -217,6 +253,7 @@ impl EnvCall {
             4 => Ok(EnvCall::Chrono(ChronoCall::from_wire(slot, regs)?)),
             5 => Ok(EnvCall::Mail(MailCall::from_wire(slot, regs)?)),
             6 => Ok(EnvCall::Control(ControlCall::from_wire(slot, regs)?)),
+            7 => Ok(EnvCall::Service(ServiceCall::from_wire(slot, regs)?)),
             _ => Err(crate::wire::Decode::BadSlot),
         }
     }

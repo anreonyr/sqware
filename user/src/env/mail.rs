@@ -6,10 +6,15 @@
 //! 方案 3（typed payload）：`MailCall::X{ .. }.call()?` 直接得 `MailCallRet`，
 //! 参数在构造时类型安全（PieToken/VirtAddr/TaskId/Permission），返回值经 from_pair
 //! 蒸馏为 Ret 载荷。裸函数层只封 Ret、零业务逻辑。
+//!
+//! push/pull 的阻塞：内核 push/pull 槽满/槽空返 Busy；本层 sleep+retry 配合
+//! 内核侧 wake 实现"看起来阻塞"（轮询粒度 2ms；唤醒走 messenger::wake）。
 
 use ubi::{MailCall, MailCallRet, PieToken, EnvResult, VirtAddr};
 
-/// Hole 单消息字节数（与内核侧 `HOLE_MSG_LEN` 一致）。
+use crate::env::room;
+
+/// hole 单消息字节数（与内核侧 `HOLE_MSG_LEN` 一致）。
 pub const HOLE_MSG_LEN: usize = 64;
 
 // ── 裸函数层（envcall 转发，零业务逻辑）──
@@ -144,12 +149,24 @@ impl HolePie {
         Self { token }
     }
 
+    /// 写消息：槽满时短 spin 等 wake（μs 级）。
     pub fn push(&self, msg: &[u8; HOLE_MSG_LEN]) -> EnvResult<()> {
-        push(self.token, msg as *const [u8; HOLE_MSG_LEN])
+        loop {
+            if push(self.token, msg as *const [u8; HOLE_MSG_LEN]).is_ok() {
+                return Ok(());
+            }
+            for _ in 0..100 { core::hint::spin_loop(); }
+        }
     }
 
+    /// 取消息：槽空时短 spin 等 wake（μs 级）。
     pub fn pull(&self, buf: &mut [u8; HOLE_MSG_LEN]) -> EnvResult<()> {
-        pull(self.token, buf as *mut [u8; HOLE_MSG_LEN])
+        loop {
+            if pull(self.token, buf as *mut [u8; HOLE_MSG_LEN]).is_ok() {
+                return Ok(());
+            }
+            for _ in 0..100 { core::hint::spin_loop(); }
+        }
     }
 
     pub fn seal(&self) -> EnvResult<()> {

@@ -10,7 +10,7 @@ use core::time::Duration;
 use crate::runtime::switcher::trampoline::restore;
 use crate::runtime::switcher::trap::{persist, trap_stack_edge};
 
-use super::utask::{park as sched_park, reap as sched_reap, starve as sched_starve};
+use super::utask::{park as sched_park, park_mail as sched_park_mail, reap as sched_reap, starve as sched_starve};
 
 /// 内核任务睡眠：存帧 → park 核心 → 切走；唤醒后恢复于调用点。
 ///
@@ -84,6 +84,67 @@ pub extern "C" fn park(_duration: Duration) {
         "jalr  t0",                          // 永不返回
         persist = sym persist,
         sched_park = sym sched_park,
+        restore = sym restore,
+    );
+}
+
+/// 内核任务事件等待：存帧 → messenger::park_mail → 切走；对方 wake(key) 解锁。
+/// `key` 经裸 usize ABI（与 wait 同族）。
+#[allow(improper_ctypes_definitions)]
+#[unsafe(naked)]
+pub extern "C" fn wait_mail(_key: usize) {
+    naked_asm!(
+        "csrc sstatus, 2",
+        "csrrw sp, sscratch, sp",
+        "sd    x1,  0x38(sp)",
+        "sd    x3,  0x48(sp)",
+        "sd    x4,  0x50(sp)",
+        "sd    x5,  0x58(sp)",
+        "sd    x6,  0x60(sp)",
+        "sd    x7,  0x68(sp)",
+        "sd    x8,  0x70(sp)",
+        "sd    x9,  0x78(sp)",
+        "sd    x10, 0x80(sp)",
+        "sd    x11, 0x88(sp)",
+        "sd    x12, 0x90(sp)",
+        "sd    x13, 0x98(sp)",
+        "sd    x14, 0xa0(sp)",
+        "sd    x15, 0xa8(sp)",
+        "sd    x16, 0xb0(sp)",
+        "sd    x17, 0xb8(sp)",
+        "sd    x18, 0xc0(sp)",
+        "sd    x19, 0xc8(sp)",
+        "sd    x20, 0xd0(sp)",
+        "sd    x21, 0xd8(sp)",
+        "sd    x22, 0xe0(sp)",
+        "sd    x23, 0xe8(sp)",
+        "sd    x24, 0xf0(sp)",
+        "sd    x25, 0xf8(sp)",
+        "sd    x26, 0x100(sp)",
+        "sd    x27, 0x108(sp)",
+        "sd    x28, 0x110(sp)",
+        "sd    x29, 0x118(sp)",
+        "sd    x30, 0x120(sp)",
+        "sd    x31, 0x128(sp)",
+        "csrr  t0, sscratch",
+        "sd    t0,  0x40(sp)",
+        "csrr  t0, sstatus",
+        "andi  t0, t0, -3",
+        "ori   t0, t0, (1 << 5) | (1 << 8)",
+        "sd    t0,  0x130(sp)",
+        "sd    ra,  0x138(sp)",
+        "mv    s0, a0",                  // ← s0 = key（与 ktask::park 同位置）
+        "mv    a0, sp",
+        "ld    sp,  0x08(sp)",
+        "la    t0, {persist}",
+        "jalr  t0",
+        "mv    a0, s0",                  // a0 = key（s0 由 persist 保全）
+        "la    t0, {sched_park_mail}",
+        "jalr  t0",                       // a0 = next PA
+        "la    t0, {restore}",
+        "jalr  t0",
+        persist = sym persist,
+        sched_park_mail = sym sched_park_mail,
         restore = sym restore,
     );
 }

@@ -385,6 +385,12 @@ impl FrameInner {
             while power < self.freelist.len() {
                 let buddy = Self::buddy_index(index, power);
 
+                // 边界检查：buddy 可能超出 free 区（pagemeta 长度非 2 的幂，末块
+                // 的 XOR 伙伴会越界）。此时该伙伴不存在，不能合并——直接 break。
+                if buddy >= self.pagemeta.len() {
+                    break;
+                }
+
                 if !self.pagemeta[buddy]
                     .as_ref()
                     .is_some_and(|m| m.free && m.power as usize == power)

@@ -52,3 +52,13 @@ pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
 pub fn wake(key: WaitKey) -> bool {
     messenger::wake(key)
 }
+
+/// ktask 事件等待入口（asm 包装 park_mail）：pend 消费 → 续跑；否则阻塞挂起。
+/// 同 [`wait`] 但用于内核任务上下文。
+pub fn park_mail(key: WaitKey) -> usize {
+    match messenger::park_mail(key) {
+        Handoff::Resume => run(),
+        Handoff::Switch(pa) => pa,
+        Handoff::Idle => run(),
+    }
+}

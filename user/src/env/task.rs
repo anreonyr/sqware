@@ -20,6 +20,15 @@ pub fn spawn_task(team: TeamId, entry: usize, arg: usize) -> EnvResult<TaskId> {
     }
 }
 
+/// 当前 task id（0 = 无上下文）。
+pub fn self_id() -> EnvResult<TaskId> {
+    let r = UnitCall::SelfId.call()?;
+    match r {
+        UnitCallRet::SelfId(id) => Ok(id),
+        _ => unreachable!(),
+    }
+}
+
 /// 溯源：生我者的 task id（0 = 顶级域 / 父已亡）。
 pub fn sire() -> EnvResult<TaskId> {
     let r = UnitCall::Sire.call()?;

@@ -16,6 +16,7 @@
 //!   sleep — 阻塞 N 毫秒（RoomCall::Park）
 //!   spawn — 派一个算 0..N 的闭包子任务并 join（TaskCall::Spawn）
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
+//!   req   — Service::connect 经内核发放的 Hole 自 echo（验证内核发能力给用户）
 //!   exit  — 退出 shell（RoomCall::Reap）
 
 extern crate alloc;
@@ -30,6 +31,7 @@ use user::core::task;
 use user::env::chrono::{self, clock};
 use user::env::mail::HolePie;
 use user::env::room::{self, sleep};
+use user::env::service::Service;
 use user::env::task::{heir_at, heir_count};
 use user::term::{Color, Readline, Terminal};
 
@@ -43,7 +45,7 @@ fn split(line: &str) -> Vec<String> {
 fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
-            term.writeline("help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / exit");
+            term.writeline("help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / exit");
         }
         "clock" => {
             let (s, n) = clock().unwrap_or((0, 0));
@@ -105,6 +107,33 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
                 core::str::from_utf8(&buf).unwrap_or("?")
             ));
             pie.seal().ok();
+        }
+        "req" => {
+            // Service::connect(ServiceId::Echo) 经 dispatcher lookup 拿 echo svc Pies，
+            // 然后 echo 自验证（push 后 pull 回，字节 +1）。
+            let svc = match Service::connect(ubi::ServiceId::Echo) {
+                Ok(s) => s,
+                Err(e) => {
+                    term.writeline(&format!("req connect err: {e:?}"));
+                    return true;
+                }
+            };
+            let txt = args.first().map(|s| s.as_str()).unwrap_or("hello-service");
+            let mut msg = [0u8; 64];
+            let bytes = txt.as_bytes();
+            let n = bytes.len().min(63);
+            msg[..n].copy_from_slice(&bytes[..n]);
+            match svc.echo(&msg) {
+                Ok(got) => {
+                    term.writeline(&format!(
+                        "req echo -> {:?}",
+                        core::str::from_utf8(&got).unwrap_or("?")
+                    ));
+                }
+                Err(e) => {
+                    term.writeline(&format!("req echo err: {e:?}"));
+                }
+            }
         }
         "exit" => {
             term.writeline("bye");

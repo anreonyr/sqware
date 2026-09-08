@@ -18,7 +18,8 @@ use core::time::Duration;
 use alloc::sync::Arc;
 
 use ubi::{
-    ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, UnitCall,
+    ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, ServiceCall,
+    UnitCall,
 };
 
 use crate::memory::PAGE_SIZE;
@@ -84,15 +85,15 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         frame.gpr.x(Gprs::A4),
         frame.gpr.x(Gprs::A5),
     ];
-    let envcall = match EnvCall::from_wire(number, &regs) {
-        Ok(c) => c,
-        Err(_) => panic!("invalid envcall number: {number}"),
-    };
     trace::note(EventKind::Env(EnvEvent::Call {
         call: number,
         arg: frame.gpr.x(Gprs::A0),
     }));
     frame.sepc += 4;
+    let envcall = match EnvCall::from_wire(number, &regs) {
+        Ok(c) => c,
+        Err(_) => panic!("invalid envcall number: {number}"),
+    };
     match envcall {
         EnvCall::Room(RoomCall::Starve) => return starve() as *mut TrapContext,
         EnvCall::IO(IOCall::Put { len, buf }) => {
@@ -413,7 +414,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     if !mail::copy_in(&ident.team.space, &mut msg, va) {
                         Err(GateError::Denied)
                     } else {
-                        mail::hole::push(&meta, &msg)
+                        mail::hole::try_push(&meta, &msg)
                     }
                 }
                 Some(Err(e)) => Err(e),
@@ -445,7 +446,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     _ => None,
                 }
             }) {
-                Some(Ok(meta)) => match mail::hole::pull(&meta) {
+                Some(Ok(meta)) => match mail::hole::try_pull(&meta) {
                     Ok(m) => {
                         if !mail::copy_out(&ident.team.space, &m, va) {
                             Err(GateError::Denied)
@@ -672,6 +673,48 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     Err(e) => e.code() as usize,
                 },
             );
+        }
+        EnvCall::Service(ServiceCall::Connect { service: _ }) => {
+            // 给 caller 两个 Pie：DISPATCHER_REQ（caller push lookup / dispatcher pull）
+            // + DISPATCHER_REP（dispatcher push reply / caller pull）。
+            // 用户拿这两个 Pies 走 lookup 拿目标服务的 Pies。
+            // envcall 返回 (req_token, rep_token)：a0 = req, a1 = rep。
+            let r = (|| -> Result<(u64, u64), GateError> {
+                let task = current().running_task().ok_or(GateError::Denied)?;
+                let current_id = task.ident.id;
+                let (req_id, req_meta) = {
+                    let (id, meta) = crate::boot::DISPATCHER_REQ.get().ok_or(GateError::Denied)?;
+                    (*id, meta.clone())
+                };
+                let (rep_id, rep_meta) = {
+                    let (id, meta) = crate::boot::DISPATCHER_REP.get().ok_or(GateError::Denied)?;
+                    (*id, meta.clone())
+                };
+                let req_pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
+                    req_id,
+                    Permission::READ | Permission::WRITE,
+                    Some(current_id),
+                    alloc::sync::Arc::downgrade(&req_meta),
+                );
+                let req_tk = req_pie.token();
+                let rep_pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
+                    rep_id,
+                    Permission::READ | Permission::WRITE,
+                    Some(current_id),
+                    alloc::sync::Arc::downgrade(&rep_meta),
+                );
+                let rep_tk = rep_pie.token();
+                let mut pies = task.pies.lock();
+                pies.push(AnyPie::Hole(req_pie));
+                pies.push(AnyPie::Hole(rep_pie));
+                Ok((req_tk, rep_tk))
+            })();
+            let (a0, a1) = match r {
+                Ok((req, rep)) => (req as usize, rep as usize),
+                Err(e) => (e.code() as usize, 0),
+            };
+            frame.gpr.set_x(Gprs::A0, a0);
+            frame.gpr.set_x(Gprs::A1, a1);
         }
     };
     frame as *mut TrapContext

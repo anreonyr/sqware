@@ -13,9 +13,9 @@ pub mod wire;
 
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, IOCall, IOCallRet,
-    MailCall, MailCallRet, MemoryCall, MemoryCallRet, RoomCall, RoomCallRet, UnitCall,
-    UnitCallRet,
+    MailCall, MailCallRet, MemoryCall, MemoryCallRet, RoomCall, RoomCallRet, ServiceCall,
+    ServiceCallRet, ServiceId, UnitCall, UnitCallRet,
 };
 pub use permission::Permission;
-pub use ucall::{EnvError, EnvResult};
+pub use ucall::{EnvError, EnvResult, make_err};
 pub use wire::{Decode, FromPair, PieToken, TaskId, TeamId, VirtAddr, Wire};

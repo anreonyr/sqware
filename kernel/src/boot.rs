@@ -19,7 +19,10 @@ use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, restore};
 use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
 use crate::work::room::scheduler;
+use crate::work::mail::HoleMeta;
+use crate::work::mail::memo::ResourceId;
 use crate::work::unit::team::kernel;
+use crate::lock::OnceLock;
 
 global_asm!(
     ".section .text.boot",
@@ -195,6 +198,150 @@ fn spawn_demos() -> Result<(), MapError> {
 
     #[cfg(feature = "audit")]
     kernel().expect("kernel team not initialized").space.audit();
+
+    // 服务系统：dispatcher 闭包独占持服务注册表 Arc；服务（echo）注册到该表。
+    spawn_services()?;
+
+    Ok(())
+}
+
+// ── 服务系统：dispatcher + 已注册服务（echo） ──
+
+/// Dispatcher 的 req/rep hole（user → dispatcher / dispatcher → user）。
+/// 与 echo 的 ECHO_REQ/REP 不同：dispatcher 走名字查找，echo 走服务数据通道。
+pub(crate) static DISPATCHER_REQ: OnceLock<(ResourceId, alloc::sync::Arc<HoleMeta>)> = OnceLock::new();
+pub(crate) static DISPATCHER_REP: OnceLock<(ResourceId, alloc::sync::Arc<HoleMeta>)> = OnceLock::new();
+
+fn spawn_services() -> Result<(), MapError> {
+    use crate::work::mail::hole;
+    use crate::service::dispatch;
+    let kt = kernel().expect("kernel team not initialized");
+
+    // 1. dispatcher req/rep hole
+    let (dreq, dreq_id) = hole::meta().map_err(|_| MapError::OutOfMemory)?;
+    let (drep, drep_id) = hole::meta().map_err(|_| MapError::OutOfMemory)?;
+    DISPATCHER_REQ.get_or_init(|| (dreq_id, dreq.clone()));
+    DISPATCHER_REP.get_or_init(|| (drep_id, drep.clone()));
+
+    // 2. echo svc req/rep hole
+    let (ereq, ereq_id) = hole::meta().map_err(|_| MapError::OutOfMemory)?;
+    let (erep, erep_id) = hole::meta().map_err(|_| MapError::OutOfMemory)?;
+
+    // 3. 服务注册表：显式 Arc，clone 给 dispatcher 闭包捕获（独占持有）
+    let registry = dispatch::new_registry();
+    dispatch::register(
+        &registry,
+        "echo",
+        ereq_id,
+        alloc::sync::Arc::downgrade(&ereq),
+        erep_id,
+        alloc::sync::Arc::downgrade(&erep),
+    );
+
+    // 4. spawn echo svc（按需启用，wait_mail park）
+    kt.task()
+        .name("echo-svc")
+        .closure(move || {
+            #[inline(never)]
+            fn svc(req: alloc::sync::Arc<HoleMeta>, rep: alloc::sync::Arc<HoleMeta>) -> ! {
+                use crate::work::room::messenger::WaitKey;
+                loop {
+                    let pull_k = hole::pull_key(&req);
+                    crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(pull_k));
+                    let Ok(pulled) = hole::pull(&req) else { continue; };
+                    let mut reply = pulled;
+                    for b in reply.iter_mut() {
+                        *b = b.wrapping_add(1);
+                    }
+                    while hole::push(&rep, &reply).is_err() {
+                        let push_k = hole::push_key(&rep);
+                        crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(push_k));
+                    }
+                }
+            }
+            svc(ereq, erep)
+        })
+        .map(|_| ())?;
+
+    // 5. spawn dispatcher task（独占持 registry Arc——闭包生命周期 = registry 生命周期）
+    kt.task()
+        .name("dispatcher")
+        .closure(move || {
+            #[inline(never)]
+            fn svc(
+                dreq: alloc::sync::Arc<HoleMeta>,
+                drep: alloc::sync::Arc<HoleMeta>,
+                reg: alloc::sync::Arc<dispatch::ServiceRegistry>,
+            ) -> ! {
+                use crate::work::room::messenger::WaitKey;
+                loop {
+                    // park 直到 caller 推 lookup 请求
+                    let pull_k = hole::pull_key(&dreq);
+                    crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(pull_k));
+                    let Ok(req_msg) = hole::pull(&dreq) else { continue; };
+                    let sender_id = u64::from_le_bytes(
+                        req_msg[0..8].try_into().unwrap_or([0u8; 8]),
+                    ) as usize;
+
+                    // 解析：[0..8] sender_task_id, [8..64] name bytes
+                    let name_bytes = &req_msg[8..];
+                    let name_len = name_bytes.iter().position(|&b| b == 0).unwrap_or(name_bytes.len());
+                    let name = core::str::from_utf8(&name_bytes[..name_len]).unwrap_or("");
+
+                    // 构造回复（默认全 0 = 未找到）
+                    let mut reply = [0u8; crate::work::mail::HOLE_MSG_LEN];
+                    if let Some(svcs) = dispatch::lookup(&reg, name) {
+                        if let Some(svc) = svcs.into_iter().next() {
+                            // 找 caller task，建 Pies 塞进 caller.pies
+                            if let Some(sender_weak) =
+                                crate::work::room::scheduler::core::lookup_task_by_id_weak(sender_id)
+                            {
+                                if let Some(sender) = sender_weak.upgrade() {
+                                    let current_id = sender.ident.id;
+                                    if let (Some(req_meta), Some(rep_meta)) =
+                                        (svc.req.upgrade(), svc.rep.upgrade())
+                                    {
+                                            use crate::work::unit::gate::{new_pie, AnyPie, Permission};
+                                        // caller push req / echo pull req 都需 READ|WRITE
+                                        // caller pull rep / echo push rep 都需 READ|WRITE
+                                        let req_pie: crate::work::unit::gate::Pie<HoleMeta> =
+                                            new_pie(
+                                                svc.req_id,
+                                                Permission::READ | Permission::WRITE,
+                                                Some(current_id),
+                                                alloc::sync::Arc::downgrade(&req_meta),
+                                            );
+                                        let rep_pie: crate::work::unit::gate::Pie<HoleMeta> =
+                                            new_pie(
+                                                svc.rep_id,
+                                                Permission::READ | Permission::WRITE,
+                                                Some(current_id),
+                                                alloc::sync::Arc::downgrade(&rep_meta),
+                                            );
+                                        let req_tk = req_pie.token();
+                                        let rep_tk = rep_pie.token();
+                                        reply[0..8].copy_from_slice(&req_tk.to_le_bytes());
+                                        reply[8..16].copy_from_slice(&rep_tk.to_le_bytes());
+                                        let mut pies = sender.pies.lock();
+                                        pies.push(AnyPie::Hole(req_pie));
+                                        pies.push(AnyPie::Hole(rep_pie));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 推回 reply（dispatcher → caller）
+                    while hole::push(&drep, &reply).is_err() {
+                        let push_k = hole::push_key(&drep);
+                        crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(push_k));
+                    }
+                }
+            }
+            svc(dreq, drep, registry)
+        })
+        .map(|_| ())?;
+
     Ok(())
 }
 

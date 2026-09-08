@@ -12,4 +12,10 @@ debug = true
 panic = "abort"
 
 [profile.release]
+# opt-level=2/3：WaitKey::compose 在闭包内联 push_key/pull_key 时 mask
+# 计算会被 size 优化多算一次 +1（错联到 0x1000000000000）→ 修法见 §13.10
+# A 段：抽 `#[inline(never)] fn low48(va) -> usize` helper 承担 mask 计算，
+# 强制每次独立，pull_key 的 +1 在调用点 `addi a0, a0, 17` 做。
+# 端到端 5/5 跑通。
+opt-level = 2
 debug = 1
