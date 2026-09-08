@@ -51,13 +51,29 @@ impl WaitKey {
     /// 合成 = asid 高 16 位 || 用户 VA 低 48 位。单射需 va < 2^48（Sv39/48 满足；
     /// Sv57 若启用需重定布局）。与 fence::key 同源意：跨空间同 VA 不得混淆。
     pub fn compose(asid: usize, va: usize) -> WaitKey {
-        WaitKey(((asid & 0xFFFF) << 48) | (va & ((1usize << 48) - 1)))
+        // 用 #[inline(never)] helper 承担 mask 计算（见 §13.10 A 待办方向 A）：
+        // size 优化在闭包多次内联 compose 时，会把 `+1`（来自 pull_key 的
+        // `| 1` 折叠）算在 mask 上 → mask 错联。helper 强制每次调用独立计算。
+        WaitKey(((asid & 0xFFFF) << 48) | low48(va))
     }
+}
 
+#[inline(never)]
+fn low48(va: usize) -> usize {
+    // 0x0000_FFFF_FFFF_FFFF 字面量替代 ((1usize << 48) - 1)：让编译器视作
+    // 已折叠常量；helper 整体 inline(never)，杜绝 size 优化把 mask 寄存器
+    // 跨调用复用。
+    va & 0x0000_FFFF_FFFF_FFFFusize
+}
+
+impl WaitKey {
     /// 直接以本体值构造事件键（dock 键路径：`DOCK_KEY_TAG | id` 全局唯一，不经
     /// compose——调用方（envcall 边界）已按标记位分流）。
     pub fn from_raw(raw: usize) -> WaitKey {
         WaitKey(raw)
+    }
+    pub fn into_raw(self) -> usize {
+        self.0
     }
 }
 
@@ -244,6 +260,56 @@ pub fn wait(key: WaitKey, dur: Duration) -> Handoff {
         wait_times().lock().insert(handle, key);
         timer::tock(handle, wake_at);
     }
+
+    match next_pa {
+        Some(pa) => Handoff::Switch(pa),
+        None => Handoff::Idle,
+    }
+}
+
+/// park_mail：永久 park（无超时），BlockReason::Mail；只能被 `wake(key)` 解锁。
+///
+/// 与 `wait(key, Duration::MAX)` 行为一致但语义不同：Mail 标记"事件等待由 IPC
+/// 对方唤醒"，killed 时 messenger 的 BlockReason::Mail 分支直接回收（无超时）。
+/// 用于 hole 的 push/pull_blocking：槽不可用时让出 CPU，对方 push/pull 完成
+/// 后 `wake` 解锁。
+pub fn park_mail(key: WaitKey) -> Handoff {
+    let cond = current();
+
+    // pend 消费路径（与 wait 同）
+    {
+        let mut sites = wait_sites(site_shard(key)).lock();
+        let site = sites.entry(key).or_insert_with(WaitSite::new);
+        if site.pend {
+            site.pend = false;
+            return Handoff::Resume;
+        }
+    }
+
+    let (mut task, next_pa) = cond.disown_and_install_next();
+    trace::note(EventKind::Room(RoomEvent::Wait {
+        tid: task.ident.id,
+        key: key.0,
+    }));
+    // 同 wait 二次检查窗口（disown_and_install_next 与 wake 之间）
+    let mut sites = wait_sites(site_shard(key)).lock();
+    let site = sites.get_mut(&key).expect("site just observed");
+    if site.pend {
+        site.pend = false;
+        drop(sites);
+        Task::exclusive(&mut task).transform(TaskState::Starved);
+        trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
+        current().push(task);
+        return match next_pa {
+            Some(pa) => Handoff::Switch(pa),
+            None => Handoff::Idle,
+        };
+    }
+    Task::exclusive(&mut task).transform(TaskState::Blocked {
+        reason: BlockReason::Mail,
+    });
+    site.waiters.push_back(Waiter { task, tock: None });
+    drop(sites);
 
     match next_pa {
         Some(pa) => Handoff::Switch(pa),
@@ -523,6 +589,13 @@ pub(crate) fn kill(task: &Arc<Task>) {
                         Task::exclusive(&mut t).transform(TaskState::Reaped);
                         REAPED.lock().push_back(t);
                     }
+                }
+                BlockReason::Mail => {
+                    // 单次往返 IPC：caller 阻塞等 Respond。killed 时直接回收。
+                    // （IPC 等待表在 Step 2/3 接入；此处仅保证状态机完备。）
+                    let mut t = task.clone();
+                    Task::exclusive(&mut t).transform(TaskState::Reaped);
+                    REAPED.lock().push_back(t);
                 }
             }
         }
