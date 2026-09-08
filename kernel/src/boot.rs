@@ -323,7 +323,7 @@ fn spawn_services(
             use crate::work::room::messenger::WaitKey;
             loop {
                 let pull_k = hole::pull_key(&dreq);
-                crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(pull_k));
+                crate::work::room::scheduler::ktask::wait_forever(WaitKey::into_raw(pull_k));
                 let Ok(msg) = hole::pull(&dreq) else { continue };
                 let Some(me) = crate::work::room::scheduler::core::current().running_task() else {
                     continue;
@@ -331,7 +331,7 @@ fn spawn_services(
                 let out = crate::service::dispatch::serve(&reg, &me, caller, &msg).encode();
                 while hole::push(&reply, &out).is_err() {
                     let push_k = hole::push_key(&reply);
-                    crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(push_k));
+                    crate::work::room::scheduler::ktask::wait_forever(WaitKey::into_raw(push_k));
                 }
             }
         }

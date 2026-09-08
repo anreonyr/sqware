@@ -49,9 +49,6 @@ pub enum BlockReason {
     Park { wake_at: u64 },
     /// 事件等待：被 `wake(key)` 唤醒；有 wake_at 时也可到期唤醒（None = 永久）。
     Wait { wake_at: Option<u64> },
-    /// 单次往返 IPC（Request 等回复）：caller 阻塞，等服务 `Respond` 唤醒。
-    /// 无到期——唤醒只来自对方的 `respond`（Mail 词族）。
-    Mail,
 }
 
 /// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。

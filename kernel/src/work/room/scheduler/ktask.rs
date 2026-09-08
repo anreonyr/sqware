@@ -11,7 +11,8 @@ use crate::runtime::switcher::trampoline::restore;
 use crate::runtime::switcher::trap::{persist, trap_stack_edge};
 
 use super::utask::{
-    park as sched_park, park_mail as sched_park_mail, reap as sched_reap, starve as sched_starve,
+    park as sched_park, reap as sched_reap, starve as sched_starve,
+    wait_forever as sched_wait_forever,
 };
 
 /// 内核任务睡眠：存帧 → park 核心 → 切走；唤醒后恢复于调用点。
@@ -90,11 +91,11 @@ pub extern "C" fn park(_duration: Duration) {
     );
 }
 
-/// 内核任务事件等待：存帧 → messenger::park_mail → 切走；对方 wake(key) 解锁。
+/// 内核任务事件等待：存帧 → messenger::wait(key, MAX) → 切走；对方 wake(key) 解锁。
 /// `key` 经裸 usize ABI（与 wait 同族）。
 #[allow(improper_ctypes_definitions)]
 #[unsafe(naked)]
-pub extern "C" fn wait_mail(_key: usize) {
+pub extern "C" fn wait_forever(_key: usize) {
     naked_asm!(
         "csrc sstatus, 2",
         "csrrw sp, sscratch, sp",
@@ -141,12 +142,12 @@ pub extern "C" fn wait_mail(_key: usize) {
         "la    t0, {persist}",
         "jalr  t0",
         "mv    a0, s0",                  // a0 = key（s0 由 persist 保全）
-        "la    t0, {sched_park_mail}",
+        "la    t0, {sched_wait_forever}",
         "jalr  t0",                       // a0 = next PA
         "la    t0, {restore}",
         "jalr  t0",
         persist = sym persist,
-        sched_park_mail = sym sched_park_mail,
+        sched_wait_forever = sym sched_wait_forever,
         restore = sym restore,
     );
 }

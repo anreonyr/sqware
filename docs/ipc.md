@@ -92,12 +92,16 @@ service 是内核 Task，caller 是用户 Task，两者跨空间。两者要共�
 
 ## 5 · 已有实现（Step 1，已落地编译通过）
 
-- `kernel/src/work/unit/task.rs`：`BlockReason::Mail` 变体（语义标记）。
+- `kernel/src/work/unit/task.rs`：阻塞原因 `BlockReason::{Park, Wait}` 两个变体。
 
-> 注：若走"纯复用 wait/wake 编排"，`BlockReason::Mail` 非必需（caller 挂起用现有 `Wait`）。
-> 保留它作语义标记；仅在"真正单次 syscall（写帧）"路径才被真正使用。
+> **修订**：`BlockReason::Mail` 已删除。它的登记形态与 `Wait { wake_at: None }` 逐字相同
+> （`wait_sites` + `tock: None`），行为含量为零；唯一独有的代码是 `kill` 分支——而该分支
+> 漏摘 `wait_sites`，残留 waiter 会让后续 `wake` 在已 Reaped 的任务上做 `Reaped -> Starved`
+> 变换（`transform` 断言 panic）。将来"真正单次 syscall（写帧）"路径落地时，它带自己的
+> 载荷（`rep → caller 帧`）与 kill 路径一起加回来。本文件其余提及 `park_mail` 之处为
+> 历史记录（当时名称），当前入口是 `wait(key, Duration::MAX)` 与 `wait_forever`。
 
-- `kernel/src/work/room/messenger.rs`：`kill` 对 `BlockReason::Mail` 的完备处理。
+- `kernel/src/work/room/messenger.rs`：`kill` 按 `BlockReason` 分派摘除（Park → parked；Wait → wait_sites）。
 
 ## 6 · 实现步骤（复用现有结构，最小）
 
@@ -128,7 +132,7 @@ shell 的 `exec()` 加 `req` 命令，unseal 请求Hole + 回复Hole，调 `Requ
 
 **"真正单次 syscall（A0 = 结果）"**：需要写 caller 帧 `gpr[A0]` 的能力——即 service 完成后直接把结果写回 caller 的 trap 帧再唤醒，caller 恢复即 A0 = 结果。这需要：
 - IPC 等待表（`rep → caller 帧`），service 凭 rep 定位。
-- `BlockReason::Mail` 真正用于 caller 挂起。
+- caller 挂起复用现有 `Wait`（`BlockReason::Mail` 已删，见 §5 修订）。
 - 调度器"写帧 + 唤醒"路径。
 
 这是后续演进，非本最小实现范围。
@@ -319,14 +323,14 @@ caller (shell)                          echo svc (kernel Task)
   Service::connect()
     → envcall ServiceCall::Connect
     → 内核给两个 pie token (req + rep)
-                                          wait_mail(pull_key(req))  ← park, 0% CPU
+                                          wait_forever(pull_key(req))  ← park, 0% CPU
   svc.req.push(payload)
     → envcall Mail::Push → try_push
     → wake(pull_key(req)) → echo 醒
                                           pull(req) → take, wake(push_key)
                                           处理: byte +1
                                           push(rep, reply): 槽空直写；满则
-                                            wait_mail(push_key(rep))  ← park, 0% CPU
+                                            wait_forever(push_key(rep))  ← park, 0% CPU
                                             ← wake(pull_key(rep)) 醒
   svc.rep.pull(buf)
     → envcall Mail::Pull → try_pull Busy
@@ -345,44 +349,27 @@ caller (shell)                          echo svc (kernel Task)
 | 用户态 `Service::connect()` | 不再需要 `service_task` 参数 | 内核全权负责"哪个服务"——固定 echo |
 | wake_key | **不需要**（双 hole 方案：req 与 rep 是物理独立通道） | 单 caller 串行即可；key 是单 hole 时的并发去重 |
 | 大数据 | 不支持（v1 范围外；走 Pole 路径见 §11） | 当前 64B payload 足够 |
-| 按需启用 | **真 park**（`wait_mail` asm） | echo 不被调用时 0% CPU |
+| 按需启用 | **真 park**（`wait_forever` asm） | echo 不被调用时 0% CPU |
 | service 退出 | 永不退出（`loop`） | 内核生命周期与 echo 绑定 |
 
 ### 12.3 新增原语
 
-#### `messenger::park_mail(key: WaitKey) -> Handoff`
 
-永久 park（无超时），BlockReason::Mail。语义与 `wait(key, MAX)` 一致但 BlockReason 不同
-（Mail 标记 IPC 对方唤醒语义）。
+#### `messenger::wait(key: WaitKey, dur: Duration) -> Handoff`（`park_mail` 已删）
 
-```rust
-pub fn park_mail(key: WaitKey) -> Handoff {
-    let cond = current();
+`park_mail` 曾与 `wait` 并存，仅以 `BlockReason::Mail` 区分语义；该变体已删除（见 §5 修订）。
+永久等待现在就是 `wait(key, Duration::MAX)`：不登记 tock，只能被 `wake(key)` 解锁，
+且 `kill` 走 `BlockReason::Wait` 分支（按 `ptr_eq` 摘 `wait_sites` + untock）。
+内核任务侧入口为 `scheduler::ktask::wait_forever`（asm 包装 `utask::wait_forever`）。
 
-    // pend 消费（同 wait）
-    { ... sites lock ... if site.pend { ... return Resume; } }
+#### `scheduler::ktask::wait_forever(_key: usize)` —— ktask 入口
 
-    let (mut task, next_pa) = cond.disown_and_install_next();
-    // ... trace ...
-    { ... sites lock 二次检查 pend ... }
-    // 二次检查通过：transform Blocked(Mail), push to sites.waiters
-    Task::exclusive(&mut task).transform(TaskState::Blocked {
-        reason: BlockReason::Mail,
-    });
-    site.waiters.push_back(Waiter { task, tock: None });
-    drop(sites);
-    Handoff::Switch(next_pa)
-}
-```
-
-#### `scheduler::ktask::wait_mail(_key: usize)` —— ktask 入口
-
-裸 asm：存帧 → 调度 park_mail → restore 下一帧。
+裸 asm：存帧 → 调度 wait_forever → restore 下一帧。
 **关键**：s0 保存 a0（key），persist 后 s0 仍持有 key（caller-saved 寄存器由 callee 保全）。
 
 ```rust
 #[unsafe(naked)]
-pub extern "C" fn wait_mail(_key: usize) {
+pub extern "C" fn wait_forever(_key: usize) {
     naked_asm!(
         "csrc sstatus, 2",
         "csrrw sp, sscratch, sp",
@@ -400,12 +387,12 @@ pub extern "C" fn wait_mail(_key: usize) {
         "la    t0, {persist}",
         "jalr  t0",
         "mv    a0, s0",
-        "la    t0, {sched_park_mail}",
+        "la    t0, {sched_wait_forever}",
         "jalr  t0",
         "la    t0, {restore}",
         "jalr  t0",
         persist = sym persist,
-        sched_park_mail = sym sched_park_mail,
+        sched_wait_forever = sym sched_wait_forever,
         restore = sym restore,
     );
 }
@@ -424,7 +411,7 @@ pub(crate) fn push(meta: &HoleMeta, msg: &[u8; 64]) -> Result<(), GateError> {
               return Ok(());
           }
         }
-        messenger::park_mail(push_key(meta));
+        messenger::wait(push_key(meta), Duration::MAX);
         if !meta.alive() { return Err(GateError::Dead); }
     }
 }
@@ -438,14 +425,14 @@ pub(crate) fn pull(meta: &HoleMeta) -> Result<[u8; 64], GateError> {
               return Ok(msg);
           }
         }
-        messenger::park_mail(pull_key(meta));
+        messenger::wait(pull_key(meta), Duration::MAX);
         if !meta.alive() { return Err(GateError::Dead); }
     }
 }
 ```
 
 写/读完槽后均 wake 对侧（push 完成 wake pull waiters；pull 完成 wake push waiters）。
-锁序：slot lock → wake（sites lock）→ park_mail（sites lock）→ wake → drop。无嵌套持锁。
+锁序：slot lock → wake（sites lock）→ wait（sites lock）→ wake → drop。无嵌套持锁。
 
 #### `mail::hole::try_push / try_pull` —— **非阻塞**（envcall handler 用）
 
@@ -491,12 +478,12 @@ release 模式下编译器对 `move || { ... }` closure 做跨函数优化（参
     fn svc_loop(req: Arc<HoleMeta>, rep: Arc<HoleMeta>) -> ! {
         loop {
             let pull_k = hole::pull_key(&req);
-            ktask::wait_mail(WaitKey::into_raw(pull_k));
+            ktask::wait_forever(WaitKey::into_raw(pull_k));
             let Ok(pulled) = hole::pull(&req) else { continue; };
             // ... 处理 ...
             while hole::push(&rep, &reply).is_err() {
                 let push_k = hole::push_key(&rep);
-                ktask::wait_mail(WaitKey::into_raw(push_k));
+                ktask::wait_forever(WaitKey::into_raw(push_k));
             }
         }
     }
@@ -513,7 +500,7 @@ release 模式下编译器对 `move || { ... }` closure 做跨函数优化（参
 | `kernel/src/work/mail/hole.rs` | push/pull 真阻塞；新增 try_push/try_pull、push_key/pull_key |
 | `kernel/src/work/room/messenger.rs` | 新增 `park_mail(key)`；`WaitKey::into_raw` |
 | `kernel/src/work/room/scheduler/utask.rs` | 新增 `park_mail(key)` 入口 |
-| `kernel/src/work/room/scheduler/ktask.rs` | 新增 `wait_mail(key)` 裸 asm |
+| `kernel/src/work/room/scheduler/ktask.rs` | 新增 `wait_forever(key)` 裸 asm |
 | `kernel/src/boot.rs` | 删 `spawn_ipc_probe`；新增 `ECHO_REQ` / `ECHO_REP` + `spawn_echo_service` |
 | `kernel/src/runtime/switcher/envcall.rs` | `Service(Connect)` 给两 pie（a0=req a1=rep）；`Mail::Push/Pull` 改用 `try_push/try_pull` |
 | `crates/env/src/fid.rs` | `ServiceCall::Connect` ret 改 `(PieToken, PieToken)` |
@@ -542,7 +529,7 @@ debug 与 release 均通过。
 | 命名 | `Service`（sqware 词族；不用 "IPC"）|
 | 连接建立 | envcall 给两 pie（dispatcher 不需要——单服务场景）|
 | service 数量 | 1（echo）；多服务探索走 dispatcher（见"服务发现"演进） |
-| 按需启用 | **真 park**（`wait_mail` asm），不被调用时 0% CPU |
+| 按需启用 | **真 park**（`wait_forever` asm），不被调用时 0% CPU |
 | 字节序 | 小端（env 单一真相：`Wire::pack`） |
 | wake_key | 不需要（双 hole 物理隔离了并发） |
 | closure release 兼容 | `#[inline(never)]` 内层 helper（必须） |
@@ -562,7 +549,8 @@ debug 与 release 均通过。
 1. **dispatcher 服务发现**：见之前讨论的 dispatcher Task + ServiceId enum。
    `ServiceCall::Connect` 接 `ServiceId` 参数，找 dispatcher 注册的 service。
 2. **单次 syscall（A0=结果）**：service 完成后直接写 caller 帧 + 唤醒。需 IPC 等待表
-   （rep → caller 帧映射）+ `BlockReason::Mail` 真正用上。
+   （rep → caller 帧映射）；caller 挂起当前复用 `Wait`（`BlockReason::Mail` 已删，
+   需要时再带载荷加回）。
 3. **异常退出清理**：echo svc 加 reap 路径（任务级 panic → 转 cleanup）。
 4. **大数据 Pole 路径**：payload > 64B 时经 Pole 物理页直传。
 
@@ -583,7 +571,7 @@ debug 与 release 均通过。
 | 用户态 Service | 拿到 echo svc Pies | 拿 dispatcher Pies → lookup 拿目标 svc Pies |
 | dispatcher 闭包持有 | — | `Arc<SpinLock<Vec<ServiceEntry>>>`（独占持有）|
 | 名字到 Pies | 编译期固定 | 运行时按 `ServiceId.name_bytes()` 查 |
-| 按需启用 | echo svc 真 park | dispatcher + echo svc 都真 park（`wait_mail`）|
+| 按需启用 | echo svc 真 park | dispatcher + echo svc 都真 park（`wait_forever`）|
 
 ### 13.2 新增模块
 
@@ -715,7 +703,7 @@ kt.task().name("dispatcher").closure(move || {
     fn svc(dreq: Arc<HoleMeta>, drep: Arc<HoleMeta>,
            reg: Arc<dispatch::ServiceRegistry>) -> ! {
         loop {
-            // wait_mail(pull_key(dreq)) park 真阻塞
+            // wait_forever(pull_key(dreq)) park 真阻塞
             // pull → 解析 sender_id + name
             // lookup(&reg, name) → ServiceEntry
             // gate::new_pie(req_id, READ|WRITE, ...) accord 给 caller.pies
@@ -820,7 +808,7 @@ kt.task().name("logger-svc").closure(move || {
 | 决策 | 定论 |
 |---|---|
 | 命名 | `Service`（sqware 词族）|
-| dispatcher 是 Task | ✅（按需启用，wait_mail 真 park）|
+| dispatcher 是 Task | ✅（按需启用，wait_forever 真 park）|
 | 服务注册表所有权 | `Arc<SpinLock<Vec<ServiceEntry>>>` dispatcher 闭包独占持有 |
 | `ServiceId` 范围 | 1..（0 保留给 dispatcher 自身）|
 | lookup key | name 字符串（更灵活；ServiceId 仅环境调用 ABI 边界）|
@@ -844,7 +832,7 @@ kt.task().name("logger-svc").closure(move || {
    802278c0: jalr  ... low48          # a0 = low48(a0)  = pull_key
    8022804c: mv    a0, s4            # a0 = dreq_ptr + 16
    80228052: jalr  ... low48          # a0 = low48(s4) = push_key
-   8022805e: jalr  ... wait_mail
+   8022805e: jalr  ... wait_forever
    ```
    两次 `low48` 独立调用，`+1` 不再跨调用错联到 mask。**方向 A 验证通过**。
 
@@ -854,7 +842,7 @@ kt.task().name("logger-svc").closure(move || {
 
 2. **closure + 裸 asm ABI 假设**（**修复已落地**）——release 编译器对
    `move ||` closure 做跨函数优化（参数重排 / 寄存器重分配 / 栈帧重排），
-   内层裸 asm `wait_mail`（基于"`scheduler::ktask::park` 后调用方栈帧特定偏移"
+   内层裸 asm `wait_forever`（基于"`scheduler::ktask::park` 后调用方栈帧特定偏移"
    的假设）的 `ra` 保存位置与返回路径被破坏，sepc 在 sret 后指向 garbage。
    修法：在 `kernel/src/boot.rs` 中给 `dispatcher svc` 和 `echo svc` 的内层
    `fn svc(...) -> !` 加 `#[inline(never)]`，**锁住闭包→裸 asm 跨函数 ABI 边界**。

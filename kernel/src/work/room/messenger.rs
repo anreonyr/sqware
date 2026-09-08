@@ -267,56 +267,6 @@ pub fn wait(key: WaitKey, dur: Duration) -> Handoff {
     }
 }
 
-/// park_mail：永久 park（无超时），BlockReason::Mail；只能被 `wake(key)` 解锁。
-///
-/// 与 `wait(key, Duration::MAX)` 行为一致但语义不同：Mail 标记"事件等待由 IPC
-/// 对方唤醒"，killed 时 messenger 的 BlockReason::Mail 分支直接回收（无超时）。
-/// 用于 hole 的 push/pull_blocking：槽不可用时让出 CPU，对方 push/pull 完成
-/// 后 `wake` 解锁。
-pub fn park_mail(key: WaitKey) -> Handoff {
-    let cond = current();
-
-    // pend 消费路径（与 wait 同）
-    {
-        let mut sites = wait_sites(site_shard(key)).lock();
-        let site = sites.entry(key).or_insert_with(WaitSite::new);
-        if site.pend {
-            site.pend = false;
-            return Handoff::Resume;
-        }
-    }
-
-    let (mut task, next_pa) = cond.disown_and_install_next();
-    trace::note(EventKind::Room(RoomEvent::Wait {
-        tid: task.ident.id,
-        key: key.0,
-    }));
-    // 同 wait 二次检查窗口（disown_and_install_next 与 wake 之间）
-    let mut sites = wait_sites(site_shard(key)).lock();
-    let site = sites.get_mut(&key).expect("site just observed");
-    if site.pend {
-        site.pend = false;
-        drop(sites);
-        Task::exclusive(&mut task).transform(TaskState::Starved);
-        trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-        current().push(task);
-        return match next_pa {
-            Some(pa) => Handoff::Switch(pa),
-            None => Handoff::Idle,
-        };
-    }
-    Task::exclusive(&mut task).transform(TaskState::Blocked {
-        reason: BlockReason::Mail,
-    });
-    site.waiters.push_back(Waiter { task, tock: None });
-    drop(sites);
-
-    match next_pa {
-        Some(pa) => Handoff::Switch(pa),
-        None => Handoff::Idle,
-    }
-}
-
 /// mark_reaped：Running → Reaped 入全局 reaped 队列（延迟回收——不能在
 /// 自己正在用的栈上回收自己；计数在 clear_loop 完成后递增）。
 pub fn mark_reaped() -> Option<usize> {
@@ -591,13 +541,6 @@ pub(crate) fn kill(task: &Arc<Task>) {
                         Task::exclusive(&mut t).transform(TaskState::Reaped);
                         REAPED.lock().push_back(t);
                     }
-                }
-                BlockReason::Mail => {
-                    // 单次往返 IPC：caller 阻塞等 Respond。killed 时直接回收。
-                    // （IPC 等待表在 Step 2/3 接入；此处仅保证状态机完备。）
-                    let mut t = task.clone();
-                    Task::exclusive(&mut t).transform(TaskState::Reaped);
-                    REAPED.lock().push_back(t);
                 }
             }
         }

@@ -4,15 +4,16 @@
 // Weak<HoleMeta>）只持门闩，不参与数据。
 //
 // 数据面原语：
-// - `push` / `pull`：真阻塞。槽满/空时 park_mail（BlockReason::Mail），对方完成
-//   对侧后 wake 解锁。用于 ktask 闭包（走 asm wait_mail）。
+// - `push` / `pull`：真阻塞。槽满/空时永久挂起（`wait(key, MAX)`），对方完成
+//   对侧后 wake 解锁。用于 ktask 闭包（走 asm wait_forever）。
 // - `try_push` / `try_pull`：非阻塞。槽满/空返 Busy。用于 envcall handler
 //   （utask 不能 fire-and-forget park）。
-// - `push_key` / `pull_key`：wait_mail 用的 wait key（per-meta）。
+// - `push_key` / `pull_key`：阻塞等待用的 wait key（per-meta）。
 //
 // 写/读完槽后都 wake 对侧 waiters。
 
 use alloc::sync::Arc;
+use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
 
@@ -76,7 +77,7 @@ pub(crate) fn pull_key(meta: &HoleMeta) -> WaitKey {
 
 // ── 数据面原语（真阻塞，ktask 用）──
 
-/// 阻塞 push：槽空则写入并 wake pull waiters；槽满则 park_mail，等 pull 后唤醒重试。
+/// 阻塞 push：槽空则写入并 wake pull waiters；槽满则永久挂起，等 pull 后唤醒重试。
 pub(crate) fn push(meta: &HoleMeta, msg: &[u8; HOLE_MSG_LEN]) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
@@ -91,14 +92,14 @@ pub(crate) fn push(meta: &HoleMeta, msg: &[u8; HOLE_MSG_LEN]) -> Result<(), Gate
                 return Ok(());
             }
         }
-        messenger::park_mail(push_key(meta));
+        messenger::wait(push_key(meta), Duration::MAX);
         if !meta.alive() {
             return Err(GateError::Dead);
         }
     }
 }
 
-/// 阻塞 pull：槽非空则取走并 wake push waiters；槽空则 park_mail，等 push 后唤醒重试。
+/// 阻塞 pull：槽非空则取走并 wake push waiters；槽空则永久挂起，等 push 后唤醒重试。
 pub(crate) fn pull(meta: &HoleMeta) -> Result<[u8; HOLE_MSG_LEN], GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
@@ -112,7 +113,7 @@ pub(crate) fn pull(meta: &HoleMeta) -> Result<[u8; HOLE_MSG_LEN], GateError> {
                 return Ok(msg);
             }
         }
-        messenger::park_mail(pull_key(meta));
+        messenger::wait(pull_key(meta), Duration::MAX);
         if !meta.alive() {
             return Err(GateError::Dead);
         }
