@@ -6,15 +6,16 @@
 //! `[call]` 载荷由 `derive(Envcall)` 生成 codec（`slot/pack/unpack/call`）。
 //! 返回类型经 `#[ret(T)]` 标注，derive 生成域 `*Ret` 枚举。
 
+pub mod dispatch;
 pub mod fid;
 pub mod permission;
 pub mod ucall;
 pub mod wire;
 
+pub use dispatch::{Name, NameError, Op, ProtocolError, Reply, Request};
 pub use fid::{
-    ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, IOCall, IOCallRet,
-    MailCall, MailCallRet, MemoryCall, MemoryCallRet, RoomCall, RoomCallRet, ServiceCall,
-    ServiceCallRet, ServiceId, UnitCall, UnitCallRet,
+    ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, IOCall, IOCallRet, MailCall,
+    MailCallRet, MemoryCall, MemoryCallRet, RoomCall, RoomCallRet, UnitCall, UnitCallRet,
 };
 pub use permission::Permission;
 pub use ucall::{EnvError, EnvResult, make_err};

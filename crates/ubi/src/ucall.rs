@@ -38,6 +38,11 @@ impl EnvError {
 /// ecall → 读回 a0/a1。
 ///
 /// unsafe：直触寄存器约定、不判错；调用方须已按 ABI 摆好 slot/packed args。
+///
+/// **`#[inline(never)]` 是硬不变量**：该 asm 块一旦被内联进调用方，调用方读回的
+/// 返回值会错（实测：同样的 `Collect` 调用，内联时 a0 恒 0，独立函数时正确）。
+/// 与仓库对裸 asm 的一贯纪律同源（见 `docs/ipc.md` §13.10 A.2 的闭包边界锁）。
+#[inline(never)]
 pub unsafe fn warpper(slot: usize, args: [usize; 6]) -> (usize, usize) {
     let (v0, v1);
     unsafe {

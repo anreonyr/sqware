@@ -1,67 +1,159 @@
-//! Service 域：用户态与内核驻留服务交互（`Service::connect` + `echo`）。
+//! Service 域：服务目录协议客户端（`Directory` 会话 + `Service` 句柄）。
 //!
-//! 路径 B（dispatcher）：
-//! 1. `Service::connect(sid)` 经 `ServiceCall::Connect` 拿到 dispatcher 的 req/rep Pies
-//! 2. push(sender_id + service_name) 到 dispatcher req
-//! 3. pull dispatcher rep 拿到目标服务的 Pies
-//! 4. 用目标服务 Pies 构造 Service（持 req + rep HolePie）
-//! 5. `Service::echo` push req → pull rep（与 §12 同）
+//! 协议规范见 `docs/dispatch.md`。三条要点：
 //!
-//! 与 `ipc` 无涉——用 sqware 词族 `Service`。
+//! 1. **内核没有目录入口调用**（class 7 已删）：内核在 boot 期把两枚 pie 放进本
+//!    任务权限表——索引 0 = 目录入口门闩，索引 1 = 回信 hole——`Directory::open`
+//!    用 `Collect` 取回。故无需向用户态传任何整数。
+//! 2. **服务侧回信通道由调用方自带**：`UnsealHole` 造自己的 hole，`Accord` 委托给
+//!    服务（owner 由 `Connect` 回复给出），请求消息前 8 字节放那个对端侧 token。
+//! 3. **服务调用载荷 56 字节**（`MSG_LEN` - 8 字节回信 token）。
 
-use ubi::{EnvResult, ServiceCall, ServiceCallRet, ServiceId, TaskId, make_err};
+use ubi::dispatch::{MSG_LEN, Name, Reply, Request};
+use ubi::{EnvError, EnvResult, Permission, TaskId, make_err};
 
-use super::mail::HolePie;
-use super::task;
+use super::mail::{self, HolePie};
 
-/// 用户态服务通道：两个 HolePie（req + rep）。
-pub struct Service {
-    req: HolePie,
-    rep: HolePie,
+/// 服务调用载荷字节数（`MSG_LEN` - 8 字节回信 token）。
+pub const PAYLOAD_LEN: usize = MSG_LEN - 8;
+
+/// D1 负码：无权 / 协议错。
+const E_DENIED: isize = -1;
+/// D1 负码：名字无绑定。
+const E_NOT_FOUND: isize = -2;
+
+fn denied() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(E_DENIED))
 }
 
-impl Service {
-    /// 连接到指定服务：先拿 dispatcher 的 Pies，再 lookup。
-    pub fn connect(sid: ServiceId) -> EnvResult<Service> {
-        // 1. envcall 拿 dispatcher Pies
-        let (dreq_tk, drep_tk) = match (ServiceCall::Connect { service: sid }).call()? {
-            ServiceCallRet::Connect((a, b)) => (a.get(), b.get()),
-        };
-        let dreq = HolePie::from_token(dreq_tk);
-        let drep = HolePie::from_token(drep_tk);
+fn parse_name(name: &str) -> EnvResult<Name> {
+    Name::new(name).map_err(|_| denied())
+}
 
-        // 2. 构造 lookup 请求
-        let my_id: TaskId = task::self_id()?;
-        let mut req_msg = [0u8; 64];
-        req_msg[0..8].copy_from_slice(&(my_id.get() as u64).to_le_bytes());
-        let name = sid.name_bytes();
-        let n = name.len().min(55);
-        req_msg[8..8 + n].copy_from_slice(&name[..n]);
+/// 回信通道：我自己的 hole + 它在对端的 token。
+struct Channel {
+    mine: HolePie,
+    at_peer: u64,
+}
 
-        // 3. push dispatcher 请求（短 spin 等 wake）
-        dreq.push(&req_msg)?;
+impl Channel {
+    /// 建通道：`UnsealHole` 造自己的 hole，`Accord` 把 R|W 委托给对端。
+    fn open(peer: TaskId) -> EnvResult<Channel> {
+        let mine = HolePie::unseal()?;
+        let at_peer = mine.accord(peer.get(), Permission::READ | Permission::WRITE)?;
+        Ok(Channel { mine, at_peer })
+    }
 
-        // 4. pull dispatcher 回复
-        let mut reply = [0u8; 64];
-        drep.pull(&mut reply)?;
-        // 5. 解析服务 Pies（0 = 未找到）
-        let req_tk = u64::from_le_bytes(reply[0..8].try_into().unwrap_or([0u8; 8]));
-        let rep_tk = u64::from_le_bytes(reply[8..16].try_into().unwrap_or([0u8; 8]));
-        if req_tk == 0 || rep_tk == 0 {
-            return Err(make_err(ubi::EnvError::from_raw(-2))); // not found
+    /// 关闭：撤回委托给对端的那一份 + 放下自己的 hole。
+    fn close(self, peer: TaskId) -> EnvResult<()> {
+        mail::revoke(peer.get(), self.at_peer)?;
+        self.mine.release()
+    }
+}
+
+/// 目录会话：入口门闩（索引 0）+ 内核预置的回信 hole（索引 1）。
+pub struct Directory {
+    entry: HolePie,
+    reply: HolePie,
+}
+
+impl Directory {
+    /// 打开会话：从本任务权限表取回内核在 boot 期放下的两枚 pie。
+    ///
+    /// 约定：索引 0 = 目录入口门闩，索引 1 = 回信 hole（`boot::spawn_demos` 的
+    /// 根授予顺序）。两枚 pie 都在 boot 期间落表（此时无任务在跑），故无需等待。
+    pub fn open() -> EnvResult<Directory> {
+        let (entry, _) = mail::collect(0)?;
+        let (reply, _) = mail::collect(1)?;
+        if entry == 0 || reply == 0 {
+            return Err(denied());
         }
-        Ok(Service {
-            req: HolePie::from_token(req_tk),
-            rep: HolePie::from_token(rep_tk),
+        Ok(Directory {
+            entry: HolePie::from_token(entry),
+            reply: HolePie::from_token(reply),
         })
     }
 
-    /// 一次 echo：caller push(req) → 等 echo 处理 → echo push(rep) → caller pull(rep)。
-    /// 阻塞语义由内核 push/pull 实现（park + wake）。
-    pub fn echo(&self, req: &[u8; 64]) -> EnvResult<[u8; 64]> {
-        self.req.push(req)?;
-        let mut reply = [0u8; 64];
-        self.rep.pull(&mut reply)?;
-        Ok(reply)
+    /// 一次往返：push 请求 → pull 回复。
+    fn call(&self, request: &Request) -> EnvResult<Reply> {
+        self.entry.push(&request.encode())?;
+        let mut buf = [0u8; MSG_LEN];
+        self.reply.pull(&mut buf)?;
+        Reply::decode(&buf).map_err(|_| denied())
+    }
+
+    /// 纯探测：这个名字有没有绑定。
+    pub fn discover(&self, name: &str) -> EnvResult<bool> {
+        let request = Request::Resolve {
+            name: parse_name(name)?,
+        };
+        match self.call(&request)? {
+            Reply::Found { .. } => Ok(true),
+            Reply::NotFound => Ok(false),
+            _ => Err(denied()),
+        }
+    }
+
+    /// 枚举下一页：按名字排序；`after = None` 从头开始；`None` 返回到头。
+    pub fn list(&self, after: Option<&str>) -> EnvResult<Option<Name>> {
+        let after = match after {
+            Some(s) => Some(parse_name(s)?),
+            None => None,
+        };
+        let request = Request::Enumerate { after };
+        match self.call(&request)? {
+            Reply::Found { name } => Ok(Some(name)),
+            Reply::NotFound => Ok(None),
+            _ => Err(denied()),
+        }
+    }
+
+    /// 连接：目录把服务的入口门闩转授给本任务，并回 owner task id。
+    pub fn connect(&self, name: &str) -> EnvResult<Service> {
+        let request = Request::Connect {
+            name: parse_name(name)?,
+        };
+        match self.call(&request)? {
+            Reply::Connected { entry, owner } => {
+                let channel = Channel::open(owner)?;
+                Ok(Service {
+                    entry: HolePie::from_token(entry.get()),
+                    channel,
+                    owner,
+                })
+            }
+            Reply::NotFound => Err(make_err(EnvError::from_raw(E_NOT_FOUND))),
+            _ => Err(denied()),
+        }
+    }
+
+}
+
+/// 服务句柄：入口门闩 + 回信通道（调用方自带，故并发调用不串台）。
+pub struct Service {
+    entry: HolePie,
+    channel: Channel,
+    owner: TaskId,
+}
+
+impl Service {
+    /// 一次调用：前 8 字节自动填回信 token，载荷 `PAYLOAD_LEN` 字节。
+    pub fn call(&self, payload: &[u8; PAYLOAD_LEN]) -> EnvResult<[u8; PAYLOAD_LEN]> {
+        let mut msg = [0u8; MSG_LEN];
+        msg[0..8].copy_from_slice(&self.channel.at_peer.to_le_bytes());
+        msg[8..].copy_from_slice(payload);
+        self.entry.push(&msg)?;
+
+        let mut buf = [0u8; MSG_LEN];
+        self.channel.mine.pull(&mut buf)?;
+        let mut out = [0u8; PAYLOAD_LEN];
+        out.copy_from_slice(&buf[8..]);
+        Ok(out)
+    }
+
+    /// 断开：撤回服务侧的回信副本 + 放下入口门闩。目录不记连接状态，故到此为止。
+    pub fn disconnect(self) -> EnvResult<()> {
+        self.channel.close(self.owner)?;
+        self.entry.release()
     }
 }

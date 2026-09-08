@@ -38,11 +38,14 @@ global_asm!(
     "__utrap:",
     "    csrrw sp, sscratch, sp", // sp = 本线程帧 VA；sscratch = 用户 sp
     "    sd    x1,  0x38(sp)",    // gpr[1] = ra
+    // x5（用户 t0）必须**先存**：下面用 t0 做 scratch 读 sscratch 取用户 sp。
+    // 顺序错了就把用户 t0 覆盖成用户 sp——每次用户陷阱（envcall / 缺页 / 抢占）
+    // 返回后 t0 都是栈地址，表现为 pc=0x4、栈数据当返回地址一类的随机崩溃。
+    "    sd    x5,  0x58(sp)",
     "    csrr  t0, sscratch",
     "    sd    t0,  0x40(sp)", // gpr[2] = 用户 sp
     "    sd    x3,  0x48(sp)",
     "    sd    x4,  0x50(sp)",
-    "    sd    x5,  0x58(sp)",
     "    sd    x6,  0x60(sp)",
     "    sd    x7,  0x68(sp)",
     "    sd    x8,  0x70(sp)",

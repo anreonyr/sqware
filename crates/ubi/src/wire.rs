@@ -214,22 +214,6 @@ impl Wire for crate::permission::Permission {
     }
 }
 
-/// 服务号（按 u8 编码——`ServiceId::Echo as u8 = 1`；0 = 未识别）。
-impl Wire for crate::fid::ServiceId {
-    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
-        s[*i] = *self as u8 as usize;
-        *i += 1;
-    }
-    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
-        let v = *s.get(*i).ok_or(Decode::Overflow)? as u8;
-        *i += 1;
-        match v {
-            1 => Ok(Self::Echo),
-            _ => Err(Decode::Invalid),
-        }
-    }
-}
-
 /// 由内核回写的 `(a0, a1)` 还原「域 Ret 载荷」的契约（R3 蒸馏）。
 ///
 /// derive(Envcall) 生成的 `call()` 在正（非负）路径按 variant 调用
@@ -264,6 +248,15 @@ impl FromPair for (u64, u64) {
 impl FromPair for (PieToken, PieToken) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (PieToken(v0 as u64), PieToken(v1 as u64))
+    }
+}
+
+impl FromPair for (PieToken, crate::permission::Permission) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (
+            PieToken(v0 as u64),
+            crate::permission::Permission::from_bits_truncate(v1 as u32),
+        )
     }
 }
 

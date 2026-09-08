@@ -132,6 +132,27 @@ pub fn revoke(dst_id: usize, token: u64) -> EnvResult<()> {
     }
 }
 
+/// 收拢：本任务权限表第 `index` 份（token + permission）。越界 → `(0, 空权限)`。
+pub fn collect(index: usize) -> EnvResult<(u64, ubi::Permission)> {
+    let r = MailCall::Collect { index }.call()?;
+    match r {
+        MailCallRet::Collect((token, permission)) => Ok((token.get(), permission)),
+        _ => unreachable!(),
+    }
+}
+
+/// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
+pub fn release(token: u64) -> EnvResult<()> {
+    let r = MailCall::Release {
+        token: PieToken::new(token),
+    }
+    .call()?;
+    match r {
+        MailCallRet::Release(()) => Ok(()),
+        _ => unreachable!(),
+    }
+}
+
 // ── 类型化句柄（编译期区分 Hole / Pole）──
 
 /// Hole 门闩用户态句柄。
@@ -189,6 +210,11 @@ impl HolePie {
         revoke(dst_id, token)
     }
 
+    /// 放下我这一份（自释；资源本身不动——封印用 `seal`）。
+    pub fn release(&self) -> EnvResult<()> {
+        release(self.token)
+    }
+
     pub fn token(&self) -> u64 {
         self.token
     }
@@ -236,6 +262,11 @@ impl PolePie {
     /// 收回授与 dst_id 的、由 token 标识的副本（须是本 pie accord 出的）。
     pub fn revoke(&self, dst_id: usize, token: u64) -> EnvResult<()> {
         revoke(dst_id, token)
+    }
+
+    /// 放下我这一份（自释；资源本身不动——封印用 `seal`）。
+    pub fn release(&self) -> EnvResult<()> {
+        release(self.token)
     }
 
     pub fn token(&self) -> u64 {

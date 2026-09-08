@@ -49,10 +49,14 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         inner.dynamic(image_end);
         for seg in &parsed.segments {
             let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;
-            inner.attach_map(seg.vaddr, frames_for_segment(bytes, seg)?, flags)?;
+            let file_pages = seg.filesz.div_ceil(PAGE_SIZE);
+            // 纯 .bss 段（filesz = 0）：无文件实体可拷，整段走下面的懒登记。
+            // 链接脚本把 .data/.bss 各自成段，故这种段合法且常见。
+            if file_pages > 0 {
+                inner.attach_map(seg.vaddr, frames_for_segment(bytes, seg)?, flags)?;
+            }
             // BSS 尾段（filesz 后的整页零区）：懒登记——首访缺页物化零页。
             // mem_pages == file_pages 时无差额（当前 ELF 即此情形）。
-            let file_pages = seg.filesz.div_ceil(PAGE_SIZE);
             let mem_pages = seg.memsz.div_ceil(PAGE_SIZE);
             if mem_pages > file_pages {
                 let bss_va = seg.vaddr + file_pages * PAGE_SIZE;

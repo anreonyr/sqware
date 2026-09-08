@@ -11,8 +11,10 @@
 //! `slot/pack/unpack` 只依赖 `Wire`——sbi 未来可复用同一 derive。
 //!
 //! 分类与功能域一一对应（class=高 32 位）：Room=0, Task=1, Memory=2, IO=3,
-//! Chrono=4, Mail=5, Control=6。命名与调度词族（conductor）、`runtime::chrono`
-//! 域及用户侧 `user::env` 同词。
+//! Chrono=4, Mail=5, Control=6。**class 7 已删除**（原 `ServiceCall` 是入口策略
+//! 而非原语：目录入口门闩改由父任务 `Accord` 下发，见 `docs/dispatch.md`）；
+//! 7 号保留空号不复用。命名与调度词族（conductor）、`runtime::chrono` 域及用户侧
+//! `user::env` 同词。
 //!
 //! 根除的两处 L3' 漏洞：`Permission`/`PteFlags` 的 unpack 走 `from_bits(...)`
 //! `.ok_or(...)` 校验（见 [`Wire`](crate::wire::Wire)），非法位 → `Err`，不再
@@ -50,6 +52,9 @@ pub enum RoomCall {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnitCall {
     /// 建用户任务（在**当前** team 里产线程）：entry VA，arg，stack（0 = 缺省）。
+    ///
+    /// `arg` 是父任务给子任务的**第一个字**：写入新任务 a0，用户运行时在 `_start`
+    /// 保存为引导参数（`user::env::task::arg`）。它是提示，不是通道——多值走权限表。
     #[ret(TaskId)]
     Spawn {
         entry: usize,
@@ -127,8 +132,11 @@ pub enum ChronoCall {
 
 /// 通信调用（class 5，mail）。用户句柄统一为 per-pie `token`（全局唯一）。
 /// UnsealHole / UnsealPole 创建资源（返 token）；Push / Pull / Map / Unmap / Seal
-/// / Accord / Narrow / Revoke 走 pie 门闩。wait/wake 不进本类——mail 同步直用
-/// 调度词族 `RoomCall::Wait/Wake`。
+/// / Accord / Narrow / Revoke / Collect / Release 走 pie 门闩。wait/wake 不进本类
+/// ——mail 同步直用调度词族 `RoomCall::Wait/Wake`。
+///
+/// 两条轴不要混：`Unseal*` ↔ `Seal` 动的是**资源**；`Accord` ↔ `Revoke`（他人）
+/// 与 `Collect` ↔ `Release`（自己）动的是**我手里那一份**。
 #[derive(Envcall)]
 #[call(class = 5)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -170,6 +178,13 @@ pub enum MailCall {
     /// 收回授与他人的副本：dst_id + token。
     #[ret(())]
     Revoke { dst: TaskId, token: PieToken },
+    /// 收拢：报出本任务权限表第 `index` 份（token + permission）。
+    /// 越界 → `PieToken(0)`（无效哨兵，不报错）。
+    #[ret((PieToken, crate::permission::Permission))]
+    Collect { index: usize },
+    /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
+    #[ret(())]
+    Release { token: PieToken },
 }
 
 /// 控制调用（class 6）。
@@ -189,41 +204,6 @@ pub enum ControlCall {
     Backtrace { buf: usize, frames: usize },
 }
 
-/// 服务调用（class 7）—— 用户态向内核驻留服务发起连接 / 请求。
-///
-/// 与 `ipc` 无涉：`Service` 是 sqware 词族。连接发放由内核处理（类似 DHCP 服务器）：
-/// 用户经 `ServiceConnect` 拿到内核驻留服务 Hole 的 Pie，重建句柄后收发数据。
-#[derive(Envcall)]
-#[call(class = 7)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ServiceCall {
-    /// 拿 dispatcher 的 req/rep Pies（service 参数当前忽照；，固定返回 dispatcher）。
-    /// dispatcher 沿 req/rep hole 处理 service name 查找，将 Pies 进 caller.pies。
-    #[ret((PieToken, PieToken))]
-    Connect { service: ServiceId },
-}
-
-/// 服务号（dispatcher 按 name 查找，ServiceId 是 uABI 边界标识）。
-///
-/// **0 保留**（未来 dispatcher 可服务 0——目前，
-/// dispatcher 不接 ServiceId，Service::Connect 固定返 dispatcher Pies）。
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ServiceId {
-    /// echo 服务（字节 +1 测试）。
-    Echo = 1,
-    // 后续：Logger = 2, Fs = 3, ...
-}
-
-impl ServiceId {
-    /// 服务名（UTF-8，null-padded，dispatcher 查找用）。
-    pub const fn name_bytes(self) -> &'static [u8] {
-        match self {
-            ServiceId::Echo => b"echo\0",
-        }
-    }
-}
-
 /// 环境调用号聚合（内核侧解码总入口）。
 ///
 /// `from_wire(slot, regs)` 按 class（高 32 位）分派到各域的 `from_wire`，得到
@@ -238,7 +218,6 @@ pub enum EnvCall {
     Chrono(ChronoCall),
     Mail(MailCall),
     Control(ControlCall),
-    Service(ServiceCall),
 }
 
 impl EnvCall {
@@ -253,7 +232,6 @@ impl EnvCall {
             4 => Ok(EnvCall::Chrono(ChronoCall::from_wire(slot, regs)?)),
             5 => Ok(EnvCall::Mail(MailCall::from_wire(slot, regs)?)),
             6 => Ok(EnvCall::Control(ControlCall::from_wire(slot, regs)?)),
-            7 => Ok(EnvCall::Service(ServiceCall::from_wire(slot, regs)?)),
             _ => Err(crate::wire::Decode::BadSlot),
         }
     }

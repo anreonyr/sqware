@@ -18,8 +18,7 @@ use core::time::Duration;
 use alloc::sync::Arc;
 
 use ubi::{
-    ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, ServiceCall,
-    UnitCall,
+    ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, UnitCall,
 };
 
 use crate::memory::PAGE_SIZE;
@@ -674,47 +673,33 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        EnvCall::Service(ServiceCall::Connect { service: _ }) => {
-            // 给 caller 两个 Pie：DISPATCHER_REQ（caller push lookup / dispatcher pull）
-            // + DISPATCHER_REP（dispatcher push reply / caller pull）。
-            // 用户拿这两个 Pies 走 lookup 拿目标服务的 Pies。
-            // envcall 返回 (req_token, rep_token)：a0 = req, a1 = rep。
-            let r = (|| -> Result<(u64, u64), GateError> {
-                let task = current().running_task().ok_or(GateError::Denied)?;
-                let current_id = task.ident.id;
-                let (req_id, req_meta) = {
-                    let (id, meta) = crate::boot::DISPATCHER_REQ.get().ok_or(GateError::Denied)?;
-                    (*id, meta.clone())
-                };
-                let (rep_id, rep_meta) = {
-                    let (id, meta) = crate::boot::DISPATCHER_REP.get().ok_or(GateError::Denied)?;
-                    (*id, meta.clone())
-                };
-                let req_pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
-                    req_id,
-                    Permission::READ | Permission::WRITE,
-                    Some(current_id),
-                    alloc::sync::Arc::downgrade(&req_meta),
-                );
-                let req_tk = req_pie.token();
-                let rep_pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
-                    rep_id,
-                    Permission::READ | Permission::WRITE,
-                    Some(current_id),
-                    alloc::sync::Arc::downgrade(&rep_meta),
-                );
-                let rep_tk = rep_pie.token();
-                let mut pies = task.pies.lock();
-                pies.push(AnyPie::Hole(req_pie));
-                pies.push(AnyPie::Hole(rep_pie));
-                Ok((req_tk, rep_tk))
-            })();
-            let (a0, a1) = match r {
-                Ok((req, rep)) => (req as usize, rep as usize),
-                Err(e) => (e.code() as usize, 0),
+        EnvCall::Mail(MailCall::Collect { index }) => {
+            // 自省：报出本任务权限表第 index 份。越界 → (PieToken(0), 空权限)
+            // ——哨兵不报错，与 UnitCall::Heir 越界返 0 同风格。
+            let task = current().running_task();
+            let (token, permission) = task
+                .and_then(|t| {
+                    let pies = t.pies.lock();
+                    pies.get(index).map(|p| (p.token(), p.permission()))
+                })
+                .unwrap_or((0, Permission::empty()));
+            frame.gpr.set_x(Gprs::A0, token as usize);
+            frame.gpr.set_x(Gprs::A1, permission.bits() as usize);
+        }
+        EnvCall::Mail(MailCall::Release { token }) => {
+            // 自释：放下自己的一份门闩（无权限要求；Pole 同步 unmap）。
+            let token = tok(token);
+            let r = match current().running_task() {
+                Some(task) => gate::release(&task, token),
+                None => Err(GateError::Denied),
             };
-            frame.gpr.set_x(Gprs::A0, a0);
-            frame.gpr.set_x(Gprs::A1, a1);
+            frame.gpr.set_x(
+                Gprs::A0,
+                match r {
+                    Ok(()) => 0,
+                    Err(e) => e.code() as usize,
+                },
+            );
         }
     };
     frame as *mut TrapContext

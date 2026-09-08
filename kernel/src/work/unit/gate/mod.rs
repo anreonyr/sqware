@@ -15,6 +15,7 @@
 //   accord.rs — 转授子集给其他 Task
 //   narrow.rs — 就地单调收窄本 pie 权限
 //   revoke.rs — 收回授与他人的副本
+//   release.rs — 自释自己持有的一份
 //
 // 用户态：Task 持 `Vec<AnyPie>`（`unit::task::pies`）；envcall 以 token 寻址。
 // `Permission` 单一真相在 `ubi`（本层 re-export）；错误码契约见 [`GateError::code`]。
@@ -22,10 +23,12 @@
 mod accord;
 mod narrow;
 mod pie;
+mod release;
 mod revoke;
 
 pub(crate) use pie::{new_pie, AnyPie, GateError, Need, Permission, Pie};
 
 pub(crate) use accord::accord;
 pub(crate) use narrow::narrow;
+pub(crate) use release::release;
 pub(crate) use revoke::revoke;

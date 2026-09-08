@@ -940,3 +940,24 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
   user/src/bin/shell.rs                    req 用 ServiceId::Echo
   Cargo.toml                                release opt_level = 1
 ```
+
+---
+
+## 14 · 服务目录协议（取代 §13 的 dispatcher 形态）
+
+§13 的 dispatcher（class 7 `ServiceCall::Connect` + 单 slot rep + 跨任务写调用方
+权限表）已被**服务目录协议**取代，规范见 [`docs/dispatch.md`](dispatch.md)。
+
+差异要点：
+
+| §13 | 现在 |
+|---|---|
+| `ServiceCall::Connect`（class 7，`service` 参数被忽略） | **删除**——入口门闩由内核在 boot 期放进首个用户任务权限表 |
+| dispatcher 持 `(name, req_id, Weak, rep_id, Weak)` | 目录持 `Pie`（`Binding { name, entry }`） |
+| 直接为 caller 建 pie 塞进 `caller.pies` | `gate::accord` 转授子集（与普通 task 授权同路） |
+| 单 slot rep（多 caller 串台） | 调用方自带回信通道 |
+| lookup 与授权混在一笔往返 | `Resolve` / `Enumerate` / `Connect` 三个操作 |
+| 无 `Unregister` / `Replace` | 均有（`Replace` 支持服务重启换门闩不换名字） |
+
+新增两个与目录无关的原语：`MailCall::Collect`（自省权限表）、`MailCall::Release`
+（自释自己的一份）。实现过程中修复的三个内核缺陷见 `docs/dispatch.md` §11。

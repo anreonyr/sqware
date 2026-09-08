@@ -16,7 +16,8 @@
 //!   sleep — 阻塞 N 毫秒（RoomCall::Park）
 //!   spawn — 派一个算 0..N 的闭包子任务并 join（TaskCall::Spawn）
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
-//!   req   — Service::connect 经内核发放的 Hole 自 echo（验证内核发能力给用户）
+//!   req   — 走目录协议连接 echo 并调用一次（Connect + Service::call）
+//!   dir   — 目录协议自省（Discover + Enumerate）
 //!   exit  — 退出 shell（RoomCall::Reap）
 
 extern crate alloc;
@@ -31,7 +32,7 @@ use user::core::task;
 use user::env::chrono::{self, clock};
 use user::env::mail::HolePie;
 use user::env::room::{self, sleep};
-use user::env::service::Service;
+use user::env::service::{Directory, PAYLOAD_LEN};
 use user::env::task::{heir_at, heir_count};
 use user::term::{Color, Readline, Terminal};
 
@@ -45,7 +46,9 @@ fn split(line: &str) -> Vec<String> {
 fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
-            term.writeline("help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / exit");
+            term.writeline(
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / exit",
+            );
         }
         "clock" => {
             let (s, n) = clock().unwrap_or((0, 0));
@@ -109,9 +112,16 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
             pie.seal().ok();
         }
         "req" => {
-            // Service::connect(ServiceId::Echo) 经 dispatcher lookup 拿 echo svc Pies，
-            // 然后 echo 自验证（push 后 pull 回，字节 +1）。
-            let svc = match Service::connect(ubi::ServiceId::Echo) {
+            // 走目录协议：Directory::open 取会话 → Connect("echo") 拿服务入口门闩
+            // → Service::call 一次往返（echo 对载荷字节 +1）。
+            let dir = match Directory::open() {
+                Ok(d) => d,
+                Err(e) => {
+                    term.writeline(&format!("req dir err: {e:?}"));
+                    return true;
+                }
+            };
+            let svc = match dir.connect("echo") {
                 Ok(s) => s,
                 Err(e) => {
                     term.writeline(&format!("req connect err: {e:?}"));
@@ -119,11 +129,11 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
                 }
             };
             let txt = args.first().map(|s| s.as_str()).unwrap_or("hello-service");
-            let mut msg = [0u8; 64];
+            let mut payload = [0u8; PAYLOAD_LEN];
             let bytes = txt.as_bytes();
-            let n = bytes.len().min(63);
-            msg[..n].copy_from_slice(&bytes[..n]);
-            match svc.echo(&msg) {
+            let n = bytes.len().min(PAYLOAD_LEN - 1);
+            payload[..n].copy_from_slice(&bytes[..n]);
+            match svc.call(&payload) {
                 Ok(got) => {
                     term.writeline(&format!(
                         "req echo -> {:?}",
@@ -132,6 +142,36 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
                 }
                 Err(e) => {
                     term.writeline(&format!("req echo err: {e:?}"));
+                }
+            }
+            let _ = svc.disconnect();
+        }
+        "dir" => {
+            // 目录协议：Discover（纯探测）+ Enumerate（按名排序分页）。
+            let dir = match Directory::open() {
+                Ok(d) => d,
+                Err(e) => {
+                    term.writeline(&format!("dir open err: {e:?}"));
+                    return true;
+                }
+            };
+            match dir.discover("echo") {
+                Ok(true) => term.writeline("discover echo -> found"),
+                Ok(false) => term.writeline("discover echo -> not found"),
+                Err(e) => term.writeline(&format!("dir discover err: {e:?}")),
+            }
+            let mut after: Option<String> = None;
+            loop {
+                match dir.list(after.as_deref()) {
+                    Ok(Some(name)) => {
+                        term.writeline(&format!("  {}", name.as_str()));
+                        after = Some(String::from(name.as_str()));
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        term.writeline(&format!("dir list err: {e:?}"));
+                        break;
+                    }
                 }
             }
         }
