@@ -961,3 +961,13 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
 
 新增两个与目录无关的原语：`MailCall::Collect`（自省权限表）、`MailCall::Release`
 （自释自己的一份）。实现过程中修复的三个内核缺陷见 `docs/dispatch.md` §11。
+
+---
+
+## 15 · S 态域（Supervisor 域）
+
+`SpaceKind` 收窄为特权轴（`Supervisor` / `User`）、ASID 提为独立字段
+（0 = 内核空间）、域态 echo 服务见 [`docs/supervisor.md`](supervisor.md)。该文
+同时记录两条被验证逼出来的 ABI 事实：环境调用陷阱是 **`ebreak`**（S 态 `ecall`
+是 SBI 调用、不进内核）与 `sepc` 必须按**真实指令长度**前进（`c.ebreak` 是 2
+字节）。
