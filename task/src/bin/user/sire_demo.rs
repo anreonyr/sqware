@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use task::core::thread::self_id;
+use task::core::unit::self_id;
 use task::env::io::put;
 use task::env::task::sire;
 

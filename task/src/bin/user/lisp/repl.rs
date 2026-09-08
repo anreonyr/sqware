@@ -2,8 +2,8 @@
 
 use alloc::format;
 
-use crate::env::room;
-use crate::term::{Readline, Terminal};
+use task::env::room;
+use task::term::{Readline, Terminal};
 
 use super::core::Core;
 use super::kernel::{LispError, Val};

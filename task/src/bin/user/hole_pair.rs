@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use env::Permission;
-use task::core::thread;
+use task::core::unit;
 use task::env::{io::put, mail::HolePie, room};
 
 // hole_pair: 跨 Task 真共享 Hole（accord 派门闩 + 多 key 同步）。
@@ -45,7 +45,7 @@ extern "C" fn main() {
     let token_slot_ptr = token_slot.as_ptr() as usize;
 
     // spawn consumer。closure 捕获 key + token 槽。
-    let join: thread::Join<()> = thread::closure(move || {
+    let join: unit::Join<()> = unit::closure(move || {
         // 等 producer accord 完 + 存 token。
         let _ = room::wait(key_token, WAIT).expect("wait token");
         let token = unsafe { (*(token_slot_ptr as *const AtomicU64)).load(Ordering::Relaxed) };

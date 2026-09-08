@@ -3,8 +3,7 @@
 
 extern crate alloc;
 
-use task::core::thread;
-use task::core::tls;
+use task::core::{tls, unit};
 use task::env::io::put;
 
 // tlser：TLS 地基验收——主线程 + 子线程各自独立 TLS 块。
@@ -16,7 +15,7 @@ extern "C" fn main() {
     let _ = put("tlser\n");
     let mine = tls::base();
 
-    let a = thread::closure(|| {
+    let a = unit::closure(|| {
         let base = tls::base();
         unsafe { (base as *mut usize).add(SLOT).write(0xA5A5_A5A5) };
         (base, 0xA5A5_A5A5usize)
@@ -24,7 +23,7 @@ extern "C" fn main() {
     let (ba, va) = a.join();
     let _ = put("P\n");
 
-    let b = thread::closure(|| {
+    let b = unit::closure(|| {
         let base = tls::base();
         unsafe { (base as *mut usize).add(SLOT).write(0x5A5A_5A5A) };
         (base, 0x5A5A_5A5Ausize)

@@ -7,7 +7,8 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use env::Permission;
-use task::core::thread;
+
+use task::core::unit;
 use task::env::{io::put, mail::HolePie, room};
 
 // revoke: 收回授与他人的副本。
@@ -40,7 +41,7 @@ extern "C" fn main() {
     let token_slot_ptr = token_slot.as_ptr() as usize;
 
     // spawn B。closure 捕获 key + token 槽。
-    let join: thread::Join<()> = thread::closure(move || {
+    let join: unit::Join<()> = unit::closure(move || {
         // 等 A accord 完 + 存 token。
         let _ = room::wait(key_grant, WAIT).expect("wait grant");
         let token = unsafe { (*(token_slot_ptr as *const AtomicU64)).load(Ordering::Relaxed) };
@@ -70,7 +71,9 @@ extern "C" fn main() {
     });
 
     // accord：subset = READ|WRITE（无 VEST，B 只能 push/pull，不能转授）。
-    let token = hole.accord(join.id(), Permission::READ | Permission::WRITE).expect("accord");
+    let token = hole
+        .accord(join.id(), Permission::READ | Permission::WRITE)
+        .expect("accord");
     token_slot[0].store(token, Ordering::Relaxed);
     put("V\n");
 

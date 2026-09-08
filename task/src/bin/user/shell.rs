@@ -28,12 +28,14 @@ use alloc::vec::Vec;
 
 use core::time::Duration;
 
-use task::core::thread;
-use task::env::chrono::{self, clock};
-use task::env::mail::HolePie;
-use task::env::room::{self, sleep};
-use task::env::service::{Directory, PAYLOAD_LEN};
-use task::env::task::{heir_at, heir_count};
+use task::core::unit;
+use task::env::{
+    chrono::{self, clock},
+    mail::HolePie,
+    room::{self, sleep},
+    service::{Directory, PAYLOAD_LEN},
+    task::{heir_at, heir_count},
+};
 use task::term::{Color, Readline, Terminal};
 
 /// 按空白切词（保留空输入 = 空 Vec）。
@@ -66,15 +68,21 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
             term.writeline(&args.join(" "));
         }
         "sleep" => {
-            let ms = args.first().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let ms = args
+                .first()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
             term.writeline(&format!("sleep {ms}ms"));
             let _ = sleep(Duration::from_millis(ms));
             term.writeline("woke");
         }
         "spawn" => {
             // 闭包 join：算 0..N。
-            let n = args.first().and_then(|s| s.parse::<u64>().ok()).unwrap_or(1000);
-            let sum = thread::closure(move || {
+            let n = args
+                .first()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(1000);
+            let sum = unit::closure(move || {
                 let mut acc: u64 = 0;
                 for i in 0..n {
                     acc = acc.wrapping_add(i);

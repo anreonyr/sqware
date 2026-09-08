@@ -285,6 +285,8 @@ debug 档同路径跑通，且 `health spare / pagetable / stress` 全 ok。
 > **`task/` 的定位**（本次由 `user/` 改名）：它是**镜像 crate**，不限特权级——
 > 负责把 `#![no_std]` 程序编成 loader 可装载的静态 ET_EXEC（VMA 0x10000）。特权级
 > 由内核侧 `SpaceKind` 决定；域程序与 U 态程序共用 `entry`/`env`/`link.ld`/`env`。
+> 只被单个程序用到的模块（如 `lisp/`）留在该 bin 的目录里（`bin/user/lisp/`），
+> 不进 lib 共享面。
 > 改名同时把 `core::task` 模块改为 `core::thread`：原名与新 crate 名撞车——
 > `use task::core::task;` 会把 `task` 绑到该模块，使同文件的 `task::env::…` 解析失败。
 

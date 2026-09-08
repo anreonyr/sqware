@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use env::Permission;
-use task::core::thread;
+use task::core::unit;
 use task::env::{io::put, mail::PolePie, room};
 
 // pole_pair: 跨 Task 真共享 Pole（页级安全内存 + accord 派门闩 + fault isolation）。
@@ -45,7 +45,7 @@ extern "C" fn main() {
 
     // spawn consumer。closure 捕获 key + token 槽。consumer 末尾写 R-only 触发
     // fault isolation，被内核杀掉，**不会**走完 closure——producer 不可 join。
-    let _join: thread::Join<()> = thread::closure(move || {
+    let _join: unit::Join<()> = unit::closure(move || {
         // 等 producer accord + 存 token（先于第一次 wake key_data）。
         let _ = room::wait(key_data, WAIT).expect("wait data");
         let token = unsafe { (*(token_slot_ptr as *const AtomicU64)).load(Ordering::Relaxed) };

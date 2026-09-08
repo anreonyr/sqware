@@ -5,7 +5,7 @@ extern crate alloc;
 
 use core::time::Duration;
 
-use task::core::thread;
+use task::core::unit;
 use task::env::{io::put, room::sleep};
 
 // spawner：反复派一个算 `0..1000` 的闭包并 join 取回。
@@ -14,7 +14,7 @@ use task::env::{io::put, room::sleep};
 extern "C" fn main() {
     let _ = put("spawner\n");
     loop {
-        let sum = thread::closure(|| {
+        let sum = unit::closure(|| {
             let mut s: u64 = 0;
             for i in 0..1000 {
                 s = s.wrapping_add(i);

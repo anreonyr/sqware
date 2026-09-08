@@ -125,7 +125,7 @@ doctest = false
 
 [[bin]]
 name = "task-lisp"
-path = "src/bin/user/lisp.rs"
+path = "src/bin/user/lisp/main.rs"
 test = false
 bench = false
 doctest = false

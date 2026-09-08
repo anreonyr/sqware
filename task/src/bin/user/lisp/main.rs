@@ -1,13 +1,24 @@
 #![no_std]
 #![no_main]
+//! 教学 Lisp：语言内核（core / kernel / parse / vm）+ REPL 适配。
+//!
+//! 归 U 态镜像层（`src/bin/user/`）：只有本 bin 用它，不进 lib 的共享面。
 
 extern crate alloc;
+
+mod core;
+mod kernel;
+mod parse;
+mod repl;
+mod vm;
 
 use alloc::format;
 
 use task::env::io::put;
-use task::lisp::{Core, repl};
 use task::term::Terminal;
+
+use crate::core::Core;
+use crate::repl::repl;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() {
