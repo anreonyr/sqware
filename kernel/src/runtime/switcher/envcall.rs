@@ -32,7 +32,7 @@ use crate::work::mail;
 use crate::work::mail::HOLE_MSG_LEN;
 use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie};
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
-use crate::work::unit::space::{Pending, PendingState};
+use crate::work::unit::space::{Pending, PendingState, Space};
 use crate::work::unit::task::TaskIdent;
 use crate::work::room::messenger::WaitKey;
 use crate::work::room::scheduler::core::current;
@@ -68,6 +68,21 @@ fn tok(t: PieToken) -> u64 {
     t.get()
 }
 
+/// 陷阱指令字节数（RVC 压缩 2 字节 / 标准 4 字节）——`sepc` 前进量。
+///
+/// 环境调用是 `ebreak`：汇编器在开 RVC 时发 **`c.ebreak`（2 字节）**，故固定
+/// `+4` 会多跳一条 2 字节指令。release 下曾因被跳过的那条恰是 `ld ra`（ra 本就
+/// 未被本函数改写）而侥幸可用；debug 下跳过的是必需指令，必崩。按指令首字节低
+/// 两位判长（`!= 0b11` ⇒ 2 字节）是规范做法；首字节经目标空间翻译后读，读不到
+/// 按 4 字节兜底。
+fn instr_len(space: &Space, sepc: KVirt) -> usize {
+    let b0 = space
+        .translate(sepc)
+        .map(|(pa, _)| unsafe { core::ptr::read_volatile(pa.as_usize() as *const u8) })
+        .unwrap_or(0b11);
+    if b0 & 0b11 == 0b11 { 4 } else { 2 }
+}
+
 /// envcall 分发。
 ///
 /// 入参 frame = 当前任务用户帧；`ident` = 当前任务身份（**Arc 所有权移交**——
@@ -88,7 +103,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         call: number,
         arg: frame.gpr.x(Gprs::A0),
     }));
-    frame.sepc += 4;
+    frame.sepc += instr_len(&ident.team.space, frame.sepc);
     let envcall = match EnvCall::from_wire(number, &regs) {
         Ok(c) => c,
         Err(_) => panic!("invalid envcall number: {number}"),
@@ -122,7 +137,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             return park(Duration::from_millis(millis as u64)) as *mut TrapContext;
         }
         EnvCall::Room(RoomCall::Wait { key, millis }) => {
-            let wkey = WaitKey::compose(ident.team.space.asid(), key);
+            let wkey = WaitKey::compose(ident.team.space.asid().get(), key);
             let dur = if millis == usize::MAX {
                 Duration::MAX
             } else {
@@ -134,7 +149,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }
         }
         EnvCall::Room(RoomCall::Wake { key }) => {
-            let wkey = WaitKey::compose(ident.team.space.asid(), key);
+            let wkey = WaitKey::compose(ident.team.space.asid().get(), key);
             let woke = wake(wkey);
             frame.gpr.set_x(Gprs::A0, woke as usize);
         }
@@ -149,7 +164,8 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let s = &ident.team.space;
                 let r = HeapWindow::allocate(s, size).map(|span| span.va);
                 if let Ok(va) = r {
-                    let key = crate::memory::allocator::fence::key(s.asid(), va.as_usize());
+                    let key =
+                        crate::memory::allocator::fence::key(s.asid().get(), va.as_usize());
                     crate::memory::allocator::fence::on_alloc(
                         key,
                         size,
@@ -179,7 +195,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let freed = HeapWindow::deallocate(s, KVirt::from_raw(addr), size);
                 if freed {
                     crate::memory::allocator::fence::on_free(
-                        crate::memory::allocator::fence::key(s.asid(), addr),
+                        crate::memory::allocator::fence::key(s.asid().get(), addr),
                         size,
                         crate::memory::allocator::fence::OwnerKind::UserHeap,
                     );

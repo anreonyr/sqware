@@ -29,9 +29,13 @@ impl ShareWindow {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
+        // U 位随空间模式：U 态页表需 U；S 态页表 SUM=0，不得带 U。
+        let mut flags = PteFlags::V | PteFlags::R | PteFlags::W;
+        if !space.kind().is_supervisor() {
+            flags |= PteFlags::U;
+        }
         space.with(|inner| {
             let va = inner.allocate(Seg::User, size)?;
-            let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
             if let Err(e) = inner.map(va, size, flags, Some(Pending::Lazy)) {
                 // reserve 未落任何 PTE/帧；段退回
                 inner.deallocate(Seg::User, va.as_usize(), size);

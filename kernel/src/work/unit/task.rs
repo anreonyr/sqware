@@ -16,7 +16,7 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::switcher::context::TrapContext;
 use crate::work::unit::gate::AnyPie;
-use crate::work::unit::space::SpaceKind;
+
 use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
 
@@ -259,7 +259,7 @@ impl TaskBuilder {
         F: FnOnce() + Send + 'static,
     {
         debug_assert!(
-            matches!(self.team.space.kind(), SpaceKind::Kernel),
+            self.team.space.asid().is_kernel(),
             "TaskBuilder::closure 目前仅支持 kernel 团队（内核态任务）"
         );
         // 双装箱：`Box<dyn FnOnce()>` 是胖指针不能直接转 usize，外包一层得薄指针。
@@ -289,10 +289,9 @@ impl TaskBuilder {
     pub fn spawn(self) -> Result<usize, MapError> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
-        // 栈：StackWindow::claim 取 slot（user 段 + guard，立即物化）
+        // 栈：StackWindow::claim 取 slot（user 段 + guard，立即物化；U 位随空间模式）
         let stack_size = self.stack;
-        let is_kernel = matches!(self.team.space.kind(), SpaceKind::Kernel);
-        let stack_span = StackWindow::claim(&self.team.space, stack_size, is_kernel)?;
+        let stack_span = StackWindow::claim(&self.team.space, stack_size)?;
         // 栈体基址（供填帧算 stack_top）= slot 基址 + guard
         let stack_body = stack_span.va + crate::layout::TASK_STACK_GUARD;
         let stack_top = stack_body + stack_size;

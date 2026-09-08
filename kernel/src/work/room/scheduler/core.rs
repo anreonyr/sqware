@@ -47,7 +47,7 @@ use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trap::trap_stack_edge;
 use crate::work::room::conductor;
 use crate::work::room::messenger;
-use crate::work::unit::space::SpaceKind;
+
 use crate::work::unit::task::{Task, TaskIdent, TaskState};
 
 // ── 核心：常量 ──
@@ -191,9 +191,10 @@ impl Scheduler {
             let frame =
                 &mut *(t.ident.frame.pa.expect("frame span has pa").as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);
-            // 内核任务上台即写 tp = 本 hart PerHart 指针：被抢占恢复路径直接 sret
-            // 回打断点（不经 ktask_trampoline 的 tp 重建），tp 必须在上台时就绪。
-            if matches!(t.ident.team.space.kind(), SpaceKind::Kernel) {
+            // S 态任务上台即写 tp = 本 hart PerHart 指针（内核任务与 supervisor 域
+            // 任务同此约定）：被抢占恢复路径直接 sret 回打断点（不经 ktask_trampoline
+            // 的 tp 重建），tp 必须在上台时就绪。U 态任务的 tp 是 TLS，不写。
+            if t.ident.team.space.kind().is_supervisor() {
                 frame
                     .gpr
                     .set_x(Gprs::TP, crate::machine::per_hart_ptr(self.hart));

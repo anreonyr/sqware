@@ -34,8 +34,14 @@ impl EnvError {
     }
 }
 
-/// 唯一碰汇编的原语：a7 = 调用号（slot）、a0..a5 = 参数（packed 数组）→ U 态
-/// ecall → 读回 a0/a1。
+/// 唯一碰汇编的原语：a7 = 调用号（slot）、a0..a5 = 参数（packed 数组）→ 任务
+/// **`ebreak`** → 读回 a0/a1。
+///
+/// 为什么不是 `ecall`：`ecall` 的语义随特权级变化——U 态 `ecall`（scause=8）委派
+/// 给 S 态，但 **S 态 `ecall`（scause=9）是 SBI 调用，进 M 态固件**（`medeleg`
+/// 位 9 由 OpenSBI 清零）。S 态 supervisor 域任务用 `ecall` 发环境调用会静默
+/// 变成一次失败的 SBI 调用（返回值当错误码，陷阱不进内核）。`ebreak`
+/// （scause=3）在 U 态与 S 态都被委派给 S 态，故**两类任务共用同一入口**。
 ///
 /// unsafe：直触寄存器约定、不判错；调用方须已按 ABI 摆好 slot/packed args。
 ///
@@ -47,7 +53,7 @@ pub unsafe fn warpper(slot: usize, args: [usize; 6]) -> (usize, usize) {
     let (v0, v1);
     unsafe {
         core::arch::asm!(
-            "ecall",
+            "ebreak",
             inlateout("a0") args[0] => v0,
             inlateout("a1") args[1] => v1,
             inlateout("a7") slot => _,

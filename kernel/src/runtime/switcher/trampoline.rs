@@ -1,8 +1,14 @@
 // 陷阱 trampoline — 所有地址空间共同映射、共同取指的 trap 入口页（页身份）
 //
-// 一页（4 KiB）内含 `__alltraps`（保存帧 + 切 satp）与 `__restore`（切回 + 恢复 + sret），
-// 内核空间与所有用户空间以 TRAMPOLINE VA 映射同一物理页（G 位），`stvec`
-// 指向 `__alltraps`。
+// 一页（4 KiB）内含 `__alltraps`（路由 + 保存帧 + 切 satp）与 `__restore`
+// （切回 + 恢复 + sret），内核空间与所有非内核空间以 TRAMPOLINE VA 映射同一
+// 物理页（G 位），`stvec` 指向 `__alltraps`。
+//
+// 路由契约（`__alltraps`）：SPP=0 → `__task_trap`；SPP=1 且 `satp.ASID ≠ 0`
+// → `__task_trap`（S 态域任务）；否则 → `__core_trap`（内核）。
+// **`satp.ASID == 0` ⇔ 被中断者是内核**——前提是不变量「内核代码只在内核空间
+// 执行」。任务路径（U 态与 S 态域任务同体）用 `sscratch` 取线程帧 VA，读帧内
+// 元数据切内核 satp；内核路径用 `tp` 取本 hart 帧，不切 satp。
 //
 // 本页代码执行于 TRAMPOLINE 固定 VA（0xFFFF_FFFF_FFFF_F000）——任何 PC 相对寻址
 // （la/call 等）的目标必须在本页内；跨页符号（如 Rust 的
@@ -20,7 +26,7 @@ use core::arch::global_asm;
 
 use crate::layout::TRAMPOLINE;
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::asid;
+use crate::memory::manager::asid::{self, Asid};
 use crate::runtime::switcher::context::TrapContext;
 
 global_asm!(
@@ -33,9 +39,16 @@ global_asm!(
     "__alltraps:",
     "    csrr  t0, sstatus",
     "    andi  t0, t0, (1 << 8)", // SPP：0 = 来自用户态，1 = 来自内核态
-    "    bnez  t0, __strap",
-    // ── 用户态陷阱（__utrap）：现场存当前线程帧（sscratch 交换）────────────
-    "__utrap:",
+    "    beqz  t0, __task_trap",
+    "    csrr  t0, satp", // SPP=1：问硬件「我们在哪个页表上」
+    "    srli  t0, t0, 44",
+    "    slli  t0, t0, 48",     // 只留 satp.ASID 16 位（模式位左移出界）
+    "    bnez  t0, __task_trap", // 非内核空间 → S 态域任务
+    "    j     __core_trap",
+    // ── 任务陷阱（__task_trap）：现场存当前线程帧（sscratch 交换）──────────
+    // 服务两类被中断者：U 态任务与 S 态域任务——存帧/切表序列逐字相同，
+    // 差别只在保存下来的 sstatus.SPP（sret 时按它返回原特权级）。
+    "__task_trap:",
     "    csrrw sp, sscratch, sp", // sp = 本线程帧 VA；sscratch = 用户 sp
     "    sd    x1,  0x38(sp)",    // gpr[1] = ra
     // x5（用户 t0）必须**先存**：下面用 t0 做 scratch 读 sscratch 取用户 sp。
@@ -90,14 +103,14 @@ global_asm!(
     "    mv    sp, t1",
     "    jalr  t2", // handler(frame_pa) -> frame_pa（续跑时恒为原帧）
     "    j     __restore",
-    // ── 内核态陷阱（__strap）：现场存**本 hart**帧（PerHart.frame 定位——tp
+    // ── 内核态陷阱（__core_trap）：现场存**本 hart**帧（PerHart.frame 定位——tp
     //    指向本 hart 上下文块，帧 VA 取块内字段，见 machine::PerHart；栈切本
     //    hart trap 栈。tp 约定：内核态恒为本 hart PerHart 指针——入口/
     //    establish_tp 维持。sscratch 内核态约定 = 本 hart 帧 VA，但**trap 入口
-    //    不可靠**：用户 trap（__utrap）入口把 sscratch 换成用户 sp，处理中若有
-    //    内核缺页再次进入本路径，sscratch 已被污染——故帧址仍由 tp 重建，
+    //    不可靠**：任务路径（__task_trap）入口把 sscratch 换成任务 sp，处理中
+    //    若有内核缺页再次进入本路径，sscratch 已被污染——故帧址仍由 tp 重建，
     //    不读 sscratch）。 ──
-    "__strap:",
+    "__core_trap:",
     "    csrrw sp, sscratch, sp", // sp = 0（内核态约定）；sscratch = 被中断内核 sp
     "    ld    sp, 0x08(tp)",     // sp = PerHart.frame（本 hart 帧 VA）
     "    sd    x1,  0x38(sp)",
@@ -153,17 +166,19 @@ global_asm!(
     "    csrw  sstatus, t0",
     "    ld    t0, 0x138(sp)",
     "    csrw  sepc, t0",
-    // sscratch 约定复原：SPP = 0（回用户）→ 线程帧 self_va；SPP = 1（回内核）→
-    // 本 hart 帧 VA（PerHart.frame；tp 此刻未被帧覆盖，仍是执行核 PerHart 指针
-    // ——x4 随后才从帧恢复；跨核迁移时即取**执行核**的帧）
-    "    csrr  t0, sstatus",
-    "    andi  t0, t0, (1 << 8)",
-    "    bnez  t0, 1f",
-    "    ld    t0,  0x140(sp)", // self_va（物理访问，切表前）
+    // sscratch 约定复原：按目标空间 `user_satp.asid()` 判别——0 = 内核空间 →
+    // 本 hart 帧 VA（PerHart.frame；tp 此刻未被帧覆盖，仍是执行核 PerHart 指针，
+    // 跨核迁移时即取**执行核**的帧）；≠0 = 任务（U 态 / S 态域任务）→ 线程帧
+    // self_va。与 `__alltraps` 的路由判据同源。
+    "    ld    t0,  0x28(sp)", // user_satp
+    "    srli  t1,  t0, 44",
+    "    slli  t1,  t1, 48", // 只留 satp.ASID 16 位（模式位左移出界）
+    "    bnez  t1, 1f",
+    "    ld    t0, 0x08(tp)", // t0 = PerHart.frame（本 hart 帧 VA）
     "    csrw  sscratch, t0",
     "    j     2f",
     "1:",
-    "    ld    t0, 0x08(tp)", // t0 = PerHart.frame（本 hart 帧 VA）
+    "    ld    t0,  0x140(sp)", // self_va（物理访问，切表前）
     "    csrw  sscratch, t0",
     "2:",
     // 恢复 GPR（x1、x3、x4、x7..x31；x2=sp、x5=t0、x6=t1 最后经 self_va 收尾）
@@ -228,7 +243,9 @@ pub fn restore(frame_pa: usize) -> ! {
     // RFENCE 清退需能发现本核驻留）。boot 路径与 `trap_handler` 出口同款——
     // 凡进 `__restore` 必先 set_asid。
     // SAFETY: frame_pa 为有效帧物理地址，恒等映射下可解引用。
-    asid::set_asid(unsafe { (*(frame_pa as *const TrapContext)).user_satp.asid() });
+    asid::set_asid(Asid::from_raw(unsafe {
+        (*(frame_pa as *const TrapContext)).user_satp.asid()
+    }));
     let link = core::ptr::addr_of!(__restore) as usize;
     let va = TRAMPOLINE.as_usize() + (link - core::ptr::addr_of!(__trampoline_start) as usize);
     unsafe {

@@ -34,7 +34,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::asid::{self, Deaf};
+use crate::memory::manager::asid::{self, Asid, Deaf};
 use crate::memory::manager::table::{Frame, FrameState, TableNode};
 use crate::memory::manager::{flush_asid, mode};
 
@@ -789,8 +789,10 @@ unsafe impl Sync for Space {}
 pub struct Space {
     /// 全部可变状态（root / 两段 / maps）——一把可重入锁保护。
     inner: RelLock<SpaceInner>,
-    /// 空间种类（内核 / 用户），内嵌 ASID。
+    /// 页表被哪个特权级使用（S 态 / U 态）。
     kind: SpaceKind,
+    /// 空间身份（TLB 标记 + wait/fence 键命名空间）；0 = 内核空间。
+    asid: Asid,
 }
 
 /// 连续 VA 区间逐段翻译迭代器（`Space::segments` 产出）。
@@ -821,42 +823,53 @@ impl Iterator for Segments<'_> {
 /// [`Space`] 构造器。
 pub struct SpaceBuilder {
     kind: SpaceKind,
+    asid: Asid,
 }
 
 impl SpaceBuilder {
-    /// 内核空间构造器（ASID 0）。
+    /// 内核空间构造器：S 态页表 + 固定身份 ASID 0（全局唯一，永不回收）。
     pub fn kernel() -> Self {
         Self {
-            kind: SpaceKind::Kernel,
+            kind: SpaceKind::Supervisor,
+            asid: Asid::kernel(),
         }
     }
 
-    /// 用户空间构造器（独立 ASID）。
+    /// supervisor 域空间构造器：S 态页表 + 独立 ASID。
+    pub fn supervisor() -> Self {
+        Self {
+            kind: SpaceKind::Supervisor,
+            asid: Asid::allocate(),
+        }
+    }
+
+    /// 用户空间构造器：U 态页表 + 独立 ASID。
     pub fn user() -> Self {
         Self {
-            kind: SpaceKind::User {
-                asid: asid::allocate(),
-            },
+            kind: SpaceKind::User,
+            asid: Asid::allocate(),
         }
     }
 
-    /// 完成构建：分配根页表帧；用户空间额外种入 trampoline 叶 PTE。
+    /// 完成构建：分配根页表帧；非内核空间额外种入 trampoline 叶 PTE——任何会
+    /// 承接陷阱的空间都必须能取指到 trampoline 页。
     pub fn build(self) -> Result<Space, MapError> {
         let mut space = Space {
             kind: self.kind,
+            asid: self.asid,
             inner: RelLock::new_level(Level::Space, SpaceInner::durable()?),
         };
-        if matches!(space.kind, SpaceKind::User { .. }) {
-            self.seed_user(&mut space)?;
+        if !self.asid.is_kernel() {
+            self.seed_trampoline(&mut space)?;
         }
         Ok(space)
     }
 
-    /// 从内核地址空间出用户空间（`build()` 内部调用）。
+    /// 从内核地址空间出非内核空间（`build()` 内部调用）。
     ///
-    /// 不复制内核半区映射——用户页表只含用户映射 + trampoline 叶 PTE 复制
+    /// 不复制内核半区映射——非内核页表只含自己的映射 + trampoline 叶 PTE 复制
     /// （帧归内核，借用映射：`pending: None` + 空帧）。
-    fn seed_user(&self, space: &mut Space) -> Result<(), MapError> {
+    fn seed_trampoline(&self, space: &mut Space) -> Result<(), MapError> {
         let (tramp_pa, tramp_flags) = {
             let ks_inner = crate::work::unit::team::kernel()
                 .expect("kernel team not initialized")
@@ -878,9 +891,9 @@ impl Space {
         self.kind
     }
 
-    /// 本空间的 ASID（写入 `satp.ASID` 用；0 = 内核空间）。
-    pub fn asid(&self) -> usize {
-        self.kind.asid()
+    /// 空间身份（写入 `satp.ASID` / 组 wait·fence 键；0 = 内核空间）。
+    pub fn asid(&self) -> Asid {
+        self.asid
     }
 
     /// 返回根页表页号（写入 `satp` 用）。
@@ -908,7 +921,7 @@ impl Space {
         let r = self.with(op);
         // SAFETY: sfence.vma 见 flush_asid
         unsafe {
-            flush_asid(self.kind.asid());
+            flush_asid(self.asid.get());
         }
         r
     }
@@ -921,7 +934,7 @@ impl Space {
     /// [`Deaf`] = RFENCE 清退失败（致命级，适配层裁定策略）。
     pub(crate) fn with_shootdown<R>(&self, op: impl FnOnce(&mut SpaceInner) -> R) -> Result<R, Deaf> {
         let r = self.with(op);
-        asid::shootdown(self.kind.asid())?;
+        asid::shootdown(self.asid)?;
         Ok(r)
     }
 
@@ -1077,15 +1090,15 @@ impl Space {
 
 impl Drop for Space {
     fn drop(&mut self) {
-        if let SpaceKind::User { asid } = self.kind {
+        if !self.asid.is_kernel() {
             // 1. 注销本空间名下的用户堆账：账的所有者是空间（键含 asid），任务
             //    退出不 unwind、退出时仍持堆是常态（TLS 由构造决定永不释放）
             //    ——账只能随空间作废。必须先于 ASID 归还：复用后键即换主。
-            crate::memory::allocator::fence::retire(asid);
+            crate::memory::allocator::fence::retire(self.asid.get());
             // 2. 释放 ASID（内含清退：ASID 立即可被复用，残留条目会让新空间同
             //    VA 命中旧映射）。此路径恒走快路径——Arc 归零 ⇒ 无任务持有本
             //    空间 ⇒ 没有任何核驻留该 ASID。
-            asid::deallocate(asid).expect("space drop: shootdown deaf");
+            asid::deallocate(self.asid).expect("space drop: shootdown deaf");
         }
         // `inner` 随字段自动 drop：root（页表树）/maps 帧全部归还 frame 池。
     }

@@ -193,7 +193,8 @@ fn collect(bytes: &[u8], h: &Header) -> Result<Vec<LoadSegment>, ParseError> {
             return Err(ParseError::Overflow);
         }
 
-        let mut pt = PteFlags::U;
+        // 只产 ELF 语义（R/W/X）；U 位是映射策略，由 loader 按空间模式加。
+        let mut pt = PteFlags::empty();
         if flags & PF_R != 0 {
             pt |= PteFlags::R;
         }

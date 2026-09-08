@@ -20,9 +20,9 @@ pub(crate) struct StackWindow;
 impl StackWindow {
     /// 领一个任务栈 slot，返回 **slot 全区间** Span（含守护页）。
     ///
-    /// `size` = 栈体大小（页对齐；guard 由本方法附加）。`kernel` = 所属空间
-    /// 种类：用户空间栈需 U（用户 push）；内核空间栈不得带 U——S 态 SUM=0 下
-    /// 访问 U 页会页故障，而内核任务跑 S 态。
+    /// `size` = 栈体大小（页对齐；guard 由本方法附加）。栈的 U 位随**空间模式**：
+    /// U 态页表需 U（用户 push）；S 态页表不得带 U——S 态 SUM=0 下访问 U 页会
+    /// 页故障，而内核任务与 supervisor 域任务都跑 S 态。
     ///
     /// 栈体立即物化（`claim`，Eager）：逐页分配物理帧 + 装 PTE + 注入。守护页
     /// 只占簿记（`reserve(Guard)`，不物化）。
@@ -33,7 +33,8 @@ impl StackWindow {
     /// # Errors
     ///
     /// 段未就绪 / 段耗尽 / 物理帧耗尽 → [`MapError`]（回滚：已分配帧与段归还）。
-    pub(crate) fn claim(space: &Space, size: usize, kernel: bool) -> Result<Span, MapError> {
+    pub(crate) fn claim(space: &Space, size: usize) -> Result<Span, MapError> {
+        let s_only = space.kind().is_supervisor();
         let slot_size = size + TASK_STACK_GUARD;
         let mut salvage = Salvage::new();
         let claimed = space.with_flush(|inner| {
@@ -47,7 +48,7 @@ impl StackWindow {
                 return Err(e);
             }
             // 栈体：立即物化（Eager）。逐页分配帧 + 装 PTE + 注入。
-            let body_flags = if kernel {
+            let body_flags = if s_only {
                 PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D
             } else {
                 PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D

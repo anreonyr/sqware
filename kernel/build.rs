@@ -3,10 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// initrd 承载的唯一用户程序（shell）。boot 把整个 initrd 当作单个 ELF 装载。
-/// 其余 demo 不再装入内核镜像/initrd——保留为用户 crate 的独立 bin，供后续
-/// 「字节内嵌 shell + SpawnTeam」机制按需装载。
-const INITRD_BIN: &str = "user-shell";
+/// initrd 承载的引导期程序（**临时机制**，见 kernel/src/initrd.rs）：
+/// (清单名, cargo bin 名)。顺序无关——内核按名取。
+const INITRD_BINS: &[(&str, &str)] = &[("shell", "user-shell"), ("echo", "user-echo")];
 
 fn main() {
     // 内核链接脚本：workspace 化后不同 crate 用不同 -Tlink.ld（内核 0x80200000 /
@@ -52,18 +51,34 @@ fn main() {
         "user crate build failed (kernel packs shell ELF into initrd)"
     );
 
-    // 写 initrd（= shell ELF 原样拷贝，无清单）：与内核 ELF 同目录，runner 从
-    // 内核 ELF 的父目录取它传给 QEMU `-initrd`。
+    // 写 initrd 小清单（**临时机制**，见 kernel/src/initrd.rs）：与内核 ELF 同目录，
+    // runner 从内核 ELF 的父目录取它传给 QEMU `-initrd`。
+    //   [u32 count]{[u32 name_len][name][u32 len][bytes]}*   （LE）
     let bin_dir = user_target.join(&target).join(&profile);
     let main_profile = main_profile_dir(&env::var("OUT_DIR").expect("OUT_DIR env missing"));
     let blob_path = main_profile.join("initrd.img");
-    let elf_path = bin_dir.join(INITRD_BIN);
-    let bytes = fs::read(&elf_path)
-        .unwrap_or_else(|e| panic!("initrd: read {INITRD_BIN} from {}: {e}", elf_path.display()));
-    fs::write(&blob_path, &bytes)
+    let mut blob: Vec<u8> = Vec::new();
+    blob.extend_from_slice(&(INITRD_BINS.len() as u32).to_le_bytes());
+    for (name, bin) in INITRD_BINS {
+        let elf = fs::read(bin_dir.join(bin))
+            .unwrap_or_else(|e| panic!("initrd: read {bin} from {}: {e}", bin_dir.display()));
+        blob.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        blob.extend_from_slice(name.as_bytes());
+        blob.extend_from_slice(&(elf.len() as u32).to_le_bytes());
+        blob.extend_from_slice(&elf);
+    }
+    fs::write(&blob_path, &blob)
         .unwrap_or_else(|e| panic!("initrd: write {}: {e}", blob_path.display()));
-    println!("initrd packed: {} ({} B)", blob_path.display(), bytes.len());
+    println!(
+        "initrd packed: {} ({} B, {} programs)",
+        blob_path.display(),
+        blob.len(),
+        INITRD_BINS.len()
+    );
     println!("cargo::rerun-if-changed=../user");
+    // ubi 是 user 的路径依赖（envcall 骨架/协议编解码）——它变了 initrd 里的程序
+    // 也得重打包，否则内核重编而用户程序是旧的（曾导致 ebreak 改动未生效）。
+    println!("cargo::rerun-if-changed=../crates/ubi");
 }
 
 /// 从 OUT_DIR（`.../<profile>/build/<pkg>/<hash>/out`）向上找到 `<profile>` 目录：

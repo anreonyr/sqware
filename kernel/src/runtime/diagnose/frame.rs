@@ -64,7 +64,7 @@ impl ResolveCfg {
     /// 内核域配置：域 = 内核，遇缺口停扫。
     pub fn kernel(ceiling: usize) -> ResolveCfg {
         ResolveCfg {
-            world: SpaceKind::Kernel,
+            world: SpaceKind::Supervisor,
             gaps: false,
             ceiling,
         }

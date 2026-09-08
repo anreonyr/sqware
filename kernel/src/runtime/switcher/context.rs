@@ -17,7 +17,6 @@
 use riscv::register::{satp, sstatus};
 
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::Team;
 
 /// 通用寄存器集（x0..x31）。`__restore`/`__alltraps` 按 `0x30 + i*8` 裸偏移存取数组。
@@ -102,10 +101,10 @@ pub struct TrapContext {
     /// 本帧在目标空间中的虚拟地址（restore 切表后经此 VA 收尾）。
     ///
     /// 用户线程帧 = 本空间 Frame 窗口分配的 VA；
-    /// hart 帧 = 帧区页。alltraps 用户路径把
+    /// hart 帧 = 帧区页。alltraps 任务路径把
     /// sscratch 设为该 VA，使每线程帧可位于任意页而汇编零改动。
-    /// （sscratch 约定：用户态 = 线程帧 self_va；内核态 = 本 hart 帧 VA，
-    /// 见 trampoline 模块头。）
+    /// （sscratch 约定：任务态（U 态 / S 态域任务）= 线程帧 self_va；
+    /// 内核态 = 本 hart 帧 VA，见 trampoline 模块头。）
     pub self_va: VirtAddr,
 }
 
@@ -137,7 +136,7 @@ impl TrapContext {
         // 模式位随探测所得 mode()（Sv39=8/Sv48=9/Sv57=10），非硬编码。
         self.user_satp = satp::Satp::from_bits(
             (crate::memory::manager::mode::mode().into_usize() << 60)
-                | (team.space.asid() << 44)
+                | (team.space.asid().get() << 44)
                 | team.space.root(),
         );
         self.self_va = self_va;
@@ -147,7 +146,7 @@ impl TrapContext {
         // 全零起步：不继承内核当前 sstatus 的 FS/XS 等位（`__restore` 整字 csrw）。
         let mut ss = sstatus::Sstatus::from_bits(0);
         ss.set_spie(true);
-        ss.set_spp(if matches!(team.space.kind(), SpaceKind::Kernel) {
+        ss.set_spp(if team.space.kind().is_supervisor() {
             sstatus::SPP::Supervisor
         } else {
             sstatus::SPP::User

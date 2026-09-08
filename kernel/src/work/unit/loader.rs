@@ -42,13 +42,20 @@ pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Lo
         .map(|s| (s.vaddr.as_usize() + s.memsz).next_multiple_of(PAGE_SIZE))
         .max()
         .unwrap_or(0);
+    // U 位随空间模式：U 态页表需 U（用户可执行/访问）；S 态页表不得带 U——
+    // S 态 SUM=0 下访问 U 页会页故障，而 supervisor 域任务跑 S 态。
+    let u_bit = if space.kind().is_supervisor() {
+        PteFlags::empty()
+    } else {
+        PteFlags::U
+    };
     space.with_flush(|inner| {
         if !image_end.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
         inner.dynamic(image_end);
         for seg in &parsed.segments {
-            let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D;
+            let flags = seg.flags | PteFlags::V | PteFlags::A | PteFlags::D | u_bit;
             let file_pages = seg.filesz.div_ceil(PAGE_SIZE);
             // 纯 .bss 段（filesz = 0）：无文件实体可拷，整段走下面的懒登记。
             // 链接脚本把 .data/.bss 各自成段，故这种段合法且常见。

@@ -32,13 +32,44 @@ pub(crate) const VACANT: usize = 1 << ASID_BITS;
 static ASID_ALLOCATOR: SpinLock<BitmapAllocator> =
     SpinLock::new_level(Level::Asid, BitmapAllocator::new(1, 65536, 1));
 
-/// 分配一个独立 ASID（1..=65535）。耗尽时 panic。
-pub fn allocate() -> usize {
-    let (asid, _) = ASID_ALLOCATOR
-        .lock()
-        .allocate(1)
-        .expect("asid: 16-bit ASID space exhausted (65535 tasks)");
-    asid
+/// 空间身份 — ASID（`satp.ASID` 字段值）。
+///
+/// 0 保留给内核空间（[`Asid::kernel`]），只由 `SpaceBuilder::kernel()` 铸造；
+/// 1..=65535 由 [`Asid::allocate`] 发放、[`deallocate`] 归还。分配器永不发 0，
+/// 故 `is_kernel()` ⇔「这是内核空间」——陷阱路由（`trampoline.rs` 的
+/// `__alltraps` 判别）、诊断展开、闭包任务与 `Space::drop` 均以此判别。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Asid(usize);
+
+impl Asid {
+    /// 内核空间的固定身份（ASID 0）。
+    pub(crate) const fn kernel() -> Self {
+        Self(0)
+    }
+
+    /// 从 `satp.ASID` 字段回读（切换/恢复路径用；值由内核自己写入，可信）。
+    pub(crate) const fn from_raw(raw: usize) -> Self {
+        Self(raw & 0xFFFF)
+    }
+
+    /// 分配一个独立 ASID（1..=65535）。耗尽时 panic。
+    pub(crate) fn allocate() -> Self {
+        let (asid, _) = ASID_ALLOCATOR
+            .lock()
+            .allocate(1)
+            .expect("asid: 16-bit ASID space exhausted (65535 tasks)");
+        Self(asid)
+    }
+
+    /// 裸值（写 satp / 组 wait·fence 键 / lease 槽）。
+    pub fn get(self) -> usize {
+        self.0
+    }
+
+    /// 是否内核空间（ASID 0）。
+    pub fn is_kernel(self) -> bool {
+        self.0 == 0
+    }
 }
 
 /// 清退该 ASID 的全系统 TLB 残留后归还位图。double-free/未分配 panic。
@@ -49,11 +80,11 @@ pub fn allocate() -> usize {
 /// # Errors
 ///
 /// [`Deaf`] = RFENCE 失败；此时位图未动（ASID 不会被复用）。
-pub fn deallocate(asid: usize) -> Result<(), Deaf> {
+pub fn deallocate(asid: Asid) -> Result<(), Deaf> {
     shootdown(asid)?;
     ASID_ALLOCATOR
         .lock()
-        .deallocate(asid, 1)
+        .deallocate(asid.get(), 1)
         .expect("asid: double-free or never-allocated");
     Ok(())
 }
@@ -62,14 +93,13 @@ pub fn deallocate(asid: usize) -> Result<(), Deaf> {
 
 /// 本核登记「当前驻留 ASID」：写本核 lease 槽（纯 ASID，无世代）。
 ///
-/// 前置：`asid` 为合法用户 ASID（1..=65535）、`ASID_BITS` 内值（含 0=内核空间），
-/// 或 [`VACANT`]（本核当前离线/关机/空闲）。调用点 = trap 入场/出场、trampoline
-/// restore、boot——每处都已保证本核 TLB 与将要驻留的 ASID 一致。
+/// 前置：`asid` 为本核即将驻留的合法空间身份（内核空间 = [`Asid::kernel`]）。
+/// 调用点 = trap 入场/出场、trampoline restore、boot——每处都已保证本核 TLB 与
+/// 将要驻留的 ASID 一致。
 ///
 /// 幂等：重复登记同一 ASID 无害。
-pub fn set_asid(asid: usize) {
-    debug_assert!(asid <= VACANT, "set_asid: asid {asid:#x} out of range");
-    machine::lease_store(asid);
+pub fn set_asid(asid: Asid) {
+    machine::lease_store(asid.get());
 }
 
 /// 本核退驻：此后不被任何清退选中（写 VACANT）。幂等。
@@ -96,10 +126,10 @@ pub fn vacate() {
 /// # Errors
 ///
 /// [`Deaf`] = RFENCE 返回非 Success。
-pub fn shootdown(asid: usize) -> Result<(), Deaf> {
+pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
     // ② 本核自刷。
     // SAFETY: 页表已改完，刷后翻译即新映射。
-    unsafe { flush_asid(asid) };
+    unsafe { flush_asid(asid.get()) };
 
     // ③ 扫名册生成 hart_mask（本核已在 ② 自刷，排除自己）。
     let me = machine::hart_id();
@@ -108,7 +138,7 @@ pub fn shootdown(asid: usize) -> Result<(), Deaf> {
         if hart == me {
             continue;
         }
-        if machine::lease_load(hart) == asid {
+        if machine::lease_load(hart) == asid.get() {
             mask |= 1usize << (hart % (usize::BITS as usize));
         }
     }
@@ -120,11 +150,11 @@ pub fn shootdown(asid: usize) -> Result<(), Deaf> {
             a1: 0, // hart_mask_base
             a2: 0, // start_addr：0 = 全地址空间
             a3: 0, // size：0 = 全地址空间
-            a4: asid,
+            a4: asid.get(),
             ..Default::default()
         })
         .call();
-    r.map(|_| ()).map_err(|_| Deaf { asid })
+    r.map(|_| ()).map_err(|_| Deaf { asid: asid.get() })
 }
 
 // ── 错误 ────────────────────────────────────────────────────

@@ -19,7 +19,7 @@
 use core::time::Duration;
 
 use riscv::interrupt::{Exception, Interrupt, Trap};
-use riscv::register::{satp, scause, sepc, sie, sip, sstatus, stval, stvec};
+use riscv::register::{satp, scause, sepc, sie, sip, stval, stvec};
 
 use crate::layout::{
     HART_FRAME_BASE, TRAP_STACK_BASE, TRAP_STACK_GUARD, TRAP_STACK_SLOT_SHIFT, TRAP_STACK_SLOT_SIZE,
@@ -28,7 +28,7 @@ use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::asid;
+use crate::memory::manager::asid::{self, Asid};
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent, RoomEvent};
@@ -37,7 +37,6 @@ use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
 use crate::work::room::messenger::drain_expired;
 use crate::work::room::scheduler::core::{Current, ident};
 use crate::work::room::scheduler::trap::run;
-use crate::work::unit::space::SpaceKind;
 use crate::work::unit::team::kernel;
 use crate::{machine, put};
 
@@ -243,7 +242,7 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(task) = i.live() else {
         return false;
     };
-    if !matches!(task.team.space.kind(), SpaceKind::Kernel) {
+    if !task.team.space.asid().is_kernel() {
         return false;
     }
     let Some(pa) = i.trap() else {
@@ -287,8 +286,15 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
     }
 
-    // 0.4 入场入册：`__utrap`/`__strap` 已整表刷（不变量 1），本核转为内核租户。
-    asid::set_asid(0);
+    // 0.4 入场入册：`__task_trap`/`__core_trap` 已整表刷（不变量 1），本核转为
+    //     内核租户（内核空间身份 ASID 0）。
+    asid::set_asid(Asid::kernel());
+
+    // 0.45 陷阱来源：`__core_trap` 传本 hart 帧、`__task_trap` 传任务帧。这是
+    //     「被中断者是内核还是任务」的**唯一判据**——S 态 supervisor 域任务的
+    //     SPP 也是 Supervisor，不能靠 SPP 区分（域任务必须能抢占、能缺页自愈、
+    //     能 ecall）。
+    let from_task = (frame as *const TrapContext as usize) != machine::hart_frame().as_usize();
 
     // 0.5 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。
     let ident = ident();
@@ -319,11 +325,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         frame.trap_stack_corrupt, TRAP_STACK_CANARY,
         "kernel trap frame corrupted"
     );
-    // 2. debug：用户态陷阱必须运行在当前 hart 的 trap 栈上（kernel_sp 每次
-    //    切换写入的正确性——任务迁移后写漏即在此暴露）。用户陷阱必有任务。
+    // 2. debug：任务（U 态 / S 态域任务）陷阱必须运行在当前 hart 的 trap 栈上
+    //    （kernel_sp 每次切换写入的正确性——任务迁移后写漏即在此暴露）。
     #[cfg(debug_assertions)]
     if let Some(i) = ident.as_ref()
-        && frame.sstatus.spp() != sstatus::SPP::Supervisor
+        && from_task
     {
         let sp: usize;
         // SAFETY: 读当前栈指针，纯读无副作用。
@@ -354,7 +360,8 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             // 重武装：运行任务抢占量子。
             timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
             drain_expired();
-            if frame.sstatus.spp() != sstatus::SPP::Supervisor {
+            if from_task {
+                // 任务（U 态或 S 态域任务）被抢占：现场已在任务帧 → 直接切换
                 run() as *mut TrapContext
             } else if persist(frame) {
                 // 内核态被打断且确有 running 内核任务：现场已持久化 → 抢占
@@ -383,22 +390,29 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             put!("unhandled interrupt: {other:?}\n{frame:#?}\n");
             frame as *mut TrapContext
         }
-        // 用户态环境调用（U 态 ecall）：envcall 表分发（ecall 必有任务）。
+        // 任务环境调用（`ebreak`，scause=3）：U 态任务与 S 态 supervisor 域任务
+        // 共用同一入口（`ecall` 不行——S 态 ecall 是 SBI 调用，进 M 态）。内核
+        // 自身 ebreak 不应出现（semihosting 由 QEMU 拦截，不经本路径）→ 内核 bug。
         // 身份 Arc **移交**给 dispatch：其内部在可能触发 halt（run）的分支（Reap/
         // Park/Wait）先 drop——否则 halt 时本核 trap_handler 仍持最后任务的
         // Arc<TaskIdent> → team → space 被钉住不 drop，关机审计误报帧泄漏。
-        Trap::Exception(Exception::UserEnvCall) => {
+        Trap::Exception(
+            Exception::Breakpoint | Exception::UserEnvCall | Exception::SupervisorEnvCall,
+        ) => {
+            if !from_task {
+                panic!("kernel ebreak from the kernel itself");
+            }
             let Some(Current::Live(ident_arc)) = ident else {
                 panic!("envcall without running task");
             };
             crate::runtime::switcher::envcall::dispatch(frame, ident_arc)
         }
-        // 用户态缺页：解析成功 → 续跑；解析失败 → fault isolation 杀 task。
-        // SPP=Supervisor（内核态）缺页 = 内核 bug → 仍 panic。
+        // 任务缺页：解析成功 → 续跑；解析失败 → fault isolation 杀 task。
+        // 内核自身缺页 = 内核 bug → 仍 panic。
         Trap::Exception(
             Exception::InstructionPageFault | Exception::LoadPageFault | Exception::StorePageFault,
         ) => {
-            if frame.sstatus.spp() == sstatus::SPP::Supervisor {
+            if !from_task {
                 panic!(
                     "kernel page fault on hart {} at sepc={:#x}, stval={:#x}",
                     machine::hart_id(),
@@ -436,9 +450,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             drop(ident);
             return crate::work::room::scheduler::utask::reap() as *mut TrapContext;
         }
-        // 异常：SPP=User → fault isolation 杀 task；SPP=Supervisor → 内核 bug → fatal。
+        // 异常：任务（U 态 / S 态域任务）→ fault isolation 杀 task；内核自身 → fatal。
         Trap::Exception(other) => {
-            if frame.sstatus.spp() == sstatus::SPP::User {
+            if from_task {
                 let running = ident
                     .as_ref()
                     .and_then(Current::live)
@@ -478,7 +492,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     // 返回之前——`__restore` 的 sfence 后本核就带新 ASID 的 TLB，RFENCE 清退
     // 需能在该时刻正确发现本核驻留该 ASID。
     // SAFETY: next 恒指向本核有效帧（分发各分支的产物），恒等映射下可解引用。
-    asid::set_asid(unsafe { (*next).user_satp.asid() });
+    asid::set_asid(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
 
     next
 }

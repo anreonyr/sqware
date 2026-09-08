@@ -177,8 +177,8 @@ impl FrameResolver {
         // 规范空洞，此时以现场世界兜底，避免把有效的镜像恒等区地址判成 Unknown。
         if self.executable(pc) {
             return match self.world {
-                SpaceKind::Kernel => FrameKind::Kernel,
-                SpaceKind::User { .. } => FrameKind::User,
+                SpaceKind::Supervisor => FrameKind::Kernel,
+                SpaceKind::User => FrameKind::User,
             };
         }
         FrameKind::Unknown
@@ -253,7 +253,7 @@ impl Scene {
         Some(Scene {
             hart: crate::machine::hart_id(),
             task: ident().map(|i| i.id()),
-            space: SpaceKind::Kernel,
+            space: SpaceKind::Supervisor,
             reg: Registers {
                 pc: VirtAddr::from_raw(sepc::read()),
                 sp: VirtAddr::from_raw(sp),
@@ -282,7 +282,7 @@ impl Scene {
         let world = info
             .live()
             .map(|t| t.team.space.kind())
-            .unwrap_or(SpaceKind::User { asid: 0 });
+            .unwrap_or(SpaceKind::User);
         // 根表 = 用户根表（user_satp）；域 = 该任务空间；上界 = sp+SPAN。
         let mut reader = StackReader::new(frame.user_satp.ppn());
         let cfg = ResolveCfg::user(world, sp.saturating_add(frame::SPAN));

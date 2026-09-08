@@ -45,8 +45,9 @@ unsafe extern "C" {
 /// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
 pub type MapResult<T> = erra::Result<T, MapError>;
 
-/// 拼装一条 ELF 成独立团队（parse → SpaceBuilder::user → loader::load →
-/// 符号表 → TeamBuilder::spawn）。boot 装载（initrd 单一 shell ELF）使用。
+/// 拼装一条 ELF 成独立团队（parse → SpaceBuilder → loader::load →
+/// TeamBuilder::spawn）。`kind` 决定页表特权级与 U 位：`User` 出 U 态团队，
+/// `Supervisor` 出 S 态 supervisor 域。
 ///
 /// 只做「字节 → 域」的纯装载，不建 task、不挂 heir、不做强持有——那些是
 /// 各自调用方的责任（boot 立即产 task）。`sire` 构造期定型进 Team
@@ -54,9 +55,14 @@ pub type MapResult<T> = erra::Result<T, MapError>;
 pub(crate) fn assemble(
     elf: &'static [u8],
     sire: Weak<task::Task>,
+    kind: space::SpaceKind,
 ) -> Result<(Arc<team::Team>, VirtAddr), team::UnitError> {
     let parsed = parser::parse(elf).map_err(|_| team::UnitError::Load)?;
-    let space = SpaceBuilder::user().build().map_err(|_| team::UnitError::Load)?;
+    let builder = match kind {
+        space::SpaceKind::Supervisor => SpaceBuilder::supervisor(),
+        space::SpaceKind::User => SpaceBuilder::user(),
+    };
+    let space = builder.build().map_err(|_| team::UnitError::Load)?;
     let loaded = loader::load(space, elf, &parsed).map_err(|_| team::UnitError::Load)?;
     let team = team::TeamBuilder::new(loaded.space).sire(sire).spawn();
     Ok((team, loaded.entry))
@@ -174,11 +180,11 @@ pub fn init() -> MapResult<()> {
                 )?;
             }
 
-            // 6. 启用探测所得模式的分页（satp MODE 字段随模式）
-            satp::set(mode::mode(), 0, kernel_space.root());
+            // 6. 启用探测所得模式的分页（satp MODE 字段随模式；ASID = 内核身份 0）
+            satp::set(mode::mode(), kernel_space.asid().get(), kernel_space.root());
 
             // 7. 刷新 TLB + 运行期布局校验（debug：违例 fail-fast）
-            flush_asid(0);
+            flush_asid(kernel_space.asid().get());
             #[cfg(debug_assertions)]
             crate::layout::validate();
 

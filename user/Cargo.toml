@@ -138,6 +138,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "user-echo"
+path = "src/bin/echo.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "user-sire"
 path = "src/bin/sire_demo.rs"
 test = false
