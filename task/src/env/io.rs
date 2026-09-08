@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use env::{IOCall, IOCallRet, EnvResult, VirtAddr};
+use env::{EnvResult, IOCall, IOCallRet, VirtAddr};
 
 use crate::env::room;
 

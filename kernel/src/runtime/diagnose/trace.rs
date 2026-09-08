@@ -43,17 +43,43 @@ pub enum EventKind {
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoomEvent {
-    Spawn { tid: usize },
-    Switch { prev_tid: usize, next_tid: usize },
-    Starve { tid: usize },
-    Steal { tid: usize, src_hart: usize },
-    Park { tid: usize, wake_at: usize },
-    Wait { tid: usize, key: usize },
-    Wake { tid: usize },
-    Exit { tid: usize },
-    Reap { tid: usize },
+    Spawn {
+        tid: usize,
+    },
+    Switch {
+        prev_tid: usize,
+        next_tid: usize,
+    },
+    Starve {
+        tid: usize,
+    },
+    Steal {
+        tid: usize,
+        src_hart: usize,
+    },
+    Park {
+        tid: usize,
+        wake_at: usize,
+    },
+    Wait {
+        tid: usize,
+        key: usize,
+    },
+    Wake {
+        tid: usize,
+    },
+    Exit {
+        tid: usize,
+    },
+    Reap {
+        tid: usize,
+    },
     /// user 异常隔离杀（page fault 不可解析 / 非法指令等）：task 死、kernel 活。
-    FaultKilled { tid: usize, cause: usize, stval: usize },
+    FaultKilled {
+        tid: usize,
+        cause: usize,
+        stval: usize,
+    },
     Idle,
 }
 

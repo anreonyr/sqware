@@ -489,7 +489,10 @@ fn scene_rows(scene: &Scene) -> Vec<Vec<Option<String>>> {
         Some("fp".into()),
         Some("cause".into()),
     ]];
-    let cause = scene.cause.map(|c| format!("{c:?}")).unwrap_or_else(|| "-".into());
+    let cause = scene
+        .cause
+        .map(|c| format!("{c:?}"))
+        .unwrap_or_else(|| "-".into());
     rows.push(vec![
         Some("edge".into()),
         Some(scene.hart.to_string()),
@@ -533,7 +536,10 @@ fn backtrace_rows(scene: &Scene, head: &str) -> Vec<Vec<Option<String>>> {
             Some(hex(f.pc.as_usize())),
             Some(format!("{:?}", f.space)),
             Some(hex(f.sp.as_usize())),
-            Some(f.fp.map(|v| hex(v.as_usize())).unwrap_or_else(|| "-".into())),
+            Some(
+                f.fp.map(|v| hex(v.as_usize()))
+                    .unwrap_or_else(|| "-".into()),
+            ),
         ]);
     }
     rows
@@ -550,10 +556,16 @@ pub fn dump(r: &mut Report) {
     }
     // 投稿：CSR/GPR/回溯段入报告（[scene] 标题挂首段，其余段空标题同段落）。
     let kernel_scene = Scene::capture_kernel();
-    let hart = kernel_scene.as_ref().map(|s| s.hart).unwrap_or_else(crate::machine::hart_id);
+    let hart = kernel_scene
+        .as_ref()
+        .map(|s| s.hart)
+        .unwrap_or_else(crate::machine::hart_id);
     let scene_head = kernel_scene
         .as_ref()
-        .and_then(|s| s.task.map(|t| format!("[scene] crash scene, hart {hart}, task #{t}")))
+        .and_then(|s| {
+            s.task
+                .map(|t| format!("[scene] crash scene, hart {hart}, task #{t}"))
+        })
         .unwrap_or_else(|| format!("[scene] crash scene, hart {hart}"));
     r.paragraph("csr", Some(scene_head))
         .items

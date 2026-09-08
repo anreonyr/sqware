@@ -214,7 +214,7 @@ pub enum GateError {
     /// Hole 槽满 / 槽空（条件未就绪）。
     Busy,
     /// 资源耗尽。
-    OOM,
+    OoM,
     /// 字节数非页对齐 / 非法。
     NotAligned,
 }
@@ -225,7 +225,7 @@ impl GateError {
             GateError::Denied => -1,
             GateError::Dead => -2,
             GateError::Busy => -3,
-            GateError::OOM => -4,
+            GateError::OoM => -4,
             GateError::NotAligned => -5,
         }
     }

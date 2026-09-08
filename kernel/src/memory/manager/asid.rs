@@ -15,7 +15,7 @@
 //   3. `shootdown` 期间不得持任何关中断锁（Space::with 已在刷前释放锁）。
 
 use fack::prelude::Error;
-use sbi::scall::SArgs;
+use sbi::ecall::SArgs;
 use sbi::{self, fid};
 
 use crate::lock::{Level, SpinLock};

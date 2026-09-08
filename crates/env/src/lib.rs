@@ -8,16 +8,16 @@
 //! 返回类型经 `#[ret(T)]` 标注，derive 生成域 `*Ret` 枚举。
 
 pub mod dispatch;
+pub mod ecall;
 pub mod fid;
 pub mod permission;
-pub mod ucall;
 pub mod wire;
 
 pub use dispatch::{Name, NameError, Op, ProtocolError, Reply, Request};
+pub use ecall::{EnvError, EnvResult, make_err};
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, IOCall, IOCallRet, MailCall,
     MailCallRet, MemoryCall, MemoryCallRet, RoomCall, RoomCallRet, UnitCall, UnitCallRet,
 };
 pub use permission::Permission;
-pub use ucall::{EnvError, EnvResult, make_err};
 pub use wire::{Decode, FromPair, PieToken, TaskId, TeamId, VirtAddr, Wire};

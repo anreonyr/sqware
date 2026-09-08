@@ -10,7 +10,9 @@ use core::time::Duration;
 use crate::runtime::switcher::trampoline::restore;
 use crate::runtime::switcher::trap::{persist, trap_stack_edge};
 
-use super::utask::{park as sched_park, park_mail as sched_park_mail, reap as sched_reap, starve as sched_starve};
+use super::utask::{
+    park as sched_park, park_mail as sched_park_mail, reap as sched_reap, starve as sched_starve,
+};
 
 /// 内核任务睡眠：存帧 → park 核心 → 切走；唤醒后恢复于调用点。
 ///

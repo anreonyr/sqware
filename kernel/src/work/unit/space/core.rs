@@ -33,8 +33,8 @@ use crate::lock::{Level, RelLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::asid::{self, Asid, Deaf};
+use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::{Frame, FrameState, TableNode};
 use crate::memory::manager::{flush_asid, mode};
 
@@ -932,7 +932,10 @@ impl Space {
     /// # Errors
     ///
     /// [`Deaf`] = RFENCE 清退失败（致命级，适配层裁定策略）。
-    pub(crate) fn with_shootdown<R>(&self, op: impl FnOnce(&mut SpaceInner) -> R) -> Result<R, Deaf> {
+    pub(crate) fn with_shootdown<R>(
+        &self,
+        op: impl FnOnce(&mut SpaceInner) -> R,
+    ) -> Result<R, Deaf> {
         let r = self.with(op);
         asid::shootdown(self.asid)?;
         Ok(r)

@@ -10,7 +10,7 @@
 //! push/pull 的阻塞：内核 push/pull 槽满/槽空返 Busy；本层 sleep+retry 配合
 //! 内核侧 wake 实现"看起来阻塞"（轮询粒度 2ms；唤醒走 messenger::wake）。
 
-use env::{MailCall, MailCallRet, PieToken, EnvResult, VirtAddr};
+use env::{EnvResult, MailCall, MailCallRet, PieToken, VirtAddr};
 
 use crate::env::room;
 
@@ -162,7 +162,9 @@ pub struct HolePie {
 
 impl HolePie {
     pub fn unseal() -> EnvResult<Self> {
-        Ok(Self { token: unseal_hole()? })
+        Ok(Self {
+            token: unseal_hole()?,
+        })
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。
@@ -176,7 +178,9 @@ impl HolePie {
             if push(self.token, msg as *const [u8; HOLE_MSG_LEN]).is_ok() {
                 return Ok(());
             }
-            for _ in 0..100 { core::hint::spin_loop(); }
+            for _ in 0..100 {
+                core::hint::spin_loop();
+            }
         }
     }
 
@@ -186,7 +190,9 @@ impl HolePie {
             if pull(self.token, buf as *mut [u8; HOLE_MSG_LEN]).is_ok() {
                 return Ok(());
             }
-            for _ in 0..100 { core::hint::spin_loop(); }
+            for _ in 0..100 {
+                core::hint::spin_loop();
+            }
         }
     }
 
@@ -227,7 +233,9 @@ pub struct PolePie {
 
 impl PolePie {
     pub fn unseal(bytes: usize) -> EnvResult<Self> {
-        Ok(Self { token: unseal_pole(bytes)? })
+        Ok(Self {
+            token: unseal_pole(bytes)?,
+        })
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。

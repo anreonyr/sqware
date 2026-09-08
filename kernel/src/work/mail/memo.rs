@@ -38,7 +38,14 @@ struct Memo {
 
 fn memo() -> &'static SpinLock<Memo> {
     static T: OnceLock<SpinLock<Memo>> = OnceLock::new();
-    T.get_or_init(|| SpinLock::new_level(Level::L3, Memo { metas: HashMap::new() }))
+    T.get_or_init(|| {
+        SpinLock::new_level(
+            Level::L3,
+            Memo {
+                metas: HashMap::new(),
+            },
+        )
+    })
 }
 
 /// 注册资源（克隆 Arc 锚定到表）。

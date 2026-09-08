@@ -378,7 +378,11 @@ impl<S: Sink> Perform for Decoder<S> {
             b'F' => Key::End,
             b'~' => {
                 // `ESC [ n ~`：Home(1)/Insert(2)/Delete(3)/End(4)/PgUp(5)/PgDn(6)。
-                let n = params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0);
+                let n = params
+                    .iter()
+                    .next()
+                    .and_then(|p| p.first().copied())
+                    .unwrap_or(0);
                 match n {
                     1 => Key::Home,
                     4 => Key::End,

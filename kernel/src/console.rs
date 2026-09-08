@@ -5,7 +5,7 @@
 // Dbcn 按物理地址读取：恒等区 VA 即 PA 直通；用户窗口 VA 逐段译成 PA 后写出。
 use core::fmt::{self, Write};
 
-use sbi::{DbcnCall, fid::Dbcn, scall::SArgs};
+use sbi::{DbcnCall, ecall::SArgs, fid::Dbcn};
 
 use crate::memory::manager::addr::VirtAddr;
 use crate::work::room::scheduler::core::ident;

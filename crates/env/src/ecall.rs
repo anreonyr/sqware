@@ -34,6 +34,7 @@ impl EnvError {
     }
 }
 
+/// # Safety
 /// 唯一碰汇编的原语：a7 = 调用号（slot）、a0..a5 = 参数（packed 数组）→ 任务
 /// **`ebreak`** → 读回 a0/a1。
 ///

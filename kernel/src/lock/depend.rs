@@ -32,7 +32,6 @@ use alloc::vec::Vec;
 use super::OnceLock;
 use crate::machine;
 
-
 /// 锁层级（1 最低、10 最高）。参与锁才有 level；`None` = exempt（不参与、不校验）。
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -73,14 +72,9 @@ pub enum Level {
 pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
     crate::memory::allocator::portal::switch(crate::memory::allocator::portal::Backend::Spare);
     let held = held().expect("depend: report outside collected set");
-    let mut msg = format!(
-        "[depend] {what}: {lock:#x} ({lock:#x})",
-    );
+    let mut msg = format!("[depend] {what}: {lock:#x} ({lock:#x})",);
     if caller != 0 {
-        msg.push_str(&format!(
-            "\n  caller: {:#x} ({caller:#x})",
-            caller,
-        ));
+        msg.push_str(&format!("\n  caller: {:#x} ({caller:#x})", caller,));
     }
     if held.len == 0 {
         msg.push_str("\n  held: (none)");

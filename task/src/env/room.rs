@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use env::{RoomCall, RoomCallRet, EnvResult};
+use env::{EnvResult, RoomCall, RoomCallRet};
 
 pub fn starve() -> EnvResult<()> {
     let _ = RoomCall::Starve.call();

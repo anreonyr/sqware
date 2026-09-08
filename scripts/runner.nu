@@ -84,7 +84,7 @@ def config [elf: path] {
     timeout: $timeout
     qemu_args: [
       "-machine", "virt"
-      "-bios", ($proj_root | path join "SBI")
+      "-bios", ($proj_root | path join "SBI.bin")
       "-kernel", $elf
       "-nographic"
       "-no-reboot"

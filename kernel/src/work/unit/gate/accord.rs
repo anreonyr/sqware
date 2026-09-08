@@ -11,7 +11,7 @@
 
 use alloc::sync::Weak;
 
-use super::pie::{new_pie, AnyPie, GateError, Permission};
+use super::pie::{AnyPie, GateError, Permission, new_pie};
 use crate::work::unit::task::Task;
 
 /// Accord 数据面原语：Arc clone + 造新 Pie + push 到 target.pies。返新 token（撤销句柄）。
@@ -34,11 +34,21 @@ pub(crate) fn accord(
     let granted = match src {
         AnyPie::Hole(p) => {
             let arc = p.weak.upgrade().ok_or(GateError::Dead)?;
-            AnyPie::Hole(new_pie(resource, subset, vestor, alloc::sync::Arc::downgrade(&arc)))
+            AnyPie::Hole(new_pie(
+                resource,
+                subset,
+                vestor,
+                alloc::sync::Arc::downgrade(&arc),
+            ))
         }
         AnyPie::Pole(p) => {
             let arc = p.weak.upgrade().ok_or(GateError::Dead)?;
-            AnyPie::Pole(new_pie(resource, subset, vestor, alloc::sync::Arc::downgrade(&arc)))
+            AnyPie::Pole(new_pie(
+                resource,
+                subset,
+                vestor,
+                alloc::sync::Arc::downgrade(&arc),
+            ))
         }
     };
     let token = granted.token();

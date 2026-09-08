@@ -1,13 +1,13 @@
 #![no_std]
 //! S-mode → M-mode 的 SBI 调用封装（sbi），独立共享 crate。
 
+pub mod ecall;
 pub mod eid;
 pub mod extension;
 pub mod fid;
-pub mod scall;
 
+use ecall::*;
 use extension::*;
-use scall::*;
 
 pub type BaseCall = ScallBuilder<BaseExt>;
 pub type TimerCall = ScallBuilder<TimerExt>;

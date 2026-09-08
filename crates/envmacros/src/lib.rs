@@ -13,7 +13,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, Ident, Lit, Type};
+use syn::{Attribute, Data, DeriveInput, Fields, Ident, Lit, Type, parse_macro_input};
 
 /// 解析 `#[ret(T)]` 属性里的返回类型。
 fn ret_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
@@ -43,10 +43,7 @@ fn class(attrs: &[Attribute]) -> syn::Result<usize> {
             if let Some(v) = value {
                 return Ok(v);
             }
-            return Err(syn::Error::new_spanned(
-                attr,
-                "expected #[call(class = N)]",
-            ));
+            return Err(syn::Error::new_spanned(attr, "expected #[call(class = N)]"));
         }
     }
     Err(syn::Error::new_spanned(
@@ -294,13 +291,13 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
         impl #name {
             /// 触发并判译：a0 负 → `Err(EnvError)`，非负 → 蒸馏成域 Ret。
             #[inline]
-            pub fn call(self) -> crate::ucall::EnvResult<#ret_name> {
+            pub fn call(self) -> crate::ecall::EnvResult<#ret_name> {
                 let (slot, args) = match self {
                     #(#call_arms),*
                 };
-                let (v0, v1) = unsafe { crate::ucall::warpper(slot, args) };
+                let (v0, v1) = unsafe { crate::ecall::warpper(slot, args) };
                 if (v0 as isize) < 0 {
-                    Err(crate::ucall::make_err(crate::ucall::EnvError::from_raw(
+                    Err(crate::ecall::make_err(crate::ecall::EnvError::from_raw(
                         v0 as isize,
                     )))
                 } else {

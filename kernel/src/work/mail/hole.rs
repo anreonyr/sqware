@@ -16,8 +16,8 @@ use alloc::sync::Arc;
 
 use crate::lock::{Level, SpinLock};
 
-use super::memo::{self, Meta, ResourceId};
 use super::HOLE_MSG_LEN;
+use super::memo::{self, Meta, ResourceId};
 use crate::work::room::messenger::{self, WaitKey};
 use crate::work::unit::gate::GateError;
 

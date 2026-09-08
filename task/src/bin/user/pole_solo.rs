@@ -21,7 +21,9 @@ extern "C" fn main() {
 
     // 写 64 字节
     for i in 0..64u8 {
-        unsafe { *ptr.add(i as usize) = i; }
+        unsafe {
+            *ptr.add(i as usize) = i;
+        }
     }
     // 校验
     let mut ok = true;

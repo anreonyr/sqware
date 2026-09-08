@@ -29,4 +29,3 @@ pub unsafe fn flush_asid(asid: usize) {
         core::arch::asm!("sfence.vma zero, {}", in(reg) asid);
     }
 }
-

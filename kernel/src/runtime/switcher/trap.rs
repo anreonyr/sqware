@@ -27,8 +27,8 @@ use crate::layout::{
 use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::asid::{self, Asid};
+use crate::memory::manager::entry::PteFlags;
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent, RoomEvent};
@@ -444,9 +444,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 cause: cause_bits,
                 stval: stval_bits,
             }));
-            putln!(
-                "user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}"
-            );
+            putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
             drop(ident);
             return crate::work::room::scheduler::utask::reap() as *mut TrapContext;
         }

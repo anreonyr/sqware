@@ -222,7 +222,9 @@ impl<'a> Walk<'a> {
     }
 
     fn push(&mut self, f: Frame) -> bool {
-        if self.full() || f.pc.as_usize() == 0 || f.pc.as_usize() & (ALIGN - 1) != 0
+        if self.full()
+            || f.pc.as_usize() == 0
+            || f.pc.as_usize() & (ALIGN - 1) != 0
             || f.pc.as_usize() == self.last
         {
             return false;

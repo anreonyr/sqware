@@ -3,7 +3,7 @@
 //! 方案 3（typed payload）：参数经 `VirtAddr` 包装，构造即类型安全；返回
 //! `MemoryCallRet`，`Allocate/Mmap` 蒸馏出 VA。
 
-use env::{MemoryCall, MemoryCallRet, EnvResult, VirtAddr};
+use env::{EnvResult, MemoryCall, MemoryCallRet, VirtAddr};
 
 use crate::PAGE_SIZE;
 

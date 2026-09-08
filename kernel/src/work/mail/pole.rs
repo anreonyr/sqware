@@ -57,7 +57,7 @@ impl PoleMeta {
             Task,
             frame::allocator()
                 .allocate(layout)
-                .map_err(|_| GateError::OOM)?
+                .map_err(|_| GateError::OoM)?
         );
         // SAFETY: 分配返回非空；清零。
         let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };
@@ -83,7 +83,12 @@ impl PoleMeta {
     ///
     /// `token` 唯一标识调用方 pie；同 token 复用既有视图（幂等 map），异 token
     /// 各自独立映射（同一物理页可出现在同 space 的多个 VA）。
-    fn map_into(&self, token: u64, space: &Arc<Space>, flags: PteFlags) -> Result<usize, GateError> {
+    fn map_into(
+        &self,
+        token: u64,
+        space: &Arc<Space>,
+        flags: PteFlags,
+    ) -> Result<usize, GateError> {
         {
             let m = self.mappings.lock();
             if let Some((_, _, span)) = m.iter().find(|(t, _, _)| *t == token) {
@@ -101,10 +106,12 @@ impl PoleMeta {
                 )?;
                 Ok::<_, MapError>(va)
             })
-            .map_err(|_| GateError::OOM)?;
-        self.mappings
-            .lock()
-            .push((token, Arc::downgrade(space), Span::new(Seg::User, va, self.bytes, None)));
+            .map_err(|_| GateError::OoM)?;
+        self.mappings.lock().push((
+            token,
+            Arc::downgrade(space),
+            Span::new(Seg::User, va, self.bytes, None),
+        ));
         Ok(va.as_usize())
     }
 
@@ -118,7 +125,10 @@ impl PoleMeta {
             let m = self.mappings.lock();
             m.iter()
                 .find(|(t, _, _)| *t == token)
-                .and_then(|(_, w, s)| w.upgrade().map(|space| (space, s.va.as_usize(), s.size.get())))
+                .and_then(|(_, w, s)| {
+                    w.upgrade()
+                        .map(|space| (space, s.va.as_usize(), s.size.get()))
+                })
         };
         if let Some((space, va, bytes)) = target {
             space
@@ -157,8 +167,8 @@ impl Drop for PoleMeta {
                 let _ = space.release(span);
             }
         }
-        let layout = core::alloc::Layout::from_size_align(self.bytes, PAGE_SIZE)
-            .expect("pole layout valid");
+        let layout =
+            core::alloc::Layout::from_size_align(self.bytes, PAGE_SIZE).expect("pole layout valid");
         unsafe {
             frame::allocator().deallocate(self.base, layout);
         }

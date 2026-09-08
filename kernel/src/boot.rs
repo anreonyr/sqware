@@ -238,7 +238,11 @@ fn spawn_demos() -> Result<(), MapError> {
     // shell 先建：它的 task id 就是目录认定的 caller（身份由内核给，不走消息体）。
     let shell_id = shell_team.task().name("shell").entry(shell_entry).spawn()?;
     // echo 域任务：跑在 supervisor 空间上（SPP=1、独立 ASID）。
-    let echo_id = echo_team.task().name("echo-svc").entry(echo_entry).spawn()?;
+    let echo_id = echo_team
+        .task()
+        .name("echo-svc")
+        .entry(echo_entry)
+        .spawn()?;
 
     // 服务系统：目录（内核闭包任务）+ 绑定 echo 入口门闩。
     spawn_services(dreq, reply, shell_id, eentry.clone(), eentry_id, echo_id)?;
@@ -307,37 +311,32 @@ fn spawn_services(
     let dreq_svc = dreq.clone();
     let reply_svc = reply.clone();
     let registry_svc = registry.clone();
-    let dir_id = kt
-        .task()
-        .name("dispatcher")
-        .closure(move || {
-            #[inline(never)]
-            fn svc(
-                dreq: alloc::sync::Arc<HoleMeta>,
-                reply: alloc::sync::Arc<HoleMeta>,
-                caller: usize,
-                reg: alloc::sync::Arc<dispatch::ServiceRegistry>,
-            ) -> ! {
-                use crate::work::mail::hole;
-                use crate::work::room::messenger::WaitKey;
-                loop {
-                    let pull_k = hole::pull_key(&dreq);
-                    crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(pull_k));
-                    let Ok(msg) = hole::pull(&dreq) else { continue };
-                    let Some(me) = crate::work::room::scheduler::core::current().running_task()
-                    else {
-                        continue;
-                    };
-                    let out =
-                        crate::service::dispatch::serve(&reg, &me, caller, &msg).encode();
-                    while hole::push(&reply, &out).is_err() {
-                        let push_k = hole::push_key(&reply);
-                        crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(push_k));
-                    }
+    let dir_id = kt.task().name("dispatcher").closure(move || {
+        #[inline(never)]
+        fn svc(
+            dreq: alloc::sync::Arc<HoleMeta>,
+            reply: alloc::sync::Arc<HoleMeta>,
+            caller: usize,
+            reg: alloc::sync::Arc<dispatch::ServiceRegistry>,
+        ) -> ! {
+            use crate::work::mail::hole;
+            use crate::work::room::messenger::WaitKey;
+            loop {
+                let pull_k = hole::pull_key(&dreq);
+                crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(pull_k));
+                let Ok(msg) = hole::pull(&dreq) else { continue };
+                let Some(me) = crate::work::room::scheduler::core::current().running_task() else {
+                    continue;
+                };
+                let out = crate::service::dispatch::serve(&reg, &me, caller, &msg).encode();
+                while hole::push(&reply, &out).is_err() {
+                    let push_k = hole::push_key(&reply);
+                    crate::work::room::scheduler::ktask::wait_mail(WaitKey::into_raw(push_k));
                 }
             }
-            svc(dreq_svc, reply_svc, caller, registry_svc)
-        })?;
+        }
+        svc(dreq_svc, reply_svc, caller, registry_svc)
+    })?;
 
     // 绑定 echo：入口门闩 vestor = echo task id（owner），故只有 echo 能解绑/换绑。
     // wire 上的 Register/Unregister/Replace 留给用户态服务。
@@ -377,7 +376,7 @@ fn boot_harts() {
         // 同事件也进 trace（hart 0 窗口）：崩溃回放可见启动序列。
         trace::note(trace::EventKind::Boot(trace::BootEvent::Launch { hart }));
         let r = sbi::HsmCall::new(sbi::fid::Hsm::Start)
-            .args(sbi::scall::SArgs {
+            .args(sbi::ecall::SArgs {
                 a0: hart,
                 a1: entry,
                 a2: stack_top,

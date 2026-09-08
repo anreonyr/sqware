@@ -327,13 +327,11 @@ impl Reply {
                         .try_into()
                         .unwrap_or([0u8; 8]),
                 ));
-                let owner = TaskId(
-                    u64::from_le_bytes(
-                        m[REPLY_PAYLOAD_AT + 8..REPLY_PAYLOAD_AT + 16]
-                            .try_into()
-                            .unwrap_or([0u8; 8]),
-                    ) as usize,
-                );
+                let owner = TaskId(u64::from_le_bytes(
+                    m[REPLY_PAYLOAD_AT + 8..REPLY_PAYLOAD_AT + 16]
+                        .try_into()
+                        .unwrap_or([0u8; 8]),
+                ) as usize);
                 Ok(Reply::Connected { entry, owner })
             }
             _ => Err(ProtocolError::BadOp),

@@ -569,7 +569,9 @@ pub(crate) fn kill(task: &Arc<Task>) {
                     for shard in 0..SITE_SHARDS {
                         let mut ws = wait_sites(shard).lock();
                         for site in ws.values_mut() {
-                            if let Some(idx) = site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task)) {
+                            if let Some(idx) =
+                                site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
+                            {
                                 let w = site.waiters.remove(idx).expect("idx from position");
                                 tock = Some(w.tock);
                                 break;

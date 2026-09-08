@@ -42,7 +42,7 @@ global_asm!(
     "    beqz  t0, __task_trap",
     "    csrr  t0, satp", // SPP=1：问硬件「我们在哪个页表上」
     "    srli  t0, t0, 44",
-    "    slli  t0, t0, 48",     // 只留 satp.ASID 16 位（模式位左移出界）
+    "    slli  t0, t0, 48",      // 只留 satp.ASID 16 位（模式位左移出界）
     "    bnez  t0, __task_trap", // 非内核空间 → S 态域任务
     "    j     __core_trap",
     // ── 任务陷阱（__task_trap）：现场存当前线程帧（sscratch 交换）──────────

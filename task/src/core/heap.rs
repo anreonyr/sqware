@@ -37,9 +37,7 @@ unsafe impl GlobalAlloc for Heap {
         // 需新页：alloc + copy + dealloc（同 GlobalAlloc 默认，但这里显式）。
         assert!(layout.size() != 0, "realloc: zero-size layout");
         assert!(new_size != 0, "realloc: zero new_size");
-        let new_layout = unsafe {
-            Layout::from_size_align_unchecked(new_size, layout.align())
-        };
+        let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) };
         let new_ptr = unsafe { self.alloc(new_layout) };
         if !new_ptr.is_null() {
             unsafe {

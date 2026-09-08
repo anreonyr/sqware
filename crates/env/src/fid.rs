@@ -101,7 +101,11 @@ pub enum MemoryCall {
     Munmap { addr: VirtAddr, size: usize },
     /// 修改映射区域保护标志（VA，字节数页对齐，新权限 PteFlags 位）。
     #[ret(())]
-    Mprotect { addr: VirtAddr, size: usize, flags: u64 },
+    Mprotect {
+        addr: VirtAddr,
+        size: usize,
+        flags: u64,
+    },
 }
 
 /// IO 调用（class 3）。

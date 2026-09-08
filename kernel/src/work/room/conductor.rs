@@ -15,7 +15,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::lock::OnceLock;
 use crate::machine;
 use crate::putln;
-use sbi::scall::SArgs;
+use sbi::ecall::SArgs;
 use sbi::{self, fid};
 
 /// 已入队（创建）任务计数（全退出检测：REAPED == PUSHED → 停机）。

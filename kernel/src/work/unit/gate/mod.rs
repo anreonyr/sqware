@@ -26,7 +26,7 @@ mod pie;
 mod release;
 mod revoke;
 
-pub(crate) use pie::{new_pie, AnyPie, GateError, Need, Permission, Pie};
+pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, new_pie};
 
 pub(crate) use accord::accord;
 pub(crate) use narrow::narrow;

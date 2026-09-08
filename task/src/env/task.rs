@@ -1,6 +1,6 @@
 //! Unit 域：`UnitCall::*` 转发（执行单元：team 建域 / task 建线程）。
 
-use env::{TeamId, TaskId, UnitCall, UnitCallRet, EnvResult};
+use env::{EnvResult, TaskId, TeamId, UnitCall, UnitCallRet};
 
 /// 在**当前** team 里建线程。
 pub fn spawn(entry: usize, arg: usize, stack: usize) -> EnvResult<TaskId> {

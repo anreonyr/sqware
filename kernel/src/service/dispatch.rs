@@ -86,11 +86,7 @@ pub fn bind(
 }
 
 /// 解绑：仅发布者（= 入口门闩的 vestor）可解绑。
-pub fn unbind(
-    reg: &Arc<ServiceRegistry>,
-    name: &Name,
-    who: usize,
-) -> Result<(), DirectoryError> {
+pub fn unbind(reg: &Arc<ServiceRegistry>, name: &Name, who: usize) -> Result<(), DirectoryError> {
     let mut dir = reg.lock();
     let binding = dir.bindings.get(name).ok_or(DirectoryError::Unknown)?;
     if binding.entry.vestor() != Some(who) {
@@ -153,9 +149,7 @@ pub fn connect(
     let binding = resolve(reg, name).ok_or(DirectoryError::Unknown)?;
     let owner = binding.entry.vestor().ok_or(DirectoryError::NotGrantable)?;
     let subset = caller_permission();
-    if !binding.entry.alive()
-        || !binding.entry.allows(Need::Grant)
-        || !binding.entry.covers(subset)
+    if !binding.entry.alive() || !binding.entry.allows(Need::Grant) || !binding.entry.covers(subset)
     {
         return Err(DirectoryError::NotGrantable);
     }
@@ -220,22 +214,20 @@ fn handle(reg: &Arc<ServiceRegistry>, me: &Arc<Task>, caller: usize, request: &R
             Err(DirectoryError::Unknown) => Reply::NotFound,
             Err(_) => Reply::Denied,
         },
-        Request::Replace { name, entry, .. } => {
-            match resolve(reg, name) {
-                None => Reply::NotFound,
-                Some(binding) if binding.entry.vestor() != Some(caller) => Reply::Denied,
-                Some(_) => {
-                    let Some(entry_pie) = take_entry(me, entry.get()) else {
-                        return Reply::Denied;
-                    };
-                    match replace(reg, name, &entry_pie, caller) {
-                        Ok(()) => Reply::Ok,
-                        Err(DirectoryError::Unknown) => Reply::NotFound,
-                        Err(_) => Reply::Denied,
-                    }
+        Request::Replace { name, entry, .. } => match resolve(reg, name) {
+            None => Reply::NotFound,
+            Some(binding) if binding.entry.vestor() != Some(caller) => Reply::Denied,
+            Some(_) => {
+                let Some(entry_pie) = take_entry(me, entry.get()) else {
+                    return Reply::Denied;
+                };
+                match replace(reg, name, &entry_pie, caller) {
+                    Ok(()) => Reply::Ok,
+                    Err(DirectoryError::Unknown) => Reply::NotFound,
+                    Err(_) => Reply::Denied,
                 }
             }
-        }
+        },
         Request::Resolve { name, .. } => match resolve(reg, name) {
             Some(_) => Reply::Found { name: *name },
             None => Reply::NotFound,

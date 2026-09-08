@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 use crate::layout::ROOT_STACK_SIZE;
 use crate::machine;
 use crate::runtime::diagnose::report::Report;
-use sbi::{self, fid, scall::SArgs};
+use sbi::{self, ecall::SArgs, fid};
 
 /// 警报是否已拉响（第一个 panic 置位；其余 hart 依此停止）。
 /// 与 follower 的 Acquire 读配对：`ALARM` 置位可见时，`ALARMER` 的写入亦必可见。

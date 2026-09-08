@@ -144,7 +144,10 @@ where
         0,
     )
     .expect("task spawn failed");
-    Join { slot, id: task_id.get() }
+    Join {
+        slot,
+        id: task_id.get(),
+    }
 }
 
 /// 读当前 task id（`UnitCall::SelfId` envcall 包装）。

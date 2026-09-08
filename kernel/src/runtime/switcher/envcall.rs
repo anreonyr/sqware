@@ -30,13 +30,13 @@ use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
 use crate::work::mail::HOLE_MSG_LEN;
+use crate::work::room::messenger::WaitKey;
+use crate::work::room::scheduler::core::current;
+use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
 use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie};
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space};
 use crate::work::unit::task::TaskIdent;
-use crate::work::room::messenger::WaitKey;
-use crate::work::room::scheduler::core::current;
-use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
 
 /// Permission 子集 → PteFlags（cap ⊆ 页表的翻译：subset 决定页表实际权限）。
 ///
@@ -164,8 +164,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 let s = &ident.team.space;
                 let r = HeapWindow::allocate(s, size).map(|span| span.va);
                 if let Ok(va) = r {
-                    let key =
-                        crate::memory::allocator::fence::key(s.asid().get(), va.as_usize());
+                    let key = crate::memory::allocator::fence::key(s.asid().get(), va.as_usize());
                     crate::memory::allocator::fence::on_alloc(
                         key,
                         size,
@@ -221,10 +220,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Unit(UnitCall::SelfId) => {
-            let id = current()
-                .running_task()
-                .map(|t| t.ident.id)
-                .unwrap_or(0);
+            let id = current().running_task().map(|t| t.ident.id).unwrap_or(0);
             frame.gpr.set_x(Gprs::A0, id);
         }
         EnvCall::Unit(UnitCall::Sire) => {
@@ -266,8 +262,17 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 }
             };
             // entry=0 用域默认入口（装载 ELF 的 e_entry）；否则用户指定。
-            let entry = if entry == 0 { team_arc.default_entry() } else { entry };
-            let r = team_arc.task().name("u-thread").entry(KVirt::from_raw(entry)).arg(arg).spawn();
+            let entry = if entry == 0 {
+                team_arc.default_entry()
+            } else {
+                entry
+            };
+            let r = team_arc
+                .task()
+                .name("u-thread")
+                .entry(KVirt::from_raw(entry))
+                .arg(arg)
+                .spawn();
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
@@ -303,14 +308,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 &bytes[..keep * core::mem::size_of::<usize>()],
                 buf,
             );
-            frame.gpr.set_x(
-                Gprs::A0,
-                if ok {
-                    keep
-                } else {
-                    -1isize as usize
-                },
-            );
+            frame
+                .gpr
+                .set_x(Gprs::A0, if ok { keep } else { -1isize as usize });
         }
         EnvCall::Memory(MemoryCall::Mmap { size, at }) => {
             let size = size.max(1).next_multiple_of(PAGE_SIZE);
@@ -395,8 +395,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 );
                 let token = pie.token();
                 // 创建者自留 pie 全权 → map 走 R|W。
-                let creator_flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U
-                    | PteFlags::A | PteFlags::D;
+                let creator_flags = PteFlags::V
+                    | PteFlags::R
+                    | PteFlags::W
+                    | PteFlags::U
+                    | PteFlags::A
+                    | PteFlags::D;
                 mail::pole::map(&meta, token, &task_space, creator_flags)?;
                 task.pies.lock().push(AnyPie::Pole(pie));
                 Ok(token)
@@ -420,7 +424,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     return Some(Err(GateError::Dead));
                 }
                 match pie {
-                    AnyPie::Hole(p) => p.weak.upgrade().map(|a| Ok(a)),
+                    AnyPie::Hole(p) => p.weak.upgrade().map(Ok),
                     _ => None,
                 }
             }) {
@@ -457,7 +461,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     return Some(Err(GateError::Dead));
                 }
                 match pie {
-                    AnyPie::Hole(p) => p.weak.upgrade().map(|a| Ok(a)),
+                    AnyPie::Hole(p) => p.weak.upgrade().map(Ok),
                     _ => None,
                 }
             }) {
@@ -583,9 +587,13 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
 
             let src_task = current().running_task();
             let current_id = src_task.as_ref().map(|t| t.ident.id).unwrap_or(0);
-            let src = match src_task
-                .and_then(|t| t.pies.lock().iter().find(|p| p.token() == src_token).cloned())
-            {
+            let src = match src_task.and_then(|t| {
+                t.pies
+                    .lock()
+                    .iter()
+                    .find(|p| p.token() == src_token)
+                    .cloned()
+            }) {
                 Some(p) => p,
                 None => return ret_err(frame, GateError::Denied),
             };
@@ -603,11 +611,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             if !src.vestable_to(dst_id) {
                 return ret_err(frame, GateError::Denied);
             }
-            let target =
-                match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
-                    Some(w) => w,
-                    None => return ret_err(frame, GateError::Denied),
-                };
+            let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
+                Some(w) => w,
+                None => return ret_err(frame, GateError::Denied),
+            };
             let r = gate::accord(&src, &target, subset, current_id);
             frame.gpr.set_x(
                 Gprs::A0,
@@ -675,11 +682,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let dst_id = dst.get();
             let token = tok(token);
             let current_id = current().running_task().map(|t| t.ident.id).unwrap_or(0);
-            let target =
-                match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
-                    Some(w) => w,
-                    None => return ret_err(frame, GateError::Denied),
-                };
+            let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
+                Some(w) => w,
+                None => return ret_err(frame, GateError::Denied),
+            };
             let r = gate::revoke(&target, token, current_id);
             frame.gpr.set_x(
                 Gprs::A0,
