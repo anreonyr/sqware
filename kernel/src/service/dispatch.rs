@@ -16,8 +16,8 @@ use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
-use ubi::dispatch::{MSG_LEN, Name, Reply, Request};
-use ubi::{PieToken, TaskId};
+use env::dispatch::{MSG_LEN, Name, Reply, Request};
+use env::{PieToken, TaskId};
 
 use crate::lock::{Level, SpinLock};
 use crate::work::mail::hole::HoleMeta;

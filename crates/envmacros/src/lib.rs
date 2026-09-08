@@ -7,8 +7,8 @@
 //!   * `Ret` 枚举                   —— 每个标 `#[ret(T)]` 的 variant 一个载荷变体
 //!   * `call(self) -> EnvResult<Ret>`—— 触发并判译（负值即错误）
 //!
-//! 通用性：`slot/pack/unpack` 与 `Ret` 只依赖 `Wire`（不绑 ubi 错误/汇编），sbi 等
-//! S-mode 调用封装未来可复用同一 derive；`call` 则绑定 ubi 的 `EnvResult`/汇编入口。
+//! 通用性：`slot/pack/unpack` 与 `Ret` 只依赖 `Wire`（不绑 env 错误/汇编），sbi 等
+//! S-mode 调用封装未来可复用同一 derive；`call` 则绑定 env 的 `EnvResult`/汇编入口。
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;

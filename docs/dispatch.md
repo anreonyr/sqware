@@ -157,7 +157,7 @@ boot:
    `filesz = 0` 的 `PT_LOAD`（链接脚本让 `.data`/`.bss` 各自成段，合法且常见）
    被 `attach_map` 的 `pages == 0` 判为 `NotAligned`，整块装载失败。修法：无文件
    实体时跳过 `attach_map`，整段走懒登记。
-3. **`warpper` 内联后返回值错**（`crates/ubi/src/ucall.rs`）：
+3. **`warpper` 内联后返回值错**（`crates/env/src/ucall.rs`）：
    asm 块被内联进调用方时，调用方读回的 a0 恒 0；独立函数调用则正确。修法：
    `#[inline(never)]`（与仓库对裸 asm 的一贯纪律同源，见 `docs/ipc.md` §13.10 A.2）。
 
@@ -181,17 +181,17 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 ## 13 · 文件清单
 
 ```
-新增  crates/ubi/src/dispatch.rs            协议类型 + 编解码
+新增  crates/env/src/dispatch.rs            协议类型 + 编解码
 新增  kernel/src/work/unit/gate/release.rs  自释原语
 改写  kernel/src/service/dispatch.rs        Directory 核心 + serve 适配
 改写  kernel/src/boot.rs                    根授予 + 目录/echo + 直接 bind
-改   crates/ubi/src/fid.rs                  +Collect/Release；删 ServiceCall/ServiceId
-改   crates/ubi/src/wire.rs                 +FromPair (PieToken, Permission)
-改   crates/ubi/src/ucall.rs                warpper #[inline(never)]
+改   crates/env/src/fid.rs                  +Collect/Release；删 ServiceCall/ServiceId
+改   crates/env/src/wire.rs                 +FromPair (PieToken, Permission)
+改   crates/env/src/ucall.rs                warpper #[inline(never)]
 改   kernel/src/runtime/switcher/envcall.rs Collect/Release handler；删 class 7
 改   kernel/src/runtime/switcher/trampoline.rs  __utrap 保存顺序修复
 改   kernel/src/work/unit/loader.rs         纯 .bss 段装载修复
-改写  user/src/env/service.rs               Directory 会话 + Service 句柄
-改   user/src/env/mail.rs                   collect() / release() 封装
-改   user/src/bin/shell.rs                  req 走新协议 + dir 命令
+改写  task/src/env/service.rs               Directory 会话 + Service 句柄
+改   task/src/env/mail.rs                   collect() / release() 封装
+改   task/src/bin/shell.rs                  req 走新协议 + dir 命令
 ```

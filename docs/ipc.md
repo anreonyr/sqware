@@ -118,7 +118,7 @@ kernel()
 
 ### Step B：用户 `Request` 封装
 
-`user/env/mail.rs` 加 `Request(callee, op, payload, rep)`：push + wait + pull。
+`task/env/mail.rs` 加 `Request(callee, op, payload, rep)`：push + wait + pull。
 
 ### Step C：shell 加命令触发
 
@@ -220,10 +220,10 @@ QEMU 实测无 panic。
 
 ---
 
-## 11 · 用户态 Service 封装（`user::env::service`）
+## 11 · 用户态 Service 封装（`task::env::service`）
 
 > 用户态单次往返服务调用。用 sqware 词族 `Service`（**不用 "IPC"**）。已实现于
-> `user/src/env/service.rs`（`connect` + `request`，编译通过）。
+> `task/src/env/service.rs`（`connect` + `request`，编译通过）。
 
 ### 定位
 
@@ -516,11 +516,11 @@ release 模式下编译器对 `move || { ... }` closure 做跨函数优化（参
 | `kernel/src/work/room/scheduler/ktask.rs` | 新增 `wait_mail(key)` 裸 asm |
 | `kernel/src/boot.rs` | 删 `spawn_ipc_probe`；新增 `ECHO_REQ` / `ECHO_REP` + `spawn_echo_service` |
 | `kernel/src/runtime/switcher/envcall.rs` | `Service(Connect)` 给两 pie（a0=req a1=rep）；`Mail::Push/Pull` 改用 `try_push/try_pull` |
-| `crates/ubi/src/fid.rs` | `ServiceCall::Connect` ret 改 `(PieToken, PieToken)` |
-| `crates/ubi/src/wire.rs` | 新增 `FromPair for (PieToken, PieToken)` |
-| `user/src/env/service.rs` | `Service` 持 req + rep 两 holePie；`echo` 编排两轮 envcall |
-| `user/src/env/mail.rs` | `HolePie::push/pull` 短 spin 100 cycles + retry |
-| `user/src/bin/shell.rs` | `req` 命令 |
+| `crates/env/src/fid.rs` | `ServiceCall::Connect` ret 改 `(PieToken, PieToken)` |
+| `crates/env/src/wire.rs` | 新增 `FromPair for (PieToken, PieToken)` |
+| `task/src/env/service.rs` | `Service` 持 req + rep 两 holePie；`echo` 编排两轮 envcall |
+| `task/src/env/mail.rs` | `HolePie::push/pull` 短 spin 100 cycles + retry |
+| `task/src/bin/shell.rs` | `req` 命令 |
 
 ### 12.7 端到端验证
 
@@ -543,7 +543,7 @@ debug 与 release 均通过。
 | 连接建立 | envcall 给两 pie（dispatcher 不需要——单服务场景）|
 | service 数量 | 1（echo）；多服务探索走 dispatcher（见"服务发现"演进） |
 | 按需启用 | **真 park**（`wait_mail` asm），不被调用时 0% CPU |
-| 字节序 | 小端（ubi 单一真相：`Wire::pack`） |
+| 字节序 | 小端（env 单一真相：`Wire::pack`） |
 | wake_key | 不需要（双 hole 物理隔离了并发） |
 | closure release 兼容 | `#[inline(never)]` 内层 helper（必须） |
 
@@ -620,9 +620,9 @@ pub mod dispatch;
 mod service;  // 新增
 ```
 
-### 13.3 ubi 扩展
+### 13.3 env 扩展
 
-#### `crates/ubi/src/fid.rs`
+#### `crates/env/src/fid.rs`
 
 ```rust
 pub enum ServiceCall {
@@ -649,7 +649,7 @@ impl ServiceId {
 }
 ```
 
-#### `crates/ubi/src/wire.rs`
+#### `crates/env/src/wire.rs`
 
 ```rust
 impl Wire for crate::fid::ServiceId {
@@ -780,7 +780,7 @@ pub fn connect(sid: ServiceId) -> EnvResult<Service> {
 ### 13.8 加新服务流程
 
 ```rust
-// 1. crates/ubi/src/fid.rs
+// 1. crates/env/src/fid.rs
 pub enum ServiceId {
     Echo = 1,
     Logger = 2,  // 新增
@@ -794,7 +794,7 @@ impl ServiceId {
     }
 }
 
-// 2. crates/ubi/src/wire.rs（增加 Logger 反序列化）
+// 2. crates/env/src/wire.rs（增加 Logger 反序列化）
 
 // 3. kernel/src/boot.rs::spawn_services
 let (lreq, lreq_id) = hole::meta()?;
@@ -810,7 +810,7 @@ kt.task().name("logger-svc").closure(move || {
     svc(lreq_for_task, lrep_for_task)
 }).spawn()?;
 
-// 4. user::Service::connect(ServiceId::Logger)
+// 4. task::Service::connect(ServiceId::Logger)
 ```
 
 **无需新 dispatcher、无需新 envcall 域**——只扩 ServiceId enum + 业务 Task + 注册。
@@ -823,7 +823,7 @@ kt.task().name("logger-svc").closure(move || {
 | dispatcher 是 Task | ✅（按需启用，wait_mail 真 park）|
 | 服务注册表所有权 | `Arc<SpinLock<Vec<ServiceEntry>>>` dispatcher 闭包独占持有 |
 | `ServiceId` 范围 | 1..（0 保留给 dispatcher 自身）|
-| lookup key | name 字符串（更灵活；ServiceId 仅 uABI 边界）|
+| lookup key | name 字符串（更灵活；ServiceId 仅环境调用 ABI 边界）|
 | dispatcher reply slot | 单 slot（v1 单 shell 串行；多 caller 后续扩数组）|
 | 服务 Pie 权限 | `READ | WRITE`（caller push/pull + echo pull/push）|
 
@@ -932,12 +932,12 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
   kernel/src/boot.rs                       spawn_demos → spawn_services（dispatcher + echo）
   kernel/src/runtime/switcher/envcall.rs    Service(Connect) → dispatcher Pies
   kernel/src/work/room/messenger.rs        WaitKey::into_raw（辅助）
-  crates/ubi/src/fid.rs                    ServiceId enum, Connect 改 Connect{ service }
-  crates/ubi/src/wire.rs                   FromPair (PieToken, PieToken), Wire ServiceId
-  crates/ubi/src/lib.rs                    导出 ServiceId, make_err
-  user/src/env/service.rs                   connect 走 dispatcher 路径
-  user/src/env/task.rs                     + self_id()
-  user/src/bin/shell.rs                    req 用 ServiceId::Echo
+  crates/env/src/fid.rs                    ServiceId enum, Connect 改 Connect{ service }
+  crates/env/src/wire.rs                   FromPair (PieToken, PieToken), Wire ServiceId
+  crates/env/src/lib.rs                    导出 ServiceId, make_err
+  task/src/env/service.rs                   connect 走 dispatcher 路径
+  task/src/env/task.rs                     + self_id()
+  task/src/bin/shell.rs                    req 用 ServiceId::Echo
   Cargo.toml                                release opt_level = 1
 ```
 

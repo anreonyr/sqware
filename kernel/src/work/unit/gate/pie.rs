@@ -17,9 +17,9 @@ use crate::work::mail::{HoleMeta, PoleMeta, ResourceId};
 
 // ── 权限位（bitflags）──
 //
-// 单一真相在 `ubi::Permission`，本处 re-export 维持 `gate::Permission` 引用路径。
+// 单一真相在 `env::Permission`，本处 re-export 维持 `gate::Permission` 引用路径。
 
-pub use ubi::Permission;
+pub use env::Permission;
 
 /// 数据面操作所需的权利位（gate 核心判定授权，不感知资源实体）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

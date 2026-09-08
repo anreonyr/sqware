@@ -11,7 +11,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use ubi::TeamId;
+use env::TeamId;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;

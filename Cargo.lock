@@ -27,6 +27,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
+name = "env"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "envmacros",
+ "erra",
+]
+
+[[package]]
 name = "envmacros"
 version = "0.1.0"
 dependencies = [
@@ -111,6 +120,7 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "env",
  "erra",
  "fack",
  "fdt",
@@ -124,7 +134,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stanza",
- "ubi",
 ]
 
 [[package]]
@@ -309,11 +318,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ubi"
+name = "task"
 version = "0.1.0"
 dependencies = [
- "bitflags",
- "envmacros",
+ "anstyle-parse",
+ "env",
  "erra",
 ]
 
@@ -322,15 +331,6 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
-
-[[package]]
-name = "user"
-version = "0.1.0"
-dependencies = [
- "anstyle-parse",
- "erra",
- "ubi",
-]
 
 [[package]]
 name = "zmij"

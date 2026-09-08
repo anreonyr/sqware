@@ -1,0 +1,152 @@
+[package]
+name = "task"
+version.workspace = true
+edition.workspace = true
+
+# 用户程序：freestanding、无 std、无 main crt。链接在 IMAGE_BASE (0x10000)、
+# 静态 ET_EXEC；由内核 loader 按绝对 VMA 装载，_start 即 e_entry。
+[lib]
+path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../crates/env" }
+erra = { version = "0.2.0", default-features = false }
+# ANSI 转义序列解析器（纯 no_std）：Terminal 层解码键盘方向键/退格（行编辑）。
+# default-features = false → 不带 utf8/codegen 特性，适配裸机 user 环境。
+anstyle-parse = { version = "1.0.0", default-features = false }
+
+[["bin"]]
+name = "task-exiter"
+path = "src/bin/user/exiter.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-yielder"
+path = "src/bin/user/yielder.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-sleeper"
+path = "src/bin/user/sleeper.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-heaper"
+path = "src/bin/user/heaper.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-spawner"
+path = "src/bin/user/spawner.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-mmaper"
+path = "src/bin/user/mmaper.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-hole-solo"
+path = "src/bin/user/hole_solo.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-stressor"
+path = "src/bin/user/stressor.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-tlser"
+path = "src/bin/user/tlser.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-pole-solo"
+path = "src/bin/user/pole_solo.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-hole-pair"
+path = "src/bin/user/hole_pair.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-pole-pair"
+path = "src/bin/user/pole_pair.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-back"
+path = "src/bin/user/back.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-narrow"
+path = "src/bin/user/narrow.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-revoke"
+path = "src/bin/user/revoke.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-lisp"
+path = "src/bin/user/lisp.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-shell"
+path = "src/bin/user/shell.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-echo"
+path = "src/bin/supervisor/echo.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "task-sire"
+path = "src/bin/user/sire_demo.rs"
+test = false
+bench = false
+doctest = false

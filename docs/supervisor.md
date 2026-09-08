@@ -116,7 +116,7 @@ let from_task = (frame as *const TrapContext as usize) != machine::hart_frame().
 | 其它异常 | 内核 bug → panic | 杀 task（fault isolation） |
 | `ebreak` | 内核自身 ebreak = bug → panic | 环境调用分发 |
 
-## 4 · uABI：环境调用是 `ebreak`，不是 `ecall`
+## 4 · 环境调用 ABI：是 `ebreak`，不是 `ecall`
 
 **RISC-V 的 `ecall` 语义随特权级变化**：
 
@@ -130,7 +130,7 @@ let from_task = (frame as *const TrapContext as usize) != machine::hart_frame().
 码，陷阱根本不进内核）——表现为 `tls_bootstrap` 的 `alloc().expect()` 失败、
 panic、最后落在 `room::exit` 的 `unimp` 上。
 
-**决定：`warpper` 的陷阱指令改为 `ebreak`**（`crates/ubi/src/ucall.rs`）。
+**决定：`warpper` 的陷阱指令改为 `ebreak`**（`crates/env/src/ucall.rs`）。
 `ebreak` 在 U 态与 S 态都被委派给 S 态，两类任务共用同一入口，无需按模式分派
 wrapper。内核侧 `trap_handler` 处理 `Exception::Breakpoint`。
 
@@ -191,6 +191,7 @@ Pie 已冻结，`AnyPie` 仍 `Hole | Pole`。设备（MMIO 区间 + 中断号）
 initrd.img
   [0..4]  count     u32 LE  1..=8
   每条：
+    [0..4]  kind      u32 LE  0 = User、1 = Supervisor
     [0..4]  name_len  u32 LE  1..=32
     [..]    name      ASCII，无 NUL
     [0..4]  len       u32 LE  >= 1
@@ -201,14 +202,15 @@ initrd.img
   `TooMany` 当场拒掉。
 - boot 按名取（`take(&programs, "shell")` / `"echo"`），顺序无关；未知名打印
   清单后 panic。
-- `build.rs` 的 `INITRD_BINS` 是打包清单，与 boot 的供给表成对。
+- `build.rs` 的 `INITRD_BINS` 是打包清单，**唯一**声明「程序装成哪种空间」的
+  地方：kind 码随条目进清单，boot 从清单读（见 §13）。
 - **退出路径**：程序投递一旦有正式通道（运行期装载原语 / 设备发现），本模块
   连同打包端一起删除。
-- `build.rs` 必须 `rerun-if-changed=../crates/ubi`——否则改 ubi 后 initrd 不重
+- `build.rs` 必须 `rerun-if-changed=../crates/env`——否则改 env 后 initrd 不重
   打包，内核重编而用户程序是旧的。
 
 **域怎么拿到自己的入口门闩**：沿用根授予——boot 把入口 hole 的 Pie 放进域任务
-权限表索引 0，域程序用 `Collect(0)` 取回（与 shell 取目录门闩同款）。uABI 无
+权限表索引 0，域程序用 `Collect(0)` 取回（与 shell 取目录门闩同款）。环境调用 ABI 无
 任何新入口。
 
 ## 9 · 已决 / 被否
@@ -235,6 +237,11 @@ initrd.img
    PA 可见性、中断路由均未做。
 4. **建域仍限内核**：用户态建域是提权原语，Pie 冻结下没有门控位，v1 不开放。
 5. **域不可转授设备权**：见 §7。
+6. **U 位策略有两处用户可控缺口**：`envcall.rs` 的 `Mmap` 固定地址路径硬编码
+   `PteFlags::V|R|W|U`，`Mprotect` 直接把用户 flags 交给 `space.protect()`——两处
+   都不按 `kind()` 兜 U 位。域任务因此可能给自持页带上 U=1（SUM=0 下自故障，不构成
+   提权，但破坏了"U 位随 kind"这条不变量）。修法：抽单一入口 `space.pte_policy(flags)`，
+   让 U 位只在 kind 处表达一次。
 
 ## 11 · 验证
 
@@ -253,8 +260,8 @@ debug 档同路径跑通，且 `health spare / pagetable / stress` 全 ok。
 ## 12 · 文件清单
 
 ```
-新增  kernel/src/initrd.rs                    小清单解析（临时机制）
-新增  user/src/bin/echo.rs                    域态 echo 服务
+新增  kernel/src/initrd.rs                    小清单解析 + kind（临时机制）
+新增  task/src/bin/supervisor/echo.rs       域态 echo 服务（S 态域程序）
 改写  kernel/src/work/unit/space/mod.rs       SpaceKind{Supervisor,User}
 改写  kernel/src/work/unit/space/core.rs      Space.asid + 三构造器 + Drop 统一
 改   kernel/src/memory/manager/asid.rs        Asid newtype（kernel/allocate/…）
@@ -269,8 +276,33 @@ debug 档同路径跑通，且 `health spare / pagetable / stress` 全 ok。
 改   kernel/src/work/unit/task.rs             闭包断言按 is_kernel、栈窗去参
 改   kernel/src/work/room/scheduler/core.rs   tp 约定按 is_supervisor
 改   kernel/src/runtime/diagnose/{scene,frame}.rs  world 随新枚举
-改   crates/ubi/src/ucall.rs                  ecall → ebreak
-改   kernel/build.rs                          小清单打包 + watch ../crates/ubi
+改   crates/env/src/ucall.rs                  ecall → ebreak
+改   kernel/build.rs                          小清单打包 + watch ../crates/env
 改   kernel/src/boot.rs                       装载两域 + 根授予 + 绑定
-改   user/Cargo.toml                          +user-echo
+改   task/Cargo.toml                          +task-echo；bin 分层 user/ supervisor/
 ```
+
+> **`task/` 的定位**（本次由 `user/` 改名）：它是**镜像 crate**，不限特权级——
+> 负责把 `#![no_std]` 程序编成 loader 可装载的静态 ET_EXEC（VMA 0x10000）。特权级
+> 由内核侧 `SpaceKind` 决定；域程序与 U 态程序共用 `entry`/`env`/`link.ld`/`env`。
+> 改名同时把 `core::task` 模块改为 `core::thread`：原名与新 crate 名撞车——
+> `use task::core::task;` 会把 `task` 绑到该模块，使同文件的 `task::env::…` 解析失败。
+
+## 13 · 程序清单与特权级（`kind` 字段）
+
+**问题**：装载特权级原本有两处知识——`build.rs::INITRD_BINS` 知道清单名与 bin 名、
+`boot.rs` 硬编码 `SpaceKind::User/Supervisor`——漂移了没人报错；源码里也看不出哪个
+程序跑哪一态。
+
+**决定**：
+
+1. **清单携带 kind**：initrd 条目加 `u32 kind`（0 = User、1 = Supervisor），由
+   `build.rs::INITRD_BINS` 写入，`boot.rs` 用 `take(..).kind` 装载——零硬编码。
+   这不是「程序自称特权级」：清单由内核构建、引导期只读，是**内核自己的装载表**。
+2. **源码分层**：`task/src/bin/user/`（U 态程序）与 `task/src/bin/supervisor/`
+   （域程序，当前仅 `echo`）。
+3. **命名**：ABI crate `ubi` → **`env`**（原名取自 "U-mode → S-mode"，而域任务是
+   S→S，`u` 已不成立）；文档里的 "uABI" 统一为「环境调用 ABI」。
+
+**被否**：程序源码里放 `const KIND`（特权级是内核的装载决策，程序不得自称）；
+kind 只加在 `build.rs` 的表里（`boot.rs` 读不到，仍是两处知识）。

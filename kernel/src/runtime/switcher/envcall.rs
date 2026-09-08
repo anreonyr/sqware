@@ -17,7 +17,7 @@ use core::time::Duration;
 
 use alloc::sync::Arc;
 
-use ubi::{
+use env::{
     ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, UnitCall,
 };
 

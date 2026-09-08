@@ -21,7 +21,7 @@ use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
 
 use super::team::Team;
-use ubi::TeamId;
+use env::TeamId;
 use crate::work::room::scheduler;
 
 /// 全局任务号（跨 hart 唯一）。自 1 起：0 保留作「无任务」哨兵——`SelfId`/

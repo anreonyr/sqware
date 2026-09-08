@@ -174,12 +174,21 @@ fn register_runtime_hooks() {
     conductor::register_shutdown_hooks(SHUTDOWN_HOOKS);
 }
 
+/// 清单 kind → 空间 kind：映射放适配层（`initrd` 是引导供给层，不反向依赖 `work::unit`）。
+impl From<crate::initrd::ProgramKind> for crate::work::unit::space::SpaceKind {
+    fn from(k: crate::initrd::ProgramKind) -> Self {
+        match k {
+            crate::initrd::ProgramKind::User => Self::User,
+            crate::initrd::ProgramKind::Supervisor => Self::Supervisor,
+        }
+    }
+}
+
 /// 生成全部启动任务：initrd 小清单按名取程序（见 [`crate::initrd`]）——shell 装成
 /// U 态团队，echo 装成 supervisor 域（S 态页表 + 独立 ASID）。错误统一 `?` 上抛。
 fn spawn_demos() -> Result<(), MapError> {
     use crate::work::mail::hole;
     use crate::work::unit::gate::{self, AnyPie, Permission};
-    use crate::work::unit::space::SpaceKind;
 
     // 读 initrd 字节来源（QEMU `-initrd` 经 `/chosen` 暴露；无配置 → 无程序）。
     // initrd 区恒等映射（=物理地址），直接按其物理基址读。
@@ -192,19 +201,16 @@ fn spawn_demos() -> Result<(), MapError> {
     }
     let programs = crate::initrd::programs(blob).expect("initrd: malformed manifest");
 
-    // 两个引导域：shell（U 态页表）与 echo（S 态 supervisor 域）。
-    let (shell_team, shell_entry) = crate::work::unit::assemble(
-        crate::initrd::take(&programs, "shell"),
-        alloc::sync::Weak::new(),
-        SpaceKind::User,
-    )
-    .expect("assemble shell elf");
-    let (echo_team, echo_entry) = crate::work::unit::assemble(
-        crate::initrd::take(&programs, "echo"),
-        alloc::sync::Weak::new(),
-        SpaceKind::Supervisor,
-    )
-    .expect("assemble echo elf");
+    // 两个引导域：shell（U 态页表）与 echo（S 态 supervisor 域）。装成哪种空间由
+    // 清单携带（`ProgramKind`）——boot 不再硬编码特权级。
+    let shell = crate::initrd::take(&programs, "shell");
+    let (shell_team, shell_entry) =
+        crate::work::unit::assemble(shell.elf, alloc::sync::Weak::new(), shell.kind.into())
+            .expect("assemble shell elf");
+    let echo = crate::initrd::take(&programs, "echo");
+    let (echo_team, echo_entry) =
+        crate::work::unit::assemble(echo.elf, alloc::sync::Weak::new(), echo.kind.into())
+            .expect("assemble echo elf");
 
     // 目录入口门闩：内核是根授予的源头 → 原始自持（vestor = None）。它没有 envcall
     // 入口（class 7 已删除）：内核把这一份放进首个用户任务的权限表，靠 `Collect` 取。
@@ -292,7 +298,7 @@ fn spawn_services(
 ) -> Result<usize, MapError> {
     use crate::service::dispatch;
     use crate::work::unit::gate::{self, Permission};
-    use ubi::dispatch::Name;
+    use env::dispatch::Name;
 
     let kt = kernel().expect("kernel team not initialized");
     let registry = dispatch::new_registry();

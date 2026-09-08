@@ -12,7 +12,7 @@
 #   .jsonl = diagnose 族全量（事件 live 流 + panic 的 halt 记录与 scene 现场行）；
 #   .log  = 完整终端捕获（含诊断文本；panic 判定改走 halt 记录，不再靠字符串匹配）。
 #
-# 约定：kernel/build.rs 已负责构建 user 供 include_bytes! 嵌入，本脚本不再预构建 user；
+# 约定：kernel/build.rs 已负责构建 task 并打包 initrd，本脚本不再预构建；
 #       仅 QEMU_FEATURES 非空或 QEMU_SEMI=1 时二次构建 kernel（带 feature）。
 #
 # semihosting 强关联：

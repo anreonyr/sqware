@@ -16,7 +16,7 @@ semihosting = []
 audit = []
 
 [dependencies]
-ubi = { path = "../crates/ubi" }
+env = { path = "../crates/env" }
 sbi = { path = "../crates/sbi" }
 stanza = "0.5.2"
 

@@ -11,7 +11,7 @@
 // 数据面不感知 rights；门闩在 envcall 入口 dispatch 时检查。
 // 阻塞语义在调度域 wait/wake，mail 不重造调度器。
 //
-// 权限四元：READ / WRITE / VEST / BACK（单一真相在 `ubi::Permission`）。
+// 权限四元：READ / WRITE / VEST / BACK（单一真相在 `env::Permission`）。
 // 用户句柄 = per-pie token（全局唯一），envcall 以 token 寻址。
 
 pub mod hole;
