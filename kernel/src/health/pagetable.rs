@@ -26,7 +26,7 @@ pub fn pagetable() {
     let space = SpaceBuilder::user()
         .build()
         .expect("[health] pagetable: build space");
-    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D;
+    let flags = space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
     let base_count = space.table_count();
     // 全动态下块池页已计入 frame.occupied,剔除块池持页得"非块池用途在途帧"。
     let held_before = crate::memory::allocator::statistics::view_frame().occupied

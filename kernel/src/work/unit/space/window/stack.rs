@@ -34,13 +34,12 @@ impl StackWindow {
     ///
     /// 段未就绪 / 段耗尽 / 物理帧耗尽 → [`MapError`]（回滚：已分配帧与段归还）。
     pub(crate) fn claim(space: &Space, size: usize) -> Result<Span, MapError> {
-        let s_only = space.kind().is_supervisor();
         let slot_size = size + TASK_STACK_GUARD;
         let mut salvage = Salvage::new();
         let claimed = space.with_flush(|inner| {
             let slot_va = inner.allocate(Seg::User, slot_size)?;
             // 守护页 Guard → 溢出缺页可诊断（只登记，不物化）
-            let guard_flags = PteFlags::V | PteFlags::R | PteFlags::W;
+            let guard_flags = space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
             if let Err(e) = inner.map(slot_va, TASK_STACK_GUARD, guard_flags, Some(Pending::Guard))
             {
                 // 装配失败：段退回（reserve 未落任何 PTE/帧）
@@ -48,13 +47,10 @@ impl StackWindow {
                 return Err(e);
             }
             // 栈体：立即物化（Eager）。逐页分配帧 + 装 PTE + 注入。
-            let body_flags = if s_only {
-                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D
-            } else {
-                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U | PteFlags::A | PteFlags::D
-            };
+            let body_flags = space
+                .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
             let body_va = slot_va + TASK_STACK_GUARD;
-            if let Err(e) = inner.claim_map(body_va, size, body_flags) {
+            if let Err(e) = inner.claim(body_va, size, body_flags) {
                 // claim 已自回滚装配（清已装叶 + 摘 body map）；guard map 与段
                 // 整体退回——拆 slot 区间（清 guard 叶 + 摘 guard map，入料箱）
                 // 后把段也交料箱：VA 一旦还段即可被复用，须等清退到齐。

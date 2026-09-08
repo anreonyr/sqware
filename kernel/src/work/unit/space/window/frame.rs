@@ -26,8 +26,11 @@ impl FrameWindow {
     pub(crate) fn claim(space: &Space) -> Result<Span, MapError> {
         space.with_flush(|inner| {
             let va = inner.allocate(Seg::Kernel, PAGE_SIZE)?;
-            let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D; // S-only
-            if let Err(e) = inner.claim_map(va, PAGE_SIZE, flags) {
+            // **不走 `pte_policy`**：帧是内核自有页落在任务空间里，恒 U=0——trap
+            // 入口在 S 态（SUM=0）把寄存器现场写进它，带 U 就会页故障（实测：
+            // 域/用户任务首次陷阱即 storm）。
+            let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
+            if let Err(e) = inner.claim(va, PAGE_SIZE, flags) {
                 // claim 已自回滚装配；段退回
                 inner.deallocate(Seg::Kernel, va.as_usize(), PAGE_SIZE);
                 return Err(e);

@@ -63,22 +63,6 @@ impl<M> Clone for Pie<M> {
 }
 
 impl<M> Pie<M> {
-    pub fn resource(&self) -> ResourceId {
-        self.resource
-    }
-
-    pub fn permission(&self) -> Permission {
-        self.permission
-    }
-
-    pub fn vestor(&self) -> Option<usize> {
-        self.vestor
-    }
-
-    pub fn token(&self) -> u64 {
-        self.token
-    }
-
     /// 存活：`Weak::upgrade` 成功 = Meta 仍活。
     pub fn alive(&self) -> bool {
         self.weak.upgrade().is_some()

@@ -89,7 +89,11 @@ pub fn bind(
 pub fn unbind(reg: &Arc<ServiceRegistry>, name: &Name, who: usize) -> Result<(), DirectoryError> {
     let mut dir = reg.lock();
     let binding = dir.bindings.get(name).ok_or(DirectoryError::Unknown)?;
-    if binding.entry.vestor() != Some(who) {
+    if ({
+        let this = &binding.entry;
+        this.vestor
+    }) != Some(who)
+    {
         return Err(DirectoryError::NotOwner);
     }
     dir.bindings.remove(name);
@@ -105,7 +109,11 @@ pub fn replace(
 ) -> Result<(), DirectoryError> {
     let mut dir = reg.lock();
     let binding = dir.bindings.get(name).ok_or(DirectoryError::Unknown)?;
-    if binding.entry.vestor() != Some(who) {
+    if ({
+        let this = &binding.entry;
+        this.vestor
+    }) != Some(who)
+    {
         return Err(DirectoryError::NotOwner);
     }
     dir.bindings.insert(
@@ -147,7 +155,11 @@ pub fn connect(
     grantor: usize,
 ) -> Result<(PieToken, TaskId), DirectoryError> {
     let binding = resolve(reg, name).ok_or(DirectoryError::Unknown)?;
-    let owner = binding.entry.vestor().ok_or(DirectoryError::NotGrantable)?;
+    let owner = {
+        let this = &binding.entry;
+        this.vestor
+    }
+    .ok_or(DirectoryError::NotGrantable)?;
     let subset = caller_permission();
     if !binding.entry.alive() || !binding.entry.allows(Need::Grant) || !binding.entry.covers(subset)
     {
@@ -216,7 +228,14 @@ fn handle(reg: &Arc<ServiceRegistry>, me: &Arc<Task>, caller: usize, request: &R
         },
         Request::Replace { name, entry, .. } => match resolve(reg, name) {
             None => Reply::NotFound,
-            Some(binding) if binding.entry.vestor() != Some(caller) => Reply::Denied,
+            Some(binding)
+                if ({
+                    let this = &binding.entry;
+                    this.vestor
+                }) != Some(caller) =>
+            {
+                Reply::Denied
+            }
             Some(_) => {
                 let Some(entry_pie) = take_entry(me, entry.get()) else {
                     return Reply::Denied;

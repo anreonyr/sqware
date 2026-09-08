@@ -161,8 +161,16 @@ fn instr_len(space: &Space, sepc: KVirt) -> usize {
 ## 6 · 装载：U 位是映射策略，不是 ELF 语义
 
 - `parser` 只产 ELF 的 R/W/X（删掉原先硬编码的 `PteFlags::U`）。
-- `loader` 按 `space.kind()` 决定 U 位：`User` ⇒ 带 U；`Supervisor` ⇒ 不带。
-- 窗口同理（`stack` 删掉 `kernel: bool` 参数，`heap`/`share` 按 kind 推导）。
+- **单一出口 `Space::pte_policy(flags)`**：`Supervisor`（含内核空间）⇒ 清 U；
+  `User` ⇒ 置 U。全仓 `PteFlags::U` 只在这一个函数里出现。
+- 产页权限的地方全部经它：loader 逐段、栈/堆/共享窗口、`map`/`attach_map`/
+  `protect` 三个适配入口（内部兜底，公开入口无法绕过）、`subset_to_pte`（Pole
+  借映）、health 自检。
+- **例外是内核自有的页**，它们不走策略：`borrow_map` 的借用映射（trampoline /
+  DRAM 恒等 / dock 视图）保留内核侧的位；`FrameWindow`（trap 帧）落在任务空间里
+  也**恒 U=0**——trap 入口在 S 态（`SUM=0`）把寄存器现场写进它，带 U 会缺页。
+  这条是实测踩出来的：把帧窗口也塞进策略后，任务首次陷阱即 storm（`scause=15`
+  在 trampoline+0x20，`stval = sscratch + 0x38`）。
 
 **为什么 S 态页不得带 U**：新任务 `sstatus` 起步为 0（`SUM=0`），S 态访问 U=1
 的页会缺页——域任务一用堆/栈就崩。域空间整片 S-only 是最省心的选择（代价：域
@@ -225,6 +233,7 @@ initrd.img
 | 内嵌 `include_bytes!` / `-device loader` + 引导参数 / 运行期装载 | v1 取小清单；其余见 §8 退出路径 |
 | 用 `SPP` 判内核/任务 | 否决——S 态域任务 SPP 也是 Supervisor |
 | `frame.sepc += 4` | 否决——见 §5 |
+| U 位散落在各调用点（`Mmap` 固定地址、`Mprotect`、`subset_to_pte` 都可被用户 flags 覆盖） | 收口到 `Space::pte_policy` 单一出口（见 §6） |
 
 ## 10 · 已知边界
 
@@ -237,11 +246,6 @@ initrd.img
    PA 可见性、中断路由均未做。
 4. **建域仍限内核**：用户态建域是提权原语，Pie 冻结下没有门控位，v1 不开放。
 5. **域不可转授设备权**：见 §7。
-6. **U 位策略有两处用户可控缺口**：`envcall.rs` 的 `Mmap` 固定地址路径硬编码
-   `PteFlags::V|R|W|U`，`Mprotect` 直接把用户 flags 交给 `space.protect()`——两处
-   都不按 `kind()` 兜 U 位。域任务因此可能给自持页带上 U=1（SUM=0 下自故障，不构成
-   提权，但破坏了"U 位随 kind"这条不变量）。修法：抽单一入口 `space.pte_policy(flags)`，
-   让 U 位只在 kind 处表达一次。
 
 ## 11 · 验证
 

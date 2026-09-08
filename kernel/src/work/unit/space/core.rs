@@ -260,7 +260,7 @@ impl SpaceInner {
     /// 装叶、注入（帧自产，物理可断）。
     ///
     /// 中途帧耗尽回滚**装配**（清已装叶 + 摘自身 Map）。
-    pub(crate) fn claim_map(
+    pub(crate) fn claim(
         &mut self,
         va: VirtAddr,
         size: usize,
@@ -276,12 +276,12 @@ impl SpaceInner {
         // 先登记空 map（全物化 pending None），再走 install 装帧
         self.maps
             .push(Map::new(va, size, flags, None, BTreeMap::new()));
-        self.install(va, pages, flags, MapMode::Claim(va), || Self::frame())
+        self.install(va, pages, flags, MapMode::Claim(va), Self::frame)
     }
 
     /// 装配调用方配好的帧（物理可断，逐帧装叶）+ 登记全物化 Map。
     /// 帧随 Map drop 归还。`frames` 非空；失败回滚清已装叶。
-    pub(crate) fn attach_map(
+    pub(crate) fn attach(
         &mut self,
         vaddr: VirtAddr,
         frames: Vec<Frame>,
@@ -306,7 +306,7 @@ impl SpaceInner {
 
     /// 借帧连续映射：物理地址已知、一次装连续段，不持帧（帧归外部：机器/
     /// 内核/DockMeta）。DRAM 恒等、trampoline、dock/ring 视图走这。
-    pub(crate) fn borrow_map(
+    pub(crate) fn borrow(
         &mut self,
         vaddr: VirtAddr,
         paddr: PhysAddr,
@@ -405,7 +405,7 @@ impl SpaceInner {
             }
             m.flags | PteFlags::A | PteFlags::D
         };
-        self.install(va, pages, flags, MapMode::Materialize, || Self::frame())
+        self.install(va, pages, flags, MapMode::Materialize, Self::frame)
     }
 
     /// 修改已映射区域的保护标志：逐 map 分流——**真有 PTE** 的页翻叶 PTE（借用/
@@ -891,6 +891,27 @@ impl Space {
         self.kind
     }
 
+    /// 页权限的**单一出口**：U 位只由空间种类决定，任何产页权限的地方都经此。
+    ///
+    /// - `Supervisor`（含内核空间）→ 清 U：S 态 `SUM=0`，带 U 的页自己访问就缺页。
+    /// - `User` → 置 U：U 态访问必须带 U。
+    ///
+    /// 只作用于**本空间自有**的页（装载段 / 栈堆共享窗口 / mmap / mprotect /
+    /// Pole 借映）。两类**内核自有**的页不走此函数：
+    /// - `borrow_map` 借用的内核映射（trampoline / DRAM 恒等 / dock 视图）；
+    /// - `FrameWindow`（trap 帧）——落在任务空间里也恒 U=0：trap 入口在 S 态
+    ///   （`SUM=0`）把寄存器现场写进它，带 U 会缺页。
+    ///
+    /// `map` / `attach_map` / `protect` 内部已兜底；窗口与 loader 在 `with_flush`
+    /// 里直调 `inner`，须自行调用本函数。
+    pub fn pte_policy(&self, flags: PteFlags) -> PteFlags {
+        if self.kind().is_supervisor() {
+            flags - PteFlags::U
+        } else {
+            flags | PteFlags::U
+        }
+    }
+
     /// 空间身份（写入 `satp.ASID` / 组 wait·fence 键；0 = 内核空间）。
     pub fn asid(&self) -> Asid {
         self.asid
@@ -951,6 +972,7 @@ impl Space {
         flags: PteFlags,
         pending: Option<Pending>,
     ) -> Result<(), MapError> {
+        let flags = self.pte_policy(flags);
         self.with(|inner| inner.map(va, size, flags, pending))
     }
 
@@ -962,7 +984,7 @@ impl Space {
         size: usize,
         flags: PteFlags,
     ) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.borrow_map(vaddr, paddr, size, flags))
+        self.with_flush(|inner| inner.borrow(vaddr, paddr, size, flags))
     }
 
     /// 已备帧装配（loader 逐段 / hart 帧 / health 压测）。
@@ -972,7 +994,8 @@ impl Space {
         frames: Vec<Frame>,
         flags: PteFlags,
     ) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.attach_map(vaddr, frames, flags))
+        let flags = self.pte_policy(flags);
+        self.with_flush(|inner| inner.attach(vaddr, frames, flags))
     }
 
     /// 统一拆除（munmap 后端 / guard 打洞）：清叶 + 摘/裂 Map + 刷本核 + 结清
@@ -1012,6 +1035,7 @@ impl Space {
 
     /// 修改保护标志（mprotect 后端）：收紧类，就地跨核清退。
     pub fn protect(&self, vaddr: VirtAddr, size: usize, flags: PteFlags) -> Result<(), MapError> {
+        let flags = self.pte_policy(flags);
         self.with_shootdown(|inner| inner.protect(vaddr, size, flags))
             .expect("protect: shootdown deaf")
     }

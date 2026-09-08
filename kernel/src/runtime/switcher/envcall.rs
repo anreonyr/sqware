@@ -42,14 +42,16 @@ use crate::work::unit::task::TaskIdent;
 ///
 /// | subset                  | PteFlags                |
 /// |-------------------------|-------------------------|
-/// | READ                    | V\|R\|U\|A\|D           |
-/// | READ \| WRITE           | V\|R\|W\|U\|A\|D        |
+/// | READ                    | V\|R\|A\|D              |
+/// | READ \| WRITE           | V\|R\|W\|A\|D           |
 /// | other（含空 / 仅 WRITE）| Denied                  |
+///
+/// U 位不在此处决定——由目标空间的 [`Space::pte_policy`] 加。
 fn subset_to_pte(subset: Permission) -> Result<PteFlags, GateError> {
     if !subset.contains(Permission::READ) {
         return Err(GateError::Denied);
     }
-    let mut f = PteFlags::V | PteFlags::U | PteFlags::A | PteFlags::D;
+    let mut f = PteFlags::V | PteFlags::A | PteFlags::D;
     f |= PteFlags::R;
     if subset.contains(Permission::WRITE) {
         f |= PteFlags::W;
@@ -320,7 +322,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 if fixed == 0 {
                     ShareWindow::mmap(s, size).map(|span| span.va)
                 } else {
-                    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::U;
+                    let flags = s.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
                     s.map(KVirt::from_raw(fixed), size, flags, Some(Pending::Lazy))
                         .map(|()| KVirt::from_raw(fixed))
                 }
@@ -371,7 +373,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     None, // 原始自持：无 vestor
                     alloc::sync::Arc::downgrade(&meta),
                 );
-                let token = pie.token();
+                let token = pie.token;
                 task.pies.lock().push(AnyPie::Hole(pie));
                 Ok(token)
             })();
@@ -393,14 +395,11 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     None, // 原始自持：无 vestor
                     alloc::sync::Arc::downgrade(&meta),
                 );
-                let token = pie.token();
-                // 创建者自留 pie 全权 → map 走 R|W。
-                let creator_flags = PteFlags::V
-                    | PteFlags::R
-                    | PteFlags::W
-                    | PteFlags::U
-                    | PteFlags::A
-                    | PteFlags::D;
+                let token = pie.token;
+                // 创建者自留 pie 全权 → map 走 R|W（U 位由空间策略决定）。
+                let creator_flags = task_space.pte_policy(
+                    PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+                );
                 mail::pole::map(&meta, token, &task_space, creator_flags)?;
                 task.pies.lock().push(AnyPie::Pole(pie));
                 Ok(token)
@@ -506,9 +505,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     _ => None,
                 }
             }) {
-                Some(Ok((meta, token, Ok(flags)))) => {
-                    mail::pole::map(&meta, token, &ident.team.space, flags)
-                }
+                Some(Ok((meta, token, Ok(flags)))) => mail::pole::map(
+                    &meta,
+                    token,
+                    &ident.team.space,
+                    ident.team.space.pte_policy(flags),
+                ),
                 Some(Ok((_, _, Err(e)))) => Err(e),
                 Some(Err(e)) => Err(e),
                 None => Err(GateError::Denied),

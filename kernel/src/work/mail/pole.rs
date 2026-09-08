@@ -98,7 +98,7 @@ impl PoleMeta {
         let va = space
             .with_flush(|inner| {
                 let va = inner.allocate(Seg::User, self.bytes)?;
-                inner.borrow_map(
+                inner.borrow(
                     va,
                     PhysAddr::from_raw(self.base.as_ptr() as usize),
                     self.bytes,
