@@ -52,8 +52,8 @@ impl WaitKey {
     /// Sv57 若启用需重定布局）。与 fence::key 同源意：跨空间同 VA 不得混淆。
     pub fn compose(asid: usize, va: usize) -> WaitKey {
         // 用 #[inline(never)] helper 承担 mask 计算（见 §13.10 A 待办方向 A）：
-        // size 优化在闭包多次内联 compose 时，会把 `+1`（来自 pull_key 的
-        // `| 1` 折叠）算在 mask 上 → mask 错联。helper 强制每次调用独立计算。
+        // size 优化在闭包多次内联 compose 时，会把 `+1`（来自 hole::key(.., Pull)
+        // 的 `| 1` 折叠）算在 mask 上 → mask 错联。helper 强制每次调用独立计算。
         WaitKey(((asid & 0xFFFF) << 48) | low48(va))
     }
 }

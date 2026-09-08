@@ -116,7 +116,7 @@ pub enum IOCall {
     /// 写缓冲（len，缓冲 VA）。
     #[ret(())]
     Put { len: usize, buf: VirtAddr },
-    /// 非阻塞读一字节；无输入 → -2 Busy。
+    /// 非阻塞读一字节；无输入 → -3 Busy。
     #[ret(u8)]
     Get,
 }
@@ -134,10 +134,20 @@ pub enum ChronoCall {
     Clock,
 }
 
+/// hole 的等待方向：`Pull` = 等槽里有消息（可取），`Push` = 等槽空（可发）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HoleDir {
+    Pull,
+    Push,
+}
+
 /// 通信调用（class 5，mail）。用户句柄统一为 per-pie `token`（全局唯一）。
 /// UnsealHole / UnsealPole 创建资源（返 token）；Push / Pull / Map / Unmap / Seal
-/// / Accord / Narrow / Revoke / Collect / Release 走 pie 门闩。wait/wake 不进本类
-/// ——mail 同步直用调度词族 `RoomCall::Wait/Wake`。
+/// / Accord / Narrow / Revoke / Collect / Release / Wait 走 pie 门闩。
+///
+/// **wait 的分界**：事件键等待留 Room（`RoomCall::Wait/Wake` 的键是调用方命名空间
+/// 里的裸整数，内核不解释）；**资源就绪**等待归本类——`Wait` 收 `token`，由内核
+/// 解引用出 hole 的等待键，键不出内核。
 ///
 /// 两条轴不要混：`Unseal*` ↔ `Seal` 动的是**资源**；`Accord` ↔ `Revoke`（他人）
 /// 与 `Collect` ↔ `Release`（自己）动的是**我手里那一份**。
@@ -189,6 +199,17 @@ pub enum MailCall {
     /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
     #[ret(())]
     Release { token: PieToken },
+    /// 等某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
+    ///
+    /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（探测失败，
+    /// 或挂起过——被唤醒与超时不分）。**绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
+    /// 权利：`Pull` 需 R、`Push` 需 W。
+    #[ret(bool)]
+    Wait {
+        token: PieToken,
+        dir: HoleDir,
+        millis: usize,
+    },
 }
 
 /// 控制调用（class 6）。

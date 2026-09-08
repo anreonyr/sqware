@@ -7,10 +7,10 @@
 //! 参数在构造时类型安全（PieToken/VirtAddr/TaskId/Permission），返回值经 from_pair
 //! 蒸馏为 Ret 载荷。裸函数层只封 Ret、零业务逻辑。
 //!
-//! push/pull 的阻塞：内核 push/pull 槽满/槽空返 Busy；本层 sleep+retry 配合
-//! 内核侧 wake 实现"看起来阻塞"（轮询粒度 2ms；唤醒走 messenger::wake）。
+//! push/pull 的阻塞：内核 Push/Pull 槽满/槽空返 `-3 Busy`；本层转 `Wait` 原语
+//! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
 
-use env::{EnvResult, MailCall, MailCallRet, PieToken, VirtAddr};
+use env::{EnvResult, HoleDir, MailCall, MailCallRet, PieToken, VirtAddr};
 
 use crate::env::room;
 
@@ -55,6 +55,21 @@ pub fn pull(token: u64, buf: *mut [u8; HOLE_MSG_LEN]) -> EnvResult<()> {
     .call()?;
     match r {
         MailCallRet::Pull(()) => Ok(()),
+        _ => unreachable!(),
+    }
+}
+
+/// 等 hole 某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
+/// 返回 `true` = 本次调用当场就绪；`false` = 未就绪（探测失败，或挂起过）。
+pub fn wait(token: u64, dir: HoleDir, millis: usize) -> EnvResult<bool> {
+    let r = MailCall::Wait {
+        token: PieToken::new(token),
+        dir,
+        millis,
+    }
+    .call()?;
+    match r {
+        MailCallRet::Wait(ready) => Ok(ready),
         _ => unreachable!(),
     }
 }
@@ -172,26 +187,34 @@ impl HolePie {
         Self { token }
     }
 
-    /// 写消息：槽满时短 spin 等 wake（μs 级）。
+    /// 等某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
+    /// 返回 `true` = 调用当场就绪；`false` = 未就绪（探测失败，或挂起过）。
+    pub fn wait(&self, dir: HoleDir, millis: usize) -> EnvResult<bool> {
+        wait(self.token, dir, millis)
+    }
+
+    /// 写消息：槽满则睡到有空间（让出 CPU）。
     pub fn push(&self, msg: &[u8; HOLE_MSG_LEN]) -> EnvResult<()> {
         loop {
-            if push(self.token, msg as *const [u8; HOLE_MSG_LEN]).is_ok() {
-                return Ok(());
-            }
-            for _ in 0..100 {
-                core::hint::spin_loop();
+            match push(self.token, msg as *const [u8; HOLE_MSG_LEN]) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.source.is_busy() => {
+                    self.wait(HoleDir::Push, usize::MAX)?;
+                }
+                Err(e) => return Err(e),
             }
         }
     }
 
-    /// 取消息：槽空时短 spin 等 wake（μs 级）。
+    /// 取消息：槽空则睡到有信（让出 CPU）。
     pub fn pull(&self, buf: &mut [u8; HOLE_MSG_LEN]) -> EnvResult<()> {
         loop {
-            if pull(self.token, buf as *mut [u8; HOLE_MSG_LEN]).is_ok() {
-                return Ok(());
-            }
-            for _ in 0..100 {
-                core::hint::spin_loop();
+            match pull(self.token, buf as *mut [u8; HOLE_MSG_LEN]) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.source.is_busy() => {
+                    self.wait(HoleDir::Pull, usize::MAX)?;
+                }
+                Err(e) => return Err(e),
             }
         }
     }

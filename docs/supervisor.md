@@ -234,18 +234,16 @@ initrd.img
 | 用 `SPP` 判内核/任务 | 否决——S 态域任务 SPP 也是 Supervisor |
 | `frame.sepc += 4` | 否决——见 §5 |
 | U 位散落在各调用点（`Mmap` 固定地址、`Mprotect`、`subset_to_pte` 都可被用户 flags 覆盖） | 收口到 `Space::pte_policy` 单一出口（见 §6） |
+| 域态 echo 忙等（拿不到 hole 等待键） | 新增 `MailCall::Wait` 原语：收 token、键不出内核；服务 park 到对侧唤醒（见 §11 实测） |
 
 ## 10 · 已知边界
 
-1. **域态 echo 忙等**：用户态拿不到 hole 的 wait key（键 = `HoleMeta` 地址、
-   命名空间 asid 0，见 `work/mail/hole.rs::pull_key`），故服务用短 spin 轮询而
-   非 park，空闲时占满所在核。根治需暴露 hole 等待键或加 wait-on-hole 原语。
-2. **域内自持陷阱未做**：v1 所有陷阱上交内核（`stvec` 仍是 `__alltraps`）。
+1. **域内自持陷阱未做**：v1 所有陷阱上交内核（`stvec` 仍是 `__alltraps`）。
    结构上留位——域改自己的 `stvec` 不需要动内核结构。
-3. **设备/中断/DMA 未接入**：设备清单（`machine::Info.uart/plic/clint` 恒 0）、
+2. **设备/中断/DMA 未接入**：设备清单（`machine::Info.uart/plic/clint` 恒 0）、
    PA 可见性、中断路由均未做。
-4. **建域仍限内核**：用户态建域是提权原语，Pie 冻结下没有门控位，v1 不开放。
-5. **域不可转授设备权**：见 §7。
+3. **建域仍限内核**：用户态建域是提权原语，Pie 冻结下没有门控位，v1 不开放。
+4. **域不可转授设备权**：见 §7。
 
 ## 11 · 验证
 
@@ -260,6 +258,13 @@ req echo -> "ifmmp.tfswjdf…"        # 域态 echo（S 态页表 + 独立 ASID�
 ```
 
 debug 档同路径跑通，且 `health spare / pagetable / stress` 全 ok。
+
+**空闲占用**（`/proc/<qemu>/stat` 采样 6 秒，`-icount auto,sleep=on`）：
+
+| 版本 | CPU tick / 6s | 含义 |
+|---|---|---|
+| 改前（域态 echo 自旋） | 601 | 一个核满载 |
+| 改后（域态 echo park） | 6 | ≈ 1%，残差是 shell 输入 1ms 轮询 |
 
 ## 12 · 文件清单
 

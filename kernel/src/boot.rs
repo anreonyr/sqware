@@ -301,7 +301,7 @@ fn spawn_services(
     echo_id: usize,
 ) -> Result<usize, MapError> {
     use crate::service::dispatch;
-    use crate::work::unit::gate::{self, Permission};
+    use crate::work::unit::gate::{self, GateError, Permission};
     use env::dispatch::Name;
 
     let kt = kernel().expect("kernel team not initialized");
@@ -318,20 +318,33 @@ fn spawn_services(
             reply: alloc::sync::Arc<HoleMeta>,
             caller: usize,
             reg: alloc::sync::Arc<dispatch::ServiceRegistry>,
-        ) -> ! {
+        ) {
             use crate::work::mail::hole;
             use crate::work::room::messenger::WaitKey;
+            use env::HoleDir;
             loop {
-                let pull_k = hole::pull_key(&dreq);
+                let pull_k = hole::key(&dreq, HoleDir::Pull);
                 crate::work::room::scheduler::ktask::wait_forever(WaitKey::into_raw(pull_k));
-                let Ok(msg) = hole::pull(&dreq) else { continue };
+                let msg = match hole::try_pull(&dreq) {
+                    Ok(m) => m,
+                    Err(GateError::Busy) => continue, // 唤醒是虚的，再等
+                    Err(_) => return,                 // Dead：入口 hole 已封印
+                };
                 let Some(me) = crate::work::room::scheduler::core::current().running_task() else {
                     continue;
                 };
                 let out = crate::service::dispatch::serve(&reg, &me, caller, &msg).encode();
-                while hole::push(&reply, &out).is_err() {
-                    let push_k = hole::push_key(&reply);
-                    crate::work::room::scheduler::ktask::wait_forever(WaitKey::into_raw(push_k));
+                loop {
+                    match hole::try_push(&reply, &out) {
+                        Ok(()) => break,
+                        Err(GateError::Busy) => {
+                            let push_k = hole::key(&reply, HoleDir::Push);
+                            crate::work::room::scheduler::ktask::wait_forever(WaitKey::into_raw(
+                                push_k,
+                            ));
+                        }
+                        Err(_) => return, // Dead：回信 hole 已封印
+                    }
                 }
             }
         }

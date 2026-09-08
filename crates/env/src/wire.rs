@@ -69,6 +69,25 @@ impl Wire for bool {
     }
 }
 
+impl Wire for crate::fid::HoleDir {
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        s[*i] = match self {
+            crate::fid::HoleDir::Pull => 0,
+            crate::fid::HoleDir::Push => 1,
+        };
+        *i += 1;
+    }
+    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
+        let v = *s.get(*i).ok_or(Decode::Overflow)?;
+        *i += 1;
+        match v {
+            0 => Ok(crate::fid::HoleDir::Pull),
+            1 => Ok(crate::fid::HoleDir::Push),
+            _ => Err(Decode::Invalid),
+        }
+    }
+}
+
 // ── 语义句柄 ────────────────────────────────────────────────────────────
 
 /// per-pie 全局唯一句柄（u64；0 = 无效哨兵）。

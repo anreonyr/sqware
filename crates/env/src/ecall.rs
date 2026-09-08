@@ -28,9 +28,22 @@ impl EnvError {
         Self(raw)
     }
 
-    /// 错误码（D1 负值契约：-1 = Dead、-2 = Busy 等；mail 端口语义）。
+    /// 错误码。D1 负值契约（单一真相；内核来源 = `work/unit/gate::GateError::code`）：
+    ///
+    /// | code | 含义 | 内核来源 |
+    /// |------|------|----------|
+    /// | -1 | Denied（无权 / 无此句柄 / 类型不符） | `GateError::Denied` |
+    /// | -2 | Dead（资源已封印） | `GateError::Dead` |
+    /// | -3 | Busy（条件未就绪） | `GateError::Busy` |
+    /// | -4 | OoM（资源耗尽） | `GateError::OoM` |
+    /// | -5 | NotAligned（字节数非页对齐） | `GateError::NotAligned` |
     pub fn code(&self) -> isize {
         self.0
+    }
+
+    /// 是否"条件未就绪"（`-3`）——非阻塞原语的可重试信号。
+    pub fn is_busy(&self) -> bool {
+        self.0 == -3
     }
 }
 

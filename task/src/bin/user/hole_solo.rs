@@ -16,7 +16,7 @@ extern "C" fn main() {
 
     let pie = HolePie::unseal().expect("hole unseal");
 
-    // push 10 轮 + 立即 pull（单槽必须交替，否则 slot 满返 Busy）
+    // push 10 轮 + 立即 pull（单槽必须交替，否则第二次 push 会挂起等空位）
     let mut ok = true;
     for i in 0..10u8 {
         let mut msg = [0u8; 64];

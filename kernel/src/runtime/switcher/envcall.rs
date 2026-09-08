@@ -18,7 +18,8 @@ use core::time::Duration;
 use alloc::sync::Arc;
 
 use env::{
-    ChronoCall, ControlCall, EnvCall, IOCall, MailCall, MemoryCall, PieToken, RoomCall, UnitCall,
+    ChronoCall, ControlCall, EnvCall, HoleDir, IOCall, MailCall, MemoryCall, PieToken, RoomCall,
+    UnitCall,
 };
 
 use crate::memory::PAGE_SIZE;
@@ -32,6 +33,7 @@ use crate::work::mail;
 use crate::work::mail::HOLE_MSG_LEN;
 use crate::work::room::messenger::WaitKey;
 use crate::work::room::scheduler::core::current;
+use crate::work::room::scheduler::trap::run;
 use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
 use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie};
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
@@ -724,6 +726,54 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     Err(e) => e.code() as usize,
                 },
             );
+        }
+        EnvCall::Mail(MailCall::Wait { token, dir, millis }) => {
+            // 锁内解析 token → Arc<HoleMeta>：pies 与 wait_sites 同为 L3，绝不嵌套；
+            // `running_task` 的临时强引用在闭包内即 drop，不跨挂起。
+            let token = tok(token);
+            let need = match dir {
+                HoleDir::Pull => Need::Read,
+                HoleDir::Push => Need::Write,
+            };
+            let resolved = match current().running_task().and_then(|t| {
+                let pies = t.pies.lock();
+                let pie = pies.iter().find(|p| p.token() == token)?;
+                if !pie.allows(need) {
+                    return Some(Err(GateError::Denied));
+                }
+                if !pie.alive() {
+                    return Some(Err(GateError::Dead));
+                }
+                match pie {
+                    AnyPie::Hole(p) => p.weak.upgrade().map(Ok),
+                    _ => None,
+                }
+            }) {
+                Some(r) => r,
+                None => Err(GateError::Denied),
+            };
+            let dur = if millis == usize::MAX {
+                Duration::MAX
+            } else {
+                Duration::from_millis(millis as u64)
+            };
+            match resolved {
+                Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+                Ok(meta) => {
+                    // 挂起路径的默认返回 = false（未当场就绪）；可能 halt 的分支先放身份。
+                    frame.gpr.set_x(Gprs::A0, 0);
+                    drop(ident);
+                    match mail::hole::wait(&meta, dir, dur) {
+                        Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+                        Ok(mail::hole::Waited::Resume(true)) => frame.gpr.set_x(Gprs::A0, 1),
+                        Ok(mail::hole::Waited::Resume(false)) => {}
+                        Ok(mail::hole::Waited::Parked(Some(pa))) => {
+                            return pa as *mut TrapContext;
+                        }
+                        Ok(mail::hole::Waited::Parked(None)) => return run() as *mut TrapContext,
+                    }
+                }
+            }
         }
     };
     frame as *mut TrapContext

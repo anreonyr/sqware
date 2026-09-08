@@ -436,7 +436,8 @@ pub(crate) fn pull(meta: &HoleMeta) -> Result<[u8; 64], GateError> {
 
 #### `mail::hole::try_push / try_pull` —— **非阻塞**（envcall handler 用）
 
-envcall handler 不能 fire-and-forget park（不能跨 ecall 切任务），所以返 Busy 让用户态自旋/重试。
+返 `Busy` 是**非阻塞探测**的答案（本原语自己不跨 ecall 挂起）；用户侧的"等"由
+§16 的 `MailCall::Wait` 承担，不再自旋。
 
 ```rust
 pub(crate) fn try_push(meta: &HoleMeta, msg: &[u8; 64]) -> Result<(), GateError> {
@@ -453,7 +454,7 @@ pub(crate) fn try_push(meta: &HoleMeta, msg: &[u8; 64]) -> Result<(), GateError>
 
 per-meta WaitKey，async 用（compose(0, meta_addr | direction_bit)）。
 
-### 12.4 envcall 边界（utask 不能 park）
+### 12.4 envcall 边界
 
 envcall handler 流程：
 ```
@@ -462,8 +463,11 @@ MailCall::Push { token, msg } →
   try_push（Busy 返错）→ set a0 = 0/err → 返 frame
 ```
 
-envcall handler 始终返 `frame`（不返 PA）——继续当前任务。
-用户态 HolePie 短 spin + retry 配合（μs 级，wake 几乎立即生效）。
+> **修订（见 §16）**：本节原文断言「envcall handler 不能 fire-and-forget park
+> （不能跨 ecall 切任务）」——**已被代码证伪**：`Starve / Park / Wait / Reap` 四个
+> arm 都 `return pa as *mut TrapContext`。handler 返回 PA 就是切走；唤醒后任务从
+> `ebreak` 之后恢复，故"挂起前预置返回值"可行。`MailCall::Wait` 即按此实现，用户态
+> `HolePie::push/pull` 不再自旋，改睡到对侧唤醒。
 
 ### 12.5 关键发现：**`#[inline(never)]` 必须加在 closure 内**
 
@@ -506,7 +510,7 @@ release 模式下编译器对 `move || { ... }` closure 做跨函数优化（参
 | `crates/env/src/fid.rs` | `ServiceCall::Connect` ret 改 `(PieToken, PieToken)` |
 | `crates/env/src/wire.rs` | 新增 `FromPair for (PieToken, PieToken)` |
 | `task/src/env/service.rs` | `Service` 持 req + rep 两 holePie；`echo` 编排两轮 envcall |
-| `task/src/env/mail.rs` | `HolePie::push/pull` 短 spin 100 cycles + retry |
+| `task/src/env/mail.rs` | `HolePie::push/pull` 短 spin 100 cycles + retry（**后改为 §16 的 Wait 挂起**） |
 | `task/src/bin/shell.rs` | `req` 命令 |
 
 ### 12.7 端到端验证
@@ -959,3 +963,67 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
 同时记录两条被验证逼出来的 ABI 事实：环境调用陷阱是 **`ebreak`**（S 态 `ecall`
 是 SBI 调用、不进内核）与 `sepc` 必须按**真实指令长度**前进（`c.ebreak` 是 2
 字节）。
+
+---
+
+## 16 · 就绪等待原语 `MailCall::Wait`（取代"Busy + 自旋"）
+
+**动机**：§12.3 的 `try_push/try_pull` 在槽不可用时返 `-3 Busy`，用户侧只能自旋——
+域态 echo 空闲时占满一个核（实测 6 秒 601 CPU tick）。内核早有 `wait/wake`，hole 也有
+唤醒点（`try_*` 成功即 wake 对侧），缺的只是**收信人怎么知道该睡在哪个键上**：hole 的
+键是 `compose(0, meta_addr | dir)`——命名空间 0 + 内核 VA，用户既构不出也不该构出。
+
+### 16.1 契约
+
+| 项 | 定论 |
+|---|---|
+| 原语 | `MailCall::Wait { token: PieToken, dir: HoleDir, millis: usize } -> bool`，slot = `(5 << 32) \| 12`（追加在 `Release` 之后，不重编号） |
+| 键 | **不出内核**：内核由 token 解引用出 `key(meta, dir)`；`WaitKey::compose` 的位布局不构成 ABI |
+| 方向 | `HoleDir::{Pull, Push}`（单一真相在 `env`，内核直接复用——同 `gate::Permission` 的做法） |
+| 返回 | `true` = 当场就绪（未挂起）；`false` = 未就绪（探测失败，或挂起过）。**绝不返 `-3 Busy`** |
+| 时间 | `millis`：`0` = 只探测不挂起；`usize::MAX` = 永久；其余 = 毫秒 |
+| 权利 | `Pull` 需 R、`Push` 需 W |
+| 错误 | `-1 Denied`（无此 token / 无权 / 类型不是 Hole）、`-2 Dead`（已封印） |
+
+「超时 vs 被唤醒」在当前结构下**表达不出来**：唤醒后任务从 `ebreak` 之后恢复，内核
+没有第二次执行机会，`a0` 只能是挂起前预置的值。要区分需"挂起时携带返回载荷"（超时路径
+改写调用者帧 `a0`），那是 ipc.md 里推迟的"单次 syscall（写 caller 帧）"的第一块；而
+目标信息用户态已可推出：`wait → false → pull`，`pull` 返 `Busy` 即"这段时间没消息"。
+
+### 16.2 结构
+
+- `hole::wait(meta, dir, dur) -> Result<Waited, GateError>` 是**唯一挂起入口**：
+  死 → `Err(Dead)`；就绪或 `dur == 0` → 不挂起（`Waited::Resume(bool)`）；否则挂起
+  （`Waited::Parked(Option<pa>)`）。**「先探」封在里面**——对侧可能已写入并正等我们取，
+  漏了先探就是死锁。先探与登记之间的窗口由 `messenger` 的 pend 双检封住。
+- `HoleMeta::ready(dir)` 与 `key(meta, dir)` 读同一份 `slot`（与 `try_*` 的唤醒点同源）。
+- `hole::seal` 在 `memo::remove` **之前**唤醒两个方向的**全部**等待者（`wake` 只弹队首，
+  故循环到空）。唤醒不能放 `Drop`：`memo::remove` 在 L3 锁内 drop，再 wake 即 3→3 嵌套。
+- 删：`hole::push/pull`（阻塞版——在 Rust 层调 `messenger::wait` 却丢弃 `Handoff`，
+  真走挂起分支会让 Blocked 任务继续占核；且把 `Dead` 当 Busy 重试）、`push_key/pull_key`
+  （并入 `key`）。ktask 侧的"等"统一由 asm 入口 `wait_forever` 承担。
+
+### 16.3 被否
+
+| 提案 | 原因 |
+|---|---|
+| 让 `Push/Pull` 自己阻塞 | park 后任务从 `ebreak` 之后恢复，内核循环已丢（无 continuation） |
+| `sepc` 回退重放 syscall | 引入"系统调用重启"概念；无法表达超时；吃掉 `Busy` 探测 |
+| 把 wait key 吐给用户 | 键布局变 ABI + 泄露内核 VA + 可伪造（域是 S 态，可换 `satp`，"猜不到地址"不构成保护） |
+| `RoomCall::WaitOn { token, .. }` | Room 类不该出现资源句柄 |
+| 保留 `HolePie::try_pull` | `wait(dir, 0)` 就是一次 ecall 的探测，能力已覆盖 |
+
+### 16.4 文件
+
+| 文件 | 改动 |
+|---|---|
+| `crates/env/src/fid.rs` | `HoleDir` + `MailCall::Wait`（追加在枚举末尾） |
+| `crates/env/src/wire.rs` | `Wire for HoleDir`（非法值 → `Decode::Invalid`） |
+| `crates/env/src/ecall.rs` | D1 负码表（修旧注释）+ `EnvError::is_busy` |
+| `kernel/src/work/mail/hole.rs` | `ready` / `key` / `wait` / `Waited`；`seal` 死亡唤醒；删阻塞版 |
+| `kernel/src/runtime/switcher/envcall.rs` | `Wait` arm（锁内解析 → 放锁 → 预置 `a0` → 挂起） |
+| `kernel/src/boot.rs` | dispatcher 改 `wait_forever` + `try_*`，并显式处理 `Dead` |
+| `task/src/env/mail.rs` | `HolePie::{wait, push, pull}` 真阻塞（仅 `Busy` 才挂起，其余错误直传） |
+
+**验证**：release / debug e2e `dir` / `req`×3 / `hole` / `exit` 全通过；debug 三项
+health ok；空闲 CPU 601 → 6 tick / 6s（`docs/supervisor.md` §11）。

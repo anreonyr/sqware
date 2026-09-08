@@ -9,10 +9,9 @@
 //! 入口门闩由内核在 boot 期放进本任务权限表**索引 0**（与 shell 的目录门闩同款
 //! 根授予），用 `Collect` 取回——不需要向用户态传任何整数。
 //!
-//! 已知边界：用户态拿不到 hole 的 wait key（内核键 = `HoleMeta` 地址、命名空间
-//! asid 0，见 `kernel/src/work/mail/hole.rs::pull_key`），故本服务对入口 hole 用
-//! `HolePie::pull` 的短 spin 轮询而非 park。服务一旦有请求即回，空闲时占满所在核
-//! ——v1 演示可接受；正式通道（暴露 hole 等待键 / wait-on-hole 原语）是后续议题。
+//! 等待不占核：`HolePie::pull/push` 内部转 `MailCall::Wait`——内核由 token 解引用出
+//! hole 的等待键（键不出内核），槽不可用时 park、被对侧唤醒。空闲 0% CPU
+//! （见 `docs/ipc.md` §16）。
 
 extern crate alloc;
 
