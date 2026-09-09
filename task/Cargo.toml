@@ -124,6 +124,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "task-datagram-demo"
+path = "src/bin/user/datagram_demo.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "task-lisp"
 path = "src/bin/user/lisp/main.rs"
 test = false
