@@ -208,7 +208,7 @@ initrd.img
 
 - 无 magic：旧格式（裸 ELF）前 4 字节 `0x464c_457f` 远超 `MAX_PROGRAMS`，被
   `TooMany` 当场拒掉。
-- boot 按名取（`take(&programs, "shell")` / `"echo"`），顺序无关；未知名打印
+- boot 按名取（`take(&programs, "shell")` / `"echo"` / `"dir"`），顺序无关；未知名打印
   清单后 panic。
 - `build.rs` 的 `INITRD_BINS` 是打包清单，**唯一**声明「程序装成哪种空间」的
   地方：kind 码随条目进清单，boot 从清单读（见 §13）。
@@ -311,7 +311,7 @@ debug 档同路径跑通，且 `health spare / pagetable / stress` 全 ok。
    `build.rs::INITRD_BINS` 写入，`boot.rs` 用 `take(..).kind` 装载——零硬编码。
    这不是「程序自称特权级」：清单由内核构建、引导期只读，是**内核自己的装载表**。
 2. **源码分层**：`task/src/bin/user/`（U 态程序）与 `task/src/bin/supervisor/`
-   （域程序，当前仅 `echo`）。
+   （域程序，当前 `echo` / `dir`）。
 3. **命名**：ABI crate `ubi` → **`env`**（原名取自 "U-mode → S-mode"，而域任务是
    S→S，`u` 已不成立）；文档里的 "uABI" 统一为「环境调用 ABI」。
 

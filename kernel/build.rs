@@ -12,6 +12,7 @@ const KIND_SUPERVISOR: u32 = 1;
 const INITRD_BINS: &[(&str, &str, u32)] = &[
     ("shell", "task-shell", KIND_USER),
     ("echo", "task-echo", KIND_SUPERVISOR),
+    ("dir", "task-dir", KIND_SUPERVISOR),
 ];
 
 fn main() {

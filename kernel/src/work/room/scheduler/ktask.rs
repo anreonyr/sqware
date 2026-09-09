@@ -26,6 +26,8 @@ use super::utask::{
 /// 仅可由当前 running 的内核任务（S 态任务上下文）调用——其余上下文调用是
 /// 设计错误（帧交换依赖内核态 sscratch 约定，服务只在任务上下文中有效）。
 // Duration 经 extern 边界按值传两寄存器（naked 头原样保留下传；不跨真实 FFI）。
+// 内核线程面：目录已移出内核，树内暂无使用者——保留备用。
+#[allow(dead_code)]
 #[allow(improper_ctypes_definitions)]
 #[unsafe(naked)]
 pub extern "C" fn park(_duration: Duration) {
@@ -93,6 +95,7 @@ pub extern "C" fn park(_duration: Duration) {
 
 /// 内核任务事件等待：存帧 → messenger::wait(key, MAX) → 切走；对方 wake(key) 解锁。
 /// `key` 经裸 usize ABI（与 wait 同族）。
+#[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 #[allow(improper_ctypes_definitions)]
 #[unsafe(naked)]
 pub extern "C" fn wait_forever(_key: usize) {
@@ -222,6 +225,7 @@ pub extern "C" fn starve() {
 ///
 /// # Safety
 /// 仅可由当前 running 的内核任务调用（同 [`park`](Self::park)）。
+#[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 #[unsafe(naked)]
 pub extern "C" fn reap() -> ! {
     naked_asm!(

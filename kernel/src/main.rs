@@ -13,7 +13,6 @@ mod lock;
 mod machine;
 mod memory;
 mod runtime;
-mod service;
 mod work;
 
 use core::arch::global_asm;

@@ -55,6 +55,7 @@ pub fn wake(key: WaitKey) -> bool {
 
 /// ktask 事件等待入口（asm 包装）：永久等一个键（`Duration::MAX`，无超时），
 /// 只能被 `wake(key)` 解锁。同 [`wait`] 但用于内核任务上下文。
+#[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 pub fn wait_forever(key: WaitKey) -> usize {
     match messenger::wait(key, Duration::MAX) {
         Handoff::Resume => run(),

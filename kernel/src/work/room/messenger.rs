@@ -66,6 +66,9 @@ fn low48(va: usize) -> usize {
     va & 0x0000_FFFF_FFFF_FFFFusize
 }
 
+// 内核线程面（`TaskBuilder::closure`）的配套接口：目录已移出内核（跑在 `task-dir`
+// 域里），树内暂无使用者——保留备用，故显式关掉 dead_code。
+#[allow(dead_code)]
 impl WaitKey {
     /// 直接以本体值构造事件键（dock 键路径：`DOCK_KEY_TAG | id` 全局唯一，不经
     /// compose——调用方（envcall 边界）已按标记位分流）。

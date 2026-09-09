@@ -41,17 +41,20 @@
 
 ```rust
 pub struct Name { bytes: [u8; 32] }          // 定长、尾随 NUL、内容非空且不含 NUL
-pub struct Binding { name: Name, entry: Pie<HoleMeta> }
-pub struct Directory { bindings: HashMap<Name, Binding> }
-pub type ServiceRegistry = SpinLock<Directory>;
+pub struct Binding { name: Name, entry: u64, owner: usize }  // entry = 入口门闩 token
+pub struct Directory { bindings: Vec<Binding> }              // 名字唯一
 pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 ```
+
+目录**跑在 S 态域程序 `task-dir` 里**（`task/src/core/directory.rs` + `bin/supervisor/dir.rs`）：
+内核不含它的任何代码。绑定里存的是入口门闩的 **token**——门闩一直留在目录自己的
+权限表里，`Connect` 用 `mail::accord` 转授子集；`owner` 取该 token 的 `vestor`。
 
 **接口 = 一份入口门闩**（不是 req/rep 两份）：目录只知道「服务有一个入口」，
 不知道服务内部怎么执行。回信通道由**调用方自带**——与目录协议自身同构。
 
-不变量做成类型义务：名字唯一（`bind` 返 `Taken`）、绑定必持门闩（字段类型是
-`Pie`）、非法名不可表达（`Name` 只能由 `new` 造出）。
+不变量做成义务：名字唯一（`bind` 返 `Taken`）、绑定必持门闩（token 必在目录权限
+表里且带授与人）、非法名不可表达（`Name` 只能由 `new` 造出）。
 
 ## 4 · 线格式（64 字节，沿用现有 hole）
 
@@ -117,15 +120,16 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 
 ```text
 boot:
-  1. 建目录 req hole + 入口门闩（vestor = 目录 task id）
-  2. spawn shell、spawn 目录（目录只捕获 dreq；不再捕获 caller）
-  3. 把入口门闩放进 shell / echo 权限表（索引 0 / 1）
-  4. echo 自注册：Collect 取回 entry + 目录门闩 → Accord entry 副本给目录
+  1. 建目录 req hole：给目录域一枚自持门闩（索引 0）、给每个 caller 一枚副本
+     （vestor = 目录 task id，供 `Collect` 顺带取回）
+  2. spawn shell（U 态）、echo（S 态服务）、dir（S 态目录）——三个域程序
+  3. echo 自注册：Collect 取回 entry + 目录门闩 → Accord entry 副本给目录
      → UnsealHole 自造回信 hole + Accord 给目录 → Register（回信 token 写 [49..57]）
-  5. 目录收下 entry 门闩（take_entry）并 bind("echo")
+  4. 目录记下 entry token 与 owner 并 bind("echo")——token 一直留在目录权限表里
 ```
 
-用户态 `Directory::open()` 用 `Collect` 取回目录门闩，顺带拿到它的 `vestor`
+目录是**普通 Service**：它自己就是一个 S 态域程序，内核不含它的代码。用户态
+`Directory::open()` 用 `Collect` 取回目录门闩，顺带拿到它的 `vestor`
 （= 目录 task id，`Accord` 回信 hole 的目标）——**不需要向用户态传任何整数**。
 目录会话是进程级授权，不随命令关闭。
 
@@ -190,8 +194,10 @@ token）→ echo `+1` → `Push` 回信 → `Pull` → `disconnect`（`Revoke` +
 ```
 新增  crates/env/src/dispatch.rs            协议类型 + 编解码
 新增  kernel/src/work/unit/gate/release.rs  自释原语
-改写  kernel/src/service/dispatch.rs        Directory 核心 + serve 适配
-改写  kernel/src/boot.rs                    根授予 + 目录/echo（echo 自注册，不 bind）
+新增  task/src/core/directory.rs            目录注册表 + 协议适配（用户态）
+新增  task/src/bin/supervisor/dir.rs        目录域程序（S 态：Collect 门闩 → 请求循环）
+删   kernel/src/service/                   目录移出内核（原为内核闭包任务）
+改写  kernel/src/boot.rs                    根授予 + 三域装载（shell / echo / dir）
 改   crates/env/src/fid.rs                  +Collect/Release；删 ServiceCall/ServiceId
 改   crates/env/src/wire.rs                 +FromPair (PieToken, Permission)
 改   crates/env/src/ucall.rs                warpper #[inline(never)]

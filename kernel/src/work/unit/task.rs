@@ -251,6 +251,10 @@ impl TaskBuilder {
     ///
     /// 闭包内可调用统一调度服务面 `scheduler::ktask::{park, starve, reap}`：
     /// 与用户任务同帧 ABI 的自愿切换（软陷阱），唤醒后闭包在调用点继续。
+    ///
+    /// 目录（原唯一使用者）已移出内核、跑在 `task-dir` 域里，故本面暂无树内使用者，
+    /// 保留作内核线程原语。
+    #[allow(dead_code)]
     pub fn closure<F>(self, f: F) -> Result<usize, MapError>
     where
         F: FnOnce() + Send + 'static,
@@ -374,6 +378,7 @@ impl TaskBuilder {
 /// # Safety
 /// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
 /// `Box<dyn FnOnce()>` 原始指针。
+#[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
     // tp = 本 hart PerHart 指针：每个内核任务上台时 Scheduler::prepare 已把 TP
     // 写入其帧（frame.gpr[TP] = per_hart_ptr(self.hart)），__restore 恢复全部 GPR
