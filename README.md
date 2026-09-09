@@ -16,32 +16,36 @@ The goal is not simply to make a smaller operating system. It is to explore how 
 
 The central idea of sqware is:
 
-> **The kernel provides structure; higher-level software provides semantics.**
+> **The kernel provides structure; non-kernel software provides semantics.**
 
-A hardware resource does not necessarily need to become a special kernel object. Instead, it can be organized through a small set of structures:
+The kernel is responsible for the structures and boundaries that cannot safely be bypassed. It does not need to understand the complete meaning of every resource.
 
 ```text
-                    Hardware
-                       │
-                       ▼
-                 ┌───────────┐
-                 │   Space   │
-                 └─────┬─────┘
-                       │
-                      Map
-                       │
-              ┌────────┴────────┐
-              │                 │
-             Task             Pie
-              │                 │
-              └────────┬────────┘
-                       │
-                     Mail
-                       │
-                Multitasking
+                  Kernel
+                    │
+       ┌────────────┼────────────┐
+       │            │            │
+     Space         Task        Mail
+       │                         │
+      Map                         │
+       │                         │
+      Pie                        data
+       │                         │
+       └────────────┬────────────┘
+                    │
+             Non-Kernel Space
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+       Protocol            Service
+          │                   │
+          └─────────┬─────────┘
+                    │
+                 System
+                 semantics
 ```
 
-The same mechanisms can then be composed into different system-level abstractions.
+The same mechanisms can therefore support different system-level abstractions without turning each abstraction into a new kernel object.
 
 ---
 
@@ -51,41 +55,31 @@ The same mechanisms can then be composed into different system-level abstraction
 
 A **Space** defines a world in which addresses and mappings exist.
 
-It provides the structural boundary for memory and resource placement.
+It provides a structural boundary for memory and resource placement.
 
 ### Map
 
 A **Map** describes how resources are placed into a Space.
 
-It is concerned with the relationship between an address space and the resources mapped into it, rather than with the higher-level meaning of those resources.
+It is concerned with mapping and placement rather than the higher-level meaning of the mapped resource.
 
 ### Task
 
 A **Task** is a schedulable unit of execution.
 
-Tasks belonging to the same Team share its Space while maintaining their own execution state.
-
-```text
-Team
- ├── Space
- ├── Task
- ├── Task
- └── Task
-```
+Tasks provide the execution side of the system, while their surrounding structural relationships determine which Space and resources they operate within.
 
 ### Team
 
-A **Team** organizes Tasks around a common Space.
+A **Team** organizes execution and ownership relationships between Tasks and Spaces.
 
-It provides the structural relationship between an execution group and its address-space world.
-
-A Team is not intended to be a universal "process object"; it is primarily a structural relationship between execution and space.
+It is not intended to be a universal "process object". It is a structural relationship from which process-like behavior can be constructed.
 
 ### Pie
 
-A **Pie** carries authority to access a resource.
+A **Pie** carries authority to access a resource across Space boundaries.
 
-A Pie combines:
+Conceptually:
 
 ```text
 Resource
@@ -103,13 +97,13 @@ V — Vest
 B — Back
 ```
 
-The important distinction is that Pie does not define what a resource *means*. It provides the mechanism through which authority over a resource can be held and transferred.
+Pie provides the **authority mechanism**, but does not define what a resource means. The kernel enforces the authority; non-kernel protocols can give that authority higher-level semantics.
 
 ### Mail
 
 **Mail** provides the data-transfer side of communication.
 
-The current model separates:
+The model deliberately separates:
 
 ```text
 Pie  → authority
@@ -118,7 +112,35 @@ Mail → data
 
 `Hole` and `Pole` form the structural endpoints of this communication mechanism.
 
-This separation allows communication and authorization to remain independent.
+This keeps communication and authority orthogonal: a protocol can decide what messages mean without requiring the kernel to understand the protocol itself.
+
+---
+
+## Protocol and Service
+
+sqware separates **mechanism** from **system semantics**.
+
+A **Protocol** defines a functional model: what operations exist, what they mean, and how components interact.
+
+A **Service** implements that model.
+
+```text
+Protocol
+   │
+   │ defines
+   ▼
+Semantics
+   ▲
+   │ implements
+   │
+Service
+```
+
+For example, a directory does not need to be a special kernel object. A non-kernel Directory Service can implement a Directory Protocol using the primitives provided by sqware.
+
+Likewise, a protocol may define its own capability semantics. The kernel does not need to know names such as `Lookup`, `Publish`, or `Remove`; it only needs to enforce the underlying authority represented by Pie.
+
+This makes sqware **capability-oriented without requiring a capability-object hierarchy in the kernel**.
 
 ---
 
@@ -152,7 +174,21 @@ Mail
 
 Higher-level software can then compose these mechanisms into the abstractions it needs.
 
-This is a design choice, not a claim that every operating system should work this way.
+This does not mean that higher-level objects disappear. They move to the layer where their semantics belong: **Protocols and Services outside the kernel**.
+
+The result is a distinction between:
+
+```text
+Kernel mechanism
+        │
+        ▼
+Protocol semantics
+        │
+        ▼
+Service implementation
+```
+
+System complexity can therefore grow through composition rather than requiring the kernel's object model to grow with every new feature.
 
 ---
 
@@ -177,7 +213,10 @@ Structural representation
 Task
     │
     ▼
-Higher-level service
+Protocol
+    │
+    ▼
+Service
     │
     ▼
 System semantics
@@ -185,7 +224,34 @@ System semantics
 
 The kernel therefore acts as a structural substrate between hardware and higher-level software.
 
-A device driver or system service can decide how a particular resource should behave, while the kernel remains responsible for the fundamental boundaries between spaces, execution, mappings, authority, and communication.
+A driver, service, or other non-kernel component can decide how a particular resource should behave, while the kernel remains responsible for the fundamental boundaries between spaces, execution, mappings, authority, and communication.
+
+---
+
+## Lisp as Shell
+
+The intended shell direction for sqware is **Lisp**.
+
+This is not simply a choice of command syntax. Lisp is a natural environment for the same compositional model used by the system itself.
+
+Instead of treating the shell as a collection of commands, a Lisp shell can treat system construction as composition:
+
+```lisp
+(service
+  (name "directory")
+  (requires
+    (capability "storage"))
+  (provides
+    (protocol "directory")))
+```
+
+The Lisp layer does not need to know how a Task is scheduled, how a Space is isolated, or how a Pie is enforced. Those are kernel mechanisms. It describes the system that should be constructed from them.
+
+In this sense:
+
+> **The kernel provides the building blocks; Lisp composes them.**
+
+The shell becomes another expression of the same principle: system complexity comes from composition rather than from continually adding special cases to the kernel.
 
 ---
 
@@ -217,7 +283,11 @@ Neither should need to become the other.
 
 ### 6. Semantics Belong Above the Kernel
 
-The kernel provides the mechanisms from which resource-specific semantics can be constructed.
+The kernel provides mechanisms from which resource-specific semantics can be constructed.
+
+### 7. Composition over Specialization
+
+New system behavior should, where possible, be constructed by composing existing structures and protocols instead of introducing another kernel primitive.
 
 ---
 
@@ -226,18 +296,34 @@ The kernel provides the mechanisms from which resource-specific semantics can be
 At the current stage, the conceptual organization is:
 
 ```text
-sqware
-│
-├── Team
-│   ├── Space
-│   │   └── Map
-│   │
-│   └── Task
-│       └── Pie[]
-│
-└── Mail
-    ├── Hole
-    └── Pole
+                    Team
+                 /         \
+             Space         Task
+               │             │
+              Map           Pie
+                             │
+                             │ authority
+                             ▼
+                           Mail
+                             │
+                             │ data
+                             ▼
+                    Non-Kernel Space
+                       /          \
+                  Protocol      Service
+                       \          /
+                        \        /
+                         System
+```
+
+The important boundary is not a hierarchy of kernel objects, but the division of responsibility:
+
+```text
+Kernel
+  → structure, isolation, enforcement
+
+Non-Kernel
+  → semantics, protocols, services, composition
 ```
 
 These are **mechanisms and relationships**, not a conventional kernel-object hierarchy.
@@ -292,7 +378,9 @@ The project is built around a few open questions:
 - Can heterogeneous hardware be expressed without a large kernel object hierarchy?
 - Can authority be represented generically rather than through resource-specific capability types?
 - How much operating-system semantics can be moved above the kernel?
+- Can Protocols and Services provide rich system behavior without becoming part of the kernel object model?
 - Can a structural kernel remain understandable as the system grows?
+- Can a compositional shell make system construction itself programmable?
 - Where is the boundary between hardware mechanism and operating-system policy?
 
 These questions are more important to the project than any particular API.
@@ -310,6 +398,10 @@ It asks a smaller question:
 > **"What structure is necessary for hardware to become a multitasking system?"**
 
 Everything else should, as far as possible, grow from that structure.
+
+The implementation follows the same idea at multiple levels:
+
+> **Structure in the kernel. Semantics above it. Composition everywhere.**
 
 ---
 
