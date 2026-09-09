@@ -18,8 +18,7 @@ use core::time::Duration;
 use alloc::sync::Arc;
 
 use env::{
-    ChronoCall, ControlCall, EnvCall, HoleDir, IOCall, MailCall, MemoryCall, PieToken, RoomCall,
-    UnitCall,
+    ChronoCall, ControlCall, EnvCall, HoleDir, IOCall, MailCall, MemoryCall, RoomCall, UnitCall,
 };
 
 use crate::memory::PAGE_SIZE;
@@ -426,12 +425,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }) {
                 Some(Ok(meta)) => {
                     // 长度校验：必须 ≥1 且 ≤ hole.mtu（meta() 入口已校验 mtu∈[1,4096]）。
-                    if len == 0
-                        || len > {
-                            let this = &meta;
-                            this.mtu
-                        }
-                    {
+                    if len == 0 || len > meta.mtu {
                         Err(GateError::Denied)
                     } else {
                         // 锁外 copy_in 到堆暂存：slot = L3，Space.segments = L2，
@@ -475,12 +469,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 }
             }) {
                 Some(Ok(meta)) => {
-                    if max == 0
-                        || max > {
-                            let this = &meta;
-                            this.mtu
-                        }
-                    {
+                    if max == 0 || max > meta.mtu {
                         Err(GateError::Denied)
                     } else {
                         let mut staging = alloc::vec![0u8; max];
