@@ -32,7 +32,7 @@ use task::core::service::{Directory, PAYLOAD_LEN};
 use task::core::unit;
 use task::env::{
     chrono::{self, clock},
-    mail::{HolePie, HOLE_MTU_MAX},
+    mail::{HOLE_MTU_MAX, HolePie},
     room::{self, sleep},
     task::{heir_at, heir_count},
 };

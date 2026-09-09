@@ -42,7 +42,7 @@ pub enum HoleState {
 pub struct HoleMeta {
     state: SpinLock<HoleState>,
     /// unseal 时定；`1..=HOLE_MTU_MAX`。Push/Pull 的长度校验上限。
-    mtu: usize,
+    pub mtu: usize,
     /// 单槽消息缓冲：`Vec<u8>` 的 capacity 恒为 mtu（创建时分配）；`len()` 既是
     /// 「消息是否在槽」也是「实际占用字节数」——`len() > 0` 即有消息，`len() == 0`
     /// 即空槽。Push 时 set_len、Pull 时 clear，零额外分配。
@@ -57,11 +57,6 @@ impl HoleMeta {
             mtu,
             slot: SpinLock::new_level(Level::L3, buf),
         })
-    }
-
-    /// unseal 时定的 mtu（只读，供 envcall handler 在 Push/Pull 校验长度时读）。
-    pub(crate) fn mtu(&self) -> usize {
-        self.mtu
     }
 
     /// 存活：state == Live（Arc 仍有效由 Pie 持 Weak 保证）。

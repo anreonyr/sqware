@@ -163,9 +163,7 @@ pub fn revoke(dst_id: usize, token: u64) -> EnvResult<()> {
 pub fn collect(index: usize) -> EnvResult<(u64, env::Permission, env::TaskId)> {
     let r = MailCall::Collect { index }.call()?;
     match r {
-        MailCallRet::Collect((token, permission, vestor)) => {
-            Ok((token.get(), permission, vestor))
-        }
+        MailCallRet::Collect((token, permission, vestor)) => Ok((token.get(), permission, vestor)),
         _ => unreachable!(),
     }
 }

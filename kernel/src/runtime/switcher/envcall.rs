@@ -66,11 +66,6 @@ fn ret_err(frame: &mut TrapContext, e: GateError) -> *mut TrapContext {
     frame as *mut TrapContext
 }
 
-/// 从 pie 句柄取 u64 token。
-fn tok(t: PieToken) -> u64 {
-    t.get()
-}
-
 /// 陷阱指令字节数（RVC 压缩 2 字节 / 标准 4 字节）——`sepc` 前进量。
 ///
 /// 环境调用是 `ebreak`：汇编器在开 RVC 时发 **`c.ebreak`（2 字节）**，故固定
@@ -411,7 +406,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }
         }
         EnvCall::Mail(MailCall::Push { token, msg, len }) => {
-            let token = tok(token);
+            let token = token.get();
             let va = msg.get();
             let len = len;
             let task = current().running_task();
@@ -431,7 +426,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }) {
                 Some(Ok(meta)) => {
                     // 长度校验：必须 ≥1 且 ≤ hole.mtu（meta() 入口已校验 mtu∈[1,4096]）。
-                    if len == 0 || len > meta.mtu() {
+                    if len == 0
+                        || len > {
+                            let this = &meta;
+                            this.mtu
+                        }
+                    {
                         Err(GateError::Denied)
                     } else {
                         // 锁外 copy_in 到堆暂存：slot = L3，Space.segments = L2，
@@ -456,7 +456,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Mail(MailCall::Pull { token, buf, max }) => {
-            let token = tok(token);
+            let token = token.get();
             let va = buf.get();
             let max = max;
             let task = current().running_task();
@@ -475,7 +475,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 }
             }) {
                 Some(Ok(meta)) => {
-                    if max == 0 || max > meta.mtu() {
+                    if max == 0
+                        || max > {
+                            let this = &meta;
+                            this.mtu
+                        }
+                    {
                         Err(GateError::Denied)
                     } else {
                         let mut staging = alloc::vec![0u8; max];
@@ -504,7 +509,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Mail(MailCall::Map { token }) => {
-            let token = tok(token);
+            let token = token.get();
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
@@ -542,7 +547,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Mail(MailCall::Unmap { token }) => {
-            let token = tok(token);
+            let token = token.get();
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
@@ -571,7 +576,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Mail(MailCall::Seal { token }) => {
-            let token = tok(token);
+            let token = token.get();
             let task = current().running_task();
             let resource = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
@@ -602,7 +607,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Mail(MailCall::Accord { src, dst, subset }) => {
-            let src_token = tok(src);
+            let src_token = src.get();
             let dst_id = dst.get();
 
             let src_task = current().running_task();
@@ -645,7 +650,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Mail(MailCall::Narrow { token, subset }) => {
-            let token = tok(token);
+            let token = token.get();
             let task = current().running_task();
             let meta = match task.as_ref().and_then(|t| {
                 let pies = t.pies.lock();
@@ -700,7 +705,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         }
         EnvCall::Mail(MailCall::Revoke { dst, token }) => {
             let dst_id = dst.get();
-            let token = tok(token);
+            let token = token.get();
             let current_id = current().running_task().map(|t| t.ident.id).unwrap_or(0);
             let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
                 Some(w) => w,
@@ -733,11 +738,13 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 })
                 .unwrap_or((0, 0, 0));
             frame.gpr.set_x(Gprs::A0, token as usize);
-            frame.gpr.set_x(Gprs::A1, (vestor_id << 32) | (perm_bits & 0xffff_ffff));
+            frame
+                .gpr
+                .set_x(Gprs::A1, (vestor_id << 32) | (perm_bits & 0xffff_ffff));
         }
         EnvCall::Mail(MailCall::Release { token }) => {
             // 自释：放下自己的一份门闩（无权限要求；Pole 同步 unmap）。
-            let token = tok(token);
+            let token = token.get();
             let r = match current().running_task() {
                 Some(task) => gate::release(&task, token),
                 None => Err(GateError::Denied),
@@ -753,7 +760,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         EnvCall::Mail(MailCall::Wait { token, dir, millis }) => {
             // 锁内解析 token → Arc<HoleMeta>：pies 与 wait_sites 同为 L3，绝不嵌套；
             // `running_task` 的临时强引用在闭包内即 drop，不跨挂起。
-            let token = tok(token);
+            let token = token.get();
             let need = match dir {
                 HoleDir::Pull => Need::Read,
                 HoleDir::Push => Need::Write,

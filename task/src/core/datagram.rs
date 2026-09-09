@@ -8,10 +8,10 @@
 //!
 //! **不开新 envcall**：纯用户态库——`Hole`（变长，C 已落地）之上套编解码层。
 
-use env::EnvResult;
 use env::EnvError;
+use env::EnvResult;
 
-use crate::env::mail::{HolePie, HOLE_MTU_MAX};
+use crate::env::mail::{HOLE_MTU_MAX, HolePie};
 
 /// datagram 头长（3 个 u16：src / dst / length）。
 pub const HEADER_LEN: usize = 6;
@@ -72,7 +72,14 @@ pub fn decode(msg: &[u8]) -> Result<(Header, usize), DatagramError> {
     if len < HEADER_LEN || len > msg.len() {
         return Err(DatagramError::BadLength);
     }
-    Ok((Header { src, dst, length: len as u16 }, HEADER_LEN))
+    Ok((
+        Header {
+            src,
+            dst,
+            length: len as u16,
+        },
+        HEADER_LEN,
+    ))
 }
 
 /// 数据报封装：自己的端口 + 一条 Hole。

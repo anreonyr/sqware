@@ -58,7 +58,8 @@ impl Directory {
         }
         // 自造 reply：unseal + accord(dir_id) + from_receipt 三步收进 Channel
         let reply_mine = HolePie::unseal(crate::env::mail::HOLE_MTU_MAX)?;
-        let reply_target = reply_mine.accord(dir_id.get(), env::Permission::READ | env::Permission::WRITE)?;
+        let reply_target =
+            reply_mine.accord(dir_id.get(), env::Permission::READ | env::Permission::WRITE)?;
         Ok(Directory {
             entry: HolePie::from_token(entry_tok),
             reply: reply_mine,

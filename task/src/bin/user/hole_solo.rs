@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use task::env::io::put;
-use task::env::mail::{HolePie, HOLE_MTU_MAX};
+use task::env::mail::{HOLE_MTU_MAX, HolePie};
 
 // hole_solo: Hole 内核邮路单端压力测试——主任务开 Hole、push 后 pull（单槽必须交替）。
 // 验证 push/pull 路径 + Permission::READ/WRITE 检查。

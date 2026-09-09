@@ -15,8 +15,8 @@
 
 extern crate alloc;
 
-use env::dispatch::{self, Name, Reply, Request};
 use env::Permission;
+use env::dispatch::{self, Name, Reply, Request};
 use task::env::mail::{self, HolePie};
 
 /// dispatch 协议载荷定 64 字节。
@@ -75,8 +75,7 @@ extern "C" fn main() -> ! {
         entry: env::PieToken(entry_target),
     }
     .encode();
-    msg[dispatch::REPLY_AT..dispatch::REPLY_AT + 8]
-        .copy_from_slice(&reply_target.to_le_bytes());
+    msg[dispatch::REPLY_AT..dispatch::REPLY_AT + 8].copy_from_slice(&reply_target.to_le_bytes());
     if dir_entry.push(&msg).is_err() {
         task::env::control::panic(9);
     }

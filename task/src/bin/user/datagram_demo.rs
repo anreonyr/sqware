@@ -5,7 +5,7 @@ extern crate alloc;
 
 use task::core::datagram::MailDatagram;
 use task::env::io::put;
-use task::env::mail::{HolePie, HOLE_MTU_MAX};
+use task::env::mail::{HOLE_MTU_MAX, HolePie};
 
 // datagram_demo: 端口多路复用最小验证。
 //
@@ -81,5 +81,9 @@ extern "C" fn main() {
     }
 
     let _ = dg.seal();
-    let _ = put(if ok { "datagram_demo: ok\n" } else { "datagram_demo: fail\n" });
+    let _ = put(if ok {
+        "datagram_demo: ok\n"
+    } else {
+        "datagram_demo: fail\n"
+    });
 }

@@ -6,8 +6,8 @@ extern crate alloc;
 use env::Permission;
 use task::env::{
     io::put,
-    mail::{HolePie, HOLE_MTU_MAX},
     mail::PolePie,
+    mail::{HOLE_MTU_MAX, HolePie},
 };
 
 // narrow: 收窄本 pie 权限（就地改写，单调）。

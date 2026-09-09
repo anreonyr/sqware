@@ -253,7 +253,10 @@ fn spawn_demos() -> Result<(), MapError> {
     );
     {
         let shell = task_by_id(shell_id);
-        shell.pies.lock().push(AnyPie::Hole(dir_entry_for_callers.clone()));
+        shell
+            .pies
+            .lock()
+            .push(AnyPie::Hole(dir_entry_for_callers.clone()));
     }
     {
         // echo 入口门闩：原始自持（vestor = None）——域主自己持有「原始」副本，
@@ -296,10 +299,7 @@ fn task_by_id(id: usize) -> alloc::sync::Arc<crate::work::unit::task::Task> {
 /// 目录只有**一个 req hole**：回信走内核预置的通道（`reply`），调用方身份由内核
 /// 给出（`caller`）。授权一律走 `gate::accord`，目录不跨任务写调用方权限表。
 /// 服务本体不在此处——echo 跑在独立 supervisor 域里（`spawn_demos` 装载）。
-fn spawn_services(
-    dreq: alloc::sync::Arc<HoleMeta>,
-    caller: usize,
-) -> Result<usize, MapError> {
+fn spawn_services(dreq: alloc::sync::Arc<HoleMeta>, caller: usize) -> Result<usize, MapError> {
     use crate::service::dispatch;
     use env::dispatch::Name;
 
@@ -337,9 +337,8 @@ fn spawn_services(
                     continue;
                 };
                 // 读 reply token（per-caller 通道的目录侧 token；0 = fire-and-forget）。
-                let reply_token = u64::from_le_bytes(
-                    msg[REPLY_AT..REPLY_AT + 8].try_into().unwrap_or([0u8; 8]),
-                );
+                let reply_token =
+                    u64::from_le_bytes(msg[REPLY_AT..REPLY_AT + 8].try_into().unwrap_or([0u8; 8]));
                 // 在 me.pies 里查该 token 对应的 HoleMeta（必须存在——caller Accord 时已落表）。
                 let reply_meta = if reply_token != 0 {
                     me.pies

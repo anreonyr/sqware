@@ -183,12 +183,7 @@ pub const MSG_LEN: usize = 64;
 /// `caller` = 调用方 task id（**由内核给**，不来自消息体）；`me` = 目录自己的
 /// task（Register/Replace 从它的权限表取登记时委托来的入口门闩）。
 /// 回信由调用方（dispatcher 闭包）推送到预置通道——本函数不做 I/O。
-pub fn serve(
-    reg: &Arc<ServiceRegistry>,
-    me: &Arc<Task>,
-    caller: usize,
-    msg: &[u8],
-) -> Reply {
+pub fn serve(reg: &Arc<ServiceRegistry>, me: &Arc<Task>, caller: usize, msg: &[u8]) -> Reply {
     if msg.len() < MSG_LEN {
         return Reply::Denied;
     }

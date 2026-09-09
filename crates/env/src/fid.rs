@@ -166,10 +166,18 @@ pub enum MailCall {
     UnsealPole { bytes: usize },
     /// push msg：token + msg VA + 长度（1..=该孔 mtu）。
     #[ret(())]
-    Push { token: PieToken, msg: VirtAddr, len: usize },
+    Push {
+        token: PieToken,
+        msg: VirtAddr,
+        len: usize,
+    },
     /// pull msg：token + 缓冲 VA + 上限（≥1 且 ≤该孔 mtu）；返实际长度。
     #[ret(usize)]
-    Pull { token: PieToken, buf: VirtAddr, max: usize },
+    Pull {
+        token: PieToken,
+        buf: VirtAddr,
+        max: usize,
+    },
     /// 借映 Pole 物理页进当前 task.space：token → VA。
     #[ret(VirtAddr)]
     Map { token: PieToken },
