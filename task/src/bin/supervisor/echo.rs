@@ -3,9 +3,9 @@
 //! echo — supervisor 域里的回显服务（载荷逐字节 +1），启动后**自注册**到目录。
 //!
 //! 启动流程：
-//!   1. Collect(0) 取自己入口门闩（内核 boot 预置的「原始自持」副本）。
-//!   2. Collect(1) 取目录入口门闩 + 目录 task id（vestor）。
-//!   3. entry.accord(dir_id, R|W) → 目录侧 entry 副本（token 在 Register 时回填）。
+//!   1. 靠泊 + 自建入口门闩 + 报到（把它在 root 侧的句柄交出去，root 据此回 `Pier`）。
+//!   2. 收配给：目录请求门闩的句柄；目录 id = `Owned(门闩).owner`（资源开辟者）。
+//!   3. `entry.accord(dir_id, R|W|VEST)` → 目录侧 entry 副本（token 在 Register 回填）。
 //!   4. 自造 reply hole，accord 给目录 → reply_target。
 //!   5. 构造 `Request::Register { name, entry }`，把 reply_target 写进 `[49..57]`，push。
 //!   6. 从自己 reply pull，等 `Reply::Ok`——失败则 panic。
@@ -17,7 +17,8 @@ extern crate alloc;
 
 use env::Permission;
 use env::dispatch::{self, Name, Reply, Request};
-use task::env::mail::{self, HolePie};
+use task::core::handshake::{self, Pier, Quay};
+use task::env::mail::{self, HOLE_MTU_MAX, HolePie};
 
 /// dispatch 协议载荷定 64 字节。
 const MSG_LEN: usize = dispatch::MSG_LEN;
@@ -27,57 +28,66 @@ const REPLY_TIMEOUT_MS: usize = 1000;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
-    // 1. 自己的入口门闩（boot 预置在权限表索引 0）。
-    let (entry_tok, _entry_perm, _entry_vestor) = match mail::collect(0) {
-        Ok(v) => v,
+    // 1. 靠泊 + 自建入口门闩（**服务自开**——客户端靠它的 owner 找到本域）。
+    let quay = match handshake::moor() {
+        Ok(q) => q,
         Err(_) => task::env::control::panic(1),
     };
-    if entry_tok == 0 {
-        task::env::control::panic(2);
-    }
-    let entry = HolePie::from_token(entry_tok);
-
-    // 2. 目录入口门闩 + 目录 task id（root 授予；task id 经启动参数告知——
-    //    用户态 Accord 只会把**授与人**写成 vestor，故不能再靠它认目录）。
-    let (dir_entry_tok, _dir_perm, vestor) = match mail::collect(1) {
-        Ok(v) => v,
+    let entry = match HolePie::unseal(MSG_LEN) {
+        Ok(h) => h,
+        Err(_) => task::env::control::panic(2),
+    };
+    let sire = match task::env::task::sire() {
+        Ok(t) => t,
         Err(_) => task::env::control::panic(3),
     };
-    let dir_id = task::env::task::args()
-        .first()
-        .copied()
-        .filter(|v| *v != 0)
-        .unwrap_or(vestor.get());
-    if dir_entry_tok == 0 || dir_id == 0 {
-        task::env::control::panic(4);
+    let at_parent = match entry.accord(sire.get(), Permission::READ | Permission::WRITE) {
+        Ok(t) => t,
+        Err(_) => task::env::control::panic(4),
+    };
+    if Quay::new(at_parent).push(&quay).is_err() {
+        task::env::control::panic(5);
     }
-    let dir_entry = HolePie::from_token(dir_entry_tok);
+
+    // 2. 收配给：目录请求门闩 + 目录身份。
+    let pier = match Pier::pull(&entry) {
+        Ok(p) => p,
+        Err(_) => task::env::control::panic(6),
+    };
+    let dir_entry = HolePie::from_token(pier.token());
+    let dir_id = match mail::owned(pier.token()) {
+        Ok((_vestor, owner)) => owner.get(),
+        Err(_) => task::env::control::panic(7),
+    };
+    if dir_id == 0 {
+        task::env::control::panic(8);
+    }
 
     // 3. entry 副本落进目录权限表——目录 Register 处理器从 [33..41] 读 entry token
-    //    然后 take_entry(me, token) 摘出。subset = R|W|VEST：**必须带 VEST**，
-    //    后续 Connect 时目录要把这个 entry 再转授给 shell。
+    //    然后 bind（owner = 该副本的 vestor = 本域）。subset = R|W|VEST：**必须带
+    //    VEST**，后续 Connect 时目录要把这个 entry 再转授给客户端。
     let entry_target = match entry.accord(
         dir_id,
         Permission::READ | Permission::WRITE | Permission::VEST,
     ) {
         Ok(t) => t,
-        Err(_) => task::env::control::panic(5),
+        Err(_) => task::env::control::panic(9),
     };
 
     // 4. 自造 reply hole，accord 给目录作 per-caller 通道。
-    let reply_mine = match HolePie::unseal(mail::HOLE_MTU_MAX) {
+    let reply_mine = match HolePie::unseal(HOLE_MTU_MAX) {
         Ok(p) => p,
-        Err(_) => task::env::control::panic(6),
+        Err(_) => task::env::control::panic(10),
     };
     let reply_target = match reply_mine.accord(dir_id, Permission::READ | Permission::WRITE) {
         Ok(t) => t,
-        Err(_) => task::env::control::panic(7),
+        Err(_) => task::env::control::panic(11),
     };
 
     // 5. 构造 Register 请求，push。
     let name = match Name::new("echo") {
         Ok(n) => n,
-        Err(_) => task::env::control::panic(8),
+        Err(_) => task::env::control::panic(12),
     };
     let mut msg = Request::Register {
         name,
@@ -86,17 +96,17 @@ extern "C" fn main() -> ! {
     .encode();
     msg[dispatch::REPLY_AT..dispatch::REPLY_AT + 8].copy_from_slice(&reply_target.to_le_bytes());
     if dir_entry.push(&msg).is_err() {
-        task::env::control::panic(9);
+        task::env::control::panic(13);
     }
 
     // 6. 等 Ok 回复（有界等待；目录若回 Denied/Taken 或漏回都 panic）。
     let mut buf = [0u8; MSG_LEN];
     if reply_mine.pull_timeout(&mut buf, REPLY_TIMEOUT_MS).is_err() {
-        task::env::control::panic(10);
+        task::env::control::panic(14);
     }
     match Reply::decode(&buf) {
         Ok(Reply::Ok) => {}
-        _ => task::env::control::panic(11),
+        _ => task::env::control::panic(15),
     }
 
     // 7. 服务循环：pull 请求、+1 载荷、push 到客户端自带的 reply token。

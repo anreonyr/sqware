@@ -954,6 +954,9 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
 新增两个与目录无关的原语：`MailCall::Collect`（自省权限表）、`MailCall::Release`
 （自释自己的一份）。实现过程中修复的三个内核缺陷见 `docs/dispatch.md` §11。
 
+> 后续（T2，见 `docs/root.md` §9）再加一个：`MailCall::Owned { token } -> (vestor, owner)`
+> ——按句柄查「这枚门闩谁授的 / 这扇门谁开的」；`Collect` 保留为唯一枚举手段。
+
 ---
 
 ## 15 · S 态域（Supervisor 域）

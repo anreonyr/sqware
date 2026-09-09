@@ -217,9 +217,10 @@ initrd.img
 - `build.rs` 必须 `rerun-if-changed=../crates/env`——否则改 env 后 initrd 不重
   打包，内核重编而用户程序是旧的。
 
-**域怎么拿到自己的入口门闩**：沿用根授予——boot 把入口 hole 的 Pie 放进域任务
-权限表索引 0，域程序用 `Collect(0)` 取回（与 shell 取目录门闩同款）。环境调用 ABI 无
-任何新入口。
+**域怎么拿到自己的入口门闩**：T2 之后**域自己开自己的门**——启动期握手（`docs/root.md`
+§9）里子域 `UnsealHole` 出请求/入口门闩，把父侧句柄交给 root；客户端认服务靠
+`MailCall::Owned(门闩).owner`。旧的「boot 把 Pie 放进权限表索引 0，域程序 `Collect(0)`
+取回」已废除（索引约定随 T2 一起消失）。环境调用 ABI 无任何新入口。
 
 ## 9 · 已决 / 被否
 

@@ -39,6 +39,9 @@ pub struct PoleMeta {
     /// 同一物理页借映给共享 Space 的多 Task 时，每个 pie 一条独立映射、独立 PTE，
     /// narrow/map 只动自己的那条——cap ⊆ 页表不被共享 PTE 击穿。
     mappings: SpinLock<Vec<(u64, alloc::sync::Weak<Space>, Span)>>,
+    /// 开辟者：`UnsealPole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
+    /// 语义同 `HoleMeta::owner`：`vestor` 管门闩的来历，`owner` 管资源的来历。
+    owner: usize,
 }
 
 // SAFETY: PoleMeta 经 Arc 跨任务共享；base 指向共享物理帧（仅经 atomic / 直接拷贝
@@ -47,7 +50,7 @@ unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
 impl PoleMeta {
-    pub(super) fn allocate(bytes: usize) -> Result<Arc<Self>, GateError> {
+    pub(super) fn allocate(bytes: usize, owner: usize) -> Result<Arc<Self>, GateError> {
         if bytes == 0 || !bytes.is_multiple_of(PAGE_SIZE) {
             return Err(GateError::NotAligned);
         }
@@ -69,7 +72,13 @@ impl PoleMeta {
             base,
             bytes,
             mappings: SpinLock::new(Vec::new()),
+            owner,
         }))
+    }
+
+    /// 资源开辟者（见字段 `owner`）。
+    pub(crate) fn owner(&self) -> usize {
+        self.owner
     }
 
     pub(crate) fn alive(&self) -> bool {
@@ -222,8 +231,9 @@ pub(crate) fn seal(meta: &PoleMeta, id: ResourceId) {
 /// 解封 Pole 的资源实体：分配物理页 + 建 Meta + 注册 memo。**不落 pies、不
 /// auto-map**——建门闩 + 落 `task.pies` + map 创建者视图由 envcall 编排
 /// （gate::new_pie + pies.push + pole::map）。返 `(Arc, ResourceId)`。
-pub(crate) fn meta(bytes: usize) -> Result<(Arc<PoleMeta>, ResourceId), GateError> {
-    let arc = PoleMeta::allocate(bytes)?;
+/// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
+pub(crate) fn meta(bytes: usize, owner: usize) -> Result<(Arc<PoleMeta>, ResourceId), GateError> {
+    let arc = PoleMeta::allocate(bytes, owner)?;
     let id = memo::alloc_id();
     memo::insert(id, Meta::Pole(arc.clone()));
     Ok((arc, id))

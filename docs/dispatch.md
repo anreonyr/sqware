@@ -71,7 +71,7 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 [0]      status  u8      0=Ok 1=Found 2=Connected 3=NotFound 4=Denied 5=Taken
 [1..33]  name    [u8;32] Found：Resolve 命中的名字 / Enumerate 的一页
 [1..9]   entry   u64 LE  Connected：目录转授给调用方的入口门闩 token
-[9..17]  owner   u64 LE  Connected：服务 owner task id
+[9..17]  保留    u64 LE  必须为 0（原 owner 字段已删——见 §5）
 ```
 
 `Enumerate` 按名字**排序**分页（HashMap 迭代顺序无保证，顺序必须是契约）：
@@ -80,15 +80,19 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 ## 5 · 身份与授权
 
 ```text
-调用方 ──(boot 授予)──▶ 目录入口门闩（Collect 取回，vestor = 目录 task id）
+调用方 ──启动期握手（Pier）──▶ 目录请求门闩（Owned 取回 owner = 目录 task id）
 调用方 ──UnsealHole + Accord──▶ 目录：回信 hole 的对端 token（写进 [49..57]）
 目录   ──gate::accord──▶ 调用方权限表（子集 R|W）
-服务 owner = 入口门闩的 vestor()
+服务 id = 入口门闩的 owner（资源开辟者，服务自己 UnsealHole 出来的）
 ```
 
 - **身份不来自消息体**：目录按请求取「`[49..57]` 那枚回信 pie 的 `vestor`」——
   内核在 `Accord` 时赋值，消息体伪造不了。没带有效回信 pie 即无身份（`caller = 0`）：
   `Register` 不看身份，`Unregister`/`Replace`/`Connect` 一律拒绝。
+- **反方向用 `owner` 而不是 `vestor`**：调用方认服务时，门闩可能经手多次（root 分发、
+  目录转授），`vestor` 每次都会改写成中间人；`owner` 挂在资源上，任意副本同值。
+- **硬规则：服务必须自开入口 hole**（`UnsealHole` 自己那份）。若由他人代开，
+  `Owned(entry).owner` 指向代开者，调用方会把回信 hole 授给错的人。
 - **授权只用已有原语**：`Connect` 就是 `gate::accord` 转授子集；注册资格就是
   「能把门闩交出来」——不需要新的 capability 类型。
 - 授权链 `service →(VEST) 目录 →(R|W) 调用方`；目录不带 BACK，故可自由代授。
@@ -108,37 +112,47 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 
 | 原语 | 一句话 | 补的洞 |
 |---|---|---|
-| `MailCall::Collect { index } -> (PieToken, Permission, TaskId)` | 报出我持有的第 index 份（含其 `vestor`） | 用户态此前**无法自省自己的权限表** |
+| `MailCall::Collect { index } -> (PieToken, Permission, TaskId)` | 报出我持有的第 index 份（含其 `vestor`）——**唯一的枚举手段** | 用户态此前**无法自省自己的权限表** |
+| `MailCall::Owned { token } -> (TaskId, TaskId)` | 我持有的这枚门闩：`vestor`（谁授的）+ `owner`（资源谁开的） | 此前**只能看门闩的来历，看不到资源的来历**（转手即丢） |
 | `MailCall::Release { token }` | 放下我自己的一份（Pole 同步 unmap） | 此前**没有任何自释路径**（`revoke` 只允许授与人收回） |
 
-配对：`Unseal*` ↔ `Seal`（动资源）；`Accord` ↔ `Revoke`（他人）；`Collect` ↔
-`Release`（自己）。
+配对：`Unseal*` ↔ `Seal`（动资源）；`Accord` ↔ `Revoke`（他人）；`Collect`（枚举）↔
+`Owned`（查证）↔ `Release`（放下，自己）。
 
-## 8 · 引导（根授予）
+## 8 · 引导（启动期握手 + 根分发）
 
-内核是根授予的源头，机制不变（父任务把权限交给子任务）：
+内核是根授予的源头；**root 域**（`bin/supervisor/root`）负责产生所有子域，机制不变
+（父任务把权限交给子任务），但顺序与过去不同：
 
 ```text
-boot:
-  1. 建目录 req hole：给目录域一枚自持门闩（索引 0）、给每个 caller 一枚副本
-     （vestor = 目录 task id，供 `Collect` 顺带取回）
-  2. spawn shell（U 态）、echo（S 态服务）、dir（S 态目录）——三个域程序
-  3. echo 自注册：Collect 取回 entry + 目录门闩 → Accord entry 副本给目录
-     → UnsealHole 自造回信 hole + Accord 给目录 → Register（回信 token 写 [49..57]）
-  4. 目录记下 entry token 与 owner 并 bind("echo")——token 一直留在目录权限表里
+root:
+  1. dock()：开一条报到孔（mtu = 8）
+  2. 逐子域串行：
+     Build + Spawn(Held) → 报到孔副本 Accord(child, R|W) → Hatch
+     → Quay::pull（子域自建孔在父侧的句柄；校验 Owned(句柄).vestor == child）
+     → Pier::push（目录请求门闩在子侧的句柄）
+  3. dir 在 Quay 里交出的就是它的请求门闩（root 留作分发源，故带 VEST）
+
+dir:   moor() 认报到孔 → UnsealHole 自建请求门闩 → Accord(root, R|W|VEST)
+       → Quay{句柄} → Pier::pull → 服务循环
+echo:  moor() → UnsealHole 自建入口门闩 → Accord(root, R|W) → Quay{句柄}
+       → Pier::pull → dir_id = Owned(门闩).owner → Accord(entry, dir_id, R|W|VEST)
+       → UnsealHole 自造回信 hole + Accord(dir_id, R|W) → Register（回信 token 写 [49..57]）
+shell: moor() → UnsealHole 纯配给通道 → Accord(root, R|W) → Quay{句柄}
+       → Pier::pull → Directory::open(门闩)
 ```
 
-目录是**普通 Service**：它自己就是一个 S 态域程序，内核不含它的代码。用户态
-`Directory::open()` 用 `Collect` 取回目录门闩，顺带拿到它的 `vestor`
-（= 目录 task id，`Accord` 回信 hole 的目标）——**不需要向用户态传任何整数**。
-目录会话是进程级授权，不随命令关闭。
+- **没有任何整数身份进报文或启动参数**：目录 id 由 `Owned(门闩).owner` 从资源事实推出。
+- **子域启动参数为空**；`Spawn` 的 args 只剩内核给 root 的清单视图。
+- 报到孔与配给通道**必须分两条孔**：Hole 是单槽信箱，同一条孔上既 push 又 pull 会把
+  自己刚写的消息读回来（实测死锁，见 `docs/root.md` §6.4）。
 
 ## 9 · 已决 / 被否
 
 | 决策 | 定论 |
 |---|---|
 | `ServiceCall`（class 7） | **删除**——它是入口策略，不是原语 |
-| 根授予 | 逐级委托（`Accord`）+ 自省（`Collect`）；不做公开 id |
+| 根授予 | 逐级委托（`Accord`）+ 启动期握手（`Quay`/`Pier`）+ 自省（`Collect`/`Owned`）；不做公开 id |
 | 接口形态 | 一份入口门闩（A3）；回信由调用方自带 |
 | 一个名字几个 provider | 1 个 |
 | 名字权限 | v1 不做管理接口；`Register` 资格 = 持有门闩 |
@@ -195,10 +209,11 @@ sq > req
 req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 ```
 
-`req` 路径：`Directory::open`（`Collect` 取目录门闩 + 目录 task id，自造回信 hole
-并 `Accord` 给目录）→ `Connect("echo")`（目录 `gate::accord` 转授入口门闩 + 回 owner）
-→ 调用方 `UnsealHole` + `Accord` 给 owner（自带回信通道）→ `Push`（前 8 字节回信
-token）→ echo `+1` → `Push` 回信 → `Pull` → `disconnect`（`Revoke` + `Release`）。
+`req` 路径：`Directory::open`（收下启动期握手配给的目录请求门闩，自造回信 hole 并
+`Accord` 给目录）→ `Connect("echo")`（目录 `gate::accord` 转授入口门闩）→ 调用方
+`Owned(entry).owner` 求服务 id → `UnsealHole` + `Accord` 给该 id（自带回信通道）
+→ `Push`（前 8 字节回信 token）→ echo `+1` → `Push` 回信 → `Pull` →
+`disconnect`（`Revoke` + `Release`）。
 
 ## 13 · 文件清单
 

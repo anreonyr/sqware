@@ -5,19 +5,15 @@
 //!
 //! 与「内核闭包版」的差别只有一处：绑定里存的是**入口门闩的 token**（u64），不是
 //! `Pie` 对象——门闩一直留在目录自己的权限表里，`Connect` 用 `mail::accord` 转授
-//! 子集。身份用 `Collect` 扫自己的表取 `vestor`（内核在 `Accord` 时赋值，消息体
-//! 伪造不了）；没带有效回信 pie 即无身份（`caller = 0`）。
+//! 子集。身份用 `mail::owned` 查该 token 的 `vestor`（内核在 `Accord` 时赋值，
+//! 消息体伪造不了）；没带有效回信 pie 即无身份（`caller = 0`）。
 
 use alloc::vec::Vec;
 
+use env::PieToken;
 use env::dispatch::{MSG_LEN, Name, Reply, Request};
-use env::{PieToken, TaskId};
 
 use crate::env::mail;
-
-/// 扫表上限：目录权限表里的 pie 数（请求 hole + 各 caller 的回信 pie + 各服务
-/// 的入口门闩），量级个位数；上限只是防越界扫描跑飞。
-const MAX_PIES: usize = 64;
 
 /// 目录转授给调用方的权限：push 请求 + pull 回复。
 fn caller_permission() -> env::Permission {
@@ -45,28 +41,14 @@ pub struct Binding {
     pub owner: usize,
 }
 
-/// 扫自己的权限表：该 token 在不在？在则返它的 `vestor`（授与人）。
+/// 查本任务表里该 token 的 `vestor`（授与人）。
 ///
-/// `None` = 不在表里；`Some(0)` = 在表里但没有授与人（boot 根授予的原始自持）。
-/// `Collect` 越界返 token 0 作哨兵——表尾即止。
+/// `None` = 表里没有 / 资源已封印；`Some(0)` = 在表里但没有授与人（原始自持）。
 pub fn vestor_of(token: u64) -> Option<usize> {
     if token == 0 {
         return None;
     }
-    for index in 0..MAX_PIES {
-        match mail::collect(index) {
-            Ok((t, _, vestor)) => {
-                if t == 0 {
-                    return None;
-                }
-                if t == token {
-                    return Some(vestor.get());
-                }
-            }
-            Err(_) => return None,
-        }
-    }
-    None
+    mail::owned(token).ok().map(|(vestor, _)| vestor.get())
 }
 
 /// 服务目录（名字唯一 = 表里至多一条同名绑定）。
@@ -146,14 +128,14 @@ impl Directory {
         }
     }
 
-    /// 连接：把绑定的入口门闩转授一份给调用方，返 (新 token, 服务 owner task id)。
+    /// 连接：把绑定的入口门闩转授一份给调用方，返新 token（调用方那侧的句柄）。
     ///
-    /// owner = 绑定时记下的 `entry.vestor()`——调用方据此把回信 hole `Accord` 给服务。
-    pub fn connect(&self, name: &Name, caller: usize) -> Result<(u64, usize), DirectoryError> {
+    /// 调用方用 `mail::owned(token).owner` 求服务 task id——那是**资源开辟者**
+    /// （服务自己 `UnsealHole` 出来的门闩），不受目录转授改写。
+    pub fn connect(&self, name: &Name, caller: usize) -> Result<u64, DirectoryError> {
         let binding = self.resolve(name).ok_or(DirectoryError::Unknown)?;
-        let token = mail::accord(binding.entry, caller, caller_permission())
-            .map_err(|_| DirectoryError::NotGrantable)?;
-        Ok((token, binding.owner))
+        mail::accord(binding.entry, caller, caller_permission())
+            .map_err(|_| DirectoryError::NotGrantable)
     }
 
     /// 处理一条目录请求（原始 64 字节消息），产出回复。
@@ -204,9 +186,8 @@ impl Directory {
                 None => Reply::NotFound,
             },
             Request::Connect { name } => match self.connect(name, caller) {
-                Ok((entry, owner)) => Reply::Connected {
+                Ok(entry) => Reply::Connected {
                     entry: PieToken(entry),
-                    owner: TaskId(owner),
                 },
                 Err(DirectoryError::Unknown) => Reply::NotFound,
                 Err(_) => Reply::Denied,

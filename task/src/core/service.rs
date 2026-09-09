@@ -2,13 +2,14 @@
 //!
 //! 协议规范见 `docs/dispatch.md`。三条要点：
 //!
-//! 1. **内核没有目录入口调用**（class 7 已删）：root 域把一枚 pie 放进本任务权限
-//!    表——索引 0 = 目录入口门闩——`Directory::open` 用 `Collect` 取回；目录 task id
-//!    经**启动参数**告知（root 显式传，取代旧 boot 期的 `vestor` 内标）。
-//! 2. **回信通道由调用方自带**：`UnsealHole` 造自己的 hole，`Accord` 给目录，把
+//! 1. **内核没有目录入口调用**（class 7 已删）：目录请求门闩由**父域经启动期握手
+//!    配给**（`handshake::Pier` 的载荷），`Directory::open` 直接收下这枚句柄。
+//! 2. **对端是谁由 `Owned` 求得**：目录 id = `Owned(entry).owner`（资源开辟者），
+//!    服务 id 同理——`vestor` 会被转发改写成 root，`owner` 不会。
+//! 3. **回信通道由调用方自带**：`UnsealHole` 造自己的 hole，`Accord` 给目录，把
 //!    对端侧 token 写进请求 `[49..57]`——目录按这枚 pie 的 `vestor` 认人。
-//!    服务调用同理，token 放在消息前 8 字节（owner 由 `Connect` 回复给出）。
-//! 3. **服务调用载荷 56 字节**（`MSG_LEN` - 8 字节回信 token）。
+//!    服务调用同理，token 放在消息前 8 字节。
+//! 4. **服务调用载荷 56 字节**（`MSG_LEN` - 8 字节回信 token）。
 //!
 //! 与 [`crate::core::channel::Channel`] 同住 `core/`（envcall 转发外的封装层）。
 
@@ -48,22 +49,14 @@ pub struct Directory {
 }
 
 impl Directory {
-    /// 打开会话：从本任务权限表取回 root 域放下的目录入口门闩（索引 0），
+    /// 打开会话：`entry` = 父域经启动期握手配给的目录请求门闩（`Pier` 的载荷）。
     /// 自造 reply hole、`Accord` 给目录，记下对端 token 供每条请求回填。
     ///
     /// **per-caller reply**：reply hole 由调用方自备；目录 `[49..57]` 字段就是
-    /// reply_target。目录 task id 取**启动参数**（root 显式告知）——旧 boot 期的
-    /// `vestor` 内标是内核特权，用户态 `Accord` 只会把授与人写成 vestor。
-    pub fn open() -> EnvResult<Directory> {
-        let (entry_tok, _entry_perm, vestor) = mail::collect(0)?;
-        if entry_tok == 0 {
-            return Err(denied());
-        }
-        let dir_id = crate::env::task::args()
-            .first()
-            .copied()
-            .filter(|v| *v != 0)
-            .unwrap_or(vestor.get());
+    /// reply_target。目录 task id 取 `Owned(entry).owner`——门闩的**开辟者**；
+    /// root 转发给本任务时 `vestor` 已变成 root，只有 `owner` 还指着目录。
+    pub fn open(entry: HolePie) -> EnvResult<Directory> {
+        let dir_id = mail::owned(entry.token())?.1.get();
         if dir_id == 0 {
             return Err(denied());
         }
@@ -72,7 +65,7 @@ impl Directory {
         let reply_target =
             reply_mine.accord(dir_id, env::Permission::READ | env::Permission::WRITE)?;
         Ok(Directory {
-            entry: HolePie::from_token(entry_tok),
+            entry,
             reply: reply_mine,
             reply_target,
         })
@@ -117,13 +110,14 @@ impl Directory {
         }
     }
 
-    /// 连接：目录把服务的入口门闩转授给本任务，并回 owner task id。
+    /// 连接：目录把服务的入口门闩转授给本任务；服务 id 由 `Owned` 从门闩求得。
     pub fn connect(&self, name: &str) -> EnvResult<Service> {
         let request = Request::Connect {
             name: parse_name(name)?,
         };
         match self.call(&request)? {
-            Reply::Connected { entry, owner } => {
+            Reply::Connected { entry } => {
+                let owner = mail::owned(entry.get())?.1;
                 let channel = Channel::open(owner)?;
                 Ok(Service {
                     entry: HolePie::from_token(entry.get()),

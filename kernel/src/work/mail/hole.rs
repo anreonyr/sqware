@@ -49,17 +49,28 @@ pub struct HoleMeta {
     /// 「消息是否在槽」也是「实际占用字节数」——`len() > 0` 即有消息，`len() == 0`
     /// 即空槽。Push 时 set_len、Pull 时 clear，零额外分配。
     slot: SpinLock<Vec<u8>>,
+    /// 开辟者：`UnsealHole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
+    ///
+    /// 与 `Pie.vestor` 分工：`vestor` = **这枚门闩**谁授的（转手即改写）；
+    /// `owner` = **这扇门**谁开的（任意副本共享同一事实）。
+    owner: usize,
 }
 
 impl HoleMeta {
-    pub(super) fn new(mtu: usize, id: ResourceId) -> Arc<Self> {
+    pub(super) fn new(mtu: usize, id: ResourceId, owner: usize) -> Arc<Self> {
         let buf = Vec::with_capacity(mtu);
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
             id,
             mtu,
             slot: SpinLock::new_level(Level::L3, buf),
+            owner,
         })
+    }
+
+    /// 资源开辟者（见字段 `owner`）。
+    pub(crate) fn owner(&self) -> usize {
+        self.owner
     }
 
     /// 存活：state == Live（Arc 仍有效由 Pie 持 Weak 保证）。
@@ -228,13 +239,14 @@ pub(crate) fn seal(meta: &HoleMeta, id: ResourceId) {
 /// `ResourceId` 供 gate::new_pie 第一参，`Arc` 供 Weak<HoleMeta>。
 ///
 /// `mtu ∈ [1, HOLE_MTU_MAX]`——envcall 入口已校验，此处 defend。
-pub(crate) fn meta(mtu: usize) -> Result<(Arc<HoleMeta>, ResourceId), GateError> {
+/// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
+pub(crate) fn meta(mtu: usize, owner: usize) -> Result<(Arc<HoleMeta>, ResourceId), GateError> {
     if mtu == 0 || mtu > HOLE_MTU_MAX {
         return Err(GateError::Denied);
     }
     // 先分配 id 再建 Meta：id 同时是等待键的身份（见 `key`），必须随 Meta 定型。
     let id = memo::alloc_id();
-    let arc = HoleMeta::new(mtu, id);
+    let arc = HoleMeta::new(mtu, id, owner);
     memo::insert(id, Meta::Hole(arc.clone()));
     Ok((arc, id))
 }

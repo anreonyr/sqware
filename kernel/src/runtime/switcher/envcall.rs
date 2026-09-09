@@ -498,7 +498,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // meta() 只建 HoleMeta + 注册 memo；门闩/落 task.pies 是能力模型的事。
             let r = (|| -> Result<u64, GateError> {
                 let task = current().running_task().ok_or(GateError::Denied)?;
-                let (meta, id) = mail::hole::meta(mtu)?;
+                let (meta, id) = mail::hole::meta(mtu, task.ident.id)?;
                 let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
                     id,
                     Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
@@ -519,7 +519,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // auto-map 创建者视图（创建者 pie 全权 → R|W）。
             let r = (|| -> Result<u64, GateError> {
                 let task = current().running_task().ok_or(GateError::Denied)?;
-                let (meta, id) = mail::pole::meta(bytes)?;
+                let (meta, id) = mail::pole::meta(bytes, task.ident.id)?;
                 let task_space = task.ident.team.space.clone();
                 let pie: Pie<mail::pole::PoleMeta> = gate::new_pie(
                     id,
@@ -867,6 +867,33 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame
                 .gpr
                 .set_x(Gprs::A1, (vestor_id << 32) | (perm_bits & 0xffff_ffff));
+        }
+        EnvCall::Mail(MailCall::Owned { token }) => {
+            // 查询：本任务表里这枚门闩的「授与人 + 资源开辟者」。
+            // 与 Collect 分工：Collect 按索引枚举（发现未见过的句柄），
+            // Owned 按句柄查事实（vestor 转手即变，owner 随资源不变）。
+            //
+            // a0 = vestor（None → 0），a1 = owner。资源已封印 → Dead（开辟者答不出）。
+            // 锁序：只读 pies（L3），owner() 走 Weak::upgrade 不取锁。
+            let token = token.get();
+            let r = match current().running_task().and_then(|t| {
+                let pies = t.pies.lock();
+                let pie = pies.iter().find(|p| p.token() == token)?;
+                match pie.owner() {
+                    Some(owner) => Some(Ok((pie.vestor().unwrap_or(0), owner))),
+                    None => Some(Err(GateError::Dead)),
+                }
+            }) {
+                Some(r) => r,
+                None => Err(GateError::Denied),
+            };
+            match r {
+                Ok((vestor_id, owner_id)) => {
+                    frame.gpr.set_x(Gprs::A0, vestor_id);
+                    frame.gpr.set_x(Gprs::A1, owner_id);
+                }
+                Err(e) => return ret_err(frame, e),
+            }
         }
         EnvCall::Mail(MailCall::Release { token }) => {
             // 自释：放下自己的一份门闩（无权限要求；Pole 同步 unmap）。

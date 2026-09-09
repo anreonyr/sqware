@@ -25,8 +25,8 @@
 //! [0]      status  u8      0=Ok 1=Found 2=Connected 3=NotFound 4=Denied 5=Taken
 //! [1..33]  name    [u8;32] Found：这一页的名字 / Resolve 命中的名字
 //! [1..9]   entry   u64 LE  Connected：目录转授给调用方的入口门闩 token
-//! [9..17]  owner   u64 LE  Connected：服务的 owner task id（调用方把回信 hole
-//!                          Accord 给它）
+//! [9..17]  保留    u64 LE  必须为 0（原 owner 字段已删——服务 task id 由调用方
+//!                          用 `MailCall::Owned` 从 entry 的 `owner` 求得）
 //! ```
 //!
 //! # 身份不走消息体
@@ -35,12 +35,16 @@
 //! `Accord` 时赋值，消息体伪造不了。没带有效回信 pie 即「无身份」：Register 不看
 //! 身份，Unregister/Replace/Connect 一律拒绝。
 //!
+//! 反方向（调用方认服务）走 `MailCall::Owned`：入口门闩的 `owner` 是**开辟者**
+//! （服务自己 `UnsealHole` 出来的），目录转授也改不掉它。**因此服务必须自开入口
+//! hole**——若由他人代开，调用方会把回信 hole 授给代开者。
+//!
 //! # Enumerate 分页
 //!
 //! 回复只有 64 字节，装不下列表，故按名字**排序**分页：`after` 之后的第一条；
 //! `after = None` 从头开始；返 `NotFound` 即到头。
 
-use crate::wire::{PieToken, TaskId};
+use crate::wire::PieToken;
 
 /// 名字类型与上限的单一真相在 [`crate::wire`]（目录协议与域名字共用）。
 pub use crate::wire::{NAME_LEN, Name, NameError};
@@ -122,7 +126,8 @@ pub enum Reply {
     /// Enumerate 的一页。
     Found { name: Name },
     /// Connect 成功：目录已把入口门闩放进调用方权限表。
-    Connected { entry: PieToken, owner: TaskId },
+    /// 服务 task id 由调用方用 `MailCall::Owned` 从这枚门闩的 `owner` 求得。
+    Connected { entry: PieToken },
     /// 无名 / Enumerate 到头。
     NotFound,
     /// 无权 / 门闩不可转授 / 回信通道非法。
@@ -237,12 +242,10 @@ impl Reply {
                 m[REPLY_STATUS_AT] = STATUS_FOUND;
                 m[REPLY_PAYLOAD_AT..REPLY_PAYLOAD_AT + NAME_LEN].copy_from_slice(name.bytes());
             }
-            Reply::Connected { entry, owner } => {
+            Reply::Connected { entry } => {
                 m[REPLY_STATUS_AT] = STATUS_CONNECTED;
                 m[REPLY_PAYLOAD_AT..REPLY_PAYLOAD_AT + 8]
                     .copy_from_slice(&entry.get().to_le_bytes());
-                m[REPLY_PAYLOAD_AT + 8..REPLY_PAYLOAD_AT + 16]
-                    .copy_from_slice(&(owner.get() as u64).to_le_bytes());
             }
         }
         m
@@ -267,12 +270,7 @@ impl Reply {
                         .try_into()
                         .unwrap_or([0u8; 8]),
                 ));
-                let owner = TaskId(u64::from_le_bytes(
-                    m[REPLY_PAYLOAD_AT + 8..REPLY_PAYLOAD_AT + 16]
-                        .try_into()
-                        .unwrap_or([0u8; 8]),
-                ) as usize);
-                Ok(Reply::Connected { entry, owner })
+                Ok(Reply::Connected { entry })
             }
             _ => Err(ProtocolError::BadOp),
         }

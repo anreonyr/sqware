@@ -164,13 +164,28 @@ pub fn revoke(dst_id: usize, token: u64) -> EnvResult<()> {
 /// 收拢：本任务权限表第 `index` 份（token + permission + vestor）。
 /// 越界 → `(0, 空权限, 0)`——哨兵不报错。
 ///
-/// **`vestor` 在「用户态入口 pie」这一支兼任「对端宿主 task id」**：调用方拿到
-/// 后可直接 `Accord(reply_hole, dst=vestor)` 建回信通道。原始自持 pie（vestor
-/// = None）由内核编码为 `TaskId(0)`，与 `UnitCall::SelfId` 越界哨兵一致。
+/// **唯一的枚举手段**：`handshake::moor()` 靠它发现「父域授给我的那枚门闩」。
+/// 已知句柄求事实用 [`owned`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
+/// 与 `UnitCall::SelfId` 越界哨兵一致。
 pub fn collect(index: usize) -> EnvResult<(u64, env::Permission, env::TaskId)> {
     let r = MailCall::Collect { index }.call()?;
     match r {
         MailCallRet::Collect((token, permission, vestor)) => Ok((token.get(), permission, vestor)),
+        _ => unreachable!(),
+    }
+}
+
+/// 查询：我持有的这枚门闩——`(vestor, owner)`。
+///
+/// `vestor` = 这枚门闩谁授的（转手即改写）；`owner` = 这扇门谁开的（副本共享同一
+/// 事实）。求「对端是谁」一律用 `owner`：root 转发过的门闩，`vestor` 会变成 root。
+pub fn owned(token: u64) -> EnvResult<(env::TaskId, env::TaskId)> {
+    let r = MailCall::Owned {
+        token: PieToken::new(token),
+    }
+    .call()?;
+    match r {
+        MailCallRet::Owned((vestor, owner)) => Ok((vestor, owner)),
         _ => unreachable!(),
     }
 }

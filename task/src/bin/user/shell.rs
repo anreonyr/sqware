@@ -26,8 +26,10 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 
+use task::core::handshake::{self, Pier, Quay};
 use task::core::service::{Directory, PAYLOAD_LEN};
 use task::core::unit;
 use task::env::{
@@ -37,6 +39,25 @@ use task::env::{
     task::{heir_at, heir_count},
 };
 use task::term::{Color, Readline, Terminal};
+
+/// 目录请求门闩在**本任务侧**的句柄（启动期握手拿到，此后只读）。
+static DIR_ENTRY: AtomicU64 = AtomicU64::new(0);
+
+/// 启动期握手：靠泊 → 自建配给通道并交给父域 → 报到 → 收配给。
+/// 返目录请求门闩在**本任务侧**的句柄。
+fn shake() -> env::EnvResult<u64> {
+    let quay = handshake::moor()?;
+    let hole = HolePie::unseal(handshake::MTU)?;
+    let sire = task::env::task::sire()?;
+    let at_parent = hole.accord(sire.get(), env::Permission::READ | env::Permission::WRITE)?;
+    Quay::new(at_parent).push(&quay)?;
+    Ok(Pier::pull(&hole)?.token())
+}
+
+/// 打开一次目录会话（每次新建 reply hole；entry 只是重建句柄）。
+fn dir_session() -> env::EnvResult<Directory> {
+    Directory::open(HolePie::from_token(DIR_ENTRY.load(Ordering::Relaxed)))
+}
 
 /// 按空白切词（保留空输入 = 空 Vec）。
 fn split(line: &str) -> Vec<String> {
@@ -122,7 +143,7 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
         "req" => {
             // 走目录协议：Directory::open 取会话 → Connect("echo") 拿服务入口门闩
             // → Service::call 一次往返（echo 对载荷字节 +1）。
-            let dir = match Directory::open() {
+            let dir = match dir_session() {
                 Ok(d) => d,
                 Err(e) => {
                     term.writeline(&format!("req dir err: {e:?}"));
@@ -156,7 +177,7 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
         }
         "dir" => {
             // 目录协议：Discover（纯探测）+ Enumerate（按名排序分页）。
-            let dir = match Directory::open() {
+            let dir = match dir_session() {
                 Ok(d) => d,
                 Err(e) => {
                     term.writeline(&format!("dir open err: {e:?}"));
@@ -196,6 +217,13 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
 
 #[unsafe(no_mangle)]
 extern "C" fn main() {
+    // 启动期握手：拿到目录请求门闩的句柄（身份由 Owned 从门闩自身求得）。
+    let entry_token = match shake() {
+        Ok(token) => token,
+        Err(_) => task::env::control::panic(1),
+    };
+    DIR_ENTRY.store(entry_token, Ordering::Relaxed);
+
     let term = Terminal::default();
     term.clear();
     term.fg(Color::Green);

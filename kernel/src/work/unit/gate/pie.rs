@@ -130,6 +130,17 @@ impl AnyPie {
         }
     }
 
+    /// 资源开辟者（`EnvCall::Mail(MailCall::Owned)` 的 `owner` 一侧）。
+    ///
+    /// `None` = Meta 已封印：开辟者随资源消失，答不出完整事实。
+    /// 读 `weak.upgrade()` 而非查 memo——不引入新锁序（pies 与 memo 同为 L3）。
+    pub fn owner(&self) -> Option<usize> {
+        match self {
+            AnyPie::Hole(p) => p.weak.upgrade().map(|m| m.owner()),
+            AnyPie::Pole(p) => p.weak.upgrade().map(|m| m.owner()),
+        }
+    }
+
     pub fn token(&self) -> u64 {
         match self {
             AnyPie::Hole(p) => p.token,

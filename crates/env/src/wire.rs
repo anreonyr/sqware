@@ -308,6 +308,13 @@ impl FromPair for (PieToken, crate::permission::Permission, TaskId) {
     }
 }
 
+/// Owned 返回值打包：v0 = vestor（授与人）、v1 = owner（资源开辟者）。
+impl FromPair for (TaskId, TaskId) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (TaskId(v0), TaskId(v1))
+    }
+}
+
 impl FromPair for bool {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         v0 != 0

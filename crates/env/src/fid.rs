@@ -240,9 +240,8 @@ pub enum MailCall {
     /// 收拢：报出本任务权限表第 `index` 份（token + permission + vestor）。
     /// 越界 → `PieToken(0)`（无效哨兵，不报错）；vestor = None 时返 `TaskId(0)`。
     ///
-    /// **vestor 的复用**：在「用户态入口 pie」（目录入口 / dispatch req 之类）
-    /// 这一支，vestor 同时是「对端宿主 task id」——客户端拿到后可直接
-    /// `Accord(reply_hole, dst=vestor)` 建回信通道。
+    /// **唯一的枚举手段**：`handshake::moor()` 靠它发现「父域授给我的那枚门闩」
+    /// （未知句柄）。已知句柄求事实用 `Owned`。
     #[ret((PieToken, crate::permission::Permission, TaskId))]
     Collect { index: usize },
     /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
@@ -259,6 +258,15 @@ pub enum MailCall {
         dir: HoleDir,
         millis: usize,
     },
+    /// 查询：我持有的这枚门闩——`vestor`（谁授的）+ `owner`（资源谁开的）。
+    ///
+    /// 两个身份不可混用：`vestor` 是**门闩**的来历，转手（Accord）即改写；
+    /// `owner` 是**资源**的来历，任意副本共享同一事实——故「目录是谁」经
+    /// `owner` 求得，root 转发门闩也不会把身份转丢。
+    ///
+    /// 错误：token 不在本任务表 → `-1 Denied`；资源已封印 → `-2 Dead`。
+    #[ret((TaskId, TaskId))]
+    Owned { token: PieToken },
 }
 
 /// 控制调用（class 6）。
