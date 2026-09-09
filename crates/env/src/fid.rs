@@ -195,9 +195,13 @@ pub enum MailCall {
     /// 收回授与他人的副本：dst_id + token。
     #[ret(())]
     Revoke { dst: TaskId, token: PieToken },
-    /// 收拢：报出本任务权限表第 `index` 份（token + permission）。
-    /// 越界 → `PieToken(0)`（无效哨兵，不报错）。
-    #[ret((PieToken, crate::permission::Permission))]
+    /// 收拢：报出本任务权限表第 `index` 份（token + permission + vestor）。
+    /// 越界 → `PieToken(0)`（无效哨兵，不报错）；vestor = None 时返 `TaskId(0)`。
+    ///
+    /// **vestor 的复用**：在「用户态入口 pie」（目录入口 / dispatch req 之类）
+    /// 这一支，vestor 同时是「对端宿主 task id」——客户端拿到后可直接
+    /// `Accord(reply_hole, dst=vestor)` 建回信通道。
+    #[ret((PieToken, crate::permission::Permission, TaskId))]
     Collect { index: usize },
     /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
     #[ret(())]

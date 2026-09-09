@@ -279,6 +279,16 @@ impl FromPair for (PieToken, crate::permission::Permission) {
     }
 }
 
+/// Collect 返回值打包：v0 = token（u64），v1 低 32 位 = permission bits、v1 高 32 位 = vestor task id。
+/// vestor = None 由内核编码为 `TaskId(0)`（哨兵与原 vestor=None 语义一致）。
+impl FromPair for (PieToken, crate::permission::Permission, TaskId) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        let permission = crate::permission::Permission::from_bits_truncate(v1 as u32);
+        let vestor = TaskId((v1 >> 32) as usize);
+        (PieToken(v0 as u64), permission, vestor)
+    }
+}
+
 impl FromPair for bool {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         v0 != 0

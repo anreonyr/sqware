@@ -34,32 +34,44 @@ fn parse_name(name: &str) -> EnvResult<Name> {
     Name::new(name).map_err(|_| denied())
 }
 
-/// 目录会话：入口门闩（索引 0）+ 内核预置的回信 hole（索引 1）。
+/// 目录会话：入口门闩 + 自造 reply（Accord 给目录作 per-caller 通道）。
 pub struct Directory {
     entry: HolePie,
     reply: HolePie,
+    /// reply hole 在目录侧的 token——写进请求 `[49..57]`，目录按此推回复。
+    reply_target: u64,
 }
 
 impl Directory {
-    /// 打开会话：从本任务权限表取回内核在 boot 期放下的两枚 pie。
+    /// 打开会话：从本任务权限表取回内核在 boot 期放下的目录入口门闩（索引 0），
+    /// 自造 reply hole、`Accord` 给目录、用 `from_receipt` 收进 `Channel`-ish 形态。
     ///
-    /// 约定：索引 0 = 目录入口门闩，索引 1 = 回信 hole（`boot::spawn_demos` 的
-    /// 根授予顺序）。两枚 pie 都在 boot 期间落表（此时无任务在跑），故无需等待。
+    /// **per-caller reply**：reply hole 由调用方自备；目录 `[49..57]` 字段就是
+    /// reply_target。`Collect` 顺带返 `vestor = dir_id`，直接当 `Accord` 的 dst。
     pub fn open() -> EnvResult<Directory> {
-        let (entry, _) = mail::collect(0)?;
-        let (reply, _) = mail::collect(1)?;
-        if entry == 0 || reply == 0 {
+        let (entry_tok, _entry_perm, dir_id) = mail::collect(0)?;
+        if entry_tok == 0 {
             return Err(denied());
         }
+        if dir_id.get() == 0 {
+            return Err(denied()); // 入口 pie 没标宿主（vestor=None），无法 Accord
+        }
+        // 自造 reply：unseal + accord(dir_id) + from_receipt 三步收进 Channel
+        let reply_mine = HolePie::unseal(crate::env::mail::HOLE_MTU_MAX)?;
+        let reply_target = reply_mine.accord(dir_id.get(), env::Permission::READ | env::Permission::WRITE)?;
         Ok(Directory {
-            entry: HolePie::from_token(entry),
-            reply: HolePie::from_token(reply),
+            entry: HolePie::from_token(entry_tok),
+            reply: reply_mine,
+            reply_target,
         })
     }
 
-    /// 一次往返：push 请求 → pull 回复。
+    /// 一次往返：push 请求（带 reply token）→ pull 回复。
     fn call(&self, request: &Request) -> EnvResult<Reply> {
-        self.entry.push(&request.encode())?;
+        let mut msg = request.encode();
+        msg[env::dispatch::REPLY_AT..env::dispatch::REPLY_AT + 8]
+            .copy_from_slice(&self.reply_target.to_le_bytes());
+        self.entry.push(&msg)?;
         let mut buf = [0u8; MSG_LEN];
         self.reply.pull(&mut buf)?;
         Reply::decode(&buf).map_err(|_| denied())

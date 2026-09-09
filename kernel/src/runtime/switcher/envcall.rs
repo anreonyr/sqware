@@ -716,17 +716,24 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Mail(MailCall::Collect { index }) => {
-            // 自省：报出本任务权限表第 index 份。越界 → (PieToken(0), 空权限)
-            // ——哨兵不报错，与 UnitCall::Heir 越界返 0 同风格。
+            // 自省：报出本任务权限表第 index 份（token + permission + vestor）。
+            // 越界 → token = 0、permission = 空、vestor = 0——哨兵不报错。
+            //
+            // a0 = token（u64），a1 = permission bits（低 32 位）| vestor task id（高 32 位）。
+            // vestor = None 时内核编码为 `TaskId(0)`——哨兵与原「无 vestor」语义一致，
+            // 因为 TaskId(0) 本来就是「无上下文」哨兵。
             let task = current().running_task();
-            let (token, permission) = task
+            let (token, perm_bits, vestor_id) = task
                 .and_then(|t| {
                     let pies = t.pies.lock();
-                    pies.get(index).map(|p| (p.token(), p.permission()))
+                    pies.get(index).map(|p| {
+                        let v = p.vestor().unwrap_or(0);
+                        (p.token(), p.permission().bits() as usize, v)
+                    })
                 })
-                .unwrap_or((0, Permission::empty()));
+                .unwrap_or((0, 0, 0));
             frame.gpr.set_x(Gprs::A0, token as usize);
-            frame.gpr.set_x(Gprs::A1, permission.bits() as usize);
+            frame.gpr.set_x(Gprs::A1, (vestor_id << 32) | (perm_bits & 0xffff_ffff));
         }
         EnvCall::Mail(MailCall::Release { token }) => {
             // 自释：放下自己的一份门闩（无权限要求；Pole 同步 unmap）。

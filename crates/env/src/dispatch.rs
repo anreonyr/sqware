@@ -12,11 +12,13 @@
 //!                          Enumerate：游标（全 0 = 从头开始）
 //! [33..41] entry   u64 LE  Register/Replace：入口门闩的目录侧 pie token
 //! [41..49] 保留    u64 LE  必须为 0
-//! [49..57] reply   u64 LE  **保留（v1 必须为 0）**：回信通道由内核在 boot 期
-//!                          预置（目录 → 主 client 的 hole），不随请求传递。
-//!                          per-caller 通道留待多 client（该字段即接入点）。
+//! [49..57] reply   u64 LE  调用方自带的回信 pie 的目录侧 token（0 = 无回复预期）
 //! [57..64] 保留（0）
 //! ```
+//!
+//! `Request::encode/decode` **不**碰 `[49..57]`——调用方在 encode 之后、push 之前
+//! 自己填 reply token（参考 `REPLY_AT`）。该字段不是请求字段而是「通道字段」，
+//! 与 op/name/entry 同列但语义独立。
 //!
 //! # 回复（64 字节）
 //! ```text
@@ -32,25 +34,26 @@
 //! 目录认定的调用方身份来自**内核**（boot 期把主 client 的 task id 交给目录），
 //! 或（多 client 时）来自调用方委托的回信 pie 的 `vestor`——消息体里的任何字段
 //! 都不参与身份判定，故不可伪造。
-//!
-//! # Enumerate 分页
-//!
-//! 回复只有 64 字节，装不下列表，故按名字**排序**分页：`after` 之后的第一条；
-//! `after = None` 从头开始；返 `NotFound` 即到头。
 
 use crate::wire::{PieToken, TaskId};
 
 /// 名字字段字节数（含终止 NUL）。
 pub const NAME_LEN: usize = 32;
 
-/// hole 单消息字节数（与内核 `HOLE_MSG_LEN`、用户 `HOLE_MSG_LEN` 一致）。
+/// hole 单消息字节数（与内核 `HOLE_MTU_MAX` 协商——dispatch 协议定 64B）。
 pub const MSG_LEN: usize = 64;
+
+/// per-caller reply 通道 token 在 wire 中的偏移（`[49..57]`）。
+/// 调用方在 `Request::encode()` 之后用此偏移写入 reply pie 的目录侧 token。
+pub const REPLY_AT: usize = 49;
 
 const OP_AT: usize = 0;
 const NAME_AT: usize = OP_AT + 1;
 const ENTRY_AT: usize = NAME_AT + NAME_LEN;
-/// [41..64) 全保留（v1 必须为 0；[49..57] 是未来 per-caller 回信通道的位置）。
+
+/// `[41..49]` 仍保留（必须为 0）；`[49..57]` 是 reply 通道，decode 不检；`[57..64]` 保留。
 const RESERVED_AT: usize = ENTRY_AT + 8;
+const RESERVED_END_AT: usize = REPLY_AT + 8;
 
 const REPLY_STATUS_AT: usize = 0;
 const REPLY_PAYLOAD_AT: usize = REPLY_STATUS_AT + 1;
@@ -235,7 +238,10 @@ impl Request {
         if !(1..=6).contains(&op) {
             return Err(ProtocolError::BadOp);
         }
-        if m[RESERVED_AT..].iter().any(|&b| b != 0) {
+        // [41..49] 与 [57..64] 必须为 0；[49..57] 是 reply 通道、decode 不检。
+        if m[RESERVED_AT..REPLY_AT].iter().any(|&b| b != 0)
+            || m[RESERVED_END_AT..].iter().any(|&b| b != 0)
+        {
             return Err(ProtocolError::Reserved);
         }
         let entry = PieToken(u64::from_le_bytes(
