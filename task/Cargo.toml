@@ -159,6 +159,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "task-root"
+path = "src/bin/supervisor/root/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "task-sire"
 path = "src/bin/user/sire_demo.rs"
 test = false

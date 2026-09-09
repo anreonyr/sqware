@@ -2,9 +2,9 @@
 //!
 //! 协议规范见 `docs/dispatch.md`。三条要点：
 //!
-//! 1. **内核没有目录入口调用**（class 7 已删）：内核在 boot 期把一枚 pie 放进本
-//!    任务权限表——索引 0 = 目录入口门闩——`Directory::open` 用 `Collect` 取回，
-//!    顺带拿到它的 `vestor` = 目录 task id。故无需向用户态传任何整数。
+//! 1. **内核没有目录入口调用**（class 7 已删）：root 域把一枚 pie 放进本任务权限
+//!    表——索引 0 = 目录入口门闩——`Directory::open` 用 `Collect` 取回；目录 task id
+//!    经**启动参数**告知（root 显式传，取代旧 boot 期的 `vestor` 内标）。
 //! 2. **回信通道由调用方自带**：`UnsealHole` 造自己的 hole，`Accord` 给目录，把
 //!    对端侧 token 写进请求 `[49..57]`——目录按这枚 pie 的 `vestor` 认人。
 //!    服务调用同理，token 放在消息前 8 字节（owner 由 `Connect` 回复给出）。
@@ -48,23 +48,29 @@ pub struct Directory {
 }
 
 impl Directory {
-    /// 打开会话：从本任务权限表取回内核在 boot 期放下的目录入口门闩（索引 0），
+    /// 打开会话：从本任务权限表取回 root 域放下的目录入口门闩（索引 0），
     /// 自造 reply hole、`Accord` 给目录，记下对端 token 供每条请求回填。
     ///
     /// **per-caller reply**：reply hole 由调用方自备；目录 `[49..57]` 字段就是
-    /// reply_target。`Collect` 顺带返 `vestor = dir_id`，直接当 `Accord` 的 dst。
+    /// reply_target。目录 task id 取**启动参数**（root 显式告知）——旧 boot 期的
+    /// `vestor` 内标是内核特权，用户态 `Accord` 只会把授与人写成 vestor。
     pub fn open() -> EnvResult<Directory> {
-        let (entry_tok, _entry_perm, dir_id) = mail::collect(0)?;
+        let (entry_tok, _entry_perm, vestor) = mail::collect(0)?;
         if entry_tok == 0 {
             return Err(denied());
         }
-        if dir_id.get() == 0 {
-            return Err(denied()); // 入口 pie 没标宿主（vestor=None），无法 Accord
+        let dir_id = crate::env::task::args()
+            .first()
+            .copied()
+            .filter(|v| *v != 0)
+            .unwrap_or(vestor.get());
+        if dir_id == 0 {
+            return Err(denied());
         }
         // 自造 reply：unseal + accord(dir_id)——目录侧那枚 token 即本会话的回信地址。
         let reply_mine = HolePie::unseal(crate::env::mail::HOLE_MTU_MAX)?;
         let reply_target =
-            reply_mine.accord(dir_id.get(), env::Permission::READ | env::Permission::WRITE)?;
+            reply_mine.accord(dir_id, env::Permission::READ | env::Permission::WRITE)?;
         Ok(Directory {
             entry: HolePie::from_token(entry_tok),
             reply: reply_mine,

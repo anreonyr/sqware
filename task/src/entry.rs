@@ -8,6 +8,7 @@ global_asm!(
     ".section .text._start",
     ".globl _start",
     "_start:",
+    "    call save_args", // a0/a1 = 启动参数区（Spawn 写入）——必须在任何调用前保存
     "    call tls_bootstrap",
     "    call main",
     "    call exit_trampoline", // main 返回（理论上 !，兜底）→ room::exit

@@ -201,6 +201,8 @@ pub enum GateError {
     OoM,
     /// 字节数非页对齐 / 非法。
     NotAligned,
+    /// 镜像不可装载（`Build` 的 parse / 装载任一步失败）。
+    BadImage,
 }
 
 impl GateError {
@@ -211,6 +213,7 @@ impl GateError {
             GateError::Busy => -3,
             GateError::OoM => -4,
             GateError::NotAligned => -5,
+            GateError::BadImage => -6,
         }
     }
 }

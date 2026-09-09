@@ -4,12 +4,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// initrd 承载的引导期程序（**临时机制**，见 kernel/src/initrd.rs）：
-/// (清单名, cargo bin 名, kind 码)。顺序无关——内核按名取。
-/// kind 码与 `kernel/src/initrd.rs::ProgramKind` 同码：0 = User、1 = Supervisor。
-/// 这里是**唯一**声明「程序装成哪种空间」的地方——boot 从清单里读，不再硬编码。
+/// (清单名, cargo bin 名, kind 码)。顺序无关——**清单解释权在 root 域程序**，
+/// 内核只按 `ROOT_NAME` 取引导镜像。
+/// kind 码与 `crates/env/src/fid.rs::ProgramKind` 同码：0 = User、1 = Supervisor。
+/// 这里是**唯一**声明「程序装成哪种空间」的地方——root 从清单里读，不再硬编码。
 const KIND_USER: u32 = 0;
 const KIND_SUPERVISOR: u32 = 1;
+/// 引导镜像的名字（内核按打包期偏移取它，不解析清单）。
+const ROOT_NAME: &str = "root";
 const INITRD_BINS: &[(&str, &str, u32)] = &[
+    (ROOT_NAME, "task-root", KIND_SUPERVISOR),
     ("shell", "task-shell", KIND_USER),
     ("echo", "task-echo", KIND_SUPERVISOR),
     ("dir", "task-dir", KIND_SUPERVISOR),
@@ -67,6 +71,9 @@ fn main() {
     let blob_path = main_profile.join("initrd.img");
     let mut blob: Vec<u8> = Vec::new();
     blob.extend_from_slice(&(INITRD_BINS.len() as u32).to_le_bytes());
+    // 引导镜像在 blob 内的偏移/长度（内核不解析清单，按这两个常量取 root 的 ELF）
+    let mut root_off = 0usize;
+    let mut root_len = 0usize;
     for (name, bin, kind) in INITRD_BINS {
         let elf = fs::read(bin_dir.join(bin))
             .unwrap_or_else(|e| panic!("initrd: read {bin} from {}: {e}", bin_dir.display()));
@@ -74,8 +81,15 @@ fn main() {
         blob.extend_from_slice(&(name.len() as u32).to_le_bytes());
         blob.extend_from_slice(name.as_bytes());
         blob.extend_from_slice(&(elf.len() as u32).to_le_bytes());
+        if *name == ROOT_NAME {
+            root_off = blob.len();
+            root_len = elf.len();
+        }
         blob.extend_from_slice(&elf);
     }
+    assert!(root_len > 0, "initrd: ROOT_NAME not in INITRD_BINS");
+    println!("cargo::rustc-env=ROOT_OFFSET={root_off}");
+    println!("cargo::rustc-env=ROOT_LEN={root_len}");
     fs::write(&blob_path, &blob)
         .unwrap_or_else(|e| panic!("initrd: write {}: {e}", blob_path.display()));
     println!(

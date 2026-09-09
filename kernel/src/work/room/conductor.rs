@@ -1,7 +1,7 @@
 // 系统级生命周期：跨核共享的原子状态与编排。
 //
 // 两件事：
-//   全退出停机 — PUSHED/REAPED 任务计数 + BOOT_DONE 守门；BOOT_DONE=true 且
+//   全退出停机 — PUSHED/REAPED 任务计数 + ROOTED 守门；ROOTED=true 且
 //              （PUSHED==0 或 REAPED==PUSHED）= 全部退出 → 发 SBI srst 复位；
 //              HALTING 做一次性互斥，防多核同时发复位。
 //   休眠唤醒   — WAITING 位图（bit h = hart h 正 WFI 等待）；入队后 kick
@@ -21,10 +21,10 @@ use sbi::{self, fid};
 /// 已入队（创建）任务计数（全退出检测：REAPED == PUSHED → 停机）。
 static PUSHED: AtomicUsize = AtomicUsize::new(0);
 static REAPED: AtomicUsize = AtomicUsize::new(0);
-/// Boot 装配完成标记（push 通道关门）。一旦置位，`done()` 才允许 true——
-/// 防 PUSHED 永久为 0 时被误判"全部结束"。一次性：`boot::init` 在
-/// `spawn_demos()` 返回后立即置位（之后不再有 spawn）。
-static BOOT_DONE: AtomicBool = AtomicBool::new(false);
+/// 根服务已产生标记（root 域已 spawn）。一旦置位，`done()` 才允许 true——
+/// 防 PUSHED 永久为 0 时被误判"全部结束"。一次性：`boot::init` 装出 root 之后
+/// 立即置位（此后所有任务都挂在 root 的 heir 树下，root 退出即 doom 级联）。
+static ROOTED: AtomicBool = AtomicBool::new(false);
 /// 停机互斥：第一个触发 srst 的核胜出，其余 wfi（避免双 srst）。
 static HALTING: AtomicBool = AtomicBool::new(false);
 /// 已到达 halt 的核数 — 关机屏障：胜出核须等**全部**核到达后再断言帧基线。
@@ -43,8 +43,11 @@ static YELL_CURSOR: AtomicUsize = AtomicUsize::new(0);
 /// WAITING 位图字数：每字 64 位（= 协议单次 IPI 掩码窗口）。
 const WAITING_WORDS: usize = crate::machine::MAX_HART_SLOTS / usize::BITS as usize;
 
-/// 任务入队计数 +1（PUSHED）。Relaxed 够用：计数只用于相等比较，且自增发生在持调度锁时。
-pub(super) fn push() {
+/// 任务**产生**计数 +1（PUSHED）。Relaxed 够用：计数只用于相等比较。
+///
+/// 挂在产生处（`TaskBuilder::hold`）而非入队处——`Held` 线程被父域 kill 时
+/// `REAPED` 与 `PUSHED` 仍配平（否则 `done()` 恒假，系统永不停机）。
+pub(crate) fn push() {
     PUSHED.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -58,20 +61,20 @@ pub(super) fn exit() {
 /// 守门 `BOOT_DONE == true`（防 boot 早期 PUSHED==0 误判"全部结束"——
 /// 当时 PUSHED 尚未增长就被 read，会永久返 false → 无任务场景无法停机）。
 ///
-/// 守门后：`PUSHED == 0`（boot 没 spawn，过期 PUSHED==0 仍可停机）或
+/// 守门后：`PUSHED == 0`（boot 没装出 root，过期 PUSHED==0 仍可停机）或
 /// `REAPED == PUSHED`（全部回收）。
 pub(super) fn done() -> bool {
-    if !BOOT_DONE.load(Ordering::Acquire) {
+    if !ROOTED.load(Ordering::Acquire) {
         return false;
     }
     let pushed = PUSHED.load(Ordering::Relaxed);
     pushed == 0 || REAPED.load(Ordering::Relaxed) == pushed
 }
 
-/// 标记 boot 装配完成（push 通道关门）。由 `boot::init` 在 `spawn_demos()`
-/// 返回后立即置位（一次性）。守门 `done()` 必须见位才认 true。
-pub(crate) fn boot_done() {
-    BOOT_DONE.store(true, Ordering::Release);
+/// 标记根服务已产生（一次性）。由 `boot::init` 在装出 root 之后立即置位；
+/// 守门 `done()` 必须见位才认 true。
+pub(crate) fn rooted() {
+    ROOTED.store(true, Ordering::Release);
 }
 
 /// 全部任务已退出：显式停机（srst；AtomicBool 防双核同时触发——后到者 wfi）。

@@ -45,18 +45,23 @@ unsafe extern "C" {
 /// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
 pub type MapResult<T> = erra::Result<T, MapError>;
 
-/// 拼装一条 ELF 成独立团队（parse → SpaceBuilder → loader::load →
-/// TeamBuilder::spawn）。`kind` 决定页表特权级与 U 位：`User` 出 U 态团队，
-/// `Supervisor` 出 S 态 supervisor 域。
+/// 装域（`Build` 的唯一核心入口）：parse → SpaceBuilder → loader::load →
+/// TeamBuilder::spawn。产**域**（Space + Team），**不产线程**——线程由 `spawn`
+/// 单独产（`Held`），授权后 `Hatch` 放行。
 ///
-/// 只做「字节 → 域」的纯装载，不建 task、不挂 heir、不做强持有——那些是
-/// 各自调用方的责任（boot 立即产 task）。`sire` 构造期定型进 Team
-/// （boot 顶级域传空 Weak）。
-pub(crate) fn assemble(
-    elf: &'static [u8],
-    sire: Weak<task::Task>,
+/// `kind` 决定页表特权级与 U 位：`User` 出 U 态团队，`Supervisor` 出 S 态域。
+/// `sire` 在 `TeamBuilder::spawn` 里闭合血缘（非空 ⇒ 立即入 sire.heir）。
+/// `name` 是域名字（程序身份，诊断用）；`default_entry` 由装载所得 `e_entry` 写入。
+///
+/// # Errors
+///
+/// parse / SpaceBuilder / loader 任一步失败 → [`team::UnitError::Load`]（原子不落）。
+pub(crate) fn build(
+    elf: &[u8],
     kind: space::SpaceKind,
-) -> Result<(Arc<team::Team>, VirtAddr), team::UnitError> {
+    name: env::Name,
+    sire: Weak<task::Task>,
+) -> Result<Arc<team::Team>, team::UnitError> {
     let parsed = parser::parse(elf).map_err(|_| team::UnitError::Load)?;
     let builder = match kind {
         space::SpaceKind::Supervisor => SpaceBuilder::supervisor(),
@@ -64,8 +69,13 @@ pub(crate) fn assemble(
     };
     let space = builder.build().map_err(|_| team::UnitError::Load)?;
     let loaded = loader::load(space, elf, &parsed).map_err(|_| team::UnitError::Load)?;
-    let team = team::TeamBuilder::new(loaded.space).sire(sire).spawn();
-    Ok((team, loaded.entry))
+    let entry = loaded.entry;
+    let team = team::TeamBuilder::new(loaded.space)
+        .sire(sire)
+        .name(name)
+        .spawn();
+    team.set_default_entry(entry.as_usize());
+    Ok(team)
 }
 
 /// 初始化 MMU：**先探测 satp 模式**（P1：最小恒等临时根，候选 57→48→39），

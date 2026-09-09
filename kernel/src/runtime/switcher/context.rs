@@ -110,10 +110,12 @@ pub struct TrapContext {
 
 impl TrapContext {
     /// 初始化为新任务入口上下文：内核切换元数据自 per-hart 帧模板拷入；
-    /// 用户上下文 = 入口/栈顶/a0。SPP 与 user_satp 均自团队空间派生——任务模式 =
+    /// 用户上下文 = 入口/栈顶/启动参数。SPP 与 user_satp 均自团队空间派生——任务模式 =
     /// 空间 kind（单一事实源），satp 位布局（模式|asid|root）为帧初始化职责，调用方
     /// 不必知道。SPIE=1（sret 后 SIE=1，可被抢占）。kernel_sp 不在此写——`prepare`
     /// 对每次上台无条件重写（含 steal 迁移）。
+    ///
+    /// `args` = (args 区 VA, 字数)：写 a0/a1，供 `_start` 保存（`env::task::args`）。
     ///
     /// # Safety
     /// 调用方须持有对 `self` 所指帧的唯一可写引用（新任务帧未发布、S-only 映射）。
@@ -124,7 +126,7 @@ impl TrapContext {
         team: &Team,
         entry: VirtAddr,
         stack_top: VirtAddr,
-        arg: usize,
+        args: (VirtAddr, usize),
         pa: PhysAddr,
         self_va: VirtAddr,
     ) {
@@ -142,7 +144,8 @@ impl TrapContext {
         self.self_va = self_va;
         self.sepc = entry;
         self.gpr.set_x(Gprs::SP, stack_top.as_usize());
-        self.gpr.set_x(Gprs::A0, arg);
+        self.gpr.set_x(Gprs::A0, args.0.as_usize());
+        self.gpr.set_x(Gprs::A1, args.1);
         // 全零起步：不继承内核当前 sstatus 的 FS/XS 等位（`__restore` 整字 csrw）。
         let mut ss = sstatus::Sstatus::from_bits(0);
         ss.set_spie(true);

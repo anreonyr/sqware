@@ -37,12 +37,18 @@ extern "C" fn main() -> ! {
     }
     let entry = HolePie::from_token(entry_tok);
 
-    // 2. 目录入口门闩 + 目录 task id（boot 预置在权限表索引 1）。
-    let (dir_entry_tok, _dir_perm, dir_id) = match mail::collect(1) {
+    // 2. 目录入口门闩 + 目录 task id（root 授予；task id 经启动参数告知——
+    //    用户态 Accord 只会把**授与人**写成 vestor，故不能再靠它认目录）。
+    let (dir_entry_tok, _dir_perm, vestor) = match mail::collect(1) {
         Ok(v) => v,
         Err(_) => task::env::control::panic(3),
     };
-    if dir_entry_tok == 0 || dir_id.get() == 0 {
+    let dir_id = task::env::task::args()
+        .first()
+        .copied()
+        .filter(|v| *v != 0)
+        .unwrap_or(vestor.get());
+    if dir_entry_tok == 0 || dir_id == 0 {
         task::env::control::panic(4);
     }
     let dir_entry = HolePie::from_token(dir_entry_tok);
@@ -51,7 +57,7 @@ extern "C" fn main() -> ! {
     //    然后 take_entry(me, token) 摘出。subset = R|W|VEST：**必须带 VEST**，
     //    后续 Connect 时目录要把这个 entry 再转授给 shell。
     let entry_target = match entry.accord(
-        dir_id.get(),
+        dir_id,
         Permission::READ | Permission::WRITE | Permission::VEST,
     ) {
         Ok(t) => t,
@@ -63,7 +69,7 @@ extern "C" fn main() -> ! {
         Ok(p) => p,
         Err(_) => task::env::control::panic(6),
     };
-    let reply_target = match reply_mine.accord(dir_id.get(), Permission::READ | Permission::WRITE) {
+    let reply_target = match reply_mine.accord(dir_id, Permission::READ | Permission::WRITE) {
         Ok(t) => t,
         Err(_) => task::env::control::panic(7),
     };

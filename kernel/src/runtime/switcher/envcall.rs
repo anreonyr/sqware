@@ -16,9 +16,11 @@
 use core::time::Duration;
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use env::{
-    ChronoCall, ControlCall, EnvCall, HoleDir, IOCall, MailCall, MemoryCall, RoomCall, UnitCall,
+    ChronoCall, ControlCall, EnvCall, HoleDir, IOCall, MailCall, MemoryCall, Name, RoomCall,
+    UnitCall,
 };
 
 use crate::memory::PAGE_SIZE;
@@ -32,11 +34,14 @@ use crate::work::mail;
 use crate::work::room::messenger::WaitKey;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::trap::run;
-use crate::work::room::scheduler::utask::{park, reap, starve, wait, wake};
+use crate::work::room::scheduler::utask::{self, JoinStep, park, reap, starve, wait, wake};
 use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie};
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
-use crate::work::unit::space::{Pending, PendingState, Space};
-use crate::work::unit::task::TaskIdent;
+use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
+use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent};
+
+/// 单次 `Build` 的镜像字节上限（8 MiB）：防止一次调用把内核暂存撑爆。
+const MAX_IMAGE: usize = 8 * 1024 * 1024;
 
 /// Permission 子集 → PteFlags（cap ⊆ 页表的翻译：subset 决定页表实际权限）。
 ///
@@ -78,6 +83,66 @@ fn instr_len(space: &Space, sepc: KVirt) -> usize {
         .map(|(pa, _)| unsafe { core::ptr::read_volatile(pa.as_usize() as *const u8) })
         .unwrap_or(0b11);
     if b0 & 0b11 == 0b11 { 4 } else { 2 }
+}
+
+/// 映射错误 → 负码（`Spawn` 的栈/帧分配失败）。
+fn map_err(e: crate::memory::manager::MapError) -> GateError {
+    match e {
+        crate::memory::manager::MapError::OutOfMemory => GateError::OoM,
+        _ => GateError::Denied,
+    }
+}
+
+/// 从调用方空间读一段字节（逐页翻译后拷贝；跨页安全）。
+///
+/// 返回 None = 长度非法 / 区间未映射（调用方按 `Denied` 处理）。一次拷进内核
+/// 暂存：`Build` 的镜像与 `Spawn` 的启动参数都走这里——镜像字节只活到装载完成。
+fn copy_in(space: &Space, va: KVirt, len: usize, cap: usize) -> Option<Vec<u8>> {
+    if len == 0 || len > cap {
+        return None;
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut done = 0usize;
+    while done < len {
+        let at = KVirt::from_raw(va.as_usize() + done);
+        let (pa, _) = space.translate(at)?;
+        let page_rest = PAGE_SIZE - (at.as_usize() % PAGE_SIZE);
+        let n = core::cmp::min(len - done, page_rest);
+        let src = pa.as_usize() as *const u8;
+        for i in 0..n {
+            // SAFETY: 区间已在调用方空间翻译成帧；恒等映射下 PA 可读。
+            out.push(unsafe { core::ptr::read_volatile(src.add(i)) });
+        }
+        done += n;
+    }
+    Some(out)
+}
+
+/// 读调用方空间里的 `count` 个字（`Spawn` 的启动参数）。
+fn copy_words(space: &Space, va: KVirt, count: usize) -> Option<Vec<usize>> {
+    if count == 0 {
+        return Some(Vec::new());
+    }
+    if count > MAX_ARGS {
+        return None;
+    }
+    let width = size_of::<usize>();
+    let bytes = copy_in(space, va, count * width, MAX_ARGS * width)?;
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let mut w = [0u8; size_of::<usize>()];
+        w.copy_from_slice(&bytes[i * width..(i + 1) * width]);
+        out.push(usize::from_le_bytes(w));
+    }
+    Some(out)
+}
+
+/// 读调用方空间里的域名字（`Build` 的 name/name_len）→ 校验过的 [`Name`]。
+fn read_name(space: &Space, va: KVirt, len: usize) -> Option<Name> {
+    let bytes = copy_in(space, va, len, env::NAME_LEN - 1)?;
+    core::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|s| Name::new(s).ok())
 }
 
 /// envcall 分发。
@@ -200,21 +265,46 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        EnvCall::Unit(UnitCall::Spawn { entry, arg, stack }) => {
-            let entry = KVirt::from_raw(entry);
-            let team = ident.team.clone();
-            let mut builder = team.task().name("u-thread").entry(entry).arg(arg);
+        EnvCall::Unit(UnitCall::Spawn {
+            team,
+            entry,
+            args,
+            count,
+            stack,
+        }) => {
+            // 目标域：TeamId(0) = 当前域；否则必须在我 heir 里（查到 = 我是 sire）
+            let target = if team.get() == 0 {
+                ident.team.clone()
+            } else {
+                match current().running_task().and_then(|me| me.heir(team)) {
+                    Some(t) => t,
+                    None => return ret_err(frame, GateError::Denied),
+                }
+            };
+            // 启动参数：从调用方空间拷（count == 0 → 空）
+            let words = match copy_words(&ident.team.space, KVirt::from_raw(args.get()), count) {
+                Some(w) => w,
+                None => return ret_err(frame, GateError::Denied),
+            };
+            // entry = 0 → 域默认入口（`Build` 装载所得 e_entry）
+            let entry_va = if entry == 0 {
+                target.default_entry()
+            } else {
+                entry
+            };
+            let mut builder = target
+                .task()
+                .name("u-thread")
+                .entry(KVirt::from_raw(entry_va))
+                .args(words);
             if stack > 0 {
                 builder = builder.stack(stack);
             }
-            let r = builder.spawn();
-            frame.gpr.set_x(
-                Gprs::A0,
-                match r {
-                    Ok(id) => id,
-                    Err(_) => usize::MAX,
-                },
-            );
+            // 恒产 Held：授权顺序由父方 `Accord` → `Hatch` 保证
+            match builder.hold() {
+                Ok(t) => frame.gpr.set_x(Gprs::A0, t.ident.id),
+                Err(e) => return ret_err(frame, map_err(e)),
+            }
         }
         EnvCall::Unit(UnitCall::SelfId) => {
             let id = current().running_task().map(|t| t.ident.id).unwrap_or(0);
@@ -245,38 +335,85 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 .unwrap_or(0);
             frame.gpr.set_x(Gprs::A0, id);
         }
-        EnvCall::Unit(UnitCall::SpawnTask { team, entry, arg }) => {
-            // 在指定 team 下建线程（域内产 task）。授权：team 必须是当前 task 的
-            // heir（查到 = 我是 sire）；否则 Denied。
-            let me = current()
+        EnvCall::Unit(UnitCall::Build {
+            elf,
+            len,
+            kind,
+            name,
+            name_len,
+        }) => {
+            // 权限：S 态域专属（U 态建域一律拒——v1 无门控位）
+            if !ident.team.space.kind().is_supervisor() {
+                return ret_err(frame, GateError::Denied);
+            }
+            let name = match read_name(&ident.team.space, KVirt::from_raw(name.get()), name_len) {
+                Some(n) => n,
+                None => return ret_err(frame, GateError::Denied),
+            };
+            // 镜像：一次拷进内核暂存（字节只活到装载完成）
+            let bytes = match copy_in(
+                &ident.team.space,
+                KVirt::from_raw(elf.get()),
+                len,
+                MAX_IMAGE,
+            ) {
+                Some(b) => b,
+                None => return ret_err(frame, GateError::Denied),
+            };
+            // sire = 调用方：`build` 内部闭合血缘（域必入我 heir）
+            let sire = current()
                 .running_task()
-                .unwrap_or_else(|| unreachable!("spawn_task without running task"));
-            let team_arc = match me.heir(team) {
+                .map(|me| Arc::downgrade(&me))
+                .unwrap_or_default();
+            match crate::work::unit::build(&bytes, SpaceKind::from(kind), name, sire) {
+                Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
+                Err(_) => return ret_err(frame, GateError::BadImage),
+            }
+        }
+        EnvCall::Unit(UnitCall::Hatch { task }) => {
+            let target = match crate::work::room::scheduler::core::lookup_task_by_id(task.get()) {
                 Some(t) => t,
-                None => {
-                    frame.gpr.set_x(Gprs::A0, usize::MAX);
-                    return frame as *mut TrapContext;
-                }
+                None => return ret_err(frame, GateError::Denied),
             };
-            // entry=0 用域默认入口（装载 ELF 的 e_entry）；否则用户指定。
-            let entry = if entry == 0 {
-                team_arc.default_entry()
+            // 授权：与我同域，或属于我 heir 里的子域
+            let same = Arc::ptr_eq(&target.ident.team, &ident.team);
+            let mine = current()
+                .running_task()
+                .map(|me| me.heir(target.ident.team.id).is_some())
+                .unwrap_or(false);
+            if !(same || mine) {
+                return ret_err(frame, GateError::Denied);
+            }
+            if let Err(e) = Task::release(&target) {
+                return ret_err(frame, e);
+            }
+        }
+        EnvCall::Unit(UnitCall::Join { task, millis }) => {
+            let dur = if millis == usize::MAX {
+                Duration::MAX
             } else {
-                entry
+                Duration::from_millis(millis as u64)
             };
-            let r = team_arc
-                .task()
-                .name("u-thread")
-                .entry(KVirt::from_raw(entry))
-                .arg(arg)
-                .spawn();
-            frame.gpr.set_x(
-                Gprs::A0,
-                match r {
-                    Ok(id) => id,
-                    Err(_) => usize::MAX,
-                },
-            );
+            // 授权：活目标须与我同域或在我 heir 里；已回收目标无从核对（返回 Dead）
+            if let Some(t) = crate::work::room::scheduler::core::lookup_task_by_id(task.get()) {
+                let same = Arc::ptr_eq(&t.ident.team, &ident.team);
+                let mine = current()
+                    .running_task()
+                    .map(|me| me.heir(t.ident.team.id).is_some())
+                    .unwrap_or(false);
+                if !(same || mine) {
+                    return ret_err(frame, GateError::Denied);
+                }
+            }
+            // 挂起后恢复读到的 a0 = 挂起前预置值 ⇒ 预置 0（未回收）；当场判定再改写
+            frame.gpr.set_x(Gprs::A0, 0);
+            drop(ident);
+            match utask::join(task.get(), dur) {
+                Ok(JoinStep::Dead) => frame.gpr.set_x(Gprs::A0, 1),
+                Ok(JoinStep::Alive) => {}
+                Ok(JoinStep::Switched(pa)) => return pa as *mut TrapContext,
+                Err(e) => return ret_err(frame, e),
+            }
         }
         EnvCall::Control(ControlCall::Panic { code }) => {
             panic!("user-initiated panic (code {code:#x})");

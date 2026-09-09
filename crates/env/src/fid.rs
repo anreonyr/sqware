@@ -46,19 +46,38 @@ pub enum RoomCall {
     Wake { key: usize },
 }
 
-/// 执行单元调用（class 1）—— unit 域：team（域）与 task（线程）两个建单元操作。
+/// 程序装成的空间（`Build` 的特权级参数）：S 态页表 / U 态页表。
+///
+/// 它是**内核打包表的产物**，不是程序自述：`build.rs::INITRD_BINS` 决定，root 服务
+/// 读取清单后原样转交（见 `docs/supervisor.md` §13、`docs/root.md`）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProgramKind {
+    /// U 态页表（页带 U 位）。
+    User,
+    /// S 态域（页不带 U 位，S 态 SUM=0）。
+    Supervisor,
+}
+
+/// 执行单元调用（class 1）—— unit 域：`Build`（装域）/ `Spawn`（产线程）/ `Hatch`
+/// （放行）/ `Join`（等结束），外加血缘观察（`Sire`/`HeirCount`/`Heir`）。
+///
+/// **index 5 是空号**（原 `SpawnTask` 已并入 `Spawn`）——保留不复用；index 是声明
+/// 顺序判别号，见文件头。
 #[derive(Envcall)]
 #[call(class = 1)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnitCall {
-    /// 建用户任务（在**当前** team 里产线程）：entry VA，arg，stack（0 = 缺省）。
+    /// 产线程（**Held**，未放行）：`team`（`TeamId(0)` = 当前域）+ `entry`（0 = 域默认
+    /// 入口）+ `args`/`count`（父方空间里的标量参数，内核拷到新任务栈顶；子方
+    /// `a0 = args VA`、`a1 = count`）+ `stack`（0 = 默认栈）。
     ///
-    /// `arg` 是父任务给子任务的**第一个字**：写入新任务 a0，用户运行时在 `_start`
-    /// 保存为引导参数（`task::env::task::arg`）。它是提示，不是通道——多值走权限表。
+    /// 产出的线程**一定不会先于 `Hatch` 运行**——父方可以先 `Accord` 再放行。
     #[ret(TaskId)]
     Spawn {
+        team: TeamId,
         entry: usize,
-        arg: usize,
+        args: VirtAddr,
+        count: usize,
         stack: usize,
     },
     /// 取当前 task id（无参 → 0 = 无上下文）。
@@ -73,13 +92,28 @@ pub enum UnitCall {
     /// 按索引取子域 TeamId（heir 枚举的 second pass；越界 → 0）。
     #[ret(TeamId)]
     Heir { index: usize },
-    /// 在给定 team 下建线程（域内产 task）：team + entry + arg → TaskId。
-    #[ret(TaskId)]
-    SpawnTask {
-        team: TeamId,
-        entry: usize,
-        arg: usize,
+    // index 5：原 SpawnTask —— 空号，不复用。
+    /// 装域：镜像字节区间 + 特权级 + 名字 → 新域（Space + Team，**无线程**）。
+    ///
+    /// 权限：调用方须为 S 态。名字 ≤ 31 字节（`Name` 的定长上限）。
+    #[ret(TeamId)]
+    Build {
+        elf: VirtAddr,
+        len: usize,
+        kind: ProgramKind,
+        name: VirtAddr,
+        name_len: usize,
     },
+    /// 放行：`Held → Starved`。放行只发生一次——重复调用返回 `-1 Denied`。
+    #[ret(())]
+    Hatch { task: TaskId },
+    /// 等目标回收：`millis`（0 = 只探测，`usize::MAX` = 永久）。
+    ///
+    /// `true` = **调用开始时**目标已回收（未挂起）；`false` = 未回收（可能挂起过）。
+    /// 调用模式（与 `MailCall::Wait` 同款）：
+    /// `loop { if Join{task,0} { break } Join{task,MAX} }`。
+    #[ret(bool)]
+    Join { task: TaskId, millis: usize },
 }
 
 /// 内存调用（class 2；trace 事件名 `MemoryEvent` 同词）。

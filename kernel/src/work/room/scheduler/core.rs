@@ -260,6 +260,7 @@ impl Scheduler {
         let last = Arc::new(LastIdent {
             id: ident.id,
             name: ident.name,
+            team: ident.team.name(),
         });
         let prev = self.info.swap(
             (Arc::into_raw(last) as usize | LAST_TAG) as *mut (),
@@ -585,11 +586,13 @@ pub enum Current {
     Last(Arc<LastIdent>),
 }
 
-/// 末次身份记录：降级时从 TaskIdent 复制（id/name），**不含 team/space/trap**——
-/// 团队 Arc 借此归零即回收整个地址空间。
+/// 末次身份记录：降级时从 TaskIdent 复制（id / 角色名 / **域名字**），
+/// **不含 team/space/trap**——团队 Arc 借此归零即回收整个地址空间。
 pub struct LastIdent {
     pub(crate) id: usize,
     pub(crate) name: &'static str,
+    /// 域名字（程序身份；内联定长，故仍不持 Team）。
+    pub(crate) team: env::Name,
 }
 
 impl Current {
@@ -604,6 +607,14 @@ impl Current {
         match self {
             Current::Live(t) => t.name,
             Current::Last(l) => l.name,
+        }
+    }
+
+    /// 域名字（程序身份；诊断用）。
+    pub fn team_name(&self) -> env::Name {
+        match self {
+            Current::Live(t) => t.team.name(),
+            Current::Last(l) => l.team,
         }
     }
 

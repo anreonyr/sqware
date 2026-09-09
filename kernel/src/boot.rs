@@ -118,13 +118,13 @@ pub fn init() -> ! {
     // fail-fast（panic → crash scene）。
     crate::health::run();
 
-    spawn_demos().expect("boot spawn failed");
+    spawn_root().expect("boot spawn failed");
 
-    // boot 装配收尾（push 通道关门）：标记 `BOOT_DONE` 让 `done()` 守门放
-    // 行——防 PUSHED==0（0 任务）永久误判为"全部结束"，系统永远停不了机。
-    // **必须在 HSM 拉起副核之前**——副核从 idle() 进 run()/wait() 读 done()
-    // 时见到 true，则 PUSHED==0 立即 halt；否则一直 WFI 等不会到达的 IPI。
-    crate::work::room::conductor::boot_done();
+    // 根服务已产生：标记 `ROOTED` 让 `done()` 守门放行——防 PUSHED==0 永久误判为
+    // "全部结束"（此刻其实还没有任何任务）。**必须在 HSM 拉起副核之前**——副核从
+    // idle() 进 run()/wait() 读 done() 时见到 true，则 PUSHED==0 立即 halt；
+    // 否则一直 WFI 等不会到达的 IPI。
+    crate::work::room::conductor::rooted();
 
     // 完整性审计（audit feature，debug 恒开）：三源交叉核对 + 类别计数 sanity
     // （类别记账替代旧 boot 基线快照——见 fence/audit 模块头）。
@@ -173,131 +173,60 @@ fn register_runtime_hooks() {
     conductor::register_shutdown_hooks(SHUTDOWN_HOOKS);
 }
 
-/// 清单 kind → 空间 kind：映射放适配层（`initrd` 是引导供给层，不反向依赖 `work::unit`）。
-impl From<crate::initrd::ProgramKind> for crate::work::unit::space::SpaceKind {
-    fn from(k: crate::initrd::ProgramKind) -> Self {
-        match k {
-            crate::initrd::ProgramKind::User => Self::User,
-            crate::initrd::ProgramKind::Supervisor => Self::Supervisor,
-        }
-    }
-}
-
-/// 生成全部启动任务：initrd 小清单按名取程序（见 [`crate::initrd`]）——shell 装成
-/// U 态团队，echo 装成 supervisor 域（S 态页表 + 独立 ASID）。错误统一 `?` 上抛。
-fn spawn_demos() -> Result<(), MapError> {
-    use crate::work::mail::hole;
-    use crate::work::unit::gate::{self, AnyPie, Permission};
-
-    // 读 initrd 字节来源（QEMU `-initrd` 经 `/chosen` 暴露；无配置 → 无程序）。
-    // initrd 区恒等映射（=物理地址），直接按其物理基址读。
-    let blob: &'static [u8] = match machine::info().initrd {
-        Some(r) => unsafe { core::slice::from_raw_parts(r.base as *const u8, r.size) },
-        None => &[],
-    };
-    if blob.is_empty() {
+/// 装出根服务域（**boot 的唯一 spawn**）：按打包期常量取 root 镜像 → `Build` 成
+/// S 态域 → 把 initrd 区只读映射进它的空间（root 自己解析清单）→ 产并放行引导线程。
+///
+/// 之后所有任务都由 root 产生（`Build`/`Spawn`/`Hatch`）；系统在全部任务回收后
+/// 自然停机（`conductor::done`）。清单的**解释权在 root**——内核不含清单格式。
+fn spawn_root() -> Result<(), MapError> {
+    let Some(region) = machine::info().initrd else {
         return Ok(());
-    }
-    let programs = crate::initrd::programs(blob).expect("initrd: malformed manifest");
+    };
+    // initrd 区恒等映射（=物理地址），直接按其物理基址读。
+    let blob: &'static [u8] =
+        unsafe { core::slice::from_raw_parts(region.base as *const u8, region.size) };
+    let elf = crate::initrd::root_image(blob).expect("initrd: root image missing");
 
-    // 三个引导域：shell（U 态页表）、echo（S 态 supervisor 服务）、dir（S 态 supervisor
-    // 目录）。装成哪种空间由清单携带（`ProgramKind`）——boot 不再硬编码特权级。
-    let shell = crate::initrd::take(&programs, "shell");
-    let (shell_team, shell_entry) =
-        crate::work::unit::assemble(shell.elf, alloc::sync::Weak::new(), shell.kind.into())
-            .expect("assemble shell elf");
-    let echo = crate::initrd::take(&programs, "echo");
-    let (echo_team, echo_entry) =
-        crate::work::unit::assemble(echo.elf, alloc::sync::Weak::new(), echo.kind.into())
-            .expect("assemble echo elf");
-    let dir = crate::initrd::take(&programs, "dir");
-    let (dir_team, dir_start) =
-        crate::work::unit::assemble(dir.elf, alloc::sync::Weak::new(), dir.kind.into())
-            .expect("assemble dir elf");
+    let name = env::Name::new("root").expect("root name");
+    let team = crate::work::unit::build(
+        elf,
+        crate::work::unit::space::SpaceKind::Supervisor,
+        name,
+        alloc::sync::Weak::new(),
+    )
+    .expect("assemble root elf");
 
-    // 目录请求 hole：boot 是根授予的源头。它没有 envcall 入口（class 7 已删除）：
-    // boot 给目录自己一枚门闩（索引 0）、给每个 caller 一枚副本（vestor = dir_id，
-    // 让 `Collect` 顺带拿到目录 task id）。mtu=64 与 dispatch MSG_LEN 一致。
-    let (dreq, dreq_id) = hole::meta(64).map_err(|_| MapError::OutOfMemory)?;
-
-    // echo 入口 hole：域侧一枚（pull 请求）+ 一枚 ungranted 派生（域主自己 Accord
-    // 给目录用于 Register 时再 grant——见 `bin/supervisor/echo.rs`）。
-    let (eentry, eentry_id) = hole::meta(64).map_err(|_| MapError::OutOfMemory)?;
-
-    // 先 spawn 三个域（caller 的目录入口门闩 vestor 要用目录的 task id）。
-    let shell_id = shell_team.task().name("shell").entry(shell_entry).spawn()?;
-    // echo 域任务：跑在 supervisor 空间上（SPP=1、独立 ASID）。
-    let echo_id = echo_team
-        .task()
-        .name("echo-svc")
-        .entry(echo_entry)
+    // 清单视图：在 root 的用户段里**登记**一段 VA（lowest first-fit，紧接镜像），
+    // 把 initrd 区（持久保留区，帧分配器永不动它）只读借用映射进去。VA 与长度
+    // 经启动参数告知 root——内核不含清单格式。
+    let view_size = region.size.next_multiple_of(PAGE_SIZE);
+    let view = team.space.with_flush(
+        |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
+            let va = inner.allocate(crate::work::unit::space::Seg::User, view_size)?;
+            inner.borrow(
+                va,
+                crate::memory::manager::addr::PhysAddr::from_raw(region.base),
+                view_size,
+                crate::memory::manager::entry::PteFlags::V
+                    | crate::memory::manager::entry::PteFlags::R
+                    | crate::memory::manager::entry::PteFlags::A
+                    | crate::memory::manager::entry::PteFlags::D,
+            )?;
+            Ok(va)
+        },
+    )?;
+    // 引导线程：args = [清单视图 VA, 清单字节数]；boot 立即放行。
+    team.task()
+        .name("bootstrap")
+        .args(vec![view.as_usize(), region.size])
         .spawn()?;
-    // 目录域任务：与 echo 同款 S 态域——目录是**普通 Service**，内核不替它做任何事。
-    let dir_id = dir_team.task().name("dir-svc").entry(dir_start).spawn()?;
-
-    // 根授予（boot 期无任务在跑，副核未拉起、hart 0 未进调度，故无竞态）：
-    //   dir   权限表 [0] 自己的请求门闩；
-    //   shell 权限表 [0] 目录入口门闩（**不再预置回信 pie**——shell 自造 reply、Accord 给目录）；
-    //   echo  权限表 [0] 自己的入口门闩（pull 请求用）、[1] 目录入口门闩（Register 用）。
-    // 目录认定的 caller 不再是 boot 期定死的那一个：每请求取「回信 pie 的 vestor」
-    // （内核在 Accord 时赋值，消息体伪造不了）——见 `bin/supervisor/dir.rs`。
-    let dir_self = gate::new_pie(
-        dreq_id,
-        Permission::READ | Permission::WRITE,
-        None, // 原始自持：目录自己的请求门闩，不经 Accord
-        alloc::sync::Arc::downgrade(&dreq),
-    );
-    let dir_entry_for_callers = gate::new_pie(
-        dreq_id,
-        Permission::READ | Permission::WRITE,
-        Some(dir_id), // ← vestor = dir_id：让 Collect 拿得到
-        alloc::sync::Arc::downgrade(&dreq),
-    );
-    {
-        let dir_task = task_by_id(dir_id);
-        dir_task.pies.lock().push(AnyPie::Hole(dir_self));
-    }
-    {
-        let shell = task_by_id(shell_id);
-        shell
-            .pies
-            .lock()
-            .push(AnyPie::Hole(dir_entry_for_callers.clone()));
-    }
-    {
-        // echo 入口门闩：原始自持（vestor = None）——域主自己持有「原始」副本，
-        // 后续 Accord 给目录用同一资源。**带 VEST**：echo 必须能把自己的 entry
-        // 副本转交给目录，目录据此把它记进绑定表。
-        let mine = gate::new_pie(
-            eentry_id,
-            Permission::READ | Permission::WRITE | Permission::VEST,
-            None,
-            alloc::sync::Arc::downgrade(&eentry),
-        );
-        let echo = task_by_id(echo_id);
-        let mut pies = echo.pies.lock();
-        pies.push(AnyPie::Hole(mine));
-        pies.push(AnyPie::Hole(dir_entry_for_callers));
-    }
-
     #[cfg(feature = "audit")]
-    shell_team.space.audit();
-    #[cfg(feature = "audit")]
-    echo_team.space.audit();
-    #[cfg(feature = "audit")]
-    dir_team.space.audit();
+    team.space.audit();
 
     #[cfg(feature = "audit")]
     kernel().expect("kernel team not initialized").space.audit();
 
     Ok(())
-}
-
-/// 按 task id 取强引用（boot 期任务已登记，取不到即引导错误）。
-fn task_by_id(id: usize) -> alloc::sync::Arc<crate::work::unit::task::Task> {
-    crate::work::room::scheduler::core::lookup_task_by_id_weak(id)
-        .and_then(|w| w.upgrade())
-        .expect("boot task registered")
 }
 
 /// boot 启动：HSM `hart_start` 逐个拉起 hart 1..count-1。

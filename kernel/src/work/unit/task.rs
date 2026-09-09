@@ -2,6 +2,10 @@
 //
 // Task = 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
 // TaskBuilder 在团队容器内生成任务：栈 + trap 帧 + 填帧 + 入队。
+//
+// **两段式构造**（D3=B 的顺序要求）：`hold` 产 `Held`（未放行、已入簿记与计数），
+// `spawn` = `hold` + 立即放行。跨域产线程必须走 `hold`，父方 `Accord` 之后再
+// `Hatch`——新线程的权限表起步为空，「先授权、后运行」是安全的一侧。
 
 use alloc::alloc::Allocator;
 use alloc::boxed::Box;
@@ -14,8 +18,10 @@ use crate::lock::SpinLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
+use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
-use crate::work::unit::gate::AnyPie;
+use crate::work::room::conductor;
+use crate::work::unit::gate::{AnyPie, GateError};
 
 use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
@@ -28,6 +34,17 @@ use env::TeamId;
 /// `sire()` 等以 0 表「无上下文 / 无父」，真实 task id 恒 ≥ 1，哨兵无歧义。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
+/// 启动参数上限（字）。栈顶 args 区 ≤ 512 B；超出由适配层拒（`-1 Denied`）。
+pub(crate) const MAX_ARGS: usize = 64;
+
+/// 该 task id 是否**已被分配过**。
+///
+/// 注册表只存 `Weak` 且从不清理，故「已回收」与「从未存在」都升级失败——
+/// `Join` 用本判据区分：已分配 ⇒ 已回收（当场 `true`）；未分配 ⇒ 非法 id（Denied）。
+pub(crate) fn allocated(id: usize) -> bool {
+    id < NEXT_ID.load(Ordering::Relaxed)
+}
+
 /// 任务状态：任务现在在哪 +（Running/Blocked 时）该状态特有的数据。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskState {
@@ -38,6 +55,9 @@ pub enum TaskState {
     Blocked { reason: BlockReason },
     /// 已饥饿（预算耗尽，在 starved 容器等补给；被选中时重置满额预算）。
     Starved,
+    /// **未放行**（在 `Team.held` 里；不在任何队列，不可被 steal）：`Spawn` 的初始态，
+    /// 只能经 `Hatch` 转 Starved（或随父域被 `kill` 转 Reaped）。
+    Held,
     /// 已收割（僵尸，在 reaped 容器等延迟回收；不在任何队列，任何核可回收）。
     Reaped,
 }
@@ -49,6 +69,8 @@ pub enum BlockReason {
     Park { wake_at: u64 },
     /// 事件等待：被 `wake(key)` 唤醒；有 wake_at 时也可到期唤醒（None = 永久）。
     Wait { wake_at: Option<u64> },
+    /// 等目标任务回收（`Join`）：目标回收时被唤醒；有 wake_at 时也可到期唤醒。
+    Join { tid: usize, wake_at: Option<u64> },
 }
 
 /// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
@@ -67,7 +89,7 @@ pub struct Task {
     ///（与 messenger 簿记同级，绝不嵌套）。
     pub(crate) pies: SpinLock<Vec<AnyPie>>,
     /// 我生的子域（强持有，血缘清单）。三合一角色：撑命（无线程子域靠它活）、
-    /// `spawn_task` 授权凭证（能在我 heir 里查到 = 我是 sire）、`doom` 级联遍历源。
+    /// `spawn` 授权凭证（能在我 heir 里查到 = 我是 sire）、`doom` 级联遍历源。
     /// 锁级 = L3（与 pies 同级）。强持有与 `Team.sire`（弱）配对断环。
     pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
 }
@@ -92,6 +114,8 @@ impl Task {
     /// 状态变换（状态机不变量）：非法变换直接 panic。
     ///
     /// 合法变换：
+    ///   Held → Starved（放行）
+    ///   Held → Reaped（父亡 / 被 kill，从未运行）
     ///   Starved → Running（调度器选上 / steal 迁移后运行）
     ///   Running → Starved（预算耗尽轮转 / 主动让出）
     ///   Running → Blocked(原因)（阻塞：如睡眠）
@@ -102,7 +126,9 @@ impl Task {
     pub(crate) fn transform(&mut self, next: TaskState) {
         let legal = matches!(
             (self.state, next),
-            (TaskState::Starved, TaskState::Running { .. })
+            (TaskState::Held, TaskState::Starved)
+                | (TaskState::Held, TaskState::Reaped)
+                | (TaskState::Starved, TaskState::Running { .. })
                 | (TaskState::Running { .. }, TaskState::Starved)
                 | (TaskState::Running { .. }, TaskState::Blocked { .. })
                 | (TaskState::Blocked { .. }, TaskState::Starved)
@@ -141,7 +167,7 @@ impl Task {
     /// `ptr_eq` 比较），不构成可变访问冲突）。
     ///
     /// 调用方义务：任务**至少**被一个容器强持有（running / starved / blocked /
-    /// reaped 之一）→ strong ≥ 1。envcall 路径（vest / 未来远程操作）可短暂持额
+    /// reaped / held 之一）→ strong ≥ 1。envcall 路径（vest / 未来远程操作）可短暂持额
     /// 外强引用，**但不解引用 Task 字段**——只 `Arc::ptr_eq` / 借用 pies 锁 /
     /// drop；唯一改 Task 字段的路径是 `transform`，由本函数串起。
     /// 互斥仍由调度器锁 + 容器唯一性保证；debug 断言只兜底"无主"漏 ref。
@@ -159,7 +185,30 @@ impl Task {
         unsafe { &mut *Arc::as_ptr(t).cast_mut() }
     }
 
-    /// 记我生的子域（强持有）。`spawn_task` 建域时由生我者调用。
+    /// 放行（`Held → Starved` 入队）。**不做授权**——授权在适配层（envcall）。
+    ///
+    /// 前置：目标仍在所属 `Team.held` 里且状态为 `Held`；否则 `Denied`
+    /// （放行只发生一次，不静默）。
+    pub(crate) fn release(task: &Arc<Task>) -> Result<(), GateError> {
+        let team = task.ident.team.clone();
+        match team.take_held() {
+            Some(held) if Arc::ptr_eq(&held, task) => {}
+            other => {
+                // 不是引导线程（或已被摘出）：放回去，报 Denied。
+                if let Some(t) = other {
+                    team.hold(&t);
+                }
+                return Err(GateError::Denied);
+            }
+        }
+        let mut t = task.clone();
+        Task::exclusive(&mut t).transform(TaskState::Starved);
+        scheduler::task::push(t);
+        Ok(())
+    }
+
+    /// 记我生的子域（强持有）。由 `TeamBuilder::spawn` 调用——**唯一入口**
+    /// （K1 血缘闭合；`spawn` 之外不得再调）。
     pub(crate) fn adopt(&self, child: Arc<Team>) {
         self.heir.lock().push(child);
     }
@@ -169,7 +218,7 @@ impl Task {
         self.heir.lock().clone()
     }
 
-    /// 在我生的子域里按 id 查（spawn_task 授权：查到 = 我是 sire）。
+    /// 在我生的子域里按 id 查（`spawn` 授权：查到 = 我是 sire）。
     pub(crate) fn heir(&self, id: TeamId) -> Option<Arc<Team>> {
         self.heir.lock().iter().find(|t| t.id == id).cloned()
     }
@@ -185,11 +234,32 @@ impl Task {
     }
 }
 
+/// 启动参数写入新任务栈顶（`at` 起 `args.len()` 个字）。
+///
+/// 栈体在 `StackWindow::claim` 时已逐页物化，故 `translate` 必成——不成即内核
+/// 不变量破裂，直接 panic（同 `frame span has pa` 的纪律）。跨页按页写。
+fn write_args(space: &crate::work::unit::space::Space, at: VirtAddr, args: &[usize]) {
+    let mut done = 0usize;
+    while done < args.len() {
+        let va = at + done * size_of::<usize>();
+        let (pa, _) = space
+            .translate(va)
+            .expect("stack page materialized before args write");
+        let page_rest = PAGE_SIZE - (va.as_usize() % PAGE_SIZE);
+        let n = core::cmp::min((args.len() - done) * size_of::<usize>(), page_rest)
+            / size_of::<usize>();
+        let dst = pa.as_usize() as *mut usize;
+        for i in 0..n {
+            // SAFETY: 帧由本空间独占持有（新任务尚未入队）；恒等映射下 PA 可写。
+            unsafe { core::ptr::write_volatile(dst.add(i), args[done + i]) };
+        }
+        done += n;
+    }
+}
+
 /// 任务构建器：在团队容器内生成线程（栈 + trap 帧 + 填帧 + 入队）。
 ///
-/// 入口参数 arg 写入用户上下文 a0。空间分配（栈/帧）
-/// 在调度器锁外完成（id 已原子化、空间自有锁）——锁只保护本 hart 队列的
-/// push（与偷取者的 pull 互斥）与入簿（1 → 3 合法）。
+/// 入口参数 `args` 写入新任务栈顶，寄存器约定 `a0 = args VA`、`a1 = count`。
 ///
 /// # Errors
 ///
@@ -198,32 +268,38 @@ pub struct TaskBuilder {
     team: Arc<Team>,
     name: &'static str,
     entry: VirtAddr,
-    arg: usize,
+    args: Vec<usize>,
     /// 栈体大小（页对齐；缺省 `TASK_STACK_SIZE`）。
     stack: usize,
 }
 
 impl TaskBuilder {
-    /// 在指定团队内生成任务。
+    /// 在指定团队内生成任务。入口默认 = **域的默认入口**（`Build` 装载所得
+    /// `e_entry`）；域未设（内核团队）时退回 `IMAGE_BASE`。
     pub fn new(team: Arc<Team>) -> TaskBuilder {
+        let entry = match team.default_entry() {
+            0 => IMAGE_BASE,
+            e => VirtAddr::from_raw(e),
+        };
         TaskBuilder {
             team,
             name: "task",
-            entry: IMAGE_BASE,
-            arg: 0,
+            entry,
+            args: Vec::new(),
             stack: TASK_STACK_SIZE,
         }
     }
 
-    /// 线程名（默认 "task"）。
+    /// 线程名（默认 "task"；诊断用角色名——域名字在 `Team.name`）。
     pub fn name(mut self, name: &'static str) -> TaskBuilder {
         self.name = name;
         self
     }
 
-    /// 线程入口参数（写入用户上下文 a0）。
-    pub fn arg(mut self, arg: usize) -> TaskBuilder {
-        self.arg = arg;
+    /// 启动参数（写入新任务栈顶；`a0 = args VA`、`a1 = count`）。
+    pub fn args(mut self, args: Vec<usize>) -> TaskBuilder {
+        debug_assert!(args.len() <= MAX_ARGS, "args 超过 MAX_ARGS");
+        self.args = args;
         self
     }
 
@@ -249,13 +325,10 @@ impl TaskBuilder {
     /// 内核任务运行于 SIE=1（帧 SPIE=1），可被 S-timer 抢占（现场经 persist 保全），
     /// 也可经 `scheduler::ktask` 自愿让出/睡眠——忙等不返回则独占所在核。
     ///
-    /// 闭包内可调用统一调度服务面 `scheduler::ktask::{park, starve, reap}`：
-    /// 与用户任务同帧 ABI 的自愿切换（软陷阱），唤醒后闭包在调用点继续。
-    ///
     /// 目录（原唯一使用者）已移出内核、跑在 `task-dir` 域里，故本面暂无树内使用者，
     /// 保留作内核线程原语。
     #[allow(dead_code)]
-    pub fn closure<F>(self, f: F) -> Result<usize, MapError>
+    pub fn closure<F>(self, f: F) -> Result<Arc<Task>, MapError>
     where
         F: FnOnce() + Send + 'static,
     {
@@ -280,14 +353,18 @@ impl TaskBuilder {
         // 释放按地址路由 + ledger 类别记账）。
         let (ptr, _alloc) = Box::into_raw_with_allocator(holder);
         let ptr = ptr as usize;
-        // SAFETY: 闭包在本地装箱，a0 传其薄指针；SPP=1 回 S 态运行于 `ktask_trampoline`。
+        // SAFETY: 闭包在本地装箱，args[0] 传其薄指针；SPP=1 回 S 态运行于
+        // `ktask_trampoline`（该 trampoline 从 `a0` 指向的 args 区读指针）。
         let entry = VirtAddr::from_raw(ktask_trampoline as *const () as usize);
-        self.entry(entry).arg(ptr).spawn()
+        self.entry(entry).args(alloc::vec![ptr]).spawn()
     }
 
-    /// 生成任务：栈 slot + trap 帧（入团队空间窗口簿记）→ 填帧 → 入队收尾。
-    /// 返回新任务号（全局唯一）。失败时已分配资源回滚（栈/帧经 `Space::release`）。
-    pub fn spawn(self) -> Result<usize, MapError> {
+    /// 产**未放行**线程：栈 slot + trap 帧（入团队空间窗口簿记）→ 写 args →
+    /// 填帧 → 入簿记（`Team.tasks`）+ 进 `Team.held` + 计数（PUSHED）。
+    ///
+    /// 计数在**产生**处而非入队处：Held 线程若被父域 `kill`，`REAPED` 与 `PUSHED`
+    /// 必须仍然配平——否则 `done()` 恒假，系统永不停机。
+    pub fn hold(self) -> Result<Arc<Task>, MapError> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
         // 栈：StackWindow::claim 取 slot（user 段 + guard，立即物化；U 位随空间模式）
@@ -295,7 +372,7 @@ impl TaskBuilder {
         let stack_span = StackWindow::claim(&self.team.space, stack_size)?;
         // 栈体基址（供填帧算 stack_top）= slot 基址 + guard
         let stack_body = stack_span.va + crate::layout::TASK_STACK_GUARD;
-        let stack_top = stack_body + stack_size;
+        let stack_body_top = stack_body.as_usize() + stack_size;
 
         // trap 帧：FrameWindow::claim（kernel 段，立即物化）
         let frame_span = match FrameWindow::claim(&self.team.space) {
@@ -312,6 +389,14 @@ impl TaskBuilder {
         let frame_pa = frame_span.pa.expect("frame span has pa");
         let frame_va = frame_span.va;
 
+        // args 区：栈顶之下 count 个字；初始 sp = 16 对齐后的 args 区下界。
+        let count = self.args.len();
+        let args_at = stack_body_top - count * size_of::<usize>();
+        if count > 0 {
+            write_args(&self.team.space, VirtAddr::from_raw(args_at), &self.args);
+        }
+        let sp = VirtAddr::from_raw(args_at & !0xF);
+
         // 填帧：`TrapContext::init` 从 per-hart 帧模板拷元数据 + 用户上下文
         let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
         unsafe {
@@ -323,11 +408,17 @@ impl TaskBuilder {
                 .0
                 .as_usize() as *const TrapContext;
             frame.init(
-                &*ktc, &self.team, self.entry, stack_top, self.arg, frame_pa, frame_va,
+                &*ktc,
+                &self.team,
+                self.entry,
+                sp,
+                (VirtAddr::from_raw(args_at), count),
+                frame_pa,
+                frame_va,
             );
         }
 
-        // 入队收尾
+        // 入队收尾（**不入调度队列**——等 `Hatch`）
         // 类别 = Task：Arc<TaskIdent>/Arc<Task> 属任务生命周期——关机 TASK_BLOCKS
         // 归零（①）。Arc 数据指针 ≠ 分配基址，装饰器无法覆盖——经标注块分配器
         // （tagged_alloc）在分配器侧标注；Arc::new_in 产 Arc<T, &'static dyn
@@ -354,7 +445,7 @@ impl TaskBuilder {
             let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(
                 Task {
                     ident,
-                    state: TaskState::Starved,
+                    state: TaskState::Held,
                     pies: SpinLock::new(Vec::new()),
                     heir: SpinLock::new(Vec::new()),
                 },
@@ -363,31 +454,43 @@ impl TaskBuilder {
             Arc::from_raw(ptr)
         };
         scheduler::core::register_task_id(id, &task);
-        scheduler::task::push(task);
-        Ok(id)
+        // 簿记 + 未放行容器 + 产生计数（配对见函数头）
+        self.team.push_task(&task);
+        self.team.hold(&task);
+        conductor::push();
+        trace::note(EventKind::Room(RoomEvent::Spawn { tid: id }));
+        Ok(task)
+    }
+
+    /// 产线程并**立即放行**（`hold` + `Hatch`）。boot 装 root 用。
+    pub fn spawn(self) -> Result<Arc<Task>, MapError> {
+        let task = self.hold()?;
+        Task::release(&task).expect("freshly held task must release");
+        Ok(task)
     }
 }
 
 /// 内核任务 trampoline：解包闭包、执行、跑完自动退出。
 ///
-/// a0 = `Box<dyn FnOnce()>` 指针（`TaskBuilder::arg` 写入）。该函数作为内核任务的
-/// sepc 入口，SPP=1 回 S 态执行于该任务内核栈上；闭包返回后退出调度。
+/// `a0` = args 区 VA（`TaskBuilder::args` 写入的**数组**地址）；本函数读
+/// `args[0]` 得 `Box<dyn FnOnce()>` 薄指针。该函数作为内核任务的 sepc 入口，
+/// SPP=1 回 S 态执行于该任务内核栈上；闭包返回后退出调度。
 ///
 /// 必须以 `-> !` 返回：从 `_start`-式入口返回会跳 0 崩溃，退出必须显式执行。
 ///
 /// # Safety
-/// `arg` 必须是对应闭包装箱（TaskBuilder::closure / kernel 侧）所产出的
-/// `Box<dyn FnOnce()>` 原始指针。
+/// `arg` 必须是 `TaskBuilder::closure` 产出的 args 区 VA（`args[0]` 为其
+/// 闭包装箱的薄指针）。
 #[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
     // tp = 本 hart PerHart 指针：每个内核任务上台时 Scheduler::prepare 已把 TP
     // 写入其帧（frame.gpr[TP] = per_hart_ptr(self.hart)），__restore 恢复全部 GPR
     // 时 tp 即已在位——此处不再重建。
-    // SAFETY: arg 由 closure 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
-    // 外层 Box 以默认分配器型（Global）重建（closure 侧为 &'static dyn Allocator
-    // ——同布局；释放经地址路由 + ledger 类别记账）。
+    // SAFETY: arg 指向本任务栈上的 args 区（a0 由填帧写入）；args[0] 由 closure
+    // 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
+    let ptr = unsafe { core::ptr::read_volatile(arg as *const usize) };
     let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>> =
-        unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce(), &'static dyn Allocator>) };
+        unsafe { Box::from_raw(ptr as *mut Box<dyn FnOnce(), &'static dyn Allocator>) };
     holder();
     scheduler::ktask::reap()
 }

@@ -1,125 +1,37 @@
 // initrd — 引导期程序清单（**临时机制**）。
 //
-// 位置与 `machine` 同级：同属「平台 / 引导供给」层，不进 `work::unit`（内核结构
-// 核心）。退出路径：程序投递一旦有正式通道（运行期装载原语 / 设备发现），本模块
-// 连同 `build.rs` 的打包端一起删除。
+// 内核侧只剩两件事：
+//   1) 定位 initrd 区（`machine::info().initrd`，来自 FDT `/chosen`）；
+//   2) 按打包期常量取出 **root 镜像**（`ROOT_OFFSET`/`ROOT_LEN`）。
 //
-// 格式（LE，无对齐要求）：
-//   [0..4]  count   u32   1..=MAX_PROGRAMS
-//   每条：
-//     [0..4]  kind      u32   0 = User，1 = Supervisor（其余 → BadKind）
-//     [0..4]  name_len  u32   1..=MAX_NAME
-//     [..]    name      ASCII，无 NUL
-//     [0..4]  len       u32   >= 1
-//     [..]    bytes     ELF 原样字节
+// 清单的**解释权在 root 域程序**（`task/src/bin/supervisor/root/manifest.rs`）：
+// 内核不含清单格式，只把整区只读映射进 root 空间（VA 由 boot 在 root 的用户段里
+// 登记后经启动参数告知）。见 `docs/root.md`。
 //
-// `kind` = 该程序装成哪种空间。它由内核自己的打包表（`build.rs::INITRD_BINS`）
-// 写入，**不是程序自述**：initrd 由内核构建、引导期只读。
+// 格式（LE，root 侧解析；`build.rs` 打包）：
+//   [0..4] count u32 1..=MAX_PROGRAMS
+//   每条：[u32 kind][u32 name_len][name][u32 len][bytes]
 //
-// 无 magic：旧格式（裸 ELF）前 4 字节 0x464c_457f 远超 MAX_PROGRAMS，会被
-// `TooMany` 当场拒掉——格式迁移期不需要额外标记。
+// 退出路径：正式供给通道（文件服务 / 设备发现）就位后，本模块与 `build.rs` 的
+// 打包端一起删除——`Build` 原语本身不随它消失。
 
-use alloc::vec::Vec;
+/// root 镜像在 initrd blob 内的字节偏移（`build.rs` 打包时经 rustc-env 导出）。
+pub(crate) const ROOT_OFFSET: usize = parse_usize(env!("ROOT_OFFSET").as_bytes());
+/// root 镜像长度。
+pub(crate) const ROOT_LEN: usize = parse_usize(env!("ROOT_LEN").as_bytes());
 
-/// 清单条目上限（引导期程序数）。
-pub(crate) const MAX_PROGRAMS: usize = 8;
-/// 清单名字节上限。
-pub(crate) const MAX_NAME: usize = 32;
-
-/// 程序装成的空间（线枚举）。映射到 `SpaceKind` 由 boot 适配层做——本模块是
-/// 平台/引导供给层，不反向依赖 `work::unit`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProgramKind {
-    /// U 态页表（页带 U 位）。
-    User,
-    /// S 态域（页不带 U 位，S 态 SUM=0）。
-    Supervisor,
-}
-
-impl ProgramKind {
-    fn from_u32(v: u32) -> Option<Self> {
-        match v {
-            0 => Some(Self::User),
-            1 => Some(Self::Supervisor),
-            _ => None,
-        }
+/// 编译期十进制解析（`env!` 只给 `&str`，`usize::from_str` 非 const）。
+const fn parse_usize(s: &[u8]) -> usize {
+    let mut v = 0usize;
+    let mut i = 0;
+    while i < s.len() {
+        v = v * 10 + (s[i] - b'0') as usize;
+        i += 1;
     }
+    v
 }
 
-/// 一条清单项（借用 blob）。
-pub(crate) struct Program<'a> {
-    pub name: &'a str,
-    pub kind: ProgramKind,
-    pub elf: &'a [u8],
-}
-
-/// 清单解析失败域（引导级致命——调用方 `expect`）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InitrdError {
-    /// count == 0
-    Empty,
-    /// count > [`MAX_PROGRAMS`]
-    TooMany { count: usize },
-    /// 头 / 条目越界
-    Truncated,
-    /// kind 非 0/1
-    BadKind { kind: u32 },
-    /// name_len 越界、非 UTF-8 或含 NUL
-    BadName,
-    /// len == 0
-    BadLen,
-}
-
-fn u32le(blob: &[u8], at: usize) -> Option<u32> {
-    let bytes: [u8; 4] = blob.get(at..at + 4)?.try_into().ok()?;
-    Some(u32::from_le_bytes(bytes))
-}
-
-/// 解析程序清单；返回顺序即 blob 顺序（调用方按名取，不依赖顺序）。
-pub(crate) fn programs(blob: &[u8]) -> Result<Vec<Program<'_>>, InitrdError> {
-    let count = u32le(blob, 0).ok_or(InitrdError::Truncated)? as usize;
-    if count == 0 {
-        return Err(InitrdError::Empty);
-    }
-    if count > MAX_PROGRAMS {
-        return Err(InitrdError::TooMany { count });
-    }
-    let mut out = Vec::with_capacity(count);
-    let mut at = 4;
-    for _ in 0..count {
-        let raw = u32le(blob, at).ok_or(InitrdError::Truncated)?;
-        at += 4;
-        let kind = ProgramKind::from_u32(raw).ok_or(InitrdError::BadKind { kind: raw })?;
-        let name_len = u32le(blob, at).ok_or(InitrdError::Truncated)? as usize;
-        at += 4;
-        if name_len == 0 || name_len > MAX_NAME {
-            return Err(InitrdError::BadName);
-        }
-        let raw = blob.get(at..at + name_len).ok_or(InitrdError::Truncated)?;
-        let name = core::str::from_utf8(raw).map_err(|_| InitrdError::BadName)?;
-        at += name_len;
-        let len = u32le(blob, at).ok_or(InitrdError::Truncated)? as usize;
-        at += 4;
-        if len == 0 {
-            return Err(InitrdError::BadLen);
-        }
-        let elf = blob.get(at..at + len).ok_or(InitrdError::Truncated)?;
-        at += len;
-        out.push(Program { name, kind, elf });
-    }
-    Ok(out)
-}
-
-/// 按名取整条清单项；未知名 → 打印清单后 panic（构建 / 引导错配当场暴露，
-/// 不静默跳过）。
-pub(crate) fn take<'p, 'a>(programs: &'p [Program<'a>], name: &str) -> &'p Program<'a> {
-    match programs.iter().find(|p| p.name == name) {
-        Some(p) => p,
-        None => {
-            for p in programs {
-                crate::putln!("[initrd] available: {} ({:?})", p.name, p.kind);
-            }
-            panic!("initrd: program `{name}` not found");
-        }
-    }
+/// 取 root 镜像字节（`blob` = initrd 区首，恒等映射下即物理地址）。
+pub(crate) fn root_image(blob: &[u8]) -> Option<&[u8]> {
+    blob.get(ROOT_OFFSET..ROOT_OFFSET + ROOT_LEN)
 }

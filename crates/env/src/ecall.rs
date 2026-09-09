@@ -37,6 +37,7 @@ impl EnvError {
     /// | -3 | Busy（条件未就绪） | `GateError::Busy` |
     /// | -4 | OoM（资源耗尽） | `GateError::OoM` |
     /// | -5 | NotAligned（字节数非页对齐） | `GateError::NotAligned` |
+    /// | -6 | BadImage（镜像不可装载） | `UnitError::Load`（parse/装载任一步失败） |
     pub fn code(&self) -> isize {
         self.0
     }

@@ -6,7 +6,8 @@
 
 use core::time::Duration;
 
-use crate::work::room::messenger::{self, Handoff, WaitKey};
+use crate::work::room::messenger::{self, Handoff, Joined, WaitKey};
+use crate::work::unit::gate::GateError;
 
 use super::core::current;
 use super::trap::run;
@@ -51,6 +52,26 @@ pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
 /// 事件唤醒入口（envcall Wake 调用）：给 `key` 投递信号；返回是否唤醒到等待者。
 pub fn wake(key: WaitKey) -> bool {
     messenger::wake(key)
+}
+
+/// `Join` 的适配结论（授权在 envcall 边界做，本层只碰核心）。
+pub enum JoinStep {
+    /// 未挂起：目标已回收（适配层写 a0 = 1）。
+    Dead,
+    /// 未挂起：目标仍在（适配层写 a0 = 0）。
+    Alive,
+    /// 已挂起：切到该帧（本核无后继时由本层 `run()` 取活）。
+    Switched(usize),
+}
+
+/// 等目标回收入口（envcall Join 调用）：已回收 / 仍在 → 当场结论；否则挂起。
+pub fn join(tid: usize, dur: Duration) -> Result<JoinStep, GateError> {
+    match messenger::join(tid, dur)? {
+        Joined::Dead => Ok(JoinStep::Dead),
+        Joined::Alive => Ok(JoinStep::Alive),
+        Joined::Parked(Some(pa)) => Ok(JoinStep::Switched(pa)),
+        Joined::Parked(None) => Ok(JoinStep::Switched(run())),
+    }
 }
 
 /// ktask 事件等待入口（asm 包装）：永久等一个键（`Duration::MAX`，无超时），

@@ -1,4 +1,4 @@
-//! 用户 task 模块：`spawn`/`closure`/`Join`/`Builder`。
+//! 用户 task 模块：`closure`/`Join`（域内并发 + 结果回收）。
 
 // 硬不变量：result 单写单取；盒子的释放由 `state` 两位仲裁——子任务完工（DONE）
 //             与父方弃权（LEFT）各置一位，**后到者**释放；fetch_or 的原子性同时
@@ -8,7 +8,7 @@
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::EnvResult;
+use env::{EnvResult, TeamId};
 
 use crate::core::tls;
 use crate::env::{room, task as env_task};
@@ -53,7 +53,7 @@ impl<T> SendSlot<T> {
 
 pub struct Join<T> {
     slot: *mut Completion<T>,
-    /// 子任务全局 id（spawn 时 envcall 返的，存于此供 `vest(target_task_id, ...)` 用）。
+    /// 子任务全局 id（spawn 时 envcall 返的，存于此供 `accord(target_task_id, ...)` 用）。
     id: usize,
 }
 
@@ -94,35 +94,10 @@ impl<T> Drop for Join<T> {
     }
 }
 
-pub struct Builder {
-    entry: usize,
-    arg: usize,
-    stack: usize,
-}
-
-impl Builder {
-    pub const fn new(entry: usize, arg: usize) -> Self {
-        Self {
-            entry,
-            arg,
-            stack: 0,
-        }
-    }
-
-    pub const fn stack(mut self, s: usize) -> Self {
-        self.stack = s;
-        self
-    }
-
-    pub fn spawn(self) -> EnvResult<usize> {
-        env_task::spawn(self.entry, self.arg, self.stack).map(|id| id.get())
-    }
-}
-
-pub fn spawn(entry: usize, arg: usize) -> EnvResult<usize> {
-    env_task::spawn(entry, arg, 0).map(|id| id.get())
-}
-
+/// 域内产线程跑一个闭包，返回 `Join<T>` 取回结果。
+///
+/// `spawn` 恒产 `Held`，故此处紧接着 `hatch`——域内线程无需跨域授权序，
+/// 数据经**共享空间**的 `Completion` 槽传递（不占权限表）。
 pub fn closure<F, T>(f: F) -> Join<T>
 where
     F: FnOnce() -> T + Send + 'static,
@@ -139,11 +114,13 @@ where
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
     let task_id = env_task::spawn(
+        TeamId(0),
         (utask_trampoline as extern "C" fn(usize) -> !) as usize,
-        ptr,
+        &[ptr],
         0,
     )
     .expect("task spawn failed");
+    env_task::hatch(task_id).expect("task hatch failed");
     Join {
         slot,
         id: task_id.get(),
@@ -161,14 +138,16 @@ pub fn self_id() -> EnvResult<usize> {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn utask_trampoline(arg: usize) -> ! {
+    // a0 = 启动参数区 VA（`Spawn` 的 args 写在栈顶）；args[0] = 闭包装箱薄指针。
+    // 必须在任何调用（tls::alloc）之前读——a0 是 caller-saved。
+    let ptr = unsafe { core::ptr::read_volatile(arg as *const usize) };
     let tls_base = tls::alloc().expect("tls alloc failed");
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) tls_base, options(nomem, nostack, preserves_flags));
     }
     let holder: Box<Box<dyn FnOnce(usize) + Send>> =
-        unsafe { Box::from_raw(arg as *mut Box<dyn FnOnce(usize) + Send>) };
-    // task 的 a0 是 holder 指针；arg 参数（user 传的）需由 closure 自行设计——本
-    // trampoline 传 0 占位（arg 信息已封进 closure captures）。
+        unsafe { Box::from_raw(ptr as *mut Box<dyn FnOnce(usize) + Send>) };
+    // closure 的参数已封进捕获，此处的形参占位 0。
     holder(0);
     room::exit()
 }
