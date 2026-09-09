@@ -8,11 +8,15 @@
 //! 2. **服务侧回信通道由调用方自带**：`UnsealHole` 造自己的 hole，`Accord` 委托给
 //!    服务（owner 由 `Connect` 回复给出），请求消息前 8 字节放那个对端侧 token。
 //! 3. **服务调用载荷 56 字节**（`MSG_LEN` - 8 字节回信 token）。
+//!
+//! 与 [`crate::core::channel::Channel`] 同住 `core/`（envcall 转发外的封装层）。
 
 use env::dispatch::{MSG_LEN, Name, Reply, Request};
-use env::{EnvError, EnvResult, Permission, TaskId, make_err};
+use env::{EnvError, EnvResult, TaskId, make_err};
 
-use super::mail::{self, HolePie};
+use crate::env::mail::{self, HolePie};
+
+use super::channel::Channel;
 
 /// 服务调用载荷字节数（`MSG_LEN` - 8 字节回信 token）。
 pub const PAYLOAD_LEN: usize = MSG_LEN - 8;
@@ -28,27 +32,6 @@ fn denied() -> erra::Error<EnvError> {
 
 fn parse_name(name: &str) -> EnvResult<Name> {
     Name::new(name).map_err(|_| denied())
-}
-
-/// 回信通道：我自己的 hole + 它在对端的 token。
-struct Channel {
-    mine: HolePie,
-    at_peer: u64,
-}
-
-impl Channel {
-    /// 建通道：`UnsealHole` 造自己的 hole，`Accord` 把 R|W 委托给对端。
-    fn open(peer: TaskId) -> EnvResult<Channel> {
-        let mine = HolePie::unseal()?;
-        let at_peer = mine.accord(peer.get(), Permission::READ | Permission::WRITE)?;
-        Ok(Channel { mine, at_peer })
-    }
-
-    /// 关闭：撤回委托给对端的那一份 + 放下自己的 hole。
-    fn close(self, peer: TaskId) -> EnvResult<()> {
-        mail::revoke(peer.get(), self.at_peer)?;
-        self.mine.release()
-    }
 }
 
 /// 目录会话：入口门闩（索引 0）+ 内核预置的回信 hole（索引 1）。
