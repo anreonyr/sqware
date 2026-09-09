@@ -232,6 +232,27 @@ impl HolePie {
         }
     }
 
+    /// 有界 pull：槽空则最多等 `millis` 毫秒；仍无消息 → `Err(Busy)`（码 -3）。
+    ///
+    /// 用于「等对端回复」这类必须有上界的往返：无限等会把协议错误（回复被丢弃、
+    /// 对端漏回）变成不可诊断的挂起。**超时后该 hole 不再"干净"**——迟到的回复
+    /// 仍可能落进槽里，使下一次 pull 取到上一条；调用方应弃用该会话。
+    pub fn pull_timeout(&self, buf: &mut [u8], millis: usize) -> EnvResult<usize> {
+        loop {
+            match pull(self.token, buf.as_mut_ptr(), buf.len()) {
+                Ok(n) => return Ok(n),
+                Err(e) if e.source.is_busy() => {
+                    // `wait` 返 false 有二义（被唤醒 / 超时），故唤醒后必须再探一次；
+                    // 再探仍空即按超时收场（`millis` 用尽）。
+                    if !self.wait(HoleDir::Pull, millis)? {
+                        return pull(self.token, buf.as_mut_ptr(), buf.len());
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     pub fn seal(&self) -> EnvResult<()> {
         seal(self.token)
     }

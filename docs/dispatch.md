@@ -60,7 +60,9 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 [0]      op      u8      1=Register 2=Unregister 3=Replace 4=Resolve 5=Enumerate 6=Connect
 [1..33]  name    [u8;32] 目标名字 / Enumerate 游标（全 0 = 从头开始）
 [33..41] entry   u64 LE  Register/Replace：入口门闩的目录侧 pie token
-[41..64] 保留（v1 必须为 0；[49..57] 是未来 per-caller 回信通道的位置）
+[41..49] 保留    u64 LE  必须为 0
+[49..57] reply   u64 LE  调用方自带的回信 pie 的目录侧 token（0 = 无回复预期）
+[57..64] 保留（0）
 
 回复
 [0]      status  u8      0=Ok 1=Found 2=Connected 3=NotFound 4=Denied 5=Taken
@@ -75,14 +77,15 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 ## 5 · 身份与授权
 
 ```text
-调用方 ──(boot 预置)──▶ 目录入口门闩 + 回信 hole
+调用方 ──(boot 授予)──▶ 目录入口门闩（Collect 取回，vestor = 目录 task id）
+调用方 ──UnsealHole + Accord──▶ 目录：回信 hole 的对端 token（写进 [49..57]）
 目录   ──gate::accord──▶ 调用方权限表（子集 R|W）
 服务 owner = 入口门闩的 vestor()
 ```
 
-- **身份不来自消息体**：v1 由内核在 boot 期把主 client 的 task id 交给目录
-  （单 client）；多 client 时改为调用方委托回信 pie，取其 `vestor`（协议里
-  `[49..57]` 那个保留字段即接入点）。
+- **身份不来自消息体**：目录按请求取「`[49..57]` 那枚回信 pie 的 `vestor`」——
+  内核在 `Accord` 时赋值，消息体伪造不了。没带有效回信 pie 即无身份（`caller = 0`）：
+  `Register` 不看身份，`Unregister`/`Replace`/`Connect` 一律拒绝。
 - **授权只用已有原语**：`Connect` 就是 `gate::accord` 转授子集；注册资格就是
   「能把门闩交出来」——不需要新的 capability 类型。
 - 授权链 `service →(VEST) 目录 →(R|W) 调用方`；目录不带 BACK，故可自由代授。
@@ -102,7 +105,7 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 
 | 原语 | 一句话 | 补的洞 |
 |---|---|---|
-| `MailCall::Collect { index } -> (PieToken, Permission)` | 报出我持有的第 index 份 | 用户态此前**无法自省自己的权限表** |
+| `MailCall::Collect { index } -> (PieToken, Permission, TaskId)` | 报出我持有的第 index 份（含其 `vestor`） | 用户态此前**无法自省自己的权限表** |
 | `MailCall::Release { token }` | 放下我自己的一份（Pole 同步 unmap） | 此前**没有任何自释路径**（`revoke` 只允许授与人收回） |
 
 配对：`Unseal*` ↔ `Seal`（动资源）；`Accord` ↔ `Revoke`（他人）；`Collect` ↔
@@ -114,16 +117,17 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 
 ```text
 boot:
-  1. 建目录 req hole + 入口门闩（vestor = None，原始自持）
-  2. 建回信 hole + pie（v1 单 client，内核预置）
-  3. spawn shell（拿 task id 作为目录认定的 caller）
-  4. spawn 目录 + echo；目录捕获 (dreq, reply, caller)
-  5. 把入口门闩（索引 0）+ 回信 pie（索引 1）放进 shell 权限表
-  6. bind("echo", echo 的入口门闩)（owner = echo task id）
+  1. 建目录 req hole + 入口门闩（vestor = 目录 task id）
+  2. spawn shell、spawn 目录（目录只捕获 dreq；不再捕获 caller）
+  3. 把入口门闩放进 shell / echo 权限表（索引 0 / 1）
+  4. echo 自注册：Collect 取回 entry + 目录门闩 → Accord entry 副本给目录
+     → UnsealHole 自造回信 hole + Accord 给目录 → Register（回信 token 写 [49..57]）
+  5. 目录收下 entry 门闩（take_entry）并 bind("echo")
 ```
 
-用户态 `Directory::open()` 用 `Collect` 取回这两枚 pie——**不需要向用户态传任何
-整数**。目录会话是进程级授权，不随命令关闭。
+用户态 `Directory::open()` 用 `Collect` 取回目录门闩，顺带拿到它的 `vestor`
+（= 目录 task id，`Accord` 回信 hole 的目标）——**不需要向用户态传任何整数**。
+目录会话是进程级授权，不随命令关闭。
 
 ## 9 · 已决 / 被否
 
@@ -139,11 +143,14 @@ boot:
 
 ## 10 · 已知边界
 
-1. **单 client**：目录的回信通道是 boot 预置的一条。多 client 需要 per-caller
-   通道（协议保留字段已留位），并需要向用户态传目录 task id 的可靠通道。
+1. **回信 pie 的 token 可猜**：身份 = 回信 pie 的 `vestor`，而 pie token 是全局
+   连续小整数（`gate::next_pie_token`）。多 client 下，任务 A 一旦猜中 B 已 `Accord`
+   给目录的回信 token，就能以 B 的身份发请求（回复仍落进 B 的 hole）。真正的修法是
+   **per-caller 请求通道**（目录按「从哪条 hole 收到」定身份，不信任任何 body 字段）
+   或**不可猜的 pie token**；v1 单 client 下不构成问题。
 2. **名字可抢注**：v1 没有名字权限；任何能造门闩的任务都能注册新名字。
-3. **Register/Unregister/Replace 的 wire 路径**未在 v1 演示中触发（echo 由内核
-   直接 `bind`）；代码路径已实现，留给用户态服务。
+3. **Unregister/Replace 已实现但不在常规演示里**：echo 自注册路径已由「注册后立刻
+   自注销」临时验证（身份取 echo 自身，返回 Ok）；v1 shell 没有对应命令，故不常驻。
 4. `Enumerate` 一次一个名字（64 字节装不下列表）。
 
 ## 11 · 实现中发现并修复的内核缺陷（与本协议无关，但拦住过验证）
@@ -173,10 +180,10 @@ sq > req
 req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 ```
 
-`req` 路径：`Directory::open`（`Collect` 取两枚 pie）→ `Connect("echo")`（目录
-`gate::accord` 转授入口门闩 + 回 owner）→ 调用方 `UnsealHole` + `Accord` 给 owner
-（自带回信通道）→ `Push`（前 8 字节回信 token）→ echo `+1` → `Push` 回信 →
-`Pull` → `disconnect`（`Revoke` + `Release`）。
+`req` 路径：`Directory::open`（`Collect` 取目录门闩 + 目录 task id，自造回信 hole
+并 `Accord` 给目录）→ `Connect("echo")`（目录 `gate::accord` 转授入口门闩 + 回 owner）
+→ 调用方 `UnsealHole` + `Accord` 给 owner（自带回信通道）→ `Push`（前 8 字节回信
+token）→ echo `+1` → `Push` 回信 → `Pull` → `disconnect`（`Revoke` + `Release`）。
 
 ## 13 · 文件清单
 
@@ -184,7 +191,7 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 新增  crates/env/src/dispatch.rs            协议类型 + 编解码
 新增  kernel/src/work/unit/gate/release.rs  自释原语
 改写  kernel/src/service/dispatch.rs        Directory 核心 + serve 适配
-改写  kernel/src/boot.rs                    根授予 + 目录/echo + 直接 bind
+改写  kernel/src/boot.rs                    根授予 + 目录/echo（echo 自注册，不 bind）
 改   crates/env/src/fid.rs                  +Collect/Release；删 ServiceCall/ServiceId
 改   crates/env/src/wire.rs                 +FromPair (PieToken, Permission)
 改   crates/env/src/ucall.rs                warpper #[inline(never)]

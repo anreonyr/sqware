@@ -31,9 +31,14 @@
 //!
 //! # 身份不走消息体
 //!
-//! 目录认定的调用方身份来自**内核**（boot 期把主 client 的 task id 交给目录），
-//! 或（多 client 时）来自调用方委托的回信 pie 的 `vestor`——消息体里的任何字段
-//! 都不参与身份判定，故不可伪造。
+//! 目录认定的调用方身份 = 该请求 `[49..57]` 那枚回信 pie 的 `vestor`——内核在
+//! `Accord` 时赋值，消息体伪造不了。没带有效回信 pie 即「无身份」：Register 不看
+//! 身份，Unregister/Replace/Connect 一律拒绝。
+//!
+//! # Enumerate 分页
+//!
+//! 回复只有 64 字节，装不下列表，故按名字**排序**分页：`after` 之后的第一条；
+//! `after = None` 从头开始；返 `NotFound` 即到头。
 
 use crate::wire::{PieToken, TaskId};
 

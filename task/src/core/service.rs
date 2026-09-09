@@ -2,11 +2,12 @@
 //!
 //! 协议规范见 `docs/dispatch.md`。三条要点：
 //!
-//! 1. **内核没有目录入口调用**（class 7 已删）：内核在 boot 期把两枚 pie 放进本
-//!    任务权限表——索引 0 = 目录入口门闩，索引 1 = 回信 hole——`Directory::open`
-//!    用 `Collect` 取回。故无需向用户态传任何整数。
-//! 2. **服务侧回信通道由调用方自带**：`UnsealHole` 造自己的 hole，`Accord` 委托给
-//!    服务（owner 由 `Connect` 回复给出），请求消息前 8 字节放那个对端侧 token。
+//! 1. **内核没有目录入口调用**（class 7 已删）：内核在 boot 期把一枚 pie 放进本
+//!    任务权限表——索引 0 = 目录入口门闩——`Directory::open` 用 `Collect` 取回，
+//!    顺带拿到它的 `vestor` = 目录 task id。故无需向用户态传任何整数。
+//! 2. **回信通道由调用方自带**：`UnsealHole` 造自己的 hole，`Accord` 给目录，把
+//!    对端侧 token 写进请求 `[49..57]`——目录按这枚 pie 的 `vestor` 认人。
+//!    服务调用同理，token 放在消息前 8 字节（owner 由 `Connect` 回复给出）。
 //! 3. **服务调用载荷 56 字节**（`MSG_LEN` - 8 字节回信 token）。
 //!
 //! 与 [`crate::core::channel::Channel`] 同住 `core/`（envcall 转发外的封装层）。
@@ -20,6 +21,10 @@ use super::channel::Channel;
 
 /// 服务调用载荷字节数（`MSG_LEN` - 8 字节回信 token）。
 pub const PAYLOAD_LEN: usize = MSG_LEN - 8;
+
+/// 等回复的上界（毫秒）。目录/服务往返都在本域内，1s 远超实际耗时；有上界才能
+/// 把「回复被丢弃」这类协议错误暴露成 `Busy`，而不是永久挂起。
+const REPLY_TIMEOUT_MS: usize = 1000;
 
 /// D1 负码：无权 / 协议错。
 const E_DENIED: isize = -1;
@@ -44,7 +49,7 @@ pub struct Directory {
 
 impl Directory {
     /// 打开会话：从本任务权限表取回内核在 boot 期放下的目录入口门闩（索引 0），
-    /// 自造 reply hole、`Accord` 给目录、用 `from_receipt` 收进 `Channel`-ish 形态。
+    /// 自造 reply hole、`Accord` 给目录，记下对端 token 供每条请求回填。
     ///
     /// **per-caller reply**：reply hole 由调用方自备；目录 `[49..57]` 字段就是
     /// reply_target。`Collect` 顺带返 `vestor = dir_id`，直接当 `Accord` 的 dst。
@@ -56,7 +61,7 @@ impl Directory {
         if dir_id.get() == 0 {
             return Err(denied()); // 入口 pie 没标宿主（vestor=None），无法 Accord
         }
-        // 自造 reply：unseal + accord(dir_id) + from_receipt 三步收进 Channel
+        // 自造 reply：unseal + accord(dir_id)——目录侧那枚 token 即本会话的回信地址。
         let reply_mine = HolePie::unseal(crate::env::mail::HOLE_MTU_MAX)?;
         let reply_target =
             reply_mine.accord(dir_id.get(), env::Permission::READ | env::Permission::WRITE)?;
@@ -67,14 +72,16 @@ impl Directory {
         })
     }
 
-    /// 一次往返：push 请求（带 reply token）→ pull 回复。
+    /// 一次往返：push 请求（带 reply token）→ 有界 pull 回复。
+    ///
+    /// 超时（`Busy`）后本会话不可复用——迟到的回复会污染下一次 pull。
     fn call(&self, request: &Request) -> EnvResult<Reply> {
         let mut msg = request.encode();
         msg[env::dispatch::REPLY_AT..env::dispatch::REPLY_AT + 8]
             .copy_from_slice(&self.reply_target.to_le_bytes());
         self.entry.push(&msg)?;
         let mut buf = [0u8; MSG_LEN];
-        self.reply.pull(&mut buf)?;
+        self.reply.pull_timeout(&mut buf, REPLY_TIMEOUT_MS)?;
         Reply::decode(&buf).map_err(|_| denied())
     }
 
@@ -133,6 +140,7 @@ pub struct Service {
 
 impl Service {
     /// 一次调用：前 8 字节自动填回信 token，载荷 `PAYLOAD_LEN` 字节。
+    /// 回复有上界（`REPLY_TIMEOUT_MS`）——服务漏回即 `Busy`，不永久挂起。
     pub fn call(&self, payload: &[u8; PAYLOAD_LEN]) -> EnvResult<[u8; PAYLOAD_LEN]> {
         let mut msg = [0u8; MSG_LEN];
         msg[0..8].copy_from_slice(&self.channel.at_peer.to_le_bytes());
@@ -140,7 +148,7 @@ impl Service {
         self.entry.push(&msg)?;
 
         let mut buf = [0u8; MSG_LEN];
-        self.channel.mine.pull(&mut buf)?;
+        self.channel.mine.pull_timeout(&mut buf, REPLY_TIMEOUT_MS)?;
         let mut out = [0u8; PAYLOAD_LEN];
         out.copy_from_slice(&buf[8..]);
         Ok(out)

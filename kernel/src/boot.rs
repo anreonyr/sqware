@@ -20,7 +20,6 @@ use crate::runtime::switcher::trampoline::{alltraps_va, restore};
 use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
 use crate::work::mail::HoleMeta;
 use crate::work::room::scheduler;
-use crate::work::unit::gate::AnyPie;
 use crate::work::unit::team::kernel;
 
 global_asm!(
@@ -213,22 +212,16 @@ fn spawn_demos() -> Result<(), MapError> {
         crate::work::unit::assemble(echo.elf, alloc::sync::Weak::new(), echo.kind.into())
             .expect("assemble echo elf");
 
-    // 目录入口门闩：内核是根授予的源头 → 原始自持（vestor = None）。它没有 envcall
-    // 入口（class 7 已删除）：内核把这一份放进首个用户任务的权限表，靠 `Collect` 取。
+    // 目录请求 hole：内核是根授予的源头。它没有 envcall 入口（class 7 已删除）：
+    // 内核给每个 caller 一枚入口门闩副本（`dir_entry_for_callers`），靠 `Collect` 取。
     // mtu=64 与 dispatch MSG_LEN 一致——保留 64B 形态等价旧行为。
     let (dreq, dreq_id) = hole::meta(64).map_err(|_| MapError::OutOfMemory)?;
-    let dir_entry = gate::new_pie(
-        dreq_id,
-        Permission::READ | Permission::WRITE | Permission::VEST,
-        None,
-        alloc::sync::Arc::downgrade(&dreq),
-    );
 
     // echo 入口 hole：域侧一枚（pull 请求）+ 一枚 ungranted 派生（域主自己 Accord
     // 给目录用于 Register 时再 grant——见 `bin/supervisor/echo.rs`）。
     let (eentry, eentry_id) = hole::meta(64).map_err(|_| MapError::OutOfMemory)?;
 
-    // shell 先建：它的 task id 就是目录认定的 caller（身份由内核给，不走消息体）。
+    // shell 先建（其 task id 供目录入口门闩当 vestor，让 `Collect` 拿得到 dir_id）。
     let shell_id = shell_team.task().name("shell").entry(shell_entry).spawn()?;
     // echo 域任务：跑在 supervisor 空间上（SPP=1、独立 ASID）。
     let echo_id = echo_team
@@ -240,11 +233,13 @@ fn spawn_demos() -> Result<(), MapError> {
     // 服务系统：目录（内核闭包任务）。**不再 bind echo**——echo 启动后自注册。
     // 目录入口门闩的 vestor = Some(dir_id)：让用户态 `Collect` 拿到 dir_id 后能
     // 把它当 `Accord(reply, dst=dir_id)` 的目标——per-caller reply 的物理前提。
-    let dir_id = spawn_services(dreq.clone(), shell_id)?;
+    let dir_id = spawn_services(dreq.clone())?;
 
     // 根授予（boot 期无任务在跑，副核未拉起、hart 0 未进调度，故无竞态）：
     //   shell 权限表 [0] 目录入口门闩（**不再预置回信 pie**——shell 自造 reply、Accord 给目录）；
     //   echo 域权限表 [0] 自己的入口门闩（pull 请求用）、[1] 目录入口门闩（Register 用）。
+    // 目录认定的 caller 不再是 boot 期定死的那一个：每请求取「回信 pie 的 vestor」
+    // （内核在 Accord 时赋值，消息体伪造不了）——见 `spawn_services`。
     let dir_entry_for_callers = gate::new_pie(
         dreq_id,
         Permission::READ | Permission::WRITE,
@@ -292,16 +287,18 @@ fn task_by_id(id: usize) -> alloc::sync::Arc<crate::work::unit::task::Task> {
         .expect("boot task registered")
 }
 
-// ── 服务系统：目录（dispatcher）+ 已注册服务（echo） ──
+// ── 服务系统：目录（dispatcher） ──
 
-/// 生成服务目录（内核闭包任务）并绑定 echo 入口门闩；返目录 task id。
+/// 生成服务目录（内核闭包任务）；返目录 task id。
 ///
-/// 目录只有**一个 req hole**：回信走内核预置的通道（`reply`），调用方身份由内核
-/// 给出（`caller`）。授权一律走 `gate::accord`，目录不跨任务写调用方权限表。
+/// 目录只有**一个 req hole**：回信走调用方自带的 per-caller 通道（wire `[49..57]`
+/// = 调用方 `Accord` 进来的回信 pie token）。**身份 = 该回信 pie 的 `vestor`**——
+/// 内核在 `Accord` 时赋值，消息体伪造不了；没带有效回信 pie 即无身份
+/// （`caller = 0`：Register 不看身份，Unregister/Replace/Connect 一律拒绝）。
+/// 授权一律走 `gate::accord`，目录不跨任务写调用方权限表。
 /// 服务本体不在此处——echo 跑在独立 supervisor 域里（`spawn_demos` 装载）。
-fn spawn_services(dreq: alloc::sync::Arc<HoleMeta>, caller: usize) -> Result<usize, MapError> {
+fn spawn_services(dreq: alloc::sync::Arc<HoleMeta>) -> Result<usize, MapError> {
     use crate::service::dispatch;
-    use env::dispatch::Name;
 
     let kt = kernel().expect("kernel team not initialized");
     let registry = dispatch::new_registry();
@@ -311,11 +308,7 @@ fn spawn_services(dreq: alloc::sync::Arc<HoleMeta>, caller: usize) -> Result<usi
     let registry_svc = registry.clone();
     let dir_id = kt.task().name("dispatcher").closure(move || {
         #[inline(never)]
-        fn svc(
-            dreq: alloc::sync::Arc<HoleMeta>,
-            caller: usize,
-            reg: alloc::sync::Arc<dispatch::ServiceRegistry>,
-        ) {
+        fn svc(dreq: alloc::sync::Arc<HoleMeta>, reg: alloc::sync::Arc<dispatch::ServiceRegistry>) {
             use crate::work::mail::hole;
             use crate::work::room::messenger::WaitKey;
             use crate::work::unit::gate::{AnyPie, GateError};
@@ -339,22 +332,26 @@ fn spawn_services(dreq: alloc::sync::Arc<HoleMeta>, caller: usize) -> Result<usi
                 // 读 reply token（per-caller 通道的目录侧 token；0 = fire-and-forget）。
                 let reply_token =
                     u64::from_le_bytes(msg[REPLY_AT..REPLY_AT + 8].try_into().unwrap_or([0u8; 8]));
-                // 在 me.pies 里查该 token 对应的 HoleMeta（必须存在——caller Accord 时已落表）。
-                let reply_meta = if reply_token != 0 {
+                // 在自己权限表里查该 token：同时拿到 (身份, 回信 hole)。身份 = 该 pie
+                // 的 `vestor`（`Accord` 时内核写死为授与人）；查不到 = 无身份（0）。
+                let reply = if reply_token != 0 {
                     me.pies
                         .lock()
                         .iter()
                         .find(|p| p.token() == reply_token)
                         .and_then(|p| match p {
-                            AnyPie::Hole(h) => h.weak.upgrade(),
+                            AnyPie::Hole(h) => {
+                                h.weak.upgrade().map(|meta| (p.vestor().unwrap_or(0), meta))
+                            }
                             _ => None,
                         })
                 } else {
                     None
                 };
+                let caller = reply.as_ref().map_or(0, |(who, _)| *who);
                 let out = crate::service::dispatch::serve(&reg, &me, caller, &msg).encode();
-                let Some(reply_meta) = reply_meta else {
-                    // 无 reply 通道（fire-and-forget 或 token 失效）：丢回复，。
+                let Some((_, reply_meta)) = reply else {
+                    // 无回信通道（fire-and-forget 或 token 失效）：回复无处可去，丢弃。
                     continue;
                 };
                 loop {
@@ -371,13 +368,12 @@ fn spawn_services(dreq: alloc::sync::Arc<HoleMeta>, caller: usize) -> Result<usi
                 }
             }
         }
-        svc(dreq_svc, caller, registry_svc)
+        svc(dreq_svc, registry_svc)
     })?;
 
     // echo 不再由内核 bind——supervisor 域启动后经 wire Register 自注册。
     // 流程见 `bin/supervisor/echo.rs`：Collect(0)=entry, Collect(1)=dir_entry,
     // 然后 entry.accord(dir_id) 把 entry 副本落进目录权限表，再 Register。
-    let _ = Name::new("echo"); // 仅占位（避免未使用警告）
 
     Ok(dir_id)
 }

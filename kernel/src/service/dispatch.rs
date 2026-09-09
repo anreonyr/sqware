@@ -3,10 +3,10 @@
 // 核心 = `Directory` 数据 + 6 个操作（bind/unbind/replace/resolve/enumerate/connect），
 // 不依赖协议编解码；适配 = `serve`，把一条 hole 消息翻译成一次核心调用 + 一条回复。
 //
-// 目录是**普通 Service**：它只有一个 req hole。回信通道由**内核在 boot 期预置**
-// （v1 单 client：目录 → 主 client 的 hole），调用方身份也由内核给出——消息体里
-// 的任何字段都不参与身份判定。多 client 时改为调用方自带回信 pie（协议里
-// [49..57] 那个保留字段即接入点），身份取其 `vestor`。
+// 目录是**普通 Service**：它只有一个 req hole。回信通道由**调用方自带**（per-caller：
+// 调用方 `Accord` 一枚自己的 hole 给目录，对端 token 写在请求 `[49..57]`）。调用方
+// 身份 = 那枚回信 pie 的 `vestor`——内核在 `Accord` 时赋值，消息体伪造不了；没带
+// 有效回信 pie 即 `caller = 0`：Register 不看身份，Unregister/Replace/Connect 拒绝。
 //
 // 两条轴：`Binding` 持的是**入口门闩**（Pie），不是 id + Weak——注册的资格就是
 // 「能把门闩交出来」，Connect 的授权就是 `gate::accord` 转授子集，无需新权限系统。
@@ -180,9 +180,10 @@ pub const MSG_LEN: usize = 64;
 
 /// 处理一条目录请求，产出回复。
 ///
-/// `caller` = 调用方 task id（**由内核给**，不来自消息体）；`me` = 目录自己的
-/// task（Register/Replace 从它的权限表取登记时委托来的入口门闩）。
-/// 回信由调用方（dispatcher 闭包）推送到预置通道——本函数不做 I/O。
+/// `caller` = 调用方 task id（由调用方内核侧按请求取自**回信 pie 的 `vestor`**，
+/// 不来自消息体；0 = 无身份）；`me` = 目录自己的 task（Register/Replace 从它的
+/// 权限表取登记时委托来的入口门闩）。回信由调用方（dispatcher 闭包）推送到该请求
+/// 自带的回信通道——本函数不做 I/O。
 pub fn serve(reg: &Arc<ServiceRegistry>, me: &Arc<Task>, caller: usize, msg: &[u8]) -> Reply {
     if msg.len() < MSG_LEN {
         return Reply::Denied;

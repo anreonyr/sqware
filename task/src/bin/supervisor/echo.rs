@@ -22,6 +22,9 @@ use task::env::mail::{self, HolePie};
 /// dispatch 协议载荷定 64 字节。
 const MSG_LEN: usize = dispatch::MSG_LEN;
 
+/// 等 Register 回复的上界（毫秒）——有上界才不会因目录漏回而永久挂起。
+const REPLY_TIMEOUT_MS: usize = 1000;
+
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     // 1. 自己的入口门闩（boot 预置在权限表索引 0）。
@@ -80,9 +83,9 @@ extern "C" fn main() -> ! {
         task::env::control::panic(9);
     }
 
-    // 6. 等 Ok 回复（fire-and-forget 失败时 panic；目录若回 Denied/Taken 也 panic）。
+    // 6. 等 Ok 回复（有界等待；目录若回 Denied/Taken 或漏回都 panic）。
     let mut buf = [0u8; MSG_LEN];
-    if reply_mine.pull(&mut buf).is_err() {
+    if reply_mine.pull_timeout(&mut buf, REPLY_TIMEOUT_MS).is_err() {
         task::env::control::panic(10);
     }
     match Reply::decode(&buf) {
