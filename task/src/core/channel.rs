@@ -28,7 +28,7 @@ impl Channel {
     pub fn open(peer: TaskId) -> EnvResult<Channel> {
         let mine = HolePie::unseal()?;
         let at_peer = mine.accord(peer.get(), Permission::READ | Permission::WRITE)?;
-        Ok(Channel { mine, at_peer })
+        Ok(Channel::from_receipt(mine, at_peer))
     }
 
     /// 由已有 hole + 对端 token 构造（per-caller reply 场景：调用方已 unseal + accord）。
