@@ -12,7 +12,7 @@
 | AC2 | 无外部 timeout 自行复位 | ✅ `exit` 后 `task: all tasks exited, system halted` |
 | AC3 | root 异常死亡 → 级联 → 复位 | ✅ `doom` 挂在每条 reaped 任务上 |
 | AC4 | 现有 e2e 不回归 | ✅ `spawn`/`dir`/`req`/`hole`/`clock`/`exit`（release + debug） |
-| AC5 | 子域崩溃也能被父域观察到 | ✅ `Join` 由内核在回收路径唤醒 |
+| AC5 | 子域崩溃也能被父域观察到 | ✅ `Join` 由内核在收尾路径唤醒；返回真 ⇔ 退出钩子已跑完 |
 | AC6 | 子域启动参数为空、服务门闩自开 | ✅ `Spawn(.., &[], ..)`；`dir`/`echo` 各自 `UnsealHole` |
 | AC7 | 目录身份不经报文/启动参数传递 | ✅ 客户端用 `Owned(门闩).owner` 求得（见 §9） |
 
@@ -37,6 +37,7 @@
 | T2-4 | 删 `Reply::Connected.owner`（同一事实由 `Owned` 给出） |
 | T2-5 | 启动通道**不回收**（`memo` 保活到关机） |
 | T2 命名 | 子→父 `Quay`（报到）/ 父→子 `Pier`（配给）/ `dock`（父侧开孔）/ `moor`（子侧认孔） |
+| J1 | **死亡两相**：`suspend` 先把整棵血缘子树的受害者**全部停摆**（置 `Doomed`），再逐个 `die`（钩子 → `Reaped` → 入队）。两相是正确性要求——钩子会摘门闩、唤醒等待者，若还有受害者能被唤醒后运行，它会在注定要死的状态下看到已死资源 |
 
 ## 3 · ABI（`crates/env/src/fid.rs`，class 1）
 
@@ -52,8 +53,10 @@
 - 启动参数写在**新任务栈顶** `[stack_top-8·count, stack_top)`，子方 `a0 = args VA`、`a1 = count`；
   `_start` 在首次调用前 `save_args`，用户侧 `env::task::args()` 取回。**子域一律空参数**
   （只有 root 收内核的清单视图）。
-- `Join` 契约与 `MailCall::Wait` 同源：`true` = **调用开始时**已回收（未挂起）；
-  `false` = 未回收（可能挂起过）→ 调用模式 `loop { if Join{t,0} { break } Join{t,MAX} }`。
+- `Join` 契约与 `MailCall::Wait` 同源：`true` = **调用开始时**目标已死**且收尾完成**
+  （退出钩子已跑完——它名下的门闩与通道都已消失）；`false` = 未结束（可能挂起过）→
+  调用模式 `loop { if Join{t,0} { break } Join{t,MAX} }`。栈/帧的回收是内核私事、
+  对调用方不可观测，不入契约。
 
 ### 3.1 T2 新增（class 5，`MailCall` 末尾）
 
@@ -73,10 +76,11 @@
   一次性复活 `Spawn` 授权、`doom` 级联、`Sire/HeirCount/Heir`。
 - **未放行态**：`TaskState::Held` + `Team.held: SpinLock<Option<Arc<Task>>>`（`Option` 把
   「至多一个引导线程」做成类型义务）；`Task::release` = `Held → Starved` 入队。
-- **计数挂产生处**：`conductor::push()` 移到 `TaskBuilder::hold`——`Held` 被 kill 时
+- **计数挂产生处**：`conductor::push()` 移到 `TaskBuilder::hold`——`Held` 被扑杀时
   `REAPED/PUSHED` 仍配平（否则 `done()` 恒假，永不停机）。
 - **`Join` 站点**：`joins: HashMap<tid, JoinSite{pend, waiters}>` + `join_times` 超时旁路；
-  `wake_joiners` 在 `clear_loop` 里逐条 reaped 任务调用——**fault 死亡也能被 join 到**。
+  `wake_joiners` 在 `clear_loop` 里逐条 reaped 任务调用——此刻钩子已跑完（死亡两相，
+  见 `messenger::{suspend, die}`），**fault 死亡也能被 join 到**。
   `pend` 闭合「判死 → 入簿」窗口，且**锁内绝不查注册表**（那是 3→3，lockdep 会拒）。
 - **清单视图**：boot 在 root 的用户段登记一段 VA（lowest first-fit，紧接镜像），把 initrd 区
   `borrow` 成只读；VA 与长度经启动参数交给 root。

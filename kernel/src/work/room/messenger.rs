@@ -295,11 +295,39 @@ pub fn wait(key: WaitKey, dur: Duration) -> Handoff {
     }
 }
 
-/// mark_reaped：Running → Reaped 入全局 reaped 队列（延迟回收——不能在
-/// 自己正在用的栈上回收自己；计数在 clear_loop 完成后递增）。
+/// 死亡唯一入口：**收尾**（退出钩子：通道级联 + 能力级联）→ 置 `Reaped` → 入僵尸队列。
+///
+/// 不变量：`TaskState::Reaped` ⇔ 退出钩子已跑完——本函数是通往 `Reaped` 的**唯一**
+/// 路径，也是僵尸队列的**唯一**入队点。`Join` 的判据 [`target_dead`] 因此精确：
+/// 它返回真即「收尾已完成」。
+///
+/// 前置：任务已停摆（`Doomed`）；或从自退路径来（此刻已离核、状态仍是 `Running`，
+/// 本函数就地补一次停摆）。已 `Reaped` 的直接返回。
+///
+/// 锁纪律：无锁调用。钩子只逐任务取放 L3（`Task.pies` / 通道注册表），且 [`cull`]
+/// 已把整棵子树的受害者停摆在前——故钩子内再扑杀子域，也不会唤醒「还能跑」的人。
+fn die(mut task: Arc<Task>) {
+    match task.state() {
+        TaskState::Reaped => return,
+        TaskState::Doomed => {}
+        _ => Task::exclusive(&mut task).transform(TaskState::Doomed),
+    }
+    for hook in exit_hooks() {
+        hook(task.ident.id);
+    }
+    Task::exclusive(&mut task).transform(TaskState::Reaped);
+    REAPED.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
+}
+
+/// mark_reaped：离核装槽 → [`die`]（收尾 + 入队）→ 返下一帧 PA。
+///
+/// 延迟回收的理由是**回收**而非收尾：不能在自己正在用的栈上回收自己，故栈/trap
+/// 帧/团队空间留到 `clear_loop`；收尾（钩子）在此刻就做完了。
 pub fn mark_reaped() -> Option<usize> {
     let cond = current();
-    let (mut exited, next_pa) = cond.disown_and_install_next();
+    // 离核且无后继装槽 → 槽已 settled（disown_and_install_next 内 demote 或
+    // 装下一）；团队 Arc 归零即回收——地址空间随释放。
+    let (exited, next_pa) = cond.disown_and_install_next();
     debug_assert!(
         matches!(exited.state(), TaskState::Running { .. }),
         "running 容器里不是 Running 任务"
@@ -307,10 +335,7 @@ pub fn mark_reaped() -> Option<usize> {
     trace::note(EventKind::Room(RoomEvent::Exit {
         tid: exited.ident.id,
     }));
-    Task::exclusive(&mut exited).transform(TaskState::Reaped);
-    // 离核且无后继装槽 → 槽已 settled（disown_and_install_next 内 demote 或
-    // 装下一）；团队 Arc 归零即回收——地址空间随释放。
-    REAPED.lock().push_back(exited); // L3 单独锁，1 → 3 顺序、不嵌套
+    die(exited);
     // 注意：回收计数（conductor::exit）不在入队时递增——须等 clear_loop 完成栈/
     // trap 帧/团队空间归还后再计数，否则最后任务退出时另一核见 REAPED==PUSHED
     // 立即 halt，本核 clear_loop 未及回收 → 关机断言误报帧泄漏。
@@ -322,7 +347,7 @@ pub fn mark_reaped() -> Option<usize> {
 /// `Join` 的结论。未挂起的两态（`Dead` / `Alive`）与「已挂起」用类型分开——
 /// 适配层据此写 a0（挂起路径读到的 a0 是挂起前预置值，故只能预置 0）。
 pub enum Joined {
-    /// 未挂起：目标已回收。
+    /// 未挂起：目标已死**且收尾完成**（退出钩子已跑完——见 [`die`]）。
     Dead,
     /// 未挂起：目标仍在（`millis == 0` 探测）。
     Alive,
@@ -330,8 +355,10 @@ pub enum Joined {
     Parked(Option<usize>),
 }
 
-/// 目标是否已回收。注册表只存 `Weak` 且从不清理：升级失败 ⇒ 已分配过就是
+/// 目标是否已死透。注册表只存 `Weak` 且从不清理：升级失败 ⇒ 已分配过就是
 /// 「已回收」；从未分配 ⇒ 非法 id（调用方另判 `Denied`）。
+///
+/// `Reaped` 由 [`die`] 独占置位（钩子之后），故本判据为真 ⇔ **收尾已完成**。
 fn target_dead(tid: usize) -> bool {
     match crate::work::room::scheduler::core::lookup_task_by_id(tid) {
         Some(t) => t.state() == TaskState::Reaped,
@@ -339,12 +366,16 @@ fn target_dead(tid: usize) -> bool {
     }
 }
 
-/// 等目标任务回收（`Join` 的承载）。
+/// 等目标结束（`Join` 的承载）。
 ///
 /// 契约（与 `wait`/`pull` 同源）：**未挂起**时结论精确；**挂起过**则恢复后读到的
 /// a0 是挂起前预置值（内核没有第二次执行机会），调用方须复探 `Join{task, 0}`。
-/// 唤醒由**内核驱动**——目标被 reap（含 fault isolation 杀）时 [`wake_joiners`]
+/// 唤醒由**内核驱动**——目标收尾（含 fault isolation 杀）时 [`wake_joiners`]
 /// 叫醒全部等待者，故用户态跑不到的死亡也能被观察到。
+///
+/// 「结束」= 目标已死**且退出钩子（通道级联 + 能力级联）已跑完**——即返回真时，
+/// 它名下的门闩与通道都已消失。栈/trap 帧/团队空间的回收是内核私事、对调用方
+/// 不可观测，故**不入契约**（那也是延迟回收存在的理由）。
 pub fn join(tid: usize, dur: Duration) -> Result<Joined, GateError> {
     if target_dead(tid) {
         return if crate::work::unit::task::allocated(tid) {
@@ -556,18 +587,17 @@ pub fn drain_expired() -> bool {
 
 // ── 操作：回收 ──
 
-/// 回收全部 Reaped 任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：Reaped
-/// 任务不在任何核运行（running/starved 均无引用）。锁纪律：只持 reaped 锁
-/// 出队，放锁后再取 Team.tasks / Space.inner（顺序获取、不嵌套）。
+/// 回收全部僵尸任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：僵尸不在任何核
+/// 运行（running/starved 均无引用）。锁纪律：只持 reaped 锁出队，放锁后再取
+/// Team.tasks / Space.inner（顺序获取、不嵌套）。
 ///
-/// 退出钩子（每条 reaped 任务调一次）经 [`register_exit_hooks`] 注册——mail 在
-/// init 时挂 dock::task_exit + ring::task_exit，clear_loop 不直接命名子系统。
+/// **入队的任务已经收尾**（退出钩子见 [`die`]），本函数只做回收——「等收尾」与
+/// 「等回收」因此分开：前者是 `Join` 的语义，后者对调用方不可观测。
 pub fn clear_loop() {
-    let hooks = exit_hooks();
     loop {
         // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
-        // 导致 reaped(L3) 锁跨 dock/ring 的 task_exit（内部取 task_docks/task_rings
-        // 同为 L3）——同层嵌套 lockdep 违规。块结束即释放 reaped 锁。
+        // 导致 reaped(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。
+        // 块结束即释放 reaped 锁。
         let z = {
             let mut reaped = REAPED.lock();
             let Some(z) = reaped.pop_front() else {
@@ -576,13 +606,7 @@ pub fn clear_loop() {
             z
         };
         trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
-        // 退出钩子（mail 等注册的）：任务名下全部通道引用逐条递减（dock pier →
-        // Hang 判据、quay → Dead 判据；ring → Dead）。需在簿记清理前执行（锁外，
-        // 只经通道注册表 L3 —— spawn 路径 1→3 合法，clear_loop 同）。
-        for hook in hooks {
-            hook(z.ident.id);
-        }
-        // 目标已回收 → 叫醒它的全部 join 等待者（内核驱动，覆盖 fault 死亡）。
+        // 目标已收尾 → 叫醒它的全部 join 等待者（内核驱动，覆盖 fault 死亡）。
         wake_joiners(z.ident.id);
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);
@@ -649,152 +673,146 @@ pub(crate) fn rip() {
     doomed().lock().clear(); // 只存 id，无 Arc
 }
 
-// ── 操作：扑杀（kill / cull / doom）──
+// ── 操作：扑杀（suspend / die / cull / doom）──
 //
-// 血缘级联的「杀」侧：`kill` 强杀单线程（按状态分派）、`cull` 扑杀整域（递归
-// 沿 heir）、`doom` 是 exit_hook 里的触发面（读父 task 的 heir → 逐个 cull）。
-// 他核 Running 任务无法被本核同步拉走（会破坏「Reaped 不在 running 槽」不变量），
-// 故走 `doomed` 待杀集合 + SSIP 单点，目标核 trap 自查自退——最终一致。
+// 血缘级联的「杀」侧，**两阶段**：先停摆（摘出全部调度/等待容器），再收尾
+// （`die`：钩子 → Reaped → 入僵尸队列）。`doom` 是 exit_hook 里的触发面
+// （读父 task 的 heir → 整棵子树两阶段扑杀）。
+//
+// 两阶段是**正确性要求**，不是优化：钩子会摘门闩，摘门闩会唤醒等待者；若受害者
+// 尚未停摆，它可能被别的核偷走并运行，在「已注定要死」的状态下观察到一个已死的
+// 资源。他核 Running 任务无法被本核同步拉走（会破坏「Reaped 不在 running 槽」
+// 不变量），故走 `doomed` 待杀集合 + SSIP 单点，目标核 trap 自查自退——最终一致。
 
-/// 强杀单线程：按状态分派。
+/// 停摆单线程：摘出全部调度/等待容器 → 置 `Doomed`。返 `true` = 本次停摆了它，
+/// 调用方须随后 [`die`]；`false` = 没动它（已 `Doomed`/`Reaped`、不在任何容器，
+/// 或 `Running`——后者已记 doomed + SSIP，待其自退时自己 `die`）。
 ///
-/// - Reaped：no-op（已在 reaped 队列，clear_loop 会回收）。
-/// - Starved：从 starved 队列摘除 → Reaped → push REAPED。
-/// - Blocked：摘 parked / wait_sites / wait_times（+ untock）→ Reaped → push REAPED。
-/// - Running：记 doomed + SSIP 单点目标 hart，待其 trap 自退。
-///
-/// 锁纪律：只持 L3 表，逐表取、放锁后再取下一表（L3 同层绝不嵌套）；摘出的
-/// Arc<Task> 在锁外 transform + push REAPED；锁内不 drop Arc（drop 链触 L2）。
-pub(crate) fn kill(task: &Arc<Task>) {
-    match task.state() {
-        TaskState::Reaped => {}
+/// 锁纪律：只持 L3 表，逐表取、放锁后再取下一表（L3 同层绝不嵌套）；锁内不 drop
+/// Arc（drop 链触 L2）。
+fn suspend(task: &Arc<Task>) -> bool {
+    let taken = match task.state() {
+        TaskState::Reaped | TaskState::Doomed => false,
         TaskState::Held => {
-            // 未放行的引导线程：从 Team.held 摘出（不是它则放回）→ Reaped。
+            // 未放行的引导线程：从 Team.held 摘出（不是它则放回）。
             let team = task.ident.team.clone();
-            if let Some(held) = team.take_held() {
-                if Arc::ptr_eq(&held, task) {
-                    let mut t = task.clone();
-                    Task::exclusive(&mut t).transform(TaskState::Reaped);
-                    REAPED.lock().push_back(t);
-                } else {
+            match team.take_held() {
+                Some(held) if Arc::ptr_eq(&held, task) => true,
+                Some(held) => {
                     team.hold(&held);
+                    false
                 }
+                None => false,
             }
         }
-        TaskState::Starved => {
-            if crate::work::room::scheduler::core::remove_from_starved(task) {
-                let mut t = task.clone();
-                Task::exclusive(&mut t).transform(TaskState::Reaped);
-                REAPED.lock().push_back(t);
+        TaskState::Starved => crate::work::room::scheduler::core::remove_from_starved(task),
+        TaskState::Blocked { reason } => match reason {
+            BlockReason::Park { .. } => {
+                // parked 按 handle 键存；按 ptr_eq 扫出句柄后摘。
+                let handle = {
+                    let p = parked().lock();
+                    p.iter()
+                        .find(|(_, t)| Arc::ptr_eq(t, task))
+                        .map(|(h, _)| *h)
+                };
+                let Some(h) = handle else { return false };
+                let removed = parked().lock().remove(&h);
+                timer::untock(h);
+                removed.is_some()
             }
-        }
-        TaskState::Blocked { reason } => {
-            match reason {
-                BlockReason::Park { .. } => {
-                    // parked 按 handle 键存；按 ptr_eq 扫出句柄后摘。
-                    let handle = {
-                        let p = parked().lock();
-                        p.iter()
-                            .find(|(_, t)| Arc::ptr_eq(t, task))
-                            .map(|(h, _)| *h)
-                    };
-                    if let Some(h) = handle {
-                        let t = parked().lock().remove(&h);
-                        timer::untock(h);
-                        if let Some(mut t) = t {
-                            Task::exclusive(&mut t).transform(TaskState::Reaped);
-                            REAPED.lock().push_back(t);
-                        }
-                    }
-                }
-                BlockReason::Wait { .. } => {
-                    // wait_sites 分片存 Waiter{task, tock}；按 ptr_eq 扫出 tock 后摘。
-                    let mut tock: Option<Option<u64>> = None;
-                    for shard in 0..SITE_SHARDS {
-                        let mut ws = wait_sites(shard).lock();
-                        for site in ws.values_mut() {
-                            if let Some(idx) =
-                                site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
-                            {
-                                let w = site.waiters.remove(idx).expect("idx from position");
-                                tock = Some(w.tock);
-                                break;
-                            }
-                        }
-                        if tock.is_some() {
+            BlockReason::Wait { .. } => {
+                // wait_sites 分片存 Waiter{task, tock}；按 ptr_eq 扫出 tock 后摘。
+                let mut tock: Option<Option<u64>> = None;
+                for shard in 0..SITE_SHARDS {
+                    let mut ws = wait_sites(shard).lock();
+                    for site in ws.values_mut() {
+                        if let Some(idx) =
+                            site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
+                        {
+                            let w = site.waiters.remove(idx).expect("idx from position");
+                            tock = Some(w.tock);
                             break;
                         }
                     }
-                    if let Some(tock) = tock {
-                        // 摘 times 旁路 + untock（先摘簿记、后 untock，同 park 纪律）。
-                        if let Some(h) = tock {
-                            wait_times().lock().remove(&h);
-                            timer::untock(h);
-                        }
-                        let mut t = task.clone();
-                        Task::exclusive(&mut t).transform(TaskState::Reaped);
-                        REAPED.lock().push_back(t);
+                    if tock.is_some() {
+                        break;
                     }
                 }
-                BlockReason::Join { tid, .. } => {
-                    // joins 按目标 tid 存；按 ptr_eq 扫出本任务后摘除。
-                    let mut tock: Option<Option<u64>> = None;
-                    {
-                        let mut j = joins().lock();
-                        if let Some(site) = j.get_mut(&tid) {
-                            if let Some(idx) =
-                                site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
-                            {
-                                let w = site.waiters.remove(idx).expect("idx from position");
-                                tock = Some(w.tock);
-                            }
-                        }
-                    }
-                    if let Some(tock) = tock {
-                        if let Some(h) = tock {
-                            join_times().lock().remove(&h);
-                            timer::untock(h);
-                        }
-                        let mut t = task.clone();
-                        Task::exclusive(&mut t).transform(TaskState::Reaped);
-                        REAPED.lock().push_back(t);
-                    }
+                let Some(tock) = tock else { return false };
+                // 摘 times 旁路 + untock（先摘簿记、后 untock，同 park 纪律）。
+                if let Some(h) = tock {
+                    wait_times().lock().remove(&h);
+                    timer::untock(h);
                 }
+                true
             }
-        }
+            BlockReason::Join { tid, .. } => {
+                // joins 按目标 tid 存；按 ptr_eq 扫出本任务后摘除。
+                let mut tock: Option<Option<u64>> = None;
+                {
+                    let mut j = joins().lock();
+                    if let Some(site) = j.get_mut(&tid)
+                        && let Some(idx) =
+                            site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
+                    {
+                        let w = site.waiters.remove(idx).expect("idx from position");
+                        tock = Some(w.tock);
+                    }
+                }
+                let Some(tock) = tock else { return false };
+                if let Some(h) = tock {
+                    join_times().lock().remove(&h);
+                    timer::untock(h);
+                }
+                true
+            }
+        },
         TaskState::Running { .. } => {
             if let Some(hart) = crate::work::room::scheduler::core::running_hart(task) {
                 doomed().lock().insert(task.ident.id);
                 crate::work::room::conductor::nudge(hart);
             }
+            false
         }
+    };
+    if taken {
+        let mut t = task.clone();
+        Task::exclusive(&mut t).transform(TaskState::Doomed);
     }
+    taken
 }
 
-/// 扑杀整域：遍历 team.tasks → kill → 递归（显式工作栈防爆栈）沿 heir。
+/// 扑杀整棵血缘子树（**两阶段**）：
 ///
-/// 每个被杀 task 的子域（heir）也入栈扑杀——父删子随的递归闭包。栈是局部
-/// Vec（锁外分配），不持任何锁时展开。
-pub(crate) fn cull(team: &Arc<Team>) {
-    let mut work: Vec<Arc<Team>> = alloc::vec![team.clone()];
+///   1. 收集：显式工作栈沿 heir 收齐全部任务（防爆栈）；
+///   2. 停摆：逐个 [`suspend`]——`Running` 分支只记 doomed + SSIP，它自退时自己 `die`；
+///   3. 收尾：逐个 [`die`]（钩子 → Reaped → 入僵尸队列）。
+///
+/// **阶段边界即安全边界**：第 3 阶段的钩子会摘门闩、唤醒等待者，而此刻全部受害者
+/// 都已停摆，没有「被唤醒后还能跑」的中间态。栈/名单都是局部 Vec（锁外分配），
+/// 全程不持任何锁。
+pub(crate) fn cull(roots: &[Arc<Team>]) {
+    let mut work: Vec<Arc<Team>> = roots.to_vec();
+    let mut tasks: Vec<Arc<Task>> = Vec::new();
     while let Some(t) = work.pop() {
-        // 先取本域成员快照（放锁），再逐个 kill；kill 期间不持 team.tasks 锁。
+        // 先取本域成员快照（放锁），再收任务与子域；不持 team.tasks 锁。
         for weak_task in t.tasks_snapshot() {
             if let Some(task) = weak_task.upgrade() {
-                // 递归：先收其 heir 入栈（扑杀其子域），再杀本任务。
                 work.extend(task.heirs());
-                kill(&task);
+                tasks.push(task);
             }
         }
     }
+    let victims: Vec<Arc<Task>> = tasks.into_iter().filter(|t| suspend(t)).collect();
+    for task in victims {
+        die(task);
+    }
 }
 
-/// 级联触发（挂 exit_hook）：读父 task 的 heir → 逐个 cull。父删子随的入口。
+/// 级联触发（挂 exit_hook）：读父 task 的 heir → 两阶段扑杀整棵血缘子树。
 pub(crate) fn doom(tid: usize) {
     if let Some(task) = lookup_task_by_id(tid) {
-        for child in task.heirs() {
-            cull(&child);
-        }
+        cull(&task.heirs());
     }
 }
 

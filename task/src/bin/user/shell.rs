@@ -71,13 +71,27 @@ fn split(line: &str) -> Vec<String> {
     line.split_whitespace().map(str::to_string).collect()
 }
 
+/// 等目标结束。`Join` 返回真 ⇒ **收尾已完成**（内核契约：退出钩子已跑完），
+/// 故调用方拿到真之后即可断言「它名下的门闩与通道都消失了」，无需重试。
+///
+/// 调用模式与 `MailCall::Wait` 同源：挂起过的那次只当「醒了一次」，须复探。
+fn join_done(tid: env::TaskId) {
+    loop {
+        if task_join(tid, 0).unwrap_or(true) {
+            return;
+        }
+        let _ = task_join(tid, usize::MAX);
+    }
+}
+
 /// 派生级联自检（`cascade` 命令）。
 ///
 /// 四段判据：
 ///   1. 三跳 A→B→C：撤销中间那跳 B，末端 C 必须失效；
 ///   2. 无关分支 D 不受波及，资源本体 A 仍可用；
 ///   3. `release` 同样级联：放下 A → D 随之下线；
-///   4. 任务消亡级联：closure 授出的 Q 随它回收而失效（退出钩子 `gate::doom`）。
+///   4. 任务消亡级联：closure 授出的 Q 随它消亡而失效（退出钩子 `gate::doom`）
+///      ——`Join` 返回真即已收尾，故当场断言、不重试。
 ///
 /// 门闩是 per-task 的，同域两个线程也不能共享——故与 closure 的交接一律走
 /// 共享内存槽 + `room` 键（与启动期握手同一手法）。
@@ -209,18 +223,9 @@ fn cascade(term: &Terminal) {
     let _ = room::wait(key_q, WAIT);
     let q = HolePie::from_token(q_slot[0].load(Ordering::Relaxed));
     drop(join_e);
-    // 等该任务回收。注意 `join` 在目标已 Reaped 时**当场返回**，而退出钩子
-    // （`gate::doom`）可能在返回之后才跑完——故此处有界等待（最多 500 ms）。
-    let _ = task_join(env::TaskId::new(e_tid), WAIT);
-    let mut q_dead = false;
-    for _ in 0..50 {
-        if q.push(&msg).is_err() {
-            q_dead = true;
-            break;
-        }
-        let _ = q.pull(&mut buf);
-        let _ = sleep(Duration::from_millis(10));
-    }
+    join_done(env::TaskId::new(e_tid));
+    // `Join` 返回真 ⇒ 退出钩子（`gate::doom`）已跑完 ⇒ Q 当场就死了——不必重试。
+    let q_dead = q.push(&msg).is_err();
     term.writeline(&format!("cascade: task-exit q.dead={q_dead}"));
 
     let ok = revoked && before && !after && b_dead && d_ok && a_ok && released && d_dead && q_dead;
@@ -335,16 +340,9 @@ fn reclaim(term: &Terminal) {
     let _ = q.pull(&mut buf);
     let _ = room::wake(k_done);
     drop(join_e);
-    let _ = task_join(env::TaskId::new(e_tid), WAIT);
-    let mut q_dead = false;
-    for _ in 0..50 {
-        if q.push(&msg).is_err() {
-            q_dead = true;
-            break;
-        }
-        let _ = q.pull(&mut buf);
-        let _ = sleep(Duration::from_millis(10));
-    }
+    join_done(env::TaskId::new(e_tid));
+    // `Join` 返回真 ⇒ 退出钩子已跑完 ⇒ q 当场失效（无需重试）。
+    let q_dead = q.push(&msg).is_err();
     term.writeline(&format!(
         "reclaim: owner-exit q.before={q_ok} q.after={q_dead}"
     ));
