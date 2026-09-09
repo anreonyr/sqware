@@ -1,40 +1,38 @@
-//! handshake — 启动期握手：父域**开报到孔**、子域**靠泊**、两条报文。
+//! handshake — 启动期握手：父域**开上行孔**、子域**靠泊**、四条报文。
 //!
-//! 为什么需要它：子域自建的孔要交给父域，父域配给的门闩要交给子域，而**第一次
-//! 跨域通信必然要求一方发现一枚预置句柄**——子域要 pull 父域发来的 `Pier`，就得
-//! 先找到那条通道。本模块的答案：
+//! 目标（B 版）：**父域 root 手里零服务孔**。子域自建**控制孔**并把父侧句柄交给
+//! root；客户端要用的目录门闩由 **dir 亲授**（root 只转达「授给谁」）——客户端拿到
+//! 的副本 `vestor == dir`，来源可自证。
 //!
-//! - 父域 `dock()` 开一条 mtu = [`MTU`] 的**报到孔**（所有子域共用一条），`Hatch`
-//!   **之前**给每个子域一份 `R|W` 副本；
-//! - 子域 `moor()` 靠 `vestor == sire() && owner == sire()` 认出它——**冒充父域
-//!   不可表达**（`vestor` 只能是门闩的直接授出者，`owner` 只能是资源的开辟者）。
-//!
-//! 两条报文各 8 字节 LE，**方向即类型**（不需要判别字节）：
+//! 线格式：`[0] = tag`、`[1..9] = payload u64 LE`，孔 mtu = [`MTU`]。
 //!
 //! ```text
-//! Quay  子 → 父：我自建孔在**父侧**的句柄（父域据此回 `Pier`）
-//! Pier  父 → 子：目录请求门闩在**子侧**的句柄（0 = 无）
+//! Quay      子 → 父   子域上行孔      我控制孔在父侧的句柄
+//! Pier      父 → 子   子域下行孔      目录门闩在本侧的句柄（0 = 无）
+//! Refer     父 → dir  dir 控制孔      请把目录门闩的 R|W 授给 who
+//! Referred  dir → 父  dir 上行孔      已授（对方侧句柄；0 = 失败）
 //! ```
 //!
-//! # 为什么报到孔与配给孔必须分开
+//! **每条孔单一发送者**：上行孔只有子域推、下行孔只有父域推、dir 控制孔只有 root 推。
+//! 「谁能推谁就是谁」是结构性的，故报文里不带任何身份。
 //!
-//! Hole 是**单槽**信箱：若子域既在一条孔上 push `Quay`、又在同一条上 pull `Pier`，
-//! 它可能把自己刚写的 `Quay` 读回来（父域还没被调度），于是父域永远等不到报到——
-//! 实测就是这样死锁的。故：
-//!
-//! - 子域在**父域开的**报到孔上 push `Quay`（父域只 pull 它）；
-//! - 子域在**自己开的**孔上 pull `Pier`（父域只 push 它）。
-//!
-//! 这也正是既有 IPC 的形态：请求孔与回信孔是两条不同的孔。
+//! 为什么上行孔与下行孔必须分开：Hole 是单槽信箱，同一条孔上既 push 又 pull 会把
+//! 自己刚写的消息读回来（T2 实测死锁）。这也正是既有 IPC 的形态：请求孔与回信孔
+//! 是两条不同的孔。
 //!
 //! 通道用完不回收：`memo` 保活到关机，启动通道没有后续语义。
 
-use env::{EnvError, EnvResult, make_err};
+use env::{EnvError, EnvResult, Permission, TaskId, make_err};
 
 use crate::env::mail::{self, HolePie};
 
-/// 报到孔与配给报文的单消息字节数：都只是单个 u64。
-pub const MTU: usize = 8;
+/// 报文长度：1 字节 tag + 一个 u64。
+pub const MTU: usize = 9;
+
+const TAG_QUAY: u8 = 1;
+const TAG_PIER: u8 = 2;
+const TAG_REFER: u8 = 3;
+const TAG_REFERRED: u8 = 4;
 
 /// 枚举自己权限表的上限（防越界扫描跑飞；表量级个位数）。
 const MAX_PIES: usize = 64;
@@ -45,7 +43,24 @@ fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(E_DENIED))
 }
 
-/// 子 → 父：报到。`hole` = 我自建孔**在父侧**的句柄（`Accord` 的返回值）。
+/// 发一条报文：`[tag][payload]`。
+fn send(hole: &HolePie, tag: u8, payload: u64) -> EnvResult<()> {
+    let mut buf = [0u8; MTU];
+    buf[0] = tag;
+    buf[1..].copy_from_slice(&payload.to_le_bytes());
+    hole.push(&buf)
+}
+
+/// 收一条报文：读满 `MTU` 并校验 tag，返 payload。tag 不符 / 短读 → `Denied`。
+fn recv(hole: &HolePie, tag: u8) -> EnvResult<u64> {
+    let mut buf = [0u8; MTU];
+    if hole.pull(&mut buf)? != MTU || buf[0] != tag {
+        return Err(denied());
+    }
+    Ok(u64::from_le_bytes(buf[1..].try_into().unwrap_or([0u8; 8])))
+}
+
+/// 子 → 父：报到。`hole` = 我自建控制孔**在父侧**的句柄（`Accord` 的返回值）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Quay {
     hole: u64,
@@ -60,24 +75,20 @@ impl Quay {
         self.hole
     }
 
-    /// 子侧：在报到孔上报到（阻塞至槽空）。
-    pub fn push(self, quay: &HolePie) -> EnvResult<()> {
-        quay.push(&self.hole.to_le_bytes())
+    /// 子侧：在子域上行孔上报到。
+    pub fn push(self, up: &HolePie) -> EnvResult<()> {
+        send(up, TAG_QUAY, self.hole)
     }
 
-    /// 父侧：在报到孔上收报到（阻塞至有消息）。
-    pub fn pull(quay: &HolePie) -> EnvResult<Quay> {
-        let mut buf = [0u8; MTU];
-        if quay.pull(&mut buf)? != MTU {
-            return Err(denied());
-        }
+    /// 父侧：在子域上行孔上收报到。
+    pub fn pull(up: &HolePie) -> EnvResult<Quay> {
         Ok(Quay {
-            hole: u64::from_le_bytes(buf),
+            hole: recv(up, TAG_QUAY)?,
         })
     }
 }
 
-/// 父 → 子：配给。`token` = 目录请求门闩**在子侧**的句柄（0 = 无）。
+/// 父 → 子：配给。`token` = 目录门闩**在子侧**的句柄（0 = 无）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pier {
     token: u64,
@@ -92,38 +103,98 @@ impl Pier {
         self.token
     }
 
-    /// 父侧：往子域自建的孔里配给（阻塞至槽空）。
-    pub fn push(self, hole: &HolePie) -> EnvResult<()> {
-        hole.push(&self.token.to_le_bytes())
+    /// 父侧：往子域下行孔里配给。
+    pub fn push(self, down: &HolePie) -> EnvResult<()> {
+        send(down, TAG_PIER, self.token)
     }
 
-    /// 子侧：从自建孔里收配给（阻塞至有消息）。
-    pub fn pull(hole: &HolePie) -> EnvResult<Pier> {
-        let mut buf = [0u8; MTU];
-        if hole.pull(&mut buf)? != MTU {
-            return Err(denied());
-        }
+    /// 子侧：从下行孔里收配给。
+    pub fn pull(down: &HolePie) -> EnvResult<Pier> {
         Ok(Pier {
-            token: u64::from_le_bytes(buf),
+            token: recv(down, TAG_PIER)?,
         })
     }
 }
 
-/// 父侧：开报到孔（一次，所有子域共用一条）。
-///
-/// **时序义务**：每个子域 `Hatch` 之前都要先 `accord` 它一份 `R|W` 副本。
-pub fn dock() -> EnvResult<HolePie> {
-    HolePie::unseal(MTU)
+/// 父 → dir：引入请求。请把目录请求门闩的 `R|W` 授给 `who`。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Refer {
+    who: TaskId,
 }
 
-/// 子侧：认父域开的报到孔——本任务表里 `vestor == sire()` **且** `owner == sire()`
+impl Refer {
+    pub fn new(who: TaskId) -> Self {
+        Self { who }
+    }
+
+    pub fn who(&self) -> TaskId {
+        self.who
+    }
+
+    /// 父侧：往 dir 的控制孔里发引入请求。
+    pub fn push(self, control: &HolePie) -> EnvResult<()> {
+        send(control, TAG_REFER, self.who.get() as u64)
+    }
+
+    /// dir 控制线程：从控制孔里收引入请求。
+    pub fn pull(control: &HolePie) -> EnvResult<Refer> {
+        Ok(Refer {
+            who: TaskId(recv(control, TAG_REFER)? as usize),
+        })
+    }
+}
+
+/// dir → 父：已授。`token` = 对方侧句柄（0 = 失败）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Referred {
+    token: u64,
+}
+
+impl Referred {
+    pub fn new(token: u64) -> Self {
+        Self { token }
+    }
+
+    pub fn token(&self) -> u64 {
+        self.token
+    }
+
+    /// dir 控制线程：把结果推回父域（dir 上行孔）。
+    pub fn push(self, up: &HolePie) -> EnvResult<()> {
+        send(up, TAG_REFERRED, self.token)
+    }
+
+    /// 父侧：在 dir 上行孔上收结果。
+    pub fn pull(up: &HolePie) -> EnvResult<Referred> {
+        Ok(Referred {
+            token: recv(up, TAG_REFERRED)?,
+        })
+    }
+}
+
+/// 父侧：为子域开上行孔并把 `R|W|VEST` 副本授给它。
+///
+/// **带 `VEST`**：子域要把这条孔再授给自己的**控制线程**（同域跨 task 门闩不共享），
+/// 而 `Accord` 要求源门闩有 `VEST|BACK`。
+///
+/// **时序义务**：必须早于 `Hatch(child)`——否则子域起跑时 `moor()` 找不到它。
+pub fn dock(child: TaskId) -> EnvResult<HolePie> {
+    let up = HolePie::unseal(MTU)?;
+    up.accord(
+        child.get(),
+        Permission::READ | Permission::WRITE | Permission::VEST,
+    )?;
+    Ok(up)
+}
+
+/// 子侧：认父域给的上行孔——本任务表里 `vestor == sire()` **且** `owner == sire()`
 /// 的那一枚。
 ///
 /// 两个条件缺一不可：`vestor` 说「这枚门闩是父域授给我的」，`owner` 说「这扇门是
-/// 父域自己开的」。父域**转授**给我的门闩（如目录请求门闩）`vestor` 也是父域，但
+/// 父域自己开的」。父域**转授**来的门闩（如目录请求门闩）`vestor` 也是父域，但
 /// 它的 `owner` 是别人——只看 `vestor` 会认错。
 ///
-/// 顶级域（`sire() == 0`）没有报到孔 → `Denied`。
+/// 顶级域（`sire() == 0`）没有上行孔 → `Denied`。
 pub fn moor() -> EnvResult<HolePie> {
     let sire = crate::env::task::sire()?.get();
     if sire == 0 {
@@ -137,8 +208,6 @@ pub fn moor() -> EnvResult<HolePie> {
         if vestor.get() != sire {
             continue;
         }
-        // `vestor` 说「父域授给我的」；`owner` 说「这扇门是父域自己开的」。
-        // 父域**转授**来的门闩（目录请求门闩）vestor 也是父域，但 owner 是别人。
         if let Ok((_, owner)) = mail::owned(token)
             && owner.get() == sire
         {

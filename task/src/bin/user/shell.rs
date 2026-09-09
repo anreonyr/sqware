@@ -43,15 +43,15 @@ use task::term::{Color, Readline, Terminal};
 /// 目录请求门闩在**本任务侧**的句柄（启动期握手拿到，此后只读）。
 static DIR_ENTRY: AtomicU64 = AtomicU64::new(0);
 
-/// 启动期握手：靠泊 → 自建配给通道并交给父域 → 报到 → 收配给。
+/// 启动期握手：靠泊 → 自建控制孔并交给父域 → 报到 → 收配给（目录门闩由 dir 亲授）。
 /// 返目录请求门闩在**本任务侧**的句柄。
 fn shake() -> env::EnvResult<u64> {
-    let quay = handshake::moor()?;
-    let hole = HolePie::unseal(handshake::MTU)?;
+    let up = handshake::moor()?;
+    let down = HolePie::unseal(handshake::MTU)?;
     let sire = task::env::task::sire()?;
-    let at_parent = hole.accord(sire.get(), env::Permission::READ | env::Permission::WRITE)?;
-    Quay::new(at_parent).push(&quay)?;
-    Ok(Pier::pull(&hole)?.token())
+    let at_parent = down.accord(sire.get(), env::Permission::READ | env::Permission::WRITE)?;
+    Quay::new(at_parent).push(&up)?;
+    Ok(Pier::pull(&down)?.token())
 }
 
 /// 打开一次目录会话（每次新建 reply hole；entry 只是重建句柄）。

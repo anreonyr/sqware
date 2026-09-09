@@ -9,18 +9,17 @@
 //! 流程：
 //!   1. 启动参数 = [清单视图 VA, 清单长度]（boot 只读映射的 initrd 区）；
 //!   2. 解析清单（`manifest`），跳过自己；
-//!   3. 开一条**报到孔**（所有子域共用）；逐子域串行握手：
-//!      `Build` + `Spawn`(Held) → 报到孔副本 `Accord` 给它 → `Hatch` → 收 `Quay`
-//!      （子域自建孔在父侧的句柄，校验「授与人 = 该子域」）→ 往那条孔 push `Pier`；
-//!      - dir 在 `Quay` 里交出的就是它的请求门闩（root 留作分发源，故它要带 VEST）；
-//!      - 客户端在 `Pier` 里收到目录请求门闩的句柄，目录身份由 `Owned` 从门闩自身的
-//!        `owner` 求得——**报文里没有任何整数身份**（`docs/root.md`）；
-//!   4. `Join(shell)`：用户会话结束 → 本域退出 → 级联 → 停机。
+//!   3. **串行握手**（每个子域一次往返）：
+//!      `Build` + `Spawn`(Held) → `dock`（开上行孔并授副本）→ `Hatch` → 收 `Quay`
+//!      （子域自建控制孔在父侧的句柄，校验「授与人 = 该子域」）→ 往那条孔 push `Pier`；
+//!   4. 客户端的目录能力由 **dir 亲授**：`Refer{who}` 转达 → `Referred{token}` 收结果
+//!      → `Pier{token}` 配给。**root 手里没有任何服务孔**（见 `docs/root.md`）；
+//!   5. `Join(shell)`：用户会话结束 → 本域退出 → 级联 → 停机。
 
 extern crate alloc;
 
-use env::{Permission, TaskId, TeamId};
-use task::core::handshake::{self, Pier, Quay};
+use env::{TaskId, TeamId};
+use task::core::handshake::{self, Pier, Quay, Refer, Referred};
 use task::env::mail::{self, HolePie};
 use task::env::task as utask;
 use task::env::{control::panic, io::put, room::exit};
@@ -49,26 +48,25 @@ fn build_spawn(entries: &[manifest::Entry<'_>], name: &str) -> TaskId {
     }
 }
 
-/// 串行握手：给子域一份报到孔副本 → 放行 → 收报到（校验授与人）→ 往它自建的孔里
-/// 配给。返子域自建孔在**父侧**的句柄。
-///
-/// `pier` = 本次配给的载荷（0 = 无）。
-fn shake(quay: &HolePie, child: TaskId, pier: u64) -> u64 {
-    if quay
-        .accord(child.get(), Permission::READ | Permission::WRITE)
-        .is_err()
-    {
-        panic(4);
-    }
+/// 开上行孔（`dock`）→ 放行。返上行孔（root 侧）。
+fn launch(child: TaskId) -> HolePie {
+    let up = match handshake::dock(child) {
+        Ok(u) => u,
+        Err(_) => panic(4),
+    };
     if utask::hatch(child).is_err() {
         panic(5);
     }
-    let reported = match Quay::pull(quay) {
+    up
+}
+
+/// 收报到：自证「这枚控制孔真是该子域授出来的」，返它在 root 侧的句柄。
+fn report(child: TaskId, up: &HolePie) -> HolePie {
+    let quay = match Quay::pull(up) {
         Ok(q) => q,
         Err(_) => panic(6),
     };
-    // 自证：这枚孔必须真是该子域授出来的（vestor 只能由授出者写）。
-    let vestor = match mail::owned(reported.hole()) {
+    let vestor = match mail::owned(quay.hole()) {
         Ok((vestor, _owner)) => vestor.get(),
         Err(_) => panic(7),
     };
@@ -76,13 +74,7 @@ fn shake(quay: &HolePie, child: TaskId, pier: u64) -> u64 {
         say("root: report not from child\n");
         panic(8);
     }
-    if Pier::new(pier)
-        .push(&HolePie::from_token(reported.hole()))
-        .is_err()
-    {
-        panic(9);
-    }
-    reported.hole()
+    HolePie::from_token(quay.hole())
 }
 
 /// 等目标回收（`Join` 的复探模式：挂起过的那一次只当「醒了一次」）。
@@ -103,7 +95,7 @@ extern "C" fn main() -> ! {
         [va, len, ..] => (*va as *const u8, *len),
         _ => {
             say("root: no manifest args\n");
-            panic(10);
+            panic(9);
         }
     };
     // SAFETY: boot 把 initrd 区只读映射到该 VA，长度即 region.size。
@@ -112,35 +104,41 @@ extern "C" fn main() -> ! {
         Some(e) => e,
         None => {
             say("root: malformed manifest\n");
-            panic(11);
+            panic(10);
         }
     };
 
-    // 2. 报到孔：一条，所有子域共用（串行握手，故无争用）
-    let quay = match handshake::dock() {
-        Ok(q) => q,
-        Err(_) => panic(12),
-    };
-
-    // 3. dir：先建（客户端要它的门闩），它的请求门闩即 root 的分发源
+    // 2. dir：先建（客户端要它的门闩）。它的控制孔即后续引入请求的通道。
     let dir_task = build_spawn(&entries, "dir");
-    let dir_hole = HolePie::from_token(shake(&quay, dir_task, 0));
+    let up_dir = launch(dir_task);
+    let control_dir = report(dir_task, &up_dir);
 
-    // 4. echo / shell：配给「目录请求门闩」的 R|W 副本
+    // 3. echo / shell：请 dir 亲授目录请求门闩的 R|W 副本，再配给客户端
     let mut shell_task = TaskId(0);
     for name in ["echo", "shell"] {
         let child = build_spawn(&entries, name);
-        let token = match dir_hole.accord(child.get(), Permission::READ | Permission::WRITE) {
-            Ok(t) => t,
-            Err(_) => panic(13),
+        let up = launch(child);
+        let down = report(child, &up);
+        if Refer::new(child).push(&control_dir).is_err() {
+            panic(11);
+        }
+        let referred = match Referred::pull(&up_dir) {
+            Ok(r) => r,
+            Err(_) => panic(12),
         };
-        shake(&quay, child, token);
+        if referred.token() == 0 {
+            say("root: directory refused to grant\n");
+            panic(13);
+        }
+        if Pier::new(referred.token()).push(&down).is_err() {
+            panic(14);
+        }
         if name == "shell" {
             shell_task = child;
         }
     }
 
-    // 5. 用户会话结束（shell 退出或崩溃）→ 本域退出 → doom 级联 → 全部回收 → 停机
+    // 4. 用户会话结束（shell 退出或崩溃）→ 本域退出 → doom 级联 → 全部回收 → 停机
     wait_dead(shell_task);
     say("root: session over, shutting down\n");
     exit()

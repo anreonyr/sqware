@@ -80,7 +80,7 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 ## 5 · 身份与授权
 
 ```text
-调用方 ──启动期握手（Pier）──▶ 目录请求门闩（Owned 取回 owner = 目录 task id）
+调用方 ──启动期握手（Pier）──▶ 目录请求门闩（**dir 亲授**；Owned 取回 owner = 目录 task id）
 调用方 ──UnsealHole + Accord──▶ 目录：回信 hole 的对端 token（写进 [49..57]）
 目录   ──gate::accord──▶ 调用方权限表（子集 R|W）
 服务 id = 入口门闩的 owner（资源开辟者，服务自己 UnsealHole 出来的）
@@ -119,33 +119,38 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 配对：`Unseal*` ↔ `Seal`（动资源）；`Accord` ↔ `Revoke`（他人）；`Collect`（枚举）↔
 `Owned`（查证）↔ `Release`（放下，自己）。
 
-## 8 · 引导（启动期握手 + 根分发）
+## 8 · 引导（启动期握手 + 根转达）
 
 内核是根授予的源头；**root 域**（`bin/supervisor/root`）负责产生所有子域，机制不变
 （父任务把权限交给子任务），但顺序与过去不同：
 
 ```text
 root:
-  1. dock()：开一条报到孔（mtu = 8）
-  2. 逐子域串行：
-     Build + Spawn(Held) → 报到孔副本 Accord(child, R|W) → Hatch
-     → Quay::pull（子域自建孔在父侧的句柄；校验 Owned(句柄).vestor == child）
-     → Pier::push（目录请求门闩在子侧的句柄）
-  3. dir 在 Quay 里交出的就是它的请求门闩（root 留作分发源，故带 VEST）
+  1. 逐子域串行：dock(child)（开上行孔 mtu=9 + Accord(child, R|W|VEST)）
+     → Build + Spawn(Held) → Hatch
+     → Quay::pull（子域控制孔在父侧的句柄；校验 Owned(句柄).vestor == child）
+  2. 客户端要目录能力时：Refer{who} → dir 控制孔；Referred{token} ← dir 上行孔
+     → Pier{token} → 子域控制孔
+  ※ root 全程不持任何服务孔（见 docs/root.md §10）
 
-dir:   moor() 认报到孔 → UnsealHole 自建请求门闩 → Accord(root, R|W|VEST)
-       → Quay{句柄} → Pier::pull → 服务循环
-echo:  moor() → UnsealHole 自建入口门闩 → Accord(root, R|W) → Quay{句柄}
-       → Pier::pull → dir_id = Owned(门闩).owner → Accord(entry, dir_id, R|W|VEST)
-       → UnsealHole 自造回信 hole + Accord(dir_id, R|W) → Register（回信 token 写 [49..57]）
-shell: moor() → UnsealHole 纯配给通道 → Accord(root, R|W) → Quay{句柄}
+dir:   moor() 认上行孔 → UnsealHole 自建请求门闩 H（**只自己持**）
+       → UnsealHole 自建控制孔 C → Accord(root, R|W) → Quay{C 在父侧的句柄}
+       → Spawn 控制线程（Held）→ Accord(H/C/上行孔 三枚副本给它) → Hatch
+       → 主线程服务循环；控制线程 pull(C) → H.accord(who, R|W) → Referred
+echo:  moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}
+       → UnsealHole 自建入口门闩 → Pier::pull → dir_id = Owned(门闩).owner
+       → Accord(entry, dir_id, R|W|VEST) → UnsealHole 自造回信 hole + Accord(dir_id, R|W)
+       → Register（回信 token 写 [49..57]）
+shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}
        → Pier::pull → Directory::open(门闩)
 ```
 
 - **没有任何整数身份进报文或启动参数**：目录 id 由 `Owned(门闩).owner` 从资源事实推出。
 - **子域启动参数为空**；`Spawn` 的 args 只剩内核给 root 的清单视图。
-- 报到孔与配给通道**必须分两条孔**：Hole 是单槽信箱，同一条孔上既 push 又 pull 会把
-  自己刚写的消息读回来（实测死锁，见 `docs/root.md` §6.4）。
+- **控制孔与服务孔必须分两条孔**：Hole 是单槽信箱，同一条孔上既 push 又 pull 会把自己
+  刚写的消息读回来（实测死锁，见 `docs/root.md` §6.4）；B 之后更要求「父域拿不到服务孔」。
+- **dir 有两个线程**：请求孔 `H` 与引入孔 `C` 必须同时有人听（`Wait` 一次只等一条孔），
+  故控制面单开一个线程——见 `docs/root.md` §10。
 
 ## 9 · 已决 / 被否
 

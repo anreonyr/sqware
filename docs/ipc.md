@@ -956,6 +956,10 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
 
 > 后续（T2，见 `docs/root.md` §9）再加一个：`MailCall::Owned { token } -> (vestor, owner)`
 > ——按句柄查「这枚门闩谁授的 / 这扇门谁开的」；`Collect` 保留为唯一枚举手段。
+>
+> B（`docs/root.md` §10）把目录能力改成 **dir 亲授**，root 手里零服务孔；dir 因此有
+> 两个线程（数据面服务请求孔、控制面服务引入孔），两线程的门闩经**同域共享内存 +
+> `Hatch` 同步点**交接。
 
 ---
 

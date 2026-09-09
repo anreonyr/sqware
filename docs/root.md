@@ -116,12 +116,16 @@ task/src/core/handshake.rs
 5. **`moor()` 认错泊位**（T2）：只用 `vestor == sire()` 认报到孔时，会把 root **转授**
    的目录门闩副本（vestor 也是 root）当成报到孔。修法：加 `owner == sire()`——报到孔是
    **父域自己开的门**，转授来的门闩 `owner` 是别人。
+6. **上行孔少了 `VEST`，子域授不出去**（B）：root 把上行孔按 `R|W` 授给子域，子域要把
+   它再交给自己的控制线程时被拒——`Accord` 要求源门闩带 `VEST|BACK`。修法：`dock()` 改授
+   `R|W|VEST`（**这条孔本来就是「子域往父域推」用的，多一个转授权不改变其用途**）。
 
 ## 7 · 已知边界
 
-1. **root 长期持有目录请求门闩**（T2 后仍是）：`Accord` 的 `subset ⊆ 自身权限`，root 分发
-   后放下就再也分不出去了——故 root 手里始终有一份 `R|W|VEST` 副本，理论上可向目录
-   注入请求。要彻底消掉得让**目录亲授**（引入式拓扑），本模块未取。
+1. ~~root 长期持有目录请求门闩~~ —— **B 已消解**：目录能力改由 **dir 亲授**，root 只转达
+   `Refer{who}`，手里**零服务孔**（实测：root 的 6 枚门闩里 `owner == dir` 的只有 1 枚，
+   即 dir 的控制孔；见 §10）。残留的是**控制面**：root 持有每个子域的控制孔副本，能往
+   子域的控制通道推消息——那是父子关系的本义，不是越权。
 2. `initrd` 仍在（内核只用于取 root 镜像）；正式供给通道（文件服务 / 设备发现）就位后，
    本模块与 `build.rs` 打包端一起删除，`Build` 原语不受影响。
 3. 无 kill 原语：root 退出即 `doom` 级联，故不需要。
@@ -148,27 +152,59 @@ task: all tasks exited, system halted        # ← 自然停机，无外部 time
 debug 档同路径跑通（`dir` + `req` + `exit` → 同样自行复位，无 lockdep 违规），
 `cargo fmt --check` 干净。
 
-## 9 · T2：启动期握手（谁开孔、谁认孔）
+## 9 · 启动期握手（B：谁开孔、谁认孔）
 
 ```text
-root                                     子域
-  dock()      开报到孔（mtu=8，一条）
-  Build+Spawn(Held)                        —— 启动参数为空
-  报到孔副本 Accord(child, R|W)
-  Hatch(child) ─────────────────────────▶  起跑
-                                           moor()      认报到孔
-                                                        （vestor==sire 且 owner==sire）
-                                           UnsealHole  自建孔（服务孔 / 配给通道）
-                                           Accord(sire) 交给父域
-  Quay::pull ◀──────────────────────────  Quay{ 孔在父侧的句柄 }
+root                                       子域
+  dock(child)   开上行孔（mtu=9，每子域一条）+ Accord(child, R|W|VEST)
+  Build+Spawn(Held)                          —— 启动参数为空
+  Hatch(child) ───────────────────────────▶  起跑
+                                             moor()      认上行孔
+                                                         （vestor==sire 且 owner==sire）
+                                             UnsealHole  自建控制孔（与自己的服务孔分离）
+                                             Accord(sire) 交给父域
+  Quay::pull ◀────────────────────────────  Quay{ 控制孔在父侧的句柄 }
   校验 Owned(句柄).vestor == child
-  Pier::push(载荷) ──────────────────────▶ Pier{ 目录门闩在本侧的句柄 }
-  下一个子域…                              （客户端：dir_id = Owned(门闩).owner）
+  ── 客户端要目录能力时 ──
+  Refer{who} ──▶ dir 控制孔                  dir 控制线程：H.accord(who, R|W)
+  Referred{token} ◀── dir 上行孔
+  Pier{token} ──▶ 子域控制孔 ─────────────▶  Pier::pull → dir_id = Owned(token).owner
 
-dir 的「孔」就是它的请求门闩（root 留作分发源，故它 `Accord` 时带 VEST）；
-echo 的「孔」是它的入口门闩；shell 只造一条纯配给通道。
+dir 的请求门闩 `H` **只有 dir 自己开、自己持**（root 不碰）；
+echo 的入口门闩同理；两者都另开一条控制孔给 root。
 ```
 
-- **身份全程不经报文/启动参数**：目录 id 由 `Owned(门闩).owner` 从资源事实推出。
-- **认泊位要两个条件**：`vestor == sire`（父域授的）**且** `owner == sire`（父域开的）。
-- 串行握手 ⇒ 报到孔单槽无争用；每条子域自建的孔只由父域 push、由子域 pull。
+- **身份全程不经报文/启动参数**：目录 id 由 `Owned(门闩).owner` 从资源事实推出；
+  B 之后客户端拿到的副本 `vestor == dir`，来源还能再自证一层。
+- **认上行孔要两个条件**：`vestor == sire`（父域授的）**且** `owner == sire`（父域开的）。
+- **四条报文各 9 字节**（`[0] tag` + `[1..9] u64`）：`Quay` / `Pier` / `Refer` / `Referred`。
+- **每条孔单一发送者**：上行孔只有子域推、下行孔只有父域推、dir 控制孔只有 root 推。
+- 串行握手 ⇒ 上行孔单槽无争用。
+
+## 10 · B：root 零服务孔（引入式拓扑）
+
+**问题**：T2 之后 root 仍持目录请求门闩的一份 `R|W|VEST` 副本——它能往目录的请求队列里
+塞消息、抢走客户端的待处理请求（`Accord` 的 `subset ⊆ 自身权限` 决定了「要分发就必须持有」）。
+
+**做法**：目录能力由 **dir 亲授**。
+
+```text
+root 手里：N 条自建上行孔 + N 条子域控制孔副本           ← 零服务孔
+dir  手里：H（请求门闩，只自己持）+ C（控制孔，给 root）
+dir 控制线程：pull(C) → H.accord(who, R|W) → push(上行孔, Referred)
+```
+
+| 判据 | 结果 |
+|---|---|
+| AC-B1 root 无服务孔 | ✅ 实测 root 持 6 枚：3 条自建上行孔 + 3 条子域控制孔副本；`owner == dir` 的仅 1 枚（控制孔，非 `H`） |
+| AC-B2 客户端副本来源可自证 | ✅ `Owned(t).vestor == dir` |
+| AC-B4 e2e 不回退 | ✅ release + debug，自然停机 |
+| AC-B5 dir 空闲 0% CPU | ✅ 主线程 park 在 `H`、控制线程 park 在 `C` |
+
+**为什么 dir 变成两个线程**：它要同时听两条输入通道（客户端请求 `H`、父域引入 `C`），而
+`Wait` 一次只能等一条孔——单线程 park 在 `H` 上就接不到引入请求。控制面（授不发）与数据面
+（注册表）分开，主线程的循环一字未改。
+
+**两线程怎么交接门闩**：门闩是 **per-task** 的（同域不同线程也各持一份），主线程 `Accord`
+出去拿到的是对方表里的 token，只能经**同域共享内存**交接——`Spawn` 恒产 `Held`，于是
+「先 `Accord` 三枚 → 写静态 → `Hatch`」天然是一个同步点，控制线程读到的必然是写好的值。
