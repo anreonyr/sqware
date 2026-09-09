@@ -297,6 +297,12 @@ pub fn mark_reaped() -> Option<usize> {
 /// wake_by_event：waiters 非空 → 唤醒队首（Blocked → Starved 推送本核 + kick）；
 /// 空 → pend 置位（防漏唤醒）。返回是否唤到人。消费方 = utask/envcall；
 /// 跨核唤醒经 steal 再平衡（与 drain_expired 一致）。
+///
+/// **pend 可能变陈旧**：站点不回收，且「信号」与「数据」是两份状态——若等待者后来
+/// 直接取走了数据（裸 pull 成功，不经 `wait`），pend 不会被消费，下一次 `wait` 就
+/// 会立刻返回「已唤醒」而实际无数据。故 `wait` 的返回**只是提示**，调用方必须自己
+/// 复核条件（`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环，见
+/// `docs/dispatch.md` §11.4）。
 pub fn wake(key: WaitKey) -> bool {
     let popped = {
         let mut sites = wait_sites(site_shard(key)).lock();

@@ -171,6 +171,17 @@ boot:
 3. **`warpper` 内联后返回值错**（`crates/env/src/ucall.rs`）：
    asm 块被内联进调用方时，调用方读回的 a0 恒 0；独立函数调用则正确。修法：
    `#[inline(never)]`（与仓库对裸 asm 的一贯纪律同源，见 `docs/ipc.md` §13.10 A.2）。
+4. **hole 等待键取堆地址 → 陈旧唤醒闩被继承**（`kernel/src/work/mail/hole.rs`
+   `key()` + `task/src/env/mail.rs` `pull_timeout()`）：`wait_sites` 的站点从不回收，
+   而 `messenger::wake` 在「无等待者」时置 `pend = true`；成功走**裸 pull** 的调用方
+   不会消费这个 pend，于是它一直留着。原键是 `HoleMeta` 的**堆地址**（会被分配器
+   回收再利用），死 hole 的陈旧 pend 因此可能被落在同一地址的新 hole 继承；即便不
+   继承，同一 hole 上也会出现「下一次 `wait` 立即返回『已唤醒』但槽是空的」。
+   客户端 `pull_timeout` 把 `wait == false` 当成超时结论，于是**第二个请求偶发
+   立刻报 `Busy`**（约 1/3 运行；目录侧其实正常，回复随后才落进槽里）。修法两处：
+   ① 键改用 `ResourceId`（单调、永不复用）+ `(id << 1) | 方向位` 编码；
+   ② `pull_timeout` 改按 deadline 循环（`clock()` 走完 `millis` 才算超时，
+   `wait` 返 false 只当「醒了一次」）。
 
 ## 12 · 验证
 

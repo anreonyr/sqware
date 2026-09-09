@@ -41,6 +41,8 @@ pub enum HoleState {
 /// hole 数据面实体（Arc 持有；最后强引用 drop 时 Meta 释放）。
 pub struct HoleMeta {
     state: SpinLock<HoleState>,
+    /// 本 hole 的全局资源 id——**等待键的身份**（单调分配、永不复用；见 [`key`]）。
+    id: ResourceId,
     /// unseal 时定；`1..=HOLE_MTU_MAX`。Push/Pull 的长度校验上限。
     pub mtu: usize,
     /// 单槽消息缓冲：`Vec<u8>` 的 capacity 恒为 mtu（创建时分配）；`len()` 既是
@@ -50,10 +52,11 @@ pub struct HoleMeta {
 }
 
 impl HoleMeta {
-    pub(super) fn new(mtu: usize) -> Arc<Self> {
+    pub(super) fn new(mtu: usize, id: ResourceId) -> Arc<Self> {
         let buf = Vec::with_capacity(mtu);
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
+            id,
             mtu,
             slot: SpinLock::new_level(Level::L3, buf),
         })
@@ -91,8 +94,16 @@ impl Drop for HoleMeta {
 ///
 /// 等数据的 task 等 `Pull` 键（push 写完槽后唤醒），等空位的 task 等 `Push` 键
 /// （pull 取完槽后唤醒）。
+///
+/// **键取 `ResourceId` 而不是 `HoleMeta` 的堆地址**：`wait_sites` 的站点从不回收，
+/// 而 wake 找不到等待者时置的「唤醒闩（pend）」会一直留着；地址会被分配器回收再
+/// 利用——死 hole 的陈旧 pend 会被落在同一地址的新 hole 继承，于是一次无关的
+/// `wait` 立即返回「已唤醒」。id 单调分配、永不复用，无此问题。
+///
+/// 编码 `(id << 1) | 方向位`：方向位占最低位，故同一 hole 两方向不撞键，也不会
+/// 与另一个 hole 的键相撞。
 pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WaitKey {
-    let raw = meta as *const _ as usize;
+    let raw = meta.id.0 << 1;
     match dir {
         // 显式把 `raw | 1` 拆成两个语句、命名中间变量：size 优化下 `| 1` 不会再
         // 合并进 `WaitKey::compose` 的 mask 计算路径（见 §13.10 A 待办方向 B）。
@@ -221,8 +232,9 @@ pub(crate) fn meta(mtu: usize) -> Result<(Arc<HoleMeta>, ResourceId), GateError>
     if mtu == 0 || mtu > HOLE_MTU_MAX {
         return Err(GateError::Denied);
     }
-    let arc = HoleMeta::new(mtu);
+    // 先分配 id 再建 Meta：id 同时是等待键的身份（见 `key`），必须随 Meta 定型。
     let id = memo::alloc_id();
+    let arc = HoleMeta::new(mtu, id);
     memo::insert(id, Meta::Hole(arc.clone()));
     Ok((arc, id))
 }

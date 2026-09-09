@@ -18,6 +18,13 @@ use crate::env::room;
 /// mtu ∈ [1, HOLE_MTU_MAX]；推送时实际字节数由 `push` 的 `len` 决定。
 pub const HOLE_MTU_MAX: usize = 4096;
 
+/// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
+/// timebase 频率）。
+fn now_ns() -> EnvResult<u64> {
+    let (secs, nanos) = crate::env::chrono::clock()?;
+    Ok(secs.saturating_mul(1_000_000_000).saturating_add(nanos))
+}
+
 // ── 裸函数层（envcall 转发，零业务逻辑）──
 
 /// 解封 Hole（mtu = 该孔单消息上限，1..=4096）。
@@ -237,16 +244,23 @@ impl HolePie {
     /// 用于「等对端回复」这类必须有上界的往返：无限等会把协议错误（回复被丢弃、
     /// 对端漏回）变成不可诊断的挂起。**超时后该 hole 不再"干净"**——迟到的回复
     /// 仍可能落进槽里，使下一次 pull 取到上一条；调用方应弃用该会话。
+    ///
+    /// 实现要点：`wait` 返 false **不等于**超时——它可能是「唤醒闩（pend）被消费」
+    /// 或一次无关唤醒（见 `messenger::wake`：无等待者时置 pend，而成功裸 pull 不会
+    /// 消费它，故 pend 可能是陈旧的）。所以这里按 **deadline 循环**：只有 `clock()`
+    /// 真的走完 `millis` 才报 Busy，否则带着剩余时间重试。
     pub fn pull_timeout(&self, buf: &mut [u8], millis: usize) -> EnvResult<usize> {
+        let deadline = now_ns()?.saturating_add((millis as u64).saturating_mul(1_000_000));
         loop {
             match pull(self.token, buf.as_mut_ptr(), buf.len()) {
                 Ok(n) => return Ok(n),
                 Err(e) if e.source.is_busy() => {
-                    // `wait` 返 false 有二义（被唤醒 / 超时），故唤醒后必须再探一次；
-                    // 再探仍空即按超时收场（`millis` 用尽）。
-                    if !self.wait(HoleDir::Pull, millis)? {
+                    let now = now_ns()?;
+                    if now >= deadline {
                         return pull(self.token, buf.as_mut_ptr(), buf.len());
                     }
+                    let remain_ms = ((deadline - now) / 1_000_000).max(1) as usize;
+                    let _ = self.wait(HoleDir::Pull, remain_ms)?;
                 }
                 Err(e) => return Err(e),
             }
