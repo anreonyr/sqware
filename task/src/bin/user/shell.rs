@@ -16,12 +16,14 @@
 //!   sleep — 阻塞 N 毫秒（RoomCall::Park）
 //!   spawn — 派一个算 0..N 的闭包子任务并 join（TaskCall::Spawn）
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
+//!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
 //!   req   — 走目录协议连接 echo 并调用一次（Connect + Service::call）
 //!   dir   — 目录协议自省（Discover + Enumerate）
 //!   exit  — 退出 shell（RoomCall::Reap）
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -36,7 +38,7 @@ use task::env::{
     chrono::{self, clock},
     mail::{HOLE_MTU_MAX, HolePie},
     room::{self, sleep},
-    task::{heir_at, heir_count},
+    task::{heir_at, heir_count, join as task_join},
 };
 use task::term::{Color, Readline, Terminal};
 
@@ -62,6 +64,162 @@ fn dir_session() -> env::EnvResult<Directory> {
 /// 按空白切词（保留空输入 = 空 Vec）。
 fn split(line: &str) -> Vec<String> {
     line.split_whitespace().map(str::to_string).collect()
+}
+
+/// 派生级联自检（`cascade` 命令）。
+///
+/// 四段判据：
+///   1. 三跳 A→B→C：撤销中间那跳 B，末端 C 必须失效；
+///   2. 无关分支 D 不受波及，资源本体 A 仍可用；
+///   3. `release` 同样级联：放下 A → D 随之下线；
+///   4. 任务消亡级联：closure 授出的 Q 随它回收而失效（退出钩子 `gate::doom`）。
+///
+/// 门闩是 per-task 的，同域两个线程也不能共享——故与 closure 的交接一律走
+/// 共享内存槽 + `room` 键（与启动期握手同一手法）。
+fn cascade(term: &Terminal) {
+    const WAIT: usize = 5_000;
+
+    let rw = env::Permission::READ | env::Permission::WRITE;
+    let msg = [0x5au8; 8];
+    let mut buf = [0u8; 8];
+
+    let me = match unit::self_id() {
+        Ok(id) => id,
+        Err(_) => {
+            term.writeline("cascade: no self id");
+            return;
+        }
+    };
+    let a = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(p) => p,
+        Err(_) => {
+            term.writeline("cascade: unseal failed");
+            return;
+        }
+    };
+    let b = match a.accord(me, rw | env::Permission::VEST) {
+        Ok(t) => HolePie::from_token(t),
+        Err(_) => {
+            term.writeline("cascade: accord b failed");
+            return;
+        }
+    };
+    let d = match a.accord(me, rw) {
+        Ok(t) => HolePie::from_token(t),
+        Err(_) => {
+            term.writeline("cascade: accord d failed");
+            return;
+        }
+    };
+
+    // ── 1+2：三跳撤销 + 无关分支 ──
+    let c_slot: &'static [AtomicUsize; 1] = Box::leak(Box::new([AtomicUsize::new(0)]));
+    let c_ptr = c_slot.as_ptr() as usize;
+    let key_c = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    let key_ack = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    let key_rev = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+
+    let join_c = unit::closure(move || {
+        let _ = room::wait(key_c, WAIT);
+        let c = HolePie::from_token(unsafe {
+            (*(c_ptr as *const AtomicUsize)).load(Ordering::Relaxed)
+        });
+        let mut buf = [0u8; 8];
+        // 撤销前：C 可用（B 还在）。
+        let before = c.push(&msg).is_ok();
+        let _ = c.pull(&mut buf); // 清槽：让 after 的失败只可能来自撤销
+        let _ = room::wake(key_ack);
+        // 等 shell 撤销 B。
+        let _ = room::wait(key_rev, WAIT);
+        let after = c.push(&msg).is_ok();
+        (before, after)
+    });
+    let c = match b.accord(join_c.id(), rw) {
+        Ok(t) => HolePie::from_token(t),
+        Err(_) => {
+            drop(join_c);
+            term.writeline("cascade: accord c failed");
+            return;
+        }
+    };
+    c_slot[0].store(c.token(), Ordering::Relaxed);
+    let _ = room::wake(key_c);
+    let _ = room::wait(key_ack, WAIT);
+
+    // 撤销 B：C 应随之失效（级联）。
+    let revoked = b.revoke(me, b.token()).is_ok();
+    let _ = room::wake(key_rev);
+    let (before, after) = join_c.join();
+
+    let b_dead = b.push(&msg).is_err();
+    let d_ok = d.push(&msg).is_ok();
+    let _ = d.pull(&mut buf);
+    let a_ok = a.push(&msg).is_ok();
+    let _ = a.pull(&mut buf);
+    term.writeline(&format!(
+        "cascade: revoke={revoked} C.before={before} C.after={after} B.dead={b_dead} D={d_ok} A={a_ok}"
+    ));
+
+    // ── 3：release 级联 ──
+    let released = a.release().is_ok();
+    let d_dead = d.push(&msg).is_err();
+    term.writeline(&format!("cascade: release={released} D.after={d_dead}"));
+
+    // ── 4：任务消亡级联 ──
+    let r = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(p) => p,
+        Err(_) => {
+            term.writeline("cascade: unseal r failed");
+            return;
+        }
+    };
+    let r2_slot: &'static [AtomicUsize; 1] = Box::leak(Box::new([AtomicUsize::new(0)]));
+    let q_slot: &'static [AtomicUsize; 1] = Box::leak(Box::new([AtomicUsize::new(0)]));
+    let r2_ptr = r2_slot.as_ptr() as usize;
+    let q_ptr = q_slot.as_ptr() as usize;
+    let key_r = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    let key_q = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+
+    let join_e = unit::closure(move || {
+        let _ = room::wait(key_r, WAIT);
+        let r2 = HolePie::from_token(unsafe {
+            (*(r2_ptr as *const AtomicUsize)).load(Ordering::Relaxed)
+        });
+        if let Ok(q) = r2.accord(me, rw) {
+            unsafe { (*(q_ptr as *const AtomicUsize)).store(q, Ordering::Relaxed) };
+        }
+        let _ = room::wake(key_q);
+    });
+    let e_tid = join_e.id();
+    let r2 = match r.accord(e_tid, rw | env::Permission::VEST) {
+        Ok(t) => HolePie::from_token(t),
+        Err(_) => {
+            drop(join_e);
+            term.writeline("cascade: accord r2 failed");
+            return;
+        }
+    };
+    r2_slot[0].store(r2.token(), Ordering::Relaxed);
+    let _ = room::wake(key_r);
+    let _ = room::wait(key_q, WAIT);
+    let q = HolePie::from_token(q_slot[0].load(Ordering::Relaxed));
+    drop(join_e);
+    // 等该任务回收。注意 `join` 在目标已 Reaped 时**当场返回**，而退出钩子
+    // （`gate::doom`）可能在返回之后才跑完——故此处有界等待（最多 500 ms）。
+    let _ = task_join(env::TaskId::new(e_tid), WAIT);
+    let mut q_dead = false;
+    for _ in 0..50 {
+        if q.push(&msg).is_err() {
+            q_dead = true;
+            break;
+        }
+        let _ = q.pull(&mut buf);
+        let _ = sleep(Duration::from_millis(10));
+    }
+    term.writeline(&format!("cascade: task-exit q.dead={q_dead}"));
+
+    let ok = revoked && before && !after && b_dead && d_ok && a_ok && released && d_dead && q_dead;
+    term.writeline(if ok { "cascade: ok" } else { "cascade: FAIL" });
 }
 
 /// 各系统能力命令。全部输出经 `term`（唯一 console 出口）。
@@ -139,6 +297,9 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
                 core::str::from_utf8(&buf).unwrap_or("?")
             ));
             pie.seal().ok();
+        }
+        "cascade" => {
+            cascade(term);
         }
         "req" => {
             // 走目录协议：Directory::open 取会话 → Connect("echo") 拿服务入口门闩

@@ -152,10 +152,18 @@ fn register_runtime_hooks() {
     use crate::work::room::conductor;
     use crate::work::room::messenger;
 
-    // 每条 reaped 任务：doom 级联（父删子随）——读该 task 的 heir → cull 子域。
-    // mail 资源释放走 Task::drop 链透传，无需 task_exit。
-    static EXIT_HOOKS: &[fn(usize)] = &[crate::work::room::messenger::doom];
+    // 每条 reaped 任务两条级联：结构面 doom（父删子随，沿 heir 扑杀子域）+
+    // 能力面 gate::doom（派生链随其断，沿 sire 反查子树）。mail 资源释放走
+    // Task::drop 链透传，无需 task_exit。
+    static EXIT_HOOKS: &[fn(usize)] = &[
+        crate::work::room::messenger::doom,
+        crate::work::unit::gate::doom,
+    ];
     messenger::register_exit_hooks(EXIT_HOOKS);
+
+    // 快照提供者：gate 的查询面与级联要「全世界任务」，但 gate 不依赖 scheduler
+    // ——依赖倒置在此一次性接上（此后 gate::snap() 即可取快照）。
+    crate::work::unit::gate::install(crate::work::room::scheduler::core::snap);
 
     // 关机序列：scheduler::rip（清任务队列 + info 槽 + messenger 簿记）→
     //   mail 由 drop 链透传（DockMeta::drop / RingMeta::drop）→ block 池冲洗 → audit

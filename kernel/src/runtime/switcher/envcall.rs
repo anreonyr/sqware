@@ -737,7 +737,6 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let dst_id = dst.get();
 
             let src_task = current().running_task();
-            let current_id = src_task.as_ref().map(|t| t.ident.id).unwrap_or(0);
             let src = match src_task.and_then(|t| {
                 t.pies
                     .lock()
@@ -758,15 +757,15 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             if !src.covers(subset) {
                 return ret_err(frame, GateError::Denied);
             }
-            // BACK 守门：带 BACK 只能回授 vestor（原始自持 None 不受限）。
-            if !src.vestable_to(dst_id) {
+            // BACK 守门：带 BACK 只能授回 sire 的持有者（原始自持 None 不受限）。
+            if !gate::vestable(&src, dst_id, &gate::snap()) {
                 return ret_err(frame, GateError::Denied);
             }
             let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
                 Some(w) => w,
                 None => return ret_err(frame, GateError::Denied),
             };
-            let r = gate::accord(&src, &target, subset, current_id);
+            let r = gate::accord(&src, &target, subset);
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
@@ -832,16 +831,19 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         EnvCall::Mail(MailCall::Revoke { dst, token }) => {
             let dst_id = dst.get();
             let token = token.get();
-            let current_id = current().running_task().map(|t| t.ident.id).unwrap_or(0);
+            let caller = match current().running_task() {
+                Some(t) => t,
+                None => return ret_err(frame, GateError::Denied),
+            };
             let target = match crate::work::room::scheduler::core::lookup_task_by_id_weak(dst_id) {
                 Some(w) => w,
                 None => return ret_err(frame, GateError::Denied),
             };
-            let r = gate::revoke(&target, token, current_id);
+            let r = gate::revoke(&caller, &target, token, &gate::snap());
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(()) => 0,
+                    Ok(_) => 0,
                     Err(e) => e.code() as usize,
                 },
             );
@@ -853,16 +855,20 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // a0 = token（usize），a1 = permission bits（低 32 位）| vestor task id（高 32 位）。
             // vestor = None 时内核编码为 `TaskId(0)`——哨兵与原「无 vestor」语义一致，
             // 因为 TaskId(0) 本来就是「无上下文」哨兵。
-            let task = current().running_task();
-            let (token, perm_bits, vestor_id) = task
-                .and_then(|t| {
-                    let pies = t.pies.lock();
-                    pies.get(index).map(|p| {
-                        let v = p.vestor().unwrap_or(0);
-                        (p.token(), p.permission().bits() as usize, v)
-                    })
-                })
-                .unwrap_or((0, 0, 0));
+            //
+            // 锁序：先克隆出 pie（放 pies 锁），再取快照求 vestor——两者都是 L3，
+            // 绝不嵌套。
+            let pie = current().running_task().and_then(|t| {
+                let pies = t.pies.lock();
+                pies.get(index).cloned()
+            });
+            let (token, perm_bits, vestor_id) = match pie {
+                Some(p) => {
+                    let v = gate::vestor(&p, &gate::snap()).unwrap_or(0);
+                    (p.token(), p.permission().bits() as usize, v)
+                }
+                None => (0, 0, 0),
+            };
             frame.gpr.set_x(Gprs::A0, token);
             frame
                 .gpr
@@ -871,20 +877,20 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         EnvCall::Mail(MailCall::Owned { token }) => {
             // 查询：本任务表里这枚门闩的「授与人 + 资源开辟者」。
             // 与 Collect 分工：Collect 按索引枚举（发现未见过的句柄），
-            // Owned 按句柄查事实（vestor 转手即变，owner 随资源不变）。
+            // Owned 按句柄查事实（vestor = 父门闩的持有者，owner 随资源不变）。
             //
             // a0 = vestor（None → 0），a1 = owner。资源已封印 → Dead（开辟者答不出）。
-            // 锁序：只读 pies（L3），owner() 走 Weak::upgrade 不取锁。
+            // 锁序：先克隆出 pie（放 pies 锁），再取快照求 vestor。
             let token = token.get();
-            let r = match current().running_task().and_then(|t| {
+            let pie = current().running_task().and_then(|t| {
                 let pies = t.pies.lock();
-                let pie = pies.iter().find(|p| p.token() == token)?;
-                match pie.owner() {
-                    Some(owner) => Some(Ok((pie.vestor().unwrap_or(0), owner))),
-                    None => Some(Err(GateError::Dead)),
-                }
-            }) {
-                Some(r) => r,
+                pies.iter().find(|p| p.token() == token).cloned()
+            });
+            let r = match pie {
+                Some(p) => match p.owner() {
+                    Some(owner) => Ok((gate::vestor(&p, &gate::snap()).unwrap_or(0), owner)),
+                    None => Err(GateError::Dead),
+                },
                 None => Err(GateError::Denied),
             };
             match r {
@@ -896,16 +902,16 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }
         }
         EnvCall::Mail(MailCall::Release { token }) => {
-            // 自释：放下自己的一份门闩（无权限要求；Pole 同步 unmap）。
+            // 自释：放下自己的一份门闩（含全部后代；无权限要求；Pole 同步 unmap）。
             let token = token.get();
             let r = match current().running_task() {
-                Some(task) => gate::release(&task, token),
+                Some(task) => gate::release(&task, token, &gate::snap()),
                 None => Err(GateError::Denied),
             };
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(()) => 0,
+                    Ok(_) => 0,
                     Err(e) => e.code() as usize,
                 },
             );

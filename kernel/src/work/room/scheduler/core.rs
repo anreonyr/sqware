@@ -32,6 +32,7 @@
 
 use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use core::time::Duration;
 use hashbrown::HashMap;
@@ -161,6 +162,11 @@ impl Scheduler {
     /// 等需跨核访问目标 task 但不愿违反"uniquely held"不变量的场景。
     pub(crate) fn lookup_id_weak(&self, id: usize) -> Option<Weak<Task>> {
         self.by_id.lock().get(&id).map(Weak::clone)
+    }
+
+    /// 本核 id 表的 Weak 快照（死条目一并返回——调用方升级判活）。
+    pub(crate) fn ids_weak(&self) -> Vec<Weak<Task>> {
+        self.by_id.lock().values().map(Weak::clone).collect()
     }
 
     /// 队首出队（run / reap / park 共用）：派生计数；空队列返回 None。
@@ -427,6 +433,18 @@ pub(crate) fn lookup_task_by_id_weak(id: usize) -> Option<Weak<Task>> {
         }
     }
     None
+}
+
+/// 全世界任务快照（存活任务；死条目一并返回，消费方升级判活）。
+///
+/// 供 `gate` 的查询面与级联用——boot 经 `gate::install` 注入，故 `gate` 不直接
+/// 依赖本模块。只收集 `Weak`，不提升强计数（不干扰「唯一强持有」不变量）。
+pub(crate) fn snap() -> Vec<Weak<Task>> {
+    let mut out = Vec::new();
+    for s in schedulers() {
+        out.extend(s.ids_weak());
+    }
+    out
 }
 
 /// 从全部 hart 的 starved 队列摘除指定任务（kill 的 Starved 分支）。返回是否

@@ -4,8 +4,11 @@
 // 拿 Hole pie 当 Pole 用在编译期即被拦。运行时擦除由 [`AnyPie`] 的 variant 承担
 // ——variant 即 tag，不再需要 marker 类型 / ResourceKind trait / PieKind 枚举。
 //
-// 运行时身份：每 Pie 持 resource（全局 id）+ permission + vestor（授与来源，
-// None=原始自持）+ token（全局唯一，用户句柄 + accord 撤销句柄）+ weak（检存活）。
+// 运行时身份：每 Pie 持 resource（全局 id）+ permission + sire（派生来源：父门闩的
+// token；None = 原始自持）+ token（全局唯一，用户句柄）+ weak（检存活）。
+//
+// **只存一条边**（向上的父指针）。另两个方向都是查询：授与人 = 父的持有者、
+// 子门闩 = sire 指向我的那些（见 `gate::snap`）——一条关系只存一次。
 //
 // 用户态：Task 持 `Vec<AnyPie>`（`unit::task::pies`）；envcall 以 token 寻址。
 
@@ -38,13 +41,14 @@ fn next_pie_token() -> usize {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// 单个门闩：`resource` 指向门洞、`permission` 控授权、`vestor` 是授与来源
-/// （revoke 验 vestor == me）、`token` 是用户句柄、`weak` 检存活。
+/// 单个门闩：`resource` 指向门洞、`permission` 控授权、`sire` 是派生来源（父门闩的
+/// token；None = 原始自持）、`token` 是用户句柄、`weak` 检存活。
 pub struct Pie<M> {
     pub(crate) resource: ResourceId,
     pub(crate) permission: Permission,
-    /// 授与本 pie 的人：None = 原始自持；Some(id) = 经 accord 来自 task id。
-    pub(crate) vestor: Option<usize>,
+    /// 我从哪一枚派生（父门闩的 token）：None = 原始自持；Some = 经 accord 得到。
+    /// 构造期定型，无 setter。
+    pub(crate) sire: Option<usize>,
     pub(crate) token: usize,
     pub(crate) weak: Weak<M>,
 }
@@ -55,7 +59,7 @@ impl<M> Clone for Pie<M> {
         Self {
             resource: self.resource,
             permission: self.permission,
-            vestor: self.vestor,
+            sire: self.sire,
             token: self.token,
             weak: self.weak.clone(),
         }
@@ -85,18 +89,6 @@ impl<M> Pie<M> {
     pub fn covers(&self, subset: Permission) -> bool {
         self.permission.contains(subset) && !subset.is_empty()
     }
-
-    /// 能否 vest 给 `dst`：BACK 守门——带 BACK 只能回授 vestor；原始自持（vestor
-    /// None）带 BACK 不受限（回授目标自由）。
-    pub fn vestable_to(&self, dst: usize) -> bool {
-        if !self.permission.contains(Permission::BACK) {
-            return true;
-        }
-        match self.vestor {
-            Some(v) => v == dst,
-            None => true,
-        }
-    }
 }
 
 // ── AnyPie ──
@@ -123,10 +115,11 @@ impl AnyPie {
         }
     }
 
-    pub fn vestor(&self) -> Option<usize> {
+    /// 派生来源（父门闩的 token）；None = 原始自持。
+    pub fn sire(&self) -> Option<usize> {
         match self {
-            AnyPie::Hole(p) => p.vestor,
-            AnyPie::Pole(p) => p.vestor,
+            AnyPie::Hole(p) => p.sire,
+            AnyPie::Pole(p) => p.sire,
         }
     }
 
@@ -170,28 +163,19 @@ impl AnyPie {
             AnyPie::Pole(p) => p.covers(subset),
         }
     }
-
-    /// 能否 vest 给 `dst`：BACK 守门——带 BACK 只能回授 vestor；原始自持（vestor
-    /// None）带 BACK 不受限（回授目标自由）。
-    pub fn vestable_to(&self, dst: usize) -> bool {
-        match self {
-            AnyPie::Hole(p) => p.vestable_to(dst),
-            AnyPie::Pole(p) => p.vestable_to(dst),
-        }
-    }
 }
 
 /// 造 pie（accord / envcall 创建共用）：token 在此分配。
 pub(crate) fn new_pie<M>(
     resource: ResourceId,
     permission: Permission,
-    vestor: Option<usize>,
+    sire: Option<usize>,
     weak: Weak<M>,
 ) -> Pie<M> {
     Pie {
         resource,
         permission,
-        vestor,
+        sire,
         token: next_pie_token(),
         weak,
     }

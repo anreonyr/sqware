@@ -114,10 +114,44 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 |---|---|---|
 | `MailCall::Collect { index } -> (PieToken, Permission, TaskId)` | 报出我持有的第 index 份（含其 `vestor`）——**唯一的枚举手段** | 用户态此前**无法自省自己的权限表** |
 | `MailCall::Owned { token } -> (TaskId, TaskId)` | 我持有的这枚门闩：`vestor`（谁授的）+ `owner`（资源谁开的） | 此前**只能看门闩的来历，看不到资源的来历**（转手即丢） |
-| `MailCall::Release { token }` | 放下我自己的一份（Pole 同步 unmap） | 此前**没有任何自释路径**（`revoke` 只允许授与人收回） |
+| `MailCall::Release { token }` | 放下我自己的一份**及其全部后代**（Pole 同步 unmap） | 此前**没有任何自释路径**（`revoke` 只允许授与人收回） |
 
 配对：`Unseal*` ↔ `Seal`（动资源）；`Accord` ↔ `Revoke`（他人）；`Collect`（枚举）↔
 `Owned`（查证）↔ `Release`（放下，自己）。
+
+### 7.1 派生关系与级联撤销
+
+**能力面只存一条边**：每枚门闩记 `sire`（父门闩的 token；`None` = 原始自持）。
+向上的「授与人」与向下的「子门闩」都不存，而是同一张**全世界任务快照**上的查询：
+
+| 查询 | 一句话 |
+|---|---|
+| `gate::vestor(pie, snap)` | 授与人 = `sire` 所在任务的 id（原始自持 → 无） |
+| `gate::heirs(token, snap)` | 子门闩 = `sire == token` 的那些（持有者 + 子 token） |
+| `gate::vestable(pie, dst, snap)` | BACK 守门：带 BACK 只能授回 `sire` 的持有者 |
+
+快照由 `scheduler::core::snap()` 提供、boot 经 `gate::install` 注入——**gate 不依赖
+scheduler**（依赖倒置）。`gate` 与 `envcall` 的分工：核心收算法、适配层拍快照。
+
+| 原语 | 一句话 | 说明 |
+|---|---|---|
+| `gate::cull(task, token, snap)` | 摘掉一枚及其**全部后代**（沿 `sire` 反查闭包） | 与结构面 `messenger::cull` 同构：那边沿 `heir`、这边沿 `sire` |
+| `gate::revoke` | 鉴权（该枚的 `sire` 在我表里）→ `cull` | 语义由「一枚」加深为「子树」 |
+| `gate::release` | 定位 → `cull` | 「放下这份，以及经它授出的一切」 |
+| `gate::doom(tid)` | 退出钩子：任务名下每枚门闩各自 `cull` | 与 `messenger::doom` 同表（`boot.rs` 的 `EXIT_HOOKS`） |
+
+**`Revoke` 的鉴权与 `Spawn` 是同一句话**：能在我表里查到它的 `sire` ⇒ 我是 sire ⇒
+我能撤销。（与旧的 `vestor == me` 等价——pie 只能复制、不能转移——但本地可判，
+不吃快照。）
+
+**`Release` 级联**换来「父在则子在」：一枚门闩只能连同它的子树一起消失，故
+`sire` 永不悬空，也**不需要** seL4 的 `RevokeFirst`。
+
+**ABI 零变更**：`Accord` / `Revoke` / `Release` / `Collect` / `Owned` 的形状与线上
+字节都不动；`sire` / `cull` / `doom` 全是内核内部。
+
+**在途语义**：撤销只作用于能力、不作用于在途数据——已 push 进 hole 槽的消息，
+对侧仍可取（与 Solaris `door_revoke` 的「进行中的调用允许完成」一致）。
 
 ## 8 · 引导（启动期握手 + 根转达）
 
@@ -238,4 +272,18 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 改写  task/src/env/service.rs               Directory 会话 + Service 句柄
 改   task/src/env/mail.rs                   collect() / release() 封装
 改   task/src/bin/shell.rs                  req 走新协议 + dir 命令
+```
+
+### 13.1 派生与撤销（本次新增）
+
+```
+新增  kernel/src/work/unit/gate/snap.rs       全世界任务快照 + 沿 sire 的查询
+新增  kernel/src/work/unit/gate/cull.rs       级联撤销 cull + 退出钩子 doom
+改   kernel/src/work/unit/gate/pie.rs         Pie.sire（唯一的派生边）
+改   kernel/src/work/unit/gate/accord.rs      子门闩写 sire；去掉 current_id
+改   kernel/src/work/unit/gate/{revoke,release}.rs  鉴权 + 级联
+改   kernel/src/work/room/scheduler/core.rs   snap()（存活任务快照，O(存活)）
+改   kernel/src/boot.rs                       EXIT_HOOKS 加 gate::doom + 注入快照
+改   kernel/src/runtime/switcher/envcall.rs   Accord/Revoke/Release/Collect/Owned 取快照
+改   task/src/bin/user/shell.rs               cascade 自检命令（三跳/无关分支/release/任务消亡）
 ```
