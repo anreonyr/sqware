@@ -205,8 +205,11 @@ pub enum MailCall {
         msg: VirtAddr,
         len: usize,
     },
-    /// pull msg：token + 缓冲 VA + 上限（≥1 且 ≤该孔 mtu）；返实际长度。
-    #[ret(usize)]
+    /// pull msg：token + 缓冲 VA + 上限（≥1 且 ≤该孔 mtu）。
+    ///
+    /// 返 `(实际长度, 发送者 TaskId)`——发送者由**内核在 Push 时盖章**（syscall
+    /// 上下文，不可伪造），与消息同槽交付。身份不必再从报文里猜。
+    #[ret((usize, TaskId))]
     Pull {
         token: PieToken,
         buf: VirtAddr,

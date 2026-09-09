@@ -183,6 +183,30 @@ scheduler**（依赖倒置）。`gate` 与 `envcall` 的分工：核心收算法
 `memo` 表。资源表若需要，也从 `snap` 派生（遍历各任务的门闩、按 `meta` 去重），
 不新开结构。
 
+### 7.3 发送者盖章（Hole 消息带来源）
+
+**问题**：目录原先按请求体 `[49..57]` 的回信 token 求 `vestor` 认人。内核没撒谎
+（`Owned` 如实回答「这枚门闩谁授给我的」），但协议信了**一段可猜的整数**——pie
+token 是全局连续小整数，猜中别人的 token 即可冒充其身份（可利用面：`Unregister`
+解绑、`Replace` 换绑别人的名字）。
+
+**修法**：身份改由**内核盖章**——`Push` 时内核把推者的 task id 与消息**同锁同写**
+进槽，`Pull` 一并交回收方：
+
+| 位置 | 变化 |
+|---|---|
+| `MailCall::Pull` | 返回 `(实际长度, 发送者 TaskId)`（a0 仍是长度、a1 是发送者） |
+| `HolePie::pull_from` | 用户态新增；`pull` 保持返长度（丢弃发送者） |
+| `HoleMeta.slot` | 从 `Vec<u8>` 变成 `{ buf, from }`——来源与消息同一次写入 |
+
+目录据此：`caller = pull 回来的 sender`；回信地址仍取报文里的 token，但**必须是该
+sender 授给目录的那一枚**（`Owned(reply).vestor == caller`），否则丢弃回复——防
+「替他人收信」。
+
+**为什么不是「不可猜的 token」**：那只是把猜中概率降低，且需要内核秘密与真熵源；
+而身份本就不该来自报文——它应来自**不可伪造的 syscall 上下文**（与 `sire`/`owner`
+由内核在 `Accord`/`Unseal` 时赋值是同一条原则）。
+
 ## 8 · 引导（启动期握手 + 根转达）
 
 内核是根授予的源头；**root 域**（`bin/supervisor/root`）负责产生所有子域，机制不变
@@ -230,11 +254,8 @@ shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句�
 
 ## 10 · 已知边界
 
-1. **回信 pie 的 token 可猜**：身份 = 回信 pie 的 `vestor`，而 pie token 是全局
-   连续小整数（`gate::next_pie_token`）。多 client 下，任务 A 一旦猜中 B 已 `Accord`
-   给目录的回信 token，就能以 B 的身份发请求（回复仍落进 B 的 hole）。真正的修法是
-   **per-caller 请求通道**（目录按「从哪条 hole 收到」定身份，不信任任何 body 字段）
-   或**不可猜的 pie token**；v1 单 client 下不构成问题。
+1. ~~**回信 pie 的 token 可猜**~~ —— **已修，见 §7.3**：身份不再来自报文，改由内核在
+   `Push` 时盖章的发送者决定；回信地址还加了「必须由该发送者授出」的一致性检查。
 2. **名字可抢注**：v1 没有名字权限；任何能造门闩的任务都能注册新名字。
 3. **Unregister/Replace 已实现但不在常规演示里**：echo 自注册路径已由「注册后立刻
    自注销」临时验证（身份取 echo 自身，返回 Ok）；v1 shell 没有对应命令，故不常驻。
@@ -333,4 +354,17 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 改   kernel/src/work/unit/gate/{accord,cull,narrow}.rs  强引用克隆 / 锁外 drop / alive 按 variant
 改   kernel/src/runtime/switcher/envcall.rs   Seal 鉴权 owner-only；各 arm 取 Arc
 改   task/src/bin/user/shell.rs               reclaim 自检命令（引用回收 / 封印归属 / 开辟者消亡）
+```
+
+### 13.3 发送者盖章（本次新增）
+
+```
+改   crates/env/src/fid.rs                    Pull 返回 (长度, 发送者 TaskId)
+改   crates/env/src/wire.rs                   +FromPair (usize, TaskId)
+改   kernel/src/work/mail/hole.rs             槽带 from；try_push/try_pull 传递来源
+改   kernel/src/runtime/switcher/envcall.rs   Push 盖章、Pull 回传 a1
+改   task/src/env/mail.rs                     pull_from() / HolePie::pull_from()
+改   task/src/bin/supervisor/dir.rs           caller = sender；回信地址一致性检查
+改   task/src/core/service.rs                 Directory::reply_target()（自检用）
+改   task/src/bin/user/shell.rs               spoof 自检命令（盖章 / 正向对照 / 猜 token）
 ```

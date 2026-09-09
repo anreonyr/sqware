@@ -50,6 +50,17 @@ pub enum HoleState {
     Dead,
 }
 
+/// 单槽：消息 + 它的来源。
+///
+/// `from` = 推者的 task id，**内核在 Push 时盖章**（syscall 上下文不可伪造）。
+/// 收方 Pull 时一并拿到——身份不再需要从报文里猜。
+struct Slot {
+    /// capacity 恒为 mtu（创建时分配）；`len() > 0` 即有消息。
+    buf: Vec<u8>,
+    /// 当前槽里这条消息的发送者；空槽时无意义。
+    from: usize,
+}
+
 /// hole 数据面实体（Arc 持有；最后强引用 drop 时 Meta 释放）。
 pub struct HoleMeta {
     state: SpinLock<HoleState>,
@@ -57,25 +68,27 @@ pub struct HoleMeta {
     id: HoleId,
     /// unseal 时定；`1..=HOLE_MTU_MAX`。Push/Pull 的长度校验上限。
     pub mtu: usize,
-    /// 单槽消息缓冲：`Vec<u8>` 的 capacity 恒为 mtu（创建时分配）；`len()` 既是
-    /// 「消息是否在槽」也是「实际占用字节数」——`len() > 0` 即有消息，`len() == 0`
-    /// 即空槽。Push 时 set_len、Pull 时 clear，零额外分配。
-    slot: SpinLock<Vec<u8>>,
+    /// 单槽消息：`len()` 既是「消息是否在槽」也是「实际占用字节数」——Push 时
+    /// set_len、Pull 时 clear，零额外分配。`from` 与消息同锁同写。
+    slot: SpinLock<Slot>,
     /// 开辟者：`UnsealHole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
     ///
-    /// 与 `Pie.vestor` 分工：`vestor` = **这枚门闩**谁授的（转手即改写）；
-    /// `owner` = **这扇门**谁开的（任意副本共享同一事实）。
+    /// 与门闩的 `sire` 分工：`sire` = **这枚门闩**从哪来（派生边）；`owner` =
+    /// **这扇门**谁开的（任意副本共享同一事实）。
     owner: usize,
 }
 
 impl HoleMeta {
     pub(super) fn new(mtu: usize, id: HoleId, owner: usize) -> Arc<Self> {
-        let buf = Vec::with_capacity(mtu);
+        let slot = Slot {
+            buf: Vec::with_capacity(mtu),
+            from: 0,
+        };
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
             id,
             mtu,
-            slot: SpinLock::new_level(Level::L3, buf),
+            slot: SpinLock::new_level(Level::L3, slot),
             owner,
         })
     }
@@ -85,7 +98,7 @@ impl HoleMeta {
         self.owner
     }
 
-    /// 存活：state == Live（Arc 仍有效由 Pie 持 Weak 保证）。
+    /// 存活：state == Live。
     pub(crate) fn alive(&self) -> bool {
         *self.state.lock() == HoleState::Live
     }
@@ -98,8 +111,8 @@ impl HoleMeta {
     pub(crate) fn ready(&self, dir: HoleDir) -> bool {
         let slot = self.slot.lock();
         match dir {
-            HoleDir::Pull => !slot.is_empty(),
-            HoleDir::Push => slot.is_empty(),
+            HoleDir::Pull => !slot.buf.is_empty(),
+            HoleDir::Push => slot.buf.is_empty(),
         }
     }
 }
@@ -151,10 +164,13 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WaitKey {
 
 /// 非阻塞 push：槽空则拷 `src` 进 slot 并 wake 等读的；槽满返 Busy。
 ///
+/// `from` = 推者 task id（内核在 envcall 入口盖章）——与消息**同锁同写**，收方
+/// Pull 时一并取回。
+///
 /// 前置：`src.len() ∈ [1, mtu]`。envcall 入口已校验 `len <= mtu`，此处再 defend。
 /// 调用方须在持 `src` 时不持 slot 锁（slot = L3，Space.segments = L2；持 L3
 /// 调 L2 锁为 4→2 反向嵌套）。
-pub(crate) fn try_push(meta: &HoleMeta, src: &[u8]) -> Result<(), GateError> {
+pub(crate) fn try_push(meta: &HoleMeta, src: &[u8], from: usize) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
@@ -163,29 +179,30 @@ pub(crate) fn try_push(meta: &HoleMeta, src: &[u8]) -> Result<(), GateError> {
         return Err(GateError::Denied);
     }
     let mut slot = meta.slot.lock();
-    if !slot.is_empty() {
+    if !slot.buf.is_empty() {
         return Err(GateError::Busy);
     }
     // SAFETY: capacity == mtu >= len；src 含 len 字节。
     unsafe {
-        core::ptr::copy_nonoverlapping(src.as_ptr(), slot.as_mut_ptr(), len);
-        slot.set_len(len);
+        core::ptr::copy_nonoverlapping(src.as_ptr(), slot.buf.as_mut_ptr(), len);
+        slot.buf.set_len(len);
     }
+    slot.from = from;
     drop(slot);
     let _ = messenger::wake(key(meta, HoleDir::Pull));
     Ok(())
 }
 
 /// 非阻塞 pull：槽非空则拷 `src.len()` 字节进 `dst` 并 wake 等写的；槽空返 Busy。
-/// 返实际长度。`dst.len() < src.len()` 返 Denied（buf 装不下）。
+/// 返 `(实际长度, 发送者 task id)`。`dst.len() < src.len()` 返 Denied（buf 装不下）。
 ///
 /// 锁序同 try_push：调用方持 `dst` 时不持 slot 锁。
-pub(crate) fn try_pull(meta: &HoleMeta, dst: &mut [u8]) -> Result<usize, GateError> {
+pub(crate) fn try_pull(meta: &HoleMeta, dst: &mut [u8]) -> Result<(usize, usize), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
     let mut slot = meta.slot.lock();
-    let len = slot.len();
+    let len = slot.buf.len();
     if len == 0 {
         return Err(GateError::Busy);
     }
@@ -194,12 +211,13 @@ pub(crate) fn try_pull(meta: &HoleMeta, dst: &mut [u8]) -> Result<usize, GateErr
     }
     // SAFETY: dst 含至少 len 字节；slot 含 len 字节已 set_len。
     unsafe {
-        core::ptr::copy_nonoverlapping(slot.as_ptr(), dst.as_mut_ptr(), len);
+        core::ptr::copy_nonoverlapping(slot.buf.as_ptr(), dst.as_mut_ptr(), len);
     }
-    slot.clear();
+    let from = slot.from;
+    slot.buf.clear();
     drop(slot);
     let _ = messenger::wake(key(meta, HoleDir::Push));
-    Ok(len)
+    Ok((len, from))
 }
 
 // ── 挂起（唯一入口）──

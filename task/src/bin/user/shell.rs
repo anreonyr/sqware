@@ -18,6 +18,7 @@
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
 //!   reclaim — 资源寿命自检（引用回收 / 封印归属 / 开辟者消亡）
+//!   spoof — 身份伪造自检（发送者由内核盖章，报文里的回信 token 不构成身份）
 //!   req   — 走目录协议连接 echo 并调用一次（Connect + Service::call）
 //!   dir   — 目录协议自省（Discover + Enumerate）
 //!   exit  — 退出 shell（RoomCall::Reap）
@@ -32,12 +33,14 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
+use env::dispatch::{MSG_LEN, Name, Reply, Request};
+
 use task::core::handshake::{self, Pier, Quay};
 use task::core::service::{Directory, PAYLOAD_LEN};
 use task::core::unit;
 use task::env::{
     chrono::{self, clock},
-    mail::{HOLE_MTU_MAX, HolePie, PolePie},
+    mail::{self, HOLE_MTU_MAX, HolePie, PolePie},
     room::{self, sleep},
     task::{heir_at, heir_count, join as task_join},
 };
@@ -349,6 +352,111 @@ fn reclaim(term: &Terminal) {
     term.writeline(if ok { "reclaim: ok" } else { "reclaim: FAIL" });
 }
 
+/// 身份伪造自检（`spoof` 命令）。
+///
+/// 修复前：目录按请求体里的回信 token 求 `vestor` 认人——**猜中别人的 token 即可
+/// 冒充**。修复后：身份 = **内核在 `Push` 时盖章的发送者**，报文里的字段只当回信
+/// 地址用，且必须**确实是该发送者授给目录的那一枚**。
+///
+/// 四段判据：
+///   1. 内核盖章：自己推的消息，`pull_from` 回来的发送者是自己；
+///   2. 正向对照：用自己那枚回信 token 注册 / 解绑自己的名字 → 两次 `Ok`；
+///   3. 攻击：把 `1..=200` 逐个当作「猜中的回信 token」发 `Unregister("echo")`
+///      ——目录按 sender 认人，全部失败，echo 的名字仍在；
+///   4. 攻击者收不到任何 `Ok`（回信地址不属于发送者即被丢弃）。
+fn spoof(term: &Terminal) {
+    const WAIT: usize = 1_000;
+    const GUESS_MAX: usize = 200;
+    const REPLY_AT: usize = env::dispatch::REPLY_AT;
+    let rw = env::Permission::READ | env::Permission::WRITE;
+
+    let me = unit::self_id().unwrap_or(0);
+
+    // ── 1：内核盖章 ──
+    let self_stamp = (|| -> Option<bool> {
+        let h = HolePie::unseal(64).ok()?;
+        h.push(b"x").ok()?;
+        let mut b = [0u8; 64];
+        let (_, from) = h.pull_from(&mut b).ok()?;
+        Some(from.get() == me)
+    })()
+    .unwrap_or(false);
+
+    let entry = HolePie::from_token(DIR_ENTRY.load(Ordering::Relaxed));
+    let dir_id = match mail::owned(entry.token()) {
+        Ok((_, owner)) => owner.get(),
+        Err(_) => {
+            term.writeline("spoof: no dir id");
+            return;
+        }
+    };
+    // 本任务自己的回信孔（攻击者身份就用它）。
+    let mine = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(p) => p,
+        Err(_) => {
+            term.writeline("spoof: unseal failed");
+            return;
+        }
+    };
+    let at_dir = match mine.accord(dir_id, rw) {
+        Ok(t) => t,
+        Err(_) => {
+            term.writeline("spoof: accord failed");
+            return;
+        }
+    };
+    let mut buf = [0u8; MSG_LEN];
+    // `ms` = 等回复的上界：正路径用 WAIT，猜 token 时用 0（只探测、顺便排空）。
+    let mut call = |req: &Request, reply_tok: usize, ms: usize| -> Option<Reply> {
+        let mut msg = req.encode();
+        msg[REPLY_AT..REPLY_AT + 8].copy_from_slice(&reply_tok.to_le_bytes());
+        entry.push(&msg).ok()?;
+        mine.pull_timeout(&mut buf, ms).ok()?;
+        Reply::decode(&buf).ok()
+    };
+
+    // 每次探测都用**新会话**：攻击循环可能把本任务自己的回信槽灌进一条陈旧回复
+    //（攻击者只能污染自己的孔——`reachable` 检查挡住了替他人收信）。
+    let before = dir_session()
+        .and_then(|d| d.discover("echo"))
+        .unwrap_or(false);
+
+    // ── 2：正向对照（自己的名字，自己的回信 token）──
+    let own_ok = match Name::new("self") {
+        Ok(n) => {
+            let reg = call(
+                &Request::Register {
+                    name: n,
+                    entry: env::PieToken::new(at_dir),
+                },
+                at_dir,
+                WAIT,
+            );
+            let unreg = call(&Request::Unregister { name: n }, at_dir, WAIT);
+            matches!(reg, Some(Reply::Ok)) && matches!(unreg, Some(Reply::Ok))
+        }
+        Err(_) => false,
+    };
+
+    // ── 3：攻击——逐个猜回信 token ──
+    if let Ok(name) = Name::new("echo") {
+        for tok in 1..=GUESS_MAX {
+            // 回复只可能落到被猜中的那枚 token 的孔里（攻击者看不见），此处探测
+            // 仅用于排空本任务自己的回信槽——判据是「echo 还在不在」。
+            let _ = call(&Request::Unregister { name }, tok, 0);
+        }
+    }
+    let after = dir_session()
+        .and_then(|d| d.discover("echo"))
+        .unwrap_or(false);
+
+    term.writeline(&format!(
+        "spoof: stamp={self_stamp} own={own_ok} echo.before={before} echo.after={after} (guess {GUESS_MAX})"
+    ));
+    let ok = self_stamp && own_ok && before && after;
+    term.writeline(if ok { "spoof: ok" } else { "spoof: FAIL" });
+}
+
 /// 各系统能力命令。全部输出经 `term`（唯一 console 出口）。
 /// 返回 false = 退出（exit 命令）。
 fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
@@ -430,6 +538,9 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
         }
         "reclaim" => {
             reclaim(term);
+        }
+        "spoof" => {
+            spoof(term);
         }
         "req" => {
             // 走目录协议：Directory::open 取会话 → Connect("echo") 拿服务入口门闩

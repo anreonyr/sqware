@@ -84,6 +84,11 @@ impl Directory {
         Reply::decode(&buf).map_err(|_| denied())
     }
 
+    /// 本会话在**目录侧**的回信 token（诊断 / 自检用：写进请求 `[49..57]`）。
+    pub fn reply_target(&self) -> usize {
+        self.reply_target
+    }
+
     /// 纯探测：这个名字有没有绑定。
     pub fn discover(&self, name: &str) -> EnvResult<bool> {
         let request = Request::Resolve {

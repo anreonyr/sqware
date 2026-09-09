@@ -122,19 +122,20 @@ extern "C" fn main() -> ! {
     let mut dir = Directory::new();
     let mut msg = [0u8; MSG_LEN];
     loop {
-        // 槽空 → 挂起让出 CPU；Err 只在门闩死亡时出现（本域自开的 hole 不会被封印）。
-        if entry.pull(&mut msg).is_err() {
-            continue;
-        }
-        let reply_token =
-            usize::from_le_bytes(msg[REPLY_AT..REPLY_AT + 8].try_into().unwrap_or([0u8; 8]));
-        // 回信 pie 在本域表里 → 其 vestor 即本次请求的 caller（0 = 无授与人）。
-        let reply = vestor_of(reply_token);
-        let out = dir.serve(reply.unwrap_or(0), &msg).encode();
-        let Some(_) = reply else {
-            // 无回信通道（fire-and-forget 或 token 不在表里）：回复无处可去，丢弃。
+        // 身份 = **内核盖章的发送者**（`Pull` 一并交回），不信任报文里的任何字段。
+        let Ok((_, from)) = entry.pull_from(&mut msg) else {
             continue;
         };
+        let caller = from.get();
+        let reply_token =
+            usize::from_le_bytes(msg[REPLY_AT..REPLY_AT + 8].try_into().unwrap_or([0u8; 8]));
+        // 回信地址必须**确实是 caller 授给本域的那一枚**——否则丢弃回复
+        //（防「替他人收信」：把别人的回信 token 塞进自己的请求）。
+        let reachable = vestor_of(reply_token) == Some(caller);
+        let out = dir.serve(caller, &msg).encode();
+        if !reachable {
+            continue;
+        }
         // 推回调用方自带的回信 hole；槽满则挂起等对侧取走，Dead 即丢。
         let _ = HolePie::from_token(reply_token).push(&out);
     }

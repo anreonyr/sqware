@@ -10,7 +10,7 @@
 //! push/pull 的阻塞：内核 Push/Pull 槽满/槽空返 `-3 Busy`；本层转 `Wait` 原语
 //! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
 
-use env::{EnvResult, HoleDir, MailCall, MailCallRet, PieToken, VirtAddr};
+use env::{EnvResult, HoleDir, MailCall, MailCallRet, PieToken, TaskId, VirtAddr};
 
 use crate::env::room;
 
@@ -58,9 +58,16 @@ pub fn push(token: usize, msg: *const u8, len: usize) -> EnvResult<()> {
     }
 }
 
-/// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）。
+/// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）；发送者丢弃。
 /// `max ≥ 1`，且 ≤该孔 mtu。
 pub fn pull(token: usize, buf: *mut u8, max: usize) -> EnvResult<usize> {
+    pull_from(token, buf, max).map(|(n, _)| n)
+}
+
+/// pull 一条消息并取回**发送者**（`(长度, 发送者 TaskId)`）。
+///
+/// 发送者由内核在 `Push` 时盖章——身份不可伪造，不必再从报文里猜。
+pub fn pull_from(token: usize, buf: *mut u8, max: usize) -> EnvResult<(usize, TaskId)> {
     let r = MailCall::Pull {
         token: PieToken::new(token),
         buf: VirtAddr::new(buf as usize),
@@ -68,7 +75,7 @@ pub fn pull(token: usize, buf: *mut u8, max: usize) -> EnvResult<usize> {
     }
     .call()?;
     match r {
-        MailCallRet::Pull(n) => Ok(n),
+        MailCallRet::Pull((n, from)) => Ok((n, from)),
         _ => unreachable!(),
     }
 }
@@ -246,6 +253,19 @@ impl HolePie {
         loop {
             match pull(self.token, buf.as_mut_ptr(), buf.len()) {
                 Ok(n) => return Ok(n),
+                Err(e) if e.source.is_busy() => {
+                    self.wait(HoleDir::Pull, usize::MAX)?;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// 同 [`HolePie::pull`]，但一并取回**发送者**（内核盖章的 task id）。
+    pub fn pull_from(&self, buf: &mut [u8]) -> EnvResult<(usize, TaskId)> {
+        loop {
+            match pull_from(self.token, buf.as_mut_ptr(), buf.len()) {
+                Ok(v) => return Ok(v),
                 Err(e) if e.source.is_busy() => {
                     self.wait(HoleDir::Pull, usize::MAX)?;
                 }

@@ -544,6 +544,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             let va = msg.get();
             let len = len;
             let task = current().running_task();
+            let me = task.as_ref().map(|t| t.ident.id).unwrap_or(0);
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
                 let pie = pies.iter().find(|p| p.token() == token)?;
@@ -569,7 +570,8 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                         if !mail::copy_in(&ident.team.space, &mut staging, va) {
                             Err(GateError::Denied)
                         } else {
-                            mail::hole::try_push(&meta, &staging)
+                            // `me` = 推者身份：内核盖章，与消息同槽交付收方。
+                            mail::hole::try_push(&meta, &staging, me)
                         }
                     }
                 }
@@ -609,11 +611,11 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     } else {
                         let mut staging = alloc::vec![0u8; max];
                         match mail::hole::try_pull(&meta, &mut staging) {
-                            Ok(n) => {
+                            Ok((n, from)) => {
                                 if !mail::copy_out(&ident.team.space, &staging[..n], va) {
                                     Err(GateError::Denied)
                                 } else {
-                                    Ok(n)
+                                    Ok((n, from))
                                 }
                             }
                             Err(e) => Err(e),
@@ -623,14 +625,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Some(Err(e)) => Err(e),
                 None => Err(GateError::Denied),
             };
-            // Pull 返实际长度（正路径写 a0 = n）；错误路径写 e.code() 作负值。
-            frame.gpr.set_x(
-                Gprs::A0,
-                match r {
-                    Ok(n) => n,
-                    Err(e) => e.code() as usize,
-                },
-            );
+            // 正路径：a0 = 实际长度、a1 = 发送者 task id；错误路径 a0 = 负码。
+            match r {
+                Ok((n, from)) => {
+                    frame.gpr.set_x(Gprs::A0, n);
+                    frame.gpr.set_x(Gprs::A1, from);
+                }
+                Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+            }
         }
         EnvCall::Mail(MailCall::Map { token }) => {
             let token = token.get();

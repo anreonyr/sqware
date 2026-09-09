@@ -400,6 +400,10 @@ pub extern "C" fn wait_forever(_key: usize) {
 
 #### `mail::hole::push / pull` —— **真阻塞**（ktask 用）
 
+> **注**：以下为当时的形态。现行数据面见 `docs/dispatch.md` §7.2 / §7.3——槽是
+> `{ buf, from }`（`from` = 内核在 `Push` 时盖章的发送者），`try_pull` 返
+> `(长度, 发送者)`。
+
 ```rust
 pub(crate) fn push(meta: &HoleMeta, msg: &[u8; 64]) -> Result<(), GateError> {
     loop {

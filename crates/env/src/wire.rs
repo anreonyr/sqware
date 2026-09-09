@@ -271,6 +271,13 @@ impl FromPair for usize {
     }
 }
 
+/// `Pull` 的返回：`(实际长度, 发送者 task id)`。
+impl FromPair for (usize, TaskId) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (v0, TaskId(v1))
+    }
+}
+
 impl FromPair for u64 {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         v0 as u64
