@@ -22,7 +22,7 @@
 
 extern crate alloc;
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::dispatch::{MSG_LEN, REPLY_AT};
 use env::{Permission, TeamId};
@@ -36,7 +36,7 @@ use task::env::task as utask;
 /// 同域两线程共享地址空间，但**门闩是 per-task 的**：主线程 `Accord` 出去拿到的是
 /// 对方表里的 token，只能经共享内存交接。`Spawn` 恒产 `Held`，故「先 `Accord`、再写
 /// 静态、最后 `Hatch`」的次序天然成立——控制线程读到的必然是写好的值。
-static CTRL: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+static CTRL: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
 
 /// 控制线程：接引入请求 → 亲授目录请求门闩 → 回报。不碰注册表。
 #[unsafe(no_mangle)]
@@ -127,7 +127,7 @@ extern "C" fn main() -> ! {
             continue;
         }
         let reply_token =
-            u64::from_le_bytes(msg[REPLY_AT..REPLY_AT + 8].try_into().unwrap_or([0u8; 8]));
+            usize::from_le_bytes(msg[REPLY_AT..REPLY_AT + 8].try_into().unwrap_or([0u8; 8]));
         // 回信 pie 在本域表里 → 其 vestor 即本次请求的 caller（0 = 无授与人）。
         let reply = vestor_of(reply_token);
         let out = dir.serve(reply.unwrap_or(0), &msg).encode();

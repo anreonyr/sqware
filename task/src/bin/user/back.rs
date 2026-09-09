@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::Permission;
 use task::core::unit;
@@ -45,8 +45,8 @@ extern "C" fn main() {
     let vestor_slot: &'static [AtomicUsize; 1] = Box::leak(Box::new([AtomicUsize::new(0)]));
     vestor_slot[0].store(my_id, Ordering::Relaxed);
     let vestor_slot_ptr = vestor_slot.as_ptr() as usize;
-    let tokens_slot: &'static [AtomicU64; 2] =
-        Box::leak(Box::new([const { AtomicU64::new(0) }; 2]));
+    let tokens_slot: &'static [AtomicUsize; 2] =
+        Box::leak(Box::new([const { AtomicUsize::new(0) }; 2]));
     let tokens_slot_ptr = tokens_slot.as_ptr() as usize;
 
     // 双 key 协议（防自产自销）：key_ready = A→B "token 已存槽";
@@ -62,7 +62,7 @@ extern "C" fn main() {
         // 等 A accord 完两个 pie + 存 token。
         let _ = room::wait(key_ready, WAIT).expect("wait ready");
 
-        let tokens = unsafe { &*(tokens_slot_ptr as *const [AtomicU64; 2]) };
+        let tokens = unsafe { &*(tokens_slot_ptr as *const [AtomicUsize; 2]) };
         let t1 = tokens[0].load(Ordering::Relaxed);
         let t2 = tokens[1].load(Ordering::Relaxed);
         let hole1 = HolePie::from_token(t1);

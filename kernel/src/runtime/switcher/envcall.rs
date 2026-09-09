@@ -496,7 +496,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         EnvCall::Mail(MailCall::UnsealHole { mtu }) => {
             // 编排创建：mail::hole::meta(mtu) 建实体 → gate::new_pie 建门闩 → 落 pies。
             // meta() 只建 HoleMeta + 注册 memo；门闩/落 task.pies 是能力模型的事。
-            let r = (|| -> Result<u64, GateError> {
+            let r = (|| -> Result<usize, GateError> {
                 let task = current().running_task().ok_or(GateError::Denied)?;
                 let (meta, id) = mail::hole::meta(mtu, task.ident.id)?;
                 let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
@@ -510,14 +510,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Ok(token)
             })();
             match r {
-                Ok(token) => frame.gpr.set_x(Gprs::A0, token as usize),
+                Ok(token) => frame.gpr.set_x(Gprs::A0, token),
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
         EnvCall::Mail(MailCall::UnsealPole { bytes }) => {
             // 编排创建：mail::pole::meta() 建实体 → gate::new_pie 建门闩 → 落 pies →
             // auto-map 创建者视图（创建者 pie 全权 → R|W）。
-            let r = (|| -> Result<u64, GateError> {
+            let r = (|| -> Result<usize, GateError> {
                 let task = current().running_task().ok_or(GateError::Denied)?;
                 let (meta, id) = mail::pole::meta(bytes, task.ident.id)?;
                 let task_space = task.ident.team.space.clone();
@@ -537,7 +537,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Ok(token)
             })();
             match r {
-                Ok(token) => frame.gpr.set_x(Gprs::A0, token as usize),
+                Ok(token) => frame.gpr.set_x(Gprs::A0, token),
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
@@ -770,7 +770,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(token) => token as usize,
+                    Ok(token) => token,
                     Err(e) => e.code() as usize,
                 },
             );
@@ -850,7 +850,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // 自省：报出本任务权限表第 index 份（token + permission + vestor）。
             // 越界 → token = 0、permission = 空、vestor = 0——哨兵不报错。
             //
-            // a0 = token（u64），a1 = permission bits（低 32 位）| vestor task id（高 32 位）。
+            // a0 = token（usize），a1 = permission bits（低 32 位）| vestor task id（高 32 位）。
             // vestor = None 时内核编码为 `TaskId(0)`——哨兵与原「无 vestor」语义一致，
             // 因为 TaskId(0) 本来就是「无上下文」哨兵。
             let task = current().running_task();
@@ -863,7 +863,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     })
                 })
                 .unwrap_or((0, 0, 0));
-            frame.gpr.set_x(Gprs::A0, token as usize);
+            frame.gpr.set_x(Gprs::A0, token);
             frame
                 .gpr
                 .set_x(Gprs::A1, (vestor_id << 32) | (perm_bits & 0xffff_ffff));

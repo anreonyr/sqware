@@ -121,7 +121,7 @@ extern "C" fn main() -> ! {
         if entry.pull(&mut req_buf).is_err() {
             continue;
         }
-        let reply_token = u64::from_le_bytes(req_buf[0..8].try_into().unwrap_or([0u8; 8]));
+        let reply_token = usize::from_le_bytes(req_buf[0..8].try_into().unwrap_or([0u8; 8]));
         req_buf[0..8].fill(0);
         for b in req_buf[8..].iter_mut() {
             *b = b.wrapping_add(1);

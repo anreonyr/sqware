@@ -16,7 +16,11 @@ use crate::work::unit::task::Task;
 ///
 /// # Errors
 /// - `Denied` — target 无该 token / 副本 vestor != me / target 已死
-pub(crate) fn revoke(target: &Weak<Task>, token: u64, current_id: usize) -> Result<(), GateError> {
+pub(crate) fn revoke(
+    target: &Weak<Task>,
+    token: usize,
+    current_id: usize,
+) -> Result<(), GateError> {
     let target = target.upgrade().ok_or(GateError::Denied)?;
     // 锁内：定位 + 归属 + 摘除 + 取 meta（不跨 space 操作——锁序纪律）。
     let meta = {

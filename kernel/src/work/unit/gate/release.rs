@@ -12,7 +12,7 @@ use crate::work::unit::task::Task;
 ///
 /// # Errors
 /// - `Denied` — 本 task 表里没有该 token
-pub(crate) fn release(task: &Task, token: u64) -> Result<(), GateError> {
+pub(crate) fn release(task: &Task, token: usize) -> Result<(), GateError> {
     // 锁内：定位 + 摘除 + 取 meta（不跨 space 操作——锁序纪律，同 revoke）。
     let meta = {
         let mut pies = task.pies.lock();

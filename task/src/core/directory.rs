@@ -3,7 +3,7 @@
 //! 目录是**普通 Service**：它跑在 S 态 supervisor 域 `task-dir` 里，只有一个 req
 //! hole，内核没有它的入口调用（class 7 已删）。协议规范见 `docs/dispatch.md`。
 //!
-//! 与「内核闭包版」的差别只有一处：绑定里存的是**入口门闩的 token**（u64），不是
+//! 与「内核闭包版」的差别只有一处：绑定里存的是**入口门闩的 token**（usize），不是
 //! `Pie` 对象——门闩一直留在目录自己的权限表里，`Connect` 用 `mail::accord` 转授
 //! 子集。身份用 `mail::owned` 查该 token 的 `vestor`（内核在 `Accord` 时赋值，
 //! 消息体伪造不了）；没带有效回信 pie 即无身份（`caller = 0`）。
@@ -37,14 +37,14 @@ pub enum DirectoryError {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Binding {
     pub name: Name,
-    pub entry: u64,
+    pub entry: usize,
     pub owner: usize,
 }
 
 /// 查本任务表里该 token 的 `vestor`（授与人）。
 ///
 /// `None` = 表里没有 / 资源已封印；`Some(0)` = 在表里但没有授与人（原始自持）。
-pub fn vestor_of(token: u64) -> Option<usize> {
+pub fn vestor_of(token: usize) -> Option<usize> {
     if token == 0 {
         return None;
     }
@@ -70,7 +70,7 @@ impl Directory {
     ///
     /// 注：内核版 `take_entry` 是「取出即移入绑定表」，此处 token 始终留在表里，
     /// 故重复注册同一枚门闩不会被拒——名字唯一仍是硬约束。
-    pub fn bind(&mut self, name: Name, entry: u64) -> Result<(), DirectoryError> {
+    pub fn bind(&mut self, name: Name, entry: usize) -> Result<(), DirectoryError> {
         if self.position(&name).is_some() {
             return Err(DirectoryError::Taken);
         }
@@ -93,7 +93,7 @@ impl Directory {
     }
 
     /// 换绑：服务重启换了门闩、名字不变。仅发布者可换。
-    pub fn replace(&mut self, name: &Name, entry: u64, who: usize) -> Result<(), DirectoryError> {
+    pub fn replace(&mut self, name: &Name, entry: usize, who: usize) -> Result<(), DirectoryError> {
         let pos = self.position(name).ok_or(DirectoryError::Unknown)?;
         if self.bindings[pos].owner != who {
             return Err(DirectoryError::NotOwner);
@@ -132,7 +132,7 @@ impl Directory {
     ///
     /// 调用方用 `mail::owned(token).owner` 求服务 task id——那是**资源开辟者**
     /// （服务自己 `UnsealHole` 出来的门闩），不受目录转授改写。
-    pub fn connect(&self, name: &Name, caller: usize) -> Result<u64, DirectoryError> {
+    pub fn connect(&self, name: &Name, caller: usize) -> Result<usize, DirectoryError> {
         let binding = self.resolve(name).ok_or(DirectoryError::Unknown)?;
         mail::accord(binding.entry, caller, caller_permission())
             .map_err(|_| DirectoryError::NotGrantable)

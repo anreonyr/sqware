@@ -109,21 +109,21 @@ impl Wire for crate::fid::ProgramKind {
 
 // ── 语义句柄 ────────────────────────────────────────────────────────────
 
-/// per-pie 全局唯一句柄（u64；0 = 无效哨兵）。
+/// per-pie 全局唯一句柄（usize；0 = 无效哨兵）。
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
-pub struct PieToken(pub u64);
+pub struct PieToken(pub usize);
 
 impl PieToken {
-    pub const fn new(v: u64) -> Self {
+    pub const fn new(v: usize) -> Self {
         Self(v)
     }
-    pub const fn get(self) -> u64 {
+    pub const fn get(self) -> usize {
         self.0
     }
 }
 
-impl From<PieToken> for u64 {
+impl From<PieToken> for usize {
     fn from(t: PieToken) -> Self {
         t.0
     }
@@ -131,11 +131,11 @@ impl From<PieToken> for u64 {
 
 impl Wire for PieToken {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
-        s[*i] = self.0 as usize;
+        s[*i] = self.0;
         *i += 1;
     }
     fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
-        let v = *s.get(*i).ok_or(Decode::Overflow)? as u64;
+        let v = *s.get(*i).ok_or(Decode::Overflow)?;
         *i += 1;
         Ok(PieToken(v))
     }
@@ -285,26 +285,26 @@ impl FromPair for (u64, u64) {
 
 impl FromPair for (PieToken, PieToken) {
     fn from_pair(v0: usize, v1: usize) -> Self {
-        (PieToken(v0 as u64), PieToken(v1 as u64))
+        (PieToken(v0), PieToken(v1))
     }
 }
 
 impl FromPair for (PieToken, crate::permission::Permission) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (
-            PieToken(v0 as u64),
+            PieToken(v0),
             crate::permission::Permission::from_bits_truncate(v1 as u32),
         )
     }
 }
 
-/// Collect 返回值打包：v0 = token（u64），v1 低 32 位 = permission bits、v1 高 32 位 = vestor task id。
+/// Collect 返回值打包：v0 = token（usize），v1 低 32 位 = permission bits、v1 高 32 位 = vestor task id。
 /// vestor = None 由内核编码为 `TaskId(0)`（哨兵与原 vestor=None 语义一致）。
 impl FromPair for (PieToken, crate::permission::Permission, TaskId) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         let permission = crate::permission::Permission::from_bits_truncate(v1 as u32);
         let vestor = TaskId((v1 >> 32) as usize);
-        (PieToken(v0 as u64), permission, vestor)
+        (PieToken(v0), permission, vestor)
     }
 }
 
@@ -329,7 +329,7 @@ impl FromPair for u8 {
 
 impl FromPair for PieToken {
     fn from_pair(v0: usize, _v1: usize) -> Self {
-        PieToken(v0 as u64)
+        PieToken(v0)
     }
 }
 

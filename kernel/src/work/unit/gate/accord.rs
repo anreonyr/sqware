@@ -27,7 +27,7 @@ pub(crate) fn accord(
     target: &Weak<Task>,
     subset: Permission,
     current_id: usize,
-) -> Result<u64, GateError> {
+) -> Result<usize, GateError> {
     let target = target.upgrade().ok_or(GateError::Denied)?;
     let resource = src.resource();
     let vestor = Some(current_id);

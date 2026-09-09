@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::Permission;
 use task::core::unit;
@@ -45,14 +45,14 @@ extern "C" fn main() {
     let key_ready: usize = Box::leak(Box::new([0u8; HOLE_MSG_LEN])).as_ptr() as usize;
     let key_empty: usize = Box::leak(Box::new([0u8; HOLE_MSG_LEN])).as_ptr() as usize;
 
-    let token_slot: &'static [AtomicU64; 1] = Box::leak(Box::new([AtomicU64::new(0)]));
+    let token_slot: &'static [AtomicUsize; 1] = Box::leak(Box::new([AtomicUsize::new(0)]));
     let token_slot_ptr = token_slot.as_ptr() as usize;
 
     // spawn consumer。closure 捕获 key + token 槽。
     let join: unit::Join<()> = unit::closure(move || {
         // 等 producer accord 完 + 存 token。
         let _ = room::wait(key_token, WAIT).expect("wait token");
-        let token = unsafe { (*(token_slot_ptr as *const AtomicU64)).load(Ordering::Relaxed) };
+        let token = unsafe { (*(token_slot_ptr as *const AtomicUsize)).load(Ordering::Relaxed) };
         let hole = HolePie::from_token(token);
 
         for i in 0..N {

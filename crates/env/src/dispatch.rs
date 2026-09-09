@@ -10,9 +10,9 @@
 //! [0]      op      u8      1=Register 2=Unregister 3=Replace 4=Resolve 5=Enumerate 6=Connect
 //! [1..33]  name    [u8;32] Register/Unregister/Replace/Resolve/Connect：目标名字
 //!                          Enumerate：游标（全 0 = 从头开始）
-//! [33..41] entry   u64 LE  Register/Replace：入口门闩的目录侧 pie token
+//! [33..41] entry   usize LE  Register/Replace：入口门闩的目录侧 pie token
 //! [41..49] 保留    u64 LE  必须为 0
-//! [49..57] reply   u64 LE  调用方自带的回信 pie 的目录侧 token（0 = 无回复预期）
+//! [49..57] reply   usize LE  调用方自带的回信 pie 的目录侧 token（0 = 无回复预期）
 //! [57..64] 保留（0）
 //! ```
 //!
@@ -24,7 +24,7 @@
 //! ```text
 //! [0]      status  u8      0=Ok 1=Found 2=Connected 3=NotFound 4=Denied 5=Taken
 //! [1..33]  name    [u8;32] Found：这一页的名字 / Resolve 命中的名字
-//! [1..9]   entry   u64 LE  Connected：目录转授给调用方的入口门闩 token
+//! [1..9]   entry   usize LE  Connected：目录转授给调用方的入口门闩 token
 //! [9..17]  保留    u64 LE  必须为 0（原 owner 字段已删——服务 task id 由调用方
 //!                          用 `MailCall::Owned` 从 entry 的 `owner` 求得）
 //! ```
@@ -180,7 +180,7 @@ impl Request {
         {
             return Err(ProtocolError::Reserved);
         }
-        let entry = PieToken(u64::from_le_bytes(
+        let entry = PieToken(usize::from_le_bytes(
             m[ENTRY_AT..ENTRY_AT + 8].try_into().unwrap_or([0u8; 8]),
         ));
         let mut name_bytes = [0u8; NAME_LEN];
@@ -265,7 +265,7 @@ impl Reply {
                 })
             }
             STATUS_CONNECTED => {
-                let entry = PieToken(u64::from_le_bytes(
+                let entry = PieToken(usize::from_le_bytes(
                     m[REPLY_PAYLOAD_AT..REPLY_PAYLOAD_AT + 8]
                         .try_into()
                         .unwrap_or([0u8; 8]),

@@ -38,7 +38,7 @@ pub struct PoleMeta {
     /// 已映射 (token, Space, Span)。键是 per-pie 身份（全局唯一）而非 per-space：
     /// 同一物理页借映给共享 Space 的多 Task 时，每个 pie 一条独立映射、独立 PTE，
     /// narrow/map 只动自己的那条——cap ⊆ 页表不被共享 PTE 击穿。
-    mappings: SpinLock<Vec<(u64, alloc::sync::Weak<Space>, Span)>>,
+    mappings: SpinLock<Vec<(usize, alloc::sync::Weak<Space>, Span)>>,
     /// 开辟者：`UnsealPole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
     /// 语义同 `HoleMeta::owner`：`vestor` 管门闩的来历，`owner` 管资源的来历。
     owner: usize,
@@ -94,7 +94,7 @@ impl PoleMeta {
     /// 各自独立映射（同一物理页可出现在同 space 的多个 VA）。
     fn map_into(
         &self,
-        token: u64,
+        token: usize,
         space: &Arc<Space>,
         flags: PteFlags,
     ) -> Result<usize, GateError> {
@@ -128,7 +128,7 @@ impl PoleMeta {
     ///
     /// cap ⊆ 页表：narrow 收窄 pie 权限后，该 pie 的映射段 PTE 必须同步降权。
     /// 只动 `token` 自己的映射（未映射则无事）；其他 pie（含同 space 的）不受影响。
-    fn narrow_into(&self, token: u64, flags: PteFlags) -> Result<(), GateError> {
+    fn narrow_into(&self, token: usize, flags: PteFlags) -> Result<(), GateError> {
         // 锁内只查 + 升级 Arc（锁序纪律：mappings 锁不跨 space 操作）。
         let target = {
             let m = self.mappings.lock();
@@ -147,7 +147,7 @@ impl PoleMeta {
         Ok(())
     }
 
-    fn unmap_from(&self, token: u64) -> Result<(), GateError> {
+    fn unmap_from(&self, token: usize) -> Result<(), GateError> {
         let (space, span) = {
             let mut m = self.mappings.lock();
             let pos = m.iter().position(|(t, _, _)| *t == token);
@@ -169,7 +169,7 @@ impl PoleMeta {
 impl Drop for PoleMeta {
     fn drop(&mut self) {
         *self.state.lock() = PoleState::Dead;
-        let mappings: Vec<(u64, alloc::sync::Weak<Space>, Span)> =
+        let mappings: Vec<(usize, alloc::sync::Weak<Space>, Span)> =
             core::mem::take(&mut *self.mappings.lock());
         for (_, weak, span) in mappings {
             if let Some(space) = weak.upgrade() {
@@ -190,7 +190,7 @@ impl Drop for PoleMeta {
 /// `token` = 调用方 pie 的映射身份；同 token 幂等复用，异 token 独立映射。
 pub(crate) fn map(
     meta: &PoleMeta,
-    token: u64,
+    token: usize,
     space: &Arc<Space>,
     flags: PteFlags,
 ) -> Result<usize, GateError> {
@@ -205,7 +205,7 @@ pub(crate) fn map(
 }
 
 /// 从 `space` 解除映射（幂等；需 rights & (R | W)）。`token` 定位该 pie 的映射。
-pub(crate) fn unmap(meta: &PoleMeta, token: u64) -> Result<(), GateError> {
+pub(crate) fn unmap(meta: &PoleMeta, token: usize) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
@@ -213,7 +213,7 @@ pub(crate) fn unmap(meta: &PoleMeta, token: u64) -> Result<(), GateError> {
 }
 
 /// Narrow 降权：把 `token` 对应映射段降权到新 `flags`（cap ⊆ 页表）。未映射则无事。
-pub(crate) fn narrow(meta: &PoleMeta, token: u64, flags: PteFlags) -> Result<(), GateError> {
+pub(crate) fn narrow(meta: &PoleMeta, token: usize, flags: PteFlags) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }

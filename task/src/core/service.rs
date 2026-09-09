@@ -45,7 +45,7 @@ pub struct Directory {
     entry: HolePie,
     reply: HolePie,
     /// reply hole 在目录侧的 token——写进请求 `[49..57]`，目录按此推回复。
-    reply_target: u64,
+    reply_target: usize,
 }
 
 impl Directory {

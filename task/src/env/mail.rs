@@ -1,7 +1,7 @@
 //! Mail 域：pie 门闩操作（Hole 数据过内核、Pole 页级安全内存）。
 //!
 //! 每个调用都是一次 envcall，由内核侧 dispatch 做 alive + rights + 分派。
-//! 用户句柄统一为 per-pie `token`（全局唯一，u64）。
+//! 用户句柄统一为 per-pie `token`（全局唯一，usize）。
 //!
 //! 方案 3（typed payload）：`MailCall::X{ .. }.call()?` 直接得 `MailCallRet`，
 //! 参数在构造时类型安全（PieToken/VirtAddr/TaskId/Permission），返回值经 from_pair
@@ -28,7 +28,7 @@ fn now_ns() -> EnvResult<u64> {
 // ── 裸函数层（envcall 转发，零业务逻辑）──
 
 /// 解封 Hole（mtu = 该孔单消息上限，1..=4096）。
-pub fn unseal_hole(mtu: usize) -> EnvResult<u64> {
+pub fn unseal_hole(mtu: usize) -> EnvResult<usize> {
     let r = MailCall::UnsealHole { mtu }.call()?;
     match r {
         MailCallRet::UnsealHole(tk) => Ok(tk.get()),
@@ -36,7 +36,7 @@ pub fn unseal_hole(mtu: usize) -> EnvResult<u64> {
     }
 }
 
-pub fn unseal_pole(bytes: usize) -> EnvResult<u64> {
+pub fn unseal_pole(bytes: usize) -> EnvResult<usize> {
     let r = MailCall::UnsealPole { bytes }.call()?;
     match r {
         MailCallRet::UnsealPole(tk) => Ok(tk.get()),
@@ -45,7 +45,7 @@ pub fn unseal_pole(bytes: usize) -> EnvResult<u64> {
 }
 
 /// push 一条消息（`msg[..len]` 进 hole 槽）。`len ∈ [1, 该孔 mtu]`。
-pub fn push(token: u64, msg: *const u8, len: usize) -> EnvResult<()> {
+pub fn push(token: usize, msg: *const u8, len: usize) -> EnvResult<()> {
     let r = MailCall::Push {
         token: PieToken::new(token),
         msg: VirtAddr::new(msg as usize),
@@ -60,7 +60,7 @@ pub fn push(token: u64, msg: *const u8, len: usize) -> EnvResult<()> {
 
 /// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）。
 /// `max ≥ 1`，且 ≤该孔 mtu。
-pub fn pull(token: u64, buf: *mut u8, max: usize) -> EnvResult<usize> {
+pub fn pull(token: usize, buf: *mut u8, max: usize) -> EnvResult<usize> {
     let r = MailCall::Pull {
         token: PieToken::new(token),
         buf: VirtAddr::new(buf as usize),
@@ -75,7 +75,7 @@ pub fn pull(token: u64, buf: *mut u8, max: usize) -> EnvResult<usize> {
 
 /// 等 hole 某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
 /// 返回 `true` = 本次调用当场就绪；`false` = 未就绪（探测失败，或挂起过）。
-pub fn wait(token: u64, dir: HoleDir, millis: usize) -> EnvResult<bool> {
+pub fn wait(token: usize, dir: HoleDir, millis: usize) -> EnvResult<bool> {
     let r = MailCall::Wait {
         token: PieToken::new(token),
         dir,
@@ -88,7 +88,7 @@ pub fn wait(token: u64, dir: HoleDir, millis: usize) -> EnvResult<bool> {
     }
 }
 
-pub fn map(token: u64) -> EnvResult<usize> {
+pub fn map(token: usize) -> EnvResult<usize> {
     let r = MailCall::Map {
         token: PieToken::new(token),
     }
@@ -99,7 +99,7 @@ pub fn map(token: u64) -> EnvResult<usize> {
     }
 }
 
-pub fn unmap(token: u64) -> EnvResult<()> {
+pub fn unmap(token: usize) -> EnvResult<()> {
     let r = MailCall::Unmap {
         token: PieToken::new(token),
     }
@@ -110,7 +110,7 @@ pub fn unmap(token: u64) -> EnvResult<()> {
     }
 }
 
-pub fn seal(token: u64) -> EnvResult<()> {
+pub fn seal(token: usize) -> EnvResult<()> {
     let r = MailCall::Seal {
         token: PieToken::new(token),
     }
@@ -122,7 +122,7 @@ pub fn seal(token: u64) -> EnvResult<()> {
 }
 
 /// 转授子集给其他 Task：src_token + dst_id + subset → 新 pie 的 token（撤销句柄）。
-pub fn accord(src_token: u64, dst_id: usize, subset: env::Permission) -> EnvResult<u64> {
+pub fn accord(src_token: usize, dst_id: usize, subset: env::Permission) -> EnvResult<usize> {
     let r = MailCall::Accord {
         src: PieToken::new(src_token),
         dst: env::TaskId::new(dst_id),
@@ -136,7 +136,7 @@ pub fn accord(src_token: u64, dst_id: usize, subset: env::Permission) -> EnvResu
 }
 
 /// 收窄本 pie 权限（就地改写；Pole 同步降页表）。
-pub fn narrow(token: u64, subset: env::Permission) -> EnvResult<()> {
+pub fn narrow(token: usize, subset: env::Permission) -> EnvResult<()> {
     let r = MailCall::Narrow {
         token: PieToken::new(token),
         subset,
@@ -149,7 +149,7 @@ pub fn narrow(token: u64, subset: env::Permission) -> EnvResult<()> {
 }
 
 /// 收回授与他人的副本：dst_id + token。
-pub fn revoke(dst_id: usize, token: u64) -> EnvResult<()> {
+pub fn revoke(dst_id: usize, token: usize) -> EnvResult<()> {
     let r = MailCall::Revoke {
         dst: env::TaskId::new(dst_id),
         token: PieToken::new(token),
@@ -167,7 +167,7 @@ pub fn revoke(dst_id: usize, token: u64) -> EnvResult<()> {
 /// **唯一的枚举手段**：`handshake::moor()` 靠它发现「父域授给我的那枚门闩」。
 /// 已知句柄求事实用 [`owned`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
 /// 与 `UnitCall::SelfId` 越界哨兵一致。
-pub fn collect(index: usize) -> EnvResult<(u64, env::Permission, env::TaskId)> {
+pub fn collect(index: usize) -> EnvResult<(usize, env::Permission, env::TaskId)> {
     let r = MailCall::Collect { index }.call()?;
     match r {
         MailCallRet::Collect((token, permission, vestor)) => Ok((token.get(), permission, vestor)),
@@ -179,7 +179,7 @@ pub fn collect(index: usize) -> EnvResult<(u64, env::Permission, env::TaskId)> {
 ///
 /// `vestor` = 这枚门闩谁授的（转手即改写）；`owner` = 这扇门谁开的（副本共享同一
 /// 事实）。求「对端是谁」一律用 `owner`：root 转发过的门闩，`vestor` 会变成 root。
-pub fn owned(token: u64) -> EnvResult<(env::TaskId, env::TaskId)> {
+pub fn owned(token: usize) -> EnvResult<(env::TaskId, env::TaskId)> {
     let r = MailCall::Owned {
         token: PieToken::new(token),
     }
@@ -191,7 +191,7 @@ pub fn owned(token: u64) -> EnvResult<(env::TaskId, env::TaskId)> {
 }
 
 /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
-pub fn release(token: u64) -> EnvResult<()> {
+pub fn release(token: usize) -> EnvResult<()> {
     let r = MailCall::Release {
         token: PieToken::new(token),
     }
@@ -206,7 +206,7 @@ pub fn release(token: u64) -> EnvResult<()> {
 
 /// Hole 门闩用户态句柄。
 pub struct HolePie {
-    token: u64,
+    token: usize,
 }
 
 impl HolePie {
@@ -218,7 +218,7 @@ impl HolePie {
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: u64) -> Self {
+    pub fn from_token(token: usize) -> Self {
         Self { token }
     }
 
@@ -293,12 +293,12 @@ impl HolePie {
 
     /// 转授子集给 dst_task。subset ⊆ self.permission。
     /// 返回新 pie 的 token（撤销句柄）——对方用 `HolePie::from_token(token)` 重建。
-    pub fn accord(&self, dst_id: usize, subset: env::Permission) -> EnvResult<u64> {
+    pub fn accord(&self, dst_id: usize, subset: env::Permission) -> EnvResult<usize> {
         accord(self.token, dst_id, subset)
     }
 
     /// 收回授与 dst_id 的、由 token 标识的副本（须是本 pie accord 出的）。
-    pub fn revoke(&self, dst_id: usize, token: u64) -> EnvResult<()> {
+    pub fn revoke(&self, dst_id: usize, token: usize) -> EnvResult<()> {
         revoke(dst_id, token)
     }
 
@@ -307,14 +307,14 @@ impl HolePie {
         release(self.token)
     }
 
-    pub fn token(&self) -> u64 {
+    pub fn token(&self) -> usize {
         self.token
     }
 }
 
 /// Pole 门闩用户态句柄。
 pub struct PolePie {
-    token: u64,
+    token: usize,
 }
 
 impl PolePie {
@@ -325,7 +325,7 @@ impl PolePie {
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: u64) -> Self {
+    pub fn from_token(token: usize) -> Self {
         Self { token }
     }
 
@@ -349,12 +349,12 @@ impl PolePie {
 
     /// 转授子集给 dst_task。subset ⊆ self.permission。
     /// 返回新 pie 的 token（撤销句柄）——对方用 `PolePie::from_token(token)` 重建。
-    pub fn accord(&self, dst_id: usize, subset: env::Permission) -> EnvResult<u64> {
+    pub fn accord(&self, dst_id: usize, subset: env::Permission) -> EnvResult<usize> {
         accord(self.token, dst_id, subset)
     }
 
     /// 收回授与 dst_id 的、由 token 标识的副本（须是本 pie accord 出的）。
-    pub fn revoke(&self, dst_id: usize, token: u64) -> EnvResult<()> {
+    pub fn revoke(&self, dst_id: usize, token: usize) -> EnvResult<()> {
         revoke(dst_id, token)
     }
 
@@ -363,7 +363,7 @@ impl PolePie {
         release(self.token)
     }
 
-    pub fn token(&self) -> u64 {
+    pub fn token(&self) -> usize {
         self.token
     }
 }

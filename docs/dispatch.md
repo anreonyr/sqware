@@ -41,7 +41,7 @@
 
 ```rust
 pub struct Name { bytes: [u8; 32] }          // 定长、尾随 NUL、内容非空且不含 NUL
-pub struct Binding { name: Name, entry: u64, owner: usize }  // entry = 入口门闩 token
+pub struct Binding { name: Name, entry: usize, owner: usize }  // entry = 入口门闩 token
 pub struct Directory { bindings: Vec<Binding> }              // 名字唯一
 pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 ```
@@ -62,15 +62,15 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 请求
 [0]      op      u8      1=Register 2=Unregister 3=Replace 4=Resolve 5=Enumerate 6=Connect
 [1..33]  name    [u8;32] 目标名字 / Enumerate 游标（全 0 = 从头开始）
-[33..41] entry   u64 LE  Register/Replace：入口门闩的目录侧 pie token
+[33..41] entry   usize LE  Register/Replace：入口门闩的目录侧 pie token
 [41..49] 保留    u64 LE  必须为 0
-[49..57] reply   u64 LE  调用方自带的回信 pie 的目录侧 token（0 = 无回复预期）
+[49..57] reply   usize LE  调用方自带的回信 pie 的目录侧 token（0 = 无回复预期）
 [57..64] 保留（0）
 
 回复
 [0]      status  u8      0=Ok 1=Found 2=Connected 3=NotFound 4=Denied 5=Taken
 [1..33]  name    [u8;32] Found：Resolve 命中的名字 / Enumerate 的一页
-[1..9]   entry   u64 LE  Connected：目录转授给调用方的入口门闩 token
+[1..9]   entry   usize LE  Connected：目录转授给调用方的入口门闩 token
 [9..17]  保留    u64 LE  必须为 0（原 owner 字段已删——见 §5）
 ```
 

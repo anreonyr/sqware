@@ -9,7 +9,7 @@
 //
 // 用户态：Task 持 `Vec<AnyPie>`（`unit::task::pies`）；envcall 以 token 寻址。
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::Weak;
 
@@ -33,8 +33,8 @@ pub enum Need {
 }
 
 /// 全局 pie 身份序列号（自 1 递增）。用户句柄 + accord 撤销句柄。
-fn next_pie_token() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
+fn next_pie_token() -> usize {
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
@@ -45,7 +45,7 @@ pub struct Pie<M> {
     pub(crate) permission: Permission,
     /// 授与本 pie 的人：None = 原始自持；Some(id) = 经 accord 来自 task id。
     pub(crate) vestor: Option<usize>,
-    pub(crate) token: u64,
+    pub(crate) token: usize,
     pub(crate) weak: Weak<M>,
 }
 
@@ -141,7 +141,7 @@ impl AnyPie {
         }
     }
 
-    pub fn token(&self) -> u64 {
+    pub fn token(&self) -> usize {
         match self {
             AnyPie::Hole(p) => p.token,
             AnyPie::Pole(p) => p.token,

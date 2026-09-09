@@ -238,7 +238,7 @@ QEMU 实测无 panic。
 pub struct Service {
     req_pie: HolePie,   // 请求 Hole（caller → service）
     rep_pie: HolePie,   // 回复 Hole（service → caller）
-    next_key: u64,      // wake_key 递增计数器（每条请求唯一）
+    next_key: usize,    // wake_key 递增计数器（每条请求唯一）
 }
 ```
 
@@ -258,8 +258,8 @@ pub fn connect(service_task: usize) -> EnvResult<Service> {
 
 ```text
   [0..4]    op        u32      服务要做什么
-  [4..12]   wake_key  u64      等回复的 key（每条唯一，递增）
-  [12..20]  big_data  u64      大数据 PieToken（指向 Pole；0 = 无）
+  [4..12]   wake_key  usize    等回复的 key（每条唯一，递增）
+  [12..20]  big_data  usize      大数据 PieToken（指向 Pole；0 = 无）
   [20..64]  payload   44 字节  小数据
 ```
 
@@ -267,7 +267,7 @@ pub fn connect(service_task: usize) -> EnvResult<Service> {
 
 ```rust
 pub fn request(&self, op: u32, payload: &[u8; 64],
-               big_data: Option<u64>) -> EnvResult<[u8; 64]> {
+               big_data: Option<usize>) -> EnvResult<[u8; 64]> {
     let wake_key = self.next_key.wrapping_add(1);   // 每条唯一
     // 组装消息（布局见上）...
     self.req_pie.push(&msg)?;
@@ -663,14 +663,14 @@ impl Wire for crate::fid::ServiceId {
 
 **请求**（user → dispatcher）：
 ```
-[0..8]    sender_task_id (u64 LE)
+[0..8]    sender_task_id (usize LE)
 [8..64]   service_name (UTF-8 null-padded)
 ```
 
 **回复**（dispatcher → user）：
 ```
-[0..8]    req_pie_token (u64 LE; 0 = 未找到)
-[8..16]   rep_pie_token (u64 LE; 0 = 未找到)
+[0..8]    req_pie_token (usize LE; 0 = 未找到)
+[8..16]   rep_pie_token (usize LE; 0 = 未找到)
 [16..64]  reserved
 ```
 
@@ -746,7 +746,7 @@ pub fn connect(sid: ServiceId) -> EnvResult<Service> {
     // 2. push lookup request
     let my_id = task::self_id()?;
     let mut req_msg = [0u8; 64];
-    req_msg[0..8].copy_from_slice(&(my_id.get() as u64).to_le_bytes());
+    req_msg[0..8].copy_from_slice(&my_id.get().to_le_bytes());
     let name = sid.name_bytes();
     let n = name.len().min(55);
     req_msg[8..8+n].copy_from_slice(&name[..n]);
@@ -757,8 +757,8 @@ pub fn connect(sid: ServiceId) -> EnvResult<Service> {
     drep.pull(&mut reply)?;
 
     // 4. parse tokens
-    let req_tk = u64::from_le_bytes(reply[0..8].try_into().unwrap_or([0; 8]));
-    let rep_tk = u64::from_le_bytes(reply[8..16].try_into().unwrap_or([0; 8]));
+    let req_tk = usize::from_le_bytes(reply[0..8].try_into().unwrap_or([0; 8]));
+    let rep_tk = usize::from_le_bytes(reply[8..16].try_into().unwrap_or([0; 8]));
     if req_tk == 0 || rep_tk == 0 { return Err(not_found); }
 
     // 5. build Service with echo svc Pies

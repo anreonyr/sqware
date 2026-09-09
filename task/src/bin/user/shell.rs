@@ -26,7 +26,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use task::core::handshake::{self, Pier, Quay};
@@ -41,11 +41,11 @@ use task::env::{
 use task::term::{Color, Readline, Terminal};
 
 /// 目录请求门闩在**本任务侧**的句柄（启动期握手拿到，此后只读）。
-static DIR_ENTRY: AtomicU64 = AtomicU64::new(0);
+static DIR_ENTRY: AtomicUsize = AtomicUsize::new(0);
 
 /// 启动期握手：靠泊 → 自建控制孔并交给父域 → 报到 → 收配给（目录门闩由 dir 亲授）。
 /// 返目录请求门闩在**本任务侧**的句柄。
-fn shake() -> env::EnvResult<u64> {
+fn shake() -> env::EnvResult<usize> {
     let up = handshake::moor()?;
     let down = HolePie::unseal(handshake::MTU)?;
     let sire = task::env::task::sire()?;

@@ -20,7 +20,7 @@ pub struct Channel {
     /// 我的 hole（push/pull 走它）。
     pub(crate) mine: HolePie,
     /// 我 Accord 给 peer 的副本的 token（`close` 时用它 revoke）。
-    pub(crate) at_peer: u64,
+    pub(crate) at_peer: usize,
 }
 
 impl Channel {
@@ -35,7 +35,7 @@ impl Channel {
     }
 
     /// 由已有 hole + 对端 token 构造（per-caller reply 场景：调用方已 unseal + accord）。
-    pub fn from_receipt(mine: HolePie, at_peer: u64) -> Channel {
+    pub fn from_receipt(mine: HolePie, at_peer: usize) -> Channel {
         Channel { mine, at_peer }
     }
 
@@ -49,7 +49,7 @@ impl Channel {
     }
 
     /// 取我在对端的 token（写进请求消息前 8 字节）。
-    pub fn at_peer(&self) -> u64 {
+    pub fn at_peer(&self) -> usize {
         self.at_peer
     }
 

@@ -44,7 +44,7 @@ fn denied() -> erra::Error<EnvError> {
 }
 
 /// 发一条报文：`[tag][payload]`。
-fn send(hole: &HolePie, tag: u8, payload: u64) -> EnvResult<()> {
+fn send(hole: &HolePie, tag: u8, payload: usize) -> EnvResult<()> {
     let mut buf = [0u8; MTU];
     buf[0] = tag;
     buf[1..].copy_from_slice(&payload.to_le_bytes());
@@ -52,26 +52,28 @@ fn send(hole: &HolePie, tag: u8, payload: u64) -> EnvResult<()> {
 }
 
 /// 收一条报文：读满 `MTU` 并校验 tag，返 payload。tag 不符 / 短读 → `Denied`。
-fn recv(hole: &HolePie, tag: u8) -> EnvResult<u64> {
+fn recv(hole: &HolePie, tag: u8) -> EnvResult<usize> {
     let mut buf = [0u8; MTU];
     if hole.pull(&mut buf)? != MTU || buf[0] != tag {
         return Err(denied());
     }
-    Ok(u64::from_le_bytes(buf[1..].try_into().unwrap_or([0u8; 8])))
+    Ok(usize::from_le_bytes(
+        buf[1..].try_into().unwrap_or([0u8; 8]),
+    ))
 }
 
 /// 子 → 父：报到。`hole` = 我自建控制孔**在父侧**的句柄（`Accord` 的返回值）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Quay {
-    hole: u64,
+    hole: usize,
 }
 
 impl Quay {
-    pub fn new(hole: u64) -> Self {
+    pub fn new(hole: usize) -> Self {
         Self { hole }
     }
 
-    pub fn hole(&self) -> u64 {
+    pub fn hole(&self) -> usize {
         self.hole
     }
 
@@ -91,15 +93,15 @@ impl Quay {
 /// 父 → 子：配给。`token` = 目录门闩**在子侧**的句柄（0 = 无）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pier {
-    token: u64,
+    token: usize,
 }
 
 impl Pier {
-    pub fn new(token: u64) -> Self {
+    pub fn new(token: usize) -> Self {
         Self { token }
     }
 
-    pub fn token(&self) -> u64 {
+    pub fn token(&self) -> usize {
         self.token
     }
 
@@ -133,13 +135,13 @@ impl Refer {
 
     /// 父侧：往 dir 的控制孔里发引入请求。
     pub fn push(self, control: &HolePie) -> EnvResult<()> {
-        send(control, TAG_REFER, self.who.get() as u64)
+        send(control, TAG_REFER, self.who.get())
     }
 
     /// dir 控制线程：从控制孔里收引入请求。
     pub fn pull(control: &HolePie) -> EnvResult<Refer> {
         Ok(Refer {
-            who: TaskId(recv(control, TAG_REFER)? as usize),
+            who: TaskId(recv(control, TAG_REFER)?),
         })
     }
 }
@@ -147,15 +149,15 @@ impl Refer {
 /// dir → 父：已授。`token` = 对方侧句柄（0 = 失败）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Referred {
-    token: u64,
+    token: usize,
 }
 
 impl Referred {
-    pub fn new(token: u64) -> Self {
+    pub fn new(token: usize) -> Self {
         Self { token }
     }
 
-    pub fn token(&self) -> u64 {
+    pub fn token(&self) -> usize {
         self.token
     }
 

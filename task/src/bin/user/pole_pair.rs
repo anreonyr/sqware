@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::Permission;
 use task::core::unit;
@@ -40,7 +40,7 @@ extern "C" fn main() {
     // 两把 key 钉在堆（地址稳定、跨 task 共享）。
     let key_data: usize = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
     let key_done: usize = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
-    let token_slot: &'static [AtomicU64; 1] = Box::leak(Box::new([AtomicU64::new(0)]));
+    let token_slot: &'static [AtomicUsize; 1] = Box::leak(Box::new([AtomicUsize::new(0)]));
     let token_slot_ptr = token_slot.as_ptr() as usize;
 
     // spawn consumer。closure 捕获 key + token 槽。consumer 末尾写 R-only 触发
@@ -48,7 +48,7 @@ extern "C" fn main() {
     let _join: unit::Join<()> = unit::closure(move || {
         // 等 producer accord + 存 token（先于第一次 wake key_data）。
         let _ = room::wait(key_data, WAIT).expect("wait data");
-        let token = unsafe { (*(token_slot_ptr as *const AtomicU64)).load(Ordering::Relaxed) };
+        let token = unsafe { (*(token_slot_ptr as *const AtomicUsize)).load(Ordering::Relaxed) };
         let pole = PolePie::from_token(token);
         let va = pole.map().expect("map r-only");
         let ptr = va as *const u8;
