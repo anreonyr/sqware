@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use hashbrown::HashMap;
 
-use env::dispatch::{MSG_LEN, Name, Reply, Request};
+use env::dispatch::{Name, Reply, Request};
 use env::{PieToken, TaskId};
 
 use crate::lock::{Level, SpinLock};
@@ -175,6 +175,9 @@ pub fn connect(
 
 // ── 适配层：一条请求 → 一条回复 ──
 
+/// dispatch 协议载荷定长字节数（与 `crates/env/src/dispatch::MSG_LEN` 一致）。
+pub const MSG_LEN: usize = 64;
+
 /// 处理一条目录请求，产出回复。
 ///
 /// `caller` = 调用方 task id（**由内核给**，不来自消息体）；`me` = 目录自己的
@@ -184,8 +187,11 @@ pub fn serve(
     reg: &Arc<ServiceRegistry>,
     me: &Arc<Task>,
     caller: usize,
-    msg: &[u8; MSG_LEN],
+    msg: &[u8],
 ) -> Reply {
+    if msg.len() < MSG_LEN {
+        return Reply::Denied;
+    }
     match Request::decode(msg) {
         Ok(request) => handle(reg, me, caller, &request),
         Err(_) => Reply::Denied,

@@ -9,7 +9,11 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use env::Permission;
 
 use task::core::unit;
-use task::env::{io::put, mail::HolePie, room};
+use task::env::{
+    io::put,
+    mail::{HolePie, HOLE_MTU_MAX},
+    room,
+};
 
 // revoke: 收回授与他人的副本。
 //
@@ -33,7 +37,7 @@ const WAIT: usize = 5_000;
 extern "C" fn main() {
     let _ = put("revoke\n");
 
-    let hole = HolePie::unseal().expect("unseal");
+    let hole = HolePie::unseal(HOLE_MTU_MAX).expect("unseal");
 
     let key_grant: usize = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
     let key_done: usize = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;

@@ -25,8 +25,11 @@ pub struct Channel {
 
 impl Channel {
     /// 建通道：我造一个 hole，把 R|W 副本授给 peer。
+    ///
+    /// `mtu` 取 `HOLE_MTU_MAX`（4096）——单消息上限：dispatch 等当前载荷远小于此，
+    /// 留上限以备未来协议扩展。
     pub fn open(peer: TaskId) -> EnvResult<Channel> {
-        let mine = HolePie::unseal()?;
+        let mine = HolePie::unseal(crate::env::mail::HOLE_MTU_MAX)?;
         let at_peer = mine.accord(peer.get(), Permission::READ | Permission::WRITE)?;
         Ok(Channel::from_receipt(mine, at_peer))
     }

@@ -151,22 +151,25 @@ pub enum HoleDir {
 ///
 /// 两条轴不要混：`Unseal*` ↔ `Seal` 动的是**资源**；`Accord` ↔ `Revoke`（他人）
 /// 与 `Collect` ↔ `Release`（自己）动的是**我手里那一份**。
+///
+/// **变长孔**：`UnsealHole { mtu }` 在 unseal 时定该孔消息上限（1..=4096）；
+/// `Push { len }` 与 `Pull { max }` 把长度作为参数传——长度是契约不是约定。
 #[derive(Envcall)]
 #[call(class = 5)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
-    /// 解封 Hole（数据过内核管道）。
+    /// 解封 Hole（数据过内核管道）；`mtu` = 该孔单消息上限（1..=4096）。
     #[ret(PieToken)]
-    UnsealHole,
+    UnsealHole { mtu: usize },
     /// 解封 Pole（页级安全内存；字节数页对齐）。
     #[ret(PieToken)]
     UnsealPole { bytes: usize },
-    /// push msg：token + msg VA。
+    /// push msg：token + msg VA + 长度（1..=该孔 mtu）。
     #[ret(())]
-    Push { token: PieToken, msg: VirtAddr },
-    /// pull msg：token + 缓冲 VA。
-    #[ret(())]
-    Pull { token: PieToken, buf: VirtAddr },
+    Push { token: PieToken, msg: VirtAddr, len: usize },
+    /// pull msg：token + 缓冲 VA + 上限（≥1 且 ≤该孔 mtu）；返实际长度。
+    #[ret(usize)]
+    Pull { token: PieToken, buf: VirtAddr, max: usize },
     /// 借映 Pole 物理页进当前 task.space：token → VA。
     #[ret(VirtAddr)]
     Map { token: PieToken },

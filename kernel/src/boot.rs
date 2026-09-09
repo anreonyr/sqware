@@ -214,7 +214,8 @@ fn spawn_demos() -> Result<(), MapError> {
 
     // 目录入口门闩：内核是根授予的源头 → 原始自持（vestor = None）。它没有 envcall
     // 入口（class 7 已删除）：内核把这一份放进首个用户任务的权限表，靠 `Collect` 取。
-    let (dreq, dreq_id) = hole::meta().map_err(|_| MapError::OutOfMemory)?;
+    // mtu=64 与 dispatch MSG_LEN 一致——保留 64B 形态等价旧行为。
+    let (dreq, dreq_id) = hole::meta(64).map_err(|_| MapError::OutOfMemory)?;
     let dir_entry = gate::new_pie(
         dreq_id,
         Permission::READ | Permission::WRITE | Permission::VEST,
@@ -224,7 +225,7 @@ fn spawn_demos() -> Result<(), MapError> {
 
     // 回信 hole（目录 → 主 client）。v1 单 client：内核预置这条通道并把它交进
     // 调用方权限表（索引 1），故无需向用户态传任何整数。
-    let (reply, reply_id) = hole::meta().map_err(|_| MapError::OutOfMemory)?;
+    let (reply, reply_id) = hole::meta(64).map_err(|_| MapError::OutOfMemory)?;
     let reply_pie = gate::new_pie(
         reply_id,
         Permission::READ | Permission::WRITE,
@@ -233,7 +234,7 @@ fn spawn_demos() -> Result<(), MapError> {
     );
 
     // echo 入口 hole：域侧一枚（pull 请求）+ 目录侧一枚（Connect 转授）。
-    let (eentry, eentry_id) = hole::meta().map_err(|_| MapError::OutOfMemory)?;
+    let (eentry, eentry_id) = hole::meta(64).map_err(|_| MapError::OutOfMemory)?;
 
     // shell 先建：它的 task id 就是目录认定的 caller（身份由内核给，不走消息体）。
     let shell_id = shell_team.task().name("shell").entry(shell_entry).spawn()?;
@@ -322,11 +323,14 @@ fn spawn_services(
             use crate::work::mail::hole;
             use crate::work::room::messenger::WaitKey;
             use env::HoleDir;
+            // dispatch 协议载荷定 64 字节（dispatch::MSG_LEN）；dreq/reply 都以 mtu=64 建。
+            const MSG_LEN: usize = crate::service::dispatch::MSG_LEN;
             loop {
                 let pull_k = hole::key(&dreq, HoleDir::Pull);
                 crate::work::room::scheduler::ktask::wait_forever(WaitKey::into_raw(pull_k));
-                let msg = match hole::try_pull(&dreq) {
-                    Ok(m) => m,
+                let mut msg = [0u8; MSG_LEN];
+                match hole::try_pull(&dreq, &mut msg) {
+                    Ok(_) => {}
                     Err(GateError::Busy) => continue, // 唤醒是虚的，再等
                     Err(_) => return,                 // Dead：入口 hole 已封印
                 };

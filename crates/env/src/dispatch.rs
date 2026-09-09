@@ -227,7 +227,10 @@ impl Request {
         m
     }
 
-    pub fn decode(m: &[u8; MSG_LEN]) -> Result<Request, ProtocolError> {
+    pub fn decode(m: &[u8]) -> Result<Request, ProtocolError> {
+        if m.len() < MSG_LEN {
+            return Err(ProtocolError::BadName(NameError::Empty));
+        }
         let op = m[OP_AT];
         if !(1..=6).contains(&op) {
             return Err(ProtocolError::BadOp);

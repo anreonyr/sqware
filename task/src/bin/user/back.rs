@@ -8,7 +8,11 @@ use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use env::Permission;
 use task::core::unit;
-use task::env::{io::put, mail::HolePie, room};
+use task::env::{
+    io::put,
+    mail::{HolePie, HOLE_MTU_MAX},
+    room,
+};
 
 // back: BACK 位 demo。
 //
@@ -106,8 +110,8 @@ extern "C" fn main() {
     });
 
     // 主线：unseal 两个 Hole、写、accord(BACK / VEST|BACK)、起 consumer、等、收尾
-    let hole1 = HolePie::unseal().expect("unseal hole1");
-    let hole2 = HolePie::unseal().expect("unseal hole2");
+    let hole1 = HolePie::unseal(HOLE_MTU_MAX).expect("unseal hole1");
+    let hole2 = HolePie::unseal(HOLE_MTU_MAX).expect("unseal hole2");
     let mut msg = [0u8; HOLE_MSG_LEN];
     msg[0] = 0x42;
     hole1.push(&msg).expect("A push");

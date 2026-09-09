@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use task::env::io::put;
-use task::env::mail::HolePie;
+use task::env::mail::{HolePie, HOLE_MTU_MAX};
 
 // hole_solo: Hole 内核邮路单端压力测试——主任务开 Hole、push 后 pull（单槽必须交替）。
 // 验证 push/pull 路径 + Permission::READ/WRITE 检查。
@@ -14,7 +14,7 @@ use task::env::mail::HolePie;
 extern "C" fn main() {
     let _ = put("hole_solo\n");
 
-    let pie = HolePie::unseal().expect("hole unseal");
+    let pie = HolePie::unseal(HOLE_MTU_MAX).expect("hole unseal");
 
     // push 10 轮 + 立即 pull（单槽必须交替，否则第二次 push 会挂起等空位）
     let mut ok = true;

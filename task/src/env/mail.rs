@@ -14,13 +14,15 @@ use env::{EnvResult, HoleDir, MailCall, MailCallRet, PieToken, VirtAddr};
 
 use crate::env::room;
 
-/// hole 单消息字节数（与内核侧 `HOLE_MSG_LEN` 一致）。
-pub const HOLE_MSG_LEN: usize = 64;
+/// hole 单消息字节上限（与内核侧 `HOLE_MTU_MAX` 一致）。调用方 unseal 时选
+/// mtu ∈ [1, HOLE_MTU_MAX]；推送时实际字节数由 `push` 的 `len` 决定。
+pub const HOLE_MTU_MAX: usize = 4096;
 
 // ── 裸函数层（envcall 转发，零业务逻辑）──
 
-pub fn unseal_hole() -> EnvResult<u64> {
-    let r = MailCall::UnsealHole.call()?;
+/// 解封 Hole（mtu = 该孔单消息上限，1..=4096）。
+pub fn unseal_hole(mtu: usize) -> EnvResult<u64> {
+    let r = MailCall::UnsealHole { mtu }.call()?;
     match r {
         MailCallRet::UnsealHole(tk) => Ok(tk.get()),
         _ => unreachable!(),
@@ -35,10 +37,12 @@ pub fn unseal_pole(bytes: usize) -> EnvResult<u64> {
     }
 }
 
-pub fn push(token: u64, msg: *const [u8; HOLE_MSG_LEN]) -> EnvResult<()> {
+/// push 一条消息（`msg[..len]` 进 hole 槽）。`len ∈ [1, 该孔 mtu]`。
+pub fn push(token: u64, msg: *const u8, len: usize) -> EnvResult<()> {
     let r = MailCall::Push {
         token: PieToken::new(token),
         msg: VirtAddr::new(msg as usize),
+        len,
     }
     .call()?;
     match r {
@@ -47,14 +51,17 @@ pub fn push(token: u64, msg: *const [u8; HOLE_MSG_LEN]) -> EnvResult<()> {
     }
 }
 
-pub fn pull(token: u64, buf: *mut [u8; HOLE_MSG_LEN]) -> EnvResult<()> {
+/// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）。
+/// `max ≥ 1`，且 ≤该孔 mtu。
+pub fn pull(token: u64, buf: *mut u8, max: usize) -> EnvResult<usize> {
     let r = MailCall::Pull {
         token: PieToken::new(token),
         buf: VirtAddr::new(buf as usize),
+        max,
     }
     .call()?;
     match r {
-        MailCallRet::Pull(()) => Ok(()),
+        MailCallRet::Pull(n) => Ok(n),
         _ => unreachable!(),
     }
 }
@@ -176,9 +183,10 @@ pub struct HolePie {
 }
 
 impl HolePie {
-    pub fn unseal() -> EnvResult<Self> {
+    /// 解封 Hole（mtu = 该孔单消息上限，1..=4096）。
+    pub fn unseal(mtu: usize) -> EnvResult<Self> {
         Ok(Self {
-            token: unseal_hole()?,
+            token: unseal_hole(mtu)?,
         })
     }
 
@@ -193,10 +201,10 @@ impl HolePie {
         wait(self.token, dir, millis)
     }
 
-    /// 写消息：槽满则睡到有空间（让出 CPU）。
-    pub fn push(&self, msg: &[u8; HOLE_MSG_LEN]) -> EnvResult<()> {
+    /// 写消息（任意长度 ≤ mtu）：槽满则睡到有空间（让出 CPU）。
+    pub fn push(&self, msg: &[u8]) -> EnvResult<()> {
         loop {
-            match push(self.token, msg as *const [u8; HOLE_MSG_LEN]) {
+            match push(self.token, msg.as_ptr(), msg.len()) {
                 Ok(()) => return Ok(()),
                 Err(e) if e.source.is_busy() => {
                     self.wait(HoleDir::Push, usize::MAX)?;
@@ -206,11 +214,11 @@ impl HolePie {
         }
     }
 
-    /// 取消息：槽空则睡到有信（让出 CPU）。
-    pub fn pull(&self, buf: &mut [u8; HOLE_MSG_LEN]) -> EnvResult<()> {
+    /// 取消息：槽空则睡到有信（让出 CPU）。返实际收到字节数（≤ `buf.len()`）。
+    pub fn pull(&self, buf: &mut [u8]) -> EnvResult<usize> {
         loop {
-            match pull(self.token, buf as *mut [u8; HOLE_MSG_LEN]) {
-                Ok(()) => return Ok(()),
+            match pull(self.token, buf.as_mut_ptr(), buf.len()) {
+                Ok(n) => return Ok(n),
                 Err(e) if e.source.is_busy() => {
                     self.wait(HoleDir::Pull, usize::MAX)?;
                 }

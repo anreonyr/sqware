@@ -23,8 +23,10 @@ pub(crate) use hole::HoleMeta;
 pub(crate) use memo::ResourceId;
 pub(crate) use pole::PoleMeta;
 
-/// Hole 单消息字节数（Data-plane 与 Pie<HoleMeta> 的缓冲尺寸；`unit::gate` 也经此）。
-pub const HOLE_MSG_LEN: usize = 64;
+/// Hole 单消息字节数上限（每 hole unseal 时定 mtu ∈ [1, HOLE_MTU_MAX]；槽缓冲按
+/// mtu 在 HoleMeta 内预分配）。原 HOLE_MSG_LEN 的固定 64B 形态由调用方选 mtu=64
+/// 等价复现——dispatch 协议沿用 64B 不变。
+pub const HOLE_MTU_MAX: usize = 4096;
 
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;

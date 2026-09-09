@@ -30,7 +30,6 @@ use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
-use crate::work::mail::HOLE_MSG_LEN;
 use crate::work::room::messenger::WaitKey;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::trap::run;
@@ -363,12 +362,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        EnvCall::Mail(MailCall::UnsealHole) => {
-            // 编排创建：mail::hole::meta() 建实体 → gate::new_pie 建门闩 → 落 pies。
+        EnvCall::Mail(MailCall::UnsealHole { mtu }) => {
+            // 编排创建：mail::hole::meta(mtu) 建实体 → gate::new_pie 建门闩 → 落 pies。
             // meta() 只建 HoleMeta + 注册 memo；门闩/落 task.pies 是能力模型的事。
             let r = (|| -> Result<u64, GateError> {
                 let task = current().running_task().ok_or(GateError::Denied)?;
-                let (meta, id) = mail::hole::meta()?;
+                let (meta, id) = mail::hole::meta(mtu)?;
                 let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
                     id,
                     Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
@@ -411,9 +410,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
-        EnvCall::Mail(MailCall::Push { token, msg }) => {
+        EnvCall::Mail(MailCall::Push { token, msg, len }) => {
             let token = tok(token);
             let va = msg.get();
+            let len = len;
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
@@ -430,11 +430,18 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 }
             }) {
                 Some(Ok(meta)) => {
-                    let mut msg = [0u8; HOLE_MSG_LEN];
-                    if !mail::copy_in(&ident.team.space, &mut msg, va) {
+                    // 长度校验：必须 ≥1 且 ≤ hole.mtu（meta() 入口已校验 mtu∈[1,4096]）。
+                    if len == 0 || len > meta.mtu() {
                         Err(GateError::Denied)
                     } else {
-                        mail::hole::try_push(&meta, &msg)
+                        // 锁外 copy_in 到堆暂存：slot = L3，Space.segments = L2，
+                        // 持 L3 调 L2 是 4→2 反向嵌套，禁止。
+                        let mut staging = alloc::vec![0u8; len];
+                        if !mail::copy_in(&ident.team.space, &mut staging, va) {
+                            Err(GateError::Denied)
+                        } else {
+                            mail::hole::try_push(&meta, &staging)
+                        }
                     }
                 }
                 Some(Err(e)) => Err(e),
@@ -448,9 +455,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 },
             );
         }
-        EnvCall::Mail(MailCall::Pull { token, buf }) => {
+        EnvCall::Mail(MailCall::Pull { token, buf, max }) => {
             let token = tok(token);
             let va = buf.get();
+            let max = max;
             let task = current().running_task();
             let r = match task.and_then(|t| {
                 let pies = t.pies.lock();
@@ -466,23 +474,31 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     _ => None,
                 }
             }) {
-                Some(Ok(meta)) => match mail::hole::try_pull(&meta) {
-                    Ok(m) => {
-                        if !mail::copy_out(&ident.team.space, &m, va) {
-                            Err(GateError::Denied)
-                        } else {
-                            Ok(())
+                Some(Ok(meta)) => {
+                    if max == 0 || max > meta.mtu() {
+                        Err(GateError::Denied)
+                    } else {
+                        let mut staging = alloc::vec![0u8; max];
+                        match mail::hole::try_pull(&meta, &mut staging) {
+                            Ok(n) => {
+                                if !mail::copy_out(&ident.team.space, &staging[..n], va) {
+                                    Err(GateError::Denied)
+                                } else {
+                                    Ok(n)
+                                }
+                            }
+                            Err(e) => Err(e),
                         }
                     }
-                    Err(e) => Err(e),
-                },
+                }
                 Some(Err(e)) => Err(e),
                 None => Err(GateError::Denied),
             };
+            // Pull 返实际长度（正路径写 a0 = n）；错误路径写 e.code() 作负值。
             frame.gpr.set_x(
                 Gprs::A0,
                 match r {
-                    Ok(()) => 0,
+                    Ok(n) => n,
                     Err(e) => e.code() as usize,
                 },
             );

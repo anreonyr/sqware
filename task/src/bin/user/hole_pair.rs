@@ -8,7 +8,11 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use env::Permission;
 use task::core::unit;
-use task::env::{io::put, mail::HolePie, room};
+use task::env::{
+    io::put,
+    mail::{HolePie, HOLE_MTU_MAX},
+    room,
+};
 
 // hole_pair: 跨 Task 真共享 Hole（accord 派门闩 + 多 key 同步）。
 //
@@ -34,7 +38,7 @@ const WAIT: usize = 5_000;
 extern "C" fn main() {
     let _ = put("hole_pair\n");
 
-    let pie = HolePie::unseal().expect("unseal");
+    let pie = HolePie::unseal(HOLE_MTU_MAX).expect("unseal");
 
     // 三把 key 钉在堆（地址稳定、跨 task 共享）。
     let key_token: usize = Box::leak(Box::new([0u8; HOLE_MSG_LEN])).as_ptr() as usize;

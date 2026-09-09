@@ -32,7 +32,7 @@ use task::core::service::{Directory, PAYLOAD_LEN};
 use task::core::unit;
 use task::env::{
     chrono::{self, clock},
-    mail::HolePie,
+    mail::{HolePie, HOLE_MTU_MAX},
     room::{self, sleep},
     task::{heir_at, heir_count},
 };
@@ -107,7 +107,7 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
         }
         "hole" => {
             let msg = b"hi from shell";
-            let pie = HolePie::unseal().unwrap();
+            let pie = HolePie::unseal(HOLE_MTU_MAX).unwrap();
             let mut buf = [0u8; 64];
             let mut m = [0u8; 64];
             m[..msg.len()].copy_from_slice(msg);

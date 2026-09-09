@@ -4,7 +4,11 @@
 extern crate alloc;
 
 use env::Permission;
-use task::env::{io::put, mail::HolePie, mail::PolePie};
+use task::env::{
+    io::put,
+    mail::{HolePie, HOLE_MTU_MAX},
+    mail::PolePie,
+};
 
 // narrow: 收窄本 pie 权限（就地改写，单调）。
 //
@@ -26,7 +30,7 @@ extern "C" fn main() {
     let _ = put("narrow\n");
 
     // ── Hole: 任意非空子集 ──
-    let hole = HolePie::unseal().expect("unseal hole");
+    let hole = HolePie::unseal(HOLE_MTU_MAX).expect("unseal hole");
     // 1. narrow 到只读（R ⊂ R|W|VEST|BACK）→ Ok
     if hole.narrow(Permission::READ).is_ok() {
         let _ = put("H1\n"); // 预期：收窄成功
