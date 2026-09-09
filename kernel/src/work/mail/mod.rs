@@ -1,12 +1,14 @@
 // 任务间通信（mail）— Hole/Pole 两通道的资源实体 + IPC 数据面。
 //
 // 与 `unit::gate` 的分工：mail 只持**资源实体**（HoleMeta/PoleMeta）+ IPC 数据面
-// （push/pull/map/unmap）+ 资源备份表（memo）+ 用户空间拷贝（copy_in/out）；
+// （push/pull/map/unmap）+ 用户空间拷贝（copy_in/out）；
 // 能力模型（Pie/AnyPie/授权）在 `unit::gate`（gate 单向依赖 mail）。
 //
-//   memo.rs   — 全局资源备忘（id → Arc<Meta>）
 //   hole.rs   — Hole 数据面（数据过内核，单槽缓冲）+ meta()
 //   pole.rs   — Pole 数据面（页级安全内存，物理帧 + 视图）+ meta()
+//
+// **没有全局资源表**：资源寿命 = 能力寿命（门闩持唯一的强引用 `Arc<Meta>`），
+// 最后一份门闩消失即回收。
 //
 // 数据面不感知 rights；门闩在 envcall 入口 dispatch 时检查。
 // 阻塞语义在调度域 wait/wake，mail 不重造调度器。
@@ -15,12 +17,10 @@
 // 用户句柄 = per-pie token（全局唯一），envcall 以 token 寻址。
 
 pub mod hole;
-pub mod memo;
 pub mod pole;
 
 // 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（gate → mail 单向依赖）。
 pub(crate) use hole::HoleMeta;
-pub(crate) use memo::ResourceId;
 pub(crate) use pole::PoleMeta;
 
 /// Hole 单消息字节数上限（每 hole unseal 时定 mtu ∈ [1, HOLE_MTU_MAX]；槽缓冲按

@@ -153,6 +153,36 @@ scheduler**（依赖倒置）。`gate` 与 `envcall` 的分工：核心收算法
 **在途语义**：撤销只作用于能力、不作用于在途数据——已 push 进 hole 槽的消息，
 对侧仍可取（与 Solaris `door_revoke` 的「进行中的调用允许完成」一致）。
 
+### 7.2 资源寿命与封印
+
+**资源寿命 = 能力寿命**：门闩持资源实体的**唯一强引用**（`Pie.meta: Arc<M>`），
+最后一份门闩消失即回收。因此**没有全局资源表**（原 `memo` 模块已删）：
+
+| `memo` 的职责 | 之后 |
+|---|---|
+| 发资源号 | 搬进 `hole.rs`（只剩 `HoleMeta` 的**等待键身份**要它） |
+| 注册 / 移除（保活） | 消失——`Arc` 就是保活，引用归零即回收 |
+| 按 id 找对象 | 消失——唯一消费者 `Seal` 用调用方自己那枚门闩的 `Arc` |
+
+由此三条性质自动成立：**撤销/放下/任务消亡都不再泄漏**（`cull` 摘掉最后一份即
+回收）；**开辟者消亡 → 它开的资源随之回收**（`doom` 摘其门闩 → 引用归零）；
+`PoleMeta::drop` 自己撤映射、还物理帧，`HoleMeta::drop` 自己唤醒等待者。
+
+**封印只归开辟者**（`MailCall::Seal` 的鉴权 = `meta.owner() == caller`，O(1)）：
+
+- 他人 `Seal` → `Denied`；已封印再 `Seal` → `Dead`。
+- 主人 `Seal` 只**置死 + 唤醒**，不回收——内存由引用归零回收。于是主人有两档：
+  `Seal`（立即失效，他人拿到 `Dead`）／`Release`（放下并级联，他人拿到 `Denied`）。
+- `Dead`（-2）因此**只**由 `Seal` 产生。
+
+**门闩必须在锁外 drop**：最后一份 drop 会跑 `Meta::drop`（唤醒 / 撤映射 / 还帧），
+在 `Task.pies`（L3）锁内 drop 即 3→3 嵌套。`gate::cull::take` 的返回值因此由调用方
+在锁外释放。
+
+**快照是唯一的全局视图**：`snap`（`[Weak<Task>]`）+ 一条 `sire` 边，替代了原来的
+`memo` 表。资源表若需要，也从 `snap` 派生（遍历各任务的门闩、按 `meta` 去重），
+不新开结构。
+
 ## 8 · 引导（启动期握手 + 根转达）
 
 内核是根授予的源头；**root 域**（`bin/supervisor/root`）负责产生所有子域，机制不变
@@ -209,6 +239,11 @@ shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句�
 3. **Unregister/Replace 已实现但不在常规演示里**：echo 自注册路径已由「注册后立刻
    自注销」临时验证（身份取 echo 自身，返回 Ok）；v1 shell 没有对应命令，故不常驻。
 4. `Enumerate` 一次一个名字（64 字节装不下列表）。
+5. **`Join` 可能在退出钩子跑完之前返回**：目标一旦置 `Reaped`，`target_dead` 即为
+   真、当场返回；而 `clear_loop` 的钩子（`messenger::doom` / `gate::doom`）可能在
+   它之后才执行。语义上「目标已退出」没错（钩子是清理路径、不阻塞退出），但
+   **「join 返回 ⇒ 收尾已完成」不成立**。依赖收尾完成的调用方需有界等待
+   （`shell` 的 `cascade`/`reclaim` 自检即如此）。
 
 ## 11 · 实现中发现并修复的内核缺陷（与本协议无关，但拦住过验证）
 
@@ -286,4 +321,16 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 改   kernel/src/boot.rs                       EXIT_HOOKS 加 gate::doom + 注入快照
 改   kernel/src/runtime/switcher/envcall.rs   Accord/Revoke/Release/Collect/Owned 取快照
 改   task/src/bin/user/shell.rs               cascade 自检命令（三跳/无关分支/release/任务消亡）
+```
+
+### 13.2 资源寿命与封印（本次新增）
+
+```
+删   kernel/src/work/mail/memo.rs             全局资源表（寿命改由引用计数决定）
+改   kernel/src/work/mail/hole.rs             ResourceId/alloc_id 迁入；Drop 接管唤醒；seal 只置死
+改   kernel/src/work/mail/pole.rs             meta() 直接返 Arc；seal 只置死
+改   kernel/src/work/unit/gate/pie.rs         Pie.meta: Arc<M>（唯一强引用）；删 resource/alive
+改   kernel/src/work/unit/gate/{accord,cull,narrow}.rs  强引用克隆 / 锁外 drop / alive 按 variant
+改   kernel/src/runtime/switcher/envcall.rs   Seal 鉴权 owner-only；各 arm 取 Arc
+改   task/src/bin/user/shell.rs               reclaim 自检命令（引用回收 / 封印归属 / 开辟者消亡）
 ```

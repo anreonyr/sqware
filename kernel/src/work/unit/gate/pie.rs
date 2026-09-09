@@ -1,11 +1,13 @@
 // Pie<M> — 能力门闩，泛型直指资源 Meta 类型（mail 的 HoleMeta | PoleMeta）。
 //
-// 编译期类型安全：M = HoleMeta | PoleMeta，`weak: Weak<M>` 精确指资源 Meta，
+// 编译期类型安全：M = HoleMeta | PoleMeta，`meta: Arc<M>` 精确指资源 Meta，
 // 拿 Hole pie 当 Pole 用在编译期即被拦。运行时擦除由 [`AnyPie`] 的 variant 承担
 // ——variant 即 tag，不再需要 marker 类型 / ResourceKind trait / PieKind 枚举。
 //
-// 运行时身份：每 Pie 持 resource（全局 id）+ permission + sire（派生来源：父门闩的
-// token；None = 原始自持）+ token（全局唯一，用户句柄）+ weak（检存活）。
+// 运行时身份：每 Pie 持 permission + sire（派生来源：父门闩的 token；None = 原始
+// 自持）+ token（全局唯一，用户句柄）+ meta（**资源实体的唯一强引用**）。
+//
+// **资源寿命 = 能力寿命**：没有全局资源表，最后一份门闩消失即回收。
 //
 // **只存一条边**（向上的父指针）。另两个方向都是查询：授与人 = 父的持有者、
 // 子门闩 = sire 指向我的那些（见 `gate::snap`）——一条关系只存一次。
@@ -14,9 +16,9 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use alloc::sync::Weak;
+use alloc::sync::Arc;
 
-use crate::work::mail::{HoleMeta, PoleMeta, ResourceId};
+use crate::work::mail::{HoleMeta, PoleMeta};
 
 // ── 权限位（bitflags）──
 //
@@ -41,35 +43,37 @@ fn next_pie_token() -> usize {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// 单个门闩：`resource` 指向门洞、`permission` 控授权、`sire` 是派生来源（父门闩的
-/// token；None = 原始自持）、`token` 是用户句柄、`weak` 检存活。
+/// 单个门闩：`permission` 控授权、`sire` 是派生来源（父门闩的 token；None = 原始
+/// 自持）、`token` 是用户句柄、`meta` 是资源实体（唯一的强引用）。
 pub struct Pie<M> {
-    pub(crate) resource: ResourceId,
     pub(crate) permission: Permission,
     /// 我从哪一枚派生（父门闩的 token）：None = 原始自持；Some = 经 accord 得到。
     /// 构造期定型，无 setter。
     pub(crate) sire: Option<usize>,
     pub(crate) token: usize,
-    pub(crate) weak: Weak<M>,
+    /// 资源实体：**唯一强引用**——资源随最后一份门闩一起消亡。
+    ///
+    /// 纪律：门闩必须在**锁外** drop（最后一份 drop 会跑 `Meta::drop`，它唤醒
+    /// 等待者 / 撤映射 / 还帧，全是 L3 或更外层的活）。
+    pub(crate) meta: Arc<M>,
 }
 
-// 手动 Clone：Weak<M> 无需 M: Clone；显式写清字段复制（弱引用计数 +1，不碰 Meta）。
+// 手动 Clone：显式写清字段复制（Arc 强计数 +1）。
 impl<M> Clone for Pie<M> {
     fn clone(&self) -> Self {
         Self {
-            resource: self.resource,
             permission: self.permission,
             sire: self.sire,
             token: self.token,
-            weak: self.weak.clone(),
+            meta: self.meta.clone(),
         }
     }
 }
 
 impl<M> Pie<M> {
-    /// 存活：`Weak::upgrade` 成功 = Meta 仍活。
-    pub fn alive(&self) -> bool {
-        self.weak.upgrade().is_some()
+    /// 资源实体（唯一强引用）。
+    pub(crate) fn meta(&self) -> &Arc<M> {
+        &self.meta
     }
 
     /// 单权利位检查（**不含 alive**：Denied/Dead 语义仍由调用方逐条区分）。
@@ -101,13 +105,6 @@ pub enum AnyPie {
 }
 
 impl AnyPie {
-    pub fn resource(&self) -> ResourceId {
-        match self {
-            AnyPie::Hole(p) => p.resource,
-            AnyPie::Pole(p) => p.resource,
-        }
-    }
-
     pub fn permission(&self) -> Permission {
         match self {
             AnyPie::Hole(p) => p.permission,
@@ -125,12 +122,11 @@ impl AnyPie {
 
     /// 资源开辟者（`EnvCall::Mail(MailCall::Owned)` 的 `owner` 一侧）。
     ///
-    /// `None` = Meta 已封印：开辟者随资源消失，答不出完整事实。
-    /// 读 `weak.upgrade()` 而非查 memo——不引入新锁序（pies 与 memo 同为 L3）。
+    /// `None` = Meta 已封印（`Seal` 之后）：答不出完整事实。
     pub fn owner(&self) -> Option<usize> {
         match self {
-            AnyPie::Hole(p) => p.weak.upgrade().map(|m| m.owner()),
-            AnyPie::Pole(p) => p.weak.upgrade().map(|m| m.owner()),
+            AnyPie::Hole(p) => p.meta.alive().then(|| p.meta.owner()),
+            AnyPie::Pole(p) => p.meta.alive().then(|| p.meta.owner()),
         }
     }
 
@@ -141,10 +137,11 @@ impl AnyPie {
         }
     }
 
+    /// 资源可用：`Live`（**已封印 → false**；已回收的资源根本无门闩可查）。
     pub fn alive(&self) -> bool {
         match self {
-            AnyPie::Hole(p) => p.alive(),
-            AnyPie::Pole(p) => p.alive(),
+            AnyPie::Hole(p) => p.meta.alive(),
+            AnyPie::Pole(p) => p.meta.alive(),
         }
     }
 
@@ -166,18 +163,12 @@ impl AnyPie {
 }
 
 /// 造 pie（accord / envcall 创建共用）：token 在此分配。
-pub(crate) fn new_pie<M>(
-    resource: ResourceId,
-    permission: Permission,
-    sire: Option<usize>,
-    weak: Weak<M>,
-) -> Pie<M> {
+pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<usize>) -> Pie<M> {
     Pie {
-        resource,
         permission,
         sire,
         token: next_pie_token(),
-        weak,
+        meta,
     }
 }
 

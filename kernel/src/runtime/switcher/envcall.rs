@@ -495,15 +495,14 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         }
         EnvCall::Mail(MailCall::UnsealHole { mtu }) => {
             // 编排创建：mail::hole::meta(mtu) 建实体 → gate::new_pie 建门闩 → 落 pies。
-            // meta() 只建 HoleMeta + 注册 memo；门闩/落 task.pies 是能力模型的事。
+            // 门闩持资源实体的强引用——寿命即能力寿命。
             let r = (|| -> Result<usize, GateError> {
                 let task = current().running_task().ok_or(GateError::Denied)?;
-                let (meta, id) = mail::hole::meta(mtu, task.ident.id)?;
+                let meta = mail::hole::meta(mtu, task.ident.id)?;
                 let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
-                    id,
+                    meta,
                     Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
-                    None, // 原始自持：无 vestor
-                    alloc::sync::Arc::downgrade(&meta),
+                    None, // 原始自持：无 sire
                 );
                 let token = pie.token;
                 task.pies.lock().push(AnyPie::Hole(pie));
@@ -519,13 +518,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // auto-map 创建者视图（创建者 pie 全权 → R|W）。
             let r = (|| -> Result<usize, GateError> {
                 let task = current().running_task().ok_or(GateError::Denied)?;
-                let (meta, id) = mail::pole::meta(bytes, task.ident.id)?;
+                let meta = mail::pole::meta(bytes, task.ident.id)?;
                 let task_space = task.ident.team.space.clone();
                 let pie: Pie<mail::pole::PoleMeta> = gate::new_pie(
-                    id,
+                    meta.clone(),
                     Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
-                    None, // 原始自持：无 vestor
-                    alloc::sync::Arc::downgrade(&meta),
+                    None, // 原始自持：无 sire
                 );
                 let token = pie.token;
                 // 创建者自留 pie 全权 → map 走 R|W（U 位由空间策略决定）。
@@ -556,7 +554,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     return Some(Err(GateError::Dead));
                 }
                 match pie {
-                    AnyPie::Hole(p) => p.weak.upgrade().map(Ok),
+                    AnyPie::Hole(p) => Some(Ok(p.meta().clone())),
                     _ => None,
                 }
             }) {
@@ -601,7 +599,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     return Some(Err(GateError::Dead));
                 }
                 match pie {
-                    AnyPie::Hole(p) => p.weak.upgrade().map(Ok),
+                    AnyPie::Hole(p) => Some(Ok(p.meta().clone())),
                     _ => None,
                 }
             }) {
@@ -649,7 +647,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 match pie {
                     AnyPie::Pole(p) => {
                         let flags = subset_to_pte(pie.permission());
-                        p.weak.upgrade().map(|a| Ok((a, token, flags)))
+                        Some(Ok((p.meta().clone(), token, flags)))
                     }
                     _ => None,
                 }
@@ -685,7 +683,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     return Some(Err(GateError::Dead));
                 }
                 match pie {
-                    AnyPie::Pole(p) => p.weak.upgrade().map(|a| Ok((a, token))),
+                    AnyPie::Pole(p) => Some(Ok((p.meta().clone(), token))),
                     _ => None,
                 }
             }) {
@@ -702,27 +700,28 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Mail(MailCall::Seal { token }) => {
+            // 封印：**只有资源开辟者**可做（`owner` 是 Meta 上的字段，O(1) 判定）。
+            // 只置死 + 唤醒等待者——内存由引用归零回收（寿命 = 能力寿命）。
             let token = token.get();
-            let task = current().running_task();
-            let resource = match task.as_ref().and_then(|t| {
-                let pies = t.pies.lock();
-                pies.iter()
-                    .find(|p| p.token() == token)
-                    .map(|p| p.resource())
-            }) {
-                Some(r) => r,
+            let me = match current().running_task() {
+                Some(t) => t,
                 None => return ret_err(frame, GateError::Denied),
             };
-            let r = match mail::memo::lookup(resource) {
-                Some(mail::memo::Meta::Hole(m)) => {
-                    mail::hole::seal(&m, resource);
+            let pie = {
+                let pies = me.pies.lock();
+                pies.iter().find(|p| p.token() == token).cloned()
+            };
+            let r = match pie {
+                None => Err(GateError::Denied),
+                Some(p) if !p.alive() => Err(GateError::Dead),
+                Some(p) if p.owner() != Some(me.ident.id) => Err(GateError::Denied),
+                Some(p) => {
+                    match &p {
+                        AnyPie::Hole(h) => mail::hole::seal(h.meta()),
+                        AnyPie::Pole(pl) => mail::pole::seal(pl.meta()),
+                    }
                     Ok(())
                 }
-                Some(mail::memo::Meta::Pole(m)) => {
-                    mail::pole::seal(&m, resource);
-                    Ok(())
-                }
-                None => Err(GateError::Dead),
             };
             frame.gpr.set_x(
                 Gprs::A0,
@@ -785,15 +784,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 }
                 match pie {
                     AnyPie::Hole(p) => {
-                        if !p.alive() {
+                        if !p.meta().alive() {
                             return Some(Err(GateError::Dead));
                         }
                         Some(Ok(None))
                     }
-                    AnyPie::Pole(p) => match p.weak.upgrade() {
-                        Some(arc) => Some(Ok(Some(arc))),
-                        None => Some(Err(GateError::Dead)),
-                    },
+                    AnyPie::Pole(p) => Some(Ok(Some(p.meta().clone()))),
                 }
             }) {
                 None => Err(GateError::Denied),
@@ -934,7 +930,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     return Some(Err(GateError::Dead));
                 }
                 match pie {
-                    AnyPie::Hole(p) => p.weak.upgrade().map(Ok),
+                    AnyPie::Hole(p) => Some(Ok(p.meta().clone())),
                     _ => None,
                 }
             }) {

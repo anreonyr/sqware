@@ -20,6 +20,7 @@
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
@@ -27,9 +28,20 @@ use crate::lock::{Level, SpinLock};
 use env::HoleDir;
 
 use super::HOLE_MTU_MAX;
-use super::memo::{self, Meta, ResourceId};
 use crate::work::room::messenger::{self, Handoff, WaitKey};
 use crate::work::unit::gate::GateError;
+
+/// Hole 的全局身份（自 1 递增、永不复用）——**等待键的身份**（见 [`key`]）。
+///
+/// 键取它而不取 `HoleMeta` 的堆地址：`wait_sites` 的站点从不回收，而地址会被
+/// 分配器回收再利用——死孔留下的陈旧 pend 会被落在同一地址的新孔继承。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ResourceId(pub usize);
+
+fn alloc_id() -> ResourceId {
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+    ResourceId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+}
 
 /// hole 状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,8 +105,15 @@ impl HoleMeta {
 }
 
 impl Drop for HoleMeta {
+    /// 最后一份强引用消失：置死 + 唤醒两方向**全部**等待者。
+    ///
+    /// 调用方义务：**在锁外** drop 门闩——`messenger::wake` 是 L3，在 `Task.pies`
+    /// 锁内 drop 即 3→3 嵌套。被唤醒者重解析 token 时会发现门闩已不在表里
+    /// （`Denied`），不会挂死。
     fn drop(&mut self) {
         *self.state.lock() = HoleState::Dead;
+        while messenger::wake(key(self, HoleDir::Pull)) {}
+        while messenger::wake(key(self, HoleDir::Push)) {}
     }
 }
 
@@ -220,33 +239,30 @@ pub(crate) fn wait(meta: &HoleMeta, dir: HoleDir, dur: Duration) -> Result<Waite
 
 // ── 封印 ──
 
-/// 封印 hole：置死 → 唤醒两个方向的**全部**等待者 → memo 移除。
+/// 封印 hole：置死 + 唤醒两方向**全部**等待者。
 ///
-/// 唤醒必须在 `memo::remove` **之前**：最后一份强引用就在 memo 表里，remove 在
-/// L3 锁内 drop，此时再 wake（sites 亦 L3）构成 3→3 嵌套。`wake` 只弹队首，故
-/// 循环到空；被唤醒者重判 alive 得 Dead，不会挂死。
-pub(crate) fn seal(meta: &HoleMeta, id: ResourceId) {
+/// **不回收内存**——资源寿命由引用计数决定：最后一份门闩消失时 `Drop` 接管回收
+/// （它也会唤醒，此处唤醒是为了让封印**立即**对等待者生效）。
+///
+/// 调用方不持 L3 锁（`wake` 是 L3）。
+pub(crate) fn seal(meta: &HoleMeta) {
     *meta.state.lock() = HoleState::Dead;
     while messenger::wake(key(meta, HoleDir::Pull)) {}
     while messenger::wake(key(meta, HoleDir::Push)) {}
-    memo::remove(id);
 }
 
 // ── 创建 ──
 
-/// 解封 hole 的资源实体：建 Meta + 注册 memo。**不落 pies**——建门闩与落
-/// `task.pies` 由 envcall 编排（gate::new_pie + pies.push）。返 `(Arc, ResourceId)`：
-/// `ResourceId` 供 gate::new_pie 第一参，`Arc` 供 Weak<HoleMeta>。
+/// 解封 hole 的资源实体：建 Meta。**不落 pies**——建门闩与落 `task.pies` 由
+/// envcall 编排（gate::new_pie + pies.push）。返 `Arc`：它既是资源实体，也是
+/// 门闩持有的**唯一强引用**（资源寿命 = 能力寿命）。
 ///
 /// `mtu ∈ [1, HOLE_MTU_MAX]`——envcall 入口已校验，此处 defend。
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
-pub(crate) fn meta(mtu: usize, owner: usize) -> Result<(Arc<HoleMeta>, ResourceId), GateError> {
+pub(crate) fn meta(mtu: usize, owner: usize) -> Result<Arc<HoleMeta>, GateError> {
     if mtu == 0 || mtu > HOLE_MTU_MAX {
         return Err(GateError::Denied);
     }
     // 先分配 id 再建 Meta：id 同时是等待键的身份（见 `key`），必须随 Meta 定型。
-    let id = memo::alloc_id();
-    let arc = HoleMeta::new(mtu, id, owner);
-    memo::insert(id, Meta::Hole(arc.clone()));
-    Ok((arc, id))
+    Ok(HoleMeta::new(mtu, alloc_id(), owner))
 }

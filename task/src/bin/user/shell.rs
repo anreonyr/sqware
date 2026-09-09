@@ -17,6 +17,7 @@
 //!   spawn — 派一个算 0..N 的闭包子任务并 join（TaskCall::Spawn）
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
+//!   reclaim — 资源寿命自检（引用回收 / 封印归属 / 开辟者消亡）
 //!   req   — 走目录协议连接 echo 并调用一次（Connect + Service::call）
 //!   dir   — 目录协议自省（Discover + Enumerate）
 //!   exit  — 退出 shell（RoomCall::Reap）
@@ -36,7 +37,7 @@ use task::core::service::{Directory, PAYLOAD_LEN};
 use task::core::unit;
 use task::env::{
     chrono::{self, clock},
-    mail::{HOLE_MTU_MAX, HolePie},
+    mail::{HOLE_MTU_MAX, HolePie, PolePie},
     room::{self, sleep},
     task::{heir_at, heir_count, join as task_join},
 };
@@ -222,6 +223,132 @@ fn cascade(term: &Terminal) {
     term.writeline(if ok { "cascade: ok" } else { "cascade: FAIL" });
 }
 
+/// 资源寿命自检（`reclaim` 命令）。
+///
+/// 三段判据：
+///   1. 反复 unseal + release —— 泄漏则耗尽帧池（≈128 MB / 4 KB ≈ 3 万帧）；
+///   2. 封印只归开辟者：他人 `Seal` 被拒；主人 `Seal` 后他人操作得 `Dead`；
+///   3. 开辟者消亡 → 它开的资源随之回收（我手里的副本随 `doom` 失效）。
+fn reclaim(term: &Terminal) {
+    const ROUNDS: usize = 40_000;
+    const WAIT: usize = 5_000;
+
+    let rw = env::Permission::READ | env::Permission::WRITE;
+    let msg = [0x5au8; 8];
+    let mut buf = [0u8; 8];
+
+    // ── 1：资源随最后一份能力回收 ──
+    let mut failed_at = 0usize;
+    for i in 1..=ROUNDS {
+        match PolePie::unseal(4096) {
+            Ok(p) => {
+                let _ = p.release();
+            }
+            Err(_) => {
+                failed_at = i;
+                break;
+            }
+        }
+    }
+    term.writeline(&format!(
+        "reclaim: unseal+release x{ROUNDS} failed_at={failed_at}"
+    ));
+
+    let me = match unit::self_id() {
+        Ok(id) => id,
+        Err(_) => {
+            term.writeline("reclaim: no self id");
+            return;
+        }
+    };
+
+    // ── 2：封印只归开辟者 ──
+    let a = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(p) => p,
+        Err(_) => {
+            term.writeline("reclaim: unseal a failed");
+            return;
+        }
+    };
+    let c_slot: &'static [AtomicUsize; 1] = Box::leak(Box::new([AtomicUsize::new(0)]));
+    let c_ptr = c_slot.as_ptr() as usize;
+    let k_ready = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    let k_sealed = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    let k_ack = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+
+    let join = unit::closure(move || {
+        let _ = room::wait(k_ready, WAIT);
+        let c = HolePie::from_token(unsafe {
+            (*(c_ptr as *const AtomicUsize)).load(Ordering::Relaxed)
+        });
+        let denied = c.seal().is_err(); // 非开辟者 → 应被拒
+        let _ = room::wake(k_ack);
+        let _ = room::wait(k_sealed, WAIT);
+        let dead = c.push(&msg).is_err(); // 主人封印后 → 应失效
+        (denied, dead)
+    });
+    let c = match a.accord(join.id(), rw) {
+        Ok(t) => HolePie::from_token(t),
+        Err(_) => {
+            drop(join);
+            term.writeline("reclaim: accord failed");
+            return;
+        }
+    };
+    c_slot[0].store(c.token(), Ordering::Relaxed);
+    let _ = room::wake(k_ready);
+    let _ = room::wait(k_ack, WAIT);
+    let owner_sealed = a.seal().is_ok();
+    let _ = room::wake(k_sealed);
+    let (denied, dead) = join.join();
+    term.writeline(&format!(
+        "reclaim: other.seal_denied={denied} owner.seal={owner_sealed} other.after={dead}"
+    ));
+
+    // ── 3：开辟者消亡 → 资源随之回收 ──
+    let q_slot: &'static [AtomicUsize; 1] = Box::leak(Box::new([AtomicUsize::new(0)]));
+    let q_ptr = q_slot.as_ptr() as usize;
+    let k_open = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    let k_q = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+    let k_done = Box::leak(Box::new([0u8; 8])).as_ptr() as usize;
+
+    let join_e = unit::closure(move || {
+        let _ = room::wait(k_open, WAIT);
+        if let Ok(r) = HolePie::unseal(HOLE_MTU_MAX)
+            && let Ok(q) = r.accord(me, rw)
+        {
+            unsafe { (*(q_ptr as *const AtomicUsize)).store(q, Ordering::Relaxed) };
+        }
+        let _ = room::wake(k_q);
+        // 等本侧检查完「退出前可用」再返回——否则 `doom` 会在检查之前就把 q 收走。
+        let _ = room::wait(k_done, WAIT);
+    });
+    let e_tid = join_e.id();
+    let _ = room::wake(k_open);
+    let _ = room::wait(k_q, WAIT);
+    let q = HolePie::from_token(q_slot[0].load(Ordering::Relaxed));
+    let q_ok = q.push(&msg).is_ok();
+    let _ = q.pull(&mut buf);
+    let _ = room::wake(k_done);
+    drop(join_e);
+    let _ = task_join(env::TaskId::new(e_tid), WAIT);
+    let mut q_dead = false;
+    for _ in 0..50 {
+        if q.push(&msg).is_err() {
+            q_dead = true;
+            break;
+        }
+        let _ = q.pull(&mut buf);
+        let _ = sleep(Duration::from_millis(10));
+    }
+    term.writeline(&format!(
+        "reclaim: owner-exit q.before={q_ok} q.after={q_dead}"
+    ));
+
+    let ok = failed_at == 0 && denied && owner_sealed && dead && q_ok && q_dead;
+    term.writeline(if ok { "reclaim: ok" } else { "reclaim: FAIL" });
+}
+
 /// 各系统能力命令。全部输出经 `term`（唯一 console 出口）。
 /// 返回 false = 退出（exit 命令）。
 fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
@@ -300,6 +427,9 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
         }
         "cascade" => {
             cascade(term);
+        }
+        "reclaim" => {
+            reclaim(term);
         }
         "req" => {
             // 走目录协议：Directory::open 取会话 → Connect("echo") 拿服务入口门闩

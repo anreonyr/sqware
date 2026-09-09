@@ -18,7 +18,6 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::{Seg, Space, Span};
 
-use super::memo::{self, Meta, ResourceId};
 use crate::work::unit::gate::GateError;
 
 /// Pole 状态。
@@ -220,21 +219,20 @@ pub(crate) fn narrow(meta: &PoleMeta, token: usize, flags: PteFlags) -> Result<(
     meta.narrow_into(token, flags)
 }
 
-/// 封印 Pole（state = Dead + memo 移除；Arc drop 时归还物理帧）。
-pub(crate) fn seal(meta: &PoleMeta, id: ResourceId) {
+/// 封印 Pole（置死；物理帧与映射随**最后一份强引用** drop 归还）。
+///
+/// 不回收内存——资源寿命由引用计数决定。调用方不持 L3 锁。
+pub(crate) fn seal(meta: &PoleMeta) {
     *meta.state.lock() = PoleState::Dead;
-    memo::remove(id);
 }
 
 // ── 创建 ──
 
-/// 解封 Pole 的资源实体：分配物理页 + 建 Meta + 注册 memo。**不落 pies、不
-/// auto-map**——建门闩 + 落 `task.pies` + map 创建者视图由 envcall 编排
-/// （gate::new_pie + pies.push + pole::map）。返 `(Arc, ResourceId)`。
+/// 解封 Pole 的资源实体：分配物理页 + 建 Meta。**不落 pies、不 auto-map**——
+/// 建门闩 + 落 `task.pies` + map 创建者视图由 envcall 编排（gate::new_pie +
+/// pies.push + pole::map）。返 `Arc`：它既是资源实体，也是门闩持有的**唯一强
+/// 引用**（资源寿命 = 能力寿命；最后一份消失时 `Drop` 归还帧 + 撤映射）。
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
-pub(crate) fn meta(bytes: usize, owner: usize) -> Result<(Arc<PoleMeta>, ResourceId), GateError> {
-    let arc = PoleMeta::allocate(bytes, owner)?;
-    let id = memo::alloc_id();
-    memo::insert(id, Meta::Pole(arc.clone()));
-    Ok((arc, id))
+pub(crate) fn meta(bytes: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
+    PoleMeta::allocate(bytes, owner)
 }

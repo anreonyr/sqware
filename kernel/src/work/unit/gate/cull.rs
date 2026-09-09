@@ -6,7 +6,8 @@
 // 闭包靠 `snap::heirs` 逐层反查——**不存 heir 列表**（一条关系只存一次）。
 //
 // 锁纪律：调用方不得持任何 L3。本模块逐任务取放 `Task.pies`（绝不嵌套）；
-// 摘除在锁内、Pole 撤映射在锁外（全部摘完统一做）。
+// 摘除在锁内、**门闩在锁外 drop**（最后一份会跑 `Meta::drop`），Pole 撤映射在
+// 全部摘完之后、同样无锁。
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -18,14 +19,21 @@ use crate::work::unit::task::Task;
 use super::pie::AnyPie;
 use super::snap::{self, Snap};
 
-/// 摘掉 `t` 表里 `token` 那枚，返回其 Meta（仅 Pole 有）。
-/// `None` = 表里没这枚（已被摘走 / 从未存在）。
-fn take(t: &Task, token: usize) -> Option<Option<Arc<PoleMeta>>> {
+/// 摘掉 `t` 表里 `token` 那枚，返回摘下的门闩（表里没有 → None）。
+///
+/// **调用方须在锁外 drop 返回值**：它可能是资源实体的最后一份强引用。
+fn take(t: &Task, token: usize) -> Option<AnyPie> {
     let mut pies = t.pies.lock();
     let pos = pies.iter().position(|p| p.token() == token)?;
-    match pies.remove(pos) {
-        AnyPie::Hole(_) => Some(None),
-        AnyPie::Pole(p) => Some(p.weak.upgrade()),
+    Some(pies.remove(pos))
+}
+
+/// Pole 门闩的资源实体（Hole → None）。**先取强引用、后 drop 门闩**：即便这是
+/// 最后一份，unmap 时 Meta 仍活。
+fn pole_meta(pie: &AnyPie) -> Option<Arc<PoleMeta>> {
+    match pie {
+        AnyPie::Pole(p) => Some(p.meta().clone()),
+        AnyPie::Hole(_) => None,
     }
 }
 
@@ -40,8 +48,10 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
     let mut unmaps: Vec<(Arc<PoleMeta>, usize)> = Vec::new();
 
     // 1. 摘根。
-    if let Some(meta) = take(&root_task, root_token) {
+    if let Some(pie) = take(&root_task, root_token) {
         removed += 1;
+        let meta = pole_meta(&pie);
+        drop(pie); // 锁外：最后一份会跑 Meta::drop
         if let Some(m) = meta {
             unmaps.push((m, root_token));
         }
@@ -53,9 +63,11 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
         let mut next = Vec::new();
         for f in frontier {
             for (t, token) in snap::heirs(f, snap) {
-                if let Some(meta) = take(&t, token) {
+                if let Some(pie) = take(&t, token) {
                     removed += 1;
                     next.push(token);
+                    let meta = pole_meta(&pie);
+                    drop(pie);
                     if let Some(m) = meta {
                         unmaps.push((m, token));
                     }
@@ -65,7 +77,7 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
         frontier = next;
     }
 
-    // 3. 无锁段：逐条撤 Pole 映射（幂等；Meta 已封印则无事）。
+    // 3. 无锁段：逐条撤 Pole 映射（幂等；资源已回收则无事）。
     for (meta, token) in unmaps {
         let _ = pole::unmap(&meta, token);
     }

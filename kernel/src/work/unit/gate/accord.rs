@@ -17,42 +17,25 @@ use alloc::sync::Weak;
 use super::pie::{AnyPie, GateError, Permission, new_pie};
 use crate::work::unit::task::Task;
 
-/// Accord 数据面原语：Arc clone + 造新 Pie（sire 指 src）+ push 到 target.pies。
-/// 返新 token（撤销句柄）。
+/// Accord 数据面原语：克隆资源实体的强引用 + 造新 Pie（sire 指 src）+ push 到
+/// target.pies。返新 token（撤销句柄）。
 ///
 /// `target: &Weak<Task>` 避免 envcall 路径长寿命持有 `Arc<Task>`；内部短暂升级为
 /// Arc，仅持锁 push 期间。
 ///
 /// # Errors
 /// - `Denied` — Weak 升级失败（target 已死 / id 不存在）
-/// - `Dead` — src pie 的 Meta 已 seal
 pub(crate) fn accord(
     src: &AnyPie,
     target: &Weak<Task>,
     subset: Permission,
 ) -> Result<usize, GateError> {
     let target = target.upgrade().ok_or(GateError::Denied)?;
-    let resource = src.resource();
     let sire = Some(src.token());
+    // 派生 = 复制资源实体的强引用（资源寿命随之延长一份）。
     let granted = match src {
-        AnyPie::Hole(p) => {
-            let arc = p.weak.upgrade().ok_or(GateError::Dead)?;
-            AnyPie::Hole(new_pie(
-                resource,
-                subset,
-                sire,
-                alloc::sync::Arc::downgrade(&arc),
-            ))
-        }
-        AnyPie::Pole(p) => {
-            let arc = p.weak.upgrade().ok_or(GateError::Dead)?;
-            AnyPie::Pole(new_pie(
-                resource,
-                subset,
-                sire,
-                alloc::sync::Arc::downgrade(&arc),
-            ))
-        }
+        AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), subset, sire)),
+        AnyPie::Pole(p) => AnyPie::Pole(new_pie(p.meta().clone(), subset, sire)),
     };
     let token = granted.token();
     let mut pies = target.pies.lock();
