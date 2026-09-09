@@ -2,8 +2,8 @@
 //
 // 与 `mail` 的分工：gate 只持**能力模型**（门闩 Pie、权限、授权原语），不碰资源
 // 实体（HoleMeta/PoleMeta 在 mail）与 IPC 数据面（push/pull/map/unmap 在 mail）。
-// `Pie<M>` 泛型直指 `mail` 的 Meta 类型；`new_pie` 需 `mail::ResourceId` —— gate
-// 单向依赖 mail，成 DAG（无环）。
+// `Pie<M>` 泛型直指 `mail` 的 Meta 类型，并持其**唯一强引用**（`Arc<M>`，资源寿命
+// = 能力寿命）—— gate 单向依赖 mail，成 DAG（无环）。
 //
 // **派生关系只存一条边**：每枚门闩记 `sire`（父门闩的 token）。向上的授与人、
 // 向下的子门闩都是查询（`snap`），吃同一张全世界任务快照——快照由适配层拍、

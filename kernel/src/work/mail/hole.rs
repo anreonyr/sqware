@@ -36,11 +36,11 @@ use crate::work::unit::gate::GateError;
 /// 键取它而不取 `HoleMeta` 的堆地址：`wait_sites` 的站点从不回收，而地址会被
 /// 分配器回收再利用——死孔留下的陈旧 pend 会被落在同一地址的新孔继承。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ResourceId(pub usize);
+pub(crate) struct HoleId(pub usize);
 
-fn alloc_id() -> ResourceId {
+fn alloc_id() -> HoleId {
     static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-    ResourceId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+    HoleId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
 }
 
 /// hole 状态。
@@ -54,7 +54,7 @@ pub enum HoleState {
 pub struct HoleMeta {
     state: SpinLock<HoleState>,
     /// 本 hole 的全局资源 id——**等待键的身份**（单调分配、永不复用；见 [`key`]）。
-    id: ResourceId,
+    id: HoleId,
     /// unseal 时定；`1..=HOLE_MTU_MAX`。Push/Pull 的长度校验上限。
     pub mtu: usize,
     /// 单槽消息缓冲：`Vec<u8>` 的 capacity 恒为 mtu（创建时分配）；`len()` 既是
@@ -69,7 +69,7 @@ pub struct HoleMeta {
 }
 
 impl HoleMeta {
-    pub(super) fn new(mtu: usize, id: ResourceId, owner: usize) -> Arc<Self> {
+    pub(super) fn new(mtu: usize, id: HoleId, owner: usize) -> Arc<Self> {
         let buf = Vec::with_capacity(mtu);
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
@@ -125,7 +125,7 @@ impl Drop for HoleMeta {
 /// 等数据的 task 等 `Pull` 键（push 写完槽后唤醒），等空位的 task 等 `Push` 键
 /// （pull 取完槽后唤醒）。
 ///
-/// **键取 `ResourceId` 而不是 `HoleMeta` 的堆地址**：`wait_sites` 的站点从不回收，
+/// **键取 `HoleId` 而不是 `HoleMeta` 的堆地址**：`wait_sites` 的站点从不回收，
 /// 而 wake 找不到等待者时置的「唤醒闩（pend）」会一直留着；地址会被分配器回收再
 /// 利用——死 hole 的陈旧 pend 会被落在同一地址的新 hole 继承，于是一次无关的
 /// `wait` 立即返回「已唤醒」。id 单调分配、永不复用，无此问题。
