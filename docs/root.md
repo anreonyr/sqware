@@ -123,9 +123,10 @@ task/src/core/handshake.rs
 ## 7 · 已知边界
 
 1. ~~root 长期持有目录请求门闩~~ —— **B 已消解**：目录能力改由 **dir 亲授**，root 只转达
-   `Refer{who}`，手里**零服务孔**（实测：root 的 6 枚门闩里 `owner == dir` 的只有 1 枚，
-   即 dir 的控制孔；见 §10）。残留的是**控制面**：root 持有每个子域的控制孔副本，能往
-   子域的控制通道推消息——那是父子关系的本义，不是越权。
+   `Refer{who, name}`（`name` 即**预约**：名字空间由 root 播种），手里**零服务孔**
+   （实测：root 的 6 枚门闩里 `owner == dir` 的只有 1 枚，即 dir 的控制孔；见 §10）。
+   残留的是**控制面**：root 持有每个子域的控制孔副本，能往子域的控制通道推消息——
+   那是父子关系的本义，不是越权。
 2. `initrd` 仍在（内核只用于取 root 镜像）；正式供给通道（文件服务 / 设备发现）就位后，
    本模块与 `build.rs` 打包端一起删除，`Build` 原语不受影响。
 3. 无 kill 原语：root 退出即 `doom` 级联，故不需要。
@@ -166,7 +167,8 @@ root                                       子域
   Quay::pull ◀────────────────────────────  Quay{ 控制孔在父侧的句柄 }
   校验 Owned(句柄).vestor == child
   ── 客户端要目录能力时 ──
-  Refer{who} ──▶ dir 控制孔                  dir 控制线程：H.accord(who, R|W)
+  Refer{who, name} ──▶ dir 控制孔           dir 控制线程：reserve(name, who)
+                                            → H.accord(who, R|W)
   Referred{token} ◀── dir 上行孔
   Pier{token} ──▶ 子域控制孔 ─────────────▶  Pier::pull → dir_id = Owned(token).owner
 
@@ -177,7 +179,8 @@ echo 的入口门闩同理；两者都另开一条控制孔给 root。
 - **身份全程不经报文/启动参数**：目录 id 由 `Owned(门闩).owner` 从资源事实推出；
   B 之后客户端拿到的副本 `vestor == dir`，来源还能再自证一层。
 - **认上行孔要两个条件**：`vestor == sire`（父域授的）**且** `owner == sire`（父域开的）。
-- **四条报文各 9 字节**（`[0] tag` + `[1..9] usize`）：`Quay` / `Pier` / `Refer` / `Referred`。
+- **四条报文**（`[0] tag` + payload）：`Quay` / `Pier` / `Referred` 各 9 字节；`Refer` 两种
+  线形——只引荐 9 字节，带预约 41 字节（`tag` + `who` + 32 字节名字）。
 - **每条孔单一发送者**：上行孔只有子域推、下行孔只有父域推、dir 控制孔只有 root 推。
 - 串行握手 ⇒ 上行孔单槽无争用。
 

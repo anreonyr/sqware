@@ -21,40 +21,50 @@
 **Disconnect 不在协议里**：它不改绑定表，只改调用方自己的权限表——它是调用方的
 自释原语 `MailCall::Release`，与目录无关。
 
-## 2 · 操作集（6 个，封闭）
+## 2 · 操作集（6 个 + 1 个父域动作，封闭）
 
-受管对象只有一张**绑定表** `name → 接口`；对它的原子动作就是这 6 个：
+受管对象只有一张**名字空间表** `name → 预约者 + 实例`；对它的原子动作就是这 6 个
+（外加父域的**预约**）：
 
 | 操作 | 谁 | 读 | 产 | 失败 |
 |---|---|---|---|---|
-| `Register` | provider | name、入口门闩 | 绑定 +1 | `Taken`（名字已占）/ `Denied` |
-| `Unregister` | provider | name、发起者 | 绑定 −1 | `NotFound` / `Denied`（非发布者） |
-| `Replace` | provider | name、新门闩、发起者 | 绑定改写 | `NotFound` / `Denied` |
+| `Register` | provider | name、入口门闩、**发起者**、预约行 | 该行实例 | `NotFound`（未预约）/ `Denied`（非预约者 / 门闩不合格）/ `Taken`（已有活实例） |
+| `Unregister` | provider | name、发起者 | 实例摘空（**行保留**） | `NotFound` / `Denied` |
+| `Replace` | provider | name、新门闩、发起者 | 实例改写 | `NotFound` / `Denied` |
 | `Resolve` | client | name | `Found` / `NotFound` | — |
-| `Enumerate` | client | 游标 | 一页名字 | — |
+| `Enumerate` | client | 游标 | 一页名字（只含有实例的） | — |
 | `Connect` | client | name | **调用方权限表 +1** | `NotFound` / `Denied` |
+| `Refer{who, name}` | **root** | who、name | **预约行 +1** + 调用方权限表 +1 | — |
 
-发起者身份 = 入口门闩的 `vestor`（`Pie` 既有字段），**不新增字段**。
-`Unregister` / `Replace` 只管名字；已发出的权限靠资源死亡自然失效（见 §6）。
+发起者身份 = **内核盖章的发送者**（§7.3），**不新增字段**。
+`Unregister` / `Replace` 只管实例；已发出的权限靠资源死亡自然失效（见 §6）。
 
 ## 3 · 结构
 
 ```rust
 pub struct Name { bytes: [u8; 32] }          // 定长、尾随 NUL、内容非空且不含 NUL
-pub struct Binding { name: Name, entry: usize, owner: usize }  // entry = 入口门闩 token
-pub struct Directory { bindings: Vec<Binding> }              // 名字唯一
+struct Binding { name: Name, publisher: usize, entry: Option<usize> }
+                                             // 行 = 预约 + 至多一个实例
+pub struct Directory { bindings: Vec<Binding>, vestor: Vestor, release: Release }
 pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 ```
 
 目录**跑在 S 态域程序 `task-dir` 里**（`task/src/core/directory.rs` + `bin/supervisor/dir.rs`）：
-内核不含它的任何代码。绑定里存的是入口门闩的 **token**——门闩一直留在目录自己的
-权限表里，`Connect` 用 `mail::accord` 转授子集；`owner` 取该 token 的 `vestor`。
+内核不含它的任何代码。
+
+**表 = 预约表**：行只能由父域的 `Refer{who, name}` 产生，`Register` 只能**填**已
+存在的行。于是「谁能用哪个名字」不是运行时判定，而是表的形状——`publisher` 就是
+名字的属主，`entry` 就是当前的实例（`None` = 未注册 / 已注销 / 已死）。
 
 **接口 = 一份入口门闩**（不是 req/rep 两份）：目录只知道「服务有一个入口」，
 不知道服务内部怎么执行。回信通道由**调用方自带**——与目录协议自身同构。
 
-不变量做成义务：名字唯一（`bind` 返 `Taken`）、绑定必持门闩（token 必在目录权限
-表里且带授与人）、非法名不可表达（`Name` 只能由 `new` 造出）。
+不变量做成义务：名字唯一（一行至多一名）、绑定必持门闩（`entry` 必在目录权限表
+里且 `vestor == publisher`）、非法名不可表达（`Name` 只能由 `new` 造出）、
+「有实例」与「无实例」由 `Option` 区分而非哨兵值。
+
+**核心不碰内核**：查证（`vestor`）与释放（`release`）都是**注入的函数指针**，
+`directory.rs` 前半是核心、后半是协议适配（`scheduler.rs` 同款分层）。
 
 ## 4 · 线格式（64 字节，沿用现有 hole）
 
@@ -86,16 +96,19 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 服务 id = 入口门闩的 owner（资源开辟者，服务自己 UnsealHole 出来的）
 ```
 
-- **身份不来自消息体**：目录按请求取「`[49..57]` 那枚回信 pie 的 `vestor`」——
-  内核在 `Accord` 时赋值，消息体伪造不了。没带有效回信 pie 即无身份（`caller = 0`）：
-  `Register` 不看身份，`Unregister`/`Replace`/`Connect` 一律拒绝。
+- **身份由内核盖章**：目录认的调用方 = `Push` 时内核写进槽的发送者（§7.3）；
+  `[49..57]` 只是回信地址，且必须**确实是该发送者授给目录的那一枚**。
+- **名字由父域预约**：`Register` 要求「该名字的预约者就是发起者」（`publisher ==
+  caller`）**且**「入口门闩是发起者亲手交给目录的」（`vestor(entry) == caller`）。
+  两条都成立才写表——前者挡抢注，后者挡「把名字绑到别人的入口」。
 - **反方向用 `owner` 而不是 `vestor`**：调用方认服务时，门闩可能经手多次（root 分发、
   目录转授），`vestor` 每次都会改写成中间人；`owner` 挂在资源上，任意副本同值。
 - **硬规则：服务必须自开入口 hole**（`UnsealHole` 自己那份）。若由他人代开，
   `Owned(entry).owner` 指向代开者，调用方会把回信 hole 授给错的人。
 - **授权只用已有原语**：`Connect` 就是 `gate::accord` 转授子集；注册资格就是
-  「能把门闩交出来」——不需要新的 capability 类型。
+  「父域把这个名字预约给了你」——不需要新的 capability 类型。
 - 授权链 `service →(VEST) 目录 →(R|W) 调用方`；目录不带 BACK，故可自由代授。
+- **回信地址不能与入口同一枚门闩**：注销会释放目录手里那枚入口副本，回复就无处可推。
 
 ## 6 · 存活级联（Unregister 为什么不用回收权限）
 
@@ -107,6 +120,32 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 
 目录的 6 个操作**一个都不对应内核原语**——它们是协议消息。落到底层只用已有原语
 （`Accord` / `Revoke` / `Push` / `Pull` / `UnsealHole` / `Narrow`）。
+
+**目录自己的原语**（`task/src/core/directory.rs` 核心，零内核调用）：
+
+| 原语 | 一句话 | 失败 |
+|---|---|---|
+| `reserve(name, publisher)` | 这个名字归 `publisher`（造行；已有行则改写并顶掉旧实例） | — |
+| `publish(name, entry, who)` | 把实例挂上空槽 | `Unknown` / `NotOwner` / `Taken` / `NotGrantable` |
+| `replace(name, entry, who)` | 换实例（覆盖，不问槽空） | `Unknown` / `NotOwner` / `NotGrantable` |
+| `unpublish(name, who)` | 摘实例、**保留预约行** | `Unknown` / `NotOwner` |
+| `entry_of(name)` | 这个名字现在的活实例 | — |
+| `enumerate(after)` | 按名排序的下一页（只含有活实例的） | — |
+
+两个**注入的事实/动作**（核心因此不 `use` 内核）：
+
+| 注入 | 签名 | 用途 |
+|---|---|---|
+| `Vestor` | `fn(usize) -> Option<usize>` | token → 授与人（`None` = 已死 / 不在我表里）：既判存活，也判 `vestor(entry) == who` |
+| `Release` | `fn(usize)` | 顶掉实例时释放那枚门闩——它是资源实体的唯一强引用，不释放就漏水 |
+
+**惰性剔除**：实例死了（服务退出 / 封印）时，`entry_of` / `enumerate` / `publish`
+只看 `vestor(entry)` 判定，**读路径不改写**；死实例的门闩留到下一次写路径释放。
+于是「未注册 / 已注销 / 已死」是**同一个状态**（无实例），`NotFound` 的语义统一，
+服务重启也能重新注册。
+
+**跨线程**：注册表即预约表，控制线程写预约、主线程读写，故用 `core::lock::Lock`
+（`with(f)`，锁程 = 闭包程，无守卫可泄漏）。控制线程的次序是**先预约、再开门**。
 
 新增的两个原语与目录无关，补的是权限模型自身的洞：
 
@@ -207,6 +246,33 @@ sender 授给目录的那一枚**（`Owned(reply).vestor == caller`），否则�
 而身份本就不该来自报文——它应来自**不可伪造的 syscall 上下文**（与 `sire`/`owner`
 由内核在 `Accord`/`Unseal` 时赋值是同一条原则）。
 
+### 7.4 名字权限（名字空间由父域播种）
+
+**问题**：目录原先对注册完全开放——任何被引荐的域都能注册任意空闲名字（先到先得），
+且 `Register` **不验发起者**，猜到一枚目录侧 token 就能把名字绑到**别人的入口**上。
+
+**结构性约束**：目录只能验证**交到它手里的门闩**（`Owned`/`Collect` 只对自表），
+看不见别人的权限表，也没有「谁持有 X 的派生」这类查询。所以「调用方必须持有 X」这条
+规则在目录里**无法实现**；可实现的只有两种形态：① 调用方把 X **交给目录**（目录读
+它的 `vestor`/`owner`/`alive`）；② 目录**自己记一条记录**。任何命名权限方案因此都会
+在目录里多一条 `名字 → 权` 的记录——分叉只在「权」是什么。
+
+**定论**：权 = **父域的预约**，而记录就是绑定行本身（**表 = 预约表**）：
+
+| 变化 | 内容 |
+|---|---|
+| 报文 | `Refer` 多一种线形 `Reserve{who, name}`（tag 5，41B；`Refer` 的 9B 编码不动，additive） |
+| 控制线程 | `pull(C)` → **先 `reserve(name, who)`、再 `H.accord(who)`** → `Referred`（先记预约再开门，客户端拿到门闩时预约必已就位） |
+| 注册 | 只填已预约的行；`publisher != caller` → `Denied`；`vestor(entry) != caller` → `Denied` |
+| 未预约的名字 | `Register` → `NotFound`（名字根本不在命名空间里） |
+| 注销 | 只摘实例、**行保留**——名字仍归预约者，可再次注册 |
+| 跨线程 | 控制线程写预约、主线程读写 → `core::lock::Lock`（`with(f)`，锁程 = 闭包程） |
+
+**为什么不是「内核加 `NAME` 权限位」**：命名策略属于目录这个普通 Service，塞回内核
+与「目录不在内核里」冲突。**为什么不是「程序名即名字」**：那要内核新开一条任务元数据
+查询，且一个程序只能有一个名字——v1 不需要。**为什么不是「不可猜的名字 token」**：
+只抬高猜测成本，不构成授权。
+
 ## 8 · 引导（启动期握手 + 根转达）
 
 内核是根授予的源头；**root 域**（`bin/supervisor/root`）负责产生所有子域，机制不变
@@ -217,18 +283,17 @@ root:
   1. 逐子域串行：dock(child)（开上行孔 mtu=9 + Accord(child, R|W|VEST)）
      → Build + Spawn(Held) → Hatch
      → Quay::pull（子域控制孔在父侧的句柄；校验 Owned(句柄).vestor == child）
-  2. 客户端要目录能力时：Refer{who} → dir 控制孔；Referred{token} ← dir 上行孔
-     → Pier{token} → 子域控制孔
+  2. 客户端要目录能力时：`Refer{who, name}` → dir 控制孔；`Referred{token}` ← dir 上行孔
+     → Pier{token} → 子域控制孔（`name` 即**预约**：这个名字从此归该子域）
   ※ root 全程不持任何服务孔（见 docs/root.md §10）
 
 dir:   moor() 认上行孔 → UnsealHole 自建请求门闩 H（**只自己持**）
-       → UnsealHole 自建控制孔 C → Accord(root, R|W) → Quay{C 在父侧的句柄}
+       → UnsealHole 自建控制孔 C（mtu = 41，装得下名字）→ Accord(root, R|W) → Quay{C 在父侧的句柄}
        → Spawn 控制线程（Held）→ Accord(H/C/上行孔 三枚副本给它) → Hatch
-       → 主线程服务循环；控制线程 pull(C) → H.accord(who, R|W) → Referred
+       → 主线程服务循环；控制线程 pull(C) → **先 reserve(name, who)** → H.accord(who, R|W) → Referred
 echo:  moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}
-       → UnsealHole 自建入口门闩 → Pier::pull → dir_id = Owned(门闩).owner
-       → Accord(entry, dir_id, R|W|VEST) → UnsealHole 自造回信 hole + Accord(dir_id, R|W)
-       → Register（回信 token 写 [49..57]）
+       → UnsealHole 自建入口门闩 → Pier::pull → Directory::open（dir_id = Owned(门闩).owner）
+       → Directory::register("echo", entry)（内部 Accord(entry, dir_id, R|W|VEST) + 回信 hole）
 shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}
        → Pier::pull → Directory::open(门闩)
 ```
@@ -248,17 +313,33 @@ shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句�
 | 根授予 | 逐级委托（`Accord`）+ 启动期握手（`Quay`/`Pier`）+ 自省（`Collect`/`Owned`）；不做公开 id |
 | 接口形态 | 一份入口门闩（A3）；回信由调用方自带 |
 | 一个名字几个 provider | 1 个 |
-| 名字权限 | v1 不做管理接口；`Register` 资格 = 持有门闩 |
+| 名字权限 | **父域预约**（§7.4）：名字由 root 经 `Refer{who, name}` 播种；`Register` 资格 = 预约者本人 **且** 入口门闩是它亲手交给目录的 |
+| 死绑定 | **惰性剔除**：实例死了即视同「无实例」，读路径不改写，`NotFound` 语义统一 |
 | Disconnect | 不进协议 = `Release` |
-| 目录状态 | 无连接实例；Unregister 只管名字 |
+| 目录状态 | 无连接实例；Unregister 只摘实例、保留预约行 |
 
 ## 10 · 已知边界
 
 1. ~~**回信 pie 的 token 可猜**~~ —— **已修，见 §7.3**：身份不再来自报文，改由内核在
    `Push` 时盖章的发送者决定；回信地址还加了「必须由该发送者授出」的一致性检查。
-2. **名字可抢注**：v1 没有名字权限；任何能造门闩的任务都能注册新名字。
-3. **Unregister/Replace 已实现但不在常规演示里**：echo 自注册路径已由「注册后立刻
-   自注销」临时验证（身份取 echo 自身，返回 Ok）；v1 shell 没有对应命令，故不常驻。
+2. ~~**名字可抢注**~~ —— **已修，见 §7.4**：名字空间由父域经 `Refer{who, name}` 播种，
+   `Register` 只填已预约的行，且必须由预约者本人、持它亲手交给目录的门闩。
+3. ~~**Unregister/Replace 不在常规演示里**~~ —— **已修**：shell 的 `name` 自检命令
+   覆盖注册 / 注销 / 非预约者被拒 / 未预约名字 / 死实例惰性剔除 / 重新注册。
+4. `Enumerate` 一次一个名字（64 字节装不下列名）。
+5. **`Join` 可能在退出钩子跑完之前返回**：目标一旦置 `Reaped`，`target_dead` 即为
+   真、当场返回；而 `clear_loop` 的钩子（`messenger::doom` / `gate::doom`）可能在
+   它之后才执行。语义上「目标已退出」没错（钩子是清理路径、不阻塞退出），但
+   **「join 返回 ⇒ 收尾已完成」不成立**。依赖收尾完成的调用方需有界等待
+   （`shell` 的 `cascade`/`reclaim` 自检即如此）。
+6. **预约行的寿命由 root 维护**：预约绑 task id，而目录**无法判断别的任务死活**
+   （`Owned`/`Collect` 只对自表）。故「服务重启」= root 重新 `Refer` 覆盖该行。
+   v1 里 root 全程在场，可接受；但名字的寿命与能力的寿命因此不是同一套机制。
+7. **门闩类型无查询原语**：`Owned`/`Collect` 对 Hole/Pole 同形，目录**无法**拦下
+   被绑进名字表的 Pole。危害仅限发布者自己（该门闩必须满足 `vestor == caller`，
+   即它自己交给目录的），客户端 `push` 时得 `Denied`。
+8. **回信地址不能与入口同一枚门闩**：注销会释放目录手里那枚入口副本（§7.2），
+   回复就无处可推。协议里这两个字段本就分离（`[33..41]` vs `[49..57]`）。
 4. `Enumerate` 一次一个名字（64 字节装不下列表）。
 5. **`Join` 可能在退出钩子跑完之前返回**：目标一旦置 `Reaped`，`target_dead` 即为
    真、当场返回；而 `clear_loop` 的钩子（`messenger::doom` / `gate::doom`）可能在
@@ -309,6 +390,19 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 `Owned(entry).owner` 求服务 id → `UnsealHole` + `Accord` 给该 id（自带回信通道）
 → `Push`（前 8 字节回信 token）→ echo `+1` → `Push` 回信 → `Pull` →
 `disconnect`（`Revoke` + `Release`）。
+
+名字权限与身份盖章各有自检命令：
+
+```text
+name: publish=true visible=true unpublish=true gone=true foreign=true ghost=true stale=true reuse=true
+name: ok
+spoof: stamp=true own=true echo.before=true echo.after=true (guess 200)
+spoof: ok
+```
+
+- `name`（§7.4）：预约者注册 / 注销只摘实例 / 非预约者 `Denied` / 未预约 `NotFound` /
+  实例门闩消亡后名字自动回到「无实例」/ 死实例不锁名字。
+- `spoof`（§7.3）：内核盖章 + 正向对照 + 逐个猜 200 枚回信 token 解绑 echo 全部失败。
 
 ## 13 · 文件清单
 
@@ -367,4 +461,20 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 改   task/src/bin/supervisor/dir.rs           caller = sender；回信地址一致性检查
 改   task/src/core/service.rs                 Directory::reply_target()（自检用）
 改   task/src/bin/user/shell.rs               spoof 自检命令（盖章 / 正向对照 / 猜 token）
+```
+
+### 13.4 名字权限（本次新增）
+
+```
+新   task/src/core/lock.rs                    Lock::with（用户态互斥，锁程 = 闭包程）
+改写  task/src/core/directory.rs              核心（reserve/publish/replace/unpublish/entry_of/
+                                              enumerate）+ 协议适配（serve）；事实与释放改为注入
+改   task/src/core/mod.rs                     +pub mod lock
+改   task/src/core/handshake.rs               Refer{who, name}（TAG_RESERVE，41B）+ REFER_MTU
+改   task/src/core/service.rs                 dir_id 入会话；register/unregister/replace；协议负码
+改   task/src/bin/supervisor/dir.rs           static Lock<Directory>；控制线程先预约再开门
+改   task/src/bin/supervisor/root/main.rs     Refer::named（把名字播种给子域）
+改   task/src/bin/supervisor/echo.rs          改用 Directory::register
+改   task/src/bin/user/shell.rs               name 自检命令；spoof 正向对照改用预约名
+改   crates/env/src/dispatch.rs               文档：身份来源、预约、NotFound/Denied 语义
 ```

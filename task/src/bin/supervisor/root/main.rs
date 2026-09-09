@@ -12,13 +12,15 @@
 //!   3. **串行握手**（每个子域一次往返）：
 //!      `Build` + `Spawn`(Held) → `dock`（开上行孔并授副本）→ `Hatch` → 收 `Quay`
 //!      （子域自建控制孔在父侧的句柄，校验「授与人 = 该子域」）→ 往那条孔 push `Pier`；
-//!   4. 客户端的目录能力由 **dir 亲授**：`Refer{who}` 转达 → `Referred{token}` 收结果
-//!      → `Pier{token}` 配给。**root 手里没有任何服务孔**（见 `docs/root.md`）；
+//!   4. 客户端的目录能力由 **dir 亲授**：`Refer{who, name}` 转达 → `Referred{token}`
+//!      收结果 → `Pier{token}` 配给。**名字也在此预约**——目录的名字空间由本域
+//!      播种，子域只能注册预约给它的名字（见 `docs/dispatch.md`）。本域手里没有
+//!      任何服务孔（见 `docs/root.md`）。
 //!   5. `Join(shell)`：用户会话结束 → 本域退出 → 级联 → 停机。
 
 extern crate alloc;
 
-use env::{TaskId, TeamId};
+use env::{Name, TaskId, TeamId};
 use task::core::handshake::{self, Pier, Quay, Refer, Referred};
 use task::env::mail::{self, HolePie};
 use task::env::task as utask;
@@ -113,13 +115,18 @@ extern "C" fn main() -> ! {
     let up_dir = launch(dir_task);
     let control_dir = report(dir_task, &up_dir);
 
-    // 3. echo / shell：请 dir 亲授目录请求门闩的 R|W 副本，再配给客户端
+    // 3. echo / shell：请 dir 亲授目录请求门闩的 R|W 副本，再配给客户端；
+    //    同时把名字预约给该子域（目录只接受预约者的注册）。
     let mut shell_task = TaskId(0);
     for name in ["echo", "shell"] {
         let child = build_spawn(&entries, name);
         let up = launch(child);
         let down = report(child, &up);
-        if Refer::new(child).push(&control_dir).is_err() {
+        let refer = match Name::new(name) {
+            Ok(n) => Refer::named(child, n),
+            Err(_) => panic(15),
+        };
+        if refer.push(&control_dir).is_err() {
             panic(11);
         }
         let referred = match Referred::pull(&up_dir) {

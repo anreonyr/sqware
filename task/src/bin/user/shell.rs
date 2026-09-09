@@ -19,6 +19,7 @@
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
 //!   reclaim — 资源寿命自检（引用回收 / 封印归属 / 开辟者消亡）
 //!   spoof — 身份伪造自检（发送者由内核盖章，报文里的回信 token 不构成身份）
+//!   name  — 名字权限自检（目录的名字空间由父域预约，注册只能填预约行）
 //!   req   — 走目录协议连接 echo 并调用一次（Connect + Service::call）
 //!   dir   — 目录协议自省（Discover + Enumerate）
 //!   exit  — 退出 shell（RoomCall::Reap）
@@ -36,7 +37,7 @@ use core::time::Duration;
 use env::dispatch::{MSG_LEN, Name, Reply, Request};
 
 use task::core::handshake::{self, Pier, Quay};
-use task::core::service::{Directory, PAYLOAD_LEN};
+use task::core::service::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use task::core::unit;
 use task::env::{
     chrono::{self, clock},
@@ -360,7 +361,7 @@ fn reclaim(term: &Terminal) {
 ///
 /// 四段判据：
 ///   1. 内核盖章：自己推的消息，`pull_from` 回来的发送者是自己；
-///   2. 正向对照：用自己那枚回信 token 注册 / 解绑自己的名字 → 两次 `Ok`；
+///   2. 正向对照：用自己那枚回信 token 注册 / 解绑**预约给本域**的名字 → 两次 `Ok`；
 ///   3. 攻击：把 `1..=200` 逐个当作「猜中的回信 token」发 `Unregister("echo")`
 ///      ——目录按 sender 认人，全部失败，echo 的名字仍在；
 ///   4. 攻击者收不到任何 `Ok`（回信地址不属于发送者即被丢弃）。
@@ -415,19 +416,36 @@ fn spoof(term: &Terminal) {
         Reply::decode(&buf).ok()
     };
 
+    // 入口门闩必须与回信孔分开：注销会**释放**目录侧那枚入口副本，若回信地址正是
+    // 它，回复就无处可推（`unpublish` 先释放、回复后推）。
+    let entry_hole = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(p) => p,
+        Err(_) => {
+            term.writeline("spoof: unseal failed");
+            return;
+        }
+    };
+    let entry_at_dir = match entry_hole.accord(dir_id, rw) {
+        Ok(t) => t,
+        Err(_) => {
+            term.writeline("spoof: accord failed");
+            return;
+        }
+    };
+
     // 每次探测都用**新会话**：攻击循环可能把本任务自己的回信槽灌进一条陈旧回复
     //（攻击者只能污染自己的孔——`reachable` 检查挡住了替他人收信）。
     let before = dir_session()
         .and_then(|d| d.discover("echo"))
         .unwrap_or(false);
 
-    // ── 2：正向对照（自己的名字，自己的回信 token）──
-    let own_ok = match Name::new("self") {
+    // ── 2：正向对照（root 预约给本域的名字，自己的回信 token）──
+    let own_ok = match Name::new("shell") {
         Ok(n) => {
             let reg = call(
                 &Request::Register {
                     name: n,
-                    entry: env::PieToken::new(at_dir),
+                    entry: env::PieToken::new(entry_at_dir),
                 },
                 at_dir,
                 WAIT,
@@ -457,13 +475,77 @@ fn spoof(term: &Terminal) {
     term.writeline(if ok { "spoof: ok" } else { "spoof: FAIL" });
 }
 
+/// 名字权限自检（`name` 命令）。
+///
+/// 目录的表只能由**父域（root）的预约**产生：注册只能**填**已预约的行。判据六段：
+///   1. 预约者注册自己的名字 → `Ok`，且 `discover` 为真；
+///   2. 注销只摘实例：`discover` 转假（名字仍归本域）；
+///   3. 非预约者注册别人的名字 → `Denied`；
+///   4. 未预约的名字 → `NotFound`；
+///   5. 实例门闩消亡（释放源门闩 → 目录侧副本随 `sire` 级联摘掉）→ 名字自动回到
+///      「无实例」；
+///   6. 死实例不锁名字：重新注册成功。
+fn name(term: &Terminal) {
+    let dir = match dir_session() {
+        Ok(d) => d,
+        Err(_) => {
+            term.writeline("name: no session");
+            return;
+        }
+    };
+    let code = |r: env::EnvResult<()>| r.err().map(|e| e.into_source().code());
+
+    // ── 1+2：预约者注册 / 注销只摘实例 ──
+    let publish = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(h) => dir.register("shell", &h).is_ok(),
+        Err(_) => false,
+    };
+    let visible = dir.discover("shell").unwrap_or(false);
+    let unpublish = dir.unregister("shell").is_ok();
+    let gone = !dir.discover("shell").unwrap_or(true);
+
+    // ── 3+4：非预约者 / 未预约的名字（各用一枚门闩；末尾释放以清掉目录侧副本）──
+    let (foreign, ghost) = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(h) => {
+            let f = code(dir.register("echo", &h)) == Some(E_DENIED);
+            let g = code(dir.register("ghost", &h)) == Some(E_NOT_FOUND);
+            let _ = h.release();
+            (f, g)
+        }
+        Err(_) => (false, false),
+    };
+
+    // ── 5：实例门闩消亡 → 目录侧副本随 sire 级联摘掉 → 名字回到「无实例」──
+    let stale = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(h) => {
+            let reg = dir.register("shell", &h).is_ok();
+            let _ = h.release();
+            reg && !dir.discover("shell").unwrap_or(true)
+        }
+        Err(_) => false,
+    };
+
+    // ── 6：死实例不锁名字；末尾注销，恢复干净状态 ──
+    let reuse = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(h) => dir.register("shell", &h).is_ok(),
+        Err(_) => false,
+    };
+    let clean = dir.unregister("shell").is_ok();
+
+    term.writeline(&format!(
+        "name: publish={publish} visible={visible} unpublish={unpublish} gone={gone} foreign={foreign} ghost={ghost} stale={stale} reuse={reuse}"
+    ));
+    let ok = publish && visible && unpublish && gone && foreign && ghost && stale && reuse && clean;
+    term.writeline(if ok { "name: ok" } else { "name: FAIL" });
+}
+
 /// 各系统能力命令。全部输出经 `term`（唯一 console 出口）。
 /// 返回 false = 退出（exit 命令）。
 fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / cascade / reclaim / spoof / name / exit",
             );
         }
         "clock" => {
@@ -541,6 +623,9 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
         }
         "spoof" => {
             spoof(term);
+        }
+        "name" => {
+            name(term);
         }
         "req" => {
             // 走目录协议：Directory::open 取会话 → Connect("echo") 拿服务入口门闩

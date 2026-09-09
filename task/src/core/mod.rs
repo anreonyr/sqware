@@ -10,6 +10,7 @@ pub mod datagram;
 pub mod directory;
 pub mod handshake;
 pub mod heap;
+pub mod lock;
 pub mod service;
 pub mod tls;
 pub mod unit;

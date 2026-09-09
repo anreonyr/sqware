@@ -949,7 +949,7 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
 | §13 | 现在 |
 |---|---|
 | `ServiceCall::Connect`（class 7，`service` 参数被忽略） | **删除**——入口门闩由内核在 boot 期放进首个用户任务权限表 |
-| dispatcher 持 `(name, req_id, Weak, rep_id, Weak)` | 目录持 `Pie`（`Binding { name, entry }`） |
+| dispatcher 持 `(name, req_id, Weak, rep_id, Weak)` | 目录持实例门闩的 token（`Binding { name, publisher, entry }`） |
 | 直接为 caller 建 pie 塞进 `caller.pies` | `gate::accord` 转授子集（与普通 task 授权同路） |
 | 单 slot rep（多 caller 串台） | 调用方自带回信通道 |
 | lookup 与授权混在一笔往返 | `Resolve` / `Enumerate` / `Connect` 三个操作 |
@@ -964,6 +964,11 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
 > B（`docs/root.md` §10）把目录能力改成 **dir 亲授**，root 手里零服务孔；dir 因此有
 > 两个线程（数据面服务请求孔、控制面服务引入孔），两线程的门闩经**同域共享内存 +
 > `Hatch` 同步点**交接。
+>
+> 此后又有三笔（`docs/dispatch.md` §7.2–§7.4）：**资源寿命 = 能力寿命**（目录手里的
+> 实例门闩是资源的唯一强引用，顶掉时必须释放）；**发送者由内核盖章**（身份不再来自
+> 报文里的 token）；**名字空间由 root 播种**（`Refer{who, name}` 预约，注册只填已预约
+> 的行——抢注与冒充在结构上不成立）。
 
 ---
 

@@ -1,13 +1,13 @@
 //! Service 域：服务目录协议客户端（`Directory` 会话 + `Service` 句柄）。
 //!
-//! 协议规范见 `docs/dispatch.md`。三条要点：
+//! 协议规范见 `docs/dispatch.md`。四条要点：
 //!
 //! 1. **内核没有目录入口调用**（class 7 已删）：目录请求门闩由**父域经启动期握手
 //!    配给**（`handshake::Pier` 的载荷），`Directory::open` 直接收下这枚句柄。
 //! 2. **对端是谁由 `Owned` 求得**：目录 id = `Owned(entry).owner`（资源开辟者），
 //!    服务 id 同理——`vestor` 会被转发改写成 root，`owner` 不会。
-//! 3. **回信通道由调用方自带**：`UnsealHole` 造自己的 hole，`Accord` 给目录，把
-//!    对端侧 token 写进请求 `[49..57]`——目录按这枚 pie 的 `vestor` 认人。
+//! 3. **身份由内核盖章**：目录认的调用方 = `Push` 时内核写进槽的发送者。回信通道
+//!    由调用方自带（`UnsealHole` + `Accord` 给目录），token 写进请求 `[49..57]`。
 //!    服务调用同理，token 放在消息前 8 字节。
 //! 4. **服务调用载荷 56 字节**（`MSG_LEN` - 8 字节回信 token）。
 //!
@@ -28,12 +28,27 @@ pub const PAYLOAD_LEN: usize = MSG_LEN - 8;
 const REPLY_TIMEOUT_MS: usize = 1000;
 
 /// D1 负码：无权 / 协议错。
-const E_DENIED: isize = -1;
-/// D1 负码：名字无绑定。
-const E_NOT_FOUND: isize = -2;
+pub const E_DENIED: isize = -1;
+/// D1 负码：名字无实例 / 未预约。
+pub const E_NOT_FOUND: isize = -2;
+/// D1 负码：名字已有活实例（内核码 -1..-6 之后自取）。
+pub const E_TAKEN: isize = -7;
 
 fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(E_DENIED))
+}
+
+fn not_found() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(E_NOT_FOUND))
+}
+
+fn taken() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(E_TAKEN))
+}
+
+/// 服务交给目录保管入口门闩时的权限：读写 + **转授**（目录要能再授给客户端）。
+fn entry_permission() -> env::Permission {
+    env::Permission::READ | env::Permission::WRITE | env::Permission::VEST
 }
 
 fn parse_name(name: &str) -> EnvResult<Name> {
@@ -46,6 +61,8 @@ pub struct Directory {
     reply: HolePie,
     /// reply hole 在目录侧的 token——写进请求 `[49..57]`，目录按此推回复。
     reply_target: usize,
+    /// 目录 task id（`Owned(entry).owner`）——发布时把入口门闩 `Accord` 给它。
+    dir_id: usize,
 }
 
 impl Directory {
@@ -68,6 +85,7 @@ impl Directory {
             entry,
             reply: reply_mine,
             reply_target,
+            dir_id,
         })
     }
 
@@ -87,6 +105,42 @@ impl Directory {
     /// 本会话在**目录侧**的回信 token（诊断 / 自检用：写进请求 `[49..57]`）。
     pub fn reply_target(&self) -> usize {
         self.reply_target
+    }
+
+    /// 发一条请求并只认 `Ok`。
+    fn ack(&self, request: Request) -> EnvResult<()> {
+        match self.call(&request)? {
+            Reply::Ok => Ok(()),
+            Reply::NotFound => Err(not_found()),
+            Reply::Taken => Err(taken()),
+            _ => Err(denied()),
+        }
+    }
+
+    /// 注册：把入口门闩交给目录保管（`Accord` 给目录，带 `VEST`——目录要能再转授）
+    /// 并登记名字。名字必须已由**父域预约**给本任务，否则 `NotFound` / `Denied`。
+    pub fn register(&self, name: &str, entry: &HolePie) -> EnvResult<()> {
+        let target = entry.accord(self.dir_id, entry_permission())?;
+        self.ack(Request::Register {
+            name: parse_name(name)?,
+            entry: env::PieToken::new(target),
+        })
+    }
+
+    /// 注销：摘掉实例；名字仍归本任务（预约行保留），可再次注册。
+    pub fn unregister(&self, name: &str) -> EnvResult<()> {
+        self.ack(Request::Unregister {
+            name: parse_name(name)?,
+        })
+    }
+
+    /// 换绑：服务换了入口门闩，名字不变（覆盖旧实例）。
+    pub fn replace(&self, name: &str, entry: &HolePie) -> EnvResult<()> {
+        let target = entry.accord(self.dir_id, entry_permission())?;
+        self.ack(Request::Replace {
+            name: parse_name(name)?,
+            entry: env::PieToken::new(target),
+        })
     }
 
     /// 纯探测：这个名字有没有绑定。
@@ -130,7 +184,7 @@ impl Directory {
                     owner,
                 })
             }
-            Reply::NotFound => Err(make_err(EnvError::from_raw(E_NOT_FOUND))),
+            Reply::NotFound => Err(not_found()),
             _ => Err(denied()),
         }
     }

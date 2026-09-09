@@ -3,20 +3,23 @@
 //! dir — 服务目录（S 态 supervisor 域，**两个线程**）。
 //!
 //! ```text
-//! 主线程      H 服务循环（pull 请求 → 认人 → 处理 → push 回复）+ 注册表
-//! 控制线程    pull(C) → H.accord(who, R|W) → push(上行孔, Referred)   —— 不碰注册表
+//! 主线程      H 服务循环（pull 请求 → 认人 → 处理 → push 回复）
+//! 控制线程    pull(C) → 预约（若报文带名字）→ H.accord(who, R|W) → push(上行孔, Referred)
 //! ```
 //!
 //! **为什么两个线程**：目录要同时听两条输入通道（客户端的请求孔 `H`、父域的引入
 //! 孔 `C`），而 `Wait` 一次只能等一条孔——单线程 park 在 `H` 上就接不到引入请求。
 //! 控制面与数据面分开，主线程的循环一字未改。
 //!
+//! **两张表合一**：注册表即预约表（见 `task::core::directory`）。控制线程要往里
+//! 写预约、主线程要读写，故用 `Lock<Directory>` 串起来；控制线程的处理次序是
+//! **先预约、再开门**——客户端拿到门闩时预约必已就位。
+//!
 //! **自开门闩是硬规则**：客户端用 `MailCall::Owned` 从门闩副本的 `owner` 求目录
 //! task id；若由他人代开，客户端会把回信 hole 授给代开者（见 `docs/dispatch.md`）。
 //!
-//! **认人**：请求 `[49..57]` 是调用方 `Accord` 给本域的回信 pie token；`Owned`
-//! 报出它的 `vestor`——内核在 `Accord` 时赋值，消息体伪造不了。没带有效回信 pie
-//! 即无身份（caller = 0）：Register 不看身份，Unregister/Replace/Connect 一律拒绝。
+//! **认人**：`Pull` 一并交回**内核盖章的发送者**（`Push` 时写入，报文伪造不了）；
+//! 请求 `[49..57]` 只是回信地址，且必须**确实是该发送者授给本域的那一枚**。
 //!
 //! 注册表逻辑在 `task::core::directory`；协议规范见 `docs/dispatch.md`。
 
@@ -26,8 +29,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::dispatch::{MSG_LEN, REPLY_AT};
 use env::{Permission, TeamId};
-use task::core::directory::{Directory, vestor_of};
+use task::core::directory::{Directory, release_pie, vestor_of};
 use task::core::handshake::{self, Quay, Refer, Referred};
+use task::core::lock::Lock;
 use task::env::mail::HolePie;
 use task::env::task as utask;
 
@@ -38,7 +42,10 @@ use task::env::task as utask;
 /// 静态、最后 `Hatch`」的次序天然成立——控制线程读到的必然是写好的值。
 static CTRL: [AtomicUsize; 3] = [const { AtomicUsize::new(0) }; 3];
 
-/// 控制线程：接引入请求 → 亲授目录请求门闩 → 回报。不碰注册表。
+/// 注册表：控制线程写预约、主线程读写，故必须跨线程互斥。
+static DIR: Lock<Directory> = Lock::new(Directory::new(vestor_of, release_pie));
+
+/// 控制线程：接引入请求 → **预约** → 亲授目录请求门闩 → 回报。
 #[unsafe(no_mangle)]
 extern "C" fn control_main() -> ! {
     let entry = HolePie::from_token(CTRL[0].load(Ordering::Relaxed));
@@ -50,6 +57,10 @@ extern "C" fn control_main() -> ! {
             // 控制孔死亡（root 已走）：无处可听，硬失败。
             Err(_) => task::env::control::panic(20),
         };
+        // 先预约、再开门：否则客户端可能在预约落表前就注册。
+        if let Some(name) = refer.name() {
+            DIR.with(|d| d.reserve(name, refer.who().get()));
+        }
         let token = entry
             .accord(refer.who().get(), Permission::READ | Permission::WRITE)
             .unwrap_or(0);
@@ -72,7 +83,7 @@ extern "C" fn main() -> ! {
         Err(_) => task::env::control::panic(2),
     };
     // 3. 自建控制孔（只给父域），与请求门闩分离——父域拿不到请求队列。
-    let control = match HolePie::unseal(handshake::MTU) {
+    let control = match HolePie::unseal(handshake::REFER_MTU) {
         Ok(h) => h,
         Err(_) => task::env::control::panic(3),
     };
@@ -119,7 +130,6 @@ extern "C" fn main() -> ! {
     }
 
     // 6. 服务循环。
-    let mut dir = Directory::new();
     let mut msg = [0u8; MSG_LEN];
     loop {
         // 身份 = **内核盖章的发送者**（`Pull` 一并交回），不信任报文里的任何字段。
@@ -132,7 +142,7 @@ extern "C" fn main() -> ! {
         // 回信地址必须**确实是 caller 授给本域的那一枚**——否则丢弃回复
         //（防「替他人收信」：把别人的回信 token 塞进自己的请求）。
         let reachable = vestor_of(reply_token) == Some(caller);
-        let out = dir.serve(caller, &msg).encode();
+        let out = DIR.with(|dir| dir.serve(caller, &msg)).encode();
         if !reachable {
             continue;
         }
