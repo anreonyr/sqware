@@ -8,7 +8,7 @@
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::{EnvResult, TeamId};
+use env::{EnvResult, TaskId, TeamId};
 
 use crate::core::tls;
 use crate::env::{room, task as env_task};
@@ -53,13 +53,14 @@ impl<T> SendSlot<T> {
 
 pub struct Join<T> {
     slot: *mut Completion<T>,
-    /// 子任务全局 id（spawn 时 envcall 返的，存于此供 `accord(target_task_id, ...)` 用）。
-    id: usize,
+    /// 子任务句柄（spawn 时 envcall 返的）——**就是喂给 `accord` 的那个类型**，
+    /// 故以句柄存，不化回裸数。
+    id: TaskId,
 }
 
 impl<T> Join<T> {
-    /// 子任务全局 id（用于 `pie.accord(token, join.id(), subset)` 转授给子任务）。
-    pub fn id(&self) -> usize {
+    /// 子任务句柄——直接可喂 `pie.accord(join.id(), subset)`。
+    pub fn id(&self) -> TaskId {
         self.id
     }
 
@@ -121,19 +122,15 @@ where
     )
     .expect("task spawn failed");
     env_task::hatch(task_id).expect("task hatch failed");
-    Join {
-        slot,
-        id: task_id.get(),
-    }
+    Join { slot, id: task_id }
 }
 
-/// 读当前 task id（`UnitCall::SelfId` envcall 包装）。
-/// 无上下文返 0。
-pub fn self_id() -> EnvResult<usize> {
-    match env::UnitCall::SelfId.call()? {
-        env::UnitCallRet::SelfId(id) => Ok(id.get()),
-        _ => unreachable!(),
-    }
+/// 当前 task id（`UnitCall::SelfId`）。无上下文 → `TaskId(0)`。
+///
+/// 返回句柄而非裸数：它是本任务身份、要喂给 `accord`/`revoke` 这类权柄操作，
+/// 化回 `usize` 只会让调用点不得不再包一次。
+pub fn self_id() -> EnvResult<TaskId> {
+    env_task::self_id()
 }
 
 #[unsafe(no_mangle)]

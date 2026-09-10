@@ -133,16 +133,14 @@ pub fn seal(token: usize) -> EnvResult<()> {
     }
 }
 
-/// 转授子集给其他 Task：src_token + dst_id + subset → 新 pie 的 token（撤销句柄）。
-pub fn accord(src_token: usize, dst_id: usize, subset: env::Permission) -> EnvResult<usize> {
-    let r = PieCall::Accord {
-        src: PieToken::new(src_token),
-        dst: env::TaskId::new(dst_id),
-        subset,
-    }
-    .call()?;
+/// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）。
+///
+/// 返回的是句柄而非裸数：它要经线形送到对方、再由对方 `from_token` 重建——
+/// 全程一个 `PieToken`，中途不化成 `usize` 便不会与别的 id 混。
+pub fn accord(src: PieToken, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
+    let r = PieCall::Accord { src, dst, subset }.call()?;
     match r {
-        PieCallRet::Accord(tk) => Ok(tk.get()),
+        PieCallRet::Accord(tk) => Ok(tk),
         _ => unreachable!(),
     }
 }
@@ -160,13 +158,12 @@ pub fn narrow(token: usize, subset: env::Permission) -> EnvResult<()> {
     }
 }
 
-/// 收回授与他人的副本：dst_id + token。
-pub fn revoke(dst_id: usize, token: usize) -> EnvResult<()> {
-    let r = PieCall::Revoke {
-        dst: env::TaskId::new(dst_id),
-        token: PieToken::new(token),
-    }
-    .call()?;
+/// 收回我授给 `dst` 的副本（含其全部后代）。
+///
+/// `at_dst` = 该副本在**对端表里**的句柄（[`accord`] 的返回值，经线形送达）——
+/// **不是我这边的 token**。鉴权 = 「这枚的 `sire` 在我表里」＝「它是我授出的」。
+pub fn revoke(dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+    let r = PieCall::Revoke { dst, token: at_dst }.call()?;
     match r {
         PieCallRet::Revoke(()) => Ok(()),
         _ => unreachable!(),
@@ -177,12 +174,12 @@ pub fn revoke(dst_id: usize, token: usize) -> EnvResult<()> {
 /// 越界 → `(0, 空权限, 0)`——哨兵不报错。
 ///
 /// **唯一的枚举手段**：`handshake::moor()` 靠它发现「父域授给我的那枚门闩」。
-/// 已知句柄求事实用 [`owned`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
+/// 已知句柄求事实用 [`reserve`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
 /// 与 `UnitCall::SelfId` 越界哨兵一致。
-pub fn collect(index: usize) -> EnvResult<(usize, env::Permission, env::TaskId)> {
+pub fn collect(index: usize) -> EnvResult<(PieToken, env::Permission, TaskId)> {
     let r = PieCall::Collect { index }.call()?;
     match r {
-        PieCallRet::Collect((token, permission, vestor)) => Ok((token.get(), permission, vestor)),
+        PieCallRet::Collect(r) => Ok(r),
         _ => unreachable!(),
     }
 }
@@ -191,11 +188,8 @@ pub fn collect(index: usize) -> EnvResult<(usize, env::Permission, env::TaskId)>
 ///
 /// `vestor` = 这枚门闩谁授的（转手即改写）；`owner` = 这扇门谁开的（副本共享同一
 /// 事实）。求「对端是谁」一律用 `owner`：root 转发过的门闩，`vestor` 会变成 root。
-pub fn owned(token: usize) -> EnvResult<(env::TaskId, env::TaskId)> {
-    let r = PieCall::Reserve {
-        token: PieToken::new(token),
-    }
-    .call()?;
+pub fn reserve(token: PieToken) -> EnvResult<(TaskId, TaskId)> {
+    let r = PieCall::Reserve { token }.call()?;
     match r {
         PieCallRet::Reserve((vestor, owner)) => Ok((vestor, owner)),
         _ => unreachable!(),
@@ -316,15 +310,16 @@ impl HolePie {
         narrow(self.token, subset)
     }
 
-    /// 转授子集给 dst_task。subset ⊆ self.permission。
-    /// 返回新 pie 的 token（撤销句柄）——对方用 `HolePie::from_token(token)` 重建。
-    pub fn accord(&self, dst_id: usize, subset: env::Permission) -> EnvResult<usize> {
-        accord(self.token, dst_id, subset)
+    /// 转授子集给 `dst`（subset ⊆ 本 pie 权限），返回**对端侧**那枚的句柄——
+    /// 对方用 `HolePie::from_token(at_dst)` 重建。
+    pub fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<usize> {
+        Ok(accord(PieToken::new(self.token), dst, subset)?.get())
     }
 
-    /// 收回授与 dst_id 的、由 token 标识的副本（须是本 pie accord 出的）。
-    pub fn revoke(&self, dst_id: usize, token: usize) -> EnvResult<()> {
-        revoke(dst_id, token)
+    /// 收回我授给 `dst` 的副本。`at_dst` = 该副本在**对端表里**的句柄（`accord`
+    /// 的返回值，经线形送达）——不是我这边的 token。
+    pub fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+        revoke(dst, at_dst)
     }
 
     /// 放下我这一份（自释；资源本身不动——封印用 `seal`）。
@@ -372,15 +367,16 @@ impl PolePie {
         narrow(self.token, subset)
     }
 
-    /// 转授子集给 dst_task。subset ⊆ self.permission。
-    /// 返回新 pie 的 token（撤销句柄）——对方用 `PolePie::from_token(token)` 重建。
-    pub fn accord(&self, dst_id: usize, subset: env::Permission) -> EnvResult<usize> {
-        accord(self.token, dst_id, subset)
+    /// 转授子集给 `dst`（subset ⊆ 本 pie 权限），返回**对端侧**那枚的句柄——
+    /// 对方用 `PolePie::from_token(at_dst)` 重建。
+    pub fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<usize> {
+        Ok(accord(PieToken::new(self.token), dst, subset)?.get())
     }
 
-    /// 收回授与 dst_id 的、由 token 标识的副本（须是本 pie accord 出的）。
-    pub fn revoke(&self, dst_id: usize, token: usize) -> EnvResult<()> {
-        revoke(dst_id, token)
+    /// 收回我授给 `dst` 的副本。`at_dst` = 该副本在**对端表里**的句柄（`accord`
+    /// 的返回值，经线形送达）——不是我这边的 token。
+    pub fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+        revoke(dst, at_dst)
     }
 
     /// 放下我这一份（自释；资源本身不动——封印用 `seal`）。

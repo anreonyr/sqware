@@ -14,7 +14,7 @@
 //! 与 [`crate::core::channel::Channel`] 同住 `core/`（envcall 转发外的封装层）。
 
 use env::dispatch::{MSG_LEN, Name, Reply, Request};
-use env::{EnvError, EnvResult, TaskId, make_err};
+use env::{EnvError, EnvResult, PieToken, TaskId, make_err};
 
 use crate::env::mail::{self, HolePie};
 
@@ -73,14 +73,16 @@ impl Directory {
     /// reply_target。目录 task id 取 `Owned(entry).owner`——门闩的**开辟者**；
     /// root 转发给本任务时 `vestor` 已变成 root，只有 `owner` 还指着目录。
     pub fn open(entry: HolePie) -> EnvResult<Directory> {
-        let dir_id = mail::owned(entry.token())?.1.get();
+        let dir_id = mail::reserve(PieToken::new(entry.token()))?.1.get();
         if dir_id == 0 {
             return Err(denied());
         }
         // 自造 reply：unseal + accord(dir_id)——目录侧那枚 token 即本会话的回信地址。
         let reply_mine = HolePie::unseal(crate::env::mail::HOLE_MTU_MAX)?;
-        let reply_target =
-            reply_mine.accord(dir_id, env::Permission::READ | env::Permission::WRITE)?;
+        let reply_target = reply_mine.accord(
+            TaskId::new(dir_id),
+            env::Permission::READ | env::Permission::WRITE,
+        )?;
         Ok(Directory {
             entry,
             reply: reply_mine,
@@ -120,7 +122,7 @@ impl Directory {
     /// 注册：把入口门闩交给目录保管（`Accord` 给目录，带 `VEST`——目录要能再转授）
     /// 并登记名字。名字必须已由**父域预约**给本任务，否则 `NotFound` / `Denied`。
     pub fn register(&self, name: &str, entry: &HolePie) -> EnvResult<()> {
-        let target = entry.accord(self.dir_id, entry_permission())?;
+        let target = entry.accord(TaskId::new(self.dir_id), entry_permission())?;
         self.ack(Request::Register {
             name: parse_name(name)?,
             entry: env::PieToken::new(target),
@@ -136,7 +138,7 @@ impl Directory {
 
     /// 换绑：服务换了入口门闩，名字不变（覆盖旧实例）。
     pub fn replace(&self, name: &str, entry: &HolePie) -> EnvResult<()> {
-        let target = entry.accord(self.dir_id, entry_permission())?;
+        let target = entry.accord(TaskId::new(self.dir_id), entry_permission())?;
         self.ack(Request::Replace {
             name: parse_name(name)?,
             entry: env::PieToken::new(target),
@@ -176,7 +178,7 @@ impl Directory {
         };
         match self.call(&request)? {
             Reply::Connected { entry } => {
-                let owner = mail::owned(entry.get())?.1;
+                let owner = mail::reserve(entry)?.1;
                 let channel = Channel::open(owner)?;
                 Ok(Service {
                     entry: HolePie::from_token(entry.get()),

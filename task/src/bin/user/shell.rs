@@ -58,7 +58,7 @@ fn shake() -> env::EnvResult<usize> {
     let up = handshake::moor()?;
     let down = HolePie::unseal(handshake::MTU)?;
     let sire = task::env::task::sire()?;
-    let at_parent = down.accord(sire.get(), env::Permission::READ | env::Permission::WRITE)?;
+    let at_parent = down.accord(sire, env::Permission::READ | env::Permission::WRITE)?;
     Quay::new(at_parent).push(&up)?;
     Ok(Pier::pull(&down)?.token())
 }
@@ -168,7 +168,7 @@ fn cascade(term: &Terminal) {
     let _ = room::wait(key_ack, WAIT);
 
     // 撤销 B：C 应随之失效（级联）。
-    let revoked = b.revoke(me, b.token()).is_ok();
+    let revoked = b.revoke(me, env::PieToken::new(b.token())).is_ok();
     let _ = room::wake(key_rev);
     let (before, after) = join_c.join();
 
@@ -225,7 +225,7 @@ fn cascade(term: &Terminal) {
     let _ = room::wait(key_q, WAIT);
     let q = HolePie::from_token(q_slot[0].load(Ordering::Relaxed));
     drop(join_e);
-    join_done(env::TaskId::new(e_tid));
+    join_done(e_tid);
     // `Join` 返回真 ⇒ 退出钩子（`gate::doom`）已跑完 ⇒ Q 当场就死了——不必重试。
     let q_dead = q.push(&msg).is_err();
     term.writeline(&format!("cascade: task-exit q.dead={q_dead}"));
@@ -342,7 +342,7 @@ fn reclaim(term: &Terminal) {
     let _ = q.pull(&mut buf);
     let _ = room::wake(k_done);
     drop(join_e);
-    join_done(env::TaskId::new(e_tid));
+    join_done(e_tid);
     // `Join` 返回真 ⇒ 退出钩子已跑完 ⇒ q 当场失效（无需重试）。
     let q_dead = q.push(&msg).is_err();
     term.writeline(&format!(
@@ -371,7 +371,7 @@ fn spoof(term: &Terminal) {
     const REPLY_AT: usize = env::dispatch::REPLY_AT;
     let rw = env::Permission::READ | env::Permission::WRITE;
 
-    let me = unit::self_id().unwrap_or(0);
+    let me = unit::self_id().unwrap_or(env::TaskId::new(0));
 
     // ── 1：内核盖章 ──
     let self_stamp = (|| -> Option<bool> {
@@ -379,12 +379,12 @@ fn spoof(term: &Terminal) {
         h.push(b"x").ok()?;
         let mut b = [0u8; 64];
         let (_, from) = h.pull_from(&mut b).ok()?;
-        Some(from.get() == me)
+        Some(from == me)
     })()
     .unwrap_or(false);
 
     let entry = HolePie::from_token(DIR_ENTRY.load(Ordering::Relaxed));
-    let dir_id = match mail::owned(entry.token()) {
+    let dir_id = match mail::reserve(env::PieToken::new(entry.token())) {
         Ok((_, owner)) => owner.get(),
         Err(_) => {
             term.writeline("spoof: no dir id");
@@ -399,7 +399,7 @@ fn spoof(term: &Terminal) {
             return;
         }
     };
-    let at_dir = match mine.accord(dir_id, rw) {
+    let at_dir = match mine.accord(env::TaskId::new(dir_id), rw) {
         Ok(t) => t,
         Err(_) => {
             term.writeline("spoof: accord failed");
@@ -425,7 +425,7 @@ fn spoof(term: &Terminal) {
             return;
         }
     };
-    let entry_at_dir = match entry_hole.accord(dir_id, rw) {
+    let entry_at_dir = match entry_hole.accord(env::TaskId::new(dir_id), rw) {
         Ok(t) => t,
         Err(_) => {
             term.writeline("spoof: accord failed");

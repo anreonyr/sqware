@@ -62,7 +62,7 @@ extern "C" fn control_main() -> ! {
             DIR.with(|d| d.reserve(name, refer.who().get()));
         }
         let token = entry
-            .accord(refer.who().get(), Permission::READ | Permission::WRITE)
+            .accord(refer.who(), Permission::READ | Permission::WRITE)
             .unwrap_or(0);
         if Referred::new(token).push(&up).is_err() {
             task::env::control::panic(21);
@@ -91,7 +91,7 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => task::env::control::panic(4),
     };
-    let at_parent = match control.accord(sire.get(), Permission::READ | Permission::WRITE) {
+    let at_parent = match control.accord(sire, Permission::READ | Permission::WRITE) {
         Ok(t) => t,
         Err(_) => task::env::control::panic(5),
     };
@@ -103,17 +103,17 @@ extern "C" fn main() -> ! {
         Err(_) => task::env::control::panic(6),
     };
     let h2 = match entry.accord(
-        ctrl.get(),
+        ctrl,
         Permission::READ | Permission::WRITE | Permission::VEST,
     ) {
         Ok(t) => t,
         Err(_) => task::env::control::panic(7),
     };
-    let c2 = match control.accord(ctrl.get(), Permission::READ | Permission::WRITE) {
+    let c2 = match control.accord(ctrl, Permission::READ | Permission::WRITE) {
         Ok(t) => t,
         Err(_) => task::env::control::panic(8),
     };
-    let u2 = match up.accord(ctrl.get(), Permission::READ | Permission::WRITE) {
+    let u2 = match up.accord(ctrl, Permission::READ | Permission::WRITE) {
         Ok(t) => t,
         Err(_) => task::env::control::panic(9),
     };

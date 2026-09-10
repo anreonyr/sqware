@@ -40,7 +40,7 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => task::env::control::panic(4),
     };
-    let at_parent = match down.accord(sire.get(), Permission::READ | Permission::WRITE) {
+    let at_parent = match down.accord(sire, Permission::READ | Permission::WRITE) {
         Ok(t) => t,
         Err(_) => task::env::control::panic(5),
     };

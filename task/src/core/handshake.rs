@@ -232,7 +232,7 @@ impl Referred {
 pub fn dock(child: TaskId) -> EnvResult<HolePie> {
     let up = HolePie::unseal(MTU)?;
     up.accord(
-        child.get(),
+        child,
         Permission::READ | Permission::WRITE | Permission::VEST,
     )?;
     Ok(up)
@@ -253,16 +253,16 @@ pub fn moor() -> EnvResult<HolePie> {
     }
     for index in 0..MAX_PIES {
         let (token, _, vestor) = mail::collect(index)?;
-        if token == 0 {
+        if token.get() == 0 {
             break;
         }
         if vestor.get() != sire {
             continue;
         }
-        if let Ok((_, owner)) = mail::owned(token)
+        if let Ok((_, owner)) = mail::reserve(token)
             && owner.get() == sire
         {
-            return Ok(HolePie::from_token(token));
+            return Ok(HolePie::from_token(token.get()));
         }
     }
     Err(denied())

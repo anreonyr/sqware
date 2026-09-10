@@ -68,7 +68,7 @@ fn report(child: TaskId, up: &HolePie) -> HolePie {
         Ok(q) => q,
         Err(_) => panic(6),
     };
-    let vestor = match mail::owned(quay.hole()) {
+    let vestor = match mail::reserve(env::PieToken::new(quay.hole())) {
         Ok((vestor, _owner)) => vestor.get(),
         Err(_) => panic(7),
     };

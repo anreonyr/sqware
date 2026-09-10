@@ -181,8 +181,8 @@ impl Directory {
 
 // ── 协议适配：线格式 → 核心原语（唯一碰内核处）──
 
-use env::Permission;
 use env::dispatch::{MSG_LEN, Reply, Request};
+use env::{Permission, PieToken, TaskId};
 
 use crate::env::mail;
 
@@ -198,7 +198,9 @@ pub fn vestor_of(token: usize) -> Option<usize> {
     if token == 0 {
         return None;
     }
-    mail::owned(token).ok().map(|(vestor, _)| vestor.get())
+    mail::reserve(PieToken::new(token))
+        .ok()
+        .map(|(vestor, _)| vestor.get())
 }
 
 /// 释放一枚门闩（自释）——注入给核心的**释放动作**。失败即已不在表里，忽略。
@@ -248,10 +250,12 @@ impl Directory {
                 None => Reply::NotFound,
             },
             Request::Connect { name } => match self.entry_of(name) {
-                Some(entry) => match mail::accord(entry, caller, caller_permission()) {
-                    Ok(token) => Reply::Connected {
-                        entry: env::PieToken::new(token),
-                    },
+                Some(entry) => match mail::accord(
+                    PieToken::new(entry),
+                    TaskId::new(caller),
+                    caller_permission(),
+                ) {
+                    Ok(token) => Reply::Connected { entry: token },
                     Err(_) => Reply::Denied,
                 },
                 None => Reply::NotFound,

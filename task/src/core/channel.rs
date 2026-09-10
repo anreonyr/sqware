@@ -11,7 +11,7 @@
 //! `from_receipt` 给 Phase B 的 per-caller reply 场景预留：调用方已经 unseal 出
 //! 自己的 hole，Accord 给目录得到 `at_peer`，用这个构造器把状态收进 Channel。
 
-use env::{EnvResult, Permission, TaskId};
+use env::{EnvResult, Permission, PieToken, TaskId};
 
 use crate::env::mail::{self, HolePie};
 
@@ -30,7 +30,7 @@ impl Channel {
     /// 留上限以备未来协议扩展。
     pub fn open(peer: TaskId) -> EnvResult<Channel> {
         let mine = HolePie::unseal(crate::env::mail::HOLE_MTU_MAX)?;
-        let at_peer = mine.accord(peer.get(), Permission::READ | Permission::WRITE)?;
+        let at_peer = mine.accord(peer, Permission::READ | Permission::WRITE)?;
         Ok(Channel::from_receipt(mine, at_peer))
     }
 
@@ -44,7 +44,7 @@ impl Channel {
     /// revoke 失败（peer 已死、token 不在 peer 表里）返 `Denied`——资源本身仍由
     /// `HoleMeta::drop` 在所有副本释放后自动封印，故无需手工 seal。
     pub fn close(self, peer: TaskId) -> EnvResult<()> {
-        mail::revoke(peer.get(), self.at_peer)?;
+        mail::revoke(peer, PieToken::new(self.at_peer))?;
         self.mine.release()
     }
 
