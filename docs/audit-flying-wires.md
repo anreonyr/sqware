@@ -1812,7 +1812,7 @@ audit 轮加 `tomb != 0 ⇒ FAIL`。
 `lock::depend`）读了一遍，并做了两次决定性的字符串核对（见 §10.1）。问题分四类，按处置排成四轮；
 用户裁决全取，序为 **①→③→④→②**。
 
-### 10.1 判据不在被测构建里（最重的一条 · 轮 ②）
+### 10.1 判据不在被测构建里（最重的一条 · 轮 ②）— ✅ 已执行，见 §10.11
 
 门的构建**只有** `--release`（`scripts/examine.nu` 的 `build_flavor`；`runner.nu` 的用法也写
 `cargo run --release`），而 `[profile.release]` 只有 `opt-level=2, debug=1` ⇒ `debug_assertions` 全关。
@@ -1842,7 +1842,7 @@ release 份取 `trace/acc-audit0/elf-audit/sqware`；debug 份取
 - `kernel/Cargo.toml` 的 `audit` 注释提到一个「**debug_assertions 硬化开关**」，features 里
   没有这个开关——这句话是这次发现的第一条线索。
 
-**处置（待做）**：加一档 `harden`——`[profile.harden] inherits = "release"` + `debug-assertions = true`
+**处置**：加一档 `harden`（✅ 已做，见 §10.11）——`[profile.harden] inherits = "release"` + `debug-assertions = true`
 （opt-level 2 保行为可比），门跑第三个 flavor，判据与默认档同形（`[depend]`/断言 panic 即 FAIL）。
 预期代价：这一档会把 `health/*`（§D6 的「把整个 frame 池抽干再还」）与全部 84 处 `debug_assert`
 一起跑起来，第一次很可能当场红——那正是要量的东西，不是要绕的东西。
@@ -1863,7 +1863,7 @@ release 份取 `trace/acc-audit0/elf-audit/sqware`；debug 份取
 另有一处**命名撞车**（不属文档漂移，待裁）：核心的 WFI/取活入口叫 `wait()`，而冻结表把
 `wait`/`wake` 这对词给了 messenger 的事件等待与唤醒——一个词两个意思，正名须用户给词。
 
-### 10.3 并发面（轮 ④）
+### 10.3 并发面（轮 ④）— ✅ 已执行，见 §10.10
 
 - **C1 · `Task.state` 被裸读，且 kill 会静默丢**。`messenger::doom::suspend` 无锁读 `state()` 后
   按它分派容器动作；`messenger::wait::target_dead` 在 `by_id` 交出的强 Arc 上读 `t.state()`。
@@ -1874,9 +1874,9 @@ release 份取 `trace/acc-audit0/elf-audit/sqware`；debug 份取
 - **C2 · `by_id` 交出的强 Arc 是有意违反「唯一强持有」**，现状安全只靠「调用方立刻 drop」的口头
   约定（envcall `Join` 恰好 drop 了；`doom::doom` 把 `task` 持过整趟级联）。没有类型、没有断言。
 
-### 10.4 冗余与可删（轮 ③ + §D3）
+### 10.4 冗余与可删（轮 ③ + §D3）— ✅ D1 已执行（§10.9）、D2/D4 随 §10.8 消失、D3 已执行（§10.9）
 
-- **D1 · N 张完全相同的表**：`register_task_id` 往**所有** hart 的 `by_id` 各插一份，没有第二条
+- ✅ **D1 · N 张完全相同的表**（已执行，见 §10.9）：`register_task_id` 往**所有** hart 的 `by_id` 各插一份，没有第二条
   插入路径 ⇒ 每张表都是全世界的完整副本：`lookup_task_by_id` 的循环只有第一张可能命中，
   `snap()` 把每个任务返回 **H 份**。取 `snap()` 的 `find`/`holder`/`vestable` 对重复免疫；
   `heirs` 返回重复对，靠 `take` 的幂等被吃掉（`cull` 的 `removed` 只 +1）——**是侥幸不是设计**。
@@ -1894,7 +1894,7 @@ release 份取 `trace/acc-audit0/elf-audit/sqware`；debug 份取
 - ~~**D4 · 4 处 `allow(dead_code)`**（`ktask` 的 park/starve/wait_forever + `utask::wait_forever`）~~ ⇒
   **随 §10.8 一并消失**（34 → 32；本轮代码提交里含另外 2 处）。
 
-### 10.5 顺带（出模块、同族）
+### 10.5 顺带（出模块、同族）— E1 已修（§10.7 的 Cargo.toml 一笔）
 
 - `kernel/Cargo.toml` 说 semihosting「**默认开启**（default 引入）」，而 `default = []` ⇒ 相反；
   `cargo check` 的 `unused dependency semihosting` 是同一事实的旁证。门的两档都不带它 ⇒
@@ -2083,3 +2083,55 @@ N 张」）现在**已有实测答案**（N 张完全相同）。
 （`19 frames/5 blocks` → `29 frames/15 blocks`）⇒ 这轮把「泄漏 ≈ 每 spawn 任务 +2 帧 +2 块」
 量化出来了，而 `cascade` 恰好给了一个**可控的 spawn 旋钮**（多跑一次 = 多一批任务），
 比此前"按 hole+spawn 轮次加量"更干净。留给泄漏线用。
+
+### 10.11 轮 ② 执行记录：harden 档（把断言与 lockdep 放回被测产物）+ `dead` 判据
+
+#### (a) 判据不再"在门外"：门加第三档 `harden`
+
+§10.1 记的那件事本轮关掉：门的构建只有 `--release` ⇒ `debug_assertions` 全关 ⇒ 容器⇔状态
+断言与整条 lockdep（`lock/depend.rs` 全文件 `#[cfg(debug_assertions)]`）在门跑过的每个产物里
+都被编译掉。现在：
+
+- `[profile.harden] inherits = "release"` + `debug-assertions = true`——**只多开这一个开关**，
+  opt-level/debug 与 release 一致，行为可比；
+- 门加第三档：`EXAMINE_HARDEN=1` ⇒ 构建 `--profile harden` 的 ELF（产物独立搬进
+  `<OUT>/elf-harden/`），跑**全部十步**（步骤越多，lockdep 与断言能验到的路径越多），
+  判据 = 通用那套（自退 / 无 panic / marker）+ **`[depend]` 不许出现**（锁序违规的报文体，
+  单列一条是为了在原因串里点名「这是锁序违规」而不是别的 panic）。
+
+**正向对照**（这一档若不带断言就退化成"又跑了一遍默认档"而没人发现）：构建后**当场 grep ELF**，
+必须能搜到某条断言串（取 `Scheduler::push` 的「starved 容器只收 Starved 任务」，非 cfg 代码、
+任何构建都编得进去）；搜不到即 `exit 1`。实测：harden ELF **1 次**、release ELF **0 次**；
+把 `debug-assertions` 临时改成 `false` 再建 ⇒ harden ELF 也变 **0 次**（对照会据此退出）⇒ 有牙。
+
+**首次实测（本轮）**：`run 2: PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 10 步全过 +
+11 marker 齐)`——**84 处 `debug_assert` + 全套 lockdep + health 全在跑**的产物里，十步走完、
+自然停机、锁序零违规。这是 §10.1 那条"纪律没人验"的正面收口。
+
+#### (b) 站点表判据换成**精确的那一条**：`dead == 0`
+
+原计划是"audit 轮加 `tomb != 0 ⇒ FAIL`"（A2 记账里那条缺口）。轮 ④ 的 `cascade` 覆盖率一挂上，
+就发现**这条判据会误报**：`tomb`（队列空 ∧ 有信标）里混着两种东西——「活键上留着一枚等未来
+认领的信号」（doorbell 的正常状态，`cascade` 之后稳定是 1）与「死键上的残留」。按老办法断言
+`tomb == 0`，门会在一个**合法**状态上判红。
+
+改成给探针加一个正交计数 **`dead`（键的存活单元已死）**——那才是 A2「站点寿命＝资源寿命」的
+**精确**形式：资源退役时 `wipe` 当场删站点 ⇒ 一个死键站点存在 ⇔ 某条退役路径漏了 `wipe`。
+audit 轮判据：`live == 0`、`orphan == 0`、**`dead == 0`**、`waiters == 0`；`tomb` 与 `sites`
+总数只报数、不作判据（理由写进门里，连同 ④ 的实测）。
+
+**反向验证（有牙的实证）**：把 `wipe` 改回"留墓碑"⇒
+`[audit] sites 19 live 0 tomb 19 orphan 0 dead 17 waiters 0` ⇒ 门判红 **`死键站点[17]`**。
+注意这组数里 **`orphan` 是 0**——也就是说**旧的孤儿判据在这个状态下抓不到**（站点带信标 ⇒
+归 `tomb`），`dead` 才抓得到。正/反向读数都已留档。
+
+#### (c) 判据（本节全绿）
+
+| 判据 | 结果 |
+|---|---|
+| 默认档 ×3 | **3/3 PASS**，默认档控制台归一化 md5 三份仍是 A2 基线 |
+| audit 档 | 十步全过；`sites=1 live=0 tomb=1 orphan=0 dead=0 waiters=0`；仍只因既存泄漏 FAIL |
+| harden 档 | **PASS**（无 lockdep 违规 + 十步全过 + 自退）|
+| 正向对照 | harden ELF 含断言串 1 次 / release 0 次（断言关掉后 harden 也 0）|
+| 反向对照 | `wipe` 留墓碑 ⇒ `dead 17` ⇒ 判红；`take_beacon` 去掉 prune ⇒ `orphan 2`（④ 已记）|
+| `cargo fmt` / `cargo check` | 干净 / warnings 13 |
