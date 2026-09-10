@@ -2039,3 +2039,47 @@ N 张」）现在**已有实测答案**（N 张完全相同）。
 
 证据：`trace/r3-default/run1..3/`、`trace/r3-audit/run1/`（`blocks 5`）、`trace/r3-reverse/run1/`
 （`blocks 9`）、`trace/stray-before/run1/`（`0/3` 的改前读数）。
+
+### 10.10 轮 ④ 执行记录：观察者只读判别式（案 B′）
+
+**根因是一条分界**：读状态的人有两类，此前**能力却一样**。
+
+| 类别 | 谁 | 同步从哪来 |
+|---|---|---|
+| **持有者** | `trap::run` 续跑、`seat`/`push` 的断言、`redeem` 之外的四条、`reap`、`block` ④ | 任务在本核手上的容器里（或刚被摘出）⇒ 与 `transform` 天然互斥 |
+| **观察者** | `doom::suspend`、`Join` 边界、`redeem`（定时到点） | **没有**——容器锁保护容器操作、名册 L3 锁保护名册，都与 `state` 的写没有同步边 |
+
+`Task::exclusive` 的 SAFETY 注记明写「临时持有者**不触字段**」，而这三处触的正是字段；
+`task.rs` 里 `Reaped` 的注释还写着「`Join` 的判据因此不含竞态」——按内存模型那句话是**假的**。
+更实的一条是 TOCTOU：`suspend` 读到 `Starved` → 摘容器之间被别核 `seat` 走 ⇒ 返 false ⇒
+`cull` 的 `filter(|t| suspend(t))` 把它当"没动它"扔掉 ⇒ **这次 kill 静默丢失**。
+
+**落地**（判据与反向验证见代码提交）：
+
+1. **判别式原子化**：`Task.tag: AtomicU8` + 无载荷枚举 `TaskTag`（`TaskState::tag()` 穷尽
+   match 投影）；`transform` 写 payload 后 Release store，观察者 `tag()` Acquire 读 ⇒
+   观察者与写者之间有了正式的 happens-before 边。
+2. **`Task::state()` 收紧成 `&mut self`**（字段转私有）：`&mut` 只能经 `Task::exclusive`
+   拿到 ⇒「不触字段」从注释变成**编译期约束**。改这一行，编译器**一处不落地点名**了三处
+   观察者——这正是本方案的价值：**旧写法现在连编译都过不了**。
+3. **三处观察者各归其容器**：`Join` 读 `tag() == Reaped`；`suspend` 用 tag 当提示、容器操作
+   当结论（`Blocked` 的键与票改扫分片问出来），不一致就重来、重试耗尽按 `Running` 兜底 ⇒
+   「要么当场摘掉、要么注定自退」；`redeem` 的键改由**票根**携带（`hold(ticket, key, &task)`）
+   ⇒ 到点路径不再读任务 payload。
+
+**门覆盖**：`kill / suspend / doom` 这条路径此前 **两档控制台里 `killed` 出现 0 次**——零覆盖。
+把 `cascade` 挂进 audit 轮（它覆盖 `doom → cull → suspend/reap`）。
+
+**反向验证（如实记账）**：把 `suspend` 整个失效 ⇒ 门**在 `exit` 步挂到超时**（受害者一个都摘不
+掉 ⇒ `REAPED` 永不配平 ⇒ 系统不停机）。故 kill 路径的牙长在**关机判据**上；`cascade: ok` 只
+证明「任务自退 + 退出钩子级联」那一段——两件事不要混着读。
+
+**新覆盖当场抓到的第一个真缺陷（已修，另一笔提交）**：`take_beacon` 把站点清成空壳后没有
+`prune`——`wake` / `wipe` / `redeem` 三条路都记得做，只有它漏了。判据 `orphan 2 → 0`
+（反向：去掉那行 ⇒ 原样回到 2）；`prune` 文档「两种形态」与探针三种 `live`/`tomb`/`orphan`
+的漂移一并对齐。
+
+**顺带一条可用作仪器的读数**：cascade 让 spawn 总数上台阶后，泄漏线跟着走
+（`19 frames/5 blocks` → `29 frames/15 blocks`）⇒ 这轮把「泄漏 ≈ 每 spawn 任务 +2 帧 +2 块」
+量化出来了，而 `cascade` 恰好给了一个**可控的 spawn 旋钮**（多跑一次 = 多一批任务），
+比此前"按 hole+spawn 轮次加量"更干净。留给泄漏线用。
