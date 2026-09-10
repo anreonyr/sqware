@@ -1587,3 +1587,35 @@ SIGPIPE），门只 `save --append` 逐条追加命令。最小实验（`trace/e
 `QEMU_TIMEOUT`（实测 60.2s，判据不受影响）；`输入写失败`/`write.err` 无对应物，替代证据是 diag 里的
 条数与字节数；diag 内容改写（去 fd3/FIFO，加 seed/icount/qemu 命令行/rc）；`只写出 N/8 条` 补了 ` + `
 分隔；新增 nu-only 失败理由「rc 取不到」；`1..0` 与 `QEMU_TIMEOUT=0` 两处边界显式对齐。
+
+### 三条缺失断言落地
+
+各自做过**改坏就挂**的反向验证（反向证据比正向通过值钱）：
+
+| 断言 | 过 | 挂（反向） |
+|---|---|---|
+| `redeem`：追加 `sleep 700`，断言两条 `sleep …ms` 与两次 `woke` **按序**出现 | `sleep 300ms / woke / sleep 700ms / woke` | 期望改成永不出现的 marker ⇒ `步骤 sleep 700 …` FAIL |
+| `wipe`：`hole` 探针把 seal **前/后**两次等待的结局分开打 | `hole: wait-pre wake=timeout …` / `hole: wait-seal sealed=1 wake=seal` | 只打 timeout ⇒ `缺[hole: wait-seal …] + 顺序[…]` FAIL |
+| `prune`：audit 档只读计数，门判 `orphan == 0` | `[audit] sites 34 live 0 tomb 34 orphan 0 waiters 0` | 关掉 `prune` ⇒ `sites 36 … orphan 2` ⇒ FAIL `孤儿站点[2]` |
+
+**判据改用 `orphan == 0`，而非原建议的「站点表已空」**（理由是实测）：真值不是 0——`sites=34` 且
+**全是墓碑**（`tomb=34, live=0, orphan=0`）；关掉 `prune` 时总数只 34→36，而**孤儿 0→2**。墓碑
+（`wipe` 留下的 `pend=true` 空站点）按判据**不许**被 `prune` 删，用总数断言既被稀释、又几乎无牙。
+`orphan`（队列空且无信标，正是 `prune` 该删的那一类）才是对 `prune` 的直接断言。
+
+**顺带量出一条实质缺陷（待裁决）**：那 34 个残留**全是墓碑**（28 hole / 6 task）——`wipe` 用
+`or_insert_with(Site::new)` 建站点并置 `pend=true`，而 `take_beacon` 消费信标后**不删空站点**、
+`prune` 又因 `!pend` 为假不删 ⇒ **每次 hole 封印、每次任务回收各留一个墓碑**；hole id 与 task id
+都单调 ⇒ **站点表随运行单调增长**。这是 A2「站点永不回收」修好之后的**一个漏口**，也正是 `prune`
+当初要消灭的东西。候选最小修法（**未做**，属行为改动）：`take_beacon` 消费信标后若队列空即删该站点
+（键不复用 ⇒ 不会误伤后续等待者）。
+
+**audit 档轮次在本机跑不通（既存缺陷，非本轮引入）**：`[integrity] CanaryBroken … 0x0 != 0x51a70d1ecafebeef`
+——docs §C3.8 那条：`KernelHeap` slack canary 被清零 ⇒ `report()` ⇒ panic ⇒ **系统无法完成启动**。
+已用 `git stash` 在**原始**内核上复现（3 个 seed 全中、空命令文件也中）；默认档看不见（自检 cfg out）。
+影响：shell 起不来 ⇒ audit 轮**一条断言都跑不到**。临时旁路该 canary 后，audit 轮里三条断言**全部
+通过**（旁路已完全还原）。其后还有第二条既存违规：关机审计 `AuditDivergence … task lifecycle leak at
+shutdown: 19 frames, 9 blocks` + `table frames 150 != kernel-walk count 141` ⇒ 即便 canary 修好，
+「无 panic」判据仍会挂。**两条都与本次计数无关**（计数在它们之前的钩子里已打印完，且 `orphan=0`）。
+
+**默认档行为不变**：非 audit 下内核不打印、不计数；门仍是 8 步 9 marker（独立复核 3/3），新步只追加。
