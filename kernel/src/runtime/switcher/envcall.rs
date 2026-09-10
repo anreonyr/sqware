@@ -150,8 +150,22 @@ fn read_name(space: &Space, va: KVirt, len: usize) -> Option<Name> {
 /// 入参 frame = 当前任务用户帧；`ident` = 当前任务身份（**Arc 所有权移交**——
 /// 可能触发 halt 的分支（Reap/Park/Wait → run）须先 `drop(ident)`，否则 halt
 /// 时身份 Arc 仍持最后任务 team → space 不 drop，关机审计误报帧泄漏）。
-/// 返回待恢复帧：Starve/Park 返回下一任务帧，Reap 返回后调用方不得再触碰 frame。
-pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapContext {
+/// 返回 `Some(帧)` = 待恢复帧（Starve/Park 给下一任务帧；其余给本次 frame）；
+/// `None` = **本任务退场**——由调用方（`trap_handler`）在最浅的 Rust 帧里收尾。
+///
+/// 「退场不由本函数做」是**退场窄尾**（§10.12 的修法 2）：任务退场＝上下文被切走、
+/// 栈上的活引用随栈一起释放而**永不递减计数**。本函数的帧里带着它全部的临时值，
+/// 在这里 `quit()` 就等于把它们的引用计数一起丢掉；把退场判断交回去之后，本函数的
+/// 帧**先正常归还**（局部量照常 drop），只有 `trap_handler` 那一帧（此刻手里只有
+/// frame/几个标量，`ident` 已移交）随 `restore` 被丢掉。
+pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Option<*mut TrapContext> {
+    // 非空指针 = 待恢复帧；空指针 = 本任务退场（见 [`dispatch_inner`] 的 Reap 分支）。
+    let pa = dispatch_inner(frame, ident);
+    if pa.is_null() { None } else { Some(pa) }
+}
+
+/// 分发本体（见 [`dispatch`] 的文档：退场不由本层做，故本层的帧会正常归还）。
+fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapContext {
     let number = frame.gpr.x(Gprs::A7);
     let regs = [
         frame.gpr.x(Gprs::A0),
@@ -194,8 +208,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             );
         }
         EnvCall::Room(RoomCall::Reap) => {
+            // 本任务退场：**不在这里 quit**（见 [`dispatch`] 的退场窄尾）——空指针即标记。
             drop(ident);
-            return quit() as *mut TrapContext;
+            return core::ptr::null_mut();
         }
         EnvCall::Chrono(ChronoCall::Ticks) => {
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);

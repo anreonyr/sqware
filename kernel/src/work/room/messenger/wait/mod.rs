@@ -91,7 +91,13 @@ fn block(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()> {
         queued
     };
     // ⑤ 窗口内信标已至 / 键已死：撤销登记，按已唤醒处理
-    if !queued {
+    if queued {
+        // **跨挂起不得持强引用**（§10.12）：入队成功 ⇒ 队列里那份是权威持有者，本地这份
+        // 到此为止。留着它不会影响「正常唤醒」（挂起后帧会恢复、局部量照常 drop），但会
+        // 在**被别核 kill 掉**时随栈一起被丢弃——栈没了，引用计数永不回落，被指向的任务
+        // 被永久钉住（它的 Team/Space 跟着不 drop，帧与页全留在关机类别账上）。
+        drop(task);
+    } else {
         void(ticket);
         rise(core::iter::once(task));
     }

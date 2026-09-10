@@ -207,7 +207,12 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             let Some(Current::Live(ident_arc)) = ident else {
                 panic!("envcall without running task");
             };
-            crate::runtime::switcher::envcall::dispatch(frame, ident_arc)
+            match crate::runtime::switcher::envcall::dispatch(frame, ident_arc) {
+                Some(next) => next,
+                // **退场窄尾**：dispatch 的帧此刻已归还（它的局部量照常 drop），
+                // 退场发生在本帧——本帧手里只有 frame 与几个标量，`ident` 已移交。
+                None => crate::work::room::messenger::quit() as *mut TrapContext,
+            }
         }
         // 任务缺页：解析成功 → 续跑；解析失败 → fault isolation 杀 task。
         // 内核自身缺页 = 内核 bug → 仍 panic。
