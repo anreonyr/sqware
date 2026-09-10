@@ -1989,3 +1989,53 @@ N 张」）现在**已有实测答案**（N 张完全相同）。
    `rust-lld: cannot find linker script`。`cargo clean -p kernel` **清不掉**它（host 侧
    `target/release/build/kernel/` 的那份要手动删），最后是 `cargo clean` + 全量重建解决的。
    结论：**跨树对照实验必须用各自的 `--target-dir`**，否则缓存会污染到很久以后的一次构建。
+
+### 10.9 轮 ③ 执行记录：`by_id` 合一 —— 名册（enlist / muster / roster）
+
+**命名（用户裁决）**：`enlist` 入册 / `muster` 点名 / `roster` 名册；对偶 `delist` 除名是
+**保留名、本轮不写**。理由（也是本轮唯一一处对裁决的偏离，已当面记账）：名册里「条目在」
+这件事本身就是**「这个 id 存在过」的唯一事实源**——「已回收」与「从未分配」靠它分开
+（`muster` 为 `None` ⇔ 从未入册）。除名会把这两态重新糊在一起，而 §A3 判的正是「合成一条
+判活」。A2 已在站点表上教过一遍：**删掉承载事实的东西，就只剩墓碑**。`delist` 出现的两个
+触发条件：①「存在过」改由单调计数承担（即 §A3 说要消掉的那个第二真相源）；②名册不再兼职
+判活。**表落点**：留在 `core.rs` 的全局表段（模块只剩 4 文件，表本来就住那儿）。
+
+**结构**：`Scheduler.by_id`（每 hart 一张、每张插全量副本）⇒ 模块级 `ROSTER` 一张
+（`Level::L3`）。原先「查表遍历所有 hart、快照把每个任务返回 H 份、每条查询成本随 hart 数
+放大」三件事一并消失——名册是全局事实，本来就只该有一份。
+
+**判活只剩一条来源**：`task::allocated`（`id < NEXT_ID`，第二个真相源）删除；`muster` 的返回值
+本身是三态（`None` = 从未入册；`Some` 升不起来 = 已消失；升得起来 = 活）。`join` 因此**去掉
+`Result`**、改收边界当场读出的 `reaped: bool`。
+
+**本轮顺出来的活缺陷（已修，有实测）**：非法 id 的 `Err(Denied)` **曾经永远不可达**——
+它需要 `target_dead ∧ ¬allocated` 同时成立，而 `target_dead` 为真的两条来路（查到且 `Reaped` /
+查不到走 `allocated`）都蕴含 `allocated`。后果是「从未分配」与「已回收」在 `Join` 入口被折成
+同一支，非法 id 走「目标仍活但永远不会结束」那条路。**先量后修**（新增用户态 `stray` 自检 +
+门里一条断言，只挂 audit 档、默认档八步逐字未动）：
+
+| | `join(9999, 0)` | `join(9999, MAX)` | `join(0, 0)` | 汇总 |
+|---|---|---|---|---|
+| 改前 | accepted | accepted | accepted（哨兵 0 甚至被答成「已回收」） | `stray: 0/3 illegal-id joins denied` |
+| 改后 | denied | denied | denied | `stray: 3/3 illegal-id joins denied` |
+
+**顺带证到的一条泄漏线结论**（§10.4 D1 的可检验预测，命中）：名册从不清理 ⇒ 每条已回收任务
+的 `ArcInner<Task>` 因为还留着一枚 `Weak` 而**不能归还**，被类别账记成泄漏。把名册放到关机
+最后一步清掉（强引用先全放，弱引用才是 `ArcInner` 的最后一道门）：
+
+| | `frames` | `blocks` |
+|---|---|---|
+| 改前 | 19 | **9** |
+| 改后 | 19 | **5** |
+| 反向验证（临时不清名册） | 19 | **9** |
+
+即：9 块里有 **4 块是名册合法持有的**（不是漏），清掉它们是把"表还在持有"与"漏了"分开；
+`frames` 一字未变 ⇒ **真漏（`strong=3` 那个任务）不受影响，audit 轮仍 FAIL** —— 判据没有被
+放水，只是账更准了。剩下的 `19 frames / 5 blocks` 仍是本线要追的东西。
+
+**判据**：默认门 3/3；默认档控制台归一化 md5 三份仍是 `183133960fd82a1ff0f4a4c3f8863355`
+（名册合一不改查询语义）；audit 轮九步全过、`sites 0 live 0 tomb 0 orphan 0 waiters 0` 不变、
+`stray 3/3`、仍只因既存违规 FAIL；fmt 干净；warnings 13（基线同）。
+
+证据：`trace/r3-default/run1..3/`、`trace/r3-audit/run1/`（`blocks 5`）、`trace/r3-reverse/run1/`
+（`blocks 9`）、`trace/stray-before/run1/`（`0/3` 的改前读数）。
