@@ -1495,3 +1495,25 @@ stdin」的推断**作废**（那是把 `-nographic` 的 monitor 复用与投递
 - **验收（cargo 层，本轮实跑）**：正常轮 → `观察：qemu 退出码 0 · 正常自退`、cargo rc=0、归档目录空；
   超时轮（`QEMU_TIMEOUT=6`）→ `观察：… 124 · 被 host 超时杀`、捕获归档为 `console-*.log`、**rc 仍是 0**。
   残留风险（未验）：真实内核 panic 路径（只以 stub qemu 验过分支）。
+
+### ③ QEMU 起法单一出处；runner 再收窄
+
+- 新增 `scripts/boot.nu`（79 行）：**qemu 起法的唯一出处**——凑参数 + 外接 timeout + 起 qemu +
+  原样返回退出码；不判定、不归档、不碰 stdin 的所有权。串口固定
+  `-display none -serial stdio -monitor none`（不用 `-nographic` 的 monitor 复用：mux 会把 stdin
+  静默改道）；`QEMU_ICOUNT=` 置空即关 icount（验收门关掉它，见上节）。
+- `scripts/runner.nu` 177 → **127** 行：`config` 只留 cargo 集成要的四个字段（proj_root/elf/
+  trapdir/seed），qemu 参数整段删除；`run_qemu` 变成「cd 归档目录 → rescue →
+  `try { ^nu boot.nu $elf o+e>| tee { save } }` → 取退出码」。**qemu 命令行现在只有一处**。
+- **实测**：正常轮 → `观察：qemu 退出码 0 · 正常自退`、cargo rc=0、归档目录空；
+  超时轮（stdin 保持打开 + `QEMU_TIMEOUT=6`）→ `观察：… 124 · 被 host 超时杀` + 捕获归档。
+- **一条新事实（记账）**：stdin 一旦 **EOF**，guest 会把它当 Ctrl-D ⇒ shell 自己退出 → 自然停机
+  → qemu 退出码 0。所以「期望不停机」的存活探针**必须保持 stdin 打开**（`( sleep 30 )`），否则
+  测到的是关机而不是超时；验收门自持 FIFO 写端不关，正因此不会踩到。
+
+### 待做：验收门重写为 nu（设计已定）
+
+- 门的输入需要**长驻写端**（既避 SIGPIPE，也避上面那条 EOF=Ctrl-D）。nu 没有长驻写句柄，
+  故用 `^tail -f -n +1 <命令文件> > <FIFO>` 当喂食器（tail 持有写端、逐行吐出），门把命令
+  `save --append` 进命令文件；逐步 expect 仍读控制台捕获。
+- 判据与九步序列照旧：逐步 expect + 自退（非 124）+ 无 panic + 九个 marker 齐，icount 关闭。
