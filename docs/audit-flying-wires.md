@@ -1274,7 +1274,8 @@ room/
 | 3b | 落点收成一个 `Handoff<T>`（`Joined`/`JoinStep`/`Waited` 退场，`Idle` 消失）；`rise` 收掉四遍唤醒尾巴 | ✅ `c250398` |
 | 4 | `sites` 合一（2a）；`wait`/`wake`/`wipe`/`redeem` 立起（2b）；`Handoff<T>` + `rise`（3b） | ✅ |
 | 4a | 冻结表余下的正名：`quit` / `reap` / `bury` / `hook` / `seat` / `shed` | ✅ `c7a8d9d` |
-| 5 | 拆文件（`messenger` 退场；即 §7.1 的搬家）——**唯一剩下的一轮** | 待做 |
+| 5a | 拆出 `messenger/{reap,doom}.rs`（纯移动，外部引用不改，`pub(crate) use` 重导出） | ✅ `f1fb458` |
+| 5b | 再拆 `messenger/{handoff.rs, wait/{mod,site,holder}.rs}` | 待做 |
 
 ### 与 §A1 的差异（记账）
 
