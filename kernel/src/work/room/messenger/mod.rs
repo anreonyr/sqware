@@ -29,17 +29,16 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use env::HoleDir;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
-use crate::work::room::scheduler::core::{current, lookup_task_by_id};
+use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::trap::run;
 use crate::work::unit::gate::GateError;
 use crate::work::unit::task::{Task, TaskState};
-use crate::work::unit::team::Team;
 
 // ── 票与票根 ──
 
@@ -83,7 +82,7 @@ fn hold(ticket: Ticket, task: &Arc<Task>) {
 /// 作废票根并取回持票人：到期认领与提前作废走同一条路，**幂等**（票号不复用，
 /// 第二次必得 `None`）。顺带消音它的到点——`timer::mute` 对已取走的句柄是 no-op，
 /// 故到期路径重复调用也无害（代价是一次空扫，n = 未到点 tock 数）。
-fn void(ticket: Ticket) -> Option<Arc<Task>> {
+pub(super) fn void(ticket: Ticket) -> Option<Arc<Task>> {
     timer::mute(ticket.raw());
     holders().lock().remove(&ticket).and_then(|w| w.upgrade())
 }
@@ -133,7 +132,7 @@ impl WakeKey {
 ///
 /// 三种唤醒源共用本类型（旧版 `WaitSite` / `JoinSite` 字段逐个相同——各自一份是
 /// 键的 Rust 类型不同逼出来的）。
-struct Site {
+pub(super) struct Site {
     /// 遗留信号（信标）：wake 无等待者 → 置位；wait 见位 → 消费即回（防漏唤醒）。
     pend: bool,
     /// 等待者（FIFO）；每项携带到点句柄（无期限 = None）。
@@ -161,6 +160,16 @@ struct Waiter {
     task: Arc<Task>,
     ticket: Ticket,
 }
+
+mod doom;
+mod reap;
+
+use doom::doomed;
+use reap::HUSKS;
+
+// 子模块对外重导出：**外部路径一行不改**（`messenger::cull` 等照旧）。
+pub(crate) use doom::{doom, take_doomed};
+pub(crate) use reap::{bury, hook, quit};
 
 // ── 簿记表（全部 L3） ──
 
@@ -201,21 +210,8 @@ fn shard_at(shard: usize) -> &'static SpinLock<HashMap<WakeKey, Site>> {
 }
 
 /// 本唤醒源的站点表分片。
-fn sites(key: WakeKey) -> &'static SpinLock<HashMap<WakeKey, Site>> {
+pub(super) fn sites(key: WakeKey) -> &'static SpinLock<HashMap<WakeKey, Site>> {
     shard_at(site_shard(key))
-}
-
-/// 全局躯壳队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
-/// 自己正在用的栈上回收自己；bury 统一回收。
-pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
-    SpinLock::new_level(Level::L3, VecDeque::new());
-
-/// 待杀集合（doomed）：`kill` 点名他核 Running 任务时记入，目标核 trap 自查
-/// 自退。无主簿记——只存 task_id，不持 `Arc<Task>`（防「杀者撑着被杀者」）。
-/// Level::L3，与站点表同级。
-fn doomed() -> &'static SpinLock<HashSet<usize>> {
-    static T: OnceLock<SpinLock<HashSet<usize>>> = OnceLock::new();
-    T.get_or_init(|| SpinLock::new_level(Level::L3, HashSet::new()))
 }
 
 // ── 操作：挂起（用 scheduler::core::Scheduler::disown_and_install_next） ──
@@ -299,7 +295,7 @@ fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
 
 /// 信标先探：消费本键上的遗留信号。**缺键即无信标**——不 `or_insert`：空的、
 /// 无信标的站点没有语义，不该被「先探」凭空造出来。
-fn take_beacon(key: WakeKey) -> bool {
+pub(super) fn take_beacon(key: WakeKey) -> bool {
     let mut sites = sites(key).lock();
     match sites.get_mut(&key) {
         Some(site) if site.pend => {
@@ -313,7 +309,7 @@ fn take_beacon(key: WakeKey) -> bool {
 /// 站点存在的判据：**队列非空 ∨ 有信标**。出队之后若不成立即删——空壳站点没有
 /// 语义，留着就是 A2 那条「站点永不回收」的老毛病（`park` 每次睡眠都会留一个）。
 /// 前置：已持有该分片的锁。
-fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
+pub(super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
     if let Some(site) = sites.get(&key)
         && site.waiters.is_empty()
         && !site.pend
@@ -347,51 +343,6 @@ pub fn park(duration: Duration) -> usize {
 /// 而当场续跑（[`Handoff::Resume`]）。
 pub fn wait(key: WakeKey, dur: Duration) -> Handoff<()> {
     block(key, dur)
-}
-
-/// 死亡唯一入口：**收尾**（退出钩子：通道级联 + 能力级联）→ 置 `Reaped` → 入躯壳队列。
-///
-/// 不变量：`TaskState::Reaped` ⇔ 退出钩子已跑完——本函数是通往 `Reaped` 的**唯一**
-/// 路径，也是躯壳队列的**唯一**入队点。`Join` 的判据 [`target_dead`] 因此精确：
-/// 它返回真即「收尾已完成」。
-///
-/// 前置：任务已停摆（`Doomed`）；或从自退路径来（此刻已离核、状态仍是 `Running`，
-/// 本函数就地补一次停摆）。已 `Reaped` 的直接返回。
-///
-/// 锁纪律：无锁调用。钩子只逐任务取放 L3（`Task.pies` / 通道注册表），且 [`cull`]
-/// 已把整棵子树的受害者停摆在前——故钩子内再扑杀子域，也不会唤醒「还能跑」的人。
-fn reap(mut task: Arc<Task>) {
-    match task.state() {
-        TaskState::Reaped => return,
-        TaskState::Doomed => {}
-        _ => Task::exclusive(&mut task).transform(TaskState::Doomed),
-    }
-    hooked(task.ident.id);
-    Task::exclusive(&mut task).transform(TaskState::Reaped);
-    HUSKS.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
-}
-
-/// quit：离核装槽 → [`reap`]（收尾 + 入队）→ 返下一帧 PA。
-///
-/// 延迟回收的理由是**回收**而非收尾：不能在自己正在用的栈上回收自己，故栈/trap
-/// 帧/团队空间留到 `bury`；收尾（钩子）在此刻就做完了。
-pub fn quit() -> Option<usize> {
-    let cond = current();
-    // 离核且无后继装槽 → 槽已 settled（disown_and_install_next 内 shed 或
-    // 装下一）；团队 Arc 归零即回收——地址空间随释放。
-    let (exited, next_pa) = cond.disown_and_install_next();
-    debug_assert!(
-        matches!(exited.state(), TaskState::Running { .. }),
-        "running 容器里不是 Running 任务"
-    );
-    trace::note(EventKind::Room(RoomEvent::Exit {
-        tid: exited.ident.id,
-    }));
-    reap(exited);
-    // 注意：回收计数（conductor::exit）不在入队时递增——须等 bury 完成栈/
-    // trap 帧/团队空间归还后再计数，否则最后任务退出时另一核见 REAPED==PUSHED
-    // 立即 halt，本核 bury 未及回收 → 关机断言误报帧泄漏。
-    next_pa
 }
 
 // ── 操作：等目标回收（Join） ──
@@ -528,72 +479,6 @@ pub fn redeem() -> bool {
 }
 // ── 操作：回收 ──
 
-/// 回收全部躯壳任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：躯壳不在任何核
-/// 运行（running/starved 均无引用）。锁纪律：只持 reaped 锁出队，放锁后再取
-/// Team.tasks / Space.inner（顺序获取、不嵌套）。
-///
-/// **入队的任务已经收尾**（退出钩子见 [`reap`]），本函数只做回收——「等收尾」与
-/// 「等回收」因此分开：前者是 `Join` 的语义，后者对调用方不可观测。
-pub fn bury() {
-    loop {
-        // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
-        // 导致 husks(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。
-        // 块结束即释放 husks 锁。
-        let z = {
-            let mut husks = HUSKS.lock();
-            let Some(z) = husks.pop_front() else {
-                break;
-            };
-            z
-        };
-        trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
-        // 目标已收尾 → 叫醒它的全部 join 等待者（内核驱动，覆盖 fault 死亡）。
-        wipe(WakeKey::Task { id: z.ident.id });
-        // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
-        z.ident.team.prune_tasks(&z);
-        // 锁外回收（Team.tasks 已放 → Space.inner=2 合法）：栈 slot + trap 帧
-        // 一次 with_flush 经 `Space::release(Span)` 收回——段归还 + PTE 清理 +
-        // 刷 TLB；帧随 map drop 归还 frame 池。Span 是 claim 时存进 TaskIdent 的
-        // 区间身份（类型同一，不 re-find）。
-        z.ident
-            .team
-            .space
-            .release(z.ident.stack)
-            .expect("release: span mismatch");
-        z.ident
-            .team
-            .space
-            .release(z.ident.frame)
-            .expect("release: span mismatch");
-        drop(z);
-        // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
-        // halt 的关机断言无滞留可验。
-        conductor::exit();
-    }
-}
-
-// ── 退出钩子注册面 ──
-//
-// mail（dock / ring）在 `boot::init` 把自己的任务退出函数挂到这里。每条收尾的
-// 任务按注册顺序跑一次——本域不命名任何子系统，故不知道挂上来的是谁。
-type Hook = fn(usize);
-
-static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();
-
-/// 挂上退出钩子（一次性；由 `boot::init` 调用）。
-pub(crate) fn hook(hooks: &'static [Hook]) {
-    let _ = HOOKS.set(hooks);
-}
-
-/// 对 `tid` 跑一遍挂上的钩子（未挂 = 无事）。
-fn hooked(tid: usize) {
-    if let Some(hooks) = HOOKS.get() {
-        for h in hooks.iter() {
-            h(tid);
-        }
-    }
-}
-
 /// 终末释放：清空 messenger 持有的全部 `Arc<Task>`（sites / husks）与全部票根
 /// ——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。由
 /// [`scheduler::core::rip`] 在 halt 路径调用。
@@ -620,103 +505,6 @@ pub(crate) fn rip() {
 // 尚未停摆，它可能被别的核偷走并运行，在「已注定要死」的状态下观察到一个已死的
 // 资源。他核 Running 任务无法被本核同步拉走（会破坏「Reaped 不在 running 槽」
 // 不变量），故走 `doomed` 待杀集合 + SSIP 单点，目标核 trap 自查自退——最终一致。
-
-/// 停摆单线程：摘出全部调度/等待容器 → 置 `Doomed`。返 `true` = 本次停摆了它，
-/// 调用方须随后 [`reap`]；`false` = 没动它（已 `Doomed`/`Reaped`、不在任何容器，
-/// 或 `Running`——后者已记 doomed + SSIP，待其自退时自己 `reap`）。
-///
-/// 锁纪律：只持 L3 表，逐表取、放锁后再取下一表（L3 同层绝不嵌套）；锁内不 drop
-/// Arc（drop 链触 L2）。
-fn suspend(task: &Arc<Task>) -> bool {
-    let taken = match task.state() {
-        TaskState::Reaped | TaskState::Doomed => false,
-        TaskState::Held => {
-            // 未放行的引导线程：从 Team.held 摘出（不是它则放回）。
-            let team = task.ident.team.clone();
-            match team.take_held() {
-                Some(held) if Arc::ptr_eq(&held, task) => true,
-                Some(held) => {
-                    team.hold(&held);
-                    false
-                }
-                None => false,
-            }
-        }
-        TaskState::Starved => crate::work::room::scheduler::core::remove_from_starved(task),
-        TaskState::Blocked { key, ticket } => {
-            // 读票直达：键指出容器、票号指出队列里的哪一个——不必扫分片。
-            let popped = {
-                let mut sites = sites(key).lock();
-                let w = sites.get_mut(&key).and_then(|site| {
-                    site.waiters
-                        .iter()
-                        .position(|w| w.ticket == ticket)
-                        .map(|i| site.waiters.remove(i).expect("idx from position"))
-                });
-                prune(&mut sites, key);
-                w
-            };
-            if popped.is_none() {
-                return false;
-            }
-            // 作废票根 + 消音到点（[`void`] 幂等）。
-            void(ticket);
-            true
-        }
-        TaskState::Running { .. } => {
-            if let Some(hart) = crate::work::room::scheduler::core::running_hart(task) {
-                doomed().lock().insert(task.ident.id);
-                crate::work::room::conductor::nudge(hart);
-            }
-            false
-        }
-    };
-    if taken {
-        let mut t = task.clone();
-        Task::exclusive(&mut t).transform(TaskState::Doomed);
-    }
-    taken
-}
-
-/// 扑杀整棵血缘子树（**两阶段**）：
-///
-///   1. 收集：显式工作栈沿 heir 收齐全部任务（防爆栈）；
-///   2. 停摆：逐个 [`suspend`]——`Running` 分支只记 doomed + SSIP，它自退时自己 `reap`；
-///   3. 收尾：逐个 [`reap`]（钩子 → Reaped → 入躯壳队列）。
-///
-/// **阶段边界即安全边界**：第 3 阶段的钩子会摘门闩、唤醒等待者，而此刻全部受害者
-/// 都已停摆，没有「被唤醒后还能跑」的中间态。栈/名单都是局部 Vec（锁外分配），
-/// 全程不持任何锁。
-pub(crate) fn cull(roots: &[Arc<Team>]) {
-    let mut work: Vec<Arc<Team>> = roots.to_vec();
-    let mut tasks: Vec<Arc<Task>> = Vec::new();
-    while let Some(t) = work.pop() {
-        // 先取本域成员快照（放锁），再收任务与子域；不持 team.tasks 锁。
-        for weak_task in t.tasks_snapshot() {
-            if let Some(task) = weak_task.upgrade() {
-                work.extend(task.heirs());
-                tasks.push(task);
-            }
-        }
-    }
-    let victims: Vec<Arc<Task>> = tasks.into_iter().filter(|t| suspend(t)).collect();
-    for task in victims {
-        reap(task);
-    }
-}
-
-/// 级联触发（挂 exit_hook）：读父 task 的 heir → 两阶段扑杀整棵血缘子树。
-pub(crate) fn doom(tid: usize) {
-    if let Some(task) = lookup_task_by_id(tid) {
-        cull(&task.heirs());
-    }
-}
-
-/// trap(SupervisorSoft) 自退查询：本 hart 当前 running 任务是否被判死。
-/// 在则摘出待杀标记并返回 true（调用方 quit）；否则 false。
-pub(crate) fn take_doomed(tid: usize) -> bool {
-    doomed().lock().remove(&tid)
-}
 
 // ── 内部辅助 ──
 
