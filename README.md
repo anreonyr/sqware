@@ -1,3 +1,18 @@
+<p align="center">
+  <img src="assets/sqware-logo.svg" alt="sqware logo" width="520">
+</p>
+
+<p align="center">
+  <strong>A structured world, made as software.</strong>
+</p>
+
+<p align="center">
+  <a href="#design">Design</a> ·
+  <a href="#core-structures">Core Structures</a> ·
+  <a href="#protocol-and-service">Protocol & Service</a> ·
+  <a href="#lisp-as-shell">Lisp Shell</a>
+</p>
+
 # sqware
 
 > A structured world, made as software.
