@@ -7,10 +7,12 @@
 //   gate      — 能力门闩（Pie/AnyPie/授权；单向依赖 mail 的资源实体）
 //   team      — 团队容器（Team/TeamBuilder/kernel 单例 + 运行期装载）
 //   task      — 线程单元（Task/TaskBuilder）
+//   life      — 存活单元（键的寿命 = 资源的寿命；A2 的后半）
 //   loader    — 程序装载（ELF → Space durable）
 //   parser    — ELF 解析（段配方）
 
 pub(crate) mod gate;
+pub(crate) mod life;
 pub(crate) mod loader;
 pub(crate) mod parser;
 pub mod space;

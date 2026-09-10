@@ -86,6 +86,8 @@ pub fn bury() {
         };
         trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
         // 目标已收尾 → 叫醒它的全部 join 等待者（内核驱动，覆盖 fault 死亡）。
+        // 站点当场删掉：`WakeKey::Task{id}` 的寿命是目标任务的存活单元，而本站点在
+        // 键还在世的最后一次入口上——删掉它，站点表就不随任务回收增长（见 `wipe`）。
         wipe(WakeKey::Task { id: z.ident.id });
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);

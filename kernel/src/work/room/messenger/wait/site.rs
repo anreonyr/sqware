@@ -6,13 +6,14 @@
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use env::HoleDir;
 use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
+use crate::work::unit::life::Life;
 use crate::work::unit::task::Task;
 
 use super::holder::Ticket;
@@ -103,7 +104,7 @@ impl WakeKind {
     }
 }
 
-/// 一个唤醒源的等待位：遗留信号（信标）+ 等待者队列。
+/// 一个唤醒源的等待位：遗留信号（信标）+ 等待者队列 + **该键的存活单元**。
 ///
 /// 三种唤醒源共用本类型（旧版 `WaitSite` / `JoinSite` 字段逐个相同——各自一份是
 /// 键的 Rust 类型不同逼出来的）。
@@ -112,6 +113,15 @@ pub(in super::super) struct Site {
     pub(in super::super) pend: bool,
     /// 等待者（FIFO）；每项携带到点句柄（无期限 = None）。
     pub(in super::super) waiters: VecDeque<Waiter>,
+    /// 本键的**存活单元**（弱引用）——站点寿命＝资源寿命的那一半（A2）。
+    ///
+    /// `Weak` 放**值**里而非键里：键是 `HashMap` 的 key，必须 `Copy`/`Eq`。
+    /// 一个键只有一份 `Life`（其唯一强持有者是那份资源），故不管哪个入口（wait /
+    /// join）写入，这枚弱引用指向的都是同一个分配——**不需要第二张表**。
+    ///
+    /// 只有**读**：`prune` 判据与 `block` ④ 各读一次「死没死」。room 不接受任何
+    /// 来自外部的「这个键死了」的说法。
+    pub(in super::super) life: Weak<Life>,
 }
 
 /// 等待者：站点队列里的一项。票号即「哪一次挂起」——同一任务先后等同一个键时，
@@ -177,20 +187,33 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
     }
 }
 
-/// 站点存在的判据：**队列非空 ∨ 有信标**。出队之后若不成立即删——空壳站点没有
-/// 语义，留着就是 A2 那条「站点永不回收」的老毛病（`park` 每次睡眠都会留一个）。
+/// 站点存在的判据：**队列非空 ∨ （信标 ∧ 键还活着）**。不成立即删——空壳站点
+/// 没有语义，留着就是 A2 那条「站点永不回收」的老毛病（`park` 每次睡眠都会留一个）。
 /// 前置：已持有该分片的锁。
 ///
-/// 因此站点有三种形态，审计计数（`messenger::probe`）按它们分列：
+/// 两项的来历：
+///   - **队列非空**：有任务挂在这里，站点是它的容器（原判据）；
+///   - **信标 ∧ 键还活着**：信标（`wake` 在无人在等时置的遗留信号）**只对未来到达
+///     的等待者有意义**，而未来的等待者只可能来自活着的键——键一死，这枚信标就再也
+///     无人认领。故 `life` 已死时信标随站点一起作废：**判据从「队列空 ∧ 无信标」
+///     扩成「… ∨ 键已死」**（A2 的后半），站点寿命＝资源寿命。
+///
+/// 由此 `wipe` 不再留**墓碑**（「此键已死」那张空站点）：键自己会答（死亡 = 资源
+/// 的强引用归零，`Weak::upgrade` 失败；见 [`Life`](crate::work::unit::life)）。
+/// 此前每次 hole 封印、每次任务回收各留一个墓碑 ⇒ 站点表随运行单调增长；本判据把
+/// 这个漏口关掉（实测 `tomb` 34 → 0；**反向验证**——把本判据与 `wipe` 的删站点一并
+/// 改回原样——`tomb` 原样回到 34、总数原样回到 34）。
+///
+/// 站点因此只剩两种形态，审计计数（`messenger::probe`）按它们分列：
 ///   - **活**（`waiters` 非空）：有任务挂在这里；
-///   - **墓碑**（`pend == true`，队列空）：`wipe` 留下的「此键已退役」结论，语义仍
-///     有效（后来的等待者要当场拿到它），**本函数依判据保留**——故它不算违规；
-///   - **孤儿**（队列空 **且** 无信标）：没有任何语义，正是本函数该删的那一类。
-/// 判别式「孤儿 == 0」才是对 `prune` 的直接断言（墓碑会稀释总数，见 §9.3 实测）。
+///   - **孤儿**（队列空 且 无信标 **或** 键已死）：没有任何语义，正是本函数该删的
+///     那一类。
+/// 不变式（判据不含挂起中的等待者，故必须为真）：**队列非空 ⇒ 键还活着**——能入队
+/// 就意味着 `block` ④ 在锁内读到过「键活着」，而等待者的站点强持有者就是那份资源。
 pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
     if let Some(site) = sites.get(&key)
         && site.waiters.is_empty()
-        && !site.pend
+        && (!site.pend || Life::dead(&site.life))
     {
         sites.remove(&key);
     }
@@ -199,10 +222,13 @@ pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) 
 // ── 内部辅助 ──
 
 impl Site {
-    pub(super) fn new() -> Self {
+    /// 新站点：挂上**本键**的存活单元。站点借它判自己的寿命——资源一死，站点即
+    /// 无意义（[`prune`] 当场删）。
+    pub(super) fn new(life: &Weak<Life>) -> Self {
         Self {
             pend: false,
             waiters: VecDeque::new(),
+            life: life.clone(),
         }
     }
 }

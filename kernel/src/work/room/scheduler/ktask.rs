@@ -93,8 +93,9 @@ pub extern "C" fn park(_duration: Duration) {
     );
 }
 
-/// 内核任务事件等待：存帧 → messenger::wait(key, MAX) → 切走；对方 wake(key) 解锁。
-/// `key` 经裸 usize ABI（与 wait 同族）。
+/// 内核任务事件等待：存帧 → `sched_wait_forever`（自取本任务的存活单元）→ 切走；
+/// 对方 `wake(key)` 解锁。`key` 经裸 usize ABI（与 wait 同族）——**ABI 未动**：
+/// 存活单元不是参数，它在 `sched_wait_forever` 内自取（同 `park` 的形状）。
 #[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 #[allow(improper_ctypes_definitions)]
 #[unsafe(naked)]

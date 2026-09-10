@@ -15,7 +15,7 @@
 
 use core::time::Duration;
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use env::{ChronoCall, ControlCall, EnvCall, IOCall, MemoryCall, Name, RoomCall, UnitCall};
@@ -31,6 +31,7 @@ use crate::work::room::messenger::{Handoff, WakeKey};
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::utask::{self, park, reap, starve, wait, wake};
 use crate::work::unit::gate::{GateError, Permission};
+use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent};
@@ -203,28 +204,32 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             return park(Duration::from_millis(millis as u64)) as *mut TrapContext;
         }
         EnvCall::Room(RoomCall::Wait { key, millis }) => {
-            let wkey = WakeKey::Space {
-                space: ident.team.space.asid().get(),
-                slot: key,
+            // 键 → 存活单元：**解析在调用方这一层**（room 不认识注册表）。空间键的
+            // 寿命就是本任务所属空间的寿命，故弱引用随键一起交给等待机。
+            let (space, wlife) = {
+                let s = &ident.team.space;
+                (s.asid().get(), s.life())
             };
+            let wkey = WakeKey::Space { space, slot: key };
             let dur = if millis == usize::MAX {
                 Duration::MAX
             } else {
                 Duration::from_millis(millis as u64)
             };
             drop(ident);
-            match wait(wkey, dur) {
+            match wait(wkey, &wlife, dur) {
                 // `RoomCall::Wait` 没有当场结论：未离核即续跑。
                 Handoff::Resume(()) => {}
                 Handoff::Switch(pa) => return pa as *mut TrapContext,
             }
         }
         EnvCall::Room(RoomCall::Wake { key }) => {
-            let wkey = WakeKey::Space {
-                space: ident.team.space.asid().get(),
-                slot: key,
+            let (space, wlife) = {
+                let s = &ident.team.space;
+                (s.asid().get(), s.life())
             };
-            let woke = wake(wkey);
+            let wkey = WakeKey::Space { space, slot: key };
+            let woke = wake(wkey, &wlife);
             frame.gpr.set_x(Gprs::A0, woke as usize);
         }
         EnvCall::Chrono(ChronoCall::Clock) => {
@@ -407,7 +412,13 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Duration::from_millis(millis as u64)
             };
             // 授权：活目标须与我同域或在我 heir 里；已回收目标无从核对（返回 Dead）
-            if let Some(t) = crate::work::room::scheduler::core::lookup_task_by_id(task.get()) {
+            //
+            // 同一趟里把**键 → 存活单元**解析出来（`WakeKey::Task{id}` 的寿命就是
+            // 目标任务的寿命）：这里本来就握着目标的 `Arc<Task>`，交一枚弱引用最自然。
+            // 弱引用先于 `t` 的那个强引用落地——任务真正消失时它自然判死。
+            let target_life = if let Some(t) =
+                crate::work::room::scheduler::core::lookup_task_by_id(task.get())
+            {
                 let same = Arc::ptr_eq(&t.ident.team, &ident.team);
                 let mine = current()
                     .running_task()
@@ -416,11 +427,22 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 if !(same || mine) {
                     return ret_err(frame, GateError::Denied);
                 }
-            }
+                TaskLife {
+                    id: task.get(),
+                    life: t.life(),
+                }
+            } else {
+                // 目标已消失/不存在：`join` 只用 id 走「已死 / 非法」两支，寿命
+                // 无从谈起（那一支不建站点）。
+                TaskLife {
+                    id: task.get(),
+                    life: Weak::new(),
+                }
+            };
             // 挂起后恢复读到的 a0 = 挂起前预置值 ⇒ 预置 0（未回收）；当场判定再改写
             frame.gpr.set_x(Gprs::A0, 0);
             drop(ident);
-            match utask::join(task.get(), dur) {
+            match utask::join(target_life, dur) {
                 // 未离核：当场结论（true = 调用开始时目标已回收）。
                 Ok(Handoff::Resume(dead)) => frame.gpr.set_x(Gprs::A0, dead as usize),
                 Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,

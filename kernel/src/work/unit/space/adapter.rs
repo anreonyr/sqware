@@ -22,6 +22,7 @@
 //! ——所有权驱动。非内核空间先 `fence::retire(asid)` 销账再归还 ASID（顺序契约：
 //! ASID 复用后键即换主）。
 
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use super::SpaceKind;
@@ -37,6 +38,7 @@ use crate::memory::manager::asid::{self, Asid, Deaf};
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::flush_asid;
 use crate::memory::manager::table::{Frame, FrameState};
+use crate::work::unit::life::Life;
 
 // SAFETY: 全部可变状态由 `RelLock` 互斥；页表树读写与 `SpaceInner` 共享同一把锁。
 unsafe impl Send for Space {}
@@ -65,6 +67,9 @@ pub struct Space {
     kind: SpaceKind,
     /// 空间身份（TLB 标记 + wait/fence 键命名空间）；0 = 内核空间。
     asid: Asid,
+    /// 本空间的**存活单元**（`WakeKey::Space{space: asid}` 的寿命来源）：
+    /// 强持有者是本 `Space` ⇒ 空间回收时键自然判死，站点随之可删（A2）。
+    life: Arc<Life>,
 }
 
 /// 连续 VA 区间逐段翻译迭代器（`Space::segments` 产出）。
@@ -129,6 +134,7 @@ impl SpaceBuilder {
         let mut space = Space {
             kind: self.kind,
             asid: self.asid,
+            life: Life::new(),
             inner: RelLock::new_level(Level::Space, SpaceInner::durable()?),
         };
         if !self.asid.is_kernel() {
@@ -187,6 +193,14 @@ impl Space {
     /// 空间身份（写入 `satp.ASID` / 组 wait·fence 键；0 = 内核空间）。
     pub fn asid(&self) -> Asid {
         self.asid
+    }
+
+    /// 本空间的存活单元（弱引用）——`WakeKey::Space{space: asid}` 的寿命来源。
+    ///
+    /// 调用方（envcall 的 `Wait` / `Wake`）随键一起把它交给等待机：站点值只留这枚
+    /// 弱引用，判死全在 room 侧靠 `upgrade` 观察。见 [`Life`]。
+    pub fn life(&self) -> Weak<Life> {
+        Arc::downgrade(&self.life)
     }
 
     /// 返回根页表页号（写入 `satp` 用）。

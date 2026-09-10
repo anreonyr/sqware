@@ -9,7 +9,7 @@
 
 use alloc::alloc::Allocator;
 use alloc::boxed::Box;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -22,6 +22,7 @@ use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::work::room::conductor;
 use crate::work::unit::gate::{AnyPie, GateError};
+use crate::work::unit::life::Life;
 
 use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
@@ -84,6 +85,10 @@ pub enum TaskState {
 pub struct Task {
     /// 不可变身份（spawn 时定型；clone 它不影响本 Task 的强持有计数）。
     pub(crate) ident: Arc<TaskIdent>,
+    /// 本任务的**存活单元**（键 `WakeKey::Task{me}` 的寿命来源；见
+    /// [`life`](crate::work::unit::life)）。强持有者是本 `Task` 自己 ⇒ 任务
+    /// 真正消失（`Arc<Task>` 归零）时它自然归零，站点侧 `upgrade` 失败。
+    pub(crate) life: Arc<Life>,
     /// 状态（含载荷）。唯一可变字段：只有经 [`Task::exclusive`] 的 &mut 能改（唯一
     /// 强持有语义见 exclusive）。
     pub(crate) state: TaskState,
@@ -233,6 +238,14 @@ impl Task {
     /// 按索引取子域 TeamId（heir 枚举 second pass；越界 → None）。
     pub(crate) fn heir_at(&self, index: usize) -> Option<TeamId> {
         self.heir.lock().get(index).map(|t| t.id)
+    }
+
+    /// 本任务的存活单元（弱引用）。**消费方 = 等待机**：`park` 自取（`Alarm` 键
+    /// 就是它自己）、`Join` 入口交给等待者（`WakeKey::Task{id}` 的寿命来源）。
+    ///
+    /// 一次 `Arc::downgrade`（一个弱计数 +1），不是每次等待一次的搜索。
+    pub(crate) fn life(&self) -> Weak<Life> {
+        Arc::downgrade(&self.life)
     }
 }
 
@@ -447,6 +460,7 @@ impl TaskBuilder {
             let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(
                 Task {
                     ident,
+                    life: Life::new(),
                     state: TaskState::Held,
                     pies: SpinLock::new(Vec::new()),
                     heir: SpinLock::new(Vec::new()),

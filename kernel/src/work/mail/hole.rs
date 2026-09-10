@@ -18,7 +18,7 @@
 // （后者经 `space.segments` 走 Space 锁 = L2，会违反 2→4 反向嵌套）——handler
 // 先把用户 VA 拷到栈/堆暂存，再调 try_push/try_pull 拷进/拷出 slot 的 Vec 存储。
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
@@ -30,6 +30,7 @@ use env::HoleDir;
 use super::HOLE_MTU_MAX;
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::gate::GateError;
+use crate::work::unit::life::Life;
 
 /// Hole 的全局身份（自 1 递增、永不复用）——**等待键的身份**（见 [`key`]）。
 ///
@@ -66,6 +67,9 @@ pub struct HoleMeta {
     state: SpinLock<HoleState>,
     /// 本 hole 的全局资源 id——**等待键的身份**（单调分配、永不复用；见 [`key`]）。
     id: HoleId,
+    /// 本 hole 的**存活单元**（两个方向的等待键都指它）：强持有者是本 Meta ⇒
+    /// 最后一份门闩消失时键自然判死，站点随之可删（A2）。见 [`Life`]。
+    life: Arc<Life>,
     /// unseal 时定；`1..=HOLE_MTU_MAX`。Push/Pull 的长度校验上限。
     pub mtu: usize,
     /// 单槽消息：`len()` 既是「消息是否在槽」也是「实际占用字节数」——Push 时
@@ -87,10 +91,19 @@ impl HoleMeta {
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
             id,
+            life: Life::new(),
             mtu,
             slot: SpinLock::new_level(Level::L3, slot),
             owner,
         })
+    }
+
+    /// 本 hole 的存活单元（弱引用）——`WakeKey::Hole{hole: id, dir}` 的寿命来源。
+    ///
+    /// 一律 `Arc::downgrade(&self.life)`（一个弱计数 +1），**不是**每次等待一次的
+    /// 搜索：`Weak` 就在 Meta 里，取值是纯函数。
+    pub(crate) fn life(&self) -> Weak<Life> {
+        Arc::downgrade(&self.life)
     }
 
     /// 资源开辟者（见字段 `owner`）。
@@ -125,6 +138,8 @@ impl Drop for HoleMeta {
     /// （`Denied`），不会挂死。
     fn drop(&mut self) {
         *self.state.lock() = HoleState::Dead;
+        // 站点当场删掉（不留墓碑）：本函数是这两个键的**最后一次**入口——`wipe` 之后
+        // 本 Meta 就归零，键随即判死，此后再没有任何入口会碰这两个键。
         messenger::wipe(key(self, HoleDir::Pull));
         messenger::wipe(key(self, HoleDir::Push));
     }
@@ -182,7 +197,7 @@ pub(crate) fn try_push(meta: &HoleMeta, src: &[u8], from: usize) -> Result<(), G
     }
     slot.from = from;
     drop(slot);
-    let _ = messenger::wake(key(meta, HoleDir::Pull));
+    let _ = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
     Ok(())
 }
 
@@ -209,7 +224,7 @@ pub(crate) fn try_pull(meta: &HoleMeta, dst: &mut [u8]) -> Result<(usize, usize)
     let from = slot.from;
     slot.buf.clear();
     drop(slot);
-    let _ = messenger::wake(key(meta, HoleDir::Push));
+    let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
     Ok((len, from))
 }
 
@@ -236,7 +251,7 @@ pub(crate) fn wait(
     if dur == Duration::ZERO {
         return Ok(Handoff::Resume(false));
     }
-    Ok(match messenger::wait(key(meta, dir), dur) {
+    Ok(match messenger::wait(key(meta, dir), &meta.life(), dur) {
         // 窗口内 wake 已至（未挂起）：以当前状态为准。
         Handoff::Resume(()) => Handoff::Resume(meta.alive() && meta.ready(dir)),
         Handoff::Switch(pa) => Handoff::Switch(pa),
