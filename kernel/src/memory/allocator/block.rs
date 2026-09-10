@@ -349,9 +349,18 @@ unsafe impl Allocator for BlockAllocator {
         // 分配器 relabel——本文件零类别词汇，见 fence 模块头解耦纪律）。
         super::fence::on_alloc(addr, layout.size(), super::fence::OwnerKind::KernelHeap);
         // SAFETY: pull 返回的地址必非零（分配器保证）。
+        //
+        // 交付长度 = **请求字节数**（`layout.size()`），不是 size class：`NonNull<[u8]>`
+        // 的 len 是「本次交给调用方的字节数」这句合约的载体，而 `Allocator::
+        // allocate_zeroed` 的默认实现正是按 `ptr.len()` 清零。报 size class 会把
+        // 清零越出请求区、砸进请求区外的 slack——fence 的 slack canary 就住在那儿
+        // （canary 槽 = addr + align8(size)，41B 请求即 +0x30 < 0x40）⇒ audit 档
+        // `vec![0u8; n]` 一次就把 canary 清零，释放时 CanaryBroken 停摆。
+        // size class 是分配器内部记账（deallocate 由 layout 重算，与 len 无关），
+        // 不属于交付物；frame 侧同理只报 `max(size, PAGE_SIZE)` 而非整个 buddy 块。
         Ok(NonNull::slice_from_raw_parts(
             unsafe { NonNull::new_unchecked(addr as *mut u8) },
-            1usize << power,
+            layout.size(),
         ))
     }
 
