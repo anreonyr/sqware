@@ -1695,3 +1695,49 @@ park(dur: Duration) -> usize                          // 形状不变，内部�
 **④ 的判死走现成的回滚分支**（不新增机制）：`tock` 在 ③ 已做，故「决定不阻塞」这条必须撤销它，
 而那正是既有 ⑤（`void(ticket)` + `rise`）在做的事；`Blocked` 只在 push 那一支被写 ⇒「容器 ⇔ 状态」
 不出现破口。
+
+### §C3.8 已定根因并修复（1 行合约修正）
+
+根因（`kernel/src/memory/allocator/block.rs:352-355`）：`impl Allocator for BlockAllocator::allocate` 返回
+`NonNull::slice_from_raw_parts(addr, 1usize << power)`——**交付长度报的是整块 size class**，而非请求的
+`layout.size()`。而 `core::alloc::Allocator::allocate_zeroed` 的默认实现按**返回切片的 len** 清零
+（`write_bytes(0, ptr.len())`）⇒ 任何零化分配都把零写进**请求区之外的 slack**，而 fence 的 slack canary
+恰住在 `addr + align8(size)`（写 `fence/ledger.rs:87-94`、读 `:252`）⇒ canary 归零 ⇒ `unmark` 时报
+`CanaryBroken` ⇒ `report()` ⇒ panic ⇒ audit 档**起不了 shell**。
+
+§C3.8 原本的三个候选方向**被逐一排除**：探针显示「分配一返回 canary 就已经是 0x0」⇒ 清零在分配**内部**；
+同页另一块同 size class 的 canary 完好；整块 64B 全零而页仍 tally-owned / banker-held、页内非零字
+394/512 ⇒ 严格本块范围。boot 第一枪是启动期 `envcall/mail.rs:134` 的 `alloc::vec![0u8; max]`
+（`REFER_MTU = 0x29` → 0x40 块，canary 槽 +0x30）。
+
+**修法（1 行 + 注释）**：`1usize << power` → `layout.size()`。理由：`NonNull<[u8]>` 的 len 是「交付给调用方
+的字节数」这条合约的载体；请求区外的 slack 属分配器内部（canary 住那儿），不能报成交付物（frame 侧本来
+就只报 `max(size, PAGE_SIZE)`）。**没有关或放宽任何 canary / ledger / banker 检查**；不动 ABI、不动锁序。
+
+**复验（本人独立跑）**：默认档 3/3；audit 档 `CanaryBroken` **归零**、9 步全过，控制台里
+`sleep 300ms`/`sleep 700ms`/两次 `woke`、`hole: wait-seal sealed=1 wake=seal`、
+`[audit] sites 34 live 0 tomb 34 orphan 0 waiters 0` 全部出现。默认档看不见的原因：canary / ledger /
+banker 全在 `cfg(feature = "audit")` 下。
+
+**副作用（待改）**：`EXAMINE_FEATURES=audit` 配默认 repeat 会「按构造」挂掉默认轮——门只构建一次 ELF
+（带 audit），而默认轮判据含「默认档不该有 audit 输出」（audit ELF 每次关机都打 `[audit] sites`）⇒ 验默认档
+必须单独跑不带 feature 的门。这是门的设计瑕疵：应当**按档分别构建**，或把 audit 轮独立成一档。
+
+### 关机审计第二条违规：已收缩到一个因（属 A2 线，未修）
+
+`task lifecycle leak at shutdown: 19 frames, 9 blocks` + `table frames 150 != kernel-walk count 141` 同源：
+**一个 state 已 `Reaped` 却仍有 3 个 `Arc<Task>` 强引用的任务**（id 5、`u-thread`、space asid 4；reap 前
+strong 4、bury 后 3，其余任务 bury 后恒为 1）⇒ Task→TaskIdent→Team→Space 整条链都不 drop ⇒
+`Space::drop` 里的 `fence::retire(asid 4)` 不跑 ⇒ 三类账同时留下（19 frames = `frame.classes[Task]`；
+9 blocks = 6–7 条 `Arc<Task>` 0x88 + 1 条 `Arc<TaskIdent>` 0x80 + 2 条 asid 4 的 UserHeap 0x1000；
+150 vs 141 = `frame.classes[Table]` 对内核根 walk，差 9 页是该任务空间页表）。多出的强引用**无活主人**
+（running 槽 / starved / by_id / Team.held / 站点队列 / HUSKS / 票根逐项排除）⇒ **泄漏的克隆**，正是
+`wait/holder.rs` 注释预言的形态。
+
+**与 A2 同源，故并入 A2、不单独打补丁**：这条账的根就是 A2 正在定的「挂起任务的强持有者只能是它所在的
+站点队列 / 键寿命＝资源寿命」。下一步：给 room 线的 `Arc<Task>` 取用点加计数探针（`running_task()` 约 20 处、
+`lookup_task_by_id()` 的 Join/Hatch/doom），抓哪一次 +1 不回落；优先怀疑「跨挂起持有」（`block()` 里
+`Handoff::Switch` 前的临时强引用、`join`/`wipe`/`redeem`、`quit`/`bury`、`doom::suspend`）。
+
+**旁枝（另案，未处理）**：关机屏障不挡「败者核继续跑任务」——慢探针期间 hart 1 报
+`user page fault without running task`（`trap.rs:228`）而 panic。
