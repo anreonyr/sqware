@@ -2557,3 +2557,75 @@ per-page 那 1 byte 从"配额分类"变成**对象身份**之后，「在不在
   理由是"独立验证"。**裁决点从三条收成一条**。
 - **(ii) 接受融合档为唯一验收构造**：现在只剩"要不要真的只留融合档 + 产品档两档"
   （audit 轮作为"无断言但有记账"的中间档是否还值得单独跑）。
+
+### 10.18 删 `banker`（用户裁决）—— 帧侧只剩一份账，两半护栏同档第一次真的咬到东西
+
+§10.17 之后残题只剩一条：`banker` 留作独立第二账，还是删。裁决是**删**。
+
+#### 删了什么、覆盖去哪了
+
+`banker`（110 行无锁原子位图，free 区每页 1 bit）回答的是两件事，删后各有接位者——
+**都在 `frame::pagemeta` 这一份真相上**：
+
+| banker 的检查 | 接位 | 位置 |
+|---|---|---|
+| `debit`：取出已 held 页（双取出） | `checker::check_frame_free`（弹链出的帧在 pagemeta 里必须 free） | `frame::pop_link` |
+| `credit`：存入陌生页（双释放） | **新** `checker::check_frame_held`（释放的帧在 pagemeta 里必须 held） | `frame::deallocate` |
+| `held_count()`（③ 用） | `statistics::view_frame().occupied`（同一量，一份账） | `audit.rs` |
+| `is_held(pa)`（② 与账本落页核验） | **新** `frame::is_held(pa)`（pagemeta 读侧，取 Frame 锁） | `frame.rs` |
+| `banker held == frame.occupied`（⑤ 交叉核对） | **删除**——那是两份账记同一件事；一份账无所谓"交叉" | — |
+
+删掉的是 **105 行文件** + 一处 `init` + 两条检查；fence 目录 1838 → 1733 行。
+
+#### 门分两档：O(1) 进 audit 档，O(链长) 只留 debug 档
+
+删 banker **不能**只删了事：audit 档（release）里 `checker` 的函数体原本整段 `debug-gated`
+⇒ 不补的话"每次取还的核对"会**从有变没**（覆盖率不升反降）。第一版把 `checker` 的检查
+**整片**扩到 `any(debug_assertions, feature = "audit")`，实测踩坑：`check_not_in_chain` /
+`check_in_chain` 是 **O(链长)** 遍历，而 `walk_chain` 的 `1<<14` "成环"上限是按**块链**
+长度定的——帧链可以更长 ⇒ audit 档把合法的长链假报成环并当场 panic（控制台 58 MB 刷屏）。
+
+于是按**代价**分档：
+
+| 检查 | 代价 | 档 |
+|---|---|---|
+| `check_dram_addr` / `check_bounds` / `check_frame_free` / `check_frame_held` | O(1) / O(order) | debug **与** audit |
+| `check_not_in_chain` / `check_in_chain`（+ `walk_chain`/`dump_chain`）/ `log_*` | O(链长) / 纯观测 | 只 debug |
+
+**融合档（debug + audit）是这个划分成立的前提**：链式遍历在那里照样跑（§10.17）。
+
+#### 两条新检查当场咬到的三处真问题（都是本轮自己的）
+
+1. **`poison()` 的派生漏了 `Plain`**：`Plain` 的 `side()` 是 `None`，而 `poison` 写成
+   `side == Ledger ∧ keys == Addr` ⇒ 未标注的**内核堆**块被判成"非内核堆" ⇒ boot 三源核对
+   假报 `user-heap record VA on non-held page`。修法：`keys == Addr ∧ side != Frame`
+   （账本里未标注的记录恒是内核堆块——用户堆一律标 `UserHeap`）。
+2. **用户堆记录本来就不该问帧侧**：它的键是 `(asid, 页索引)`，不是地址。旧代码在这里问
+   `banker`，那会撞上 `banker.idx` 的范围断言——只因为关机前用户堆账已被 `retire` 清空，
+   那个分支**从未被走到**（化石分支）。种类分开后这里不再假装能查。
+3. **`held()` 的"对齐命中 ≠ 包含"**：按 order 从大到小找块首时，`index & !(2^power-1)`
+   命中一个块基址**不等于**那个块包含该页（同址可能站着另一个 order 的块）⇒ index 5004
+   撞上"从 0 起的 4096 页空闲块" ⇒ 把合法释放报成 `freeing non-held frame`。修法：用表项
+   自带的 power 复核覆盖关系。
+
+#### 融合档咬到的第四处：一条**新锁序边**（本轮最有价值的一条）
+
+删掉 banker 之后 `audit()` 的账本核验改成 `frame::is_held`（**取 Frame 锁=L6**），而它是在
+`LEDGER.for_each`（**Ledger 锁=L8**）的闭包里调的 ⇒ **持高取低** ⇒ `lock/depend.rs` 的
+`lock-order level violation` ⇒ `report()` ⇒ panic ⇒ 其后的报错现场把控制台刷成一片
+`trap stack overflow`（首次跑到的现象是"第一发用户缺页落在无 running 任务的核上"，
+那是 panic 级联，不是独立缺陷——修完即消失）。
+
+**这条边只有融合档看得见**：audit 档是 release（lockdep 是 `debug_assertions` 门控）⇒
+装作没看见。这正是 §10.17 把两半合成一档的**直接证据**。修法：锁内只把地址抄进**预先
+分配好**的缓冲（锁内零分配纪律照旧），放锁后再问帧分配器。
+
+#### 判据
+
+| | 值 |
+|---|---|
+| examine | **5/5**（默认 3/3 + audit 轮 PASS + 融合 harden 轮 PASS 无 lockdep） |
+| 行为零变化 | 默认档三轮归一化 md5 = `183133960fd82a1ff0f4a4c3f8863355`（A2 基线，逐字节不变） |
+| 串普查 | `debit on already-held page` 三档**全 0**（banker 的报文体随文件一起消失）；audit 档现在带 ledger 的 `unmark: no record` + checker 的两条（`allocated non-free frame` / `freeing non-held frame`）；融合档再加 `lock-order level violation` |
+| 反向验证 | 上面第 3 条即是：把 `held()` 写成错的（对齐命中就当包含）⇒ `freeing non-held frame` 当场报 ⇒ 修好即绿 |
+| 警告 | 三档与基线一致（默认 `cargo check` 7 / audit 1 / harden 7）。**附记**：默认 **release** 档另有 10 条死码警告（`health` / `view_*` 在 `debug_assertions` 关时不可达）——§9.0 那句"两档 0 dead-code warning"是 **dev（`cargo check`）口径**下的结论，release 口径从来不成立（实测：release 17 条，调用点与 HEAD 逐字相同 ⇒ 非本轮引入）。
