@@ -1469,3 +1469,29 @@ stdin」的推断**作废**（那是把 `-nographic` 的 monitor 复用与投递
 （req / hole / clock / sleep 各出现过），而**未改动的干净基线同一道门也只有 5/6**、签名完全相同
 ⇒ 与本轮无关。正面等价证据：基线 PASS 轮与改后 PASS 轮的全量控制台只差两行
 （`free 0x8029…` 映像大 ~2 KB 导致空闲区起点挪一页、以及挂钟相关的 `clock` 值）。
+
+### runner 瘦身：判定收归一处
+
+`scripts/runner.nu` 245 → **177** 行（注释 91→62、非注释 136→100）。runner 的职责此刻只剩两条：
+**cargo 集成点** + 交互式跑的**终端流与证据归档**；判据不再有第二份。
+
+- **删**：`def verdict`（40 行，第二份判据）、`QEMU_EXPECT`（零消费者）、`const MARK_HALT`/`MARK_PANIC`、
+  `main` 里的**二次构建**（建的是 debug、跑的是 release ELF，实测不影响被跑内核）、FAIL 分支与 `exit 1`。
+  删后 `QEMU_FEATURES`/`QEMU_SEMI` 只剩「给 qemu 加 `-semihosting`」一个含义。
+- **改为一行观察**（信息，不是判据）：`观察：qemu 退出码 N · <正常自退 | 检出内核 panic | 被 host
+  超时杀 | 非零退出>`；**任何情况都不 `exit 1`**，`cargo run` 的退出码不再因内核行为而变。
+- **证据策略原样保住**：导出恒归档；捕获只在「退出码 0 且无 panic」时才删；起跑前残留 cap 先归档不删。
+- **采纳的两处判断**：① 观察行加第四档「非零退出」——否则 qemu 非 0 自退会被标成「正常自退」= 假话；
+  ② **panic 先于 124**——panic 走 `halt_loop()` 兜底自旋必被超时杀，根因是 panic 而非超时。
+- 头部四段（导出模型 / 判定 / 证据策略 / 约定）压成两行指向本节；四条 **nu 语义地雷**（外部命令非零
+  退出当场中止脚本、`do -i` 清掉退出码、`<` 不支持、`o+e>|` 合并 stderr）留在脚本里。
+- **记一个静默失效的风险**：panic 现在只认控制台那行 `[panic] at`（导出里的 `"halt":"panic"` 不再被看，
+  因导出需 semihosting）。**将来若内核不再打这一行，panic 检测会无声失效**——改内核 panic 输出时
+  必须同时改这里。另：`open $cap --raw` 遇非法 UTF-8 会报错，与旧版同等暴露，未改。
+- 顺带修了旧注释的自相矛盾处（写 `sleep=off` 而实参是 `auto,sleep=on`，只改注释）；`.cargo/config.toml`
+  注释里的旧名 `scripts/qemu-runner.nu` 同步改为 `scripts/runner.nu`（该文件仅此一行改动）。
+- **未动**：runner 仍带 `-icount auto,sleep=on`（为「同 seed 可复现」）⇒ 交互式跑仍会吃到与 icount
+  相关的那条偶发失步（约 1/5）；验收门已去掉 icount，故门不受影响。要不要给 runner 也换掉，是独立裁决。
+- **验收（cargo 层，本轮实跑）**：正常轮 → `观察：qemu 退出码 0 · 正常自退`、cargo rc=0、归档目录空；
+  超时轮（`QEMU_TIMEOUT=6`）→ `观察：… 124 · 被 host 超时杀`、捕获归档为 `console-*.log`、**rc 仍是 0**。
+  残留风险（未验）：真实内核 panic 路径（只以 stub qemu 验过分支）。
