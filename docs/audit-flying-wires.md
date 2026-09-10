@@ -1047,14 +1047,16 @@ alloc_site        → 删除（改用 frame::walk）
 | **阶段 5** | 主线 C/D 的裁决项：`fence` 终点、`by_id` 合一、`health` 门控、`lock` 层级重编 | 中 | audit 构建 + 默认构建双跑 |
 | **阶段 6** | 文档回写：`ipc.md` §13 取代横幅、`ipc.md:951` 指向 supervisor §8、锁层级规范、ABI 全表（含 `ControlCall`）、harness 补断言与 `.cap` 归档 | 低 | 四份文档路径/符号逐条核过 |
 
-**e2e 基线命令**（每阶段跑）：
+**e2e 基线命令**（每阶段跑；**已换成脚本门，见 §9.3**）：
 
 ```bash
-( sleep 8; printf 'spawn\n'; sleep 3; printf 'dir\n'; sleep 2; printf 'req\n';
-  sleep 2; printf 'hole\n'; sleep 2; printf 'clock\n'; sleep 2; printf 'exit\n' ) \
-  | QEMU_TIMEOUT=60 cargo run --release
+scripts/e2e.sh          # 自退 + 无 panic + 九个 marker，连跑 3 次要求 3/3
 cargo fmt --check
 ```
+
+> 旧写法 `( sleep 8; printf 'spawn\n'; … ) | QEMU_TIMEOUT=60 cargo run --release` 已废：
+> 它靠人眼比对 marker，超时被杀与正常结束在脚本层面同形，且**没有一条命令会触发 `redeem`**。
+> 历史基线只到 `clock`，缺 `sleep 300` 探针与 `badslot`。
 
 ---
 
@@ -1256,7 +1258,7 @@ room/
 │   ├── mod.rs                        锁序契约 + rip 扇出
 │   ├── handoff.rs                    Handoff<T>
 │   ├── wait/{mod,site,holder}.rs     两原语 + 站点表（唯一容器）+ 票根
-│   ├── husk.rs                       HUSKS / quit / reap / bury / hook
+│   ├── reap.rs                       HUSKS / quit / reap / bury / hook〔计划名 husk.rs〕
 │   └── doom.rs                       suspend / cull / doom / doomed
 └── scheduler/                        〔本刀不动；core.rs 的 §7.4 拆分另刀〕
 ```
@@ -1275,7 +1277,7 @@ room/
 | 4 | `sites` 合一（2a）；`wait`/`wake`/`wipe`/`redeem` 立起（2b）；`Handoff<T>` + `rise`（3b） | ✅ |
 | 4a | 冻结表余下的正名：`quit` / `reap` / `bury` / `hook` / `seat` / `shed` | ✅ `c7a8d9d` |
 | 5a | 拆出 `messenger/{reap,doom}.rs`（纯移动，外部引用不改，`pub(crate) use` 重导出） | ✅ `f1fb458` |
-| 5b | 再拆 `messenger/{handoff.rs, wait/{mod,site,holder}.rs}` | 待做 |
+| 5b | 再拆 `messenger/{handoff.rs, wait/{mod,site,holder}.rs}` | ❌ **已回退**，待重做（失败现象与下述「控制台输入会丢」同形，疑非 5b 引入，见下节） |
 
 ### 与 §A1 的差异（记账）
 
@@ -1291,11 +1293,103 @@ room/
 原七条 e2e 命令（spawn / dir / req / hole / clock / badslot / exit）**没有一条**会触发
 `redeem`（到点兑现）——轮 2b 新写的「票号 → 票根 → 持票人的键 → 站点」路径当时
 **从未被跑过**，7/7 全绿并不覆盖它。基线已加 `sleep 300` 探针（shell 的 `sleep <ms>`
-命令，输出 `sleep 300ms` → `woke`），当前为 **9/9**。
+命令，输出 `sleep 300ms` → `woke`），marker 增到 **9 条**。
+
+但「9/9」本身**不是确定性判据**：同一份产物连跑 3 次实测只有 **1/3** 通过，且失败原因是
+**控制台输入会丢**（见下节），不是被测行为回归。故验收门改由 `scripts/e2e.sh` 承担，
+并明确要求「自退 + 无 panic + 9 marker」且**连跑 3 次 3/3**。
 
 同类的可疑覆盖缺口（未验，留待 harness 补断言那一项）：`wipe` 的两个调用方
 （`clear_loop` 的目标回收、hole 的 `seal`/`drop`）与 `prune` 的空站点删除，都没有
 可观测的断言——它们只在内核内部生效。
+
+### 轮 5b 失败，与验收基线的三处缺陷
+
+**轮 5b 已回退**：拆 `messenger/{handoff.rs, wait/{mod,site,holder}.rs}` 后编译与 audit 档
+均 0 error、零新增 warning，但**运行时在 `spawn` 之后卡死**（提示符出现后任何输入不再产出，
+QEMU 跑满超时被杀）⇒ `git checkout` 回退，`f1fb458`（5a）为当前绿状态。
+
+回退后同一份二进制连跑两次 e2e：**8/9**（缺 `task: all tasks exited, system halted`）
+与 **9/9**。同一命令、同一产物、结果不同 ⇒ **「e2e 9/9」不是确定性判据**——此前多轮都把它
+当作语义变更的唯一裁判，这个用法不成立。
+
+顺着这条线查 harness，实测确认三处缺陷（证据均在 `trace/`）：
+
+1. **panic 判定是一句永不成立的匹配**。`scripts/runner.nu:133` 以
+   `str contains '"kind":"halt"'` 判 panic；而导出的真实形状是**外部标签嵌套**：
+   `{"h":0,"when":29715467,"kind":{"room":{"spawn":{"tid":1}}}}`，停机记录实为
+   `"kind":{"halt":"halt"}` / `"kind":{"halt":"panic"}`。实测：8868 行导出里
+   `"kind":"halt"` 出现 **0** 次；整个 `trace/` 里 `console-*.log` **0** 个
+   ⇒ 该分支从未触发过，panic 现场从未归档。
+2. **唯一证据在下一轮开跑时被删**。`runner.nu:115` 每轮起 QEMU 前清掉全部
+   `sqware-*.cap`，而 cap 只在「判定为 panic」时才 `mv` 成 `console-*.log`（因缺陷 1
+   永不发生）。**故 8/9 那轮的终端输出已被 9/9 那轮删除**——「挂起发生在哪一步」的唯一
+   直接证据是这么丢的，不是没抓到。
+3. **没有停机断言**。pass/fail 靠人眼比对九个 marker；`timeout` 的 124 与正常结束在脚本
+   层面同形。且导出文件只在 semihosting 开启时才存在——`semihosting` **不在** `default`
+   （与 `kernel/Cargo.toml` 注释所述相反，§9.0 已记），默认档连结构化流都没有，判定无从下手。
+
+**处置结果（本轮已落）**：
+
+- 判定不再做子串侥幸：`scripts/runner.nu` 的判据改成三个可观测量 —— **qemu 是否自行退出**
+  （退出码 0）/ **是否被 host 侧 `timeout` 杀**（124）/ **是否 panic**（捕获里的 `[panic] at`）。
+  起跑前不再删上一轮捕获（发现残留即归档为 `…-stale.log`）；**导出恒归档**、捕获只在判定通过
+  时才丢；判定失败 ⇒ 非零退出。
+- 新增 `scripts/e2e.sh`：三轮判据（**自退** + 无 panic + 九个 marker）叠加，**连跑 3 次要求 3/3**，
+  每轮独立目录留档。判据不依赖 semihosting（原因见下条）。
+- 修 harness 时又逮到两处**同类**缺陷（都是「永不成立/永不执行」的检查）：
+  - `nu` 脚本在**外部命令非零退出时当场中止整个脚本**（实测：其后语句、以及调用方其后的
+    语句都不执行）。旧 runner 的归档步骤因此**在每次超时被杀时都不执行**——恰是最需要它的
+    失败路径；`archive` 里两个分支从未真正跑过。
+  - qemu 那行 `terminating on signal 15 … (/usr/bin/timeout)` **走 stderr**，而捕获只接了
+    stdout ⇒ 若照此写判定，就是又一个永不成立的检查（本轮先写错、随即被 `e2e.sh` 的独立
+    grep 抓住，已改为读退出码 + `o+e>|` 合并 stderr）。
+  - 结论性写法（实测过三种）：**裸 `try { ^cmd | tee {…} } catch { }`**——保留终端流、
+    保留真实退出码、脚本继续；`do -i` 会继续执行但把退出码清成 0；不包则当场中止。
+- **结构化导出不能当 e2e 判据**：`semihosting` + `-icount auto` 下，诊断事件流（每个 room
+  park/wake/envcall 都写一条）经 ebreak 落宿主文件，实测 guest 虚拟时间被拖慢约 **650×**
+  （60 s 墙钟只推进 **92 ms**、写了 **5245** 条事件），e2e 在超时前走不完。故停机判据取
+  「自行退出（code 0）」——停机走 srst，qemu 自己退出正是这一档；被超时杀则必然不是。
+
+### 真正的问题：控制台输入会丢（不是挂起）
+
+回退 5b 后连跑两次得 8/9 与 9/9，当时记为「关机路径偶发挂起」。**这个判断是错的**，本轮按新判据
+连跑 3 次后查清了：失败那两轮的**逐键回显停在半路**——run1 最后一条回显是 `sq > badslot`
+（此后输入的 `exit` 从未回显），run3 最后一条是 `sq > req`（此后的 `hole` 从未回显）。
+
+即：**guest 活着**（每轮都在正常打提示符与结果），只是**之后的输入不再进入行编辑器**。所以
+`task: all tasks exited` 缺失不是「屏障没释放」，而是 `exit` 根本没被 shell 收到；据此写下的
+`conductor::halt` / `HALT_ARRIVED` 猜测一并作废。
+
+复现率（同一份产物、同一命令、连跑 3 次）：**1/3 通过**，且丢输入的位置不固定（一次在 `hole`
+前、一次在 `exit` 前）。这也解释了 5b 那次失败——它在 `spawn` 之后停住，与「输入丢失」同形，
+**5b 的失败大概率不是 5b 引入的**，回退建立在误判之上，待本轮排查出结论后重新评估。
+
+**A/B 排查结果（否掉了上面那个判断）**：从 2a 之前的 `d9ca7a5` 向 HEAD 逐点连跑 3 次 ——
+`d9ca7a5`（1b）**3/3**、`1eb7ca1`（2a）**3/3**、`fd15ffd`（2b）**3/3**、`c250398`（3b）**3/3**，
+四点全绿；随后在**另一批**里测 HEAD 却是 **4/6**——那两次失败连**第一条**命令都没生效：
+guest 已经到了提示符（`SQware shell` / `type 'help'` / `sq > ` 都在），回显却只有初始那一条，
+8–24 s 之间发出的八条命令**一个字节都没进去**。
+
+差别不在提交而在**批次**，机制是：qemu 跑在 `-icount auto,sleep=on` 下——虚拟时钟跟着墙钟走，
+但 guest 的**工作量**推进速度取决于宿主负载；而 e2e 的输入日程按墙钟排（`sleep 8; spawn;
+sleep 3; dir; …`）。宿主一忙，命令就在 guest 还没走到那一步时到达，被 UART 丢（FIFO 16 字节，
+早期输入不排队）。**所以 1/3、4/6 与「输入丢失」都是门自身的不可靠，不是内核回归**；同理，
+5b 那次失败（现象同形）不该算在 5b 头上。
+
+**这条修得不完整（记账）**：要根治必须**按 guest 输出同步**发命令（expect 式）。本轮试了两版
+都没成：管道下 nu/qemu 的输出要等进程结束才落盘（实测日志停在构建输出的字节数上不动），
+`script -qfc` 走 pty 也没拿到 guest 输出。故门暂时仍是「按墙钟发 + 事后按 marker 判定」——
+它能**判定**（本轮抓到的都有据可查），但**输入本身仍会偶发丢**，通过率随宿主负载漂。
+下一步：要么给 runner 一条不退缓冲的捕获通路（guest 输出边收边落盘），要么把输入改由 pty
+原始模式驱动。在此之前的「3/3」只算**弱证据**：失败要按现场分辨是丢输入还是真回归。
+
+另修 runner 自身一处：FAIL 分支原写作 `$"FAIL(seed …)"`，`(` 紧跟文本让 nu 把 `FAIL(...)`
+当命令调用 ⇒ **失败路径自己崩掉、诊断丢失**（语义仍是退码 1）。改形后实测 FAIL 会正常打印
+判定与 qemu 退出码。
+
+- **5b 重来的纪律**：纯移动的判据是「导出的名字在两边指向同一样东西」；一旦为搬迁而放宽
+  `pub(crate)` 或改动 import 形状，就必须按语义变更来验（先 3× e2e，再谈记账）。
 
 ### 遗留的一处历史记录
 
