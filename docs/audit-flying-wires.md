@@ -2135,3 +2135,87 @@ audit 轮判据：`live == 0`、`orphan == 0`、**`dead == 0`**、`waiters == 0`
 | 正向对照 | harden ELF 含断言串 1 次 / release 0 次（断言关掉后 harden 也 0）|
 | 反向对照 | `wipe` 留墓碑 ⇒ `dead 17` ⇒ 判红；`take_beacon` 去掉 prune ⇒ `orphan 2`（④ 已记）|
 | `cargo fmt` / `cargo check` | 干净 / warnings 13 |
+
+### 10.12 泄漏线定位：任务退场把栈上的强引用一起丢了（机制已实证，修法待裁）
+
+§9.3 记的那条账（`task lifecycle leak at shutdown: 29 frames, 15 blocks` + `table frames` 同源）
+本轮**定位到机制**，并且让它有了**说出名字的判据**。
+
+#### 先纠正一条我自己的误读
+
+上一条记账说"每个 spawn 任务 +2 帧 +2 块"。实测否掉了它：`cascade=0` 的一次跑给出
+`39 frames, 25 blocks`，而名册里**只有一个**任务活着（id=5 `u-thread`, `strong=3`, `Reaped`）。
+⇒ 不是"每任务漏一对"，而是**这一个任务钉住了它整个 Team/Space**，于是那个域此后分配过的每一页
+都留在类别账上——**账目随该域的活动量涨**，与 spawn 次数只是相关而非因果。这也是为什么不同负载
+下同一个门的数字会不一样（29/15 与 39/25 是同一件事的两副面孔）。
+
+#### 一条条排除：容器全空
+
+在 `scheduler::rip` 末尾（此时就绪队列 / 站点 / 躯壳 / 槽都已清）插探针，量出：
+
+```
+[probe] 名册 8 条 / 仍活着 1 条 / 强计数合计 3        ← 其中 1 份是探针自己的 upgrade
+[probe] hart 0..3 running = none                     ← running 槽空（rip 有意不清，但确实是空的）
+[probe] leak team.held = None                        ← 未放行容器空
+```
+
+即：`Arc<Task>` 能**存住**的地方（`running` / `starved` / `HUSKS` / 站点队列 / `Team.held`）
+**全部为空**，却仍有 2 份强引用 —— 与 §9.3 早先"多出的强引用无活主人"一致，但这次找到了主人。
+
+#### 工具：**逐页先问映射、再问账本**的指针扫描
+
+`Arc<Task>` 克隆存的指针 = `Arc::as_ptr`（数据指针）；`Weak` 存的是 ArcInner 基址 ⇒
+在内存里扫这个字就**只命中强克隆**。两个坑都踩过并记下：
+
+1. **直接扫 DRAM 会吃 LoadPageFault**：恒等映射不覆盖整个 DRAM（实测故障地址 `0x87c29000`，
+   而且慢探针还会把 §9.3 那条旁枝（败者核继续跑任务）叫起来 ⇒ panic）。修法：逐页
+   `team::kernel().space.translate(VirtualAddr::from_raw(pa))` **先问映射**，通过才读。
+2. **账本按块登记、不含帧**：命中地址过 `fence::ledger::LEDGER.for_each` 查"驻在哪个块、
+   谁分配的"；返回 `block=0x0` 即说明它在**帧**（栈 / trap 帧）里而不是堆块里。
+
+实测（同一趟门）：
+
+```
+[probe] leak id=5 strong=3 arc_ptr=0x87c6ff10
+[probe]   stack va=0x21000 size=20480 → pa=None      ← 它的栈**已经释放**（translate 返回 None）
+[probe]   frame pa=0x87c6a000
+[probe]   holder @ 0x87c39700 block=0x0（帧内）
+[probe]   holder @ 0x87c49530 block=0x0（帧内）
+```
+
+两处持有者都在**帧**里、且都不是它自己的帧或栈 ⇒ 是**别的任务**的栈页。
+
+#### 机制（结论）
+
+任务退场是"**切走**"而不是"展开栈"：`quit` → `swap` → 装下一帧 → `restore`，被切走那份上下文
+（含 **callee-saved 寄存器与调用者栈帧**）**永不回退**。于是：
+
+> 切走那一刻栈上**还活着**的 `Arc<Task>` 局部量，随它的栈一起被释放（`bury` 归还 StackWindow /
+> FrameWindow），**引用计数永不回落** ⇒ 被指向的任务被永久钉住 ⇒ 它的 Team/Space 不 drop ⇒
+> 该域的帧与页全部留在类别账上（`task lifecycle leak`），`table frames != kernel-walk` 同源。
+
+这也解释了 §9.3 记的"reap 前 strong 4、bury 后 3、其余任务 bury 后恒为 1"：多出来的那几份就是
+**别的核/别的任务切走时留在栈上的**。u-thread 被 `running_task()` 交出过 **14298 次**（临时探针
+实测），只要其中任意两次发生在"持引用时切走"的路径上，它就再也走不掉。
+
+**这是一条纪律缺口，不是一个孤立的 bug**：`Task::exclusive` 的注记管的是"临时持有者不解引用
+字段"（别名安全），**没人管"能不能跨切换持有"**（生命周期安全）。
+
+#### 本轮落地：判据先有名字
+
+新增 audit 观测量 `[audit] roster N alive M`（`Weak::strong_count()` 数活口——**只读、不升强
+引用**，观测不改被观测的事实），门里立判据 **`alive == 0`**。实测 `roster 8 alive 1` ⇒ audit 轮的
+原因串现在直接写出 **`名册活任务[1]`**，不再只有"29 frames, 15 blocks"那种只说现象的数。
+
+#### 修法（待裁，三条）
+
+1. **纪律 + 逐点收口（推荐）**：把"**跨切换不得持强引用**"写成显式纪律，并逐点收口可能切换的
+   路径（envcall 的 `running_task()` 克隆在 `park`/`wait`/`join`/`quit` 之前必须 drop；`block`
+   之前的 `Handoff` 计算不得残留克隆）。**可验**：`alive == 0` 就是判据，且上面的扫描工具可复查。
+2. **退场路径显式收尾**：让 `quit` 走一条"先把可控引用放掉、再切"的窄尾（`#[inline(never)]` 的
+   极小函数），把"切走时栈上没有活克隆"变成结构而非纪律。代价：编译器仍可能把克隆留在
+   callee-saved 寄存器里，纪律无法完全消掉 ⇒ 需要与 1 合用。
+3. **躯壳回收时"擦栈"**：`bury` 归还栈帧前把栈页清零 —— **不解决**问题（清零不递减计数），
+   只是把证据擦掉。**否**。
+
+工具代码（约 40 行）本轮用完已撤出树（探针纪律：不留半成品），需要时按上面两步骤重建即可。
