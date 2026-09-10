@@ -20,7 +20,7 @@
 // 锁纪律：inner = level 1 每核一把；Team.tasks(3) 与 Space.inner(2) 禁止嵌套
 // ——锁内只做纯 Vec 操作，绝不调 space 方法。task "离开 running" 的过渡（park /
 // wait / reap）借 disown_and_install_next 跨边界原语交给 messenger 处理，本核
-// 只负责 settled 槽位（Live=next 或 Last）；唤醒（drain_expired）也在 messenger。
+// 只负责 settled 槽位（Live=next 或 Last）；唤醒（redeem / wipe）也在 messenger。
 //
 // 装槽（mount）：唯一装 running 的方法，自取锁，空槽由 Option::replace 返回
 // 旧值断言（绝不覆盖在跑任务）。装槽写 info 身份槽（TaskIdent 载荷）；降级
@@ -28,7 +28,7 @@
 //
 // 可见性：`pub(super)` = 供本文件夹各适配面借用的核心表面（入口面转发点）；
 // `pub` = 供 scheduler 之外消费（ident —— 身份槽读取）。wait() 是 WFI 入口
-// 借 messenger::drain_expired 处理 timer 到期；clear_loop 不归本核管。
+// 借 messenger::redeem 处理 timer 到期；clear_loop 不归本核管。
 
 use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
@@ -306,7 +306,7 @@ impl Scheduler {
     /// demote 槽位。返回 (取走的 Arc<Task>, Optional 下一帧 PA)。
     ///
     /// 锁纪律：内锁取 running / 弹 starved 后立即放；mount 重新取内锁。
-    /// messenger 在两次取锁之间做自己的簿记（parked / sites / times / reaped
+    /// messenger 在两次取锁之间做自己的簿记（sites / holders / husks
     /// 各自 L3 锁，绝不持 L3 取 L1）。
     pub(crate) fn disown_and_install_next(&self) -> (Arc<Task>, Option<usize>) {
         let mut i = self.inner.lock();
@@ -367,7 +367,7 @@ impl Scheduler {
 
     // 注：park / wait / reap 三个 Scheduler 方法已移至 [`crate::work::room::messenger`]，
     // 任务"离开 running 槽"的所有过渡归 messenger 管理——它们借 Scheduler::disown_and_install_next
-    // 跨边界原语完成槽位 settled，再在 messenger 域内做 parked / sites / reaped 簿记。
+    // 跨边界原语完成槽位 settled，再在 messenger 域内做 sites / husks 簿记。
 }
 
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
@@ -386,14 +386,14 @@ pub(super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 ///   3. audit::check_baseline        ← 帧/block 基线核对
 ///
 /// 注：本函数只清 scheduler 持有的 Arc<Task> + info 槽。messenger 簿记
-/// （parked / sites / reaped）由 [`messenger::rip`] 清——本函数连调之。
+/// （sites / holders / husks）由 [`messenger::rip`] 清——本函数连调之。
 pub(crate) fn rip() {
     // 清各 hart 内核的 starved 队列（running 不动——halt 时本 hart 不再调度）
     let Some(cs) = SCHEDULERS.get() else { return };
     for c in cs.iter() {
         c.inner.lock().starved.clear();
     }
-    // 清 messenger 簿记（parked / sites / times / reaped）
+    // 清 messenger 簿记（sites / holders / husks）
     messenger::rip();
     // 清 info 槽（原 shutdown_slots 职责）
     for c in cs.iter() {
@@ -488,7 +488,7 @@ pub(crate) fn current() -> &'static Scheduler {
     unsafe { &*(crate::machine::scheduler() as *const Scheduler) }
 }
 
-// 注：parked / sites / wait_times / husks 四张表与 WakeKey / Site / Waiter
+// 注：sites / holders / husks 三张表与 WakeKey / Site / Ticket / Waiter
 // 类型已全部移至 [`crate::work::room::messenger`]——"任务不在 running 槽"的状态机归
 // messenger 所有。详见 messenger 模块头注。
 
@@ -547,7 +547,7 @@ pub(super) fn wait() -> Option<Arc<Task>> {
     }
     loop {
         // 每次决定重新睡下前，先复审全退出：halt 的 yell 会把本核从 WFI 拉起。
-        // 若这里不归队 halt，而 drain_expired 又无可唤醒任务、steal 也无活，
+        // 若这里不归队 halt，而 redeem 又无可唤醒任务、steal 也无活，
         // 就会清 SSIP 后回睡，停机屏障将永远等不到本核的 HALT_ARRIVED。
         if conductor::done() {
             // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
@@ -567,8 +567,8 @@ pub(super) fn wait() -> Option<Arc<Task>> {
         unsafe {
             core::arch::asm!("wfi");
         }
-        // timer 到期分派由 messenger 处理（sites + parked 两路）
-        if messenger::drain_expired() {
+        // timer 到期分派由 messenger 处理（票根 → 键 → 站点，一路）
+        if messenger::redeem() {
             break;
         }
         // 假醒：也可能被 yell 的 IPI 唤来 steal（有活入队）——先复查取活，
@@ -588,11 +588,10 @@ pub(super) fn wait() -> Option<Arc<Task>> {
     None
 }
 
-// 注：drain_expired / wake_by_event / clear_loop 三个函数已移至
-// [`crate::work::room::messenger`]：
-// - drain_expired：按 timer 到期分派到 sites / parked
-// - wake_by_event：按事件键唤醒
-// - clear_loop：排空 reaped 队列 + 清理钩子
+// 注：redeem / wake / wipe / clear_loop 已移至 [`crate::work::room::messenger`]：
+// - redeem：按票认领到期登记（一段，不区分 park / wait / join）
+// - wake / wipe：按唤醒源叫醒一个 / 放行全部
+// - clear_loop：排空躯壳队列 + 清理钩子
 
 // ── 核心：当前任务身份（槽）──
 

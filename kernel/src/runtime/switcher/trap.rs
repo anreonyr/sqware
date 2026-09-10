@@ -12,7 +12,7 @@ use crate::putln;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
-use crate::work::room::messenger::drain_expired;
+use crate::work::room::messenger::redeem;
 use crate::work::room::scheduler::core::{Current, ident};
 use crate::work::room::scheduler::trap::run;
 use crate::{machine, put};
@@ -160,7 +160,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             timer::tick();
             // 重武装：运行任务抢占量子。
             timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
-            drain_expired();
+            redeem();
             if from_task {
                 // 任务（U 态或 S 态域任务）被抢占：现场已在任务帧 → 直接切换
                 run() as *mut TrapContext

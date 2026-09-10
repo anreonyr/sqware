@@ -1,17 +1,21 @@
 // 事件队列（messenger）— 任务不在 running 槽时的状态机。
 //
-// 任务离开 running 槽有三种过渡：park（按 deadline 挂起）、wait（按键等信号）、
-// reap（退出）。三种共用 [`scheduler::core::Scheduler::disown_and_install_next`]
-// 跨边界原语——先借 scheduler 把 running 卸下（槽位 settled：装下一 starved 或
-// 降级 Last），再挂到本域的簿记/计时器上。恢复路径分两类：wake_by_event（信号到）
-// 和 drain_expired（timer 到期），都把任务转 Starved 推回 scheduler 本核 + kick。
+// 任务离开 running 槽有三种过渡：park（纯睡）、wait（按唤醒源等信号）、reap（退出）。
+// 前两种与「等目标回收」现在共用一条挂起实现 [`block`]——它们只差一个键。
+// 三种都借 [`scheduler::core::Scheduler::disown_and_install_next`] 跨边界原语把
+// running 卸下（槽位 settled：装下一 starved 或降级 Last），再挂进站点表。
+// 恢复路径三条：[`wake`]（信号到，一个）、[`wipe`]（键退役，全部）、
+// [`redeem`]（到点，按票），都把任务转 Starved 推回本核 + kick。
 //
-// 簿记：parked（deadline 句柄 → task）、sites（唤醒源 → 等待位）、times
-// （tock 句柄 → 唤醒源）、husks（Arc<Task> 队列）。全部 L3，3→3 嵌套禁止。
-// 锁序：**L1（调度器）与 L3（本域四表）任何方向都不得嵌套**——持任一 L3 期间
+// 簿记：sites（唤醒源 → 信标 + 等待者队列）、holders（票 → 持票人）、husks
+// （Arc<Task> 队列）。**两张等待表分工**：站点表是挂起任务的唯一容器（谁在等、
+// 等什么）；票根只回答「这一票是谁」（到点时凭票认领）。「等什么」不复制进票根
+// ——从持票人自己那张票上读（`TaskState::Blocked`）。旧版的 parked /
+// wait_times / join_times 三张旁路表因此消失。
+// 锁序：**L1（调度器）与 L3（本域各表）任何方向都不得嵌套**——持任一 L3 期间
 // 不得调用 scheduler 的任何加锁方法，也不得在锁内 drop `Arc<Task>`（drop 链会
-// 取 Space 锁 L2）。各路径的写法统一为「作用域内取、作用域外用」：wait/wake/
-// drain_expired 在块内摘出 Waiter、块外 push 回 scheduler；clear_loop 块内出队、
+// 取 Space 锁 L2）。各路径的写法统一为「作用域内取、作用域外用」：block/wake/
+// wipe/redeem 在块内摘出 Waiter、块外 push 回 scheduler；clear_loop 块内出队、
 // 块外回收；rip 块内 take 整表、块外 drop。
 //
 // 反向耦合清零：dock / ring 的 task_exit 反向耦合走两步拆——step 5 引入 exit
@@ -19,7 +23,7 @@
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
@@ -33,14 +37,55 @@ use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::{current, lookup_task_by_id};
 use crate::work::unit::gate::GateError;
-use crate::work::unit::task::{BlockReason, Task, TaskState};
+use crate::work::unit::task::{Task, TaskState};
 use crate::work::unit::team::Team;
 
-// ── 句柄分配 ──
+// ── 票与票根 ──
 
-/// park / wait (with timeout) 的句柄分配器——messenger 自管；「先入簿、后 tock」
-/// 闭合竞态（堆可见 ⇒ 簿记必在——drain_expired 按句柄摘除绝不会命中空簿记）。
-static HANDLE: AtomicUsize = AtomicUsize::new(0);
+/// 票：一次挂起的唯一标识。单调、不复用。
+///
+/// 到点登记（`timer::tock`）只携带它。凭它可以还原出「谁」——`HOLDERS` 拿着票号
+/// 找持票人；而「等什么」在持票人自己那张票上（`TaskState::Blocked { key, ticket }`）。
+/// 于是「到点了该叫醒谁」不再需要任何旁路表。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Ticket(u64);
+
+impl Ticket {
+    /// 发票。Relaxed 足够：票号只用于相等判定，不承载顺序。
+    fn alloc() -> Ticket {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        Ticket(NEXT.fetch_add(1, Ordering::Relaxed) as u64)
+    }
+
+    /// 到点登记用的裸值。
+    fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+/// 票根：票 → 持票人。**只存 `Weak`**。
+///
+/// 挂起任务的强持有者只能是它所在的站点队列（见模块头的「唯一强持有」）。这里若
+/// 存 `Arc`，任务就有了第二个强持有者：一撞 `Task::exclusive` 的唯一性前提，二让
+/// 陈旧的到点登记把已回收的任务钉住（关机审计会把它报成帧泄漏）。
+fn holders() -> &'static SpinLock<HashMap<Ticket, Weak<Task>>> {
+    static HOLDERS: OnceLock<SpinLock<HashMap<Ticket, Weak<Task>>>> = OnceLock::new();
+    HOLDERS.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
+}
+
+/// 存根。**前置：到点登记尚未发生**——「堆可见 ⇒ 票根必在」，否则到期路径会命中
+/// 一个空的票根。
+fn hold(ticket: Ticket, task: &Arc<Task>) {
+    holders().lock().insert(ticket, Arc::downgrade(task));
+}
+
+/// 作废票根并取回持票人：到期认领与提前作废走同一条路，**幂等**（票号不复用，
+/// 第二次必得 `None`）。顺带消音它的到点——`timer::mute` 对已取走的句柄是 no-op，
+/// 故到期路径重复调用也无害（代价是一次空扫，n = 未到点 tock 数）。
+fn void(ticket: Ticket) -> Option<Arc<Task>> {
+    timer::mute(ticket.raw());
+    holders().lock().remove(&ticket).and_then(|w| w.upgrade())
+}
 
 // ── 类型 ──
 
@@ -61,6 +106,10 @@ pub enum WakeKey {
     Hole { hole: usize, dir: HoleDir },
     /// 目标任务回收（`UnitCall::Join`）。
     Task { id: usize },
+    /// 无人投信——只有期限会响（`RoomCall::Park`）。
+    ///
+    /// 键就是那个睡眠者本人：park 没有信号源，能唤醒它的只有它自己那次到点登记。
+    Alarm { task: usize },
 }
 
 impl WakeKey {
@@ -74,6 +123,7 @@ impl WakeKey {
                 (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir as u64
             }
             WakeKey::Task { id } => (id as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
+            WakeKey::Alarm { task } => (task as u64).wrapping_mul(0xA24B_AED4_963E_E407),
         }
     }
 }
@@ -103,19 +153,14 @@ pub enum Handoff {
     Idle,
 }
 
+/// 等待者：站点队列里的一项。票号即「哪一次挂起」——同一任务先后等同一个键时，
+/// 靠它区分，故陈旧的到点登记不可能偷走后来的那次等待。
 struct Waiter {
     task: Arc<Task>,
-    tock: Option<u64>,
+    ticket: Ticket,
 }
 
 // ── 簿记表（全部 L3） ──
-
-/// deadline-keyed 等待者（park 路径）：句柄 → 任务。条目即任务本身，阻塞原因
-/// （含 wake_at）在任务的 Blocked(Park) 载荷里——映射退化为「句柄 → 唯一 Arc<Task>」。
-fn parked() -> &'static SpinLock<HashMap<u64, Arc<Task>>> {
-    static PARKED: OnceLock<SpinLock<HashMap<u64, Arc<Task>>>> = OnceLock::new();
-    PARKED.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
-}
 
 /// 事件等待表的分片数。每片 = 一把 L3 锁 + 一个 HashMap；wait/wake/drain
 /// 按 [`site_shard`] 纯函数路由到同片，跨片互不阻塞——把单点串行竞争降到
@@ -131,7 +176,7 @@ fn site_shard(key: WakeKey) -> usize {
     ((h >> 32) ^ h) as usize & SITE_SHARDS_MASK
 }
 
-/// 站点表（Level::L3，与 parked 同级；绝不 3→3 嵌套）。**分片版**：每片一把
+/// 站点表（Level::L3，绝不 3→3 嵌套）。**分片版**：每片一把
 /// L3 锁 + HashMap，单一线性化点缩小到一片——wait / wake 跨片并行。
 ///
 /// **一张表装三种唤醒源**：它们的等待者是同一种东西（任务 + 到点句柄），唤醒
@@ -158,13 +203,6 @@ fn sites(key: WakeKey) -> &'static SpinLock<HashMap<WakeKey, Site>> {
     shard_at(site_shard(key))
 }
 
-/// 超时旁路：tock 句柄 → 唤醒源（timer 到期分派用）。任务本体只在站点表注册；
-/// 本表只放键（不含 Arc）——两条唤醒路仍都经站点表锁摘除。
-fn wait_times() -> &'static SpinLock<HashMap<u64, WakeKey>> {
-    static TIMES: OnceLock<SpinLock<HashMap<u64, WakeKey>>> = OnceLock::new();
-    TIMES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
-}
-
 /// 全局躯壳队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
 /// 自己正在用的栈上回收自己；clear_loop  统一回收。
 pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
@@ -172,119 +210,127 @@ pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
 
 /// 待杀集合（doomed）：`kill` 点名他核 Running 任务时记入，目标核 trap 自查
 /// 自退。无主簿记——只存 task_id，不持 `Arc<Task>`（防「杀者撑着被杀者」）。
-/// Level::L3，与 parked/sites 同级。
+/// Level::L3，与站点表同级。
 fn doomed() -> &'static SpinLock<HashSet<usize>> {
     static T: OnceLock<SpinLock<HashSet<usize>>> = OnceLock::new();
     T.get_or_init(|| SpinLock::new_level(Level::L3, HashSet::new()))
 }
 
-/// Join 超时旁路（Level::L3）：tock 句柄 → 目标 tid（只存键，无 Arc）。
-fn join_times() -> &'static SpinLock<HashMap<u64, usize>> {
-    static T: OnceLock<SpinLock<HashMap<u64, usize>>> = OnceLock::new();
-    T.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
-}
+// ── 操作：挂起（用 scheduler::core::Scheduler::disown_and_install_next） ──
 
-// ── 操作：挂起（用 scheduler::core::disown_and_install_next） ──
-
-/// park：Running → Blocked(Park{wake_at})。借 scheduler 取走 running；句柄 +
-/// 入 parked + timer::tock；返回下一帧 PA（若 scheduler 装了下一 starved）。
-pub fn park(duration: Duration) -> Option<usize> {
-    let cond = current();
-    let (mut task, next_pa) = cond.disown_and_install_next();
-
-    let wake_at = clock::now().add(duration).as_ticks();
-    trace::note(EventKind::Room(RoomEvent::Park {
-        tid: task.ident.id,
-        wake_at: wake_at as usize,
-    }));
-    Task::exclusive(&mut task).transform(TaskState::Blocked {
-        reason: BlockReason::Park { wake_at },
-    });
-    // 锁序 HANDLE → parked → timer（防跨锁竞态；1 → 3 顺序、不嵌套）：
-    let handle = HANDLE.fetch_add(1, Ordering::Relaxed) as u64;
-    // debug: 同一任务不得在 parked 簿记中重复登记（两次 park 同一任务 = 唤醒后
-    // 重复入队 → 多容器强持有）。持 parked 锁遍历核对（锁内不做分配）。
-    #[cfg(debug_assertions)]
-    {
-        let p = parked().lock();
-        if p.values().any(|t| Arc::ptr_eq(t, &task)) {
-            panic!(
-                "park: task #{} '{}' already in parked map (double park, handle {handle})",
-                task.ident.id, task.ident.name
-            );
-        }
+/// 挂起的唯一实现：三处入口（`park` / `wait` / `join`）只差一个键。
+///
+/// 时序（两个竞态闭合点）：
+///   ① 信标先探——信号已至 → 不挂起（不碰站点表：缺键即无信标）
+///   ② 离核——借 scheduler 跨边界原语把 running 卸下（槽位 settled）
+///   ③ 登记——发票 → 存票根 → `tock`（**先票根后 tock**：堆可见 ⇒ 票根必在）
+///   ④ 入队——写等待点 + 挂进站点队列；**锁内再查一次信标**
+///   ⑤ 窗口内信号已至 → 撤销登记，按「已唤醒」处理（Starved 入队）
+///
+/// 锁纪律：站点表与票根都是 L3，**绝不互相嵌套**——「作用域内取、作用域外用」。
+fn block(key: WakeKey, dur: Duration) -> Handoff {
+    // ① 信标先探
+    if take_beacon(key) {
+        return Handoff::Resume;
     }
-    parked().lock().insert(handle, task);
-    timer::tock(handle, wake_at);
-
-    next_pa
-}
-
-/// 事件等待：Running → Blocked(Wait)。pend 存在 → 消费即回（不阻塞，无状态
-/// 变更，[`Handoff::Resume`]）。`dur == Duration::MAX` → 永久（无 tock）；否则
-/// 登记超时。
-pub fn wait(key: WakeKey, dur: Duration) -> Handoff {
-    let cond = current();
-
-    // pend 消费路径：信号已至 → 任务不阻塞（续跑）；锁 sites 短暂，锁内不问
-    // 调度器（当前帧是调用方的知识，不是本域的）。
-    {
-        let mut sites = sites(key).lock();
-        let site = sites.entry(key).or_insert_with(Site::new);
-        if site.pend {
-            site.pend = false;
-            return Handoff::Resume;
-        }
+    // ② 离核
+    let (mut task, next_pa) = current().disown_and_install_next();
+    // ③ 登记
+    let ticket = Ticket::alloc();
+    let at = (dur != Duration::MAX).then(|| clock::now().add(dur).as_ticks());
+    if let Some(at) = at {
+        hold(ticket, &task);
+        timer::tock(ticket.raw(), at);
     }
-
-    let (mut task, next_pa) = cond.disown_and_install_next();
-    let (wake_at, tock) = if dur == Duration::MAX {
-        (None, None)
-    } else {
-        let wake_at = clock::now().add(dur).as_ticks();
-        let handle = HANDLE.fetch_add(1, Ordering::Relaxed) as u64;
-        (Some(wake_at), Some(handle))
-    };
     trace::note(EventKind::Room(RoomEvent::Wait {
         tid: task.ident.id,
         // 诊断用折叠值：键成枚举后不再有「人可读的位打包」形态。
         key: key.fold() as usize,
     }));
-    // 入 sites[].waiters]队尾。此处**必须再查 pend**：首段 pend 检查与派单之间
-    // 有窗口（disown_and_install_next 取调度锁 L1，持 sites L3 期间不可取），
-    // wake 可能在此窗口置 pend——若此刻已注册 waiter 而不消费 pend，该 waiter 永
-    // 不被唤醒（pend 只会被"下一次 wait"消费）。闭环：注册入锁后见 pend → 消费、
-    // 撤销本次阻塞（任务已在槽外，回收为 Starved 即可——由 run 再接走）。
-    let mut sites = sites(key).lock();
-    let site = sites.get_mut(&key).expect("site just observed");
-    if site.pend {
-        // 窗口内 wake 已至——本任务按「已唤醒」处理，不阻塞。
-        site.pend = false;
-        drop(sites);
+    // ④ 写等待点 + 入队（锁内查信标）
+    Task::exclusive(&mut task).transform(TaskState::Blocked { key, ticket });
+    let queued = {
+        let mut sites = sites(key).lock();
+        let site = sites.entry(key).or_insert_with(Site::new);
+        let queued = if site.pend {
+            site.pend = false;
+            false
+        } else {
+            site.waiters.push_back(Waiter {
+                task: task.clone(),
+                ticket,
+            });
+            true
+        };
+        // 撤销阻塞那一支没有留下等待者：空壳站点随手删掉。
+        prune(&mut sites, key);
+        queued
+    };
+    // ⑤ 窗口内信标已至：撤销登记，按已唤醒处理
+    if !queued {
+        void(ticket);
         Task::exclusive(&mut task).transform(TaskState::Starved);
         trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
         current().push(task);
-        // 已入本核 starved（run 会再接走）；无后备帧则交 run 取活。
-        return match next_pa {
-            Some(pa) => Handoff::Switch(pa),
-            None => Handoff::Idle,
-        };
     }
-    Task::exclusive(&mut task).transform(TaskState::Blocked {
-        reason: BlockReason::Wait { wake_at },
-    });
-    site.waiters.push_back(Waiter { task, tock });
-    drop(sites);
-    // 超时登记：先旁路簿记、后 tock（堆可见 ⇒ 簿记必在，同 park 纪律）
-    if let (Some(wake_at), Some(handle)) = (wake_at, tock) {
-        wait_times().lock().insert(handle, key);
-        timer::tock(handle, wake_at);
-    }
-
     match next_pa {
         Some(pa) => Handoff::Switch(pa),
         None => Handoff::Idle,
     }
+}
+
+/// 信标先探：消费本键上的遗留信号。**缺键即无信标**——不 `or_insert`：空的、
+/// 无信标的站点没有语义，不该被「先探」凭空造出来。
+fn take_beacon(key: WakeKey) -> bool {
+    let mut sites = sites(key).lock();
+    match sites.get_mut(&key) {
+        Some(site) if site.pend => {
+            site.pend = false;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// 站点存在的判据：**队列非空 ∨ 有信标**。出队之后若不成立即删——空壳站点没有
+/// 语义，留着就是 A2 那条「站点永不回收」的老毛病（`park` 每次睡眠都会留一个）。
+/// 前置：已持有该分片的锁。
+fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
+    if let Some(site) = sites.get(&key)
+        && site.waiters.is_empty()
+        && !site.pend
+    {
+        sites.remove(&key);
+    }
+}
+
+/// 纯睡（`RoomCall::Park`）：键是 `Alarm { 我 }`——无人投信，只有期限会响。
+///
+/// Running → Blocked；返回下一帧 PA（若 scheduler 装了下一 starved）。
+pub fn park(duration: Duration) -> Option<usize> {
+    let me = current()
+        .running_task()
+        .expect("park: no running task")
+        .ident
+        .id;
+    let wake_at = clock::now().add(duration).as_ticks();
+    trace::note(EventKind::Room(RoomEvent::Park {
+        tid: me,
+        wake_at: wake_at as usize,
+    }));
+    match block(WakeKey::Alarm { task: me }, duration) {
+        Handoff::Switch(pa) => Some(pa),
+        // 本核无后继：交适配层取活。
+        Handoff::Idle => None,
+        // `Alarm` 无投信方 ⇒ 信标先探不可能命中。
+        Handoff::Resume => unreachable!("Alarm 无投信方"),
+    }
+}
+
+/// 事件等待（`RoomCall::Wait`）：直通 [`block`]。有投信方的键，信标先探可能命中
+/// 而当场续跑（[`Handoff::Resume`]）。
+pub fn wait(key: WakeKey, dur: Duration) -> Handoff {
+    block(key, dur)
 }
 
 /// 死亡唯一入口：**收尾**（退出钩子：通道级联 + 能力级联）→ 置 `Reaped` → 入躯壳队列。
@@ -362,8 +408,8 @@ fn target_dead(tid: usize) -> bool {
 ///
 /// 契约（与 `wait`/`pull` 同源）：**未挂起**时结论精确；**挂起过**则恢复后读到的
 /// a0 是挂起前预置值（内核没有第二次执行机会），调用方须复探 `Join{task, 0}`。
-/// 唤醒由**内核驱动**——目标收尾（含 fault isolation 杀）时 [`wake_joiners`]
-/// 叫醒全部等待者，故用户态跑不到的死亡也能被观察到。
+/// 唤醒由**内核驱动**——目标收尾（含 fault isolation 杀）时 [`wipe`]
+/// 放行全部等待者，故用户态跑不到的死亡也能被观察到。
 ///
 /// 「结束」= 目标已死**且退出钩子（通道级联 + 能力级联）已跑完**——即返回真时，
 /// 它名下的门闩与通道都已消失。栈/trap 帧/团队空间的回收是内核私事、对调用方
@@ -379,116 +425,71 @@ pub fn join(tid: usize, dur: Duration) -> Result<Joined, GateError> {
     if dur == Duration::ZERO {
         return Ok(Joined::Alive);
     }
-    let cond = current();
-    let (mut task, next_pa) = cond.disown_and_install_next();
-    let (wake_at, tock) = if dur == Duration::MAX {
-        (None, None)
-    } else {
-        let wake_at = clock::now().add(dur).as_ticks();
-        let handle = HANDLE.fetch_add(1, Ordering::Relaxed) as u64;
-        (Some(wake_at), Some(handle))
-    };
-    trace::note(EventKind::Room(RoomEvent::Wait {
-        tid: task.ident.id,
-        key: tid,
-    }));
-    Task::exclusive(&mut task).transform(TaskState::Blocked {
-        reason: BlockReason::Join { tid, wake_at },
-    });
-    // 竞态闭合：disown 期间目标可能已被 reap——`wake_joiners` 会置 pend。入簿
-    // 只持 joins 一把锁（**锁内绝不查注册表**：那是 L3→L3 嵌套，lockdep 会拒）。
-    let queued = {
-        let key = WakeKey::Task { id: tid };
-        let mut j = sites(key).lock();
-        let site = j.entry(key).or_insert_with(Site::new);
-        if site.pend {
-            site.pend = false;
-            false
-        } else {
-            site.waiters.push_back(Waiter {
-                task: task.clone(),
-                tock,
-            });
-            true
-        }
-    };
-    if !queued {
-        Task::exclusive(&mut task).transform(TaskState::Starved);
-        current().push(task);
-        return Ok(Joined::Parked(next_pa));
+    match block(WakeKey::Task { id: tid }, dur) {
+        Handoff::Switch(pa) => Ok(Joined::Parked(Some(pa))),
+        Handoff::Idle => Ok(Joined::Parked(None)),
+        // 信标已置：目标在「判死 → 入队」的窗口内被回收。当场结论（已回收）。
+        Handoff::Resume => Ok(Joined::Dead),
     }
-    drop(task);
-    // 超时登记：先旁路簿记、后 tock（堆可见 ⇒ 簿记必在，同 park 纪律）
-    if let (Some(wake_at), Some(handle)) = (wake_at, tock) {
-        join_times().lock().insert(handle, tid);
-        timer::tock(handle, wake_at);
-    }
-    Ok(Joined::Parked(next_pa))
 }
 
-/// 目标回收时叫醒其全部 join 等待者（`clear_loop` 每条 reaped 任务调一次）。
+/// 键退役：放行该键上的**全部**等待者，并留下信标（墓碑）。
 ///
-/// 锁纪律同 `wake`：只在 joins（L3）内摘除，锁外 transform + 入队；不 mute
-/// （旁路已摘，陈旧句柄在 drain 里自然落空——省一次 O(n) 的堆重建）。
-fn wake_joiners(tid: usize) {
+/// 「目标已回收」与「资源已封印/销毁」是同一件事的两副面孔：这个键再也不会有人
+/// 投信，此后到达的等待者必须**当场**得到结论，而不是永远等下去——信标承担这一点
+/// （`wake` 只在无人在等时置位；这里无条件置位）。一个信标够用：调用方在入队前都
+/// 先探过条件（`join` 探 `target_dead`、`hole::wait` 探就绪位），窗口最多一人。
+///
+/// 锁纪律同 [`wake`]：只在站点表（L3）内摘除，锁外 transform + 入队。返回唤醒数。
+pub(crate) fn wipe(key: WakeKey) -> usize {
     let waiters = {
-        let key = WakeKey::Task { id: tid };
-        let mut j = sites(key).lock();
-        let site = j.entry(key).or_insert_with(Site::new);
-        if site.waiters.is_empty() {
-            // 无人在等：留信标——之后入簿者见 pend 即当场撤销阻塞。
-            site.pend = true;
-            return;
-        }
+        let mut sites = sites(key).lock();
+        let site = sites.entry(key).or_insert_with(Site::new);
+        site.pend = true;
         core::mem::take(&mut site.waiters)
     };
-    let mut woke = false;
+    let mut woke = 0;
     for w in waiters {
-        if let Some(h) = w.tock {
-            join_times().lock().remove(&h);
-        }
+        void(w.ticket);
         let mut task = w.task;
         Task::exclusive(&mut task).transform(TaskState::Starved);
         trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
         current().push(task);
-        woke = true;
+        woke += 1;
     }
-    if woke {
+    if woke > 0 {
         conductor::kick();
     }
+    woke
 }
-
+// ── 操作：唤醒 ──
 // ── 操作：唤醒 ──
 
-/// wake_by_event：waiters 非空 → 唤醒队首（Blocked → Starved 推送本核 + kick）；
-/// 空 → pend 置位（防漏唤醒）。返回是否唤到人。消费方 = utask/envcall；
-/// 跨核唤醒经 steal 再平衡（与 drain_expired 一致）。
+/// 叫醒一个：摘队首 → 放回就绪。无人在等 → 置信标（防漏唤醒）。返回是否唤到人。
 ///
-/// **pend 可能变陈旧**：站点不回收，且「信号」与「数据」是两份状态——若等待者后来
-/// 直接取走了数据（裸 pull 成功，不经 `wait`），pend 不会被消费，下一次 `wait` 就
-/// 会立刻返回「已唤醒」而实际无数据。故 `wait` 的返回**只是提示**，调用方必须自己
-/// 复核条件（`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环，见
+/// 消费方 = utask/envcall 与 mail 的投信方；跨核经 steal 再平衡（同 [`redeem`]）。
+///
+/// **信标可能陈旧**：「信号」与「数据」是两份状态——等待者后来直接取走数据
+/// （裸 pull 成功，不经 `wait`）时信标不被消费，下一次 `wait` 就立刻返回「已唤醒」
+/// 而实际无数据。故 `wait` 的返回**只是提示**，调用方必须自己复核条件
+/// （`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环，见
 /// `docs/dispatch.md` §11.4）。
 pub fn wake(key: WakeKey) -> bool {
     let popped = {
         let mut sites = sites(key).lock();
         let site = sites.entry(key).or_insert_with(Site::new);
-        match site.waiters.pop_front() {
+        let popped = match site.waiters.pop_front() {
             Some(w) => Some(w),
             None => {
                 site.pend = true;
                 None
             }
-        }
+        };
+        prune(&mut sites, key);
+        popped
     };
-    let Some(w) = popped else {
-        return false;
-    };
-    // 摘超时旁路：堆项留至到期被 drain 空闲丢弃（不 mute——旁路已摘，陈旧句柄
-    // 落空；省一次 O(n) 的堆重建）
-    if let Some(handle) = w.tock {
-        wait_times().lock().remove(&handle);
-    }
+    let Some(w) = popped else { return false };
+    void(w.ticket);
     let mut task = w.task;
     Task::exclusive(&mut task).transform(TaskState::Starved);
     trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
@@ -497,82 +498,54 @@ pub fn wake(key: WakeKey) -> bool {
     true
 }
 
-/// drain_expired：从到期句柄按 parked / sites 映射摘除任务，Blocked → Starved
-/// 入本核 starved。
+/// 到期兑现：`chrono` 交回的不透明句柄，在这里还原成「谁」。
 ///
-/// 按 tock 堆取到期者（与入队顺序无关）；队列锁/堆锁先放后取，绝不持队列锁取
-/// 调度锁（防 ABBA）。返回：本次是否撤出过任务（wait 的哑睡壳判定用）。
-/// 由 trap 路径（S-timer 处理）在本 hart 触发；`pub`（scheduler 之外消费）。
-pub fn drain_expired() -> bool {
+/// 一段走完，不再认识 park / wait / join 的区别：
+///   票根 → 升出持票人 → 读它自己那张票上的键 → 从该键的队列里按票号摘出。
+/// 陈旧的登记在每一步都自然落空（票根已被 `void`、任务已不阻塞、票号对不上），
+/// 故不需要任何「取消」记账。
+///
+/// 按 tock 堆取到期者（与入队顺序无关）；堆锁先放后取，绝不持堆锁取调度锁
+/// （防 ABBA）。返回：本次是否撤出过任务（空闲核的哑睡壳判定用）。
+/// 由 trap 路径（S-timer 处理）与空闲核归队时在本 hart 触发。
+pub fn redeem() -> bool {
     let due = timer::drain(clock::now());
     let mut woke = false;
     for handle in due {
-        // Join 超时：旁路表命中 → 从 joins[目标 tid] 按 tock 摘出唤醒
-        let join_tid = join_times().lock().remove(&handle);
-        if let Some(tid) = join_tid {
-            let popped = {
-                let mut j = sites(WakeKey::Task { id: tid }).lock();
-                j.get_mut(&WakeKey::Task { id: tid }).and_then(|site| {
-                    site.waiters
-                        .iter()
-                        .position(|w| w.tock == Some(handle))
-                        .map(|i| site.waiters.remove(i).expect("idx from position"))
-                })
-            };
-            let Some(w) = popped else { continue };
-            woke = true;
-            let mut task = w.task;
-            Task::exclusive(&mut task).transform(TaskState::Starved);
-            trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-            current().push(task);
-            continue;
-        }
-        // 事件等待超时：旁路表命中 → 从 wait-site 摘（by tock == handle）唤醒
-        let wait_key = wait_times().lock().remove(&handle);
-        if let Some(key) = wait_key {
-            let popped = {
-                let mut ws = sites(key).lock();
-                if let Some(site) = ws.get_mut(&key) {
-                    if let Some(idx) = site.waiters.iter().position(|w| w.tock == Some(handle)) {
-                        Some(site.waiters.remove(idx).expect("idx from position"))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-            // 空 popped 不吼：句柄已被他路唤醒，事件已消化（woke 不置位）。
-            let Some(w) = popped else { continue };
-            woke = true;
-            let mut task = w.task;
-            Task::exclusive(&mut task).transform(TaskState::Starved);
-            trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-            current().push(task);
-            continue;
-        }
-        // park 到期（原路径）
-        let Some(mut task) = parked().lock().remove(&handle) else {
-            // 已取消/已由他路唤醒：跳过（堆项随 drain 已丢弃）
+        // 票号即到点登记的身份：作废票根并取回持票人（已回收 → 落空）。
+        let Some(task) = void(Ticket(handle)) else {
             continue;
         };
-
+        let TaskState::Blocked { key, ticket } = task.state() else {
+            continue;
+        };
+        // 从该键的队列里摘出**这一票**的等待者（票号对不上 = 陈旧，落空）。
+        let popped = {
+            let mut sites = sites(key).lock();
+            let w = sites.get_mut(&key).and_then(|site| {
+                site.waiters
+                    .iter()
+                    .position(|w| w.ticket == ticket)
+                    .map(|i| site.waiters.remove(i).expect("idx from position"))
+            });
+            prune(&mut sites, key);
+            w
+        };
+        let Some(w) = popped else { continue };
         woke = true;
+        let mut task = w.task;
         Task::exclusive(&mut task).transform(TaskState::Starved);
         trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
         current().push(task);
     }
-    // 批量踢：循环外一次 SBI IPI（替代原每条吼）。
-    // 任务已全部入本核 starved（push 先于踢 = 唤醒方进入 steal 必可见），
-    // 单次 kick 把当前最低 set bit 的等待 hart 拉起即可——单 tick IPI 量
-    // 从 O(N) → O(1)。`woke` 与"是否真唤醒过"等价：false = 全是空
-    // popped/已被取消，无需踢。wake 路径（messenger::wake）单次入单踢。
+    // 批量踢：循环外一次 SBI IPI（替代原每条吼）。任务已全部入本核 starved
+    // （push 先于踢 = 唤醒方进入 steal 必可见），单次 kick 把当前最低 set bit 的
+    // 等待 hart 拉起即可——单 tick IPI 量从 O(N) → O(1)。
     if woke {
         conductor::kick();
     }
     woke
 }
-
 // ── 操作：回收 ──
 
 /// 回收全部躯壳任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：躯壳不在任何核
@@ -595,7 +568,7 @@ pub fn clear_loop() {
         };
         trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
         // 目标已收尾 → 叫醒它的全部 join 等待者（内核驱动，覆盖 fault 死亡）。
-        wake_joiners(z.ident.id);
+        wipe(WakeKey::Task { id: z.ident.id });
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);
         // 锁外回收（Team.tasks 已放 → Space.inner=2 合法）：栈 slot + trap 帧
@@ -638,27 +611,22 @@ fn exit_hooks() -> &'static [ExitHook] {
     EXIT_HOOKS.get().copied().unwrap_or(EMPTY)
 }
 
-/// 终末释放：清空 messenger 持有的全部 Arc<Task>（parked / sites / times /
-/// husks 四张表）——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。
-/// 由 [`scheduler::core::rip`] 在 halt 路径调用；mail 接入点由 task.mail
-/// 析构透传释放（无需 mail 自有关闭钩子）。
+/// 终末释放：清空 messenger 持有的全部 `Arc<Task>`（sites / husks）与全部票根
+/// ——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。由
+/// [`scheduler::core::rip`] 在 halt 路径调用。
 ///
 /// 逐表 `take` 出内容、**锁外 drop**：drop 链会取 Space 锁（L2），锁内 drop 即
 /// L3→L2 嵌套。站点表分片版循环逐片取——不持跨片锁。
 pub(crate) fn rip() {
-    let parked_out = core::mem::take(&mut *parked().lock());
-    drop(parked_out);
     for shard in 0..SITE_SHARDS {
         let sites_out = core::mem::take(&mut *shard_at(shard).lock());
         drop(sites_out);
     }
-    wait_times().lock().clear(); // 只存键，无 Arc，无 drop 链
-    join_times().lock().clear(); // 只存键，无 Arc
     let husks_out = core::mem::take(&mut *HUSKS.lock());
     drop(husks_out);
+    holders().lock().clear(); // 只存 Weak，无 drop 链
     doomed().lock().clear(); // 只存 id，无 Arc
 }
-
 // ── 操作：扑杀（suspend / die / cull / doom）──
 //
 // 血缘级联的「杀」侧，**两阶段**：先停摆（摘出全部调度/等待容器），再收尾
@@ -692,68 +660,26 @@ fn suspend(task: &Arc<Task>) -> bool {
             }
         }
         TaskState::Starved => crate::work::room::scheduler::core::remove_from_starved(task),
-        TaskState::Blocked { reason } => match reason {
-            BlockReason::Park { .. } => {
-                // parked 按 handle 键存；按 ptr_eq 扫出句柄后摘。
-                let handle = {
-                    let p = parked().lock();
-                    p.iter()
-                        .find(|(_, t)| Arc::ptr_eq(t, task))
-                        .map(|(h, _)| *h)
-                };
-                let Some(h) = handle else { return false };
-                let removed = parked().lock().remove(&h);
-                timer::mute(h);
-                removed.is_some()
+        TaskState::Blocked { key, ticket } => {
+            // 读票直达：键指出容器、票号指出队列里的哪一个——不必扫分片。
+            let popped = {
+                let mut sites = sites(key).lock();
+                let w = sites.get_mut(&key).and_then(|site| {
+                    site.waiters
+                        .iter()
+                        .position(|w| w.ticket == ticket)
+                        .map(|i| site.waiters.remove(i).expect("idx from position"))
+                });
+                prune(&mut sites, key);
+                w
+            };
+            if popped.is_none() {
+                return false;
             }
-            BlockReason::Wait { .. } => {
-                // 站点表分片存 Waiter{task, tock}；按 ptr_eq 扫出 tock 后摘。
-                let mut tock: Option<Option<u64>> = None;
-                for shard in 0..SITE_SHARDS {
-                    let mut ws = shard_at(shard).lock();
-                    for site in ws.values_mut() {
-                        if let Some(idx) =
-                            site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
-                        {
-                            let w = site.waiters.remove(idx).expect("idx from position");
-                            tock = Some(w.tock);
-                            break;
-                        }
-                    }
-                    if tock.is_some() {
-                        break;
-                    }
-                }
-                let Some(tock) = tock else { return false };
-                // 摘 times 旁路 + mute（先摘簿记、后 mute，同 park 纪律）。
-                if let Some(h) = tock {
-                    wait_times().lock().remove(&h);
-                    timer::mute(h);
-                }
-                true
-            }
-            BlockReason::Join { tid, .. } => {
-                // joins 按目标 tid 存；按 ptr_eq 扫出本任务后摘除。
-                let mut tock: Option<Option<u64>> = None;
-                {
-                    let key = WakeKey::Task { id: tid };
-                    let mut j = sites(key).lock();
-                    if let Some(site) = j.get_mut(&key)
-                        && let Some(idx) =
-                            site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
-                    {
-                        let w = site.waiters.remove(idx).expect("idx from position");
-                        tock = Some(w.tock);
-                    }
-                }
-                let Some(tock) = tock else { return false };
-                if let Some(h) = tock {
-                    join_times().lock().remove(&h);
-                    timer::mute(h);
-                }
-                true
-            }
-        },
+            // 作废票根 + 消音到点（[`void`] 幂等）。
+            void(ticket);
+            true
+        }
         TaskState::Running { .. } => {
             if let Some(hart) = crate::work::room::scheduler::core::running_hart(task) {
                 doomed().lock().insert(task.ident.id);

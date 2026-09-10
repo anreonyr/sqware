@@ -27,6 +27,7 @@ use crate::work::unit::space::window::{FrameWindow, StackWindow};
 use crate::work::unit::team::kernel;
 
 use super::team::Team;
+use crate::work::room::messenger::{Ticket, WakeKey};
 use crate::work::room::scheduler;
 use env::TeamId;
 
@@ -51,8 +52,11 @@ pub enum TaskState {
     /// 正在执行（恒为某 hart 的 running，不在任何队列）：预算随 run 递减。
     /// 不变量：预算恒 ≥ 1（耗尽即转 Starved，不落盘 Running{0}）。
     Running { ticks_left: u32 },
-    /// 已阻塞（在 blocked 容器中；不在任何就绪队列，不可被 steal）：原因在载荷。
-    Blocked { reason: BlockReason },
+    /// 已阻塞（在站点队列里；不在任何就绪队列，不可被 steal）：等待点在载荷。
+    ///
+    /// **等待点 = 键 + 票**：键指向站点（唤醒侧按它找人），票指向到点登记（到期侧
+    /// 凭它认领）。两者都在这里，故「谁在等、等什么、等到何时」不散在全局表里。
+    Blocked { key: WakeKey, ticket: Ticket },
     /// 已饥饿（预算耗尽，在 starved 容器等补给；被选中时重置满额预算）。
     Starved,
     /// **未放行**（在 `Team.held` 里；不在任何队列，不可被 steal）：`Spawn` 的初始态，
@@ -70,17 +74,6 @@ pub enum TaskState {
     /// 入躯壳队列），故「`state == Reaped`」精确表示**收尾已完成**，`Join` 的判据
     /// 因此不含竞态。延迟的是**回收**（栈/trap 帧/团队空间），不是收尾。
     Reaped,
-}
-
-/// Blocked 的载荷：阻塞原因。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BlockReason {
-    /// 睡眠：wake_at（timebase 刻度）到期后被唤醒。
-    Park { wake_at: u64 },
-    /// 事件等待：被 `wake(key)` 唤醒；有 wake_at 时也可到期唤醒（None = 永久）。
-    Wait { wake_at: Option<u64> },
-    /// 等目标任务回收（`Join`）：目标回收时被唤醒；有 wake_at 时也可到期唤醒。
-    Join { tid: usize, wake_at: Option<u64> },
 }
 
 /// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。

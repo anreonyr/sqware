@@ -120,13 +120,13 @@ impl HoleMeta {
 impl Drop for HoleMeta {
     /// 最后一份强引用消失：置死 + 唤醒两方向**全部**等待者。
     ///
-    /// 调用方义务：**在锁外** drop 门闩——`messenger::wake` 是 L3，在 `Task.pies`
+    /// 调用方义务：**在锁外** drop 门闩——`messenger::wipe` 是 L3，在 `Task.pies`
     /// 锁内 drop 即 3→3 嵌套。被唤醒者重解析 token 时会发现门闩已不在表里
     /// （`Denied`），不会挂死。
     fn drop(&mut self) {
         *self.state.lock() = HoleState::Dead;
-        while messenger::wake(key(self, HoleDir::Pull)) {}
-        while messenger::wake(key(self, HoleDir::Push)) {}
+        messenger::wipe(key(self, HoleDir::Pull));
+        messenger::wipe(key(self, HoleDir::Push));
     }
 }
 
@@ -258,8 +258,8 @@ pub(crate) fn wait(meta: &HoleMeta, dir: HoleDir, dur: Duration) -> Result<Waite
 /// 调用方不持 L3 锁（`wake` 是 L3）。
 pub(crate) fn seal(meta: &HoleMeta) {
     *meta.state.lock() = HoleState::Dead;
-    while messenger::wake(key(meta, HoleDir::Pull)) {}
-    while messenger::wake(key(meta, HoleDir::Push)) {}
+    messenger::wipe(key(meta, HoleDir::Pull));
+    messenger::wipe(key(meta, HoleDir::Push));
 }
 
 // ── 创建 ──
