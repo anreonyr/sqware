@@ -353,7 +353,7 @@ shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句�
    `filesz = 0` 的 `PT_LOAD`（链接脚本让 `.data`/`.bss` 各自成段，合法且常见）
    被 `attach_map` 的 `pages == 0` 判为 `NotAligned`，整块装载失败。修法：无文件
    实体时跳过 `attach_map`，整段走懒登记。
-3. **`warpper` 内联后返回值错**（`crates/env/src/ucall.rs`）：
+3. **`trap` 内联后返回值错**（`crates/env/src/ecall.rs`）：
    asm 块被内联进调用方时，调用方读回的 a0 恒 0；独立函数调用则正确。修法：
    `#[inline(never)]`（与仓库对裸 asm 的一贯纪律同源，见 `docs/ipc.md` §13.10 A.2）。
 4. **hole 等待键取堆地址 → 陈旧唤醒闩被继承**（`kernel/src/work/mail/hole.rs`
@@ -410,7 +410,7 @@ spoof: ok
 改写  kernel/src/boot.rs                    根授予 + 三域装载（shell / echo / dir）
 改   crates/env/src/fid.rs                  +Collect/Release；删 ServiceCall/ServiceId
 改   crates/env/src/wire.rs                 +FromPair (PieToken, Permission)
-改   crates/env/src/ucall.rs                warpper #[inline(never)]
+改   crates/env/src/ecall.rs                warpper #[inline(never)]
 改   kernel/src/runtime/switcher/envcall.rs Collect/Release handler；删 class 7
 改   kernel/src/runtime/switcher/trampoline.rs  __utrap 保存顺序修复
 改   kernel/src/work/unit/loader.rs         纯 .bss 段装载修复

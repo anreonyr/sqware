@@ -10,11 +10,19 @@
 //! `call()`（负值即 `EnvError`，非负蒸馏为 Ret）。`call()` 绑定 envcall 汇编入口，
 //! `slot/pack/unpack` 只依赖 `Wire`——sbi 未来可复用同一 derive。
 //!
-//! 分类与功能域一一对应（class=高 32 位）：Room=0, Task=1, Memory=2, IO=3,
+//! 分类与功能域一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2, IO=3,
 //! Chrono=4, Mail=5, Control=6。**class 7 已删除**（原 `ServiceCall` 是入口策略
 //! 而非原语：目录入口门闩改由父任务 `Accord` 下发，见 `docs/dispatch.md`）；
 //! 7 号保留空号不复用。命名与调度词族（conductor）、`runtime::chrono` 域及用户侧
 //! `task::env` 同词。
+//!
+//! **未知调用号的运行时契约（ABI 的一部分，不是实现细节）**：`a7` 由调用方
+//! 完全控制，故它是**输入**而非可信标识。未声明的 class / index（含 class 1 的
+//! 空号 index 5、已删的 class 7、越界索引）一律 decoded 为 `Decode::BadSlot`，
+//! 内核侧按**被拒绝**处理：写回负码（`GateError::Denied`）并**续跑调用方**——
+//! 与其它用户引起的异常同走故障隔离，绝不 panic（否则用户态一发 `ebreak`
+//! 即可停摆整机）。想主动终止有正规原语 `ControlCall::Panic`。
+//! 本文件是这条契约的**单一真相**：`slot` 的生成与解码都在此处。
 //!
 //! 根除的两处 L3' 漏洞：`Permission`/`PteFlags` 的 unpack 走 `from_bits(...)`
 //! `.ok_or(...)` 校验（见 [`Wire`](crate::wire::Wire)），非法位 → `Err`，不再

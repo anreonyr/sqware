@@ -4,8 +4,8 @@
 //! shell — 命令解释器，经 Terminal（term 模块）显示、读命令并分发给系统能力。
 //!
 //! 分层：本 bin 是 Shell；`task::term::{Terminal, Readline}` 是渲壳 + 行编辑宿主。
-//! **Terminal 是唯一 console 出口**——Shell 的一切输出经 `Terminal::put`、一切
-//! 输入经 `Terminal::readline`，不再直接 `io::put`。
+//! **Terminal 是唯一 console 出口**——Shell 的一切输出经 `Terminal::write`/`writeline`、
+//! 一切输入经 `Terminal::readline`，不再直接 `io::put`。
 //!
 //! 命令（系统能力巡演）：
 //!   help  — 列命令
@@ -14,12 +14,14 @@
 //!   alloc — 堆分配一页（MemoryCall::Allocate）
 //!   echo  — 回显参数
 //!   sleep — 阻塞 N 毫秒（RoomCall::Park）
-//!   spawn — 派一个算 0..N 的闭包子任务并 join（TaskCall::Spawn）
+//!   spawn — 派一个算 0..N 的闭包子任务并 join（UnitCall::Spawn + Join）
+//!   heir  — 子域枚举（UnitCall::HeirCount + Heir）
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
 //!   reclaim — 资源寿命自检（引用回收 / 封印归属 / 开辟者消亡）
 //!   spoof — 身份伪造自检（发送者由内核盖章，报文里的回信 token 不构成身份）
 //!   name  — 名字权限自检（目录的名字空间由父域预约，注册只能填预约行）
+//!   badslot — 非法 envcall 槽位自检（未知调用号 → 拒掉并续跑，绝不 panic）
 //!   req   — 走目录协议连接 echo 并调用一次（Connect + Service::call）
 //!   dir   — 目录协议自省（Discover + Enumerate）
 //!   exit  — 退出 shell（RoomCall::Reap）
@@ -543,7 +545,7 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / cascade / reclaim / spoof / name / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / cascade / reclaim / spoof / name / badslot / exit",
             );
         }
         "clock" => {
@@ -624,6 +626,21 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
         }
         "name" => {
             name(term);
+        }
+        "badslot" => {
+            // 非法 envcall 槽位（`a7` 由 U 态完全控制）：空号 class 1 idx 5 + 已删
+            // class 7。判据 = 内核把调用号当**参数**拒掉（a0 回负码）并续跑本任务，
+            // 而不是 panic 打死整机。此处不走 `EnvCall` 解码（那正是要绕过的正常路径），
+            // 直入 ABI 的唯一汇编入口 `trap`。
+            let mut neg = 0usize;
+            for slot in [0x1_0000_0005usize, 0x7_0000_0000, usize::MAX] {
+                // SAFETY: 照 ABI 摆 slot + 6 参数；本调用只探错误路径，不依赖返回语义。
+                let (a0, _a1) = unsafe { env::ecall::trap(slot, [0; 6]) };
+                if (a0 as isize) < 0 {
+                    neg += 1;
+                }
+            }
+            term.writeline(&format!("badslot: {neg}/3 rejected, kernel alive"));
         }
         "req" => {
             // 走目录协议：Directory::open 取会话 → Connect("echo") 拿服务入口门闩

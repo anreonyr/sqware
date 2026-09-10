@@ -74,7 +74,7 @@ impl<E: Extension> ScallBuilder<E> {
         self
     }
     pub fn call(self) -> SResult<usize> {
-        unsafe { warpper(E::EID, self.fid.into(), self.args.into()) }
+        unsafe { call_raw(E::EID, self.fid.into(), self.args.into()) }
     }
 }
 
@@ -82,7 +82,7 @@ impl<E: Extension> ScallBuilder<E> {
 /// 读回 a0（错误码）/a1（值）。
 ///
 /// unsafe：直触寄存器约定、不判错；调用方须为 S 态上下文。
-unsafe fn warpper(eid: usize, fid: usize, args: [usize; 6]) -> SResult<usize> {
+unsafe fn call_raw(eid: usize, fid: usize, args: [usize; 6]) -> SResult<usize> {
     let [a0, a1, a2, a3, a4, a5] = args;
     let (error, value);
     unsafe {

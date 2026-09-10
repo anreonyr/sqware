@@ -1,8 +1,8 @@
-//! envcall·ucall — U-mode → S-mode 调用原语 / 错误 / 汇编入口。
+//! envcall — U-mode → S-mode 环境调用原语 / 错误 / 汇编入口。
 //!
 //! 本文件只保留**跨域共用**的调用骨架：错误（`EnvError`）、结果（`EnvResult`）、
-//! 唯一汇编入口（`warpper`）。各域枚举的 `call()/slot()/pack()` 由 `derive(Envcall)`
-//! 生成（见 `fid.rs`），它们调用本文件的 `warpper`。
+//! 唯一汇编入口（`trap`）。各域枚举的 `call()/slot()/pack()` 由 `derive(Envcall)`
+//! 生成（见 `fid.rs`），它们调用本文件的 `trap`。
 
 /// 环境调用结果。
 pub type EnvResult<T> = Result<T, erra::Error<EnvError>>;
@@ -64,7 +64,7 @@ impl EnvError {
 /// 返回值会错（实测：同样的 `Collect` 调用，内联时 a0 恒 0，独立函数时正确）。
 /// 与仓库对裸 asm 的一贯纪律同源（见 `docs/ipc.md` §13.10 A.2 的闭包边界锁）。
 #[inline(never)]
-pub unsafe fn warpper(slot: usize, args: [usize; 6]) -> (usize, usize) {
+pub unsafe fn trap(slot: usize, args: [usize; 6]) -> (usize, usize) {
     let (v0, v1);
     unsafe {
         core::arch::asm!(

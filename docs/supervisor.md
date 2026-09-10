@@ -130,7 +130,7 @@ let from_task = (frame as *const TrapContext as usize) != machine::hart_frame().
 码，陷阱根本不进内核）——表现为 `tls_bootstrap` 的 `alloc().expect()` 失败、
 panic、最后落在 `room::exit` 的 `unimp` 上。
 
-**决定：`warpper` 的陷阱指令改为 `ebreak`**（`crates/env/src/ucall.rs`）。
+**决定：`trap` 的陷阱指令改为 `ebreak`**（`crates/env/src/ecall.rs`）。
 `ebreak` 在 U 态与 S 态都被委派给 S 态，两类任务共用同一入口，无需按模式分派
 wrapper。内核侧 `trap_handler` 处理 `Exception::Breakpoint`。
 
@@ -142,8 +142,8 @@ wrapper。内核侧 `trap_handler` 处理 `Exception::Breakpoint`。
 `ebreak` 有两种编码：标准 4 字节 `0x00100073` 与 RVC 压缩 2 字节 `0x9002`
 （汇编器在开 RVC 时发后者）。旧的 `frame.sepc += 4` 会**多跳一条 2 字节指令**：
 
-- release 档：`warpper` 的 ebreak 后面紧跟 `ld ra, 0x8(sp)`——被跳过的恰是它，
-  而 `ra` 本就没被 `warpper` 改写（caller 的 `jalr` 设的值仍有效），于是**侥幸
+- release 档：`trap` 的 ebreak 后面紧跟 `ld ra, 0x8(sp)`——被跳过的恰是它，
+  而 `ra` 本就没被 `trap` 改写（caller 的 `jalr` 设的值仍有效），于是**侥幸
   可用**；
 - debug 档：跳过的是必需指令，控制流错位，表现为"6 字节分配失败"一类假象。
 
@@ -286,7 +286,7 @@ debug 档同路径跑通，且 `health spare / pagetable / stress` 全 ok。
 改   kernel/src/work/unit/task.rs             闭包断言按 is_kernel、栈窗去参
 改   kernel/src/work/room/scheduler/core.rs   tp 约定按 is_supervisor
 改   kernel/src/runtime/diagnose/{scene,frame}.rs  world 随新枚举
-改   crates/env/src/ucall.rs                  ecall → ebreak
+改   crates/env/src/ecall.rs                  ecall → ebreak
 改   kernel/build.rs                          小清单打包 + watch ../crates/env
 改   kernel/src/boot.rs                       装载两域 + 根授予 + 绑定
 改   task/Cargo.toml                          +task-echo；bin 分层 user/ supervisor/

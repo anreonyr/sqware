@@ -295,7 +295,7 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
                 let (slot, args) = match self {
                     #(#call_arms),*
                 };
-                let (v0, v1) = unsafe { crate::ecall::warpper(slot, args) };
+                let (v0, v1) = unsafe { crate::ecall::trap(slot, args) };
                 if (v0 as isize) < 0 {
                     Err(crate::ecall::make_err(crate::ecall::EnvError::from_raw(
                         v0 as isize,

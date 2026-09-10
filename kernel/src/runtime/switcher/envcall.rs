@@ -166,9 +166,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         arg: frame.gpr.x(Gprs::A0),
     }));
     frame.sepc += instr_len(&ident.team.space, frame.sepc);
+    // 未知调用号 = 调用方的错误（`a7` 由 U 态完全控制：空号 idx、已删 class 都落这里），
+    // 按被拒绝处理并续跑调用方——与其它用户引起的异常同走故障隔离，绝不 panic
+    // （panic 即 U 态一发 ebreak 打死整机）。想主动终止有正规原语 ControlCall::Panic。
     let envcall = match EnvCall::from_wire(number, &regs) {
         Ok(c) => c,
-        Err(_) => panic!("invalid envcall number: {number}"),
+        Err(_) => return ret_err(frame, GateError::Denied),
     };
     match envcall {
         EnvCall::Room(RoomCall::Starve) => return starve() as *mut TrapContext,
@@ -183,7 +186,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Gprs::A0,
                 match crate::console::pull() {
                     Some(b) => b as usize,
-                    None => -2isize as usize,
+                    // 无输入 = 条件未就绪（非阻塞原语的可重试信号），不是资源死。
+                    // 走统一错误表：fid.rs 的 ABI 注释与 ecall.rs 的 D1 表都写 -3，
+                    // 且用户侧 `EnvError::is_busy()` 就是判 -3（原先返 -2 使该判据永假）。
+                    None => GateError::Busy.code() as usize,
                 },
             );
         }
@@ -442,9 +448,16 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 &bytes[..keep * core::mem::size_of::<usize>()],
                 buf,
             );
-            frame
-                .gpr
-                .set_x(Gprs::A0, if ok { keep } else { -1isize as usize });
+            // 用户 buf 非法（未映射 / 不可写）→ 统一错误表（写裸 -1 与 `Denied` 同值，
+            // 但把「通道」写死在一处：D1 负码的单一真相是 `GateError::code`）。
+            frame.gpr.set_x(
+                Gprs::A0,
+                if ok {
+                    keep
+                } else {
+                    GateError::Denied.code() as usize
+                },
+            );
         }
         EnvCall::Memory(MemoryCall::Mmap { size, at }) => {
             let size = size.max(1).next_multiple_of(PAGE_SIZE);
