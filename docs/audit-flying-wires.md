@@ -1765,3 +1765,41 @@ waiters==0`；`sites=34` 全是墓碑，总数从来不作判据），是文字�
 ⇒ **3 条默认轮 PASS ＋ audit 轮九步全过、仅因既存违规 FAIL**、`3/4` rc=1，原因串里没有任何
 `缺[…]`/`顺序[…]`/`孤儿站点`。**反向验证**（把 `DEFAULT_FEATURES` 临时改成 `audit`）⇒ 哨兵仍拦
 （`默认档出现了 audit 输出`，捕获里 10 行 `[audit]`），改回后指纹一致。
+
+### A2 实施落地
+
+新增 `kernel/src/work/unit/life.rs`（72 行）+ 12 文件适配，`+252/-90`。
+
+- **`Life` 是无字段零尺寸标记**：没有字段 ⇒ **没有锁可持** ⇒ 结构上不可能是 L1/L2/L3 任何一层的持有者
+  （比「加把锁保护状态」强的地方就在这里）；判死只读 `ArcInner::strong` 一个原子量 ⇒ 在站点锁（L3）内
+  判死是合法的，而那正是 `prune` 需要的那一条读法。
+- **`Weak` 的传递**：强引用在资源侧（`Space.life` / `HoleMeta.life` / `Task.life`），弱引用由**调用方层**
+  在入口交给 room（envcall `Wait`/`Wake` 取 `team.space.life()`、`Join` 取 `lookup_task_by_id` 的 `Arc`、
+  hole 的五个调用点取 `meta.life()`、`park` 内部自取）——room 只收 `(键, 弱引用)`，**不认识 mail**。
+- **判据实测**：`[audit] sites 0 live 0 tomb 0 orphan 0 waiters 0`（**tomb 34 → 0**）；自建量具
+  `trace/a2-press.nu` 在 extra=0 与 extra=8 两档都是 `sites 0` ⇒ **总数持平且真值为 0**（不是「持平在
+  34」）；三条断言照旧（两次 `woke`、`wait-seal sealed=1 wake=seal`、`orphan==0`）；**默认档控制台归一化
+  后六份同一个 md5、diff 0 行** ⇒ 默认档无可观测行为变化。
+- **反向验证**：把 `wipe` 改回留墓碑 + `prune` 判据还原 ⇒ `sites 34 / tomb 34 / hole 28 / task 6`，与改前
+  **逐字相同**；中途版本（判据换了但仍留站点）实测 `52 → 88`，量具当场抓到漏口 ⇒ 判据有牙。
+
+**两处对设计原稿的偏离（已采纳，理由都是实测）**：
+
+1. **`wipe(key)` 不带 `&Weak<Life>`**：语义已变成「当场删站点」，而三个调用点（`HoleMeta::drop` /
+   `hole::seal` / `bury`）都在资源退役那一刻，站点里那枚弱引用本就指向同一个 `Arc` ⇒ 参数无处可用；
+   逐字保签名只是多一次未使用的 clone。
+2. **`prune` 判据落成 `队列空 ∧ (无信标 ∨ 键已死)`**，比原稿的「… ∧ `life` 已死」更进一步：`wipe` 不再留
+   墓碑后，死键上**落单的信标**（`wake` 在无人在等时置的那种）成了新的墓碑——按原话写实测
+   `sites 34 / tomb 14 / orphan 20`。死键的信标**永远无人认领**（资源侧的 `alive()` 检查已拒绝后来的操作），
+   故归入孤儿。这是**谓词形状**的改变，不是新增机制。
+
+**泄漏（判据 4）仍在，并有了新的收缩结论**：`task lifecycle leak at shutdown: 19 frames, 9 blocks` 一字未变
+⇒ audit 轮仍未转绿。临时探针（已删）显示 `#5 'u-thread' state=Reaped strong=3`，而 **A2 侧容器全空**
+（sites 0 / husks 0 / holders 0 / 四个 info 槽 None）⇒ 强引用不在 A2 碰过的任何容器里；且
+**`extra=0 → 21 frames / 13 blocks`、`extra=4 → 23 frames / 17 blocks`** ⇒ 它**按活动量增长**（每个
+hole+spawn 轮次约 +0.5 帧 / +1 块），不是固定残留。**下一步**：给 room 线的 `Arc<Task>` 取用点加计数探针
+（`running_task()` 约 20 处、`lookup_task_by_id()` 的 Join/Hatch/doom），抓哪一次 +1 不回落。
+
+**门的缺口（待修）**：门的 PASS 判据只判 `orphan`/`live`/`waiters`，**不判 `tomb`** ⇒ 反向验证那一轮门照样
+PASS——`tomb 34 → 0` 目前只是**仪器读数**，还不是**门判据**。要让它有牙，须在 `scripts/examine.nu` 的
+audit 轮加 `tomb != 0 ⇒ FAIL`。
