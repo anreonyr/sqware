@@ -1660,3 +1660,38 @@ shutdown: 19 frames, 9 blocks` + `table frames 150 != kernel-walk count 141` ⇒
 **由此确定的结构**：`Site` 值变为 `{ pend, waiters, alive: Weak<Alive> }`；`prune` 判据从「队列空 ∧
 无信标」扩成「… ∧ `alive` 已死」⇒ 墓碑不再需要、残留自然归零；`block()` 的 ④ 在持站点锁时先判
 `alive.upgrade().is_none()` ⇒ 键已死则不入队、直接 `Handoff::Resume`（在飞窗口由此关上）。
+
+### A2 原语与签名（已裁 / 待裁）
+
+**原语（已裁）**：
+
+1. **`Life`** —— 键的存活单元。`Life::new() -> Arc<Life>` 由**资源的创建者**调用；读法一对
+   `live()` / `dead()`（4/4 等长对偶；room 内部只用 `dead`）。不变式：**它只回答「资源还在不在」**，
+   不回答「谁在等」——后者仍归站点表。死亡 = 强引用落地 ⇒ 弱引用 `upgrade` 失败，**没有写路径、
+   没有回调**。命名避开了 `Task` 那侧已有的 `alive` 语义。
+2. **`Site` 值加 `life: Weak<Life>`**（不是新原语）。`Weak` 放**值**里而非键里：键是 map key，
+   必须 Copy/Eq。
+3. **room 侧只加一个读法**（在站点锁内）：`prune` 判据由「队列空 ∧ 无信标」扩为「… ∧ `life` 已死」；
+   `block()` ④ 持锁先判 `dead` ⇒ 键已死不入队、走既有回滚。
+
+**不新增写路径**（这条是 (b) 的自洽性前提）：除 `Life::new` 与资源侧**显式的** `wipe(key)`（今天
+`seal`/`drop` 处already 在调），room 再不接受任何来自外部的「这个键死了」的说法——全部靠**读**。
+故 A2 不引入第二张表，也就不会重演墓碑。
+
+**签名（本轮稿，待裁）**：四个入口加参数，`park` 例外自取：
+
+```
+wait(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()>
+join(tid: TaskId,   life: &Weak<Life>, dur: Duration) -> Result<Handoff<bool>, GateError>
+wake(key: WakeKey,  life: &Weak<Life>) -> bool        // 键已死 ⇒ false，且不建站点
+wipe(key: WakeKey,  life: &Weak<Life>) -> usize       // 全放；站点可直接删，不留墓碑
+park(dur: Duration) -> usize                          // 形状不变，内部自取本任务的 Life
+```
+
+资源侧（`Space` / `HolePie` / 任务）各增一枚 `life: Arc<Life>`，并在创建时留一份 `Weak` 交调用方——
+避免每次等待一次的原子操作。「键 → 存活单元」的解析在**调用方那一层**（envcall / mail / scheduler），
+**不在 room** ⇒ `mail → room` 单向不变。
+
+**④ 的判死走现成的回滚分支**（不新增机制）：`tock` 在 ③ 已做，故「决定不阻塞」这条必须撤销它，
+而那正是既有 ⑤（`void(ticket)` + `rise`）在做的事；`Blocked` 只在 push 那一支被写 ⇒「容器 ⇔ 状态」
+不出现破口。
