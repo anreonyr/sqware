@@ -166,10 +166,13 @@ impl Kind {
         }
     }
 
-    /// 毒化 / canary 策略（**派生**，不是第二张表）：账本侧 + 地址键。
+    /// 毒化 / canary 策略（**派生**，不是第二张表）：**地址键 ∧ 非帧侧**。
     /// 用户堆（页索引键）维持清零语义、不 poison、不设 canary；帧从不 poison。
+    /// `Plain`（未标注）也算：账本里未标注的记录恒是内核堆块（用户堆一律标
+    /// `UserHeap`）——第一版把它漏掉，boot 三源核对当场报出
+    /// "user-heap record VA on non-held page"（是假报，见 docs §10.18）。
     pub(crate) fn poison(self) -> bool {
-        self.side() == Some(Side::Ledger) && self.keys() == Keys::Addr
+        self.keys() == Keys::Addr && self.side() != Some(Side::Frame)
     }
 
     /// 报表用名（小写单词，需要时以 `-` 连接——与登记名同形）。

@@ -189,7 +189,7 @@ const AUDIT_ORDER = [
 #
 # 这一档跑的是 `--profile harden --features $features`（= release + `debug-assertions = true`
 # + audit）：把**两半护栏放进同一份产物**——容器⇔状态断言 / 整条 lockdep（L1/L3 锁序）
-# 与 audit 的 banker/ledger 记账。旧版只带前者，于是"帧分配器的同一条不变量有两份实现、
+# 与 audit 的 ledger 记账 + checker 的帧侧链式不变式。旧版只带前者，于是"帧分配器的同一条不变量有两份实现、
 # 而没有任何一档同时带着它们"这件事一直没有被门盯住（docs §10.16）；
 # 正向对照因此从 1 串升到 **4 串**（断言 / banker / ledger / lockdep），少任何一串即退出。
 # 它断言两件事：
@@ -206,12 +206,15 @@ const HARDEN_MARKERS = [
 # 而没人发现。实测过的事实（docs §10.1）：release ELF 里这两句各 0 次、debug ELF 里各 1 次。
 # 取容器断言那一句当探针——它在 `Scheduler::push` 里，任何构建都编得进去（非 cfg 代码）。
 const HARDEN_PROBE = "starved 容器只收 Starved 任务"
-# harden 档要**同时**带的四串：容器⇔状态断言（debug-assertions）· banker 金库 ·
-# ledger 活块账本 · lockdep 锁序报文体。四串齐 = 两半护栏在同一份产物里（docs §10.16）。
+# harden 档要**同时**带的四串：容器⇔状态断言（debug-assertions）· ledger 活块账本 ·
+# checker 的帧侧链式不变式 · lockdep 锁序报文体。四串齐 = 两半护栏在同一份产物里
+# （docs §10.16）。第三串原为 banker 的 `debit on already-held page`——banker 删除后
+# 换成 checker 的 `allocated non-free frame`（帧侧"在不在手"从 banker 位图搬到
+# pagemeta 的核对点；**门跟着搬**，见 docs §10.18）。
 const HARDEN_PROBES = [
   $HARDEN_PROBE
-  "debit on already-held page"
   "unmark: no record"
+  "allocated non-free frame"
   "lock-order level violation"
 ]
 
@@ -626,7 +629,7 @@ def main [] {
         exit 1
       }
     }
-    print $"  harden 正向对照：四串齐（断言 / banker / ledger / lockdep），共 ($HARDEN_PROBES | length) 项"
+    print $"  harden 正向对照：四串齐（断言 / ledger / 帧侧链式不变式 / lockdep），共 ($HARDEN_PROBES | length) 项"
   }
 
   let cfg = {

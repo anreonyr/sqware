@@ -6,18 +6,21 @@
 // checker/lockdep，**没有任何一档同时带两半**。这个事实记在 docs §10.16。
 //
 // 与「自测（selftest，out-of-path 验收用例）」相对：护栏是功能运行的自我证明，
-// 命中即 halt（panic → crash scene）。五个成员：
+// 命中即 halt（panic → crash scene）。四个成员：
 //   kind     — **记账的唯一维度**：分配对象种类与它自带的期望终值 / 策略 / 键域。
 //   checker  — 分配器链式不变式断言（block/frame 的 freepool 判重、越界、环与
-//              流水观测）。钩子恒编译、单行调用；函数体 debug-gated。
-//   banker   — 页金库占位（无锁原子位图；free 区每页 1 bit，debit/credit/is_held）。
+//              流水观测）。钩子恒编译、单行调用；**检查**在 debug 档与 audit 档都跑。
 //   ledger   — 活块账本（hashbrown 登记表；mark/unmark/relabel/canary，锁内零分配）。
 //   audit    — 核查侧（多源交叉核对 audit()、关机**逐种类终值**检查 check_baseline、
 //              持久注册表、页清残留 page_clear、站点/名册探针）。
-// 模块根 = kind/banker/ledger/checker/audit 共享的处置原语：report（违例→trace→panic）、
+// 模块根 = kind/ledger/checker/audit 共享的处置原语：report（违例→trace→panic）、
 // IntegrityViolation（违例类目）、poison（毒化标记）、帧种类表与相关常量，以及**事件入口**
-// （on_alloc/on_free/on_frame_alloc/on_frame_free）——分配器热路径对其的调用是
-// 一行无 cfg 的语义事件，asm 读 ra、poison、记账全部收在本层内部。
+// （on_alloc/on_free/on_frame_free）——分配器热路径对其的调用是一行无 cfg 的
+// 语义事件，asm 读 ra、poison、记账全部收在本层内部。
+//
+// **`banker`（页金库位图）已删除**（用户裁决，见 docs §10.18）："这页在不在手"只由
+// `frame::pagemeta` 一份账回答，核对点收进 `checker`（audit 档也在场）；原先 banker
+// 与 `frame.occupied` 的计数交叉核对是**两份账记同一件事**，随之消失。
 //
 // # 解耦纪律：种类机制收在本层，分配器文件零种类词汇
 //
@@ -26,19 +29,19 @@
 // ZST 包装委托分配器 + 返回前标注）全部在本层实现。**分配器不携带种类参数**：
 // 分配点经 `tag!` 装饰器 / `tagged_alloc(kind)`（唯一 fence 词汇入口）标注，
 // 释放路径的种类由本层自存表/账本读出。debit/credit 恒发生、与种类无关——种类只影响
-// 计数维度，种类错乱只失真计数（`tag` 的 side 断言会当场抓住），不破坏 banker 配对。
+// 计数维度，种类错乱只失真计数（`tag` 的 side 断言会当场抓住）。
 //
 // 帧的种类**由造对象的那一层标注**：`SpaceInner::frame()` 只领一帧、不认识种类，
 // claim/materialize 的帧来源由调用者以闭包给出（`attach` 早就是这个形状）。
 //
 // gate 语义：**audit 是 cargo feature**（kernel/Cargo.toml `audit`，**非默认**，
 // 需显式 `--features audit` 开启；与 debug_assertions 无关，release 也能跑审计）。
-// checker 独立（debug-only）；banker/ledger/audit → 模块根（feature-gated）。
+// checker 独立（检查在 debug 档与 audit 档都编译）；ledger/audit → 模块根（feature-gated）。
 // feature 关闭时装饰器（tag!）退化为裸表达式（零开销），ledger 模块整体 cfg out，
 // scene 中 sweep_canaries 等调用也必须同步 gate 在 audit feature 下。
 //
-// 依赖方向（无环）：kind 独立（恒编译）；checker 独立；banker/ledger → 模块根；
-// audit → 模块根 + banker + ledger。
+// 依赖方向（无环）：kind 独立（恒编译）；checker 独立；ledger → 模块根；
+// audit → 模块根 + ledger + frame（读侧 is_held）。
 
 // ── 对象种类（关机记账的唯一维度）──
 //
@@ -63,7 +66,6 @@ use crate::lock::OnceLock;
 use crate::runtime::diagnose::frame::StackReader;
 
 pub mod audit;
-pub mod banker;
 pub mod checker;
 pub mod kind;
 pub mod ledger;
@@ -86,14 +88,14 @@ pub(crate) const CANARY_MIN_SLACK: usize = 8;
 
 // ── 帧种类表（fence 所有；分配器文件零种类词汇）──
 
-/// 帧种类表：free 区每页 1 字节（0 = Plain 未标注），与 banker 位图同构
-/// （idx = (pa − base)/PAGE_SIZE，base 同 banker.init）。init 由 banker.init
-/// 同步装配（bump 后端，boot 单核）。
+/// 帧种类表：free 区每页 1 字节（0 = Plain 未标注），idx = (pa − base)/PAGE_SIZE。
+/// 装配点 = `block::init` 里拿到 free 区几何的那一处（先于任何帧分配；原与 banker
+/// 同点，banker 删除后由这里直呼）。
 static FRAME_KIND: OnceLock<Box<[AtomicU8]>> = OnceLock::new();
-/// 表基址（与 banker 同源）。
+/// 表基址（free 区基址）。
 static FRAME_KIND_BASE: AtomicUsize = AtomicUsize::new(0);
 
-/// 装配帧种类表（banker.init 同点调用；先于任何帧分配）。
+/// 装配帧种类表（block::init 调用；先于任何帧分配）。
 #[cfg(feature = "audit")]
 pub(crate) fn init_frame_kind(base: usize, pages: usize) {
     let table: Box<[AtomicU8]> = (0..pages).map(|_| AtomicU8::new(0)).collect();
@@ -104,7 +106,7 @@ pub(crate) fn init_frame_kind(base: usize, pages: usize) {
     );
 }
 
-/// 表下标（与 banker.idx 同算式）。
+/// 表下标（帧页号）。
 fn frame_kind_slot(pa: usize) -> usize {
     let base = FRAME_KIND_BASE.load(Ordering::Relaxed);
     (pa - base) / crate::memory::PAGE_SIZE
@@ -374,7 +376,7 @@ pub fn report(v: IntegrityViolation, addr: usize, detail: fmt::Arguments) -> ! {
 // ── 事件入口（恒编译；体内 audit-feature-gated，feature 关闭时空体零开销）──
 //
 // 分配器热路径唯一可见的护栏痕迹：一行语义调用。asm 读 ra、poison 填充、
-// ledger/banker 记账全部收在本层内部——纯功能文件（block/frame/space）不见
+// ledger 记账全部收在本层内部——纯功能文件（block/frame/space）不见
 // 任何 cfg、编译器内联指令或审计词汇。audit-feature 构建做账，feature 关闭时空体经
 // #[inline] 消除。
 
@@ -623,27 +625,16 @@ pub fn on_free(addr: usize, size: usize, kind: Kind) {
     }
 }
 
-/// 帧分配事件：页金库取出（Free→held；双取出 / 活堆页泄漏进池现行）。
-/// debit 恒发生、与种类无关——种类标注由装饰器（[`tag!`]）在求值返回后
-/// 经 [`tag`] 完成（frame 分配器文件零种类词汇）。
-#[inline]
-pub fn on_frame_alloc(addr: usize) {
-    #[cfg(feature = "audit")]
-    {
-        banker::BANKER.debit(addr);
-    }
-}
-
-/// 帧释放事件：页金库存入（held→Free；存入陌生页 / 双释放现行）。
+/// 帧释放事件：摘标（untag）+（audit 档）由 `pagemeta` 侧核对"这帧确实在手里"。
+/// 取出的对偶不需要钩子：`pop_link` 的 `check_frame_free` 就是"原先必须 free"那条
+/// 不变量，且在 audit 档也在场（banker 删除后它成了唯一一份账）。
 /// 摘标（untag——tag 的对偶）：自 FRAME_KIND 表读出种类、清表项,按种类减
 /// 计数由 [`untag_frame`] 内部 record_frame_give 完成；credit 恒发生、
-/// 与种类无关（banker 配对不受种类错乱影响）。
 #[inline]
 pub fn on_frame_free(addr: usize) {
     #[cfg(feature = "audit")]
     {
         let _kind = untag_frame(addr);
-        banker::BANKER.credit(addr);
     }
     #[cfg(not(feature = "audit"))]
     {

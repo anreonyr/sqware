@@ -48,6 +48,17 @@ impl FrameAllocator {
         let g = self.inner.lock();
         (g.edge - g.base) / PAGE_SIZE
     }
+
+    /// 该物理页当前是否在帧分配器手里（held）。
+    ///
+    /// **唯一真相**：`pagemeta`。banker 的每页位图删除后，持久帧登记表与账本落页
+    /// 检查都问这里（见 docs §10.18）——同一件事不再有两份账。
+    /// 消费者只有 audit 档（关机不变量 + boot 三源核对），故同 gate。
+    #[cfg(feature = "audit")]
+    pub(crate) fn is_held(&self, pa: usize) -> bool {
+        let g = self.inner.lock();
+        g.held(pa)
+    }
 }
 
 /// 由请求字节数计算 frame order（块 = 2^power × PAGE_SIZE，须覆盖 size）。
@@ -83,7 +94,8 @@ unsafe impl Allocator for FrameAllocator {
                     frame.edge
                 );
             }
-            super::fence::on_frame_alloc(addr as usize);
+            // 取出即已由 pagemeta 证明"这帧原先 free"（pop_link 的 check_frame_free
+            // 在 audit 档也跑）——banker 删除后不再有第二份每页位图（docs §10.18）。
             super::statistics::record_frame_take(super::fence::Kind::Plain);
             checker::log_frame_alloc(addr as usize, index, power);
             Ok(NonNull::slice_from_raw_parts(
@@ -113,6 +125,11 @@ unsafe impl Allocator for FrameAllocator {
                 );
             }
             let index = frame.frame_index(addr);
+            // 护栏：释放的帧必须**仍在手**（pagemeta 唯一真相，O(order) 遍历
+            // ——与 check_frame_free 同档：debug + audit；产品档整句不编译，
+            // 故那次遍历不付）。
+            #[cfg(any(debug_assertions, feature = "audit"))]
+            checker::check_frame_held(frame.held(addr), index, addr, power);
 
             // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);
@@ -210,6 +227,35 @@ impl FrameInner {
             remaining -= 1 << power;
         }
         Ok(())
+    }
+
+    /// 页是否 held：按 order 从大到小找**包含它的那个块的块首**，读该块首的 pagemeta。
+    /// （`is_held` 与 `check_frame_held` 的读侧：audit 档与 debug 档都要。）
+    /// 伙伴块内其余页没有独立表项（`None`），故必须按对齐回退找块首。
+    /// 窗口外 / 找不到任何块首（不可能：init 把每一页都归入某个块或洞）→ false。
+    #[cfg(any(debug_assertions, feature = "audit"))]
+    fn held(&self, pa: usize) -> bool {
+        if pa < self.base || pa >= self.edge {
+            return false;
+        }
+        let index = self.frame_index(pa);
+        // 从大到小扫"包含它的那个块的块首"：`index & !(2^power-1)` 给出该 order 下的
+        // 对齐基址，但**对齐命中不等于包含**——同址可能站着另一个 order 的块（块基址
+        // 互相都是对齐的）。故必须用表项自带的 power 复核覆盖关系，否则会读到"隔壁
+        // 那块"的 free 位（实测：index 5004 撞上一个从 0 起的 4096 页空闲块 ⇒ 把
+        // 合法的释放报成 non-held）。
+        for power in (0..self.freelist.len()).rev() {
+            let base_index = index & !((1usize << power) - 1);
+            if base_index >= self.pagemeta.len() {
+                continue;
+            }
+            if let Some(m) = self.pagemeta[base_index].as_ref()
+                && index < base_index + (1usize << m.power)
+            {
+                return !m.free;
+            }
+        }
+        false
     }
 
     // 物理地址 → 帧索引

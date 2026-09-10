@@ -1,8 +1,10 @@
 // 护栏层 · checker — 分配器链式不变式的断言收容处。
 //
-// 钩子恒编译、单行调用；函数体 #[cfg(debug_assertions)] 包住，release 下空体
-// 零开销。命中一律 panic（halt 处理器再转储 crash scene）。调用点传裸值，
-// 本模块无状态、不触碰任何分配器内部。
+// 钩子恒编译、单行调用；命中一律 panic（halt 处理器再转储 crash scene）。调用点传裸值，
+// 本模块无状态、不触碰任何分配器内部。门分两档（见下"为什么 audit 档也要跑"）：
+//   O(1) 的检查（dram/bounds/frame_free/frame_held）→ debug 档 **与** audit 档都编译
+//   O(链长) 的链式遍历（not_in_chain / in_chain）与 log_* → 只 debug 档
+// 其余档空体零开销。
 
 #![allow(unused_variables)] // release 下钩子为空体，参数随之未用
 
@@ -12,7 +14,7 @@ use core::ptr::NonNull;
 /// 的特征；校验不过立刻 panic，把解引用野指针后的随机崩溃变成定位明确的报错。
 #[inline(always)]
 pub(crate) fn check_dram_addr(addr: usize, ctx: &str) {
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "audit"))]
     {
         if !crate::machine::info().free.range().contains(&addr) {
             panic!(
@@ -25,7 +27,7 @@ pub(crate) fn check_dram_addr(addr: usize, ctx: &str) {
 /// 索引越界（freelist/pagemeta 数组写前检查——越界写会破坏相邻元数据）。
 #[inline(always)]
 pub(crate) fn check_bounds(value: usize, len: usize, ctx: &str) {
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "audit"))]
     assert!(
         value < len,
         "allocator: {ctx}: {value} out of range (len {len})"
@@ -35,10 +37,24 @@ pub(crate) fn check_bounds(value: usize, len: usize, ctx: &str) {
 /// frame 弹出帧必须 free（`pagemeta` 与链一致；分配中的帧被再弹出 = 重叠分配）。
 #[inline(always)]
 pub(crate) fn check_frame_free(free: bool, index: usize, addr: usize, power: usize) {
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "audit"))]
     if !free {
         panic!(
             "frame allocator: allocated non-free frame — index {index}, addr {addr:#x}, power {power}"
+        );
+    }
+}
+
+/// frame 释放帧必须**仍在手**（`pagemeta` 说它是某块的块首且 non-free）——
+/// 双释放 / 释放陌生页的特征。O(order) 无锁内遍历，故与 `check_frame_free`
+/// 一同进 audit 档（banker 的 `credit` 删掉后由它接位，见 docs §10.18）。
+// 整函数与调用点同 gate：它的实参是一次 O(order) 的 pagemeta 遍历，产品档不该付。
+#[cfg(any(debug_assertions, feature = "audit"))]
+#[inline(always)]
+pub(crate) fn check_frame_held(held: bool, index: usize, addr: usize, power: usize) {
+    if !held {
+        panic!(
+            "frame allocator: freeing non-held frame — index {index}, addr {addr:#x}, power {power}"
         );
     }
 }

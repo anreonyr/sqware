@@ -1,7 +1,7 @@
 //! 护栏层 · audit — 核查侧：所有权类别记账、关机不变量、页清残留检查
 //!
-//! 与 banker/ledger（簿记：写账/读账）相对，本模块是**核查**：拿类别计数对
-//! 不变量。只读账本（banker/ledger/statistics 类别计数），不写。违例统一经
+//! 与 ledger（簿记：写账/读账）相对，本模块是**核查**：拿种类计数对
+//! 不变量。只读账本（ledger/statistics 计数）与帧分配器的 `pagemeta` 读侧，不写。违例统一经
 //! `report` 处置（见 fence/mod）。
 //!
 //! # 设计：逐对象种类记账（替代旧「boot 身份快照 vs 关机差集」，也替代粗粒度的 4 类）
@@ -17,7 +17,8 @@
 //!   ③ `End::Walk` 表页数 == 内核根表 walk 数      任务表遗留 / 内核表被摘。
 //!   ④ `End::Report` 只报数（池借页周转 / 自检帧 / 未标注 Plain）。
 //!   ⑤ `End::Retire` 随空间作废（用户堆账，`fence::retire` 已在归还 ASID 前销账）。
-//!   ⑥ banker held == frame.occupied               两条独立记账的交叉核对。
+//!   ⑥ 帧侧"在不在手"只问 `frame::is_held`（pagemeta 唯一真相；banker 已删——
+//!      原先那条 `banker held == frame.occupied` 是两份账记同一件事，随之消失）。
 //!
 //! boot 收尾 [`audit()`] 三源交叉核对 + 类别计数 sanity；[`page_clear`] 验页内
 //! 无活账。
@@ -38,7 +39,8 @@ use crate::memory::allocator::statistics;
 /// boot 持久帧登记：显式 **add-only** 注册 `(pa, name)`——trap 栈块、spare 仓块、
 /// 内核窗口帧（各自 boot 初始化点注册）。硬规则：持久帧永不移动（移动的是缓冲，
 /// 缓冲是块/池页）——注册表永远有效，无 rehome/adopt。关机逐项校验仍 held
-/// （[`banker::is_held`]），错还即违例（替代旧「持久缺失差集」——旧差集把
+/// （[`crate::memory::allocator::frame::FrameAllocator::is_held`]），错还即违例
+/// （替代旧「持久缺失差集」——旧差集把
 /// boot held 全集当持久集，任何合法归还都需赦免；注册表只覆盖**声明持久**的
 /// 少量结构，其余 boot 期分配属默认类 Persistent，不参与检查）。
 struct PersistEntry {
@@ -50,8 +52,8 @@ struct PersistEntry {
 
 static PERSISTENT: OnceLock<crate::lock::SpinLock<alloc::vec::Vec<PersistEntry>>> = OnceLock::new();
 
-/// 登记持久帧（boot 调用；add-only）。`pa` = 帧块基址（分配事件首地址——banker
-/// held 位与种类记账均按分配事件首页）；`kind` = 声明它是哪种对象（名字从种类来）。
+/// 登记持久帧（boot 调用；add-only）。`pa` = 帧块基址（分配事件首地址——帧种类表
+/// 与 held 核验均按分配事件首页）；`kind` = 声明它是哪种对象（名字从种类来）。
 pub(crate) fn register_persistent(pa: usize, kind: Kind) {
     let list = PERSISTENT.get_or_init(|| crate::lock::SpinLock::new(alloc::vec::Vec::new()));
     list.lock().push(PersistEntry { pa, kind });
@@ -103,6 +105,11 @@ fn collect_kernel_tables(out: &mut alloc::vec::Vec<usize, &'static dyn Allocator
 
 // ── 关机检查 ──────────────────────────────────────────
 
+/// 帧"在不在手"的唯一问法（pagemeta 读侧；banker 删除后不再有第二份每页位图）。
+fn held(pa: usize) -> bool {
+    crate::memory::allocator::frame::heap().is_held(pa)
+}
+
 /// 按种类取「帧 + 块」两侧的计数（种类自带侧面；未标注两侧都算）。
 fn count_kind(frame: &statistics::FrameView, block: &statistics::BlockView, k: Kind) -> usize {
     match k.side() {
@@ -127,12 +134,12 @@ pub fn check_baseline() {
     // push 零分配、无 realloc（关机单核无并发分配）。
     let mut now_tables: alloc::vec::Vec<usize, &'static dyn Allocator> =
         alloc::vec::Vec::with_capacity_in(
-            super::banker::BANKER.held_count().max(64),
+            frame.occupied.max(64),
             crate::memory::allocator::hybrid::allocator(),
         );
     let mut now_pool: alloc::vec::Vec<usize, &'static dyn Allocator> =
         alloc::vec::Vec::with_capacity_in(
-            super::banker::BANKER.held_count().max(64),
+            frame.occupied.max(64),
             crate::memory::allocator::hybrid::allocator(),
         );
 
@@ -166,7 +173,7 @@ pub fn check_baseline() {
             // boot 语句上，一致是廉价的，不一致就是把种类说错了（旧版这里是一份
             // 并列的字符串，无人核对）。
             let actual = super::frame_kind(e.pa);
-            if actual != e.kind && super::banker::BANKER.is_held(e.pa) {
+            if actual != e.kind && held(e.pa) {
                 crate::putln!(
                     "[audit] persistent {} @ {:#x} is tagged {} in the frame table",
                     e.kind.name(),
@@ -175,7 +182,7 @@ pub fn check_baseline() {
                 );
                 misdeclared += 1;
             }
-            if !super::banker::BANKER.is_held(e.pa) {
+            if !held(e.pa) {
                 if freed_persistent == 0 {
                     crate::putln!("[audit] freed persistent frames at shutdown:");
                 }
@@ -208,16 +215,6 @@ pub fn check_baseline() {
     crate::memory::allocator::block::heap().collect_owned(&mut now_pool);
     let pool_pages = now_pool.len();
 
-    // ⑤ 一致性：banker held 与 frame.occupied 必须相符（两条独立记账的交叉核对）。
-    //
-    // 重取快照：本函数 now_tables / now_pool 两次 Vec 分配自扰会增减 held
-    // 与 occupied，上面的 frame 是分配前的快照——drift 检查用它会把自扰
-    // 当违例。view_frame() 重读 occupied，audit 自扰归零，!held_ok 触发条件
-    // 只对真违例（漏 take / 漏 give / 帧重叠 / OOB 等）开放。
-    let held = super::banker::BANKER.held_count();
-    let occupied = statistics::view_frame().occupied;
-    let held_ok = held == occupied;
-
     drop(now_tables);
     drop(now_pool);
 
@@ -249,13 +246,6 @@ pub fn check_baseline() {
             format_args!("table frames {table_frames} != kernel-walk {walk_tables} at shutdown"),
         );
     }
-    if !held_ok {
-        report(
-            IntegrityViolation::AuditDivergence,
-            0,
-            format_args!("banker held {held} != frame occupied {occupied} at shutdown"),
-        );
-    }
     crate::putln!(
         "[audit] shutdown checks ok: zero {zero_ok}/{zero_total} held {}/{held_total} tables {table_frames}/{walk_tables} report-only prime {prime} probe {probe} plain {plain} user-heap {user_heap} pool {pool_pages}",
         held_total - freed_persistent
@@ -282,28 +272,21 @@ pub fn page_clear(pa: usize) {
 }
 
 /// 全量审计（boot 收尾调用一次；三源交叉核对 + 类别计数 sanity，违例即 report）：
-///   Banker.held_count == frame.occupied；
-///   帧类别计数之和 == held（每帧分配恰记入一个类别计数）；
+///   帧种类计数之和 == frame.occupied（每帧分配恰记入一个种类计数）；
 ///   块类别计数之和 == ledger 在册数；
-///   每条 KernelHeap 记录地址须落在某池持有页,且所在页须 held。
+///   每条内核堆记录的地址须落在某池持有页、且所在页仍在帧分配器手里
+///   （用户堆记录不参与：键是页索引，不是地址）。
 pub fn audit() {
     let frame = statistics::view_frame();
     let block = statistics::view_block();
-    let held = super::banker::BANKER.held_count();
     let occupied = frame.occupied;
-    if held != occupied {
-        report(
-            IntegrityViolation::AuditDivergence,
-            0,
-            format_args!("banker {held} != frames {occupied}"),
-        );
-    }
+    // 帧种类计数之和 == occupied（帧侧唯一账：pagemeta 的 occupied 镜像）。
     let ftotal: usize = frame.kinds.iter().sum();
-    if ftotal != held {
+    if ftotal != occupied {
         report(
             IntegrityViolation::AuditDivergence,
             0,
-            format_args!("frame class counts {ftotal} != banker held {held}"),
+            format_args!("frame kind counts {ftotal} != frames occupied {occupied}"),
         );
     }
     let btotal: usize = block.kinds.iter().sum();
@@ -315,31 +298,43 @@ pub fn audit() {
             format_args!("block class counts {btotal} != ledger records {recs}"),
         );
     }
+    // **锁序**：帧侧读侧（`held`）要取 Frame 锁（level 6），而本处若在 Ledger 锁
+    // （level 8）内取就是"持高取低"⇒ lockdep 当场报违规。故先在 Ledger 锁内把地址
+    // 抄进**预先分配好**的缓冲（锁内零分配），放锁后再问帧分配器。
+    // 这条边是删 banker 之后新出现的：banker 是无锁原子位图，不问帧锁。
+    let mut kheap: alloc::vec::Vec<usize, &'static dyn Allocator> =
+        alloc::vec::Vec::with_capacity_in(
+            super::ledger::LEDGER.len().max(64),
+            crate::memory::allocator::hybrid::allocator(),
+        );
     super::ledger::LEDGER.for_each(|addr, rec| {
-        let page = addr & !(crate::memory::PAGE_SIZE - 1);
         if rec.kind.poison() {
-            if crate::memory::allocator::block::heap().own(addr).is_none() {
-                report(
-                    IntegrityViolation::WildAddress,
-                    addr,
-                    format_args!("kernel-heap record outside block-owned pages"),
-                );
-            }
-            if !super::banker::BANKER.is_held(page) {
-                report(
-                    IntegrityViolation::AuditDivergence,
-                    addr,
-                    format_args!("kernel-heap record on non-held page {page:#x}"),
-                );
-            }
-        } else if !super::banker::BANKER.is_held(page) {
+            kheap.push(addr);
+        }
+        // 用户堆记录**没有帧侧对应物**：它的键是 `(asid, 页索引)`，不是地址，帧
+        // 分配器无从作答（它的性命由空间持有——`retire(asid)` 在归还 ASID 前销账，
+        // 验收在 `Space` 侧）。旧代码在这里问 banker，那会撞上 `idx` 的范围断言
+        // ——只因为关机前用户堆账已被 `retire` 清空，那个分支从未被走到（种类分开
+        // 之后这里不再假装能查）。
+    });
+    for &addr in kheap.iter() {
+        let page = addr & !(crate::memory::PAGE_SIZE - 1);
+        if crate::memory::allocator::block::heap().own(addr).is_none() {
+            report(
+                IntegrityViolation::WildAddress,
+                addr,
+                format_args!("kernel-heap record outside block-owned pages"),
+            );
+        }
+        if !held(page) {
             report(
                 IntegrityViolation::AuditDivergence,
                 addr,
-                format_args!("user-heap record VA on non-held page {page:#x}"),
+                format_args!("kernel-heap record on non-held page {page:#x}"),
             );
         }
-    });
+    }
+    drop(kheap);
 
     // 收尾 delta：把与 boot 基线的差打印出来（statistics 的读侧出口）。
     if let Ok(d) = statistics::delta() {
