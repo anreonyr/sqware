@@ -88,7 +88,7 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
 /// 退出钩子：任务消亡时，它名下每一枚门闩各自 `cull`（派生链随其断）。
 ///
 /// 签名受 `ExitHook = fn(usize)` 约束，故自取快照并在其中按 id 找到该任务
-/// （此刻它仍在 REAPED 里，Weak 可升级）——**不查调度器**。
+/// （此刻收尾者 `die` 仍持强引用，Weak 可升级）——**不查调度器**。
 pub(crate) fn doom(tid: usize) {
     let snap = snap::snap();
     let Some(task) = snap::find(tid, &snap) else {

@@ -225,7 +225,6 @@ pub extern "C" fn starve() {
 ///
 /// # Safety
 /// 仅可由当前 running 的内核任务调用（同 [`park`](Self::park)）。
-#[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 #[unsafe(naked)]
 pub extern "C" fn reap() -> ! {
     naked_asm!(

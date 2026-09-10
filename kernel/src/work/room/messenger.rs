@@ -7,7 +7,7 @@
 // 和 drain_expired（timer 到期），都把任务转 Starved 推回 scheduler 本核 + kick。
 //
 // 簿记：parked（deadline 句柄 → task）、sites（key → pend+waiters）、times
-// （tock 句柄 → key）、reaped（Arc<Task> 队列）。四张表全 L3，3→3 嵌套禁止。
+// （tock 句柄 → key）、zombies（Arc<Task> 队列）。四张表全 L3，3→3 嵌套禁止。
 // 锁序：**L1（调度器）与 L3（本域四表）任何方向都不得嵌套**——持任一 L3 期间
 // 不得调用 scheduler 的任何加锁方法，也不得在锁内 drop `Arc<Task>`（drop 链会
 // 取 Space 锁 L2）。各路径的写法统一为「作用域内取、作用域外用」：wait/wake/
@@ -156,9 +156,9 @@ fn wait_times() -> &'static SpinLock<HashMap<u64, WaitKey>> {
     TIMES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
-/// 全局 reaped 队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
+/// 全局僵尸队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
 /// 自己正在用的栈上回收自己；clear_loop  统一回收。
-pub(super) static REAPED: SpinLock<VecDeque<Arc<Task>>> =
+pub(super) static ZOMBIES: SpinLock<VecDeque<Arc<Task>>> =
     SpinLock::new_level(Level::L3, VecDeque::new());
 
 /// 待杀集合（doomed）：`kill` 点名他核 Running 任务时记入，目标核 trap 自查
@@ -316,7 +316,7 @@ fn die(mut task: Arc<Task>) {
         hook(task.ident.id);
     }
     Task::exclusive(&mut task).transform(TaskState::Reaped);
-    REAPED.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
+    ZOMBIES.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
 }
 
 /// mark_reaped：离核装槽 → [`die`]（收尾 + 入队）→ 返下一帧 PA。
@@ -596,11 +596,11 @@ pub fn drain_expired() -> bool {
 pub fn clear_loop() {
     loop {
         // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
-        // 导致 reaped(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。
-        // 块结束即释放 reaped 锁。
+        // 导致 zombies(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。
+        // 块结束即释放 zombies 锁。
         let z = {
-            let mut reaped = REAPED.lock();
-            let Some(z) = reaped.pop_front() else {
+            let mut zombies = ZOMBIES.lock();
+            let Some(z) = zombies.pop_front() else {
                 break;
             };
             z
@@ -651,7 +651,7 @@ fn exit_hooks() -> &'static [ExitHook] {
 }
 
 /// 终末释放：清空 messenger 持有的全部 Arc<Task>（parked / sites / times /
-/// reaped 四张表）——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。
+/// zombies 四张表）——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。
 /// 由 [`scheduler::core::rip`] 在 halt 路径调用；mail 接入点由 task.mail
 /// 析构透传释放（无需 mail 自有关闭钩子）。
 ///
@@ -668,8 +668,8 @@ pub(crate) fn rip() {
     let joins_out = core::mem::take(&mut *joins().lock());
     drop(joins_out);
     join_times().lock().clear(); // 只存键，无 Arc
-    let reaped_out = core::mem::take(&mut *REAPED.lock());
-    drop(reaped_out);
+    let zombies_out = core::mem::take(&mut *ZOMBIES.lock());
+    drop(zombies_out);
     doomed().lock().clear(); // 只存 id，无 Arc
 }
 

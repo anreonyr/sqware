@@ -110,7 +110,6 @@ pub fn tock(handle: u64, wake_at: u64) {
 }
 
 /// 取消这个 tock（惰性：堆项留至到期被 drain 丢弃；此后该句柄不再唤醒任何任务）。
-#[allow(dead_code)] // 预留：超时等待被提前唤醒时取消用
 pub fn untock(handle: u64) {
     let mut i = TIMER_HEAP.inner.lock();
     if !i.cancelled.contains(&handle) {
@@ -120,7 +119,6 @@ pub fn untock(handle: u64) {
 }
 
 /// 最近一个未到点 tock（锁外原子读；None = 无）。
-#[allow(dead_code)] // 预留：轮询最近唤醒点
 pub fn next_tock() -> Option<Instant> {
     let t = TIMER_HEAP.peek_nearest();
     (t != NONE).then_some(Instant::from_ticks(t))
