@@ -2498,3 +2498,62 @@ per-page 那 1 byte 从"配额分类"变成**对象身份**之后，「在不在
 **产品档（default）里一条护栏串都没有**（audit 带 banker/ledger、harden 带 checker/lockdep，
 没有任何一档同时带两半），而 `fence/mod.rs` 的头注写着"内嵌在生产路径"——那句已按实测改写，
 但它指向的"哪一档才是验收构造"仍待裁决。
+
+### 10.17 `fence` 终点第一刀：三档合成（用户裁决「先做第二件」）
+
+先量化再裁。`cargo build -p kernel --profile harden --features audit` **建得出来、跑得绿**，
+四串同时在场：
+
+| 档 | banker | ledger | checker | lockdep | 实测 |
+|---|---|---|---|---|---|
+| default（产品档） | ✗ | ✗ | ✗ | ✗ | 四条串全 0 |
+| audit | ✓ | ✓ | ✗ | ✗ | `debit on already-held page` / `unmark: no record` |
+| harden（旧） | ✗ | ✗ | ✓ | ✓ | `allocated non-free frame` / `lock-order level violation` |
+| **harden + audit（新）** | **✓** | **✓** | **✓** | **✓** | 四串齐；ELF 7899048 B（纯 harden 7433648 B，+6%） |
+
+于是 §10.16 记下的那个病——「帧分配器的同一条不变量有两份实现，而**没有任何一档同时带着
+两半**」——直接消掉：融合档里 banker 的每页位与 `pagemeta` 的链式检查**同档同跑**，
+两个时刻的计数交叉核对（`banker held == frame.occupied`）也因此第一次真正有意义。
+
+**门侧三处**（都是判据自身的修正，不动内核）：
+
+| # | 改动 | 为什么 |
+|---|---|---|
+| 1 | harden 档构建参数 `$DEFAULT_FEATURES` → `$features` | 融合档的入口 |
+| 2 | 哨兵「默认档不该有 audit 输出」**收窄到 `flavor == "default"`** | 原先对一切非 audit 档生效 ⇒ 融合档必红（实测那次 FAIL 就是这条，**不是内核问题**：同轮 `[depend]` 无违规、audit 报告完整） |
+| 3 | 正向对照 1 串 → **4 串**（`HARDEN_PROBES`：断言 / banker / ledger / lockdep），少任何一串即退出 | "两半同档"从此是门**每次都要核**的事实，不再是一句声明；旧版只查一句断言串，所以"两半从不在一起"一直没被门盯住 |
+
+**判据**：全门 **5/5**（默认 3/3 + audit 轮 PASS + 融合 harden 轮 PASS 无 `[depend]`）；
+默认档三轮 md5 = `183133960fd82a1ff0f4a4c3f8863355`（A2 基线，逐字节不变）。
+全门调用：`EXAMINE_FEATURES=audit EXAMINE_HARDEN=1 scripts/examine.nu`。
+
+#### 顺带抓到的**新泄漏**：`[audit] leak: task 1`（间歇）
+
+融合档实验的第一轮里，audit 轮 FAIL，原因是本轮的逐对象判据：
+
+```
+[audit] sites 0 live 0 tomb 0 orphan 0 dead 0 waiters 0
+[audit] roster 8 alive 0
+[audit] leak: task 1
+```
+
+`Task` 是**账本侧**种类 ⇒ 泄漏物是一个 `Arc<Task>` / `TaskIdent` **块**（不是帧）。
+同一轮：站点四零态、名册 `alive 0`。**名册看不见它**——名册只存 `Weak<Task>`，
+不存 `Weak<TaskIdent>`：一个 `Arc<TaskIdent>` 可以在 `Task` 本体已回收之后继续钉住那个块。
+这正是逐对象记账多出来的那一维所看见的东西。
+
+复跑 5 轮 audit 全绿（另加融合档那轮的 audit 轮）⇒ **间歇**（约 1/8）。旧判据（`task_blocks`）
+理论上也能看见它（会报"0 frames, N blocks"），但它从未在最近几十轮里出现——现在它有了名字。
+
+**诊断它需要什么**：账本记录里的 `site`（分配点返回地址）**早就在存**，却从没拿来做账
+（§10.16 记的"另一半"）。所以下一步是明确的：泄漏时按种类把 `site` 打出来，host 侧
+`addr2line` 符号化 ⇒ 直接指到"哪个分配点漏了一份强引用"。这与 §10.12 那条线的机制
+（退场是切走、不是退栈 ⇒ 被丢弃帧里的强引用永远不还）同源，故很可能是同一族里的第三处。
+
+#### 残题（比上一次窄了很多）
+
+- **(i) 删 `banker`**：融合档之后它的存在理由从"唯一能查每页在不在手的账"变成"独立第二账"
+  ——两份独立实现同档同跑正是审计的价值。要删，理由是"pagemeta 已是唯一真相"；要留，
+  理由是"独立验证"。**裁决点从三条收成一条**。
+- **(ii) 接受融合档为唯一验收构造**：现在只剩"要不要真的只留融合档 + 产品档两档"
+  （audit 轮作为"无断言但有记账"的中间档是否还值得单独跑）。
