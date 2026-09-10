@@ -13,7 +13,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::work::room::messenger::redeem;
-use crate::work::room::scheduler::core::{Current, ident};
+use crate::work::room::scheduler::core::{Identity, ident};
 use crate::work::room::scheduler::trap::run;
 use crate::{machine, put};
 
@@ -180,7 +180,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             unsafe {
                 sip::clear_ssoft();
             }
-            if let Some(running) = ident.as_ref().and_then(Current::live)
+            if let Some(running) = ident.as_ref().and_then(Identity::live)
                 && crate::work::room::messenger::take_doomed(running.id)
             {
                 drop(ident);
@@ -204,7 +204,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             if !from_task {
                 panic!("kernel ebreak from the kernel itself");
             }
-            let Some(Current::Live(ident_arc)) = ident else {
+            let Some(Identity::Live(ident_arc)) = ident else {
                 panic!("envcall without running task");
             };
             match crate::runtime::switcher::envcall::dispatch(frame, ident_arc) {
@@ -230,7 +230,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
             let running = ident
                 .as_ref()
-                .and_then(Current::live)
+                .and_then(Identity::live)
                 .expect("user page fault without running task");
             let ok = crate::memory::manager::fault::handle_page_fault(&fault, &running.team.space);
             trace::note(EventKind::Memory(MemoryEvent::PageFault {
@@ -260,7 +260,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             if from_task {
                 let running = ident
                     .as_ref()
-                    .and_then(Current::live)
+                    .and_then(Identity::live)
                     .expect("user exception without running task");
                 let tid = running.id;
                 let cause_bits = scause::read().bits();

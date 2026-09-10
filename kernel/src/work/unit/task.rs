@@ -48,7 +48,11 @@ pub enum TaskState {
     /// **等待点 = 键 + 票**：键指向站点（唤醒侧按它找人），票指向到点登记（到期侧
     /// 凭它认领）。两者都在这里，故「谁在等、等什么、等到何时」不散在全局表里。
     Blocked { key: WakeKey, ticket: Ticket },
-    /// 已饥饿（预算耗尽，在 starved 容器等补给；被选中时重置满额预算）。
+    /// 在就绪容器里等选（被选中时重置满额预算）。四条进入路径：放行
+    /// （`Held → Starved`）、预算耗尽轮转、主动让出、唤醒（`Blocked → Starved`）。
+    ///
+    /// 名字只说了其中一条（预算耗尽 = 真的饿过）——放行的新生儿从未跑过。名字保留
+    /// （用户裁决），故四条路径记在这里而不是靠名字暗示。
     Starved,
     /// **未放行**（在 `Team.held` 里；不在任何队列，不可被 steal）：`Spawn` 的初始态，
     /// 只能经 `Hatch` 转 Starved（或随父域被扑杀转 `Doomed`）。
@@ -264,7 +268,7 @@ impl Task {
         }
         let mut t = task.clone();
         Task::exclusive(&mut t).transform(TaskState::Starved);
-        scheduler::core::push(t);
+        scheduler::core::launch(t);
         Ok(())
     }
 
