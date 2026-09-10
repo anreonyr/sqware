@@ -1101,10 +1101,9 @@ cargo fmt --check
 2. **`fence` 终点**：(i) 吸收进 frame/block 单一真相（删 `banker`，直接断言
    `frame::pagemeta`），还是 (ii) 承认它是独立审计构建（`audit` 成 CI 唯一档）？
    现在是两者最坏的混合。§C3.6 已先把「audit 专属」事实化，两条路都已铺平。
-3. **`EnvCall` 分类**：`MailCall` 里混着 9 个**授权**原语
-   （`Seal/Accord/Narrow/Revoke/Collect/Release/Owned/Map/Unmap`），与 README 原则 5
-
-   「Mail 传数据、Pie 传权柄」相背；class 7 已空出。是否落成 `PieCall`？
+3. ~~**`EnvCall` 分类**：`MailCall` 里混着 9 个授权原语，是否落成 `PieCall`？~~
+   → **✅ 已裁决并执行**（见下方 §9.2）。裁决：把九个搬进 class 7 `PieCall`，
+   并把 `Map`/`Unmap` 正名为 `Open`/`Shut`、`Owned` 正名为 `Reserve`。
 4. **`env::dispatch` 的位置**：它是**用户态协议**（Request/Reply/`MSG_LEN`），零内核引用，
    却住在内核也依赖的 ABI crate 里 —— 移进 `task/src/core` 还是独立 `protocol` crate？
 5. **B2 拷贝契约**：维持「精确长度、允许部分写」，还是升级成「要么全写要么不写」？
@@ -1135,3 +1134,54 @@ cargo fmt --check
 `task/src/env/**`（名副其实的薄转发）、`task/src/core/{heap,lock,tls,unit}.rs`、
 `task/src/core/directory.rs:30-180`（本仓最好的核心/适配示范）、`task/link.ld`、
 `scripts/runner.nu`（除断言与 `.cap` 清理外）。
+
+---
+
+## 9.2 · 裁决执行记录：`EnvCall` 按两条轴分家
+
+**裁决**（用户）：把 9 个授权原语搬出 `MailCall`，落成 class 7 `PieCall`；
+`Map`/`Unmap` → `Open`/`Shut`；`Owned` → `Reserve`；class 5 名字与类号不动；
+句柄类型化；抽 `AnyPie` trait；`release` 用 `&self`；封印后允许自释。
+
+分四步执行，各自验收（对应 4 个提交）：
+
+| 步 | 提交 | 内容 |
+|---|---|---|
+| ① | `73e4a62` | ABI：`PieCall` 落 class 7、三处正名、类表与「未知槽位」契约改写、`badslot` 探针换 class 8 |
+| ② | `86caf7a` | 内核：`envcall.rs` 按轴拆成 `{mail,pie}_axis.rs` + **立 `resolve`/`find` 原语** + `pole::map/unmap` → `open/shut` |
+| ③ | `a482c10` | 句柄类型化：`dst: TaskId`、`revoke` 第二参数改名 `at_dst: PieToken`、`accord` 返 `PieToken`、`self_id`/`Join::id` 顺链上移 |
+| ④ | `9e8d810` | 用户侧抽 `AnyPie` trait（5 个方法），线形字段收成句柄 |
+
+### 执行中发现的三件事（设计时没看见）
+
+**1. 六处重复的判定顺序互相矛盾 —— 同一个 token 会拿到两个答案。**
+`Push`/`Pull`/`Open`/`Shut`/`Wait` 先判 `allows` 后判 `alive`，而 `Seal` 相反。
+配合两条既有事实——`Pie::allows` 的注释自述「**不含 alive**」、`seal()` 只把资源
+置死而**不清权限位**——结论是：**对同一个已封印、仍在表里的 token，调用方按调用
+的动词不同，会拿到 `Denied` 或 `Dead` 两个不同错误码。**
+`resolve` 把顺序钉成一处，这条歧义才消失（这是**行为变更**，非纯重构）。
+
+**2. `Seal` 不摘表项 ⇒ `Release` 必须不过存活闸。**
+`Seal` 的判定是 `表里没有 → Denied`、`!alive → Dead`、`owner != 我 → Denied`，
+然后**只把资源置死**——那枚门闩仍留在权限表里。若 `Release` 也走 `resolve`，
+它就会返 `Dead`，**表项永远摘不掉＝泄漏**。故 `Release` 与 `Reserve` 显式走
+`find`（只判存在），这条纪律写进函数文档。
+
+**3. `Map`/`Unmap` 与 `MemoryCall::{Mmap,Munmap,Mprotect}` 的关系**（用户提问）。
+**不重合**：`Mmap` 分配匿名页、无身份、无登记、非幂等；pole 的 `Map` 借用**已存在的**
+页、以 token 为身份、有 `mappings` 登记表、同 token 幂等、且随最后一份强引用
+自动撤映射。但**底层原语共用**（都落 `Space::{map,borrow,protect,unmap}`）。
+真正像冗余的在别处：`Mprotect` 与 pole 的 `narrow` **是同一个机制**（都走
+`Space::protect` 改 PTE flags），差别是 `narrow` 先查 `cap ⊆ 页表` 的单调性，
+而 `Mprotect` 不查、任意改——**`Mprotect` 是 `narrow` 的无权柄版本**。
+记入阶段 4 候选，不在本刀内。
+
+### 未做（留给阶段 4/5）
+
+- **`resolve` 只覆盖六个臂**：`Accord`（额外 `Grant`+`covers`+`vestable` 三道闸）、
+  `Revoke`（不查本表，跨任务）、`Collect`（按 index 非 token）、`Unseal*`（创建）
+  各有各的形状，硬塞会把它从「一个安全检查」退化成「一个通用查找器」。
+- **`Mprotect` ↔ `narrow` 的机制重合**：见上。
+- **`Release`/`Revoke` 内核侧算了「摘掉几枚」并返回 `usize`，而 ABI 是 `#[ret(())]`**
+  ——那个 count 被丢掉，调用方无法知道是放下一个空壳还是拆掉一棵子树。
+  改 Ret 要动 `FromPair` 蒸馏与全部调用点，独立一项。
