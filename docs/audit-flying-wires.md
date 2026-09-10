@@ -1277,7 +1277,7 @@ room/
 | 4 | `sites` 合一（2a）；`wait`/`wake`/`wipe`/`redeem` 立起（2b）；`Handoff<T>` + `rise`（3b） | ✅ |
 | 4a | 冻结表余下的正名：`quit` / `reap` / `bury` / `hook` / `seat` / `shed` | ✅ `c7a8d9d` |
 | 5a | 拆出 `messenger/{reap,doom}.rs`（纯移动，外部引用不改，`pub(crate) use` 重导出） | ✅ `f1fb458` |
-| 5b | 再拆 `messenger/{handoff.rs, wait/{mod,site,holder}.rs}` | ❌ **已回退**，待重做（失败现象与下述「控制台输入会丢」同形，疑非 5b 引入，见下节） |
+| 5b | 再拆 `messenger/{handoff.rs, wait/{mod,site,holder}.rs}` | ✅ 落地（见下「轮 5b 落地」）；上轮那次回退是误判 |
 
 ### 与 §A1 的差异（记账）
 
@@ -1421,3 +1421,39 @@ sleep 3; dir; …`）。宿主一忙，命令就在 guest 还没走到那一步�
 
 本文件 §C3.1（`:342`）那句 `` `timer.rs:113 untock` / `:123 next_tock` `` 是阶段 1 的**当时记录**，
 连同当时的行号，不随本冻结回写；新名以本节为准。
+
+### 轮 5b 落地
+
+结构（行数）：`mod.rs` 518→**71**（锁序契约头 + `mod`/重导出 + `rip` + 扑杀面说明——因
+`reap.rs`/`doom.rs` 本轮不动，它不是字面意义的「只有契约 + rip」）· `handoff.rs` **16** ·
+`wait/mod.rs` **263**（`block`/`rise`/`park`/`wait`/`target_dead`/`join`/`wipe`/`wake`/`redeem`）·
+`wait/site.rs` **156**（`WakeKey`/`Site`/`Waiter` + 分片 + `take_beacon`/`prune`）·
+`wait/holder.rs` **57**（`Ticket`/`holders`/`hold`/`void`）。`reap.rs`/`doom.rs` **零改动**
+（`git diff --quiet` 通过）：`mod.rs` 留了一组私有 `use`，连 `doom.rs` 那句
+`use super::{prune, sites, void};` 都一行没改。
+
+**外部路径一行未变**：`mod.rs` 用 `pub(crate) use` 重导出（照 5a 写法，比被导出条目窄，
+不触发 E0364）。
+
+**可见性账（唯一可能改变行为的地方）**：放宽 7 条（`Ticket.0` / `Ticket::alloc` / `Ticket::raw` /
+`hold` / `WakeKey::fold` / `Site::new` 私有→`pub(super)`；`holders` 私有→`pub(in super::super)`
+——**没有一条到 `pub(crate)`**）；规格显式化而有效范围不变 7 条（`Site.pend` / `waiters` /
+`Waiter` 及其两字段 / `SITE_SHARDS` / `shard_at`）；收紧 8 条（`void` / `sites` / `prune` / `Site`、
+`take_beacon`、`SITE_SHARDS_MASK` / `site_shard`、`block` / `rise` / `target_dead`——均无外部
+使用者，编译器已证）。
+
+**「不再是纯移动」的地方（记账）**：① 上面那张可见性表；② **产物非逐字节相同**——`.text`
+274904 B vs 272656 B，模块结构变化改动了 codegen unit 划分与内联决策（连 `SpaceInner::unmap`、
+`handle_page_fault` 这类不相干函数的大小都变了），故「产物相同」这条判据本轮不成立；
+③ 两处 intra-doc 链接（`mod.rs` 头的 `block`、`wait/mod.rs` 的 `reap`）搬家后解析范围变了，
+已改成纯代码串，不再假装是链接；④ `// ── 操作：唤醒 ──` 重复两遍的旧瑕疵原样带走。
+
+**验收**：`cargo fmt --check` clean；`cargo check --workspace --all-targets` **13 条 warning，
+与改前逐条相同（零新增）**，拆出的文件里一条没有；`cargo build --release -p kernel --features audit`
+通过；`scripts/e2e.sh` 多轮实跑为 2/3、3/3、2/3。
+
+**逐轮结果本身不是判据**（门有已知残留噪声，见上节）：判据是**失败签名 + 基线对照**——
+失败轮一律是「门写不进 FIFO / `只写出 N/8 条`」且 guest 侧回显为 0，失败步不固定
+（req / hole / clock / sleep 各出现过），而**未改动的干净基线同一道门也只有 5/6**、签名完全相同
+⇒ 与本轮无关。正面等价证据：基线 PASS 轮与改后 PASS 轮的全量控制台只差两行
+（`free 0x8029…` 映像大 ~2 KB 导致空闲区起点挪一页、以及挂钟相关的 `clock` 值）。
