@@ -439,7 +439,7 @@ pub fn join(tid: usize, dur: Duration) -> Result<Joined, GateError> {
 /// 目标回收时叫醒其全部 join 等待者（`clear_loop` 每条 reaped 任务调一次）。
 ///
 /// 锁纪律同 `wake`：只在 joins（L3）内摘除，锁外 transform + 入队；不 mute
-/// （句柄留待 drain 空闲丢弃——已 drain 的句柄再 mute 会污染 cancelled 表）。
+/// （旁路已摘，陈旧句柄在 drain 里自然落空——省一次 O(n) 的堆重建）。
 fn wake_joiners(tid: usize) {
     let waiters = {
         let mut j = joins().lock();
@@ -496,8 +496,8 @@ pub fn wake(key: WaitKey) -> bool {
     let Some(w) = popped else {
         return false;
     };
-    // 摘超时旁路：堆项留至到期被 drain 空闲丢弃（不 mute——已 drain 的句柄再
-    // mute 会永久污染 cancelled 表，见 drain 语义）
+    // 摘超时旁路：堆项留至到期被 drain 空闲丢弃（不 mute——旁路已摘，陈旧句柄
+    // 落空；省一次 O(n) 的堆重建）
     if let Some(handle) = w.tock {
         wait_times().lock().remove(&handle);
     }

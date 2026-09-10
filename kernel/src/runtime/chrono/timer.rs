@@ -36,7 +36,6 @@ struct TimerHeap {
 
 struct TimerInner {
     heap: BinaryHeap<Reverse<(u64, u64)>>,
-    cancelled: Vec<u64>,
 }
 
 static TIMER_HEAP: TimerHeap = TimerHeap {
@@ -44,7 +43,6 @@ static TIMER_HEAP: TimerHeap = TimerHeap {
         Level::L3,
         TimerInner {
             heap: BinaryHeap::new(),
-            cancelled: Vec::new(),
         },
     ),
     nearest: AtomicU64::new(NONE),
@@ -56,15 +54,10 @@ impl TimerHeap {
         self.nearest.load(Ordering::Acquire)
     }
 
-    /// 锁内刷新镜像：从内层数据派生最近未取消 tock（须持 inner 锁；Release）。
+    /// 锁内刷新镜像：从内层数据派生最近到点（须持 inner 锁；Release）。
+    /// 堆里没有墓碑——`mute` 是真摘除，故不必过滤。
     fn recompute_nearest(&self, i: &TimerInner) {
-        let t = i
-            .heap
-            .iter()
-            .filter(|e| !i.cancelled.contains(&e.0.1))
-            .map(|e| e.0.0)
-            .min()
-            .unwrap_or(NONE);
+        let t = i.heap.iter().map(|e| e.0.0).min().unwrap_or(NONE);
         self.nearest.store(t, Ordering::Release);
     }
 }
@@ -109,12 +102,14 @@ pub fn tock(handle: u64, wake_at: u64) {
     TIMER_HEAP.recompute_nearest(&i);
 }
 
-/// 消音这个 tock（惰性：堆项留至到期被 drain 丢弃；此后该句柄不再唤醒任何任务）。
+/// 消音这个 tock —— 与 [`tock`] 互为逆操作：堆里那一项直接摘掉，此后该句柄不再
+/// 唤醒任何任务。不在堆里（已被 drain 取走）即 no-op —— 没有惰性标记，也就没有
+/// 「已 drain 的句柄再消音会永久污染表」这一类陷阱。
+///
+/// 代价 O(n)（n = 未到点 tock 数，通常个位数），只在扑杀路径上调用（3 处）。
 pub fn mute(handle: u64) {
     let mut i = TIMER_HEAP.inner.lock();
-    if !i.cancelled.contains(&handle) {
-        i.cancelled.push(handle);
-    }
+    i.heap.retain(|Reverse((_, h))| *h != handle);
     TIMER_HEAP.recompute_nearest(&i);
 }
 
@@ -142,10 +137,6 @@ pub fn drain(now: Instant) -> Vec<u64> {
             break;
         }
         let Reverse((_, handle)) = i.heap.pop().expect("peeked non-empty heap entry");
-        if i.cancelled.contains(&handle) {
-            i.cancelled.retain(|c| *c != handle);
-            continue;
-        }
         due[n] = handle;
         n += 1;
     }
