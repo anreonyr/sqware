@@ -13,14 +13,15 @@
 
 use env::{EnvResult, Permission, PieToken, TaskId};
 
+use crate::env::mail::AnyPie as _;
 use crate::env::mail::{self, HolePie};
 
 ///通信通道：我自己的 hole + 它在对端的 token。
 pub struct Channel {
     /// 我的 hole（push/pull 走它）。
     pub(crate) mine: HolePie,
-    /// 我 Accord 给 peer 的副本的 token（`close` 时用它 revoke）。
-    pub(crate) at_peer: usize,
+    /// 我 Accord 给 peer 的副本**在对端表里**的句柄（`close` 时用它 revoke）。
+    pub(crate) at_peer: PieToken,
 }
 
 impl Channel {
@@ -35,7 +36,7 @@ impl Channel {
     }
 
     /// 由已有 hole + 对端 token 构造（per-caller reply 场景：调用方已 unseal + accord）。
-    pub fn from_receipt(mine: HolePie, at_peer: usize) -> Channel {
+    pub fn from_receipt(mine: HolePie, at_peer: PieToken) -> Channel {
         Channel { mine, at_peer }
     }
 
@@ -44,12 +45,12 @@ impl Channel {
     /// revoke 失败（peer 已死、token 不在 peer 表里）返 `Denied`——资源本身仍由
     /// `HoleMeta::drop` 在所有副本释放后自动封印，故无需手工 seal。
     pub fn close(self, peer: TaskId) -> EnvResult<()> {
-        mail::revoke(peer, PieToken::new(self.at_peer))?;
+        mail::revoke(peer, self.at_peer)?;
         self.mine.release()
     }
 
     /// 取我在对端的 token（写进请求消息前 8 字节）。
-    pub fn at_peer(&self) -> usize {
+    pub fn at_peer(&self) -> PieToken {
         self.at_peer
     }
 

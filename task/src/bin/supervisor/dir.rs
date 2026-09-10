@@ -32,7 +32,7 @@ use env::{Permission, TeamId};
 use task::core::directory::{Directory, release_pie, vestor_of};
 use task::core::handshake::{self, Quay, Refer, Referred};
 use task::core::lock::Lock;
-use task::env::mail::HolePie;
+use task::env::mail::{AnyPie as _, HolePie};
 use task::env::task as utask;
 
 /// 控制线程的三枚门闩（主线程写、控制线程读；`Hatch` 是同步点）。
@@ -63,6 +63,7 @@ extern "C" fn control_main() -> ! {
         }
         let token = entry
             .accord(refer.who(), Permission::READ | Permission::WRITE)
+            .map(|t| t.get())
             .unwrap_or(0);
         if Referred::new(token).push(&up).is_err() {
             task::env::control::panic(21);
@@ -117,9 +118,9 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => task::env::control::panic(9),
     };
-    CTRL[0].store(h2, Ordering::Relaxed);
-    CTRL[1].store(c2, Ordering::Relaxed);
-    CTRL[2].store(u2, Ordering::Relaxed);
+    CTRL[0].store(h2.get(), Ordering::Relaxed);
+    CTRL[1].store(c2.get(), Ordering::Relaxed);
+    CTRL[2].store(u2.get(), Ordering::Relaxed);
     if utask::hatch(ctrl).is_err() {
         task::env::control::panic(10);
     }

@@ -16,6 +16,7 @@
 use env::dispatch::{MSG_LEN, Name, Reply, Request};
 use env::{EnvError, EnvResult, PieToken, TaskId, make_err};
 
+use crate::env::mail::AnyPie as _;
 use crate::env::mail::{self, HolePie};
 
 use super::channel::Channel;
@@ -60,7 +61,7 @@ pub struct Directory {
     entry: HolePie,
     reply: HolePie,
     /// reply hole 在目录侧的 token——写进请求 `[49..57]`，目录按此推回复。
-    reply_target: usize,
+    reply_target: PieToken,
     /// 目录 task id（`Owned(entry).owner`）——发布时把入口门闩 `Accord` 给它。
     dir_id: usize,
 }
@@ -97,7 +98,7 @@ impl Directory {
     fn call(&self, request: &Request) -> EnvResult<Reply> {
         let mut msg = request.encode();
         msg[env::dispatch::REPLY_AT..env::dispatch::REPLY_AT + 8]
-            .copy_from_slice(&self.reply_target.to_le_bytes());
+            .copy_from_slice(&self.reply_target.get().to_le_bytes());
         self.entry.push(&msg)?;
         let mut buf = [0u8; MSG_LEN];
         self.reply.pull_timeout(&mut buf, REPLY_TIMEOUT_MS)?;
@@ -105,7 +106,7 @@ impl Directory {
     }
 
     /// 本会话在**目录侧**的回信 token（诊断 / 自检用：写进请求 `[49..57]`）。
-    pub fn reply_target(&self) -> usize {
+    pub fn reply_target(&self) -> PieToken {
         self.reply_target
     }
 
@@ -125,7 +126,7 @@ impl Directory {
         let target = entry.accord(TaskId::new(self.dir_id), entry_permission())?;
         self.ack(Request::Register {
             name: parse_name(name)?,
-            entry: env::PieToken::new(target),
+            entry: target,
         })
     }
 
@@ -141,7 +142,7 @@ impl Directory {
         let target = entry.accord(TaskId::new(self.dir_id), entry_permission())?;
         self.ack(Request::Replace {
             name: parse_name(name)?,
-            entry: env::PieToken::new(target),
+            entry: target,
         })
     }
 
@@ -204,7 +205,7 @@ impl Service {
     /// 回复有上界（`REPLY_TIMEOUT_MS`）——服务漏回即 `Busy`，不永久挂起。
     pub fn call(&self, payload: &[u8; PAYLOAD_LEN]) -> EnvResult<[u8; PAYLOAD_LEN]> {
         let mut msg = [0u8; MSG_LEN];
-        msg[0..8].copy_from_slice(&self.channel.at_peer.to_le_bytes());
+        msg[0..8].copy_from_slice(&self.channel.at_peer.get().to_le_bytes());
         msg[8..].copy_from_slice(payload);
         self.entry.push(&msg)?;
 

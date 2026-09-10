@@ -11,6 +11,7 @@
 use env::EnvError;
 use env::EnvResult;
 
+use crate::env::mail::AnyPie as _;
 use crate::env::mail::{HOLE_MTU_MAX, HolePie};
 
 /// datagram 头长（3 个 u16：src / dst / length）。

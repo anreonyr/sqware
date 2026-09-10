@@ -210,6 +210,48 @@ pub fn release(token: usize) -> EnvResult<()> {
 
 // ── 类型化句柄（编译期区分 Hole / Pole）──
 
+/// 权柄句柄 —— Hole 与 Pole 的**权柄操作同构**，故只写一遍。
+///
+/// 方法集 = `PieCall` 里「实例作用域 ∧ 与资源种类无关」那一类，一一对应，不多不少：
+/// `Seal` / `Narrow` / `Accord` / `Revoke` / `Release`。
+///
+/// 不在本 trait 的，各有其理由：
+/// - **构造**：`unseal*` 产出 `Self`，做不成 `&self` 方法
+/// - **任务作用域**：`Collect`（按 index 枚举我表里的）、`Reserve`（按句柄查来历）
+///   ——它们不作用在「某一个句柄」上
+/// - **资源专属**：`Open`/`Shut`（Pole）、`Push`/`Pull`/`Wait`（Hole）
+/// - **表示层转换**：`from_token` / `token` —— 与 ABI 无关
+///
+/// 镜像内核侧 `gate::AnyPie`（`enum { Hole, Pole }`，提供同一批跨种类方法）：
+/// 同一条「权柄操作与资源种类无关」的知识在两侧各落一次，而不是散成四份。
+pub trait AnyPie {
+    /// 封印资源（**只有资源开辟者**可做）。
+    ///
+    /// 只置死并唤醒等待者，**不摘表项**——持有者仍须 [`release`](AnyPie::release)
+    /// 收尾，否则表项泄漏。故 `release` 是唯一不过存活闸的操作。
+    fn seal(&self) -> EnvResult<()>;
+
+    /// 收窄本 pie 权限（就地改写，单调；`subset` ⊆ 当前权限）。
+    ///
+    /// Pole 多一条约束：`subset` 须含 READ（RISC-V PTE 无 R=0 的合法数据叶子），
+    /// 且会同步把已映射段降权。Hole 无映射，故无此约束。
+    fn narrow(&self, subset: env::Permission) -> EnvResult<()>;
+
+    /// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）——
+    /// 对方用 `from_token(at_dst)` 重建。
+    fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken>;
+
+    /// 收回我授给 `dst` 的副本（含其全部后代，幂等）。
+    ///
+    /// `at_dst` = 该副本在**对端表里**的句柄（[`accord`](AnyPie::accord) 的返回值，
+    /// 经线形送达）——**不是我这边的 token**。鉴权 = 「这枚的 `sire` 在我表里」。
+    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()>;
+
+    /// 放下我这一份（含其全部后代；Pole 同步撤映射）。资源本身不动——封印用
+    /// [`seal`](AnyPie::seal)。不需要任何权限位。
+    fn release(&self) -> EnvResult<()>;
+}
+
 /// Hole 门闩用户态句柄。
 pub struct HolePie {
     token: usize,
@@ -224,8 +266,10 @@ impl HolePie {
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: usize) -> Self {
-        Self { token }
+    pub fn from_token(token: impl Into<usize>) -> Self {
+        Self {
+            token: token.into(),
+        }
     }
 
     /// 等某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
@@ -301,34 +345,52 @@ impl HolePie {
         }
     }
 
-    pub fn seal(&self) -> EnvResult<()> {
+    pub fn token(&self) -> usize {
+        self.token
+    }
+}
+
+impl AnyPie for PolePie {
+    fn seal(&self) -> EnvResult<()> {
         seal(self.token)
     }
 
-    /// 收窄本 pie 权限（就地改写，单调；subset ⊆ 当前权限）。
-    pub fn narrow(&self, subset: env::Permission) -> EnvResult<()> {
+    fn narrow(&self, subset: env::Permission) -> EnvResult<()> {
         narrow(self.token, subset)
     }
 
-    /// 转授子集给 `dst`（subset ⊆ 本 pie 权限），返回**对端侧**那枚的句柄——
-    /// 对方用 `HolePie::from_token(at_dst)` 重建。
-    pub fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<usize> {
-        Ok(accord(PieToken::new(self.token), dst, subset)?.get())
+    fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
+        accord(PieToken::new(self.token), dst, subset)
     }
 
-    /// 收回我授给 `dst` 的副本。`at_dst` = 该副本在**对端表里**的句柄（`accord`
-    /// 的返回值，经线形送达）——不是我这边的 token。
-    pub fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
         revoke(dst, at_dst)
     }
 
-    /// 放下我这一份（自释；资源本身不动——封印用 `seal`）。
-    pub fn release(&self) -> EnvResult<()> {
+    fn release(&self) -> EnvResult<()> {
         release(self.token)
     }
+}
 
-    pub fn token(&self) -> usize {
-        self.token
+impl AnyPie for HolePie {
+    fn seal(&self) -> EnvResult<()> {
+        seal(self.token)
+    }
+
+    fn narrow(&self, subset: env::Permission) -> EnvResult<()> {
+        narrow(self.token, subset)
+    }
+
+    fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
+        accord(PieToken::new(self.token), dst, subset)
+    }
+
+    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+        revoke(dst, at_dst)
+    }
+
+    fn release(&self) -> EnvResult<()> {
+        release(self.token)
     }
 }
 
@@ -345,8 +407,10 @@ impl PolePie {
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: usize) -> Self {
-        Self { token }
+    pub fn from_token(token: impl Into<usize>) -> Self {
+        Self {
+            token: token.into(),
+        }
     }
 
     pub fn open(&self) -> EnvResult<usize> {
@@ -355,33 +419,6 @@ impl PolePie {
 
     pub fn shut(&self) -> EnvResult<()> {
         shut(self.token)
-    }
-
-    pub fn seal(&self) -> EnvResult<()> {
-        seal(self.token)
-    }
-
-    /// 收窄本 pie 权限（就地改写，单调；subset ⊆ 当前权限且须含 READ——RISC-V
-    /// PTE 无 R=0 合法数据叶子）。Pole 会同步把映射段降权。
-    pub fn narrow(&self, subset: env::Permission) -> EnvResult<()> {
-        narrow(self.token, subset)
-    }
-
-    /// 转授子集给 `dst`（subset ⊆ 本 pie 权限），返回**对端侧**那枚的句柄——
-    /// 对方用 `PolePie::from_token(at_dst)` 重建。
-    pub fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<usize> {
-        Ok(accord(PieToken::new(self.token), dst, subset)?.get())
-    }
-
-    /// 收回我授给 `dst` 的副本。`at_dst` = 该副本在**对端表里**的句柄（`accord`
-    /// 的返回值，经线形送达）——不是我这边的 token。
-    pub fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
-        revoke(dst, at_dst)
-    }
-
-    /// 放下我这一份（自释；资源本身不动——封印用 `seal`）。
-    pub fn release(&self) -> EnvResult<()> {
-        release(self.token)
     }
 
     pub fn token(&self) -> usize {

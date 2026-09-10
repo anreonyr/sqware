@@ -27,8 +27,9 @@
 //!
 //! 通道用完不回收：门闩由各任务的权限表保活到关机，启动通道没有后续语义。
 
-use env::{EnvError, EnvResult, NAME_LEN, Name, Permission, TaskId, make_err};
+use env::{EnvError, EnvResult, NAME_LEN, Name, Permission, PieToken, TaskId, make_err};
 
+use crate::env::mail::AnyPie as _;
 use crate::env::mail::{self, HolePie};
 
 /// 报文长度：1 字节 tag + 一个 u64。
@@ -53,14 +54,20 @@ fn denied() -> erra::Error<EnvError> {
 }
 
 /// 发一条报文：`[tag][payload]`。
-fn send(hole: &HolePie, tag: u8, payload: usize) -> EnvResult<()> {
+///
+/// `payload` 收任何句柄：线形是 8 字节，但**类型不化**——调用方继续拿 `PieToken`。
+fn send(hole: &HolePie, tag: u8, payload: impl Into<usize>) -> EnvResult<()> {
     let mut buf = [0u8; MTU];
     buf[0] = tag;
-    buf[1..].copy_from_slice(&payload.to_le_bytes());
+    buf[1..].copy_from_slice(&payload.into().to_le_bytes());
     hole.push(&buf)
 }
 
 /// 收一条报文：读满 `MTU` 并校验 tag，返 payload。tag 不符 / 短读 → `Denied`。
+fn recv_pie(hole: &HolePie, tag: u8) -> EnvResult<PieToken> {
+    recv(hole, tag).map(PieToken::new)
+}
+
 fn recv(hole: &HolePie, tag: u8) -> EnvResult<usize> {
     let mut buf = [0u8; MTU];
     if hole.pull(&mut buf)? != MTU || buf[0] != tag {
@@ -74,15 +81,17 @@ fn recv(hole: &HolePie, tag: u8) -> EnvResult<usize> {
 /// 子 → 父：报到。`hole` = 我自建控制孔**在父侧**的句柄（`Accord` 的返回值）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Quay {
-    hole: usize,
+    hole: PieToken,
 }
 
 impl Quay {
-    pub fn new(hole: usize) -> Self {
-        Self { hole }
+    pub fn new(hole: impl Into<usize>) -> Self {
+        Self {
+            hole: PieToken::new(hole.into()),
+        }
     }
 
-    pub fn hole(&self) -> usize {
+    pub fn hole(&self) -> PieToken {
         self.hole
     }
 
@@ -94,7 +103,7 @@ impl Quay {
     /// 父侧：在子域上行孔上收报到。
     pub fn pull(up: &HolePie) -> EnvResult<Quay> {
         Ok(Quay {
-            hole: recv(up, TAG_QUAY)?,
+            hole: recv_pie(up, TAG_QUAY)?,
         })
     }
 }
@@ -102,15 +111,17 @@ impl Quay {
 /// 父 → 子：配给。`token` = 目录门闩**在子侧**的句柄（0 = 无）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pier {
-    token: usize,
+    token: PieToken,
 }
 
 impl Pier {
-    pub fn new(token: usize) -> Self {
-        Self { token }
+    pub fn new(token: impl Into<usize>) -> Self {
+        Self {
+            token: PieToken::new(token.into()),
+        }
     }
 
-    pub fn token(&self) -> usize {
+    pub fn token(&self) -> PieToken {
         self.token
     }
 
@@ -122,7 +133,7 @@ impl Pier {
     /// 子侧：从下行孔里收配给。
     pub fn pull(down: &HolePie) -> EnvResult<Pier> {
         Ok(Pier {
-            token: recv(down, TAG_PIER)?,
+            token: recv_pie(down, TAG_PIER)?,
         })
     }
 }
@@ -198,15 +209,17 @@ impl Refer {
 /// dir → 父：已授。`token` = 对方侧句柄（0 = 失败）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Referred {
-    token: usize,
+    token: PieToken,
 }
 
 impl Referred {
-    pub fn new(token: usize) -> Self {
-        Self { token }
+    pub fn new(token: impl Into<usize>) -> Self {
+        Self {
+            token: PieToken::new(token.into()),
+        }
     }
 
-    pub fn token(&self) -> usize {
+    pub fn token(&self) -> PieToken {
         self.token
     }
 
@@ -218,7 +231,7 @@ impl Referred {
     /// 父侧：在 dir 上行孔上收结果。
     pub fn pull(up: &HolePie) -> EnvResult<Referred> {
         Ok(Referred {
-            token: recv(up, TAG_REFERRED)?,
+            token: recv_pie(up, TAG_REFERRED)?,
         })
     }
 }

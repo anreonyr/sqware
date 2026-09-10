@@ -68,7 +68,7 @@ fn report(child: TaskId, up: &HolePie) -> HolePie {
         Ok(q) => q,
         Err(_) => panic(6),
     };
-    let vestor = match mail::reserve(env::PieToken::new(quay.hole())) {
+    let vestor = match mail::reserve(quay.hole()) {
         Ok((vestor, _owner)) => vestor.get(),
         Err(_) => panic(7),
     };
@@ -133,7 +133,7 @@ extern "C" fn main() -> ! {
             Ok(r) => r,
             Err(_) => panic(12),
         };
-        if referred.token() == 0 {
+        if referred.token().get() == 0 {
             say("root: directory refused to grant\n");
             panic(13);
         }

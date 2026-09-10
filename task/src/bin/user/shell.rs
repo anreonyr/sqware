@@ -43,7 +43,7 @@ use task::core::service::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use task::core::unit;
 use task::env::{
     chrono::{self, clock},
-    mail::{self, HOLE_MTU_MAX, HolePie, PolePie},
+    mail::{self, AnyPie as _, HOLE_MTU_MAX, HolePie, PolePie},
     room::{self, sleep},
     task::{heir_at, heir_count, join as task_join},
 };
@@ -54,7 +54,7 @@ static DIR_ENTRY: AtomicUsize = AtomicUsize::new(0);
 
 /// 启动期握手：靠泊 → 自建控制孔并交给父域 → 报到 → 收配给（目录门闩由 dir 亲授）。
 /// 返目录请求门闩在**本任务侧**的句柄。
-fn shake() -> env::EnvResult<usize> {
+fn shake() -> env::EnvResult<env::PieToken> {
     let up = handshake::moor()?;
     let down = HolePie::unseal(handshake::MTU)?;
     let sire = task::env::task::sire()?;
@@ -207,7 +207,7 @@ fn cascade(term: &Terminal) {
             (*(r2_ptr as *const AtomicUsize)).load(Ordering::Relaxed)
         });
         if let Ok(q) = r2.accord(me, rw) {
-            unsafe { (*(q_ptr as *const AtomicUsize)).store(q, Ordering::Relaxed) };
+            unsafe { (*(q_ptr as *const AtomicUsize)).store(q.get(), Ordering::Relaxed) };
         }
         let _ = room::wake(key_q);
     });
@@ -328,7 +328,7 @@ fn reclaim(term: &Terminal) {
         if let Ok(r) = HolePie::unseal(HOLE_MTU_MAX)
             && let Ok(q) = r.accord(me, rw)
         {
-            unsafe { (*(q_ptr as *const AtomicUsize)).store(q, Ordering::Relaxed) };
+            unsafe { (*(q_ptr as *const AtomicUsize)).store(q.get(), Ordering::Relaxed) };
         }
         let _ = room::wake(k_q);
         // 等本侧检查完「退出前可用」再返回——否则 `doom` 会在检查之前就把 q 收走。
@@ -400,7 +400,7 @@ fn spoof(term: &Terminal) {
         }
     };
     let at_dir = match mine.accord(env::TaskId::new(dir_id), rw) {
-        Ok(t) => t,
+        Ok(t) => t.get(),
         Err(_) => {
             term.writeline("spoof: accord failed");
             return;
@@ -445,7 +445,7 @@ fn spoof(term: &Terminal) {
             let reg = call(
                 &Request::Register {
                     name: n,
-                    entry: env::PieToken::new(entry_at_dir),
+                    entry: entry_at_dir,
                 },
                 at_dir,
                 WAIT,
@@ -725,7 +725,7 @@ extern "C" fn main() {
         Ok(token) => token,
         Err(_) => task::env::control::panic(1),
     };
-    DIR_ENTRY.store(entry_token, Ordering::Relaxed);
+    DIR_ENTRY.store(entry_token.get(), Ordering::Relaxed);
 
     let term = Terminal::default();
     term.clear();
