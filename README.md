@@ -42,7 +42,7 @@ The kernel is responsible for the structures and boundaries that cannot safely b
        │            │            │
      Space         Task        Mail
        │                         │
-      Map                         │
+      Map                        │
        │                         │
       Pie                        data
        │                         │
