@@ -1641,3 +1641,22 @@ shutdown: 19 frames, 9 blocks` + `table frames 150 != kernel-walk count 141` ⇒
 安全且**有界**的两小块（并入 A2 一起做，不单独打补丁）：④ 消费信标后若队列空即 `prune`（安全：信标
 已被这个等待者吃掉，且窗口最多一人）；关机期 `clear_loop` 的目标回收可「不建墓碑」（那一刻全任务已退、
 无在飞等待者），而 hole 封印那半**不行**（那时是并发中）。
+
+### A2 结构裁决：(b) 令牌是引用
+
+用户裁决：room 拥有**存活单元**，**站点值持 `Weak`**，资源侧（`HolePie` / `Space` / 任务）持强引用；
+死亡靠 `Weak::upgrade` 失败**观察**得到，**不靠 `Drop` 回调** ⇒ 锁序零风险（(a) 案的
+「资源 drop 必须在 room 锁外」那条难保证的前提因此不必存在）。
+
+**一落地就浮出的结构点：键怎么找到它的存活单元？**
+
+- 键是 `HashMap` 的 key，必须 Copy/Eq ⇒ **`Weak` 不能放进键**（同时破坏 `Copy` 与哈希语义）；
+- 于是只剩一条自然路：**调用方随键一起把弱引用交进来**（形如 `wait(key, alive: &Weak<Alive>, dur)`）——
+  调用方（hole / space / task 侧）**本来就握着强引用**（它就是那个退休者），交一枚弱引用最自然；
+  且保持 **mail → room 单向**、键仍是 Copy 小枚举、**无需任何旁路表**；
+- 代价：五个入口的签名各多一个参数（`wait` / `wake` / `wipe` / `join` / `park`；`Alarm` 键由任务自己
+  退休，同一形状）。
+
+**由此确定的结构**：`Site` 值变为 `{ pend, waiters, alive: Weak<Alive> }`；`prune` 判据从「队列空 ∧
+无信标」扩成「… ∧ `alive` 已死」⇒ 墓碑不再需要、残留自然归零；`block()` 的 ④ 在持站点锁时先判
+`alive.upgrade().is_none()` ⇒ 键已死则不入队、直接 `Handoff::Resume`（在飞窗口由此关上）。
