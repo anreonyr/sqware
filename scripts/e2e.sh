@@ -85,24 +85,54 @@ for i in $(seq 1 "$REPEAT"); do
   LOG="$dir/console.log"; FIFO="$dir/in.fifo"
   : > "$LOG"; rm -f "$FIFO"; mkfifo "$FIFO"
   seed=$((RANDOM * 32768 + RANDOM))
+  # `-icount auto,sleep=on` 按宿主时间给 guest 计时；置 E2E_ICOUNT= 空可关掉它做对照。
+  icount_args=()
+  [ -n "${E2E_ICOUNT-auto,sleep=on}" ] && icount_args=(-icount "${E2E_ICOUNT-auto,sleep=on}")
 
+  # 串口**只**绑 stdio，不复用 monitor：`-nographic` 等价 `-serial mon:stdio`，而 mux 会
+  # 按模式把 stdin 分派给串口或 monitor——一旦切到 monitor，输入就**静默改道**，guest
+  # 再也收不到（现象正是「写成功但一个字都没进 guest」）。故显式拆开写。
   ( timeout "$QEMU_TIMEOUT" qemu-system-riscv64 \
-      -machine virt -bios SBI.bin -kernel "$ELF" -nographic -no-reboot \
-      -m 128 -smp 4 -seed "$seed" -icount auto,sleep=on -initrd "$INITRD" \
+      -machine virt -bios SBI.bin -kernel "$ELF" \
+      -display none -serial stdio -monitor none -no-reboot \
+      -m 128 -smp 4 -seed "$seed" "${icount_args[@]}" -initrd "$INITRD" \
       < "$FIFO" > "$LOG" 2>&1 ) &
   QPID=$!
   exec 3> "$FIFO"        # 阻塞直到 qemu 持有读端 ⇒ 与「qemu 就绪」同步
 
+  # 失败诊断：失败要留证据，不能只留一句「失败了」。
+  poke() {
+    local q; q=$(pgrep -f 'qemu-system-riscv64' | head -1)
+    {
+      echo "--- 诊断：$1 ---"
+      echo "gate fd3  → $(readlink /proc/$$/fd/3 2>/dev/null || echo 无)"
+      echo "fifo      → $(ls -l "$FIFO" 2>&1)"
+      echo "qemu pid  → ${q:-无}"
+      [ -n "$q" ] && echo "qemu fd0  → $(readlink /proc/$q/fd/0 2>/dev/null || echo 无)"
+      [ -n "$q" ] && echo "qemu fd1  → $(readlink /proc/$q/fd/1 2>/dev/null || echo 无)"
+      echo "已收到    → $(wc -c < "$LOG") 字节"
+      echo "回显计数  → $(sed -e 's/\r/\n/g' "$LOG" | grep -ac '^sq > ')"
+    } > "$dir/diag.txt" 2>&1
+    sed 's/^/  /' "$dir/diag.txt"
+  }
+
   why=""; sent=0
-  # 首条前留引导余量（上一步的 expect 已保证 guest 到提示符则无需再等）。
   expect 'sq > ' "$STEP_WAIT" 'boot' || why="引导/提示符"
   for s in "${STEPS[@]}"; do
     cmd=${s%%|*}; pat=${s#*|}
     [ -n "$why" ] && break
     sleep "$T_GAP"
-    if printf '%s\n' "$cmd" >&3 2>/dev/null; then sent=$((sent + 1)); else why="输入写失败($cmd)"; break; fi
+    # 写失败的原始 errno 文本要留下：`Broken pipe` = 读端全关；`Bad file descriptor`
+    # = 本地 fd 没了 —— 两回事，指向完全不同的原因。
+    if printf '%s\n' "$cmd" >&3 2>"$dir/write.err"; then
+      sent=$((sent + 1))
+    else
+      why="输入写失败($cmd) err=$(cat "$dir/write.err")"
+      break
+    fi
     expect "$pat" "$STEP_WAIT" "$cmd" || why="步骤 $cmd"
   done
+  [ -n "$why" ] && poke "$why"
   exec 3>&-
   wait "$QPID"; rc=$?
 
