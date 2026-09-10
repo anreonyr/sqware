@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sqware e2e 验收门。
+# sqware examine 验收门（原名 e2e）。
 #
 # 判据四条，缺一不可：
 #   1) 逐步生效：八条命令**逐个等它的输出出现**再发下一条（expect 式），不是按墙钟
@@ -22,18 +22,18 @@
 # 文件，实测把 guest 虚拟时间拖慢约 650×（60 s 墙钟只推进 92 ms、5245 条事件），e2e 在
 # 超时前走不完。故结构化导出只适合小规模短跑，不进门。
 #
-# 用法：scripts/e2e.sh                     # 默认连跑 3 次，要求 3/3
-#       E2E_REPEAT=1 scripts/e2e.sh
+# 用法：scripts/examine.sh                     # 默认连跑 3 次，要求 3/3
+#       EXAMINE_REPEAT=1 scripts/examine.sh
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-REPEAT=${E2E_REPEAT:-3}
-OUT=${E2E_OUT:-"trace/e2e-$(date +%Y%m%d-%H%M%S)"}
+REPEAT=${EXAMINE_REPEAT:-3}
+OUT=${EXAMINE_OUT:-"trace/e2e-$(date +%Y%m%d-%H%M%S)"}
 QEMU_TIMEOUT=${QEMU_TIMEOUT:-60}
-STEP_WAIT=${E2E_STEP_WAIT:-15}     # 单步等待上限（秒）
-T_BOOT=${E2E_T_BOOT:-3}            # 首条命令前的余量（guest 实测 3 s 内到提示符）
-T_GAP=${E2E_T_GAP:-2}              # 每条命令之间的让出
+STEP_WAIT=${EXAMINE_STEP_WAIT:-15}     # 单步等待上限（秒）
+T_BOOT=${EXAMINE_T_BOOT:-3}            # 首条命令前的余量（guest 实测 3 s 内到提示符）
+T_GAP=${EXAMINE_T_GAP:-2}              # 每条命令之间的让出
 
 ELF=target/riscv64gc-unknown-none-elf/release/sqware
 INITRD=target/riscv64gc-unknown-none-elf/release/initrd.img
@@ -62,7 +62,7 @@ MARKERS=(
   'task: all tasks exited, system halted'
 )
 
-echo "e2e: repeat=$REPEAT out=$OUT qemu_timeout=${QEMU_TIMEOUT}s step_wait=${STEP_WAIT}s"
+echo "examine: repeat=$REPEAT out=$OUT qemu_timeout=${QEMU_TIMEOUT}s step_wait=${STEP_WAIT}s"
 mkdir -p "$OUT"
 
 cargo build --release -p kernel || exit 1
@@ -85,9 +85,11 @@ for i in $(seq 1 "$REPEAT"); do
   LOG="$dir/console.log"; FIFO="$dir/in.fifo"
   : > "$LOG"; rm -f "$FIFO"; mkfifo "$FIFO"
   seed=$((RANDOM * 32768 + RANDOM))
-  # `-icount auto,sleep=on` 按宿主时间给 guest 计时；置 E2E_ICOUNT= 空可关掉它做对照。
+  # icount **默认关闭**：它按宿主时间给 guest 计时节流，会让 guest 与输入日程失步——实测
+  # 带 icount 两批 14/18、关掉后两批 20/20（见 docs/audit-flying-wires.md §9.3）。
+  # 要复现「同 seed 可跑同一条轨迹」时才显式开：EXAMINE_ICOUNT=auto,sleep=on。
   icount_args=()
-  [ -n "${E2E_ICOUNT-auto,sleep=on}" ] && icount_args=(-icount "${E2E_ICOUNT-auto,sleep=on}")
+  [ -n "${EXAMINE_ICOUNT-}" ] && icount_args=(-icount "$EXAMINE_ICOUNT")
 
   # 串口**只**绑 stdio，不复用 monitor：`-nographic` 等价 `-serial mon:stdio`，而 mux 会
   # 按模式把 stdin 分派给串口或 monitor——一旦切到 monitor，输入就**静默改道**，guest
@@ -152,5 +154,5 @@ for i in $(seq 1 "$REPEAT"); do
   fi
 done
 
-echo "e2e: $pass/$REPEAT"
+echo "examine: $pass/$REPEAT"
 [ "$pass" -eq "$REPEAT" ]

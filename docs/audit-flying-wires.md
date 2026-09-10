@@ -1050,7 +1050,7 @@ alloc_site        → 删除（改用 frame::walk）
 **e2e 基线命令**（每阶段跑；**已换成脚本门，见 §9.3**）：
 
 ```bash
-scripts/e2e.sh          # 自退 + 无 panic + 九个 marker，连跑 3 次要求 3/3
+scripts/examine.sh          # 自退 + 无 panic + 九个 marker，连跑 3 次要求 3/3
 cargo fmt --check
 ```
 
@@ -1296,7 +1296,7 @@ room/
 命令，输出 `sleep 300ms` → `woke`），marker 增到 **9 条**。
 
 但「9/9」本身**不是确定性判据**：同一份产物连跑 3 次实测只有 **1/3** 通过，且失败原因是
-**控制台输入会丢**（见下节），不是被测行为回归。故验收门改由 `scripts/e2e.sh` 承担，
+**控制台输入会丢**（见下节），不是被测行为回归。故验收门改由 `scripts/examine.sh` 承担，
 并明确要求「自退 + 无 panic + 9 marker」且**连跑 3 次 3/3**。
 
 同类的可疑覆盖缺口（未验，留待 harness 补断言那一项）：`wipe` 的两个调用方
@@ -1335,14 +1335,14 @@ QEMU 跑满超时被杀）⇒ `git checkout` 回退，`f1fb458`（5a）为当前
   （退出码 0）/ **是否被 host 侧 `timeout` 杀**（124）/ **是否 panic**（捕获里的 `[panic] at`）。
   起跑前不再删上一轮捕获（发现残留即归档为 `…-stale.log`）；**导出恒归档**、捕获只在判定通过
   时才丢；判定失败 ⇒ 非零退出。
-- 新增 `scripts/e2e.sh`：三轮判据（**自退** + 无 panic + 九个 marker）叠加，**连跑 3 次要求 3/3**，
+- 新增 `scripts/examine.sh`：三轮判据（**自退** + 无 panic + 九个 marker）叠加，**连跑 3 次要求 3/3**，
   每轮独立目录留档。判据不依赖 semihosting（原因见下条）。
 - 修 harness 时又逮到两处**同类**缺陷（都是「永不成立/永不执行」的检查）：
   - `nu` 脚本在**外部命令非零退出时当场中止整个脚本**（实测：其后语句、以及调用方其后的
     语句都不执行）。旧 runner 的归档步骤因此**在每次超时被杀时都不执行**——恰是最需要它的
     失败路径；`archive` 里两个分支从未真正跑过。
   - qemu 那行 `terminating on signal 15 … (/usr/bin/timeout)` **走 stderr**，而捕获只接了
-    stdout ⇒ 若照此写判定，就是又一个永不成立的检查（本轮先写错、随即被 `e2e.sh` 的独立
+    stdout ⇒ 若照此写判定，就是又一个永不成立的检查（本轮先写错、随即被 `examine.sh` 的独立
     grep 抓住，已改为读退出码 + `o+e>|` 合并 stderr）。
   - 结论性写法（实测过三种）：**裸 `try { ^cmd | tee {…} } catch { }`**——保留终端流、
     保留真实退出码、脚本继续；`do -i` 会继续执行但把退出码清成 0；不包则当场中止。
@@ -1388,7 +1388,7 @@ sleep 3; dir; …`）。宿主一忙，命令就在 guest 还没走到那一步�
 那种写法里，写端在下游还没持有读端时会被 **SIGPIPE 杀掉**，于是日程后半段的命令一条都写不出去——
 症状正是「guest 正常停在提示符、marker 全缺」。之前两批（1/3 与 4/6）与 5b 那次失败都归到这里。
 
-**门的处置**：`scripts/e2e.sh` 不再走 `cargo run`，改为自己 `cargo build` + 直接起 qemu，
+**门的处置**：`scripts/examine.sh` 不再走 `cargo run`，改为自己 `cargo build` + 直接起 qemu，
 输入用自己持有的 FIFO（`exec 3>` 阻塞到 qemu 打开读端 ⇒ 与「qemu 就绪」天然同步），
 **逐步 expect**：每步等它的输出出现再发下一条，单步独立超时、失败指到具体命令。实测
 连跑 3 次 **3/3**、连跑 6 次 **5/6**——比改前的 1/3 好得多，且每次失败都指名道姓。
@@ -1404,7 +1404,7 @@ stdin」的推断**作废**（那是把 `-nographic` 的 monitor 复用与投递
 | 配置 | 结果 |
 |---|---|
 | `-icount auto,sleep=on`（原样） | 8/8、6/10（合计 **14/18**） |
-| **去掉 `-icount`**（`E2E_ICOUNT=`） | **20/20**（两批各 10 轮） |
+| **去掉 `-icount`**（`EXAMINE_ICOUNT=`） | **20/20**（两批各 10 轮） |
 
 `-icount` 是按宿主时间给 guest 计时并节流的开关；去掉后失步不再出现 ⇒ 指向
 **qemu / OpenSBI 的控制台读路径与 icount 节流之间的相互作用**，不是内核行为
@@ -1462,7 +1462,7 @@ stdin」的推断**作废**（那是把 `-nographic` 的 monitor 复用与投递
 
 **验收**：`cargo fmt --check` clean；`cargo check --workspace --all-targets` **13 条 warning，
 与改前逐条相同（零新增）**，拆出的文件里一条没有；`cargo build --release -p kernel --features audit`
-通过；`scripts/e2e.sh` 多轮实跑为 2/3、3/3、2/3。
+通过；`scripts/examine.sh` 多轮实跑为 2/3、3/3、2/3。
 
 **逐轮结果本身不是判据**（门有已知残留噪声，见上节）：判据是**失败签名 + 基线对照**——
 失败轮一律是「门写不进 FIFO / `只写出 N/8 条`」且 guest 侧回显为 0，失败步不固定
@@ -1542,5 +1542,16 @@ unseal / push / pull / **seal**，因而走到了 `wipe` 的 hole seal/drop 调�
    该句（同一轮内 seal 前后各一次等待，两种结局可辨）。
 3. **`prune`**：**在 `audit` 档下加只读计数**（站点表规模）并打印，门增加一个 audit 档轮次。
    这是内核侧观测面，由用户裁决；**ABI 不动**——只加计数与打印，不加 envcall。
-4. **顺序**：先把门从 `scripts/e2e.sh` 重写成 `scripts/e2e.nu`（设计见上节），三条断言**一次**
+4. **顺序**：先把门从 `scripts/examine.sh` 重写成 `scripts/e2e.nu`（设计见上节），三条断言**一次**
    加进 nu 版，避免搬两遍。
+
+### 命名：验收门改名 `examine`
+
+按用户裁决，验收门 `scripts/e2e.sh` → **`scripts/examine.sh`**，环境变量前缀 `E2E_*` → `EXAMINE_*`，
+文档中的活引用同步更新（历史叙述里的度量与结论不动）。**同时修掉一处代码与记载不符**：门里的
+`icount` 开关是本轮诊断时加的，默认仍是 `auto,sleep=on`（**开**），而本节早已写「门不再用
+`-icount`」——即记载是对的、代码是错的。本轮把默认改成**关闭**，要复现「同 seed 同轨迹」时才显式
+`EXAMINE_ICOUNT=auto,sleep=on`。改后复验连跑 3 次 **3/3**。
+
+下一步的 nu 重写产出 **`scripts/examine.nu`**（替掉 `.sh` 这版），三条缺失断言（`redeem` / `wipe` /
+`prune`）随之一次加进 nu 版。
