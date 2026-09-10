@@ -67,6 +67,8 @@ def main [elf: path] {
     ...$extra
   ]
 
+  # 退出码必须 **exit 出去**，不能只当返回值：nu 脚本把 main 的返回值**打印**出来而进程仍以 0
+  # 结束，消费者（runner/门）看到的就永远是 0 —— 超时杀那档会被误报成「正常自退」（实测踩过）。
   let t = ($env.QEMU_TIMEOUT? | default "")
   # **必须包裸 try**：nu 在外部命令非零退出时当场中止整个脚本（其后语句都不执行），
   # 这样退出码才拿得到、调用方才不会被莫名中止。
@@ -75,5 +77,5 @@ def main [elf: path] {
   } else {
       try { ^timeout $t qemu-system-riscv64 ...$args } catch { }
   }
-  $env.LAST_EXIT_CODE
+  exit $env.LAST_EXIT_CODE
 }
