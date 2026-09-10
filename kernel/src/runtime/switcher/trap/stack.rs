@@ -184,7 +184,7 @@ pub fn init() {
 
     // 4. 先武装定时器：OpenSBI 可能遗留一个已到期的 stimecmp，若不清掉，
     //    开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序难看）。
-    timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
+    timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
 
     arm_hart();
 }

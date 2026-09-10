@@ -7,7 +7,7 @@
 // 和 drain_expired（timer 到期），都把任务转 Starved 推回 scheduler 本核 + kick。
 //
 // 簿记：parked（deadline 句柄 → task）、sites（key → pend+waiters）、times
-// （tock 句柄 → key）、zombies（Arc<Task> 队列）。四张表全 L3，3→3 嵌套禁止。
+// （tock 句柄 → key）、husks（Arc<Task> 队列）。四张表全 L3，3→3 嵌套禁止。
 // 锁序：**L1（调度器）与 L3（本域四表）任何方向都不得嵌套**——持任一 L3 期间
 // 不得调用 scheduler 的任何加锁方法，也不得在锁内 drop `Arc<Task>`（drop 链会
 // 取 Space 锁 L2）。各路径的写法统一为「作用域内取、作用域外用」：wait/wake/
@@ -156,9 +156,9 @@ fn wait_times() -> &'static SpinLock<HashMap<u64, WaitKey>> {
     TIMES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
-/// 全局僵尸队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
+/// 全局躯壳队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
 /// 自己正在用的栈上回收自己；clear_loop  统一回收。
-pub(super) static ZOMBIES: SpinLock<VecDeque<Arc<Task>>> =
+pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
     SpinLock::new_level(Level::L3, VecDeque::new());
 
 /// 待杀集合（doomed）：`kill` 点名他核 Running 任务时记入，目标核 trap 自查
@@ -295,10 +295,10 @@ pub fn wait(key: WaitKey, dur: Duration) -> Handoff {
     }
 }
 
-/// 死亡唯一入口：**收尾**（退出钩子：通道级联 + 能力级联）→ 置 `Reaped` → 入僵尸队列。
+/// 死亡唯一入口：**收尾**（退出钩子：通道级联 + 能力级联）→ 置 `Reaped` → 入躯壳队列。
 ///
 /// 不变量：`TaskState::Reaped` ⇔ 退出钩子已跑完——本函数是通往 `Reaped` 的**唯一**
-/// 路径，也是僵尸队列的**唯一**入队点。`Join` 的判据 [`target_dead`] 因此精确：
+/// 路径，也是躯壳队列的**唯一**入队点。`Join` 的判据 [`target_dead`] 因此精确：
 /// 它返回真即「收尾已完成」。
 ///
 /// 前置：任务已停摆（`Doomed`）；或从自退路径来（此刻已离核、状态仍是 `Running`，
@@ -316,7 +316,7 @@ fn die(mut task: Arc<Task>) {
         hook(task.ident.id);
     }
     Task::exclusive(&mut task).transform(TaskState::Reaped);
-    ZOMBIES.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
+    HUSKS.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
 }
 
 /// mark_reaped：离核装槽 → [`die`]（收尾 + 入队）→ 返下一帧 PA。
@@ -438,8 +438,8 @@ pub fn join(tid: usize, dur: Duration) -> Result<Joined, GateError> {
 
 /// 目标回收时叫醒其全部 join 等待者（`clear_loop` 每条 reaped 任务调一次）。
 ///
-/// 锁纪律同 `wake`：只在 joins（L3）内摘除，锁外 transform + 入队；不 untock
-/// （句柄留待 drain 空闲丢弃——已 drain 的句柄再 untock 会污染 cancelled 表）。
+/// 锁纪律同 `wake`：只在 joins（L3）内摘除，锁外 transform + 入队；不 mute
+/// （句柄留待 drain 空闲丢弃——已 drain 的句柄再 mute 会污染 cancelled 表）。
 fn wake_joiners(tid: usize) {
     let waiters = {
         let mut j = joins().lock();
@@ -496,8 +496,8 @@ pub fn wake(key: WaitKey) -> bool {
     let Some(w) = popped else {
         return false;
     };
-    // 摘超时旁路：堆项留至到期被 drain 空闲丢弃（不 untock——已 drain 的句柄再
-    // untock 会永久污染 cancelled 表，见 drain 语义）
+    // 摘超时旁路：堆项留至到期被 drain 空闲丢弃（不 mute——已 drain 的句柄再
+    // mute 会永久污染 cancelled 表，见 drain 语义）
     if let Some(handle) = w.tock {
         wait_times().lock().remove(&handle);
     }
@@ -587,7 +587,7 @@ pub fn drain_expired() -> bool {
 
 // ── 操作：回收 ──
 
-/// 回收全部僵尸任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：僵尸不在任何核
+/// 回收全部躯壳任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：躯壳不在任何核
 /// 运行（running/starved 均无引用）。锁纪律：只持 reaped 锁出队，放锁后再取
 /// Team.tasks / Space.inner（顺序获取、不嵌套）。
 ///
@@ -596,11 +596,11 @@ pub fn drain_expired() -> bool {
 pub fn clear_loop() {
     loop {
         // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
-        // 导致 zombies(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。
-        // 块结束即释放 zombies 锁。
+        // 导致 husks(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。
+        // 块结束即释放 husks 锁。
         let z = {
-            let mut zombies = ZOMBIES.lock();
-            let Some(z) = zombies.pop_front() else {
+            let mut husks = HUSKS.lock();
+            let Some(z) = husks.pop_front() else {
                 break;
             };
             z
@@ -651,7 +651,7 @@ fn exit_hooks() -> &'static [ExitHook] {
 }
 
 /// 终末释放：清空 messenger 持有的全部 Arc<Task>（parked / sites / times /
-/// zombies 四张表）——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。
+/// husks 四张表）——Arc<Task> 归零 → Task::drop → MailHolds::drop → 链。
 /// 由 [`scheduler::core::rip`] 在 halt 路径调用；mail 接入点由 task.mail
 /// 析构透传释放（无需 mail 自有关闭钩子）。
 ///
@@ -668,15 +668,15 @@ pub(crate) fn rip() {
     let joins_out = core::mem::take(&mut *joins().lock());
     drop(joins_out);
     join_times().lock().clear(); // 只存键，无 Arc
-    let zombies_out = core::mem::take(&mut *ZOMBIES.lock());
-    drop(zombies_out);
+    let husks_out = core::mem::take(&mut *HUSKS.lock());
+    drop(husks_out);
     doomed().lock().clear(); // 只存 id，无 Arc
 }
 
 // ── 操作：扑杀（suspend / die / cull / doom）──
 //
 // 血缘级联的「杀」侧，**两阶段**：先停摆（摘出全部调度/等待容器），再收尾
-// （`die`：钩子 → Reaped → 入僵尸队列）。`doom` 是 exit_hook 里的触发面
+// （`die`：钩子 → Reaped → 入躯壳队列）。`doom` 是 exit_hook 里的触发面
 // （读父 task 的 heir → 整棵子树两阶段扑杀）。
 //
 // 两阶段是**正确性要求**，不是优化：钩子会摘门闩，摘门闩会唤醒等待者；若受害者
@@ -717,7 +717,7 @@ fn suspend(task: &Arc<Task>) -> bool {
                 };
                 let Some(h) = handle else { return false };
                 let removed = parked().lock().remove(&h);
-                timer::untock(h);
+                timer::mute(h);
                 removed.is_some()
             }
             BlockReason::Wait { .. } => {
@@ -739,10 +739,10 @@ fn suspend(task: &Arc<Task>) -> bool {
                     }
                 }
                 let Some(tock) = tock else { return false };
-                // 摘 times 旁路 + untock（先摘簿记、后 untock，同 park 纪律）。
+                // 摘 times 旁路 + mute（先摘簿记、后 mute，同 park 纪律）。
                 if let Some(h) = tock {
                     wait_times().lock().remove(&h);
-                    timer::untock(h);
+                    timer::mute(h);
                 }
                 true
             }
@@ -762,7 +762,7 @@ fn suspend(task: &Arc<Task>) -> bool {
                 let Some(tock) = tock else { return false };
                 if let Some(h) = tock {
                     join_times().lock().remove(&h);
-                    timer::untock(h);
+                    timer::mute(h);
                 }
                 true
             }
@@ -786,7 +786,7 @@ fn suspend(task: &Arc<Task>) -> bool {
 ///
 ///   1. 收集：显式工作栈沿 heir 收齐全部任务（防爆栈）；
 ///   2. 停摆：逐个 [`suspend`]——`Running` 分支只记 doomed + SSIP，它自退时自己 `die`；
-///   3. 收尾：逐个 [`die`]（钩子 → Reaped → 入僵尸队列）。
+///   3. 收尾：逐个 [`die`]（钩子 → Reaped → 入躯壳队列）。
 ///
 /// **阶段边界即安全边界**：第 3 阶段的钩子会摘门闩、唤醒等待者，而此刻全部受害者
 /// 都已停摆，没有「被唤醒后还能跑」的中间态。栈/名单都是局部 Vec（锁外分配），

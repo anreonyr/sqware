@@ -359,7 +359,7 @@ caller (shell)                          echo svc (kernel Task)
 
 `park_mail` 曾与 `wait` 并存，仅以 `BlockReason::Mail` 区分语义；该变体已删除（见 §5 修订）。
 永久等待现在就是 `wait(key, Duration::MAX)`：不登记 tock，只能被 `wake(key)` 解锁，
-且 `kill` 走 `BlockReason::Wait` 分支（按 `ptr_eq` 摘 `wait_sites` + untock）。
+且 `kill` 走 `BlockReason::Wait` 分支（按 `ptr_eq` 摘 `wait_sites` + mute）。
 内核任务侧入口为 `scheduler::ktask::wait_forever`（asm 包装 `utask::wait_forever`）。
 
 #### `scheduler::ktask::wait_forever(_key: usize)` —— ktask 入口

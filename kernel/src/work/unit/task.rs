@@ -64,10 +64,10 @@ pub enum TaskState {
     /// 血缘子树时**先让全部受害者停摆、再逐个跑钩子**——钩子会摘门闩、唤醒等待者，
     /// 若此时还有受害者能被唤醒后运行，它就会在注定要死的状态下看到已死资源。
     Doomed,
-    /// 已收割（僵尸，在 reaped 容器等延迟回收；不在任何调度队列，任何核可回收）。
+    /// 已收割（躯壳，在 reaped 容器等延迟回收；不在任何调度队列，任何核可回收）。
     ///
     /// 不变量：**退出钩子已跑完**——唯一置位路径是 `messenger::die`（钩子 → 本态 →
-    /// 入僵尸队列），故「`state == Reaped`」精确表示**收尾已完成**，`Join` 的判据
+    /// 入躯壳队列），故「`state == Reaped`」精确表示**收尾已完成**，`Join` 的判据
     /// 因此不含竞态。延迟的是**回收**（栈/trap 帧/团队空间），不是收尾。
     Reaped,
 }
@@ -130,7 +130,7 @@ impl Task {
     ///   Running → Blocked(原因)（阻塞：如睡眠）
     ///   Blocked(_) → Starved（唤醒：回到就绪容器）
     ///   {Held, Starved, Blocked, Running} → Doomed（停摆：判死，钩子未跑）
-    ///   Doomed → Reaped（收尾：退出钩子已跑完，入僵尸队列）
+    ///   Doomed → Reaped（收尾：退出钩子已跑完，入躯壳队列）
     pub(crate) fn transform(&mut self, next: TaskState) {
         let legal = matches!(
             (self.state, next),

@@ -1,8 +1,8 @@
 // 计时模块（timer）— 「到点叫我」：tock 日程 + 节拍计数
 //
 // 中心意象 tick-tock：tick = 节拍（周期中断计数）；tock = 一个被安排的「到点
-// 唤醒」事件。本模块管理者一堆 tock 的日程：登记（tock）、取消（untock）、
-// 到期取走（drain）、查最近（next_tock）。
+// 唤醒」事件。本模块管理者一堆 tock 的日程：登记（tock）、消音（mute）、
+// 到期取走（drain）、查最近（due）。另有机器定时器的一拍（beat）。
 //
 // 数据结构：TimerHeap = inner(SpinLock<TimerInner>) + 锁外最近 tock 镜像——镜像
 // 由持锁方法 recompute_nearest 派生，唯一修改路径在 Inner 内。锁层级 level 3。
@@ -20,7 +20,7 @@ use crate::lock::{Level, SpinLock};
 use crate::runtime::chrono::clock::Instant;
 use sbi::{TimerCall, ecall::SArgs, fid::Timer};
 
-/// 镜像的无 tock 哨兵（内部；对外以 next_tock() -> None 表达）。
+/// 镜像的无 tock 哨兵（内部；对外以 due() -> None 表达）。
 const NONE: u64 = u64::MAX;
 
 /// 节拍计数（ENV_TICKS 兼容）。
@@ -83,11 +83,11 @@ pub fn ticks() -> u64 {
 
 // ── 机器定时器（tick 发源）──────────────────────────────
 
-/// 将下一机器定时器中断安排在「当前 time 起 interval 刻度后」：
+/// 打下一拍：将下一机器定时器中断安排在「当前 time 起 interval 刻度后」：
 /// stimecmp = time + interval（SBI Time 扩展，绝对时间）。interval 为
 /// timebase 刻度（调用方经 clock::duration_to_ticks 换算）。SBI 失败即
 /// panic（定时器路径不许失败，与 drain 同纪律）。
-pub fn tick_after(interval: u64) {
+pub fn beat(interval: u64) {
     let next = (time::read() as u64).wrapping_add(interval);
     TimerCall::new(Timer::SetTimer)
         .args(SArgs {
@@ -109,8 +109,8 @@ pub fn tock(handle: u64, wake_at: u64) {
     TIMER_HEAP.recompute_nearest(&i);
 }
 
-/// 取消这个 tock（惰性：堆项留至到期被 drain 丢弃；此后该句柄不再唤醒任何任务）。
-pub fn untock(handle: u64) {
+/// 消音这个 tock（惰性：堆项留至到期被 drain 丢弃；此后该句柄不再唤醒任何任务）。
+pub fn mute(handle: u64) {
     let mut i = TIMER_HEAP.inner.lock();
     if !i.cancelled.contains(&handle) {
         i.cancelled.push(handle);
@@ -118,8 +118,8 @@ pub fn untock(handle: u64) {
     TIMER_HEAP.recompute_nearest(&i);
 }
 
-/// 最近一个未到点 tock（锁外原子读；None = 无）。
-pub fn next_tock() -> Option<Instant> {
+/// 最近一个到点时刻（锁外原子读；None = 无）。
+pub fn due() -> Option<Instant> {
     let t = TIMER_HEAP.peek_nearest();
     (t != NONE).then_some(Instant::from_ticks(t))
 }

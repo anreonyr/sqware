@@ -159,7 +159,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             timer::tick();
             // 重武装：运行任务抢占量子。
-            timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
+            timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
             drain_expired();
             if from_task {
                 // 任务（U 态或 S 态域任务）被抢占：现场已在任务帧 → 直接切换

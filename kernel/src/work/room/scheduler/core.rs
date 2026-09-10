@@ -206,7 +206,7 @@ impl Scheduler {
                     .set_x(Gprs::TP, crate::machine::per_hart_ptr(self.hart));
             }
         }
-        timer::tick_after(clock::duration_to_ticks(Duration::from_millis(100)));
+        timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
     }
 
     /// 装槽：把 Starved 任务装为本 hart 的 running（自取锁）并记身份槽。空槽
@@ -556,11 +556,11 @@ pub(super) fn wait() -> Option<Arc<Task>> {
             conductor::halt();
         }
 
-        let delta = match timer::next_tock() {
+        let delta = match timer::due() {
             Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
             None => WFI_FAR,
         };
-        timer::tick_after(delta);
+        timer::beat(delta);
         // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）。
         // 注意：不再有清退应答点——RFENCE 由固件强制打断空闲核（含 WFI 态），
         // 目标核进 trap 执行 sfence，无需空闲核主动 sweep。
