@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/anreonyr/sqware/master/assets/sqware-logo.svg" alt="sqware logo" width="520">
+  <img src="https://raw.githubusercontent.com/anreonyr/sqware/master/assets/sqware-logo.png" alt="sqware logo" width="520">
 </p>
 
 <p align="center">
