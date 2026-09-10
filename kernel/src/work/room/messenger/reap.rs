@@ -1,9 +1,13 @@
 // 收割（reap）——「离核 → 收尾 → 埋掉」这条链与钩子注入面。
 //
-// 三个动词成因果串（都是 4 字母）：
-//   `quit` 离核退出 → `reap` 收尾（钩子 → Reaped → 入躯壳队列）→ `bury` 埋掉归还
+// 三个动词成因果串（都是 4 字母），入口是 `quit`：
+//   `quit` 退场并交班 = 离核退出 → `reap` 收尾（钩子 → Reaped → 入躯壳队列）
+//                     → `bury` 埋掉归还 → `scheduler::trap::run` 交下一帧
 // 延迟的是**回收**（栈 / trap 帧 / 团队空间），不是收尾：不能在自己正在用的栈上
 // 回收自己。故收尾在 `reap` 里就做完，`bury` 只管归还。
+//
+// `bury` 是 `quit` 的**内部一步**（私有）：排空必须发生在再次取活之前，把这条
+// 不变量做进结构，就不必指望每个调用点记得按顺序写两行。
 
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
@@ -43,15 +47,27 @@ pub(super) fn reap(mut task: Arc<Task>) {
     HUSKS.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
 }
 
-/// quit：离核装槽 → [`reap`]（收尾 + 入队）→ 返下一帧 PA。
+/// quit：**退场并交班**——离核装槽 → [`reap`]（收尾 + 入壳）→ [`bury`]（排空躯壳）
+/// → 交出下一个要恢复的帧。
 ///
 /// 延迟回收的理由是**回收**而非收尾：不能在自己正在用的栈上回收自己，故栈/trap
 /// 帧/团队空间留到 `bury`；收尾（钩子）在此刻就做完了。
-pub fn quit() -> Option<usize> {
+///
+/// 「排空躯壳」是本函数的一部分，**不是调用方的义务**：它必须发生在再次取活之前
+/// ——最后退出的任务若带着栈/trap 帧/团队空间滞留到关机断言，就是帧泄漏。四个调用点
+/// （envcall 的 `Exit`、fault isolation 的三个杀点）因此各自只写一行。
+///
+/// 落点由 `scheduler::trap::run` 决定（续跑 / 轮转 / 取活 / 停机）——它只会循环到
+/// 有帧或停机，故恒有帧可交。
+///
+/// 注：`disown_and_install_next` 其实已经在装槽时给出了后继帧 PA，这里仍走 `run()`
+/// 取活——两条路等价，差别只在 `run()` 会替后继再扣 1 个量子（8 → 7）。为与改前
+/// 保持**逐字相同的调度行为**，本轮不动它（记一笔，待单独裁决）。
+pub fn quit() -> usize {
     let cond = current();
     // 离核且无后继装槽 → 槽已 settled（disown_and_install_next 内 shed 或
     // 装下一）；团队 Arc 归零即回收——地址空间随释放。
-    let (exited, next_pa) = cond.disown_and_install_next();
+    let (exited, _next_pa) = cond.disown_and_install_next();
     debug_assert!(
         matches!(exited.state(), TaskState::Running { .. }),
         "running 容器里不是 Running 任务"
@@ -60,10 +76,8 @@ pub fn quit() -> Option<usize> {
         tid: exited.ident.id,
     }));
     reap(exited);
-    // 注意：回收计数（conductor::exit）不在入队时递增——须等 bury 完成栈/
-    // trap 帧/团队空间归还后再计数，否则最后任务退出时另一核见 REAPED==PUSHED
-    // 立即 halt，本核 bury 未及回收 → 关机断言误报帧泄漏。
-    next_pa
+    bury();
+    crate::work::room::scheduler::trap::run()
 }
 
 /// 回收全部躯壳任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：躯壳不在任何核
@@ -72,7 +86,11 @@ pub fn quit() -> Option<usize> {
 ///
 /// **入队的任务已经收尾**（退出钩子见 [`reap`]），本函数只做回收——「等收尾」与
 /// 「等回收」因此分开：前者是 `Join` 的语义，后者对调用方不可观测。
-pub fn bury() {
+///
+/// 唯一调用者是 [`quit`]（排空必须发生在再次取活之前，故是它的一部分）。回收计数
+/// （`conductor::exit`）在归还完成之后才递增：否则最后任务退出时另一核见
+/// `REAPED == PUSHED` 立即 halt，本核 bury 未及回收 → 关机断言误报帧泄漏。
+fn bury() {
     loop {
         // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
         // 导致 husks(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。

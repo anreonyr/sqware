@@ -40,7 +40,7 @@ use wait::site::WakeKind;
 // 子模块对外重导出：**外部路径一行不改**（`messenger::cull` 等照旧）。
 pub(crate) use doom::{doom, take_doomed};
 pub(crate) use handoff::Handoff;
-pub(crate) use reap::{bury, hook, quit};
+pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;
 pub(crate) use wait::site::WakeKey;
 pub(crate) use wait::{join, park, redeem, wait, wake, wipe};

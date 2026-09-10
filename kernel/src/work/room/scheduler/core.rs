@@ -239,9 +239,10 @@ impl Scheduler {
             let frame =
                 &mut *(t.ident.frame.pa.expect("frame span has pa").as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);
-            // S 态任务上台即写 tp = 本 hart PerHart 指针（内核任务与 supervisor 域
-            // 任务同此约定）：被抢占恢复路径直接 sret 回打断点（不经 ktask_trampoline
-            // 的 tp 重建），tp 必须在上台时就绪。U 态任务的 tp 是 TLS，不写。
+            // S 态任务上台即写 tp = 本 hart PerHart 指针（内核自举任务与 supervisor
+            // 域任务同此约定）：被抢占后的恢复路径直接 sret 回打断点（不再经任何
+            // 内核任务 trampoline 重建 tp），tp 必须在上台时就绪。U 态任务的 tp 是
+            // TLS，不写。
             if t.ident.team.space.kind().is_supervisor() {
                 frame
                     .gpr
@@ -385,7 +386,10 @@ impl Scheduler {
     }
 
     /// 主动让出：无视剩余预算立即轮转（Running → Starved）。
-    pub(super) fn starve(&self) -> usize {
+    ///
+    /// `pub(crate)`：唯一调用方是 envcall 的 `RoomCall::Starve`（任务面文件删除后
+    /// 直呼本方法，不再经 `utask::starve` 转发）。
+    pub(crate) fn starve(&self) -> usize {
         let mut i = self.inner.lock();
         let Some(cur) = i.running.take() else {
             panic!("starve with no running task on hart {}", self.hart);
@@ -450,6 +454,22 @@ pub(crate) fn rip() {
 
 pub(super) fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
+}
+
+/// 放行入队（`Task::release` 收尾）：入本核就绪队列 **+ 踢醒一个休眠核**。
+///
+/// 簿记（`Team.tasks`）、未放行容器（`Team.held`）、产生计数（PUSHED）与 trace 都在
+/// `TaskBuilder::hold` 完成——**计数挂在产生处**，Held 被父域 kill 时
+/// REAPED/PUSHED 仍配平（否则 `done()` 恒假，系统永不停机）。
+///
+/// 「踢醒」为什么不在 [`Scheduler::push`](Scheduler::push) 里：`messenger::rise`
+/// 唤醒一批时**只在批量之后踢一次**（单 tick 的 IPI 量 O(N) → O(1)），并进去会让
+/// 批量路径退化成 N 次踢。新任务出现是单点事件，故踢在这里。
+pub(crate) fn push(task: Arc<Task>) {
+    current().push(task);
+    // 新任务出现：单点踢醒 1 个 WFI 休眠核（可 steal 取活；多核广播会触发
+    // 雷鸣群，多 hart 同时抢源 L1 → cache 行乒乓）。
+    conductor::kick();
 }
 
 /// 注册 task id → task 索引（Task::spawn 末尾调用）。

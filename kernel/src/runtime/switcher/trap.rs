@@ -28,12 +28,13 @@ pub use stack::{arm_hart, init, trap_stack, trap_stack_base, trap_stack_edge};
 /// 陷阱会覆写 hart 帧——被抢占内核任务的现场将丢失。
 ///
 /// 判定源（与调度域的 D2-1 收敛一致）：「running 任务是内核任务」由任务所属
-/// 空间的 kind 决定（不再读 sstatus.spp）。软陷阱（scheduler::ktask）与硬件
-/// 抢占路径共用本搬移。
+/// 空间的 kind 决定（不再读 sstatus.spp）。硬件抢占与自愿切换（S 态域任务发
+/// envcall 切走）共用本搬移。
 ///
-/// 自查询形态：身份经 `ident()` 无锁读槽（ktask 汇编消费者无法传参；槽读廉价、
-/// 崩溃现场安全）。只搬三个现场字段；任务帧其余元数据（kernel_satp/kernel_sp/
-/// trap_handler/user_satp/self_va/…）由 spawn/prepare 维护，不得改动。
+/// 自查询形态：身份经 `ident()` 无锁读槽（软陷阱那套汇编入口已随内核任务面删除，
+/// 现在唯一调用点也传不了参——槽读廉价、崩溃现场安全）。只搬三个现场字段；
+/// 任务帧其余元数据（kernel_satp/kernel_sp/trap_handler/user_satp/self_va/…）由
+/// spawn/prepare 维护，不得改动。
 pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(i) = ident() else {
         return false;
@@ -183,7 +184,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 && crate::work::room::messenger::take_doomed(running.id)
             {
                 drop(ident);
-                return crate::work::room::scheduler::utask::reap() as *mut TrapContext;
+                return crate::work::room::messenger::quit() as *mut TrapContext;
             }
             frame as *mut TrapContext
         }
@@ -247,7 +248,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             }));
             putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
             drop(ident);
-            return crate::work::room::scheduler::utask::reap() as *mut TrapContext;
+            return crate::work::room::messenger::quit() as *mut TrapContext;
         }
         // 异常：任务（U 态 / S 态域任务）→ fault isolation 杀 task；内核自身 → fatal。
         Trap::Exception(other) => {
@@ -269,7 +270,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                     other
                 );
                 drop(ident);
-                return crate::work::room::scheduler::utask::reap() as *mut TrapContext;
+                return crate::work::room::messenger::quit() as *mut TrapContext;
             }
             panic!(
                 "unhandled kernel exception: {other:?} at sepc={:#x}, stval={:#x}",

@@ -7,8 +7,6 @@
 // `spawn` = `hold` + 立即放行。跨域产线程必须走 `hold`，父方 `Accord` 之后再
 // `Hatch`——新线程的权限表起步为空，「先授权、后运行」是安全的一侧。
 
-use alloc::alloc::Allocator;
-use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -210,7 +208,7 @@ impl Task {
         }
         let mut t = task.clone();
         Task::exclusive(&mut t).transform(TaskState::Starved);
-        scheduler::task::push(t);
+        scheduler::core::push(t);
         Ok(())
     }
 
@@ -331,49 +329,6 @@ impl TaskBuilder {
         self
     }
 
-    /// 统一闭包式任务生成：团队 + 闭包建任务（闭包装箱
-    /// → trampoline → 新任务栈上调用）。团队身份决定运行世界：kernel 团队 → S 态内核任务
-    /// （内核堆装箱、入口 `ktask_trampoline`、SPP=1 由 spawn 按团队身份自动定）。
-    /// 当前仅支持 kernel 团队（U 态用户闭包未接入）。
-    ///
-    /// 约束：`FnOnce + Send + 'static`——闭包可捕获、可搬移到新执行上下文。
-    /// 内核任务运行于 SIE=1（帧 SPIE=1），可被 S-timer 抢占（现场经 persist 保全），
-    /// 也可经 `scheduler::ktask` 自愿让出/睡眠——忙等不返回则独占所在核。
-    ///
-    /// 目录（原唯一使用者）已移出内核、跑在 `task-dir` 域里，故本面暂无树内使用者，
-    /// 保留作内核线程原语。
-    #[allow(dead_code)]
-    pub fn closure<F>(self, f: F) -> Result<Arc<Task>, MapError>
-    where
-        F: FnOnce() + Send + 'static,
-    {
-        debug_assert!(
-            self.team.space.asid().is_kernel(),
-            "TaskBuilder::closure 目前仅支持 kernel 团队（内核态任务）"
-        );
-        // 双装箱：`Box<dyn FnOnce()>` 是胖指针不能直接转 usize，外包一层得薄指针。
-        // 类别 = Task：闭包装箱属任务生命周期——关机 TASK_BLOCKS 归零（①）。
-        // 装饰器标注（块侧：mark 默认 Persistent 后 relabel）；释放经地址路由 +
-        // ledger 类别记账，不依赖分配器类型。
-        let inner: Box<dyn FnOnce(), &'static dyn Allocator> = crate::tag!(
-            Task,
-            Box::new_in(f, crate::memory::allocator::block::allocator())
-        );
-        let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>, &'static dyn Allocator> = crate::tag!(
-            Task,
-            Box::new_in(inner, crate::memory::allocator::block::allocator())
-        );
-        // into_raw_with_allocator（非 Global 的 Box 无 into_raw）——alloc 是
-        // 引用（drop 空操作），ptr 交 trampoline 的 Box::from_raw（Global 型，
-        // 释放按地址路由 + ledger 类别记账）。
-        let (ptr, _alloc) = Box::into_raw_with_allocator(holder);
-        let ptr = ptr as usize;
-        // SAFETY: 闭包在本地装箱，args[0] 传其薄指针；SPP=1 回 S 态运行于
-        // `ktask_trampoline`（该 trampoline 从 `a0` 指向的 args 区读指针）。
-        let entry = VirtAddr::from_raw(ktask_trampoline as *const () as usize);
-        self.entry(entry).args(alloc::vec![ptr]).spawn()
-    }
-
     /// 产**未放行**线程：栈 slot + trap 帧（入团队空间窗口簿记）→ 写 args →
     /// 填帧 → 入簿记（`Team.tasks`）+ 进 `Team.held` + 计数（PUSHED）。
     ///
@@ -484,29 +439,4 @@ impl TaskBuilder {
         Task::release(&task).expect("freshly held task must release");
         Ok(task)
     }
-}
-
-/// 内核任务 trampoline：解包闭包、执行、跑完自动退出。
-///
-/// `a0` = args 区 VA（`TaskBuilder::args` 写入的**数组**地址）；本函数读
-/// `args[0]` 得 `Box<dyn FnOnce()>` 薄指针。该函数作为内核任务的 sepc 入口，
-/// SPP=1 回 S 态执行于该任务内核栈上；闭包返回后退出调度。
-///
-/// 必须以 `-> !` 返回：从 `_start`-式入口返回会跳 0 崩溃，退出必须显式执行。
-///
-/// # Safety
-/// `arg` 必须是 `TaskBuilder::closure` 产出的 args 区 VA（`args[0]` 为其
-/// 闭包装箱的薄指针）。
-#[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
-pub(crate) extern "C" fn ktask_trampoline(arg: usize) -> ! {
-    // tp = 本 hart PerHart 指针：每个内核任务上台时 Scheduler::prepare 已把 TP
-    // 写入其帧（frame.gpr[TP] = per_hart_ptr(self.hart)），__restore 恢复全部 GPR
-    // 时 tp 即已在位——此处不再重建。
-    // SAFETY: arg 指向本任务栈上的 args 区（a0 由填帧写入）；args[0] 由 closure
-    // 以 Box::into_raw(holder) 产出（薄指针），此处独占回收。
-    let ptr = unsafe { core::ptr::read_volatile(arg as *const usize) };
-    let holder: Box<Box<dyn FnOnce(), &'static dyn Allocator>> =
-        unsafe { Box::from_raw(ptr as *mut Box<dyn FnOnce(), &'static dyn Allocator>) };
-    holder();
-    scheduler::ktask::reap()
 }

@@ -11,7 +11,9 @@
 // 根除旧 `from_bits_truncate` 的静默截断；`PteFlags` 仍在 `Mprotect` arm 校验。
 // 返回值写回 a0（`Gprs::A0`）；每个调用后 sepc += 4（Reap 除外——不返回）。
 // 时间语义统一以毫秒（Duration 边界）表达（Park / Wait）；Ticks 仅作兼容诊断。
-// 调用名与调度词族（conductor）同词：Starve/Park/Reap/Wait/Wake 即 utask 各服务。
+// 调用名与调度词族同词：Starve/Park/Reap/Wait/Wake 分别直呼
+// `scheduler::core::starve` / `messenger::{park, quit, wait, wake}`（服务面转发层
+// 已随内核任务面一并删除）。
 
 use core::time::Duration;
 
@@ -27,9 +29,8 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::messenger::{Handoff, WakeKey};
+use crate::work::room::messenger::{self, Handoff, WakeKey, park, quit, wait, wake};
 use crate::work::room::scheduler::core::current;
-use crate::work::room::scheduler::utask::{self, park, reap, starve, wait, wake};
 use crate::work::unit::gate::{GateError, Permission};
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
@@ -173,7 +174,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         Err(_) => return ret_err(frame, GateError::Denied),
     };
     match envcall {
-        EnvCall::Room(RoomCall::Starve) => return starve() as *mut TrapContext,
+        EnvCall::Room(RoomCall::Starve) => return current().starve() as *mut TrapContext,
         EnvCall::IO(IOCall::Put { len, buf }) => {
             let ok = crate::console::push(&ident.team.space, buf.get(), len);
             if !ok {
@@ -194,7 +195,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         }
         EnvCall::Room(RoomCall::Reap) => {
             drop(ident);
-            return reap() as *mut TrapContext;
+            return quit() as *mut TrapContext;
         }
         EnvCall::Chrono(ChronoCall::Ticks) => {
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);
@@ -442,7 +443,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             // 挂起后恢复读到的 a0 = 挂起前预置值 ⇒ 预置 0（未回收）；当场判定再改写
             frame.gpr.set_x(Gprs::A0, 0);
             drop(ident);
-            match utask::join(target_life, dur) {
+            match messenger::join(target_life, dur) {
                 // 未离核：当场结论（true = 调用开始时目标已回收）。
                 Ok(Handoff::Resume(dead)) => frame.gpr.set_x(Gprs::A0, dead as usize),
                 Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
