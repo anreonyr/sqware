@@ -176,15 +176,24 @@ pub(in super::super) fn sites(key: WakeKey) -> &'static SpinLock<HashMap<WakeKey
 
 /// 信标先探：消费本键上的遗留信号。**缺键即无信标**——不 `or_insert`：空的、
 /// 无信标的站点没有语义，不该被「先探」凭空造出来。
+///
+/// 取走信标后**当场 [`prune`]**：消费掉最后一枚信标的站点正好是「队列空 ∧ 无信标」
+/// 那一类，不删就是空壳——而这正是 `wake` / `wipe` / `redeem` 三条路都记得做、
+/// 唯独这里漏掉的一步。漏掉的表现：门里挂上 `cascade` 之后 `orphan` 从 0 变 2
+/// （每次「等待者后到、消费掉遗留信标」都永久留一个空壳，站点表随该事件增长）。
 pub(super) fn take_beacon(key: WakeKey) -> bool {
     let mut sites = sites(key).lock();
-    match sites.get_mut(&key) {
+    let taken = match sites.get_mut(&key) {
         Some(site) if site.pend => {
             site.pend = false;
             true
         }
         _ => false,
+    };
+    if taken {
+        prune(&mut sites, key);
     }
+    taken
 }
 
 /// 站点存在的判据：**队列非空 ∨ （信标 ∧ 键还活着）**。不成立即删——空壳站点
@@ -204,10 +213,12 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
 /// 这个漏口关掉（实测 `tomb` 34 → 0；**反向验证**——把本判据与 `wipe` 的删站点一并
 /// 改回原样——`tomb` 原样回到 34、总数原样回到 34）。
 ///
-/// 站点因此只剩两种形态，审计计数（`messenger::probe`）按它们分列：
+/// 站点因此只剩三种形态，审计计数（`messenger::probe` 的 `live`/`tomb`/`orphan`）
+/// 按它们分列——**名字与判据只有这一处定义**：
 ///   - **活**（`waiters` 非空）：有任务挂在这里；
-///   - **孤儿**（队列空 且 无信标 **或** 键已死）：没有任何语义，正是本函数该删的
-///     那一类。
+///   - **墓碑**（队列空 **且** 有信标）：信号留着等**未来的**等待者认领。键还活着时
+///     它有语义（`wake` 的记忆），故本函数**不删**它；键一死即落到下一类；
+///   - **孤儿**（队列空 **且** 无信标）：没有任何语义，正是本函数该删的那一类。
 /// 不变式（判据不含挂起中的等待者，故必须为真）：**队列非空 ⇒ 键还活着**——能入队
 /// 就意味着 `block` ④ 在锁内读到过「键活着」，而等待者的站点强持有者就是那份资源。
 pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
