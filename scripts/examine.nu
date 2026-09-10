@@ -30,6 +30,28 @@
 #       EXAMINE_REPEAT=10 scripts/examine.nu
 #       EXAMINE_FEATURES=audit scripts/examine.nu   # 默认 3 轮 + 1 轮 audit 档
 #
+# ── 按档构建、按档跑（本轮修掉的设计瑕疵）────────────────────────────────────
+# 原来**只构建一次** ELF（`--features $EXAMINE_FEATURES` 那一份），默认轮与 audit 轮共用。
+# 于是 `EXAMINE_FEATURES=audit` 时默认轮拿到的是 audit ELF，撞上默认档自己的哨兵「默认档
+# 不该出现 audit 输出」（audit ELF 每次关机都打 `[audit] sites …`）⇒ 那几轮**按构造**必挂：
+# 想验默认档就不能带 feature，想验 audit 档就同时挂掉默认轮，两档不能在一次运行里各得其所。
+# 现改为**按档构建、按档跑**：
+#   默认轮（`EXAMINE_REPEAT` 那几轮）← 不带 feature 构建的 ELF（`const DEFAULT_FEATURES`，恒空）
+#   audit 轮                        ← 带 `EXAMINE_FEATURES` 构建的 ELF
+# cargo 的落点 `target/…/release/sqware` 只有一条、换 feature 就覆盖 ⇒ 每建完一档**立刻**把
+# 产物（连同同目录的 `initrd.img`，boot.nu 按 ELF 同目录找它）搬进本档自己的目录
+# `<OUT>/elf-default/`、`<OUT>/elf-audit/`；每轮只跑自己那份 ⇒ 两档不可能互相污染
+# （调换构建顺序也一样，因为搬运发生在下一次构建之前）。
+# 判据一条没动：哨兵、九 marker、逐步 expect、自退非 124、无 panic 全部照旧（新步只追加）。
+#
+# ── 既存违规（**不是**豁免）───────────────────────────────────────────────────
+# audit 档的关机审计有一条**已记账**的既存违规（A2 线，未修）：`[audit] task lifecycle leak
+# at shutdown: 19 frames, 9 blocks` ⇒ `report()` ⇒ `[panic] at …`。故 audit 轮**就该判 FAIL**、
+# 整体**就该非零退出**；门只在这条 FAIL 的原因串里如实写出「是什么」并指到
+# `docs/audit-flying-wires.md` §9.3「关机审计第二条违规：已收缩到一个因（属 A2 线，未修）」。
+# **没有**「已知失败不算失败」的开关：那条违规没从判据里摘掉，阈值没放宽，ok 仍为 false。
+# 标注只加在**已经判 FAIL** 的轮上（调用点前置 `$why != ""`）⇒ 判定既不增也不减。
+#
 # ── qemu 起法：唯一出处 scripts/boot.nu ────────────────────────────────────────
 # 门**不凑 qemu 参数**：`^nu scripts/boot.nu <elf>`，QEMU_TIMEOUT / QEMU_SEED / QEMU_ICOUNT
 # 等全由它解释（见该文件头注）。**icount 显式置空**——boot.nu 的默认档是 `auto,sleep=on`，
@@ -66,7 +88,9 @@
 #   <OUT>/run<i>/console.log   qemu 控制台与 stderr 的合并捕获（`o+e>`）
 #   <OUT>/run<i>/cmds.txt      门写出的命令（长驻写端读的就是它）
 #   <OUT>/run<i>/qemu.rc       qemu 退出码（124 = 被外接 timeout 杀）
-#   <OUT>/run<i>/diag.txt      仅失败时写：why + 字节数 / 回显数 / qemu 现场
+#   <OUT>/run<i>/diag.txt      仅失败时写：why + 本轮跑的 ELF / features + 字节数 / 回显数 / qemu 现场
+#   <OUT>/elf-default/sqware   默认档构建的产物（含同目录 initrd.img）——默认轮跑的就是它
+#   <OUT>/elf-audit/sqware     audit 档构建的产物（仅带 feature 时有）——audit 轮跑的就是它
 #
 # ── 旋钮 ─────────────────────────────────────────────────────────────────────
 #   EXAMINE_REPEAT     轮数（默认 3）
@@ -79,6 +103,10 @@
 #   EXAMINE_FEATURES   内核 cargo feature（默认空 = 默认档，行为/输出与原版逐字相同）。
 #                      含 `audit` ⇒ 默认轮之后**再加一轮 audit 档**（追加 `sleep 700`
 #                      与 hole 的封印唤醒观测，并断言关机时刻的站点表计数）。
+#                      **只作用于 audit 轮**：默认轮恒跑不带 feature 构建出的 ELF。
+#   （默认档的构建 features **不是旋钮**：见 `const DEFAULT_FEATURES`，恒为空。加个
+#    `EXAMINE_DEFAULT_FEATURES` 等于门里开一条「让默认轮跑别档 ELF」的合法通路，
+#    只会把本轮修掉的瑕疵做成可配置项——反向验证要的是临时改这一行常量。）
 
 # 步骤：命令 → 该步要看到的输出（逐字照抄 .sh 版）。最后一条同时是自然停机的判据。
 #
@@ -100,6 +128,11 @@ const STEPS = [
 # 档位 → 本档要跑的步骤（下标取自上面那张表，命令与顺序都只有一处出处）。
 const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 8]
 const STEPS_AUDIT   = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+# 默认档的构建 features：**恒为空串**，是构造上的保证，不是旋钮（见头注「按档构建」）。
+# 想反向验证默认档哨兵（「默认档不该出现 audit 输出」）还拦不拦得住，就临时把它改成
+# `"audit"`：默认轮便会跑在 audit ELF 上，哨兵必响 —— 验完改回。
+const DEFAULT_FEATURES = ""
 
 # 全量 marker（含 sleep 探针的 `sleep 300ms`），跑完逐条核。默认八步那九条
 # 同样是 .sh 版原文，逐字未动；audit 档另加三条（redeem 的第二个时长 + wipe 的
@@ -183,6 +216,24 @@ def audit_count [field: string, file: path] {
   ($toks | get ($i + 1) | into int)
 }
 
+# ── 既存违规的如实标注（**不是**豁免）────────────────────────────────────────
+# audit 档的关机审计有一条**已记账**的既存违规（A2 线）：`[audit] task lifecycle leak at
+# shutdown: N frames, M blocks` ⇒ `report(IntegrityViolation::AuditDivergence)` ⇒ `[panic] at …`，
+# 于是「无崩溃」判据必然挂。**这一轮就该 FAIL**：本函数**只**往原因串里补一句
+# 「是什么、记在 §9.3 哪一节」，不碰 ok/FAIL，不开开关、不设白名单、不摘 marker、不放宽阈值。
+# 调用点另外带 `$why != ""` 前件 ⇒ 这句话只可能加在**已经判 FAIL** 的轮上（见 run_once 末）。
+# 数（N frames, M blocks）**从捕获里读**，不写死：哪一轮数变了，原因串跟着变（写死就成了造数）。
+# 只写指针、不去改 docs。
+def existing_violation_note [file: path] {
+  if not (hit 'task lifecycle leak at shutdown' $file) { return "" }
+  let r = (^grep -oE -- '\[audit\] task lifecycle leak at shutdown: [0-9]+ frames, [0-9]+ blocks' $file | complete)
+  let found = (if $r.exit_code == 0 { ($r.stdout | lines | first) } else { null })
+  let what = (if $found == null { "task lifecycle leak at shutdown（原文行取不到，见捕获）" } else { $found | str replace "[audit] " "" })
+  # 同一因的第二笔账（docs §9.3 同节记着它与上面同源）：在就一并写出来，不在就不提。
+  let table = (if (hit 'table frames [0-9]+ != kernel-walk count [0-9]+' $file) { " + table frames != kernel-walk count（同源）" } else { "" })
+  $"既存违规[($what)($table)]：A2 线未修，记账 docs/audit-flying-wires.md §9.3「关机审计第二条违规：已收缩到一个因（属 A2 线，未修）」"
+}
+
 # 等 marker 出现在捕获里；limit 秒内没等到 ⇒ false。每步独立超时（.sh 同名函数的语义，
 # 连「哪一步、等的是哪条正则」那句即时提示也照旧打出来）。
 def expect [pat: string, limit: int, file: path, step: string] {
@@ -243,10 +294,12 @@ def snapshot [log: path, cmds: path] {
 def write_diag [file: path, ctx: record] {
   let rc_s = if $ctx.rc == null { "缺失（job 未在限内收尾，已杀掉）" } else { $ctx.rc | into string }
   let icount_s = if $ctx.icount == "" { "关（QEMU_ICOUNT 置空）" } else { $ctx.icount }
+  let feats_s = if $ctx.features == "" { "（默认档：不带 feature）" } else { $ctx.features }
   let lines = [
     $"--- 诊断：($ctx.why) ---"
     $"seed         → ($ctx.seed)"
     $"icount       → ($icount_s)"
+    $"ELF          → ($ctx.elf)（本档构建的产物；features=($feats_s)）"
     $"长驻写端     → tail -f -n +1 ($ctx.cmds)（喂 scripts/boot.nu 起的 qemu；nu 无 < ⇒ 管道代 FIFO）"
     $"已写出       → ($ctx.sent)/($ctx.total) 条命令，($ctx.cmds_bytes) 字节"
     $"capture      → ($ctx.log)（($ctx.log_bytes) 字节）"
@@ -279,7 +332,11 @@ def run_once [cfg: record, i: int, audit: bool] {
   $env.QEMU_SEED = ($seed | into string)
 
   let boot = $cfg.boot
-  let elf = $cfg.elf
+  # **本档只跑本档构建出来的 ELF**：默认轮 ← 不带 feature 的那份，audit 轮 ← 带
+  # EXAMINE_FEATURES 的那份（两份产物在 <OUT>/elf-<档>/，见 main 的按档构建）。
+  # 这就是本门的设计要点：一次构建、两种期望，必然有一档被按构造误判。
+  let elf = (if $audit { $cfg.elf_audit } else { $cfg.elf_default })
+  let feats = (if $audit { $cfg.features } else { $DEFAULT_FEATURES })
   # qemu：tail 长驻写端喂命令文件 → scripts/boot.nu（qemu 起法的唯一出处）。
   # 退出码拿不到（nu 无 job wait）⇒ job 自己落盘；**必须包 try**，否则被 timeout 杀（124）
   # 时 job 会当场中止，rc 文件永远不写（.sh 版旧 runner 的归档分支就是这么从未跑过的）。
@@ -373,13 +430,50 @@ def run_once [cfg: record, i: int, audit: bool] {
   # .sh 里 `wait` 一定有退出码；nu 这条路可能取不到（job 没收尾），那也是失败的理由。
   if $rc == null { $why = (append_why $why "qemu 未在限内收尾（退出码取不到）") }
 
+  # ── 既存违规的如实标注（**最后一步，只加话**）────────────────────────────────
+  # `ok` 就是 `$why == ""`，故这行**必须**带 `$why != ""` 这个前件：只有**已经**判 FAIL 的轮
+  # 才加这句指针 ⇒ 标注不可能把一轮 PASS 翻成 FAIL，也不可能把 FAIL 翻成 PASS；判据既不增
+  # 也不减（见 existing_violation_note：没有开关、没有白名单、没摘 marker、没放宽阈值）。
+  let note = (existing_violation_note $log)
+  if $note != "" and $why != "" { $why = (append_why $why $note) }
+
   if $why != "" {
     write_diag $diagfile ($live | merge {
       why: $why, seed: $seed, icount: $cfg.icount, cmds: $cmds, log: $log,
-      sent: $sent, total: $total, rc: $rc, features: $cfg.features,
+      sent: $sent, total: $total, rc: $rc, features: $feats, elf: $elf,
     })
   }
   {ok: ($why == ""), why: $why, dir: $dir}
+}
+
+# 构建一档内核，并**立刻**把产物搬出 cargo 的公共落点。
+# 为什么必须搬：cargo 的落点是 `target/…/release/sqware` **一条路径**，换 feature 就覆盖；
+# 两档若都直接跑那条路径，先建的那档跑起来时手里那份可能已是后建的那档（原设计瑕疵的另一半）。
+# 顺带把 `initrd.img` 一起搬：boot.nu 在 **ELF 同目录**找它（`-initrd`），不搬就等于把
+# initrd 弄丢——那会让 guest 起不到 shell，且症状与 feature 毫无关系，极难查。
+def build_flavor [features: string, src: path, dest: path] {
+  # 非零退出在 nu 里会当场中止脚本，故显式接住并退 1（.sh 的 `|| exit 1` 同义）。
+  # 裸 `^cargo` 在 try 里仍然把输出流到终端（包进 `let` 才会被吞掉）。
+  # feature 是**空串也照传** `--features`（cargo 对空 feature 列表与不传等价），
+  # 免得两处分叉（传/不传各一条命令行）。
+  try { ^cargo build --release -p kernel --features $features } catch {
+    print $"examine: cargo build 失败（features='($features)' rc=($env.LAST_EXIT_CODE)）"
+    exit 1
+  }
+  if not ($src | path exists) { print $"缺 ($src)"; exit 1 }
+  let dir = ($dest | path dirname)
+  mkdir $dir
+  try { ^cp -- $src $dest } catch {
+    print $"examine: 搬产物失败（($src) → ($dest) rc=($env.LAST_EXIT_CODE)）"
+    exit 1
+  }
+  let initrd = ($src | path dirname | path join "initrd.img")
+  if ($initrd | path exists) {
+    try { ^cp -- $initrd ($dir | path join "initrd.img") } catch {
+      print $"examine: 搬 initrd 失败（($initrd) rc=($env.LAST_EXIT_CODE)）"
+      exit 1
+    }
+  }
 }
 
 def main [] {
@@ -396,28 +490,37 @@ def main [] {
   # 内核 cargo feature（默认空 = 默认档，行为与输出与本门原版逐字相同）。
   # `audit` ⇒ 默认档轮次**之后**再多跑一轮 audit 轮：步骤追加 `sleep 700` / hole 的
   # 封印唤醒观测，并断言关机时刻的站点表计数（prune 的观测量）。
+  # **只作用于 audit 轮**：默认轮跑的 ELF 由 `const DEFAULT_FEATURES` 决定（恒空）。
   let features = ($env.EXAMINE_FEATURES? | default "" | str trim)
   let audit = (($features | split row -r '\s+') | any { |f| $f == "audit" })
-  let elf = ($root | path join "target/riscv64gc-unknown-none-elf/release/sqware")
+  # cargo 的落点：**两档共用**（换 feature 就覆盖）⇒ 每建一档必须立刻搬走产物（见 build_flavor）。
+  let built = ($root | path join "target/riscv64gc-unknown-none-elf/release/sqware")
+  # 两档各自的产物：本轮（本 OUT）自己的目录，各带 initrd.img。轮次只跑自己那份。
+  let elf_default = ($out | path join "elf-default" "sqware")
+  let elf_audit = ($out | path join "elf-audit" "sqware")
   let boot = ($root | path join "scripts" "boot.nu")
 
   print $"examine: repeat=($repeat) out=($out) qemu_timeout=($qemu_timeout)s step_wait=($step_wait)s"
   print ('examine: features=' + (if $features == "" { "(默认)" } else { $features }) + (if $audit { "（另加一轮 audit）" } else { "" }))
   mkdir $out
 
-  # 构建：非零退出在 nu 里会当场中止脚本，故显式接住并退 1（.sh 的 `|| exit 1` 同义）。
-  # 裸 `^cargo` 在 try 里仍然把输出流到终端（包进 `let` 才会被吞掉）。
-  # feature 是**空串也照传** `--features`（cargo 对空 feature 列表与不传等价），
-  # 免得两处分叉（传/不传各一条命令行）。
-  try { ^cargo build --release -p kernel --features $features } catch {
-    print $"examine: cargo build 失败（rc=($env.LAST_EXIT_CODE)）"
-    exit 1
+  # 构建：**按档各建一次**，建完立刻搬进本档自己的目录（cargo 落点两档共用，见头注/build_flavor）。
+  # 只建**有轮次要跑**的档：
+  #   REPEAT=0 且不带 audit ⇒ 一条都不建（0/0 与 .sh 的 `seq 1 0` 同义，也省一次编译）；
+  #   带 audit 而 REPEAT=0   ⇒ 只建 audit 档（与改动前「只构建一次」的语义逐字一致）。
+  if $repeat > 0 {
+    print $"examine: 构建默认档（--features '($DEFAULT_FEATURES)'）→ ($elf_default)"
+    build_flavor $DEFAULT_FEATURES $built $elf_default
   }
-  if not ($elf | path exists) { print $"缺 ($elf)"; exit 1 }
+  if $audit {
+    print $"examine: 构建 audit 档（--features '($features)'）→ ($elf_audit)"
+    build_flavor $features $built $elf_audit
+  }
 
   let cfg = {
-    out: $out, elf: $elf, boot: $boot, qemu_timeout: $qemu_timeout,
-    step_wait: $step_wait, t_gap: $t_gap, icount: $icount, features: $features,
+    out: $out, elf_default: $elf_default, elf_audit: $elf_audit, boot: $boot,
+    qemu_timeout: $qemu_timeout, step_wait: $step_wait, t_gap: $t_gap,
+    icount: $icount, features: $features,
   }
 
   mut pass = 0
@@ -448,7 +551,9 @@ def main [] {
     $total_rounds += 1
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 9 步全过 + 12 marker 齐 + 站点表已空)')
+      # 标签照实写：audit 档判的是**孤儿 == 0 / 活 == 0 / 等待者 == 0**，不是「站点表已空」
+      # （实测 sites=34 全是墓碑，docs §9.3「三条缺失断言落地」已记明总数不作判据）。
+      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 9 步全过 + 12 marker 齐 + 站点表无孤儿)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (audit 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
