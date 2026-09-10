@@ -2256,3 +2256,34 @@ task 键，**空间键没有任何退役调用点**；而 `prune` 只在"那个�
 （唯一持有者就是这个将死的任务 ⇒ 空间随之而亡），就按 asid 扫站点分片删掉它的 `Space{space: asid, ..}`
 站点（新原语 `wipe_space(asid)`，与 `wipe(key)` 同一族）。用强计数当判据的理由与仓里既有做法一致
 （"唯一强持有"）；不用 `Drop` 回调的理由见 A2（死亡靠 `Weak` 观察，不靠回调）。
+
+### 10.14 空间键退役：`wipe_space(asid)` —— **audit 轮首次转绿**
+
+§10.13 收口后只剩一条判据红着：`死键站点[1]`（`by kind: space 1`）。成因与处置都已在 §10.13
+写清，本轮落地：
+
+- **新原语 `wipe_space(asid)`**（与 `wipe(key)` 同族）：删掉该空间名下的**全部**空间键站点，
+  放行其等待者（`void(ticket)` 消音到点 + `rise` 放回就绪）。遍历全部分片、**逐片取放**
+  （绝不持跨片锁）、锁外 drop（`Arc<Task>` 的 drop 链会取 L2）——与 `wipe` 同一套锁纪律。
+- **触发点 = `bury`**：`Arc::strong_count(&z.ident.team.space) == 1` ⇒ 这个壳是空间的最后
+  一份持有者，`drop(z)` 之后空间才真死 ⇒ 趁 asid 还在手上，把它名下的空间键站点一起退役。
+  判据用"唯一强持有"与仓里既有做法一致；**不用 `Drop` 回调**的理由见 A2（死亡靠 `Weak` 观察，
+  不靠回调——那正是墓碑的来源）。
+- 为什么空间键此前没有退役面：hole 键（`HoleMeta::drop` / `hole::seal`）与 task 键（`bury`）
+  各有自己的退役调用点，**空间键没有**；而 `prune` 只在"那个键再次被碰到"时跑，空间死了就
+  再没人碰它 ⇒ 站点永留。它此前被更大的泄漏遮住（空间还活着时算 `tomb`，不算 `dead`）。
+
+**判据（首次全绿）**：
+
+| | §10.13 之后 | 本轮 |
+|---|---|---|
+| `[audit] sites …` | `1 live 0 tomb 1 orphan 0 dead 1` | **`0 live 0 tomb 0 orphan 0 dead 0 waiters 0`**（四项全零） |
+| `[audit] roster` | `8 alive 0` | `8 alive 0` |
+| audit 轮 | FAIL：死键站点[1] | **PASS**（自退 + 无 panic + 十步全过 + 13 marker 齐） |
+| 反向验证 | — | 去掉 `wipe_space` 调用 ⇒ 原样回到 `sites 1 / tomb 1 / dead 1` ⇒ 判红 `死键站点[1]` |
+
+**至此 §9.3 起记的那条主线违规全部消掉**：`task lifecycle leak at shutdown`（曾经 19 frames/9
+blocks → 29/15）、`table frames != kernel-walk`、`名册活任务[1]`、`死键站点[1]` 四样一起归零。
+一路的账：A2（站点寿命＝资源寿命，墓碑 34→0）→ 轮③（名册合一，blocks 9→5）→ 轮④（观察者只读
+判别式 + kill 路径覆盖）→ 轮②（harden 档把断言与 lockdep 放回被测产物；`dead == 0` 判据）→
+§10.12/§10.13（退场窄尾 + 跨挂起纪律，alive 1→0、泄漏行消失）→ 本节（空间键退役，死键站点归零）。
