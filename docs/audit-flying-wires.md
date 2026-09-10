@@ -1222,8 +1222,8 @@ enum Handoff<T> { Resume(T), Switch(usize) }            // `Idle` 消失：room 
 `HOLDERS` 只存 `Weak`）· 簿记先于 tock · 锁序（L1 与 L3 不互嵌、L3 之间也不互嵌；
 L3 = sites / HOLDERS / timer 堆）。
 
-**站点存在 ⟺ 队列非空 ∨ 有信标**（空且无信标即删）——A2 那条「站点永不回收」的一半，
-不花 A2 的预算就修掉了。
+**站点存在 ⟺ 队列非空 ∨ 有信标**（空且无信标即删，`prune` 在出队点收口）——A2 那条「站点永不回收」的
+一半，不花 A2 的预算就修掉了（轮 2b 已落）。
 
 ### 命名（冻结：对偶成对且等长，无 `A_B`）
 
@@ -1269,7 +1269,7 @@ room/
 | 1a | chrono 正名（`untock`→`mute`、`next_tock`→`due`、`tick_after`→`beat`）+ `ZOMBIES`→`HUSKS` | ✅ `ccaae73` |
 | 1b | `mute` 变真逆操作，删 `cancelled` 与其两处污染陷阱 | ✅ `d9ca7a5` |
 | 2a | 唤醒键成枚举（`WakeKey`）+ 两张站点表合一（`WaitSite`/`JoinSite` → `Site`） | ✅ `1eb7ca1` |
-| 2b | 票号 + 票根（`HOLDERS`）；删 `parked`/`wait_times`/`join_times`；`Alarm` 站点（park 进站点表） | 待做 |
+| 2b | 票号 + 票根（`HOLDERS`）；等待点上任务（`Blocked { key, ticket }`）；`Alarm` 站点；删 `parked`/`wait_times`/`join_times`；`wipe` / `redeem` 立起；站点寿命 `prune` | ✅ `fd15ffd` |
 | 3 | `Ticket` 上任务；`WakeKey` 四变体；`suspend` 读票直达（不再扫 16 分片） | 待做 |
 | 4 | `sites` 合一；`wait`/`wake`/`wipe`/`redeem`/`rise` 立起；`Handoff<T>` 收成一 | 待做 |
 | 5 | 拆文件（`messenger` 退场；即 §7.1 的搬家） | 待做 |
