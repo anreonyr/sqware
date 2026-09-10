@@ -13,7 +13,7 @@
 //     ktask.rs — 内核任务面（软陷阱服务：park / starve / reap）
 //
 // 术语：tick/tock 属计时域；调度域词族 = run/starve/park/reap/steal/wait/
-// rotate/prepare/mount/unpark。命名三面同词（park/starve/reap），路径 +
+// rotate/prepare/seat/shed。命名三面同词（park/starve/reap），路径 +
 // 签名区分——`Scheduler::park`(核心方法，原 Conductor::park) / `utask::park`(用户面) /
 // `ktask::park`(内核面)。
 

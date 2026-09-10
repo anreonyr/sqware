@@ -99,7 +99,7 @@ pub(super) fn halt() -> ! {
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,
         ));
-        run_shutdown_hooks();
+        hooked();
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }
     loop {
@@ -109,24 +109,23 @@ pub(super) fn halt() -> ! {
 
 // ── 关机钩子注册面 ──
 //
-// 子系统（mail::dock / mail::ring / scheduler / allocator）在 `boot::init` 把
-// 自己的关机函数挂到这里——conductor 不再硬编码子系统名。每条钩子调一次，
-// 顺序 = 注册顺序（mail → scheduler → block::flush → audit），由 boot::init
-// 装配时定。
-type ShutdownHook = fn();
+// 子系统（mail / scheduler / allocator）在 `boot::init` 把自己的关机函数挂到
+// 这里——conductor 不硬编码子系统名。每条钩子调一次，顺序 = 注册顺序
+// （mail → scheduler → block::flush → audit），由 boot::init 装配时定。
+type Hook = fn();
 
-static SHUTDOWN_HOOKS: OnceLock<&'static [ShutdownHook]> = OnceLock::new();
+static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();
 
-/// 注册关机钩子（一次性；由 `boot::init` 调用）。
-pub(crate) fn register_shutdown_hooks(hooks: &'static [ShutdownHook]) {
-    let _ = SHUTDOWN_HOOKS.set(hooks);
+/// 挂上关机钩子（一次性；由 `boot::init` 调用）。
+pub(crate) fn hook(hooks: &'static [Hook]) {
+    let _ = HOOKS.set(hooks);
 }
 
-/// 跑注册关的（halt 屏障之后调）。
-fn run_shutdown_hooks() {
-    if let Some(hooks) = SHUTDOWN_HOOKS.get() {
-        for hook in hooks.iter() {
-            hook();
+/// 跑全部挂上的（halt 屏障之后调）。
+fn hooked() {
+    if let Some(hooks) = HOOKS.get() {
+        for h in hooks.iter() {
+            h();
         }
     }
 }

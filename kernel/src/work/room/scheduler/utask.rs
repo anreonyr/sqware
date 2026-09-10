@@ -26,10 +26,10 @@ pub fn park(duration: Duration) -> usize {
 /// 当前线程退出入口（envcall Reap 调用）：标记 Reaped + 取下一任务
 /// （run 的取活循环；拿不到就 WFI）；全部任务退出 → halt。
 pub fn reap() -> usize {
-    messenger::mark_reaped();
-    // 必须在取活（可能触发 done→halt）**之前**清空 reaped 队列——否则最后退出
-    // 的任务会带着它的栈/trap 帧及团队地址空间滞留到关机断言，被误报为帧泄漏。
-    messenger::clear_loop();
+    messenger::quit();
+    // 必须在取活（可能触发 done→halt）**之前**清空躯壳队列——否则最后退出的
+    // 任务会带着它的栈/trap 帧及团队地址空间滞留到关机断言，被误报为帧泄漏。
+    messenger::bury();
     run()
 }
 

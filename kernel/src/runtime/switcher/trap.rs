@@ -175,7 +175,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         Trap::Interrupt(Interrupt::SupervisorSoft) => {
             // IPI 唤醒信号（SSIP）：清挂起位（不清则 sret 后立即再取 → 中断
             // 风暴）。若本核当前 running 任务被 `doomed` 点名（kill 的他核分支），
-            // 在此自退：mark_reaped + clear_loop，再取下一任务。
+            // 在此自退：quit + bury，再取下一任务。
             unsafe {
                 sip::clear_ssoft();
             }

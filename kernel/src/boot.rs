@@ -159,7 +159,7 @@ fn register_runtime_hooks() {
         crate::work::room::messenger::doom,
         crate::work::unit::gate::doom,
     ];
-    messenger::register_exit_hooks(EXIT_HOOKS);
+    messenger::hook(EXIT_HOOKS);
 
     // 快照提供者：gate 的查询面与级联要「全世界任务」，但 gate 不依赖 scheduler
     // ——依赖倒置在此一次性接上（此后 gate::snap() 即可取快照）。
@@ -178,7 +178,7 @@ fn register_runtime_hooks() {
         crate::work::room::scheduler::core::rip,
         crate::memory::allocator::block::flush,
     ];
-    conductor::register_shutdown_hooks(SHUTDOWN_HOOKS);
+    conductor::hook(SHUTDOWN_HOOKS);
 }
 
 /// 装出根服务域（**boot 的唯一 spawn**）：按打包期常量取 root 镜像 → `Build` 成

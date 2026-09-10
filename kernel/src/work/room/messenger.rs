@@ -15,11 +15,11 @@
 // 锁序：**L1（调度器）与 L3（本域各表）任何方向都不得嵌套**——持任一 L3 期间
 // 不得调用 scheduler 的任何加锁方法，也不得在锁内 drop `Arc<Task>`（drop 链会
 // 取 Space 锁 L2）。各路径的写法统一为「作用域内取、作用域外用」：block/wake/
-// wipe/redeem 在块内摘出 Waiter、块外 push 回 scheduler；clear_loop 块内出队、
+// wipe/redeem 在块内摘出 Waiter、块外 push 回 scheduler；bury 块内出队、
 // 块外回收；rip 块内 take 整表、块外 drop。
 //
 // 反向耦合清零：dock / ring 的 task_exit 反向耦合走两步拆——step 5 引入 exit
-// hook 注册面后，clear_loop 不再硬编码子系统名。本 step 暂留直调作为过渡。
+// hook 注册面后，bury 不再硬编码子系统名。本 step 暂留直调作为过渡。
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -206,7 +206,7 @@ fn sites(key: WakeKey) -> &'static SpinLock<HashMap<WakeKey, Site>> {
 }
 
 /// 全局躯壳队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
-/// 自己正在用的栈上回收自己；clear_loop  统一回收。
+/// 自己正在用的栈上回收自己；bury 统一回收。
 pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
     SpinLock::new_level(Level::L3, VecDeque::new());
 
@@ -360,26 +360,24 @@ pub fn wait(key: WakeKey, dur: Duration) -> Handoff<()> {
 ///
 /// 锁纪律：无锁调用。钩子只逐任务取放 L3（`Task.pies` / 通道注册表），且 [`cull`]
 /// 已把整棵子树的受害者停摆在前——故钩子内再扑杀子域，也不会唤醒「还能跑」的人。
-fn die(mut task: Arc<Task>) {
+fn reap(mut task: Arc<Task>) {
     match task.state() {
         TaskState::Reaped => return,
         TaskState::Doomed => {}
         _ => Task::exclusive(&mut task).transform(TaskState::Doomed),
     }
-    for hook in exit_hooks() {
-        hook(task.ident.id);
-    }
+    hooked(task.ident.id);
     Task::exclusive(&mut task).transform(TaskState::Reaped);
     HUSKS.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
 }
 
-/// mark_reaped：离核装槽 → [`die`]（收尾 + 入队）→ 返下一帧 PA。
+/// quit：离核装槽 → [`reap`]（收尾 + 入队）→ 返下一帧 PA。
 ///
 /// 延迟回收的理由是**回收**而非收尾：不能在自己正在用的栈上回收自己，故栈/trap
-/// 帧/团队空间留到 `clear_loop`；收尾（钩子）在此刻就做完了。
-pub fn mark_reaped() -> Option<usize> {
+/// 帧/团队空间留到 `bury`；收尾（钩子）在此刻就做完了。
+pub fn quit() -> Option<usize> {
     let cond = current();
-    // 离核且无后继装槽 → 槽已 settled（disown_and_install_next 内 demote 或
+    // 离核且无后继装槽 → 槽已 settled（disown_and_install_next 内 shed 或
     // 装下一）；团队 Arc 归零即回收——地址空间随释放。
     let (exited, next_pa) = cond.disown_and_install_next();
     debug_assert!(
@@ -389,10 +387,10 @@ pub fn mark_reaped() -> Option<usize> {
     trace::note(EventKind::Room(RoomEvent::Exit {
         tid: exited.ident.id,
     }));
-    die(exited);
-    // 注意：回收计数（conductor::exit）不在入队时递增——须等 clear_loop 完成栈/
+    reap(exited);
+    // 注意：回收计数（conductor::exit）不在入队时递增——须等 bury 完成栈/
     // trap 帧/团队空间归还后再计数，否则最后任务退出时另一核见 REAPED==PUSHED
-    // 立即 halt，本核 clear_loop 未及回收 → 关机断言误报帧泄漏。
+    // 立即 halt，本核 bury 未及回收 → 关机断言误报帧泄漏。
     next_pa
 }
 
@@ -401,7 +399,7 @@ pub fn mark_reaped() -> Option<usize> {
 /// 目标是否已死透。注册表只存 `Weak` 且从不清理：升级失败 ⇒ 已分配过就是
 /// 「已回收」；从未分配 ⇒ 非法 id（调用方另判 `Denied`）。
 ///
-/// `Reaped` 由 [`die`] 独占置位（钩子之后），故本判据为真 ⇔ **收尾已完成**。
+/// `Reaped` 由 [`reap`] 独占置位（钩子之后），故本判据为真 ⇔ **收尾已完成**。
 fn target_dead(tid: usize) -> bool {
     match crate::work::room::scheduler::core::lookup_task_by_id(tid) {
         Some(t) => t.state() == TaskState::Reaped,
@@ -534,9 +532,9 @@ pub fn redeem() -> bool {
 /// 运行（running/starved 均无引用）。锁纪律：只持 reaped 锁出队，放锁后再取
 /// Team.tasks / Space.inner（顺序获取、不嵌套）。
 ///
-/// **入队的任务已经收尾**（退出钩子见 [`die`]），本函数只做回收——「等收尾」与
+/// **入队的任务已经收尾**（退出钩子见 [`reap`]），本函数只做回收——「等收尾」与
 /// 「等回收」因此分开：前者是 `Join` 的语义，后者对调用方不可观测。
-pub fn clear_loop() {
+pub fn bury() {
     loop {
         // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
         // 导致 husks(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。
@@ -576,21 +574,24 @@ pub fn clear_loop() {
 
 // ── 退出钩子注册面 ──
 //
-// mail（dock / ring）在 `boot::init` 把自己的 task_exit 函数挂到这里。clear_loop
-// 每条 reaped 任务按注册顺序调一次——messenger 不直接命名任何子系统。
-type ExitHook = fn(usize);
+// mail（dock / ring）在 `boot::init` 把自己的任务退出函数挂到这里。每条收尾的
+// 任务按注册顺序跑一次——本域不命名任何子系统，故不知道挂上来的是谁。
+type Hook = fn(usize);
 
-static EXIT_HOOKS: OnceLock<&'static [ExitHook]> = OnceLock::new();
+static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();
 
-/// 注册任务退出钩子（一次性；由 `boot::init` 调用）。
-pub(crate) fn register_exit_hooks(hooks: &'static [ExitHook]) {
-    let _ = EXIT_HOOKS.set(hooks);
+/// 挂上退出钩子（一次性；由 `boot::init` 调用）。
+pub(crate) fn hook(hooks: &'static [Hook]) {
+    let _ = HOOKS.set(hooks);
 }
 
-/// 取当前注册（未注册则空切片——clear_loop 仍可跑，no-op）。
-fn exit_hooks() -> &'static [ExitHook] {
-    static EMPTY: &[ExitHook] = &[];
-    EXIT_HOOKS.get().copied().unwrap_or(EMPTY)
+/// 对 `tid` 跑一遍挂上的钩子（未挂 = 无事）。
+fn hooked(tid: usize) {
+    if let Some(hooks) = HOOKS.get() {
+        for h in hooks.iter() {
+            h(tid);
+        }
+    }
 }
 
 /// 终末释放：清空 messenger 持有的全部 `Arc<Task>`（sites / husks）与全部票根
@@ -609,10 +610,10 @@ pub(crate) fn rip() {
     holders().lock().clear(); // 只存 Weak，无 drop 链
     doomed().lock().clear(); // 只存 id，无 Arc
 }
-// ── 操作：扑杀（suspend / die / cull / doom）──
+// ── 操作：扑杀（suspend / reap / cull / doom）──
 //
 // 血缘级联的「杀」侧，**两阶段**：先停摆（摘出全部调度/等待容器），再收尾
-// （`die`：钩子 → Reaped → 入躯壳队列）。`doom` 是 exit_hook 里的触发面
+// （`reap`：钩子 → Reaped → 入躯壳队列）。`doom` 是 hook 里的触发面
 // （读父 task 的 heir → 整棵子树两阶段扑杀）。
 //
 // 两阶段是**正确性要求**，不是优化：钩子会摘门闩，摘门闩会唤醒等待者；若受害者
@@ -621,8 +622,8 @@ pub(crate) fn rip() {
 // 不变量），故走 `doomed` 待杀集合 + SSIP 单点，目标核 trap 自查自退——最终一致。
 
 /// 停摆单线程：摘出全部调度/等待容器 → 置 `Doomed`。返 `true` = 本次停摆了它，
-/// 调用方须随后 [`die`]；`false` = 没动它（已 `Doomed`/`Reaped`、不在任何容器，
-/// 或 `Running`——后者已记 doomed + SSIP，待其自退时自己 `die`）。
+/// 调用方须随后 [`reap`]；`false` = 没动它（已 `Doomed`/`Reaped`、不在任何容器，
+/// 或 `Running`——后者已记 doomed + SSIP，待其自退时自己 `reap`）。
 ///
 /// 锁纪律：只持 L3 表，逐表取、放锁后再取下一表（L3 同层绝不嵌套）；锁内不 drop
 /// Arc（drop 链触 L2）。
@@ -680,8 +681,8 @@ fn suspend(task: &Arc<Task>) -> bool {
 /// 扑杀整棵血缘子树（**两阶段**）：
 ///
 ///   1. 收集：显式工作栈沿 heir 收齐全部任务（防爆栈）；
-///   2. 停摆：逐个 [`suspend`]——`Running` 分支只记 doomed + SSIP，它自退时自己 `die`；
-///   3. 收尾：逐个 [`die`]（钩子 → Reaped → 入躯壳队列）。
+///   2. 停摆：逐个 [`suspend`]——`Running` 分支只记 doomed + SSIP，它自退时自己 `reap`；
+///   3. 收尾：逐个 [`reap`]（钩子 → Reaped → 入躯壳队列）。
 ///
 /// **阶段边界即安全边界**：第 3 阶段的钩子会摘门闩、唤醒等待者，而此刻全部受害者
 /// 都已停摆，没有「被唤醒后还能跑」的中间态。栈/名单都是局部 Vec（锁外分配），
@@ -700,7 +701,7 @@ pub(crate) fn cull(roots: &[Arc<Team>]) {
     }
     let victims: Vec<Arc<Task>> = tasks.into_iter().filter(|t| suspend(t)).collect();
     for task in victims {
-        die(task);
+        reap(task);
     }
 }
 
@@ -712,7 +713,7 @@ pub(crate) fn doom(tid: usize) {
 }
 
 /// trap(SupervisorSoft) 自退查询：本 hart 当前 running 任务是否被判死。
-/// 在则摘出待杀标记并返回 true（调用方 mark_reaped）；否则 false。
+/// 在则摘出待杀标记并返回 true（调用方 quit）；否则 false。
 pub(crate) fn take_doomed(tid: usize) -> bool {
     doomed().lock().remove(&tid)
 }

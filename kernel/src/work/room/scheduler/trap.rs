@@ -41,9 +41,9 @@ pub fn run() -> usize {
         let next = s.rotate(&mut i, cur);
         let next_tid = next.ident.id;
         drop(i);
-        // Switch 事件落在身份槽更新（mount）**之后**：窗口内崩溃不再把已下台
+        // Switch 事件落在身份槽更新（seat）**之后**：窗口内崩溃不再把已下台
         // 的 prev 报成当前任务（轮转窗口 issue）。
-        let pa = s.mount(next);
+        let pa = s.seat(next);
         trace::note(EventKind::Room(RoomEvent::Switch { prev_tid, next_tid }));
         return pa;
     }
@@ -53,16 +53,16 @@ pub fn run() -> usize {
     // wait() 内部自带 done 复审 + 睡眠位协议（未到期/假醒自洽）。
     loop {
         if let Some(task) = s.pull() {
-            return s.mount(task);
+            return s.seat(task);
         }
         if conductor::done() {
             conductor::halt();
         }
         if let Some(task) = steal() {
-            return s.mount(task);
+            return s.seat(task);
         }
         if let Some(task) = wait() {
-            return s.mount(task);
+            return s.seat(task);
         }
     }
 }

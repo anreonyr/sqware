@@ -6,7 +6,7 @@
 //
 // 结构：Scheduler = inner(SpinLock) + info(身份槽，无锁) + starved_len(AtomicUsize
 // 锁外镜像)。info 槽 = `ident()` 的事实源：带标签指针（bit0 = 载荷类型：TaskIdent
-// 在跑 / LastIdent 末次记录），写 = 本核 mount/demote 的 swap（AcqRel），读 = 本核
+// 在跑 / LastIdent 末次记录），写 = 本核 seat/shed 的 swap（AcqRel），读 = 本核
 // trap/panic——同 hart 单写单读 + 载荷不可变 ⇒ 无锁（跨核读是 UB，字段私有且只经
 // ident() 触及）。starved 字段私有，唯一修改
 // 路径是 push/pull（方法内持锁 +
@@ -22,13 +22,13 @@
 // wait / reap）借 disown_and_install_next 跨边界原语交给 messenger 处理，本核
 // 只负责 settled 槽位（Live=next 或 Last）；唤醒（redeem / wipe）也在 messenger。
 //
-// 装槽（mount）：唯一装 running 的方法，自取锁，空槽由 Option::replace 返回
+// 装槽（seat）：唯一装 running 的方法，自取锁，空槽由 Option::replace 返回
 // 旧值断言（绝不覆盖在跑任务）。装槽写 info 身份槽（TaskIdent 载荷）；降级
-// （demote：reap / park 无后继）换 LastIdent 载荷——写点唯一 pair（同标签原子）。
+// （shed：reap / park 无后继）换 LastIdent 载荷——写点唯一 pair（同标签原子）。
 //
 // 可见性：`pub(super)` = 供本文件夹各适配面借用的核心表面（入口面转发点）；
 // `pub` = 供 scheduler 之外消费（ident —— 身份槽读取）。wait() 是 WFI 入口
-// 借 messenger::redeem 处理 timer 到期；clear_loop 不归本核管。
+// 借 messenger::redeem 处理 timer 到期；bury 不归本核管。
 
 use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
@@ -76,14 +76,14 @@ pub(crate) struct Scheduler {
     pub(super) inner: SpinLock<SchedulerInner>,
     /// 锁外：本核当前任务身份（`ident()` 的事实源）。**带标签指针**：bit0 = 载荷
     /// 类型标签（0 = TaskIdent / 1 = LastIdent）。原子指针 + 手工 Arc 计数：写 =
-    /// 本核装槽（mount，AcqRel swap，取走旧指针按标签收回归还其计数）或降级
-    /// （demote，TaskIdent → LastIdent），读 = 本核 trap/panic 路径 load（Acquire）
+    /// 本核装槽（seat，AcqRel swap，取走旧指针按标签收回归还其计数）或降级
+    /// （shed，TaskIdent → LastIdent），读 = 本核 trap/panic 路径 load（Acquire）
     /// + increment_strong_count——载荷不可变 ⇒ 无锁；同 hart 程序序保证读时指针恒
     ///   有效（写读互不同期）。未装槽 → null。
     ///
     /// 载荷语义：TaskIdent = 槽指向本核**在跑**的任务（trap 可信）；LastIdent =
     /// 末次身份记录（id/name/符号表；trap 不可信，见 [`ident`] 的 `Current::Last`）。
-    /// 标签与指针同一原子字——载荷类型自描述，读侧无需第二读点（mount/demote
+    /// 标签与指针同一原子字——载荷类型自描述，读侧无需第二读点（seat/shed
     /// 双写点无读撕裂窗口）。
     info: AtomicPtr<()>,
     /// 锁外：starved 长度镜像（steal 预检；与 inner 同结构体共生，不会分家）。
@@ -214,7 +214,7 @@ impl Scheduler {
     ///
     /// 安全前提：调用方先放锁再调本方法——放锁窗口内任务已出队且唯一持有
     /// （strong == 1），无并发别名。
-    pub(super) fn mount(&self, mut task: Arc<Task>) -> usize {
+    pub(super) fn seat(&self, mut task: Arc<Task>) -> usize {
         let mut i = self.inner.lock();
         self.prepare(&mut task);
         let pa = task.ident.frame.pa.expect("frame span has pa").as_usize();
@@ -244,7 +244,7 @@ impl Scheduler {
             "running 容器只装 Running 任务"
         );
         // 装槽：replace 完成实际装槽（副作用不得藏在 debug_assert 内——release
-        // 下断言被编译掉，装槽即失效 → running 恒空）。再断言旧槽必空（mount
+        // 下断言被编译掉，装槽即失效 → running 恒空）。再断言旧槽必空（seat
         // 唯一装槽点）。
         let prev = i.running.replace(task);
         debug_assert!(prev.is_none(), "装槽前 running 必须为空");
@@ -260,9 +260,9 @@ impl Scheduler {
     /// 与「末次符号化」兼得）。
     ///
     /// # Safety
-    /// 调用方须持有本核在跑任务的身份且本核独占写槽（同 hart——mount/demote
+    /// 调用方须持有本核在跑任务的身份且本核独占写槽（同 hart——seat/shed
     /// 互斥的天然保证）；旧载荷必为未标签 TaskIdent。
-    fn demote(&self, ident: &Arc<TaskIdent>) {
+    fn shed(&self, ident: &Arc<TaskIdent>) {
         let last = Arc::new(LastIdent {
             id: ident.id,
             name: ident.name,
@@ -274,7 +274,7 @@ impl Scheduler {
         );
         if !prev.is_null() {
             // SAFETY: 降级只在拥有在跑任务时发生——旧载荷必为未标签 TaskIdent。
-            debug_assert_eq!(prev as usize & LAST_TAG, 0, "demote 旧载荷带标签");
+            debug_assert_eq!(prev as usize & LAST_TAG, 0, "shed 旧载荷带标签");
             unsafe {
                 drop(Arc::from_raw(prev as *const TaskIdent));
             }
@@ -290,7 +290,7 @@ impl Scheduler {
             return;
         }
         let prev = prev as usize;
-        // SAFETY: 同 mount/demote 的 prev 回收纪律（swap 取走即独占；关机单核）。
+        // SAFETY: 同 seat/shed 的 prev 回收纪律（swap 取走即独占；关机单核）。
         if prev & LAST_TAG != 0 {
             unsafe {
                 drop(Arc::from_raw((prev & !LAST_TAG) as *const LastIdent));
@@ -303,9 +303,9 @@ impl Scheduler {
     }
 
     /// 跨边界原语（messenger 三种过渡共用）：取走 running + 装下一 starved 或
-    /// demote 槽位。返回 (取走的 Arc<Task>, Optional 下一帧 PA)。
+    /// shed 槽位。返回 (取走的 Arc<Task>, Optional 下一帧 PA)。
     ///
-    /// 锁纪律：内锁取 running / 弹 starved 后立即放；mount 重新取内锁。
+    /// 锁纪律：内锁取 running / 弹 starved 后立即放；seat 重新取内锁。
     /// messenger 在两次取锁之间做自己的簿记（sites / holders / husks
     /// 各自 L3 锁，绝不持 L3 取 L1）。
     pub(crate) fn disown_and_install_next(&self) -> (Arc<Task>, Option<usize>) {
@@ -319,10 +319,10 @@ impl Scheduler {
         drop(i);
         let next_pa = if let Some(next) = next {
             let pa = next.ident.frame.pa.expect("frame span has pa").as_usize();
-            self.mount(next);
+            self.seat(next);
             Some(pa)
         } else {
-            self.demote(&ident);
+            self.shed(&ident);
             None
         };
         (task, next_pa)
@@ -360,7 +360,7 @@ impl Scheduler {
         let prev_tid = cur.ident.id;
         let next = self.rotate(&mut i, cur);
         drop(i);
-        let pa = self.mount(next);
+        let pa = self.seat(next);
         trace::note(EventKind::Room(RoomEvent::Starve { tid: prev_tid }));
         pa
     }
@@ -380,7 +380,7 @@ pub(super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 /// 终末释放：halt 路径的关闭钩子——强制释放 scheduler 持有的全部 task 引用，
 /// 触发 MailHolds::drop 链透传 mail Arcs 归零（DockMeta::drop → 共享区帧还）。
 ///
-/// 关闭顺序（conductor::halt → run_shutdown_hooks）：
+/// 关闭顺序（conductor::halt → conductor::hooked）：
 ///   1. scheduler::rip              ← 本函数：星等任务强制释放 → mail 透传
 ///   2. block::flush                 ← block 池冲洗
 ///   3. audit::check_baseline        ← 帧/block 基线核对
@@ -588,10 +588,10 @@ pub(super) fn wait() -> Option<Arc<Task>> {
     None
 }
 
-// 注：redeem / wake / wipe / clear_loop 已移至 [`crate::work::room::messenger`]：
+// 注：redeem / wake / wipe / bury 已移至 [`crate::work::room::messenger`]：
 // - redeem：按票认领到期登记（一段，不区分 park / wait / join）
 // - wake / wipe：按唤醒源叫醒一个 / 放行全部
-// - clear_loop：排空躯壳队列 + 清理钩子
+// - bury：排空躯壳队列 + 清理钩子
 
 // ── 核心：当前任务身份（槽）──
 
@@ -653,8 +653,8 @@ impl Current {
     }
 }
 
-/// 本核任务身份：mount 装槽时定型（Live 载荷 TaskIdent）；reap / park 无后继
-/// 降级（Last 载荷 LastIdent）；未装槽 → None。无锁：写 = 本核 mount/demote 的
+/// 本核任务身份：seat 装槽时定型（Live 载荷 TaskIdent）；reap / park 无后继
+/// 降级（Last 载荷 LastIdent）；未装槽 → None。无锁：写 = 本核 seat/shed 的
 /// 带标签指针 swap（AcqRel），读 = 本核 trap/panic（Acquire +
 /// increment_strong_count）——载荷不可变 + 同 hart 程序序 ⇒ 非阻塞、不 panic、
 /// 读恒有效，正常路径与崩溃现场同一入口。载荷类型自描述（标签位与指针同行），
