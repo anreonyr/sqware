@@ -21,8 +21,6 @@ use crate::work::room::scheduler::trap::run;
 use crate::work::unit::gate::{AnyPie, GateError, Need};
 use crate::work::unit::task::TaskIdent;
 
-use super::copy_in;
-
 /// 一次 envcall 的落点：续跑本任务，或换一帧跑（让出/挂起）。
 ///
 /// 把「本操作是否可能换帧」写进类型，而不是留给调用方猜。
@@ -83,9 +81,11 @@ fn push(
             } else {
                 // 锁外拷入堆暂存：slot = L3，Space.segments = L2，
                 // 持 L3 调 L2 是 4→2 反向嵌套，禁止。
-                match copy_in(&ident.team.space, msg, len, len) {
-                    None => Err(GateError::Denied),
-                    Some(staging) => mail::hole::try_push(&meta, &staging, me),
+                let mut staging = alloc::vec![0u8; len];
+                if mail::copy_in(&ident.team.space, &mut staging, msg.as_usize()) {
+                    mail::hole::try_push(&meta, &staging, me)
+                } else {
+                    Err(GateError::Denied)
                 }
             }
         }
