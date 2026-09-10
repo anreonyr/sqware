@@ -1403,6 +1403,13 @@ sleep 3; dir; …`）。宿主一忙，命令就在 guest 还没走到那一步�
 已知债：门里的 QEMU 参数与 `scripts/runner.nu` 那份**重复**了，改一处要改两处（runner 仍服务
 交互式 `cargo run`，本轮已证明它的 stdin 链不适合当验收门）。
 
+**试过一条替代路，不通（记账）**：`-display none -serial pty`（本意是让 guest 控制台完全不
+经过进程 stdin，从根上消掉 EPIPE 那类问题）。qemu 正常报出从设备路径
+（`char device redirected to /dev/pts/0 (label serial0)`），但门把从设备读干也只有 **0 字节**
+——同一个 `cat` 换回 stdio 直连就有 4 KB 引导输出。故这条路要先弄清 qemu 的 pty chardev
+何时才把 guest 输出写到从设备上，或改走 `-serial pipe:`／socket chardev。
+门保持现状：**FIFO 直连 + 逐步 expect**（3/3、5/6）。
+
 另修 runner 自身一处：FAIL 分支原写作 `$"FAIL(seed …)"`，`(` 紧跟文本让 nu 把 `FAIL(...)`
 当命令调用 ⇒ **失败路径自己崩掉、诊断丢失**（语义仍是退码 1）。改形后实测 FAIL 会正常打印
 判定与 qemu 退出码。
