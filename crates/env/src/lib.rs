@@ -17,8 +17,8 @@ pub use dispatch::{Name, NameError, Op, ProtocolError, Reply, Request};
 pub use ecall::{EnvError, EnvResult, make_err};
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, HoleDir, IOCall, IOCallRet,
-    MailCall, MailCallRet, MemoryCall, MemoryCallRet, ProgramKind, RoomCall, RoomCallRet, UnitCall,
-    UnitCallRet,
+    MailCall, MailCallRet, MemoryCall, MemoryCallRet, PieCall, PieCallRet, ProgramKind, RoomCall,
+    RoomCallRet, UnitCall, UnitCallRet,
 };
 pub use permission::Permission;
 pub use wire::{Decode, FromPair, NAME_LEN, PieToken, TaskId, TeamId, VirtAddr, Wire};

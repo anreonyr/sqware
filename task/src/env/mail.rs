@@ -1,16 +1,21 @@
-//! Mail 域：pie 门闩操作（Hole 数据过内核、Pole 页级安全内存）。
+//! Mail 域：门闩操作。
+//!
+//! **两条轴**：权柄（`PieCall`，class 7）走 `unseal_*`/`open`/`shut`/`seal`/`accord`
+//! /`narrow`/`revoke`/`collect`/`reserve`/`release`；数据（`MailCall`，class 5）走
+//! `push`/`pull`/`wait`。本模块是两者的**裸函数层**——每个函数封一次 envcall，
+//! 零业务逻辑。
 //!
 //! 每个调用都是一次 envcall，由内核侧 dispatch 做 alive + rights + 分派。
 //! 用户句柄统一为 per-pie `token`（全局唯一，usize）。
 //!
-//! 方案 3（typed payload）：`MailCall::X{ .. }.call()?` 直接得 `MailCallRet`，
+//! 方案 3（typed payload）：`PieCall::X{ .. }.call()?` 直接得 `PieCallRet`，
 //! 参数在构造时类型安全（PieToken/VirtAddr/TaskId/Permission），返回值经 from_pair
 //! 蒸馏为 Ret 载荷。裸函数层只封 Ret、零业务逻辑。
 //!
 //! push/pull 的阻塞：内核 Push/Pull 槽满/槽空返 `-3 Busy`；本层转 `Wait` 原语
 //! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
 
-use env::{EnvResult, HoleDir, MailCall, MailCallRet, PieToken, TaskId, VirtAddr};
+use env::{EnvResult, HoleDir, MailCall, MailCallRet, PieCall, PieCallRet, PieToken, TaskId, VirtAddr};
 
 /// hole 单消息字节上限（与内核侧 `HOLE_MTU_MAX` 一致）。调用方 unseal 时选
 /// mtu ∈ [1, HOLE_MTU_MAX]；推送时实际字节数由 `push` 的 `len` 决定。
@@ -27,17 +32,17 @@ fn now_ns() -> EnvResult<u64> {
 
 /// 解封 Hole（mtu = 该孔单消息上限，1..=4096）。
 pub fn unseal_hole(mtu: usize) -> EnvResult<usize> {
-    let r = MailCall::UnsealHole { mtu }.call()?;
+    let r = PieCall::UnsealHole { mtu }.call()?;
     match r {
-        MailCallRet::UnsealHole(tk) => Ok(tk.get()),
+        PieCallRet::UnsealHole(tk) => Ok(tk.get()),
         _ => unreachable!(),
     }
 }
 
 pub fn unseal_pole(bytes: usize) -> EnvResult<usize> {
-    let r = MailCall::UnsealPole { bytes }.call()?;
+    let r = PieCall::UnsealPole { bytes }.call()?;
     match r {
-        MailCallRet::UnsealPole(tk) => Ok(tk.get()),
+        PieCallRet::UnsealPole(tk) => Ok(tk.get()),
         _ => unreachable!(),
     }
 }
@@ -94,74 +99,74 @@ pub fn wait(token: usize, dir: HoleDir, millis: usize) -> EnvResult<bool> {
 }
 
 pub fn map(token: usize) -> EnvResult<usize> {
-    let r = MailCall::Map {
+    let r = PieCall::Open {
         token: PieToken::new(token),
     }
     .call()?;
     match r {
-        MailCallRet::Map(va) => Ok(va.get()),
+        PieCallRet::Open(va) => Ok(va.get()),
         _ => unreachable!(),
     }
 }
 
 pub fn unmap(token: usize) -> EnvResult<()> {
-    let r = MailCall::Unmap {
+    let r = PieCall::Shut {
         token: PieToken::new(token),
     }
     .call()?;
     match r {
-        MailCallRet::Unmap(()) => Ok(()),
+        PieCallRet::Shut(()) => Ok(()),
         _ => unreachable!(),
     }
 }
 
 pub fn seal(token: usize) -> EnvResult<()> {
-    let r = MailCall::Seal {
+    let r = PieCall::Seal {
         token: PieToken::new(token),
     }
     .call()?;
     match r {
-        MailCallRet::Seal(()) => Ok(()),
+        PieCallRet::Seal(()) => Ok(()),
         _ => unreachable!(),
     }
 }
 
 /// 转授子集给其他 Task：src_token + dst_id + subset → 新 pie 的 token（撤销句柄）。
 pub fn accord(src_token: usize, dst_id: usize, subset: env::Permission) -> EnvResult<usize> {
-    let r = MailCall::Accord {
+    let r = PieCall::Accord {
         src: PieToken::new(src_token),
         dst: env::TaskId::new(dst_id),
         subset,
     }
     .call()?;
     match r {
-        MailCallRet::Accord(tk) => Ok(tk.get()),
+        PieCallRet::Accord(tk) => Ok(tk.get()),
         _ => unreachable!(),
     }
 }
 
 /// 收窄本 pie 权限（就地改写；Pole 同步降页表）。
 pub fn narrow(token: usize, subset: env::Permission) -> EnvResult<()> {
-    let r = MailCall::Narrow {
+    let r = PieCall::Narrow {
         token: PieToken::new(token),
         subset,
     }
     .call()?;
     match r {
-        MailCallRet::Narrow(()) => Ok(()),
+        PieCallRet::Narrow(()) => Ok(()),
         _ => unreachable!(),
     }
 }
 
 /// 收回授与他人的副本：dst_id + token。
 pub fn revoke(dst_id: usize, token: usize) -> EnvResult<()> {
-    let r = MailCall::Revoke {
+    let r = PieCall::Revoke {
         dst: env::TaskId::new(dst_id),
         token: PieToken::new(token),
     }
     .call()?;
     match r {
-        MailCallRet::Revoke(()) => Ok(()),
+        PieCallRet::Revoke(()) => Ok(()),
         _ => unreachable!(),
     }
 }
@@ -173,9 +178,9 @@ pub fn revoke(dst_id: usize, token: usize) -> EnvResult<()> {
 /// 已知句柄求事实用 [`owned`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
 /// 与 `UnitCall::SelfId` 越界哨兵一致。
 pub fn collect(index: usize) -> EnvResult<(usize, env::Permission, env::TaskId)> {
-    let r = MailCall::Collect { index }.call()?;
+    let r = PieCall::Collect { index }.call()?;
     match r {
-        MailCallRet::Collect((token, permission, vestor)) => Ok((token.get(), permission, vestor)),
+        PieCallRet::Collect((token, permission, vestor)) => Ok((token.get(), permission, vestor)),
         _ => unreachable!(),
     }
 }
@@ -185,24 +190,24 @@ pub fn collect(index: usize) -> EnvResult<(usize, env::Permission, env::TaskId)>
 /// `vestor` = 这枚门闩谁授的（转手即改写）；`owner` = 这扇门谁开的（副本共享同一
 /// 事实）。求「对端是谁」一律用 `owner`：root 转发过的门闩，`vestor` 会变成 root。
 pub fn owned(token: usize) -> EnvResult<(env::TaskId, env::TaskId)> {
-    let r = MailCall::Owned {
+    let r = PieCall::Reserve {
         token: PieToken::new(token),
     }
     .call()?;
     match r {
-        MailCallRet::Owned((vestor, owner)) => Ok((vestor, owner)),
+        PieCallRet::Reserve((vestor, owner)) => Ok((vestor, owner)),
         _ => unreachable!(),
     }
 }
 
 /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
 pub fn release(token: usize) -> EnvResult<()> {
-    let r = MailCall::Release {
+    let r = PieCall::Release {
         token: PieToken::new(token),
     }
     .call()?;
     match r {
-        MailCallRet::Release(()) => Ok(()),
+        PieCallRet::Release(()) => Ok(()),
         _ => unreachable!(),
     }
 }

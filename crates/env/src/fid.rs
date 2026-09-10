@@ -10,15 +10,24 @@
 //! `call()`（负值即 `EnvError`，非负蒸馏为 Ret）。`call()` 绑定 envcall 汇编入口，
 //! `slot/pack/unpack` 只依赖 `Wire`——sbi 未来可复用同一 derive。
 //!
-//! 分类与功能域一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2, IO=3,
-//! Chrono=4, Mail=5, Control=6。**class 7 已删除**（原 `ServiceCall` 是入口策略
-//! 而非原语：目录入口门闩改由父任务 `Accord` 下发，见 `docs/dispatch.md`）；
-//! 7 号保留空号不复用。命名与调度词族（conductor）、`runtime::chrono` 域及用户侧
-//! `task::env` 同词。
+//! 分类按**操作的归属轴**一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2,
+//! IO=3, Chrono=4, Mail=5, Control=6, **Pie=7**。命名与调度词族（conductor）、
+//! `runtime::chrono` 域及用户侧 `task::env` 同词。
+//!
+//! **5 与 7 的分界是两条正交的轴**（不是按资源种类分，也不是按新旧分）：
+//! - **class 5 `Mail` = 数据轴**：消息穿孔。`Push`/`Pull`/`Wait`——传的是**内容**。
+//! - **class 7 `Pie` = 权柄轴**：权柄的生死与流动。`Unseal*`/`Seal`/`Open`/`Shut`
+//!   /`Accord`/`Narrow`/`Revoke`/`Collect`/`Reserve`/`Release`——传的是**许可**。
+//!
+//! 两轴正交的判据在代码里：数据轴的臂从**不**调用 `gate` 的权柄函数
+//! （`accord`/`narrow`/`revoke`/`release`/`vestor`/`snap`），权柄轴的臂从**不**搬运
+//! 载荷。原先 12 个操作同居 class 5，是这两轴的混合——本次拆分即为此。
+//! `Pie` 复用原 `ServiceCall` 的空出的 7 号（后者是入口策略而非原语：目录入口门闩
+//! 改由父任务 `Accord` 下发，见 `docs/dispatch.md`）。
 //!
 //! **未知调用号的运行时契约（ABI 的一部分，不是实现细节）**：`a7` 由调用方
 //! 完全控制，故它是**输入**而非可信标识。未声明的 class / index（含 class 1 的
-//! 空号 index 5、已删的 class 7、越界索引）一律 decoded 为 `Decode::BadSlot`，
+//! 空号 index 5、未分配的 class 8、越界索引）一律 decoded 为 `Decode::BadSlot`，
 //! 内核侧按**被拒绝**处理：写回负码（`GateError::Denied`）并**续跑调用方**——
 //! 与其它用户引起的异常同走故障隔离，绝不 panic（否则用户态一发 `ebreak`
 //! 即可停摆整机）。想主动终止有正规原语 `ControlCall::Panic`。
@@ -183,16 +192,14 @@ pub enum HoleDir {
     Push,
 }
 
-/// 通信调用（class 5，mail）。用户句柄统一为 per-pie `token`（全局唯一）。
-/// UnsealHole / UnsealPole 创建资源（返 token）；Push / Pull / Map / Unmap / Seal
-/// / Accord / Narrow / Revoke / Collect / Release / Wait 走 pie 门闩。
+/// 通信调用（class 5，mail）—— **数据轴**：消息穿孔。
+///
+/// 三个操作都作用在一枚 Hole 门闩上：`Push` 写入、`Pull` 取出、`Wait` 等方向就绪。
+/// 权柄的生死与流动不在此类，见 [`PieCall`]（class 7）。
 ///
 /// **wait 的分界**：事件键等待留 Room（`RoomCall::Wait/Wake` 的键是调用方命名空间
 /// 里的裸整数，内核不解释）；**资源就绪**等待归本类——`Wait` 收 `token`，由内核
 /// 解引用出 hole 的等待键，键不出内核。
-///
-/// 两条轴不要混：`Unseal*` ↔ `Seal` 动的是**资源**；`Accord` ↔ `Revoke`（他人）
-/// 与 `Collect` ↔ `Release`（自己）动的是**我手里那一份**。
 ///
 /// **变长孔**：`UnsealHole { mtu }` 在 unseal 时定该孔消息上限（1..=4096）；
 /// `Push { len }` 与 `Pull { max }` 把长度作为参数传——长度是契约不是约定。
@@ -200,12 +207,6 @@ pub enum HoleDir {
 #[call(class = 5)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
-    /// 解封 Hole（数据过内核管道）；`mtu` = 该孔单消息上限（1..=4096）。
-    #[ret(PieToken)]
-    UnsealHole { mtu: usize },
-    /// 解封 Pole（页级安全内存；字节数页对齐）。
-    #[ret(PieToken)]
-    UnsealPole { bytes: usize },
     /// push msg：token + msg VA + 长度（1..=该孔 mtu）。
     #[ret(())]
     Push {
@@ -223,13 +224,62 @@ pub enum MailCall {
         buf: VirtAddr,
         max: usize,
     },
-    /// 借映 Pole 物理页进当前 task.space：token → VA。
+    /// 等某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
+    ///
+    /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（探测失败，
+    /// 或挂起过——被唤醒与超时不分）。**绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
+    /// 权利：`Pull` 需 R、`Push` 需 W。
+    #[ret(bool)]
+    Wait {
+        token: PieToken,
+        dir: HoleDir,
+        millis: usize,
+    },
+}
+
+/// 权柄调用（class 7，pie）—— **权柄轴**：许可的生死与流动。
+///
+/// 用户句柄统一为 per-pie `token`（全局唯一）。本类**不搬运载荷**——传的是许可，
+/// 内容走 [`MailCall`]（class 5）。两轴正交，见文件头。
+///
+/// # 三条轴
+///
+/// **资源轴**（动的是资源本身）：`Unseal*` ↔ `Seal` 是资源寿命的两端（不可逆）；
+/// `Open` ↔ `Shut` 是杆闩的开合（可逆的日常）。`Open`/`Shut` 只对 Pole 成立——
+/// Hole 的"开闩"就是 `MailCall::Push`/`Pull`。
+///
+/// **持有轴**（动的是我表里的那一份）：`Collect`（按 index 枚举出我表里的）↔
+/// `Release`（放下我持有的一枚）。两个方向都不需要权限位。
+///
+/// **转授轴**（跨任务）：`Accord`（授出子集）↔ `Revoke`（收回授出的）。`Narrow`
+/// 是就地收窄自己那一份，同属权限大小这一维。
+///
+/// `Reserve` 与 `Collect` 分工：`Collect` 按 index 枚举（发现未见过的句柄），
+/// `Reserve` 按句柄查事实（vestor = 父门闩的持有者，owner 随资源不变）。
+#[derive(Envcall)]
+#[call(class = 7)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PieCall {
+    /// 解封 Hole（数据过内核管道）；`mtu` = 该孔单消息上限（1..=4096）。
+    #[ret(PieToken)]
+    UnsealHole { mtu: usize },
+    /// 解封 Pole（页级安全内存；字节数页对齐）。
+    #[ret(PieToken)]
+    UnsealPole { bytes: usize },
+    /// 开闩：借映 Pole 物理页进当前 task.space（同 token 幂等复用）→ VA。
+    ///
+    /// 仅对 Pole 成立；权利：需 R。
     #[ret(VirtAddr)]
-    Map { token: PieToken },
-    /// 从当前 task.space 解除映射：token。
+    Open { token: PieToken },
+    /// 关闩：从当前 task.space 解除该 token 的映射（幂等）。
+    ///
+    /// 仅对 Pole 成立；权利：需 R。
     #[ret(())]
-    Unmap { token: PieToken },
-    /// 封印资源（generic on Hole/Pole）：token。
+    Shut { token: PieToken },
+    /// 封印资源（generic on Hole/Pole）：token。**只有资源开辟者**可做。
+    ///
+    /// 只置死 + 唤醒等待者，**不摘表项**——持有者仍须 `Release` 收尾（否则泄漏）。
+    /// 故本操作之后 `Release` 仍须可用：`Release` 是唯一不过存活闸的操作。
     #[ret(())]
     Seal { token: PieToken },
     /// 转授子集给其他 Task：src_token + dst_id + subset → 新 pie 的 token（撤销句柄）。
@@ -245,31 +295,17 @@ pub enum MailCall {
         token: PieToken,
         subset: crate::permission::Permission,
     },
-    /// 收回授与他人的副本：dst_id + token。
+    /// 收回授与他人的副本：dst_id + token（`token` = 该副本在**对端表里**的句柄）。
     #[ret(())]
     Revoke { dst: TaskId, token: PieToken },
     /// 收拢：报出本任务权限表第 `index` 份（token + permission + vestor）。
     /// 越界 → `PieToken(0)`（无效哨兵，不报错）；vestor = None 时返 `TaskId(0)`。
     ///
     /// **唯一的枚举手段**：`handshake::moor()` 靠它发现「父域授给我的那枚门闩」
-    /// （未知句柄）。已知句柄求事实用 `Owned`。
+    /// （未知句柄）。已知句柄求事实用 `Reserve`。
     #[ret((PieToken, crate::permission::Permission, TaskId))]
     Collect { index: usize },
-    /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
-    #[ret(())]
-    Release { token: PieToken },
-    /// 等某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
-    ///
-    /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（探测失败，
-    /// 或挂起过——被唤醒与超时不分）。**绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
-    /// 权利：`Pull` 需 R、`Push` 需 W。
-    #[ret(bool)]
-    Wait {
-        token: PieToken,
-        dir: HoleDir,
-        millis: usize,
-    },
-    /// 查询：我持有的这枚门闩——`vestor`（谁授的）+ `owner`（资源谁开的）。
+    /// 查这枚门闩的来历：`vestor`（谁授的）+ `owner`（资源谁开的）。
     ///
     /// 两个身份不可混用：`vestor` 是**门闩**的来历，转手（Accord）即改写；
     /// `owner` 是**资源**的来历，任意副本共享同一事实——故「目录是谁」经
@@ -277,7 +313,13 @@ pub enum MailCall {
     ///
     /// 错误：token 不在本任务表 → `-1 Denied`；资源已封印 → `-2 Dead`。
     #[ret((TaskId, TaskId))]
-    Owned { token: PieToken },
+    Reserve { token: PieToken },
+    /// 放下：自释本任务的一份门闩（含其全部后代；Pole 同步 unmap）。表里无此 token → -1。
+    ///
+    /// **唯一不判存活的操作**：`Seal` 不摘表项，若本操作也判存活，封印后的表项
+    /// 就永远摘不掉。语义 =「你总得能放下手里的东西」。
+    #[ret(())]
+    Release { token: PieToken },
 }
 
 /// 控制调用（class 6）。
@@ -300,8 +342,8 @@ pub enum ControlCall {
 /// 环境调用号聚合（内核侧解码总入口）。
 ///
 /// `from_wire(slot, regs)` 按 class（高 32 位）分派到各域的 `from_wire`，得到
-/// `MailCall::Push { .. }` 等带载荷 variant，供 `dispatch` match。用户侧不再构造
-/// 本枚举——直接 `MailCall::X.call()` 发起（R3+B）。
+/// `PieCall::Seal { .. }` 等带载荷 variant，供 `dispatch` match。用户侧不再构造
+/// 本枚举——直接 `PieCall::X.call()` 发起（R3+B）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EnvCall {
     Room(RoomCall),
@@ -311,6 +353,7 @@ pub enum EnvCall {
     Chrono(ChronoCall),
     Mail(MailCall),
     Control(ControlCall),
+    Pie(PieCall),
 }
 
 impl EnvCall {
@@ -325,6 +368,7 @@ impl EnvCall {
             4 => Ok(EnvCall::Chrono(ChronoCall::from_wire(slot, regs)?)),
             5 => Ok(EnvCall::Mail(MailCall::from_wire(slot, regs)?)),
             6 => Ok(EnvCall::Control(ControlCall::from_wire(slot, regs)?)),
+            7 => Ok(EnvCall::Pie(PieCall::from_wire(slot, regs)?)),
             _ => Err(crate::wire::Decode::BadSlot),
         }
     }
