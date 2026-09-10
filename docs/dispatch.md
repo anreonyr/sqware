@@ -169,7 +169,8 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 | `gate::heirs(token, snap)` | 子门闩 = `sire == token` 的那些（持有者 + 子 token） |
 | `gate::vestable(pie, dst, snap)` | BACK 守门：带 BACK 只能授回 `sire` 的持有者 |
 
-快照由 `scheduler::core::snap()` 提供、boot 经 `gate::install` 注入——**gate 不依赖
+快照由 `scheduler::core::roster()` 提供（旧名 `snap`，§9.3 轮③ 名册合一）、boot 经
+`gate::install` 注入——**gate 不依赖
 scheduler**（依赖倒置）。`gate` 与 `envcall` 的分工：核心收算法、适配层拍快照。
 
 | 原语 | 一句话 | 说明 |

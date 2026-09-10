@@ -1260,7 +1260,15 @@ room/
 │   ├── wait/{mod,site,holder}.rs     两原语 + 站点表（唯一容器）+ 票根
 │   ├── reap.rs                       HUSKS / quit / reap / bury / hook〔计划名 husk.rs〕
 │   └── doom.rs                       suspend / cull / doom / doomed
-└── scheduler/                        〔本刀不动；core.rs 的 §7.4 拆分另刀〕
+└── scheduler/                        ✅ 已拆（§10.15）：核心四文件 + 两个入口面
+    ├── mod.rs                        薄壳 + 术语表
+    ├── core/mod.rs                   薄壳 + 重导出（`scheduler::core::X` 外部路径不变）
+    ├── core/hart.rs                  Scheduler / SchedulerInner / 容器四改点 / seat / swap / starve / advance
+    ├── core/ident.rs                 身份槽 `Badge` / `Identity` / `LastIdent` / `ident()`
+    ├── core/table.rs                 SCHEDULERS / current / rip / launch / 名册 / 全机扫描
+    ├── core/fetch.rs                 steal / wait / fetch
+    ├── boot.rs                       入口面：init / idle
+    └── trap.rs                       入口面：run（续跑 / 轮转 / 取活）
 ```
 
 ### 轮次与状态
@@ -1862,6 +1870,8 @@ release 份取 `trace/acc-audit0/elf-audit/sqware`；debug 份取
 
 另有一处**命名撞车**（不属文档漂移，待裁）：核心的 WFI/取活入口叫 `wait()`，而冻结表把
 `wait`/`wake` 这对词给了 messenger 的事件等待与唤醒——一个词两个意思，正名须用户给词。
+→ **已裁决并消解**（§10.15）：名字**不动**，`wait` 降为 `core/fetch.rs` 内部私有步骤
+（对外入口是 `fetch`）——同一个词不再有两个意思。
 
 ### 10.3 并发面（轮 ④）— ✅ 已执行，见 §10.10
 
@@ -2287,3 +2297,89 @@ blocks → 29/15）、`table frames != kernel-walk`、`名册活任务[1]`、`�
 一路的账：A2（站点寿命＝资源寿命，墓碑 34→0）→ 轮③（名册合一，blocks 9→5）→ 轮④（观察者只读
 判别式 + kill 路径覆盖）→ 轮②（harden 档把断言与 lockdep 放回被测产物；`dead == 0` 判据）→
 §10.12/§10.13（退场窄尾 + 跨挂起纪律，alive 1→0、泄漏行消失）→ 本节（空间键退役，死键站点归零）。
+
+### 10.15 `scheduler/core.rs` 拆刀 + 正名（用户裁决：乙 + 丁）
+
+§9.3 目录图里挂着的那句「core.rs 的 §7.4 拆分另刀」，本轮落地。**拆的判据是接缝，不是行数**
+（§7.6 的方法论）：读完之后找出三条接缝，其中两条是「同一份知识抄了多遍」，一条是
+「核心策略长在适配面里」——后者正是本仓核心/适配分离纪律的直接违规。
+
+#### 三条接缝
+
+| # | 接缝 | 事实 | 处置 |
+|---|---|---|---|
+| S1 | **核心策略在适配面里** | `core.rs` 头注自称「纯功能，无适配代码」，而时间片决策（预算判定 `ticks_left > 1 \|\| starved_is_empty()` / 续跑递减 / 轮转 / `Switch` 事件，27 行）整段在 `trap.rs`——能写出来只因 `inner` 是 `pub(super)`（该文件 5 处伸手） | 收成 `Scheduler::advance() -> Option<usize>`（None = 槽空，交取活）与 `core::fetch()`（取活循环 + 其内部的 WFI 步骤 `wait`）。`trap.rs` **69 → 19 行**，只剩 `hush()` + 二选一转发 |
+| S2 | **计数协议手抄三遍** | `seat`(:239-253) / `shed`(:290-296) / `clear_slot`(:307-317) 各写一份「swap 取旧指针 → 判 bit0 → `from_raw` 归还」，两份逐字相同 | 抽成 `Badge`：三个写点 `seat` / `shed` / `clear`，回收只有一处 `reclaim`；带标签指针这套协议只活在 `ident.rs`（做法同 §10.7 的 `starved_len` 收口：**不变量进类型**） |
+| S3 | **「帧必有 PA」重述 6 遍** | `.frame.pa.expect("frame span has pa")` 全树 6 处**全在调度器**（core 5 + trap 1）。真相是 `space/salvage.rs:32` 的一句注释（trap 帧恒 `Some`；栈/懒区恒 `None`） | 收成一个 `frame_pa(&TaskIdent) -> PhysAddr` |
+
+#### 结构（裁决 ①＝乙：嵌套，外部路径零改）
+
+```
+scheduler/
+├── mod.rs            薄壳 + 术语表（28 → 32）
+├── core/mod.rs       薄壳 + 重导出（32）
+├── core/hart.rs      Scheduler / SchedulerInner / 容器四改点 / seat / swap / starve / advance（340）
+├── core/ident.rs     Badge / Identity / LastIdent / ident()（193）
+├── core/table.rs     SCHEDULERS / current / rip / launch / 名册 / 全机扫描（176）
+├── core/fetch.rs     steal / wait / fetch（139）
+├── boot.rs           入口面（34，未动）
+└── trap.rs           入口面（69 → 19）
+```
+
+- `core/mod.rs` 重导出 ⇒ **22 处 `scheduler::core::X` 引用里只有两处因正名而改**
+  （`push` → `launch`、`Current` → `Identity`），路径本身一行未改。
+- 跨到 `scheduler` 一级的条目取 `pub(in super::super)`——与
+  `messenger/wait/{site,holder}.rs` 同一条纪律（那里也写着「刚好到 `messenger`，不放宽到
+  `pub(crate)`」）。核心里只自用的条目降到 `pub(super)` 或私有：`inner` / `rotate` /
+  `starved_is_empty` / `starved_push` / `starved_pop` **不再对入口面开放**（S1 的结构性保证：
+  `trap.rs` 现在连 `inner` 都够不着）。
+- 拆开后总行数 **743 + 69 → 899**（+87）：全是按文件重分的头注、`Badge` 的文档与 `advance`
+  的文档；**代码本体零增益**——这不是「拆了就短」，是「拆了才看得见那三条」。
+
+#### 命名（裁决 ③④⑤⑥⑦）
+
+| 项 | 裁决 | 落地 |
+|---|---|---|
+| `wait()`（WFI 取活入口）与冻结表 `wait`/`wake` 撞车（§10.2 记的「待裁」） | **不动** | 采丁之后 `wait` 降为 `core/fetch.rs` **内部私有**步骤，对外入口是 `fetch` ——**同一个词不再有两个意思**，撞车结构性消解（不是靠改名躲开） |
+| `core::push`（自由函数）/ `Scheduler::push`（容器动词）/ `starved_push`（私有改点）三义 | 自由函数正名 | `launch(task)`：名字说它独有的事（新任务出现 → 入就绪 + **踢醒一个休眠核**）；容器动词 `push` 与私有四改点不动 |
+| `get_len` / `set_len` | 按推荐 | `backlog()`（锁外预检：还有多少活）/ `recount(&inner)`（按事实重清点——原先的名字说它「设」长度，与事实相反；`get_` 也是全树唯一一处此前缀） |
+| `Current` / `Current::Last`（当前=末次，自相矛盾） | 按推荐 | 枚举正名 `Identity`（`Live` / `Last` 不变）；`LastIdent` 类型与 `LAST_TAG` 常量不动 |
+| `TaskState::Starved` 只覆盖四条进入路径里的一条（放行 / 轮转 / 主动让出 / 唤醒） | **不动** | 只把「预算耗尽」那句头注改成四条路径的事实（改名字要连门脚本的正控串 `scripts/examine.nu:200` 一起动，收益不值；定义在 `unit/task.rs`，本就越界一处） |
+
+#### 顺带
+
+- `starved_remove` 由「收下标」改成「收目标」：就绪队列对 `hart.rs` 之外私有，「找 + 摘」
+  一起留在队列的主人家，`table.rs` 的全机扫描不必看队列内部。
+- `ident()` 与本核取用**合一**：原先 `current()` 走 tp 直达、`ident()` 走
+  `schedulers()[hart_id()]` 索引（两条件不同：后者有 boot 前兜底），而 `current()` 的头注
+  却写「替代那三步」——名不副实。现在 `ident()` = 查表兜底 + `current().badge.read()`：
+  唯一一条取本核路径（`boot::init` 先填每核直达指针、再发布表 ⇒ **表在即指针在**）。
+- `lock/depend.rs` 的 L3 清单里 `scheduler.by_id` 早已不存在（轮③ 名册合一）⇒ 改成名册。
+- `docs/dispatch.md:172` 的 `scheduler::core::snap()` 同理 ⇒ 改成 `roster()`（旧名括注）。
+
+#### 判据
+
+| | 值 |
+|---|---|
+| **examine** | **5/5** —— 默认 3/3 PASS；audit 轮 PASS（`sites 0 live 0 tomb 0 orphan 0 dead 0 waiters 0` + `roster 8 alive 0`，§10.14 的四零态保持）；harden 轮 PASS（无 `[depend]`，正控串 1 次 / release 0 次） |
+| **行为零变化** | 默认档三轮控制台归一化 md5 = `183133960fd82a1ff0f4a4c3f8863355`（A2 基线，逐字节不变）。这是本次唯一的「纯搬家 + 收口」判据：**结构动了、字节没动** |
+| 构建 | `cargo fmt --check` 干净；`cargo check --workspace --all-targets` 警告数与基线一致（11 条 + 2 条汇总行）；audit / harden 两档各自单编通过 |
+
+#### §7.4 计划的处置（记账）
+
+§7.4 当年那份四刀切法里，`hart.rs` / `ident.rs` / `table.rs` 三个名字沿用；`vital.rs` **否**
+（`vital`＝生命，与「取活」不相干）⇒ 改 `fetch.rs`。更要紧的是那份计划的原动机已经消失：
+它说「独立出 `table.rs` 会逼出『一张表还是 N 张』这个决定（§A3）」——A3 已随轮③ 落地
+（名册只有一张），§10.6 当时就记下「已有实测答案：N 张完全相同」，故本轮 `table.rs` 的存在
+理由换成现行的那条：**名册与全机扫描（`remove_from_starved` / `running_hart` / `rip`）都需要
+「全世界的核」，与表同居一处**。
+
+#### 仍未做（记账，不是遗漏）
+
+- `starve()`（主动让出）与 `advance()` 的轮转分支是同一条「rotate → 放锁 → seat」，差别只有
+  trace 事件（`Starve` vs `Switch`）与「无视预算」这一条语义。合并要加一个事件参数 ⇒ 属接口
+  变更，本轮不动。
+- S3 的**根治**是类型化（`TaskIdent.frame` 用恒有 `pa` 的 span 类型），落在 `unit/space`，
+  越界；调度器内只做了「说一次」。
+- `Badge::read` 目前私有（唯一读者 `ident()`）。将来若要第二读者，先裁再开——
+  本轮刻意没把它放进 `core/mod.rs` 的重导出。
