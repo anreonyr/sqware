@@ -29,6 +29,10 @@
 # 用法：scripts/examine.nu                    # 默认连跑 3 次，要求 3/3
 #       EXAMINE_REPEAT=10 scripts/examine.nu
 #       EXAMINE_FEATURES=audit scripts/examine.nu   # 默认 3 轮 + 1 轮 audit 档
+#       EXAMINE_FEATURES=audit EXAMINE_HARDEN=1 scripts/examine.nu
+#           ↑ **全门**：默认 3 轮 + audit 轮 + harden 轮（harden = --profile harden
+#             --features audit，两半护栏同档）。只给 EXAMINE_HARDEN=1 不带 features 会
+#             被四串正向对照当场拦下（那说明这一档只剩一半护栏）。
 #
 # ── 按档构建、按档跑（本轮修掉的设计瑕疵）────────────────────────────────────
 # 原来**只构建一次** ELF（`--features $EXAMINE_FEATURES` 那一份），默认轮与 audit 轮共用。
@@ -183,8 +187,12 @@ const AUDIT_ORDER = [
 
 # ── harden 档（告警：**不是**第二道 audit）───────────────────────────────────
 #
-# 这一档跑的是 `--profile harden`（= release + `debug-assertions = true`）：把
-# **容器⇔状态断言**与**整条 lockdep（L1/L3 锁序）**放回被测产物里。它断言两件事：
+# 这一档跑的是 `--profile harden --features $features`（= release + `debug-assertions = true`
+# + audit）：把**两半护栏放进同一份产物**——容器⇔状态断言 / 整条 lockdep（L1/L3 锁序）
+# 与 audit 的 banker/ledger 记账。旧版只带前者，于是"帧分配器的同一条不变量有两份实现、
+# 而没有任何一档同时带着它们"这件事一直没有被门盯住（docs §10.16）；
+# 正向对照因此从 1 串升到 **4 串**（断言 / banker / ledger / lockdep），少任何一串即退出。
+# 它断言两件事：
 #   ① 那条 kill 路径的探针照旧（`stray` / `cascade`）；
 #   ② 控制台里**没有** `[depend]`——锁序违规的报文体（`report` 拼出来的那一行）。
 # 内核里任何 `debug_assert` 失败都会走 panic ⇒ 已被通用判据「无 panic」抓住；`[depend]`
@@ -198,6 +206,14 @@ const HARDEN_MARKERS = [
 # 而没人发现。实测过的事实（docs §10.1）：release ELF 里这两句各 0 次、debug ELF 里各 1 次。
 # 取容器断言那一句当探针——它在 `Scheduler::push` 里，任何构建都编得进去（非 cfg 代码）。
 const HARDEN_PROBE = "starved 容器只收 Starved 任务"
+# harden 档要**同时**带的四串：容器⇔状态断言（debug-assertions）· banker 金库 ·
+# ledger 活块账本 · lockdep 锁序报文体。四串齐 = 两半护栏在同一份产物里（docs §10.16）。
+const HARDEN_PROBES = [
+  $HARDEN_PROBE
+  "debit on already-held page"
+  "unmark: no record"
+  "lock-order level violation"
+]
 
 # 本档要核的 marker：默认档九条（.sh 原文），audit 档再追加三条。
 def markers_for [flavor: string] {
@@ -377,7 +393,7 @@ def run_once [cfg: record, i: int, flavor: string] {
     "harden" => $cfg.elf_harden
     _        => $cfg.elf_default
   })
-  let feats = (if $flavor == "audit" { $cfg.features } else { $DEFAULT_FEATURES })
+  let feats = (if $flavor == "default" { $DEFAULT_FEATURES } else { $cfg.features })
   # qemu：tail 长驻写端喂命令文件 → scripts/boot.nu（qemu 起法的唯一出处）。
   # 退出码拿不到（nu 无 job wait）⇒ job 自己落盘；**必须包 try**，否则被 timeout 杀（124）
   # 时 job 会当场中止，rc 文件永远不写（.sh 版旧 runner 的归档分支就是这么从未跑过的）。
@@ -490,8 +506,10 @@ def run_once [cfg: record, i: int, flavor: string] {
       print $"  名册：roster=($n_roster) alive=($n_alive)"
       if $n_alive != 0 { $why = (append_why $why $"名册活任务[($n_alive)]（就是它钉住了自己的 Team/Space ⇒ 帧/页留在类别账）") }
     }
-  } else if (hit '\[audit\] sites ' $log) {
-    # 默认档**不该**有 audit 输出：出现即说明跑的 ELF 带着 audit feature（不是本档构建）。
+  } else if $flavor == "default" and (hit '\[audit\] sites ' $log) {
+    # **默认档**不该有 audit 输出：出现即说明跑的 ELF 带着 audit feature（不是本档构建）。
+    # 只对 default 判——harden 档现在**有意**带 features（一档同时带断言与 ledger/banker/
+    # lockdep，见头注「三档覆盖矩阵」），它的 audit 输出是本档应有的。
     $why = (append_why $why "默认档出现了 audit 输出")
   }
   # .sh 里 `wait` 一定有退出码；nu 这条路可能取不到（job 没收尾），那也是失败的理由。
@@ -594,16 +612,21 @@ def main [] {
     # 命名档的 cargo 落点是 target/<triple>/harden/（不是 release/），故 src 单独给。
     let built_harden = ($root | path join "target/riscv64gc-unknown-none-elf/harden/sqware")
     print $"examine: 构建 harden 档（--profile harden，debug-assertions=on）→ ($elf_harden)"
-    build_flavor "harden" $DEFAULT_FEATURES $built_harden $elf_harden
-    # **正向对照**：这一档必须真的带着断言，否则它退化成「又跑了一遍默认档」而没人发现。
+    build_flavor "harden" $features $built_harden $elf_harden
+    # **正向对照（四串）**：这一档必须**同时**带着两半护栏——断言（debug-assertions）
+    # 与记账（audit feature 的 banker/ledger），再加 lockdep 的报文体。少任何一串，
+    # 这一档就退化成"又跑了一遍别的档"而没人发现（旧版只查一句断言串，故"两半从不
+    # 同时在场"这件事一直没有被门盯住——docs §10.16）。
     # 实测基线（docs §10.1）：同一句断言在 release ELF 里 0 次、debug ELF 里 1 次。
-    let r = (^grep -ac -- $HARDEN_PROBE $elf_harden | complete)
-    let found = ($r.stdout | str trim)
-    if $r.exit_code != 0 or $found == null or ($found | into int) < 1 {
-      print $"examine: harden ELF 里找不到断言串『($HARDEN_PROBE)』⇒ 这一档没有 debug-assertions"
-      exit 1
+    for probe in $HARDEN_PROBES {
+      let r = (^grep -ac -- $probe $elf_harden | complete)
+      let found = ($r.stdout | str trim)
+      if $r.exit_code != 0 or $found == null or ($found | into int) < 1 {
+        print $"examine: harden ELF 里找不到『($probe)』⇒ 这一档缺护栏的一半（断言 / banker / ledger / lockdep）"
+        exit 1
+      }
     }
-    print $"  harden 正向对照：ELF 里『($HARDEN_PROBE)』出现 ($found) 次（release 档为 0 次）"
+    print $"  harden 正向对照：四串齐（断言 / banker / ledger / lockdep），共 ($HARDEN_PROBES | length) 项"
   }
 
   let cfg = {
