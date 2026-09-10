@@ -37,7 +37,7 @@ pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
 /// 锁纪律：无锁调用。钩子只逐任务取放 L3（`Task.pies` / 通道注册表），且 [`cull`]
 /// 已把整棵子树的受害者停摆在前——故钩子内再扑杀子域，也不会唤醒「还能跑」的人。
 pub(super) fn reap(mut task: Arc<Task>) {
-    match task.state() {
+    match Task::exclusive(&mut task).state() {
         TaskState::Reaped => return,
         TaskState::Doomed => {}
         _ => Task::exclusive(&mut task).transform(TaskState::Doomed),
@@ -67,9 +67,12 @@ pub fn quit() -> usize {
     let cond = current();
     // 离核且无后继装槽 → 槽已 settled（disown_and_install_next 内 shed 或
     // 装下一）；团队 Arc 归零即回收——地址空间随释放。
-    let (exited, _next_pa) = cond.disown_and_install_next();
+    let (mut exited, _next_pa) = cond.disown_and_install_next();
     debug_assert!(
-        matches!(exited.state(), TaskState::Running { .. }),
+        matches!(
+            Task::exclusive(&mut exited).state(),
+            TaskState::Running { .. }
+        ),
         "running 容器里不是 Running 任务"
     );
     trace::note(EventKind::Room(RoomEvent::Exit {

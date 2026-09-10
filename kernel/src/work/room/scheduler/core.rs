@@ -174,9 +174,9 @@ impl Scheduler {
 
     /// 队尾入队（spawn / 轮转 / 唤醒共用）：push + 派生计数。
     /// 只收 Starved 任务——容器 ⇔ 状态由断言强制。
-    pub(crate) fn push(&self, task: Arc<Task>) {
+    pub(crate) fn push(&self, mut task: Arc<Task>) {
         debug_assert_eq!(
-            task.state(),
+            Task::exclusive(&mut task).state(),
             TaskState::Starved,
             "starved 容器只收 Starved 任务"
         );
@@ -252,7 +252,10 @@ impl Scheduler {
             }
         }
         debug_assert!(
-            matches!(task.state(), TaskState::Running { .. }),
+            matches!(
+                Task::exclusive(&mut task).state(),
+                TaskState::Running { .. }
+            ),
             "running 容器只装 Running 任务"
         );
         // 装槽：replace 完成实际装槽（副作用不得藏在 debug_assert 内——release

@@ -22,7 +22,8 @@ pub fn run() -> usize {
     let s = current();
     let mut i = s.inner.lock();
     if let Some(mut cur) = i.running.take() {
-        let ticks_left = match cur.state() {
+        // 持有者读：running 槽刚被本核摘出，唯一强持有 ⇒ 经 exclusive 拿 &mut。
+        let ticks_left = match Task::exclusive(&mut cur).state() {
             TaskState::Running { ticks_left } => ticks_left,
             _ => unreachable!("running 容器里不是 Running 任务"),
         };

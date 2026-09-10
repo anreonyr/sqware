@@ -53,7 +53,7 @@ fn block(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()> {
     let ticket = Ticket::alloc();
     let at = (dur != Duration::MAX).then(|| clock::now().add(dur).as_ticks());
     if let Some(at) = at {
-        hold(ticket, &task);
+        hold(ticket, key, &task);
         timer::tock(ticket.raw(), at);
     }
     trace::note(EventKind::Room(RoomEvent::Wait {
@@ -269,7 +269,7 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
 /// 到期兑现：`chrono` 交回的不透明句柄，在这里还原成「谁」。
 ///
 /// 一段走完，不再认识 park / wait / join 的区别：
-///   票根 → 升出持票人 → 读它自己那张票上的键 → 从该键的队列里按票号摘出。
+///   票根 → 取回（键 + 持票人）→ 从该键的队列里按票号摘出。
 /// 陈旧的登记在每一步都自然落空（票根已被 `void`、任务已不阻塞、票号对不上），
 /// 故不需要任何「取消」记账。
 ///
@@ -281,20 +281,20 @@ pub fn redeem() -> bool {
     // 批量收集再统一 `rise`：一次 kick 收尾（逐条踢会让 IPI 量回到 O(N)）。
     let mut tasks: Vec<Arc<Task>> = Vec::new();
     for handle in due {
-        // 票号即到点登记的身份：作废票根并取回持票人（已回收 → 落空）。
-        let Some(task) = void(Ticket(handle)) else {
+        // 票号即到点登记的身份：作废票根并取回「在哪个键上等 + 持票人」（已回收 → 落空）。
+        // **键取自票根而不是任务 payload**：本路径是观察者（那份持票人 Arc 是临时的，
+        // 任务随时可能被别核放行），读 payload 就是读一个被独占写的字段。
+        let Some((key, holder)) = void(Ticket(handle)) else {
             continue;
         };
-        let TaskState::Blocked { key, ticket } = task.state() else {
-            continue;
-        };
+        drop(holder); // 队列里的那份才是权威强持有者（票根只存 Weak）
         // 从该键的队列里摘出**这一票**的等待者（票号对不上 = 陈旧，落空）。
         let popped = {
             let mut sites = sites(key).lock();
             let w = sites.get_mut(&key).and_then(|site| {
                 site.waiters
                     .iter()
-                    .position(|w| w.ticket == ticket)
+                    .position(|w| w.ticket == Ticket(handle))
                     .map(|i| site.waiters.remove(i).expect("idx from position"))
             });
             prune(&mut sites, key);

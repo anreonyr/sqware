@@ -31,7 +31,7 @@ mod wait;
 use doom::doomed;
 use reap::HUSKS;
 use wait::holder::{holders, void};
-use wait::site::{SITE_SHARDS, prune, shard_at, sites};
+use wait::site::{SITE_SHARDS, prune, shard_at};
 // `WakeKind` 只被 audit 档的观测面用（`SiteStats` 分列）——非 audit 构建下不引，
 // 免得留下一条「导入了但没人读」的飞线。
 #[cfg(feature = "audit")]

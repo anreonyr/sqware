@@ -35,7 +35,7 @@ use crate::work::unit::gate::{GateError, Permission};
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
-use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskState};
+use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
 
 mod mail;
 mod pie;
@@ -434,7 +434,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                     if !(same || mine) {
                         return ret_err(frame, GateError::Denied);
                     }
-                    (t.state() == TaskState::Reaped, t.life())
+                    (t.tag() == TaskTag::Reaped, t.life())
                 }
                 None => (true, Weak::new()),
             };

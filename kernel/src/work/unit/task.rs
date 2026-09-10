@@ -9,7 +9,7 @@
 
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::lock::SpinLock;
@@ -67,6 +67,55 @@ pub enum TaskState {
     Reaped,
 }
 
+/// 状态的**判别式**（无载荷投影）——给「观察者」读的那一半。
+///
+/// 本仓有两类读状态的人，能力不同（这是 B′ 的核心）：
+///   - **持有者**：任务在自己手上的容器里（或本核刚把它摘出来）⇒ 经 [`Task::exclusive`]
+///     拿 `&mut`，读得到 [`TaskState`] 的全部载荷，也是唯一能改状态的路径；
+///   - **观察者**：他核判死（`messenger::doom::suspend`）、`Join` 的边界、定时到点
+///     （`messenger::redeem`）⇒ 只读本枚举。判别式是唯一的**原子发布点**，payload 在
+///     类型上够不着 ⇒ 「读状态再摘容器」这件事做不出来了，只能**问容器**。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TaskTag {
+    Held = 0,
+    Starved = 1,
+    Running = 2,
+    Blocked = 3,
+    Doomed = 4,
+    Reaped = 5,
+}
+
+impl TaskTag {
+    /// 字节 → 判别式。写侧只有一处（`Task::transform` 存 `TaskState::tag()`），故不合法
+    /// 字节只可能来自内存损坏——报错而不是猜。
+    fn of(byte: u8) -> TaskTag {
+        match byte {
+            b if b == TaskTag::Held as u8 => TaskTag::Held,
+            b if b == TaskTag::Starved as u8 => TaskTag::Starved,
+            b if b == TaskTag::Running as u8 => TaskTag::Running,
+            b if b == TaskTag::Blocked as u8 => TaskTag::Blocked,
+            b if b == TaskTag::Doomed as u8 => TaskTag::Doomed,
+            b if b == TaskTag::Reaped as u8 => TaskTag::Reaped,
+            other => panic!("task tag 越界: {other}"),
+        }
+    }
+}
+
+impl TaskState {
+    /// 判别式投影。**穷尽 match**：将来加状态时编译器会在这里逼你补一行。
+    pub fn tag(&self) -> TaskTag {
+        match self {
+            TaskState::Held => TaskTag::Held,
+            TaskState::Starved => TaskTag::Starved,
+            TaskState::Running { .. } => TaskTag::Running,
+            TaskState::Blocked { .. } => TaskTag::Blocked,
+            TaskState::Doomed => TaskTag::Doomed,
+            TaskState::Reaped => TaskTag::Reaped,
+        }
+    }
+}
+
 /// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
 ///
 /// 栈 / 帧全部归 Team.space 的映射簿记，Task 只持不可变身份（TaskIdent，含
@@ -80,8 +129,14 @@ pub struct Task {
     /// 真正消失（`Arc<Task>` 归零）时它自然归零，站点侧 `upgrade` 失败。
     pub(crate) life: Arc<Life>,
     /// 状态（含载荷）。唯一可变字段：只有经 [`Task::exclusive`] 的 &mut 能改（唯一
-    /// 强持有语义见 exclusive）。
-    pub(crate) state: TaskState,
+    /// 强持有语义见 exclusive）。**字段私有**——持有者经 [`Task::state`]（要 `&mut`）
+    /// 读，观察者只能读 [`Task::tag`]。
+    state: TaskState,
+    /// 状态的判别式（原子发布）。`transform` 先写 `state`，再 Release store 本字段
+    /// ⇒ Acquire 读到新判别式的观察者「看见」了那次变换（观察者拿不到 payload，
+    /// 也不需要）。观察者与 `transform` 之间因此有正式的 happens-before 边——此前
+    /// 三处观察者读的是被独占写的裸字段，按内存模型是未同步读。
+    tag: AtomicU8,
     /// mail 门闩集合（每个门闩持 Arc<Meta>）。envcall 适配 push/pull，
     /// Task::drop 时 Arc 递减——最后 Arc drop 时 Meta 自然析构。锁级 = L3
     ///（与 messenger 簿记同级，绝不嵌套）。
@@ -139,10 +194,19 @@ impl Task {
             self.state, next
         );
         self.state = next;
+        // 发布判别式（Release 与 `Task::tag` 的 Acquire 配对）：观察者据此分派。
+        self.tag.store(next.tag() as u8, Ordering::Release);
     }
 
-    pub(crate) fn state(&self) -> TaskState {
+    /// 状态（含载荷）：**只有持有者读得到**——`&mut self` 只能经 [`Task::exclusive`]
+    /// 拿到，而 `exclusive` 的前提正是「容器独占」。观察者读 [`Task::tag`]。
+    pub(crate) fn state(&mut self) -> TaskState {
         self.state
+    }
+
+    /// 判别式（观察者读；Acquire 与 `transform` 的 Release store 配对）。
+    pub fn tag(&self) -> TaskTag {
+        TaskTag::of(self.tag.load(Ordering::Acquire))
     }
 
     /// 续跑：预算递减（Running → Running 仅载荷更新，不经状态机变换表）。
@@ -409,6 +473,7 @@ impl TaskBuilder {
                     ident,
                     life: Life::new(),
                     state: TaskState::Held,
+                    tag: AtomicU8::new(TaskTag::Held as u8),
                     pies: SpinLock::new(Vec::new()),
                     heir: SpinLock::new(Vec::new()),
                 },
