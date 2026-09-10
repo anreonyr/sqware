@@ -1,6 +1,6 @@
 //! envcall 权柄轴（class 7 `PieCall`）—— 许可的生死与流动，十一个操作。
 //!
-//! 与数据轴（`envcall/mail_axis.rs`）的分界：本模块**不搬运载荷**——传的是许可，
+//! 与数据轴（`envcall/mail.rs`）的分界：本模块**不搬运载荷**——传的是许可，
 //! 内容走 class 5。三条轴（资源 / 持有 / 转授）见 `crates/env/src/fid.rs`。
 //!
 //! # 两个查询原语

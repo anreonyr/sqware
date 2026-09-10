@@ -27,7 +27,6 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::mail;
 use crate::work::room::messenger::WaitKey;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::utask::{self, JoinStep, park, reap, starve, wait, wake};
@@ -36,8 +35,8 @@ use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent};
 
-mod mail_axis;
-mod pie_axis;
+mod mail;
+mod pie;
 
 /// 单次 `Build` 的镜像字节上限（8 MiB）：防止一次调用把内核暂存撑爆。
 const MAX_IMAGE: usize = 8 * 1024 * 1024;
@@ -442,7 +441,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 bytes[i * core::mem::size_of::<usize>()..][..core::mem::size_of::<usize>()]
                     .copy_from_slice(&pc_arr[i].pc.as_usize().to_le_bytes());
             }
-            let ok = mail::copy_out(
+            let ok = crate::work::mail::copy_out(
                 &ident.team.space,
                 &bytes[..keep * core::mem::size_of::<usize>()],
                 buf,
@@ -507,15 +506,15 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
         }
         // 两条轴各自成模块；命中的臂直接解构，未命中回落到下一个 match 腿。
         EnvCall::Mail(call) => {
-            if let Some(out) = mail_axis::dispatch(frame, call, ident) {
+            if let Some(out) = mail::dispatch(frame, call, ident) {
                 return match out {
-                    mail_axis::Outcome::Resume => frame as *mut TrapContext,
-                    mail_axis::Outcome::Park(next) => next,
+                    mail::Outcome::Resume => frame as *mut TrapContext,
+                    mail::Outcome::Park(next) => next,
                 };
             }
         }
         EnvCall::Pie(call) => {
-            if let Some(pie_axis::Outcome::Resume) = pie_axis::dispatch(frame, call, ident) {
+            if let Some(pie::Outcome::Resume) = pie::dispatch(frame, call, ident) {
                 return frame as *mut TrapContext;
             }
         }

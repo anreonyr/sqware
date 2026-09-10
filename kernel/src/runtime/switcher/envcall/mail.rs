@@ -1,6 +1,6 @@
 //! envcall 数据轴（class 5 `MailCall`）—— 消息穿孔的三个操作。
 //!
-//! 与权柄轴（`envcall/pie_axis.rs`）的分界：本模块**只搬运载荷**，不调用任何
+//! 与权柄轴（`envcall/pie.rs`）的分界：本模块**只搬运载荷**，不调用任何
 //! 权柄函数（`accord`/`narrow`/`revoke`/`release`/`vestor`/`snap`）。两轴正交，
 //! 判据见 `crates/env/src/fid.rs` 文件头。
 //!
