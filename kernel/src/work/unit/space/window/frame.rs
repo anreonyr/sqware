@@ -5,6 +5,7 @@
 // 产物 Span 带 `pa`（restore 热路径直接取帧）。帧 VA 无固定地址——切换代码
 // 经帧内 self_va 定位，是每帧可任意放置的前提。
 
+use super::super::core::SpaceInner;
 use super::super::salvage::Span;
 use super::super::{Seg, Space};
 use crate::memory::PAGE_SIZE;
@@ -30,7 +31,9 @@ impl FrameWindow {
             // 入口在 S 态（SUM=0）把寄存器现场写进它，带 U 就会页故障（实测：
             // 域/用户任务首次陷阱即 storm）。
             let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
-            if let Err(e) = inner.claim(va, PAGE_SIZE, flags) {
+            // 种类 = Trap：这一页是线程的 trap 帧（谁造对象谁报种类）。
+            let next = || Ok(crate::tag!(Trap, SpaceInner::frame()?));
+            if let Err(e) = inner.claim(va, PAGE_SIZE, flags, next) {
                 // claim 已自回滚装配；段退回
                 inner.deallocate(Seg::Kernel, va.as_usize(), PAGE_SIZE);
                 return Err(e);

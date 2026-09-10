@@ -118,18 +118,21 @@ pub fn init() {
     );
     let total = segments * TRAP_STACK_SLOT_SIZE;
     let layout = core::alloc::Layout::from_size_align(total, PAGE_SIZE).expect("trap stack layout");
-    // 块连续（frame 按 order 取整到 2 的幂）；boot 期帧池充足。类别 = Persistent
-    // （boot 持久帧——装饰器标注，类别记账收在 fence）。
+    // 块连续（frame 按 order 取整到 2 的幂）；boot 期帧池充足。种类 = TrapStack
+    // （boot 持久帧——装饰器标注，种类记账收在 fence）。
     let block = crate::tag!(
-        Persistent,
+        TrapStack,
         crate::memory::allocator::frame::allocator()
             .allocate(layout)
             .expect("trap stack block allocation")
     );
     let base = block.cast::<u8>().as_ptr() as usize;
-    // 持久注册表：trap 栈块永不归还——登记以便关机逐项核 held（②）。
+    // 持久注册表：trap 栈块永不归还——登记以便关机逐项核 held（Held 组）。
     #[cfg(feature = "audit")]
-    crate::memory::allocator::fence::audit::register_persistent(base, "trap-stack");
+    crate::memory::allocator::fence::audit::register_persistent(
+        base,
+        crate::memory::allocator::fence::Kind::TrapStack,
+    );
     assert!(
         TRAP_STACK_PHYS.set(base).is_ok(),
         "trap stack phys double init"

@@ -453,10 +453,10 @@ impl TaskBuilder {
         // 归零（①）。Arc 数据指针 ≠ 分配基址，装饰器无法覆盖——经标注块分配器
         // （tagged_alloc）在分配器侧标注；Arc::new_in 产 Arc<T, &'static dyn
         // Allocator>，经 into_raw_with_allocator/from_raw 转回默认分配器型
-        // Arc<T>（同布局；释放路径按地址路由 + ledger 类别记账，不依赖分配器
+        // Arc<T>（同布局；释放路径按地址路由 + ledger 种类记账，不依赖分配器
         // 类型——见 fence::on_free）。
         let alloc = crate::memory::allocator::fence::tagged_alloc(
-            crate::memory::allocator::fence::Class::Task,
+            crate::memory::allocator::fence::Kind::Task,
         );
         let ident: Arc<TaskIdent> = unsafe {
             let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(

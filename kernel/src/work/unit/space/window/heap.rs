@@ -8,6 +8,7 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
+use super::super::core::SpaceInner;
 use super::super::salvage::{Salvage, Span};
 use super::super::{Seg, Space};
 
@@ -31,7 +32,9 @@ impl HeapWindow {
             space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
         space.with_flush(|inner| {
             let va = inner.allocate(Seg::User, size)?;
-            if let Err(e) = inner.claim(va, size, flags) {
+            // 种类 = Heap：用户堆的物理页。
+            let next = || Ok(crate::tag!(Heap, SpaceInner::frame()?));
+            if let Err(e) = inner.claim(va, size, flags, next) {
                 // claim 已自回滚装配；段退回
                 inner.deallocate(Seg::User, va.as_usize(), size);
                 return Err(e);

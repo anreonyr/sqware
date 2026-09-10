@@ -4,20 +4,20 @@
 //! 不变量。只读账本（banker/ledger/statistics 类别计数），不写。违例统一经
 //! `report` 处置（见 fence/mod）。
 //!
-//! # 设计：所有权类别记账（替代旧「boot 身份快照 vs 关机差集」）
+//! # 设计：逐对象种类记账（替代旧「boot 身份快照 vs 关机差集」，也替代粗粒度的 4 类）
 //!
-//! 每帧/每块按生命周期归属一个类别（[`super::Class`]），计数由 statistics
-//! 维护（FRAME_COUNTS / BLOCK_COUNTS 已删除,statistics::view_frame/block().classes
-//! 是唯一权威）；装饰器 `tag!` 在分配点标注、释放路径摘标。合法形态演化——
-//! 容器扩容、realloc 搬家（类别继承）、池页周转、审计工具自身分配——只是
-//! 类别内部的变化，**不需要任何赦免机制**。
+//! 每帧/每块按**对象种类**归属（[`super::Kind`]），计数由 statistics 维护
+//! （statistics::view_frame/block().kinds 是唯一权威）；装饰器 `tag!` 在分配点标注、
+//! 释放路径摘标。合法形态演化——容器扩容、realloc 搬家（种类继承）、池页周转、
+//! 审计工具自身分配——只是种类内部的变化，**不需要任何赦免机制**。
 //!
-//! 关机检查 [`check_baseline`] 五步：
-//!   ① TASK_FRAMES == 0 && TASK_BLOCKS == 0   真泄漏（替代旧孤儿 + 块差集）。
-//!   ② 持久注册表逐项仍 held                   持久错还（替代旧持久缺失差集）。
-//!   ③ TABLE_FRAMES == 内核根表 walk 数         任务表遗留 / 内核表被摘。
-//!   ④ 池页计数诊断（周转，非违规）。
-//!   ⑤ banker held == frame.occupied           簿记不变量。
+//! 关机检查 [`check_baseline`] 按**期望终值**（[`super::End`]）分组：
+//!   ① `End::Zero` 逐种类归零——真泄漏判据，**报告点名是哪种对象**（替代旧「Task 帧 N」）。
+//!   ② `End::Held` 持久注册表逐项仍 held           持久错还。
+//!   ③ `End::Walk` 表页数 == 内核根表 walk 数      任务表遗留 / 内核表被摘。
+//!   ④ `End::Report` 只报数（池借页周转 / 自检帧 / 未标注 Plain）。
+//!   ⑤ `End::Retire` 随空间作废（用户堆账，`fence::retire` 已在归还 ASID 前销账）。
+//!   ⑥ banker held == frame.occupied               两条独立记账的交叉核对。
 //!
 //! boot 收尾 [`audit()`] 三源交叉核对 + 类别计数 sanity；[`page_clear`] 验页内
 //! 无活账。
@@ -30,7 +30,7 @@ use core::sync::atomic::Ordering;
 use crate::lock::OnceLock;
 use crate::memory::manager::addr::PhysAddr;
 
-use super::{Class, IntegrityViolation, OwnerKind, report};
+use super::{End, IntegrityViolation, Kind, Side, report};
 use crate::memory::allocator::statistics;
 
 // ── 持久注册表 ────────────────────────────────────────
@@ -43,16 +43,18 @@ use crate::memory::allocator::statistics;
 /// 少量结构，其余 boot 期分配属默认类 Persistent，不参与检查）。
 struct PersistEntry {
     pa: usize,
-    name: &'static str,
+    /// 声明它是哪种对象（报表用名由种类给出——旧版是一份并列的字符串，
+    /// 与种类重复且无人核对）。
+    kind: Kind,
 }
 
 static PERSISTENT: OnceLock<crate::lock::SpinLock<alloc::vec::Vec<PersistEntry>>> = OnceLock::new();
 
 /// 登记持久帧（boot 调用；add-only）。`pa` = 帧块基址（分配事件首地址——banker
-/// held 位与类别记账均按分配事件首页）。
-pub(crate) fn register_persistent(pa: usize, name: &'static str) {
+/// held 位与种类记账均按分配事件首页）；`kind` = 声明它是哪种对象（名字从种类来）。
+pub(crate) fn register_persistent(pa: usize, kind: Kind) {
     let list = PERSISTENT.get_or_init(|| crate::lock::SpinLock::new(alloc::vec::Vec::new()));
-    list.lock().push(PersistEntry { pa, name });
+    list.lock().push(PersistEntry { pa, kind });
 }
 
 // ── 表页 walk ─────────────────────────────────────────
@@ -101,17 +103,26 @@ fn collect_kernel_tables(out: &mut alloc::vec::Vec<usize, &'static dyn Allocator
 
 // ── 关机检查 ──────────────────────────────────────────
 
-/// 断言关机时任务生命周期帧/块已全部归还（类别记账五步，见模块头）。
+/// 按种类取「帧 + 块」两侧的计数（种类自带侧面；未标注两侧都算）。
+fn count_kind(frame: &statistics::FrameView, block: &statistics::BlockView, k: Kind) -> usize {
+    match k.side() {
+        Some(Side::Frame) => frame.kinds[k as usize],
+        Some(Side::Ledger) => block.kinds[k as usize],
+        None => frame.kinds[k as usize] + block.kinds[k as usize],
+    }
+}
+
+/// 断言关机时各对象种类都到了它的期望终值（逐种类，见模块头）。
 ///
 /// 与旧框架（boot 快照差集）不同：本检查对「合法形态演化」天然免疫——容器
-/// 扩容、realloc 搬家（新块继承类别）、池页周转、审计工具自身分配都只是类别
+/// 扩容、realloc 搬家（新种类继承）、池页周转、审计工具自身分配都只是种类
 /// 内部的变化，不构成违规、不需要赦免。
 #[track_caller]
 pub fn check_baseline() {
     let frame = statistics::view_frame();
     let block = statistics::view_block();
 
-    // 收集存储物化：普通记账（默认 Persistent 类）——审计暂态分配与归还在本
+    // 收集存储物化：普通记账（Plain 类）——审计暂态分配与归还在本
     // 函数内成对，新框架无差集检查对其天然免疫。容量 ≥ 全集（held_count 上界），
     // push 零分配、无 realloc（关机单核无并发分配）。
     let mut now_tables: alloc::vec::Vec<usize, &'static dyn Allocator> =
@@ -125,25 +136,54 @@ pub fn check_baseline() {
             crate::memory::allocator::hybrid::allocator(),
         );
 
-    // ① 任务类泄漏：帧/块类别计数归零（真泄漏判据）。
-    let task_frames = frame.classes[Class::Task as usize];
-    let task_blocks = block.classes[Class::Task as usize];
-    if task_frames > 0 || task_blocks > 0 {
-        crate::putln!(
-            "[audit] task lifecycle leak at shutdown: {task_frames} frames, {task_blocks} blocks"
-        );
+    // ① 真泄漏：`End::Zero` 的**每一种**都必须归零，报告点名是哪种对象。
+    let mut zero_total = 0usize;
+    let mut zero_ok = 0usize;
+    let mut leaks = 0usize;
+    for k in Kind::ALL {
+        if k.end() != End::Zero {
+            continue;
+        }
+        zero_total += 1;
+        let n = count_kind(frame, block, k);
+        if n == 0 {
+            zero_ok += 1;
+        } else {
+            crate::putln!("[audit] leak: {} {n}", k.name());
+            leaks += 1;
+        }
     }
 
     // ② 持久注册表：逐项仍 held（持久帧错还 = 违例）。
     let mut freed_persistent = 0usize;
+    let mut held_total = 0usize;
+    let mut misdeclared = 0usize;
     if let Some(reg) = PERSISTENT.get() {
         let g = reg.lock();
         for e in g.iter() {
+            held_total += 1;
+            // 声明即受核：登记说的种类必须与帧种类表里的一致——两处都在同一条
+            // boot 语句上，一致是廉价的，不一致就是把种类说错了（旧版这里是一份
+            // 并列的字符串，无人核对）。
+            let actual = super::frame_kind(e.pa);
+            if actual != e.kind && super::banker::BANKER.is_held(e.pa) {
+                crate::putln!(
+                    "[audit] persistent {} @ {:#x} is tagged {} in the frame table",
+                    e.kind.name(),
+                    e.pa,
+                    actual.name()
+                );
+                misdeclared += 1;
+            }
             if !super::banker::BANKER.is_held(e.pa) {
                 if freed_persistent == 0 {
                     crate::putln!("[audit] freed persistent frames at shutdown:");
                 }
-                crate::putln!("  freed[{freed_persistent}] = {} @ {:#x}", e.name, e.pa);
+                crate::putln!(
+                    "  freed[{freed_persistent}] = {} @ {:#x}",
+                    e.kind.name(),
+                    e.pa
+                );
                 freed_persistent += 1;
             }
         }
@@ -152,7 +192,7 @@ pub fn check_baseline() {
     // ③ 表页计数 vs 内核根表 walk。
     collect_kernel_tables(&mut now_tables);
     let walk_tables = now_tables.len();
-    let table_frames = frame.classes[Class::Table as usize];
+    let table_frames = frame.kinds[Kind::Table as usize];
     if table_frames != walk_tables {
         crate::putln!("[audit] table frames {table_frames} != kernel-walk count {walk_tables}:");
         for (i, &pa) in now_tables.iter().take(16).enumerate() {
@@ -160,15 +200,18 @@ pub fn check_baseline() {
         }
     }
 
-    // ④ 块池页：计数诊断（正常周转，非违规）。
+    // ④ 只报数：周转（池借页）、自检帧、未标注 Plain、随空间退役的用户堆账。
+    let prime = frame.kinds[Kind::Prime as usize];
+    let probe = frame.kinds[Kind::Probe as usize];
+    let plain = count_kind(frame, block, Kind::Plain);
+    let user_heap = block.kinds[Kind::UserHeap as usize];
     crate::memory::allocator::block::heap().collect_owned(&mut now_pool);
     let pool_pages = now_pool.len();
-    crate::putln!("[audit] block-pool pages: {pool_pages} (turnover, not a violation)");
 
-    // ⑤ 一致性：banker held 与 frame.occupied 必须相符（簿记不变量）。
+    // ⑤ 一致性：banker held 与 frame.occupied 必须相符（两条独立记账的交叉核对）。
     //
-    // 重取快照：本函数 now_tables / now_pool 三次 Vec 分配自扰会增减 held
-    // 与 occupied，line 134 的 frame 是分配前的快照——drift 检查用它会把自扰
+    // 重取快照：本函数 now_tables / now_pool 两次 Vec 分配自扰会增减 held
+    // 与 occupied，上面的 frame 是分配前的快照——drift 检查用它会把自扰
     // 当违例。view_frame() 重读 occupied，audit 自扰归零，!held_ok 触发条件
     // 只对真违例（漏 take / 漏 give / 帧重叠 / OOB 等）开放。
     let held = super::banker::BANKER.held_count();
@@ -178,13 +221,11 @@ pub fn check_baseline() {
     drop(now_tables);
     drop(now_pool);
 
-    if task_frames > 0 || task_blocks > 0 {
+    if leaks > 0 {
         report(
             IntegrityViolation::AuditDivergence,
             0,
-            format_args!(
-                "task lifecycle leak at shutdown: {task_frames} frames, {task_blocks} blocks"
-            ),
+            format_args!("{leaks} object kinds leaked at shutdown"),
         );
     }
     if freed_persistent > 0 {
@@ -192,6 +233,13 @@ pub fn check_baseline() {
             IntegrityViolation::AuditDivergence,
             0,
             format_args!("{freed_persistent} persistent frames freed at shutdown"),
+        );
+    }
+    if misdeclared > 0 {
+        report(
+            IntegrityViolation::MisplacedKind,
+            0,
+            format_args!("{misdeclared} persistent frames misdeclared"),
         );
     }
     if table_frames != walk_tables {
@@ -209,7 +257,8 @@ pub fn check_baseline() {
         );
     }
     crate::putln!(
-        "[audit] shutdown checks ok: task {task_frames}F/{task_blocks}B persistent-freed {freed_persistent} tables {table_frames}/{walk_tables} held {held}/{occupied}"
+        "[audit] shutdown checks ok: zero {zero_ok}/{zero_total} held {}/{held_total} tables {table_frames}/{walk_tables} report-only prime {prime} probe {probe} plain {plain} user-heap {user_heap} pool {pool_pages}",
+        held_total - freed_persistent
     );
 }
 
@@ -249,7 +298,7 @@ pub fn audit() {
             format_args!("banker {held} != frames {occupied}"),
         );
     }
-    let ftotal: usize = frame.classes.iter().sum();
+    let ftotal: usize = frame.kinds.iter().sum();
     if ftotal != held {
         report(
             IntegrityViolation::AuditDivergence,
@@ -257,7 +306,7 @@ pub fn audit() {
             format_args!("frame class counts {ftotal} != banker held {held}"),
         );
     }
-    let btotal: usize = block.classes.iter().sum();
+    let btotal: usize = block.kinds.iter().sum();
     let recs = super::ledger::LEDGER.len();
     if btotal != recs {
         report(
@@ -268,7 +317,7 @@ pub fn audit() {
     }
     super::ledger::LEDGER.for_each(|addr, rec| {
         let page = addr & !(crate::memory::PAGE_SIZE - 1);
-        if rec.kind == OwnerKind::KernelHeap {
+        if rec.kind.poison() {
             if crate::memory::allocator::block::heap().own(addr).is_none() {
                 report(
                     IntegrityViolation::WildAddress,

@@ -316,7 +316,7 @@ impl Space {
 
     /// 懒页物化（缺页处理：分配零页装叶注入 + 刷 TLB）。
     pub fn materialize_map(&self, vaddr: VirtAddr, size: usize) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.materialize_map(vaddr, size))
+        self.with_flush(|inner| inner.materialize(vaddr, size))
     }
 
     /// 修改保护标志（mprotect 后端）：收紧类，就地跨核清退。

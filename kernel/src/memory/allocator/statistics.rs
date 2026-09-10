@@ -22,13 +22,12 @@ use crate::lock::OnceLock;
 #[cfg(feature = "audit")]
 use crate::lock::RwLock;
 
-use super::fence::Class;
+use super::fence::{KIND_COUNT, Kind};
 use super::spare;
 
 /// 预留池数上限（risc-v 主流硬件 ≤ 8 核；超出则统计只取前 8 个池）。
 pub(super) const MAX_POOLS: usize = 8;
-/// Class 枚举项数（Persistent / Task / Pool / Table）。
-const CLASS_COUNT: usize = 4;
+// 种类计数按 fence::KIND_COUNT 定长（对象种类是记账的唯一维度，见 fence::kind）。
 
 // ── 视图类型 ──
 
@@ -37,7 +36,7 @@ pub struct FrameView {
     pub total: usize,
     pub available: usize,
     pub occupied: usize,
-    pub classes: [usize; CLASS_COUNT],
+    pub kinds: [usize; KIND_COUNT],
 }
 
 #[derive(Clone, Copy)]
@@ -51,7 +50,7 @@ pub struct PoolStat {
 pub struct BlockView {
     pub pools: [PoolStat; MAX_POOLS],
     pub occupied: usize,
-    pub classes: [usize; CLASS_COUNT],
+    pub kinds: [usize; KIND_COUNT],
 }
 
 #[derive(Clone, Copy)]
@@ -135,13 +134,13 @@ struct FrameStats {
     total: AtomicUsize,
     available: AtomicUsize,
     occupied: AtomicUsize,
-    classes: [AtomicUsize; CLASS_COUNT],
+    kinds: [AtomicUsize; KIND_COUNT],
 }
 
 struct BlockStats {
     occupied: AtomicUsize,
     pools: [AtomicUsize; MAX_POOLS],
-    classes: [AtomicUsize; CLASS_COUNT],
+    kinds: [AtomicUsize; KIND_COUNT],
 }
 
 struct SpareStats {
@@ -177,7 +176,7 @@ const ZERO_FRAME_VIEW: FrameView = FrameView {
     total: 0,
     available: 0,
     occupied: 0,
-    classes: [0; CLASS_COUNT],
+    kinds: [0; KIND_COUNT],
 };
 
 const ZERO_POOL_STAT: PoolStat = PoolStat {
@@ -189,7 +188,7 @@ const ZERO_POOL_STAT: PoolStat = PoolStat {
 const ZERO_BLOCK_VIEW: BlockView = BlockView {
     pools: [ZERO_POOL_STAT; MAX_POOLS],
     occupied: 0,
-    classes: [0; CLASS_COUNT],
+    kinds: [0; KIND_COUNT],
 };
 
 const ZERO_SPARE_VIEW: SpareView = SpareView {
@@ -223,12 +222,12 @@ pub fn init() -> Result<(), Error> {
             total: AtomicUsize::new(0),
             available: AtomicUsize::new(0),
             occupied: AtomicUsize::new(0),
-            classes: [const { AtomicUsize::new(0) }; CLASS_COUNT],
+            kinds: [const { AtomicUsize::new(0) }; KIND_COUNT],
         },
         block: BlockStats {
             occupied: AtomicUsize::new(0),
             pools: [const { AtomicUsize::new(0) }; MAX_POOLS],
-            classes: [const { AtomicUsize::new(0) }; CLASS_COUNT],
+            kinds: [const { AtomicUsize::new(0) }; KIND_COUNT],
         },
         spare: SpareStats {
             total: AtomicUsize::new(0),
@@ -269,23 +268,23 @@ pub fn rebaseline() -> Result<(), Error> {
 
 // ── record 钩子（pub(super) 由 frame/block/spare 内部 alloc/free 调）──
 
-pub(crate) fn record_frame_take(class: Class) {
+pub(crate) fn record_frame_take(kind: Kind) {
     let s = stats();
     s.frame.occupied.fetch_add(1, Ordering::Relaxed);
-    s.frame.classes[class as usize].fetch_add(1, Ordering::Relaxed);
+    s.frame.kinds[kind as usize].fetch_add(1, Ordering::Relaxed);
 }
 
-pub(crate) fn record_frame_give(class: Class) {
+pub(crate) fn record_frame_give(kind: Kind) {
     let s = stats();
     s.frame.occupied.fetch_sub(1, Ordering::Relaxed);
-    s.frame.classes[class as usize].fetch_sub(1, Ordering::Relaxed);
+    s.frame.kinds[kind as usize].fetch_sub(1, Ordering::Relaxed);
 }
 
 #[cfg(feature = "audit")]
-pub(crate) fn record_frame_relabel(from: Class, to: Class) {
+pub(crate) fn record_frame_relabel(from: Kind, to: Kind) {
     let s = stats();
-    s.frame.classes[from as usize].fetch_sub(1, Ordering::Relaxed);
-    s.frame.classes[to as usize].fetch_add(1, Ordering::Relaxed);
+    s.frame.kinds[from as usize].fetch_sub(1, Ordering::Relaxed);
+    s.frame.kinds[to as usize].fetch_add(1, Ordering::Relaxed);
 }
 
 pub(crate) fn record_frame_total(total: usize) {
@@ -300,7 +299,7 @@ pub(crate) fn record_frame_available(available: usize) {
     }
 }
 
-pub(crate) fn record_block_take(pool_id: usize) {
+pub(crate) fn record_pool_take(pool_id: usize) {
     let s = stats();
     s.block.occupied.fetch_add(1, Ordering::Relaxed);
     if let Some(p) = s.block.pools.get(pool_id) {
@@ -308,7 +307,7 @@ pub(crate) fn record_block_take(pool_id: usize) {
     }
 }
 
-pub(crate) fn record_block_give(pool_id: usize) {
+pub(crate) fn record_pool_give(pool_id: usize) {
     let s = stats();
     s.block.occupied.fetch_sub(1, Ordering::Relaxed);
     if let Some(p) = s.block.pools.get(pool_id) {
@@ -317,26 +316,26 @@ pub(crate) fn record_block_give(pool_id: usize) {
 }
 
 #[cfg(feature = "audit")]
-pub(crate) fn record_block_relabel(from: Class, to: Class) {
+pub(crate) fn record_block_relabel(from: Kind, to: Kind) {
     let s = stats();
-    s.block.classes[from as usize].fetch_sub(1, Ordering::Relaxed);
-    s.block.classes[to as usize].fetch_add(1, Ordering::Relaxed);
+    s.block.kinds[from as usize].fetch_sub(1, Ordering::Relaxed);
+    s.block.kinds[to as usize].fetch_add(1, Ordering::Relaxed);
 }
 
-/// fence::on_alloc 用：块按 class +1（仅维护 classes 数组，不动 block.occupied——
-/// block.occupied 由 prime/drain 路径维护,反映块池借出页数,与类别计数维度不同）。
+/// fence::on_alloc / retire 用：块按种类 +1（仅维护 kinds 数组，不动 block.occupied——
+/// block.occupied 由 prime/drain 路径维护,反映块池借出页数,与种类计数维度不同）。
 #[cfg(feature = "audit")]
-pub(crate) fn record_block_take_for_class(class: Class) {
+pub(crate) fn record_block_take(kind: Kind) {
     if let Some(s) = STATS.get() {
-        s.block.classes[class as usize].fetch_add(1, Ordering::Relaxed);
+        s.block.kinds[kind as usize].fetch_add(1, Ordering::Relaxed);
     }
 }
 
-/// fence::on_free 用：块按 class -1。
+/// fence::on_free / retire 用：块按种类 -1。
 #[cfg(feature = "audit")]
-pub(crate) fn record_block_give_for_class(class: Class) {
+pub(crate) fn record_block_give(kind: Kind) {
     if let Some(s) = STATS.get() {
-        s.block.classes[class as usize].fetch_sub(1, Ordering::Relaxed);
+        s.block.kinds[kind as usize].fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -372,8 +371,8 @@ pub fn view_frame() -> &'static FrameView {
     v.total = s.frame.total.load(Ordering::Relaxed);
     v.available = s.frame.available.load(Ordering::Relaxed);
     v.occupied = s.frame.occupied.load(Ordering::Relaxed);
-    for i in 0..CLASS_COUNT {
-        v.classes[i] = s.frame.classes[i].load(Ordering::Relaxed);
+    for i in 0..KIND_COUNT {
+        v.kinds[i] = s.frame.kinds[i].load(Ordering::Relaxed);
     }
     v
 }
@@ -382,8 +381,8 @@ pub fn view_block() -> &'static BlockView {
     let s = stats();
     let v = unsafe { &mut *s.block_view_cell.get() };
     v.occupied = s.block.occupied.load(Ordering::Relaxed);
-    for i in 0..CLASS_COUNT {
-        v.classes[i] = s.block.classes[i].load(Ordering::Relaxed);
+    for i in 0..KIND_COUNT {
+        v.kinds[i] = s.block.kinds[i].load(Ordering::Relaxed);
     }
     for (i, pool) in v.pools.iter_mut().enumerate() {
         pool.id = i;

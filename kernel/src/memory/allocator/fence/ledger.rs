@@ -1,11 +1,12 @@
 //! 护栏层 · ledger — 活块账本（hashbrown；容量 init 预留，运行期插入零分配）
 //!
-//! 按地址登记在册活块（mark 入账、unmark 校验+注销、verify 任意地址 drop-in、
-//! for_each 锁内遍历、sweep_canaries 崩溃现场清查）。笼统：
+//! 按地址登记在册活块（mark 入账、unmark 校验+注销、relabel 改种类、for_each
+//! 锁内遍历、sweep_canaries 崩溃现场清查）。笼统：
 //!   - 容量 init 预留（with_capacity），soft_cap = 容量 × 7/8——插入在装载 < 0.875
 //!     不扩容、零分配（绝不持锁触碰分配器，防 block 重入 / 锁序死锁）；
 //!   - 锁 = Level::Ledger；持锁**绝不分配**（插入容量 init 预留、零分配、绝不反向嵌套）；
-//!   - canary 只写 KernelHeap 块（用户堆为清零语义，不 poison、不 canary）。
+//!   - canary 只写 `kind.poison()` 的块（[`Kind::poison`] = 账本侧 + 地址键；用户堆
+//!     为清零语义、键也不是地址 ⇒ 不 poison、不 canary）。
 //!     违例统一经 `report` 处置（见 fence/mod）。
 //!
 //! 分配/释放记账经 fence 根事件入口（`on_alloc`/`on_free`）调用，本模块为
@@ -18,7 +19,7 @@ use hashbrown::HashMap;
 
 use crate::lock::{Level, SpinLock};
 
-use super::{CANARY_MAGIC, CANARY_MIN_SLACK, Class, IntegrityViolation, OwnerKind, report};
+use super::{CANARY_MAGIC, CANARY_MIN_SLACK, IntegrityViolation, Keys, Kind, report};
 
 /// 一条活块登记。
 pub struct Record {
@@ -27,12 +28,10 @@ pub struct Record {
     pub(crate) size: usize,
     /// 分配点返回地址（alloc-site，violation 报告转储）。
     pub(crate) site: usize,
-    /// slack canary（Some = 在 addr+size 处写入 8 字节；UserHeap 恒 None）。
+    /// slack canary（Some = 在 addr+size 处写入 8 字节；`kind.poison()` 为假者恒 None）。
     canary: Option<u64>,
-    /// 登记类别。
-    pub(crate) kind: OwnerKind,
-    /// 生命周期类别（mark 时定型；unmark 读出减类别计数——见 fence::on_free）。
-    pub(crate) class: Class,
+    /// 对象种类（mark 时定型；unmark/relabel 读出——单一维度，见 [`Kind`]）。
+    pub(crate) kind: Kind,
 }
 
 /// 活块账本：地址 → 记录（锁内；容量 init 预留，运行期零分配）。
@@ -56,9 +55,9 @@ impl Ledger {
     }
 
     /// 活块入账。前置：已 init、容量充足、地址未登记（DuplicateMark 现行）。
-    /// KernelHeap 且 slack ≥ 8 时顺带写 slack canary。**零分配**。
-    /// `class` = 生命周期类别（mark 时定型；unmark 读出减类别计数）。
-    pub fn mark(&self, addr: usize, size: usize, site: usize, kind: OwnerKind, class: Class) {
+    /// `kind.poison()` 且 slack ≥ 8 时顺带写 slack canary。**零分配**。
+    /// `kind` = 对象种类（mark 时定型；unmark 读出减种类计数）。
+    pub fn mark(&self, addr: usize, size: usize, site: usize, kind: Kind) {
         let mut g = self.inner.lock();
         let Some((map, soft)) = g.as_mut() else {
             report(
@@ -85,13 +84,12 @@ impl Ledger {
         // canary 槽位按 8 对齐（块首 + 请求尺寸可能不对齐；u64 读写必须对齐——
         // 未对齐会触发 misaligned trap 进 OpenSBI 模拟，极慢/卡死）。
         let aligned = (size + 7) & !7;
-        let canary = (kind == OwnerKind::KernelHeap && size_class - aligned >= CANARY_MIN_SLACK)
-            .then(|| {
-                let at = addr + aligned;
-                // SAFETY: at..at+8 落在块 slack 区（size_class ≥ aligned+8），块此刻独占（分配未交付）。
-                unsafe { (at as *mut u64).write_volatile(CANARY_MAGIC) };
-                CANARY_MAGIC
-            });
+        let canary = (kind.poison() && size_class - aligned >= CANARY_MIN_SLACK).then(|| {
+            let at = addr + aligned;
+            // SAFETY: at..at+8 落在块 slack 区（size_class ≥ aligned+8），块此刻独占（分配未交付）。
+            unsafe { (at as *mut u64).write_volatile(CANARY_MAGIC) };
+            CANARY_MAGIC
+        });
         map.insert(
             addr,
             Record {
@@ -99,14 +97,13 @@ impl Ledger {
                 site,
                 canary,
                 kind,
-                class,
             },
         );
     }
 
     /// 唯一注销入口：先证（存在 + canary 完好 + 尺寸一致）再移除；移除后该地址
-    /// 即「无账」。返回记录类别（fence::on_free 按类减计数）。
-    pub fn unmark(&self, addr: usize, size: usize) -> Class {
+    /// 即「无账」。返回记录种类（fence::on_free 按种类减计数）。
+    pub fn unmark(&self, addr: usize, size: usize) -> Kind {
         let mut g = self.inner.lock();
         let Some((map, _)) = g.as_mut() else {
             report(
@@ -131,21 +128,21 @@ impl Ledger {
             );
         }
         check_canary(addr, rec);
-        let class = rec.class;
+        let kind = rec.kind;
         map.remove(&addr);
-        class
+        kind
     }
 
-    /// 按地址查登记类别（realloc 窗口类别继承用；无账 → None）。
-    pub fn class_of(&self, addr: usize) -> Option<Class> {
+    /// 按地址查登记种类（realloc 窗口种类继承用；无账 → None）。
+    pub fn kind_of(&self, addr: usize) -> Option<Kind> {
         let g = self.inner.lock();
-        g.as_ref().and_then(|(m, _)| m.get(&addr)).map(|r| r.class)
+        g.as_ref().and_then(|(m, _)| m.get(&addr)).map(|r| r.kind)
     }
 
-    /// 类别改标（装饰器标注 / realloc 继承；fence::tag 调用）：更新记录
-    /// 类别，返回旧类——计数迁移由调用方完成（mark 已按默认 Persistent +1）。
+    /// 种类改标（装饰器标注 / realloc 继承；fence::tag 调用）：更新记录
+    /// 种类，返回旧种类——计数迁移由调用方完成（mark 已按默认 Plain +1）。
     /// 无账 → report（mark 必须先行）。
-    pub fn relabel(&self, addr: usize, class: Class) -> Class {
+    pub fn relabel(&self, addr: usize, kind: Kind) -> Kind {
         let mut g = self.inner.lock();
         let Some((map, _)) = g.as_mut() else {
             report(
@@ -161,8 +158,8 @@ impl Ledger {
                 format_args!("relabel: no record"),
             );
         });
-        let old = rec.class;
-        rec.class = class;
+        let old = rec.kind;
+        rec.kind = kind;
         old
     }
 
@@ -183,16 +180,17 @@ impl Ledger {
     /// 物理地址（DRAM 高位恒 0），不会与 `asid ≥ 1` 相撞。
     ///
     /// 单趟 `retain`：一次加锁、零分配。**不可**用 `for_each` + `unmark` 实现
-    /// ——同一把 Ledger 锁会自锁死。类别计数在同趟内按记录扣减，与 `unmark` →
-    /// `record_block_give_for_class` 的语义一致。
+    /// ——同一把 Ledger 锁会自锁死。种类计数在同趟内按记录扣减，与 `unmark` →
+    /// `record_block_give` 的语义一致。
     pub fn retire(&self, asid: usize) -> usize {
         let mut g = self.inner.lock();
         let Some((map, _)) = g.as_mut() else { return 0 };
         let mut retired = 0usize;
         map.retain(|&addr, rec| {
-            let mine = matches!(rec.kind, OwnerKind::UserHeap) && (addr >> 44) == asid;
+            // 页索引键（`Keys::Page`）的唯一使用者就是用户堆账目。
+            let mine = rec.kind.keys() == Keys::Page && (addr >> 44) == asid;
             if mine {
-                crate::memory::allocator::statistics::record_block_give_for_class(rec.class);
+                crate::memory::allocator::statistics::record_block_give(rec.kind);
                 retired += 1;
             }
             !mine

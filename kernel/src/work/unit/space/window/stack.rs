@@ -10,6 +10,7 @@ use crate::layout::TASK_STACK_GUARD;
 use crate::memory::manager::MapError;
 use crate::memory::manager::entry::PteFlags;
 
+use super::super::core::SpaceInner;
 use super::super::map::Pending;
 use super::super::salvage::{Salvage, Span};
 use super::super::{Seg, Space};
@@ -50,7 +51,9 @@ impl StackWindow {
             let body_flags = space
                 .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
             let body_va = slot_va + TASK_STACK_GUARD;
-            if let Err(e) = inner.claim(body_va, size, body_flags) {
+            // 种类 = Stack：任务栈体。
+            let next = || Ok(crate::tag!(Stack, SpaceInner::frame()?));
+            if let Err(e) = inner.claim(body_va, size, body_flags, next) {
                 // claim 已自回滚装配（清已装叶 + 摘 body map）；guard map 与段
                 // 整体退回——拆 slot 区间（清 guard 叶 + 摘 guard map，入料箱）
                 // 后把段也交料箱：VA 一旦还段即可被复用，须等清退到齐。

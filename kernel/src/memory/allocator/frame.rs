@@ -84,7 +84,7 @@ unsafe impl Allocator for FrameAllocator {
                 );
             }
             super::fence::on_frame_alloc(addr as usize);
-            super::statistics::record_frame_take(super::fence::Class::Persistent);
+            super::statistics::record_frame_take(super::fence::Kind::Plain);
             checker::log_frame_alloc(addr as usize, index, power);
             Ok(NonNull::slice_from_raw_parts(
                 NonNull::new(addr).ok_or(AllocError)?,
@@ -117,8 +117,8 @@ unsafe impl Allocator for FrameAllocator {
             // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);
             frame.merge_block(index, power);
-            // 类别：untag 在 fence::on_frame_free 内完成,class 由 untag 路径同步 record;
-            // 非 audit 时 fence::on_frame_free 内部直接 record_frame_give(Persistent)。
+            // 种类：untag 在 fence::on_frame_free 内完成,kind 由 untag 路径同步 record;
+            // 非 audit 时 fence::on_frame_free 内部直接 record_frame_give(Plain)。
             // 此处无需再调 record_frame_give,避免重复。
 
             checker::log_frame_dealloc(addr, index, power);

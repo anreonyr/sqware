@@ -347,7 +347,7 @@ unsafe impl Allocator for BlockAllocator {
         let addr = pool.pull(power).ok_or(AllocError)?;
         // 护栏事件：活块入账（类别记账收在 fence：mark 默认 Persistent，打标
         // 分配器 relabel——本文件零类别词汇，见 fence 模块头解耦纪律）。
-        super::fence::on_alloc(addr, layout.size(), super::fence::OwnerKind::KernelHeap);
+        super::fence::on_alloc(addr, layout.size(), super::fence::Kind::Plain);
         // SAFETY: pull 返回的地址必非零（分配器保证）。
         //
         // 交付长度 = **请求字节数**（`layout.size()`），不是 size class：`NonNull<[u8]>`
@@ -374,7 +374,7 @@ unsafe impl Allocator for BlockAllocator {
         // 归属路由：非块内存 → 静默丢弃。
         let Some(home) = self.own(pa) else { return };
         // 护栏事件：活块注销。
-        super::fence::on_free(pa, layout.size(), super::fence::OwnerKind::KernelHeap);
+        super::fence::on_free(pa, layout.size(), super::fence::Kind::Plain);
         let me = machine::hart_id();
         let pool = &self.blocks[home];
         if home == me {
@@ -441,18 +441,18 @@ impl BlockInner {
 
     /// 借一页拆块入链（arena 扩展：池无自有区段，页即向 frame 借）。
     /// 调用方须已持本池 inner 锁（pull 内调用）。锁序：inner → frame（单向）。
-    /// 页类别 = Pool（fence 打标分配器——自由周转，关机只做诊断计数，
-    /// 不参与归零检查；本文件对类别词汇仅此一处）。
+    /// 页种类 = Prime（fence 打标分配器——自由周转，关机只报数，
+    /// 不参与归零检查；本文件对种类词汇仅此一处）。
     fn prime(&self, inner: &mut Pool, power: usize) -> Result<NonNull<u8>, AllocError> {
         // 借 1 页（order0）。
         let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
         let page = crate::tag!(
-            Pool,
+            Prime,
             frame::allocator()
                 .allocate(layout)
                 .map_err(|_| AllocError)?
         );
-        super::statistics::record_block_take(self.id);
+        super::statistics::record_pool_take(self.id);
         let base = page.as_ptr() as *mut u8 as usize;
         checker::check_dram_addr(base, "block prime (frame page)");
 
@@ -521,7 +521,7 @@ impl BlockInner {
         unsafe {
             frame::allocator().deallocate(NonNull::new_unchecked(page as *mut u8).cast(), layout);
         }
-        super::statistics::record_block_give(self.id);
+        super::statistics::record_pool_give(self.id);
     }
 
     /// 推回本池：写 freelist 链 + 递减表项计数；归零走 spare/drain 决策。

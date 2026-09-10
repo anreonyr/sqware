@@ -260,15 +260,12 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 let r = HeapWindow::allocate(s, size).map(|span| span.va);
                 if let Ok(va) = r {
                     let key = crate::memory::allocator::fence::key(s.asid().get(), va.as_usize());
+                    // 种类 = UserHeap：键是 `(asid, 页索引)` 而非地址，随空间
+                    // `retire` 作废——on_alloc 已把种类记进账本，无需再 tag。
                     crate::memory::allocator::fence::on_alloc(
                         key,
                         size,
-                        crate::memory::allocator::fence::OwnerKind::UserHeap,
-                    );
-                    #[cfg(feature = "audit")]
-                    crate::memory::allocator::fence::tag(
-                        key,
-                        crate::memory::allocator::fence::Class::Task,
+                        crate::memory::allocator::fence::Kind::UserHeap,
                     );
                 }
                 r
@@ -291,7 +288,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                     crate::memory::allocator::fence::on_free(
                         crate::memory::allocator::fence::key(s.asid().get(), addr),
                         size,
-                        crate::memory::allocator::fence::OwnerKind::UserHeap,
+                        crate::memory::allocator::fence::Kind::UserHeap,
                     );
                 }
                 freed

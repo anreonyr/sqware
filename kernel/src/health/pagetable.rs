@@ -37,7 +37,7 @@ pub fn pagetable() {
         // map：分配数据帧 + 中间表
         let mut frames: Vec<crate::memory::manager::table::Frame> = Vec::new();
         for _ in 0..(SIZE / PAGE_SIZE) {
-            frames.push(crate::tag!(Persistent, unsafe {
+            frames.push(crate::tag!(Probe, unsafe {
                 Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                     .expect("[health] pagetable: data frame")
                     .assume_init()

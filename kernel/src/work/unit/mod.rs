@@ -174,16 +174,16 @@ pub fn init() -> MapResult<()> {
             // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页
             let n = machine::hart_count();
             for h in 0..n {
-                let page: crate::memory::manager::table::Frame = crate::tag!(Persistent, {
+                let page: crate::memory::manager::table::Frame = crate::tag!(HartFrame, {
                     Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
                 });
-                // 持久注册表：内核窗口帧永不归还——登记以便关机逐项核 held（②）。
+                // 持久注册表：内核窗口帧永不归还——登记以便关机逐项核 held（Held 组）。
                 #[cfg(feature = "audit")]
                 crate::memory::allocator::fence::audit::register_persistent(
                     PhysAddr::from_raw(page.as_ptr() as usize).as_usize(),
-                    "hart-frame",
+                    crate::memory::allocator::fence::Kind::HartFrame,
                 );
                 kernel_space.attach_map(
                     HART_FRAME_BASE + h * PAGE_SIZE,

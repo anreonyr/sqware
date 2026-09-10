@@ -157,16 +157,24 @@ impl SpaceInner {
         Ok(())
     }
 
-    /// 立即装配（Eager）：登记全物化 Map + 逐页 [`Self::frame`]() 分配帧、
-    /// 装叶、注入（帧自产，物理可断）。
+    /// 立即装配（Eager）：登记全物化 Map + 逐页取帧、装叶、注入（物理可断）。
+    ///
+    /// **帧来源由调用者给**（与 [`Self::attach`] 同形）：本动作服务三种对象
+    /// （trap 帧 / 用户堆页 / 任务栈），是"造哪种对象"的那一层说出种类——
+    /// `|| Ok(crate::tag!(Trap, SpaceInner::frame()?))`。本函数与 [`Self::frame`]
+    /// 都不认识种类。
     ///
     /// 中途帧耗尽回滚**装配**（清已装叶 + 摘自身 Map）。
-    pub(crate) fn claim(
+    pub(crate) fn claim<F>(
         &mut self,
         va: VirtAddr,
         size: usize,
         flags: PteFlags,
-    ) -> Result<(), MapError> {
+        next_frame: F,
+    ) -> Result<(), MapError>
+    where
+        F: FnMut() -> Result<Frame, MapError>,
+    {
         if size == 0 || !va.as_usize().is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
@@ -177,7 +185,7 @@ impl SpaceInner {
         // 先登记空 map（全物化 pending None），再走 install 装帧
         self.maps
             .push(Map::new(va, size, flags, None, BTreeMap::new()));
-        self.install(va, pages, flags, MapMode::Claim(va), Self::frame)
+        self.install(va, pages, flags, MapMode::Claim(va), next_frame)
     }
 
     /// 装配调用方配好的帧（物理可断，逐帧装叶）+ 登记全物化 Map。
@@ -276,17 +284,18 @@ impl SpaceInner {
 
     // ── 帧 ──────────────────────────────────────────────────
 
-    /// 领一帧（零化 + Task 类别标注）——全模块唯一帧分配点。
+    /// 领一帧（零化）——全模块唯一帧分配点，**不认识种类**。
     ///
-    /// 类别 = Task：懒/堆/栈/COW 帧属任务生命周期——关机归零。
+    /// 种类由造对象的那一层标注：懒页在本文件的 [`Self::materialize`]，trap 帧 /
+    /// 堆页 / 栈在各自 window 的装配请求里（帧来源以闭包给出），COW 在本文件的
+    /// 分裂路径。帧分配器与装配核心都不携带种类参数。
     pub(crate) fn frame() -> Result<Frame, MapError> {
         let frame: Frame = unsafe {
             Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                 .map_err(|_| MapError::OutOfMemory)?
                 .assume_init()
         };
-        // 类别 = Task：懒/堆/栈/COW 帧属任务生命周期——关机归零。
-        Ok(crate::tag!(Task, frame))
+        Ok(frame)
     }
 
     // ── 物化 / 保护 / 共享 ──────────────────────────────────
@@ -296,7 +305,7 @@ impl SpaceInner {
     /// `pending` 非 Lazy（Guard / None）或无映射 → 错误。
     /// 循环失败时 [`InstallGuard`] 按 [`MapMode::Materialize`] 自动拆 PTE +
     /// 摘 frames 键；收尾成功须 `commit()` 拆雷。
-    pub(crate) fn materialize_map(&mut self, va: VirtAddr, size: usize) -> Result<(), MapError> {
+    pub(crate) fn materialize(&mut self, va: VirtAddr, size: usize) -> Result<(), MapError> {
         let pages = size.div_ceil(PAGE_SIZE);
         // 前置：从已存在的 Lazy map 拿 flags + 校验 pending
         let flags = {
@@ -306,7 +315,10 @@ impl SpaceInner {
             }
             m.flags | PteFlags::A | PteFlags::D
         };
-        self.install(va, pages, flags, MapMode::Materialize, Self::frame)
+        // 种类 = Lazy：本动作只服务懒页一种对象，故帧来源就地给出。
+        self.install(va, pages, flags, MapMode::Materialize, || {
+            Ok(crate::tag!(Lazy, Self::frame()?))
+        })
     }
 
     /// 修改已映射区域的保护标志：逐 map 分流——**真有 PTE** 的页翻叶 PTE（借用/
@@ -394,9 +406,9 @@ impl SpaceInner {
                         None => continue,
                     }
                 };
-                // 类别 = Task：COW 共享帧（Shared）属任务生命周期——关机归零。
+                // 种类 = Cow：COW 共享帧（Shared）——关机归零。
                 let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> = crate::tag!(
-                    Task,
+                    Cow,
                     Arc::new_in(
                         [0u8; PAGE_SIZE],
                         crate::memory::allocator::frame::allocator()
@@ -469,8 +481,8 @@ impl SpaceInner {
                             _ => continue, // 并发下变 Owned——跳过
                         }
                     };
-                    // 类别 = Task：COW 分裂新帧属任务生命周期——关机归零。
-                    let mut nb: Frame = Self::frame()?;
+                    // 种类 = Cow：COW 分裂出的新帧——关机归零。
+                    let mut nb: Frame = crate::tag!(Cow, Self::frame()?);
                     nb.copy_from_slice(&arc[..]);
                     let ppn = (PhysAddr::from_raw(nb.as_ptr() as usize).as_usize() >> 12) as u64;
                     let map = self.resolve_mut(page).expect("map exists (checked)");

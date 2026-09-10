@@ -223,14 +223,22 @@ impl SpareAllocator {
             (payload.next_multiple_of(MAX_ALIGN) + HEADER + DUMP_BUDGET).next_multiple_of(PAGE_SIZE)
         };
         let align = Layout::from_size_align(cap, PAGE_SIZE).map_err(|_| InitError::OutOfMemory)?;
-        let chunk = hybrid::allocator()
-            .allocate(align)
-            .map_err(|_| InitError::OutOfMemory)?;
+        // 种类 = Spare（hybrid 的大块路径默认标 Plain；这里是崩溃路径专用仓，
+        // 唯一使用者，故就地改标）。
+        let chunk = crate::tag!(
+            Spare,
+            hybrid::allocator()
+                .allocate(align)
+                .map_err(|_| InitError::OutOfMemory)?
+        );
         let base = chunk.as_ptr() as *mut u8 as usize;
         // 持久注册表：spare 仓块（日志 + panic 打印专用）永不归还——登记以便
-        // 关机逐项核 held（②）。
+        // 关机逐项核 held（Held 组）。
         #[cfg(feature = "audit")]
-        crate::memory::allocator::fence::audit::register_persistent(base, "spare");
+        crate::memory::allocator::fence::audit::register_persistent(
+            base,
+            crate::memory::allocator::fence::Kind::Spare,
+        );
         let edge = base + chunk.len();
         Ok(Self {
             inner: SpinLock::new_level(Level::Spare, SpareInner::new(base, edge)),

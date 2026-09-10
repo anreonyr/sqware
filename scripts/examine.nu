@@ -253,22 +253,22 @@ def audit_count [field: string, file: path] {
   ($toks | get ($i + 1) | into int)
 }
 
-# ── 既存违规的如实标注（**不是**豁免）────────────────────────────────────────
-# audit 档的关机审计有一条**已记账**的既存违规（A2 线）：`[audit] task lifecycle leak at
-# shutdown: N frames, M blocks` ⇒ `report(IntegrityViolation::AuditDivergence)` ⇒ `[panic] at …`，
-# 于是「无崩溃」判据必然挂。**这一轮就该 FAIL**：本函数**只**往原因串里补一句
-# 「是什么、记在 §9.3 哪一节」，不碰 ok/FAIL，不开开关、不设白名单、不摘 marker、不放宽阈值。
-# 调用点另外带 `$why != ""` 前件 ⇒ 这句话只可能加在**已经判 FAIL** 的轮上（见 run_once 末）。
-# 数（N frames, M blocks）**从捕获里读**，不写死：哪一轮数变了，原因串跟着变（写死就成了造数）。
+# ── 关机终值违约的如实标注（**不是**豁免）────────────────────────────────────
+# 逐对象种类记账（docs §10.16）之后，关机的真泄漏判据是**每种对象的期望终值**：
+# 违约时内核逐条打印 `[audit] leak: <kind> N`，随后 `report(AuditDivergence)` ⇒ `[panic] at …`，
+# 于是「无崩溃」判据必然挂。**那一轮就该 FAIL**：本函数**只**往原因串里补一句
+# 「是哪种对象、记在哪一节」，不碰 ok/FAIL，不开开关、不设白名单、不摘 marker、不放宽阈值。
+# 调用点另外带 `$why != ""` 前件 ⇒ 这句话只可能加在**已经判 FAIL**的轮上（见 run_once 末）。
+# 数（哪种对象、几个）**从捕获里读**，不写死：哪一轮变了，原因串跟着变（写死就成了造数）。
 # 只写指针、不去改 docs。
 def existing_violation_note [file: path] {
-  if not (hit 'task lifecycle leak at shutdown' $file) { return "" }
-  let r = (^grep -oE -- '\[audit\] task lifecycle leak at shutdown: [0-9]+ frames, [0-9]+ blocks' $file | complete)
-  let found = (if $r.exit_code == 0 { ($r.stdout | lines | first) } else { null })
-  let what = (if $found == null { "task lifecycle leak at shutdown（原文行取不到，见捕获）" } else { $found | str replace "[audit] " "" })
-  # 同一因的第二笔账（docs §9.3 同节记着它与上面同源）：在就一并写出来，不在就不提。
-  let table = (if (hit 'table frames [0-9]+ != kernel-walk count [0-9]+' $file) { " + table frames != kernel-walk count（同源）" } else { "" })
-  $"既存违规[($what)($table)]：A2 线未修，记账 docs/audit-flying-wires.md §9.3「关机审计第二条违规：已收缩到一个因（属 A2 线，未修）」"
+  if not (hit '\[audit\] leak: ' $file) { return "" }
+  let r = (^grep -oE -- '\[audit\] leak: [a-z-]+ [0-9]+' $file | complete)
+  let found = (if $r.exit_code == 0 { ($r.stdout | lines | str join " + ") } else { null })
+  let what = (if $found == null { "对象种类泄漏（原文行取不到，见捕获）" } else { $found | str replace --all "[audit] leak: " "" })
+  # 同一因的第二笔账（同源）：在就一并写出来，不在就不提。
+  let table = (if (hit 'table frames [0-9]+ != kernel-walk count [0-9]+' $file) { " + table frames != kernel-walk count" } else { "" })
+  $"关机终值违约[($what)($table)]：逐对象种类终值判据，记账 docs/audit-flying-wires.md §10.16"
 }
 
 # 等 marker 出现在捕获里；limit 秒内没等到 ⇒ false。每步独立超时（.sh 同名函数的语义，

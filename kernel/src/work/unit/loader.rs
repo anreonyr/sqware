@@ -77,8 +77,8 @@ fn frames_for_segment(bytes: &[u8], seg: &LoadSegment) -> Result<Vec<Frame>, Map
     let pages = seg.filesz.div_ceil(PAGE_SIZE);
     let mut frames = Vec::with_capacity(pages);
     for i in 0..pages {
-        // 类别 = Task：装载段帧（owned 数据帧）属任务生命周期——关机归零。
-        let mut frame: Frame = crate::tag!(Task, unsafe {
+        // 种类 = Image：装载段帧（owned 数据帧）——关机归零。
+        let mut frame: Frame = crate::tag!(Image, unsafe {
             Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                 .map_err(|_| MapError::OutOfMemory)?
                 .assume_init()
