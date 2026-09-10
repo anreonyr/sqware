@@ -488,7 +488,7 @@ pub(crate) fn current() -> &'static Scheduler {
     unsafe { &*(crate::machine::scheduler() as *const Scheduler) }
 }
 
-// 注：parked / wait_sites / wait_times / reaped 四张表与 WaitKey / WaitSite / Waiter
+// 注：parked / sites / wait_times / husks 四张表与 WakeKey / Site / Waiter
 // 类型已全部移至 [`crate::work::room::messenger`]——"任务不在 running 槽"的状态机归
 // messenger 所有。详见 messenger 模块头注。
 

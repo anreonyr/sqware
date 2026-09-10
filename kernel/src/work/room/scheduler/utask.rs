@@ -6,7 +6,7 @@
 
 use core::time::Duration;
 
-use crate::work::room::messenger::{self, Handoff, Joined, WaitKey};
+use crate::work::room::messenger::{self, Handoff, Joined, WakeKey};
 use crate::work::unit::gate::GateError;
 
 use super::core::current;
@@ -41,7 +41,7 @@ pub fn reap() -> usize {
 /// 返回**是否切走**：`None` = 未离核（调用方续用当前帧）；`Some(pa)` = 切到该帧
 /// （本核已装槽的下一位，或本核空时 `run()` 取来的）。`key` 为已合成的事件键
 /// （envcall 边界负责并入空间身份）。
-pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
+pub fn wait(key: WakeKey, dur: Duration) -> Option<usize> {
     match messenger::wait(key, dur) {
         Handoff::Resume => None,
         Handoff::Switch(pa) => Some(pa),
@@ -50,7 +50,7 @@ pub fn wait(key: WaitKey, dur: Duration) -> Option<usize> {
 }
 
 /// 事件唤醒入口（envcall Wake 调用）：给 `key` 投递信号；返回是否唤醒到等待者。
-pub fn wake(key: WaitKey) -> bool {
+pub fn wake(key: WakeKey) -> bool {
     messenger::wake(key)
 }
 
@@ -77,7 +77,7 @@ pub fn join(tid: usize, dur: Duration) -> Result<JoinStep, GateError> {
 /// ktask 事件等待入口（asm 包装）：永久等一个键（`Duration::MAX`，无超时），
 /// 只能被 `wake(key)` 解锁。同 [`wait`] 但用于内核任务上下文。
 #[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
-pub fn wait_forever(key: WaitKey) -> usize {
+pub fn wait_forever(key: WakeKey) -> usize {
     match messenger::wait(key, Duration::MAX) {
         Handoff::Resume => run(),
         Handoff::Switch(pa) => pa,

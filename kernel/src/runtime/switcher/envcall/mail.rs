@@ -170,7 +170,7 @@ fn wait_dir(
     dir: HoleDir,
     millis: usize,
 ) -> Outcome {
-    // 锁内解析 token → Arc<HoleMeta>：pies 与 wait_sites 同为 L3，绝不嵌套；
+    // 锁内解析 token → Arc<HoleMeta>：pies 与站点表同为 L3，绝不嵌套；
     // `running_task` 的临时强引用在闭包内即 drop，不跨挂起。
     let need = match dir {
         HoleDir::Pull => Need::Read,

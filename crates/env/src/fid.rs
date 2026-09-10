@@ -186,7 +186,7 @@ pub enum ChronoCall {
 }
 
 /// hole 的等待方向：`Pull` = 等槽里有消息（可取），`Push` = 等槽空（可发）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum HoleDir {
     Pull,
     Push,

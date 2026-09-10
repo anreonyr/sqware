@@ -27,7 +27,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::messenger::WaitKey;
+use crate::work::room::messenger::WakeKey;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::utask::{self, JoinStep, park, reap, starve, wait, wake};
 use crate::work::unit::gate::{GateError, Permission};
@@ -203,7 +203,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             return park(Duration::from_millis(millis as u64)) as *mut TrapContext;
         }
         EnvCall::Room(RoomCall::Wait { key, millis }) => {
-            let wkey = WaitKey::compose(ident.team.space.asid().get(), key);
+            let wkey = WakeKey::Space {
+                space: ident.team.space.asid().get(),
+                slot: key,
+            };
             let dur = if millis == usize::MAX {
                 Duration::MAX
             } else {
@@ -215,7 +218,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }
         }
         EnvCall::Room(RoomCall::Wake { key }) => {
-            let wkey = WaitKey::compose(ident.team.space.asid().get(), key);
+            let wkey = WakeKey::Space {
+                space: ident.team.space.asid().get(),
+                slot: key,
+            };
             let woke = wake(wkey);
             frame.gpr.set_x(Gprs::A0, woke as usize);
         }

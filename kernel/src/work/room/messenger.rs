@@ -6,8 +6,8 @@
 // 降级 Last），再挂到本域的簿记/计时器上。恢复路径分两类：wake_by_event（信号到）
 // 和 drain_expired（timer 到期），都把任务转 Starved 推回 scheduler 本核 + kick。
 //
-// 簿记：parked（deadline 句柄 → task）、sites（key → pend+waiters）、times
-// （tock 句柄 → key）、husks（Arc<Task> 队列）。四张表全 L3，3→3 嵌套禁止。
+// 簿记：parked（deadline 句柄 → task）、sites（唤醒源 → 等待位）、times
+// （tock 句柄 → 唤醒源）、husks（Arc<Task> 队列）。全部 L3，3→3 嵌套禁止。
 // 锁序：**L1（调度器）与 L3（本域四表）任何方向都不得嵌套**——持任一 L3 期间
 // 不得调用 scheduler 的任何加锁方法，也不得在锁内 drop `Arc<Task>`（drop 链会
 // 取 Space 锁 L2）。各路径的写法统一为「作用域内取、作用域外用」：wait/wake/
@@ -24,6 +24,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
+use env::HoleDir;
 use hashbrown::{HashMap, HashSet};
 
 use crate::lock::{Level, OnceLock, SpinLock};
@@ -43,49 +44,48 @@ static HANDLE: AtomicUsize = AtomicUsize::new(0);
 
 // ── 类型 ──
 
-/// 事件等待键（newtype）：核心不解释组成，纯匹配。合成走 [`WaitKey::compose`]
-/// （适配层在 envcall 边界调用，并入空间身份）。
+/// 唤醒源：谁会把等待者叫醒。三个命名空间各占一个变体，键即身份。
+///
+/// **没有位打包**：`Space` 的两个字段各自完整，不再把 asid 挤进高 16 位、用户键
+/// 截到低 48 位。旧 `WaitKey::compose` 的单射性靠掩码保证，还因此逼出一个
+/// `#[inline(never)]` 的 mask helper 去躲 size 优化下的错联（§13.10 A）——枚举下
+/// 这两样都不需要：没有 mask，就没有 mask 错联。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct WaitKey(usize);
+pub enum WakeKey {
+    /// 调用方命名空间里的裸整数（`RoomCall::Wait` / `Wake`）：空间身份 + 槽位。
+    Space { space: usize, slot: usize },
+    /// 资源就绪（`MailCall::Wait`；hole 的 push / pull / seal 投信）。
+    ///
+    /// `hole` 用裸整数而非 `mail::HoleId`：依赖方向必须保持 mail → room 单向，
+    /// 引 `HoleId` 就成了环。
+    Hole { hole: usize, dir: HoleDir },
+    /// 目标任务回收（`UnitCall::Join`）。
+    Task { id: usize },
+}
 
-impl WaitKey {
-    /// 合成 = asid 高 16 位 || 用户 VA 低 48 位。单射需 va < 2^48（Sv39/48 满足；
-    /// Sv57 若启用需重定布局）。与 fence::key 同源意：跨空间同 VA 不得混淆。
-    pub fn compose(asid: usize, va: usize) -> WaitKey {
-        // 用 #[inline(never)] helper 承担 mask 计算（见 §13.10 A 待办方向 A）：
-        // size 优化在闭包多次内联 compose 时，会把 `+1`（来自 hole::key(.., Pull)
-        // 的 `| 1` 折叠）算在 mask 上 → mask 错联。helper 强制每次调用独立计算。
-        WaitKey(((asid & 0xFFFF) << 48) | low48(va))
+impl WakeKey {
+    /// 折成 64 位——**只供分片**，不承载语义（相等性仍由 `Eq` 判定）。
+    fn fold(self) -> u64 {
+        match self {
+            WakeKey::Space { space, slot } => {
+                (space as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ slot as u64
+            }
+            WakeKey::Hole { hole, dir } => {
+                (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir as u64
+            }
+            WakeKey::Task { id } => (id as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
+        }
     }
 }
 
-#[inline(never)]
-fn low48(va: usize) -> usize {
-    // 0x0000_FFFF_FFFF_FFFF 字面量替代 ((1usize << 48) - 1)：让编译器视作
-    // 已折叠常量；helper 整体 inline(never)，杜绝 size 优化把 mask 寄存器
-    // 跨调用复用。
-    va & 0x0000_FFFF_FFFF_FFFFusize
-}
-
-// 内核线程面（`TaskBuilder::closure`）的配套接口：目录已移出内核（跑在 `task-dir`
-// 域里），树内暂无使用者——保留备用，故显式关掉 dead_code。
-#[allow(dead_code)]
-impl WaitKey {
-    /// 直接以本体值构造事件键（dock 键路径：`DOCK_KEY_TAG | id` 全局唯一，不经
-    /// compose——调用方（envcall 边界）已按标记位分流）。
-    pub fn from_raw(raw: usize) -> WaitKey {
-        WaitKey(raw)
-    }
-    pub fn into_raw(self) -> usize {
-        self.0
-    }
-}
-
-/// 一个事件键的等待位：遗留信号（闩）+ 等待者队列。
-struct WaitSite {
-    /// 遗留信号（闩）：wake 无等待者 → 置位；wait 见位 → 消费即回（防漏唤醒）。
+/// 一个唤醒源的等待位：遗留信号（信标）+ 等待者队列。
+///
+/// 三种唤醒源共用本类型（旧版 `WaitSite` / `JoinSite` 字段逐个相同——各自一份是
+/// 键的 Rust 类型不同逼出来的）。
+struct Site {
+    /// 遗留信号（信标）：wake 无等待者 → 置位；wait 见位 → 消费即回（防漏唤醒）。
     pend: bool,
-    /// 等待者（FIFO）；每项携带超时句柄（无超时 = None）。
+    /// 等待者（FIFO）；每项携带到点句柄（无期限 = None）。
     waiters: VecDeque<Waiter>,
 }
 
@@ -123,24 +123,28 @@ fn parked() -> &'static SpinLock<HashMap<u64, Arc<Task>>> {
 const SITE_SHARDS: usize = 16;
 const SITE_SHARDS_MASK: usize = SITE_SHARDS - 1;
 
-/// 事件键 → 分片（pure function，所有路径一致：wait / wake / drain 都经此）。
+/// 唤醒源 → 分片（pure function，所有路径一致：wait / wake / 投信 / 到期都经此）。
 /// splitmix64 折叠 64→32 后按位与 SHARDS 掩码——高位低位的熵都被采样。
 #[inline]
-fn site_shard(key: WaitKey) -> usize {
-    let h = (key.0 as u64).wrapping_mul(0x9E3779B97F4A7C15);
+fn site_shard(key: WakeKey) -> usize {
+    let h = key.fold().wrapping_mul(0x9E3779B97F4A7C15);
     ((h >> 32) ^ h) as usize & SITE_SHARDS_MASK
 }
 
-/// 事件等待表（Level::L3，与 parked 同级；绝不 3→3 嵌套）。**分片版**：每片
-/// 一把 L3 锁 + HashMap，单一线性化点缩小到一片——wait/wake 跨片并行。
+/// 站点表（Level::L3，与 parked 同级；绝不 3→3 嵌套）。**分片版**：每片一把
+/// L3 锁 + HashMap，单一线性化点缩小到一片——wait / wake 跨片并行。
 ///
-/// 锁纪律（与原版同级）：仍是 L3、与 parked 同级、可与 timer 锁共存但**绝不
-/// 3→3 嵌套**（rip 路径循环逐片清，禁持跨片锁）。同 key 的所有 waiters 必落
-/// 在同一分片（`site_shard` 纯函数保证），wake 不必跨片扫描。
-fn wait_sites(shard: usize) -> &'static SpinLock<HashMap<WaitKey, WaitSite>> {
-    static SHARDS: OnceLock<Box<[SpinLock<HashMap<WaitKey, WaitSite>>]>> = OnceLock::new();
-    let arr: &'static [SpinLock<HashMap<WaitKey, WaitSite>>] = SHARDS.get_or_init(|| {
-        let mut v: Vec<SpinLock<HashMap<WaitKey, WaitSite>>> = Vec::with_capacity(SITE_SHARDS);
+/// **一张表装三种唤醒源**：它们的等待者是同一种东西（任务 + 到点句柄），唤醒
+/// 也是同一件事（摘出 → 放回就绪）。旧版把「等目标回收」单独放进 `joins`，理由
+/// 只是键的 Rust 类型不同（`usize` vs `WaitKey`）——键成枚举之后，那个理由没了。
+///
+/// 锁纪律：仍是 L3、可与 timer 锁共存但**绝不 3→3 嵌套**（rip 路径循环逐片清，
+/// 禁持跨片锁）。同 key 的所有 waiters 必落在同一分片（`site_shard` 纯函数保证），
+/// 唤醒不必跨片扫描。
+fn shard_at(shard: usize) -> &'static SpinLock<HashMap<WakeKey, Site>> {
+    static SHARDS: OnceLock<Box<[SpinLock<HashMap<WakeKey, Site>>]>> = OnceLock::new();
+    let arr: &'static [SpinLock<HashMap<WakeKey, Site>>] = SHARDS.get_or_init(|| {
+        let mut v: Vec<SpinLock<HashMap<WakeKey, Site>>> = Vec::with_capacity(SITE_SHARDS);
         for _ in 0..SITE_SHARDS {
             v.push(SpinLock::new_level(Level::L3, HashMap::new()));
         }
@@ -149,10 +153,15 @@ fn wait_sites(shard: usize) -> &'static SpinLock<HashMap<WaitKey, WaitSite>> {
     &arr[shard]
 }
 
-/// 超时旁路：tock 句柄 → 事件键（timer 到期分派用）。任务本体只在 wait_sites
-/// 注册；本表只放键（不含 Arc）——两条唤醒路仍都经 wait_sites 锁摘除。
-fn wait_times() -> &'static SpinLock<HashMap<u64, WaitKey>> {
-    static TIMES: OnceLock<SpinLock<HashMap<u64, WaitKey>>> = OnceLock::new();
+/// 本唤醒源的站点表分片。
+fn sites(key: WakeKey) -> &'static SpinLock<HashMap<WakeKey, Site>> {
+    shard_at(site_shard(key))
+}
+
+/// 超时旁路：tock 句柄 → 唤醒源（timer 到期分派用）。任务本体只在站点表注册；
+/// 本表只放键（不含 Arc）——两条唤醒路仍都经站点表锁摘除。
+fn wait_times() -> &'static SpinLock<HashMap<u64, WakeKey>> {
+    static TIMES: OnceLock<SpinLock<HashMap<u64, WakeKey>>> = OnceLock::new();
     TIMES.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
@@ -167,24 +176,6 @@ pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
 fn doomed() -> &'static SpinLock<HashSet<usize>> {
     static T: OnceLock<SpinLock<HashSet<usize>>> = OnceLock::new();
     T.get_or_init(|| SpinLock::new_level(Level::L3, HashSet::new()))
-}
-
-/// Join 等待站点：遗留信号（pend，目标已回收但当时无人等）+ FIFO 等待者。
-///
-/// `pend` 闭合「判死 → 入簿」窗口：目标在窗口内被回收时 `wake_joiners` 置 pend，
-/// 入簿者见到即当场撤销阻塞——**无须在持 joins 锁时再查注册表**（那是 3→3）。
-struct JoinSite {
-    pend: bool,
-    waiters: VecDeque<Waiter>,
-}
-
-/// Join 等待表（Level::L3）：目标 tid → 站点。
-///
-/// 条目持等待者的 `Arc<Task>`，故 `rip` 必须清空（否则关机审计把等待者的空间
-/// 算成泄漏）。与 `wait_sites` 同形、同为 L3，绝不 3→3 嵌套。
-fn joins() -> &'static SpinLock<HashMap<usize, JoinSite>> {
-    static J: OnceLock<SpinLock<HashMap<usize, JoinSite>>> = OnceLock::new();
-    J.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
 /// Join 超时旁路（Level::L3）：tock 句柄 → 目标 tid（只存键，无 Arc）。
@@ -232,14 +223,14 @@ pub fn park(duration: Duration) -> Option<usize> {
 /// 事件等待：Running → Blocked(Wait)。pend 存在 → 消费即回（不阻塞，无状态
 /// 变更，[`Handoff::Resume`]）。`dur == Duration::MAX` → 永久（无 tock）；否则
 /// 登记超时。
-pub fn wait(key: WaitKey, dur: Duration) -> Handoff {
+pub fn wait(key: WakeKey, dur: Duration) -> Handoff {
     let cond = current();
 
     // pend 消费路径：信号已至 → 任务不阻塞（续跑）；锁 sites 短暂，锁内不问
     // 调度器（当前帧是调用方的知识，不是本域的）。
     {
-        let mut sites = wait_sites(site_shard(key)).lock();
-        let site = sites.entry(key).or_insert_with(WaitSite::new);
+        let mut sites = sites(key).lock();
+        let site = sites.entry(key).or_insert_with(Site::new);
         if site.pend {
             site.pend = false;
             return Handoff::Resume;
@@ -256,14 +247,15 @@ pub fn wait(key: WaitKey, dur: Duration) -> Handoff {
     };
     trace::note(EventKind::Room(RoomEvent::Wait {
         tid: task.ident.id,
-        key: key.0,
+        // 诊断用折叠值：键成枚举后不再有「人可读的位打包」形态。
+        key: key.fold() as usize,
     }));
     // 入 sites[].waiters]队尾。此处**必须再查 pend**：首段 pend 检查与派单之间
     // 有窗口（disown_and_install_next 取调度锁 L1，持 sites L3 期间不可取），
     // wake 可能在此窗口置 pend——若此刻已注册 waiter 而不消费 pend，该 waiter 永
     // 不被唤醒（pend 只会被"下一次 wait"消费）。闭环：注册入锁后见 pend → 消费、
     // 撤销本次阻塞（任务已在槽外，回收为 Starved 即可——由 run 再接走）。
-    let mut sites = wait_sites(site_shard(key)).lock();
+    let mut sites = sites(key).lock();
     let site = sites.get_mut(&key).expect("site just observed");
     if site.pend {
         // 窗口内 wake 已至——本任务按「已唤醒」处理，不阻塞。
@@ -406,11 +398,9 @@ pub fn join(tid: usize, dur: Duration) -> Result<Joined, GateError> {
     // 竞态闭合：disown 期间目标可能已被 reap——`wake_joiners` 会置 pend。入簿
     // 只持 joins 一把锁（**锁内绝不查注册表**：那是 L3→L3 嵌套，lockdep 会拒）。
     let queued = {
-        let mut j = joins().lock();
-        let site = j.entry(tid).or_insert_with(|| JoinSite {
-            pend: false,
-            waiters: VecDeque::new(),
-        });
+        let key = WakeKey::Task { id: tid };
+        let mut j = sites(key).lock();
+        let site = j.entry(key).or_insert_with(Site::new);
         if site.pend {
             site.pend = false;
             false
@@ -442,11 +432,9 @@ pub fn join(tid: usize, dur: Duration) -> Result<Joined, GateError> {
 /// （旁路已摘，陈旧句柄在 drain 里自然落空——省一次 O(n) 的堆重建）。
 fn wake_joiners(tid: usize) {
     let waiters = {
-        let mut j = joins().lock();
-        let site = j.entry(tid).or_insert_with(|| JoinSite {
-            pend: false,
-            waiters: VecDeque::new(),
-        });
+        let key = WakeKey::Task { id: tid };
+        let mut j = sites(key).lock();
+        let site = j.entry(key).or_insert_with(Site::new);
         if site.waiters.is_empty() {
             // 无人在等：留信标——之后入簿者见 pend 即当场撤销阻塞。
             site.pend = true;
@@ -481,10 +469,10 @@ fn wake_joiners(tid: usize) {
 /// 会立刻返回「已唤醒」而实际无数据。故 `wait` 的返回**只是提示**，调用方必须自己
 /// 复核条件（`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环，见
 /// `docs/dispatch.md` §11.4）。
-pub fn wake(key: WaitKey) -> bool {
+pub fn wake(key: WakeKey) -> bool {
     let popped = {
-        let mut sites = wait_sites(site_shard(key)).lock();
-        let site = sites.entry(key).or_insert_with(WaitSite::new);
+        let mut sites = sites(key).lock();
+        let site = sites.entry(key).or_insert_with(Site::new);
         match site.waiters.pop_front() {
             Some(w) => Some(w),
             None => {
@@ -523,8 +511,8 @@ pub fn drain_expired() -> bool {
         let join_tid = join_times().lock().remove(&handle);
         if let Some(tid) = join_tid {
             let popped = {
-                let mut j = joins().lock();
-                j.get_mut(&tid).and_then(|site| {
+                let mut j = sites(WakeKey::Task { id: tid }).lock();
+                j.get_mut(&WakeKey::Task { id: tid }).and_then(|site| {
                     site.waiters
                         .iter()
                         .position(|w| w.tock == Some(handle))
@@ -543,7 +531,7 @@ pub fn drain_expired() -> bool {
         let wait_key = wait_times().lock().remove(&handle);
         if let Some(key) = wait_key {
             let popped = {
-                let mut ws = wait_sites(site_shard(key)).lock();
+                let mut ws = sites(key).lock();
                 if let Some(site) = ws.get_mut(&key) {
                     if let Some(idx) = site.waiters.iter().position(|w| w.tock == Some(handle)) {
                         Some(site.waiters.remove(idx).expect("idx from position"))
@@ -656,17 +644,15 @@ fn exit_hooks() -> &'static [ExitHook] {
 /// 析构透传释放（无需 mail 自有关闭钩子）。
 ///
 /// 逐表 `take` 出内容、**锁外 drop**：drop 链会取 Space 锁（L2），锁内 drop 即
-/// L3→L2 嵌套。wait_sites 分片版循环逐片取——不持跨片锁。
+/// L3→L2 嵌套。站点表分片版循环逐片取——不持跨片锁。
 pub(crate) fn rip() {
     let parked_out = core::mem::take(&mut *parked().lock());
     drop(parked_out);
     for shard in 0..SITE_SHARDS {
-        let sites_out = core::mem::take(&mut *wait_sites(shard).lock());
+        let sites_out = core::mem::take(&mut *shard_at(shard).lock());
         drop(sites_out);
     }
     wait_times().lock().clear(); // 只存键，无 Arc，无 drop 链
-    let joins_out = core::mem::take(&mut *joins().lock());
-    drop(joins_out);
     join_times().lock().clear(); // 只存键，无 Arc
     let husks_out = core::mem::take(&mut *HUSKS.lock());
     drop(husks_out);
@@ -721,10 +707,10 @@ fn suspend(task: &Arc<Task>) -> bool {
                 removed.is_some()
             }
             BlockReason::Wait { .. } => {
-                // wait_sites 分片存 Waiter{task, tock}；按 ptr_eq 扫出 tock 后摘。
+                // 站点表分片存 Waiter{task, tock}；按 ptr_eq 扫出 tock 后摘。
                 let mut tock: Option<Option<u64>> = None;
                 for shard in 0..SITE_SHARDS {
-                    let mut ws = wait_sites(shard).lock();
+                    let mut ws = shard_at(shard).lock();
                     for site in ws.values_mut() {
                         if let Some(idx) =
                             site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
@@ -750,8 +736,9 @@ fn suspend(task: &Arc<Task>) -> bool {
                 // joins 按目标 tid 存；按 ptr_eq 扫出本任务后摘除。
                 let mut tock: Option<Option<u64>> = None;
                 {
-                    let mut j = joins().lock();
-                    if let Some(site) = j.get_mut(&tid)
+                    let key = WakeKey::Task { id: tid };
+                    let mut j = sites(key).lock();
+                    if let Some(site) = j.get_mut(&key)
                         && let Some(idx) =
                             site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task))
                     {
@@ -824,7 +811,7 @@ pub(crate) fn take_doomed(tid: usize) -> bool {
 
 // ── 内部辅助 ──
 
-impl WaitSite {
+impl Site {
     fn new() -> Self {
         Self {
             pend: false,

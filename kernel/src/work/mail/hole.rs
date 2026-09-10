@@ -28,12 +28,12 @@ use crate::lock::{Level, SpinLock};
 use env::HoleDir;
 
 use super::HOLE_MTU_MAX;
-use crate::work::room::messenger::{self, Handoff, WaitKey};
+use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::gate::GateError;
 
 /// Hole 的全局身份（自 1 递增、永不复用）——**等待键的身份**（见 [`key`]）。
 ///
-/// 键取它而不取 `HoleMeta` 的堆地址：`wait_sites` 的站点从不回收，而地址会被
+/// 键取它而不取 `HoleMeta` 的堆地址：站点表的站点从不回收，而地址会被
 /// 分配器回收再利用——死孔留下的陈旧 pend 会被落在同一地址的新孔继承。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HoleId(pub usize);
@@ -138,25 +138,18 @@ impl Drop for HoleMeta {
 /// 等数据的 task 等 `Pull` 键（push 写完槽后唤醒），等空位的 task 等 `Push` 键
 /// （pull 取完槽后唤醒）。
 ///
-/// **键取 `HoleId` 而不是 `HoleMeta` 的堆地址**：`wait_sites` 的站点从不回收，
+/// **键取 `HoleId` 而不是 `HoleMeta` 的堆地址**：站点表的站点从不回收，
 /// 而 wake 找不到等待者时置的「唤醒闩（pend）」会一直留着；地址会被分配器回收再
 /// 利用——死 hole 的陈旧 pend 会被落在同一地址的新 hole 继承，于是一次无关的
 /// `wait` 立即返回「已唤醒」。id 单调分配、永不复用，无此问题。
 ///
-/// 编码 `(id << 1) | 方向位`：方向位占最低位，故同一 hole 两方向不撞键，也不会
-/// 与另一个 hole 的键相撞。
-pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WaitKey {
-    let raw = meta.id.0 << 1;
-    match dir {
-        // 显式把 `raw | 1` 拆成两个语句、命名中间变量：size 优化下 `| 1` 不会再
-        // 合并进 `WaitKey::compose` 的 mask 计算路径（见 §13.10 A 待办方向 B）。
-        HoleDir::Pull => {
-            let with_low_bit = raw | 1;
-            WaitKey::compose(0, with_low_bit)
-        }
-        // 显式把 raw 拆出来给变量：避免 size 优化把 `| 1` 折叠到 compose 的 mask
-        // 参数里（见 §13.10 A 待办方向 B）。
-        HoleDir::Push => WaitKey::compose(0, raw),
+/// 方向是键的一个字段，不占位：同一 hole 两方向不撞键，也不会与另一个 hole 的键
+/// 相撞——**不需要位打包**。旧版把方向压进最低位，还因此要把 `| 1` 拆句去躲
+/// size 优化把它折叠进 mask（§13.10 A 方向 B）；枚举下这层防御连同理由一起消失。
+pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
+    WakeKey::Hole {
+        hole: meta.id.0,
+        dir,
     }
 }
 
@@ -232,7 +225,7 @@ pub(crate) enum Waited {
 
 /// 等某方向就绪：死 → `Err(Dead)`；就绪或 `dur == 0` → 不挂起；否则挂起。
 ///
-/// 前置：调用者在任务上下文，且**不持任何 L3 锁**（`wait_sites` 是 L3，3→3 禁止）。
+/// 前置：调用者在任务上下文，且**不持任何 L3 锁**（站点表是 L3，3→3 禁止）。
 ///
 /// 「先探」在此处不可省：对侧可能已经写入并正等我们取，此时若我们 park 在"等写入"
 /// 上就永远等不到下一次唤醒。先探与登记之间的窗口由 messenger 的 pend 双检封住
