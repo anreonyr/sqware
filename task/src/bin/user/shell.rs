@@ -539,6 +539,74 @@ fn name(term: &Terminal) {
     term.writeline(if ok { "name: ok" } else { "name: FAIL" });
 }
 
+/// 封印唤醒探针：在同一轮里以 `seal` 为界各等一次，把两次等待的**结论**分开打印。
+///
+/// 判据与打印的对应关系（门断言 `wake=seal` 那一支）：
+///   - `wake=timeout`：封印前那一等——孔里不会有东西来，等满了 `WAIT_MS` 期限；
+///   - `wake=seal`   ：**封印后**那一等——孔已置死，等待当场拿到结论、不睡满期限。
+///
+/// 「不睡满期限」怎么定得死：有界 pull **只有走完 deadline 才会报 Busy**
+/// （`HolePie::pull_timeout` 的注释即此契约：「只有 `clock()` 真的走完 `millis`
+/// 才报 Busy」）。故「这次调用耗时 < `WAIT_MS`」只可能是**没等满就拿到了结论**
+/// ——即被 seal 唤醒；等满期限那一支必然 ≥ `WAIT_MS`。`WAKE_SLACK_MS` 是给
+/// 「seal 到了才判」留的读数余量（远比一次 seal 的实际耗时宽松）。
+///
+/// 这一支有牙的地方：**若 seal 不唤醒等待者**（`wipe` 那条路断了），第二次等待
+/// 就会睡满期限 ⇒ 打出的是 `wake=timeout` ⇒ 门的断言挂。反向验证（本轮实跑）
+/// 正是把这一支改坏来做的。
+fn seal_wake_probe(term: &Terminal) {
+    /// 一次有界等待的期限：短到不拖慢门，长到足以让「等满」与「当场」区分开。
+    const WAIT_MS: usize = 200;
+    /// 「当场拿到结论」的读数余量：远大于一次 seal 的实际耗时（微秒级）。
+    const WAKE_SLACK_MS: u64 = 5;
+
+    let Ok(probe) = HolePie::unseal(HOLE_MTU_MAX) else {
+        term.writeline("hole: wait-probe unseal failed");
+        return;
+    };
+    let mut buf = [0u8; 8];
+
+    // ① 封印前：等满期限（孔里不会有东西来）。
+    term.writeline(&format!(
+        "hole: wait-pre  {}",
+        wait_verdict(&probe, &mut buf, WAIT_MS, WAKE_SLACK_MS)
+    ));
+    // 封印：本探针自己的孔，封印者 = 开辟者（本任务）。
+    let sealed = probe.seal().is_ok();
+    // ② 封印后：等待者当场拿到结论（seal 唤醒），故不会是 `timeout`。
+    term.writeline(&format!(
+        "hole: wait-seal sealed={} {}",
+        sealed as u8,
+        wait_verdict(&probe, &mut buf, WAIT_MS, WAKE_SLACK_MS)
+    ));
+    let _ = probe.release();
+}
+
+/// 一次有界等待的结论串：`wake=seal` / `wake=timeout` / `wake=msg`。
+///
+/// 前两者按「有没有睡满期限」区分（见 [`seal_wake_probe`] 的判据说明）；报错与
+/// 两者都分开打——把错误折叠进 timeout 会把真实的失败伪装成正常结局。
+fn wait_verdict(pie: &HolePie, buf: &mut [u8], wait_ms: usize, slack_ms: u64) -> String {
+    // 时钟是 `(秒, 纳秒)` 两段——各段分段相减会在「纳秒借位」时算错，故先各自折成
+    // 总纳秒再相减（`ns()` 只此一处）。
+    fn ns(t: (u64, u64)) -> u64 {
+        t.0.saturating_mul(1_000_000_000).saturating_add(t.1)
+    }
+    let t0 = clock().ok();
+    let r = pie.pull_timeout(buf, wait_ms);
+    let elapsed_ms = match (t0, clock().ok()) {
+        (Some(a), Some(b)) => ns(b).saturating_sub(ns(a)) / 1_000_000,
+        _ => u64::MAX, // 时钟读不到 ⇒ 按「等满了」算：宁漏报 seal，不误报
+    };
+    match r {
+        Ok(_) => format!("wake=msg elapsed={elapsed_ms}ms"),
+        Err(_) if elapsed_ms.saturating_add(slack_ms) < wait_ms as u64 => {
+            format!("wake=seal elapsed={elapsed_ms}ms")
+        }
+        Err(e) => format!("wake=timeout elapsed={elapsed_ms}ms err={e:?}"),
+    }
+}
+
 /// 各系统能力命令。全部输出经 `term`（唯一 console 出口）。
 /// 返回 false = 退出（exit 命令）。
 fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
@@ -613,6 +681,12 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
                 "hole got {:?}",
                 core::str::from_utf8(&buf).unwrap_or("?")
             ));
+            // ── 封印唤醒探针（**只加观测量**：上面那句与本命令既有语义逐字未动）──
+            // 既有自测走到了 `seal`（`wipe` 的 hole 调用方），却没有任何断言说
+            // 「seal 释放了等待者」。下面在同一轮里以 seal 为界各等一次：**封印前**
+            // 等满期限、**封印后**当场就绪——两个结论都被打印出来，门断言
+            // `hole: wait-seal sealed=1 wake=seal`（只被 seal 唤醒才可能打出的那一支）。
+            seal_wake_probe(term);
             pie.seal().ok();
         }
         "cascade" => {

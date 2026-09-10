@@ -56,6 +56,51 @@ impl WakeKey {
             WakeKey::Alarm { task } => (task as u64).wrapping_mul(0xA24B_AED4_963E_E407),
         }
     }
+
+    /// 分门别类用的**分类标签**（审计观测面用；语义与变体一一对应，不是折叠值）。
+    #[cfg(feature = "audit")]
+    pub(in super::super) const fn kind(self) -> WakeKind {
+        match self {
+            WakeKey::Space { .. } => WakeKind::Space,
+            WakeKey::Hole { .. } => WakeKind::Hole,
+            WakeKey::Task { .. } => WakeKind::Task,
+            WakeKey::Alarm { .. } => WakeKind::Alarm,
+        }
+    }
+}
+
+/// 唤醒源的四类命名空间——只管「这站点在等什么」，供审计计数分列。
+///
+/// 判别式即 [`WakeKind::ALL`] 的下标（`as usize`），故四类合计可直接按数组求和。
+/// 只在 audit 档（`SiteStats::kinds`）有消费者——非 audit 构建整型 cfg out。
+#[cfg(feature = "audit")]
+#[derive(Clone, Copy, Debug)]
+pub(in super::super) enum WakeKind {
+    Space,
+    Hole,
+    Task,
+    Alarm,
+}
+
+#[cfg(feature = "audit")]
+impl WakeKind {
+    /// 全部四类，下标 = 判别式：分列数组与打印顺序都由它一处定。
+    pub(in super::super) const ALL: [WakeKind; 4] = [
+        WakeKind::Space,
+        WakeKind::Hole,
+        WakeKind::Task,
+        WakeKind::Alarm,
+    ];
+
+    /// 分列用的名字（打印与排序的唯一出处）。
+    pub(in super::super) const fn name(self) -> &'static str {
+        match self {
+            WakeKind::Space => "space",
+            WakeKind::Hole => "hole",
+            WakeKind::Task => "task",
+            WakeKind::Alarm => "alarm",
+        }
+    }
 }
 
 /// 一个唤醒源的等待位：遗留信号（信标）+ 等待者队列。
@@ -135,6 +180,13 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
 /// 站点存在的判据：**队列非空 ∨ 有信标**。出队之后若不成立即删——空壳站点没有
 /// 语义，留着就是 A2 那条「站点永不回收」的老毛病（`park` 每次睡眠都会留一个）。
 /// 前置：已持有该分片的锁。
+///
+/// 因此站点有三种形态，审计计数（`messenger::probe`）按它们分列：
+///   - **活**（`waiters` 非空）：有任务挂在这里；
+///   - **墓碑**（`pend == true`，队列空）：`wipe` 留下的「此键已退役」结论，语义仍
+///     有效（后来的等待者要当场拿到它），**本函数依判据保留**——故它不算违规；
+///   - **孤儿**（队列空 **且** 无信标）：没有任何语义，正是本函数该删的那一类。
+/// 判别式「孤儿 == 0」才是对 `prune` 的直接断言（墓碑会稀释总数，见 §9.3 实测）。
 pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
     if let Some(site) = sites.get(&key)
         && site.waiters.is_empty()

@@ -32,6 +32,10 @@ use doom::doomed;
 use reap::HUSKS;
 use wait::holder::{holders, void};
 use wait::site::{SITE_SHARDS, prune, shard_at, sites};
+// `WakeKind` 只被 audit 档的观测面用（`SiteStats` 分列）——非 audit 构建下不引，
+// 免得留下一条「导入了但没人读」的飞线。
+#[cfg(feature = "audit")]
+use wait::site::WakeKind;
 
 // 子模块对外重导出：**外部路径一行不改**（`messenger::cull` 等照旧）。
 pub(crate) use doom::{doom, take_doomed};
@@ -58,6 +62,107 @@ pub(crate) fn rip() {
     drop(husks_out);
     holders().lock().clear(); // 只存 Weak，无 drop 链
     doomed().lock().clear(); // 只存 id，无 Arc
+}
+
+// ── 观测面：站点表只读计数（audit 档） ──
+//
+// `prune`（空站点出队即删）每次收队都在跑，却**零观测量**：站点表规模从哪里都
+// 读不到，于是「删没删」只能靠读代码断言。本面把规模变成可观测量——只读、不
+// 改任何表（不加 envcall，ABI 不变）。
+//
+// **必须在 [`rip`] 之前读**：`rip` 的职责就是清空这两张表，之后读到的恒为 0，
+// 那样的断言没有牙（`prune` 全坏也照样是 0）。消费者 = `boot::register_runtime_hooks`
+// 的关机钩子（序列里排在 `rip` 之前的那一条）。
+
+/// 站点表的一帧只读快照：合计规模 + 三形态分列 + 等待者总数。
+///
+/// 三形态（判据见 `site::prune`）：活 / 墓碑 / 孤儿。三者必须分列的理由是**只有
+/// 孤儿能指证 `prune`**：墓碑是 `wipe` 留下的有效结论、`prune` 依判据**不许**删它，
+/// 它们会把「站点表规模」这个总数稀释掉——本轮反向验证实测：把 `prune` 整个关掉，
+/// 走完门那九步的总数只从 34 变 36，而**孤儿从 0 变 2**；断言不分开看就几乎没有牙。
+#[cfg(feature = "audit")]
+pub(crate) struct SiteStats {
+    /// 全部 16 片合计的站点数（键数）= 活 + 墓碑 + 孤儿。
+    pub(crate) sites: usize,
+    /// 还挂着等待者的站点数。
+    pub(crate) live: usize,
+    /// 墓碑站点数：队列空、但有信标（`wipe` 的键退役结论）。
+    pub(crate) tomb: usize,
+    /// **孤儿**站点数：队列空 **且** 无信标——`prune` 该删而没删的残留。
+    pub(crate) orphan: usize,
+    /// 全部站点队列里的等待者总数（挂起任务数）。
+    pub(crate) waiters: usize,
+    /// 按 [`WakeKind::ALL`] 下标分列的站点数（四类合计 == `sites`）。
+    /// 只用定长数组（关机路径上不为一行诊断再分配）。
+    pub(crate) each: [usize; WakeKind::ALL.len()],
+}
+
+#[cfg(feature = "audit")]
+impl SiteStats {
+    /// 分列串：`space N hole N task N alarm N`。四类的名字与顺序**只有一处**出处
+    /// （[`WakeKind::ALL`] / [`WakeKind::name`]），本方法不含第二份清单。
+    pub(crate) fn kinds(&self) -> impl core::fmt::Display + '_ {
+        struct Kinds<'a>(&'a [usize]);
+        impl core::fmt::Display for Kinds<'_> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                for (i, k) in WakeKind::ALL.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" ")?;
+                    }
+                    write!(f, "{} {}", k.name(), self.0[i])?;
+                }
+                Ok(())
+            }
+        }
+        Kinds(&self.each)
+    }
+}
+
+/// 站点表快照：**逐片取、逐片放**（绝不持跨片锁，同 [`rip`] 的锁纪律）。
+///
+/// dropped 纪律：每片 `HashMap` 的值含 `Arc<Task>`，**锁外 drop**——持 L3 锁
+/// drop `Arc<Task>` 会顺 drop 链取 Space 锁（L2），即 3→2 嵌套。
+#[cfg(feature = "audit")]
+pub(crate) fn probe() -> SiteStats {
+    let mut st = SiteStats {
+        sites: 0,
+        live: 0,
+        tomb: 0,
+        orphan: 0,
+        waiters: 0,
+        each: [0; WakeKind::ALL.len()],
+    };
+    for shard in 0..SITE_SHARDS {
+        // 作用域即临界区：`SpinLock::lock` 返的是**守卫**（不是引用），故守卫必须在
+        // 块内成型、块末即放——出块后本片就没有 `Arc<Task>` 被持锁 drop 的风险。
+        {
+            let guard = shard_at(shard).lock();
+            for (key, site) in guard.iter() {
+                st.sites += 1;
+                st.each[key.kind() as usize] += 1;
+                if !site.waiters.is_empty() {
+                    st.live += 1;
+                } else if site.pend {
+                    st.tomb += 1;
+                } else {
+                    st.orphan += 1;
+                }
+                st.waiters += site.waiters.len();
+            }
+        }
+    }
+    st
+}
+
+/// 另两张簿记表的规模：票根（只存 `Weak`，无 drop 链）与躯壳队列。
+///
+/// 一并量出去的理由与站点表同：它们也只由关机钩子清，`rip` 之后就再也读不到。
+/// `husks` 里若**还有东西**，说明 `bury` 没跑完 —— 而全部任务回收是停机的前置。
+#[cfg(feature = "audit")]
+pub(crate) fn probe_bookkeeping() -> (usize, usize) {
+    let holders_n = holders().lock().len();
+    let husks_n = HUSKS.lock().len();
+    (holders_n, husks_n)
 }
 // ── 操作：扑杀（suspend / reap / cull / doom）──
 //

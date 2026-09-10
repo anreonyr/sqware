@@ -306,3 +306,38 @@ pub fn audit() {
         );
     }
 }
+
+// ── 关机观测：messenger 簿记规模（只读）──────────────────
+
+/// 打印 messenger 三张簿记表的规模——**全部任务退出时刻**的那一帧。
+///
+/// 为什么在这里：`prune`（空站点出队即删）每次收队都在跑却零观测量，站点表规模
+/// 此前从哪都读不到，「删没删」只能靠读代码断言。三张表都只由关机钩子清，`rip`
+/// 之后恒为 0 ⇒ 计数必须**排在 `rip` 之前**才有意义（这就是本函数被单列成一条
+/// 钩子、而不并进 [`check_baseline`] 的理由）。
+///
+/// **只读**：不加 envcall、不改任何对外调用号，也不改任何调度/等待语义——
+/// 量完即返回，由后续钩子照旧清表。
+///
+/// 判据（门侧断言的三项，按牙口从强到弱）：
+///   ① `orphan == 0`：队列空且无信标的站点**只**该由 `prune` 删——这是对
+///      `prune` 的直接断言（`wipe` 的墓碑带信标，不算孤儿，故不稀释它）；
+///   ② `waiters == 0` 且 `live == 0`：全部任务已退出 ⇒ 不该还有人挂在任何站点上
+///      （有 ⇒ 那张站点也在表里，直接与「全退出」矛盾）；
+///   ③ `sites`（总数）：**本轮实测非 0**（`wipe` 的墓碑：每次 hole 封印 / 任务回收
+///      都留下一个带信标的空站点，`prune` 依判据不许删）。它是记在账上的事实，
+///      作为「墓碑数」的观测量保留，不作为违规判据——见 §9.3 的实测数字。
+pub fn probe_messenger() {
+    let st = crate::work::room::messenger::probe();
+    crate::putln!(
+        "[audit] sites {} live {} tomb {} orphan {} waiters {}",
+        st.sites,
+        st.live,
+        st.tomb,
+        st.orphan,
+        st.waiters
+    );
+    crate::putln!("[audit] sites by kind: {}", st.kinds());
+    let (holders_n, husks_n) = crate::work::room::messenger::probe_bookkeeping();
+    crate::putln!("[audit] holders {holders_n} husks {husks_n}");
+}

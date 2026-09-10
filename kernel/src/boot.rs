@@ -165,10 +165,13 @@ fn register_runtime_hooks() {
     // ——依赖倒置在此一次性接上（此后 gate::snap() 即可取快照）。
     crate::work::unit::gate::install(crate::work::room::scheduler::core::snap);
 
-    // 关机序列：scheduler::rip（清任务队列 + info 槽 + messenger 簿记）→
-    //   mail 由 drop 链透传（DockMeta::drop / RingMeta::drop）→ block 池冲洗 → audit
+    // 关机序列：messenger 簿记规模（仅 audit：只读观测，**必须在 rip 之前**——
+    //   rip 清空站点表，之后再量恒为 0，那样的断言没有牙）→ scheduler::rip
+    //   （清任务队列 + info 槽 + messenger 簿记）→ mail 由 drop 链透传
+    //   （DockMeta::drop / RingMeta::drop）→ block 池冲洗 → audit 基线。
     #[cfg(feature = "audit")]
     const SHUTDOWN_HOOKS: &[fn()] = &[
+        crate::memory::allocator::fence::audit::probe_messenger,
         crate::work::room::scheduler::core::rip,
         crate::memory::allocator::block::flush,
         crate::memory::allocator::fence::audit::check_baseline,
