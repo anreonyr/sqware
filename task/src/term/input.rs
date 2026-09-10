@@ -1,20 +1,12 @@
-//! Terminal（term）— 宿主终端的 ANSI 渲壳 + 键盘输入的行编辑。
+//! 输入方向：VTE 键盘解码 + 行编辑缓冲 + 重绘。
 //!
-//! 分层：Terminal 是**唯一**与宿主 console 打交道的中间层。Shell / Lisp 等
-//! 交互程序都**经本模块**读写。输入侧成对：
-//!   - `read` ↔ `write`：读/写原始字节片段；
-//!   - `readline(prompt)` ↔ `writeline`：读/写一行。`readline` 收纳 prompt
-//!     （打提示符 + 行编辑 + 清行时**重绘含 prompt**，不再丢失）。
+//! 与 `term`（输出/ANSI）分开的理由：本方向**不需要**任何 ANSI/颜色知识
+//! （只发回车、擦行、光标左移三种控制序列），而输出方向不依赖本文件的任何类型。
+//! 依赖单向：`input` → `term`（用 `Terminal::write` 回显），反向不成立。
 //!
-//! 本模块持有：
-//!   1. 输出——ANSI 转义（清屏/光标/前景色/复位）+ 裸写/写行；
-//!   2. 输入——`read`（原始字节）地基 + `readline`（行编辑，VTE 解码）；
-//!   3. 行编辑——[`Line`]（`Vec<char>` 缓冲 + 光标 pos）。
-//!
-//! 关键：宿主终端（QEMU -nographic 所在的真实终端）**本身就是 ANSI 渲染器**，
-//! 无需自绘屏幕 buffer。我们只产转义、不解析渲染。
-//!
-//! no_std：无 std，仅 `anstyle_parse`（default-features = false）+ alloc（format!）。
+//! 数据流：`env::io::try_get` 逐字节 → [`Decoder`]（`anstyle_parse::Perform` 回调）
+//! → [`Key`] 事件 → [`Sink`]（[`LineSink`]）改 [`Line`] 缓冲并 [`redraw`]。
+//! 终止标志（回车/Ctrl-C/Ctrl-D）走独立 `core::cell::Cell`，避开 `&mut Line` 借用冲突。
 
 use alloc::format;
 use alloc::string::String;
@@ -22,143 +14,9 @@ use alloc::vec::Vec;
 
 use anstyle_parse::{Params, Parser, Perform};
 
-use crate::env::io::put;
+use super::Terminal;
 use crate::env::room::sleep;
 use core::time::Duration;
-
-// ── 输出（ANSI 转义生成）──
-
-/// 前景色（ANSI 三一色 30-37）。
-#[derive(Clone, Copy, Debug)]
-pub enum Color {
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    White,
-}
-
-impl Color {
-    fn code(self) -> u8 {
-        match self {
-            Color::Black => 30,
-            Color::Red => 31,
-            Color::Green => 32,
-            Color::Yellow => 33,
-            Color::Blue => 34,
-            Color::Magenta => 35,
-            Color::Cyan => 36,
-            Color::White => 37,
-        }
-    }
-}
-
-/// ANSI 渲壳 + 行编辑入口。纯输出方法无状态；`readline` 内部自建解码器/行缓冲。
-#[derive(Default, Clone, Copy)]
-pub struct Terminal;
-
-impl Terminal {
-    /// 裸写（不加 `\n`）：供提示符等「无需换行的片段」输出。与 [`read`] 对称。
-    pub fn write(&self, s: &str) {
-        put(s).ok();
-    }
-
-    /// 清屏 + 光标回 home（`ESC[2J` + `ESC[H`）。
-    pub fn clear(&self) {
-        self.write("\x1b[2J\x1b[H");
-    }
-
-    /// 光标定位到 1-based (row, col)（`ESC[row;colH`）。
-    pub fn set_cursor(&self, row: u16, col: u16) {
-        self.write(&format!("\x1b[{row};{col}H"));
-    }
-
-    /// 前景色（`ESC[3xm`）。
-    pub fn fg(&self, color: Color) {
-        self.write(&format!("\x1b[{}m", color.code()));
-    }
-
-    /// 复位 SGR（`ESC[0m`）。
-    pub fn reset(&self) {
-        self.write("\x1b[0m");
-    }
-
-    /// 隐藏/显示光标（`ESC[?25l` / `ESC[?25h`）。
-    pub fn hide_cursor(&self) {
-        self.write("\x1b[?25l");
-    }
-    pub fn show_cursor(&self) {
-        self.write("\x1b[?25h");
-    }
-
-    /// 写一行（自动追加 `\n`）。与 [`Terminal::readline`]（读一行、不含 `\n`）对称。
-    pub fn writeline(&self, s: &str) {
-        self.write(&format!("{s}\n"));
-    }
-
-    /// 读一个字节（阻塞）。与 [`Terminal::write`] 对称的输入地基。
-    pub fn read(&self) -> u8 {
-        loop {
-            if let Some(b) = crate::env::io::try_get() {
-                return b;
-            }
-            // 无输入避忙等（同 io::get 的 sleep 策略）。
-            let _ = sleep(Duration::from_millis(1));
-        }
-    }
-
-    /// 读一整行（带行编辑），**收纳 prompt**。
-    ///
-    /// 先打 `prompt`，行编辑过程中每次重绘都用 `\r\x1b[K + prompt + 输入串`
-    /// （清行/退格/光标移动时 prompt 不丢）。阻塞直到：
-    /// - 回车提交 → [`Readline::Line`]；
-    /// - Ctrl-C 清行 → [`Readline::Interrupt`]；
-    /// - Ctrl-D 退出 → [`Readline::Eof`]。
-    pub fn readline(&self, prompt: &str) -> Readline {
-        self.write(prompt);
-        let mut ed = Line::new();
-        let submitted = core::cell::Cell::new(false);
-        let interrupt = core::cell::Cell::new(false);
-        let eof = core::cell::Cell::new(false);
-        {
-            let mut dec = Decoder::new(LineSink {
-                term: self,
-                prompt,
-                line: &mut ed,
-                submitted: &submitted,
-                interrupt: &interrupt,
-                eof: &eof,
-            });
-            loop {
-                if let Some(b) = crate::env::io::try_get() {
-                    dec.advance(b);
-                } else {
-                    let _ = sleep(Duration::from_millis(1));
-                }
-                if submitted.get() {
-                    break;
-                }
-                if interrupt.get() {
-                    self.write("\r\n");
-                    break;
-                }
-                if eof.get() {
-                    break;
-                }
-            }
-        } // dec 在此 drop，释放对 `ed` 的 &mut 借用
-        if interrupt.get() {
-            return Readline::Interrupt;
-        }
-        if eof.get() {
-            return Readline::Eof;
-        }
-        Readline::Line(ed.text())
-    }
-}
 
 // ── 输入（VTE 解码 + 行编辑）──
 
@@ -401,4 +259,53 @@ impl<S: Sink> Perform for Decoder<S> {
     fn unhook(&mut self) {}
     fn osc_dispatch(&mut self, _p: &[&[u8]], _b: bool) {}
     fn esc_dispatch(&mut self, _i: &[u8], _ig: bool, _b: u8) {}
+}
+
+/// 读一整行（带行编辑），**收纳 prompt**。
+///
+/// 先打 `prompt`，行编辑过程中每次重绘都用 `\r\x1b[K + prompt + 输入串`
+/// （清行/退格/光标移动时 prompt 不丢）。阻塞直到：
+/// - 回车提交 → [`Readline::Line`]；
+/// - Ctrl-C 清行 → [`Readline::Interrupt`]；
+/// - Ctrl-D 退出 → [`Readline::Eof`]。
+pub fn readline(term: &Terminal, prompt: &str) -> Readline {
+    term.write(prompt);
+    let mut ed = Line::new();
+    let submitted = core::cell::Cell::new(false);
+    let interrupt = core::cell::Cell::new(false);
+    let eof = core::cell::Cell::new(false);
+    {
+        let mut dec = Decoder::new(LineSink {
+            term,
+            prompt,
+            line: &mut ed,
+            submitted: &submitted,
+            interrupt: &interrupt,
+            eof: &eof,
+        });
+        loop {
+            if let Some(b) = crate::env::io::try_get() {
+                dec.advance(b);
+            } else {
+                let _ = sleep(Duration::from_millis(1));
+            }
+            if submitted.get() {
+                break;
+            }
+            if interrupt.get() {
+                term.write("\r\n");
+                break;
+            }
+            if eof.get() {
+                break;
+            }
+        }
+    } // dec 在此 drop，释放对 `ed` 的 &mut 借用
+    if interrupt.get() {
+        return Readline::Interrupt;
+    }
+    if eof.get() {
+        return Readline::Eof;
+    }
+    Readline::Line(ed.text())
 }

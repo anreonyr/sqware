@@ -33,29 +33,6 @@ use crate::memory::manager::addr::PhysAddr;
 use super::{Class, IntegrityViolation, OwnerKind, report};
 use crate::memory::allocator::statistics;
 
-// ── 统计 ──────────────────────────────────────────────
-
-/// 核算快照（类别计数 + ledger 分布；诊断用）。
-pub struct IntegrityStats {
-    pub held_frames: usize,
-    pub kernel_blocks: usize,
-    pub user_blocks: usize,
-}
-
-pub fn stats() -> IntegrityStats {
-    let mut kernel_blocks = 0usize;
-    let mut user_blocks = 0usize;
-    super::ledger::LEDGER.for_each(|_, rec| match rec.kind {
-        OwnerKind::KernelHeap => kernel_blocks += 1,
-        OwnerKind::UserHeap => user_blocks += 1,
-    });
-    IntegrityStats {
-        held_frames: super::banker::BANKER.held_count(),
-        kernel_blocks,
-        user_blocks,
-    }
-}
-
 // ── 持久注册表 ────────────────────────────────────────
 
 /// boot 持久帧登记：显式 **add-only** 注册 `(pa, name)`——trap 栈块、spare 仓块、
@@ -315,8 +292,7 @@ pub fn audit() {
         }
     });
 
-    // 顺便把 statistics 视图一并打出来——baseline / delta / snapshot 三视图在
-    // 审计收尾时被消费,既是审计输出也是 statistics 模块的接线点。
+    // 收尾 delta：把与 boot 基线的差打印出来（statistics 的读侧出口）。
     if let Ok(d) = statistics::delta() {
         crate::putln!(
             "[audit] delta frame: total {:+} avail {:+} occ {:+}; block: occ {:+}; spare: total {:+} occ {:+} avail {:+}",
@@ -329,6 +305,4 @@ pub fn audit() {
             d.spare.available,
         );
     }
-    let _ = statistics::snapshot();
-    let _ = statistics::baseline();
 }

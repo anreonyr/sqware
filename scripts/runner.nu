@@ -107,7 +107,12 @@ def run_qemu [cfg: record] {
   # 调用者 CWD 的隐式依赖（-kernel/-bios 均为绝对路径，cd 无损）。
   cd $cfg.trapdir
   rm --force sqware-diagnose.jsonl   # 干净基线（guest create 本会 truncate，双保险）
+  # 通过的一次不留档：只有 panic 才 mv 成 console-<seed>-<ts>.log（见 archive）。
+  # 故按通配清掉全部上一轮捕获（seed 随机 ⇒ 只清本 seed 会留下陈旧文件）。
   let cap = $"sqware-($cfg.seed).cap"
+  # 经 each 逐项删：glob 无匹配时展开为空 ⇒ 直接 `rm ...(...)` 会报
+  # "missing parameter"（nu 的 rm 不接受空参数表）。
+  glob $"($cfg.trapdir)/sqware-*.cap" | each { |f| rm --force $f }
   # 勿包进 let —— let 会把外部输出吞掉，终端看不到（"我看不到输出"的根因）。
   if ($cfg.timeout | is-empty) {
       # ^qemu-system-riscv64 ...$cfg.qemu_args | tee { save --force $cap }

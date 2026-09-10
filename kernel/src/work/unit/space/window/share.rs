@@ -9,8 +9,8 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
-use super::super::core::{Salvage, Span};
 use super::super::map::Pending;
+use super::super::salvage::{Salvage, Span};
 use super::super::{Seg, Space};
 
 /// 共享懒窗口（零状态策略）。

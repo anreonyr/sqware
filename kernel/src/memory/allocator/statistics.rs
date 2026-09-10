@@ -4,23 +4,23 @@
 //! pages / used 等 read-only 统计字段（无算法依赖）；record 钩子在持分配器
 //! 锁期间同步增减本模块的 atomic，作为唯一权威。
 //!
-//! 视图层 [`Snapshot`] / [`FrameView`] / [`BlockView`] / [`SpareView`] /
-//! [`Delta`] / [`Baseline`] 由本模块 init 时分配驻留内存，pub fn 返回 `&'static`
-//! 引用，调用方零拷贝。
+//! 视图层 [`FrameView`] / [`BlockView`] / [`SpareView`] / [`Delta`] / [`Baseline`]
+//! 由本模块 init 时分配驻留内存，pub fn 返回 `&'static` 引用，调用方零拷贝。
 //!
 //! 命名贯穿：统计内部字段路径与视图字段名同根。
-
-// 大量 pub API 在 audit 关闭 + release 构建下未被调用（健康检查 / 审计 / 关机报表
-// 均 audit-gated）；模块顶层 allow 压制死码报警——这些 API 是公开契约,任何 caller
-// 接入即重新活跃。
-#![allow(dead_code)]
+//!
+//! 可见性说明：读侧（view_* / Delta / Baseline）的消费者是 audit 与 debug 自检，
+//! 故默认 release 构建下未被调用属**预期**——需要时由消费方接入即活跃，
+//! 不使用模块级 blanket allow 压制。
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::boxed::Box;
 
-use crate::lock::{OnceLock, RwLock};
+use crate::lock::OnceLock;
+#[cfg(feature = "audit")]
+use crate::lock::RwLock;
 
 use super::fence::Class;
 use super::spare;
@@ -62,26 +62,29 @@ pub struct SpareView {
     pub dump_budget: usize,
 }
 
+#[cfg(feature = "audit")]
 #[derive(Clone, Copy)]
 pub struct BaselineFrame {
     pub total: usize,
     pub occupied: usize,
 }
 
+#[cfg(feature = "audit")]
 #[derive(Clone, Copy)]
 pub struct BaselineBlock {
     pub occupied: usize,
 }
 
+#[cfg(feature = "audit")]
 #[derive(Clone, Copy)]
 pub struct BaselineSpare {
     pub total: usize,
     pub occupied: usize,
 }
 
+#[cfg(feature = "audit")]
 #[derive(Clone, Copy)]
 pub struct Baseline {
-    pub captured_at: usize,
     pub frame: BaselineFrame,
     pub block: BaselineBlock,
     pub spare: BaselineSpare,
@@ -151,11 +154,11 @@ struct Stats {
     frame: FrameStats,
     block: BlockStats,
     spare: SpareStats,
+    #[cfg(feature = "audit")]
     baseline_lock: RwLock<Baseline>,
     frame_view_cell: UnsafeCell<FrameView>,
     block_view_cell: UnsafeCell<BlockView>,
     spare_view_cell: UnsafeCell<SpareView>,
-    snapshot_cell: UnsafeCell<Snapshot>,
 }
 
 // SAFETY: Stats 内的 UnsafeCell 访问均通过 `unsafe { &mut *ptr.get() }` 单线程
@@ -196,8 +199,8 @@ const ZERO_SPARE_VIEW: SpareView = SpareView {
     dump_budget: 0,
 };
 
+#[cfg(feature = "audit")]
 const ZERO_BASELINE: Baseline = Baseline {
-    captured_at: 0,
     frame: BaselineFrame {
         total: 0,
         occupied: 0,
@@ -232,25 +235,22 @@ pub fn init() -> Result<(), Error> {
             occupied: AtomicUsize::new(0),
             available: AtomicUsize::new(0),
         },
+        #[cfg(feature = "audit")]
         baseline_lock: RwLock::new(ZERO_BASELINE),
         frame_view_cell: UnsafeCell::new(ZERO_FRAME_VIEW),
         block_view_cell: UnsafeCell::new(ZERO_BLOCK_VIEW),
         spare_view_cell: UnsafeCell::new(ZERO_SPARE_VIEW),
-        snapshot_cell: UnsafeCell::new(Snapshot {
-            frame: ZERO_FRAME_VIEW,
-            block: ZERO_BLOCK_VIEW,
-            spare: ZERO_SPARE_VIEW,
-        }),
     }));
     STATS.set(s).map_err(|_| Error::AlreadyInitialized)?;
+    #[cfg(feature = "audit")]
     rebaseline()?;
     Ok(())
 }
 
+#[cfg(feature = "audit")]
 pub fn rebaseline() -> Result<(), Error> {
     let s = stats();
     let cur = Baseline {
-        captured_at: 0,
         frame: BaselineFrame {
             total: s.frame.total.load(Ordering::Relaxed),
             occupied: s.frame.occupied.load(Ordering::Relaxed),
@@ -281,6 +281,7 @@ pub(crate) fn record_frame_give(class: Class) {
     s.frame.classes[class as usize].fetch_sub(1, Ordering::Relaxed);
 }
 
+#[cfg(feature = "audit")]
 pub(crate) fn record_frame_relabel(from: Class, to: Class) {
     let s = stats();
     s.frame.classes[from as usize].fetch_sub(1, Ordering::Relaxed);
@@ -315,6 +316,7 @@ pub(crate) fn record_block_give(pool_id: usize) {
     }
 }
 
+#[cfg(feature = "audit")]
 pub(crate) fn record_block_relabel(from: Class, to: Class) {
     let s = stats();
     s.block.classes[from as usize].fetch_sub(1, Ordering::Relaxed);
@@ -323,6 +325,7 @@ pub(crate) fn record_block_relabel(from: Class, to: Class) {
 
 /// fence::on_alloc 用：块按 class +1（仅维护 classes 数组，不动 block.occupied——
 /// block.occupied 由 prime/drain 路径维护,反映块池借出页数,与类别计数维度不同）。
+#[cfg(feature = "audit")]
 pub(crate) fn record_block_take_for_class(class: Class) {
     if let Some(s) = STATS.get() {
         s.block.classes[class as usize].fetch_add(1, Ordering::Relaxed);
@@ -330,6 +333,7 @@ pub(crate) fn record_block_take_for_class(class: Class) {
 }
 
 /// fence::on_free 用：块按 class -1。
+#[cfg(feature = "audit")]
 pub(crate) fn record_block_give_for_class(class: Class) {
     if let Some(s) = STATS.get() {
         s.block.classes[class as usize].fetch_sub(1, Ordering::Relaxed);
@@ -399,27 +403,15 @@ pub fn view_spare() -> &'static SpareView {
     v
 }
 
-pub fn snapshot() -> &'static Snapshot {
-    let s = stats();
-    let snap = unsafe { &mut *s.snapshot_cell.get() };
-    snap.frame = *view_frame();
-    snap.block = *view_block();
-    snap.spare = *view_spare();
-    snap
-}
-
-pub fn baseline() -> Result<Baseline, Error> {
-    // 返回 owned Baseline(Copy)——调用方拿到的快照与 RwLock 解耦,并发安全。
-    // 锁持有期只在拷贝内,函数返回即释放。
-    let g = stats().baseline_lock.read();
-    Ok(*g)
-}
-
+#[cfg(feature = "audit")]
 pub fn delta() -> Result<Delta, Error> {
     let s = stats();
     let bl = *s.baseline_lock.read();
-    let cur = snapshot();
-    let bl_avail = bl.spare.total - bl.spare.occupied;
+    let cur = Snapshot {
+        frame: *view_frame(),
+        block: *view_block(),
+        spare: *view_spare(),
+    };
     Ok(Delta {
         frame: FrameDiff {
             total: cur.frame.total as isize - bl.frame.total as isize,
@@ -433,7 +425,8 @@ pub fn delta() -> Result<Delta, Error> {
         spare: SpareDiff {
             total: cur.spare.total as isize - bl.spare.total as isize,
             occupied: cur.spare.occupied as isize - bl.spare.occupied as isize,
-            available: cur.spare.available as isize - bl_avail as isize,
+            available: cur.spare.available as isize
+                - (bl.spare.total as isize - bl.spare.occupied as isize),
         },
     })
 }

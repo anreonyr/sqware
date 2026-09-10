@@ -18,6 +18,8 @@
 为长期回归。
 */
 
+#![cfg(debug_assertions)]
+
 use core::alloc::Layout;
 use core::ptr::NonNull;
 

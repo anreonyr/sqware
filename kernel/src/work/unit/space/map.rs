@@ -23,7 +23,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::{Frame, FrameState};
 
-use super::core::Salvage;
+use super::salvage::Salvage;
 
 /// 未物化页的行为（Map 级）— 与帧所有权正交。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

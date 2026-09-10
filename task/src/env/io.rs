@@ -1,27 +1,11 @@
 //! IO 域：`IOCall::*` 转发。
 
-use core::time::Duration;
-
 use env::{EnvResult, IOCall, IOCallRet, VirtAddr};
 
-use crate::env::room;
-
-// 硬不变量：put / try_put 共用 IOCall::Put（best-effort 直写），差异在错误传播；
-//             IOCall::Get 已非阻塞，try_get 直接复用。
+// 硬不变量：`IOCall::Get` 非阻塞，故 `try_get` 是唯一读入口（调用方自担轮询/
+//             避忙等策略——`term::readline` 即在其上加重绘与 1ms 让出）。
 
 pub fn put(s: &str) -> EnvResult<()> {
-    let r = IOCall::Put {
-        len: s.len(),
-        buf: VirtAddr::new(s.as_ptr() as usize),
-    }
-    .call()?;
-    match r {
-        IOCallRet::Put(()) => Ok(()),
-        _ => unreachable!(),
-    }
-}
-
-pub fn try_put(s: &str) -> EnvResult<()> {
     let r = IOCall::Put {
         len: s.len(),
         buf: VirtAddr::new(s.as_ptr() as usize),
@@ -38,14 +22,5 @@ pub fn try_get() -> Option<u8> {
     match r {
         IOCallRet::Get(b) => Some(b),
         _ => unreachable!(),
-    }
-}
-
-pub fn get() -> u8 {
-    loop {
-        if let Some(b) = try_get() {
-            return b;
-        }
-        let _ = room::sleep(Duration::from_millis(1));
     }
 }

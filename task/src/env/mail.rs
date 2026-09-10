@@ -12,8 +12,6 @@
 
 use env::{EnvResult, HoleDir, MailCall, MailCallRet, PieToken, TaskId, VirtAddr};
 
-use crate::env::room;
-
 /// hole 单消息字节上限（与内核侧 `HOLE_MTU_MAX` 一致）。调用方 unseal 时选
 /// mtu ∈ [1, HOLE_MTU_MAX]；推送时实际字节数由 `push` 的 `len` 决定。
 pub const HOLE_MTU_MAX: usize = 4096;

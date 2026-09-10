@@ -145,23 +145,6 @@ fn frame_class_slot(pa: usize) -> usize {
     (pa - base) / crate::memory::PAGE_SIZE
 }
 
-/// 帧类别查（审计/诊断用）：未装配返回 `u8::MAX`（哨兵值）；越界同样。
-pub(crate) fn frame_class_of(pa: usize) -> u8 {
-    let Some(table) = FRAME_CLASS.get() else {
-        return u8::MAX;
-    };
-    let base = FRAME_CLASS_BASE.load(Ordering::Relaxed);
-    if pa < base {
-        return u8::MAX;
-    }
-    let idx = (pa - base) / crate::memory::PAGE_SIZE;
-    let bits = table.len();
-    if idx >= bits {
-        return u8::MAX;
-    }
-    table[idx].load(Ordering::Relaxed)
-}
-
 /// 标注（tag）：按地址判别后把类别记入归属账——块地址（ledger 有账）→ relabel
 /// （计数迁移）；帧地址（永不入账）→ FRAME_CLASS 表 + 计数。判别由「块必
 /// mark、帧永不 mark」保证确定。帧侧 Persistent 标注写 0（表全零即默认语义），
@@ -454,9 +437,9 @@ fn text_end() -> usize {
 /// 分配点回溯（诊断 site）：从当前 fp 沿标准 RV64 帧链上溯 depth 帧；链在 core
 /// 预编译库处断（无 FP，与 diagnose::scene 回溯同款问题）后，从断点帧顶向上扫描
 /// 收集候选 ra（4 对齐 + 镜像 .text + 非重复；连续 SCAN_GAP 字无候选 = 已越
-/// 活跃帧区，停）。返回 (site, site2) = 扫描候选第 3、4 个（第 1、2 个 ≈ core
-/// 帧保存 ra，无区分度）：候选序列 ≈ [core 帧 ra]×2、[装箱/容器帧 ra]、[业务
-/// 帧 ra]、…——两条一并打印，离线 addr2line 择真。
+/// 活跃帧区，停）。返回 site = 扫描候选第 5 个（前 4 个 ≈ core/分配器帧，
+/// 无区分度）：候选序列 ≈ [fmt::num、block、block、hybrid、业务帧…]，取业务帧
+/// 返回地址供离线 addr2line。
 ///
 /// 守卫轻量（热路径）：fp 单调增（栈向下生长，必终止）+ 同栈窗（链帧必在本栈，
 /// 跨度 < 1 MiB——任务栈最大 256 KiB）+ 帧顶 16 对齐 + ra 落在 .text。读的
@@ -467,7 +450,7 @@ fn text_end() -> usize {
 /// （未映射），扫描越界须停而非缺页 panic。SCAN_WINDOW 内最多两页，按页
 /// 缓存翻译结果（每页一次 walk）。
 #[cfg(feature = "audit")]
-fn alloc_site(depth: usize) -> (usize, usize) {
+fn alloc_site(depth: usize) -> usize {
     let mut fp: usize;
     // SAFETY: 读 s0 无副作用。
     unsafe { core::arch::asm!("mv {0}, s0", out(reg) fp) };
@@ -519,13 +502,9 @@ fn alloc_site(depth: usize) -> (usize, usize) {
         }
         a += 8;
     }
-    // site = 候选第 5、6 个（跳过 4 层 core/分配器帧——实证候选序 ≈
+    // site = 候选第 5 个（跳过 4 层 core/分配器帧——实证候选序 ≈
     // [fmt::num, block:345, block:632, hybrid, 业务帧…]）；不足则回退链尾 ra。
-    if n >= 5 {
-        (cands[4], if n >= 6 { cands[5] } else { 0 })
-    } else {
-        (ra, 0)
-    }
+    if n >= 5 { cands[4] } else { ra }
 }
 
 /// realloc 窗口（per-hart）：portal::grow 显式 begin/end 标记。grow 默认路径 =
@@ -538,7 +517,6 @@ fn alloc_site(depth: usize) -> (usize, usize) {
 /// 分配——RALLOC_NEW 被覆盖即错配继承（旧基线 rehome 同源教训：抢占污染配对
 /// 已实证）。关中断后窗口内分配必属本 grow。
 static IN_REALLOC: [AtomicBool; 16] = [const { AtomicBool::new(false) }; 16];
-static RALLOC_OLD: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 static RALLOC_NEW: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
 /// 待继承类别（begin 从 ledger 读出旧块类别；窗口内首笔新块 mark 时采用）。
 static RALLOC_CLASS: [AtomicU8; 16] = [const { AtomicU8::new(0) }; 16];
@@ -561,7 +539,6 @@ pub fn begin_realloc(old: usize) {
             unsafe { riscv::register::sstatus::clear_sie() };
             RALLOC_SIE[hart].store(sie, Ordering::Relaxed);
             IN_REALLOC[hart].store(true, Ordering::Relaxed);
-            RALLOC_OLD[hart].store(old, Ordering::Relaxed);
             RALLOC_NEW[hart].store(0, Ordering::Relaxed);
             RALLOC_CLASS[hart].store(class as u8, Ordering::Relaxed);
         }
@@ -596,7 +573,7 @@ pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
     {
         // site 须先于任何函数调用捕获（jalr 覆写 ra——已实证：ra 读数曾是
         // poison 返回点，全部块 site 同址失真）。
-        let (site, site2) = alloc_site(4);
+        let site = alloc_site(4);
         // realloc 窗口：记首笔新块（grow 内第一笔 alloc；窗口关 SIE，后续分配
         // 必属同 grow 链，首笔即 allocate 新块）并继承旧块类别（begin_realloc
         // 已从 ledger 读出存入 RALLOC_CLASS）。
@@ -609,7 +586,7 @@ pub fn on_alloc(addr: usize, size: usize, kind: OwnerKind) {
         if let OwnerKind::KernelHeap = kind {
             poison(addr, size);
         }
-        ledger::LEDGER.mark(addr, size, site, site2, kind, Class::Persistent);
+        ledger::LEDGER.mark(addr, size, site, kind, Class::Persistent);
         crate::memory::allocator::statistics::record_block_take_for_class(Class::Persistent);
         if first_new {
             let inherited = Class::from_u8(RALLOC_CLASS[hart].load(Ordering::Relaxed));

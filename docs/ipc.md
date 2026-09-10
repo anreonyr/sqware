@@ -566,6 +566,19 @@ debug 与 release 均通过。
 
 ## 13 · 多服务发现：dispatcher Task + Arc 服务注册表
 
+> **⚠ 本节的 dispatcher 形态已作废（`kernel/src/service/*` 已在 a92b211 删除）**，
+> 取代它的是**服务目录协议**（[`docs/dispatch.md`](dispatch.md)）——本节保留为
+> **设计沿革记录**，请勿据此实现。
+>
+> **仍然有效、且被代码反向引用的只有 §13.10**（`opt-level=2` 的 mask 错联与
+> 闭包/裸 asm ABI 两处实测修复）：`messenger.rs:55`、`hole.rs:152/157`、
+> `env/ecall.rs:65` 四处在注释里指向它。故本节**只划掉 §13.1–13.9 / 13.11 / 13.12**，
+> 不整节删除。
+>
+> §13.12 的文件清单是当时的执行计划，其中 `kernel/src/service/{mod,dispatch}.rs`、
+> `task/src/env/service.rs`、`task/src/bin/shell.rs` 等路径**均已不存在或改名**，
+> 亦不再作为现行清单。
+
 > §12 单服务（echo）走通后扩展。**dispatcher 是真正的服务发现机制**——服务数从 1
 > 扩到 N，shell 按服务名 lookup；dispatcher Task 走"DHCP 服务器"路径（已有结构复用）。
 
@@ -948,7 +961,7 @@ req echo -> "ifmmp.tfswjdf..."  ← hello-service 字节 +1
 
 | §13 | 现在 |
 |---|---|
-| `ServiceCall::Connect`（class 7，`service` 参数被忽略） | **删除**——入口门闩由内核在 boot 期放进首个用户任务权限表 |
+| `ServiceCall::Connect`（class 7，`service` 参数被忽略） | **删除**（class 7 留空号不复用）——入口门闩改由**服务自开**：子域 `UnsealHole` 出自己的入口孔，父域经启动期握手配给，客户端认服务靠 `MailCall::Owned(门闩).owner`。详见 [`docs/supervisor.md`](supervisor.md) §8 与 [`docs/root.md`](root.md) §9 |
 | dispatcher 持 `(name, req_id, Weak, rep_id, Weak)` | 目录持实例门闩的 token（`Binding { name, publisher, entry }`） |
 | 直接为 caller 建 pie 塞进 `caller.pies` | `gate::accord` 转授子集（与普通 task 授权同路） |
 | 单 slot rep（多 caller 串台） | 调用方自带回信通道 |

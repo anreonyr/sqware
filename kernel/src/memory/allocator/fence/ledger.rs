@@ -22,16 +22,11 @@ use super::{CANARY_MAGIC, CANARY_MIN_SLACK, Class, IntegrityViolation, OwnerKind
 
 /// 一条活块登记。
 pub struct Record {
-    /// 块尺寸类（2 的幂字节；canary slack 判定）。
-    size_class: usize,
     /// 登记时请求字节数（canary 位置 = addr + size；unmark 校 SizeMismatch）。
     /// pub(crate)：audit 关机差集报告引用（泄漏块详情转储）。
     pub(crate) size: usize,
     /// 分配点返回地址（alloc-site，violation 报告转储）。
     pub(crate) site: usize,
-    /// 分配点第二候选（回溯扫描候选第 4 个——业务帧；与 site 一并转储，离线
-    /// addr2line 择真。0 = 候选不足）。
-    pub(crate) site2: usize,
     /// slack canary（Some = 在 addr+size 处写入 8 字节；UserHeap 恒 None）。
     canary: Option<u64>,
     /// 登记类别。
@@ -63,15 +58,7 @@ impl Ledger {
     /// 活块入账。前置：已 init、容量充足、地址未登记（DuplicateMark 现行）。
     /// KernelHeap 且 slack ≥ 8 时顺带写 slack canary。**零分配**。
     /// `class` = 生命周期类别（mark 时定型；unmark 读出减类别计数）。
-    pub fn mark(
-        &self,
-        addr: usize,
-        size: usize,
-        site: usize,
-        site2: usize,
-        kind: OwnerKind,
-        class: Class,
-    ) {
+    pub fn mark(&self, addr: usize, size: usize, site: usize, kind: OwnerKind, class: Class) {
         let mut g = self.inner.lock();
         let Some((map, soft)) = g.as_mut() else {
             report(
@@ -108,35 +95,13 @@ impl Ledger {
         map.insert(
             addr,
             Record {
-                size_class,
                 size,
                 site,
-                site2,
                 canary,
                 kind,
                 class,
             },
         );
-    }
-
-    /// 任意地址 drop-in 校验：无账 → report(UnregisteredFree)；有账 → canary 核对。
-    pub fn verify(&self, addr: usize) {
-        let g = self.inner.lock();
-        let Some((map, _)) = g.as_ref() else {
-            report(
-                IntegrityViolation::NotInitialized,
-                addr,
-                format_args!("ledger verify before init"),
-            );
-        };
-        let Some(rec) = map.get(&addr) else {
-            report(
-                IntegrityViolation::UnregisteredFree,
-                addr,
-                format_args!("verify: no record"),
-            );
-        };
-        check_canary(addr, rec);
     }
 
     /// 唯一注销入口：先证（存在 + canary 完好 + 尺寸一致）再移除；移除后该地址
@@ -269,15 +234,6 @@ impl Ledger {
             }
         }
         bad
-    }
-
-    /// 账目存活查询（不报违例——realloc 搬家配对用：新块先 mark，旧块 free 时
-    /// 验证候选仍在账）。
-    pub fn is_live(&self, addr: usize) -> bool {
-        let g = self.inner.lock();
-        g.as_ref()
-            .map(|(m, _)| m.contains_key(&addr))
-            .unwrap_or(false)
     }
 
     pub fn len(&self) -> usize {

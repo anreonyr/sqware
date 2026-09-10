@@ -6,6 +6,8 @@
 //     再全部归还——余量须还原到演练前（分配/释放/合并闭环无泄漏）。
 // 断言用 `expect!`（health 专用宏）：失败统一报告 + fail-fast。
 
+#![cfg(debug_assertions)]
+
 use core::alloc::{Allocator, Layout};
 use core::ptr::NonNull;
 

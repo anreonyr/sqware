@@ -89,6 +89,10 @@ pub fn init() -> InitResult<()> {
     statistics::record_spare_total(spare_total);
     statistics::record_spare_available(spare_total);
 
+    // 基线在此刻捕获（三分配器 init 之后、任何分配之前）——`delta` 的参考点。
+    // audit 专属：默认构建没有 `delta` 消费者，编译掉以免留下「调了但没人读」的调用。
+    #[cfg(feature = "audit")]
     statistics::rebaseline().expect("statistics rebaseline: not initialized");
+
     Ok(())
 }

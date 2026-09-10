@@ -10,8 +10,8 @@ use crate::layout::TASK_STACK_GUARD;
 use crate::memory::manager::MapError;
 use crate::memory::manager::entry::PteFlags;
 
-use super::super::core::{Salvage, Span};
 use super::super::map::Pending;
+use super::super::salvage::{Salvage, Span};
 use super::super::{Seg, Space};
 
 /// 栈窗口（零状态策略）。

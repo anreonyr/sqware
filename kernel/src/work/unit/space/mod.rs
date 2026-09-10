@@ -18,14 +18,16 @@
 //   Map     — VA→PA 原子单元（区间 + 访问属性 + 物化态 + 帧所有权）
 //   SpaceInner 持 root 页表树 + 两段 + 唯一 maps 表；窗口方法操作它。
 
+mod adapter;
 mod core;
 mod map;
+mod salvage;
 mod seg;
 pub(crate) mod window;
 
-pub(crate) use core::Span;
-pub use core::{Space, SpaceBuilder};
+pub use adapter::{Space, SpaceBuilder};
 pub(crate) use map::{Pending, PendingState};
+pub(crate) use salvage::Span;
 pub(crate) use seg::Seg;
 
 /// 空间种类 — 页表被哪个特权级使用（单一事实源）。
