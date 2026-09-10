@@ -93,9 +93,14 @@ pub extern "C" fn park(_duration: Duration) {
     );
 }
 
-/// 内核任务事件等待：存帧 → `sched_wait_forever`（自取本任务的存活单元）→ 切走；
-/// 对方 `wake(key)` 解锁。`key` 经裸 usize ABI（与 wait 同族）——**ABI 未动**：
-/// 存活单元不是参数，它在 `sched_wait_forever` 内自取（同 `park` 的形状）。
+/// 内核任务事件等待：存帧 → `sched_wait_forever` → 切走；对方 `wake(key)` 解锁。
+///
+/// **已失效（死岛，处置见 `docs/audit-flying-wires.md` §D3）**：本 asm 与它的 callee
+/// 契约**早已不符**——A2 之后 callee 是 `utask::wait_forever(WakeKey, &Weak<Life>)`
+/// （`WakeKey` 是带载荷的枚举、要 a0–a2），而本 asm 只从 s0 递出 a0，且来源是裸
+/// `usize`；旧的「存活单元不是参数，在 callee 内自取」是 A2 之前的形状，随签名一起
+/// 漏改。树内零调用者，故不炸。要修它得先定「裸 usize → `WakeKey` 的哪一支」的编码
+/// （现无定义），随死岛的存废一起做——**不在此处假装它能用**。
 #[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 #[allow(improper_ctypes_definitions)]
 #[unsafe(naked)]

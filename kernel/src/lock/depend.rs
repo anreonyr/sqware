@@ -41,7 +41,9 @@ pub enum Level {
     Scheduler = 1,
     /// Space.inner (RelLock) — 含段表（Segment 并入 Space 锁，无独立 Alloc 层级）
     Space = 2,
-    /// Team.tasks / TIMER_DEADLINES / blocked / reaped
+    /// 全部「任务/资源簿记表」同级（互相**绝不嵌套**）：`Team.{tasks,heir,held}` /
+    /// `TIMER_HEAP.inner` / `scheduler.by_id` / `Hole`·`Pole` 的 state+slot /
+    /// messenger 四表（站点分片、holders、husks、doomed）。
     L3 = 4,
     /// ASID_ALLOCATOR
     Asid = 5,

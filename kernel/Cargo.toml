@@ -6,8 +6,11 @@ edition.workspace = true
 [features]
 default = []
 # diagnose 结构化记录经 semihosting fs 导出宿主文件（JSON Lines，自描述长度；文件
-# sqware-diagnose.jsonl 落在 qemu CWD，runner 归档）。**默认开启**（default 引入）——
-# 要关则把 default 里的 semihosting 拿掉。依赖 QEMU -semihosting（runner 恒加）。
+# sqware-diagnose.jsonl 落在 qemu CWD，runner 归档）。**非默认**（`default = []`，
+# 要开须显式 `--features semihosting`）——旧注写「默认开启（default 引入）」与
+# manifest 相反。另注意 qemu 侧的 `-semihosting` 只在 `QEMU_SEMI=1` / `QEMU_FEATURES`
+# 含 semihosting 时才加（`scripts/boot.nu`，**只管 QEMU 侧**），而 `scripts/examine.nu`
+# 的两档都不带头文件 feature ⇒ 门跑过的产物没有结构化导出。
 semihosting = []
 # 审计框架（fence 的 banker/ledger/audit + 关机类别记账检查）——**cargo feature 门控**：
 # **非默认**（不在 default 里）；需显式 `--features audit` 开启。审计不依赖

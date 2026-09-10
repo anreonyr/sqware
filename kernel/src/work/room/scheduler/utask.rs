@@ -57,6 +57,10 @@ pub fn join(task: TaskLife, dur: Duration) -> Result<Handoff<bool>, GateError> {
 
 /// ktask 事件等待入口（asm 包装）：永久等一个键（`Duration::MAX`，无超时），
 /// 只能被 `wake(key)` 解锁。同 [`wait`] 但用于内核任务上下文。
+///
+/// 注：包它的 asm（`ktask::wait_forever`）当前与本签名不符（只递 a0，且来源是裸
+/// `usize` 而非 `WakeKey`），该路径树内零调用者——失效说明与处置见
+/// `docs/audit-flying-wires.md` §D3。
 #[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 pub fn wait_forever(key: WakeKey, life: &Weak<Life>) -> usize {
     match messenger::wait(key, life, Duration::MAX) {

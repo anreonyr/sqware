@@ -5,22 +5,26 @@
 // 预算立即轮转——抢占与让出各自独立。
 //
 // 结构：Scheduler = inner(SpinLock) + info(身份槽，无锁) + starved_len(AtomicUsize
-// 锁外镜像)。info 槽 = `ident()` 的事实源：带标签指针（bit0 = 载荷类型：TaskIdent
-// 在跑 / LastIdent 末次记录），写 = 本核 seat/shed 的 swap（AcqRel），读 = 本核
-// trap/panic——同 hart 单写单读 + 载荷不可变 ⇒ 无锁（跨核读是 UB，字段私有且只经
-// ident() 触及）。starved 字段私有，唯一修改
-// 路径是 push/pull（方法内持锁 +
-// 从 starved.len() 派生计数）；steal 锁外先读 starved_len 跳过空队列（不做 RMW），
-// 再 try_lock。
+// 锁外镜像) + by_id(索引，L3)。info 槽 = `ident()` 的事实源：带标签指针（bit0 = 载荷
+// 类型：TaskIdent 在跑 / LastIdent 末次记录），写 = 本核 seat/shed 的 swap（AcqRel），
+// 读 = 本核 trap/panic——同 hart 单写单读 + 载荷不可变 ⇒ 无锁（跨核读是 UB，字段私有
+// 且只经 ident() 触及）。
+//
+// 就绪队列的改动**只有四个入口**：`starved_push` / `starved_pop` / `starved_remove` /
+// `starved_clear`——计数镜像在方法体内与队列操作同一处派生，`inner.starved` 对 core.rs
+// 之外私有、另留 `starved_is_empty` 一个持锁读法（旧版是 6 处手工 set_len，`rip` 的
+// clear 漏过一次）。steal 锁外先读 starved_len 跳过空队列（不做 RMW），再 try_lock。
 //
 // 状态互斥：无原子字段。所有状态变更都经 Task::exclusive（唯一 Arc 所有权
 // + &mut，Arc::get_mut 的 weak≥1 变体）——锁内 take/pull 出任务 → 取 &mut；
 // 锁 + 所有权保证互斥，编译器强制。
 //
-// 锁纪律：inner = level 1 每核一把；Team.tasks(3) 与 Space.inner(2) 禁止嵌套
-// ——锁内只做纯 Vec 操作，绝不调 space 方法。task "离开 running" 的过渡（park /
-// wait / reap）借 disown_and_install_next 跨边界原语交给 messenger 处理，本核
-// 只负责 settled 槽位（Live=next 或 Last）；唤醒（redeem / wipe）也在 messenger。
+// 锁纪律：inner = Level::Scheduler(1)，每核一把；by_id = Level::L3(**4**——3 是删掉的
+// 旧槽位，名字里的 3 不是数值，见 `lock/depend.rs`)。Team.tasks(L3=4) 与
+// Space.inner(Space=2) 禁止嵌套——锁内只做纯 Vec 操作，绝不调 space 方法。task
+// "离开 running" 的过渡（park / wait / reap）借 disown_and_install_next 跨边界原语交给
+// messenger 处理，本核只负责 settled 槽位（Live=next 或 Last）；唤醒（redeem / wipe）
+// 也在 messenger。
 //
 // 装槽（seat）：唯一装 running 的方法，自取锁，空槽由 Option::replace 返回
 // 旧值断言（绝不覆盖在跑任务）。装槽写 info 身份槽（TaskIdent 载荷）；降级
@@ -87,6 +91,8 @@ pub(crate) struct Scheduler {
     /// 双写点无读撕裂窗口）。
     info: AtomicPtr<()>,
     /// 锁外：starved 长度镜像（steal 预检；与 inner 同结构体共生，不会分家）。
+    /// **派生点唯一**：`starved_push` / `starved_pop` / `starved_remove` /
+    /// `starved_clear` 四个方法体内。
     starved_len: AtomicUsize,
     /// 锁外：steal 起点游标（每次 steal 调用 fetch_add(1) % hart_count 拿起点）。
     /// 多核同时醒来时用本地游标派生不同起点——避免全从 hart 0 起步造成的 cache
@@ -101,7 +107,16 @@ pub(crate) struct Scheduler {
 /// 锁内核心：running（运行中，不在队列）+ starved（就绪队列，FIFO）。
 pub(super) struct SchedulerInner {
     pub(super) running: Option<Arc<Task>>,
-    pub(super) starved: VecDeque<Arc<Task>>,
+    /// 就绪队列。**改动只经 [`Scheduler`] 的四个 `starved_*` 方法**（计数镜像在同一处
+    /// 派生），故对 core.rs 之外私有；跨文件只留 `starved_is_empty` 一个持锁读法。
+    starved: VecDeque<Arc<Task>>,
+}
+
+impl SchedulerInner {
+    /// 本核就绪队列是否空（持锁读；轮转 / 唯一任务判断用）。
+    pub(super) fn starved_is_empty(&self) -> bool {
+        self.starved.is_empty()
+    }
 }
 
 impl Scheduler {
@@ -134,6 +149,33 @@ impl Scheduler {
             .store(inner.starved.len(), Ordering::Relaxed);
     }
 
+    // ── 就绪队列的四个改点：镜像在方法体内派生，队列与计数不可能分家 ──
+
+    /// 队尾入队 + 派生计数。
+    fn starved_push(&self, i: &mut SchedulerInner, task: Arc<Task>) {
+        i.starved.push_back(task);
+        self.set_len(i);
+    }
+
+    /// 队首出队 + 派生计数；空队列 → None。
+    fn starved_pop(&self, i: &mut SchedulerInner) -> Option<Arc<Task>> {
+        let t = i.starved.pop_front();
+        self.set_len(i);
+        t
+    }
+
+    /// 摘除指定下标 + 派生计数（kill 的 Starved 分支）。
+    fn starved_remove(&self, i: &mut SchedulerInner, pos: usize) {
+        i.starved.remove(pos);
+        self.set_len(i);
+    }
+
+    /// 清空 + 派生计数（关机）。
+    fn starved_clear(&self, i: &mut SchedulerInner) {
+        i.starved.clear();
+        self.set_len(i);
+    }
+
     /// 队尾入队（spawn / 轮转 / 唤醒共用）：push + 派生计数。
     /// 只收 Starved 任务——容器 ⇔ 状态由断言强制。
     pub(crate) fn push(&self, task: Arc<Task>) {
@@ -143,8 +185,7 @@ impl Scheduler {
             "starved 容器只收 Starved 任务"
         );
         let mut i = self.inner.lock();
-        i.starved.push_back(task);
-        self.set_len(&i);
+        self.starved_push(&mut i, task);
     }
 
     /// 注册 task id → Weak<Task>（Task::spawn 末尾调用）。
@@ -158,8 +199,13 @@ impl Scheduler {
         self.by_id.lock().get(&id).and_then(Weak::upgrade)
     }
 
-    /// 按 id 查 Weak<Task>（不持 strong，调用方按需短升升级）。用于 envcall::Vest
-    /// 等需跨核访问目标 task 但不愿违反"uniquely held"不变量的场景。
+    /// 按 id 查 Weak<Task>（不持 strong，调用方按需短升升级）。
+    ///
+    /// 现存理由是**形状**而非当年写下的那条：旧注说它用于「避免撞上 `strong_count == 1`
+    /// 断言」，而 `Task::exclusive` 早已放宽成 `assert!(strong_count >= 1)` 并明写
+    /// envcall 可短暂持额外强引用（`task.rs`）——那条约束不存在了；两个调用点
+    /// （`gate::accord` / `gate::revoke`）拿到弱引用后也**立刻 upgrade**。故它与
+    /// [`lookup_id`](Self::lookup_id) 目前是同一件事的两条路径，合一只等 §A3 的表合一。
     pub(crate) fn lookup_id_weak(&self, id: usize) -> Option<Weak<Task>> {
         self.by_id.lock().get(&id).map(Weak::clone)
     }
@@ -172,17 +218,13 @@ impl Scheduler {
     /// 队首出队（run / reap / park 共用）：派生计数；空队列返回 None。
     pub(super) fn pull(&self) -> Option<Arc<Task>> {
         let mut i = self.inner.lock();
-        let t = i.starved.pop_front();
-        self.set_len(&i);
-        t
+        self.starved_pop(&mut i)
     }
 
     /// steal 用：非阻塞取队首（锁外预检后调用）。None = 队列空或锁忙。
     fn try_pull(&self) -> Option<Arc<Task>> {
         let mut i = self.inner.try_lock()?;
-        let t = i.starved.pop_front();
-        self.set_len(&i);
-        t
+        self.starved_pop(&mut i)
     }
 
     /// 任务即将在本 hart 上运行：置 Running + 满额预算 + 写 kernel_sp（本 hart
@@ -312,10 +354,7 @@ impl Scheduler {
         let mut i = self.inner.lock();
         let task = i.running.take().expect("no running task");
         let ident = task.ident.clone();
-        let next = i.starved.pop_front();
-        if next.is_some() {
-            self.set_len(&i);
-        }
+        let next = self.starved_pop(&mut i);
         drop(i);
         let next_pa = if let Some(next) = next {
             let pa = next.ident.frame.pa.expect("frame span has pa").as_usize();
@@ -341,8 +380,8 @@ impl Scheduler {
     /// 调用方负责空队列判断（空 → 唯一任务续跑，不走本方法）。
     pub(super) fn rotate(&self, i: &mut SchedulerInner, mut cur: Arc<Task>) -> Arc<Task> {
         Task::exclusive(&mut cur).transform(TaskState::Starved);
-        i.starved.push_back(cur);
-        i.starved.pop_front().expect("non-empty")
+        self.starved_push(i, cur);
+        self.starved_pop(i).expect("non-empty")
     }
 
     /// 主动让出：无视剩余预算立即轮转（Running → Starved）。
@@ -351,7 +390,7 @@ impl Scheduler {
         let Some(cur) = i.running.take() else {
             panic!("starve with no running task on hart {}", self.hart);
         };
-        if i.starved.is_empty() {
+        if i.starved_is_empty() {
             // 本 hart 唯一任务：无需轮转，继续运行
             let pa = cur.ident.frame.pa.expect("frame span has pa").as_usize();
             i.running = Some(cur);
@@ -373,25 +412,33 @@ impl Scheduler {
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
 // （MAX_HART_SLOTS=4096 仅为编译期 VA 窗口上限，不固定静态数组）。长度镜像随结构体共生。
 
-// ── 核心：全局表（SCHEDULERS / blocked / reaped）──
+// ── 核心：全局表（SCHEDULERS / 调度器持有的 task 引用）──
 
 pub(super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
-/// 终末释放：halt 路径的关闭钩子——强制释放 scheduler 持有的全部 task 引用，
-/// 触发 MailHolds::drop 链透传 mail Arcs 归零（DockMeta::drop → 共享区帧还）。
+/// 终末释放：halt 路径的关闭钩子——释放 scheduler 在**就绪队列**里持有的全部
+/// task 引用，触发 MailHolds::drop 链透传 mail Arcs 归零（DockMeta::drop → 共享区帧还）。
 ///
 /// 关闭顺序（conductor::halt → conductor::hooked）：
-///   1. scheduler::rip              ← 本函数：星等任务强制释放 → mail 透传
+///   1. scheduler::rip              ← 本函数：就绪队列强制释放 → mail 透传
 ///   2. block::flush                 ← block 池冲洗
 ///   3. audit::check_baseline        ← 帧/block 基线核对
 ///
-/// 注：本函数只清 scheduler 持有的 Arc<Task> + info 槽。messenger 簿记
+/// 注：本函数清 scheduler 持有的 Arc<Task>（就绪队列）+ info 槽。messenger 簿记
 /// （sites / holders / husks）由 [`messenger::rip`] 清——本函数连调之。
+///
+/// **`running` 槽有意不清**（旧头注写「全部 task 引用」，与代码不符，此处改正为事实）：
+/// 关机屏障（`conductor::halt` 等 `HALT_ARRIVED == hart_count`）保证的是**各核已到达**
+/// halt，不保证没有核还在任务上下文里（已记账的旁枝：败者核继续跑任务，实测报
+/// `user page fault without running task`）。此刻释放 running 的最后一个 Arc，等于在别人
+/// 脚下的内核栈/trap 帧上归还内存。代价是：**真有核停在任务上下文**时，那一个任务的帧会
+/// 留在类别账上——那是旁枝的账，不是本函数该擅自抹掉的。`by_id` 只存 `Weak`，不构成持有。
 pub(crate) fn rip() {
-    // 清各 hart 内核的 starved 队列（running 不动——halt 时本 hart 不再调度）
+    // 清各 hart 的就绪队列（`running` 不动——理由见上）
     let Some(cs) = SCHEDULERS.get() else { return };
     for c in cs.iter() {
-        c.inner.lock().starved.clear();
+        let mut i = c.inner.lock();
+        c.starved_clear(&mut i);
     }
     // 清 messenger 簿记（sites / holders / husks）
     messenger::rip();
@@ -449,12 +496,14 @@ pub(crate) fn snap() -> Vec<Weak<Task>> {
 
 /// 从全部 hart 的 starved 队列摘除指定任务（kill 的 Starved 分支）。返回是否
 /// 摘到。只持本 hart 的 inner(L1)，逐 hart 顺序取、不嵌套其它锁。
+///
+/// 注：`state` 的读取与容器动作不在一把锁里（读来自调用方），窗口内被别核 seat 走
+/// ⇒ 这里返 false ⇒ 本次 kill 丢失（见 `docs/audit-flying-wires.md` §10.3 C1）。
 pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
     for s in schedulers() {
         let mut i = s.inner.lock();
         if let Some(pos) = i.starved.iter().position(|t| Arc::ptr_eq(t, target)) {
-            i.starved.remove(pos);
-            s.set_len(&i);
+            s.starved_remove(&mut i, pos);
             drop(i);
             return true;
         }
@@ -572,7 +621,7 @@ pub(super) fn wait() -> Option<Arc<Task>> {
             break;
         }
         // 假醒：也可能被 yell 的 IPI 唤来 steal（有活入队）——先复查取活，
-        // 有任务即正常出口（清位交外层）；真无活才保持睡眠位回睡。
+        // 有任务即正常出口（睡眠位就在本分支清掉，见下）；真无活才保持睡眠位回睡。
         if let Some(task) = current().pull().or_else(steal) {
             conductor::wake(me);
             return Some(task);

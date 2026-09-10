@@ -29,7 +29,7 @@ pub fn run() -> usize {
         // 续跑两分支合并（语义等价：先判后 dec——先判是否续跑，再在分支内递减；
         // 若先 dec 再判，pre=2 且他队非空会提前轮转一格）。两情形均不切走、
         // 不进 starved；预算恒 ≥ 1 不落盘（唯一任务分支不减预算）。
-        if ticks_left > 1 || i.starved.is_empty() {
+        if ticks_left > 1 || i.starved_is_empty() {
             if ticks_left > 1 {
                 Task::exclusive(&mut cur).dec_ticks_left();
             }
