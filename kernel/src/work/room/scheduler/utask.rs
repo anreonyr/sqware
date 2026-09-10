@@ -6,7 +6,7 @@
 
 use core::time::Duration;
 
-use crate::work::room::messenger::{self, Handoff, Joined, WakeKey};
+use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::gate::GateError;
 
 use super::core::current;
@@ -17,13 +17,10 @@ pub fn starve() -> usize {
     current().starve()
 }
 
-/// 当前线程睡眠入口（envcall Park 调用）：换算 deadline →
-/// messenger::park；本核 starved 空 → run() 取活。
+/// 当前线程睡眠入口（envcall Park 调用）：纯睡——键是 `Alarm{我}`，必挂起，
+/// 返回值就是下一帧（本核无后继时由核心内部取活）。
 pub fn park(duration: Duration) -> usize {
-    match messenger::park(duration) {
-        Some(pa) => pa,
-        None => run(),
-    }
+    messenger::park(duration)
 }
 
 /// 当前线程退出入口（envcall Reap 调用）：标记 Reaped + 取下一任务
@@ -36,17 +33,10 @@ pub fn reap() -> usize {
     run()
 }
 
-/// 事件等待入口（envcall Wait 调用）：pend 存在 → 消费即回；否则阻塞挂起。
-///
-/// 返回**是否切走**：`None` = 未离核（调用方续用当前帧）；`Some(pa)` = 切到该帧
-/// （本核已装槽的下一位，或本核空时 `run()` 取来的）。`key` 为已合成的事件键
-/// （envcall 边界负责并入空间身份）。
-pub fn wait(key: WakeKey, dur: Duration) -> Option<usize> {
-    match messenger::wait(key, dur) {
-        Handoff::Resume => None,
-        Handoff::Switch(pa) => Some(pa),
-        Handoff::Idle => Some(run()),
-    }
+/// 事件等待入口（envcall Wait 调用）：直通核心的 [`messenger::wait`]。
+/// `key` 为已合成的唤醒源（envcall 边界负责并入空间身份）。
+pub fn wait(key: WakeKey, dur: Duration) -> Handoff<()> {
+    messenger::wait(key, dur)
 }
 
 /// 事件唤醒入口（envcall Wake 调用）：给 `key` 投递信号；返回是否唤醒到等待者。
@@ -54,24 +44,10 @@ pub fn wake(key: WakeKey) -> bool {
     messenger::wake(key)
 }
 
-/// `Join` 的适配结论（授权在 envcall 边界做，本层只碰核心）。
-pub enum JoinStep {
-    /// 未挂起：目标已回收（适配层写 a0 = 1）。
-    Dead,
-    /// 未挂起：目标仍在（适配层写 a0 = 0）。
-    Alive,
-    /// 已挂起：切到该帧（本核无后继时由本层 `run()` 取活）。
-    Switched(usize),
-}
-
 /// 等目标回收入口（envcall Join 调用）：已回收 / 仍在 → 当场结论；否则挂起。
-pub fn join(tid: usize, dur: Duration) -> Result<JoinStep, GateError> {
-    match messenger::join(tid, dur)? {
-        Joined::Dead => Ok(JoinStep::Dead),
-        Joined::Alive => Ok(JoinStep::Alive),
-        Joined::Parked(Some(pa)) => Ok(JoinStep::Switched(pa)),
-        Joined::Parked(None) => Ok(JoinStep::Switched(run())),
-    }
+/// 授权在 envcall 边界做，本层只碰核心。
+pub fn join(tid: usize, dur: Duration) -> Result<Handoff<bool>, GateError> {
+    messenger::join(tid, dur)
 }
 
 /// ktask 事件等待入口（asm 包装）：永久等一个键（`Duration::MAX`，无超时），
@@ -79,8 +55,8 @@ pub fn join(tid: usize, dur: Duration) -> Result<JoinStep, GateError> {
 #[allow(dead_code)] // 内核线程面：暂无树内使用者（目录已移出内核）
 pub fn wait_forever(key: WakeKey) -> usize {
     match messenger::wait(key, Duration::MAX) {
-        Handoff::Resume => run(),
+        // 信标已至（永久等待被满足）：内核线程面没有调用方，直接取活。
+        Handoff::Resume(()) => run(),
         Handoff::Switch(pa) => pa,
-        Handoff::Idle => run(),
     }
 }

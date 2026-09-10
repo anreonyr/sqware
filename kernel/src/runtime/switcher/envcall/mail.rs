@@ -16,8 +16,8 @@ use env::{HoleDir, MailCall};
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
+use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::current;
-use crate::work::room::scheduler::trap::run;
 use crate::work::unit::gate::{AnyPie, GateError, Need};
 use crate::work::unit::task::TaskIdent;
 
@@ -206,14 +206,9 @@ fn wait_dir(
             drop(ident);
             match mail::hole::wait(&meta, dir, dur) {
                 Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
-                Ok(mail::hole::Waited::Resume(true)) => frame.gpr.set_x(Gprs::A0, 1),
-                Ok(mail::hole::Waited::Resume(false)) => {}
-                Ok(mail::hole::Waited::Parked(Some(pa))) => {
-                    return Outcome::Park(pa as *mut TrapContext);
-                }
-                Ok(mail::hole::Waited::Parked(None)) => {
-                    return Outcome::Park(run() as *mut TrapContext);
-                }
+                // 未离核：当场结论（true = 该方向现在就绪）。
+                Ok(Handoff::Resume(ready)) => frame.gpr.set_x(Gprs::A0, ready as usize),
+                Ok(Handoff::Switch(pa)) => return Outcome::Park(pa as *mut TrapContext),
             }
         }
     }

@@ -27,9 +27,9 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::messenger::WakeKey;
+use crate::work::room::messenger::{Handoff, WakeKey};
 use crate::work::room::scheduler::core::current;
-use crate::work::room::scheduler::utask::{self, JoinStep, park, reap, starve, wait, wake};
+use crate::work::room::scheduler::utask::{self, park, reap, starve, wait, wake};
 use crate::work::unit::gate::{GateError, Permission};
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
@@ -213,8 +213,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
                 Duration::from_millis(millis as u64)
             };
             drop(ident);
-            if let Some(pa) = wait(wkey, dur) {
-                return pa as *mut TrapContext;
+            match wait(wkey, dur) {
+                // `RoomCall::Wait` 没有当场结论：未离核即续跑。
+                Handoff::Resume(()) => {}
+                Handoff::Switch(pa) => return pa as *mut TrapContext,
             }
         }
         EnvCall::Room(RoomCall::Wake { key }) => {
@@ -419,9 +421,9 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             frame.gpr.set_x(Gprs::A0, 0);
             drop(ident);
             match utask::join(task.get(), dur) {
-                Ok(JoinStep::Dead) => frame.gpr.set_x(Gprs::A0, 1),
-                Ok(JoinStep::Alive) => {}
-                Ok(JoinStep::Switched(pa)) => return pa as *mut TrapContext,
+                // 未离核：当场结论（true = 调用开始时目标已回收）。
+                Ok(Handoff::Resume(dead)) => frame.gpr.set_x(Gprs::A0, dead as usize),
+                Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
                 Err(e) => return ret_err(frame, e),
             }
         }

@@ -36,6 +36,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::{current, lookup_task_by_id};
+use crate::work::room::scheduler::trap::run;
 use crate::work::unit::gate::GateError;
 use crate::work::unit::task::{Task, TaskState};
 use crate::work::unit::team::Team;
@@ -139,18 +140,19 @@ struct Site {
     waiters: VecDeque<Waiter>,
 }
 
-/// 交接：本次调用之后由谁占住处理器。
+/// 落点：一次可能离核的调用之后，由谁占住处理器。
 ///
-/// 三态各自独立，不可合并：`Resume` 是**没离核**（当前帧由调用方持有——
-/// messenger 不知道也不该知道当前帧是什么），另两态是**已离核**，区别只在本核
-/// starved 是否装得上下一位。
-pub enum Handoff {
-    /// 未离核：继续跑调用方的当前帧。
-    Resume,
-    /// 已离核：切到该帧（本核 starved 队首已装槽）。
+/// `Resume(T)` 是**没离核**（当前帧由调用方持有——本域不知道也不该知道当前帧是
+/// 什么），`T` 是该次调用的**当场结论**；`Switch(pa)` 是**已离核**。
+///
+/// 两态而非三态：本核无后继不再是一种落点——那是「取活」，由本域内部 `run()`
+/// 收口，不是调用方该知道的事（旧 `Idle` 把这个收尾漏给了两个不同层的调用方）。
+/// 于是 `Handoff` / `Joined` / `JoinStep` / `Waited` 四种拼写收成一个。
+pub enum Handoff<T> {
+    /// 未离核：继续跑调用方的当前帧；`T` = 当场结论。
+    Resume(T),
+    /// 已离核：切到该帧（本核 starved 队首已装槽，或本域取活取来）。
     Switch(usize),
-    /// 已离核且本核无后继：由适配层取活（`run()`）。
-    Idle,
 }
 
 /// 等待者：站点队列里的一项。票号即「哪一次挂起」——同一任务先后等同一个键时，
@@ -228,10 +230,10 @@ fn doomed() -> &'static SpinLock<HashSet<usize>> {
 ///   ⑤ 窗口内信号已至 → 撤销登记，按「已唤醒」处理（Starved 入队）
 ///
 /// 锁纪律：站点表与票根都是 L3，**绝不互相嵌套**——「作用域内取、作用域外用」。
-fn block(key: WakeKey, dur: Duration) -> Handoff {
+fn block(key: WakeKey, dur: Duration) -> Handoff<()> {
     // ① 信标先探
     if take_beacon(key) {
-        return Handoff::Resume;
+        return Handoff::Resume(());
     }
     // ② 离核
     let (mut task, next_pa) = current().disown_and_install_next();
@@ -269,14 +271,30 @@ fn block(key: WakeKey, dur: Duration) -> Handoff {
     // ⑤ 窗口内信标已至：撤销登记，按已唤醒处理
     if !queued {
         void(ticket);
-        Task::exclusive(&mut task).transform(TaskState::Starved);
-        trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-        current().push(task);
+        rise(core::iter::once(task));
     }
-    match next_pa {
-        Some(pa) => Handoff::Switch(pa),
-        None => Handoff::Idle,
+    // 本核无后继即就地取活：`run()` 只会循环到有帧或停机，故落点恒为 `Switch`。
+    Handoff::Switch(next_pa.unwrap_or_else(run))
+}
+
+/// 放回就绪——「唤醒」的全部效果就是这一件事。
+///
+/// `wake` / `wipe` / `redeem` 与撤销阻塞四条路径的收尾完全同形（置 Starved →
+/// 记事件 → 推回本核 starved 队列），故只写一遍。`kick` 提到批量之后：push 先于
+/// 踢，唤醒方进入 steal 必可见（单 tick 的 IPI 量从 O(N) → O(1)）。返回唤醒数。
+fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
+    let mut woke = 0;
+    for task in tasks {
+        let mut t = task;
+        Task::exclusive(&mut t).transform(TaskState::Starved);
+        trace::note(EventKind::Room(RoomEvent::Wake { tid: t.ident.id }));
+        current().push(t);
+        woke += 1;
     }
+    if woke > 0 {
+        conductor::kick();
+    }
+    woke
 }
 
 /// 信标先探：消费本键上的遗留信号。**缺键即无信标**——不 `or_insert`：空的、
@@ -307,7 +325,7 @@ fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
 /// 纯睡（`RoomCall::Park`）：键是 `Alarm { 我 }`——无人投信，只有期限会响。
 ///
 /// Running → Blocked；返回下一帧 PA（若 scheduler 装了下一 starved）。
-pub fn park(duration: Duration) -> Option<usize> {
+pub fn park(duration: Duration) -> usize {
     let me = current()
         .running_task()
         .expect("park: no running task")
@@ -319,17 +337,15 @@ pub fn park(duration: Duration) -> Option<usize> {
         wake_at: wake_at as usize,
     }));
     match block(WakeKey::Alarm { task: me }, duration) {
-        Handoff::Switch(pa) => Some(pa),
-        // 本核无后继：交适配层取活。
-        Handoff::Idle => None,
+        Handoff::Switch(pa) => pa,
         // `Alarm` 无投信方 ⇒ 信标先探不可能命中。
-        Handoff::Resume => unreachable!("Alarm 无投信方"),
+        Handoff::Resume(()) => unreachable!("Alarm 无投信方"),
     }
 }
 
 /// 事件等待（`RoomCall::Wait`）：直通 [`block`]。有投信方的键，信标先探可能命中
 /// 而当场续跑（[`Handoff::Resume`]）。
-pub fn wait(key: WakeKey, dur: Duration) -> Handoff {
+pub fn wait(key: WakeKey, dur: Duration) -> Handoff<()> {
     block(key, dur)
 }
 
@@ -382,17 +398,6 @@ pub fn mark_reaped() -> Option<usize> {
 
 // ── 操作：等目标回收（Join） ──
 
-/// `Join` 的结论。未挂起的两态（`Dead` / `Alive`）与「已挂起」用类型分开——
-/// 适配层据此写 a0（挂起路径读到的 a0 是挂起前预置值，故只能预置 0）。
-pub enum Joined {
-    /// 未挂起：目标已死**且收尾完成**（退出钩子已跑完——见 [`die`]）。
-    Dead,
-    /// 未挂起：目标仍在（`millis == 0` 探测）。
-    Alive,
-    /// 已挂起：切到该帧（None = 本核无后继，适配层 `run()` 取活）。
-    Parked(Option<usize>),
-}
-
 /// 目标是否已死透。注册表只存 `Weak` 且从不清理：升级失败 ⇒ 已分配过就是
 /// 「已回收」；从未分配 ⇒ 非法 id（调用方另判 `Denied`）。
 ///
@@ -414,23 +419,22 @@ fn target_dead(tid: usize) -> bool {
 /// 「结束」= 目标已死**且退出钩子（通道级联 + 能力级联）已跑完**——即返回真时，
 /// 它名下的门闩与通道都已消失。栈/trap 帧/团队空间的回收是内核私事、对调用方
 /// 不可观测，故**不入契约**（那也是延迟回收存在的理由）。
-pub fn join(tid: usize, dur: Duration) -> Result<Joined, GateError> {
+pub fn join(tid: usize, dur: Duration) -> Result<Handoff<bool>, GateError> {
     if target_dead(tid) {
         return if crate::work::unit::task::allocated(tid) {
-            Ok(Joined::Dead)
+            Ok(Handoff::Resume(true))
         } else {
             Err(GateError::Denied)
         };
     }
     if dur == Duration::ZERO {
-        return Ok(Joined::Alive);
+        return Ok(Handoff::Resume(false));
     }
-    match block(WakeKey::Task { id: tid }, dur) {
-        Handoff::Switch(pa) => Ok(Joined::Parked(Some(pa))),
-        Handoff::Idle => Ok(Joined::Parked(None)),
-        // 信标已置：目标在「判死 → 入队」的窗口内被回收。当场结论（已回收）。
-        Handoff::Resume => Ok(Joined::Dead),
-    }
+    Ok(match block(WakeKey::Task { id: tid }, dur) {
+        Handoff::Switch(pa) => Handoff::Switch(pa),
+        // 信标已置：目标在「判死 → 入队」的窗口内被回收 ⇒ 当场结论（已回收）。
+        Handoff::Resume(()) => Handoff::Resume(true),
+    })
 }
 
 /// 键退役：放行该键上的**全部**等待者，并留下信标（墓碑）。
@@ -448,19 +452,10 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
         site.pend = true;
         core::mem::take(&mut site.waiters)
     };
-    let mut woke = 0;
-    for w in waiters {
+    for w in &waiters {
         void(w.ticket);
-        let mut task = w.task;
-        Task::exclusive(&mut task).transform(TaskState::Starved);
-        trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-        current().push(task);
-        woke += 1;
     }
-    if woke > 0 {
-        conductor::kick();
-    }
-    woke
+    rise(waiters.into_iter().map(|w| w.task))
 }
 // ── 操作：唤醒 ──
 // ── 操作：唤醒 ──
@@ -490,11 +485,7 @@ pub fn wake(key: WakeKey) -> bool {
     };
     let Some(w) = popped else { return false };
     void(w.ticket);
-    let mut task = w.task;
-    Task::exclusive(&mut task).transform(TaskState::Starved);
-    trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-    current().push(task);
-    conductor::kick();
+    rise(core::iter::once(w.task));
     true
 }
 
@@ -510,7 +501,8 @@ pub fn wake(key: WakeKey) -> bool {
 /// 由 trap 路径（S-timer 处理）与空闲核归队时在本 hart 触发。
 pub fn redeem() -> bool {
     let due = timer::drain(clock::now());
-    let mut woke = false;
+    // 批量收集再统一 `rise`：一次 kick 收尾（逐条踢会让 IPI 量回到 O(N)）。
+    let mut tasks: Vec<Arc<Task>> = Vec::new();
     for handle in due {
         // 票号即到点登记的身份：作废票根并取回持票人（已回收 → 落空）。
         let Some(task) = void(Ticket(handle)) else {
@@ -532,19 +524,9 @@ pub fn redeem() -> bool {
             w
         };
         let Some(w) = popped else { continue };
-        woke = true;
-        let mut task = w.task;
-        Task::exclusive(&mut task).transform(TaskState::Starved);
-        trace::note(EventKind::Room(RoomEvent::Wake { tid: task.ident.id }));
-        current().push(task);
+        tasks.push(w.task);
     }
-    // 批量踢：循环外一次 SBI IPI（替代原每条吼）。任务已全部入本核 starved
-    // （push 先于踢 = 唤醒方进入 steal 必可见），单次 kick 把当前最低 set bit 的
-    // 等待 hart 拉起即可——单 tick IPI 量从 O(N) → O(1)。
-    if woke {
-        conductor::kick();
-    }
-    woke
+    rise(tasks) > 0
 }
 // ── 操作：回收 ──
 

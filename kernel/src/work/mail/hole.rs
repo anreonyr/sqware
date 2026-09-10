@@ -215,14 +215,6 @@ pub(crate) fn try_pull(meta: &HoleMeta, dst: &mut [u8]) -> Result<(usize, usize)
 
 // ── 挂起（唯一入口）──
 
-/// 等待结果（核心语义，不含 ABI 映射）。
-pub(crate) enum Waited {
-    /// 未挂起：`true` = 该方向现在就绪。
-    Resume(bool),
-    /// 已挂起：`Some(pa)` = 切到该帧；`None` = 本核无后备（调用方取活）。
-    Parked(Option<usize>),
-}
-
 /// 等某方向就绪：死 → `Err(Dead)`；就绪或 `dur == 0` → 不挂起；否则挂起。
 ///
 /// 前置：调用者在任务上下文，且**不持任何 L3 锁**（站点表是 L3，3→3 禁止）。
@@ -230,21 +222,24 @@ pub(crate) enum Waited {
 /// 「先探」在此处不可省：对侧可能已经写入并正等我们取，此时若我们 park 在"等写入"
 /// 上就永远等不到下一次唤醒。先探与登记之间的窗口由 messenger 的 pend 双检封住
 /// （窗口内的 wake 置 pend，登记时被消费 ⇒ 不挂起）。
-pub(crate) fn wait(meta: &HoleMeta, dir: HoleDir, dur: Duration) -> Result<Waited, GateError> {
+pub(crate) fn wait(
+    meta: &HoleMeta,
+    dir: HoleDir,
+    dur: Duration,
+) -> Result<Handoff<bool>, GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
     if meta.ready(dir) {
-        return Ok(Waited::Resume(true));
+        return Ok(Handoff::Resume(true));
     }
     if dur == Duration::ZERO {
-        return Ok(Waited::Resume(false));
+        return Ok(Handoff::Resume(false));
     }
     Ok(match messenger::wait(key(meta, dir), dur) {
         // 窗口内 wake 已至（未挂起）：以当前状态为准。
-        Handoff::Resume => Waited::Resume(meta.alive() && meta.ready(dir)),
-        Handoff::Switch(pa) => Waited::Parked(Some(pa)),
-        Handoff::Idle => Waited::Parked(None),
+        Handoff::Resume(()) => Handoff::Resume(meta.alive() && meta.ready(dir)),
+        Handoff::Switch(pa) => Handoff::Switch(pa),
     })
 }
 
