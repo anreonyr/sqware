@@ -1268,7 +1268,8 @@ room/
 | 0 | 摘三处与事实相反的 `allow`；躯壳队列改名；还原 `86caf7a` 静默换掉的拷入原语 | ✅ `4197276` + `d49b342` |
 | 1a | chrono 正名（`untock`→`mute`、`next_tock`→`due`、`tick_after`→`beat`）+ `ZOMBIES`→`HUSKS` | ✅ `ccaae73` |
 | 1b | `mute` 变真逆操作，删 `cancelled` 与其两处污染陷阱 | ✅ `d9ca7a5` |
-| 2 | 票号 + 票根（`HOLDERS`）；删 `parked`/`wait_times`/`join_times`；`Alarm` 站点（park 进站点表） | 待做 |
+| 2a | 唤醒键成枚举（`WakeKey`）+ 两张站点表合一（`WaitSite`/`JoinSite` → `Site`） | ✅ `1eb7ca1` |
+| 2b | 票号 + 票根（`HOLDERS`）；删 `parked`/`wait_times`/`join_times`；`Alarm` 站点（park 进站点表） | 待做 |
 | 3 | `Ticket` 上任务；`WakeKey` 四变体；`suspend` 读票直达（不再扫 16 分片） | 待做 |
 | 4 | `sites` 合一；`wait`/`wake`/`wipe`/`redeem`/`rise` 立起；`Handoff<T>` 收成一 | 待做 |
 | 5 | 拆文件（`messenger` 退场；即 §7.1 的搬家） | 待做 |
