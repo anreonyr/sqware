@@ -330,11 +330,12 @@ pub fn audit() {
 pub fn probe_messenger() {
     let st = crate::work::room::messenger::probe();
     crate::putln!(
-        "[audit] sites {} live {} tomb {} orphan {} waiters {}",
+        "[audit] sites {} live {} tomb {} orphan {} dead {} waiters {}",
         st.sites,
         st.live,
         st.tomb,
         st.orphan,
+        st.dead,
         st.waiters
     );
     crate::putln!("[audit] sites by kind: {}", st.kinds());

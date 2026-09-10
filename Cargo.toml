@@ -11,6 +11,15 @@ edition = "2024"
 debug = true
 panic = "abort"
 
+# 验收门的 harden 档：**继承 release，只把断言打开**——`debug_assertions` 在 release 里是关的，
+# 而门的构建只有 `--release` ⇒ 容器⇔状态不变量与整条 lockdep 校验（`lock/depend.rs` 全文件
+# `#[cfg(debug_assertions)]`）在门跑过的每个产物里都被编译掉了（实测：release ELF 里
+# 「装槽前 running 必须为空」「new level must exceed max(held)」各 0 次，debug ELF 里各 1 次）。
+# 只多开这一个开关，opt-level 与 debug 与 release 一致 ⇒ 行为可比。
+[profile.harden]
+inherits = "release"
+debug-assertions = true
+
 [profile.release]
 # opt-level=2/3：WaitKey::compose 在闭包内联 push_key/pull_key 时 mask
 # 计算会被 size 优化多算一次 +1（错联到 0x1000000000000）→ 修法见 §13.10

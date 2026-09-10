@@ -28,6 +28,8 @@ mod wait;
 
 // `doom` / `reap` 按 `super::{...}` 取站点表与票根，5a 拆出的这两个面本轮不动——
 // 故它们要的三个名字在父模块留一份私有 `use`（可见范围与拆分前一致：只到本域）。
+#[cfg(feature = "audit")]
+use crate::work::unit::life::Life;
 use doom::doomed;
 use reap::HUSKS;
 use wait::holder::{holders, void};
@@ -91,10 +93,17 @@ pub(crate) struct SiteStats {
     pub(crate) sites: usize,
     /// 还挂着等待者的站点数。
     pub(crate) live: usize,
-    /// 墓碑站点数：队列空、但有信标。**A2 之后恒为 0**（`wipe` 不再置信标）。
+    /// 墓碑站点数：队列空、但有信标。**不作为判据**（见下 `dead`）：键还活着时它
+    /// 有语义——「`wake` 在无人在等时置的遗留信号」，下一个等待者会立刻消费它。
+    /// 轮④ 挂上 `cascade` 后它稳定是 1，而那是**合法**状态。
     pub(crate) tomb: usize,
     /// **孤儿**站点数：队列空 **且** 无信标——`prune` 该删而没删的残留。
     pub(crate) orphan: usize,
+    /// **死键站点数**：键的存活单元已死。A2「站点寿命＝资源寿命」的**精确**形式，
+    /// 必须为 0。它与上面三形态**正交**（能入队 ⇒ 键活着，故 `live` 里不会有死键；
+    /// 死键只能落在 `tomb`/`orphan` 里）。资源退役时 `wipe` 当场删站点，故一个死键
+    /// 站点存在 ⇔ 某条退役路径漏了 `wipe`——这是 `tomb` 那种混合计数给不出的牙。
+    pub(crate) dead: usize,
     /// 全部站点队列里的等待者总数（挂起任务数）。
     pub(crate) waiters: usize,
     /// 按 [`WakeKind::ALL`] 下标分列的站点数（四类合计 == `sites`）。
@@ -134,6 +143,7 @@ pub(crate) fn probe() -> SiteStats {
         live: 0,
         tomb: 0,
         orphan: 0,
+        dead: 0,
         waiters: 0,
         each: [0; WakeKind::ALL.len()],
     };
@@ -151,6 +161,9 @@ pub(crate) fn probe() -> SiteStats {
                     st.tomb += 1;
                 } else {
                     st.orphan += 1;
+                }
+                if Life::dead(&site.life) {
+                    st.dead += 1;
                 }
                 st.waiters += site.waiters.len();
             }
