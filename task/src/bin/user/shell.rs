@@ -22,6 +22,7 @@
 //!   spoof — 身份伪造自检（发送者由内核盖章，报文里的回信 token 不构成身份）
 //!   name  — 名字权限自检（目录的名字空间由父域预约，注册只能填预约行）
 //!   badslot — 非法 envcall 槽位自检（未知调用号 → 拒掉并续跑，绝不 panic）
+//!   stray — 野 id 自检（从未入册的 task id 去 Join ⇒ 必须 Denied）
 //!   req   — 走目录协议连接 echo 并调用一次（Connect + Service::call）
 //!   dir   — 目录协议自省（Discover + Enumerate）
 //!   exit  — 退出 shell（RoomCall::Reap）
@@ -554,6 +555,31 @@ fn name(term: &Terminal) {
 /// 这一支有牙的地方：**若 seal 不唤醒等待者**（`wipe` 那条路断了），第二次等待
 /// 就会睡满期限 ⇒ 打出的是 `wake=timeout` ⇒ 门的断言挂。反向验证（本轮实跑）
 /// 正是把这一支改坏来做的。
+/// 野 id 自检：拿**从未入册**的 task id 去 `Join`，看内核怎么答。
+///
+/// 契约（`root.md` §…、`messenger::join`）：`Join` 收的是 task id，而「从未分配」是
+/// **非法 id** ⇒ `-1 Denied`；「已回收」⇒ 真。两者若被折成同一条路（判活有两个
+/// 真相源时就会这样），调用方就再也分不清「它早结束了」与「你给错了 id」。
+///
+/// 三个野 id 各探一次：`9999`（远超已分配过的 id——id 单调递增、永不复用）、
+/// `9999` 配永久等待（挂起路径）、`0`（「无任务」哨兵，同样从未入册）。
+/// 输出一行计数：`stray: 3/3 illegal-id joins denied`（反向验证时它是 `0/3`）。
+fn stray_probe(term: &Terminal) {
+    let cases = [(9999usize, 0usize), (9999, usize::MAX), (0, 0)];
+    let mut denied = 0;
+    for (id, millis) in cases {
+        let r = task_join(env::TaskId(id), millis);
+        if r.is_err() {
+            denied += 1;
+        }
+        term.writeline(&format!(
+            "stray: join({id}, {millis}) → {}",
+            if r.is_err() { "denied" } else { "accepted" }
+        ));
+    }
+    term.writeline(&format!("stray: {denied}/3 illegal-id joins denied"));
+}
+
 fn seal_wake_probe(term: &Terminal) {
     /// 一次有界等待的期限：短到不拖慢门，长到足以让「等满」与「当场」区分开。
     const WAIT_MS: usize = 200;
@@ -613,7 +639,7 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / cascade / reclaim / spoof / name / badslot / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / cascade / reclaim / spoof / name / badslot / stray / exit",
             );
         }
         "clock" => {
@@ -780,6 +806,9 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
                     }
                 }
             }
+        }
+        "stray" => {
+            stray_probe(term);
         }
         "exit" => {
             term.writeline("bye");

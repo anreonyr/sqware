@@ -37,14 +37,6 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 /// 启动参数上限（字）。栈顶 args 区 ≤ 512 B；超出由适配层拒（`-1 Denied`）。
 pub(crate) const MAX_ARGS: usize = 64;
 
-/// 该 task id 是否**已被分配过**。
-///
-/// 注册表只存 `Weak` 且从不清理，故「已回收」与「从未存在」都升级失败——
-/// `Join` 用本判据区分：已分配 ⇒ 已回收（当场 `true`）；未分配 ⇒ 非法 id（Denied）。
-pub(crate) fn allocated(id: usize) -> bool {
-    id < NEXT_ID.load(Ordering::Relaxed)
-}
-
 /// 任务状态：任务现在在哪 +（Running/Blocked 时）该状态特有的数据。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskState {
@@ -424,7 +416,7 @@ impl TaskBuilder {
             ));
             Arc::from_raw(ptr)
         };
-        scheduler::core::register_task_id(id, &task);
+        scheduler::core::enlist(id, &task);
         // 簿记 + 未放行容器 + 产生计数（配对见函数头）
         self.team.push_task(&task);
         self.team.hold(&task);

@@ -110,9 +110,10 @@
 
 # 步骤：命令 → 该步要看到的输出（逐字照抄 .sh 版）。最后一条同时是自然停机的判据。
 #
-# 默认档 = .sh 版八条，逐字未动。**audit 档**在同一序列上**追加**两步（不改既有
-# 八步的命令、时序与 marker）：`sleep 700` 与 `hole`（hole 的期望串两种档相同，
-# 只是它多打的那几句由 audit 档的 marker 去断言）。
+# 默认档 = .sh 版八条，逐字未动。**audit 档**在同一序列上**追加**三步（不改既有
+# 八步的命令、时序与 marker）：`sleep 700`、`hole`（hole 的期望串两种档相同，
+# 只是它多打的那几句由 audit 档的 marker 去断言）与 `stray`（野 id 自检：从未入册的
+# task id 去 Join 必须 -1 Denied——判活并成一条来源之后，这条才答得出来）。
 const STEPS = [
   {cmd: "spawn",     pat: "spawnjoin -> 499500"}
   {cmd: "dir",       pat: "discover echo -> found"}
@@ -122,12 +123,13 @@ const STEPS = [
   {cmd: "sleep 700", pat: "woke"}   # 见「audit 档步骤」：redeem 的第二个时长
   {cmd: "clock",     pat: "clock [0-9]"}
   {cmd: "badslot",   pat: "badslot: 3/3 rejected, kernel alive"}
+  {cmd: "stray",     pat: "stray: 3/3 illegal-id joins denied"}
   {cmd: "exit",      pat: "task: all tasks exited, system halted"}
 ]
 
 # 档位 → 本档要跑的步骤（下标取自上面那张表，命令与顺序都只有一处出处）。
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 8]
-const STEPS_AUDIT   = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 9]
+const STEPS_AUDIT   = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 # 默认档的构建 features：**恒为空串**，是构造上的保证，不是旋钮（见头注「按档构建」）。
 # 想反向验证默认档哨兵（「默认档不该出现 audit 输出」）还拦不拦得住，就临时把它改成
@@ -160,6 +162,7 @@ const MARKERS = [
 const AUDIT_MARKERS = [
   "sleep 700ms"
   'hole: wait-seal sealed=1 wake=seal'
+  "stray: 3/3 illegal-id joins denied"
   "\\[audit\\] sites "
 ]
 # 顺序断言：后者必须出现在前者之后（grep 行号比较；任一缺 ⇒ 直接挂）。

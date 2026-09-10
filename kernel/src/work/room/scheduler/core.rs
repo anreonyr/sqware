@@ -5,7 +5,7 @@
 // 预算立即轮转——抢占与让出各自独立。
 //
 // 结构：Scheduler = inner(SpinLock) + info(身份槽，无锁) + starved_len(AtomicUsize
-// 锁外镜像) + by_id(索引，L3)。info 槽 = `ident()` 的事实源：带标签指针（bit0 = 载荷
+// 锁外镜像)。info 槽 = `ident()` 的事实源：带标签指针（bit0 = 载荷
 // 类型：TaskIdent 在跑 / LastIdent 末次记录），写 = 本核 seat/shed 的 swap（AcqRel），
 // 读 = 本核 trap/panic——同 hart 单写单读 + 载荷不可变 ⇒ 无锁（跨核读是 UB，字段私有
 // 且只经 ident() 触及）。
@@ -19,7 +19,7 @@
 // + &mut，Arc::get_mut 的 weak≥1 变体）——锁内 take/pull 出任务 → 取 &mut；
 // 锁 + 所有权保证互斥，编译器强制。
 //
-// 锁纪律：inner = Level::Scheduler(1)，每核一把；by_id = Level::L3(**4**——3 是删掉的
+// 锁纪律：inner = Level::Scheduler(1)，每核一把；名册 = Level::L3(**4**——3 是删掉的
 // 旧槽位，名字里的 3 不是数值，见 `lock/depend.rs`)。Team.tasks(L3=4) 与
 // Space.inner(Space=2) 禁止嵌套——锁内只做纯 Vec 操作，绝不调 space 方法。task
 // "离开 running" 的过渡（park / wait / reap）借 disown_and_install_next 跨边界原语交给
@@ -99,9 +99,6 @@ pub(crate) struct Scheduler {
     /// 热点（多 hart 同时对同一目标的 L1 锁 RMW → cache line 乒乓 = 雷鸣群）。
     /// per-hart 独立，每核 fetch_add 是 Relaxed 无需同步。
     steal_cursor: AtomicUsize,
-    /// 锁外：id → Weak<Task> 索引（cross-task 寻址——envcall::Vest 找目标 Task 用）。
-    /// Weak<Task> 升级失败 = task 已死 = 自动失效，无需显式清理。
-    by_id: SpinLock<hashbrown::HashMap<usize, alloc::sync::Weak<Task>>>,
 }
 
 /// 锁内核心：running（运行中，不在队列）+ starved（就绪队列，FIFO）。
@@ -134,7 +131,6 @@ impl Scheduler {
             info: AtomicPtr::new(core::ptr::null_mut()),
             starved_len: AtomicUsize::new(0),
             steal_cursor: AtomicUsize::new(0),
-            by_id: SpinLock::new_level(Level::L3, HashMap::new()),
         }
     }
 
@@ -186,33 +182,6 @@ impl Scheduler {
         );
         let mut i = self.inner.lock();
         self.starved_push(&mut i, task);
-    }
-
-    /// 注册 task id → Weak<Task>（Task::spawn 末尾调用）。
-    /// Weak<Task> 升级失败 = task 死 = 自动失效，无需显式清理。
-    pub(crate) fn register_id(&self, id: usize, task: &Arc<Task>) {
-        self.by_id.lock().insert(id, Arc::downgrade(task));
-    }
-
-    /// 按 id 查 task（envcall::Vest 入口调用）。None = id 不存在 / task 已死。
-    pub(crate) fn lookup_id(&self, id: usize) -> Option<Arc<Task>> {
-        self.by_id.lock().get(&id).and_then(Weak::upgrade)
-    }
-
-    /// 按 id 查 Weak<Task>（不持 strong，调用方按需短升升级）。
-    ///
-    /// 现存理由是**形状**而非当年写下的那条：旧注说它用于「避免撞上 `strong_count == 1`
-    /// 断言」，而 `Task::exclusive` 早已放宽成 `assert!(strong_count >= 1)` 并明写
-    /// envcall 可短暂持额外强引用（`task.rs`）——那条约束不存在了；两个调用点
-    /// （`gate::accord` / `gate::revoke`）拿到弱引用后也**立刻 upgrade**。故它与
-    /// [`lookup_id`](Self::lookup_id) 目前是同一件事的两条路径，合一只等 §A3 的表合一。
-    pub(crate) fn lookup_id_weak(&self, id: usize) -> Option<Weak<Task>> {
-        self.by_id.lock().get(&id).map(Weak::clone)
-    }
-
-    /// 本核 id 表的 Weak 快照（死条目一并返回——调用方升级判活）。
-    pub(crate) fn ids_weak(&self) -> Vec<Weak<Task>> {
-        self.by_id.lock().values().map(Weak::clone).collect()
     }
 
     /// 队首出队（run / reap / park 共用）：派生计数；空队列返回 None。
@@ -416,7 +385,7 @@ impl Scheduler {
 // 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
 // （MAX_HART_SLOTS=4096 仅为编译期 VA 窗口上限，不固定静态数组）。长度镜像随结构体共生。
 
-// ── 核心：全局表（SCHEDULERS / 调度器持有的 task 引用）──
+// ── 核心：全局表（SCHEDULERS / 名册）──
 
 pub(super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
@@ -436,7 +405,8 @@ pub(super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 /// halt，不保证没有核还在任务上下文里（已记账的旁枝：败者核继续跑任务，实测报
 /// `user page fault without running task`）。此刻释放 running 的最后一个 Arc，等于在别人
 /// 脚下的内核栈/trap 帧上归还内存。代价是：**真有核停在任务上下文**时，那一个任务的帧会
-/// 留在类别账上——那是旁枝的账，不是本函数该擅自抹掉的。`by_id` 只存 `Weak`，不构成持有。
+/// 留在类别账上——那是旁枝的账，不是本函数该擅自抹掉的。名册只存 `Weak`，不构成持有
+/// （它的条目在最后一步统一放掉）。
 pub(crate) fn rip() {
     // 清各 hart 的就绪队列（`running` 不动——理由见上）
     let Some(cs) = SCHEDULERS.get() else { return };
@@ -449,6 +419,11 @@ pub(crate) fn rip() {
     // 清 info 槽（原 shutdown_slots 职责）
     for c in cs.iter() {
         c.clear_slot();
+    }
+    // 名册**放最后**：强引用先全放掉（就绪队列 / 站点 / 躯壳 / 槽），名册里的弱引用才是
+    // `ArcInner` 的最后一道门——放早了也白放（强引用还在，块归还不掉）。
+    if let Some(r) = ROSTER.get() {
+        r.lock().clear();
     }
 }
 
@@ -472,46 +447,44 @@ pub(crate) fn push(task: Arc<Task>) {
     conductor::kick();
 }
 
-/// 注册 task id → task 索引（Task::spawn 末尾调用）。
-/// 遍历所有 hart 的 by_id 插入——task 落在哪个 hart 都行（不绑定 hart）。
-pub(crate) fn register_task_id(id: usize, task: &Arc<Task>) {
-    for s in schedulers() {
-        s.register_id(id, task);
-    }
+// ── 核心：名册（全世界任务的 id → Weak<Task> 索引）──
+//
+// **一张表，不是每 hart 一张**：原先 by_id 是 `Scheduler` 的字段，而每张表都插全量
+// 副本（入册要遍历所有 hart 各插一遍、没有第二条插入路径）⇒ 每张都是全世界的完整
+// 拷贝：查表要遍历、快照把每个任务返回 H 份、每条查询成本随 hart 数放大。名册是
+// 全局事实，故只有一张。
+//
+// 名字（用户裁决）：`enlist` 入册 / `muster` 点名 / `roster` 名册。对偶 `delist`（除名）
+// 是**保留名、暂不实现**——名册里「条目在」这件事本身就是「这个 id 存在过」的唯一事实
+// 源：「已回收」与「从未分配」靠它分开（`muster` 为 `None` ⇔ 从未入册）。除名会把这两态
+// 重新糊在一起（A2 已在站点表上教过一遍：删掉承载事实的东西，就只剩墓碑）。
+//
+// 表只增不删 ⇒ 名册随运行增长；条目是 `Weak`，不钉住对象本体（`ArcInner` 的归还等
+// 关机时的 [`rip`] 一次性放掉全部条目）。锁 = Level::L3，只经下面三个函数触及。
+
+static ROSTER: OnceLock<SpinLock<HashMap<usize, Weak<Task>>>> = OnceLock::new();
+
+fn roster_table() -> &'static SpinLock<HashMap<usize, Weak<Task>>> {
+    ROSTER.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
-/// 按 id 查 task（envcall::Vest 入口调用）。None = id 不存在 / task 已死。
-/// 遍历所有 hart 的 by_id 找——慢路径但简单。
-pub(crate) fn lookup_task_by_id(id: usize) -> Option<Arc<Task>> {
-    for s in schedulers() {
-        if let Some(t) = s.lookup_id(id) {
-            return Some(t);
-        }
-    }
-    None
+/// 入册：任务产生处一次性（`Task::hold` 末尾）。`Weak` 升级失败 = 任务已消失 =
+/// 自动失效，无需显式清理。
+pub(crate) fn enlist(id: usize, task: &Arc<Task>) {
+    roster_table().lock().insert(id, Arc::downgrade(task));
 }
 
-/// 按 id 查 Weak<Task>（不持 strong；envcall::Vest 借此避免长寿命 Arc 跨核
-/// 撞上 scheduler transform 的 strong_count == 1 断言）。
-pub(crate) fn lookup_task_by_id_weak(id: usize) -> Option<Weak<Task>> {
-    for s in schedulers() {
-        if let Some(w) = s.lookup_id_weak(id) {
-            return Some(w);
-        }
-    }
-    None
-}
-
-/// 全世界任务快照（存活任务；死条目一并返回，消费方升级判活）。
+/// 点名：按 id 取一个，**只出弱引用**——要强引用由调用方当场短升（于是「谁短暂持了
+/// 强引用」摆在调用点上，而不是藏在查询函数里）。
 ///
-/// 供 `gate` 的查询面与级联用——boot 经 `gate::install` 注入，故 `gate` 不直接
-/// 依赖本模块。只收集 `Weak`，不提升强计数（不干扰「唯一强持有」不变量）。
-pub(crate) fn snap() -> Vec<Weak<Task>> {
-    let mut out = Vec::new();
-    for s in schedulers() {
-        out.extend(s.ids_weak());
-    }
-    out
+/// `None` = **从未入册**（非法 id）；`Some` 升不起来 = 已消失（对象已回收）。
+pub(crate) fn muster(id: usize) -> Option<Weak<Task>> {
+    roster_table().lock().get(&id).map(Weak::clone)
+}
+
+/// 名册：全世界任务的弱引用，**每个任务恰好一次**（`gate` 的快照来源，boot 注入）。
+pub(crate) fn roster() -> Vec<Weak<Task>> {
+    roster_table().lock().values().map(Weak::clone).collect()
 }
 
 /// 从全部 hart 的 starved 队列摘除指定任务（kill 的 Starved 分支）。返回是否

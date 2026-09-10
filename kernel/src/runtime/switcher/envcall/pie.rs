@@ -23,7 +23,7 @@ use env::PieCall;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
-use crate::work::room::scheduler::core::{current, lookup_task_by_id_weak};
+use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie};
 use crate::work::unit::task::TaskIdent;
 
@@ -222,7 +222,7 @@ fn accord(frame: &mut TrapContext, src_token: usize, dst_id: usize, subset: Perm
         if !gate::vestable(&src, dst_id, &gate::snap()) {
             return Err(GateError::Denied);
         }
-        let target = lookup_task_by_id_weak(dst_id).ok_or(GateError::Denied)?;
+        let target = muster(dst_id).ok_or(GateError::Denied)?;
         gate::accord(&src, &target, subset)
     })();
     answer(frame, r);
@@ -272,7 +272,7 @@ fn narrow(frame: &mut TrapContext, token: usize, subset: Permission) -> Outcome 
 fn revoke(frame: &mut TrapContext, dst_id: usize, token: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let caller = current().running_task().ok_or(GateError::Denied)?;
-        let target = lookup_task_by_id_weak(dst_id).ok_or(GateError::Denied)?;
+        let target = muster(dst_id).ok_or(GateError::Denied)?;
         gate::revoke(&caller, &target, token, &gate::snap()).map(|_| 0)
     })();
     answer(frame, r);

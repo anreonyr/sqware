@@ -30,12 +30,12 @@ use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff, WakeKey, park, quit, wait, wake};
-use crate::work::room::scheduler::core::current;
+use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::{GateError, Permission};
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
-use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent};
+use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskState};
 
 mod mail;
 mod pie;
@@ -389,7 +389,7 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             }
         }
         EnvCall::Unit(UnitCall::Hatch { task }) => {
-            let target = match crate::work::room::scheduler::core::lookup_task_by_id(task.get()) {
+            let target = match muster(task.get()).and_then(|w| w.upgrade()) {
                 Some(t) => t,
                 None => return ret_err(frame, GateError::Denied),
             };
@@ -412,42 +412,46 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCont
             } else {
                 Duration::from_millis(millis as u64)
             };
-            // 授权：活目标须与我同域或在我 heir 里；已回收目标无从核对（返回 Dead）
-            //
-            // 同一趟里把**键 → 存活单元**解析出来（`WakeKey::Task{id}` 的寿命就是
-            // 目标任务的寿命）：这里本来就握着目标的 `Arc<Task>`，交一枚弱引用最自然。
-            // 弱引用先于 `t` 的那个强引用落地——任务真正消失时它自然判死。
-            let target_life = if let Some(t) =
-                crate::work::room::scheduler::core::lookup_task_by_id(task.get())
-            {
-                let same = Arc::ptr_eq(&t.ident.team, &ident.team);
-                let mine = current()
-                    .running_task()
-                    .map(|me| me.heir(t.ident.team.id).is_some())
-                    .unwrap_or(false);
-                if !(same || mine) {
-                    return ret_err(frame, GateError::Denied);
+            // 判活三态**在边界一次问清**（room 不查注册表）：
+            //   ① 名册里没有这个 id ⇒ **从未分配** = 非法 id ⇒ Denied。旧版把这一支与
+            //      「目标仍活」折在一起（判活有两个真相源时必然如此），于是非法 id 拿到
+            //      「未回收」、`Join{0}` 拿到「已回收」；而那个本该拦它的 `Err(Denied)`
+            //      需要 `target_dead ∧ ¬allocated` 同时成立，两条来路都蕴含 `allocated`
+            //      ⇒ 它**曾经永远不可达**。
+            //   ② 升不起强引用 ⇒ 已消失（对象已回收）⇒ 当场结论「已回收」；授权无从核对
+            //      （照旧放行；寿命无从谈起 ⇒ 空弱引用，站点当场判死、不建站点）。
+            //   ③ 仍是活任务 ⇒ 当场核对授权，并把「退出钩子是否已跑完」读出来。
+            let Some(target) = muster(task.get()) else {
+                return ret_err(frame, GateError::Denied);
+            };
+            let (reaped, life) = match target.upgrade() {
+                Some(t) => {
+                    let same = Arc::ptr_eq(&t.ident.team, &ident.team);
+                    let mine = current()
+                        .running_task()
+                        .map(|me| me.heir(t.ident.team.id).is_some())
+                        .unwrap_or(false);
+                    if !(same || mine) {
+                        return ret_err(frame, GateError::Denied);
+                    }
+                    (t.state() == TaskState::Reaped, t.life())
                 }
-                TaskLife {
-                    id: task.get(),
-                    life: t.life(),
-                }
-            } else {
-                // 目标已消失/不存在：`join` 只用 id 走「已死 / 非法」两支，寿命
-                // 无从谈起（那一支不建站点）。
-                TaskLife {
-                    id: task.get(),
-                    life: Weak::new(),
-                }
+                None => (true, Weak::new()),
             };
             // 挂起后恢复读到的 a0 = 挂起前预置值 ⇒ 预置 0（未回收）；当场判定再改写
             frame.gpr.set_x(Gprs::A0, 0);
             drop(ident);
-            match messenger::join(target_life, dur) {
+            match messenger::join(
+                TaskLife {
+                    id: task.get(),
+                    life,
+                },
+                reaped,
+                dur,
+            ) {
                 // 未离核：当场结论（true = 调用开始时目标已回收）。
-                Ok(Handoff::Resume(dead)) => frame.gpr.set_x(Gprs::A0, dead as usize),
-                Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
-                Err(e) => return ret_err(frame, e),
+                Handoff::Resume(dead) => frame.gpr.set_x(Gprs::A0, dead as usize),
+                Handoff::Switch(pa) => return pa as *mut TrapContext,
             }
         }
         EnvCall::Control(ControlCall::Panic { code }) => {

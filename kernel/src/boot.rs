@@ -163,7 +163,7 @@ fn register_runtime_hooks() {
 
     // 快照提供者：gate 的查询面与级联要「全世界任务」，但 gate 不依赖 scheduler
     // ——依赖倒置在此一次性接上（此后 gate::snap() 即可取快照）。
-    crate::work::unit::gate::install(crate::work::room::scheduler::core::snap);
+    crate::work::unit::gate::install(crate::work::room::scheduler::core::roster);
 
     // 关机序列：messenger 簿记规模（仅 audit：只读观测，**必须在 rip 之前**——
     //   rip 清空站点表，之后再量恒为 0，那样的断言没有牙）→ scheduler::rip

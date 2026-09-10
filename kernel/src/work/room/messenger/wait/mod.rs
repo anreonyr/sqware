@@ -17,7 +17,6 @@ use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::trap::run;
-use crate::work::unit::gate::GateError;
 use crate::work::unit::life::{Life, TaskLife};
 use crate::work::unit::task::{Task, TaskState};
 
@@ -157,17 +156,6 @@ pub fn wait(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()> {
 
 // ── 操作：等目标回收（Join） ──
 
-/// 目标是否已死透。注册表只存 `Weak` 且从不清理：升级失败 ⇒ 已分配过就是
-/// 「已回收」；从未分配 ⇒ 非法 id（调用方另判 `Denied`）。
-///
-/// `Reaped` 由 `reap` 独占置位（钩子之后），故本判据为真 ⇔ **收尾已完成**。
-fn target_dead(tid: usize) -> bool {
-    match crate::work::room::scheduler::core::lookup_task_by_id(tid) {
-        Some(t) => t.state() == TaskState::Reaped,
-        None => crate::work::unit::task::allocated(tid),
-    }
-}
-
 /// 等目标结束（`Join` 的承载）。
 ///
 /// 契约（与 `wait`/`pull` 同源）：**未挂起**时结论精确；**挂起过**则恢复后读到的
@@ -183,23 +171,23 @@ fn target_dead(tid: usize) -> bool {
 /// 就握着目标的 `Arc<Task>`（授权判定要用），交一枚弱引用最自然——**解析在调用方
 /// 那一层**，room 不查任务注册表。键的这张站点因此也有了寿命：目标真正消失
 /// （`Arc<Task>` 归零）后，残留的空站点会被 `prune` 当场删掉。
-pub fn join(task: TaskLife, dur: Duration) -> Result<Handoff<bool>, GateError> {
-    let tid = task.id;
-    if target_dead(tid) {
-        return if crate::work::unit::task::allocated(tid) {
-            Ok(Handoff::Resume(true))
-        } else {
-            Err(GateError::Denied)
-        };
+///
+/// `reaped` = 边界当场读出的「退出钩子已跑完」（`TaskState::Reaped` 由 [`reap`] 独占
+/// 置位）。**非法 id 也在边界判掉**（名册点名无此 id ⇒ `Denied`）——判活只此一条来源，
+/// 本函数因此**没有失败支**：从前那个 `Err(Denied)` 需要 `target_dead ∧ ¬allocated`
+/// 同时成立，而两条来路都蕴含 `allocated`，故它**曾经永远不可达**。
+pub fn join(task: TaskLife, reaped: bool, dur: Duration) -> Handoff<bool> {
+    if reaped {
+        return Handoff::Resume(true);
     }
     if dur == Duration::ZERO {
-        return Ok(Handoff::Resume(false));
+        return Handoff::Resume(false);
     }
-    Ok(match block(WakeKey::Task { id: tid }, &task.life, dur) {
+    match block(WakeKey::Task { id: task.id }, &task.life, dur) {
         Handoff::Switch(pa) => Handoff::Switch(pa),
         // 信标已置：目标在「判死 → 入队」的窗口内被回收 ⇒ 当场结论（已回收）。
         Handoff::Resume(()) => Handoff::Resume(true),
-    })
+    }
 }
 
 /// 键退役：放行该键上的**全部**等待者，并把站点**当场删掉**（不留墓碑，也不留空壳）。

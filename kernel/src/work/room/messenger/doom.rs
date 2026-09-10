@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use hashbrown::HashSet;
 
 use crate::lock::{Level, OnceLock, SpinLock};
-use crate::work::room::scheduler::core::lookup_task_by_id;
+use crate::work::room::scheduler::core::muster;
 use crate::work::unit::task::{Task, TaskState};
 use crate::work::unit::team::Team;
 
@@ -113,7 +113,7 @@ pub(crate) fn cull(roots: &[Arc<Team>]) {
 
 /// 级联触发（挂 exit_hook）：读父 task 的 heir → 两阶段扑杀整棵血缘子树。
 pub(crate) fn doom(tid: usize) {
-    if let Some(task) = lookup_task_by_id(tid) {
+    if let Some(task) = muster(tid).and_then(|w| w.upgrade()) {
         cull(&task.heirs());
     }
 }
