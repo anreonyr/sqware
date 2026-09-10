@@ -15,7 +15,9 @@
 //! push/pull 的阻塞：内核 Push/Pull 槽满/槽空返 `-3 Busy`；本层转 `Wait` 原语
 //! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
 
-use env::{EnvResult, HoleDir, MailCall, MailCallRet, PieCall, PieCallRet, PieToken, TaskId, VirtAddr};
+use env::{
+    EnvResult, HoleDir, MailCall, MailCallRet, PieCall, PieCallRet, PieToken, TaskId, VirtAddr,
+};
 
 /// hole 单消息字节上限（与内核侧 `HOLE_MTU_MAX` 一致）。调用方 unseal 时选
 /// mtu ∈ [1, HOLE_MTU_MAX]；推送时实际字节数由 `push` 的 `len` 决定。
@@ -98,7 +100,7 @@ pub fn wait(token: usize, dir: HoleDir, millis: usize) -> EnvResult<bool> {
     }
 }
 
-pub fn map(token: usize) -> EnvResult<usize> {
+pub fn open(token: usize) -> EnvResult<usize> {
     let r = PieCall::Open {
         token: PieToken::new(token),
     }
@@ -109,7 +111,7 @@ pub fn map(token: usize) -> EnvResult<usize> {
     }
 }
 
-pub fn unmap(token: usize) -> EnvResult<()> {
+pub fn shut(token: usize) -> EnvResult<()> {
     let r = PieCall::Shut {
         token: PieToken::new(token),
     }
@@ -352,12 +354,12 @@ impl PolePie {
         Self { token }
     }
 
-    pub fn map(&self) -> EnvResult<usize> {
-        map(self.token)
+    pub fn open(&self) -> EnvResult<usize> {
+        open(self.token)
     }
 
-    pub fn unmap(&self) -> EnvResult<()> {
-        unmap(self.token)
+    pub fn shut(&self) -> EnvResult<()> {
+        shut(self.token)
     }
 
     pub fn seal(&self) -> EnvResult<()> {

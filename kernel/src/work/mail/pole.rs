@@ -3,7 +3,7 @@
 // PoleMeta 是内核侧"地基"：物理页块 + 各 pie 的视图登记（键 = token）。
 // 用户态 Pie<PoleMeta>（含 Weak<PoleMeta>）只持门闩；map 后用户直接读写页。
 //
-// 数据面原语：`map` / `unmap` / `narrow` / `seal`。创建：`unseal(bytes)`。
+// 数据面原语：`open` / `shut` / `narrow` / `seal`。创建：`unseal(bytes)`。
 // PoleMeta 拥有物理帧；Arc 归零时 `Drop` 链逐视图 unmap + 还帧。
 
 use alloc::sync::Arc;
@@ -91,7 +91,7 @@ impl PoleMeta {
     ///
     /// `token` 唯一标识调用方 pie；同 token 复用既有视图（幂等 map），异 token
     /// 各自独立映射（同一物理页可出现在同 space 的多个 VA）。
-    fn map_into(
+    fn open_into(
         &self,
         token: usize,
         space: &Arc<Space>,
@@ -146,7 +146,7 @@ impl PoleMeta {
         Ok(())
     }
 
-    fn unmap_from(&self, token: usize) -> Result<(), GateError> {
+    fn shut_from(&self, token: usize) -> Result<(), GateError> {
         let (space, span) = {
             let mut m = self.mappings.lock();
             let pos = m.iter().position(|(t, _, _)| *t == token);
@@ -187,7 +187,7 @@ impl Drop for PoleMeta {
 
 /// 把物理页借映进 `space`（需 rights & R，flags 由 caller 按 subset 决定）。
 /// `token` = 调用方 pie 的映射身份；同 token 幂等复用，异 token 独立映射。
-pub(crate) fn map(
+pub(crate) fn open(
     meta: &PoleMeta,
     token: usize,
     space: &Arc<Space>,
@@ -196,7 +196,7 @@ pub(crate) fn map(
     if !meta.alive() {
         return Err(GateError::Dead);
     }
-    let va = meta.map_into(token, space, flags)?;
+    let va = meta.open_into(token, space, flags)?;
     // 强制翻 PTE flags——map_into 偶遇 superpage / 旧 entry 时 flags 没真落位；
     // protect 走 walk 改 PTE flags，确保 cap ⊆ 页表（无视 superpage 起点）。
     let _ = space.protect(VirtAddr::from_raw(va), meta.bytes, flags);
@@ -204,11 +204,11 @@ pub(crate) fn map(
 }
 
 /// 从 `space` 解除映射（幂等；需 rights & (R | W)）。`token` 定位该 pie 的映射。
-pub(crate) fn unmap(meta: &PoleMeta, token: usize) -> Result<(), GateError> {
+pub(crate) fn shut(meta: &PoleMeta, token: usize) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
-    meta.unmap_from(token)
+    meta.shut_from(token)
 }
 
 /// Narrow 降权：把 `token` 对应映射段降权到新 `flags`（cap ⊆ 页表）。未映射则无事。

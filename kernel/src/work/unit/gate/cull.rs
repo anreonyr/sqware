@@ -79,7 +79,7 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
 
     // 3. 无锁段：逐条撤 Pole 映射（幂等；资源已回收则无事）。
     for (meta, token) in unmaps {
-        let _ = pole::unmap(&meta, token);
+        let _ = pole::shut(&meta, token);
     }
 
     removed

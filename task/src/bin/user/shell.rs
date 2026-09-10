@@ -628,12 +628,13 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
             name(term);
         }
         "badslot" => {
-            // 非法 envcall 槽位（`a7` 由 U 态完全控制）：空号 class 1 idx 5 + 已删
-            // class 7。判据 = 内核把调用号当**参数**拒掉（a0 回负码）并续跑本任务，
-            // 而不是 panic 打死整机。此处不走 `EnvCall` 解码（那正是要绕过的正常路径），
-            // 直入 ABI 的唯一汇编入口 `trap`。
+            // 非法 envcall 槽位（`a7` 由 U 态完全控制）：空号 class 1 idx 5 +
+            // **未分配**的 class 8 + 越界。判据 = 内核把调用号当**参数**拒掉
+            // （a0 回负码）并续跑本任务，而不是 panic 打死整机。此处不走
+            // `EnvCall` 解码（那正是要绕过的正常路径），直入 ABI 的唯一汇编入口
+            // `trap`。
             let mut neg = 0usize;
-            for slot in [0x1_0000_0005usize, 0x7_0000_0000, usize::MAX] {
+            for slot in [0x1_0000_0005usize, 0x8_0000_0000, usize::MAX] {
                 // SAFETY: 照 ABI 摆 slot + 6 参数；本调用只探错误路径，不依赖返回语义。
                 let (a0, _a1) = unsafe { env::ecall::trap(slot, [0; 6]) };
                 if (a0 as isize) < 0 {
