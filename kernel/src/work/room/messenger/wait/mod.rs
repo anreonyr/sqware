@@ -21,7 +21,7 @@ use crate::work::unit::life::{Life, TaskLife};
 use crate::work::unit::task::{Task, TaskState};
 
 use self::holder::{Ticket, hold, void};
-use self::site::{Site, Waiter, WakeKey, prune, sites, take_beacon};
+use self::site::{SITE_SHARDS, Site, Waiter, WakeKey, prune, shard_at, sites, take_beacon};
 use super::handoff::Handoff;
 
 // ── 操作：挂起（用 scheduler::core::Scheduler::swap） ──
@@ -232,6 +232,43 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
     }
     rise(waiters.into_iter().map(|w| w.task))
 }
+/// 空间退役：删掉该空间名下的**全部**空间键站点，放行它们的等待者。返回唤醒数。
+///
+/// 与 [`wipe`]（单键）同族，但**触发面不同**：hole 键与 task 键各有自己的退役调用点
+/// （`HoleMeta::drop` / `hole::seal` / `bury`），**空间键没有**——空间死掉时没有任何入口
+/// 会再碰它的键，而 `prune` 只在"那个键再次被碰到"时才跑 ⇒ 站点永留（实测：关机时
+/// `dead 1`，`by kind: space 1`）。
+///
+/// 调用方 = [`super::reap::bury`]：判定"空间将亡"（唯一强持有者就是这个正在回收的任务）
+/// 之后调。遍历全部分片、**逐片取放**（绝不持跨片锁）；摘出的等待者与键一起退役
+/// （`void(ticket)` 消音到点 + `rise` 放回就绪）。
+pub(crate) fn wipe_space(space: usize) -> usize {
+    let mut woken = 0usize;
+    for shard in 0..SITE_SHARDS {
+        // 作用域即临界区：锁内只取、锁外 drop（`Arc<Task>` 的 drop 链会取 L2）。
+        let taken: Vec<Waiter> = {
+            let mut sites = shard_at(shard).lock();
+            let keys: Vec<WakeKey> = sites
+                .keys()
+                .filter(|k| matches!(k, WakeKey::Space { space: s, .. } if *s == space))
+                .copied()
+                .collect();
+            let mut out = Vec::new();
+            for key in keys {
+                if let Some(site) = sites.remove(&key) {
+                    out.extend(site.waiters);
+                }
+            }
+            out
+        };
+        for w in &taken {
+            void(w.ticket);
+        }
+        woken += rise(taken.into_iter().map(|w| w.task));
+    }
+    woken
+}
+
 // ── 操作：唤醒 ──
 
 /// 叫醒一个：摘队首 → 放回就绪。无人在等 → 置信标（防漏唤醒）。返回是否唤到人。

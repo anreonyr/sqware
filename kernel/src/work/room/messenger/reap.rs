@@ -18,7 +18,7 @@ use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
 use crate::work::unit::task::{Task, TaskState};
 
-use super::{WakeKey, wipe};
+use super::{WakeKey, wipe, wipe_space};
 
 /// 全局躯壳队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
 /// 自己正在用的栈上回收自己；bury 统一回收。
@@ -110,6 +110,13 @@ fn bury() {
         // 站点当场删掉：`WakeKey::Task{id}` 的寿命是目标任务的存活单元，而本站点在
         // 键还在世的最后一次入口上——删掉它，站点表就不随任务回收增长（见 `wipe`）。
         wipe(WakeKey::Task { id: z.ident.id });
+        // 空间键的退役面：**空间死掉时没有任何入口会再碰它的键**（hole / task 键各有自己
+        // 的退役调用点，空间键没有），而 `prune` 只在"键再被碰到"时才跑 ⇒ 站点永留。
+        // 判据用**唯一强持有**：这个壳是最后一份持有者时，`drop(z)` 之后空间才真死——
+        // 故趁 asid 还在手上先把它名下的空间键站点一起退役。
+        if Arc::strong_count(&z.ident.team.space) == 1 {
+            wipe_space(z.ident.team.space.asid().get());
+        }
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);
         // 锁外回收（Team.tasks 已放 → Space.inner=2 合法）：栈 slot + trap 帧

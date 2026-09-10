@@ -29,7 +29,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::messenger::{self, Handoff, WakeKey, park, quit, wait, wake};
+use crate::work::room::messenger::{self, Handoff, WakeKey, park, wait, wake};
 use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::{GateError, Permission};
 use crate::work::unit::life::TaskLife;
