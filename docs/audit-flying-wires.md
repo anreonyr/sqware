@@ -1675,7 +1675,7 @@ shutdown: 19 frames, 9 blocks` + `table frames 150 != kernel-walk count 141` ⇒
    `block()` ④ 持锁先判 `dead` ⇒ 键已死不入队、走既有回滚。
 
 **不新增写路径**（这条是 (b) 的自洽性前提）：除 `Life::new` 与资源侧**显式的** `wipe(key)`（今天
-`seal`/`drop` 处already 在调），room 再不接受任何来自外部的「这个键死了」的说法——全部靠**读**。
+`seal`/`drop` 处已经在调），room 再不接受任何来自外部的「这个键死了」的说法——全部靠**读**。
 故 A2 不引入第二张表，也就不会重演墓碑。
 
 **签名（本轮稿，待裁）**：四个入口加参数，`park` 例外自取：
