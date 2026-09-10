@@ -1741,3 +1741,27 @@ strong 4、bury 后 3，其余任务 bury 后恒为 1）⇒ Task→TaskIdent→T
 
 **旁枝（另案，未处理）**：关机屏障不挡「败者核继续跑任务」——慢探针期间 hart 1 报
 `user page fault without running task`（`trap.rs:228`）而 panic。
+
+### 门按档分别构建（修掉「一次构建、两种期望」）
+
+`EXAMINE_FEATURES=audit` 原先只构建**一次** ELF，而默认轮判据里有一条哨兵「默认档不该出现 audit 输出」
+（audit ELF 每次关机都打 `[audit] sites …`）⇒ 默认轮**按构造必挂**，两个档不能在一次运行里各得其所。
+改成**按档构建、按档跑**：默认轮恒跑不带 feature 的 ELF、audit 轮跑带 feature 的 ELF；每档产物**建完立刻**
+搬进本档目录（`<OUT>/elf-default`、`<OUT>/elf-audit`），并**连 `initrd.img` 一起搬**——`boot.nu` 在 ELF 同
+目录找它，不搬等于把 initrd 弄丢（症状与 feature 无关，极难查）；只建有轮次要跑的档（`REPEAT=0` 且不带
+feature 时不再空构建）。
+
+**默认档的 feature 写成 `const DEFAULT_FEATURES = ""`，不是环境变量**：加旋钮等于在门里开一条「让默认轮跑
+别档 ELF」的合法通路，正是本轮修掉的瑕疵的可配置版。
+
+**判定没有被改成和事佬**（逐条自查）：那条既存违规（`task lifecycle leak at shutdown: 19 frames, 9 blocks`，
+A2 线）**仍由「无 panic」判据原样判死** ⇒ audit 轮 FAIL、整体非零退出；新增的只是**纯标注**（前件
+`$why != ""` ⇒ 只可能加在已判 FAIL 的轮上，`ok` 的算法没动），数从捕获 grep 而来、不写死，并指向本节
+「关机审计第二条违规」。没有开关、没有白名单、没摘 marker、没放宽阈值。另把 audit 档 PASS 标签
+`站点表已空` 改成 `站点表无孤儿`——**旧标签与本档判据自相矛盾**（判的从来是 `orphan==0 ∧ live==0 ∧
+waiters==0`；`sites=34` 全是墓碑，总数从来不作判据），是文字修正。
+
+**复验（本人独立跑）**：默认档 3/3（每轮构建行显示 `--features ''`）；`EXAMINE_FEATURES=audit REPEAT=3`
+⇒ **3 条默认轮 PASS ＋ audit 轮九步全过、仅因既存违规 FAIL**、`3/4` rc=1，原因串里没有任何
+`缺[…]`/`顺序[…]`/`孤儿站点`。**反向验证**（把 `DEFAULT_FEATURES` 临时改成 `audit`）⇒ 哨兵仍拦
+（`默认档出现了 audit 输出`，捕获里 10 行 `[audit]`），改回后指纹一致。
