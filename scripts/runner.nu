@@ -237,7 +237,9 @@ def archive [cfg: record, code: int] {
   # 3) 判定（显式期望不满足 ⇒ 非零退出，验收门不再靠人眼比对）。
   print $"判定[期望 ($v.want)]: ($v.shape)（qemu code ($v.code)）"
   if not $v.ok {
-      print $"FAIL(seed ($cfg.seed)): 期望 ($v.want)，实测 ($v.shape)"
+      # 注意别写成 $"FAIL(seed …)：`(` 紧跟文本会让 nu 把 `FAIL(...)` 当命令调用，
+      # 于是 FAIL 路径自己崩掉、诊断信息丢失（语义仍是退码 1，但现场说明没了）。
+      print $"FAIL · seed=($cfg.seed) · 期望=($v.want) · 实测=($v.shape)"
       exit 1
   }
 }
