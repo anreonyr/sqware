@@ -1555,3 +1555,35 @@ unseal / push / pull / **seal**，因而走到了 `wipe` 的 hole seal/drop 调�
 
 下一步的 nu 重写产出 **`scripts/examine.nu`**（替掉 `.sh` 这版），三条缺失断言（`redeem` / `wipe` /
 `prune`）随之一次加进 nu 版。
+
+### 门重写为 nu（`scripts/examine.nu`）
+
+`scripts/examine.sh` → **`scripts/examine.nu`**（297 行；bash 版删除）。四类判据逐条保留——逐步
+expect / 自退（非 124）/ 无 panic / 九个 marker；八条命令与九个 marker 与被删版**逐字一致**（从 git
+取旧版做 diff 核过）。独立复核：`--ide-ast` 通过、本人实跑 **3/3**。
+
+**输入的喂法必须换（原设计在 nu 里不可达）**：nu **没有 `<` 重定向**——`^cat < f` 里 `<` 只是普通
+实参（实测报 `cat: '<': 没有那个文件或目录`），FIFO 接不到 qemu 的 stdin。改用**同性质的长驻管道**：
+
+```
+job spawn { try { ^tail -f -n +1 <命令文件> | ^nu scripts/boot.nu <elf> o+e> <捕获> } catch {}; … }
+```
+
+tail 端长驻（不 EOF ⇒ 不会被 guest 当 Ctrl-D），读端自 job 启动起由 nu→timeout→qemu 持有（不
+SIGPIPE），门只 `save --append` 逐条追加命令。最小实验（`trace/examine-exp/`）证过：管道直通逐条到达；
+真 guest 收到 `spawn`/`exit` 并自然停机；job 里不包 `try` 就永远不写 rc 文件。
+
+**验收**：`EXAMINE_REPEAT=3` → **3/3**；`EXAMINE_REPEAT=10` → **10/10**（icount 关）。
+**故障注入**（把 `hole` 那步期望改坏、marker 不动）：`步骤[hole] 超时（15s 内没等到 …）` + 原因串指到
+`步骤 hole` + 现场四个文件（console.log / cmds.txt / qemu.rc / diag.txt）留在目录 + `rc=1`；改回后 hash
+与冻结值一致并复跑通过。**门真的会拦，且指到具体命令。**
+
+**顺带修掉 `.sh` 里一处恒不成立的检查**：诊断用的「回显计数」写成 `grep -ac '^sq > '`（**行首锚定**），
+而 guest 提示符前**恒有 ANSI 色码** ⇒ 该计数**永远是 0**——本轮早前我读诊断时正是被它误导（把「guest
+没收到输入」判断得更死）。nu 版去掉锚定（故障轮活快照报 20 行含 `sq > `）。它只作诊断字段、不参与判定，
+但「永远为 0 的观测量」本身就是飞线。
+
+**改行为处（全列，供复查）**：FIFO→管道；收尾无 `exec 3>&-` ⇒ 失败轮不再因 EOF 提前自退、要等满
+`QEMU_TIMEOUT`（实测 60.2s，判据不受影响）；`输入写失败`/`write.err` 无对应物，替代证据是 diag 里的
+条数与字节数；diag 内容改写（去 fd3/FIFO，加 seed/icount/qemu 命令行/rc）；`只写出 N/8 条` 补了 ` + `
+分隔；新增 nu-only 失败理由「rc 取不到」；`1..0` 与 `QEMU_TIMEOUT=0` 两处边界显式对齐。
