@@ -476,6 +476,20 @@ def run_once [cfg: record, i: int, flavor: string] {
       }
       print $"  audit 站点计数：sites=($n_sites) live=($n_live) tomb=($n_tomb) orphan=($n_orphan) dead=($n_dead) waiters=($n_waiters)"
     }
+    # ── 名册：关机时**不该还有活着的任务** ──
+    # 这一条比帧/块计数更早说出问题的名字：帧/块只说明"有东西没还"，它说明"哪个任务没走"。
+    # 实现用 `Weak::strong_count()` 数活口（只读、不升强引用），故观测不改被观测的事实。
+    let alive = ((^grep -oE -- '\[audit\] roster [0-9]+ alive [0-9]+' $log | complete).stdout | lines | first)
+    if $alive == null {
+      $why = (append_why $why "名册计数取不到")
+    } else {
+      let toks = ($alive | split row -r '\s+')
+      # 取的是 grep -oE 的整段匹配 ⇒ toks = ["[audit]", "roster", N, "alive", M]
+      let n_alive = ($toks | get 4 | into int)
+      let n_roster = ($toks | get 2)
+      print $"  名册：roster=($n_roster) alive=($n_alive)"
+      if $n_alive != 0 { $why = (append_why $why $"名册活任务[($n_alive)]（就是它钉住了自己的 Team/Space ⇒ 帧/页留在类别账）") }
+    }
   } else if (hit '\[audit\] sites ' $log) {
     # 默认档**不该**有 audit 输出：出现即说明跑的 ELF 带着 audit feature（不是本档构建）。
     $why = (append_why $why "默认档出现了 audit 输出")

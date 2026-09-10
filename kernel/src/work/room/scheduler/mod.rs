@@ -18,7 +18,7 @@
 // 术语：tick/tock 属计时域；调度域词族 = run/starve/park/reap/steal/rotate/prepare/
 // seat/shed。这些词的**服务面现在只剩一处**：`park`/`reap` 的实现都在 messenger
 // （任务「离开 running 槽」的状态机归它），本核心只留跨边界原语
-// `disown_and_install_next` 与槽位两态（`seat` 装 / `shed` 降级）。
+// `swap`（取走 running + 装下一帧）与槽位两态（`seat` 装 / `shed` 降级）。
 //
 // **待裁的一处撞车**：核心的 WFI/取活入口仍叫 `wait()`（`core.rs`），而冻结表把
 // `wait`/`wake` 这对词给了 messenger 的事件等待与唤醒。同一个词两个意思，正名待裁决。

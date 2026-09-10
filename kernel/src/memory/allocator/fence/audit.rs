@@ -341,4 +341,8 @@ pub fn probe_messenger() {
     crate::putln!("[audit] sites by kind: {}", st.kinds());
     let (holders_n, husks_n) = crate::work::room::messenger::probe_bookkeeping();
     crate::putln!("[audit] holders {holders_n} husks {husks_n}");
+    // 名册：关机时不该还有能升起来的任务（强引用能升 ⇒ 有人没放 ⇒ 它钉住了自己的
+    // Team/Space，帧与页因此留在类别账上——这就是 `task lifecycle leak` 那条账的名字）。
+    let (roster_n, alive_n) = crate::work::room::scheduler::core::roster_live();
+    crate::putln!("[audit] roster {roster_n} alive {alive_n}");
 }

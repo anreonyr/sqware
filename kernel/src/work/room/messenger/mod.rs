@@ -2,7 +2,7 @@
 //
 // 任务离开 running 槽有三种过渡：park（纯睡）、wait（按唤醒源等信号）、reap（退出）。
 // 前两种与「等目标回收」现在共用一条挂起实现 `block`——它们只差一个键。
-// 三种都借 [`scheduler::core::Scheduler::disown_and_install_next`] 跨边界原语把
+// 三种都借 [`scheduler::core::Scheduler::swap`] 跨边界原语把
 // running 卸下（槽位 settled：装下一 starved 或降级 Last），再挂进站点表。
 // 恢复路径三条：[`wake`]（信号到，一个）、[`wipe`]（键退役，全部）、
 // [`redeem`]（到点，按票），都把任务转 Starved 推回本核 + kick。

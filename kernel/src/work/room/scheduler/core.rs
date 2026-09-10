@@ -22,7 +22,7 @@
 // 锁纪律：inner = Level::Scheduler(1)，每核一把；名册 = Level::L3(**4**——3 是删掉的
 // 旧槽位，名字里的 3 不是数值，见 `lock/depend.rs`)。Team.tasks(L3=4) 与
 // Space.inner(Space=2) 禁止嵌套——锁内只做纯 Vec 操作，绝不调 space 方法。task
-// "离开 running" 的过渡（park / wait / reap）借 disown_and_install_next 跨边界原语交给
+// "离开 running" 的过渡（park / wait / reap）借 `swap` 跨边界原语交给
 // messenger 处理，本核只负责 settled 槽位（Live=next 或 Last）；唤醒（redeem / wipe）
 // 也在 messenger。
 //
@@ -323,7 +323,7 @@ impl Scheduler {
     /// 锁纪律：内锁取 running / 弹 starved 后立即放；seat 重新取内锁。
     /// messenger 在两次取锁之间做自己的簿记（sites / holders / husks
     /// 各自 L3 锁，绝不持 L3 取 L1）。
-    pub(crate) fn disown_and_install_next(&self) -> (Arc<Task>, Option<usize>) {
+    pub(crate) fn swap(&self) -> (Arc<Task>, Option<usize>) {
         let mut i = self.inner.lock();
         let task = i.running.take().expect("no running task");
         let ident = task.ident.clone();
@@ -381,7 +381,7 @@ impl Scheduler {
     }
 
     // 注：park / wait / reap 三个 Scheduler 方法已移至 [`crate::work::room::messenger`]，
-    // 任务"离开 running 槽"的所有过渡归 messenger 管理——它们借 Scheduler::disown_and_install_next
+    // 任务"离开 running 槽"的所有过渡归 messenger 管理——它们借 Scheduler::swap
     // 跨边界原语完成槽位 settled，再在 messenger 域内做 sites / husks 簿记。
 }
 
@@ -483,6 +483,18 @@ pub(crate) fn enlist(id: usize, task: &Arc<Task>) {
 /// `None` = **从未入册**（非法 id）；`Some` 升不起来 = 已消失（对象已回收）。
 pub(crate) fn muster(id: usize) -> Option<Weak<Task>> {
     roster_table().lock().get(&id).map(Weak::clone)
+}
+
+/// 名册规模与**仍活着的条数**（`(总条数, 活条数)`）——audit 档的观测量。
+///
+/// 用 `Weak::strong_count()` 数活口：**只读、不升强引用**，故观测本身不会把被量对象
+/// 拖住（`upgrade` 会 +1，用于观测就会改变被观测的事实）。关机时它应当是 `0`：全部任务
+/// 都已回收，名册里不该还有强引用能升起来的条目。**它比帧/块计数更早说出问题的名字**
+/// ——帧/块只告诉你"有东西没还"，它告诉你"哪个任务没走"。
+#[cfg(feature = "audit")]
+pub(crate) fn roster_live() -> (usize, usize) {
+    let g = roster_table().lock();
+    (g.len(), g.values().filter(|w| w.strong_count() > 0).count())
 }
 
 /// 名册：全世界任务的弱引用，**每个任务恰好一次**（`gate` 的快照来源，boot 注入）。

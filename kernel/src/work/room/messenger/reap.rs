@@ -60,14 +60,14 @@ pub(super) fn reap(mut task: Arc<Task>) {
 /// 落点由 `scheduler::trap::run` 决定（续跑 / 轮转 / 取活 / 停机）——它只会循环到
 /// 有帧或停机，故恒有帧可交。
 ///
-/// 注：`disown_and_install_next` 其实已经在装槽时给出了后继帧 PA，这里仍走 `run()`
+/// 注：`swap` 其实已经在装槽时给出了后继帧 PA，这里仍走 `run()`
 /// 取活——两条路等价，差别只在 `run()` 会替后继再扣 1 个量子（8 → 7）。为与改前
 /// 保持**逐字相同的调度行为**，本轮不动它（记一笔，待单独裁决）。
 pub fn quit() -> usize {
     let cond = current();
-    // 离核且无后继装槽 → 槽已 settled（disown_and_install_next 内 shed 或
+    // 离核且无后继装槽 → 槽已 settled（`swap` 内 shed 或
     // 装下一）；团队 Arc 归零即回收——地址空间随释放。
-    let (mut exited, _next_pa) = cond.disown_and_install_next();
+    let (mut exited, _next_pa) = cond.swap();
     debug_assert!(
         matches!(
             Task::exclusive(&mut exited).state(),

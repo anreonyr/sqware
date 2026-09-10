@@ -24,7 +24,7 @@ use self::holder::{Ticket, hold, void};
 use self::site::{Site, Waiter, WakeKey, prune, sites, take_beacon};
 use super::handoff::Handoff;
 
-// ── 操作：挂起（用 scheduler::core::Scheduler::disown_and_install_next） ──
+// ── 操作：挂起（用 scheduler::core::Scheduler::swap） ──
 
 /// 挂起的唯一实现：三处入口（`park` / `wait` / `join`）只差一个键。
 ///
@@ -48,7 +48,7 @@ fn block(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()> {
         return Handoff::Resume(());
     }
     // ② 离核
-    let (mut task, next_pa) = current().disown_and_install_next();
+    let (mut task, next_pa) = current().swap();
     // ③ 登记
     let ticket = Ticket::alloc();
     let at = (dur != Duration::MAX).then(|| clock::now().add(dur).as_ticks());
