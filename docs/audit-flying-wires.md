@@ -1270,7 +1270,8 @@ room/
 | 1b | `mute` 变真逆操作，删 `cancelled` 与其两处污染陷阱 | ✅ `d9ca7a5` |
 | 2a | 唤醒键成枚举（`WakeKey`）+ 两张站点表合一（`WaitSite`/`JoinSite` → `Site`） | ✅ `1eb7ca1` |
 | 2b | 票号 + 票根（`HOLDERS`）；等待点上任务（`Blocked { key, ticket }`）；`Alarm` 站点；删 `parked`/`wait_times`/`join_times`；`wipe` / `redeem` 立起；站点寿命 `prune` | ✅ `fd15ffd` |
-| 3 | `Ticket` 上任务；`WakeKey` 四变体；`suspend` 读票直达（不再扫 16 分片） | 待做 |
+| 3 | `Ticket` 上任务；`WakeKey` 四变体；`suspend` 读票直达 —— 已在 2b 内一并落掉 | ✅ `fd15ffd` |
+| 3b | 落点收成一个 `Handoff<T>`（`Joined`/`JoinStep`/`Waited` 退场，`Idle` 消失）；`rise` 收掉四遍唤醒尾巴 | ✅ `c250398` |
 | 4 | `sites` 合一；`wait`/`wake`/`wipe`/`redeem`/`rise` 立起；`Handoff<T>` 收成一 | 待做 |
 | 5 | 拆文件（`messenger` 退场；即 §7.1 的搬家） | 待做 |
 
@@ -1282,6 +1283,17 @@ room/
 
 **A2 的接口已留好**：`WakeKey::Space.space` 今天填 asid；A2 轮只需换「谁填这个字段」＋在
 `Space::drop` / `seal` 处调 `wipe` / `void`，结构不动。
+
+### 验收基线的缺口（本轮实测发现）
+
+原七条 e2e 命令（spawn / dir / req / hole / clock / badslot / exit）**没有一条**会触发
+`redeem`（到点兑现）——轮 2b 新写的「票号 → 票根 → 持票人的键 → 站点」路径当时
+**从未被跑过**，7/7 全绿并不覆盖它。基线已加 `sleep 300` 探针（shell 的 `sleep <ms>`
+命令，输出 `sleep 300ms` → `woke`），当前为 **9/9**。
+
+同类的可疑覆盖缺口（未验，留待 harness 补断言那一项）：`wipe` 的两个调用方
+（`clear_loop` 的目标回收、hole 的 `seal`/`drop`）与 `prune` 的空站点删除，都没有
+可观测的断言——它们只在内核内部生效。
 
 ### 遗留的一处历史记录
 
