@@ -3,6 +3,14 @@
 > 本文档沉淀 sqware 单次往返 IPC 的完整设计决策与实现路径。
 > 所有决策均经用户逐条确认。内核侧几乎不改——全部复用现有结构。
 
+> ⚠️ **历史文档（本轮起）**：本文描述的 Service 承载方式是**内核任务**（`TaskBuilder::closure`
+> + `scheduler::ktask` 软陷阱面）。该面已**整片删除**——用户裁决「内核任务不再支持」。删除清单：
+> `scheduler/ktask.rs`、`scheduler/utask.rs`、`scheduler/task.rs` 三个文件，加上内核侧
+> `TaskBuilder::closure` 与 `ktask_trampoline`。**当前形态**：服务目录是 `task-dir` 域程序
+> （S 态用户任务，`a92b211` 起就不在内核里），事件等待走 `messenger::{wait, wake}`，
+> 退场走 `messenger::quit`。下文凡出现 `closure` / `ktask` / `utask::wait_forever` 之处，
+> 都按「当时的实现」读，不再对应现行代码。
+
 ## 0 · 目标
 
 用户态 caller 向一个 Service Task（内核 Task）发一次请求，Service 处理后回结果。
@@ -73,7 +81,7 @@ fn Respond(req, result) {
 | 授权 | **Pie** 闩 Hole | 现有 |
 | 挂起/唤醒 | **wait/wake** | 现有 |
 | 跨空间数据 | **mail::hole::push/pull** | 现有 |
-| service 承载 | **TaskBuilder::closure**（内核 Task） | 现有（曾用，重构删除，可复活）|
+| service 承载 | ~~**TaskBuilder::closure**（内核 Task）~~ | **已删除**（内核任务面不再支持；现行承载＝`task-dir` 域程序）|
 | **真正新增** | service 循环（Receive/Respond 编排）+ Request 用户封装 + shell 命令 | 纯适配/库层 |
 
 ## 4 · 关键难点：caller 与 service 的连接建立
@@ -99,13 +107,13 @@ service 是内核 Task，caller 是用户 Task，两者跨空间。两者要共�
 > 漏摘 `wait_sites`，残留 waiter 会让后续 `wake` 在已 Reaped 的任务上做 `Reaped -> Starved`
 > 变换（`transform` 断言 panic）。将来"真正单次 syscall（写帧）"路径落地时，它带自己的
 > 载荷（`rep → caller 帧`）与 kill 路径一起加回来。本文件其余提及 `park_mail` 之处为
-> 历史记录（当时名称），当前入口是 `wait(key, Duration::MAX)` 与 `wait_forever`。
+> 历史记录（当时名称）；当前入口是 `wait(key, Duration::MAX)`（内核任务侧的 `wait_forever` 已随内核任务面删除）。
 
 - `kernel/src/work/room/messenger.rs`：`kill` 按 `BlockReason` 分派摘除（Park → parked；Wait → wait_sites）。
 
 ## 6 · 实现步骤（复用现有结构，最小）
 
-### Step A：复活 service 内核 Task
+### Step A：复活 service 内核 Task（**已作废**：内核任务面已删除）
 
 用 `TaskBuilder::closure` 建一个内核 Task，循环 `Receive()` → 处理 → `Respond()`。
 
@@ -360,9 +368,9 @@ caller (shell)                          echo svc (kernel Task)
 `park_mail` 曾与 `wait` 并存，仅以 `BlockReason::Mail` 区分语义；该变体已删除（见 §5 修订）。
 永久等待现在就是 `wait(key, Duration::MAX)`：不登记 tock，只能被 `wake(key)` 解锁，
 且 `kill` 走 `BlockReason::Wait` 分支（按 `ptr_eq` 摘 `wait_sites` + mute）。
-内核任务侧入口为 `scheduler::ktask::wait_forever`（asm 包装 `utask::wait_forever`）。
+~~内核任务侧入口为 `scheduler::ktask::wait_forever`（asm 包装 `utask::wait_forever`）~~——**两者均已删除**。
 
-#### `scheduler::ktask::wait_forever(_key: usize)` —— ktask 入口
+#### ~~`scheduler::ktask::wait_forever(_key: usize)`~~ —— ktask 入口（**已删除**）
 
 裸 asm：存帧 → 调度 wait_forever → restore 下一帧。
 **关键**：s0 保存 a0（key），persist 后 s0 仍持有 key（caller-saved 寄存器由 callee 保全）。

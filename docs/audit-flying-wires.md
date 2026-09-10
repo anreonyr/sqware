@@ -693,7 +693,7 @@ crates/env/src/ecall.rs:63-66  「#[inline(never)] 是硬不变量」（实测�
 > （写进 `runner.nu` 的脚本用例，还是写进 shell 的命令用例）。
 > **故本轮未做，也不建议单独做**：等 harness 裁决一次落定。
 
-### D3 · `ktask` 内核线程面整个是死岛（约 400 行）· **DELETE**
+### D3 · `ktask` 内核线程面整个是死岛（约 400 行）· **DELETE** — ✅ 已执行（见 §10.8）
 
 - `scheduler/ktask.rs:29` 自述「目录已移出内核，树内暂无使用者——保留备用」。
 - 闭合链全死：`TaskBuilder::closure`（`task.rs:339`）← 0 调用者；
@@ -1853,8 +1853,8 @@ release 份取 `trace/acc-audit0/elf-audit/sqware`；debug 份取
 |---|---|---|---|
 | A1 | `core.rs` `rip()` 头注 vs 内联注释 | 「强制释放 scheduler 持有的**全部** task 引用」 | 只清 `starved` + info 槽；`running` 明确不动；`by_id` 只存 `Weak` |
 | A1b | `rip()` 的 `starved.clear()` | 计数镜像「从唯一事实来源派生」 | 6 个改点里**唯一**漏 `set_len` 的一处 ⇒ 关机后镜像停在旧值 |
-| A2 | `ktask.rs:96-102` vs `utask.rs:61` | 「存活单元**不是参数**，在 callee 内自取」 | A2 之后 callee 是 `(WakeKey, &Weak<Life>)`（`WakeKey` 是带载荷枚举，要 a0–a2），asm 只递 a0 且来源是裸 `usize` ⇒ **双重不符**；零调用者故不炸 |
-| A3 | `mod.rs` 头注 | 「命名三面同词：`Scheduler::park` / `utask::park` / `ktask::park`」 | `Scheduler::park` 已随「离开 running 槽」整体移入 messenger，**不存在**；utask/ktask 的面清单也缺项 |
+| ~~A2~~ | ~~`ktask.rs:96-102` vs `utask.rs:61`~~ | ~~「存活单元**不是参数**，在 callee 内自取」~~ | 曾记：callee 是 `(WakeKey, &Weak<Life>)`，asm 只递 a0 且来源是裸 `usize` ⇒ 双重不符。**已随 §10.8 的删除消失** |
+| ~~A3~~ | ~~`mod.rs` 头注「命名三面同词」~~ | — | **已随 §10.8 重写**：三个面文件删除后，`mod.rs` 只剩 core/boot/trap 两个入口面 |
 | A4 | `core.rs` 头注 | 「`starved` 字段私有，唯一修改路径是 push/pull」 | 实际 6 条（push/rotate/pull/try_pull/disown/remove/rip） |
 | A5 | `core.rs` 头注 | 「`Team.tasks(3)` 与 `Space.inner(2)`」 | `Level::L3` 的**数值是 4**（3 是删掉的旧槽位）；括号里一个写名字一个写数值 |
 | A6 | `core.rs` `lookup_id_weak` 头注 | 「避免撞上 `strong_count == 1` 断言」 | `Task::exclusive` 早已放宽成 `>= 1` 并明写「envcall 可短暂持额外强引用」；两个调用点拿到弱引用后**立刻 upgrade** ⇒ 理由是化石 |
@@ -1888,11 +1888,11 @@ release 份取 `trace/acc-audit0/elf-audit/sqware`；debug 份取
   实测的泄漏增长是「每个 hole+spawn 轮次约 +1 块」，与「每次 spawn 多一枚不死 `Weak`」的形态
   吻合。故轮 ③ 把表合一并在关机时清掉它之后，**预测 `blocks` 会下降**（强引用那份不变）；
   不降则这条假设被否掉——那也是收获，因为泄漏线就少了一个候选。
-- **D2 · `ktask.rs` 4 份逐字相同的存帧序**（约 35 条 `sd`/`csrr`，245 行里约 140 行），帧布局 4 个
-  真相源；其中 `reap` 是唯一活的。裁 §D3=DELETE 则自动消失；保留则至少折成一个宏。
+- ~~**D2 · `ktask.rs` 4 份逐字相同的存帧序**（约 35 条 `sd`/`csrr`，245 行里约 140 行）~~ ⇒
+  **随 §10.8 的删除一并消失**（不再需要宏）。
 - **D3 · `starved_len` 镜像 6 个改点靠人记**，已漏 1 处（A1b）。
-- **D4 · 4 处 `allow(dead_code)`**（`ktask` 的 park/starve/wait_forever + `utask::wait_forever`）属
-  那 34 处未清的 allow。
+- ~~**D4 · 4 处 `allow(dead_code)`**（`ktask` 的 park/starve/wait_forever + `utask::wait_forever`）~~ ⇒
+  **随 §10.8 一并消失**（34 → 32；本轮代码提交里含另外 2 处）。
 
 ### 10.5 顺带（出模块、同族）
 
@@ -1946,3 +1946,46 @@ N 张」）现在**已有实测答案**（N 张完全相同）。
 **本轮故意不动**（各有归属轮）：`running` 槽的释放（属旁枝的账，理由写进 `rip` 头注）、
 `by_id` 合一（轮 ③）、`state` 裸读与 kill 丢失（轮 ④）、harden 档与 `tomb` 判据（轮 ②）、
 `wait` 的正名（**待用户给词**）。
+
+### 10.8 内核任务面删除（用户裁决：内核任务不再支持）
+
+裁决一句话：**把 `task` / `ktask` / `utask` 删了，内核任务不再支持。** 执行的落点与理由：
+
+| 删掉的 | 落到哪 | 理由 |
+|---|---|---|
+| `scheduler/ktask.rs`（整文件，250 行） | — | 4 个 asm 面里 3 个树内零调用者；第 4 个（`reap`）的唯一调用者是 `ktask_trampoline`，而它自己也是死的 |
+| `TaskBuilder::closure`（内核闭包任务唯一生产者，0 调用者）+ `ktask_trampoline` | — | §D3 的闭合死链；随内核任务面一起删（另收掉 2 处 `allow(dead_code)`） |
+| `scheduler/utask.rs`（整文件，71 行） | `park`/`wait`/`wake` → 调用方直呼 `messenger::*`；`starve` → `current().starve()`；`wait_forever` → 删 | 五个 1:1 转发没有信息含量（转发层的名字只对「两个任务面」这个二分有意义，二分没了它就没意义） |
+| `utask::reap` 的合成（`quit` + `bury` + `run`） | **收进 `messenger::quit()`** | 「排空躯壳必须发生在再次取活之前」原是**调用方义务**（靠两处注释维持）；收进 `quit` 后由结构保证 ⇒ 四个调用点各写一行。同时 `quit() -> Option<usize>`（旧返回值全仓无人用）改为 `-> usize`（就是要恢复的帧） |
+| `scheduler/task.rs`（整文件，23 行） | `core.rs` 的模块级 `push`（入队 + 踢醒） | 「踢醒」不能并进 `Scheduler::push`——`messenger::rise` 批量唤醒后只踢一次（单 tick 的 IPI 量 O(N)→O(1)），并进去会让批量路径退化成 N 次踢；而 `conductor::kick` 只在 room 内可见（`pub(super)`）⇒ 入口必须留在 room 里 |
+| `messenger::bury` 的导出 | 转私有 | 唯一调用者就是那个合成 ⇒ 收掉一个零引用导出（§D4 同类） |
+
+**结构**：`scheduler/` = `mod.rs` + `core.rs` + `boot.rs` + `trap.rs`——「面」的划分随「用户任务 /
+内核任务」二分一起消失，其头注写明这一段历史。`Scheduler::starve` 随之从 `pub(super)` 提到
+`pub(crate)`（唯一调用方 envcall 现在直呼它）。
+
+**判据（本轮要求"删除后无可观测变化"）**：
+
+| 判据 | 结果 |
+|---|---|
+| 默认门 3/3 | **PASS** |
+| 默认档控制台归一化 md5（3 份） | **183133960fd82a1ff0f4a4c3f8863355** = A2 基线（六份同值）⇒ 删除本身零行为变化 |
+| audit 轮 | 九步全过；`sites 0 live 0 tomb 0 orphan 0 waiters 0`；**`[audit]` 判据行与删前逐行相同**（`19 frames, 9 blocks` + `table frames 150 != 141` 一字未变）；仍只因既存违规 FAIL |
+| `cargo fmt --check` / `cargo check --workspace --all-targets` | 干净 / warnings **13**（与基线同） |
+| release 档 warnings | 与删前逐条相同（0 行 diff） |
+
+证据：`trace/del-default/run1..3/`、`trace/del-audit/run1/`、`trace/warn-del.txt`（对 `trace/warn-r1.txt`）。
+
+**记账两笔**：
+
+1. **`quit()` 丢掉已算好的后继帧**：`disown_and_install_next` 装槽时已经交出了后继帧 PA，`quit`
+   仍走 `run()` 取活——两条路等价，差别只在 `run()` 会替后继再扣 1 个量子（8 → 7）。为保持与改前
+   **逐字相同的调度行为**（上面那条 md5 判据要的就是这个），本轮**不动它**，已写进 `quit` 的文档
+   待单独裁决。这是"顺手改掉"会让判据失去意义的典型例子。
+2. **⚠ 操作教训（本轮踩到、写下来）**：为了对比 warnings，我用 `git worktree` 在主仓里建了一棵
+   `HEAD` 对照树、并**共用同一个 `--target-dir`**。`kernel/build.rs` 的 `-T…/link.ld` 是
+   `env!("CARGO_MANIFEST_DIR")` 在**编译 build script 时**烧进去的 ⇒ 缓存下来的 build-script
+   可执行文件里留着 `trace/wt-head/kernel/link.ld`；对照树删掉之后，主树重建时才在**链接**阶段报
+   `rust-lld: cannot find linker script`。`cargo clean -p kernel` **清不掉**它（host 侧
+   `target/release/build/kernel/` 的那份要手动删），最后是 `cargo clean` + 全量重建解决的。
+   结论：**跨树对照实验必须用各自的 `--target-dir`**，否则缓存会污染到很久以后的一次构建。
