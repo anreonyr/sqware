@@ -1185,3 +1185,104 @@ cargo fmt --check
 - **`Release`/`Revoke` 内核侧算了「摘掉几枚」并返回 `usize`，而 ABI 是 `#[ret(())]`**
   ——那个 count 被丢掉，调用方无法知道是放下一个空壳还是拆掉一棵子树。
   改 Ret 要动 `FromPair` 蒸馏与全部调用点，独立一项。
+
+---
+
+## 9.3 主线 A 开工：room 的结构与命名（冻结）
+
+**§9.1 第 1 条裁决：开**，范围取「乙」＝轮 0–5（五张表 → 两张、三台等待机 → 一条原语）。
+A2（站点寿命）、A3（`by_id` 合一）、A4（不变量进类型）各自另轮；ABI 不动（§9.1 第 4 条）。
+
+### 两条边界（用户裁决）
+
+1. **`tock` 归 chrono**：chrono 就是 tick 与 tock 两件事；到点句柄对它**不透明**，堆不搬进 room。
+   代价是确定的：room 侧必须留一张反查表，即 `HOLDERS`（见下）。
+2. **`conductor` 留 `room/` 一级**，不并入 `messenger/`。
+
+### 结构
+
+```rust
+struct Ticket(u64);                          // 票：一次挂起的唯一标识。单调、不复用
+
+enum WakeKey {                               // 唤醒源：四个命名空间
+    Space { space: u64, slot: u64 },         // RoomCall::Wait / Wake
+    Hole  { hole: u64, dir: HoleDir },       // MailCall::Wait + hole 投信（裸 u64：保持 mail → room 单向）
+    Task  { task: TaskId },                  // UnitCall::Join —— 等别人死
+    Alarm { task: TaskId },                  // RoomCall::Park —— 无人投信，只有期限会响
+}
+
+TaskState::Blocked { key: WakeKey, ticket: Ticket }   // 等待点长在任务上（无 Option）
+struct Waiter { task: Arc<Task>, ticket: Ticket }
+struct Site   { pend: bool, waiters: VecDeque<Waiter> }
+static HOLDERS: SpinLock<HashMap<Ticket, Weak<Task>>>;  // 票根：票 → 持票人（Weak 是硬要求）
+enum Handoff<T> { Resume(T), Switch(usize) }            // `Idle` 消失：room 内 run() 收口
+```
+
+**四条不变量**：容器 ⇔ 状态（`Blocked` ⟺ 恰在某条站点队列里）· 唯一强持有（站点是唯一 `Arc`、
+`HOLDERS` 只存 `Weak`）· 簿记先于 tock · 锁序（L1 与 L3 不互嵌、L3 之间也不互嵌；
+L3 = sites / HOLDERS / timer 堆）。
+
+**站点存在 ⟺ 队列非空 ∨ 有信标**（空且无信标即删）——A2 那条「站点永不回收」的一半，
+不花 A2 的预算就修掉了。
+
+### 命名（冻结：对偶成对且等长，无 `A_B`）
+
+| 一对 / 单个 | 字母 | 语义 |
+|---|---|---|
+| `wait` / `wake` | 4/4 | 挂起一个 / 唤醒队首一个 |
+| `wake` / `wipe` | 4/4 | 一个 / 该源全放（+ 墓碑）——替掉 `wake_joiners`、两处 `while wake(){}`、`wake_all` |
+| `hold` / `void` | 4/4 | 票根入表 / 作废票根 + 消音到点（幂等） |
+| `tock` / `mute` | 4/4 | chrono 登记到点 / 消音（**真逆操作**，轮 1b 已落） |
+| `enqueue` / `dequeue` | 7/7 | 站点队列（私有） |
+| `pick` / `wipe` | 4/4 | 按票摘一个 / 全量清空（私有） |
+| `quit` / `reap` / `bury` | 4/4/4 | 离核 / 收尾入躯壳 / 埋掉归还 |
+| `reap` / `rise` | 4/4 | 收进躯壳 / 放回就绪 + 一次 kick |
+| `seat` / `shed` | 4/4 | 装入槽位 / 蜕壳降级（替代 `mount`/`demote`） |
+| `hook` | 4 | 钩子注入面（一个名字；`ExitHook`/`ShutdownHook`/`register_*`/`*_hooks` 六个收成一个） |
+
+单个（无对手，不受等长约束）：`redeem`（到期兑现）· `doomed`（领判决）· `suspend` · `cull` ·
+`doom` · `drain` · `due` · `beat` · `tick` · `ticks`。
+
+**被否并记下理由**：`drop`（与 prelude 的 `core::mem::drop` 撞——全树 65 处且全是放锁）→ `void`；
+`slot`（与 ABI 的调用号撞——全树 66 处）→ `seat`；`kill`/`retire`（不满足与 `wake` 的等长对偶）→ `wipe`；
+`zombie`（`quit → reap → bury` 的宾语正是躯壳）→ `husk`。
+
+### 目录
+
+```
+room/
+├── mod.rs  conductor.rs              〔一级〕conductor 不并入 messenger
+├── messenger/                        「任务一旦不在 running 槽，归这里」
+│   ├── mod.rs                        锁序契约 + rip 扇出
+│   ├── handoff.rs                    Handoff<T>
+│   ├── wait/{mod,site,holder}.rs     两原语 + 站点表（唯一容器）+ 票根
+│   ├── husk.rs                       HUSKS / quit / reap / bury / hook
+│   └── doom.rs                       suspend / cull / doom / doomed
+└── scheduler/                        〔本刀不动；core.rs 的 §7.4 拆分另刀〕
+```
+
+### 轮次与状态
+
+| 轮 | 内容 | 状态 |
+|---|---|---|
+| 0 | 摘三处与事实相反的 `allow`；躯壳队列改名；还原 `86caf7a` 静默换掉的拷入原语 | ✅ `4197276` + `d49b342` |
+| 1a | chrono 正名（`untock`→`mute`、`next_tock`→`due`、`tick_after`→`beat`）+ `ZOMBIES`→`HUSKS` | ✅ `ccaae73` |
+| 1b | `mute` 变真逆操作，删 `cancelled` 与其两处污染陷阱 | ✅ `d9ca7a5` |
+| 2 | 票号 + 票根（`HOLDERS`）；删 `parked`/`wait_times`/`join_times`；`Alarm` 站点（park 进站点表） | 待做 |
+| 3 | `Ticket` 上任务；`WakeKey` 四变体；`suspend` 读票直达（不再扫 16 分片） | 待做 |
+| 4 | `sites` 合一；`wait`/`wake`/`wipe`/`redeem`/`rise` 立起；`Handoff<T>` 收成一 | 待做 |
+| 5 | 拆文件（`messenger` 退场；即 §7.1 的搬家） | 待做 |
+
+### 与 §A1 的差异（记账）
+
+§A1 的方案是「**tock 携带唤醒目标**」，那要求把到点堆搬进 room。用户裁决 `tock` 归 chrono 后，
+改为「**票号 + 票根**」：堆仍只持不透明句柄，room 用 `HOLDERS: Ticket → Weak<Task>` 还原「谁」，
+而**键从任务自己那张票上读**（不再复制一份进表）。五张表 → 两张，仍是 §A1 要的结果，机制换了一条。
+
+**A2 的接口已留好**：`WakeKey::Space.space` 今天填 asid；A2 轮只需换「谁填这个字段」＋在
+`Space::drop` / `seal` 处调 `wipe` / `void`，结构不动。
+
+### 遗留的一处历史记录
+
+本文件 §C3.1（`:342`）那句 `` `timer.rs:113 untock` / `:123 next_tock` `` 是阶段 1 的**当时记录**，
+连同当时的行号，不随本冻结回写；新名以本节为准。
