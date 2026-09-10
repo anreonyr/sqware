@@ -1803,3 +1803,146 @@ hole+spawn 轮次约 +0.5 帧 / +1 块），不是固定残留。**下一步**�
 **门的缺口（待修）**：门的 PASS 判据只判 `orphan`/`live`/`waiters`，**不判 `tomb`** ⇒ 反向验证那一轮门照样
 PASS——`tomb 34 → 0` 目前只是**仪器读数**，还不是**门判据**。要让它有牙，须在 `scripts/examine.nu` 的
 audit 轮加 `tomb != 0 ⇒ FAIL`。
+
+---
+
+## 10 · scheduler 模块清理（`work/room/scheduler`，7 文件 1148 行）
+
+巡检（A2 之后、门按档构建之后）：把模块连同它的消费者（`envcall` / `gate` / `messenger` /
+`lock::depend`）读了一遍，并做了两次决定性的字符串核对（见 §10.1）。问题分四类，按处置排成四轮；
+用户裁决全取，序为 **①→③→④→②**。
+
+### 10.1 判据不在被测构建里（最重的一条 · 轮 ②）
+
+门的构建**只有** `--release`（`scripts/examine.nu` 的 `build_flavor`；`runner.nu` 的用法也写
+`cargo run --release`），而 `[profile.release]` 只有 `opt-level=2, debug=1` ⇒ `debug_assertions` 全关。
+**双向实测**（阳性对照在内）：
+
+| 字符串 | release ELF（门跑的那份） | debug ELF |
+|---|---|---|
+| `装槽前 running 必须为空`（`seat` 的容器断言） | **0** | 1 |
+| `starved 容器只收 Starved 任务`（`push`） | **0** | — |
+| `new level must exceed max(held)`（lockdep 报文体） | **0** | 1 |
+| `[depend]` | **0** | — |
+| 对照：`task lifecycle leak at shutdown` | 2 | — |
+| 对照：`no running task` | 3 | — |
+
+release 份取 `trace/acc-audit0/elf-audit/sqware`；debug 份取
+`target/riscv64gc-unknown-none-elf/debug/sqware`（同日构建，14 MB）。
+
+后果全落在本模块与它的纪律上：
+
+- **容器 ⇔ 状态不变量**（`push` 只收 Starved、`seat` 前 running 必空、`shed` 旧载荷不带标签）
+  在门跑过的每一个产物里都只是注释；`Task::exclusive` 的 `assert!(strong_count >= 1)` 是**真断言**
+  （release 也在）——同一个文件里两种纪律，前者没人验。
+- **L1/L3 锁序**：`lock/depend.rs` 整文件 `#[cfg(debug_assertions)]` ⇒ 门也从不校验它。
+  `docs/root.md` §8 的「debug 档同路径跑通（无 lockdep 违规）」是**一次手工跑**，不是覆盖；
+  而历史上 lockdep **抓到过真违规**（`trace/diag9.log`：`lock-order level violation … (Space)
+  <-- max held`），说明这条校验有牙、只是现在不进门。
+- `kernel/Cargo.toml` 的 `audit` 注释提到一个「**debug_assertions 硬化开关**」，features 里
+  没有这个开关——这句话是这次发现的第一条线索。
+
+**处置（待做）**：加一档 `harden`——`[profile.harden] inherits = "release"` + `debug-assertions = true`
+（opt-level 2 保行为可比），门跑第三个 flavor，判据与默认档同形（`[depend]`/断言 panic 即 FAIL）。
+预期代价：这一档会把 `health/*`（§D6 的「把整个 frame 池抽干再还」）与全部 84 处 `debug_assert`
+一起跑起来，第一次很可能当场红——那正是要量的东西，不是要绕的东西。
+
+### 10.2 说了但没做（同一份文件里文档与代码相反 · 轮 ①）
+
+| # | 位置 | 文档说 | 代码是 |
+|---|---|---|---|
+| A1 | `core.rs` `rip()` 头注 vs 内联注释 | 「强制释放 scheduler 持有的**全部** task 引用」 | 只清 `starved` + info 槽；`running` 明确不动；`by_id` 只存 `Weak` |
+| A1b | `rip()` 的 `starved.clear()` | 计数镜像「从唯一事实来源派生」 | 6 个改点里**唯一**漏 `set_len` 的一处 ⇒ 关机后镜像停在旧值 |
+| A2 | `ktask.rs:96-102` vs `utask.rs:61` | 「存活单元**不是参数**，在 callee 内自取」 | A2 之后 callee 是 `(WakeKey, &Weak<Life>)`（`WakeKey` 是带载荷枚举，要 a0–a2），asm 只递 a0 且来源是裸 `usize` ⇒ **双重不符**；零调用者故不炸 |
+| A3 | `mod.rs` 头注 | 「命名三面同词：`Scheduler::park` / `utask::park` / `ktask::park`」 | `Scheduler::park` 已随「离开 running 槽」整体移入 messenger，**不存在**；utask/ktask 的面清单也缺项 |
+| A4 | `core.rs` 头注 | 「`starved` 字段私有，唯一修改路径是 push/pull」 | 实际 6 条（push/rotate/pull/try_pull/disown/remove/rip） |
+| A5 | `core.rs` 头注 | 「`Team.tasks(3)` 与 `Space.inner(2)`」 | `Level::L3` 的**数值是 4**（3 是删掉的旧槽位）；括号里一个写名字一个写数值 |
+| A6 | `core.rs` `lookup_id_weak` 头注 | 「避免撞上 `strong_count == 1` 断言」 | `Task::exclusive` 早已放宽成 `>= 1` 并明写「envcall 可短暂持额外强引用」；两个调用点拿到弱引用后**立刻 upgrade** ⇒ 理由是化石 |
+| A7 | `core.rs` `wait()` 内联注释 | 「有任务即正常出口（清位交外层）」 | 两行后就是 `conductor::wake(me)`——清位就在本分支 |
+
+另有一处**命名撞车**（不属文档漂移，待裁）：核心的 WFI/取活入口叫 `wait()`，而冻结表把
+`wait`/`wake` 这对词给了 messenger 的事件等待与唤醒——一个词两个意思，正名须用户给词。
+
+### 10.3 并发面（轮 ④）
+
+- **C1 · `Task.state` 被裸读，且 kill 会静默丢**。`messenger::doom::suspend` 无锁读 `state()` 后
+  按它分派容器动作；`messenger::wait::target_dead` 在 `by_id` 交出的强 Arc 上读 `t.state()`。
+  `Task::exclusive` 的 SAFETY 论证明写「临时持有者**不触字段**」——这两处正是触字段：他核
+  `transform` 写 `state` 时这里是未同步读。更实的是 TOCTOU：读到 `Starved` 与
+  `remove_from_starved` 之间被别核 seat 走 ⇒ 返 false ⇒ **这次 kill 被丢掉**（`doomed`+SSIP
+  兜底只覆盖 Running 分支，`cull` 的 `filter(|t| suspend(t))` 把它当「没动它」扔了，无重试）。
+- **C2 · `by_id` 交出的强 Arc 是有意违反「唯一强持有」**，现状安全只靠「调用方立刻 drop」的口头
+  约定（envcall `Join` 恰好 drop 了；`doom::doom` 把 `task` 持过整趟级联）。没有类型、没有断言。
+
+### 10.4 冗余与可删（轮 ③ + §D3）
+
+- **D1 · N 张完全相同的表**：`register_task_id` 往**所有** hart 的 `by_id` 各插一份，没有第二条
+  插入路径 ⇒ 每张表都是全世界的完整副本：`lookup_task_by_id` 的循环只有第一张可能命中，
+  `snap()` 把每个任务返回 **H 份**。取 `snap()` 的 `find`/`holder`/`vestable` 对重复免疫；
+  `heirs` 返回重复对，靠 `take` 的幂等被吃掉（`cull` 的 `removed` 只 +1）——**是侥幸不是设计**。
+  代价形状更值钱：`by_id` **从不清理**，而 `gate::snap()` 在 `pie.rs` 的 5 处
+  （Vest/Accord/Collect/Revoke/Release）各拍一张、每张逐条 `upgrade` ⇒ 每次 envcall 的成本随
+  **历史 spawn 总数 × hart 数**增长，不随活任务数。
+  **可检验的预测（并到泄漏线）**：「从不清理」还有第二层代价——每个已回收任务的
+  `ArcInner<Task>` 因为表里还留着一枚 `Weak` 而**不能归还**，那些块会一直留在类别账上。
+  实测的泄漏增长是「每个 hole+spawn 轮次约 +1 块」，与「每次 spawn 多一枚不死 `Weak`」的形态
+  吻合。故轮 ③ 把表合一并在关机时清掉它之后，**预测 `blocks` 会下降**（强引用那份不变）；
+  不降则这条假设被否掉——那也是收获，因为泄漏线就少了一个候选。
+- **D2 · `ktask.rs` 4 份逐字相同的存帧序**（约 35 条 `sd`/`csrr`，245 行里约 140 行），帧布局 4 个
+  真相源；其中 `reap` 是唯一活的。裁 §D3=DELETE 则自动消失；保留则至少折成一个宏。
+- **D3 · `starved_len` 镜像 6 个改点靠人记**，已漏 1 处（A1b）。
+- **D4 · 4 处 `allow(dead_code)`**（`ktask` 的 park/starve/wait_forever + `utask::wait_forever`）属
+  那 34 处未清的 allow。
+
+### 10.5 顺带（出模块、同族）
+
+- `kernel/Cargo.toml` 说 semihosting「**默认开启**（default 引入）」，而 `default = []` ⇒ 相反；
+  `cargo check` 的 `unused dependency semihosting` 是同一事实的旁证。门的两档都不带它 ⇒
+  **门跑过的产物没有结构化导出**（`boot.nu` 的 `-semihosting` 只管 QEMU 侧、且要显式请求）。
+- `Level::Block = 7` 零引用（§D4 已记），`Level::L3` 的数值洞 3（§10.2 A5 的同一件事）。
+
+### 10.6 已核对干净（不要动）
+
+`seat`/`shed`/`clear_slot` 三处 `into_raw`↔`from_raw` 配对与标签回收**账面平衡**（含
+`!prev.is_null()` 分支可达）；`disown_and_install_next` 的「放锁窗口内无人能写本核 `running`」
+自述成立（别核只能 `try_pull`）；`wait()` 的每条出口各清一次睡眠位、无重复；
+`remove_from_starved`/`running_hart` 逐 hart 顺序取放锁、不嵌套；轮转分支「唯一任务不减预算」与
+「Switch 事件落在 seat 之后」是对的；§7.4 的拆分计划方向正确——而它要逼出的那个问题（A3「一张还是
+N 张」）现在**已有实测答案**（N 张完全相同）。
+
+### 10.7 轮 ① 执行记录（文档/契约对齐 + `starved_len` 收口）
+
+改了 A1–A7、D3、§10.5 的 manifest 一句，外加 §10.3 C1 在 `remove_from_starved` 上的一句话指针：
+
+- `core.rs`：就绪队列的改动收成四个 `starved_*` 方法（**镜像在方法体内与队列操作同一处派生**），
+  `SchedulerInner.starved` 对 core.rs 之外私有、跨文件只留 `starved_is_empty` 一个读法；
+  `rip` 走 `starved_clear` ⇒ A1b 的漏点从结构上消失；`rip` 头注改成事实（`running` **有意**不清
+  + 关机屏障为什么不保证「没有核还在任务上下文」+ 代价归旁枝的账）；`lookup_id_weak` 的理由改成
+  事实（旧理由依赖的 `strong_count == 1` 约束已不存在）；`wait()` 的内联注释改正；头注里
+  `Level` 的数值与「唯一修改路径是 push/pull」两处改正。
+- `mod.rs`：面清单与「三面同词」改正（**事件面**的 `Scheduler::{park,wait,reap}` 已整体移入
+  messenger），死岛存废指向 §D3，并**显式记下** `wait` 一词两义这处待裁的撞车。
+- `ktask.rs` / `utask.rs`：`wait_forever` 的失效写成事实（asm 与 callee 双重不符、树内零调用者、
+  修它得先定「裸 usize → `WakeKey` 哪一支」的编码）——**不假装它能用**。
+- `lock/depend.rs`：`L3` 的清单改正（`blocked` / `reaped` / `TIMER_DEADLINES` 三张表早已不在，
+  改成现存的同级八类）。
+- `kernel/Cargo.toml`：semihosting 头注改成与 manifest 一致（**非默认**），并记下门的两档都不带它
+  ⇒ 门跑过的产物没有结构化导出。
+
+**本轮的判据就是"无可观测变化"**：
+
+| 判据 | 结果 |
+|---|---|
+| `cargo fmt --all -- --check` | 干净 |
+| `cargo check --workspace --all-targets` | warnings **13**（与记账基线同） |
+| release 档 warnings | 新建 `HEAD` 对照工作树各建一次再 diff：**23 行两侧逐条相同** |
+| 默认门 `scripts/examine.nu`（3 轮） | **3/3 PASS** |
+| 默认档控制台归一化 md5（3 份） | **183133960fd82a1ff0f4a4c3f8863355** = A2 记账基线（六份同值） |
+| audit 轮（`EXAMINE_FEATURES=audit REPEAT=0`） | 九步全过；仍只因既存违规 FAIL；`sites 0 live 0 tomb 0 orphan 0 waiters 0`；`19 frames, 9 blocks` 与 `table frames 150 != 141` **逐字未变**；**全部 `[audit]` 判据行与 A2 验收那份逐行相同**（差异只在 `[trace]`/`[scene]` 转储的内部顺序——那是非确定性段，不是行为） |
+
+证据：`trace/sched-r1-default/`（`run1..3` 的 `console.log` / `norm2.txt` / `qemu.rc`）、
+`trace/sched-r1-audit/run1/`、`trace/warn-head.txt` vs `trace/warn-r1.txt`。
+
+**本轮故意不动**（各有归属轮）：`running` 槽的释放（属旁枝的账，理由写进 `rip` 头注）、
+`by_id` 合一（轮 ③）、`state` 裸读与 kill 丢失（轮 ④）、harden 档与 `tomb` 判据（轮 ②）、
+`wait` 的正名（**待用户给词**）。
