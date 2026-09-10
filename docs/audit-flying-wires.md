@@ -2383,3 +2383,118 @@ scheduler/
   越界；调度器内只做了「说一次」。
 - `Badge::read` 目前私有（唯一读者 `ident()`）。将来若要第二读者，先裁再开——
   本轮刻意没把它放进 `core/mod.rs` 的重导出。
+
+### 10.16 逐对象种类记账（用户裁决：甲 / 直接对应 / 收进种类 / 帧来源＝闭包）
+
+上一关（§9.1-2 `fence` 终点）勘察完之后，用户提了另一条更靠前的问题——「内核的分配对象
+已经稳定，可以考虑逐对象记账？」。裁下来是：**对象种类成为记账的唯一维度**（甲）、名字
+**直接对应**、键域与多页粒度**收进种类**、帧来源用**闭包参数**（`frame(kind)` 被否）。
+
+#### 一个维度取代两个枚举
+
+`Class`（4 值："关机时怎么核账"）与 `OwnerKind`（2 值：毒化策略 + 账键域）本是一个维度的
+碎片——`OwnerKind::KernelHeap` 恒等于"账本侧 + 地址键"。于是"这是什么"在代码里**无处安放**，
+三条实证：
+
+| 实证 | 位置 |
+|---|---|
+| 一个标注点盖**五种对象**（trap 帧 / 懒页 / 堆页 / 栈 / COW）——注释只列了四种 | `SpaceInner::frame()`（自述"全模块唯一帧分配点"） |
+| 自检数据帧只能假标 `Persistent`（生命周期维度里没有它的位置） | `health/pagetable.rs:40` |
+| `spare` / `trap-stack` / `hart-frame` 只能靠**旁路字符串名**区分 | `register_persistent(pa, "…")` |
+
+#### 结构：`Kind` 16 种，属性由种类自带
+
+| kind | 侧 | 键 | end | 落点 |
+|---|---|---|---|---|
+| `Trap` `Lazy` `Heap` `Stack` `Cow` | 帧 | 地址 | Zero | `window/frame`、`core::materialize`、`window/heap`、`window/stack`、COW 分裂 |
+| `Image` | 帧 | 地址 | Zero | `loader` |
+| `Ring` | 帧 | 地址 | Zero | `mail/pole` |
+| `Table` | 帧 | 地址 | Walk | `manager/table` |
+| `TrapStack` `HartFrame` `Spare` | 帧 | 地址 | Held | `trap/stack`、`unit/mod`、`spare` |
+| `Prime` `Probe` | 帧 | 地址 | Report | `block::prime`、`health/pagetable` |
+| `Task` | 账 | 地址 | Zero | `task`（`tagged_alloc`） |
+| `UserHeap` | 账 | 页索引 | Retire | `envcall`（键 = asid+页索引） |
+| `Plain` | — | 地址 | Report | 未标注：容器增长 / 大块直取 |
+
+四条属性：`side()`（帧表 / 账本 / 未标注）· `keys()`（地址 / 页索引）· `end()`（期望终值）·
+`poison()`（**派生**：账本侧 ∧ 地址键——它就是 `OwnerKind` 原先的全部内容）。
+存储代价≈0：per-page 仍是 1 byte（值域 4 → 16）、ledger 记录**少**一个字段、计数数组 4 → 16。
+
+#### 帧不认识种类（用户否决 `frame(kind)`）
+
+我第一版把种类做成参数（`frame(kind)`），被否——理由与模块头自己的设计原则一致：
+**资源原语不携带对象语义**。改成：`SpaceInner::frame()` 回到"裸零化帧"，`claim` 的帧来源
+**由调用者以闭包给出**，而这不是新机制——**`attach` 早就是这个形状**，且它的调用者本来就
+是标注点（`loader` 的 `tag!(Image, …)`、`unit/mod` 的 `tag!(HartFrame, …)`）：
+
+```rust
+inner.claim(va, PAGE_SIZE, flags, || Ok(crate::tag!(Trap, SpaceInner::frame()?)))
+```
+
+| 装配动作 | 帧来源 |
+|---|---|
+| `attach` | 调用者给（一直如此） |
+| `claim` | **调用者给**（服务 trap 帧 / 堆页 / 栈三种对象） |
+| `materialize` | 就地给（只服务懒页一种对象） |
+
+闭包**按页**调用 ⇒ 多页对象（栈 / 堆 span / Pole 环）每页都带种类，与"逐页收入"的裁决一致。
+被否的第二案（装配完成后按 PA 事后标注）理由记下：多页路径要在**产品档**多走 N 次
+translate（栈一次 64 页），且"标注"与"造对象"分家 ⇒ 漏标就静默落 `Plain`。
+
+#### 关机判据：从 4 类变逐种类终值
+
+报告从 `task lifecycle leak at shutdown: 19 frames, 9 blocks` 变成**点名**：
+
+```
+[audit] leak: ring 1                                   ← End::Zero 组逐种类（有才打）
+[audit] persistent spare @0x83fea000 is tagged ring …   ← Held 组：声明种类须与帧表一致
+[audit] shutdown checks ok: zero 8/8 held 6/6 tables 141/141 report-only prime 14 probe 0 plain 31 user-heap 0 pool 15
+```
+
+`Held` 组保留**逐项**核 held（不用"按种类计数 vs boot 基线"：计数对"等量还借"不敏感），
+且登记表的字符串删掉——名字从种类来，声明即受核。
+
+#### 新牙（连带堵住一类旧事故）
+
+`tag()` 不再用"在不在账本里"**猜**种类落哪张表，而是按 `Kind::side()` **核对**，不符报
+`IntegrityViolation::MisplacedKind`（新追加类目，`repr(u8)` 顺序即 ABI）——**覆盖 docs
+记过的那次 FRAME_CLASS 污染**（块级 Arc 误用数据指针）。另得一条：`on_free` 时"说的种类"
+必须与账上一致（旧版传错无人发现）。同类重复标注改为幂等（旧版会再 relabel 一次，把计数
+多搬一遍）。
+
+#### 判据
+
+| | 值 |
+|---|---|
+| examine | **5/5**：默认 3/3 + audit 轮 PASS（`zero 8/8 held 6/6 tables 141/141`、无 leak 行、站点四零态保持）+ harden 轮 PASS（无 lockdep） |
+| 行为零变化 | 默认档三轮归一化 md5 = `183133960fd82a1ff0f4a4c3f8863355`（A2 基线，逐字节不变） |
+| **反向验证** | 把 spare 仓错标成 `Ring`（一个零终值种类）⇒ 关机如实报 `[audit] leak: ring 1` + `persistent spare … tagged ring`，门判红 `关机终值违约[ring 1]`；还原即复绿 |
+| **新牙自证** | 本轮自己的一个 bug 被当场抓住：`on_alloc` 起初没把传入种类写进账本（用户堆记录落成 `Plain`）⇒ 释放时 `MisplacedKind: free: said UserHeap, ledger says Plain` ⇒ 修复即绿。**这正是旧版"传错无人发现"的那条** |
+| 构建 | `cargo fmt --check` 干净；三档警告数与基线一致（默认 7 条死码 + 4 条 manifest） |
+
+#### 顺带
+
+- `hybrid` 大块路径的 `tag(.., Plain)` **删除**：那是一次空转（`relabel(Persistent, Persistent)`
+  成对抵消）——"标注"什么都没做，留着就是飞线。
+- `statistics`：`classes` → `kinds`；`record_block_{take,give}_for_class` → `record_block_{take,give}`；
+  池维度改名 `record_pool_{take,give}`（与帧侧同形）。
+- `examine.nu` 的 FAIL 归因分支改读新格式（`[audit] leak: <kind> N`）。
+- 用户手工正名：`SpaceInner::materialize_map` → `materialize`（适配面仍名 `materialize_map`）。
+
+#### 块侧的实况（诚实记账，不是遗漏）
+
+产品档里 **`plain 31`**：31 个未标注的帧/块活到关机——内核自身的长期结构（roster、messenger
+四表、gate 表、console/trace 缓冲、timer 堆…）。它们**能标但还没标**；而**容器增长**
+（`Vec::push` / `HashMap` 扩容）结构上标不了：`GlobalAlloc` 只拿到 `(size, align)`。
+故块侧的"逐对象"本轮只做到能标的本体 + `Plain` 兜底。另一半（`ledger.Record.site` 早就存着
+分配点返回地址、从没拿来做账）仍是一条可走的路——它回答"在哪"而不是"是什么"，
+两件事正交。**「块侧全覆盖」单列成项目**，前提是先把内核自身长期结构逐个声明（约 14 个族）。
+
+#### 与 §9.1-2（`fence` 终点）的关系
+
+per-page 那 1 byte 从"配额分类"变成**对象身份**之后，「在不在手」（`pagemeta` / banker）与
+「是什么」（种类）各有唯一真相 ⇒ `banker` 存废那一关的 (i) 方案（吸收进单一真相）
+**内容已就位**，只剩"要不要保留独立第二账"这一个问题。另有一条已实测的事实待裁：
+**产品档（default）里一条护栏串都没有**（audit 带 banker/ledger、harden 带 checker/lockdep，
+没有任何一档同时带两半），而 `fence/mod.rs` 的头注写着"内嵌在生产路径"——那句已按实测改写，
+但它指向的"哪一档才是验收构造"仍待裁决。
