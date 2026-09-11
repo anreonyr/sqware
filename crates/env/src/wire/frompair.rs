@@ -101,23 +101,6 @@ impl FromPair for bool {
     }
 }
 
-/// `u8` 是**唯一**一处"宽值 → 窄类型"的收窄：内核侧 `console::pull()` 给的是 `u8`
-/// （`envcall.rs` 的 `Some(b) => b as usize`），故 a0 恒 ≤ 255——但那个保证**只由类型
-/// 承载，没有任何契约或位打包为它背书**（对比：`(PieToken, Permission, TaskId)` 的
-/// `as u32` 取位是契约本身）。所以这一处设防。
-///
-/// release 档是 `as u8`（零开销）；`debug_assertions` 档（门的 harden 轮）多一次比较，
-/// 内核违约时当场点位到这一行，而不是让用户程序拿到一个与自己写入无关的字节。
-impl FromPair for u8 {
-    fn from_pair(v0: usize, _v1: usize) -> Self {
-        debug_assert!(
-            v0 <= u8::MAX as usize,
-            "IOCall::Get 的返回值必须是一字节（a0 ∈ 0..=255）：收窄无契约依据，越界即内核违约"
-        );
-        v0 as u8
-    }
-}
-
 impl FromPair for PieToken {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         PieToken(v0)

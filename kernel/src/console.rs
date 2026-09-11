@@ -1,15 +1,18 @@
-// 控制台输出 — 内核打印 sink（SBI Dbcn 块写 + 段地址解析）
+// 控制台输出 — **内核自己的**打印 sink（SBI Dbcn 块写 + 段地址解析）
 //
 // 命名约定：输出用 put!/putln!。
 //
-// Dbcn 按物理地址读取：恒等区 VA 即 PA 直通；用户窗口 VA 逐段译成 PA 后写出。
+// Dbcn 按物理地址读取：恒等区 VA 即 PA 直通；非恒等区的内核地址经页表译成 PA。
+//
+// **内核不再是域的控制台通路**（`docs/driver.md` §10 第三步）：`IOCall::Put`/`Get`
+// 与 `push`/`pull` 一起删了——设备的持有者是 console 服务，客户端走它自己的协议。
+// 本文件只剩内核**自己**的打印（banner、故障、审计），那是内核的诊断面，走固件的
+// SBI，与域持有 UART 这件事互不干扰。
 use core::fmt::{self, Write};
 
 use sbi::{DbcnCall, ecall::SArgs, fid::Dbcn};
 
 use crate::memory::manager::addr::VirtAddr;
-use crate::work::room::scheduler::core::ident;
-use crate::work::unit::space::Space;
 
 /// **恒等区**（DRAM 0x80000000.. dram 上界）：VA 即 PA，Dbcn 可直读。
 /// 其他（用户窗口 VA）须经页表 translate。
@@ -53,13 +56,11 @@ impl Write for Console {
                 })
                 .call()
                 .expect("Dbcn");
-        } else if let Some(info) = ident()
-            && let Some(task) = info.live()
-        {
-            // 当前任务身份槽：一次读（无锁）。Live 才有正在用的地址空间可翻译
-            // （boot/空闲/末次身份 → 静默丢弃——写用户缓冲只发生在任务上下文）。
-            push(&task.team.space, va, bytes.len());
         }
+        // 落到这里 = 缓冲既不在恒等区、也不在内核半区（多半是格式化时引用了用户
+        // 内存里的字符串）。**静默丢弃**：内核打印不该依赖域的空间是否还在，而
+        // "替域把它写出去"那条路（旧 `push`，经 SBI 逐段翻译用户页）随设备面一起
+        // 删了——现在往设备写是持设备者的事。
         Ok(())
     }
 }
@@ -90,54 +91,6 @@ fn translate_kernel(va: usize, len: usize) -> Option<usize> {
         va_cur = (va_cur & !(crate::memory::PAGE_SIZE - 1)) + crate::memory::PAGE_SIZE;
     }
     Some(pa0.as_usize())
-}
-
-/// 在指定空间上打印一段缓冲（已持空间锁的上下文用）：逐段翻译，段内 flags
-/// 做 R 位检查；不重取锁。返回是否完整写出（某页未映射/不可读即中断）。
-pub(crate) fn push(space: &Space, va: usize, len: usize) -> bool {
-    let mut full = true;
-    for (pa, flags, l) in space.segments(VirtAddr::from_raw(va), len) {
-        if !flags.intersects(crate::memory::manager::entry::PteFlags::R) {
-            full = false;
-            break;
-        }
-        DbcnCall::new(Dbcn::ConsoleWrite)
-            .args(SArgs {
-                a0: l,
-                a1: pa.as_usize(),
-                ..Default::default()
-            })
-            .call()
-            .unwrap();
-    }
-    full
-}
-
-/// 从控制台拉一个字节（**非阻塞**）：DBCN `ConsoleRead` 读 1 字节；无输入 → `None`。
-///
-/// 缓冲取**静态区**（原子字节防多核并发读写；栈局部量不可用——trap 栈在内核
-/// 高半区）；其物理地址经**内核空间**逐段翻译（`segments`，与 [`push`] 同机制
-/// ——不假设恒等映射；PULL_BUF 是内核地址，用户空间不可见，故取内核空间，
-/// 其 DRAM 恒等映射涵盖 .bss）。SBI 返回值 = 实际读到字节数（0 = 无输入可用）。
-static PULL_BUF: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-
-pub(crate) fn pull() -> Option<u8> {
-    let va = VirtAddr::from_raw(&PULL_BUF as *const _ as usize);
-    let (pa, _flags, _len) = crate::work::unit::team::kernel()?
-        .space
-        .segments(va, 1)
-        .next()?;
-    let r = DbcnCall::new(Dbcn::ConsoleRead)
-        .args(SArgs {
-            a0: 1,
-            a1: pa.as_usize(),
-            ..Default::default()
-        })
-        .call();
-    match r {
-        Ok(n) if n > 0 => Some(PULL_BUF.load(core::sync::atomic::Ordering::Relaxed)),
-        _ => None,
-    }
 }
 
 /// put!/putln!/log logger 的共同出口。

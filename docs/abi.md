@@ -38,14 +38,15 @@ kernel → env → runtime → protocol → programs
 
 ## 3 · ABI 面
 
-八个 class（`crates/env/src/fid.rs:13-15`），按**操作的归属轴**分：
+七个 class（`crates/env/src/fid.rs:13-15`），按**操作的归属轴**分。
+**原 class 3（`IO`）已删**——设备面搬出内核（`docs/driver.md` §10 第三步），号段空着不补：
 
 | class | 名 | 轴 |
 |---|---|---|
-| 0 | Room | 调度词族：`Starve` `Park` `Reap` `Wait` `Wake` |
+| 0 | Room | 调度词族：`Starve` `Park` `Reap` `Wait` `Wake` `Doom` |
 | 1 | Unit | 执行单元：`Spawn` `SelfId` `Sire` `HeirCount` `Heir` `Build` `Hatch` `Join` |
 | 2 | Memory | `Allocate` `Deallocate` `Mmap` `Munmap` `Mprotect` |
-| 3 | IO | `Get` `Put` |
+| ~~3~~ | ~~IO~~ | 已删（`Put` `Get` 随设备面搬出内核；号段空着，见下） |
 | 4 | Chrono | `Ticks` `Clock` |
 | **5** | **Mail** | **数据轴**：`Push` `Pull` `Wait`（传**内容**） |
 | 6 | Control | `Backtrace` |
@@ -77,12 +78,11 @@ slot = (class << 32) | index      index = 变体在枚举里的**声明顺序**
   （`envmacros/src/lib.rs:298-308`）。
 - **口径分工**（`frompair.rs:7-24`）：输入面（用户可控的 `a0..a5`）**拒绝**；回写面**按契约
   取位**（例：`Collect` 的 `v1` 低 32 位是 permission、高 32 位是 vestor，`:81-89`）。
-- **唯一「纯靠类型收窄、无契约背书」的地方**：`FromPair for u8`（`:104-119`）在
-  `debug_assertions` 档查 `v0 <= u8::MAX`——这条契约只由内核实现承载（`IOCall::Get` 成功时
-  `a0 ∈ 0..=255`，`fid.rs:194-198`）。**这条护栏抓到过真缺陷**：`u8` 的静默截断高位由一次性
-  宿主 crate 实测确认（与另两条 codec 缺陷并列），护栏随后补上，「活着」由阳性对照
-  `u8_guard_actually_fires_on_overflow`（喂 `from_pair(256, 0)` 捕获 panic）证明。
-  **但它在门里没有存在性探针**（harden 档的四串不含它）。
+- **曾经唯一「纯靠类型收窄、无契约背书」的地方（`FromPair for u8`）已随 `IOCall` 删除**：
+  那个收窄只为 `IOCall::Get` 存在（成功时 `a0 ∈ 0..=255`，靠内核实现承载），而 `Get` 在
+  `docs/driver.md` §10 第三步随设备面一起删了 ⇒ 该 impl 与它的 debug 断言一并删除。
+  于是本 crate 现在**没有**"只靠类型收窄"的字段：每个 `FromPair` 都有契约或位打包背书。
+  **class 3 号段空着不补**（判别号 = 声明顺序，挪号只制造无意义的 ABI 位移）。
 
 ## 5 · 用户侧的薄与厚
 
@@ -122,6 +122,8 @@ slot = (class << 32) | index      index = 变体在枚举里的**声明顺序**
 | 协议搬出 ABI crate | 新建 `crates/protocol` | env 里躺着 284 行内核读不到的协议 |
 | protocol 依赖 runtime 而非 env | 要用机制（`HolePie` / `Channel`） | 「机制在运行时、语义在协议」的编译期形态 |
 | class 5 / 7 拆轴 | Mail ＝ 数据、Pie ＝ 权柄 | 正交判据在臂的调用集合里 |
+| `Doom` 落 class 0（词族 doom） | 与 `Reap` 同族成对：**自杀 ↔ 他杀** | 追加在末尾——判别号 = 声明顺序，插中间即改 ABI（`fid.rs:78-94`） |
+| 他杀**不进** `UnitCall` | 判据是血缘（domain 轴），不是执行单元 | `Join`/`Spawn` 那一轴管"产/放行/等"，"杀"与 `Reap` 同族 |
 | 返回类型锁死 | 每 variant 一个 `#[ret(T)]` → 生成域 `*Ret` | `call()` 负值判译、非负蒸馏（`fid.rs:9-11`） |
 | `from_pair` 不返 `Result` | 回写面按契约取位，纯收窄只在 debug 档查 | 内核违约不该塞进「内核→用户」的错误域 |
 | `test = false` | 不是「不该测」 | `no_std` + riscv64 编不出 libtest |
@@ -170,5 +172,6 @@ slot = (class << 32) | index      index = 变体在枚举里的**声明顺序**
   （`:171`——它的头注说这是「域级退场曾实现成 `panic!`」留下的牙）；③数据轴往返
   `hole got "hi from shell`（`:163`）；④权柄轴 `seal` 唤醒等待者（`:185`）；⑤非法 id 的
   `Join` ⇒ `Denied`（`:186`）；⑥协议往返经 ABI `req echo -> "ifmmp…"`（`:161`）。
-- **未覆盖**：8 个 class × 全部原语的逐条往返；`BadSlot` 与 `Denied` 的区分；`Wire` 的
+- **未覆盖**：7 个 class × 全部原语的逐条往返（class 3 已删，故不再是 8；**空号段**
+  现在也无人探针——`a7 = 3<<32` 走的是同一条 `BadSlot` 拒码，与 `badslot` 的三发同类）；`BadSlot` 与 `Denied` 的区分；`Wire` 的
   `Invalid`/`Overflow` 拒绝面在真机日程里没有探针（只在已删的一次性宿主测试里出现过）。

@@ -21,14 +21,14 @@ use core::time::Duration;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{ChronoCall, ControlCall, EnvCall, IOCall, MemoryCall, Name, RoomCall, UnitCall};
+use env::{ChronoCall, ControlCall, EnvCall, MemoryCall, Name, RoomCall, UnitCall};
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
-use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
+use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff, WakeKey, park, wait, wake};
 use crate::work::room::scheduler::core::{current, muster};
@@ -190,24 +190,6 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
     };
     match envcall {
         EnvCall::Room(RoomCall::Starve) => return current().starve() as *mut TrapContext,
-        EnvCall::IO(IOCall::Put { len, buf }) => {
-            let ok = crate::console::push(&ident.team.space, buf.get(), len);
-            if !ok {
-                frame.gpr.set_x(Gprs::A0, usize::MAX);
-            }
-        }
-        EnvCall::IO(IOCall::Get) => {
-            frame.gpr.set_x(
-                Gprs::A0,
-                match crate::console::pull() {
-                    Some(b) => b as usize,
-                    // 无输入 = 条件未就绪（非阻塞原语的可重试信号），不是资源死。
-                    // 走统一错误表：fid.rs 的 ABI 注释与 ecall.rs 的 D1 表都写 -3，
-                    // 且用户侧 `EnvError::is_busy()` 就是判 -3（原先返 -2 使该判据永假）。
-                    None => GateError::Busy.code() as usize,
-                },
-            );
-        }
         EnvCall::Room(RoomCall::Reap { reason }) => {
             // 本任务退场：**不在这里 quit**（见 [`dispatch`] 的退场窄尾）——空指针即标记。
             //
@@ -223,6 +205,36 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             crate::work::room::messenger::set_exit_reason(reason);
             drop(ident);
             return core::ptr::null_mut();
+        }
+        EnvCall::Room(RoomCall::Doom { task }) => {
+            // 他杀（与 `Reap` 成对：自杀 ↔ 他杀）。判据只有**血缘**（传递），执行
+            // 复用结构面既有的两相扑杀——语义是**域粒度**：`task` 只是"指认域"的
+            // 手柄，它所属的域连同子树一起走（同域的线程一并，不会剩半个域）。
+            //
+            // 跨血缘的"该不该"不在这里：那是**政策**的活（root 的 `doom` 服务）。
+            // 内核只回答"能不能"——`descends` 沿 `Team.sire` 上溯、比较按域。
+            //
+            // 一次调用**只下一道令**，不下场等它回收：要等就 `UnitCall::Join`
+            // （Linux 的 `kill` 也是"送到即回"）。
+            let target = muster(task.get()).and_then(|w| w.upgrade());
+            let Some(target) = target else {
+                // 名册升不起来 = 从未入册 / 已回收——与 `Join` 判活三态同一口径。
+                return ret_err(frame, GateError::Dead);
+            };
+            if !messenger::descends(&ident.team, &target.ident.team) {
+                return ret_err(frame, GateError::Denied);
+            }
+            let team = target.ident.team.clone();
+            // 下令时记一笔（谁杀的）；死亡时受害者那颗核另记 `Exit { EXIT_DOOM }`
+            // ——两条分开是因为它们落在不同的核上（见 `RoomEvent::Doomed`）。
+            trace::note(EventKind::Room(RoomEvent::Doomed {
+                tid: target.ident.id,
+                by: ident.id,
+            }));
+            drop(target);
+            drop(ident);
+            messenger::cull(&[team], messenger::EXIT_DOOM);
+            frame.gpr.set_x(Gprs::A0, 0);
         }
         EnvCall::Chrono(ChronoCall::Ticks) => {
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);

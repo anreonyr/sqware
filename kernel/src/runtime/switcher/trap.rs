@@ -5,8 +5,9 @@
 use core::time::Duration;
 
 use riscv::interrupt::{Exception, Interrupt, Trap};
-use riscv::register::{scause, sepc, sip, stval};
+use riscv::register::{scause, sepc, sie, sip, stval};
 
+use crate::machine;
 use crate::memory::manager::asid::{self, Asid};
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
@@ -15,7 +16,6 @@ use crate::runtime::switcher::context::TrapContext;
 use crate::work::room::messenger::{self, redeem};
 use crate::work::room::scheduler::core::{Identity, ident};
 use crate::work::room::scheduler::trap::run;
-use crate::{machine, put};
 
 mod stack;
 
@@ -195,6 +195,12 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         // 帧仅一份，不搬即被下一次 trap 覆写，被抢占内核任务现场丢失。
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             timer::tick();
+            // 闸门重开（`docs/driver.md` §3.2.2 的另一半）：外部中断的闸门是零状态的
+            // ——槽满时关掉本 hart 的 SEIE，下一个 timer tick **无条件**重开。病态情形
+            // （消费者不取）退化为每 hart 10 Hz 的探测，自愈；健康情形这一句是空转。
+            unsafe {
+                sie::set_sext();
+            }
             // 重武装：运行任务抢占量子。
             timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
             redeem();
@@ -211,23 +217,39 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         }
         Trap::Interrupt(Interrupt::SupervisorSoft) => {
             // IPI 唤醒信号（SSIP）：清挂起位（不清则 sret 后立即再取 → 中断
-            // 风暴）。若本核当前 running 任务被 `doomed` 点名（kill 的他核分支），
+            // 风暴）。若本核当前 running 任务被 `doomed` 点名（他杀 / 级联的跨核分支），
             // 在此自退：quit + bury，再取下一任务。
             unsafe {
                 sip::clear_ssoft();
             }
             if let Some(running) = ident.as_ref().and_then(Identity::live)
-                && crate::work::room::messenger::take_doomed(running.id)
+                && let Some(reason) = crate::work::room::messenger::take_doomed(running.id)
             {
+                // 原因码写进**本核**的槽（杀者写不进：它在别的核上）——那个码随杀令
+                // 一起躺在 `doomed` 里被送过来，见 `messenger::doom::doomed`。
+                messenger::set_exit_reason(reason);
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }
             frame as *mut TrapContext
         }
-        Trap::Interrupt(other) => {
-            put!("unhandled interrupt: {other:?}\n{frame:#?}\n");
+        // 外部中断：**内核只知道"有外部中断"这一件事**（`docs/driver.md` §3.2.3）。
+        // 把一枚空令牌推进 `irq` 门闩就走人——claim/complete、线号、哪个客户端，
+        // 全在 PLIC 驱动那个域里；内核侧只有这三件（分支、闸门、门闩）。
+        //
+        // 槽满（消费者还没取走上一枚）⇒ 关**本 hart** 的 SEIE：这就是闸门，也是内核
+        // 侧唯一的"状态"（零状态：这个决定不落任何账，靠 timer tick 无条件重开）。
+        Trap::Interrupt(Interrupt::SupervisorExternal) => {
+            if crate::devices::raise_irq().is_err() {
+                unsafe {
+                    sie::clear_sext();
+                }
+            }
             frame as *mut TrapContext
         }
+        // 三类中断至此**全部有名有姓**（S 软 / S 定时 / S 外部）——原先那条
+        // 「unhandled interrupt」兜底在这次接入外部中断后成了死分支：`Interrupt`
+        // 只有这三个变体，兜底既是死码、也再没有一个"没处理的中断"可言。
         // 任务环境调用（`ebreak`，scause=3）：U 态任务与 S 态 supervisor 域任务
         // 共用同一入口（`ecall` 不行——S 态 ecall 是 SBI 调用，进 M 态）。内核
         // 自身 ebreak 不应出现（semihosting 由 QEMU 拦截，不经本路径）→ 内核 bug。
@@ -288,7 +310,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 stval: stval_bits,
             }));
             putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
-            messenger::set_exit_reason(EXIT_FAULT);
+            messenger::set_exit_reason(messenger::EXIT_FAULT);
             drop(ident);
             return crate::work::room::messenger::quit() as *mut TrapContext;
         }
@@ -311,7 +333,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                     "user exception killed: tid={tid} cause={:?} stval={stval_bits:#x}",
                     other
                 );
-                messenger::set_exit_reason(EXIT_FAULT);
+                messenger::set_exit_reason(messenger::EXIT_FAULT);
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }
@@ -340,9 +362,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     next
 }
 
-// ── 退出原因码：内核给的那几个 ──
-
-/// 故障隔离杀（不可解析的缺页 / 其它用户异常）。**内核给的原因码**——与
-/// `RoomCall::Reap` 带上来的"域自己的诊断编号"共用同一个字段，值域不重叠：
-/// 域从 1 开始编号，内核用高位段。
-const EXIT_FAULT: usize = 0xFFFF_FFFF;
+// ── 退出原因码 ──
+//
+// 取值与它们的账都在 `work::room::messenger`（码住在那口槽旁边：一个事实一份账）。
+// 本文件是它们的**一个**写者（故障隔离那条路），不是它们的主人。

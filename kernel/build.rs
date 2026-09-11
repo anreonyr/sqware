@@ -17,6 +17,8 @@ const INITRD_BINS: &[(&str, &str, u32)] = &[
     ("shell", "prog-shell", KIND_USER),
     ("echo", "prog-echo", KIND_SUPERVISOR),
     ("dir", "prog-dir", KIND_SUPERVISOR),
+    // 中断线驱动：PLIC 的线 → 客户端门闩里的一个线号（见 docs/driver.md §3.2）。
+    ("plic", "prog-plic", KIND_SUPERVISOR),
     // 控制台服务：任务侧唯一读 UART 的任务（见 crates/protocol/src/console）。
     ("console", "prog-console", KIND_SUPERVISOR),
 ];

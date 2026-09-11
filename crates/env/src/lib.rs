@@ -17,11 +17,12 @@ pub mod wire;
 
 pub use ecall::{EnvError, EnvResult, make_err};
 pub use fid::{
-    ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, HoleDir, IOCall, IOCallRet,
-    MailCall, MailCallRet, MemoryCall, MemoryCallRet, PieCall, PieCallRet, ProgramKind, RoomCall,
+    ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, HoleDir, MailCall,
+    MailCallRet, MemoryCall, MemoryCallRet, PieCall, PieCallRet, ProgramKind, RoomCall,
     RoomCallRet, UnitCall, UnitCallRet,
 };
 pub use permission::Permission;
 pub use wire::{
-    Decode, FromPair, NAME_LEN, Name, NameError, PieToken, TaskId, TeamId, VirtAddr, Wire,
+    Decode, FromPair, NAME_LEN, Name, NameError, PAIR_LEN, Pair, PieToken, TaskId, TeamId,
+    VirtAddr, Wire,
 };

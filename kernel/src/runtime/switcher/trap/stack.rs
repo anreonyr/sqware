@@ -193,10 +193,15 @@ pub fn init() {
 }
 
 /// 武装**当前执行 hart** 的 trap 运行时：stvec → trap 入口（Direct）、sscratch →
-/// 本 hart 帧 VA（内核态约定）、sie 开 STIE + SSIE。
+/// 本 hart 帧 VA（内核态约定）、sie 开 STIE + SSIE + **SEIE**。
 ///
 /// 前置：本 hart 帧元数据已填（`init` 装配后）；stvec 目标 = 已映射的 TRAMPOLINE 页。
 /// 调用方：hart 0 由 `init()` 调；副核由 `boot_main` 在切 satp 后调——同一原语。
+///
+/// SEIE（S 模式外部中断）**从一开始就开着**：它的闸门是 `trap_handler` 的
+/// `SupervisorExternal` 分支（槽满即关本 hart、timer tick 无条件重开——`docs/driver.md`
+/// §3.2.2）。开着不等于会响：外部中断要 PLIC 侧有使能的线才拉得起来，而 PLIC 寄存器
+/// 是域的地盘，内核一行都不碰。
 pub fn arm_hart() {
     unsafe {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
@@ -205,5 +210,6 @@ pub fn arm_hart() {
         core::arch::asm!("csrw sscratch, {}", in(reg) scr);
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠核被 SBI IPI 唤醒的前提（只唤醒不取中断）
+        sie::set_sext();
     }
 }

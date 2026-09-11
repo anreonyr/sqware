@@ -83,7 +83,9 @@ kernel_sp      每次上台**无条件重写**（scheduler/core/hart.rs:186）
 **谁在最浅帧收尾**：`Reap { reason }` 只写退出原因 + `drop(ident)` + 返回空
 （`envcall.rs:210-224`）；`trap_handler` 见到 `None` → `messenger::quit()`
 （`trap.rs:212-215`）→ `swap` → `reap`（钩子 → `Reaped` → 躯壳）→ `bury`（归还栈 slot、trap 帧、
-空间）→ `run` 取下一帧。故障隔离的三条杀点（`trap.rs:186-188,245-257,260-280`）与退场同款。
+空间）→ `run` 取下一帧。故障隔离的两条杀点（`trap.rs:305-316,330-340`）与自退同款；
+**他杀**（`RoomCall::Doom`）在 `envcall.rs` 里只下一道令（`messenger::cull`），他核目标由
+SSIP 唤起、在同一处 `take_doomed` 自退（`trap.rs:218-234`），级联走的也是这条路。
 
 ## 6 · 启动时序
 

@@ -6,6 +6,7 @@ extern crate alloc;
 
 mod boot;
 mod console;
+mod devices;
 mod health;
 mod initrd;
 mod layout;

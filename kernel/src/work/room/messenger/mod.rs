@@ -63,8 +63,27 @@ fn take_exit_reason() -> usize {
     EXIT_REASON[slot].swap(0, core::sync::atomic::Ordering::Relaxed)
 }
 
+// ── 内核给的退出原因码 ──
+//
+// 与 `RoomCall::Reap` 带上来的"域自己的诊断编号"共用同一个字段，值域不重叠：域从 1
+// 开始编号，内核用高位段。三枚码与 [`EXIT_REASON`] 的槽住在一起——**码的账在持有槽的
+// 地方**（一个事实一份账：谁写这格，谁登记它的取值）。
+//
+// 他杀与级联两条路都**不在这颗核上**发生（受害者是在别的核上被 IPI 唤起、自己在
+// `trap.rs` 里自退的），故它们的码随杀令躺在 `doomed` 集合里，由受害者那颗核取出来
+// 写进**自己**的槽。
+
+/// 故障隔离杀（不可解析的缺页 / 其它用户异常）。
+pub(crate) const EXIT_FAULT: usize = 0xFFFF_FFFF;
+
+/// 他杀（`RoomCall::Doom`）：由别的域下的杀令。
+pub(crate) const EXIT_DOOM: usize = 0xFFFF_FFFE;
+
+/// 级联（父域退出 ⇒ 沿 heir 扑杀整棵子树）。
+pub(crate) const EXIT_CASCADE: usize = 0xFFFF_FFFD;
+
 // 子模块对外重导出：**外部路径一行不改**（`messenger::cull` 等照旧）。
-pub(crate) use doom::{doom, take_doomed};
+pub(crate) use doom::{cull, descends, doom, take_doomed};
 pub(crate) use handoff::Handoff;
 pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;

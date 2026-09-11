@@ -9,7 +9,7 @@
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 
-use riscv::register::sip;
+use riscv::register::{sie, sip};
 
 use crate::machine;
 use crate::runtime::chrono::{clock, timer};
@@ -111,6 +111,21 @@ fn wait() -> Option<Arc<Task>> {
             None => WFI_FAR,
         };
         timer::beat(delta);
+        // 外部中断的闸门也在这里重开：「下一拍无条件重开」那条只管**以陷阱形式取到**
+        // 的 timer tick，而空闲核的拍子是在这里处理的——SIE=0 的 WFI 只被"挂起"唤醒，
+        // 不进陷阱。少了这一句，关过闸门的空闲核就再也不会重开（`docs/driver.md`
+        // §3.2.2 的"自愈"在空闲核上不成立）。
+        //
+        // **挂着的就别开**：SEIP 还置着说明那条中断没人领（多半是槽满被闸门挡下的），
+        // 此刻重开只会让 WFI 立刻返回、把空闲核变成一个探测死循环——而它挂在 WFI 上
+        // 才是对的（认领是消费者的事）。等重开条件自然成立（消费者把 pending 领走、
+        // SEIP 落下）下一轮就开。
+        // SAFETY: 只置 sie.SEIE 一位，不改任何内存与栈。
+        if !sip::read().sext() {
+            unsafe {
+                sie::set_sext();
+            }
+        }
         // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）。
         // 注意：不再有清退应答点——RFENCE 由固件强制打断空闲核（含 WFI 态），
         // 目标核进 trap 执行 sfence，无需空闲核主动 sweep。

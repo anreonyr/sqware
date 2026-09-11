@@ -1,5 +1,8 @@
-// 扑杀（doom）——血缘级联的「杀」侧，**两阶段**：先停摆（摘出全部调度/等待
+// 扑杀（doom）——「杀」侧，**两阶段**：先停摆（摘出全部调度/等待
 // 容器），再收尾（[`super::reap`]：钩子 → Reaped → 入躯壳队列）。
+//
+// 两个入口共用这一套：**级联**（父域退出 ⇒ 沿 heir 扑杀子树，[`doom`]）与
+// **他杀**（`RoomCall::Doom` ⇒ [`cull`] 目标一个域，判据见 [`descends`]）。
 //
 // 两阶段是**正确性要求**，不是优化：钩子会摘门闩，摘门闩会唤醒等待者；若受害者
 // 尚未停摆，它可能被别的核偷走并运行，在「已注定要死」的状态下观察到一个已死的
@@ -9,7 +12,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use hashbrown::HashSet;
+use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::room::scheduler::core::muster;
@@ -21,17 +24,30 @@ use super::wait::holder::Ticket;
 use super::wait::site::{SITE_SHARDS, WakeKey, shard_at};
 use super::{prune, void};
 
-/// 待杀集合（doomed）：`kill` 点名他核 Running 任务时记入，目标核 trap 自查
-/// 自退。无主簿记——只存 task_id，不持 `Arc<Task>`（防「杀者撑着被杀者」）。
+/// 待杀集合（doomed）：**task id → 内核给的原因码**。
+///
+/// 为什么值不是"一个 bool"：退场原因码住的是**逐核暂存槽**
+/// （[`super::set_exit_reason`]），写它的必须是"在**那颗核上**调用 `quit()` 的那段
+/// 代码"；而被他杀的受害者是在**别的核**上被 IPI 唤起、自己在 `trap.rs` 里自退的
+/// ——杀者写不进它的槽。原因码因此随杀令一起躺在集合里，由受害者那颗核取出来写进
+/// **自己**的槽；不这样，被杀的域在 trace 里就是 `Exit { reason: 0 }`，与自愿退场同码。
+///
+/// "谁杀的"不在这里：下令者在下令那一刻就记了一笔（`RoomEvent::Doomed { tid, by }`），
+/// 一个事实一份账，不随杀令再抄一份。
+///
+/// 无主簿记——只存 task_id 与原因码，不持 `Arc<Task>`（防「杀者撑着被杀者」）。
 /// Level::L3，与站点表同级。
-pub(super) fn doomed() -> &'static SpinLock<HashSet<usize>> {
-    static T: OnceLock<SpinLock<HashSet<usize>>> = OnceLock::new();
-    T.get_or_init(|| SpinLock::new_level(Level::L3, HashSet::new()))
+pub(super) fn doomed() -> &'static SpinLock<HashMap<usize, usize>> {
+    static T: OnceLock<SpinLock<HashMap<usize, usize>>> = OnceLock::new();
+    T.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
 /// 停摆单线程：摘出全部调度/等待容器 → 置 `Doomed`。返 `true` = 本次停摆了它，
 /// 调用方须随后 [`reap`]；`false` = 没动它（已 `Doomed`/`Reaped`、不在任何容器，
 /// 或 `Running`——后者已记 doomed + 定向 IPI，待其自退时自己 `reap`）。
+///
+/// `reason` = 内核给的原因码：`Running` 分支把它随 doomed 一起留给目标核，目标核
+/// 自退时写进**自己那颗核**的原因槽（杀者写不进那张槽，见 [`doomed`]）。
 ///
 /// **观察者纪律**（B′）：本函数读的是**判别式**（[`Task::tag`]，原子），payload 在类型
 /// 上够不着——`Blocked` 的键与票因此不是读出来的，而是**问站点表**（扫分片找这个 task
@@ -42,7 +58,7 @@ pub(super) fn doomed() -> &'static SpinLock<HashSet<usize>> {
 ///
 /// 锁纪律：只持 L3 表，逐表取、放锁后再取下一表（L3 同层绝不嵌套）；锁内不 drop
 /// Arc（drop 链触 L2）。
-fn suspend(task: &Arc<Task>) -> bool {
+fn suspend(task: &Arc<Task>, reason: usize) -> bool {
     /// 窗口有多小都可能有：给几次重来，之后走兜底。
     const RETRY: usize = 4;
 
@@ -71,7 +87,7 @@ fn suspend(task: &Arc<Task>) -> bool {
                 void(ticket);
                 true
             }
-            TaskTag::Running => return doomed_nudge(task),
+            TaskTag::Running => return doomed_nudge(task, reason),
         };
         if taken {
             let mut t = task.clone();
@@ -81,7 +97,7 @@ fn suspend(task: &Arc<Task>) -> bool {
         // 容器里没有它（tag 陈旧）：重来一轮重新分派。
     }
     // 重试耗尽：tag 一直在变（正在换容器）⇒ 按 Running 兜底。
-    doomed_nudge(task)
+    doomed_nudge(task, reason)
 }
 
 /// 站点表全扫：找 `task` 的等待者，摘出并**顺带拿到它的票**（观察者不读 payload，
@@ -114,8 +130,8 @@ fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
 /// `Running` 分支（也是重试耗尽的兜底）：记入待杀集合 + 定向 IPI，由目标核在陷阱里
 /// 自查自退。找不到它的在跑核也照样记——**「记了 doomed」本身就是保证**：它下次上台
 /// 遇任何 IPI 即自退；不记才会把这次 kill 丢掉。
-fn doomed_nudge(task: &Arc<Task>) -> bool {
-    doomed().lock().insert(task.ident.id);
+fn doomed_nudge(task: &Arc<Task>, reason: usize) -> bool {
+    doomed().lock().insert(task.ident.id, reason);
     if let Some(hart) = crate::work::room::scheduler::core::running_hart(task) {
         crate::work::room::conductor::nudge(hart);
     }
@@ -131,7 +147,7 @@ fn doomed_nudge(task: &Arc<Task>) -> bool {
 /// **阶段边界即安全边界**：第 3 阶段的钩子会摘门闩、唤醒等待者，而此刻全部受害者
 /// 都已停摆，没有「被唤醒后还能跑」的中间态。栈/名单都是局部 Vec（锁外分配），
 /// 全程不持任何锁。
-pub(crate) fn cull(roots: &[Arc<Team>]) {
+pub(crate) fn cull(roots: &[Arc<Team>], reason: usize) {
     let mut work: Vec<Arc<Team>> = roots.to_vec();
     let mut tasks: Vec<Arc<Task>> = Vec::new();
     while let Some(t) = work.pop() {
@@ -143,7 +159,7 @@ pub(crate) fn cull(roots: &[Arc<Team>]) {
             }
         }
     }
-    let victims: Vec<Arc<Task>> = tasks.into_iter().filter(suspend).collect();
+    let victims: Vec<Arc<Task>> = tasks.into_iter().filter(|t| suspend(t, reason)).collect();
     for task in victims {
         reap(task);
     }
@@ -152,12 +168,42 @@ pub(crate) fn cull(roots: &[Arc<Team>]) {
 /// 级联触发（挂 exit_hook）：读父 task 的 heir → 两阶段扑杀整棵血缘子树。
 pub(crate) fn doom(tid: usize) {
     if let Some(task) = muster(tid).and_then(|w| w.upgrade()) {
-        cull(&task.heirs());
+        // “谁杀的”由父域自己那一笔 `Exit` 记（它先于本行发出）——级联不为子树里每个
+        // 任务各记一条 `Doomed`。
+        cull(&task.heirs(), super::EXIT_CASCADE);
     }
 }
 
 /// trap(SupervisorSoft) 自退查询：本 hart 当前 running 任务是否被判死。
-/// 在则摘出待杀标记并返回 true（调用方 quit）；否则 false。
-pub(crate) fn take_doomed(tid: usize) -> bool {
+/// 在则摘出**原因码**交给调用方（它写进本核的原因槽再 `quit`）。
+pub(crate) fn take_doomed(tid: usize) -> Option<usize> {
     doomed().lock().remove(&tid)
+}
+
+/// 血缘判据：`actor` 是不是 `target` 的**祖先域**（含直接）。
+///
+/// 沿 `Team.sire`（弱引用、构造期定型）上溯，逐级用 `muster` 问名册；比较按**域**
+/// ——`sire` 链上记的是**建域那一枚 task**，若按 task 比，同域的另一线程就杀不了
+/// 自己的子域，而语义明明是域对域。
+///
+/// **严格祖先**：从目标域的 sire 起步（自己不算自己的后代）——否则"杀我域里的
+/// 一枚线程"会退化成"杀掉我整个域连同我自己"。
+///
+/// 纯查询：不改任何状态；成本 O(深度)（virt 上 2）。锁纪律：逐级取放 `muster`
+/// （L3），不跨级持锁；`Team::sire()` 只做一次 `Weak::upgrade`，不取锁。
+pub(crate) fn descends(actor: &Arc<Team>, target: &Arc<Team>) -> bool {
+    let mut team = target.clone();
+    loop {
+        let Some(parent) = team
+            .sire()
+            .and_then(|id| muster(id))
+            .and_then(|w| w.upgrade())
+        else {
+            return false;
+        };
+        if Arc::ptr_eq(&parent.ident.team, actor) {
+            return true;
+        }
+        team = parent.ident.team.clone();
+    }
 }

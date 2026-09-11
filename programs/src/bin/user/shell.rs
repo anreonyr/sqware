@@ -7,9 +7,8 @@
 //! 终端渲染与行编辑住在 `prog-console` 域。**Terminal 是唯一 console 出口**——
 //! Shell 的一切输出经 `Terminal::writeline`、一切输入经 `Terminal::readline`。
 //!
-//! 例外的**只有降级路径**（[`fallback_readline`] 与 [`flush`] 里那条 `io::put`）：
-//! 服务不在时退回直连设备，否则一个连不上服务的 shell 会变成"哑巴且读不到命令"。
-//! 那是**临时护栏**，第三步删 `IOCall` 时一并删。
+//! **任务侧没有设备可直连**（`docs/driver.md` §10 第三步）：`IOCall` 已删，故
+//! `Terminal` 之外再无第二条输出通路，连不上服务就是连不上——见 [`Terminal`]。
 //!
 //! 命令（系统能力巡演）：
 //!   help  — 列命令
@@ -49,6 +48,7 @@ use protocol::dispatch::{MSG_LEN, Name, Reply, Request};
 
 use protocol::console::client::{Console, Readline};
 use protocol::dispatch::client::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
+use protocol::doom::{self, Ack, Doom};
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
 use runtime::core::unit;
@@ -103,11 +103,11 @@ impl Color {
 /// 时再按 `PAYLOAD_LEN` 切片。读行前强制 flush——次序不能颠倒，否则提示符会晚于
 /// 读行落屏。
 ///
-/// # 降级：服务连不上时退回直连设备
+/// # 服务连不上时没有退路（**这是设计**，不是缺口）
 ///
-/// **临时**（过渡期）：若控制台入口缺失或 `Open` 失败，就退回 `io::put` /
-/// 本地最简行编辑——否则一个连不上服务的 shell 会变成"哑巴且读不到命令"。
-/// 第三步删 `IOCall` 时这条降级路径一并删掉（那时任务侧根本没有设备可直连）。
+/// 设备在 console 服务手里，任务侧连 `IOCall` 都没有了（第三步删）。所以本门面只有
+/// 一条通路：**写丢了不致命，读不到就收场**（[`Term::readline`]）。
+/// 过渡期那条"退回直连设备"的护栏随 `IOCall` 一起删——它护的是一个正在消失的世界。
 struct Terminal {
     /// 控制台会话（首次用时开，之后一直用）。`Cell` 便于"锁内取走、锁外建、放回"。
     session: Cell<Option<Console>>,
@@ -119,6 +119,9 @@ impl Terminal {
     /// 一行的上界（超过就先把缓冲发掉）。
     const CAP: usize = 128;
 }
+
+/// 连不上控制台服务时的退出原因码（域自己的编号；trace 里 `RoomEvent::Exit` 带它）。
+const NO_CONSOLE: usize = 0x51;
 
 /// 全局唯一的终端门面（70 处调用点传的都是它的引用）。
 ///
@@ -133,46 +136,11 @@ static TERM: Term = Term(Lock::new(Terminal {
     buf: RefCell::new(String::new()),
 }));
 
-/// 本地行编辑回退（**仅降级路径用**）：逐字节读到回车，含最简回显。
-///
-/// 不做退格/方向键——它是"服务不可用"时的应急面，不是第二条终端实现。
-fn fallback_readline(prompt: &str) -> Readline {
-    let _ = runtime::env::io::put(prompt);
-    let mut s = String::new();
-    loop {
-        match runtime::env::io::try_get() {
-            Some(b'\r') | Some(b'\n') => {
-                let _ = runtime::env::io::put("\r\n");
-                return Readline::Line(s);
-            }
-            Some(0x04) => return Readline::Eof,
-            Some(0x03) => return Readline::Interrupt,
-            Some(0x7f) | Some(0x08) => {
-                if s.pop().is_some() {
-                    let _ = runtime::env::io::put("\x08 \x08");
-                }
-            }
-            Some(b) => {
-                if b.is_ascii() {
-                    s.push(b as char);
-                    let mut one = [0u8; 1];
-                    one[0] = b;
-                    if let Ok(t) = core::str::from_utf8(&one) {
-                        let _ = runtime::env::io::put(t);
-                    }
-                }
-            }
-            None => {
-                let _ = room::sleep(Duration::from_millis(1));
-            }
-        }
-    }
-}
-
 /// 借出控制台会话：**锁内取走 → 锁外建（要跑内核调用）→ 锁内放回**。
 ///
 /// 锁不可重入，故这一段的顺序是硬要求：`Console::open` 绝不能出现在临界区里。
-/// 建不出来 → `None`（调用方降级到直连设备）。
+/// 建不出来 → `None`——**没有第二通路可退**（设备在服务手里），调用方见 [`flush`]
+/// 与 [`Term::readline`] 各自的处置。
 fn with_session<T>(f: impl FnOnce(&Console) -> T) -> Option<T> {
     let mut session = TERM.0.with(|t| t.session.take());
     if session.is_none() {
@@ -198,11 +166,10 @@ fn flush(term: &Term) {
     let Some(text) = text else {
         return;
     };
-    let sent = with_session(|c| c.write(&text).is_ok()).unwrap_or(false);
-    if !sent {
-        // 降级：服务不在，直连设备（**临时路径**，见 [`Terminal`] 的说明）。
-        let _ = runtime::env::io::put(&text);
-    }
+    // 发不出去就是发不出去：本侧没有设备可直连（设备在服务手里），也没有第二条
+    // 通路。**不判死**——一段输出丢掉不是"域不可续"，而 `readline` 那边会判（见
+    // [`Term::readline`]）：一个连不上控制台的 shell 只可能是个哑巴，那时才收场。
+    let _ = with_session(|c| c.write(&text).is_ok());
 }
 
 impl Term {
@@ -248,13 +215,12 @@ impl Term {
         flush(self);
         // prompt 交给客户端：它自己会先把它同步写出去（`Write` 的 Ok 即"已落屏"），
         // 再把长度与内容带进 `ReadLine` 请求——服务侧重绘要用它。
-        let out = with_session(|c| match c.readline(prompt) {
-            Ok(r) => r,
-            Err(_) => Readline::Interrupt,
-        });
-        match out {
-            Some(r) => r,
-            None => fallback_readline(prompt),
+        match with_session(|c| c.readline(prompt)) {
+            Some(Ok(r)) => r,
+            // 服务连不上 / 会话死了：**任务侧没有设备可直连**（第三步删了 `IOCall`），
+            // 再退也没有可退的地方。当场收场，让内核把原因码记进 trace——一个读不到
+            // 命令的 shell 继续活着只会更难诊断。
+            _ => runtime::env::room::exit_with(NO_CONSOLE),
         }
     }
 }
@@ -898,6 +864,53 @@ fn stray_probe(term: &Term) {
     term.writeline(&format!("stray: {denied}/3 illegal-id joins denied"));
 }
 
+/// `kill <名字>`：**经 root 的他杀服务**收掉一个域。
+///
+/// 内核那枚 `RoomCall::Doom` 只认血缘（谁生的谁能杀，传递），而 root 是**全体域的
+/// 祖先** ⇒ 跨血缘的"该不该"由它的政策回答。这就是 Linux `kill` 的形状：谁都能请求，
+/// 够格的那个来执行（`docs/driver.md` §12）。
+///
+/// 回执**四态分开打**：`ok` 的含义是"**内核确认它回收完了**"（不是"收到了"）、
+/// `dead` = 没这个目标、`denied` = 政策不许、`slow` = 已下令但没等到。判据取第一态。
+fn kill_cmd(arg: Option<&str>, term: &Term) {
+    let Some(name) = arg else {
+        term.writeline("kill: usage: kill <name>");
+        return;
+    };
+    let Ok(target) = Name::new(name) else {
+        term.writeline(&format!("kill {name} -> bad name"));
+        return;
+    };
+    let dir = match dir_session() {
+        Ok(d) => d,
+        Err(e) => {
+            term.writeline(&format!("kill {name} err: dir {e:?}"));
+            return;
+        }
+    };
+    let entry = match dir.connect_token(doom::SERVICE) {
+        Ok(t) => t,
+        Err(_) => {
+            term.writeline(&format!("kill {name} -> no doom service"));
+            return;
+        }
+    };
+    let svc = match Doom::open(HolePie::from_token(entry)) {
+        Ok(s) => s,
+        Err(_) => {
+            term.writeline(&format!("kill {name} -> service refused"));
+            return;
+        }
+    };
+    match svc.kill(&target) {
+        Ok(Ack::Ok) => term.writeline(&format!("kill {name} -> ok")),
+        Ok(Ack::Dead) => term.writeline(&format!("kill {name} -> dead")),
+        Ok(Ack::Denied) => term.writeline(&format!("kill {name} -> denied")),
+        Ok(Ack::Slow) => term.writeline(&format!("kill {name} -> slow")),
+        Err(e) => term.writeline(&format!("kill {name} err: {e:?}")),
+    }
+}
+
 fn seal_wake_probe(term: &Term) {
     /// 一次有界等待的期限：短到不拖慢门，长到足以让「等满」与「当场」区分开。
     const WAIT_MS: usize = 200;
@@ -957,7 +970,7 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / cascade / churn / reclaim / spoof / name / badslot / stray / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / cascade / churn / reclaim / spoof / name / badslot / stray / exit",
             );
         }
         "clock" => {
@@ -1164,6 +1177,9 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "stray" => {
             stray_probe(term);
+        }
+        "kill" => {
+            kill_cmd(args.first().map(|s| s.as_str()), term);
         }
         "exit" => {
             term.writeline("bye");

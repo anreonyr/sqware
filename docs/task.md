@@ -61,7 +61,7 @@ work/room/mod.rs:3   scheduler / messenger / conductor
 | `Running` → `Starved` | 预算尽 `advance` / 主动让出 `starve` / 被唤醒 `rise` | `core/hart.rs:312-329`、`:277-294` |
 | `Running` → `Blocked` | `block`（**唯一写点**） | `wait/mod.rs:65` |
 | `Blocked` → `Starved` | `rise`（四路唤醒同形收尾） | `wait/mod.rs:113-126` |
-| `{Held,Starved,Blocked,Running}` → `Doomed` | 扑杀 `suspend`；自退路径由 `reap` 就地补停摆 | `messenger/doom.rs:78`、`reap.rs:43` |
+| `{Held,Starved,Blocked,Running}` → `Doomed` | 扑杀 `suspend`；自退路径由 `reap` 就地补停摆 | `messenger/doom.rs:94`、`reap.rs:43` |
 | `Doomed` → `Reaped` | `reap`：钩子跑完 → 入 `HUSKS`（**唯一置位点**） | `messenger/reap.rs:46` |
 
 四条状态名**只覆盖一条进入路径**：放行、让出、唤醒都落到 `Starved`——名字是"登记处"，
@@ -81,7 +81,7 @@ work/room/mod.rs:3   scheduler / messenger / conductor
 | L1(`Scheduler`) 与 L3 任何方向不嵌套；不持 L3 去 drop `Arc<Task>` | lockdep 违规 / drop 链里取 L2 | `messenger/mod.rs:15-19`；实录见 `reap.rs:101-110` |
 | 跨挂起不得持强引用 | 被扑杀时引用永不回落，任务永久钉住 | `wait/mod.rs:94-99` |
 | 名册只增不删（`delist` 保留未实现） | 「已回收」与「从未分配」重新糊在一起 | `core/table.rs:89-95` |
-| 观察者只读 `tag`；键票只能问容器 | 读到被独占写的 payload | `task.rs:74-91`、`doom.rs:90-112`、`holder.rs:16-24` |
+| 观察者只读 `tag`；键票只能问容器 | 读到被独占写的 payload | `task.rs:74-91`、`doom.rs:106-130`、`holder.rs:16-24` |
 
 ## 5 · 时序：一次 `Wait` 的站点路径
 
@@ -112,7 +112,7 @@ work/room/mod.rs:3   scheduler / messenger / conductor
 
 ## 6 · 死亡两相（为什么必须分两相）
 
-`suspend`（`doom.rs:45-85`）与 `reap`（`reap.rs:39-48`）不能合并：退出钩子会**摘门闩**，
+`suspend`（`doom.rs:61-131`）与 `reap`（`reap.rs:39-48`）不能合并：退出钩子会**摘门闩**，
 摘门闩会**唤醒等待者**；只要还有受害者留在任何容器里，它就可能被别的核偷走并在"注定要死"
 的状态下运行，从而看到一个**已经死掉的资源**（`doom.rs:4-7`）。
 
@@ -126,12 +126,31 @@ work/room/mod.rs:3   scheduler / messenger / conductor
 ```
 
 - `tag` 只作提示，**容器返回值才是结论**；不一致就重来（RETRY=4），耗尽按 `Running` 兜底
-  （`doom.rs:39-41,49-84`）。
+  （`doom.rs:61-131`）。
 - 他核 `Running` **不同步拉走**：那会破坏「`Reaped` 不在 running 槽」这条不变量，故只发
-  SSIP 让它自己退（`doom.rs:114-123` + `scheduler/trap.rs:177-188`）。
+  SSIP 让它自己退（`doom.rs:133-141` + `trap.rs:218-234`）。
 - 延迟的是**回收**不是收尾：栈 / 帧 / 空间的归还留到 `bury`——**不能在自己正在用的栈上回收
   自己**（`reap.rs:6-11,50-58`）。
-- 阶段边界即安全边界（`doom.rs:125-150`）。
+- 阶段边界即安全边界（`doom.rs:150-166`）。
+
+### 6.1 两个入口：级联 与 他杀
+
+同一套两相有**两个触发者**：**级联**（父域退出 ⇒ 沿 `heir` 扑杀子树，挂在那条任务的
+退出钩子上）与**他杀**（`RoomCall::Doom` ⇒ 目标**一个域**，`envcall.rs` 里的一支）。
+
+- 判据 = **血缘、传递、按域比较**（`messenger::descends`）：目标域沿 `Team.sire` 上溯，
+  命中发起者的**域**即放行。按域而非按 task——`sire` 链上记的是**建域那一枚 task**，
+  按 task 比会让同域的另一线程杀不了自己的子域。**严格祖先**：自己不算自己的后代，
+  否则「杀我域里的一枚线程」会退化成「杀掉我整个域连同我自己」。
+- 语义 = **域粒度**：`task` 只是"指认域"的手柄，执行直接复用 `cull(&[team], reason)`
+  （同域的线程一并走，不会剩半个域）——与 Linux `kill <pid>` 同款。
+- **原因码随杀令走**：退场原因码住的是**逐核暂存槽**，写它的必须是"在那颗核上调用
+  `quit()` 的那段代码"；而他杀的受害者是在**别的核**上被 IPI 唤起、自己在 `trap.rs`
+  里自退的 ⇒ 码只能随 `doomed` 一起过去（`doomed` 因此是 `task id → 原因码`，不再是一个
+  集合成员）。"**谁杀的**"在下令那一刻记一笔（`RoomEvent::Doomed { tid, by }`）——
+  一个事实一份账，不随杀令再抄一份。
+- 内核给的三枚码：`EXIT_FAULT` / `EXIT_DOOM` / `EXIT_CASCADE`（与域自己的编号共用字段：
+  域从 1 起、内核占高位段；**码与槽同住** `messenger/mod.rs`，谁写那格谁登记取值）。
 
 ## 7 · 多核与停机
 
@@ -159,6 +178,10 @@ work/room/mod.rs:3   scheduler / messenger / conductor
 | `WakeKey` 用枚举，不位打包 | 键是类型不是数字 | 掩码单射性与 mask helper 错联风险一起消失（`site.rs:23-28`） |
 | `Handoff` 两态 | 本核无后继归 `run()` 收口 | 落点不是调用方的事（`handoff.rs:8-10`） |
 | 信标只是提示 | 调用方必须复核条件 | 裸 `pull` 取走数据时信标不消费（`wait/mod.rs:281-286`） |
+| 他杀只认血缘 | `RoomCall::Doom` 的判据 = `descends`（传递、按域、严格祖先） | 跨血缘的"该不该"是**政策**的活（root 的 `doom` 服务）；内核只答"能不能" |
+| 杀令带原因码 | `doomed`: `task id → 原因码` | 受害者在**他核**自退，杀者写不进它的原因槽 |
+| 级联不逐条记 `Doomed` | 父域自己那一笔 `Exit` 就是"谁杀的" | 一个事实一份账，不为子树里每个任务各记一条 |
+| 他杀不等回收 | 下一句要等用 `Join` | Linux 的 `kill` 也是"送到即回" |
 
 ## 9 · 已知边界
 
@@ -166,7 +189,7 @@ work/room/mod.rs:3   scheduler / messenger / conductor
    （`:27,67`）。
 2. ~~**注释陈旧**~~ —— **已修（本轮）**（改为「调用方据此重来，重试耗尽按 `Running` 兜底」）。
    原记录：`core/table.rs:136-138` 说 `remove_from_starved` 返 false ⇒「本次 kill 丢失」，
-   实际已被 RETRY + 按 `Running` 兜底取代（`doom.rs:39-41,49-84`）。
+   实际已被 RETRY + 按 `Running` 兜底取代（`doom.rs:61-131`）。
 3. **待裁决**：`reap.rs:62-66` 仍走 `run()` 而非用 `swap` 给出的 `next_pa`，差别是后继多扣
    1 个量子（8→7），注释自记「本轮不动，待单独裁决」。
 4. **信标可能陈旧**：`wait` 的返回只是提示（见 §8 末行）；有界等待方还须按 deadline 循环。
@@ -175,6 +198,12 @@ work/room/mod.rs:3   scheduler / messenger / conductor
 7. **已实证的假泄漏**：4 hart = 4 个 48B `LastIdent`，故关机前 `badge.clear()`
    （`core/ident.rs:87-90`）。
 8. **`task_exit` 反向耦合只拆了一半**：dock/ring 那一侧仍直调过渡（`messenger/mod.rs:21-22`）。
+9. **同域的兄弟线程不在血缘里**：`heir` 是 **task → 子 Team**（`UnitCall::Spawn{team:0}`
+   把线程产进当前 Team，**不产生血缘边**）⇒ ① 杀一个任务 ≠ 杀整个域；② 级联**收不到**
+   同域的兄弟线程。root 的他杀服务正因此必须由主线程显式收场（协议里的 `Quit`）。
+10. **S 态域能把自己弄成不可中断**：清掉 `sstatus.SIE` 后 SSIP 送不进去 ⇒ `doomed` 记着
+    但**永不执行**（U 态域做不到——它写不了 `sstatus`）。这是**既有**边界（级联同一条
+    路），`Doom` 只是让它可被政策触发。
 9. **轮转窗口**：`Switch` 事件特意落在 `seat` **之后**，防窗口内崩溃把已下台任务报成当前
    （`core/hart.rs:324-325`）。
 

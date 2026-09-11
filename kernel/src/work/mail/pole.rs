@@ -27,9 +27,25 @@ pub enum PoleState {
     Dead,
 }
 
-/// Pole 数据面实体（Arc 持有；最后强引用 drop 时物理帧归还）。
+/// 载荷归属：这块物理区**是谁的**——决定 `Drop` 时做什么。
+///
+/// 这不是"设备规则"，是**所有权规则**：两条构造路径产出的是同一种门闩，差别只在
+/// 这块内存的来路。于是设备（一段有主的、可映射的内存）不需要新名词，也不需要内核
+/// 认识"设备"二字。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Payload {
+    /// 内核自己分配的页块（`frame::allocator()` 给的）：清零、Drop 时归还。
+    Frames,
+    /// 接管的**外来物理区**（boot 从设备树交出的 MMIO / 保留区）：**不是我的**
+    /// ⇒ 不清零、不归还。借映（`open`）与撤映射（`shut`/`Drop`）照旧。
+    Region,
+}
+
+/// Pole 数据面实体（Arc 持有；最后强引用 drop 时按载荷归还）。
 pub struct PoleMeta {
     state: SpinLock<PoleState>,
+    /// 载荷归属（构造期定型，无 setter）。
+    payload: Payload,
     /// 共享物理块首址（恒等映射下 = PA）。
     base: NonNull<u8>,
     /// 字节数（页对齐）。
@@ -68,8 +84,35 @@ impl PoleMeta {
         }
         Ok(Arc::new(Self {
             state: SpinLock::new_level(Level::L3, PoleState::Live),
+            payload: Payload::Frames,
             base,
             bytes,
+            mappings: SpinLock::new(Vec::new()),
+            owner,
+        }))
+    }
+
+    /// 接管一段**外来物理区**（boot 从设备树的 `reg` 交出：MMIO 或保留区）。
+    ///
+    /// 与 [`PoleMeta::allocate`] 的差别只有两处，都在"这块不是我的"这一个事实上：
+    /// **不清零**（原样保留外来自述——清零设备寄存器是荒谬的）、**Drop 不归还**
+    /// （它不是分配器给的，还回去就是还错东西）。
+    ///
+    /// 页是映射粒度、`reg` 是所有权粒度（`docs/driver.md` §9.1）：区间按页界向两侧
+    /// 撑开，故同一页里的邻居对持有者可见——UART 的 `reg` 只有 0x100，撑到一页。
+    pub(super) fn region(base: usize, bytes: usize, owner: usize) -> Result<Arc<Self>, GateError> {
+        if bytes == 0 {
+            return Err(GateError::NotAligned);
+        }
+        let end = base.checked_add(bytes).ok_or(GateError::NotAligned)?;
+        let lo = base & !(PAGE_SIZE - 1);
+        let hi = end.next_multiple_of(PAGE_SIZE);
+        let base = NonNull::new(lo as *mut u8).ok_or(GateError::NotAligned)?;
+        Ok(Arc::new(Self {
+            state: SpinLock::new_level(Level::L3, PoleState::Live),
+            payload: Payload::Region,
+            base,
+            bytes: hi - lo,
             mappings: SpinLock::new(Vec::new()),
             owner,
         }))
@@ -177,8 +220,12 @@ impl Drop for PoleMeta {
         }
         let layout =
             core::alloc::Layout::from_size_align(self.bytes, PAGE_SIZE).expect("pole layout valid");
-        unsafe {
-            frame::allocator().deallocate(self.base, layout);
+        // 载荷归属决定这一句：**分配器给的才还回去**。外来区（`Region`）在此什么都不做
+        // ——它不是内核的内存，还它就是还错东西（`docs/driver.md` §3.1.1）。
+        if self.payload == Payload::Frames {
+            unsafe {
+                frame::allocator().deallocate(self.base, layout);
+            }
         }
     }
 }
@@ -235,4 +282,13 @@ pub(crate) fn seal(meta: &PoleMeta) {
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
 pub(crate) fn meta(bytes: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
     PoleMeta::allocate(bytes, owner)
+}
+
+/// 接管一段外来物理区，做成一枚门闩的资源实体（见 [`PoleMeta::region`]）。
+///
+/// **只对内核开放**（`pub(crate)`，无 envcall 入口）：设备树是 boot 的事实，
+/// 域不能凭一个物理地址给自己造门闩。独占因此不靠判据，靠**没有第二个创建入口**
+/// （`docs/driver.md` §8）。
+pub(crate) fn region(base: usize, bytes: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
+    PoleMeta::region(base, bytes, owner)
 }

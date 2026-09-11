@@ -3,13 +3,15 @@
 # sqware examine 验收门（原名 e2e）——nu 版，取代 scripts/examine.sh。
 #
 # 判据四条，缺一不可（与 .sh 版逐条相同）：
-#   1) 逐步生效：八条命令**逐个等它的输出出现**再发下一条（expect 式），不是按墙钟盲排；
+#   1) 逐步生效：十条命令（默认档；audit/harden 档十三条）**逐个等它的输出出现**再发下一条
+#      （expect 式），不是按墙钟盲排；
 #      每步都有独立超时，失败能指到具体哪一条。
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) 十个 marker 齐全（含 `task: all tasks exited, system halted` 与
-#      `badslot: 1/1 abnormal exit reaped, kernel alive`）。
+#   4) 十三个 marker 齐全（含 `task: all tasks exited, system halted`、
+#      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
+#      `plic: line 10 delivered`）。
 # 默认连跑 3 次要求 3/3；任一判据不过 ⇒ 该轮 FAIL，进程以非零退出。
 #
 # ── 三条补上的断言（只在 audit 档跑）─────────────────────────────────────────
@@ -47,7 +49,7 @@
 # 产物（连同同目录的 `initrd.img`，boot.nu 按 ELF 同目录找它）搬进本档自己的目录
 # `<OUT>/elf-default/`、`<OUT>/elf-audit/`；每轮只跑自己那份 ⇒ 两档不可能互相污染
 # （调换构建顺序也一样，因为搬运发生在下一次构建之前）。
-# 判据一条没动：哨兵、九 marker、逐步 expect、自退非 124、无 panic 全部照旧（新步只追加）。
+# 判据一条没动：哨兵、逐条 marker、逐步 expect、自退非 124、无 panic 全部照旧（新步只追加）。
 #
 # ── 三档都该绿（**没有**豁免机制）─────────────────────────────────────────────
 # 默认 / audit / harden 三档跑的是同一套判据，三档**都该 PASS**。没有「已知失败不算失败」
@@ -139,23 +141,41 @@ const STEPS = [
   {cmd: "badslot",   pat: "badslot: 3/3 rejected, kernel alive"}
   {cmd: "stray",     pat: "stray: 3/3 illegal-id joins denied"}
   {cmd: "cascade",   pat: "cascade: ok"}
+  # 他杀（`docs/driver.md` §12 的 `kill`）：**经 root 的他杀服务**收掉 echo，
+  # 随后一步是它的牙——名字在目录里**再没有活实例**（不是"root 说成了"）。
+  {cmd: "kill echo", pat: "kill echo -> ok"}
+  {cmd: "dir",       pat: "discover echo -> not found"}
   {cmd: "exit",      pat: "task: all tasks exited, system halted"}
 ]
+
+# ── 中断面（`docs/driver.md` §11 第二步）────────────────────────────────────
+#
+# 上面那张表的每一步都**先敲键盘后看输出**：`dir` 那个字符串是经 UART RX 进来的。
+# 于是"输入能用"本身已经隐含了整条链——但它是**隐含**的：把中断登记摘掉，输入会退化成
+# 有界轮询，上面十步照样全过（实测过：闸门坏了那轮，门是绿的）。
+#
+# 故这里钉一条**只可能由中断产生**的读数：PLIC 驱动域在**第一次 claim → 投递**时打的
+# 那一行（`prog-plic`，一次性标记）。它要成立，必须
+#   设备拉线 → PLIC 置 pending → SEI → 内核推空令牌进 `irq` 门闩 → 驱动 claim 到线号
+#   → 投进 console 的会话门闩 → console 的输入线程被唤醒
+# 这一整条都在。轮询路径**不会**产生它：驱动只在 claim 到东西时说话。
+const IRQ_MARKER = "plic: line 10 delivered"
 
 # 档位 → 本档要跑的步骤（下标取自上面那张表，命令与顺序都只有一处出处）。
 # **改上面那张表就要重算这里**：本轮往 `exit` 前插 `cascade` 时漏算，默认档的 9 从
 # `exit` 指到了 `cascade` ⇒ 默认轮从不 exit、三轮都挂到超时（症状像内核挂，其实是门）。
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 10]
-const STEPS_AUDIT   = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 10, 11, 12]
+const STEPS_AUDIT   = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
 # 默认档的构建 features：**恒为空串**，是构造上的保证，不是旋钮（见头注「按档构建」）。
 # 想反向验证默认档哨兵（「默认档不该出现 audit 输出」）还拦不拦得住，就临时把它改成
 # `"audit"`：默认轮便会跑在 audit ELF 上，哨兵必响 —— 验完改回。
 const DEFAULT_FEATURES = ""
 
-# 全量 marker（含 sleep 探针的 `sleep 300ms`），跑完逐条核。默认八步那九条
-# 同样是 .sh 版原文，逐字未动；audit 档另加三条（redeem 的第二个时长 + wipe 的
-# 封印唤醒 + prune 的站点表计数）。
+# 全量 marker（含 sleep 探针的 `sleep 300ms`），跑完逐条核。默认档那批是 .sh 版原文
+# 逐字未动；他杀那两条（`kill echo -> ok` / `discover echo -> not found`）是后加的，
+# 一条管回执、一条管复验；audit 档另加三条（redeem 的第二个时长 + wipe 的封印唤醒 +
+# prune 的站点表计数）。计数以实跑为准，报告行里的数字是人写的、要跟着改。
 const MARKERS = [
   "spawnjoin -> 499500"
   "discover echo -> found"
@@ -169,6 +189,10 @@ const MARKERS = [
   # 调用要「调用方活、内核活」，带原因的退场要「**调用方死**、内核活」。内核一度把
   # "域级退场"实现成 `panic!`（用户态一句话打死整机）；这条 marker 就是它的牙。
   "badslot: 1/1 abnormal exit reaped, kernel alive"
+  # 他杀：回执 `ok` 的含义是"内核确认它**走完了死亡路径**"（服务手里那枚指向它的
+  # 副本被摘掉），下一条则从**目录**那一侧再验一遍"这个实例没了"——两条都要成立。
+  "kill echo -> ok"
+  "discover echo -> not found"
   "task: all tasks exited, system halted"
 ]
 
@@ -226,12 +250,14 @@ const HARDEN_PROBES = [
   "lock-order level violation"
 ]
 
-# 本档要核的 marker：默认档九条（.sh 原文），audit 档再追加三条。
+# 本档要核的 marker：默认档十三条（.sh 原文 + 中断链 + 他杀两验），audit/harden 档再追加各自那几条。
+# **三档都要核** `IRQ_MARKER`：中断面不是某一档的附属品，它每一轮都该成立。
 def markers_for [flavor: string] {
+  let base = ($MARKERS | append $IRQ_MARKER)
   match $flavor {
-    "audit"  => ($MARKERS | append $AUDIT_MARKERS)
-    "harden" => ($MARKERS | append $HARDEN_MARKERS)
-    _        => $MARKERS
+    "audit"  => ($base | append $AUDIT_MARKERS)
+    "harden" => ($base | append $HARDEN_MARKERS)
+    _        => $base
   }
 }
 
@@ -659,7 +685,7 @@ def main [] {
     # 故结果行用拼接写，只有变量进插值。
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (自退 + 无 panic + 8 步全过 + 10 marker 齐)')
+      print ('run ' + ($i | into string) + ': PASS (自退 + 无 panic + 10 步全过 + 13 marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
@@ -676,7 +702,7 @@ def main [] {
       $pass += 1
       # 标签照实写：audit 档判的是**孤儿 == 0 / 活 == 0 / 等待者 == 0**，不是「站点表已空」
       # （实测 sites=34 全是墓碑；总数不作判据）。
-      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 10 步全过 + 14 marker 齐 + 站点表：无孤儿/无死键/无活站点)')
+      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 13 步全过 + 18 marker 齐 + 站点表：无孤儿/无死键/无活站点)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (audit 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
@@ -690,7 +716,7 @@ def main [] {
     $total_rounds += 1
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 10 步全过 + 12 marker 齐)')
+      print ('run ' + ($i | into string) + ': PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 13 步全过 + 15 marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (harden 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }

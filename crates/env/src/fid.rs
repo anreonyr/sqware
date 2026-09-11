@@ -11,8 +11,13 @@
 //! `slot/pack/unpack` 只依赖 `Wire`——sbi 未来可复用同一 derive。
 //!
 //! 分类按**操作的归属轴**一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2,
-//! IO=3, Chrono=4, Mail=5, Control=6, **Pie=7**。命名与调度词族（conductor）、
+//! Chrono=4, Mail=5, Control=6, **Pie=7**。命名与调度词族（conductor）、
 //! `runtime::chrono` 域及用户侧 `runtime::env` 同词。
+//!
+//! **class 3（原 `IO`：`Put`/`Get`）已删**（`docs/driver.md` §10 第三步）：设备不再是
+//! 内核的事——域持门闩、自己读写寄存器，控制台是服务。号段空着不补：**判别号是声明
+//! 顺序**，把 4..7 挪下来只会在 ABI 里制造一次无意义的位移。空号即"这条路上没有
+//! 内核的入口"，这比复用更准确。
 //!
 //! **5 与 7 的分界是两条正交的轴**（不是按资源种类分，也不是按新旧分）：
 //! - **class 5 `Mail` = 数据轴**：消息穿孔。`Push`/`Pull`/`Wait`——传的是**内容**。
@@ -70,6 +75,22 @@ pub enum RoomCall {
     /// 事件唤醒（词族 wake）：key；返回是否唤到人。
     #[ret(bool)]
     Wake { key: usize },
+    /// 他杀（词族 doom）：把一个任务送进既有的死亡路径——与 [`RoomCall::Reap`] 成对，
+    /// **自杀 ↔ 他杀**。
+    ///
+    /// **语义 = 杀它所属的域连同它的子树**（不是"只杀这一枚线程"）：与 Linux
+    /// `kill <pid>` 同款——pid 指进程，进程的全部线程一并走。`task` 只是"指认域"的手柄。
+    ///
+    /// 判据只有**血缘**（传递）：目标域沿 `sire` 链可达**发起者的域**。跨血缘的
+    /// "该不该"不在这里——那是政策的活（root 提供的 `doom` 服务，见 `docs/driver.md`
+    /// §12）；内核只回答"能不能"。
+    ///
+    /// 失败：`Dead`(-2) 目标从未入册 / 已回收；`Denied`(-1) 不在血缘里、目标与发起者
+    /// 同域、或目标是顶级域。**不等它回收**——要等用 [`UnitCall::Join`]。
+    ///
+    /// [`UnitCall::Join`]: crate::fid::UnitCall::Join
+    #[ret(())]
+    Doom { task: TaskId },
 }
 
 /// 程序装成的空间（`Build` 的特权级参数）：S 态页表 / U 态页表。
@@ -179,23 +200,6 @@ pub enum MemoryCall {
         size: usize,
         flags: u64,
     },
-}
-
-/// IO 调用（class 3）。
-#[derive(Envcall)]
-#[call(class = 3)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum IOCall {
-    /// 写缓冲（len，缓冲 VA）。
-    #[ret(())]
-    Put { len: usize, buf: VirtAddr },
-    /// 非阻塞读一字节；无输入 → -3 Busy。
-    ///
-    /// **内核侧契约**：成功时 `a0` 恰是那一字节（`console::pull()` 给的 `u8` 零扩展），
-    /// 故 `a0 ∈ 0..=255`。这不是"约定"而是本原语的形状——但它**只由内核的实现承载**，
-    /// 故 `FromPair for u8` 在 `debug_assertions` 档把它查出来（见 `wire/frompair.rs`）。
-    #[ret(u8)]
-    Get,
 }
 
 /// 时钟调用（class 4；域 = runtime::chrono）。
@@ -379,7 +383,6 @@ pub enum EnvCall {
     Room(RoomCall),
     Unit(UnitCall),
     Memory(MemoryCall),
-    IO(IOCall),
     Chrono(ChronoCall),
     Mail(MailCall),
     Control(ControlCall),
@@ -394,7 +397,6 @@ impl EnvCall {
             0 => Ok(EnvCall::Room(RoomCall::from_wire(slot, regs)?)),
             1 => Ok(EnvCall::Unit(UnitCall::from_wire(slot, regs)?)),
             2 => Ok(EnvCall::Memory(MemoryCall::from_wire(slot, regs)?)),
-            3 => Ok(EnvCall::IO(IOCall::from_wire(slot, regs)?)),
             4 => Ok(EnvCall::Chrono(ChronoCall::from_wire(slot, regs)?)),
             5 => Ok(EnvCall::Mail(MailCall::from_wire(slot, regs)?)),
             6 => Ok(EnvCall::Control(ControlCall::from_wire(slot, regs)?)),

@@ -2,7 +2,7 @@
 
 use core::arch::global_asm;
 
-use runtime::env::{io::put, room::exit};
+use runtime::env::room::exit_with;
 
 global_asm!(
     ".section .text._start",
@@ -22,51 +22,32 @@ extern "C" fn tls_bootstrap() {
 
 #[unsafe(no_mangle)]
 extern "C" fn exit_trampoline() -> ! {
-    exit()
+    exit_with(EXIT_OK)
 }
 
-/// 域内 panic：留**只有本侧知道**的那一半，然后把处置交给内核。
+/// 自愿结束的原因码（域自己的编号空间的 0 号）。
+pub const EXIT_OK: usize = 0;
+
+/// 域 panic 的原因码——**域自己的诊断编号**，取高位段、与各 bin 的启动握手编号
+/// （小整数）不重叠：读 trace 的人一眼能分出"启动没走通"与"域自己炸了"。
+pub const EXIT_PANIC: usize = 0xFFFF_FF01;
+
+/// 域内 panic：**不打印**，把处置交给内核（`docs/driver.md` §3.3.5）。
 ///
-/// 分工的判据是"谁知道这件事"：
+/// 一个死掉的域还能打印，前提是服务、门闩、槽全都活着——**那是错的依赖方向**：
+/// 域正在告诉你它算不下去了，却要它先去求一条活路。故这里一行字都不写。
 ///
-/// | 事实 | 谁知道 | 谁打 |
-/// |---|---|---|
-/// | 源码位置（`file:line`） | 只有用户侧 | 本函数（`put`，一行） |
-/// | 是哪个域、tid、原因码 | 只有内核 | 内核（`RoomEvent::Exit{reason}`） |
-/// | 该域是否已收尾 | 只有内核 | 内核（`RoomEvent::PanicDeclared` → `reap` → `wipe`） |
+/// 那"哪里崩的"怎么办——**靠内核那头**：
+/// - `Reap { reason: EXIT_PANIC }` 进 trace 的 `RoomEvent::Exit`（谁、何时、为何），
+/// - panic 现场（sepc/sp/寄存器）由内核在自己的故障路径上留痕，
+/// - `sepc` 事后经 initrd 符号表解析成 `file:line`。
 ///
-/// 收尾走 [`exit`]（= `RoomCall::Reap { reason: 0 }`）：**内核不需要知道"这是一次
-/// panic"**——那是域的判断，内核只需要"这个任务不再续跑"。本仓一度另立了
-/// `ControlCall::Panic` 走这条路，已收回：它把域的策略写进了 ABI，并让
-/// "任务终止"这条不变量在 ABI 里有两个出口。
+/// 这条路的前提（**要修**）是 `symbol()` 还只是十六进制桩：符号化不落地，"不打印"
+/// 就等于"看不见"。它记在 `docs/driver.md` §12 的"要修"一栏。
 ///
 /// panic 现场禁忌（照旧）：**不能**走 `format!` / `writeln!`（潜在分配 → 双重 panic）。
-/// 故本函数只有字面量 `put` 与整数逐位写。
+/// 现在连字面量也不写——本函数只剩一条 `Reap`。
 #[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    let _ = put("user paniced\n");
-    if let Some(loc) = info.location() {
-        let _ = put("  at ");
-        let _ = put(loc.file());
-        let _ = put(":");
-        let mut n = loc.line();
-        if n == 0 {
-            let _ = put("0");
-        } else {
-            let mut buf = [0u8; 20];
-            let mut i = 20;
-            while n > 0 && i > 0 {
-                i -= 1;
-                buf[i] = b'0' + (n % 10) as u8;
-                n /= 10;
-            }
-            let _ = put(core::str::from_utf8(&buf[i..]).unwrap_or("?"));
-        }
-        let _ = put("\n");
-    }
-    // 收尾走**通用终止原语**（`Reap`，原因码 0 = 自愿/正常）：内核不需要知道"这是
-    // 一次 panic"——那是域的判断。位置那条事实已经在上面写出去了，域能说的就这些；
-    // 剩下的（是哪个 tid、域是否已收尾）归内核，`RoomEvent::Exit` 会带上原因码。
-    // 各 bin 的启动握手失败分支给的是各自的编号（`1`、`2`…），两者在 trace 里分得开。
-    exit()
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    exit_with(EXIT_PANIC)
 }

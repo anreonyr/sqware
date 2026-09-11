@@ -54,9 +54,9 @@ pub fn mark_hart_started(hart: usize) {
 
 /// 实际活跃核数 = DTB 上报核数（上限 = VA 窗口槽数 MAX_HART_SLOTS）。
 ///
-/// **动态获取**：核数完全由 DTB 决定（`Machine.hart`，运行时注入）。
+/// **动态获取**：核数完全由 DTB 决定（`Machine.hart.count`，运行时注入）。
 pub fn hart_count() -> usize {
-    let n = info().hart;
+    let n = info().hart.count;
     assert!(
         n <= MAX_HART_SLOTS,
         "DTB reports {n} harts, at most {MAX_HART_SLOTS} VA slots"
@@ -236,21 +236,61 @@ const _: () = {
     assert!(core::mem::size_of::<PerHart>() == 64);
 };
 
+/// CPU 侧的事实：**一次 `/cpus` 解析所得**的核数与时基频率。
+///
+/// 为什么这两个住一起（`docs/driver.md` §3.1.7）：它们**同源、同时定型**，而
+/// `Machine` 的其余字段是**内存侧**的事实（dram / free / reserved）。分组不是装饰
+/// ——它让"这台机器的 CPU 侧长什么样"只有一处可读，读侧也少一次两字段配对的默记。
+///
+/// 与 [`PerHart`] 的分工：这个是**机器的值**（Copy、注入 once），那个是**每核的运行时
+/// 上下文**（tp 指向、含帧 VA/调度器/租约，非 Copy）。核的**身份**（我是第几号核）由
+/// [`hart_id()`] 动态读，不在这里——它是"谁在执行"，不是机器属性。
+#[derive(Clone, Copy, Debug)]
+pub struct HartInfo {
+    /// CPU 核数（DTB `/cpus` 的 cpu 节点数）。
+    pub count: usize,
+    /// 时钟频率（DTB `/cpus` timebase-frequency，Hz）。
+    pub hertz: usize,
+}
+
 /// 启动时从 DTB 解析出的机器设备信息（纯值，Copy，可安全存入 static）。
 #[derive(Clone, Copy, Debug)]
 pub struct Machine {
-    /// CPU 核数。
-    pub hart: usize,
-    /// 时钟频率（DTB /cpus timebase-frequency，Hz）。
-    pub hertz: usize,
+    /// CPU 侧的事实（核数 + 时基）：**两项一注**，同源于 `/cpus`。
+    pub hart: HartInfo,
     /// 物理内存范围
     pub dram: Region,
     /// 物理内存空闲区
     pub free: Region,
+    /// **持久保留区**（boot 给的、终身的物理区）：其物理页在 frame 分配器中永不
+    /// 分配。槽号即语义（见 [`Machine::initrd`] / [`Machine::dtb`]）。
+    ///
+    /// 为什么是一张账而不是两个字段：initrd 与 DTB 的语义**逐字相同**（boot 给的、
+    /// 终身的、不该被复用的物理区），差别只在谁来读——一张账两个读者，不是两份账。
+    pub reserved: [Option<Region>; MAX_RESERVED],
+}
+
+/// 保留区槽数（initrd + DTB；再多一种来源就一起加在 [`Machine::init`] 里）。
+pub const MAX_RESERVED: usize = 2;
+
+/// `/chosen` 的 initrd 载荷区槽号。
+const RESERVED_INITRD: usize = 0;
+/// 设备树本体所在的槽号。
+const RESERVED_DTB: usize = 1;
+
+impl Machine {
     /// initrd 载荷区（`/chosen` 的 `linux,initrd-start/end`；QEMU `-initrd` 传递的
     /// 独立 payload）。无 initrd（未传参）→ None。作为**持久保留区**：其物理页在
     /// frame 分配器中永不分配（符号表 `&'static` 名字指向其 strtab，须终身存活）。
-    pub initrd: Option<Region>,
+    pub fn initrd(&self) -> Option<Region> {
+        self.reserved[RESERVED_INITRD]
+    }
+
+    /// 设备树本体所在物理区（始终存在——它在整个 boot 里被解析，且**原样搬运**
+    /// 给域：节点自描述不解释、不转录，故它必须活到关机）。
+    pub fn dtb(&self) -> Region {
+        self.reserved[RESERVED_DTB].expect("machine::init always reserves the DTB")
+    }
 }
 
 static MACHINE: OnceLock<Machine> = OnceLock::new();
@@ -259,7 +299,7 @@ static MACHINE: OnceLock<Machine> = OnceLock::new();
 pub fn init(dtp: usize) {
     let fdt = unsafe { fdt::Fdt::from_ptr(dtp as *const u8) }.expect("invalid device tree blob");
 
-    let hart = fdt.cpus().count();
+    let count = fdt.cpus().count();
 
     let mem = fdt
         .memory()
@@ -269,6 +309,8 @@ pub fn init(dtp: usize) {
     let dram_base = mem.starting_address.addr();
     let dram_size = mem.size.unwrap_or(0);
     let hertz = hertz(&fdt);
+    // 两项同源（都在 `/cpus`）⇒ 一处构造、一处注入（见 [`HartInfo`]）。
+    let hart = HartInfo { count, hertz };
 
     let free_base = root_stack_edge();
     // ROOT 栈位于镜像内（guard + 栈区），整个空闲区
@@ -277,16 +319,35 @@ pub fn init(dtp: usize) {
     let free_size = free_end - free_base;
 
     let initrd = initrd_region(&fdt);
+    // 设备树本体也是一段**终身的、boot 给的物理区**：它与 initrd 走同一条机制
+    // （保留区），语义逐字相同——`docs/driver.md` §3.1.5。长度取 blob 自述的
+    // totalsize（`fdt` 头里的字段），向上取整到页。
+    let dtb = Region::new(dtp, dtb_size(dtp as *const u8));
+
+    let mut reserved = [None; MAX_RESERVED];
+    reserved[RESERVED_INITRD] = initrd;
+    reserved[RESERVED_DTB] = Some(dtb);
 
     MACHINE
         .set(Machine {
             dram: Region::new(dram_base, dram_size),
             free: Region::new(free_base, free_size),
             hart,
-            hertz,
-            initrd,
+            reserved,
         })
         .unwrap()
+}
+
+/// 设备树本体的字节数（向上取整到页）——扁平设备树的头里自述 `totalsize`
+/// （大端 u32，偏移 4）。
+///
+/// 从**原始头**读而不经 `fdt::Fdt`：本值要在任何分配之前定下来（frame 分配器的
+/// 保留区账就按它算），故它不能依赖被封装过的东西——只认规范里那 8 个字节。
+fn dtb_size(dtp: *const u8) -> usize {
+    // SAFETY: dtp 是 boot 交上来的设备树首址（`main` 的 a1），前 8 字节是
+    // magic(u32) + totalsize(u32)；此处只读 4 字节，无副作用。
+    let total = unsafe { core::ptr::read_unaligned(dtp.add(4).cast::<u32>()) };
+    (u32::from_be(total) as usize).next_multiple_of(PAGE_SIZE)
 }
 
 /// 读取注入的机器信息（驱动按需调用）。

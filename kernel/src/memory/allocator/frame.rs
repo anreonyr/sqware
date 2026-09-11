@@ -143,6 +143,17 @@ unsafe impl Allocator for FrameAllocator {
     }
 }
 
+/// 帧索引 `index` 落在哪条保留区内 → 该保留区的**洞尾**（帧索引，开区间）。
+///
+/// 表已升序、区内不重叠（`Machine::reserved` 的两段物理区互不相交）。
+fn hole_containing(holes: &[Option<(usize, usize)>], index: usize) -> Option<usize> {
+    holes
+        .iter()
+        .flatten()
+        .find(|&&(start, end)| index >= start && index < end)
+        .map(|&(_, end)| end)
+}
+
 struct FrameInner {
     freelist: Vec<Option<NonNull<Link>>>,
     pagemeta: Vec<Option<Meta>>,
@@ -199,25 +210,34 @@ impl FrameInner {
 
         let mut index = 0usize;
         let mut remaining = max_frame;
-        // 持久保留区（initrd）的帧索引范围：`[hole_start, hole_end)` 的帧绝不出现在
-        // 任何 free bucket。initrd 物理页承载符号表 strtab（`&'static` 名字），须
-        // 终身存活——一旦被分配器复用，崩溃现场符号化即悬垂/OOB。预留帧的
+        // 持久保留区（initrd / 设备树……——`Machine::reserved` 一张账）的帧索引
+        // 范围：这些帧绝不出现在任何 free bucket。initrd 物理页承载符号表 strtab
+        // （`&'static` 名字），设备树承载设备自描述，两者都须终身存活——一旦被
+        // 分配器复用，崩溃现场符号化即悬垂、设备自述即被改写。预留帧的
         // pagemeta 置 non-free（free=false），`merge_block` 不会并入（伙伴侧检查
         // `is_some_and(|m| m.free)` 失败即停），也不会被 split 产出（不在链中）。
-        let (hole_start, hole_end) = self.hole_range(self.base, self.edge, max_frame);
+        let holes = Self::holes(self.base, self.edge, max_frame);
         while remaining > 0 {
             // 起始帧落在洞内：整段跳过洞（跳到洞尾，含洞的帧永不入链）。
-            if index < hole_end && index >= hole_start {
-                let skip = hole_end - index;
+            if let Some(end) = hole_containing(&holes, index) {
+                let skip = end - index;
                 index += skip;
                 remaining -= skip;
                 continue;
             }
-            // 候选块 [index, index + 2^power)：若不跨洞、不越上界。
+            // 候选块 [index, index + 2^power)：**不跨任何洞、不越上界**。
+            // 「不跨洞」= 块尾不得超过**下一个洞的起点**（洞已排序，取最近的那个）。
+            let limit = holes
+                .iter()
+                .flatten()
+                .map(|&(start, _)| start)
+                .filter(|&start| start > index)
+                .min()
+                .unwrap_or(max_frame);
             let mut power = (index.trailing_zeros() as usize)
                 .min(remaining.ilog2() as usize)
                 .min(max_power - 1);
-            while index < hole_start && index + (1 << power) > hole_start {
+            while index + (1 << power) > limit {
                 power -= 1;
             }
             unsafe {
@@ -268,22 +288,32 @@ impl FrameInner {
         self.base + index * PAGE_SIZE
     }
 
-    /// 持久保留区（initrd）在本分配器窗口内的帧索引范围 `[start, end)`。
+    /// 持久保留区在本分配器窗口内的帧索引区间 `[start, end)` 表（升序，最多
+    /// [`MAX_RESERVED`](crate::machine::MAX_RESERVED) 条）。
     ///
-    /// initrd 物理区可能部分落在窗口外（防御性地截断到 `[base, edge)`）；无
-    /// initrd 配置 → `(max_frame, max_frame)`（空洞，表示无跳过）。
-    fn hole_range(&self, base: usize, edge: usize, max_frame: usize) -> (usize, usize) {
-        let Some(r) = crate::machine::info().initrd else {
-            return (max_frame, max_frame);
-        };
-        let (hs, he) = (r.base, r.base + r.size);
-        // 洞边界不在窗口内 → 空洞。
-        if he <= base || hs >= edge {
-            return (max_frame, max_frame);
+    /// 每个保留区可能部分落在窗口外（防御性地截断到 `[base, edge)`）；完全落在
+    /// 窗口外的、以及空的，都不进表（表里的每一条都真的挡住一段帧）。
+    fn holes(
+        base: usize,
+        edge: usize,
+        max_frame: usize,
+    ) -> [Option<(usize, usize)>; crate::machine::MAX_RESERVED] {
+        let mut out = [None; crate::machine::MAX_RESERVED];
+        let mut n = 0;
+        for r in crate::machine::info().reserved.iter().flatten() {
+            let (hs, he) = (r.base, r.base + r.size);
+            // 洞边界不在窗口内 → 无洞。
+            if he <= base || hs >= edge {
+                continue;
+            }
+            let start = (hs.max(base) - base) / PAGE_SIZE;
+            let end = (he.min(edge) - base).div_ceil(PAGE_SIZE);
+            out[n] = Some((start.min(max_frame), end.min(max_frame)));
+            n += 1;
         }
-        let start = (hs.max(base) - base) / PAGE_SIZE;
-        let end = (he.min(edge) - base).div_ceil(PAGE_SIZE);
-        (start.min(max_frame), end.min(max_frame))
+        // 升序（下面按「最近的洞起点」取 limit，且跳过时要能顺序前进）。
+        out[..n].sort_unstable();
+        out
     }
 
     // frame 索引：翻转 order 对应的位

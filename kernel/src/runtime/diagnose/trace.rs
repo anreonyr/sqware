@@ -85,6 +85,19 @@ pub enum RoomEvent {
         cause: usize,
         stval: usize,
     },
+    /// 杀令下达（`RoomCall::Doom`）：**谁杀的**必须记账。
+    ///
+    /// 与 [`RoomEvent::FaultKilled`] 同形——**下令时记一笔、死亡时再记一笔**
+    /// （`Exit { reason }`，原因码 `EXIT_DOOM`）。两条分开是因为它们落在**不同的核**
+    /// 上：下令者在自己那颗核记这一条，受害者在自己的核上自退。
+    ///
+    /// 级联（父域退出）**不重复记**：它的"下令者"就是那个正在死的父域，它自己的
+    /// `Exit` 与受害者的 `Exit { reason: EXIT_CASCADE }` 同一时刻成对出现——一个事实
+    /// 一份账，不为一棵子树里的每个任务各记一条 `Doomed`。
+    Doomed {
+        tid: usize,
+        by: usize,
+    },
     Idle,
 }
 
@@ -306,6 +319,9 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
         EventKind::Room(RoomEvent::Reap { tid }) => write!(w, "reap tid={tid}"),
         EventKind::Room(RoomEvent::FaultKilled { tid, cause, stval }) => {
             write!(w, "fault-killed tid={tid} cause={cause} stval={stval:#x}")
+        }
+        EventKind::Room(RoomEvent::Doomed { tid, by }) => {
+            write!(w, "doomed tid={tid} by={by}")
         }
         EventKind::Room(RoomEvent::Idle) => write!(w, "idle"),
         EventKind::Env(EnvEvent::Call { call, arg }) => write!(w, "envcall #{call} arg={arg:#x}"),

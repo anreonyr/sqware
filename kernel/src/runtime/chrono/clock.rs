@@ -46,7 +46,7 @@ static CYCLE: AtomicU64 = AtomicU64::new(0);
 ///
 /// 见 [`ClockError`]。
 pub fn init() -> Result<(), ClockError> {
-    let hertz = machine::info().hertz;
+    let hertz = machine::info().hart.hertz;
     if hertz == 0 {
         return Err(ClockError::NoTimebase);
     }

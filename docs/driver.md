@@ -1,0 +1,350 @@
+# driver — 设备与驱动的基础
+
+> **状态：已实现（§10 三步走完），门绿。** 本文是**裁决账**（每条都记依据与锚点），
+> 写法上分三层：**裁决**（§1–§5，不改）· **落点**（§6–§7：代码在哪、量到了什么）·
+> **结算**（§8–§12：已否、边界、路径、判据、未决）。
+>
+> 实现期与设计不同的地方**一条不删、就地记**（标 **实现**），理由写在原处，不另开一章粉饰：
+> 清单与**裁决状态**在 **§8.1**——已裁的只有一条（§3.1.7 的字段账，用户裁「改」），其余**待裁**。
+> 故本文的「已实现、门绿」说的是**落点齐、判据过**，不是「每一条都已裁过」。
+
+## 1 · 第一刀
+
+**设备 = 一段有主的、可映射的内存。**
+
+CPU 只认识内存：设备的控制寄存器被映射进地址空间，CPU 操作它们，本质还是内存。所以设备
+不是 primitive，也不需要新名词——它要的每一样东西，本仓都已经有了：
+
+| 要有的事实 | 承载它的既有结构 |
+|---|---|
+| 一段设备区 | `Region`（`machine.rs:11`："内存池 / MMIO 设备区域通用"） |
+| 所有权 | `Pole` 的 payload 多一种：`Frames` \| `Region` |
+| 身份 | 名字（`env::Name`）= DTB 节点 basename |
+| 授权与转授 | `Accord`（现有） |
+| 数据面 | 门闩本身（映射之后就是 load/store） |
+
+于是内核在 boot 之后**零设备概念**：没有设备表、没有索引、没有占用账。要有账也是门闩自己——
+**资源寿命 = 能力寿命**。独占不靠判据，靠**没有第二个创建入口**（§8）。
+
+## 2 · 功能模型
+
+- **交付面**：一台设备在系统里可被占有、映射、使用、交还，而内核不知道"设备"是什么。
+- **驱动是 U 态域**：与 S 态域任务共用同一条 envcall 路径（`ebreak`）、同等故障隔离。
+- **零新 syscall、零新 ABI**；净效果是删掉两个 fid（`IOCall`）。
+- **中断 = 一台设备 ＋ 一件内核侧事实**：PLIC 的寄存器就是内存（照 §1 处理）；但外部中断的
+  入口是 `trap_handler`，那是内核的领地，故另有一小块内核结构（§3.2）。
+- **服务边界口径**：能力层只管"**谁是设备的持有者**"；"**谁能在控制台上说话**"是服务的
+  用户态政策（会话表）。
+- 内核自己的打印**不在交付面内**：它走 SBI（§7.3）。
+
+## 3 · 结构
+
+### 3.1 设备与驱动基础
+
+| # | 裁决 |
+|---|---|
+| 3.1.1 | 承载 = **`Pole`**，不新增名词。payload 由 `Frames` 扩为 **`Frames \| Region`**，语义是"这些页不是我的 ⇒ 不清零、不归还"——**所有权规则，不是设备规则**。两条构造路径：`allocate(bytes, owner)`（现有：内核自己的页）+ **`region(base, bytes, owner)`**（新：接管外来物理区）；`Drop` 按 payload 分支 |
+| 3.1.2 | 身份 = **名字**（`env::Name`）；名字 = **DTB 节点 basename（含 `@unit-address`）**。实测最长 28 ≤ 31；**全路径最长 34 装不下**（§7.1） |
+| 3.1.3 | 事实通道 = **boot 供给**：一次 DTB 扫描，把每个 (节点, `reg` 段) 变成一枚门闩；内核**原样搬运自描述、不解释** |
+| 3.1.4 | 授权 = 现有 `Accord`；**root 留源副本、不 `Open`**，驱动重启由 root 重发，内核不参与 |
+| 3.1.5 | **DTB 也是一台"设备"**：`Payload::Region` 门闩 + 保留区——它的语义与 `initrd` 逐字相同（boot 给的、终身的、物理区），故走 `initrd` 那条现成机制 |
+| 3.1.6 | 扫描单位是 **(节点, `reg` 段)**（实测 `flash` 的 `reg` 是两段）；豁免 = `/memory`（内核已解析成 `dram`）、`clint@2000000`（内核的时钟与 IPI 经 SBI 走它，交出去等于交出节拍） |
+| 3.1.7 | **`Machine` 零设备字段**。字段账 = `hart: HartInfo` / `dram` / `free` / **`reserved`**（`initrd` + `dtb`）；`hole_range`（原 `frame.rs:275-287`）由单区间推广到多区间（现为 `holes()`）。<br>**实现**：这条账是**四对四**的——实现期一度把 `hertz` 单列成第五个字段，那正是把这条账读漏了。`HartInfo` 收的是一对**同源**事实（`/cpus` 的核数与 `timebase-frequency`），而 `Machine` 剩下的字段全是**内存侧**的（`dram`/`free`/`reserved`）：故 `hart: HartInfo { count, hertz }` 不是改名，是**分组**——CPU 侧的事实一处可读。落点：`machine.rs:249-266`（`HartInfo` + `Machine`）、`machine.rs:58-65`（`hart_count()` 读 `.count`）、`boot.rs:50,52,67`（banner 两行 + 帧窗口算式）、`chrono/clock.rs:49`（`.hertz`）。`reserved` = `[Option<Region>; 2]` 定长槽 + `initrd()`/`dtb()` 两个具名读法（**一张账两个读者，不是两个字段**）；`dtb_size()`（`machine.rs:346-356`）只读规范头那 8 字节，因为保留区账要在**任何分配之前**算出来；`frame.rs:296-320` 的 `holes()`（洞包含判定在 `frame.rs:149`） 返回升序区间表，建链循环按"不跨任何洞"取 limit。**裁决**：§8.1.9（**已裁**） |
+
+### 3.2 中断门
+
+| # | 裁决 |
+|---|---|
+| 3.2.1 | 内核侧只有三件：**`SupervisorExternal` 分支**（今天落在兜底 `trap.rs:227-230`）、**`sie.SEIE` 闸门**、boot 建 `irq` 门闩并入配对块 |
+| 3.2.2 | 闸门政策（**零状态**）：`try_push` 满槽（`Busy`）⇒ 清**本 hart** 的 `SEIE`；本 hart 的下一个 timer tick **无条件重开**。病态情形退化为每 hart 10 Hz 的探测，自愈。<br>**实现**：两半都在（`trap.rs` 的 `SupervisorExternal` / `SupervisorTimer` 两支）。**但"下一拍"只在以陷阱形式取到的 tick 上成立**——空闲核的拍子在 `scheduler/core/fetch.rs` 里用 SIE=0 的 WFI 处理，根本不进陷阱。故那一处也补了重开，**并加一条守卫**：`sip.SEIP` 还置着就不开（那条中断没人领，多半正被闸门挡着；此刻重开只会让 WFI 立刻返回、把空闲核变成一个探测死循环）。实测：带守卫时一次 3 秒停摆只推 7 枚；不带给守卫的重开是 337 枚；把闸门整个删掉是 **2 424 133** 枚且整机停摆（§11）。**裁决**：§8.1.2（**待裁**） |
+| 3.2.3 | `irq` 门闩 = **一枚**，`mtu = 1`、**空载荷**、`owner = 0`、内核永久持源。载荷为空是因为内核只知道"外部中断"这一件事。<br>**实现**：一枚 1 字节的孔，载荷恒 `[0]`（`mtu` 最小是 1，"空"落在内容上）。**内核永久持源**这条落地为一个 `OnceLock<Arc<HoleMeta>>`——这是"资源寿命 = 能力寿命"的**有意例外**，理由在方向上：它不是谁的资源，是内核一件事实的出口；若它也随门闩消亡，域放下手里那份就能把中断面拆掉，而 `trap_handler` 还会继续往里推。**裁决**：§8.1.10（**落地**） |
+| 3.2.4 | PLIC ↔ 设备驱动 = **每中断一跳**（整链 2 跳：内核空令牌 + PLIC 投线号）。**会话门闩由客户端递出**，沿用 console 会话形状（`crates/protocol/src/console/mod.rs:16-20`） |
+| 3.2.5 | **静音在设备侧**：客户端进门先 mask 自己的 `IER`，出门再开门。⇒ PLIC 侧**无静音表、无 deadline、无扫描**，只剩 `claim → push → complete`。<br>**实现**：console 的输入线程循环就是 §4 那一行（`drain → unmask → Wait → Pull → mask`）——读它的方向很重要：**等的时候门是开的**，一被叫醒先关门、回到开头排空。只动 `IER`，不碰 `LCR`/`FCR`/波特率（§9.4） |
+| 3.2.6 | `线号 → (客户端, 门闩)` 的表活在 **PLIC 驱动的用户态内存**里；内核不参与 |
+| 3.2.7 | **不引入任务亲和性**：实测 `claim` 的 context 由**地址区间**选定，不由访问者选定（§7.2）⇒ 驱动跑在哪颗 hart 上无关 |
+
+### 3.3 服务边界
+
+| # | 裁决 |
+|---|---|
+| 3.3.1 | UART = `Payload::Region` 门闩，来自同一次扫描，名字 `serial@10000000` |
+| 3.3.2 | 持有者 = **console 服务域，一体不拆**——它今天已经是设备的唯一触点（`crates/protocol/src/console/mod.rs:11` 的设计意图就是"服务自己持设备"） |
+| 3.3.3 | 移交：boot → **root**（配对块）→ console 上线后 root 用 `Accord` 交出。**root 在移交前用的是同一枚门闩**，不是第二个创建入口 |
+| 3.3.4 | 迁完的读者只有一个 ⇒ `console.md` §6 的"单读者"**由能力保证**，不再靠约定 |
+| 3.3.5 | **U 态 panic 不打印**：把诊断交给内核（`Reap { reason ≠ 0 }`），细节靠 trace + initrd 符号表事后解析。一个死掉的域还能打印，前提是服务、门闩、槽全都活着——那是错的依赖方向 |
+| 3.3.6 | root：**移交前用门闩自己写**，**移交后作普通客户端**走会话 |
+
+## 4 · 原语
+
+| 类别 | 内容 |
+|---|---|
+| 复用 | `Reserve`/`Collect`、`Open`/`Shut`/`Narrow`、`Accord`、`Hole` + `Wait`/`Wake`、`Spawn`/`Hatch`、`Allocate`/`Mmap`、`UnsealHole`/`UnsealPole` |
+| 内核内部**新增** | `Payload::Region` + `region(...)`；`SupervisorExternal` 分支；`sie::set_sext()`（今天全仓只有 `set_stimer`/`set_ssoft`，`trap/stack.rs:206-207`） |
+| 内核内部**删除** | `IOCall::Put`/`Get`、`crate::console::push`/`pull`、`PULL_BUF`。**内核自己的 `put!` 保留**（走 SBI DBCN） |
+| PLIC 驱动 | `claim → push(线号) → complete`——三行的循环，里面没有一行跟设备有关 |
+| 设备驱动 | `drain → unmask → Wait → Pull → mask` |
+| console 服务（用户态，纯设备语义） | `LSR.THRE` 推进的同步写 + **`IER` 掩码** + **RX 排空**（读 `RBR` 到 `LSR.DR = 0`） |
+| ~~TX 环~~ | **实现时删掉**，理由是它在这条路上是**死机制**：环只有在"不排空"时才非空，而轮询写法的每一次 `put` 都当场把环排干（环恒空 ⇒ 满分支永不进 ⇒ 那圈代码没有任何观测）。更硬的一条：客户端的 `Write` 回执是**同步点**（"收到 Ok 才知道这段已落屏"，`crates/protocol/src/console/server.rs:293`），把字节留在环里等于把这条承诺改成"排队成功"。**开除条件写清**：若第二步之后开 TX 中断（`IER.THRE`），环才成为必需品——那时它是 ISR 的队列，不是这里的装饰。**裁决**：§8.1.1（**待裁**） |
+
+## 5 · 签名
+
+| # | 裁决 |
+|---|---|
+| 5.1 | 配对块 = `[(Name, Pie)]`，经 boot 借映交给 root——机制现成（`boot.rs:180-235` 已把 initrd 视图借映进 root 空间当 args）。<br>**实现**：块里放的是 `(名字, token)`，**不是 Pie 本体**——`Pie` 是内核里的 `Arc<Meta>` 强引用，交不出去也不该交；**门闩落进 root 的权限表、块里只留它在 root 表里的号**（这才是"root 拿到了"的准确形状）。记录类型 = `env::wire::Pair`（`crates/env/src/wire/pair.rs`，`repr(C)`、40 字节、`PAIR_LEN` 编译期断言锁死），**内核与 root 共用一份定义**，不各写一遍。块本身 = 页对齐的**内核静态区**（`devices.rs` 的 `BLOCK`，写一次、此后只读；寿命即镜像寿命，用门闩管它只会多一个失败模式）。**裁决**：§8.1.3（**待裁**） |
+| 5.2 | console 协议不变（请求门闩 + 回信孔）；只是它背后的"写设备"从 `io::put` 换成 MMIO。<br>**实现**：协议的写出口从固定调用改成一枚 **`Sink`（`fn(&str)`）**——服务是"一台设备一个实例"的装配体，装配层（`prog-console`）把设备的写函数交进来（`crates/protocol/src/console/server.rs` 的 `State::new(Sink)`），协议层因此**不认识串口**，也不需要认识。**裁决**：§8.1.4（**待裁**） |
+| 5.3 | 中断会话载荷 = **u16 线号**（实测 `ndev = 95`，一字节够；按"长度是参数不是约定"给 u16）；`from` 是内核盖的 PLIC 驱动 task id，客户端可据此验证来源 |
+| 5.4 | 注册协议（PLIC 驱动自己的用户态协议）：`Register { name, line, priority, hole } → Ack \| Denied`。<br>**实现**：报文 57 字节 `[op u8][line u32][priority u32][hole u64][ack u64][name 32]`，回执 1 字节。**回执走客户端自带的回信门闩**（报文里那个 `ack`）——与 dispatch 协议同一条规矩：谁发起谁备回信通道。**客户端是 console 服务**：它自建会话门闩（`mtu = 2`），`READ` 副本给自己的输入线程、`WRITE` 副本给驱动（门闩是 per-task 的，这是唯一能跨 task 交接的方式）；驱动 id 取 `Reserve(entry).owner`，**不取 vestor**（转发会改 vestor，owner 不会）。**裁决**：§8.1.11（**落地**） |
+
+## 6 · 一条设备的一生
+
+以 UART（第一实例）为例，从 boot 到一次键盘输入走完全程：
+
+```text
+① boot    DTB 扫描：把 (serial@10000000, 0x10000000+0x100) 做成一枚 Pole
+          （payload = Region、owner = 0）；DTB 与 irq 门闩各另做一枚
+          门闩连同名字进配对块（20 条），借映交给 root
+② root    拿到配对块：留源副本、不 Open。console 还不存在 ⇒ 移交之前 root
+          直接 Open 自己那枚 UART 门闩来打印（同一枚门闩，不是第二个来源）
+③ root    Spawn console → console 经 Accord 取走 UART 门闩 → Open（段里 lowest
+          first-fit 给的 VA）→ 此后 root 不再碰设备，最后一句改走会话
+④ 任意域  打印 = 写进 console 的请求门闩（那次 push 的阻塞就是背压）
+⑤ console 请求线程 Pull → 写 THR（轮询 LSR.THRE，同步；见 §4 的 TX 环裁决）
+⑥ 键盘    固件不再参与：输入线程排空 LSR.DR → 读 RBR → VTE 解码 → 行编辑
+          → 整行经共享态交给请求线程 → 回信孔（`console.md` §5 时序）
+⑦ 中断    PLIC 驱动 claim 到线号 → 投进 console 的会话门闩 → console 醒来先
+          mask IER、排空 RBR、再开门等下一次 —— 不需要任何 ack
+```
+
+**内核在这一整条路上出现 0 次**（②–⑦）：boot 期出现一次（①），中断接上后再出现一次
+（§3.2.1 的三个分支之一）。搬迁前，这条路上内核出现**每一步**（§7.3）。
+
+## 7 · 实测锚点
+
+裁决依赖的事实，全部来自 QEMU virt（`-smp 2`）的活 DTB（gdbstub 读出，6076 字节）与直接点寄存器。
+
+### 7.1 树的形状
+
+- PLIC = `/soc/interrupt-controller@c000000`（`riscv,plic0`，`reg = 0xc000000 + 0x600000`，
+  `ndev = 95`，`#interrupt-cells = 1`）。
+- UART = `/soc/serial@10000000`（`ns16550a`，`reg = 0x10000000 + 0x100`，`interrupts = <10>`，
+  `interrupt-parent` = PLIC 的 phandle）。
+- 带 `reg` 的节点 **17** 个（含 8×`virtio_mmio`、`rtc`、`test`、`clint`、`pci` 256 MiB、DTB 自己）。
+- **路径长度**：全路径最长 34（PLIC）> `Name` 的 31；**basename 最长 28** ⇒ 名字取 basename。
+- DTB 本体 6076 字节，落在 `free = 0x8029e000..0x88000000` **之内**（`0x87e00000`）。
+
+### 7.2 中断语义（量出来的，不是规范复述）
+
+| 动作 | 观测 |
+|---|---|
+| 设备拉线 | `pending` 置位（bit = 线号） |
+| **源撤线** | `pending` **保持** —— 不是电平镜像，是**闩锁** |
+| `claim` | 返回线号，且 `pending` **原子清零** |
+| **`complete`（源仍拉线）** | `pending` **不回来** —— **不重采样** |
+| `threshold == priority` | `pending` 置位但 `claim = 0` ⇒ **严格大于**；卡仲裁不卡 pending |
+| `priority = 0` | `pending` 照旧置位，`claim = 0` ⇒ 可逆静音 |
+| **gdb（无 hart 身份）读 `ctx1` 的 claim** | 返回线号 ⇒ **context 由地址选定** |
+
+⇒ 三条会静默咬人的规矩：① claim 之后**必须真的碰设备**（否则那条线静默失联）；② `complete`
+不是重武装点，别指望它把中断带回来；③ 静音要用 `priority`（单线、可逆），`threshold` 是
+context 级总闸。
+
+⇒ `interrupts-extended` 每 hart 两项：`<intc 11>`（M 外部）与 `<intc 9>`（S 外部）⇒ 驱动
+**认 `9` 不认 `11`**（认错就是把线交给固件）；context 序号按该属性的顺序取，**别硬算 `2h+1`**。
+
+### 7.3 搬迁前的控制台形状（**已消失**）
+
+```
+域 ──ebreak 陷阱──► 内核 ──SBI ecall──► 固件 ──MMIO──► UART
+```
+
+`IOCall::Put` → `crate::console::push()` → `Dbcn::ConsoleWrite`（原 `kernel/src/console.rs:97-114`）；
+`IOCall::Get` → `pull()` → `Dbcn::ConsoleRead`（`:124-141`）。**内核一行都不碰 UART 寄存器**——
+UART 的持有者是 OpenSBI（横幅：`Platform Console Device : uart8250`）。所以每输出一个字节要穿
+**两次**特权边界；`IOCall` 是一条**固件代理**，不是设备面。
+
+两者都已删（§10 第三步）：`IOCall` 两个 fid、`crate::console::push`/`pull`、`PULL_BUF`
+在 `crates/env/src/fid.rs` 与 `kernel/src/console.rs` 里**没有了**。
+
+**PMP 有回执，不必 probe**：OpenSBI 自己把域 0 的 PMP 分区打在横幅里（这就是 §7.4 的第一张
+表）——`0x10000000`（UART）与 `0xc000000..0xc5fffff`（PLIC）都是 **S/U (R,W)**，
+`0x2000000`（CLINT）是 **M-only**，末尾还有一条 `0x0..0xffffffffffffffff` 的 **S/U (R,W,X)**
+兜底。**PMP 只分 M 与 S/U** ⇒ 域（S 态或 U 态）访问 UART/PLIC 的 MMIO 被允许。
+实测确认：把这一条从"推理"变成"量到"的是**第一次迁移**——内核自己在 boot 直写 `THR` 打出一个
+`!`（探针，随即删除），字符出现在横幅前。
+
+**UART 侧一条**：`THRE`（"THR 为空"）是**持续状态不是事件** ⇒ 必须软件闸门（这也正是"静音
+归设备侧"的先例）。
+
+### 7.4 实现期的读数（**这一节是搬迁之后量的**）
+
+**PMP 分区（OpenSBI 横幅自己打的，不是推理）**：
+
+| 区间 | M | S/U |
+|---|---|---|
+| `0x10000000-0x1000fff`（UART） | I,R,W | **R,W** |
+| `0xc000000-0xc5fffff`（PLIC，两段） | I,R,W | **R,W** |
+| `0x2000000-0x200ffff`（CLINT） | I,R,W | **()** ⇒ M-only |
+| `0x0-0xffffffffffffffff` | () | R,W,X（兜底） |
+
+⇒ 域访问 UART/PLIC 的 MMIO **被允许**；CLINT 交出去也没用（M-only），与 §3.1.6 的豁免同向。
+**实测**：内核 boot 直写 `THR` 打一个 `!`（探针，随即删）——字符出现在横幅之前。
+
+**供给账**：`devices: 20 handed to root`——18 条来自设备树（带 `reg` 的 (节点, 段) 对，
+`flash` 两段），加上 `devicetree` 与 `irq`。
+
+**迁移的效率读数（§11 第一步的判据）**：同一条命令序列（boot → `dir` → `exit`），
+semihosting 导出的事件流里按 class 数的 envcall（`--features semihosting` + `QEMU_SEMI=1`，
+`sqware-diagnose.jsonl` 逐行数）：
+
+| class | 搬迁前 | 搬迁后 |
+|---|---|---|
+| 3（`IO`：`Put`/`Get`） | **≥ 450**（`Get` 444 次来自输入线程的 1 ms 轮询——它是**时长**的函数，故记下界；`Put` 6 次来自 shell 降级路径、root 的 `say`、用户态 panic 打印） | **0**（整类消失：`Put` 与 `Get` 都已不在 ABI 面上） |
+| 0 / 1 / 2 / 4 / 5 / 7 | 464 / 26 / 26 / 2219 / 3065 / 59 | 12 / 31 / 89 / 1667 / 2792 / 121 |
+
+后一行**只作对照，不作判据**：它们是两条协议自己的往返（`Mail` 的 push/pull/wait、`Chrono`
+的 `pull_timeout` 取钟），逐次运行随输入时序抖动，与设备面无关。**判据只有一行**：class 3
+从"每个字节穿两次内核"变成"这一类不存在"——**内核从这条路上消失，不是变快**。
+
+**PLIC 驱动从设备树里数出来的**：4 个 S 外部 context（`interrupts-extended` 里 cell = 9 的
+项）、`riscv,ndev = 95` 条线；第一次投递是 **line 10**（UART），与 §7.1 的 `interrupts = <10>`
+对上。
+
+## 8 · 已决 / 被否
+
+- **`Machine.devices`（设备表进内核）** → 否：内核零设备概念；设备区的终身判据活在
+  `PoleMeta.base` 里（门闩就是账），存第二份即第二份账。而 `compatible: &'static [&'static str]`
+  还额外把 DTB 变成**不可撤销**的保留义务（`'static` 是单向承诺）。
+- **`irq: Option<u32>`** → 否：它不是转录而是**解释**（要按父节点的 `#interrupt-cells` 解码），
+  而一个 `u32` 装不下 `interrupts-extended` / 多 cell / 父链；装得下的东西（DTB）本来就该
+  留在原处。
+- **DTB 拷成 `Frames` 门闩** → 否：能省一个保留区，但"拷贝必须先于任何分配"只能靠代码位置
+  维持（DTB 落在 buddy 窗口内）——那是约定不是不变式；而它的语义与 `initrd` 逐字相同 ⇒ 走保留区。
+- **内核持一张"线号 → 持有者"表**（普通内核的做法） → 否：那是 `console.md` §8 裁过的
+  "给 `IOCall` 加判据"的同一件事（`AnyPie` 只有 Hole/Pole/Nole，UART 指不过去）。
+- **内核在陷阱里 claim/complete** → 否：内核要知道 PLIC 在哪，且就此拥有中断语义。
+- **PLIC 侧静音（`priority = 0` + deadline）** → 降级为不必要：静音是"用别人的寄存器替设备
+  驱动做时间判断"，而设备驱动有更直接的旋钮（自己的 `IER`）。
+- **共享页位图 + 一次性提示** → 否：它的真正价值是"让 ack 变成一次内存写"，而 ack 只在 PLIC
+  侧静音时才需要；静音归设备侧之后，页、位图、扫描全部不需要。
+- **每 hart 一枚 `irq` 门闩** → 否：实测 context 由地址选定，驱动不需要"哪颗 hart"。
+- **给 `IOCall` 加判据 / 保留一条域可直连设备的应急通道** → 否（同 `console.md` §8）。
+- **抖动兜底（同线反复 claim ⇒ 退避静音）** → **先不做**，等真硅上真出现再说。
+- **PLIC 驱动开两个线程（注册 / 投递）** → 否（**实现期**）：投递必须由**持有客户端门闩的那个
+  task** 做（门闩是 per-task 的——console 服务为这件事踩过坑并写进了它的模块头），而注册报文带来
+  的门闩落在收报文的任务表里 ⇒ 两者只能同任务。故驱动是**一个线程**，循环里注册用非阻塞探测、
+  中断用有界等待（20 ms），中断路径本身不轮询（内核的 `try_push` 唤醒站点）。**裁决**：§8.1.5（**待裁**）。
+- **TX 环** → 否（**实现期**，理由见 §4 那一行）。
+- **内核替域把用户内存里的缓冲打出去**（旧 `push` 经 SBI 逐段翻译用户页）→ 否：它随 `IOCall`
+  一起删。代价如实记在 §9.8。
+
+### 8.1 实现期的裁决（**待裁 / 已裁 / 落地**）
+
+§1–§5 是**设计期**的裁决；下表是**实现期**冒出来的判断——它们不是落点（落点见 §6–§7），
+而是"写到那一步不得不定"的事。裁决栏三种状态：
+
+- **已裁**：用户已表态（本文目前只有一条）；
+- **待裁**：实现自己定了，**等一句话**——在那之前它是实现的定论，不是本文的定论；
+- **落地**：设计原判的机械翻译（列出只为不留暗格，不必裁）。
+
+| # | 项 | 设计原判 | 实做（锚点） | 裁决 |
+|---|---|---|---|---|
+| 8.1.1 | §4 TX 环 | 有（`push → 环 → drain`） | 删：同步写，客户端回执即"已落屏"（`crates/protocol/src/console/server.rs:293`） | **待裁** · 建议追认；开庭条件已写在 §4 那一行（开 `IER.THRE` 才需要环） |
+| 8.1.2 | §3.2.2 闸门重开 | 本 hart 的下一个 timer tick **无条件**重开 | 两个重开点：陷阱里的 tick（无条件，`trap.rs:202`）+ **空闲循环**（带 `sip.SEIP` 守卫，`scheduler/core/fetch.rs:114-128`） | **待裁** · 建议把判词改成"下一拍 / 下次 WFI 醒来，且 `SEIP` 未落"——实测 7 / 337 / 2 424 133（§11） |
+| 8.1.3 | §5.1 配对块的载荷 | `[(Name, Pie)]` | `[(Name, token)]`：`Pair` 定长 40 B（`crates/env/src/wire/pair.rs`）；块 = 页对齐内核静态区（`devices.rs:105-130`）；门闩本体落 root 的权限表 | **待裁** · 建议改判词：`Pie` 是内核里的强引用，**交不出去**也不该交（内核留一份 = 设备永不死） |
+| 8.1.4 | §5.2 console 协议 | "协议不变" | 写出口 = 注入的 `Sink`（`crates/protocol/src/console/server.rs:61,208`） | **待裁** · 建议追认：协议面 +1 出口，设备留在装配层（协议 crate 不认识串口） |
+| 8.1.5 | 驱动线程形状 | `claim → push → complete` 三行循环 | 单线程：注册用非阻塞探测、中断用有界等待 20 ms（`programs/src/bin/supervisor/plic.rs:263-278`） | **待裁** · 建议追认：两线程要跨 task 交门闩，那条路 `console.md` §8 已否两次 |
+| 8.1.6 | §11 判据的牙 | "注入一次输入、观察全链" | 驱动**第一次**投递打一行 24 B（`plic.rs:318-343,355-369`），门三档都核 | **待裁** · 建议追认：没有它，摘掉中断登记、输入退化成有界轮询，门照样全绿（实测过那一轮） |
+| 8.1.7 | 供给的失败政策 | 未裁（§3.1.2 只说名字装得下） | 名字装不下 ⇒ 打印 + 跳过（`devices.rs:158-167`）；条数超块 ⇒ panic（`devices.rs:192-199`） | **待裁** · 建议追认两条：失败域不同（一个是"一台设备"，一个是"整张供给清单"） |
+| 8.1.8 | 退出码取值 | 只裁了"`reason ≠ 0`" | `EXIT_PANIC = 0xFFFF_FF01`（`programs/src/entry.rs:33`）、`NO_CONSOLE = 0x51`（`programs/src/bin/user/shell.rs:123`） | **待裁** · 建议追认；若认，这两个码要不要写进 `abi.md` / `root.md` |
+| 8.1.9 | §3.1.7 的字段账 | `hart: HartInfo`（一项收两枚） | 一度拆成五个字段，用户点出后补回（`machine.rs:249-266`） | **已裁**（用户：「改」）——实现服从设计，不是设计迁就实现 |
+| 8.1.10 | §3.2.3 `irq` 门闩 | 一枚、`mtu = 1`、空载荷、**内核永久持源** | `OnceLock<Arc<HoleMeta>>`（`devices.rs:53-58`）；载荷恒 `[0]` | **落地**（原判明文已含"永久持源"；"空"落在内容上——`mtu` 最小是 1） |
+| 8.1.11 | 编码、参数、形状 | §5.3 裁过"长度是参数不是约定"、§3.1.7 裁过"多区间洞" | 报文 57 B / 回执 1 B；`IRQ_WAIT_MS = 20`；`MAX_PAIRS = 64`；`PLIC_RETRY = 20 × 25 ms`；`reserved = [Option<Region>; 2]` + 具名读法；`holes()` 升序表 | **落地**（值不是裁决：改值不动账） |
+
+## 9 · 已知边界
+
+1. **`reg` 通常不足一页**（UART 只有 `0x100`）⇒ 门闩映射到页尾，**同页邻居对持有者可见**。
+   virt 上 UART 的邻居在下一页，无冲突；一般情形要记着：**页是映射粒度，`reg` 是所有权粒度**。
+2. **名字取 basename**：同父下的 `@unit-address` 保证唯一，跨父不保证 ⇒ 撞名即 `Register` 拒绝
+   （内核不解释、不去重）。
+3. **真硅未验证三条**：跨 context 访问、`complete` 是否重武装、claim 后 `pending` 是否自动回来。
+   设计按**可实现的最坏情形**写（设备侧静音），但真硅上 `complete` 若确实重武装，"每中断一跳"
+   的抖动窗口就由客户端的唤醒延迟界定（已裁决：先不做兜底）。
+4. **内核打印与域持有的 UART 共用 `THR`**：最坏只是交错，不会坏；但驱动**不要改 `LCR`/`FCR`/
+   波特率**（那是固件设的），只动 `IER` 与数据寄存器。
+5. **TX 侧是新账，但不是"排队"**：搬迁前 SBI `Dbcn` 是同步块写（固件自己忙等），搬完之后
+   这一等落在**服务线程**身上（`UART.put` 轮询 `LSR.THRE`）；**背压语义没变**——调用方被挡住，
+   不丢字（"客户端 `push` 的阻塞就是背压"，`crates/protocol/src/console/mod.rs:14`）。TX 环的
+   裁决见 §4。
+6. **线的权威未决**：注册时凭什么是你的线（§12）。
+7. **`\n` → `\r\n` 这条翻译换主人了**（**实现期发现**）：此前是**固件做的**（OpenSBI 的
+   uart8250 驱动写 `\n` 前补 `\r`）。服务接手设备就得接手这条翻译，否则行尾只剩换行、光标不回
+   列首（终端上是阶梯）。它不是协议、是**设备的脾气**，落在 `programs/src/uart.rs:66-72`——
+   这是"服务自己持设备"最容易漏掉的一笔。
+8. **内核打印丢掉"引用域内存"的那一条**（**实现期发现**）：旧 `push` 会把落在用户空间里的缓冲
+   逐段翻译后打出去；它随 `IOCall` 一起删了。现在内核 `putln!` 只认**恒等区**与**内核半区**，
+   其余静默丢弃（`kernel/src/console.rs:44-52`）。影响面 = 格式化一条引用域内存字符串的内核
+   日志；它本来就是"顺手"而非契约。
+9. **设备锁与共享态锁有一次 ABBA**（**实现期踩到，已修**）：输入线程若**持设备锁解码**，而解码
+   要重绘 → 重绘要写设备 → `Lock` 不可重入 ⇒ 自己等自己；同时主线程持共享态锁调 sink（要写
+   设备）⇒ 两条锁序反向。现象极具误导性：**输入完全不响应 + 中断风暴**（没有人排空 FIFO，
+   设备侧一直拉线）。修法是次序本身：**先把字节收进本线程的栈（锁内），再在锁外解码**
+   （`programs/src/bin/supervisor/console.rs` 的 `drain_into`）。
+10. **驱动只认设备树上唯一一个中断控制器**（**实现期**）：PLIC 驱动按
+   `interrupt-controller` + `compatible` 含 `plic` 找节点，读它的 `interrupts-extended` 数
+   context。多控制器时"第 k 项即 context k"的算法需要先知道自己持有的是哪一个 phandle——
+   而那件事现在**没有可靠来源**（门闩不给物理基址）。virt 上只有一个，够用；一般化要补一条
+   "把节点名也带下去"的路。
+
+## 10 · 迁移路径（三步）——**三步都已落地**
+
+下表保留原文（它是**为什么这么切**的裁决），第三列补上落点。
+
+| 步 | 做什么 | 为什么这一步单独走 | 落点 |
+|---|---|---|---|---|
+| **一 · 所有权** | boot 扫描 + 配对块 + `Payload::Region`/`region(...)` + DTB 门闩与保留区 + console 服务持 UART 门闩，**仍轮询**。`THRE` + `IER` 掩码 + RX 排空 | 这一步的失败模式是 PMP / 页权限 / 映射 / 名字，与中断的失败模式（掩码、抖动、陷阱风暴）完全不同——**混在一起就无法定位**。而且它一步就把"内核从这条路上消失"变成可核的事实（§11） | `kernel/src/devices.rs`（扫描 + 配对块 + `install`）、`kernel/src/boot.rs:190-250`（借映 + 启动参数 + `install`）、`kernel/src/work/mail/pole.rs:20-30,92-115`（`Payload`/`region`）、`kernel/src/machine.rs`（`reserved`）、`kernel/src/memory/allocator/frame.rs`（多区间洞）、`programs/src/uart.rs`（ns16550a 驱动）、`programs/src/bin/supervisor/console.rs`（持设备 + sink）、`programs/src/bin/supervisor/root/main.rs`（配对块 → UART → 移交） |
+| **二 · 中断** | PLIC 驱动域 + `irq` 门闩 + `SupervisorExternal` 分支 + `SEIE` 闸门 + 会话门闩 | §3.2 已裁完，原样可用；把 UART 当第一个中断消费者 | `kernel/src/devices.rs`（`supply_irq`/`raise_irq`）、`kernel/src/runtime/switcher/trap.rs:196-235`（分支 + 闸门）、`trap/stack.rs:200-215`（`set_sext`）、`programs/src/bin/supervisor/plic.rs`（驱动域）、`console.rs`（`register_line` + `input_loop`） |
+| **三 · 收口** | 删 `IOCall::Put`/`Get` 与 `crate::console::push`/`pull`；shell 降级 5 处一并删；U 态 panic 改 `Reap{reason ≠ 0}`；root 移交后走会话 | 到这一步"任务侧根本没有设备可直连"，降级路径自然消失 | `crates/env/src/fid.rs`（class 3 删除 + 空号段说明）、`crates/runtime/src/env/io.rs`（删）、`kernel/src/console.rs`（`push`/`pull`/`PULL_BUF` 删）、`programs/src/entry.rs`（panic → `Reap{EXIT_PANIC}`）、`programs/src/bin/user/shell.rs`（降级路径删） |
+
+## 11 · 判据与验证
+
+- **门（每步都过）**：先 `expect "sq > "`——**提示符即两条路（写与读）都通的证据**（与
+  `console.md` §10 同源）；随后逐步 expect 命令并核 marker，含自然停机。
+  **结果**：`EXAMINE_FEATURES=audit EXAMINE_HARDEN=1 nu scripts/examine.nu` → **5/5 PASS**
+  （默认档 3 轮 + audit 档 1 轮 + harden 档 1 轮；marker 13 / 18 / 15 条全齐，
+  harden 档另核四条护栏串与"无 lockdep 违规"）。
+- **第一步新增量**：同一段输出在 diagnose 事件流里的 **envcall 条数为 0**（搬迁前 > 0）。
+  **注意口径**：控制台协议自己的 `Push`/`Pull` 仍是 envcall（那是协议，不是设备面）——
+  消失的是 **class 3（`IO`）**：`Put 6 + Get 444 = 450 → 0`（§7.4 的表）。
+- **第二步**：注入一次键盘输入，观察 `claim → 会话投递` 全链。**判据落成一条只可能由中断
+  产生的 marker**（`scripts/examine.nu` 的 `IRQ_MARKER`）：`plic: line 10 delivered`——
+  PLIC 驱动域在**第一次 claim → 投递**时打的那一行，**三档都核**。
+  它必须成立，就要求整条链在场：设备拉线 → `pending` → SEI → 内核推空令牌 → 驱动 claim →
+  投进会话门闩 → 输入线程被唤醒。**摘掉中断登记这一行会消失**（轮询路径不产生它）。**裁决**：§8.1.6（**待裁**）。
+  **这条 marker 是补上的牙**：在此之前，"输入能用"是**隐含**的——把登记摘掉，输入退化成
+  有界轮询，门照样全绿（实测过那一轮）。
+  **闸门**（槽满关 SEIE / timer tick 重开）：**量到了**。做法是给闸门造一个必须用的病态场景——
+  **让消费者停摆 3 秒**（临时探针：PLIC 驱动第一次进门先睡 3 秒），再数内核推了几枚：
+
+  | 配置 | 一次 3 秒停摆里内核推了几枚 | 结果 |
+  |---|---|---|
+  | 闸门在（两半齐、含空闲核那条带 `SEIP` 守卫的重开） | **7** | 停摆结束后投递照常完成（marker 在），会话继续，正常自退 |
+  | 只在 `trap_handler` 里重开（空闲核那条缺失） | 337 | 也能自愈，但空闲核退出 WFI 后立刻再推——探测率由空闲循环决定而非 10 Hz |
+  | **闸门整个删掉**（对照：不 `clear_sext`） | **2 424 133** | 投递**从未完成**、只出现过 1 次提示符、被超时杀——**整机被自己的中断打死** |
+
+  第三行是对照组，也是这条判据的牙：没有它，"闸门有效"只是一句自述。量法本身也在上表里
+  （同一份代码、同一个输入时序，只改闸门那一句）。
+- **第三步**：`IOCall` 两个 fid 从 ABI 面消失（class 3 空号）；U 态 panic 的打印消失而
+  `Reap { reason = 0xFFFF_FF01 }` 出现在 trace 里——由 `programs/src/entry.rs` 的
+  `EXIT_PANIC` 承载（§12 的第一条即为此修）。
+
+## 12 · 未决
+
+| 项 | 状态 |
+|---|---|
+| 线的权威（注册时凭什么是你的线） | **已裁（本轮）· 甲**：线 = **名字的函数**（`名字 → 设备树节点 → (interrupts, interrupt-parent)` ⇒ 线号），客户端**不报线**；属主**只能由 root 写**（`Refer{who, name}` 形状 = `dispatch` 那张表：谁能用哪个名字不是运行时判定，而是表里有没有写你的行），`Register` 只能**填**自己的行；预约落在**驱动自己那张表**（不走真目录）。被否：客户端自证"我持那台设备"（`Accord` 证得了同源门闩，但用户态拿不到物理基址 ⇒ 证不了"是这一台"）、名字当秘密、内核持线表（§8）。**结构 / 原语 / 签名待走**（闭合后一次写进 §3.2 / §5 对应格）。**读数（本轮）**：①报文里那 32 字节 `name`（`REG_LEN = 57`）**一个字节都没被读**——`serve_register` 只取 op/line/priority/hole/ack；②登记是 `TABLE.retain(同线) + push`（`plic.rs:300-303`）⇒ 同线**后到者顶掉先到者**，今天任何域报一条 `line ≤ ndev` 就能把 UART 的线抢走。**实现把口子照原样留着**：只查"线号 ≤ `ndev`"，不查"这条线是不是你的"——上面两条读数就是这个口子的全部形状。 |
+| 客户端死亡（谁清 enable、那条线怎么办） | **已裁（本轮）**：收线靠**一次失败**——`push` 返 `Denied`（那枚副本不在了）或 `Dead`（被封印）⇒ 先 `complete` 再 `disable(line)` + 实例摘空（**行保留**，等 root 重发）；`Ok` / `Busy` **留着**（`Busy` 是背压，当死亡就会误摘）。另给客户端一条 `Unregister`（自愿退场立刻收线）。表项只在**同线重注册**时被替换，从不由死亡清理。**纠正（本轮读码，原文"一枚死门闩 ⇒ `push` 失败（`Dead`）"是错的）**：死亡**已经可见**，只是可见的形态不是 `Dead`——①客户端死时 `gate::doom` 对它名下每枚门闩各跑一次 `cull`，BFS 沿 `sire` 反查、`take` 摘的是**各自任务表里**那枚（`gate/cull.rs:61-79,93-106`）⇒ **驱动表里那枚 WRITE 副本随主人一起消失**；②驱动下一次投递连门闩都找不到 ⇒ `push` 返 **`Denied`**（`envcall/mail.rs` push 分支：`find` 落空 ⇒ `Denied`；`alive` 假才 ⇒ `Dead`，而 `Dead` 只由显式 `Seal` 产生）；③现状净效果：这次失败被**丢在地上**（`plic.rs:330` 的 `let _ =`）⇒ 线留在使能态、表项照旧，每次投递 `claim → 丢 → complete`。自愈的只有内核那侧（槽满 → 闸门 → timer 重开）。**判据缺口与 kill 路径**：驱动此刻已失去与 console 的**全部**副本（会话孔、回执孔、打印用的请求孔全是派生来的）⇒ ①"我摘了线"不能由驱动自己打出来，②**console 一死，全系统的打印通道暂时断**（每个客户端手里那枚请求孔副本都是 console 的派生）。**"杀对端的原语"这一缺口已补**（本轮落地）：`RoomCall::Doom`（class 0，与 `Reap` 成对，判据只有血缘、传递、域粒度）+ root 的 `doom` 服务（政策在服务，见 `docs/root.md` §5.1）——实验档自杀那条不再需要。死法因此有四条：自退 `Reap`（含 U 态 panic）、**故障隔离**、父域 `doom` **级联**、**他杀** `RoomCall::Doom`。**驱动侧仍未做**（本轮只落了上游）：①线的权威（名字 → 设备树解线 + 属主由 root 写 + `Register{name, hole}` 只填行）；②收线（`Denied`/`Dead` ⇒ 先 `complete` 再 `disable` + 实例摘空、行保留）。两条的判据仍是"**旧实例不摘，新实例就 `Taken`**"（不必读 PLIC 寄存器）。root 侧的"重发"也现成：它留 UART 源副本、且有 `Out::Device(Uart)` 直连打印（`root/main.rs`） |
+| `Reap{reason: 0}` 与正常退出同码 | **已修**：域 panic 走 `Reap { reason: EXIT_PANIC }`（`programs/src/entry.rs`，`0xFFFF_FF01`），与"自愿结束"（`EXIT_OK = 0`）和各自的小整数启动编号都分得开。`shell` 另有 `NO_CONSOLE`（连不上控制台 ⇒ 收场），也不再用 0（取值本身的裁决：§8.1.8，**待裁**） |
+| SEIE 闸门的**直接**观测 | **已量**（§11 的三行表）：消费者停摆 3 秒时，带闸门推 7 枚、无闸门推 2 424 133 枚且整机停摆。**但那次是把探针临时打进去量的**（数一枚内核静态计数器 + timer 分支打印），**没有留成常驻读数**——它是一次实验，不是一个探针。要常驻得有观测量（而 §3.2.2 裁的是"零状态"，内核不为它记账） |
+| `symbol()` 还是十六进制桩（`runtime/diagnose/backtrace.rs:24`） | **要修**（未做）：§3.3.5 的 panic 可见性靠它，不靠打印。**现在的净效果是"不打印 = 看不见"**——域 panic 只留下一个原因码与一个 pc |
+| 抖动兜底 | 先不做（§8） |
+| 范围外 | DMA、热插拔、设备类框架/模板、共享字节设备线格式 |

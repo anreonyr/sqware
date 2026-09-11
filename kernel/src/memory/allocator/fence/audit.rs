@@ -407,14 +407,26 @@ pub fn audit() {
     // （level 8）内取就是"持高取低"⇒ lockdep 当场报违规。故先在 Ledger 锁内把地址
     // 抄进**预先分配好**的缓冲（锁内零分配），放锁后再问帧分配器。
     // 这条边是删 banker 之后新出现的：banker 是无锁原子位图，不问帧锁。
+    // **容量必须留余量，且闭包里绝不许扩容**（实测踩过，release 档是静默死机）：
+    // `with_capacity_in` 自己会向 hybrid 要一块内存，而块分配**要记账**
+    // （`on_alloc` → `ledger::mark`）⇒ 它在这次预留**之后**给账本添一条记录。按
+    // `len()` 预留就短一条，闭包里的 `push` 于是扩容——扩容再向块分配器要块、再记账，
+    // 而 `mark` 要取的就是闭包正持有的那把 Ledger 锁：**8→8 自锁死**。
+    // 现象：`audit()` 卡死在 `for_each` 里，没有任何输出（本仓实测：容量 65、账本 66 条）。
+    // 双保险 = ① 多留 `SLACK` 条；② 闭包按 `capacity()` 判满，**永不扩容**，真放不下
+    // 也只丢计数并**报出来**（不静默截断）。
+    const SLACK: usize = 8;
+    let cap = super::ledger::LEDGER.len() + SLACK;
     let mut kheap: alloc::vec::Vec<usize, &'static dyn Allocator> =
-        alloc::vec::Vec::with_capacity_in(
-            super::ledger::LEDGER.len().max(64),
-            crate::memory::allocator::hybrid::allocator(),
-        );
+        alloc::vec::Vec::with_capacity_in(cap, crate::memory::allocator::hybrid::allocator());
+    let mut dropped = 0usize;
     super::ledger::LEDGER.for_each(|addr, rec| {
         if rec.kind.poison() {
-            kheap.push(addr);
+            if kheap.len() < kheap.capacity() {
+                kheap.push(addr);
+            } else {
+                dropped += 1;
+            }
         }
         // 用户堆记录**没有帧侧对应物**：它的键是 `(asid, 页索引)`，不是地址，帧
         // 分配器无从作答（它的性命由空间持有——`retire(asid)` 在归还 ASID 前销账，
@@ -438,6 +450,13 @@ pub fn audit() {
                 format_args!("kernel-heap record on non-held page {page:#x}"),
             );
         }
+    }
+    if dropped > 0 {
+        report(
+            IntegrityViolation::AuditDivergence,
+            0,
+            format_args!("{dropped} kernel-heap records beyond the audit buffer"),
+        );
     }
     drop(kheap);
 

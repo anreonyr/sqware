@@ -16,6 +16,9 @@ doctest = false
 env = { path = "../crates/env" }
 runtime = { path = "../crates/runtime" }
 protocol = { path = "../crates/protocol" }
+# 设备树解析：**驱动自己读自描述**（内核不代劳，见 `docs/driver.md` §3.1.3）。
+# 使用者目前只有 `prog-plic`（要数自己的 context）。
+fdt = { version = "0.1.5", default-features = false }
 
 [[bin]]
 name = "prog-shell"
@@ -41,6 +44,13 @@ doctest = false
 [[bin]]
 name = "prog-console"
 path = "src/bin/supervisor/console.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-plic"
+path = "src/bin/supervisor/plic.rs"
 test = false
 bench = false
 doctest = false

@@ -8,12 +8,15 @@
 控制台是**一个服务**（`prog-console`，S 态），不是每个程序自己读 UART：终端渲染、键盘解码、
 行编辑都住在服务侧，客户端只说「我写了什么」和「给我读一行」（`console/mod.rs:3-4`）。
 
-它是**唯一读 UART 的任务**（`programs/src/bin/supervisor/console.rs:3`）。写也由服务落到设备：
+它是**唯一持 UART 的任务**（`programs/src/bin/supervisor/console.rs:3`）。写也由服务落到设备：
 客户端的 `Write` 只是把字节推进请求门闩，**那次 `push` 的阻塞就是背压**——与旧 `io::put`
 （同步写设备）语义同级（`console/mod.rs:13-14`）。
 
-**「持有设备」是纪律不是权限**：设备走 `IOCall`，是环境给的调用，不占权限表
-（`console.rs:68-69`、`crates/runtime/src/env/io.rs:5-6`）。
+**「持有设备」已经是权限**（[driver.md](driver.md) 落地后）：UART 是一枚 `Pole` 门闩，
+root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/store 就是设备访问。
+`IOCall` 已删——**每个字节都不再穿内核**。迁移前这句话写作：「持有设备是纪律不是权限：
+设备走 `IOCall`，是环境给的调用，不占权限表」（旧 `console.rs:68-69`、
+`crates/runtime/src/env/io.rs:5-6`，两处都已随设备面删除）。
 
 **不负责**：命令解释与分发（shell）、名字与发现（目录）、命令历史与补全（`Up`/`Down` 无操作、
 `Tab` 直插 `\t`）、OSC/DCS、多会话并发等读（**单读者**）。
@@ -129,15 +132,22 @@
 - **`Render` 的 `clear` / `fg` / `reset`** → 删（零调用点）；shell 侧自留同名门面、经协议发
   转义串（`server.rs:56-60`、`shell.rs:228-241`）。
 - **给 `IOCall` 加判据** → 否：`AnyPie` 只有 `Hole`/`Pole`/`Nole`，UART 指不过去——
-  「权威不是收紧，是收口」（`kernel/src/work/unit/gate/pie.rs:102-108`）。
+  「权威不是收紧，是收口」（`kernel/src/work/unit/gate/pie.rs:102-108`）。**已按此收口**：
+  不是给 `IOCall` 加判据，而是让 `IOCall` 消失（[driver.md](driver.md) §10 第三步）。
 
 ## 9 · 已知边界
 
-1. **`IOCall` 的存废**：`Get` 暂留为服务读 UART 的唯一入口；但 **`Put` 仍在用**——shell 的
-   降级路径 5 处（`shell.rs:140,145,152,161,204`）、用户态 panic 打印（`programs/src/entry.rs:47-65`）、
-   root 的 `say`（`root/main.rs:35-37`）。「写侧已零调用方」的说法与代码不符。
-2. **降级路径是临时护栏**（`fallback_readline` + `flush` 的 `io::put`），第三步删 `IOCall`
-   时一并删（`shell.rs:10-12,106-110`）。
+> 下面 1、2 两条的归宿已经走完：**所有权搬迁 → 接中断 → 删 `IOCall`**，见 [driver.md](driver.md)。
+> 两条都**已办**，就地记为历史：
+
+1. ~~**`IOCall` 的存废**~~ → **已删**：`Put`/`Get` 两个 fid 连同 class 3 一起消失
+   （`crates/env/src/fid.rs`），shell 降级 5 处、用户态 panic 打印、root 的 `say` 三处调用方
+   全部改道（分别是：删、改 `Reap`、改持设备/走会话）。**结果**：同一段输出在事件流里的
+   `IO` 类 envcall **450 → 0**（`driver.md` §7.4）。
+2. ~~**降级路径是临时护栏**~~ → **已删**：`fallback_readline` 与 `flush` 里那条 `io::put`
+   都没了。**代价如实记**：任务侧现在**没有第二通路**，故 shell 的取舍写成
+   `flush` 写丢不致命、`readline` 连不上就 `exit_with(NO_CONSOLE)` 收场
+   （`programs/src/bin/user/shell.rs`）。
 3. **`Close` 零调用点**：`Console::close` / `client()` 没有任何消费者（会话活到进程结束），
    门里也没有 `Close` 这一步。
 4. **线格式 `[16..24]` 无主**（见 §3）。

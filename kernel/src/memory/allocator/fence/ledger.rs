@@ -164,6 +164,12 @@ impl Ledger {
     }
 
     /// 锁内遍历；回调签名 (addr, &Record)。
+    ///
+    /// ⚠ **回调在 Ledger 锁内跑**：里面**不能取任何会回头记账的东西**。向
+    /// `hybrid`（内核堆）要一块内存就会记账（`fence::on_alloc` → `mark`），而 `mark`
+    /// 要取的就是本函数正持有的这把锁 ⇒ **8→8 自锁死**（release 档没有 lockdep 报，
+    /// 现象是静默死机）。要收集地址的调用方（`fence::audit::audit`）必须先**锁外**
+    /// 预留好缓冲，且闭包里只写不扩容。
     pub fn for_each(&self, mut f: impl FnMut(usize, &Record)) {
         let g = self.inner.lock();
         let Some((map, _)) = g.as_ref() else { return };

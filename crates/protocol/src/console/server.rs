@@ -38,8 +38,6 @@ use alloc::vec::Vec;
 
 use anstyle_parse::{Params, Parser, Perform};
 
-use runtime::env::io;
-
 use super::wire::{LINE_MAX, PAYLOAD_LEN, Reply, Request};
 
 /// 同时在线的客户端上界（会话 id = 槽位 + 1）。
@@ -53,15 +51,32 @@ const LINE_CAP: usize = 512;
 
 // ── 输出（ANSI 渲壳）──
 
-/// ANSI 渲壳：把字符串写进 UART。**服务侧唯一写设备的出口**。
+/// 服务侧唯一写设备的出口：**谁能写设备由装配层给**（`prog-console` 持着设备门闩，
+/// 把它的写函数交进来）。
+///
+/// 为什么是一枚 `fn` 指针而不是一个 trait 对象或 `Uart` 值：服务是**一台设备一个
+/// 实例**的装配体，而 `State` 要进 `static`（两个线程共享）——`const fn` + 函数指针
+/// 是唯一能进静态的形态，且它把"设备怎么写"完全挡在协议层之外（本 crate 不认识
+/// 串口，也不需要认识）。
+pub type Sink = fn(&str);
+
+/// 设备还没接手时的 sink：**丢弃**。
+///
+/// 丢弃不是"容错"，是"此刻确实没有设备可写"——服务上线前不会有任何字节要落屏
+/// （第一句 banner 也是在开闩之后才写）。
+fn no_device(_s: &str) {}
+
+/// ANSI 渲壳：把字符串写进设备。**服务侧唯一写设备的出口**。
 ///
 /// 旧 `term::Terminal` 还有 `clear`/`fg`/`reset`（清屏与前景色）——搬来时查了消费者：
 /// **零调用点**，按本仓裁决删（"真死的删、该留的写清理由"）；要用时一条转义序列就能加回来。
-struct Render;
+struct Render {
+    sink: Sink,
+}
 
 impl Render {
     fn write(&self, s: &str) {
-        io::put(s).ok();
+        (self.sink)(s);
     }
 }
 
@@ -183,18 +198,19 @@ pub struct State {
 
 impl Default for State {
     fn default() -> Self {
-        Self::new()
+        Self::new(no_device)
     }
 }
 
 impl State {
     /// `const`：服务把它放进 `static`（`Lock<State>`）让两个线程共享。
-    pub const fn new() -> Self {
+    /// `sink` = 写设备的出口（见 [`Sink`]）。
+    pub const fn new(sink: Sink) -> Self {
         Self {
             slots: [None; MAX_CLIENTS],
             reading: None,
             pending: None,
-            term: Render,
+            term: Render { sink },
         }
     }
 

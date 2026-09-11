@@ -4,7 +4,8 @@
 //! 字段**词汇表**按语义分居三个子模块（本文件 re-export，故 `env::wire::X` 路径不变）：
 //!   - [`handle`] —— 语义句柄（PieToken / TaskId / TeamId / VirtAddr）；
 //!   - [`frompair`] —— 内核回写的 `(a0, a1)` → 域 Ret 载荷蒸馏；
-//!   - [`name`] —— 定长名字（[`NAME_LEN`] / [`Name`] / [`NameError`]）。
+//!   - [`name`] —— 定长名字（[`NAME_LEN`] / [`Name`] / [`NameError`]）；
+//!   - [`pair`] —— 配对块（boot → root 的设备供给账，定长记录）。
 //!
 //! 这是方案 3（typed payload）的**唯一类型擦除点**：每个字段类型都实现 [`Wire`]，
 //! 由 [`derive(Envcall)`](envmacros) 生成的 codec 自动接线，用户侧与内核侧不再手写
@@ -17,10 +18,12 @@
 pub mod frompair;
 pub mod handle;
 pub mod name;
+pub mod pair;
 
 pub use frompair::FromPair;
 pub use handle::{PieToken, TaskId, TeamId, VirtAddr};
 pub use name::{NAME_LEN, Name, NameError};
+pub use pair::{PAIR_LEN, Pair};
 
 /// 字段 ↔ usize 的契约。
 pub trait Wire: Sized {

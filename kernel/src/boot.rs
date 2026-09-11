@@ -47,9 +47,9 @@ pub fn banner() {
     {
         let p = r.paragraph("banner", None);
         for (label, value) in [
-            ("hart count", format!("{} H", m.hart)),
+            ("hart count", format!("{} H", m.hart.count)),
             ("hart this", format!("{}", machine::hart_id())),
-            ("timebase", format!("{} Hz", m.hertz)),
+            ("timebase", format!("{} Hz", m.hart.hertz)),
             (
                 "dram",
                 format!("{:#x}..{:#x}", m.dram.base, m.dram.range().end),
@@ -64,7 +64,7 @@ pub fn banner() {
                 format!(
                     "{:#x}..{:#x}",
                     HART_FRAME_BASE.as_usize(),
-                    HART_FRAME_BASE.as_usize() + m.hart * PAGE_SIZE
+                    HART_FRAME_BASE.as_usize() + m.hart.count * PAGE_SIZE
                 ),
             ),
             (
@@ -183,12 +183,14 @@ fn register_runtime_hooks() {
 }
 
 /// 装出根服务域（**boot 的唯一 spawn**）：按打包期常量取 root 镜像 → `Build` 成
-/// S 态域 → 把 initrd 区只读映射进它的空间（root 自己解析清单）→ 产并放行引导线程。
+/// S 态域 → 把 initrd 区与**配对块**只读映射进它的空间（root 自己解析清单与设备供给）
+/// → 产并放行引导线程。
 ///
 /// 之后所有任务都由 root 产生（`Build`/`Spawn`/`Hatch`）；系统在全部任务回收后
-/// 自然停机（`conductor::done`）。清单的**解释权在 root**——内核不含清单格式。
+/// 自然停机（`conductor::done`）。清单与设备语义的**解释权都在 root**——内核不含
+/// 清单格式，也不解释设备（`docs/driver.md` §3.1.3）。
 fn spawn_root() -> Result<(), MapError> {
-    let Some(region) = machine::info().initrd else {
+    let Some(region) = machine::info().initrd() else {
         return Ok(());
     };
     // initrd 区恒等映射（=物理地址），直接按其物理基址读。
@@ -216,19 +218,43 @@ fn spawn_root() -> Result<(), MapError> {
                 va,
                 crate::memory::manager::addr::PhysAddr::from_raw(region.base),
                 view_size,
-                crate::memory::manager::entry::PteFlags::V
-                    | crate::memory::manager::entry::PteFlags::R
-                    | crate::memory::manager::entry::PteFlags::A
-                    | crate::memory::manager::entry::PteFlags::D,
+                read_only(),
             )?;
             Ok(va)
         },
     )?;
-    // 引导线程：args = [清单视图 VA, 清单字节数]；boot 立即放行。
-    team.task()
+
+    // 设备供给：**一次设备树扫描**，每台设备一枚门闩（`Payload::Region`）。
+    // 扫描在 spawn 之前（条数要进启动参数），落表在 spawn 之后（门闩要落进那个
+    // 刚产生的任务）——中间这一小段由本函数的局部量持着，不留内核静态。
+    let devices = crate::devices::scan();
+    let (pairs_pa, pairs_bytes) = crate::devices::block();
+    let pairs = team.space.with_flush(
+        |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
+            let va = inner.allocate(crate::work::unit::space::Seg::User, pairs_bytes)?;
+            inner.borrow(
+                va,
+                crate::memory::manager::addr::PhysAddr::from_raw(pairs_pa),
+                pairs_bytes,
+                read_only(),
+            )?;
+            Ok(va)
+        },
+    )?;
+
+    // 引导线程：args = [清单视图 VA, 清单字节数, 配对块 VA, 设备条数]；boot 立即放行。
+    let bootstrap = team
+        .task()
         .name("bootstrap")
-        .args(vec![view.as_usize(), region.size])
+        .args(vec![
+            view.as_usize(),
+            region.size,
+            pairs.as_usize(),
+            devices.len(),
+        ])
         .spawn()?;
+    crate::devices::install(&bootstrap, devices);
+
     #[cfg(feature = "audit")]
     team.space.audit();
 
@@ -236,6 +262,12 @@ fn spawn_root() -> Result<(), MapError> {
     kernel().expect("kernel team not initialized").space.audit();
 
     Ok(())
+}
+
+/// boot 借映块统一的只读页标志（清单视图 / 配对块——同一种东西，同一份标志）。
+fn read_only() -> crate::memory::manager::entry::PteFlags {
+    use crate::memory::manager::entry::PteFlags;
+    PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D
 }
 
 /// boot 启动：HSM `hart_start` 逐个拉起 hart 1..count-1。

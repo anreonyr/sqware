@@ -184,6 +184,7 @@ Two protocols exist, both as ordinary non-kernel code:
 |---|---|---|
 | **Directory** | `crates/protocol/src/dispatch/` | `Register` `Unregister` `Replace` `Resolve` `Enumerate` `Connect`, plus one parent-side action `Refer` |
 | **Console** | `crates/protocol/src/console/` | `Open` `Write` `ReadLine` `Close` |
+| **Doom** | `crates/protocol/src/doom/` | `Kill`, plus the owner-only `Quit` |
 
 The kernel holds none of their code and has no entry call for them: the directory is reached through a request hole, and every operation is a message on it. Rendering, key decoding and line editing live on the console **service** side; a client only says "I wrote this" and "give me a line".
 
@@ -198,6 +199,12 @@ Services are Teams:
 | `prog-dir` | S-mode | the directory service |
 | `prog-echo` | S-mode | a sample service |
 | `prog-shell` | U-mode | the interactive shell — a client of the directory |
+
+The kernel answers exactly one question about killing: *may this domain kill that one* — by
+**lineage**, transitively (`RoomCall::Doom`). "Should it" is policy and lives in a service:
+root is the ancestor of every domain, so it is the one that qualifies, and it exposes a
+`doom` service (`kill <name>`) — the shape of Unix `kill`, with the mechanism in the kernel
+and the check in a service rather than in a system call.
 
 ---
 
@@ -520,7 +527,7 @@ same order as this README: structure first, then semantics, then the base everyt
 | [`docs/space.md`](docs/space.md) — Space / Map / Window / Seg | [`docs/dispatch.md`](docs/dispatch.md) — the directory protocol | [`docs/switcher.md`](docs/switcher.md) — traps, switching, the envcall entry |
 | [`docs/memory.md`](docs/memory.md) — frames, page tables, audit | [`docs/console.md`](docs/console.md) — the console protocol & service | [`docs/abi.md`](docs/abi.md) — the ABI surface and the layers |
 | [`docs/task.md`](docs/task.md) — Task / Team / lineage / scheduler | [`docs/root.md`](docs/root.md) — the root domain | [`docs/lock.md`](docs/lock.md) — locks and lockdep |
-| [`docs/pie.md`](docs/pie.md) — authority | | [`docs/diagnose.md`](docs/diagnose.md) — diagnosis and crash scenes |
+| [`docs/pie.md`](docs/pie.md) — authority | [`docs/driver.md`](docs/driver.md) — devices as owned memory, the interrupt gate | [`docs/diagnose.md`](docs/diagnose.md) — diagnosis and crash scenes |
 | [`docs/mail.md`](docs/mail.md) — Hole / Pole / Nole | | |
 
 Every doc has the same shape: where the mechanism sits and what it refuses to do, what it is made
@@ -570,7 +577,7 @@ scripts/quick.sh dir     # one cold boot and a round-trip, no verdict
 
 The architecture is still being developed. APIs, abstractions, and terminology may change as the design is tested against real hardware and increasingly complex multitasking scenarios.
 
-Not there yet, by design or by order of work: device drivers, a file service (the initrd is explicitly temporary), and the Lisp composition layer.
+Not there yet, by design or by order of work: a **device-class framework** (what landed is the *basis* — a device is owned, mappable memory, and one interrupt line per hop; see [`docs/driver.md`](docs/driver.md)), a file service (the initrd is explicitly temporary), and the Lisp composition layer.
 
 The project is intentionally experimental:
 

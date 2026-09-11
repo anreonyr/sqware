@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use env::{EnvResult, RoomCall, RoomCallRet};
+use env::{EnvResult, RoomCall, RoomCallRet, TaskId};
 
 pub fn starve() -> EnvResult<()> {
     let _ = RoomCall::Starve.call();
@@ -34,6 +34,19 @@ pub fn sleep(d: Duration) -> EnvResult<()> {
         millis: d.as_millis() as usize,
     }
     .call();
+    Ok(())
+}
+
+/// 他杀：把 `task` 送进既有的死亡路径——与 [`exit_with`] 成对（**自杀 ↔ 他杀**）。
+///
+/// **语义是域粒度**：`task` 只是"指认域"的手柄，它所属的域连同子树一起走（同域的
+/// 线程一并，不会剩半个域）。判据只有**血缘**（传递）：目标域沿 `sire` 链可达本域
+/// ——跨血缘的"该不该"是政策的活（root 的 `doom` 服务），内核只回答"能不能"。
+///
+/// 失败：`Dead`(-2) 目标从未入册 / 已回收；`Denied`(-1) 不在血缘里、目标与发起者
+/// 同域、或目标是顶级域。**不等它回收**——要等用 [`crate::env::task::join`]。
+pub fn doom(task: TaskId) -> EnvResult<()> {
+    let _ = RoomCall::Doom { task }.call()?;
     Ok(())
 }
 
