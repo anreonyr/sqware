@@ -14,6 +14,7 @@
   <a href="#abi-surface">ABI</a> ·
   <a href="#boot-and-shutdown">Boot</a> ·
   <a href="#lisp-as-shell">Lisp Shell</a> ·
+  <a href="#documentation">Docs</a> ·
   <a href="#status">Status</a>
 </p>
 
@@ -248,7 +249,7 @@ An envcall slot is `(class << 32) | index`, where `index` is declaration order.
 | class | name | operations |
 |---|---|---|
 | 0 | Room | `Starve` `Park` `Reap` `Wait` `Wake` |
-| 1 | Unit | `Spawn` `SelfId` `Sire` `HeirCount` `Heir` · `Build` `Hatch` `Join` (index 5 is reserved) |
+| 1 | Unit | `Spawn` `SelfId` `Sire` `HeirCount` `Heir` `Build` `Hatch` `Join` |
 | 2 | Memory | `Allocate` `Deallocate` `Mmap` `Munmap` `Mprotect` |
 | 3 | IO | `Get` `Put` |
 | 4 | Chrono | `Ticks` `Clock` |
@@ -508,6 +509,24 @@ Together:
 > **sqware — a structured world, made as software.**
 
 ---
+
+## Documentation
+
+The mechanism-by-mechanism design docs live in [`docs/`](docs/README.md), and they follow the
+same order as this README: structure first, then semantics, then the base everything stands on.
+
+| Structure | Semantics | Base |
+|---|---|---|
+| [`docs/space.md`](docs/space.md) — Space / Map / Window / Seg | [`docs/dispatch.md`](docs/dispatch.md) — the directory protocol | [`docs/switcher.md`](docs/switcher.md) — traps, switching, the envcall entry |
+| [`docs/memory.md`](docs/memory.md) — frames, page tables, audit | [`docs/console.md`](docs/console.md) — the console protocol & service | [`docs/abi.md`](docs/abi.md) — the ABI surface and the layers |
+| [`docs/task.md`](docs/task.md) — Task / Team / lineage / scheduler | [`docs/root.md`](docs/root.md) — the root domain | [`docs/lock.md`](docs/lock.md) — locks and lockdep |
+| [`docs/pie.md`](docs/pie.md) — authority | | [`docs/diagnose.md`](docs/diagnose.md) — diagnosis and crash scenes |
+| [`docs/mail.md`](docs/mail.md) — Hole / Pole / Nole | | |
+
+Every doc has the same shape: where the mechanism sits and what it refuses to do, what it is made
+of, its invariants (with what breaks if one is violated), one complete sequence, the decisions
+behind it, its known edges, and — last but not least — **how it is known to be correct**: the
+self-test, the acceptance-gate assertion, or the shutdown accounting that would catch it.
 
 ## Status
 
