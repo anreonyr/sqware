@@ -244,12 +244,6 @@ pub struct Machine {
     pub dram: Region,
     /// 物理内存空闲区
     pub free: Region,
-    #[allow(dead_code)]
-    pub uart: Region,
-    #[allow(dead_code)]
-    pub plic: Region,
-    #[allow(dead_code)]
-    pub clint: Region,
     /// initrd 载荷区（`/chosen` 的 `linux,initrd-start/end`；QEMU `-initrd` 传递的
     /// 独立 payload）。无 initrd（未传参）→ None。作为**持久保留区**：其物理页在
     /// frame 分配器中永不分配（符号表 `&'static` 名字指向其 strtab，须终身存活）。
@@ -287,9 +281,6 @@ pub fn init(dtp: usize) {
             free: Region::new(free_base, free_size),
             hart,
             hertz,
-            uart: Region::new(0, 0),
-            plic: Region::new(0, 0),
-            clint: Region::new(0, 0),
             initrd,
         })
         .unwrap()

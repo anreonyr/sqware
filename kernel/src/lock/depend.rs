@@ -33,6 +33,12 @@ use super::OnceLock;
 use crate::machine;
 
 /// 锁层级（1 最低、10 最高）。参与锁才有 level；`None` = exempt（不参与、不校验）。
+///
+/// **本枚举两档都在**（`SpinLock::new_level` 的签名里就有它——release 也要构造）。
+/// 曾有 `#[allow(dead_code)]`：不是因为整体编译掉，而是**部分变体的读点只在
+/// lockdep 那几段**（档位内），而 `Level` 是**坐标系**——它多一个刻度不算死代码，
+/// 少一个会让锁层级表（`docs` 的锁序表）失去一处出处。这是**该留的 allow**：
+/// 与 `lock::{bare,spin}` 那批"锁库预留面"同族（docs §10.22）。
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]
@@ -197,7 +203,6 @@ static POOL: OnceLock<&'static [HeldCell]> = OnceLock::new();
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DepInitError {
     /// 分配失败（OOM）——当前容量下不触发，预留错误路径。
-    #[allow(dead_code)]
     OutOfMemory,
     /// 重复装配。
     AlreadyInit,

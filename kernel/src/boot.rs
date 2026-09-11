@@ -58,9 +58,6 @@ pub fn banner() {
                 "free",
                 format!("{:#x}..{:#x}", m.free.base, m.free.range().end),
             ),
-            ("uart", format!("{:#x}", m.uart.base)),
-            ("plic", format!("{:#x}", m.plic.base)),
-            ("clint", format!("{:#x}", m.clint.base)),
             ("trap vector", format!("{:#x}", alltraps_va())),
             (
                 "kernel frames",

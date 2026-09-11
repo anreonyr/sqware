@@ -47,12 +47,6 @@ impl VirtAddr {
         self.0 & (PAGE_SIZE - 1)
     }
 
-    /// 向下对齐到页边界
-    #[inline]
-    pub fn page_align(self) -> Self {
-        Self(self.0 & !(PAGE_SIZE - 1))
-    }
-
     /// 是否为用户地址（分裂位 = 0，即地址 < 2^split_bit；分割随当前模式）。
     #[inline]
     pub fn is_user(self) -> bool {
@@ -79,6 +73,15 @@ impl VirtAddr {
             (&raw const _kernel_edge).addr(),
         );
         a >= s && a < e
+    }
+
+    /// 向下对齐到页边界 —— **有调用者**（`fault::resolve_anonymous` 把缺页地址
+    /// 对齐到页再物化）。这一份原先在 `PhysAddr` 上，是零调用者的孪生体（挂着
+    /// `#[allow(dead_code)] // 对齐工具预留`）：删掉那一份，把名字留给真正在用的
+    /// 虚拟地址侧（docs §10.22）。
+    #[inline]
+    pub fn page_align(self) -> Self {
+        Self(self.0 & !(PAGE_SIZE - 1))
     }
 
     /// 获取原始 usize 值
@@ -138,13 +141,6 @@ impl PhysAddr {
     #[inline]
     pub fn is_aligned(self) -> bool {
         self.0 & (PAGE_SIZE - 1) == 0
-    }
-
-    /// 向下对齐到页边界
-    #[inline]
-    #[allow(dead_code)] // 对齐工具预留
-    pub fn page_align(self) -> Self {
-        Self(self.0 & !(PAGE_SIZE - 1))
     }
 
     /// 获取原始 usize 值

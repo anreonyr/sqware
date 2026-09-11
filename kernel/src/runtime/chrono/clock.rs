@@ -83,33 +83,9 @@ impl Instant {
         Instant(t)
     }
 
-    /// 自 earlier 以来的时长（回绕安全；earlier 在未来按零处理）。
-    #[allow(dead_code)]
-    pub fn elapsed_since(&self, earlier: Instant) -> Duration {
-        ticks_to_duration(self.0.wrapping_sub(earlier.0))
-    }
-
-    /// 自本时刻以来经过的时长（= now − self）。
-    #[allow(dead_code)]
-    pub fn elapsed(&self) -> Duration {
-        now().elapsed_since(*self)
-    }
-
     /// 本时刻 + Duration（换算饱和防溢出；语义为「最晚到期时刻」）。
     pub fn add(&self, d: Duration) -> Instant {
         Instant(self.0.wrapping_add(duration_to_ticks(d)))
-    }
-
-    /// 本时刻 − Duration（换算饱和防溢出；非负语义由调用方保证，wrapping 承担）。
-    #[allow(dead_code)]
-    pub fn sub(&self, d: Duration) -> Instant {
-        Instant(self.0.wrapping_sub(duration_to_ticks(d)))
-    }
-
-    /// 自 earlier 以来的时长；earlier 在未来 → None。
-    #[allow(dead_code)]
-    pub fn checked_duration_since(&self, earlier: Instant) -> Option<Duration> {
-        (self.0 >= earlier.0).then_some(ticks_to_duration(self.0 - earlier.0))
     }
 }
 
