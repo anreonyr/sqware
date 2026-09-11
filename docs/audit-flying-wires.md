@@ -973,7 +973,7 @@ envcall/misc.rs   IO/Chrono/Control
 space/salvage.rs   Span + Salvage（清退到齐前不得易主）         :49-139
 space/install.rs   MapMode + InstallGuard + SpaceInner::install  :659-767
 space/inner.rs     SpaceInner 的映射簿记（纯，无锁无刷）          :146-470
-space/cow.rs       share / own / is_shared / FrameState::Shared  :472-585
+space/cow.rs       ~~share / own / is_shared / FrameState::Shared~~ → **已删**（§10.20）
 space/adapter.rs   Space + SpaceBuilder + impl + Drop            :769-1132
 space/segments.rs  Segments 迭代器                                :798-821
 ```
@@ -982,6 +982,10 @@ space/segments.rs  Segments 迭代器                                :798-821
 `own` 只被 `fault.rs:113` 经 `is_shared` 触达 ⇒ 约 130 行是「已建好但没有触发条件的控制面」，
 且 :1053-1056 有一条**注释承诺将来要改一条活陷阱路径的内存序档位**。
 独立成文件后，留或删是一次决定，而不是埋在 1132 行里。
+
+> **✅ 已裁决（§10.20）**：整片删掉——`share` / `own` / `is_shared` / `FrameState::Shared` /
+> `Kind::Cow` / `fault.rs` 的 COW 分支全部移除；`FrameState` 随之消失，`Map.frames` 直接持
+> `Frame`。理由是"共享在这台机器上只有只读借用一个形态"，写共享是被放弃的特性。
 
 ### 7.4 `kernel/src/work/room/scheduler/core.rs`（687）
 
@@ -1110,7 +1114,8 @@ cargo fmt --check
    却住在内核也依赖的 ABI crate 里 —— 移进 `task/src/core` 还是独立 `protocol` crate？
 5. **B2 拷贝契约**：维持「精确长度、允许部分写」，还是升级成「要么全写要么不写」？
    （今天所有调用方都是精确长度，升级是免费的，但要把 `Segments` 的逐页取锁改掉。）
-6. **COW 控制面**（§7.3 `space/cow.rs`）：留（等 fork 接通）还是删？
+6. ~~**COW 控制面**（§7.3 `space/cow.rs`）：留（等 fork 接通）还是删？~~
+   → **✅ 已裁决并执行：删**（§10.20；用户裁决"删"）。
 7. **`core/datagram.rs`**：单一消费者（`datagram_demo`，本身是死 bin），按 `supervisor.md:298`
    应降到 bin 目录；是否有第二个消费者在路上？
 8. **harness**：是否接受「补宿主单测（`crates/env` 的 codec 最该测）+ runner 断言 + 通过也归档」，
@@ -2406,7 +2411,7 @@ scheduler/
 
 | kind | 侧 | 键 | end | 落点 |
 |---|---|---|---|---|
-| `Trap` `Lazy` `Heap` `Stack` `Cow` | 帧 | 地址 | Zero | `window/frame`、`core::materialize`、`window/heap`、`window/stack`、COW 分裂 |
+| `Trap` `Lazy` `Heap` `Stack` | 帧 | 地址 | Zero | `window/frame`、`core::materialize`、`window/heap`、`window/stack`（`Cow` 已删，§10.20） |
 | `Image` | 帧 | 地址 | Zero | `loader` |
 | `Ring` | 帧 | 地址 | Zero | `mail/pole` |
 | `Table` | 帧 | 地址 | Walk | `manager/table` |
@@ -2694,3 +2699,83 @@ per-page 那 1 byte 从"配额分类"变成**对象身份**之后，「在不在
 同一轮尝试里还撞到一件与泄漏无关的事实：**主动压测（连续产/销任务）在 `-m 128` 下会
 先把 128 MB 的内核堆吃满**（`memory allocation of 114688 bytes failed`，来自
 `env::ecall::trap` 即用户堆请求），与这台机器的长跑上限有关、与本轮改动无关，未追。
+
+## 10.20 COW 控制面删除：共享在这台机器上只有一个形态
+
+**裁决**（用户）：`⑥ COW 控制面` 由"留 + 立刻修"改为**删**。触发它的是一个问题——
+"COW 在现在的模型里能用来干什么"——逐条走完之后，答案是**没有合法用途**。
+
+### 为什么不是"留一块备用机制"
+
+COW 的全部价值前提是"**同一物理页先共享、之后按写分裂**"，它服务的是 fork 的
+`exec 后接着跑`。逐条排查：
+
+| 候选 | 判定 |
+|---|---|
+| 程序启动（新域跑同一份程序） | **不需要**：`.text` 只读 ⇒ 共享只读就够（initrd 区 + `borrow`）；`.data` 必须私有，而装载器**今天已经在拷**（`loader.rs:81` 逐页新建 + `copy_from_slice`），`.bss` 走懒零页 |
+| 快照 / 回滚 | **不需要**：那是"拷贝 + 回收"，COW 只省"还没改的那部分"，是可选优化不是需求满足 |
+| 内存去重 | **不是 COW**：去重的前提是只读，写不触发拷贝 ⇒ 需要的是内容寻址，COW 帮不上 |
+| 事务式私有变更 | **不够用**：COW 只给"一共享 + 一私有"两版，回滚要多版 |
+| 一次性克隆运行中的域 | 唯一沾边的一条，但它要求**源域停止**（否则共享一方还在写）⇒ 那就是 fork 的语义，也就是第一行的判定；而"停止 + 拷贝"今天用现有原语就能做 |
+
+而且**共享在这台机器上已经通了，靠的不是 COW**——两条活的跨空间共享都是 `borrow`：
+initrd 清单视图映射进 root 的用户段（`boot.rs:217`，帧属"持久保留区"）、pole 环缓冲映射进
+每个调用方的空间（`pole.rs:109`，帧属 `HoleMeta`）。它们的共同前提是
+**帧的所有者活得比所有借用者长**。这就是这个模型里共享的唯一形态：**只读借用 + 长寿所有者**；
+"写共享"不是没实现，是**被放弃**（那样消息传递的隔离叙事就破了）。`borrow` 只写 PTE、
+`Map.frames` 留空——它**没有位置**表达"我打算写它、写时再变私有"；要接 COW，第一件事是给共享页
+补一个所有权对象，而那个对象存在的唯一理由（共享页会被写）恰恰是被否掉的那条。
+
+### 删了什么（实测）
+
+| 面 | 量 |
+|---|---|
+| `SpaceInner::share`（唯一构造 `FrameState::Shared` 的地方） | 57 行 |
+| `SpaceInner::own`（**唯一调用点是那个 COW 分支** ⇒ 随之全死） | 24 行 |
+| `Space::share` / `Space::is_shared` / `Space::own` 三个包装 | 32 行 |
+| `fault.rs` 的 COW 分支 + `FrameState` 定义与 `pa()` | 35 行 |
+| `Kind::Cow` | 1 个变体（`KIND_COUNT` 16 → 15，其余编号整体下移，**不留空洞**） |
+| 合计 | **−228 / +160**（内核侧 −195/+47） |
+
+`FrameState` 因此不再是枚举（只剩一臂），整个类型消失，`Map.frames` 直接持 `Frame`。
+
+### 拍下去之后撞到的一件事（如实记）
+
+一度按"把槽位语义留在类型上"改成 `Page(Frame)` newtype（用户批过这个名字），**实测付不出**：
+它唯一的读点 `pa()` 只被 `SpaceInner::audit()` 调用，而后者整段是 `#[cfg(feature = "audit")]`
+（`core.rs:418`，两个 boot 调用点也同门控）⇒ **默认档里那个字段没有任何读点**，直接产生两条
+dead_code 警告，而"两档零警告、零 allow"是既有纪律。试过的三条补法都不通：`Deref` 服务不了
+元组字段、给 `Page` 写 `Drop` 会在 `inject` 的移出处编译失败（E0509）、显式 `drop_in_place`
+同样不算"读"。**故撤回该名字**（用户复裁"行"）：`Map.frames` 直接放 `Frame`，取址做成 audit 档里的
+自由函数 `page_pa(&Frame)`。教训记在这里：**在这个仓里，一个只服务 audit 档的类型包装，会以
+默认档 dead_code 的形式付账**。
+
+### 判据
+
+| | 值 |
+|---|---|
+| examine | **5/5**（默认 3/3 + audit 轮 + 融合 harden 轮无 lockdep） |
+| 行为零变化 | 默认档三轮归一化 md5 = `183133960fd82a1ff0f4a4c3f8863355`（A2 基线）；audit 轮 = `efd03cb45e01a4acefef90a34ba32735`（与 §10.18/§10.19 基线**逐字节相同**） |
+| 警告 | 三档**回到基线**：默认 7（`statistics.rs` 6 + `diagnose/trace.rs` 1）/ audit 1 / harden 1——删掉的面没有留下任何新警告 |
+| `allow(dead_code)` | 少一条（`Space::share` 那条"fork 后端预留"） |
+| ELF | 融合档 7 892 344 → 7 924 608 字节（含被删函数的 debug 信息） |
+| 残留 | `grep -rn "Cow\|FrameState\|is_shared\|Shared"` 在内核/用户态/crates 里**零命中** |
+
+### 明确的代价（唯一一条）
+
+失去"同一物理页可写共享"的语义。今天**零个调用方**表达过这个需求。将来若真要（真 fork 或
+快照），正确的形状是**显式共享内存对象**（命名、有主、有生命周期，像 pole 的环），
+而不是让 COW 悄悄把页变私有——那时写共享是**契约**（所有方看得见），不是**意外**。
+从这次删除里留下两条结论供将来复用：
+1. 共享的唯一形态是**只读借用 + 所有者长寿**（`borrow` + `Map.frames` 留空）；
+2. 帧归还要求 **4 KB 对齐的块基址**（`frame_index`/`merge_block`），所以任何"每页引用计数"
+   的设计**都不能把计数长在帧里**——原 `Arc::new_in(…, frame::allocator())` 正是这么写的
+   （数据指针 = 基址 + 16），一旦真跑起来就是帧泄漏 + `check_frame_held` 停摆；这也是它
+   从没被执行过的原因。
+
+### 顺带记录的一处现存缺口（与本次删除无关，未修）
+
+`Mprotect` 把**私有页**收紧成只读之后，用户写它会在 `fault.rs` 走「已物化但权限不足」——
+那条路今天**不处理**（判 `false` ⇒ 空间故障隔离）。删掉的 `own` 本来像是它的解药，但
+`own` 在旧代码里被 `is_shared` 门控、永远够不到这条路径 ⇒ **删前删后行为一致**。
+要不要让"私有只读页的写缺页"可恢复（把 W 翻回来），是一次独立裁决。
