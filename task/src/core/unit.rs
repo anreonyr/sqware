@@ -99,7 +99,25 @@ impl<T> Drop for Join<T> {
 ///
 /// `spawn` 恒产 `Held`，故此处紧接着 `hatch`——域内线程无需跨域授权序，
 /// 数据经**共享空间**的 `Completion` 槽传递（不占权限表）。
+///
+/// **生成失败即 panic**（`expect`）：本函数是「产线程」这条语义的便捷面，
+/// 调用点当它不会失败。要**观测**失败（压测/自检要分辨「没生出来」与
+/// 「生出来且回收干净」）用 [`try_closure`]——两者的成功路径是同一份装配。
 pub fn closure<F, T>(f: F) -> Join<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+{
+    try_closure(f).expect("task spawn failed")
+}
+
+/// [`closure`] 的可失败版：把 `Spawn` / `Hatch` 的错误原样交回调用方。
+///
+/// 失败时的残骸归属：`Spawn` 失败 ⇒ 只有 `Completion` 槽与闭包装箱两笔本地
+/// 堆分配，随 `Err` 返回由调用方的作用域照常回收；`Hatch` 失败 ⇒ 任务已产生
+/// （在 `Team.held` 里）但未放行，本函数**只可能**在父方被 doom 级联扑杀的
+/// 窗口里走到，那时该任务已随父域停摆、由级联的 `reap` 收尾——故此处不留孤儿。
+/// 不在这里 `kill`：本模块不该认识「杀」这条路径（它属 room）。
+pub fn try_closure<F, T>(f: F) -> EnvResult<Join<T>>
 where
     F: FnOnce() -> T + Send + 'static,
 {
@@ -119,10 +137,9 @@ where
         (utask_trampoline as extern "C" fn(usize) -> !) as usize,
         &[ptr],
         0,
-    )
-    .expect("task spawn failed");
-    env_task::hatch(task_id).expect("task hatch failed");
-    Join { slot, id: task_id }
+    )?;
+    env_task::hatch(task_id)?;
+    Ok(Join { slot, id: task_id })
 }
 
 /// 当前 task id（`UnitCall::SelfId`）。无上下文 → `TaskId(0)`。

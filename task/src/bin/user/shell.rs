@@ -18,6 +18,7 @@
 //!   heir  — 子域枚举（UnitCall::HeirCount + Heir）
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
+//!   churn — 任务生灭压测（主动探测：反复产生/回收，把关机终值变成刻度）
 //!   reclaim — 资源寿命自检（引用回收 / 封印归属 / 开辟者消亡）
 //!   spoof — 身份伪造自检（发送者由内核盖章，报文里的回信 token 不构成身份）
 //!   name  — 名字权限自检（目录的名字空间由父域预约，注册只能填预约行）
@@ -37,7 +38,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
-use env::dispatch::{MSG_LEN, Name, Reply, Request};
+use protocol::dispatch::{MSG_LEN, Name, Reply, Request};
 
 use task::core::handshake::{self, Pier, Quay};
 use task::core::service::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
@@ -235,6 +236,88 @@ fn cascade(term: &Terminal) {
     term.writeline(if ok { "cascade: ok" } else { "cascade: FAIL" });
 }
 
+/// 任务生灭压测（`churn` 命令）——**主动探测**：不等间歇自己撞上来，把
+/// 「产生 → 收尾 → 回收」这条链反复走到足够深的树上，让偶发的那条路径自己现形。
+///
+/// 判据不是「有没有崩」——**崩不崩是既有探针的事**，本命令的产物是**关机时的
+/// 逐种类终值**：每轮每一层任务都带一份 `Arc<Task>`/`Arc<TaskIdent>`（内核侧
+/// `Kind::Task`），回收漏一个，关机审计就点名报出来（`[audit] leak: task N`
+/// 给的 N 就是**这一轮压测的刻度**：N 应该恒为 0，与轮数无关）。
+///
+/// 形状：树深 `1 + depth`（每层 `fan` 叉并行），每轮等整棵树 join 完再开下一轮
+/// ——故「在飞」的任务数与树的大小同阶、不随轮数增长，压的是生灭**次数**而非
+/// 并存量。默认 200 轮 × 深 2 × 2 叉 ≈ 1400 个任务；轮数由参数给，便于两端
+/// 对照（`churn 1` 与 `churn 2000` 的关机账必须逐字相同：都是零）。
+///
+/// 一层的孩子全部 join 完才返回上一层——**没人「弃权」**（`Join::drop` 的 LEFT
+/// 路径在本命令里一次都不会走到），故失败只可能来自内核侧（句柄/权限/内存），
+/// 不会与「父方不等了」混在一起。
+fn churn(term: &Terminal, rounds: usize, depth: usize, fan: usize) {
+    fn tree(depth: usize, fan: usize) -> Vec<usize> {
+        if depth == 0 {
+            return Vec::new();
+        }
+        let kids: Vec<_> = (0..fan)
+            .map(|_| unit::closure(move || tree(depth - 1, fan)))
+            .collect();
+        let mut out = Vec::new();
+        for k in kids {
+            out.extend(k.join());
+        }
+        out.push(depth);
+        out
+    }
+
+    let t0 = clock().ok();
+    for r in 0..rounds {
+        // 压测自身的失败**必须现形**：`unit::closure` 失败即 panic，而 panic 发生在
+        // 被压的那个子任务里 ⇒ 父方只看到 join 醒来，账面上「什么都没发生」。故这里
+        // 自己接住 `Spawn`/`Hatch` 的错，把「没生出来」与「生出来且回收干净」分开
+        // ——否则一次失败会伪装成「压过了、很干净」。
+        // 闭包要 `'static`：两个量先按值抄进来（`dispatcher` 端 `fan` 随后还要用）。
+        let (d, f) = (depth, fan);
+        let step = unit::try_closure(move || -> Result<(), (isize, usize)> {
+            let mut spawned = 0usize;
+            for _ in 0..f {
+                match unit::try_closure(move || tree(d - 1, f)) {
+                    Ok(j) => {
+                        spawned += 1;
+                        let _ = j.join();
+                    }
+                    Err(e) => {
+                        return Err((e.into_source().code(), spawned));
+                    }
+                }
+            }
+            Ok(())
+        })
+        .expect("churn: outer closure spawn failed")
+        .join();
+        if let Err((code, spawned)) = step {
+            term.writeline(&format!(
+                "churn: spawn failed with code {code} after {spawned}/{fan} at round {}",
+                r + 1
+            ));
+            return;
+        }
+        if r % 20 == 19 {
+            term.writeline(&format!("churn: {}/{}", r + 1, rounds));
+        }
+    }
+    // 时钟是 `(秒, 纳秒)` 两段——先各自折成总纳秒再相减（与 `wait_verdict` 同一手法），
+    // 避免「纳秒借位」时算出负数。
+    let ms = match (t0, clock().ok()) {
+        (Some(a), Some(b)) => {
+            let ns = |t: (u64, u64)| t.0.saturating_mul(1_000_000_000).saturating_add(t.1);
+            ns(b).saturating_sub(ns(a)) / 1_000_000
+        }
+        _ => 0,
+    };
+    term.writeline(&format!(
+        "churn: {rounds} rounds x depth {depth} x fan {fan} done in {ms} ms"
+    ));
+}
+
 /// 资源寿命自检（`reclaim` 命令）。
 ///
 /// 三段判据：
@@ -369,7 +452,7 @@ fn reclaim(term: &Terminal) {
 fn spoof(term: &Terminal) {
     const WAIT: usize = 1_000;
     const GUESS_MAX: usize = 200;
-    const REPLY_AT: usize = env::dispatch::REPLY_AT;
+    const REPLY_AT: usize = protocol::dispatch::REPLY_AT;
     let rw = env::Permission::READ | env::Permission::WRITE;
 
     let me = unit::self_id().unwrap_or(env::TaskId::new(0));
@@ -639,7 +722,7 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / cascade / reclaim / spoof / name / badslot / stray / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / cascade / churn / reclaim / spoof / name / badslot / stray / exit",
             );
         }
         "clock" => {
@@ -717,6 +800,14 @@ fn exec(cmd: &str, args: &[String], term: &Terminal) -> bool {
         }
         "cascade" => {
             cascade(term);
+        }
+        "churn" => {
+            // 任务生灭压测：`churn [rounds] [depth] [fan]`（默认 200 × 2 × 2）。
+            // `args` 已去掉命令词本身（见 `main`：`split` 后传的是 `&args[1..]`），故从 0 起。
+            let n = args.first().and_then(|s| s.parse().ok()).unwrap_or(200);
+            let d = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
+            let f = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2);
+            churn(term, n, d, f);
         }
         "reclaim" => {
             reclaim(term);
