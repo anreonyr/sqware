@@ -89,22 +89,22 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
     } else {
         let max = held.max_level();
         msg.push_str("\n  held:");
-        for i in 0..held.len {
-            let lv = held.slots[i]
+        for slot in &held.slots[..held.len] {
+            let lv = slot
                 .level
                 .map(|l| format!("{l:?}"))
                 .unwrap_or_else(|| "exempt".into());
             msg.push_str(&format!(
                 "\n    {:#x} {:#x} ({lv}){} acquired at {:#x} ({:#x})",
-                held.slots[i].addr,
-                held.slots[i].addr,
-                if held.slots[i].level == max {
+                slot.addr,
+                slot.addr,
+                if slot.level == max {
                     "  <-- max held"
                 } else {
                     ""
                 },
-                held.slots[i].caller,
-                held.slots[i].caller
+                slot.caller,
+                slot.caller
             ));
         }
         msg.push_str("\n  rule: new level must exceed max(held); violation");

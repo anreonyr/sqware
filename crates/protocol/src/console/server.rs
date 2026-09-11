@@ -375,9 +375,7 @@ impl State {
     pub fn on_key(&mut self, key: Key) -> Option<(usize, Reply)> {
         let terminal = matches!(key, Key::Enter | Key::Interrupt | Key::Eof);
         {
-            let Some(r) = self.reading.as_mut() else {
-                return None;
-            };
+            let r = self.reading.as_mut()?;
             match key {
                 Key::Char(c) => {
                     r.line.insert(c);

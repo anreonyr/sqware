@@ -301,9 +301,7 @@ impl Scheduler {
     /// 不进 starved；预算恒 ≥ 1 不落盘（唯一任务分支不减预算）。
     pub(in super::super) fn advance(&self) -> Option<usize> {
         let mut i = self.inner.lock();
-        let Some(mut cur) = i.running.take() else {
-            return None;
-        };
+        let mut cur = i.running.take()?;
         // 持有者读：running 槽刚被本核摘出，唯一强持有 ⇒ 经 exclusive 拿 &mut。
         let ticks_left = match Task::exclusive(&mut cur).state() {
             TaskState::Running { ticks_left } => ticks_left,

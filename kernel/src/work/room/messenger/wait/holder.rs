@@ -36,13 +36,16 @@ impl Ticket {
     }
 }
 
+/// 票根表：票 →（唤醒键, 持票人）。
+type HolderTable = SpinLock<HashMap<Ticket, (WakeKey, Weak<Task>)>>;
+
 /// 票根：票 → 持票人。**只存 `Weak`**。
 ///
 /// 挂起任务的强持有者只能是它所在的站点队列（见模块头的「唯一强持有」）。这里若
 /// 存 `Arc`，任务就有了第二个强持有者：一撞 `Task::exclusive` 的唯一性前提，二让
 /// 陈旧的到点登记把已回收的任务钉住（关机审计会把它报成帧泄漏）。
-pub(in super::super) fn holders() -> &'static SpinLock<HashMap<Ticket, (WakeKey, Weak<Task>)>> {
-    static HOLDERS: OnceLock<SpinLock<HashMap<Ticket, (WakeKey, Weak<Task>)>>> = OnceLock::new();
+pub(in super::super) fn holders() -> &'static HolderTable {
+    static HOLDERS: OnceLock<HolderTable> = OnceLock::new();
     HOLDERS.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 

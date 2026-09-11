@@ -147,6 +147,9 @@ fn site_shard(key: WakeKey) -> usize {
     ((h >> 32) ^ h) as usize & SITE_SHARDS_MASK
 }
 
+/// 一处分片：键 → 站点。
+type Shard = SpinLock<HashMap<WakeKey, Site>>;
+
 /// 站点表（Level::L3，绝不 3→3 嵌套）。**分片版**：每片一把
 /// L3 锁 + HashMap，单一线性化点缩小到一片——wait / wake 跨片并行。
 ///
@@ -157,10 +160,10 @@ fn site_shard(key: WakeKey) -> usize {
 /// 锁纪律：仍是 L3、可与 timer 锁共存但**绝不 3→3 嵌套**（rip 路径循环逐片清，
 /// 禁持跨片锁）。同 key 的所有 waiters 必落在同一分片（`site_shard` 纯函数保证），
 /// 唤醒不必跨片扫描。
-pub(in super::super) fn shard_at(shard: usize) -> &'static SpinLock<HashMap<WakeKey, Site>> {
-    static SHARDS: OnceLock<Box<[SpinLock<HashMap<WakeKey, Site>>]>> = OnceLock::new();
-    let arr: &'static [SpinLock<HashMap<WakeKey, Site>>] = SHARDS.get_or_init(|| {
-        let mut v: Vec<SpinLock<HashMap<WakeKey, Site>>> = Vec::with_capacity(SITE_SHARDS);
+pub(in super::super) fn shard_at(shard: usize) -> &'static Shard {
+    static SHARDS: OnceLock<Box<[Shard]>> = OnceLock::new();
+    let arr: &'static [Shard] = SHARDS.get_or_init(|| {
+        let mut v: Vec<Shard> = Vec::with_capacity(SITE_SHARDS);
         for _ in 0..SITE_SHARDS {
             v.push(SpinLock::new_level(Level::L3, HashMap::new()));
         }
@@ -170,7 +173,7 @@ pub(in super::super) fn shard_at(shard: usize) -> &'static SpinLock<HashMap<Wake
 }
 
 /// 本唤醒源的站点表分片。
-pub(in super::super) fn sites(key: WakeKey) -> &'static SpinLock<HashMap<WakeKey, Site>> {
+pub(in super::super) fn sites(key: WakeKey) -> &'static Shard {
     shard_at(site_shard(key))
 }
 
@@ -219,6 +222,7 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
 ///   - **墓碑**（队列空 **且** 有信标）：信号留着等**未来的**等待者认领。键还活着时
 ///     它有语义（`wake` 的记忆），故本函数**不删**它；键一死即落到下一类；
 ///   - **孤儿**（队列空 **且** 无信标）：没有任何语义，正是本函数该删的那一类。
+///
 /// 不变式（判据不含挂起中的等待者，故必须为真）：**队列非空 ⇒ 键还活着**——能入队
 /// 就意味着 `block` ④ 在锁内读到过「键活着」，而等待者的站点强持有者就是那份资源。
 pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
