@@ -63,6 +63,7 @@ impl EnvError {
 /// **`#[inline(never)]` 是硬不变量**：该 asm 块一旦被内联进调用方，调用方读回的
 /// 返回值会错（实测：同样的 `Collect` 调用，内联时 a0 恒 0，独立函数时正确）。
 /// 与仓库对裸 asm 的一贯纪律同源（见 `docs/ipc.md` §13.10 A.2 的闭包边界锁）。
+#[cfg(target_arch = "riscv64")]
 #[inline(never)]
 pub unsafe fn trap(slot: usize, args: [usize; 6]) -> (usize, usize) {
     let (v0, v1);
@@ -80,4 +81,15 @@ pub unsafe fn trap(slot: usize, args: [usize; 6]) -> (usize, usize) {
         );
     }
     (v0, v1)
+}
+
+/// 非 RISC-V 构建（**只可能是宿主侧测试**）：`ebreak` 入口在这里没有对应物。
+///
+/// 本 crate 除这一个函数外**全部可移植**（`Wire`/`FromPair`/`Permission`/`Name`/各域
+/// 枚举的 `slot`/`pack`/`from_wire` 都不碰架构），故门控这一个函数就把 1300 行 ABI
+/// 面变成宿主可测的；`call()` 那条路（唯一会走到这里的）在宿主上必然 panic —— 这是
+/// 有意的：**没有汇编就没有调用**，不许静默返回假值。
+#[cfg(not(target_arch = "riscv64"))]
+pub unsafe fn trap(_slot: usize, _args: [usize; 6]) -> (usize, usize) {
+    unimplemented!("env::ecall::trap 只在 riscv64 上有实现（宿主侧测试不应触发真实调用）")
 }

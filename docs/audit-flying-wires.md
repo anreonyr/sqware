@@ -2907,3 +2907,103 @@ clint 0x0
 （自旋/裸/rw/可重入/惰性/一次性各留了几条没到用的时候的读法）。删掉它们等于把"锁库"缩成
 "当前调用点用到的子集"，下一个要用 `try_lock` / `read()` 的人得先把代码加回来——**预留不是
 飞线，飞线是"看起来有用但其实没有"**。这条界线记在这里，免得下一轮又把它当死代码清一遍。
+
+## 10.23 harness 形态勘察：宿主侧单测这条路的三道门 + 两条确认缺陷
+
+**裁决**（用户）：harness 形态一项选「新开一个专用测试 crate」。于是本轮不是先裁形态、
+而是**先量出形态**——因为那个 crate 只要立不起来，裁决就是空的。结论：**立起来了，
+并且一趟就抓到两条确认缺陷**；同时我三次判断被实测打回。
+
+### 先更正两处过期记账（§6.2 与 §9.1-8）
+
+§6.2 与 §9.1-8 都记着「runner 零断言 / 通过不留档 ⇒ 没有判据」。**这两条在门重写为 nu 之后
+已经部分失效**，本轮实测更正：
+
+| 旧记账 | 实测现状 |
+|---|---|
+| "只在 panic 时归档 console，通过的一次什么都不留" | **门已归档通过轮**：`trace/e2e-20260911-042820/run{1,2,3}/` 各有 `console.log` + `cmds.txt` + `qemu.rc`（`examine.nu:92-95`），另留 `elf-<档>/` 产物 |
+| "`trace/` 累积 496 个 `.cap`" | 根目录 **0 个 `.cap`**；轮次归档改按目录，`console-*.log` 只剩 3 个 |
+| "`runner.nu` 零断言" | 成立，**但这是设计**：`runner.nu:15` 明写"判定不在这里…不 exit 1"。它现在是**纯观察器**（一行 `观察：qemu 退出码 N · 原因`） |
+
+⇒ **"通过也归档"与"runner 断言"两项不必再裁**：前者门已做到；后者是刻意不要（`cargo run`
+的退出码不该因内核行为而变）。真正欠的只剩宿主单测与日程外覆盖。
+
+### 三道门（都是构造性的，不是技巧问题）
+
+| # | 门 | 实测症状 | 处置 |
+|---|---|---|---|
+| 1 | 工作区 `[profile.dev] panic = "abort"` | 在 workspace 内建测试 crate ⇒ `the -C panic flag cannot be used with cargo test` | 本 crate **自成工作区**（自带空 `[workspace]` 表）。**不靠 `exclude`**：`exclude` 只挡成员资格，挡不住 profile 继承 |
+| 2 | 根 `.cargo/config.toml` 的 `[build] target = riscv64gc-…` | `can't find crate for std`（cargo **向上查找并合并**配置，自成工作区也照读） | crate 内再放一份 `.cargo/config.toml` 显式改回 `x86_64-unknown-linux-gnu`。**最近一份优先**——实测 `cargo -Zunstable-options config get build.target` 在 `crates/testhost` 下 = `x86_64…` |
+| 3 | `~/.cargo/registry` 只读 | 解析出 `bitflags 2.13.2` 而缓存里只有 2.13.1 ⇒ `failed to open …bitflags-2.13.2.crate` | 钉到缓存已解包版本 `bitflags = "=2.13.1"` + `--offline`。**不引入任何新依赖版本**，与"一次性实验"相称 |
+
+### 最关键的一条：`crates/env` **不是**纯 crate
+
+我原先按文档口径把它当"纯 codec"。实测**当场打回**：`crates/env/src/ecall.rs:67` 的 `trap`
+是 RISC-V 内联汇编（`a2`..`a5` 寄存器），宿主构建直接 `invalid register 'a2'`。
+
+处置是**门控这一个函数**（`#[cfg(target_arch = "riscv64")]` + 一条宿主 stub，stub 有意
+`unimplemented!`：没有汇编就没有调用，不许静默返回假值）。**riscv 分支的汇编一字未动**
+⇒ 裸机产物行为中性（判据见下）。除这 17 行外，该 crate 其余 1300 行（`Wire`/`FromPair`/
+`Permission`/`Name`/各域枚举的 `slot`/`pack`/`from_wire`）**全部可移植**。
+
+### 一趟跑出的结果：27 绿 / 5 初红
+
+`cargo test --manifest-path crates/testhost/Cargo.toml` ⇒ 29 条：**27 绿、2 红（红的就是本条要报的缺陷）**。
+但**首轮是 5 红**，其中 **3 条是我的判断错**——这一节按仓的纪律如实记：
+
+| 我原先的判断 | 实测 | 定案 |
+|---|---|---|
+| `UnitCall` 的 index 5 是空号（照抄 `fid.rs` 那条注释） | slot 实测 `0x1_0000_0005` = `Build` | **注释是错的**：`UnitCall` 只有 7 个变体、index 0..=7 **连续无空号**（`Spawn`0 `SelfId`1 `Sire`2 `HeirCount`3 `Heir`4 `Build`5 `Hatch`6 `Join`7），`Build` 就坐在"空号"上 |
+| 域 codec 不校验 class ⇒ **伪造高位可绕过** | `RoomCall::from_wire(slot(0,0)\|(5<<32))` = `Ok(Starve)`（不校验为真）；但 `EnvCall::from_wire` 对同一输入 = `Ok(Mail(Push{..}))` | **不是漏洞**：`slot` 是**一个**数，高 32 位**就是** class。分派层取 `slot >> 32` 路由、域 codec 取 `slot & 0xFFFF_FFFF` 定 index——**两半合起来才是完整调用号**，写错任一半 = 落到另一个真实调用号上。内核唯一入口 `runtime/switcher/envcall.rs:186` 走的正是分派层 ⇒ 无第二个"该拒绝"的期望可写 |
+| 同上，改猜"分派层会拒伪造高位" | 实测 `Ok(Mail(Push{..}))` | 同上（同一事实的第二次误判） |
+| `FromPair for u8` 静默截断高位 | `from_pair(0x100,0)` = `0` | **确认缺陷**（见下） |
+
+**教训与 §10.19 那条一致**：`fid.rs` 的注释、以及我在会话里对它的两次推断，
+都是**"读代码的结论"**，而三条里三条都被实测改写。凡涉及声明顺序/编号这类
+**必须与宏展开对齐**的事实，读注释等于没读。
+
+### 两条**确认缺陷**（待裁，未修）
+
+| # | 位置 | 事实 | 性质 |
+|---|---|---|---|
+| 1 | `wire/mod.rs:132` `Permission::unpack` | `*s.get(*i)? as u32` —— **先截断 32 位再校验** ⇒ 32 位以上永远非法不了。实测 `0x1_0000_0002` → `Ok(Permission(WRITE))` | 该文件头注写着"校验式 unpack，非法位 → Invalid，**不再静默截断**"——正是它要根除的那类静默截断，只是搬到了 32 位以上。a2/a3 由用户态完全控制（usize） |
+| 2 | `wire/name.rs:68-70` `Name::from_bytes` | 非 UTF-8 输入返回 `Err(NameError::Nul)`，实测确认 | 该变体定义是"含 NUL（会与填充歧义）"，`0xff` 与 NUL 无关；错误域里没有第三个变体 ⇒ **错标**（不是漏判）。定案看调用方是否按变体补救 |
+
+两条修法都极小（前者先判 `v > u32::MAX`；后者或加变体、或让调用方不按变体分支）。
+**本轮不修**：本轮的裁决是"测"，修是独立一刀（且第二条的修法取决于调用方形状，
+属接口变更）。
+
+#### 顺带记录的两条小事
+
+- `Name::is_empty()` **恒为 false**：两个构造入口都不允许空名 ⇒ 该方法没有返回 `true` 的路径。
+  与 §10.22 那批同族，但它**不是 `allow(dead_code)`**（编译器看不见——调用的可能性存在）。
+- `frompair.rs:53,64` 的 `(PieToken, Permission)` / `(PieToken, Permission, TaskId)` 走
+  `from_bits_truncate`（静默截断），而同一个 `Permission` 在 `Wire` 路上走 `from_bits`（校验）
+  ⇒ **同一个值的两条还原路径口径相反**。未实测，只记事实。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 宿主测试 | `cargo test --manifest-path crates/testhost/Cargo.toml` ⇒ **27 passed / 2 failed**（那 2 红是**缺陷本身**：断言写的是"修好之后应该是什么"） |
+| `fmt` | `cargo fmt --check` 零输出 |
+| 裸机侧 | `cargo check --workspace --all-targets` **无 error**；警告数与 §10.22 基线一致（`kernel` 7 + manifest 4） |
+| examine | **5/5**（默认 3/3 + audit 轮 + 融合 harden 轮无 lockdep）；audit 站点计数四零态保持（`sites=0 live=0 tomb=0 orphan=0 dead=0 waiters=0`、`roster=8 alive=0`） |
+| **行为零变化** | 默认三轮归一化 md5 = `11aefee70ff9a6d33cfec8dbf11ef5fc`（×3，逐字节相同）；audit 轮 = `65aa6d84ab3e903bb15dde7529610e5f`（与 §10.22 基线**逐字节相同**）⇒ **`ecall::trap` 的 `#[cfg]` 门控对 riscv 产物零影响**（riscv 分支的汇编一字未动，这是它的直接证据） |
+| 归一化口径 | `trace/a2-norm2.sh`（剥 ANSI → `0x…`→`HEX` → 其余数字→`N`）；**门自己不产出 md5**，比对是宿主侧手工步骤 |
+
+### 删什么、留什么（用户裁决："测完就可以删了"）
+
+本 crate 是**一次性实验草稿**，刻意做成纯减法：
+
+| 项 | 处置 |
+|---|---|
+| `crates/testhost/`（含 `Cargo.toml` / `.cargo/config.toml` / `src/lib.rs` / `tests/`） | **测试进程结束后整个删掉** |
+| 根 `Cargo.toml` | **一行未改**（`exclude` 都没加——自带 `[workspace]` 已够） |
+| `crates/env/src/ecall.rs` 的 `#[cfg(target_arch = "riscv64")]` 门控 + 宿主 stub | **保留**（这是三条门里唯一"值钱"的那一条；删了宿主侧再无落脚点） |
+| `docs/audit-flying-wires.md` 本节 | **保留**（删了 crate 就没人知道那两条缺陷是怎么确认的） |
+
+⇒ 删完之后，宿主侧单测这条路**回到"没有落脚点"的状态**，本节记的就是它当初怎么被立起来、
+以及立起来当场抓到了什么。**要不要重建、以什么形态常驻，是下一刀的裁决**；
+本轮只证明了一件事：**这条路通，而且一趟就能抓到东西**。
+
