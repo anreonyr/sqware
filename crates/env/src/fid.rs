@@ -168,6 +168,10 @@ pub enum IOCall {
     #[ret(())]
     Put { len: usize, buf: VirtAddr },
     /// 非阻塞读一字节；无输入 → -3 Busy。
+    ///
+    /// **内核侧契约**：成功时 `a0` 恰是那一字节（`console::pull()` 给的 `u8` 零扩展），
+    /// 故 `a0 ∈ 0..=255`。这不是"约定"而是本原语的形状——但它**只由内核的实现承载**，
+    /// 故 `FromPair for u8` 在 `debug_assertions` 档把它查出来（见 `wire/frompair.rs`）。
     #[ret(u8)]
     Get,
 }
