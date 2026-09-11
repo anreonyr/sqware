@@ -403,7 +403,7 @@ spoof: ok
 ## 13 · 文件清单
 
 ```
-新增  crates/env/src/dispatch.rs            协议类型 + 编解码
+新增  crates/protocol/src/dispatch.rs       协议类型 + 编解码（原在 crates/env，§10.21 独立成 crate）
 新增  kernel/src/work/unit/gate/release.rs  自释原语
 新增  task/src/core/directory.rs            目录注册表 + 协议适配（用户态）
 新增  task/src/bin/supervisor/dir.rs        目录域程序（S 态：Collect 门闩 → 请求循环）
@@ -472,5 +472,5 @@ spoof: ok
 改   task/src/bin/supervisor/root/main.rs     Refer::named（把名字播种给子域）
 改   task/src/bin/supervisor/echo.rs          改用 Directory::register
 改   task/src/bin/user/shell.rs               name 自检命令；spoof 正向对照改用预约名
-改   crates/env/src/dispatch.rs               文档：身份来源、预约、NotFound/Denied 语义
+改   crates/protocol/src/dispatch.rs          文档：身份来源、预约、NotFound/Denied 语义（当时路径为 crates/env）
 ```

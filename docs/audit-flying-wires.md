@@ -1110,14 +1110,16 @@ cargo fmt --check
 3. ~~**`EnvCall` 分类**：`MailCall` 里混着 9 个授权原语，是否落成 `PieCall`？~~
    → **✅ 已裁决并执行**（见下方 §9.2）。裁决：把九个搬进 class 7 `PieCall`，
    并把 `Map`/`Unmap` 正名为 `Open`/`Shut`、`Owned` 正名为 `Reserve`。
-4. **`env::dispatch` 的位置**：它是**用户态协议**（Request/Reply/`MSG_LEN`），零内核引用，
-   却住在内核也依赖的 ABI crate 里 —— 移进 `task/src/core` 还是独立 `protocol` crate？
-5. **B2 拷贝契约**：维持「精确长度、允许部分写」，还是升级成「要么全写要么不写」？
-   （今天所有调用方都是精确长度，升级是免费的，但要把 `Segments` 的逐页取锁改掉。）
+4. ~~**`env::dispatch` 的位置**：它是**用户态协议**（Request/Reply/`MSG_LEN`），零内核引用，
+   却住在内核也依赖的 ABI crate 里 —— 移进 `task/src/core` 还是独立 `protocol` crate？~~
+   → **✅ 已裁决并执行：独立 `crates/protocol`**（§10.21；用户裁决"新建 protocol 目录"）。
+5. ~~**B2 拷贝契约**：维持「精确长度、允许部分写」，还是升级成「要么全写要么不写」？~~
+   → **✅ 已裁决并执行：升级成"要么全写，要么不写"**（§10.21；提交 `c919ced`）。
 6. ~~**COW 控制面**（§7.3 `space/cow.rs`）：留（等 fork 接通）还是删？~~
    → **✅ 已裁决并执行：删**（§10.20；用户裁决"删"）。
-7. **`core/datagram.rs`**：单一消费者（`datagram_demo`，本身是死 bin），按 `supervisor.md:298`
-   应降到 bin 目录；是否有第二个消费者在路上？
+7. ~~**`core/datagram.rs`**：单一消费者（`datagram_demo`，本身是死 bin），按 `supervisor.md:298`
+   应降到 bin 目录；是否有第二个消费者在路上？~~
+   → **✅ 已裁决并执行：删**（§10.21；实测消费者数 = 0，提交 `7502806`）。
 8. **harness**：是否接受「补宿主单测（`crates/env` 的 codec 最该测）+ runner 断言 + 通过也归档」，
    作为删除 18 个 bin 的前提？
    实测现状：`#[test]` 全仓 **0 个**、`runner.nu` 断言 **0 条**、`trace/` 里 496 个 `.cap`
@@ -2779,3 +2781,68 @@ dead_code 警告，而"两档零警告、零 allow"是既有纪律。试过的�
 那条路今天**不处理**（判 `false` ⇒ 空间故障隔离）。删掉的 `own` 本来像是它的解药，但
 `own` 在旧代码里被 `is_shared` 门控、永远够不到这条路径 ⇒ **删前删后行为一致**。
 要不要让"私有只读页的写缺页"可恢复（把 W 翻回来），是一次独立裁决。
+
+## 10.21 §9.1 收尾：协议独立成 crate + 拷贝契约 + 删 datagram
+
+三件都不大，但各自把一颗飞线拔了。
+
+### (1) `crates/protocol`：内核不知道目录协议，交给依赖方向保证
+
+**裁决**（用户）："新建 protocol 目录"——不是搬进 `task/src/core`，而是独立成一个
+crate `crates/protocol`（`crates/env/src/dispatch.rs` → `crates/protocol/src/dispatch.rs`）。
+
+`crates/env` 是**内核也依赖的 ABI crate**，而目录协议（`Request`/`Reply`/`MSG_LEN`）
+是**纯用户态**的东西。它住在那儿，只是让内核多编译几百行它永远读不到的协议，
+并把"这是用户态的东西"这句话从结构上抹掉。独立成 crate 之后，这条事实变成**编译期
+保证**：`kernel/Cargo.toml` 里没有 `protocol`，想引用也引用不到。
+
+依赖方向：`protocol → env`（单向，用 `env::wire::{Name, NAME_LEN, PieToken}`）、
+`task → protocol`。
+
+**"零内核引用"用探针验过，两个方向都跑了**（一次性实验，验完即删）：
+
+| | 做法 | 内核 ELF 里 `PROBE-DISPATCH-REACHED` 出现次数 |
+|---|---|---|
+| 正向 | kernel **不**依赖 protocol（现状） | **0** |
+| 反向 | 临时给 `kernel/Cargo.toml` 加 `protocol` + `static PROBE_LINK: usize = protocol::dispatch::MSG_LEN;` | **1** |
+
+两行加起来才说明问题：**"0"不是测不出来，是内核真的没链接它**。反向那一步用完即撤
+（`kernel/Cargo.toml`/`main.rs` 已还原，探针串也已删除）。
+
+顺带一处连带收口：`env::Name`/`NAME_LEN`/`NameError` 原先是从 `dispatch` 转口的，
+现在直接由 `wire` 出（`pub use wire::{…}`）——**同一个类型不留两个出口**。
+`Name::from_bytes`（线格式解码）由 `pub(crate)` 升为 `pub`：它是 `Name` 的**线格式
+对偶**，语义属于 `env`，不随协议搬家。
+
+### (2) B2：拷贝契约升级成「要么全写，要么一个字节都不动」
+
+`mail/mod.rs` 的 `copy_out` 原本**边写边判**权限：中段缺 W 或越界时，前面几段**已经
+写进用户缓冲区了**，函数才返 false ⇒ 模块头那句"（不部分写入）"是假话。今天没炸只因
+所有调用方都传精确长度的缓冲——**靠调用方纪律掩盖的假契约**。
+
+修法是抽出共用前置 `whole(space, va, len, need)`：先整段验完（每段在、权限含 `need`、
+段长之和恰为 `len`）再动第一个字节。两遍之间映射可能变（他核 unmap）——那是**既有**
+窗口（单遍实现同样逐页取放 Space 锁），不是本契约引入的；先验后写只是让"失败"不再
+留下半截数据。代价是区间多走一遍 `Segments`（64 B 消息通常落在一两页内）。
+
+### (3) 删 `core/datagram.rs`
+
+实测消费者数 = **0**（全树引用只剩 `core/mod.rs` 的模块声明本身；demo bin 早随 18 个
+死 bin 删除）。`docs/supervisor.md:298` 说的"降到 bin 目录"是**有消费者之后**的处置。
+
+### 判据
+
+| | 值 |
+|---|---|
+| examine | **5/5**（默认 3/3 + audit 轮 + 融合 harden 轮无 lockdep） |
+| 行为零变化 | 默认档三轮 md5 = `183133960fd82a1ff0f4a4c3f8863355`、audit 轮 = `efd03cb45e01a4acefef90a34ba32735` —— 与基线**逐字节相同**（对 B2 而言这条尤其有牙：契约一变，失败路径的字节数就会变） |
+| 依赖图 | `protocol → env`、`task → protocol`；`kernel` 的依赖里**没有** `protocol`（探针正反两向实证） |
+| 警告 | 三档与基线一致（默认 7 / audit 1 / harden 1） |
+| 词法 | `grep -rn datagram task/src/` 零命中；`env::dispatch` 零命中 |
+
+### 带出来的一处小事（未修，记一笔）
+
+`env` crate 的 `Name::from_bytes` 在协议搬走的那一刻立刻变成"never used"——因为它的
+**唯一**使用者就是那份协议。这本身是个好信号（说明 `pub(crate)` 的边界画得准），
+按上面的处置升成 `pub` 留在 `env`。若将来 `wire` 里出现第二个"只给协议用"的东西，
+就该问一句它是不是也该搬去 `protocol`。
