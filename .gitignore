@@ -1,2 +1,7 @@
 /target
 trace/
+
+# 编辑器状态归本地：`docs/` 是一个 Obsidian 库，`.obsidian/` 里放的是库配置与**每个人的
+# 窗口布局**（`workspace.json` 每次打开都变）。收进来只会让每次 `git status` 都脏一次，
+# 与仓库要管的事实（文档本身）无关。文件仍在原地，只是不进库。
+docs/.obsidian/
