@@ -135,7 +135,9 @@ pub(crate) fn roster() -> Vec<Weak<Task>> {
 /// 摘到。只持本 hart 的 inner(L1)，逐 hart 顺序取、不嵌套其它锁。
 ///
 /// 注：`state` 的读取与容器动作不在一把锁里（读来自调用方），窗口内被别核 seat 走
-/// ⇒ 这里返 false ⇒ 本次 kill 丢失（受害者会留在容器里不被收——这一步做错就是这个后果）。
+/// ⇒ 这里返 false。**调用方（`messenger::doom::suspend`）据此重来**，重试耗尽按
+/// `Running` 兜底（记 doomed + 定向 IPI）——所以「读到 Starved 却摘不到」不会静默
+/// 丢掉这次 kill。
 pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
     for s in schedulers() {
         let mut i = s.inner.lock();

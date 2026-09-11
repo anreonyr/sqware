@@ -3,10 +3,15 @@
 // 提供"写入一次、只读多次"的同步原语，读取路径仅一次 AtomicBool::load，
 // 无需获取 SpinLock。适用于全局驱动引用、函数指针等写入后不再变动的场景。
 //
-// 内存序约定：
-//   - set() 使用 Release store 保证数据写入在标记初始化前完成
-//   - get() 使用 Acquire load  保证看到初始化前的所有数据写入
-//   - 多 hart 下 compare_exchange(AcqRel) 保证一次且仅一次写入
+// 内存序约定（**照实写**）：
+//   - set() 先用 compare_exchange(AcqRel) 抢占「写入权」，**随后**才写 data
+//   - get() 用 Acquire load 读标记，读到即返回 &T
+//   - 多 hart 下 compare_exchange 保证一次且仅一次写入
+//
+// ⚠ 缺口：标记的发布**早于** data 的写入——CAS 的 Release 语义只覆盖它之前的操作，
+//   故另一 hart 可能看到「已初始化」而读到尚未写入的 data。今日不可达（三处消费者
+//   `HERTZ`/`TRAP_STACK_PHYS`/`POOL` 都在副核拉起之前就 set 完了），但那是**启动次序
+//   的巧合**，不是本原语的性质。修法见 `set` 内注（待单独裁决）。
 
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
@@ -55,7 +60,12 @@ impl<T> OnceLock<T> {
     /// 成功设置返回 `Ok(())`，已初始化则返回 `Err(value)`。
     pub fn set(&self, value: T) -> Result<(), T> {
         // compare_exchange：原子地尝试将 initialized 从 false 变为 true。
-        // AcqRel：成功时 Release 保证 data 写入可见；失败时 Acquire 保证看到已存值。
+        // AcqRel：失败时 Acquire 保证看到已存值。
+        //
+        // 待裁决：成功这支的 Release **不覆盖随后的 data 写入**（它排在 CAS 之后），
+        // 故「标记可见 ⇒ 数据可见」并不成立。要成立得让发布晚于写入——要么把标记
+        // 做成三态（空 / 写入中 / 就绪），要么写入完成后再补一次 Release store。
+        // 今日三处消费者都在副核之前 set，故未暴露；改法留待与 `LazyLock` 的存废一起裁。
         match self
             .initialized
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)

@@ -55,7 +55,7 @@ pub(super) fn reap(mut task: Arc<Task>) {
 ///
 /// 「排空躯壳」是本函数的一部分，**不是调用方的义务**：它必须发生在再次取活之前
 /// ——最后退出的任务若带着栈/trap 帧/团队空间滞留到关机断言，就是帧泄漏。四个调用点
-/// （envcall 的 `Exit`、fault isolation 的三个杀点）因此各自只写一行。
+/// （envcall 的 `Reap`、fault isolation 的三个杀点）因此各自只写一行。
 ///
 /// 落点由 `scheduler::trap::run` 决定（续跑 / 轮转 / 取活 / 停机）——它只会循环到
 /// 有帧或停机，故恒有帧可交。

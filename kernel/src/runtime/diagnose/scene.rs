@@ -218,7 +218,7 @@ fn stval_note(int: bool, code: usize) -> &'static str {
     }
 }
 
-/// CSR 段行集（首行表头）：sepc/stval/scause = 崩点；stvec/sscratch = 陷阱
+/// CSR 段行集（**第二行**才是表头；首行是运行中任务行）：sepc/stval/scause = 崩点；stvec/sscratch = 陷阱
 /// 入口/暂存；sstatus/satp = 特权/地址空间域。task 行 = 运行中任务（若有；
 /// try_lock 拿不到则跳过）。注解列 = 符号化 + 解码。
 fn csr_rows() -> Vec<Vec<Option<String>>> {
@@ -232,7 +232,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         } else {
             vec![None, Some("failed to get task info".into()), None]
         },
-        vec![None, Some("hex".into()), Some("note".into())], // 首行表头
+        vec![None, Some("hex".into()), Some("note".into())], // 表头（第二行）
     ];
     let sc = scause::read();
     let (int, code) = (sc.is_interrupt(), sc.code());
@@ -422,7 +422,7 @@ pub fn dump(r: &mut Report) {
     r.paragraph("csr", Some(scene_head))
         .items
         .extend(csr_rows());
-    // Scene 快照行（hart/task/pc/sp/fp/cause）并入 csr 段最前。
+    // Scene 快照行（hart/task/pc/sp/fp/cause）自成一个 `scene` 段，排在 csr 段**之后**。
     if let Some(scene) = kernel_scene.as_ref() {
         r.paragraph("scene", None).items.extend(scene_rows(scene));
     }

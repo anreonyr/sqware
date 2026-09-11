@@ -26,8 +26,8 @@
 //! 改由父任务 `Accord` 下发，见 `docs/dispatch.md`）。
 //!
 //! **未知调用号的运行时契约（ABI 的一部分，不是实现细节）**：`a7` 由调用方
-//! 完全控制，故它是**输入**而非可信标识。未声明的 class / index（含 class 1 的
-//! 空号 index 5、未分配的 class 8、越界索引）一律 decoded 为 `Decode::BadSlot`，
+//! 完全控制，故它是**输入**而非可信标识。未声明的 class / index（未分配的 class 8、
+//! 越界索引）一律 decoded 为 `Decode::BadSlot`，
 //! 内核侧按**被拒绝**处理：写回负码（`GateError::Denied`）并**续跑调用方**——
 //! 与其它用户引起的异常同走故障隔离，绝不 panic（否则用户态一发 `ebreak`
 //! 即可停摆整机）。想主动终止有正规原语 `RoomCall::Reap { reason }`——它**只终止
@@ -87,8 +87,9 @@ pub enum ProgramKind {
 /// 执行单元调用（class 1）—— unit 域：`Build`（装域）/ `Spawn`（产线程）/ `Hatch`
 /// （放行）/ `Join`（等结束），外加血缘观察（`Sire`/`HeirCount`/`Heir`）。
 ///
-/// **index 5 是空号**（原 `SpawnTask` 已并入 `Spawn`）——保留不复用；index 是声明
-/// 顺序判别号，见文件头。
+/// **index 是声明顺序判别号**（见文件头）。原 `SpawnTask` 并入 `Spawn` 之后，本枚举
+/// 的 index `0..=7` **连续无空号**：`Build` 落在 5、`Hatch`/`Join` 在 6/7——注释占不住
+/// 槽位，没有变体就没有号。
 #[derive(Envcall)]
 #[call(class = 1)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -118,7 +119,6 @@ pub enum UnitCall {
     /// 按索引取子域 TeamId（heir 枚举的 second pass；越界 → 0）。
     #[ret(TeamId)]
     Heir { index: usize },
-    // index 5：原 SpawnTask —— 空号，不复用。
     /// 装域：镜像字节区间 + 特权级 + 名字 → 新域（Space + Team，**无线程**）。
     ///
     /// 名字 ≤ 31 字节（`Name` 的定长上限）。

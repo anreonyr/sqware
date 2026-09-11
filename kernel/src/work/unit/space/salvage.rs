@@ -4,7 +4,7 @@
 //! 窗口 claim/allocate/mmap 产出 [`Span`]，拆除时收进 [`Salvage`]，
 //! 清退到齐后由 [`Salvage::reclaim`] 一次结清。
 //!
-//! 独立成文件的理由：它们是**回收侧**的词汇，与 [`SpaceInner`](super::inner::SpaceInner)
+//! 独立成文件的理由：它们是**回收侧**的词汇，与 [`SpaceInner`](super::core::SpaceInner)
 //! 的映射簿记是两件事；`Space`/`SpaceInner` 只提供结清所需的入口
 //! （`asid()` / `with()` / `deallocate()`）。
 

@@ -278,7 +278,8 @@ pub(crate) fn seal(meta: &HoleMeta) {
 /// envcall 编排（gate::new_pie + pies.push）。返 `Arc`：它既是资源实体，也是
 /// 门闩持有的**唯一强引用**（资源寿命 = 能力寿命）。
 ///
-/// `mtu ∈ [1, HOLE_MTU_MAX]`——envcall 入口已校验，此处 defend。
+/// `mtu ∈ [1, HOLE_MTU_MAX]`——**唯一校验点**：`UnsealHole` 在 envcall 入口把 mtu
+/// 直交这里，没有第二道。
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
 pub(crate) fn meta(mtu: usize, owner: usize) -> Result<Arc<HoleMeta>, GateError> {
     if mtu == 0 || mtu > HOLE_MTU_MAX {

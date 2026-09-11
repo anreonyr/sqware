@@ -9,7 +9,8 @@
 // 一次解码出带类型载荷的 variant，match 各 arm 直接消费类型化字段。
 // `Permission` 子集在 decode 时已过 `from_bits(...).ok_or(...)` 校验（非法位 → Err），
 // 根除旧 `from_bits_truncate` 的静默截断；`PteFlags` 仍在 `Mprotect` arm 校验。
-// 返回值写回 a0（`Gprs::A0`）；每个调用后 sepc += 4（Reap 除外——不返回）。
+// 返回值写回 a0（`Gprs::A0`）；sepc 按**实际指令长度**前进（RVC 2 / 标准 4 字节，
+// 见 `instr_len`；Reap 不返回）。
 // 时间语义统一以毫秒（Duration 边界）表达（Park / Wait）；Ticks 仅作兼容诊断。
 // 调用名与调度词族同词：Starve/Park/Reap/Wait/Wake 分别直呼
 // `scheduler::core::starve` / `messenger::{park, quit, wait, wake}`（服务面转发层

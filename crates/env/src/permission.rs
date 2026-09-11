@@ -1,12 +1,13 @@
 //! 门闩权限位掩码（用户态 + 内核态共用，单一真相）。
 //!
-//! `READ | WRITE | VEST | BACK` 均已实现。注意 RESTRICT 的资源不对称：
-//!   - Hole：任意非空子集都可作 restrict 目标（无页表约束）；
-//!   - Pole：restrict 目标**必须含 READ**（RISC-V PTE 无 R=0 合法数据叶子），
-//!     因此 `restrict(pole, WRITE)` 返回 Denied 而 `restrict(hole, WRITE)` 成功。
+//! `READ | WRITE | VEST | BACK` 均已实现。**收窄（`Narrow`）有一处资源不对称**：
+//!   - Hole：任意非空子集都是合法目标（无页表约束）；
+//!   - Pole：目标**必须含 READ**（RISC-V PTE 无 R=0 的合法数据叶），故
+//!     `Narrow(pole, WRITE)` 被拒而 `Narrow(hole, WRITE)` 成功。
 //!
-//! 用户态用法：envcall 时 `a2 = permission.bits() as usize`；内核侧
-//! `Permission::from_bits_truncate(a2)` 还原。
+//! 用户态用法：envcall 时 `a2 = permission.bits() as usize`。内核侧**不**做
+//! `from_bits_truncate` 式的截断还原——未申明的位一律拒绝（`wire::unpack` 的
+//! 拒绝式解码，见 `kernel/src/runtime/switcher/envcall.rs` 的入口）。
 
 use bitflags::bitflags;
 

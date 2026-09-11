@@ -111,8 +111,9 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     crate::lock::init_depend(machine::hart_count()).expect("depend init failed");
 
-    // 健康检查（spare 预算验收恒跑 + PT 回收自测 debug）：任一失败
-    // fail-fast（panic → crash scene）。
+    // 健康检查：三个探针（spare 预算验收 / PT 回收自测 / 分配器压测）全在
+    // `debug_assertions` 档，release 下本函数是空体。任一失败 fail-fast
+    // （panic → crash scene）。
     crate::health::run();
 
     spawn_root().expect("boot spawn failed");

@@ -64,7 +64,7 @@ pub struct Console {
 impl Console {
     /// 打开会话：自建**回信孔**一枚，`Accord` 给服务，然后 `Open`（把它的对端句柄交出去）。
     ///
-    /// 对端 task id 由 `Owned(entry).owner` 求得——**门闩的开辟者就是服务本身**
+    /// 对端 task id 由 `Reserve(entry).owner` 求得——**门闩的开辟者就是服务本身**
     /// （root 转发不改 `owner`，只改 `vestor`）。
     pub fn open(entry: HolePie) -> EnvResult<Console> {
         let owner = mail::reserve(PieToken::new(entry.token()))?.1.get();

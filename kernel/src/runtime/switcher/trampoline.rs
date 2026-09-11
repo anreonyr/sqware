@@ -98,7 +98,7 @@ global_asm!(
     "    csrw  satp, t0",
     "    sfence.vma",
     // 切内核栈；旧 sp（线程帧 VA）切表后指向本空间帧窗口，不再解引用。
-    // （tp 由 C 侧 trap_handler 入口按 sp 反解重建——见 establish_tp；汇编
+    // （tp 由 C 侧 trap_handler 入口按 sp 反解重建——见该函数第 0 步；汇编
     //   不能 PC 相对引用跨页符号，TRAMPOLINE VA 下 la 会算出错误地址）
     "    mv    sp, t1",
     "    jalr  t2", // handler(frame_pa) -> frame_pa（续跑时恒为原帧）
@@ -106,7 +106,7 @@ global_asm!(
     // ── 内核态陷阱（__core_trap）：现场存**本 hart**帧（PerHart.frame 定位——tp
     //    指向本 hart 上下文块，帧 VA 取块内字段，见 machine::PerHart；栈切本
     //    hart trap 栈。tp 约定：内核态恒为本 hart PerHart 指针——入口/
-    //    establish_tp 维持。sscratch 内核态约定 = 本 hart 帧 VA，但**trap 入口
+    //    trap_handler 第 0 步维持。sscratch 内核态约定 = 本 hart 帧 VA，但**trap 入口
     //    不可靠**：任务路径（__task_trap）入口把 sscratch 换成任务 sp，处理中
     //    若有内核缺页再次进入本路径，sscratch 已被污染——故帧址仍由 tp 重建，
     //    不读 sscratch）。 ──

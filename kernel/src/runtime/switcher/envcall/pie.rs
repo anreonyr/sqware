@@ -1,15 +1,18 @@
-//! envcall 权柄轴（class 7 `PieCall`）—— 许可的生死与流动，十一个操作。
+//! envcall 权柄轴（class 7 `PieCall`）—— 许可的生死与流动，十二个操作。
 //!
 //! 与数据轴（`envcall/mail.rs`）的分界：本模块**不搬运载荷**——传的是许可，
 //! 内容走 class 5。三条轴（资源 / 持有 / 转授）见 `crates/env/src/fid.rs`。
 //!
 //! # 两个查询原语
 //!
-//! 十一个操作里有六个在开头做同一件事：**按 token 在我表里取得，顺带判存活与判权**。
-//! 那件事在此立为 [`resolve`]（判权）与 [`find`]（只判存在）——不是抄六遍：
-//! 逐处手写曾导致判定顺序不一（`allows` 先或 `alive` 先），**同一个已封印的 token
-//! 按调用的动词不同报出 `Denied` 或 `Dead` 两个答案**。现在顺序只有一处：
-//! 表里没有 → `Denied`；已封印 → `Dead`；权不够 → `Denied`。
+//! 「**按 token 在我表里取得，顺带判存活与判权**」这件事在此立为 [`resolve`]（判权）
+//! 与 [`find`]（只判存在）。目标顺序是：表里没有 → `Denied`；已封印 → `Dead`；
+//! 权不够 → `Denied`——同一个已封印的 token 不该按动词报出两个答案。
+//!
+//! ⚠ **今日只有 `open`/`shut`/`accord`/`reserve` 四个动词走它**：`seal`/`narrow`/`collect`
+//! 仍手写查找，`Release` 完全不走 `find`（它必须能在封印后仍摘表项）。于是那条现象
+//! **没有消失、只是缩小了**：`narrow` 把 `covers` 排在 `alive` 之前，故「已封印 + 越权
+//! 子集」报 `Denied` 而非 `Dead`。把余下几处也收进 `resolve`/`find` 是**独立一步**。
 //!
 //! 显式不过闸的两个：`Release`（自释必须能在封印后收尾，否则表项永远摘不掉）、
 //! `Reserve`（`owner` 是资源来历，封印不使它消失）——它们走 [`find`]。
@@ -38,7 +41,7 @@ pub(crate) enum Outcome {
     Resume,
 }
 
-/// 权柄轴的十一个操作。返回 `None` = 本次调用不属于本轴（交还门面继续匹配）。
+/// 权柄轴的十二个操作。返回 `None` = 本次调用不属于本轴（交还门面继续匹配）。
 pub(crate) fn dispatch(
     frame: &mut TrapContext,
     call: PieCall,

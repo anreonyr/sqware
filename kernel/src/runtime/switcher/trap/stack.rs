@@ -61,7 +61,7 @@ pub fn trap_stack_edge(hart: usize) -> VirtAddr {
 
 /// sp 是否落在某 hart 的 trap 栈体内（guard 之上、edge 之下→含）——反解 hart。
 ///
-/// 崩溃路径的瘦身版 `establish_tp`：推 hart 不读表、不 panic；越出窗口/guard/
+/// 崩溃路径的瘦身版 tp 重建（与 `trap_handler` 第 0 步同一套反解）：推 hart 不读表、不 panic；越出窗口/guard/
 /// 未启用核一律 None（引导期与非法现场合法返回）。正常路径恒命中：trap handler
 /// 恒在 per-hart trap 栈上执行。
 pub(crate) fn trap_stack_hart(sp: usize) -> Option<usize> {
@@ -164,7 +164,7 @@ pub fn init() {
     check_fits_page();
 
     // 3. per-hart trap-context 帧元数据（帧已逐页映射，PA 已发布）。每 hart
-    //    一份——kernel_sp = 本 hart trap 栈顶，__strap 按 TP 索引帧页；内核态
+    //    一份——kernel_sp = 本 hart trap 栈顶，trap 入口按 TP 索引帧页；内核态
     //    故障在**故障核**的帧与 trap 栈上处理。
     let ksatp = satp::read();
     for h in 0..crate::machine::hart_count() {
@@ -200,7 +200,7 @@ pub fn init() {
 pub fn arm_hart() {
     unsafe {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
-        // PerHart.frame 经 tp 直达（执行核帧 VA；与 __strap 帧定位同源）。
+        // PerHart.frame 经 tp 直达（执行核帧 VA；与 trap 入口的帧定位同源）。
         let scr = crate::machine::hart_frame().as_usize();
         core::arch::asm!("csrw sscratch, {}", in(reg) scr);
         sie::set_stimer();

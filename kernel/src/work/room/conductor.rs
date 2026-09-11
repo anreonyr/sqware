@@ -58,7 +58,7 @@ pub(super) fn exit() {
 
 /// 全部任务是否已退出。
 ///
-/// 守门 `BOOT_DONE == true`（防 boot 早期 PUSHED==0 误判"全部结束"——
+/// 守门 `ROOTED == true`（防 boot 早期 PUSHED==0 误判"全部结束"——
 /// 当时 PUSHED 尚未增长就被 read，会永久返 false → 无任务场景无法停机）。
 ///
 /// 守门后：`PUSHED == 0`（boot 没装出 root，过期 PUSHED==0 仍可停机）或

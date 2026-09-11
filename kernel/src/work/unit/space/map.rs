@@ -5,7 +5,8 @@
 // guard 页永不入帧）。`pending` 表达**未物化页的行为**（与帧所有权正交）：
 //   None       — 无未物化页（全物化）。拥有映射满帧；借用映射（DRAM 恒等、
 //                 trampoline、dock 视图）空帧——leaf 在册、物理帧归外部。
-//   Some(Lazy) — 未物化页缺页时分配零页（懒映射：mmap/declare/栈体）。
+//   Some(Lazy) — 未物化页缺页时分配零页（懒映射：`ShareWindow::mmap` 的共享区；
+//                 栈体相反，是**立即物化**，见 `window/stack.rs`）。
 //   Some(Guard)— 未物化且禁止物化：触碰即「预留映射访问」（栈守护页）。
 //
 // 帧随 Map drop 归还 frame 池——所有权即回收，无遍历页表树、无手写 deallocate

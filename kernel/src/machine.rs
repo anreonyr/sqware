@@ -68,7 +68,7 @@ pub fn hart_count() -> usize {
 ///
 /// S-mode 读不到 M-mode 专属 CSR `mhartid`（读它触发 illegal instruction），故
 /// hartid 经 `tp` 指向的 [`PerHart`] 读取：`tp` = 本 hart 的 `PerHart` 指针
-/// （入口/陷阱重建维护，见 `main.rs`/`_boot_entry`/`establish_tp`）。
+/// （入口与陷阱重建维护，见 `main.rs`/`_boot_entry`/`trap_handler` 第 0 步）。
 #[inline]
 pub fn hart_id() -> usize {
     let id: usize;
@@ -85,7 +85,7 @@ pub fn hart_id() -> usize {
 
 /// per-hart 上下文块——内核态 tp 指向本结构（替代旧「tp 存裸 hartid」约定）。
 ///
-/// 汇编消费端（`__strap`/`__restore` 定位本 hart 帧 VA、调度器经 tp 直达）
+/// 汇编消费端（`__core_trap`/`__restore` 定位本 hart 帧 VA、调度器经 tp 直达）
 /// 按本结构裸偏移访问，布局由编译期断言锁死（`offset_of` 检查）。
 ///
 /// 为什么是常量数组而非运行时分配：boot 汇编（`_start`/`_boot_entry`）在
@@ -100,7 +100,7 @@ pub fn hart_id() -> usize {
 pub struct PerHart {
     /// 本 hart 编号（offset 0x00；`hart_id()` 读这里）。
     pub id: usize,
-    /// 本 hart 帧 VA（offset 0x08；`HART_FRAME_BASE + id·PAGE`，`__strap` 帧定位）。
+    /// 本 hart 帧 VA（offset 0x08；`HART_FRAME_BASE + id·PAGE`，trap 入口的帧定位）。
     pub frame: VirtAddr,
     /// 本 hart 调度器指针（offset 0x10；boot 期 `scheduler::boot::init` 经
     /// [`set_scheduler`] 原子 store——调度器在堆上动态分配，运行时才知道地址，
@@ -223,7 +223,7 @@ pub(crate) fn lease_store(value: usize) {
     PER_HART[hart_id()].lease.store(value, Ordering::Release);
 }
 
-/// 编译期断言：PerHart 布局即 ABI（`__strap`/`__restore` 帧定位、调度器 tp 直达
+/// 编译期断言：PerHart 布局即 ABI（trap 入口/`__restore` 帧定位、调度器 tp 直达
 /// 按偏移访问；槽宽 2⁶ 供 boot 汇编 `slli` 索引）。
 const _: () = {
     assert!(core::mem::offset_of!(PerHart, id) == 0x00);

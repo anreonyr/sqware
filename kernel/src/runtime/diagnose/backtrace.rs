@@ -128,7 +128,8 @@ impl FrameResolver {
 
 // ── Scene — 可诊断的执行现场快照（适配层）────────────────────────────
 
-/// 现场寄存器 — 快照的「当前点」（pc/sp/fp 独立于全量 GPR）。
+// 历史注：`Registers`（现场寄存器快照：「当前点」，pc/sp/fp 独立于全量 GPR）
+// 已迁至 `scene.rs`；本行曾挂着它的文档。
 
 /// [`FrameKind`] 的单字符标签（K 列用；Root/Kernel/User/Unknown → R/K/U/?）。
 fn kind_label(k: FrameKind) -> &'static str {

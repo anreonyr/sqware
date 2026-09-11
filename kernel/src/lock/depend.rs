@@ -74,7 +74,7 @@ pub enum Level {
 /// **第一件事：门户无锁切到后备仓（spare）**——`report` 的消息拼装
 /// （format! / 符号化）要分配；此刻违规锁常仍被本核持着（guard Drop 内的
 /// release 失配等），主堆分配会重入同一把锁自旋致死——切到 spare 后本函数及
-/// 后续 panic_handler 的全部分配都进后备仓（其锁是独立实例、层级 9，正常持
+/// 后续 panic_handler 的全部分配都进后备仓（其锁是独立实例、层级 10 `Spare`，正常持
 /// 有链上无反向边），违规现场永不因"报告自己"而二次卡死。
 #[cfg(debug_assertions)]
 pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
