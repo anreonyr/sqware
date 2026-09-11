@@ -2846,3 +2846,64 @@ crate `crates/protocol`（`crates/env/src/dispatch.rs` → `crates/protocol/src/
 **唯一**使用者就是那份协议。这本身是个好信号（说明 `pub(crate)` 的边界画得准），
 按上面的处置升成 `pub` 留在 `env`。若将来 `wire` 里出现第二个"只给协议用"的东西，
 就该问一句它是不是也该搬去 `protocol`。
+
+## 10.22 逐条裁决那 10 条 `allow(dead_code)`
+
+`allow(dead_code)` 全仓 36 → **26**（§10.20 带走 COW 那条时记的数）。但 26 里 **16 条在锁模块**、
+性质相同——**锁库的预留面**（`lock/{bare,spin,rw,reentrant,lazy,depend,once}`，注释自述
+`// 未使用` / `// 预留`）。把"预留面"逐条删掉等于把锁库削成"当前用到的子集"，那是另一种坏。
+故本轮**只判那 10 条非锁库的**，锁那 16 条一并留档（见文末"留档"表）。
+
+方法：把 10 条 `#[allow]` 全部摘掉，**让编译器自己说**哪条真死——比读代码猜准。
+
+### 判完的账（26 → 19 条 allow）
+
+| 项 | 结论 | 依据 |
+|---|---|---|
+| `PhysAddr::page_align` | **真死 → 删**，名字让给 `VirtAddr::page_align` | 零调用者；真正在用的是 `fault::resolve_anonymous` 里的**地址侧**（`fault.addr` 是 `VirtAddr`）。原先 `PhysAddr` 上那份是**孪生体**——删掉它、在 `VirtAddr` 上补同名同义的一份 |
+| `Instant::{elapsed_since, elapsed, sub}` | **真死 → 删**（3 个） | 零调用者（`elapsed` 的"使用者"是它自己的 `elapsed_since`） |
+| `Instant::checked_duration_since` | **真死 → 删** | 零调用者 |
+| `MachineInfo::{uart, plic, clint}` | **删字段 + 删 banner 那三行** | 见下 |
+| `DepInitError::OutOfMemory` | **留（去 allow 后编译器不吭声）** | 错误域成员，`Debug` 派生即读 |
+| `depend::Level` | **留 allow**（一度被我误删，release 构建当场打回） | 见下 |
+
+### 两处值得单记
+
+**(1) `uart/plic/clint` 不是"预留"，是"假装有值"。**
+`machine::init` 只从 DTB 读 `hart` / `dram` / `free(整个 DRAM)` / `hertz` / `initrd`——
+这三个字段**从来没有被填过**，初值恒 `Region::new(0,0)`。于是 banner 上印着
+
+```
+uart  0x0
+plic  0x0
+clint 0x0
+```
+
+三行**看起来像诊断，其实恒零**。而真正的使用者（uart 驱动、`clint` 计时）各自硬编码自己的
+地址，从不读这三个字段 ⇒ 删字段 + 删那三行。**这是本轮的可见行为变化**：控制台少三行，
+归一化 md5 因此变（默认 `18313396…` → `11aefee7…`，audit 轮 `efd03cb4…` → `65aa6d84…`），
+两次门的 diff **逐字就是那 7 行**（三对"标签 + HEX 值"+ 三个空行）。
+
+**(2) `Level` 那条 allow 是"该留的"，而我差点判错。**
+我先按"release 档整体编译掉 ⇒ 不给 allow"给它加了 `#[cfg(debug_assertions)]`——**release 构建
+当场打回**：`lock/mod.rs:83``pub use depend::Level`、`bare.rs`/`spin.rs` 的 `level: Option<depend::Level>`
+**两档都在**（`SpinLock::new_level` 的签名里就有它）。真相是：`Level` 所有档都存在，
+只是**部分变体的读点落在 lockdep 那几段**（档位内）。而它是**坐标系**——多一个刻度
+不算死代码，少一个会让锁层级表（§9.3 的锁序表）失去一处出处。故恢复 allow，并把理由写进
+注释（"该留的 allow"而不是"忘了删"）。
+
+### 判据
+
+| | 值 |
+|---|---|
+| examine | **5/5**（默认 3/3 + audit 轮 + 融合 harden 轮无 lockdep） |
+| 行为变化 | **只有那三行 banner**：两档归一化 diff = 7 行（见上），无其它差异 |
+| 警告 | 三档（默认 check / audit / harden）与基线一致：7 / 1 / 1；**release 档 17 条**与 HEAD **逐行相同**（`layout.rs` 1 + `statistics.rs` 15 + `trace.rs` 1——都不是本轮引入，已用 stash 对拍确认） |
+| `allow(dead_code)` | 26 → **19**（内核）；其中锁库预留 16 条 + `Level` 1 条 + `statistics`/`trace` 遗留 2 条 |
+
+### 留档：锁库那 16 条为什么不动
+
+`lock/{bare 5, spin 3, rw 3, reentrant 2, lazy 2, depend 1, once 1}` —— 它们是**锁库的预留面**
+（自旋/裸/rw/可重入/惰性/一次性各留了几条没到用的时候的读法）。删掉它们等于把"锁库"缩成
+"当前调用点用到的子集"，下一个要用 `try_lock` / `read()` 的人得先把代码加回来——**预留不是
+飞线，飞线是"看起来有用但其实没有"**。这条界线记在这里，免得下一轮又把它当死代码清一遍。
