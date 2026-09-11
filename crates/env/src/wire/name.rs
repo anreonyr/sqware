@@ -21,6 +21,13 @@ pub enum NameError {
     TooLong,
     /// 含 NUL（会与填充歧义）。
     Nul,
+    /// 字节不是合法 UTF-8（**线格式入口**才会遇到：名字内容按 UTF-8 解释，
+    /// 而 [`Name::new`] 收的是 `&str`，天然合法）。
+    ///
+    /// 单列一个变体的理由：原先这条走 `Nul`，而 `Nul` 的定义是"含 NUL（会与填充
+    /// 歧义）"——与"不是 UTF-8"是两件事。错误域里没有别的变体能承载它，于是
+    /// **错标**：调用方若按变体补救（"含 NUL ⇒ 重新填充"），就会做错事。
+    BadUtf8,
 }
 
 /// 定长名字：32 字节、尾随 NUL 填充、内容非空且不含 NUL。
@@ -66,7 +73,7 @@ impl Name {
             return Err(NameError::Nul);
         }
         if core::str::from_utf8(&bytes[..len]).is_err() {
-            return Err(NameError::Nul);
+            return Err(NameError::BadUtf8);
         }
         Ok(Name { bytes })
     }

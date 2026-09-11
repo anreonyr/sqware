@@ -2962,48 +2962,68 @@ clint 0x0
 都是**"读代码的结论"**，而三条里三条都被实测改写。凡涉及声明顺序/编号这类
 **必须与宏展开对齐**的事实，读注释等于没读。
 
-### 两条**确认缺陷**（待裁，未修）
+### 两条确认缺陷 —— **已修**（用户裁决："修"）
 
-| # | 位置 | 事实 | 性质 |
+| # | 位置 | 修前实测 | 修法 |
 |---|---|---|---|
-| 1 | `wire/mod.rs:132` `Permission::unpack` | `*s.get(*i)? as u32` —— **先截断 32 位再校验** ⇒ 32 位以上永远非法不了。实测 `0x1_0000_0002` → `Ok(Permission(WRITE))` | 该文件头注写着"校验式 unpack，非法位 → Invalid，**不再静默截断**"——正是它要根除的那类静默截断，只是搬到了 32 位以上。a2/a3 由用户态完全控制（usize） |
-| 2 | `wire/name.rs:68-70` `Name::from_bytes` | 非 UTF-8 输入返回 `Err(NameError::Nul)`，实测确认 | 该变体定义是"含 NUL（会与填充歧义）"，`0xff` 与 NUL 无关；错误域里没有第三个变体 ⇒ **错标**（不是漏判）。定案看调用方是否按变体补救 |
+| 1 | `wire/mod.rs` `Permission::unpack` | `*s.get(*i)? as u32` —— **先截断 32 位再校验** ⇒ 32 位以上永远非法不了。实测 `0x1_0000_0002` → `Ok(Permission(WRITE))` | 改成 `u32::try_from(v).map_err(\|_\| Decode::Invalid)?` 再 `from_bits` ⇒ **宽度先判、再判位**。头注补上"超宽值同样要拒"的理由 |
+| 2 | `wire/name.rs` `Name::from_bytes` | 非 UTF-8 → `Err(NameError::Nul)`，而 `Nul` 的定义是"含 NUL（会与填充歧义）" | 新增变体 `NameError::BadUtf8` 并在此返回它（原先是**错标**：错误域里没有变体能承载"不是 UTF-8"） |
 
-两条修法都极小（前者先判 `v > u32::MAX`；后者或加变体、或让调用方不按变体分支）。
-**本轮不修**：本轮的裁决是"测"，修是独立一刀（且第二条的修法取决于调用方形状，
-属接口变更）。
+**加变体为什么不构成接口破坏**：全仓 `NameError` 的消费点只有两处——`protocol/src/dispatch.rs:152`
+把它存进 `ProtocolError::BadName(NameError)`（纯存储，不 match），以及 `:178` 主动构造 `Empty`。
+**零处 `match` ⇒ 加变体不破坏任何穷尽性**。（若将来有调用方按变体补救，现在的口径才是对的：
+"含 NUL"与"不是 UTF-8"是两件不同的事。）
 
 #### 顺带记录的两条小事
 
 - `Name::is_empty()` **恒为 false**：两个构造入口都不允许空名 ⇒ 该方法没有返回 `true` 的路径。
   与 §10.22 那批同族，但它**不是 `allow(dead_code)`**（编译器看不见——调用的可能性存在）。
+  **未动**：删它要先确认没有调用方靠它做"名字是否为空"的判定（现读点只在本 crate 的测试面）。
 - `frompair.rs:53,64` 的 `(PieToken, Permission)` / `(PieToken, Permission, TaskId)` 走
   `from_bits_truncate`（静默截断），而同一个 `Permission` 在 `Wire` 路上走 `from_bits`（校验）
-  ⇒ **同一个值的两条还原路径口径相反**。未实测，只记事实。
+  ⇒ **同一个值的两条还原路径口径相反**。**本轮未动**（见下"留下的不对称"）。
 
-### 判据
+### 判据（修复后）
 
 | | 值 |
 |---|---|
-| 宿主测试 | `cargo test --manifest-path crates/testhost/Cargo.toml` ⇒ **27 passed / 2 failed**（那 2 红是**缺陷本身**：断言写的是"修好之后应该是什么"） |
+| 宿主测试 | **9 passed / 0 failed** —— 两条缺陷的断言现在写的是**修复后的行为**，绿即修好；另 7 条是回归控制（各族往返、拒绝面、蒸馏位布局） |
 | `fmt` | `cargo fmt --check` 零输出 |
 | 裸机侧 | `cargo check --workspace --all-targets` **无 error**；警告数与 §10.22 基线一致（`kernel` 7 + manifest 4） |
-| examine | **5/5**（默认 3/3 + audit 轮 + 融合 harden 轮无 lockdep）；audit 站点计数四零态保持（`sites=0 live=0 tomb=0 orphan=0 dead=0 waiters=0`、`roster=8 alive=0`） |
-| **行为零变化** | 默认三轮归一化 md5 = `11aefee70ff9a6d33cfec8dbf11ef5fc`（×3，逐字节相同）；audit 轮 = `65aa6d84ab3e903bb15dde7529610e5f`（与 §10.22 基线**逐字节相同**）⇒ **`ecall::trap` 的 `#[cfg]` 门控对 riscv 产物零影响**（riscv 分支的汇编一字未动，这是它的直接证据） |
+| examine | **5/5**（默认 3/3 + audit 轮 + 融合 harden 轮无 lockdep）；audit 四零态保持（`sites=0 live=0 tomb=0 orphan=0 dead=0 waiters=0`、`roster=8 alive=0`） |
+| **行为零变化** | 默认三轮归一化 md5 = `11aefee70ff9a6d33cfec8dbf11ef5fc`（×3）；audit 轮 = `65aa6d84ab3e903bb15dde7529610e5f` —— **与 §10.22 基线逐字节相同**。这是缺陷 1 那条**收紧**（超宽值从"静默接受"变成"拒绝"）**只在非法输入上生效**的直接证据：合法输入下内核行为一字未改 |
 | 归一化口径 | `trace/a2-norm2.sh`（剥 ANSI → `0x…`→`HEX` → 其余数字→`N`）；**门自己不产出 md5**，比对是宿主侧手工步骤 |
+
+### 留下的不对称（记账，本轮未动）
+
+`Wire::unpack` 现在是**拒绝式**，`FromPair::from_pair` 仍是**截断式**（`from_bits_truncate`）。
+两者不是同一类东西，但**口径确实相反**，且都在同一个 `Permission` 上：
+
+- `Wire` 收的是**用户态输入**（a2/a3 整寄存器，完全可控）⇒ 必须拒绝；
+- `FromPair` 收的是**内核回写的 a0/a1**（v1 低 32 位 = permission bits，高 32 位 = vestor）
+  ⇒ 截断是**位打包契约的一部分**，不是校验缺失。
+
+要"统一"就得先给 `FromPair` 换签名（`Result`），那会波及 derive 生成的 `call()` 与
+全部调用点——**属接口变更，独立一刀**。当前口径记在此处：**输入面拒绝、回写面按契约取位**。
 
 ### 删什么、留什么（用户裁决："测完就可以删了"）
 
-本 crate 是**一次性实验草稿**，刻意做成纯减法：
+本 crate 是**一次性实验草稿**，刻意做成纯减法。**建过两次**：第一次量形态、抓缺陷；
+第二次（修缺陷那一刀）验证修复与回归。两次都删干净。
 
 | 项 | 处置 |
 |---|---|
-| `crates/testhost/`（含 `Cargo.toml` / `.cargo/config.toml` / `src/lib.rs` / `tests/`） | **测试进程结束后整个删掉** |
-| 根 `Cargo.toml` | **一行未改**（`exclude` 都没加——自带 `[workspace]` 已够） |
-| `crates/env/src/ecall.rs` 的 `#[cfg(target_arch = "riscv64")]` 门控 + 宿主 stub | **保留**（这是三条门里唯一"值钱"的那一条；删了宿主侧再无落脚点） |
-| `docs/audit-flying-wires.md` 本节 | **保留**（删了 crate 就没人知道那两条缺陷是怎么确认的） |
+| `crates/testhost/`（含 `Cargo.toml` / `.cargo/config.toml` / `src/lib.rs` / `tests/`） | **两次都整目录删掉** |
+| 根 `Cargo.toml` / 根 `Cargo.lock` | **一行未改**（`exclude` 都没加——自带 `[workspace]` 已够；实测根 lock 里 `testhost` 命中 0） |
+| `crates/env/src/ecall.rs` 的 `#[cfg(target_arch = "riscv64")]` 门控 + 宿主 stub | **保留**（这是三道门里唯一"值钱"的那一条；删了宿主侧再无落脚点） |
+| `docs/audit-flying-wires.md` 本节 | **保留**（删了 crate 就没人知道那两条缺陷是怎么确认、怎么修的） |
 
-⇒ 删完之后，宿主侧单测这条路**回到"没有落脚点"的状态**，本节记的就是它当初怎么被立起来、
-以及立起来当场抓到了什么。**要不要重建、以什么形态常驻，是下一刀的裁决**；
-本轮只证明了一件事：**这条路通，而且一趟就能抓到东西**。
+⇒ 删完之后，宿主侧单测这条路**回到"没有落脚点"的状态**。**重建成本已实测**：
+三道门照本节抄，三分钟能跑出结果——两次都是这么做的。
+
+**记一条已知代价**：那 9 条断言**不在树里**，所以两条缺陷的修复**没有回归网**——
+改回去不会有人红。补上网要么让 crate 常驻、要么把纯 crate 的测试面内联
+（`crates/env` 摘 `test = false`，但那会撞上 workspace 的 `panic = "abort"`，
+要先裁工作区剖面）。**以什么形态常驻，是下一刀的裁决**；本节只证明了两件事：
+**这条路通**，以及**它一趟就能抓到东西**。
 

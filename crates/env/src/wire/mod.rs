@@ -123,14 +123,19 @@ impl Wire for crate::fid::ProgramKind {
 
 /// 权限位掩码（envcall 单一真相；unpack 走 `from_bits` 校验，非法位 → `Invalid`，
 /// 替代旧 `from_bits_truncate` 的静默截断）。
+///
+/// **超宽值同样要拒**：`a2`/`a3` 是整寄存器（`usize`），故「先 `as u32` 再校验」等于
+/// 把 32 位以上静默丢掉后再判合法——`0x1_0000_0002` 会被解成 `WRITE` 而不是 `Invalid`，
+/// 那正是本条要根除的那类静默截断，只是搬到了高位。故先判宽度、再判位。
 impl Wire for crate::permission::Permission {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
         s[*i] = self.bits() as usize;
         *i += 1;
     }
     fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
-        let v = *s.get(*i).ok_or(Decode::Overflow)? as u32;
+        let v = *s.get(*i).ok_or(Decode::Overflow)?;
         *i += 1;
-        crate::permission::Permission::from_bits(v).ok_or(Decode::Invalid)
+        let bits = u32::try_from(v).map_err(|_| Decode::Invalid)?;
+        crate::permission::Permission::from_bits(bits).ok_or(Decode::Invalid)
     }
 }
