@@ -2629,3 +2629,68 @@ per-page 那 1 byte 从"配额分类"变成**对象身份**之后，「在不在
 | 串普查 | `debit on already-held page` 三档**全 0**（banker 的报文体随文件一起消失）；audit 档现在带 ledger 的 `unmark: no record` + checker 的两条（`allocated non-free frame` / `freeing non-held frame`）；融合档再加 `lock-order level violation` |
 | 反向验证 | 上面第 3 条即是：把 `held()` 写成错的（对齐命中就当包含）⇒ `freeing non-held frame` 当场报 ⇒ 修好即绿 |
 | 警告 | 三档与基线一致（默认 `cargo check` 7 / audit 1 / harden 7）。**附记**：默认 **release** 档另有 10 条死码警告（`health` / `view_*` 在 `debug_assertions` 关时不可达）——§9.0 那句"两档 0 dead-code warning"是 **dev（`cargo check`）口径**下的结论，release 口径从来不成立（实测：release 17 条，调用点与 HEAD 逐字相同 ⇒ 非本轮引入）。
+
+## 10.19 泄漏现场取证：让「哪种对象」变成「哪一条」
+
+§10.16 把关机判据从「帧/块各还差多少」推进到**逐种类点名**（`[audit] leak: task 1`），
+方向是对的，但那条报告只说得出**哪一类**没归零，说不出**哪一条分配点、哪一个对象**。
+而它抓到的那条既存违规（audit 档的 `leak: task 1`）恰好是**间歇**的：二十余轮里只见过一次
+（`trace/fuse-r1/run1`，seed 336576081），随后连记录在案的种子都复现不出来。间歇 +
+名字不详 = 既定位不了也修不了。
+
+本轮的处置是**补上那两级信息**，而不是继续盲扫。
+
+### 加了什么
+
+`fence::audit::dump_records(kind)`——挂点就在那条报告的下一行（`check_baseline` 里
+`if n != 0` 的分支内，`report` 之前）：
+
+```
+[audit] leak: task 1
+[audit]   task @ 0x8479f200 size 48 site 0x8023fe60
+[audit]     <- TaskIdent: strong 1, id 7
+[audit]     name "u-thread"
+```
+
+**它补的量**：记录**地址**、**尺寸**、分配点 **`site`**（host `addr2line` 可符号化
+——`alloc_site` 的回溯栈早就把它存进账本了，只是从来没人读），以及 `Kind::Task` 记录
+的**对象身份**。
+
+`Kind::Task` 的记录就是 `ArcInner<{Task, TaskIdent}>`（两种都经
+`tagged_alloc(Kind::Task)` 标注，尺寸不同故可分辨）：头 16 字节是 strong/weak 计数、+16
+起是载荷。`Task` 的载荷首字是指向 `TaskIdent` 的 `Arc` 数据指针；`TaskIdent` 的载荷首字
+是 `id`、次字是 `name`（`&'static str` 二元组 = 指针 + 长度）。于是**名字**能直接打出来
+——名册（`roster_live`）只说"还有条目活着"，本条说得出"是哪一个"。`name` 只在指针落在内核
+镜像内（`_kernel_start`..`_kernel_edge`，新加的两个读法 `image_base()` / `image_edge()`）时
+才读，且是只读诊断。
+
+### 三条纪律（都不新造机制，只是把已有的约束在这条路上重申一次）
+
+1. **不加判据**。它只打印：不改任何计数、不写任何表、不参与 `report` 与否。泄漏的判定
+   仍然只有一条（`End::Zero` 逐种类归零）。
+2. **锁纪律**：本条要两次问账本（先抄记录、再按地址指认内层 `TaskIdent`），而
+   `LEDGER.for_each` 是**持有** Ledger 锁的遍历 ⇒ 嵌套调用即自锁死（`ledger::retire` 的头注
+   记过同一个坑）。故先抄进**预先分配好**的缓冲（锁内零分配），放锁后再互相指认。
+3. **有上限**：最多打印 64 条（超了打一行 `... N records, first 64:`）。取证输出不许自己
+   变成刷屏源——同类事故在本文件里已实证过一次（58 MB 控制台，§10.18）。
+
+### 判据
+
+| | 值 |
+|---|---|
+| examine | **5/5**（默认 3/3 + audit 轮 PASS + 融合 harden 轮 PASS 无 lockdep） |
+| 行为零变化 | 默认档三轮归一化 md5 = `183133960fd82a1ff0f4a4c3f8863355`（A2 基线，逐字节不变）；**audit 轮**归一化 md5 = `efd03cb45e01a4acefef90a34ba32735`，与 §10.18 那一轮的基线**逐字节相同** |
+| 串普查 | 两轮 `[audit]` 行数同为 10、词汇表 `diff` 完全一致——即本轮在**没有泄漏的关机**上**一个新字符串都不产生**（这是"只在已判泄漏时打印"的直接证据，不是承诺） |
+| 正向对照 | 临时把泄漏分支短路（每种有记录的 kind 都无条件走一遍转储）后单跑一轮：转储打出 **32 条**，同帧的关机行是 `plain 32` ⇒ **账本侧记录数与统计侧计数对得上**；32 条**全是 `plain`**、`task` 一行没有，而同帧 `zero 8/8` ⇒ 有记录才打印、无记录不打印，两个方向都在同一次输出里成立；随手挑的 `site` 符号化正常（`0x8023fe60` → `<RawVecInner>::non_null::<(usize, TableNode)>`，`0x8021b344` → `scheduler::core::table::current`）。补丁**已还原**（`audit.rs` 与补丁前逐字节一致） |
+| 警告 | 三档与基线一致（默认 `cargo check` 7 / audit 1 / harden 7；7 条全部落在 `statistics.rs`(6) 与 `diagnose/trace.rs`(1)，**无一来自本轮改动的文件**） |
+
+#### 未验到的一处（如实记下）
+
+**`Kind::Task` 的载荷解码一次都没跑到**——对照恰好证明了「没有记录时它就是安静的」，
+而那条真泄漏在本轮二十余轮里一次都没复现（含记录在案的失败种子）。所以"尺寸 48/88
+分流、`strong` 计数、`id`、`name`"这几步仍是**读代码的结论**，不是实测；要实测只能等它
+现形，或人为造一条 Task 记录（那是伪造账，没做）。
+
+同一轮尝试里还撞到一件与泄漏无关的事实：**主动压测（连续产/销任务）在 `-m 128` 下会
+先把 128 MB 的内核堆吃满**（`memory allocation of 114688 bytes failed`，来自
+`env::ecall::trap` 即用户堆请求），与这台机器的长跑上限有关、与本轮改动无关，未追。
