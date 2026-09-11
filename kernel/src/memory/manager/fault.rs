@@ -132,6 +132,13 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
                 //（A/D 竞争 / 陈旧 TLB）判为 resolved，所以到此处 PTE **不满足**
                 // 本次访问 ⇒ 权限违例（如写 R-only 的 cap⊆页表场景），或物化簿记与
                 // 页表不一致。前者是 fault isolation 的正常触发，后者才是内核 bug。
+                //
+                // **"写只读私有页"只有一条来源，且不该被恢复**（用户裁决，§10.23）：
+                // 私有页的 W 只有 `Mprotect` 能翻回去（物化取 `map.flags`、`protect`
+                // 重写叶 PTE，除此之外没有第二个写点），所以一次写缺页 = **程序自己
+                // 写了自己标成只读的页**。内核在这里"帮它把 W 翻回来"等于把
+                // `Mprotect` 从**边界**降级成**建议**——它同时是 `narrow` 收紧后的
+                // 执法点。故此处继续判 false（fault isolation），不恢复。
                 match space.translate(fault.addr) {
                     Some((_paddr, flags)) if !satisfies(flags, fault.kind) => {
                         // PTE 在但权限不足 ⇒ 真实访问违例，杀 task（非法越权访问）。
