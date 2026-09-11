@@ -326,9 +326,24 @@ impl SpaceInner {
     ///
     /// 先校验覆盖、后落改（`maps` 互不重叠 ⇒ 相交长度之和 == size ⟺ 全覆盖）。
     ///
+    /// # 所有权闸（借入页只能收紧）
+    ///
+    /// **借入**映射（`frames` 空、`pending` 无 —— 见 [`Map::is_borrowed`]）的物理帧
+    /// 归外部所有，那份映射是别人所有权的**只读借用**（Pole 视图等）。对它，新 flags
+    /// 必须是当前 PTE flags 的**子集**；否则拒 [`MapError::WidenDenied`]。
+    ///
+    /// 为什么必须在这里挡：叶 PTE 是权限的**权威**（`map.flags` 只是指针，且只对
+    /// 惰性态同步），而本函数是全树唯一的 flags 写点。放行加宽等于开一个按 VA 就
+    /// 能扩大他人资源权限的入口——`narrow` 的 `cap ⊆ 页表` 契约正是靠"加宽无路可走"
+    /// 成立的（`Mprotect` 走的就是本函数，它没有、也不该有 pie 句柄）。
+    ///
+    /// 自有的页（满帧 / 懒区 / guard）不受此限：那是调用方自己的内存，重设权限是
+    /// 它的正当用途（如把私有页重新标成可写）。
+    ///
     /// # Errors
     ///
     /// - `NoRegion` — 区间内有页不落在任何 map（此时尚未落任何改动）
+    /// - `WidenDenied` — 区间内有借入页要被加宽（此时尚未落任何改动）
     /// - 叶操作失败 — 簿记与页表分叉（不变量违反，见 `audit` 的反向核对）
     pub(crate) fn protect(
         &mut self,
@@ -357,7 +372,34 @@ impl SpaceInner {
         if covered != size {
             return Err(MapError::NoRegion);
         }
-        // 2. 落改（root 与 maps 是不同字段，可同时可变借出）
+        // 2. 所有权闸先行（同样整体失败、状态未动）：借入页不许被加宽。
+        //    用页表当前 flags 判"加宽"（叶 PTE 是权威，不读可能陈旧的 map.flags）。
+        {
+            let root = &self.root;
+            for m in self.maps.iter() {
+                if !m.is_borrowed() {
+                    continue;
+                }
+                let Some((s, lo, hi)) = span(m) else { continue };
+                let lo_pg = (lo - s) / PAGE_SIZE;
+                let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
+                let mut denied = false;
+                m.runs(lo_pg, hi_pg, |rva, rsize| {
+                    for i in 0..(rsize / PAGE_SIZE) {
+                        let page = rva + i * PAGE_SIZE;
+                        if let Ok((_, cur)) = root.walk_ref(page)
+                            && flags.bits() & !cur.bits() != 0
+                        {
+                            denied = true;
+                        }
+                    }
+                });
+                if denied {
+                    return Err(MapError::WidenDenied);
+                }
+            }
+        }
+        // 3. 落改（root 与 maps 是不同字段，可同时可变借出）
         let mut fault: Option<MapError> = None;
         let root = &mut self.root;
         for m in self.maps.iter_mut() {

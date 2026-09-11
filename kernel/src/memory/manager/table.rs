@@ -53,6 +53,14 @@ pub enum MapError {
     /// Span 与段状态不一致（释放时 VA/size 不匹配——调用方 bug）。
     #[error("span does not match segment state")]
     SegmentMismatch,
+    /// 试图给**借入页**加权限（加宽被所有权挡住）。
+    ///
+    /// 借入页（Pole 视图等）的物理帧归外部所有、其映射的帧表为空——那份映射是
+    /// 别人所有权的**只读借用**。故它只能收紧、不能加宽：加宽 = 单方面扩大自己对
+    /// 他人资源的权限，而 `narrow` 的 `cap ⊆ 页表` 契约正是靠"加宽无路可走"成立的。
+    /// 自有的页（懒区 / 满帧）不受此限——那是调用方自己的内存。
+    #[error("cannot widen a borrowed mapping")]
+    WidenDenied,
 }
 
 /// 页表页 — 512 条目 × 8 字节 = 4 KiB，对齐到页边界（三类模式同宽）。
