@@ -68,7 +68,11 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
 /// `HART_FRAME_BASE` 恒映射、帧常驻不迁移，故此处直读安全。
 fn hart_frame_pa() -> usize {
     // SAFETY: kernel satp 下本 hart 帧恒映射；只读帧头一个字段，不改任何状态。
-    unsafe { (*(machine::hart_frame().as_usize() as *const TrapContext)).user_pa.as_usize() }
+    unsafe {
+        (*(machine::hart_frame().as_usize() as *const TrapContext))
+            .user_pa
+            .as_usize()
+    }
 }
 
 /// 陷阱分发 — 汇编入口（`jalr trap_handler`）的唯一 Rust 侧。
@@ -327,4 +331,3 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
 /// `RoomCall::Reap` 带上来的"域自己的诊断编号"共用同一个字段，值域不重叠：
 /// 域从 1 开始编号，内核用高位段。
 const EXIT_FAULT: usize = 0xFFFF_FFFF;
-

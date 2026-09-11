@@ -143,7 +143,7 @@ pub(crate) fn cull(roots: &[Arc<Team>]) {
             }
         }
     }
-    let victims: Vec<Arc<Task>> = tasks.into_iter().filter(|t| suspend(t)).collect();
+    let victims: Vec<Arc<Task>> = tasks.into_iter().filter(suspend).collect();
     for task in victims {
         reap(task);
     }

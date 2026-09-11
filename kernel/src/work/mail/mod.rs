@@ -21,8 +21,8 @@
 // 用户句柄 = per-pie token（全局唯一），envcall 以 token 寻址。
 
 pub mod hole;
-pub mod pole;
 pub mod nole;
+pub mod pole;
 
 // 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（gate → mail 单向依赖）。
 pub(crate) use hole::HoleMeta;

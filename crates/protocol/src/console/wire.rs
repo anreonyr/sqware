@@ -114,10 +114,7 @@ pub enum Reply {
     /// Open/Write/Close 成功；Open 时 `client` 是新会话 id。
     Ok { client: usize },
     /// ReadLine：一行（不含 `\n`）。
-    Line {
-        len: usize,
-        payload: [u8; LINE_MAX],
-    },
+    Line { len: usize, payload: [u8; LINE_MAX] },
     /// ReadLine：Ctrl-D。
     Eof,
     /// ReadLine：Ctrl-C。
@@ -148,11 +145,19 @@ impl Request {
         m[LEN_AT..LEN_AT + 8].copy_from_slice(&(len as u64).to_le_bytes());
         match self {
             Request::Write { len, payload, .. } => {
-                let n = if *len > PAYLOAD_LEN { PAYLOAD_LEN } else { *len };
+                let n = if *len > PAYLOAD_LEN {
+                    PAYLOAD_LEN
+                } else {
+                    *len
+                };
                 m[PAYLOAD_AT..PAYLOAD_AT + n].copy_from_slice(&payload[..n]);
             }
             Request::ReadLine { len, prompt, .. } => {
-                let n = if *len > PAYLOAD_LEN { PAYLOAD_LEN } else { *len };
+                let n = if *len > PAYLOAD_LEN {
+                    PAYLOAD_LEN
+                } else {
+                    *len
+                };
                 m[PAYLOAD_AT..PAYLOAD_AT + n].copy_from_slice(&prompt[..n]);
             }
             _ => {}
@@ -198,7 +203,11 @@ impl Request {
                 }
                 let mut payload = [0u8; PAYLOAD_LEN];
                 payload.copy_from_slice(&m[PAYLOAD_AT..PAYLOAD_AT + PAYLOAD_LEN]);
-                Ok(Request::Write { client, len, payload })
+                Ok(Request::Write {
+                    client,
+                    len,
+                    payload,
+                })
             }
             x if x == Op::ReadLine as u8 => {
                 if rpeer != 0 {
@@ -212,7 +221,11 @@ impl Request {
                 }
                 let mut prompt = [0u8; PAYLOAD_LEN];
                 prompt.copy_from_slice(&m[PAYLOAD_AT..PAYLOAD_AT + PAYLOAD_LEN]);
-                Ok(Request::ReadLine { client, len, prompt })
+                Ok(Request::ReadLine {
+                    client,
+                    len,
+                    prompt,
+                })
             }
             x if x == Op::Close as u8 => {
                 if rpeer != 0 {

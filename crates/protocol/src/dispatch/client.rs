@@ -101,8 +101,7 @@ impl Directory {
     /// 超时（`Busy`）后本会话不可复用——迟到的回复会污染下一次 pull。
     fn call(&self, request: &Request) -> EnvResult<Reply> {
         let mut msg = request.encode();
-        msg[REPLY_AT..REPLY_AT + 8]
-            .copy_from_slice(&self.reply_target.get().to_le_bytes());
+        msg[REPLY_AT..REPLY_AT + 8].copy_from_slice(&self.reply_target.get().to_le_bytes());
         self.entry.push(&msg)?;
         let mut buf = [0u8; MSG_LEN];
         self.reply.pull_timeout(&mut buf, REPLY_TIMEOUT_MS)?;
@@ -231,7 +230,9 @@ impl Service {
         self.entry.push(&msg)?;
 
         let mut buf = [0u8; MSG_LEN];
-        self.channel.mine().pull_timeout(&mut buf, REPLY_TIMEOUT_MS)?;
+        self.channel
+            .mine()
+            .pull_timeout(&mut buf, REPLY_TIMEOUT_MS)?;
         let mut out = [0u8; PAYLOAD_LEN];
         out.copy_from_slice(&buf[8..]);
         Ok(out)

@@ -48,8 +48,8 @@ use core::time::Duration;
 use protocol::dispatch::{MSG_LEN, Name, Reply, Request};
 
 use protocol::console::client::{Console, Readline};
-use runtime::core::handshake::{self, Pier, Quay};
 use protocol::dispatch::client::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
+use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
 use runtime::core::unit;
 use runtime::env::{

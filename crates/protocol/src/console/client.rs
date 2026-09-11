@@ -28,7 +28,6 @@ use super::wire::{MSG_LEN, PAYLOAD_LEN, Reply, Request};
 /// 一次往返的上界（毫秒）。与 dispatch 的 `REPLY_TIMEOUT_MS` 同值。
 const REPLY_TIMEOUT_MS: usize = 1000;
 
-
 fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(-1))
 }
@@ -143,7 +142,11 @@ impl Console {
             self.write(prompt)?;
         }
         let bytes = prompt.as_bytes();
-        let n = if bytes.len() > PAYLOAD_LEN { PAYLOAD_LEN } else { bytes.len() };
+        let n = if bytes.len() > PAYLOAD_LEN {
+            PAYLOAD_LEN
+        } else {
+            bytes.len()
+        };
         let mut pbuf = [0u8; PAYLOAD_LEN];
         pbuf[..n].copy_from_slice(&bytes[..n]);
         self.entry.push(
@@ -176,7 +179,10 @@ impl Console {
         if self.client == 0 {
             return Ok(());
         }
-        match self.call(&Request::Close { client: self.client })? {            Reply::Ok { .. } => Ok(()),
+        match self.call(&Request::Close {
+            client: self.client,
+        })? {
+            Reply::Ok { .. } => Ok(()),
             _ => Err(denied()),
         }
     }

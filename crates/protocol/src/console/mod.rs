@@ -33,6 +33,5 @@ pub mod wire;
 pub use client::{Console, Readline};
 pub use server::{Decoder, Key, State, TICK_MS};
 pub use wire::{
-    CLIENT_AT, LINE_MAX, MSG_LEN, Op, PAYLOAD_LEN, ProtocolError, REPLY_PEER_AT, Reply,
-    Request,
+    CLIENT_AT, LINE_MAX, MSG_LEN, Op, PAYLOAD_LEN, ProtocolError, REPLY_PEER_AT, Reply, Request,
 };

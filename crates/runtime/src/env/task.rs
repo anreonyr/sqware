@@ -36,7 +36,12 @@ pub fn args() -> &'static [usize] {
 /// 2. 调用方仍须是 S 态（血缘树不进沙箱外，理由见 `env::fid` 该 variant）。
 ///
 /// 名字 ≤ 31 字节。失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（门没过）。
-pub fn build(elf: &[u8], kind: ProgramKind, name: &str, build: &crate::env::mail::NolePie) -> EnvResult<TeamId> {
+pub fn build(
+    elf: &[u8],
+    kind: ProgramKind,
+    name: &str,
+    build: &crate::env::mail::NolePie,
+) -> EnvResult<TeamId> {
     let r = UnitCall::Build {
         elf: VirtAddr::new(elf.as_ptr() as usize),
         len: elf.len(),

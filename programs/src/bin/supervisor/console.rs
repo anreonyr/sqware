@@ -82,7 +82,9 @@ fn input_loop() -> ! {
             let _ = sleep(core::time::Duration::from_millis(TICK_MS as u64));
             continue;
         };
-        let Some(key) = dec.advance(byte) else { continue };
+        let Some(key) = dec.advance(byte) else {
+            continue;
+        };
         // ③ 落到共享状态；若这一键收尾，把「哪个会话 + 什么结果」放进待交付格。
         let done = CONSOLE.with(|s| s.on_key(key));
         if let Some((client, reply)) = done {

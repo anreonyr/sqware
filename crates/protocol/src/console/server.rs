@@ -40,7 +40,7 @@ use anstyle_parse::{Params, Parser, Perform};
 
 use runtime::env::io;
 
-use super::wire::{PAYLOAD_LEN, Reply, Request, LINE_MAX};
+use super::wire::{LINE_MAX, PAYLOAD_LEN, Reply, Request};
 
 /// 同时在线的客户端上界（会话 id = 槽位 + 1）。
 const MAX_CLIENTS: usize = 8;
@@ -234,8 +234,16 @@ impl State {
     fn handle(&mut self, request: Request) -> Outcome {
         match request {
             Request::Open { reply } => self.open(reply),
-            Request::Write { client, len, payload } => self.write(client, len, &payload),
-            Request::ReadLine { client, len, prompt } => self.readline(client, len, &prompt),
+            Request::Write {
+                client,
+                len,
+                payload,
+            } => self.write(client, len, &payload),
+            Request::ReadLine {
+                client,
+                len,
+                prompt,
+            } => self.readline(client, len, &prompt),
             Request::Close { client } => self.close(client),
         }
     }
@@ -426,7 +434,11 @@ impl State {
             Key::Eof => Reply::Eof,
             _ => {
                 let bytes = r.line.text().into_bytes();
-                let n = if bytes.len() > LINE_MAX { LINE_MAX } else { bytes.len() };
+                let n = if bytes.len() > LINE_MAX {
+                    LINE_MAX
+                } else {
+                    bytes.len()
+                };
                 let mut payload = [0u8; LINE_MAX];
                 payload[..n].copy_from_slice(&bytes[..n]);
                 Reply::Line { len: n, payload }
@@ -482,7 +494,11 @@ impl Perform for OneKey {
     fn print(&mut self, c: char) {
         // AsciiParser 把 `0x7f`(DEL) 归入可打印区间 → `print`。拦截为退格，
         // 使退格键（0x7f 或 0x08）统一走 Backspace，而非插入 `\x7f` 字符。
-        self.key = Some(if c == '\x7f' { Key::Backspace } else { Key::Char(c) });
+        self.key = Some(if c == '\x7f' {
+            Key::Backspace
+        } else {
+            Key::Char(c)
+        });
     }
 
     fn execute(&mut self, byte: u8) {

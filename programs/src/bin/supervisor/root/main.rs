@@ -24,11 +24,11 @@ extern crate programs;
 
 use env::{Name, TaskId, TeamId};
 use runtime::core::handshake::{self, Pier, Quay, Refer, Referred};
-use runtime::env::mail::{self, HolePie};
-use runtime::env::task as utask;
 use runtime::env::io::put;
 use runtime::env::mail::NolePie;
+use runtime::env::mail::{self, HolePie};
 use runtime::env::room::{exit, exit_with};
+use runtime::env::task as utask;
 
 mod manifest;
 

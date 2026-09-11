@@ -19,8 +19,8 @@ extern crate programs;
 
 use env::Permission;
 use protocol::dispatch::MSG_LEN;
-use runtime::core::handshake::{self, Pier, Quay};
 use protocol::dispatch::client::Directory;
+use runtime::core::handshake::{self, Pier, Quay};
 use runtime::env::mail::{AnyPie as _, HolePie};
 
 #[unsafe(no_mangle)]

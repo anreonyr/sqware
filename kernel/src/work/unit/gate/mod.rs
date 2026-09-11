@@ -29,19 +29,19 @@
 
 mod accord;
 mod cull;
-mod right;
 mod narrow;
 mod pie;
 mod release;
 mod revoke;
+mod right;
 mod snap;
 
 pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, new_pie};
 
 pub(crate) use accord::accord;
 pub(crate) use cull::{cull, doom};
-pub(crate) use right::holds_build_right;
 pub(crate) use narrow::narrow;
 pub(crate) use release::release;
 pub(crate) use revoke::revoke;
+pub(crate) use right::holds_build_right;
 pub(crate) use snap::{install, snap, vestable, vestor};
