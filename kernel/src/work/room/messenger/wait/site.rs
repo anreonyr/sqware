@@ -24,7 +24,7 @@ use super::holder::Ticket;
 ///
 /// **没有位打包**：`Space` 的两个字段各自完整，不再把 asid 挤进高 16 位、用户键
 /// 截到低 48 位。旧 `WaitKey::compose` 的单射性靠掩码保证，还因此逼出一个
-/// `#[inline(never)]` 的 mask helper 去躲 size 优化下的错联（§13.10 A）——枚举下
+/// `#[inline(never)]` 的 mask helper 去躲 size 优化下的错联——枚举下
 /// 这两样都不需要：没有 mask，就没有 mask 错联。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WakeKey {

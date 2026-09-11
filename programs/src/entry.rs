@@ -25,7 +25,7 @@ extern "C" fn exit_trampoline() -> ! {
     exit()
 }
 
-/// 域内 panic：留**只有本侧知道**的那一半，然后把处置交给内核（§10.35）。
+/// 域内 panic：留**只有本侧知道**的那一半，然后把处置交给内核。
 ///
 /// 分工的判据是"谁知道这件事"：
 ///
@@ -37,7 +37,7 @@ extern "C" fn exit_trampoline() -> ! {
 ///
 /// 收尾走 [`exit`]（= `RoomCall::Reap { reason: 0 }`）：**内核不需要知道"这是一次
 /// panic"**——那是域的判断，内核只需要"这个任务不再续跑"。本仓一度另立了
-/// `ControlCall::Panic` 走这条路，已收回（§10.36）：它把域的策略写进了 ABI，并让
+/// `ControlCall::Panic` 走这条路，已收回：它把域的策略写进了 ABI，并让
 /// "任务终止"这条不变量在 ABI 里有两个出口。
 ///
 /// panic 现场禁忌（照旧）：**不能**走 `format!` / `writeln!`（潜在分配 → 双重 panic）。

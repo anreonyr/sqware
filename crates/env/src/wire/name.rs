@@ -62,8 +62,7 @@ impl Name {
     /// 对偶**：构造期义务在两条入口上都成立（非法名不可表达）。
     ///
     /// `pub`：它是 `Name` 线格式的**解码面**，使用者是用户态协议
-    /// （`task::core::dispatch` 的 decode）；语义上属于本 crate，不随协议搬家
-    /// （见 docs §10.21）。
+    /// （`crates/protocol/src/dispatch` 的 decode）；语义上属于本 crate，不随协议搬家。
     pub fn from_bytes(bytes: [u8; NAME_LEN]) -> Result<Name, NameError> {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
         if len == 0 {

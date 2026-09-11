@@ -2,7 +2,7 @@
 
 > 目录是一个**普通 Service**，不是内核特殊机制。它只有一个 req hole；Register /
 > Unregister / Replace / Resolve / Enumerate / Connect 全是该 hole 上的消息。
-> 内核面没有它的入口调用（原 `ServiceCall` / class 7 已删除）。
+> 内核面没有它的入口调用（原 `ServiceCall` 已删除——那个号位现在是权柄轴 `PieCall`）。
 
 ## 1 · 语义定位
 
@@ -19,7 +19,7 @@
 目录**不负责**：启动服务、停止服务、调用服务、执行 operation、解释业务载荷。
 
 **Disconnect 不在协议里**：它不改绑定表，只改调用方自己的权限表——它是调用方的
-自释原语 `MailCall::Release`，与目录无关。
+自释原语 `PieCall::Release`，与目录无关。
 
 ## 2 · 操作集（6 个 + 1 个父域动作，封闭）
 
@@ -90,7 +90,7 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 ## 5 · 身份与授权
 
 ```text
-调用方 ──启动期握手（Pier）──▶ 目录请求门闩（**dir 亲授**；Owned 取回 owner = 目录 task id）
+调用方 ──启动期握手（Pier）──▶ 目录请求门闩（**dir 亲授**；Reserve 取回 owner = 目录 task id）
 调用方 ──UnsealHole + Accord──▶ 目录：回信 hole 的对端 token（写进 [49..57]）
 目录   ──gate::accord──▶ 调用方权限表（子集 R|W）
 服务 id = 入口门闩的 owner（资源开辟者，服务自己 UnsealHole 出来的）
@@ -104,7 +104,7 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 - **反方向用 `owner` 而不是 `vestor`**：调用方认服务时，门闩可能经手多次（root 分发、
   目录转授），`vestor` 每次都会改写成中间人；`owner` 挂在资源上，任意副本同值。
 - **硬规则：服务必须自开入口 hole**（`UnsealHole` 自己那份）。若由他人代开，
-  `Owned(entry).owner` 指向代开者，调用方会把回信 hole 授给错的人。
+  `Reserve(entry).owner` 指向代开者，调用方会把回信 hole 授给错的人。
 - **授权只用已有原语**：`Connect` 就是 `gate::accord` 转授子集；注册资格就是
   「父域把这个名字预约给了你」——不需要新的 capability 类型。
 - 授权链 `service →(VEST) 目录 →(R|W) 调用方`；目录不带 BACK，故可自由代授。
@@ -151,12 +151,12 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 
 | 原语 | 一句话 | 补的洞 |
 |---|---|---|
-| `MailCall::Collect { index } -> (PieToken, Permission, TaskId)` | 报出我持有的第 index 份（含其 `vestor`）——**唯一的枚举手段** | 用户态此前**无法自省自己的权限表** |
-| `MailCall::Owned { token } -> (TaskId, TaskId)` | 我持有的这枚门闩：`vestor`（谁授的）+ `owner`（资源谁开的） | 此前**只能看门闩的来历，看不到资源的来历**（转手即丢） |
-| `MailCall::Release { token }` | 放下我自己的一份**及其全部后代**（Pole 同步 unmap） | 此前**没有任何自释路径**（`revoke` 只允许授与人收回） |
+| `PieCall::Collect { index } -> (PieToken, Permission, TaskId)` | 报出我持有的第 index 份（含其 `vestor`）——**唯一的枚举手段** | 用户态此前**无法自省自己的权限表** |
+| `PieCall::Reserve { token } -> (TaskId, TaskId)` | 我持有的这枚门闩：`vestor`（谁授的）+ `owner`（资源谁开的） | 此前**只能看门闩的来历，看不到资源的来历**（转手即丢） |
+| `PieCall::Release { token }` | 放下我自己的一份**及其全部后代**（Pole 同步 unmap） | 此前**没有任何自释路径**（`revoke` 只允许授与人收回） |
 
 配对：`Unseal*` ↔ `Seal`（动资源）；`Accord` ↔ `Revoke`（他人）；`Collect`（枚举）↔
-`Owned`（查证）↔ `Release`（放下，自己）。
+`Reserve`（查证）↔ `Release`（放下，自己）。
 
 ### 7.1 派生关系与级联撤销
 
@@ -169,7 +169,7 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 | `gate::heirs(token, snap)` | 子门闩 = `sire == token` 的那些（持有者 + 子 token） |
 | `gate::vestable(pie, dst, snap)` | BACK 守门：带 BACK 只能授回 `sire` 的持有者 |
 
-快照由 `scheduler::core::roster()` 提供（旧名 `snap`，§9.3 轮③ 名册合一）、boot 经
+快照由 `scheduler::core::roster()` 提供（旧名 `snap`）、boot 经
 `gate::install` 注入——**gate 不依赖
 scheduler**（依赖倒置）。`gate` 与 `envcall` 的分工：核心收算法、适配层拍快照。
 
@@ -187,7 +187,7 @@ scheduler**（依赖倒置）。`gate` 与 `envcall` 的分工：核心收算法
 **`Release` 级联**换来「父在则子在」：一枚门闩只能连同它的子树一起消失，故
 `sire` 永不悬空，也**不需要** seL4 的 `RevokeFirst`。
 
-**ABI 零变更**：`Accord` / `Revoke` / `Release` / `Collect` / `Owned` 的形状与线上
+**ABI 零变更**：`Accord` / `Revoke` / `Release` / `Collect` / `Reserve` 的形状与线上
 字节都不动；`sire` / `cull` / `doom` 全是内核内部。
 
 **在途语义**：撤销只作用于能力、不作用于在途数据——已 push 进 hole 槽的消息，
@@ -208,7 +208,7 @@ scheduler**（依赖倒置）。`gate` 与 `envcall` 的分工：核心收算法
 回收）；**开辟者消亡 → 它开的资源随之回收**（`doom` 摘其门闩 → 引用归零）；
 `PoleMeta::drop` 自己撤映射、还物理帧，`HoleMeta::drop` 自己唤醒等待者。
 
-**封印只归开辟者**（`MailCall::Seal` 的鉴权 = `meta.owner() == caller`，O(1)）：
+**封印只归开辟者**（`PieCall::Seal` 的鉴权 = `meta.owner() == caller`，O(1)）：
 
 - 他人 `Seal` → `Denied`；已封印再 `Seal` → `Dead`。
 - 主人 `Seal` 只**置死 + 唤醒**，不回收——内存由引用归零回收。于是主人有两档：
@@ -226,7 +226,7 @@ scheduler**（依赖倒置）。`gate` 与 `envcall` 的分工：核心收算法
 ### 7.3 发送者盖章（Hole 消息带来源）
 
 **问题**：目录原先按请求体 `[49..57]` 的回信 token 求 `vestor` 认人。内核没撒谎
-（`Owned` 如实回答「这枚门闩谁授给我的」），但协议信了**一段可猜的整数**——pie
+（`Reserve` 如实回答「这枚门闩谁授给我的」），但协议信了**一段可猜的整数**——pie
 token 是全局连续小整数，猜中别人的 token 即可冒充其身份（可利用面：`Unregister`
 解绑、`Replace` 换绑别人的名字）。
 
@@ -240,7 +240,7 @@ token 是全局连续小整数，猜中别人的 token 即可冒充其身份（�
 | `HoleMeta.slot` | 从 `Vec<u8>` 变成 `{ buf, from }`——来源与消息同一次写入 |
 
 目录据此：`caller = pull 回来的 sender`；回信地址仍取报文里的 token，但**必须是该
-sender 授给目录的那一枚**（`Owned(reply).vestor == caller`），否则丢弃回复——防
+sender 授给目录的那一枚**（`Reserve(reply).vestor == caller`），否则丢弃回复——防
 「替他人收信」。
 
 **为什么不是「不可猜的 token」**：那只是把猜中概率降低，且需要内核秘密与真熵源；
@@ -252,7 +252,7 @@ sender 授给目录的那一枚**（`Owned(reply).vestor == caller`），否则�
 **问题**：目录原先对注册完全开放——任何被引荐的域都能注册任意空闲名字（先到先得），
 且 `Register` **不验发起者**，猜到一枚目录侧 token 就能把名字绑到**别人的入口**上。
 
-**结构性约束**：目录只能验证**交到它手里的门闩**（`Owned`/`Collect` 只对自表），
+**结构性约束**：目录只能验证**交到它手里的门闩**（`Reserve`/`Collect` 只对自表），
 看不见别人的权限表，也没有「谁持有 X 的派生」这类查询。所以「调用方必须持有 X」这条
 规则在目录里**无法实现**；可实现的只有两种形态：① 调用方把 X **交给目录**（目录读
 它的 `vestor`/`owner`/`alive`）；② 目录**自己记一条记录**。任何命名权限方案因此都会
@@ -283,7 +283,7 @@ sender 授给目录的那一枚**（`Owned(reply).vestor == caller`），否则�
 root:
   1. 逐子域串行：dock(child)（开上行孔 mtu=9 + Accord(child, R|W|VEST)）
      → Build + Spawn(Held) → Hatch
-     → Quay::pull（子域控制孔在父侧的句柄；校验 Owned(句柄).vestor == child）
+     → Quay::pull（子域控制孔在父侧的句柄；校验 Reserve(句柄).vestor == child）
   2. 客户端要目录能力时：`Refer{who, name}` → dir 控制孔；`Referred{token}` ← dir 上行孔
      → Pier{token} → 子域控制孔（`name` 即**预约**：这个名字从此归该子域）
   ※ root 全程不持任何服务孔（见 docs/root.md §10）
@@ -293,13 +293,13 @@ dir:   moor() 认上行孔 → UnsealHole 自建请求门闩 H（**只自己持*
        → Spawn 控制线程（Held）→ Accord(H/C/上行孔 三枚副本给它) → Hatch
        → 主线程服务循环；控制线程 pull(C) → **先 reserve(name, who)** → H.accord(who, R|W) → Referred
 echo:  moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}
-       → UnsealHole 自建入口门闩 → Pier::pull → Directory::open（dir_id = Owned(门闩).owner）
+       → UnsealHole 自建入口门闩 → Pier::pull → Directory::open（dir_id = Reserve(门闩).owner）
        → Directory::register("echo", entry)（内部 Accord(entry, dir_id, R|W|VEST) + 回信 hole）
 shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}
        → Pier::pull → Directory::open(门闩)
 ```
 
-- **没有任何整数身份进报文或启动参数**：目录 id 由 `Owned(门闩).owner` 从资源事实推出。
+- **没有任何整数身份进报文或启动参数**：目录 id 由 `Reserve(门闩).owner` 从资源事实推出。
 - **子域启动参数为空**；`Spawn` 的 args 只剩内核给 root 的清单视图。
 - **控制孔与服务孔必须分两条孔**：Hole 是单槽信箱，同一条孔上既 push 又 pull 会把自己
   刚写的消息读回来（实测死锁，见 `docs/root.md` §6.4）；B 之后更要求「父域拿不到服务孔」。
@@ -310,8 +310,8 @@ shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句�
 
 | 决策 | 定论 |
 |---|---|
-| `ServiceCall`（class 7） | **删除**——它是入口策略，不是原语 |
-| 根授予 | 逐级委托（`Accord`）+ 启动期握手（`Quay`/`Pier`）+ 自省（`Collect`/`Owned`）；不做公开 id |
+| `ServiceCall` | **删除**——它是入口策略，不是原语（该号位后来归权柄轴 `PieCall`） |
+| 根授予 | 逐级委托（`Accord`）+ 启动期握手（`Quay`/`Pier`）+ 自省（`Collect`/`Reserve`）；不做公开 id |
 | 接口形态 | 一份入口门闩（A3）；回信由调用方自带 |
 | 一个名字几个 provider | 1 个 |
 | 名字权限 | **父域预约**（§7.4）：名字由 root 经 `Refer{who, name}` 播种；`Register` 资格 = 预约者本人 **且** 入口门闩是它亲手交给目录的 |
@@ -335,9 +335,9 @@ shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句�
    两相是**正确性要求**：钩子会摘门闩、唤醒等待者，若还有受害者能被唤醒后运行，
    它就会在注定要死的状态下看到已死资源。
 6. **预约行的寿命由 root 维护**：预约绑 task id，而目录**无法判断别的任务死活**
-   （`Owned`/`Collect` 只对自表）。故「服务重启」= root 重新 `Refer` 覆盖该行。
+   （`Reserve`/`Collect` 只对自表）。故「服务重启」= root 重新 `Refer` 覆盖该行。
    v1 里 root 全程在场，可接受；但名字的寿命与能力的寿命因此不是同一套机制。
-7. **门闩类型无查询原语**：`Owned`/`Collect` 对 Hole/Pole 同形，目录**无法**拦下
+7. **门闩类型无查询原语**：`Reserve`/`Collect` 对 Hole/Pole 同形，目录**无法**拦下
    被绑进名字表的 Pole。危害仅限发布者自己（该门闩必须满足 `vestor == caller`，
    即它自己交给目录的），客户端 `push` 时得 `Denied`。
 8. **回信地址不能与入口同一枚门闩**：注销会释放目录手里那枚入口副本（§7.2），
@@ -356,7 +356,7 @@ shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句�
    实体时跳过 `attach_map`，整段走懒登记。
 3. **`trap` 内联后返回值错**（`crates/env/src/ecall.rs`）：
    asm 块被内联进调用方时，调用方读回的 a0 恒 0；独立函数调用则正确。修法：
-   `#[inline(never)]`（与仓库对裸 asm 的一贯纪律同源，见 `docs/ipc.md` §13.10 A.2）。
+   `#[inline(never)]`——与仓库对裸 asm 的一贯纪律同源：**内联会改写我读回的寄存器**。
 4. **hole 等待键取堆地址 → 陈旧唤醒闩被继承**（`kernel/src/work/mail/hole.rs`
    `key()` + `crates/runtime/src/env/mail.rs` `pull_timeout()`）：`wait_sites` 的站点从不回收，
    而 `messenger::wake` 在「无等待者」时置 `pend = true`；成功走**裸 pull** 的调用方
@@ -383,7 +383,7 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 
 `req` 路径：`Directory::open`（收下启动期握手配给的目录请求门闩，自造回信 hole 并
 `Accord` 给目录）→ `Connect("echo")`（目录 `gate::accord` 转授入口门闩）→ 调用方
-`Owned(entry).owner` 求服务 id → `UnsealHole` + `Accord` 给该 id（自带回信通道）
+`Reserve(entry).owner` 求服务 id → `UnsealHole` + `Accord` 给该 id（自带回信通道）
 → `Push`（前 8 字节回信 token）→ echo `+1` → `Push` 回信 → `Pull` →
 `disconnect`（`Revoke` + `Release`）。
 
@@ -400,77 +400,25 @@ spoof: ok
   实例门闩消亡后名字自动回到「无实例」/ 死实例不锁名字。
 - `spoof`（§7.3）：内核盖章 + 正向对照 + 逐个猜 200 枚回信 token 解绑 echo 全部失败。
 
-## 13 · 文件清单
+## 13 · 文件清单（当前）
 
-```
-新增  crates/protocol/src/dispatch.rs       协议类型 + 编解码（原在 crates/env，§10.21 独立成 crate）
-新增  kernel/src/work/unit/gate/release.rs  自释原语
-新增  task/src/core/directory.rs            目录注册表 + 协议适配（用户态）
-新增  task/src/bin/supervisor/dir.rs        目录域程序（S 态：Collect 门闩 → 请求循环）
-删   kernel/src/service/                   目录移出内核（原为内核闭包任务）
-改写  kernel/src/boot.rs                    根授予 + 三域装载（shell / echo / dir）
-改   crates/env/src/fid.rs                  +Collect/Release；删 ServiceCall/ServiceId
-改   crates/env/src/wire.rs                 +FromPair (PieToken, Permission)
-改   crates/env/src/ecall.rs                warpper #[inline(never)]
-改   kernel/src/runtime/switcher/envcall.rs Collect/Release handler；删 class 7
-改   kernel/src/runtime/switcher/trampoline.rs  __utrap 保存顺序修复
-改   kernel/src/work/unit/loader.rs         纯 .bss 段装载修复
-改写  task/src/env/service.rs               Directory 会话 + Service 句柄
-改   task/src/env/mail.rs                   collect() / release() 封装
-改   task/src/bin/shell.rs                  req 走新协议 + dir 命令
-```
+```text
+crates/protocol/src/dispatch/
+  mod.rs      协议类型与操作集（6 个 + 父域 `Refer`）
+  wire.rs     线格式：64 字节请求 / 定长回复
+  client.rs   调用方会话：open / connect / call / disconnect
+  server.rs   服务侧：注册表（预约行 + 至多一个实例）+ 控制线程
 
-### 13.1 派生与撤销（本次新增）
+programs/src/bin/supervisor/dir.rs      目录域程序（S 态：请求线程 + 控制线程）
+crates/runtime/src/core/handshake.rs    Refer / Reserve / Referred（父域引入）
+crates/runtime/src/core/lock.rs         用户态互斥（Lock::with）
 
-```
-新增  kernel/src/work/unit/gate/snap.rs       全世界任务快照 + 沿 sire 的查询
-新增  kernel/src/work/unit/gate/cull.rs       级联撤销 cull + 退出钩子 doom
-改   kernel/src/work/unit/gate/pie.rs         Pie.sire（唯一的派生边）
-改   kernel/src/work/unit/gate/accord.rs      子门闩写 sire；去掉 current_id
-改   kernel/src/work/unit/gate/{revoke,release}.rs  鉴权 + 级联
-改   kernel/src/work/room/scheduler/core.rs   snap()（存活任务快照，O(存活)）
-改   kernel/src/boot.rs                       EXIT_HOOKS 加 gate::doom + 注入快照
-改   kernel/src/runtime/switcher/envcall.rs   Accord/Revoke/Release/Collect/Owned 取快照
-改   task/src/bin/user/shell.rs               cascade 自检命令（三跳/无关分支/release/任务消亡）
+内核侧（与协议无关，但被它用到）
+kernel/src/work/unit/gate/{pie,snap,cull,accord,revoke,release}.rs  门闩 + 派生 + 级联
+kernel/src/work/mail/{hole,pole}.rs     数据面（槽带发送者；封印只置死）
+kernel/src/runtime/switcher/envcall.rs  Push 盖章 / Pull 回传发送者 / 收集与放下
+kernel/src/boot.rs                      只装 root；其余子域（dir / echo / console / shell）由 root 建
 ```
 
-### 13.2 资源寿命与封印（本次新增）
-
-```
-删   kernel/src/work/mail/memo.rs             全局资源表（寿命改由引用计数决定）
-改   kernel/src/work/mail/hole.rs             ResourceId/alloc_id 迁入；Drop 接管唤醒；seal 只置死
-改   kernel/src/work/mail/pole.rs             meta() 直接返 Arc；seal 只置死
-改   kernel/src/work/unit/gate/pie.rs         Pie.meta: Arc<M>（唯一强引用）；删 resource/alive
-改   kernel/src/work/unit/gate/{accord,cull,narrow}.rs  强引用克隆 / 锁外 drop / alive 按 variant
-改   kernel/src/runtime/switcher/envcall.rs   Seal 鉴权 owner-only；各 arm 取 Arc
-改   task/src/bin/user/shell.rs               reclaim 自检命令（引用回收 / 封印归属 / 开辟者消亡）
-```
-
-### 13.3 发送者盖章（本次新增）
-
-```
-改   crates/env/src/fid.rs                    Pull 返回 (长度, 发送者 TaskId)
-改   crates/env/src/wire.rs                   +FromPair (usize, TaskId)
-改   kernel/src/work/mail/hole.rs             槽带 from；try_push/try_pull 传递来源
-改   kernel/src/runtime/switcher/envcall.rs   Push 盖章、Pull 回传 a1
-改   task/src/env/mail.rs                     pull_from() / HolePie::pull_from()
-改   task/src/bin/supervisor/dir.rs           caller = sender；回信地址一致性检查
-改   task/src/core/service.rs                 Directory::reply_target()（自检用）
-改   task/src/bin/user/shell.rs               spoof 自检命令（盖章 / 正向对照 / 猜 token）
-```
-
-### 13.4 名字权限（本次新增）
-
-```
-新   task/src/core/lock.rs                    Lock::with（用户态互斥，锁程 = 闭包程）
-改写  task/src/core/directory.rs              核心（reserve/publish/replace/unpublish/entry_of/
-                                              enumerate）+ 协议适配（serve）；事实与释放改为注入
-改   task/src/core/mod.rs                     +pub mod lock
-改   task/src/core/handshake.rs               Refer{who, name}（TAG_RESERVE，41B）+ REFER_MTU
-改   task/src/core/service.rs                 dir_id 入会话；register/unregister/replace；协议负码
-改   task/src/bin/supervisor/dir.rs           static Lock<Directory>；控制线程先预约再开门
-改   task/src/bin/supervisor/root/main.rs     Refer::named（把名字播种给子域）
-改   task/src/bin/supervisor/echo.rs          改用 Directory::register
-改   task/src/bin/user/shell.rs               name 自检命令；spoof 正向对照改用预约名
-改   crates/protocol/src/dispatch.rs          文档：身份来源、预约、NotFound/Denied 语义（当时路径为 crates/env）
-```
+本文档此前逐批罗列改动过的文件（含 `task/` 时代的旧路径）。那些清单已随 git 历史归档
+——**改动清单属于提交信息，不属于设计文档**；这里只留「现在东西在哪」。

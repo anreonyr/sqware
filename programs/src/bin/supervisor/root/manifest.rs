@@ -6,7 +6,7 @@
 //! ```
 //!
 //! `kind` 来自内核的打包表（`build.rs::INITRD_BINS`），不是程序自述——root 只
-//! 读取并原样转交 `Build`（见 `docs/supervisor.md` §13）。
+//! 读取并原样转交 `Build`（见 `docs/root.md` §5）。
 
 use alloc::vec::Vec;
 

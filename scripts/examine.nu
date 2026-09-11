@@ -12,7 +12,7 @@
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`）。
 # 默认连跑 3 次要求 3/3；任一判据不过 ⇒ 该轮 FAIL，进程以非零退出。
 #
-# ── 三条补上的断言（§9.3「三条缺失断言的处置」，只在 audit 档跑）─────────────
+# ── 三条补上的断言（只在 audit 档跑）─────────────────────────────────────────
 # `redeem` / `wipe` / `prune` 三条内核路径**本来就已被现有探针走到**，缺的是断言：
 #   1) `redeem`：`sleep <ms>` 走到「票 → 持票人 → 键 → 站点」，`woke` 即断言——但
 #      原来只跑一个时长、一轮一次。audit 档在 `sleep 300` 之后**追加** `sleep 700`：
@@ -24,7 +24,7 @@
 #      关机点（排在 `scheduler::rip` **之前**的那条只读钩子）打印站点表计数
 #      `[audit] sites N live N tomb N orphan N waiters N`；门断言全部任务退出后
 #      **无孤儿站点、无活站点、无残留等待者**（「孤儿 == 0」才是对 `prune` 的直接
-#      断言；总数与墓碑数是同一帧的记账，非判据——实测见 §9.3）。
+#      断言；总数与墓碑数是同一帧的记账，非判据）。
 #      **ABI 未动**：只加计数与打印，没有新 envcall、没有改任何对外调用号。
 #
 # 用法：scripts/examine.nu                    # 默认连跑 3 次，要求 3/3
@@ -49,22 +49,21 @@
 # （调换构建顺序也一样，因为搬运发生在下一次构建之前）。
 # 判据一条没动：哨兵、九 marker、逐步 expect、自退非 124、无 panic 全部照旧（新步只追加）。
 #
-# ── 既存违规（**不是**豁免）───────────────────────────────────────────────────
-# audit 档的关机审计有一条**已记账**的既存违规（A2 线，未修）：`[audit] task lifecycle leak
-# at shutdown: 19 frames, 9 blocks` ⇒ `report()` ⇒ `[panic] at …`。故 audit 轮**就该判 FAIL**、
-# 整体**就该非零退出**；门只在这条 FAIL 的原因串里如实写出「是什么」并指到
-# `docs/audit-flying-wires.md` §9.3「关机审计第二条违规：已收缩到一个因（属 A2 线，未修）」。
-# **没有**「已知失败不算失败」的开关：那条违规没从判据里摘掉，阈值没放宽，ok 仍为 false。
-# 标注只加在**已经判 FAIL** 的轮上（调用点前置 `$why != ""`）⇒ 判定既不增也不减。
+# ── 三档都该绿（**没有**豁免机制）─────────────────────────────────────────────
+# 默认 / audit / harden 三档跑的是同一套判据，三档**都该 PASS**。没有「已知失败不算失败」
+# 的开关：没有白名单，没摘 marker，没放宽阈值，ok 恒为 `$why == ""`。
+# 若 audit 档的关机审计报了对象种类泄漏（`[audit] leak: …`），那是一条**回归**，该轮当场
+# FAIL；`existing_violation_note` 只负责把这条 FAIL 的原因串写得更具体——它只在**已经判
+# FAIL** 的轮上追加话，判定既不增也不减。
 #
 # ── qemu 起法：唯一出处 scripts/boot.nu ────────────────────────────────────────
 # 门**不凑 qemu 参数**：`^nu scripts/boot.nu <elf>`，QEMU_TIMEOUT / QEMU_SEED / QEMU_ICOUNT
 # 等全由它解释（见该文件头注）。**icount 显式置空**——boot.nu 的默认档是 `auto,sleep=on`，
-# 门必须主动关掉：带 icount 实测两批 14/18、关掉后两批 20/20（docs/audit-flying-wires.md §9.3）。
+# 门必须主动关掉：带 icount 实测两批 14/18、关掉后两批 20/20。
 # 要复现「同 seed 可跑同一条轨迹」时才设 EXAMINE_ICOUNT=auto,sleep=on。
 #
 # ── 输入：长驻写端（为什么是一门管道，而不是 .sh 的 FIFO）─────────────────────
-# 两条实测教训（§9.3）：写端在下游还没持读端时会被 **SIGPIPE 杀掉**，日程后半段的命令
+# 两条实测教训：写端在下游还没持读端时会被 **SIGPIPE 杀掉**，日程后半段的命令
 # 一条都写不出去；stdin 一旦 **EOF**，guest 把它当 **Ctrl-D** ⇒ shell 自退、自然停机
 # （qemu 退码 0），于是「超时/存活」这类探针测到的是关机。
 # .sh 的手法是自持 FIFO 写端（`exec 3>` 阻塞到 qemu 打开读端），收尾 `exec 3>&-`。
@@ -82,7 +81,7 @@
 # `task: all tasks exited, system halted` 且 qemu 自退 rc=0；同时 `ps -o args=` 里 qemu
 # 命令行**无 `-icount`**。同一次实验也记下 `^cat < f` 的失败形态。
 #
-# ── nu 语义地雷（改本脚本前先读，§9.3 记过）──────────────────────────────────
+# ── nu 语义地雷（改本脚本前先读）──────────────────────────────────────────────
 #   - 外部命令非零退出 ⇒ **当场中止整个脚本**（其后语句都不执行）。故取退出码只有两条路：
 #     `… | complete`（读 .exit_code）或 `try { … } catch { }` 后再读 `$env.LAST_EXIT_CODE`。
 #   - **没有 `<` 重定向**；`do -i` 会把退出码清成 0（退出码这个观测量就丢了）。
@@ -199,7 +198,7 @@ const AUDIT_ORDER = [
 # 这一档跑的是 `--profile harden --features $features`（= release + `debug-assertions = true`
 # + audit）：把**两半护栏放进同一份产物**——容器⇔状态断言 / 整条 lockdep（L1/L3 锁序）
 # 与 audit 的 ledger 记账 + checker 的帧侧链式不变式。旧版只带前者，于是"帧分配器的同一条不变量有两份实现、
-# 而没有任何一档同时带着它们"这件事一直没有被门盯住（docs §10.16）；
+# 而没有任何一档同时带着它们"这件事一直没有被门盯住；
 # 正向对照因此从 1 串升到 **4 串**（断言 / banker / ledger / lockdep），少任何一串即退出。
 # 它断言两件事：
 #   ① 那条 kill 路径的探针照旧（`stray` / `cascade`）；
@@ -212,14 +211,14 @@ const HARDEN_MARKERS = [
 ]
 
 # harden ELF 的**正向对照**：这一档必须真的带着断言，否则它就退化成「又跑了一遍默认档」
-# 而没人发现。实测过的事实（docs §10.1）：release ELF 里这两句各 0 次、debug ELF 里各 1 次。
+# 而没人发现。实测过的事实：release ELF 里这两句各 0 次、debug ELF 里各 1 次。
 # 取容器断言那一句当探针——它在 `Scheduler::push` 里，任何构建都编得进去（非 cfg 代码）。
 const HARDEN_PROBE = "starved 容器只收 Starved 任务"
 # harden 档要**同时**带的四串：容器⇔状态断言（debug-assertions）· ledger 活块账本 ·
-# checker 的帧侧链式不变式 · lockdep 锁序报文体。四串齐 = 两半护栏在同一份产物里
-# （docs §10.16）。第三串原为 banker 的 `debit on already-held page`——banker 删除后
-# 换成 checker 的 `allocated non-free frame`（帧侧"在不在手"从 banker 位图搬到
-# pagemeta 的核对点；**门跟着搬**，见 docs §10.18）。
+# checker 的帧侧链式不变式 · lockdep 锁序报文体。四串齐 = 两半护栏在同一份产物里。
+# 第三串原为 banker 的 `debit on already-held page`——banker 删除后换成 checker 的
+# `allocated non-free frame`（帧侧「在不在手」从 banker 位图搬到 pagemeta 的核对点；
+# **门跟着搬**）。
 const HARDEN_PROBES = [
   $HARDEN_PROBE
   "unmark: no record"
@@ -282,7 +281,7 @@ def audit_count [field: string, file: path] {
 }
 
 # ── 关机终值违约的如实标注（**不是**豁免）────────────────────────────────────
-# 逐对象种类记账（docs §10.16）之后，关机的真泄漏判据是**每种对象的期望终值**：
+# 逐对象种类记账之后，关机的真泄漏判据是**每种对象的期望终值**：
 # 违约时内核逐条打印 `[audit] leak: <kind> N`，随后 `report(AuditDivergence)` ⇒ `[panic] at …`，
 # 于是「无崩溃」判据必然挂。**那一轮就该 FAIL**：本函数**只**往原因串里补一句
 # 「是哪种对象、记在哪一节」，不碰 ok/FAIL，不开开关、不设白名单、不摘 marker、不放宽阈值。
@@ -296,7 +295,7 @@ def existing_violation_note [file: path] {
   let what = (if $found == null { "对象种类泄漏（原文行取不到，见捕获）" } else { $found | str replace --all "[audit] leak: " "" })
   # 同一因的第二笔账（同源）：在就一并写出来，不在就不提。
   let table = (if (hit 'table frames [0-9]+ != kernel-walk count [0-9]+' $file) { " + table frames != kernel-walk count" } else { "" })
-  $"关机终值违约[($what)($table)]：逐对象种类终值判据，记账 docs/audit-flying-wires.md §10.16"
+  $"关机终值违约[($what)($table)]：逐对象种类终值判据"
 }
 
 # 等 marker 出现在捕获里；limit 秒内没等到 ⇒ false。每步独立超时（.sh 同名函数的语义，
@@ -628,8 +627,8 @@ def main [] {
     # **正向对照（四串）**：这一档必须**同时**带着两半护栏——断言（debug-assertions）
     # 与记账（audit feature 的 banker/ledger），再加 lockdep 的报文体。少任何一串，
     # 这一档就退化成"又跑了一遍别的档"而没人发现（旧版只查一句断言串，故"两半从不
-    # 同时在场"这件事一直没有被门盯住——docs §10.16）。
-    # 实测基线（docs §10.1）：同一句断言在 release ELF 里 0 次、debug ELF 里 1 次。
+    # 同时在场"这件事一直没有被门盯住）。
+    # 实测基线：同一句断言在 release ELF 里 0 次、debug ELF 里 1 次。
     for probe in $HARDEN_PROBES {
       let r = (^grep -ac -- $probe $elf_harden | complete)
       let found = ($r.stdout | str trim)
@@ -656,7 +655,7 @@ def main [] {
     let r = (run_once $cfg $i "default")
     $total_rounds += 1
     # 这两行**不能**写成 `$"… (自退 + …)"`：插值里的 `(` 会被当成子表达式、把紧跟的汉字
-    # 当命令调用（nu 0.115 实测：`Command `自退` not found`，正是 §9.3 记过的那颗地雷）。
+    # 当命令调用（nu 0.115 实测：`Command `自退` not found`，这类地雷改写本脚本时踩过一次）。
     # 故结果行用拼接写，只有变量进插值。
     if $r.ok {
       $pass += 1
@@ -676,7 +675,7 @@ def main [] {
     if $r.ok {
       $pass += 1
       # 标签照实写：audit 档判的是**孤儿 == 0 / 活 == 0 / 等待者 == 0**，不是「站点表已空」
-      # （实测 sites=34 全是墓碑，docs §9.3「三条缺失断言落地」已记明总数不作判据）。
+      # （实测 sites=34 全是墓碑；总数不作判据）。
       print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 10 步全过 + 14 marker 齐 + 站点表：无孤儿/无死键/无活站点)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (audit 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))

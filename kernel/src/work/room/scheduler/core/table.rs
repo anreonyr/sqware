@@ -135,7 +135,7 @@ pub(crate) fn roster() -> Vec<Weak<Task>> {
 /// 摘到。只持本 hart 的 inner(L1)，逐 hart 顺序取、不嵌套其它锁。
 ///
 /// 注：`state` 的读取与容器动作不在一把锁里（读来自调用方），窗口内被别核 seat 走
-/// ⇒ 这里返 false ⇒ 本次 kill 丢失（见 `docs/audit-flying-wires.md` §10.3 C1）。
+/// ⇒ 这里返 false ⇒ 本次 kill 丢失（受害者会留在容器里不被收——这一步做错就是这个后果）。
 pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
     for s in schedulers() {
         let mut i = s.inner.lock();

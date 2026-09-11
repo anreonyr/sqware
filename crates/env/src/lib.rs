@@ -3,7 +3,7 @@
 //! codec + 线类型 + 发起骨架），独立共享 crate。
 //!
 //! **不含服务目录协议**（`Request`/`Reply`/`MSG_LEN`）——那是纯用户态协议，住在
-//! `crates/protocol`（内核零引用；见 docs §10.21、§10.26）。
+//! `crates/protocol`（内核零引用；依赖方向 `kernel → env → runtime → protocol → programs`）。
 //!
 //! 方案 3（typed payload）：各调用域枚举（`RoomCall` 等）是带类型载荷的 variant，
 //! 字段类型为语义句柄（`PieToken`/`TaskId`/`VirtAddr`）或 `Permission`/裸量；

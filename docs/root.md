@@ -14,14 +14,14 @@
 | AC4 | 现有 e2e 不回归 | ✅ `spawn`/`dir`/`req`/`hole`/`clock`/`exit`（release + debug） |
 | AC5 | 子域崩溃也能被父域观察到 | ✅ `Join` 由内核在收尾路径唤醒；返回真 ⇔ 退出钩子已跑完 |
 | AC6 | 子域启动参数为空、服务门闩自开 | ✅ `Spawn(.., &[], ..)`；`dir`/`echo` 各自 `UnsealHole` |
-| AC7 | 目录身份不经报文/启动参数传递 | ✅ 客户端用 `Owned(门闩).owner` 求得（见 §9） |
+| AC7 | 目录身份不经报文/启动参数传递 | ✅ 客户端用 `Reserve(门闩).owner` 求得（见 §9） |
 
 ## 2 · 裁决账
 
 | 裁决 | 定论 |
 |---|---|
 | D1 | **E5**：清单解释权上移——内核不含清单格式，只把 initrd 区只读映射给 root |
-| D2 | 建域资格 = **S 态**（U 态 `Build` 一律 `-1 Denied`；Pie 不破例） |
+| D2 | 建域资格 = **能力**（`UnsealNole` 铸一枚，S 态门控）+ **S 态兜底**；U 态即便持有建域权也一律 `-1 Denied`。两道门不是冗余：能力答「谁有权」，S 态答「血缘树能不能伸进沙箱外」 |
 | D3 | 建域与授权**分两笔**（`Build`/`Spawn` → `Accord` → `Hatch`） |
 | D4 | 关机判据 = 计数（`PUSHED/REAPED`）+ `ROOTED` 守门（原 `BOOT_DONE`） |
 | D5′ | 新增 `Join { task, millis }`（有界，内核驱动唤醒） |
@@ -31,10 +31,10 @@
 | N1 | 诊断名挂**域**（`Team.name: Name`，线程保留角色名） |
 | N2/N3/N4 | 非 `Held` → `-1`；`Join` 放开 `usize::MAX`；`MAX_ARGS = 64` |
 | 命名 | `Build`（装域）/ `Spawn`（产线程）/ `Hatch`（放行）/ `Join`（等结束） |
-| T2-1 | **内核盖章**：`HoleMeta/PoleMeta.owner`（资源开辟者）+ `MailCall::Owned` |
+| T2-1 | **内核盖章**：`HoleMeta/PoleMeta.owner`（资源开辟者）+ `PieCall::Reserve` |
 | T2-2 | 报到通道 = **父域预建的报到孔**（一条，串行握手共用） |
 | T2-3 | 握手**串行**（hatch 一个 → 收报到 → 配给 → 下一个） |
-| T2-4 | 删 `Reply::Connected.owner`（同一事实由 `Owned` 给出） |
+| T2-4 | 删 `Reply::Connected.owner`（同一事实由 `Reserve` 给出） |
 | T2-5 | 启动通道**不回收**（`memo` 保活到关机） |
 | T2 命名 | 子→父 `Quay`（报到）/ 父→子 `Pier`（配给）/ `dock`（父侧开孔）/ `moor`（子侧认孔） |
 | J1 | **死亡两相**：`suspend` 先把整棵血缘子树的受害者**全部停摆**（置 `Doomed`），再逐个 `die`（钩子 → `Reaped` → 入队）。两相是正确性要求——钩子会摘门闩、唤醒等待者，若还有受害者能被唤醒后运行，它会在注定要死的状态下看到已死资源 |
@@ -45,11 +45,14 @@
 |---|---|---|
 | 0 | `Spawn` | `{ team: TeamId, entry: usize, args: VirtAddr, count: usize, stack: usize }` → `TaskId` |
 | 5 | ~~`SpawnTask`~~ | **空号**（并入 `Spawn`，不复用） |
-| 6 | `Build` | `{ elf: VirtAddr, len: usize, kind: ProgramKind, name: VirtAddr, name_len: usize }` → `TeamId` |
+| 6 | `Build` | `{ elf: VirtAddr, len: usize, kind: ProgramKind, name: VirtAddr, name_len: usize, build: PieToken }` → `TeamId` |
 | 7 | `Hatch` | `{ task: TaskId }` → `()` |
 | 8 | `Join` | `{ task: TaskId, millis: usize }` → `bool` |
 
 - `Spawn` **恒产 `Held`**；`team = TeamId(0)` = 当前域（沿用 `Mmap.at = 0` 的「自选」先例）。
+- `Build` 是系统调用面上**唯一带能力入场**的原语：`build` 必须是调用方**自己表里**一枚活着
+  的 `Nole`（token 不自证——内核只在调用方表里找它，故「拿别人的 token」不是绕过面），
+  外加 S 态兜底。带它是为了让权威显式可审计：**「你说的是哪一枚」**。
 - 启动参数写在**新任务栈顶** `[stack_top-8·count, stack_top)`，子方 `a0 = args VA`、`a1 = count`；
   `_start` 在首次调用前 `save_args`，用户侧 `env::task::args()` 取回。**子域一律空参数**
   （只有 root 收内核的清单视图）。
@@ -58,15 +61,20 @@
   调用模式 `loop { if Join{t,0} { break } Join{t,MAX} }`。栈/帧的回收是内核私事、
   对调用方不可观测，不入契约。
 
-### 3.1 T2 新增（class 5，`MailCall` 末尾）
+### 3.1 查证与枚举（class 7，`PieCall`）
 
-| idx | 原语 | 签名 | 语义 |
-|---|---|---|---|
-| 13 | `Owned` | `{ token: PieToken }` → `(TaskId, TaskId)` | 我持有的这枚门闩：`vestor`（谁授的）+ `owner`（资源谁开的） |
+> 两条轴拆开之后（数据轴 `MailCall` = class 5、权柄轴 `PieCall` = class 7），查证与枚举
+> 都归**权柄轴**；`MailCall` 现在只剩 `Push` / `Pull` / `Wait` 三个数据面动作。
+> 原来的 `Owned` 同时改名 **`Reserve`**：它答的是「这枚门闩的来历」，与「把数据推过去」
+> 不是一件事。
+
+| 原语 | 签名 | 语义 |
+|---|---|---|
+| `Reserve` | `{ token: PieToken }` → `(TaskId, TaskId)` | 我持有的这枚门闩：`vestor`（谁授的）+ `owner`（资源谁开的） |
 
 - 错误：token 不在本任务表 → `-1 Denied`；资源已封印 → `-2 Dead`。
-- 与既有 `Collect { index }`（index 10，**未改名**）分工：`Collect` 按索引**枚举**
-  （`moor()` 靠它发现未见过的句柄），`Owned` 按句柄**查事实**。
+- 与 `Collect { index }`（**未改名**）分工：`Collect` 按索引**枚举**
+  （`moor()` 靠它发现未见过的句柄），`Reserve` 按句柄**查事实**。
 - 两个身份不可混用：`vestor` 是**门闩**的来历（`Accord` 转手即改写），`owner` 是
   **资源**的来历（任意副本共享同一事实）。
 
@@ -92,16 +100,17 @@
 
 ```text
 programs/src/bin/supervisor/root/
-  main.rs      开报到孔 → 逐子域串行握手 → Join(shell) → exit
+  main.rs      解封建域权（NolePie::unseal）→ 开报到孔 → 逐子域串行握手
+               → Join(shell) → exit
   manifest.rs  清单格式（只被 build.rs 与 root 知道）
-runtime/src/core/handshake.rs
+crates/runtime/src/core/handshake.rs
   dock()       父侧：开报到孔（一次）
   moor()       子侧：认报到孔（vestor == sire 且 owner == sire）
   Quay / Pier  两条 8 字节报文（方向即类型）
 ```
 
 - 清单格式与 `build.rs::INITRD_BINS` 对齐；`kind` 仍由**内核打包表**决定，root 原样转交
-  （`docs/supervisor.md` §13 的「程序不自称特权级」不破）。
+  ——**程序不自称特权级**这条不破：全仓唯一声明「装成哪种空间」的地方是内核的打包表。
 - boot 只按 `ROOT_OFFSET/ROOT_LEN`（build.rs 导出）取 root 镜像，**不解析清单**。
 
 ## 6 · 实现中发现并修掉的缺陷
@@ -135,7 +144,7 @@ runtime/src/core/handshake.rs
    本模块与 `build.rs` 打包端一起删除，`Build` 原语不受影响。
 3. 无 kill 原语：root 退出即 `doom` 级联，故不需要。
 4. `Spawn` 的 `args` 是**标量参数**；大数据仍走权限表（`fid.rs` 的裁决只放宽了标量一侧）。
-5. **服务必须自开入口 hole**：客户端用 `Owned(entry).owner` 认服务；若由他人代开，
+5. **服务必须自开入口 hole**：客户端用 `Reserve(entry).owner` 认服务；若由他人代开，
    `owner` 会指向代开者（`docs/dispatch.md` 已列为硬规则）。
 
 ## 8 · 验证
@@ -169,18 +178,18 @@ root                                       子域
                                              UnsealHole  自建控制孔（与自己的服务孔分离）
                                              Accord(sire) 交给父域
   Quay::pull ◀────────────────────────────  Quay{ 控制孔在父侧的句柄 }
-  校验 Owned(句柄).vestor == child
+  校验 Reserve(句柄).vestor == child
   ── 客户端要目录能力时 ──
   Refer{who, name} ──▶ dir 控制孔           dir 控制线程：reserve(name, who)
                                             → H.accord(who, R|W)
   Referred{token} ◀── dir 上行孔
-  Pier{token} ──▶ 子域控制孔 ─────────────▶  Pier::pull → dir_id = Owned(token).owner
+  Pier{token} ──▶ 子域控制孔 ─────────────▶  Pier::pull → dir_id = Reserve(token).owner
 
 dir 的请求门闩 `H` **只有 dir 自己开、自己持**（root 不碰）；
 echo 的入口门闩同理；两者都另开一条控制孔给 root。
 ```
 
-- **身份全程不经报文/启动参数**：目录 id 由 `Owned(门闩).owner` 从资源事实推出；
+- **身份全程不经报文/启动参数**：目录 id 由 `Reserve(门闩).owner` 从资源事实推出；
   B 之后客户端拿到的副本 `vestor == dir`，来源还能再自证一层。
 - **认上行孔要两个条件**：`vestor == sire`（父域授的）**且** `owner == sire`（父域开的）。
 - **四条报文**（`[0] tag` + payload）：`Quay` / `Pier` / `Referred` 各 9 字节；`Refer` 两种
@@ -204,7 +213,7 @@ dir 控制线程：pull(C) → H.accord(who, R|W) → push(上行孔, Referred)
 | 判据 | 结果 |
 |---|---|
 | AC-B1 root 无服务孔 | ✅ 实测 root 持 6 枚：3 条自建上行孔 + 3 条子域控制孔副本；`owner == dir` 的仅 1 枚（控制孔，非 `H`） |
-| AC-B2 客户端副本来源可自证 | ✅ `Owned(t).vestor == dir` |
+| AC-B2 客户端副本来源可自证 | ✅ `Reserve(t).vestor == dir` |
 | AC-B4 e2e 不回退 | ✅ release + debug，自然停机 |
 | AC-B5 dir 空闲 0% CPU | ✅ 主线程 park 在 `H`、控制线程 park 在 `C` |
 

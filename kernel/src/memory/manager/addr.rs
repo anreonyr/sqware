@@ -78,7 +78,7 @@ impl VirtAddr {
     /// 向下对齐到页边界 —— **有调用者**（`fault::resolve_anonymous` 把缺页地址
     /// 对齐到页再物化）。这一份原先在 `PhysAddr` 上，是零调用者的孪生体（挂着
     /// `#[allow(dead_code)] // 对齐工具预留`）：删掉那一份，把名字留给真正在用的
-    /// 虚拟地址侧（docs §10.22）。
+    /// 虚拟地址侧。
     #[inline]
     pub fn page_align(self) -> Self {
         Self(self.0 & !(PAGE_SIZE - 1))

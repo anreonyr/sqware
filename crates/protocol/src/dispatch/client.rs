@@ -181,7 +181,7 @@ impl Directory {
     /// 与 [`Directory::connect`] 的分工：那个给"用服务调用协议说话"的调用方
     /// （要通道）；这个给"用**自己的协议**说话"的调用方（只要入口——如控制台）。
     /// 后者若先 `connect` 再 `disconnect`，会顺手 release 掉刚拿到的入口——
-    /// 那是实测踩过的坑（§10.30）。
+    /// 那是实测踩过的坑。
     pub fn connect_token(&self, name: &str) -> EnvResult<PieToken> {
         let request = Request::Connect {
             name: parse_name(name)?,

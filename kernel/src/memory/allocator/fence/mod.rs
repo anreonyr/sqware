@@ -3,7 +3,8 @@
 // **「in-path」是结构意义上的**：事件入口恒编译、调用点就在分配热路径上；但护栏本体
 // 只在验收档里存在（`audit` feature / `debug_assertions`），产品档（default）里那些调用
 // 是空体——实测三档产物：default 一条护栏串都没有，audit 带 banker/ledger，harden 带
-// checker/lockdep，**没有任何一档同时带两半**。这个事实记在 docs §10.16。
+// checker/lockdep，**没有任何一档同时带两半**——故验收门按档分别构建，且 harden 档要
+// 求两半同时在场（见 `scripts/examine.nu` 的正向对照）。
 //
 // 与「自测（selftest，out-of-path 验收用例）」相对：护栏是功能运行的自我证明，
 // 命中即 halt（panic → crash scene）。四个成员：
@@ -18,7 +19,7 @@
 // （on_alloc/on_free/on_frame_free）——分配器热路径对其的调用是一行无 cfg 的
 // 语义事件，asm 读 ra、poison、记账全部收在本层内部。
 //
-// **`banker`（页金库位图）已删除**（用户裁决，见 docs §10.18）："这页在不在手"只由
+// **`banker`（页金库位图）已删除**（用户裁决）："这页在不在手"只由
 // `frame::pagemeta` 一份账回答，核对点收进 `checker`（audit 档也在场）；原先 banker
 // 与 `frame.occupied` 的计数交叉核对是**两份账记同一件事**，随之消失。
 //

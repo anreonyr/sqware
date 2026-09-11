@@ -47,7 +47,7 @@ pub(crate) fn check_frame_free(free: bool, index: usize, addr: usize, power: usi
 
 /// frame 释放帧必须**仍在手**（`pagemeta` 说它是某块的块首且 non-free）——
 /// 双释放 / 释放陌生页的特征。O(order) 无锁内遍历，故与 `check_frame_free`
-/// 一同进 audit 档（banker 的 `credit` 删掉后由它接位，见 docs §10.18）。
+/// 一同进 audit 档（banker 的 `credit` 删掉后由它接位）。
 // 整函数与调用点同 gate：它的实参是一次 O(order) 的 pagemeta 遍历，产品档不该付。
 #[cfg(any(debug_assertions, feature = "audit"))]
 #[inline(always)]

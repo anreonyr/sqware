@@ -54,8 +54,7 @@ impl SpaceKind {
 }
 
 /// 清单携带的特权级（`env::ProgramKind`）→ 空间种类。`Build` 的唯一映射点：
-/// 程序不自称特权级，kind 由内核打包表决定、root 原样转交（见
-/// `docs/supervisor.md` §13）。
+/// 程序不自称特权级，kind 由内核打包表决定、root 原样转交。
 impl From<env::ProgramKind> for SpaceKind {
     fn from(k: env::ProgramKind) -> Self {
         match k {

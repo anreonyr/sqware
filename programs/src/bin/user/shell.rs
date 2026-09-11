@@ -9,7 +9,7 @@
 //!
 //! 例外的**只有降级路径**（[`fallback_readline`] 与 [`flush`] 里那条 `io::put`）：
 //! 服务不在时退回直连设备，否则一个连不上服务的 shell 会变成"哑巴且读不到命令"。
-//! 那是 §10.30 记的**临时护栏**，第三步删 `IOCall` 时一并删。
+//! 那是**临时护栏**，第三步删 `IOCall` 时一并删。
 //!
 //! 命令（系统能力巡演）：
 //!   help  — 列命令
@@ -65,10 +65,10 @@ static DIR_ENTRY: AtomicUsize = AtomicUsize::new(0);
 /// 控制台请求门闩在本任务侧的句柄（启动期握手拿到，此后只读）。
 static CONSOLE_ENTRY: AtomicUsize = AtomicUsize::new(0);
 
-// ── 控制台适配（§10.30：Terminal 从"进程内模块"改为"服务的线对侧"）──
+// ── 控制台适配（Terminal 从"进程内模块"改为"服务的线对侧"）──────────────────
 
 /// 前景色。**只留本 bin 真用到的两个**：旧 `term::Color` 是八色齐全，但全仓只有
-/// `Green`（标题）与 `Cyan`（提示符）被构造过——按 §10.22 逐条判 `allow(dead_code)`
+/// `Green`（标题）与 `Cyan`（提示符）被构造过——逐条判 `allow(dead_code)`
 /// 的同一条判据（零消费者且没有第二个在路上的不留），其余六个别再带着。
 #[derive(Clone, Copy)]
 enum Color {
@@ -88,7 +88,7 @@ impl Color {
 /// Shell 的终端门面：**与旧 `programs::term::Terminal` 同 API**，故 70 处调用点一字未改；
 /// 内部从"直接读写 UART"改成"与控制台服务说话"。
 ///
-/// # 会话寿命：**一条会话活到进程结束**（§10.31 的性能修正）
+/// # 会话寿命：**一条会话活到进程结束**（性能修正）
 ///
 /// 第一版每次 `write`/`readline` 各开关一条会话，于是**每条输出**要付
 /// 2× `Channel::open`（各含 unseal+accord）＋ 2 次往返。实测反馈"输出延迟很高"，
@@ -105,7 +105,7 @@ impl Color {
 ///
 /// # 降级：服务连不上时退回直连设备
 ///
-/// **临时**（§10.30 记账）：若控制台入口缺失或 `Open` 失败，就退回 `io::put` /
+/// **临时**（过渡期）：若控制台入口缺失或 `Open` 失败，就退回 `io::put` /
 /// 本地最简行编辑——否则一个连不上服务的 shell 会变成"哑巴且读不到命令"。
 /// 第三步删 `IOCall` 时这条降级路径一并删掉（那时任务侧根本没有设备可直连）。
 struct Terminal {
@@ -290,7 +290,7 @@ fn console_entry() -> Option<usize> {
     }
     let session = Directory::open(HolePie::from_token(dir)).ok()?;
     // 只要**入口 token**，不要 `connect` 的回信通道：后者要先建再断，而
-    // `disconnect` 会 release 掉刚拿到的入口——§10.30 实测踩过这个坑。
+    // `disconnect` 会 release 掉刚拿到的入口——实测踩过这个坑。
     let token = session.connect_token("console").ok()?.get();
     if token != 0 {
         CONSOLE_ENTRY.store(token, Ordering::Relaxed);
@@ -875,7 +875,7 @@ fn name(term: &Term) {
 /// 正是把这一支改坏来做的。
 /// 野 id 自检：拿**从未入册**的 task id 去 `Join`，看内核怎么答。
 ///
-/// 契约（`root.md` §…、`messenger::join`）：`Join` 收的是 task id，而「从未分配」是
+/// 契约（`docs/root.md` §3、`messenger::join`）：`Join` 收的是 task id，而「从未分配」是
 /// **非法 id** ⇒ `-1 Denied`；「已回收」⇒ 真。两者若被折成同一条路（判活有两个
 /// 真相源时就会这样），调用方就再也分不清「它早结束了」与「你给错了 id」。
 ///
@@ -1091,7 +1091,7 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
                     // 契约正是「返真 ⇔ 已到终态」——本仓既有 [`join_done`] 就照这个写
                     // （探一发 `0`，未到终态就无条件等）。本探针第一版拿 `0` 与 `500ms`
                     // 两种"看一眼"的形态去问，两次都误报 FAIL：那一刻退场已受理、终态
-                    // 未落地（§10.33 的教训换了副面孔又来一次——**等状态，别等钟**）。
+                    // 未落地（同一条教训换了副面孔又来一次——**等状态，别等钟**）。
                     join_done(tid);
                     term.writeline("badslot: 1/1 abnormal exit reaped, kernel alive");
                 }

@@ -15,7 +15,7 @@
 //
 // 编码：`repr(u8)`，0 = `Plain`（表全零 = 未标注语义）。**编号是构建期内部约定，
 // 不是持久格式**（帧种类表与账本都是 boot 期重建的）——删一个种类即整体下移，
-// 不留空洞（空洞就是飞线，见 §10.20 删 `Cow`）。`from_u8` 对未知值防御归 `Plain`
+// 不留空洞（空洞就是飞线——删 `Cow` 时用的同一条理由）。`from_u8` 对未知值防御归 `Plain`
 // （只失真计数维度；取还配对与种类无关）。
 
 /// 对象种类数（statistics 的计数数组与视图按它定长）。
@@ -167,7 +167,7 @@ impl Kind {
     /// 用户堆（页索引键）维持清零语义、不 poison、不设 canary；帧从不 poison。
     /// `Plain`（未标注）也算：账本里未标注的记录恒是内核堆块（用户堆一律标
     /// `UserHeap`）——第一版把它漏掉，boot 三源核对当场报出
-    /// "user-heap record VA on non-held page"（是假报，见 docs §10.18）。
+    /// "user-heap record VA on non-held page"（是假报）。
     pub(crate) fn poison(self) -> bool {
         self.keys() == Keys::Addr && self.side() != Some(Side::Frame)
     }

@@ -62,7 +62,7 @@ impl EnvError {
 ///
 /// **`#[inline(never)]` 是硬不变量**：该 asm 块一旦被内联进调用方，调用方读回的
 /// 返回值会错（实测：同样的 `Collect` 调用，内联时 a0 恒 0，独立函数时正确）。
-/// 与仓库对裸 asm 的一贯纪律同源（见 `docs/ipc.md` §13.10 A.2 的闭包边界锁）。
+/// 与仓库对裸 asm 的一贯纪律同源：**内联会改写我读回的寄存器**。
 #[cfg(target_arch = "riscv64")]
 #[inline(never)]
 pub unsafe fn trap(slot: usize, args: [usize; 6]) -> (usize, usize) {

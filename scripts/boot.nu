@@ -17,7 +17,7 @@
 #   QEMU_SEED     整数；空 = 用 qemu 自己的随机（本脚本不改写它）
 #   QEMU_ICOUNT   非空则加 `-icount <值>`（默认 auto,sleep=on）；**置空可关**。
 #                 验收门关掉它：按宿主时间节流会让 guest 与输入日程失步，实测约 1/5 的轮次
-#                 guest 会在某一步之后停止取输入（详见 docs/audit-flying-wires.md §9.3）。
+#                 guest 会在某一步之后停止取输入（这就是门要关掉 icount 的实测理由）。
 #   QEMU_MEM / QEMU_SMP / QEMU_EXTRA_ARGS / QEMU_GDB
 #   QEMU_SEMI / QEMU_FEATURES   含 semihosting ⇒ 给 qemu 加 -semihosting。**只管 QEMU 侧**：
 #                               被跑 ELF 的 feature 由调用方 cargo 决定（缺则无结构化导出）。

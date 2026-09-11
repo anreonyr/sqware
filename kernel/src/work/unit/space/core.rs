@@ -542,7 +542,7 @@ impl<'a> InstallGuard<'a> {
 ///
 /// 独立函数而不是方法：**唯一使用者是 [`SpaceInner::audit`]**，而它整段是
 /// `#[cfg(feature = "audit")]`——做成结构上的方法会让那个字段在默认档没有任何
-/// 读点（dead_code 警告），违反"两档零警告、零 allow"（用户裁决，见 docs §10.20）。
+/// 读点（dead_code 警告），违反"两档零警告、零 allow"（用户裁决）。
 #[cfg(feature = "audit")]
 fn page_pa(f: &Frame) -> PhysAddr {
     PhysAddr::from_raw(f.as_ptr() as usize)

@@ -5,7 +5,7 @@
 //! `bin/` 是**同时依赖 runtime 与 protocol 的装配层**：机制来自 `runtime`，
 //! 协议语义来自 `protocol`。
 //!
-//! **`term` 已不在本包**（§10.30）：终端渲染与行编辑搬进 `prog-console` 服务，
+//! **`term` 已不在本包**：终端渲染与行编辑搬进 `prog-console` 服务，
 //! 住在 `crates/protocol/src/console/server.rs`；程序侧只剩线对侧。
 
 extern crate alloc;

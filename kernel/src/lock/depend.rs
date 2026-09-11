@@ -38,7 +38,7 @@ use crate::machine;
 /// 曾有 `#[allow(dead_code)]`：不是因为整体编译掉，而是**部分变体的读点只在
 /// lockdep 那几段**（档位内），而 `Level` 是**坐标系**——它多一个刻度不算死代码，
 /// 少一个会让锁层级表（`docs` 的锁序表）失去一处出处。这是**该留的 allow**：
-/// 与 `lock::{bare,spin}` 那批"锁库预留面"同族（docs §10.22）。
+/// 与 `lock::{bare,spin}` 那批"锁库预留面"同族。
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]

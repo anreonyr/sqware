@@ -317,7 +317,7 @@ impl BlockAllocator {
         }
 
         // audit: 完整性框架装配（帧种类表 + Ledger）。帧侧不再有 banker 位图——
-        // "这页在不在手"由 frame::pagemeta 一份账回答（docs §10.18）。
+        // "这页在不在手"由 frame::pagemeta 一份账回答。
         #[cfg(feature = "audit")]
         {
             crate::memory::allocator::fence::init_frame_kind(m.free.base, m.free.size / PAGE_SIZE);

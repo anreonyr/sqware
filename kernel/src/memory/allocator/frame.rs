@@ -52,7 +52,7 @@ impl FrameAllocator {
     /// 该物理页当前是否在帧分配器手里（held）。
     ///
     /// **唯一真相**：`pagemeta`。banker 的每页位图删除后，持久帧登记表与账本落页
-    /// 检查都问这里（见 docs §10.18）——同一件事不再有两份账。
+    /// 检查都问这里——同一件事不再有两份账。
     /// 消费者只有 audit 档（关机不变量 + boot 三源核对），故同 gate。
     #[cfg(feature = "audit")]
     pub(crate) fn is_held(&self, pa: usize) -> bool {
@@ -95,7 +95,7 @@ unsafe impl Allocator for FrameAllocator {
                 );
             }
             // 取出即已由 pagemeta 证明"这帧原先 free"（pop_link 的 check_frame_free
-            // 在 audit 档也跑）——banker 删除后不再有第二份每页位图（docs §10.18）。
+            // 在 audit 档也跑）——banker 删除后不再有第二份每页位图。
             super::statistics::record_frame_take(super::fence::Kind::Plain);
             checker::log_frame_alloc(addr as usize, index, power);
             Ok(NonNull::slice_from_raw_parts(

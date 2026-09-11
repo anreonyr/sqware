@@ -160,7 +160,7 @@ impl Drop for HoleMeta {
 ///
 /// 方向是键的一个字段，不占位：同一 hole 两方向不撞键，也不会与另一个 hole 的键
 /// 相撞——**不需要位打包**。旧版把方向压进最低位，还因此要把 `| 1` 拆句去躲
-/// size 优化把它折叠进 mask（§13.10 A 方向 B）；枚举下这层防御连同理由一起消失。
+/// size 优化把它折叠进 mask；枚举下这层防御连同理由一起消失。
 pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
     WakeKey::Hole {
         hole: meta.id.0,

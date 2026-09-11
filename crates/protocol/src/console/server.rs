@@ -1,6 +1,6 @@
 //! console·server — 控制台服务：ANSI 渲壳 + VTE 键盘解码 + 行编辑 + 客户端表。
 //!
-//! # 为什么要两线程（§10.32）
+//! # 为什么要两线程
 //!
 //! 第一版把 `ReadLine` 写成**就地阻塞**（单线程），于是**等输入期间服务不理别的请求**：
 //! 任何 `Write` 都排在请求孔里 ⇒ **消息不显示**，屏幕只剩反复重绘的提示符。
@@ -30,7 +30,7 @@
 //! ```
 //!
 //! 回信孔的 token **只在请求线程的表里**——故整行由输入线程放进共享态、请求线程来推
-//! （§10.33）。**跨 task 交接句柄这条路走不通**，别再试第三次。
+//! （踩过）。**跨 task 交接句柄这条路走不通**，别再试第三次。
 
 use alloc::format;
 use alloc::string::String;
@@ -56,7 +56,7 @@ const LINE_CAP: usize = 512;
 /// ANSI 渲壳：把字符串写进 UART。**服务侧唯一写设备的出口**。
 ///
 /// 旧 `term::Terminal` 还有 `clear`/`fg`/`reset`（清屏与前景色）——搬来时查了消费者：
-/// **零调用点**，按本仓裁决（§10.21-(3)、§10.22）删；要用时一条转义序列就能加回来。
+/// **零调用点**，按本仓裁决删（"真死的删、该留的写清理由"）；要用时一条转义序列就能加回来。
 struct Render;
 
 impl Render {
@@ -201,7 +201,7 @@ impl State {
     /// 输入线程用：登记"这一行该回给谁、回什么"。
     ///
     /// **不在这里推回信孔**：回信孔的 token 在**请求线程**的 pie 表里，输入线程推
-    /// 不动（§10.33 踩过）。整行经共享内存交给请求线程，由它推。
+    /// 不动（踩过）。整行经共享内存交给请求线程，由它推。
     pub fn set_pending(&mut self, client: usize, reply: Reply) {
         self.pending = Some((client, reply));
     }
@@ -216,7 +216,7 @@ impl State {
         self.term.write(s);
     }
 
-    /// 处理一条请求。`ReadLine` 只登记等读、**不阻塞**（阻塞会让消息排队，§10.32）。
+    /// 处理一条请求。`ReadLine` 只登记等读、**不阻塞**（阻塞会让别的消息排队）。
     pub fn serve(&mut self, msg: &[u8]) -> Outcome {
         match Request::decode(msg) {
             Ok(request) => self.handle(request),
@@ -248,7 +248,7 @@ impl State {
             Some(i) => {
                 self.slots[i] = Some(Slot { reply });
                 // **去向必须是新建会话的回信孔**：回执只有经它才到得了客户端。
-                // （第一版写成 `None` = 丢弃 ⇒ 客户端每条请求都等到超时；§10.30 实测。）
+                // （第一版写成 `None` = 丢弃 ⇒ 客户端每条请求都等到超时；实测过。）
                 Outcome {
                     reply: Some(Reply::Ok { client: i + 1 }),
                     to_client: Some(i + 1),
@@ -286,7 +286,7 @@ impl State {
     fn write(&mut self, client: usize, len: usize, payload: &[u8; PAYLOAD_LEN]) -> Outcome {
         if self.index(client).is_none() {
             // 回执走**该会话的回信孔**——它正是"这个 id 不认识"的原因，故无处可推。
-            // 这一支只在客户端用错 id 时出现（§10.32 排查中真实撞到过）。
+            // 这一支只在客户端用错 id 时出现（排查中真实撞到过）。
             return Outcome {
                 reply: Some(Reply::NoSuchClient),
                 to_client: None,

@@ -56,7 +56,7 @@ pub struct Console {
     ///
     /// `Channel` 只是"我这枚 `HolePie` + 对端那枚的号"的打包，方便 `open` 一次配好；
     /// **孔本身与它绑不绑没有关系**——`HolePie` 没有 `Drop`，`from_token` 是零成本
-    /// 重建（这一点我在 §10.32 曾判错，把"孔会随句柄消亡"当成了根因；真正的根因是
+    /// 重建（这一点曾判错，把"孔会随句柄消亡"当成了根因；真正的根因是
     /// **交错了 token**：必须交 `at_peer`，且 `push` 只在**推者自己的表**里查）。
     reply: Channel,
 }
@@ -72,17 +72,17 @@ impl Console {
             return Err(denied());
         }
         // **一条**通道就够：回信孔。请求走 `entry`（请求门闩），故不需要数据孔
-        // （第一版多开的那枚从没被读过，§10.32 删）。
+        // （第一版多开的那枚从没被读过，已删）。
         let reply = Channel::open(env::TaskId::new(owner))?;
         let mut console = Console {
             entry,
             client: 0,
             reply,
         };
-        // 交出去的必须是 `at_peer`（§10.32 连踩两次的第一处）：服务 `push` 时按
+        // 交出去的必须是 `at_peer`（连踩两次的第一处）：服务 `push` 时按
         // `find(token)` 在**它自己的表**里找，`at_peer` 正是 `Accord` 给它那枚的号；
         // 交 `mine`（我表里的号）→ `Denied`。第二处在**服务侧**：整行必须由持有这枚
-        // token 的那个 task 推（§10.33）。
+        // token 的那个 task 推。
         let ack = console.call(&Request::Open {
             reply: console.reply.at_peer().get(),
         })?;
