@@ -164,6 +164,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "protocol"
+version = "0.1.0"
+dependencies = [
+ "env",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -324,6 +331,7 @@ dependencies = [
  "anstyle-parse",
  "env",
  "erra",
+ "protocol",
 ]
 
 [[package]]

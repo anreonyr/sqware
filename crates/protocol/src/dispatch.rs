@@ -50,10 +50,11 @@
 //! 回复只有 64 字节，装不下列表，故按名字**排序**分页：`after` 之后的第一条；
 //! `after = None` 从头开始；返 `NotFound` 即到头。
 
-use crate::wire::PieToken;
+use env::wire::PieToken;
 
-/// 名字类型与上限的单一真相在 [`crate::wire`]（目录协议与域名字共用）。
-pub use crate::wire::{NAME_LEN, Name, NameError};
+/// 名字类型与上限的单一真相在 `env::wire`（目录协议与域名字共用）——本 crate 只是
+/// 它的使用者，不转口第二遍。
+pub use env::wire::{NAME_LEN, Name, NameError};
 
 /// hole 单消息字节数（与内核 `HOLE_MTU_MAX` 协商——dispatch 协议定 64B）。
 pub const MSG_LEN: usize = 64;

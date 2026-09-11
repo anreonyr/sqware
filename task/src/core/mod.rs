@@ -1,5 +1,5 @@
 //! core 适配层 —— 任务本地原语（heap/tls/unit）+ Mail 之上封装
-//! （channel/service/directory/handshake）。
+//! （channel/service/directory/handshake）；协议在 `crates/protocol`。
 //!
 //! 与 `env/` 的分工：`env/` 是 envcall 转发（薄），`core/` 是组合与封装（厚）。
 //! 例子：`env::mail::HolePie` 是「薄」门闩句柄；`core::channel::Channel` 是

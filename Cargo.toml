@@ -1,5 +1,5 @@
 [workspace]
-members = ["kernel", "task", "crates/env", "crates/sbi", "crates/envmacros"]
+members = ["kernel", "task", "crates/env", "crates/protocol", "crates/sbi", "crates/envmacros"]
 default-members = ["kernel"]
 resolver = "3"
 

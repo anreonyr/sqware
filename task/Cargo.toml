@@ -13,6 +13,7 @@ doctest = false
 
 [dependencies]
 env = { path = "../crates/env" }
+protocol = { path = "../crates/protocol" }
 erra = { version = "0.2.0", default-features = false }
 # ANSI 转义序列解析器（纯 no_std）：Terminal 层解码键盘方向键/退格（行编辑）。
 # default-features = false → 不带 utf8/codegen 特性，适配裸机 user 环境。

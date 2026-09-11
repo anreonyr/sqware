@@ -51,8 +51,13 @@ impl Name {
         Ok(Name { bytes })
     }
 
-    /// 由线上字节还原（校验填充规范 + 内容合法）。`dispatch` 的 decode 用。
-    pub(crate) fn from_bytes(bytes: [u8; NAME_LEN]) -> Result<Name, NameError> {
+    /// 由线上字节还原（校验填充规范 + 内容合法）——[`new`](Self::new) 的**线格式
+    /// 对偶**：构造期义务在两条入口上都成立（非法名不可表达）。
+    ///
+    /// `pub`：它是 `Name` 线格式的**解码面**，使用者是用户态协议
+    /// （`task::core::dispatch` 的 decode）；语义上属于本 crate，不随协议搬家
+    /// （见 docs §10.21）。
+    pub fn from_bytes(bytes: [u8; NAME_LEN]) -> Result<Name, NameError> {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
         if len == 0 {
             return Err(NameError::Empty);

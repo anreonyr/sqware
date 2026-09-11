@@ -13,8 +13,8 @@
 //!
 //! 与 [`crate::core::channel::Channel`] 同住 `core/`（envcall 转发外的封装层）。
 
-use env::dispatch::{MSG_LEN, Name, Reply, Request};
 use env::{EnvError, EnvResult, PieToken, TaskId, make_err};
+use protocol::dispatch::{MSG_LEN, Name, Reply, Request};
 
 use crate::env::mail::AnyPie as _;
 use crate::env::mail::{self, HolePie};
@@ -97,7 +97,7 @@ impl Directory {
     /// 超时（`Busy`）后本会话不可复用——迟到的回复会污染下一次 pull。
     fn call(&self, request: &Request) -> EnvResult<Reply> {
         let mut msg = request.encode();
-        msg[env::dispatch::REPLY_AT..env::dispatch::REPLY_AT + 8]
+        msg[protocol::dispatch::REPLY_AT..protocol::dispatch::REPLY_AT + 8]
             .copy_from_slice(&self.reply_target.get().to_le_bytes());
         self.entry.push(&msg)?;
         let mut buf = [0u8; MSG_LEN];

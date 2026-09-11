@@ -15,7 +15,7 @@
 extern crate alloc;
 
 use env::Permission;
-use env::dispatch::MSG_LEN;
+use protocol::dispatch::MSG_LEN;
 use task::core::handshake::{self, Pier, Quay};
 use task::core::service::Directory;
 use task::env::mail::{AnyPie as _, HolePie};

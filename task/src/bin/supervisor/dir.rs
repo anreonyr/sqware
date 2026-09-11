@@ -27,8 +27,8 @@ extern crate alloc;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::dispatch::{MSG_LEN, REPLY_AT};
 use env::{Permission, TeamId};
+use protocol::dispatch::{MSG_LEN, REPLY_AT};
 use task::core::directory::{Directory, release_pie, vestor_of};
 use task::core::handshake::{self, Quay, Refer, Referred};
 use task::core::lock::Lock;

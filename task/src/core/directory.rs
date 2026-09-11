@@ -181,8 +181,8 @@ impl Directory {
 
 // ── 协议适配：线格式 → 核心原语（唯一碰内核处）──
 
-use env::dispatch::{MSG_LEN, Reply, Request};
 use env::{Permission, PieToken, TaskId};
+use protocol::dispatch::{MSG_LEN, Reply, Request};
 
 use crate::env::mail;
 
