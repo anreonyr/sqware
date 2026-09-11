@@ -8,7 +8,8 @@
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) 九个 marker 齐全（含 `task: all tasks exited, system halted`）。
+#   4) 十个 marker 齐全（含 `task: all tasks exited, system halted` 与
+#      `badslot: 1/1 abnormal exit reaped, kernel alive`）。
 # 默认连跑 3 次要求 3/3；任一判据不过 ⇒ 该轮 FAIL，进程以非零退出。
 #
 # ── 三条补上的断言（§9.3「三条缺失断言的处置」，只在 audit 档跑）─────────────
@@ -165,6 +166,10 @@ const MARKERS = [
   "woke"
   "clock [0-9]"
   "badslot: 3/3 rejected, kernel alive"
+  # 带**原因码**退场（`RoomCall::Reap { reason }`）必须与上面那条**同轮**成立：非法
+  # 调用要「调用方活、内核活」，带原因的退场要「**调用方死**、内核活」。内核一度把
+  # "域级退场"实现成 `panic!`（用户态一句话打死整机）；这条 marker 就是它的牙。
+  "badslot: 1/1 abnormal exit reaped, kernel alive"
   "task: all tasks exited, system halted"
 ]
 
@@ -655,7 +660,7 @@ def main [] {
     # 故结果行用拼接写，只有变量进插值。
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (自退 + 无 panic + 8 步全过 + 9 marker 齐)')
+      print ('run ' + ($i | into string) + ': PASS (自退 + 无 panic + 8 步全过 + 10 marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
@@ -672,7 +677,7 @@ def main [] {
       $pass += 1
       # 标签照实写：audit 档判的是**孤儿 == 0 / 活 == 0 / 等待者 == 0**，不是「站点表已空」
       # （实测 sites=34 全是墓碑，docs §9.3「三条缺失断言落地」已记明总数不作判据）。
-      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 10 步全过 + 13 marker 齐 + 站点表：无孤儿/无死键/无活站点)')
+      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 10 步全过 + 14 marker 齐 + 站点表：无孤儿/无死键/无活站点)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (audit 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
@@ -686,7 +691,7 @@ def main [] {
     $total_rounds += 1
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 10 步全过 + 11 marker 齐)')
+      print ('run ' + ($i | into string) + ': PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 10 步全过 + 12 marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (harden 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }

@@ -91,10 +91,10 @@
 ## 5 · 用户面
 
 ```text
-task/src/bin/supervisor/root/
+programs/src/bin/supervisor/root/
   main.rs      开报到孔 → 逐子域串行握手 → Join(shell) → exit
   manifest.rs  清单格式（只被 build.rs 与 root 知道）
-task/src/core/handshake.rs
+runtime/src/core/handshake.rs
   dock()       父侧：开报到孔（一次）
   moor()       子侧：认报到孔（vestor == sire 且 owner == sire）
   Quay / Pier  两条 8 字节报文（方向即类型）

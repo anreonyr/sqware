@@ -4,7 +4,7 @@
 //   1) 定位 initrd 区（`machine::info().initrd`，来自 FDT `/chosen`）；
 //   2) 按打包期常量取出 **root 镜像**（`ROOT_OFFSET`/`ROOT_LEN`）。
 //
-// 清单的**解释权在 root 域程序**（`task/src/bin/supervisor/root/manifest.rs`）：
+// 清单的**解释权在 root 域程序**（`programs/src/bin/supervisor/root/manifest.rs`）：
 // 内核不含清单格式，只把整区只读映射进 root 空间（VA 由 boot 在 root 的用户段里
 // 登记后经启动参数告知）。见 `docs/root.md`。
 //

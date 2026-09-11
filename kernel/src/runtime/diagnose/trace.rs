@@ -68,8 +68,13 @@ pub enum RoomEvent {
     Wake {
         tid: usize,
     },
+    /// 任务退场（**所有**退出路径的公共事件，由 `messenger::quit` 发出）。
+    ///
+    /// `reason` = 退出原因码：0 = 自愿/正常结束；非 0 = 域自己的诊断编号（`Reap`
+    /// 带上来）或内核给的原因码（故障隔离路径）。内核**只记录不解释**。
     Exit {
         tid: usize,
+        reason: usize,
     },
     Reap {
         tid: usize,
@@ -295,7 +300,9 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
             write!(w, "wait tid={tid} key={key:#x}")
         }
         EventKind::Room(RoomEvent::Wake { tid }) => write!(w, "wake tid={tid}"),
-        EventKind::Room(RoomEvent::Exit { tid }) => write!(w, "exit tid={tid}"),
+        EventKind::Room(RoomEvent::Exit { tid, reason }) => {
+            write!(w, "exit tid={tid} reason={reason:#x}")
+        }
         EventKind::Room(RoomEvent::Reap { tid }) => write!(w, "reap tid={tid}"),
         EventKind::Room(RoomEvent::FaultKilled { tid, cause, stval }) => {
             write!(w, "fault-killed tid={tid} cause={cause} stval={stval:#x}")

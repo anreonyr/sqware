@@ -33,7 +33,8 @@ fn take(t: &Task, token: usize) -> Option<AnyPie> {
 fn pole_meta(pie: &AnyPie) -> Option<Arc<PoleMeta>> {
     match pie {
         AnyPie::Pole(p) => Some(p.meta().clone()),
-        AnyPie::Hole(_) => None,
+        // Hole 无映射可撤；Void 连载荷都没有——两者都不需要"先取强引用"这一步。
+        AnyPie::Hole(_) | AnyPie::Void(_) => None,
     }
 }
 

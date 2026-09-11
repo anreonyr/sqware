@@ -13,10 +13,12 @@ const KIND_SUPERVISOR: u32 = 1;
 /// 引导镜像的名字（内核按打包期偏移取它，不解析清单）。
 const ROOT_NAME: &str = "root";
 const INITRD_BINS: &[(&str, &str, u32)] = &[
-    (ROOT_NAME, "task-root", KIND_SUPERVISOR),
-    ("shell", "task-shell", KIND_USER),
-    ("echo", "task-echo", KIND_SUPERVISOR),
-    ("dir", "task-dir", KIND_SUPERVISOR),
+    (ROOT_NAME, "prog-root", KIND_SUPERVISOR),
+    ("shell", "prog-shell", KIND_USER),
+    ("echo", "prog-echo", KIND_SUPERVISOR),
+    ("dir", "prog-dir", KIND_SUPERVISOR),
+    // 控制台服务：任务侧唯一读 UART 的任务（见 crates/protocol/src/console）。
+    ("console", "prog-console", KIND_SUPERVISOR),
 ];
 
 fn main() {
@@ -27,25 +29,25 @@ fn main() {
     println!("cargo::rustc-link-arg=-T{ld}");
     println!("cargo::rerun-if-changed=link.ld"); // link.ld 变更自动重链
 
-    // 用户程序 ELF 打包进 initrd（boot 不再 include_bytes 内嵌）：工作区没有
-    // kernel→task 的依赖边，`cargo clean` 后可能先编 kernel 而 user 产物尚不存在
-    // → initrd 打包报"文件缺失"。这里在编译前显式构建 task crate，并从产物
+    // 镜像程序 ELF 打包进 initrd（boot 不再 include_bytes 内嵌）：工作区没有
+    // kernel→programs 的依赖边，`cargo clean` 后可能先编 kernel 而程序产物尚不存在
+    // → initrd 打包报"文件缺失"。这里在编译前显式构建 programs crate，并从产物
     // 路径读字节写 initrd。
     //
-    // 嵌套 cargo 必须用**独立 target 目录**（$OUT_DIR/user）：宿主 cargo 会在
+    // 嵌套 cargo 必须用**独立 target 目录**（$OUT_DIR/programs）：宿主 cargo 会在
     // target 根持有 .cargo-build-lock，同目录再起 cargo 会互锁死等。隔离目录无此问题，
     // 且随 cargo clean 一并清除（每次从零重build，无陈旧产物）。
     let target = env::var("TARGET").expect("TARGET env missing");
-    let task_target = Path::new(&env::var("OUT_DIR").expect("OUT_DIR env missing")).join("task");
+    let bin_target = Path::new(&env::var("OUT_DIR").expect("OUT_DIR env missing")).join("programs");
     let cargo = env::var("CARGO").expect("CARGO env missing");
     let mut args = vec![
         "build".to_string(),
         "-p".to_string(),
-        "task".to_string(),
+        "programs".to_string(),
         "--target".to_string(),
         target.clone(),
         "--target-dir".to_string(),
-        task_target.to_str().expect("non-utf8 OUT_DIR").to_string(),
+        bin_target.to_str().expect("non-utf8 OUT_DIR").to_string(),
     ];
     // PROFILE = "debug" 对应 dev profile（cargo 不接受 --profile debug）；其余按名透传
     // （release 等）。内层 cargo 与宿主同 profile，产物目录名一致。
@@ -57,16 +59,16 @@ fn main() {
     let status = Command::new(&cargo)
         .args(&args)
         .status()
-        .expect("failed to spawn cargo for task crate");
+        .expect("failed to spawn cargo for programs crate");
     assert!(
         status.success(),
-        "task crate build failed (kernel packs shell ELF into initrd)"
+        "programs crate build failed (kernel packs program ELFs into initrd)"
     );
 
     // 写 initrd 小清单（**临时机制**，见 kernel/src/initrd.rs）：与内核 ELF 同目录，
     // runner 从内核 ELF 的父目录取它传给 QEMU `-initrd`。
     //   [u32 count]{[u32 kind][u32 name_len][name][u32 len][bytes]}*   （LE）
-    let bin_dir = task_target.join(&target).join(&profile);
+    let bin_dir = bin_target.join(&target).join(&profile);
     let main_profile = main_profile_dir(&env::var("OUT_DIR").expect("OUT_DIR env missing"));
     let blob_path = main_profile.join("initrd.img");
     let mut blob: Vec<u8> = Vec::new();
@@ -98,9 +100,13 @@ fn main() {
         blob.len(),
         INITRD_BINS.len()
     );
-    println!("cargo::rerun-if-changed=../task");
-    // env 是 task 的路径依赖（envcall 骨架/协议编解码）——它变了 initrd 里的程序
-    // 也得重打包，否则内核重编而用户程序是旧的（曾导致 ebreak 改动未生效）。
+    // 程序侧任何一层变了，initrd 里的程序也得重打包——否则内核重编而镜像是旧的。
+    // 这几条曾经漏掉过一次（"改了程序、initrd 还是旧的"），故四层都 watch。
+    println!("cargo::rerun-if-changed=../programs");
+    println!("cargo::rerun-if-changed=../crates/runtime");
+    println!("cargo::rerun-if-changed=../crates/protocol");
+    // env 是 runtime/protocol/programs 的路径依赖（envcall 骨架/协议编解码）——它变了
+    // initrd 里的程序也得重打包，否则内核重编而用户程序是旧的（曾导致 ebreak 改动未生效）。
     println!("cargo::rerun-if-changed=../crates/env");
 }
 

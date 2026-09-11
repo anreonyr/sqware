@@ -12,7 +12,7 @@
 //!
 //! 分类按**操作的归属轴**一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2,
 //! IO=3, Chrono=4, Mail=5, Control=6, **Pie=7**。命名与调度词族（conductor）、
-//! `runtime::chrono` 域及用户侧 `task::env` 同词。
+//! `runtime::chrono` 域及用户侧 `runtime::env` 同词。
 //!
 //! **5 与 7 的分界是两条正交的轴**（不是按资源种类分，也不是按新旧分）：
 //! - **class 5 `Mail` = 数据轴**：消息穿孔。`Push`/`Pull`/`Wait`——传的是**内容**。
@@ -30,7 +30,9 @@
 //! 空号 index 5、未分配的 class 8、越界索引）一律 decoded 为 `Decode::BadSlot`，
 //! 内核侧按**被拒绝**处理：写回负码（`GateError::Denied`）并**续跑调用方**——
 //! 与其它用户引起的异常同走故障隔离，绝不 panic（否则用户态一发 `ebreak`
-//! 即可停摆整机）。想主动终止有正规原语 `ControlCall::Panic`。
+//! 即可停摆整机）。想主动终止有正规原语 `RoomCall::Reap { reason }`——它**只终止
+//! 调用方所在的那个域**，内核照旧活着（§10.34 修的就是这条：那条路一度是内核
+//! 自己的 `panic!`，即"合法退场比非法调用更危险"）。
 //! 本文件是这条契约的**单一真相**：`slot` 的生成与解码都在此处。
 //!
 //! 根除的两处 L3' 漏洞：`Permission`/`PteFlags` 的 unpack 走 `from_bits(...)`
@@ -53,8 +55,15 @@ pub enum RoomCall {
     #[ret(())]
     Park { millis: usize },
     /// 退出当前任务（不返回；词族 reap）。发散，无 Ret。
+    ///
+    /// `reason` = **退出原因码**（数据，不是策略）：`0` = 自愿/正常结束；非 0 = 域自己的
+    /// 诊断编号。内核**只记录不解释**，把它写进 trace 的 `RoomEvent::Exit`。
+    ///
+    /// 为什么原因码长在本原语上、而不是另立一个"panic 调用"：**"域不可续"是域的判断，
+    /// 内核只需要知道"这个任务不再续跑 + 为什么"**。另立入口等于把域的策略写进 ABI，
+    /// 且让"任务终止"这条不变量在 ABI 里有两个出口（§10.36）。
     #[ret(())]
-    Reap,
+    Reap { reason: usize },
     /// 事件等待（词族 wait）：key + 毫秒（usize::MAX = 永久）。
     #[ret(())]
     Wait { key: usize, millis: usize },
@@ -112,7 +121,19 @@ pub enum UnitCall {
     // index 5：原 SpawnTask —— 空号，不复用。
     /// 装域：镜像字节区间 + 特权级 + 名字 → 新域（Space + Team，**无线程**）。
     ///
-    /// 权限：调用方须为 S 态。名字 ≤ 31 字节（`Name` 的定长上限）。
+    /// 名字 ≤ 31 字节（`Name` 的定长上限）。
+    ///
+    /// # 两道门
+    ///
+    /// 1. **建域权**：`build` 必须是**调用方自己表里**一枚活着的 `Void`（存在权的
+    ///    载体，见 `PieCall::UnsealVoid`）。token 不自证——内核只在调用方的表里找它，
+    ///    故"拿别人的 token"不是绕过面。带它是为了让权威**显式可审计**（同
+    ///    `Reserve`/`Release` 的形态："你说的是哪一枚"）。
+    /// 2. **S 态兜底**：调用方仍须是 supervisor 域。
+    ///
+    /// 两道门不是冗余：能力回答"**谁有权**"，S 态回答"**血缘树能不能伸进沙箱外**"
+    /// ——`Build` 出来的域以调用方为 `sire`，若允许 U 态域建域，沙箱里的任务就成了
+    /// 别的域的父亲，那是本仓没有的形态。先别开这个口子。
     #[ret(TeamId)]
     Build {
         elf: VirtAddr,
@@ -120,6 +141,7 @@ pub enum UnitCall {
         kind: ProgramKind,
         name: VirtAddr,
         name_len: usize,
+        build: PieToken,
     },
     /// 放行：`Held → Starved`。放行只发生一次——重复调用返回 `-1 Denied`。
     #[ret(())]
@@ -270,6 +292,13 @@ pub enum PieCall {
     /// 解封 Pole（页级安全内存；字节数页对齐）。
     #[ret(PieToken)]
     UnsealPole { bytes: usize },
+    /// 解封 Void（**无数据面的权柄载体**）：造一枚只有身份与存活的许可载体。
+    ///
+    /// **无参数**——没有 mtu、没有字节数、没有对齐可校验。它的全部内容就是"这一枚
+    /// 存在"，故它承载的是**存在权**（第一位消费者：建域权 `UnitCall::Build`）。
+    /// 与 `UnsealHole`/`UnsealPole` 并列，不是它们的特例。
+    #[ret(PieToken)]
+    UnsealVoid,
     /// 开闩：借映 Pole 物理页进当前 task.space（同 token 幂等复用）→ VA。
     ///
     /// 仅对 Pole 成立；权利：需 R。
@@ -331,9 +360,6 @@ pub enum PieCall {
 #[call(class = 6)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ControlCall {
-    /// 用户主动内核 panic（任意关联码；不返回）。发散，无 Ret。
-    #[ret(())]
-    Panic { code: usize },
     /// 用户自诊断：采样当前任务调用栈，把 pc 地址数组写进用户 buf，返回帧数。
     ///
     /// `buf` = 用户预分配的 `[usize; N]` 数组 VA；`frames` = 该数组最大容量。

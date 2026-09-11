@@ -1,0 +1,53 @@
+[package]
+name = "programs"
+version.workspace = true
+edition.workspace = true
+
+# 镜像里的四个程序：freestanding、无 std、无 main crt。链接在 IMAGE_BASE
+# (0x10000)、静态 ET_EXEC；由内核 loader 按绝对 VMA 装载，_start 即 e_entry。
+# 内核 `build.rs::INITRD_BINS` 按 bin 名打进 initrd（**唯一**声明特权级处）。
+[lib]
+path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../crates/env" }
+runtime = { path = "../crates/runtime" }
+protocol = { path = "../crates/protocol" }
+
+[[bin]]
+name = "prog-shell"
+path = "src/bin/user/shell.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-echo"
+path = "src/bin/supervisor/echo.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-dir"
+path = "src/bin/supervisor/dir.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-console"
+path = "src/bin/supervisor/console.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-root"
+path = "src/bin/supervisor/root/main.rs"
+test = false
+bench = false
+doctest = false

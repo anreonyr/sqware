@@ -1,0 +1,17 @@
+[package]
+name = "runtime"
+version.workspace = true
+edition.workspace = true
+
+# 镜像侧运行时（旧 `task` crate 的库面）：`env` 是 envcall 转发（薄），
+# `core` 是组合与封装（厚）。程序在 `programs`。
+# 目标依赖方向：`kernel → env → runtime → protocol → programs`。
+[lib]
+path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../env" }
+erra = { version = "0.2.0", default-features = false }

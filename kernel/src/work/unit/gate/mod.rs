@@ -10,7 +10,7 @@
 // boot 注入，gate 不依赖 scheduler。
 //
 // 授权语义在此：`Pie::{allows, covers}` 判定「哪个操作需哪些权利位」
-// （`Need::{Read,Write,Grant}`）+ 覆盖子集（narrow/accord 共用）；BACK 守门
+// （`Need::{Read,Write,Grant,Build}`）+ 覆盖子集（narrow/accord 共用）；BACK 守门
 // （带 BACK 只能授回 sire 的持有者）在 `snap::vestable`；envcall 适配层只
 // 「取本核 → 转发」，不在壳内重写规则。
 //
@@ -20,6 +20,7 @@
 //   accord.rs  — 转授子集给其他 Task（写派生边）
 //   narrow.rs  — 就地单调收窄本 pie 权限
 //   cull.rs    — 级联撤销（cull）+ 退出钩子（doom）
+//   right.rs   — **存在权**的判定与铸造（`Void` 载体；建域权是第一位消费者）
 //   revoke.rs  — 撤销授与他人的副本（含全部后代）
 //   release.rs — 自释自己持有的一份（含全部后代）
 //
@@ -28,6 +29,7 @@
 
 mod accord;
 mod cull;
+mod right;
 mod narrow;
 mod pie;
 mod release;
@@ -38,6 +40,7 @@ pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, new_pie};
 
 pub(crate) use accord::accord;
 pub(crate) use cull::{cull, doom};
+pub(crate) use right::holds_build_right;
 pub(crate) use narrow::narrow;
 pub(crate) use release::release;
 pub(crate) use revoke::revoke;

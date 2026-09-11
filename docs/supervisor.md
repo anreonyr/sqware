@@ -297,8 +297,13 @@ debug 档同路径跑通，且 `health spare / pagetable / stress` 全 ok。
 > 由内核侧 `SpaceKind` 决定；域程序与 U 态程序共用 `entry`/`env`/`link.ld`/`env`。
 > 只被单个程序用到的模块（如 `lisp/`）留在该 bin 的目录里（`bin/user/lisp/`），
 > 不进 lib 共享面。
-> 改名同时把 `core::task` 模块改为 `core::thread`：原名与新 crate 名撞车——
-> `use task::core::task;` 会把 `task` 绑到该模块，使同文件的 `task::env::…` 解析失败。
+> 改名同时把 `core::task` 模块改掉：原名与新 crate 名撞车——`use task::core::task;`
+> 会把 `task` 绑到该模块，使同文件的 `task::env::…` 解析失败。
+>
+> **后续（§10.26）**：这个包**已拆开**，不再存在同名 crate——库面成为 `runtime`
+> （`env` 薄转发 + `core` 组合封装），四个程序与共享 `entry`/`term`/`link.ld` 组成
+> `programs`，程序名 `task-*` → `prog-*`。撞车的理由（"一个包不能既是 `task` 又是
+> 程序面"）没有消失，只是不再需要用改名绕开：拆包把它从根上去掉了。
 
 ## 13 · 程序清单与特权级（`kind` 字段）
 
@@ -311,7 +316,7 @@ debug 档同路径跑通，且 `health spare / pagetable / stress` 全 ok。
 1. **清单携带 kind**：initrd 条目加 `u32 kind`（0 = User、1 = Supervisor），由
    `build.rs::INITRD_BINS` 写入，`boot.rs` 用 `take(..).kind` 装载——零硬编码。
    这不是「程序自称特权级」：清单由内核构建、引导期只读，是**内核自己的装载表**。
-2. **源码分层**：`task/src/bin/user/`（U 态程序）与 `task/src/bin/supervisor/`
+2. **源码分层**：`programs/src/bin/user/`（U 态程序）与 `programs/src/bin/supervisor/`
    （域程序，当前 `echo` / `dir`）。
 3. **命名**：ABI crate `ubi` → **`env`**（原名取自 "U-mode → S-mode"，而域任务是
    S→S，`u` 已不成立）；文档里的 "uABI" 统一为「环境调用 ABI」。

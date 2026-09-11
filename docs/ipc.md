@@ -6,7 +6,7 @@
 > ⚠️ **历史文档（本轮起）**：本文描述的 Service 承载方式是**内核任务**（`TaskBuilder::closure`
 > + `scheduler::ktask` 软陷阱面）。该面已**整片删除**——用户裁决「内核任务不再支持」。删除清单：
 > `scheduler/ktask.rs`、`scheduler/utask.rs`、`scheduler/task.rs` 三个文件，加上内核侧
-> `TaskBuilder::closure` 与 `ktask_trampoline`。**当前形态**：服务目录是 `task-dir` 域程序
+> `TaskBuilder::closure` 与 `ktask_trampoline`。**当前形态**：服务目录是 `prog-dir` 域程序
 > （S 态用户任务，`a92b211` 起就不在内核里），事件等待走 `messenger::{wait, wake}`，
 > 退场走 `messenger::quit`。下文凡出现 `closure` / `ktask` / `utask::wait_forever` 之处，
 > 都按「当时的实现」读，不再对应现行代码。
@@ -81,7 +81,7 @@ fn Respond(req, result) {
 | 授权 | **Pie** 闩 Hole | 现有 |
 | 挂起/唤醒 | **wait/wake** | 现有 |
 | 跨空间数据 | **mail::hole::push/pull** | 现有 |
-| service 承载 | ~~**TaskBuilder::closure**（内核 Task）~~ | **已删除**（内核任务面不再支持；现行承载＝`task-dir` 域程序）|
+| service 承载 | ~~**TaskBuilder::closure**（内核 Task）~~ | **已删除**（内核任务面不再支持；现行承载＝`prog-dir` 域程序）|
 | **真正新增** | service 循环（Receive/Respond 编排）+ Request 用户封装 + shell 命令 | 纯适配/库层 |
 
 ## 4 · 关键难点：caller 与 service 的连接建立

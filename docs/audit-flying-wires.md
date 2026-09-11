@@ -3130,3 +3130,931 @@ clint 0x0
 但"覆盖写"与"静默丢错"合起来有个坏角：若哪天这里撞上 `WidenDenied`，pole 视图会**静默留着
 比契约更宽的权限**。本轮不动它（改了就是行为变更，且这条路上目前零调用点），记在此处供下一刀。
 
+## 10.25 `task::core` → `task::rt`：层的名用"责任"命名，不用"位置"
+
+一刀纯改名，零语义变化。起因是一个命名问题而非结构问题：`task/src/core/` 这个层名
+**说它在哪儿，不说它做什么**——同级的 `env/` 是责任词（它封装的是什么），`core/` 是
+位置词。三层误读叠在同两个字上：
+
+1. Rust 的 `core` 是 freestanding 核心库（`core::mem` / `core::alloc` 与 `task::core` 同屏）；
+2. 本仓内部的 `core` 已经归**内核**——`kernel/src/work/room/scheduler/core.rs`、
+   `work/unit/space/core.rs`，含义是"某模块的实现本体"，与这一层既不同义也不同层；
+3. 它是**假朋友**：读者会以为它和内 kernel 那两个 `core` 是一回事。
+
+**裁决（用户）：`rt`。** 与内核的 `kernel/src/runtime/`（switcher/chrono/diagnose）
+**同义不同层**——那是内核给自己用的 runtime，本层是"任务依赖内核的方式"。同名不是撞车，
+是同一句话在两侧各成立一次；而 `adapter` 一类会被读成内核那个 `space/adapter.rs` 的同类
+（那个是 `Space` 的门面构造器），**假朋友比同义贵**。
+
+这一刀同时把上一轮讨论定下的层次落成可读形式（协议的归属另刀，本刀不动内容）：
+
+```text
+kernel → crates/env → task::env（薄：一次 envcall 一个函数）→ task::rt（厚：组合与封装）→ protocol
+```
+
+### 落地（9 个文件，路径前缀替换）
+
+| 面 | 改动 |
+|---|---|
+| 目录 | `git mv task/src/core task/src/rt`（9 个 .rs，内容一字未动） |
+| `task/src/lib.rs` | `pub mod core;` → `pub mod rt;` |
+| `task/src/entry.rs:20`、`task/src/rt/unit.rs:13`、`task/src/env/mod.rs:2` | `crate::core` → `crate::rt`（含 1 处注释） |
+| `task/src/rt/channel.rs:4`、`task/src/rt/service.rs:14` | 文档链接与散文里的 `core/` → `rt/` |
+| 四个 bin（`shell`/`dir`/`echo`/`root`） | 6 处 `use task::core::` → `task::rt::`（9 行，含 2 处注释） |
+| `task/src/rt/mod.rs:1-11` | 头注：责任词 + 与 `kernel/src/runtime/` 的关系 + 薄/厚分工 |
+
+**统一替换必须按文件白名单，不能全树 sed。** `task/src` 里 `core::` 的另一半含义是
+**std 的 freestanding 核心库**（`core::alloc`/`core::hint`/`core::time`/`core::panic`/
+`core::mem`/`core::sync`/`core::arch`/`core::ptr`/`core::str`/`core::slice`/`core::fmt`/
+`core::cell` 实测 39 处），全树替换会一起改坏。改动脚本是一次性的（仓库对这类脚手架
+的处置是"验完即删"，同 §10.21 的内核探针），已删除，不留在 `scripts/`。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 残留 | `grep -rn "task::core\|crate::core\|pub mod core" task/src/` = **0**；`docs/` 里 3 处**现行指针**已跟（`root.md:97`、`dispatch.md:52,124`），历史清单（`dispatch.md` §13、本文件 §10.x）按惯例冻结不改 |
+| 编译 | `cargo check -p task` 通过 |
+| 门 | `nu scripts/examine.nu` → **3/3 PASS**（自退 + 无 panic + 8 步全过 + 9 marker 齐） |
+| **行为零变化** | 改名前后**两份归档**的归一化控制台指纹**逐字节相同**（见下） |
+
+**md5 判据这次不能照抄旧常数**：本文件里散落着两代基线，`18313396…` 是 **A2 期**的值，
+§10.22 删掉 banner 三行后已变成 `11aefee7…`（§10.23/§10.24 用的是后者）。两个都不是
+本次的对照物——**本次的对照物是"改名前那一刀的归档"**：
+
+| 归档 | 归一化指纹（6 份全部相同） |
+|---|---|
+| `trace/e2e-narrow-guard/`（改名前的同一 HEAD 状态，§10.24） | `bcc947a1303a2bd1882e7d46afa25c63` |
+| `trace/e2e-20260911-195326/`（本刀之后） | `bcc947a1303a2bd1882e7d46afa25c63` |
+
+归一化抹掉的**只有**四类易变行，脚本如下（`docs/` 里从未定义过这个手法，本次写死在此，
+免得下一刀再靠猜）：
+
+```bash
+norm() { sed -E $'s/\x1b\\[[0-9;]*[A-Za-z]//g' "$1" \
+  | sed -E -e 's/elapsed=[0-9]+ms/elapsed=Nms/' \
+           -e 's/^(clock) [0-9.]+ sec/\1 T sec/' \
+           -e 's/^(Domain0 Boot HART +:) [0-9]+/\1 H/' \
+           -e 's/^(Boot HART ID +:) [0-9]+/\1 H/' \
+           -e 's/^(hart this +)[0-9]+/\1H/' \
+           -e 's/^(trap stack this +)[0-9]+ @ 0x[0-9a-f]+\.\.0x[0-9a-f]+/\1H @ RANGE/'; }
+```
+
+**归一化仍有牙**（它不是在抹平一切）：六份归档的**原始** console md5 各不相同
+（3 个不同值），差的正是上面四类行——其中后两类是 **QEMU 种子的抽签**：引导 hart
+可能是 0 也可能是 1，于是 OpenSBI 的两行与 sqware 的 `hart this` / `trap stack this`
+两行跟着变。这是本次才查清的：原先的"归一化 md5 三份同值"判据在**随机种子**下会
+三份分成两类（`26ca3dd5…` / `3f545306…`），看着像行为变化、其实只是抽到了另一个 hart。
+
+### 顺带记：sed 漏了两处，而这次是"守卫先过、替换没覆盖"
+
+首轮替换漏掉 `pub mod core;`（`rt/service.rs:14` 的散文 `同住 core/` 同理）——原因是
+我的模式只写了 `task::core` / `crate::core` 两种**带 `::` 的路径形**，而模块声明是
+`pub mod core;`。预检守卫查的是"锚点在不在"，`grep -q '^pub mod core;'` 是**通过**的：
+它没告诉你"这一行也在替换范围里"。两处都在替换后的复查里抓出来并补上。
+
+**留给下一刀的一条纪律**：这类改名的判据不是"脚本跑完了"，而是**跑完立刻 `cargo check`**
+——模块声明没跟着改的话，目录 `mv` 之后会当场编译失败，是最便宜的真相来源。
+
+## 10.26 拆 `task`：包不能既是层又是程序（`runtime` + `programs`）
+
+**起因**：§10.25 之后要按用户裁定的链 `kernel → env → task::core → protocol` 把协议
+实现搬进 `crates/protocol`。但搬之前撞上一个**结构性拦路石**：`service.rs` 要的机制
+（`HolePie`/`mail`/`channel`/`handshake`）都在 `task` 里 ⇒ `protocol` 必须依赖 `task`；
+而 `task/Cargo.toml` 里那条 `protocol` 依赖是 **bin 要的**（实测 lib 对 `protocol` 的引用
+**0 处**）⇒ 一个包不能有环。**根因不是依赖写错了，是 `task` 同时是"层"和"程序"**：
+它既提供被上层复用的运行时，又装着四个链接在 `IMAGE_BASE` 的镜像程序。
+
+**裁决（用户）**：拆。包名 `task` → **`runtime`**（库面），四个程序 → **`programs`**；
+`env` 与 `envmacros` **不改名**（用户明示）；原 `core` 层在包内的模块名定为 **`core`**。
+
+### 落地
+
+| 面 | 改动 |
+|---|---|
+| `runtime/`（新，纯库） | `env/`（envcall 转发，薄）+ `core/`（组合与封装，厚）+ `PAGE_SIZE`。目标态是**lib 不认识任何协议**；此刻还残留 4 处（`core/{service,directory}.rs` 的 3 处 `use`/路径 + 1 处文档注）——那正是下面那条临时边，第二刀归零 |
+| `programs/`（新） | 四个程序（`user/shell.rs`、`supervisor/{echo,dir,root}`）+ `entry.rs`（`_start`/panic handler）+ `term/`（shell 专用）+ `link.ld` + `build.rs` |
+| 程序名 | `task-shell/echo/dir/root` → `prog-shell/echo/dir/root`（`programs/Cargo.toml` 四处 `[[bin]]` + `kernel/build.rs::INITRD_BINS` 四行） |
+| `kernel/build.rs` | `-p task` → `-p programs`；产物目录变量 `task_target` → `bin_target`；**watch 从 1 条变 3 条**（`../programs`、`../runtime`、`../crates/env`）——旧注记过的"改了程序、initrd 还是旧的"就是漏 watch 的后果 |
+| 依赖搬迁 | `anstyle-parse` 归 `programs`（唯一消费者是 `term/input.rs` 的 VTE 解码）；`erra` 留 `runtime`（`core/{handshake,service}.rs` 用） |
+| 引用重写 | 逐行正则 + 替换账目 + 残留断言（`task::rt::`→`runtime::core::`、`task::env::`→`runtime::env::`、`task::term::`→`crate::term::` 等，共 19 条规则命中，全表穷举、无模糊匹配） |
+| 工作区 | `members` = kernel / runtime / programs / crates{env,protocol,sbi,envmacros}；旧 `task/` 目录消失 |
+
+**临时边（必须记账）**：`runtime/Cargo.toml` 里加了一行 `protocol`——因为拆包这一刀
+**不能同时动语义**，`core/{service,directory}.rs` 此刻仍是 dispatch 的客户端/服务端实现。
+方向是反的（`runtime → protocol`），下一刀协议搬家时删掉它、把方向翻正
+（`protocol → runtime`）。这一行就是"拆包"与"搬协议"必须分两刀的证据。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 编译 | `cargo check --workspace --all-targets` 无 error；警告数**回到基线**（kernel 7 + manifest 4，四个程序 0） |
+| 门 | examine **3/3 PASS**（自退 + 无 panic + 8 步全过 + 9 marker 齐） |
+| 行为零变化 | 归一化控制台 diff **零差异**——但见下，这次要多归一化两个量 |
+| ELF | initrd 5 834 372 → 5 845 444 字节（**+11 KB**，见"代价"） |
+
+**这次"零差异"不是直接得出来的，值得记**：先按 §10.25 的归一化比，指纹从
+`bcc947a1…` 变成 `e3a7e464…`，四行 diff 全部落在两类**布局量**上——
+`pc: 69246 → 71198`（镜像内偏移，非 VA）与用户堆 `VA(0x21000) → VA(0x20000)`。
+同一故障、同一顺序、同一 `kind`；成因是每个 bin 多链了一份 lib 符号 ⇒ 代码重排。
+把这两类量也归一化之后：**106 行对 106 行，零差异**。
+
+> **教训（写进下一刀的判据模板）**：拆包/改名类改动**会移动程序计数器和堆地址**。
+> "归一化 console md5 不变"这条老判据**对拆包不成立**——不是行为变了，是布局变了。
+> 判据要做成两条：①归一化后**零行差异**；②差异**只允许**落在 `pc:` 与 `VA(...)`
+> 这两类量上。只跑老判据会把纯搬家误判成行为变化。
+
+### 发现的坑（都是"编译期才暴露"的，记账供复用）
+
+1. **`use` 不链接 crate。** `entry`（`_start` + `#[panic_handler]`）从 bin 根搬进 lib 之后，
+   四个程序当场报 `` `#[panic_handler]` function required, but not found ``。试过
+   `use programs::entry as _;` 与 `use programs::term::...`——**都不够**：`use` 只影响名字
+   解析，不拉链接。唯一管用的是 **`extern crate programs;`**（2018 起 `unused_extern_crates`
+   默认允许，故零警告；而 `use ... as _` 会吃一条 `unused_imports`）。**判空法**：把那一行
+   摘掉重编——panic handler 立刻缺失 ⇒ 证明是它在拉链接。
+2. **代价（如实记）**：`entry` 提进 lib 之后每个程序各链一份，initrd **+11 KB**。
+   换来的是"入口只有一份真相"。若将来这 11 KB 变得要紧，正确的修法是把 `entry` 放回
+   每个 bin 的根（`#[path]` 引入或各自一份），而不是让四个程序共享一个会被复制四遍的 lib 符号。
+3. **`git mv` 对未跟踪目录报"源为空"**：§10.25 刚改名、尚未提交的 `task/src/rt/` 在 git 眼里
+   还不存在。用普通 `mv`（git 的 diff 阶段会自动识别重命名），别在脏树上用 `git mv`。
+4. **sed 漏 `pub mod core;` 的教训在 Python 里不成立**：上一刀的问题出在 `sed` 的
+   `core::` 模式匹配不到 `core;`。这次替换脚本用**逐行正则 + 穷举规则表 + 残留断言**，
+   并在写完立刻 `cargo check`——模块声明这类"守卫查得到、替换覆盖不到"的洞，在
+   `(?W)` 语义下不可能重演。
+
+### 带出来的一条既存不一致（**未改**）
+
+`docs/supervisor.md` 里那段"`task/` 的定位"原先只有**改名**视角（`core::task` → `core::thread`），
+而那个模块早已是 `unit.rs`；本轮把它按拆包后的现状改写，并保留撞车的原始理由
+（"一个包不能既是 `task` 又是程序面"）——**拆包把这条撞车从根上消掉了**，不再需要靠改名绕开。
+
+## 10.27 协议搬家：目录协议三块归 `protocol`，临时边翻正
+
+§10.26 拆包时留了一条**方向反着**的临时边（`runtime → protocol`），并写明"协议搬家那一刀
+把它删掉"。这一刀就是它。判据不是"哪边行数多"，而是**依赖方向**：
+
+```text
+搬前（§10.26 的临时态）       搬后（本刀）
+runtime ──▶ protocol          protocol ──▶ runtime ──▶ env
+   （core/{service,directory}     （dispatch/{wire,client,server}
+     还住在 runtime 里）             住在 protocol 里）
+```
+
+用户裁定的链 `kernel → env → runtime → protocol → programs` 至此**逐条落成编译期事实**。
+
+### 落地：`crates/protocol/src/dispatch/` 三块
+
+| 模块 | 内容 | 来源 |
+|---|---|---|
+| `dispatch/wire.rs`（285 行） | 线格式：`Request`/`Reply`/`Op`/`MSG_LEN`/`REPLY_AT`/`Name` 转出 | `protocol/src/dispatch.rs` 原位改（纯函数，零依赖） |
+| `dispatch/client.rs`（228 行） | 客户端：`Directory`（连目录）+ `Service`（连服务）+ `PAYLOAD_LEN` + 负码 `E_DENIED/-1 E_NOT_FOUND/-2 E_TAKEN/-7` | `runtime/src/core/service.rs` |
+| `dispatch/server.rs`（272 行） | 服务端：注册表 `Directory` + `serve()` 线格式适配 + `vestor_of`/`release_pie` | `runtime/src/core/directory.rs` |
+
+**进口路径保持不变**：`dispatch/mod.rs` 把三块一并转出（`pub use wire::{…}` 等），
+故 `protocol::dispatch::{MSG_LEN, Name, Reply, Request}` 照旧可用——拆三块是**内部**整理，
+不动调用方的进口。三个程序只改了 `Directory`/`Service` 的来处
+（`runtime::core::service::` → `protocol::dispatch::client::`，`runtime::core::directory::`
+→ `protocol::dispatch::server::`）。
+
+### 依赖边（实测）
+
+| 包 | 依赖 |
+|---|---|
+| `kernel` | env, sbi |
+| `runtime` | **env**（`protocol` 已删） |
+| `protocol` | env, **runtime**, erra（负码容器，新加） |
+| `programs` | env, runtime, protocol |
+
+`grep -rn protocol runtime/src` 现在只剩 **3 处文档注释**（指路用），引用数 0。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 编译 | `cargo check --workspace --all-targets` 无 error；警告**回到基线**（kernel 7 + manifest 4，programs 0） |
+| 门 | examine **3/3 PASS**（跑了两次：中途一次 + 收尾一次） |
+| 行为零变化 | 归一化控制台指纹 `4966018f567cccc48b5c07bf5ef6a7e0` —— 与 §10.26 那份归档**逐字节相同**，且 `diff` **零行**。**本刀连布局量都没动**（没有 §10.26 那种 `pc`/`VA` 漂移）：协议搬到另一个 crate 不改任何一个程序的代码生成顺序 |
+| 残留 | `grep -rn "core::service\|core::directory"` 全仓 **0** |
+
+### 三处"封装正确地咬人"
+
+**① `Channel` 的字段不再是协议层能碰的。** 搬家后 `client.rs` 报两处私字段错误：
+
+```
+error[E0616]: field `at_peer` of struct `Channel` is private
+error[E0616]: field `mine` of struct `Channel` is private
+```
+
+根因：`Channel` 的字段是 **`pub(crate)`**（`runtime/src/core/channel.rs:22,24`），同 crate 时
+协议代码摸得到，跨包后摸不到。**修法不是把字段放开**，而是改用公开的
+`at_peer()` / `mine()` 访问器——这正是"协议层只该看见机制的门面"这句话第一次被编译器
+强制。类型本身一行没改。
+
+**② `crate::` 的含义在搬家那一刻变了。** `crate::env::mail` 在 `runtime` 里是"本包的
+`env` 模块"，在 `protocol` 里成了"不存在的模块"——8 处编译错误里有 4 处是这个。
+全部改成 `runtime::env::mail`。协议层因此**只走机制的公开面**：`runtime::env::mail`
+（薄）+ `runtime::core::channel`（厚），**不碰** `env::ecall`。
+
+**③ 模块声明又一次跑在路径前面。** 搬走两个文件后，`runtime/src/core/mod.rs` 的
+`pub mod directory; pub mod service;` 立刻报 `file not found for module`——与 §10.25
+那条教训同源（"守卫查得到锚点，不保证替换覆盖到声明"），这次是**编译器**先抓到，
+比 grep 断言可靠。
+
+### 试过并撤回的一件事（记账）
+
+我曾把 `protocol/Cargo.toml` 的 `test = false` 翻成开（理由：`wire` 是纯函数编解码，
+最该宿主单测）。**当场失败**：
+
+```
+error[E0463]: can't find crate for `test`
+error: `#[panic_handler]` function required, but not found
+```
+
+`no_std` + riscv64 编不出 libtest（它依赖 std）。这也把 §10.23 那句"宿主侧单测要一个
+**一次性 crate**"的**原因**补上了：不是懒得给这些 crate 写 `#[test]`，是这条路在
+no_std 目标上根本不通。理由与复现命令已写进 `protocol/Cargo.toml` 的注释（那一行仍
+是 `test = false`）。**归零的真正入口是宿主 crate**，独立一步。
+
+### 带出来的一处同名（**未改，记账**）
+
+`client::Directory`（客户端会话）与 `server::Directory`（目录注册表）**同名不同角色**。
+§10.26 之前它们是同一文件的两半、名字还不刺眼；现在分居两个模块，靠路径才能分开。
+我在这两处各加了一段"同名不同角色，先看模块"的注释，**没有改名**——改名是命名裁决，
+得单独定（且 `Directory` 作为"目录"这个名字对两侧都成立，未必该动）。
+
+## 10.28 `runtime` 收进 `crates/`：顶层只留"构成物"，库全在 `crates/`
+
+**起因**（用户）：§10.26 拆包时把 `runtime` 建在了**顶层**（`/runtime/`），而它是个库——
+与它同性质的四位（`env`/`protocol`/`sbi`/`envmacros`）都在 `crates/` 下。一个纯库单独站在
+顶层，把 `crates/` 的语义（"可复用的库都在这儿"）打出了一个洞。
+
+**裁决（用户）**："runtime 放 crate 里"。搬到 `crates/runtime`。
+
+**顶层分类至此明确**（两条，都是"构成物"）：
+
+| 位置 | 内容 | 判据 |
+|---|---|---|
+| 顶层 | `kernel/`（内核镜像）、`programs/`（四个镜像程序） | 它们是**被构建出来的东西**（链接脚本、`IMAGE_BASE`、initrd 打包），不是供人 `use` 的库 |
+| `crates/` | `env` / `runtime` / `protocol` / `sbi` / `envmacros` | **供人 `use` 的库**，按 `kernel → env → runtime → protocol → programs` 分层 |
+
+### 落地的四处（比预想的少，因为依赖是路径式的）
+
+| 面 | 改动 |
+|---|---|
+| 目录 | `mv runtime crates/runtime` |
+| `Cargo.toml`（工作区） | `members` 里 `"runtime"` → `"crates/runtime"`（与其余四位排在一起） |
+| `crates/protocol/Cargo.toml` | `path = "../../runtime"` → `"../runtime"`（同层相邻了） |
+| `programs/Cargo.toml` | `path = "../runtime"` → `"../crates/runtime"` |
+| `crates/runtime/Cargo.toml` | `env` 的 `path = "../crates/env"` → `"../env"` ⚠ **这一处是我先漏掉的** |
+| `kernel/build.rs` | watch `../runtime` → `../crates/runtime`；**并补上 `../crates/protocol`**（§10.26 只 watch 了三层，protocol 当时还没被程序依赖，现在依赖了） |
+| `docs/dispatch.md:361` | 现行指针 `runtime/src/env/mail.rs` → `crates/runtime/src/env/mail.rs` |
+
+**那个漏掉的一处值得记**：`crates/runtime/Cargo.toml` 里的 `env = { path = "../crates/env" }`
+是 §10.26 从顶层姿态写的（顶层时 `../crates/env` 正确），搬到 `crates/runtime/` 之后它解析成
+`crates/crates/env`。**报错却指在 `programs` 上**（`failed to load manifest for workspace member
+programs` → `failed to load manifest for dependency protocol`），根因隔了两跳。判据是那条
+**逐包路径解析检查**（列出每个包的 `→` 边再人眼核）——`cargo` 的报错只给最外层那一跳。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 编译 | `cargo check --workspace --all-targets` 无 error；警告**回基线**（kernel 7 + manifest 4，programs 0） |
+| 门 | examine **3/3 PASS** |
+| 行为零变化 | 归一化控制台指纹 `4966018f567cccc48b5c07bf5ef6a7e0` —— 与 §10.27 归档**逐字节相同**，`diff` **零行**（纯路径搬家，连布局量都没动） |
+| 依赖边 | `kernel → env,sbi`；`runtime → env`；`protocol → env,runtime,erra`；`programs → env,runtime,protocol`（与 §10.27 表逐条相同） |
+
+
+
+
+
+## 10.29 `term` → console 服务（第 1 步：服务起来并注册）
+
+**裁决（用户）**：`term` 变成 console 服务；`IOCall` 是**前期的兼容层**，故正确的处置是
+**删它**而不是给它加判据；任务 panic 打印改走内核 diagnose（**(子)**）；服务化与删 IOCall
+**分两步**（服务上线后再删）。本刀只做第一步。
+
+### 为什么"给 IOCall 加判据"是死路（先记账，免得下次绕回来）
+
+`AnyPie` 只有**两个变体**（`Hole`/`Pole`，`gate/pie.rs:102-104`）——权限只能指向这两种资源，
+而 UART 是内核硬编码的设备，谁都指不过去。要给 `IOCall` 加"持 pie 才准调"就得**先造一种
+设备权柄**（新内核对象 + 33 处 `AnyPie::` 匹配点）。而既然 `IOCall` 是兼容层，正确动作是
+删除：**权威不是"收紧"，是"收口"**——设备只有一个用户时，没人需要判据。
+
+### 形状
+
+```text
+crates/protocol/src/console/
+  ├── wire.rs    请求/回复同一张字段表（op/data/reply/client/len/payload），纯函数
+  ├── client.rs  Console 会话 + Readline（与旧 term 的 API 同形，内部走协议）
+  └── server.rs  ANSI 渲壳 + VTE 解码 + 行编辑 + 客户端表（旧 term/ 的 403 行大部分搬到这）
+programs/src/bin/supervisor/console.rs   prog-console：任务侧唯一读 UART 的任务
+```
+
+**两条孔的拓扑**（契约是"谁开孔谁读"）：
+
+```text
+data   客户端 push → 服务 pull     （服务读）
+reply  服务 push   → 客户端 pull   （客户端读）
+```
+
+两枚 token 都是**同一条调用方 hole 的两侧**（`Channel = { mine, at_peer }`）。分两枚而不是
+复用一枚：复用会让"服务写回信"和"客户端写字节"在同一枚孔里对撞。
+
+### 三条落地约束（都写进代码注释了）
+
+1. **`Write` 必须同步**：客户端等到 `Ok` 才返回——`write(prompt)` 返回时提示符**已落屏**，
+   之后 `readline` 才安全。若"推完就算"，提示符会憋在孔里而用户已在对着空行打字。
+   这是 dispatch 的 `Channel` + `pull_timeout` 的成熟形，未新造机制。
+2. **单请求阻塞**：`ReadLine` 在 `handle` 里就地阻塞（旧 `readline` 也是这么写的）。
+   代价：一个会话等读时服务不理别的请求（它们排在请求孔里）。今天只有 shell 一个客户端，
+   取舍成立；第二个并发客户端上来时要重裁。
+3. **空转 1 kHz**：`pull_timeout(请求孔, 1ms)`。与旧 `readline` 的轮询同级，但**它是常驻的**。
+   要真不空转需要第二线程或新等待门闩——另一刀。
+
+### 现场抓到的缺陷（**这一刀最重要的记录**）
+
+第一版域循环里我写了"无请求时 `poll_device_byte()` 读设备一次"，并在文件头自己写下了
+注释"未在等读时读到就丢"——**然后这个风险当场发生了**：门发 `spawn`，shell 收到 `sawn`
+（5 字节丢 1），examine **0/3**。
+
+```text
+sq > s   ← 只有 4 个字符进到 shell
+unknown: sawn (try help)
+```
+
+根因：服务**无条件**每 1ms `io::try_get()`，把 shell 正要读的字节抢走丢掉。
+修法是判据而非补丁：**只有 `reader != 0` 时才允许碰设备**（UART 只在 `edit_line` 的
+循环里被读）。`poll_device_byte()` 改名 `tick()` 并留空——名字要挡住"顺手读一下"。
+
+**这条给下一刀的教训**：服务化不是"另一个人也来读共享设备"，而是"**别人都不读，
+只有我在客户端要的时候读**"。旧世界 UART 被两个读者轮流读是**竞态**（只是没人撞上）；
+服务化的价值恰恰是消掉它——若服务自己也随便读，等于把竞态换了个形式留下来。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 编译 | `cargo check --workspace --all-targets` 无 error；警告回基线（kernel 7 + manifest 4，其余 0） |
+| 门 | examine **3/3 PASS**（`prog-console` 由 root 启动、注册成功、不影响任何既有步骤） |
+| 行为差异 | 归一化后**只多 3 行**，且都是这一刀该有的：`prog-console` 启动的两次缺页 ＋ 目录枚举多一行 `console` |
+| 指纹 | `46963e8205cfec2fe6cd221c96cb0cd4`（×3）。**与基线不同是正确的**——多了一个注册进目录的程序；差异已逐行核过 |
+| 注册证据 | `dir` 命令的输出里出现 `console`（`:91`）——服务真的进了名字空间 |
+
+### 未做（后续两步）
+
+- **第 2 步**：shell 切到 `protocol::console::client`（`Terminal`/`Readline` 改成线对侧），
+  然后 `programs/src/term/` 删除、`programs` 卸掉 `anstyle-parse`。
+  **本步零调用方**：服务已经跑起来并注册，但 shell 仍走旧的 `io::write`/`io::try_get`
+  路径——那正是"服务上线后再删 IOCall"这个顺序的第一半。
+- **第 3 步**：删 `IOCall`（`envcall.rs` 两个臂、`fid.rs` class 3、`console::push/pull`、
+  `runtime::env::io`），`entry.rs` 的 panic 改走 `ControlCall::Panic` 交内核。
+
+## 10.30 console 服务第 2 步：shell 切到线对侧（`programs/term` 删除）
+
+§10.29 让服务起来并注册，但**零调用方**。这一步把 shell 接上去，判据是
+**逐键行为与今天一致**——门里 8 步含交互输入，指纹就是它对的证据。
+
+### 落地
+
+| 面 | 改动 |
+|---|---|
+| `programs/src/bin/user/shell.rs` | 新增 `Terminal` **适配器**（与旧 `programs::term::Terminal` **同 API**：`writeline`/`clear`/`fg`/`reset`/`readline(prompt)`）⇒ **70 处调用点一字未改**；内部改走 `protocol::console::client` |
+| `programs/src/term/` | **删除**（403 行）：渲染与编辑在 §10.29 就搬进了 `protocol::console::server` |
+| `programs/Cargo.toml` | 卸掉 `anstyle-parse`（解码在服务侧；全仓现在只剩 `crates/protocol` 一处依赖它） |
+| `crates/protocol/src/dispatch/client.rs` | +`Directory::connect_token(name)`——只要入口门闩、不建回信通道 |
+| `crates/protocol/src/console/wire.rs` | `ReadLine` 带 **prompt**（见下） |
+| shell 的 `Color` | 八色 → **只留用到的两个**（`Green` 标题 / `Cyan` 提示符）：其余六个全仓从没构造过，按 §10.22 同款判据收敛 |
+
+### 提示符必须随 `ReadLine` 走（协议设计点）
+
+行重绘是 `\r\x1b[K` + **`prompt` + 缓冲**（`server.rs::redraw`）。服务若不知道 prompt，
+重绘就只剩输入串——实测第一版正是这样：屏幕上出现 `s` `sp` `spa`… 而 `sq > ` 只剩第一次。
+
+于是 `ReadLine` 请求**带上 prompt**（复用 `len` + `payload` 两字段），客户端在请求前先把它
+同步写一次（`Write` 的 `Ok` 就是"已落屏"）。两个动作的次序不能颠倒——否则用户对着空行打字。
+**这不是额外往返**：那条 `Write` 本来就要发。
+
+### 现场抓到的三个缺陷（都由门当场判 0/3 或指纹偏差暴露）
+
+**① 服务抢走了 shell 的输入**（§10.29 末段就已修，一并记）：域循环无条件每 1ms
+`io::try_get()`，把 shell 正读的字节抢走丢掉——门发 `spawn`，shell 收到 `sawn`。
+修法：**只有 `reader != 0` 时才碰设备**，`poll_device_byte()` 正名 `tick()` 并留空。
+
+**② `connect` 之后 `disconnect` 会把入口一起 release 掉**：`console_entry()` 里
+`let svc = session.connect("console")?; let token = svc.entry_token(); svc.disconnect();`
+——`Service::disconnect` 的实现是 `entry.release()`，于是刚拿到的入口**当场作废**，
+后续每次 `Console::open` 都 `Denied`。修法不是"别断"，而是**不建**：新增
+`Directory::connect_token()`——只要入口、不建通道，于是没有可断的东西。
+
+**③ `Open` 的回执被我写成了"无处可回"**：`open()` 返回 `to_client: None`，主循环据此
+**丢弃**回执 ⇒ 客户端每条请求都等到 `REPLY_TIMEOUT_MS` 超时 ⇒ 一路降级。
+`Open` 的回执只能走**新建会话的回信孔**（客户端的孔，随请求带来）。同一处错误也影响
+`Write`/`Close` 的 `Ok`——三处一并修（`to_client: Some(client)`）。
+**这条最容易漏**：`None` 分支的注释当时写着"`Open` 失败 / 消息非法"，读起来自洽，
+实际把成功路径也归了进去。
+
+### 调试方法（值得复用）
+
+三个缺陷都不是读代码看出来的，是**探针 + 门**一步步二分出来的。有效的做法：**两侧各打
+一枚可区分的短标记**（`[A] entered` / `[B] push-ok` / `[C] op=1 decode=ok` /
+`[F2] free-slot=yes` / `[E] no-reply-slot` / `[G] handled to_client=none`），每次只推进一格；
+关键是**让探针落在"能不能到这儿"的分界上**，而不是印变量值。
+
+一条纪律：**探针用纯 ASCII 字面量**——我用 `python` 的转义替换插探针时写坏过 `"\r\n"`
+（变成字面量），还切坏过括号（把 `client.rs` 截到 97 行）。探针用完**全部清除**，
+收尾用 `grep` 断言为零。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 编译 | `cargo check --workspace --all-targets` 无 error；警告回基线（kernel 7 + manifest 4，其余 0） |
+| 门 | examine **3/3 PASS** ×3 轮 |
+| **逐键行为** | 原始字节逐字相同：`sq > \r\x1b[Ksq > s\r\x1b[Ks…sq > spawn` —— 与接入服务**之前**的形状一致 |
+| 行为零变化 | 归一化指纹 `46963e8205cfec2fe6cd221c96cb0cd4` = §10.29 那轮的基线，`diff` **零行** |
+| 残留 | `programs/src/term/` 已删；`grep` 探针 = 0 |
+
+### 还剩什么（第 3 步）
+
+1. **删 `IOCall`**：`envcall.rs` 两个臂、`fid.rs` class 3、`console::push/pull`、
+   `runtime::env::io`；`entry.rs` 的 panic 改走 `ControlCall::Panic` 交内核。
+2. **删 shell 的降级路径**（`fallback_readline` 与 `io::put` 分支）——那时任务侧根本没有
+   设备可直连；它现在是**临时护栏**（服务连不上时还能诊断）。
+3. ~~`protocol::console::server::Color` 目前零构造点~~ —— 已在 §10.32 判掉并从
+   `server.rs` 删（颜色由客户端拼成转义串发来，服务侧零消费者）；留在 shell 的是
+   `Terminal` 自己的 `Color`（`Green`/`Cyan` 两个真在用）。
+
+---
+
+## 10.31 console 服务第 2.5 步：把"输出延迟 1 秒"查到底
+
+§10.30 交付时 shell 已经"接上"控制台，但用户实测：**输入没问题，输出延迟 ≥1 秒**，
+且提示符会被消息覆盖。这一刀只做一件事——把延迟的**每一拍**找出来。
+
+### 五处根因（按发现顺序）
+
+**① 每条输出开关一次会话**（shell 侧，最大的一笔）
+第一版 `Terminal::write`/`readline` 各自"开会话 → 用 → 关会话"，于是**一条输出**要付
+2× `Channel::open`（各含一次 unseal + 一次 accord）＋ 2 次往返。而 §10.30 之前的旧路径
+一条输出是 **1 次 envcall**。修法：会话**开一次活到进程结束**（服务本就支持
+`MAX_CLIENTS` 个会话；"单读者"约束由 shell 自己保证——它不会并发等读）。
+
+**② 一条协议消息只带 24 字节**：`sq > ` 这种短串也要一次往返。修法：shell 侧**按行
+攒**（`Terminal::buf`，遇换行或满 128 字节才发）；读行前强制 flush——顺序不能颠倒，
+否则提示符会晚于读行落屏。
+
+**③ 服务每 1ms 轮询请求孔**：改成一件事——**没事就阻塞**（`entry.pull` 就地等）。
+输出延迟直接少一拍。
+
+**④ 回信孔交错了 token**：`Open` 必须把**对端表里**的号（`Channel::at_peer`）交给服务。
+交自己表里的号（`mine`）→ 服务 `push` 时 `find(token)` 在**它自己的表**里找不到 →
+`Denied` → 客户端那条有界收**白等满 1 秒** → 静默降级到直连设备。
+
+**⑤ `write`/`readline` 在"会话不认识"时把回执丢在地上**：`to_client: None` ⇒ 回执无处可推
+⇒ 客户端又是白等 1 秒。三处（`write`/`readline`/`close`）一并改成走**该会话的回信孔**。
+
+### 一条被自己推翻的"根因"（记下来免得再犯）
+
+排查中我曾认定"`Console` 丢掉了 `Channel` ⇒ `mine` 那枚 `HolePie` 随之消亡 ⇒ 整条孔
+没了"。**这是错的**：`HolePie` 根本没有 `Drop`，`from_token` 是零成本重建，句柄值不持有
+任何东西。当时那次"实验证明交 `mine` 也行"之所以看起来成立，是因为**另有一处独立缺陷**
+正好掩盖了它。真正成立的两条是：交出去的是**对端**的号；以及**谁的表里有这枚 token，
+谁才能推**（后者到 §10.33 才补齐）。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 编译 | `cargo check --workspace --all-targets` 无 error；警告回基线 |
+| 门 | examine **3/3 PASS** |
+| 观感 | 单启 transcript：`sq > dir` 回车后**输出立即出现**；提示符被覆盖的问题随之消失（重绘时先 `\r\x1b[K` 再补 `prompt + 缓冲`） |
+
+---
+
+## 10.32 console 服务第 2.6 步：两线程，以及"句柄是 per-task 的"这条硬边
+
+修完 §10.31 之后，`dir` 一开始**读不到行**了：逐键重绘全对、提示符也在，**回车之后
+什么都没有**，shell 像卡死。这一刀把这个"看起来完全正常却什么都不发生"的缺陷查到底。
+
+### 根因：服务侧两个线程是**两个 task**，孔句柄不通用
+
+为了"等输入时别的程序还能打印"（§10.30 第一版把 `ReadLine` 就地阻塞在请求循环里，
+于是消息全排在请求孔里显示不出来），服务拆成两半：
+
+```text
+主线程      pull 请求孔 → Open/Write/Close/ReadLine → 回信孔
+输入线程    读 UART → 解码 → 行编辑 → 交付整行
+```
+
+**输入线程经 `unit::try_closure` 派生，是一个独立的 task**，而"某会话的回信孔"这枚
+token 是客户端在 `Open` 时交给**主线程**的，只在**主线程的 pie 表**里。输入线程拿它去
+`push`，内核 `push` 的实现是 `t.pies.iter().find(|p| p.token() == token)`——在**推者
+自己的表**里找，找不到就是 `Denied`。于是整行永远递不出去，客户端阻塞在**无上界**的
+`pull` 上。
+
+现象之所以极具误导性：**屏幕上一切正常**——逐键重绘是输入线程自己在写设备，与新行交付
+无关；只有"回车之后什么都没有"这一条暴露它。
+
+### 走不通的两条路（都别再试第三次）
+
+| 试法 | 结果 |
+|---|---|
+| 输入线程直接用会话回信孔的 token 推 | `Denied`（token 不在它的表里） |
+| 输入线程**自建**一条事件孔、`Accord` 给主线程后再推 | **同样 `Denied`**（跨 task 的孔句柄交接在这个形态下不成立） |
+
+第二条尤其费时间：它看起来"正是 `dir.rs` 控制线程的同款手法"，但那个先例是
+**主线程 Accord 给控制线程**，方向与这里相反。
+
+### 落地的形态：**只有主线程碰孔**，整行经共享内存交接
+
+```text
+输入线程  读设备 → 解码 → 行编辑 → State::set_pending(client, reply)
+主线程    pull_timeout(请求孔) → 超时即 State::take_pending() → push(会话回信孔)
+```
+
+共享内存这条路**本仓早已在同一对线程上实证**：`static CONSOLE: Lock<State>` 本来就是
+两个线程共写的（行缓冲就在里面），加一格"待交付"不引入任何新机制、也不占权限表。
+
+主线程的等待因此**不能是无穷**：整行是被放进共享槽的，它得有机会去看。故两档——
+有会话等读时 `IDLE_MS = 20`（输入线程正在读设备，回车随时来），没人等读时
+`SLOW_MS = 200`。
+
+### 同刀清理
+
+| 面 | 改动 |
+|---|---|
+| `protocol::console::wire` | 删 `Request::Open` 的**数据孔**字段（客户端从不推、服务从不读，**从第一天起就是死码**）；`Op::Open` 的注释跟着改 |
+| `protocol::console::server` | `deliver()` / `poll_device()` 删（前者是"输入线程推回信孔"的遗骸，后者搬到持有设备的 `prog-console`）；`State` +`set_pending`/`take_pending` |
+| `protocol::console::mod` | 导出表与模块文档跟上（`deliver`/`poll_device` 从导出里删、"数据孔"段落改写） |
+| `programs/src/bin/supervisor/console.rs` | 两线程接线；输入线程**不接任何句柄**（只碰共享态与设备），故启动无交接次序问题 |
+
+### 判据
+
+| | 值 |
+|---|---|
+| 编译 | `cargo check --workspace --all-targets` 无 error；**警告回基线**（kernel 7 + manifest 4，`unused import/variable/function` = **0**） |
+| 门 | examine **3/3 PASS** ×2 轮（清理前、清理后各一轮） |
+| 指纹 | `a07cfb552ee964ea2400898d561f87ae`（×3）。**与 §10.30 的 `46963e82…` 不同是正确的**——现在 shell **真的读到了命令**；`diff` 只有两类行：① 逐键重绘串（`sq > \r\x1b[Ksq > s…`）② 两条 `pc:` 页错误行（二进制布局位移）。**每一条命令的输出行逐字未动** |
+| 残留 | 探针 `grep` = 0（唯一命中的 `entry.rs` 里那个 `#` 是 panic 回溯**既有的**序号前缀） |
+
+### 调试方法（这次的教训，比上面两条都值钱）
+
+1. **"屏幕上看起来正常"不是证据**。逐键重绘对、提示符对、行编辑对——全都与"整行有没有
+   交到主线程"无关。
+2. **成对标记 > 印变量**：客户端每个调用点一个大写字母（`#O`/`#W`）+ 结果 `#+`（收到）
+   / `#-`（超时）；服务侧 `#g`（取到请求）/ `#s`（推送成功）/ `#S`（推送失败）。一次启动
+   就把"请求到了服务、服务推了、客户端没收到"三段切成两半。
+3. **`format!` 探测行靠不住**：`io::put(&format!("…"))` 写的那两条**始终没进产物**
+   （同一文件里纯字面量的标记都进了）。探针一律用纯字面量。
+4. **嵌套产物会按时间戳缓存**：`programs` 只在 kernel 的 build script 重跑时才重建，
+   **每次都 `touch kernel/src/main.rs` 并 `strings` 验一遍标记真的进了 ELF**——否则会
+   在旧二进制上读出新结论。
+5. 本轮插了 15 轮探针、还用 `python` 正文替换**切坏 `crates/protocol/src/console/client.rs`
+   四次**。下一次：**一次启动打全所有分界**，不做"一格一格试"。
+
+
+
+---
+
+## 10.33 Ctrl-C 之后提示符不换行：三个收尾键在"要不要换行"上必须一致
+
+§10.32 之后交互一切正常，用户实测报出这一条：**Ctrl-C 之后提示符原地盖掉上一行**。
+
+### 根因：收尾键分了两类，而重绘是"回到本行行首"
+
+一整行的收尾键有三个：**回车**（提交）、**Ctrl-C**（`Interrupt`）、**Ctrl-D**（`Eof`）。
+`on_key` 里回车那一支写了 `\r\n`，另两支**什么都不写**。而客户端下一轮的重绘固定是：
+
+```text
+\r\x1b[K  +  prompt  +  行缓冲        （server.rs::redraw）
+```
+
+`\r` 是"回**本行**行首"——不换行。于是 Ctrl-C 之后新提示符把旧提示符**原地覆盖**：
+屏幕上看起来像"没反应"，实际是两行叠在同一行。
+
+修法是一句话：**三个收尾键都写 `\r\n`**（`Key::Interrupt | Key::Eof` 与 `Key::Enter`
+同款）。终端语义归终端，shell 不必知道这件事。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 单启实测 | `ticks` → Ctrl-C → `clock` → `exit` 全程走通；Ctrl-C 处字节为 `sq > \r\n` 后接下一行独立的 `sq > ` |
+| 门 | examine **3/3 PASS** |
+| 指纹 | `ceef698e13aba2b67211ad9c1e1ff8d4`（×3）。与 §10.32 的 `a07cfb55…` 相比 `diff` **4 行 = 2 处 `pc:`**（二进制布局位移）——门里没有 Ctrl-C 这一步，故行为指纹本就该只差布局 |
+
+### 一次自己吓自己的观察（记下来）
+
+中途有一轮单启看起来像"Ctrl-C 之后**输入被吞**"：`clock` 发进去没反应。加了
+`<E>`（`ReadLine` 到达）/`<R>`（登记等读）/`<C>`（读到一字节）三枚标记之后真相是
+**标记齐全、什么都没丢**——是我在脚本里 `sleep 2.5` 就接着发下一条命令，**抢在
+guest 重新进入读行之前**把字节发了出去，而 QEMU 的串口输入在没人读时会丢。
+
+**教训**：交互验证的等待必须**等状态**（等提示符/等标记），不能等钟。这一条与
+§10.32 那条"探针要成对"是同一件事的两面。
+
+---
+
+## 10.34 `ControlCall::Panic` 曾经是"用户态一句话打死整机"
+
+第三步（删 `IOCall`）的地基：panic 要**只走内核**。落地前实测发现这条地基是塌的——
+`ControlCall::Panic` 的内核实现是
+
+```rust
+panic!("user-initiated panic (code {code:#x})");
+```
+
+即"任何域声明一句不可续，整机陪葬"。
+
+### 为什么这自相矛盾（不是取舍，是缺陷）
+
+同一个文件开头的契约写着：未知调用号只**拒掉**并续跑调用方，"**绝不 panic，否则 U 态
+一发 `ebreak` 即可停摆整机**"。于是出现了荒谬的对照：
+
+| 调用 | 内核处置 |
+|---|---|
+| **非法**调用号（`a7` 乱写） | 拒掉、续跑调用方——**保整机** |
+| **合法**声明不可续 | `panic!` ——**赔整机** |
+
+合法路径比非法路径更危险，`ControlCall::Panic` 因此成了最好用的关机开关。而全仓有
+**40+ 处** `runtime::env::control::panic(n)`（每个 bin 的启动握手与线程派生各若干），
+每一处都是"一个域起不来 ⇒ 整机死"。
+
+### 修法：比照既有的"定点故障隔离"，只杀域
+
+内核里"task 死、kernel 活"早有成熟形态——`trap.rs` 的两个杀点：
+
+```text
+user fault killed: tid=… cause=… stval=…      （不可解析的缺页）
+user exception killed: tid=… cause=…          （其它用户异常）
+```
+
+两者都是 `trace::note(FaultKilled) → putln! → drop(ident) → quit()`。`Panic` 是同一类
+事件（**域级不可续**），处置就该同款：
+
+```rust
+let tid = ident.id;
+trace::note(EventKind::Room(RoomEvent::PanicDeclared { tid, code }));
+putln!("user declared panic: tid={tid} code={code:#x}");
+drop(ident);
+return core::ptr::null_mut();   // 退场窄尾：与 Reap 同一条路
+```
+
+三处改动：`envcall.rs`（处置）、`trace.rs`（+`RoomEvent::PanicDeclared`）、
+`envcall.rs` 的 import（+`RoomEvent`、`putln`）。
+
+**为什么另立 `PanicDeclared` 而不复用 `FaultKilled`**：那一条是"**撞上的**"——`cause`/
+`stval` 是内核自己解析出的故障现场；这一条是"**声明的**"——`code` 是域自己的诊断编号，
+内核只记录不解释。trace 里一眼要能分清是哪一种。
+
+### 靶子：`badslot` 补上"合法声明"的对照
+
+原来门里只有**非法**那一半（`badslot: 3/3 rejected, kernel alive`），合法那一半**零覆盖**
+（全仓没有一处 `ControlCall::Panic` 会被门走到）。故 `badslot` 现在连打两半，判据互为对照：
+
+| | 调用 | 期望 |
+|---|---|---|
+| 前三发 | 非法槽位 | 拒掉、**调用方活**、内核活 |
+| 后一发 | 合法 `Panic` | 受理、**调用方死**、内核活 |
+
+**为什么靶子是一次性子任务**：`Panic` 的 ABI 契约是"**调用方**不可续、发散不返回"
+（`fid.rs` 注释即此），故挨刀的只能是发起调用的那个任务。子任务正是本仓反复用的
+"可弃靶子"（`cascade`/`reclaim` 同款），而它死后本任务还能打印结论——这是任何
+"让 shell 自己 panic"的写法都做不到的（那一支连结论都打不出来）。
+
+门因此多一条 marker（`badslot: 1/1 declared panic reaped, kernel alive`），三档的
+marker 计数同步 +1（默认 9→10、audit 13→14、harden 11→12）。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 单启 | `badslot` → `3/3 rejected, kernel alive` + `user declared panic: tid=8 code=0x5a5a` + `1/1 declared panic reaped, kernel alive`；随后 `exit` 干净自退 |
+| 门 | examine **3/3 PASS**（8 步 / **10** marker 齐） |
+| 内核 panic 头 | `grep -c '\[panic\]' ` = **0**（修之前这一轮必然出 `[panic] at` 并被判"内核panic"） |
+| 指纹 | `a17f29c7ce7abf13dfc70dd39150f6e7`（×3）。与上一轮的差异只有两类：一条页错误行位移 + 新增的两行（本刀新增的行为） |
+
+### 一个如实记下的悬案（未查完，别当结论）
+
+本探针第一版用**有上界的等**（`task_join(tid, 500)`）与**当场问**（`task_join(tid, 0)`）
+两种形态都误报 `FAIL`：内核明明打了 `user declared panic`，结论行却是"did not terminate
+caller"。换成既有的 [`join_done`]（探一发 `0`，未到终态就 `usize::MAX` 无条件等）**立刻
+稳定通过**。
+
+当时表层现象是"**终态落地晚于 500ms**"。这可能是内核 `messenger::join` 的有界等待
+（`WakeKey::Task` 的 `wipe` 唤醒面）值得单独查的一条线索——但**证据只有一次配置下的
+一次观察**，不足以定性，故只记线索、不下结论。探针本身改用 `join_done`：判据是
+"退出钩子已跑完"这个**终态**，本来就该按状态等，而不是按钟等——这已是本文件第二次
+栽在同一句话上（§10.33 的交互等待、§10.32 的探针成对）。
+
+### 还剩什么（第三步）
+
+地基修好了，`entry.rs` 的 panic 处理器现在**可以**改走 `ControlCall::Panic`（域死、内核活、
+且内核留痕）。剩下的仍是原清单：删 `IOCall`（`envcall.rs` 两个臂、`fid.rs` class 3、
+`console::push/pull`、`runtime::env::io`）、删 shell 的降级路径、`entry.rs` panic 改道。
+
+---
+
+## 10.35 程序 panic 改走内核：留痕归内核，位置归用户侧
+
+§10.34 修好了内核那一半（`ControlCall::Panic` 不再打死整机）。这一刀把**用户侧**
+接过去：`#[panic_handler]` 不再自己 `put` 一段回溯、再 `room::exit()` 退场，而是把处置
+交给内核。
+
+### 分工的判据是"**谁知道这件事**"
+
+| 事实 | 谁知道 | 谁打 |
+|---|---|---|
+| 源码位置（`file:line`） | 只有用户侧 | `entry.rs` 的 panic handler（一行 `put`） |
+| 是哪个域、tid、终止码 | 只有内核 | 内核（`user declared panic: tid=… code=…` + trace） |
+| 该域是否已收尾 | 只有内核 | 内核（`RoomEvent::PanicDeclared` → `reap` → `wipe`） |
+
+故用户侧**只留位置**，其余全交内核。留痕这件事必须归内核：`Exit`（`room::exit`）与
+`Panic` 在内核侧的落点不同——前者是"我自己退场"，后者是"**声明**我不可续"，后者在
+console 与 trace 上各留一笔，且与"撞上的故障"（`FaultKilled`）分得开。
+
+关联码取 **0**，语义写死为"来自 `#[panic_handler]`、无域自定义编号"；各 bin 启动握手
+失败分支给的是各自的编号（`panic(1)`…`panic(13)`），两者在 trace 里分得开。
+
+顺带删掉 `entry.rs` 里那段**零分配回溯打印**（`put_hex_usize` + `control::backtrace`
+采样共 40 行）：它打的是 panic handler 自己的调用链（业务帧在更深处），价值本就有限，
+而"域已死"这条结论现在由内核给出。`runtime::env::control::backtrace` 本身保留（它是
+用户自诊断的原语，不是 panic 专用）。
+
+### 判据（探针：临时让 `prog-echo` 在**报到之后**panic 一次，验完即还原）
+
+```text
+user paniced
+  at programs/src/bin/supervisor/echo.rs:28      ← 用户侧：只有它知道的位置
+user declared panic: tid=4 code=0x0              ← 内核：哪个域、什么码
+...
+SQware shell                                     ← 内核活着，shell 照常起来
+discover echo -> not found                       ← echo 真的没了（目录里不在了）
+task: all tasks exited, system halted            ← 整机干净自退
+```
+
+| | 值 |
+|---|---|
+| 内核 panic 头 | `grep -c '[panic]'` = **0**（修之前这一轮必然出 `[panic] at` 并被门判"内核panic"） |
+| 门 | examine **3/3 PASS**（8 步 / 10 marker 齐） |
+| 指纹 | `0846554a645d3c2b6ba7b788f172ed80`（×3）。与 §10.34 那轮相比 `diff` **只有页错误行**（布局位移）——行为零变化 |
+
+### 探针顺带撞出的一条**既有**缺口（不是本刀引入，未在本刀修）
+
+把同一个探针挪到**报到之前**（`main` 一进来就 panic），则：
+
+```text
+user paniced / user declared panic: tid=4 code=0x0
+（此后什么都没有——shell 从未起来）
+```
+
+即"**子域在报到之前就死掉 ⇒ 父域永久挂在 `Quay::pull`（无上界的 `hole.pull`）上**"。
+按设计这**不该**发生：`gate::doom` 的 `cull` 会沿 `sire` 反查撤销后代，root 手里那枚
+派生自子域控制孔的门闩应当被撤掉，从而唤醒它的 `pull`。
+
+**只记线索、不下结论**：我只跑了一次这个形态，"永久"是"到 45s 超时为止"的意思，
+没有查到 `cull` 是否真的走了那一支。它与本刀正交（本刀是"域死之后内核与兄弟域怎么
+活"，那条是"域死在报到窗口里怎么被父域察觉"），等驱动那一刀（服务可被 kill）再一起看
+——那时这条会从边角变成主路。
+
+### 还剩什么
+
+设备归属一格按裁决**留给驱动**（"等驱动来了再说"）：`IOCall::Get` 暂留，是
+`prog-console` 读 UART 的唯一入口，也是驱动要接的那个位。`IOCall::Put` 的写侧已经
+**零调用方**（输出全走服务），可与读侧一起在驱动那一刀收掉。
+
+---
+
+## 10.36 收回 `ControlCall::Panic`：内核不需要知道"panic"这个词
+
+**本节的裁决推翻 §10.34 与 §10.35 的形态**——那两节把"panic 进内核"做成了一条新的
+class-6 调用（`ControlCall::Panic { code }`）加一个专门事件（`RoomEvent::PanicDeclared`）。
+裁决是：**内核不需要知道 panic**。
+
+### 三层拆开看"必要"
+
+| 层 | 必要吗 | 为什么 |
+|---|---|---|
+| **机制**：退场必须经内核 | **必要** | 只有内核持任务本体、trap 帧、栈、team 空间的真值，也只有它能级联（叫醒 `Join` 等待者、撤销派生门闩）。域自己"不干了"做不到——停在半路还是活任务，资源一份都还不了 |
+| **语义**：内核要知道"这是一次 panic" | **不必** | "域不可续"是域的判断；内核只需要"这个任务不再续跑" |
+| **入口**：为 panic 另立一个调用 | **不必要，且有害** | 见下 |
+
+`RoomCall::Reap` 本来就是那个通用终止原语——无载荷、`room::exit()` 包着它、shell 正常
+结束时走的就是它。**内核早就有正确的形状**，而 §10.34 另立 `ControlCall::Panic`
+把域的策略写进了 ABI，并让"任务终止"这条不变量在 ABI 里有了**两个出口**。这比
+"panic 打死整机"那个 bug 更隐蔽：后者是错的，前者是**多余的**——而多余的那个出口
+恰好是最危险的一条路（它是唯一能让一个域主动了结自己的调用）。
+
+### 落地的形态：一个原语 + 一个原因码（数据，不是策略）
+
+```rust
+RoomCall::Reap { reason: usize }     // 0 = 自愿/正常；非 0 = 域自己的诊断编号
+```
+
+- 取消 `ControlCall::Panic`（class 6 只剩 `Backtrace`）；
+- `runtime::env::room` 出两档：`exit()`（= `reason: 0`）与 `exit_with(reason)`；
+- 删 `runtime::env::control::panic`，**35 处调用点**全部改为 `room::exit_with(n)`
+  （各 bin 的启动握手失败分支照旧带自己的编号，`n` 从 1 起）；
+- `entry.rs` 的 `#[panic_handler]` 收尾走 `exit()`（= 原因 0），位置仍由用户侧打
+  （只有它知道 `file:line`）；
+- trace：`RoomEvent::Exit { tid, reason }` 成为**所有**退出路径的公共事件（由
+  `messenger::quit` 发出，故障隔离路径也走它，带内核给的原因码 `EXIT_FAULT`），
+  `PanicDeclared` 删除。
+
+原因的搬运方式：**逐核暂存槽** `messenger::EXIT_REASON`（写 → `quit` 读 → 清零）。
+为什么不是挂在 `Task` 上：故障隔离那两条路径此刻**已经离核**（`current()` 返回
+`None`），拿不到 `Arc<Task>` 去经 `exclusive` 改字段；按 tid 回名册反查则多一条可能
+不一致的路径。原因是"每核一次退场"的瞬态数据，放核内槽最贴合它的寿命
+（写 → `quit` → 读全程在同一次 trap 处理里，不跨核）。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 单启 | `badslot` → `3/3 rejected, kernel alive` + `1/1 abnormal exit reaped, kernel alive`（带原因码 `0x5A5A` 的子任务被内核收干净，内核活） |
+| 门 | examine **3/3 PASS**（8 步 / 10 marker 齐） |
+| 指纹 | `1ad07cd9c6f3861a861c9ad7048a96bf`（×3）。与 §10.35 那轮相比：两行按预期变化（`user declared panic:` 那行消失、marker 换名）+ 页错误/`free` 一类的布局行——**无意外行为差异** |
+| 编译 | `cargo check --workspace --all-targets` 无 error；kernel 警告 7 条 = 基线 |
+
+### 代价与遗留
+
+- 失去"内核权威记录某域是**声明**不可续、而不是撞上故障"这条**精确**区分：现在
+  `RoomEvent::Exit{reason}` 只说明原因码是多少，不说它属于哪一类。要恢复精确性，
+  正确做法也不是恢复一个"panic 调用"，而是给原因码定**值域**（0 = 自愿；域自用 1..；
+  内核高位段 = 故障 `EXIT_FAULT`）——本次已按这个值域落地，只是尚未有消费者去区分。
+- §10.34 的 bug 修复本身**继续有效**（`Exit`/`Reap` 不打死整机）；§10.35 的"位置归
+  用户侧、其余归内核"的判据也继续有效，只是"其余"里不再包含一个 panic 专用入口。
+
+---
+
+## 10.37 `Void`：第三种数据面类型，与"建域权"从 S-only 判定换成能力
+
+§10.36 之后 kernel 侧收拾干净了，这一刀回到**用户问的那个问题**：系统调用能不能区分
+权限级？清点结果是——**整条 syscall 分派路径上只有一处**真的按特权级判（`UnitCall::Build`
+的"U 态建域一律拒"），其余三处 `is_supervisor()` 都是机制（`sstatus.SPP`、S 态任务的
+`tp`、`pte_policy` 去掉 `U` 位）。那一处该换成**能力**。
+
+### 一路被否掉的两个形态（都记下来，免得再来一遍）
+
+| 形态 | 否掉的判据 |
+|---|---|
+| `ControlCall::Panic` 之类**另立一个调用** | 一个不变量在 ABI 里有两个出口，且多的那个把域的策略写进内核（§10.36） |
+| `Permission::BUILD` **一个权限位** | 位说"对**这份资源**能做什么"，与资源同轴；做成位会让**任何**资源顺带携带建域权（`READ\|WRITE\|BUILD` 这种掩码一旦能出现，"这是不是那枚"就再也答不出来） |
+
+**用户两句话定的案**：`Void`（"考虑到 Pie 是 Mail 的门闩，我觉得 Right 应该叫 Void"）、
+以及否掉位。定下来的判据是：**位能回答"能不能"，答不了"这是不是那枚"；类型是身份，位不是。**
+
+### 落地：三种数据面按"有没有数据面"分
+
+```text
+Hole   → 有槽（mtu + slot{buf, from}），有方向，有等待者
+Pole   → 有页（物理帧 + 视图表）
+Void   → 什么都没有：没有 mtu、没有槽、**连 id 都没有**
+```
+
+`VoidMeta` 只剩 `state + owner`——少一个 `id` 不是省事，是"无数据面"的直接后果：
+另两者的 `id` 是**等待键的身份**（谁在等这条孔/这份页），而没人会等一个没有数据的东西。
+
+| 面 | 改动 |
+|---|---|
+| `work/mail/void.rs`（新） | `VoidMeta{state, owner}` + `seal`（置死，**不唤醒任何人**） |
+| `gate/pie.rs` | `AnyPie::Void(Pie<VoidMeta>)` + 六个 `match` 各补一臂（编译器点出全部） |
+| `gate/{accord,cull,narrow}.rs` | 派生分支；`Void` 无映射可撤、无页表可降（与 `Hole` 同路） |
+| `gate/right.rs`（新） | `holds_build_right(task, token)`：**按 token 在调用方自己的表里**找一枚活着且是 `Void` 的门闩 |
+| `fid.rs` | `PieCall::UnsealVoid`（**无参数**）+ `UnitCall::Build { .., build: PieToken }` |
+| `envcall/pie.rs` | `unseal_void`：建 meta → 建门闩（全权）→ **没有第二步**（Hole 要预分配槽、Pole 要分配帧并 auto-map） |
+| `envcall.rs` 的 `Build` 臂 | **两道门**：门一 = 持有建域权；门二 = S 态兜底 |
+| `env/runtime` | `VoidPie`（三种句柄里唯一没有任何数据面方法的那种）+ `unseal_void` |
+| `root/main.rs` | 启动解封一枚（`build_right`），此后每次 `Build` 都带它 |
+
+### 两道门不是冗余（各答一个问题）
+
+- **门一（能力）**："**谁有权**"——可转授（`Accord`）、可收窄（`Narrow`）、可撤销
+  （`Revoke`）、沿 `sire` 可审计、`Collect` 可枚举；且判据是"在你**自己**表里"，
+  故 token 不自证、"借来的 token"不是绕过面。
+- **门二（S 态）**："**血缘树能不能伸进沙箱外**"——`Build` 出来的域以调用方为 `sire`；
+  若允许 U 态域建域，沙箱里的任务就成了别的域的父亲，那是本仓没有的形态。
+
+### 铸币权也收在 S 态（这条是排查中补上的）
+
+`UnsealVoid` 一开始没有门——那等于**任何 U 域自己 `UnsealVoid` 一枚就给自己授了建域权**，
+能力模型当场自证。故 `UnsealVoid` 与 `Build` 同收 S 态门：**"谁可以铸"与"谁可以用"都由
+S 态划界，而"铸出来的那枚能转授给谁、怎么收回"由能力代数回答**。
+
+### 判据
+
+| | 值 |
+|---|---|
+| 单启（正） | 启动、`dir`、`req echo`、`exit` 全通——建域带权走完全流程 |
+| 单启（**反**） | 临时把 root 的建域权 `seal()` 掉：`Build` 当场被拒 → root 自退 → 全机干净停机，**dir/echo/console/shell 一个都没建起来**（证明门是活的，不是空检查；探针验完即撤） |
+| 门 | examine **3/3 PASS**（8 步 / 10 marker 齐） |
+| 指纹 | `5d75fa0b059401d0966bc628d7eb1278`（×3）。与 §10.36 那轮相比 `diff` **只有 `free` 一行 + 页错误行**——行为零变化 |
+| 编译 | 无 error；警告回基线（kernel 7 + manifest 4），新代码零警告 |
+
+### 留给"带状态的权利"的那个名字
+
+`Void` 的定义式就是**无状态**——它承载纯存在权。若将来出现**带状态**的许可
+（配额"最多 N 个"、设备能力"哪个窗口"），那**不该**是 `Void`，要另立 meta：
+"多少/哪个"是数据面的活，而 `Void` 的名字本身就承诺了数据面为空。

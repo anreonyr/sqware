@@ -12,7 +12,7 @@ use crate::putln;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
-use crate::work::room::messenger::redeem;
+use crate::work::room::messenger::{self, redeem};
 use crate::work::room::scheduler::core::{Identity, ident};
 use crate::work::room::scheduler::trap::run;
 use crate::{machine, put};
@@ -252,6 +252,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 stval: stval_bits,
             }));
             putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
+            messenger::set_exit_reason(EXIT_FAULT);
             drop(ident);
             return crate::work::room::messenger::quit() as *mut TrapContext;
         }
@@ -274,6 +275,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                     "user exception killed: tid={tid} cause={:?} stval={stval_bits:#x}",
                     other
                 );
+                messenger::set_exit_reason(EXIT_FAULT);
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }
@@ -301,3 +303,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
 
     next
 }
+
+// ── 退出原因码：内核给的那几个 ──
+
+/// 故障隔离杀（不可解析的缺页 / 其它用户异常）。**内核给的原因码**——与
+/// `RoomCall::Reap` 带上来的"域自己的诊断编号"共用同一个字段，值域不重叠：
+/// 域从 1 开始编号，内核用高位段。
+const EXIT_FAULT: usize = 0xFFFF_FFFF;
+

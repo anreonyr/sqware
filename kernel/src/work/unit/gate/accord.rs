@@ -36,6 +36,7 @@ pub(crate) fn accord(
     let granted = match src {
         AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), subset, sire)),
         AnyPie::Pole(p) => AnyPie::Pole(new_pie(p.meta().clone(), subset, sire)),
+        AnyPie::Void(p) => AnyPie::Void(new_pie(p.meta().clone(), subset, sire)),
     };
     let token = granted.token();
     let mut pies = target.pies.lock();

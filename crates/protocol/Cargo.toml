@@ -3,6 +3,12 @@ name = "protocol"
 version.workspace = true
 edition.workspace = true
 
+# `test = false`：**不是**"不该测"，是 no_std + riscv64 目标**编不出 libtest**
+# （libtest 依赖 std）。实测：把这里改成 `test = true` 后 `cargo check -p protocol
+# --lib --tests` 当场报 ``can't find crate for `test` `` + panic_handler 缺失。
+# `dispatch::wire` 是纯函数编解码、最该测，但**宿主侧单测需要一个宿主 crate**
+# （§10.23 立过一次，用完即删）——那是**独立一步**，不是把这一行翻过来。
+# `bench`/`doctest` 同样关：无基准，文档示例都要真实硬件。
 [lib]
 test = false
 bench = false
@@ -10,3 +16,11 @@ doctest = false
 
 [dependencies]
 env = { path = "../env" }
+# 协议的用户态实现要用**机制**（门闩 `HolePie`、回信通道 `Channel`）——机制在 runtime。
+# 这条边就是"机制在运行时、语义在协议"的编译期形态（§10.26 的临时边在这里翻正）。
+runtime = { path = "../runtime" }
+# 错误容器：客户端把协议负码包成 `erra::Error<EnvError>`（与 runtime 同款）。
+erra = { version = "0.2.0", default-features = false }
+# VTE 键盘解码（`console::server` 的行编辑）：服务侧解码宿主终端发来的转义序列。
+# 消费者是**服务**，不是客户端——客户端一个字都不解码。
+anstyle-parse = { version = "1.0.0", default-features = false }

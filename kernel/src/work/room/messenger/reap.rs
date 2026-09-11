@@ -75,8 +75,11 @@ pub fn quit() -> usize {
         ),
         "running 容器里不是 Running 任务"
     );
+    // 原因码取自逐核暂存槽（`Reap` / 故障隔离杀在调 `quit` 前写下，见
+    // `messenger::EXIT_REASON`）——取即清零，下一次退场重新写。
     trace::note(EventKind::Room(RoomEvent::Exit {
         tid: exited.ident.id,
+        reason: super::take_exit_reason(),
     }));
     reap(exited);
     bury();

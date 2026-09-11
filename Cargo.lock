@@ -164,10 +164,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "protocol"
+name = "programs"
 version = "0.1.0"
 dependencies = [
  "env",
+ "protocol",
+ "runtime",
+]
+
+[[package]]
+name = "protocol"
+version = "0.1.0"
+dependencies = [
+ "anstyle-parse",
+ "env",
+ "erra",
+ "runtime",
 ]
 
 [[package]]
@@ -226,6 +238,14 @@ name = "riscv-types"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3f2ad9f15a07f4a0e1677124f9120ce7e83ab7e1ca7186af0ca9da529b62e80"
+
+[[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "erra",
+]
 
 [[package]]
 name = "rustc-demangle"
@@ -322,16 +342,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "task"
-version = "0.1.0"
-dependencies = [
- "anstyle-parse",
- "env",
- "erra",
- "protocol",
 ]
 
 [[package]]

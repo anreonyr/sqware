@@ -49,7 +49,7 @@ pub struct Directory { bindings: Vec<Binding>, vestor: Vestor, release: Release 
 pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 ```
 
-目录**跑在 S 态域程序 `task-dir` 里**（`task/src/core/directory.rs` + `bin/supervisor/dir.rs`）：
+目录**跑在 S 态域程序 `prog-dir` 里**（`crates/protocol/src/dispatch/server.rs` + `programs/src/bin/supervisor/dir.rs`）：
 内核不含它的任何代码。
 
 **表 = 预约表**：行只能由父域的 `Refer{who, name}` 产生，`Register` 只能**填**已
@@ -121,7 +121,7 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 目录的 6 个操作**一个都不对应内核原语**——它们是协议消息。落到底层只用已有原语
 （`Accord` / `Revoke` / `Push` / `Pull` / `UnsealHole` / `Narrow`）。
 
-**目录自己的原语**（`task/src/core/directory.rs` 核心，零内核调用）：
+**目录自己的原语**（`crates/protocol/src/dispatch/server.rs` 核心，零内核调用）：
 
 | 原语 | 一句话 | 失败 |
 |---|---|---|
@@ -358,7 +358,7 @@ shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句�
    asm 块被内联进调用方时，调用方读回的 a0 恒 0；独立函数调用则正确。修法：
    `#[inline(never)]`（与仓库对裸 asm 的一贯纪律同源，见 `docs/ipc.md` §13.10 A.2）。
 4. **hole 等待键取堆地址 → 陈旧唤醒闩被继承**（`kernel/src/work/mail/hole.rs`
-   `key()` + `task/src/env/mail.rs` `pull_timeout()`）：`wait_sites` 的站点从不回收，
+   `key()` + `crates/runtime/src/env/mail.rs` `pull_timeout()`）：`wait_sites` 的站点从不回收，
    而 `messenger::wake` 在「无等待者」时置 `pend = true`；成功走**裸 pull** 的调用方
    不会消费这个 pend，于是它一直留着。原键是 `HoleMeta` 的**堆地址**（会被分配器
    回收再利用），死 hole 的陈旧 pend 因此可能被落在同一地址的新 hole 继承；即便不

@@ -48,6 +48,7 @@ pub(crate) fn dispatch(
     Some(match call {
         PieCall::UnsealHole { mtu } => unseal_hole(frame, mtu),
         PieCall::UnsealPole { bytes } => unseal_pole(frame, bytes),
+        PieCall::UnsealVoid => unseal_void(frame, ident),
         PieCall::Open { token } => open(frame, ident, token.get()),
         PieCall::Shut { token } => shut(frame, ident, token.get()),
         PieCall::Seal { token } => seal(frame, token.get()),
@@ -119,6 +120,34 @@ fn unseal_hole(frame: &mut TrapContext, mtu: usize) -> Outcome {
     Outcome::Resume
 }
 
+/// 解封 Void：建一枚**无载荷**的权柄载体 → 建门闩（全权）→ 返 token。
+///
+/// 与另两者的差别就是"没有第二步"：Hole 要按 mtu 预分配槽、Pole 要分配物理帧并
+/// auto-map 创建者视图；Void 建完 meta 就结束了——这正是"无数据面"的含义。
+fn unseal_void(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
+    let r = (|| -> Result<usize, GateError> {
+        // **铸币权收在 S 态**：不然任何 U 域 `UnsealVoid` 一枚就给自己授了建域权，
+        // 能力模型立刻自证。这条与 `Build` 的 S 态兜底是**同一条政策**的两端
+        // ——"谁可以铸"与"谁可以用"都由 S 态划界，而"铸出来的那枚能转授给谁"由
+        // 能力代数回答（accord/narrow/revoke）。
+        if !ident.team.space.kind().is_supervisor() {
+            return Err(GateError::Denied);
+        }
+        let task = current().running_task().ok_or(GateError::Denied)?;
+        let meta = mail::void::VoidMeta::new(task.ident.id);
+        let pie: Pie<mail::void::VoidMeta> = gate::new_pie(
+            meta,
+            Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+            None,
+        );
+        let token = pie.token;
+        task.pies.lock().push(AnyPie::Void(pie));
+        Ok(token)
+    })();
+    answer(frame, r);
+    Outcome::Resume
+}
+
 /// 解封 Pole：建实体 → 建门闩 → **auto-map 创建者视图**（创建者全权 → R|W）。
 fn unseal_pole(frame: &mut TrapContext, bytes: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
@@ -157,6 +186,8 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
         },
         // Hole 没有「开闩」这回事：它的开闩就是 Push/Pull。
         Ok(AnyPie::Hole(_)) => Err(GateError::Denied),
+        // Void 更没有：它没有载荷可以借映进任何空间。
+        Ok(AnyPie::Void(_)) => Err(GateError::Denied),
     };
     answer(frame, r);
     Outcome::Resume
@@ -168,7 +199,8 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
     let r = match resolve(token, Need::Read) {
         Err(e) => Err(e),
         Ok(AnyPie::Pole(p)) => mail::pole::shut(p.meta(), token).map(|()| 0),
-        Ok(AnyPie::Hole(_)) => Err(GateError::Denied),
+        // Hole 与 Void 都没有「关闩」这回事（无映射可撤）。
+        Ok(AnyPie::Hole(_) | AnyPie::Void(_)) => Err(GateError::Denied),
     };
     answer(frame, r);
     Outcome::Resume
@@ -195,6 +227,7 @@ fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
         match &pie {
             AnyPie::Hole(h) => mail::hole::seal(h.meta()),
             AnyPie::Pole(pl) => mail::pole::seal(pl.meta()),
+            AnyPie::Void(v) => mail::void::seal(v.meta()),
         }
         Ok(0)
     })();
@@ -250,6 +283,13 @@ fn narrow(frame: &mut TrapContext, token: usize, subset: Permission) -> Outcome 
                     None
                 }
                 AnyPie::Pole(p) => Some(p.meta().clone()),
+                // Void 无载荷、无页表映射：收窄只改权限位，没有第二步。
+                AnyPie::Void(p) => {
+                    if !p.meta().alive() {
+                        return Err(GateError::Dead);
+                    }
+                    None
+                }
             }
         };
         if let Some(meta) = pole_meta {

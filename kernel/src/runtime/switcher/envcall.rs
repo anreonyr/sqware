@@ -31,7 +31,7 @@ use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff, WakeKey, park, wait, wake};
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::gate::{GateError, Permission};
+use crate::work::unit::gate::{self, GateError, Permission};
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
@@ -182,7 +182,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
     frame.sepc += instr_len(&ident.team.space, frame.sepc);
     // 未知调用号 = 调用方的错误（`a7` 由 U 态完全控制：空号 idx、已删 class 都落这里），
     // 按被拒绝处理并续跑调用方——与其它用户引起的异常同走故障隔离，绝不 panic
-    // （panic 即 U 态一发 ebreak 打死整机）。想主动终止有正规原语 ControlCall::Panic。
+    // （panic 即 U 态一发 ebreak 打死整机）。想主动终止有正规原语 `RoomCall::Reap`。
     let envcall = match EnvCall::from_wire(number, &regs) {
         Ok(c) => c,
         Err(_) => return ret_err(frame, GateError::Denied),
@@ -207,8 +207,19 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 },
             );
         }
-        EnvCall::Room(RoomCall::Reap) => {
+        EnvCall::Room(RoomCall::Reap { reason }) => {
             // 本任务退场：**不在这里 quit**（见 [`dispatch`] 的退场窄尾）——空指针即标记。
+            //
+            // `reason` 是**数据**：0 = 自愿/正常结束，非 0 = 域自己的诊断编号。内核只把
+            // 它记进 trace，**不解释**——"域为什么不可续"是域的判断，内核的事只是
+            // "它不再续跑"与"把它的账结清"。故本仓**没有** `ControlCall::Panic`
+            // 这样的第二入口（§10.36）：那会把域的策略写进 ABI，并让"任务终止"
+            // 这条不变量在 ABI 里有两个出口。
+            //
+            // 写进逐核暂存槽，由 `quit` 统一发出 `RoomEvent::Exit`：那是**所有**退出
+            // 路径（Reap / 故障隔离 / doom 级联）的公共点，事件因此只发一次、
+            // 且每条路径都带得上原因（故障路径带走的是内核给的原因码）。
+            crate::work::room::messenger::set_exit_reason(reason);
             drop(ident);
             return core::ptr::null_mut();
         }
@@ -371,8 +382,18 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             kind,
             name,
             name_len,
+            build,
         }) => {
-            // 权限：S 态域专属（U 态建域一律拒——v1 无门控位）
+            // 门一：**建域权**——调用方自己表里必须有一枚活着的 `Void`（存在权的载体）。
+            // 按 token 在**调用方表里**找，故 token 不自证、借来的 token 无效。
+            let holds = current()
+                .running_task()
+                .is_some_and(|me| gate::holds_build_right(&me, build.get()));
+            if !holds {
+                return ret_err(frame, GateError::Denied);
+            }
+            // 门二：S 态兜底（理由见 `fid.rs` 该 variant 的注释：能力管"谁有权"，
+            // S 态管"血缘树能不能伸进沙箱外"）。
             if !ident.team.space.kind().is_supervisor() {
                 return ret_err(frame, GateError::Denied);
             }
@@ -465,9 +486,6 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Handoff::Resume(dead) => frame.gpr.set_x(Gprs::A0, dead as usize),
                 Handoff::Switch(pa) => return pa as *mut TrapContext,
             }
-        }
-        EnvCall::Control(ControlCall::Panic { code }) => {
-            panic!("user-initiated panic (code {code:#x})");
         }
         EnvCall::Control(ControlCall::Backtrace { buf, frames }) => {
             // 用户自诊断回溯：采样当前任务用户栈（user_satp 根表，零锁不触缺页），

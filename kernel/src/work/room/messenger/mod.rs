@@ -39,6 +39,30 @@ use wait::site::{SITE_SHARDS, prune, shard_at};
 #[cfg(feature = "audit")]
 use wait::site::WakeKind;
 
+/// 退场原因码的**逐核暂存槽**：`Reap` / 故障隔离杀在调 `quit` 之前写，`quit` 读它
+/// 并写进 `RoomEvent::Exit`，随后清零（下一次退场重新写）。
+///
+/// 为什么不挂在 `Task` 上：故障隔离那两条路径**此刻已经离核**（`current()` 返回
+/// `None`），拿不到 `Arc<Task>` 去经 `exclusive` 改字段；而按 tid 回名册反查会多出
+/// 一条可能不一致的路径。原因是**每核一次退场**的瞬态数据，放核内槽最贴合它的寿命。
+///
+/// 槽与核一一对应：一次退场的全程（写 → `quit` → 读）在同一次 trap 处理里完成，
+/// 不跨核、不跨任务。
+static EXIT_REASON: [core::sync::atomic::AtomicUsize; crate::machine::MAX_HART_SLOTS] =
+    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::machine::MAX_HART_SLOTS];
+
+/// 记下本次退场的原因码（见 [`EXIT_REASON`]）。
+pub(crate) fn set_exit_reason(reason: usize) {
+    let slot = crate::machine::hart_id().min(crate::machine::MAX_HART_SLOTS - 1);
+    EXIT_REASON[slot].store(reason, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// 取出并清零本次退场的原因码（`quit` 用）。
+fn take_exit_reason() -> usize {
+    let slot = crate::machine::hart_id().min(crate::machine::MAX_HART_SLOTS - 1);
+    EXIT_REASON[slot].swap(0, core::sync::atomic::Ordering::Relaxed)
+}
+
 // 子模块对外重导出：**外部路径一行不改**（`messenger::cull` 等照旧）。
 pub(crate) use doom::{doom, take_doomed};
 pub(crate) use handoff::Handoff;

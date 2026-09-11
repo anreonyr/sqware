@@ -102,6 +102,9 @@ impl<M> Pie<M> {
 pub enum AnyPie {
     Hole(Pie<HoleMeta>),
     Pole(Pie<PoleMeta>),
+    /// 无数据面的权柄载体（见 `work::mail::void`）：只有身份与存活，
+    /// 故它是"存在权"的载体——资源权需要资源，存在权不需要。
+    Void(Pie<crate::work::mail::void::VoidMeta>),
 }
 
 impl AnyPie {
@@ -109,6 +112,7 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.permission,
             AnyPie::Pole(p) => p.permission,
+            AnyPie::Void(p) => p.permission,
         }
     }
 
@@ -117,6 +121,7 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.sire,
             AnyPie::Pole(p) => p.sire,
+            AnyPie::Void(p) => p.sire,
         }
     }
 
@@ -127,6 +132,7 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.meta.alive().then(|| p.meta.owner()),
             AnyPie::Pole(p) => p.meta.alive().then(|| p.meta.owner()),
+            AnyPie::Void(p) => p.meta.alive().then(|| p.meta.owner()),
         }
     }
 
@@ -134,6 +140,7 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.token,
             AnyPie::Pole(p) => p.token,
+            AnyPie::Void(p) => p.token,
         }
     }
 
@@ -142,6 +149,7 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.meta.alive(),
             AnyPie::Pole(p) => p.meta.alive(),
+            AnyPie::Void(p) => p.meta.alive(),
         }
     }
 
@@ -150,6 +158,7 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.allows(need),
             AnyPie::Pole(p) => p.allows(need),
+            AnyPie::Void(p) => p.allows(need),
         }
     }
 
@@ -158,6 +167,7 @@ impl AnyPie {
         match self {
             AnyPie::Hole(p) => p.covers(subset),
             AnyPie::Pole(p) => p.covers(subset),
+            AnyPie::Void(p) => p.covers(subset),
         }
     }
 }
