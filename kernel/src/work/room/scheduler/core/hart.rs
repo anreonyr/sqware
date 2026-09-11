@@ -184,11 +184,13 @@ impl Scheduler {
         unsafe {
             let frame = &mut *(frame_pa(&t.ident).as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);
-            // S 态任务上台即写 tp = 本 hart PerHart 指针（内核自举任务与 supervisor
-            // 域任务同此约定）：被抢占后的恢复路径直接 sret 回打断点（不再经任何
-            // 内核任务 trampoline 重建 tp），tp 必须在上台时就绪。U 态任务的 tp 是
-            // TLS，不写。
-            if t.ident.team.space.kind().is_supervisor() {
+            // **核空间上下文**上台即写 tp = 本 hart PerHart 指针：内核态恒以 tp 为
+            // per-hart 锚（`__core_trap` 用 `0x08(tp)` 定位 hart 帧）。判据与陷阱
+            // 入口、`__restore` 的 sscratch 复原则同一条轴——`Asid::is_kernel()`，
+            // **不按 S/U 分**：域任务的陷阱走 `__task_trap`，tp 由入口按 sp 反解
+            // 重建，不需要这条约定，故域任务的 tp 一律留给它自己——S 态域与 U 态域
+            // 同等待遇（TLS 因此对两者一视同仁）。
+            if t.ident.team.space.asid().is_kernel() {
                 frame
                     .gpr
                     .set_x(Gprs::TP, crate::machine::per_hart_ptr(self.hart));

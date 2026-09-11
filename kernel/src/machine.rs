@@ -67,8 +67,11 @@ pub fn hart_count() -> usize {
 /// 当前 hart id（**执行本代码的核**）——与 `Machine::hart`（总核数）不同。
 ///
 /// S-mode 读不到 M-mode 专属 CSR `mhartid`（读它触发 illegal instruction），故
-/// hartid 经 `tp` 指向的 [`PerHart`] 读取：`tp` = 本 hart 的 `PerHart` 指针
-/// （入口与陷阱重建维护，见 `main.rs`/`_boot_entry`/`trap_handler` 第 0 步）。
+/// hartid 经 `tp` 指向的 [`PerHart`] 读取：**核空间上下文**恒有 `tp` = 本 hart 的
+/// `PerHart` 指针（入口与陷阱重建维护，见 `main.rs`/`_boot_entry`/`trap_handler`
+/// 第 0 步；上台时只对核空间上下文补写，见 `scheduler/core/hart.rs`）。域任务的
+/// `tp` 是它自己的（S 态域与 U 态域一视同仁）——本模块与 `PerHart` 的其余读点
+/// 全在 `trap_handler` 第 0 步重建**之后**的内核态执行，故不受其影响。
 #[inline]
 pub fn hart_id() -> usize {
     let id: usize;

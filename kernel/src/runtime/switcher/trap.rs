@@ -102,6 +102,21 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
     }
 
+    // 0.1 复位 **sscratch 约定**：非陷阱态恒有 `sscratch` = 该上下文的帧 VA
+    //     （内核 = 本 hart 帧，任务 = 线程帧 self_va）。入口已把被中断 sp 存进帧，
+    //     此处立刻把 sscratch 换回本 hart 帧 VA——处理期间若再次陷入（内核缺页 /
+    //     抢占后回内核态），入口读到的仍是真帧址。这是「陷阱入口不再依赖 tp
+    //     定位帧」的另一半（另一半是 `arm_hart` 与 `__restore` 的既有接线）。
+    let frame_va = crate::machine::hart_frame().as_usize();
+    // SAFETY: 写 sscratch（内核态约定 = 本 hart 帧 VA），无内存副作用。
+    unsafe {
+        core::arch::asm!(
+            "csrw sscratch, {}",
+            in(reg) frame_va,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+
     // 0.4 入场入册：`__task_trap`/`__core_trap` 已整表刷（不变量 1），本核转为
     //     内核租户（内核空间身份 ASID 0）。
     asid::set_asid(Asid::kernel());

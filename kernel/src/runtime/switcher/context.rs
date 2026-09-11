@@ -34,7 +34,7 @@ impl Gprs {
     pub const RA: usize = 1; // 返回地址
     pub const SP: usize = 2; // 栈指针
     pub const GP: usize = 3; // 全局指针
-    pub const TP: usize = 4; // 线程指针（内核 = hartid）
+    pub const TP: usize = 4; // 线程指针（核空间上下文 = PerHart 指针；域任务 = 它自己的）
     pub const S0: usize = 8; // 帧指针（回溯起点）
     pub const A0: usize = 10; // 环境调用参数/返回值 0
     pub const A1: usize = 11; // 环境调用参数/返回值 1
@@ -102,10 +102,11 @@ pub struct TrapContext {
     /// 本帧在目标空间中的虚拟地址（restore 切表后经此 VA 收尾）。
     ///
     /// 用户线程帧 = 本空间 Frame 窗口分配的 VA；
-    /// hart 帧 = 帧区页。alltraps 任务路径把
-    /// sscratch 设为该 VA，使每线程帧可位于任意页而汇编零改动。
-    /// （sscratch 约定：任务态（U 态 / S 态域任务）= 线程帧 self_va；
-    /// 内核态 = 本 hart 帧 VA，见 trampoline 模块头。）
+    /// hart 帧 = 帧区页。陷阱入口经 `sscratch` 换出本 VA，使每线程帧可位于任意页
+    /// 而汇编零改动。
+    /// （**sscratch 约定：非陷阱态恒有 sscratch = 该上下文的帧 VA**——任务态
+    /// （U 态 / S 态域任务）= 线程帧 `self_va`，内核态 = 本 hart 帧 VA。三处维持：
+    /// `arm_hart` / `__restore` / `trap_handler` 第 0 步，见 trampoline 模块头。）
     pub self_va: VirtAddr,
 }
 

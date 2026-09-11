@@ -4,11 +4,16 @@
 // （切回 + 恢复 + sret），内核空间与所有非内核空间以 TRAMPOLINE VA 映射同一
 // 物理页（G 位），`stvec` 指向 `__alltraps`。
 //
-// 路由契约（`__alltraps`）：SPP=0 → `__task_trap`；SPP=1 且 `satp.ASID ≠ 0`
-// → `__task_trap`（S 态域任务）；否则 → `__core_trap`（内核）。
+// 路由契约（`__alltraps`）：**单轴——只看核不核**。`satp.ASID ≠ 0` →
+// `__task_trap`（U 态与 S 态域任务同体）；否则 → `__core_trap`（内核）。
 // **`satp.ASID == 0` ⇔ 被中断者是内核**——前提是不变量「内核代码只在内核空间
-// 执行」。任务路径（U 态与 S 态域任务同体）用 `sscratch` 取线程帧 VA，读帧内
-// 元数据切内核 satp；内核路径用 `tp` 取本 hart 帧，不切 satp。
+// 执行」（核空间的页无 U 位，U 态不可能跑在它上面）。**特权级不进路由**：S 态域
+// 任务的 `sstatus.SPP` 也是 Supervisor，按 SPP 分轴必把它们判错；SPP 只在
+// `__restore` 时决定回哪个特权级。**帧来源统一**：两条路径都从 `sscratch` 换出
+// 帧指针（任务 = 线程帧 `self_va`，内核 = 本 hart 帧），**入口不依赖 tp**；差别只在
+// 任务路径要切内核 satp 与内核栈，内核路径两条都不动。为此 `sscratch` 约定必须在
+// **任何非陷阱态**成立，三处维持：`arm_hart`（boot）/ `__restore`（回目标空间）/
+// `trap_handler` 第 0 步（进了 Rust 立刻复位）。
 //
 // 本页代码执行于 TRAMPOLINE 固定 VA（0xFFFF_FFFF_FFFF_F000）——任何 PC 相对寻址
 // （la/call 等）的目标必须在本页内；跨页符号（如 Rust 的
@@ -35,28 +40,34 @@ global_asm!(
     ".globl __trampoline_start",
     "__trampoline_start:",
     // ── 陷阱入口（stvec Direct 目标）──────────────────────────────────
+    // 入口只做两件事，**次序不可换**：
+    //   ① `sscratch` 换出**帧指针**：非陷阱态恒有 `sscratch` = 该上下文的帧 VA
+    //      （任务 = 线程帧 `self_va`，内核 = 本 hart 帧；三处维持：`arm_hart`、
+    //      `__restore`、`trap_handler` 第 0 步）。换到 `sp` 上 ⇒ **不消耗任何
+    //      GPR**，于是 ② 才可能。
+    //   ② 先存 x5，之后才允许用 `t0` 做 scratch。旧版在存 x5 **之前**就路由，
+    //      内核路径存进帧的 x5 因此一直是 scratch 值（而 `__restore` 会把它
+    //      当成内核代码的 t0 恢复回去）。
+    // 路由**单轴**：只看核不核（`satp.ASID`）。特权级不进路由——S 态域任务的
+    // SPP 也是 Supervisor，按 SPP 分轴会把它们判错；Rust 面的 `from_task` 与
+    // `__restore` 的 sscratch 复原则用的都是这条轴。一次 CSR 读，两条路。
     ".globl __alltraps",
     "__alltraps:",
-    "    csrr  t0, sstatus",
-    "    andi  t0, t0, (1 << 8)", // SPP：0 = 来自用户态，1 = 来自内核态
-    "    beqz  t0, __task_trap",
-    "    csrr  t0, satp", // SPP=1：问硬件「我们在哪个页表上」
+    "    csrrw sp, sscratch, sp", // sp = 本上下文帧 VA；sscratch = 被中断 sp
+    "    sd    x5, 0x58(sp)",     // ★ 先存 x5：此后 t0 才是可自由用的 scratch
+    "    csrr  t0, satp",         // 问硬件「我们在哪个页表上」
     "    srli  t0, t0, 44",
     "    slli  t0, t0, 48",      // 只留 satp.ASID 16 位（模式位左移出界）
-    "    bnez  t0, __task_trap", // 非内核空间 → S 态域任务
-    "    j     __core_trap",
-    // ── 任务陷阱（__task_trap）：现场存当前线程帧（sscratch 交换）──────────
+    "    bnez  t0, __task_trap", // 非内核空间 → 任务（U 态 / S 态域任务）
+    "    j     __core_trap",     // 内核空间（帧已在 sp；satp 不动）
+    // ── 任务陷阱（__task_trap）：现场存当前线程帧（帧指针已在入口换进 sp）──
     // 服务两类被中断者：U 态任务与 S 态域任务——存帧/切表序列逐字相同，
     // 差别只在保存下来的 sstatus.SPP（sret 时按它返回原特权级）。
+    // x5 已由入口存好；自此 `t0` 可自由用作 scratch。
     "__task_trap:",
-    "    csrrw sp, sscratch, sp", // sp = 本线程帧 VA；sscratch = 用户 sp
-    "    sd    x1,  0x38(sp)",    // gpr[1] = ra
-    // x5（用户 t0）必须**先存**：下面用 t0 做 scratch 读 sscratch 取用户 sp。
-    // 顺序错了就把用户 t0 覆盖成用户 sp——每次用户陷阱（envcall / 缺页 / 抢占）
-    // 返回后 t0 都是栈地址，表现为 pc=0x4、栈数据当返回地址一类的随机崩溃。
-    "    sd    x5,  0x58(sp)",
+    "    sd    x1,  0x38(sp)", // gpr[1] = ra
     "    csrr  t0, sscratch",
-    "    sd    t0,  0x40(sp)", // gpr[2] = 用户 sp
+    "    sd    t0,  0x40(sp)", // gpr[2] = 被中断 sp
     "    sd    x3,  0x48(sp)",
     "    sd    x4,  0x50(sp)",
     "    sd    x6,  0x60(sp)",
@@ -103,20 +114,14 @@ global_asm!(
     "    mv    sp, t1",
     "    jalr  t2", // handler(frame_pa) -> frame_pa（续跑时恒为原帧）
     "    j     __restore",
-    // ── 内核态陷阱（__core_trap）：现场存**本 hart**帧（PerHart.frame 定位——tp
-    //    指向本 hart 上下文块，帧 VA 取块内字段，见 machine::PerHart；栈切本
-    //    hart trap 栈。tp 约定：内核态恒为本 hart PerHart 指针——入口/
-    //    trap_handler 第 0 步维持。sscratch 内核态约定 = 本 hart 帧 VA，但**trap 入口
-    //    不可靠**：任务路径（__task_trap）入口把 sscratch 换成任务 sp，处理中
-    //    若有内核缺页再次进入本路径，sscratch 已被污染——故帧址仍由 tp 重建，
-    //    不读 sscratch）。 ──
+    // ── 内核态陷阱（__core_trap）：现场存**本 hart 帧**（帧指针已在入口换进 sp
+    //    ——非陷阱态恒有 sscratch = 本 hart 帧 VA；`trap_handler` 第 0 步进了
+    //    Rust 就把它复位，故处理期间再次陷入也读得到真帧址）。栈切本 hart trap
+    //    栈；satp 不动（本就在内核空间）。**入口不再依赖 tp**。 ──
     "__core_trap:",
-    "    csrrw sp, sscratch, sp", // sp = 0（内核态约定）；sscratch = 被中断内核 sp
-    "    ld    sp, 0x08(tp)",     // sp = PerHart.frame（本 hart 帧 VA）
     "    sd    x1,  0x38(sp)",
     "    sd    x3,  0x48(sp)",
     "    sd    x4,  0x50(sp)",
-    "    sd    x5,  0x58(sp)",
     "    sd    x6,  0x60(sp)",
     "    sd    x7,  0x68(sp)",
     "    sd    x8,  0x70(sp)",
