@@ -32,15 +32,40 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::Space;
 
-/// 从用户空间读 `dst.len()` 字节进内核缓冲：逐段翻译（`Space::segments`）+
-/// 拷贝；任一段权限缺 R 或越界 → false（不部分写入）。
-pub(crate) fn copy_in(space: &Space, dst: &mut [u8], va: usize) -> bool {
+/// 区间可整段拷吗：`[va, va+len)` 的**每一个**段都在、权限含 `need`、
+/// 且段长之和恰好 `len`（中途未映射页 ⇒ [`Segments`] 提前终止 ⇒ 和不等于）。
+///
+/// 这是"要么全写要么不写"的**前置**：两半共用它，先整段验完再动一个字节。
+/// 代价是区间多走一遍 [`Segments`]（逐页 `translate`）；64 B 的消息通常只落在
+/// 一两页内，可接受。用户裁决见 docs §10.21。
+///
+/// 注：两遍之间映射可能变（他核 unmap）——那是**既有**窗口（单遍实现同样逐页
+/// 取放 Space 锁），不是本契约引入的；先验后写只是让"失败"不再留下半截数据。
+fn whole(space: &Space, va: usize, len: usize, need: PteFlags) -> bool {
     let mut off = 0;
-    for (pa, flags, l) in space.segments(VirtAddr::from_raw(va), dst.len()) {
-        if !flags.intersects(PteFlags::R) || off + l > dst.len() {
+    for (_, flags, l) in space.segments(VirtAddr::from_raw(va), len) {
+        if !flags.intersects(need) || off + l > len {
             return false;
         }
-        // SAFETY: pa 为恒等映射物理地址；l 在段界与 dst 剩余长度内。
+        off += l;
+    }
+    off == len
+}
+
+/// 从用户空间读 `dst.len()` 字节进内核缓冲：逐段翻译（`Space::segments`）+
+/// 拷贝。任一段权限缺 R / 越界 / 中途未映射 ⇒ false。
+///
+/// **契约：「要么全读，要么 `dst` 一个字节都不动」**——先 [`whole`] 整段验完
+/// 再拷。内核缓冲（`staging`）拿到半截数据本不外泄，但"读失败却改过调用方的
+/// 缓冲"这种假契约不留（见 [`copy_out`] 的同一句话）。
+pub(crate) fn copy_in(space: &Space, dst: &mut [u8], va: usize) -> bool {
+    if !whole(space, va, dst.len(), PteFlags::R) {
+        return false;
+    }
+    let mut off = 0;
+    for (pa, _, l) in space.segments(VirtAddr::from_raw(va), dst.len()) {
+        // SAFETY: pa 为恒等映射物理地址；`whole` 已验本段权限含 R、且 l 在段界
+        // 与 dst 剩余长度内（同一区间、同一遍历器，两遍之间只可能变窄）。
         unsafe {
             core::ptr::copy_nonoverlapping(
                 pa.as_usize() as *const u8,
@@ -50,21 +75,27 @@ pub(crate) fn copy_in(space: &Space, dst: &mut [u8], va: usize) -> bool {
         }
         off += l;
     }
-    off == dst.len()
+    true
 }
 
-/// 从内核缓冲写 `src.len()` 字节进用户空间：逐段翻译 + 拷贝；任一段权限缺 W
-/// 或越界 → false。
+/// 从内核缓冲写 `src.len()` 字节进用户空间：逐段翻译 + 拷贝。任一段权限缺 W /
+/// 越界 / 中途未映射 ⇒ false。
+///
+/// **契约：「要么全写，要么用户缓冲区一个字节都不动」**——先 [`whole`] 整段验完
+/// 再拷。旧版是在**写的过程中**逐段判权限，于是失败路径上**前面的页已经写进用户
+/// 缓冲区了**（`mail/mod.rs` 那句"不部分写入"因此是假话，B2）；今天所有调用方都
+/// 传精确长度的缓冲、掩盖着这个假契约。
 pub(crate) fn copy_out(space: &Space, src: &[u8], va: usize) -> bool {
+    if !whole(space, va, src.len(), PteFlags::W) {
+        return false;
+    }
     let mut off = 0;
-    for (pa, flags, l) in space.segments(VirtAddr::from_raw(va), src.len()) {
-        if !flags.intersects(PteFlags::W) || off + l > src.len() {
-            return false;
-        }
+    for (pa, _, l) in space.segments(VirtAddr::from_raw(va), src.len()) {
+        // SAFETY: pa 为恒等映射物理地址；`whole` 已验本段权限含 W、且长度在界内。
         unsafe {
             core::ptr::copy_nonoverlapping(src.as_ptr().add(off), pa.as_usize() as *mut u8, l);
         }
         off += l;
     }
-    off == src.len()
+    true
 }
