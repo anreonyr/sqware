@@ -134,7 +134,7 @@ where
     let ptr = Box::into_raw(holder) as usize;
     let task_id = env_task::spawn(
         TeamId(0),
-        (utask_trampoline as extern "C" fn(usize) -> !) as usize,
+        (trampoline as extern "C" fn(usize) -> !) as usize,
         &[ptr],
         0,
     )?;
@@ -151,7 +151,7 @@ pub fn self_id() -> EnvResult<TaskId> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn utask_trampoline(arg: usize) -> ! {
+pub extern "C" fn trampoline(arg: usize) -> ! {
     // a0 = 启动参数区 VA（`Spawn` 的 args 写在栈顶）；args[0] = 闭包装箱薄指针。
     // 必须在任何调用（tls::alloc）之前读——a0 是 caller-saved。
     let ptr = unsafe { core::ptr::read_volatile(arg as *const usize) };
