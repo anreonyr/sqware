@@ -125,8 +125,8 @@ pub enum UnitCall {
     ///
     /// # 两道门
     ///
-    /// 1. **建域权**：`build` 必须是**调用方自己表里**一枚活着的 `Void`（存在权的
-    ///    载体，见 `PieCall::UnsealVoid`）。token 不自证——内核只在调用方的表里找它，
+    /// 1. **建域权**：`build` 必须是**调用方自己表里**一枚活着的 `Nole`（存在权的
+    ///    载体，见 `PieCall::UnsealNole`）。token 不自证——内核只在调用方的表里找它，
     ///    故"拿别人的 token"不是绕过面。带它是为了让权威**显式可审计**（同
     ///    `Reserve`/`Release` 的形态："你说的是哪一枚"）。
     /// 2. **S 态兜底**：调用方仍须是 supervisor 域。
@@ -292,13 +292,13 @@ pub enum PieCall {
     /// 解封 Pole（页级安全内存；字节数页对齐）。
     #[ret(PieToken)]
     UnsealPole { bytes: usize },
-    /// 解封 Void（**无数据面的权柄载体**）：造一枚只有身份与存活的许可载体。
+    /// 解封 Nole（**无数据面的权柄载体**）：造一枚只有身份与存活的许可载体。
     ///
     /// **无参数**——没有 mtu、没有字节数、没有对齐可校验。它的全部内容就是"这一枚
     /// 存在"，故它承载的是**存在权**（第一位消费者：建域权 `UnitCall::Build`）。
     /// 与 `UnsealHole`/`UnsealPole` 并列，不是它们的特例。
     #[ret(PieToken)]
-    UnsealVoid,
+    UnsealNole,
     /// 开闩：借映 Pole 物理页进当前 task.space（同 token 幂等复用）→ VA。
     ///
     /// 仅对 Pole 成立；权利：需 R。

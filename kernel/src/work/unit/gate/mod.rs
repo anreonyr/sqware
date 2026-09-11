@@ -20,7 +20,7 @@
 //   accord.rs  — 转授子集给其他 Task（写派生边）
 //   narrow.rs  — 就地单调收窄本 pie 权限
 //   cull.rs    — 级联撤销（cull）+ 退出钩子（doom）
-//   right.rs   — **存在权**的判定与铸造（`Void` 载体；建域权是第一位消费者）
+//   right.rs   — **存在权**的判定与铸造（`Nole` 载体；建域权是第一位消费者）
 //   revoke.rs  — 撤销授与他人的副本（含全部后代）
 //   release.rs — 自释自己持有的一份（含全部后代）
 //

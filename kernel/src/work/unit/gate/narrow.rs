@@ -38,9 +38,9 @@ pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), GateErr
             let alive = p.meta().alive();
             set_perm(p, subset, alive)
         }
-        // Void 同款：收窄只改权限位——它的数据面为空，故 envcall 层没有第二步
-        // （Pole 要同步降页表，Hole 与 Void 都不用）。
-        AnyPie::Void(p) => {
+        // Nole 同款：收窄只改权限位——它的数据面为空，故 envcall 层没有第二步
+        // （Pole 要同步降页表，Hole 与 Nole 都不用）。
+        AnyPie::Nole(p) => {
             let alive = p.meta().alive();
             set_perm(p, subset, alive)
         }

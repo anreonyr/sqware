@@ -49,14 +49,14 @@ pub fn unseal_pole(bytes: usize) -> EnvResult<usize> {
     }
 }
 
-/// 解封 Void（**无数据面**的权柄载体）：造一枚只有身份与存活的许可载体。
+/// 解封 Nole（**无数据面**的权柄载体）：造一枚只有身份与存活的许可载体。
 ///
 /// **无参数**——没有 mtu、没有字节数。它承载**存在权**（"你能不能做某件事"），
 /// 与资源权（"你对这份资源能做什么"）正交。
-pub fn unseal_void() -> EnvResult<usize> {
-    let r = PieCall::UnsealVoid.call()?;
+pub fn unseal_nole() -> EnvResult<usize> {
+    let r = PieCall::UnsealNole.call()?;
     match r {
-        PieCallRet::UnsealVoid(tk) => Ok(tk.get()),
+        PieCallRet::UnsealNole(tk) => Ok(tk.get()),
         _ => unreachable!(),
     }
 }
@@ -362,7 +362,7 @@ impl HolePie {
     }
 }
 
-impl AnyPie for VoidPie {
+impl AnyPie for NolePie {
     fn seal(&self) -> EnvResult<()> {
         seal(self.token)
     }
@@ -428,20 +428,20 @@ impl AnyPie for HolePie {
     }
 }
 
-/// Void 门闩用户态句柄——**三种句柄里唯一没有任何方法的那种**。
+/// Nole 门闩用户态句柄——**三种句柄里唯一没有任何方法的那种**。
 ///
 /// 它没有 `push`/`pull`（那是 Hole 的数据面）、没有 `open`/`shut`（那是 Pole 的
 /// 页视图）。它能做的只有 [`AnyPie`] 那一套（`accord`/`narrow`/`revoke`/`release`
 /// /`seal`）——因为它的全部内容就是"我持有这一枚"。
-pub struct VoidPie {
+pub struct NolePie {
     token: usize,
 }
 
-impl VoidPie {
-    /// 解封一枚 Void（无参数：没有大小、没有对齐）。
+impl NolePie {
+    /// 解封一枚 Nole（无参数：没有大小、没有对齐）。
     pub fn unseal() -> EnvResult<Self> {
         Ok(Self {
-            token: unseal_void()?,
+            token: unseal_nole()?,
         })
     }
 

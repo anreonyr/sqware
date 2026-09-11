@@ -27,7 +27,7 @@ use runtime::core::handshake::{self, Pier, Quay, Refer, Referred};
 use runtime::env::mail::{self, HolePie};
 use runtime::env::task as utask;
 use runtime::env::io::put;
-use runtime::env::mail::VoidPie;
+use runtime::env::mail::NolePie;
 use runtime::env::room::{exit, exit_with};
 
 mod manifest;
@@ -39,7 +39,7 @@ fn say(s: &str) {
 /// 清单里按名取程序 → `Build` 装域 → `Spawn` 产**未放行**的引导线程（启动参数为空）。
 ///
 /// `build` = 建域权（root 启动时解封一次、此后一直用）：`Build` 的第一道门。
-fn build_spawn(entries: &[manifest::Entry<'_>], name: &str, build: &VoidPie) -> TaskId {
+fn build_spawn(entries: &[manifest::Entry<'_>], name: &str, build: &NolePie) -> TaskId {
     let Some(e) = entries.iter().find(|e| e.name == name) else {
         say("root: missing program ");
         say(name);
@@ -116,13 +116,13 @@ extern "C" fn main() -> ! {
         }
     };
 
-    // 1.5 建域权：**解封一枚 Void**，此后每次 `Build` 都带它。
+    // 1.5 建域权：**解封一枚 Nole**，此后每次 `Build` 都带它。
     //
-    // 为什么由 root 自己解封（而不是 boot 铸好塞进它表里）：`UnsealVoid` 有 S 态门，
+    // 为什么由 root 自己解封（而不是 boot 铸好塞进它表里）：`UnsealNole` 有 S 态门，
     // 故"谁能铸"已经由政策划界；而"铸出来的这枚能转授给谁、怎么收回"由能力代数
     // 回答（accord/narrow/revoke）。boot 铸那一条要多一个"往还不存在的任务里塞 pie"
     // 的时序 hack，收益为零。
-    let build_right = match VoidPie::unseal() {
+    let build_right = match NolePie::unseal() {
         Ok(b) => b,
         Err(_) => exit_with(16),
     };

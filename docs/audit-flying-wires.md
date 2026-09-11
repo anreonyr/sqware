@@ -3989,7 +3989,7 @@ RoomCall::Reap { reason: usize }     // 0 = 自愿/正常；非 0 = 域自己的
 
 ---
 
-## 10.37 `Void`：第三种数据面类型，与"建域权"从 S-only 判定换成能力
+## 10.37 `Nole`：第三种数据面类型，与"建域权"从 S-only 判定换成能力
 
 §10.36 之后 kernel 侧收拾干净了，这一刀回到**用户问的那个问题**：系统调用能不能区分
 权限级？清点结果是——**整条 syscall 分派路径上只有一处**真的按特权级判（`UnitCall::Build`
@@ -4003,30 +4003,41 @@ RoomCall::Reap { reason: usize }     // 0 = 自愿/正常；非 0 = 域自己的
 | `ControlCall::Panic` 之类**另立一个调用** | 一个不变量在 ABI 里有两个出口，且多的那个把域的策略写进内核（§10.36） |
 | `Permission::BUILD` **一个权限位** | 位说"对**这份资源**能做什么"，与资源同轴；做成位会让**任何**资源顺带携带建域权（`READ\|WRITE\|BUILD` 这种掩码一旦能出现，"这是不是那枚"就再也答不出来） |
 
-**用户两句话定的案**：`Void`（"考虑到 Pie 是 Mail 的门闩，我觉得 Right 应该叫 Void"）、
-以及否掉位。定下来的判据是：**位能回答"能不能"，答不了"这是不是那枚"；类型是身份，位不是。**
+**用户定的案**（原话）：`Right` 先改名 ——"考虑到 Pie 是 Mail 的门闩，我觉得 Right
+应该叫 **Void**"；随后再一句"**Void -> Nole**"定名（下面的正文与代码统一用 `Nole`，
+历史引语保留原话）。**同时否掉了"加一个权限位"那条路**。定下来的判据是：
+**位能回答"能不能"，答不了"这是不是那枚"；类型是身份，位不是。**
+
+命名理由写进 `nole.rs` 头注，三个名字各说一个字的形状：
+
+```text
+Hole  有槽（消息穿孔）    Pole  有页（页视图）    Nole = no + -ole，什么都没有
+```
+
+**名字即定义**——`Nole` 承诺数据面为空，故它不可能被当成资源来使唤。（改名前后
+指纹逐字节相同：`5d75fa0b059401d0966bc628d7eb1278`，即纯改名、零行为变化。）
 
 ### 落地：三种数据面按"有没有数据面"分
 
 ```text
 Hole   → 有槽（mtu + slot{buf, from}），有方向，有等待者
 Pole   → 有页（物理帧 + 视图表）
-Void   → 什么都没有：没有 mtu、没有槽、**连 id 都没有**
+Nole   → 什么都没有：没有 mtu、没有槽、**连 id 都没有**
 ```
 
-`VoidMeta` 只剩 `state + owner`——少一个 `id` 不是省事，是"无数据面"的直接后果：
+`NoleMeta` 只剩 `state + owner`——少一个 `id` 不是省事，是"无数据面"的直接后果：
 另两者的 `id` 是**等待键的身份**（谁在等这条孔/这份页），而没人会等一个没有数据的东西。
 
 | 面 | 改动 |
 |---|---|
-| `work/mail/void.rs`（新） | `VoidMeta{state, owner}` + `seal`（置死，**不唤醒任何人**） |
-| `gate/pie.rs` | `AnyPie::Void(Pie<VoidMeta>)` + 六个 `match` 各补一臂（编译器点出全部） |
-| `gate/{accord,cull,narrow}.rs` | 派生分支；`Void` 无映射可撤、无页表可降（与 `Hole` 同路） |
-| `gate/right.rs`（新） | `holds_build_right(task, token)`：**按 token 在调用方自己的表里**找一枚活着且是 `Void` 的门闩 |
-| `fid.rs` | `PieCall::UnsealVoid`（**无参数**）+ `UnitCall::Build { .., build: PieToken }` |
-| `envcall/pie.rs` | `unseal_void`：建 meta → 建门闩（全权）→ **没有第二步**（Hole 要预分配槽、Pole 要分配帧并 auto-map） |
+| `work/mail/nole.rs`（新） | `NoleMeta{state, owner}` + `seal`（置死，**不唤醒任何人**） |
+| `gate/pie.rs` | `AnyPie::Nole(Pie<NoleMeta>)` + 六个 `match` 各补一臂（编译器点出全部） |
+| `gate/{accord,cull,narrow}.rs` | 派生分支；`Nole` 无映射可撤、无页表可降（与 `Hole` 同路） |
+| `gate/right.rs`（新） | `holds_build_right(task, token)`：**按 token 在调用方自己的表里**找一枚活着且是 `Nole` 的门闩 |
+| `fid.rs` | `PieCall::UnsealNole`（**无参数**）+ `UnitCall::Build { .., build: PieToken }` |
+| `envcall/pie.rs` | `unseal_nole`：建 meta → 建门闩（全权）→ **没有第二步**（Hole 要预分配槽、Pole 要分配帧并 auto-map） |
 | `envcall.rs` 的 `Build` 臂 | **两道门**：门一 = 持有建域权；门二 = S 态兜底 |
-| `env/runtime` | `VoidPie`（三种句柄里唯一没有任何数据面方法的那种）+ `unseal_void` |
+| `env/runtime` | `NolePie`（三种句柄里唯一没有任何数据面方法的那种）+ `unseal_nole` |
 | `root/main.rs` | 启动解封一枚（`build_right`），此后每次 `Build` 都带它 |
 
 ### 两道门不是冗余（各答一个问题）
@@ -4039,8 +4050,8 @@ Void   → 什么都没有：没有 mtu、没有槽、**连 id 都没有**
 
 ### 铸币权也收在 S 态（这条是排查中补上的）
 
-`UnsealVoid` 一开始没有门——那等于**任何 U 域自己 `UnsealVoid` 一枚就给自己授了建域权**，
-能力模型当场自证。故 `UnsealVoid` 与 `Build` 同收 S 态门：**"谁可以铸"与"谁可以用"都由
+`UnsealNole` 一开始没有门——那等于**任何 U 域自己 `UnsealNole` 一枚就给自己授了建域权**，
+能力模型当场自证。故 `UnsealNole` 与 `Build` 同收 S 态门：**"谁可以铸"与"谁可以用"都由
 S 态划界，而"铸出来的那枚能转授给谁、怎么收回"由能力代数回答**。
 
 ### 判据
@@ -4055,6 +4066,6 @@ S 态划界，而"铸出来的那枚能转授给谁、怎么收回"由能力代�
 
 ### 留给"带状态的权利"的那个名字
 
-`Void` 的定义式就是**无状态**——它承载纯存在权。若将来出现**带状态**的许可
-（配额"最多 N 个"、设备能力"哪个窗口"），那**不该**是 `Void`，要另立 meta：
-"多少/哪个"是数据面的活，而 `Void` 的名字本身就承诺了数据面为空。
+`Nole` 的定义式就是**无状态**——它承载纯存在权。若将来出现**带状态**的许可
+（配额"最多 N 个"、设备能力"哪个窗口"），那**不该**是 `Nole`，要另立 meta：
+"多少/哪个"是数据面的活，而 `Nole` 的名字本身就承诺了数据面为空。

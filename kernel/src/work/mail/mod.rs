@@ -1,4 +1,4 @@
-// 任务间通信（mail）— Hole/Pole/Void 三种数据面的资源实体 + IPC 数据面。
+// 任务间通信（mail）— Hole/Pole/Nole 三种数据面的资源实体 + IPC 数据面。
 //
 // 与 `unit::gate` 的分工：mail 只持**资源实体**（HoleMeta/PoleMeta）+ IPC 数据面
 // （push/pull/map/unmap）+ 用户空间拷贝（copy_in/out）；
@@ -6,7 +6,7 @@
 //
 //   hole.rs   — Hole 数据面（数据过内核，单槽缓冲）+ meta()
 //   pole.rs   — Pole 数据面（页级安全内存，物理帧 + 视图）+ meta()
-//   void.rs   — Void **无数据面**（只有身份与存活）——存在权的载体
+//   nole.rs   — Nole **无数据面**（只有身份与存活）——存在权的载体
 //
 // **没有全局资源表**：资源寿命 = 能力寿命（门闩持唯一的强引用 `Arc<Meta>`），
 // 最后一份门闩消失即回收。
@@ -14,7 +14,7 @@
 // 数据面不感知 rights；门闩在 envcall 入口 dispatch 时检查。
 // 阻塞语义在调度域 wait/wake，mail 不重造调度器。
 //
-// 三者按"有没有数据面"分：Hole 有槽、Pole 有页、Void **什么都没有**——故 Void 是
+// 三者按"有没有数据面"分：Hole 有槽、Pole 有页、Nole **什么都没有**——故 Nole 是
 // 唯一能被用作"存在权"载体的类型（资源权需要资源，存在权不需要）。
 //
 // 权限四元：READ / WRITE / VEST / BACK（单一真相在 `env::Permission`）。
@@ -22,7 +22,7 @@
 
 pub mod hole;
 pub mod pole;
-pub mod void;
+pub mod nole;
 
 // 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（gate → mail 单向依赖）。
 pub(crate) use hole::HoleMeta;

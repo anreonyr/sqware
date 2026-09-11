@@ -384,7 +384,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             name_len,
             build,
         }) => {
-            // 门一：**建域权**——调用方自己表里必须有一枚活着的 `Void`（存在权的载体）。
+            // 门一：**建域权**——调用方自己表里必须有一枚活着的 `Nole`（存在权的载体）。
             // 按 token 在**调用方表里**找，故 token 不自证、借来的 token 无效。
             let holds = current()
                 .running_task()
