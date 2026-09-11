@@ -45,7 +45,7 @@ pub fn pagetable() {
         }
         let _pa = PhysAddr::from_raw(frames[0].as_ptr() as usize);
         space
-            .attach_map(VirtAddr::from_raw(BASE), frames, flags)
+            .attach(VirtAddr::from_raw(BASE), frames, flags)
             .expect("[health] pagetable: attach");
         crate::expect!(
             space.table_count() == base_count + levels,

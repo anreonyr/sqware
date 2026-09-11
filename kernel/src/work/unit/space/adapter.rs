@@ -156,7 +156,7 @@ impl SpaceBuilder {
                 .lock();
             ks_inner.root.walk_ref(TRAMPOLINE)?
         };
-        space.borrow_map(TRAMPOLINE, tramp_pa, PAGE_SIZE, tramp_flags)?;
+        space.borrow(TRAMPOLINE, tramp_pa, PAGE_SIZE, tramp_flags)?;
         Ok(())
     }
 }
@@ -263,7 +263,7 @@ impl Space {
     }
 
     /// 借帧连续映射（DRAM 恒等 / trampoline / dock·ring 视图）。
-    pub fn borrow_map(
+    pub fn borrow(
         &self,
         vaddr: VirtAddr,
         paddr: PhysAddr,
@@ -274,7 +274,7 @@ impl Space {
     }
 
     /// 已备帧装配（loader 逐段 / hart 帧 / health 压测）。
-    pub(crate) fn attach_map(
+    pub(crate) fn attach(
         &self,
         vaddr: VirtAddr,
         frames: Vec<Frame>,
@@ -315,7 +315,7 @@ impl Space {
     }
 
     /// 懒页物化（缺页处理：分配零页装叶注入 + 刷 TLB）。
-    pub fn materialize_map(&self, vaddr: VirtAddr, size: usize) -> Result<(), MapError> {
+    pub fn materialize(&self, vaddr: VirtAddr, size: usize) -> Result<(), MapError> {
         self.with_flush(|inner| inner.materialize(vaddr, size))
     }
 

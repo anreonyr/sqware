@@ -145,7 +145,7 @@ pub fn init() {
         let phys = base + h * TRAP_STACK_SLOT_SIZE;
         // 段体映射（60 KiB）：固定 VA → 块内物理页；guard 页不映射（越界即页故障）
         space
-            .borrow_map(
+            .borrow(
                 body_va,
                 PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
                 TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
