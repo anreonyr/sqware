@@ -105,10 +105,12 @@ debug 构建           → lockdep 在
    - ~~`boot.rs:114`「spare 预算验收恒跑」~~ —— **已修**（改为「三个探针全在 `debug_assertions`
      档，release 下本函数是空体」）。
    - ~~`depend.rs:77` 后备仓「层级 9」~~ —— **已修**（改为层级 10 `Spare`）。
-   - ~~`once.rs:7` 的 Release 序声称~~ —— **已修（注释）**：改为照实描述（CAS 先发布标记、
-     后写 data），并把缺口写进文件头与 `set` 内注。⚠ **缺口本身未修**：标记的发布早于
-     data 的写入，另一 hart 理论上可见「已初始化」而读到未写入的 data；今日不可达
-     （三处消费者都在副核拉起之前 set 完），修法（三态标记 / 补一次 Release store）待裁。
+   - ~~`once.rs` 的 Release 序声称~~ —— **已修（本轮）**，且**缺口一并修掉**：标记由
+     `AtomicBool` 改为三态 `AtomicU8`（`EMPTY → WRITING → READY`），`set()` 抢到
+     「写入中」后**写完 data 才** Release store「就绪」——发布晚于写入，
+     「见 `READY` ⇒ 见数据」由 Acquire/Release 配对保证；`get()` 在「写入中」返回
+     `None`；抢不到写入权的一方等它落到 `READY` 再报「已初始化」（写方被抢占时该循环
+     可被中断，不死等）。消费者四处（`HERTZ` / `TRAP_STACK_PHYS` / `POOL` / `MACHINE`）。
    - `depend.rs:4-5` 说「机制关闭即零开销」，但 release 仍读 `ra` 并存 `caller`
      （`spin.rs:89,101`）。
    - ~~`rw.rs:21,44,107` 三处「未使用」~~ —— **已修**（三行 `allow` 删除；删后无新告警，
