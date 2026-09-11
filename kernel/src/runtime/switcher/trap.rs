@@ -61,6 +61,16 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
     true
 }
 
+/// 本 hart 帧的**物理**地址——`from_task` 判据的右侧。
+///
+/// 帧内 `user_pa` 由 `trap::init` 装配 per-hart 帧时写入（对 `HART_FRAME_BASE +
+/// h·PAGE` 的翻译结果），与汇编两个入口交上来的口径一致。内核 satp 下
+/// `HART_FRAME_BASE` 恒映射、帧常驻不迁移，故此处直读安全。
+fn hart_frame_pa() -> usize {
+    // SAFETY: kernel satp 下本 hart 帧恒映射；只读帧头一个字段，不改任何状态。
+    unsafe { (*(machine::hart_frame().as_usize() as *const TrapContext)).user_pa.as_usize() }
+}
+
 /// 陷阱分发 — 汇编入口（`jalr trap_handler`）的唯一 Rust 侧。
 ///
 /// 入参 `frame` = 被中断上下文的帧（汇编以 a0 = 帧物理地址调用，恒等映射下
@@ -96,7 +106,14 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     //     「被中断者是内核还是任务」的**唯一判据**——S 态 supervisor 域任务的
     //     SPP 也是 Supervisor，不能靠 SPP 区分（域任务必须能抢占、能缺页自愈、
     //     能 ecall）。
-    let from_task = (frame as *const TrapContext as usize) != machine::hart_frame().as_usize();
+    //
+    //     两个来源必须**同口径**：汇编两个入口交上来的都是帧的**物理**地址
+    //     （`ld a0, 0x20(sp)` 取的 `user_pa`），故本 hart 帧也用它的 `user_pa` 比。
+    //     曾经直接与 `machine::hart_frame()`（`HART_FRAME_BASE + id·PAGE` 的**高 VA**）
+    //     比——口径不同源 ⇒ 恒不相等 ⇒ 判据恒为「来自任务」：内核侧同步异常会被当成
+    //     任务故障（误杀无辜任务），`persist` 与「S 态空闲恢复原上下文」两条支路
+    //     一起成死代码。
+    let from_task = (frame as *const TrapContext as usize) != hart_frame_pa();
 
     // 0.5 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。
     let ident = ident();
