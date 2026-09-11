@@ -13,7 +13,7 @@
 // 先清 PTE 再摘子节点——构造上一致，无第二份待同步状态。
 
 use alloc::vec::Vec;
-use alloc::{alloc::Allocator, boxed::Box, sync::Arc};
+use alloc::{alloc::Allocator, boxed::Box};
 use fack::prelude::Error;
 
 use crate::memory::{PAGE_SHIFT, PAGE_SIZE};
@@ -28,31 +28,6 @@ use super::{
 /// 仅用于**数据页**；页表页用 `TableNode::page`（`Box<PageTable>`，同为
 /// 4096 B / 4096 对齐）——类型即语义，两种帧各归其位。
 pub(crate) type Frame = Box<[u8; PAGE_SIZE], &'static dyn Allocator>;
-
-/// 数据页的共享 / 私有身份 —— COW 共享帧。
-///
-/// Shared = 共享只读视图：多条 PTE / 多个空间引用同一物理页，写缺页触发
-/// `own` 分裂。Arc 带帧分配器（配 Arc::new_in），底层仍从 buddy 分配
-/// / 归还——不串物理帧池。
-/// Owned = 私有可写视图（原 Frame 独占 Box 语义；Shared→Owned 必经一次拷贝）。
-#[derive(Debug)]
-pub(crate) enum FrameState {
-    Shared(Arc<[u8; PAGE_SIZE], &'static dyn Allocator>),
-    Owned(Frame),
-}
-
-impl FrameState {
-    /// 页物理地址（Shared/Owned 都指向一页；恒等映射下指针即 PA）。
-    /// 仅 audit（精确比对 PTE↔帧）使用。
-    #[cfg(feature = "audit")]
-    pub(crate) fn pa(&self) -> PhysAddr {
-        let p = match self {
-            FrameState::Shared(a) => Arc::as_ptr(a) as usize,
-            FrameState::Owned(b) => b.as_ptr() as usize,
-        };
-        PhysAddr::from_raw(p)
-    }
-}
 
 /// 页表操作错误。
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]

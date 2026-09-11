@@ -8,8 +8,8 @@
 //   Some(Lazy) — 未物化页缺页时分配零页（懒映射：mmap/declare/栈体）。
 //   Some(Guard)— 未物化且禁止物化：触碰即「预留映射访问」（栈守护页）。
 //
-// 帧随 Map drop 归还 frame 池（Owned）或 Arc 计数归零归还（Shared）——
-// 所有权即回收，无遍历页表树、无手写 deallocate。
+// 帧随 Map drop 归还 frame 池——所有权即回收，无遍历页表树、无手写 deallocate
+// （只读借用页不在 `frames` 里：所有权归那个活得更久的所有者）。
 //
 // 部分拆除（`remove`）按洞分裂：`carve` 摘洞内帧并用 `split_off` 重排右段键
 // ——洞是**结构上的**（键区间缺省），不是额外 holes 字段；稀疏表让
@@ -21,7 +21,7 @@ use core::num::NonZeroUsize;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
-use crate::memory::manager::table::{Frame, FrameState};
+use crate::memory::manager::table::Frame;
 
 use super::salvage::Salvage;
 
@@ -58,7 +58,7 @@ pub(crate) struct Map {
     /// 未物化页行为（None = 全物化：拥有满帧 / 借用空帧）。
     pub(super) pending: Option<Pending>,
     /// 已物化页帧（页序键；未物化页不在表）。
-    pub(super) frames: BTreeMap<usize, FrameState>,
+    pub(super) frames: BTreeMap<usize, Frame>,
 }
 
 impl Map {
@@ -68,7 +68,7 @@ impl Map {
         size: usize,
         flags: PteFlags,
         pending: Option<Pending>,
-        frames: BTreeMap<usize, FrameState>,
+        frames: BTreeMap<usize, Frame>,
     ) -> Self {
         Self {
             va,
@@ -136,7 +136,7 @@ impl Map {
             "map {:#x} frame overflow",
             self.va.as_usize()
         );
-        let old = self.frames.insert(idx, FrameState::Owned(frame));
+        let old = self.frames.insert(idx, frame);
         debug_assert!(
             old.is_none(),
             "map {:#x} double inject @page {idx}",
@@ -171,7 +171,7 @@ impl Map {
             hole.into_iter().map(|(k, v)| (k - lo_pg, v)).collect(),
         ));
         // 右段帧键重排：k − hi_pg
-        let right_frames: BTreeMap<usize, FrameState> =
+        let right_frames: BTreeMap<usize, Frame> =
             tail.into_iter().map(|(k, v)| (k - hi_pg, v)).collect();
         if lo_pg == 0 {
             // 洞在头：本 Map 重绕成右段（调用方分支保证 hi_pg < pages）

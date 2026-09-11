@@ -24,7 +24,6 @@
 
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE};
@@ -33,7 +32,7 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::mode;
-use crate::memory::manager::table::{Frame, FrameState, TableNode};
+use crate::memory::manager::table::{Frame, TableNode};
 
 use super::Seg;
 use super::map::{Map, Pending};
@@ -382,121 +381,6 @@ impl SpaceInner {
         }
     }
 
-    /// 把 `[start, start+size)` 内可写页提升为共享只读：Owned → Shared(Arc)。
-    /// 写缺页将触发 [`Self::own`] 分裂。
-    ///
-    /// **Lazy 区行为**：未触页（`frames` 无键）跳过——首次写缺页命中 Owned
-    /// 而非 Shared，触发 [`Self::own`] 从 Owned 直接分裂（不走 COW 路径）。
-    /// 这是 fork 后端语义，不为 bug。
-    #[allow(dead_code)] // fork 后端预留
-    pub(crate) fn share(&mut self, start: VirtAddr, size: usize) -> Result<(), MapError> {
-        let pages = size.div_ceil(PAGE_SIZE);
-        let mut guard = InstallGuard::new(self, start, MapMode::Materialize);
-        let result: Result<(), MapError> = (|| {
-            for i in 0..pages {
-                let va = start + i * PAGE_SIZE;
-                // 拿原 Owned 字节 + flags + idx
-                let (bytes_src, flags, idx) = {
-                    let map = guard.inner.resolve_ref(va).ok_or(MapError::NotMapped)?;
-                    let idx = (va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-                    match &map.frames.get(&idx) {
-                        // 跳过的页不 mark——保留原 Shared/None 状态
-                        Some(FrameState::Shared(_)) => continue,
-                        Some(FrameState::Owned(b)) => (b.as_slice(), map.flags, idx),
-                        None => continue,
-                    }
-                };
-                // 种类 = Cow：COW 共享帧（Shared）——关机归零。
-                let mut arc: Arc<[u8; PAGE_SIZE], &'static dyn alloc::alloc::Allocator> = crate::tag!(
-                    Cow,
-                    Arc::new_in(
-                        [0u8; PAGE_SIZE],
-                        crate::memory::allocator::frame::allocator()
-                    )
-                );
-                Arc::get_mut(&mut arc)
-                    .expect("fresh arc")
-                    .copy_from_slice(bytes_src);
-                let arc_pa = PhysAddr::from_raw(Arc::as_ptr(&arc) as usize);
-                {
-                    let map = guard.inner.resolve_mut(va).ok_or(MapError::NotMapped)?;
-                    let old = map.frames.insert(idx, FrameState::Shared(arc));
-                    drop(old); // 原 Owned 帧归还 frame 池
-                    let leaf = guard.inner.root.walk_mut(va, false, mode::levels())?;
-                    let ppn = (arc_pa.as_usize() >> 12) as u64;
-                    leaf.set(
-                        ppn,
-                        (flags & !PteFlags::W) | PteFlags::A | PteFlags::D | PteFlags::V,
-                    );
-                }
-                guard.mark(i); // 已 set PTE：登记回滚页号（跳过的页不登记）
-            }
-            Ok(())
-        })();
-        if result.is_ok() {
-            guard.commit();
-        }
-        result
-    }
-
-    /// COW 写缺页分裂：保证 `[start, start+size)` 内每页私有可写。
-    /// Shared → 分新 Owned 拷字节；Owned + 只读 → 翻 W；其它页**静默跳过**
-    /// （无 map / 帧未触——与 [`Self::share`] 跳过非 Owned 对称）。
-    #[allow(clippy::wrong_self_convention)] // Space 跨核 Arc 共享，&mut self 在事务内
-    pub(crate) fn own(&mut self, start: VirtAddr, size: usize) -> Result<(), MapError> {
-        enum Step {
-            /// Owned 页 PTE 翻 W（已 Owned + 只读）
-            SetW,
-            /// Shared 页分裂：新 Owned 帧 + 写可 PTE
-            Split(PteFlags),
-        }
-        let pages = size.div_ceil(PAGE_SIZE);
-        for i in 0..pages {
-            let page = start + i * PAGE_SIZE;
-            // 1. 探：决定本页动作（静默跳过 no-map / 帧未触）
-            let step: Step = match self.resolve_mut(page) {
-                Some(map) => {
-                    let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-                    let flags = map.flags;
-                    match map.frames.get(&idx) {
-                        Some(FrameState::Owned(_)) => Step::SetW,
-                        Some(FrameState::Shared(_)) => Step::Split(flags),
-                        None => continue,
-                    }
-                }
-                None => continue,
-            };
-            // 2. 行
-            match step {
-                Step::SetW => {
-                    let leaf = self.root.walk_mut(page, false, mode::levels())?;
-                    leaf.set_flags(leaf.flags() | PteFlags::W | PteFlags::V);
-                }
-                Step::Split(flags) => {
-                    let arc = {
-                        let map = self.resolve_mut(page).expect("map exists (checked)");
-                        let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-                        match &map.frames.get(&idx) {
-                            Some(FrameState::Shared(a)) => a.clone(),
-                            _ => continue, // 并发下变 Owned——跳过
-                        }
-                    };
-                    // 种类 = Cow：COW 分裂出的新帧——关机归零。
-                    let mut nb: Frame = crate::tag!(Cow, Self::frame()?);
-                    nb.copy_from_slice(&arc[..]);
-                    let ppn = (PhysAddr::from_raw(nb.as_ptr() as usize).as_usize() >> 12) as u64;
-                    let map = self.resolve_mut(page).expect("map exists (checked)");
-                    let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-                    let old = map.frames.insert(idx, FrameState::Owned(nb));
-                    drop(old);
-                    let leaf = self.root.walk_mut(page, false, mode::levels())?;
-                    leaf.set(ppn, flags | PteFlags::W | PteFlags::V);
-                }
-            }
-        }
-        Ok(())
-    }
-
     // ── 查询 ────────────────────────────────────────────────
 
     /// `[start, start+size)` 是否与**已有映射**重叠（单表查询）。
@@ -536,7 +420,7 @@ impl SpaceInner {
         for m in &self.maps {
             for (i, f) in &m.frames {
                 let va = m.va + i * PAGE_SIZE;
-                let expect = f.pa();
+                let expect = page_pa(f);
                 match self.translate(va) {
                     Some((pa, _)) if pa == expect => {}
                     other => panic!(
@@ -610,6 +494,16 @@ impl<'a> InstallGuard<'a> {
     fn commit(mut self) {
         self.installed.clear();
     }
+}
+
+/// 页槽位里那帧的物理地址（恒等映射下指针值即 PA）。
+///
+/// 独立函数而不是方法：**唯一使用者是 [`SpaceInner::audit`]**，而它整段是
+/// `#[cfg(feature = "audit")]`——做成结构上的方法会让那个字段在默认档没有任何
+/// 读点（dead_code 警告），违反"两档零警告、零 allow"（用户裁决，见 docs §10.20）。
+#[cfg(feature = "audit")]
+fn page_pa(f: &Frame) -> PhysAddr {
+    PhysAddr::from_raw(f.as_ptr() as usize)
 }
 
 impl Drop for InstallGuard<'_> {

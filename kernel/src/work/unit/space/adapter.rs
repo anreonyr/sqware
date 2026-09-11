@@ -37,7 +37,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::asid::{self, Asid, Deaf};
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::flush_asid;
-use crate::memory::manager::table::{Frame, FrameState};
+use crate::memory::manager::table::Frame;
 use crate::work::unit::life::Life;
 
 // SAFETY: 全部可变状态由 `RelLock` 互斥；页表树读写与 `SpaceInner` 共享同一把锁。
@@ -324,37 +324,6 @@ impl Space {
         let flags = self.pte_policy(flags);
         self.with_shootdown(|inner| inner.protect(vaddr, size, flags))
             .expect("protect: shootdown deaf")
-    }
-
-    /// 共享只读化（COW fork 前置：Owned → Shared）：收紧类，就地跨核清退。
-    #[allow(dead_code)] // fork 后端预留
-    pub fn share(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
-        self.with_shootdown(|inner| inner.share(start, size))
-            .expect("share: shootdown deaf")
-    }
-
-    /// 写时分裂私有（COW 写缺页：Shared → 新 Owned；写缺页调用传 `PAGE_SIZE`）。
-    /// 非 Shared 页静默跳过——与 [`Self::share`] 跳过非 Owned 对称。
-    ///
-    /// 抵押（fork 未接通期成立）：归"只刷本核"档的前提是 `share` 仍是 dead code
-    /// ——今天没有任何页是 Shared，本方法不可达。fork 接通后同空间多线程会出现
-    /// 「他核持旧共享帧的只读陈旧条目 → 读不到本核的写」，届时必须改走
-    /// [`Self::with_shootdown`]。
-    #[allow(clippy::wrong_self_convention)] // Space 跨核 Arc 共享，&self 刻意为之
-    pub fn own(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
-        self.with_flush(|inner| inner.own(start, size))
-    }
-
-    /// 判别 va 所在页是否 Shared 共享态。
-    pub fn is_shared(&self, va: VirtAddr) -> bool {
-        let page = va.page_align();
-        self.with(|inner| {
-            let Some(map) = inner.resolve_ref(page) else {
-                return false;
-            };
-            let idx = (page.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-            matches!(map.frames.get(&idx), Some(FrameState::Shared(_)))
-        })
     }
 
     // ── 查询 ────────────────────────────────────────────────

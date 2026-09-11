@@ -13,13 +13,15 @@
 //   end()    — 关机时的**期望终值**（`fence::audit::check_baseline` 按它分组）
 //   poison() — 毒化 / canary 策略，**派生**：账本侧 + 地址键（= `OwnerKind` 原先的全部内容）
 //
-// 编码即 ABI：`repr(u8)`，0 = `Plain`（表全零 = 未标注语义）。`from_u8` 对未知值
-// 防御归 `Plain`（只失真计数维度；banker 的 debit/credit 配对与种类无关）。
+// 编码：`repr(u8)`，0 = `Plain`（表全零 = 未标注语义）。**编号是构建期内部约定，
+// 不是持久格式**（帧种类表与账本都是 boot 期重建的）——删一个种类即整体下移，
+// 不留空洞（空洞就是飞线，见 §10.20 删 `Cow`）。`from_u8` 对未知值防御归 `Plain`
+// （只失真计数维度；取还配对与种类无关）。
 
 /// 对象种类数（statistics 的计数数组与视图按它定长）。
-pub(crate) const KIND_COUNT: usize = 16;
+pub(crate) const KIND_COUNT: usize = 15;
 
-/// 分配对象种类。帧侧 13 种、账侧 2 种、未标注 1 种。
+/// 分配对象种类。帧侧 12 种、账侧 2 种、未标注 1 种（= 15）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum Kind {
@@ -35,30 +37,28 @@ pub(crate) enum Kind {
     Heap = 3,
     /// 任务栈（`StackWindow::claim`）。
     Stack = 4,
-    /// COW 共享帧（复制与 `Arc::new_in` 两条路）。
-    Cow = 5,
     /// 装载段帧（`loader`）。
-    Image = 6,
+    Image = 5,
     /// Pole 环页（mail 环形缓冲）。
-    Ring = 7,
+    Ring = 6,
     // ── 帧侧：表 / 持久 / 只报数 ──
     /// 页表页（root + 中间表；关机与内核根表 walk 数核对）。
-    Table = 8,
+    Table = 7,
     /// trap 栈块（每核异常栈，boot 一次、永不归还）。
-    TrapStack = 9,
+    TrapStack = 8,
     /// hart trap-context 帧（每核一页，boot 一次、永不归还）。
-    HartFrame = 10,
+    HartFrame = 9,
     /// spare 仓块（崩溃路径专用，boot 一次、永不归还）。
-    Spare = 11,
+    Spare = 10,
     /// 块池 prime 借页（自由周转，只报数）。
-    Prime = 12,
+    Prime = 11,
     /// 自检数据帧（`health` 自取自还，只报数）。
-    Probe = 13,
+    Probe = 12,
     // ── 账侧（活块账本）──
     /// `Arc<Task>` / `TaskIdent`。
-    Task = 14,
+    Task = 13,
     /// 用户堆账目（键 = `(asid, 页索引)`；随空间退役）。
-    UserHeap = 15,
+    UserHeap = 14,
 }
 
 /// 记进哪张表。
@@ -106,7 +106,6 @@ impl Kind {
         Kind::Lazy,
         Kind::Heap,
         Kind::Stack,
-        Kind::Cow,
         Kind::Image,
         Kind::Ring,
         Kind::Table,
@@ -127,7 +126,6 @@ impl Kind {
             | Kind::Lazy
             | Kind::Heap
             | Kind::Stack
-            | Kind::Cow
             | Kind::Image
             | Kind::Ring
             | Kind::Table
@@ -155,7 +153,6 @@ impl Kind {
             | Kind::Lazy
             | Kind::Heap
             | Kind::Stack
-            | Kind::Cow
             | Kind::Image
             | Kind::Ring
             | Kind::Task => End::Zero,
@@ -183,7 +180,6 @@ impl Kind {
             Kind::Lazy => "lazy",
             Kind::Heap => "heap",
             Kind::Stack => "stack",
-            Kind::Cow => "cow",
             Kind::Image => "image",
             Kind::Ring => "ring",
             Kind::Table => "table",
@@ -207,17 +203,16 @@ impl Kind {
             2 => Kind::Lazy,
             3 => Kind::Heap,
             4 => Kind::Stack,
-            5 => Kind::Cow,
-            6 => Kind::Image,
-            7 => Kind::Ring,
-            8 => Kind::Table,
-            9 => Kind::TrapStack,
-            10 => Kind::HartFrame,
-            11 => Kind::Spare,
-            12 => Kind::Prime,
-            13 => Kind::Probe,
-            14 => Kind::Task,
-            15 => Kind::UserHeap,
+            5 => Kind::Image,
+            6 => Kind::Ring,
+            7 => Kind::Table,
+            8 => Kind::TrapStack,
+            9 => Kind::HartFrame,
+            10 => Kind::Spare,
+            11 => Kind::Prime,
+            12 => Kind::Probe,
+            13 => Kind::Task,
+            14 => Kind::UserHeap,
             _ => Kind::Plain,
         }
     }
