@@ -3,13 +3,13 @@
 # sqware examine 验收门（原名 e2e）——nu 版，取代 scripts/examine.sh。
 #
 # 判据四条，缺一不可（与 .sh 版逐条相同）：
-#   1) 逐步生效：十条命令（默认档；audit/harden 档十三条）**逐个等它的输出出现**再发下一条
+#   1) 逐步生效：十二条命令（默认档；audit/harden 档十五条）**逐个等它的输出出现**再发下一条
 #      （expect 式），不是按墙钟盲排；
 #      每步都有独立超时，失败能指到具体哪一条。
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) 十三个 marker 齐全（含 `task: all tasks exited, system halted`、
+#   4) 十五个 marker 齐全（含 `task: all tasks exited, system halted`、
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
 #      `plic: line 10 delivered`）。
 # 默认连跑 3 次要求 3/3；任一判据不过 ⇒ 该轮 FAIL，进程以非零退出。
@@ -145,6 +145,12 @@ const STEPS = [
   # 随后一步是它的牙——名字在目录里**再没有活实例**（不是"root 说成了"）。
   {cmd: "kill echo", pat: "kill echo -> ok"}
   {cmd: "dir",       pat: "discover echo -> not found"}
+  # 线的权威（`docs/driver.md` §12 甲）：**反证探针**。shell 谁的名下设备都不是
+  # （root 只把 console 那台交出去了）⇒ 抢 console 的名字必须被拒；而设备树里没有的
+  # 名字必须是"不认识"。两条合起来说明：线号是名字的函数、名字的属主只能由 root 写
+  # ——报文里既没有线号，也没有任何能自证"这台设备是我的"的字段。
+  {cmd: "line serial@10000000", pat: "line serial@10000000 -> not-yours"}
+  {cmd: "line rtc@101000",      pat: "line rtc@101000 -> unclaimed"}
   {cmd: "exit",      pat: "task: all tasks exited, system halted"}
 ]
 
@@ -152,20 +158,25 @@ const STEPS = [
 #
 # 上面那张表的每一步都**先敲键盘后看输出**：`dir` 那个字符串是经 UART RX 进来的。
 # 于是"输入能用"本身已经隐含了整条链——但它是**隐含**的：把中断登记摘掉，输入会退化成
-# 有界轮询，上面十步照样全过（实测过：闸门坏了那轮，门是绿的）。
+# 有界轮询，上面那些步照样全过（实测过：闸门坏了那轮，门是绿的）。
 #
 # 故这里钉一条**只可能由中断产生**的读数：PLIC 驱动域在**第一次 claim → 投递**时打的
 # 那一行（`prog-plic`，一次性标记）。它要成立，必须
 #   设备拉线 → PLIC 置 pending → SEI → 内核推空令牌进 `irq` 门闩 → 驱动 claim 到线号
 #   → 投进 console 的会话门闩 → console 的输入线程被唤醒
 # 这一整条都在。轮询路径**不会**产生它：驱动只在 claim 到东西时说话。
+#
+# **线的权威落地之后这条 marker 的牙更硬了**（`docs/driver.md` §12 甲）：报文的线号字段
+# 已经不存在，客户端只报名字 ⇒ "line 10" 这个数字只能是驱动**自己从设备树解出来**的。
+# 名字没写属主（root 的 `Refer` 没到）、或树里解不出这条线，这条 marker 都不会出现。
 const IRQ_MARKER = "plic: line 10 delivered"
 
 # 档位 → 本档要跑的步骤（下标取自上面那张表，命令与顺序都只有一处出处）。
 # **改上面那张表就要重算这里**：本轮往 `exit` 前插 `cascade` 时漏算，默认档的 9 从
 # `exit` 指到了 `cascade` ⇒ 默认轮从不 exit、三轮都挂到超时（症状像内核挂，其实是门）。
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 10, 11, 12]
-const STEPS_AUDIT   = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+# 插 `kill`/`dir`/`line` 那几步时同样要重算（本轮又走了一遍这张表）。
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 10, 11, 12, 13, 14]
+const STEPS_AUDIT   = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
 # 默认档的构建 features：**恒为空串**，是构造上的保证，不是旋钮（见头注「按档构建」）。
 # 想反向验证默认档哨兵（「默认档不该出现 audit 输出」）还拦不拦得住，就临时把它改成
@@ -193,6 +204,11 @@ const MARKERS = [
   # 副本被摘掉），下一条则从**目录**那一侧再验一遍"这个实例没了"——两条都要成立。
   "kill echo -> ok"
   "discover echo -> not found"
+  # 线的权威（§12 甲）的两条反证：抢别人的名字被拒、树里没有的名字不认识。
+  # 前一条的牙在"驱动那条属主判据还在不在"：去掉它，shell 会打出 `ok` 并**真的**
+  # 把 console 的线抢走（输入随后退化成有界轮询，而这门里输入照旧"能用"）。
+  "line serial@10000000 -> not-yours"
+  "line rtc@101000 -> unclaimed"
   "task: all tasks exited, system halted"
 ]
 
@@ -250,7 +266,7 @@ const HARDEN_PROBES = [
   "lock-order level violation"
 ]
 
-# 本档要核的 marker：默认档十三条（.sh 原文 + 中断链 + 他杀两验），audit/harden 档再追加各自那几条。
+# 本档要核的 marker：默认档十五条（.sh 原文 + 中断链 + 他杀两验 + 线的权威两证），audit/harden 档再追加各自那几条。
 # **三档都要核** `IRQ_MARKER`：中断面不是某一档的附属品，它每一轮都该成立。
 def markers_for [flavor: string] {
   let base = ($MARKERS | append $IRQ_MARKER)
@@ -685,7 +701,7 @@ def main [] {
     # 故结果行用拼接写，只有变量进插值。
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (自退 + 无 panic + 10 步全过 + 13 marker 齐)')
+      print ('run ' + ($i | into string) + ': PASS (自退 + 无 panic + 12 步全过 + 15 marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
@@ -702,7 +718,7 @@ def main [] {
       $pass += 1
       # 标签照实写：audit 档判的是**孤儿 == 0 / 活 == 0 / 等待者 == 0**，不是「站点表已空」
       # （实测 sites=34 全是墓碑；总数不作判据）。
-      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 13 步全过 + 18 marker 齐 + 站点表：无孤儿/无死键/无活站点)')
+      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 15 步全过 + 20 marker 齐 + 站点表：无孤儿/无死键/无活站点)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (audit 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
@@ -716,7 +732,7 @@ def main [] {
     $total_rounds += 1
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 13 步全过 + 15 marker 齐)')
+      print ('run ' + ($i | into string) + ': PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 15 步全过 + 17 marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (harden 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }

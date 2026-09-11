@@ -1,8 +1,9 @@
 #![no_std]
 //! programs — 镜像里装载的程序集合（每个 `src/bin/` 一个）。
 //!
-//! 本 lib 收程序侧共享物：`entry`（`_start`/panic 处理，各程序共用）与
-//! `uart`（一台设备的驱动——**不是设备框架**，见其模块头）。
+//! 本 lib 收程序侧共享物：`entry`（`_start`/panic 处理，各程序共用）、`uart`（一台设备
+//! 的驱动——**不是设备框架**，见其模块头）与 `lines`（线表：名字 → 线号 + 属主 + 实例，
+//! 见 `docs/driver.md` §12）。
 //! `bin/` 是**同时依赖 runtime 与 protocol 的装配层**：机制来自 `runtime`，
 //! 协议语义来自 `protocol`。
 //!
@@ -12,4 +13,5 @@
 extern crate alloc;
 
 pub mod entry;
+pub mod lines;
 pub mod uart;

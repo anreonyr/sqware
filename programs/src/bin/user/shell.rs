@@ -49,6 +49,7 @@ use protocol::dispatch::{MSG_LEN, Name, Reply, Request};
 use protocol::console::client::{Console, Readline};
 use protocol::dispatch::client::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use protocol::doom::{self, Ack, Doom};
+use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
 use runtime::core::unit;
@@ -911,6 +912,56 @@ fn kill_cmd(arg: Option<&str>, term: &Term) {
     }
 }
 
+/// `line <设备名>`：**线的权威**的反证探针（`docs/driver.md` §12 甲）。
+///
+/// 本域**不是**任何设备名的属主（root 只把 console 那台交出去了）⇒ 这一句应当拿到
+/// `not-yours`；而设备树里没有的名字应当拿到 `unknown`。两条合起来说清这件事：
+/// **线号是名字的函数、名字的属主只能由 root 写**——报文里既没有线号，也没有任何
+/// 可以让本域自证"这台设备是我的"的字段。
+///
+/// **判据有牙**：把驱动那条属主判据去掉，两条都会变成 `ok`（而且第一条真把 console
+/// 的线抢走，输入随后退化成有界轮询）。
+fn line_probe(arg: Option<&str>, term: &Term) {
+    let Some(text) = arg else {
+        term.writeline("line: usage: line <device-name>");
+        return;
+    };
+    let Ok(name) = Name::new(text) else {
+        term.writeline(&format!("line {text} -> bad name"));
+        return;
+    };
+    let dir = match dir_session() {
+        Ok(d) => d,
+        Err(e) => {
+            term.writeline(&format!("line {text} err: dir {e:?}"));
+            return;
+        }
+    };
+    let line = match irq::Line::connect(&dir) {
+        Ok(l) => l,
+        Err(_) => {
+            term.writeline(&format!("line {text} -> no irq driver"));
+            return;
+        }
+    };
+    // 报文要一枚会话门闩（驱动往它投线号）。本探针**不会**读它——故登记万一被接受
+    // （不该发生），当场封印：驱动下一次投递拿到 `Dead` ⇒ 它把这条线收掉（§12 ②）。
+    let Ok(session) = HolePie::unseal(irq::LINE_LEN) else {
+        term.writeline(&format!("line {text} -> no session"));
+        return;
+    };
+    let verdict = match line.register(&name, &session) {
+        Ok(irq::Ack::Ok) => "ok",
+        Ok(irq::Ack::Refused(irq::Refused::Unknown)) => "unknown",
+        Ok(irq::Ack::Refused(irq::Refused::Unclaimed)) => "unclaimed",
+        Ok(irq::Ack::Refused(irq::Refused::NotYours)) => "not-yours",
+        Ok(irq::Ack::Refused(irq::Refused::Taken)) => "taken",
+        Err(_) => "no answer",
+    };
+    let _ = session.seal();
+    term.writeline(&format!("line {text} -> {verdict}"));
+}
+
 fn seal_wake_probe(term: &Term) {
     /// 一次有界等待的期限：短到不拖慢门，长到足以让「等满」与「当场」区分开。
     const WAIT_MS: usize = 200;
@@ -970,7 +1021,7 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / cascade / churn / reclaim / spoof / name / badslot / stray / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / churn / reclaim / spoof / name / badslot / stray / exit",
             );
         }
         "clock" => {
@@ -1180,6 +1231,9 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "kill" => {
             kill_cmd(args.first().map(|s| s.as_str()), term);
+        }
+        "line" => {
+            line_probe(args.first().map(|s| s.as_str()), term);
         }
         "exit" => {
             term.writeline("bye");

@@ -22,3 +22,4 @@ extern crate alloc;
 pub mod console;
 pub mod dispatch;
 pub mod doom;
+pub mod irq;

@@ -15,6 +15,9 @@
 //! 于是那段物理区出现在**本域的页表**里，此后读写寄存器就是普通 load/store——
 //! 全程没有一个 syscall 跟"设备"有关。
 //!
+//! 名字也是 root 一并转达的（同一通道的第三件配给）：本域**不硬编码设备名**，也**不
+//! 认识线号**——`Register` 只报名字，线号由 PLIC 驱动从设备树解出来（§12 甲）。
+//!
 //! # 为什么由本域持设备
 //!
 //! 终端渲染、键盘解码、行编辑都住在这里（`protocol::console::server`），
@@ -60,6 +63,7 @@ use env::{HoleDir, Permission, TaskId};
 use protocol::console::MSG_LEN;
 use protocol::console::{Decoder, Reply, Sink, State, TICK_MS};
 use protocol::dispatch::client::Directory;
+use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
 use runtime::core::unit;
@@ -71,16 +75,6 @@ use programs::uart::Uart;
 /// 本服务的名字（root 在启动期把它预约给本域）。
 const NAME: &str = "console";
 
-/// 中断线驱动的名字（目录里预约给它的名字；线号由本服务登记）。
-const PLIC_NAME: &str = "plic";
-
-/// UART 在 PLIC 上的线号（实测：`interrupts = <10>`，§7.1）。
-const UART_LINE: u32 = 10;
-
-/// 中断会话孔的单消息字节数：**u16 线号**（`docs/driver.md` §5.3；实测 `ndev = 95`，
-/// 一字节够，但"长度是参数不是约定"，给出 u16）。
-const LINE_LEN: usize = 2;
-
 /// **等中断的上界**（毫秒）。不是"轮询周期"：有中断时这一等由内核的 `try_push`
 /// 唤醒（立即返回），无中断时它只是兜底——没登记成（PLIC 服务不可用）或设备侧
 /// 没拉线时，输入不能就此停摆（那时它退化成有界轮询，行为与搬迁前一致）。
@@ -91,11 +85,9 @@ const IRQ_WAIT_MS: usize = 20;
 const PLIC_RETRY: usize = 20;
 const PLIC_RETRY_MS: usize = 25;
 
-/// 注册报文的线格式：`[op u8][line u32][priority u32][hole u64][ack u64][name 32]`。
-/// 与 `prog-plic` 的那一份**逐字对应**（同仓两个域之间的私有协议）。
-const REG_LEN: usize = 1 + 4 + 4 + 8 + 8 + env::NAME_LEN;
-const REG_OP: u8 = 1;
-const ACK_OK: u8 = 0;
+/// 等设备名字的上界（毫秒）：root 在配给设备门闩之后、按同一通道把它交过来，
+/// 故这一等只是一次握手，不是轮询。
+const NAME_WAIT_MS: usize = 1000;
 
 /// 中断会话（输入线程用）：`(门闩 token, 该门闩的合法推者)`。
 ///
@@ -178,13 +170,17 @@ fn input_loop() -> ! {
 }
 
 /// 取走一枚线号，并核**来源**：`from` 是内核在 `Push` 时盖的章（伪造不了），
-/// 必须是 PLIC 驱动的 task id；线号也必须是本服务登记的那条（§5.3）。
+/// 必须是 PLIC 驱动的 task id（§5.3）。
+///
+/// **线号本域不认识、也不核**：它是驱动的账（名字 → 线号由驱动从设备树解出来，§12 甲）。
+/// 本域只核"谁投的、多长"——把线号也核一遍就等于在本域存第二份"我是哪条线"的账，
+/// 而那正是本次改造拿掉的东西。
 ///
 /// 校验失败在 debug 档炸出来——release 下这几行只做"把令牌取走"（门闩是单槽的：
 /// 不取走，槽就一直满着，内核那边会关闸门等 timer 重开）。线号本身不携带新信息
 /// （这条门闩只为 UART 登记），设备状态才是真相，故调用方不消费它的返回值。
 fn take_line(session: usize) {
-    let mut buf = [0u8; LINE_LEN];
+    let mut buf = [0u8; irq::LINE_LEN];
     let Ok((n, from)) = mail::pull_from(session, buf.as_mut_ptr(), buf.len()) else {
         return;
     };
@@ -194,15 +190,11 @@ fn take_line(session: usize) {
     let _ = (n, from);
     #[cfg(debug_assertions)]
     {
-        let line = u16::from_le_bytes(buf);
         debug_assert!(
-            n == LINE_LEN
-                && from.get() == IRQ_FROM.load(Ordering::Relaxed)
-                && line as u32 == UART_LINE,
-            "console: unexpected interrupt delivery (from {}, {} bytes, line {})",
+            n == irq::LINE_LEN && from.get() == IRQ_FROM.load(Ordering::Relaxed),
+            "console: unexpected interrupt delivery (from {}, {} bytes)",
             from.get(),
             n,
-            line
         );
     }
 }
@@ -274,71 +266,58 @@ fn unmask_rx() {
     });
 }
 
-/// 把 UART 的那条线登记给 PLIC 驱动：**会话门闩由本线程造**，READ 副本交给输入
-/// 线程、WRITE 副本交给驱动（`docs/driver.md` §3.2.4 的"客户端递出门闩"）。
+/// 把本服务的设备线登记给 PLIC 驱动：**会话门闩由本线程造**，READ 副本交给输入
+/// 线程（`docs/driver.md` §3.2.4 的"客户端递出门闩"）。
+///
+/// 报文里只有**设备名字**——线号是名字的函数，由驱动从设备树解出来，本域不认识它
+/// （§12 甲）。名字也不是本域硬编码的：它由 root 按配给交过来（`name` 参数）。
 ///
 /// 回执走客户端自带的回信门闩——与 dispatch 协议同一条规矩（谁发起谁备回信通道）。
-/// 建不成（驱动不在 / 报告被拒）即返回 false：**降级是有界轮询**，不是错误路径
-/// （[`input_loop`] 只有一份循环）。
-fn register_line(input: TaskId, dir: &Directory, uart: &Uart) -> bool {
-    // ① 找驱动：目录里按名字连（它排在 console 之前起，但它注册进目录的时机是它
-    //    自己的事——故有界重试）。
-    let mut entry = None;
-    for _ in 0..PLIC_RETRY {
-        if let Ok(t) = dir.connect_token(PLIC_NAME) {
-            entry = Some(t);
-            break;
-        }
-        sleep_ticks(PLIC_RETRY_MS);
-    }
-    let Some(entry) = entry else {
-        return false;
-    };
-    // ② 驱动是谁：门闩的 `owner` 就是开辟它的那个域（服务自开入口门闩，改不掉）。
-    let Ok((_, owner)) = mail::reserve(entry) else {
-        return false;
-    };
-    if owner.get() == 0 {
-        return false;
-    }
-    // ③ 两枚孔：中断会话（驱动投线号）+ 回执（驱动回状态）。
-    let Ok(session) = HolePie::unseal(LINE_LEN) else {
+/// 建不成（驱动不在 / 被拒 / 回执没回来）即返回 false：**降级是有界轮询**，不是错误
+/// 路径（[`input_loop`] 只有一份循环）。此时会话门闩**当场封印**：驱动那侧手里那一份
+/// 若还在（回执丢了的那种情形），它下一次投递拿到 `Dead` ⇒ 收线（§12 ②）。
+fn register_line(input: TaskId, dir: &Directory, name: &env::Name) -> bool {
+    // ① 会话门闩：本线程造，READ 副本给输入线程（门闩是 per-task 的，这是唯一的
+    //    交接方式）。
+    let Ok(session) = HolePie::unseal(irq::LINE_LEN) else {
         return false;
     };
     let Ok(at_input) = session.accord(input, Permission::READ) else {
         return false;
     };
-    let Ok(at_plic) = session.accord(owner, Permission::WRITE) else {
+    // ② 找驱动：目录里按名字连（它排在 console 之前起，但它注册进目录的时机是它
+    //    自己的事——故有界重试）。
+    let mut found = None;
+    for _ in 0..PLIC_RETRY {
+        if let Ok(l) = irq::Line::connect(dir) {
+            found = Some(l);
+            break;
+        }
+        sleep_ticks(PLIC_RETRY_MS);
+    }
+    let Some(line) = found else {
         return false;
     };
-    let Ok(ack) = HolePie::unseal(1) else {
-        return false;
-    };
-    let Ok(ack_at_plic) = ack.accord(owner, Permission::WRITE) else {
-        return false;
-    };
-    // ④ 报文：`[op][line][priority][hole][ack][name]`。
-    let mut msg = [0u8; REG_LEN];
-    msg[0] = REG_OP;
-    msg[1..5].copy_from_slice(&UART_LINE.to_le_bytes());
-    msg[5..9].copy_from_slice(&1u32.to_le_bytes()); // priority ≥ 1（0 = 静音）
-    msg[9..17].copy_from_slice(&at_plic.get().to_le_bytes());
-    msg[17..25].copy_from_slice(&ack_at_plic.get().to_le_bytes());
-    let name = NAME.as_bytes();
-    msg[25..25 + name.len()].copy_from_slice(name);
-    if HolePie::from_token(entry).push(&msg).is_err() {
+    // ③ 登记：驱动认**名字的属主**（root 在把这台设备交过来时写的），并把线号解出来。
+    if !matches!(line.register(name, &session), Ok(irq::Ack::Ok)) {
+        let _ = session.seal();
         return false;
     }
-    // ⑤ 等回执（有界：注册是同步的，1s 足够）。
-    let mut status = [1u8; 1];
-    if !matches!(ack.pull_timeout(&mut status, 1000), Ok(1)) || status[0] != ACK_OK {
-        return false;
-    }
-    // ⑥ 交给输入线程：**先写推者、后发门闩**（见 [`IRQ_SESSION`] 的顺序说明）。
-    IRQ_FROM.store(owner.get(), Ordering::Relaxed);
+    // ④ 交给输入线程：**先写推者、后发门闩**（见 [`IRQ_SESSION`] 的顺序说明）。
+    IRQ_FROM.store(line.owner().get(), Ordering::Relaxed);
     IRQ_SESSION.store(at_input.get(), Ordering::Release);
-    let _ = uart; // 设备视图不必传（输入线程从静态取）——此参数只作"确实持着设备"的凭据
     true
+}
+
+/// 从 root 配给的名字孔里取回设备名（**本域不硬编码设备名**：名字的账在 boot 的
+/// 配对块里，root 是它的读者，见 §12 甲）。
+fn take_name(hole: HolePie) -> Option<env::Name> {
+    let mut buf = [0u8; env::NAME_LEN];
+    let n = hole.pull_timeout(&mut buf, NAME_WAIT_MS).ok()?;
+    let name = env::Name::new(core::str::from_utf8(&buf[..n]).ok()?).ok()?;
+    // 名字只有一个读者，读完就把这一份放下（`root` 手里那份是它自己的账）。
+    let _ = mail::release(hole.token());
+    Some(name)
 }
 
 #[unsafe(no_mangle)]
@@ -394,6 +373,17 @@ extern "C" fn main() -> ! {
     };
     UART.with(|u| *u = Some(uart));
 
+    // 3.6 收设备的名字：root 转达的一件事实（**本域不硬编码设备名**——名字的账在 boot
+    //     的配对块里，root 是它的读者，见 `docs/driver.md` §12 甲）。它在设备门闩之后
+    //     到：root 先把属主写给驱动、再交这个名字，故本域拿到名字时登记必成。
+    let name_pier = match Pier::pull(&down) {
+        Ok(p) => p,
+        Err(_) => runtime::env::room::exit_with(13),
+    };
+    let Some(name) = take_name(HolePie::from_token(name_pier.token())) else {
+        runtime::env::room::exit_with(14);
+    };
+
     // 4. 输入线程：不接任何句柄**直接开工**——它要的那枚中断会话门闩由本线程造好后
     //    经 `Accord` 授给它（门闩是 per-task 的，这是唯一的交接方式）。
     let input = match unit::try_closure(input_loop) {
@@ -403,7 +393,7 @@ extern "C" fn main() -> ! {
 
     // 4.5 接中断：把设备那条线登记给 PLIC 驱动。**失败不是错误路径**——输入线程的
     //     循环只有一份，没登记成就退化成有界轮询（与搬迁前一致）。
-    register_line(input, &dir, &uart);
+    register_line(input, &dir, &name);
 
     // 5. 请求循环：没人等读时慢档等请求；有人等读时快档，顺路取走输入线程放下的整行。
     let mut req = [0u8; MSG_LEN];

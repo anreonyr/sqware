@@ -9,7 +9,7 @@
 // 资源。他核 Running 任务无法被本核同步拉走（会破坏「Reaped 不在 running 槽」
 // 不变量），故走 `doomed` 待杀集合 + SSIP 单点，目标核 trap 自查自退——最终一致。
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use hashbrown::HashMap;
@@ -194,11 +194,10 @@ pub(crate) fn take_doomed(tid: usize) -> Option<usize> {
 pub(crate) fn descends(actor: &Arc<Team>, target: &Arc<Team>) -> bool {
     let mut team = target.clone();
     loop {
-        let Some(parent) = team
-            .sire()
-            .and_then(|id| muster(id))
-            .and_then(|w| w.upgrade())
-        else {
+        let Some(sire) = team.sire().and_then(muster) else {
+            return false;
+        };
+        let Some(parent) = Weak::upgrade(&sire) else {
             return false;
         };
         if Arc::ptr_eq(&parent.ident.team, actor) {

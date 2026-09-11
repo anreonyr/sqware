@@ -3,14 +3,15 @@
 //! plic — 中断线驱动（S 态 supervisor 域，**一个线程**）。
 //!
 //! ```text
-//! 循环     注册请求（探测）→ irq 门闩（有界等待）→ claim → 投线号 → complete
+//! 循环     报文（探测：登记 / 写属主）→ irq 门闩（有界等待）→ claim → 投线号 → complete
 //! ```
 //!
 //! # 它认识什么、不认识什么
 //!
-//! 它认识 PLIC 的寄存器布局与设备树的绑定；它**不认识任何设备**——不知道线 10 后面
-//! 是串口还是网卡，只把"哪条线响了"投给当初登记那条线的客户端（`docs/driver.md`
-//! §3.2.6：线号 → (客户端, 门闩) 的表活在**本域的内存**里，内核不参与）。
+//! 它认识 PLIC 的寄存器布局与设备树的绑定（**名字 → 线号**）；它**不认识任何设备**
+//! ——不知道 `serial@10000000` 后面是串口还是网卡，只把"哪条线响了"投给持有那条线的
+//! 客户端（`docs/driver.md` §3.2.6：名字 → (线号, 属主, 门闩) 的表活在**本域的内存**
+//! 里，内核不参与）。
 //!
 //! # 内核在这一整条路上出现两次，且都不认识设备
 //!
@@ -22,16 +23,21 @@
 //! # 为什么只有一个线程
 //!
 //! 投递必须由**持有客户端门闩的那个 task** 做（门闩是 per-task 的——console 服务
-//! 为这件事踩过坑并写进了它的模块头）。注册报文带来的门闩落在收报文的任务表里，
-//! 故收报文与投递必须同任务。于是循环里两件事共处：注册用**非阻塞探测**（它是
-//! 引导期事件，晚 20 ms 无所谓），中断用**有界等待**（无界会把注册饿死）。
+//! 为这件事踩过坑并写进了它的模块头）。报文带来的门闩落在收报文的任务表里，
+//! 故收报文与投递必须同任务。于是循环里两件事共处：报文用**非阻塞探测**（它们是
+//! 引导期事件，晚 20 ms 无所谓），中断用**有界等待**（无界会把报文饿死）。
 //! 中断路径本身不轮询：内核的 `try_push` 会唤醒站点。
 //!
 //! # 线号从哪来
 //!
-//! 设备树。`interrupts-extended` 的**项序即 context 序**（RISC-V 的中断控制器
-//! 绑定），而 `cell == 9` 是 S 模式外部中断、`11` 是 M 模式——**认 9 不认 11**
-//! （认错就是把线交给固件）。**不硬算 `2h+1`**（`docs/driver.md` §7.2）。
+//! **名字的函数**（`docs/driver.md` §12 甲）：设备树的 `interrupts` ×
+//! `interrupt-parent`（指向本控制器的 phandle）⇒ 线号。客户端**不报线号**——报文里
+//! 也没有这个字段，它只报名字（`protocol::irq`）。于是"这条线是不是你的"这个问题在
+//! 本域只有一条判据：名字的属主是不是它（属主**只能由 root 写**）。
+//!
+//! context 序号则来自 `interrupts-extended` 的**项序**（RISC-V 的中断控制器绑定），
+//! 而 `cell == 9` 是 S 模式外部中断、`11` 是 M 模式——**认 9 不认 11**（认错就是把线
+//! 交给固件）。**不硬算 `2h+1`**（§7.2）。
 
 extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
@@ -41,20 +47,13 @@ use alloc::vec::Vec;
 
 use env::HoleDir;
 use env::Permission;
+use programs::lines::Lines;
 use protocol::console::Console;
 use protocol::dispatch::client::Directory;
+use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
-use runtime::env::mail::{AnyPie as _, HolePie, PolePie};
-
-/// 本服务的名字（root 在启动期把它预约给本域）。
-const NAME: &str = "plic";
-
-/// 注册报文的字节数：`[op u8][line u32][priority u32][hole u64][ack u64][name 32]`。
-const REG_LEN: usize = 1 + 4 + 4 + 8 + 8 + env::NAME_LEN;
-
-/// 请求孔的单消息上限（与 `REG_LEN` 同量级，给足余量）。
-const REG_MTU: usize = 64;
+use runtime::env::mail::{self, AnyPie as _, HolePie, PolePie};
 
 /// `irq` 门闩的等待上界（毫秒）——**不能是无穷**：注册报文要有人听（见模块头）。
 /// 中断路径不受它影响（槽满/有信都立即唤醒）。
@@ -63,9 +62,9 @@ const IRQ_WAIT_MS: usize = 20;
 /// S 模式外部中断的中断号（`interrupts-extended` 里的 cell 值）。
 const EXT_S: u32 = 9;
 
-/// 注册成功 / 拒绝。
-const ACK_OK: u8 = 0;
-const ACK_DENIED: u8 = 1;
+/// 一条线的优先级：恒 1（0 = 静音，见 [`Plic::disable`]）。它不再是客户端的字段——
+/// 这个量没有第二个取值，问客户端等于让它替本域做设备侧的决定。
+const LINE_PRIORITY: u32 = 1;
 
 /// PLIC 的寄存器视图（一段有主的、可映射的内存——`docs/driver.md` §1）。
 struct Plic {
@@ -86,11 +85,13 @@ const THRESHOLD: usize = 0x00;
 const CLAIM: usize = 0x04;
 
 impl Plic {
-    /// 开闩 + 读设备树：把"我是谁、我有哪些 context"问清楚。
+    /// 开闩 + 读设备树：把"我是谁、我有哪些 context、这台机器上有哪些中断源"问清楚。
     ///
     /// 判据 = `interrupt-controller` 且 `compatible` 里含 `plic` 的节点。**解释设备
     /// 树是驱动的事**（内核只原样搬运自描述，§3.1.3），故这里可以按 compatible 认。
-    fn open(pole: PolePie, dtb: PolePie) -> Option<Self> {
+    ///
+    /// 返的第二件是**线表**：它由同一棵树建出来（名字 → 线号），本域此后只认名字。
+    fn open(pole: PolePie, dtb: PolePie) -> Option<(Self, Lines)> {
         let base = pole.open().ok()?;
         let dtb_va = dtb.open().ok()?;
         // SAFETY: DTB 门闩把设备树本体只读借映进了本域；`fdt` 只读它。
@@ -118,11 +119,16 @@ impl Plic {
                 contexts.push(i as u32);
             }
         }
-        Some(Self {
-            base,
-            ndev,
-            contexts,
-        })
+        // 线表与控制器同源：同一个 `ndev` 只读一次（它就是"这台控制器有几条线"）。
+        let lines = Lines::from_tree(&fdt, &node, ndev);
+        Some((
+            Self {
+                base,
+                ndev,
+                contexts,
+            },
+            lines,
+        ))
     }
 
     /// 使能一条线：`priority` 一条、**每个 S context** 各一份 enable。
@@ -138,6 +144,16 @@ impl Plic {
             let bits = self.read(e) | 1 << (line % 32);
             self.write(e, bits);
         }
+    }
+
+    /// 关一条线（**收线**用，§12 ②）：`priority = 0`。
+    ///
+    /// 这是**可逆静音**，不是把线拆掉（§7.2 量到的语义）：`pending` 照旧置位，但
+    /// `claim` 恒 0 ⇒ 本域不再投递它；重新登记时 [`Plic::enable`] 把优先级写回
+    /// [`LINE_PRIORITY`]。enable 位留着——线号与设备的绑定没变，变的只是"现在有没有
+    /// 人接"。
+    fn disable(&self, line: u32) {
+        self.write(PRIORITY + 4 * line as usize, 0);
     }
 
     /// 领一条线号；0 = 没有可领的（**不是错误**：另一颗 hart 的 context 可能已经
@@ -170,18 +186,12 @@ impl Plic {
     }
 }
 
-/// 一条线的客户端：会话门闩在**本域侧**的 token（往它投线号）。
+/// 线表：**名字 → 线号 + 属主 + 活实例**。只在本域的内存里（§3.2.6）。
 ///
-/// 只存 token 值：`HolePie` 没有 `Drop`，"即建即弃"与持有等价（console 协议的
-/// `Slot` 同款），而 token 是 `Copy`。
-#[derive(Clone, Copy)]
-struct Client {
-    line: u32,
-    hole: usize,
-}
-
-/// 注册表：线号 → 客户端。**只在本域的内存里**（§3.2.6）。
-static TABLE: Lock<Vec<Client>> = Lock::new(Vec::new());
+/// 它替掉了此前那张"线号 → 会话门闩"的表：那张表把权威放在了客户端自报的线号上
+/// （任何域报一条 `line ≤ ndev` 就能把别人的线抢走，§12 的读数）。现在线号由本域从
+/// 设备树解出来，客户端只能证明"名字是我的"。
+static LINES: Lock<Option<Lines>> = Lock::new(None);
 
 /// 设备与门闩：开一次、之后只读（`Lock` 只是为了让静态可写一次）。
 static PLIC: Lock<Option<Plic>> = Lock::new(None);
@@ -219,12 +229,12 @@ extern "C" fn main() -> ! {
         Err(_) => runtime::env::room::exit_with(7),
     };
     ENTRY.with(|e| *e = Some(pier.token().get()));
-    // 自建请求孔：客户端往它推注册报文。
-    let entry = match HolePie::unseal(REG_MTU) {
+    // 自建请求孔：客户端往它推动词（`protocol::irq` 的定长报文，故 `mtu` 就是它）。
+    let entry = match HolePie::unseal(irq::LEN) {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(8),
     };
-    if dir.register(NAME, &entry).is_err() {
+    if dir.register(irq::SERVICE, &entry).is_err() {
         runtime::env::room::exit_with(9);
     }
 
@@ -241,18 +251,20 @@ extern "C" fn main() -> ! {
         Ok(p) => p,
         Err(_) => runtime::env::room::exit_with(12),
     };
-    let Some(plic) = Plic::open(
+    let Some((plic, lines)) = Plic::open(
         PolePie::from_token(plic_pier.token()),
         PolePie::from_token(dtb_pier.token()),
     ) else {
         runtime::env::room::exit_with(13);
     };
-    // 一个 context 都没数出来 = 这台机器的中断面接不上：宁可当场收场，也别装作
-    // 上线了（那样现象是"中断静默不响"，最难查的一类）。
-    if plic.contexts.is_empty() || plic.ndev == 0 {
+    // 三样都得有：一个 S 外部 context（不然影子都投不出去）、控制器自报的线数、以及
+    // **设备树里至少一个指向它的中断源**。缺任何一样都是"这台机器的中断面接不上"——
+    // 宁可当场收场，也别装作上线了（那样现象是"中断静默不响"，最难查的一类）。
+    if plic.contexts.is_empty() || plic.ndev == 0 || lines.count() == 0 {
         runtime::env::room::exit_with(14);
     }
     PLIC.with(|p| *p = Some(plic));
+    LINES.with(|l| *l = Some(lines));
     let irq = HolePie::from_token(irq_pier.token());
 
     // 4. 上线：本域的工作就是下面这个循环。
@@ -260,13 +272,16 @@ extern "C" fn main() -> ! {
     // **上线不打日志**：此刻控制台可能还不存在（本域排在它前面起），而第一条投递
     // 一定在它之后（正是它登记了这条线）。故本域只在**第一次投递**时说一句话。
 
-    let mut buf = [0u8; REG_MTU];
+    let mut buf = [0u8; irq::LEN];
     let mut token = [0u8; 1];
     let mut first = true;
     loop {
-        // ① 注册：非阻塞探测（晚一拍无所谓——它是引导期事件）。
-        if let Ok(n) = entry.pull_timeout(&mut buf, 0) {
-            serve_register(&buf[..n]);
+        // ① 报文：**非阻塞探测**（晚一拍无所谓——登记与写属主都是引导期事件）。
+        //
+        // 用裸 `pull_from` 而不是 `pull_timeout`：它一并交回**内核盖章的推者**，
+        // 而 `Refer` 的判据正是"推者是不是本域的 sire"（见 [`serve`]）。
+        if let Ok((n, from)) = mail::pull_from(entry.token(), buf.as_mut_ptr(), buf.len()) {
+            serve(&buf[..n], from, sire);
         }
         // ② 中断：有界等待内核的空令牌；有信即醒（`try_push` 唤醒站点）。
         if matches!(irq.wait(HoleDir::Pull, IRQ_WAIT_MS), Ok(true)) {
@@ -278,66 +293,117 @@ extern "C" fn main() -> ! {
     }
 }
 
-/// 处理一条注册报文：记账 + 使能该线 + 回执。
-fn serve_register(msg: &[u8]) {
-    if msg.len() < REG_LEN || msg[0] != 1 {
+/// 处理一条报文：**认动词、认人**，其余交给线表。
+///
+/// 认人有两条，都在这里落地：
+/// - `Register` 的判据在**行里**（线表判"名字是不是你的"）；
+/// - `Refer` 的判据在**血缘**：推者必须是本域的 `sire`（= root 的主线程，生本域的那个
+///   任务）。属主只能由 root 写——它不在报文里自证，而是"这枚门闩是谁生的"。
+fn serve(msg: &[u8], from: env::TaskId, sire: env::TaskId) {
+    let Some(req) = irq::Request::decode(msg) else {
         return;
-    }
-    let line = u32::from_le_bytes(msg[1..5].try_into().unwrap_or([0; 4]));
-    let priority = u32::from_le_bytes(msg[5..9].try_into().unwrap_or([0; 4]));
-    let hole = usize::from_le_bytes(msg[9..17].try_into().unwrap_or([0; 8]));
-    let ack = usize::from_le_bytes(msg[17..25].try_into().unwrap_or([0; 8]));
-    let plic = PLIC.with(|p| p.as_ref().map(|p| (p.ndev, p.contexts.len())));
-    // 拒绝的两条：线号越界（本控制器没有这条线）、本域没数出任何 context（连不上）。
-    let ok = match plic {
-        Some((ndev, ctxs)) if line >= 1 && line <= ndev && ctxs > 0 && hole != 0 => {
-            PLIC.with(|p| {
-                if let Some(p) = p {
-                    p.enable(line, priority.max(1)); // priority 0 = 静音（可逆），故至少 1
-                }
-            });
-            let c = Client { line, hole };
-            TABLE.with(|t| {
-                t.retain(|x| x.line != line);
-                t.push(c);
-            });
-            true
-        }
-        _ => false,
     };
-    // 回执（客户端自带回信通道——与 dispatch 协议同一条规矩）。
-    let status = [if ok { ACK_OK } else { ACK_DENIED }];
-    let _ = HolePie::from_token(ack).push(&status);
+    match req {
+        irq::Request::Register { name, session, ack } => {
+            let status =
+                match LINES.with(|l| l.as_mut().map(|l| l.register(&name, from, session.get()))) {
+                    Some(Ok(line)) => {
+                        PLIC.with(|p| {
+                            if let Some(p) = p {
+                                p.enable(line, LINE_PRIORITY);
+                            }
+                        });
+                        irq::Ack::Ok
+                    }
+                    // 拒绝：会话门闩那一份本域**当即放下**——它不是我们的资源（不放下就是
+                    // 让一个被拒的请求在本域的表里留下痕迹）。行与线都不动。
+                    Some(Err(why)) => {
+                        let _ = mail::release(session.get());
+                        irq::Ack::Refused(why)
+                    }
+                    None => {
+                        let _ = mail::release(session.get());
+                        irq::Ack::Refused(irq::Refused::Unknown)
+                    }
+                };
+            reply(ack.get(), status);
+        }
+        irq::Request::Refer { name, who, ack } => {
+            // `who = 0` 是坏报文（行里的 0 是"没人认领"的哨兵，不能被写成属主）。
+            let status = if from != sire || who.get() == 0 {
+                irq::Ack::Refused(irq::Refused::NotYours)
+            } else {
+                match LINES.with(|l| l.as_mut().map(|l| l.refer(&name, who))) {
+                    Some(Ok(())) => irq::Ack::Ok,
+                    Some(Err(why)) => irq::Ack::Refused(why),
+                    None => irq::Ack::Refused(irq::Refused::Unknown),
+                }
+            };
+            reply(ack.get(), status);
+        }
+    }
 }
 
-/// 领一条线、投给客户端、结掉它。
+/// 回一条回执，**随即放下本域那一份回执孔**（它是调用方的东西，一个往返就该走完）。
+///
+/// 调用方可能已经走了（`irq::client` 在等不到回执时封印它自己的回执孔）⇒ 这一推当场
+/// 拿到 `Dead`，不会把本域挂住。
+fn reply(ack: usize, status: irq::Ack) {
+    let _ = HolePie::from_token(ack).push(&[status.byte()]);
+    let _ = mail::release(ack);
+}
+
+/// 领一条线、投给客户端、结掉它；投不出去就**收线**。
 ///
 /// 三条会静默咬人的规矩都在这里落地（§7.2）：claim 之后**必须真的碰设备**
 /// （我们确实在领线号）、`complete` 不是重武装点（所以线还得靠客户端重新等）、
 /// 线号 0 恒无（第二个 claim 拿到 0 —— 什么都不做，**不要 complete 0**）。
+///
+/// 收线的判据是**一次失败**（§12 ②）：`Denied` = 那枚副本已经不在本域表里（客户端死了
+/// ——内核沿派生链把本域手里那一枚一起摘掉了）、`Dead` = 客户端封印了它（自愿退场）。
+/// `Busy` **到不了这里**：`HolePie::push` 对槽满是等（背压），不是报错。
 fn deliver(first: &mut bool) {
-    let Some((line, client)) = PLIC.with(|p| p.as_ref().map(|p| p.claim())).map(|line| {
-        let client = TABLE.with(|t| t.iter().find(|c| c.line == line).map(|c| c.hole));
-        (line, client)
-    }) else {
+    let Some(line) = PLIC.with(|p| p.as_ref().map(|p| p.claim())) else {
         return;
     };
     if line == 0 {
         return; // 没东西可领：不 complete（那会把 0 当线号结掉）
     }
+    let client = LINES.with(|l| l.as_ref().and_then(|l| l.holder(line)));
+    let mut carried = false;
     if let Some(hole) = client {
         let payload = (line as u16).to_le_bytes();
-        let _ = HolePie::from_token(hole).push(&payload);
-        if *first {
-            // **一次性标记**：证明"claim → 投递"整链真的走通过。此后不再打印——
-            // 每键一行会把屏幕刷满，而这条链的验证只需要一次。
-            *first = false;
-            report(line);
-        }
+        carried = HolePie::from_token(hole).push(&payload).is_ok();
     }
+    // **先 complete、再收线**（§12 ② 的次序）：领了就结，不然那条线在本域这边静默失联。
     PLIC.with(|p| {
         if let Some(p) = p {
             p.complete(line);
+        }
+    });
+    if client.is_some() && !carried {
+        retire(line);
+    }
+    if carried && *first {
+        // **一次性标记**：证明"claim → 投递"整链真的走通过。此后不再打印——
+        // 每键一行会把屏幕刷满，而这条链的验证只需要一次。
+        *first = false;
+        report(line);
+    }
+}
+
+/// 收线：实例摘空（**行保留**）、关掉那条线、放下本域手里那份会话门闩。
+///
+/// 行的名字、线号与属主都不动：名字还是 root 写的那个人所有——它换个新实例再来登记，
+/// 表里已经有它的位置（这正是"行保留，等 root 重发"，§12 ②）。
+fn retire(line: u32) {
+    let session = LINES.with(|l| l.as_mut().and_then(|l| l.retire(line)));
+    if let Some(session) = session {
+        let _ = mail::release(session);
+    }
+    PLIC.with(|p| {
+        if let Some(p) = p {
+            p.disable(line);
         }
     });
 }

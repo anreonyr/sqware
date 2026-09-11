@@ -39,6 +39,7 @@ use env::{Name, PAIR_LEN, Pair, TaskId, TeamId};
 use protocol::console::Console;
 use protocol::dispatch::client::Directory;
 use protocol::doom;
+use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay, Refer, Referred};
 use runtime::core::lock::Lock;
 use runtime::env::mail::NolePie;
@@ -190,6 +191,28 @@ fn read_only() -> env::Permission {
     env::Permission::READ
 }
 
+/// 把一件**事实**交给子域：写进一枚一次性孔，按配给递出（用的是既有原语——
+/// `UnsealHole` + `Accord` + `Pier`，没有为它新增任何机制）。
+///
+/// 目前只有一件这样的事实：**设备的名字**。名字不是资源，是 boot 从设备树里原样搬来的
+/// 身份（配对块的 `(名字, token)`）——本域是它的读者，子域要用就得由本域转达，别处
+/// 没有第二个来源（`docs/driver.md` §12 甲）。
+fn hand_name(down: &HolePie, name: &str, child: TaskId) {
+    let Ok(hole) = HolePie::unseal(env::NAME_LEN) else {
+        exit_with(40);
+    };
+    if hole.push(name.as_bytes()).is_err() {
+        exit_with(41);
+    }
+    let at_child = match hole.accord(child, read_only()) {
+        Ok(t) => t,
+        Err(_) => exit_with(42),
+    };
+    if Pier::new(at_child).push(down).is_err() {
+        exit_with(43);
+    }
+}
+
 // ── 他杀服务（`kill` 的机制在核、政策在这里）─────────────────────────────
 //
 // 内核那枚 `RoomCall::Doom` 只认**血缘**（谁生的谁能杀，传递）；跨血缘的"该不该"
@@ -312,12 +335,11 @@ fn wait_dead(task: TaskId) {
     }
 }
 
-/// 作普通客户端连上控制台服务：**本域也一样走目录**（`Refer` 引荐自己 → dir 亲授
-/// 请求门闩 → `connect_token("console")`）。
+/// 作普通客户端连上一个服务：`Refer` 引荐自己 → dir 亲授目录门闩 → 按名字 `Connect`。
 ///
-/// 时序：只在 shell 已退出之后调用——那时 console 一定已注册（shell 用过它），
-/// 故不需要任何重试。连不上 → `None`，调用方退回自己那台设备。
-fn connect_console(control: &HolePie, up: &HolePie) -> Option<Console> {
+/// **本域手里零服务孔**（`docs/root.md`）：每次要用就连一次。这本是"名字的账在目录里"
+/// 的直接读法——本域不缓存任何服务的入口。
+fn reach(control: &HolePie, up: &HolePie, service: &str) -> Option<env::PieToken> {
     let me = utask::self_id().ok()?;
     Refer::new(me).push(control).ok()?;
     let referred = Referred::pull(up).ok()?;
@@ -325,7 +347,16 @@ fn connect_console(control: &HolePie, up: &HolePie) -> Option<Console> {
         return None;
     }
     let dir = Directory::open(HolePie::from_token(referred.token())).ok()?;
-    let entry = dir.connect_token("console").ok()?;
+    dir.connect_token(service).ok()
+}
+
+/// 作普通客户端连上控制台服务：**本域也一样走目录**（`Refer` 引荐自己 → dir 亲授
+/// 请求门闩 → `connect_token("console")`）。
+///
+/// 时序：只在 shell 已退出之后调用——那时 console 一定已注册（shell 用过它），
+/// 故不需要任何重试。连不上 → `None`，调用方退回自己那台设备。
+fn connect_console(control: &HolePie, up: &HolePie) -> Option<Console> {
+    let entry = reach(control, up, "console")?;
     Console::open(HolePie::from_token(entry)).ok()
 }
 
@@ -335,20 +366,29 @@ fn connect_console(control: &HolePie, up: &HolePie) -> Option<Console> {
 /// 为什么需要这一句：服务线程在本域、是本域的**兄弟线程**，不在血缘里——级联收不到它，
 /// 而请求孔又是它自己开的（本域 seal 不动）⇒ 只能由协议说一句话收场。
 fn quit_doom(control: &HolePie, up: &HolePie) {
-    let Ok(me) = utask::self_id() else { return };
-    if Refer::new(me).push(control).is_err() {
-        return;
-    }
-    let Ok(referred) = Referred::pull(up) else {
+    let Some(door) = reach(control, up, doom::SERVICE) else {
         return;
     };
-    let Ok(dir) = Directory::open(HolePie::from_token(referred.token())) else {
-        return;
+    let _ = HolePie::from_token(door.get()).push(&[doom::OP_QUIT]);
+    let _ = mail::release(door.get());
+}
+
+/// 把一台设备的名字交给它的属主：**属主只能由 root 写**（`docs/driver.md` §12 甲）。
+///
+/// 与 `dispatch` 的 `Refer` 同形：谁能用哪个名字不是运行时判定，而是表里有没有写你的行。
+/// 这一句**必须早于**把名字交给客户端——客户端拿到名字就会去登记，而登记读的正是本域
+/// 刚写的这一行。驱动的报文队列是 FIFO，故先推的 `Refer` 一定先被处理。
+fn refer_device(control: &HolePie, up: &HolePie, who: TaskId, device: &str) -> bool {
+    let Some(entry) = reach(control, up, irq::SERVICE) else {
+        return false;
     };
-    let Ok(door) = dir.connect_token(doom::SERVICE) else {
-        return;
+    let ok = match (irq::Line::at(entry), Name::new(device)) {
+        (Ok(line), Ok(name)) => matches!(line.refer(&name, who), Ok(irq::Ack::Ok)),
+        _ => false,
     };
-    let _ = HolePie::from_token(door).push(&[doom::OP_QUIT]);
+    // 用完放下：本域**不留**服务孔（这一枚只用一次，留着就是"手里有孔"）。
+    let _ = mail::release(entry.get());
+    ok
 }
 
 #[unsafe(no_mangle)]
@@ -437,10 +477,19 @@ extern "C" fn main() -> ! {
         if Pier::new(referred.token()).push(&down).is_err() {
             exit_with(14);
         }
-        // console 多收一件：**设备门闩**（本域手里那枚的 R|W 副本）。交出去之后
-        // 本域不再碰设备——`say` 在会话建立后走会话。
+        // console 多收两件：**设备门闩**（本域手里那枚的 R|W 副本）与**它的名字**。
+        // 交出去之后本域不再碰设备——`say` 在会话建立后走会话。
+        //
+        // 次序是硬要求：**先把属主写给中断驱动，再交名字**。客户端一拿到名字就会去登记
+        // （`Register`），而登记读的正是本域刚写的那一行；两件事走的是同一条 FIFO 队列，
+        // 故先推的 `Refer` 一定先被处理（§12 甲）。
         if name == "console" {
             hand_over(&down, uart_token, child, read_write());
+            if !refer_device(&control_dir, &up_dir, child, CONSOLE_DEVICE) {
+                say("root: line authority refused the console device\n");
+                exit_with(44);
+            }
+            hand_name(&down, CONSOLE_DEVICE, child);
         }
         // plic 收三件：PLIC 的寄存器、设备树本体、内核的 `irq` 门闩。
         // 它自己不认识"串口"——线号是客户端来登记的（§3.2.6）。
@@ -460,7 +509,7 @@ extern "C" fn main() -> ! {
     //     "谁能请求"不设判据表：**能连上它就是有资格**——目录门闩只亲授给 root 引荐过
     //     的域，客户端的回信孔又得先拿到入口门闩的副本（`Connect`）才配得出去。
     //     独占不靠判据，靠没有第二个创建入口（沙箱里的域连不上目录，也就够不着这里）。
-    let svc = match utask::spawn(TeamId(0), doom_service as usize, &[], 0) {
+    let svc = match utask::spawn(TeamId(0), doom_service as *const () as usize, &[], 0) {
         Ok(t) => t,
         Err(_) => exit_with(26),
     };

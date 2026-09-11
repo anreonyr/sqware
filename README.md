@@ -185,10 +185,13 @@ Two protocols exist, both as ordinary non-kernel code:
 | **Directory** | `crates/protocol/src/dispatch/` | `Register` `Unregister` `Replace` `Resolve` `Enumerate` `Connect`, plus one parent-side action `Refer` |
 | **Console** | `crates/protocol/src/console/` | `Open` `Write` `ReadLine` `Close` |
 | **Doom** | `crates/protocol/src/doom/` | `Kill`, plus the owner-only `Quit` |
+| **IRQ** | `crates/protocol/src/irq/` | `Register` (a client claims the line of a device *by name*), plus the parent-side `Refer` (root writes the owner) |
 
 The kernel holds none of their code and has no entry call for them: the directory is reached through a request hole, and every operation is a message on it. Rendering, key decoding and line editing live on the console **service** side; a client only says "I wrote this" and "give me a line".
 
 The directory's central structure is a **reservation table**, not a registry. Rows are created only by the parent domain (`Refer`), and `Register` can only *fill* an existing row — so "who may use which name" is a property of the table's shape rather than a runtime decision.
+
+The interrupt driver's table has the same shape, with one more column: `name → (line, owner, instance)`. The line number is **a function of the name** (`interrupts` × `interrupt-parent` read out of the device tree by the driver), so a client cannot state — or steal — a line: the register message has no line field at all. Its owner is written only by root, the device name is relayed by root, and a delivery that fails (`Denied`/`Dead`) makes the driver close the line and drop the instance while keeping the row.
 
 Services are Teams:
 
