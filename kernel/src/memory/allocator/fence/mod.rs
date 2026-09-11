@@ -428,12 +428,28 @@ unsafe extern "C" {
     /// vtable/常量指针是栈上常见数据，误收即 site 失真。旧守卫用 _rodata_start
     /// （.rodata 在镜像尾）会放 .data/.bss 进来——已实证 site 全失真。
     static _text_end: u8;
+    /// 镜像起止（link.ld `_kernel_start` / `_kernel_edge`）：判"某指针是否指向
+    /// 内核镜像内的静态物"（.rodata 的 `&'static str` 等）。
+    static _kernel_start: u8;
+    static _kernel_edge: u8;
 }
 
 /// .text 段上界（.trampoline 之后）。
 fn text_end() -> usize {
     // SAFETY: 链接脚本符号，恒存在。
     unsafe { (&raw const _text_end).addr() }
+}
+
+/// 内核镜像上界（link.ld `_kernel_edge`，.rodata 之后页对齐）。
+pub(crate) fn image_edge() -> usize {
+    // SAFETY: 链接脚本符号，恒存在。
+    unsafe { (&raw const _kernel_edge).addr() }
+}
+
+/// 内核镜像下界（link.ld `_kernel_start`）。
+fn image_base() -> usize {
+    // SAFETY: 链接脚本符号，恒存在。
+    unsafe { (&raw const _kernel_start).addr() }
 }
 
 /// 分配点回溯（诊断 site）：从当前 fp 沿标准 RV64 帧链上溯 depth 帧；链在 core

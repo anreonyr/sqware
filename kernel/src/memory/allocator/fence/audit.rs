@@ -119,6 +119,110 @@ fn count_kind(frame: &statistics::FrameView, block: &statistics::BlockView, k: K
     }
 }
 
+// ── 泄漏现场取证（只在日志一侧、只在已判泄漏时跑）────────
+
+/// 打印该种类的**全部在册记录**：地址 / 尺寸 / 分配点 `site`（host `addr2line`
+/// 可符号化）。`End::Zero` 判据只说"哪种对象没归零"，说不出"是哪一支分配点、
+/// 哪个对象"——本条补上那两个量。**只读账本、只打印**（不改判据、不写任何表）。
+///
+/// `Kind::Task` 的记录是 `ArcInner<{Task, TaskIdent}>`（两种都由
+/// `tagged_alloc(Kind::Task)` 标注，尺寸不同故可分辨），头 16 字节是
+/// strong/weak 计数、+16 起是载荷——`Task` 的载荷首字是指向 `TaskIdent` 的
+/// `Arc` 数据指针，`TaskIdent` 的载荷首字是 `id`、次字是 `name`（`&'static str`
+/// 二元组 = 指针 + 长度）。故这里能**直接打出泄漏任务的名字**：名册只说"还有
+/// 条目活着"，本条说得出"是哪一个"。
+///
+/// **锁纪律**：本条要两次问账本（先抄记录、再按地址指认内层 `TaskIdent`），而
+/// `LEDGER.for_each` 是**持有** Ledger 锁的遍历——嵌套调用即自锁死（`ledger::retire`
+/// 的头注已记过同一个坑）。故先把记录抄进**预先分配好**的缓冲（锁内零分配），
+/// 放锁后再互相指认。
+fn dump_records(kind: Kind) {
+    use crate::work::unit::task::{Task, TaskIdent};
+
+    /// 一条抄出来的记录（放锁后用它打印与互相指认）。
+    struct Rec {
+        addr: usize,
+        size: usize,
+        site: usize,
+    }
+
+    let mut recs: alloc::vec::Vec<Rec, &'static dyn Allocator> = alloc::vec::Vec::with_capacity_in(
+        super::ledger::LEDGER.len().max(64),
+        crate::memory::allocator::hybrid::allocator(),
+    );
+    super::ledger::LEDGER.for_each(|addr, rec| {
+        if rec.kind == kind {
+            recs.push(Rec {
+                addr,
+                size: rec.size,
+                site: rec.site,
+            });
+        }
+    });
+
+    let task_bytes = core::mem::size_of::<Task>();
+    let ident_bytes = core::mem::size_of::<TaskIdent>();
+    let id_off = core::mem::offset_of!(TaskIdent, id);
+    let name_off = core::mem::offset_of!(TaskIdent, name);
+    let lo = super::image_base();
+    let hi = super::image_edge();
+    // 上限：取证输出不许自己变成刷屏源（同类事故已实证一次：58 MB 控制台）。
+    // 截断只影响"打印多少"，报告头一行与判据都不动。
+    const CAP: usize = 64;
+    if recs.len() > CAP {
+        crate::putln!("[audit]   ... {} records, first {CAP}:", recs.len());
+    }
+    for r in recs.iter().take(CAP) {
+        crate::putln!(
+            "[audit]   {} @ {:#x} size {} site {:#x}",
+            kind.name(),
+            r.addr,
+            r.size,
+            r.site
+        );
+        if kind != Kind::Task {
+            continue;
+        }
+        // 块 = `ArcInner<T>`：头 16 字节是 strong/weak 计数，data = 基址 + 16。
+        // SAFETY: 记录在册 = 块活、不可复用；下表读是只读诊断（与
+        // `sweep_canaries` 同性质）。尺寸（块分配器报的**请求字节数**）分出是哪一种
+        // `T`：`ArcInner<Task>` = 88、`ArcInner<TaskIdent>` = 48。
+        let data = r.addr + 16;
+        let size_class = r.size.max(8).next_power_of_two();
+        unsafe {
+            let strong = *((r.addr + 8) as *const u64);
+            let word0 = *((data + id_off) as *const usize);
+            let word1 = *((data + name_off) as *const usize);
+            if size_class >= 16 + task_bytes + 8 {
+                // 载荷首字 = 内层 `Arc<TaskIdent>` 的数据指针，按地址在本批记录里认它。
+                let owner = recs.iter().find(|o| {
+                    o.addr + 16 == word0 && o.size.max(8).next_power_of_two() < size_class
+                });
+                match owner {
+                    Some(o) => crate::putln!(
+                        "[audit]     <- Task block: strong {strong}, ident @ {word0:#x} (rec {:#x}, id {})",
+                        o.addr,
+                        *((word0 + id_off) as *const usize)
+                    ),
+                    None => crate::putln!(
+                        "[audit]     <- Task block: strong {strong}, ident @ {word0:#x} (record not in this batch)"
+                    ),
+                }
+            } else if size_class >= 16 + ident_bytes {
+                crate::putln!("[audit]     <- TaskIdent: strong {strong}, id {word0}");
+                // `name` = (&'static str)（指针 + 长度）：指针落在内核镜像内才读
+                // （.rodata 的字面量；镜像恒等映射，S 态可直读）。
+                if word1 >= lo && word1 < hi && word0 < 256 && word1 + word0 <= hi {
+                    let s = core::slice::from_raw_parts(word1 as *const u8, word0);
+                    if let Ok(s) = core::str::from_utf8(s) {
+                        crate::putln!("[audit]     name \"{s}\"");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// 断言关机时各对象种类都到了它的期望终值（逐种类，见模块头）。
 ///
 /// 与旧框架（boot 快照差集）不同：本检查对「合法形态演化」天然免疫——容器
@@ -157,6 +261,7 @@ pub fn check_baseline() {
             zero_ok += 1;
         } else {
             crate::putln!("[audit] leak: {} {n}", k.name());
+            dump_records(k);
             leaks += 1;
         }
     }
