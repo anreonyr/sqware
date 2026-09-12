@@ -487,7 +487,7 @@ fn image_base() -> usize {
 /// （未映射），扫描越界须停而非缺页 panic。SCAN_WINDOW 内最多两页，按页
 /// 缓存翻译结果（每页一次 walk）。
 #[cfg(feature = "audit")]
-fn alloc_site(depth: usize) -> usize {
+pub(crate) fn alloc_site(depth: usize) -> usize {
     let mut fp: usize;
     // SAFETY: 读 s0 无副作用。
     unsafe { core::arch::asm!("mv {0}, s0", out(reg) fp) };

@@ -88,9 +88,23 @@ pub(crate) fn check_frame_head(
     if let Some((base, bpower)) = interior {
         let n = INTERIOR_FREES.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
         if n <= 4 {
+            // 调用者地址：`alloc_site` 走帧指针链（`s0`）逐层读 `ra`，与 `on_alloc` 的分配点
+            // 捕获同源。多打几层是**刻意的**：这摞 `ra` 的深度语义要现场校准，逐层符号化
+            // 才能认出落在 `frame.rs::deallocate` 调用者那一层的是哪个。
+            // 实测（启动期，4 例样本，跨运行稳定）：
+            //   `base=17396 bpower=1` 的前几层 = `0x80235ae0`（落在 `main` 的
+            //   `allocator::init` 闭包附近）
+            //   `base=4080 bpower=4` 的 = `0x8020e48c` / `0x8023e8cc`
+            // **只作线索**：符号化用的二进制与产出日志的那份布局不同，位置只能近似。
+            let sites: [usize; 5] = [
+                crate::memory::allocator::fence::alloc_site(1),
+                crate::memory::allocator::fence::alloc_site(2),
+                crate::memory::allocator::fence::alloc_site(3),
+                crate::memory::allocator::fence::alloc_site(4),
+                crate::memory::allocator::fence::alloc_site(5),
+            ];
             crate::putln!(
-                "[interior] freeing interior frame idx={index} addr={addr:#x} power={power} \
-                 → 落在 base={base} (power={bpower}) 的在手块跨度内 ({n})"
+                "[interior] idx={index} addr={addr:#x} power={power} base={base} bpower={bpower} ({n}) sites={sites:#x?}"
             );
         }
     }
