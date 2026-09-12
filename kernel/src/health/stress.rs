@@ -116,6 +116,7 @@ pub(super) fn chain() {
     // 与孤儿那条同形：**断增量，不断绝对值**。绝对值目前很大（差 143），旧账的根因尚未
     // 修；但"本次 churn 不许把这个差推大"是能立刻立的判据 —— 新写入一处不同步即红。
     let gap0 = flat as i64 - stepped as i64;
+    let covered0 = crate::memory::allocator::frame::FrameAllocator::covered_writes();
 
     let census = h.free_block_census();
     let mut first_off = 0usize;
@@ -134,6 +135,15 @@ pub(super) fn chain() {
          逐条 {flat}→{fl2}）；freeent {free_entries}、sample={sample:?}、nomerge={}",
         fl2 as i64 - st2 as i64,
         crate::memory::allocator::frame::FrameAllocator::nomerge_count()
+    );
+    let covered2 = crate::memory::allocator::frame::FrameAllocator::covered_writes();
+    crate::putln!(
+        "[covered] 累计 {covered0} → {covered2}（写点索引已被别条跨度覆盖；块首互不可能包含，恒应为 0）"
+    );
+    crate::expect!(
+        covered2 <= covered0,
+        "写点判据在增长：{covered0} → {covered2} —— 有新的索引被写进**别人已声明的跨度**里\
+         （块首之间不可能互相包含）"
     );
     crate::expect!(
         fl2 as i64 - st2 as i64 <= gap0,

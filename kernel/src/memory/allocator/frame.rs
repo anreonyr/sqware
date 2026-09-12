@@ -147,6 +147,11 @@ impl FrameAllocator {
     ///
     /// 返回 `(检查的块数, 不一致块数, 头 3 个不一致样本 (帧索引, 桶号, 表项))`。
     /// **临时诊断入口**：见 `FrameInner::scan_disagree`。
+    /// 写点落在别人跨度内的累计次数（块首互不可能包含 ⇒ 恒应为 0）。
+    pub(crate) fn covered_writes() -> usize {
+        COVERED.load(::core::sync::atomic::Ordering::Relaxed)
+    }
+
     pub(crate) fn scan_disagree(&self) -> (usize, usize, usize, (usize, u8)) {
         self.inner.lock().scan_disagree()
     }
@@ -549,6 +554,12 @@ static MR_OK: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUs
 /// 判据：它必须等于 `freelist[order]` 的**实际链长**。两者不等 ⇒ 有块被标为空闲
 /// 却没进链（幽灵块）—— 而且本计数**只由 `pagemeta` 写点驱动**，不经过任何
 /// 遍历，故它自己不会"看不见"东西。
+/// **写点判据**：写入一个**已被别条表项跨度覆盖**的索引的次数。
+///
+/// 块首之间不可能互相包含（每条表项声明"从本索引起、占 `2^power` 帧"），所以这个数
+/// **必须恒为 0**。实测非零且有稳定样本 —— 见 `health/stress.rs::chain()` 的哨兵。
+static COVERED: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+
 static META_FREE_BLOCKS: [::core::sync::atomic::AtomicUsize; 17] =
     [const { ::core::sync::atomic::AtomicUsize::new(0) }; 17];
 
@@ -869,7 +880,51 @@ impl FrameInner {
     /// （`nomerge`），那一段永久脱离可用池；`held()` 也会读到它而答错"谁拥有这帧"。
     ///
     /// 与 `push_link` 的"唯一入链口"成对：**一处标块首、一处撤块首**。
+    /// **写点判据**：写下 `index` 之前先问"它是不是已经落在别人的跨度里"。
+    ///
+    /// 把判据装到**写点**上而不是事后扫：事后扫只看得到结果，装在这里能看到**是谁写的**
+    /// （`what`）与**被谁的跨度覆盖**（覆盖者索引与 power）。
+    ///
+    /// # 实测读数：这不是边界情况，是常态
+    ///
+    /// 启动期一次运行累计 **31376** 次"写进已有跨度"，且多次运行稳定 —— `pagemeta`
+    /// **是一张容许重叠的块首图**，不是块首到块的函数。这正是两条扫表法差 143 条的根：
+    /// 它们都建立在"表项互不重叠"这个**表并不满足**的假设上。
+    ///
+    /// 由此也解释了修法 A/B 为什么撞墙：A 想靠"块缩小时唯一化"消灭别名（但重叠是常态，
+    /// 逐个撤无法穷尽）；B 想靠"这个索引有没有自己的表项"回答"在谁手里"（同样以不重叠
+    /// 为前提）。
+    ///
+    /// 真修法只有一条：**先决定这张表是"块首到块的函数"还是"容许重叠的覆盖图"**，
+    /// 然后让写侧与读侧同守那一个决定。现状是两种假设混用。
+    fn note_covered(&mut self, index: usize, what: &str) {
+        // 由小到大找覆盖 index 的块首：block_head = index & !(2^p - 1)，含 index 者即覆盖。
+        for p in 0..self.freelist.len() {
+            let base = index & !((1usize << p) - 1);
+            if base == index || base >= self.pagemeta.len() {
+                continue;
+            }
+            if let Some(m) = self.pagemeta[base].as_ref()
+                && index < base + (1usize << m.power)
+            {
+                let n = COVERED.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
+                // 只报一次：这次写入**不该发生** —— `index` 已被另一条表项声明的跨度覆盖，
+                // 而块首之间不可能互相包含。前几条附现场（谁写的、被谁覆盖），其余只计数。
+                if n <= 4 {
+                    crate::putln!(
+                        "[covered] {what} idx={index} 落在 base={base} (free={} power={}) 的跨度内 ({n})",
+                        m.free,
+                        m.power
+                    );
+                }
+                let _ = what;
+                return;
+            }
+        }
+    }
+
     fn clear_head(&mut self, index: usize) {
+        self.note_covered(index, "clear_head");
         if let Some(old) = self.pagemeta[index].as_ref()
             && old.free
         {
@@ -931,6 +986,7 @@ impl FrameInner {
 
             FR_PULL.fetch_add(1usize << power, ::core::sync::atomic::Ordering::Relaxed);
             BK_PULL.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
+            self.note_covered(index, "pull_link");
             self.clear_head(index);
             self.pagemeta[index] = Some(Meta::new(false, power as u8));
             Some(index)
@@ -959,6 +1015,7 @@ impl FrameInner {
             );
 
             let addr = NonNull::new_unchecked(self.frame_addr(index) as *mut Link);
+            self.note_covered(index, "push_link");
             addr.write(Link::new(None, self.freelist[power]));
 
             if let Some(head) = self.freelist[power] {
