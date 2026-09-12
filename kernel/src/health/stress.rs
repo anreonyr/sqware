@@ -117,6 +117,7 @@ pub(super) fn chain() {
     // 修；但"本次 churn 不许把这个差推大"是能立刻立的判据 —— 新写入一处不同步即红。
     let gap0 = flat as i64 - stepped as i64;
     let covered0 = crate::memory::allocator::frame::FrameAllocator::covered_writes();
+    let interior0 = crate::memory::allocator::frame::FrameAllocator::interior_frees();
 
     let census = h.free_block_census();
     let mut first_off = 0usize;
@@ -137,8 +138,23 @@ pub(super) fn chain() {
         crate::memory::allocator::frame::FrameAllocator::nomerge_count()
     );
     let covered2 = crate::memory::allocator::frame::FrameAllocator::covered_writes();
+    // 直接对有案底的样本取证：17397 是 17396 那块（power=1）的中间帧吗？
+    for probe in [512usize, 17397, 1280, 1344] {
+        let pa = h.frame_addr_of(probe);
+        crate::putln!("[interior] idx={probe} pa={pa:#x} => {:?}", h.interior_of_held(pa));
+    }
+    let bd = crate::memory::allocator::frame::FrameAllocator::covered_breakdown();
     crate::putln!(
-        "[covered] 累计 {covered0} → {covered2}（写点索引已被别条跨度覆盖；块首互不可能包含，恒应为 0）"
+        "[covered] 累计 {covered0} → {covered2}；分类 push→free={} push→held={} pull→free={} pull→held={} clear→free={} 其它={}",
+        bd[0], bd[1], bd[2], bd[3], bd[4], bd[5]
+    );
+    let interior2 = crate::memory::allocator::frame::FrameAllocator::interior_frees();
+    crate::putln!(
+        "[interior] 释放在手块中间帧 累计 {interior0} → {interior2}（恒应为 0；非零即表里长出不存在的块首）"
+    );
+    crate::expect!(
+        interior2 <= interior0,
+        "释放中间帧的次数在增长：{interior0} → {interior2} —— 分配器按帧处理，会把中点当块首入链"
     );
     crate::expect!(
         covered2 <= covered0,

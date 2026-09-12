@@ -58,15 +58,30 @@ pub(crate) fn run(platform: &dyn Platform) -> Status {
 /// `#[panic_handler]`，本模块**不**再声明一个）。
 ///
 /// 为什么在这里而不是 halt 里：`halt` 认识崩溃转储（寄存器/栈/页表），本模块认识
-/// "用例"。**测试档下崩溃转储没有意义** —— 那不是内核缺陷，是用例失败；打一百行现场
-/// 反而埋掉了"哪一例、断言说了什么"这两件唯一有用的事。
+/// "用例"。
+///
+/// # 但要**保住位置**
+///
+/// 第一版只打 message，于是护栏在启动期抓到缺陷时，读数只有"哪一例、断言说了什么"
+/// —— 而 `index 4078 / base 4076` 这类信息**指不出是哪个调用点**。`PanicInfo::location()`
+/// 就是那个调用点（`check_*` 的 panic 都在调用者的行上），它比整份寄存器转储有用得多。
+/// 教训：省掉转储是对的，省掉位置不是。
 pub(crate) fn case_failed(info: &core::panic::PanicInfo) -> ! {
     let kernel = Kernel;
-    kernel.print(format_args!(
-        "[case] FAIL {} — {}",
-        super::running(),
-        info.message()
-    ));
+    match info.location() {
+        Some(loc) => kernel.print(format_args!(
+            "[case] FAIL {} — {}（{}:{}）",
+            super::running(),
+            info.message(),
+            loc.file(),
+            loc.line()
+        )),
+        None => kernel.print(format_args!(
+            "[case] FAIL {} — {}",
+            super::running(),
+            info.message()
+        )),
+    }
     // 失败即停机：干净自退（宿主按 qemu 自退/退出码判定），不走 `abort`。
     crate::runtime::diagnose::halt::halt_loop()
 }

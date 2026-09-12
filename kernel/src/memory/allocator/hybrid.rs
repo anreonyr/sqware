@@ -56,6 +56,7 @@ unsafe impl Allocator for HybridAllocator {
         }
     }
 
+    #[track_caller]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         unsafe {
             if layout.size() <= PAGE_SIZE / 2 {

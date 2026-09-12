@@ -147,9 +147,35 @@ impl FrameAllocator {
     ///
     /// 返回 `(检查的块数, 不一致块数, 头 3 个不一致样本 (帧索引, 桶号, 表项))`。
     /// **临时诊断入口**：见 `FrameInner::scan_disagree`。
+    /// 释放"在手块中间帧"的累计次数（见 `checker::INTERIOR_FREES`）—— 恒应为 0。
+    pub(crate) fn interior_frees() -> usize {
+        crate::memory::allocator::fence::checker::INTERIOR_FREES
+            .load(::core::sync::atomic::Ordering::Relaxed)
+    }
+
     /// 写点落在别人跨度内的累计次数（块首互不可能包含 ⇒ 恒应为 0）。
     pub(crate) fn covered_writes() -> usize {
         COVERED.load(::core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 覆盖写入的**分类**读数：`[push→free, push→held, pull→free, pull→held, clear→free, 其它]`。
+    pub(crate) fn covered_breakdown() -> [usize; 6] {
+        let mut out = [0usize; 6];
+        for (i, a) in COVERED_BY.iter().enumerate() {
+            out[i] = a.load(::core::sync::atomic::Ordering::Relaxed);
+        }
+        out
+    }
+
+
+    /// **诊断入口**：见 `FrameInner::interior_of_held`。
+    pub(crate) fn interior_of_held(&self, pa: usize) -> Option<(usize, u8)> {
+        self.inner.lock().interior_of_held(pa)
+    }
+
+    /// 帧索引 → 物理地址（诊断用）。
+    pub(crate) fn frame_addr_of(&self, index: usize) -> usize {
+        self.inner.lock().frame_addr(index)
     }
 
     pub(crate) fn scan_disagree(&self) -> (usize, usize, usize, (usize, u8)) {
@@ -560,6 +586,10 @@ static MR_OK: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUs
 /// **必须恒为 0**。实测非零且有稳定样本 —— 见 `health/stress.rs::chain()` 的哨兵。
 static COVERED: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
 
+/// 覆盖写入的分类：`push|pull|clear` × 被覆盖者 `free=true|false`。
+static COVERED_BY: [::core::sync::atomic::AtomicUsize; 6] =
+    [const { ::core::sync::atomic::AtomicUsize::new(0) }; 6];
+
 static META_FREE_BLOCKS: [::core::sync::atomic::AtomicUsize; 17] =
     [const { ::core::sync::atomic::AtomicUsize::new(0) }; 17];
 
@@ -644,6 +674,7 @@ unsafe impl Allocator for FrameAllocator {
         }
     }
 
+    #[track_caller]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
         unsafe {
             let mut guard = self.inner.lock();
@@ -669,6 +700,8 @@ unsafe impl Allocator for FrameAllocator {
             // 故那次遍历不付）。
             #[cfg(any(debug_assertions, feature = "audit"))]
             checker::check_frame_held(frame.held(addr), index, addr, power);
+            #[cfg(any(debug_assertions, feature = "audit"))]
+            checker::check_frame_head(frame.interior_of_held(addr), index, addr, power);
 
             // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);
@@ -907,9 +940,19 @@ impl FrameInner {
             if let Some(m) = self.pagemeta[base].as_ref()
                 && index < base + (1usize << m.power)
             {
+                // 分类计数：**写入者 × 被覆盖者的 free 态**。直接上"写侧消解覆盖"很可能
+                // 砸掉合法的拆分/合并写点，故先量分布 —— 如果绝大多数是"空闲被空闲覆盖"
+                // （被切开的原块残留），那才是可安全消解的那部分。
+                let slot = match (what, m.free) {
+                    ("push_link", true) => 0,
+                    ("push_link", false) => 1,
+                    ("pull_link", true) => 2,
+                    ("pull_link", false) => 3,
+                    ("clear_head", true) => 4,
+                    _ => 5,
+                };
+                COVERED_BY[slot].fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                 let n = COVERED.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
-                // 只报一次：这次写入**不该发生** —— `index` 已被另一条表项声明的跨度覆盖，
-                // 而块首之间不可能互相包含。前几条附现场（谁写的、被谁覆盖），其余只计数。
                 if n <= 4 {
                     crate::putln!(
                         "[covered] {what} idx={index} 落在 base={base} (free={} power={}) 的跨度内 ({n})",
@@ -917,7 +960,6 @@ impl FrameInner {
                         m.power
                     );
                 }
-                let _ = what;
                 return;
             }
         }
@@ -1233,6 +1275,31 @@ impl FrameInner {
             }
         }
         (stepped, flat, misaligned, first)
+    }
+
+    /// **诊断**：`pa` 是不是**某个在手块的中间帧**（不是块首）。
+    ///
+    /// 判据：由小到大找覆盖它的表项；若覆盖者索引 `!= index` 且 `free == false`，则这一页
+    /// 是**某笔在手分配的中间帧**。对这样的页调 `deallocate` 是错的 —— 分配器按帧合并会把
+    /// 中点当块首入链，表里于是长出"在手块跨度内的表项"（这正是 `[covered]` 量到的那些）。
+    fn interior_of_held(&self, pa: usize) -> Option<(usize, u8)> {
+        if pa < self.base || pa >= self.edge {
+            return None;
+        }
+        let index = self.frame_index(pa);
+        for p in 0..self.freelist.len() {
+            let base = index & !((1usize << p) - 1);
+            if base == index || base >= self.pagemeta.len() {
+                continue;
+            }
+            if let Some(m) = self.pagemeta[base].as_ref()
+                && index < base + (1usize << m.power)
+                && !m.free
+            {
+                return Some((base, m.power));
+            }
+        }
+        None
     }
 
     fn in_freelist(&self, index: usize, power: usize) -> bool {

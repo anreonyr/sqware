@@ -59,6 +59,56 @@ pub(crate) fn check_frame_held(held: bool, index: usize, addr: usize, power: usi
     }
 }
 
+/// 释放的帧必须是**块首**，且大小与它在手时一致。
+///
+/// # 为什么必须单列这一条（实测缺陷的直接入口）
+///
+/// `check_frame_held` 只问"这一页在不在手"，而"在手"的判据是 `held(pa)` —— 它按
+/// **覆盖**回答：任一覆盖该页的在手表项都算数。于是**一笔大分配的中间帧**照样答"在手"，
+/// 护栏放行。而分配器按帧处理：把中点当 power-0 的块入链 ⇒ `pagemeta` 里长出"在手块跨度
+/// 内的表项"。
+///
+/// 实测（框架档）：启动期累计 **31376** 次这样的写入，且**覆盖者一律是在手块**
+/// （分类 `push→free=0`、`pull→free=0` —— "空闲块被切开的残留"这个来源是 0）。
+/// 两个取证样本：`idx=512` 是 `[0,1024)`（power=10，在手）的中点、`idx=17397` 是
+/// `[17396,17398)`（power=1，在手）的中点。
+///
+/// 故这一条把**沉默的损坏**变成响亮的失败：调用者当场现形。
+/// `#[track_caller]`：panic 位置须落在**调用者**那一行（否则只指到本函数，等于没给
+/// 位置 —— 实测踩过：`checker.rs:86` 这种读数指不出是谁在释放中间帧）。
+#[cfg(any(debug_assertions, feature = "audit"))]
+#[track_caller]
+#[inline(always)]
+pub(crate) fn check_frame_head(
+    interior: Option<(usize, u8)>,
+    index: usize,
+    addr: usize,
+    power: usize,
+) {
+    if let Some((base, bpower)) = interior {
+        let n = INTERIOR_FREES.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 4 {
+            crate::putln!(
+                "[interior] freeing interior frame idx={index} addr={addr:#x} power={power} \
+                 → 落在 base={base} (power={bpower}) 的在手块跨度内 ({n})"
+            );
+        }
+    }
+}
+
+/// **判据**：释放"在手块的中间帧"的累计次数 —— 必须恒为 0。
+///
+/// 这是**沉默的损坏**：分配器按帧处理，把中点当 `power` 大小的块入链 ⇒ `pagemeta` 里
+/// 长出"在手块跨度内的表项"（正是 `[covered]` 量到的 31376 次，且覆盖者一律是在手块）。
+/// 现有护栏放行它，因为 `check_frame_held` 问的是"在不在手"，而"在手"的判据 `held(pa)`
+/// 按**覆盖**回答 —— 中间帧照样答"在手"。
+///
+/// 为什么是计数而不是 panic：实测启动期就有一处（`index 4078`，4 帧分配 `base 4076` 的
+/// 第三个帧），修它要先找出**是谁**在放中间帧 —— 而那一步还没做完。判据先立住，别让它再
+/// 悄悄长。查到调用者后这一条应当升回 panic。
+pub(crate) static INTERIOR_FREES: ::core::sync::atomic::AtomicUsize =
+    ::core::sync::atomic::AtomicUsize::new(0);
+
 /// 遍历判重：目标不得已在链中——已在 = double-free / double-push（再头插会写坏
 /// 链表）；遍历深度越界 = 成环（某节点 next 被覆写）。仅 debug 构建做 O(链长)
 /// 遍历；命中即 dump 现场 + panic。`next` 由调用点提供（block 读块首字，frame
