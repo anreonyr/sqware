@@ -7,7 +7,7 @@
 // 取放锁（只持 L1，不嵌套）、`rip` 关机时逐 hart 收队——三者都需要「全世界的核」，
 // 故与表同居一处，而不是散进各入口面。
 
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use hashbrown::HashMap;
@@ -16,6 +16,7 @@ use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::room::conductor;
 use crate::work::room::messenger;
 use crate::work::unit::task::Task;
+use crate::work::unit::weak::{Site, TaskWeak};
 
 use super::hart::Scheduler;
 
@@ -105,16 +106,18 @@ pub(crate) fn launch(task: Arc<Task>) {
 // 表只增不删 ⇒ 名册随运行增长；条目是 `Weak`，不钉住对象本体（`ArcInner` 的归还等
 // 关机时的 [`rip`] 一次性放掉全部条目）。锁 = Level::L3，只经下面三个函数触及。
 
-static ROSTER: OnceLock<SpinLock<HashMap<usize, Weak<Task>>>> = OnceLock::new();
+static ROSTER: OnceLock<SpinLock<HashMap<usize, TaskWeak>>> = OnceLock::new();
 
-fn roster_table() -> &'static SpinLock<HashMap<usize, Weak<Task>>> {
+fn roster_table() -> &'static SpinLock<HashMap<usize, TaskWeak>> {
     ROSTER.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
 /// 入册：任务产生处一次性（`Task::hold` 末尾）。`Weak` 升级失败 = 任务已消失 =
 /// 自动失效，无需显式清理。
 pub(crate) fn enlist(id: usize, task: &Arc<Task>) {
-    roster_table().lock().insert(id, Arc::downgrade(task));
+    roster_table()
+        .lock()
+        .insert(id, TaskWeak::stored(Arc::downgrade(task), Site::Roster));
 }
 
 /// 为即将入册的**一条**预留名册容量。
@@ -144,8 +147,11 @@ pub(crate) fn try_reserve_roster() -> Result<(), ()> {
 /// 强引用」摆在调用点上，而不是藏在查询函数里）。
 ///
 /// `None` = **从未入册**（非法 id）；`Some` 升不起来 = 已消失（对象已回收）。
-pub(crate) fn muster(id: usize) -> Option<Weak<Task>> {
-    roster_table().lock().get(&id).map(Weak::clone)
+pub(crate) fn muster(id: usize) -> Option<TaskWeak> {
+    roster_table()
+        .lock()
+        .get(&id)
+        .map(|w| w.copy_at(Site::Muster))
 }
 
 /// 名册规模与**仍活着的条数**（`(总条数, 活条数)`）——audit 档的观测量。
@@ -232,13 +238,13 @@ pub(crate) fn roster_live_ids() -> (usize, [usize; 8]) {
 /// 而空快照的语义是现成的、安全的——见 [`super::super::gate::snap`] 的头注：
 /// 「未注入 ⇒ 空 ⇒ 查询退化为『找不到』，即**不级联、不认亲**」。即：内存耗尽
 /// 时**放弃级联**，而不是停摆整机。
-pub(crate) fn roster() -> Vec<Weak<Task>> {
+pub(crate) fn roster() -> Vec<TaskWeak> {
     let g = roster_table().lock();
-    let mut out: Vec<Weak<Task>> = Vec::new();
+    let mut out: Vec<TaskWeak> = Vec::new();
     if out.try_reserve(g.len()).is_err() {
         return Vec::new();
     }
-    out.extend(g.values().map(Weak::clone));
+    out.extend(g.values().map(|w| w.copy_at(Site::Snapshot)));
     out
 }
 

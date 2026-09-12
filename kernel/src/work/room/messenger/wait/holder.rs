@@ -1,6 +1,6 @@
 // 票与票根（holder）——挂起的身份（票）与「凭票认人」的票根表。
 
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use hashbrown::HashMap;
@@ -8,6 +8,7 @@ use hashbrown::HashMap;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::runtime::chrono::timer;
 use crate::work::unit::task::Task;
+use crate::work::unit::weak::{Site, TaskWeak};
 
 use super::site::WakeKey;
 
@@ -37,7 +38,7 @@ impl Ticket {
 }
 
 /// 票根表：票 →（唤醒键, 持票人）。
-type HolderTable = SpinLock<HashMap<Ticket, (WakeKey, Weak<Task>)>>;
+type HolderTable = SpinLock<HashMap<Ticket, (WakeKey, TaskWeak)>>;
 
 /// 票根：票 → 持票人。**只存 `Weak`**。
 ///
@@ -52,7 +53,9 @@ pub(in super::super) fn holders() -> &'static HolderTable {
 /// 存根。**前置：到点登记尚未发生**——「堆可见 ⇒ 票根必在」，否则到期路径会命中
 /// 一个空的票根。
 pub(super) fn hold(ticket: Ticket, key: WakeKey, task: &Arc<Task>) {
-    holders().lock().insert(ticket, (key, Arc::downgrade(task)));
+    holders()
+        .lock()
+        .insert(ticket, (key, TaskWeak::stored(Arc::downgrade(task), Site::Holder)));
 }
 
 /// 作废票根并取回持票人：到期认领与提前作废走同一条路，**幂等**（票号不复用，

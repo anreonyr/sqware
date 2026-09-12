@@ -37,6 +37,7 @@ use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
+use crate::work::unit::weak::{Site, TaskWeak};
 
 mod mail;
 mod pie;
@@ -500,11 +501,15 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Some(b) => b,
                 None => return ret_err(frame, GateError::Denied),
             };
-            // sire = 调用方：`build` 内部闭合血缘（域必入我 heir）
-            let sire = current()
-                .running_task()
-                .map(|me| Arc::downgrade(&me))
-                .unwrap_or_default();
+            // sire = 调用方：`build` 内部闭合血缘（域必入我 heir）。
+            //
+            // 这枚弱引用的出身是**血亲**（`Site::Sire`）：它几步之后就会住进
+            // `Team.sire`，中间没有挂起点（`build` 全程不 switch）。写清出身是为了
+            // 弱引用收支账能把这枚与"抄件"分开（见 `work::unit::weak`）。
+            let sire = match current().running_task() {
+                Some(me) => TaskWeak::stored(Arc::downgrade(&me), Site::Sire),
+                None => TaskWeak::empty(),
+            };
             match crate::work::unit::build(&bytes, SpaceKind::from(kind), name, sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 Err(_) => return ret_err(frame, GateError::BadImage),

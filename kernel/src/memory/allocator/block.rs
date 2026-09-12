@@ -155,6 +155,19 @@ impl Tally {
         m.owner()
     }
 
+    /// 按**物理地址**只读一条表项：`(owner, power, used)`。区外/下溢 → `None`。
+    ///
+    /// 这是"池子这一页上还有几块在册"的唯一问法（`used` 由块层的 alloc/dealloc
+    /// 直接维护，与 `fence` 的 Ledger **互相独立**）—— 两边对不上就是"两套账"，
+    /// 详见 `fence::audit::dump_records` 的交叉核对。
+    #[cfg(feature = "audit")]
+    pub(crate) fn read_pa(&self, pa: usize) -> Option<(Option<usize>, usize, u16)> {
+        let _g = self.lock.lock();
+        // SAFETY: idx 过上下界检查；lock 串行，读与写互斥。
+        let m = unsafe { self.cells.add(self.idx(pa)?).read() };
+        Some((m.owner(), m.power as usize, m.used()))
+    }
+
     /// 按下标读表项（clear 扫表用；idx 已由调用方保证 < len）。
     fn read_idx(&self, idx: usize) -> Meta {
         let _g = self.lock.lock();
@@ -267,6 +280,17 @@ impl BlockAllocator {
     /// Some(owner）；区外或无主 → None（调用方静默丢弃，沿用旧 pool_of 语义）。
     pub(crate) fn own(&self, pa: usize) -> Option<usize> {
         self.tally.owner_of(pa)
+    }
+
+    /// 一页的簿记（**审计的交叉核对面**）：`(owner, 该页块大小阶, 在册块数)`。
+    ///
+    /// 为什么要它：`fence` 的账说"一块 `Kind::Task` 还活着"时，块层**同时**记着
+    /// 那一页上还有几块在册（`Meta::used`，由 alloc/dealloc 独立维护）。两者
+    /// 各自演进、谁也不看谁 —— 于是"页上 0 块在册而账里还挂着一条"这种状态可以
+    /// 静默存在，表现为一次**假泄漏**（那块随时会被别处复用，读到的是陈旧字节）。
+    #[cfg(feature = "audit")]
+    pub(crate) fn page_meta(&self, pa: usize) -> Option<(Option<usize>, usize, u16)> {
+        self.tally.read_pa(pa)
     }
 
     /// 收集全部「有主」页 PA（任何池 owned；本块堆全部持有页）。

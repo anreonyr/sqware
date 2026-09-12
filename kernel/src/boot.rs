@@ -217,7 +217,7 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
         elf,
         crate::work::unit::space::SpaceKind::Supervisor,
         name,
-        alloc::sync::Weak::new(),
+        crate::work::unit::weak::TaskWeak::empty(),
     )
     .expect("assemble root elf");
 

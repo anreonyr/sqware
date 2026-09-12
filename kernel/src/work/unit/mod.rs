@@ -18,9 +18,10 @@ pub(crate) mod parser;
 pub mod space;
 pub(crate) mod task;
 pub(crate) mod team;
+pub(crate) mod weak;
 
 use alloc::boxed::Box;
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Arc;
 use alloc::vec;
 use erra::ResultExt;
 
@@ -62,7 +63,7 @@ pub(crate) fn build(
     elf: &[u8],
     kind: space::SpaceKind,
     name: env::Name,
-    sire: Weak<task::Task>,
+    sire: weak::TaskWeak,
 ) -> Result<Arc<team::Team>, team::UnitError> {
     let parsed = parser::parse(elf).map_err(|_| team::UnitError::Load)?;
     let builder = match kind {

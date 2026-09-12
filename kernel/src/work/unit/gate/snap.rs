@@ -16,25 +16,30 @@ use alloc::vec::Vec;
 
 use crate::lock::OnceLock;
 use crate::work::unit::task::Task;
+use crate::work::unit::weak::TaskWeak;
 
 use super::pie::{AnyPie, Permission};
 
 /// 全世界任务快照：查询与级联的唯一输入。只读、不增删。
-pub(crate) type Snap = [Weak<Task>];
+///
+/// 快照条目是**抄件**（`Site::Snapshot`）：容器里那些随容器清空而死，抄出来的
+/// 这些却活在调用方的栈帧里 —— 二者在"外壳归还不掉"这个观测量上长得一样，只差
+/// 一个出身（见 `work::unit::weak` 头注）。
+pub(crate) type Snap = [TaskWeak];
 
 /// 快照提供者（boot 注入；`gate` 不依赖 scheduler）。
-fn provider() -> &'static OnceLock<fn() -> Vec<Weak<Task>>> {
-    static P: OnceLock<fn() -> Vec<Weak<Task>>> = OnceLock::new();
+fn provider() -> &'static OnceLock<fn() -> Vec<TaskWeak>> {
+    static P: OnceLock<fn() -> Vec<TaskWeak>> = OnceLock::new();
     &P
 }
 
 /// 注入快照提供者（boot 一次性调用）。
-pub(crate) fn install(f: fn() -> Vec<Weak<Task>>) {
+pub(crate) fn install(f: fn() -> Vec<TaskWeak>) {
     let _ = provider().set(f);
 }
 
 /// 拍一张快照。未注入 → 空（查询退化为「找不到」，即不级联、不认亲）。
-pub(crate) fn snap() -> Vec<Weak<Task>> {
+pub(crate) fn snap() -> Vec<TaskWeak> {
     provider().get().copied().map(|f| f()).unwrap_or_default()
 }
 

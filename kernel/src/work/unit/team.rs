@@ -21,6 +21,7 @@ use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;
 
 use super::task::{Task, TaskBuilder};
+use super::weak::{Site, TaskWeak};
 
 /// 团队（进程）— 共享地址空间的线程容器。
 ///
@@ -35,7 +36,7 @@ pub struct Team {
     /// 内核团队独占内核 Space。
     pub(crate) space: Arc<Space>,
     /// 成员簿记（弱引用条目；死条目在下次清理时摘除）。
-    pub(crate) tasks: SpinLock<Vec<Weak<Task>>>,
+    pub(crate) tasks: SpinLock<Vec<TaskWeak>>,
     /// 域名字（程序身份；诊断用）。`Build` 时定型，不可改。
     pub(crate) name: Name,
     /// 引导线程（**未放行**，`Held`）——`Option` 把「至多一个」做成类型义务。
@@ -46,7 +47,7 @@ pub struct Team {
     pub(crate) id: TeamId,
     /// 生我者的 task（弱引用，溯源；构造期定型，boot 顶级域 / 内核域 = 空 Weak）。
     /// 保持 Weak 是防环唯一边：`Task →(heir 强)→ Team →(sire 弱)→ Task`。
-    pub(crate) sire: Weak<Task>,
+    pub(crate) sire: TaskWeak,
     /// 本域默认执行入口（= 装载 ELF 的 `e_entry`，即镜像 `_start` VA）。
     /// `spawn` 的 `entry=0` 时用它。`OnceLock` 单次写，由 `Build` 写入。
     default_entry: OnceLock<usize>,
@@ -55,7 +56,9 @@ pub struct Team {
 impl Team {
     /// 成员入簿。
     pub(crate) fn push_task(&self, task: &Arc<Task>) {
-        self.tasks.lock().push(Arc::downgrade(task));
+        self.tasks
+            .lock()
+            .push(TaskWeak::stored(Arc::downgrade(task), Site::TeamTasks));
     }
 
     /// 为即将入簿的成员**预留**一格（产生路径不分配）。
@@ -135,8 +138,17 @@ impl Team {
     }
 
     /// 成员簿记快照（cull 遍历用：快照后放锁，锁外逐条处理）。
-    pub(crate) fn tasks_snapshot(&self) -> Vec<Weak<Task>> {
-        self.tasks.lock().clone()
+    ///
+    /// 抄件（`Site::Snapshot`）：**不实现 `Clone`** 是刻意的——这条注释就是编译器
+    /// 逼出来的"这一枚抄件从哪儿出去"的答案（见 `work::unit::weak`）。
+    pub(crate) fn tasks_snapshot(&self) -> Vec<TaskWeak> {
+        let g = self.tasks.lock();
+        let mut out: Vec<TaskWeak> = Vec::new();
+        if out.try_reserve(g.len()).is_err() {
+            return Vec::new();
+        }
+        out.extend(g.iter().map(|w| w.copy_at(Site::Snapshot)));
+        out
     }
 
     /// 本团队产出任务 builder（后续 `.name/.entry/.args/.stack/.hold/.spawn`
@@ -180,7 +192,7 @@ impl Team {
 /// 团队构建器：把已装载程序的地址空间容器化为团队。
 pub struct TeamBuilder {
     space: Space,
-    sire: Weak<Task>,
+    sire: TaskWeak,
     name: Name,
 }
 
@@ -189,13 +201,13 @@ impl TeamBuilder {
     pub fn new(space: Space) -> TeamBuilder {
         TeamBuilder {
             space,
-            sire: Weak::new(),
+            sire: TaskWeak::empty(),
             name: Name::new("team").expect("default team name"),
         }
     }
 
     /// 定生我者（boot 顶级域 / 内核域默认空 Weak）。构造期定型：sire 不可后改。
-    pub fn sire(mut self, sire: Weak<Task>) -> TeamBuilder {
+    pub fn sire(mut self, sire: TaskWeak) -> TeamBuilder {
         self.sire = sire;
         self
     }
@@ -313,7 +325,7 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
             name: Name::new("kernel").expect("kernel team name"),
             held: SpinLock::new_level(Level::L3, None),
             id,
-            sire: Weak::new(),
+            sire: TaskWeak::empty(),
             default_entry: OnceLock::new(),
         });
         #[cfg(feature = "audit")]
