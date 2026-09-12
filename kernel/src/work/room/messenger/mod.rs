@@ -215,6 +215,25 @@ pub(crate) fn probe() -> SiteStats {
     st
 }
 
+/// **post-`rip`** 的三张表规模（站点数、票根数、躯壳数）—— 都应恒为 0。
+/// 与 `probe_messenger`（pre-`rip`）成对：那一侧量"关机前还剩什么"，这一侧量
+/// "清空动作到底做没做"。
+#[cfg(feature = "audit")]
+pub(crate) fn probe_bookkeeping_post() -> (usize, usize, usize) {
+    // **逐个取、逐个放**：写成元组一次性求值会让三把 L3 锁同时活着（临时量的生存期
+    // 到语句末尾）⇒ lockdep 当场报同层嵌套（实测：整轮 panic 在 `lock/depend.rs`）。
+    let sites = {
+        let mut n = 0usize;
+        for i in 0..SITE_SHARDS {
+            n += shard_at(i).lock().len();
+        }
+        n
+    };
+    let holders_n = holders().lock().len();
+    let husks_n = HUSKS.lock().len();
+    (sites, holders_n, husks_n)
+}
+
 /// 另两张簿记表的规模：票根（只存 `Weak`，无 drop 链）与躯壳队列。
 ///
 /// 一并量出去的理由与站点表同：它们也只由关机钩子清，`rip` 之后就再也读不到。

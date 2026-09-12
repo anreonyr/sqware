@@ -30,7 +30,7 @@ pub(crate) use beacon::arm as beacon_arm;
 // scheduler 之外消费的表面（messenger / envcall / unit / diagnose）。
 pub use ident::{Identity, ident};
 #[cfg(feature = "audit")]
-pub(crate) use table::roster_live;
+pub(crate) use table::{roster_len, roster_live};
 pub(crate) use table::{
     current, enlist, launch, muster, remove_from_starved, rip, roster, running_hart,
     try_reserve_roster, try_reserve_starved,

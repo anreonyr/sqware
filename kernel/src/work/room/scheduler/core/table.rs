@@ -160,6 +160,13 @@ pub(crate) fn roster_live() -> (usize, usize) {
     (g.len(), g.values().filter(|w| w.strong_count() > 0).count())
 }
 
+/// 名册规模（**post-`rip` 应为 0**）：`rip` 清空名册是"外壳归还"的最后一道门，
+/// 这条读数就是那扇门的检验 —— 若它非 0，说明门没关（或有人在门后又插了条目）。
+#[cfg(feature = "audit")]
+pub(crate) fn roster_len() -> usize {
+    roster_table().lock().len()
+}
+
 /// **在世任务的 id**（`strong_count > 0`），至多取 8 个：信标用它点名"谁还没走"。
 ///
 /// 为什么返回定长数组而不是 `Vec`：本函数在**停机挂住**的现场被调用，而它要在

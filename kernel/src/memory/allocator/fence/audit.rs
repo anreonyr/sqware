@@ -135,6 +135,24 @@ fn count_kind(frame: &statistics::FrameView, block: &statistics::BlockView, k: K
 /// 机器已经坏了，速度不重要）。只扫内核镜像 + DRAM 窗口，不碰 MMIO。
 ///
 /// 返回命中数；逐条打印命中地址（在内核镜像里的可直接 `nm` 符号化 = 哪一个静态）。
+/// **这个地址落在哪个"在册块"里**：`(块基址, 请求尺寸, 种类, 分配点)`。
+///
+/// 账本（`LEDGER`）就是"活块"的权威表：一枚 `Weak<Task>` 总要**存在某个对象里**，
+/// 而那个对象本身也是一次分配 ⇒ 它的地址必然落在某条记录 `[base, base+size)` 内。
+/// 于是"谁扣着这枚弱引用"变成"哪个对象里存着它"，再拿 `site` 到 host 上
+/// `addr2line`，就能说出**是谁分配的** —— 定位到这一步，剩下的只是读那一处代码。
+///
+/// 锁纪律：本函数取一次账本锁，回调里只写局部变量（零分配、不回头记账）。
+fn owner_of(p: usize) -> Option<(usize, usize, Kind, usize)> {
+    let mut found: Option<(usize, usize, Kind, usize)> = None;
+    super::ledger::LEDGER.for_each(|base, rec| {
+        if found.is_none() && p >= base && p < base + rec.size {
+            found = Some((base, rec.size, rec.kind, rec.site));
+        }
+    });
+    found
+}
+
 fn who_holds(addr: usize, cap: usize) -> usize {
     // **只扫"内核真的映射了"的两段**：内核镜像（静态/BSS）与帧池窗口**去掉保留区**
     // （initrd / 设备树）。越界即 page fault —— 本轮真踩过一次（扫到 `0x87f90000`），
@@ -159,11 +177,20 @@ fn who_holds(addr: usize, cap: usize) -> usize {
                 *hits += 1;
                 if *hits <= cap {
                     let zone = if p >= super::image_base() && p < super::image_edge() {
-                        "内核镜像（静态/BSS ⇒ 可 nm 符号化）"
+                        "镜像"
                     } else {
-                        "帧池（堆/栈 ⇒ 动态分配）"
+                        "池内"
                     };
-                    crate::putln!("[audit]     <- 指向它的字 @ {p:#x}（{zone}）");
+                    match owner_of(p) {
+                        Some((base, size, kind, site)) => crate::putln!(
+                            "[audit]     <- 指向它的字 @ {p:#x}（{zone}）**容器**：{kind:?} base={base:#x} \
+                             size={size} 偏移={} site={site:#x}",
+                            p - base
+                        ),
+                        None => crate::putln!(
+                            "[audit]     <- 指向它的字 @ {p:#x}（{zone}）容器**不在账上**（已释放的块/栈/静态）"
+                        ),
+                    }
                 }
             }
             p += 8;
@@ -315,6 +342,11 @@ fn dump_records(kind: Kind) {
 #[cfg(feature = "audit")]
 pub fn probe_teams() {
     let live_tasks = crate::memory::allocator::statistics::view_block().kinds[Kind::Task as usize];
+    // 清空动作的检验：这几张表在 `rip` 之后**必须**是 0，否则"外壳归还"的最后一道门
+    // 根本没关上（那时泄漏块是谁扣着的就不言自明了）。
+    let (sites_post, holders_post, husks_post) =
+        crate::work::room::messenger::probe_bookkeeping_post();
+    let roster_post = crate::work::room::scheduler::core::roster_len();
     let (live_teams, more, dead_total, head) = crate::work::unit::team::weak_census_all();
     let kernel_line = match crate::work::unit::team::kernel() {
         Some(t) => {
@@ -328,7 +360,8 @@ pub fn probe_teams() {
         None => alloc::string::String::from("内核团队未注入"),
     };
     crate::putln!(
-        "[audit] teams 活 {live_teams}（超限 {more}）｜死弱引用 {dead_total}（首 4 个 (id, tasks 死, sire 死)={head:?}）\
+        "[audit] post-rip 空表检验：名册 {roster_post}、站点 {sites_post}、票根 {holders_post}、躯壳 {husks_post}（都应为 0）\
+         ｜teams 活 {live_teams}（超限 {more}）｜死弱引用 {dead_total}（首 4 个 (id, tasks 死, sire 死)={head:?}）\
          ｜{kernel_line}｜task 块存活={live_tasks}"
     );
 }
