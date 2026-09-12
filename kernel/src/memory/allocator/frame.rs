@@ -147,6 +147,15 @@ impl FrameAllocator {
     ///
     /// 返回 `(检查的块数, 不一致块数, 头 3 个不一致样本 (帧索引, 桶号, 表项))`。
     /// **临时诊断入口**：见 `FrameInner::scan_disagree`。
+    /// 丢帧的中间帧释放 / 判据把块首认成中间帧 的次数。
+    pub(crate) fn interior_split() -> (usize, usize) {
+        use ::core::sync::atomic::Ordering;
+        (
+            crate::memory::allocator::fence::checker::LOSSY_FREES.load(Ordering::Relaxed),
+            crate::memory::allocator::fence::checker::HEAD_ALIASED.load(Ordering::Relaxed),
+        )
+    }
+
     /// 释放"在手块中间帧"的累计次数（见 `checker::INTERIOR_FREES`）—— 恒应为 0。
     pub(crate) fn interior_frees() -> usize {
         crate::memory::allocator::fence::checker::INTERIOR_FREES
@@ -700,8 +709,14 @@ unsafe impl Allocator for FrameAllocator {
             // 故那次遍历不付）。
             #[cfg(any(debug_assertions, feature = "audit"))]
             checker::check_frame_held(frame.held(addr), index, addr, power);
+            // 判据：被命中的那个"在手大块"（base / bpower / 在手帧数）。命中前后各取一次，
+            // **差即答案**：若该块的在手帧数不变（且仍被算作在手），说明释放它的中间帧
+            // 并没有把它还回池子 ⇒ 真缺陷；若整块回到池里，则这是"逐帧拆块"的正常用法，
+            // 我这轮的判据方向就是错的。
             #[cfg(any(debug_assertions, feature = "audit"))]
-            checker::check_frame_head(frame.interior_of_held(addr), index, addr, power);
+            let hit = frame.interior_of_held(addr);
+            #[cfg(any(debug_assertions, feature = "audit"))]
+            checker::check_frame_head(hit, index, addr, power);
 
             // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);

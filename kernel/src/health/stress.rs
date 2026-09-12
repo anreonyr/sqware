@@ -149,8 +149,9 @@ pub(super) fn chain() {
         bd[0], bd[1], bd[2], bd[3], bd[4], bd[5]
     );
     let interior2 = crate::memory::allocator::frame::FrameAllocator::interior_frees();
+    let (lossy, aliased) = crate::memory::allocator::frame::FrameAllocator::interior_split();
     crate::putln!(
-        "[interior] 释放在手块中间帧 累计 {interior0} → {interior2}（恒应为 0；非零即表里长出不存在的块首）"
+        "[interior] 释放在手块中间帧 {interior0} → {interior2}；其中丢帧(power<bpower)={lossy}、块首误判={aliased}"
     );
     crate::expect!(
         interior2 <= interior0,
