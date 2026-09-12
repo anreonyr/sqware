@@ -114,6 +114,12 @@
 #                      `debug-assertions`）：容器⇔状态断言与整条 lockdep 放回被测产物。
 #                      判据 = 无 `[depend]` + stray/cascade 两条探针；构建后另做一次
 #                      **正向对照**（ELF 里必须出现某条断言串，否则这一档等于白跑）。
+#   EXAMINE_FRAMEWORK  "0" ⇒ **跳过**框架档（默认为开）。这一档跑内核内测试框架
+#                      （`--profile framework --features "framework audit"`）：用例登记在
+#                      链接期、跑在启动期，逐例打点 + 末行汇总；判据是同一条路数加上
+#                      「用例全过（条数具体到个位，零用例与全过只差一个数字）+ 15 步照跑」。
+#                      默认开是因为它判的是**别的档判不到**的东西：分配器/页表/Space 的
+#                      内部不变量，而那正是既往几轮真缺陷的所在。
 #   EXAMINE_FEATURES   内核 cargo feature（默认空 = 默认档，行为/输出与原版逐字相同）。
 #                      含 `audit` ⇒ 默认轮之后**再加一轮 audit 档**（追加 `sleep 700`
 #                      与 hole 的封印唤醒观测，并断言关机时刻的站点表计数）。
@@ -649,12 +655,13 @@ def main [] {
   # 把容器⇔状态断言与整条 lockdep 放回被测产物里。**不是**第二道 audit：它不带 audit
   # feature，判的是「没有 `[depend]`（锁序违规）」+ 那两条探针。
   let harden = (($env.EXAMINE_HARDEN? | default "0") == "1")
-  # `EXAMINE_FRAMEWORK=1` ⇒ 再加一轮**框架档**（`--profile framework --features "framework audit"`）：
+  # 框架档**默认开**（`EXAMINE_FRAMEWORK=0` 可关）：这一档跑的是内核内测试框架
+  # （`--profile framework --features "framework audit"`）：
   # 内核内测试框架（`kernel/src/framework/` + `health/` 的用例）跑在启动期，逐例打点 +
   # 末行汇总。这一档判两件事：① 用例全过（汇总行 `cases N ok N fail 0`，N 具体到条数
   # ——零用例比失败更坏）；② 判据其余五条照旧（测试档要在**同一趟**里接着跑完那 15 步
   # shell 序列，因为用例通过即放行启动）。
-  let framework = (($env.EXAMINE_FRAMEWORK? | default "0") == "1")
+  let framework = (($env.EXAMINE_FRAMEWORK? | default "1") == "1")
   # cargo 的落点：**两档共用**（换 feature 就覆盖）⇒ 每建一档必须立刻搬走产物（见 build_flavor）。
   let built = ($root | path join "target/riscv64gc-unknown-none-elf/release/sqware")
   # 三档各自的产物：本轮（本 OUT）自己的目录，各带 initrd.img。轮次只跑自己那份。
@@ -775,7 +782,7 @@ def main [] {
     }
   }
 
-  # 框架轮（仅当 EXAMINE_FRAMEWORK=1）：跑内核内测试框架那份产物。轮次编号接在前面几档之后。
+  # 框架轮（默认跑；`EXAMINE_FRAMEWORK=0` 跳过）：跑内核内测试框架那份产物。轮次编号接在前面几档之后。
   if $framework {
     let i = $repeat + (if $audit { 1 } else { 0 }) + (if $harden { 1 } else { 0 }) + 1
     let r = (run_once $cfg $i "framework")
