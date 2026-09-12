@@ -227,24 +227,6 @@ impl Ledger {
         self.retire_matching(asid, None)
     }
 
-    /// **按 VA 范围**注销 `asid` 名下的用户堆账（[`Self::retire`] 的定域版）。
-    ///
-    /// 调用点是 [`Space::release`](crate::work::unit::space::adapter::Space::release)
-    /// ——**唯一的释放入口**。用户堆页的账目键是 `(asid, 页索引)`，而任何拆掉一块
-    /// 用户区间的路径都得销账；此前销账只在 `MemoryCall::Deallocate` 的臂里，于是
-    /// 另一条能拆到 `Seg::User` 的路径（`Munmap`）**完全不销账**，留下永不消失的
-    /// 记录，等该 VA 复用时的第二次 `mark` 撞 `DuplicateMark`
-    /// （见 `docs/allocator-diagnosis.md` §8）。
-    ///
-    /// 收敛到释放点之后，销账不再依赖"每个调用方都记得"。
-    ///
-    /// 范围口径（页索引落在 `[va>>12, (va+size)>>12)`）只清这次真正拆掉的那些，
-    /// 不误伤同空间里**还活着**的堆页（否则它们下次 free 会报 `UnregisteredFree`
-    /// 假违规）。
-    pub fn retire_range(&self, asid: usize, va: usize, size: usize) -> usize {
-        self.retire_matching(asid, Some((va >> 12, va.saturating_add(size) >> 12)))
-    }
-
     /// `range = None` ⇒ 该 asid 全部；`Some((lo, hi))` ⇒ 页索引落在 `[lo, hi)` 的那些。
     fn retire_matching(&self, asid: usize, range: Option<(usize, usize)>) -> usize {
         let mut g = self.inner.lock();

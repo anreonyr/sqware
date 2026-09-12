@@ -25,6 +25,10 @@ static REAPED: AtomicUsize = AtomicUsize::new(0);
 /// 防 PUSHED 永久为 0 时被误判"全部结束"。一次性：`boot::init` 装出 root 之后
 /// 立即置位（此后所有任务都挂在 root 的 heir 树下，root 退出即 doom 级联）。
 static ROOTED: AtomicBool = AtomicBool::new(false);
+/// 屏障信标的自旋阈值：取够大以避开正常收尾的抖动（正常一轮屏障只等几个核、
+/// 微秒级），又够小以在门的单步超时（15 s）之前把话说出来。
+const BARRIER_REPORT_AT: usize = 20_000_000;
+
 /// 停机互斥：第一个触发 srst 的核胜出，其余 wfi（避免双 srst）。
 static HALTING: AtomicBool = AtomicBool::new(false);
 /// 已到达 halt 的核数 — 关机屏障：胜出核须等**全部**核到达后再断言帧基线。
@@ -71,6 +75,23 @@ pub(super) fn done() -> bool {
     pushed == 0 || REAPED.load(Ordering::Relaxed) == pushed
 }
 
+/// **只读计数**：`(已产生, 已回收)`。信标点名"谁还没归队"时用它 —— 两者不等即为
+/// 「还有任务没走完收尾」，相等而屏障不齐即「有核没到 halt」。
+pub(crate) fn counts() -> (usize, usize) {
+    (
+        PUSHED.load(Ordering::Relaxed),
+        REAPED.load(Ordering::Relaxed),
+    )
+}
+
+/// 屏障已到达的核数与应有核数（信标用）。
+pub(crate) fn barrier() -> (usize, usize) {
+    (
+        HALT_ARRIVED.load(Ordering::Acquire),
+        crate::machine::hart_count(),
+    )
+}
+
 /// 标记根服务已产生（一次性）。由 `boot::init` 在装出 root 之后立即置位；
 /// 守门 `done()` 必须见位才认 true。
 pub(crate) fn rooted() {
@@ -92,7 +113,23 @@ pub(super) fn halt() -> ! {
         // **必须用广播 `yell`**——屏障要求全员到齐，单点 `kick` 会让部分
         // hart 留 WFI 不归队、屏障永远释放不了。
         yell();
+        // **信标**：屏障等不齐时，最后一行日志必须说出"还差几个核"——否则现场只剩
+        // "没有 `system halted`"，无从判断是屏障没齐（有核没到 halt）还是根本没走到
+        // `done()`（有任务没退完，那种情况下本函数压根不会被调用）。
+        // 一次性：只报第一行，之后照旧自旋（诊断不许把停机变成刷屏源）。
+        let mut spins = 0usize;
+        let mut reported = false;
         while HALT_ARRIVED.load(Ordering::Acquire) < machine::hart_count() {
+            spins += 1;
+            if !reported && spins == BARRIER_REPORT_AT {
+                reported = true;
+                let (arrived, total) = barrier();
+                let (pushed, reaped) = counts();
+                crate::putln!(
+                    "[stop] halt 屏障等待：已达 {arrived}/{total} 核；任务 PUSHED={pushed}                      REAPED={reaped}（差 {}）—— 屏障等的是**核**，不是任务",
+                    pushed.saturating_sub(reaped)
+                );
+            }
             core::hint::spin_loop();
         }
         putln!("task: all tasks exited, system halted");

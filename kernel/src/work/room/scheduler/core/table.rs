@@ -160,6 +160,31 @@ pub(crate) fn roster_live() -> (usize, usize) {
     (g.len(), g.values().filter(|w| w.strong_count() > 0).count())
 }
 
+/// **在世任务的 id**（`strong_count > 0`），至多取 8 个：信标用它点名"谁还没走"。
+///
+/// 为什么返回定长数组而不是 `Vec`：本函数在**停机挂住**的现场被调用，而它要在
+/// **持名册锁（L3）**时取数 —— 那时**不能分配**（分配会取 L2，L3→L2 嵌套即 lockdep
+/// 违规，且在挂住的机器上分配未必成功）。故锁内只写定长数组，出锁后由调用方打印。
+#[cfg(feature = "audit")]
+pub(crate) fn roster_live_ids() -> (usize, [usize; 8]) {
+    let g = roster_table().lock();
+    let mut out = [0usize; 8];
+    let mut n = 0usize;
+    let mut more = 0usize;
+    for (id, w) in g.iter() {
+        if w.strong_count() == 0 {
+            continue;
+        }
+        if n < 8 {
+            out[n] = *id;
+            n += 1;
+        } else {
+            more += 1;
+        }
+    }
+    (more, out)
+}
+
 /// 名册：全世界任务的弱引用，**每个任务恰好一次**（`gate` 的快照来源，boot 注入）。
 ///
 /// # 不 panic 的分配（本函数是**唯一**的快照来源，就在 `Spawn` 的路径上）

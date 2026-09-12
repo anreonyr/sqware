@@ -105,6 +105,12 @@ fn wait() -> Option<Arc<Task>> {
             conductor::wake(me);
             conductor::halt();
         }
+        // **停机信标**：必须在**循环内**（每拍一次），不能只在进入 `wait` 时看一次 ——
+        // 收尾期的核是"进一次 `wait` 然后一直 WFI"，进去那一刻根任务往往还没析构，
+        // 一次性检查会永远错过窗口（实测：把它放在循环外，40 次空闲里 `root_gone()`
+        // 恒为 false）。挂住时四个核都睡在 WFI、没有栈帧可读，这一行是唯一能说出
+        // "还差谁"的证据；判据是**时间**（收尾毫无进展 ≥2 s），故正常收尾不会误报。
+        crate::work::room::scheduler::core::beacon::idle(me);
 
         let delta = match timer::due() {
             Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),

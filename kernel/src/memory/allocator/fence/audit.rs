@@ -121,6 +121,59 @@ fn count_kind(frame: &statistics::FrameView, block: &statistics::BlockView, k: K
 
 // ── 泄漏现场取证（只在日志一侧、只在已判泄漏时跑）────────
 
+/// **谁还指着这个块**：把 `addr`（`ArcInner` 基址）当作字，扫一遍 DRAM，报出命中处。
+///
+/// # 为什么要有这一条
+///
+/// `leak: task 1` 的读数形态是 `strong 0 weak 1` —— 载荷已析构、块却因**一枚存活的
+/// `Weak<Task>`** 而未归还。把全仓的 `Weak<Task>` 容器逐个点名排除（名册 / 票根 /
+/// 躯壳 / 站点由 `rip` 清空；`Team.tasks` / `Team.sire` 由逐团队普查给出 0）之后，
+/// 仍然复现 —— 说明**持有者不在我列举出来的容器里**。继续读代码只会继续漏，
+/// 故改成**直接问内存**：`Weak` 对象里就存着这个基址，扫一遍必然命中持有它的那张表。
+///
+/// 代价：一次 DRAM 线性读（128 M ⇒ 千万级字），**只在已判泄漏时跑**（一次性诊断，
+/// 机器已经坏了，速度不重要）。只扫内核镜像 + DRAM 窗口，不碰 MMIO。
+///
+/// 返回命中数；逐条打印命中地址（在内核镜像里的可直接 `nm` 符号化 = 哪一个静态）。
+fn who_holds(addr: usize, cap: usize) -> usize {
+    // **只扫"内核真的映射了"的两段**：内核镜像（静态/BSS）与帧池窗口**去掉保留区**
+    // （initrd / 设备树）。越界即 page fault —— 本轮真踩过一次（扫到 `0x87f90000`），
+    // 于是"诊断"把一次可读的泄漏报告升级成了 panic。
+    let (pool_base, pool_edge, holes) = crate::memory::allocator::frame::heap().window();
+    let mut hits = 0usize;
+    let mut scan = |lo: usize, hi: usize, hits: &mut usize| {
+        let mut p = (lo + 7) & !7;
+        while p + 8 <= hi {
+            // 跳过保留区（未映射/只读之外的区域）。
+            if holes
+                .iter()
+                .flatten()
+                .any(|&(s, e)| p >= pool_base + s * crate::memory::PAGE_SIZE && p < pool_base + e * crate::memory::PAGE_SIZE)
+            {
+                p += crate::memory::PAGE_SIZE;
+                continue;
+            }
+            // SAFETY: 两段窗口都已由 boot 建立恒等映射，对齐读。
+            let w = unsafe { *(p as *const usize) };
+            if w == addr {
+                *hits += 1;
+                if *hits <= cap {
+                    let zone = if p >= super::image_base() && p < super::image_edge() {
+                        "内核镜像（静态/BSS ⇒ 可 nm 符号化）"
+                    } else {
+                        "帧池（堆/栈 ⇒ 动态分配）"
+                    };
+                    crate::putln!("[audit]     <- 指向它的字 @ {p:#x}（{zone}）");
+                }
+            }
+            p += 8;
+        }
+    };
+    scan(super::image_base(), super::image_edge(), &mut hits);
+    scan(pool_base, pool_edge, &mut hits);
+    hits
+}
+
 /// 打印该种类的**全部在册记录**：地址 / 尺寸 / 分配点 `site`（host `addr2line`
 /// 可符号化）。`End::Zero` 判据只说"哪种对象没归零"，说不出"是哪一支分配点、
 /// 哪个对象"——本条补上那两个量。**只读账本、只打印**（不改判据、不写任何表）。
@@ -228,8 +281,56 @@ fn dump_records(kind: Kind) {
                     }
                 }
             }
+            // **谁还指着它**：载荷已析构（`strong 0`）而块未归还 ⇒ 有一枚弱引用活着。
+            // 逐个容器点名排除之后仍然复现，故直接扫内存把持有者找出来（见 `who_holds`）。
+            if strong == 0 {
+                let hits = who_holds(r.addr, 8);
+                crate::putln!("[audit]     -> 全 DRAM 命中 {hits} 处（上限打印 8）");
+            }
         }
     }
+}
+
+/// **`rip` 之后的弱引用普查**（只读；`check_baseline` **之前**跑，与泄漏判据同一快照）。
+///
+/// # 为什么需要它（`leak: task 1` 的定案仪）
+///
+/// `ArcInner<Task>`（`Kind::Task`，152 B）的最后一门是**弱引用**：只要还有一枚
+/// `Weak<Task>` 活着，块就归还不掉 —— 即使载荷早已析构。`scheduler::core::rip`
+/// 把名册（全世界任务的弱引用）**放最后**清空，靠"最后一次弱引用归零 → 级联 drop"
+/// 把外壳全带走。但**名册不是唯一的弱引用容器**：
+///
+/// ```text
+/// 名册 ROSTER（rip 清空）        holders / sites / husks（rip 清空）
+/// Team.tasks: Vec<Weak<Task>>    ← rip **不碰**（随团队析构才消失）
+/// Team.sire:  Weak<Task>         ← rip **不碰**
+/// ```
+///
+/// 全仓的 `Arc<Team>` 只有三处：`Task.heir`、`TaskIdent.team`、以及
+/// `KERNEL_TEAM`（`OnceLock<Arc<Team>>`，**永不析构**）。前两者随任务载荷析构而消失，
+/// 所以"停机时还活着的团队"只可能是内核团队 ⇒ 它那张成员表里的**死条目**是唯一
+/// 能跨过 `rip` 的弱引用。本行把这件事变成两个数：`tasks 总/死` 与 `sire/held` 是否
+/// 还活着（三者都应为 `0`/`false`），并顺带打出泄漏判据真正读的那个数（活着的
+/// `Kind::Task` 块数）。
+#[cfg(feature = "audit")]
+pub fn probe_teams() {
+    let live_tasks = crate::memory::allocator::statistics::view_block().kinds[Kind::Task as usize];
+    let (live_teams, more, dead_total, head) = crate::work::unit::team::weak_census_all();
+    let kernel_line = match crate::work::unit::team::kernel() {
+        Some(t) => {
+            let (n, dead) = t.weak_census();
+            alloc::format!(
+                "内核团队 tasks {n}（死 {dead}）sire_live={} held_live={}",
+                t.sire_live(),
+                t.held_live()
+            )
+        }
+        None => alloc::string::String::from("内核团队未注入"),
+    };
+    crate::putln!(
+        "[audit] teams 活 {live_teams}（超限 {more}）｜死弱引用 {dead_total}（首 4 个 (id, tasks 死, sire 死)={head:?}）\
+         ｜{kernel_line}｜task 块存活={live_tasks}"
+    );
 }
 
 /// 断言关机时各对象种类都到了它的期望终值（逐种类，见模块头）。

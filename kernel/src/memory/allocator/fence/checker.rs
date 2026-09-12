@@ -87,34 +87,13 @@ pub(crate) fn check_frame_head(
     power: usize,
 ) {
     if let Some((base, bpower)) = interior {
-        // **本征信号**：调用者报的 `power` 小于该块的实际 `bpower`。
-        //   · `power < bpower` ⇒ 释放的是**中间帧**（要丢 `2^bpower − 2^power` 帧）；
-        //   · `power == bpower` 且 `base == index` ⇒ 其实是块首，不该命中（判据问题）。
-        // 分开计数，才能说清"这 1811 次到底丢了多少帧"。
-        if power < bpower as usize {
-            LOSSY_FREES.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
-        } else {
-            HEAD_ALIASED.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
-        }
-        let n = INTERIOR_FREES.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
-        // 采样窗口：`caller_site` 要遍历 fp 链并做若干次原子读，不宜进热路径（启动期有
-        // 上千次命中）。前几条足够定位；此后只累加计数（哨兵读计数，不读样本）。
-        if n <= 4 {
-            // 调用者地址：`alloc_site` 走帧指针链（`s0`）逐层读 `ra`，与 `on_alloc` 的分配点
-            // 捕获同源。多打几层是**刻意的**：这摞 `ra` 的深度语义要现场校准，逐层符号化
-            // 才能认出落在 `frame.rs::deallocate` 调用者那一层的是哪个。
-            // 实测（启动期，4 例样本，跨运行稳定）：
-            //   `base=17396 bpower=1` 的前几层 = `0x80235ae0`（落在 `main` 的
-            //   `allocator::init` 闭包附近）
-            //   `base=4080 bpower=4` 的 = `0x8020e48c` / `0x8023e8cc`
-            // **只作线索**：符号化用的二进制与产出日志的那份布局不同，位置只能近似。
-            // 只在采样窗口内走栈（`caller_site` 是 fp 链遍历 + 若干次原子读，不该进热路径）。
-            let (depth, site) = crate::memory::allocator::fence::caller_site();
-            crate::putln!(
-                "[interior] idx={index} addr={addr:#x} power={power} base={base} bpower={bpower} ({n}) \
-                 caller=0x{site:x} depth={depth}"
-            );
-        }
+        // 只累加一个计数。**采样与调用者回溯（`caller_site`）已删**：那套东西是为
+        // "1811 次到底是谁在放中间帧"取证用的，而那个问题已结案 —— 1811 次全部是
+        // `split_block` 粗表项造成的**误判**（修后恒为 0），采样窗口再也不会打开。
+        // 判据本身留着（见本函数文档）：它是"调用者拿小块 layout 释放大块内部帧"
+        // 的唯一入口，而那种事一旦发生就会破坏 `表在手 = 账在手`。
+        let _ = (base, bpower, power);
+        INTERIOR_FREES.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -134,14 +113,6 @@ pub(crate) fn check_frame_head(
 /// （`[conserve]` 裁决 + `interior2 == 0` 的绝对零断言），那里红掉能指名道姓；
 /// 而在产品档把它升成 panic，等于拿一次误判换整机停机。
 pub(crate) static INTERIOR_FREES: ::core::sync::atomic::AtomicUsize =
-    ::core::sync::atomic::AtomicUsize::new(0);
-
-/// **丢帧的**中间帧释放次数（调用者报的 `power` < 该块实际 `power`）。
-pub(crate) static LOSSY_FREES: ::core::sync::atomic::AtomicUsize =
-    ::core::sync::atomic::AtomicUsize::new(0);
-
-/// 命中但 `power >= bpower` 的次数 —— 那些不是"丢帧"，而是判据把块首认成了中间帧。
-pub(crate) static HEAD_ALIASED: ::core::sync::atomic::AtomicUsize =
     ::core::sync::atomic::AtomicUsize::new(0);
 
 

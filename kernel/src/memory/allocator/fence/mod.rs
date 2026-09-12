@@ -404,24 +404,6 @@ pub(crate) fn key(asid: usize, va: usize) -> usize {
 ///
 /// 调用点：`Space::drop`，须先于 ASID 归还（asid 一旦复用，键即换主）。
 #[inline]
-/// **按 VA 范围**注销用户堆账：挂在唯一的释放入口 [`Space::release`] 上
-/// （`crate::work::unit::space::adapter`）。
-///
-/// 默认档是空函数（账本只在 `--features audit` 存在）——调用点不必分档。
-pub(crate) fn retire_range(asid: usize, va: usize, size: usize) {
-    #[cfg(feature = "audit")]
-    {
-        let n = ledger::LEDGER.retire_range(asid, va, size);
-        if n > 0 {
-            crate::putln!("[audit] release retires {n} user-heap records @ {va:#x}+{size:#x}");
-        }
-    }
-    #[cfg(not(feature = "audit"))]
-    {
-        let _ = (asid, va, size);
-    }
-}
-
 pub(crate) fn retire(asid: usize) {
     #[cfg(feature = "audit")]
     {
@@ -675,49 +657,4 @@ pub fn on_frame_free(addr: usize) {
     {
         crate::memory::allocator::statistics::record_frame_give(Kind::Plain);
     }
-}
-
-/// **诊断**：沿帧指针链走到"第一个不属于分配器内部"的返回地址 —— 即真正的调用者。
-///
-/// 为什么不用 `alloc_site`：那个从**本函数**起算深度，而护栏里能取到的头几层是护栏自己
-/// （`checker.rs:99/103`），深度语义随内联变化。这里换成**按位置筛**：丢掉落在
-/// `checker.rs` 那一段的地址，取第一个更外层的 `ra`。
-///
-/// 返回 `(采样深度, 候选地址)`；候选地址须自行 `addr2line` 核对（二进制布局不同则只是线索）。
-///
-/// 取函数指针作锚，±0x400 视为同函数（护栏是 `#[inline(always)]` 的小函数，区间很窄）。
-#[cfg(any(debug_assertions, feature = "audit"))]
-fn near_guard(addr: usize) -> bool {
-    let anchor = crate::memory::allocator::fence::checker::check_frame_head as *const () as usize;
-    addr.abs_diff(anchor) < 0x400
-}
-
-#[cfg(any(debug_assertions, feature = "audit"))]
-pub(crate) fn caller_site() -> (usize, usize) {
-    let mut fp: usize;
-    // SAFETY: 读 s0 无副作用。
-    unsafe { core::arch::asm!("mv {0}, s0", out(reg) fp) };
-    let end = text_end();
-    for depth in 1..24usize {
-        // SAFETY: fp 指向本 hart 当前调用链的帧（帧指针链），只读两个字；
-        // 布局同 `alloc_site`（ra 在 [fp-8]、调用者 fp 在 [fp-16]）。
-        let (next, ret) = unsafe {
-            (
-                (fp as *const usize).sub(2).read_unaligned(),
-                (fp as *const usize).sub(1).read_unaligned(),
-            )
-        };
-        if next <= fp || next - fp > 0x10_0000 || next & 0xF != 0 || ret & 3 != 0 || ret < 0x8020_0000
-            || ret >= end
-        {
-            break;
-        }
-        // 护栏自身那一段（`checker.rs` 的 check_frame_head）不可能是"谁在放中间帧"的答案。
-        // 判据用**函数边界**而不是文件：`check_frame_head` 的地址区间由链接器固定。
-        if !near_guard(ret) {
-            return (depth, ret);
-        }
-        fp = next;
-    }
-    (0, 0)
 }

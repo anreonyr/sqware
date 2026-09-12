@@ -137,39 +137,37 @@ fn bury() {
             .release(z.ident.frame)
             .expect("release: span mismatch");
         drop(z);
-        // ── 临时探针（判据立住即删）：每 200 笔回收读一次池水位 ──
+        // ── 池水位（每 200 笔回收一行）──
         //
-        // `walk` = freelist 走链（**待审计的旧判据**），`held` = pagemeta 说在手
-        // （真相，已由用户态 `calib` 闭环校准过：干净 alloc/free 循环 3000 遍
-        // 零漂移）。两个数在同一把锁下取，故可直接对质。**`held` 单调上涨 = 泄漏**，
-        // 与链的完整度无关。
+        // **一次持锁、一份快照**。先前这里分七次持锁读（`watermark` / `meta_free_frames`
+        // / `freelist_ledger` / `frame_ledger` / `chain_meta_mismatch` / `addr_sets` /
+        // `free_entry_orphans` / `chain_cycle_count`），字段之间因此**可以互相矛盾** ——
+        // 读数看似有信息量，实则是我自己把不同时刻的量摆在一起比。`conserve` 一次给全，
+        // 并自带自洽残差（残差非 0 说明口径本身有漏，那行数就不该拿来下结论）。
+        //
+        // 两个口径的判词：`walk`（走链可见）vs `free`（表说空闲）—— 修好后**逐帧相等**；
+        // `orphan`（表说空闲却不在任何链上）必须为 0；`held` vs `账`（累计分配−累计释放）
+        // 是**跨账恒等式**。三者任一破即"池子记账又开始说两套话"。
         {
             use ::core::sync::atomic::{AtomicUsize, Ordering};
             static REAPS: AtomicUsize = AtomicUsize::new(0);
             let n = REAPS.fetch_add(1, Ordering::Relaxed) + 1;
             if n % 200 == 0 {
-                let f = crate::memory::allocator::frame::heap();
-                let (walk, held, step) = f.watermark();
-                let meta = f.meta_free_frames();
-
-                // `walk`（走链）与 `meta`（只读 pagemeta 求和）是两条独立读法，
-                // **判据就在两者的差**：`meta ≫ walk` ⇒ 池子其实还有内存，是走链
-                // 看不见那些帧（实测 `walk=442 / meta=11963`）⇒ 所谓 OOM 是记账假象。
-                //
-                // 探针的代价是**实测出来的**，不是估的：本行 `walk+meta+held+step`
-                // 与基线持平（3.46 s vs 3.46 s），而曾经同在这条路上的
-                // `reachability()`（分配 `pagemeta.len()` 的位图 + 每桶最多走
-                // `pagemeta.len()` 步）把一次运行从 **3.5 s 拖到 60 s 超时**。
-                // 它现在只作为函数保留，供需要时**手动**调用，不再进热路径。
-                let (fr_net, bk_net) = crate::memory::allocator::frame::FrameAllocator::freelist_ledger();
-                let (taken, given) = crate::memory::allocator::frame::FrameAllocator::frame_ledger();
-                let live = (taken as i64) - (given as i64);
-                let (chk, bad, sample) = f.chain_meta_mismatch();
-                let (cn0, en0, ch0, ent0) = f.addr_sets(0);
-                let (fent, orph, _osample) = f.free_entry_orphans();
+                let c = crate::memory::allocator::frame::heap().conserve();
                 crate::putln!(
-                    "wm reap={n} walk={walk} meta={meta} held={held} step={step} frnet={fr_net} bknet={bk_net} live={live} cycles={} | chainblk={chk} mismatch={bad} sample={sample:?} | freeent={fent} orphan={orph} | p0chain={cn0} p0entry={en0} chain0={ch0:?} entry0={ent0:?}",
-                    crate::memory::allocator::frame::FrameAllocator::chain_cycle_count()
+                    "wm reap={n} walk={} free={} held={} step={} flat={} orphan={} 残差={} 账={} \
+                     | chain={} bad={} | census:{}",
+                    c.walk,
+                    c.idle,
+                    c.held,
+                    c.stepped,
+                    c.flat,
+                    c.orphan_frames,
+                    c.residual(),
+                    c.taken as i64 - c.given as i64,
+                    c.chain_nodes,
+                    c.chain_bad,
+                    c.census_line()
                 );
             }
         }

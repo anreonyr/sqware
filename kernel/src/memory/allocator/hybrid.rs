@@ -29,15 +29,10 @@ impl HybridAllocator {
     pub fn init(&self) -> InitResult<()> {
         block::init()?;
         frame::init()?;
-        // ── 临时探针（判据立住即删）：帧池出厂指纹 ──
-        //
-        // 读的是"一行代码都还没跑"的 `pagemeta`：表项条数 vs 步进覆盖 vs 求和。
-        // 三者若在出厂时就对不上，则运行期看到的 `sum` 虚高有一部分是**先天**的，
-        // 必须与 churn 造成的腐化分开——否则会把出厂状态当成运行期 bug 去修。
-        {
-            let (frames, entries, step, sum) = frame::heap().init_fingerprint();
-            crate::putln!("pool init: frames={frames} entries={entries} step={step} sum={sum}");
-        }
+        // 出厂指纹探针（`pool init: frames=… entries=… step=… sum=…`）**已删**：
+        // 它要回答的是"运行期看到的表自相矛盾有多少是**先天**的"，而那个问题已由
+        // `conserve`（守恒快照 + 自洽残差）在用例起点直接回答 —— 且口径自洽，
+        // 不像旧探针那样"求和"与"步进"两把尺子各说一套。
         Ok(())
     }
 }

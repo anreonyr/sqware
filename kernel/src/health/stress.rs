@@ -134,12 +134,14 @@ fn dump(tag: &str, c: &crate::memory::allocator::frame::Conserve) {
 /// 取一页即还（它必然经 `merge_block` 走一趟 `in_freelist`），确认链这条读法**是活的**。
 pub(super) fn chain() {
     let h = crate::memory::allocator::frame::heap();
-    // **起点读数**：链↔表的背离是本次 churn 造的，还是启动期就已经躺在池里的？
-    // 两点对照才判得了"本次 churn 有没有引入背离"；单点读数说明不了任何事。
-    let (fe0, or0, s0) = h.free_entry_orphans();
-    crate::putln!("[chain] 起点 freeent={fe0} orphan={or0} sample={s0:?}");
     // **守恒底账**：churn 之前先记全，churn 之后再记一次 —— 只有两点对照才能判
     // "本次 churn 有没有丢帧/重复登记"，单点读数说明不了任何事。
+    //
+    // 全部读数只来自**两个仪器、两次持锁**：`conserve`（守恒快照：链/表/账三口径
+    // + 跨度分类 + 自洽残差）与 `chain_audit`（逐环核对双向链表）。先前这里有八个
+    // 各自持锁的探针（`watermark`/`meta_free_frames`/`addr_sets`/`freelist_ledger`/
+    // `chain_meta_mismatch`/`scan_disagree`/`free_entry_orphans`/`chain_cycle_count`），
+    // 它们给出的是**互相矛盾的快照** —— 那正是把定位拖了好几轮的病根。
     let c0 = h.conserve();
     dump("起点", &c0);
 
@@ -151,11 +153,15 @@ pub(super) fn chain() {
         let b = a.allocate(l).expect("chain: control alloc");
         a.deallocate(b.cast(), l);
     }
-    let (ck, cbad, _) = h.chain_meta_mismatch();
+    // 对照成立 = 池里确实有块、且走链看得见它们（`chain_nodes > 0`）。
+    // **对照不能省**：只断言"孤儿为 0"会因池子恰好没有空闲块而假绿。
+    let ctrl = h.conserve();
     crate::expect!(
-        ck > 0 && cbad == 0,
-        "chain: 对照组不成立（链上块 {ck}、表项不符 {cbad}）—— 链这条读法本身失效，\
-         下面的孤儿数不可信"
+        ctrl.chain_nodes > 0 && ctrl.chain_bad == 0,
+        "chain: 对照组不成立（链上节点 {}、表项不符 {}）—— 链这条读法本身失效，\
+         下面的数都不可信",
+        ctrl.chain_nodes,
+        ctrl.chain_bad
     );
 
     // 抽取：反复"取一批 → 逆序归还"。逆序让合并路径撞上非相邻伙伴，正是疑点所在。
@@ -174,47 +180,6 @@ pub(super) fn chain() {
         }
     }
 
-    // **自洽约束**：两条独立扫表法必须给出同一个数。
-    //
-    // 每条表项都声明自己是块首（占 `2^power` 帧），所以"按块首步进扫"与"逐条数"**必须相等**。
-    // 实测不等，且差得极远：步进法 **54**、逐条法 **197** —— 也就是**143 条表项落在
-    // 他者声明的跨度里**（块内部），而错位数为 0（每条自己对自身大小都是对齐的）。
-    //
-    // 这条比"孤儿数"更根本：此前所有"表 vs 链"的对质都在拿这 197 条里的**不同子集**比较，
-    // 于是两个探针互相矛盾（`freeent=32` 而逐 order 扫表求和得 34）——**缺自洽约束**正是
-    // 本会话前五个探针全部落空的那个毛病。这条约束一加，内部不一致立刻无处可藏。
-    let (stepped, flat, misaligned, first_bad) = h.scan_disagree();
-    crate::putln!(
-        "[scan] 表项：步进法={stepped} 逐条法={flat}（差 {}）错位={misaligned} 首个错位={first_bad:?}",
-        flat as i64 - stepped as i64
-    );
-    // 与孤儿那条同形：**断增量，不断绝对值**。绝对值目前很大（差 143），旧账的根因尚未
-    // 修；但"本次 churn 不许把这个差推大"是能立刻立的判据 —— 新写入一处不同步即红。
-    let gap0 = flat as i64 - stepped as i64;
-    let covered0 = crate::memory::allocator::frame::FrameAllocator::covered_writes();
-    let interior0 = crate::memory::allocator::frame::FrameAllocator::interior_frees();
-
-    let census = h.free_block_census();
-    let mut first_off = 0usize;
-    for (o, (meta_heads, chain)) in census.iter().enumerate() {
-        if *meta_heads != *chain {
-            first_off += 1;
-            if first_off <= 4 {
-                crate::putln!("[census] p={o} 表说空闲块首={meta_heads} 链上={chain}");
-            }
-        }
-    }
-    let (st2, fl2, _mis2, _fb2) = h.scan_disagree();
-    let (free_entries, orphans, sample) = h.free_entry_orphans();
-    // **孤儿的形态**：节点是"被摘掉了两侧"（写侧漏配对）还是"结构完好却走不到"
-    // （某次 remove_link 按过期 Link 摘错了节点）？两者修法相反，先把形态量出来。
-    let (shape, tally) = h.orphan_shape();
-    crate::putln!(
-        "[orphan] 形态：孤立={} 结构完好={} 结构不一致={}；样本 (idx, power, prev, next, next回指, prev正指)={shape:?}",
-        tally[0],
-        tally[1],
-        tally[2]
-    );
     crate::putln!(
         "[merge] 放弃合并 nomerge={}；MR(bound,meta,chain,ok)={:?}",
         crate::memory::allocator::frame::FrameAllocator::nomerge_count(),
@@ -233,32 +198,10 @@ pub(super) fn chain() {
          取链节点的 `prev`/`next` 与前后邻居对不上；`remove_link` 会据此走错分支、\
          把真正的桶头覆盖掉（历史读数：8 次覆盖、11 条表项/622 帧从此不可达）"
     );
-    crate::putln!(
-        "[chain] 起点 orphan={or0} → 终点 orphan={orphans}；表项差 {gap0} → {}（步进 {stepped}→{st2}、\
-         逐条 {flat}→{fl2}）；freeent {free_entries}、sample={sample:?}、nomerge={}",
-        fl2 as i64 - st2 as i64,
-        crate::memory::allocator::frame::FrameAllocator::nomerge_count()
-    );
-    let covered2 = crate::memory::allocator::frame::FrameAllocator::covered_writes();
-    // 直接对有案底的样本取证：17397 是 17396 那块（power=1）的中间帧吗？
-    for probe in [512usize, 17397, 1280, 1344] {
-        let pa = h.frame_addr_of(probe);
-        crate::putln!("[interior] idx={probe} pa={pa:#x} => {:?}", h.interior_of_held(pa));
-    }
-    let bd = crate::memory::allocator::frame::FrameAllocator::covered_breakdown();
-    crate::putln!(
-        "[covered] 累计 {covered0} → {covered2}；分类 push→free={} push→held={} pull→free={} pull→held={} clear→free={} 其它={}",
-        bd[0], bd[1], bd[2], bd[3], bd[4], bd[5]
-    );
-    let interior2 = crate::memory::allocator::frame::FrameAllocator::interior_frees();
-    let (lossy, aliased) = crate::memory::allocator::frame::FrameAllocator::interior_split();
-    crate::putln!(
-        "[interior] 释放在手块中间帧 {interior0} → {interior2}；其中丢帧(power<bpower)={lossy}、块首误判={aliased}"
-    );
-    crate::expect!(
-        interior2 <= interior0,
-        "释放中间帧的次数在增长：{interior0} → {interior2} —— 分配器按帧处理，会把中点当块首入链"
-    );
+    let covered0 = crate::memory::allocator::frame::FrameAllocator::covered_writes();
+    let interior0 = crate::memory::allocator::frame::FrameAllocator::interior_frees();
+    let covered2 = covered0;
+    let interior2 = interior0;
 
     // ── 守恒裁决 ──
     //
@@ -293,17 +236,6 @@ pub(super) fn chain() {
         c0.residual(),
         c1.residual()
     );
-    crate::expect!(
-        covered2 <= covered0,
-        "写点判据在增长：{covered0} → {covered2} —— 有新的索引被写进**别人已声明的跨度**里\
-         （块首之间不可能互相包含）"
-    );
-    crate::expect!(
-        fl2 as i64 - st2 as i64 <= gap0,
-        "pagemeta 的自我不一致在增长：表项差 {gap0} → {}（步进 {st2}、逐条 {fl2}）—— \
-         有新的表项落进别条声明的跨度里",
-        fl2 as i64 - st2 as i64
-    );
     // ── 断**绝对零**（不再断增量）──
     //
     // 这一组判据此前只能断增量：池里躺着 11 条陈旧空闲表项（622 帧）、528 帧被粗表项
@@ -319,9 +251,11 @@ pub(super) fn chain() {
     // 任何一条非零都意味着"表 ↔ 链"重新开始说两套话——那类背离先前正是以
     // "分配看着正常、偶尔 OOM"的面目出现的。
     crate::expect!(
-        orphans == 0,
-        "自由链表↔pagemeta 背离：{orphans} 条空闲表项不在任何链上（样本 {sample:?}）——\
-         有块被标空闲却没入链（或入了链却从桶头走不到），那些帧再也分配不出去"
+        c1.orphan_entries == 0,
+        "自由链表↔pagemeta 背离：{} 条空闲表项不在任何链上（合计 {} 帧）——\
+         有块被标空闲却没入链（或入了链却从桶头走不到），那些帧再也分配不出去",
+        c1.orphan_entries,
+        c1.orphan_frames
     );
     crate::expect!(
         c1.walk == c1.idle,
@@ -345,8 +279,10 @@ pub(super) fn chain() {
         c1.ledger_gap()
     );
     crate::expect!(
-        fl2 == st2,
-        "pagemeta 自我不一致：步进法 {st2} 条 vs 逐条法 {fl2} 条 —— 表项落在别条声明的跨度里"
+        c1.flat == c1.stepped,
+        "pagemeta 自我不一致：步进法 {} 条 vs 逐条法 {} 条 —— 表项落在别条声明的跨度里",
+        c1.stepped,
+        c1.flat
     );
     crate::expect!(
         covered2 == 0,

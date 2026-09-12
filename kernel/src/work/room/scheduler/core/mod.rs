@@ -13,6 +13,7 @@
 //
 // 外部路径不变：`scheduler::core::X` 照旧（重导出于下）。
 
+pub(super) mod beacon;
 pub(super) mod fetch;
 pub(super) mod hart;
 pub(super) mod ident;
@@ -22,6 +23,9 @@ pub(super) mod table;
 pub(super) use fetch::fetch;
 pub(super) use hart::Scheduler;
 pub(super) use table::SCHEDULERS;
+
+/// 停机信标：`boot` 在装出根任务后武装它（会话结束的判据）。
+pub(crate) use beacon::arm as beacon_arm;
 
 // scheduler 之外消费的表面（messenger / envcall / unit / diagnose）。
 pub use ident::{Identity, ident};

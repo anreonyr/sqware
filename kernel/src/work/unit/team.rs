@@ -92,6 +92,48 @@ impl Team {
         });
     }
 
+    /// 成员簿记的 `(条数, 死条数)`：`strong_count == 0` 的条目是**纯垃圾** —— 它
+    /// 唯一的作用就是把那个任务的 `ArcInner`（`Kind::Task`，152 B）扣住不放，而载荷
+    /// 早已析构。停机普查用（只读，不 upgrade——`upgrade` 会 +1 强计数，用它观测就
+    /// 改变了被观测的事实）。
+    ///
+    /// **为什么这条普查非做不可**：`scheduler::core::rip` 把名册（全世界任务的弱引用）
+    /// **放最后**清空，靠"最后一次弱引用归零 → 级联 drop"把外壳全带走。但**名册不是
+    /// 唯一的弱引用容器** —— 本表与 [`Self::sire`] 也存 `Weak<Task>`，而
+    /// [`KERNEL_TEAM`] 是 `OnceLock<Arc<Team>>` **永不析构**：它这张表里的死条目
+    /// 永远不会被那次级联带走。
+    pub(crate) fn weak_census(&self) -> (usize, usize) {
+        let g = self.tasks.lock();
+        (
+            g.len(),
+            g.iter().filter(|w| Weak::strong_count(w) == 0).count(),
+        )
+    }
+
+    /// `held`（未放行引导线程，**强引用**）里那枚还在不在。
+    pub(crate) fn held_live(&self) -> bool {
+        self.held
+            .lock()
+            .as_ref()
+            .is_some_and(|t| Arc::strong_count(t) > 0)
+    }
+
+    /// `sire`（建域者的弱引用）是否还指着活对象（空 `Weak` 恒 false）。
+    pub(crate) fn sire_live(&self) -> bool {
+        self.sire.strong_count() > 0
+    }
+
+    /// `sire` 是否是**一枚非空、但对象已死的弱引用** —— 那正是"扣住外壳"的形态：
+    /// 空 `Weak`（`Weak::new()`）不占任何分配，而死弱引用会把那个任务的 `ArcInner`
+    /// 扣到团队析构。
+    ///
+    /// **判据不能写成 `!as_ptr().is_null()`**：`Weak::new()` 的指针是**悬垂值**不是
+    /// 空值，那样写会把"从未定过 sire"的内核团队报成"扣着一个死对象"（实测：普查里
+    /// 恒报 `死弱引用 1`）。故与一枚新建的空 `Weak` 逐址比较。
+    pub(crate) fn sire_armed(&self) -> bool {
+        self.sire.as_ptr() != Weak::<Task>::new().as_ptr()
+    }
+
     /// 成员簿记快照（cull 遍历用：快照后放锁，锁外逐条处理）。
     pub(crate) fn tasks_snapshot(&self) -> Vec<Weak<Task>> {
         self.tasks.lock().clone()
@@ -181,8 +223,81 @@ impl TeamBuilder {
         if let Some(sire) = team.sire.upgrade() {
             sire.adopt(team.clone());
         }
+        #[cfg(feature = "audit")]
+        register(&team);
         team
     }
+}
+
+/// **全部团队的弱引用**（普查用；仅 audit）。
+///
+/// 为什么需要它：`ArcInner<Task>` 的最后一门是**弱引用**，而全仓的 `Weak<Task>`
+/// 容器除名册（`rip` 清空）之外还有 `Team.tasks` / `Team.sire` —— 那些弱引用随**团队
+/// 析构**才消失。停机普查若只看内核团队（唯一永不析构的那个）就会**瞎**：真凶可能是
+/// 任何一个"还活着"的团队。本表让普查能走遍全部团队，逐个报出"死弱引用"有几条。
+///
+/// 代价与安全：只存 `Weak`（不给团队续命），条目数 = 本次开机建立过的团队数（个位数），
+/// 且每次普查顺带把死条目剔掉。**仅 audit 档存在**：产品档不需要它。
+#[cfg(feature = "audit")]
+static TEAMS: OnceLock<SpinLock<Vec<Weak<Team>>>> = OnceLock::new();
+
+#[cfg(feature = "audit")]
+fn teams() -> &'static SpinLock<Vec<Weak<Team>>> {
+    TEAMS.get_or_init(|| SpinLock::new_level(Level::L3, Vec::new()))
+}
+
+/// 登记一个团队（构造点调用；仅 audit）。
+#[cfg(feature = "audit")]
+pub(crate) fn register(team: &Arc<Team>) {
+    teams().lock().push(Arc::downgrade(team));
+}
+
+/// **逐团队弱引用普查**：`(活团队数, 抄不下的多余额, 死条目总数, 首 4 个 (团队 id, tasks 死, sire 死))`。
+///
+/// 顺带把**已死团队的条目**从登记表里剔掉（那些条目自己也占着团队外壳）。
+///
+/// # 锁纪律（第一版在这里撞了 lockdep）
+///
+/// `TEAMS` 与 `Team.tasks` **都是 L3**：持前者再取后者即"同层嵌套"，lockdep 当场
+/// 报违规（`lock/depend.rs:112`）—— 而且是在关机钩子里炸，整轮报 panic。故分两段：
+/// ① 持 `TEAMS` 锁时只做"剔除死条目 + 抄出活团队的强引用"，随即放锁；
+/// ② 出锁后逐个团队读 `tasks`（每次只有一把 L3 在手）。
+#[cfg(feature = "audit")]
+pub(crate) fn weak_census_all() -> (usize, usize, usize, [(TeamId, usize, bool); 4]) {
+    /// 一次能普查的团队数上限（团队是"每个程序一个"，量级个位；超出只记数）。
+    const CAP: usize = 24;
+    let mut live_refs: [Option<Arc<Team>>; CAP] = [const { None }; CAP];
+    let mut live = 0usize;
+    let mut more = 0usize;
+    {
+        let mut g = teams().lock();
+        g.retain(|w| match w.upgrade() {
+            None => false,
+            Some(t) => {
+                if live < CAP {
+                    live_refs[live] = Some(t);
+                    live += 1;
+                } else {
+                    more += 1;
+                }
+                true
+            }
+        });
+    }
+    let mut dead_total = 0usize;
+    let mut head = [(TeamId::new(0), 0usize, false); 4];
+    let mut n = 0usize;
+    for slot in live_refs.iter_mut().take(live) {
+        let Some(t) = slot.take() else { continue };
+        let (_, dead_tasks) = t.weak_census();
+        let dead_sire = !t.sire_live() && t.sire_armed();
+        dead_total += dead_tasks + usize::from(dead_sire);
+        if (dead_tasks > 0 || dead_sire) && n < 4 {
+            head[n] = (t.id, dead_tasks, dead_sire);
+            n += 1;
+        }
+    }
+    (live, more, dead_total, head)
 }
 
 /// 内核团队单例（拥有内核地址空间；内核任务挂此团队）。
@@ -192,7 +307,7 @@ pub(crate) static KERNEL_TEAM: OnceLock<Arc<Team>> = OnceLock::new();
 pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     KERNEL_TEAM.get_or_init(|| {
         let id = alloc_team_id();
-        Arc::new(Team {
+        let t = Arc::new(Team {
             space,
             tasks: SpinLock::new_level(Level::L3, Vec::new()),
             name: Name::new("kernel").expect("kernel team name"),
@@ -200,7 +315,10 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
             id,
             sire: Weak::new(),
             default_entry: OnceLock::new(),
-        })
+        });
+        #[cfg(feature = "audit")]
+        register(&t);
+        t
     })
 }
 

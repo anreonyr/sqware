@@ -121,7 +121,11 @@ pub fn init() -> ! {
     #[cfg(not(feature = "framework"))]
     crate::health::run();
 
-    spawn_root().expect("boot spawn failed");
+    // 根任务交给信标：它一走即"会话结束"，信标据此把收尾期与会话期的空档分开
+    // （见 `scheduler::core::beacon` 的头注）。
+    if let Some(root) = spawn_root().expect("boot spawn failed") {
+        crate::work::room::scheduler::core::beacon_arm(&root);
+    }
 
     // 根服务已产生：标记 `ROOTED` 让 `done()` 守门放行——防 PUSHED==0 永久误判为
     // "全部结束"（此刻其实还没有任何任务）。**必须在 HSM 拉起副核之前**——副核从
@@ -177,6 +181,9 @@ fn register_runtime_hooks() {
         crate::memory::allocator::fence::audit::probe_messenger,
         crate::work::room::scheduler::core::rip,
         crate::memory::allocator::block::flush,
+        // 弱引用普查：必须在 `rip` **之后**（看的就是它清完名册之后还剩谁扣着外壳），
+        // 且在 `check_baseline` **之前**（与泄漏判据同一快照）。
+        crate::memory::allocator::fence::audit::probe_teams,
         crate::memory::allocator::fence::audit::check_baseline,
     ];
     #[cfg(not(feature = "audit"))]
@@ -194,9 +201,11 @@ fn register_runtime_hooks() {
 /// 之后所有任务都由 root 产生（`Build`/`Spawn`/`Hatch`）；系统在全部任务回收后
 /// 自然停机（`conductor::done`）。清单与设备语义的**解释权都在 root**——内核不含
 /// 清单格式，也不解释设备（`docs/driver.md` §3.1.3）。
-fn spawn_root() -> Result<(), MapError> {
+fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>>, MapError> {
     let Some(region) = machine::info().initrd() else {
-        return Ok(());
+        // 无 initrd ⇒ 没有任何任务会被产生；`conductor::done` 的 `PUSHED == 0`
+        // 分支保证照样能停机。故这里返回"没有根任务"（信标不武装）。
+        return Ok(None);
     };
     // initrd 区恒等映射（=物理地址），直接按其物理基址读。
     let blob: &'static [u8] =
@@ -269,7 +278,7 @@ fn spawn_root() -> Result<(), MapError> {
     #[cfg(feature = "audit")]
     kernel().expect("kernel team not initialized").space.audit();
 
-    Ok(())
+    Ok(Some(bootstrap))
 }
 
 /// boot 借映块统一的只读页标志（清单视图 / 配对块——同一种东西，同一份标志）。
