@@ -81,7 +81,7 @@ unsafe impl Allocator for FrameAllocator {
             }
             // 取出的帧就来自空闲链本身——"哪些帧空闲"的唯一真相是 freelist，
             // pagemeta 的 free 位是它的派生视图，没有第二份每页位图要对。
-            super::statistics::record_frame_take();
+            super::statistics::record_frame_take(index, power);
             Ok(NonNull::slice_from_raw_parts(
                 NonNull::new(addr).ok_or(AllocError)?,
                 size,
@@ -111,7 +111,7 @@ unsafe impl Allocator for FrameAllocator {
             let index = frame.frame_index(addr);
             // 归还入总量账（`occupied` 减一）。pagemeta 是"这帧在不在手"的唯一真相，
             // 总量账只是水位；合并在下一句里做。
-            super::statistics::record_frame_give();
+            super::statistics::record_frame_give(index);
             frame.merge_block(index, power);
         }
     }
@@ -169,6 +169,9 @@ impl FrameInner {
             .try_reserve(max_frame)
             .map_err(|_| InitError::OutOfMemory)?;
         self.pagemeta.resize_with(max_frame, || None);
+        // 每帧类目表与 pagemeta 同批（都在"所有 bump 分配完成"之前），尺寸按本步的
+        // 暂估帧数 —— 它 ≥ 第二步收缩后的真实帧数，故索引永不出界。
+        super::statistics::install_frame_kinds(max_frame)?;
 
         // 第二步：此时所有 bump 分配已完成，确定实际基址并收缩 Vec。
         // base ≥ prov_base（frontier 单调前进）⇒ 本步尺寸 ≤ 第一步，

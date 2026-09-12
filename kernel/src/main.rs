@@ -18,17 +18,6 @@ mod memory;
 mod runtime;
 mod work;
 
-/// 帧/块的**种类标注**（`tag!(Stack, frame)`）随 `fence` 层一起删掉了：种类词汇
-/// （`Kind` / 帧种类表 / 块类账目）不再存在，故这里保留一个**恒等**宏 ——
-/// 12 处调用点分属空间/装载/页表/后备仓，改它们只是把无关文件的 diff 改一遍，
-/// 语义上什么都没变（标注本来就是诊断面）。
-#[macro_export]
-macro_rules! tag {
-    ($kind:ident, $v:expr) => {
-        $v
-    };
-}
-
 use core::arch::global_asm;
 
 use crate::memory::allocator;

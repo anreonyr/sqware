@@ -329,8 +329,10 @@ def existing_violation_note [file: path] {
     ['\[case\] FAIL ', "测试框架用例失败（framework）"]
     ['frame freelist corrupt', "帧空闲链被写坏（pop_link 的降级分支）"]
   ]
+  # 拼接而非 `$"…(…)…"`：插值里的括号会被当成子表达式（nu 0.115 实测踩过，
+  # 这条正是踩点 —— 命中时整轮不是 FAIL 而是 nu 自己报 Command not found）。
   for k in $known {
-    if (hit $k.0 $file) { return $"(内核自报违约：($k.1))" }
+    if (hit $k.0 $file) { return ("内核自报违约：" + $k.1) }
   }
   ""
 }

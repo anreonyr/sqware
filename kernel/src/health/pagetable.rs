@@ -78,9 +78,12 @@ pub(super) fn pagetable() {
 
     let held_after = crate::memory::allocator::statistics::frame_occupied()
         - crate::memory::allocator::statistics::block_occupied();
+    // 失败时把**逐类**读数一并打出来：净漏帧只说"少了多少"，逐类读数直接说
+    // "漏的是哪一类"（判据的把手，不是又一条判据）。
     crate::expect!(
         held_before == held_after,
-        "net frames leaked: {held_before} → {held_after}"
+        "net frames leaked: {held_before} → {held_after}（逐类 {}）",
+        crate::memory::allocator::statistics::frame_kinds()
     );
     drop(space);
 }
