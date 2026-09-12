@@ -197,15 +197,18 @@ impl TeamBuilder {
     /// **血缘闭合**：sire 非空 ⇒ 立即推进 sire.heir（强持有）。见文件头 K1。
     pub fn spawn(self) -> Arc<Team> {
         let id = alloc_team_id();
-        let team = Arc::new(Team {
-            space: Arc::new(self.space),
-            tasks: SpinLock::new_level(Level::L3, Vec::new()),
-            name: self.name,
-            held: SpinLock::new_level(Level::L3, Vec::new()),
-            id,
-            sire: self.sire,
-            default_entry: OnceLock::new(),
-        });
+        let team = crate::tag!(
+            Team,
+            Arc::new(Team {
+                space: crate::tag!(Space, Arc::new(self.space)),
+                tasks: SpinLock::new_level(Level::L3, Vec::new()),
+                name: self.name,
+                held: SpinLock::new_level(Level::L3, Vec::new()),
+                id,
+                sire: self.sire,
+                default_entry: OnceLock::new(),
+            })
+        );
         if let Some(sire) = team.sire.upgrade() {
             sire.adopt(team.clone());
         }
@@ -220,16 +223,18 @@ pub(crate) static KERNEL_TEAM: OnceLock<Arc<Team>> = OnceLock::new();
 pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     KERNEL_TEAM.get_or_init(|| {
         let id = alloc_team_id();
-        let t = Arc::new(Team {
-            space,
-            tasks: SpinLock::new_level(Level::L3, Vec::new()),
-            name: Name::new("kernel").expect("kernel team name"),
-            held: SpinLock::new_level(Level::L3, Vec::new()),
-            id,
-            sire: TaskWeak::empty(),
-            default_entry: OnceLock::new(),
-        });
-        t
+        crate::tag!(
+            Team,
+            Arc::new(Team {
+                space,
+                tasks: SpinLock::new_level(Level::L3, Vec::new()),
+                name: Name::new("kernel").expect("kernel team name"),
+                held: SpinLock::new_level(Level::L3, Vec::new()),
+                id,
+                sire: TaskWeak::empty(),
+                default_entry: OnceLock::new(),
+            })
+        )
     })
 }
 

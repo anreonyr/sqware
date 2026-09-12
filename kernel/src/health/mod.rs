@@ -41,6 +41,7 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 }
 
 pub mod pagetable;
+pub mod shell;
 pub mod spare;
 pub mod stress;
 
@@ -69,6 +70,13 @@ crate::test! {
     }
 }
 
+#[cfg(feature = "framework")]
+crate::test! {
+    "shell: 内核原语外壳（任务/团队/空间）造-收闭环" {
+        shell::accept();
+    }
+}
+
 // ── 旧档入口（非 framework）─────────────────────────────────────────────────
 //
 // 与框架档互斥：`boot.rs` 按 feature 二选一（同一位置、同一时点）。
@@ -81,5 +89,6 @@ pub fn run() {
         spare::accept();
         pagetable::pagetable();
         stress::accept();
+        shell::accept();
     }
 }

@@ -83,7 +83,7 @@ pub(super) fn pagetable() {
     crate::expect!(
         held_before == held_after,
         "net frames leaked: {held_before} → {held_after}（逐类 {}）",
-        crate::memory::allocator::statistics::frame_kinds()
+        crate::memory::allocator::statistics::kinds()
     );
     drop(space);
 }

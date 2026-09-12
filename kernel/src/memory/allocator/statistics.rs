@@ -18,15 +18,19 @@
 //!
 //! # 类目（`Kind` / `tag!` / 逐类在册数）
 //!
-//! 除了那四个总数，本模块还收着"**这一笔分配是干什么用的**"这一整套：词表
-//! [`Kind`]、标注 [`mark`]、每帧类目表、逐类在册数 [`frame_kinds`]，以及那枚把
-//! 它们串起来的宏 [`tag!`]。**判据的把手**是最后一项：净漏帧非 0 时，逐类读数直接
-//! 说出漏的是哪一类，不必从总量反推机制。
+//! 除了那四笔总数，本模块还收着"**这一笔分配是干什么用的**"这一整套：词表
+//! [`Kind`]、标注 [`mark`]、两张类目表（帧侧一帧一格、块侧一格 256 B）、逐类在册数
+//! [`kinds`]，以及那枚把它们串起来的宏 [`tag!`]。**判据的把手**是最后一项：净额非 0
+//! 时，逐类读数直接说出漏的是哪一类，不必从总量反推机制。
+//!
+//! 两张表**不合并**：粒度不同，且会互相覆盖（一个 `Prime` 池页里再有一个 `Task` 块，
+//! 池页归还时按首格读会读到 `Task` ⇒ 计数漂移）。计数**合并成一份**：判据是逐类净额，
+//! 与容器无关，合成一份就不必为"哪一侧"再造一条读数。
 //!
 //! 这一整套只在 debug / framework 档存在（与读侧同一个 gate）：
 //! · release 档 `Kind` 连类型都不存在——宏恒等展开，分配器调用点跨档同形；
-//! · 类目表与标注格都不进产物（前者在 release 下不装配、后者整块 cfg out），
-//!   热路径在 release 档只剩原来那两笔 RMW。
+//! · 两张类目表与标注格都不进产物（release 下不装配、整块 cfg out），热路径在
+//!   release 档只剩原来那两笔 RMW。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -60,12 +64,16 @@ pub(crate) enum Kind {
     Spare,
     Prime,
     Probe,
+    // ── 块侧：内核原语的外壳（`Arc<Task>` / `Arc<Team>` / `Arc<Space>`）──
+    Task,
+    Team,
+    Space,
 }
 
 #[cfg(any(debug_assertions, feature = "framework"))]
 impl Kind {
     /// 类的个数（计数数组与 `ALL` 的长度）。
-    pub(crate) const COUNT: usize = 13;
+    pub(crate) const COUNT: usize = 16;
 
     /// 全部类（次序 = 判别式 = 打印次序）。
     pub(crate) const ALL: [Kind; Kind::COUNT] = [
@@ -82,6 +90,9 @@ impl Kind {
         Kind::Spare,
         Kind::Prime,
         Kind::Probe,
+        Kind::Task,
+        Kind::Team,
+        Kind::Space,
     ];
 
     /// 下标 = 判别式（计数数组按它索引）。
@@ -105,6 +116,9 @@ impl Kind {
             Kind::Spare => "spare",
             Kind::Prime => "prime",
             Kind::Probe => "probe",
+            Kind::Task => "task",
+            Kind::Team => "team",
+            Kind::Space => "space",
         }
     }
 }
@@ -259,6 +273,103 @@ fn frame_kind_at(index: usize) -> Kind {
     frame_kind_table()[index]
 }
 
+// ── 类目：每块类目表（块侧；一格 = `BLOCK_KIND_GRAIN` 字节）────────
+
+/// 块类目表的粒度位移：一格 = `1 << 7` = 128 B。
+///
+/// **为什么是 7 而不是 8**（实测定的）：内核原语的三类外壳里最小的那个是
+/// `Arc<Task>`（`ArcInner<Task>` 128 B = `power 7`）；阈值取 8 会把"任务外壳"这一类
+/// 正好漏在表外——而它就是 `leak: task 1` 那一族要点的名。取 7 的代价是表从
+/// `区/256` 涨到 `区/128`（16 MiB 区 ⇒ 128 KiB，0.78%）。
+///
+/// `power < BLOCK_KIND_SHIFT` 的块（≤ 64 B）比一格还小，落不进去：那些块**两侧都按
+/// `Plain` 记**（take 不记它的标注、give 也记 `Plain`）——两侧必须对称，否则 take 记了
+/// 标注、give 读回 `plain`，逐类账会一笔一笔地漂（这正是本条从 8 改成 7 时当场量的
+/// 现象：`task` 每轮 +1、`plain` 每轮 −1）。
+#[cfg(any(debug_assertions, feature = "framework"))]
+pub(crate) const BLOCK_KIND_SHIFT: usize = 7;
+
+/// 每块类目表句柄：覆盖块分配器的 free 区（与 `Tally` 同一 `base`），
+/// `slot = (addr - base) >> BLOCK_KIND_SHIFT`。一页可容多格 ⇒ 一格里可容多个小块，
+/// 故与帧侧同形：**取时写满该块覆盖的格，还时读首格**。
+#[cfg(any(debug_assertions, feature = "framework"))]
+struct BlockKinds {
+    ptr: *mut Kind,
+    len: usize,
+    base: usize,
+}
+
+// SAFETY: 同 `FrameKinds` —— 句柄装配一次后不变；所指内存只经
+// `record_block_take`/`record_block_give` 在池锁内（`pull`/`push` 路径）读写。
+#[cfg(any(debug_assertions, feature = "framework"))]
+unsafe impl Send for BlockKinds {}
+#[cfg(any(debug_assertions, feature = "framework"))]
+unsafe impl Sync for BlockKinds {}
+
+#[cfg(any(debug_assertions, feature = "framework"))]
+static BLOCK_KINDS: OnceLock<BlockKinds> = OnceLock::new();
+
+/// 装配块类目表（覆盖 `[base, base + len)` 的字节区间）。非 debug 档 no-op。
+///
+/// # Errors
+///
+/// - 类目表分配失败 → [`InitError::OutOfMemory`]。
+/// - 重复装配 → [`InitError::AlreadyInitialized`]。
+#[cfg(any(debug_assertions, feature = "framework"))]
+pub(crate) fn install_block_kinds(base: usize, len: usize) -> Result<(), super::InitError> {
+    let slots = len >> BLOCK_KIND_SHIFT;
+    let mut v: Vec<Kind> = Vec::new();
+    v.try_reserve(slots)
+        .map_err(|_| super::InitError::OutOfMemory)?;
+    v.resize(slots, Kind::Plain);
+    let slice: &'static mut [Kind] = Box::leak(v.into_boxed_slice());
+    let h = BlockKinds {
+        ptr: slice.as_mut_ptr(),
+        len: slice.len(),
+        base,
+    };
+    BLOCK_KINDS
+        .set(h)
+        .map_err(|_| super::InitError::AlreadyInitialized)
+}
+
+#[cfg(not(any(debug_assertions, feature = "framework")))]
+pub(crate) fn install_block_kinds(_base: usize, _len: usize) -> Result<(), super::InitError> {
+    Ok(())
+}
+
+#[cfg(any(debug_assertions, feature = "framework"))]
+fn block_kind_table() -> (&'static mut [Kind], usize) {
+    let h = BLOCK_KINDS
+        .get()
+        .expect("block kinds not installed (block::init 应先调 install_block_kinds)");
+    // SAFETY: 见 `BlockKinds` 的 SAFETY。
+    let t = unsafe { core::slice::from_raw_parts_mut(h.ptr, h.len) };
+    (t, h.base)
+}
+
+/// 写下 `addr` 起 `1 << power` 字节这段的类目（`power < BLOCK_KIND_SHIFT` ⇒ 不落）。
+#[cfg(any(debug_assertions, feature = "framework"))]
+fn note_block_kind(addr: usize, power: usize, k: Kind) {
+    if power < BLOCK_KIND_SHIFT {
+        return;
+    }
+    let (t, base) = block_kind_table();
+    let first = (addr - base) >> BLOCK_KIND_SHIFT;
+    t[first..first + (1 << (power - BLOCK_KIND_SHIFT))].fill(k);
+}
+
+/// 读 `addr` 这一块的类目；`power < BLOCK_KIND_SHIFT` ⇒ `Plain`（那些块不落类目，
+/// 与 [`record_block_take`] 的那一支对称）。
+#[cfg(any(debug_assertions, feature = "framework"))]
+fn block_kind_at(addr: usize, power: usize) -> Kind {
+    if power < BLOCK_KIND_SHIFT {
+        return Kind::Plain;
+    }
+    let (t, base) = block_kind_table();
+    t[(addr - base) >> BLOCK_KIND_SHIFT]
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     NotInitialized,
@@ -273,9 +384,10 @@ struct Stats {
     spare_occupied: AtomicUsize,
     /// 后备仓**定容**总量（`spare::init` 报一次；余量由此减去在手段数得出）。
     spare_total: AtomicUsize,
-    /// 逐类在册帧数（下标 = `Kind::ix`）。
+    /// 逐类在册数（下标 = `Kind::ix`；**帧与块合计一份** —— 判据是逐类净额，
+    /// 与容器无关，合成一份就不必给"哪一侧"再造一条读数）。
     #[cfg(any(debug_assertions, feature = "framework"))]
-    frame_kinds: [AtomicUsize; Kind::COUNT],
+    kinds: [AtomicUsize; Kind::COUNT],
 }
 
 static STATS: OnceLock<&'static Stats> = OnceLock::new();
@@ -296,7 +408,7 @@ pub fn init() -> Result<(), Error> {
         spare_occupied: AtomicUsize::new(0),
         spare_total: AtomicUsize::new(0),
         #[cfg(any(debug_assertions, feature = "framework"))]
-        frame_kinds: [const { AtomicUsize::new(0) }; Kind::COUNT],
+        kinds: [const { AtomicUsize::new(0) }; Kind::COUNT],
     }));
     STATS.set(s).map_err(|_| Error::AlreadyInitialized)?;
     Ok(())
@@ -315,7 +427,7 @@ pub(crate) fn record_frame_take(index: usize, power: usize) {
     {
         let k = current();
         note_frame_kind(index, 1 << power, k);
-        s.frame_kinds[k.ix()].fetch_add(1, Ordering::Relaxed);
+        s.kinds[k.ix()].fetch_add(1, Ordering::Relaxed);
     }
     #[cfg(not(any(debug_assertions, feature = "framework")))]
     let _ = (index, power);
@@ -330,10 +442,42 @@ pub(crate) fn record_frame_give(index: usize) {
     #[cfg(any(debug_assertions, feature = "framework"))]
     {
         let k = frame_kind_at(index);
-        s.frame_kinds[k.ix()].fetch_sub(1, Ordering::Relaxed);
+        s.kinds[k.ix()].fetch_sub(1, Ordering::Relaxed);
     }
     #[cfg(not(any(debug_assertions, feature = "framework")))]
     let _ = index;
+}
+
+/// 块被交付：把该块的类目写成**本核当前标注**并按类 +1。
+///
+/// 前置：调用方持本池锁（`pull` 路径），`addr` 是刚交付的块首地址。
+pub(crate) fn record_block_take(addr: usize, power: usize) {
+    #[cfg(any(debug_assertions, feature = "framework"))]
+    {
+        // 落不进类目表的块（`power < BLOCK_KIND_SHIFT`）：两侧都按 `Plain` 记，
+        // 标注被忽略但不破坏账 —— 与 `record_block_give` 的那一支严格对称。
+        let k = if power < BLOCK_KIND_SHIFT {
+            Kind::Plain
+        } else {
+            let k = current();
+            note_block_kind(addr, power, k);
+            k
+        };
+        stats().kinds[k.ix()].fetch_add(1, Ordering::Relaxed);
+    }
+    #[cfg(not(any(debug_assertions, feature = "framework")))]
+    let _ = (addr, power);
+}
+
+/// 块被归还：类目取**这块当初被交付时写下的**那一格，按类 −1。
+pub(crate) fn record_block_give(addr: usize, power: usize) {
+    #[cfg(any(debug_assertions, feature = "framework"))]
+    {
+        let k = block_kind_at(addr, power);
+        stats().kinds[k.ix()].fetch_sub(1, Ordering::Relaxed);
+    }
+    #[cfg(not(any(debug_assertions, feature = "framework")))]
+    let _ = (addr, power);
 }
 
 /// 块分配器从帧池**借走**一页（`prime` 拆块入链之前记一笔）。
@@ -403,15 +547,15 @@ fn records(f: impl FnOnce(&Stats)) {
     }
 }
 
-/// 逐类在册数快照（含未标注的 [`Kind::Plain`]）。
+/// 逐类在册数快照（**帧与块合计**；含未标注的 [`Kind::Plain`]）。
 ///
-/// 口径与 [`frame_occupied`] 一致：**一笔 = 一次 take**（一笔可能是 `2^power` 帧的块，
-/// 总量账也是这么记的）；类目表按帧记是为了让归还侧能按块首帧问出类别。
+/// 口径与 [`frame_occupied`] 一致：**一笔 = 一次 take**（帧侧一笔可能是 `2^power` 帧的
+/// 块，块侧一笔是 `2^power` 字节的块）；类目表按"格"记是为了让归还侧问得出类别。
 #[cfg(any(debug_assertions, feature = "framework"))]
-pub(crate) fn frame_kinds() -> Kinds {
+pub(crate) fn kinds() -> Kinds {
     let s = stats();
     let mut out = [0usize; Kind::COUNT];
-    for (i, c) in s.frame_kinds.iter().enumerate() {
+    for (i, c) in s.kinds.iter().enumerate() {
         out[i] = c.load(Ordering::Relaxed);
     }
     Kinds(out)

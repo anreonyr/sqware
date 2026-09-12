@@ -482,7 +482,7 @@ impl TaskBuilder {
         // 变成返回值；已领的栈/trap 帧按 `FrameWindow::claim` 失败时的同一套
         // 回滚归还，从此这条路径的 OOM 与 `Spawn` 的其它失败同形（`-4 OoM`）。
         let ident: Arc<TaskIdent> = unsafe {
-            let ident = Arc::try_new_in(
+            let ident = crate::tag!(Task, Arc::try_new_in(
                 TaskIdent {
                     id,
                     name: self.name,
@@ -491,7 +491,7 @@ impl TaskBuilder {
                     frame: frame_span,
                 },
                 alloc,
-            )
+            ))
             .map_err(|_| {
                 // 回滚：两段都还回本域空间（顺序与占用相反，先帧后栈）。
                 self.team
@@ -517,7 +517,7 @@ impl TaskBuilder {
             }
         };
         let task: Arc<Task> = unsafe {
-            let task = Arc::try_new_in(
+            let task = crate::tag!(Task, Arc::try_new_in(
                 Task {
                     ident,
                     life,
@@ -527,7 +527,7 @@ impl TaskBuilder {
                     heir: SpinLock::new(Vec::new()),
                 },
                 alloc,
-            )
+            ))
             .map_err(|_| MapError::OutOfMemory)?;
             let (ptr, _alloc) = Arc::into_raw_with_allocator(task);
             Arc::from_raw(ptr)

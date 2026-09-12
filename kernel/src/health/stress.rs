@@ -45,7 +45,7 @@ const FRAME_HELD: usize = 8;
 pub(super) fn accept() {
     let a = hybrid::allocator();
     // 逐类在册数的起点：本用例全程借完即还，收尾每一类都必须回到这个数。
-    let kinds_before = crate::memory::allocator::statistics::frame_kinds();
+    let kinds_before = crate::memory::allocator::statistics::kinds();
 
     // 幕 1：block 域 多尺寸混合 分配-立即释放
     for i in 0..STEPS {
@@ -130,14 +130,17 @@ pub(super) fn accept() {
         a.deallocate(b.cast(), l);
     }
 
-    // 判据之前先还掉**本用例自己的**宿主缓冲：`drained` 上万项、容量上百 KiB，
-    // 走 hybrid 的 frame 大块路径且**未标注** ⇒ 它活着时正好记在 `plain` 那一桶
-    // （实测：不 drop 就报 `frame kind plain: 3 → 4`，那是用例的账，不是分配器的账）。
+    // 判据之前先还掉**本用例自己的**宿主缓冲：它们都**未标注** ⇒ 活着时正好记在
+    // `plain` 那一桶（实测：`drained`（上万项、上百 KiB、走 frame 大块路径）不 drop
+    // 就报 `plain: 3 → 4`；`held`/`fheld` 是块侧（≤ 2 KiB）各一笔，不 drop 就报
+    // `plain: 20 → 22`）。那是用例的账，不是分配器的账 —— 判据只该看分配器的。
     drop(drained);
+    drop(held);
+    drop(fheld);
 
     // 收尾判据：**逐类**净额归零。比总量判据更利的把手 —— 总量为 0 时它也一样过，
     // 总量不为 0 时它指出是哪一类（以及是不是"未标注"那一桶在漏）。
-    let kinds_after = crate::memory::allocator::statistics::frame_kinds();
+    let kinds_after = crate::memory::allocator::statistics::kinds();
     for (k, n) in kinds_after.nonzero() {
         crate::expect!(
             n == kinds_before.get(k),

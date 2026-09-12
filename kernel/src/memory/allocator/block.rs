@@ -282,6 +282,9 @@ impl BlockAllocator {
             }
             Box::leak(Box::new(Tally::new(m.free.base, cells, meta_len)))
         };
+        // 块类目表与 Tally 同批（同为 bump 期、`frame::init` 之前）：覆盖同一个
+        // free 区，粒度见 `BLOCK_KIND_SHIFT`。
+        super::statistics::install_block_kinds(m.free.base, m.free.size)?;
 
         let mut pools = Vec::new();
         for i in 0..nodes {
@@ -313,6 +316,7 @@ unsafe impl Allocator for BlockAllocator {
         let me = machine::hart_id();
         let pool = &self.blocks[me];
         let addr = pool.pull(power).ok_or(AllocError)?;
+        super::statistics::record_block_take(addr, power);
 
         // SAFETY: pull 返回的地址必非零（分配器保证）。
         //
@@ -337,6 +341,7 @@ unsafe impl Allocator for BlockAllocator {
         let pa = ptr.addr().get();
         // 归属路由：非块内存 → 静默丢弃。
         let Some(home) = self.own(pa) else { return };
+        super::statistics::record_block_give(pa, power);
 
         let me = machine::hart_id();
         let pool = &self.blocks[home];
