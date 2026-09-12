@@ -115,7 +115,7 @@ pub fn init() -> ! {
     // 否则走 debug 档的健康检查。任一失败 fail-fast（panic）。
     //
     // 同位置、同时点：调度器已就绪、`spawn_root` 未起 ⇒ 用例**没有 shell、没有装槽**，
-    // 只有单核与早启动期设施（`putln!`、块/frame 分配器、页表树、`Space` 原语、`fence`）。
+    // 只有单核与早启动期设施（`putln!`、块/frame 分配器、页表树、`Space` 原语）。
     #[cfg(feature = "framework")]
     crate::framework::run(&crate::framework::Kernel);
     #[cfg(not(feature = "framework"))]
@@ -132,11 +132,6 @@ pub fn init() -> ! {
     // idle() 进 run()/wait() 读 done() 时见到 true，则 PUSHED==0 立即 halt；
     // 否则一直 WFI 等不会到达的 IPI。
     crate::work::room::conductor::rooted();
-
-    // 完整性审计（audit feature，debug 恒开）：三源交叉核对 + 类别计数 sanity
-    // （类别记账替代旧 boot 基线快照——见 fence/audit 模块头）。
-    #[cfg(feature = "audit")]
-    crate::memory::allocator::fence::audit::audit();
 
     // 多核：HSM 拉起其余副核。
     boot_harts();
@@ -172,21 +167,9 @@ fn register_runtime_hooks() {
     // ——依赖倒置在此一次性接上（此后 gate::snap() 即可取快照）。
     crate::work::unit::gate::install(crate::work::room::scheduler::core::roster);
 
-    // 关机序列：messenger 簿记规模（仅 audit：只读观测，**必须在 rip 之前**——
-    //   rip 清空站点表，之后再量恒为 0，那样的断言没有牙）→ scheduler::rip
-    //   （清任务队列 + info 槽 + messenger 簿记）→ mail 由 drop 链透传
-    //   （DockMeta::drop / RingMeta::drop）→ block 池冲洗 → audit 基线。
-    #[cfg(feature = "audit")]
-    const SHUTDOWN_HOOKS: &[fn()] = &[
-        crate::memory::allocator::fence::audit::probe_messenger,
-        crate::work::room::scheduler::core::rip,
-        crate::memory::allocator::block::flush,
-        // 弱引用普查：必须在 `rip` **之后**（看的就是它清完名册之后还剩谁扣着外壳），
-        // 且在 `check_baseline` **之前**（与泄漏判据同一快照）。
-        crate::memory::allocator::fence::audit::probe_teams,
-        crate::memory::allocator::fence::audit::check_baseline,
-    ];
-    #[cfg(not(feature = "audit"))]
+    // 关机序列：`scheduler::rip`（清任务队列 + info 槽 + messenger 簿记）→ mail 由
+    //   drop 链透传（DockMeta::drop / RingMeta::drop）→ block 池冲洗。**不看账**：
+    //   审计层的关机判词随那一层删了（见 `docs/memory.md` §5），这里只剩"把东西还回去"。
     const SHUTDOWN_HOOKS: &[fn()] = &[
         crate::work::room::scheduler::core::rip,
         crate::memory::allocator::block::flush,

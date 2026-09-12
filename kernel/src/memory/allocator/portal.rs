@@ -62,15 +62,9 @@ unsafe impl Allocator for PortalAllocator {
         let Some(allocator) = backend() else {
             return Err(AllocError);
         };
-        // realloc 窗口（debug 记账）：默认 grow = allocate 新 → copy →
-        // deallocate 旧——新块**继承旧块类别**（任务类缓冲 grow 搬家后仍是任务
-        // 类，关机类别归零检查不因搬家漏报），由 fence 窗口标记判定（见
-        // fence::begin_realloc）。grow 失败/in-place 成功时旧块未 free，end 清窗。
-        let old_addr = ptr.as_ptr() as usize;
-        super::fence::begin_realloc(old_addr);
-        let result = unsafe { allocator.grow(ptr, old_layout, new_layout) };
-        super::fence::end_realloc();
-        result
+        // 默认 grow = 分配新块 → 拷贝 → 释放旧块，三步都在后端分配器里完成；
+        // 本层是纯转发（没有第二份记账，也就没有跨层窗口要维护）。
+        unsafe { allocator.grow(ptr, old_layout, new_layout) }
     }
 }
 

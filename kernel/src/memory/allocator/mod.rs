@@ -8,8 +8,6 @@ use fack::prelude::Error;
 pub mod bitmap;
 pub mod block;
 pub mod bump;
-/// 护栏层：checker / banker / ledger / audit。
-pub mod fence;
 pub mod frame;
 pub mod hybrid;
 pub mod portal;
@@ -80,19 +78,9 @@ pub fn init() -> InitResult<()> {
     portal::switch(portal::Backend::Hybrid);
     spare::init()?;
 
-    // 三分配器全部 init 后,捕获各自的 total / available 作为 baseline。
-    let total_frames = frame::heap().total_pages();
-    statistics::record_frame_total(total_frames);
-    statistics::record_frame_available(total_frames);
-
-    let spare_total = spare::spare().total_bytes();
-    statistics::record_spare_total(spare_total);
-    statistics::record_spare_available(spare_total);
-
-    // 基线在此刻捕获（三分配器 init 之后、任何分配之前）——`delta` 的参考点。
-    // audit 专属：默认构建没有 `delta` 消费者，编译掉以免留下「调了但没人读」的调用。
-    #[cfg(feature = "audit")]
-    statistics::rebaseline().expect("statistics rebaseline: not initialized");
+    // 后备仓定容总量在此报一次（余量 = 它 − 在手段数，见 statistics 头注）；
+    // 帧池的 total/available 水位没有读者（判据只用"在手帧数"），不记。
+    statistics::record_spare_total(spare::spare().total_bytes());
 
     Ok(())
 }

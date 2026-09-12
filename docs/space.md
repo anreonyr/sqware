@@ -35,7 +35,7 @@
 |---|---|---|
 | `Pending`（`map.rs:30`） | `None` / `Lazy` / `Guard` | 全物化 / 触页物化 / **永不物化** |
 | `MapMode`（`core.rs:502`） | `Materialize` / `Claim` | 失败时**回滚方式**不同 |
-| 帧种类 `Kind`（`memory/allocator/fence/kind.rs:27`，15 种） | 按 `End` 分组 | 关机终值判据的键（见 [memory.md](memory.md)） |
+| 帧来源标注（`tag!(TrapStack, …)` 之类） | 只有名字 | 读代码用；记账随审计层删了（见 [memory.md](memory.md) §5） |
 
 ## 3 · 不变量
 
@@ -47,15 +47,14 @@
 | 借入映射只能收紧（新 flags ⊆ 当前叶 PTE） | 按 VA 单方面扩他人权限 | `map.rs:112` + `protect` 闸 `core.rs:375-401` |
 | U 位单一出口 ＝ 空间种类 | S 态 SUM=0 访问 U 页缺页 | `adapter.rs:185`；例外：`frame.rs:30`、`borrow` |
 | ASID 先 shootdown 再还位图/销账 | 复用后同一键换主 | `asid.rs:83`、`adapter.rs:375-383` |
-| 帧释放必「仍在手」、弹出必 free | 双释放 / 重叠分配 | `fence/checker.rs:39/54`（debug + audit 档） |
-| 账键单射 `(asid<<44)\|(va>>12)` | 碰撞误销账 | `fence/mod.rs:391` |
+| 帧释放必「仍在手」、弹出必 free | 双释放 / 重叠分配 | `frame::pagemeta` 一份账 + `health/stress.rs` 的持有/反还演练 |
 
 ## 4 · 裁决账
 
 | 裁决 | 定论 | 理由要点 |
 |---|---|---|
 | `Segment` 取代 interval | 无 `Arc`、无锁、无注册 | 「段内互不重叠……段再大也零 up-front 成本」（`seg.rs:4-12`） |
-| 帧种类不在 `frame()` 标 | 在造对象那一层标（`tag!`） | 「帧分配器与装配核心都不携带种类参数」（`core.rs:286-290`） |
+| 帧来源不在 `frame()` 标 | 在造对象那一层标（`tag!`） | 「帧分配器与装配核心都不携带来源参数」（`core.rs:286-290`） |
 | 拆除统一走料箱 | 摘下的帧一律交 `Salvage` | 「清退到齐后才归还（远核可能仍持旧条目）」（`core.rs:238-240`） |
 | 借入页不许加宽 | `WidenDenied`，**先校验后落改** | 「叶 PTE 是权限的权威……`narrow` 的 cap ⊆ 页表契约正是靠『加宽无路可走』成立」（`core.rs:329-338`） |
 | 三档锁退出 | 不刷 / 本核刷 / 跨核清退 | 「新增放宽无远核义务……收紧必须就地跨核清退」（`adapter.rs:224-240`） |
@@ -82,13 +81,13 @@
 
 ## 6 · 与其它机制的关系
 
-- **锁序**（`lock/depend.rs:45-66`）：`Space=2 < Asid=5 < Frame=6 < Block=7 < Ledger=8 <
-  Tally=9 < Spare=10`。`Space::with` 的闭包内**禁再调 `Space`**（`adapter.rs:215`），故
+- **锁序**（`lock/depend.rs`）：`Space=2 < Asid=5 < Frame=6 < Block=7 < Tally=9 < Spare=10`
+  （8 是删掉的审计账本层级）。`Space::with` 的闭包内**禁再调 `Space`**（`adapter.rs:215`），故
   上层（gate / mail / pie）只能经窗口与 `with` **单向进入**，不可能反向回调。
 - **space → life**：空间持 `Arc<Life>`，`WakeKey::Space{space: asid}` 靠它判死
   （`adapter.rs:70-72,198-204`）——空间不依赖 room。
-- **space → fence 单向**：`SpaceInner::frame()` 只领帧，种类由窗口 `tag!` 标注；
-  fence 的 audit 反向只读 `frame::is_held`（`fence/audit.rs:109`），分配器文件里零种类词汇。
+- **space → allocator 单向**：`SpaceInner::frame()` 只领帧，来源标注由窗口的 `tag!` 写下
+  （`tag!` 现在只服务"读代码时看得见这一层造的是什么"）；空间从不读分配器的账。
 - **借入映射**服务 machine / `DockMeta` / mail ring：帧归外部所有（`core.rs:215-216`）。
 
 ## 7 · 已知边界
@@ -122,15 +121,13 @@
 
 ## 8 · 判据与验证
 
-- **health 探针**（`health/pagetable.rs:18-92`，**debug-only**）：32 轮 4 MiB map/unmap，
-  断言表数回到 `base`、`translate` 命中与落空都对、「在途帧 − 块池持页」回到轮前——
-  每轮还调一次 `space.audit()`。
-- **audit 档**：boot 后逐空间 `space.audit()`（`boot.rs:133/136`），核对簿记 ⇔ PTE；
-  关机序列 `probe_messenger → scheduler::rip → block::flush → check_baseline`
-  （`boot.rs:170-182`）。
-- **验收门**：三档同一套判据；audit 档抓 `[audit] leak: <kind> N` 与
-  `table frames != kernel-walk count`（`scripts/examine.nu:285-297`）；默认档哨兵
-  「出现 audit 输出即挂」（`:520-524`）。
+- **health 用例 `pagetable`**（`health/pagetable.rs`，debug / framework 档）：32 轮 4 MiB
+  map/unmap，断言表数回到 `base`、`translate` 命中与落空都对、「在途帧 − 块池持页」回到
+  轮前——每轮还调一次 `space.audit()`。
+- **audit 档**：boot 装出根域后逐空间 `space.audit()`（`boot.rs`），核对簿记 ⇔ PTE；
+  关机钩子只剩 `scheduler::rip` 与 `block::flush`（没有审计判词）。
+- **验收门**：四档（默认 / audit / harden / framework）同一套判据 + 各自的正向对照；
+  allocator 与空间的判据落在 framework 档的用例行（`[case] cases 3 ok 3 fail 0`）。
 - **未覆盖**：用户侧只有 `alloc` 一条端到端命令（`programs/src/bin/user/shell.rs:971-973`
   → `MemoryCall::Allocate`）。**`Mmap`/`Munmap`/`Mprotect` 三条路径没有门覆盖**——
   `share.rs` 的懒区与借入所有权闸目前只有内核代码、注释与 health 探针在守。

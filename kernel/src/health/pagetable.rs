@@ -30,8 +30,8 @@ pub(super) fn pagetable() {
         space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
     let base_count = space.table_count();
     // 全动态下块池页已计入 frame.occupied,剔除块池持页得"非块池用途在途帧"。
-    let held_before = crate::memory::allocator::statistics::view_frame().occupied
-        - crate::memory::allocator::statistics::view_block().occupied;
+    let held_before = crate::memory::allocator::statistics::frame_occupied()
+        - crate::memory::allocator::statistics::block_occupied();
 
     for round in 0..ROUNDS {
         // map：分配数据帧 + 中间表
@@ -76,8 +76,8 @@ pub(super) fn pagetable() {
         space.audit();
     }
 
-    let held_after = crate::memory::allocator::statistics::view_frame().occupied
-        - crate::memory::allocator::statistics::view_block().occupied;
+    let held_after = crate::memory::allocator::statistics::frame_occupied()
+        - crate::memory::allocator::statistics::block_occupied();
     crate::expect!(
         held_before == held_after,
         "net frames leaked: {held_before} → {held_after}"

@@ -5,3 +5,11 @@ trace/
 # 窗口布局**（`workspace.json` 每次打开都变）。收进来只会让每次 `git status` 都脏一次，
 # 与仓库要管的事实（文档本身）无关。文件仍在原地，只是不进库。
 docs/.obsidian/
+
+# 宿主侧分配器压测台（`crates/alloc-probe`）的本地 CARGO_HOME：`run.sh` 把依赖拉到这里
+# （沙箱里 `~/.cargo/registry` 只读），内容是 cargo registry 缓存 + 源码，1.5 MB 级。
+# 它是**缓存**不是源码：换台机器跑 `run.sh` 会自动重新拉。
+.cargo-home/
+# 那个 crate 是**独立工作区**（被根 workspace `exclude`），故它有自己的一份 target——
+# 根上的 `/target` 只盖根目录那一份。
+crates/alloc-probe/target/

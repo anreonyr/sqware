@@ -8,9 +8,8 @@
 //!   [`Frame`]（纯数据）。它**不知道自己属于 kernel 还是 user**——不掺和分域、
 //!   不知道 scene/dump/Report 是什么。分域（world/gaps/ceiling）由调用方经
 //!   [`ResolveCfg`] **注入**。
-//! - **适配**（调用方）：`scene`（崩溃回溯）、`fence`（分配审计 site）、未来的
-//!   backtrace envcall。各自构造自己的 `StackReader`（根表）与 `ResolveCfg`，调用
-//!   `walk`。
+//! - **适配**（调用方）：`scene`（崩溃回溯）、`envcall` 的 backtrace 通道。各自
+//!   构造自己的 `StackReader`（根表）与 `ResolveCfg`，调用 `walk`。
 //!
 //! 安全契约：**采样绝不触发缺页**。`walk_raw` 只读页表（未映射/非 R → [`None`] →
 //! 回溯提前终止），物理地址经 DRAM 值域守卫——用户构造的伪栈最多让链提前结束，
@@ -48,8 +47,8 @@ pub struct Frame {
 
 /// 回溯策略配置 — 由调用方**注入**到 [`walk`]，`frame` 模块本身不持有分域。
 ///
-/// 这是「入口独立 + 算法不重复」的枢纽：kernel/user/fence 三条路径各自构造自己
-/// 的 `ResolveCfg`，`walk` 是共享的投影函数、不知道自己是哪条路径。
+/// 这是「入口独立 + 算法不重复」的枢纽：kernel/user 两条路径各自构造自己的
+/// `ResolveCfg`，`walk` 是共享的投影函数、不知道自己是哪条路径。
 #[derive(Debug, Clone, Copy)]
 pub struct ResolveCfg {
     /// 现场地址空间（回溯行/分类的域归属单一事实源）。

@@ -6,6 +6,10 @@
 //     再全部归还——余量须还原到演练前（分配/释放/合并闭环无泄漏）。
 // 断言用 `expect!`（health 专用宏）：失败统一报告 + fail-fast。
 
+// 用例只在 debug / framework 档存在（与 `pagetable.rs` 同一 gate）：这一档才有
+// 消费者调用它，其余档里编进去就是一段没人跑、也没人读的代码。
+#![cfg(any(debug_assertions, feature = "framework"))]
+
 use core::alloc::{Allocator, Layout};
 use core::ptr::NonNull;
 
@@ -22,20 +26,20 @@ pub(super) fn accept() {
     let h = machine::hart_count();
     let ring = trace::ring_bytes(h);
 
-    let view = statistics::view_spare();
     crate::expect!(
-        view.occupied >= ring,
+        statistics::spare_occupied() >= ring,
         "spare: ring {ring} B not resident (occupied {})",
-        view.occupied
+        statistics::spare_occupied()
     );
     crate::expect!(
-        view.available >= DUMP_BUDGET,
+        statistics::spare_available() >= DUMP_BUDGET,
         "spare: dump budget {DUMP_BUDGET} B not reserved (available {})",
-        view.available
+        statistics::spare_available()
     );
 
     let step = Layout::from_size_align(1024, 16).unwrap();
-    let before = *statistics::view_spare();
+    // 演练前后的 (在手段数, 余量) 快照：余量由在手段数导出，两条一起核。
+    let before = (statistics::spare_occupied(), statistics::spare_available());
     let mut held: Vec<NonNull<[u8]>> = Vec::new();
     while let Ok(b) = spare::spare().allocate(step) {
         held.push(b)
@@ -43,22 +47,22 @@ pub(super) fn accept() {
     crate::expect!(
         spare::spare().allocate(step).is_err(),
         "spare: drill did not reach exhaustion (available {})",
-        statistics::view_spare().available
+        statistics::spare_available()
     );
     for b in held.iter().rev() {
         unsafe { spare::spare().deallocate(b.cast(), step) };
     }
-    let after = *statistics::view_spare();
+    let after = (statistics::spare_occupied(), statistics::spare_available());
     crate::expect!(
-        after.available == before.available,
+        after.1 == before.1,
         "spare: drill leaked budget (available {0} → {1})",
-        before.available,
-        after.available
+        before.1,
+        after.1
     );
     crate::expect!(
-        after.occupied == before.occupied,
+        after.0 == before.0,
         "spare: drill left residue (occupied {0}), want {1}",
-        after.occupied,
-        before.occupied
+        after.0,
+        before.0
     );
 }

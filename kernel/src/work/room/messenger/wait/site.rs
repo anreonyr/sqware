@@ -58,50 +58,6 @@ impl WakeKey {
         }
     }
 
-    /// 分门别类用的**分类标签**（审计观测面用；语义与变体一一对应，不是折叠值）。
-    #[cfg(feature = "audit")]
-    pub(in super::super) const fn kind(self) -> WakeKind {
-        match self {
-            WakeKey::Space { .. } => WakeKind::Space,
-            WakeKey::Hole { .. } => WakeKind::Hole,
-            WakeKey::Task { .. } => WakeKind::Task,
-            WakeKey::Alarm { .. } => WakeKind::Alarm,
-        }
-    }
-}
-
-/// 唤醒源的四类命名空间——只管「这站点在等什么」，供审计计数分列。
-///
-/// 判别式即 [`WakeKind::ALL`] 的下标（`as usize`），故四类合计可直接按数组求和。
-/// 只在 audit 档（`SiteStats::kinds`）有消费者——非 audit 构建整型 cfg out。
-#[cfg(feature = "audit")]
-#[derive(Clone, Copy, Debug)]
-pub(in super::super) enum WakeKind {
-    Space,
-    Hole,
-    Task,
-    Alarm,
-}
-
-#[cfg(feature = "audit")]
-impl WakeKind {
-    /// 全部四类，下标 = 判别式：分列数组与打印顺序都由它一处定。
-    pub(in super::super) const ALL: [WakeKind; 4] = [
-        WakeKind::Space,
-        WakeKind::Hole,
-        WakeKind::Task,
-        WakeKind::Alarm,
-    ];
-
-    /// 分列用的名字（打印与排序的唯一出处）。
-    pub(in super::super) const fn name(self) -> &'static str {
-        match self {
-            WakeKind::Space => "space",
-            WakeKind::Hole => "hole",
-            WakeKind::Task => "task",
-            WakeKind::Alarm => "alarm",
-        }
-    }
 }
 
 /// 一个唤醒源的等待位：遗留信号（信标）+ 等待者队列 + **该键的存活单元**。

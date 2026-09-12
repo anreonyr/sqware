@@ -999,3 +999,39 @@ freelist↔pagemeta 背离（§10）现在只剩 `check_bounds` / `check_frame_f
 净变化 **−783 / +405 行**（含注释）。收敛后的仪器只有**两个**：守恒快照 `conserve`
 （链/表/账三口径 + 跨度分类 + 自洽残差 + 逐 order 普查）与 `chain_audit`（逐环核对
 双向链表），加分配器内的护栏。
+
+## 12. 第 14 轮：审计层整体撤除（用户裁决）
+
+`allocator/fence/` 这一层（帧种类 `Kind` / 活块账本 `Ledger` / O(1) 核对点 `checker` /
+关机终值 `audit`）与它在 `boot` 里的三个关机钩子（`probe_messenger` / `probe_teams` /
+`check_baseline`）**整体删掉**，本文前面的 §3.3 / §4 / §6–§10 因此是**历史记录**：
+那些判据、读数与解剖过程都不再存在于代码里。
+
+裁决的理由（用户原话的意思）：**判据的唯一通道是 `framework` 档的用例**——审计层是第二
+套账，它自己维护"谁在册、谁该归零"，与分配器的 `pagemeta` / `Tally` 互为解释；两份账
+一旦漂移，两边都不再有牙。它要判的东西仍有人判，只是换了地方（帧池净漏帧 → 框架档
+`pagetable` 用例的 `frame.occupied − block.occupied`；分配器闭环 → `stress` / `spare`）。
+
+**随之消失的读数**（本文件里出现过的那些，现在都读不到了）：
+
+| 没了的东西 | 原来在哪 |
+|---|---|
+| 逐对象终值判词 `[audit] leak: <kind> N` | `fence/audit.rs` + `boot::check_baseline` |
+| 关机三源核对 / 逐种类配平 `[audit] shutdown checks ok: …` | 同上 |
+| 弱引用收支与存活清单 `[audit] 弱引用收支` / `[audit] 存活 #N …` | `work/unit/weak.rs`（整段普查面删除） |
+| 站点表计数 `[audit] sites N live N tomb N orphan N waiters N` | `messenger::probe` + `boot::probe_messenger` |
+| 逐团队弱引用普查 `[audit] 团队 …` / 池页清点 | `team::weak_census_all`、`block::{collect_owned*}` |
+| 帧池水位/链自审/delta 快照 | `frame::{tally, chain_audit, window}`、`statistics::{Delta, Baseline}` |
+| 用户堆账（键 `(asid, 页索引)`） | `fence::{on_alloc, on_free, retire}`、`envcall` 两处钩子 |
+
+**留下的**两条真判据（它们不靠审计层）：
+
+- 挂起自检从"记账给关机看"改成**当场断言**（`weak::check_block_heldout`）：跨挂起还压着
+  抄件 ⇒ panic。判据没变，只是不再等关机。
+- 帧"在不在手"的**唯一一份账**仍是 `frame::pagemeta`；块池在册页仍是 `Tally`；帧池水位
+  仍是 `statistics`（现在只剩四个判据输入：帧在手数、块池持页数、仓在手段数与余量）。
+
+门跟着改：`AUDIT_MARKERS` 里与站点表/终值判词相关的条目撤掉，`HARDEN_PROBES` 收敛为
+两道正向对照（容器⇔状态断言 / lockdep 报文体），allocator 与空间的判据落在框架档的
+`[case] cases 3 ok 3 fail 0`。**没有放宽任何阈值**：删的是判据本身（连同它的读者），
+不是把阈值改宽。

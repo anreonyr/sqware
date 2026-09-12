@@ -1,4 +1,8 @@
 [workspace]
+# `crates/alloc-probe` 是**宿主**（x86_64）侧的分配器压测台：主工作区被
+# `.cargo/config.toml` 钉在 `riscv64gc-unknown-none-elf` 上，它进不来（要 std + host ABI）。
+# 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/run.sh` 跑。
+exclude = ["crates/alloc-probe"]
 members = [
     "kernel",
     "programs",

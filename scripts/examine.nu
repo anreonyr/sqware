@@ -22,12 +22,11 @@
 #   2) `wipe`：`hole` 的自测本就含 seal（走到了 wipe 的调用方）却零断言。userland
 #      侧在同一轮里以 seal 为界各等一次并打印**结局**（`wake=seal` / `wake=timeout`），
 #      门断言 `hole: wait-seal sealed=1 wake=seal`——seal 不唤醒等待者就只会打出 timeout。
-#   3) `prune`（空站点出队即删）每次收队都在跑、此前零观测量。内核在 **audit 档**的
-#      关机点（排在 `scheduler::rip` **之前**的那条只读钩子）打印站点表计数
-#      `[audit] sites N live N tomb N orphan N waiters N`；门断言全部任务退出后
-#      **无孤儿站点、无活站点、无残留等待者**（「孤儿 == 0」才是对 `prune` 的直接
-#      断言；总数与墓碑数是同一帧的记账，非判据）。
-#      **ABI 未动**：只加计数与打印，没有新 envcall、没有改任何对外调用号。
+#   3) `prune`（空站点出队即删）**目前没有专属判据**：它当年靠 audit 档关机钩子里的
+#      站点表计数（`[audit] sites N live N tomb N orphan N waiters N`）看着，那条钩子
+#      随审计层一起删了。间接覆盖仍在——`wipe` / `hole` / `cascade` 三条都要求站点
+#      在被 seal/退役时当场删掉，删不掉就会在后续等待里现形。要恢复直接判据，就在
+#      `health/` 里加一条读站点表的用例，而不是把关机钩子搬回来。
 #
 # 用法：scripts/examine.nu                    # 默认连跑 3 次，要求 3/3
 #       EXAMINE_REPEAT=10 scripts/examine.nu
@@ -40,7 +39,7 @@
 # ── 按档构建、按档跑（本轮修掉的设计瑕疵）────────────────────────────────────
 # 原来**只构建一次** ELF（`--features $EXAMINE_FEATURES` 那一份），默认轮与 audit 轮共用。
 # 于是 `EXAMINE_FEATURES=audit` 时默认轮拿到的是 audit ELF，撞上默认档自己的哨兵「默认档
-# 不该出现 audit 输出」（audit ELF 每次关机都打 `[audit] sites …`）⇒ 那几轮**按构造**必挂：
+# 不该出现 audit 输出」（当年 audit ELF 每次关机都打 `[audit] sites …`）⇒ 那几轮**按构造**必挂：
 # 想验默认档就不能带 feature，想验 audit 档就同时挂掉默认轮，两档不能在一次运行里各得其所。
 # 现改为**按档构建、按档跑**：
 #   默认轮（`EXAMINE_REPEAT` 那几轮）← 不带 feature 构建的 ELF（`const DEFAULT_FEATURES`，恒空）
@@ -54,9 +53,9 @@
 # ── 三档都该绿（**没有**豁免机制）─────────────────────────────────────────────
 # 默认 / audit / harden 三档跑的是同一套判据，三档**都该 PASS**。没有「已知失败不算失败」
 # 的开关：没有白名单，没摘 marker，没放宽阈值，ok 恒为 `$why == ""`。
-# 若 audit 档的关机审计报了对象种类泄漏（`[audit] leak: …`），那是一条**回归**，该轮当场
-# FAIL；`existing_violation_note` 只负责把这条 FAIL 的原因串写得更具体——它只在**已经判
-# FAIL** 的轮上追加话，判定既不增也不减。
+# 若某一轮报出内核自己点的名（锁序违规 `[depend]`、挂起自检 `[weak]`、健康用例
+# `[health]`），那是一条**回归**，该轮当场 FAIL；`existing_violation_note` 只负责把这条
+# FAIL 的原因串写得更具体——它只在**已经判 FAIL** 的轮上追加话，判定既不增也不减。
 #
 # ── qemu 起法：唯一出处 scripts/boot.nu ────────────────────────────────────────
 # 门**不凑 qemu 参数**：`^nu scripts/boot.nu <elf>`，QEMU_TIMEOUT / QEMU_SEED / QEMU_ICOUNT
@@ -122,7 +121,7 @@
 #                      内部不变量，而那正是既往几轮真缺陷的所在。
 #   EXAMINE_FEATURES   内核 cargo feature（默认空 = 默认档，行为/输出与原版逐字相同）。
 #                      含 `audit` ⇒ 默认轮之后**再加一轮 audit 档**（追加 `sleep 700`
-#                      与 hole 的封印唤醒观测，并断言关机时刻的站点表计数）。
+#                      与 hole 的封印唤醒观测）。
 #                      **只作用于 audit 轮**：默认轮恒跑不带 feature 构建出的 ELF。
 #   （默认档的构建 features **不是旋钮**：见 `const DEFAULT_FEATURES`，恒为空。加个
 #    `EXAMINE_DEFAULT_FEATURES` 等于门里开一条「让默认轮跑别档 ELF」的合法通路，
@@ -191,8 +190,8 @@ const DEFAULT_FEATURES = ""
 
 # 全量 marker（含 sleep 探针的 `sleep 300ms`），跑完逐条核。默认档那批是 .sh 版原文
 # 逐字未动；他杀那两条（`kill echo -> ok` / `discover echo -> not found`）是后加的，
-# 一条管回执、一条管复验；audit 档另加三条（redeem 的第二个时长 + wipe 的封印唤醒 +
-# prune 的站点表计数）。计数以实跑为准，报告行里的数字是人写的、要跟着改。
+# 一条管回执、一条管复验；audit 档另加四条（票单调不复用 + wipe 的封印唤醒 + 他杀
+# 两条）。计数以实跑为准，报告行里的数字是人写的、要跟着改。
 const MARKERS = [
   "spawnjoin -> 499500"
   "discover echo -> found"
@@ -231,7 +230,6 @@ const AUDIT_MARKERS = [
   'hole: wait-seal sealed=1 wake=seal'
   "stray: 3/3 illegal-id joins denied"
   "cascade: ok"
-  "\\[audit\\] sites "
 ]
 # 顺序断言：后者必须出现在前者之后（grep 行号比较；任一缺 ⇒ 直接挂）。
 const AUDIT_ORDER = [
@@ -242,10 +240,8 @@ const AUDIT_ORDER = [
 # ── harden 档（告警：**不是**第二道 audit）───────────────────────────────────
 #
 # 这一档跑的是 `--profile harden --features $features`（= release + `debug-assertions = true`
-# + audit）：把**两半护栏放进同一份产物**——容器⇔状态断言 / 整条 lockdep（L1/L3 锁序）
-# 与 audit 的 ledger 记账 + checker 的帧侧链式不变式。旧版只带前者，于是"帧分配器的同一条不变量有两份实现、
-# 而没有任何一档同时带着它们"这件事一直没有被门盯住；
-# 正向对照因此从 1 串升到 **4 串**（断言 / banker / ledger / lockdep），少任何一串即退出。
+# + audit）：把**两半护栏放进同一份产物**——容器⇔状态断言（debug-assertions）与
+# lockdep 锁序报文体（audit 档常开）。
 # 它断言两件事：
 #   ① 那条 kill 路径的探针照旧（`stray` / `cascade`）；
 #   ② 控制台里**没有** `[depend]`——锁序违规的报文体（`report` 拼出来的那一行）。
@@ -260,15 +256,11 @@ const HARDEN_MARKERS = [
 # 而没人发现。实测过的事实：release ELF 里这两句各 0 次、debug ELF 里各 1 次。
 # 取容器断言那一句当探针——它在 `Scheduler::push` 里，任何构建都编得进去（非 cfg 代码）。
 const HARDEN_PROBE = "starved 容器只收 Starved 任务"
-# harden 档要**同时**带的四串：容器⇔状态断言（debug-assertions）· ledger 活块账本 ·
-# checker 的帧侧链式不变式 · lockdep 锁序报文体。四串齐 = 两半护栏在同一份产物里。
-# 第三串原为 banker 的 `debit on already-held page`——banker 删除后换成 checker 的
-# `allocated non-free frame`（帧侧「在不在手」从 banker 位图搬到 pagemeta 的核对点；
-# **门跟着搬**）。
+# 两道**正向对照**（都从 ELF 里 grep，不看运行输出）：一句容器⇔状态断言
+# （debug-assertions 的产物），一句 lockdep 锁序报文体（audit 档的产物）。少任何一道，
+# 这一档就退化成「又跑了一遍别的档」而没人发现。
 const HARDEN_PROBES = [
   $HARDEN_PROBE
-  "unmark: no record"
-  "allocated non-free frame"
   "lock-order level violation"
 ]
 
@@ -320,41 +312,27 @@ def at [pat: string, file: path] {
   ($first | split row ':' | first | into int)
 }
 
-# 从 audit 档那行计数里取一个数：`[audit] sites N live N tomb N orphan N waiters N`。
-# 取不到 ⇒ null（由调用方当失败处理：**没量到**与「量到 0」必须分开）。
-def audit_count [field: string, file: path] {
-  if not ($file | path exists) { return null }
-  let r = (^grep -oE -- '\[audit\] sites [0-9]+ live [0-9]+ tomb [0-9]+ orphan [0-9]+ dead [0-9]+ waiters [0-9]+' $file | complete)
-  if $r.exit_code != 0 { return null }
-  let line = ($r.stdout | lines | first)
-  if $line == null { return null }
-  let toks = ($line | split row -r '\s+')
-  # 手写查找：nu 0.115 在这台机上没有 list 的 `index-of`（只有 bytes-/str- 前缀那两个）。
-  # 找不到 ⇒ -1 ⇒ null（**没量到**与「量到 0」必须分开，故不返 0）。
-  mut i = -1
-  for k in 0..(($toks | length) - 1) {
-    if ($toks | get $k) == $field { $i = $k; break }
-  }
-  if $i < 0 { return null }
-  ($toks | get ($i + 1) | into int)
-}
 
-# ── 关机终值违约的如实标注（**不是**豁免）────────────────────────────────────
-# 逐对象种类记账之后，关机的真泄漏判据是**每种对象的期望终值**：
-# 违约时内核逐条打印 `[audit] leak: <kind> N`，随后 `report(AuditDivergence)` ⇒ `[panic] at …`，
-# 于是「无崩溃」判据必然挂。**那一轮就该 FAIL**：本函数**只**往原因串里补一句
-# 「是哪种对象、记在哪一节」，不碰 ok/FAIL，不开开关、不设白名单、不摘 marker、不放宽阈值。
-# 调用点另外带 `$why != ""` 前件 ⇒ 这句话只可能加在**已经判 FAIL**的轮上（见 run_once 末）。
-# 数（哪种对象、几个）**从捕获里读**，不写死：哪一轮变了，原因串跟着变（写死就成了造数）。
+# ── 内核自报违约的如实标注（**不是**豁免）──────────────────────────────────
+# 内核自己点名的违约会在捕获里留下一行**它自己的话**，随后走 panic 通道
+# （`report(...)` ⇒ `[panic] at …`），于是「无崩溃」判据必然挂。**那一轮就该 FAIL**：
+# 本函数**只**往原因串里补一句「这是哪一类违约」，不碰 ok/FAIL，不开开关、不设白名单、
+# 不摘 marker、不放宽阈值。调用点另外带 `$why != ""` 前件 ⇒ 这句话只可能加在**已经判
+# FAIL** 的轮上（见 run_once 末）。原文**从捕获里读**、不写死：哪一轮变了原因串跟着变。
 # 只写指针、不去改 docs。
 def existing_violation_note [file: path] {
-  if not (hit '\[audit\] leak: ' $file) { return "" }
-  let r = (^grep -oE -- '\[audit\] leak: [a-z-]+ [0-9]+' $file | complete)
-  let found = (if $r.exit_code == 0 { ($r.stdout | lines | str join " + ") } else { null })
-  let what = (if $found == null { "对象种类泄漏（原文行取不到，见捕获）" } else { $found | str replace --all "[audit] leak: " "" })
-  # 同一因的第二笔账（同源）：在就一并写出来，不在就不提。
-  let table = (if (hit 'table frames [0-9]+ != kernel-walk count [0-9]+' $file) { " + table frames != kernel-walk count" } else { "" })
-  $"关机终值违约[($what)($table)]：逐对象种类终值判据"
+  # 逐个试：命中哪条就报哪条（同一个因只报一次，顺序即"最像根因的排前面"）。
+  let known = [
+    ['\[depend\] ', "锁序违规（lockdep 的 report 体）"]
+    ['\[weak\] 挂起自检', "跨挂起的弱引用（挂起自检）"]
+    ['\[health\] ', "健康用例失败（health 的 expect!）"]
+    ['\[case\] FAIL ', "测试框架用例失败（framework）"]
+    ['frame freelist corrupt', "帧空闲链被写坏（pop_link 的降级分支）"]
+  ]
+  for k in $known {
+    if (hit $k.0 $file) { return $"(内核自报违约：($k.1))" }
+  }
+  ""
 }
 
 # 等 marker 出现在捕获里；limit 秒内没等到 ⇒ false。每步独立超时（.sh 同名函数的语义，
@@ -523,65 +501,6 @@ def run_once [cfg: record, i: int, flavor: string] {
         $why = (append_why $why $"顺序[($pair.0) → ($pair.1)]")
       }
     }
-    # ── 站点表的断言：全部任务退出时刻的计数 ──
-    # 内核侧的计数（`[audit] sites N live N tomb N orphan N dead N waiters N`）由**关机
-    # 序列里排在 `scheduler::rip` 之前**的那条只读钩子打印——rip 会清空站点表，
-    # 排在其后数出来的恒为 0，那样的断言没有牙。
-    #
-    # 判据：**live == 0、orphan == 0、dead == 0、waiters == 0**，逐条报数（不合并成一句
-    # bool，失败时要能直接读数）。四项各指一件事：
-    #   ① **live == 0 且 waiters == 0**：全部任务已退出 ⇒ 不该还有人挂在任何站点上。
-    #   ② **orphan == 0**（队列空 ∧ 无信标）：`prune` 该删的残留——对 `prune` 的直接断言。
-    #      有牙的实证：把 `prune` 关掉 ⇒ 孤儿 0 变 3；而总数只从 34 变 36（看总数的断言
-    #      几乎没牙）。**轮④ 新挂 `cascade` 后它当场抓到一处真漏**：`take_beacon` 把站点
-    #      清空却没 `prune` ⇒ 孤儿 2（修完回到 0，反去掉那行又回到 2）。
-    #   ③ **dead == 0**（键的存活单元已死）：A2「站点寿命＝资源寿命」的**精确**形式——
-    #      资源退役时 `wipe` 当场删站点，故一个死键站点存在 ⇔ 某条退役路径漏了 `wipe`。
-    #   ④ `tomb`（队列空 ∧ **有**信标）**不作为判据**：那是「活键上留着一枚等未来认领的
-    #      信号」，是 doorbell 语义的合法状态（`wake` 在无人在等时置的遗留信号，下一个
-    #      等待者会立刻消费它）。轮④ 挂上 `cascade` 后它稳定是 1——若照老办法断言
-    #      `tomb == 0`，门会在一个**合法**状态上判红。它照旧打印，供跨轮对比。
-    #   ⑤ `sites` 总数同样不作判据（历史记账：它曾是 34，全是 `wipe` 墓碑；A2 之后
-    #      由 ②③ 两项真正管住），只报数。
-    let n_sites = (audit_count "sites" $log)
-    let n_live = (audit_count "live" $log)
-    let n_tomb = (audit_count "tomb" $log)
-    let n_orphan = (audit_count "orphan" $log)
-    let n_dead = (audit_count "dead" $log)
-    let n_waiters = (audit_count "waiters" $log)
-    if $n_sites == null or $n_live == null or $n_tomb == null or $n_orphan == null or $n_dead == null or $n_waiters == null {
-      $why = (append_why $why "audit 站点计数取不到")
-    } else {
-      if $n_orphan != 0 { $why = (append_why $why $"孤儿站点[($n_orphan)]") }
-      if $n_dead != 0 { $why = (append_why $why $"死键站点[($n_dead)]") }
-      if $n_live != 0 { $why = (append_why $why $"活站点[($n_live)]") }
-      if $n_waiters != 0 { $why = (append_why $why $"残留等待者[($n_waiters)]") }
-      # 三形态必须配平（活 + 墓碑 + 孤儿 == 总数）：分列若与总数对不上，是**计数
-      # 自身**坏了——那会让上面几条判据全部失效，故也当判据。
-      if ($n_live + $n_tomb + $n_orphan) != $n_sites {
-        $why = (append_why $why $"三形态不配平[($n_live)+($n_tomb)+($n_orphan)!=($n_sites)]")
-      }
-      print $"  audit 站点计数：sites=($n_sites) live=($n_live) tomb=($n_tomb) orphan=($n_orphan) dead=($n_dead) waiters=($n_waiters)"
-    }
-    # ── 名册：关机时**不该还有活着的任务** ──
-    # 这一条比帧/块计数更早说出问题的名字：帧/块只说明"有东西没还"，它说明"哪个任务没走"。
-    # 实现用 `Weak::strong_count()` 数活口（只读、不升强引用），故观测不改被观测的事实。
-    let alive = ((^grep -oE -- '\[audit\] roster [0-9]+ alive [0-9]+' $log | complete).stdout | lines | first)
-    if $alive == null {
-      $why = (append_why $why "名册计数取不到")
-    } else {
-      let toks = ($alive | split row -r '\s+')
-      # 取的是 grep -oE 的整段匹配 ⇒ toks = ["[audit]", "roster", N, "alive", M]
-      let n_alive = ($toks | get 4 | into int)
-      let n_roster = ($toks | get 2)
-      print $"  名册：roster=($n_roster) alive=($n_alive)"
-      if $n_alive != 0 { $why = (append_why $why $"名册活任务[($n_alive)]（就是它钉住了自己的 Team/Space ⇒ 帧/页留在类别账）") }
-    }
-  } else if $flavor == "default" and (hit '\[audit\] sites ' $log) {
-    # **默认档**不该有 audit 输出：出现即说明跑的 ELF 带着 audit feature（不是本档构建）。
-    # 只对 default 判——harden 档现在**有意**带 features（一档同时带断言与 ledger/banker/
-    # lockdep，见头注「三档覆盖矩阵」），它的 audit 输出是本档应有的。
-    $why = (append_why $why "默认档出现了 audit 输出")
   }
   # .sh 里 `wait` 一定有退出码；nu 这条路可能取不到（job 没收尾），那也是失败的理由。
   if $rc == null { $why = (append_why $why "qemu 未在限内收尾（退出码取不到）") }
@@ -647,7 +566,7 @@ def main [] {
   let icount = ($env.EXAMINE_ICOUNT? | default "")               # 默认空 = 关
   # 内核 cargo feature（默认空 = 默认档，行为与输出与本门原版逐字相同）。
   # `audit` ⇒ 默认档轮次**之后**再多跑一轮 audit 轮：步骤追加 `sleep 700` / hole 的
-  # 封印唤醒观测，并断言关机时刻的站点表计数（prune 的观测量）。
+  # 封印唤醒观测。
   # **只作用于 audit 轮**：默认轮跑的 ELF 由 `const DEFAULT_FEATURES` 决定（恒空）。
   let features = ($env.EXAMINE_FEATURES? | default "" | str trim)
   let audit = (($features | split row -r '\s+') | any { |f| $f == "audit" })
@@ -692,20 +611,18 @@ def main [] {
     let built_harden = ($root | path join "target/riscv64gc-unknown-none-elf/harden/sqware")
     print $"examine: 构建 harden 档（--profile harden，debug-assertions=on）→ ($elf_harden)"
     build_flavor "harden" $features $built_harden $elf_harden
-    # **正向对照（四串）**：这一档必须**同时**带着两半护栏——断言（debug-assertions）
-    # 与记账（audit feature 的 banker/ledger），再加 lockdep 的报文体。少任何一串，
-    # 这一档就退化成"又跑了一遍别的档"而没人发现（旧版只查一句断言串，故"两半从不
-    # 同时在场"这件事一直没有被门盯住）。
+    # **正向对照**：这一档必须**同时**带着两半护栏——容器⇔状态断言与 lockdep 的
+    # 报文体。少任何一道，这一档就退化成"又跑了一遍别的档"而没人发现。
     # 实测基线：同一句断言在 release ELF 里 0 次、debug ELF 里 1 次。
     for probe in $HARDEN_PROBES {
       let r = (^grep -ac -- $probe $elf_harden | complete)
       let found = ($r.stdout | str trim)
       if $r.exit_code != 0 or $found == null or ($found | into int) < 1 {
-        print $"examine: harden ELF 里找不到『($probe)』⇒ 这一档缺护栏的一半（断言 / banker / ledger / lockdep）"
+        print $"examine: harden ELF 里找不到『($probe)』⇒ 这一档缺护栏的一半（断言 / lockdep）"
         exit 1
       }
     }
-    print $"  harden 正向对照：四串齐（断言 / ledger / 帧侧链式不变式 / lockdep），共 ($HARDEN_PROBES | length) 项"
+    print $"  harden 正向对照：两串齐（容器⇔状态断言 / lockdep），共 ($HARDEN_PROBES | length) 项"
   }
 
   let cfg = {
@@ -751,8 +668,8 @@ def main [] {
     }
   }
 
-  # audit 轮（仅当 EXAMINE_FEATURES 含 audit）：同一台门、同一套判据，另加三条
-  # audit 断言（redeem 的第二个时长 / wipe 的封印唤醒 / prune 的站点表计数）。
+  # audit 轮（仅当 EXAMINE_FEATURES 含 audit）：同一台门、同一套判据，另加四条
+  # audit 断言（票单调不复用 / wipe 的封印唤醒 / 他杀两条探针）。
   # 轮次编号接在默认轮之后，证据目录因此不会互相覆盖。
   if $audit {
     let i = $repeat + 1
@@ -760,9 +677,10 @@ def main [] {
     $total_rounds += 1
     if $r.ok {
       $pass += 1
-      # 标签照实写：audit 档判的是**孤儿 == 0 / 活 == 0 / 等待者 == 0**，不是「站点表已空」
-      # （实测 sites=34 全是墓碑；总数不作判据）。
-      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 15 步全过 + 20 marker 齐 + 站点表：无孤儿/无死键/无活站点)')
+      # 标签照实写：audit 档比默认档多的是**四条 audit 断言**（票单调不复用 / 封印唤醒 /
+      # 他杀两条），以及 boot 期与挂起点的内核内自检（`space.audit()` / 挂起自检）。
+      # 站点表/终值判词那几条读数已随审计层删除，别在报告行里写成还在判。
+      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 15 步全过 + 20 marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (audit 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }

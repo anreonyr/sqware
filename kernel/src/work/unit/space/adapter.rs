@@ -19,8 +19,7 @@
 //! # Drop
 //!
 //! `root`（页表树，递归归还全部表帧）、`maps` 帧随字段自动 drop 归还 frame 池
-//! ——所有权驱动。非内核空间先 `fence::retire(asid)` 销账再归还 ASID（顺序契约：
-//! ASID 复用后键即换主）。
+//! ——所有权驱动；非内核空间额外归还自己的 ASID。
 
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -323,29 +322,10 @@ impl Space {
             salvage.take_span(span);
             Ok(())
         })?;
-        // 3. **这里不销账**（曾经销过，是错的——本条是那次错误的墓志铭）。
-        //
-        // 用户堆页的账目键是 `(asid, 页索引)`，而账目的**主人**是
-        // `MemoryCall::Deallocate` 的臂（`envcall.rs` 的 `on_free`），它按
-        // `(key, size, Kind::UserHeap)` 精确注销；空间作废时则由 `Space::drop` 的
-        // `fence::retire(asid)` 整片收走。本条释放门夹在两者**之间**——走到这里时
-        // 那笔账**还是活的、且应当保持活着**，因为 `on_free` 正要读它来核
-        // `SizeMismatch`、canary 与种类。
-        //
-        // 上一轮我在这个位置加过 `retire_range`，理由是"任何拆掉一块用户区间的
-        // 路径都得销账"（当时怀疑 `Munmap` → `ShareWindow::munmap` 不销账）。那个
-        // 怀疑**不成立**：`Mmap`/`Munmap` 在用户态没有调用方，而唯一真在跑的路径
-        // 是堆的 `Deallocate`——于是这个"兜底"恰好打在**唯一真路径**上：先把记录
-        // 销掉，`on_free` 随后 `unmark` 便查无此账，`report(UnregisteredFree)`
-        // 是 `-> !`，**当场 panic 掉整机**。实测（`--features audit`）：
-        //
-        // ```text
-        // [audit] release retires 1 user-heap records @ 0x2d000+0x1000
-        // [integrity] UnregisteredFree at 0x60000000002d: unmark: no record
-        // ```
-        //
-        // 教训是这条：**"一个资源两个归还者"的解法不是再加一个归还者**，而是把
-        // 归还点收敛掉。此处已收敛（两个 window 都走本条），销账点则本来就只有一个。
+        // 3. 归还点是**唯一**的：两个窗口（堆 / mmap）都走本条，空间侧不含第二份
+        //    记账。这条曾经长过一段"兜底销账"（`retire_range`），当事的账本已随
+        //    `fence` 层删除；留下的教训是那句普通的工程话——**"一个资源两个归还
+        //    者"的解法不是再加一个归还者，而是把归还点收敛掉**。此处已收敛。
         salvage.reclaim(self).expect("release: shootdown deaf");
         Ok(())
     }
@@ -438,13 +418,9 @@ impl Space {
 impl Drop for Space {
     fn drop(&mut self) {
         if !self.asid.is_kernel() {
-            // 1. 注销本空间名下的用户堆账：账的所有者是空间（键含 asid），任务
-            //    退出不 unwind、退出时仍持堆是常态（TLS 由构造决定永不释放）
-            //    ——账只能随空间作废。必须先于 ASID 归还：复用后键即换主。
-            crate::memory::allocator::fence::retire(self.asid.get());
-            // 2. 释放 ASID（内含清退：ASID 立即可被复用，残留条目会让新空间同
-            //    VA 命中旧映射）。此路径恒走快路径——Arc 归零 ⇒ 无任务持有本
-            //    空间 ⇒ 没有任何核驻留该 ASID。
+            // 释放 ASID（内含清退：ASID 立即可被复用，残留条目会让新空间同 VA
+            // 命中旧映射）。此路径恒走快路径——Arc 归零 ⇒ 无任务持有本空间 ⇒
+            // 没有任何核驻留该 ASID。
             asid::deallocate(self.asid).expect("space drop: shootdown deaf");
         }
         // `inner` 随字段自动 drop：root（页表树）/maps 帧全部归还 frame 池。

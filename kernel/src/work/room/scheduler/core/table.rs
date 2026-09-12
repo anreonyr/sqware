@@ -154,18 +154,6 @@ pub(crate) fn muster(id: usize) -> Option<TaskWeak> {
         .map(|w| w.copy_at(Site::Muster))
 }
 
-/// 名册规模与**仍活着的条数**（`(总条数, 活条数)`）——audit 档的观测量。
-///
-/// 用 `Weak::strong_count()` 数活口：**只读、不升强引用**，故观测本身不会把被量对象
-/// 拖住（`upgrade` 会 +1，用于观测就会改变被观测的事实）。关机时它应当是 `0`：全部任务
-/// 都已回收，名册里不该还有强引用能升起来的条目。**它比帧/块计数更早说出问题的名字**
-/// ——帧/块只告诉你"有东西没还"，它告诉你"哪个任务没走"。
-#[cfg(feature = "audit")]
-pub(crate) fn roster_live() -> (usize, usize) {
-    let g = roster_table().lock();
-    (g.len(), g.values().filter(|w| w.strong_count() > 0).count())
-}
-
 /// **清掉已消失任务的条目**，返回摘掉的条数。
 ///
 /// # 为什么必须清（这不是"顺手优化"）
@@ -184,13 +172,6 @@ pub(crate) fn prune_dead() -> usize {
     let before = g.len();
     g.retain(|_, w| w.strong_count() > 0);
     before - g.len()
-}
-
-/// 名册规模（**post-`rip` 应为 0**）：`rip` 清空名册是"外壳归还"的最后一道门，
-/// 这条读数就是那扇门的检验 —— 若它非 0，说明门没关（或有人在门后又插了条目）。
-#[cfg(feature = "audit")]
-pub(crate) fn roster_len() -> usize {
-    roster_table().lock().len()
 }
 
 /// **在世任务的 id**（`strong_count > 0`），至多取 8 个：信标用它点名"谁还没走"。

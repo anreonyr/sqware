@@ -23,7 +23,7 @@ use super::{Kernel, Platform, Status, discover, set_running};
 ///
 /// 调用点：`boot` 期（`kernel/src/boot.rs`），在调度器就绪之后、`spawn_root` 之前 ——
 /// 与既往 `health::run()` 同一位置。故用例**没有 shell、没有装槽**，只有单核与早启动期
-/// 设施（`putln!`、块/frame 分配器、页表树、`Space` 原语、`fence`）。
+/// 设施（`putln!`、块/frame 分配器、页表树、`Space` 原语）。
 ///
 /// # 通过 = **放行启动**，不是停机
 ///

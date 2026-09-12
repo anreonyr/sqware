@@ -472,15 +472,10 @@ impl TaskBuilder {
         }
 
         // 入队收尾（**不入调度队列**——等 `Hatch`）
-        // 类别 = Task：Arc<TaskIdent>/Arc<Task> 属任务生命周期——关机 TASK_BLOCKS
-        // 归零（①）。Arc 数据指针 ≠ 分配基址，装饰器无法覆盖——经标注块分配器
-        // （tagged_alloc）在分配器侧标注；Arc::new_in 产 Arc<T, &'static dyn
-        // Allocator>，经 into_raw_with_allocator/from_raw 转回默认分配器型
-        // Arc<T>（同布局；释放路径按地址路由 + ledger 种类记账，不依赖分配器
-        // 类型——见 fence::on_free）。
-        let alloc = crate::memory::allocator::fence::tagged_alloc(
-            crate::memory::allocator::fence::Kind::Task,
-        );
+        // 分配器 = 内核主堆（hybrid 当前后端）。`Arc::new_in` 产
+        // `Arc<T, &'static dyn Allocator>`，经 into_raw_with_allocator/from_raw 转回
+        // 默认分配器型 `Arc<T>`（同布局：释放路径按地址路由，不依赖分配器类型）。
+        let alloc = crate::memory::allocator::hybrid::allocator();
         // **可失败装配**：这里的两笔 `Arc` 是任务自身的簿记，内存吃紧时旧版
         // `Arc::new_in` 直接走 std 默认 `handle_alloc_error` → 内核 panic →
         // 整机 halt（一个任务生不出来，全体陪葬）。改走 `try_new_in` 把失败

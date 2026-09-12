@@ -36,10 +36,11 @@ debug 构建           → lockdep 在
 
 ```text
 1 Scheduler   2 Space   4 L3(帧/槽)   5 Asid   6 Frame
-7 Block       8 Ledger  9 Tally       10 Spare
+7 Block       9 Tally       10 Spare
 ```
 
-**空槽 3 与 7 不是笔误**：3 是删掉的旧槽位，`Block=7` 当前全仓无调用点。声明方式是在构造处
+**空槽不是笔误**：3 与 8 是删掉的旧槽位（8 当年是审计账本 `Ledger` 的层级，随
+`allocator/fence` 一起删了），`Block=7` 当前全仓无调用点。声明方式是在构造处
 调 `new_level`（`spin.rs:59`、`reentrant.rs:65`、`bare.rs:49`），比较规则在 `depend::check`：
 先 `contains` 判重入，再 `Some(lv) 且 lv <= max(held)` 即违规——**严格递增**（`depend.rs:250-257`）；
 `max_level` 只数 `Some` 的（exempt 不参与，`:150-152`）。

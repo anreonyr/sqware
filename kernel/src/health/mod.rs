@@ -11,6 +11,7 @@
 // 非框架档（默认 / audit / harden）保留一条 `debug_assertions` 的旧入口：三个用例
 // 仍会在 debug 构建里跑一次，行为与框架落地前逐字相同。
 
+#[cfg(any(debug_assertions, feature = "framework"))]
 use core::fmt;
 
 /// 健康检查断言：条件不成立 → 统一报告 + fail-fast（panic）。
@@ -30,6 +31,10 @@ macro_rules! expect {
 }
 
 /// 输出健康检查结果行（旧档的通过汇报；框架档改由 `[case] ok <name>` 打点）。
+///
+/// 与三条用例同一个 gate：没有用例的档里它没有调用者。framework 档里用例的通过
+/// 汇报改走 `[case] ok` 打点，故那一档是本函数唯一"在场但没人调"的配置。
+#[cfg(any(debug_assertions, feature = "framework"))]
 #[cfg_attr(feature = "framework", allow(dead_code))]
 pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
     crate::putln!("[health] {item}: ok ({detail})");

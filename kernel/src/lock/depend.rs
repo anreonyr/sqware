@@ -57,8 +57,6 @@ pub enum Level {
     Frame = 6,
     /// block 的 `inner`/`pump`
     Block = 7,
-    /// allocator::fence::ledger::LEDGER
-    Ledger = 8,
     /// block 簿记表（tally）
     Tally = 9,
     /// allocator::spare（后备仓）

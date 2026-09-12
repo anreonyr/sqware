@@ -1,0 +1,6 @@
+# smartalloc 的 C 源是 1990 年代风格（K&R 形参声明、`extern int printf();` 这类
+# "未指定参数"声明）。GCC 14 起默认按 C23 解析，于是 `qinsert()` 被当成"零参数函数"，
+# 调用处直接报 `too many arguments to function 'qinsert'; expected 0, have 2`。
+# 钉回 gnu17 并把那几条风格告警关掉 —— 这是上游 C 源的老化，不是我们这边的问题。
+[env]
+CFLAGS = "-std=gnu17 -Wno-old-style-definition -Wno-implicit-function-declaration -Wno-implicit-int -Wno-builtin-declaration-mismatch"

@@ -18,6 +18,9 @@
 为长期回归。
 */
 
+// 用例只在 debug / framework 档存在（与 `pagetable.rs` 同一 gate）。
+#![cfg(any(debug_assertions, feature = "framework"))]
+
 use core::alloc::Layout;
 use core::ptr::NonNull;
 

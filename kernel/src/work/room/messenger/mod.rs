@@ -28,16 +28,10 @@ mod wait;
 
 // `doom` / `reap` 按 `super::{...}` 取站点表与票根，5a 拆出的这两个面本轮不动——
 // 故它们要的三个名字在父模块留一份私有 `use`（可见范围与拆分前一致：只到本域）。
-#[cfg(feature = "audit")]
-use crate::work::unit::life::Life;
 use doom::doomed;
 use reap::HUSKS;
 use wait::holder::{holders, void};
 use wait::site::{SITE_SHARDS, prune, shard_at};
-// `WakeKind` 只被 audit 档的观测面用（`SiteStats` 分列）——非 audit 构建下不引，
-// 免得留下一条「导入了但没人读」的飞线。
-#[cfg(feature = "audit")]
-use wait::site::WakeKind;
 
 /// 退场原因码的**逐核暂存槽**：`Reap` / 故障隔离杀在调 `quit` 之前写，`quit` 读它
 /// 并写进 `RoomEvent::Exit`，随后清零（下一次退场重新写）。
@@ -109,141 +103,16 @@ pub(crate) fn rip() {
     doomed().lock().clear(); // 只存 id，无 Arc
 }
 
-// ── 观测面：站点表只读计数（audit 档） ──
-//
-// `prune`（空站点出队即删）每次收队都在跑，却**零观测量**：站点表规模从哪里都
-// 读不到，于是「删没删」只能靠读代码断言。本面把规模变成可观测量——只读、不
-// 改任何表（不加 envcall，ABI 不变）。
-//
-// **必须在 [`rip`] 之前读**：`rip` 的职责就是清空这两张表，之后读到的恒为 0，
-// 那样的断言没有牙（`prune` 全坏也照样是 0）。消费者 = `boot::register_runtime_hooks`
-// 的关机钩子（序列里排在 `rip` 之前的那一条）。
-
-/// 站点表的一帧只读快照：合计规模 + 三形态分列 + 等待者总数。
-///
-/// 三形态（判据见 `site::prune`）：活 / 墓碑 / 孤儿。`tomb` 自 A2 落地后**恒为 0**
-/// ——`wipe` 不再留墓碑，「此键已死」由 [`Life`] 承担（见 `work::unit::life`）。
-/// 保留这个字段是**反向验证要的哨兵**：判据 1 就是「它必须掉到 0」，一个计数若被
-/// 删掉就再也验不了「没有墓碑」（本轮实测 34 → 0；把判据与 `wipe` 一并改回原样 ⇒
-/// 原样回到 34）。
-///
-/// 后两者必须分列的理由是**只有孤儿能指证 `prune`**：总数会把「活站点」与「残留」
-/// 混在一起——本轮反向验证实测：把 `prune` 整个关掉，走完门那九步的总数只从 34 变
-/// 36，而**孤儿从 0 变 2**；断言不分开看就几乎没有牙。
-#[cfg(feature = "audit")]
-pub(crate) struct SiteStats {
-    /// 全部 16 片合计的站点数（键数）= 活 + 墓碑 + 孤儿。
-    pub(crate) sites: usize,
-    /// 还挂着等待者的站点数。
-    pub(crate) live: usize,
-    /// 墓碑站点数：队列空、但有信标。**不作为判据**（见下 `dead`）：键还活着时它
-    /// 有语义——「`wake` 在无人在等时置的遗留信号」，下一个等待者会立刻消费它。
-    /// 轮④ 挂上 `cascade` 后它稳定是 1，而那是**合法**状态。
-    pub(crate) tomb: usize,
-    /// **孤儿**站点数：队列空 **且** 无信标——`prune` 该删而没删的残留。
-    pub(crate) orphan: usize,
-    /// **死键站点数**：键的存活单元已死。A2「站点寿命＝资源寿命」的**精确**形式，
-    /// 必须为 0。它与上面三形态**正交**（能入队 ⇒ 键活着，故 `live` 里不会有死键；
-    /// 死键只能落在 `tomb`/`orphan` 里）。资源退役时 `wipe` 当场删站点，故一个死键
-    /// 站点存在 ⇔ 某条退役路径漏了 `wipe`——这是 `tomb` 那种混合计数给不出的牙。
-    pub(crate) dead: usize,
-    /// 全部站点队列里的等待者总数（挂起任务数）。
-    pub(crate) waiters: usize,
-    /// 按 [`WakeKind::ALL`] 下标分列的站点数（四类合计 == `sites`）。
-    /// 只用定长数组（关机路径上不为一行诊断再分配）。
-    pub(crate) each: [usize; WakeKind::ALL.len()],
-}
-
-#[cfg(feature = "audit")]
-impl SiteStats {
-    /// 分列串：`space N hole N task N alarm N`。四类的名字与顺序**只有一处**出处
-    /// （[`WakeKind::ALL`] / [`WakeKind::name`]），本方法不含第二份清单。
-    pub(crate) fn kinds(&self) -> impl core::fmt::Display + '_ {
-        struct Kinds<'a>(&'a [usize]);
-        impl core::fmt::Display for Kinds<'_> {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                for (i, k) in WakeKind::ALL.iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(" ")?;
-                    }
-                    write!(f, "{} {}", k.name(), self.0[i])?;
-                }
-                Ok(())
-            }
-        }
-        Kinds(&self.each)
-    }
-}
-
-/// 站点表快照：**逐片取、逐片放**（绝不持跨片锁，同 [`rip`] 的锁纪律）。
-///
-/// dropped 纪律：每片 `HashMap` 的值含 `Arc<Task>`，**锁外 drop**——持 L3 锁
-/// drop `Arc<Task>` 会顺 drop 链取 Space 锁（L2），即 3→2 嵌套。
-#[cfg(feature = "audit")]
-pub(crate) fn probe() -> SiteStats {
-    let mut st = SiteStats {
-        sites: 0,
-        live: 0,
-        tomb: 0,
-        orphan: 0,
-        dead: 0,
-        waiters: 0,
-        each: [0; WakeKind::ALL.len()],
-    };
-    for shard in 0..SITE_SHARDS {
-        // 作用域即临界区：`SpinLock::lock` 返的是**守卫**（不是引用），故守卫必须在
-        // 块内成型、块末即放——出块后本片就没有 `Arc<Task>` 被持锁 drop 的风险。
-        {
-            let guard = shard_at(shard).lock();
-            for (key, site) in guard.iter() {
-                st.sites += 1;
-                st.each[key.kind() as usize] += 1;
-                if !site.waiters.is_empty() {
-                    st.live += 1;
-                } else if site.pend {
-                    st.tomb += 1;
-                } else {
-                    st.orphan += 1;
-                }
-                if Life::dead(&site.life) {
-                    st.dead += 1;
-                }
-                st.waiters += site.waiters.len();
-            }
-        }
-    }
-    st
-}
-
-/// **post-`rip`** 的三张表规模（站点数、票根数、躯壳数）—— 都应恒为 0。
-/// 与 `probe_messenger`（pre-`rip`）成对：那一侧量"关机前还剩什么"，这一侧量
-/// "清空动作到底做没做"。
-#[cfg(feature = "audit")]
-pub(crate) fn probe_bookkeeping_post() -> (usize, usize, usize) {
-    // **逐个取、逐个放**：写成元组一次性求值会让三把 L3 锁同时活着（临时量的生存期
-    // 到语句末尾）⇒ lockdep 当场报同层嵌套（实测：整轮 panic 在 `lock/depend.rs`）。
-    let sites = {
-        let mut n = 0usize;
-        for i in 0..SITE_SHARDS {
-            n += shard_at(i).lock().len();
-        }
-        n
-    };
-    let holders_n = holders().lock().len();
-    let husks_n = HUSKS.lock().len();
-    (sites, holders_n, husks_n)
-}
-
 /// 另两张簿记表的规模：票根（只存 `Weak`，无 drop 链）与躯壳队列。
 ///
-/// 一并量出去的理由与站点表同：它们也只由关机钩子清，`rip` 之后就再也读不到。
-/// `husks` 里若**还有东西**，说明 `bury` 没跑完 —— 而全部任务回收是停机的前置。
+/// 消费者是停机信标：挂住时它要报出"还剩多少簿记没清"，靠的就是这两个读数。
 #[cfg(feature = "audit")]
 pub(crate) fn probe_bookkeeping() -> (usize, usize) {
     let holders_n = holders().lock().len();
     let husks_n = HUSKS.lock().len();
     (holders_n, husks_n)
 }
+
 // ── 操作：扑杀（suspend / reap / cull / doom）──
 //
 // 血缘级联的「杀」侧，**两阶段**：先停摆（摘出全部调度/等待容器），再收尾

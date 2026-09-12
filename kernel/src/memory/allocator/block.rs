@@ -27,7 +27,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use erra::ResultExt;
 
-use super::fence::checker;
+
 use crate::machine;
 use crate::memory::PAGE_SIZE;
 use crate::{
@@ -162,25 +162,6 @@ impl Tally {
         unsafe { self.cells.add(idx).read() }
     }
 
-    /// 收集全部「有主」页 PA — 审计/诊断专用（关机池页计数诊断）。
-    ///
-    /// 闭包在 tally 锁内逐项读取（O(表长)），对每条 owner.is_some() 的表项
-    /// 反算 PA 推入 out。注意本函数持 tally 锁期间调用方不得持 frame 锁
-    /// （持锁顺序 tally < frame，与 prime/drain 同向；见模块头锁序）。
-    /// out 使用审计类分配器（check_baseline 调用方传入）——审计工具自扰豁免。
-    /// 仅 audit（debug-gated）用。
-    #[cfg(feature = "audit")]
-    pub(crate) fn collect_owned_pa(&self, out: &mut Vec<usize, &'static dyn Allocator>) {
-        let _g = self.lock.lock();
-        for idx in 0..self.len {
-            // SAFETY: idx < len 由循环保证；lock 串行。
-            let m = unsafe { self.cells.add(idx).read() };
-            if m.owner.is_some() {
-                out.push(self.frame_of(idx));
-            }
-        }
-    }
-
     /// 写表项。
     fn write(&self, page: usize, m: Meta) {
         let _g = self.lock.lock();
@@ -269,13 +250,6 @@ impl BlockAllocator {
         self.tally.owner_of(pa)
     }
 
-    /// 收集全部「有主」页 PA（任何池 owned；本块堆全部持有页）。
-    /// 关机池页计数诊断用（audit::check_baseline ④）。
-    #[cfg(feature = "audit")]
-    pub(crate) fn collect_owned(&self, out: &mut Vec<usize, &'static dyn Allocator>) {
-        self.tally.collect_owned_pa(out);
-    }
-
     /// 构建块分配器：按核数建池集合 + bump 分配簿记表（池从 0 页起，页经 prime 向 frame 借）。
     ///
     /// 必须在任何堆分配之前调用恰好一次，且须在 frame 初始化之前。
@@ -316,13 +290,7 @@ impl BlockAllocator {
             pools.push(BlockInner::new(i, tally, pool));
         }
 
-        // audit: 完整性框架装配（帧种类表 + Ledger）。帧侧不再有 banker 位图——
-        // "这页在不在手"由 frame::pagemeta 一份账回答。
-        #[cfg(feature = "audit")]
-        {
-            crate::memory::allocator::fence::init_frame_kind(m.free.base, m.free.size / PAGE_SIZE);
-            crate::memory::allocator::fence::ledger::LEDGER.init(512 * 1024);
-        }
+        // 帧侧没有第二份位图："这页在不在手"由 frame::pagemeta 一份账回答。
 
         Ok(BlockAllocator {
             blocks: Box::leak(pools.into_boxed_slice()),
@@ -345,17 +313,13 @@ unsafe impl Allocator for BlockAllocator {
         let me = machine::hart_id();
         let pool = &self.blocks[me];
         let addr = pool.pull(power).ok_or(AllocError)?;
-        // 护栏事件：活块入账（类别记账收在 fence：mark 默认 Persistent，打标
-        // 分配器 relabel——本文件零类别词汇，见 fence 模块头解耦纪律）。
-        super::fence::on_alloc(addr, layout.size(), super::fence::Kind::Plain);
+
         // SAFETY: pull 返回的地址必非零（分配器保证）。
         //
         // 交付长度 = **请求字节数**（`layout.size()`），不是 size class：`NonNull<[u8]>`
         // 的 len 是「本次交给调用方的字节数」这句合约的载体，而 `Allocator::
         // allocate_zeroed` 的默认实现正是按 `ptr.len()` 清零。报 size class 会把
-        // 清零越出请求区、砸进请求区外的 slack——fence 的 slack canary 就住在那儿
-        // （canary 槽 = addr + align8(size)，41B 请求即 +0x30 < 0x40）⇒ audit 档
-        // `vec![0u8; n]` 一次就把 canary 清零，释放时 CanaryBroken 停摆。
+        // 清零越出请求区、砸进请求区外的 slack（调用方并没有要那块字节）。
         // size class 是分配器内部记账（deallocate 由 layout 重算，与 len 无关），
         // 不属于交付物；frame 侧同理只报 `max(size, PAGE_SIZE)` 而非整个 buddy 块。
         Ok(NonNull::slice_from_raw_parts(
@@ -373,8 +337,7 @@ unsafe impl Allocator for BlockAllocator {
         let pa = ptr.addr().get();
         // 归属路由：非块内存 → 静默丢弃。
         let Some(home) = self.own(pa) else { return };
-        // 护栏事件：活块注销。
-        super::fence::on_free(pa, layout.size(), super::fence::Kind::Plain);
+
         let me = machine::hart_id();
         let pool = &self.blocks[home];
         if home == me {
@@ -421,7 +384,7 @@ impl BlockInner {
         let mut g = self.pool.lock();
         let inner = &mut *g;
         if let Some(head) = inner.freepool[power] {
-            checker::check_dram_addr(head.as_ptr() as usize, "block pull (freepool head)");
+
             // spare 资格取消：保留页被重新在用 → 释放保留名额
             let page = head.as_ptr() as usize & !(PAGE_SIZE - 1);
             if inner.spare[power] == Some(page) {
@@ -431,7 +394,7 @@ impl BlockInner {
             inner.freepool[power] = next;
             // used 记账：复合 RMW 单锁内完成（tally 自锁；见 Tally::inc_used）。
             self.tally.inc_used(page);
-            checker::log_alloc(head.as_ptr() as usize, power);
+
             return Some(head.as_ptr() as usize);
         }
         // 无现成块：向 frame 借页拆入链，首块即本次分配结果
@@ -441,8 +404,7 @@ impl BlockInner {
 
     /// 借一页拆块入链（arena 扩展：池无自有区段，页即向 frame 借）。
     /// 调用方须已持本池 inner 锁（pull 内调用）。锁序：inner → frame（单向）。
-    /// 页种类 = Prime（fence 打标分配器——自由周转，关机只报数，
-    /// 不参与归零检查；本文件对种类词汇仅此一处）。
+    /// 本页是自由周转页：关机时不参与任何归零检查（池冲洗 `flush` 会归还它）。
     fn prime(&self, inner: &mut Pool, power: usize) -> Result<NonNull<u8>, AllocError> {
         // 借 1 页（order0）。
         let layout = Layout::from_size_align(PAGE_SIZE, PAGE_SIZE).unwrap();
@@ -452,9 +414,8 @@ impl BlockInner {
                 .allocate(layout)
                 .map_err(|_| AllocError)?
         );
-        super::statistics::record_pool_take(self.id);
+        super::statistics::record_pool_take();
         let base = page.as_ptr() as *mut u8 as usize;
-        checker::check_dram_addr(base, "block prime (frame page)");
 
         // 簿记表：owner=本池、power=本类、used=1；块从页首 +0 起整页拆链（页内零开销，满装）
         self.meta_put(base, Meta::new(self.id, power));
@@ -521,7 +482,7 @@ impl BlockInner {
         unsafe {
             frame::allocator().deallocate(NonNull::new_unchecked(page as *mut u8).cast(), layout);
         }
-        super::statistics::record_pool_give(self.id);
+        super::statistics::record_pool_give();
     }
 
     /// 推回本池：写 freelist 链 + 递减表项计数；归零走 spare/drain 决策。
@@ -529,21 +490,12 @@ impl BlockInner {
         let mut g = self.pool.lock();
         let inner = &mut *g;
 
-        checker::check_not_in_chain(
-            power,
-            "block push",
-            inner.freepool[power],
-            ptr.as_ptr() as usize,
-            |n| unsafe { n.cast::<Option<NonNull<u8>>>().read() },
-        );
-
         // 头插
         unsafe {
             ptr.cast::<Option<NonNull<u8>>>()
                 .write(inner.freepool[power]);
         }
         inner.freepool[power] = Some(ptr);
-        checker::log_dealloc(ptr.as_ptr() as usize, power);
 
         // 递减表项计数；归零 → 本 class 无 spare 则补位（迟滞保留），有则归还本页。
         // used 记账：复合 RMW 单锁内完成（tally 自锁；见 Tally::dec_used）。
@@ -551,8 +503,7 @@ impl BlockInner {
         let (_, empty) = self.tally.dec_used(page);
         if empty {
             // 整页无活跃账目。
-            #[cfg(feature = "audit")]
-            crate::memory::allocator::fence::audit::page_clear(page);
+
             if inner.spare[power].is_none() {
                 inner.spare[power] = Some(page);
             } else {

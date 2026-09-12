@@ -400,12 +400,6 @@ fn scene_rows(scene: &Scene) -> Vec<Vec<Option<String>>> {
 
 /// 末尾倒出每 hart 最近事件窗口。
 pub fn dump(r: &mut Report) {
-    // canary 现场清查依赖 ledger 模块（audit-feature-gated）；非 audit 构建
-    // 下 ledger 整体未编译，本调用也必须 gate 同步，否则 E0433。
-    #[cfg(feature = "audit")]
-    {
-        let _ = crate::memory::allocator::fence::ledger::LEDGER.sweep_canaries();
-    }
     // 投稿：CSR/GPR/回溯段入报告（[scene] 标题挂首段，其余段空标题同段落）。
     let kernel_scene = Scene::capture_kernel();
     let hart = kernel_scene

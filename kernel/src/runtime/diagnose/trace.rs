@@ -108,7 +108,7 @@ pub enum EnvEvent {
     Call { call: usize, arg: usize },
 }
 
-/// 内存事件（缺页 + 完整性违例）。
+/// 内存事件（缺页）。
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryEvent {
@@ -117,8 +117,6 @@ pub enum MemoryEvent {
         fault: FaultKind,
         resolved: bool,
     },
-    /// 完整性违例（repr(u8) 编码）。
-    Integrity { code: u8, addr: usize },
 }
 
 /// 停机事件。
@@ -335,9 +333,6 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
                 "pagefault va={va:#x} kind={:?} resolved={resolved}",
                 fault
             )
-        }
-        EventKind::Memory(MemoryEvent::Integrity { code, addr }) => {
-            write!(w, "integrity code={code} addr={addr:#x}")
         }
         EventKind::Halt(HaltEvent::Halt) => write!(w, "halt"),
         EventKind::Halt(HaltEvent::Panic) => write!(w, "panic"),

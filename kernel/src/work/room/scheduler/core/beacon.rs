@@ -56,9 +56,9 @@ static BEACON_FIRED: AtomicBool = AtomicBool::new(false);
 /// 有任务还活着），只按计数判会在那里误报。
 ///
 /// **存 id 而不是 `Weak<Task>`**：静态里放一枚 `Weak` 就是**永久的弱引用**，而
-/// `ArcInner<Task>`（`Kind::Task`，152 B）的最后一门正是弱引用 —— 它会把这个任务的
-/// 外壳一直扣到关机审计，于是审计**每次都**报 `leak: task 1`。这不是推论：本轮真
-/// 用 `Weak` 实现过一次，四轮里四轮复现（`task 块存活=1`），改成 id + 名册查名后归零。
+/// `ArcInner<Task>`（152 B）的最后一门正是弱引用 —— 它会把这个任务的外壳一直扣到
+/// 关机，于是停机普查每次都报任务外壳未归零。这不是推论：本轮真用 `Weak` 实现过
+/// 一次，四轮里四轮复现，改成 id + 名册查名后归零。
 /// 名册（[`super::table::muster`]）是**设计上的任务索引**，且 `rip` 会清空它 —— 用它
 /// 查名不会给任何对象续命。
 static ROOT_ID: AtomicUsize = AtomicUsize::new(0);

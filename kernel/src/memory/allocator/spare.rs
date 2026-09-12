@@ -26,7 +26,6 @@ use crate::{
     },
 };
 
-use super::fence::checker;
 
 /// 块头字节数：Link(16) + size(8) + 对齐垫(8) → 块首 16B 对齐 ⇒ 载荷 16B 对齐。
 const HEADER: usize = 32;
@@ -223,8 +222,8 @@ impl SpareAllocator {
             (payload.next_multiple_of(MAX_ALIGN) + HEADER + DUMP_BUDGET).next_multiple_of(PAGE_SIZE)
         };
         let align = Layout::from_size_align(cap, PAGE_SIZE).map_err(|_| InitError::OutOfMemory)?;
-        // 种类 = Spare（hybrid 的大块路径默认标 Plain；这里是崩溃路径专用仓，
-        // 唯一使用者，故就地改标）。
+        // 从主堆整块取一段作仓区（hybrid 的大块路径）；本仓是崩溃路径专用仓，
+        // 启动期一次取定，此后只在本区内拉/还块，不再向主堆要内存。
         let chunk = crate::tag!(
             Spare,
             hybrid::allocator()
@@ -232,20 +231,13 @@ impl SpareAllocator {
                 .map_err(|_| InitError::OutOfMemory)?
         );
         let base = chunk.as_ptr() as *mut u8 as usize;
-        // 持久注册表：spare 仓块（日志 + panic 打印专用）永不归还——登记以便
-        // 关机逐项核 held（Held 组）。
-        #[cfg(feature = "audit")]
-        crate::memory::allocator::fence::audit::register_persistent(
-            base,
-            crate::memory::allocator::fence::Kind::Spare,
-        );
         let edge = base + chunk.len();
         Ok(Self {
             inner: SpinLock::new_level(Level::Spare, SpareInner::new(base, edge)),
         })
     }
 
-    /// 仓总容量（edge − base 字节）。statistics::view_spare().total 派生于此。
+    /// 仓总容量（edge − base 字节）。`statistics::record_spare_total` 报的就是它。
     pub(crate) fn total_bytes(&self) -> usize {
         let g = self.inner.lock();
         g.edge - g.base
@@ -266,7 +258,6 @@ unsafe impl Allocator for SpareAllocator {
         let addr = blk.as_ptr() as usize;
         // SAFETY: blk 在链中，size 为块首真实总长（split 后 = HEADER + need）。
         let size = unsafe { blk.read() }.size;
-        checker::check_dram_addr(addr, "spare pull");
         super::statistics::record_spare_take(size);
         // SAFETY: addr + HEADER 为仓内空闲块载荷首（16B 对齐，块已出链）。
         Ok(NonNull::slice_from_raw_parts(
@@ -284,7 +275,7 @@ unsafe impl Allocator for SpareAllocator {
                 // 跨堆指针（切换前主堆分配、切换后 drop）：不还本仓、绝不 panic——直接丢弃。
                 return;
             }
-            checker::check_dram_addr(blk_addr, "spare put");
+
             let blk = NonNull::new_unchecked(blk_addr as *mut Blk);
             let size = blk.read().size;
             super::statistics::record_spare_give(size);
@@ -298,7 +289,7 @@ unsafe impl Allocator for SpareAllocator {
 static SPARE_ALLOCATOR: OnceLock<&'static SpareAllocator> = OnceLock::new();
 
 /// 后备仓入口（统一暴露）：返回具体 `SpareAllocator`——调用方直接
-/// `spare().allocate(...)`。`occupied` / `available` 走 `statistics::view_spare()`。
+/// `spare().allocate(...)`。`occupied` / `available` 走 `statistics::spare_*()`。
 pub fn spare() -> &'static SpareAllocator {
     SPARE_ALLOCATOR
         .get()

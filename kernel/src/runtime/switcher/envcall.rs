@@ -316,18 +316,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             let size = size.max(1).next_multiple_of(PAGE_SIZE);
             let addr = {
                 let s = &ident.team.space;
-                let r = HeapWindow::allocate(s, size).map(|span| span.va);
-                if let Ok(va) = r {
-                    let key = crate::memory::allocator::fence::key(s.asid().get(), va.as_usize());
-                    // 种类 = UserHeap：键是 `(asid, 页索引)` 而非地址，随空间
-                    // `retire` 作废——on_alloc 已把种类记进账本，无需再 tag。
-                    crate::memory::allocator::fence::on_alloc(
-                        key,
-                        size,
-                        crate::memory::allocator::fence::Kind::UserHeap,
-                    );
-                }
-                r
+                HeapWindow::allocate(s, size).map(|span| span.va)
             };
             frame.gpr.set_x(
                 Gprs::A0,
@@ -342,15 +331,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             let size = size.max(1).next_multiple_of(PAGE_SIZE);
             let ok = {
                 let s = &ident.team.space;
-                let freed = HeapWindow::deallocate(s, KVirt::from_raw(addr), size);
-                if freed {
-                    crate::memory::allocator::fence::on_free(
-                        crate::memory::allocator::fence::key(s.asid().get(), addr),
-                        size,
-                        crate::memory::allocator::fence::Kind::UserHeap,
-                    );
-                }
-                freed
+                HeapWindow::deallocate(s, KVirt::from_raw(addr), size)
             };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
