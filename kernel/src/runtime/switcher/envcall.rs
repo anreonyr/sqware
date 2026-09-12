@@ -529,14 +529,14 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             }
         }
         EnvCall::Control(ControlCall::Backtrace { buf, frames }) => {
-            // 用户自诊断回溯：采样当前任务用户栈（user_satp 根表，零锁不触缺页），
+            // Normal 任务自诊断回溯：采样当前任务的栈（`user_satp` 根表，零锁不触缺页），
             // 把 pc 数组经 mail::copy_out 写进用户 buf。buf 非法（未映射/不可写）→
             // copy_out 返 false → A0 = 负值（EnvError）。
             let world = ident.team.space.kind();
             let sp = frame.gpr.x(Gprs::SP);
             let fp = frame.gpr.x(Gprs::S0);
             let mut reader = StackReader::new(frame.user_satp.ppn());
-            let cfg = ResolveCfg::user(world, sp.saturating_add(frame::SPAN));
+            let cfg = ResolveCfg::normal(world, sp.saturating_add(frame::SPAN));
             // 域筛：候选 pc 是否属本域代码。符号表已移除：不再做符号命中域筛。
             let code = move |_w: usize| true;
             let (pc_arr, count) = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));

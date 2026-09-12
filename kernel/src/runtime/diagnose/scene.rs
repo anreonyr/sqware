@@ -162,14 +162,21 @@ impl Scene {
         })
     }
 
-    /// 用户现场采集：running 任务的用户 trap 帧（`ident().trap()`）。
-    fn capture_user() -> Option<Scene> {
+    /// Normal 现场采集：running 的 **Normal 团队**任务的 trap 帧（`ident().trap()`）。
+    fn capture_normal() -> Option<Scene> {
         let info = ident()?;
         let pa = info.trap()?;
         // SAFETY: Live 轴 = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM
         // 恒等映射）；崩溃现场只读，其余核已冻结。
         let frame = unsafe { &*(pa.as_usize() as *const TrapContext) };
-        if frame.sepc.is_kernel() {
+        // 门 = **团队种类**（现成的 `team.space.kind()`）：Kernel 团队没有"Normal 现场"这
+        // 回事——它那叠帧是内核帧。此前这里是地址判据（`frame.sepc.is_kernel()`），那是同一
+        // 件事的地址视图；一个事实只留一份账，故这里问种类、下面复用这一次读数。
+        let world = info
+            .live()
+            .map(|t| t.team.space.kind())
+            .unwrap_or(SpaceKind::User);
+        if world.is_supervisor() {
             return None;
         }
         let sp = frame.gpr.x(Gprs::SP);
@@ -177,13 +184,9 @@ impl Scene {
             return None;
         }
         let fp = frame.gpr.x(Gprs::S0);
-        let world = info
-            .live()
-            .map(|t| t.team.space.kind())
-            .unwrap_or(SpaceKind::User);
-        // 根表 = 用户根表（user_satp）；域 = 该任务空间；上界 = sp+SPAN。
+        // 根表 = Normal 侧根表（`user_satp`）；域 = 该任务空间（上面问过一次）；上界 = sp+SPAN。
         let mut reader = StackReader::new(frame.user_satp.ppn());
-        let cfg = ResolveCfg::user(world, sp.saturating_add(frame::SPAN));
+        let cfg = ResolveCfg::normal(world, sp.saturating_add(frame::SPAN));
         let code = |w: usize| VirtAddr::from_raw(w).is_user();
         let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
         let backtrace = Backtrace::from_walk(r);
@@ -427,10 +430,10 @@ pub fn dump(r: &mut Report) {
             .items
             .extend(backtrace_rows(scene, "kbt"));
     }
-    if let Some(scene) = Scene::capture_user() {
-        r.paragraph("ubt", None)
+    if let Some(scene) = Scene::capture_normal() {
+        r.paragraph("nbt", None)
             .items
-            .extend(backtrace_rows(&scene, "ubt"));
+            .extend(backtrace_rows(&scene, "nbt"));
     }
 
     // 每 hart 最近事件窗口（人读对照）。

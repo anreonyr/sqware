@@ -17,11 +17,11 @@ use alloc::collections::BTreeMap;
 /// 段 — 一段虚拟地址区间的几何身份（选段/定位段用）。
 ///
 /// 只作「从哪段取 / 归哪段」的参数，不承载几何或分配表（几何在 [`Segment`]
-/// 实体字段）。`User` 段装栈/堆/dock 视图；`Kernel` 段装线程 trap 帧。
+/// 实体字段）。`Normal` 段装栈/堆/dock 视图；`Kernel` 段装线程 trap 帧。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SegmentKind {
-    /// 非内核半区 `[free_base, upper)` — 栈/堆/dock 共用。
-    NonKernel,
+    /// Normal 半区 `[free_base, upper)` — 栈/堆/dock 共用。
+    Normal,
     /// 内核 trap 帧常量区 `[TEAM_FRAME_BASE, +SIZE)`，S-only。
     Kernel,
 }

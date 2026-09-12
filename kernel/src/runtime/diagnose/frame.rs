@@ -14,7 +14,7 @@
 //! 安全契约：**采样绝不触发缺页**。`walk_raw` 只读页表（未映射/非 R → [`None`] →
 //! 回溯提前终止），物理地址经 DRAM 值域守卫——用户构造的伪栈最多让链提前结束，
 //! 不会让内核在回溯中途缺页侵入。**根表分域**由调用方保证（kernel 传 `satp` 根、
-//! user 传 `user_satp` 根），本模块不持分域。
+//! normal 传 `user_satp` 根），本模块不持分域。
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
@@ -69,8 +69,8 @@ impl ResolveCfg {
         }
     }
 
-    /// 用户域配置：域 = 该任务空间，遇缺口跳页。
-    pub fn user(world: SpaceKind, ceiling: usize) -> ResolveCfg {
+    /// Normal 域配置：域 = 该任务空间，遇缺口跳页。
+    pub fn normal(world: SpaceKind, ceiling: usize) -> ResolveCfg {
         ResolveCfg {
             world,
             gaps: true,
@@ -93,7 +93,7 @@ pub struct StackReader {
 }
 
 impl StackReader {
-    /// 以根表 PPN 构造（`kernel` 传 `satp` 根、`user` 传 `user_satp` 根——根表分域
+    /// 以根表 PPN 构造（`kernel` 传 `satp` 根、`normal` 传 `user_satp` 根——根表分域
     /// 即分域隔离的第一重保障）。
     pub fn new(root_ppn: usize) -> StackReader {
         StackReader {

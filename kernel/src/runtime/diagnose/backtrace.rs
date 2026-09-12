@@ -33,8 +33,8 @@ pub enum FrameKind {
     Root,
     /// 内核域（高半区 或 镜像恒等区 `[_kernel_start, _kernel_edge)`）。
     Kernel,
-    /// 用户域（分裂位以下，`is_user`）。
-    User,
+    /// Normal 域（分裂位以下，`is_user`）。
+    Normal,
     /// 无法判定（无表 / 域外 / 未知）。
     Unknown,
 }
@@ -80,7 +80,7 @@ pub struct FrameResolver {
 }
 
 impl FrameResolver {
-    /// 由 Scene 的现场世界构造（内核/用户域的单一事实源）。
+    /// 由 Scene 的现场世界构造（内核 / Normal 域的单一事实源）。
     fn new(world: SpaceKind) -> FrameResolver {
         FrameResolver { world }
     }
@@ -89,7 +89,7 @@ impl FrameResolver {
     ///
     /// 三档裁决，`world` 与 `executable` 都参与：
     /// 1. ROOT 栈区（panic 救援栈）→ [`FrameKind::Root`]。
-    /// 2. 地址域本身（`is_kernel`/`is_user` → Kernel/User）——`world` 在**域可自定**
+    /// 2. 地址域本身（`is_kernel`/`is_user` → Kernel/Normal）——`world` 在**域可自定**
     ///    时不作用；仅当地址落在**规范空洞**（既非用户也非内核）才由 `world` 兜底。
     /// 3. 都不中 → 非代码地址（数据指针不足以判执行链）→ [`FrameKind::Unknown`]，
     ///    但若 `executable`（符号表命中）成立则视为本域代码，避免误杀有效的
@@ -104,7 +104,7 @@ impl FrameResolver {
             return FrameKind::Kernel;
         }
         if pc.is_user() {
-            return FrameKind::User;
+            return FrameKind::Normal;
         }
         // 规范的地址本身已能定域；此处不落 `self.world`。
         // 空域（既非用户也非内核）地址：若符号表命中（本域代码）则归本域，否则 Unknown。
@@ -113,7 +113,7 @@ impl FrameResolver {
         if self.executable(pc) {
             return match self.world {
                 SpaceKind::Supervisor => FrameKind::Kernel,
-                SpaceKind::User => FrameKind::User,
+                SpaceKind::User => FrameKind::Normal,
             };
         }
         FrameKind::Unknown
@@ -136,7 +136,7 @@ fn kind_label(k: FrameKind) -> &'static str {
     match k {
         FrameKind::Root => "R",
         FrameKind::Kernel => "K",
-        FrameKind::User => "U",
+        FrameKind::Normal => "N",
         FrameKind::Unknown => "?",
     }
 }

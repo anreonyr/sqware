@@ -41,7 +41,7 @@ fn shell_round() {
 
     let space = SpaceBuilder::user().build().expect("shell: build space");
     // `SpaceBuilder::user()` 只做完常量侧就位；user 段由 `dynamic(base)` 装上
-    // ——loader 在映像装载结束处做的就是这一步。用户栈走 `SegmentKind::NonKernel`，
+    // ——loader 在映像装载结束处做的就是这一步。用户栈走 `SegmentKind::Normal`，
     // 少了它 `StackWindow::claim` 会答 `NoRegion`。
     space.with_flush(|inner| inner.dynamic(USER_BASE));
     let team = TeamBuilder::new(space)
