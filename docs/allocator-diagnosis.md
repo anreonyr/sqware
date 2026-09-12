@@ -130,8 +130,24 @@ strong 在 `+0`、weak 在 `+8`，而取证代码只读了 `+8` 却标成 `stron
 `tomb 3` 说明关机上确实留着墓碑）。已修取证读数（两个都读、都打），
 下次复现即可一句话定案。
 
-**待查方向**：谁持有那枚 `Weak<Task>`（`wait/site.rs` 的站点值？
-`team` 的成员表？`heir`？），以及它为何在墓碑后仍未被回收。
+**第 11 轮：机制已证，容器已缩小到"扫描点名"**
+
+1. **机制不再是推论**。把根任务存成静态 `Weak<Task>`（停机信标的第一版实现），于是
+   **每一轮都复现**同一条 `leak: task 1`（`strong 0 weak 1` ⇒ 载荷已析构、块被一枚
+   存活的弱引用扣住）；改成"存 id + 名册查名"后立刻归零。⇒ 只要有一枚 `Weak<Task>`
+   活过关机审计，就必然报这一条。
+2. **已排除全部命名容器**。新增逐团队普查（`[audit] teams 活 N｜死弱引用 M｜…`）：
+   `ROSTER` / `HOLDERS` / `HUSKS` / 站点表都由 `rip` 清空；`Team.tasks` 与
+   `Team.sire` 在**全部活跃团队**里都是 0（含 `KERNEL_TEAM`，它也是唯一永不析构的
+   团队）。**但仍复现**（5 轮里 1 轮，14 轮里 0 轮）。
+3. **改为直接问内存**：泄漏时扫 DRAM 找"还指着这个块的地址的字"，逐条打印
+   （限定内核镜像 + 帧池窗口并跳过保留区 —— 第一版扫越界当场 page fault）。首轮命中
+   给出 4 处地址，**全在堆侧**（镜像内 0 处）⇒ 持有者是一张**堆上的表**而不是静态。
+   下一步：把那 4 处地址所在块的**堆头**打出来（块分配器的 size/kind、以及所在页
+   首的自述），或者按"地址落在哪个已知结构里"反推 —— 这一步已不需要复现运气，
+   因为扫描是在**已经抓到泄漏的那一轮**里跑的。
+
+**仍未定案的**：那 4 处命中里哪些是真持有者（字面巧合也会命中）。
 
 ### 3.4 关机偶发**挂住**（harden 档约 1/10 轮；**与本轮改动无关**）
 
@@ -157,11 +173,27 @@ asid 3）。且它**不由 seed 决定**：同一 ELF + 同一 seed 重跑可以
 `T_GAP=2` 的让出后连跑 8 轮全部正常停机。故"四核空闲在 `wfi`"这个现场**尚未**在真挂住
 的轮次里取到。
 
-**下一步（窄且明确）**：挂住时没有任何 hart 在跑，堆栈取不到"卡在哪个对象"，故要
-**在关机路径上装进度信标**（只在 audit 档）：每个空间的 drop 进入/离开、每个任务
-exit 的进入/离开、停机屏障已到达的 hart 数，各打一行带序号。挂住那轮的**最后一行**
-就是卡点。若挂点在 `Ledger::retire` 的 `retain` 里（它持账本锁），则同时解释了
-"5 个空间退完、第 6 个消失"的形态。
+**第 11 轮：信标已落地**（`scheduler/core/beacon.rs` + `conductor::halt` 的屏障信标）
+
+挂住时四个 hart 都睡在 WFI，没有栈帧可读 ⇒ 只能靠"收尾期停滞就发声"。两行信标：
+
+```text
+[stop] hart 1 空闲等待：PUSHED=13 REAPED=7（差 6）husks=0 holders=0 在世任务 id=[4, 7, 2, 3, 6, 1]
+[stop] halt 屏障等待：已达 3/4 核；任务 PUSHED=13 REAPED=13（差 0）—— 屏障等的是**核**，不是任务
+```
+
+判读三分：**在世 id 非空** ⇒ 有任务没退（点名到 id）；**husks > 0** ⇒ 躯干队列没排空
+（`bury` 没跑完）；**PUSHED == REAPED 而屏障不齐** ⇒ 卡在停机屏障（第二行报）。
+
+两条实现纪律（都是本轮踩出来的）：
+
+* **收尾期的判据是"根任务已 `Reaped`"，不是"根任务已析构"**：根退出时它的整棵血缘
+  子树在**它自己的 `reap` 里**被收尾，而根的外壳要等 `bury` 才放 ⇒ "已析构"这个窗口
+  在正常收尾里几乎不成立（实测把窗口压到 1 ms 也一次不发声）。
+* **信标必须在 WFI 循环内**（每拍一次），不能只在进入 `wait` 时看一次 —— 收尾期的核是
+  "进一次 `wait` 然后一直 WFI"，进去那一刻根任务往往还没到 `Reaped`。
+
+正常轮**零误报**（实测 4 轮 `stop=0`）；把窗口临时压到 1 ms 时能正确发声，内容如上。
 
 ### 3.5 `churn <n> 3 3` 在第 1 轮就 `spawn failed with code -1`（既有，未查）
 
@@ -680,3 +712,22 @@ head.read().prev = Some(addr);        // push_link
 `health/stress.rs::chain` 的断言从"断增量"升格为**绝对零**（此前做不到，因为池里
 确实躺着旧账）：步进=逐条、链=空闲、表在手=账在手、未入链=0、无主=0、残差=0、
 `covered`=0、`interior`=0，另加 `chain_audit` 逐环核对双向链表。
+
+## 11. 第 11 轮：诊断收敛（该删的删，判据留下）
+
+判据立住之后，本会话攒下的探针必须收敛 —— 它们的**代价**不只是代码量：几处读数
+各自持锁、各自取时刻，字段之间**可以互相矛盾**，而"看似有信息量的矛盾读数"正是把
+定位拖了好几轮的东西。
+
+| 处置 | 对象 |
+|---|---|
+| 删（零读者） | `pagemeta_sum`、`chain_symptoms`、`retire_range`（全仓已无调用点） |
+| 删（已被 `conserve` 取代） | `watermark`、`meta_free_frames`、`free_block_census`、`freelist_ledger`、`addr_sets`、`chain_cycle_count`、`scan_disagree`、`free_entry_orphans`、`chain_meta_mismatch`、`init_fingerprint`、`orphan_shape`、`frame_addr_of`、`covered_breakdown`、`interior_split`、`caller_site`、`near_guard` |
+| 删（原子/静态） | `META_FREE_BLOCKS`、`COVERED_BY`、`CHAIN_CYCLE`、`FR_PUSH/FR_PULL/BK_PUSH/BK_PULL` |
+| 收敛 | `reap` 的池水位线：**七次持锁读 → 一次 `conserve`**；用例 `dump`：八行重复读数 → `conserve` + `chain_audit`；`Watermark` envcall：同一次快照（ABI 与打印格式逐字不变，`conserve` 因此新增逐 order 的 `(表说空闲块首, 链上节点)`） |
+| 门控 | `note_covered`：唯一还在 release 档付代价的探针（每次 push/pull/clear/split 扫 `0..freelist.len()`）⇒ `#[cfg(any(debug_assertions, feature="audit"))]`。它证明的事（写进别条跨度）由 `conserve` 的"跨度内表项 = 0"从读侧覆盖，撤销型写入由"无主帧 = 0"兜住 |
+| 留（判据） | `conserve`、`chain_audit`、`chain_meta_mismatch`（对照）、`STALE_RM`（护栏）、`check_frame_head` + `INTERIOR_FREES`、`covered_writes`、`merge_census`/`nomerge`、`frame_ledger` |
+
+净变化 **−783 / +405 行**（含注释）。收敛后的仪器只有**两个**：守恒快照 `conserve`
+（链/表/账三口径 + 跨度分类 + 自洽残差 + 逐 order 普查）与 `chain_audit`（逐环核对
+双向链表），加分配器内的护栏。
