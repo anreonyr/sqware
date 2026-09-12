@@ -34,7 +34,7 @@ use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::mode;
 use crate::memory::manager::table::{Frame, TableNode};
 
-use super::Seg;
+use super::SegmentKind;
 use super::map::{Map, Pending};
 use super::salvage::Salvage;
 
@@ -47,9 +47,9 @@ pub(crate) struct SpaceInner {
     /// 页表树（翻译基础，全空间一棵）。
     pub(crate) root: TableNode,
     /// 用户半区段 `[free_base, upper)` — 栈/堆/dock 同池（dynamic 前 None）。
-    pub(crate) user: Option<super::seg::Segment>,
+    pub(crate) user: Option<super::segment::Segment>,
     /// 内核 trap 帧常量区段 `[TEAM_FRAME_BASE, +SIZE)`，S-only。
-    pub(crate) kernel: super::seg::Segment,
+    pub(crate) kernel: super::segment::Segment,
     /// 唯一 VA→PA 簿记（单表遍历，无常数/动态之分）。
     pub(crate) maps: Vec<Map>,
 }
@@ -71,7 +71,7 @@ impl SpaceInner {
         Ok(Self {
             root: TableNode::root()?,
             user: None,
-            kernel: super::seg::Segment::new(
+            kernel: super::segment::Segment::new(
                 TEAM_FRAME_BASE.as_usize(),
                 TEAM_FRAME_BASE.as_usize() + TEAM_FRAME_WINDOW_SIZE,
             ),
@@ -92,7 +92,7 @@ impl SpaceInner {
             base.is_multiple_of(PAGE_SIZE) && base <= edge,
             "Space: bad user segment [{base:#x}, {edge:#x})"
         );
-        self.user = Some(super::seg::Segment::new(base, edge));
+        self.user = Some(super::segment::Segment::new(base, edge));
     }
 
     // ── 段轴 ────────────────────────────────────────────────
@@ -133,7 +133,7 @@ impl SpaceInner {
     /// （那次 `unmap` 的料箱恒空、`reclaim` 恒早返回——纯多余），而
     /// `PoleMeta::open_into` 一个字都没写（段永久泄漏）。写在这里，让后来者不必
     /// 再推第三遍。
-    pub(crate) fn allocate(&mut self, seg: Seg, size: usize) -> Result<VirtAddr, MapError> {
+    pub(crate) fn allocate(&mut self, seg: SegmentKind, size: usize) -> Result<VirtAddr, MapError> {
         // **映射表的增长可失败**：取段之后必有一张新 `Map` 入 `self.maps`
         // （`map` / `attach` / `borrow` / 各窗口的 claim 都在这条路上），而那次
         // `Vec::push` 的扩容是 std 默认路径——内存吃紧即 `handle_alloc_error`
@@ -145,13 +145,13 @@ impl SpaceInner {
             .try_reserve(1)
             .map_err(|_| MapError::OutOfMemory)?;
         let base = match seg {
-            Seg::User => self
+            SegmentKind::NonKernel => self
                 .user
                 .as_mut()
                 .ok_or(MapError::NoRegion)?
                 .allocate(size)
                 .map_err(|_| MapError::OutOfMemory)?,
-            Seg::Kernel => self
+            SegmentKind::Kernel => self
                 .kernel
                 .allocate(size)
                 .map_err(|_| MapError::OutOfMemory)?,
@@ -160,13 +160,13 @@ impl SpaceInner {
     }
 
     /// 还段：精确匹配释放 `(addr, size)`。未分配 / 长度不匹配 → `false`。
-    pub(crate) fn deallocate(&mut self, seg: Seg, addr: usize, size: usize) -> bool {
+    pub(crate) fn deallocate(&mut self, seg: SegmentKind, addr: usize, size: usize) -> bool {
         let seg = match seg {
-            Seg::User => match self.user.as_mut() {
+            SegmentKind::NonKernel => match self.user.as_mut() {
                 Some(u) => u,
                 None => return false,
             },
-            Seg::Kernel => &mut self.kernel,
+            SegmentKind::Kernel => &mut self.kernel,
         };
         seg.deallocate(addr, size)
     }
@@ -339,10 +339,10 @@ impl SpaceInner {
 
     /// 只读校验：`(addr, size)` 是否为该段的一个已分配块（拆除路径的失败域
     /// 前移，见 [`super::seg::Segment::holds`]）。
-    pub(crate) fn holds(&self, seg: Seg, addr: usize, size: usize) -> bool {
+    pub(crate) fn holds(&self, seg: SegmentKind, addr: usize, size: usize) -> bool {
         match seg {
-            Seg::User => self.user.as_ref().is_some_and(|u| u.holds(addr, size)),
-            Seg::Kernel => self.kernel.holds(addr, size),
+            SegmentKind::NonKernel => self.user.as_ref().is_some_and(|u| u.holds(addr, size)),
+            SegmentKind::Kernel => self.kernel.holds(addr, size),
         }
     }
 

@@ -22,13 +22,13 @@ mod adapter;
 mod core;
 mod map;
 mod salvage;
-mod seg;
+mod segment;
 pub(crate) mod window;
 
 pub use adapter::{Space, SpaceBuilder};
 pub(crate) use map::{Pending, PendingState};
 pub(crate) use salvage::Span;
-pub(crate) use seg::Seg;
+pub(crate) use segment::SegmentKind;
 
 /// 空间种类 — 页表被哪个特权级使用（单一事实源）。
 ///

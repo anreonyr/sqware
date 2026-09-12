@@ -11,7 +11,7 @@ use crate::memory::manager::entry::PteFlags;
 
 use super::super::map::Pending;
 use super::super::salvage::Span;
-use super::super::{Seg, Space};
+use super::super::{SegmentKind, Space};
 
 /// 共享懒窗口（零状态策略）。
 pub(crate) struct ShareWindow;
@@ -32,13 +32,13 @@ impl ShareWindow {
         // U 位经 Space::pte_policy 单一出口（U 态需 U；S 态 SUM=0 不得带 U）。
         let flags = space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
         space.with(|inner| {
-            let va = inner.allocate(Seg::User, size)?;
+            let va = inner.allocate(SegmentKind::NonKernel, size)?;
             if let Err(e) = inner.map(va, size, flags, Some(Pending::Lazy)) {
                 // reserve 未落任何 PTE/帧；段退回
-                inner.deallocate(Seg::User, va.as_usize(), size);
+                inner.deallocate(SegmentKind::NonKernel, va.as_usize(), size);
                 return Err(e);
             }
-            Ok(Span::new(Seg::User, va, size, None))
+            Ok(Span::new(SegmentKind::NonKernel, va, size, None))
         })
     }
 
@@ -59,6 +59,6 @@ impl ShareWindow {
     ///
     /// 语义不变：该区间不是本段的已分配块 → `false`（状态未动）。
     pub(crate) fn munmap(space: &Space, addr: VirtAddr, size: usize) -> bool {
-        space.release_addr(Seg::User, addr, size)
+        space.release_addr(SegmentKind::NonKernel, addr, size)
     }
 }

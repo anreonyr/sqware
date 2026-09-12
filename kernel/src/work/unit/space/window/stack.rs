@@ -13,7 +13,7 @@ use crate::memory::manager::entry::PteFlags;
 use super::super::core::SpaceInner;
 use super::super::map::Pending;
 use super::super::salvage::Span;
-use super::super::{Seg, Space};
+use super::super::{SegmentKind, Space};
 
 /// 栈窗口（零状态策略）。
 pub(crate) struct StackWindow;
@@ -37,13 +37,13 @@ impl StackWindow {
     pub(crate) fn claim(space: &Space, size: usize) -> Result<Span, MapError> {
         let slot_size = size + TASK_STACK_GUARD;
         space.with_flush(|inner| {
-            let slot_va = inner.allocate(Seg::User, slot_size)?;
+            let slot_va = inner.allocate(SegmentKind::NonKernel, slot_size)?;
             // 守护页 Guard → 溢出缺页可诊断（只登记，不物化）
             let guard_flags = space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
             if let Err(e) = inner.map(slot_va, TASK_STACK_GUARD, guard_flags, Some(Pending::Guard))
             {
                 // 装配失败：段退回（reserve 未落任何 PTE/帧）
-                inner.deallocate(Seg::User, slot_va.as_usize(), slot_size);
+                inner.deallocate(SegmentKind::NonKernel, slot_va.as_usize(), slot_size);
                 return Err(e);
             }
             // 栈体：立即物化（Eager）。逐页分配帧 + 装 PTE + 注入。
@@ -58,10 +58,10 @@ impl StackWindow {
                 // 此前这里展开了 `unmap(slot) + take_span + reclaim` 整套：那趟
                 // `unmap` 收进料箱的只有一张**无 PTE 的空 guard map**，`reclaim`
                 // 随即在"料箱空"处早返回——清退、销账、刷 TLB 一件都没发生过。
-                inner.deallocate(Seg::User, slot_va.as_usize(), slot_size);
+                inner.deallocate(SegmentKind::NonKernel, slot_va.as_usize(), slot_size);
                 return Err(e);
             }
-            Ok(Span::new(Seg::User, slot_va, slot_size, None))
+            Ok(Span::new(SegmentKind::NonKernel, slot_va, slot_size, None))
         })
     }
 }

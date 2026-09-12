@@ -19,9 +19,9 @@ use alloc::collections::BTreeMap;
 /// 只作「从哪段取 / 归哪段」的参数，不承载几何或分配表（几何在 [`Segment`]
 /// 实体字段）。`User` 段装栈/堆/dock 视图；`Kernel` 段装线程 trap 帧。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Seg {
-    /// 用户半区 `[free_base, upper)` — 栈/堆/dock 共用。
-    User,
+pub(crate) enum SegmentKind {
+    /// 非内核半区 `[free_base, upper)` — 栈/堆/dock 共用。
+    NonKernel,
     /// 内核 trap 帧常量区 `[TEAM_FRAME_BASE, +SIZE)`，S-only。
     Kernel,
 }

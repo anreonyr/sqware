@@ -27,9 +27,9 @@ use alloc::vec::Vec;
 
 use super::SpaceKind;
 use super::core::SpaceInner;
-use super::seg::Seg;
 use super::map::{Pending, PendingState};
 use super::salvage::{Salvage, Span};
+use super::segment::SegmentKind;
 use crate::layout::TRAMPOLINE;
 use crate::lock::{Level, RelLock};
 use crate::memory::PAGE_SIZE;
@@ -365,7 +365,7 @@ impl Space {
     /// `SegmentMismatch` 留给内核内部调用方（它们用 `.expect()`）。
     ///
     /// 返回：找到并释放 → `true`；该区间不是本段的已分配块 → `false`（状态未动）。
-    pub(crate) fn release_addr(&self, seg: Seg, addr: VirtAddr, size: usize) -> bool {
+    pub(crate) fn release_addr(&self, seg: SegmentKind, addr: VirtAddr, size: usize) -> bool {
         if !self.with_flush(|inner| inner.holds(seg, addr.as_usize(), size)) {
             return false;
         }

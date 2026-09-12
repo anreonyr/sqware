@@ -10,7 +10,7 @@ use crate::memory::manager::entry::PteFlags;
 
 use super::super::core::SpaceInner;
 use super::super::salvage::Span;
-use super::super::{Seg, Space};
+use super::super::{SegmentKind, Space};
 
 /// 堆窗口（零状态策略）。
 pub(crate) struct HeapWindow;
@@ -31,15 +31,15 @@ impl HeapWindow {
         let flags =
             space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
         space.with_flush(|inner| {
-            let va = inner.allocate(Seg::User, size)?;
+            let va = inner.allocate(SegmentKind::NonKernel, size)?;
             // 种类 = Heap：用户堆的物理页。
             let next = || Ok(crate::tag!(Heap, SpaceInner::frame()?));
             if let Err(e) = inner.claim(va, size, flags, next) {
                 // claim 已自回滚装配；段退回
-                inner.deallocate(Seg::User, va.as_usize(), size);
+                inner.deallocate(SegmentKind::NonKernel, va.as_usize(), size);
                 return Err(e);
             }
-            Ok(Span::new(Seg::User, va, size, None))
+            Ok(Span::new(SegmentKind::NonKernel, va, size, None))
         })
     }
 
@@ -55,6 +55,6 @@ impl HeapWindow {
     ///
     /// 语义不变：该区间不是本段的已分配块 → `false`（状态未动）。
     pub(crate) fn deallocate(space: &Space, addr: VirtAddr, size: usize) -> bool {
-        space.release_addr(Seg::User, addr, size)
+        space.release_addr(SegmentKind::NonKernel, addr, size)
     }
 }

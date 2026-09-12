@@ -213,7 +213,7 @@ fn spawn_root() -> Result<(), MapError> {
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
     let view = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = inner.allocate(crate::work::unit::space::Seg::User, view_size)?;
+            let va = inner.allocate(crate::work::unit::space::SegmentKind::NonKernel, view_size)?;
             inner.borrow(
                 va,
                 crate::memory::manager::addr::PhysAddr::from_raw(region.base),
@@ -231,7 +231,10 @@ fn spawn_root() -> Result<(), MapError> {
     let (pairs_pa, pairs_bytes) = crate::devices::block();
     let pairs = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = inner.allocate(crate::work::unit::space::Seg::User, pairs_bytes)?;
+            let va = inner.allocate(
+                crate::work::unit::space::SegmentKind::NonKernel,
+                pairs_bytes,
+            )?;
             inner.borrow(
                 va,
                 crate::memory::manager::addr::PhysAddr::from_raw(pairs_pa),

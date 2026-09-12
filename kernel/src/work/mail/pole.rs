@@ -16,7 +16,7 @@ use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::work::unit::space::{Seg, Space, Span};
+use crate::work::unit::space::{SegmentKind, Space, Span};
 
 use crate::work::unit::gate::GateError;
 
@@ -148,7 +148,7 @@ impl PoleMeta {
         }
         let va = space
             .with_flush(|inner| {
-                let va = inner.allocate(Seg::User, self.bytes)?;
+                let va = inner.allocate(SegmentKind::NonKernel, self.bytes)?;
                 // 装配失败 ⇒ 只剩段要还（`SpaceInner::allocate` 那条不变量的现场）：
                 // `borrow` 在登记之前就拒，maps 干净；此刻一片 PTE 未落，故还段
                 // 不必等清退，当场还即可。此前这里用 `?` 直返——**段永久泄漏**，
@@ -159,7 +159,7 @@ impl PoleMeta {
                     self.bytes,
                     flags,
                 ) {
-                    inner.deallocate(Seg::User, va.as_usize(), self.bytes);
+                    inner.deallocate(SegmentKind::NonKernel, va.as_usize(), self.bytes);
                     return Err(e);
                 }
                 Ok::<_, MapError>(va)
@@ -168,7 +168,7 @@ impl PoleMeta {
         self.mappings.lock().push((
             token,
             Arc::downgrade(space),
-            Span::new(Seg::User, va, self.bytes, None),
+            Span::new(SegmentKind::NonKernel, va, self.bytes, None),
         ));
         Ok(va.as_usize())
     }

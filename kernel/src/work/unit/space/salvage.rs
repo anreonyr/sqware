@@ -13,7 +13,7 @@ use core::num::NonZeroUsize;
 
 use super::adapter::Space;
 use super::map::Map;
-use super::seg::Seg;
+use super::segment::SegmentKind;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::asid::{self, Deaf};
 
@@ -24,7 +24,7 @@ use crate::memory::manager::asid::{self, Deaf};
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Span {
     /// 所属段（回收定位）。
-    pub(crate) seg: Seg,
+    pub(crate) seg: SegmentKind,
     /// 基址（页对齐）。
     pub(crate) va: VirtAddr,
     /// 总长（页对齐，非零）。
@@ -34,7 +34,7 @@ pub(crate) struct Span {
 }
 
 impl Span {
-    pub(crate) fn new(seg: Seg, va: VirtAddr, size: usize, pa: Option<PhysAddr>) -> Self {
+    pub(crate) fn new(seg: SegmentKind, va: VirtAddr, size: usize, pa: Option<PhysAddr>) -> Self {
         Self {
             seg,
             va,

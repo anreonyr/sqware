@@ -7,7 +7,7 @@
 
 use super::super::core::SpaceInner;
 use super::super::salvage::Span;
-use super::super::{Seg, Space};
+use super::super::{SegmentKind, Space};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::entry::PteFlags;
@@ -26,7 +26,7 @@ impl FrameWindow {
     /// 段耗尽或物理帧耗尽 → [`MapError::OutOfMemory`]（回滚：段归还）。
     pub(crate) fn claim(space: &Space) -> Result<Span, MapError> {
         space.with_flush(|inner| {
-            let va = inner.allocate(Seg::Kernel, PAGE_SIZE)?;
+            let va = inner.allocate(SegmentKind::Kernel, PAGE_SIZE)?;
             // **不走 `pte_policy`**：帧是内核自有页落在任务空间里，恒 U=0——trap
             // 入口在 S 态（SUM=0）把寄存器现场写进它，带 U 就会页故障（实测：
             // 域/用户任务首次陷阱即 storm）。
@@ -35,11 +35,11 @@ impl FrameWindow {
             let next = || Ok(crate::tag!(Trap, SpaceInner::frame()?));
             if let Err(e) = inner.claim(va, PAGE_SIZE, flags, next) {
                 // claim 已自回滚装配；段退回
-                inner.deallocate(Seg::Kernel, va.as_usize(), PAGE_SIZE);
+                inner.deallocate(SegmentKind::Kernel, va.as_usize(), PAGE_SIZE);
                 return Err(e);
             }
             let pa = inner.translate(va).expect("frame claimed").0;
-            Ok(Span::new(Seg::Kernel, va, PAGE_SIZE, Some(pa)))
+            Ok(Span::new(SegmentKind::Kernel, va, PAGE_SIZE, Some(pa)))
         })
     }
 }
