@@ -158,16 +158,17 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
    （`hole.rs:217-219`）；没有长度查询原语，收方须自备 ≥ mtu 的缓冲。
 7. **`pull_timeout` 超时后该孔不再「干净」**：迟到的回复仍可能落槽，调用方应弃用会话
    （`env/mail.rs:335-336`）。
-8. **门的字段数比内核打印少一个**：`examine.nu:24-27` 与旧 trace 记 5 个数，当前
-   `audit.rs:482` 打 6 个（多了 `dead`）；门正则只锚 `[audit] sites ` 前缀，故仍成立。
+8. **（史料）门的字段数曾比内核打印少一个**：`examine.nu` 与旧 trace 记 5 个数，当时的
+   `audit.rs:482` 打 6 个（多了 `dead`）。那条读数随审计层删除了（见 memory.md §5）。
 
 ## 11 · 判据与验证
 
 - **门**：`hole` 步断言 `hole got "hi from shell`（`examine.nu:135,163`）；同一条命令内
-  `seal_wake_probe` 以 seal 为界各等一次（前等满期限、后当场拿结论），audit 档断言
-  `hole: wait-seal sealed=1 wake=seal`（`shell.rs:901-935`、`examine.nu:185,193`）——
-  **封印不唤醒等待者就只会打出 `timeout`**。
-- **附带断言**：`[audit] sites … by kind: space N hole N …` 要求全部任务退出后无孤儿、无活站点、
-  无残留等待者；其中 `hole N` 就是孔等待键随资源消亡的直接观测量（`audit.rs:468-482`）。
+  `seal_wake_probe` 以 seal 为界各等一次（前等满期限、后当场拿结论），**非默认档**（harden /
+  框架）断言 `hole: wait-seal sealed=1 wake=seal`（`shell.rs:901-935`、`scripts/examine.nu` 的
+  `EXTRA_MARKERS`）——**封印不唤醒等待者就只会打出 `timeout`**。
+- **（史料）附带断言**：`[audit] sites … by kind: space N hole N …` 曾要求全部任务退出后无孤儿、
+  无活站点、无残留等待者（其中 `hole N` 是孔等待键随资源消亡的直接观测量）；那条读数随审计层
+  删除了（见 memory.md §5），今天对应的是「空站点出队即删」的间接覆盖（`examine.nu` 头注第 3 条）。
 - **`spoof`** 覆盖「Push 盖章不可伪造」（`shell.rs:687-799`）；**`reclaim`** 覆盖「随最后一份
   能力回收」与「封印只归开辟者」（`shell.rs:562-660`）。

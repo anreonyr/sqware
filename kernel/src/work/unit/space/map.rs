@@ -92,7 +92,7 @@ impl Map {
     /// - `Some(Guard)` → 永不物化 → false。
     ///
     /// 运行路径（拆除 / 改权）不用点查询逐页问，用 [`Self::runs`] 的段枚举。
-    #[cfg(any(feature = "audit", feature = "framework"))]
+    #[cfg(any(debug_assertions, feature = "framework"))]
     pub(super) fn is_materialized(&self, idx: usize) -> bool {
         match self.pending {
             None => true,

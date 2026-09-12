@@ -119,30 +119,34 @@ pub(crate) fn scene() -> (usize, usize) {
 
 #[panic_handler]
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
-    // 测试档：panic 不是内核缺陷，是用例失败 —— 崩溃转储在这里没有意义（打一百行现场
-    // 反而埋掉"哪一例、断言说了什么"）。改道报用例 + 干净停机，见 framework::case_failed。
-    // 该函数恒 `-> !`，故下面的转储整段在本档不可达（`cfg` 两块，不是运行期分支）。
+    // 两条出口按**状态**挑，不是 cfg 二选一：用例体的执行期里 panic 是"用例失败"——
+    // 报哪一例、断言说了什么，比一百行现场有用；其余时候 panic 是内核缺陷，走崩溃转储。
+    // 自检（挂起自检 / 帧范围 / 簿记↔页表）会在**会话期**响，那时"哪一例"是句假话，
+    // 故 `runner` 跑完用例即把当前用例归零。
     #[cfg(feature = "framework")]
-    {
+    if !crate::framework::running().is_empty() {
         crate::framework::case_failed(info)
     }
+    crash_scene(info)
+}
 
-    #[cfg(not(feature = "framework"))]
-    {
-        // 拉响警报：抢占报警源（输家就地卧倒），再广播停止其它核，随后归巢组稿。
-        // 嵌套 panic（重入）= `claim()` 假分支，恒为「本核即报警源」——直接进停机自环。
-        // 仲裁**先行**于换栈：双核同时 panic 若先换栈，输家会与胜家争夺同一 ROOT 栈顶。
-        if !alarm() {
-            crate::putln!(
-                "info: {} sepc={:#x} stval={:#x}",
-                info.message(),
-                riscv::register::sepc::read(),
-                riscv::register::stval::read(),
-            );
-            halt_loop()
-        }
-        home(info)
+/// 崩溃转储——**现场的唯一出口**：拉响警报 → 归巢组稿。
+///
+/// 任何上下文可入（持锁、panic 重入都行：仲裁在 [`alarm`] 里），恒不返回。
+fn crash_scene(info: &PanicInfo) -> ! {
+    // 拉响警报：抢占报警源（输家就地卧倒），再广播停止其它核，随后归巢组稿。
+    // 嵌套 panic（重入）= `claim()` 假分支，恒为「本核即报警源」——直接进停机自环。
+    // 仲裁**先行**于换栈：双核同时 panic 若先换栈，输家会与胜家争夺同一 ROOT 栈顶。
+    if !alarm() {
+        crate::putln!(
+            "info: {} sepc={:#x} stval={:#x}",
+            info.message(),
+            riscv::register::sepc::read(),
+            riscv::register::stval::read(),
+        );
+        halt_loop()
     }
+    home(info)
 }
 
 /// 归巢（naked）：落盘 SCENE（原始 sp/fp）→ 跳 ROOT 栈顶 → `tail` panic_work。

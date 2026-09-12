@@ -27,6 +27,7 @@
 
 use alloc::sync::Weak;
 use core::ops::Deref;
+#[cfg(feature = "framework")]
 use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use super::task::Task;
@@ -55,9 +56,9 @@ pub(crate) enum Site {
     Empty,
 }
 
-/// 全部出身（下标即 `Site::ix`）。消费者只有 audit 档的挂起自检（它要把槽位里
+/// 全部出身（下标即 `Site::ix`）。消费者只有框架档的挂起自检（它要把槽位里
 /// 记下的出身下标还原成 `Site`）。
-#[cfg(feature = "audit")]
+#[cfg(feature = "framework")]
 const ALL: [Site; NSITE] = [
     Site::Roster,
     Site::Holder,
@@ -68,9 +69,10 @@ const ALL: [Site; NSITE] = [
     Site::Empty,
 ];
 
-#[cfg(feature = "audit")]
+#[cfg(feature = "framework")]
 const NSITE: usize = 7;
 
+#[cfg(feature = "framework")]
 impl Site {
     fn ix(self) -> usize {
         match self {
@@ -92,7 +94,7 @@ impl Site {
     }
 }
 
-#[cfg(feature = "audit")]
+#[cfg(feature = "framework")]
 impl Site {
     /// 出身的人话名字（挂起自检的失败消息里点名用；消费者只有那一处）。
     fn name(self) -> &'static str {
@@ -109,16 +111,24 @@ impl Site {
 }
 
 // ── 账 ────────────────────────────────────────────────
+//
+// 门 = `framework`：这整段的**唯一读者**是挂起自检（[`check_block_heldout`]），
+// 而自检只在用例产物里在场。账与判据同门，非框架档里连这笔原子开销都不存在
+// （`TaskWeak` 在那里退化成"只是 `Weak<Task>` 的一层出身标注"）。
 
 /// 存活清单的槽位数。存活弱引用的量级 = 在册任务/团队数（个位到几十）。
+#[cfg(feature = "framework")]
 const SLOTS: usize = 48;
 
 /// 槽位占用标志（0 = 空）；非 0 即已占。
+#[cfg(feature = "framework")]
 static SLOT_ID: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// `出身下标 | hart << 8`（出生处只有这两个小整数，打包进一个字）——挂起自检按
 /// "是不是**本核**出生的抄件"筛，故 hart 必须记下来。
+#[cfg(feature = "framework")]
 static SLOT_META: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// 槽位身份序列（0 = 无效哨兵，故自 1 起）。
+#[cfg(feature = "framework")]
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 // ── 带账的弱引用 ────────────────────────────────────────
@@ -138,7 +148,11 @@ pub(crate) struct TaskWeak {
 impl TaskWeak {
     /// **住进容器**：`site` 说明是哪张表（名册 / 票根 / 团队簿记 / 血亲）。
     pub(crate) fn stored(w: Weak<Task>, site: Site) -> TaskWeak {
+        // 记账只在框架档：账的读者是挂起自检（同门）。
+        #[cfg(feature = "framework")]
         let id = if site.counted() { record(site) } else { 0 };
+        #[cfg(not(feature = "framework"))]
+        let id = 0;
         TaskWeak { w, id, site }
     }
 
@@ -169,6 +183,8 @@ impl Deref for TaskWeak {
 
 impl Drop for TaskWeak {
     fn drop(&mut self) {
+        // 销账与记账同门（`stored`）：非框架档 `id` 恒 0，这一整段不在产物里。
+        #[cfg(feature = "framework")]
         if self.id != 0 {
             for i in 0..SLOTS {
                 if SLOT_ID[i].load(Relaxed) == self.id {
@@ -187,6 +203,7 @@ impl Drop for TaskWeak {
 /// 抢槽用 CAS：`SLOT_ID` 为 0 是唯一空态，非 0 即已占。多核同时抢同一格只会有
 /// 一个成功（失败者继续扫下一格）。槽满只是"这一枚没记下出身"（挂起自检漏看它），
 /// 不影响任何分配语义。
+#[cfg(feature = "framework")]
 fn record(site: Site) -> usize {
     let id = NEXT_ID.fetch_add(1, Relaxed);
     let meta = site.ix() | (crate::machine::hart_id() << 8);
@@ -224,7 +241,7 @@ fn record(site: Site) -> usize {
 ///
 /// 本核栈上存在出身是抄件的存活弱引用 → panic（fail-fast，crash scene 里能看到
 /// `block` 的挂起点与这里的出身）。
-#[cfg(feature = "audit")]
+#[cfg(feature = "framework")]
 pub(crate) fn check_block_heldout() {
     let me = crate::machine::hart_id();
     for i in 0..SLOTS {

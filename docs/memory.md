@@ -53,16 +53,23 @@
 `audit`）连同它在 `boot` 里的三个关机钩子（`probe_messenger` / `probe_teams` /
 `check_baseline`）一起删掉了。裁决与理由：
 
-- **判据的唯一通道是 `framework` 档的用例**（`health/` 三条）。审计层是**第二套**记账：
+- **判据的唯一通道是 `framework` 档的用例**（`health/` 四条）。审计层是**第二套**记账：
   它自己维护一份「谁在册、谁该归零」的账，与分配器的 `pagemeta` / `Tally` 互为解释
   ——两份账一旦漂移，两边都不再有牙（`banker` 的删除就是这条纪律的第一次执行）。
 - 它要判的东西仍有人判，只是换了地方：帧池「净漏帧」由 `health/pagetable.rs` 的
   `frame.occupied − block.occupied` 每轮核（§10），分配器闭环由 `stress` / `spare`
   两条用例演练。
 - **代价（如实记下）**：关机期的逐对象终值判词（`[audit] leak: <kind> N`）、弱引用收支
-  普查、站点表孤儿/墓碑读数**都没有了**；`audit` 档不再比默认档多出运行时判据，只多
-  `space.audit()` 与挂起自检（见 §6）。想要回哪条读数，就在 `health/` 里加一条真读它
+  普查、站点表孤儿/墓碑读数**都没有了**。想要回哪条读数，就在 `health/` 里加一条真读它
   的用例——而不是恢复一层「只在关机时说话」的账。
+- **把这条纪律执行到底（后来的裁决）**：审计层删完之后，那个 cargo feature `audit` 也
+  没有存在的理由了 —— 它当时只剩三样东西：**自检**（挂起自检 / 帧取还范围 / 簿记↔页表
+  双向核对）、它们的**数据源**（`weak` 的出身槽位账）、以及停机信标的**挂住现场读数**。
+  现在门只有两个，各一句话说得清：
+  - **`framework` = 会当场响的东西**（用例 + 自检 + 自检的数据源）；
+  - **`debug_assertions` = 证明与现场**（全 `debug_assert!` / lockdep / 帧页表护栏 /
+    挂住现场那三读数）。
+  验收门跟着从四档收到**三档**（默认 / harden / 框架），见 §10。
 - 留下的是**唯一性纪律**本身：帧「在不在手」只问 `frame::pagemeta`（`frame.rs:18/68`），
   块池在册页只问 `Tally`（`block.rs:99`），帧池水位只问 `statistics`（`statistics.rs`）
   ——一个事实一份账。
@@ -94,7 +101,7 @@
 | 不变量 | 违反会怎样 | 谁守着 |
 |---|---|---|
 | 帧释放必「仍在手」，弹出必 free | 双释放 / 重叠分配 | `frame::pagemeta` 一份账 + `health/stress.rs` 的持有/反还演练 |
-| 簿记 ⇔ PTE 双向一致 | 悬垂 PTE | `SpaceInner::audit`（audit 档，见 space.md §3） |
+| 簿记 ⇔ PTE 双向一致 | 悬垂 PTE | `SpaceInner::audit`（framework 档，见 space.md §3） |
 | ASID 先清退再还位图/销账 | 位图复用后键换主 | `asid.rs:83`、`adapter.rs:375-383` |
 | 清退到齐前帧与段不得易主 | 远核旧条目污染新映射 | `salvage.rs:88` |
 | 跨挂起不得持强/弱引用 | 任务外壳归还不掉（弃帧不析构） | `weak::check_block_heldout`（挂起前当场断言，`work/unit/weak.rs`） |
@@ -106,6 +113,7 @@
 |---|---|---|
 | 删 `banker` | 只留 `pagemeta` 一份账 | 两份账记同一件事 |
 | 删整个 `fence` 审计层 | 判据只走 `framework` 用例 | 第二套账会与分配器互释；观测面没有读者就是负债（见 §5） |
+| 撤 `audit` feature，门收成两个 | 自检看 `framework`、读数看 `debug_assertions` | 「自检是 framework 的事情」：判据与它的数据源同一门；读数（不判什么、只给人看）跟硬化走。门从四档收到三档（见 §5、§10） |
 | 已物化页的写缺页不恢复 | 判 `false` | 「等于把 `Mprotect` 从边界降级成建议」（`fault.rs:131-141`） |
 | 三种锁退出档 | 不刷 / 本核刷 / 跨核清退 | 放宽无远核义务、收紧必须就地清退（`adapter.rs:224-240`） |
 | 后备仓预算即契约 | 常驻 + 1 MiB dump 预算不得被吃穿 | 报告与诊断要在分配失败时仍能跑（见 [diagnose.md](diagnose.md)） |
@@ -135,7 +143,7 @@
 
 ## 10 · 判据与验证
 
-- **三个 health 用例**（gate 一律 `#[cfg(any(debug_assertions, feature = "framework"))]`
+- **四个 health 用例**（gate 一律 `#[cfg(any(debug_assertions, feature = "framework"))]`
   ——与它们唯一的消费者同在）：
   - `spare::accept`：ring 常驻 + `DUMP_BUDGET = 1 MiB` 未被吃穿 + 1 KiB 逐块拉到
     `AllocError`（**失败返 `Err` 不 panic**）+ 全归还后余量逐字节还原。
@@ -143,10 +151,15 @@
     落空、「在途帧 − 块池持页」回轮前，**每轮 `space.audit()`**。
   - `stress::accept`：五幕分配器演练（block 混合/持有、frame 多档/持有、frame 耗尽—反还）；
     耗尽后 `split_block` 必须返 `None` 而不是挂死。
+  - `shell::accept`：内核原语外壳（任务 / 团队 / 空间）的造-收闭环，按**逐类净额**核账
+    （§5.1）——`leak: task 1` 那一族的常驻判据。
   - 运行时机：`boot::init` 里 `init_depend` → 用例入口 → `spawn_root`（`boot.rs`）：
-    framework 档走 `framework::run`（`[case] ok/FAIL` 逐例打点 + 末行汇总），debug 档走
-    `health::run`（逐项 `[health] … ok`）。**其余档一个都不跑，用例体也不编进去。**
+    framework 档走 `framework::run`（`[case] ok/FAIL` 逐例打点 + 末行汇总），非框架的
+    `debug_assertions` 档走 `health::run`（**静默**跑四例，失败才 panic）。
+    **其余档一个都不跑，用例体也不编进去。**
 - **关机序列**：`boot.rs` 的关机钩子只剩 `scheduler::core::rip` 与 `block::flush` 两条
   ——停机不看账（见 §5）。
-- **门**：`scripts/examine.nu`（默认 / audit / harden / framework 四档）。allocator 的判据
-  落在 framework 档的用例汇总行 `[case] cases 3 ok 3 fail 0`。
+- **门**：`scripts/examine.nu`（默认 / harden / framework **三档**；档位的全部事实只有
+  一处 —— `const FLAVORS`，报告行的步数与 marker 数由它算）。allocator 的判据落在
+  framework 档的用例汇总行 `[case] cases 4 ok 4 fail 0`；harden 档另有两道 ELF 正向对照
+  （断言串与 lockdep 报文体必须真在产物里）。

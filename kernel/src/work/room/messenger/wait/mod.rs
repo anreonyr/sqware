@@ -106,9 +106,9 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
         void(ticket);
         rise(core::iter::once(task));
     }
-    // **挂起前自检**（audit）：此刻本核栈上不该还压着任何"抄件"弱引用 —— 压着就说明
+    // **挂起前自检**（framework）：此刻本核栈上不该还压着任何"抄件"弱引用 —— 压着就说明
     // 有引用跨过了挂起，而这条调用链一旦被弃，它的 `Drop` 永不执行（见 `weak`）。
-    #[cfg(feature = "audit")]
+    #[cfg(feature = "framework")]
     crate::work::unit::weak::check_block_heldout();
     // 本核无后继即就地取活：`run()` 只会循环到有帧或停机，故落点恒为 `Switch`。
     Handoff::Switch(next_pa.unwrap_or_else(run))

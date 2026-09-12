@@ -126,5 +126,5 @@ debug 构建           → lockdep 在
 - **harden 档的四串正向对照**（在 ELF 里 `grep -ac ≥ 1`，少一串当场 `exit 1`，`:222-227`）：
   `starved 容器只收 Starved 任务`、`unmark: no record`、`allocated non-free frame`、
   `lock-order level violation`——最后一条就是 lockdep 的报文体本身。
-- **harden 轮的产物**：`--profile harden --features audit`，落点 `target/<triple>/harden/`
-  （`:622-626`）；默认轮恒不带 feature，并有「默认档不该出现 audit 输出」的哨兵（`:517-521`）。
+- **harden 轮的产物**：`--profile harden`（**不带 feature**），落点 `target/<triple>/harden/`
+  （由 `scripts/examine.nu` 的 `FLAVORS` 那一行给出）；默认轮恒不带 feature。

@@ -152,5 +152,5 @@ gate::doom        沿 sire  → 反查我授出的全部能力（权柄面）
   `vestor`——身份不由报文自证。
 - **`name`**（`:797` 起）：末两段是级联在真实服务上的落地——实例门闩消亡 ⇒ 目录侧副本随
   `sire` 级联摘掉 ⇒ 名字回到「无实例」。
-- **门**：audit 轮断言 `cascade: ok` 与 `stray: 3/3 illegal-id joins denied`；默认档的步骤表
-  **不含** `cascade`（`scripts/examine.nu:148-149`）——它只在 audit 与 harden 档跑。
+- **门**：非默认档（harden / 框架）断言 `cascade: ok` 与 `stray: 3/3 illegal-id joins denied`；
+  默认档的步骤表**不含** `cascade`（`scripts/examine.nu` 的 `STEPS_DEFAULT`）——它只在非默认档跑。

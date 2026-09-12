@@ -33,7 +33,7 @@ kernel → env → runtime → protocol → programs
 | `crates/envmacros` | `proc-macro = true`：`derive(Envcall)` 生成 `slot` / `pack` / `from_wire` / `*Ret` / `call` |
 | `crates/runtime` | 「薄/厚的判据不是行数」＋目标依赖方向（`runtime/Cargo.toml:6-8`） |
 | `crates/protocol` | `test = false` 的**实测**理由：`no_std` + riscv64 **编不出 libtest**（`:6-11`）；`→ runtime` 这条边是「机制在运行时、语义在协议」的编译期形态（`:19-21`）；`anstyle-parse` 只服务服务侧的 VTE 解码（`:24-26`） |
-| `kernel` | `semihosting` 与 `audit` 都**非默认**（`kernel/Cargo.toml:7-19`） |
+| `kernel` | `semihosting` 与 `framework` 都**非默认**（`kernel/Cargo.toml:6-30`，两个门的分工见该文件的门注） |
 | `programs` | `INITRD_BINS` 是**唯一**声明特权级的地方（`programs/Cargo.toml:6-8`） |
 
 ## 3 · ABI 面

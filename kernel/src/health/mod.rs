@@ -3,13 +3,14 @@
 // 这里是**唯一**会产出 `.tests` 段登记行的模块（框架整块门控的理由见 `framework/mod.rs`
 // 头注）：`test!` 块展开成段里的一行，`framework::discover()` 在启动后取到它们。
 //
-// 三个用例对应三块子系统，都只经公开接口验收，与生产断言分离：
+// 四个用例对应四块子系统，都只经公开接口验收，与生产断言分离：
 //   · `spare`  —— 后备仓预算（ring 常驻 + 溢出演练闭环）
 //   · `pagetable` —— PT 回收（map/unmap 32 轮，无孤儿表、无 double-free）
 //   · `stress` —— 分配器压测（block/frame 两档：混合闭环 + 持有-全释放 + 耗尽-反还）
+//   · `shell` —— 内核原语外壳（任务/团队/空间）的造-收闭环（逐类净额）
 //
-// 非框架档（默认 / audit / harden）保留一条 `debug_assertions` 的旧入口：三个用例
-// 仍会在 debug 构建里跑一次，行为与框架落地前逐字相同。
+// 非框架的 `debug_assertions` 档（harden / debug）保留一条旧入口：四个用例仍会在
+// 那里跑一次（**静默**，失败才 panic），行为与框架落地前逐字相同。
 
 #[cfg(any(debug_assertions, feature = "framework"))]
 use core::fmt;

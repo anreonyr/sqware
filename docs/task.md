@@ -209,10 +209,10 @@ work/room/mod.rs:3   scheduler / messenger / conductor
 
 ## 10 · 判据与验证
 
-- **验收门**（`scripts/examine.nu`）：默认档 9 条 marker，含 `spawnjoin -> 499500` 与
-  `task: all tasks exited, system halted`（`:144-158`）；audit 档追加 `sleep 700ms`（票单调不
-  复用 ⇒ 第二次仍要醒）、`stray: 3/3 illegal-id joins denied`、`cascade: ok` 与 `[audit] sites …`，
-  并有 `AUDIT_ORDER` **顺序断言**（`:191-194`）；站点表判据是**无孤儿 / 无死键 / 无活站点**；
+- **验收门**（`scripts/examine.nu`）：默认档 12 步 / 15 条 marker，含 `spawnjoin -> 499500` 与
+  `task: all tasks exited, system halted`；非默认档（harden / 框架）追加 `sleep 700ms`（票单调不
+  复用 ⇒ 第二次仍要醒）、`stray: 3/3 illegal-id joins denied`、`cascade: ok`（`EXTRA_MARKERS`），
+  并有 `STEP_ORDER` **顺序断言**；
   harden 档以 `starved 容器只收 Starved 任务` 为正向对照探针，要求四串护栏在同一份产物里
   （`:208-227`）。
 - **shell 自检**（`programs/src/bin/user/shell.rs`）：`spawn`（`Spawn`+`Join`，`:987-1001`）、

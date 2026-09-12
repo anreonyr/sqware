@@ -3,59 +3,59 @@
 # sqware examine 验收门（原名 e2e）——nu 版，取代 scripts/examine.sh。
 #
 # 判据四条，缺一不可（与 .sh 版逐条相同）：
-#   1) 逐步生效：十二条命令（默认档；audit/harden 档十五条）**逐个等它的输出出现**再发下一条
+#   1) 逐步生效：十二条命令（默认档；harden/框架档十五条）**逐个等它的输出出现**再发下一条
 #      （expect 式），不是按墙钟盲排；
 #      每步都有独立超时，失败能指到具体哪一条。
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) 十五个 marker 齐全（含 `task: all tasks exited, system halted`、
+#   4) marker 齐全（默认档十五条；harden/框架档在其上再加非默认档那四条），含
+#      `task: all tasks exited, system halted` 与
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
-#      `plic: line 10 delivered`）。
+#      `plic: line 10 delivered`。
 # 默认连跑 3 次要求 3/3；任一判据不过 ⇒ 该轮 FAIL，进程以非零退出。
 #
-# ── 三条补上的断言（只在 audit 档跑）─────────────────────────────────────────
+# ── 三条补上的断言（非默认档跑）──────────────────────────────────────────────
 # `redeem` / `wipe` / `prune` 三条内核路径**本来就已被现有探针走到**，缺的是断言：
 #   1) `redeem`：`sleep <ms>` 走到「票 → 持票人 → 键 → 站点」，`woke` 即断言——但
-#      原来只跑一个时长、一轮一次。audit 档在 `sleep 300` 之后**追加** `sleep 700`：
+#      原来只跑一个时长、一轮一次。非默认档在 `sleep 300` 之后**追加** `sleep 700`：
 #      票单调不复用 ⇒ 若这条路上有残留，第二次就会挂住。这是**结构性**断言。
 #   2) `wipe`：`hole` 的自测本就含 seal（走到了 wipe 的调用方）却零断言。userland
 #      侧在同一轮里以 seal 为界各等一次并打印**结局**（`wake=seal` / `wake=timeout`），
 #      门断言 `hole: wait-seal sealed=1 wake=seal`——seal 不唤醒等待者就只会打出 timeout。
-#   3) `prune`（空站点出队即删）**目前没有专属判据**：它当年靠 audit 档关机钩子里的
+#   3) `prune`（空站点出队即删）**目前没有专属判据**：它当年靠审计档关机钩子里的
 #      站点表计数（`[audit] sites N live N tomb N orphan N waiters N`）看着，那条钩子
 #      随审计层一起删了。间接覆盖仍在——`wipe` / `hole` / `cascade` 三条都要求站点
 #      在被 seal/退役时当场删掉，删不掉就会在后续等待里现形。要恢复直接判据，就在
 #      `health/` 里加一条读站点表的用例，而不是把关机钩子搬回来。
 #
-# 用法：scripts/examine.nu                    # 默认连跑 3 次，要求 3/3
+# 用法：scripts/examine.nu                        # 默认连跑 3 次，要求 3/3
 #       EXAMINE_REPEAT=10 scripts/examine.nu
-#       EXAMINE_FEATURES=audit scripts/examine.nu   # 默认 3 轮 + 1 轮 audit 档
-#       EXAMINE_FEATURES=audit EXAMINE_HARDEN=1 scripts/examine.nu
-#           ↑ **全门**：默认 3 轮 + audit 轮 + harden 轮（harden = --profile harden
-#             --features audit，两半护栏同档）。只给 EXAMINE_HARDEN=1 不带 features 会
-#             被四串正向对照当场拦下（那说明这一档只剩一半护栏）。
+#       EXAMINE_HARDEN=1 scripts/examine.nu       # 默认 3 轮 + 1 轮 harden 档
+#       EXAMINE_HARDEN=1 scripts/examine.nu       # ↑ **全门**：默认 3 轮 + harden 轮 + 框架轮
+#                                                 #   （框架轮默认就开，见 EXAMINE_FRAMEWORK）
+#       EXAMINE_FRAMEWORK=0 scripts/examine.nu    # 只跑默认轮（跳过用例/自检那一档）
 #
-# ── 按档构建、按档跑（本轮修掉的设计瑕疵）────────────────────────────────────
-# 原来**只构建一次** ELF（`--features $EXAMINE_FEATURES` 那一份），默认轮与 audit 轮共用。
-# 于是 `EXAMINE_FEATURES=audit` 时默认轮拿到的是 audit ELF，撞上默认档自己的哨兵「默认档
-# 不该出现 audit 输出」（当年 audit ELF 每次关机都打 `[audit] sites …`）⇒ 那几轮**按构造**必挂：
-# 想验默认档就不能带 feature，想验 audit 档就同时挂掉默认轮，两档不能在一次运行里各得其所。
-# 现改为**按档构建、按档跑**：
-#   默认轮（`EXAMINE_REPEAT` 那几轮）← 不带 feature 构建的 ELF（`const DEFAULT_FEATURES`，恒空）
-#   audit 轮                        ← 带 `EXAMINE_FEATURES` 构建的 ELF
-# cargo 的落点 `target/…/release/sqware` 只有一条、换 feature 就覆盖 ⇒ 每建完一档**立刻**把
+# ── 按档构建、按档跑（修掉的设计瑕疵）────────────────────────────────────────
+# 原来**只构建一次** ELF，默认轮与另一档共用。于是想让某一档跑到自己那份产物，就会撞上
+# 另一档按构造必挂的期望 —— 两档不能在一次运行里各得其所。现改为**按档构建、按档跑**：
+#   默认轮 ← `--profile release`（不带 feature）
+#   harden 轮 ← `--profile harden`（= release + debug-assertions，不带 feature）
+#   框架轮 ← `--profile framework --features framework`
+# 三者的 profile / features / 步骤集 / marker 集 / 附加检查**只有一处事实**：`const FLAVORS`。
+# cargo 的落点 `target/…/release/sqware` 每档各一条、换 feature 就覆盖 ⇒ 每建完一档**立刻**把
 # 产物（连同同目录的 `initrd.img`，boot.nu 按 ELF 同目录找它）搬进本档自己的目录
-# `<OUT>/elf-default/`、`<OUT>/elf-audit/`；每轮只跑自己那份 ⇒ 两档不可能互相污染
-# （调换构建顺序也一样，因为搬运发生在下一次构建之前）。
-# 判据一条没动：哨兵、逐条 marker、逐步 expect、自退非 124、无 panic 全部照旧（新步只追加）。
+# `<OUT>/elf-default/`、`<OUT>/elf-harden/`、`<OUT>/elf-framework/`；每轮只跑自己那份
+# ⇒ 三档不可能互相污染（调换构建顺序也一样，因为搬运发生在下一次构建之前）。
+# 判据一条没动：逐条 marker、逐步 expect、自退非 124、无 panic 全部照旧。
 #
 # ── 三档都该绿（**没有**豁免机制）─────────────────────────────────────────────
-# 默认 / audit / harden 三档跑的是同一套判据，三档**都该 PASS**。没有「已知失败不算失败」
+# 默认 / harden / 框架三档跑的是同一套判据，三档**都该 PASS**。没有「已知失败不算失败」
 # 的开关：没有白名单，没摘 marker，没放宽阈值，ok 恒为 `$why == ""`。
 # 若某一轮报出内核自己点的名（锁序违规 `[depend]`、挂起自检 `[weak]`、健康用例
-# `[health]`），那是一条**回归**，该轮当场 FAIL；`existing_violation_note` 只负责把这条
-# FAIL 的原因串写得更具体——它只在**已经判 FAIL** 的轮上追加话，判定既不增也不减。
+# `[health]`、用例失败 `[case] FAIL`），那是一条**回归**，该轮当场 FAIL；
+# `existing_violation_note` 只负责把这条 FAIL 的原因串写得更具体——它只在**已经判 FAIL**
+# 的轮上追加话，判定既不增也不减。
 #
 # ── qemu 起法：唯一出处 scripts/boot.nu ────────────────────────────────────────
 # 门**不凑 qemu 参数**：`^nu scripts/boot.nu <elf>`，QEMU_TIMEOUT / QEMU_SEED / QEMU_ICOUNT
@@ -95,7 +95,8 @@
 #   <OUT>/run<i>/qemu.rc       qemu 退出码（124 = 被外接 timeout 杀）
 #   <OUT>/run<i>/diag.txt      仅失败时写：why + 本轮跑的 ELF / features + 字节数 / 回显数 / qemu 现场
 #   <OUT>/elf-default/sqware   默认档构建的产物（含同目录 initrd.img）——默认轮跑的就是它
-#   <OUT>/elf-audit/sqware     audit 档构建的产物（仅带 feature 时有）——audit 轮跑的就是它
+#   <OUT>/elf-harden/sqware    harden 档构建的产物（`--profile harden`）——harden 轮跑的就是它
+#   <OUT>/elf-framework/sqware 框架档构建的产物（`--features framework`）——框架轮跑的就是它
 #
 # ── 旋钮 ─────────────────────────────────────────────────────────────────────
 #   EXAMINE_REPEAT     轮数（默认 3）
@@ -110,28 +111,28 @@
 #   EXAMINE_T_BOOT     .sh 的遗留旋钮：那边也从未被读用，这里同样只接受、不影响时序
 #   EXAMINE_ICOUNT     非空则透传给 boot.nu（默认空 = **关 icount**）
 #   EXAMINE_HARDEN     "1" ⇒ 再加一轮 harden 档（`--profile harden` = release +
-#                      `debug-assertions`）：容器⇔状态断言与整条 lockdep 放回被测产物。
-#                      判据 = 无 `[depend]` + stray/cascade 两条探针；构建后另做一次
-#                      **正向对照**（ELF 里必须出现某条断言串，否则这一档等于白跑）。
+#                      `debug-assertions`，**不带 feature**）：整条 debug 断言面（容器⇔状态
+#                      不变量、lockdep 校验、帧/页表护栏）放回被测产物，而 panic 走**崩溃
+#                      转储**（用例框架不在场 ⇒ 会话期的断言失败有完整现场）。
+#                      判据 = 无 `[depend]` + 两对顺序断言 + stray/cascade 探针；构建后另做
+#                      两道**正向对照**（ELF 里必须出现断言串与 lockdep 报文体，否则这一档
+#                      等于白跑）。
 #   EXAMINE_FRAMEWORK  "0" ⇒ **跳过**框架档（默认为开）。这一档跑内核内测试框架
-#                      （`--profile framework --features "framework audit"`）：用例登记在
-#                      链接期、跑在启动期，逐例打点 + 末行汇总；判据是同一条路数加上
-#                      「用例全过（条数具体到个位，零用例与全过只差一个数字）+ 15 步照跑」。
+#                      （`--profile framework --features framework`）：用例登记在链接期、
+#                      跑在启动期，逐例打点 + 末行汇总；**自检**（挂起自检 / 帧取还范围 /
+#                      簿记↔页表双向核对）也在这一档。判据是同一条路数加上「用例全过（条数
+#                      具体到个位，零用例与全过只差一个数字）+ 15 步照跑」。
 #                      默认开是因为它判的是**别的档判不到**的东西：分配器/页表/Space 的
 #                      内部不变量，而那正是既往几轮真缺陷的所在。
-#   EXAMINE_FEATURES   内核 cargo feature（默认空 = 默认档，行为/输出与原版逐字相同）。
-#                      含 `audit` ⇒ 默认轮之后**再加一轮 audit 档**（追加 `sleep 700`
-#                      与 hole 的封印唤醒观测）。
-#                      **只作用于 audit 轮**：默认轮恒跑不带 feature 构建出的 ELF。
-#   （默认档的构建 features **不是旋钮**：见 `const DEFAULT_FEATURES`，恒为空。加个
-#    `EXAMINE_DEFAULT_FEATURES` 等于门里开一条「让默认轮跑别档 ELF」的合法通路，
-#    只会把本轮修掉的瑕疵做成可配置项——反向验证要的是临时改这一行常量。）
+#   （**没有** `EXAMINE_FEATURES` 这个旋钮了：profile / features / 步骤集 / marker 集 /
+#    附加检查一律从 `const FLAVORS` 那一行读。想反向验证某一档的哨兵，就临时改那一行 ——
+#    可配置的「让某轮跑别档 ELF」正是本门修掉的那个瑕疵。）
 
 # 步骤：命令 → 该步要看到的输出（逐字照抄 .sh 版）。最后一条同时是自然停机的判据。
 #
-# 默认档 = .sh 版八条，逐字未动。**audit 档**在同一序列上**追加**三步（不改既有
-# 八步的命令、时序与 marker）：`sleep 700`、`hole`（hole 的期望串两种档相同，
-# 只是它多打的那几句由 audit 档的 marker 去断言）、`stray`（野 id 自检：从未入册的
+# 默认档 = .sh 版八条，逐字未动。**非默认档**（harden / 框架）在同一序列上**追加**三步
+# （不改既有的命令、时序与 marker）：`sleep 700`、`hole`（hole 的期望串两种档相同，
+# 只是它多打的那几句由非默认档的 marker 去断言）、`stray`（野 id 自检：从未入册的
 # task id 去 Join 必须 -1 Denied——判活并成一条来源之后，这条才答得出来）与 `cascade`
 # （派生级联自检：它覆盖 `doom::doom → cull → suspend/reap` 这条 kill 路径——此前
 # 两档控制台里 `killed` 出现 0 次，等于零覆盖）。
@@ -141,7 +142,7 @@ const STEPS = [
   {cmd: "req",       pat: 'req echo -> "ifmmp\.tfswjdf'}
   {cmd: "hole",      pat: 'hole got "hi from shell'}
   {cmd: "sleep 300", pat: "woke"}
-  {cmd: "sleep 700", pat: "woke"}   # 见「audit 档步骤」：redeem 的第二个时长
+  {cmd: "sleep 700", pat: "woke"}   # 见「非默认档步骤」：redeem 的第二个时长
   {cmd: "clock",     pat: "clock [0-9]"}
   {cmd: "badslot",   pat: "badslot: 3/3 rejected, kernel alive"}
   {cmd: "stray",     pat: "stray: 3/3 illegal-id joins denied"}
@@ -181,16 +182,14 @@ const IRQ_MARKER = "plic: line 10 delivered"
 # `exit` 指到了 `cascade` ⇒ 默认轮从不 exit、三轮都挂到超时（症状像内核挂，其实是门）。
 # 插 `kill`/`dir`/`line` 那几步时同样要重算（本轮又走了一遍这张表）。
 const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 10, 11, 12, 13, 14]
-const STEPS_AUDIT   = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
-# 默认档的构建 features：**恒为空串**，是构造上的保证，不是旋钮（见头注「按档构建」）。
-# 想反向验证默认档哨兵（「默认档不该出现 audit 输出」）还拦不拦得住，就临时把它改成
-# `"audit"`：默认轮便会跑在 audit ELF 上，哨兵必响 —— 验完改回。
-const DEFAULT_FEATURES = ""
+# 默认档的构建 features **恒为空串**：那是 `FLAVORS` 里 `default` 那一行（构造上的保证，
+# 不是旋钮，见头注「按档构建」）。
 
 # 全量 marker（含 sleep 探针的 `sleep 300ms`），跑完逐条核。默认档那批是 .sh 版原文
 # 逐字未动；他杀那两条（`kill echo -> ok` / `discover echo -> not found`）是后加的，
-# 一条管回执、一条管复验；audit 档另加四条（票单调不复用 + wipe 的封印唤醒 + 他杀
+# 一条管回执、一条管复验；非默认档另加四条（票单调不复用 + wipe 的封印唤醒 + 他杀
 # 两条）。计数以实跑为准，报告行里的数字是人写的、要跟着改。
 const MARKERS = [
   "spawnjoin -> 499500"
@@ -217,7 +216,10 @@ const MARKERS = [
   "task: all tasks exited, system halted"
 ]
 
-# ── audit 档追加的断言（默认档一条都不跑）──────────────────────────────────
+# ── 非默认档**多跑三步**的判词（默认档一条都不跑）──────────────────────────────
+#
+# 名字里没有 audit：这几条与任何 feature 都无关，只是"那三步的期望输出"。三步是
+# `sleep 700`（redeem 的第二个时长）、`stray`（野 id 自检）、`cascade`（级联扑杀）。
 #
 # 1) `redeem`：票**单调不复用**（`Ticket::alloc` 只有 fetch_add），到点兑现走
 #    「票 → 持票人 → 键 → 站点」四步。第二个时长不是把同一个检查做两遍：它是
@@ -225,40 +227,38 @@ const MARKERS = [
 #    那张票没摘掉），第一次的 `sleep 300` 可能照样过，而第二次就会挂住。两条
 #    `sleep …ms` 与两次 `woke` 都逐条断言，且 `sleep 700` 必须在 `sleep 300`
 #    之后出现（顺序也断言，防「同一句被数了两次」）。
-const AUDIT_MARKERS = [
+const EXTRA_MARKERS = [
   "sleep 700ms"
   'hole: wait-seal sealed=1 wake=seal'
   "stray: 3/3 illegal-id joins denied"
   "cascade: ok"
 ]
 # 顺序断言：后者必须出现在前者之后（grep 行号比较；任一缺 ⇒ 直接挂）。
-const AUDIT_ORDER = [
+# 这三步只有**非默认档**跑，故两对顺序在 harden 与框架两档都核（`FLAVORS` 的 `checks`）。
+const STEP_ORDER = [
   ["sleep 300ms", "sleep 700ms"]
   ['hole got "hi from shell', "hole: wait-seal sealed=1 wake=seal"]
 ]
 
-# ── harden 档（告警：**不是**第二道 audit）───────────────────────────────────
+# ── harden 档（告警：**不是**第二道别的档）────────────────────────────────────
 #
-# 这一档跑的是 `--profile harden --features $features`（= release + `debug-assertions = true`
-# + audit）：把**两半护栏放进同一份产物**——容器⇔状态断言（debug-assertions）与
-# lockdep 锁序报文体（audit 档常开）。
-# 它断言两件事：
-#   ① 那条 kill 路径的探针照旧（`stray` / `cascade`）；
-#   ② 控制台里**没有** `[depend]`——锁序违规的报文体（`report` 拼出来的那一行）。
+# 这一档跑的是 `--profile harden`（= release + `debug-assertions = true`，**不带 feature**）：
+# 把整条 debug 断言面（容器⇔状态不变量、lockdep 校验、帧/页表护栏）放回被测产物里，
+# 而 panic 走**崩溃转储**（用例框架不在场）。它断言三件事：
+#   ① kill 路径的探针照旧（`stray` / `cascade`）；
+#   ② 控制台里**没有** `[depend]`——锁序违规的报文体（`report` 拼出来的那一行）；
+#   ③ 那两对顺序断言（与框架档同）。
 # 内核里任何 `debug_assert` 失败都会走 panic ⇒ 已被通用判据「无 panic」抓住；`[depend]`
 # 单列一条是为了在原因串里点明「这是锁序违规」，不是别的 panic。
-const HARDEN_MARKERS = [
-  "stray: 3/3 illegal-id joins denied"
-  "cascade: ok"
-]
 
 # harden ELF 的**正向对照**：这一档必须真的带着断言，否则它就退化成「又跑了一遍默认档」
-# 而没人发现。实测过的事实：release ELF 里这两句各 0 次、debug ELF 里各 1 次。
-# 取容器断言那一句当探针——它在 `Scheduler::push` 里，任何构建都编得进去（非 cfg 代码）。
+# 而没人发现。实测过的事实：同一句断言在 release ELF 里 0 次、harden ELF 里 1 次。
+# 取容器断言那一句当探针——它在 `Scheduler::push` 里，是 `debug_assert!`（关了自动消失）。
 const HARDEN_PROBE = "starved 容器只收 Starved 任务"
 # 两道**正向对照**（都从 ELF 里 grep，不看运行输出）：一句容器⇔状态断言
-# （debug-assertions 的产物），一句 lockdep 锁序报文体（audit 档的产物）。少任何一道，
-# 这一档就退化成「又跑了一遍别的档」而没人发现。
+# （`debug_assert!` 的产物），一句 lockdep 锁序报文体（`lock/depend.rs` 整块
+# `#[cfg(debug_assertions)]` 的产物，由 `--profile harden` 打开 —— 与 cargo feature 无关）。
+# 少任何一道，这一档就退化成「又跑了一遍别的档」而没人发现。
 const HARDEN_PROBES = [
   $HARDEN_PROBE
   "lock-order level violation"
@@ -272,26 +272,49 @@ const HARDEN_PROBES = [
 # 什么都没测，故这条必须断言具体条数。
 const FRAMEWORK_MARKER = "\\[case\\] cases 4 ok 4 fail 0"
 
-# 本档要核的 marker：默认档十五条（.sh 原文 + 中断链 + 他杀两验 + 线的权威两证），audit/harden 档再追加各自那几条。
-# **三档都要核** `IRQ_MARKER`：中断面不是某一档的附属品，它每一轮都该成立。
-def markers_for [flavor: string] {
-  let base = ($MARKERS | append $IRQ_MARKER)
-  match $flavor {
-    "audit"     => ($base | append $AUDIT_MARKERS)
-    "harden"    => ($base | append $HARDEN_MARKERS)
-    # 框架档跑 `--features "framework audit"`：audit 那几条照旧要成立（用例跑在 audit 版
-    # 产物上，账本与三源核对都在场），再加用例汇总行。
-    "framework" => ($base | append $AUDIT_MARKERS | append $FRAMEWORK_MARKER)
-    _           => $base
-  }
+# ── 档位表：**一档一行**，档位的事实只有这一处 ─────────────────────────────────
+#
+# 一行管五件事：构建参数（profile / features）、步骤集（steps）、要核的 marker
+# （markers）、通用判据之外的附加检查（checks），报告行的数字则由前三项**算出来**
+# （手抄的数字在改档时必然漂 —— 这张表就是为了让那类漂移不可能）。
+# 加一档 = 加一行；改一档 = 改那一行。`run_once` / `main` 全从这里读。
+#
+# `markers` 三段的含义见 `markers_for`：`base` / `extra` / `case`。
+# `checks` 的取值见 `run_once` 末：`depend`（`[depend]` 点名）、`order`（顺序断言）。
+const FLAVORS = [
+  {name: "default",   profile: "release",   features: "",          steps: "default", markers: "base",            checks: []}
+  {name: "harden",    profile: "harden",    features: "",          steps: "full",    markers: "base+extra",      checks: ["depend" "order"]}
+  {name: "framework", profile: "framework", features: "framework", steps: "full",    markers: "base+extra+case", checks: ["depend" "order"]}
+]
+
+# 按名字取那一行（档案的全部事实都从它读；名字写错就该当场炸，故 `first` 之后必有值）。
+def flavor [name: string] { $FLAVORS | where name == $name | first }
+
+# 本档要核的 marker：`base` = 默认档那十五条 + 中断链（**每一档都核**：中断面不是某一档的
+# 附属品）；`extra` = 非默认档多跑三步的判词；`case` = 用例汇总行（判据是**全过**——
+# `0 fail` 且 `ok` 数 == 用例总数：零用例的症状比失败更坏，绿着、什么都没测，故必须断言
+# 具体条数）。
+def markers_for [f: record] {
+  mut out = ($MARKERS | append $IRQ_MARKER)
+  if ($f.markers | str contains "extra") { $out = ($out | append $EXTRA_MARKERS) }
+  if ($f.markers | str contains "case") { $out = ($out | append $FRAMEWORK_MARKER) }
+  $out
 }
 
-# 本档要跑的步骤（命令与 marker 同源，见 STEPS / STEPS_AUDIT）。
-def steps_for [flavor: string] {
-  # harden 档跑**全部**步骤（含 audit 档那两步的探针）：断言的覆盖面越大，lockdep 与
-  # 容器⇔状态断言能验到的路径越多——这一档要的就是「多跑一点、让校验抓到东西」。
-  let idx = if $flavor == "default" { $STEPS_DEFAULT } else { $STEPS_AUDIT }
+# 本档要跑的步骤（命令与 marker 同源，见 STEPS / STEPS_DEFAULT / STEPS_FULL）。
+# 非默认档跑**全部**步骤：断言的覆盖面越大，lockdep 与容器⇔状态断言能验到的路径越多
+# —— 这一档要的就是「多跑一点、让校验抓到东西」。
+def steps_for [f: record] {
+  let idx = if $f.steps == "default" { $STEPS_DEFAULT } else { $STEPS_FULL }
   $idx | each { |i| $STEPS | get $i }
+}
+
+# 报告行：数字从表里算（步数 / marker 数不再手抄）。拼接而非 `$"…(…)…"`：插值里的括号
+# 会被当成子表达式（nu 0.115 实测，本脚本踩过两次）。
+def report_for [f: record, i: int] {
+  let steps = ((steps_for $f) | length | into string)
+  let marks = ((markers_for $f) | length | into string)
+  'run ' + ($i | into string) + ': PASS (' + $f.name + ' 档：自退 + 无 panic + ' + $steps + ' 步全过 + ' + $marks + ' marker 齐)'
 }
 
 # 匹配一律走 `grep -E`（与 .sh 逐字同语义），且**字节安全**：控制台捕获里有 ANSI 转义、
@@ -302,7 +325,7 @@ def hit [pat: string, file: path] {
   ((^grep -Eq -- $pat $file | complete).exit_code) == 0
 }
 
-# 命中行号（1 基；无命中 ⇒ null）。顺序断言（AUDIT_ORDER）用——「两句话都在」
+# 命中行号（1 基；无命中 ⇒ null）。顺序断言（STEP_ORDER）用——「两句话都在」
 # 不等于「先后对」，同一句 marker 被数两次也能骗过 `hit`。
 def at [pat: string, file: path] {
   if not ($file | path exists) { return null }
@@ -417,7 +440,7 @@ def write_diag [file: path, ctx: record] {
   for l in $lines { print $"  ($l)" }
 }
 
-# 一轮：独立目录 + 起 qemu + 逐步 expect + 四条判据（audit 档另加三条）。
+# 一轮：独立目录 + 起 qemu + 逐步 expect + 通用四条判据 + 本档 `checks` 里的附加检查。
 def run_once [cfg: record, i: int, flavor: string] {
   let dir = ($cfg.out | path join $"run($i)")
   mkdir $dir
@@ -435,16 +458,15 @@ def run_once [cfg: record, i: int, flavor: string] {
   $env.QEMU_SEED = ($seed | into string)
 
   let boot = $cfg.boot
-  # **本档只跑本档构建出来的 ELF**：默认轮 ← 不带 feature 的那份，audit 轮 ← 带
-  # EXAMINE_FEATURES 的那份（两份产物在 <OUT>/elf-<档>/，见 main 的按档构建）。
-  # 这就是本门的设计要点：一次构建、两种期望，必然有一档被按构造误判。
+  let f = (flavor $flavor)
+  # **本档只跑本档构建出来的 ELF**（产物在 <OUT>/elf-<档>/，见 main 的按档构建）：
+  # 一次构建、两种期望，必然有一档被按构造误判 —— 故按档构建、按档跑。
   let elf = (match $flavor {
-    "audit"     => $cfg.elf_audit
     "harden"    => $cfg.elf_harden
     "framework" => $cfg.elf_framework
     _           => $cfg.elf_default
   })
-  let feats = (if $flavor == "default" { $DEFAULT_FEATURES } else { $cfg.features })
+  let feats = $f.features
   # qemu：tail 长驻写端喂命令文件 → scripts/boot.nu（qemu 起法的唯一出处）。
   # 退出码拿不到（nu 无 job wait）⇒ job 自己落盘；**必须包 try**，否则被 timeout 杀（124）
   # 时 job 会当场中止，rc 文件永远不写（.sh 版旧 runner 的归档分支就是这么从未跑过的）。
@@ -455,7 +477,7 @@ def run_once [cfg: record, i: int, flavor: string] {
 
   mut why = ""
   mut sent = 0
-  let steps = (steps_for $flavor)
+  let steps = (steps_for $f)
   if not (expect "sq > " $cfg.step_wait $log "boot") { $why = "引导/提示符" }
   for s in $steps {
     if $why != "" { break }
@@ -485,18 +507,20 @@ def run_once [cfg: record, i: int, flavor: string] {
   if $rc == 124 { $why = (append_why $why "被超时杀") }
   if (hit 'terminating on signal' $log) { $why = (append_why $why "被超时杀") }
   if (hit '\[panic\] at' $log) { $why = (append_why $why "内核panic") }
-  for m in (markers_for $flavor) {
+  for m in (markers_for $f) {
     if not (hit $m $log) { $why = (append_why $why $"缺[($m)]") }
   }
-  # harden 档单列一条：控制台里不许出现 `[depend]`——lockdep 的报文体（锁序违规：
-  # 同层嵌套 / 层级递减 / 同锁重入）。内核里任何 debug_assert 失败都会走 panic ⇒ 已被
-  # 通用判据「无 panic」抓住；这条是为了在原因串里点名「这是锁序违规」而不是别的 panic。
-  if $flavor == "harden" and (hit '\[depend\]' $log) {
+  # 附加检查（表里那一行的 `checks`）。两条都只**加话**、不加新阈值：
+  #   `depend` —— 控制台里不许出现 `[depend]`：lockdep 的报文体（锁序违规：同层嵌套 /
+  #     层级递减 / 同锁重入）。内核里任何 debug_assert 失败都会走 panic ⇒ 已被通用判据
+  #     「无 panic」抓住；这条是为了在原因串里点名「这是锁序违规」而不是别的 panic。
+  #   `order`  —— 两步的先后也是判据（「两句话都在」不等于「第二次真的发生在第一次之后」；
+  #     同一句被数两次也能骗过 `hit`）。
+  if "depend" in $f.checks and (hit '\[depend\]' $log) {
     $why = (append_why $why "lockdep 违规([depend])")
   }
-  # 顺序断言：两步的先后也是判据（「两句话都在」不等于「第二次真的发生在第一次之后」）。
-  if $flavor == "audit" {
-    for pair in $AUDIT_ORDER {
+  if "order" in $f.checks {
+    for pair in $STEP_ORDER {
       let first = (at $pair.0 $log)
       let second = (at $pair.1 $log)
       if $first == null or $second == null or $second <= $first {
@@ -566,53 +590,44 @@ def main [] {
   let t_gap = ($env.EXAMINE_T_GAP? | default "2" | into int)
   let _t_boot = ($env.EXAMINE_T_BOOT? | default "3" | into int)   # 同 .sh：接受但不用
   let icount = ($env.EXAMINE_ICOUNT? | default "")               # 默认空 = 关
-  # 内核 cargo feature（默认空 = 默认档，行为与输出与本门原版逐字相同）。
-  # `audit` ⇒ 默认档轮次**之后**再多跑一轮 audit 轮：步骤追加 `sleep 700` / hole 的
-  # 封印唤醒观测。
-  # **只作用于 audit 轮**：默认轮跑的 ELF 由 `const DEFAULT_FEATURES` 决定（恒空）。
-  let features = ($env.EXAMINE_FEATURES? | default "" | str trim)
-  let audit = (($features | split row -r '\s+') | any { |f| $f == "audit" })
-  # `EXAMINE_HARDEN=1` ⇒ 再加一轮 harden 档（`--profile harden` = release + debug-assertions）：
-  # 把容器⇔状态断言与整条 lockdep 放回被测产物里。**不是**第二道 audit：它不带 audit
-  # feature，判的是「没有 `[depend]`（锁序违规）」+ 那两条探针。
+  # `EXAMINE_HARDEN=1` ⇒ 再加一轮 harden 档（`--profile harden` = release + debug-assertions，
+  # **不带 feature**）：把整条 debug 断言面（容器⇔状态不变量、lockdep 校验、帧/页表护栏）
+  # 放回被测产物里，而 panic 仍走**崩溃转储**（用例框架不在场 ⇒ 会话期的断言失败有完整现场）。
+  # 判词：没有 `[depend]`（锁序违规）+ 两对顺序断言 + 两道 ELF 正向对照（见 `FLAVORS`）。
   let harden = (($env.EXAMINE_HARDEN? | default "0") == "1")
-  # 框架档**默认开**（`EXAMINE_FRAMEWORK=0` 可关）：这一档跑的是内核内测试框架
-  # （`--profile framework --features "framework audit"`）：
-  # 内核内测试框架（`kernel/src/framework/` + `health/` 的用例）跑在启动期，逐例打点 +
-  # 末行汇总。这一档判两件事：① 用例全过（汇总行 `cases N ok N fail 0`，N 具体到条数
-  # ——零用例比失败更坏）；② 判据其余五条照旧（测试档要在**同一趟**里接着跑完那 15 步
-  # shell 序列，因为用例通过即放行启动）。
+  # 框架档**默认开**（`EXAMINE_FRAMEWORK=0` 可关）：这一档跑内核内测试框架
+  # （`--profile framework --features framework`）—— 用例（`kernel/src/framework/` +
+  # `health/`）跑在启动期，逐例打点 + 末行汇总；**自检**（挂起自检 / 帧取还范围 /
+  # 簿记↔页表双向核对）也在这一档。这一档判两件事：① 用例全过（汇总行
+  # `cases N ok N fail 0`，N 具体到条数 ——零用例比失败更坏）；② 判据其余几条照旧
+  # （测试档要在**同一趟**里接着跑完那 15 步 shell 序列，因为用例通过即放行启动）。
   let framework = (($env.EXAMINE_FRAMEWORK? | default "1") == "1")
-  # cargo 的落点：**两档共用**（换 feature 就覆盖）⇒ 每建一档必须立刻搬走产物（见 build_flavor）。
+  # cargo 的落点：**各档共用**（换 profile/feature 就覆盖）⇒ 每建一档必须立刻搬走产物。
   let built = ($root | path join "target/riscv64gc-unknown-none-elf/release/sqware")
-  # 三档各自的产物：本轮（本 OUT）自己的目录，各带 initrd.img。轮次只跑自己那份。
+  # 各档自己的产物：本轮（本 OUT）自己的目录，各带 initrd.img。轮次只跑自己那份。
   let elf_default = ($out | path join "elf-default" "sqware")
-  let elf_audit = ($out | path join "elf-audit" "sqware")
   let elf_harden = ($out | path join "elf-harden" "sqware")
   let elf_framework = ($out | path join "elf-framework" "sqware")
   let boot = ($root | path join "scripts" "boot.nu")
 
   print $"examine: repeat=($repeat) out=($out) qemu_timeout=($qemu_timeout)s step_wait=($step_wait)s"
-  print ('examine: features=' + (if $features == "" { "(默认)" } else { $features }) + (if $audit { "（另加一轮 audit）" } else { "" }))
+  print ('examine: 档位 = ' + (($FLAVORS | each {|f| $f.name }) | str join ' + ') + '（默认轮 ' + ($repeat | into string) + ' 轮' + (if $harden { " + harden 轮" } else { "" }) + (if $framework { " + 框架轮" } else { "" }) + '）')
   mkdir $out
 
-  # 构建：**按档各建一次**，建完立刻搬进本档自己的目录（cargo 落点两档共用，见头注/build_flavor）。
-  # 只建**有轮次要跑**的档：
-  #   REPEAT=0 且不带 audit ⇒ 一条都不建（0/0 与 .sh 的 `seq 1 0` 同义，也省一次编译）；
-  #   带 audit 而 REPEAT=0   ⇒ 只建 audit 档（与改动前「只构建一次」的语义逐字一致）。
+  # 构建：**按档各建一次**，建完立刻搬进本档自己的目录（cargo 落点各档共用，见头注/build_flavor）。
+  # 只建**有轮次要跑**的档（REPEAT=0 又不带别的档 ⇒ 一条都不建，0/0 与 .sh 的 `seq 1 0` 同义）。
+  # profile / features 一律从 `FLAVORS` 那一行读 —— 命令行不该有第二份事实。
+  let f_default = (flavor "default")
   if $repeat > 0 {
-    print $"examine: 构建默认档（--features '($DEFAULT_FEATURES)'）→ ($elf_default)"
-    build_flavor "release" $DEFAULT_FEATURES $built $elf_default
-  }
-  if $audit {
-    print $"examine: 构建 audit 档（--features '($features)'）→ ($elf_audit)"
-    build_flavor "release" $features $built $elf_audit
+    print ('examine: 构建默认档（--profile ' + $f_default.profile + '，features ' + (if $f_default.features == "" { "(无)" } else { $f_default.features }) + '）→ ' + ($elf_default | into string))
+    build_flavor $f_default.profile $f_default.features $built $elf_default
   }
   if $harden {
+    let f = (flavor "harden")
     # 命名档的 cargo 落点是 target/<triple>/harden/（不是 release/），故 src 单独给。
     let built_harden = ($root | path join "target/riscv64gc-unknown-none-elf/harden/sqware")
-    print $"examine: 构建 harden 档（--profile harden，debug-assertions=on）→ ($elf_harden)"
-    build_flavor "harden" $features $built_harden $elf_harden
+    print ('examine: 构建 harden 档（--profile ' + $f.profile + '，debug-assertions=on，features ' + (if $f.features == "" { "(无)" } else { $f.features }) + '）→ ' + ($elf_harden | into string))
+    build_flavor $f.profile $f.features $built_harden $elf_harden
     # **正向对照**：这一档必须**同时**带着两半护栏——容器⇔状态断言与 lockdep 的
     # 报文体。少任何一道，这一档就退化成"又跑了一遍别的档"而没人发现。
     # 实测基线：同一句断言在 release ELF 里 0 次、debug ELF 里 1 次。
@@ -628,19 +643,20 @@ def main [] {
   }
 
   let cfg = {
-    out: $out, elf_default: $elf_default, elf_audit: $elf_audit, elf_harden: $elf_harden,
+    out: $out, elf_default: $elf_default, elf_harden: $elf_harden,
     elf_framework: $elf_framework, boot: $boot,
     qemu_timeout: $qemu_timeout, step_wait: $step_wait, t_gap: $t_gap,
-    icount: $icount, features: $features,
+    icount: $icount,
   }
 
   if $framework {
+    let f = (flavor "framework")
     # 命名档的 cargo 落点是 target/<triple>/framework/（与 harden 同理）。
     let built_fw = ($root | path join "target/riscv64gc-unknown-none-elf/framework/sqware")
     # 逐字拼（不能用 `$"…"`）：`$elf_framework` 此刻在作用域内，但下面这条打印的
     # 兄弟行曾写成纯字符串、把变量名原样打了出来——那类错在报告里看得见，在此记一笔。
-    print ('examine: 构建框架档（--profile framework --features framework+audit）→ ' + ($elf_framework | into string))
-    build_flavor "framework" "framework audit" $built_fw $elf_framework
+    print ('examine: 构建框架档（--profile ' + $f.profile + '，features ' + $f.features + '）→ ' + ($elf_framework | into string))
+    build_flavor $f.profile $f.features $built_fw $elf_framework
     # 正向对照：这一档必须真带着用例登记段 —— 段被链接器丢掉时用例一个不跑，
     # 而 transcript 上「零用例」与「全过」只差一个数字，故在此先验 ELF 里那段在。
     let n = (^readelf -sW $elf_framework | ^grep -c __tests_start | complete)
@@ -659,57 +675,40 @@ def main [] {
   for i in $rounds {
     let r = (run_once $cfg $i "default")
     $total_rounds += 1
-    # 这两行**不能**写成 `$"… (自退 + …)"`：插值里的 `(` 会被当成子表达式、把紧跟的汉字
-    # 当命令调用（nu 0.115 实测：`Command `自退` not found`，这类地雷改写本脚本时踩过一次）。
-    # 故结果行用拼接写，只有变量进插值。
+    # 结果行一律走 `report_for`（数字从 `FLAVORS` 那一行算），且**不能**写成
+    # `$"… (自退 + …)"`：插值里的 `(` 会被当成子表达式、把紧跟的汉字当命令调用
+    # （nu 0.115 实测：`Command `自退` not found`，这类地雷改写本脚本时踩过）。
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (自退 + 无 panic + 12 步全过 + 15 marker 齐)')
+      print (report_for (flavor "default") $i)
     } else {
       print ('run ' + ($i | into string) + ': FAIL — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
   }
 
-  # audit 轮（仅当 EXAMINE_FEATURES 含 audit）：同一台门、同一套判据，另加四条
-  # audit 断言（票单调不复用 / wipe 的封印唤醒 / 他杀两条探针）。
+  # harden 轮（仅当 EXAMINE_HARDEN=1）：跑 release + debug-assertions 那份产物（**不带
+  # feature**）—— 判「没有 lockdep 违规」+ 两对顺序断言 + 那两道 ELF 正向对照。
   # 轮次编号接在默认轮之后，证据目录因此不会互相覆盖。
-  if $audit {
-    let i = $repeat + 1
-    let r = (run_once $cfg $i "audit")
-    $total_rounds += 1
-    if $r.ok {
-      $pass += 1
-      # 标签照实写：audit 档比默认档多的是**四条 audit 断言**（票单调不复用 / 封印唤醒 /
-      # 他杀两条），以及 boot 期与挂起点的内核内自检（`space.audit()` / 挂起自检）。
-      # 站点表/终值判词那几条读数已随审计层删除，别在报告行里写成还在判。
-      print ('run ' + ($i | into string) + ': PASS (audit 档：自退 + 无 panic + 15 步全过 + 20 marker 齐)')
-    } else {
-      print ('run ' + ($i | into string) + ': FAIL (audit 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
-    }
-  }
-
-  # harden 轮（仅当 EXAMINE_HARDEN=1）：跑 release + debug-assertions 那份产物，
-  # 判「没有 lockdep 违规」+ 那两条探针。轮次编号接在前面几档之后。
   if $harden {
-    let i = $repeat + (if $audit { 2 } else { 1 })
+    let i = $repeat + 1
     let r = (run_once $cfg $i "harden")
     $total_rounds += 1
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 15 步全过 + 17 marker 齐)')
+      print (report_for (flavor "harden") $i)
     } else {
       print ('run ' + ($i | into string) + ': FAIL (harden 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
   }
 
-  # 框架轮（默认跑；`EXAMINE_FRAMEWORK=0` 跳过）：跑内核内测试框架那份产物。轮次编号接在前面几档之后。
+  # 框架轮（默认跑；`EXAMINE_FRAMEWORK=0` 跳过）：跑用例 + 自检那份产物。轮次编号接在前面几档之后。
   if $framework {
-    let i = $repeat + (if $audit { 1 } else { 0 }) + (if $harden { 1 } else { 0 }) + 1
+    let i = $repeat + (if $harden { 1 } else { 0 }) + 1
     let r = (run_once $cfg $i "framework")
     $total_rounds += 1
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (框架档：自退 + 无 panic + 用例全过(4/4) + 15 步全过 + marker 齐)')
+      print (report_for (flavor "framework") $i)
     } else {
       print ('run ' + ($i | into string) + ': FAIL (框架档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }

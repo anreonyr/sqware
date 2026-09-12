@@ -145,7 +145,7 @@ impl SpaceInner {
             .try_reserve(1)
             .map_err(|_| MapError::OutOfMemory)?;
         let base = match seg {
-            SegmentKind::NonKernel => self
+            SegmentKind::Normal => self
                 .user
                 .as_mut()
                 .ok_or(MapError::NoRegion)?
@@ -162,7 +162,7 @@ impl SpaceInner {
     /// 还段：精确匹配释放 `(addr, size)`。未分配 / 长度不匹配 → `false`。
     pub(crate) fn deallocate(&mut self, seg: SegmentKind, addr: usize, size: usize) -> bool {
         let seg = match seg {
-            SegmentKind::NonKernel => match self.user.as_mut() {
+            SegmentKind::Normal => match self.user.as_mut() {
                 Some(u) => u,
                 None => return false,
             },
@@ -341,7 +341,7 @@ impl SpaceInner {
     /// 前移，见 [`super::seg::Segment::holds`]）。
     pub(crate) fn holds(&self, seg: SegmentKind, addr: usize, size: usize) -> bool {
         match seg {
-            SegmentKind::NonKernel => self.user.as_ref().is_some_and(|u| u.holds(addr, size)),
+            SegmentKind::Normal => self.user.as_ref().is_some_and(|u| u.holds(addr, size)),
             SegmentKind::Kernel => self.kernel.holds(addr, size),
         }
     }
@@ -522,7 +522,7 @@ impl SpaceInner {
     /// 反向（PTE ⇒ map）：每个已装叶都落在某张 map 内、且该页确实"已物化"——
     /// 拆除与改权只碰**簿记说有 PTE** 的页（[`Self::runs`]），这条一破，PTE 就会
     /// 残留成悬垂（指向已归还帧，复用即错乱）。
-    #[cfg(any(feature = "audit", feature = "framework"))]
+    #[cfg(any(debug_assertions, feature = "framework"))]
     pub(crate) fn audit(&self) {
         for m in &self.maps {
             for (i, f) in &m.frames {
@@ -606,9 +606,9 @@ impl<'a> InstallGuard<'a> {
 /// 页槽位里那帧的物理地址（恒等映射下指针值即 PA）。
 ///
 /// 独立函数而不是方法：**唯一使用者是 [`SpaceInner::audit`]**，而它整段是
-/// `#[cfg(feature = "audit")]`——做成结构上的方法会让那个字段在默认档没有任何
-/// 读点（dead_code 警告），违反"两档零警告、零 allow"（用户裁决）。
-#[cfg(any(feature = "audit", feature = "framework"))]
+/// `#[cfg(feature = "framework")]`——做成结构上的方法会让那个字段在没有用例的档里
+/// 没有任何读点（dead_code 警告），违反"零警告、零 allow"（用户裁决）。
+#[cfg(any(debug_assertions, feature = "framework"))]
 fn page_pa(f: &Frame) -> PhysAddr {
     PhysAddr::from_raw(f.as_ptr() as usize)
 }

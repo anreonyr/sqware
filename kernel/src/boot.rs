@@ -102,7 +102,6 @@ pub fn init() -> ! {
     //   1) dock / ring 注册表清空（触发 Meta drop 归还共享区帧）
     //   2) 调度器槽载荷归还（per-hart LastIdent Arc）
     //   3) block 池冲洗（所有 Arc 已归还后帧基线才稳定）
-    //   4) audit 基线核对（仅 audit feature）
     // exit 钩子（每条 reaped 任务）：dock::task_exit + ring::task_exit
     register_runtime_hooks();
 
@@ -210,7 +209,7 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
     let view = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = inner.allocate(crate::work::unit::space::SegmentKind::NonKernel, view_size)?;
+            let va = inner.allocate(crate::work::unit::space::SegmentKind::Normal, view_size)?;
             inner.borrow(
                 va,
                 crate::memory::manager::addr::PhysAddr::from_raw(region.base),
@@ -229,7 +228,7 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
     let pairs = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
             let va = inner.allocate(
-                crate::work::unit::space::SegmentKind::NonKernel,
+                crate::work::unit::space::SegmentKind::Normal,
                 pairs_bytes,
             )?;
             inner.borrow(
@@ -255,10 +254,10 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
         .spawn()?;
     crate::devices::install(&bootstrap, devices);
 
-    #[cfg(feature = "audit")]
+    #[cfg(feature = "framework")]
     team.space.audit();
 
-    #[cfg(feature = "audit")]
+    #[cfg(feature = "framework")]
     kernel().expect("kernel team not initialized").space.audit();
 
     Ok(Some(bootstrap))

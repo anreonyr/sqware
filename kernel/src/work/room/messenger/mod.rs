@@ -106,7 +106,7 @@ pub(crate) fn rip() {
 /// 另两张簿记表的规模：票根（只存 `Weak`，无 drop 链）与躯壳队列。
 ///
 /// 消费者是停机信标：挂住时它要报出"还剩多少簿记没清"，靠的就是这两个读数。
-#[cfg(feature = "audit")]
+#[cfg(debug_assertions)]
 pub(crate) fn probe_bookkeeping() -> (usize, usize) {
     let holders_n = holders().lock().len();
     let husks_n = HUSKS.lock().len();

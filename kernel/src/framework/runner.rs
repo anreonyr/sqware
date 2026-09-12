@@ -17,7 +17,7 @@
 //! 短路分支），由它报"哪一例 + 原因"再停机。本模块因此**看不到**失败 —— 它只负责把
 //! 通过的例子数清楚，并在全部通过时给 `Pass`。见模块头注的算术。
 
-use super::{Kernel, Platform, Status, discover, set_running};
+use super::{Kernel, Platform, Status, clear_running, discover, set_running};
 
 /// 跑全部用例并给出结局。
 ///
@@ -40,11 +40,14 @@ pub(crate) fn run(platform: &dyn Platform) -> Status {
     // 现在失败的用例**留不下完整的一行**，缺席即失败，汇总行也随之自洽。
     let mut done = 0usize;
     for case in cases {
-        set_running(case.name);
+        set_running(case);
         (case.body)();
         done += 1;
         platform.print(format_args!("[case] ok {}", case.name));
     }
+    // 用例跑完即**归零**：那之后 panic 是内核缺陷，该给崩溃现场 —— 而不是顶着最后一个
+    // 用例的名字（自检会在会话期响，那时"哪一例"是句假话）。
+    clear_running();
     platform.print(format_args!(
         "[case] cases {} ok {done} fail 0",
         cases.len()
@@ -55,7 +58,8 @@ pub(crate) fn run(platform: &dyn Platform) -> Status {
 /// 崩溃路径的出口：某一例 panic 了 → 报"哪一例 + 原因"再停机。
 ///
 /// 由 `halt.rs` 的 panic 通道在 `--features framework` 下调用（那里是唯一的
-/// `#[panic_handler]`，本模块**不**再声明一个）。
+/// `#[panic_handler]`，本模块**不**再声明一个）；通道按 [`super::running`] 是否为空
+/// 挑出口 —— 空了就走崩溃转储，本函数因此**只在用例体的执行期内**被调到。
 ///
 /// 为什么在这里而不是 halt 里：`halt` 认识崩溃转储（寄存器/栈/页表），本模块认识
 /// "用例"。

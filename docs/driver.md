@@ -349,9 +349,9 @@ semihosting 导出的事件流里按 class 数的 envcall（`--features semihost
 
 - **门（每步都过）**：先 `expect "sq > "`——**提示符即两条路（写与读）都通的证据**（与
   `console.md` §10 同源）；随后逐步 expect 命令并核 marker，含自然停机。
-  **结果**：`EXAMINE_FEATURES=audit EXAMINE_HARDEN=1 nu scripts/examine.nu` → **5/5 PASS**
-  （默认档 3 轮 + audit 档 1 轮 + harden 档 1 轮；marker 13 / 18 / 15 条全齐，
-  harden 档另核四条护栏串与"无 lockdep 违规"）。
+  **结果**：`EXAMINE_HARDEN=1 nu scripts/examine.nu` → **全过**
+  （默认档 3 轮 + harden 轮 + 框架轮；marker 逐档全齐（数字由 `FLAVORS` 算），
+  harden 档另核两道 ELF 护栏串与"无 lockdep 违规"）。
 - **第一步新增量**：同一段输出在 diagnose 事件流里的 **envcall 条数为 0**（搬迁前 > 0）。
   **注意口径**：控制台协议自己的 `Push`/`Pull` 仍是 envcall（那是协议，不是设备面）——
   消失的是 **class 3（`IO`）**：`Put 6 + Get 444 = 450 → 0`（§7.4 的表）。
@@ -383,7 +383,7 @@ semihosting 导出的事件流里按 class 数的 envcall（`--features semihost
      行表是空的）+ 会话门闩真的投得出去。**三档都核**。
   2. **反证（权威是判据，不是装饰）**：shell 的 `line <名字>`（`prog-shell` 的自检命令之一）
      去抢 console 的名字 ⇒ 必须拿到 `not-yours`；去点一个设备树里没有的名字 ⇒ 必须拿到
-     `unknown`。两条都进了门（默认/audit/harden 三档）。
+     `unknown`。两条都进了门（默认 / harden / 框架三档）。
      **牙在哪**：把驱动那两条判据（属主 + 占用）一起摘掉 = **改造前的语义**（后到者顶替），
      第一条当场变成 `line serial@10000000 -> ok`——**真的把 console 的线抢走了**，门立刻判红。
      **本轮实做**，读数如下（同一份代码，只改 `lines.rs::register` 里那两句）：

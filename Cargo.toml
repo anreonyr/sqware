@@ -32,13 +32,13 @@ panic = "abort"
 inherits = "release"
 debug-assertions = true
 
-# 框架档（内核内测试）：**继承 harden**，于是用例跑在与验收门同一套护栏下 ——
-# debug_assertions 开着（页码表/空间不变量、lockdep 全集在场），配合
-# `--features "framework audit"` 再叠上账本与三源核对。用例要测的正是这些护栏，
-# 关着断言跑测试等于测了个空壳。
+# 框架档（内核内测试）：**继承 harden**，于是用例与自检跑在与验收门同一套护栏下 ——
+# debug_assertions 开着（页码表/空间不变量、lockdep 全集在场），`--features framework`
+# 再叠上用例与**自检**（挂起自检 / 帧范围 / 簿记↔页表；见 `kernel/Cargo.toml` 的门注）。
+# 用例要测的正是这些护栏，关着断言跑测试等于测了个空壳。
 #
 # 注：`--features framework` 是**内核 crate 的 feature**，profile 只管构建参数，
-# 两者要一起给（`cargo build --profile framework --features "framework audit"`）。
+# 两者要一起给（`cargo build --profile framework --features framework`）。
 [profile.framework]
 inherits = "harden"
 debug-assertions = true

@@ -408,8 +408,8 @@ impl Space {
     /// 簿记↔页表一致性审计（boot / 压力测试后调用；不一致即 panic）。
     ///
     /// 同 [`Self::table_count`]：门跟着用户走 —— 用例里的 `space.audit()` 是它的第二个
-    /// 调用点，而 `--features framework` 未必同时带 `audit`。
-    #[cfg(any(feature = "audit", feature = "framework"))]
+    /// 调用点，而那条用例在 `debug_assertions` 档（harden / debug）同样编得进来。
+    #[cfg(any(debug_assertions, feature = "framework"))]
     pub(crate) fn audit(&self) {
         self.with(|inner| inner.audit());
     }

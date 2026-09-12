@@ -6,12 +6,11 @@
 ## 1 · 语义定位
 
 诊断是**常驻**的：`halt` / `report` / `render` / `scene` / `trace` / `frame` / `backtrace`
-**没有 feature 门**，三档产物里都在（`runtime/diagnose/mod.rs:1-15`）。只有两处例外：
+**没有 feature 门**，各档产物里都在（`runtime/diagnose/mod.rs:1-15`）。只有一处例外：
 
 | 能力 | 门 |
 |---|---|
 | 结构化导出（`export.rs` + trace 的宿主镜像） | `semihosting` |
-| canary 现场清查 | `audit`（`scene.rs:405-408`） |
 
 它要回答的是三个不同的问题：**谁先发现的**（`claim` / `ALARMER`）、**现场是什么样**
 （`scene` + `frame`）、**之前发生了什么**（`trace` 事件环）。
@@ -23,7 +22,7 @@
 | `diagnose/halt.rs` | 报警源登记（`ALARM:21-24`）+ 单次报告（`claim` CAS `:57-67`）+ `broadcast:71-106`（SBI IPI）+ 停核 `hush:27-49` + 归巢 `home:141-162` + 组稿 `info:166-220` + 停机自环 `halt_loop:223-230` |
 | `diagnose/report.rs` | `Report{seal, paras}`、`paragraph`、`seal`（打戳 hart + ticks）、`clear` |
 | `diagnose/render.rs` | 段落 → stanza 定宽栅格（列宽 ＝ 非空槽最宽、char 安全截断、Decor 全抑制） |
-| `diagnose/scene.rs` | 现场采集：`capture_kernel:125-163`（归巢落盘的 sp/fp 或当前）、`capture_user:166-202`（running 任务的 trap 帧）；`dump` 组稿 |
+| `diagnose/scene.rs` | 现场采集：`capture_kernel:125-163`（归巢落盘的 sp/fp 或当前）、`capture_normal`（running 任务的 trap 帧）；`dump` 组稿 |
 | `diagnose/frame.rs` | 领域无关的投影引擎：`StackReader` 逐页 `walk_raw` + DRAM 值域 + R 位（**采样绝不触发缺页**，`:15-18,107-138`）；`walk` ＝ `chain`（fp 链）+ `scan`（无表时扫候选 `ra`，4 对齐、去重、`SPAN=4096`/`DEPTH=32`） |
 | `diagnose/trace.rs` | per-hart 事件环（`BUFFER_SIZE=512`，从 spare 仓常驻，`:239-270`）；`note` 尽力而为不失败；`panic_dump` 每 hart 倒 `TRACE_DUMP/hart_count` 条 |
 | `diagnose/backtrace.rs` | 定长 `Backtrace{frames:[Frame;DEPTH]}`（**回溯层零分配做成类型约束**）+ `classify`（Root/Kernel/User/Unknown） |
@@ -43,7 +42,7 @@ panic! → panic_handler（halt.rs:120）→ alarm:100 → claim:57（CAS 抢占
 
 嵌套 panic 走 `claim` 的假分支：只打一行 `info:` 然后 `halt_loop()`——**报告只报一次**。
 
-**用户域 panic**（**不进**报告链）：`programs/src/entry.rs:45` 用字面量 `put`（禁 `format!`）
+**Normal 域 panic**（**不进**报告链）：`programs/src/entry.rs:45` 用字面量 `put`（禁 `format!`）
 打印，然后 `exit()` → `RoomCall::Reap{reason}` → 内核写 `EXIT_REASON` 并返回空指针 →
 `trap_handler` 走退场窄尾 → `messenger::quit` → `trace::note(RoomEvent::Exit{tid,reason})` →
 `reap` → `bury`。
@@ -69,11 +68,11 @@ panic! → panic_handler（halt.rs:120）→ alarm:100 → claim:57（CAS 抢占
 
 | 裁决 | 定论 | 理由 |
 |---|---|---|
-| 用户域退场 ≠ 内核 panic | 走 `Reap → quit → RoomEvent::Exit`，只记 trace | 内核不需要知道「panic」这个词（`entry.rs:32-36`、`trace.rs:71-78`） |
+| Normal 域退场 ≠ 内核 panic | 走 `Reap → quit → RoomEvent::Exit`，只记 trace | 内核不需要知道「panic」这个词（`entry.rs:32-36`、`trace.rs:71-78`） |
 | 报文体有分配 | 允许，但先切 spare 门户 | 门户有免锁判别位，panic 路径不能走主堆（`halt.rs:174`） |
 | 采样只读 `walk_raw` | 不触发缺页、不改页表 | 诊断不得成为故障源（`frame.rs:15-18`） |
 | 结构化导出放 `semihosting` 门后 | 非默认 | 它要宿主文件系统；**门跑过的产物没有它** |
-| canary 现场清查放 `audit` 门后 | 非默认 | 清查本身要遍历，产品档不该付 |
+| ~~canary 现场清查放 `audit` 门后~~ | 非默认 | **史料**：那条清查与 `audit` 门都撤了（见 memory.md §5）；`audit` 这个 cargo feature 也不再存在 |
 | trace 用定长环、每 hart 一份 | 不分配、不跨核同步 | 崩溃现场要能读（`trace.rs:239-270`） |
 
 ## 6 · 已知边界

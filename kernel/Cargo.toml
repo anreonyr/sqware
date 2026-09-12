@@ -12,15 +12,18 @@ default = []
 # 含 semihosting 时才加（`scripts/boot.nu`，**只管 QEMU 侧**），而 `scripts/examine.nu`
 # 的两档都不带头文件 feature ⇒ 门跑过的产物没有结构化导出。
 semihosting = []
-# 审计框架（fence 的 banker/ledger/audit + 关机类别记账检查）——**cargo feature 门控**：
-# **非默认**（不在 default 里）；需显式 `--features audit` 开启。审计不依赖
-# debug_assertions 硬化开关，release 也能跑审计。默认关闭以减小常驻 footprint：
-# 活块账本（hashbrown）、关机类别记账检查、canary 现场清查等全部 cfg out。
-audit = []
 # 内核内测试框架（framework/ + health/ 的用例 + link.ld 的 `.tests` 段）。
-# **非默认、且不在任何别的档里**：它同时管两件事 —— 启用用例（`.tests` 段登记）与把
-# panic 通道改成"报哪一例失败再停机"（`halt.rs`）。两件事拆成两个 feature 只会造出
-# 无意义的四象限（登记了却走崩溃转储 / 没登记却报用例失败）。
+# **非默认、且不在任何别的档里**。它管三件事，因为它们是**同一批读者**：
+#   ① 启用用例（`.tests` 段登记）；
+#   ② panic 通道按**状态**挑出口（用例体执行期 → 报哪一例失败；其余 → 崩溃转储，
+#      见 `halt.rs`）；
+#   ③ **自检**（挂起自检 / 帧取还范围 / 簿记↔页表双向核对，以及自检的数据源——
+#      `weak` 的出身槽位账）。
+# ③ 跟着 ① 走而不是跟着 `debug_assertions` 走，是用户裁决：**判据只有一个通道，
+# 就是 framework 档**。`debug_assertions` 那条门管的是另一件事 —— 断言与**现场读数**
+# （锁序、数字不变量、挂住现场的三读数），它在 harden/framework 两个 profile 里都开。
+#
+# 拆成两个 feature 只会造出无意义的四象限（登记了却走崩溃转储 / 没登记却报用例失败）。
 framework = []
 
 [dependencies]

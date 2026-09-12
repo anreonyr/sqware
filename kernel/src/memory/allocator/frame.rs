@@ -69,7 +69,7 @@ unsafe impl Allocator for FrameAllocator {
             let frame = &mut *guard;
             let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
             let addr = frame.frame_addr(index) as *mut u8;
-            #[cfg(feature = "audit")]
+            #[cfg(feature = "framework")]
             {
                 let a = addr as usize;
                 assert!(
@@ -98,7 +98,7 @@ unsafe impl Allocator for FrameAllocator {
             let power = block_power(size);
             let addr = ptr.addr().get();
             // 护栏：释放地址必须在 free 区（双释放/错地址释放即刻暴露）
-            #[cfg(feature = "audit")]
+            #[cfg(feature = "framework")]
             {
                 let a = addr;
                 assert!(

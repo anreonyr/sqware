@@ -92,8 +92,8 @@ impl PageTable {
         // 同 [u8;4096] 教训：PageTable::default() 按值 4 KiB 会在调用栈上物化约
         // 16 KiB 栈帧——任务栈上建中间表同样击穿（风暴 UAF 同源）。走标准原语
         // Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）。
-        // 类别 = Table：页表页（root 与 walk_mut 子表）——关机与内核根表 walk
-        // 计数核对（audit::check_baseline ③）。
+        // 类别 = Table：页表页（root 与 walk_mut 子表）——框架档用例的逐类读数与
+        // `Space::audit()` 的簿记↔页表核对都靠这个标注认得出它们。
         let page = crate::tag!(Table, unsafe {
             Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                 .map_err(|_| MapError::OutOfMemory)?
@@ -163,7 +163,7 @@ impl TableNode {
     /// `level` = 本节点层号（根传 `levels - 1`）；`node_va` = 本节点覆盖区间的起始
     /// 地址（掩码空间——叶 VA 经 `VirtAddr::from_raw` 规范化回符号扩展形式）。
     /// 只走**存在的**子节点：代价 O(树中节点数)，与地址空间大小无关。
-    #[cfg(any(feature = "audit", feature = "framework"))]
+    #[cfg(any(debug_assertions, feature = "framework"))]
     pub(crate) fn mapped(&self, level: usize, node_va: usize, visit: &mut impl FnMut(VirtAddr)) {
         if level == 0 {
             for (i, e) in self.page.entries.iter().enumerate() {

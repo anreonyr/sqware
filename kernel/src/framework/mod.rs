@@ -73,36 +73,37 @@ macro_rules! test {
     };
 }
 
-/// 当前用例名（panic 通道报"哪一例"用）。
+/// 当前在跑的用例（空 = 没有用例在跑）。
 ///
-/// 存成原子指针而非 `&'static str`：静态量里没有字符串切片的字面形态，而
-/// `from_utf8_unchecked(ptr, len)` 在**常量上下文**里不是 `const fn`。指针 + 长度分
-/// 两处存，读点拼回。
-///
-/// **不还原**：首个 panic 即停机，没有"下一例"需要干净的名字。
-static RUNNING: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-/// 当前用例名的长度（与 [`RUNNING`] 配对）。
-static RUNNING_LEN: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// **一个字的发布**：panic 通道靠它挑出口，而"哪一例"必须要么是完整的一例、要么是
+/// 空 —— 长度 + 指针两个原子会给出第三种状态（新长度配旧指针）。发布 `Case` 指针
+/// 让那个状态**不可表达**。
+static RUNNING: core::sync::atomic::AtomicPtr<Case> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-/// 置当前用例名（[`runner`] 每例前调用）。
-pub(super) fn set_running(name: &'static str) {
+/// 置当前用例（[`runner`] 每例**开跑前**调用）。
+pub(super) fn set_running(case: &'static Case) {
     use core::sync::atomic::Ordering;
-    RUNNING_LEN.store(name.len(), Ordering::Relaxed);
-    RUNNING.store(name.as_ptr() as usize, Ordering::Relaxed);
+    RUNNING.store(core::ptr::from_ref(case).cast_mut(), Ordering::Relaxed);
 }
 
-/// 当前用例名；未开跑（或已跑完）时是空串。
+/// 归零：全部用例跑完（[`runner`] 返回前**唯一**一处）。此后 panic 走崩溃转储。
+pub(super) fn clear_running() {
+    use core::sync::atomic::Ordering;
+    RUNNING.store(core::ptr::null_mut(), Ordering::Relaxed);
+}
+
+/// 当前用例名；没有用例在跑（未开跑 / 已跑完）时是空串。
 ///
-/// 崩溃路径的读点（panic 通道报"哪一例失败"）。
+/// 崩溃路径的读点：panic 通道据此挑"用例失败"还是"崩溃现场"。
 pub(crate) fn running() -> &'static str {
     use core::sync::atomic::Ordering;
-    let len = RUNNING_LEN.load(Ordering::Relaxed);
-    let ptr = RUNNING.load(Ordering::Relaxed) as *const u8;
-    if len == 0 || ptr.is_null() {
+    let ptr = RUNNING.load(Ordering::Relaxed);
+    if ptr.is_null() {
         return "";
     }
-    // SAFETY: `RUNNING`/`RUNNING_LEN` 只由 `set_running` 成对写入，而它收到的
-    // `name` 是 `&'static str`（用例名来自 `test!` 的字符串字面量）⇒ 指针与长度
-    // 在整个运行期内有效且自洽。
-    unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len)) }
+    // SAFETY: `RUNNING` 只由 `set_running` / `clear_running` 写，写进去的是
+    // `.tests` 段里那一行 `Case` 的 `&'static` 引用；段在链接期成形、运行期不变
+    // ⇒ 指针与它指的 `name` 在整个运行期内都有效。
+    unsafe { (*ptr).name }
 }

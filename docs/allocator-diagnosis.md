@@ -1031,7 +1031,36 @@ freelist↔pagemeta 背离（§10）现在只剩 `check_bounds` / `check_frame_f
 - 帧"在不在手"的**唯一一份账**仍是 `frame::pagemeta`；块池在册页仍是 `Tally`；帧池水位
   仍是 `statistics`（现在只剩四个判据输入：帧在手数、块池持页数、仓在手段数与余量）。
 
-门跟着改：`AUDIT_MARKERS` 里与站点表/终值判词相关的条目撤掉，`HARDEN_PROBES` 收敛为
-两道正向对照（容器⇔状态断言 / lockdep 报文体），allocator 与空间的判据落在框架档的
-`[case] cases 3 ok 3 fail 0`。**没有放宽任何阈值**：删的是判据本身（连同它的读者），
-不是把阈值改宽。
+门跟着改：与站点表/终值判词相关的 marker 条目撤掉，`HARDEN_PROBES` 收敛为两道正向对照
+（容器⇔状态断言 / lockdep 报文体），allocator 与空间的判据落在框架档的 `[case] cases …`
+汇总行。**没有放宽任何阈值**：删的是判据本身（连同它的读者），不是把阈值改宽。
+
+## 13 第 15 轮：`audit` 这个门也撤了 —— 门收成两个（用户裁决）
+
+第 14 轮删掉审计层之后，cargo feature `audit` 只剩三样东西：**自检**（挂起自检 / 帧取还
+范围 / 簿记↔页表双向核对）、它们的**数据源**（`work/unit/weak.rs` 的出身槽位账）、以及
+停机信标的**挂住现场读数**。三项都另有归属，故：
+
+| 项 | 新门 | 理由 |
+|---|---|---|
+| 挂起自检、帧取还范围断言、`boot` 的 `space.audit()`、`weak` 的出身槽位账 | `feature = "framework"` | **自检是 framework 的事情**：判据与它的数据源同一门（用户裁决原话）；非框架档里那笔原子开销一并消失 |
+| 停机信标的三读数（`husks` / `holders` / 在世任务 id） | `debug_assertions` | 它们是**读数**不是自检（不判什么、只给看挂住现场的人看）；§3.4 那次「关机偶发挂住」正是在 harden 档诊断出来的 |
+| `space` / `manager::table` 的读侧面（`Space::audit`、`is_materialized`、`mapped`、`page_pa`） | `any(debug_assertions, feature = "framework")` | **门跟着读者走**：用例体在 `debug_assertions` 档（harden / debug）同样编进来，读侧面不能比读者窄 |
+
+配套的两处（都由上面这条裁决推出来）：
+
+1. **panic 通道按状态分派**（`runtime/diagnose/halt.rs`）：用例体执行期 ⇒ `case_failed`（报
+   哪一例 + 断言说了什么）；其余 ⇒ 新的 `crash_scene`（崩溃转储，唯一出口）。此前那是
+   **编译期二选一**，于是框架产物里根本没有崩溃转储，而会话期的 panic（自检就是在会话期
+   响的）会被冠上**上一个用例的名字**——负向对照实测：`[case] FAIL pagetable: … — [weak]
+   挂起自检：…（weak.rs:239）`，与 pagetable 用例毫无关系。`framework::running()` 因此改成一个
+   字的发布（`AtomicPtr<Case>`）并在用例跑完后归零（`clear_running`）。
+2. **验收门四档 → 三档**（`scripts/examine.nu`）：默认 / harden / 框架。档位的全部事实收进
+   `const FLAVORS`（一行一档：profile、features、步骤集、marker 集、附加检查），报告行的
+   步数与 marker 数由表算 —— 此前是手抄的，实测已经漂过一个（audit 轮报"20 marker 齐"，
+   实为 19）。audit 轮独有的三条检查（两对顺序断言、`[depend]` 点名、`sleep 700ms` /
+   `wait-seal` 两条 marker）搬进 harden 与框架两档；`EXAMINE_FEATURES` 这个旋钮随之取消。
+
+**代价写在明处**：框架产物里开始**带着崩溃转储代码**（此前它被 `cfg(not(feature =
+"framework"))` 整块编掉）——实测框架档的编译告警因此从 45 条降到 3 条（那 42 条正是崩溃
+转储面被编掉留下的死代码）。换来的是：自检在会话期响时给的是**完整现场**。

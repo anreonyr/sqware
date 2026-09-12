@@ -28,7 +28,6 @@ pub(in super::super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLoc
 /// 关闭顺序（conductor::halt → conductor::hooked）：
 ///   1. scheduler::core::rip      ← 本函数：就绪队列强制释放 → mail 透传
 ///   2. block::flush                 ← block 池冲洗
-///   3. audit::check_baseline        ← 帧/block 基线核对
 ///
 /// 注：本函数清 scheduler 持有的 Arc<Task>（就绪队列）+ 身份槽。messenger 簿记
 /// （sites / holders / husks）由 [`messenger::rip`] 清——本函数连调之。
@@ -179,7 +178,7 @@ pub(crate) fn prune_dead() -> usize {
 /// 为什么返回定长数组而不是 `Vec`：本函数在**停机挂住**的现场被调用，而它要在
 /// **持名册锁（L3）**时取数 —— 那时**不能分配**（分配会取 L2，L3→L2 嵌套即 lockdep
 /// 违规，且在挂住的机器上分配未必成功）。故锁内只写定长数组，出锁后由调用方打印。
-#[cfg(feature = "audit")]
+#[cfg(debug_assertions)]
 pub(crate) fn roster_live_ids() -> (usize, [usize; 8]) {
     let g = roster_table().lock();
     let mut out = [0usize; 8];

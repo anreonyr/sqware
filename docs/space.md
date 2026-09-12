@@ -41,7 +41,7 @@
 
 | 不变量 | 违反会怎样 | 谁守着 |
 |---|---|---|
-| 簿记 ⇔ PTE 双向一致 | 悬垂 PTE 指向已归还帧 | `SpaceInner::audit` `core.rs:461`（audit 档） |
+| 簿记 ⇔ PTE 双向一致 | 悬垂 PTE 指向已归还帧 | `SpaceInner::audit`（framework 档；门见 `kernel/Cargo.toml` 的门注） |
 | 段表并入 Space 锁；`allocate`/`deallocate` 只在事务内 | 死锁 / 竞争 | `core.rs:18-20`、`adapter.rs:217` |
 | 清退到齐前帧与段不得易主 | 远核旧条目污染新映射 | `salvage.rs:88`、`:106` |
 | 借入映射只能收紧（新 flags ⊆ 当前叶 PTE） | 按 VA 单方面扩他人权限 | `map.rs:112` + `protect` 闸 `core.rs:375-401` |
@@ -124,10 +124,10 @@
 - **health 用例 `pagetable`**（`health/pagetable.rs`，debug / framework 档）：32 轮 4 MiB
   map/unmap，断言表数回到 `base`、`translate` 命中与落空都对、「在途帧 − 块池持页」回到
   轮前——每轮还调一次 `space.audit()`。
-- **audit 档**：boot 装出根域后逐空间 `space.audit()`（`boot.rs`），核对簿记 ⇔ PTE；
+- **framework 档（自检）**：boot 装出根域后逐空间 `space.audit()`（`boot.rs`），核对簿记 ⇔ PTE；
   关机钩子只剩 `scheduler::rip` 与 `block::flush`（没有审计判词）。
-- **验收门**：四档（默认 / audit / harden / framework）同一套判据 + 各自的正向对照；
-  allocator 与空间的判据落在 framework 档的用例行（`[case] cases 3 ok 3 fail 0`）。
+- **验收门**：三档（默认 / harden / framework）同一套判据 + 各自的正向对照；
+  allocator 与空间的判据落在 framework 档的用例行（`[case] cases 4 ok 4 fail 0`）。
 - **未覆盖**：用户侧只有 `alloc` 一条端到端命令（`programs/src/bin/user/shell.rs:971-973`
   → `MemoryCall::Allocate`）。**`Mmap`/`Munmap`/`Mprotect` 三条路径没有门覆盖**——
   `share.rs` 的懒区与借入所有权闸目前只有内核代码、注释与 health 探针在守。

@@ -2,8 +2,8 @@
 //!
 //! # 为什么必须单列一个模块
 //!
-//! 「关机偶发挂住」的症状是：`exit` 之后打印若干 `[audit] space asid N retired …`
-//! 就再没有 `task: all tasks exited, system halted`，四个 hart 全停在空闲 `wfi`。
+//! 「关机偶发挂住」的症状是：`exit` 之后打了几行退场读数，就再也没有
+//! `task: all tasks exited, system halted`，四个 hart 全停在空闲 `wfi`。
 //! **挂住时没有任何 hart 在跑** —— 没有栈帧可读、没有 panic 现场可 dump，事后
 //! 只能对着"少了哪一行"猜。本模块把那个"猜"变成一行日志：
 //!
@@ -33,7 +33,7 @@
 //! 两头都离得远（实测：按轮数计阈值会在正常收尾里误报 —— 那次的读数是
 //! `PUSHED=10 REAPED=1`，正是收尾刚开头）。
 //!
-//! 产品档也带着它 —— 挂住不是 audit 档特有的现象，而这一行是唯一能指路的证据。
+//! 产品档也带着它 —— 挂住不是某一档特有的现象，而这一行是唯一能指路的证据。
 
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -132,7 +132,9 @@ pub(super) fn idle(hart: usize) {
         return;
     }
     BEACON_FIRED.store(true, Ordering::Relaxed);
-    #[cfg(feature = "audit")]
+    // 门 = `debug_assertions`：这两句是**现场读数**（不判什么，只给看挂住现场的人看），
+    // 跟硬化开关走 —— 优化产物 + 断言那一档同样打得出它们。
+    #[cfg(debug_assertions)]
     {
         let (holders, husks) = crate::work::room::messenger::probe_bookkeeping();
         let (more, ids) = super::table::roster_live_ids();
@@ -152,7 +154,7 @@ pub(super) fn idle(hart: usize) {
             if more > 0 { " …" } else { "" }
         );
     }
-    #[cfg(not(feature = "audit"))]
+    #[cfg(not(debug_assertions))]
     {
         crate::putln!(
             "[stop] hart {hart} 空闲等待：PUSHED={pushed} REAPED={reaped}（差 {}）",
