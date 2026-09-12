@@ -278,7 +278,7 @@ const HARDEN_PROBES = [
 # 「无 panic」判据抓住，这一条是**正向**读数 —— 它同时挡掉"零用例"（`.tests` 段被链接器
 # 丢掉时用例一个都不跑，而其余所有 marker 照旧齐）。零用例的症状比失败更坏：绿着，
 # 什么都没测，故这条必须断言具体条数。
-const FRAMEWORK_MARKER = "\\[case\\] cases 3 ok 3 fail 0"
+const FRAMEWORK_MARKER = "\\[case\\] cases 4 ok 4 fail 0"
 
 # 本档要核的 marker：默认档十五条（.sh 原文 + 中断链 + 他杀两验 + 线的权威两证），audit/harden 档再追加各自那几条。
 # **三档都要核** `IRQ_MARKER`：中断面不是某一档的附属品，它每一轮都该成立。
@@ -789,7 +789,7 @@ def main [] {
     $total_rounds += 1
     if $r.ok {
       $pass += 1
-      print ('run ' + ($i | into string) + ': PASS (框架档：自退 + 无 panic + 用例全过(3/3) + 15 步全过 + marker 齐)')
+      print ('run ' + ($i | into string) + ': PASS (框架档：自退 + 无 panic + 用例全过(4/4) + 15 步全过 + marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (框架档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }

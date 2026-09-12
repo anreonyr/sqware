@@ -188,6 +188,7 @@ impl FrameAllocator {
         (checked, bad, sample)
     }
 
+
     /// **反向核对：`pagemeta` 里每条 `free=true` 表项，其块是否真在 `freelist[power]` 链上。**
     ///
     /// # 这是上一个检查缺的那一半
@@ -760,11 +761,10 @@ impl FrameInner {
             return false;
         }
         let index = self.frame_index(pa);
-        // 从大到小扫"包含它的那个块的块首"：`index & !(2^power-1)` 给出该 order 下的
-        // 对齐基址，但**对齐命中不等于包含**——同址可能站着另一个 order 的块（块基址
-        // 互相都是对齐的）。故必须用表项自带的 power 复核覆盖关系，否则会读到"隔壁
-        // 那块"的 free 位（实测：index 5004 撞上一个从 0 起的 4096 页空闲块 ⇒ 把
-        // 合法的释放报成 non-held）。
+        // `index & !(2^power-1)` 给出该 order 下的对齐基址，但**对齐命中不等于包含**
+        // ——同址可能站着另一个 order 的块。故必须用表项自带的 power 复核覆盖关系，
+        // 否则会读到"隔壁那块"的 free 位（实测：index 5004 撞上一个从 0 起的 4096 页
+        // 空闲块 ⇒ 把合法的释放报成 non-held）。
         for power in (0..self.freelist.len()).rev() {
             let base_index = index & !((1usize << power) - 1);
             if base_index >= self.pagemeta.len() {
@@ -834,6 +834,24 @@ impl FrameInner {
     // # Safety
     //
     // 调用者需确保 freelist[order] 的链表节点指向有效的已映射物理内存。
+    /// 撤掉 `index` 处的块首表项：清表 + 扣"空闲块首"计数。
+    ///
+    /// **这是"块首"这一身份的唯一撤销点**。`pagemeta` 只该在块首有条目，而块一旦
+    /// 被并进更大的块、或被从链中取出，它就不再是块首 —— 那条目必须撤，否则它成了
+    /// **幽灵**：`merge_block` 按它认定伙伴空闲、`in_freelist` 却找不到 ⇒ 放弃合并
+    /// （`nomerge`），那一段永久脱离可用池；`held()` 也会读到它而答错"谁拥有这帧"。
+    ///
+    /// 与 `push_link` 的"唯一入链口"成对：**一处标块首、一处撤块首**。
+    fn clear_head(&mut self, index: usize) {
+        if let Some(old) = self.pagemeta[index].as_ref()
+            && old.free
+        {
+            META_FREE_BLOCKS[(old.power as usize).min(16)]
+                .fetch_sub(1, ::core::sync::atomic::Ordering::Relaxed);
+        }
+        self.pagemeta[index] = None;
+    }
+
     unsafe fn pull_link(&mut self, power: usize) -> Option<usize> {
         unsafe {
             let head = self.freelist[power]?;
@@ -886,12 +904,7 @@ impl FrameInner {
 
             FR_PULL.fetch_add(1usize << power, ::core::sync::atomic::Ordering::Relaxed);
             BK_PULL.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
-            if let Some(old) = self.pagemeta[index].as_ref()
-                && old.free
-            {
-                META_FREE_BLOCKS[(old.power as usize).min(16)]
-                    .fetch_sub(1, ::core::sync::atomic::Ordering::Relaxed);
-            }
+            self.clear_head(index);
             self.pagemeta[index] = Some(Meta::new(false, power as u8));
             Some(index)
         }
@@ -1035,6 +1048,12 @@ impl FrameInner {
     // 调用者需确保 index 来自本分配器的 allocate，且未被重复释放。
     unsafe fn merge_block(&mut self, mut index: usize, mut power: usize) {
         unsafe {
+            // **下降头**：`index` 处的表项是 `pull_link` 按当时的 `power` 写的，而本函数
+            // 每合并一级就 `power += 1`（`index` 不变）⇒ 那条表项从第一级起就是过时的
+            // ——它声明的是一个**已经不存在**的块。撤掉它，块首身份由下面的
+            // `push_link(index, power)` 按最终 order 重新建立。**只撤一次**：本函数的
+            // 每一次 `power += 1` 都对应同一次调用，故循环外撤即够。
+            self.clear_head(index);
             while power < self.freelist.len() {
                 let buddy = Self::buddy_index(index, power);
 
@@ -1069,13 +1088,7 @@ impl FrameInner {
                 // 合并后 frame 并入 index 块：清除其独立 pagemeta——残留 free
                 // 标记会让后续 split/merge 把已并入大块的帧当空闲块处理
                 // （frame 不变量破坏 → 同一帧双重入链 → freelist 读垃圾）。
-                if let Some(om) = self.pagemeta[buddy].as_ref()
-                    && om.free
-                {
-                    META_FREE_BLOCKS[(om.power as usize).min(16)]
-                        .fetch_sub(1, ::core::sync::atomic::Ordering::Relaxed);
-                }
-                self.pagemeta[buddy] = None;
+                self.clear_head(buddy);
                 MR_OK.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                 index = index.min(buddy); // 合并后取较小的帧索引
                 power += 1;
