@@ -146,11 +146,16 @@ impl FrameAllocator {
     /// 没有"分项之和 vs 总数"这类可漂移的口径。
     ///
     /// 返回 `(检查的块数, 不一致块数, 头 3 个不一致样本 (帧索引, 桶号, 表项))`。
+    /// **临时诊断入口**：见 `FrameInner::scan_disagree`。
+    pub(crate) fn scan_disagree(&self) -> (usize, usize, usize, (usize, u8)) {
+        self.inner.lock().scan_disagree()
+    }
+
     pub(crate) fn chain_meta_mismatch(&self) -> (usize, usize, [(usize, usize, u8); 3]) {
         let g = self.inner.lock();
         let mut checked = 0usize;
         let mut bad = 0usize;
-        // `u8` 编码：0 = 无表项，1 = free=false，2 = power 不符。
+        // `u8` 编码：0 = 无表项，1 = free=false，2 = power 不符，3 = 地址出池。
         let mut sample = [(0usize, 0usize, 0u8); 3];
         for (order, head) in g.freelist.iter().enumerate() {
             let mut cur = *head;
@@ -161,19 +166,29 @@ impl FrameAllocator {
                 }
                 budget -= 1;
                 let addr = node.as_ptr() as usize;
-                if addr < g.base || addr >= g.edge {
-                    break;
-                }
-                let i = (addr - g.base) / PAGE_SIZE;
-                if i >= g.pagemeta.len() {
-                    break;
-                }
+                // **不 break —— 记违规并继续走**。
+                //
+                // 旧版这三处都是 `break`：一遇到"表里没有它"就**丢掉整条链的余下部分**，
+                // 于是那条节点以及它之后的一切都不计入 `bad`。实测正是这么漏掉的 ——
+                // 逐 order 扫表比对时 `p=0` 出现"链=1、表=0"（链上有个节点它的索引没有
+                // 条目），而本函数报 `mismatch=0`：它不是判对了，是**根本没走到**。
+                // 判据的盲区比判据的错更坏：错会响，盲区只会沉默。
+                let outside = addr < g.base || addr >= g.edge;
+                let i = if outside {
+                    0
+                } else {
+                    (addr - g.base) / PAGE_SIZE
+                };
                 checked += 1;
-                let code = match g.pagemeta[i].as_ref() {
-                    None => 0u8,
-                    Some(m) if !m.free => 1u8,
-                    Some(m) if m.power as usize != order => 2u8,
-                    Some(_) => 255u8, // 一致
+                let code = if outside || i >= g.pagemeta.len() {
+                    3u8 // 节点地址不在池内 → 链被写坏
+                } else {
+                    match g.pagemeta[i].as_ref() {
+                        None => 0u8,
+                        Some(m) if !m.free => 1u8,
+                        Some(m) if m.power as usize != order => 2u8,
+                        Some(_) => 255u8, // 一致
+                    }
                 };
                 if code != 255 {
                     if bad < 3 {
@@ -310,10 +325,22 @@ impl FrameAllocator {
                 .get(o)
                 .map(|h| chain_len(*h, g.pagemeta.len() + 1))
                 .unwrap_or(0);
-            out[o] = (
-                META_FREE_BLOCKS[o].load(::core::sync::atomic::Ordering::Relaxed),
-                chain,
-            );
+            // **扫表**，不读 `META_FREE_BLOCKS`：那个计数器只在 `push_link` 加、只在
+            // `clear_head` 减，而 `pull_link` 取出时**不减**（它直接覆写成 free=false）
+            // ⇒ 计数器**单调虚高**，当口径用会得出"表比链多"的假象。判据只能直接问表。
+            let mut heads = 0usize;
+            let mut cursor = 0usize;
+            while cursor < g.pagemeta.len() {
+                let Some(m) = g.pagemeta[cursor].as_ref() else {
+                    cursor += 1;
+                    continue;
+                };
+                if m.free && m.power as usize == o {
+                    heads += 1;
+                }
+                cursor += 1usize << m.power;
+            }
+            out[o] = (heads, chain);
         }
         out
     }
@@ -1116,6 +1143,41 @@ impl FrameInner {
     /// merge 合并 frame 前调用：pagemeta 可能残留 free 标记（frame 已并入
     /// 其它块），链中核对可避免摘除不存在的节点——这是 frame 一致性修复的
     /// 本体，release 同样生效（不是纯调试防御）。
+    /// **临时诊断**：两条独立扫表法对质 —— 步进法（`free_entry_orphans`）vs 逐条法。
+    ///
+    /// 判据是"两者必须相等"：`pagemeta` 里每条表项都声明自己是块首（占 `2^power` 帧），
+    /// 所以 (a) 步进扫一次、每次跳 `2^power`，与 (b) 逐条数 `flatten()`，**必须给出同一个数**。
+    /// 不等就意味着**有条目落在别人声明占用的跨度里** —— 那正是别名。
+    ///
+    /// 返回 `(步进法条数, 逐条法条数, 错位条数, (索引, power) 首个错位样本)`。
+    fn scan_disagree(&self) -> (usize, usize, usize, (usize, u8)) {
+        let mut stepped = 0usize;
+        let mut cursor = 0usize;
+        let mut first = (0usize, 0u8);
+        while cursor < self.pagemeta.len() {
+            let Some(m) = self.pagemeta[cursor].as_ref() else {
+                cursor += 1;
+                continue;
+            };
+            stepped += 1;
+            cursor += 1usize << m.power;
+        }
+        let flat = self.pagemeta.iter().flatten().count();
+        // 错位：块首索引必须按自身大小对齐（`index % 2^power == 0`）。
+        let mut misaligned = 0usize;
+        for (i, m) in self.pagemeta.iter().enumerate() {
+            if let Some(x) = m.as_ref()
+                && i & ((1usize << x.power) - 1) != 0
+            {
+                if misaligned == 0 {
+                    first = (i, x.power);
+                }
+                misaligned += 1;
+            }
+        }
+        (stepped, flat, misaligned, first)
+    }
+
     fn in_freelist(&self, index: usize, power: usize) -> bool {
         let target = self.frame_addr(index);
         let mut cur = self.freelist[power];

@@ -99,11 +99,47 @@ pub(super) fn chain() {
         }
     }
 
+    // **自洽约束**：两条独立扫表法必须给出同一个数。
+    //
+    // 每条表项都声明自己是块首（占 `2^power` 帧），所以"按块首步进扫"与"逐条数"**必须相等**。
+    // 实测不等，且差得极远：步进法 **54**、逐条法 **197** —— 也就是**143 条表项落在
+    // 他者声明的跨度里**（块内部），而错位数为 0（每条自己对自身大小都是对齐的）。
+    //
+    // 这条比"孤儿数"更根本：此前所有"表 vs 链"的对质都在拿这 197 条里的**不同子集**比较，
+    // 于是两个探针互相矛盾（`freeent=32` 而逐 order 扫表求和得 34）——**缺自洽约束**正是
+    // 本会话前五个探针全部落空的那个毛病。这条约束一加，内部不一致立刻无处可藏。
+    let (stepped, flat, misaligned, first_bad) = h.scan_disagree();
+    crate::putln!(
+        "[scan] 表项：步进法={stepped} 逐条法={flat}（差 {}）错位={misaligned} 首个错位={first_bad:?}",
+        flat as i64 - stepped as i64
+    );
+    // 与孤儿那条同形：**断增量，不断绝对值**。绝对值目前很大（差 143），旧账的根因尚未
+    // 修；但"本次 churn 不许把这个差推大"是能立刻立的判据 —— 新写入一处不同步即红。
+    let gap0 = flat as i64 - stepped as i64;
+
+    let census = h.free_block_census();
+    let mut first_off = 0usize;
+    for (o, (meta_heads, chain)) in census.iter().enumerate() {
+        if *meta_heads != *chain {
+            first_off += 1;
+            if first_off <= 4 {
+                crate::putln!("[census] p={o} 表说空闲块首={meta_heads} 链上={chain}");
+            }
+        }
+    }
+    let (st2, fl2, _mis2, _fb2) = h.scan_disagree();
     let (free_entries, orphans, sample) = h.free_entry_orphans();
     crate::putln!(
-        "[chain] 起点 orphan={or0} → 终点 orphan={orphans}（freeent {free_entries}、\
-         sample={sample:?}、nomerge={}）",
+        "[chain] 起点 orphan={or0} → 终点 orphan={orphans}；表项差 {gap0} → {}（步进 {stepped}→{st2}、\
+         逐条 {flat}→{fl2}）；freeent {free_entries}、sample={sample:?}、nomerge={}",
+        fl2 as i64 - st2 as i64,
         crate::memory::allocator::frame::FrameAllocator::nomerge_count()
+    );
+    crate::expect!(
+        fl2 as i64 - st2 as i64 <= gap0,
+        "pagemeta 的自我不一致在增长：表项差 {gap0} → {}（步进 {st2}、逐条 {fl2}）—— \
+         有新的表项落进别条声明的跨度里",
+        fl2 as i64 - st2 as i64
     );
     // **判据是对照自己**，不是绝对零。
     //
