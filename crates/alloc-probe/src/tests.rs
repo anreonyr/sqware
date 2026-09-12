@@ -1,18 +1,23 @@
 //! 分配器自己的用例 —— **完全不涉及内核对象生命周期**。
 //!
-//! 判据分三层：
-//!   ① 宿主堆由 **smartalloc 接管**（debug 档的全局分配器，见 `lib.rs`）：分配器自己的
-//!      元数据若漏了，就在那张账上留着，收尾 `sm_dump` 会点名（含分配点）；
-//!   ② 本文件用**影子账**独立复核每一次交付（同一个帧不得发两次、区间不得重叠）；
-//!   ③ 收尾对账：把借出去的都还回去之后，分配器的**自有簿记**应回到起点
-//!      （这一条正是"分配器自己有没有漏"的判据，与"谁没 drop"无关）。
+//! 判据分四层（与 `lib.rs` 的头注同一张表）：
+//!   ① 检测后端（`smartalloc` / `mockalloc` / `dhat` **三选一**，见 README「六条路」）；
+//!   ② 本文件 + `harness` 的**影子账**：区间不重叠、指针满足对齐、交付区写读一致、
+//!      `block.rs:310` 的请求门必须拒、预算内的合法请求必须成；
+//!   ③ 收尾对账：借出去的都还回去之后，影子账与分配器自有簿记都回到起点；
+//!   ④ [`crate::fault::allocator_fault`]：分配器**自身**违例的当场炸通道。
+//!
+//! **本文件的用例不依赖任何检测后端**（四档都跑）：随机序列的确定性语料（LCG）+
+//! 伙伴容量守恒 + 耗尽—恢复 + 契约门。proptest 的两条探索腿在 `tests/pairing.rs`
+//! 与 `tests/heap.rs`，各自带后端。
 
 use core::alloc::{Allocator, Layout};
-use std::collections::HashMap;
 
-use crate::machine;
-use crate::memory::allocator::{block, bump, frame};
+use crate::harness::{self, Backend, Op};
 use crate::memory::PAGE_SIZE;
+use crate::memory::allocator::frame;
+
+const PAGE: usize = PAGE_SIZE;
 
 /// 用例收尾：smartalloc 档把孤儿缓冲打出来（其它档 no-op）。
 fn done() {
@@ -29,7 +34,7 @@ fn done() {
 #[cfg(all(feature = "smartalloc", debug_assertions))]
 #[test]
 fn host_allocator_took_over() {
-    use std::alloc::{alloc, dealloc, Layout};
+    use std::alloc::{Layout, alloc, dealloc};
     let layout = Layout::from_size_align(256, 64).unwrap();
     // SAFETY: layout 非零尺寸；解引用只发生在下面显式写入的范围内。
     unsafe {
@@ -38,7 +43,8 @@ fn host_allocator_took_over() {
         assert_eq!(
             p as usize % 64,
             0,
-            "接管层的指针对齐不满足 layout.align()=64（上游 smartalloc 只给 8 字节对齐，             见 vendor/smartalloc-sys/csrc/smartall.c 的 SM_ALIGN 段）"
+            "接管层的指针对齐不满足 layout.align()=64（上游 smartalloc 只给 8 字节对齐，\
+             见 vendor/smartalloc-sys/csrc/smartall.c 的 SM_ALIGN 段）"
         );
         // 写满整块再还：越界会被 smartalloc 的尾部哨兵当场抓住。
         std::ptr::write_bytes(p, 0xA5, 256);
@@ -58,154 +64,221 @@ fn host_allocator_not_taken_over() {
     done();
 }
 
-/// 一块冒充"物理内存"的宿主缓冲：16 MiB、页对齐。
-struct Arena {
-    v: Vec<u8>,
-    base: usize,
-    size: usize,
-}
-
-impl Arena {
-    fn new(pages: usize) -> Arena {
-        let size = pages * PAGE_SIZE;
-        // 多要一页，取其中页对齐的起点；保证 base 与 base+size 都在缓冲内。
-        let mut v: Vec<u8> = vec![0; size + PAGE_SIZE];
-        let raw = v.as_mut_ptr() as usize;
-        let base = (raw + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        Arena { v, base, size }
-    }
-}
-
-/// 影子账：帧分配器交出来的每一页记一次，重复即分配器缺陷。
-#[derive(Default, Debug)]
-struct Shadow {
-    live: HashMap<usize, usize>, // 页地址 → 记账次数
-    handed: usize,
-}
-
-impl Shadow {
-    fn take(&mut self, addr: usize, len: usize) {
-        for p in (addr..addr + len).step_by(PAGE_SIZE) {
-            let n = self.live.entry(p).or_insert(0);
-            *n += 1;
-            assert_eq!(*n, 1, "同一帧被交付了两次：{p:#x}（分配器缺陷，不是泄漏）");
-        }
-        self.handed += len / PAGE_SIZE;
-    }
-    fn give(&mut self, addr: usize, len: usize) {
-        for p in (addr..addr + len).step_by(PAGE_SIZE) {
-            let n = self.live.get_mut(&p).expect("释放了从未交付的帧（分配器缺陷）");
-            *n -= 1;
-            if *n == 0 {
-                self.live.remove(&p);
-            }
-        }
-    }
-    fn live_pages(&self) -> usize {
-        self.live.len()
-    }
-}
-
-/// 全局只装一次台（`bump`/`frame`/`block` 都是进程内单例）。
-fn boot() -> &'static Arena {
-    use std::sync::OnceLock;
-    static ARENA: OnceLock<Arena> = OnceLock::new();
-    static INIT: OnceLock<()> = OnceLock::new();
-    let a = ARENA.get_or_init(|| Arena::new(4096));
-    INIT.get_or_init(|| {
-        machine::configure(a.base, a.size, 4);
-        // 顺序照内核 `hybrid::init()`：bump（元数据）→ block（池 + 簿记表）→ frame。
-        // **block 必须在 frame 之前**（block.rs 的 `init` 文档：池的页要向 frame 借，
-        // 而簿记表要覆盖 free 区；顺序反了帧链的链头就是毒化内存 —— 实测过）。
-        bump::init().expect("bump::init");
-        block::init().expect("block::init");
-        frame::init().expect("frame::init");
-    });
-    a
-}
-
+/// 帧：单块不同档位取还（1 / 2 / 8 / 32 页），逆序归还逼出伙伴合并。
+///
+/// 全程由影子账复核：交付区间不重叠、指针页对齐、交付区写读一致。
 #[test]
 fn frame_alloc_free_round_trip() {
-    let _a = boot();
-    let f = frame::allocator();
-    let mut shadow = Shadow::default();
-
-    // 单帧、不同 order（4 KiB…128 KiB），记下每一次交付。
-    let mut got: Vec<(usize, usize)> = Vec::new();
-    for &bytes in &[PAGE_SIZE, 2 * PAGE_SIZE, 8 * PAGE_SIZE, 32 * PAGE_SIZE] {
-        let layout = Layout::from_size_align(bytes, PAGE_SIZE).unwrap();
-        let p = f.allocate(layout).expect("allocate").cast::<u8>().as_ptr() as usize;
-        shadow.take(p, bytes);
-        got.push((p, bytes));
-    }
-    // 逆序归还（逼出伙伴合并）。
-    for (p, bytes) in got.into_iter().rev() {
-        let layout = Layout::from_size_align(bytes, PAGE_SIZE).unwrap();
-        // SAFETY: 这块正是上面 allocate 出来的同一段。
-        unsafe { f.deallocate(core::ptr::NonNull::new(p as *mut u8).unwrap(), layout) };
-        shadow.give(p, bytes);
-    }
-    assert_eq!(shadow.live_pages(), 0, "归还完毕仍有在册帧：{shadow:?}");
+    let _a = harness::boot();
+    let ops = [
+        Op::Take {
+            backend: Backend::Frame,
+            req: 0,
+        }, // 1 页
+        Op::Take {
+            backend: Backend::Frame,
+            req: 2,
+        }, // 2 页
+        Op::Take {
+            backend: Backend::Frame,
+            req: 5,
+        }, // 8 页
+        Op::Take {
+            backend: Backend::Frame,
+            req: 7,
+        }, // 32 页
+        Op::GiveAll, // 逆序归还
+    ];
+    let r = harness::run(&ops).expect("帧取还往返");
+    assert_eq!((r.taken, r.rejected, r.given), (4, 0, 4), "{r:?}");
+    // 还尽之后同一串必须能再走一遍（合并把整段拼回去了）。
+    let r2 = harness::run(&ops).expect("帧取还往返（第二遍）");
+    assert_eq!((r2.taken, r2.given), (4, 4), "{r2:?}");
     done();
 }
 
+/// 帧：混合档位churn（64 轮取、水位过 8 就还一块）——影子账抓"同一帧发两次"。
+///
+/// 序列由代码生成（不是手写），但**确定性**：同一条序列每次跑的都是同一批动作，
+/// 失败可复现。随机化的对应物在 `tests/pairing.rs` / `tests/heap.rs`（proptest）。
 #[test]
 fn frame_no_double_delivery_under_churn() {
-    let _a = boot();
-    let f = frame::allocator();
-    let mut shadow = Shadow::default();
+    let _a = harness::boot();
+    // Miri 下缩到 8 轮：它的成本随**分配器调用次数**线性涨（实测：round-trip 两条秒级，
+    // 百次级调用的用例就是分钟级），而 Miri 要找的是 UB 而不是"跑够多少轮"。
+    #[cfg(not(miri))]
+    let rounds = 64usize;
+    #[cfg(miri)]
+    let rounds = 8usize;
 
-    // 混合尺寸的取/还（含中间释放），影子账会抓住"同一帧发两次"。
-    let sizes = [PAGE_SIZE, 4 * PAGE_SIZE, 16 * PAGE_SIZE];
-    let mut held: Vec<(usize, usize)> = Vec::new();
-    for round in 0..64usize {
-        let bytes = sizes[round % sizes.len()];
-        let layout = Layout::from_size_align(bytes, PAGE_SIZE).unwrap();
-        let p = f.allocate(layout).expect("allocate").cast::<u8>().as_ptr() as usize;
-        shadow.take(p, bytes);
-        held.push((p, bytes));
-        if held.len() > 8 {
-            let (q, b) = held.remove(0);
-            let l = Layout::from_size_align(b, PAGE_SIZE).unwrap();
-            // SAFETY: 同一次 allocate 的产物。
-            unsafe { f.deallocate(core::ptr::NonNull::new(q as *mut u8).unwrap(), l) };
-            shadow.give(q, b);
+    let mut ops: Vec<Op> = Vec::new();
+    let mut live = 0usize;
+    for round in 0..rounds {
+        let req = [0u8, 2, 5][round % 3]; // 1 / 2 / 8 页轮转
+        ops.push(Op::Take {
+            backend: Backend::Frame,
+            req,
+        });
+        live += 1;
+        if live > 8 {
+            // 还一块在册的（`pick 0` = 影子账数组头；`give` 是 swap_remove ⇒ 它是
+            // "某一块在册的"而不是严格最老的那块——这也正是 churn 想要的乱序）。
+            ops.push(Op::Give { pick: 0 });
+            live -= 1;
         }
     }
-    for (p, b) in held {
-        let l = Layout::from_size_align(b, PAGE_SIZE).unwrap();
-        // SAFETY: 同上。
-        unsafe { f.deallocate(core::ptr::NonNull::new(p as *mut u8).unwrap(), l) };
-        shadow.give(p, b);
-    }
-    assert_eq!(shadow.live_pages(), 0);
+    ops.push(Op::GiveAll);
+    let r = harness::run(&ops).expect("64 轮混合取还");
+    assert!(
+        r.taken >= rounds,
+        "轮数 {} 对应至少 {} 笔交付：{r:?}",
+        rounds,
+        rounds
+    );
+    assert_eq!(r.taken, r.given, "取了多少就该还多少：{r:?}");
+    assert!(r.peak_live <= 9, "水位应压在 9 块以内：{r:?}");
     // 中间帧判据（内核那边随 `fence` 一起删了）；宿主侧由影子账兜住：
-    // 交付过的帧若被当成块首再放一次，`Shadow::give` 会当场炸。
-    assert_eq!(shadow.live_pages(), 0, "收尾仍有在册帧：{shadow:?}");
+    // 交付过的帧若被当成块首再放一次，`give` 的模式读回会当场炸。
+    assert!(
+        r.peak_bytes >= r.peak_live * PAGE,
+        "在册峰值字节不该小于在册峰值块数 × 页：{r:?}"
+    );
     done();
 }
 
+/// 块：混合档位取还 + **契约门**（`block.rs:310` 的越界/超对齐请求必须被拒）。
 #[test]
-fn block_pool_alloc_free_round_trip() {
-    let _a = boot();
-    let b = block::allocator();
-    let mut live: Vec<(usize, usize)> = Vec::new();
-    for &bytes in &[16usize, 64, 256, 1024, 2048, 300] {
-        let layout = Layout::from_size_align(bytes, 8).unwrap();
-        let p = b.allocate(layout).expect("block allocate").cast::<u8>().as_ptr() as usize;
-        // 交付区间不得与任何在册块重叠（块池的"表在手 = 账在手"）。
-        for &(q, n) in &live {
-            assert!(
-                p + bytes <= q || q + n <= p,
-                "块池交付了重叠区间：{p:#x}+{bytes} 与 {q:#x}+{n}（分配器缺陷）"
-            );
-        }
-        live.push((p, bytes));
+fn block_alloc_free_round_trip() {
+    let _a = harness::boot();
+    let mut ops: Vec<Op> = [0u8, 3, 5, 7, 9, 10, 12] // 1 / 8 / 24 / 100 / 512 / 1000 / 2000 B
+        .into_iter()
+        .map(|req| Op::Take {
+            backend: Backend::Block,
+            req,
+        })
+        .collect();
+    // 越界 / 超对齐：4 条都必须返 Err（不许交付出来）。
+    for req in [14u8, 15, 16, 17] {
+        ops.push(Op::Take {
+            backend: Backend::Block,
+            req,
+        });
     }
-    for (p, bytes) in live.into_iter().rev() {
-        let layout = Layout::from_size_align(bytes, 8).unwrap();
-        // SAFETY: 上面同一次 allocate 的产物。
-        unsafe { b.deallocate(core::ptr::NonNull::new(p as *mut u8).unwrap(), layout) };
+    ops.push(Op::GiveAll);
+    let r = harness::run(&ops).expect("块取还 + 契约门");
+    assert_eq!(
+        r.taken, 7,
+        "合法请求必须全部交付（返 Err 只可能是分配器有病）：{r:?}"
+    );
+    assert_eq!(
+        r.rejected, 4,
+        "越界/超对齐的 4 条必须被拒（block.rs:310）：{r:?}"
+    );
+    assert_eq!(r.given, 7, "{r:?}");
+    done();
+}
+
+/// 伙伴的**容量守恒**：取尽 → 还尽 → 再取尽，页数必须一样；且还尽之后大块必可取回。
+///
+/// 这是影子账问不了的两件事（影子账只认"我取的那几块"）：
+/// * **容量守恒** —— 合并若漏掉某一段，第二轮就取不到同样多的页（帧"丢"了）；
+/// * **合并没有漏** —— 还尽之后必须还能拿到 4 MiB 的连续块（整段拼不回来就取不到）；
+/// * **`Err` 不是死路** —— 台面满时返 `Err` 而不是 panic（`frame.rs` 的
+///   `pull_link` 对污染 `Link` 有意"降级成 `AllocError`"），且它还回一块之后必须立刻可用。
+///
+/// Miri 下**跳过**：这里要 4000+ 次拆分 + 一次 4 MiB 合并，解释执行下只换来"进度条很慢"，
+/// 判据本身（容量守恒）不是 UB；UB 那面由 `frame_alloc_free_round_trip` / 语料 / 并发层覆盖。
+#[cfg_attr(
+    miri,
+    ignore = "解释执行下 4000+ 次 buddy 拆分没有信息增量（UB 由其它用例覆盖）"
+)]
+#[test]
+fn buddy_capacity_is_conserved_and_recovers() {
+    let _a = harness::boot();
+    let one = Layout::from_size_align(PAGE, PAGE).unwrap();
+    let frame = frame::allocator();
+
+    // 第一轮：一块一页，取到 Err 为止。
+    let mut held = Vec::new();
+    let n1 = harness::fill_frames(1, &mut held);
+    assert!(
+        n1 * PAGE >= 13 * 1024 * 1024,
+        "台面 16 MiB 扣掉 bump 簿记与后备仓仓区（~1 MiB）后应能吐出 13 MiB 以上的单页块，只拿到 {} MiB —— \
+         不是真耗尽，是 freelist 提前空了",
+        n1 * PAGE / (1024 * 1024)
+    );
+    // 取尽之后：再问一块必须是 `Err`（不许 panic、不许交付）。
+    assert!(
+        frame.allocate(one).is_err(),
+        "取尽之后仍能交付 ⇒ 容量账不平"
+    );
+
+    // `Err` 之后台面仍可用：还回一块，立刻就该能再取到一块。
+    let (p, l) = held.pop().expect("第一轮至少拿到一块");
+    // SAFETY: `fill_frames` 的产物，layout 原样带回。
+    unsafe { frame.deallocate(p, l) };
+    let again = frame
+        .allocate(one)
+        .expect("还回一块之后仍取不到 ⇒ Err 把 freelist 弄坏了");
+    // SAFETY: 同一次 allocate 的产物。
+    unsafe { frame.deallocate(again.cast::<u8>(), one) };
+    harness::drain(&mut held);
+
+    // 第二轮：同样的取法，页数必须一样。
+    let mut held2 = Vec::new();
+    let n2 = harness::fill_frames(1, &mut held2);
+    assert_eq!(n1, n2, "取尽—还尽—再取尽，页数必须一样（合并漏一段就会少）");
+    harness::drain(&mut held2);
+
+    // 还尽之后：大块必可取回（伙伴真的拼回来了）。
+    let big = Layout::from_size_align(4 * 1024 * 1024, PAGE).unwrap();
+    let b = frame
+        .allocate(big)
+        .expect("还尽之后 4 MiB 的大块必可取回（合并没漏）");
+    // SAFETY: 同一次 allocate 的产物。
+    unsafe { frame.deallocate(b.cast::<u8>(), big) };
+    println!(
+        "[capacity] 单页块 {n1} 块（{} MiB）/ 两轮一致 / 4 MiB 大块取回成功",
+        n1 * PAGE / (1024 * 1024)
+    );
+    done();
+}
+
+/// 确定性语料：256 条 LCG 计划（每条 96 B ⇒ 48 条动作）走影子账。
+///
+/// 这条用例是**不装 proptest 也跑**的随机序列版本 —— `plain` 档（零后端、零探索）
+/// 同样在压同一批评据。proptest 那两条腿是在它之上再加"探索 + 各自的后端读数"。
+///
+/// Miri 下**整条跳过**（实测：缩到 6 种子 × 24 B 仍 > 300 s 未完成）。原因是 Miri 的成本
+/// 随**分配器调用次数**线性涨（每调用秒级），而这条用例要的是"够多的轮次"—— 那是 proptest
+/// 与 LCG 语料在**原生**档的事。Miri 要看的是 **UB**（裸指针来去、交付区写读），由
+/// `frame_alloc_free_round_trip` / `block_alloc_free_round_trip` / churn(8 轮) 三条承担。
+#[cfg_attr(
+    miri,
+    ignore = "Miri 下按调用次数计费，语料这条不划算（UB 由三条小用例覆盖）"
+)]
+#[test]
+fn deterministic_corpus() {
+    let _a = harness::boot();
+    #[cfg(not(miri))]
+    let (seeds, bytes_per_plan) = (256u64, 96usize);
+    #[cfg(miri)]
+    let (seeds, bytes_per_plan) = (6u64, 24usize);
+
+    let (mut ops, mut taken, mut rejected, mut skipped) = (0usize, 0usize, 0usize, 0usize);
+    for seed in 0..seeds {
+        let bytes = harness::lcg_bytes(seed, bytes_per_plan);
+        let plan = harness::plan(&bytes);
+        let r = harness::run(&plan).unwrap_or_else(|v| panic!("种子 {seed}：{v}"));
+        ops += r.ops;
+        taken += r.taken;
+        rejected += r.rejected;
+        skipped += r.skipped;
     }
+    assert!(ops > 20, "语料太瘦：{ops} 条动作");
+    assert!(taken > 10, "语料没落到分配器上：只交付 {taken} 块");
+    println!(
+        "[corpus] {seeds} 种子 × {bytes_per_plan} B：{ops} 条动作 / 交付 {taken} 块 / 拒 {rejected} / 跳过 {skipped}"
+    );
     done();
 }

@@ -4,29 +4,55 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# 宿主（x86_64）专用 crate：把**内核真实的**帧/块分配器源码按 `#[path]` 编进来单独压测。
+# 宿主（x86_64）专用 crate：把**内核真实的**帧/块分配器源码按 `include!` 编进来单独压测。
 #
 # 为什么单独一个 crate：内核里一次分配器失败与"某个内核对象没析构"在读数上长得一样
 # （都是关机审计的资产表）。把分配器搬到宿主上，判据就只剩分配器自己。
-#
-# 依赖只有一个 `erra`（内核分配器源码里用了它的 `ResultExt`），它已在本地 registry 缓存里，
-# 故本 crate 离线可构建；`smartalloc` 是**可选**后端（见 README：需要能拉 crates.io）。
+
 [dependencies]
 erra = { version = "0.2.0", default-features = false }
-# smartalloc：**接管 debug 档宿主堆的全局分配器**（C 库绑定，自带"孤儿缓冲"检测）。
+# 三个**互斥**的宿主堆后端（见 README「六条路」与 lib.rs 的接管段）。三者都必须是
+# `[dependencies]`（可选）而不是 `[dev-dependencies]`：`#[global_allocator]` 挂在 lib 里，
+# 而 dev-dependencies 对 lib 不可见（实测：`unresolved module`）。
 #
-# 放在 `[dependencies]`（可选）而不是 `[dev-dependencies]`：`#[global_allocator]` 挂在
-# lib 里，而 dev-dependencies 对 lib 不可见（实测：`unresolved module`）。
-# 它自己 `#![cfg(debug_assertions)]` ⇒ 只在 debug 档存在，这正是"接管 debug 档"的字面
-# 含义；release 档下本 crate 对它的引用整块 cfg out。
+#   smartalloc（默认）——"孤儿缓冲"转储：还在账上的块收尾点名
+#   mockalloc        ——分配/释放**配对**判词：泄漏 / 重复释放 / 错指针 / 错尺寸 / 错对齐
+#   dhat             ——宿主堆**用量**读数：total / curr / max 的块数与字节数
+#
+# 三者的读数口径互不相同，而 rustc 只允许一个 `#[global_allocator]` ⇒ 三选一；
+# lib.rs 里有 `compile_error!` 把"同时开两个"挡在编译期。
 smartalloc = { version = "0.2.0", optional = true }
+mockalloc = { version = "0.1.2", optional = true }
+dhat = { version = "0.3.3", optional = true }
+
+[dev-dependencies]
+# **随机序列的来源**：proptest 只出现在测试侧（lib 不依赖它，故非测试构建不必编它）。
+# 关掉默认 feature 是刻意的：默认含 `fork` + `timeout`，会经 `rusty-fork` **起子进程**跑用例
+# —— 那与"全局分配器 + 进程内单例分配器（bump/block/frame 都是 OnceLock）+ 台面是一块
+# 进程内宿主缓冲"这套构造直接冲突（子进程里另有一份台面，读数对不上）。
+# 留 `std` 即可，其余（bit-set / attr-macro / hardware-rng）本 crate 用不上。
+proptest = { version = "1.11", default-features = false, features = ["std"] }
+# **多线程（扩展）那一层的两个器械**：
+#
+#   dropcount       —— 析构计数：判"**本层自己的**对象有没有漏"（读数归因的前提，
+#                      见 `tests/mt.rs::harness_handles_are_dropped`）。零依赖，极轻。
+#   malloc-bench-rs —— 并发压力/吞吐量：Larson / mstress 两种工作负载（**含跨线程交接**），
+#                      泛型在 `GlobalAlloc` 上、**直接调 `A::alloc`**（不抢 `#[global_allocator]`，
+#                      故能与本 crate 的接管层共存）。见 `examples/throughput.rs`。
+#                      注：它列出的 `mimalloc` 是它自己的 **dev-dependency**，不会进我们的构建。
+dropcount = "0.1"
+malloc-bench-rs = "0.1"
 
 [features]
-# **默认接管**：debug 档的宿主堆直接走 smartalloc（见 `src/lib.rs` 的 `host_alloc`）。
+# **默认接管**：debug 档的宿主堆直接走 smartalloc（见 `src/lib.rs` 的接管段）。
 # 想要 LSan 那条路（或者只想看"用例过不过"）就 `--no-default-features`：接管之后
 # 每个活块都被 smartalloc 的队列指着，LSan 会把它们全判成 reachable。
 default = ["smartalloc"]
 smartalloc = ["dep:smartalloc"]
+# 第一层·甲：配对判词（`./run.sh mockalloc`）——`tests/pairing.rs`。
+mockalloc = ["dep:mockalloc"]
+# 第一层·乙：用量读数（`./run.sh dhat`）——`tests/heap.rs`。
+dhat = ["dep:dhat"]
 # **声明但不启用**：`include!` 进来的内核源码里有 `#[cfg(feature = "audit")]` 分支
 # （内核那边的帧侧范围断言）。不声明它，rustc 会报 `unexpected_cfgs`；声明为恒关，
 # 那些分支在宿主上就是**确定地**不编进来——宿主判据不看内核的 audit 档。
