@@ -190,7 +190,16 @@ fn dump_records(kind: Kind) {
         let data = r.addr + 16;
         let size_class = r.size.max(8).next_power_of_two();
         unsafe {
-            let strong = *((r.addr + 8) as *const u64);
+            // `ArcInner<T> = { strong, weak, data }` ⇒ **strong 在 +0、weak 在 +8**。
+            // 先前这里只读 +8 却标成 `strong`，于是"泄漏的都是 strong=1"这个读数
+            // 是**错的**：那是 `weak`。两者含义天差地别 ——
+            //   · `strong ≥ 1` = 真有强持有者（对象还活着，真泄漏）；
+            //   · `strong == 0 && weak == 1` = 只有 `Weak` 活着 ⇒ 载荷已析构、块却
+            //     因弱引用而**未归还**（站点墓碑/注册表里的一枚 `Weak<Task>` 即可
+            //     造成），泄漏的是 152 B 的 `ArcInner` 外壳，不是活任务。
+            // 故两个都读、都打（只读诊断，不改判据）。
+            let strong = *(r.addr as *const u64);
+            let weak = *((r.addr + 8) as *const u64);
             let word0 = *((data + id_off) as *const usize);
             let word1 = *((data + name_off) as *const usize);
             if size_class >= 16 + task_bytes + 8 {
@@ -200,16 +209,16 @@ fn dump_records(kind: Kind) {
                 });
                 match owner {
                     Some(o) => crate::putln!(
-                        "[audit]     <- Task block: strong {strong}, ident @ {word0:#x} (rec {:#x}, id {})",
+                        "[audit]     <- Task block: strong {strong} weak {weak}, ident @ {word0:#x} (rec {:#x}, id {})",
                         o.addr,
                         *((word0 + id_off) as *const usize)
                     ),
                     None => crate::putln!(
-                        "[audit]     <- Task block: strong {strong}, ident @ {word0:#x} (record not in this batch)"
+                        "[audit]     <- Task block: strong {strong} weak {weak}, ident @ {word0:#x} (record not in this batch)"
                     ),
                 }
             } else if size_class >= 16 + ident_bytes {
-                crate::putln!("[audit]     <- TaskIdent: strong {strong}, id {word0}");
+                crate::putln!("[audit]     <- TaskIdent: strong {strong} weak {weak}, id {word0}");
                 // `name` = (&'static str)（指针 + 长度）：指针落在内核镜像内才读
                 // （.rodata 的字面量；镜像恒等映射，S 态可直读）。
                 if word1 >= lo && word1 < hi && word0 < 256 && word1 + word0 <= hi {
