@@ -94,6 +94,28 @@ fn map_err(e: crate::memory::manager::MapError) -> GateError {
     }
 }
 
+/// 打印域退场时带来的那句话（见 `RoomCall::Reap` 的 `note`）。
+///
+/// 三条纪律：①**栈上定长**（退场路径不分配）；②读失败就如实说读不到（诊断是**加成**，
+/// 不是退场的前提——指针非法不该让"它已经走了"这件事多一个失败模式）；③打印走内核
+/// 自己的出口（SBI DBCN），**不经过任何服务**：控制台可能正是那个死掉的域。
+fn note_out(ident: &TaskIdent, reason: usize, va: usize, len: usize) {
+    if len == 0 {
+        return;
+    }
+    let n = len.min(env::NOTE_MAX);
+    let mut buf = [0u8; env::NOTE_MAX];
+    if !crate::work::mail::copy_in(&ident.team.space, &mut buf[..n], va) {
+        crate::putln!(
+            "exit tid={} reason={reason:#x} note=<unreadable {len} bytes at {va:#x}>",
+            ident.id
+        );
+        return;
+    }
+    let text = core::str::from_utf8(&buf[..n]).unwrap_or("<non-utf8 note>");
+    crate::putln!("exit tid={} reason={reason:#x} note: {text}", ident.id);
+}
+
 /// 从调用方空间读一段字节（逐页翻译后拷贝；跨页安全）。
 ///
 /// 返回 None = 长度非法 / 区间未映射（调用方按 `Denied` 处理）。一次拷进内核
@@ -102,7 +124,11 @@ fn copy_in(space: &Space, va: KVirt, len: usize, cap: usize) -> Option<Vec<u8>> 
     if len == 0 || len > cap {
         return None;
     }
-    let mut out: Vec<u8> = Vec::with_capacity(len);
+    // **暂存缓冲不 panic**：`Vec::with_capacity` 走 std 默认 `handle_alloc_error`
+    // （内存吃紧 ⇒ 整机 halt）。失败与「长度非法 / 区间未映射」同路返回 `None`
+    // ——调用方已把这两类都落到 `Denied` / `OoM` 负码上，机器照旧活着。
+    let mut out: Vec<u8> = Vec::new();
+    out.try_reserve(len).ok()?;
     let mut done = 0usize;
     while done < len {
         let at = KVirt::from_raw(va.as_usize() + done);
@@ -129,7 +155,9 @@ fn copy_words(space: &Space, va: KVirt, count: usize) -> Option<Vec<usize>> {
     }
     let width = size_of::<usize>();
     let bytes = copy_in(space, va, count * width, MAX_ARGS * width)?;
-    let mut out = Vec::with_capacity(count);
+    // 同 `copy_in`：可失败，不 panic。
+    let mut out: Vec<usize> = Vec::new();
+    out.try_reserve(count).ok()?;
     for i in 0..count {
         let mut w = [0u8; size_of::<usize>()];
         w.copy_from_slice(&bytes[i * width..(i + 1) * width]);
@@ -190,7 +218,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
     };
     match envcall {
         EnvCall::Room(RoomCall::Starve) => return current().starve() as *mut TrapContext,
-        EnvCall::Room(RoomCall::Reap { reason }) => {
+        EnvCall::Room(RoomCall::Reap { reason, note, len }) => {
             // 本任务退场：**不在这里 quit**（见 [`dispatch`] 的退场窄尾）——空指针即标记。
             //
             // `reason` 是**数据**：0 = 自愿/正常结束，非 0 = 域自己的诊断编号。内核只把
@@ -202,6 +230,11 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // 写进逐核暂存槽，由 `quit` 统一发出 `RoomEvent::Exit`：那是**所有**退出
             // 路径（Reap / 故障隔离 / doom 级联）的公共点，事件因此只发一次、
             // 且每条路径都带得上原因（故障路径带走的是内核给的原因码）。
+            //
+            // `note` = 域自己带的一句话（`len = 0` = 无话）：**它必须在这里读**——域一退场，
+            // 那段内存随它的空间一起没了。故拷进栈上的定长缓冲（退场路径不分配），由内核
+            // 自己打印（见 [`note_out`]）。
+            note_out(&ident, reason, note.get(), len);
             crate::work::room::messenger::set_exit_reason(reason);
             drop(ident);
             return core::ptr::null_mut();
@@ -318,6 +351,59 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 freed
             };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+        }
+        // **临时探针**：`merge_block` 三道门的拒绝计数（见 `MemoryCall::MergeCensus`）。
+        EnvCall::Memory(MemoryCall::LiveFrames) => {
+            let (taken, given) = crate::memory::allocator::frame::FrameAllocator::frame_ledger();
+            frame.gpr.set_x(Gprs::A0, taken.wrapping_sub(given));
+        }
+        EnvCall::Memory(MemoryCall::MergeCensus { power }) => {
+            let (bound, meta, chain, ok) =
+                crate::memory::allocator::frame::FrameAllocator::merge_census();
+            let (_, rm, rc) =
+                crate::memory::allocator::frame::FrameAllocator::reject_by_power(power);
+            let v = if power == usize::MAX {
+                (ok & 0xffff) | ((bound & 0xffff) << 16) | ((meta & 0xffff) << 32) | ((chain & 0xffff) << 48)
+            } else {
+                (rm & 0xffff_ffff) | ((rc & 0xffff_ffff) << 32)
+            };
+            frame.gpr.set_x(Gprs::A0, v);
+        }
+        // **临时探针**：读帧池水位（见 `MemoryCall::Watermark`）。A0 = pagemeta
+        // 在手帧数（真相），A1 = freelist 走链帧数（待审计）。两个数在同一把锁
+        // 下取，故可直接对质。`kinds` 非 0 时附带逐类在册帧数（写进用户态缓冲）。
+        EnvCall::Memory(MemoryCall::Watermark { kinds }) => {
+            let (walk, held, _span) = crate::memory::allocator::frame::heap().watermark();
+            frame.gpr.set_x(Gprs::A0, held);
+            frame.gpr.set_x(Gprs::A1, walk);
+            // 分类水位：判漏该用的表，随同一次调用取回（同刻快照）。
+            //
+            // 走内核自己打印（SBI DBCN）而不只依赖 `copy_out`：`copy_out` 要先把
+            // 用户 VA 翻译成**页对齐**的物理缓冲，栈上小数组不在此列，实测静默
+            // 写不进去（读数只剩 `plain=NNN` 这种只剩一块的假象）。诊断是**加成**，
+            // 不该有一条静默失败的路。
+            // 逐 order 对质：`pagemeta` 空闲块首条数 vs 链上实际块数。
+            // 不等即**幽灵块**（标空闲却没进链）。固定 17 槽，零堆分配。
+            {
+                let mut line = alloc::string::String::new();
+                for (o, (meta, chain)) in
+                    crate::memory::allocator::frame::heap().free_block_census().iter().enumerate()
+                {
+                    if *meta != 0 || *chain != 0 {
+                        let _ = core::fmt::Write::write_fmt(
+                            &mut line,
+                            format_args!(" o{o}:{meta}/{chain}"),
+                        );
+                    }
+                }
+                crate::putln!("census meta/chain{line}");
+            }
+            let buf = crate::memory::allocator::frame::FrameAllocator::kind_counts();
+            crate::putln!("kinds {buf}");
+            let at = kinds.get();
+            if at != 0 {
+                let _ = crate::work::mail::copy_out(&ident.team.space, buf.as_bytes(), at);
+            }
         }
         EnvCall::Unit(UnitCall::Spawn {
             team,

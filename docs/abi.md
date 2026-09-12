@@ -43,7 +43,7 @@ kernel → env → runtime → protocol → programs
 
 | class | 名 | 轴 |
 |---|---|---|
-| 0 | Room | 调度词族：`Starve` `Park` `Reap` `Wait` `Wake` `Doom` |
+| 0 | Room | 调度词族：`Starve` `Park` `Reap` `Wait` `Wake` `Doom`。<br>`Reap { reason, note, len }`：`reason` = 退出原因码（数据，内核只记不解），`note` = 域自己带的一句话（`VirtAddr(0)`+`len=0` = 无话，内核在入口 `copy_in` 至多 `env::NOTE_MAX` 字节并**自己打印**——不依赖任何服务活着） |
 | 1 | Unit | 执行单元：`Spawn` `SelfId` `Sire` `HeirCount` `Heir` `Build` `Hatch` `Join` |
 | 2 | Memory | `Allocate` `Deallocate` `Mmap` `Munmap` `Mprotect` |
 | ~~3~~ | ~~IO~~ | 已删（`Put` `Get` 随设备面搬出内核；号段空着，见下） |

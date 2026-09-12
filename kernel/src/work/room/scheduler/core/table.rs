@@ -63,8 +63,19 @@ pub(super) fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
 }
 
-/// 放行入队（`Task::release` 收尾）：入本核就绪队列 **+ 踢醒一个休眠核**。
+/// 为本核就绪队列**预留**一格（放行路径不分配）。
 ///
+/// # Errors
+///
+/// 队列无法扩容（内存耗尽）→ `Err(())`。
+///
+/// 与 [`try_reserve_roster`] 同旨：把唯一会分配的一步提到装配之前，失败时
+/// 干净退回，让「生不出任务」是一个返回码而不是一次整机 halt。
+pub(crate) fn try_reserve_starved(slot: usize) -> Result<(), ()> {
+    current().try_reserve_starved(slot.saturating_add(1))
+}
+
+/// 放行入队（`Task::release` 收尾）：入本核就绪队列 **+ 踢醒一个休眠核**。
 /// 簿记（`Team.tasks`）、未放行容器（`Team.held`）、产生计数（PUSHED）与 trace 都在
 /// `TaskBuilder::hold` 完成——**计数挂在产生处**，Held 被父域 kill 时
 /// REAPED/PUSHED 仍配平（否则 `done()` 恒假，系统永不停机）。
@@ -106,6 +117,29 @@ pub(crate) fn enlist(id: usize, task: &Arc<Task>) {
     roster_table().lock().insert(id, Arc::downgrade(task));
 }
 
+/// 为即将入册的**一条**预留名册容量。
+///
+/// # Errors
+///
+/// 容量扩不出来（内存耗尽）→ `Err(())`。
+///
+/// **为什么在产生处预留而不是让 `enlist` 失败**：名册插入是 `Spawn` 落库的中间
+/// 一步，那里已经没有可返回的错误通道（任务对象已建、计数已记）。把唯一会分配
+/// 的那一步提到**装配之前**——失败时干干净净地退回已领的栈/帧，`Spawn` 照旧答
+/// `-4 OoM`。`try_reserve` 的语义正合此用：容量不够就报错，不做部分改动。
+///
+/// **不按 `id` 预留**：名册是 `HashMap<usize, Weak<Task>>`，容量是**元素数**的
+/// 函数，与键的大小无关——而 `id` 来自全局 `NEXT_ID`，**只增不减**。先前用
+/// `try_reserve(slot + 1)` 是把 `HashMap` 当 `Vec` 的按索引预留用：每产生一个
+/// 任务就要求"再装得下 `id` 个"，于是预留量**随时间线性增长**，把一条恒定的
+/// `O(1)` 需求变成随运行时长膨胀的开销，失败域被自己提前（实测：64M 下
+/// `churn` 约 2220 轮即报 `-4 OoM`，而当时池里还有一万余帧）。
+///
+/// `try_reserve(1)` 才是这里真实的语义："马上要再插一个元素"。
+pub(crate) fn try_reserve_roster() -> Result<(), ()> {
+    roster_table().lock().try_reserve(1).map_err(|_| ())
+}
+
 /// 点名：按 id 取一个，**只出弱引用**——要强引用由调用方当场短升（于是「谁短暂持了
 /// 强引用」摆在调用点上，而不是藏在查询函数里）。
 ///
@@ -127,8 +161,33 @@ pub(crate) fn roster_live() -> (usize, usize) {
 }
 
 /// 名册：全世界任务的弱引用，**每个任务恰好一次**（`gate` 的快照来源，boot 注入）。
+///
+/// # 不 panic 的分配（本函数是**唯一**的快照来源，就在 `Spawn` 的路径上）
+///
+/// 旧版 `values().map(Weak::clone).collect()` 是一次**不可失败**的 `collect`：
+/// 名册随任务数增长，`Vec` 扩容失败时 std 走 `handle_alloc_error` → `panic`
+/// → **整机 halt**。实测现场（64M，`churn` 约 2260 轮）：
+///
+/// ```text
+/// IllegalInstruction at sepc=<Vec<Weak<Task>>::from_iter> , stval=0x0
+///   team 'shell' / task #4537 'u-thread'
+/// ```
+///
+/// ——崩在**快照构建**里，而快照是 `Spawn` 必经的一步（`gate` 靠它认亲/级联）。
+/// 与 `TaskBuilder::hold` 的簿记、`SpaceInner::maps` 同类：**簿记分配不得 panic**。
+///
+/// 失败时返回**空快照**而不是 `Err`：本函数在 `gate` 的查询面里（无错误通道），
+/// 而空快照的语义是现成的、安全的——见 [`super::super::gate::snap`] 的头注：
+/// 「未注入 ⇒ 空 ⇒ 查询退化为『找不到』，即**不级联、不认亲**」。即：内存耗尽
+/// 时**放弃级联**，而不是停摆整机。
 pub(crate) fn roster() -> Vec<Weak<Task>> {
-    roster_table().lock().values().map(Weak::clone).collect()
+    let g = roster_table().lock();
+    let mut out: Vec<Weak<Task>> = Vec::new();
+    if out.try_reserve(g.len()).is_err() {
+        return Vec::new();
+    }
+    out.extend(g.values().map(Weak::clone));
+    out
 }
 
 /// 从全部 hart 的 starved 队列摘除指定任务（kill 的 Starved 分支）。返回是否

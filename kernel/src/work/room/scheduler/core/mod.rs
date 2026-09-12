@@ -29,4 +29,5 @@ pub use ident::{Identity, ident};
 pub(crate) use table::roster_live;
 pub(crate) use table::{
     current, enlist, launch, muster, remove_from_starved, rip, roster, running_hart,
+    try_reserve_roster, try_reserve_starved,
 };

@@ -51,6 +51,26 @@ impl FromPair for (usize, TaskId) {
     }
 }
 
+/// `merge_block` 门计数：`(成功, bound 拒, meta 拒, chain 拒)`，两个寄存器各压两个
+/// 计数（32 位足够——只用于诊断，不做精确累加上限语义）。
+impl FromPair for (usize, usize, usize, usize) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (
+            v0 & 0xffff_ffff,
+            v0 >> 32,
+            v1 & 0xffff_ffff,
+            v1 >> 32,
+        )
+    }
+}
+
+/// 池水位探针的返回：`(pagemeta 在手帧数 = 真相, freelist 走链帧数 = 待审计)`。
+impl FromPair for (usize, usize) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (v0, v1)
+    }
+}
+
 impl FromPair for u64 {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         v0 as u64

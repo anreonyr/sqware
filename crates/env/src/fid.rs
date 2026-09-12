@@ -64,11 +64,21 @@ pub enum RoomCall {
     /// `reason` = **退出原因码**（数据，不是策略）：`0` = 自愿/正常结束；非 0 = 域自己的
     /// 诊断编号。内核**只记录不解释**，把它写进 trace 的 `RoomEvent::Exit`。
     ///
-    /// 为什么原因码长在本原语上、而不是另立一个"panic 调用"：**"域不可续"是域的判断，
+    /// `note` = 域自己带的一句话（`VirtAddr(0)` + `len = 0` = 无话）：**"哪里算不下去"
+    /// 只有域知道**（panic 现场自带的 `file:line` 就是编译器塞进只读段的字面量，不需要
+    /// 符号表），而它一旦退场，那段内存也跟着没了——故内核在入口当场 `copy_in` 一段
+    /// （至多 [`NOTE_MAX`] 字节，超出部分截断），**由内核自己打印**：不依赖任何服务活着
+    /// （`docs/driver.md` §3.3.5 拒绝的正是"一个算不下去的域先去求一条活路"）。
+    ///
+    /// 为什么原因码与这句话长在本原语上、而不另立"panic 调用"：**"域不可续"是域的判断，
     /// 内核只需要知道"这个任务不再续跑 + 为什么"**。另立入口等于把域的策略写进 ABI，
     /// 且让"任务终止"这条不变量在 ABI 里有两个出口。
     #[ret(())]
-    Reap { reason: usize },
+    Reap {
+        reason: usize,
+        note: VirtAddr,
+        len: usize,
+    },
     /// 事件等待（词族 wait）：key + 毫秒（usize::MAX = 永久）。
     #[ret(())]
     Wait { key: usize, millis: usize },
@@ -92,6 +102,13 @@ pub enum RoomCall {
     #[ret(())]
     Doom { task: TaskId },
 }
+
+/// `Reap { note }` 的上限：域带的那句话最多这么长，超出部分内核**截断**（不拒绝：
+/// 一句被截断的话仍有诊断价值，而拒绝会让"域正在死"这件事多一个失败模式）。
+///
+/// 为什么是编译期常量：内核在 `Reap` 的入口把它拷进**栈上的定长缓冲**（退场路径不分配），
+/// 上限因此必须是常量。128 字节装得下 `消息 + " at file:line:col"`（panic 现场）。
+pub const NOTE_MAX: usize = 128;
 
 /// 程序装成的空间（`Build` 的特权级参数）：S 态页表 / U 态页表。
 ///
@@ -200,6 +217,25 @@ pub enum MemoryCall {
         size: usize,
         flags: u64,
     },
+    /// **临时探针**：读帧池水位 `(pagemeta 在手帧数, freelist 走链帧数)`。
+    ///
+    /// 为什么要有这一条：先前全部「泄漏速率」都拿 freelist 走链当判据，而它与
+    /// `pagemeta` 记账对不上；只有让用户态能读**同一时刻**的两个数，闭环校准
+    /// （已知量 alloc/free 前后各读一次）才能成立。判据立住后连同实现一起删。
+    ///
+    /// `kinds` = 用户态缓冲 VA（0 = 不写）：非 0 时内核把**逐类在册帧数**一行
+    /// （`trap=12 stack=85 table=420 …`）写进去。分类水位是判漏该用的表——只盯
+    /// 池总量任何一类漏都长一个样，逐类看才能直接指到是 `Table` 还是 `Stack`。
+    #[ret((usize, usize))]
+    Watermark { kinds: VirtAddr },
+    /// **临时探针**：`merge_block` 的计数。`power` 选口径：
+    /// `usize::MAX` ⇒ 总计数（打包 `ok | bound<<16 | meta<<32 | chain<<48`）；
+    /// 否则 ⇒ 该 order 的拒绝分布（`meta | chain<<32`）。
+    #[ret(usize)]
+    MergeCensus { power: usize },
+    /// **临时探针**：`live` = 累计分配 − 累计释放（帧数）。
+    #[ret(usize)]
+    LiveFrames,
 }
 
 /// 时钟调用（class 4；域 = runtime::chrono）。

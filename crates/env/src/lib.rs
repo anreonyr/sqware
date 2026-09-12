@@ -18,7 +18,7 @@ pub mod wire;
 pub use ecall::{EnvError, EnvResult, make_err};
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, HoleDir, MailCall,
-    MailCallRet, MemoryCall, MemoryCallRet, PieCall, PieCallRet, ProgramKind, RoomCall,
+    MailCallRet, MemoryCall, MemoryCallRet, NOTE_MAX, PieCall, PieCallRet, ProgramKind, RoomCall,
     RoomCallRet, UnitCall, UnitCallRet,
 };
 pub use permission::Permission;

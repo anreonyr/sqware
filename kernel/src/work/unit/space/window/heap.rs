@@ -9,7 +9,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
 use super::super::core::SpaceInner;
-use super::super::salvage::{Salvage, Span};
+use super::super::salvage::Span;
 use super::super::{Seg, Space};
 
 /// 堆窗口（零状态策略）。
@@ -45,22 +45,16 @@ impl HeapWindow {
 
     /// 用户堆释放：按 `(addr, size)` 精确匹配**校验**段 → 统一拆除（清叶 PTE +
     /// 摘 map，帧交料箱）→ 结清（跨核清退到齐后才还段与帧）。返回是否找到并释放。
+    ///
+    /// # 本方法不再自己拆装
+    ///
+    /// 此前这里把 `Space::release` 的整段流程（`holds` + `unmap` + `take_span` +
+    /// `reclaim`）**复制了一遍**，与 `ShareWindow::munmap` 逐字同构——同一件事
+    /// 三份实现、三套失败语义。收敛后只剩一层：校验与还原走
+    /// [`Space::release_addr`]，拆装与结清只有 `Space::release` 一处。
+    ///
+    /// 语义不变：该区间不是本段的已分配块 → `false`（状态未动）。
     pub(crate) fn deallocate(space: &Space, addr: VirtAddr, size: usize) -> bool {
-        let mut salvage = Salvage::new();
-        let found = space.with_flush(|inner| {
-            // 1. 只读校验（未分配 → false，状态未动）
-            if !inner.holds(Seg::User, addr.as_usize(), size) {
-                return false;
-            }
-            // 2. 统一拆除：清叶（必须先于摘 map——clear 按 map 的
-            //    is_materialized 决定 unmap 哪些页）+ 摘 map + 段一并入箱。
-            inner.unmap(addr, size, &mut salvage);
-            salvage.take_span(Span::new(Seg::User, addr, size, None));
-            true
-        });
-        if found {
-            salvage.reclaim(space).expect("heap deallocate: evict deaf");
-        }
-        found
+        space.release_addr(Seg::User, addr, size)
     }
 }

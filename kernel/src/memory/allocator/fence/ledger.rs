@@ -32,7 +32,11 @@ pub struct Record {
     canary: Option<u64>,
     /// 对象种类（mark 时定型；unmark/relabel 读出——单一维度，见 [`Kind`]）。
     pub(crate) kind: Kind,
+    /// **同一键被 mark 过的次数（探针）**：>1 即"上一笔没 unmark 就又被交付"。
+    /// 用来把"漏了一次 unmark"与"反复漏"分开——两者根因不同。
+    pub(crate) marks: usize,
 }
+
 
 /// 活块账本：地址 → 记录（锁内；容量 init 预留，运行期零分配）。
 pub struct Ledger {
@@ -73,11 +77,41 @@ impl Ledger {
                 format_args!("soft cap {soft} reached"),
             );
         }
-        if map.contains_key(&addr) {
+        let old_marks = map.get(&addr).map_or(0, |r| r.marks);
+        if let Some(old) = map.get(&addr) {
+            // **双方身份并排**：只说"重复"是没用的——要知道"上一次是谁交付的"。
+            //
+            // `old.site` 是**上一笔 mark 的分配点返回地址**，直接指向"谁先把这块
+            // 交出去的"；配合新旧 `size`/`kind` 就能判形态：
+            //   · 两次同 size 同 kind ⇒ 同一容器/同一对象被注册两遍（双交付）；
+            //   · size 不同 ⇒ 前一笔没释放就复用（free 漏了 unmark）；
+            //   · 两次 site 相同 ⇒ 同一分配点重复执行（如重入/重试）。
+            //
+            // 这条是**整条症状链的上游**：实测 `DuplicateMark` 与坏 `Weak`
+            // （`snap::find` 的 `stval=0x1078`）、`IllegalInstruction`、freelist
+            // 节点被覆写（索引变成 wait key）、以及 16/24/160 字节分配失败同源
+            // ——同一块被两个所有者写 ⇒ 池子账面与链都失真。
+            // 地址每次运行都不同（`...0045` → `...0032`），是**被写坏**的形态。
             report(
                 IntegrityViolation::DuplicateMark,
                 addr,
-                format_args!("site {site:#x}"),
+                format_args!(
+                    "old(size={} kind={:?} site={:#x} marks={}) vs new(size={} kind={:?} site={:#x})",
+                    old.size, old.kind, old.site, old.marks, size, kind, site
+                ),
+            );
+            // **键还是地址？** 这是本缺陷的分水岭：
+            //   · `addr` 在用户 VA 形状（低地址、页对齐）⇒ 它是 `UserHeap` 的
+            //     **账键** `(asid, 页索引)` ⇒ 同一个**用户页**被登记两次
+            //     ⇒ 查 `HeapWindow::allocate` 的段簿记（同一 VA 发了两次）；
+            //   · `addr` 是内核堆指针形状（高地址）⇒ 它是**块地址** ⇒ 同一块被
+            //     块分配器交付两次 ⇒ 查自由链。
+            // 两者修法完全不同，故这一行必须打。
+            crate::putln!(
+                "dupmk addr={addr:#x} page_align={} user_shape={} >=0x80000000={}",
+                addr % 4096 == 0,
+                addr < 0x8000_0000,
+                addr >= 0x8000_0000
             );
         }
         let size_class = size.max(8).next_power_of_two();
@@ -97,6 +131,7 @@ impl Ledger {
                 site,
                 canary,
                 kind,
+                marks: old_marks + 1,
             },
         );
     }
@@ -189,12 +224,39 @@ impl Ledger {
     /// ——同一把 Ledger 锁会自锁死。种类计数在同趟内按记录扣减，与 `unmark` →
     /// `record_block_give` 的语义一致。
     pub fn retire(&self, asid: usize) -> usize {
+        self.retire_matching(asid, None)
+    }
+
+    /// **按 VA 范围**注销 `asid` 名下的用户堆账（[`Self::retire`] 的定域版）。
+    ///
+    /// 调用点是 [`Space::release`](crate::work::unit::space::adapter::Space::release)
+    /// ——**唯一的释放入口**。用户堆页的账目键是 `(asid, 页索引)`，而任何拆掉一块
+    /// 用户区间的路径都得销账；此前销账只在 `MemoryCall::Deallocate` 的臂里，于是
+    /// 另一条能拆到 `Seg::User` 的路径（`Munmap`）**完全不销账**，留下永不消失的
+    /// 记录，等该 VA 复用时的第二次 `mark` 撞 `DuplicateMark`
+    /// （见 `docs/allocator-diagnosis.md` §8）。
+    ///
+    /// 收敛到释放点之后，销账不再依赖"每个调用方都记得"。
+    ///
+    /// 范围口径（页索引落在 `[va>>12, (va+size)>>12)`）只清这次真正拆掉的那些，
+    /// 不误伤同空间里**还活着**的堆页（否则它们下次 free 会报 `UnregisteredFree`
+    /// 假违规）。
+    pub fn retire_range(&self, asid: usize, va: usize, size: usize) -> usize {
+        self.retire_matching(asid, Some((va >> 12, va.saturating_add(size) >> 12)))
+    }
+
+    /// `range = None` ⇒ 该 asid 全部；`Some((lo, hi))` ⇒ 页索引落在 `[lo, hi)` 的那些。
+    fn retire_matching(&self, asid: usize, range: Option<(usize, usize)>) -> usize {
         let mut g = self.inner.lock();
         let Some((map, _)) = g.as_mut() else { return 0 };
         let mut retired = 0usize;
         map.retain(|&addr, rec| {
             // 页索引键（`Keys::Page`）的唯一使用者就是用户堆账目。
-            let mine = rec.kind.keys() == Keys::Page && (addr >> 44) == asid;
+            let mut mine = rec.kind.keys() == Keys::Page && (addr >> 44) == asid;
+            if let (true, Some((lo, hi))) = (mine, range) {
+                let page = addr & ((1usize << 44) - 1);
+                mine = page >= lo && page < hi;
+            }
             if mine {
                 crate::memory::allocator::statistics::record_block_give(rec.kind);
                 retired += 1;

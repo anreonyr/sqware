@@ -125,6 +125,16 @@ impl Scheduler {
         self.recount(i);
     }
 
+    /// 为本核就绪队列**预留** `slot` 格（`table::try_reserve_starved` 的实体）。
+    ///
+    /// # Errors
+    ///
+    /// 队列无法扩容（内存耗尽）→ `Err(())`。调用点在放行**之前**：那时失败还能
+    /// 干净退回，而不是让 `push_back` 在内核里 panic 掉整机。
+    pub(super) fn try_reserve_starved(&self, slot: usize) -> Result<(), ()> {
+        self.inner.lock().starved.try_reserve(slot).map_err(|_| ())
+    }
+
     /// 队首出队 + 派生计数；空队列 → None。
     fn starved_pop(&self, i: &mut SchedulerInner) -> Option<Arc<Task>> {
         let t = i.starved.pop_front();

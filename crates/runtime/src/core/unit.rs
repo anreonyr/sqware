@@ -163,5 +163,15 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
         unsafe { Box::from_raw(ptr as *mut Box<dyn FnOnce(usize) + Send>) };
     // closure 的参数已封进捕获，此处的形参占位 0。
     holder(0);
+    // **TLS 块必须在退场前归还**：它是内核给的**一整页**（`memory::allocate` 按页
+    // 取整），而内核不认它是谁的——`bury` 只归还 `TaskIdent` 上记着的那两个 Span
+    // （栈 / trap 帧），故不还就每任务漏一页。
+    //
+    // 实测（64M，同一启动内 `churn` 连跑两遍，静息水位应当回到同一处）：
+    // 不还时 `held` 6046 → 9244、`walk` 6899 → 3501（**同一份工作量，水位上台阶**
+    // = 真漏）；补上这一行后见同档复测。这页是 `tls::alloc` 自己领的，故由
+    // `tls::free` 自己对还——用的是用户态既有原语 `MemoryCall::Deallocate`，
+    // 不需要任何新 ABI。
+    tls::free();
     room::exit()
 }

@@ -29,6 +29,15 @@ impl HybridAllocator {
     pub fn init(&self) -> InitResult<()> {
         block::init()?;
         frame::init()?;
+        // ── 临时探针（判据立住即删）：帧池出厂指纹 ──
+        //
+        // 读的是"一行代码都还没跑"的 `pagemeta`：表项条数 vs 步进覆盖 vs 求和。
+        // 三者若在出厂时就对不上，则运行期看到的 `sum` 虚高有一部分是**先天**的，
+        // 必须与 churn 造成的腐化分开——否则会把出厂状态当成运行期 bug 去修。
+        {
+            let (frames, entries, step, sum) = frame::heap().init_fingerprint();
+            crate::putln!("pool init: frames={frames} entries={entries} step={step} sum={sum}");
+        }
         Ok(())
     }
 }

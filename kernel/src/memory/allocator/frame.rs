@@ -59,7 +59,506 @@ impl FrameAllocator {
         let g = self.inner.lock();
         g.held(pa)
     }
+
+    /// 池水位三元组：`(freelist 链上帧数, pagemeta 说"在手"帧数, 区总帧数)`。
+    ///
+    /// # 为什么是两份读法并排返回
+    ///
+    /// 先前所有「泄漏速率」都是拿 **freelist 走链**当判据的，而它与 `pagemeta`
+    /// 记账对不上（走链说"放进去了"，`free` 却在跌）。两者在同一把锁下取，**在
+    /// 同一次读数里自洽**——不等就说明走链不是真相，先前基于它的结论全部作废。
+    ///
+    /// 真相在 `pagemeta`：分配时写 `free=false`、释放时写回 `true`，与 `held()`
+    /// 同一份表（见 [`Self::is_held`] 的「唯一真相」）。故：
+    ///
+    /// ```text
+    /// pagemeta 在手 = Σ 块首 free=false 的块页数
+    /// pagemeta 空闲 = Σ 块首 free=true  的块页数
+    /// 两者之和 = 总帧数 − 洞（洞在 init 时写 free=false 且永不出现在链上，
+    ///           故恒不计入任何一边）
+    /// ```
+    ///
+    /// **`pagemeta` 在手单调上涨 = 泄漏**——与 freelist 链的完整度无关。
+    pub(crate) fn watermark(&self) -> (usize, usize, usize) {
+        let g = self.inner.lock();
+        let (walk, held, idle) = Self::tally(&g);
+        (walk, held, idle + held)
+    }
+
+    /// **只按 `pagemeta` 数空闲帧**（完全不碰 freelist 链）。
+    ///
+    /// # 为什么要第三个独立读数
+    ///
+    /// 实测出现了一个无法同时成立的组合：`step − held ≈ 11579` 帧按账该空闲，
+    /// 而**走链**只报 `walk=349` —— 可 guest 又跑了几百轮不 OOM。两者必有一个错。
+    ///
+    /// 本函数是**不看链**的独立答案：把 `pagemeta` 里所有 `free=true` 的块按
+    /// `2^power` 加起来。它与 [`Self::tally`] 的 `idle` 是同一个算法，但**分开
+    /// 暴露**，以便和走链的 `walk` 三者并列对质：
+    ///
+    /// * `meta_free ≈ walk` ⇒ 链是好的，池子真的空了；
+    /// * `meta_free ≫ walk` ⇒ **链断了/漏了**（`next` 被写坏而提前终止，或块没入链），
+    ///   池子其实还有内存——此时"OOM"是**记账缺陷**造成的假象。
+    ///
+    /// 注意 `meta_free` 是**求和**口径，碎片化时会**高估**（大空闲块的跨度里可能
+    /// 合法地站着小块、被重复计入）。故判据用**量级**（`≫`），不做精确相等。
+    pub(crate) fn meta_free_frames(&self) -> usize {
+        let g = self.inner.lock();
+        g.pagemeta
+            .iter()
+            .flatten()
+            .filter(|m| m.free)
+            .map(|m| 1usize << m.power)
+            .sum()
+    }
+
+    /// 那个"伙伴说空闲但不在链上 ⇒ 放弃合并"分支被走了多少次（探针）。
+    ///
+    /// 该分支 `break` 后，那个伙伴**既没被合并、也没被重新入链**，而它的
+    /// `free=true` 标记留着——正是"`pagemeta` 说空闲、链上却找不到"的来源。
+    /// 这个数在 churn 下单调增长即为该机制成立的直接证据。
+    pub(crate) fn nomerge_count() -> usize {
+        NOMERGE.load(::core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 守恒量读数（探针）：`(累计分配帧, 累计释放帧)`。
+    ///
+    /// 恒等式：**每一帧要么在手、要么空闲** ⇒ `累计分配 − 累计释放 = held + walk`。
+    /// 这是唯一不依赖 freelist 走链、也不依赖 `pagemeta` 的第三口径——三者对不上
+    /// 时，它指出到底是谁在说假话。
+    pub(crate) fn frame_ledger() -> (usize, usize) {
+        use ::core::sync::atomic::Ordering;
+        (
+            TAKE_FRAMES.load(Ordering::Relaxed),
+            GIVE_FRAMES.load(Ordering::Relaxed),
+        )
+    }
+
+    /// **链↔表一致性核对**：链上每个块，其 `pagemeta` 表项必须是
+    /// `Some(free=true, power=桶号)`。
+    ///
+    /// # 为什么这条核对可信（与我前五个探针的区别）
+    ///
+    /// 前五个探针（`overrun` / `census` / `frnet` / `merge_census` / `reachability`）
+    /// 都**缺少自洽性约束**，所以总能产出一个看似有信息量的数，而我就照着讲，
+    /// 随后被自己的数据推翻。本条不同：它是**逐块的两处状态对照**，两边都直接读
+    /// 自权威结构（链节点 vs `pagemeta` 表项），不经过任何我自己的累加——
+    /// 没有"分项之和 vs 总数"这类可漂移的口径。
+    ///
+    /// 返回 `(检查的块数, 不一致块数, 头 3 个不一致样本 (帧索引, 桶号, 表项))`。
+    pub(crate) fn chain_meta_mismatch(&self) -> (usize, usize, [(usize, usize, u8); 3]) {
+        let g = self.inner.lock();
+        let mut checked = 0usize;
+        let mut bad = 0usize;
+        // `u8` 编码：0 = 无表项，1 = free=false，2 = power 不符。
+        let mut sample = [(0usize, 0usize, 0u8); 3];
+        for (order, head) in g.freelist.iter().enumerate() {
+            let mut cur = *head;
+            let mut budget = g.pagemeta.len() + 1;
+            while let Some(node) = cur {
+                if budget == 0 {
+                    break;
+                }
+                budget -= 1;
+                let addr = node.as_ptr() as usize;
+                if addr < g.base || addr >= g.edge {
+                    break;
+                }
+                let i = (addr - g.base) / PAGE_SIZE;
+                if i >= g.pagemeta.len() {
+                    break;
+                }
+                checked += 1;
+                let code = match g.pagemeta[i].as_ref() {
+                    None => 0u8,
+                    Some(m) if !m.free => 1u8,
+                    Some(m) if m.power as usize != order => 2u8,
+                    Some(_) => 255u8, // 一致
+                };
+                if code != 255 {
+                    if bad < 3 {
+                        sample[bad] = (i, order, code);
+                    }
+                    bad += 1;
+                }
+                // SAFETY: freelist 节点恒为空闲块，头 16 字节是 Link。
+                cur = unsafe { node.read() }.next;
+            }
+        }
+        (checked, bad, sample)
+    }
+
+    /// **反向核对：`pagemeta` 里每条 `free=true` 表项，其块是否真在 `freelist[power]` 链上。**
+    ///
+    /// # 这是上一个检查缺的那一半
+    ///
+    /// `chain_meta_mismatch` 只验"链上每块的表项正确"（正向）。孤儿表项——不在任何
+    /// 链上、却写着 `free=true` 的那些——从这个缺口**整片漏掉**。而 `walk`（503 帧，
+    /// 13 个块）与 `meta`（11918 帧）的背离，唯一自洽的解释就是**大批孤儿表项**。
+    ///
+    /// 返回 `(自由表项数, 不在链上者数, 头 3 个样本 (帧索引, power))`。
+    pub(crate) fn free_entry_orphans(&self) -> (usize, usize, [(usize, u8); 3]) {
+        let g = self.inner.lock();
+        let mut free_entries = 0usize;
+        let mut orphans = 0usize;
+        let mut sample = [(0usize, 0u8); 3];
+        // 步进扫：表项只在块首，块占 `2^power` 帧。
+        let mut cursor = 0usize;
+        while cursor < g.pagemeta.len() {
+            let Some(m) = g.pagemeta[cursor].as_ref() else {
+                cursor += 1;
+                continue;
+            };
+            let power = m.power as usize;
+            let frames = 1usize << power;
+            if m.free {
+                free_entries += 1;
+                if !g.in_freelist(cursor, power) {
+                    if orphans < 3 {
+                        sample[orphans] = (cursor, m.power);
+                    }
+                    orphans += 1;
+                }
+            }
+            cursor += frames;
+        }
+        (free_entries, orphans, sample)
+    }
+
+    /// **地址集合比对**：`freelist[0]` 的全部节点地址 vs `pagemeta` 里 `free=true`
+    /// 且 `power=0` 的表项地址。
+    ///
+    /// 目的：上一轮发现"`pagemeta` 有 ~7758 条空闲表项不在任何链上"，而按代码
+    /// `push_link` 是唯一写这些表项的地方、且**无条件**入链——两者矛盾。本函数把
+    /// 两边地址**原样打出来**，看差异集合的形状（整段连续 vs 散点），不做任何
+    /// 自造口径。
+    ///
+    /// 返回 `(链上节点数, power=0 的空闲表项数, 链上头 3 个地址, 表项头 3 个地址)`。
+    pub(crate) fn addr_sets(
+        &self,
+        power: usize,
+    ) -> (usize, usize, [usize; 3], [usize; 3]) {
+        let g = self.inner.lock();
+        let mut chain = [0usize; 3];
+        let mut cn = 0usize;
+        let mut total_chain = 0usize;
+        let mut cur = g.freelist.get(power).copied().flatten();
+        let mut budget = g.pagemeta.len() + 1;
+        while let Some(node) = cur {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            total_chain += 1;
+            if cn < 3 {
+                chain[cn] = node.as_ptr() as usize;
+                cn += 1;
+            }
+            // SAFETY: freelist 节点恒为空闲块，头 16 字节是 Link。
+            cur = unsafe { node.read() }.next;
+        }
+        let mut entries = [0usize; 3];
+        let mut en = 0usize;
+        let mut total_entries = 0usize;
+        for (i, m) in g.pagemeta.iter().enumerate() {
+            if let Some(m) = m.as_ref()
+                && m.free
+                && m.power as usize == power
+            {
+                total_entries += 1;
+                if en < 3 {
+                    entries[en] = g.base + i * PAGE_SIZE;
+                    en += 1;
+                }
+            }
+        }
+        (total_chain, total_entries, chain, entries)
+    }
+
+    /// 拒绝按 power 的分布（探针）：`(power, REJ_META[p], REJ_CHAIN[p])`。
+    pub(crate) fn reject_by_power(p: usize) -> (usize, usize, usize) {
+        use ::core::sync::atomic::Ordering;
+        let i = p.min(19);
+        (
+            i,
+            REJ_META[i].load(Ordering::Relaxed),
+            REJ_CHAIN[i].load(Ordering::Relaxed),
+        )
+    }
+
+    /// `merge_block` 三道门各自的拒绝次数 + 成功合并次数（探针）。
+    pub(crate) fn merge_census() -> (usize, usize, usize, usize) {
+        use ::core::sync::atomic::Ordering;
+        (
+            MR_BOUND.load(Ordering::Relaxed),
+            MR_META.load(Ordering::Relaxed),
+            MR_CHAIN.load(Ordering::Relaxed),
+            MR_OK.load(Ordering::Relaxed),
+        )
+    }
+
+    /// 各 order 的 `(pagemeta 空闲块首条数, 链上实际块数)`（探针，固定 17 槽）。
+    ///
+    /// 两者不等 ⇒ 幽灵块：被标空闲却没进链。
+    pub(crate) fn free_block_census(&self) -> [(usize, usize); 17] {
+        let g = self.inner.lock();
+        let mut out = [(0usize, 0usize); 17];
+        for o in 0..17 {
+            let chain = g
+                .freelist
+                .get(o)
+                .map(|h| chain_len(*h, g.pagemeta.len() + 1))
+                .unwrap_or(0);
+            out[o] = (
+                META_FREE_BLOCKS[o].load(::core::sync::atomic::Ordering::Relaxed),
+                chain,
+            );
+        }
+        out
+    }
+
+    /// freelist 累计收支（探针）：`(净帧数, 净块数)`，按入链时声明的 `power` 累加。
+    pub(crate) fn freelist_ledger() -> (i64, i64) {
+        use ::core::sync::atomic::Ordering;
+        let net_frames =
+            FR_PUSH.load(Ordering::Relaxed) as i64 - FR_PULL.load(Ordering::Relaxed) as i64;
+        let net_blocks =
+            BK_PUSH.load(Ordering::Relaxed) as i64 - BK_PULL.load(Ordering::Relaxed) as i64;
+        (net_frames, net_blocks)
+    }
+
+    /// 走链超出步数上限的次数（探针）——`>0` 即**链成环**，也就是"卡死"的真身。
+    pub(crate) fn chain_cycle_count() -> usize {
+        CHAIN_CYCLE.load(::core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 走链的**症状描述**：`(可见块数, 链尾是否为 None, 有没有指向区外的节点)`。
+    ///
+    /// # 为什么需要"症状"而不只是"计数"
+    ///
+    /// 实测走链总量掉到 113 而 `pagemeta` 说还有 ~12000 帧空闲 ⇒ **链断了**。
+    /// 断链有三种形态，处置完全不同：
+    ///
+    /// * **提前终止**（某节点 `next = None` 却本不该是尾）：说明有节点被摘除时
+    ///   没接上后续——查 `remove_link` / `merge_block`；
+    /// * **指向区外**（`next` 落在 `[base, edge)` 之外或没对齐）：说明空闲块的
+    ///   内存被**别人写了**（空闲块被复用/覆写）——查"谁动了空闲帧"；
+    /// * **成环**（走不完）：说明同一块被入链两次——查 `push_link` 的重复入链。
+    ///
+    /// 返回的 `tail_none` 为真**不代表有问题**（正常的链就是以 None 结尾）；
+    /// 判据是它与 `meta_free_frames` 的**量级差**——差得大就说明是前两种之一。
+    pub(crate) fn chain_symptoms(&self) -> (usize, bool, usize) {
+        let g = self.inner.lock();
+        let lo = g.base;
+        let hi = g.edge;
+        let mut blocks = 0usize;
+        let mut tail_none = false;
+        let mut outside = 0usize;
+        for (order, head) in g.freelist.iter().enumerate() {
+            let mut cur = *head;
+            // 防环护栏：最多走 `pagemeta.len() + 1` 步（合法块数不可能超过总帧数）。
+            let mut budget = g.pagemeta.len() + 1;
+            loop {
+                let Some(node) = cur else {
+                    tail_none = true;
+                    break;
+                };
+                if budget == 0 {
+                    break; // 成环
+                }
+                budget -= 1;
+                blocks += 1;
+                let addr = node.as_ptr() as usize;
+                if addr < lo || addr >= hi || addr % PAGE_SIZE != 0 {
+                    outside += 1;
+                }
+                // SAFETY: freelist 节点恒为空闲块，头 16 字节是 Link（prev/next）。
+                cur = unsafe { node.read() }.next;
+            }
+            let _ = order;
+        }
+        (blocks, tail_none, outside)
+    }
+
+    /// 初始化刚结束时的 `pagemeta` 指纹：`(区总帧数, 表项条数, 步进覆盖帧数, 求和的空闲帧数)`。
+    ///
+    /// **为什么要读"出厂状态"**：churn 跑起来之后 `sum` 一路虚高、`overrun` 一路涨，
+    /// 但那只能说明"运行中变坏了"。若出厂时 `表项条数 × 2^power` 就已经超过区总帧数
+    /// （即洞被逐帧写成了表项），那"虚高"里有一大块是**先天**的，与 churn 无关——
+    /// 判据必须先把这两部分分开，否则会把出厂状态当成运行期腐化去修。
+    pub(crate) fn init_fingerprint(&self) -> (usize, usize, usize, usize) {
+        let g = self.inner.lock();
+        let frames = g.pagemeta.len();
+        let entries = g.pagemeta.iter().flatten().count();
+        let (_, _, idle_step) = Self::tally(&g);
+        let mut idle_sum = 0usize;
+        for m in g.pagemeta.iter().flatten() {
+            if m.free {
+                idle_sum += 1usize << m.power;
+            }
+        }
+        (frames, entries, idle_step, idle_sum)
+    }
+
+    /// 独立重算一次水位：走链 + 按**块首步进**扫 `pagemeta`。
+    ///
+    /// 步进才是 `pagemeta` 的正确读法：表项只存在于**块首**，一个块占 `2^power`
+    /// 帧（见 `FrameInner::pagemeta` 的「仅块首帧有表项」）。逐表项求和是**错的**
+    /// ——它把逻辑上已被并入大块、但表项尚未清掉的帧重复计入。
+    fn tally(g: &FrameInner) -> (usize, usize, usize) {
+        let walk = g
+            .freelist
+            .iter()
+            .enumerate()
+            .map(|(o, head)| chain_len(*head, g.pagemeta.len() + 1) << o)
+            .sum();
+        let mut held = 0usize;
+        let mut idle = 0usize;
+        let mut cursor = 0usize;
+        while cursor < g.pagemeta.len() {
+            if let Some(m) = g.pagemeta[cursor].as_ref() {
+                let frames = 1usize << m.power;
+                if m.free {
+                    idle += frames;
+                } else {
+                    held += frames;
+                }
+                cursor += frames;
+            } else {
+                cursor += 1;
+            }
+        }
+        (walk, held, idle)
+    }
+
+    /// 逐 `Kind` 的**当前在册帧数**（`Trap` / `Stack` / `Table` / `Heap` …）。
+    ///
+    /// 读数来自 `statistics` 的按类计数（`record_frame_take` / `record_frame_give`
+    /// 在帧分配器里**无条件**调用，不受 audit 档影响），故这是可用的**分类水位**。
+    ///
+    /// **为什么这才是判漏该用的表**：先前我盯的是池总量（`walk` / `held`），那是
+    /// 一锅粥——任何一类在漏都表现为"池少了"。逐类看才能直接指到漏的是哪一类，
+    /// 而不是逼着人从总量反推机制（我为此编了三个错误机制，浪费了好几轮）。
+    ///
+    /// 只列非零项；名字走 [`crate::memory::allocator::fence::Kind::name`]，不另维
+    /// 一张字符串表（两张表必然漂移）。
+    pub(crate) fn kind_counts() -> alloc::string::String {
+        let v = crate::memory::allocator::statistics::view_frame();
+        let mut out = alloc::string::String::new();
+        for (i, n) in v.kinds.iter().enumerate() {
+            if *n == 0 {
+                continue;
+            }
+            let kind = crate::memory::allocator::fence::Kind::ALL[i];
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(kind.name());
+            out.push('=');
+            let _ = core::fmt::Write::write_fmt(&mut out, format_args!("{n}"));
+        }
+        out
+    }
+
+    /// `pagemeta` 逐表项**求和**的跨度数：`(持有帧数, 空闲帧数)`。
+    /// # 它不是"真相"，是**上界**
+    ///
+    /// 先前我把它当真相、并据此断言"表项互相重叠 ⇒ 记账腐化"。**那个断言是错的**：
+    /// buddy 分配器里，一个大的**空闲**块，其跨度内**合法地**站着若干小块的块首
+    /// （碎片化的正常形态，它们不是这个空闲块的伙伴、不该合并）。求和会把小块
+    /// 再算一遍，故 `和 ≥ 步进解` 恒成立，且差值就是碎片量。
+    ///
+    /// 判"漏没漏"的正确读数是 [`Self::tally`] 的**步进解**（它 `walk + held` 守恒），
+    /// 不是这个和。本函数只作诊断对照保留。
+    pub(crate) fn pagemeta_sum(&self) -> (usize, usize) {
+        let g = self.inner.lock();
+        let mut held = 0usize;
+        let mut idle = 0usize;
+        for m in g.pagemeta.iter().flatten() {
+            let frames = 1usize << m.power;
+            if m.free {
+                idle += frames;
+            } else {
+                held += frames;
+            }
+        }
+        (held, idle)
+    }
 }
+
+static NOMERGE: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+
+/// ── 临时探针：freelist **累计收支**（零分配，只用原子）──
+///
+/// 前两版探针都在回收路径上按 `pagemeta.len()` 开 `Vec`，两次都把整机拖进退化态。
+/// 这一版**完全不碰堆**。判据：`net_frames` 按**入链时声明的 `power`** 累加，
+/// 与走链累加（`walk`，按**桶号**算）对质：
+///   · 两者不等 ⇒ 块被放进了**不是它自己 order 的桶**（按桶算自然对不上）；
+///   · 两者相等而都远小于 `meta` ⇒ 块确实没进链。
+/// `merge_block` 三道门各自拒绝了多少次（探针，零堆分配）。
+///
+/// 判据：`pagedrain` 显示每个 order-0 块释放后都停在 order-0（`walk_delta` 恒为
+/// +1），说明合并从未发生。这三道 `break` 里必有一道在拒绝——计数直接指认是哪道。
+/// `merge_block` 拒绝时**按 power 分桶**计数（探针，17 槽定长、零堆分配）。
+///
+/// `REJ_META[p]` = 「pagemeta 说伙伴不空闲/order 不对」在 power=p 拒了几次；
+/// `REJ_CHAIN[p]` = 「pagemeta 说空闲，但 `in_freelist` 找不到」在 power=p 拒了几次。
+///
+/// 判据：`meta=0`（总）已经排除了第一道门，故 `REJ_CHAIN` 是主因。看它集中在哪个
+/// `p`，就能判断是"块从未挂上"还是"挂在别的 order 桶"——两者的 `p` 分布不同。
+static REJ_META: [::core::sync::atomic::AtomicUsize; 20] =
+    [const { ::core::sync::atomic::AtomicUsize::new(0) }; 20];
+static REJ_CHAIN: [::core::sync::atomic::AtomicUsize; 20] =
+    [const { ::core::sync::atomic::AtomicUsize::new(0) }; 20];
+
+static MR_BOUND: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+static MR_META: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+static MR_CHAIN: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+static MR_OK: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+
+/// `pagemeta` 里各 order 的**空闲块首**条数（探针，固定 17 槽、零堆分配）。
+///
+/// 判据：它必须等于 `freelist[order]` 的**实际链长**。两者不等 ⇒ 有块被标为空闲
+/// 却没进链（幽灵块）—— 而且本计数**只由 `pagemeta` 写点驱动**，不经过任何
+/// 遍历，故它自己不会"看不见"东西。
+static META_FREE_BLOCKS: [::core::sync::atomic::AtomicUsize; 17] =
+    [const { ::core::sync::atomic::AtomicUsize::new(0) }; 17];
+
+static GIVE_FRAMES: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+static TAKE_FRAMES: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+static FR_PUSH: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+static FR_PULL: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+static BK_PUSH: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+static BK_PULL: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+
+/// 数一条 order 链的块数（只读遍历，`None` 结尾）。
+///
+/// # 必须有步数上限
+///
+/// 旧版没有上限：链若**成环**（同一块入链两次 / `next` 指回前驱），这个循环
+/// 永不返回——而它在**持 `inner` 锁**的情况下跑，于是整机在分配器里静默卡死。
+/// 实测：诊断路径加上走链读数后，一次 `churn` 从 3.4 s 变成**跑不完**，与
+/// "循环不返回"的症状一致。
+///
+/// 上限取 `pagemeta.len() + 1`（合法块数不可能超过总帧数），超限即按"链坏"处理：
+/// 停止遍历并**记一笔**（`CHAIN_CYCLE`），让"链成环"从"卡死"变成"可读的事实"。
+fn chain_len(mut n: Option<NonNull<Link>>, cap: usize) -> usize {
+    let mut blocks = 0usize;
+    let mut budget = cap;
+    while let Some(node) = n {
+        if budget == 0 {
+            CHAIN_CYCLE.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
+            break;
+        }
+        budget -= 1;
+        blocks += 1;
+        // SAFETY: freelist 节点恒为空闲块，头 16 字节是 Link（prev/next）。
+        n = unsafe { node.read() }.next;
+    }
+    blocks
+}
+
+static CHAIN_CYCLE: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
 
 /// 由请求字节数计算 frame order（块 = 2^power × PAGE_SIZE，须覆盖 size）。
 ///
@@ -82,6 +581,7 @@ unsafe impl Allocator for FrameAllocator {
             let mut guard = this.inner.lock();
             let frame = &mut *guard;
             let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
+            TAKE_FRAMES.fetch_add(1usize << power, ::core::sync::atomic::Ordering::Relaxed);
             let addr = frame.frame_addr(index) as *mut u8;
             checker::check_dram_addr(addr as usize, "frame alloc (split result)");
             #[cfg(feature = "audit")]
@@ -133,6 +633,7 @@ unsafe impl Allocator for FrameAllocator {
 
             // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);
+            GIVE_FRAMES.fetch_add(1usize << power, ::core::sync::atomic::Ordering::Relaxed);
             frame.merge_block(index, power);
             // 种类：untag 在 fence::on_frame_free 内完成,kind 由 untag 路径同步 record;
             // 非 audit 时 fence::on_frame_free 内部直接 record_frame_give(Plain)。
@@ -321,6 +822,13 @@ impl FrameInner {
         index ^ (1 << power)
     }
 
+    // ── 临时探针：累计封箱/开箱（帧数口径，不受抽样时刻影响）──
+    //
+    // 判据：`已封 − 已开 = 当前该在链上的帧数`。它应当等于 `meta_free − 洞`；
+    // 若**远大于**走链可见量，就直接证明"有帧被标成空闲却没入链"。
+    // `merge_nomerge` 记录那个可疑分支：伙伴 `pagemeta` 说空闲、但不在链上 ⇒
+    // `break` ⇒ 该伙伴既没被合并、也没被重新入链，而 `free=true` 标记留着。
+
     // 从 freelist[order] 头部弹出一个空闲块，标记为非空闲，返回帧索引。
     //
     // # Safety
@@ -333,6 +841,30 @@ impl FrameInner {
 
             let addr = head.addr().get();
             let index = self.frame_index(addr);
+            // **空链必须降级，不得索引 panic**：`head` 是从 freelist 头读出来的，
+            // 它的 `addr` 若已被写坏（实测：`index` 变成 `0x07011C7D01BB83C6`，
+            // 一个 **wait key** 的数形状），`self.pagemeta[index]` 就是一次越界索引
+            // ⇒ `index out of bounds` panic ⇒ **整机 halt**。
+            //
+            // 这条路上没有"地址是用户提供的"这种借口：`head` 是**内核自己放进链里
+            // 的**。所以它坏 = 链被写坏 = 已知的既有缺陷（见本文件头部/`held` 的
+            // 注释里记的跨 order 交叉史）。此处只做一件事：**不让它升级成停机**
+            // ——返回 `None` 上抛成 `AllocError`，`Spawn`/堆分配照常拿到 `-4`/`-1`。
+            //
+            // 计数是刻意的：**污染率**是本缺陷唯一的量化面（每 N 次分配坏一次），
+            // 也是后续定位根因的判据；静默吞掉就只剩"偶尔分配失败"的传言。
+            if index >= self.pagemeta.len() {
+                static BAD: ::core::sync::atomic::AtomicUsize =
+                    ::core::sync::atomic::AtomicUsize::new(0);
+                let n = BAD.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
+                if n <= 8 {
+                    crate::putln!(
+                        "frame freelist corrupt: pop index={index:#x} len={} power={power} ({n})",
+                        self.pagemeta.len()
+                    );
+                }
+                return None;
+            }
             checker::check_bounds(
                 index,
                 self.pagemeta.len(),
@@ -352,6 +884,14 @@ impl FrameInner {
                 n.read().prev = None;
             }
 
+            FR_PULL.fetch_add(1usize << power, ::core::sync::atomic::Ordering::Relaxed);
+            BK_PULL.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
+            if let Some(old) = self.pagemeta[index].as_ref()
+                && old.free
+            {
+                META_FREE_BLOCKS[(old.power as usize).min(16)]
+                    .fetch_sub(1, ::core::sync::atomic::Ordering::Relaxed);
+            }
             self.pagemeta[index] = Some(Meta::new(false, power as u8));
             Some(index)
         }
@@ -387,7 +927,44 @@ impl FrameInner {
             }
 
             self.freelist[power] = Some(addr);
+            // 注：曾在此处"清跨度内的过期空闲标记"（遍历 `2^power` 个槽）。**已撤**：
+            // ① 实测对 `nomerge` 毫无改善（说明孤儿另有产出者，不在标记残留）；
+            // ② 代价是大 order 块每次入链遍历 `2^power` 槽（power 16 = 65536 次），
+            //    而 `push_link` 在每次拆分/合并都跑 —— 实测把 `churn` 拖慢约 50 倍
+            //    （`churn 300 1 1` 从秒级变 100 s 跑不到一半）。
+            // 教训与"改完看判据"同源：**没有判据支持的优化，只留代价**。
+            FR_PUSH.fetch_add(1usize << power, ::core::sync::atomic::Ordering::Relaxed);
+            BK_PUSH.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
+            // **唯一入链口：清掉跨度内的过期空闲表项**。
+            //
+            // 为什么必须有：`split_block` 取出 power=k 的整块后，逐级 `push_link`
+            // 把切出的 buddy 填进**原块的跨度**；而旧版只写 buddy 自己那一条，
+            // **原块那条粗粒度表项留在原地**，成了覆盖整段的幽灵。
+            // 后果（`pagedrain` 实测，纯分配/释放、零任务生变，每轮
+            // `pagedrain 500` 净漏 200~570 帧且单调累积）：
+            //   · `merge_block` 按它认定伙伴空闲，`in_freelist` 却找不到 ⇒ 放弃
+            //     合并 ⇒ 那一段永久脱离可用池；
+            //   · `held()` 也会读到幽灵而答错"谁拥有这帧"。
+            //
+            // **只清 `free == true`**：`free == false` 的表项是**活分配**，它们
+            // 合法地落在一个大空闲块的跨度里（碎片化的正常形态），清掉等于把在用
+            // 的帧标成未知。
+            //
+            // （先前我按"跨度内不得有别的表项"整片清空过，被判据 `overrun` 证伪后
+            //   撤回——那个判据本身是错的：大空闲块的跨度**合法地**包含小块块首。
+            //   现在用的是 pagedrain 的帧数净漏，它不含解读空间。）
+            META_FREE_BLOCKS[power.min(16)].fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
             self.pagemeta[index] = Some(Meta::new(true, power as u8));
+            let end = (index + (1usize << power)).min(self.pagemeta.len());
+            for slot in &mut self.pagemeta[index + 1..end] {
+                if let Some(m) = slot.as_ref()
+                    && m.free
+                {
+                    META_FREE_BLOCKS[(m.power as usize).min(16)]
+                        .fetch_sub(1, ::core::sync::atomic::Ordering::Relaxed);
+                    *slot = None;
+                }
+            }
         }
     }
 
@@ -464,6 +1041,7 @@ impl FrameInner {
                 // 边界检查：buddy 可能超出 free 区（pagemeta 长度非 2 的幂，末块
                 // 的 XOR 伙伴会越界）。此时该伙伴不存在，不能合并——直接 break。
                 if buddy >= self.pagemeta.len() {
+                    MR_BOUND.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                     break;
                 }
 
@@ -471,12 +1049,19 @@ impl FrameInner {
                     .as_ref()
                     .is_some_and(|m| m.free && m.power as usize == power)
                 {
+                    MR_META.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
+                    REJ_META[power.min(19)].fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                     break;
                 }
                 // pagemeta 说 frame 空闲，但必须确实在 freelist[power] 链中才可
                 // 合并——否则是残留标记（frame 已并入其它块/已被分配），合并会
                 // 摘除一个不在链中的节点、破坏链表（跨 order 交叉的直接来源）。
                 if !self.in_freelist(buddy, power) {
+                    // 探针：伙伴说空闲却不在链上 ⇒ 它既不被合并也不被重新入链，
+                    // 但 `free=true` 留着 —— "标空闲却不在链上"的批量来源。
+                    NOMERGE.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
+                    MR_CHAIN.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
+                    REJ_CHAIN[power.min(19)].fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                     break;
                 }
 
@@ -484,12 +1069,32 @@ impl FrameInner {
                 // 合并后 frame 并入 index 块：清除其独立 pagemeta——残留 free
                 // 标记会让后续 split/merge 把已并入大块的帧当空闲块处理
                 // （frame 不变量破坏 → 同一帧双重入链 → freelist 读垃圾）。
+                if let Some(om) = self.pagemeta[buddy].as_ref()
+                    && om.free
+                {
+                    META_FREE_BLOCKS[(om.power as usize).min(16)]
+                        .fetch_sub(1, ::core::sync::atomic::Ordering::Relaxed);
+                }
                 self.pagemeta[buddy] = None;
+                MR_OK.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                 index = index.min(buddy); // 合并后取较小的帧索引
                 power += 1;
             }
 
             self.push_link(index, power);
+            // **自审**：块标空闲之后必须真的在链上。不在 ⇒ 该块永久脱离可用池
+            // （`merge_block` 的伙伴判定会一直失败、分配也拿不到它）。
+            // 只在异常时打印，稳态零代价。
+            if !self.in_freelist(index, power) {
+                static LOST: ::core::sync::atomic::AtomicUsize =
+                    ::core::sync::atomic::AtomicUsize::new(0);
+                let n = LOST.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
+                if n <= 8 {
+                    crate::putln!(
+                        "merge: pushed block NOT in chain idx={index} power={power} ({n})"
+                    );
+                }
+            }
         }
     }
 

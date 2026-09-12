@@ -27,6 +27,7 @@ use alloc::vec::Vec;
 
 use super::SpaceKind;
 use super::core::SpaceInner;
+use super::seg::Seg;
 use super::map::{Pending, PendingState};
 use super::salvage::{Salvage, Span};
 use crate::layout::TRAMPOLINE;
@@ -298,6 +299,18 @@ impl Space {
     /// `Span` 由 claim/allocate/mmap 产出（`release` 只收它——分配与回收同一
     /// 类型，杜绝 re-find）。失败域：`MapError::SegmentMismatch` = Span 与段状态
     /// 不一致（调用方 bug——绝大多数调用方用 `.expect()` 保留 panic 语义）。
+    ///
+    /// # 这是**唯一**的释放实现
+    ///
+    /// 内核里"释放一段"只有这一处拆装代码。此前 `HeapWindow::deallocate` 与
+    /// `ShareWindow::munmap` **各自复制了一遍**（`holds` 校验 + `unmap` +
+    /// `take_span` + `reclaim`，逐字同构），于是同一件事有三份实现、三套失败语义
+    /// ——而那正是"一份资源有两个归还者"的温床（本仓实测过：`Munmap` 能拆到用户
+    /// 堆页却**不注销账目**，因为 `ShareWindow::munmap` 与堆共用 `Seg::User`，
+    /// 见 `docs/allocator-diagnosis.md` §8）。
+    ///
+    /// 现在两个 window 都经 [`Self::release_addr`] 收敛到这里：**一个入口、
+    /// 一个失败域、一个注销点**。
     pub(crate) fn release(&self, span: Span) -> Result<(), MapError> {
         let mut salvage = Salvage::new();
         self.with_flush(|inner| {
@@ -310,8 +323,53 @@ impl Space {
             salvage.take_span(span);
             Ok(())
         })?;
+        // 3. **这里不销账**（曾经销过，是错的——本条是那次错误的墓志铭）。
+        //
+        // 用户堆页的账目键是 `(asid, 页索引)`，而账目的**主人**是
+        // `MemoryCall::Deallocate` 的臂（`envcall.rs` 的 `on_free`），它按
+        // `(key, size, Kind::UserHeap)` 精确注销；空间作废时则由 `Space::drop` 的
+        // `fence::retire(asid)` 整片收走。本条释放门夹在两者**之间**——走到这里时
+        // 那笔账**还是活的、且应当保持活着**，因为 `on_free` 正要读它来核
+        // `SizeMismatch`、canary 与种类。
+        //
+        // 上一轮我在这个位置加过 `retire_range`，理由是"任何拆掉一块用户区间的
+        // 路径都得销账"（当时怀疑 `Munmap` → `ShareWindow::munmap` 不销账）。那个
+        // 怀疑**不成立**：`Mmap`/`Munmap` 在用户态没有调用方，而唯一真在跑的路径
+        // 是堆的 `Deallocate`——于是这个"兜底"恰好打在**唯一真路径**上：先把记录
+        // 销掉，`on_free` 随后 `unmark` 便查无此账，`report(UnregisteredFree)`
+        // 是 `-> !`，**当场 panic 掉整机**。实测（`--features audit`）：
+        //
+        // ```text
+        // [audit] release retires 1 user-heap records @ 0x2d000+0x1000
+        // [integrity] UnregisteredFree at 0x60000000002d: unmark: no record
+        // ```
+        //
+        // 教训是这条：**"一个资源两个归还者"的解法不是再加一个归还者**，而是把
+        // 归还点收敛掉。此处已收敛（两个 window 都走本条），销账点则本来就只有一个。
         salvage.reclaim(self).expect("release: shootdown deaf");
         Ok(())
+    }
+
+    /// **地址形态**的释放门：把用户面送来的 `(addr, size)` 还原成 `Span` 后走
+    /// [`Self::release`]。
+    ///
+    /// # 为什么需要这一层
+    ///
+    /// 栈与 trap 帧的 Span 由内核自己持有（存进 `TaskIdent`），退场时直接
+    /// `release(span)`。但**堆与 mmap 是用户面**：`EnvCall::Memory::Deallocate`
+    /// 与 `Munmap` 只送来地址与长度，内核手上没有那块区域的身份，故必须由地址
+    /// 还原。
+    ///
+    /// 前置校验放在这里（而不是在两个 window 里各写一遍）：地址不对是**用户输入
+    /// 问题**，不是调用方 bug，所以回 `false`（"未登记"语义），而 `release` 的
+    /// `SegmentMismatch` 留给内核内部调用方（它们用 `.expect()`）。
+    ///
+    /// 返回：找到并释放 → `true`；该区间不是本段的已分配块 → `false`（状态未动）。
+    pub(crate) fn release_addr(&self, seg: Seg, addr: VirtAddr, size: usize) -> bool {
+        if !self.with_flush(|inner| inner.holds(seg, addr.as_usize(), size)) {
+            return false;
+        }
+        self.release(Span::new(seg, addr, size, None)).is_ok()
     }
 
     /// 懒页物化（缺页处理：分配零页装叶注入 + 刷 TLB）。

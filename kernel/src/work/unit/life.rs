@@ -46,6 +46,15 @@ impl Life {
         Arc::new(Life)
     }
 
+    /// 可失败的 [`Self::new`]：内存吃紧时返回 `Err`，而不是走 std 默认的
+    /// `handle_alloc_error`（那会 panic → 整机 halt）。任务装配路径用这个，
+    /// 好让「生不出任务」表现为一个返回码，而不是全机陪葬。
+    #[allow(dead_code)]
+    pub(crate) fn try_new() -> Result<Arc<Life>, crate::memory::manager::MapError> {
+        Arc::try_new_in(Life, alloc::alloc::Global)
+            .map_err(|_| crate::memory::manager::MapError::OutOfMemory)
+    }
+
     /// 活着吗：`Weak` 还能升级出强引用。资源侧的对外读法。
     pub(crate) fn live(w: &Weak<Life>) -> bool {
         w.strong_count() > 0

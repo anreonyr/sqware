@@ -397,6 +397,19 @@ impl TaskBuilder {
     pub fn hold(self) -> Result<Arc<Task>, MapError> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
+        // **先备好索引容量，再动帧**（顺序即「失败域最小」）：名册 / 就绪队列 /
+        // 域簿记这三张表都在装配尾部 `insert`/`push`，那时已无错误通道——它们一
+        // panic 就是整机 halt。故把唯一会分配的一步提到最前：容量不够就当场
+        // `Err(OutOfMemory)`，此时**一帧未领**，退回成本为零。
+        //
+        // 名册（`HashMap`，容量与键无关）、就绪队列、域簿记：各预留**一格**。
+        // 不按 `id` 预留——`id` 只增不减，按它预留会让开销随运行时长线性膨胀。
+        scheduler::core::try_reserve_roster().map_err(|()| MapError::OutOfMemory)?;
+        scheduler::core::try_reserve_starved(1).map_err(|()| MapError::OutOfMemory)?;
+        self.team
+            .try_reserve_task(1)
+            .map_err(|()| MapError::OutOfMemory)?;
+
         // 栈：StackWindow::claim 取 slot（user 段 + guard，立即物化；U 位随空间模式）
         let stack_size = self.stack;
         let stack_span = StackWindow::claim(&self.team.space, stack_size)?;
@@ -458,8 +471,13 @@ impl TaskBuilder {
         let alloc = crate::memory::allocator::fence::tagged_alloc(
             crate::memory::allocator::fence::Kind::Task,
         );
+        // **可失败装配**：这里的两笔 `Arc` 是任务自身的簿记，内存吃紧时旧版
+        // `Arc::new_in` 直接走 std 默认 `handle_alloc_error` → 内核 panic →
+        // 整机 halt（一个任务生不出来，全体陪葬）。改走 `try_new_in` 把失败
+        // 变成返回值；已领的栈/trap 帧按 `FrameWindow::claim` 失败时的同一套
+        // 回滚归还，从此这条路径的 OOM 与 `Spawn` 的其它失败同形（`-4 OoM`）。
         let ident: Arc<TaskIdent> = unsafe {
-            let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(
+            let ident = Arc::try_new_in(
                 TaskIdent {
                     id,
                     name: self.name,
@@ -468,21 +486,45 @@ impl TaskBuilder {
                     frame: frame_span,
                 },
                 alloc,
-            ));
+            )
+            .map_err(|_| {
+                // 回滚：两段都还回本域空间（顺序与占用相反，先帧后栈）。
+                self.team
+                    .space
+                    .release(frame_span)
+                    .expect("release: rollback");
+                self.team
+                    .space
+                    .release(stack_span)
+                    .expect("release: rollback");
+                MapError::OutOfMemory
+            })?;
+            let (ptr, _alloc) = Arc::into_raw_with_allocator(ident);
             Arc::from_raw(ptr)
         };
+        // `Life` 的可失败版本：失败时 `ident` 随作用域 drop（未入任何册子），
+        // 两段 Span 随之归还——故这里**不用闭包**捕获 `ident`。
+        let life = match Life::try_new() {
+            Ok(l) => l,
+            Err(_) => {
+                drop(ident);
+                return Err(MapError::OutOfMemory);
+            }
+        };
         let task: Arc<Task> = unsafe {
-            let (ptr, _alloc) = Arc::into_raw_with_allocator(Arc::new_in(
+            let task = Arc::try_new_in(
                 Task {
                     ident,
-                    life: Life::new(),
+                    life,
                     state: TaskState::Held,
                     tag: AtomicU8::new(TaskTag::Held as u8),
                     pies: SpinLock::new(Vec::new()),
                     heir: SpinLock::new(Vec::new()),
                 },
                 alloc,
-            ));
+            )
+            .map_err(|_| MapError::OutOfMemory)?;
+            let (ptr, _alloc) = Arc::into_raw_with_allocator(task);
             Arc::from_raw(ptr)
         };
         scheduler::core::enlist(id, &task);

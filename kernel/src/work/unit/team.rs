@@ -58,6 +58,21 @@ impl Team {
         self.tasks.lock().push(Arc::downgrade(task));
     }
 
+    /// 为即将入簿的成员**预留**一格（产生路径不分配）。
+    ///
+    /// # Errors
+    ///
+    /// 簿记无法扩容（内存耗尽）→ `Err(())`。
+    ///
+    /// 与名册 / 就绪队列的预留同旨：把会分配的一步提到装配之前，失败时干净退回
+    /// ——「生不出任务」应当是一个返回码，不是一次整机 halt。
+    pub(crate) fn try_reserve_task(&self, slot: usize) -> Result<(), ()> {
+        self.tasks
+            .lock()
+            .try_reserve(slot.saturating_add(1))
+            .map_err(|_| ())
+    }
+
     /// 清理簿记：摘除已退出线程与全部死条目。
     ///
     /// **不 upgrade**：弱引用提升会让存活条目的强计数瞬时 +1，与「强计数唯一

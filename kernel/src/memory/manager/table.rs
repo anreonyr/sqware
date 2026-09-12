@@ -94,12 +94,26 @@ impl PageTable {
         // Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）。
         // 类别 = Table：页表页（root 与 walk_mut 子表）——关机与内核根表 walk
         // 计数核对（audit::check_baseline ③）。
-        Ok(crate::tag!(Table, unsafe {
+        let page = crate::tag!(Table, unsafe {
             Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                 .map_err(|_| MapError::OutOfMemory)?
                 .assume_init()
-        }))
+        });
+        TABLE_LIVE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Ok(page)
     }
+}
+
+/// 活页表帧数（页表分配的净存量）——**泄漏探针**用。
+///
+/// 判据：`Space` 树随任务死亡递归 drop，故任务稳态下这个数应当**回到基线**；
+/// 单调上涨即「页表帧没随任务回收」，是 `Plain` 帧线性流失的头号嫌疑。
+pub(crate) static TABLE_LIVE: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// 活页表帧数（探针读数）。
+pub(crate) fn table_live() -> usize {
+    TABLE_LIVE.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 /// 页表所有权节点 — 硬件页 + 子树所有权（堆上，不进帧）。
@@ -113,6 +127,15 @@ impl PageTable {
 pub(crate) struct TableNode {
     pub(crate) page: Box<PageTable, &'static dyn Allocator>,
     children: Vec<(usize, TableNode)>,
+}
+
+impl Drop for TableNode {
+    /// 节点消亡 ⇒ 本节点的页表帧随 `Box<PageTable>` 归还帧池；探针计数同步减一。
+    /// **回收是递归的**（子树在 `children` 里，随本结构一并 drop），故这个数在
+    /// 任务稳态下必然回到基线——单调上涨即「页表帧没随任务回收」。
+    fn drop(&mut self) {
+        TABLE_LIVE.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl TableNode {

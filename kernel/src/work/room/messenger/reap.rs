@@ -137,6 +137,42 @@ fn bury() {
             .release(z.ident.frame)
             .expect("release: span mismatch");
         drop(z);
+        // ── 临时探针（判据立住即删）：每 200 笔回收读一次池水位 ──
+        //
+        // `walk` = freelist 走链（**待审计的旧判据**），`held` = pagemeta 说在手
+        // （真相，已由用户态 `calib` 闭环校准过：干净 alloc/free 循环 3000 遍
+        // 零漂移）。两个数在同一把锁下取，故可直接对质。**`held` 单调上涨 = 泄漏**，
+        // 与链的完整度无关。
+        {
+            use ::core::sync::atomic::{AtomicUsize, Ordering};
+            static REAPS: AtomicUsize = AtomicUsize::new(0);
+            let n = REAPS.fetch_add(1, Ordering::Relaxed) + 1;
+            if n % 200 == 0 {
+                let f = crate::memory::allocator::frame::heap();
+                let (walk, held, step) = f.watermark();
+                let meta = f.meta_free_frames();
+
+                // `walk`（走链）与 `meta`（只读 pagemeta 求和）是两条独立读法，
+                // **判据就在两者的差**：`meta ≫ walk` ⇒ 池子其实还有内存，是走链
+                // 看不见那些帧（实测 `walk=442 / meta=11963`）⇒ 所谓 OOM 是记账假象。
+                //
+                // 探针的代价是**实测出来的**，不是估的：本行 `walk+meta+held+step`
+                // 与基线持平（3.46 s vs 3.46 s），而曾经同在这条路上的
+                // `reachability()`（分配 `pagemeta.len()` 的位图 + 每桶最多走
+                // `pagemeta.len()` 步）把一次运行从 **3.5 s 拖到 60 s 超时**。
+                // 它现在只作为函数保留，供需要时**手动**调用，不再进热路径。
+                let (fr_net, bk_net) = crate::memory::allocator::frame::FrameAllocator::freelist_ledger();
+                let (taken, given) = crate::memory::allocator::frame::FrameAllocator::frame_ledger();
+                let live = (taken as i64) - (given as i64);
+                let (chk, bad, sample) = f.chain_meta_mismatch();
+                let (cn0, en0, ch0, ent0) = f.addr_sets(0);
+                let (fent, orph, _osample) = f.free_entry_orphans();
+                crate::putln!(
+                    "wm reap={n} walk={walk} meta={meta} held={held} step={step} frnet={fr_net} bknet={bk_net} live={live} cycles={} | chainblk={chk} mismatch={bad} sample={sample:?} | freeent={fent} orphan={orph} | p0chain={cn0} p0entry={en0} chain0={ch0:?} entry0={ent0:?}",
+                    crate::memory::allocator::frame::FrameAllocator::chain_cycle_count()
+                );
+            }
+        }
         // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
         // halt 的关机断言无滞留可验。
         conductor::exit();

@@ -103,7 +103,47 @@ impl SpaceInner {
     ///
     /// 段未就绪（user 未 dynamic）→ [`MapError::NoRegion`]；段空隙不足 →
     /// [`MapError::OutOfMemory`]。
+    ///
+    /// # 取段之后装配失败，善后**只有还段**（那条不变量的唯一出处）
+    ///
+    /// 本函数是"先占段、后装配"族（`map` / `borrow` / `claim` / `attach`）的第一步。
+    /// 装配族失败时，**maps 簿记已由它自己回滚干净**：
+    ///
+    /// - `map` / `borrow` 在 `push` 之前就拒（`NotAligned` / `AlreadyMapped` / 叶写
+    ///   失败）——没登记过，无事可撤；
+    /// - `claim` / `attach` 走 `install`，失败时 [`InstallGuard`] 按 `MapMode::Claim`
+    ///   清已装叶并摘整张 map（见本文件 `Drop` 分支）。
+    ///
+    /// 于是调用方在 `Err` 之后**只欠段一笔**，且这笔可以**当场**还（`deallocate`），
+    /// 不必绕 [`Salvage`] 的清退：此刻没有任何 PTE 落过，也就没有任何远核能持旧条目
+    /// ——"还段即 VA 可复用"这条危险的时序（见 [`Space::release`]）在此不成立。
+    ///
+    /// 所以每个现场都长这样，一字不改：
+    ///
+    /// ```ignore
+    /// let va = inner.allocate(seg, size)?;
+    /// if let Err(e) = inner.<装配>(va, ...) {
+    ///     inner.deallocate(seg, va.as_usize(), size);   // 唯一善后 = 还段
+    ///     return Err(e);
+    /// }
+    /// ```
+    ///
+    /// 这条规则此前没有出处，于是被五个现场各自推理了一遍，其中两处推错：
+    /// `StackWindow` 的 body 失败分支展开了整段 `unmap` + `Salvage` + `reclaim`
+    /// （那次 `unmap` 的料箱恒空、`reclaim` 恒早返回——纯多余），而
+    /// `PoleMeta::open_into` 一个字都没写（段永久泄漏）。写在这里，让后来者不必
+    /// 再推第三遍。
     pub(crate) fn allocate(&mut self, seg: Seg, size: usize) -> Result<VirtAddr, MapError> {
+        // **映射表的增长可失败**：取段之后必有一张新 `Map` 入 `self.maps`
+        // （`map` / `attach` / `borrow` / 各窗口的 claim 都在这条路上），而那次
+        // `Vec::push` 的扩容是 std 默认路径——内存吃紧即 `handle_alloc_error`
+        // → 整机 halt。在这里先把容量备足，失败就当场答 `OutOfMemory`
+        // （`Spawn` / 堆分配把它翻成 `-4` / `-1`），机器照旧活着。
+        //
+        // 放在取段**之前**：失败时段未被占用，调用方的回滚路径一个字都不用改。
+        self.maps
+            .try_reserve(1)
+            .map_err(|_| MapError::OutOfMemory)?;
         let base = match seg {
             Seg::User => self
                 .user
@@ -238,38 +278,63 @@ impl SpaceInner {
     /// 统一拆除 `[va, va+size)`：逐 map 清其相交且**真有 PTE** 的页（中间表随之
     /// 回收）→ **全覆盖**的 Map 整张摘除、**部分覆盖**的 Map 按洞分裂——摘下的帧
     /// 一律**交料箱**（`salvage`），清退到齐后才归还（远核可能仍持旧条目）。不碰段。
+    ///
+    /// # 拆除路径不分配（本函数的硬约束）
+    ///
+    /// 这是 `MemoryCall::Deallocate` 的必经之路——**释放不得依赖内存**。旧版
+    /// `mem::take` + 新建 `survivors` 每次调用都重建整张映射表：`Map` 恰 112 B，
+    /// 表涨到 512 条时 `grow_one` 那一步就是一次 **114688 B（28 页）** 的请求，
+    /// 而它落在内存已经吃紧的释放路径上——压垮内核的那次分配，是「释放」自己
+    /// 递上去的（`trace/churn6/console.log` 的实测现场）。
+    ///
+    /// 故改为**原地压实**：`retain_mut` 把存活映射就地左移、末尾截断，缓冲区
+    /// 自始至终是 `self.maps` 自己那一块；闭包内 `Vec::push` 只用于**拆分**新
+    /// 产出的右段（一条映射至多一个，常态零分配）。
     pub(crate) fn unmap(&mut self, va: VirtAddr, size: usize, salvage: &mut Salvage) {
         if size == 0 {
             return;
         }
         let end = va.as_usize().saturating_add(size);
-        let mut survivors: Vec<Map> = Vec::new();
-        for mut m in core::mem::take(&mut self.maps) {
+        // 被拆出的右段（`carve` 只在「洞在中间」时产出）：先存本地，遍历结束再
+        // 追加——`retain_mut` 期间不得再借 `self.maps`。
+        let mut rights: Vec<Map> = Vec::new();
+        let root = &mut self.root;
+        self.maps.retain_mut(|m| {
             let s = m.va.as_usize();
             let m_end = s.saturating_add(m.size.get());
             let lo = va.as_usize().max(s);
             let hi = end.min(m_end);
             if lo >= hi {
-                survivors.push(m); // 不相交
-                continue;
+                return true; // 不相交
             }
             let lo_pg = (lo - s) / PAGE_SIZE;
             let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
             // 清叶与摘 map 同一趟：拿着 map 才能问它哪些页有 PTE，顺序不可能写反。
-            let root = &mut self.root;
             m.runs(lo_pg, hi_pg, |rva, rsize| root.unmap(rva, rsize));
             if va.as_usize() <= s && end >= m_end {
-                salvage.take_map(m); // 全覆盖：整张摘除交料箱
-                continue;
+                // 全覆盖：整张摘除交料箱。`Map` 无 `Default`，用一个占位 Map 换出
+                // 真身（占位随即被 retain 截掉）——搬移而非重建。
+                let taken = core::mem::replace(
+                    m,
+                    Map::new(m.va, PAGE_SIZE, m.flags, m.pending, BTreeMap::new()),
+                );
+                salvage.take_map(taken);
+                return false;
             }
-            // 部分覆盖：挖洞分裂（洞内帧由 carve 交料箱）
-            let right = m.carve(lo_pg, hi_pg, salvage);
-            survivors.push(m); // 左段（carve 收缩 self）
-            if let Some(right) = right {
-                survivors.push(right);
+            // 部分覆盖：挖洞分裂（洞内帧由 carve 交料箱）。
+            match m.carve(lo_pg, hi_pg, salvage) {
+                Some(right) => {
+                    rights.push(right); // 右段：洞在中间
+                    true // 左段（carve 已收缩 m）
+                }
+                // `None` 有两种来源，必须分开——判据与 `carve` 内部分支逐一对应：
+                //   洞在头（`lo_pg == 0`）⇒ **本 map 已被重绕成右段**，无右段产出，
+                //                          故它仍是存活映射，保留；
+                //   洞在尾（`hi_pg == 页数`）⇒ 右段不存在，本 map（左段）保留。
+                None => lo_pg != 0,
             }
-        }
-        self.maps = survivors;
+        });
+        self.maps.append(&mut rights);
     }
 
     /// 只读校验：`(addr, size)` 是否为该段的一个已分配块（拆除路径的失败域

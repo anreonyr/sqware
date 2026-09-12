@@ -455,19 +455,32 @@ fn cascade(term: &Term) {
 /// 路径在本命令里一次都不会走到），故失败只可能来自内核侧（句柄/权限/内存），
 /// 不会与「父方不等了」混在一起。
 fn churn(term: &Term, rounds: usize, depth: usize, fan: usize) {
-    fn tree(depth: usize, fan: usize) -> Vec<usize> {
+    /// 递归生灭一棵任务树。**全程可失败**：`churn` 的用途就是把池子压到耗尽，
+    /// 而耗尽恰好发生在"产生任务"这一步；任何一处 `unit::closure`（失败即
+    /// `panic`）都会让整个 `shell` 进程退出、压测不给结论（实测
+    /// `exit tid=3434 reason=0xffffff01 note: task spawn failed: EnvError(-4)`）。
+    ///
+    /// 故这里每一层都用 `try_closure` 并把 `Spawn`/`Hatch` 的错**原样上抛**。
+    fn tree(depth: usize, fan: usize) -> Result<Vec<usize>, env::EnvError> {
         if depth == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let kids: Vec<_> = (0..fan)
-            .map(|_| unit::closure(move || tree(depth - 1, fan)))
-            .collect();
+        let mut kids = Vec::new();
+        for _ in 0..fan {
+            let j = unit::try_closure(move || tree(depth - 1, fan)).map_err(|e| e.source)?;
+            kids.push(j);
+        }
         let mut out = Vec::new();
         for k in kids {
-            out.extend(k.join());
+            // `join()` = `EnvResult<Vec<usize>>`（错误类型是 erra 包装的 `EnvError`）
+            // ——子任务里的失败经它原样上抛，不再伪装成"生出来了且很干净"。
+            match k.join() {
+                Ok(v) => out.extend(v),
+                Err(e) => return Err(env::EnvError::from_raw(e.code())),
+            }
         }
         out.push(depth);
-        out
+        Ok(out)
     }
 
     let t0 = clock().ok();
@@ -478,23 +491,37 @@ fn churn(term: &Term, rounds: usize, depth: usize, fan: usize) {
         // ——否则一次失败会伪装成「压过了、很干净」。
         // 闭包要 `'static`：两个量先按值抄进来（`dispatcher` 端 `fan` 随后还要用）。
         let (d, f) = (depth, fan);
-        let step = unit::try_closure(move || -> Result<(), (isize, usize)> {
+        // **外层 spawn 也要可失败**：`churn` 是拿来把池子压到耗尽的工具，而
+        // 「耗尽」恰好就发生在**产生任务**这一步。旧版这里用
+        // `.expect("churn: outer closure spawn failed")` —— 于是压测把自己压死：
+        // 一次 `Spawn` 拿不到帧 ⇒ 用户态 panic ⇒ 整个 `shell` 进程退出 ⇒
+        // 系统停机、而**压测没给出结论**（实测：`exit tid=3469 reason=0xffffff01
+        // note: task spawn failed: EnvError(-4)`，harness 只能干等到超时）。
+        //
+        // 内外层都走 `try_closure`，撞墙就**如实报告并正常收尾**：这是压测该有的
+        // 行为——它要观测的是"生不出来"，不是"自己也死了"。
+        let step = match unit::try_closure(move || -> Result<(), (isize, usize)> {
             let mut spawned = 0usize;
             for _ in 0..f {
                 match unit::try_closure(move || tree(d - 1, f)) {
                     Ok(j) => {
                         spawned += 1;
-                        let _ = j.join();
+                        // `join` 拿到的是子任务里的 `Result`——失败同样上抛，
+                        // 不再伪装成"生出来了且很干净"。
+                        if let Err(e) = j.join() {
+                            return Err((e.code(), spawned));
+                        }
                     }
                     Err(e) => {
-                        return Err((e.into_source().code(), spawned));
+                        return Err((e.source.code(), spawned));
                     }
                 }
             }
             Ok(())
-        })
-        .expect("churn: outer closure spawn failed")
-        .join();
+        }) {
+            Ok(j) => j.join(),
+            Err(e) => Err((e.source.code(), 0)),
+        };
         if let Err((code, spawned)) = step {
             term.writeline(&format!(
                 "churn: spawn failed with code {code} after {spawned}/{fan} at round {}",
@@ -518,6 +545,118 @@ fn churn(term: &Term, rounds: usize, depth: usize, fan: usize) {
     term.writeline(&format!(
         "churn: {rounds} rounds x depth {depth} x fan {fan} done in {ms} ms"
     ));
+}
+
+/// 静息时刻的一行读数：水位 + **逐类在册帧数**（`when` = `before` / `after`）。
+///
+/// 分类水位是判漏该用的表：只盯池总量，任何一类在漏都长一个样——我为此从总量
+/// 反推机制，编了三个错误结论。逐类看才能直接指到漏的是 `table` 还是 `stack`。
+fn idle_kinds(term: &Term, when: &str) -> (usize, usize) {
+    let mut buf = [0u8; 512];
+    let w = runtime::env::memory::watermark_kinds(&mut buf).unwrap_or((0, 0));
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    let kinds = core::str::from_utf8(&buf[..end]).unwrap_or("<non-utf8>");
+    term.writeline(&format!(
+        "idle-{when} held={} walk={} | {kinds}",
+        w.0, w.1
+    ));
+    w
+}
+
+/// 池水位**闭环校准**（`calib [rounds]` 命令）——先证读数可信，再拿它量泄漏。
+///
+/// # 为什么必须先校准
+///
+/// 先前所有泄漏结论都建立在「freelist 走链」这个读数上，而它与分配器自己的
+/// `pagemeta` 记账对不上（走链说"放进去了"、空闲数却在跌）。**没有可信读数，
+/// 一切速率都是编的**。
+///
+/// # 判据只有一条：净变化必须为 0
+///
+/// `alloc(1 页) → free(同一页)` 是**配平**的操作。重复 `rounds` 遍，只在首尾各
+/// 读一次水位：**净变化不为 0 就是漏**，漏的速率 = `Δ / rounds`。
+///
+/// 关键在**保持循环里没有别的东西**：不收集地址（`Vec` 自己会分配/扩容，那是
+/// 被测量对象不是测量工具）、不每轮打印（终端输出也走堆）。先前的版本每轮建
+/// 一个 `Vec` + 打一行，读数里混进了这两样——**先让循环干净，再谈池子**。
+///
+/// 两个地址轮流用（`a`、`b`），既避免"同一个地址反复 alloc/free"这种退化路径，
+/// 又不需要任何容器。
+fn calib(term: &Term, rounds: usize) {
+    const PAGE: usize = 4096;
+    let rounds = rounds.max(1);
+
+    let (w0_held, w0_walk) = runtime::env::memory::watermark().unwrap_or((0, 0));
+
+    // ── 预热：先跑几轮把懒物化（页表/窗口）打掉，免得混进下面的读数 ──
+    for _ in 0..200 {
+        if let Ok(a) = runtime::env::memory::allocate(PAGE) {
+            let _ = runtime::env::memory::deallocate(a, PAGE);
+        }
+    }
+
+    let (b0_held, b0_walk) = runtime::env::memory::watermark().unwrap_or((0, 0));
+    term.writeline(&format!(
+        "calib warmup 200x alloc+free: held {w0_held}->{b0_held} (Δ{}), walk {w0_walk}->{b0_walk} (Δ{})",
+        b0_held as i64 - w0_held as i64,
+        b0_walk as i64 - w0_walk as i64,
+    ));
+
+    // ── 干净循环：只有 alloc/free 本身 ──
+    let mut fails = 0usize;
+    for _ in 0..rounds {
+        match runtime::env::memory::allocate(PAGE) {
+            Ok(a) => {
+                if runtime::env::memory::deallocate(a, PAGE).is_err() {
+                    fails += 1;
+                }
+            }
+            Err(_) => fails += 1,
+        }
+    }
+
+    let (b1_held, b1_walk) = runtime::env::memory::watermark().unwrap_or((0, 0));
+    let d_held = b1_held as i64 - b0_held as i64;
+    term.writeline(&format!(
+        "calib clean rounds={rounds} fails={fails} held {b0_held}->{b1_held} (Δ{d_held}, per_round {}) walk {b0_walk}->{b1_walk} (Δ{})",
+        d_held / rounds as i64,
+        b1_walk as i64 - b0_walk as i64,
+    ));
+
+    // ── 对照：**一批** N 页一起分配再一起释放，问"残差是否随批次累加"──
+    //
+    // 这是与上面唯一的差别：干净循环在页与页之间把窗口腾空，批次不腾空。
+    // 若残差集中在头几批后归零 ⇒ 内核为**峰值并发**留下的常驻容量（不是漏）；
+    // 若每批都涨同样的量 ⇒ 真漏，且漏点与"同时在手页数"有关。
+    for keep in [8usize, 32, 64, 128] {
+        let (c0_held, _) = runtime::env::memory::watermark().unwrap_or((0, 0));
+        let mut line = format!("calib batch n={keep}");
+        for _pass in 1..=4u32 {
+            let (p0_held, _) = runtime::env::memory::watermark().unwrap_or((0, 0));
+            let mut addrs = Vec::new();
+            for _ in 0..keep {
+                if let Ok(a) = runtime::env::memory::allocate(PAGE) {
+                    addrs.push(a);
+                }
+            }
+            let (p1_held, _) = runtime::env::memory::watermark().unwrap_or((0, 0));
+            for a in addrs.drain(..) {
+                let _ = runtime::env::memory::deallocate(a, PAGE);
+            }
+            let (p2_held, _) = runtime::env::memory::watermark().unwrap_or((0, 0));
+            line.push_str(&format!(
+                " | allocΔ{} res{}",
+                p1_held as i64 - p0_held as i64,
+                p2_held as i64 - p0_held as i64,
+            ));
+        }
+        let (c1_held, _) = runtime::env::memory::watermark().unwrap_or((0, 0));
+        term.writeline(&format!(
+            "{line} | totalΔ{}",
+            c1_held as i64 - c0_held as i64
+        ));
+    }
+    term.writeline("calib done");
 }
 
 /// 资源寿命自检（`reclaim` 命令）。
@@ -1101,12 +1240,187 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
             cascade(term);
         }
         "churn" => {
-            // 任务生灭压测：`churn [rounds] [depth] [fan]`（默认 200 × 2 × 2）。
+            // 任务生灭压测：`churn [rounds] [depth] [fan] [rest]`（默认 200 × 2 × 2）。
+            // `rest` = 同一启动内**连跑 rest 遍**，每遍之间水位由内核探针打点。
+            // 为什么要连跑：判「漏」的唯一干净问题是**同一状态下重复同一操作，
+            // 静息水位是否上台阶**。跑一遍只能看到"涨了"，分不清是稳态占用还是
+            // 每遍新漏的——连跑两遍的差值就把这两者分开了。
             // `args` 已去掉命令词本身（见 `main`：`split` 后传的是 `&args[1..]`），故从 0 起。
             let n = args.first().and_then(|s| s.parse().ok()).unwrap_or(200);
             let d = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
             let f = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2);
-            churn(term, n, d, f);
+            let rest = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1);
+            for pass in 1..=rest {
+                // ── 静息水位：此刻**没有任何任务在飞**（上一遍已全部收尾）──
+                //
+                // 这是判"漏"唯一干净的采样点。在 churn **跑的过程中**采样读到的
+                // `held` 混着"当时活着的任务占的栈/页表"，那部分随并发波动，与
+                // 是否泄漏无关——我先前就是拿运行中的采样当"静息水位"，把并发占用
+                // 误读成了每遍新增的漏量。
+                //
+                // 同时取**逐类在册帧数**：只盯池总量，漏哪一类都长一个样；逐类看
+                // 才能直接指到是 `table` 还是 `stack` 在涨。
+                let before = idle_kinds(term, "before");
+                churn(term, n, d, f);
+                let after = idle_kinds(term, "after");
+                term.writeline(&format!(
+                    "churn pass {pass}/{rest} idle Δheld {} Δwalk {}",
+                    after.0 as i64 - before.0 as i64,
+                    after.1 as i64 - before.1 as i64,
+                ));
+            }
+        }
+        "carve" => {
+            // **最小自证**：证明"随后的页分配是从一个大空闲块里切出来的"，
+            // 即 `split_block` 会消费一块物理连续的大块。
+            //
+            // 判据：分配 N 页后，**最大相邻连续段**（按地址排序后跑一遍）若远大于
+            // 单页，则这些页来自同一大块的不同位置 —— 与"分配器总从固定基址首次
+            // 适配切出"一致。这解释了为何一次释放能把大块丢进幽灵态（§ 诊断文档）。
+            let n = args.first().and_then(|s| s.parse().ok()).unwrap_or(64usize);
+            let mut a: Vec<usize> = Vec::new();
+            for _ in 0..n {
+                match runtime::env::memory::allocate(4096) {
+                    Ok(x) => a.push(x),
+                    Err(_) => break,
+                }
+            }
+            a.sort_unstable();
+            let (mut best, mut run) = (1usize, 1usize);
+            for w in a.windows(2) {
+                if w[1] == w[0] + 4096 {
+                    run += 1;
+                    best = best.max(run);
+                } else {
+                    run = 1;
+                }
+            }
+            let lo = a.first().copied().unwrap_or(0);
+            let hi = a.last().copied().unwrap_or(0);
+            term.writeline(&format!(
+                "carve n={} lo={lo:#x} hi={hi:#x} span={:#x} max_run={best}",
+                a.len(),
+                hi.saturating_sub(lo)
+            ));
+            for x in a.drain(..) {
+                let _ = runtime::env::memory::deallocate(x, 4096);
+            }
+        }
+        "pagedrain" => {
+            // **只做 order-0 分配的抽取实验**（默认 4000 页）。
+            //
+            // 目的：`walk` 塌陷是否与 `split_block`（拆分大块）有关。本命令只逐页
+            // `allocate(4096)` 并一直持有，**从不请求大块** ⇒ 走不到多级拆分；再逐页
+            // 释放。若 `walk` 照样塌，则病灶与拆分无关；若 `walk` 保持，则病在拆分。
+            let n = args.first().and_then(|s| s.parse().ok()).unwrap_or(4000usize);
+            let mut addrs: Vec<usize> = Vec::new();
+            let (h0, w0) = runtime::env::memory::watermark().unwrap_or((0, 0));
+            // `live` = 累计分配 − 累计释放（帧数）。它若每轮精确回到基线，说明
+            // **每一页都走到了 `deallocate`**；那丢失就发生在 `deallocate` 内部。
+            let l0 = runtime::env::memory::live_frames().unwrap_or(0);
+            let mut fails = 0usize;
+            for _ in 0..n {
+                match runtime::env::memory::allocate(4096) {
+                    Ok(a) => addrs.push(a),
+                    Err(_) => {
+                        fails += 1;
+                        break;
+                    }
+                }
+            }
+            let (h1, w1) = runtime::env::memory::watermark().unwrap_or((0, 0));
+            term.writeline(&format!(
+                "pagedrain held {} pages fails={fails} | held {h0}->{h1} walk {w0}->{w1}",
+                addrs.len()
+            ));
+            // 逐页释放，并记录每一页释放后 `walk` 的**增量**。
+            //
+            // 判据：一次 `free` 之后 `walk` 应当增加该块的大小（合并还会更多）。
+            // 某一步增量为 0 或异常 ⇒ **丢帧就发生在这一步**，比猜机制直接。
+            // 释放**顺序**实验（判据仍是同一个：`walk` 净变化）：
+            //   · `fwd`（默认）升序；`rev` 降序；`even` 只放偶数下标（留洞）。
+            // 若 `rev` 能让 `walk` 恢复 ⇒ 合并依赖释放顺序；若都漏 ⇒ 是块状态问题。
+            let mode = args.get(1).cloned().unwrap_or_else(|| "fwd".into());
+            let trace = mode == "trace";
+            if mode == "rev" {
+                addrs.reverse();
+            } else if mode == "even" {
+                let evens: Vec<usize> = addrs.iter().step_by(2).copied().collect();
+                addrs = evens;
+            }
+            let mut zero_steps = 0usize;
+            let mut shown = 0usize;
+            let mut sum_delta: i64 = 0;
+            let mut wprev = w1;
+            for (i, a) in addrs.drain(..).enumerate() {
+                let _ = runtime::env::memory::deallocate(a, 4096);
+                let (_, wn) = runtime::env::memory::watermark().unwrap_or((0, 0));
+                let d = wn as i64 - wprev as i64;
+                sum_delta += d;
+                if d <= 0 {
+                    zero_steps += 1;
+                }
+                if trace && shown < 40 {
+                    term.writeline(&format!("  free#{i} {a:#x} walk_delta={d} walk={wn}"));
+                    shown += 1;
+                }
+                wprev = wn;
+            }
+            let (mb, mm, mc, mo) = runtime::env::memory::merge_census().unwrap_or((0, 0, 0, 0));
+            term.writeline(&format!(
+                "pagedrain deltas sum={sum_delta} zero_or_neg={zero_steps} | merge ok={mo} 拒: bound={mb} meta={mm} chain={mc}"
+            ));
+            // 拒绝的**逐 order 分布**：看主因（chain 拒）集中在哪个 power。
+            let mut line = alloc::string::String::new();
+            for p in 0..8usize {
+                let (rm, rc) = runtime::env::memory::reject_by_power(p).unwrap_or((0, 0));
+                let _ = core::fmt::Write::write_fmt(&mut line, format_args!(" p{p}:m{rm}/c{rc}"));
+            }
+            term.writeline(&format!("pagedrain reject by power{line}"));
+            let (h2, w2) = runtime::env::memory::watermark().unwrap_or((0, 0));
+            let l2 = runtime::env::memory::live_frames().unwrap_or(0);
+            // 逐 order 的 `pagemeta空闲块首/链上块数`：看那几百帧是从哪个 order 掉的。
+            let mut kbuf = [0u8; 512];
+            let _ = runtime::env::memory::watermark_kinds(&mut kbuf);
+            let kend = kbuf.iter().position(|b| *b == 0).unwrap_or(kbuf.len());
+            let kinds = core::str::from_utf8(&kbuf[..kend]).unwrap_or("");
+            term.writeline(&format!(
+                "pagedrain freed | held ->{h2} walk ->{w2} live {l0}->{l2} | {kinds}"
+            ));
+        }
+        "bigalloc" => {
+            // **行为判据**：一次性请求 N 页（默认 2048 页 = 8 MiB）。
+            //
+            // 用途：`walk`（freelist 走链）与 `meta`（pagemeta 求和）长期背离，
+            // 一个说池子空了、一个说还有一万多帧。读数之间争不出结果，就用**行为**
+            // 定论：静息时刻请求一大块 —— 成功 ⇒ `walk` 在少算、池子还有内存；
+            // 失败 ⇒ 池子真的空了。
+            let n = args.first().and_then(|s| s.parse().ok()).unwrap_or(2048usize);
+            let bytes = n * 4096;
+            let (held0, walk0) = runtime::env::memory::watermark().unwrap_or((0, 0));
+            let r = runtime::env::memory::allocate(bytes);
+            let (held1, walk1) = runtime::env::memory::watermark().unwrap_or((0, 0));
+            match r {
+                Ok(a) => {
+                    term.writeline(&format!(
+                        "bigalloc {n}p OK at {a:#x} | held {held0}->{held1} walk {walk0}->{walk1}"
+                    ));
+                    let _ = runtime::env::memory::deallocate(a, bytes);
+                    let (held2, walk2) =
+                        runtime::env::memory::watermark().unwrap_or((0, 0));
+                    term.writeline(&format!(
+                        "bigalloc freed | held ->{held2} walk ->{walk2}"
+                    ));
+                }
+                Err(e) => term.writeline(&format!(
+                    "bigalloc {n}p FAILED {e:?} | held={held0} walk={walk0}"
+                )),
+            }
+        }
+        "calib" => {
+            // **闭环校准**：先证明读数可信，再拿它量泄漏。
+            let n = args.first().and_then(|s| s.parse().ok()).unwrap_or(200);
+            calib(term, n);
         }
         "reclaim" => {
             reclaim(term);

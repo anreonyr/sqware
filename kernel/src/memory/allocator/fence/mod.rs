@@ -404,6 +404,24 @@ pub(crate) fn key(asid: usize, va: usize) -> usize {
 ///
 /// 调用点：`Space::drop`，须先于 ASID 归还（asid 一旦复用，键即换主）。
 #[inline]
+/// **按 VA 范围**注销用户堆账：挂在唯一的释放入口 [`Space::release`] 上
+/// （`crate::work::unit::space::adapter`）。
+///
+/// 默认档是空函数（账本只在 `--features audit` 存在）——调用点不必分档。
+pub(crate) fn retire_range(asid: usize, va: usize, size: usize) {
+    #[cfg(feature = "audit")]
+    {
+        let n = ledger::LEDGER.retire_range(asid, va, size);
+        if n > 0 {
+            crate::putln!("[audit] release retires {n} user-heap records @ {va:#x}+{size:#x}");
+        }
+    }
+    #[cfg(not(feature = "audit"))]
+    {
+        let _ = (asid, va, size);
+    }
+}
+
 pub(crate) fn retire(asid: usize) {
     #[cfg(feature = "audit")]
     {

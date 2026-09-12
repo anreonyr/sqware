@@ -149,12 +149,19 @@ impl PoleMeta {
         let va = space
             .with_flush(|inner| {
                 let va = inner.allocate(Seg::User, self.bytes)?;
-                inner.borrow(
+                // 装配失败 ⇒ 只剩段要还（`SpaceInner::allocate` 那条不变量的现场）：
+                // `borrow` 在登记之前就拒，maps 干净；此刻一片 PTE 未落，故还段
+                // 不必等清退，当场还即可。此前这里用 `?` 直返——**段永久泄漏**，
+                // 且被 `GateError::OoM` 掩成"物理内存不够"。
+                if let Err(e) = inner.borrow(
                     va,
                     PhysAddr::from_raw(self.base.as_ptr() as usize),
                     self.bytes,
                     flags,
-                )?;
+                ) {
+                    inner.deallocate(Seg::User, va.as_usize(), self.bytes);
+                    return Err(e);
+                }
                 Ok::<_, MapError>(va)
             })
             .map_err(|_| GateError::OoM)?;

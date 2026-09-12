@@ -10,7 +10,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
 use super::super::map::Pending;
-use super::super::salvage::{Salvage, Span};
+use super::super::salvage::Span;
 use super::super::{Seg, Space};
 
 /// 共享懒窗口（零状态策略）。
@@ -47,22 +47,18 @@ impl ShareWindow {
     /// 找到并释放。
     ///
     /// **懒区只有已触页有 PTE/帧**：PTE 清理按已物化帧数逐页走（O(触页数)，
-    /// 非 O(段大小)）——1 TiB 级区域不可逐页扫全段。
+    /// 非 O(段大小)）——1 TiB 级区域不可逐页扫全段。这一步在 `Space::unmap` 内部
+    /// 由 map 的 `is_materialized` 决定，与下面这条收敛无关。
+    ///
+    /// # 本方法不再自己拆装
+    ///
+    /// 与 `HeapWindow::deallocate` 一样，此前它把 `Space::release` 的整段流程
+    /// （`holds` + `unmap` + `take_span` + `reclaim`）复制了一遍，逐字同构——
+    /// 同一件事三份实现、三套失败语义。收敛后只剩一层：校验与还原走
+    /// [`Space::release_addr`]，拆装与结清只有 `Space::release` 一处。
+    ///
+    /// 语义不变：该区间不是本段的已分配块 → `false`（状态未动）。
     pub(crate) fn munmap(space: &Space, addr: VirtAddr, size: usize) -> bool {
-        let mut salvage = Salvage::new();
-        let found = space.with_flush(|inner| {
-            // 1. 只读校验（未分配 → false，状态未动）
-            if !inner.holds(Seg::User, addr.as_usize(), size) {
-                return false;
-            }
-            // 2. 统一拆除（清叶先于摘 map；帧与段一并入箱）
-            inner.unmap(addr, size, &mut salvage);
-            salvage.take_span(Span::new(Seg::User, addr, size, None));
-            true
-        });
-        if found {
-            salvage.reclaim(space).expect("munmap: evict deaf");
-        }
-        found
+        space.release_addr(Seg::User, addr, size)
     }
 }

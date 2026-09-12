@@ -97,7 +97,8 @@ pub(crate) enum End {
     Retire,
 }
 
-#[cfg(feature = "audit")]
+/// 全部种类（次序 = 编码次序）——**不分档**：编码次序是常量事实，探针与报表
+/// 都要它；门在 audit 后面只会逼出一个平行的字符串表（两张表必然漂移）。
 impl Kind {
     /// 全部种类（次序 = 编码次序）。
     pub(crate) const ALL: [Kind; KIND_COUNT] = [
@@ -118,6 +119,30 @@ impl Kind {
         Kind::UserHeap,
     ];
 
+    /// 报表用名（小写单词，需要时以 `-` 连接——与登记名同形）。
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Kind::Plain => "plain",
+            Kind::Trap => "trap",
+            Kind::Lazy => "lazy",
+            Kind::Heap => "heap",
+            Kind::Stack => "stack",
+            Kind::Image => "image",
+            Kind::Ring => "ring",
+            Kind::Table => "table",
+            Kind::TrapStack => "trap-stack",
+            Kind::HartFrame => "hart-frame",
+            Kind::Spare => "spare",
+            Kind::Prime => "prime",
+            Kind::Probe => "probe",
+            Kind::Task => "task",
+            Kind::UserHeap => "user-heap",
+        }
+    }
+}
+
+#[cfg(feature = "audit")]
+impl Kind {
     /// 记进哪张表；`None` = 未标注（两侧都可能有）。
     pub(crate) fn side(self) -> Option<Side> {
         match self {
@@ -172,26 +197,6 @@ impl Kind {
         self.keys() == Keys::Addr && self.side() != Some(Side::Frame)
     }
 
-    /// 报表用名（小写单词，需要时以 `-` 连接——与登记名同形）。
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Kind::Plain => "plain",
-            Kind::Trap => "trap",
-            Kind::Lazy => "lazy",
-            Kind::Heap => "heap",
-            Kind::Stack => "stack",
-            Kind::Image => "image",
-            Kind::Ring => "ring",
-            Kind::Table => "table",
-            Kind::TrapStack => "trap-stack",
-            Kind::HartFrame => "hart-frame",
-            Kind::Spare => "spare",
-            Kind::Prime => "prime",
-            Kind::Probe => "probe",
-            Kind::Task => "task",
-            Kind::UserHeap => "user-heap",
-        }
-    }
 }
 
 impl Kind {
