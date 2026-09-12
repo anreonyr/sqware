@@ -77,7 +77,7 @@ pub(crate) fn arm(root: &Arc<Task>) {
 /// `Reaped` 在 `reap` 开头就置位、此后**恒真** ⇒ 它给出的窗口正好覆盖整段收尾。
 ///
 /// 未注入 ⇒ 不发声；已析构（`upgrade` 失败）⇒ 会话当然早就结束了。
-fn shutting_down() -> bool {
+pub(super) fn shutting_down() -> bool {
     let id = ROOT_ID.load(Ordering::Relaxed);
     if id == 0 {
         return false;

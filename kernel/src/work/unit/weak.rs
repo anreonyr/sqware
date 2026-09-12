@@ -235,6 +235,74 @@ fn record(site: Site, alive: usize) -> usize {
     0
 }
 
+// ── 挂起自检：跨挂起的"抄件" ────────────────────────────
+
+/// 挂起点上**还活着的"抄件"**枚数（累计，>0 即违例）。
+static HELD_OUT: AtomicUsize = AtomicUsize::new(0);
+/// 头几次违例的出身（打印用；上限 4，避免把挂起热路径变成刷屏源）。
+static HELD_OUT_SITE: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+
+/// **挂起前自检**：本核此刻还活着、且出身是**抄件**的弱引用有几枚 —— 它们只可能活在
+/// **本核当前还压着的栈帧**里（抄件不落任何容器；已经返回的帧里的抄件早就析构了）。
+///
+/// 为什么这条判据是"总是可判"的：它不依赖偶发。`block` 每次挂起都问一次，问的是
+/// **当下这个核的栈**；正常实现下答案恒为 0（要挂起的任务已把它的强引用交进队列、
+/// 把弱引用交进站点）。答案非 0 就说明有一条**引用被留在调用链的局部量里跨过了挂起**
+/// —— 而这条链一旦被弃（被别核判死 / 收尾时就地冻住），那个局部量的 `Drop` 永不执行：
+/// `Arc` 会把整棵团队/空间钉住，`Weak` 会把 `ArcInner` 外壳钉住（`leak: task 1`，
+/// `strong 0 weak 1` —— 关机审计那条的由来）。
+///
+/// 与 `block` 头注里那条既有纪律（"跨挂起不得持强引用"）是**同一条**，这里把它
+/// 从"实现者记得"升级成"每次挂起都自检"，并且把**弱引用**也纳进来：弱引用不钉住
+/// 载荷、但钉住外壳，而外壳照样是一笔还不掉的账。
+#[cfg(feature = "audit")]
+pub(crate) fn check_block_heldout() {
+    let me = crate::machine::hart_id();
+    let mut n = 0usize;
+    for i in 0..SLOTS {
+        if SLOT_ID[i].load(Relaxed) == 0 {
+            continue;
+        }
+        let meta = SLOT_META[i].load(Relaxed);
+        let site = ALL[meta & 0xff];
+        // "抄件" = 不落容器的两种出身（`Muster` 抄出即用 / `Snapshot` 快照）。
+        if !matches!(site, Site::Muster | Site::Snapshot) || (meta >> 8) != me {
+            continue;
+        }
+        n += 1;
+        let k = HELD_OUT.fetch_add(1, Relaxed);
+        let _ = k;
+        if n <= 4 {
+            let slot = HELD_OUT_SITE.iter().position(|x| x.load(Relaxed) == 0);
+            if let Some(slot) = slot {
+                HELD_OUT_SITE[slot].store(site.ix() + 1, Relaxed);
+            }
+        }
+    }
+}
+
+/// 挂起自检的关机判词（`report` 里打）。
+#[cfg(feature = "audit")]
+fn held_out_line() {
+    let n = HELD_OUT.load(Relaxed);
+    if n == 0 {
+        crate::putln!("[audit] 挂起自检：每次挂起时本核栈上都没有抄件（跨挂起的引用 = 0）");
+        return;
+    }
+    let mut who = alloc::string::String::new();
+    for x in HELD_OUT_SITE.iter() {
+        let v = x.load(Relaxed);
+        if v != 0 {
+            who.push_str(ALL[v - 1].name());
+            who.push(' ');
+        }
+    }
+    crate::putln!(
+        "[audit] 挂起自检：**{n} 次挂起时本核栈上仍有抄件**（出身：{who}）—— \
+         这些引用跨过了挂起，帧被弃则计数永不回落（`leak: task 1` 的由来）"
+    );
+}
+
 // ── 观测面（只读；audit 档） ─────────────────────────────
 
 /// 打印生/亡账与存活清单。**只在关机钩子里调**（那一刻没有别的东西在动，读到的
@@ -322,4 +390,5 @@ pub(crate) fn report() {
     if lost > 0 {
         crate::putln!("[audit]   槽位不足：{lost} 枚没记下出身（生/亡计数不受影响）");
     }
+    held_out_line();
 }

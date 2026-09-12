@@ -256,20 +256,30 @@ impl Task {
     /// （放行只发生一次，不静默）。
     pub(crate) fn release(task: &Arc<Task>) -> Result<(), GateError> {
         let team = task.ident.team.clone();
-        match team.take_held() {
-            Some(held) if Arc::ptr_eq(&held, task) => {}
-            other => {
-                // 不是引导线程（或已被摘出）：放回去，报 Denied。
-                if let Some(t) = other {
-                    team.hold(&t);
-                }
-                return Err(GateError::Denied);
-            }
+        if !team.release_held(task) {
+            // 不在未放行表里（已放行过 / 已被他杀摘走）⇒ 报 Denied，**不动别人的**。
+            return Err(GateError::Denied);
         }
         let mut t = task.clone();
         Task::exclusive(&mut t).transform(TaskState::Starved);
         scheduler::core::launch(t);
         Ok(())
+    }
+
+    /// **离开计数**：外壳被放掉时若**没走过 `reap`**，补上那一笔退出账。
+    ///
+    /// 为什么要它：停机判据是 `REAPED == PUSHED`（`conductor::done`），而"一个任务消失"
+    /// 的路径**不止** `reap → bury` 一条 —— 未放行的引导线程被并发 `Spawn` 覆盖、
+    /// 被判死后外壳先掉、级联摘下的空壳……都到不了 `bury`。少一笔，全机就在空闲里
+    /// 等到天荒地老（实测：32 M、`churn 16 4 4` 稳定卡死，信标报 `PUSHED=66
+    /// REAPED=62`，四个核全睡在 WFI、永不 `system halted`）。
+    ///
+    /// 判据用 `tag() != Reaped`：正规路径（`bury` 已计过一笔）**恒为 `Reaped`**，
+    /// 故这里不会重复计数；其余形态都还没记过账。
+    fn count_vanished(&self) {
+        if self.tag() != TaskTag::Reaped {
+            crate::work::room::conductor::exit();
+        }
     }
 
     /// 记我生的子域（强持有）。由 `TeamBuilder::spawn` 调用——**唯一入口**
@@ -541,5 +551,11 @@ impl TaskBuilder {
         let task = self.hold()?;
         Task::release(&task).expect("freshly held task must release");
         Ok(task)
+    }
+}
+
+impl Drop for Task {
+    fn drop(&mut self) {
+        self.count_vanished();
     }
 }

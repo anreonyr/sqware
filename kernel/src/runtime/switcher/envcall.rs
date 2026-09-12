@@ -291,7 +291,8 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Duration::from_millis(millis as u64)
             };
             drop(ident);
-            match wait(wkey, &wlife, dur) {
+            // `wlife` **按值**交给等待机（站点是它唯一的持有者）。
+            match wait(wkey, wlife, dur) {
                 // `RoomCall::Wait` 没有当场结论：未离核即续跑。
                 Handoff::Resume(()) => {}
                 Handoff::Switch(pa) => return pa as *mut TrapContext,
@@ -551,6 +552,13 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             let Some(target) = muster(task.get()) else {
                 return ret_err(frame, GateError::Denied);
             };
+            // **挂起前放掉那枚抄件**（`muster` 抄出来的弱引用）：`target` 只用来当场判活
+            // 与取 `(reaped, life)`，此后它就是一具"跨挂起还压在栈上"的引用 —— 而
+            // `messenger::join` 会挂起本任务。这条链一旦被别核判死（或被收尾就地冻住），
+            // `target` 的 `Drop` 永不执行：目标任务的 `ArcInner` 外壳（152 B）被一枚
+            // **永远活着**的弱引用扣住 ⇒ 关机审计 `leak: task 1`（`strong 0 weak 1`）。
+            // 与上面那行 `drop(ident)` 是同一条纪律（见 `dispatch` 头注）；弱引用同样
+            // 算"引用"，只是它钉住的是外壳而不是载荷。
             let (reaped, life) = match target.upgrade() {
                 Some(t) => {
                     let same = Arc::ptr_eq(&t.ident.team, &ident.team);
@@ -568,6 +576,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // 挂起后恢复读到的 a0 = 挂起前预置值 ⇒ 预置 0（未回收）；当场判定再改写
             frame.gpr.set_x(Gprs::A0, 0);
             drop(ident);
+            drop(target);
             match messenger::join(
                 TaskLife {
                     id: task.get(),

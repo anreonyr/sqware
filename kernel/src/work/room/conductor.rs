@@ -56,7 +56,11 @@ pub(crate) fn push() {
 }
 
 /// 任务回收计数 +1（REAPED）。
-pub(super) fn exit() {
+///
+/// `pub(crate)`：正规路径是 `messenger::bury`（每个躯壳一笔），但**"任务消失"不止
+/// 那一条路** —— 外壳被放掉而没走过 `reap` 的形态（未放行的引导线程、被判死后先掉的
+/// 壳……）由 `Task::drop` 补账，否则 `done()` 恒假、全机再也停不下来。
+pub(crate) fn exit() {
     REAPED.fetch_add(1, Ordering::Relaxed);
 }
 

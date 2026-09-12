@@ -39,9 +39,15 @@ pub struct Team {
     pub(crate) tasks: SpinLock<Vec<TaskWeak>>,
     /// 域名字（程序身份；诊断用）。`Build` 时定型，不可改。
     pub(crate) name: Name,
-    /// 引导线程（**未放行**，`Held`）——`Option` 把「至多一个」做成类型义务。
-    /// `spawn` 填入、`Hatch` 摘出、`kill` 摘出。
-    pub(crate) held: SpinLock<Option<Arc<Task>>>,
+    /// 未放行的引导线程（`Held`）——`spawn` 填入、`Hatch` 摘出、`kill` 摘出。
+    ///
+    /// **不是"至多一个"**（曾经是 `Option<Arc<Task>>`）：`Spawn` 可以来自**同域的任何
+    /// 线程**，两个线程各自 `Spawn`→`Hatch` 时，单槽会被后一个 `Spawn` **覆盖**——
+    /// 被覆盖的那个任务外壳当场掉、`Hatch` 拿不到它只能答 `Denied(-1)`，而它的
+    /// `PUSHED` 已经记过、`REAPED` 永远不会记 ⇒ `done()` 恒假 ⇒ **全机在空闲里再也
+    /// 停不下来**（实测：32 M、`churn 16 4 4` 稳定卡死，信标报 `PUSHED=66 REAPED=62`）。
+    /// 故这里是**一张表**，摘除按身份（`Arc::ptr_eq`）而不是"拿走那一个"。
+    pub(crate) held: SpinLock<Vec<Arc<Task>>>,
     /// 本域全局唯一标识（0 = 无效哨兵）。纯身份标识：诊断 + heir 内匹配，不承担
     /// 全局反查（授权走父 task 的 `heir` 表）。
     pub(crate) id: TeamId,
@@ -113,14 +119,6 @@ impl Team {
         )
     }
 
-    /// `held`（未放行引导线程，**强引用**）里那枚还在不在。
-    pub(crate) fn held_live(&self) -> bool {
-        self.held
-            .lock()
-            .as_ref()
-            .is_some_and(|t| Arc::strong_count(t) > 0)
-    }
-
     /// `sire`（建域者的弱引用）是否还指着活对象（空 `Weak` 恒 false）。
     pub(crate) fn sire_live(&self) -> bool {
         self.sire.strong_count() > 0
@@ -157,14 +155,29 @@ impl Team {
         TaskBuilder::new(self.clone())
     }
 
-    /// 记下引导线程（未放行）。`Spawn` 产 Held 时调用。
+    /// 记下引导线程（未放行）。`Spawn` 产 Held 时调用。**追加**，不覆盖。
     pub(crate) fn hold(&self, task: &Arc<Task>) {
-        *self.held.lock() = Some(task.clone());
+        self.held.lock().push(task.clone());
     }
 
-    /// 摘出引导线程（`Hatch` / `kill` 用）；空则 None。
-    pub(crate) fn take_held(&self) -> Option<Arc<Task>> {
-        self.held.lock().take()
+    /// **按身份**摘出引导线程（`Hatch` / `kill` 用）：摘到返回 true。
+    ///
+    /// 前置即"是不是它"：调用方拿着的 `Arc` 与表里的逐址比较，故**别人放行过的
+    /// 不会被我摘走**（旧版"拿走唯一那一个、不是它再放回去"的舞蹈在并发下必然出错）。
+    pub(crate) fn release_held(&self, task: &Arc<Task>) -> bool {
+        let mut g = self.held.lock();
+        match g.iter().position(|t| Arc::ptr_eq(t, task)) {
+            Some(i) => {
+                g.swap_remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 未放行线程里还有活的吗（关机普查用）。
+    pub(crate) fn held_live(&self) -> bool {
+        self.held.lock().iter().any(|t| Arc::strong_count(t) > 0)
     }
 
     /// 域名字（诊断）。
@@ -227,7 +240,7 @@ impl TeamBuilder {
             space: Arc::new(self.space),
             tasks: SpinLock::new_level(Level::L3, Vec::new()),
             name: self.name,
-            held: SpinLock::new_level(Level::L3, None),
+            held: SpinLock::new_level(Level::L3, Vec::new()),
             id,
             sire: self.sire,
             default_entry: OnceLock::new(),
@@ -323,7 +336,7 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
             space,
             tasks: SpinLock::new_level(Level::L3, Vec::new()),
             name: Name::new("kernel").expect("kernel team name"),
-            held: SpinLock::new_level(Level::L3, None),
+            held: SpinLock::new_level(Level::L3, Vec::new()),
             id,
             sire: TaskWeak::empty(),
             default_entry: OnceLock::new(),

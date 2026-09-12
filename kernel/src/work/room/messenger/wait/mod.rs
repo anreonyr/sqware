@@ -42,7 +42,7 @@ use super::handoff::Handoff;
 /// 任何清理机制——`Blocked` 只在 push 那一支被写，状态仍与容器一致。
 ///
 /// 锁纪律：站点表与票根都是 L3，**绝不互相嵌套**——「作用域内取、作用域外用」。
-fn block(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()> {
+fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
     // ① 信标先探
     if take_beacon(key) {
         return Handoff::Resume(());
@@ -65,11 +65,16 @@ fn block(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()> {
     Task::exclusive(&mut task).transform(TaskState::Blocked { key, ticket });
     let queued = {
         let mut sites = sites(key).lock();
-        let site = sites.entry(key).or_insert_with(|| Site::new(life));
+        let site = sites.entry(key).or_insert_with(|| Site::new(&life));
         // 站点带着**本键**的存活单元：同一个键只有一份 Life，故这枚弱引用与入口
         // 无关（wait / join 指同一个分配），赋值不是「换主」而是「同一事实的重写」。
-        site.life = life.clone();
-        let queued = if Life::dead(life) {
+        //
+        // **按值移进站点**（不是 `clone()`）：这一行之后，本帧与调用链上再没有这枚
+        // 弱引用的副本。跨挂起的引用只要还在某个局部量里，那条链一旦被弃（被别核判死 /
+        // 收尾时就地冻住）它的 `Drop` 就永不执行 —— `block` 头注里那条"跨挂起不得持
+        // 强引用"的纪律，对**弱引用**同样成立（弱引用不钉载荷、钉的是外壳）。
+        site.life = life;
+        let queued = if Life::dead(&site.life) {
             // 键已死（资源没了）：不入队、也不留站点——死键的队列必然空（能入队 ⇒
             // 入队那一刻键还活着），故下面的 `prune` 会当场把这个空壳删掉。
             // 与「信标已至」同一支收尾（⑤ 的 `void` + `rise`）：两支的对外结论都是
@@ -101,6 +106,10 @@ fn block(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()> {
         void(ticket);
         rise(core::iter::once(task));
     }
+    // **挂起前自检**（audit）：此刻本核栈上不该还压着任何"抄件"弱引用 —— 压着就说明
+    // 有引用跨过了挂起，而这条调用链一旦被弃，它的 `Drop` 永不执行（见 `weak`）。
+    #[cfg(feature = "audit")]
+    crate::work::unit::weak::check_block_heldout();
     // 本核无后继即就地取活：`run()` 只会循环到有帧或停机，故落点恒为 `Switch`。
     Handoff::Switch(next_pa.unwrap_or_else(run))
 }
@@ -146,7 +155,7 @@ pub fn park(duration: Duration) -> usize {
     }));
     let life = task.life();
     drop(task);
-    match block(WakeKey::Alarm { task: me }, &life, duration) {
+    match block(WakeKey::Alarm { task: me }, life, duration) {
         Handoff::Switch(pa) => pa,
         // `Alarm` 无投信方，且键的强持有者就是我（我还在跑）⇒ 信标先探不可能命中、
         // 键也不可能已死。
@@ -156,7 +165,7 @@ pub fn park(duration: Duration) -> usize {
 
 /// 事件等待（`RoomCall::Wait`）：直通 [`block`]。有投信方的键，信标先探可能命中
 /// 而当场续跑（[`Handoff::Resume`]）；键已死则 ④ 的锁内判死把它当场放回。
-pub fn wait(key: WakeKey, life: &Weak<Life>, dur: Duration) -> Handoff<()> {
+pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
     block(key, life, dur)
 }
 
@@ -189,7 +198,10 @@ pub fn join(task: TaskLife, reaped: bool, dur: Duration) -> Handoff<bool> {
     if dur == Duration::ZERO {
         return Handoff::Resume(false);
     }
-    match block(WakeKey::Task { id: task.id }, &task.life, dur) {
+    // 拆壳（`TaskLife` 是"一对"）后**按值移交**存活单元：挂起期间站点是它唯一的
+    // 持有者，`join` 这一帧里不留副本（理由同 `block` 头注的"跨挂起不得持强引用"）。
+    let TaskLife { id, life } = task;
+    match block(WakeKey::Task { id }, life, dur) {
         Handoff::Switch(pa) => Handoff::Switch(pa),
         // 信标已置：目标在「判死 → 入队」的窗口内被回收 ⇒ 当场结论（已回收）。
         Handoff::Resume(()) => Handoff::Resume(true),

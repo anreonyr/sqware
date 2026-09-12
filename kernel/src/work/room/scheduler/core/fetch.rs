@@ -23,6 +23,10 @@ use super::table::{current, schedulers};
 /// WFI 休眠的推远增量：无待唤醒 tock 时 arm 到「永远」。
 const WFI_FAR: u64 = 1 << 60;
 
+/// 收尾期的 WFI 拍长（**ticks 与 timebase 同频**：QEMU virt 上 10 MHz ⇒ 25 ms）。
+/// 25 ms 足以让"停滞 ≥2 s"那条判据拿到足够采样点，又不至于把空闲核变成忙等。
+const BEACON_TICK: u64 = 250_000;
+
 /// 取活：本核队首 → 全退出 → 跨核偷 → 睡下等。返回下一帧 PA（永不返回 None：
 /// 全退出时走 `conductor::halt`）。
 pub(in super::super) fn fetch() -> usize {
@@ -112,9 +116,23 @@ fn wait() -> Option<Arc<Task>> {
         // "还差谁"的证据；判据是**时间**（收尾毫无进展 ≥2 s），故正常收尾不会误报。
         crate::work::room::scheduler::core::beacon::idle(me);
 
+        // WFI 的拍长：有到点登记就睡到最近那一拍；**否则**——收尾期（根任务已
+        // `Reaped`/`Doomed`/已消失）最多睡 `BEACON_TICK`，正常期才睡到"永远"。
+        //
+        // 为什么收尾期非要有界：信标只在**本循环顶部**发声，而 `WFI_FAR` 会让核
+        // 一睡不醒 ⇒ 信标永远没机会说话。这正是"挂住时一行证据都没有"的原因
+        // （本轮实测：`churn 16 4 4` @32 M 稳定卡死，四个核全睡在 WFI，`[stop]`
+        // 一个字都没出）。收尾期本来就没人在跑，多醒几拍不值一提；正常期保持
+        // 长睡（那是省电与不被惊扰的正解）。
         let delta = match timer::due() {
             Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
-            None => WFI_FAR,
+            None => {
+                if crate::work::room::scheduler::core::beacon::shutting_down() {
+                    BEACON_TICK
+                } else {
+                    WFI_FAR
+                }
+            }
         };
         timer::beat(delta);
         // 外部中断的闸门也在这里重开：「下一拍无条件重开」那条只管**以陷阱形式取到**

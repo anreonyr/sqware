@@ -66,16 +66,9 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
         let taken = match task.tag() {
             TaskTag::Reaped | TaskTag::Doomed => return false,
             TaskTag::Held => {
-                // 未放行的引导线程：从 Team.held 摘出（不是它则放回）。
+                // 未放行的引导线程：从 Team.held **按身份**摘出（不是它就不动）。
                 let team = task.ident.team.clone();
-                match team.take_held() {
-                    Some(held) if Arc::ptr_eq(&held, task) => true,
-                    Some(held) => {
-                        team.hold(&held);
-                        false
-                    }
-                    None => false,
-                }
+                team.release_held(task)
             }
             TaskTag::Starved => crate::work::room::scheduler::core::remove_from_starved(task),
             TaskTag::Blocked => {
