@@ -952,6 +952,35 @@ head.read().prev = Some(addr);        // push_link
 确实躺着旧账）：步进=逐条、链=空闲、表在手=账在手、未入链=0、无主=0、残差=0、
 `covered`=0、`interior`=0，另加 `chain_audit` 逐环核对双向链表。
 
+## 11.5 第 13 轮收尾：帧池的探针与器械一并撤（用户裁决）
+
+用户裁决：**`Conserve` 与它带的一整套测量面全撤**。已删——
+
+```text
+ConcreteCall/MemoryCall::Watermark   （帧池水位读数：held / walk / 逐类在册帧数）
+MemoryCall::LiveFrames               （累计分配 − 累计释放）
+MemoryCall::MergeCensus              （merge_block 三道门的拒绝计数，含按 power 分桶）
+FrameAllocator::conserve / Conserve  （26 字段的守恒快照 + 残差/账差/链差）
+FrameAllocator::frame_ledger、GIVE/TAKE_FRAMES、MR_*/REJ_* 八个原子
+health/stress.rs::chain()            （框架档那条"绝对零"用例）
+messenger::reap 的 `wm reap=… walk=… 残差=…` 行
+用户态：runtime 的五个水位 helper、shell 的 pagedrain / bigalloc / calib 三条命令、
+        churn 的 `idle Δheld/Δwalk` 读数
+```
+
+**代价写在明处**：帧池不再有常驻的"走链 = 逐条 / 残差 = 0 / 无主 = 0"读数。当年那个
+freelist↔pagemeta 背离（§10）现在只剩 `check_bounds` / `check_frame_free` /
+`check_not_in_chain`（debug 档）三道护栏 + 框架档的 `stress` 压测用例间接压着；
+`docs` 里那些"绝对零判据"的记述是**当时的判据**，不再是今天的常驻检查。
+
+**留下的判据**（与本条无关、仍然每次关机都跑）：`[audit] post-rip 空表检验`、
+`[audit] 弱引用收支`、`[audit] 挂起自检`、`check_baseline` 的逐种类终值判词 ——
+它们服务的对象是 `leak: task 1` 那一族（§3.3），不是帧池守恒。
+
+门跟着改一处**事实**（不是放宽阈值）：框架档用例 4 → 3，
+`FRAMEWORK_MARKER` 由 `cases 4 ok 4 fail 0` 改为 `cases 3 ok 3 fail 0`（删掉的那条就是
+`chain`），报告行同步。
+
 ## 11. 第 11 轮：诊断收敛（该删的删，判据留下）
 
 判据立住之后，本会话攒下的探针必须收敛 —— 它们的**代价**不只是代码量：几处读数

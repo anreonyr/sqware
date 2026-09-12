@@ -217,25 +217,6 @@ pub enum MemoryCall {
         size: usize,
         flags: u64,
     },
-    /// **临时探针**：读帧池水位 `(pagemeta 在手帧数, freelist 走链帧数)`。
-    ///
-    /// 为什么要有这一条：先前全部「泄漏速率」都拿 freelist 走链当判据，而它与
-    /// `pagemeta` 记账对不上；只有让用户态能读**同一时刻**的两个数，闭环校准
-    /// （已知量 alloc/free 前后各读一次）才能成立。判据立住后连同实现一起删。
-    ///
-    /// `kinds` = 用户态缓冲 VA（0 = 不写）：非 0 时内核把**逐类在册帧数**一行
-    /// （`trap=12 stack=85 table=420 …`）写进去。分类水位是判漏该用的表——只盯
-    /// 池总量任何一类漏都长一个样，逐类看才能直接指到是 `Table` 还是 `Stack`。
-    #[ret((usize, usize))]
-    Watermark { kinds: VirtAddr },
-    /// **临时探针**：`merge_block` 的计数。`power` 选口径：
-    /// `usize::MAX` ⇒ 总计数（打包 `ok | bound<<16 | meta<<32 | chain<<48`）；
-    /// 否则 ⇒ 该 order 的拒绝分布（`meta | chain<<32`）。
-    #[ret(usize)]
-    MergeCensus { power: usize },
-    /// **临时探针**：`live` = 累计分配 − 累计释放（帧数）。
-    #[ret(usize)]
-    LiveFrames,
 }
 
 /// 时钟调用（class 4；域 = runtime::chrono）。

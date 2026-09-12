@@ -140,40 +140,6 @@ fn bury() {
             .release(z.ident.frame)
             .expect("release: span mismatch");
         drop(z);
-        // ── 池水位（每 200 笔回收一行）──
-        //
-        // **一次持锁、一份快照**。先前这里分七次持锁读（`watermark` / `meta_free_frames`
-        // / `freelist_ledger` / `frame_ledger` / `chain_meta_mismatch` / `addr_sets` /
-        // `free_entry_orphans` / `chain_cycle_count`），字段之间因此**可以互相矛盾** ——
-        // 读数看似有信息量，实则是我自己把不同时刻的量摆在一起比。`conserve` 一次给全，
-        // 并自带自洽残差（残差非 0 说明口径本身有漏，那行数就不该拿来下结论）。
-        //
-        // 两个口径的判词：`walk`（走链可见）vs `free`（表说空闲）—— 修好后**逐帧相等**；
-        // `orphan`（表说空闲却不在任何链上）必须为 0；`held` vs `账`（累计分配−累计释放）
-        // 是**跨账恒等式**。三者任一破即"池子记账又开始说两套话"。
-        {
-            use ::core::sync::atomic::{AtomicUsize, Ordering};
-            static REAPS: AtomicUsize = AtomicUsize::new(0);
-            let n = REAPS.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % 200 == 0 {
-                let c = crate::memory::allocator::frame::heap().conserve();
-                crate::putln!(
-                    "wm reap={n} walk={} free={} held={} step={} flat={} orphan={} 残差={} 账={} \
-                     | chain={} bad={} | census:{}",
-                    c.walk,
-                    c.idle,
-                    c.held,
-                    c.stepped,
-                    c.flat,
-                    c.orphan_frames,
-                    c.residual(),
-                    c.taken as i64 - c.given as i64,
-                    c.chain_nodes,
-                    c.chain_bad,
-                    c.census_line()
-                );
-            }
-        }
         // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
         // halt 的关机断言无滞留可验。
         conductor::exit();

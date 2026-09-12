@@ -354,49 +354,6 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             };
             frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
-        // **临时探针**：`merge_block` 三道门的拒绝计数（见 `MemoryCall::MergeCensus`）。
-        EnvCall::Memory(MemoryCall::LiveFrames) => {
-            let (taken, given) = crate::memory::allocator::frame::FrameAllocator::frame_ledger();
-            frame.gpr.set_x(Gprs::A0, taken.wrapping_sub(given));
-        }
-        EnvCall::Memory(MemoryCall::MergeCensus { power }) => {
-            let (bound, meta, chain, ok) =
-                crate::memory::allocator::frame::FrameAllocator::merge_census();
-            let (_, rm, rc) =
-                crate::memory::allocator::frame::FrameAllocator::reject_by_power(power);
-            let v = if power == usize::MAX {
-                (ok & 0xffff) | ((bound & 0xffff) << 16) | ((meta & 0xffff) << 32) | ((chain & 0xffff) << 48)
-            } else {
-                (rm & 0xffff_ffff) | ((rc & 0xffff_ffff) << 32)
-            };
-            frame.gpr.set_x(Gprs::A0, v);
-        }
-        // **临时探针**：读帧池水位（见 `MemoryCall::Watermark`）。A0 = pagemeta
-        // 在手帧数（真相），A1 = freelist 走链帧数（待审计）。两个数在同一把锁
-        // 下取，故可直接对质。`kinds` 非 0 时附带逐类在册帧数（写进用户态缓冲）。
-        EnvCall::Memory(MemoryCall::Watermark { kinds }) => {
-            // **一次持锁取全**（原来是 `watermark()` + `free_block_census()` + `kind_counts()`
-            // 三次分别持锁 ⇒ 三个互不一致的快照，正是当初把定位拖偏的病根）。
-            // ABI 与打印格式逐字不变。
-            let c = crate::memory::allocator::frame::heap().conserve();
-            frame.gpr.set_x(Gprs::A0, c.held);
-            frame.gpr.set_x(Gprs::A1, c.walk);
-            // 分类水位：判漏该用的表，随同一次调用取回（同刻快照）。
-            //
-            // 走内核自己打印（SBI DBCN）而不只依赖 `copy_out`：`copy_out` 要先把
-            // 用户 VA 翻译成**页对齐**的物理缓冲，栈上小数组不在此列，实测静默
-            // 写不进去（读数只剩 `plain=NNN` 这种只剩一块的假象）。诊断是**加成**，
-            // 不该有一条静默失败的路。
-            // 逐 order 对质：`pagemeta` 空闲块首条数 vs 链上实际块数。
-            // 不等即**幽灵块**（标空闲却没进链）。固定 17 槽，零堆分配。
-            crate::putln!("census meta/chain{}", c.census_line());
-            let buf = crate::memory::allocator::frame::FrameAllocator::kind_counts();
-            crate::putln!("kinds {buf}");
-            let at = kinds.get();
-            if at != 0 {
-                let _ = crate::work::mail::copy_out(&ident.team.space, buf.as_bytes(), at);
-            }
-        }
         EnvCall::Unit(UnitCall::Spawn {
             team,
             entry,

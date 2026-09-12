@@ -86,19 +86,6 @@ impl FrameAllocator {
         NOMERGE.load(::core::sync::atomic::Ordering::Relaxed)
     }
 
-    /// 守恒量读数（探针）：`(累计分配帧, 累计释放帧)`。
-    ///
-    /// 恒等式：**每一帧要么在手、要么空闲** ⇒ `累计分配 − 累计释放 = held + walk`。
-    /// 这是唯一不依赖 freelist 走链、也不依赖 `pagemeta` 的第三口径——三者对不上
-    /// 时，它指出到底是谁在说假话。
-    pub(crate) fn frame_ledger() -> (usize, usize) {
-        use ::core::sync::atomic::Ordering;
-        (
-            TAKE_FRAMES.load(Ordering::Relaxed),
-            GIVE_FRAMES.load(Ordering::Relaxed),
-        )
-    }
-
 
     /// 释放"在手块中间帧"的累计次数（见 `checker::INTERIOR_FREES`）—— 恒应为 0。
     pub(crate) fn interior_frees() -> usize {
@@ -116,34 +103,6 @@ impl FrameAllocator {
     /// **诊断入口**：见 `FrameInner::interior_of_held`。
     pub(crate) fn interior_of_held(&self, pa: usize) -> Option<(usize, u8)> {
         self.inner.lock().interior_of_held(pa)
-    }
-
-
-
-
-
-
-
-    /// 拒绝按 power 的分布（探针）：`(power, REJ_META[p], REJ_CHAIN[p])`。
-    pub(crate) fn reject_by_power(p: usize) -> (usize, usize, usize) {
-        use ::core::sync::atomic::Ordering;
-        let i = p.min(19);
-        (
-            i,
-            REJ_META[i].load(Ordering::Relaxed),
-            REJ_CHAIN[i].load(Ordering::Relaxed),
-        )
-    }
-
-    /// `merge_block` 三道门各自的拒绝次数 + 成功合并次数（探针）。
-    pub(crate) fn merge_census() -> (usize, usize, usize, usize) {
-        use ::core::sync::atomic::Ordering;
-        (
-            MR_BOUND.load(Ordering::Relaxed),
-            MR_META.load(Ordering::Relaxed),
-            MR_CHAIN.load(Ordering::Relaxed),
-            MR_OK.load(Ordering::Relaxed),
-        )
     }
 
 
@@ -298,289 +257,6 @@ impl FrameAllocator {
         }
         (nodes, cycles, bad, first)
     }
-
-
-    /// **守恒快照**：三口径一次取全（诊断）。
-    ///
-    /// # 为什么必须"一次取全"
-    ///
-    /// `walk`（走链）/ 步进读表 / 累计收支（原子）三者**分三次读**，中间任何一次分配
-    /// 都会让它们对不上；于是我又会照着一组互不相干的数讲一个故事 —— 本会话前五个探针
-    /// 全是这个毛病。本函数**持一次锁**算完所有读数，并额外给出**残差**这一条自洽约束：
-    /// 若模型完整覆盖了池子，残差恒为 `0`；不为 `0` 就说明还有一个我没建模的机制 ——
-    /// 这比任何一个具体读数都重要。
-    ///
-    /// # 四条平衡
-    ///
-    /// ```text
-    /// (S) 总 == 在手 + 空闲 + 洞 + 无主
-    /// (C) 链 == 空闲 + 跨度内空闲 − 未入链表项      （链上表项全部相符时）
-    /// (L) 累计分配 − 累计释放 == 在手 − 洞
-    /// (R) 残差 == 0
-    /// ```
-    ///
-    /// 各项口径：
-    ///
-    /// * `总` = `pagemeta` 槽数；`洞` = 保留区（initrd / 设备树）帧数，**合法地没有表项**；
-    /// * `无主` = 步进时踩到 `None`、且不属于保留区的帧 —— **既不在手、也不空闲、
-    ///   也不是保留区**；
-    /// * `在手` / `空闲` = 步进解（落在表项上的帧数，按其 `2^power` 计数）；
-    /// * `链` = 走链 `Σ chain_len(o) << o`；`跨度内空闲` = 落在**他者声明的跨度内**的
-    ///   空闲表项帧数（`split_block` 的粗表项残留、块内中间帧被释放留下的登记）。
-    ///
-    /// **(S) 的 `无主` 是"真丢帧"的直读**：`clear_head` 把表项撤成 `None` 之后，若没有
-    /// 外层表项覆盖这段，帧就此消失。我先前三次"撤销粗表项"的修法正是造这种洞，
-    /// 这条会当场把那种修法否掉 —— 判据存在的意义就在这里。
-    ///
-    /// **(C) 的符号裁决那对矛盾**（"释放中间帧 1811 次 × 每次丢 ≥1 帧" ⇒ 该少 ~7 MiB，
-    /// 而 boot / 用例无恙）：
-    ///
-    /// * `链 > 空闲 + 跨度内空闲` 收不平时，那些帧是**重复登记**（链里有、也在他者在手
-    ///   跨度里）⇒ **帧没丢**，池子不缺内存，病是同一物理帧被两处登记（危险：可能二次
-    ///   分配）；
-    /// * `链 < 空闲` 时，表说空闲而链上找不到的帧**真的没了** ⇒ 泄漏。
-    pub(crate) fn conserve(&self) -> Conserve {
-        let g = self.inner.lock();
-        let len = g.pagemeta.len();
-        let cap = len + 1;
-        // 幂次安全展开：表项若腐化成 power ≥ 64，`1 << power` 在 debug 档直接 panic
-        // （本框架三档全开 debug_assertions），故按"腐化"记一笔并以 1 帧前进。
-        let pow = |p: u8| 1usize.checked_shl(p as u32).unwrap_or(0);
-
-        // ── 走链 ──
-        let mut walk = 0usize;
-        let mut chain_nodes = 0usize;
-        let mut chain_bad = 0usize;
-        let mut per_order = [(0usize, 0usize); 17];
-        for (o, head) in g.freelist.iter().enumerate() {
-            let mut cur = *head;
-            let mut budget = cap;
-            while let Some(node) = cur {
-                if budget == 0 {
-                    chain_bad += 1;
-                    break;
-                }
-                budget -= 1;
-                chain_nodes += 1;
-                walk += 1usize << o;
-                if o < 17 {
-                    per_order[o].1 += 1;
-                }
-                let pa = node.as_ptr() as usize;
-                if pa < g.base || pa >= g.edge {
-                    chain_bad += 1;
-                } else {
-                    let i = (pa - g.base) / PAGE_SIZE;
-                    match g.pagemeta.get(i).and_then(|m| m.as_ref()) {
-                        Some(m) if m.free && m.power as usize == o => {}
-                        _ => chain_bad += 1,
-                    }
-                }
-                // SAFETY: freelist 节点恒为空闲块，头 16 字节是 Link（prev/next）。
-                cur = unsafe { node.read() }.next;
-            }
-        }
-
-        // ── 步进读表（含跨度内表项分类）──
-        let mut held = 0usize;
-        let mut idle = 0usize;
-        let mut vacant = 0usize;
-        let mut stepped = 0usize;
-        let mut bad_entries = 0usize;
-        let mut orphan_entries = 0usize;
-        let mut orphan_frames = 0usize;
-        let mut inner_orphan_entries = 0usize;
-        let mut inner_orphan_frames = 0usize;
-        let mut ghost_free = (0usize, 0usize);
-        let mut nested_held = (0usize, 0usize);
-        let mut nested_free = (0usize, 0usize);
-        let mut held_in_free = (0usize, 0usize);
-        let mut cursor = 0usize;
-        while cursor < len {
-            let Some(m) = g.pagemeta[cursor].as_ref() else {
-                vacant += 1;
-                cursor += 1;
-                continue;
-            };
-            let frames = pow(m.power);
-            if frames == 0 {
-                bad_entries += 1;
-                cursor += 1;
-                continue;
-            }
-            stepped += 1;
-            if m.free {
-                idle += frames;
-                if (m.power as usize) < 17 {
-                    per_order[m.power as usize].0 += 1;
-                }
-                if !g.in_freelist(cursor, m.power as usize) {
-                    orphan_entries += 1;
-                    orphan_frames += frames;
-                }
-            } else {
-                held += frames;
-            }
-            // 跨度内还有没有别的表项：谁包含了谁、那一条空闲还是在手。
-            let end = cursor.saturating_add(frames).min(len);
-            for j in (cursor + 1)..end {
-                let Some(im) = g.pagemeta[j].as_ref() else {
-                    continue;
-                };
-                let iframes = pow(im.power);
-                let slot = match (m.free, im.free) {
-                    (false, true) => &mut ghost_free,
-                    (false, false) => &mut nested_held,
-                    (true, true) => &mut nested_free,
-                    (true, false) => &mut held_in_free,
-                };
-                slot.0 += 1;
-                slot.1 += iframes;
-                if im.free && !g.in_freelist(j, im.power as usize) {
-                    inner_orphan_entries += 1;
-                    inner_orphan_frames += iframes;
-                }
-            }
-            cursor += frames;
-        }
-
-        // ── 独立重算保留区帧数（与 init 用的同一张表，但重新求和）──
-        let holes = FrameInner::holes(g.base, g.edge, len)
-            .iter()
-            .flatten()
-            .map(|&(s, e)| e.saturating_sub(s))
-            .sum::<usize>();
-
-        let flat = g.pagemeta.iter().flatten().count();
-        let (taken, given) = Self::frame_ledger();
-        Conserve {
-            total: len,
-            holes,
-            flat,
-            stepped,
-            bad_entries,
-            chain_nodes,
-            chain_bad,
-            walk,
-            held,
-            idle,
-            vacant,
-            orphan_entries,
-            orphan_frames,
-            inner_orphan_entries,
-            inner_orphan_frames,
-            ghost_free,
-            nested_held,
-            nested_free,
-            held_in_free,
-            taken,
-            given,
-            per_order,
-        }
-    }
-}
-
-/// [`FrameAllocator::conserve`] 的读数。字段名与该方法文档里的代号一一对应。
-///
-/// `(条数, 帧数)` 这类二元组一律是"多少条表项、它们声明了多少帧"。
-#[derive(Debug)]
-pub(crate) struct Conserve {
-    /// 区总帧数（`pagemeta` 槽数）。
-    pub total: usize,
-    /// 保留区帧数（合法无表项）。
-    pub holes: usize,
-    /// 逐条法：`Some` 表项总数。
-    pub flat: usize,
-    /// 步进法：被落到（即未被别条跨度覆盖）的表项数。
-    pub stepped: usize,
-    /// `power` 腐化（`1<<power` 溢出）的表项数。
-    pub bad_entries: usize,
-    /// 链节点数。
-    pub chain_nodes: usize,
-    /// 链上"表项缺失 / 不空闲 / 幂次与桶号不符 / 越界"的节点数与成环次数之和。
-    pub chain_bad: usize,
-    /// 走链帧数。
-    pub walk: usize,
-    /// 步进在手帧数（含保留区？否 —— 保留区无表项，见 `vacant`/`holes`）。
-    pub held: usize,
-    /// 步进空闲帧数。
-    pub idle: usize,
-    /// 步进踩到 `None` 的帧数（应恰好等于 `holes`）。
-    pub vacant: usize,
-    /// 落在表项上的空闲块**不在自己桶的链上**（孤儿）的条数 / 帧数。
-    pub orphan_entries: usize,
-    pub orphan_frames: usize,
-    /// 落在**他者跨度内**的空闲表项中，同样不在链上的条数 / 帧数。
-    pub inner_orphan_entries: usize,
-    pub inner_orphan_frames: usize,
-    /// 在手跨度内的**空闲**表项（条数, 帧数）—— 块内中间帧被释放留下的登记。
-    pub ghost_free: (usize, usize),
-    /// 在手跨度内的**在手**表项 —— 大块里被拆出的子块。
-    pub nested_held: (usize, usize),
-    /// 空闲跨度内的空闲表项 —— 该合并却没合并的伙伴。
-    pub nested_free: (usize, usize),
-    /// 空闲跨度内的**在手**表项 —— 危险：这会在大空闲块被分配出去时二次分配。
-    pub held_in_free: (usize, usize),
-    /// 累计分配帧（原子账）。
-    pub taken: usize,
-    /// 累计释放帧（原子账）。
-    pub given: usize,
-    /// 逐 order 的 `(表说空闲块首条数, 链上节点数)`（步进口径，与
-    /// `ConcreteCall`/`Watermark` 那条 `oN:meta/chain` 打印同源）。两者不等即为幽灵块。
-    pub per_order: [(usize, usize); 17],
-}
-
-impl Conserve {
-    /// 无主帧：步进踩到、既不属于任何块、也不是保留区 ⇒ **从账上消失的帧**。
-    pub(crate) fn unaccounted(&self) -> i64 {
-        self.vacant as i64 - self.holes as i64
-    }
-
-    /// 账（累计收支）与表（步进在手）之差：表比账多认了多少在手帧。
-    ///
-    /// **洞不参与**：保留区帧**没有表项**（`init` 跳过它们），故它们既不计进 `held`
-    /// 也不计进 `idle`（步进时按 `None` 逐帧踩过，记在 `vacant`）。先前我把 `held`
-    /// 当成"含洞"来减，得出 `-2534` 这种没有意义的数 —— 这正是"分项口径不一致"
-    /// 的老毛病，写在这里备忘。
-    ///
-    /// 修前实测本值为 **+528**，且恰好等于"跨度内空闲帧"（粗表项把已归还的伙伴帧
-    /// 仍算作在手）；粗表项与指针写修好后为 **0**。
-    pub(crate) fn ledger_gap(&self) -> i64 {
-        self.held as i64 - (self.taken as i64 - self.given as i64)
-    }
-
-    /// 走链与步进空闲之差（不含跨度内表项的修正）—— **符号**是"帧丢没丢"的判词。
-    pub(crate) fn chain_gap(&self) -> i64 {
-        self.walk as i64 - self.idle as i64
-    }
-
-    /// 自洽残差：模型若完整，恒为 `0`（`chain_bad == 0` 时才有意义）。
-    pub(crate) fn residual(&self) -> i64 {
-        let inner_free = (self.ghost_free.1 + self.nested_free.1) as i64;
-        self.walk as i64 - self.idle as i64 - inner_free
-            + self.orphan_frames as i64
-            + self.inner_orphan_frames as i64
-    }
-
-    /// 逐 order 的 `(表说空闲块首条数, 链上节点数)` 单行（`oN:meta/chain` 形式，
-    /// 与用户态 `Watermark` 探针打印的那行逐字同源）。
-    pub(crate) fn census_line(&self) -> alloc::string::String {
-        let mut line = alloc::string::String::new();
-        for (o, (meta, chain)) in self.per_order.iter().enumerate() {
-            if *meta != 0 || *chain != 0 {
-                let _ = core::fmt::Write::write_fmt(
-                    &mut line,
-                    format_args!(" o{o}:{meta}/{chain}"),
-                );
-            }
-        }
-        line
-    }
-
-    /// 跨度内空闲表项帧数合计（`ghost_free + nested_free`）。
-    pub(crate) fn inner_free_frames(&self) -> usize {
-        self.ghost_free.1 + self.nested_free.1
-    }
 }
 
 static NOMERGE: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
@@ -591,35 +267,15 @@ static STALE_RM: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::Atomi
 /// ── 已删：freelist 累计收支探针（`freelist_ledger`）──
 ///
 /// `FR_PUSH/FR_PULL/BK_PUSH/BK_PULL` 四个原子喂的是"封箱 − 开箱 = 当前该在链上的
-/// 帧数"那条**第二本守恒账**。它已被 `conserve` 取代（`walk == idle` 是同一件事的
-/// 一手读数，且与 `pagemeta` 同刻取自一把锁），四个原子连同读数一并删除。
+/// 帧数"那条**第二本守恒账**。探针时代连同 `conserve` 一起撤掉了 —— 现在
+/// `walk == idle`（走链 = 表说空闲）由**框架档的 `stress` 用例**间接压住，不再有
+/// 逐帧对质的常驻读数。
 ///
 /// 前两版探针都在回收路径上按 `pagemeta.len()` 开 `Vec`，两次都把整机拖进退化态。
 /// 这一版**完全不碰堆**。判据：`net_frames` 按**入链时声明的 `power`** 累加，
 /// 与走链累加（`walk`，按**桶号**算）对质：
 ///   · 两者不等 ⇒ 块被放进了**不是它自己 order 的桶**（按桶算自然对不上）；
 ///   · 两者相等而都远小于 `meta` ⇒ 块确实没进链。
-/// `merge_block` 三道门各自拒绝了多少次（探针，零堆分配）。
-///
-/// 判据：`pagedrain` 显示每个 order-0 块释放后都停在 order-0（`walk_delta` 恒为
-/// +1），说明合并从未发生。这三道 `break` 里必有一道在拒绝——计数直接指认是哪道。
-/// `merge_block` 拒绝时**按 power 分桶**计数（探针，17 槽定长、零堆分配）。
-///
-/// `REJ_META[p]` = 「pagemeta 说伙伴不空闲/order 不对」在 power=p 拒了几次；
-/// `REJ_CHAIN[p]` = 「pagemeta 说空闲，但 `in_freelist` 找不到」在 power=p 拒了几次。
-///
-/// 判据：`meta=0`（总）已经排除了第一道门，故 `REJ_CHAIN` 是主因。看它集中在哪个
-/// `p`，就能判断是"块从未挂上"还是"挂在别的 order 桶"——两者的 `p` 分布不同。
-static REJ_META: [::core::sync::atomic::AtomicUsize; 20] =
-    [const { ::core::sync::atomic::AtomicUsize::new(0) }; 20];
-static REJ_CHAIN: [::core::sync::atomic::AtomicUsize; 20] =
-    [const { ::core::sync::atomic::AtomicUsize::new(0) }; 20];
-
-static MR_BOUND: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
-static MR_META: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
-static MR_CHAIN: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
-static MR_OK: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
-
 /// `pagemeta` 里各 order 的**空闲块首**条数（探针，固定 17 槽、零堆分配）。
 ///
 /// 判据：它必须等于 `freelist[order]` 的**实际链长**。两者不等 ⇒ 有块被标为空闲
@@ -628,13 +284,12 @@ static MR_OK: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUs
 /// **写点判据**：写入一个**已被别条表项跨度覆盖**的索引的次数。
 ///
 /// 块首之间不可能互相包含（每条表项声明"从本索引起、占 `2^power` 帧"），所以这个数
-/// **必须恒为 0**。实测非零且有稳定样本 —— 见 `health/stress.rs::chain()` 的哨兵。
+/// **必须恒为 0**。实测非零且有稳定样本（当年由 `stress::chain()` 用例当哨兵看着；
+/// 该用例已随帧池探针一并撤）。
 static COVERED: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
 
 
 
-static GIVE_FRAMES: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
-static TAKE_FRAMES: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
 
 /// 数一条 order 链的块数（只读遍历，`None` 结尾）。
 ///
@@ -647,7 +302,7 @@ static TAKE_FRAMES: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::At
 ///
 /// 上限取 `pagemeta.len() + 1`（合法块数不可能超过总帧数），超限即按"链坏"处理：
 /// 停止遍历 —— "链成环"从"卡死"变成"走链数偏小"。**成环不再单独计数**：
-/// `conserve` 的 `chain_bad` 用的是同一份预算（越界即记一笔），两个计数只会漂移。
+/// （撤掉的 `conserve` 曾用同一份预算，两个计数会漂移 —— 记一笔当时的口径问题。）
 fn chain_len(mut n: Option<NonNull<Link>>, cap: usize) -> usize {
     let mut blocks = 0usize;
     let mut budget = cap;
@@ -685,7 +340,6 @@ unsafe impl Allocator for FrameAllocator {
             let mut guard = this.inner.lock();
             let frame = &mut *guard;
             let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
-            TAKE_FRAMES.fetch_add(1usize << power, ::core::sync::atomic::Ordering::Relaxed);
             let addr = frame.frame_addr(index) as *mut u8;
             checker::check_dram_addr(addr as usize, "frame alloc (split result)");
             #[cfg(feature = "audit")]
@@ -746,7 +400,6 @@ unsafe impl Allocator for FrameAllocator {
 
             // 护栏事件：帧存入金库。
             super::fence::on_frame_free(addr);
-            GIVE_FRAMES.fetch_add(1usize << power, ::core::sync::atomic::Ordering::Relaxed);
             frame.merge_block(index, power);
             // 种类：untag 在 fence::on_frame_free 内完成,kind 由 untag 路径同步 record;
             // 非 audit 时 fence::on_frame_free 内部直接 record_frame_give(Plain)。
@@ -977,7 +630,7 @@ impl FrameInner {
     fn note_covered(&mut self, index: usize, what: &str) {
         // **产品档不付这份代价**：本判据曾量到启动期 31376 次命中，而根因（`split_block`
         // 的粗表项）在源头修掉后恒为 0；但每次 `push_link`/`pull_link`/`clear_head`/
-        // `split_head` 都要扫一遍 `0..freelist.len()`。覆盖面已由 `conserve` 从**读侧**
+        // `split_head` 都要扫一遍 `0..freelist.len()`。覆盖面当年由 `conserve` 从**读侧**
         // 等价给出（"跨度内表项 = 0"，撤销型写入则由"无主帧 = 0"兜住），故只有
         // debug / audit / framework 三档继续收这笔账。
         #[cfg(not(any(debug_assertions, feature = "audit")))]
@@ -1253,7 +906,6 @@ impl FrameInner {
                 // 边界检查：buddy 可能超出 free 区（pagemeta 长度非 2 的幂，末块
                 // 的 XOR 伙伴会越界）。此时该伙伴不存在，不能合并——直接 break。
                 if buddy >= self.pagemeta.len() {
-                    MR_BOUND.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                     break;
                 }
 
@@ -1261,8 +913,6 @@ impl FrameInner {
                     .as_ref()
                     .is_some_and(|m| m.free && m.power as usize == power)
                 {
-                    MR_META.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
-                    REJ_META[power.min(19)].fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                     break;
                 }
                 // pagemeta 说 frame 空闲，但必须确实在 freelist[power] 链中才可
@@ -1272,8 +922,6 @@ impl FrameInner {
                     // 探针：伙伴说空闲却不在链上 ⇒ 它既不被合并也不被重新入链，
                     // 但 `free=true` 留着 —— "标空闲却不在链上"的批量来源。
                     NOMERGE.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
-                    MR_CHAIN.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
-                    REJ_CHAIN[power.min(19)].fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                     break;
                 }
 
@@ -1282,7 +930,6 @@ impl FrameInner {
                 // 标记会让后续 split/merge 把已并入大块的帧当空闲块处理
                 // （frame 不变量破坏 → 同一帧双重入链 → freelist 读垃圾）。
                 self.clear_head(buddy);
-                MR_OK.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
                 index = index.min(buddy); // 合并后取较小的帧索引
                 power += 1;
             }

@@ -64,13 +64,6 @@ crate::test! {
     }
 }
 
-#[cfg(feature = "framework")]
-crate::test! {
-    "chain: 自由链表↔pagemeta 不背离（表说空闲 ⇔ 真在链上）" {
-        stress::chain();
-    }
-}
-
 // ── 旧档入口（非 framework）─────────────────────────────────────────────────
 //
 // 与框架档互斥：`boot.rs` 按 feature 二选一（同一位置、同一时点）。

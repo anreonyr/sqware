@@ -68,7 +68,7 @@ pub(crate) fn check_frame_held(held: bool, index: usize, addr: usize, power: usi
 /// 那条"粗表项"覆盖了拆分推回的伙伴帧 ⇒ 释放一个**邻居**（自己那块的首帧）时，
 /// `interior_of_held` 会命中那条粗表项，报成"释放中间帧"。
 ///
-/// 取证：`[conserve]` 的守恒核对给出 `表在手 − 账在手 = +528 帧`，而**恰好等于**同一
+/// 取证（当年 `[conserve]` 的守恒核对，已撤）：它给出 `表在手 − 账在手 = +528 帧`，而**恰好等于**同一
 /// 快照里"跨度内空闲帧"的 528 —— 即那条粗表项把已归还的伙伴帧仍算作在手。粗表项在
 /// 源头去掉后：`interior` 命中 **1811 → 0**、`covered` 写点 **31376 → 0**、
 /// `表在手 = 账在手 = 735`（两口径逐帧相等）。
@@ -110,7 +110,7 @@ pub(crate) fn check_frame_head(
 /// 时，它会立刻破坏 `表在手 = 账在手` 这条跨账恒等式。
 ///
 /// 保留计数而非 panic 的理由：这条判据的**归属**已经交给了框架档用例
-/// （`[conserve]` 裁决 + `interior2 == 0` 的绝对零断言），那里红掉能指名道姓；
+/// （当年是 `[conserve]` 裁决 + `interior2 == 0` 的绝对零断言；前者已撤），那里红掉能指名道姓；
 /// 而在产品档把它升成 panic，等于拿一次误判换整机停机。
 pub(crate) static INTERIOR_FREES: ::core::sync::atomic::AtomicUsize =
     ::core::sync::atomic::AtomicUsize::new(0);
