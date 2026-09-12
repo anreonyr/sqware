@@ -160,6 +160,26 @@ pub(crate) fn roster_live() -> (usize, usize) {
     (g.len(), g.values().filter(|w| w.strong_count() > 0).count())
 }
 
+/// **清掉已消失任务的条目**，返回摘掉的条数。
+///
+/// # 为什么必须清（这不是"顺手优化"）
+///
+/// `enlist` 在任务产生时插一条 `Weak<Task>`，而名册的条目此前**只由 `rip` 清空** ——
+/// 于是"开机以来活过的每个任务"都会把它那份 `ArcInner<Task>`（152 B）的外壳扣到关机：
+/// 会话越长、churn 越猛，扣住的越多（churn 下与**任务总数**成正比）。而名册里**死条目
+/// 是纯垃圾**：`muster` 的契约本就是"`Some` 升不起来 = 已消失"，摘掉它不改变任何读取
+/// 方的语义（`Join`/`Hatch` 一律照旧拒绝，`descends` 一律返回 false，快照照旧跳过）。
+///
+/// 调用点：[`messenger::bury`](crate::work::room::messenger) —— 每回收一个躯壳一次。
+/// 代价 `O(在世条数)`：清理后名册只装**在世**任务，条数是"同时在跑的任务数"，不再是
+/// "开机以来产生过的任务数"。
+pub(crate) fn prune_dead() -> usize {
+    let mut g = roster_table().lock();
+    let before = g.len();
+    g.retain(|_, w| w.strong_count() > 0);
+    before - g.len()
+}
+
 /// 名册规模（**post-`rip` 应为 0**）：`rip` 清空名册是"外壳归还"的最后一道门，
 /// 这条读数就是那扇门的检验 —— 若它非 0，说明门没关（或有人在门后又插了条目）。
 #[cfg(feature = "audit")]

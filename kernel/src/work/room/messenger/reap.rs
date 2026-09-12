@@ -122,6 +122,9 @@ fn bury() {
         }
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);
+        // 名册里的**死条目**：不清就会把每个"活过的任务"的 `ArcInner<Task>`（152 B）
+        // 外壳一路扣到关机（churn 下与任务总数成正比）。详见 `roster::prune_dead`。
+        let _pruned = crate::work::room::scheduler::core::prune_dead();
         // 锁外回收（Team.tasks 已放 → Space.inner=2 合法）：栈 slot + trap 帧
         // 一次 with_flush 经 `Space::release(Span)` 收回——段归还 + PTE 清理 +
         // 刷 TLB；帧随 map drop 归还 frame 池。Span 是 claim 时存进 TaskIdent 的
