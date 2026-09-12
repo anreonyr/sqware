@@ -358,30 +358,6 @@ pub(crate) fn report() {
                 ""
             }
         );
-        // 它**现在躺在哪段内存里**：在册块（说出了谁分配的那张表）／不在账上
-        // （那段内存已被拆掉——比泄漏更严重）／整个找不到（已被覆写）。
-        // 只在存活清单非空时跑（一次线性扫），健康轮一分钱不花。
-        use crate::memory::allocator::fence::audit::Where;
-        match crate::memory::allocator::fence::audit::locate_weak(id, site.ix()) {
-            Some((p, Where::Ledger(base, size, kind, s))) => crate::putln!(
-                "[audit]     物件 @ {p:#x} 躺在**在册**块里：{kind:?} base={base:#x} size={size} 偏移={} \
-                 site={s:#x}（内存还活着 ⇒ 只是没人去析构它）",
-                p - base
-            ),
-            Some((p, Where::TrapStack(h))) => crate::putln!(
-                "[audit]     物件 @ {p:#x} 躺在 hart {h} 的 **trap 栈**上（一段恒映射的常驻栈）"
-            ),
-            Some((p, Where::Image)) => crate::putln!(
-                "[audit]     物件 @ {p:#x} 躺在**内核镜像**里（静态 / BSS / ROOT 栈）"
-            ),
-            Some((p, Where::PoolUnaccounted)) => crate::putln!(
-                "[audit]     物件 @ {p:#x} **不在任何在册块里** ⇒ 它所在的那段内存已被释放/复用 \
-                 （活着就被拆掉：析构永不执行）"
-            ),
-            None => crate::putln!(
-                "[audit]     物件**已不在任何可读内存里** ⇒ 所在分配已被拆掉并覆写"
-            ),
-        }
     }
     if n == 0 {
         crate::putln!("[audit]   存活清单：空（每一枚弱引用的析构都跑到了）");

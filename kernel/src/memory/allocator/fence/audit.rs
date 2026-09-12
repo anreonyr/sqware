@@ -121,188 +121,6 @@ fn count_kind(frame: &statistics::FrameView, block: &statistics::BlockView, k: K
     }
 }
 
-// ── 泄漏现场取证（只在日志一侧、只在已判泄漏时跑）────────
-
-/// **谁还指着这个块**：把 `addr`（`ArcInner` 基址）当作字，扫一遍 DRAM，报出命中处。
-///
-/// # 为什么要有这一条
-///
-/// `leak: task 1` 的读数形态是 `strong 0 weak 1` —— 载荷已析构、块却因**一枚存活的
-/// `Weak<Task>`** 而未归还。把全仓的 `Weak<Task>` 容器逐个点名排除（名册 / 票根 /
-/// 躯壳 / 站点由 `rip` 清空；`Team.tasks` / `Team.sire` 由逐团队普查给出 0）之后，
-/// 仍然复现 —— 说明**持有者不在我列举出来的容器里**。继续读代码只会继续漏，
-/// 故改成**直接问内存**：`Weak` 对象里就存着这个基址，扫一遍必然命中持有它的那张表。
-///
-/// 代价：一次 DRAM 线性读（128 M ⇒ 千万级字），**只在已判泄漏时跑**（一次性诊断，
-/// 机器已经坏了，速度不重要）。只扫内核镜像 + DRAM 窗口，不碰 MMIO。
-///
-/// 返回命中数；逐条打印命中地址（在内核镜像里的可直接 `nm` 符号化 = 哪一个静态）。
-/// **这个地址落在哪个"在册块"里**：`(块基址, 请求尺寸, 种类, 分配点)`。
-///
-/// 账本（`LEDGER`）就是"活块"的权威表：一枚 `Weak<Task>` 总要**存在某个对象里**，
-/// 而那个对象本身也是一次分配 ⇒ 它的地址必然落在某条记录 `[base, base+size)` 内。
-/// 于是"谁扣着这枚弱引用"变成"哪个对象里存着它"，再拿 `site` 到 host 上
-/// `addr2line`，就能说出**是谁分配的** —— 定位到这一步，剩下的只是读那一处代码。
-///
-/// 锁纪律：本函数取一次账本锁，回调里只写局部变量（零分配、不回头记账）。
-fn owner_of(p: usize) -> Option<(usize, usize, Kind, usize)> {
-    let mut found: Option<(usize, usize, Kind, usize)> = None;
-    super::ledger::LEDGER.for_each(|base, rec| {
-        if found.is_none() && p >= base && p < base + rec.size {
-            found = Some((base, rec.size, rec.kind, rec.site));
-        }
-    });
-    found
-}
-
-/// **找出这枚弱引用对象现在住在哪儿**（`work::unit::weak` 的存活清单用）。
-///
-/// 生死账只说得出"哪一枚的析构没跑"与它的**出身**（哪个点造的），说不出它**现在**
-/// 躺在一段什么样的内存里 —— 而这两件事的修法完全不同：
-///
-/// ```text
-/// 物件在一块**在册**的分配里  ⇒ 那块内存还活着，只是没人会去析构它（谁忘了 drop）
-/// 物件**不在账上**            ⇒ 它所在的那段内存已经被释放/复用 —— 析构永不执行，
-///                              且那是一次"活着就被拆掉"的分配（比泄漏更严重）
-/// 物件**整个找不到**          ⇒ 同上，且内存已被覆写（连身份字都没了）
-/// ```
-///
-/// 认领靠**指纹**：`TaskWeak` 是 `#[repr(C)]` 的 `{w, id, site}`，故 `id` 落在 +8、
-/// `site` 落在 +16 —— 按 `id` 扫、用 `site` 复核，两个字都对上才算命中（单看 `id`
-/// 会被复用的小整数骗）。这与 `who_holds` 的"扫一个裸地址"不同：那条**分不清**
-/// 陈旧字节与活对象（本轮已被它骗过一次），这条不会 —— 指纹是这一枚独有的。
-///
-/// 代价：一次线性扫（只在**存活清单非空**时跑；那时候机器已经不正常，速度不重要）。
-/// 一枚弱引用对象**现在躺的那段内存**是什么。
-pub(crate) enum Where {
-    /// 一块**在册**（还活着）的块分配：`(块基址, 尺寸, 种类, 分配点)`。
-    /// 内存活着 ⇒ 只是没人去析构它（谁忘了 drop / 谁把它从容器里抠掉了）。
-    Ledger(usize, usize, Kind, usize),
-    /// 某核的 **trap 栈**（恒映射的常驻内核栈）：`hart`。
-    TrapStack(usize),
-    /// 内核**镜像**（静态 / BSS / ROOT 栈）。
-    Image,
-    /// 帧池窗口内，但**不在任何在册块里** ⇒ 它所在的那段内存已被释放/复用。
-    PoolUnaccounted,
-}
-
-/// **扫一页之前先问页表**：这一页在内核地址空间里映射了吗。
-///
-/// 上一轮的教训分两层：`who_holds` 的"裸扫窗口"曾把一次可读的泄漏报告升级成一次
-/// panic（扫到 `0x87f90000`）；本轮 `locate_weak` 又踩了同一条 —— **诊断工具不许
-/// 因为自己要读几页内存就把整机打死**（这一轮的日志里，弱引用收支刚报出"存 1"，
-/// 下一行就是 `kernel page fault`，取证信息全部丢在血泊里）。
-///
-/// 「窗口 + 保留区清单」是**声明**，页表才是**事实**：按页问一句 `translate`，
-/// 问不到就跳过那一页。代价是每页一次页表走（只在存活清单非空时跑）。
-fn page_mapped(va: usize) -> bool {
-    crate::work::unit::team::kernel()
-        .is_some_and(|t| t.space.translate(VirtAddr::from_raw(va)).is_some())
-}
-
-pub(crate) fn locate_weak(id: usize, site_ix: usize) -> Option<(usize, Where)> {
-    let (pool_base, pool_edge, _holes) = crate::memory::allocator::frame::heap().window();
-    let (img_lo, img_hi) = (super::image_base(), super::image_edge());
-    let mut found: Option<usize> = None;
-    let mut scan = |lo: usize, hi: usize, found: &mut Option<usize>| {
-        let mut page = lo & !(crate::memory::PAGE_SIZE - 1);
-        while page < hi {
-            let end = (page + crate::memory::PAGE_SIZE).min(hi);
-            // 页未映射 ⇒ 整页跳过（越界读 = 内核缺页 = panic，见 `page_mapped` 注释）。
-            if page_mapped(page) {
-                let mut p = (page.max(lo) + 7) & !7;
-                while p + 24 <= end {
-                    // SAFETY: 本页刚问过页表（已映射、内核恒等/线性映射），对齐读。
-                    unsafe {
-                        if *((p + 8) as *const usize) == id && *((p + 16) as *const usize) == site_ix
-                        {
-                            *found = Some(p);
-                            return;
-                        }
-                    }
-                    p += 8;
-                }
-            }
-            page += crate::memory::PAGE_SIZE;
-        }
-    };
-    scan(img_lo, img_hi, &mut found);
-    if found.is_none() {
-        scan(pool_base, pool_edge, &mut found);
-    }
-    if found.is_none() {
-        // trap 栈：每核一段 64 KiB（首 4 KiB 是未映射的 guard，`page_mapped` 自会跳过）。
-        for h in 0..crate::machine::hart_count() {
-            let lo = crate::runtime::switcher::trap::trap_stack_base(h).as_usize();
-            let hi = crate::runtime::switcher::trap::trap_stack_edge(h).as_usize();
-            scan(lo, hi, &mut found);
-            if found.is_some() {
-                break;
-            }
-        }
-    }
-    found.map(|p| {
-        let where_ = if let Some((b, s, k, st)) = owner_of(p) {
-            Where::Ledger(b, s, k, st)
-        } else if crate::runtime::switcher::trap::trap_stack_hart(p).is_some() {
-            Where::TrapStack(crate::runtime::switcher::trap::trap_stack_hart(p).unwrap_or(0))
-        } else if p >= img_lo && p < img_hi {
-            Where::Image
-        } else {
-            Where::PoolUnaccounted
-        };
-        (p, where_)
-    })
-}
-
-fn who_holds(addr: usize, cap: usize) -> usize {
-    // **只扫"内核真的映射了"的两段**：内核镜像（静态/BSS）与帧池窗口**去掉保留区**
-    // （initrd / 设备树）。越界即 page fault —— 本轮真踩过一次（扫到 `0x87f90000`），
-    // 于是"诊断"把一次可读的泄漏报告升级成了 panic。
-    let (pool_base, pool_edge, holes) = crate::memory::allocator::frame::heap().window();
-    let mut hits = 0usize;
-    let mut scan = |lo: usize, hi: usize, hits: &mut usize| {
-        let mut p = (lo + 7) & !7;
-        while p + 8 <= hi {
-            // 跳过保留区（未映射/只读之外的区域）。
-            if holes
-                .iter()
-                .flatten()
-                .any(|&(s, e)| p >= pool_base + s * crate::memory::PAGE_SIZE && p < pool_base + e * crate::memory::PAGE_SIZE)
-            {
-                p += crate::memory::PAGE_SIZE;
-                continue;
-            }
-            // SAFETY: 两段窗口都已由 boot 建立恒等映射，对齐读。
-            let w = unsafe { *(p as *const usize) };
-            if w == addr {
-                *hits += 1;
-                if *hits <= cap {
-                    let zone = if p >= super::image_base() && p < super::image_edge() {
-                        "镜像"
-                    } else {
-                        "池内"
-                    };
-                    match owner_of(p) {
-                        Some((base, size, kind, site)) => crate::putln!(
-                            "[audit]     <- 指向它的字 @ {p:#x}（{zone}）**容器**：{kind:?} base={base:#x} \
-                             size={size} 偏移={} site={site:#x}",
-                            p - base
-                        ),
-                        None => crate::putln!(
-                            "[audit]     <- 指向它的字 @ {p:#x}（{zone}）容器**不在账上**（已释放的块/栈/静态）"
-                        ),
-                    }
-                }
-            }
-            p += 8;
-        }
-    };
-    scan(super::image_base(), super::image_edge(), &mut hits);
-    scan(pool_base, pool_edge, &mut hits);
-    hits
-}
-
 /// 打印该种类的**全部在册记录**：地址 / 尺寸 / 分配点 `site`（host `addr2line`
 /// 可符号化）。`End::Zero` 判据只说"哪种对象没归零"，说不出"是哪一支分配点、
 /// 哪个对象"——本条补上那两个量。**只读账本、只打印**（不改判据、不写任何表）。
@@ -355,21 +173,8 @@ fn dump_records(kind: Kind) {
         crate::putln!("[audit]   ... {} records, first {CAP}:", recs.len());
     }
     for r in recs.iter().take(CAP) {
-        // **账说它活着，帧同意吗？** 在册块必须落在一个**在手**的帧里（大块自己占帧、
-        // 小块住在池借页里，两种都在手）。若帧已归还（`held == false`）而记录还在，
-        // 那是"**活着就被拆掉**"：块的内容随时会被别处复用 —— 这一类泄漏的修法与
-        // "谁忘了 drop"完全不同，故在这一行就把它分出来。
-        let frame_held = held(r.addr & !(crate::memory::PAGE_SIZE - 1));
-        // **账说它活着，池同意吗？** 块层的 `Meta::used` 是**另一套独立维护**的账
-        // （alloc/dealloc 直接加减，从不看 Ledger）。两边对不上就是"两套账"：
-        // `used == 0` ⇒ 池认为这一页上一块在册都没有 ⇒ 这一条是**假泄漏**（那块
-        // 早被归还、随时会被别处复用，读到的 `strong/weak` 是陈旧字节）。
-        let pool = crate::memory::allocator::block::heap()
-            .page_meta(r.addr)
-            .map(|(owner, _, used)| alloc::format!("owner={owner:?} 该页在册块={used}"))
-            .unwrap_or_else(|| alloc::string::String::from("不在块堆簿记范围内"));
         crate::putln!(
-            "[audit]   {} @ {:#x} size {} site {:#x} 所在帧在手={frame_held} ｜块池：{pool}",
+            "[audit]   {} @ {:#x} size {} site {:#x}",
             kind.name(),
             r.addr,
             r.size,
@@ -423,68 +228,8 @@ fn dump_records(kind: Kind) {
                     }
                 }
             }
-            // **谁还指着它**：载荷已析构（`strong 0`）而块未归还 ⇒ 有一枚弱引用活着。
-            // 逐个容器点名排除之后仍然复现，故直接扫内存把持有者找出来（见 `who_holds`）。
-            if strong == 0 {
-                let hits = who_holds(r.addr, 8);
-                crate::putln!("[audit]     -> 全 DRAM 命中 {hits} 处（上限打印 8）");
-            }
         }
     }
-}
-
-/// **账 / 帧 一致性**：账（`LEDGER`）说"这块还活着"时，它所在的那一页**必须在手**。
-///
-/// # 为什么这条与 `residual == 0` 是一对
-///
-/// 帧侧的恒等式（`held == 累计分配 − 累计释放`、`walk == idle`、`residual == 0`）只说
-/// 帧池自己两套账对不对；块侧（`Kind::Task` / `Kind::Plain` 这些**块分配**）此前**没有
-/// 对偶的那一条**：Ledger 说活着、而那块脚下的帧早已归还给池子 —— 这种状态谁都不报，
-/// 却正是"读到 `strong 0 weak 1` 的陈旧字节"这类**假泄漏**的温床（块随时会被别处复用）。
-///
-/// 故本条把"活着"钉上两件独立事实：
-/// ```text
-/// ① 账说在册  ⇒ 它所在的**帧**必须在手（本函数）
-/// ② 账说在册  ⇒ 块池簿记里那一页的**在册块数** > 0（`dump_records` 逐条打）
-/// ```
-/// ①是常驻判据（每次关机都跑、不依赖偶发），②只在已判泄漏时逐条取证。
-fn probe_ledger_frames() {
-    /// 一条抄出来的记录（**先抄后查**：`for_each` 持 Ledger 锁，而 `held` 要取帧锁
-    /// —— 锁内回头问另一把锁就是自造锁序）。抄进预分配缓冲，锁内零分配。
-    struct Rec {
-        addr: usize,
-        kind: Kind,
-        site: usize,
-    }
-    let mut recs: alloc::vec::Vec<Rec, &'static dyn Allocator> = alloc::vec::Vec::with_capacity_in(
-        super::ledger::LEDGER.len().max(64),
-        crate::memory::allocator::hybrid::allocator(),
-    );
-    super::ledger::LEDGER
-        .for_each(|addr, rec| recs.push(Rec { addr, kind: rec.kind, site: rec.site }));
-
-    let mut bad = 0usize;
-    let mut shown = 0usize;
-    for r in recs.iter() {
-        if held(r.addr & !(crate::memory::PAGE_SIZE - 1)) {
-            continue;
-        }
-        bad += 1;
-        if shown < 8 {
-            shown += 1;
-            crate::putln!(
-                "[audit] **账/帧 不一致**：{} @ {:#x}（site {:#x}）所在的帧**不在手** \
-                 —— 账说它活着，池子却已经把那一页收回去了",
-                r.kind.name(),
-                r.addr,
-                r.site
-            );
-        }
-    }
-    crate::putln!(
-        "[audit] 账/帧 一致性：在册记录 {} 条，其中**所在帧不在手** {bad} 条（应为 0）",
-        recs.len()
-    );
 }
 
 /// **`rip` 之后的弱引用普查**（只读；`check_baseline` **之前**跑，与泄漏判据同一快照）。
@@ -537,8 +282,6 @@ pub fn probe_teams() {
     // 容器清空**看不见**的那一半（抄件活在调用方的栈帧里）。生/亡账把这一半补上：
     // 存 ≠ 0 就是 `leak: task 1` 的持有者，出身指出是哪条路造出来的。
     crate::work::unit::weak::report();
-    // 块侧的对偶判据（帧侧那条在 `chain` 用例里）：账说活着的每一块，脚下的帧必须在手。
-    probe_ledger_frames();
 }
 
 /// 断言关机时各对象种类都到了它的期望终值（逐种类，见模块头）。
