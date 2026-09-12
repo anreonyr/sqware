@@ -111,9 +111,14 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     crate::lock::init_depend(machine::hart_count()).expect("depend init failed");
 
-    // 健康检查：三个探针（spare 预算验收 / PT 回收自测 / 分配器压测）全在
-    // `debug_assertions` 档，release 下本函数是空体。任一失败 fail-fast
-    // （panic → crash scene）。
+    // 用例：两档互斥 —— `--features framework` 走测试框架（逐例打点 + 末行汇总），
+    // 否则走 debug 档的健康检查。任一失败 fail-fast（panic）。
+    //
+    // 同位置、同时点：调度器已就绪、`spawn_root` 未起 ⇒ 用例**没有 shell、没有装槽**，
+    // 只有单核与早启动期设施（`putln!`、块/frame 分配器、页表树、`Space` 原语、`fence`）。
+    #[cfg(feature = "framework")]
+    crate::framework::run(&crate::framework::Kernel);
+    #[cfg(not(feature = "framework"))]
     crate::health::run();
 
     spawn_root().expect("boot spawn failed");

@@ -33,6 +33,17 @@ SECTIONS
   .rodata ALIGN(0x1000) : {
     _rodata_start = .;
     *(.rodata*)
+
+    /* 用例登记段（`--features framework` 才有内容）。三条约束：
+       ① 嵌在 `.rodata` 内 ⇒ **不动 `_kernel_edge`**（主栈 guard 靠它定位，见上段注释）；
+       ② `KEEP` ⇒ 空引用不被 `--gc-sections` 丢掉 —— 这是"零维护发现"的支点，
+          段一丢，症状是**静默零用例**（绿着，什么都没测），比失败更坏；
+       ③ 两边界符号供 `framework::discover()` 取切片（与 `_rodata_start` 同一手法）。
+       内容只有 `&'static str` 与裸函数指针，故落只读段是安全的（无重定位写）。 */
+    . = ALIGN(8);
+    __tests_start = .;
+    KEEP(*(.tests))
+    __tests_end = .;
   }
 
   . = ALIGN(0x1000);

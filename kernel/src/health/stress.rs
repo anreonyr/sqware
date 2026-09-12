@@ -18,8 +18,6 @@
 为长期回归。
 */
 
-#![cfg(debug_assertions)]
-
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
@@ -41,7 +39,7 @@ const FRAME_STEPS: usize = 64;
 /// 幕 4 持有批大小（跨 order 分裂/合并交错；block 幕 2 的 frame 对偶）。
 const FRAME_HELD: usize = 8;
 
-pub fn accept() {
+pub(super) fn accept() {
     let a = hybrid::allocator();
 
     // 幕 1：block 域 多尺寸混合 分配-立即释放
@@ -127,10 +125,4 @@ pub fn accept() {
         a.deallocate(b.cast(), l);
     }
 
-    crate::health::report_ok(
-        "stress",
-        format_args!(
-            "block {STEPS} mixed + {HELD} held; frame {FRAME_STEPS} mixed + {FRAME_HELD} held + drain {n} clean"
-        ),
-    );
 }

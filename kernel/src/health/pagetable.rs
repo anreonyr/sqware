@@ -4,7 +4,7 @@
 // 每轮：map 4 MiB（4 KiB 页，根表槽 1）→ 表数 +3（1×L1 + 2×L0）；unmap → 回落；
 // 32 轮后「在途帧 − 堆支撑页」回到轮前。断言用 `expect!`：失败统一报告 + fail-fast。
 
-#![cfg(debug_assertions)]
+#![cfg(any(debug_assertions, feature = "framework"))]
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -14,8 +14,8 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::SpaceBuilder;
 
-/// PT 回收自测（audit-only）：map/unmap 循环验证中间表当场归还。
-pub fn pagetable() {
+/// PT 回收自测：map/unmap 循环验证中间表当场归还。
+pub(super) fn pagetable() {
     // 表数期望随模式层级（4 MiB = 2×L0 + 每层一个中间表 = 共 levels 张表）。
     let levels = crate::memory::manager::mode::geometry(crate::memory::manager::mode::mode()).levels
         as usize;
@@ -83,10 +83,4 @@ pub fn pagetable() {
         "net frames leaked: {held_before} → {held_after}"
     );
     drop(space);
-    super::report_ok(
-        "pagetable",
-        format_args!(
-            "{ROUNDS} rounds, levels {levels}, tables {base_count} → +{levels} → {base_count}"
-        ),
-    );
 }

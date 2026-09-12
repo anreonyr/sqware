@@ -6,8 +6,6 @@
 //     再全部归还——余量须还原到演练前（分配/释放/合并闭环无泄漏）。
 // 断言用 `expect!`（health 专用宏）：失败统一报告 + fail-fast。
 
-#![cfg(debug_assertions)]
-
 use core::alloc::{Allocator, Layout};
 use core::ptr::NonNull;
 
@@ -19,8 +17,8 @@ use crate::memory::allocator::spare::DUMP_BUDGET;
 use crate::memory::allocator::statistics;
 use crate::runtime::diagnose::trace;
 
-/// spare 预算验收（失败即 halt）。
-pub fn accept() {
+/// spare 预算验收（用例体；登记在 `mod.rs` 的 `test!` 块）。
+pub(super) fn accept() {
     let h = machine::hart_count();
     let ring = trace::ring_bytes(h);
 
@@ -63,6 +61,4 @@ pub fn accept() {
         after.occupied,
         before.occupied
     );
-
-    crate::putln!("[health] spare: ok (ring {ring} B, dump budget {DUMP_BUDGET} B, drill clean)");
 }

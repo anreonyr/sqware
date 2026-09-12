@@ -7,6 +7,8 @@ extern crate alloc;
 mod boot;
 mod console;
 mod devices;
+#[cfg(feature = "framework")]
+mod framework;
 mod health;
 mod initrd;
 mod layout;

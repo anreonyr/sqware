@@ -415,14 +415,21 @@ impl Space {
         }
     }
 
-    /// 页表树节点总数（health 自测用，debug-only——非审计链）。
-    #[cfg(debug_assertions)]
+    /// 页表树节点总数（自测用，非审计链）。
+    ///
+    /// 门跟着**用户**走：`debug_assertions`（旧 `health` 验收跑在 debug）与
+    /// `framework`（测试档用例要它；framework profile 恒开 debug-assertions，但
+    /// `--features framework` 也能落在 release 上 —— 那时不带此门就编不过）。
+    #[cfg(any(debug_assertions, feature = "framework"))]
     pub fn table_count(&self) -> usize {
         self.with(|inner| inner.root.count())
     }
 
     /// 簿记↔页表一致性审计（boot / 压力测试后调用；不一致即 panic）。
-    #[cfg(feature = "audit")]
+    ///
+    /// 同 [`Self::table_count`]：门跟着用户走 —— 用例里的 `space.audit()` 是它的第二个
+    /// 调用点，而 `--features framework` 未必同时带 `audit`。
+    #[cfg(any(feature = "audit", feature = "framework"))]
     pub(crate) fn audit(&self) {
         self.with(|inner| inner.audit());
     }

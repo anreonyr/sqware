@@ -17,6 +17,11 @@ semihosting = []
 # debug_assertions 硬化开关，release 也能跑审计。默认关闭以减小常驻 footprint：
 # 活块账本（hashbrown）、关机类别记账检查、canary 现场清查等全部 cfg out。
 audit = []
+# 内核内测试框架（framework/ + health/ 的用例 + link.ld 的 `.tests` 段）。
+# **非默认、且不在任何别的档里**：它同时管两件事 —— 启用用例（`.tests` 段登记）与把
+# panic 通道改成"报哪一例失败再停机"（`halt.rs`）。两件事拆成两个 feature 只会造出
+# 无意义的四象限（登记了却走崩溃转储 / 没登记却报用例失败）。
+framework = []
 
 [dependencies]
 env = { path = "../crates/env" }

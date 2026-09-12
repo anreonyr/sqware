@@ -28,6 +28,17 @@ panic = "abort"
 inherits = "release"
 debug-assertions = true
 
+# 框架档（内核内测试）：**继承 harden**，于是用例跑在与验收门同一套护栏下 ——
+# debug_assertions 开着（页码表/空间不变量、lockdep 全集在场），配合
+# `--features "framework audit"` 再叠上账本与三源核对。用例要测的正是这些护栏，
+# 关着断言跑测试等于测了个空壳。
+#
+# 注：`--features framework` 是**内核 crate 的 feature**，profile 只管构建参数，
+# 两者要一起给（`cargo build --profile framework --features "framework audit"`）。
+[profile.framework]
+inherits = "harden"
+debug-assertions = true
+
 [profile.release]
 # opt-level=2/3：WaitKey::compose 在闭包内联 push_key/pull_key 时 mask
 # 计算会被 size 优化多算一次 +1（错联到 0x1000000000000）→

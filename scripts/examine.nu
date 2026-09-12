@@ -266,14 +266,25 @@ const HARDEN_PROBES = [
   "lock-order level violation"
 ]
 
+# 框架档的 marker：用例汇总行。
+#
+# 判据是**全过**（`0 fail` 且 `ok` 数 == 用例总数）：用例失败会走 panic 通道 → 被通用的
+# 「无 panic」判据抓住，这一条是**正向**读数 —— 它同时挡掉"零用例"（`.tests` 段被链接器
+# 丢掉时用例一个都不跑，而其余所有 marker 照旧齐）。零用例的症状比失败更坏：绿着，
+# 什么都没测，故这条必须断言具体条数。
+const FRAMEWORK_MARKER = "\\[case\\] cases 3 ok 3 fail 0"
+
 # 本档要核的 marker：默认档十五条（.sh 原文 + 中断链 + 他杀两验 + 线的权威两证），audit/harden 档再追加各自那几条。
 # **三档都要核** `IRQ_MARKER`：中断面不是某一档的附属品，它每一轮都该成立。
 def markers_for [flavor: string] {
   let base = ($MARKERS | append $IRQ_MARKER)
   match $flavor {
-    "audit"  => ($base | append $AUDIT_MARKERS)
-    "harden" => ($base | append $HARDEN_MARKERS)
-    _        => $base
+    "audit"     => ($base | append $AUDIT_MARKERS)
+    "harden"    => ($base | append $HARDEN_MARKERS)
+    # 框架档跑 `--features "framework audit"`：audit 那几条照旧要成立（用例跑在 audit 版
+    # 产物上，账本与三源核对都在场），再加用例汇总行。
+    "framework" => ($base | append $AUDIT_MARKERS | append $FRAMEWORK_MARKER)
+    _           => $base
   }
 }
 
@@ -442,9 +453,10 @@ def run_once [cfg: record, i: int, flavor: string] {
   # EXAMINE_FEATURES 的那份（两份产物在 <OUT>/elf-<档>/，见 main 的按档构建）。
   # 这就是本门的设计要点：一次构建、两种期望，必然有一档被按构造误判。
   let elf = (match $flavor {
-    "audit"  => $cfg.elf_audit
-    "harden" => $cfg.elf_harden
-    _        => $cfg.elf_default
+    "audit"     => $cfg.elf_audit
+    "harden"    => $cfg.elf_harden
+    "framework" => $cfg.elf_framework
+    _           => $cfg.elf_default
   })
   let feats = (if $flavor == "default" { $DEFAULT_FEATURES } else { $cfg.features })
   # qemu：tail 长驻写端喂命令文件 → scripts/boot.nu（qemu 起法的唯一出处）。
@@ -637,12 +649,19 @@ def main [] {
   # 把容器⇔状态断言与整条 lockdep 放回被测产物里。**不是**第二道 audit：它不带 audit
   # feature，判的是「没有 `[depend]`（锁序违规）」+ 那两条探针。
   let harden = (($env.EXAMINE_HARDEN? | default "0") == "1")
+  # `EXAMINE_FRAMEWORK=1` ⇒ 再加一轮**框架档**（`--profile framework --features "framework audit"`）：
+  # 内核内测试框架（`kernel/src/framework/` + `health/` 的用例）跑在启动期，逐例打点 +
+  # 末行汇总。这一档判两件事：① 用例全过（汇总行 `cases N ok N fail 0`，N 具体到条数
+  # ——零用例比失败更坏）；② 判据其余五条照旧（测试档要在**同一趟**里接着跑完那 15 步
+  # shell 序列，因为用例通过即放行启动）。
+  let framework = (($env.EXAMINE_FRAMEWORK? | default "0") == "1")
   # cargo 的落点：**两档共用**（换 feature 就覆盖）⇒ 每建一档必须立刻搬走产物（见 build_flavor）。
   let built = ($root | path join "target/riscv64gc-unknown-none-elf/release/sqware")
   # 三档各自的产物：本轮（本 OUT）自己的目录，各带 initrd.img。轮次只跑自己那份。
   let elf_default = ($out | path join "elf-default" "sqware")
   let elf_audit = ($out | path join "elf-audit" "sqware")
   let elf_harden = ($out | path join "elf-harden" "sqware")
+  let elf_framework = ($out | path join "elf-framework" "sqware")
   let boot = ($root | path join "scripts" "boot.nu")
 
   print $"examine: repeat=($repeat) out=($out) qemu_timeout=($qemu_timeout)s step_wait=($step_wait)s"
@@ -683,9 +702,27 @@ def main [] {
   }
 
   let cfg = {
-    out: $out, elf_default: $elf_default, elf_audit: $elf_audit, elf_harden: $elf_harden, boot: $boot,
+    out: $out, elf_default: $elf_default, elf_audit: $elf_audit, elf_harden: $elf_harden,
+    elf_framework: $elf_framework, boot: $boot,
     qemu_timeout: $qemu_timeout, step_wait: $step_wait, t_gap: $t_gap,
     icount: $icount, features: $features,
+  }
+
+  if $framework {
+    # 命名档的 cargo 落点是 target/<triple>/framework/（与 harden 同理）。
+    let built_fw = ($root | path join "target/riscv64gc-unknown-none-elf/framework/sqware")
+    # 逐字拼（不能用 `$"…"`）：`$elf_framework` 此刻在作用域内，但下面这条打印的
+    # 兄弟行曾写成纯字符串、把变量名原样打了出来——那类错在报告里看得见，在此记一笔。
+    print ('examine: 构建框架档（--profile framework --features framework+audit）→ ' + ($elf_framework | into string))
+    build_flavor "framework" "framework audit" $built_fw $elf_framework
+    # 正向对照：这一档必须真带着用例登记段 —— 段被链接器丢掉时用例一个不跑，
+    # 而 transcript 上「零用例」与「全过」只差一个数字，故在此先验 ELF 里那段在。
+    let n = (^readelf -sW $elf_framework | ^grep -c __tests_start | complete)
+    if ($n.stdout | str trim) == "0" {
+      print "examine: 框架 ELF 里没有 __tests_start ⇒ 用例登记段被丢了（零用例档）"
+      exit 1
+    }
+    print "  framework 正向对照：.tests 段边界符号在（用例真被登记）"
   }
 
   mut pass = 0
@@ -735,6 +772,19 @@ def main [] {
       print ('run ' + ($i | into string) + ': PASS (harden 档：自退 + 无 panic + 无 lockdep 违规 + 15 步全过 + 17 marker 齐)')
     } else {
       print ('run ' + ($i | into string) + ': FAIL (harden 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
+    }
+  }
+
+  # 框架轮（仅当 EXAMINE_FRAMEWORK=1）：跑内核内测试框架那份产物。轮次编号接在前面几档之后。
+  if $framework {
+    let i = $repeat + (if $audit { 1 } else { 0 }) + (if $harden { 1 } else { 0 }) + 1
+    let r = (run_once $cfg $i "framework")
+    $total_rounds += 1
+    if $r.ok {
+      $pass += 1
+      print ('run ' + ($i | into string) + ': PASS (框架档：自退 + 无 panic + 用例全过(3/3) + 15 步全过 + marker 齐)')
+    } else {
+      print ('run ' + ($i | into string) + ': FAIL (框架档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
   }
 

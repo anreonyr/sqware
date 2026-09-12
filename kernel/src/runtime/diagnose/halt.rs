@@ -119,19 +119,30 @@ pub(crate) fn scene() -> (usize, usize) {
 
 #[panic_handler]
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
-    // 拉响警报：抢占报警源（输家就地卧倒），再广播停止其它核，随后归巢组稿。
-    // 嵌套 panic（重入）= `claim()` 假分支，恒为「本核即报警源」——直接进停机自环。
-    // 仲裁**先行**于换栈：双核同时 panic 若先换栈，输家会与胜家争夺同一 ROOT 栈顶。
-    if !alarm() {
-        crate::putln!(
-            "info: {} sepc={:#x} stval={:#x}",
-            info.message(),
-            riscv::register::sepc::read(),
-            riscv::register::stval::read(),
-        );
-        halt_loop()
+    // 测试档：panic 不是内核缺陷，是用例失败 —— 崩溃转储在这里没有意义（打一百行现场
+    // 反而埋掉"哪一例、断言说了什么"）。改道报用例 + 干净停机，见 framework::case_failed。
+    // 该函数恒 `-> !`，故下面的转储整段在本档不可达（`cfg` 两块，不是运行期分支）。
+    #[cfg(feature = "framework")]
+    {
+        crate::framework::case_failed(info)
     }
-    home(info)
+
+    #[cfg(not(feature = "framework"))]
+    {
+        // 拉响警报：抢占报警源（输家就地卧倒），再广播停止其它核，随后归巢组稿。
+        // 嵌套 panic（重入）= `claim()` 假分支，恒为「本核即报警源」——直接进停机自环。
+        // 仲裁**先行**于换栈：双核同时 panic 若先换栈，输家会与胜家争夺同一 ROOT 栈顶。
+        if !alarm() {
+            crate::putln!(
+                "info: {} sepc={:#x} stval={:#x}",
+                info.message(),
+                riscv::register::sepc::read(),
+                riscv::register::stval::read(),
+            );
+            halt_loop()
+        }
+        home(info)
+    }
 }
 
 /// 归巢（naked）：落盘 SCENE（原始 sp/fp）→ 跳 ROOT 栈顶 → `tail` panic_work。
@@ -220,7 +231,7 @@ extern "C" fn info(info: &PanicInfo) -> ! {
 }
 
 /// 停机自环：srst 关机/复位，失败则关中断 wfi 兜底自旋。**不 panic**（已是 panic 末端）。
-fn halt_loop() -> ! {
+pub(crate) fn halt_loop() -> ! {
     // SAFETY: 仅清 sstatus.SIE（纯写本 hart 自己的 CSR，与 hunker 同契约）。
     unsafe { core::arch::asm!("csrci sstatus, 2") };
     loop {
