@@ -13,19 +13,28 @@ publish = false
 # 故本 crate 离线可构建；`smartalloc` 是**可选**后端（见 README：需要能拉 crates.io）。
 [dependencies]
 erra = { version = "0.2.0", default-features = false }
-# smartalloc：**全局分配器**（C 库绑定，自带"孤儿缓冲"检测）。
+# smartalloc：**接管 debug 档宿主堆的全局分配器**（C 库绑定，自带"孤儿缓冲"检测）。
 #
 # 放在 `[dependencies]`（可选）而不是 `[dev-dependencies]`：`#[global_allocator]` 挂在
-# **lib 的 crate 根**上，而 dev-dependencies 对 lib 不可见（实测：`unresolved module`）。
-# 它自己 `#![cfg(debug_assertions)]` ⇒ 只在 debug 档生效，这与"护栏要开着跑"同一条理由。
+# lib 里，而 dev-dependencies 对 lib 不可见（实测：`unresolved module`）。
+# 它自己 `#![cfg(debug_assertions)]` ⇒ 只在 debug 档存在，这正是"接管 debug 档"的字面
+# 含义；release 档下本 crate 对它的引用整块 cfg out。
 smartalloc = { version = "0.2.0", optional = true }
 
 [features]
-default = []
-# 用 `SmartAlloc` **架空**内核分配器：宿主进程的堆整个走 smartalloc，
-# 于是"内核对像/分配器元数据有没有漏"由它来答，而不是由内核自己的读数答。
+# **默认接管**：debug 档的宿主堆直接走 smartalloc（见 `src/lib.rs` 的 `host_alloc`）。
+# 想要 LSan 那条路（或者只想看"用例过不过"）就 `--no-default-features`：接管之后
+# 每个活块都被 smartalloc 的队列指着，LSan 会把它们全判成 reachable。
+default = ["smartalloc"]
 smartalloc = ["dep:smartalloc"]
 # **声明但不启用**：`include!` 进来的内核源码里有 `#[cfg(feature = "audit")]` 分支
 # （内核那边的帧侧范围断言）。不声明它，rustc 会报 `unexpected_cfgs`；声明为恒关，
 # 那些分支在宿主上就是**确定地**不编进来——宿主判据不看内核的 audit 档。
 audit = []
+
+# `smartalloc-sys` 用本地 vendored 副本（只改 C 源，见 `vendor/smartalloc-sys/csrc/smartall.c`
+# 的 `SM_ALIGN` 段）：上游 `sizeof(struct abufhead) == 40`，用户指针只有 8 字节对齐，
+# 违反 Rust `GlobalAlloc` 的对齐契约（当全局分配器用时在第一条 16 字节 SIMD 载入上炸）。
+# Rust 侧**照用 crate 原样**，修在 C 里。
+[patch.crates-io]
+smartalloc-sys = { path = "vendor/smartalloc-sys" }

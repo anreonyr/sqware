@@ -1,7 +1,8 @@
 //! 分配器自己的用例 —— **完全不涉及内核对象生命周期**。
 //!
 //! 判据分三层：
-//!   ① 分配器的护栏（`checker`）自己会在违例处炸（双 free / 放没在手的帧 / 链成环…）；
+//!   ① 宿主堆由 **smartalloc 接管**（debug 档的全局分配器，见 `lib.rs`）：分配器自己的
+//!      元数据若漏了，就在那张账上留着，收尾 `sm_dump` 会点名（含分配点）；
 //!   ② 本文件用**影子账**独立复核每一次交付（同一个帧不得发两次、区间不得重叠）；
 //!   ③ 收尾对账：把借出去的都还回去之后，分配器的**自有簿记**应回到起点
 //!      （这一条正是"分配器自己有没有漏"的判据，与"谁没 drop"无关）。
@@ -18,18 +19,42 @@ fn done() {
     crate::dump_orphans();
 }
 
-/// **架空内核分配器的那条路**：这一段内存完全由 smartalloc 提供与结算，
-/// 内核对它一无所知 —— 于是"漏没漏"由 smartalloc 答。
-#[cfg(feature = "smartalloc")]
+/// **接管的凭证（对齐那条契约）**：debug 档的宿主堆由 smartalloc 接管，而它上游只给
+/// 8 字节对齐（`sizeof(struct abufhead) == 40`）——违反 Rust `GlobalAlloc` 的契约。
+/// 本仓 vendored 的 `smartalloc-sys` 在 C 里把基址抬到 `SM_ALIGN = 64`，于是这里问
+/// 一次 64 字节对齐的分配：**拿到的必须真是 64 对齐**。
+///
+/// 这一条同时钉住两件事：① 全局分配器确实是接管层（系统 malloc 也给 16 对齐，但那条路
+/// 由 `--no-default-features` 的反向对照覆盖）；② vendored 补丁真的编进去了。
+#[cfg(all(feature = "smartalloc", debug_assertions))]
 #[test]
-fn smartalloc_owns_this_path() {
-    // 借了又还：不该留下任何孤儿缓冲。
-    // SAFETY: 同一 bytes、只归还一次。
+fn host_allocator_took_over() {
+    use std::alloc::{alloc, dealloc, Layout};
+    let layout = Layout::from_size_align(256, 64).unwrap();
+    // SAFETY: layout 非零尺寸；解引用只发生在下面显式写入的范围内。
     unsafe {
-        let p = crate::smart::alloc(64);
-        assert!(!p.is_null());
-        crate::smart::free(p, 64);
+        let p = alloc(layout);
+        assert!(!p.is_null(), "接管层没给出内存");
+        assert_eq!(
+            p as usize % 64,
+            0,
+            "接管层的指针对齐不满足 layout.align()=64（上游 smartalloc 只给 8 字节对齐，             见 vendor/smartalloc-sys/csrc/smartall.c 的 SM_ALIGN 段）"
+        );
+        // 写满整块再还：越界会被 smartalloc 的尾部哨兵当场抓住。
+        std::ptr::write_bytes(p, 0xA5, 256);
+        dealloc(p, layout);
     }
+    done();
+}
+
+/// `--no-default-features` / release 档：没有接管层（同一条判据的另一面）。
+#[cfg(not(all(feature = "smartalloc", debug_assertions)))]
+#[test]
+fn host_allocator_not_taken_over() {
+    // 未接管时 `dump_orphans()` 是 no-op，这里只做一次普通分配/释放的冒烟。
+    let v: Vec<u8> = vec![1u8; 4096];
+    assert_eq!(v.len(), 4096);
+    drop(v);
     done();
 }
 

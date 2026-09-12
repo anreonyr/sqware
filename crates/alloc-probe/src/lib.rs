@@ -240,58 +240,44 @@ macro_rules! tag {
     };
 }
 
-// ── smartalloc：架空内核分配器的那条路 ────────────────────────────────────
+// ── 宿主堆的接管：`smartalloc` 当 `#[global_allocator]`（**debug 档**）──────────
 //
-// **它不能当 `#[global_allocator]`**（实测：挂上后测试进程启动阶段 SIGSEGV）。原因在
-// 上游 C 源里写着：`csrc/smartall.c` 的 `smalloc()` 是 `malloc(nbytes)` 的**跟踪包装** ——
-// smartalloc 不是独立分配器，而是围着 libc `malloc/free` 的一层账。挂成全局分配器等于
-// 让 Rust 运行时的每一次分配都穿过它（含 stdio/启动期），代价与风险都不划算。
+// 就这一行 —— crate 原样用它自己的 `SmartAlloc`，不再包任何自定义分配器：
 //
-// 故按**上游自己的用法**驱动它：用例显式拿 `SmartAlloc` 分配、收尾 `sm_dump(true)`。
-// 这在语义上仍然正是"架空内核的分配器"：宿主侧那条分配路径由它提供，
-// **泄漏判据由它来答**（"孤儿缓冲"= 分配了但指针已丢的块），而不是由内核自己的读数答。
-#[cfg(feature = "smartalloc")]
-pub mod smart {
-    use core::alloc::{GlobalAlloc, Layout};
+//     #[global_allocator]
+//     static HOST: smartalloc::SmartAlloc = smartalloc::SmartAlloc;
+//
+// 于是本 crate 的**每一次**宿主分配（含被压测的内核分配器自己去要的元数据）都记在
+// smartalloc 的账上；收尾 `dump_orphans()` 把还在账上的块连**分配点**一起打出来。
+//
+// 为什么只可能是 debug 档：`smartalloc` 自己写着 `#![cfg(debug_assertions)]` ——
+// release 下整个 crate 是空的（连 `SmartAlloc` 类型都不存在）。测试跑的就是 debug 档。
+//
+// # 两个必须交代的前提（都在本 crate 里写明并落实，而不是靠"应该没事"）
+//
+// ① **指针对齐**：上游 `sizeof(struct abufhead) == 40`（x86-64），用户指针 = malloc 基址
+//    + 40 ⇒ 只有 8 字节对齐，违反 Rust `GlobalAlloc` 的契约（返回指针须满足
+//    `layout.align()`）。直接挂上去的实测症状：进程起始阶段 SIGSEGV，`movdqa (%r14)`
+//    —— hashbrown 的表扩容里第一条 16 字节 SIMD 载入，一个用例都跑不到。
+//    修法见 `Cargo.toml` 的 `[patch.crates-io]`：本地 vendored `smartalloc-sys` 把
+//    `SM_ALIGN = 64` 写进 C（`smalloc` 抬高基址并把真基址记在头里），**Rust 侧照用 crate**。
+// ② **单线程**：C 层是一张无锁全局链表 + `assert`，多线程并发 alloc/free 会把它写坏。
+//    故 `.cargo/config.toml` 里钉 `RUST_TEST_THREADS = "1"`（crate 自己的使用前提）。
+//
+// 与 `-Zsanitizer=leak` 互斥：接管之后每个活块都被 smartalloc 的队列指着，LSan 会一律
+// 判成 "still reachable" ⇒ 那条路必须 `--no-default-features`（见 README）。
 
-    /// 全局分配器**实例**（不是 `#[global_allocator]`，理由见上）。
-    pub static ALLOC: smartalloc::SmartAlloc = smartalloc::SmartAlloc;
+/// **接管点**：debug 档（且带 `smartalloc` feature）的宿主堆从这里过。
+#[cfg(all(feature = "smartalloc", debug_assertions))]
+#[global_allocator]
+static HOST_ALLOCATOR: smartalloc::SmartAlloc = smartalloc::SmartAlloc;
 
-    /// 借一块内存：走 smartalloc 的账。
-    ///
-    /// # Safety
-    /// 与 `GlobalAlloc::alloc` 同契约；调用方负责把指针交给 [`free`]（否则就是
-    /// **故意的孤儿缓冲**，那正是收尾转储要报的东西）。
-    pub unsafe fn alloc(bytes: usize) -> *mut u8 {
-        let layout = Layout::from_size_align(bytes, 16).expect("layout");
-        // SAFETY: 由调用方保证 layout 合法（非零尺寸）。
-        unsafe { ALLOC.alloc(layout) }
-    }
-
-    /// 归还 [`alloc`] 借出的块。
-    ///
-    /// # Safety
-    /// `p` 必须来自同一 `bytes` 的 [`alloc`]，且只归还一次。
-    pub unsafe fn free(p: *mut u8, bytes: usize) {
-        let layout = Layout::from_size_align(bytes, 16).expect("layout");
-        // SAFETY: 由调用方保证同一 layout、只归还一次。
-        unsafe { ALLOC.dealloc(p, layout) }
-    }
-
-    /// 收尾转储：把"孤儿缓冲"（分配了但指针已丢的块）打出来。
-    ///
-    /// 与 `-Zsanitizer=leak` 的分工：LSan 报"退出时还挂着"的块（含仍有指针的），
-    /// smartalloc 报"**指针都没了**"的那一类（unsafe 代码里最典型的一种漏）。
-    pub fn dump_orphans() {
-        // SAFETY: 上游契约——调试期、进程/用例收尾处调用一次。
-        unsafe { smartalloc::sm_dump(true) };
-    }
-}
-
-/// 收尾转储（非 smartalloc 档 no-op）。
+/// 收尾转储：把此刻仍在 smartalloc 账上的缓冲（"孤儿缓冲"）打出来。
+///
+/// 未接管时（`--no-default-features` 或 release）是 no-op。
 pub fn dump_orphans() {
-    #[cfg(feature = "smartalloc")]
-    smart::dump_orphans();
+    #[cfg(all(feature = "smartalloc", debug_assertions))]
+    smartalloc::sm_dump(true);
 }
 
 #[cfg(test)]

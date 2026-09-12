@@ -50,8 +50,6 @@ dependencies = [
 [[package]]
 name = "smartalloc-sys"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acf7478472a5270d8a34116112435062b88caddfa4018851b81846b3d3d5151e"
 dependencies = [
  "cc",
 ]

@@ -4,3 +4,9 @@
 # 钉回 gnu17 并把那几条风格告警关掉 —— 这是上游 C 源的老化，不是我们这边的问题。
 [env]
 CFLAGS = "-std=gnu17 -Wno-old-style-definition -Wno-implicit-function-declaration -Wno-implicit-int -Wno-builtin-declaration-mismatch"
+
+# 用例**单线程**跑：smartalloc 的 C 层（`smartall.c`）是一张无锁的全局双向链表 +
+# `assert` 校验，多线程同时 alloc/free 会把链表写坏。上游没有锁，我们又按用户裁决
+# "直接用 crate"（不自造封装层），故这里用"单线程跑用例"这条构造性保证替代加锁——
+# 它是 crate 自己的使用前提，写在配置里比写在注释里可靠。
+RUST_TEST_THREADS = "1"
