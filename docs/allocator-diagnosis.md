@@ -133,6 +133,36 @@ strong 在 `+0`、weak 在 `+8`，而取证代码只读了 `+8` 却标成 `stron
 **待查方向**：谁持有那枚 `Weak<Task>`（`wait/site.rs` 的站点值？
 `team` 的成员表？`heir`？），以及它为何在墓碑后仍未被回收。
 
+### 3.4 关机偶发**挂住**（harden 档约 1/10 轮；**与本轮改动无关**）
+
+**症状**：`exit` 之后内核开始关机，打印若干 `[audit] space asid N retired M user-heap
+records`，然后**永不 `system halted`**；四个 hart 全部停在空闲 `wfi`
+（`scheduler::core::fetch::wait`，见下），外接 timeout 180 s 才收场。
+
+成功一轮与挂住一轮的日志对照（**缺的正是 asid 3**）：
+
+```
+成功: asid 1 → 2 → 3 → 4 → 6 → 5   task: all tasks exited, system halted
+挂住: asid 1 → 2 →    4 → 5 → 6    ←—— 到此为止
+```
+
+**为什么判定与本轮改动无关**：改前那份 ELF（`git checkout 9fb61c4 -- kernel/src` 构建，
+`strings | grep stale-rm` = 0 与改后区分）**同样挂住**，且日志签名逐字相同（同样缺
+asid 3）。且它**不由 seed 决定**：同一 ELF + 同一 seed 重跑可以一次挂一次不挂
+（`mine/101` 挂、`before/101` 通；`before/202` 挂、`mine/202` 通）⇒ 是**时序相关的竞态**。
+
+**已排除的假象**：本轮用 gdb（QEMU `-gdb tcp::1234`）抓到过一例"四核全停在
+`fetch::wait` 的 `wfi`"，但那份日志里 `exit` 被喂成了 `xit`
+（`unknown: xit`）—— **是我的驱动吃了首字符**，属喂入失误而非内核挂住。同一脚本补上
+`T_GAP=2` 的让出后连跑 8 轮全部正常停机。故"四核空闲在 `wfi`"这个现场**尚未**在真挂住
+的轮次里取到。
+
+**下一步（窄且明确）**：挂住时没有任何 hart 在跑，堆栈取不到"卡在哪个对象"，故要
+**在关机路径上装进度信标**（只在 audit 档）：每个空间的 drop 进入/离开、每个任务
+exit 的进入/离开、停机屏障已到达的 hart 数，各打一行带序号。挂住那轮的**最后一行**
+就是卡点。若挂点在 `Ledger::retire` 的 `retain` 里（它持账本锁），则同时解释了
+"5 个空间退完、第 6 个消失"的形态。
+
 ## 4. 两条驱动纪律（非内核问题，但曾把时间烧光）
 
 1. **stdin 不关，`boot.nu` 就不退出** —— 即便 guest 早已 `system halted`。
