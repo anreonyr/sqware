@@ -185,7 +185,7 @@ Two protocols exist, both as ordinary non-kernel code:
 | **Directory** | `crates/protocol/src/dispatch/` | `Register` `Unregister` `Replace` `Resolve` `Enumerate` `Connect`, plus one parent-side action `Refer` |
 | **Console** | `crates/protocol/src/console/` | `Open` `Write` `ReadLine` `Close` |
 | **Doom** | `crates/protocol/src/doom/` | `Kill`, plus the owner-only `Quit` |
-| **IRQ** | `crates/protocol/src/irq/` | `Register` (a client claims the line of a device *by name*), plus the parent-side `Refer` (root writes the owner) |
+| **IRQ** | `crates/protocol/src/irq/` | `Register` (a client claims the line of a device *by name*), plus two parent-side verbs: `Refer` (root writes the owner) and `Delegate` (root hands that write right to another task) |
 
 The kernel holds none of their code and has no entry call for them: the directory is reached through a request hole, and every operation is a message on it. Rendering, key decoding and line editing live on the console **service** side; a client only says "I wrote this" and "give me a line".
 
@@ -208,6 +208,18 @@ The kernel answers exactly one question about killing: *may this domain kill tha
 root is the ancestor of every domain, so it is the one that qualifies, and it exposes a
 `doom` service (`kill <name>`) — the shape of Unix `kill`, with the mechanism in the kernel
 and the check in a service rather than in a system call.
+
+The other half of that policy is **restart**, and every layer of it is bounded on purpose.
+Root's main thread brings each service up once; a **watcher thread** (same domain, one per
+service) owns the rest of its life — it probes the door it holds to that service and, on
+death, respawns it from the image it kept. Three bounds decide what "it never comes back"
+means: the restart budget (3 tries in a 10 s window; a failed build is terminal), the
+client's bounded reconnect (60 × 50 ms — [console.md](docs/console.md) §9.2), and root's own
+job, which waits on the **shell**, not on the service it supervises. So the terminal state is
+the natural halt, never an unbounded retry loop. The respawned instance is a **new task id**,
+which is why the interrupt driver learns the name's new owner through an explicit `Delegate`
+rather than through a widened owner test — the relaxation it would need ("same domain") is
+not expressible in the message, which carries only a `from: TaskId`.
 
 ---
 

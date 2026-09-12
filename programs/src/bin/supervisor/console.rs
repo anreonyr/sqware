@@ -54,6 +54,8 @@
 
 extern crate alloc;
 
+use alloc::format;
+
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
@@ -306,7 +308,17 @@ fn register_line(input: TaskId, dir: &Directory, name: &env::Name) -> bool {
     // ④ 交给输入线程：**先写推者、后发门闩**（见 [`IRQ_SESSION`] 的顺序说明）。
     IRQ_FROM.store(line.owner().get(), Ordering::Relaxed);
     IRQ_SESSION.store(at_input.get(), Ordering::Release);
+    announced(name);
     true
+}
+
+/// 登记成了一句：**走本域自己的设备**（同步写，不经过任何服务）。
+///
+/// 它是"**这个实例拿到了 `Ok`**"的唯一可见证据——`Taken` / `NotYours` / `Unclaimed` 都会走
+/// 降级路径（有界轮询）、不打这一行。故 root 重发出来的新实例能不能拿到 `Ok`，取决于驱动
+/// 有没有把旧实例收干净：**收线的判据就架在它上面**（`docs/root.md` §5.3）。
+fn announced(name: &env::Name) {
+    device_put(&format!("console: line {} ok\n", name.as_str()));
 }
 
 /// 从 root 配给的名字孔里取回设备名（**本域不硬编码设备名**：名字的账在 boot 的

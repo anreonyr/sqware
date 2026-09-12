@@ -91,7 +91,7 @@ impl Plic {
     /// 树是驱动的事**（内核只原样搬运自描述，§3.1.3），故这里可以按 compatible 认。
     ///
     /// 返的第二件是**线表**：它由同一棵树建出来（名字 → 线号），本域此后只认名字。
-    fn open(pole: PolePie, dtb: PolePie) -> Option<(Self, Lines)> {
+    fn open(pole: PolePie, dtb: PolePie, sire: env::TaskId) -> Option<(Self, Lines)> {
         let base = pole.open().ok()?;
         let dtb_va = dtb.open().ok()?;
         // SAFETY: DTB 门闩把设备树本体只读借映进了本域；`fdt` 只读它。
@@ -120,7 +120,7 @@ impl Plic {
             }
         }
         // 线表与控制器同源：同一个 `ndev` 只读一次（它就是"这台控制器有几条线"）。
-        let lines = Lines::from_tree(&fdt, &node, ndev);
+        let lines = Lines::from_tree(&fdt, &node, ndev, sire);
         Some((
             Self {
                 base,
@@ -254,6 +254,7 @@ extern "C" fn main() -> ! {
     let Some((plic, lines)) = Plic::open(
         PolePie::from_token(plic_pier.token()),
         PolePie::from_token(dtb_pier.token()),
+        sire,
     ) else {
         runtime::env::room::exit_with(13);
     };
@@ -305,35 +306,55 @@ fn serve(msg: &[u8], from: env::TaskId, sire: env::TaskId) {
     };
     match req {
         irq::Request::Register { name, session, ack } => {
-            let status =
-                match LINES.with(|l| l.as_mut().map(|l| l.register(&name, from, session.get()))) {
-                    Some(Ok(line)) => {
-                        PLIC.with(|p| {
-                            if let Some(p) = p {
-                                p.enable(line, LINE_PRIORITY);
-                            }
-                        });
-                        irq::Ack::Ok
-                    }
-                    // 拒绝：会话门闩那一份本域**当即放下**——它不是我们的资源（不放下就是
-                    // 让一个被拒的请求在本域的表里留下痕迹）。行与线都不动。
-                    Some(Err(why)) => {
-                        let _ = mail::release(session.get());
-                        irq::Ack::Refused(why)
-                    }
-                    None => {
-                        let _ = mail::release(session.get());
-                        irq::Ack::Refused(irq::Refused::Unknown)
-                    }
-                };
+            let status = match LINES.with(|l| {
+                l.as_mut().map(|l| {
+                    l.register(&name, from, session.get(), |hole| {
+                        // 探能力链：持有者那枚会话门闩还在不在（在 = 它活着）。
+                        mail::reserve(env::PieToken::new(hole)).is_ok()
+                    })
+                })
+            }) {
+                Some(Ok(line)) => {
+                    PLIC.with(|p| {
+                        if let Some(p) = p {
+                            p.enable(line, LINE_PRIORITY);
+                        }
+                    });
+                    irq::Ack::Ok
+                }
+                // 拒绝：会话门闩那一份本域**当即放下**——它不是我们的资源（不放下就是
+                // 让一个被拒的请求在本域的表里留下痕迹）。行与线都不动。
+                Some(Err(why)) => {
+                    let _ = mail::release(session.get());
+                    irq::Ack::Refused(why)
+                }
+                None => {
+                    let _ = mail::release(session.get());
+                    irq::Ack::Refused(irq::Refused::Unknown)
+                }
+            };
             reply(ack.get(), status);
         }
         irq::Request::Refer { name, who, ack } => {
-            // `who = 0` 是坏报文（行里的 0 是"没人认领"的哨兵，不能被写成属主）。
-            let status = if from != sire || who.get() == 0 {
+            // `who = 0` 是坏报文（行里的 0 是"没人认领"的哨兵，不能被写成属主）；
+            // "谁有资格写"由行表判（`sire` 或 root 委托过的那个，见 [`Lines::refer`]）。
+            let status = if who.get() == 0 {
                 irq::Ack::Refused(irq::Refused::NotYours)
             } else {
-                match LINES.with(|l| l.as_mut().map(|l| l.refer(&name, who))) {
+                match LINES.with(|l| l.as_mut().map(|l| l.refer(&name, from, who))) {
+                    Some(Ok(())) => irq::Ack::Ok,
+                    Some(Err(why)) => irq::Ack::Refused(why),
+                    None => irq::Ack::Refused(irq::Refused::Unknown),
+                }
+            };
+            reply(ack.get(), status);
+        }
+        irq::Request::Delegate { name, who, ack } => {
+            // 委托写权：**只有 `sire` 能委托**（行表判），且 `who = 0` 是坏报文。
+            let status = if who.get() == 0 {
+                irq::Ack::Refused(irq::Refused::NotYours)
+            } else {
+                match LINES.with(|l| l.as_mut().map(|l| l.delegate(&name, from, who))) {
                     Some(Ok(())) => irq::Ack::Ok,
                     Some(Err(why)) => irq::Ack::Refused(why),
                     None => irq::Ack::Refused(irq::Refused::Unknown),

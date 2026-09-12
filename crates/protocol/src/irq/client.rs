@@ -64,6 +64,12 @@ impl Line {
         self.ask(|ack| Request::refer(*name, who, ack))
     }
 
+    /// 委托写权：这个名字的属主，从此也可以由 `who` 写。**同样只有 root 会调它**——
+    /// 它是"root 把自己那份写权借给自己域里的一个线程"，与 [`Line::refer`] 同一条判据入口。
+    pub fn delegate(&self, name: &Name, who: TaskId) -> EnvResult<Ack> {
+        self.ask(|ack| Request::delegate(*name, who, ack))
+    }
+
     /// 一次往返：备回信孔 → 报文 → 有界等回执 → **封印回信孔**。
     fn ask(&self, build: impl FnOnce(PieToken) -> Request) -> EnvResult<Ack> {
         let ack = HolePie::unseal(ACK_LEN)?;

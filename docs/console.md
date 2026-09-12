@@ -120,6 +120,7 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 | 非 UTF-8 载荷 | `Denied` | 逐字节写会把转义串打成碎片（`server.rs:309-314`） |
 | 表满 | 借 `NoSuchClient` | 协议里没有「稍后重试」这个码（`server.rs:257-262`） |
 | 生命周期 | 显式 `close`，**不假装有 `Drop`** | `HolePie` 是句柄值（`client.rs:14-18`） |
+| 重启后谁是这条线的属主 | **root 把该名字的写权 `Delegate` 给监护线程** | 监护线程与 root **同域但不是 root 本人**，而驱动的属主判据问的是「你是不是这台设备的 sire」；「同域」这个放宽**不可表达**（报文里只有一个 `from: TaskId`）⇒ 宁可显式多一个动词（[driver.md](driver.md) §12、[root.md](root.md) §5.3） |
 
 ## 8 · 已决 / 被否
 
@@ -148,6 +149,11 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
    都没了。**代价如实记**：任务侧现在**没有第二通路**，故 shell 的取舍写成
    `flush` 写丢不致命、`readline` 连不上就 `exit_with(NO_CONSOLE)` 收场
    （`programs/src/bin/user/shell.rs`）。
+   **服务重启那一轮改了一半**：`readline` 发现会话不可用不再当场退出，而是**先重连一次**
+   （`reconnect`，有界：`CONSOLE_RETRY` × `CONSOLE_RETRY_MS` = 60 × 50 ms），成功就接着读行，
+   失败仍按原样收场。为什么必须有界：重启那条路自己的上限是「重发预算」（[root.md](root.md)
+   §5.3），客户端若在这里无界重试，就把一个**有界**的失败变成一个既挂不住也退不出的活锁。
+   为什么给 3 s：实测一次重发 235–943 ms（构建 + 启动 + 登记），3 s 盖得住，而它仍然有界。
 3. **`Close` 零调用点**：`Console::close` / `client()` 没有任何消费者（会话活到进程结束），
    门里也没有 `Close` 这一步。
 4. **线格式 `[16..24]` 无主**（见 §3）。
@@ -182,3 +188,9 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
   ④交 `mine` → 白等满 1 s 后静默降级；⑤回执丢在地上 → 三处改走该会话的回信孔；⑥Ctrl-C 不换行。
 - **观测坑**：提示符在每次输入出现**两次**（写一次 + 重绘一次），故 `scripts/quick.sh` 不用它
   计数，改数 `clock <秒>` 行。
+- **服务重启有两条判据，分在两侧**（[root.md](root.md) §5.3）：客户端侧是
+  `shell: console reconnected`（会话续上了），服务侧是 `console: line <名字> ok` **恰好出现
+  两次**——引导期一枚实例、重发之后又一枚（`examine.nu` 的 `checks` 项 `instances`）。后者是
+  「**新实例拿到了 `Ok`**」的唯一可见证据：驱动若答 `Taken`，本域走降级路径、不打这句，计数就
+  停在 1，门当场判红。这句标记在 `register_line` **成功之后**才打（`console.rs`），故它同时
+  读出了「这台设备的名字此刻真的在新实例名下」——收线少了任何一半都凑不出这个 2。

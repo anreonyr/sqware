@@ -37,6 +37,13 @@ struct Line {
     line: u32,
     /// 属主（`TaskId(0)` = 还没人认领）。只有 [`Lines::refer`] 写它。
     who: TaskId,
+    /// 属主**唯一的原始写者**：本域的 `sire`（= root 的主线程）。**建表时定死**
+    /// （它不是运行时判断，是"谁生的我"）。
+    sire: TaskId,
+    /// 被 root **委托**的第二个写者（`Lines::delegate` 写它）：root 的服务重启落在它自己
+    /// 域里的监护线程上，而线程不是域——这条委托就是"root 亲口把这份写权借给它"。
+    /// 只有一个：今天只有一个消费者（console 的重发），第二个出现时再抽表。
+    writer: Option<TaskId>,
     /// 活实例：正挂着这条线的会话门闩（**驱动侧**的 token）。只有
     /// [`Lines::register`]/[`Lines::retire`] 动它。
     holder: Option<usize>,
@@ -57,7 +64,7 @@ impl Lines {
     ///
     /// `ndev` 由调用方传入、不在这里再读一遍：同一个事实（`riscv,ndev`）只留一份账,
     /// 适配层已经为"我的中断面接没接上"读过它了。
-    pub fn from_tree(fdt: &Fdt, controller: &FdtNode, ndev: u32) -> Lines {
+    pub fn from_tree(fdt: &Fdt, controller: &FdtNode, ndev: u32, sire: TaskId) -> Lines {
         let mut rows = Vec::new();
         // 控制器自己没有 phandle ⇒ 树里没有任何节点指得到它 ⇒ 空表（这不是错误：
         // 那棵树在说"没有指向它的中断源"）。
@@ -83,6 +90,8 @@ impl Lines {
                 name,
                 line,
                 who: TaskId(0),
+                sire,
+                writer: None,
                 holder: None,
             });
         }
@@ -94,13 +103,27 @@ impl Lines {
         self.rows.len()
     }
 
-    /// 写属主：这个名字归 `who`。
+    /// 写属主：这个名字归 `who`。`from` = 发起者——**只有本行的写者能写**
+    /// （本域的 `sire`，或 root 为这个名字委托过的那个线程，见 [`Lines::delegate`]）。
     ///
     /// **只写属主，不动实例**：旧实例摘不摘是"收线"那条路的事——没摘，新实例拿的就是
     /// [`Refused::Taken`]（这正是 §12 的判据：不必读 PLIC 寄存器就知道线收没收到）。
-    pub fn refer(&mut self, name: &Name, who: TaskId) -> Result<(), Refused> {
+    pub fn refer(&mut self, name: &Name, from: TaskId, who: TaskId) -> Result<(), Refused> {
         let row = self.row_mut(name).ok_or(Refused::Unknown)?;
+        if !row.writable_by(from) {
+            return Err(Refused::NotYours);
+        }
         row.who = who;
+        Ok(())
+    }
+
+    /// 委托写权：这个名字的属主，从此也可以由 `who` 写（**只有 `sire` 能委托**）。
+    pub fn delegate(&mut self, name: &Name, from: TaskId, who: TaskId) -> Result<(), Refused> {
+        let row = self.row_mut(name).ok_or(Refused::Unknown)?;
+        if from != row.sire {
+            return Err(Refused::NotYours);
+        }
+        row.writer = Some(who);
         Ok(())
     }
 
@@ -108,7 +131,22 @@ impl Lines {
     ///
     /// 判据的次序是有意的：先问"这个名字认不认识"，再问"是不是你的"，最后才问"有没有人
     /// 占着"——**权威在属主，不在占用**（别人占没占着，不是请求者该知道的事）。
-    pub fn register(&mut self, name: &Name, from: TaskId, session: usize) -> Result<u32, Refused> {
+    ///
+    /// `alive` = "这枚会话门闩还在不在"（探能力链，由适配层注入——核心不碰门闩）。
+    /// **它让 `Taken` 只表示"有一个活实例占着"**：持有者已经没了（客户端死了、内核沿派生链
+    /// 把本域手里那枚摘掉）⇒ 这一行其实空着，实例**当场自愈**（行保留、实例摘空——与
+    /// [`Lines::retire`] 是同一笔账，只是触发者从"投递失败"换成"新人来登记"）。
+    ///
+    /// 为什么非有它不可：收线那条路的触发点是**一次投递失败**（§12 ②），而"客户端死了、
+    /// 在新实例登记之前**没有过任何投递**"是常态（§9.14）——没有这一步，root 重发出来的
+    /// 新实例会拿到 `Taken` 而永远登不上记。
+    pub fn register(
+        &mut self,
+        name: &Name,
+        from: TaskId,
+        session: usize,
+        alive: impl Fn(usize) -> bool,
+    ) -> Result<u32, Refused> {
         let row = self.row_mut(name).ok_or(Refused::Unknown)?;
         if row.who.get() == 0 {
             return Err(Refused::Unclaimed);
@@ -116,8 +154,11 @@ impl Lines {
         if row.who != from {
             return Err(Refused::NotYours);
         }
-        if row.holder.is_some() {
-            return Err(Refused::Taken);
+        if let Some(held) = row.holder {
+            if alive(held) {
+                return Err(Refused::Taken);
+            }
+            row.holder = None;
         }
         row.holder = Some(session);
         Ok(row.line)
@@ -142,6 +183,13 @@ impl Lines {
 
     fn row_mut(&mut self, name: &Name) -> Option<&mut Line> {
         self.rows.iter_mut().find(|r| r.name == *name)
+    }
+}
+
+impl Line {
+    /// 本行的写者 = 本域的 `sire`，或 root 委托过的那个（一个）。
+    fn writable_by(&self, task: TaskId) -> bool {
+        task == self.sire || self.writer == Some(task)
     }
 }
 

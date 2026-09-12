@@ -3,13 +3,13 @@
 # sqware examine 验收门（原名 e2e）——nu 版，取代 scripts/examine.sh。
 #
 # 判据四条，缺一不可（与 .sh 版逐条相同）：
-#   1) 逐步生效：十二条命令（默认档；harden/框架档十五条）**逐个等它的输出出现**再发下一条
+#   1) 逐步生效：十三条命令（默认档；harden/框架档十六条）**逐个等它的输出出现**再发下一条
 #      （expect 式），不是按墙钟盲排；
 #      每步都有独立超时，失败能指到具体哪一条。
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) marker 齐全（默认档十五条；harden/框架档在其上再加非默认档那四条），含
+#   4) marker 齐全（默认档十六条；harden/框架档在其上再加非默认档那四条），含
 #      `task: all tasks exited, system halted` 与
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
 #      `plic: line 10 delivered`。
@@ -157,6 +157,14 @@ const STEPS = [
   # ——报文里既没有线号，也没有任何能自证"这台设备是我的"的字段。
   {cmd: "line serial@10000000", pat: "line serial@10000000 -> not-yours"}
   {cmd: "line rtc@101000",      pat: "line rtc@101000 -> unclaimed"}
+  # 服务重启（`docs/root.md` §5.3）：**收线的判据就架在这两步上**。`kill console` 之后
+  #   ① root 的监护线程重发出一个新实例（`root: console restarted` 由 root 自己打，
+  #      走的是本域的设备直连——不依赖那个刚被杀掉的服务）；
+  #   ② shell 的会话断了又续上（`shell: console reconnected`，客户端那一半）；
+  #   ③ 随后那条 `exit` 由此刻**活着的新实例**回显 ⇒ 会话真的活着。
+  # 服务侧那一半不在这一步的期望串里：它要求同一句话出现**两次**，故走 `checks` 的
+  # `instances`（见 `run_once`）——`hit` 只问在不在，问不出"两枚实例"。
+  {cmd: "kill console", pat: "shell: console reconnected"}
   {cmd: "exit",      pat: "task: all tasks exited, system halted"}
 ]
 
@@ -180,9 +188,10 @@ const IRQ_MARKER = "plic: line 10 delivered"
 # 档位 → 本档要跑的步骤（下标取自上面那张表，命令与顺序都只有一处出处）。
 # **改上面那张表就要重算这里**：本轮往 `exit` 前插 `cascade` 时漏算，默认档的 9 从
 # `exit` 指到了 `cascade` ⇒ 默认轮从不 exit、三轮都挂到超时（症状像内核挂，其实是门）。
-# 插 `kill`/`dir`/`line` 那几步时同样要重算（本轮又走了一遍这张表）。
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 10, 11, 12, 13, 14]
-const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+# 插 `kill`/`dir`/`line` 那几步时同样要重算（本轮又走了一遍这张表）；插重启那一步
+# （`kill console`）时走了第三遍——`exit` 的下标从 14 挪到 15，两行都跟着改。
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 10, 11, 12, 13, 14, 15]
+const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
 # 默认档的构建 features **恒为空串**：那是 `FLAVORS` 里 `default` 那一行（构造上的保证，
 # 不是旋钮，见头注「按档构建」）。
@@ -213,6 +222,9 @@ const MARKERS = [
   # 把 console 的线抢走（输入随后退化成有界轮询，而这门里输入照旧"能用"）。
   "line serial@10000000 -> not-yours"
   "line rtc@101000 -> unclaimed"
+  # 服务重启：客户端那一半（会话续上了）。服务侧那一半（**新实例**拿到 `Ok`）由
+  # `checks` 里的 `instances` 核——它不能进这张表，因为同一句话要出现两次。
+  "shell: console reconnected"
   "task: all tasks exited, system halted"
 ]
 
@@ -280,11 +292,13 @@ const FRAMEWORK_MARKER = "\\[case\\] cases 4 ok 4 fail 0"
 # 加一档 = 加一行；改一档 = 改那一行。`run_once` / `main` 全从这里读。
 #
 # `markers` 三段的含义见 `markers_for`：`base` / `extra` / `case`。
-# `checks` 的取值见 `run_once` 末：`depend`（`[depend]` 点名）、`order`（顺序断言）。
+# `checks` 的取值见 `run_once` 末：`depend`（`[depend]` 点名）、`order`（顺序断言）、
+# `instances`（`console: line … ok` 恰好两次 = 收线的判据）。三档都核 `instances`：
+# 重启那一步三档都跑，判据就该三档都成立。
 const FLAVORS = [
-  {name: "default",   profile: "release",   features: "",          steps: "default", markers: "base",            checks: []}
-  {name: "harden",    profile: "harden",    features: "",          steps: "full",    markers: "base+extra",      checks: ["depend" "order"]}
-  {name: "framework", profile: "framework", features: "framework", steps: "full",    markers: "base+extra+case", checks: ["depend" "order"]}
+  {name: "default",   profile: "release",   features: "",          steps: "default", markers: "base",            checks: ["instances"]}
+  {name: "harden",    profile: "harden",    features: "",          steps: "full",    markers: "base+extra",      checks: ["depend" "order" "instances"]}
+  {name: "framework", profile: "framework", features: "framework", steps: "full",    markers: "base+extra+case", checks: ["depend" "order" "instances"]}
 ]
 
 # 按名字取那一行（档案的全部事实都从它读；名字写错就该当场炸，故 `first` 之后必有值）。
@@ -516,8 +530,21 @@ def run_once [cfg: record, i: int, flavor: string] {
   #     「无 panic」抓住；这条是为了在原因串里点名「这是锁序违规」而不是别的 panic。
   #   `order`  —— 两步的先后也是判据（「两句话都在」不等于「第二次真的发生在第一次之后」；
   #     同一句被数两次也能骗过 `hit`）。
+  #   `instances` —— **收线的判据**：`console: line <名字> ok` 恰好出现两次。它是"新实例
+  #     拿到了 `Ok`"的唯一可见证据（驱动答 `Taken` 会走降级路径、不打这句），进不了 marker
+  #     表是因为同一句话要出现**两次**。它成立要求三件事同时在场：驱动把旧实例判成"没了"
+  #     （持有者那枚副本被摘）、root 的监护线程重发、**属主写权的委托**（否则驱动不认新实例
+  #     的 `Refer`）。
   if "depend" in $f.checks and (hit '\[depend\]' $log) {
     $why = (append_why $why "lockdep 违规([depend])")
+  }
+  if "instances" in $f.checks {
+    let n = ((^grep -oE -- 'console: line [^ ]+ ok' $log | complete).stdout | lines | length)
+    if $n != 2 {
+      $why = (append_why $why $"console 实例数[($n)!=2]（新实例没拿到 Ok？）")
+    } else {
+      print $"  console 实例：($n)（引导期 + 重发）"
+    }
   }
   if "order" in $f.checks {
     for pair in $STEP_ORDER {

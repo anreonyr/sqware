@@ -51,6 +51,7 @@ pub const LINE_LEN: usize = 2;
 
 const OP_REGISTER: u8 = 1;
 const OP_REFER: u8 = 2;
+const OP_DELEGATE: u8 = 3;
 
 /// 一条请求：**动词 + 一条定长记录**。
 ///
@@ -70,6 +71,18 @@ pub enum Request {
         who: TaskId,
         ack: PieToken,
     },
+    /// 委托写权：**这个名字的属主，从此也可以由 `who` 写**（同样只有 root 会发它）。
+    ///
+    /// 为什么需要它：root 的服务重启落在**它自己域里的监护线程**上（`docs/root.md` §5.3），
+    /// 而线程不是域——驱动认的是"推者是不是我的 `sire`"，监护线程答不上这一条。放弃这条
+    /// 判据不行（那等于谁都能改属主）；把判据放宽成"同一个域"也不行（驱动拿不到推者的域）。
+    /// 于是让 **root 亲口把这份写权委托给它信任的那个线程**：判据从"谁的 id"变成
+    /// "root 有没有为这个名字委托过你"——一条可审计、可收回（重启即失效）的授权。
+    Delegate {
+        name: Name,
+        who: TaskId,
+        ack: PieToken,
+    },
 }
 
 impl Request {
@@ -81,15 +94,23 @@ impl Request {
         Request::Refer { name, who, ack }
     }
 
+    pub const fn delegate(name: Name, who: TaskId, ack: PieToken) -> Request {
+        Request::Delegate { name, who, ack }
+    }
+
     pub fn name(&self) -> Name {
         match self {
-            Request::Register { name, .. } | Request::Refer { name, .. } => *name,
+            Request::Register { name, .. }
+            | Request::Refer { name, .. }
+            | Request::Delegate { name, .. } => *name,
         }
     }
 
     pub fn ack(&self) -> PieToken {
         match self {
-            Request::Register { ack, .. } | Request::Refer { ack, .. } => *ack,
+            Request::Register { ack, .. }
+            | Request::Refer { ack, .. }
+            | Request::Delegate { ack, .. } => *ack,
         }
     }
 
@@ -97,6 +118,7 @@ impl Request {
         let (op, arg) = match self {
             Request::Register { session, .. } => (OP_REGISTER, session.get() as u64),
             Request::Refer { who, .. } => (OP_REFER, who.get() as u64),
+            Request::Delegate { who, .. } => (OP_DELEGATE, who.get() as u64),
         };
         let mut msg = [0u8; LEN];
         msg[0] = op;
@@ -123,6 +145,11 @@ impl Request {
                 ack,
             }),
             OP_REFER => Some(Request::Refer {
+                name,
+                who: TaskId::new(arg as usize),
+                ack,
+            }),
+            OP_DELEGATE => Some(Request::Delegate {
                 name,
                 who: TaskId::new(arg as usize),
                 ack,

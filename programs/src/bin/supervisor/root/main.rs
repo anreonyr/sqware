@@ -18,6 +18,8 @@
 //!      播种，子域只能注册预约给它的名字（见 `docs/dispatch.md`）。本域手里没有
 //!      任何服务孔（见 `docs/root.md`）。
 //!   5. `Join(shell)`：用户会话结束 → 本域退出 → 级联 → 停机。
+//!   6. **监护**（本域第二个线程）：等 console 死 → 按预算重发（`docs/root.md` §5.3）——
+//!      服务从此有"余生"，而收线那条判据也才有读数。
 //!
 //! # 设备：本域是**第一个持有者**，也是转授者
 //!
@@ -33,15 +35,19 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use alloc::format;
 
-use env::{Name, PAIR_LEN, Pair, TaskId, TeamId};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::time::Duration;
+
+use env::{Name, PAIR_LEN, Pair, PieToken, TaskId, TeamId};
 use protocol::console::Console;
 use protocol::dispatch::client::Directory;
 use protocol::doom;
 use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay, Refer, Referred};
 use runtime::core::lock::Lock;
+use runtime::env::chrono;
 use runtime::env::mail::NolePie;
 use runtime::env::mail::{self, AnyPie as _, HolePie, PolePie};
 use runtime::env::room::{self, exit, exit_with};
@@ -119,67 +125,91 @@ fn device_token(block: usize, count: usize, want: &str) -> Option<usize> {
     None
 }
 
+/// 一步失败的编号（`exit_with` 的既有编号空间：它照旧指"死在启动握手的哪一步"）。
+///
+/// 为什么这些步骤返回 `Result` 而不是直接 `exit_with`：**重发路径要用同一批步骤**，而那边
+/// 每一次尝试失败只是"计一次失败"（监护线程有预算），不是致命错误。主线程的处置见 [`fatal`]。
+type Step = usize;
+
+/// 主线程的失败处置：**启动期任何一步失败都是致命的**——配置错了就别装作起来了。
+fn fatal<T>(r: Result<T, Step>) -> T {
+    match r {
+        Ok(v) => v,
+        Err(code) => exit_with(code),
+    }
+}
+
 /// 清单里按名取程序 → `Build` 装域 → `Spawn` 产**未放行**的引导线程（启动参数为空）。
 ///
 /// `build` = 建域权（root 启动时解封一次、此后一直用）：`Build` 的第一道门。
-fn build_spawn(entries: &[manifest::Entry<'_>], name: &str, build: &NolePie) -> TaskId {
+fn build_spawn(
+    entries: &[manifest::Entry<'_>],
+    name: &str,
+    build: &NolePie,
+) -> Result<TaskId, Step> {
     let Some(e) = entries.iter().find(|e| e.name == name) else {
         say("root: missing program ");
         say(name);
         say("\n");
-        exit_with(1);
+        return Err(1);
     };
     let team: TeamId = match utask::build(e.elf, e.kind, e.name, build) {
         Ok(t) => t,
-        Err(_) => exit_with(2),
+        Err(_) => return Err(2),
     };
     match utask::spawn(team, 0, &[], 0) {
-        Ok(t) => t,
-        Err(_) => exit_with(3),
+        Ok(t) => Ok(t),
+        Err(_) => Err(3),
     }
 }
 
 /// 开上行孔（`dock`）→ 放行。返上行孔（root 侧）。
-fn launch(child: TaskId) -> HolePie {
+fn launch(child: TaskId) -> Result<HolePie, Step> {
     let up = match handshake::dock(child) {
         Ok(u) => u,
-        Err(_) => exit_with(4),
+        Err(_) => return Err(4),
     };
     if utask::hatch(child).is_err() {
-        exit_with(5);
+        return Err(5);
     }
-    up
+    Ok(up)
 }
 
 /// 收报到：自证「这枚控制孔真是该子域授出来的」，返它在 root 侧的句柄。
-fn report(child: TaskId, up: &HolePie) -> HolePie {
+fn report(child: TaskId, up: &HolePie) -> Result<HolePie, Step> {
     let quay = match Quay::pull(up) {
         Ok(q) => q,
-        Err(_) => exit_with(6),
+        Err(_) => return Err(6),
     };
     let vestor = match mail::reserve(quay.hole()) {
         Ok((vestor, _owner)) => vestor.get(),
-        Err(_) => exit_with(7),
+        Err(_) => return Err(7),
     };
     if vestor != child.get() {
         say("root: report not from child\n");
-        exit_with(8);
+        return Err(8);
     }
-    HolePie::from_token(quay.hole())
+    Ok(HolePie::from_token(quay.hole()))
 }
 
 /// 转授一枚门闩给子域，并把**对端侧**的句柄经下行孔配给它（配给 = `Pier`）。
 ///
 /// 这是本域对"我手里有一枚、某个子域需要它"的**唯一**出口：转授（`Accord`）+ 配给
 /// （`Pier`）。失败即判死——配给没送到，子域会卡在等第一件配给上，症状比死更难看。
-fn hand_over(down: &HolePie, token: usize, child: TaskId, subset: env::Permission) {
+fn hand_over(
+    down: &HolePie,
+    token: usize,
+    child: TaskId,
+    subset: env::Permission,
+) -> Result<(), Step> {
     let at_child = match PolePie::from_token(token).accord(child, subset) {
         Ok(t) => t,
-        Err(_) => exit_with(19),
+        Err(_) => return Err(19),
     };
     if Pier::new(at_child).push(down).is_err() {
-        exit_with(20);
+        return Err(20);
     }
+    Ok(())
 }
 
 /// 转授子集的两个常用面：设备要读写，自描述只读。
@@ -197,20 +227,100 @@ fn read_only() -> env::Permission {
 /// 目前只有一件这样的事实：**设备的名字**。名字不是资源，是 boot 从设备树里原样搬来的
 /// 身份（配对块的 `(名字, token)`）——本域是它的读者，子域要用就得由本域转达，别处
 /// 没有第二个来源（`docs/driver.md` §12 甲）。
-fn hand_name(down: &HolePie, name: &str, child: TaskId) {
+fn hand_name(down: &HolePie, name: &str, child: TaskId) -> Result<(), Step> {
     let Ok(hole) = HolePie::unseal(env::NAME_LEN) else {
-        exit_with(40);
+        return Err(40);
     };
     if hole.push(name.as_bytes()).is_err() {
-        exit_with(41);
+        return Err(41);
     }
     let at_child = match hole.accord(child, read_only()) {
         Ok(t) => t,
-        Err(_) => exit_with(42),
+        Err(_) => return Err(42),
     };
     if Pier::new(at_child).push(down).is_err() {
-        exit_with(43);
+        return Err(43);
     }
+    Ok(())
+}
+
+/// 目录面 + 建域权 + 清单视图：**产生一个服务并把它送上线所需的全部通道**。
+///
+/// 主线程与监护线程各持一份（门闩是 per-task 的 ⇒ 每一样都得先 `Accord` 到对方表里，
+/// 见 [`Kit`]）。它本身不认识具体服务：四个字段正好对应 [`spawn_service`] 的四步。
+struct Face {
+    /// 清单视图（boot 借映的 initrd 区；`Build` 从它取 ELF 字节）。同域共享内存，给引用即可。
+    blob: &'static [u8],
+    /// 建域权（`Build` 的第一道门）。
+    build: NolePie,
+    /// 目录请求门闩（`Connect`；也是"本域有资格用目录"的凭据）。
+    dir: PieToken,
+    /// 目录控制孔（`Refer::named`：预约服务名）。
+    control: HolePie,
+    /// 目录上行孔（收 `Referred`）。
+    up: HolePie,
+}
+
+/// 产生一个服务并把它送上线：`Build` → `Spawn` → `dock` → `Hatch` → 收 `Quay` →
+/// 预约名字 → 配给目录门闩。返"子域 + 它在父侧的下行孔"（接着配给设备等）。
+///
+/// **首次与重发走的是同一个函数**（重发因此不是第二条路径）：两次的差别只有"谁是调用方"
+/// ——主线程用自己那三枚，监护线程用它自己那三枚，其余一字不差。
+fn spawn_service(face: &Face, name: &str) -> Result<(TaskId, HolePie), Step> {
+    let entries = match manifest::parse(face.blob) {
+        Some(e) => e,
+        None => {
+            say("root: malformed manifest\n");
+            return Err(10);
+        }
+    };
+    let child = build_spawn(&entries, name, &face.build)?;
+    let up = launch(child)?;
+    let down = report(child, &up)?;
+    let refer = match Name::new(name) {
+        Ok(n) => Refer::named(child, n),
+        Err(_) => return Err(15),
+    };
+    if refer.push(&face.control).is_err() {
+        return Err(11);
+    }
+    let referred = match Referred::pull(&face.up) {
+        Ok(r) => r,
+        Err(_) => return Err(12),
+    };
+    if referred.token().get() == 0 {
+        say("root: directory refused to grant\n");
+        return Err(13);
+    }
+    if Pier::new(referred.token()).push(&down).is_err() {
+        return Err(14);
+    }
+    Ok((child, down))
+}
+
+/// console 的两件配给 + 它那台设备的属主。
+///
+/// **次序是硬要求**：**先把属主写给中断驱动，再交名字**。客户端一拿到名字就会去登记
+/// （`Register`），而登记读的正是本域刚写的那一行；两件事走的是同一条 FIFO 队列，故先推的
+/// `Refer` 一定先被处理（`docs/driver.md` §12 甲）。
+fn wire_console(face: &Face, down: &HolePie, child: TaskId, uart: usize) -> Result<(), Step> {
+    hand_over(down, uart, child, read_write())?;
+    refer_device(face.dir, child, CONSOLE_DEVICE)?;
+    hand_name(down, CONSOLE_DEVICE, child)
+}
+
+/// plic 收三件：PLIC 的寄存器、设备树本体、内核的 `irq` 门闩。
+/// 它自己不认识"串口"——线号由客户端按名字登记（§3.2.6）。
+fn wire_plic(
+    down: &HolePie,
+    child: TaskId,
+    plic: usize,
+    dtb: usize,
+    irq: usize,
+) -> Result<(), Step> {
+    hand_over(down, plic, child, read_write())?;
+    hand_over(down, dtb, child, read_only())?;
+    hand_over(down, irq, child, read_write())
 }
 
 // ── 他杀服务（`kill` 的机制在核、政策在这里）─────────────────────────────
@@ -335,38 +445,53 @@ fn wait_dead(task: TaskId) {
     }
 }
 
-/// 作普通客户端连上一个服务：`Refer` 引荐自己 → dir 亲授目录门闩 → 按名字 `Connect`。
+/// 本域自己的目录请求门闩：**启动期问一次，此后一直用**（`docs/root.md` §5.3）。
 ///
-/// **本域手里零服务孔**（`docs/root.md`）：每次要用就连一次。这本是"名字的账在目录里"
-/// 的直接读法——本域不缓存任何服务的入口。
-fn reach(control: &HolePie, up: &HolePie, service: &str) -> Option<env::PieToken> {
-    let me = utask::self_id().ok()?;
-    Refer::new(me).push(control).ok()?;
-    let referred = Referred::pull(up).ok()?;
-    if referred.token().get() == 0 {
-        return None;
+/// 为什么本域现在要留一枚（此前每次用就连一次，见 §10）：目录的控制面是**一问一答的单槽**
+/// ——`Refer` 推给控制孔、`Referred` 从上行孔取；而"重发服务名"要在**运行期**再问一次，
+/// 那是监护线程的活。一条单槽问答通道只能有一个长期用户 ⇒ 启动期归主线程，此后**整条让给
+/// 监护线程**；主线程留这枚请求门闩当凭据，运行期只走 `Connect`。
+fn my_entry(control: &HolePie, up: &HolePie) -> Result<PieToken, Step> {
+    let Ok(me) = utask::self_id() else {
+        return Err(9);
+    };
+    if Refer::new(me).push(control).is_err() {
+        return Err(11);
     }
-    let dir = Directory::open(HolePie::from_token(referred.token())).ok()?;
+    let referred = match Referred::pull(up) {
+        Ok(r) => r,
+        Err(_) => return Err(12),
+    };
+    if referred.token().get() == 0 {
+        return Err(13);
+    }
+    Ok(referred.token())
+}
+
+/// 按名字连上一个服务：**用本域那枚长期凭据**（见 [`my_entry`]）。
+///
+/// `Connect` 是请求孔上的一问一答，且**回信通道由发起方自备** ⇒ 多个客户端并发提问互不
+/// 干扰。这正是"问答"整条让给监护线程之后，主线程仍能连服务的原因。
+fn connect(entry: PieToken, service: &str) -> Option<PieToken> {
+    let dir = Directory::open(HolePie::from_token(entry.get())).ok()?;
     dir.connect_token(service).ok()
 }
 
-/// 作普通客户端连上控制台服务：**本域也一样走目录**（`Refer` 引荐自己 → dir 亲授
-/// 请求门闩 → `connect_token("console")`）。
+/// 作普通客户端连上控制台服务：**本域也一样走目录**。
 ///
-/// 时序：只在 shell 已退出之后调用——那时 console 一定已注册（shell 用过它），
-/// 故不需要任何重试。连不上 → `None`，调用方退回自己那台设备。
-fn connect_console(control: &HolePie, up: &HolePie) -> Option<Console> {
-    let entry = reach(control, up, "console")?;
-    Console::open(HolePie::from_token(entry)).ok()
+/// 时序：只在 shell 已退出之后调用——那时 console 一定已注册（shell 用过它），故不需要任何
+/// 重试。连不上 → `None`，调用方退回自己那台设备。
+fn connect_console(entry: PieToken) -> Option<Console> {
+    let door = connect(entry, "console")?;
+    Console::open(HolePie::from_token(door.get())).ok()
 }
 
-/// 对服务说一句"停服"：**本域也走目录**（`Refer` 引荐自己 → dir 亲授请求门闩 →
-/// `connect_token("doom")`），与 [`connect_console`] 同一条路。
+/// 对服务说一句"停服"（同样经目录连上它）。
 ///
 /// 为什么需要这一句：服务线程在本域、是本域的**兄弟线程**，不在血缘里——级联收不到它，
 /// 而请求孔又是它自己开的（本域 seal 不动）⇒ 只能由协议说一句话收场。
-fn quit_doom(control: &HolePie, up: &HolePie) {
-    let Some(door) = reach(control, up, doom::SERVICE) else {
+fn quit_doom(entry: PieToken) {
+    let Some(door) = connect(entry, doom::SERVICE) else {
         return;
     };
     let _ = HolePie::from_token(door.get()).push(&[doom::OP_QUIT]);
@@ -376,19 +501,153 @@ fn quit_doom(control: &HolePie, up: &HolePie) {
 /// 把一台设备的名字交给它的属主：**属主只能由 root 写**（`docs/driver.md` §12 甲）。
 ///
 /// 与 `dispatch` 的 `Refer` 同形：谁能用哪个名字不是运行时判定，而是表里有没有写你的行。
-/// 这一句**必须早于**把名字交给客户端——客户端拿到名字就会去登记，而登记读的正是本域
-/// 刚写的这一行。驱动的报文队列是 FIFO，故先推的 `Refer` 一定先被处理。
-fn refer_device(control: &HolePie, up: &HolePie, who: TaskId, device: &str) -> bool {
-    let Some(entry) = reach(control, up, irq::SERVICE) else {
-        return false;
+/// 这一句**必须早于**把名字交给客户端——客户端拿到名字就会去登记，而登记读的正是本域刚写
+/// 的这一行。驱动的报文队列是 FIFO，故先推的 `Refer` 一定先被处理。
+fn refer_device(entry: PieToken, who: TaskId, device: &str) -> Result<(), Step> {
+    let Some(door) = connect(entry, irq::SERVICE) else {
+        return Err(44);
     };
-    let ok = match (irq::Line::at(entry), Name::new(device)) {
+    let ok = match (irq::Line::at(door), Name::new(device)) {
         (Ok(line), Ok(name)) => matches!(line.refer(&name, who), Ok(irq::Ack::Ok)),
         _ => false,
     };
     // 用完放下：本域**不留**服务孔（这一枚只用一次，留着就是"手里有孔"）。
-    let _ = mail::release(entry.get());
-    ok
+    let _ = mail::release(door.get());
+    if !ok {
+        say("root: line authority refused the console device\n");
+        return Err(44);
+    }
+    Ok(())
+}
+
+// ── 监护与重发（`docs/root.md` §5.3）────────────────────────────────────
+//
+// 一个服务的一生：**主线程起第一次，监护线程管余生**。这是分工，不是权宜——主线程的正事是
+// "等 shell 死 ⇒ 收场"，监护线程的正事是"等 console 死 ⇒ 重发"；两条命各有一个任务**无界**
+// 地等着。root 此前零节拍，为了发现"它死了"引入一圈轮询是浪费（而且监护的延迟会由那圈节拍
+// 决定，而不是由"它什么时候死"决定）。
+
+/// 重发预算：**窗口内至多 [`RESTART_MAX`] 次**（"活够一个窗口就重置计数"⇒"偶发崩溃"与
+/// "崩溃循环"分得开）。**政策值不是裁决**：改值不动账。
+const RESTART_MAX: usize = 3;
+const RESTART_WINDOW_MS: u64 = 10_000;
+
+/// 探针的周期（毫秒，见 [`wait_gone`]）与"拿探针"的重试次数 × 间隔。
+const WATCH_PROBE_MS: u64 = 20;
+const DOOR_RETRY: usize = 20;
+const DOOR_RETRY_MS: u64 = 25;
+
+/// 监护线程的行李：目录面（含建域权、清单视图）+ console 那台设备的门闩。
+///
+/// 每一枚门闩都是**主线程 `Accord` 到它表里**的那一份（门闩是 per-task 的）。同域两线程只能
+/// 经共享内存交接，故这个形状与 doom 服务的 `DOOM_DIR`/`DOOM_OWNER` 同款，只是行李更多。
+/// 写入在 `Hatch` 之前（`Spawn` 恒产 `Held`）⇒ 线程读到的必然是写好的值。
+struct Kit {
+    face: Face,
+    /// UART 门闩（**本任务表里**的 token）——console 的配给。
+    uart: usize,
+}
+
+static KIT: Lock<Option<Kit>> = Lock::new(None);
+
+/// 主线程开始收摊（**监护线程据此收场**）：它不在血缘里，级联收不到同域的兄弟线程。
+static STOPPING: AtomicBool = AtomicBool::new(false);
+
+/// 现在几点（毫秒，单调钟）：只用来量"这个实例活了多久"。
+fn now_ms() -> u64 {
+    let (secs, nanos) = chrono::clock().unwrap_or((0, 0));
+    secs.saturating_mul(1000).saturating_add(nanos / 1_000_000)
+}
+
+/// 监护线程：**等 console 死，按预算重发**。
+///
+/// 收场有三条路，每条都有界——"一直不能重启"的终局必须是停机，不是挂住：
+///   ① 主线程开始收摊（[`STOPPING`]）⇒ 本线程跟着走；
+///   ② 预算耗尽 ⇒ 打印一行 + 走（**退回"没有恢复"的世界**：主线程等的是 shell，与本线程
+///      无关，故 console 起不来也挡不住收场）；
+///   ③ 重发成功 ⇒ 接着等新实例。
+///
+/// **一条次序依赖**（如实记）：本线程收场会连带走它授出去的副本（UART 门闩、目录那两孔、
+/// 名字孔）——那些副本的持有者是 console，而它那时**已经死透**（`wait_dead` 保证），故无事
+/// 发生；顺序反了就会把还活着的实例的门闩摘掉。
+extern "C" fn watcher() -> ! {
+    let Some(kit) = KIT.with(|k| k.take()) else {
+        exit_with(50);
+    };
+    let mut born = now_ms();
+    let mut tries = 0usize;
+    // 首个实例已经在线上（主线程起的）——先拿一枚指向它的入口副本当**探针**。
+    let mut door = wait_door(&kit).unwrap_or(PieToken::new(0));
+    loop {
+        wait_gone(door);
+        if STOPPING.load(Ordering::Acquire) {
+            exit_with(0);
+        }
+        // 活够一个窗口 ⇒ 计数重置（上一次崩溃按"偶发"算）。
+        if now_ms().saturating_sub(born) >= RESTART_WINDOW_MS {
+            tries = 0;
+        }
+        tries += 1;
+        if tries > RESTART_MAX {
+            say("root: console unrecoverable, giving up\n");
+            exit_with(51);
+        }
+        match restart(&kit) {
+            Ok(next) => {
+                door = next;
+                born = now_ms();
+                say("root: console restarted\n");
+            }
+            // 没成：**不假装成功**，也不空转——把"死在哪一步"说出来（与主线程的
+            // `exit_with(code)` 同一套编号），再试下一次，直到预算用尽（有界）。
+            Err(step) => {
+                door = PieToken::new(0);
+                say(&format!("root: console restart failed at step {step}\n"));
+            }
+        }
+    }
+}
+
+/// 重发一次：产生 + 配给 + 写属主 + **拿一枚指向新实例的探针**。
+/// **与首次走的是同两个函数**（[`spawn_service`] 与 [`wire_console`]），差别只有"谁是调用方"。
+fn restart(kit: &Kit) -> Result<PieToken, Step> {
+    let (child, down) = spawn_service(&kit.face, "console")?;
+    wire_console(&kit.face, &down, child, kit.uart)?;
+    wait_door(kit).ok_or(60 as Step)
+}
+
+/// 拿一枚**指向当前实例**的入口副本（`Connect`）：有界重试——console 注册进目录的时机是
+/// 它自己的事（本域刚把名字交给它）。
+fn wait_door(kit: &Kit) -> Option<PieToken> {
+    for _ in 0..DOOR_RETRY {
+        if let Some(t) = connect(kit.face.dir, "console") {
+            return Some(t);
+        }
+        let _ = room::sleep(Duration::from_millis(DOOR_RETRY_MS));
+    }
+    None
+}
+
+/// 等它没了：**探能力链**——本线程手里那枚指向它的入口副本还在不在。
+///
+/// 为什么不是 `Join`（本该是最贴的形状）：`Join` 的授权是**任务粒度**的"它是不是我生的"
+/// （`envcall.rs`：`me.heir(target.team.id)`），而监护线程**不是** console 的生父——生它的是
+/// 主线程 ⇒ `Denied`（实测）。故改用与 root 的 `doom` 服务同一条机制：**副本没了 = 它走了**
+/// （`gate::doom` 的 BFS 沿派生链把本域手里那一枚一起摘掉，§12 ②）。
+///
+/// **代价如实记**：这是一圈**有界间隔的探测**（[`WATCH_PROBE_MS`]），不是纯事件等待。
+/// 要换成 `Join` 只有一条路——**让监护线程当生父**（从第一次起全包），那要另加一条
+/// "console 上线"的报到通道（两条路的取舍记在 `docs/root.md` §5.3）。
+fn wait_gone(door: PieToken) {
+    loop {
+        if STOPPING.load(Ordering::Acquire) {
+            return;
+        }
+        if mail::reserve(door).is_err() {
+            return;
+        }
+        let _ = room::sleep(Duration::from_millis(WATCH_PROBE_MS));
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -446,9 +705,23 @@ extern "C" fn main() -> ! {
     };
 
     // 2. dir：先建（客户端要它的门闩）。它的控制孔即后续引入请求的通道。
-    let dir_task = build_spawn(&entries, "dir", &build_right);
-    let up_dir = launch(dir_task);
-    let control_dir = report(dir_task, &up_dir);
+    let dir_task = fatal(build_spawn(&entries, "dir", &build_right));
+    let up_dir = fatal(launch(dir_task));
+    let control_dir = fatal(report(dir_task, &up_dir));
+
+    // 1.7 本域自己的目录请求门闩：**问一次、此后一直用**（见 [`my_entry`]）。
+    let my_dir = fatal(my_entry(&control_dir, &up_dir));
+
+    // 1.8 目录面：产生并上线一个服务所需的四样（清单视图 + 建域权 + 那两孔 + 请求门闩）。
+    let face = Face {
+        blob,
+        // 同一个句柄再造一份（token 是**本任务表里**的号，句柄可以再取）：主线程与监护线程
+        // 各要一份建域权，后者那份由下面的 `Accord` 真正复制过去。
+        build: NolePie::from_token(build_right.token()),
+        dir: my_dir,
+        control: control_dir,
+        up: up_dir,
+    };
 
     // 3. plic / echo / console / shell：请 dir 亲授目录请求门闩的 R|W 副本，再配给
     //    客户端；同时把名字预约给该子域（目录只接受预约者的注册）。
@@ -456,47 +729,12 @@ extern "C" fn main() -> ! {
     //    连它），故 plic 最先、console 次之、shell 最后。
     let mut shell_task = TaskId(0);
     for name in ["plic", "echo", "console", "shell"] {
-        let child = build_spawn(&entries, name, &build_right);
-        let up = launch(child);
-        let down = report(child, &up);
-        let refer = match Name::new(name) {
-            Ok(n) => Refer::named(child, n),
-            Err(_) => exit_with(15),
-        };
-        if refer.push(&control_dir).is_err() {
-            exit_with(11);
-        }
-        let referred = match Referred::pull(&up_dir) {
-            Ok(r) => r,
-            Err(_) => exit_with(12),
-        };
-        if referred.token().get() == 0 {
-            say("root: directory refused to grant\n");
-            exit_with(13);
-        }
-        if Pier::new(referred.token()).push(&down).is_err() {
-            exit_with(14);
-        }
-        // console 多收两件：**设备门闩**（本域手里那枚的 R|W 副本）与**它的名字**。
-        // 交出去之后本域不再碰设备——`say` 在会话建立后走会话。
-        //
-        // 次序是硬要求：**先把属主写给中断驱动，再交名字**。客户端一拿到名字就会去登记
-        // （`Register`），而登记读的正是本域刚写的那一行；两件事走的是同一条 FIFO 队列，
-        // 故先推的 `Refer` 一定先被处理（§12 甲）。
-        if name == "console" {
-            hand_over(&down, uart_token, child, read_write());
-            if !refer_device(&control_dir, &up_dir, child, CONSOLE_DEVICE) {
-                say("root: line authority refused the console device\n");
-                exit_with(44);
-            }
-            hand_name(&down, CONSOLE_DEVICE, child);
-        }
-        // plic 收三件：PLIC 的寄存器、设备树本体、内核的 `irq` 门闩。
-        // 它自己不认识"串口"——线号是客户端来登记的（§3.2.6）。
-        if name == "plic" {
-            hand_over(&down, plic_token, child, read_write());
-            hand_over(&down, dtb_token, child, read_only());
-            hand_over(&down, irq_token, child, read_write());
+        let (child, down) = fatal(spawn_service(&face, name));
+        // 各服务自己的那几件配给——**重发走的是同一对函数**。
+        match name {
+            "console" => fatal(wire_console(&face, &down, child, uart_token)),
+            "plic" => fatal(wire_plic(&down, child, plic_token, dtb_token, irq_token)),
+            _ => {}
         }
         if name == "shell" {
             shell_task = child;
@@ -518,10 +756,10 @@ extern "C" fn main() -> ! {
         Ok(n) => Refer::named(svc, n),
         Err(_) => exit_with(27),
     };
-    if refer.push(&control_dir).is_err() {
+    if refer.push(&face.control).is_err() {
         exit_with(28);
     }
-    let referred = match Referred::pull(&up_dir) {
+    let referred = match Referred::pull(&face.up) {
         Ok(r) => r,
         Err(_) => exit_with(29),
     };
@@ -538,6 +776,76 @@ extern "C" fn main() -> ! {
         exit_with(32);
     }
 
+    // 3.6 监护线程：**等 console 死，按预算重发**（§5.3）。行李逐件 `Accord` 到它表里
+    //     （门闩是 per-task 的），再写静态、最后 `Hatch`（`Spawn` 恒产 `Held`）。
+    let watch_task = match utask::spawn(TeamId(0), watcher as *const () as usize, &[], 0) {
+        Ok(t) => t,
+        Err(_) => exit_with(45),
+    };
+    // 它自己的目录请求门闩：请 dir **亲授给它**——`Refer` 的产物是"对方表里的号"，主线程
+    // 手里那枚跨任务不通用。
+    if Refer::new(watch_task).push(&face.control).is_err() {
+        exit_with(46);
+    }
+    let w_dir = match Referred::pull(&face.up) {
+        Ok(r) if r.token().get() != 0 => r.token(),
+        _ => exit_with(47),
+    };
+    // 控制孔与上行孔：**问答那一条链整条交给它**（主线程此后只走 `Connect`，见 [`my_entry`]）。
+    let w_control = match face.control.accord(watch_task, read_write()) {
+        Ok(t) => t,
+        Err(_) => exit_with(48),
+    };
+    let w_up = match face.up.accord(watch_task, read_write()) {
+        Ok(t) => t,
+        Err(_) => exit_with(49),
+    };
+    // UART 门闩与建域权：**带 `VEST`、不带 `BACK`**。
+    //   - `VEST`：它产生新实例时要**再授一次**给那个子域（门闩是 per-task 的）；
+    //   - **不能带 `BACK`**：`BACK` 是"回授目标自由"的那一位——**带它的源只能授给 sire 的
+    //     持有者**（`gate::snap::vestable`），而监护线程要授给的正是它刚生的子域 ⇒ 那一授
+    //     会被 `Denied`（实测：重发卡在 `hand_over` 的 `Err(19)`，三次都用完预算）。
+    let vest_only = env::Permission::READ | env::Permission::WRITE | env::Permission::VEST;
+    let w_uart = match PolePie::from_token(uart_token).accord(watch_task, vest_only) {
+        Ok(t) => t,
+        Err(_) => exit_with(52),
+    };
+    let w_build = match build_right.accord(watch_task, vest_only) {
+        Ok(t) => t,
+        Err(_) => exit_with(53),
+    };
+    // **委托写权**（`docs/root.md` §5.3）：重发出来的 console 是个**新 task id**，行表的属主
+    // 得跟着换——而驱动认的是"推者是不是我的 `sire`"，监护线程答不上这一条（它不是域）。
+    // 故由本线程（`sire` 本人）亲口把**这一个名字**的写权委托给它。这一句必须在 `Hatch`
+    // 之前说：它一起来就可能重发，而重发要写属主。
+    let Some(door) = connect(face.dir, irq::SERVICE) else {
+        exit_with(55);
+    };
+    let delegated = match (irq::Line::at(door), Name::new(CONSOLE_DEVICE)) {
+        (Ok(line), Ok(name)) => matches!(line.delegate(&name, watch_task), Ok(irq::Ack::Ok)),
+        _ => false,
+    };
+    let _ = mail::release(door.get());
+    if !delegated {
+        say("root: line authority refused delegation\n");
+        exit_with(56);
+    }
+    KIT.with(|k| {
+        *k = Some(Kit {
+            face: Face {
+                blob,
+                build: NolePie::from_token(w_build),
+                dir: w_dir,
+                control: HolePie::from_token(w_control.get()),
+                up: HolePie::from_token(w_up.get()),
+            },
+            uart: w_uart.get(),
+        })
+    });
+    if utask::hatch(watch_task).is_err() {
+        exit_with(54);
+    }
+
     // 4. 用户会话结束（shell 退出或崩溃）→ 本域退出 → 级联 → 全部回收 → 停机。
     //    最后这句**经控制台服务**说：本域此时是普通客户端（§3.3.6）。
     wait_dead(shell_task);
@@ -545,11 +853,14 @@ extern "C" fn main() -> ! {
     //     级联（父死子随）收的是子**域**，收不到同域的兄弟线程；而请求孔是它自己开的，
     //     本域也 seal 不动。故按协议说一句 `Quit`（服务只在收到主人这一句时收场）。
     //     次序在 `say` 之前：让"session over"仍是最后一行。
-    quit_doom(&control_dir, &up_dir);
+    quit_doom(my_dir);
     wait_dead(svc);
-    if let Some(console) = connect_console(&control_dir, &up_dir) {
+    if let Some(console) = connect_console(my_dir) {
         OUT.with(|o| *o = Out::Session(console));
     }
+    // 4.2 告诉监护线程"本域开始收摊"：它不在血缘里（同域的兄弟线程不被级联收走），而它等的
+    //     "console 之死"在本域退出后会由级联带来 ⇒ 它据此收场，而不是把它当成一次崩溃去重发。
+    STOPPING.store(true, Ordering::Release);
     say("root: session over, shutting down\n");
     exit()
 }

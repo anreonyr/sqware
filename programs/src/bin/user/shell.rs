@@ -124,6 +124,14 @@ impl Terminal {
 /// 连不上控制台服务时的退出原因码（域自己的编号；trace 里 `RoomEvent::Exit` 带它）。
 const NO_CONSOLE: usize = 0x51;
 
+/// 重连控制台的次数 × 间隔（毫秒）：**重启期窗口**——console 可能正被 root 重发，
+/// 那一刻它还没注册回目录。有界是硬要求（理由见 [`reconnect`]），与 console 服务连 PLIC
+/// 的既有形状同款。
+/// **量出来的**：root 重发一次要 ~1 s（`Build` + 握手 + 属主 + 名字，其中 `Build` 最贵，
+/// 实测 235–943 ms），故窗口给到 3 s 才盖得住它；而它仍然是**有界**的（见 [`reconnect`]）。
+const CONSOLE_RETRY: usize = 60;
+const CONSOLE_RETRY_MS: usize = 50;
+
 /// 全局唯一的终端门面（70 处调用点传的都是它的引用）。
 ///
 /// 用 `runtime::core::lock::Lock`（`const fn new` ⇒ 能进 `static`）而不是 `RefCell`：
@@ -136,6 +144,34 @@ static TERM: Term = Term(Lock::new(Terminal {
     session: Cell::new(None),
     buf: RefCell::new(String::new()),
 }));
+
+/// 丢掉这一份会话（以及缓存的控制台入口）——它死了。
+///
+/// **入口也要一起丢**：console 一死，内核沿派生链把本域手里**指向它的每一枚副本**都摘掉了
+/// （`gate::doom` 的 BFS，`docs/driver.md` §12 ②），缓存的那个入口 token 已经是空号。
+fn drop_session() {
+    TERM.0.with(|t| t.session.set(None));
+    CONSOLE_ENTRY.store(0, Ordering::Relaxed);
+}
+
+/// 重连一次控制台：**有界重试**（`CONSOLE_RETRY` × `CONSOLE_RETRY_MS`）。
+///
+/// 为什么必须有界：console 正被 root 重发时它还没注册回目录；无界重试会把 shell 变成一个
+/// 永远等下去的进程——而"服务起不来"的终局必须是有界的（重连失败 ⇒ 本域收场 ⇒ 会话结束
+/// ⇒ root 收场 ⇒ 停机，见 `docs/root.md` §5.3）。
+fn reconnect() -> bool {
+    drop_session();
+    for _ in 0..CONSOLE_RETRY {
+        if console_entry().is_some() && with_session(|_| ()).is_some() {
+            // 成了一句：这条读数**只在重连成功时**出现（门里拿它当"会话续上了"的判据，
+            // 它同时证明了服务侧那一半：root 重发出来的新实例已经注册回目录）。
+            TERM.writeline("shell: console reconnected");
+            return true;
+        }
+        let _ = sleep(Duration::from_millis(CONSOLE_RETRY_MS as u64));
+    }
+    false
+}
 
 /// 借出控制台会话：**锁内取走 → 锁外建（要跑内核调用）→ 锁内放回**。
 ///
@@ -170,7 +206,11 @@ fn flush(term: &Term) {
     // 发不出去就是发不出去：本侧没有设备可直连（设备在服务手里），也没有第二条
     // 通路。**不判死**——一段输出丢掉不是"域不可续"，而 `readline` 那边会判（见
     // [`Term::readline`]）：一个连不上控制台的 shell 只可能是个哑巴，那时才收场。
-    let _ = with_session(|c| c.write(&text).is_ok());
+    if !matches!(with_session(|c| c.write(&text).is_ok()), Some(true)) {
+        // 写不出去（会话死了）：丢掉它，**下一次**取会话时会重连。这里不重连——一段输出
+        // 不值得两次往返，真正的判据在读行那边（[`Term::readline`]）。
+        drop_session();
+    }
 }
 
 impl Term {
@@ -218,10 +258,19 @@ impl Term {
         // 再把长度与内容带进 `ReadLine` 请求——服务侧重绘要用它。
         match with_session(|c| c.readline(prompt)) {
             Some(Ok(r)) => r,
-            // 服务连不上 / 会话死了：**任务侧没有设备可直连**（第三步删了 `IOCall`），
-            // 再退也没有可退的地方。当场收场，让内核把原因码记进 trace——一个读不到
-            // 命令的 shell 继续活着只会更难诊断。
-            _ => runtime::env::room::exit_with(NO_CONSOLE),
+            // 会话断了：**丢掉它、重连一次**——服务重启之后会话还能续上，靠的就是这一半
+            // （服务侧那一半在 root 的监护线程，见 `docs/root.md` §5.3）。
+            _ => {
+                if reconnect()
+                    && let Some(Ok(r)) = with_session(|c| c.readline(prompt))
+                {
+                    return r;
+                }
+                // 重连也在界内失败了：**任务侧没有设备可直连**（第三步删了 `IOCall`），再退
+                // 也没有可退的地方。当场收场，让内核把原因码记进 trace——一个读不到命令的
+                // shell 继续活着只会更难诊断。
+                runtime::env::room::exit_with(NO_CONSOLE)
+            }
         }
     }
 }
@@ -1126,6 +1175,24 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "cascade" => {
             cascade(term);
+        }
+        // `memtest [rounds]` —— 探针专用：**不牵涉任务**的 alloc/dealloc 闭环。
+        // 判据：帧池 free 必须回到同一水平。它把「分配器自己丢帧」与「任务
+        // 生命周期漏帧」两件事分开——前者在本命令下就会现形。
+        "memtest" => {
+            let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(2000);
+            let mut fails = 0usize;
+            for _ in 0..n {
+                match runtime::env::memory::allocate(4096) {
+                    Ok(a) => {
+                        if runtime::env::memory::deallocate(a, 4096).is_err() {
+                            fails += 1;
+                        }
+                    }
+                    Err(_) => fails += 1,
+                }
+            }
+            term.writeline(&format!("memtest: {n} alloc+free, fails={fails}"));
         }
         "churn" => {
             // 任务生灭压测：`churn [rounds] [depth] [fan] [rest]`（默认 200 × 2 × 2）。
