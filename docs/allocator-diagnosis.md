@@ -1178,19 +1178,24 @@ harden/framework 档当场 `[panic] envcall without running task`（`trap.rs:266
 | `PoleMeta.mappings`（`pole.rs`） | 先备后插；备不出来当场把刚建好的映射撤掉并答 `OoM` |
 | `envcall/mail.rs` 两处 `vec![0u8; …]` | 换 `try_reserve` + `resize` |
 
-**已按 (C) 落地：两条队列的链穿在任务的状态载荷里**
+**已按 (C) 落地：三条队列的链穿在任务的状态载荷里**
 
-`starved`（就绪）与 `HUSKS`（躯壳）都改成"链在载荷里、容器只存链头链尾"：
+`starved`（就绪）、`HUSKS`（躯壳）与站点等待链（`wait/site.rs`）都改成"链在载荷里、
+容器只存链头链尾"：
 
-- `TaskState::Starved { next }` / `TaskState::Reaped { next }`——节点就是任务自己；
-  容器（`SchedulerInner.head/tail`、`Husks.head/tail`）一次指针写即入队/出队，
-  **两条队列上再没有任何分配**（`try_reserve_starved` 与它的跨核错配一并删除）。
-- 互斥不靠引用计数：`Task::exclusive` 的定义就是"调度器锁 + 容器唯一性"，
-  故偷窃（`try_pull`，受害者锁内摘链头）与 kill 摘除（`starved_remove` 走链）都成立。
+- `TaskState::Starved { next }` / `Reaped { next }` / `Blocked { key, ticket, next }`
+  ——节点就是任务自己；容器（`SchedulerInner.head/tail`、`Husks.head/tail`、
+  `Site.head/tail`）一次指针写即入队/出队，**三条队列上再没有任何分配**
+  （`try_reserve_starved`、`Waiter` + 它的 `VecDeque`、以及等待路径上"给队列备一格"
+  那一半 `try_reserve_site` 一并删除）。
+- 互斥不靠引用计数：`Task::exclusive` 的定义就是"容器锁 + 容器唯一性"，
+  故偷窃（`try_pull`，受害者锁内摘链头）、kill 摘除（`starved_remove` / `Site::remove_task`
+  走链）与到期认领（`remove_ticket` 按票走链）都成立。
 - 代价一条，写在明处：链没有 `.len()`，`starved_len` 镜像从"从容器派生"降为
   "与容器同处 ±1 维护"（`counted`），兜底是调试档整链核算 `starved_check`。
-- 三条纪律：弹出时**清空离开者的 `next`**（否则一任务两链）；离开 `Starved` 前先摘链
-  （`transform` 的 `debug_assert` 兜底）；拆链迭代（先 `take` 再 drop，别压栈）。
+- 三条纪律：弹出时**清空离开者的 `next`**（否则一任务两链）；离开 `Starved`/`Blocked`
+  前先摘链（`transform` 的 `debug_assert` 兜底）；拆链迭代（先 `take` 再 drop，别压栈
+  ——`wipe`/`wipe_space` 用 `Unchain` 这个迭代器交经 `rise`，批量 kick 照旧）。
 - 实测：门 5/5；`QEMU_MEM=128 churn 1 4 4` 干净收线、0 panic；`reap` 体内增长助手 0 命中。
 
 **最后三笔（本轮）**
@@ -1207,11 +1212,26 @@ harden/framework 档当场 `[panic] envcall without running task`（`trap.rs:266
 
 **没做完（逐条点名，处置已定）**
 
-| 位置 | 为什么不是"紧贴预留"就完事 | 计划的处置 |
+| 位置 | 为什么不是"紧贴预留"就完事 | 处置 |
 |---|---|---|
-| `wipe_space` 持分片 L3 锁时的 `keys().collect()`（`wait/mod.rs`） | 收尾路径，且锁内分配 | 改"游标 + 就地摘除" |
+| `wipe_space` 持分片 L3 锁时的 `keys().collect()`（`wait/mod.rs`） | 收尾路径，且锁内分配 | **已落地**（`372fbd8`）：改"一次一个站点、游标 + 就地摘除"，锁内不再收集 |
 
-**残余风险（写在明处）**：站点可能在"备料"与"入队"之间被同片的 `prune` 删掉 ⇒ 入队时
-`or_insert_with` 新建站点的那一格容量没有预留。窗口极窄（同键的一次 beacon 消费），
-由 `debug_assert` 守着；release 档下这一支退化成今天的"不可失败扩容"——它是本轮
-**已知未闭合**的一处，与"预留—插入"在共享表上的固有竞态同源。
+**残余风险已闭合（第 17 轮）**：站点可能在"备料"与"入队"之间被同片的 `prune`／`wake`／
+`wipe` 删掉，于是入队时 `or_insert_with` 新建站点的那一格容量没有预留。这一处**不是靠
+补预留关掉的，是靠把队列本身改成零分配**：等待者改挂 `TaskState::Blocked::next`
+（链在载荷里，站点只存 `head`/`tail`），④ 于是只 `get_mut`、不 `or_insert_with`——
+站点不在就按「已唤醒」收尾。那一支是**伪唤醒**，而 `wait` 的返回本来就只是提示
+（调用方必须复核条件，见 `docs/dispatch.md` §11.4）⇒ 窗口仍在，但它的代价从
+"一次可能失败的扩容"降到"一次白跑的条件复核"，**入队这条路上再没有任何分配**。
+
+同一把尺子顺手量了 `wake`：它的站点自建（无人等过这个键、只留一枚信标）本来是
+`entry().or_insert_with()` 直接扩容，现在改成**锁内 `try_reserve(1)` + `insert`**，
+备不出来就丢掉这枚信标、照旧答 `false`——投信方只看"叫到人没有"（没有失败通道），
+而信标本来就只是提示（`hole::wait` 复核就绪位），丢它 = 少一次"当场返回"，不是少一次
+唤醒。等待模块里因此**再没有一处"要么扩容要么 halt"**。
+
+顺带记一笔在照抄就绪链时发现的旧洞：`starved_remove` 摘掉**非链头的链尾**时只在新链
+为空才清 `tail`，于是 `tail` 会指着链外节点，下一次 `starved_push` 把新任务接到链外
+（链头到不了它 = 任务静静丢失）。等待链的 `remove_if` 与 `starved_remove` 一并改成
+"摘到尾 ⇒ `tail = prev`"。
+

@@ -12,7 +12,7 @@
 // - `wait(meta, dir, dur)`：唯一挂起入口——先探、后挂；死则报 Dead。
 // - `key(meta, dir)`：该方向的等待键（命名空间 0，键不出内核）。
 //
-// 写/读完槽后都 wake 对侧 waiters。
+// 写/读完槽后都 wake 对侧等待者。
 //
 // **锁序约定**：`slot` 是 L3 锁。envcall handler 不在持 slot 锁时调 copy_in/out
 // （后者经 `space.segments` 走 Space 锁 = L2，会违反 2→4 反向嵌套）——handler

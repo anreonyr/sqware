@@ -93,7 +93,7 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
     doomed_nudge(task, reason)
 }
 
-/// 站点表全扫：找 `task` 的等待者，摘出并**顺带拿到它的票**（观察者不读 payload，
+/// 站点表全扫：找 `task` 的那一环，摘下并**顺带拿到它的票**（观察者不读 payload，
 /// 键票只能问容器——键在片内用来定位与 `prune`，票交调用方作废到点登记）。
 /// 逐片取放，不持跨片锁；命中即摘即返。
 fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
@@ -101,9 +101,8 @@ fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
         let mut sites = shard_at(shard).lock();
         let mut hit: Option<(WakeKey, Ticket)> = None;
         for (key, site) in sites.iter_mut() {
-            if let Some(i) = site.waiters.iter().position(|w| Arc::ptr_eq(&w.task, task)) {
-                let w = site.waiters.remove(i).expect("idx from position");
-                hit = Some((*key, w.ticket));
+            if let Some(ticket) = site.remove_task(task) {
+                hit = Some((*key, ticket));
                 break;
             }
         }

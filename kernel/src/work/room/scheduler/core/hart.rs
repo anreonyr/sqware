@@ -192,6 +192,10 @@ impl Scheduler {
 
     /// 摘除指定任务 + 派生计数（kill 的 Starved 分支）。返回是否摘到——队列私有，
     /// 所以「找 + 摘」一起留在本文件，调用方（全机扫描）不必看队列。
+    ///
+    /// **链尾**跟着改：摘掉的若是最后一环（`next` 为空），新链尾就是它的前驱。只在新
+    /// 链为空时清 `tail` 不够——摘掉"非头的尾"会留下一个指着链外的 `tail`，下一次
+    /// `starved_push` 就把新任务接到链外节点上（链头到不了它 = 任务静静丢失）。
     pub(super) fn starved_remove(&self, i: &mut SchedulerInner, target: &Arc<Task>) -> bool {
         // 走链：`prev` 是"摘除点"的持有者（None = 摘链头）。逐节 clone 只为比较身份，
         // 不动链；命中时把后继接到前驱的载荷上，并清空离开者。
@@ -200,12 +204,13 @@ impl Scheduler {
         while let Some(mut node) = cur {
             if Arc::ptr_eq(&node, target) {
                 let next = Task::starved_next(&mut node).take();
+                let was_tail = next.is_none();
                 match &mut prev {
                     Some(p) => *Task::starved_next(p) = next,
                     None => i.head = next,
                 }
-                if i.head.is_none() {
-                    i.tail = None;
+                if was_tail {
+                    i.tail = prev;
                 }
                 self.counted(-1);
                 #[cfg(debug_assertions)]

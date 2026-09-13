@@ -50,7 +50,20 @@ pub enum TaskState {
     ///
     /// **等待点 = 键 + 票**：键指向站点（唤醒侧按它找人），票指向到点登记（到期侧
     /// 凭它认领）。两者都在这里，故「谁在等、等什么、等到何时」不散在全局表里。
-    Blocked { key: WakeKey, ticket: Ticket },
+    Blocked {
+        key: WakeKey,
+        ticket: Ticket,
+        /// 站点等待链的下一环（`None` = 链尾）——与 `Starved::next` 同一手法，第三条链。
+        ///
+        /// **链在载荷里**：站点只存链头与链尾，"下一个是谁"跟着等待者自己走。挂起路径
+        /// ④ 落在 `swap()` **之后**——那一侧没有失败域可挂（离核之后想返回只能让核上空转，
+        /// 实测见 `block` 头注），故任何"要么扩容要么 halt"的入队容器都是地雷。
+        ///
+        /// 互斥由**分片锁 + 容器唯一性**保证（见 [`Task::exclusive`]）：同一条链只有一个
+        /// hart 的锁能碰。纪律与另两条链相同——入链前必须为空，离开 `Blocked` 之前必须
+        /// 先摘链（`transform` 整块换掉载荷，两处都有断言兜底）。
+        next: Option<Arc<Task>>,
+    },
     /// 在就绪容器里等选（被选中时重置满额预算）。四条进入路径：放行
     /// （`Held → Starved`）、预算耗尽轮转、主动让出、唤醒（`Blocked → Starved`）。
     ///
@@ -137,9 +150,13 @@ impl core::fmt::Debug for TaskState {
             TaskState::Reaped { next } => write!(f, "Reaped {{ next: {} }}", next.is_some()),
             // 「等什么、等到何时」的载荷在这里被读出来：排障看挂住现场时，
             // 一个阻塞任务在哪个键上等是最要紧的一行。
-            TaskState::Blocked { key, ticket } => {
-                write!(f, "Blocked {{ key: {:?}, ticket: {:?} }}", key, ticket)
-            }
+            TaskState::Blocked { key, ticket, next } => write!(
+                f,
+                "Blocked {{ key: {:?}, ticket: {:?}, next: {} }}",
+                key,
+                ticket,
+                next.is_some()
+            ),
             other => write!(f, "{:?}", other.tag()),
         }
     }
@@ -240,6 +257,7 @@ impl Task {
         // 放进来就是"一个任务挂在两条链上"。
         let unlinked = match &next {
             TaskState::Starved { next } | TaskState::Reaped { next } => next.is_none(),
+            TaskState::Blocked { next, .. } => next.is_none(),
             _ => true,
         };
         debug_assert!(unlinked, "transform: 入链载荷非空（有人没先摘链）");
@@ -277,6 +295,27 @@ impl Task {
         match Self::exclusive(t).state_mut() {
             TaskState::Reaped { next } => next,
             other => unreachable!("躯壳链只穿 Reaped 任务，实为 {:?}", other.tag()),
+        }
+    }
+
+    /// 站点等待链的下一环——**只在持该键所在分片锁（`Level::L3`）时调用**（理由同上）。
+    pub(crate) fn blocked_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
+        match Self::exclusive(t).state_mut() {
+            TaskState::Blocked { next, .. } => next,
+            other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
+        }
+    }
+
+    /// 本环的票——摘链/比对时读（作废到点登记要用）。
+    ///
+    /// 与 [`Self::blocked_next`] 同一前提（持分片锁）：读的人就是容器（链的强持有者
+    /// ＋那把锁），故读得到。**观察者不这么用**——`redeem` 从票根拿「键 + 持票人」
+    /// （那份持有人的 `Arc` 是临时的，任务随时可能被别核放行），进容器后只按票号比对
+    /// （`Site::remove_ticket`），不去看「持票人现在什么状态」。
+    pub(crate) fn blocked_ticket(t: &mut Arc<Self>) -> Ticket {
+        match Self::exclusive(t).state_mut() {
+            TaskState::Blocked { ticket, .. } => *ticket,
+            other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
         }
     }
 

@@ -5,7 +5,6 @@
 // （= `messenger`）——`doom.rs` 与 `messenger::rip` 要的那几个，刚好够。
 
 use alloc::boxed::Box;
-use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
@@ -14,7 +13,7 @@ use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::life::Life;
-use crate::work::unit::task::Task;
+use crate::work::unit::task::{Task, TaskState};
 
 use super::holder::Ticket;
 
@@ -60,15 +59,24 @@ impl WakeKey {
 
 }
 
-/// 一个唤醒源的等待位：遗留信号（信标）+ 等待者队列 + **该键的存活单元**。
+/// 一个唤醒源的等待位：遗留信号（信标）+ **等待链的两头** + 该键的存活单元。
 ///
 /// 三种唤醒源共用本类型（旧版 `WaitSite` / `JoinSite` 字段逐个相同——各自一份是
 /// 键的 Rust 类型不同逼出来的）。
+///
+/// **队列在等待者的载荷里**（`TaskState::Blocked::next`），这里只存两头——与
+/// `SchedulerInner` 的就绪队列、`Husks` 的躯壳队列同一手法。理由也一样：入队落在
+/// `block` ④（`swap()` 之后，没有失败域）与 `redeem` / `wipe` 这两条放行路径上，
+/// 任何"要么扩容要么 halt"的容器在这三条路上都是地雷；而"容量需求是并发占用"与
+/// 一生一次的 `try_reserve(1)` 对不上（不累加，实测见 `docs/allocator-diagnosis.md`
+/// §14.5）。改链之后，入队 = 两次指针写。
 pub(in super::super) struct Site {
     /// 遗留信号（信标）：wake 无等待者 → 置位；wait 见位 → 消费即回（防漏唤醒）。
     pub(in super::super) pend: bool,
-    /// 等待者（FIFO）；每项携带到点句柄（无期限 = None）。
-    pub(in super::super) waiters: VecDeque<Waiter>,
+    /// 等待链的链头（`None` = 无人在等）。
+    pub(in super::super) head: Option<Arc<Task>>,
+    /// 链尾（多持一个强引用，等价 `SchedulerInner::tail` 那种缓存；链的所有权在节点间）。
+    pub(in super::super) tail: Option<Arc<Task>>,
     /// 本键的**存活单元**（弱引用）——站点寿命＝资源寿命的那一半（A2）。
     ///
     /// `Weak` 放**值**里而非键里：键是 `HashMap` 的 key，必须 `Copy`/`Eq`。
@@ -78,13 +86,6 @@ pub(in super::super) struct Site {
     /// 只有**读**：`prune` 判据与 `block` ④ 各读一次「死没死」。room 不接受任何
     /// 来自外部的「这个键死了」的说法。
     pub(in super::super) life: Weak<Life>,
-}
-
-/// 等待者：站点队列里的一项。票号即「哪一次挂起」——同一任务先后等同一个键时，
-/// 靠它区分，故陈旧的到点登记不可能偷走后来的那次等待。
-pub(in super::super) struct Waiter {
-    pub(in super::super) task: Arc<Task>,
-    pub(in super::super) ticket: Ticket,
 }
 
 // ── 簿记表（全部 L3） ──
@@ -114,7 +115,7 @@ type Shard = SpinLock<HashMap<WakeKey, Site>>;
 /// 只是键的 Rust 类型不同（`usize` vs `WaitKey`）——键成枚举之后，那个理由没了。
 ///
 /// 锁纪律：仍是 L3、可与 timer 锁共存但**绝不 3→3 嵌套**（rip 路径循环逐片清，
-/// 禁持跨片锁）。同 key 的所有 waiters 必落在同一分片（`site_shard` 纯函数保证），
+/// 禁持跨片锁）。同 key 的所有等待者必落在同一分片（`site_shard` 纯函数保证），
 /// 唤醒不必跨片扫描。
 pub(in super::super) fn shard_at(shard: usize) -> &'static Shard {
     static SHARDS: OnceLock<Box<[Shard]>> = OnceLock::new();
@@ -133,37 +134,37 @@ pub(in super::super) fn sites(key: WakeKey) -> &'static Shard {
     shard_at(site_shard(key))
 }
 
-/// 为即将入队的等待者**备一站 + 一格**：站点不在就先建出来（队列容量一并备足），
-/// 在就为它的队列留一格。`life` **按值**进站点（跨挂起不留副本）。
+/// 为即将挂起的等待者**把站点就位**——不在就先建出来（唯一的分配点：分片表那一格）。
+/// `life` **按值**进站点（跨挂起不留副本）。
 ///
-/// 为什么备料非得包含"把站点就位"：等待队列挂在站点上，而站点可能要等这一刻才
-/// 存在——队列的容量没有第二个地方可挂。整件事在**同一把分片锁内**做完，别的核
-/// 抢不走那格容量。
+/// 这是挂起路径上**唯一**会失败的一步，且它整个在 `swap()` **之前**（`block` ②）——
+/// 挂起没有失败域可挂，故唯一能答错的入口必须留在还有调用方栈可退的那一侧。链改到
+/// 载荷里之后，这一步不再包含"给队列备容量"：入链本身零分配，站点只要**存在**就够了。
 ///
-/// 不变量（`block` ⑤ 的容量检查立在它上面）：**每次 `waiters.push_back` 之前，
-/// 都先为自己的那一格预留过**。于是任意时刻 `capacity ≥ len + 已在备料、尚未入队
-/// 的等待者数` ⇒ 轮到自己 push 时必有余量。同键的等待者共用一条队列，故这条
-/// 不变量对"同键并发挂起"同样成立。
+/// 站点为什么要**先**建：④ 的入队是"把本任务接到链尾"，而链挂在站点上——站点不在，
+/// 链就没有落脚处。④ 因此只 `get_mut`（不 `entry().or_insert_with()`）：站点若在窗口里
+/// 被别的核删掉（`prune` / `wake` / `wipe` / `wipe_space` 都可能删），④ 当场按「已唤醒」
+/// 收尾——**伪唤醒，契约允许**（`wait` 的返回只是提示，调用方必须复核条件），故那一支
+/// 不需要任何分配，也不需要第二条失败通道。这是「对象在入口造，表只串链」在等待机上的
+/// 落点：备料 = 造对象，串链 = 零分配。
 ///
 /// 站点带着**本键**的存活单元：同一个键只有一份 `Life`，故这枚弱引用与入口无关
 /// （wait / join 指同一个分配），赋值不是「换主」而是「同一事实的重写」。
 ///
 /// # Errors
 ///
-/// 分片表或队列扩不出来（内存耗尽）→ `Err(())`（与 `try_reserve_roster` 同一口径）。
+/// 分片表扩不出来（内存耗尽）→ `Err(())`（与 `try_reserve_roster` 同一口径）。
+/// 失败时那一个键上什么都没留下：站点没建、票根与到点未登记、任务状态未改。
 pub(in super::super) fn try_reserve_site(key: WakeKey, life: Weak<Life>) -> Result<(), ()> {
     let mut sites = sites(key).lock();
-    match sites.get_mut(&key) {
-        Some(site) => site.waiters.try_reserve(1).map_err(|_| ()),
-        None => {
-            sites.try_reserve(1).map_err(|_| ())?;
-            let mut site = Site::new(&Weak::new());
-            site.waiters.try_reserve(1).map_err(|_| ())?;
-            site.life = life;
-            sites.insert(key, site);
-            Ok(())
-        }
+    if sites.contains_key(&key) {
+        return Ok(());
     }
+    sites.try_reserve(1).map_err(|_| ())?;
+    let mut site = Site::new(&Weak::new());
+    site.life = life;
+    sites.insert(key, site);
+    Ok(())
 }
 
 /// 信标先探：消费本键上的遗留信号。**缺键即无信标**——不 `or_insert`：空的、
@@ -188,12 +189,12 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
     taken
 }
 
-/// 站点存在的判据：**队列非空 ∨ （信标 ∧ 键还活着）**。不成立即删——空壳站点
+/// 站点存在的判据：**链非空 ∨ （信标 ∧ 键还活着）**。不成立即删——空壳站点
 /// 没有语义，留着就是 A2 那条「站点永不回收」的老毛病（`park` 每次睡眠都会留一个）。
 /// 前置：已持有该分片的锁。
 ///
 /// 两项的来历：
-///   - **队列非空**：有任务挂在这里，站点是它的容器（原判据）；
+///   - **链非空**：有任务挂在这里，站点是它的容器（原判据）；
 ///   - **信标 ∧ 键还活着**：信标（`wake` 在无人在等时置的遗留信号）**只对未来到达
 ///     的等待者有意义**，而未来的等待者只可能来自活着的键——键一死，这枚信标就再也
 ///     无人认领。故 `life` 已死时信标随站点一起作废：**判据从「队列空 ∧ 无信标」
@@ -207,16 +208,16 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
 ///
 /// 站点因此只剩三种形态，审计计数（`messenger::probe` 的 `live`/`tomb`/`orphan`）
 /// 按它们分列——**名字与判据只有这一处定义**：
-///   - **活**（`waiters` 非空）：有任务挂在这里；
-///   - **墓碑**（队列空 **且** 有信标）：信号留着等**未来的**等待者认领。键还活着时
+///   - **活**（链非空）：有任务挂在这里；
+///   - **墓碑**（链空 **且** 有信标）：信号留着等**未来的**等待者认领。键还活着时
 ///     它有语义（`wake` 的记忆），故本函数**不删**它；键一死即落到下一类；
-///   - **孤儿**（队列空 **且** 无信标）：没有任何语义，正是本函数该删的那一类。
+///   - **孤儿**（链空 **且** 无信标）：没有任何语义，正是本函数该删的那一类。
 ///
-/// 不变式（判据不含挂起中的等待者，故必须为真）：**队列非空 ⇒ 键还活着**——能入队
-/// 就意味着 `block` ④ 在锁内读到过「键活着」，而等待者的站点强持有者就是那份资源。
+/// 不变式（判据不含挂起中的等待者，故必须为真）：**链非空 ⇒ 键还活着**——能入链
+/// 就意味着 `block` ④ 在锁内读到过「键活着」，而等待链的强持有者就是那份资源。
 pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
     if let Some(site) = sites.get(&key)
-        && site.waiters.is_empty()
+        && site.head.is_none()
         && (!site.pend || Life::dead(&site.life))
     {
         sites.remove(&key);
@@ -231,8 +232,97 @@ impl Site {
     pub(super) fn new(life: &Weak<Life>) -> Self {
         Self {
             pend: false,
-            waiters: VecDeque::new(),
+            head: None,
+            tail: None,
             life: life.clone(),
         }
+    }
+
+    /// 链尾入链（**纯指针写，零分配**）。
+    ///
+    /// 前置（由 `transform` 的断言兜底）：入链者状态为 `Blocked { next: None, .. }`
+    /// ——站点只收等待者，且它不得还挂在别处的链上（否则就是一个任务两条链）。
+    /// 只做法上的移动：`task` 按值进来，链尾与链头各留一份强引用。
+    pub(super) fn push_back(&mut self, mut task: Arc<Task>) {
+        debug_assert!(
+            matches!(
+                Task::exclusive(&mut task).state(),
+                TaskState::Blocked { next: None, .. }
+            ),
+            "站点只收 Blocked 任务，且入链前不得挂在链上"
+        );
+        match self.tail.take() {
+            // 空链：新节点即链头。
+            None => self.head = Some(task.clone()),
+            // 非空：接到原链尾的载荷上，再把链尾前移。
+            Some(mut last) => *Task::blocked_next(&mut last) = Some(task.clone()),
+        }
+        self.tail = Some(task);
+    }
+
+    /// 链头出链（**摘链 + 清空离开者的 `next`**）；空链 → `None`。
+    ///
+    /// 清空那一步是硬要求：不清就等于"被取走的任务还持有它原来的后继"，同一段链
+    /// 会有两个所有者。
+    pub(super) fn pop_front(&mut self) -> Option<Arc<Task>> {
+        let mut head = self.head.take()?;
+        self.head = Task::blocked_next(&mut head).take();
+        if self.head.is_none() {
+            self.tail = None;
+        }
+        Some(head)
+    }
+
+    /// 按票摘一环（到期认领）；票对不上 → `None`。摘除点当场摘链。
+    pub(super) fn remove_ticket(&mut self, ticket: Ticket) -> Option<Arc<Task>> {
+        self.remove_if(&mut |t| Task::blocked_ticket(t) == ticket)
+    }
+
+    /// 按身份摘一环（扑杀路径：观察者只知道「谁」，不知道票）。票交调用方作废到点登记。
+    ///
+    /// 被摘下的那一环就地释放：调用方必持一枚强引用（签名要求 `&Arc<Task>`），故它不
+    /// 可能是最后一个所有者——锁内不会触发 `Task::drop` 的 drop 链（那会取 L2 空间锁）。
+    pub(in super::super) fn remove_task(&mut self, target: &Arc<Task>) -> Option<Ticket> {
+        let mut ticket = None;
+        self.remove_if(&mut |t| {
+            if Arc::ptr_eq(t, target) {
+                ticket = Some(Task::blocked_ticket(t));
+                true
+            } else {
+                false
+            }
+        })
+        .and(ticket)
+    }
+
+    /// 「走链找第一个匹配者并摘掉它」的共用实现：`hit` 判定 + 顺带读载荷
+    /// （票在两处都要读一次，故判定与读取合成一个闭包）。返回被摘下的那一环。
+    ///
+    /// 走链逐节 clone 只为比较身份，不动链；命中时把后继接到前驱的载荷上，并清空
+    /// 离开者（与 `Scheduler::starved_remove` 同形）。
+    ///
+    /// **链尾**必须跟着改：摘掉的若是最后一环（`next` 为空），新链尾就是它的前驱——
+    /// 只在新链为空时才清 `tail` 是不够的，摘掉"非头的尾"会留下一个指着链外的
+    /// `tail`，下一次 `push_back` 就把新等待者接到链外的节点上（链头压根到不了它）。
+    fn remove_if(&mut self, hit: &mut dyn FnMut(&mut Arc<Task>) -> bool) -> Option<Arc<Task>> {
+        let mut prev: Option<Arc<Task>> = None;
+        let mut cur = self.head.clone();
+        while let Some(mut node) = cur {
+            if hit(&mut node) {
+                let next = Task::blocked_next(&mut node).take();
+                let was_tail = next.is_none();
+                match &mut prev {
+                    Some(p) => *Task::blocked_next(p) = next,
+                    None => self.head = next,
+                }
+                if was_tail {
+                    self.tail = prev;
+                }
+                return Some(node);
+            }
+            prev = Some(node.clone());
+            cur = Task::blocked_next(&mut node).clone();
+        }
+        None
     }
 }

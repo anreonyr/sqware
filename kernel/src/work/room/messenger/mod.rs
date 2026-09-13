@@ -15,7 +15,7 @@
 // 锁序：**L1（调度器）与 L3（本域各表）任何方向都不得嵌套**——持任一 L3 期间
 // 不得调用 scheduler 的任何加锁方法，也不得在锁内 drop `Arc<Task>`（drop 链会
 // 取 Space 锁 L2）。各路径的写法统一为「作用域内取、作用域外用」：block/wake/
-// wipe/redeem 在块内摘出 Waiter、块外 push 回 scheduler；bury 块内出队、
+// wipe/redeem 在块内摘出等待者那一环、块外 push 回 scheduler；bury 块内出队、
 // 块外回收；rip 块内 take 整表、块外 drop。
 //
 // 反向耦合清零：dock / ring 的 task_exit 反向耦合走两步拆——step 5 引入 exit

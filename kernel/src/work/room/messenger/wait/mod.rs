@@ -7,7 +7,6 @@
 pub(super) mod holder;
 pub(super) mod site;
 
-use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
 use core::time::Duration;
 
@@ -21,9 +20,7 @@ use crate::work::unit::life::{Life, TaskLife};
 use crate::work::unit::task::{Task, TaskState};
 
 use self::holder::{Ticket, hold, void};
-use self::site::{
-    SITE_SHARDS, Site, Waiter, WakeKey, prune, shard_at, sites, take_beacon, try_reserve_site,
-};
+use self::site::{SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon, try_reserve_site};
 use super::handoff::Handoff;
 
 // ── 操作：挂起（用 scheduler::core::Scheduler::swap） ──
@@ -32,11 +29,11 @@ use super::handoff::Handoff;
 ///
 /// 时序（两个竞态闭合点）：
 ///   ① 信标先探——信号已至 → 不挂起（不碰站点表：缺键即无信标）
-///   ② 备料 + 登记——站点那一格 / 票根 / 到点，**全部在离核之前**：
+///   ② 备料 + 登记——**站点就位（唯一的分配点）** / 票根 / 到点，全部在离核之前：
 ///      票根先于 `tock`（**堆可见 ⇒ 票根必在**），而两步都要能答错
 ///   ③ 离核——借 scheduler 跨边界原语把 running 卸下（槽位 settled）
-///   ④ 入队——写等待点 + 挂进站点队列；**锁内先判键死活、再查一次信标**
-///   ⑤ 窗口内信标已至或键已死 → 撤销登记，按「已唤醒」处理（Starved 入队）
+///   ④ 入链——写等待点 + 接到站点链尾（**零分配**）；**锁内先判键死活、再查一次信标**
+///   ⑤ 窗口内信标已至 / 键已死 / 站点已被删 → 撤销登记，按「已唤醒」处理（Starved 入队）
 ///
 /// `life` = 本键的存活单元（弱引用，调用方随键一起交进来——room 不查任何注册表）。
 /// ④ 的锁内判死就是 A2 说的「关上在飞窗口」：一个正飞在 ①④ 之间的等待者，此前
@@ -49,7 +46,7 @@ use super::handoff::Handoff;
 /// 挂起没有失败域可挂（`Handoff` 两态里没有"失败"），所以唯一会分配的一步按仓内
 /// 惯例提到装配之前；而"之前"的边界是 **`current().swap()`**——离核之后本核就没
 /// 有自己的任务了，此时再想返回只能让核上空转（实测：下一次 envcall 直接
-/// `envcall without running task`）。失败时一个字都没欠：站点那一格已备、票根与
+/// `envcall without running task`）。失败时一个字都没欠：站点已就位、票根与
 /// 到点未登记、任务状态未改，调用方当场拿到 `OoM`。
 ///
 /// 锁纪律：站点表与票根都是 L3，**绝不互相嵌套**——「作用域内取、作用域外用」。
@@ -63,7 +60,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
     // 挂起这条路上没有失败域（`Handoff` 两态里没有"失败"），故按仓内惯例把唯一会
     // 分配的一步提到装配之前。**必须在 `swap()` 之前**：`swap()` 已经把本任务换下
     // 核，之后返回等于让本核没有任务（实测：下一次 envcall 直接
-    // `envcall without running task` panic）。失败时一个字都没欠——站点那一格已备、
+    // `envcall without running task` panic）。失败时一个字都没欠——站点已就位、
     // 票根与到点未登记、任务状态未改、本核仍持着自己的任务，`OoM` 当场交给调用方，
     // 它可能马上重试。
     let Some(me) = current().running_task() else {
@@ -91,42 +88,42 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
         // 诊断用折叠值：键成枚举后不再有「人可读的位打包」形态。
         key: key.fold() as usize,
     }));
-    // ④ 写等待点 + 入队（锁内判死活 + 查信标）
-    Task::exclusive(&mut task).transform(TaskState::Blocked { key, ticket });
+    // ④ 写等待点 + 入链（锁内判死活 + 查信标）
+    Task::exclusive(&mut task).transform(TaskState::Blocked {
+        key,
+        ticket,
+        next: None,
+    });
     let queued = {
         let mut sites = sites(key).lock();
-        let site = sites.entry(key).or_insert_with(|| Site::new(&Weak::new()));
-        let queued = if Life::dead(&site.life) {
-            // 键已死（资源没了）：不入队、也不留站点——死键的队列必然空（能入队 ⇒
-            // 入队那一刻键还活着），故下面的 `prune` 会当场把这个空壳删掉。
-            // 与「信标已至」同一支收尾（⑤ 的 `void` + `rise`）：两支的对外结论都是
-            //「没挂起、当场放回」，调用方本来就须复核条件（信标只是提示）。
-            false
-        } else if site.pend {
-            // 窗口内信标已至：消费它，不入队。
-            site.pend = false;
-            false
-        } else if site.waiters.len() < site.waiters.capacity() {
-            site.waiters.push_back(Waiter {
-                task: task.clone(),
-                ticket,
-            });
-            true
-        } else {
-            // ② 备的那一格被**同键**的另一个等待者占了（`try_reserve(1)` 只保证
-            // "此刻 capa ≥ len+1"，不累加）：**不再扩容**，就地撤销——状态置回
-            // Starved（`rise`），按"已唤醒"处理，调用方本来就须复核条件。少一次
-            // 唤醒语义、不换一次整机 halt。
-            false
+        // **只 `get_mut`，不 `entry().or_insert_with()`**：站点是 ② 就位好的（唯一分配
+        // 点在那一侧），这里再要一次分片表容量就等于把失败的入口搬到了 `swap()` 之后
+        // ——那一侧没有失败域。站点不在 = 它在 ② 与此刻之间被别的核删了（`prune` /
+        // `wake` / `wipe` 都能删），三支一起按「已唤醒」收尾。
+        let queued = match sites.get_mut(&key) {
+            None => false,
+            // 键已死（资源没了）：不入链、也不留站点——死键的链必然空（能入链 ⇒ 入链那
+            // 一刻键还活着），故下面的 `prune` 会当场把这个空壳删掉。
+            Some(site) if Life::dead(&site.life) => false,
+            // 窗口内信标已至：消费它，不入链。
+            Some(site) if site.pend => {
+                site.pend = false;
+                false
+            }
+            // 入链 = 两次指针写：链尾的 `next` 指向我，我成为新链尾。
+            Some(site) => {
+                site.push_back(task.clone());
+                true
+            }
         };
         // 撤销阻塞那一支没有留下等待者：空壳站点随手删掉。
         prune(&mut sites, key);
         queued
     };
 
-    // ⑤ 窗口内信标已至 / 键已死：撤销登记，按已唤醒处理
+    // ⑤ 窗口内信标已至 / 键已死 / 站点已被删：撤销登记，按已唤醒处理
     if queued {
-        // **跨挂起不得持强引用**：入队成功 ⇒ 队列里那份是权威持有者，本地这份
+        // **跨挂起不得持强引用**：入链成功 ⇒ 链上那份是权威持有者，本地这份
         // 到此为止。留着它不会影响「正常唤醒」（挂起后帧会恢复、局部量照常 drop），但会
         // 在**被别核 kill 掉**时随栈一起被丢弃——栈没了，引用计数永不回落，被指向的任务
         // 被永久钉住（它的 Team/Space 跟着不 drop，帧与页全留在关机类别账上）。
@@ -161,6 +158,27 @@ fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
         conductor::kick();
     }
     woke
+}
+
+/// 拆一条 `Blocked` 等待链：每次吐一环，**吐之前先作废它的到点登记**（`void` 幂等），
+/// 并就地摘掉那一环（离开 `Blocked` 必须摘链，`transform` 的断言就立在这上面）。
+///
+/// 逐环摘而不是整条一次 drop：一次性 drop 会把长链压进调用栈（与 `starved_clear`
+/// 同理）。交给 [`rise`] 当迭代器用，故唤醒仍是**一次** `kick`（逐条踢会让单 tick 的
+/// IPI 量回到 O(N)）。链头进门时已经出了分片锁——本迭代器不上锁、不分配。
+struct Unchain {
+    cur: Option<Arc<Task>>,
+}
+
+impl Iterator for Unchain {
+    type Item = Arc<Task>;
+
+    fn next(&mut self) -> Option<Arc<Task>> {
+        let mut task = self.cur.take()?;
+        void(Task::blocked_ticket(&mut task));
+        self.cur = Task::blocked_next(&mut task).take();
+        Some(task)
+    }
 }
 
 /// 纯睡（`RoomCall::Park`）：键是 `Alarm { 我 }`——无人投信，只有期限会响。
@@ -250,28 +268,23 @@ pub fn join(task: TaskLife, reaped: bool, dur: Duration) -> Result<Handoff<bool>
 /// ⇒ 一个死键的站点若留在表里，此后**再没有任何入口会碰它**。实测（同一个 ELF、同一
 /// 台机，追加量按轮计）：只把判据扩成「键已死也算孤儿」而 `wipe` 仍留站点时，追加
 /// 6 轮 hole+spawn 让总数 52 → 88（每轮 +6，与追加量成正比）；改成删站点后，追加 8 轮
-/// 的总数恒为 0（`sites 0 live 0 tomb 0 orphan 0 waiters 0`，与追加轮数无关）。
+/// 的总数恒为 0（`sites 0 live 0 tomb 0 orphan 0`，与追加轮数无关）。
 ///
 /// 在飞窗口不受影响：正飞在 `block` ①④ 之间的等待者由 ④ 的锁内判死接住（键在资源
-/// 归零后必然判死）；`wipe` 之后再到达的等待者走 ④ 的建立分支重建站点，而那一刻键
-/// 要么已死（当场放回）、要么还活（本来就该等）。
+/// 归零后必然判死）；`wipe` 之后再到达的等待者由 ② 把站点建回来，而那一刻键要么已死
+/// （当场放回）、要么还活（本来就该等）。
 ///
 /// 锁纪律同 [`wake`]：只在站点表（L3）内摘除，锁外 transform + 入队。返回唤醒数。
 pub(crate) fn wipe(key: WakeKey) -> usize {
-    let waiters = {
+    let chain = {
         let mut sites = sites(key).lock();
         // 不 `or_insert`、不留信标：站点是「等待者 + 对未来等待者仍有意义的遗留信号」
         // 的容器，键退役后两者都不该留下（信标同样作废——资源侧的 `alive()` 检查已经
         // 拒绝了后来的操作，投信方不存在了）。
-        match sites.remove(&key) {
-            Some(site) => site.waiters,
-            None => VecDeque::new(),
-        }
+        sites.remove(&key).and_then(|site| site.head)
     };
-    for w in &waiters {
-        void(w.ticket);
-    }
-    rise(waiters.into_iter().map(|w| w.task))
+    // 链随站点一起出锁：作废登记、摘环、放回就绪全在锁外（[`Unchain`]）。
+    rise(Unchain { cur: chain })
 }
 /// 空间退役：删掉该空间名下的**全部**空间键站点，放行它们的等待者。返回唤醒数。
 ///
@@ -287,9 +300,9 @@ pub(crate) fn wipe_space(space: usize) -> usize {
     let mut woken = 0usize;
     for shard in 0..SITE_SHARDS {
         // **一次一个站点**：锁内只摘、锁外处理（`Arc<Task>` 的 drop 链会取 L2），而
-        // `VecDeque` 的缓冲随站点本身一起出锁 ⇒ 全程零分配。旧版在片内先
-        // `keys().collect()` 再开一个 `Vec` 收等待者——两笔都发生在**持锁期间**，
-        // 而收尾路径（`bury`）没有失败域，内存吃紧就是一次整机 halt。
+        // **等待链随站点本身一起出锁**（链头链尾两份强引用都在 `Site` 里）⇒ 全程零分配。
+        // 旧版在片内先 `keys().collect()` 再开一个 `Vec` 收等待者——两笔都发生在
+        // **持锁期间**，而收尾路径（`bury`）没有失败域，内存吃紧就是一次整机 halt。
         loop {
             let taken = {
                 let mut sites = shard_at(shard).lock();
@@ -300,11 +313,8 @@ pub(crate) fn wipe_space(space: usize) -> usize {
                 key.and_then(|key| sites.remove(&key))
             };
             let Some(site) = taken else { break };
-            let waiters = site.waiters;
-            for w in &waiters {
-                void(w.ticket);
-            }
-            woken += rise(waiters.into_iter().map(|w| w.task));
+            // 空链的站点（只剩信标）也照删——键跟着空间一起退役，信标作废。
+            woken += rise(Unchain { cur: site.head });
         }
     }
     woken
@@ -312,11 +322,17 @@ pub(crate) fn wipe_space(space: usize) -> usize {
 
 // ── 操作：唤醒 ──
 
-/// 叫醒一个：摘队首 → 放回就绪。无人在等 → 置信标（防漏唤醒）。返回是否唤到人。
+/// 叫醒一个：摘链头 → 放回就绪。无人在等 → 置信标（防漏唤醒）。返回是否唤到人。
 ///
 /// **键已死 ⇒ `false` 且不建站点**（A2 裁决）：资源没了，这个键再也不会有等待者，
 /// 给它留站点或信标都是墓碑的另一种叫法。此处顺带把死键的残留站点删掉——
-/// 死键的队列必然空（能入队 ⇒ 那时键还活着），故直接 `remove` 是安全的。
+/// 死键的等待链必然空（能入链 ⇒ 那时键还活着），故直接 `remove` 是安全的。
+///
+/// 站点不在（无人等过这个键）时才需要**建**一个来承载信标，那是本函数唯一的分配点，
+/// 故**锁内先备后插**（同一把分片锁保证中间没人抢走那格容量）。备不出来就**丢掉这枚
+/// 信标**（本函数返回 `false`）——本函数没有失败通道（投信方只看"叫到人没有"），而信标
+/// 本来就只是提示（见下），丢它 = 少一次"当场返回"，不是少一次唤醒。于是这条路上也
+/// 没有"要么扩容要么 halt"。
 ///
 /// 消费方 = envcall 与 mail 的投信方；跨核经 steal 再平衡（同 [`redeem`]）。
 ///
@@ -332,28 +348,42 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
             sites.remove(&key);
             None
         } else {
-            let site = sites.entry(key).or_insert_with(|| Site::new(life));
-            let popped = match site.waiters.pop_front() {
-                Some(w) => Some(w),
+            // 摘链头；站点不在 ⇒ 记下来，出借后再建（建它要 `sites` 的 &mut）。
+            // `site` 的借用在块内结束——`prune` 还要一次 `&mut sites`。
+            let mut beacon_only = false;
+            let popped = match sites.get_mut(&key) {
+                Some(site) => match site.pop_front() {
+                    Some(task) => Some(task),
+                    None => {
+                        site.pend = true;
+                        None
+                    }
+                },
                 None => {
-                    site.pend = true;
+                    beacon_only = true;
                     None
                 }
             };
+            if beacon_only && sites.try_reserve(1).is_ok() {
+                let mut site = Site::new(life);
+                site.pend = true;
+                sites.insert(key, site);
+            }
             prune(&mut sites, key);
             popped
         }
     };
-    let Some(w) = popped else { return false };
-    void(w.ticket);
-    rise(core::iter::once(w.task));
+    let Some(mut task) = popped else { return false };
+    // 票在摘链那一刻从载荷里读（持分片锁时读得到；见 `Task::blocked_ticket`）。
+    void(Task::blocked_ticket(&mut task));
+    rise(core::iter::once(task));
     true
 }
 
 /// 到期兑现：`chrono` 交回的不透明句柄，在这里还原成「谁」。
 ///
 /// 一段走完，不再认识 park / wait / join 的区别：
-///   票根 → 取回（键 + 持票人）→ 从该键的队列里按票号摘出。
+///   票根 → 取回（键 + 持票人）→ 从该键的等待链里按票号摘出。
 /// 陈旧的登记在每一步都自然落空（票根已被 `void`、任务已不阻塞、票号对不上），
 /// 故不需要任何「取消」记账。
 ///
@@ -376,20 +406,19 @@ pub fn redeem() -> bool {
             continue;
         };
         drop(holder); // 队列里的那份才是权威强持有者（票根只存 Weak）
-        // 从该键的队列里摘出**这一票**的等待者（票号对不上 = 陈旧，落空）。
+        // 从该键的等待链里摘出**这一票**的那一环（票号对不上 = 陈旧，落空）。摘的
+        // 动作是「走链找 + 接前驱」，全在分片锁内完成（与 `doom::pop_waiter` 同一手法，
+        // 只是它按身份找、这里按票找）。
         let popped = {
             let mut sites = sites(key).lock();
-            let w = sites.get_mut(&key).and_then(|site| {
-                site.waiters
-                    .iter()
-                    .position(|w| w.ticket == Ticket(handle))
-                    .map(|i| site.waiters.remove(i).expect("idx from position"))
-            });
+            let w = sites
+                .get_mut(&key)
+                .and_then(|site| site.remove_ticket(Ticket(handle)));
             prune(&mut sites, key);
             w
         };
         let Some(w) = popped else { continue };
-        *slot = Some(w.task);
+        *slot = Some(w);
         woken += 1;
     }
     let _ = woken;
