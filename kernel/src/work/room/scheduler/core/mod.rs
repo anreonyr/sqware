@@ -31,5 +31,5 @@ pub(crate) use beacon::arm as beacon_arm;
 pub use ident::{Identity, ident};
 pub(crate) use table::{
     current, enlist, launch, muster, prune_dead, remove_from_starved, rip, roster, running_hart,
-    try_reserve_roster, try_reserve_starved,
+    try_reserve_roster,
 };

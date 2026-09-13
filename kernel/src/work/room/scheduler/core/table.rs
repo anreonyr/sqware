@@ -65,16 +65,6 @@ pub(super) fn schedulers() -> &'static [Scheduler] {
 
 /// 为本核就绪队列**预留**一格（放行路径不分配）。
 ///
-/// # Errors
-///
-/// 队列无法扩容（内存耗尽）→ `Err(())`。
-///
-/// 与 [`try_reserve_roster`] 同旨：把唯一会分配的一步提到装配之前，失败时
-/// 干净退回，让「生不出任务」是一个返回码而不是一次整机 halt。
-pub(crate) fn try_reserve_starved(slot: usize) -> Result<(), ()> {
-    current().try_reserve_starved(slot.saturating_add(1))
-}
-
 /// 放行入队（`Task::release` 收尾）：入本核就绪队列 **+ 踢醒一个休眠核**。
 /// 簿记（`Team.tasks`）、未放行容器（`Team.held`）、产生计数（PUSHED）与 trace 都在
 /// `TaskBuilder::hold` 完成——**计数挂在产生处**，Held 被父域 kill 时

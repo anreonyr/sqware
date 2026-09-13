@@ -38,7 +38,10 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 pub(crate) const MAX_ARGS: usize = 64;
 
 /// 任务状态：任务现在在哪 +（Running/Blocked 时）该状态特有的数据。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// **不是 `Copy`/`Clone`**：`Starved` / `Reaped` 的载荷里挂着容器链的下一环（`Arc`），
+/// 复制一份状态就等于复制一条链的持有——链只能有一份所有者。读状态经
+/// [`Task::state`]（借出），改状态只经 [`Task::transform`]。
 pub enum TaskState {
     /// 正在执行（恒为某 hart 的 running，不在任何队列）：预算随 run 递减。
     /// 不变量：预算恒 ≥ 1（耗尽即转 Starved，不落盘 Running{0}）。
@@ -53,7 +56,19 @@ pub enum TaskState {
     ///
     /// 名字只说了其中一条（预算耗尽 = 真的饿过）——放行的新生儿从未跑过。名字保留
     /// （用户裁决），故四条路径记在这里而不是靠名字暗示。
-    Starved,
+    Starved {
+        /// 就绪链的下一环（`None` = 链尾）。
+        ///
+        /// **链在载荷里**，不在容器里：容器（某核的 `SchedulerInner`）只存链头与链尾，
+        /// 而"下一个是谁"跟着任务自己走。这样入队/出队/偷取/摘除全是**指针写**——
+        /// 唤醒路径（`rise`）与时钟路径（`redeem`）上没有失败域，任何"要么扩容要么
+        /// halt"的容器在这两条路上都是地雷。互斥由**容器那把锁 + 容器唯一性**保证
+        /// （见 [`Task::exclusive`]）：同一条链只有一个 hart 的锁能碰。
+        ///
+        /// 纪律：离开 `Starved` 之前必须先摘链（`transform` 会整块换掉载荷）；
+        /// 入队时 `next` 必须为空——两处都有断言兜底。
+        next: Option<Arc<Task>>,
+    },
     /// **未放行**（在 `Team.held` 里；不在任何队列，不可被 steal）：`Spawn` 的初始态，
     /// 只能经 `Hatch` 转 Starved（或随父域被扑杀转 `Doomed`）。
     Held,
@@ -68,7 +83,14 @@ pub enum TaskState {
     /// 不变量：**退出钩子已跑完**——唯一置位路径是 `messenger::reap`（钩子 → 本态 →
     /// 入躯壳队列），故「`state == Reaped`」精确表示**收尾已完成**，`Join` 的判据
     /// 因此不含竞态。延迟的是**回收**（栈/trap 帧/团队空间），不是收尾。
-    Reaped,
+    Reaped {
+        /// 躯壳链的下一环（`None` = 链尾）——与 `Starved::next` 同一手法、另一条链。
+        ///
+        /// 为什么要这条链：任务的栈/帧/团队空间**不能在自己还在用的栈上回收**，故
+        /// 收尾之后要把躯壳交给别人排空（`bury`）。那条队列的入队在退出路径上，没有
+        /// 任何可以答错的入口 ⇒ 同样不许分配。
+        next: Option<Arc<Task>>,
+    },
 }
 
 /// 状态的**判别式**（无载荷投影）——给「观察者」读的那一半。
@@ -106,16 +128,33 @@ impl TaskTag {
     }
 }
 
+impl core::fmt::Debug for TaskState {
+    /// 手写而不是 derive：载荷里是 `Arc<Task>`，而 `Task` 不实现 `Debug`（任务是活对象，
+    /// 打印它没有意义）。这里只印判别式 + "还挂在链上吗"——排障要看的正是这两样。
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TaskState::Starved { next } => write!(f, "Starved {{ next: {} }}", next.is_some()),
+            TaskState::Reaped { next } => write!(f, "Reaped {{ next: {} }}", next.is_some()),
+            // 「等什么、等到何时」的载荷在这里被读出来：排障看挂住现场时，
+            // 一个阻塞任务在哪个键上等是最要紧的一行。
+            TaskState::Blocked { key, ticket } => {
+                write!(f, "Blocked {{ key: {:?}, ticket: {:?} }}", key, ticket)
+            }
+            other => write!(f, "{:?}", other.tag()),
+        }
+    }
+}
+
 impl TaskState {
     /// 判别式投影。**穷尽 match**：将来加状态时编译器会在这里逼你补一行。
     pub fn tag(&self) -> TaskTag {
         match self {
             TaskState::Held => TaskTag::Held,
-            TaskState::Starved => TaskTag::Starved,
+            TaskState::Starved { .. } => TaskTag::Starved,
             TaskState::Running { .. } => TaskTag::Running,
             TaskState::Blocked { .. } => TaskTag::Blocked,
             TaskState::Doomed => TaskTag::Doomed,
-            TaskState::Reaped => TaskTag::Reaped,
+            TaskState::Reaped { .. } => TaskTag::Reaped,
         }
     }
 }
@@ -180,32 +219,65 @@ impl Task {
     ///   Doomed → Reaped（收尾：退出钩子已跑完，入躯壳队列）
     pub(crate) fn transform(&mut self, next: TaskState) {
         let legal = matches!(
-            (self.state, next),
-            (TaskState::Held, TaskState::Starved)
-                | (TaskState::Starved, TaskState::Running { .. })
-                | (TaskState::Running { .. }, TaskState::Starved)
+            (&self.state, &next),
+            (TaskState::Held, TaskState::Starved { .. })
+                | (TaskState::Starved { .. }, TaskState::Running { .. })
+                | (TaskState::Running { .. }, TaskState::Starved { .. })
                 | (TaskState::Running { .. }, TaskState::Blocked { .. })
-                | (TaskState::Blocked { .. }, TaskState::Starved)
+                | (TaskState::Blocked { .. }, TaskState::Starved { .. })
                 | (TaskState::Held, TaskState::Doomed)
-                | (TaskState::Starved, TaskState::Doomed)
+                | (TaskState::Starved { .. }, TaskState::Doomed)
                 | (TaskState::Blocked { .. }, TaskState::Doomed)
                 | (TaskState::Running { .. }, TaskState::Doomed)
-                | (TaskState::Doomed, TaskState::Reaped)
+                | (TaskState::Doomed, TaskState::Reaped { .. })
         );
         assert!(
             legal,
             "illegal task state transform: {:?} -> {:?}",
             self.state, next
         );
+        // 入链载荷必须为空：不为空说明这个任务还挂在某条链上（有人漏摘链），
+        // 放进来就是"一个任务挂在两条链上"。
+        let unlinked = match &next {
+            TaskState::Starved { next } | TaskState::Reaped { next } => next.is_none(),
+            _ => true,
+        };
+        debug_assert!(unlinked, "transform: 入链载荷非空（有人没先摘链）");
+        // 判别式先从 `next` 取出来（`next` 随后按值移进 `state`）。
+        let tag = next.tag() as u8;
         self.state = next;
         // 发布判别式（Release 与 `Task::tag` 的 Acquire 配对）：观察者据此分派。
-        self.tag.store(next.tag() as u8, Ordering::Release);
+        self.tag.store(tag, Ordering::Release);
     }
 
     /// 状态（含载荷）：**只有持有者读得到**——`&mut self` 只能经 [`Task::exclusive`]
     /// 拿到，而 `exclusive` 的前提正是「容器独占」。观察者读 [`Task::tag`]。
-    pub(crate) fn state(&mut self) -> TaskState {
-        self.state
+    pub(crate) fn state(&mut self) -> &TaskState {
+        &self.state
+    }
+
+    /// 状态的可变借用（**唯一改字段的路径是 [`Self::transform`] 与下面两条链访问**）。
+    fn state_mut(&mut self) -> &mut TaskState {
+        &mut self.state
+    }
+
+    /// 就绪链的下一环——**只在持该就绪容器的锁（`Level::Scheduler`）时调用**。
+    ///
+    /// 互斥不靠引用计数而靠那把锁（见 [`Task::exclusive`]）：同一条链只有一个
+    /// hart 能碰，`Arc` 的临时持有者不解引用 Task 字段。
+    pub(crate) fn starved_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
+        match Self::exclusive(t).state_mut() {
+            TaskState::Starved { next } => next,
+            other => unreachable!("就绪链只穿 Starved 任务，实为 {:?}", other.tag()),
+        }
+    }
+
+    /// 躯壳链的下一环——**只在持 `HUSKS` 锁时调用**（理由同上）。
+    pub(crate) fn reaped_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
+        match Self::exclusive(t).state_mut() {
+            TaskState::Reaped { next } => next,
+            other => unreachable!("躯壳链只穿 Reaped 任务，实为 {:?}", other.tag()),
+        }
     }
 
     /// 判别式（观察者读；Acquire 与 `transform` 的 Release store 配对）。
@@ -261,7 +333,7 @@ impl Task {
             return Err(GateError::Denied);
         }
         let mut t = task.clone();
-        Task::exclusive(&mut t).transform(TaskState::Starved);
+        Task::exclusive(&mut t).transform(TaskState::Starved { next: None });
         scheduler::core::launch(t);
         Ok(())
     }
@@ -415,7 +487,7 @@ impl TaskBuilder {
         // 名册（`HashMap`，容量与键无关）、就绪队列、域簿记：各预留**一格**。
         // 不按 `id` 预留——`id` 只增不减，按它预留会让开销随运行时长线性膨胀。
         scheduler::core::try_reserve_roster().map_err(|()| MapError::OutOfMemory)?;
-        scheduler::core::try_reserve_starved(1).map_err(|()| MapError::OutOfMemory)?;
+        // 就绪队列不再需要预留：它的节点是任务自己的 `Starved` 载荷（零分配入队）。
         self.team
             .try_reserve_task(1)
             .map_err(|()| MapError::OutOfMemory)?;

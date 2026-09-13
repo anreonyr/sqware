@@ -32,7 +32,6 @@
 // scheduler 文件夹内两个入口面（boot / trap）借用；`pub(crate)` = 供本调度器之外
 // 消费（`swap` / `starve` / `push` / `running_task`）。
 
-use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
@@ -76,15 +75,25 @@ pub(crate) struct Scheduler {
 /// 锁内核心：running（运行中，不在队列）+ starved（就绪队列，FIFO）。
 pub(super) struct SchedulerInner {
     pub(super) running: Option<Arc<Task>>,
-    /// 就绪队列。**改动只经 [`Scheduler`] 的四个 `starved_*` 方法**（计数镜像在同一处
-    /// 派生），故对本核心之外私有；跨文件只留 `starved_is_empty` 一个持锁读法。
-    starved: VecDeque<Arc<Task>>,
+    /// 就绪队列 = **一条穿在任务 `Starved` 载荷里的链**，这里只存两头。
+    ///
+    /// 改动只经 [`Scheduler`] 的四个 `starved_*` 方法，故对本核心之外私有；跨文件只留
+    /// `starved_is_empty` 一个持锁读法。链的下一环在任务自己身上（`Task::starved_next`），
+    /// 互斥由本 `inner` 锁 + 容器唯一性保证。
+    ///
+    /// 为什么不是 `VecDeque`：唤醒路径（`rise`：`wake`/`wipe`/`redeem`）与轮转路径
+    /// **没有失败域**，任何"要么扩容要么 halt"的容器在这两条路上都是地雷；而队列的
+    /// 容量需求是"并发占用"，跟"一生一次"的预留对不上（`VecDeque::try_reserve(1)`
+    /// 不累加，实测见 `docs/allocator-diagnosis.md` §14.5）。
+    head: Option<Arc<Task>>,
+    /// 链尾（多持一个强引用，等价 Linux `rb_leftmost` 那种缓存；链的所有权仍在节点间）。
+    tail: Option<Arc<Task>>,
 }
 
 impl SchedulerInner {
     /// 本核就绪队列是否空（持锁读；轮转 / 唯一任务判断用）。
     fn starved_is_empty(&self) -> bool {
-        self.starved.is_empty()
+        self.head.is_none()
     }
 }
 
@@ -97,7 +106,8 @@ impl Scheduler {
                 Level::Scheduler,
                 SchedulerInner {
                     running: None,
-                    starved: VecDeque::new(),
+                    head: None,
+                    tail: None,
                 },
             ),
             badge: Badge::new(),
@@ -111,60 +121,117 @@ impl Scheduler {
         self.starved_len.load(Ordering::Relaxed)
     }
 
-    /// 从唯一事实来源（starved.len()）重派生计数——须在持 inner 锁时调用。
-    fn recount(&self, inner: &SchedulerInner) {
-        self.starved_len
-            .store(inner.starved.len(), Ordering::Relaxed);
+    /// 计数镜像与队列**在同一处改动**：每次摘挂各 ±1（须在持 inner 锁时调用）。
+    ///
+    /// 链没有 `.len()`，故这一条从"从容器派生"降为"与容器同处维护"——代价写在
+    /// `docs/allocator-diagnosis.md` §14.5；兜底是调试档整链核算
+    /// [`Self::starved_check`]（只走链，不上热路径）。
+    fn counted(&self, delta: isize) {
+        if delta > 0 {
+            self.starved_len.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.starved_len.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
+    /// 调试档核算：链长与计数镜像必须一致（O(n)，只在断言档跑）。
+    #[cfg(debug_assertions)]
+    fn starved_check(&self, i: &SchedulerInner) {
+        let mut n = 0usize;
+        let mut cur = i.head.clone();
+        while let Some(mut node) = cur {
+            n += 1;
+            cur = Task::starved_next(&mut node).clone();
+        }
+        debug_assert_eq!(
+            n,
+            self.starved_len.load(Ordering::Relaxed),
+            "就绪链长与计数镜像分家"
+        );
     }
 
     // ── 就绪队列的四个改点：镜像在方法体内派生，队列与计数不可能分家 ──
 
-    /// 队尾入队 + 派生计数。
-    fn starved_push(&self, i: &mut SchedulerInner, task: Arc<Task>) {
-        i.starved.push_back(task);
-        self.recount(i);
+    /// 队尾入队（**纯指针写，零分配**）+ 计数 ±1。
+    ///
+    /// 前置（断言兜底）：入队者状态为 `Starved { next: None }`——容器只收 Starved
+    /// 任务，且它不得还挂在别的链上（否则就是一个任务两条链）。
+    fn starved_push(&self, i: &mut SchedulerInner, mut task: Arc<Task>) {
+        debug_assert!(
+            matches!(
+                Task::exclusive(&mut task).state(),
+                TaskState::Starved { next: None }
+            ),
+            "starved 容器只收 Starved 任务，且入队前不得挂在链上"
+        );
+        match i.tail.take() {
+            // 空队列：新节点即链头。
+            None => i.head = Some(task.clone()),
+            // 非空：接到原链尾的载荷上，再把链尾前移。
+            Some(mut last) => *Task::starved_next(&mut last) = Some(task.clone()),
+        }
+        i.tail = Some(task);
+        self.counted(1);
     }
 
-    /// 为本核就绪队列**预留** `slot` 格（`table::try_reserve_starved` 的实体）。
+    /// 队首出队（**摘链 + 清空离开者的 `next`**）+ 计数 −1；空队列 → None。
     ///
-    /// # Errors
-    ///
-    /// 队列无法扩容（内存耗尽）→ `Err(())`。调用点在放行**之前**：那时失败还能
-    /// 干净退回，而不是让 `push_back` 在内核里 panic 掉整机。
-    pub(super) fn try_reserve_starved(&self, slot: usize) -> Result<(), ()> {
-        self.inner.lock().starved.try_reserve(slot).map_err(|_| ())
-    }
-
-    /// 队首出队 + 派生计数；空队列 → None。
+    /// 清空那一步是硬要求：不清就等于"被取走的任务还持有它原来的后继"，同一段链
+    /// 会有两个所有者（偷窃路径正靠它保证不把任务留在两条队列里）。
     fn starved_pop(&self, i: &mut SchedulerInner) -> Option<Arc<Task>> {
-        let t = i.starved.pop_front();
-        self.recount(i);
-        t
+        let mut head = i.head.take()?;
+        i.head = Task::starved_next(&mut head).take();
+        if i.head.is_none() {
+            i.tail = None;
+        }
+        self.counted(-1);
+        #[cfg(debug_assertions)]
+        self.starved_check(i);
+        Some(head)
     }
 
     /// 摘除指定任务 + 派生计数（kill 的 Starved 分支）。返回是否摘到——队列私有，
     /// 所以「找 + 摘」一起留在本文件，调用方（全机扫描）不必看队列。
     pub(super) fn starved_remove(&self, i: &mut SchedulerInner, target: &Arc<Task>) -> bool {
-        let Some(pos) = i.starved.iter().position(|t| Arc::ptr_eq(t, target)) else {
-            return false;
-        };
-        i.starved.remove(pos);
-        self.recount(i);
-        true
+        // 走链：`prev` 是"摘除点"的持有者（None = 摘链头）。逐节 clone 只为比较身份，
+        // 不动链；命中时把后继接到前驱的载荷上，并清空离开者。
+        let mut prev: Option<Arc<Task>> = None;
+        let mut cur = i.head.clone();
+        while let Some(mut node) = cur {
+            if Arc::ptr_eq(&node, target) {
+                let next = Task::starved_next(&mut node).take();
+                match &mut prev {
+                    Some(p) => *Task::starved_next(p) = next,
+                    None => i.head = next,
+                }
+                if i.head.is_none() {
+                    i.tail = None;
+                }
+                self.counted(-1);
+                #[cfg(debug_assertions)]
+                self.starved_check(i);
+                return true;
+            }
+            prev = Some(node.clone());
+            cur = Task::starved_next(&mut node).clone();
+        }
+        false
     }
 
     /// 清空 + 派生计数（关机）。
     pub(super) fn starved_clear(&self, i: &mut SchedulerInner) {
-        i.starved.clear();
-        self.recount(i);
+        // 逐节摘（每节先 `take()` 再 drop）：整条链一次性 drop 会把长链压进调用栈。
+        while self.starved_pop(i).is_some() {}
     }
 
     /// 队尾入队（`launch` / 轮转 / 唤醒共用）：push + 派生计数。
     /// 只收 Starved 任务——容器 ⇔ 状态由断言强制。
     pub(crate) fn push(&self, mut task: Arc<Task>) {
-        debug_assert_eq!(
-            Task::exclusive(&mut task).state(),
-            TaskState::Starved,
+        debug_assert!(
+            matches!(
+                Task::exclusive(&mut task).state(),
+                TaskState::Starved { .. }
+            ),
             "starved 容器只收 Starved 任务"
         );
         let mut i = self.inner.lock();
@@ -277,7 +344,7 @@ impl Scheduler {
     /// 轮转尾部（持锁、starved 非空）：Running → Starved 入队尾，队首上台。
     /// 调用方负责空队列判断（空 → 唯一任务续跑，不走本方法）。
     fn rotate(&self, i: &mut SchedulerInner, mut cur: Arc<Task>) -> Arc<Task> {
-        Task::exclusive(&mut cur).transform(TaskState::Starved);
+        Task::exclusive(&mut cur).transform(TaskState::Starved { next: None });
         self.starved_push(i, cur);
         self.starved_pop(i).expect("non-empty")
     }
@@ -316,7 +383,7 @@ impl Scheduler {
         let mut cur = i.running.take()?;
         // 持有者读：running 槽刚被本核摘出，唯一强持有 ⇒ 经 exclusive 拿 &mut。
         let ticks_left = match Task::exclusive(&mut cur).state() {
-            TaskState::Running { ticks_left } => ticks_left,
+            TaskState::Running { ticks_left } => *ticks_left,
             _ => unreachable!("running 容器里不是 Running 任务"),
         };
         if ticks_left > 1 || i.starved_is_empty() {

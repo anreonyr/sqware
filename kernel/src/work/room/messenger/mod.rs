@@ -97,7 +97,7 @@ pub(crate) fn rip() {
         let sites_out = core::mem::take(&mut *shard_at(shard).lock());
         drop(sites_out);
     }
-    let husks_out = core::mem::take(&mut *HUSKS.lock());
+    let husks_out = HUSKS.lock().take();
     drop(husks_out);
     holders().lock().clear(); // 只存 Weak，无 drop 链
     doomed().lock().clear(); // 只存 id，无 Arc

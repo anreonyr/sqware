@@ -153,7 +153,7 @@ fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
     let mut woke = 0;
     for task in tasks {
         let mut t = task;
-        Task::exclusive(&mut t).transform(TaskState::Starved);
+        Task::exclusive(&mut t).transform(TaskState::Starved { next: None });
         trace::note(EventKind::Room(RoomEvent::Wake { tid: t.ident.id }));
         current().push(t);
         woke += 1;

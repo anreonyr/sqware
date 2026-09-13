@@ -9,7 +9,6 @@
 // `bury` 是 `quit` 的**内部一步**（私有）：排空必须发生在再次取活之前，把这条
 // 不变量做进结构，就不必指望每个调用点记得按顺序写两行。
 
-use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 
 use crate::lock::{Level, OnceLock, SpinLock};
@@ -22,8 +21,70 @@ use super::{WakeKey, wipe, wipe_space};
 
 /// 全局躯壳队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
 /// 自己正在用的栈上回收自己；bury 统一回收。
-pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
-    SpinLock::new_level(Level::L3, VecDeque::new());
+pub(super) static HUSKS: SpinLock<Husks> = SpinLock::new_level(Level::L3, Husks::new());
+
+/// 躯壳队列 = **一条穿在任务 `Reaped` 载荷里的链**（与就绪队列同一手法）。
+///
+/// 入队在退出路径（`reap`）上，那里没有任何可以答错的入口 ⇒ 这条队列不许分配：
+/// 链的节点就是躯壳自己，"交给别人排空"这条需求因此不需要容器。
+#[derive(Default)]
+pub(super) struct Husks {
+    head: Option<Arc<Task>>,
+    tail: Option<Arc<Task>>,
+}
+
+impl Husks {
+    const fn new() -> Self {
+        Self {
+            head: None,
+            tail: None,
+        }
+    }
+
+    /// 入壳（纯指针写）。前置同就绪链：`Reaped { next: None }`。
+    fn push(&mut self, mut task: Arc<Task>) {
+        debug_assert!(
+            matches!(
+                Task::exclusive(&mut task).state(),
+                TaskState::Reaped { next: None }
+            ),
+            "躯壳容器只收 Reaped 任务，且入壳前不得挂在链上"
+        );
+        match self.tail.take() {
+            None => self.head = Some(task.clone()),
+            Some(mut last) => *Task::reaped_next(&mut last) = Some(task.clone()),
+        }
+        self.tail = Some(task);
+    }
+
+    /// 出壳（摘链 + 清空离开者的 `next`）。
+    fn pop(&mut self) -> Option<Arc<Task>> {
+        let mut head = self.head.take()?;
+        self.head = Task::reaped_next(&mut head).take();
+        if self.head.is_none() {
+            self.tail = None;
+        }
+        Some(head)
+    }
+
+    /// 链长（只在挂住现场的信标里读 ⇒ 走一遍，O(n) 无妨；门跟着读者走）。
+    #[cfg(any(debug_assertions, feature = "framework"))]
+    pub(super) fn len(&self) -> usize {
+        let mut n = 0usize;
+        let mut cur = self.head.clone();
+        while let Some(mut node) = cur {
+            n += 1;
+            cur = Task::reaped_next(&mut node).clone();
+        }
+        n
+    }
+
+    /// 整体摘走（关机终末释放）：交出链头，队列就地清空。
+    pub(super) fn take(&mut self) -> Option<Arc<Task>> {
+        self.tail = None;
+        self.head.take()
+    }
+}
 
 /// 死亡唯一入口：**收尾**（退出钩子：通道级联 + 能力级联）→ 置 `Reaped` → 入躯壳队列。
 ///
@@ -38,20 +99,15 @@ pub(super) static HUSKS: SpinLock<VecDeque<Arc<Task>>> =
 /// 已把整棵子树的受害者停摆在前——故钩子内再扑杀子域，也不会唤醒「还能跑」的人。
 pub(super) fn reap(mut task: Arc<Task>) {
     match Task::exclusive(&mut task).state() {
-        TaskState::Reaped => return,
+        TaskState::Reaped { .. } => return,
         TaskState::Doomed => {}
         _ => Task::exclusive(&mut task).transform(TaskState::Doomed),
     }
     hooked(task.ident.id);
-    Task::exclusive(&mut task).transform(TaskState::Reaped);
-    // L3 单独锁，1 → 3 顺序、不嵌套。
-    //
-    // **这一笔目前仍不可失败**，且"出生处预留"救不了它：`VecDeque::try_reserve(1)`
-    // 只保证"此刻 capa ≥ len+1"，**不累加**——一端是"并发占用"的容量需求，另一端是
-    // "一生一次"的预留，两者对不上（实测：boot 期 5 个任务各自预留过，第 5 个入壳时
-    // 容量仍只有 1，harden 档当场断言失败）。要闭合它，得让"队列容量"与"入队点"同锁
-    // 内可失败，或给队列一个按占用归还的槽位表——见 `docs/allocator-diagnosis.md` §14.5。
-    HUSKS.lock().push_back(task);
+    Task::exclusive(&mut task).transform(TaskState::Reaped { next: None });
+    // L3 单独锁，1 → 3 顺序、不嵌套。入壳是**纯指针写**（链在 `Reaped` 载荷里）——
+    // 退出路径没有失败域，这条队列因此不再有"扩容即 halt"的可能。
+    HUSKS.lock().push(task);
 }
 
 /// quit：**退场并交班**——离核装槽 → [`reap`]（收尾 + 入壳）→ [`bury`]（排空躯壳）
@@ -110,7 +166,7 @@ fn bury() {
         // 块结束即释放 husks 锁。
         let z = {
             let mut husks = HUSKS.lock();
-            let Some(z) = husks.pop_front() else {
+            let Some(z) = husks.pop() else {
                 break;
             };
             z

@@ -1178,12 +1178,25 @@ harden/framework 档当场 `[panic] envcall without running task`（`trap.rs:266
 | `PoleMeta.mappings`（`pole.rs`） | 先备后插；备不出来当场把刚建好的映射撤掉并答 `OoM` |
 | `envcall/mail.rs` 两处 `vec![0u8; …]` | 换 `try_reserve` + `resize` |
 
+**已按 (C) 落地：两条队列的链穿在任务的状态载荷里**
+
+`starved`（就绪）与 `HUSKS`（躯壳）都改成"链在载荷里、容器只存链头链尾"：
+
+- `TaskState::Starved { next }` / `TaskState::Reaped { next }`——节点就是任务自己；
+  容器（`SchedulerInner.head/tail`、`Husks.head/tail`）一次指针写即入队/出队，
+  **两条队列上再没有任何分配**（`try_reserve_starved` 与它的跨核错配一并删除）。
+- 互斥不靠引用计数：`Task::exclusive` 的定义就是"调度器锁 + 容器唯一性"，
+  故偷窃（`try_pull`，受害者锁内摘链头）与 kill 摘除（`starved_remove` 走链）都成立。
+- 代价一条，写在明处：链没有 `.len()`，`starved_len` 镜像从"从容器派生"降为
+  "与容器同处 ±1 维护"（`counted`），兜底是调试档整链核算 `starved_check`。
+- 三条纪律：弹出时**清空离开者的 `next`**（否则一任务两链）；离开 `Starved` 前先摘链
+  （`transform` 的 `debug_assert` 兜底）；拆链迭代（先 `take` 再 drop，别压栈）。
+- 实测：门 5/5；`QEMU_MEM=128 churn 1 4 4` 干净收线、0 panic；`reap` 体内增长助手 0 命中。
+
 **没做完（逐条点名，处置已定）**
 
 | 位置 | 为什么不是"紧贴预留"就完事 | 计划的处置 |
 |---|---|---|
-| `HUSKS`（`reap.rs`） | **"出生处预留"这条路实测走不通**：`VecDeque::try_reserve(1)` 只保证"此刻 capa ≥ len+1"，**不累加** —— 一端是并发占用的容量需求，另一端是一生一次的预留，两者对不上（harden 档实测：boot 期 5 个任务各自预留过，第 5 个入壳时容量仍只有 1，断言当场失败） | 同 `starved`：需要"容量与入队点同锁内可失败"或"按占用归还的槽位表"；本轮保持现状并在 `reap` 注释里点名 |
-| `SchedulerInner.starved`（`hart.rs`） | push 在**唤醒路径**（`rise`/`redeem`/`wipe`）上，没有失败域；今日的预留落在 Spawn 那一核、push 落在唤醒那一核（跨核错配）。**就绪链也走不通**：队列受 `Level::Scheduler` 保护，而链要写在 `Task` 上就得再取一把同层锁（1→1 嵌套，lockdep 禁） | 需要一次"容量与队列同锁内"的设计（例如按核的槽位表随任务生灭归还）；本轮未动，保持现状并在注释里点名 |
 | `Task.heir` / `Team.holds`（`task.rs` / `team.rs`） | 域出生路径 | 入口前置预留（`TeamBuilder::spawn` 现为 `-> Arc<Team>`，需改返回码） |
 | `Task.pies` 5 处 | 上游 Unseal/Accord 有 `Result`，但权柄对象已建出来 ⇒ 预留要提到**造权柄之前** | 各自在入口前置预留 |
 | `wipe_space` 持分片 L3 锁时的 `keys().collect()`（`wait/mod.rs`） | 收尾路径，且锁内分配 | 改"游标 + 就地摘除" |
