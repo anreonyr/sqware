@@ -44,7 +44,14 @@ pub(super) fn reap(mut task: Arc<Task>) {
     }
     hooked(task.ident.id);
     Task::exclusive(&mut task).transform(TaskState::Reaped);
-    HUSKS.lock().push_back(task); // L3 单独锁，1 → 3 顺序、不嵌套
+    // L3 单独锁，1 → 3 顺序、不嵌套。
+    //
+    // **这一笔目前仍不可失败**，且"出生处预留"救不了它：`VecDeque::try_reserve(1)`
+    // 只保证"此刻 capa ≥ len+1"，**不累加**——一端是"并发占用"的容量需求，另一端是
+    // "一生一次"的预留，两者对不上（实测：boot 期 5 个任务各自预留过，第 5 个入壳时
+    // 容量仍只有 1，harden 档当场断言失败）。要闭合它，得让"队列容量"与"入队点"同锁
+    // 内可失败，或给队列一个按占用归还的槽位表——见 `docs/allocator-diagnosis.md` §14.5。
+    HUSKS.lock().push_back(task);
 }
 
 /// quit：**退场并交班**——离核装槽 → [`reap`]（收尾 + 入壳）→ [`bury`]（排空躯壳）

@@ -49,7 +49,7 @@ impl BitmapAllocator {
     ///
     /// 空间耗尽或窗口内无足够连续空闲区间 → [`AllocError`]。
     pub(crate) fn allocate(&mut self, size: usize) -> Result<(usize, usize), AllocError> {
-        self.ensure();
+        self.ensure().map_err(|()| AllocError)?;
         let units = size.div_ceil(self.unit).max(1);
 
         // first-fit：逐位扫描找连续 `units` 个 0（最坏 O(窗口位数)；
@@ -87,9 +87,11 @@ impl BitmapAllocator {
     ///
     /// 越界/非对齐/区间内含未分配 unit（从未分配或部分已释放）→ [`AllocError`]。
     pub(crate) fn deallocate(&mut self, addr: usize, size: usize) -> Result<(), AllocError> {
-        self.ensure();
+        // 释放路径**不该**因为备不出位图而失败：位图若还空着，说明区间从未被分配过，
+        // 越界检查随后就会拒掉它——`ensure` 的结果在这里按"没建成"处理即可。
+        let sized = self.ensure().is_ok();
         // 越界/非对齐：运行时检查（addr 可能来自 syscall 边界，不可只 debug_assert）
-        if addr < self.base || addr + size > self.edge {
+        if !sized || addr < self.base || addr + size > self.edge {
             return Err(AllocError);
         }
         if !addr.is_multiple_of(self.unit) || !size.is_multiple_of(self.unit) {
@@ -116,9 +118,17 @@ impl BitmapAllocator {
     }
 
     /// 惰性尺寸：首次使用时按窗口尺寸分配位图（word 对齐向上取整）。
-    fn ensure(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// 位图扩不出来（内存耗尽）→ `Err(())`。`resize` 原先直接走不可失败扩容；
+    /// 唯一实例是 ASID 位图（8 KiB 上界），入口本来就能答错。
+    fn ensure(&mut self) -> Result<(), ()> {
         if self.bits.is_empty() && self.units() > 0 {
-            self.bits.resize(self.units().div_ceil(64), 0);
+            let words = self.units().div_ceil(64);
+            self.bits.try_reserve(words).map_err(|_| ())?;
+            self.bits.resize(words, 0);
         }
+        Ok(())
     }
 }

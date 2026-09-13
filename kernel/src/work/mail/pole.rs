@@ -165,7 +165,14 @@ impl PoleMeta {
                 Ok::<_, MapError>(va)
             })
             .map_err(|_| GateError::OoM)?;
-        self.mappings.lock().push((
+        // 视图清单：**先备后插**（这一步失败时把刚建好的映射当场撤掉）。
+        let mut maps = self.mappings.lock();
+        if maps.try_reserve(1).is_err() {
+            drop(maps);
+            let _ = space.release(Span::new(SegmentKind::Normal, va, self.bytes, None));
+            return Err(GateError::OoM);
+        }
+        maps.push((
             token,
             Arc::downgrade(space),
             Span::new(SegmentKind::Normal, va, self.bytes, None),

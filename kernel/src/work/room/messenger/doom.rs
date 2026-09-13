@@ -124,7 +124,13 @@ fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
 /// 自查自退。找不到它的在跑核也照样记——**「记了 doomed」本身就是保证**：它下次上台
 /// 遇任何 IPI 即自退；不记才会把这次 kill 丢掉。
 fn doomed_nudge(task: &Arc<Task>, reason: usize) -> bool {
-    doomed().lock().insert(task.ident.id, reason);
+    let mut d = doomed().lock();
+    // 扩容先试、失败即放弃这一笔（返回值本来就把'没记上'算进语义：不记才会把这次
+    // kill 丢掉，故这里**先备后插**，备不出来也不 panic —— 整机照旧活着）。
+    if d.try_reserve(1).is_ok() {
+        d.insert(task.ident.id, reason);
+    }
+    drop(d);
     if let Some(hart) = crate::work::room::scheduler::core::running_hart(task) {
         crate::work::room::conductor::nudge(hart);
     }

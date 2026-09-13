@@ -1165,19 +1165,29 @@ freelist↔pagemeta 背离（§10）现在只剩 `check_bounds` / `check_frame_f
 harden/framework 档当场 `[panic] envcall without running task`（`trap.rs:266`）——离核之后
 没有"原地失败"这条路，这条教训已写进 `block` 的注释。
 
-### 14.5 这一轮没做完的（逐条点名，处置已定）
+### 14.5 这一轮做完的与没做完的
 
-释放路径之外仍有"不可失败增长"的入口，它们**不在**本轮的 churn 现场上，按计划属波二：
+**做完（波二里"入口可失败"的那批，本轮一并落地）**
+
+| 位置 | 处置 |
+|---|---|
+| `Team.held`（`team.rs`） | `try_reserve_held` 在 `TaskBuilder::hold` 的**领帧之前**（推送发生在帧之后） |
+| `TableNode.children`（`table.rs`） | 建中间表时紧贴 `try_reserve(1)`（落在缺页路径上） |
+| `doomed`（`doom.rs`） | 锁内先试扩容；备不出来不 panic（该函数的返回值本就把"没记上"算进语义） |
+| `bitmap.bits`（`bitmap.rs`） | `ensure` 返 `Result`：`allocate` 翻成 `AllocError`；`deallocate` 按"没建成 ⇒ 拒掉"处理（释放路径不该因备不出位图而失败） |
+| `PoleMeta.mappings`（`pole.rs`） | 先备后插；备不出来当场把刚建好的映射撤掉并答 `OoM` |
+| `envcall/mail.rs` 两处 `vec![0u8; …]` | 换 `try_reserve` + `resize` |
+
+**没做完（逐条点名，处置已定）**
 
 | 位置 | 为什么不是"紧贴预留"就完事 | 计划的处置 |
 |---|---|---|
-| `SchedulerInner.starved`（`hart.rs:81/124/281`） | push 在**唤醒路径**（`rise`/`redeem`）上，没有失败域；且今日的预留落在 Spawn 那一核、push 落在 Hatch 那一核（跨核错配） | `Task` 加就绪链（①），连 `try_reserve_starved` 一起去掉 |
-| `HUSKS`（`reap.rs:47`） | 退出路径（`bury`）没有失败域 | Spawn 侧前置预留（全局队列，一任务一出生一死亡，配对是全称的）或对象链 |
-| `Task.heir` / `Team.holds`（`task.rs:288`、`team.rs:126`） | 域出生路径 | 入口前置预留（`TeamBuilder::spawn` 现为 `-> Arc<Team>`，需改返回码） |
-| `Task.pies` 5 处 | 上游 Unseal/Accord 已有 `Result` | 各自紧贴预留 |
-| `doomed`（`doom.rs:127`）、`bitmap.bits`（`bitmap.rs:121`）、`PoleMeta.mappings`（`pole.rs:168`） | 入口可失败 | 紧贴预留（`bitmap` 需 `try_reserve` + `resize`） |
-| `wipe_space` 持分片 L3 锁时的 `keys().collect()`（`wait/mod.rs:263-267`） | 收尾路径，且锁内分配 | 改"游标 + 就地摘除" |
-| `timer::drain` 的 `Vec`（`timer.rs:145`） | 时钟路径 | 改回调式（零分配） |
+| `HUSKS`（`reap.rs`） | **"出生处预留"这条路实测走不通**：`VecDeque::try_reserve(1)` 只保证"此刻 capa ≥ len+1"，**不累加** —— 一端是并发占用的容量需求，另一端是一生一次的预留，两者对不上（harden 档实测：boot 期 5 个任务各自预留过，第 5 个入壳时容量仍只有 1，断言当场失败） | 同 `starved`：需要"容量与入队点同锁内可失败"或"按占用归还的槽位表"；本轮保持现状并在 `reap` 注释里点名 |
+| `SchedulerInner.starved`（`hart.rs`） | push 在**唤醒路径**（`rise`/`redeem`/`wipe`）上，没有失败域；今日的预留落在 Spawn 那一核、push 落在唤醒那一核（跨核错配）。**就绪链也走不通**：队列受 `Level::Scheduler` 保护，而链要写在 `Task` 上就得再取一把同层锁（1→1 嵌套，lockdep 禁） | 需要一次"容量与队列同锁内"的设计（例如按核的槽位表随任务生灭归还）；本轮未动，保持现状并在注释里点名 |
+| `Task.heir` / `Team.holds`（`task.rs` / `team.rs`） | 域出生路径 | 入口前置预留（`TeamBuilder::spawn` 现为 `-> Arc<Team>`，需改返回码） |
+| `Task.pies` 5 处 | 上游 Unseal/Accord 有 `Result`，但权柄对象已建出来 ⇒ 预留要提到**造权柄之前** | 各自在入口前置预留 |
+| `wipe_space` 持分片 L3 锁时的 `keys().collect()`（`wait/mod.rs`） | 收尾路径，且锁内分配 | 改"游标 + 就地摘除" |
+| `timer::drain` 的 `Vec`（`timer.rs`） | 时钟路径 | 改回调式（零分配） |
 
 **残余风险（写在明处）**：站点可能在"备料"与"入队"之间被同片的 `prune` 删掉 ⇒ 入队时
 `or_insert_with` 新建站点的那一格容量没有预留。窗口极窄（同键的一次 beacon 消费），

@@ -107,19 +107,18 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
             // 窗口内信标已至：消费它，不入队。
             site.pend = false;
             false
-        } else {
-            // 这一格容量在 ② 已经备好（见 `try_reserve_site`）：**每次 push 之前都为
-            // 自己那一格预留过**，于是任意时刻 `capacity − len ≥ 已在备料、尚未入队
-            // 的等待者数 ≥ 1` —— 所以这里不会再扩容，`push_back` 走的是纯搬移。
-            debug_assert!(
-                site.waiters.len() < site.waiters.capacity(),
-                "wait: 入队前没备够一格（try_reserve_site 的不变量破了）"
-            );
+        } else if site.waiters.len() < site.waiters.capacity() {
             site.waiters.push_back(Waiter {
                 task: task.clone(),
                 ticket,
             });
             true
+        } else {
+            // ② 备的那一格被**同键**的另一个等待者占了（`try_reserve(1)` 只保证
+            // "此刻 capa ≥ len+1"，不累加）：**不再扩容**，就地撤销——状态置回
+            // Starved（`rise`），按"已唤醒"处理，调用方本来就须复核条件。少一次
+            // 唤醒语义、不换一次整机 halt。
+            false
         };
         // 撤销阻塞那一支没有留下等待者：空壳站点随手删掉。
         prune(&mut sites, key);
