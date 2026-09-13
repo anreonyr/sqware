@@ -104,12 +104,20 @@
 #
 # ── 旋钮 ─────────────────────────────────────────────────────────────────────
 #   EXAMINE_REPEAT     轮数（默认 3）
+#   EXAMINE_PAR        轮次并行度（默认 = 轮数，全门即 5 路；`1` = 退回逐轮）。轮与轮之间
+#                      **没有共享**（各自的 `<OUT>/run<i>/`、各自的 ELF、各自的长驻写端
+#                      与 qemu），故可并行；两条实测前提见 main 里那一段（env 线程局部、
+#                      快照按 fd1 认领本轮的 qemu）。判据一字不改，只是不再排队等彼此。
 #   EXAMINE_OUT        输出根目录（默认 trace/e2e-<时间戳>）
-#   QEMU_TIMEOUT       秒（默认 60；由 boot.nu 解释：外接 timeout）。**别按"日程要多久"估**：
+#   QEMU_TIMEOUT       秒（默认 **120**；由 boot.nu 解释：外接 timeout）。**别按"日程要多久"估**：
 #                      实测一整轮墙钟 ≈ 57 s（guest 自报时钟 34.7 s + 启动 ≈ 20 s + 每步 2 s 让出），
 #                      而**本轮试过把它压到 10 s ⇒ 5/5 全挂、每轮只走到第 4 步**（rc=124）。
 #                      这条是**兜底**不是"挂在半路"的检测：轮次的耗时预算与它无关（逐轮在
 #                      QEMU_TIMEOUT+10 内落定），真正决定"挂住多久"的是单步 EXAMINE_STEP_WAIT。
+#                      **为什么从 60 抬到 120**：60 对串行那一轮只剩 3 s 余量，而并行 5 路时
+#                      guest 被 CPU 挤慢（实测框架轮 60 s 卡在 `root: session over, shutting
+#                      down` 之后、`system halted` 之前被兜底杀掉 ⇒ 假 FAIL）。抬的是**兜底**，
+#                      不是判据：该轮该过还是得把 16 步与全部 marker 走完。
 #   EXAMINE_STEP_WAIT  单步等待上限秒（默认 15）
 #   EXAMINE_T_GAP      每条命令之间的让出秒（默认 2，同 .sh）
 #   EXAMINE_T_BOOT     .sh 的遗留旋钮：那边也从未被读用，这里同样只接受、不影响时序
@@ -417,8 +425,15 @@ def append_why [why: string, add: string] {
 # **必须在收尾之前调**（.sh 的 poke 就在它的 `wait` 之前）：qemu 那时多半还活着，fd0/fd1
 # 与命令行才是现场；等外接 timeout 杀完再量，只能量到一具尸体。
 def snapshot [log: path, cmds: path] {
-  let qpid = ((^ps -o pid= -C qemu-system-riscv64 | complete).stdout | str trim)
-  let qargs = ((^ps -o args= -C qemu-system-riscv64 | complete).stdout | str trim)
+  # **认领本轮的 qemu**：并行轮次下 `ps -C qemu-system-riscv64` 会把**每一轮**那一个都
+  # 列出来，直接取会把别人的现场写进本轮的 diag（甚至串成多行）。认领的判据用「本轮
+  # 独有的东西」——本轮的捕获文件：谁的 fd1 指着它，谁就是本轮。串行时结论与旧版相同。
+  let log_abs = ($log | path expand)
+  let mine = ((^ps -o pid= -C qemu-system-riscv64 | complete).stdout
+    | lines | each {|l| $l | str trim } | where {|p| $p != "" }
+    | where {|p| ((^readlink $"/proc/($p)/fd/1" | complete).stdout | str trim) == $log_abs })
+  let qpid = ($mine | str join " ")
+  let qargs = ($mine | each {|p| (^ps -o args= -p $p | complete).stdout | str trim } | str join " | ")
   let alive = ($qpid != "")
   let gone = "无（快照时 qemu 已退出）"
   {
@@ -547,12 +562,14 @@ def run_once [cfg: record, i: int, flavor: string] {
   if "depend" in $f.checks and (hit '\[depend\]' $log) {
     $why = (append_why $why "lockdep 违规([depend])")
   }
+  mut instances = -1
   if "instances" in $f.checks {
     let n = ((^grep -oE -- 'console: line [^ ]+ ok' $log | complete).stdout | lines | length)
     if $n != 2 {
       $why = (append_why $why $"console 实例数[($n)!=2]（新实例没拿到 Ok？）")
     } else {
-      print $"  console 实例：($n)（引导期 + 重发）"
+      # 读数带回调用方去打：并行时轮内 `print` 会互相插队，报告行必须由一处按计划顺序打。
+      $instances = $n
     }
   }
   if "order" in $f.checks {
@@ -580,7 +597,7 @@ def run_once [cfg: record, i: int, flavor: string] {
       sent: $sent, total: $total, rc: $rc, features: $feats, elf: $elf,
     })
   }
-  {ok: ($why == ""), why: $why, dir: $dir}
+  {ok: ($why == ""), why: $why, dir: $dir, i: $i, flavor: $flavor, instances: $instances}
 }
 
 # 构建一档内核，并**立刻**把产物搬出 cargo 的公共落点。
@@ -621,7 +638,7 @@ def main [] {
 
   let repeat = ($env.EXAMINE_REPEAT? | default "3" | into int)
   let out = ($env.EXAMINE_OUT? | default $"trace/e2e-(date now | format date '%Y%m%d-%H%M%S')" | path expand)
-  let qemu_timeout = ($env.QEMU_TIMEOUT? | default "60" | into int)
+  let qemu_timeout = ($env.QEMU_TIMEOUT? | default "120" | into int)
   let step_wait = ($env.EXAMINE_STEP_WAIT? | default "15" | into int)
   let t_gap = ($env.EXAMINE_T_GAP? | default "2" | into int)
   let _t_boot = ($env.EXAMINE_T_BOOT? | default "3" | into int)   # 同 .sh：接受但不用
@@ -704,52 +721,57 @@ def main [] {
   }
 
   mut pass = 0
-  mut total_rounds = 0
   # `1..0` 在 nu 里**不是空区间**（会倒着数出 1、0 两轮），`.sh` 的 `seq 1 0` 是空的；显式挡一下，
   # 让 REPEAT=0/负数 与 .sh 同义（0 轮 ⇒ `examine: 0/0`）。
   let rounds = if $repeat > 0 { (1..$repeat) } else { [] }
-  for i in $rounds {
-    let r = (run_once $cfg $i "default")
-    $total_rounds += 1
-    # 结果行一律走 `report_for`（数字从 `FLAVORS` 那一行算），且**不能**写成
-    # `$"… (自退 + …)"`：插值里的 `(` 会被当成子表达式、把紧跟的汉字当命令调用
-    # （nu 0.115 实测：`Command `自退` not found`，这类地雷改写本脚本时踩过）。
-    if $r.ok {
-      $pass += 1
-      print (report_for (flavor "default") $i)
-    } else {
-      print ('run ' + ($i | into string) + ': FAIL — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
-    }
-  }
-
-  # harden 轮（仅当 EXAMINE_HARDEN=1）：跑 release + debug-assertions 那份产物（**不带
-  # feature**）—— 判「没有 lockdep 违规」+ 两对顺序断言 + 那两道 ELF 正向对照。
-  # 轮次编号接在默认轮之后，证据目录因此不会互相覆盖。
+  # ── 轮次计划：**一档一轮，编号固定**（证据目录 <OUT>/run<i> 与 .sh 时代一致）──
+  mut plan = ($rounds | each {|i| {i: $i, flavor: "default"} })
   if $harden {
-    let i = $repeat + 1
-    let r = (run_once $cfg $i "harden")
-    $total_rounds += 1
-    if $r.ok {
-      $pass += 1
-      print (report_for (flavor "harden") $i)
-    } else {
-      print ('run ' + ($i | into string) + ': FAIL (harden 档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
-    }
+    $plan = ($plan | append {i: ($repeat + 1), flavor: "harden"})
   }
-
-  # 框架轮（默认跑；`EXAMINE_FRAMEWORK=0` 跳过）：跑用例 + 自检那份产物。轮次编号接在前面几档之后。
   if $framework {
-    let i = $repeat + (if $harden { 1 } else { 0 }) + 1
-    let r = (run_once $cfg $i "framework")
-    $total_rounds += 1
+    $plan = ($plan | append {i: ($repeat + (if $harden { 1 } else { 0 }) + 1), flavor: "framework"})
+  }
+
+  # ── 并行（EXAMINE_PAR）────────────────────────────────────────────────────────
+  # 轮与轮之间**本来就没有共享**：各自的 `<OUT>/run<i>/` 证据目录、各自的 cmds 文件与
+  # 长驻写端、各自的 ELF（按档构建时就搬开了）、各自的 qemu。故 5 轮不必排队等彼此。
+  # 两条前提都是实测的：
+  #   ① `$env.QEMU_*` 在 `par-each` 的闭包里是**线程局部**的（同一次实验里三轮各读到
+  #      自己的值：`[1 2 3] | par-each {|i| $env.P = $i; ^bash -c 'echo $P'}`），
+  #      故 `run_once` 里那三行 env 赋值不必改（qemu 起法仍只有 boot.nu 一处出处）；
+  #   ② 失败现场快照原先按进程名取 pid，并行时会认错人 ⇒ 已改成按「fd1 指着本轮的
+  #      console.log」认领（见 `snapshot`）。
+  # 默认并行度 = 轮数；`EXAMINE_PAR=1` 退回逐轮（判据一字不改，只是排队）。
+  let par = ($env.EXAMINE_PAR? | default (($plan | length) | into string) | into int)
+  let t0 = (date now)
+  let results = if $par <= 1 or ($plan | length) <= 1 {
+    $plan | each {|p| run_once $cfg $p.i $p.flavor }
+  } else {
+    # `--keep-order`：结果按计划顺序回来，报告行因此与串行时逐字相同。
+    $plan | par-each --threads $par --keep-order {|p| run_once $cfg $p.i $p.flavor }
+  }
+  let wall = (((date now) - $t0) | format duration sec)
+
+  let total_rounds = ($plan | length)
+  for p in $plan {
+    let r = ($results | where i == $p.i | first)
+    # 轮内不再自己打这行（并行会互相插队）：读数带回这里，按计划顺序打。
+    if $r.instances == 2 { print $"  console 实例：($r.instances)（引导期 + 重发）" }
     if $r.ok {
       $pass += 1
-      print (report_for (flavor "framework") $i)
+      print (report_for (flavor $p.flavor) $p.i)
     } else {
-      print ('run ' + ($i | into string) + ': FAIL (框架档) — ' + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
+      let head = (match $p.flavor {
+        "harden"    => ('run ' + ($p.i | into string) + ': FAIL (harden 档) — ')
+        "framework" => ('run ' + ($p.i | into string) + ': FAIL (框架档) — ')
+        _           => ('run ' + ($p.i | into string) + ': FAIL — ')
+      })
+      print ($head + $r.why + ' —— 现场留在 ' + ($r.dir | into string))
     }
   }
 
+  print ('examine: ' + ($total_rounds | into string) + ' 轮 / 并行 ' + ($par | into string) + ' 路，墙钟 ' + $wall)
   print $"examine: ($pass)/($total_rounds)"
   exit (if $pass == $total_rounds { 0 } else { 1 })
 }
