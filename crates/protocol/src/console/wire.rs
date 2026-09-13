@@ -31,6 +31,13 @@
 //! 0 恒为"无会话"：`Write{client:0}` / `ReadLine{client:0}` / `Close{0}` 一律
 //! `NoSuchClient`。这是 **id 值域**约定，不是字段哨兵（与 `PieToken(0)` 同款）。
 
+/// 服务的名字（目录里登记的那一个；客户端与服务端共用一份，不各写一遍）。
+///
+/// 与 `doom`/`irq` 同形：**名字是协议的一部分**——它是两端认同一台服务的那个词。此前它
+/// 是散在程序里的六个字面量（root 的 spawn 表、驱动与 shell 的连接点、服务自己的注册），
+/// 谁写错一个字母就得到一次"连不上"，且没有一处可供对账。
+pub const SERVICE: &str = "console";
+
 /// 单消息字节数（与 dispatch 的 `MSG_LEN` 同值：同一代 hole MTU 协商）。
 pub const MSG_LEN: usize = 64;
 

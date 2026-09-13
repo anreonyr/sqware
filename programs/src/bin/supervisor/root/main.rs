@@ -41,7 +41,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use env::{Name, PAIR_LEN, Pair, PieToken, TaskId, TeamId};
-use protocol::console::Console;
+use protocol::console::{self, Console};
 use protocol::dispatch::client::Directory;
 use protocol::doom;
 use protocol::irq;
@@ -328,7 +328,7 @@ fn wire_plic(
 // 内核那枚 `RoomCall::Doom` 只认**血缘**（谁生的谁能杀，传递）；跨血缘的"该不该"
 // 没有内核判据——那本来就是政策的活。而 root 是**全体域的祖先**（boot 只装它），
 // 它对任何域的杀都够格 ⇒ 它就是 Linux `kill` 里"够格的那一个"：谁都能请求，够格的
-// 那个来执行（`docs/driver.md` §12）。
+// 那个来执行（`docs/root.md` §5.1）。
 
 /// 他杀服务：**本域的第二个线程**，无界等请求孔，按请求办事。
 ///
@@ -340,6 +340,9 @@ fn wire_plic(
 /// **请求孔由本线程自己开**（不是主线程开了再授过来）：客户端认服务靠
 /// `Reserve(入口门闩).owner`——门闩的**开辟者**；门闩是 per-task 的，谁读谁就得谁开，
 /// 否则客户端的回信孔会配到另一个 task 的表里，回执永远出不来。
+///
+/// **判据不在这里**：收谁、按什么判据收在 `protocol::doom::server`（那是协议语义）；
+/// 本函数只剩装配——开孔、注册、等、推回执、收场。
 extern "C" fn doom_service() -> ! {
     let dir_tok = DOOM_DIR.load(Ordering::Acquire);
     let owner = DOOM_OWNER.load(Ordering::Acquire);
@@ -366,81 +369,17 @@ extern "C" fn doom_service() -> ! {
         let Ok((n, from)) = entry.pull_from(&mut msg) else {
             exit_with(0);
         };
-        match msg[0] {
+        match doom::serve(&msg[..n], from, &dir, TaskId::new(owner)) {
+            // 回信孔是**调用方自带**的（报文里那个号）；它若已消失，这一句静默失败。
+            doom::Outcome::Reply { ack, status } => {
+                let _ = HolePie::from_token(ack.get()).push(&[status.byte()]);
+            }
             // 停服：**只归主人**（本域主线程在收摊时说的那一句）。
-            doom::OP_QUIT if from.get() == owner => exit_with(0),
-            doom::OP_KILL => {}
-            _ => continue,
-        }
-        let Some(kill) = doom::Kill::decode(&msg[..n]) else {
-            continue;
-        };
-        let ack = [collect(&dir, kill.target.as_str()).byte()];
-        // 回信孔是**调用方自带**的（报文里那个号）；它若已消失，这一句静默失败。
-        let _ = HolePie::from_token(kill.ack.get()).push(&ack);
-    }
-}
-
-/// 收**一个名字**：解析 → 内核下令 → 有界等它真的没了。
-///
-/// 三步的分工就是本设计的全部：内核回答"能不能"（血缘判据），**目录**回答"这个名字
-/// 现在是谁"（名字的账在它那儿，本域不存第二份），而 `Ok` 这个回执的含义是"内核确认
-/// 它**回收完了**"——不是"收到了"。
-///
-/// **两个调用者共用它**：他杀服务（用户发来的 `Kill`）与**关机收尾**（`main` 的 4.3）。
-/// 两件事本来就是同一件——把"这个名字此刻指向的那个域"收掉，并等到它真的没了；差别只在
-/// 前者要把结局回给调用方，后者只想知道"收干净没有"。
-///
-/// **等它走用的是"探手里这枚副本还在不在"，不是 `Join`**：`Join` 的授权是**任务粒度**的
-/// （谁生的谁能等，`docs/driver.md` §8.1.20 实测监护线程等不到主线程生下的那个），而
-/// console 可能正是监护线程重发的 ⇒ 关机收尾那条路不能依赖 `Join`。
-///
-/// "该不该"只剩一层，且不是判据：**够得着就能请求**——入口门闩只亲授给 root 引荐过的
-/// 域（`Refer` 的产物），沙箱里的域连不上目录，也就拿不到这扇门的副本。
-fn collect(dir: &Directory, target: &str) -> doom::Ack {
-    // 名字 → 活实例 → 它的属主 task：目录给的入口门闩副本，`owner` 就是开它的那个域的
-    // 主线程（`vestor` 会被转发改写，`owner` 不会）。解析完当场放下这枚副本——它不是
-    // 我们的资源。
-    let Ok(entry) = dir.connect_token(target) else {
-        return doom::Ack::Dead;
-    };
-    let owner = match mail::reserve(entry) {
-        Ok((_, owner)) => owner,
-        Err(_) => {
-            let _ = mail::release(entry.get());
-            return doom::Ack::Dead;
-        }
-    };
-    if owner.get() == 0 {
-        let _ = mail::release(entry.get());
-        return doom::Ack::Dead;
-    }
-    match room::doom(owner) {
-        Ok(()) => {}
-        // `Dead`(-2) = 内核那侧对不上号（已回收 / 从未入册）；其余如实报"不许"。
-        Err(e) if e.source.code() == -2 => {
-            let _ = mail::release(entry.get());
-            return doom::Ack::Dead;
-        }
-        Err(_) => {
-            let _ = mail::release(entry.get());
-            return doom::Ack::Denied;
+            doom::Outcome::Quit => exit_with(0),
+            // 坏报文 / 认不得的动词。
+            doom::Outcome::Ignore => {}
         }
     }
-    // 有界等"它真的没了"：探的是**手里这枚副本还在不在**——目标一死，内核的退出钩子
-    // 沿派生链把它一起摘掉（"客户端死亡"用的同一条机制）。副本没了才回 `Ok`；
-    // 探完还在就如实说"已下令、没等到"（`Slow`），**不假装成功**。
-    for _ in 0..doom::GONE_ROUNDS {
-        if mail::reserve(entry).is_err() {
-            return doom::Ack::Ok;
-        }
-        let _ = room::sleep(core::time::Duration::from_millis(
-            doom::GONE_ROUND_MS as u64,
-        ));
-    }
-    // 副本还在 ⇒ 目标还活着；这枚副本是解析时拿的，用完放下（它不属于我们）。
-    let _ = mail::release(entry.get());
-    doom::Ack::Slow
 }
 
 /// 等目标回收（`Join` 的复探模式：挂起过的那一次只当「醒了一次」）。
@@ -490,7 +429,7 @@ fn connect(entry: PieToken, service: &str) -> Option<PieToken> {
 /// 时序：只在 shell 已退出之后调用——那时 console 一定已注册（shell 用过它），故不需要任何
 /// 重试。连不上 → `None`，调用方退回自己那台设备。
 fn connect_console(entry: PieToken) -> Option<Console> {
-    let door = connect(entry, "console")?;
+    let door = connect(entry, console::SERVICE)?;
     Console::open(HolePie::from_token(door.get())).ok()
 }
 
@@ -628,7 +567,7 @@ fn restart(kit: &Kit) -> Result<PieToken, Step> {
 /// 它自己的事（本域刚把名字交给它）。
 fn wait_door(kit: &Kit) -> Option<PieToken> {
     for _ in 0..DOOR_RETRY {
-        if let Some(t) = connect(kit.face.dir, "console") {
+        if let Some(t) = connect(kit.face.dir, console::SERVICE) {
             return Some(t);
         }
         let _ = room::sleep(Duration::from_millis(DOOR_RETRY_MS));
@@ -735,6 +674,11 @@ extern "C" fn main() -> ! {
     //    客户端；同时把名字预约给该子域（目录只接受预约者的注册）。
     //    次序 = 依赖序：plic 是中断面（console 要连它），console 是交互面（shell 要
     //    连它），故 plic 最先、console 次之、shell 最后。
+    //
+    //    **表里这些字面量先是"镜像里的 bin 名"**（`kernel/build.rs::INITRD_BINS` 是它的
+    //    权威，`spawn_service` 拿它去清单里找 ELF），顺带才是预约给子域的名字——故此处
+    //    **不**引 `console::SERVICE`：那是服务名那一侧的出处，改这里等于把两笔账并成
+    //    一笔（`Console` 服务自己注册时用的是它，见 `protocol::console::SERVICE`）。
     let mut shell_task = TaskId(0);
     for name in ["plic", "echo", "console", "shell"] {
         let (child, down) = fatal(spawn_service(&face, name));
@@ -880,7 +824,7 @@ extern "C" fn main() -> ! {
     // 是 `IER`（符号化 = `programs/src/uart.rs:114 ← :104`，console 输入线程"进门关中断"那一
     // 步）；对照见 `docs/root.md` §7.6（本轮配置 4 轮里 3 轮出现，干净 master 的 4 轮 0 轮）。
     //
-    // 收法与用户杀服务**共用 [`collect`]**（两件事是同一件），且**按名字收、不按 id**：
+    // 收法与用户杀服务**共用 [`doom::collect`]**（两件事是同一件），且**按名字收、不按 id**：
     // console 可能被重发过（重发出来的是**另一个** id），而"哪个是当前实例"这条账在**目录**
     // 那儿——本域不存第二份。等它走也走 `collect` 里那条判据（探手里那枚副本），不走 `Join`：
     // `Join` 是任务粒度的，重发出来的那个本线程等不到（§8.1.20）。
@@ -888,8 +832,8 @@ extern "C" fn main() -> ! {
     // 目录自己**没有名字**（它就是名字的账）：按 id 收，它是本域亲生的 ⇒ `Join` 等得到。
     match Directory::open(HolePie::from_token(my_dir)) {
         Ok(dir) => {
-            for name in ["console", irq::SERVICE, "echo"] {
-                match collect(&dir, name) {
+            for name in [console::SERVICE, irq::SERVICE, "echo"] {
+                match doom::collect(&dir, name) {
                     // `Ok` = 收干净了；`Dead` = 它本来就已经没了（`kill` 那两步收过的就是它）
                     // ——两种都是这一步要的结果。
                     doom::Ack::Ok | doom::Ack::Dead => {}

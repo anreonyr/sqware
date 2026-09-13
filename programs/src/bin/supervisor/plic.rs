@@ -47,10 +47,10 @@ use alloc::vec::Vec;
 
 use env::HoleDir;
 use env::Permission;
-use programs::lines::Lines;
+use programs::lines::from_tree;
 use protocol::console::Console;
 use protocol::dispatch::client::Directory;
-use protocol::irq;
+use protocol::irq::{self, Lines};
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
 use runtime::env::mail::{self, AnyPie as _, HolePie, PolePie};
@@ -120,7 +120,7 @@ impl Plic {
             }
         }
         // 线表与控制器同源：同一个 `ndev` 只读一次（它就是"这台控制器有几条线"）。
-        let lines = Lines::from_tree(&fdt, &node, ndev, sire);
+        let lines = from_tree(&fdt, &node, ndev, sire);
         Some((
             Self {
                 base,
@@ -282,7 +282,7 @@ extern "C" fn main() -> ! {
         // 用裸 `pull_from` 而不是 `pull_timeout`：它一并交回**内核盖章的推者**，
         // 而 `Refer` 的判据正是"推者是不是本域的 sire"（见 [`serve`]）。
         if let Ok((n, from)) = mail::pull_from(entry.token(), buf.as_mut_ptr(), buf.len()) {
-            serve(&buf[..n], from, sire);
+            serve(&buf[..n], from);
         }
         // ② 中断：有界等待内核的空令牌；有信即醒（`try_push` 唤醒站点）。
         if matches!(irq.wait(HoleDir::Pull, IRQ_WAIT_MS), Ok(true)) {
@@ -296,11 +296,12 @@ extern "C" fn main() -> ! {
 
 /// 处理一条报文：**认动词、认人**，其余交给线表。
 ///
-/// 认人有两条，都在这里落地：
-/// - `Register` 的判据在**行里**（线表判"名字是不是你的"）；
-/// - `Refer` 的判据在**血缘**：推者必须是本域的 `sire`（= root 的主线程，生本域的那个
-///   任务）。属主只能由 root 写——它不在报文里自证，而是"这枚门闩是谁生的"。
-fn serve(msg: &[u8], from: env::TaskId, sire: env::TaskId) {
+/// 认人有两条，都在**行**里落地（本函数只把内核盖章的推者 `from` 交下去）：
+/// - `Register` 的判据是"名字是不是你的"；
+/// - `Refer`/`Delegate` 的判据在**血缘**：推者必须是本域的 `sire`（= root 的主线程，
+///   生本域的那个任务）或它委托过的那个。行的 `sire` 是**建表时**记下的（`from_tree`），
+///   故属主只能由 root 写这一条在表里判——它不靠报文自证，靠"这枚门闩是谁生的"。
+fn serve(msg: &[u8], from: env::TaskId) {
     let Some(req) = irq::Request::decode(msg) else {
         return;
     };

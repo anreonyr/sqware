@@ -31,8 +31,8 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 | `Close` | `Console::close`（`:179`，**零调用点**） | `client` | `NoSuchClient` |
 
 `Reply` ＝ `Ok{client}` / `Line{len, payload}` / `Eof` / `Interrupt` / `Denied` / `NoSuchClient`
-（`console/wire.rs:112-129`，状态码 `70-75`）。`ProtocolError` ＝ `BadOp`（未知动词或状态码）/
-`Reserved` / `UnexpectedField`（该动词下不该有的字段非零）/ `BadLen`（`wire.rs:79-88`）；
+（`console/wire.rs:119-136`，状态码 `77-82`）。`ProtocolError` ＝ `BadOp`（未知动词或状态码）/
+`Reserved` / `UnexpectedField`（该动词下不该有的字段非零）/ `BadLen`（`wire.rs:86-95`）；
 客户端一律折成 `denied()` ＝ `-1`（`client.rs:32-34`）。
 
 ## 3 · 线格式（64 字节）
@@ -48,13 +48,13 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 [40..64] payload   Write 的字节 / Line 的整行（不含 \n）
 ```
 
-`MSG_LEN = 64`、`PAYLOAD_LEN = LINE_MAX = 24`（`wire.rs:35-53`）。**会话 id 从 1 起，
+`MSG_LEN = 64`、`PAYLOAD_LEN = LINE_MAX = 24`（`wire.rs:42-60`）。**会话 id 从 1 起，
 `0` 恒表示「无会话」**——这是 id 值域约定，不是字段哨兵（`wire.rs:29-32`、`server.rs:227-232`）。
 
 **第一版多开的那枚「数据孔」的下场**：字段已从 `Request::Open` 里删掉（客户端从不推、
 服务从不读，从第一天就是死码），省下每次开会话一次 `Channel::open`（`wire.rs:25-27`）。
 **但它的字节区没有收口**：`[16..24]` 既不在字段表里，也不在任何保留检查里——`decode` 只查
-`m[1..8]`，另一半是**空区间、恒不触发**（`wire.rs:168-172`）。这 8 字节现在无文档、无检查。
+`m[1..8]`，另一半是**空区间、恒不触发**（`wire.rs:175-179`）。这 8 字节现在无文档、无检查。
 
 ## 4 · 结构
 

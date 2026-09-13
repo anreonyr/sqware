@@ -46,7 +46,10 @@ use core::time::Duration;
 
 use protocol::dispatch::{MSG_LEN, Name, Reply, Request};
 
-use protocol::console::client::{Console, Readline};
+use protocol::console::{
+    self,
+    client::{Console, Readline},
+};
 use protocol::dispatch::client::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use protocol::doom::{self, Ack, Doom};
 use protocol::irq;
@@ -307,7 +310,7 @@ fn console_entry() -> Option<usize> {
     let session = Directory::open(HolePie::from_token(dir)).ok()?;
     // 只要**入口 token**，不要 `connect` 的回信通道：后者要先建再断，而
     // `disconnect` 会 release 掉刚拿到的入口——实测踩过这个坑。
-    let token = session.connect_token("console").ok()?.get();
+    let token = session.connect_token(console::SERVICE).ok()?.get();
     if token != 0 {
         CONSOLE_ENTRY.store(token, Ordering::Relaxed);
         Some(token)
@@ -945,7 +948,7 @@ fn stray_probe(term: &Term) {
 ///
 /// 内核那枚 `RoomCall::Doom` 只认血缘（谁生的谁能杀，传递），而 root 是**全体域的
 /// 祖先** ⇒ 跨血缘的"该不该"由它的政策回答。这就是 Linux `kill` 的形状：谁都能请求，
-/// 够格的那个来执行（`docs/driver.md` §12）。
+/// 够格的那个来执行（`docs/root.md` §5.1）。
 ///
 /// 回执**四态分开打**：`ok` 的含义是"**内核确认它回收完了**"（不是"收到了"）、
 /// `dead` = 没这个目标、`denied` = 政策不许、`slow` = 已下令但没等到。判据取第一态。

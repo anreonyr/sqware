@@ -16,7 +16,7 @@ kernel → env → runtime → protocol → programs
 | `kernel` | 只认 ABI 与固件：`kernel/Cargo.toml:21-24` 的依赖表里只有 `env` 与 `sbi`，**没有** `runtime`/`protocol` |
 | `crates/env` | ABI 的线格式与调用骨架：slot 编码、载荷 codec、线类型、唯一汇编入口；U 态任务与 S 态域任务共用（`env/src/lib.rs:2-3`） |
 | `crates/runtime` | 镜像侧机制：`env` 薄转发 + `core` 组合封装（`runtime/src/lib.rs:5-12`） |
-| `crates/protocol` | 用户态协议语义（目录 / 控制台），用 runtime 的机制（`protocol/src/lib.rs:4-18`） |
+| `crates/protocol` | 用户态协议语义（目录 / 控制台 / 他杀 / 中断线；四者同一个形状：`wire` + `client` + `server`），用 runtime 的机制（`protocol/src/lib.rs:4-18`） |
 | `programs` | 装配层 bin：机制来自 runtime、语义来自 protocol（`programs/src/lib.rs:5-6`） |
 
 **「内核零引用 protocol」不是纪律而是构造**：`kernel/src` 全树对 `protocol` 零命中，唯一命中是

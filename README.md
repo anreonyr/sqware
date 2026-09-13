@@ -178,7 +178,7 @@ This makes sqware **capability-oriented without requiring a capability-object hi
 
 ### Implemented today
 
-Two protocols exist, both as ordinary non-kernel code:
+Four protocols exist, all as ordinary non-kernel code:
 
 | Protocol | Where | Operations |
 |---|---|---|
@@ -237,7 +237,7 @@ env        the ABI: envcall declarations, payload codec, permission bits
    ↑
 runtime    mechanisms: channels, handshake, heap, locks, TLS, units
    ↑
-protocol   semantics: the directory and console protocols
+protocol   semantics: the directory, console, doom and irq protocols
    ↑
 programs   assembled images: root, console, dir, echo, shell
 ```
@@ -248,7 +248,7 @@ programs   assembled images: root, console, dir, echo, shell
 | `crates/env/` | ABI surface: envcall classes, payload codec, `Permission` (single source of truth) |
 | `crates/envmacros/` | the `#[call(class = …)]` macro that turns a declaration into a codec |
 | `crates/runtime/` | mechanism layer: `core/{channel,handshake,heap,lock,tls,unit}` + `env/*` wrappers |
-| `crates/protocol/` | protocol semantics: `dispatch/` (directory) + `console/` |
+| `crates/protocol/` | protocol semantics: `dispatch/` (directory) + `console/` + `doom/` (kill) + `irq/` (interrupt lines) — each in the same shape: `wire` + `client` + `server` |
 | `crates/sbi/` | SBI access for platform services |
 | `programs/` | the images packed into the initrd |
 | `scripts/` | `boot.nu` (the single source of QEMU launch), `runner.nu` (cargo integration), `examine.nu` (acceptance gate), `quick.sh` (dev round-trip) |

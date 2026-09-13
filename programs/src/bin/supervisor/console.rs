@@ -63,7 +63,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::{HoleDir, Permission, TaskId};
 use protocol::console::MSG_LEN;
-use protocol::console::{Decoder, Reply, Sink, State, TICK_MS};
+use protocol::console::{Decoder, Reply, SERVICE, Sink, State, TICK_MS};
 use protocol::dispatch::client::Directory;
 use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay};
@@ -73,9 +73,6 @@ use runtime::env::mail::{self, AnyPie as _, HolePie, PolePie};
 use runtime::env::room::sleep;
 
 use programs::uart::Uart;
-
-/// 本服务的名字（root 在启动期把它预约给本域）。
-const NAME: &str = "console";
 
 /// **等中断的上界**（毫秒）。不是"轮询周期"：有中断时这一等由内核的 `try_push`
 /// 唤醒（立即返回），无中断时它只是兜底——没登记成（PLIC 服务不可用）或设备侧
@@ -369,7 +366,8 @@ extern "C" fn main() -> ! {
         Ok(d) => d,
         Err(_) => runtime::env::room::exit_with(8),
     };
-    if dir.register(NAME, &entry).is_err() {
+    // 名字来自协议（root 在启动期已把它预约给本域）：客户端连的、本域注册的是同一个词。
+    if dir.register(SERVICE, &entry).is_err() {
         runtime::env::room::exit_with(9);
     }
 
