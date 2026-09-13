@@ -23,7 +23,6 @@
 // 同时借 `durable` 的不同字段时，先绑定局部变量（字段级拆借），再调用方法。
 
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use crate::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE};
@@ -51,7 +50,10 @@ pub(crate) struct SpaceInner {
     /// 内核 trap 帧常量区段 `[TEAM_FRAME_BASE, +SIZE)`，S-only。
     pub(crate) kernel: super::segment::Segment,
     /// 唯一 VA→PA 簿记（单表遍历，无常数/动态之分）。
-    pub(crate) maps: Vec<Map>,
+    ///
+    /// 元素是 `Box<Map>` 而不是 `Map`：拆除路径要能把摘下的图**整体搬进料箱**
+    /// （[`Salvage`] 的链，零分配）——值住在 `Vec` 的缓冲里就搬不走。
+    pub(crate) maps: Vec<Box<Map>>,
 }
 
 impl core::fmt::Debug for SpaceInner {
@@ -135,15 +137,12 @@ impl SpaceInner {
     /// 再推第三遍。
     pub(crate) fn allocate(&mut self, seg: SegmentKind, size: usize) -> Result<VirtAddr, MapError> {
         // **映射表的增长可失败**：取段之后必有一张新 `Map` 入 `self.maps`
-        // （`map` / `attach` / `borrow` / 各窗口的 claim 都在这条路上），而那次
-        // `Vec::push` 的扩容是 std 默认路径——内存吃紧即 `handle_alloc_error`
-        // → 整机 halt。在这里先把容量备足，失败就当场答 `OutOfMemory`
-        // （`Spawn` / 堆分配把它翻成 `-4` / `-1`），机器照旧活着。
-        //
-        // 放在取段**之前**：失败时段未被占用，调用方的回滚路径一个字都不用改。
-        self.maps
-            .try_reserve(1)
-            .map_err(|_| MapError::OutOfMemory)?;
+        // （`map` / `claim` / `attach` / `borrow` / 各窗口的 claim 都在这条路上），
+        // 而那次 `Vec::push` 的扩容若走 std 默认路径就是 `handle_alloc_error` →
+        // 整机 halt。**预留现在紧贴每个 push 点**（本文件四处 `self.maps.try_reserve(1)`）
+        // ——此前它只在本函数里备一格，而 `StackWindow::claim` 一个入口要推两张
+        // （guard + 栈体），于是"预留 1 格、推 2 张"，扩容就落在 churn 现场那次
+        // 917504 B（= 8192×112）上。一次预留配一次增长，且两者挨在一起。
         let base = match seg {
             SegmentKind::Normal => self
                 .user
@@ -173,6 +172,20 @@ impl SpaceInner {
 
     // ── 装配族 ──────────────────────────────────────────────
 
+    /// 注册一张图：**先备表容量、再造对象、最后 push**——三步里唯一会分配的两步
+    /// 都在此处失败（都答 `OutOfMemory`），失败时表与段一个字都没动。
+    ///
+    /// 这是"一次预留配一次增长"的落点：预留**紧贴** `push`，调用方不再需要在更远处
+    /// 预判自己会推几张。
+    fn register(&mut self, map: Map) -> Result<(), MapError> {
+        self.maps
+            .try_reserve(1)
+            .map_err(|_| MapError::OutOfMemory)?;
+        let map = Box::try_new(map).map_err(|_| MapError::OutOfMemory)?;
+        self.maps.push(map);
+        Ok(())
+    }
+
     /// 只登记簿记：校验 + 推入一张空帧 Map（懒/守卫/借用占位），不装 PTE。
     ///
     /// `pending: Some(Lazy)` = 缺页物化；`Some(Guard)` = 禁止触碰；
@@ -191,9 +204,7 @@ impl SpaceInner {
         if self.overlaps(va, size) {
             return Err(MapError::AlreadyMapped);
         }
-        self.maps
-            .push(Map::new(va, size, flags, pending, BTreeMap::new()));
-        Ok(())
+        self.register(Map::new(va, size, flags, pending))
     }
 
     /// 立即装配（Eager）：登记全物化 Map + 逐页取帧、装叶、注入（物理可断）。
@@ -222,8 +233,7 @@ impl SpaceInner {
         }
         let pages = size / PAGE_SIZE;
         // 先登记空 map（全物化 pending None），再走 install 装帧
-        self.maps
-            .push(Map::new(va, size, flags, None, BTreeMap::new()));
+        self.register(Map::new(va, size, flags, None))?;
         self.install(va, pages, flags, MapMode::Claim(va), next_frame)
     }
 
@@ -244,8 +254,7 @@ impl SpaceInner {
             return Err(MapError::AlreadyMapped);
         }
         // 先登记空 map（全物化 pending None），再走 install 用外部帧装叶
-        self.maps
-            .push(Map::new(vaddr, size, flags, None, BTreeMap::new()));
+        self.register(Map::new(vaddr, size, flags, None))?;
         let mut iter = frames.into_iter();
         self.install(vaddr, pages, flags, MapMode::Claim(vaddr), move || {
             Ok(iter.next().expect("attach: frame iter exhausted"))
@@ -268,18 +277,17 @@ impl SpaceInner {
             return Err(MapError::AlreadyMapped);
         }
         self.root.map(vaddr, paddr, size, flags)?;
-        self.maps
-            .push(Map::new(vaddr, size, flags, None, BTreeMap::new()));
-        Ok(())
+        self.register(Map::new(vaddr, size, flags, None))
     }
 
     // ── 拆除 ────────────────────────────────────────────────
 
     /// 统一拆除 `[va, va+size)`：逐 map 清其相交且**真有 PTE** 的页（中间表随之
-    /// 回收）→ **全覆盖**的 Map 整张摘除、**部分覆盖**的 Map 按洞分裂——摘下的帧
-    /// 一律**交料箱**（`salvage`），清退到齐后才归还（远核可能仍持旧条目）。不碰段。
+    /// 回收）→ **全覆盖**的 Map 整张摘除交料箱、**部分覆盖**的按洞分裂（本图就地
+    /// 收缩，洞在头时重绕成右段）——摘下的图一律**交料箱**（`salvage`），清退到齐后
+    /// 才归还（远核可能仍持旧条目）。不碰段（段由 [`Space::release`] 收）。
     ///
-    /// # 拆除路径不分配（本函数的硬约束）
+    /// # 先备后动（本函数的硬约束）
     ///
     /// 这是 `MemoryCall::Deallocate` 的必经之路——**释放不得依赖内存**。旧版
     /// `mem::take` + 新建 `survivors` 每次调用都重建整张映射表：`Map` 恰 112 B，
@@ -287,54 +295,104 @@ impl SpaceInner {
     /// 而它落在内存已经吃紧的释放路径上——压垮内核的那次分配，是「释放」自己
     /// 递上去的（`trace/churn6/console.log` 的实测现场）。
     ///
-    /// 故改为**原地压实**：`retain_mut` 把存活映射就地左移、末尾截断，缓冲区
-    /// 自始至终是 `self.maps` 自己那一块；闭包内 `Vec::push` 只用于**拆分**新
-    /// 产出的右段（一条映射至多一个，常态零分配）。
-    pub(crate) fn unmap(&mut self, va: VirtAddr, size: usize, salvage: &mut Salvage) {
+    /// 现在两趟走。**第一趟只读**：数出这次要造几张图（洞图 / 右段图）、各要搬
+    /// 多少帧，并**当场把容量备足**——任何一步失败都在**状态一字未动**时答
+    /// `OutOfMemory`（照 `cull.rs:51` 的教训：让 `try_reserve` 在拆到一半时才失败，
+    /// 就把"摘一半"变成可达状态）。**第二趟只搬**：`Vec::remove` 等长压实 + 帧表
+    /// `move_*` + 链上挂图，一次分配都没有。
+    ///
+    /// 于是 `Space::release` 那条**不能失败**的路（调用方是 `.expect()`）恒走
+    /// "无需造图"的分支（它按 Span 精确归还，块内的图恒被整覆盖）⇒ 零分配 ⇒ 永不失败。
+    ///
+    /// # Errors
+    ///
+    /// 备料失败 → [`MapError::OutOfMemory`]（状态未动，可安全重试）。
+    pub(crate) fn unmap(
+        &mut self,
+        va: VirtAddr,
+        size: usize,
+        salvage: &mut Salvage,
+    ) -> Result<(), MapError> {
         if size == 0 {
-            return;
+            return Ok(());
         }
-        let end = va.as_usize().saturating_add(size);
-        // 被拆出的右段（`carve` 只在「洞在中间」时产出）：先存本地，遍历结束再
-        // 追加——`retain_mut` 期间不得再借 `self.maps`。
-        let mut rights: Vec<Map> = Vec::new();
-        let root = &mut self.root;
-        self.maps.retain_mut(|m| {
+        let lo = va.as_usize();
+        let end = lo.saturating_add(size);
+
+        // ── 第一趟：只读 + 备料 ──────────────────────────────
+        //
+        // `splits[i]` 与第二趟里第 i 张**部分覆盖**的图逐一同位：两趟对"全覆盖 /
+        // 部分覆盖 / 不相交"用同一套判据，且第二趟只做等长压实、不改相互次序。
+        let mut splits: Vec<Split> = Vec::new();
+        let mut rights = 0usize;
+        for m in self.maps.iter() {
+            let Some((lo_pg, hi_pg)) = intersect(m, lo, end) else {
+                continue;
+            };
             let s = m.va.as_usize();
-            let m_end = s.saturating_add(m.size.get());
-            let lo = va.as_usize().max(s);
-            let hi = end.min(m_end);
-            if lo >= hi {
-                return true; // 不相交
+            if lo <= s && end >= s.saturating_add(m.size.get()) {
+                continue; // 全覆盖：整张进料箱，不造新图
             }
-            let lo_pg = (lo - s) / PAGE_SIZE;
-            let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
-            // 清叶与摘 map 同一趟：拿着 map 才能问它哪些页有 PTE，顺序不可能写反。
+            let pages = m.size.get() / PAGE_SIZE;
+            // 洞内有帧才需要洞图：借入页 / 未触页的洞没有帧要挂着等清退。
+            let hole = {
+                let n = m.frames.count_range(lo_pg, hi_pg);
+                (n > 0).then(|| m.part(lo_pg, hi_pg - lo_pg, n)).transpose()?
+            };
+            // 右段：洞**在中间**时才独立成一张图（在头由本图重绕、在尾无右段）。
+            let right = if lo_pg != 0 && hi_pg < pages {
+                Some(m.part(hi_pg, pages - hi_pg, m.frames.count_range(hi_pg, pages))?)
+            } else {
+                None
+            };
+            rights += usize::from(right.is_some());
+            splits.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+            splits.push(Split { hole, right });
+        }
+        // 第二趟会把右段图推回表：先把追加格备足（此后 `push` 不再增长）。
+        self.maps.try_reserve(rights).map_err(|_| MapError::OutOfMemory)?;
+
+        // ── 第二趟：只搬 ────────────────────────────────────
+        let SpaceInner { root, maps, .. } = self; // 字段级拆借：清叶要用 root
+        let mut i = 0usize;
+        let mut n = 0usize;
+        while i < maps.len() {
+            let m_va = maps[i].va.as_usize();
+            let m_size = maps[i].size.get();
+            let l = lo.max(m_va);
+            let h = end.min(m_va.saturating_add(m_size));
+            if l >= h {
+                i += 1; // 不相交（含第二趟刚推回表的左段/右段：它们已不含本区间）
+                continue;
+            }
+            let lo_pg = (l - m_va) / PAGE_SIZE;
+            let hi_pg = (h - m_va).div_ceil(PAGE_SIZE);
+            // 清叶与摘图同一趟：拿着图才能问它哪些页有 PTE，顺序不可能写反。
+            // `remove` 是等长压实（后继整体左移），故此处**不递增**下标。
+            let mut m = maps.remove(i);
             m.runs(lo_pg, hi_pg, |rva, rsize| root.unmap(rva, rsize));
-            if va.as_usize() <= s && end >= m_end {
-                // 全覆盖：整张摘除交料箱。`Map` 无 `Default`，用一个占位 Map 换出
-                // 真身（占位随即被 retain 截掉）——搬移而非重建。
-                let taken = core::mem::replace(
-                    m,
-                    Map::new(m.va, PAGE_SIZE, m.flags, m.pending, BTreeMap::new()),
-                );
-                salvage.take_map(taken);
-                return false;
+            if lo <= m_va && end >= m_va.saturating_add(m_size) {
+                salvage.take_map(m); // 全覆盖：整张挂上料箱链（零分配）
+                continue;
             }
-            // 部分覆盖：挖洞分裂（洞内帧由 carve 交料箱）。
-            match m.carve(lo_pg, hi_pg, salvage) {
-                Some(right) => {
-                    rights.push(right); // 右段：洞在中间
-                    true // 左段（carve 已收缩 m）
-                }
-                // `None` 有两种来源，必须分开——判据与 `carve` 内部分支逐一对应：
-                //   洞在头（`lo_pg == 0`）⇒ **本 map 已被重绕成右段**，无右段产出，
-                //                          故它仍是存活映射，保留；
-                //   洞在尾（`hi_pg == 页数`）⇒ 右段不存在，本 map（左段）保留。
-                None => lo_pg != 0,
+            let split = &mut splits[n];
+            n += 1;
+            m.carve(
+                lo_pg,
+                hi_pg,
+                split.hole.as_deref_mut(),
+                split.right.as_deref_mut(),
+            );
+            if let Some(hole) = split.hole.take() {
+                salvage.take_map(hole);
             }
-        });
-        self.maps.append(&mut rights);
+            if let Some(right) = split.right.take() {
+                maps.push(right);
+            }
+            maps.push(m);
+        }
+        debug_assert_eq!(n, splits.len(), "unmap: 两趟的图数不一致");
+        Ok(())
     }
 
     /// 只读校验：`(addr, size)` 是否为该段的一个已分配块（拆除路径的失败域
@@ -431,7 +489,7 @@ impl SpaceInner {
         let covered: usize = self
             .maps
             .iter()
-            .filter_map(&span)
+            .filter_map(|m| span(m))
             .map(|(_, lo, hi)| hi - lo)
             .sum();
         if covered != size {
@@ -498,14 +556,22 @@ impl SpaceInner {
         })
     }
 
-    /// 查询 `vaddr` 所属的映射（常数表 → 动态窗口子表），返回借用。
+    /// 查询 `vaddr` 所属的映射（单表线性查，无常数/动态之分），返回借用。
     pub(super) fn resolve_ref(&self, vaddr: VirtAddr) -> Option<&Map> {
-        self.maps.iter().rev().find(|m| m.contains(vaddr))
+        self.maps
+            .iter()
+            .rev()
+            .find(|m| m.contains(vaddr))
+            .map(Box::as_ref)
     }
 
     /// 查询 `vaddr` 所属映射的可变引用（缺页注入帧用）。
     pub(super) fn resolve_mut(&mut self, vaddr: VirtAddr) -> Option<&mut Map> {
-        self.maps.iter_mut().rev().find(|m| m.contains(vaddr))
+        self.maps
+            .iter_mut()
+            .rev()
+            .find(|m| m.contains(vaddr))
+            .map(Box::as_mut)
     }
 
     /// 页表读翻译（内部版，调用者须持锁）。
@@ -525,7 +591,7 @@ impl SpaceInner {
     #[cfg(any(debug_assertions, feature = "framework"))]
     pub(crate) fn audit(&self) {
         for m in &self.maps {
-            for (i, f) in &m.frames {
+            for (i, f) in m.frames.iter() {
                 let va = m.va + i * PAGE_SIZE;
                 let expect = page_pa(f);
                 match self.translate(va) {
@@ -562,6 +628,26 @@ impl SpaceInner {
 
 // ── 安装回滚 ────────────────────────────────────────────
 
+/// `unmap` 第一趟为一张**部分覆盖**的图备下的两张图（不需要时 `None`）。
+///
+/// `hole` 收洞内的帧、随后整张进料箱；`right` 是洞右侧独立成的那张，回表。
+/// 备料与搬移分两趟，是为了让"要分配"与"改状态"不交叠：分配失败时状态一字未动。
+struct Split {
+    hole: Option<Box<Map>>,
+    right: Option<Box<Map>>,
+}
+
+/// `[lo, end)` 与本图相交的那一段（页序，半开）；不相交 → `None`。
+///
+/// 两趟（备料 / 搬移）共用这一套算式——写在一处，就不会出现"数的"和"搬的"
+/// 不是同一批。
+fn intersect(m: &Map, lo: usize, end: usize) -> Option<(usize, usize)> {
+    let s = m.va.as_usize();
+    let l = lo.max(s);
+    let h = end.min(s.saturating_add(m.size.get()));
+    (l < h).then(|| ((l - s) / PAGE_SIZE, (h - s).div_ceil(PAGE_SIZE)))
+}
+
 /// 失败时 maps 簿记的两种处置（由"map 是谁 push 的"决定）。
 #[derive(Clone, Copy)]
 enum MapMode {
@@ -575,12 +661,18 @@ enum MapMode {
 
 /// 安装回滚守卫——循环失败时按已装页数清叶 + 按 [`MapMode`] 处置 maps。
 ///
-/// `installed: usize` = 已装页数；`commit()` 归零 → drop 循环 0 次 = no-op。
+/// `installed` = 已装页数；`commit()` 归零 → drop 循环 0 次 = no-op。
 /// 成功路径必须 `commit()`，否则 drop 会拆掉刚装的页。
+///
+/// 为什么是一个计数而不是集合：`mark` 只在 [`SpaceInner::install`] 的 `for i in 0..pages`
+/// 循环里、按 `0..pages` **单调**调用（`mark` 紧跟在"叶已装 + 帧已注入"之后，中间
+/// 没有别的可失败步骤），故已装页恒为**前缀** `[0, installed)`。旧版这里是
+/// `BTreeSet<usize>`——每次装配一张页表就多一次不可失败的节点分配，而它要表达的
+/// 事实只是"前 k 页装好了"。
 struct InstallGuard<'a> {
     inner: &'a mut SpaceInner,
     va: VirtAddr,
-    installed: BTreeSet<usize>,
+    installed: usize,
     book: MapMode,
 }
 
@@ -589,17 +681,17 @@ impl<'a> InstallGuard<'a> {
         Self {
             inner,
             va,
-            installed: BTreeSet::new(),
+            installed: 0,
             book,
         }
     }
-    fn mark(&mut self, at: usize) {
-        self.installed.insert(at);
+    fn mark(&mut self) {
+        self.installed += 1;
     }
     /// 拆雷：drop 时 installed=0 不调 unmap；book 不动——Claim 仍按原策略摘整张 map。
     /// 消费 self。
     fn commit(mut self) {
-        self.installed.clear();
+        self.installed = 0;
     }
 }
 
@@ -616,19 +708,19 @@ fn page_pa(f: &Frame) -> PhysAddr {
 impl Drop for InstallGuard<'_> {
     fn drop(&mut self) {
         // commit() 已归零 → 成功路径，整个 drop 不做任何动作
-        if self.installed.is_empty() {
+        if self.installed == 0 {
             return;
         }
         // 1. 按精确页号清已 set 叶 PTE（单页 unmap，各自拆空中间表）
-        for &j in &self.installed {
+        for j in 0..self.installed {
             self.inner.root.unmap(self.va + j * PAGE_SIZE, PAGE_SIZE);
         }
-        // 2. 按策略动 maps（精确页号——share 跳过的页保留原状态）
+        // 2. 按策略动 maps（精确页号——装到哪页就撤哪页）
         match self.book {
             MapMode::Materialize => {
-                for &j in &self.installed {
+                for j in 0..self.installed {
                     if let Some(m) = self.inner.resolve_mut(self.va + j * PAGE_SIZE) {
-                        m.frames.remove(&j);
+                        m.frames.remove(j);
                     }
                 }
             }
@@ -648,6 +740,11 @@ impl SpaceInner {
     ///
     /// `next_frame` 按页提供帧；`flags` 直接装入 PTE。
     /// 失败时 [`InstallGuard`] 按 `book` 处置：清叶 + 摘 frames 键或摘整张 map。
+    ///
+    /// # 帧表容量在装第一页之前一次备足
+    ///
+    /// `Frames` 的插入要求容量已备（`Vec` 的扩容是不可失败路径）；备料是**唯一**
+    /// 会分配的一步，放在循环之前 ⇒ 失败时一页未装、一字未改。
     fn install<F>(
         &mut self,
         va: VirtAddr,
@@ -659,6 +756,9 @@ impl SpaceInner {
     where
         F: FnMut() -> Result<Frame, MapError>,
     {
+        self.resolve_mut(va)
+            .expect("map exists")
+            .reserve_frames(pages)?;
         let mut guard = InstallGuard::new(self, va, book);
         let result: Result<(), MapError> = (|| {
             for i in 0..pages {
@@ -668,8 +768,8 @@ impl SpaceInner {
                 guard.inner.root.map(m_va, pa, PAGE_SIZE, flags)?;
                 let map = guard.inner.resolve_mut(m_va).expect("map exists");
                 let idx = (m_va.as_usize() - map.va.as_usize()) / PAGE_SIZE;
-                map.inject(idx, page);
-                guard.mark(i);
+                map.frames.insert(idx, page);
+                guard.mark();
             }
             Ok(())
         })();

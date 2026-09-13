@@ -52,10 +52,19 @@ pub(in super::super) fn holders() -> &'static HolderTable {
 
 /// 存根。**前置：到点登记尚未发生**——「堆可见 ⇒ 票根必在」，否则到期路径会命中
 /// 一个空的票根。
-pub(super) fn hold(ticket: Ticket, key: WakeKey, task: &Arc<Task>) {
-    holders()
-        .lock()
-        .insert(ticket, (key, TaskWeak::stored(Arc::downgrade(task), Site::Holder)));
+///
+/// # Errors
+///
+/// 表扩不出来（内存耗尽）→ `Err(())`（与 `try_reserve_roster` 同一口径）。
+/// **扩容与插入在同一把锁内**：先 `try_reserve(1)` 再 `insert`，中间没有别的核能
+/// 插进来抢那格容量——这条正是 116744 B（= 2048×57+8，那张 hashbrown 表的一次
+/// 扩容）落在挂起路径上的原因。失败时票根一字未登记，调用方（[`super::block`]）
+/// 当场答 `OoM`，任务不挂起、机器照旧活着。
+pub(super) fn hold(ticket: Ticket, key: WakeKey, task: &Arc<Task>) -> Result<(), ()> {
+    let mut table = holders().lock();
+    table.try_reserve(1).map_err(|_| ())?;
+    table.insert(ticket, (key, TaskWeak::stored(Arc::downgrade(task), Site::Holder)));
+    Ok(())
 }
 
 /// 作废票根并取回持票人：到期认领与提前作废走同一条路，**幂等**（票号不复用，

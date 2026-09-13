@@ -419,6 +419,11 @@ impl TaskBuilder {
         self.team
             .try_reserve_task(1)
             .map_err(|()| MapError::OutOfMemory)?;
+        // `held` 的推送发生在帧之后（见 `Team::hold` 的前置），故它那一格也在**领帧
+        // 之前**备——三条表 + 这一条，四笔插入各有一笔预留，且都在不可逆步骤之前。
+        self.team
+            .try_reserve_held()
+            .map_err(|()| MapError::OutOfMemory)?;
 
         // 栈：StackWindow::claim 取 slot（user 段 + guard，立即物化；U 位随空间模式）
         let stack_size = self.stack;

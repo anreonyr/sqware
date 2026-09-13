@@ -226,6 +226,11 @@ impl TableNode {
                     return Err(MapError::NotMapped);
                 }
                 let child = Self::leaf(&mut node.page.entries[idx])?;
+                // **紧贴预留**：子表清单的扩容此前是不可失败的（落在缺页建中间表
+                // 这条路上）；现在它答 `OutOfMemory`，与页表帧的取用同一个失败域。
+                node.children
+                    .try_reserve(1)
+                    .map_err(|_| MapError::OutOfMemory)?;
                 node.children.push((idx, child));
             }
             node = &mut node

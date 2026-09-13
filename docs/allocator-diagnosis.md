@@ -1064,3 +1064,122 @@ freelist↔pagemeta 背离（§10）现在只剩 `check_bounds` / `check_frame_f
 **代价写在明处**：框架产物里开始**带着崩溃转储代码**（此前它被 `cfg(not(feature =
 "framework"))` 整块编掉）——实测框架档的编译告警因此从 45 条降到 3 条（那 42 条正是崩溃
 转储面被编掉留下的死代码）。换来的是：自检在会话期响时给的是**完整现场**。
+
+---
+
+## 14 第 16 轮：入表零分配（Z1）—— 能失败的走预留，只有不能失败的那条路动结构
+
+### 14.1 裁决
+
+先裁 **Z1**（对象自带链接、表零分配，取代账/需求单/池），随后追加一条把范围收紧：
+
+> **本来就可失败，就没必要增加复杂度。**
+> —— 入口已经能答错的表，只加"前置/紧贴预留"；**只有不能失败的那条路**（释放）
+> 才动结构。
+
+于是本轮的实际形状是两句话：
+
+| 路径 | 处置 |
+|---|---|
+| 装配 / 缺页 / Spawn·Hatch / Wait·wake / Doom / Mmap·Munmap / Deallocate | **只加预留**：`try_reserve` 要么紧贴 push、要么落在同一入口的不可逆步骤之前，失败即该入口本来的错误码 |
+| **释放**（`Space::release` → `SpaceInner::unmap` → `Salvage` → `reclaim`） | **零分配**：它在调用方是 `reap.rs` 的 `.expect()` 与 `pole.rs` 的 `Denied` —— 给释放引入新失败域等于把 halt 换个位置。为此只动一处结构：`Map` 自带一条链、料箱持链 |
+
+### 14.2 三笔实测与归因
+
+| 实测 | 现场 | 归因 |
+|---|---|---|
+| `917504 B`（`churn 4 8 4` 的 halt） | `SpaceInner::{map,claim,attach,borrow}` 的 `Vec<Map>::push` 扩容 | `SpaceInner::allocate` **只预留 1 格**，而 `StackWindow::claim` 一次入口推 **2** 张（guard + 栈体）⇒「预留与增长没挨在一起」 |
+| `368 B`（BTreeMap 叶节点，`Frame`=24） | `Map::inject`，落在**缺页物化**上 | `BTreeMap` 没有 `try_reserve`（本地 rust-src 零命中）⇒ 那次首插不可能失败 |
+| `116744 B`（= 2048×57+8，hashbrown） | `holder.rs` 的 `HOLDERS.insert`，落在**挂起**上 | 无预留 |
+
+### 14.3 落地（篇 A）
+
+**空间与帧**（`work/unit/space/**` + 调用面）
+
+1. `SpaceInner.maps: Vec<Map>` → **`Vec<Box<Map>>`**，`Map` 增 `next: Option<Box<Map>>`：
+   摘下的图能**整体搬进料箱**（一次指针写），不必往容器里推。
+2. `Salvage { maps: Option<Box<Map>>, span: Option<Span> }`（原 `Vec<Map>` + `Vec<Span>`）：
+   一次拆除至多一条 `Span`，图走链。`Map` 的 `Drop` **迭代**摘链（默认递归 drop 会把
+   长链压进调用栈）。
+3. `SpaceInner::unmap` 改**两趟**并返回 `Result`：第一趟只读——数出这次要造几张图（洞图 /
+   右段图）、各要搬多少帧，并当场把容量备足；任何一步失败都在**状态一字未动**时答
+   `OutOfMemory`（照 `cull.rs:51` 的教训：让 `try_reserve` 在拆到一半时才失败，就把
+   "摘一半"变成可达状态）。第二趟只搬：`Vec::remove` 等长压实 + 帧表 `move_*` + 链上挂图。
+   于是 `release` 恒走"无需造图"的分支 ⇒ 零分配 ⇒ 永不失败。
+4. `Map.frames: BTreeMap<usize, Frame>` → **`Frames { v: Vec<(usize, Frame)> }`**（页序）：
+   `BTreeMap` 的插入无法预留，换成可预留的有序 `Vec`（尺寸不变：32 B/条 vs 叶节点约 33 B/条）。
+   唯一分配点是 `Frames::reserve`；`install` 在装第一页之前**一次备足 `pages` 条**，
+   `unmap` 的备料在动状态之前完成。
+5. `Segment.allocated: BTreeMap<usize, usize>` → **有序 `Vec<(usize, usize)>`**：同理由；
+   `try_reserve(1)` 紧贴 `insert`。
+6. `InstallGuard.installed: BTreeSet<usize>` → **`usize`**：`mark` 只在 `install` 的
+   `for i in 0..pages` 里单调调用，已装页恒为**前缀**——这个集合要表达的事实只是"前 k 页装好了"。
+7. **预留配对的修正**：`SpaceInner::allocate` 里那格 `try_reserve(1)` 删掉，改为四个 push 点
+   各自 `try_reserve(1)`（`register` 一处收口）——一次预留配一次增长，且两者挨在一起。
+
+**挂起路径**（`work/room/messenger/wait/**` + `chrono/timer.rs`）
+
+8. `holder::hold`、`timer::tock`、`site::try_reserve_site` 都在**各自锁内**先 `try_reserve`
+   再插；`block` 的备料全部提到 **`current().swap()` 之前**。
+   实测教训：备料放在离核之后 ⇒ 失败时返回等于让本核没有任务，下一次 envcall 直接
+   `[panic] envcall without running task`（`trap.rs:266`）。离核之后没有"原地失败"这条路。
+9. 站点队列的容量不变量（写在 `try_reserve_site` 的文档里）：**每次 `push_back` 之前都为
+   自己那一格预留过** ⇒ 任意时刻 `capacity − len ≥ 已在备料尚未入队的等待者数` ⇒ 入队
+   不再扩容。
+
+**其他入口**
+
+10. `Team::try_reserve_held` 在 `TaskBuilder::hold` 的**领帧之前**预留（`hold` 的推送在帧之后，
+    没有失败通道）；`TableNode::children` 的 push 前紧贴 `try_reserve(1)`（落在缺页建中间表
+    这条路上）；`envcall/mail.rs` 的两处 `vec![0u8; …]` 换 `try_reserve` + `resize`。
+
+### 14.4 实测（前后对照）
+
+**器械**：`readelf -sW <ELF>` 取函数边界 → `llvm-objdump -d --start-address/--stop-address`
+列 `jalr` 目标 → 判据集 = {`RawVecInner::do_reserve_and_handle`, `RawVec*::grow_one`,
+`handle_alloc_error`, `hashbrown*`}（**在产物上核，不读源码**）。
+
+```
+改前：SpaceInner::unmap 体内直达
+      _RNvNvMs2_..alloc7raw_vec..RawVecInnerpE7reserve21do_reserve_and_handle..
+      —— core.rs 那句「拆除路径不分配」只对 self.maps 成立；`rights: Vec<Map>`（:300/:327）
+      与 `Salvage.maps: Vec<Map>`（salvage.rs:55/:71）仍在释放路径上扩容。
+
+改后：Salvage::reclaim       @0x80204888+288  → 0 命中
+      Space::release         @0x80225fb8+500  → 0 命中
+      SpaceInner::unmap      @0x8020cb8e+1570 → 5 命中（全是"先备后动"的 try_reserve /
+                                                Box::try_new：状态未动之前的那一步）
+```
+
+**复现命令与结果**（`QEMU_MEM=128 SKIP_BUILD=1 scripts/fast.sh "…"`）
+
+| 命令 | 改前 | 改后 |
+|---|---|---|
+| `churn 4 8 4` | `[panic] … memory allocation of 917504 bytes failed`（churn 现场）/ 116744 B（holder 表）⇒ 整机 halt | 跑满 120 s **0 panic**、1277 次用户面自退（工作量大、内存被压到用户面自己失败退出，正是 `churn` 的设计语义） |
+| `churn 1 4 4` | 同上 | `qemu-exit=0`、0 panic、`task: all tasks exited, system halted` |
+
+**门**：`EXAMINE_HARDEN=1 nu scripts/examine.nu` → **5/5**（default ×3 / harden / framework）；
+步数与 marker 数由 `FLAVORS` 一行算出来（13/16/16 与 16/20/21），不由人手抄。
+
+**过程中的一处自证**：备料最初写在 `current().swap()` **之后** ⇒ 失败返回时本核没有任务，
+harden/framework 档当场 `[panic] envcall without running task`（`trap.rs:266`）——离核之后
+没有"原地失败"这条路，这条教训已写进 `block` 的注释。
+
+### 14.5 这一轮没做完的（逐条点名，处置已定）
+
+释放路径之外仍有"不可失败增长"的入口，它们**不在**本轮的 churn 现场上，按计划属波二：
+
+| 位置 | 为什么不是"紧贴预留"就完事 | 计划的处置 |
+|---|---|---|
+| `SchedulerInner.starved`（`hart.rs:81/124/281`） | push 在**唤醒路径**（`rise`/`redeem`）上，没有失败域；且今日的预留落在 Spawn 那一核、push 落在 Hatch 那一核（跨核错配） | `Task` 加就绪链（①），连 `try_reserve_starved` 一起去掉 |
+| `HUSKS`（`reap.rs:47`） | 退出路径（`bury`）没有失败域 | Spawn 侧前置预留（全局队列，一任务一出生一死亡，配对是全称的）或对象链 |
+| `Task.heir` / `Team.holds`（`task.rs:288`、`team.rs:126`） | 域出生路径 | 入口前置预留（`TeamBuilder::spawn` 现为 `-> Arc<Team>`，需改返回码） |
+| `Task.pies` 5 处 | 上游 Unseal/Accord 已有 `Result` | 各自紧贴预留 |
+| `doomed`（`doom.rs:127`）、`bitmap.bits`（`bitmap.rs:121`）、`PoleMeta.mappings`（`pole.rs:168`） | 入口可失败 | 紧贴预留（`bitmap` 需 `try_reserve` + `resize`） |
+| `wipe_space` 持分片 L3 锁时的 `keys().collect()`（`wait/mod.rs:263-267`） | 收尾路径，且锁内分配 | 改"游标 + 就地摘除" |
+| `timer::drain` 的 `Vec`（`timer.rs:145`） | 时钟路径 | 改回调式（零分配） |
+
+**残余风险（写在明处）**：站点可能在"备料"与"入队"之间被同片的 `prune` 删掉 ⇒ 入队时
+`or_insert_with` 新建站点的那一格容量没有预留。窗口极窄（同键的一次 beacon 消费），
+由 `debug_assert` 守着；release 档下这一支退化成今天的"不可失败扩容"——它是本轮
+**已知未闭合**的一处，与"预留—插入"在共享表上的固有竞态同源。

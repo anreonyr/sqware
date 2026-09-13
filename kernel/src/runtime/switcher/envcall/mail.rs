@@ -81,11 +81,18 @@ fn push(
             } else {
                 // 锁外拷入堆暂存：slot = L3，Space.segments = L2，
                 // 持 L3 调 L2 是 4→2 反向嵌套，禁止。
-                let mut staging = alloc::vec![0u8; len];
-                if mail::copy_in(&ident.team.space, &mut staging, msg.as_usize()) {
-                    mail::hole::try_push(&meta, &staging, me)
+                // 堆暂存：`try_reserve` 而不是 `vec![0u8; len]`——这一笔不可失败时
+                // 是一次整机 halt，而入口（envcall）本来就能答 `Denied`/`OoM`。
+                let mut staging: Vec<u8> = Vec::new();
+                if staging.try_reserve(len).is_err() {
+                    Err(GateError::OoM)
                 } else {
-                    Err(GateError::Denied)
+                    staging.resize(len, 0);
+                    if mail::copy_in(&ident.team.space, &mut staging, msg.as_usize()) {
+                        mail::hole::try_push(&meta, &staging, me)
+                    } else {
+                        Err(GateError::Denied)
+                    }
                 }
             }
         }
@@ -131,16 +138,22 @@ fn pull(
             if max == 0 || max > meta.mtu {
                 Err(GateError::Denied)
             } else {
-                let mut staging: Vec<u8> = alloc::vec![0u8; max];
-                match mail::hole::try_pull(&meta, &mut staging) {
-                    Ok((n, from)) => {
-                        if !mail::copy_out(&ident.team.space, &staging[..n], buf.as_usize()) {
-                            Err(GateError::Denied)
-                        } else {
-                            Ok((n, from))
+                // 同上：Pull 的暂存也不走 `vec!`（≤ mtu，但失败即 halt）。
+                let mut staging: Vec<u8> = Vec::new();
+                if staging.try_reserve(max).is_err() {
+                    Err(GateError::OoM)
+                } else {
+                    staging.resize(max, 0);
+                    match mail::hole::try_pull(&meta, &mut staging) {
+                        Ok((n, from)) => {
+                            if !mail::copy_out(&ident.team.space, &staging[..n], buf.as_usize()) {
+                                Err(GateError::Denied)
+                            } else {
+                                Ok((n, from))
+                            }
                         }
+                        Err(e) => Err(e),
                     }
-                    Err(e) => Err(e),
                 }
             }
         }

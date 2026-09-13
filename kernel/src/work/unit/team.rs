@@ -122,8 +122,22 @@ impl Team {
     }
 
     /// 记下引导线程（未放行）。`Spawn` 产 Held 时调用。**追加**，不覆盖。
+    ///
+    /// 前置：容量已由 [`Self::try_reserve_held`] 备好——这一步发生在帧之后
+    /// （栈与 trap 帧那时已经领了），所以预留**必须在领帧之前**做：`hold` 没有
+    /// 失败通道，这里再扩容就是把"帧已领、任务没入表"变成可达状态。
     pub(crate) fn hold(&self, task: &Arc<Task>) {
         self.held.lock().push(task.clone());
+    }
+
+    /// 为即将入表的引导线程**预留一格**（产生路径不分配）。
+    ///
+    /// # Errors
+    ///
+    /// 表扩不出来（内存耗尽）→ `Err(())`。与 `try_reserve_task` 同一口径，
+    /// 且**在领帧之前**调用（见 [`Self::hold`] 的前置）。
+    pub(crate) fn try_reserve_held(&self) -> Result<(), ()> {
+        self.held.lock().try_reserve(1).map_err(|_| ())
     }
 
     /// **按身份**摘出引导线程（`Hatch` / `kill` 用）：摘到返回 true。

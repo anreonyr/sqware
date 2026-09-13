@@ -286,10 +286,17 @@ impl Space {
 
     /// 统一拆除（munmap 后端 / guard 打洞）：清叶 + 摘/裂 Map + 刷本核 + 结清
     /// （清退到齐后帧才归还）。不还段——段由 [`Self::release`] 收。
-    pub fn unmap(&self, vaddr: VirtAddr, size: usize) {
+    ///
+    /// # Errors
+    ///
+    /// [`MapError::OutOfMemory`] = 区间**部分覆盖**某张图、而分裂要用的那两张图
+    /// （洞图 / 右段图）备不出来。此时簿记**一字未动**（[`SpaceInner::unmap`] 的
+    /// "先备后动"），用户面把它翻成 `-4` 即可，机器照旧活着。
+    pub fn unmap(&self, vaddr: VirtAddr, size: usize) -> Result<(), MapError> {
         let mut salvage = Salvage::new();
-        self.with_flush(|inner| inner.unmap(vaddr, size, &mut salvage));
+        let r = self.with_flush(|inner| inner.unmap(vaddr, size, &mut salvage));
         salvage.reclaim(self).expect("unmap: shootdown deaf");
+        r
     }
 
     /// Span 回收门：校验段 + 统一拆除 + 刷本核 + 结清（清退到齐后**才**还段与帧
@@ -310,6 +317,14 @@ impl Space {
     ///
     /// 现在两个 window 都经 [`Self::release_addr`] 收敛到这里：**一个入口、
     /// 一个失败域、一个注销点**。
+    ///
+    /// # 这条路上不会分配，故它不会失败
+    ///
+    /// `holds` 要求 `(va, size)` 与本段的一个已分配块**逐字相等**，而一个块内的图
+    /// 恒被这个区间**整覆盖**（栈 slot = guard + 栈体两张；堆 / mmap / Pole = 一张）
+    /// ⇒ [`SpaceInner::unmap`] 走"无需造图"的分支，一次分配都不发生。于是调用方
+    /// （`reap.rs` 的两处 `.expect()`）不可能看到 `OutOfMemory` —— 那只有在区间与块
+    /// 不符时才可能，而那是调用方 bug，不是内存问题。
     pub(crate) fn release(&self, span: Span) -> Result<(), MapError> {
         let mut salvage = Salvage::new();
         self.with_flush(|inner| {
@@ -318,7 +333,7 @@ impl Space {
                 return Err(MapError::SegmentMismatch);
             }
             // 2. 统一拆除（清叶 / 摘·裂 map，帧交料箱）+ 段一并入箱
-            inner.unmap(span.va, span.size.get(), &mut salvage);
+            inner.unmap(span.va, span.size.get(), &mut salvage)?;
             salvage.take_span(span);
             Ok(())
         })?;

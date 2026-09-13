@@ -275,7 +275,11 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         }
         EnvCall::Room(RoomCall::Park { millis }) => {
             drop(ident);
-            return park(Duration::from_millis(millis as u64)) as *mut TrapContext;
+            match park(Duration::from_millis(millis as u64)) {
+                Ok(pa) => return pa as *mut TrapContext,
+                // 备料失败（内存耗尽）：本任务**没挂起**，当场答 `OoM`。
+                Err(e) => return ret_err(frame, e),
+            }
         }
         EnvCall::Room(RoomCall::Wait { key, millis }) => {
             // 键 → 存活单元：**解析在调用方这一层**（room 不认识注册表）。空间键的
@@ -294,8 +298,10 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // `wlife` **按值**交给等待机（站点是它唯一的持有者）。
             match wait(wkey, wlife, dur) {
                 // `RoomCall::Wait` 没有当场结论：未离核即续跑。
-                Handoff::Resume(()) => {}
-                Handoff::Switch(pa) => return pa as *mut TrapContext,
+                Ok(Handoff::Resume(())) => {}
+                Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
+                // 备料失败（内存耗尽）：本任务**没挂起**，当场答 `OoM`。
+                Err(e) => return ret_err(frame, e),
             }
         }
         EnvCall::Room(RoomCall::Wake { key }) => {
@@ -524,8 +530,10 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 dur,
             ) {
                 // 未离核：当场结论（true = 调用开始时目标已回收）。
-                Handoff::Resume(dead) => frame.gpr.set_x(Gprs::A0, dead as usize),
-                Handoff::Switch(pa) => return pa as *mut TrapContext,
+                Ok(Handoff::Resume(dead)) => frame.gpr.set_x(Gprs::A0, dead as usize),
+                Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
+                // 备料失败（内存耗尽）：本任务**没挂起**，当场答 `OoM`。
+                Err(e) => return ret_err(frame, e),
             }
         }
         EnvCall::Control(ControlCall::Backtrace { buf, frames }) => {
@@ -592,8 +600,9 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 if ShareWindow::munmap(s, addr, size) {
                     true
                 } else if s.pending_state(addr) != PendingState::Absent {
-                    s.unmap(addr, size);
-                    true
+                    // 部分覆盖时 `unmap` 要分裂、分裂要造图 ⇒ 可能答 `OutOfMemory`
+                    // （簿记一字未动）——用户面照旧是"没拆成"。
+                    s.unmap(addr, size).is_ok()
                 } else {
                     false
                 }

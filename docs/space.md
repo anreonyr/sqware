@@ -22,11 +22,11 @@
 | 文件 | 职责 |
 |---|---|
 | `space/mod.rs` | `SpaceKind`（S/U 页表；不含 ASID） |
-| `space/core.rs` | `SpaceInner` + 映射原语：`map:140` `claim:167` `attach:192` `borrow:217` `unmap:241` `frame:291` `protect:348` `install:586`；`InstallGuard:515`、`MapMode:502` |
+| `space/core.rs` | `SpaceInner` + 映射原语：`register`（**预留紧贴 push** 的收口处）、`map` / `claim` / `attach` / `borrow` / `unmap`（**先备后动**，返 `Result`）/ `frame` / `protect` / `install`（装第一页前一次备足帧表容量）；`InstallGuard`（`installed: usize` 前缀计数）、`MapMode`、`Split`（备料：洞图 / 右段图） |
 | `space/adapter.rs` | 门与刷：`with:217`（不刷）/ `with_flush:227`（本核刷）/ `with_shootdown:242`（跨核清退）、`pte_policy:185`、`Drop:373` |
-| `space/map.rs` | `Map:54` / `Pending:30` / `runs:122` / `carve:168` / `is_borrowed:112` |
-| `space/seg.rs` | `Seg:22` / `Segment:34`——段表，**lowest first-fit** |
-| `space/salvage.rs` | `Span:25` / `Salvage::reclaim:88`——拆下来的帧的**料箱** |
+| `space/map.rs` | `Map`（含 `next` 拆除链）/ `Frames`（**有序 `Vec`**，`reserve` 是唯一分配点）/ `Pending` / `runs` / `carve`（就地收缩，三种洞位）/ `is_borrowed` |
+| `space/segment.rs` | `SegmentKind` / `Segment`——几何 + 块表（**有序 `Vec`**，`try_reserve(1)` 紧贴插入），**lowest first-fit** |
+| `space/salvage.rs` | `Span` / `Salvage`——料箱：摘下的图**自带链**（`Option<Box<Map>>`），待还的段是 `Option<Span>`；**零分配** |
 | `space/window/*` | 零状态窗口策略：`FrameWindow::claim` `frame.rs:27`、`HeapWindow` `heap.rs:30/48`、`StackWindow::claim` `stack.rs:37`、`ShareWindow` `share.rs:28/51` |
 
 三张小状态机：
@@ -42,6 +42,8 @@
 | 不变量 | 违反会怎样 | 谁守着 |
 |---|---|---|
 | 簿记 ⇔ PTE 双向一致 | 悬垂 PTE 指向已归还帧 | `SpaceInner::audit`（framework 档；门见 `kernel/Cargo.toml` 的门注） |
+| **释放路径零分配**（`release` → `unmap` → `reclaim`） | 释放里冒出一次不可失败扩容 = 整机 halt（调用方是 `.expect()`） | `unmap` 的「先备后动」（要造图就先备足，失败时状态一字未动）+ `Salvage` 链；产物对照见 `docs/allocator-diagnosis.md` §14.4 |
+| 帧表容量先备后用：**每次 `push` 之前都预留过** | `Vec` 扩容走不可失败路径 | `Frames::reserve`（唯一分配点）+ `install` 的一次性备足 + `move_*` 的 `debug_assert` |
 | 段表并入 Space 锁；`allocate`/`deallocate` 只在事务内 | 死锁 / 竞争 | `core.rs:18-20`、`adapter.rs:217` |
 | 清退到齐前帧与段不得易主 | 远核旧条目污染新映射 | `salvage.rs:88`、`:106` |
 | 借入映射只能收紧（新 flags ⊆ 当前叶 PTE） | 按 VA 单方面扩他人权限 | `map.rs:112` + `protect` 闸 `core.rs:375-401` |
@@ -59,7 +61,11 @@
 | 借入页不许加宽 | `WidenDenied`，**先校验后落改** | 「叶 PTE 是权限的权威……`narrow` 的 cap ⊆ 页表契约正是靠『加宽无路可走』成立」（`core.rs:329-338`） |
 | 三档锁退出 | 不刷 / 本核刷 / 跨核清退 | 「新增放宽无远核义务……收紧必须就地跨核清退」（`adapter.rs:224-240`） |
 | 已物化页的写缺页不恢复 | 判 `false`（fault isolation） | 「等于把 `Mprotect` 从边界降级成建议」（`fault.rs:131-141`） |
-| 借入即「空帧表的 Map」 | `pending:None ∧ frames 空` | 与 `ShareWindow` 的懒区在同一段表里共存（`map.rs:104-115`） |
+| 借入即「空帧表的 Map」 | `pending:None ∧ frames 空` | 与 `ShareWindow` 的懒区在同一段表里共存 |
+| **能失败的走预留，不能失败的那条路才动结构**（第 16 轮裁决） | 装配/缺页/挂起等入口只加前置或紧贴的 `try_reserve`；释放路径（唯一的「不能失败」）零分配 | 「本来就可失败就没必要增加复杂度」——给释放引入新失败域等于把 halt 换个位置（`docs/allocator-diagnosis.md` §14） |
+| 映射表元素改 `Box<Map>`、`Map` 增拆除链 | 摘下的图整张搬进料箱，不再往容器里推 | 拆除路径不能失败 ⇒ 它必须零分配 |
+| `Frames` / 段块表由 `BTreeMap` 改**有序 `Vec`** | 增长可失败（`BTreeMap` 无 `try_reserve`） | 尺寸不变：32 B/条 vs 叶节点约 33 B/条 |
+| `InstallGuard.installed` 由 `BTreeSet` 改前缀计数 | `mark` 在 `install` 里按 `0..pages` 单调调用 ⇒ 集合恒为前缀 | 一张页表一次不可失败节点分配，要表达的事实只是「前 k 页装好了」 |
 
 ## 5 · 时序：`Mmap` → 触碰 → 缺页 → `Munmap`
 
@@ -126,6 +132,12 @@
   轮前——每轮还调一次 `space.audit()`。
 - **framework 档（自检）**：boot 装出根域后逐空间 `space.audit()`（`boot.rs`），核对簿记 ⇔ PTE；
   关机钩子只剩 `scheduler::rip` 与 `block::flush`（没有审计判词）。
+- **释放路径零分配（第 16 轮）**：器械在**产物**上——`readelf -sW` 取 `Space::release` / `Salvage::reclaim`
+  的函数边界，`llvm-objdump -d` 列 `jalr` 目标，判据集 = {`RawVecInner::do_reserve_and_handle`,
+  `RawVec*::grow_one`, `handle_alloc_error`, `hashbrown*`}：两者**均 0 命中**。改前
+  `SpaceInner::unmap` 体内直达 `do_reserve_and_handle`（拆除路径上的不可失败扩容）。
+- **复现**：`QEMU_MEM=128 SKIP_BUILD=1 scripts/fast.sh "churn 4 8 4"` 改前 halt（917504 B / 116744 B），
+  改后无 panic；`churn 1 4 4` 干净收线（`all tasks exited, system halted`）。
 - **验收门**：三档（默认 / harden / framework）同一套判据 + 各自的正向对照；
   allocator 与空间的判据落在 framework 档的用例行（`[case] cases 4 ok 4 fail 0`）。
 - **未覆盖**：用户侧只有 `alloc` 一条端到端命令（`programs/src/bin/user/shell.rs:971-973`

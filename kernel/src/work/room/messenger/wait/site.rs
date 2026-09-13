@@ -133,6 +133,39 @@ pub(in super::super) fn sites(key: WakeKey) -> &'static Shard {
     shard_at(site_shard(key))
 }
 
+/// 为即将入队的等待者**备一站 + 一格**：站点不在就先建出来（队列容量一并备足），
+/// 在就为它的队列留一格。`life` **按值**进站点（跨挂起不留副本）。
+///
+/// 为什么备料非得包含"把站点就位"：等待队列挂在站点上，而站点可能要等这一刻才
+/// 存在——队列的容量没有第二个地方可挂。整件事在**同一把分片锁内**做完，别的核
+/// 抢不走那格容量。
+///
+/// 不变量（`block` ⑤ 的容量检查立在它上面）：**每次 `waiters.push_back` 之前，
+/// 都先为自己的那一格预留过**。于是任意时刻 `capacity ≥ len + 已在备料、尚未入队
+/// 的等待者数` ⇒ 轮到自己 push 时必有余量。同键的等待者共用一条队列，故这条
+/// 不变量对"同键并发挂起"同样成立。
+///
+/// 站点带着**本键**的存活单元：同一个键只有一份 `Life`，故这枚弱引用与入口无关
+/// （wait / join 指同一个分配），赋值不是「换主」而是「同一事实的重写」。
+///
+/// # Errors
+///
+/// 分片表或队列扩不出来（内存耗尽）→ `Err(())`（与 `try_reserve_roster` 同一口径）。
+pub(in super::super) fn try_reserve_site(key: WakeKey, life: Weak<Life>) -> Result<(), ()> {
+    let mut sites = sites(key).lock();
+    match sites.get_mut(&key) {
+        Some(site) => site.waiters.try_reserve(1).map_err(|_| ()),
+        None => {
+            sites.try_reserve(1).map_err(|_| ())?;
+            let mut site = Site::new(&Weak::new());
+            site.waiters.try_reserve(1).map_err(|_| ())?;
+            site.life = life;
+            sites.insert(key, site);
+            Ok(())
+        }
+    }
+}
+
 /// 信标先探：消费本键上的遗留信号。**缺键即无信标**——不 `or_insert`：空的、
 /// 无信标的站点没有语义，不该被「先探」凭空造出来。
 ///

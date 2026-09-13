@@ -7,8 +7,17 @@
 //! 独立成文件的理由：它们是**回收侧**的词汇，与 [`SpaceInner`](super::core::SpaceInner)
 //! 的映射簿记是两件事；`Space`/`SpaceInner` 只提供结清所需的入口
 //! （`asid()` / `with()` / `deallocate()`）。
+//!
+//! # 料箱必须零分配（不是省内存，是唯一能让释放路径不失败的办法）
+//!
+//! `release` 这条路上没有可返回的错误：调用方是 `reap.rs` 的 `.expect()` 与
+//! `pole.rs` 的 `Denied`。故料箱不许往任何容器里推——摘下的图**自带一条链**
+//! （[`Map::next`]），进箱只是把 `Box` 挂到链头（一次指针写）；一次性释放时
+//! 至多一条 [`Span`]，故它是 `Option` 而不是 `Vec`。旧版这里是两个 `Vec`
+//! （`maps: Vec<Map>` / `spans: Vec<Span>`），那正是拆除路径上那次
+//! `RawVecInner::do_reserve_and_handle` 的来源（实测见 `docs/allocator-diagnosis.md` §14）。
 
-use alloc::vec::Vec;
+use alloc::boxed::Box;
 use core::num::NonZeroUsize;
 
 use super::adapter::Space;
@@ -44,39 +53,55 @@ impl Span {
     }
 }
 
-/// 拆除产出的待回收料 —— 摘下的帧（整张 [`Map`]）与待还的段（[`Span`]）。
+/// 拆除产出的待回收料 —— 摘下的图（自带链）与待还的段（[`Span`]）。
 ///
 /// 硬不变量：**清退到齐之前不得易主**。帧归还即可被别的空间拿到、还段即 VA 可
 /// 被本空间复用，而远核此刻可能仍持旧 TLB 条目 —— 两者都必须等在
 /// [`Self::reclaim`] 里的清退之后。故 `Drop` 断言料箱已空（非空即被绕过）。
 #[must_use = "salvage holds frames/segments that must be reclaimed after eviction"]
 pub(crate) struct Salvage {
-    /// 摘下的映射（帧随其 drop 归还 frame 池 / Arc 计数归零）。
-    maps: Vec<Map>,
-    /// 待还的段区间（`release` 类拆除；`unmap` 类不还段则为空）。
-    spans: Vec<Span>,
+    /// 摘下的图链（帧随链上每张图 drop 归还 frame 池 / Arc 计数归零）。
+    maps: Option<Box<Map>>,
+    /// 待还的段区间（`release` 类拆除；`unmap` 类不还段则为空）——至多一条。
+    span: Option<Span>,
 }
 
 impl Salvage {
-    /// 空料箱（拆除事务前构造，事务内收料）。
+    /// 空料箱（拆除事务前构造，事务内收料）。**不分配**。
     pub(crate) const fn new() -> Self {
         Self {
-            maps: Vec::new(),
-            spans: Vec::new(),
+            maps: None,
+            span: None,
         }
     }
 
-    /// 收帧（`SpaceInner::unmap` / `Map::carve` 调用）。
-    pub(super) fn take_map(&mut self, map: Map) {
-        self.maps.push(map);
+    /// 收图（`SpaceInner::unmap` 调用）：挂到链头。**不分配**。
+    ///
+    /// 前置：这张图已从 `SpaceInner::maps` 摘除、`next` 为空（在册的图恒无链）。
+    pub(super) fn take_map(&mut self, mut map: Box<Map>) {
+        debug_assert!(map.next.is_none(), "salvage: 收进料箱的图不得已带链");
+        map.next = self.maps.take();
+        self.maps = Some(map);
     }
 
-    /// 收段（拆除入口在校验通过后调用）。
+    /// 收段（拆除入口在校验通过后调用）。**不分配**。
     pub(super) fn take_span(&mut self, span: Span) {
-        self.spans.push(span);
+        debug_assert!(self.span.is_none(), "salvage: 一次拆除至多一条 Span");
+        self.span = Some(span);
     }
 
-    /// 结清：清退本空间 ASID → 还段 → 帧 drop。顺序即安全性。
+    /// 链上图的张数（`Drop` 的断言词用；**只在断言里读**，不做读数）。
+    fn chain_len(&self) -> usize {
+        let mut n = 0;
+        let mut cur = self.maps.as_deref();
+        while let Some(m) = cur {
+            n += 1;
+            cur = m.next.as_deref();
+        }
+        n
+    }
+
+    /// 结清：清退本空间 ASID → 还段 → 丢链（帧归还）。顺序即安全性。
     ///
     /// 空料箱直接返回（无易主 = 无清退义务），故装配回滚路径零成本。
     ///
@@ -86,14 +111,14 @@ impl Salvage {
     ///
     /// [`Deaf`] = RFENCE 清退失败（致命级，适配层裁定策略）。
     pub(crate) fn reclaim(mut self, space: &Space) -> Result<(), Deaf> {
-        let maps = core::mem::take(&mut self.maps);
-        let spans = core::mem::take(&mut self.spans);
-        if maps.is_empty() && spans.is_empty() {
+        let maps = self.maps.take();
+        let span = self.span.take();
+        if maps.is_none() && span.is_none() {
             return Ok(());
         }
         asid::shootdown(space.asid())?;
         space.with(|inner| {
-            for span in &spans {
+            if let Some(span) = span {
                 let ok = inner.deallocate(span.seg, span.va.as_usize(), span.size.get());
                 debug_assert!(ok, "salvage: segment mismatch on reclaim {:?}", span.va);
             }
@@ -106,10 +131,10 @@ impl Salvage {
 impl Drop for Salvage {
     fn drop(&mut self) {
         debug_assert!(
-            self.maps.is_empty() && self.spans.is_empty(),
+            self.maps.is_none() && self.span.is_none(),
             "salvage dropped unreclaimed: {} maps, {} spans",
-            self.maps.len(),
-            self.spans.len()
+            self.chain_len(),
+            usize::from(self.span.is_some())
         );
     }
 }

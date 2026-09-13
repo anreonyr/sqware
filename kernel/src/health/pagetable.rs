@@ -58,8 +58,11 @@ pub(super) fn pagetable() {
             "round {round}: map hit"
         );
 
-        // 拆除：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）
-        space.unmap(VirtAddr::from_raw(BASE), SIZE);
+        // 拆除：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）。
+        // 这里拆的是**完整区间**（与 attach 的区间逐字相等）⇒ 不需要分裂 ⇒ 不会分配。
+        space
+            .unmap(VirtAddr::from_raw(BASE), SIZE)
+            .expect("pagetable case: unmap");
         crate::expect!(
             space.table_count() == base_count,
             "round {round}: tables after unmap (got {} want {})",

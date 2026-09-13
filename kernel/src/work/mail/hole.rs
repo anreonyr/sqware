@@ -253,7 +253,7 @@ pub(crate) fn wait(
     }
     // `meta.life()` 的临时量**直接移进**等待机（站点是它唯一的持有者）：这一帧里
     // 不留副本，故挂起跨过的调用链上没有任何引用需要析构。
-    Ok(match messenger::wait(key(meta, dir), meta.life(), dur) {
+    Ok(match messenger::wait(key(meta, dir), meta.life(), dur)? {
         // 窗口内 wake 已至（未挂起）：以当前状态为准。
         Handoff::Resume(()) => Handoff::Resume(meta.alive() && meta.ready(dir)),
         Handoff::Switch(pa) => Handoff::Switch(pa),

@@ -96,10 +96,19 @@ pub fn beat(interval: u64) {
 /// 在句柄上安排一个到点（tock）事件：入堆 + 刷新最近 tock 镜像。
 ///
 /// 前置：handle 由调度器自管（先入簿、后 tock，闭合「堆可见 ⇒ 簿记必在」）。
-pub fn tock(handle: u64, wake_at: u64) {
+///
+/// # Errors
+///
+/// 堆扩不出来（内存耗尽）→ `Err(())`（与 `try_reserve_roster` 同一口径）。
+/// **扩容与入堆在同一把锁内**——挂起路径上这次 `BinaryHeap` 扩容此前是不可失败的，
+/// 内存吃紧即整机 halt；现在它是一个返回码，调用方（`wait::block`）当场答 `OoM`，
+/// 任务不挂起、机器照旧活着。
+pub fn tock(handle: u64, wake_at: u64) -> Result<(), ()> {
     let mut i = TIMER_HEAP.inner.lock();
+    i.heap.try_reserve(1).map_err(|_| ())?;
     i.heap.push(Reverse((wake_at, handle)));
     TIMER_HEAP.recompute_nearest(&i);
+    Ok(())
 }
 
 /// 消音这个 tock —— 与 [`tock`] 互为逆操作：堆里那一项直接摘掉，此后该句柄不再

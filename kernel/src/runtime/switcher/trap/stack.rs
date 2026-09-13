@@ -146,8 +146,12 @@ pub fn init() {
                 flags,
             )
             .expect("map trap stack body");
-        // 恒等视图 guard 页清 PTE 保留 boot 栈溢出护栏（固定 VA guard 管 trap 栈）
-        space.unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD);
+        // 恒等视图 guard 页清 PTE 保留 boot 栈溢出护栏（固定 VA guard 管 trap 栈）。
+        // 这是**挖洞**（DRAM 恒等视图的中间一页），故 `unmap` 要造一张洞图；boot 期
+        // 帧池充足，造不出来即初始化失败，当场停。
+        space
+            .unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD)
+            .expect("trap stack guard punch");
         // canary 写于固定 VA 栈体底（guard 之上）
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);

@@ -17,11 +17,14 @@ use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
 use crate::work::room::scheduler::trap::run;
+use crate::work::unit::gate::GateError;
 use crate::work::unit::life::{Life, TaskLife};
 use crate::work::unit::task::{Task, TaskState};
 
 use self::holder::{Ticket, hold, void};
-use self::site::{SITE_SHARDS, Site, Waiter, WakeKey, prune, shard_at, sites, take_beacon};
+use self::site::{
+    SITE_SHARDS, Site, Waiter, WakeKey, prune, shard_at, sites, take_beacon, try_reserve_site,
+};
 use super::handoff::Handoff;
 
 // ── 操作：挂起（用 scheduler::core::Scheduler::swap） ──
@@ -30,8 +33,9 @@ use super::handoff::Handoff;
 ///
 /// 时序（两个竞态闭合点）：
 ///   ① 信标先探——信号已至 → 不挂起（不碰站点表：缺键即无信标）
-///   ② 离核——借 scheduler 跨边界原语把 running 卸下（槽位 settled）
-///   ③ 登记——发票 → 存票根 → `tock`（**先票根后 tock**：堆可见 ⇒ 票根必在）
+///   ② 备料 + 登记——站点那一格 / 票根 / 到点，**全部在离核之前**：
+///      票根先于 `tock`（**堆可见 ⇒ 票根必在**），而两步都要能答错
+///   ③ 离核——借 scheduler 跨边界原语把 running 卸下（槽位 settled）
 ///   ④ 入队——写等待点 + 挂进站点队列；**锁内先判键死活、再查一次信标**
 ///   ⑤ 窗口内信标已至或键已死 → 撤销登记，按「已唤醒」处理（Starved 入队）
 ///
@@ -41,21 +45,48 @@ use super::handoff::Handoff;
 /// 可以不留。键已死这一支**走既有回滚**（⑤ 的 `void(ticket)` + `rise`），不新增
 /// 任何清理机制——`Blocked` 只在 push 那一支被写，状态仍与容器一致。
 ///
+/// # ② 为什么必须在离核之前（失败域）
+///
+/// 挂起没有失败域可挂（`Handoff` 两态里没有"失败"），所以唯一会分配的一步按仓内
+/// 惯例提到装配之前；而"之前"的边界是 **`current().swap()`**——离核之后本核就没
+/// 有自己的任务了，此时再想返回只能让核上空转（实测：下一次 envcall 直接
+/// `envcall without running task`）。失败时一个字都没欠：站点那一格已备、票根与
+/// 到点未登记、任务状态未改，调用方当场拿到 `OoM`。
+///
 /// 锁纪律：站点表与票根都是 L3，**绝不互相嵌套**——「作用域内取、作用域外用」。
-fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
+fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, GateError> {
     // ① 信标先探
     if take_beacon(key) {
-        return Handoff::Resume(());
+        return Ok(Handoff::Resume(()));
     }
-    // ② 离核
-    let (mut task, next_pa) = current().swap();
-    // ③ 登记
+    // ② 备料 + 登记（**全部在离核之前**）
+    //
+    // 挂起这条路上没有失败域（`Handoff` 两态里没有"失败"），故按仓内惯例把唯一会
+    // 分配的一步提到装配之前。**必须在 `swap()` 之前**：`swap()` 已经把本任务换下
+    // 核，之后返回等于让本核没有任务（实测：下一次 envcall 直接
+    // `envcall without running task` panic）。失败时一个字都没欠——站点那一格已备、
+    // 票根与到点未登记、任务状态未改、本核仍持着自己的任务，`OoM` 当场交给调用方，
+    // 它可能马上重试。
+    let Some(me) = current().running_task() else {
+        // envcall 恒在任务上下文（见 `dispatch` 头注）；退化路径不挂起、不动表，
+        // 按"条件未就绪"答（`Busy`）。
+        return Err(GateError::Busy);
+    };
+    // `life` 按值移进站点（理由见 `try_reserve_site`）。
+    try_reserve_site(key, life).map_err(|()| GateError::OoM)?;
     let ticket = Ticket::alloc();
     let at = (dur != Duration::MAX).then(|| clock::now().add(dur).as_ticks());
     if let Some(at) = at {
-        hold(ticket, key, &task);
-        timer::tock(ticket.raw(), at);
+        hold(ticket, key, &me).map_err(|()| GateError::OoM)?;
+        if timer::tock(ticket.raw(), at).is_err() {
+            void(ticket); // 到点没登记上 ⇒ 票根也不留（`void` 顺带消音，幂等）
+            return Err(GateError::OoM);
+        }
     }
+    // 强引用到此为止：**跨挂起不得持强引用**（`me` 只是登记用的临时量）。
+    drop(me);
+    // ③ 离核
+    let (mut task, next_pa) = current().swap();
     trace::note(EventKind::Room(RoomEvent::Wait {
         tid: task.ident.id,
         // 诊断用折叠值：键成枚举后不再有「人可读的位打包」形态。
@@ -65,15 +96,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
     Task::exclusive(&mut task).transform(TaskState::Blocked { key, ticket });
     let queued = {
         let mut sites = sites(key).lock();
-        let site = sites.entry(key).or_insert_with(|| Site::new(&life));
-        // 站点带着**本键**的存活单元：同一个键只有一份 Life，故这枚弱引用与入口
-        // 无关（wait / join 指同一个分配），赋值不是「换主」而是「同一事实的重写」。
-        //
-        // **按值移进站点**（不是 `clone()`）：这一行之后，本帧与调用链上再没有这枚
-        // 弱引用的副本。跨挂起的引用只要还在某个局部量里，那条链一旦被弃（被别核判死 /
-        // 收尾时就地冻住）它的 `Drop` 就永不执行 —— `block` 头注里那条"跨挂起不得持
-        // 强引用"的纪律，对**弱引用**同样成立（弱引用不钉载荷、钉的是外壳）。
-        site.life = life;
+        let site = sites.entry(key).or_insert_with(|| Site::new(&Weak::new()));
         let queued = if Life::dead(&site.life) {
             // 键已死（资源没了）：不入队、也不留站点——死键的队列必然空（能入队 ⇒
             // 入队那一刻键还活着），故下面的 `prune` 会当场把这个空壳删掉。
@@ -85,6 +108,13 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
             site.pend = false;
             false
         } else {
+            // 这一格容量在 ② 已经备好（见 `try_reserve_site`）：**每次 push 之前都为
+            // 自己那一格预留过**，于是任意时刻 `capacity − len ≥ 已在备料、尚未入队
+            // 的等待者数 ≥ 1` —— 所以这里不会再扩容，`push_back` 走的是纯搬移。
+            debug_assert!(
+                site.waiters.len() < site.waiters.capacity(),
+                "wait: 入队前没备够一格（try_reserve_site 的不变量破了）"
+            );
             site.waiters.push_back(Waiter {
                 task: task.clone(),
                 ticket,
@@ -95,6 +125,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
         prune(&mut sites, key);
         queued
     };
+
     // ⑤ 窗口内信标已至 / 键已死：撤销登记，按已唤醒处理
     if queued {
         // **跨挂起不得持强引用**：入队成功 ⇒ 队列里那份是权威持有者，本地这份
@@ -111,7 +142,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
     #[cfg(feature = "framework")]
     crate::work::unit::weak::check_block_heldout();
     // 本核无后继即就地取活：`run()` 只会循环到有帧或停机，故落点恒为 `Switch`。
-    Handoff::Switch(next_pa.unwrap_or_else(run))
+    Ok(Handoff::Switch(next_pa.unwrap_or_else(run)))
 }
 
 /// 放回就绪——「唤醒」的全部效果就是这一件事。
@@ -141,11 +172,11 @@ fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
 /// 一枚弱引用。
 ///
 /// Running → Blocked；返回下一帧 PA（若 scheduler 装了下一 starved）。
-pub fn park(duration: Duration) -> usize {
+pub fn park(duration: Duration) -> Result<usize, GateError> {
     let Some(task) = current().running_task() else {
         // 唯一调用点（envcall `Park`）恒在任务上下文；退化路径不空转也不挂：
         // 无任务即无「本核无后继」可谈，直接取活。
-        return run();
+        return Ok(run());
     };
     let me = task.ident.id;
     let wake_at = clock::now().add(duration).as_ticks();
@@ -155,8 +186,8 @@ pub fn park(duration: Duration) -> usize {
     }));
     let life = task.life();
     drop(task);
-    match block(WakeKey::Alarm { task: me }, life, duration) {
-        Handoff::Switch(pa) => pa,
+    match block(WakeKey::Alarm { task: me }, life, duration)? {
+        Handoff::Switch(pa) => Ok(pa),
         // `Alarm` 无投信方，且键的强持有者就是我（我还在跑）⇒ 信标先探不可能命中、
         // 键也不可能已死。
         Handoff::Resume(()) => unreachable!("Alarm 无投信方"),
@@ -164,8 +195,8 @@ pub fn park(duration: Duration) -> usize {
 }
 
 /// 事件等待（`RoomCall::Wait`）：直通 [`block`]。有投信方的键，信标先探可能命中
-/// 而当场续跑（[`Handoff::Resume`]）；键已死则 ④ 的锁内判死把它当场放回。
-pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
+/// 而当场续跑（[`Handoff::Resume`]）；键已死则 ⑤ 的锁内判死把它当场放回。
+pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, GateError> {
     block(key, life, dur)
 }
 
@@ -191,20 +222,20 @@ pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Handoff<()> {
 /// 置位）。**非法 id 也在边界判掉**（名册点名无此 id ⇒ `Denied`）——判活只此一条来源，
 /// 本函数因此**没有失败支**：从前那个 `Err(Denied)` 需要 `target_dead ∧ ¬allocated`
 /// 同时成立，而两条来路都蕴含 `allocated`，故它**曾经永远不可达**。
-pub fn join(task: TaskLife, reaped: bool, dur: Duration) -> Handoff<bool> {
+pub fn join(task: TaskLife, reaped: bool, dur: Duration) -> Result<Handoff<bool>, GateError> {
     if reaped {
-        return Handoff::Resume(true);
+        return Ok(Handoff::Resume(true));
     }
     if dur == Duration::ZERO {
-        return Handoff::Resume(false);
+        return Ok(Handoff::Resume(false));
     }
     // 拆壳（`TaskLife` 是"一对"）后**按值移交**存活单元：挂起期间站点是它唯一的
     // 持有者，`join` 这一帧里不留副本（理由同 `block` 头注的"跨挂起不得持强引用"）。
     let TaskLife { id, life } = task;
-    match block(WakeKey::Task { id }, life, dur) {
-        Handoff::Switch(pa) => Handoff::Switch(pa),
+    match block(WakeKey::Task { id }, life, dur)? {
+        Handoff::Switch(pa) => Ok(Handoff::Switch(pa)),
         // 信标已置：目标在「判死 → 入队」的窗口内被回收 ⇒ 当场结论（已回收）。
-        Handoff::Resume(()) => Handoff::Resume(true),
+        Handoff::Resume(()) => Ok(Handoff::Resume(true)),
     }
 }
 
