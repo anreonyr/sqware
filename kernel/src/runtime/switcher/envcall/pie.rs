@@ -9,10 +9,12 @@
 //! 与 [`find`]（只判存在）。目标顺序是：表里没有 → `Denied`；已封印 → `Dead`；
 //! 权不够 → `Denied`——同一个已封印的 token 不该按动词报出两个答案。
 //!
-//! ⚠ **今日只有 `open`/`shut`/`accord`/`reserve` 四个动词走它**：`seal`/`narrow`/`collect`
-//! 仍手写查找，`Release` 完全不走 `find`（它必须能在封印后仍摘表项）。于是那条现象
-//! **没有消失、只是缩小了**：`narrow` 把 `covers` 排在 `alive` 之前，故「已封印 + 越权
-//! 子集」报 `Denied` 而非 `Dead`。把余下几处也收进 `resolve`/`find` 是**独立一步**。
+//! ⚠ **今日只有 `open`/`shut`/`reserve` 三个动词走它**：`accord` 走 `find` +
+//! [`usable`] + 核心自带的四道闸（"交出"要在调用方表内写锚）；`seal`/`narrow`/
+//! `collect` 仍手写查找，`Release` 完全不走 `find`（它必须能在封印后仍摘表项）。
+//! 于是那条现象**没有消失、只是缩小了**：`narrow` 把 `covers` 排在 `alive` 之前，
+//! 故「已封印 + 越权子集」报 `Denied` 而非 `Dead`。把余下几处也收进
+//! `resolve`/`find` 是**独立一步**。
 //!
 //! 显式不过闸的两个：`Release`（自释必须能在封印后收尾，否则表项永远摘不掉）、
 //! `Reserve`（`owner` 是资源来历，封印不使它消失）——它们走 [`find`]。
@@ -27,7 +29,7 @@ use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie};
+use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie, clear_heir};
 use crate::work::unit::task::TaskIdent;
 
 use super::subset_to_pte;
@@ -103,16 +105,49 @@ fn find(token: usize) -> Result<AnyPie, GateError> {
         .ok_or(GateError::Denied)
 }
 
+/// 「被关住」闸——位与存活之外的**第三个判据维度**。
+///
+/// 读本地锚：锚空 ⇒ 放行；锚指向的那一枚**还在**（且仍带 `CAGE`）⇒ `Caged`；
+/// 已不在 ⇒ **清锚** ⇒ 放行。清锚是唯一的"解关"动作（没有独立动词）——交回、撤销、
+/// 借入方死亡都只是让那一枚消失，而"消失"由这里读出来，故它必须回到**本任务表**
+/// 里写（判据拿到的是抄件）。
+///
+/// 挂点：数据面四个动词 + `Accord` 的源枚。**不挂**查询与收场（`Reserve`/`Collect`/
+/// `Release`/`Revoke`/`Narrow`/`Seal`）。
+///
+/// 锁序：核对要摸**别人**的表（L3），故必须**在放开本任务 `pies` 之后**调用；本函数
+/// 自己逐任务取放，绝不嵌套。
+pub(super) fn usable(pie: &AnyPie) -> Result<(), GateError> {
+    let Some(h) = pie.heir().copied() else {
+        return Ok(());
+    };
+    let held = muster(h.task).and_then(|t| t.upgrade()).is_some_and(|t| {
+        let pies = t.pies.lock();
+        pies.iter()
+            .any(|p| p.token() == h.token && p.permission().contains(Permission::CAGE))
+    });
+    if held {
+        return Err(GateError::Caged);
+    }
+    if let Some(task) = current().running_task() {
+        clear_heir(&task, pie.token());
+    }
+    Ok(())
+}
+
 /// 解封 Hole：建资源实体 → 建门闩（原始自持：无 sire）→ 落表。
 ///
 /// 门闩持资源实体的强引用——**寿命即能力寿命**：最后一份消失时资源随之回收。
+///
+/// 原始自持枚带满四位（含 `CAGE`）：源枚上这一位的读法是"**我有资格交出去**"
+/// ——`covers` 要求 `subset ⊆ 自身`，造物主不带它就永远借不出去。
 fn unseal_hole(frame: &mut TrapContext, mtu: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         let meta = mail::hole::meta(mtu, task.ident.id)?;
         let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
             meta,
-            Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+            Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
             None,
         );
         let token = pie.token;
@@ -143,7 +178,7 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
         let meta = mail::nole::NoleMeta::new(task.ident.id);
         let pie: Pie<mail::nole::NoleMeta> = gate::new_pie(
             meta,
-            Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+            Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
             None,
         );
         let token = pie.token;
@@ -165,7 +200,7 @@ fn unseal_pole(frame: &mut TrapContext, bytes: usize) -> Outcome {
         let task_space = task.ident.team.space.clone();
         let pie: Pie<mail::pole::PoleMeta> = gate::new_pie(
             meta.clone(),
-            Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+            Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
             None,
         );
         let token = pie.token;
@@ -185,7 +220,7 @@ fn unseal_pole(frame: &mut TrapContext, bytes: usize) -> Outcome {
 
 /// 开闩：借映 Pole 页进当前任务空间 → VA（同 token 幂等复用）。仅对 Pole 成立。
 fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
-    let r = match resolve(token, Need::Read) {
+    let r = match resolve(token, Need::Read).and_then(|p| usable(&p).map(|()| p)) {
         Err(e) => Err(e),
         Ok(AnyPie::Pole(p)) => match subset_to_pte(p.permission) {
             Err(e) => Err(e),
@@ -208,7 +243,7 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
 /// 关闩：撤该 token 的映射（幂等）。仅对 Pole 成立。
 fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
     let _ = &ident;
-    let r = match resolve(token, Need::Read) {
+    let r = match resolve(token, Need::Read).and_then(|p| usable(&p).map(|()| p)) {
         Err(e) => Err(e),
         Ok(AnyPie::Pole(p)) => mail::pole::shut(p.meta(), token).map(|()| 0),
         // Hole 与 Nole 都没有「关闩」这回事（无映射可撤）。
@@ -247,28 +282,19 @@ fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
     Outcome::Resume
 }
 
-/// 转授子集给另一个任务 → 对端侧那枚的 token（撤销句柄）。
+/// 转授 / 交出一枚给另一个任务 → **对端侧**那枚的 token（撤回句柄）。
 ///
-/// 四道闸：存活 → 有转授权（VEST 或 BACK）→ `subset` 非空且 ⊆ 当前权限 →
-/// BACK 守门（带 BACK 只能授回 sire 的持有者；原始自持不受限）。
+/// 四道闸（在表内 / 存活 / 持 `VEST` / 覆盖子集 / 未被关住）已下沉到核心
+/// （`gate::accord`）——"交出"要在调用方表内就地写锚，抄件做不到。本层只补两件核心
+/// 做不到的事：**① 过「被关住」闸**（陈旧锚在此自愈；核心不依赖 scheduler，核不了），
+/// **② 把目标解析成 `Weak`**。
 fn accord(frame: &mut TrapContext, src_token: usize, dst_id: usize, subset: Permission) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
+        let caller = current().running_task().ok_or(GateError::Denied)?;
         let src = find(src_token)?;
-        if !src.alive() {
-            return Err(GateError::Dead);
-        }
-        if !src.allows(Need::Grant) {
-            return Err(GateError::Denied);
-        }
-        // subset 已由 Wire 校验式 unpack（非法位 → Err），此处只查非空 & ⊆。
-        if !src.covers(subset) {
-            return Err(GateError::Denied);
-        }
-        if !gate::vestable(&src, dst_id, &gate::snap()) {
-            return Err(GateError::Denied);
-        }
-        let target = muster(dst_id).ok_or(GateError::Denied)?;
-        gate::accord(&src, &target, subset)
+        usable(&src)?;
+        let dst = muster(dst_id).ok_or(GateError::Denied)?;
+        gate::accord(&caller, src_token, &dst, subset)
     })();
     answer(frame, r);
     Outcome::Resume

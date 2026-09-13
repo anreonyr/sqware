@@ -17,7 +17,7 @@
 // 三者按"有没有数据面"分：Hole 有槽、Pole 有页、Nole **什么都没有**——故 Nole 是
 // 唯一能被用作"存在权"载体的类型（资源权需要资源，存在权不需要）。
 //
-// 权限四元：READ / WRITE / VEST / BACK（单一真相在 `env::Permission`）。
+// 权限四位：READ / WRITE（读写族）+ VEST / CAGE（传递族；单一真相在 `env::Permission`）。
 // 用户句柄 = per-pie token（全局唯一），envcall 以 token 寻址。
 
 pub mod hole;

@@ -5,20 +5,22 @@
 // `Pie<M>` 泛型直指 `mail` 的 Meta 类型，并持其**唯一强引用**（`Arc<M>`，资源寿命
 // = 能力寿命）—— gate 单向依赖 mail，成 DAG（无环）。
 //
-// **派生关系只存一条边**：每枚门闩记 `sire`（父门闩的 token）。向上的授与人、
-// 向下的子门闩都是查询（`snap`），吃同一张全世界任务快照——快照由适配层拍、
-// boot 注入，gate 不依赖 scheduler。
+// **派生关系只存一条边**（`sire`）：向上的授与人、向下的子门闩都是查询（`snap`），
+// 吃同一张全世界任务快照——快照由适配层拍、boot 注入，gate 不依赖 scheduler。
+// `Pie.heir` 不是第二条边：它是"我交出的那一枚"的**本地锚（缓存）**，真相仍在
+// `sire` 边上——锚存在的唯一理由是数据面判权不能吃快照（`snap()` 要分配）。
 //
 // 授权语义在此：`Pie::{allows, covers}` 判定「哪个操作需哪些权利位」
-// （`Need::{Read,Write,Grant,Build}`）+ 覆盖子集（narrow/accord 共用）；BACK 守门
-// （带 BACK 只能授回 sire 的持有者）在 `snap::vestable`；envcall 适配层只
-// 「取本核 → 转发」，不在壳内重写规则。
+// （`Need::{Read,Write,Grant}`）+ 覆盖子集（narrow/accord 共用）。`Grant` 只看
+// `VEST`（传递族唯一的目标位）；`CAGE` 是形态声明、不授予任何事。**交出**（带
+// `CAGE` 的 accord）在本层自带四道闸，并把源枚的锚写进 `Pie.heir`；envcall 适配层
+// 只「取本核 → 转发」，不在壳内重写规则。
 //
 //   pie.rs     — 门闩（Pie<M>, AnyPie）+ 权限（Permission）+ 操作授权
 //                 （Need/allows/covers）+ 错误（GateError）
-//   snap.rs    — 全世界任务快照 + 沿 sire 的查询（heirs/vestor/vestable/find）
-//   accord.rs  — 转授子集给其他 Task（写派生边）
-//   narrow.rs  — 就地单调收窄本 pie 权限
+//   snap.rs    — 全世界任务快照 + 沿 sire 的查询（heirs/vestor/find）
+//   accord.rs  — 转授 / 交出给其他 Task（写派生边 + 写锚）+ `clear_heir`
+//   narrow.rs  — 就地单调收窄本 pie 权限（`CAGE` 不可撤）
 //   cull.rs    — 级联撤销（cull）+ 退出钩子（doom）
 //   right.rs   — **存在权**的判定与铸造（`Nole` 载体；建域权是第一位消费者）
 //   revoke.rs  — 撤销授与他人的副本（含全部后代）
@@ -38,10 +40,10 @@ mod snap;
 
 pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, new_pie};
 
-pub(crate) use accord::accord;
+pub(crate) use accord::{accord, clear_heir};
 pub(crate) use cull::{cull, doom};
 pub(crate) use narrow::narrow;
 pub(crate) use release::release;
 pub(crate) use revoke::revoke;
 pub(crate) use right::holds_build_right;
-pub(crate) use snap::{install, snap, vestable, vestor};
+pub(crate) use snap::{install, snap, vestor};

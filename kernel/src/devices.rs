@@ -73,7 +73,7 @@ fn supply_dtb() -> (Name, AnyPie) {
     let meta = mail::pole::region(dtb.base, dtb.size, 0).expect("devicetree region");
     let pie = gate::new_pie(
         meta,
-        Permission::READ | Permission::VEST | Permission::BACK,
+        Permission::READ | Permission::VEST | Permission::CAGE,
         None,
     );
     (
@@ -93,7 +93,7 @@ fn supply_irq() -> (Name, AnyPie) {
     assert!(IRQ.set(meta.clone()).is_ok(), "irq hole built twice");
     let pie = gate::new_pie(
         meta,
-        Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+        Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
         None,
     );
     (
@@ -172,7 +172,7 @@ pub(crate) fn scan() -> Vec<(Name, AnyPie)> {
             };
             let pie = gate::new_pie(
                 meta,
-                Permission::READ | Permission::WRITE | Permission::VEST | Permission::BACK,
+                Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
                 None,
             );
             out.push((name, AnyPie::Pole(pie)));

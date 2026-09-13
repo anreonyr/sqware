@@ -21,6 +21,7 @@
 //!   heir  — 子域枚举（UnitCall::HeirCount + Heir）
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
+//!   lend  — 独占交出自检（CAGE：我不可用 / 至多一个 heir / 转交 / 逐级复原）
 //!   churn — 任务生灭压测（主动探测：反复产生/回收，把关机终值变成刻度）
 //!   reclaim — 资源寿命自检（引用回收 / 封印归属 / 开辟者消亡）
 //!   spoof — 身份伪造自检（发送者由内核盖章，报文里的回信 token 不构成身份）
@@ -340,6 +341,96 @@ fn join_done(tid: env::TaskId) {
         }
         let _ = task_join(tid, usize::MAX);
     }
+}
+
+/// `GateError::Caged` 的负码（内核与用户侧共用同一张表，见 `env::EnvError::code`）。
+const E_CAGED: isize = -7;
+
+/// 这一枚现在被关住了吗（**探测**的答案是不是 `Caged`）。
+///
+/// **用 `wait` 探测，不用 `push`**：`push` 成功会把槽占住，而单任务自检里没有第二个
+/// task 来排空它——`HolePie::push` 对 `Busy` 是**永久等**，于是后面那句 `push` 会当场
+/// 挂住（实测：`lend` 步骤挂住、门报超时、QEMU 被外接 timeout 杀掉 rc=124）。
+/// `wait(.., 0)` = 只探测不挂起，且**不碰槽**——探针不该改变被测状态。
+fn caged(pie: &HolePie) -> bool {
+    matches!(
+        pie.wait(env::HoleDir::Push, 0),
+        Err(e) if e.source.code() == E_CAGED
+    )
+}
+
+/// 独占交出（`CAGE`）自检（`lend` 命令）。
+///
+/// 交出与交回都不需要第二方配合（目标可以是我自己），故六段判据全在一个任务里：
+///   ① **交出后我这一枚当场不可用**（`Caged`），子枚照常能用；
+///   ② **关着的时候不能再交出**（"至多一个 heir"——这条同时就是独占的守卫）；
+///   ③ **转交后子枚自己也被关住**，链上只有尾端那枚可用；
+///   ④ 放下尾端 ⇒ 上一格复原；
+///   ⑤ 放下子枚 ⇒ **我复原**：陈旧锚在判据里自愈，没有谁通知我；
+///   ⑥ **自持枚授出不带 `CAGE` 的子集 ⇒ 允许，且我不被关住**（"我有资格交出去" ≠
+///      "每一次授予都是交出"）。这一条是实测踩出来的回归：少了它，自持枚的每一次
+///      普通授予都会被粘性拒掉，整机起不来。
+fn lend(term: &Term) {
+    let rw = env::Permission::READ | env::Permission::WRITE;
+    // 交出：读写 + 转交资格（VEST）+ 形态位（CAGE）。
+    let lend = rw | env::Permission::VEST | env::Permission::CAGE;
+    let msg = [0x5au8; 8];
+    let mut buf = [0u8; 8];
+    let me = match unit::self_id() {
+        Ok(id) => id,
+        Err(_) => {
+            term.writeline("lend: no self id");
+            return;
+        }
+    };
+    let a = match HolePie::unseal(HOLE_MTU_MAX) {
+        Ok(p) => p,
+        Err(_) => {
+            term.writeline("lend: unseal failed");
+            return;
+        }
+    };
+    // ① 交出 a → b（dst = 我自己：子枚落进同一张表）
+    let b = match a.accord(me, lend) {
+        Ok(t) => HolePie::from_token(t),
+        Err(_) => {
+            term.writeline("lend: accord failed");
+            return;
+        }
+    };
+    let a_caged = caged(&a);
+    let b_ok = b.push(&msg).is_ok() && b.pull(&mut buf).is_ok();
+    // ② 关着时不能再交出
+    let twice = a.accord(me, lend).is_err();
+    // ③ 转交 b → c：b 自己也被关住，只有 c 能用
+    let c = match b.accord(me, lend) {
+        Ok(t) => HolePie::from_token(t),
+        Err(_) => {
+            term.writeline("lend: sub-accord failed");
+            return;
+        }
+    };
+    // 每次成功 `push` 都当场取回：单任务里没人排空槽，留着它下一步就会永久等。
+    let chain = caged(&b) && c.push(&msg).is_ok() && c.pull(&mut buf).is_ok();
+    // ④ 放下尾端 ⇒ 上一格复原
+    let _ = c.release();
+    let back = b.push(&msg).is_ok() && b.pull(&mut buf).is_ok();
+    // ⑤ 放下子枚 ⇒ 我复原
+    let _ = b.release();
+    let restore = a.push(&msg).is_ok() && a.pull(&mut buf).is_ok();
+    // ⑥ 自持枚授出**不带 `CAGE`** 的子集 ⇒ 允许，且我不被关住
+    let plain = match a.accord(me, rw) {
+        Ok(t) => {
+            let ok = !caged(&a);
+            let _ = HolePie::from_token(t).release();
+            ok
+        }
+        Err(_) => false,
+    };
+    term.writeline(&format!(
+        "lend: caged={} child={} twice={} chain={} back={} restore={} plain={}",
+        a_caged as u8, b_ok as u8, twice as u8, chain as u8, back as u8, restore as u8, plain as u8
+    ));
 }
 
 /// 派生级联自检（`cascade` 命令）。
@@ -1100,7 +1191,7 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / churn / reclaim / spoof / name / badslot / stray / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / churn / reclaim / spoof / name / badslot / stray / exit",
             );
         }
         "clock" => {
@@ -1178,6 +1269,9 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "cascade" => {
             cascade(term);
+        }
+        "lend" => {
+            lend(term);
         }
         // `memtest [rounds]` —— 探针专用：**不牵涉任务**的 alloc/dealloc 闭环。
         // 判据：帧池 free 必须回到同一水平。它把「分配器自己丢帧」与「任务

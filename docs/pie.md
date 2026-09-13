@@ -20,9 +20,9 @@
 
 | 文件 | 职责 |
 |---|---|
-| `gate/pie.rs` | `Pie<M>` / `AnyPie` / `Need` / `allows` / `covers` / `GateError` / `new_pie`（token 自 1 递增，`pie.rs:41-44`） |
-| `gate/snap.rs` | 全世界快照 + `vestor` / `heirs` / `vestable` / `find` |
-| `gate/accord.rs` | 转授子集——**唯一写派生边的地方**（`accord.rs:34-44`） |
+| `gate/pie.rs` | `Pie<M>` / `AnyPie` / `Need` / `allows` / `covers` / `borrowed` / `GateError` / `new_pie`（token 自 1 递增）+ `Heir`（交出的**坐标**） |
+| `gate/snap.rs` | 全世界快照 + `vestor` / `heirs` / `find` |
+| `gate/accord.rs` | 转授 / 交出——**唯一写派生边的地方**，也是唯一写锚的地方；`clear_heir` 是唯一的解关 |
 | `gate/narrow.rs` | 就地单调收窄（sire / token / meta 都不动） |
 | `gate/cull.rs` | 级联撤销 `cull` + 退出钩子 `doom` |
 | `gate/right.rs` | **存在权**判定（`Nole` 载体，`right.rs:22-33`） |
@@ -33,22 +33,44 @@
 variant 就是运行时 tag，故不需要 marker trait 或 `PieKind`（`pie.rs:1-5,100-108`）。
 `Permission` 的单一真相在 `crates/env/src/permission.rs:16-28`，本层 re-export。
 `PieToken` 是 `usize` newtype，`0` ＝ 无效哨兵（`crates/env/src/wire/handle.rs:14-17`）。
-`Pie.sire: Option<usize>` 存的是**父门闩的 token**，不是 task id（`pie.rs:50-52`）。
+`Pie.sire: Option<usize>` 存的是**父门闩的 token**，不是 task id；`Pie.heir: Option<Heir>`
+存的是"我交出的那一枚"的**坐标**（`task` + `token`）——它是锚/缓存，不是第二条边（见 §5）。
 
 ## 3 · 权限代数
 
-四位（`permission.rs:16-28`）：`READ`（观察/接收/重读）、`WRITE`（修改/投递）、
-`VEST`（复制给其他 Task，自身权限不变）、`BACK`（只能 Vest 回 grantor）。
+四位分**两族**，各回答一个问题（`permission.rs:16-28`）：
 
-**BACK 压制 VEST 的自由性**：只要带 BACK，目标恒被守门为 `target == vestor`——即便同时带
-VEST 也取最严（`permission.rs:23-27`、`snap.rs:95-102`）。
+| 族 | 位 | 回答 |
+|---|---|---|
+| 读写族 | `READ`（观察/接收/重读）、`WRITE`（修改/投递） | 对这份资源**能做什么**（数据面看这一族） |
+| 传递族 | `VEST`（**目标位**）、`CAGE`（**形态位**） | 这一枚**能怎么流动**（权柄面看这一族） |
+
+- **`Need::Grant ⟺ 持 VEST`**：`VEST` 是唯一的目标位（"能不能再流出去"）；
+- **`CAGE` 不授予任何事**，它是一条**声明**："这一枚是被交出来的"。子枚存在 ⇒ 源枚
+  不可用（数据面答 `Caged`，码 `-7`）；子枚消亡 ⇒ 源枚自动复原。同一位在源枚上读作
+  "**我有资格交出去**"（由 `covers` 保证 `subset ⊆ 自身`）；
+- **同一位有两处读法**（**实测踩出来的**）：`sire = None`（自持枚）带 `CAGE` 读作"**我有
+  资格交出去**"；`sire = Some`（**借入枚**）带它读作"**我是被交出来的那一枚**"。
+  **只有借入枚**受下面两条约束——否则自持枚连一次普通授予都发不出去（回归现象：粘性把
+  `root` 的每一次 `Accord(R|W)` 都拒掉，整机起不来）。判据落在 `AnyPie::borrowed()`。
+- **粘性**：**借入枚**授出时，子枚必带 `CAGE`；**`Narrow`** 也不得把它撤掉——两条合起来
+  才是"交出链不会被洗掉"。
+
+于是四格（授予方 A → 收方 B）：
+
+| subset | B 能再传吗 | A 还能用吗 |
+|---|---|---|
+| `R\|W` | 不能 | 能 |
+| `R\|W\|VEST` | 能（任意目标） | 能 |
+| `R\|W\|CAGE` | 不能 | **不能**（A 在借） |
+| `R\|W\|VEST\|CAGE` | 能（转交后它自己也被关住） | **不能** |
 
 | 动作 | 动谁的什么 | 规则 |
 |---|---|---|
-| `Accord` | **别人的表**：克隆 `Arc<Meta>` 造新 token，`sire = Some(src.token())` | 子集必须非空且 ⊆ 自身（`pie.rs:93-95`）；src 权限不变 |
-| `Narrow` | **自己那份的位**：就地改写、单调 | 空子集一律 `Denied`——「清空」的语义归 `Release`（`narrow.rs:23`） |
-| `Revoke` | **我授出的那棵子树** | 鉴权 ＝「这枚的 `sire` 在我表里」（pie 只能复制不能转移，故等价于"我授出的"，`revoke.rs:39-46`） |
-| `Release` | **我持有的那枚及其全部后代** | 不需要任何权限位（`release.rs:1-7`） |
+| `Accord` | **别人的表**：克隆 `Arc<Meta>` 造新 token，`sire = Some(src.token())`；带 `CAGE` 时**先把源枚关住**再入表 | 四道闸在核心里：表内 / 存活 / 持 `VEST` / 子集非空且 ⊆ 自身 / **heir 为空**（`accord.rs`） |
+| `Narrow` | **自己那份的位**：就地改写、单调 | 空子集一律 `Denied`（「清空」的语义归 `Release`）；**借入枚带 `CAGE` ⇒ 目标必须仍含 `CAGE`** |
+| `Revoke` | **我授出的那棵子树** | 鉴权 ＝「这枚的 `sire` 在我表里」（pie 只能复制不能转移，故等价于"我授出的"，`revoke.rs`） |
+| `Release` | **我持有的那枚及其全部后代** | 不需要任何权限位（`release.rs`）；落在带 `CAGE` 的那一枚上 ＝ **交回** |
 
 ## 4 · 寿命与所有权
 
@@ -74,6 +96,23 @@ VEST 也取最严（`permission.rs:23-27`、`snap.rs:95-102`）。
 后 drop 门闩** → 全部摘完后**无锁**撤映射（`cull.rs:25-39,46-87`）。三处共用它：
 `revoke` / `release` / `doom`（`cull.rs:4`）。
 
+**`heir` 不是第二条边**：`Pie.heir` 是"我交出的那一枚"的**本地锚**。真相仍是 `sire` 边上的
+查询（"存在一枚带 `CAGE` 的子门闩、其 `sire` 指向我"），但那个查询要吃快照（`snap()` 要
+分配一个 `Vec<TaskWeak>`），而数据面判权是**热路径** ⇒ 锚让判据 O(1)。锚**至多一个**
+（"已交出"既是"我不可用"的理由，也是"我不能再交出"的理由），且有一处**必须的不对称**：
+`sire` 只存 token（"谁持有它"可由 `holder` 查出来），`heir` 必须连 `task` 一起存——热路径
+要问的正是这件事。
+
+```text
+   写锚：accord 带 CAGE 时（先关后授，目标表备不出容量则回滚）   ← 唯一写锚的地方
+   解关：判据读锚 → 那一枚不在了 ⇒ 清锚（自愈）                  ← 唯一的解关动作，没有独立动词
+```
+
+**"释放"不自动解关**：`release`/`revoke` 的形状是「摘根 + 沿 `sire` 反查后代」，**从不回头
+改父枚**。废止（借入方 `release`）与死亡（整表消亡）都只让那一枚消失，而"消失"由判据在
+**下一次使用时**读出来（惰性自愈，方向保守）。急切清锚反而会错：`cull` 备不出容量时
+**整个不做**，那时子枚还在而我已解关 ⇒ 两个使用者。
+
 **两条级联，两个方向，都挂在退出钩子表里**：
 
 ```text
@@ -90,10 +129,11 @@ gate::doom        沿 sire  → 反查我授出的全部能力（权柄面）
 |---|---|---|
 | 资源寿命 ＝ 能力寿命（无全局资源表） | 泄漏或提前回收 | `pie.rs:54-58`、`mail/hole.rs:259-262` |
 | 门闩在锁外 drop | 锁内跑 `Meta::drop` ⇒ L3 自嵌套 | `cull.rs:24,55`、`envcall/pie.rs:78-79` |
-| 派生只存一条边 | 两处状态不一致（子在而父亡） | `snap.rs:2-6`、`cull.rs:6` |
-| 权限单调（非空 ∧ ⊆） | 提权 | `pie.rs:93-95`、`narrow.rs:23-26` |
+| 派生只存一条边（`heir` 是锚，不是第二条边） | 两处状态不一致（子在而父亡） | `snap.rs:2-6`、`cull.rs:6` |
+| 权限单调（非空 ∧ ⊆）**且借入枚的 `CAGE` 不可撤** | 提权；交出链被洗掉 ⇒ 两个使用者 | `narrow.rs`、`accord.rs` |
 | 父在则子在（摘一枚必连同子树） | `sire` 悬空，需要 `RevokeFirst` | `release.rs:6-7` |
-| BACK 压制 VEST | 委托权越过授与人意向外流 | `permission.rs:23-27`、`snap.rs:95-102` |
+| 交出：**先关后授**、**至多一个 heir** | 窗口内两边都能用；链分叉 ⇒ 两个使用者 | `accord.rs` |
+| 锚陈旧只推迟自愈、方向保守 | 提前放行 ⇒ 两个使用者 | `envcall/pie.rs` 的 `usable` |
 | 快照只出 `Weak`，查询不增删 | 死任务挡查询、需要清理 | `snap.rs:22-23`、`table.rs:103-106` |
 
 ## 7 · 裁决账
@@ -108,36 +148,49 @@ gate::doom        沿 sire  → 反查我授出的全部能力（权柄面）
 | 级联归 `cull` | 三处共用 | 与 `messenger::cull` 同构同名，那边沿 `heir`、这边沿 `sire` |
 | `UnsealNole` 铸币权收在 S 态 | 非 S 态 → `Denied` | 否则任何 U 域自铸一枚就自授建域权（`envcall/pie.rs:129-135`） |
 | 快照由适配层拍、boot 注入 | gate 不依赖 scheduler | 依赖倒置（`snap.rs:26-39`） |
+| 传递族分**目标位**与**形态位** | `VEST` 是能力、`CAGE` 是声明 | 「能不能出去」与「出去后我还剩什么」是两个可独立变化的事实，故两位（`permission.rs`） |
+| 删 `BACK`、其位改义为 `CAGE` | 位表仍是四位（`1<<3` 换义） | 旧义唯一独有的流（把**收到的**副本授回授与人）净收益为 0：accord 只复制，授与人从不失去；而"反向给"的真需求由「自造枚 + `VEST`」承担 |
+| `heir` 是锚不是边 | 只加一个字段 | 数据面判权不能吃快照（`snap()` 要分配）；真相仍在 `sire` 边上 |
+| 粘性与不可撤**只约束借入枚** | 判据读 `sire.is_some() && 带 CAGE` | 同一个位在两处读法不同（资格 / 形态）；一律按位判会把自持枚的普通授予也拒掉 —— **实测整机起不来**，`lend` 自检第 ⑥ 段就是它的牙 |
+| 交出**先关后授** | 挂起先于入表 | 反过来留一个"两边都能用"的窗口；而"没人能用"的一小段是合法状态 |
+| 解关归**判据** | 没有独立动词（`uncage` 不立） | 三条"释放"路径都只让子枚消失（`cull` 只向下），且 `cull` 可能**整个不做** ⇒ 急切清锚会制造"撤销没生效但我已放行"的不一致 |
+| `Revoke`/`Release` 不清锚 | 留给判据 | 省一次跨任务核对；且"交回后立刻可用"仍可观察（下次使用即复原） |
 
 ## 8 · 已知边界
 
-1. **注释与代码不一致**：`gate/mod.rs:12` 写 `Need::{Read,Write,Grant,Build}`，实际枚举只有
-   三个（`pie.rs:31-38`）——建域权**不走 `allows`**，走「自己表里有枚活着的 `Nole`」+ S 态
-   兜底（`right.rs:23-28`、`envcall.rs:387-397`）。
-2. **文档过期**：`pie.rs:192` 说 `GateError::Dead` ＝「已 seal **或 Weak upgrade 失败**」，
-   但两处 upgrade 失败都返 `Denied`（`accord.rs:33`、`revoke.rs:29`）；全仓 `Dead` 只由封印产生。
-3. ~~**计数写错**~~ —— **已修（本轮）**（改称十二个操作）。原记录：`envcall/pie.rs:1,8` 说「十一个操作」，`PieCall` 现有 **12** 个 variant
+1. ~~**注释与代码不一致**~~ —— **已修（本轮）**。原记录：`gate/mod.rs:12` 写
+   `Need::{Read,Write,Grant,Build}`，实际枚举只有三个——建域权**不走 `allows`**，走
+   「自己表里有枚活着的 `Nole`」+ S 态兜底（`right.rs`、`envcall.rs`）。
+2. **文档过期**：`pie.rs` 说 `GateError::Dead` ＝「已 seal **或 Weak upgrade 失败**」，
+   但两处 upgrade 失败都返 `Denied`（`accord.rs`、`revoke.rs`）；全仓 `Dead` 只由封印产生。
+3. ~~**计数写错**~~ —— **已修**（改称十二个操作）。原记录：`envcall/pie.rs:1,8` 说「十一个操作」，`PieCall` 现有 **12** 个 variant
    （`crates/env/src/fid.rs:288-356`）。
-4. **「判定顺序只有一处」不成立**（注释已于本轮如实改写，**统一仍是待办**）：只有
-   `open`/`shut`/`accord`/`reserve` 走 `resolve`；
+4. **「判定顺序只有一处」仍不成立**（本轮把 `accord` 的四道闸**下沉进了核心**，账只小了一格）：
+   现在 `open`/`shut`/`reserve` 走 `resolve`，`accord` 走 `find` + `usable` + 核心闸；
    `seal`/`narrow`/`collect` 仍手写查找，`Release` 完全不走 `find`。**`narrow` 的顺序与
    `resolve` 相反**（`covers` 在 `alive` 之前）⇒「已封印 + 越权子集」报 `Denied` 而不是
-   `Dead`——正是那条注释声称已消灭的现象。数据轴 `push`/`pull`/`wait` 同样是「先判权、
-   后判存活」。
+   `Dead`；数据轴 `push`/`pull`/`wait` 同样是「先判权、后判存活」，且它们的第三道闸
+   （`usable`）由各自的闭包在**放锁之后**调用——统一仍是独立一步。
 5. **「`Release` 是唯一不过存活闸的操作」与代码不符**：`Revoke` 与 `Collect` 同样一次都没读
    `alive`；而 `Reserve` 虽不经 `resolve`，却经 `AnyPie::owner`（以 `alive` 为闸）**会**报
    `Dead`。该说法只成立于「唯一**必须**如此的」——`Seal` 之后仍须能摘表项的只有它。
-6. **撤 `BACK` 会使 `VEST` 摆脱守门**：`vestable` 只查当下是否含 BACK（`snap.rs:96-98`），
-   而 `Narrow` 可以把 BACK 位摘掉（`narrow.rs:23-26`）⇒ BACK 是唯一「位越少自由度越大」的位。
+6. ~~**撤 `BACK` 会使 `VEST` 摆脱守门**~~ —— **已销（本轮）**：`BACK` 删除，其位改义为
+   `CAGE`（交出），并补上两条守卫——「从带 `CAGE` 的枚授出必带 `CAGE`」（粘性）与
+   「`Narrow` 不得撤 `CAGE`」（`accord.rs`、`narrow.rs`）。
 7. **级联闭包 ＝ 快照上的闭包**：`cull` 逐层用 `snap::heirs`，而快照只在入口拍一次
    （`snap.rs:37-39`）；多核下与并行 `Accord` 之间的 TOCTOU（新子门闩不被本次撤销覆盖）
    在代码与注释里都没有交代。
 8. **三条自检没有门**：`reclaim`/`spoof`/`name` 不在 `scripts/examine.nu` 的步骤表与任何
    marker 里（`:131-143`），只有人工跑过的输出留在 [dispatch.md](dispatch.md) §12。
-9. ~~**`crates/env/src/permission.rs:3-9` 陈旧**~~ —— **已修（本轮）**。原记录：`RESTRICT`/`restrict(...)` 这个术语在代码里
+9. ~~**`crates/env/src/permission.rs:3-9` 陈旧**~~ —— **已修**。原记录：`RESTRICT`/`restrict(...)` 这个术语在代码里
    不存在（ABI 动词是 `Narrow`）；「内核侧 `from_bits_truncate` 还原」与拒绝式 unpack 相反。
-   「Pole 的 subset 必须含 READ」这条不对称实际落在 `envcall.rs:55-65` 的 `subset_to_pte`，
-   作用于 `Open` 与 `Narrow`。
+10. **用户侧无法枚举"我授出的"**（缺口：有动机、有形状、**未做**）：授与人必须自己存住
+    `Accord` 的返回值才能单独 `Revoke` 那一枚；`snap::heirs` 是内核私有查询，用户侧没有对应
+    原语。影响有界（协议惯例是把返回句柄留下、或经线形交给对方），但"**交出前先清场**"
+    （把先前授出的副本逐个 `Revoke`，见 §3 四格里的独占语义）因此没有可操作的入口。
+11. **交出锚没有"真相谓词"**：`caged(pie, snap)`（`∃ 带 CAGE 的 heir`）**没有实现**——没有
+    任何操作需要它（生产路径读锚，判据由行为断言），加了就是死代码。真相仍是 `sire` 边上的
+    查询，由 `lend` 自检以行为覆盖（§9）。
 
 ## 9 · 判据与验证
 
@@ -145,6 +198,11 @@ gate::doom        沿 sire  → 反查我授出的全部能力（权柄面）
   必须失效；②无关分支 D 与本体 A 仍可用——覆盖「父在则子在」与「一条边」的精确性；
   ③`release` A ⇒ D 随之下线；④closure 退出 ⇒ 它授出的 Q 失效（退出钩子 `doom`；`Join`
   返真即已收尾，故当场断言）。
+- **`lend`**（`shell.rs` 的 `lend` 命令，六段）：交出与交回**都不需要第二方配合**（目标可以是
+  自己），故全在一个任务里：①交出后我这一枚 `push` 得 `Caged(-7)`、子枚照常能用；②关着时
+  再交出被拒（"至多一个 heir"）；③转交后子枚自己也被关住、只有尾端可用；④放下尾端 ⇒
+  上一格复原；⑤放下子枚 ⇒ **我复原**（陈旧锚在判据里自愈）；⑥**自持枚授出不带 `CAGE` 的
+  子集 ⇒ 允许且我不被关住**（"资格"≠"形态"；这一条是实测回归的牙——见 §7 的粘性那一行）。
 - **`reclaim`**（`:556-673`）：①`unseal + release` × 40000 不许耗尽帧池；②封印只归开辟者
   （他人 `Seal` → `Denied`；主人 `Seal` 后他人 → `Dead`）；③开辟者消亡 ⇒ 资源随之回收。
 - **`spoof`**（`:675-794`）：`Push` 盖章后 `pull_from` 回来的发送者是自己；把 `1..=200`
@@ -152,5 +210,6 @@ gate::doom        沿 sire  → 反查我授出的全部能力（权柄面）
   `vestor`——身份不由报文自证。
 - **`name`**（`:797` 起）：末两段是级联在真实服务上的落地——实例门闩消亡 ⇒ 目录侧副本随
   `sire` 级联摘掉 ⇒ 名字回到「无实例」。
-- **门**：非默认档（harden / 框架）断言 `cascade: ok` 与 `stray: 3/3 illegal-id joins denied`；
-  默认档的步骤表**不含** `cascade`（`scripts/examine.nu` 的 `STEPS_DEFAULT`）——它只在非默认档跑。
+- **门**：非默认档（harden / 框架）断言 `cascade: ok`、`lend: caged=1 child=1 twice=1 chain=1
+  back=1 restore=1 plain=1` 与 `stray: 3/3 illegal-id joins denied`；
+  默认档的步骤表**不含** `cascade`/`lend`（`scripts/examine.nu` 的 `STEPS_DEFAULT`）——它们只在非默认档跑。

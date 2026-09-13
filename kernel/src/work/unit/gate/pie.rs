@@ -5,7 +5,8 @@
 // ——variant 即 tag，不再需要 marker 类型 / ResourceKind trait / PieKind 枚举。
 //
 // 运行时身份：每 Pie 持 permission + sire（派生来源：父门闩的 token；None = 原始
-// 自持）+ token（全局唯一，用户句柄）+ meta（**资源实体的唯一强引用**）。
+// 自持）+ heir（我交出的那一枚的坐标；None = 没交出过）+ token（全局唯一，用户句柄）
+// + meta（**资源实体的唯一强引用**）。
 //
 // **资源寿命 = 能力寿命**：没有全局资源表，最后一份门闩消失即回收。
 //
@@ -26,6 +27,18 @@ use crate::work::mail::{HoleMeta, PoleMeta};
 
 pub use env::Permission;
 
+/// 子门闩的**坐标**：我交出的那一枚落到了谁手里。
+///
+/// 与 `sire` 成对（向上 / 向下），但**不对称是必须的**：`sire` 只存 token，因为
+/// "谁持有它"可以由快照查出来（`holder`，冷路径够用）；`heir` 必须连 `task` 一起存，
+/// 因为"谁持有它"正是**热路径**（数据面判权）要问的问题，而反向查询要吃全世界快照
+/// （`snap()` 要分配一个 `Vec<TaskWeak>`，数据面从不这么干）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Heir {
+    pub(crate) task: usize,
+    pub(crate) token: usize,
+}
+
 /// 数据面操作所需的权利位（gate 核心判定授权，不感知资源实体）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Need {
@@ -33,7 +46,7 @@ pub enum Need {
     Read,
     /// push —— 需 W。
     Write,
-    /// accord 转授 —— 需 VEST 或 BACK。
+    /// accord 转授 / 交出 —— 需 VEST（唯一的目标位）。
     Grant,
 }
 
@@ -44,12 +57,16 @@ fn next_pie_token() -> usize {
 }
 
 /// 单个门闩：`permission` 控授权、`sire` 是派生来源（父门闩的 token；None = 原始
-/// 自持）、`token` 是用户句柄、`meta` 是资源实体（唯一的强引用）。
+/// 自持）、`heir` 是我交出的那一枚（交出时写、判据清）、`token` 是用户句柄、`meta`
+/// 是资源实体（唯一的强引用）。
 pub struct Pie<M> {
     pub(crate) permission: Permission,
     /// 我从哪一枚派生（父门闩的 token）：None = 原始自持；Some = 经 accord 得到。
     /// 构造期定型，无 setter。
     pub(crate) sire: Option<usize>,
+    /// 我交出的那一枚（交出时写、判据发现它已不在时清）。**至多一个**：
+    /// "已交出"既是"我不可用"的理由，也是"我不能再交出"的理由。
+    pub(crate) heir: Option<Heir>,
     pub(crate) token: usize,
     /// 资源实体：**唯一强引用**——资源随最后一份门闩一起消亡。
     ///
@@ -64,6 +81,7 @@ impl<M> Clone for Pie<M> {
         Self {
             permission: self.permission,
             sire: self.sire,
+            heir: self.heir,
             token: self.token,
             meta: self.meta.clone(),
         }
@@ -81,11 +99,8 @@ impl<M> Pie<M> {
         match need {
             Need::Read => self.permission.contains(Permission::READ),
             Need::Write => self.permission.contains(Permission::WRITE),
-            // Grant = VEST 或 BACK（原始鉴权 OR 语义：有其一即转授）。
-            Need::Grant => {
-                self.permission.contains(Permission::VEST)
-                    || self.permission.contains(Permission::BACK)
-            }
+            // Grant = 持 VEST（唯一的目标位）：CAGE 是形态声明，不授予任何事。
+            Need::Grant => self.permission.contains(Permission::VEST),
         }
     }
 
@@ -123,6 +138,30 @@ impl AnyPie {
             AnyPie::Pole(p) => p.sire,
             AnyPie::Nole(p) => p.sire,
         }
+    }
+
+    /// 我交出的那一枚的坐标（本地锚；`None` = 没交出过）。
+    ///
+    /// 它是**缓存**，不是第二处真相：真相是"存在一枚带 `CAGE` 的子门闩、其 `sire`
+    /// 指向我"。锚只是让热路径 O(1) 地读它——陈旧只会推迟自愈，方向保守（继续拒）。
+    pub fn heir(&self) -> Option<&Heir> {
+        match self {
+            AnyPie::Hole(p) => p.heir.as_ref(),
+            AnyPie::Pole(p) => p.heir.as_ref(),
+            AnyPie::Nole(p) => p.heir.as_ref(),
+        }
+    }
+
+    /// **借入枚**：带 `CAGE` **且**有 `sire`。
+    ///
+    /// 同一位在两处读法不同：造物主自持的枚（`sire = None`）带它读作"**我有资格交出去**"
+    /// （由 `covers` 保证 `subset ⊆ 自身`，不带它就永远交不出去）；经交出得到的枚
+    /// （`sire = Some`）带它读作"**我是被交出来的那一枚**"。
+    ///
+    /// **只有后者**受下面两条约束（粘性、`Narrow` 不可撤）——否则自持枚连一次普通授予
+    /// 都发不出去（实测：整机起不来，root 的每一次 `Accord(R|W)` 都会被粘性拒掉）。
+    pub fn borrowed(&self) -> bool {
+        self.sire().is_some() && self.permission().contains(Permission::CAGE)
     }
 
     /// 资源开辟者（`EnvCall::Mail(MailCall::Owned)` 的 `owner` 一侧）。
@@ -177,6 +216,7 @@ pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<usiz
     Pie {
         permission,
         sire,
+        heir: None,
         token: next_pie_token(),
         meta,
     }
@@ -191,6 +231,8 @@ pub enum GateError {
     Denied,
     /// Meta 已 seal 或 Weak upgrade 失败。
     Dead,
+    /// 这一枚被我交出去了（带 `CAGE` 的那一枚还在）：交回即复原，不是失败。
+    Caged,
     /// Hole 槽满 / 槽空（条件未就绪）。
     Busy,
     /// 资源耗尽。
@@ -210,6 +252,7 @@ impl GateError {
             GateError::OoM => -4,
             GateError::NotAligned => -5,
             GateError::BadImage => -6,
+            GateError::Caged => -7,
         }
     }
 }

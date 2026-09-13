@@ -3,7 +3,6 @@
 // 能力面**只存一条边**（`Pie.sire`）。另两个方向都靠查询还原：
 //   - `vestor(pie, snap)` —— 向上：父门闩的持有者（= 授与人）
 //   - `heirs(token, snap)` —— 向下：`sire` 指向我的那些子门闩
-//   - `vestable(pie, dst, snap)` —— BACK 守门
 //   - `find(tid, snap)` —— 按 id 取任务（退出钩子用）
 //
 // **快照由适配层提供**（boot 注入 provider）：本模块不依赖 scheduler。快照是
@@ -18,7 +17,7 @@ use crate::lock::OnceLock;
 use crate::work::unit::task::Task;
 use crate::work::unit::weak::TaskWeak;
 
-use super::pie::{AnyPie, Permission};
+use super::pie::AnyPie;
 
 /// 全世界任务快照：查询与级联的唯一输入。只读、不增删。
 ///
@@ -143,16 +142,4 @@ pub(crate) fn heirs(token: usize, snap: &Snap) -> Option<Vec<(Arc<Task>, usize)>
         }
     }
     Some(out)
-}
-
-/// BACK 守门：带 BACK 的源只能授给 `sire` 的持有者；不带 BACK 恒真；
-/// 原始自持（sire = None）带 BACK 不受限（回授目标自由）。
-pub(crate) fn vestable(pie: &AnyPie, dst: usize, snap: &Snap) -> bool {
-    if !pie.permission().contains(Permission::BACK) {
-        return true;
-    }
-    match pie.sire() {
-        None => true,
-        Some(sire) => holder(sire, snap) == Some(dst),
-    }
 }

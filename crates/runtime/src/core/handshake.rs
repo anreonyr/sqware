@@ -239,7 +239,7 @@ impl Referred {
 /// 父侧：为子域开上行孔并把 `R|W|VEST` 副本授给它。
 ///
 /// **带 `VEST`**：子域要把这条孔再授给自己的**控制线程**（同域跨 task 门闩不共享），
-/// 而 `Accord` 要求源门闩有 `VEST|BACK`。
+/// 而 `Accord` 的门槛是"源门闩持 `VEST`"。
 ///
 /// **时序义务**：必须早于 `Hatch(child)`——否则子域起跑时 `moor()` 找不到它。
 pub fn dock(child: TaskId) -> EnvResult<HolePie> {

@@ -33,8 +33,8 @@ const REPLY_TIMEOUT_MS: usize = 1000;
 pub const E_DENIED: isize = -1;
 /// D1 负码：名字无实例 / 未预约。
 pub const E_NOT_FOUND: isize = -2;
-/// D1 负码：名字已有活实例（内核码 -1..-6 之后自取）。
-pub const E_TAKEN: isize = -7;
+/// D1 负码：名字已有活实例（内核码 `-1..-7` 之后自取）。
+pub const E_TAKEN: isize = -8;
 
 fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(E_DENIED))

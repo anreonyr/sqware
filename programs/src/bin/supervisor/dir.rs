@@ -95,7 +95,7 @@ extern "C" fn main() -> ! {
         Err(_) => runtime::env::room::exit_with(4),
     };
     // 控制孔给父域 **R|W|VEST**：父域要把这条孔再授给**它自己的另一个线程**（重发服务名
-    // 时用，见 `docs/root.md` §5.3），而 `Accord` 要求源门闩带 `VEST|BACK`——与
+    // 时用，见 `docs/root.md` §5.3），而 `Accord` 的门槛是"源门闩持 `VEST`"——与
     // `handshake::dock()` 给上行孔带 `VEST` 是同一条理由（"子域要把这条孔再授给自己的
     // 控制线程"）。多一个转授权不改变这条孔的用途：它本来就只对父域开口。
     let at_parent = match control.accord(

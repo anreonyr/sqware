@@ -107,7 +107,8 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
   `Reserve(entry).owner` 指向代开者，调用方会把回信 hole 授给错的人。
 - **授权只用已有原语**：`Connect` 就是 `gate::accord` 转授子集；注册资格就是
   「父域把这个名字预约给了你」——不需要新的 capability 类型。
-- 授权链 `service →(VEST) 目录 →(R|W) 调用方`；目录不带 BACK，故可自由代授。
+- 授权链 `service →(VEST) 目录 →(R|W) 调用方`；目录那一份不带 `CAGE`，故可自由代授
+  （`CAGE` 是**形态位**：带它的源会被关住，见 [pie.md](pie.md) §3）。
 - **回信地址不能与入口同一枚门闩**：注销会释放目录手里那枚入口副本，回复就无处可推。
 
 ## 6 · 存活级联（Unregister 为什么不用回收权限）
@@ -167,7 +168,6 @@ pub enum DirectoryError { Taken, Unknown, NotOwner, NotGrantable }
 |---|---|
 | `gate::vestor(pie, snap)` | 授与人 = `sire` 所在任务的 id（原始自持 → 无） |
 | `gate::heirs(token, snap)` | 子门闩 = `sire == token` 的那些（持有者 + 子 token） |
-| `gate::vestable(pie, dst, snap)` | BACK 守门：带 BACK 只能授回 `sire` 的持有者 |
 
 快照由 `scheduler::core::roster()` 提供（旧名 `snap`）、boot 经
 `gate::install` 注入——**gate 不依赖

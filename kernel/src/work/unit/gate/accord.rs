@@ -1,47 +1,121 @@
-// Accord — 转授子集给其他 Task（原 vest）。
+// Accord — 转授 / 交出子集给其他 Task（原 vest）。
 //
 // 纯数据面原语：src 的 permission 不变；新 pie 的 permission = subset、
-// **sire = Some(src.token())**（派生边只写在这里，不碰 src 所在的表）。
-// 鉴权（VEST|BACK 权、subset 合法、target 存在、BACK 守门）在 envcall::Accord
-// 入口做完。
+// **sire = Some(src.token())**（派生边只写在这里）。
 //
-// 前置（envcall 入口保证）：
-//   - src.permission 含 VEST 或 BACK
-//   - !subset.is_empty()
-//   - subset ⊆ src.permission
-//   - target 任务存在（Weak::upgrade 成功）
-//   - snap::vestable(src, dst, snap) 通过（带 BACK 时）
+// 四道闸在本模块（调用方不必重复判）：在表内 / 存活 / 持 VEST / 覆盖子集 /
+// **未被关住**。闸之所以在这里，是因为"交出"要求就地改**调用方自己表里**那一枚
+// ——`find` 给的是抄件，改抄件不动表。
+//
+// # 先关后授（顺序是契约，不是顺手）
+//
+// 带 `CAGE` 的授予 = 一次交出：源枚必须在子枚入表**之前**被关住，否则两者之间留一个
+// **"两边都能用"**的窗口（多核真实可见）。反过来，"没人能用"的一小段是合法状态。
+// 正因为它必须先关，就必须能回滚：目标表备不出容量时把锚清掉，等于没交出过。
+//
+// # 锁序
+//
+// `caller.pies` 与 `target.pies` 同为 L3，**绝不嵌套**：三段顺序取放
+// （关 → 授 → 失败回滚），且失败路径必须**先放锁再 drop 子枚**（最后一份强引用会跑
+// `Meta::drop`，那是 L3 或更外层的活）。
+//
+// # Errors
+// - `Denied` — 表内无此 token / 不持 VEST / 子集非法 / 目标不存在
+// - `Caged`  — 已被关住（"至多一个 heir"，也是独占的守卫）
+// - `Dead`   — 源枚的资源已封印
+// - `OoM`    — 目标表备不出容量（锚已回滚）
 
 use alloc::sync::Weak;
 
-use super::pie::{AnyPie, GateError, Permission, new_pie};
+use super::pie::{AnyPie, GateError, Heir, Need, Permission, new_pie};
 use crate::work::unit::task::Task;
 
-/// Accord 数据面原语：克隆资源实体的强引用 + 造新 Pie（sire 指 src）+ push 到
-/// target.pies。返新 token（撤销句柄）。
+/// 授出 / 交出：以 `caller` 表里的 `src` 为源，造一枚 `subset` 的子枚给 `dst`。
 ///
-/// `target: &Weak<Task>` 避免 envcall 路径长寿命持有 `Arc<Task>`；内部短暂升级为
-/// Arc，仅持锁 push 期间。
+/// 返：子枚在**对端**的 token（撤回句柄）。
 ///
 /// # Errors
-/// - `Denied` — Weak 升级失败（target 已死 / id 不存在）
+/// 见模块头。
 pub(crate) fn accord(
-    src: &AnyPie,
-    target: &Weak<Task>,
+    caller: &Task,
+    src: usize,
+    dst: &Weak<Task>,
     subset: Permission,
 ) -> Result<usize, GateError> {
-    let target = target.upgrade().ok_or(GateError::Denied)?;
-    let sire = Some(src.token());
-    // 派生 = 复制资源实体的强引用（资源寿命随之延长一份）。
-    let granted = match src {
-        AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), subset, sire)),
-        AnyPie::Pole(p) => AnyPie::Pole(new_pie(p.meta().clone(), subset, sire)),
-        AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), subset, sire)),
+    let target = dst.upgrade().ok_or(GateError::Denied)?;
+    // ① 锁内：定位 + 四道闸 + 造子枚（尚未入表）+ 先关。放开锁再做 ②。
+    let granted = {
+        let mut pies = caller.pies.lock();
+        let pie = pies
+            .iter_mut()
+            .find(|p| p.token() == src)
+            .ok_or(GateError::Denied)?;
+        if !pie.alive() {
+            return Err(GateError::Dead);
+        }
+        if !pie.allows(Need::Grant) {
+            return Err(GateError::Denied);
+        }
+        if !pie.covers(subset) {
+            return Err(GateError::Denied);
+        }
+        // 已被关住 ⇒ 不能再交出：一枚门闩在同一时刻至多一个 heir。
+        if pie.heir().is_some() {
+            return Err(GateError::Caged);
+        }
+        // 粘性（**只约束借入枚**）：转交时子枚必带 `CAGE`——否则"交出"会在下一跳被洗掉
+        // （源枚没有带 `CAGE` 的子枚 ⇒ 它当场复原，而收方那份照样能用 ⇒ 两个使用者）。
+        // 自持枚上的这一位只是"我有资格交出去"，故自持枚**可以**授出不带 `CAGE` 的子集。
+        if pie.borrowed() && !subset.contains(Permission::CAGE) {
+            return Err(GateError::Denied);
+        }
+        // 派生 = 复制资源实体的强引用（资源寿命随之延长一份）。
+        let granted = match &*pie {
+            AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), subset, Some(src))),
+            AnyPie::Pole(p) => AnyPie::Pole(new_pie(p.meta().clone(), subset, Some(src))),
+            AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), subset, Some(src))),
+        };
+        if subset.contains(Permission::CAGE) {
+            let h = Heir {
+                task: target.ident.id,
+                token: granted.token(),
+            };
+            match pie {
+                AnyPie::Hole(p) => p.heir = Some(h),
+                AnyPie::Pole(p) => p.heir = Some(h),
+                AnyPie::Nole(p) => p.heir = Some(h),
+            }
+        }
+        granted
     };
     let token = granted.token();
-    let mut pies = target.pies.lock();
-    // 入表那一格先备：备不出来答 `OoM`，此时权柄还没进表（`granted` 随作用域退回）。
-    pies.try_reserve(1).map_err(|_| GateError::OoM)?;
-    pies.push(granted);
+    // ② 目标表：备容量与入表必须同锁（备出来的那一格不能被别人用掉）。
+    let mut kids = target.pies.lock();
+    if kids.try_reserve(1).is_err() {
+        drop(kids);
+        drop(granted);
+        // ③ 回滚：清锚（只写本地一格，不会失败）。
+        clear_heir(caller, src);
+        return Err(GateError::OoM);
+    }
+    kids.push(granted);
+    drop(kids);
     Ok(token)
+}
+
+/// 清锚：把 `task` 表里 `token` 那一枚的 `heir` 写回 `None`（幂等；返"是否真清了"）。
+///
+/// `heir` 只有两个写点：本模块的 [`accord`]（写）与**判据**（陈旧时清）。所有
+/// "释放"路径都不需要额外动作——它们只让锚指向的那一枚消失，而"消失"由判据在
+/// 下一次使用时读出来。
+pub(crate) fn clear_heir(task: &Task, token: usize) -> bool {
+    let mut pies = task.pies.lock();
+    let Some(pie) = pies.iter_mut().find(|p| p.token() == token) else {
+        return false;
+    };
+    match pie {
+        AnyPie::Hole(p) => p.heir.take().is_some(),
+        AnyPie::Pole(p) => p.heir.take().is_some(),
+        AnyPie::Nole(p) => p.heir.take().is_some(),
+    }
 }

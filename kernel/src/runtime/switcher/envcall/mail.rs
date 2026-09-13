@@ -19,6 +19,8 @@ use crate::work::mail;
 use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::current;
 use crate::work::unit::gate::{AnyPie, GateError, Need};
+
+use super::pie::usable;
 use crate::work::unit::task::TaskIdent;
 
 /// 一次 envcall 的落点：续跑本任务，或换一帧跑（让出/挂起）。
@@ -60,42 +62,50 @@ fn push(
 ) -> Outcome {
     let task = current().running_task();
     let me = task.as_ref().map(|t| t.ident.id).unwrap_or(0);
-    let r = match task.and_then(|t| {
+    // ① 锁内：定位 + 判权 + 判存活 ⇒ 抄件。"被关住"要核对**别人**的表（L3），
+    //    故必须在放开本任务 `pies` 之后判（L3 绝不嵌套）。
+    let found = task.and_then(|t| {
         let pies = t.pies.lock();
-        let pie = pies.iter().find(|p| p.token() == token)?;
+        let pie = pies.iter().find(|p| p.token() == token)?.clone();
         if !pie.allows(Need::Write) {
             return Some(Err(GateError::Denied));
         }
         if !pie.alive() {
             return Some(Err(GateError::Dead));
         }
-        match pie {
-            AnyPie::Hole(p) => Some(Ok(p.meta().clone())),
-            _ => None,
-        }
-    }) {
-        Some(Ok(meta)) => {
-            // 长度校验：必须 ≥1 且 ≤ hole.mtu（meta() 入口已校验 mtu∈[1,4096]）。
-            if len == 0 || len > meta.mtu {
-                Err(GateError::Denied)
-            } else {
-                // 锁外拷入堆暂存：slot = L3，Space.segments = L2，
-                // 持 L3 调 L2 是 4→2 反向嵌套，禁止。
-                // 堆暂存：`try_reserve` 而不是 `vec![0u8; len]`——这一笔不可失败时
-                // 是一次整机 halt，而入口（envcall）本来就能答 `Denied`/`OoM`。
-                let mut staging: Vec<u8> = Vec::new();
-                if staging.try_reserve(len).is_err() {
-                    Err(GateError::OoM)
-                } else {
-                    staging.resize(len, 0);
-                    if mail::copy_in(&ident.team.space, &mut staging, msg.as_usize()) {
-                        mail::hole::try_push(&meta, &staging, me)
-                    } else {
+        Some(Ok(pie))
+    });
+    let r = match found {
+        // ② 锁外：第四道判据（陈旧锚在此自愈）。
+        Some(Ok(pie)) => match usable(&pie) {
+            Err(e) => Err(e),
+            Ok(()) => match &pie {
+                AnyPie::Hole(p) => {
+                    let meta = p.meta().clone();
+                    // 长度校验：必须 ≥1 且 ≤ hole.mtu（meta() 入口已校验 mtu∈[1,4096]）。
+                    if len == 0 || len > meta.mtu {
                         Err(GateError::Denied)
+                    } else {
+                        // 锁外拷入堆暂存：slot = L3，Space.segments = L2，
+                        // 持 L3 调 L2 是 4→2 反向嵌套，禁止。
+                        // 堆暂存：`try_reserve` 而不是 `vec![0u8; len]`——这一笔不可失败时
+                        // 是一次整机 halt，而入口（envcall）本来就能答 `Denied`/`OoM`。
+                        let mut staging: Vec<u8> = Vec::new();
+                        if staging.try_reserve(len).is_err() {
+                            Err(GateError::OoM)
+                        } else {
+                            staging.resize(len, 0);
+                            if mail::copy_in(&ident.team.space, &mut staging, msg.as_usize()) {
+                                mail::hole::try_push(&meta, &staging, me)
+                            } else {
+                                Err(GateError::Denied)
+                            }
+                        }
                     }
                 }
-            }
-        }
+                _ => Err(GateError::Denied),
+            },
+        },
         Some(Err(e)) => Err(e),
         None => Err(GateError::Denied),
     };
@@ -120,43 +130,54 @@ fn pull(
     max: usize,
 ) -> Outcome {
     let task = current().running_task();
-    let r = match task.and_then(|t| {
+    // ① 锁内：定位 + 判权 + 判存活 ⇒ 抄件（"被关住"在锁外判，见 Push）。
+    let found = task.and_then(|t| {
         let pies = t.pies.lock();
-        let pie = pies.iter().find(|p| p.token() == token)?;
+        let pie = pies.iter().find(|p| p.token() == token)?.clone();
         if !pie.allows(Need::Read) {
             return Some(Err(GateError::Denied));
         }
         if !pie.alive() {
             return Some(Err(GateError::Dead));
         }
-        match pie {
-            AnyPie::Hole(p) => Some(Ok(p.meta().clone())),
-            _ => None,
-        }
-    }) {
-        Some(Ok(meta)) => {
-            if max == 0 || max > meta.mtu {
-                Err(GateError::Denied)
-            } else {
-                // 同上：Pull 的暂存也不走 `vec!`（≤ mtu，但失败即 halt）。
-                let mut staging: Vec<u8> = Vec::new();
-                if staging.try_reserve(max).is_err() {
-                    Err(GateError::OoM)
-                } else {
-                    staging.resize(max, 0);
-                    match mail::hole::try_pull(&meta, &mut staging) {
-                        Ok((n, from)) => {
-                            if !mail::copy_out(&ident.team.space, &staging[..n], buf.as_usize()) {
-                                Err(GateError::Denied)
-                            } else {
-                                Ok((n, from))
+        Some(Ok(pie))
+    });
+    let r = match found {
+        // ② 锁外：第四道判据（陈旧锚在此自愈）。
+        Some(Ok(pie)) => match usable(&pie) {
+            Err(e) => Err(e),
+            Ok(()) => match &pie {
+                AnyPie::Hole(p) => {
+                    let meta = p.meta().clone();
+                    if max == 0 || max > meta.mtu {
+                        Err(GateError::Denied)
+                    } else {
+                        // 同上：Pull 的暂存也不走 `vec!`（≤ mtu，但失败即 halt）。
+                        let mut staging: Vec<u8> = Vec::new();
+                        if staging.try_reserve(max).is_err() {
+                            Err(GateError::OoM)
+                        } else {
+                            staging.resize(max, 0);
+                            match mail::hole::try_pull(&meta, &mut staging) {
+                                Ok((n, from)) => {
+                                    if !mail::copy_out(
+                                        &ident.team.space,
+                                        &staging[..n],
+                                        buf.as_usize(),
+                                    ) {
+                                        Err(GateError::Denied)
+                                    } else {
+                                        Ok((n, from))
+                                    }
+                                }
+                                Err(e) => Err(e),
                             }
                         }
-                        Err(e) => Err(e),
                     }
                 }
-            }
-        }
+                _ => Err(GateError::Denied),
+            },
+        },
         Some(Err(e)) => Err(e),
         None => Err(GateError::Denied),
     };
@@ -183,27 +204,33 @@ fn wait_dir(
     dir: HoleDir,
     millis: usize,
 ) -> Outcome {
-    // 锁内解析 token → Arc<HoleMeta>：pies 与站点表同为 L3，绝不嵌套；
-    // `running_task` 的临时强引用在闭包内即 drop，不跨挂起。
+    // ① 锁内解析 token ⇒ 抄件：pies 与站点表同为 L3，绝不嵌套；
+    //    `running_task` 的临时强引用在闭包内即 drop，不跨挂起。
     let need = match dir {
         HoleDir::Pull => Need::Read,
         HoleDir::Push => Need::Write,
     };
-    let resolved = match current().running_task().and_then(|t| {
+    let found = current().running_task().and_then(|t| {
         let pies = t.pies.lock();
-        let pie = pies.iter().find(|p| p.token() == token)?;
+        let pie = pies.iter().find(|p| p.token() == token)?.clone();
         if !pie.allows(need) {
             return Some(Err(GateError::Denied));
         }
         if !pie.alive() {
             return Some(Err(GateError::Dead));
         }
-        match pie {
-            AnyPie::Hole(p) => Some(Ok(p.meta().clone())),
-            _ => None,
-        }
-    }) {
-        Some(r) => r,
+        Some(Ok(pie))
+    });
+    // ② 锁外：第四道判据（陈旧锚在此自愈）。
+    let resolved = match found {
+        Some(Ok(pie)) => match usable(&pie) {
+            Err(e) => Err(e),
+            Ok(()) => match &pie {
+                AnyPie::Hole(p) => Ok(p.meta().clone()),
+                _ => Err(GateError::Denied),
+            },
+        },
+        Some(Err(e)) => Err(e),
         None => Err(GateError::Denied),
     };
     let dur = if millis == usize::MAX {

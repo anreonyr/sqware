@@ -112,7 +112,7 @@ slot = (class << 32) | index      index = 变体在枚举里的**声明顺序**
 | 非法位与超宽位必须拒，不得截断 | `0x1_0000_0002` 静默变成 `WRITE` | `wire/mod.rs:124-140` |
 | 非法名不可表达（非空、≤ 31 B、无 NUL、UTF-8） | 填充与内容歧义、错误域错标 | `wire/name.rs:43-78` |
 | `Release` 不过存活闸 | 封印后表项永远摘不掉 | `fid.rs:350-355` |
-| 负值即错误、非负即成功（`-1..-6`） | 用户把错误当值用 | `ecall.rs:31-48` |
+| 负值即错误、非负即成功（`-1..-7`） | 用户把错误当值用 | `ecall.rs:31-48` |
 | 发送者由内核盖章，`owner` 不随转手改写 | 身份可伪造 / 认错对端 | `fid.rs:243-247,341-349` |
 
 ## 7 · 裁决账
@@ -128,7 +128,7 @@ slot = (class << 32) | index      index = 变体在枚举里的**声明顺序**
 | `from_pair` 不返 `Result` | 回写面按契约取位，纯收窄只在 debug 档查 | 内核违约不该塞进「内核→用户」的错误域 |
 | `test = false` | 不是「不该测」 | `no_std` + riscv64 编不出 libtest |
 | `default-members = ["kernel"]` | 裸 `cargo build` 只出内核 | 根 `Cargo.toml:12` |
-| 负码空间所有权 | 内核 `-1..-6`；协议自 `-7` 起自取 | `ecall.rs:31-40`、`protocol/src/dispatch/client.rs:37-45` |
+| 负码空间所有权 | 内核 `-1..-7`；协议自 `-8` 起自取 | `ecall.rs:31-48`、`protocol/src/dispatch/client.rs:32-38` |
 
 ## 8 · 已知边界
 
