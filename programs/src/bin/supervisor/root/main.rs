@@ -375,25 +375,33 @@ extern "C" fn doom_service() -> ! {
         let Some(kill) = doom::Kill::decode(&msg[..n]) else {
             continue;
         };
-        let ack = [serve(&dir, &kill).byte()];
+        let ack = [collect(&dir, kill.target.as_str()).byte()];
         // 回信孔是**调用方自带**的（报文里那个号）；它若已消失，这一句静默失败。
         let _ = HolePie::from_token(kill.ack.get()).push(&ack);
     }
 }
 
-/// 一次请求：**解析名字 → 内核下令 → 有界等回收**。
+/// 收**一个名字**：解析 → 内核下令 → 有界等它真的没了。
 ///
 /// 三步的分工就是本设计的全部：内核回答"能不能"（血缘判据），**目录**回答"这个名字
 /// 现在是谁"（名字的账在它那儿，本域不存第二份），而 `Ok` 这个回执的含义是"内核确认
 /// 它**回收完了**"——不是"收到了"。
 ///
+/// **两个调用者共用它**：他杀服务（用户发来的 `Kill`）与**关机收尾**（`main` 的 4.3）。
+/// 两件事本来就是同一件——把"这个名字此刻指向的那个域"收掉，并等到它真的没了；差别只在
+/// 前者要把结局回给调用方，后者只想知道"收干净没有"。
+///
+/// **等它走用的是"探手里这枚副本还在不在"，不是 `Join`**：`Join` 的授权是**任务粒度**的
+/// （谁生的谁能等，`docs/driver.md` §8.1.20 实测监护线程等不到主线程生下的那个），而
+/// console 可能正是监护线程重发的 ⇒ 关机收尾那条路不能依赖 `Join`。
+///
 /// "该不该"只剩一层，且不是判据：**够得着就能请求**——入口门闩只亲授给 root 引荐过的
 /// 域（`Refer` 的产物），沙箱里的域连不上目录，也就拿不到这扇门的副本。
-fn serve(dir: &Directory, kill: &doom::Kill) -> doom::Ack {
+fn collect(dir: &Directory, target: &str) -> doom::Ack {
     // 名字 → 活实例 → 它的属主 task：目录给的入口门闩副本，`owner` 就是开它的那个域的
     // 主线程（`vestor` 会被转发改写，`owner` 不会）。解析完当场放下这枚副本——它不是
     // 我们的资源。
-    let Ok(entry) = dir.connect_token(kill.target.as_str()) else {
+    let Ok(entry) = dir.connect_token(target) else {
         return doom::Ack::Dead;
     };
     let owner = match mail::reserve(entry) {
@@ -862,5 +870,40 @@ extern "C" fn main() -> ! {
     //     "console 之死"在本域退出后会由级联带来 ⇒ 它据此收场，而不是把它当成一次崩溃去重发。
     STOPPING.store(true, Ordering::Release);
     say("root: session over, shutting down\n");
+
+    // 4.3 **先收子域，再放本域自己的空间**——次序是判据，不是顺手。
+    //
+    // 为什么不能只靠 `exit()` 的级联：级联管的是"父死子随"，而本域退场时**自己那几件资源
+    // 也要收回**（UART 那页设备内存是本域的所有物，`hand_over` 只把副本交给 console）。这两
+    // 件事不是一件原子事（4 核）⇒ 子域可能落在"映射已收、任务还没死"的缝里再读一次设备。
+    // 实测那道缝：`no map for user page fault: Load at VA(0x23001)`——VA 正是 UART 那页、读的
+    // 是 `IER`（符号化 = `programs/src/uart.rs:114 ← :104`，console 输入线程"进门关中断"那一
+    // 步）；对照见 `docs/root.md` §7.6（本轮配置 4 轮里 3 轮出现，干净 master 的 4 轮 0 轮）。
+    //
+    // 收法与用户杀服务**共用 [`collect`]**（两件事是同一件），且**按名字收、不按 id**：
+    // console 可能被重发过（重发出来的是**另一个** id），而"哪个是当前实例"这条账在**目录**
+    // 那儿——本域不存第二份。等它走也走 `collect` 里那条判据（探手里那枚副本），不走 `Join`：
+    // `Join` 是任务粒度的，重发出来的那个本线程等不到（§8.1.20）。
+    //
+    // 目录自己**没有名字**（它就是名字的账）：按 id 收，它是本域亲生的 ⇒ `Join` 等得到。
+    match Directory::open(HolePie::from_token(my_dir)) {
+        Ok(dir) => {
+            for name in ["console", irq::SERVICE, "echo"] {
+                match collect(&dir, name) {
+                    // `Ok` = 收干净了；`Dead` = 它本来就已经没了（`kill` 那两步收过的就是它）
+                    // ——两种都是这一步要的结果。
+                    doom::Ack::Ok | doom::Ack::Dead => {}
+                    // `Slow` = 已下令、没等到：**不假装收干净了**，说出来。
+                    doom::Ack::Slow => say(&format!("root: {name} still alive after doom\n")),
+                    // `Denied` = 不在血缘里（本域是全体域的祖先 ⇒ 结构不对）：也说一句。
+                    doom::Ack::Denied => say(&format!("root: {name} not in lineage\n")),
+                }
+            }
+        }
+        Err(_) => say("root: directory unreachable, children not collected\n"),
+    }
+    if room::doom(dir_task).is_ok() {
+        wait_dead(dir_task);
+    }
     exit()
 }

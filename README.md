@@ -219,7 +219,12 @@ job, which waits on the **shell**, not on the service it supervises. So the term
 the natural halt, never an unbounded retry loop. The respawned instance is a **new task id**,
 which is why the interrupt driver learns the name's new owner through an explicit `Delegate`
 rather than through a widened owner test — the relaxation it would need ("same domain") is
-not expressible in the message, which carries only a `from: TaskId`.
+not expressible in the message, which carries only a `from: TaskId`. Shutdown is ordered for
+the same reason, and it reuses the same path: root *collects each child domain by name* — the
+one code path its `kill` service uses — and waits for each to be gone before it releases its
+own space, because the device memory it owns (the UART page) is revoked on the way out and a
+child caught mid-instruction there would fault ([root.md](docs/root.md) §7.6 records the
+window that fix closed).
 
 ---
 

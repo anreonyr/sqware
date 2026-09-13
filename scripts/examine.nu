@@ -2,7 +2,7 @@
 
 # sqware examine 验收门（原名 e2e）——nu 版，取代 scripts/examine.sh。
 #
-# 判据四条，缺一不可（与 .sh 版逐条相同）：
+# 判据五条，缺一不可（前四条与 .sh 版逐条相同；第 5 条是本轮加的，见它那一行）：
 #   1) 逐步生效：十三条命令（默认档；harden/框架档十六条）**逐个等它的输出出现**再发下一条
 #      （expect 式），不是按墙钟盲排；
 #      每步都有独立超时，失败能指到具体哪一条。
@@ -13,6 +13,10 @@
 #      `task: all tasks exited, system halted` 与
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
 #      `plic: line 10 delivered`。
+#   5) 无未处理 fault：捕获里无 `no map for user page fault` / `user fault killed`
+#      ——"有任务被内存错误杀掉"与 panic 同级：自退、marker 齐、无 panic 三样它都不影响，
+#      可它绝不该发生。这条是修关机期那道缝（`docs/root.md` §7.6）时才立起来的：缝在修之前
+#      是"四轮里三轮"，而当时**没有任何判据看着它**（这也正是它能躺那么久的原因）。
 # 默认连跑 3 次要求 3/3；任一判据不过 ⇒ 该轮 FAIL，进程以非零退出。
 #
 # ── 三条补上的断言（非默认档跑）──────────────────────────────────────────────
@@ -521,6 +525,11 @@ def run_once [cfg: record, i: int, flavor: string] {
   if $rc == 124 { $why = (append_why $why "被超时杀") }
   if (hit 'terminating on signal' $log) { $why = (append_why $why "被超时杀") }
   if (hit '\[panic\] at' $log) { $why = (append_why $why "内核panic") }
+  # 未处理的 fault（`trap.rs` 把任务按 `EXIT_FAULT` 杀掉）。与 panic 同级、三档都核：
+  # "停机照旧"不等于"没出事"——缝就是这么藏住的（`docs/root.md` §7.6）。
+  if (hit 'no map for user page fault|user fault killed' $log) {
+    $why = (append_why $why "未处理fault")
+  }
   for m in (markers_for $f) {
     if not (hit $m $log) { $why = (append_why $why $"缺[($m)]") }
   }
