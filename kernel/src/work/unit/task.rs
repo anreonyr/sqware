@@ -356,8 +356,16 @@ impl Task {
 
     /// 记我生的子域（强持有）。由 `TeamBuilder::spawn` 调用——**唯一入口**
     /// （K1 血缘闭合；`spawn` 之外不得再调）。
-    pub(crate) fn adopt(&self, child: Arc<Team>) {
-        self.heir.lock().push(child);
+    /// # Errors
+    ///
+    /// 表扩不出来（内存耗尽）→ `Err(())`（与 `try_reserve_*` 一族同一口径）。
+    /// **预留紧贴 push**：调用方（`TeamBuilder::spawn`）手里那个刚建好的 `Team`
+    /// 可以靠 drop 干净退回，故不需要在它之前预判。
+    pub(crate) fn adopt(&self, child: Arc<Team>) -> Result<(), ()> {
+        let mut g = self.heir.lock();
+        g.try_reserve(1).map_err(|_| ())?;
+        g.push(child);
+        Ok(())
     }
 
     /// 快照我的全部子域（doom 级联遍历用：快照后放锁，锁外逐条处理）。

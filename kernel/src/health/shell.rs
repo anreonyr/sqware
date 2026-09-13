@@ -46,7 +46,8 @@ fn shell_round() {
     space.with_flush(|inner| inner.dynamic(USER_BASE));
     let team = TeamBuilder::new(space)
         .name(Name::new("probe").expect("shell: team name"))
-        .spawn();
+        .spawn()
+        .expect("shell: spawn team");
     let task = team
         .task()
         .name("probe-task")

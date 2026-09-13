@@ -76,7 +76,8 @@ pub(crate) fn build(
     let team = team::TeamBuilder::new(loaded.space)
         .sire(sire)
         .name(name)
-        .spawn();
+        .spawn()
+        .map_err(|_| team::UnitError::Load)?;
     team.set_default_entry(entry.as_usize());
     Ok(team)
 }

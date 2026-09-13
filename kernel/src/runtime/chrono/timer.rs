@@ -10,7 +10,6 @@
 // 簿记约定：堆只存 (wake_at, handle) 纯数据，不持任务引用。
 
 use alloc::collections::binary_heap::BinaryHeap;
-use alloc::vec::Vec;
 use core::cmp::Reverse;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -128,30 +127,24 @@ pub fn due() -> Option<Instant> {
     (t != NONE).then_some(Instant::from_ticks(t))
 }
 
-/// 取出全部已到点 tock 的句柄。
+/// 取出已到点 tock 的句柄，**写进调用方给的缓冲**，返回条数（≤ 缓冲长）。
 ///
-/// 返回的句柄由调用方在放锁后处理——本函数只在 TIMER_HEAP 锁内完成弹堆与
-/// 镜像刷新，不持任何其它锁。
-///
-/// **锁内零分配**：`due` 用固定栈缓冲（[`MAX_DUE`]）——持 Level::L3 锁时不得触
-/// 分配器。超出截断（尽力而为）。
-pub fn drain(now: Instant) -> Vec<u64> {
-    const MAX_DUE: usize = 64;
-    let mut due: [u64; MAX_DUE] = [0; MAX_DUE];
+/// 缓冲由调用方出，是为了让这条路径上**一处分配都不发生**：本函数只在 TIMER_HEAP
+/// 锁内弹堆 + 刷镜像、锁外不碰任何东西，而调用方（`redeem`）在锁外用栈上的固定
+/// 缓冲继续处理——时钟路径（S-timer / 空闲核归队）没有失败域，`Vec` 在这里就是
+/// 一颗地雷。缓冲满则余下留到下一拍（尽力而为的语义与旧版一致）。
+pub fn drain(now: Instant, out: &mut [u64]) -> usize {
     let mut n = 0usize;
     let mut i = TIMER_HEAP.inner.lock();
     let now = now.as_ticks();
     while let Some(Reverse((t, _))) = i.heap.peek() {
-        if *t > now || n >= MAX_DUE {
+        if *t > now || n >= out.len() {
             break;
         }
         let Reverse((_, handle)) = i.heap.pop().expect("peeked non-empty heap entry");
-        due[n] = handle;
+        out[n] = handle;
         n += 1;
     }
     TIMER_HEAP.recompute_nearest(&i);
-    drop(i); // 放锁后再组装结果（锁外分配，零锁内分配）
-    let mut out = Vec::with_capacity(n);
-    out.extend_from_slice(&due[..n]);
-    out
+    n
 }

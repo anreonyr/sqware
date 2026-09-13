@@ -209,7 +209,13 @@ impl TeamBuilder {
     /// 容器化：包 Arc<Space> + 建空簿记，返回团队句柄。
     ///
     /// **血缘闭合**：sire 非空 ⇒ 立即推进 sire.heir（强持有）。见文件头 K1。
-    pub fn spawn(self) -> Arc<Team> {
+    /// # Errors
+    ///
+    /// 父域血缘表扩不出来（内存耗尽）→ [`MapError::OutOfMemory`]。此时那个刚建好的
+    /// `Team` 随作用域 drop：`Space` 归调用方（`Build` 失败时自己 drop）、`id` 单调
+    /// 不复用、`tasks`/`held` 都空 ⇒ **退回是干净的**，所以预留可以紧贴 push，
+    /// 不必在造 `Team` 之前预判。
+    pub fn spawn(self) -> Result<Arc<Team>, crate::memory::manager::MapError> {
         let id = alloc_team_id();
         let team = crate::tag!(
             Team,
@@ -224,9 +230,10 @@ impl TeamBuilder {
             })
         );
         if let Some(sire) = team.sire.upgrade() {
-            sire.adopt(team.clone());
+            sire.adopt(team.clone())
+                .map_err(|()| crate::memory::manager::MapError::OutOfMemory)?;
         }
-        team
+        Ok(team)
     }
 }
 

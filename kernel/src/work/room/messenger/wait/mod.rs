@@ -9,7 +9,6 @@ pub(super) mod site;
 
 use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
-use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::runtime::chrono::{clock, timer};
@@ -362,10 +361,14 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
 /// （防 ABBA）。返回：本次是否撤出过任务（空闲核的哑睡壳判定用）。
 /// 由 trap 路径（S-timer 处理）与空闲核归队时在本 hart 触发。
 pub fn redeem() -> bool {
-    let due = timer::drain(clock::now());
-    // 批量收集再统一 `rise`：一次 kick 收尾（逐条踢会让 IPI 量回到 O(N)）。
-    let mut tasks: Vec<Arc<Task>> = Vec::new();
-    for handle in due {
+    // 两块**栈上**固定缓冲：句柄一块、放行任务一块。批量收集再统一 `rise`——一次
+    // kick 收尾（逐条踢会让 IPI 量回到 O(N)）；两块都由本帧出，故这条路上没有分配。
+    const MAX_DUE: usize = 64;
+    let mut due = [0u64; MAX_DUE];
+    let n = timer::drain(clock::now(), &mut due);
+    let mut tasks: [Option<Arc<Task>>; MAX_DUE] = [const { None }; MAX_DUE];
+    let mut woken = 0usize;
+    for (slot, &handle) in tasks.iter_mut().zip(&due[..n]) {
         // 票号即到点登记的身份：作废票根并取回「在哪个键上等 + 持票人」（已回收 → 落空）。
         // **键取自票根而不是任务 payload**：本路径是观察者（那份持票人 Arc 是临时的，
         // 任务随时可能被别核放行），读 payload 就是读一个被独占写的字段。
@@ -386,7 +389,9 @@ pub fn redeem() -> bool {
             w
         };
         let Some(w) = popped else { continue };
-        tasks.push(w.task);
+        *slot = Some(w.task);
+        woken += 1;
     }
-    rise(tasks) > 0
+    let _ = woken;
+    rise(tasks.iter_mut().filter_map(Option::take)) > 0
 }

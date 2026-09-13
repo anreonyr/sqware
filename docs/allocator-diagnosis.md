@@ -1193,14 +1193,23 @@ harden/framework 档当场 `[panic] envcall without running task`（`trap.rs:266
   （`transform` 的 `debug_assert` 兜底）；拆链迭代（先 `take` 再 drop，别压栈）。
 - 实测：门 5/5；`QEMU_MEM=128 churn 1 4 4` 干净收线、0 panic；`reap` 体内增长助手 0 命中。
 
+**最后三笔（本轮）**
+
+- `timer::drain` 改**调用方给缓冲**（`drain(now, out) -> usize`）：模板里不再有 `Vec`，
+  `redeem` 用两块栈上固定缓冲（句柄一块、放行任务一块）并保住"批量收集、一次 kick"。
+- `Task::adopt` 变成**可失败且紧贴预留**（`Result<(), ()>`），`TeamBuilder::spawn` 随之
+  返回 `Result`：建好的 `Team` 可以靠 drop 干净退回（`Space` 归调用方、`id` 单调不复用、
+  两张表都空）⇒ 不需要"预留跨一次构造"。原先设想的 `try_reserve_heir` 因此**不造**。
+- `pies` 入表按同一把尺子重摆：`Hole`/`Nole` **紧贴 push**（`Pie` drop 即回收资源实体），
+  `Pole` 的预留**贴在 `open` 之前**（落映射才是不可撤回的那一步）。
+- 判据写进代码注释：**预留与 push 的距离 = 二者之间有没有不可撤回的步骤**；能靠 drop
+  退回的不算，故"能不提前就不提前"，也不造"为别处的 push 预留"这类远程 API。
+
 **没做完（逐条点名，处置已定）**
 
 | 位置 | 为什么不是"紧贴预留"就完事 | 计划的处置 |
 |---|---|---|
-| `Task.heir` / `Team.holds`（`task.rs` / `team.rs`） | 域出生路径 | 入口前置预留（`TeamBuilder::spawn` 现为 `-> Arc<Team>`，需改返回码） |
-| `Task.pies` 5 处 | 上游 Unseal/Accord 有 `Result`，但权柄对象已建出来 ⇒ 预留要提到**造权柄之前** | 各自在入口前置预留 |
 | `wipe_space` 持分片 L3 锁时的 `keys().collect()`（`wait/mod.rs`） | 收尾路径，且锁内分配 | 改"游标 + 就地摘除" |
-| `timer::drain` 的 `Vec`（`timer.rs`） | 时钟路径 | 改回调式（零分配） |
 
 **残余风险（写在明处）**：站点可能在"备料"与"入队"之间被同片的 `prune` 删掉 ⇒ 入队时
 `or_insert_with` 新建站点的那一格容量没有预留。窗口极窄（同键的一次 beacon 消费），
