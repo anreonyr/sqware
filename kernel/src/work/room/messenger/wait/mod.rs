@@ -287,26 +287,26 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
 pub(crate) fn wipe_space(space: usize) -> usize {
     let mut woken = 0usize;
     for shard in 0..SITE_SHARDS {
-        // 作用域即临界区：锁内只取、锁外 drop（`Arc<Task>` 的 drop 链会取 L2）。
-        let taken: Vec<Waiter> = {
-            let mut sites = shard_at(shard).lock();
-            let keys: Vec<WakeKey> = sites
-                .keys()
-                .filter(|k| matches!(k, WakeKey::Space { space: s, .. } if *s == space))
-                .copied()
-                .collect();
-            let mut out = Vec::new();
-            for key in keys {
-                if let Some(site) = sites.remove(&key) {
-                    out.extend(site.waiters);
-                }
+        // **一次一个站点**：锁内只摘、锁外处理（`Arc<Task>` 的 drop 链会取 L2），而
+        // `VecDeque` 的缓冲随站点本身一起出锁 ⇒ 全程零分配。旧版在片内先
+        // `keys().collect()` 再开一个 `Vec` 收等待者——两笔都发生在**持锁期间**，
+        // 而收尾路径（`bury`）没有失败域，内存吃紧就是一次整机 halt。
+        loop {
+            let taken = {
+                let mut sites = shard_at(shard).lock();
+                let key = sites
+                    .keys()
+                    .find(|k| matches!(k, WakeKey::Space { space: s, .. } if *s == space))
+                    .copied();
+                key.and_then(|key| sites.remove(&key))
+            };
+            let Some(site) = taken else { break };
+            let waiters = site.waiters;
+            for w in &waiters {
+                void(w.ticket);
             }
-            out
-        };
-        for w in &taken {
-            void(w.ticket);
+            woken += rise(waiters.into_iter().map(|w| w.task));
         }
-        woken += rise(taken.into_iter().map(|w| w.task));
     }
     woken
 }

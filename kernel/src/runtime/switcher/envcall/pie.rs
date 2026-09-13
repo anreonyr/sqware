@@ -109,6 +109,9 @@ fn find(token: usize) -> Result<AnyPie, GateError> {
 fn unseal_hole(frame: &mut TrapContext, mtu: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
+        // 权柄表那一格**先备**：`Unseal` 的失败点必须落在造权柄之前（Hole 这一步
+        // 之后会建资源实体，事后再失败要连实体一起撤）。
+        task.pies.lock().try_reserve(1).map_err(|_| GateError::OoM)?;
         let meta = mail::hole::meta(mtu, task.ident.id)?;
         let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
             meta,
@@ -137,6 +140,8 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
             return Err(GateError::Denied);
         }
         let task = current().running_task().ok_or(GateError::Denied)?;
+        // 同 Hole：预留先于造权柄。
+        task.pies.lock().try_reserve(1).map_err(|_| GateError::OoM)?;
         let meta = mail::nole::NoleMeta::new(task.ident.id);
         let pie: Pie<mail::nole::NoleMeta> = gate::new_pie(
             meta,
@@ -155,6 +160,8 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
 fn unseal_pole(frame: &mut TrapContext, bytes: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
+        // 同 Hole：Pole 这一支 `open` 会落映射，故预留尤其要在它之前。
+        task.pies.lock().try_reserve(1).map_err(|_| GateError::OoM)?;
         let meta = mail::pole::meta(bytes, task.ident.id)?;
         let task_space = task.ident.team.space.clone();
         let pie: Pie<mail::pole::PoleMeta> = gate::new_pie(

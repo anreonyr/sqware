@@ -40,6 +40,8 @@ pub(crate) fn accord(
     };
     let token = granted.token();
     let mut pies = target.pies.lock();
+    // 入表那一格先备：备不出来答 `OoM`，此时权柄还没进表（`granted` 随作用域退回）。
+    pies.try_reserve(1).map_err(|_| GateError::OoM)?;
     pies.push(granted);
     Ok(token)
 }
