@@ -15,7 +15,7 @@
 //! （[`Map::next`]），进箱只是把 `Box` 挂到链头（一次指针写）；一次性释放时
 //! 至多一条 [`Span`]，故它是 `Option` 而不是 `Vec`。旧版这里是两个 `Vec`
 //! （`maps: Vec<Map>` / `spans: Vec<Span>`），那正是拆除路径上那次
-//! `RawVecInner::do_reserve_and_handle` 的来源（实测见 `docs/allocator-diagnosis.md` §14）。
+//! `RawVecInner::do_reserve_and_handle` 的来源（拆除路径上实测到的那次不可失败扩容）。
 
 use alloc::boxed::Box;
 use core::num::NonZeroUsize;

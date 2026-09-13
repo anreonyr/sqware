@@ -66,8 +66,8 @@ impl WakeKey {
 /// `SchedulerInner` 的就绪队列、`Husks` 的躯壳队列同一手法。理由也一样：入队落在
 /// `block` ④（`swap()` 之后，没有失败域）与 `redeem` / `wipe` 这两条放行路径上，
 /// 任何"要么扩容要么 halt"的容器在这三条路上都是地雷；而"容量需求是并发占用"与
-/// 一生一次的 `try_reserve(1)` 对不上（不累加，实测见 `docs/allocator-diagnosis.md`
-/// §14.5）。改链之后，入队 = 两次指针写。
+/// 一生一次的 `try_reserve(1)` 对不上（不累加：备下的那一格可能被同键的另一个等待者
+/// 先占走）。改链之后，入队 = 两次指针写。
 pub(in super::super) struct Site {
     /// 遗留信号（信标）：wake 无等待者 → 置位；wait 见位 → 消费即回（防漏唤醒）。
     pub(in super::super) pend: bool,

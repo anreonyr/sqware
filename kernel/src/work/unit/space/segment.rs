@@ -15,7 +15,7 @@
 //
 // 取段这一步只发生在**能失败**的装配入口里（`SpaceInner::allocate`，上层把失败翻成
 // `-4`/`-1`），所以它该答 `OutOfMemory`，而不是走 `BTreeMap` 那条没有 `try_reserve`
-// 的不可失败叶节点分配（实测同类：368 B，见 `docs/allocator-diagnosis.md`）。
+// 的不可失败叶节点分配（同类实测：368 B 那次）。
 // 复杂度不变：lowest first-fit 今天也是沿表顺序扫一遍。
 
 use alloc::alloc::AllocError;

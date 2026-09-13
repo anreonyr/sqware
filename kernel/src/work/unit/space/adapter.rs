@@ -312,8 +312,7 @@ impl Space {
     /// `ShareWindow::munmap` **各自复制了一遍**（`holds` 校验 + `unmap` +
     /// `take_span` + `reclaim`，逐字同构），于是同一件事有三份实现、三套失败语义
     /// ——而那正是"一份资源有两个归还者"的温床（本仓实测过：`Munmap` 能拆到用户
-    /// 堆页却**不注销账目**，因为 `ShareWindow::munmap` 与堆共用 `Seg::User`，
-    /// 见 `docs/allocator-diagnosis.md` §8）。
+    /// 堆页却**不注销账目**，因为 `ShareWindow::munmap` 与堆共用 `Seg::User`）。
     ///
     /// 现在两个 window 都经 [`Self::release_addr`] 收敛到这里：**一个入口、
     /// 一个失败域、一个注销点**。

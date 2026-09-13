@@ -42,7 +42,7 @@
 | 不变量 | 违反会怎样 | 谁守着 |
 |---|---|---|
 | 簿记 ⇔ PTE 双向一致 | 悬垂 PTE 指向已归还帧 | `SpaceInner::audit`（framework 档；门见 `kernel/Cargo.toml` 的门注） |
-| **释放路径零分配**（`release` → `unmap` → `reclaim`） | 释放里冒出一次不可失败扩容 = 整机 halt（调用方是 `.expect()`） | `unmap` 的「先备后动」（要造图就先备足，失败时状态一字未动）+ `Salvage` 链；产物对照见 `docs/allocator-diagnosis.md` §14.4 |
+| **释放路径零分配**（`release` → `unmap` → `reclaim`） | 释放里冒出一次不可失败扩容 = 整机 halt（调用方是 `.expect()`） | `unmap` 的「先备后动」（要造图就先备足，失败时状态一字未动）+ `Salvage` 链；产物对照：`release`/`reclaim` 体内 0 次增长助手命中（`readelf -sW` 取边界 + `llvm-objdump -d` 列调用）|
 | 帧表容量先备后用：**每次 `push` 之前都预留过** | `Vec` 扩容走不可失败路径 | `Frames::reserve`（唯一分配点）+ `install` 的一次性备足 + `move_*` 的 `debug_assert` |
 | 段表并入 Space 锁；`allocate`/`deallocate` 只在事务内 | 死锁 / 竞争 | `core.rs:18-20`、`adapter.rs:217` |
 | 清退到齐前帧与段不得易主 | 远核旧条目污染新映射 | `salvage.rs:88`、`:106` |
@@ -62,7 +62,7 @@
 | 三档锁退出 | 不刷 / 本核刷 / 跨核清退 | 「新增放宽无远核义务……收紧必须就地跨核清退」（`adapter.rs:224-240`） |
 | 已物化页的写缺页不恢复 | 判 `false`（fault isolation） | 「等于把 `Mprotect` 从边界降级成建议」（`fault.rs:131-141`） |
 | 借入即「空帧表的 Map」 | `pending:None ∧ frames 空` | 与 `ShareWindow` 的懒区在同一段表里共存 |
-| **能失败的走预留，不能失败的那条路才动结构**（第 16 轮裁决） | 装配/缺页/挂起等入口只加前置或紧贴的 `try_reserve`；释放路径（唯一的「不能失败」）零分配 | 「本来就可失败就没必要增加复杂度」——给释放引入新失败域等于把 halt 换个位置（`docs/allocator-diagnosis.md` §14） |
+| **能失败的走预留，不能失败的那条路才动结构**（第 16 轮裁决） | 装配/缺页/挂起等入口只加前置或紧贴的 `try_reserve`；释放路径（唯一的「不能失败」）零分配 | 「本来就可失败就没必要增加复杂度」——给释放引入新失败域等于把 halt 换个位置 |
 | 映射表元素改 `Box<Map>`、`Map` 增拆除链 | 摘下的图整张搬进料箱，不再往容器里推 | 拆除路径不能失败 ⇒ 它必须零分配 |
 | `Frames` / 段块表由 `BTreeMap` 改**有序 `Vec`** | 增长可失败（`BTreeMap` 无 `try_reserve`） | 尺寸不变：32 B/条 vs 叶节点约 33 B/条 |
 | `InstallGuard.installed` 由 `BTreeSet` 改前缀计数 | `mark` 在 `install` 里按 `0..pages` 单调调用 ⇒ 集合恒为前缀 | 一张页表一次不可失败节点分配，要表达的事实只是「前 k 页装好了」 |

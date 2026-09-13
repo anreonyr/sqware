@@ -84,7 +84,7 @@ pub(super) struct SchedulerInner {
     /// 为什么不是 `VecDeque`：唤醒路径（`rise`：`wake`/`wipe`/`redeem`）与轮转路径
     /// **没有失败域**，任何"要么扩容要么 halt"的容器在这两条路上都是地雷；而队列的
     /// 容量需求是"并发占用"，跟"一生一次"的预留对不上（`VecDeque::try_reserve(1)`
-    /// 不累加，实测见 `docs/allocator-diagnosis.md` §14.5）。
+    /// 不累加：备下的那一格会被同键的另一个等待者先占走）。
     head: Option<Arc<Task>>,
     /// 链尾（多持一个强引用，等价 Linux `rb_leftmost` 那种缓存；链的所有权仍在节点间）。
     tail: Option<Arc<Task>>,
@@ -123,8 +123,8 @@ impl Scheduler {
 
     /// 计数镜像与队列**在同一处改动**：每次摘挂各 ±1（须在持 inner 锁时调用）。
     ///
-    /// 链没有 `.len()`，故这一条从"从容器派生"降为"与容器同处维护"——代价写在
-    /// `docs/allocator-diagnosis.md` §14.5；兜底是调试档整链核算
+    /// 链没有 `.len()`，故这一条从"从容器派生"降为"与容器同处维护"（这就是那条代价）；
+    /// 兜底是调试档整链核算
     /// [`Self::starved_check`]（只走链，不上热路径）。
     fn counted(&self, delta: isize) {
         if delta > 0 {

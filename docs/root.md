@@ -249,7 +249,7 @@ crates/runtime/src/core/handshake.rs
    - **症状**：`no map for user page fault: Load at VA(0x23001)`——`0x23000` 是 UART 那页
      设备内存，读的是 `IER`；符号化落到 `programs/src/uart.rs:114`（`Uart::read`）← `:104`
      （`mask_rx`）← `console.rs:258`，即 **console 的输入线程"进门关中断"那一步**。
-   - **站点不是本轮引入的**：`docs/allocator-diagnosis.md` §13 记过一次同址现场
+   - **站点不是本轮引入的**：更早一轮记过一次同址现场
      （`pc=0x1024c`，同样落到 `uart.rs:104/114`），而那次运行的命令序列**没有**重启步骤。
    - **窗口是本轮撑开的**：同一套判据、同一台机器——本轮配置（含 `kill console` + 重发）
      4 轮里 **3 轮**出现（tid 14/14/18，pc 全是 `0x10302`）；干净 master 上的对照
