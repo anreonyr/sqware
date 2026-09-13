@@ -28,7 +28,6 @@ use super::SpaceKind;
 use super::core::SpaceInner;
 use super::map::{Pending, PendingState};
 use super::salvage::{Salvage, Span};
-use super::segment::SegmentKind;
 use crate::layout::TRAMPOLINE;
 use crate::lock::{Level, RelLock};
 use crate::memory::PAGE_SIZE;
@@ -342,28 +341,6 @@ impl Space {
         //    者"的解法不是再加一个归还者，而是把归还点收敛掉**。此处已收敛。
         salvage.reclaim(self).expect("release: shootdown deaf");
         Ok(())
-    }
-
-    /// **地址形态**的释放门：把用户面送来的 `(addr, size)` 还原成 `Span` 后走
-    /// [`Self::release`]。
-    ///
-    /// # 为什么需要这一层
-    ///
-    /// 栈与 trap 帧的 Span 由内核自己持有（存进 `TaskIdent`），退场时直接
-    /// `release(span)`。但**堆与 mmap 是用户面**：`EnvCall::Memory::Deallocate`
-    /// 与 `Munmap` 只送来地址与长度，内核手上没有那块区域的身份，故必须由地址
-    /// 还原。
-    ///
-    /// 前置校验放在这里（而不是在两个 window 里各写一遍）：地址不对是**用户输入
-    /// 问题**，不是调用方 bug，所以回 `false`（"未登记"语义），而 `release` 的
-    /// `SegmentMismatch` 留给内核内部调用方（它们用 `.expect()`）。
-    ///
-    /// 返回：找到并释放 → `true`；该区间不是本段的已分配块 → `false`（状态未动）。
-    pub(crate) fn release_addr(&self, seg: SegmentKind, addr: VirtAddr, size: usize) -> bool {
-        if !self.with_flush(|inner| inner.holds(seg, addr.as_usize(), size)) {
-            return false;
-        }
-        self.release(Span::new(seg, addr, size, None)).is_ok()
     }
 
     /// 懒页物化（缺页处理：分配零页装叶注入 + 刷 TLB）。

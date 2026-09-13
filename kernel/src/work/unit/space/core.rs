@@ -53,6 +53,7 @@ pub(crate) struct SpaceInner {
     ///
     /// 元素是 `Box<Map>` 而不是 `Map`：拆除路径要能把摘下的图**整体搬进料箱**
     /// （[`Salvage`] 的链，零分配）——值住在 `Vec` 的缓冲里就搬不走。
+    #[allow(clippy::vec_box)]
     pub(crate) maps: Vec<Box<Map>>,
 }
 
@@ -337,7 +338,9 @@ impl SpaceInner {
             // 洞内有帧才需要洞图：借入页 / 未触页的洞没有帧要挂着等清退。
             let hole = {
                 let n = m.frames.count_range(lo_pg, hi_pg);
-                (n > 0).then(|| m.part(lo_pg, hi_pg - lo_pg, n)).transpose()?
+                (n > 0)
+                    .then(|| m.part(lo_pg, hi_pg - lo_pg, n))
+                    .transpose()?
             };
             // 右段：洞**在中间**时才独立成一张图（在头由本图重绕、在尾无右段）。
             let right = if lo_pg != 0 && hi_pg < pages {
@@ -350,7 +353,9 @@ impl SpaceInner {
             splits.push(Split { hole, right });
         }
         // 第二趟会把右段图推回表：先把追加格备足（此后 `push` 不再增长）。
-        self.maps.try_reserve(rights).map_err(|_| MapError::OutOfMemory)?;
+        self.maps
+            .try_reserve(rights)
+            .map_err(|_| MapError::OutOfMemory)?;
 
         // ── 第二趟：只搬 ────────────────────────────────────
         let SpaceInner { root, maps, .. } = self; // 字段级拆借：清叶要用 root

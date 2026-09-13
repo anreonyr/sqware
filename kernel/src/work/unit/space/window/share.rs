@@ -59,6 +59,13 @@ impl ShareWindow {
     ///
     /// 语义不变：该区间不是本段的已分配块 → `false`（状态未动）。
     pub(crate) fn munmap(space: &Space, addr: VirtAddr, size: usize) -> bool {
-        space.release_addr(SegmentKind::Normal, addr, size)
+        {
+            let this = &space;
+            let seg = SegmentKind::Normal;
+            if !this.with_flush(|inner| inner.holds(seg, addr.as_usize(), size)) {
+                return false;
+            }
+            this.release(Span::new(seg, addr, size, None)).is_ok()
+        }
     }
 }

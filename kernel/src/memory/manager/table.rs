@@ -111,11 +111,6 @@ impl PageTable {
 pub(crate) static TABLE_LIVE: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
-/// 活页表帧数（探针读数）。
-pub(crate) fn table_live() -> usize {
-    TABLE_LIVE.load(core::sync::atomic::Ordering::Relaxed)
-}
-
 /// 页表所有权节点 — 硬件页 + 子树所有权（堆上，不进帧）。
 ///
 /// - `page`：硬件页表帧（根或中间表；恰好一帧，`repr(C, align(4096))`）
