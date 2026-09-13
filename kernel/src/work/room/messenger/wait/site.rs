@@ -15,8 +15,6 @@ use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::life::Life;
 use crate::work::unit::task::{Task, TaskState};
 
-use super::holder::Ticket;
-
 // ── 类型 ──
 
 /// 唤醒源：谁会把等待者叫醒。三个命名空间各占一个变体，键即身份。
@@ -134,39 +132,6 @@ pub(in super::super) fn sites(key: WakeKey) -> &'static Shard {
     shard_at(site_shard(key))
 }
 
-/// 为即将挂起的等待者**把站点就位**——不在就先建出来（唯一的分配点：分片表那一格）。
-/// `life` **按值**进站点（跨挂起不留副本）。
-///
-/// 这是挂起路径上**唯一**会失败的一步，且它整个在 `swap()` **之前**（`block` ②）——
-/// 挂起没有失败域可挂，故唯一能答错的入口必须留在还有调用方栈可退的那一侧。链改到
-/// 载荷里之后，这一步不再包含"给队列备容量"：入链本身零分配，站点只要**存在**就够了。
-///
-/// 站点为什么要**先**建：④ 的入队是"把本任务接到链尾"，而链挂在站点上——站点不在，
-/// 链就没有落脚处。④ 因此只 `get_mut`（不 `entry().or_insert_with()`）：站点若在窗口里
-/// 被别的核删掉（`prune` / `wake` / `wipe` / `wipe_space` 都可能删），④ 当场按「已唤醒」
-/// 收尾——**伪唤醒，契约允许**（`wait` 的返回只是提示，调用方必须复核条件），故那一支
-/// 不需要任何分配，也不需要第二条失败通道。这是「对象在入口造，表只串链」在等待机上的
-/// 落点：备料 = 造对象，串链 = 零分配。
-///
-/// 站点带着**本键**的存活单元：同一个键只有一份 `Life`，故这枚弱引用与入口无关
-/// （wait / join 指同一个分配），赋值不是「换主」而是「同一事实的重写」。
-///
-/// # Errors
-///
-/// 分片表扩不出来（内存耗尽）→ `Err(())`（与 `try_reserve_roster` 同一口径）。
-/// 失败时那一个键上什么都没留下：站点没建、票根与到点未登记、任务状态未改。
-pub(in super::super) fn try_reserve_site(key: WakeKey, life: Weak<Life>) -> Result<(), ()> {
-    let mut sites = sites(key).lock();
-    if sites.contains_key(&key) {
-        return Ok(());
-    }
-    sites.try_reserve(1).map_err(|_| ())?;
-    let mut site = Site::new(&Weak::new());
-    site.life = life;
-    sites.insert(key, site);
-    Ok(())
-}
-
 /// 信标先探：消费本键上的遗留信号。**缺键即无信标**——不 `or_insert`：空的、
 /// 无信标的站点没有语义，不该被「先探」凭空造出来。
 ///
@@ -273,30 +238,13 @@ impl Site {
         Some(head)
     }
 
-    /// 按票摘一环（到期认领）；票对不上 → `None`。摘除点当场摘链。
-    pub(super) fn remove_ticket(&mut self, ticket: Ticket) -> Option<Arc<Task>> {
-        self.remove_if(&mut |t| Task::blocked_ticket(t) == ticket)
-    }
-
-    /// 按身份摘一环（扑杀路径：观察者只知道「谁」，不知道票）。票交调用方作废到点登记。
+    /// 走链摘掉**第一个满足 `hit` 的一环**（票对不上 / 人不对都由 `hit` 回答）；空链或
+    /// 无人命中 → `None`。返回**被摘下的那一环**——调用方要什么就从它身上读：到期认领
+    /// 要人（直接用），扑杀要票（`Task::blocked_ticket`）。
     ///
-    /// 被摘下的那一环就地释放：调用方必持一枚强引用（签名要求 `&Arc<Task>`），故它不
-    /// 可能是最后一个所有者——锁内不会触发 `Task::drop` 的 drop 链（那会取 L2 空间锁）。
-    pub(in super::super) fn remove_task(&mut self, target: &Arc<Task>) -> Option<Ticket> {
-        let mut ticket = None;
-        self.remove_if(&mut |t| {
-            if Arc::ptr_eq(t, target) {
-                ticket = Some(Task::blocked_ticket(t));
-                true
-            } else {
-                false
-            }
-        })
-        .and(ticket)
-    }
-
-    /// 「走链找第一个匹配者并摘掉它」的共用实现：`hit` 判定 + 顺带读载荷
-    /// （票在两处都要读一次，故判定与读取合成一个闭包）。返回被摘下的那一环。
+    /// 这是站点唯一的摘除入口。曾经有两个名字（`remove_ticket` / `remove_task`）：它们
+    /// 各自只有一行、各自只有一个调用点，只是把「按什么找」与「要回答什么」包了一层
+    /// ——那两句话本来就该由调用方说（`hit` 是**数据**，不是策略）。
     ///
     /// 走链逐节 clone 只为比较身份，不动链；命中时把后继接到前驱的载荷上，并清空
     /// 离开者（与 `Scheduler::starved_remove` 同形）。
@@ -304,7 +252,14 @@ impl Site {
     /// **链尾**必须跟着改：摘掉的若是最后一环（`next` 为空），新链尾就是它的前驱——
     /// 只在新链为空时才清 `tail` 是不够的，摘掉"非头的尾"会留下一个指着链外的
     /// `tail`，下一次 `push_back` 就把新等待者接到链外的节点上（链头压根到不了它）。
-    fn remove_if(&mut self, hit: &mut dyn FnMut(&mut Arc<Task>) -> bool) -> Option<Arc<Task>> {
+    ///
+    /// 被摘下的那一环如果在锁内就地释放：调用方必持一枚强引用（杀路径）或它本来就在
+    /// 锁外（到期路径），故它不可能是最后一个所有者——锁内不会触发 `Task::drop` 的
+    /// drop 链（那会取 L2 空间锁）。
+    pub(in super::super) fn remove_if(
+        &mut self,
+        hit: &mut dyn FnMut(&mut Arc<Task>) -> bool,
+    ) -> Option<Arc<Task>> {
         let mut prev: Option<Arc<Task>> = None;
         let mut cur = self.head.clone();
         while let Some(mut node) = cur {

@@ -67,21 +67,6 @@ impl Team {
             .push(TaskWeak::stored(Arc::downgrade(task), Site::TeamTasks));
     }
 
-    /// 为即将入簿的成员**预留**一格（产生路径不分配）。
-    ///
-    /// # Errors
-    ///
-    /// 簿记无法扩容（内存耗尽）→ `Err(())`。
-    ///
-    /// 与名册 / 就绪队列的预留同旨：把会分配的一步提到装配之前，失败时干净退回
-    /// ——「生不出任务」应当是一个返回码，不是一次整机 halt。
-    pub(crate) fn try_reserve_task(&self, slot: usize) -> Result<(), ()> {
-        self.tasks
-            .lock()
-            .try_reserve(slot.saturating_add(1))
-            .map_err(|_| ())
-    }
-
     /// 清理簿记：摘除已退出线程与全部死条目。
     ///
     /// **不 upgrade**：弱引用提升会让存活条目的强计数瞬时 +1，与「强计数唯一
@@ -123,21 +108,11 @@ impl Team {
 
     /// 记下引导线程（未放行）。`Spawn` 产 Held 时调用。**追加**，不覆盖。
     ///
-    /// 前置：容量已由 [`Self::try_reserve_held`] 备好——这一步发生在帧之后
-    /// （栈与 trap 帧那时已经领了），所以预留**必须在领帧之前**做：`hold` 没有
-    /// 失败通道，这里再扩容就是把"帧已领、任务没入表"变成可达状态。
+    /// 前置：那一格的容量已经备好——本方法没有失败通道，而**它的调用点在领帧之后**
+    /// （栈与 trap 帧那时已经领了、不可撤回），故预留只能由 `TaskBuilder::hold` 在领帧
+    /// 之前做（`TaskBuilder::hold` 里与 `tasks` 那一格并排，各配一次 push）。
     pub(crate) fn hold(&self, task: &Arc<Task>) {
         self.held.lock().push(task.clone());
-    }
-
-    /// 为即将入表的引导线程**预留一格**（产生路径不分配）。
-    ///
-    /// # Errors
-    ///
-    /// 表扩不出来（内存耗尽）→ `Err(())`。与 `try_reserve_task` 同一口径，
-    /// 且**在领帧之前**调用（见 [`Self::hold`] 的前置）。
-    pub(crate) fn try_reserve_held(&self) -> Result<(), ()> {
-        self.held.lock().try_reserve(1).map_err(|_| ())
     }
 
     /// **按身份**摘出引导线程（`Hatch` / `kill` 用）：摘到返回 true。

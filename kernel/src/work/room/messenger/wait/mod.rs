@@ -20,7 +20,7 @@ use crate::work::unit::life::{Life, TaskLife};
 use crate::work::unit::task::{Task, TaskState};
 
 use self::holder::{Ticket, hold, void};
-use self::site::{SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon, try_reserve_site};
+use self::site::{SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon};
 use super::handoff::Handoff;
 
 // ── 操作：挂起（用 scheduler::core::Scheduler::swap） ──
@@ -63,13 +63,26 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
     // `envcall without running task` panic）。失败时一个字都没欠——站点已就位、
     // 票根与到点未登记、任务状态未改、本核仍持着自己的任务，`OoM` 当场交给调用方，
     // 它可能马上重试。
+    //
+    // 备料三件事：**站点就位**（唯一会分配的一步）、票根、到点。站点是 ④ 的落脚处
+    // ——链挂在站点上；它同时是 ④ 只 `get_mut` 的前提（见 ④）。`life` 按值移进站点
+    // （跨挂起不留副本），且它带的就是**本键**的存活单元：同一个键只有一份 `Life`，
+    // 故这枚弱引用与入口无关（wait / join 指同一个分配），赋值不是「换主」而是
+    // 「同一事实的重写」。
     let Some(me) = current().running_task() else {
         // envcall 恒在任务上下文（见 `dispatch` 头注）；退化路径不挂起、不动表，
         // 按"条件未就绪"答（`Busy`）。
         return Err(GateError::Busy);
     };
-    // `life` 按值移进站点（理由见 `try_reserve_site`）。
-    try_reserve_site(key, life).map_err(|()| GateError::OoM)?;
+    {
+        let mut sites = sites(key).lock();
+        if !sites.contains_key(&key) {
+            sites.try_reserve(1).map_err(|_| GateError::OoM)?;
+            let mut site = Site::new(&Weak::new());
+            site.life = life;
+            sites.insert(key, site);
+        }
+    }
     let ticket = Ticket::alloc();
     let at = (dur != Duration::MAX).then(|| clock::now().add(dur).as_ticks());
     if let Some(at) = at {
@@ -411,9 +424,8 @@ pub fn redeem() -> bool {
         // 只是它按身份找、这里按票找）。
         let popped = {
             let mut sites = sites(key).lock();
-            let w = sites
-                .get_mut(&key)
-                .and_then(|site| site.remove_ticket(Ticket(handle)));
+            let pick = &mut |t: &mut Arc<Task>| Task::blocked_ticket(t) == Ticket(handle);
+            let w = sites.get_mut(&key).and_then(|site| site.remove_if(pick));
             prune(&mut sites, key);
             w
         };

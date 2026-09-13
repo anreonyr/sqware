@@ -1119,18 +1119,20 @@ freelist↔pagemeta 背离（§10）现在只剩 `check_bounds` / `check_frame_f
 
 **挂起路径**（`work/room/messenger/wait/**` + `chrono/timer.rs`）
 
-8. `holder::hold`、`timer::tock`、`site::try_reserve_site` 都在**各自锁内**先 `try_reserve`
-   再插；`block` 的备料全部提到 **`current().swap()` 之前**。
+8. `holder::hold`、`timer::tock` 都在**各自锁内**先 `try_reserve` 再插；站点就位
+   （`block` ②）同样锁内先备后插；`block` 的备料全部提到 **`current().swap()` 之前**。
    实测教训：备料放在离核之后 ⇒ 失败时返回等于让本核没有任务，下一次 envcall 直接
    `[panic] envcall without running task`（`trap.rs:266`）。离核之后没有"原地失败"这条路。
-9. 站点队列的容量不变量（写在 `try_reserve_site` 的文档里）：**每次 `push_back` 之前都为
-   自己那一格预留过** ⇒ 任意时刻 `capacity − len ≥ 已在备料尚未入队的等待者数` ⇒ 入队
-   不再扩容。
+9. 站点等待队列**不再有容量不变量**（第 17 轮）：它成了一条穿在
+   `TaskState::Blocked::next` 里的链，入链/出链/摘除全是指针写 ⇒ 没有"没备够一格"这回事。
+   连带删掉两个薄封装：`try_reserve_site`（活摊回 `block` ②）、`remove_ticket` /
+   `remove_task`（活摊回调用点，`Site::remove_if` 成为唯一的摘除入口）。
 
 **其他入口**
 
-10. `Team::try_reserve_held` 在 `TaskBuilder::hold` 的**领帧之前**预留（`hold` 的推送在帧之后，
-    没有失败通道）；`TableNode::children` 的 push 前紧贴 `try_reserve(1)`（落在缺页建中间表
+10. `held` / `tasks` 两格在 `TaskBuilder::hold` 的**领帧之前**就地锁内 `try_reserve(1)`
+    （两次 push 都在帧之后，没有失败通道 —— 中间的领帧不可撤回，故预留只能提前）；
+    `TableNode::children` 的 push 前紧贴 `try_reserve(1)`（落在缺页建中间表
     这条路上）；`envcall/mail.rs` 的两处 `vec![0u8; …]` 换 `try_reserve` + `resize`。
 
 ### 14.4 实测（前后对照）
@@ -1171,7 +1173,7 @@ harden/framework 档当场 `[panic] envcall without running task`（`trap.rs:266
 
 | 位置 | 处置 |
 |---|---|
-| `Team.held`（`team.rs`） | `try_reserve_held` 在 `TaskBuilder::hold` 的**领帧之前**（推送发生在帧之后） |
+| `Team.held`（`team.rs`） | 两格都在 `TaskBuilder::hold` 的**领帧之前**就地备（两次 push 发生在帧之后） |
 | `TableNode.children`（`table.rs`） | 建中间表时紧贴 `try_reserve(1)`（落在缺页路径上） |
 | `doomed`（`doom.rs`） | 锁内先试扩容；备不出来不 panic（该函数的返回值本就把"没记上"算进语义） |
 | `bitmap.bits`（`bitmap.rs`） | `ensure` 返 `Result`：`allocate` 翻成 `AllocError`；`deallocate` 按"没建成 ⇒ 拒掉"处理（释放路径不该因备不出位图而失败） |
@@ -1186,11 +1188,12 @@ harden/framework 档当场 `[panic] envcall without running task`（`trap.rs:266
 - `TaskState::Starved { next }` / `Reaped { next }` / `Blocked { key, ticket, next }`
   ——节点就是任务自己；容器（`SchedulerInner.head/tail`、`Husks.head/tail`、
   `Site.head/tail`）一次指针写即入队/出队，**三条队列上再没有任何分配**
-  （`try_reserve_starved`、`Waiter` + 它的 `VecDeque`、以及等待路径上"给队列备一格"
-  那一半 `try_reserve_site` 一并删除）。
+  （`try_reserve_starved`、`Waiter` + 它的 `VecDeque` 一并删除；站点那一侧的备料
+  最后只剩"造站点"这一件事，活摊回了 `block` ②）。
 - 互斥不靠引用计数：`Task::exclusive` 的定义就是"容器锁 + 容器唯一性"，
-  故偷窃（`try_pull`，受害者锁内摘链头）、kill 摘除（`starved_remove` / `Site::remove_task`
-  走链）与到期认领（`remove_ticket` 按票走链）都成立。
+  故偷窃（`try_pull`，受害者锁内摘链头）、kill 摘除（`starved_remove` 走链）与
+  到期认领 / 扑杀（`Site::remove_if`：`hit` 是数据、票与人都从摘下来的那一环上读）
+  都成立。
 - 代价一条，写在明处：链没有 `.len()`，`starved_len` 镜像从"从容器派生"降为
   "与容器同处 ±1 维护"（`counted`），兜底是调试档整链核算 `starved_check`。
 - 三条纪律：弹出时**清空离开者的 `next`**（否则一任务两链）；离开 `Starved`/`Blocked`

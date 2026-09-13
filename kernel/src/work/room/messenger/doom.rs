@@ -93,15 +93,21 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
     doomed_nudge(task, reason)
 }
 
-/// 站点表全扫：找 `task` 的那一环，摘下并**顺带拿到它的票**（观察者不读 payload，
-/// 键票只能问容器——键在片内用来定位与 `prune`，票交调用方作废到点登记）。
+/// 站点表全扫：找 `task` 的那一环，摘下并**顺带拿到它的票**（票在容器里那一环上，
+/// 链的强持有者就是那个站点；键在片内用来定位与 `prune`，票交调用方作废到点登记）。
 /// 逐片取放，不持跨片锁；命中即摘即返。
 fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
     for shard in 0..SITE_SHARDS {
         let mut sites = shard_at(shard).lock();
         let mut hit: Option<(WakeKey, Ticket)> = None;
         for (key, site) in sites.iter_mut() {
-            if let Some(ticket) = site.remove_task(task) {
+            // 摘下那一环之后票从它身上读一次（读的人就是容器 + 持着分片锁，
+            // 见 `Task::blocked_ticket`）。`task` 在本帧里是被强持有的 ⇒ 即使这里是
+            // 最后一个引用也不会在锁内走 `Task::drop` 的 drop 链。
+            if let Some(ticket) = site
+                .remove_if(&mut |t| Arc::ptr_eq(t, task))
+                .map(|mut node| Task::blocked_ticket(&mut node))
+            {
                 hit = Some((*key, ticket));
                 break;
             }

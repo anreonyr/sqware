@@ -311,7 +311,7 @@ impl Task {
     /// 与 [`Self::blocked_next`] 同一前提（持分片锁）：读的人就是容器（链的强持有者
     /// ＋那把锁），故读得到。**观察者不这么用**——`redeem` 从票根拿「键 + 持票人」
     /// （那份持有人的 `Arc` 是临时的，任务随时可能被别核放行），进容器后只按票号比对
-    /// （`Site::remove_ticket`），不去看「持票人现在什么状态」。
+    /// （`Site::remove_if` 里那一比），不去看「持票人现在什么状态」。
     pub(crate) fn blocked_ticket(t: &mut Arc<Self>) -> Ticket {
         match Self::exclusive(t).state_mut() {
             TaskState::Blocked { ticket, .. } => *ticket,
@@ -526,23 +526,29 @@ impl TaskBuilder {
     pub fn hold(self) -> Result<Arc<Task>, MapError> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
-        // **先备好索引容量，再动帧**（顺序即「失败域最小」）：名册 / 就绪队列 /
-        // 域簿记这三张表都在装配尾部 `insert`/`push`，那时已无错误通道——它们一
+        // **先备好索引容量，再动帧**（顺序即「失败域最小」）：名册 / 成员簿记 /
+        // 未放行容器这三张表都在装配尾部 `insert`/`push`，那时已无错误通道——它们一
         // panic 就是整机 halt。故把唯一会分配的一步提到最前：容量不够就当场
         // `Err(OutOfMemory)`，此时**一帧未领**，退回成本为零。
         //
-        // 名册（`HashMap`，容量与键无关）、就绪队列、域簿记：各预留**一格**。
-        // 不按 `id` 预留——`id` 只增不减，按它预留会让开销随运行时长线性膨胀。
+        // 三张表**各备一格**（不按 `id` 预留——`id` 只增不减，按它预留会让开销随运行时
+        // 长线性膨胀）；名册走它自己的入口，另两张就在这里、锁内直接备。就绪队列不用备：
+        // 它的节点是任务自己的 `Starved` 载荷（零分配入队）。
+        //
+        // 后两张的预留为什么隔着这么远（备在这儿、push 在装配尾部）：`push_task` 与
+        // `hold` 都落在**领帧之后**——栈与 trap 帧那时已经领了、不可撤回，故那两格只能
+        // 在这里备。判据即「预留与 push 的距离 = 二者之间有没有不可撤回的步骤」。
         scheduler::core::try_reserve_roster().map_err(|()| MapError::OutOfMemory)?;
-        // 就绪队列不再需要预留：它的节点是任务自己的 `Starved` 载荷（零分配入队）。
         self.team
-            .try_reserve_task(1)
-            .map_err(|()| MapError::OutOfMemory)?;
-        // `held` 的推送发生在帧之后（见 `Team::hold` 的前置），故它那一格也在**领帧
-        // 之前**备——四笔插入各有一笔预留，且都在不可逆步骤之前。
+            .tasks
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| MapError::OutOfMemory)?;
         self.team
-            .try_reserve_held()
-            .map_err(|()| MapError::OutOfMemory)?;
+            .held
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| MapError::OutOfMemory)?;
 
         // 栈：StackWindow::claim 取 slot（user 段 + guard，立即物化；U 位随空间模式）
         let stack_size = self.stack;
