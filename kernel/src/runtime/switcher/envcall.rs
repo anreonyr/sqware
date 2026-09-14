@@ -21,7 +21,7 @@ use core::time::Duration;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{ChronoCall, ControlCall, EnvCall, MemoryCall, Name, RoomCall, UnitCall};
+use env::{ChronoCall, ControlCall, DebugCall, EnvCall, MemoryCall, Name, RoomCall, UnitCall};
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr as KVirt;
@@ -39,6 +39,7 @@ use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
 use crate::work::unit::weak::{Site, TaskWeak};
 
+mod debug;
 mod mail;
 mod pie;
 
@@ -272,6 +273,12 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         }
         EnvCall::Chrono(ChronoCall::Ticks) => {
             frame.gpr.set_x(Gprs::A0, timer::ticks() as usize);
+        }
+        EnvCall::Debug(DebugCall::Put { buf, len }) => {
+            return debug::put(frame, &ident, buf.get(), len);
+        }
+        EnvCall::Debug(DebugCall::Get { buf, len }) => {
+            return debug::get(frame, &ident, buf.get(), len);
         }
         EnvCall::Room(RoomCall::Park { millis }) => {
             drop(ident);

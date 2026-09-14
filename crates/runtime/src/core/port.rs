@@ -30,6 +30,30 @@ fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(-1))
 }
 
+/// 回信地址的线形：一枚 `PieToken` 在**对端那张表**里的编号。
+pub const ADDRESS_LEN: usize = 8;
+
+/// 回信地址在报文里的偏移——**紧跟首字段**（首字段是动词，一字节）。
+///
+/// 它与 [`Duet::encode`] 一起构成本层的两件套：**地址在哪儿**（这个数）、
+/// **这一帧多长**（那个返回值）。两者都不由协议各自发明。
+pub const ADDRESS_AT: usize = 1;
+
+/// 从任意一条报文里抠出回信地址——**坏报文也要能抠**（拒一条请求仍欠对方一句
+/// `Denied`，而那一句得知道往哪儿推）。`None` = 太短 / 全是 0（0 是本仓的"无句柄"）。
+pub fn address_of(m: &[u8]) -> Option<PieToken> {
+    let slot = m.get(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    let token = PieToken::new(usize::from_le_bytes(slot.try_into().ok()?));
+    if token.get() == 0 { None } else { Some(token) }
+}
+
+/// 把回信地址写进一条报文的地址槽（成帧方用；机制只在 [`Duet::encode`] 里代劳）。
+pub fn put_address(m: &mut [u8], at: PieToken) -> Option<()> {
+    let slot = m.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    slot.copy_from_slice(&at.get().to_le_bytes());
+    Some(())
+}
+
 /// 读写族：对端对这份资源**能做什么**。
 ///
 /// 与 [`Policy`] 分成两个类型是刻意的：合成一个 `Permission` 时，调用方可以把
@@ -165,20 +189,21 @@ pub trait Duet {
     /// （要 `generic_const_exprs`），用不了 ⇒「报文多大」这份知识只能留在实现侧。
     type Wire: AsRef<[u8]> + AsMut<[u8]>;
 
-    /// 请求报文的字节数（**协议自己的尺寸**：孔不替协议记长度）。
-    const REQ: usize;
-    /// 回复报文的字节数。
-    const REP: usize;
+    /// **一块内存要多大装得下本协议任何一条帧**——给容器定容用的上界，**不是被推的
+    /// 字节数**（那个数由 [`Duet::encode`] 当场报出来）。报文可短不可长：短了正是省下
+    /// 的那些字节，长了接收侧装不下（`pull` 拒绝且槽不动 ⇒ 这条孔当场死住）。
+    const CAP: usize;
 
     /// 一个空的报文容器。请求与回复**共用一块**：报文推出去之后即可复用——`push`
     /// 在锁外就把字节搬进了内核那份 staging。
     fn wire() -> Self::Wire;
 
-    /// 布局：把请求写进 `out`，并把**回信地址**写在该协议自己的偏移上。
+    /// 布局：把请求写进 `out`，并把**回信地址**写在 `[ADDRESS_AT..)` 上。
     ///
-    /// `seed` = 种在对端表里的那一枚（[`To::seed`]）——布局归协议：地址写哪、
-    /// 写成几个字节、要不要每条请求都写，它说了算。
-    fn encode(req: &Self::Req, seed: PieToken, out: &mut [u8]);
+    /// `seed` = 种在对端表里的那一枚（[`To::seed`]）。返**本帧的字节数**——写入 `out`
+    /// 的那些字节才是这一帧，其余位置一个字节都不上线（补零、保留区都由此消失）。
+    /// 要不要每条请求都带地址，仍归协议说（如控制台只在 `Open` 上带）。
+    fn encode(req: &Self::Req, seed: PieToken, out: &mut [u8]) -> usize;
 
     /// 解码回复。报文不合法 ⇒ `Denied`。
     fn decode(buf: &[u8]) -> EnvResult<Self::Rep>;
@@ -226,15 +251,15 @@ impl Port {
     /// `call`（与 [`HolePie::pull_timeout`] 的既有契约同款）。
     pub fn call<W: Duet>(&self, req: &W::Req, within: usize) -> EnvResult<W::Rep> {
         let mut wire = W::wire();
-        W::encode(req, self.to.seed(), wire.as_mut());
+        let sent = W::encode(req, self.to.seed(), wire.as_mut());
         self.entry
-            .push(wire.as_ref().get(..W::REQ).ok_or_else(denied)?)?;
-        let field = wire.as_mut().get_mut(..W::REP).ok_or_else(denied)?;
+            .push(wire.as_ref().get(..sent).ok_or_else(denied)?)?;
+        let field = wire.as_mut().get_mut(sent..W::CAP).ok_or_else(denied)?;
         let (len, from) = self.reply.pull_timeout_from(field, within)?;
         if from != self.to.peer() {
             return Err(denied());
         }
-        W::decode(wire.as_ref().get(..len).ok_or_else(denied)?)
+        W::decode(wire.as_ref().get(sent..sent + len).ok_or_else(denied)?)
     }
 
     /// 关：只放下回信孔（**级联已含对端那枚副本**，不必再 `revoke`——那是旧

@@ -50,7 +50,7 @@ use alloc::format;
 use env::{HoleDir, TeamId};
 use protocol::dispatch::client::Directory;
 use protocol::irq;
-use protocol::uart::{self, Action, DELIVER_MTU, MSG_LEN, SERVICE, Status};
+use protocol::uart::{self, Action, DELIVER, SERVICE, Status};
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
 use runtime::core::port::{Access, Policy, ship};
@@ -75,7 +75,7 @@ static UART: Lock<Option<Uart>> = Lock::new(None);
 /// 门闩是 **per-task** 的：主线程 `Accord` 出去拿到的是**对方表里**的号，只能经共享内存
 /// 交接（`Spawn` 恒产 `Held` ⇒ 「先 `Accord`、再写静态、最后 `Hatch`」的次序天然成立）。
 static SESSION: AtomicUsize = AtomicUsize::new(0);
-static DELIVER: AtomicUsize = AtomicUsize::new(0);
+static DELIVER_AT: AtomicUsize = AtomicUsize::new(0);
 
 /// 从 root 配给的名字孔里取回设备名。
 fn take_name(hole: HolePie) -> Option<env::Name> {
@@ -184,7 +184,7 @@ extern "C" fn main() -> ! {
     };
     UART.with(|u| *u = Some(uart));
     SESSION.store(at_read.get(), Ordering::Release);
-    DELIVER.store(deliver_at_read.get(), Ordering::Release);
+    DELIVER_AT.store(deliver_at_read.get(), Ordering::Release);
     if utask::hatch(read_task).is_err() {
         runtime::env::room::exit_with(21);
     }
@@ -210,7 +210,7 @@ fn announced(uart: &Uart, name: &env::Name) {
 /// 无界是硬的：请求是事件不是节拍，本线程没有别的活。门没了（副本被摘 / 被封印）即收场
 /// ——服务的门没了，活也就没了（与 `doom` 服务线程同款）。
 fn write_loop(entry: HolePie, uart: Uart) -> ! {
-    let mut msg = [0u8; MSG_LEN];
+    let mut msg = [0u8; uart::CAP];
     loop {
         let Ok(n) = entry.pull(&mut msg) else {
             runtime::env::room::exit_with(0);
@@ -239,9 +239,9 @@ extern "C" fn read_loop() -> ! {
         runtime::env::room::exit_with(22);
     };
     let session = HolePie::from_token(SESSION.load(Ordering::Acquire));
-    let deliver = HolePie::from_token(DELIVER.load(Ordering::Acquire));
+    let deliver = HolePie::from_token(DELIVER_AT.load(Ordering::Acquire));
     let mut tok = [0u8; irq::LINE_LEN];
-    let mut chunk = [0u8; DELIVER_MTU];
+    let mut chunk = [0u8; DELIVER];
     // 一次性读数：**"投递把本域叫醒"这件事的唯一可见证据**（判据见 `scripts/examine.nu`
     // 的 `IRQ_MARKER` 段）。为什么需要它：本线程那一等有 20 ms 兜底，故"输入能用"本身
     // 证明不了中断链在场——兜底轮询同样能让输入工作。

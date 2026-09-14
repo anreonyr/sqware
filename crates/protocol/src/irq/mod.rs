@@ -8,7 +8,7 @@
 //!
 //! # 三块分工（与 `dispatch`/`console` 同形）
 //!
-//!   [`wire`]   —— 线格式：`Request`/`Ack`/`Refused`/`LEN`，**纯函数、零依赖**；
+//!   [`wire`]   —— 线格式：`Query`/`Ack`/`Refused`/`CAP`，**纯函数、零依赖**；
 //!   [`client`] —— 线对侧：`Line`（连上驱动、登记 / 写属主 / 委托写权）；
 //!   [`server`] —— 服务侧：线表 [`Lines`]（名字 → 线号 + 属主 + 实例）。
 //!
@@ -22,4 +22,4 @@ pub mod wire;
 
 pub use client::Line;
 pub use server::Lines;
-pub use wire::{ACK_LEN, Ack, LEN, LINE_LEN, Refused, Request, SERVICE};
+pub use wire::{ACK_LEN, Ack, CAP, LINE_LEN, Query, Refused, SERVICE, TEXT};

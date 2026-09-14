@@ -4,7 +4,7 @@
 //! 键盘解码、行编辑都住在服务侧，客户端只说"我写了什么"和"给我读一行"。
 //!
 //! 三块分工：
-//!   [`wire`]   —— 线格式：动词 + 定长消息，纯函数；
+//!   [`wire`]   —— 线格式：动词 + 变长帧，纯函数；
 //!   [`client`] —— 线对侧：`Console`/`Readline`（与旧 `programs/src/term` 的 API 同形）；
 //!   [`server`] —— 服务侧：ANSI 渲壳 + VTE 解码 + 行编辑 + 客户端表。
 //!
@@ -37,7 +37,4 @@ pub mod wire;
 
 pub use client::{Console, Readline};
 pub use server::{Decoder, Key, State, TICK_MS};
-pub use wire::{
-    CLIENT_AT, LINE_MAX, MSG_LEN, Op, PAYLOAD_LEN, ProtocolError, REPLY_PEER_AT, Reply, Request,
-    SERVICE,
-};
+pub use wire::{CAP, LINE, Op, ProtocolError, Query, Reply, SERVICE, Text, WORD};

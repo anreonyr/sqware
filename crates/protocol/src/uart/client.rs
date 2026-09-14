@@ -13,7 +13,7 @@ use env::EnvResult;
 use runtime::core::port::Port;
 use runtime::env::mail::HolePie;
 
-use super::wire::{PAYLOAD_MAX, Request, Status, denied};
+use super::wire::{PAYLOAD_MAX, Query, Status, denied};
 
 /// 等回执的上界（毫秒）。驱动在同一台机器上做一次逐字节的 `THRE` 轮询，远超实际耗时；
 /// 有上界才能把"回执被丢"暴露成 `Busy`，而不是永久挂起（与 console/irq 同值）。
@@ -45,8 +45,8 @@ impl Uart {
     /// 已失效）；`Dead`（驱动没了）。
     pub fn write(&self, bytes: &[u8]) -> EnvResult<()> {
         for chunk in bytes.chunks(PAYLOAD_MAX) {
-            let request = Request::write(chunk).ok_or_else(denied)?;
-            match self.port.call::<Request>(&request, ACK_WAIT_MS)? {
+            let request = Query::write(chunk).ok_or_else(denied)?;
+            match self.port.call::<Query>(&request, ACK_WAIT_MS)? {
                 Status::Ok => {}
                 _ => return Err(denied()),
             }

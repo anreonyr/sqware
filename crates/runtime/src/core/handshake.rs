@@ -7,7 +7,7 @@
 //! root；客户端要用的目录门闩由 **dir 亲授**（root 只转达「授给谁」）——客户端拿到
 //! 的副本 `vestor == dir`，来源可自证。
 //!
-//! 线格式：`[0] = tag`、`[1..9] = payload u64 LE`，报文 [`MTU`] 字节。
+//! 线格式：`[0] = tag`、`[1..9] = payload u64 LE`——**定长 9 字节**，两条报文同一形状。
 //!
 //! ```text
 //! Quay      子 → 父   子域上行孔      我控制孔在父侧的句柄
@@ -29,7 +29,10 @@ use crate::core::port::{Access, Policy, ship};
 use crate::env::mail::{self, HolePie};
 
 /// 报文长度：1 字节 tag + 一个 u64（本模块自用：两条报文的线形都定长）。
-const MTU: usize = 9;
+///
+/// **它就是长度**：本模块的报文没有变长那一段，故这里一个数既是容量也是被推的字节数
+/// （与各协议不同——那边 `CAP` 只是容量上界，长度由成帧的人报）。
+const LEN: usize = 9;
 
 const TAG_QUAY: u8 = 1;
 const TAG_PIER: u8 = 2;
@@ -47,20 +50,21 @@ fn denied() -> erra::Error<EnvError> {
 ///
 /// `payload` 收任何句柄：线形是 8 字节，但**类型不化**——调用方继续拿 `PieToken`。
 fn send(hole: &HolePie, tag: u8, payload: impl Into<usize>) -> EnvResult<()> {
-    let mut buf = [0u8; MTU];
+    let mut buf = [0u8; LEN];
     buf[0] = tag;
     buf[1..].copy_from_slice(&payload.into().to_le_bytes());
     hole.push(&buf)
 }
 
-/// 收一条报文：读满 `MTU` 并校验 tag，返 payload。tag 不符 / 短读 → `Denied`。
+/// 收一条报文：读满 `LEN` 并校验 tag，返 payload。tag 不符 / 短读 → `Denied`。
 fn recv_pie(hole: &HolePie, tag: u8) -> EnvResult<PieToken> {
     recv(hole, tag).map(PieToken::new)
 }
 
 fn recv(hole: &HolePie, tag: u8) -> EnvResult<usize> {
-    let mut buf = [0u8; MTU];
-    if hole.pull(&mut buf)? != MTU || buf[0] != tag {
+    let mut buf = [0u8; LEN];
+    // 长度由内核给（谁推的谁知道多长），本模块只认"[tag][u64]"这一种形状。
+    if hole.pull(&mut buf)? != LEN || buf[0] != tag {
         return Err(denied());
     }
     Ok(usize::from_le_bytes(

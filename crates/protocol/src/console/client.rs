@@ -24,7 +24,7 @@ use env::EnvResult;
 use runtime::core::port::Port;
 use runtime::env::mail::HolePie;
 
-use super::wire::{PAYLOAD_LEN, Reply, Request, denied};
+use super::wire::{LINE, Query, Reply, denied};
 
 /// 一次往返的上界（毫秒）。与 dispatch 的 `REPLY_TIMEOUT_MS` 同值。
 const REPLY_TIMEOUT_MS: usize = 1000;
@@ -57,7 +57,7 @@ impl Console {
     pub fn open(entry: HolePie) -> EnvResult<Console> {
         let port = Port::open(&entry)?;
         let mut console = Console { port, client: 0 };
-        match console.call(&Request::open())? {
+        match console.call(&Query::open())? {
             Reply::Ok { client } => {
                 console.client = client;
                 Ok(console)
@@ -72,26 +72,21 @@ impl Console {
     }
 
     /// 一次往返：请求推请求孔、回复从自己的回信孔**有界**收、**核来源**。
-    fn call(&self, request: &Request) -> EnvResult<Reply> {
-        self.port.call::<Request>(request, REPLY_TIMEOUT_MS)
+    fn call(&self, query: &Query) -> EnvResult<Reply> {
+        self.port.call::<Query>(query, REPLY_TIMEOUT_MS)
     }
 
     /// 写字符串：**阻塞到服务确认落屏**。
     ///
-    /// 按 [`PAYLOAD_LEN`] 分片；每片一次往返。旧 `io::put` 是同步写设备，
+    /// 按 [`LINE`] 分片；每片一次往返。旧 `io::put` 是同步写设备，
     /// 故这里的同步语义与它同级——`write(prompt)` 返回即可安全开始读。
     pub fn write(&self, s: &str) -> EnvResult<()> {
         if self.client == 0 {
             return Err(denied());
         }
-        for chunk in s.as_bytes().chunks(PAYLOAD_LEN) {
-            let mut payload = [0u8; PAYLOAD_LEN];
-            payload[..chunk.len()].copy_from_slice(chunk);
-            match self.call(&Request::Write {
-                client: self.client,
-                len: chunk.len(),
-                payload,
-            })? {
+        for chunk in s.as_bytes().chunks(LINE) {
+            let query = Query::write(self.client, chunk).ok_or_else(denied)?;
+            match self.call(&query)? {
                 Reply::Ok { .. } => {}
                 _ => return Err(denied()),
             }
@@ -111,23 +106,12 @@ impl Console {
             self.write(prompt)?;
         }
         let bytes = prompt.as_bytes();
-        let n = if bytes.len() > PAYLOAD_LEN {
-            PAYLOAD_LEN
-        } else {
-            bytes.len()
-        };
-        let mut pbuf = [0u8; PAYLOAD_LEN];
-        pbuf[..n].copy_from_slice(&bytes[..n]);
-        let request = Request::ReadLine {
-            client: self.client,
-            len: n,
-            prompt: pbuf,
-        };
+        let query =
+            Query::readline(self.client, &bytes[..bytes.len().min(LINE)]).ok_or_else(denied)?;
         // 上界给 `usize::MAX`（永久）：等多久由用户决定。
-        match self.port.call::<Request>(&request, usize::MAX)? {
-            Reply::Line { len, payload } => {
-                let n = if len > PAYLOAD_LEN { PAYLOAD_LEN } else { len };
-                let text = core::str::from_utf8(&payload[..n]).map_err(|_| denied())?;
+        match self.port.call::<Query>(&query, usize::MAX)? {
+            Reply::Line { text } => {
+                let text = core::str::from_utf8(text.as_bytes()).map_err(|_| denied())?;
                 Ok(Readline::Line(String::from(text)))
             }
             Reply::Eof => Ok(Readline::Eof),
@@ -143,7 +127,7 @@ impl Console {
         if self.client == 0 {
             return Ok(());
         }
-        match self.call(&Request::Close {
+        match self.call(&Query::Close {
             client: self.client,
         })? {
             Reply::Ok { .. } => Ok(()),

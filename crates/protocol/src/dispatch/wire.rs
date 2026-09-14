@@ -5,34 +5,31 @@
 //! 本模块定义该 hole 上的消息编解码，不含任何内核机制——没有 Connection、没有
 //! Endpoint、没有 Capability。
 //!
-//! # 请求（64 字节）
+//! # 询问（变长）
 //! ```text
-//! [0]      op      u8      1=Register 2=Unregister 3=Replace 4=Resolve 5=Enumerate 6=Connect
-//! [1..33]  name    [u8;32] Register/Unregister/Replace/Resolve/Connect：目标名字
-//!                          Enumerate：游标（全 0 = 从头开始）
-//! [33..41] entry   usize LE  Register/Replace：入口门闩的目录侧 pie token
-//! [41..49] 保留    u64 LE  必须为 0
-//! [49..57] reply   usize LE  调用方自带的回信 pie 的目录侧 token（0 = 无回复预期）
-//! [57..64] 保留（0）
+//! [0]      op      u8        1=Register 2=Unregister 3=Replace 4=Resolve 5=Enumerate 6=Connect
+//! [1..9)   地址槽  usize LE  **传输字段**：调用方回信孔在目录侧的 token（每条都带）
+//! [9..)    name    ≤ 31 字节 目标名字（Enumerate：游标，空 = 从头开始）
+//! 帧尾      entry   usize LE  Register/Replace：入口门闩的目录侧 token（其余动词必须为 0）
 //! ```
 //!
-//! `Request::encode/decode` **不**碰 `[49..57]`——调用方在 encode 之后、push 之前
-//! 自己填 reply token（参考 `REPLY_AT`）。该字段不是请求字段而是「通道字段」，
-//! 与 op/name/entry 同列但语义独立。
+//! **帧长 = 头 + 名字文本长 + entry + 地址槽**：名字多长帧多长，没有终止 NUL、没有填充。
+//! `entry` 锚在**地址槽之前**（尾部），故名字的结束由它自己的位置给出。
 //!
-//! # 回复（64 字节）
+//! # 回复（变长）
 //! ```text
 //! [0]      status  u8      0=Ok 1=Found 2=Connected 3=NotFound 4=Denied 5=Taken
-//! [1..33]  name    [u8;32] Found：这一页的名字 / Resolve 命中的名字
-//! [1..9]   entry   usize LE  Connected：目录转授给调用方的入口门闩 token
-//! [9..17]  保留    u64 LE  必须为 0（原 owner 字段已删——服务 task id 由调用方
-//!                          用 `MailCall::Owned` 从 entry 的 `owner` 求得）
+//! [1..9)   地址槽  usize LE 恒为 0（回复走对端的回信孔）
+//! [9..)    载荷    Found：名字 / Connected：entry（8 字节）；其余状态无载荷
 //! ```
+//!
+//! `Query::encode/decode` **不碰地址槽**——由 [`Duet::encode`] 写（见模块头那张字段表）。
+//! 该字段不是询问字段而是「传输字段」，与 op/name/entry 同列但语义独立。
 //!
 //! # 身份不走消息体
 //!
 //! 目录认定的调用方身份 = **内核在 `Push` 时盖章的发送者**（`Pull` 一并交回），
-//! 消息体伪造不了。请求 `[49..57]` 只是回信地址，且必须确实是该发送者授给目录的
+//! 消息体伪造不了。询问里那一格地址槽只是回信地址，且必须确实是该发送者授给目录的
 //! 那一枚（否则目录丢弃回复）。
 //!
 //! # 名字空间由父域预约
@@ -52,7 +49,7 @@
 
 use env::wire::PieToken;
 use env::{EnvError, EnvResult, make_err};
-use runtime::core::port::Duet;
+use runtime::core::port::{ADDRESS_LEN, Duet, put_address};
 
 /// D1 负码：无权 / 协议错。
 pub const E_DENIED: isize = -1;
@@ -78,22 +75,16 @@ pub(crate) fn taken() -> erra::Error<EnvError> {
 /// 它的使用者，不转口第二遍。
 pub use env::wire::{NAME_LEN, Name, NameError};
 
-/// 单条报文的字节数——**协议自己的尺寸**：孔早就不替协议记这件事了
-/// （`docs/port.md` §5），它在这里是因为布局与缓冲都得知道它。
-pub const MSG_LEN: usize = 64;
-
-/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在报文里的位置——`[49..57]`。
+/// **一块内存要多大装得下任何一条帧**：`op + 名字(上界) + entry + 地址槽`。
 ///
-/// `Request::encode()` 一个字节都不碰它，由 [`Duet::encode`] 写（见模块头那张字段表）。
-pub const REPLY_AT: usize = 49;
+/// 回复比它小（`status + max(名字, entry)`），故容量取两者的大者。
+pub const CAP: usize = 1 + TEXT + 8 + ADDRESS_LEN;
+
+/// 名字最长能写多少字节（内容上界：定长字段里那一个字节留给终止 NUL）。
+pub const TEXT: usize = NAME_LEN - 1;
 
 const OP_AT: usize = 0;
 const NAME_AT: usize = OP_AT + 1;
-const ENTRY_AT: usize = NAME_AT + NAME_LEN;
-
-/// `[41..49]` 仍保留（必须为 0）；`[49..57]` 是 reply 通道，decode 不检；`[57..64]` 保留。
-const RESERVED_AT: usize = ENTRY_AT + 8;
-const RESERVED_END_AT: usize = REPLY_AT + 8;
 
 const REPLY_STATUS_AT: usize = 0;
 const REPLY_PAYLOAD_AT: usize = REPLY_STATUS_AT + 1;
@@ -123,9 +114,9 @@ pub enum Op {
     Connect = 6,
 }
 
-/// 目录请求。
+/// 目录询问。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Request {
+pub enum Query {
     Register {
         name: Name,
         entry: PieToken,
@@ -174,161 +165,180 @@ pub enum ProtocolError {
     BadOp,
     /// 名字非法。
     BadName(NameError),
-    /// 该动词下保留字段非零。
+    /// 该动词下不该有内容的那一格非零（如 Unregister 带了 entry）。
     Reserved,
 }
 
-impl Request {
-    pub fn encode(&self) -> [u8; MSG_LEN] {
-        let mut m = [0u8; MSG_LEN];
-        let (op, name, entry) = match self {
-            Request::Register { name, entry } => (Op::Register, Some(name), entry.get()),
-            Request::Unregister { name } => (Op::Unregister, Some(name), 0),
-            Request::Replace { name, entry } => (Op::Replace, Some(name), entry.get()),
-            Request::Resolve { name } => (Op::Resolve, Some(name), 0),
-            Request::Enumerate { after } => (Op::Enumerate, after.as_ref(), 0),
-            Request::Connect { name } => (Op::Connect, Some(name), 0),
-        };
-        m[OP_AT] = op as u8;
-        if let Some(name) = name {
-            m[NAME_AT..NAME_AT + NAME_LEN].copy_from_slice(name.bytes());
-        }
-        m[ENTRY_AT..ENTRY_AT + 8].copy_from_slice(&entry.to_le_bytes());
-        m
+/// 帧尾固定 8 字节：`entry`（询问）或名字/entry 的载荷（回复）。**名字在它之前**，
+/// 故帧长 = 头 + 名字文本长。
+const TAIL: usize = 8;
+
+impl Query {
+    /// 这一帧多少字节：`op + 名字文本 + entry + 地址槽`。
+    pub fn len(&self) -> usize {
+        NAME_AT + self.name().map(|n| n.text().len()).unwrap_or(0) + TAIL + ADDRESS_LEN
     }
 
-    pub fn decode(m: &[u8]) -> Result<Request, ProtocolError> {
-        if m.len() < MSG_LEN {
-            return Err(ProtocolError::BadName(NameError::Empty));
+    fn name(&self) -> Option<&Name> {
+        match self {
+            Query::Register { name, .. }
+            | Query::Unregister { name }
+            | Query::Replace { name, .. }
+            | Query::Resolve { name }
+            | Query::Connect { name } => Some(name),
+            Query::Enumerate { after } => after.as_ref(),
         }
-        let op = m[OP_AT];
+    }
+
+    fn entry(&self) -> PieToken {
+        match self {
+            Query::Register { entry, .. } | Query::Replace { entry, .. } => *entry,
+            _ => PieToken::new(0),
+        }
+    }
+
+    /// 编码（**不写地址槽**：留给 [`Duet::encode`]；尾部不补零）。
+    pub fn encode(&self) -> ([u8; CAP], usize) {
+        let mut m = [0u8; CAP];
+        m[OP_AT] = match self {
+            Query::Register { .. } => Op::Register as u8,
+            Query::Unregister { .. } => Op::Unregister as u8,
+            Query::Replace { .. } => Op::Replace as u8,
+            Query::Resolve { .. } => Op::Resolve as u8,
+            Query::Enumerate { .. } => Op::Enumerate as u8,
+            Query::Connect { .. } => Op::Connect as u8,
+        };
+        let n = self.len();
+        if let Some(name) = self.name() {
+            m[NAME_AT..NAME_AT + name.text().len()].copy_from_slice(name.text());
+        }
+        m[n - TAIL - ADDRESS_LEN..n - ADDRESS_LEN]
+            .copy_from_slice(&self.entry().get().to_le_bytes());
+        (m, n)
+    }
+
+    /// 解码：动词、名字、entry 三者都要过。**帧长即那一格**——名字的结束由它在帧里
+    /// 的位置给出（`entry` 之前），故不再有"终止 NUL + 全零填充"。
+    pub fn decode(m: &[u8]) -> Result<Query, ProtocolError> {
+        let op = *m.first().ok_or(ProtocolError::BadOp)?;
         if !(1..=6).contains(&op) {
             return Err(ProtocolError::BadOp);
         }
-        // [41..49] 与 [57..64] 必须为 0；[49..57] 是 reply 通道、decode 不检。
-        if m[RESERVED_AT..REPLY_AT].iter().any(|&b| b != 0)
-            || m[RESERVED_END_AT..].iter().any(|&b| b != 0)
+        if m.len() < NAME_AT + TAIL + ADDRESS_LEN {
+            return Err(ProtocolError::BadName(NameError::Empty));
+        }
+        let text = &m[NAME_AT..m.len() - TAIL - ADDRESS_LEN];
+        let entry = PieToken(usize::from_le_bytes(
+            m[m.len() - TAIL - ADDRESS_LEN..m.len() - ADDRESS_LEN]
+                .try_into()
+                .unwrap_or([0u8; 8]),
+        ));
+        // 只有 Register/Replace 带 entry；其余动词那一格必须为 0（真检查：帧里它存在）。
+        if !matches!(op, x if x == Op::Register as u8 || x == Op::Replace as u8) && entry.get() != 0
         {
             return Err(ProtocolError::Reserved);
         }
-        let entry = PieToken(usize::from_le_bytes(
-            m[ENTRY_AT..ENTRY_AT + 8].try_into().unwrap_or([0u8; 8]),
-        ));
-        let mut name_bytes = [0u8; NAME_LEN];
-        name_bytes.copy_from_slice(&m[NAME_AT..NAME_AT + NAME_LEN]);
-        let name = || Name::from_bytes(name_bytes).map_err(ProtocolError::BadName);
-
+        let name = || Name::from_slice(text).map_err(ProtocolError::BadName);
         match op {
-            x if x == Op::Register as u8 => Ok(Request::Register {
+            x if x == Op::Register as u8 => Ok(Query::Register {
                 name: name()?,
                 entry,
             }),
-            x if x == Op::Unregister as u8 => {
-                if entry.get() != 0 {
-                    return Err(ProtocolError::Reserved);
-                }
-                Ok(Request::Unregister { name: name()? })
-            }
-            x if x == Op::Replace as u8 => Ok(Request::Replace {
+            x if x == Op::Unregister as u8 => Ok(Query::Unregister { name: name()? }),
+            x if x == Op::Replace as u8 => Ok(Query::Replace {
                 name: name()?,
                 entry,
             }),
-            x if x == Op::Resolve as u8 => {
-                if entry.get() != 0 {
-                    return Err(ProtocolError::Reserved);
-                }
-                Ok(Request::Resolve { name: name()? })
-            }
-            x if x == Op::Enumerate as u8 => {
-                if entry.get() != 0 {
-                    return Err(ProtocolError::Reserved);
-                }
-                // 游标全 0 = 从头开始；否则必须是合法名字。
-                let after = if name_bytes.iter().all(|&b| b == 0) {
-                    None
-                } else {
-                    Some(name()?)
-                };
-                Ok(Request::Enumerate { after })
-            }
-            _ => {
-                if entry.get() != 0 {
-                    return Err(ProtocolError::Reserved);
-                }
-                Ok(Request::Connect { name: name()? })
-            }
+            x if x == Op::Resolve as u8 => Ok(Query::Resolve { name: name()? }),
+            // 游标那一段为空 = 从头开始（空名字本就不是名字，故这一格无歧义）。
+            x if x == Op::Enumerate as u8 => Ok(Query::Enumerate {
+                after: if text.is_empty() { None } else { Some(name()?) },
+            }),
+            _ => Ok(Query::Connect { name: name()? }),
         }
     }
 }
 
 impl Reply {
-    pub fn encode(&self) -> [u8; MSG_LEN] {
-        let mut m = [0u8; MSG_LEN];
+    /// 这一帧多少字节。
+    pub fn len(&self) -> usize {
         match self {
-            Reply::Ok => m[REPLY_STATUS_AT] = STATUS_OK,
-            Reply::NotFound => m[REPLY_STATUS_AT] = STATUS_NOT_FOUND,
-            Reply::Denied => m[REPLY_STATUS_AT] = STATUS_DENIED,
-            Reply::Taken => m[REPLY_STATUS_AT] = STATUS_TAKEN,
-            Reply::Found { name } => {
-                m[REPLY_STATUS_AT] = STATUS_FOUND;
-                m[REPLY_PAYLOAD_AT..REPLY_PAYLOAD_AT + NAME_LEN].copy_from_slice(name.bytes());
-            }
-            Reply::Connected { entry } => {
-                m[REPLY_STATUS_AT] = STATUS_CONNECTED;
-                m[REPLY_PAYLOAD_AT..REPLY_PAYLOAD_AT + 8]
-                    .copy_from_slice(&entry.get().to_le_bytes());
-            }
+            Reply::Found { name } => REPLY_PAYLOAD_AT + name.text().len(),
+            Reply::Connected { .. } => REPLY_PAYLOAD_AT + TAIL,
+            _ => REPLY_PAYLOAD_AT,
         }
-        m
     }
 
-    pub fn decode(m: &[u8; MSG_LEN]) -> Result<Reply, ProtocolError> {
-        match m[REPLY_STATUS_AT] {
+    /// 编码（回复**永不带地址**：它走的是对端的回信孔）。
+    pub fn encode(&self) -> ([u8; CAP], usize) {
+        let mut m = [0u8; CAP];
+        let n = self.len();
+        m[REPLY_STATUS_AT] = match self {
+            Reply::Ok => STATUS_OK,
+            Reply::NotFound => STATUS_NOT_FOUND,
+            Reply::Denied => STATUS_DENIED,
+            Reply::Taken => STATUS_TAKEN,
+            Reply::Found { .. } => STATUS_FOUND,
+            Reply::Connected { .. } => STATUS_CONNECTED,
+        };
+        match self {
+            Reply::Found { name } => {
+                m[REPLY_PAYLOAD_AT..n].copy_from_slice(name.text());
+            }
+            Reply::Connected { entry } => {
+                m[REPLY_PAYLOAD_AT..n].copy_from_slice(&entry.get().to_le_bytes());
+            }
+            _ => {}
+        }
+        (m, n)
+    }
+
+    /// 解码：与询问同一张表，按首字节读。载荷长度 = 帧长 − 头。
+    pub fn decode(m: &[u8]) -> Result<Reply, ProtocolError> {
+        let status = *m.first().ok_or(ProtocolError::BadOp)?;
+        let payload = m
+            .get(REPLY_PAYLOAD_AT..)
+            .ok_or(ProtocolError::BadName(NameError::Empty))?;
+        match status {
             STATUS_OK => Ok(Reply::Ok),
             STATUS_NOT_FOUND => Ok(Reply::NotFound),
             STATUS_DENIED => Ok(Reply::Denied),
             STATUS_TAKEN => Ok(Reply::Taken),
-            STATUS_FOUND => {
-                let mut name_bytes = [0u8; NAME_LEN];
-                name_bytes.copy_from_slice(&m[REPLY_PAYLOAD_AT..REPLY_PAYLOAD_AT + NAME_LEN]);
-                Ok(Reply::Found {
-                    name: Name::from_bytes(name_bytes).map_err(ProtocolError::BadName)?,
-                })
-            }
-            STATUS_CONNECTED => {
-                let entry = PieToken(usize::from_le_bytes(
-                    m[REPLY_PAYLOAD_AT..REPLY_PAYLOAD_AT + 8]
-                        .try_into()
-                        .unwrap_or([0u8; 8]),
-                ));
-                Ok(Reply::Connected { entry })
-            }
+            STATUS_FOUND => Ok(Reply::Found {
+                name: Name::from_slice(payload).map_err(ProtocolError::BadName)?,
+            }),
+            STATUS_CONNECTED => Ok(Reply::Connected {
+                entry: PieToken(usize::from_le_bytes(payload.try_into().unwrap_or([0u8; 8]))),
+            }),
             _ => Err(ProtocolError::BadOp),
         }
     }
 }
 
-/// 报文对：一条目录请求、一条目录回复。尺寸与布局都由本协议说了算——包括
-/// **回信地址写在 `[49..57]`**（`REPLY_AT`）这件事。
-impl Duet for Request {
-    type Req = Request;
+/// 报文对：一条目录询问、一条目录应答。尺寸与布局都由本协议说了算——包括
+/// **地址槽在 `[1..9)`**（本协议每问都带）与**帧长 = 头 + 名字文本长**这两件事。
+impl Duet for Query {
+    type Req = Query;
     type Rep = Reply;
-    type Wire = [u8; MSG_LEN];
+    type Wire = [u8; CAP];
 
-    const REQ: usize = MSG_LEN;
-    const REP: usize = MSG_LEN;
+    const CAP: usize = CAP;
 
-    fn wire() -> [u8; MSG_LEN] {
-        [0u8; MSG_LEN]
+    fn wire() -> [u8; CAP] {
+        [0u8; CAP]
     }
 
-    fn encode(req: &Request, at: PieToken, out: &mut [u8]) {
-        out[..MSG_LEN].copy_from_slice(&req.encode());
-        out[REPLY_AT..REPLY_AT + 8].copy_from_slice(&at.get().to_le_bytes());
+    fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
+        let (frame, n) = req.encode();
+        let Some(slot) = out.get_mut(..n) else {
+            return 0;
+        };
+        slot.copy_from_slice(&frame[..n]);
+        put_address(out, at);
+        n
     }
 
     fn decode(buf: &[u8]) -> EnvResult<Reply> {
-        let m: &[u8; MSG_LEN] = buf.try_into().map_err(|_| denied())?;
-        Reply::decode(m).map_err(|_| denied())
+        Reply::decode(buf).map_err(|_| denied())
     }
 }

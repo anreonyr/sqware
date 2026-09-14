@@ -46,7 +46,9 @@ use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
-use protocol::dispatch::{MSG_LEN, Name, Reply, Request};
+use runtime::core::port::{ADDRESS_AT, ADDRESS_LEN};
+
+use protocol::dispatch::{CAP, Name, Query, Reply};
 
 use protocol::console::{
     self,
@@ -560,7 +562,7 @@ fn source_probe(me: env::TaskId) -> bool {
         let hole = HolePie::unseal().ok()?;
         ship(&hole, me, Access::READ | Access::WRITE, Policy::NONE).ok()?;
         // 有界等：父方的请求来了就走人；没来也不至于让 `join` 永久挂住。
-        let mut buf = [0u8; MSG_LEN];
+        let mut buf = [0u8; CAP];
         hole.pull_timeout(&mut buf, 1_000).ok()?;
         Some(())
     }) else {
@@ -587,9 +589,9 @@ fn source_probe(me: env::TaskId) -> bool {
     let Ok(name) = Name::new("ship") else {
         return false;
     };
-    let req = Request::Resolve { name };
+    let req = Query::Resolve { name };
     let denied = port
-        .call::<Request>(&req, 0)
+        .call::<Query>(&req, 0)
         .err()
         .map(|e| e.into_source().code())
         == Some(E_DENIED);
@@ -989,7 +991,6 @@ fn reclaim(term: &Term) {
 fn spoof(term: &Term) {
     const WAIT: usize = 1_000;
     const GUESS_MAX: usize = 200;
-    const REPLY_AT: usize = protocol::dispatch::REPLY_AT;
     let rw = env::Permission::READ | env::Permission::WRITE;
 
     let me = unit::self_id().unwrap_or(env::TaskId::new(0));
@@ -1027,14 +1028,15 @@ fn spoof(term: &Term) {
             return;
         }
     };
-    let mut buf = [0u8; MSG_LEN];
+    let mut buf = [0u8; CAP];
     // `ms` = 等回复的上界：正路径用 WAIT，猜 token 时用 0（只探测、顺便排空）。
-    let mut call = |req: &Request, reply_tok: usize, ms: usize| -> Option<Reply> {
-        let mut msg = req.encode();
-        msg[REPLY_AT..REPLY_AT + 8].copy_from_slice(&reply_tok.to_le_bytes());
-        entry.push(&msg).ok()?;
-        mine.pull_timeout(&mut buf, ms).ok()?;
-        Reply::decode(&buf).ok()
+    // 裸报文那一层：帧自己给布局，地址槽按机制那一格写（本自检测的正是伪造它）。
+    let mut call = |query: &Query, reply_tok: usize, ms: usize| -> Option<Reply> {
+        let (mut msg, n) = query.encode();
+        msg[ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN].copy_from_slice(&reply_tok.to_le_bytes());
+        entry.push(&msg[..n]).ok()?;
+        let (got, _) = mine.pull_timeout_from(&mut buf, ms).ok()?;
+        Reply::decode(&buf[..got]).ok()
     };
 
     // 入口门闩必须与回信孔分开：注销会**释放**目录侧那枚入口副本，若回信地址正是
@@ -1064,14 +1066,14 @@ fn spoof(term: &Term) {
     let own_ok = match Name::new("shell") {
         Ok(n) => {
             let reg = call(
-                &Request::Register {
+                &Query::Register {
                     name: n,
                     entry: entry_at_dir,
                 },
                 at_dir,
                 WAIT,
             );
-            let unreg = call(&Request::Unregister { name: n }, at_dir, WAIT);
+            let unreg = call(&Query::Unregister { name: n }, at_dir, WAIT);
             matches!(reg, Some(Reply::Ok)) && matches!(unreg, Some(Reply::Ok))
         }
         Err(_) => false,
@@ -1082,7 +1084,7 @@ fn spoof(term: &Term) {
         for tok in 1..=GUESS_MAX {
             // 回复只可能落到被猜中的那枚 token 的孔里（攻击者看不见），此处探测
             // 仅用于排空本任务自己的回信槽——判据是「echo 还在不在」。
-            let _ = call(&Request::Unregister { name }, tok, 0);
+            let _ = call(&Query::Unregister { name }, tok, 0);
         }
     }
     let after = dir_session()

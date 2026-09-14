@@ -34,7 +34,9 @@ use runtime::env::room;
 
 use crate::dispatch::client::Directory;
 
-use super::wire::{Ack, Kill, OP_KILL, OP_QUIT};
+use runtime::core::port::address_of;
+
+use super::wire::{Ack, OP_KILL, OP_QUIT, Query};
 
 /// 服务处理一条请求时，等目标**消失**的探测间隔（毫秒）与轮次。
 ///
@@ -67,11 +69,16 @@ pub fn serve(msg: &[u8], from: TaskId, dir: &Directory, owner: TaskId) -> Outcom
         OP_KILL => {}
         _ => return Outcome::Ignore,
     }
-    let Some(kill) = Kill::decode(msg) else {
+    let Some(kill) = Query::decode(msg) else {
+        return Outcome::Ignore;
+    };
+    // 回信地址从**帧**里抠（它不在请求值里）：坏报文也欠对方一句答复，而这一句
+    // 得知道往哪儿推——所以这一读发生在解码之后、与解码无关。
+    let Some(ack) = address_of(msg) else {
         return Outcome::Ignore;
     };
     Outcome::Reply {
-        ack: kill.ack,
+        ack,
         status: collect(dir, kill.target.as_str()),
     }
 }

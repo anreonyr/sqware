@@ -1,13 +1,13 @@
 //! irq·wire — 中断线协议的线格式（纯函数，零依赖）。
 //!
-//! # 两个动词、定长 49 字节
+//! # 三个动词，一条记录
 //!
 //! ```text
-//! [0]       op    u8        1 Register / 2 Refer
-//! [1..9)    arg   u64 LE    Register：会话门闩在**驱动侧**的 token
-//!                            Refer   ：把名字交给谁（who）
-//! [9..17)   ack   u64 LE    回信孔在**驱动侧**的 token
-//! [17..49)  name  [u8; 32]  设备名（boot 给的设备树节点 basename）
+//! [0]       op     u8        1 Register / 2 Refer / 3 Delegate
+//! [1..9)    地址槽  u64 LE    回信孔在**驱动侧**的 token（传输字段，见下）
+//! [9..17)   arg    u64 LE    Register：会话门闩在**驱动侧**的 token
+//!                            Refer / Delegate：把名字交给谁（who）
+//! [17..]    name   ≤ 31 字节 设备名（boot 给的设备树节点 basename）——**名字多长帧多长**
 //! ```
 //!
 //! **线号不在报文里**：线 = 名字的函数（名字 → 设备树节点 → `interrupts` ×
@@ -24,7 +24,7 @@
 //!
 //! 四值不合并（请求方对它们的反应不同）：名字不认识（`Unknown`）是配错名，没人认领
 //! （`Unclaimed`）是 root 还没写属主，**不是你的**（`NotYours`）是权威判定，已经有人占着
-//! （`Taken`）是旧实例没收线。回信通道**由调用方自带**（报文里那个 `ack`），与目录协议、
+//! （`Taken`）是旧实例没收线。回信通道**由调用方自带**（报文里那个地址槽），与目录协议、
 //! 控制台协议、他杀协议同一条规矩：谁发起谁备回信通道。
 //!
 //! # 投递载荷：u16 线号
@@ -35,7 +35,7 @@
 
 use env::wire::NAME_LEN;
 use env::{EnvError, EnvResult, Name, PieToken, TaskId, make_err};
-use runtime::core::port::Duet;
+use runtime::core::port::{ADDRESS_LEN, Duet, put_address};
 
 /// 本协议的负码：无权 / 协议错（与内核码同表）。
 pub(crate) fn denied() -> erra::Error<EnvError> {
@@ -45,14 +45,19 @@ pub(crate) fn denied() -> erra::Error<EnvError> {
 /// 服务的名字（目录里登记的那一个）。
 pub const SERVICE: &str = "plic";
 
-/// 报文长度：`[op][arg 8][ack 8][name 32]`——**三个动词同一条记录**，故 `mtu` 就是它。
-pub const LEN: usize = 1 + 8 + 8 + NAME_LEN;
+/// 名字最长能写多少字节（内容上界：定长字段里那一个字节留给终止 NUL）。
+pub const TEXT: usize = NAME_LEN - 1;
+
+/// 一块内存要多大装得下任何一条帧：`op + 地址槽 + arg + 名字(上界)`。
+pub const CAP: usize = 1 + ADDRESS_LEN + 8 + TEXT;
 
 /// 投递载荷（线号）的字节数。
 pub const LINE_LEN: usize = 2;
 
-/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在报文里的偏移（见三个构造器的注）。
-const ACK_AT: usize = 9;
+/// 正文里 `arg` 的偏移。
+const ARG_AT: usize = 1 + ADDRESS_LEN;
+/// 正文里名字的偏移。
+const NAME_AT: usize = ARG_AT + 8;
 
 const OP_REGISTER: u8 = 1;
 const OP_REFER: u8 = 2;
@@ -63,117 +68,83 @@ const OP_DELEGATE: u8 = 3;
 /// 线形是统一的（见模块头），但两侧都用枚举说话：驱动不可能把 `who` 当成会话门闩读
 /// ——那是解码时就已经分好的事。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Request {
+pub enum Query {
     /// 登记：我按名字拿到的这台设备，会话门闩在那儿。
-    Register {
-        name: Name,
-        session: PieToken,
-        ack: PieToken,
-    },
+    Register { name: Name, session: PieToken },
     /// 写属主：这个名字归 `who`（**只有 root 会发它**）。
-    Refer {
-        name: Name,
-        who: TaskId,
-        ack: PieToken,
-    },
+    Refer { name: Name, who: TaskId },
     /// 委托写权：**这个名字的属主，从此也可以由 `who` 写**（同样只有 root 会发它）。
     ///
-    /// 为什么需要它：root 的服务重启落在**它自己域里的监护线程**上（`docs/root.md` §5.3），
-    /// 而线程不是域——驱动认的是"推者是不是我的 `sire`"，监护线程答不上这一条。放弃这条
+    /// 为什么需要它：root 的服务重启落在**它自己域里的监管线程**上（`docs/root.md` §5.3），
+    /// 而线程不是域——驱动认的是"推者是不是我的 `sire`"，监管线程答不上这一条。放弃这条
     /// 判据不行（那等于谁都能改属主）；把判据放宽成"同一个域"也不行（驱动拿不到推者的域）。
     /// 于是让 **root 亲口把这份写权委托给它信任的那个线程**：判据从"谁的 id"变成
     /// "root 有没有为这个名字委托过你"——一条可审计、可收回（重启即失效）的授权。
-    Delegate {
-        name: Name,
-        who: TaskId,
-        ack: PieToken,
-    },
+    Delegate { name: Name, who: TaskId },
 }
 
-impl Request {
-    /// 三个构造器都**不收回信地址**：它是**通道字段**（`[9..17]`），由 `decode` 从
-    /// 报文里读、由 [`Duet::encode`] 按本端回信孔填——客户端手里没有那枚 token，
-    /// 故请求值里它是 0。
-    pub const fn register(name: Name, session: PieToken) -> Request {
-        Request::Register {
-            name,
-            session,
-            ack: PieToken::new(0),
-        }
+impl Query {
+    /// 三个构造器都**不收回信地址**：它是**传输字段**（地址槽），由 [`Duet::encode`]
+    /// 按本端回信孔填——客户端手里没有那枚 token，故请求值里没有这一格。
+    pub const fn register(name: Name, session: PieToken) -> Query {
+        Query::Register { name, session }
     }
 
-    pub const fn refer(name: Name, who: TaskId) -> Request {
-        Request::Refer {
-            name,
-            who,
-            ack: PieToken::new(0),
-        }
+    pub const fn refer(name: Name, who: TaskId) -> Query {
+        Query::Refer { name, who }
     }
 
-    pub const fn delegate(name: Name, who: TaskId) -> Request {
-        Request::Delegate {
-            name,
-            who,
-            ack: PieToken::new(0),
-        }
+    pub const fn delegate(name: Name, who: TaskId) -> Query {
+        Query::Delegate { name, who }
     }
 
     pub fn name(&self) -> Name {
         match self {
-            Request::Register { name, .. }
-            | Request::Refer { name, .. }
-            | Request::Delegate { name, .. } => *name,
+            Query::Register { name, .. }
+            | Query::Refer { name, .. }
+            | Query::Delegate { name, .. } => *name,
         }
     }
 
-    pub fn ack(&self) -> PieToken {
-        match self {
-            Request::Register { ack, .. }
-            | Request::Refer { ack, .. }
-            | Request::Delegate { ack, .. } => *ack,
-        }
+    /// 这一帧多少字节：头 17 + 名字那一段。
+    pub fn len(&self) -> usize {
+        NAME_AT + self.name().text().len()
     }
 
-    /// 编码为线上消息（**不写通道字段**：`[9..17]` 留给 [`Duet::encode`]）。
-    pub fn encode(&self) -> [u8; LEN] {
+    /// 编码为线上消息（**不写地址槽**：留给 [`Duet::encode`]；尾部不补零）。
+    pub fn encode(&self) -> ([u8; CAP], usize) {
         let (op, arg) = match self {
-            Request::Register { session, .. } => (OP_REGISTER, session.get() as u64),
-            Request::Refer { who, .. } => (OP_REFER, who.get() as u64),
-            Request::Delegate { who, .. } => (OP_DELEGATE, who.get() as u64),
+            Query::Register { session, .. } => (OP_REGISTER, session.get() as u64),
+            Query::Refer { who, .. } => (OP_REFER, who.get() as u64),
+            Query::Delegate { who, .. } => (OP_DELEGATE, who.get() as u64),
         };
-        let mut msg = [0u8; LEN];
+        let mut msg = [0u8; CAP];
         msg[0] = op;
-        msg[1..9].copy_from_slice(&arg.to_le_bytes());
-        msg[17..LEN].copy_from_slice(self.name().bytes());
-        msg
+        msg[ARG_AT..ARG_AT + 8].copy_from_slice(&arg.to_le_bytes());
+        let name = self.name();
+        let text = name.text();
+        let n = self.len();
+        msg[NAME_AT..n].copy_from_slice(text);
+        (msg, n)
     }
 
     /// 解码：**长度、动词、名字**三者都要过（非法名不可表达——名字的构造义务在
-    /// `Name::from_bytes` 上，这里只是把它接上）。
-    pub fn decode(msg: &[u8]) -> Option<Request> {
-        if msg.len() < LEN {
-            return None;
-        }
-        let bytes: [u8; NAME_LEN] = msg[17..LEN].try_into().ok()?;
-        let name = Name::from_bytes(bytes).ok()?;
-        let arg = u64::from_le_bytes(msg[1..9].try_into().ok()?);
-        let ack =
-            PieToken::new(u64::from_le_bytes(msg[ACK_AT..ACK_AT + 8].try_into().ok()?) as usize);
-        match msg[0] {
-            OP_REGISTER => Some(Request::Register {
+    /// `Name::from_slice` 上，这里只是把它接上）。
+    pub fn decode(msg: &[u8]) -> Option<Query> {
+        let name = Name::from_slice(msg.get(NAME_AT..)?).ok()?;
+        let arg = u64::from_le_bytes(msg.get(ARG_AT..ARG_AT + 8)?.try_into().ok()?);
+        match *msg.first()? {
+            OP_REGISTER => Some(Query::Register {
                 name,
                 session: PieToken::new(arg as usize),
-                ack,
             }),
-            OP_REFER => Some(Request::Refer {
+            OP_REFER => Some(Query::Refer {
                 name,
                 who: TaskId::new(arg as usize),
-                ack,
             }),
-            OP_DELEGATE => Some(Request::Delegate {
+            OP_DELEGATE => Some(Query::Delegate {
                 name,
                 who: TaskId::new(arg as usize),
-                ack,
             }),
             _ => None,
         }
@@ -228,22 +199,27 @@ impl Ack {
 /// 回执的字节数（一字节）。
 pub const ACK_LEN: usize = 1;
 
-/// 报文对：一条中断线请求、一字节判据回答。回信地址写在 `[9..17]`（`ACK_AT`）。
-impl Duet for Request {
-    type Req = Request;
+/// 报文对：一条中断线询问、一字节判据应答。地址槽在 `[1..9)`，**每条询问都带**
+/// （本协议每请求一趟：`irq::client` 的 `Line::ask` 每次开一枚新回信孔）。
+impl Duet for Query {
+    type Req = Query;
     type Rep = Ack;
-    type Wire = [u8; LEN];
+    type Wire = [u8; CAP];
 
-    const REQ: usize = LEN;
-    const REP: usize = ACK_LEN;
+    const CAP: usize = CAP;
 
-    fn wire() -> [u8; LEN] {
-        [0u8; LEN]
+    fn wire() -> [u8; CAP] {
+        [0u8; CAP]
     }
 
-    fn encode(req: &Request, at: PieToken, out: &mut [u8]) {
-        out[..LEN].copy_from_slice(&req.encode());
-        out[ACK_AT..ACK_AT + 8].copy_from_slice(&(at.get() as u64).to_le_bytes());
+    fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
+        let (frame, n) = req.encode();
+        let Some(slot) = out.get_mut(..n) else {
+            return 0;
+        };
+        slot.copy_from_slice(&frame[..n]);
+        put_address(out, at);
+        n
     }
 
     fn decode(buf: &[u8]) -> EnvResult<Ack> {

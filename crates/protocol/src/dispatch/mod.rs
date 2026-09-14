@@ -21,6 +21,5 @@ pub use client::{Directory, PAYLOAD_LEN, Service};
 pub use control::{Refer, Referred};
 pub use server::{DirectoryError, Release, Vestor, release_pie, vestor_of};
 pub use wire::{
-    E_DENIED, E_NOT_FOUND, E_TAKEN, MSG_LEN, Name, NameError, Op, ProtocolError, REPLY_AT, Reply,
-    Request,
+    CAP, E_DENIED, E_NOT_FOUND, E_TAKEN, Name, NameError, Op, ProtocolError, Query, Reply, TEXT,
 };

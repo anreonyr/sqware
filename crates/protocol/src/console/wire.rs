@@ -1,45 +1,58 @@
-//! console·wire — 控制台协议的消息编解码（纯函数，零依赖）。
+//! console·wire — 控制台协议的报文编解码（纯函数，零依赖）。
 //!
-//! # 字段布局（请求与回复**同一张表**，按 `op` 读）
-//!
-//! ```text
-//! [0]      op      u8
-//! [1..8]   保留    7 字节   必须为 0
-//! [8..16]  reply   usize LE  Open：调用方**回信孔**在服务侧的 token（服务往它写）
-//! [24..32] client  usize LE  Open 回复 / Write / ReadLine / Close：会话 id
-//! [32..40] len     u64 LE    Write：有效字节数；Line 回复：行长
-//! [40..64] payload [u8;24]   Write：字节；Line 回复：整行（不含 `\n`）
-//! ```
-//!
-//! **只按 `op` 判读字段，不用哨兵值**——dispatch 的 `Request::decode` 就是这么写的
-//! （按动词检查保留区）。故"非 Open 的 reply 必须是 0"是一条真检查，
-//! 而不是"必须等于某个魔数"。
-//!
-//! `[8..16]` 是**通道字段**（与 dispatch 的 `[49..57]`、uart 的 `[8..16]` 同一条规矩）：
-//! 它由收方从报文里读、由 [`Duet::encode`] 以**本端回信孔在对端表里的句柄**填入——
-//! 客户端造请求时给不出也不该给，故 `Request::Open` 的 `reply` 只在 `decode` 之后有意义
-//! （值上写 [`PieToken::new(0)`] 的那条路正是 `Request::open`）。
-//!
-//! # 只有一枚客户端孔
+//! # 一帧的两段：地址 + 正文
 //!
 //! ```text
-//! 请求孔   客户端 push 请求   → 服务 pull      （客户端持 `entry`）
-//! 回信孔   服务 push 回复     → 客户端 pull    （Open 时交出对端 token）
+//! [0]       op     u8
+//! [1..9)    地址槽  usize LE  **传输字段**：投递孔在服务侧的 token（客户端给不出）
+//! [9..]     正文   ……        按 `op` 排；**正文的结束就是这一帧的结束**
 //! ```
 //!
-//! 第一版还开了一枚"数据孔"（客户端往上推整行）——**它从第一天起就是死码**：
-//! 客户端从不推、服务从不读（整行的交付走的是回信孔）。删掉它：每次开会话
-//! 少一次自建孔。
+//! 动词与正文（请求与回复同一张表，按首字节读）：
+//!
+//! ```text
+//! Open      [1]=1  正文 = 空                          帧长 9
+//! Write     [1]=2  [9..17) client  [17..] 字节         帧长 17 + 字节数
+//! ReadLine  [1]=3  [9..17) client  [17..] 提示符       帧长 17 + 提示符长度
+//! Close     [1]=4  [9..17) client                     帧长 17
+//!
+//! Ok        [1]=0  [9..17) client                     帧长 17
+//! Line      [1]=1  [9..] 整行（不含 `\n`）             帧长 9 + 行长
+//! Eof       [1]=2  正文 = 空                          帧长 9
+//! Interrupt [1]=3  同上                              帧长 9
+//! Denied    [1]=4  同上                              帧长 9
+//! NoSuch…   [1]=5  同上                              帧长 9
+//! ```
+//!
+//! **没有一处是补的**：正文里不再有保留区、不再有长度字段、不再有定长载荷数组。
+//! 「这条消息多长」就是「这一帧多少字节」，由成帧的人报给 `Port`；收方按同一份表
+//! 精确对账（短一字节、多一字节都是坏帧）——那才是"这个动词不该有这一格"的真检查，
+//! 而它不需要任何字节能为 0 才算数。
+//!
+//! # 地址槽只在 `Open` 上非零
+//!
+//! 本协议是"开一次、长期用"：服务在 `Open` 时把回信孔记进会话表（`server::Slot`
+//! 的 `reply`），此后每条请求都照表推回复。故只有 `Open` 那一帧带地址，其余动词
+//! 的地址槽恒为 0——这是**本协议的**语义，`Duet::encode` 那三行就是它的落点
+//! （机制只问"地址写哪儿"，不问"哪些动词带"）。
 //!
 //! # 会话 id 从 1 起
 //!
 //! 0 恒为"无会话"：`Write{client:0}` / `ReadLine{client:0}` / `Close{0}` 一律
 //! `NoSuchClient`。这是 **id 值域**约定，不是字段哨兵（与 `PieToken(0)` 同款）。
 
-use env::{EnvError, EnvResult, PieToken, make_err};
-use runtime::core::port::Duet;
+use core::mem::size_of;
 
-/// 本协议的负码：无权 / 协议错（与内核码同表）。
+use env::{EnvError, EnvResult, PieToken, make_err};
+use runtime::core::port::{ADDRESS_LEN, Duet};
+
+/// 地址槽在本协议报文里的偏移（就 `op` 之后那一格）。
+///
+/// 转出 [`runtime::core::port::ADDRESS_AT`] 是为了让**服务侧读地址**不必知道那个数
+/// 从哪儿来：本模块说"槽在这儿"，机制说"槽是这么写的"。
+pub use runtime::core::port::ADDRESS_AT;
+
+/// 本协议的负码：协议错（与内核码同表）。
 pub(crate) fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(-1))
 }
@@ -51,36 +64,102 @@ pub(crate) fn denied() -> erra::Error<EnvError> {
 /// 谁写错一个字母就得到一次"连不上"，且没有一处可供对账。
 pub const SERVICE: &str = "console";
 
-/// 单消息字节数（与 dispatch 的 `MSG_LEN` 同值：同一代协议）。
-pub const MSG_LEN: usize = 64;
+/// 会话 id 的宽度（`usize` LE）。
+pub const WORD: usize = size_of::<usize>();
 
-/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在消息里的偏移。
-pub const REPLY_PEER_AT: usize = 8;
+/// 正文里最大的一段：一次 `Write` 最多带的字节数 = 回复里一行的上界。
+pub const LINE: usize = 24;
 
-/// 会话 id 在消息里的偏移。
-pub const CLIENT_AT: usize = 24;
+/// 一块内存要多大装得下任何一条帧：`op + 地址槽 + client + LINE`。
+pub const CAP: usize = 1 + ADDRESS_LEN + 2 * WORD + LINE;
 
-/// 长度字段在消息里的偏移（u64 LE）。
-pub const LEN_AT: usize = 32;
+/// 正文里那一段字节：容量定长，`bytes[..len]` 有效。
+///
+/// 那个容量**永不上线**——成帧时只写有效的那一段，故它不是"补零的来源"。它存在的
+/// 唯一理由是让这个值能活在帧之外（服务的 `pending` 要跨线程持有一整行）。
+///
+/// 相等按**有效的那一段**比：容量里没写过的那几格不是一个值的一部分。
+#[derive(Clone, Debug)]
+pub struct Text {
+    bytes: [u8; LINE],
+    len: usize,
+}
 
-/// 载荷起始偏移。
-pub const PAYLOAD_AT: usize = 40;
+impl PartialEq for Text {
+    fn eq(&self, other: &Text) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
 
-/// 一次 `Write` 能带的字节数（也是回复里一整行的上界）。
-pub const PAYLOAD_LEN: usize = MSG_LEN - PAYLOAD_AT;
+impl Eq for Text {}
 
-/// 一整行的字节上界。与 [`PAYLOAD_LEN`] 同值：同一块区两用。
-pub const LINE_MAX: usize = PAYLOAD_LEN;
+impl Text {
+    /// 由字节造一段。`> LINE` ⇒ `None`（**不截断**：截断会把"写不下"变成"写坏了"）。
+    pub fn new(bytes: &[u8]) -> Option<Text> {
+        let mut text = Text {
+            bytes: [0u8; LINE],
+            len: bytes.len(),
+        };
+        if text.len > LINE {
+            return None;
+        }
+        text.bytes[..text.len].copy_from_slice(bytes);
+        Some(text)
+    }
+
+    /// 有效的那一段。
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+
+    /// 写进 `out[at..]` 并返**写了几格**。子切片先造好再拷——越界即 `None`。
+    fn encode_into(&self, out: &mut [u8], at: usize) -> Option<usize> {
+        let text = self.as_bytes();
+        let slot = out.get_mut(at..at + text.len())?;
+        slot.copy_from_slice(text);
+        Some(text.len())
+    }
+}
+
+/// 控制台请求。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Query {
+    /// 开会话：地址槽里是调用方的回信孔（对端 token）。
+    Open,
+    /// 写一批字节（**同步**：`Ok` 即"已落屏"）。
+    Write { client: usize, text: Text },
+    /// 读一行（带行编辑）。`prompt` 供服务侧重绘。
+    ReadLine { client: usize, prompt: Text },
+    /// 关会话。
+    Close { client: usize },
+}
+
+/// 控制台回复。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Reply {
+    /// Open/Write/Close 成功；Open 时 `client` 是新会话 id。
+    Ok { client: usize },
+    /// ReadLine：一行（不含 `\n`）。
+    Line { text: Text },
+    /// ReadLine：Ctrl-D。
+    Eof,
+    /// ReadLine：Ctrl-C。
+    Interrupt,
+    /// 请求非法。
+    Denied,
+    /// 会话 id 不认识（未开、已关、0）。
+    NoSuchClient,
+}
 
 /// 控制台请求动词（线上判别号）。
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Op {
-    /// 开会话：登记调用方的**回信孔**（对端 token），回执给会话 id。
+    /// 开会话：登记调用方的回信孔，回执给会话 id。
     Open = 1,
-    /// 写：把这批字节交给服务写设备（**同步**：Ok 即"已落屏"）。
+    /// 写：把这批字节交给服务写设备。
     Write = 2,
-    /// 读一行（带行编辑）：阻塞到回车 / Ctrl-C / Ctrl-D，结果走回信孔。
+    /// 读一行（带行编辑）。
     ReadLine = 3,
     /// 关会话。
     Close = 4,
@@ -99,173 +178,120 @@ pub const STATUS_NO_CLIENT: u8 = 5;
 pub enum ProtocolError {
     /// 未知动词或未知状态码。
     BadOp,
-    /// 保留字段非零。
-    Reserved,
-    /// 该动词下不该出现的字段非零（如 Write 却带了孔 token）。
-    UnexpectedField,
-    /// 长度越界（`len > PAYLOAD_LEN`）。
+    /// 长度越界（一段正文超过 `LINE`）。
     BadLen,
+    /// 帧长与该动词的表不符（短一字节、多一字节都算）。
+    Short,
 }
 
-/// 控制台请求。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Request {
-    /// `reply` = 回信孔在服务侧的名字；0 = 非法。
-    ///
-    /// 客户端造不出来（[`Request::open`] 给的是 0）——它由 `decode` 从**通道字段**
-    /// `[8..16]` 读出，由 [`Duet::encode`] 按本端回信孔填入。
-    Open { reply: usize },
-    /// `payload[..len]` = 要写的字节。
-    Write {
-        client: usize,
-        len: usize,
-        payload: [u8; PAYLOAD_LEN],
-    },
-    /// 读一行。`prompt` = 提示符（重绘时用；空 = 无提示符）。
-    ReadLine {
-        client: usize,
-        len: usize,
-        prompt: [u8; PAYLOAD_LEN],
-    },
-    /// 关会话。
-    Close { client: usize },
-}
-
-/// 控制台回复。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Reply {
-    /// Open/Write/Close 成功；Open 时 `client` 是新会话 id。
-    Ok { client: usize },
-    /// ReadLine：一行（不含 `\n`）。
-    Line { len: usize, payload: [u8; LINE_MAX] },
-    /// ReadLine：Ctrl-D。
-    Eof,
-    /// ReadLine：Ctrl-C。
-    Interrupt,
-    /// 请求非法（保留字段 / 长度越界 / 孔 token 为 0）。
-    Denied,
-    /// 会话 id 不认识（未开、已关、0）。
-    NoSuchClient,
-}
+/// 正文里 client 的偏移（`op` 与地址槽之后）。仅本模块用。
+const CLIENT_AT: usize = 1 + ADDRESS_LEN;
+/// 正文里"变长那一段"的偏移。
+const TEXT_AT: usize = CLIENT_AT + WORD;
 
 fn word(m: &[u8], at: usize) -> usize {
-    usize::from_le_bytes(m[at..at + 8].try_into().unwrap_or([0u8; 8]))
+    usize::from_le_bytes(m[at..at + WORD].try_into().unwrap_or([0u8; WORD]))
 }
 
-impl Request {
-    /// 开一次会话。回信地址是**通道字段**（见模块头），由 [`Duet::encode`] 填，
-    /// 故这里不带参数——客户端手里根本没有那枚 token。
-    pub const fn open() -> Request {
-        Request::Open { reply: 0 }
+impl Query {
+    /// 开一次会话。地址是**传输字段**（见模块头），客户端手里没有那枚 token。
+    pub const fn open() -> Query {
+        Query::Open
     }
 
-    /// 编码为线上消息（**不写通道字段**：`[8..16]` 留给 [`Duet::encode`]）。
-    pub fn encode(&self) -> [u8; MSG_LEN] {
-        let mut m = [0u8; MSG_LEN];
-        let (op, client, len) = match self {
-            Request::Open { .. } => (Op::Open, 0, 0),
-            Request::Write { client, len, .. } => (Op::Write, *client, *len),
-            Request::ReadLine { client, len, .. } => (Op::ReadLine, *client, *len),
-            Request::Close { client } => (Op::Close, *client, 0),
+    /// 造一条写请求。空或超过 [`LINE`] ⇒ `None`（分片是客户端的活）。
+    pub fn write(client: usize, bytes: &[u8]) -> Option<Query> {
+        if bytes.is_empty() {
+            return None;
+        }
+        Some(Query::Write {
+            client,
+            text: Text::new(bytes)?,
+        })
+    }
+
+    /// 造一条读行请求。提示符可以为空（服务侧无提示符重绘）。
+    pub fn readline(client: usize, prompt: &[u8]) -> Option<Query> {
+        Some(Query::ReadLine {
+            client,
+            prompt: Text::new(prompt)?,
+        })
+    }
+
+    /// 这一帧多少字节。
+    pub fn len(&self) -> usize {
+        match self {
+            Query::Open => 1 + ADDRESS_LEN,
+            Query::Write { text, .. } => TEXT_AT + text.as_bytes().len(),
+            Query::ReadLine { prompt, .. } => TEXT_AT + prompt.as_bytes().len(),
+            Query::Close { .. } => TEXT_AT,
+        }
+    }
+
+    /// 正文里那一段字节（就地借帧）：`Write` 要写的字节 / `ReadLine` 的提示符。
+    ///
+    /// 与 [`Query::decode`] 是同一张表的两个读法：那个认动词与会话，这个取变长段。
+    pub fn text(m: &[u8]) -> &[u8] {
+        m.get(TEXT_AT..).unwrap_or(&[])
+    }
+
+    /// 成帧。**地址槽留 0**——由 [`Duet::encode`] 按本端回信孔填。
+    pub fn encode(&self) -> ([u8; CAP], usize) {
+        let mut m = [0u8; CAP];
+        let (op, client, text) = match self {
+            Query::Open => (Op::Open, 0, None),
+            Query::Write { client, text } => (Op::Write, *client, Some(text)),
+            Query::ReadLine { client, prompt } => (Op::ReadLine, *client, Some(prompt)),
+            Query::Close { client } => (Op::Close, *client, None),
         };
         m[0] = op as u8;
-        m[CLIENT_AT..CLIENT_AT + 8].copy_from_slice(&client.to_le_bytes());
-        m[LEN_AT..LEN_AT + 8].copy_from_slice(&(len as u64).to_le_bytes());
-        match self {
-            Request::Write { len, payload, .. } => {
-                let n = if *len > PAYLOAD_LEN {
-                    PAYLOAD_LEN
-                } else {
-                    *len
-                };
-                m[PAYLOAD_AT..PAYLOAD_AT + n].copy_from_slice(&payload[..n]);
-            }
-            Request::ReadLine { len, prompt, .. } => {
-                let n = if *len > PAYLOAD_LEN {
-                    PAYLOAD_LEN
-                } else {
-                    *len
-                };
-                m[PAYLOAD_AT..PAYLOAD_AT + n].copy_from_slice(&prompt[..n]);
-            }
-            _ => {}
+        if let Some(text) = text {
+            let _ = text.encode_into(&mut m, TEXT_AT);
         }
-        m
+        if !matches!(self, Query::Open) {
+            m[CLIENT_AT..CLIENT_AT + WORD].copy_from_slice(&client.to_le_bytes());
+        }
+        (m, self.len())
     }
 
-    /// 解码。**按 op 判读字段**：每个动词检查"它不该有的字段必须是 0"。
-    pub fn decode(m: &[u8]) -> Result<Request, ProtocolError> {
-        if m.len() < MSG_LEN {
-            return Err(ProtocolError::Reserved);
-        }
-        if m[1..REPLY_PEER_AT].iter().any(|&b| b != 0)
-            || m[LEN_AT + 8..PAYLOAD_AT].iter().any(|&b| b != 0)
-        {
-            return Err(ProtocolError::Reserved);
-        }
-        let op = m[0];
-        let rpeer = word(m, REPLY_PEER_AT);
-        let client = word(m, CLIENT_AT);
-        let len = u64::from_le_bytes(m[LEN_AT..LEN_AT + 8].try_into().unwrap_or([0u8; 8])) as usize;
-        let payload_zero = m[PAYLOAD_AT..].iter().all(|&b| b == 0);
-
+    /// 解码。**帧长即那一格**：每个动词只认自己那一种长度。
+    pub fn decode(m: &[u8]) -> Result<Query, ProtocolError> {
+        let op = *m.first().ok_or(ProtocolError::Short)?;
+        let body = m.len() - 1;
         match op {
             x if x == Op::Open as u8 => {
-                if rpeer == 0 {
-                    return Err(ProtocolError::UnexpectedField);
+                if body != ADDRESS_LEN {
+                    return Err(ProtocolError::Short);
                 }
-                if client != 0 || len != 0 || !payload_zero {
-                    return Err(ProtocolError::Reserved);
-                }
-                Ok(Request::Open { reply: rpeer })
+                Ok(Query::Open)
             }
             x if x == Op::Write as u8 => {
-                if rpeer != 0 {
-                    return Err(ProtocolError::UnexpectedField);
+                if body < ADDRESS_LEN + WORD {
+                    return Err(ProtocolError::Short);
                 }
-                if client == 0 {
-                    return Err(ProtocolError::UnexpectedField);
-                }
-                if len > PAYLOAD_LEN {
-                    return Err(ProtocolError::BadLen);
-                }
-                let mut payload = [0u8; PAYLOAD_LEN];
-                payload.copy_from_slice(&m[PAYLOAD_AT..PAYLOAD_AT + PAYLOAD_LEN]);
-                Ok(Request::Write {
-                    client,
-                    len,
-                    payload,
+                let text = Text::new(&m[TEXT_AT..]).ok_or(ProtocolError::BadLen)?;
+                Ok(Query::Write {
+                    client: word(m, CLIENT_AT),
+                    text,
                 })
             }
             x if x == Op::ReadLine as u8 => {
-                if rpeer != 0 {
-                    return Err(ProtocolError::UnexpectedField);
+                if body < ADDRESS_LEN + WORD {
+                    return Err(ProtocolError::Short);
                 }
-                if client == 0 {
-                    return Err(ProtocolError::UnexpectedField);
-                }
-                if len > PAYLOAD_LEN {
-                    return Err(ProtocolError::BadLen);
-                }
-                let mut prompt = [0u8; PAYLOAD_LEN];
-                prompt.copy_from_slice(&m[PAYLOAD_AT..PAYLOAD_AT + PAYLOAD_LEN]);
-                Ok(Request::ReadLine {
-                    client,
-                    len,
+                let prompt = Text::new(&m[TEXT_AT..]).ok_or(ProtocolError::BadLen)?;
+                Ok(Query::ReadLine {
+                    client: word(m, CLIENT_AT),
                     prompt,
                 })
             }
             x if x == Op::Close as u8 => {
-                if rpeer != 0 {
-                    return Err(ProtocolError::UnexpectedField);
+                if body != ADDRESS_LEN + WORD {
+                    return Err(ProtocolError::Short);
                 }
-                if client == 0 {
-                    return Err(ProtocolError::UnexpectedField);
-                }
-                if len != 0 || !payload_zero {
-                    return Err(ProtocolError::Reserved);
-                }
-                Ok(Request::Close { client })
+                Ok(Query::Close {
+                    client: word(m, CLIENT_AT),
+                })
             }
             _ => Err(ProtocolError::BadOp),
         }
@@ -273,41 +299,59 @@ impl Request {
 }
 
 impl Reply {
-    pub fn encode(&self) -> [u8; MSG_LEN] {
-        let mut m = [0u8; MSG_LEN];
-        match self {
-            Reply::Ok { client } => {
-                m[0] = STATUS_OK;
-                m[CLIENT_AT..CLIENT_AT + 8].copy_from_slice(&client.to_le_bytes());
+    /// 成帧。回复**永不带地址**（它走的是对端的回信孔）。
+    pub fn encode(&self) -> ([u8; CAP], usize) {
+        let mut m = [0u8; CAP];
+        let (status, client, text) = match self {
+            Reply::Ok { client } => (STATUS_OK, *client, None),
+            Reply::Line { text } => (STATUS_LINE, 0, Some(text)),
+            Reply::Eof => (STATUS_EOF, 0, None),
+            Reply::Interrupt => (STATUS_INTERRUPT, 0, None),
+            Reply::Denied => (STATUS_DENIED, 0, None),
+            Reply::NoSuchClient => (STATUS_NO_CLIENT, 0, None),
+        };
+        m[0] = status;
+        match text {
+            Some(text) => {
+                let _ = text.encode_into(&mut m, 1 + ADDRESS_LEN);
             }
-            Reply::Line { len, payload } => {
-                m[0] = STATUS_LINE;
-                let n = if *len > LINE_MAX { LINE_MAX } else { *len };
-                m[LEN_AT..LEN_AT + 8].copy_from_slice(&(n as u64).to_le_bytes());
-                m[PAYLOAD_AT..PAYLOAD_AT + LINE_MAX].copy_from_slice(payload);
+            None => {
+                if matches!(self, Reply::Ok { .. }) {
+                    m[CLIENT_AT..CLIENT_AT + WORD].copy_from_slice(&client.to_le_bytes());
+                }
             }
-            Reply::Eof => m[0] = STATUS_EOF,
-            Reply::Interrupt => m[0] = STATUS_INTERRUPT,
-            Reply::Denied => m[0] = STATUS_DENIED,
-            Reply::NoSuchClient => m[0] = STATUS_NO_CLIENT,
         }
-        m
+        (m, self.len())
     }
 
-    pub fn decode(m: &[u8; MSG_LEN]) -> Result<Reply, ProtocolError> {
-        match m[0] {
-            STATUS_OK => Ok(Reply::Ok {
-                client: word(m, CLIENT_AT),
-            }),
-            STATUS_LINE => {
-                let len = u64::from_le_bytes(m[LEN_AT..LEN_AT + 8].try_into().unwrap_or([0u8; 8]))
-                    as usize;
-                if len > LINE_MAX {
-                    return Err(ProtocolError::BadLen);
+    /// 这一帧多少字节。
+    pub fn len(&self) -> usize {
+        match self {
+            Reply::Ok { .. } => TEXT_AT,
+            Reply::Line { text } => 1 + ADDRESS_LEN + text.as_bytes().len(),
+            _ => 1 + ADDRESS_LEN,
+        }
+    }
+
+    /// 解码。与请求同一张表，按首字节读。
+    pub fn decode(m: &[u8]) -> Result<Reply, ProtocolError> {
+        let status = *m.first().ok_or(ProtocolError::Short)?;
+        let body = m.len() - 1;
+        match status {
+            STATUS_OK => {
+                if body != ADDRESS_LEN + WORD {
+                    return Err(ProtocolError::Short);
                 }
-                let mut payload = [0u8; LINE_MAX];
-                payload.copy_from_slice(&m[PAYLOAD_AT..PAYLOAD_AT + LINE_MAX]);
-                Ok(Reply::Line { len, payload })
+                Ok(Reply::Ok {
+                    client: word(m, CLIENT_AT),
+                })
+            }
+            STATUS_LINE => {
+                if body < ADDRESS_LEN {
+                    return Err(ProtocolError::Short);
+                }
+                let text = Text::new(&m[1 + ADDRESS_LEN..]).ok_or(ProtocolError::BadLen)?;
+                Ok(Reply::Line { text })
             }
             STATUS_EOF => Ok(Reply::Eof),
             STATUS_INTERRUPT => Ok(Reply::Interrupt),
@@ -318,32 +362,34 @@ impl Reply {
     }
 }
 
-/// 报文对：一条控制台请求、一条控制台回复。回信地址写在 `[8..16]`（`REPLY_PEER_AT`）。
-///
-/// **只有 `Open` 那一条带地址**：本协议是"开一次、长期用"——服务在 `Open` 时把回信孔
-/// 记进会话表（`server::Slot { reply }`），此后每条请求都照表推回复。其余动词那一格
-/// 必须是 0，`decode` 里"非 Open 的 reply 必须为 0"那条因此是真检查。
-impl Duet for Request {
-    type Req = Request;
+/// 报文对：一条控制台询问、一条控制台应答。尺寸与布局都由本协议说了算——包括
+/// **地址槽在 `[1..9)`（`ADDRESS_AT`）**与【地址只在 `Open` 上带】这两件事。
+impl Duet for Query {
+    type Req = Query;
     type Rep = Reply;
-    type Wire = [u8; MSG_LEN];
+    type Wire = [u8; CAP];
 
-    const REQ: usize = MSG_LEN;
-    const REP: usize = MSG_LEN;
+    const CAP: usize = CAP;
 
-    fn wire() -> [u8; MSG_LEN] {
-        [0u8; MSG_LEN]
+    fn wire() -> [u8; CAP] {
+        [0u8; CAP]
     }
 
-    fn encode(req: &Request, at: PieToken, out: &mut [u8]) {
-        out[..MSG_LEN].copy_from_slice(&req.encode());
-        if matches!(req, Request::Open { .. }) {
-            out[REPLY_PEER_AT..REPLY_PEER_AT + 8].copy_from_slice(&at.get().to_le_bytes());
+    fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
+        let (frame, n) = req.encode();
+        let Some(slot) = out.get_mut(..n) else {
+            return 0;
+        };
+        slot.copy_from_slice(&frame[..n]);
+        if matches!(req, Query::Open) {
+            if let Some(slot) = out.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN) {
+                slot.copy_from_slice(&at.get().to_le_bytes());
+            }
         }
+        n
     }
 
     fn decode(buf: &[u8]) -> EnvResult<Reply> {
-        let m: &[u8; MSG_LEN] = buf.try_into().map_err(|_| denied())?;
-        Reply::decode(m).map_err(|_| denied())
+        Reply::decode(buf).map_err(|_| denied())
     }
 }

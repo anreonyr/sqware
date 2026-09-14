@@ -30,12 +30,12 @@ extern crate programs;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::TeamId;
+use protocol::dispatch::CAP;
 use protocol::dispatch::control::{Refer, Referred};
 use protocol::dispatch::server::{Directory, release_pie, vestor_of};
-use protocol::dispatch::{MSG_LEN, REPLY_AT};
 use runtime::core::handshake::{self, Quay};
 use runtime::core::lock::Lock;
-use runtime::core::port::{Access, Policy, ship};
+use runtime::core::port::{self, Access, Policy, ship};
 use runtime::env::mail::HolePie;
 use runtime::env::task as utask;
 
@@ -58,6 +58,7 @@ extern "C" fn control_main() -> ! {
     loop {
         let refer = match Refer::pull(&control) {
             Ok(r) => r,
+            // 控制孔死亡（root 已走）：无处可听，硬失败。
             // 控制孔死亡（root 已走）：无处可听，硬失败。
             Err(_) => runtime::env::room::exit_with(20),
         };
@@ -140,23 +141,26 @@ extern "C" fn main() -> ! {
     }
 
     // 6. 服务循环。
-    let mut msg = [0u8; MSG_LEN];
+    let mut msg = [0u8; CAP];
     loop {
         // 身份 = **内核盖章的发送者**（`Pull` 一并交回），不信任报文里的任何字段。
         let Ok((_, from)) = entry.pull_from(&mut msg) else {
             continue;
         };
         let caller = from.get();
-        let reply_token =
-            usize::from_le_bytes(msg[REPLY_AT..REPLY_AT + 8].try_into().unwrap_or([0u8; 8]));
+        // 回信地址从**地址槽**里读（机制那一格，不是本协议的字段）。
+        let reply_token = match port::address_of(&msg) {
+            Some(at) => at.get(),
+            None => continue,
+        };
         // 回信地址必须**确实是 caller 授给本域的那一枚**——否则丢弃回复
         //（防「替他人收信」：把别人的回信 token 塞进自己的请求）。
         let reachable = vestor_of(reply_token) == Some(caller);
-        let out = DIR.with(|dir| dir.serve(caller, &msg)).encode();
+        let (out, n) = DIR.with(|dir| dir.serve(caller, &msg)).encode();
         if !reachable {
             continue;
         }
         // 推回调用方自带的回信 hole；槽满则挂起等对侧取走，Dead 即丢。
-        let _ = HolePie::from_token(reply_token).push(&out);
+        let _ = HolePie::from_token(reply_token).push(&out[..n]);
     }
 }

@@ -5,8 +5,8 @@
 //! ```text
 //! Kill：                                      Quit（无回执）：
 //! [0]      op      u8        1                [0] op u8   2
-//! [1..33)  target  [u8; 32]  `env::Name`
-//! [33..41) ack     usize LE  回信孔在**服务侧**的 token
+//! [1..9)   地址槽  usize LE  回信孔在**服务侧**的 token（每条询问都带）
+//! [9..)    target  ≤ 31 字节 `env::Name`——**名字多长帧多长**
 //! ```
 //!
 //! 名字的账在**目录**里，不在本协议里：目标只按名字点，服务自己去目录解出
@@ -22,7 +22,7 @@
 
 use env::wire::NAME_LEN;
 use env::{EnvError, EnvResult, Name, PieToken, make_err};
-use runtime::core::port::Duet;
+use runtime::core::port::{ADDRESS_LEN, Duet, put_address};
 
 /// 本协议的负码：无权 / 协议错（与内核码同表）。
 pub(crate) fn denied() -> erra::Error<EnvError> {
@@ -32,15 +32,21 @@ pub(crate) fn denied() -> erra::Error<EnvError> {
 /// 服务的名字（目录里登记的那一个；两端共用一份，不各写一遍）。
 pub const SERVICE: &str = "doom";
 
-/// 请求报文长度：`[op u8][target 32][ack 8]`。
-pub const REQ_LEN: usize = 1 + NAME_LEN + 8;
+/// 名字最长能写多少字节（内容上界：定长字段里那一个字节留给终止 NUL）。
+pub const TEXT: usize = NAME_LEN - 1;
+
+/// 一块内存要多大装得下任何一条帧：`op + 地址槽 + 名字(上界)`。
+pub const CAP: usize = 1 + ADDRESS_LEN + TEXT;
 
 /// 回执长度（一字节）。
 pub const ACK_LEN: usize = 1;
 
+/// 名字在帧里的偏移。
+const NAME_AT: usize = 1 + ADDRESS_LEN;
+
 /// 动词（号段从 1 起，与 `console`/`dispatch` 同一约定：0 留给"无效"）。
 ///
-/// 只有两个：`Kill`（请求杀一个域，41 字节 + 一字节回执）与 `Quit`（**主人停服**，
+/// 只有两个：`Kill`（请求杀一个域，名字多长帧多长 + 一字节回执）与 `Quit`（**主人停服**，
 /// 1 字节、无回执）。后者不是给客户端的：服务线程在本域、是兄弟线程，**不在血缘里**
 /// ——级联收不到它，请求孔又是它自己开的 ⇒ 只能由协议说一句"收场"。
 pub const OP_KILL: u8 = 1;
@@ -83,68 +89,67 @@ impl Ack {
     }
 }
 
-/// 一条杀令：按**名字**点目标。
-pub struct Kill {
+/// 一条询问：按**名字**点目标。
+///
+/// 值里**没有回信地址**：它是**传输字段**（地址槽），由 `decode` 之后的收方用
+/// [`address_of`](runtime::core::port::address_of) 从报文里抠、由 [`Duet::encode`]
+/// 按本端回信孔填——客户端手里没有那枚 token。
+pub struct Query {
     pub target: Name,
-    /// 回信孔在本协议**服务侧**的 token（服务按此推回执）。
-    ///
-    /// 这是**通道字段**：`decode` 从报文里读出它，[`Duet::encode`] 按本端回信孔填入；
-    /// 客户端造的请求里它是 [`Kill::new`] 给的 0（客户端手里没有那枚 token）。
-    pub ack: PieToken,
 }
 
-/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在报文里的偏移（见 [`Kill::ack`]）。
-const ACK_AT: usize = 1 + NAME_LEN;
-
-impl Kill {
+impl Query {
     /// 造一条杀令。回信地址由 [`Duet::encode`] 填，故这里不带参数。
-    pub const fn new(target: Name) -> Kill {
-        Kill {
-            target,
-            ack: PieToken::new(0),
-        }
+    pub const fn new(target: Name) -> Query {
+        Query { target }
     }
 
-    /// 编码为线上消息（**不写通道字段**：`[33..41]` 留给 [`Duet::encode`]）。
-    pub fn encode(&self) -> [u8; REQ_LEN] {
-        let mut msg = [0u8; REQ_LEN];
+    /// 这一帧多少字节：头 9 + 名字那一段。
+    pub fn len(&self) -> usize {
+        NAME_AT + self.target.text().len()
+    }
+
+    /// 编码（**不写地址槽**：留给 [`Duet::encode`]；尾部不补零）。
+    pub fn encode(&self) -> ([u8; CAP], usize) {
+        let mut msg = [0u8; CAP];
         msg[0] = OP_KILL;
-        msg[1..ACK_AT].copy_from_slice(self.target.bytes());
-        msg
+        let n = self.len();
+        msg[NAME_AT..n].copy_from_slice(self.target.text());
+        (msg, n)
     }
 
-    /// 解码：**长度、动词、名字**三者都要过（非法名不可表达——名字的构造义务在
-    /// `Name::from_bytes` 上，这里只是把它接上）。
-    pub fn decode(msg: &[u8]) -> Option<Kill> {
-        if msg.len() < REQ_LEN || msg[0] != OP_KILL {
+    /// 解码：**动词、名字**两者都要过（非法名不可表达——名字的构造义务在
+    /// `Name::from_slice` 上，这里只是把它接上）。
+    pub fn decode(msg: &[u8]) -> Option<Query> {
+        if *msg.first()? != OP_KILL {
             return None;
         }
-        let bytes: [u8; NAME_LEN] = msg[1..ACK_AT].try_into().ok()?;
-        let target = Name::from_bytes(bytes).ok()?;
-        let ack = usize::from_le_bytes(msg[ACK_AT..REQ_LEN].try_into().ok()?);
-        Some(Kill {
-            target,
-            ack: PieToken::new(ack),
-        })
+        let target = Name::from_slice(msg.get(NAME_AT..)?).ok()?;
+        Some(Query { target })
     }
 }
 
-/// 报文对：一条杀令、一字节回执。回信地址写在 `[33..41]`（`ACK_AT`）。
-impl Duet for Kill {
-    type Req = Kill;
+/// 报文对：一条杀令、一字节回执。地址槽在 `[1..9)`，**每条询问都带**（本协议是
+/// 一问一答，服务不记会话）。
+impl Duet for Query {
+    type Req = Query;
     type Rep = Ack;
-    type Wire = [u8; REQ_LEN];
+    type Wire = [u8; CAP];
 
-    const REQ: usize = REQ_LEN;
-    const REP: usize = ACK_LEN;
+    const CAP: usize = CAP;
 
-    fn wire() -> [u8; REQ_LEN] {
-        [0u8; REQ_LEN]
+    fn wire() -> [u8; CAP] {
+        [0u8; CAP]
     }
 
-    fn encode(req: &Kill, at: PieToken, out: &mut [u8]) {
-        out[..REQ_LEN].copy_from_slice(&req.encode());
-        out[ACK_AT..ACK_AT + 8].copy_from_slice(&at.get().to_le_bytes());
+    fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
+        let (frame, n) = req.encode();
+        let Some(slot) = out.get_mut(..n) else {
+            return 0;
+        };
+        slot.copy_from_slice(&frame[..n]);
+        put_address(out, at);
+        n
     }
 
     fn decode(buf: &[u8]) -> EnvResult<Ack> {

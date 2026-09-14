@@ -23,4 +23,4 @@ pub mod wire;
 
 pub use client::Doom;
 pub use server::{GONE_ROUND_MS, GONE_ROUNDS, Outcome, collect, serve};
-pub use wire::{ACK_LEN, Ack, Kill, OP_KILL, OP_QUIT, REQ_LEN, SERVICE};
+pub use wire::{ACK_LEN, Ack, CAP, OP_KILL, OP_QUIT, Query, SERVICE, TEXT};

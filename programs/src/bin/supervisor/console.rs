@@ -50,7 +50,7 @@ extern crate programs;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::TeamId;
-use protocol::console::MSG_LEN;
+use protocol::console::CAP;
 use protocol::console::{Decoder, Reply, SERVICE, State, TICK_MS};
 use protocol::dispatch::client::Directory;
 use protocol::uart::Uart;
@@ -96,7 +96,7 @@ extern "C" fn input_loop() -> ! {
     // 读行存活（转义序列可能被读行边界切开），故放在循环外。
     let mut dec = Decoder::new();
     let hole = HolePie::from_token(DELIVER.load(Ordering::Acquire));
-    let mut buf = [0u8; protocol::uart::DELIVER_MTU];
+    let mut buf = [0u8; protocol::uart::DELIVER];
     loop {
         if !CONSOLE.with(|s| s.is_reading()) {
             sleep_ticks(TICK_MS);
@@ -232,7 +232,7 @@ extern "C" fn main() -> ! {
     }
 
     // 7. 请求循环：没人等读时慢档等请求；有人等读时快档，顺路取走输入线程放下的整行。
-    let mut req = [0u8; MSG_LEN];
+    let mut req = [0u8; CAP];
     loop {
         let timeout = if CONSOLE.with(|s| s.is_reading()) {
             IDLE_MS
@@ -265,8 +265,8 @@ fn route(to_client: Option<usize>, reply: Reply) {
     let Some(client) = to_client else {
         return;
     };
-    let msg = reply.encode();
+    let (msg, n) = reply.encode();
     if let Some(token) = CONSOLE.with(|s| s.reply_token(client)) {
-        let _ = HolePie::from_token(token).push(&msg);
+        let _ = HolePie::from_token(token).push(&msg[..n]);
     }
 }

@@ -8,7 +8,7 @@ use env::{EnvResult, Name};
 use runtime::core::port::Port;
 use runtime::env::mail::HolePie;
 
-use super::{Ack, Kill};
+use super::{Ack, Query};
 
 /// 等回执的上界（毫秒）。服务在同一台机器上做一次 envcall + 有界 `Join`，远超实际
 /// 耗时；有上界才能把"回执被丢"暴露成 `Busy`，而不是永久挂起。
@@ -34,6 +34,7 @@ impl Doom {
     ///
     /// 回执四值见 [`Ack`]；`Ok` 的含义是"内核确认它回收完了"，不是一个"收到了"。
     pub fn kill(&self, target: &Name) -> EnvResult<Ack> {
-        self.port.call::<Kill>(&Kill::new(*target), ACK_TIMEOUT_MS)
+        self.port
+            .call::<Query>(&Query::new(*target), ACK_TIMEOUT_MS)
     }
 }

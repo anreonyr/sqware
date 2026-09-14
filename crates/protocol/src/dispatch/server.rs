@@ -192,7 +192,7 @@ use env::{PieToken, TaskId};
 use runtime::core::port::{Access, Policy, ship};
 use runtime::env::mail::{self, HolePie};
 
-use super::wire::{MSG_LEN, Reply, Request};
+use super::wire::{Query, Reply};
 
 /// 查本任务表里该 token 的 `vestor`（授与人）——注入给核心的**事实来源**。
 ///
@@ -212,47 +212,44 @@ pub fn release_pie(token: usize) {
 }
 
 impl Directory {
-    /// 处理一条目录请求（原始 64 字节消息），产出回复。
+    /// 处理一条目录询问，产出应答。
     ///
     /// `caller` = 调用方 task id，**由内核在 `Push` 时盖章**（`Pull` 交回），不来自
     /// 消息体；0 = 无身份。本函数不做 I/O——回复由调用方（域主循环）推送。
     pub fn serve(&mut self, caller: usize, msg: &[u8]) -> Reply {
-        if msg.len() < MSG_LEN {
-            return Reply::Denied;
-        }
-        match Request::decode(msg) {
-            Ok(request) => self.handle(caller, &request),
+        match Query::decode(msg) {
+            Ok(query) => self.handle(caller, &query),
             Err(_) => Reply::Denied,
         }
     }
 
-    fn handle(&mut self, caller: usize, request: &Request) -> Reply {
-        match request {
-            Request::Register { name, entry } => match self.publish(name, entry.get(), caller) {
+    fn handle(&mut self, caller: usize, query: &Query) -> Reply {
+        match query {
+            Query::Register { name, entry } => match self.publish(name, entry.get(), caller) {
                 Ok(()) => Reply::Ok,
                 Err(DirectoryError::Taken) => Reply::Taken,
                 Err(DirectoryError::Unknown) => Reply::NotFound,
                 Err(_) => Reply::Denied,
             },
-            Request::Unregister { name } => match self.unpublish(name, caller) {
+            Query::Unregister { name } => match self.unpublish(name, caller) {
                 Ok(()) => Reply::Ok,
                 Err(DirectoryError::Unknown) => Reply::NotFound,
                 Err(_) => Reply::Denied,
             },
-            Request::Replace { name, entry } => match self.replace(name, entry.get(), caller) {
+            Query::Replace { name, entry } => match self.replace(name, entry.get(), caller) {
                 Ok(()) => Reply::Ok,
                 Err(DirectoryError::Unknown) => Reply::NotFound,
                 Err(_) => Reply::Denied,
             },
-            Request::Resolve { name } => match self.entry_of(name) {
+            Query::Resolve { name } => match self.entry_of(name) {
                 Some(_) => Reply::Found { name: *name },
                 None => Reply::NotFound,
             },
-            Request::Enumerate { after } => match self.enumerate(after.as_ref()) {
+            Query::Enumerate { after } => match self.enumerate(after.as_ref()) {
                 Some(name) => Reply::Found { name },
                 None => Reply::NotFound,
             },
-            Request::Connect { name } => match self.entry_of(name) {
+            Query::Connect { name } => match self.entry_of(name) {
                 // 转授给调用方：push 请求 + pull 回复（`Access` 两族分开写）。
                 Some(entry) => match ship(
                     &HolePie::from_token(entry),

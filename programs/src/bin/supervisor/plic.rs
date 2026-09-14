@@ -55,7 +55,7 @@ use protocol::irq::{self, Lines};
 use runtime::core::bell::Bell;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
-use runtime::core::port::{Access, Policy, ship};
+use runtime::core::port::{self, Access, Policy, ship};
 use runtime::env::mail::{self, HolePie, NolePie, PolePie};
 
 /// `irq` 门铃的等待上界（毫秒）——**不能是无穷**：注册报文要有人听（见模块头）。
@@ -149,7 +149,7 @@ extern "C" fn main() -> ! {
     // **上线不打日志**：此刻控制台可能还不存在（本域排在它前面起），而第一条投递
     // 一定在它之后（正是它登记了这条线）。故本域只在**第一次投递**时说一句话。
 
-    let mut buf = [0u8; irq::LEN];
+    let mut buf = [0u8; irq::CAP];
     let mut first = true;
     loop {
         // ① 报文：**非阻塞探测**（晚一拍无所谓——登记与写属主都是引导期事件）。
@@ -182,11 +182,15 @@ extern "C" fn main() -> ! {
 ///   生本域的那个任务）或它委托过的那个。行的 `sire` 是**建表时**记下的（`from_tree`），
 ///   故属主只能由 root 写这一条在表里判——它不靠报文自证，靠"这枚门闩是谁生的"。
 fn serve(msg: &[u8], from: env::TaskId) {
-    let Some(req) = irq::Request::decode(msg) else {
+    let Some(query) = irq::Query::decode(msg) else {
         return;
     };
-    match req {
-        irq::Request::Register { name, session, ack } => {
+    // 回信地址从**地址槽**里读（传输字段，不在询问值里）：坏报文也要能答一句。
+    let Some(ack) = port::address_of(msg) else {
+        return;
+    };
+    match query {
+        irq::Query::Register { name, session } => {
             let status = match LINES.with(|l| {
                 l.as_mut().map(|l| {
                     l.register(&name, from, session.get(), |hole| {
@@ -216,7 +220,7 @@ fn serve(msg: &[u8], from: env::TaskId) {
             };
             reply(ack.get(), status);
         }
-        irq::Request::Refer { name, who, ack } => {
+        irq::Query::Refer { name, who } => {
             // `who = 0` 是坏报文（行里的 0 是"没人认领"的哨兵，不能被写成属主）；
             // "谁有资格写"由行表判（`sire` 或 root 委托过的那个，见 [`Lines::refer`]）。
             let status = if who.get() == 0 {
@@ -230,7 +234,7 @@ fn serve(msg: &[u8], from: env::TaskId) {
             };
             reply(ack.get(), status);
         }
-        irq::Request::Delegate { name, who, ack } => {
+        irq::Query::Delegate { name, who } => {
             // 委托写权：**只有 `sire` 能委托**（行表判），且 `who = 0` 是坏报文。
             let status = if who.get() == 0 {
                 irq::Ack::Refused(irq::Refused::NotYours)

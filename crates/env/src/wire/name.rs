@@ -82,6 +82,36 @@ impl Name {
         &self.bytes
     }
 
+    /// 内容原始字节（不含填充）——**线形的编码面**：帧里只写这一段，其余位置不上线。
+    ///
+    /// 与 [`Name::bytes`] 的分工就是两侧的分工：`bytes` 是 ABI 的定长字段
+    /// （`env/src/wire/pair.rs` 的 `Team.name`），`text` 是协议帧里的变长那一段。
+    pub fn text(&self) -> &[u8] {
+        &self.bytes[..self.len()]
+    }
+
+    /// 长度是**帧给的**：终止 NUL 不在帧里，帧的结束就是名字的结束。
+    ///
+    /// 判据与 [`Name::from_bytes`] 逐条相同（非空、`< NAME_LEN`、无 NUL、UTF-8），
+    /// 只是"NUL 之后必须全零"这一条没有了——帧里没有 NUL 之后。
+    pub fn from_slice(s: &[u8]) -> Result<Name, NameError> {
+        if s.is_empty() {
+            return Err(NameError::Empty);
+        }
+        if s.len() >= NAME_LEN {
+            return Err(NameError::TooLong);
+        }
+        if s.contains(&0) {
+            return Err(NameError::Nul);
+        }
+        if core::str::from_utf8(s).is_err() {
+            return Err(NameError::BadUtf8);
+        }
+        let mut bytes = [0u8; NAME_LEN];
+        bytes[..s.len()].copy_from_slice(s);
+        Ok(Name { bytes })
+    }
+
     /// 内容长度（终止 NUL 之前）。
     pub fn len(&self) -> usize {
         self.bytes.iter().position(|&b| b == 0).unwrap_or(NAME_LEN)

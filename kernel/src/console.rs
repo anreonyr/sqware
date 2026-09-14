@@ -65,6 +65,37 @@ impl Write for Console {
     }
 }
 
+/// 内核自己的读入出口：从调试控制台读至多 `buf.len()` 字节写进 `buf`，返实际字节数。
+///
+/// **只认内核半区的缓冲**（与 `put` 那两条路同款：恒等区 VA 即 PA、或经页表译）。
+/// 域给的缓冲一次都到不了这里——调用方（`envcall/debug.rs`）先备内核栈暂存，读进来
+/// 之后再 `copy_out` 给域。理由只有一条：DBCN 按**物理地址**读写，用户 VA 在这里没有意义。
+///
+/// **可能阻塞**（SBI 的 console read 语义是"等到至少一个字节"）。`None` = 缓冲不可直读。
+pub fn read(buf: &mut [u8]) -> Option<usize> {
+    if buf.is_empty() {
+        return None;
+    }
+    let va = buf.as_ptr() as usize;
+    let end = va + buf.len();
+    let pa = if va >= IDENTITY_BASE && end <= identity_edge() {
+        va
+    } else {
+        translate_kernel(va, buf.len())?
+    };
+    // SAFETY: `pa` 指向一段可写、物理连续的缓冲（恒等区直通，或 `translate_kernel`
+    // 逐页校验过物理连续性）；`Dbcn::ConsoleRead` 按 PA 写回。
+    let got = DbcnCall::new(Dbcn::ConsoleRead)
+        .args(SArgs {
+            a0: buf.len(),
+            a1: pa,
+            ..Default::default()
+        })
+        .call()
+        .ok()?;
+    Some(got.min(buf.len()))
+}
+
 /// 内核空间翻译 `[va, va+len)`：整段须在同一物理连续块内（每页 walk 检查
 /// 连续性），否则 None。内核空间构造后页表树只读，`translate` 安全。
 /// 用于非恒等区、且无活任务身份可译的高半区内核地址（trap 栈 / 内核堆缓冲）。

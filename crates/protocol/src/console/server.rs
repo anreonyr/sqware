@@ -42,7 +42,12 @@ use alloc::vec::Vec;
 
 use anstyle_parse::{Params, Parser, Perform};
 
-use super::wire::{LINE_MAX, PAYLOAD_LEN, Reply, Request};
+use super::wire::{ADDRESS_AT, Query, Reply, Text, WORD};
+
+/// 报文里的一格 `usize`（LE）。解码已保证帧长，故越界这一支不可达。
+fn word(m: &[u8], at: usize) -> usize {
+    usize::from_le_bytes(m[at..at + WORD].try_into().unwrap_or([0u8; WORD]))
+}
 
 /// 同时在线的客户端上界（会话 id = 槽位 + 1）。
 const MAX_CLIENTS: usize = 8;
@@ -230,8 +235,8 @@ impl State {
 
     /// 处理一条请求。`ReadLine` 只登记等读、**不阻塞**（阻塞会让别的消息排队）。
     pub fn serve(&mut self, msg: &[u8]) -> Outcome {
-        match Request::decode(msg) {
-            Ok(request) => self.handle(request),
+        match Query::decode(msg) {
+            Ok(query) => self.handle(query, msg),
             Err(_) => Outcome::deny(),
         }
     }
@@ -243,20 +248,14 @@ impl State {
         self.slots[client - 1].map(|_| client - 1)
     }
 
-    fn handle(&mut self, request: Request) -> Outcome {
-        match request {
-            Request::Open { reply } => self.open(reply),
-            Request::Write {
-                client,
-                len,
-                payload,
-            } => self.write(client, len, &payload),
-            Request::ReadLine {
-                client,
-                len,
-                prompt,
-            } => self.readline(client, len, &prompt),
-            Request::Close { client } => self.close(client),
+    /// 正文那一段：`Query::decode` 只认出"哪个动词、哪个会话"，字节本身按同一个偏移
+    /// 就地取——**长度由帧长给**，故这里没有第二把尺子。
+    fn handle(&mut self, query: Query, msg: &[u8]) -> Outcome {
+        match query {
+            Query::Open => self.open(word(msg, ADDRESS_AT)),
+            Query::Write { client, .. } => self.write(client, Query::text(msg)),
+            Query::ReadLine { client, .. } => self.readline(client, Query::text(msg)),
+            Query::Close { client } => self.close(client),
         }
     }
 
@@ -305,7 +304,7 @@ impl State {
     /// 字节只落进**出帧槽**（[`State::take_out`]），落屏由请求线程做——本层不认识设备。
     ///
     /// 回执即**同步点**：客户端收到 Ok 才知道这段已落屏。
-    fn write(&mut self, client: usize, len: usize, payload: &[u8; PAYLOAD_LEN]) -> Outcome {
+    fn write(&mut self, client: usize, text: &[u8]) -> Outcome {
         if self.index(client).is_none() {
             // 回执走**该会话的回信孔**——它正是"这个 id 不认识"的原因，故无处可推。
             // 这一支只在客户端用错 id 时出现（排查中真实撞到过）。
@@ -314,8 +313,7 @@ impl State {
                 to_client: None,
             };
         }
-        let n = if len > PAYLOAD_LEN { PAYLOAD_LEN } else { len };
-        match core::str::from_utf8(&payload[..n]) {
+        match core::str::from_utf8(text) {
             Ok(s) => {
                 // 正在编辑 → 先清行（否则消息会插进用户正在打的输入串中间）
                 if self.reading.is_some() {
@@ -341,7 +339,7 @@ impl State {
     ///
     /// 提示符**由客户端先同步写过一次**（那条 `Write` 的 Ok 即"已落屏"）；
     /// 这里只把它登记下来供重绘使用——重绘是"清行后整行重写"，故不会重复显示。
-    fn readline(&mut self, client: usize, len: usize, prompt: &[u8; PAYLOAD_LEN]) -> Outcome {
+    fn readline(&mut self, client: usize, prompt: &[u8]) -> Outcome {
         if self.index(client).is_none() {
             return Outcome {
                 reply: Some(Reply::NoSuchClient),
@@ -355,8 +353,7 @@ impl State {
                 to_client: Some(client),
             };
         }
-        let n = if len > PAYLOAD_LEN { PAYLOAD_LEN } else { len };
-        let prompt = core::str::from_utf8(&prompt[..n]).unwrap_or("");
+        let prompt = core::str::from_utf8(prompt).unwrap_or("");
         self.reading = Some(Reading {
             client,
             prompt: String::from(prompt),
@@ -446,15 +443,13 @@ impl State {
             Key::Interrupt => Reply::Interrupt,
             Key::Eof => Reply::Eof,
             _ => {
-                let bytes = r.line.text().into_bytes();
-                let n = if bytes.len() > LINE_MAX {
-                    LINE_MAX
-                } else {
-                    bytes.len()
-                };
-                let mut payload = [0u8; LINE_MAX];
-                payload[..n].copy_from_slice(&bytes[..n]);
-                Reply::Line { len: n, payload }
+                let line = r.line.text();
+                match Text::new(line.as_bytes()) {
+                    Some(text) => Reply::Line { text },
+                    // 行长超过 `LINE` 是服务侧不可能造出的状态（行缓冲有自己的上限）；
+                    // 真撞上就按"这一行没了"回，不截断。
+                    None => Reply::Eof,
+                }
             }
         };
         Some((r.client, reply))

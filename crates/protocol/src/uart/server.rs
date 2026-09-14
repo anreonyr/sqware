@@ -10,8 +10,9 @@
 //! 没有表、没有会话、没有未决读——**一个纯函数**。
 
 use env::PieToken;
+use runtime::core::port::address_of;
 
-use super::wire::{Request, Status, reply_of};
+use super::wire::{Query, Status};
 
 /// 一条报文解出来的动作。
 pub enum Action<'a> {
@@ -19,16 +20,19 @@ pub enum Action<'a> {
     Write { reply: PieToken, bytes: &'a [u8] },
     /// 只回一个状态（坏报文 / 超长）。
     Reply { reply: PieToken, status: Status },
-    /// 连回执地址都没有：丢弃。
+    /// 连回信地址都没有：丢弃。
     Ignore,
 }
 
 /// 认动词、验字段。**不碰设备、不推孔**。
 pub fn serve(msg: &[u8]) -> Action<'_> {
-    match Request::view(msg) {
-        Some((bytes, reply)) => Action::Write { reply, bytes },
-        // 坏报文也欠对方一个答复：能捞出回执地址就答 `Denied`，捞不出来就丢。
-        None => match reply_of(msg) {
+    match Query::view(msg) {
+        Some(bytes) => match address_of(msg) {
+            Some(reply) => Action::Write { reply, bytes },
+            None => Action::Ignore,
+        },
+        // 坏报文也欠对方一个答复：能抠出回信地址就答 `Denied`，抠不出来就丢。
+        None => match address_of(msg) {
             Some(reply) => Action::Reply {
                 reply,
                 status: Status::Denied,

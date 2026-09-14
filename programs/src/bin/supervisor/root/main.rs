@@ -492,7 +492,7 @@ extern "C" fn doom_service() -> ! {
     if dir.register(doom::SERVICE, &entry).is_err() {
         exit_with(36);
     }
-    let mut msg = [0u8; doom::REQ_LEN];
+    let mut msg = [0u8; doom::CAP];
     loop {
         // 无界等待：请求是**事件**，不是节拍——本线程没有别的活。
         //
@@ -785,6 +785,10 @@ extern "C" fn main() -> ! {
     };
     // 1.6 门铃自检：不需要别的域、别的域也不需要它 ⇒ 放在建域之前，坏了当场一行字。
     bell_probe();
+    // 调试面自检：内核的 DBCN 出口借给域之后，"域能说一句话"不依赖任何服务。
+    // 这一行本身就是判据（`scripts/examine.nu` 的 `dbg:` 段）：去掉 `DebugCall`
+    // 的 dispatch 臂它就不会出现，而机器照跑。
+    let _ = runtime::env::debug::put("dbg: put ok\n");
 
     // 2. dir：先建（客户端要它的门闩）。它的控制孔即后续引入请求的通道。
     let dir_task = fatal(build_spawn(&entries, "dir", &build_right));

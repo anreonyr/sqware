@@ -19,17 +19,20 @@ use env::{EnvResult, PieToken, TaskId};
 use runtime::core::port::{Access, Duet, Policy, Port, ship};
 use runtime::env::mail::{self, AnyPie as _, HolePie};
 
-use super::wire::{MSG_LEN, Name, Reply, Request, denied, not_found, taken};
+use super::wire::{Name, Query, Reply, denied, not_found, taken};
 
-/// 服务调用载荷字节数（`MSG_LEN` - 8 字节回信 token）。
-pub const PAYLOAD_LEN: usize = MSG_LEN - 8;
+/// 服务调用报文的字节数：地址槽 8 + 载荷 56。
+const CALL: usize = 8 + PAYLOAD_LEN;
+
+/// 服务调用载荷字节数。
+///
+/// 56 是**留给载荷的上界**（`64 - 地址槽 8`）：服务调用的载荷不透明，宽一点不亏——
+/// 它与目录询问的容量（`wire::CAP = 48`）不是同一个数，两者各有各的算法。
+pub const PAYLOAD_LEN: usize = 56;
 
 /// 等回复的上界（毫秒）。目录/服务往返都在本域内，1s 远超实际耗时；有上界才能
 /// 把「回复被丢弃」这类协议错误暴露成 `Busy`，而不是永久挂起。
 const REPLY_TIMEOUT_MS: usize = 1000;
-
-/// 服务调用报文的字节数（与目录请求同尺寸：同一代协议）。
-const CALL_LEN: usize = MSG_LEN;
 
 fn parse_name(name: &str) -> EnvResult<Name> {
     Name::new(name).map_err(|_| denied())
@@ -64,13 +67,13 @@ impl Directory {
     /// 一次往返：五步（填回信地址 / push / 校来源 / 有界等 / 解码）都在 [`Port::call`]。
     ///
     /// 超时（`Busy`）或来源不符（`Denied`）后本会话不可复用——迟到的回复会污染下一次。
-    fn call(&self, request: &Request) -> EnvResult<Reply> {
-        self.port.call::<Request>(request, REPLY_TIMEOUT_MS)
+    fn call(&self, query: &Query) -> EnvResult<Reply> {
+        self.port.call::<Query>(query, REPLY_TIMEOUT_MS)
     }
 
     /// 发一条请求并只认 `Ok`。
-    fn ack(&self, request: Request) -> EnvResult<()> {
-        match self.call(&request)? {
+    fn ack(&self, query: Query) -> EnvResult<()> {
+        match self.call(&query)? {
             Reply::Ok => Ok(()),
             Reply::NotFound => Err(not_found()),
             Reply::Taken => Err(taken()),
@@ -87,7 +90,7 @@ impl Directory {
             Access::READ | Access::WRITE,
             Policy::VEST,
         )?;
-        self.ack(Request::Register {
+        self.ack(Query::Register {
             name: parse_name(name)?,
             entry: to.seed(),
         })
@@ -95,7 +98,7 @@ impl Directory {
 
     /// 注销：摘掉实例；名字仍归本任务（预约行保留），可再次注册。
     pub fn unregister(&self, name: &str) -> EnvResult<()> {
-        self.ack(Request::Unregister {
+        self.ack(Query::Unregister {
             name: parse_name(name)?,
         })
     }
@@ -108,7 +111,7 @@ impl Directory {
             Access::READ | Access::WRITE,
             Policy::VEST,
         )?;
-        self.ack(Request::Replace {
+        self.ack(Query::Replace {
             name: parse_name(name)?,
             entry: to.seed(),
         })
@@ -116,10 +119,10 @@ impl Directory {
 
     /// 纯探测：这个名字有没有绑定。
     pub fn discover(&self, name: &str) -> EnvResult<bool> {
-        let request = Request::Resolve {
+        let query = Query::Resolve {
             name: parse_name(name)?,
         };
-        match self.call(&request)? {
+        match self.call(&query)? {
             Reply::Found { .. } => Ok(true),
             Reply::NotFound => Ok(false),
             _ => Err(denied()),
@@ -132,8 +135,8 @@ impl Directory {
             Some(s) => Some(parse_name(s)?),
             None => None,
         };
-        let request = Request::Enumerate { after };
-        match self.call(&request)? {
+        let query = Query::Enumerate { after };
+        match self.call(&query)? {
             Reply::Found { name } => Ok(Some(name)),
             Reply::NotFound => Ok(None),
             _ => Err(denied()),
@@ -147,10 +150,10 @@ impl Directory {
     /// 后者若先 `connect` 再 `disconnect`，会顺手 release 掉刚拿到的入口——
     /// 那是实测踩过的坑。
     pub fn connect_token(&self, name: &str) -> EnvResult<PieToken> {
-        let request = Request::Connect {
+        let query = Query::Connect {
             name: parse_name(name)?,
         };
-        match self.call(&request)? {
+        match self.call(&query)? {
             Reply::Connected { entry } => Ok(entry),
             Reply::NotFound => Err(not_found()),
             _ => Err(denied()),
@@ -159,10 +162,10 @@ impl Directory {
 
     /// 连接：目录把服务的入口门闩转授给本任务；服务 id 由 `Owned` 从门闩求得。
     pub fn connect(&self, name: &str) -> EnvResult<Service> {
-        let request = Request::Connect {
+        let query = Query::Connect {
             name: parse_name(name)?,
         };
-        match self.call(&request)? {
+        match self.call(&query)? {
             Reply::Connected { entry } => {
                 let entry = HolePie::from_token(entry.get());
                 Ok(Service {
@@ -187,23 +190,25 @@ pub struct Service {
 impl Duet for Service {
     type Req = [u8; PAYLOAD_LEN];
     type Rep = [u8; PAYLOAD_LEN];
-    type Wire = [u8; CALL_LEN];
+    type Wire = [u8; CALL];
 
-    const REQ: usize = CALL_LEN;
-    const REP: usize = CALL_LEN;
+    const CAP: usize = CALL;
 
-    fn wire() -> [u8; CALL_LEN] {
-        [0u8; CALL_LEN]
+    fn wire() -> [u8; CALL] {
+        [0u8; CALL]
     }
 
-    fn encode(req: &[u8; PAYLOAD_LEN], at: PieToken, out: &mut [u8]) {
+    /// 地址槽（前 8 字节）+ 载荷（其余）——本协议没有动词字段，故地址就落在最前面，
+    /// 而这一格正是机制说的那一格（`[ADDRESS_AT..+8)`）。
+    fn encode(req: &[u8; PAYLOAD_LEN], at: PieToken, out: &mut [u8]) -> usize {
         out[..8].copy_from_slice(&at.get().to_le_bytes());
-        out[8..CALL_LEN].copy_from_slice(req);
+        out[8..CALL].copy_from_slice(req);
+        CALL
     }
 
     fn decode(buf: &[u8]) -> EnvResult<[u8; PAYLOAD_LEN]> {
         let mut out = [0u8; PAYLOAD_LEN];
-        out.copy_from_slice(buf.get(8..CALL_LEN).ok_or_else(denied)?);
+        out.copy_from_slice(buf.get(8..CALL).ok_or_else(denied)?);
         Ok(out)
     }
 }

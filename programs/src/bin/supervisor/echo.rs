@@ -17,7 +17,7 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-use protocol::dispatch::MSG_LEN;
+use protocol::dispatch::CAP;
 use protocol::dispatch::client::Directory;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::port::{Access, Policy, ship};
@@ -66,7 +66,7 @@ extern "C" fn main() -> ! {
     }
 
     // 5. 服务循环：pull 请求、+1 载荷、push 到客户端自带的 reply token。
-    let mut req_buf = [0u8; MSG_LEN];
+    let mut req_buf = [0u8; CAP];
     loop {
         if entry.pull(&mut req_buf).is_err() {
             continue;

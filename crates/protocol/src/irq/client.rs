@@ -15,7 +15,7 @@ use runtime::core::port::{Access, Policy, Port, ship};
 use runtime::env::mail::{self, HolePie};
 
 use super::wire::denied;
-use super::{Ack, Request, SERVICE};
+use super::{Ack, Query, SERVICE};
 use crate::dispatch::client::Directory;
 
 /// 等回执的上界（毫秒）。驱动在同一台机器上做一次查表 + 回执（至多再碰一次 PLIC 寄存器），
@@ -57,18 +57,18 @@ impl Line {
     /// 能跨任务交接的方式（"客户端递出门闩"，§3.2.4）。
     pub fn register(&self, name: &Name, session: &HolePie) -> EnvResult<Ack> {
         let to = ship(session, self.owner, Access::WRITE, Policy::NONE)?;
-        self.ask(Request::register(*name, to.seed()))
+        self.ask(Query::register(*name, to.seed()))
     }
 
     /// 写属主：这个名字归 `who`。**只有 root 会调它**（驱动认推者是不是自己的 `sire`）。
     pub fn refer(&self, name: &Name, who: TaskId) -> EnvResult<Ack> {
-        self.ask(Request::refer(*name, who))
+        self.ask(Query::refer(*name, who))
     }
 
     /// 委托写权：这个名字的属主，从此也可以由 `who` 写。**同样只有 root 会调它**——
     /// 它是"root 把自己那份写权借给自己域里的一个线程"，与 [`Line::refer`] 同一条判据入口。
     pub fn delegate(&self, name: &Name, who: TaskId) -> EnvResult<Ack> {
-        self.ask(Request::delegate(*name, who))
+        self.ask(Query::delegate(*name, who))
     }
 
     /// 一次往返：开回信孔 → 报文 → 有界等回执 → **放下回信孔**。
@@ -78,10 +78,10 @@ impl Line {
     ///
     /// 收尾是 `close`（放下），不是旧版的 `seal`：驱动每请求只推一条回执，迟到的
     /// 那条落在空槽里、下一请求已换新孔，故这里不必再借"封印"去断它的路。
-    fn ask(&self, request: Request) -> EnvResult<Ack> {
+    fn ask(&self, request: Query) -> EnvResult<Ack> {
         let entry = HolePie::from_token(self.entry.get());
         let port = Port::open(&entry)?;
-        let ack = port.call::<Request>(&request, ACK_TIMEOUT_MS)?;
+        let ack = port.call::<Query>(&request, ACK_TIMEOUT_MS)?;
         port.close()?;
         Ok(ack)
     }

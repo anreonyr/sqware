@@ -37,4 +37,4 @@ pub mod wire;
 
 pub use client::Uart;
 pub use server::{Action, serve};
-pub use wire::{ACK_LEN, DELIVER_MTU, MSG_LEN, PAYLOAD_MAX, Request, SERVICE, Status};
+pub use wire::{ACK_LEN, CAP, DELIVER, HEAD, PAYLOAD_MAX, Query, SERVICE, Status};
