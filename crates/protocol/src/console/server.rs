@@ -9,12 +9,16 @@
 //! 现在分成两半，各自只持锁一小段：
 //!
 //! ```text
-//! 请求线程   pull 请求孔 → Open/Write/Close/ReadLine → 回信孔
-//! 输入线程   读 UART → 解码 → 改行缓冲 → 重绘 → 回车时把整行回给等读的会话
+//! 请求线程   pull 请求孔 → Open/Write/Close/ReadLine → 出帧落屏 → 回信孔
+//! 输入线程   收驱动的投递孔 → 解码 → 改行缓冲 → 重绘（只进出帧槽）
+//!            → 回车时把整行放进共享态
 //! ```
 //!
-//! 两者共享 [`State`]（`Lock`）。**输入线程每轮只持锁一拍**（poll 一次设备、
-//! 处理一个字节），故输出请求随时能插进来。
+//! 两者共享 [`State`]（`Lock`）。**输入线程每轮只持锁一拍**（收一拍字节、处理一个
+//! 字节），故输出请求随时能插进来。
+//!
+//! 落屏只归**请求线程**：写给设备是一次跨域协议调用，要持 per-task 的门闩，而输入
+//! 线程手里没有那枚门闩——与回信孔同一条规矩（"跨 task 交接句柄这条路走不通"）。
 //!
 //! # 输出撞上输入时重绘
 //!
@@ -50,35 +54,8 @@ pub const TICK_MS: usize = 1;
 const LINE_CAP: usize = 512;
 
 // ── 输出（ANSI 渲壳）──
-
-/// 服务侧唯一写设备的出口：**谁能写设备由装配层给**（`prog-console` 持着设备门闩，
-/// 把它的写函数交进来）。
-///
-/// 为什么是一枚 `fn` 指针而不是一个 trait 对象或 `Uart` 值：服务是**一台设备一个
-/// 实例**的装配体，而 `State` 要进 `static`（两个线程共享）——`const fn` + 函数指针
-/// 是唯一能进静态的形态，且它把"设备怎么写"完全挡在协议层之外（本 crate 不认识
-/// 串口，也不需要认识）。
-pub type Sink = fn(&str);
-
-/// 设备还没接手时的 sink：**丢弃**。
-///
-/// 丢弃不是"容错"，是"此刻确实没有设备可写"——服务上线前不会有任何字节要落屏
-/// （第一句 banner 也是在开闩之后才写）。
-fn no_device(_s: &str) {}
-
-/// ANSI 渲壳：把字符串写进设备。**服务侧唯一写设备的出口**。
-///
-/// 旧 `term::Terminal` 还有 `clear`/`fg`/`reset`（清屏与前景色）——搬来时查了消费者：
-/// **零调用点**，按本仓裁决删（"真死的删、该留的写清理由"）；要用时一条转义序列就能加回来。
-struct Render {
-    sink: Sink,
-}
-
-impl Render {
-    fn write(&self, s: &str) {
-        (self.sink)(s);
-    }
-}
+//
+// 渲壳只在字符串上做转义，字节落到 `State::out`（出帧槽）。见该字段的注。
 
 // ── 行编辑状态（共享）──
 
@@ -193,25 +170,44 @@ pub struct State {
     reading: Option<Reading>,
     /// 输入线程完成一整行后**放在这里**，等请求线程来取（见 [`State::set_pending`]）。
     pending: Option<(usize, Reply)>,
-    term: Render,
+    /// **出帧槽**：渲染出来的字节先攒在这里，由请求线程在推回复之前统一送出去
+    /// （[`State::take_out`]）。
+    ///
+    /// 为什么不让渲染直接落设备：设备在一个**自己的域**里（`prog-uart`），写它是一次
+    /// 跨域协议调用，而调用要持 per-task 的门闩——**只有请求线程推得动**（与回信孔
+    /// 同一条规矩，踩过）。两个线程都会渲染（请求线程渲染消息、输入线程渲染行编辑），
+    /// 故渲染一律只动这块共享缓冲，落屏只归请求线程。
+    out: Vec<u8>,
 }
 
 impl Default for State {
     fn default() -> Self {
-        Self::new(no_device)
+        Self::new()
     }
 }
 
 impl State {
     /// `const`：服务把它放进 `static`（`Lock<State>`）让两个线程共享。
-    /// `sink` = 写设备的出口（见 [`Sink`]）。
-    pub const fn new(sink: Sink) -> Self {
+    pub const fn new() -> Self {
         Self {
             slots: [None; MAX_CLIENTS],
             reading: None,
             pending: None,
-            term: Render { sink },
+            out: Vec::new(),
         }
+    }
+
+    /// 渲壳的唯一出口：把一段字符串追加进出帧槽。
+    fn emit(&mut self, s: &str) {
+        self.out.extend_from_slice(s.as_bytes());
+    }
+
+    /// 请求线程用：取走这一轮攒下的出帧（没有则空 `Vec`）。
+    ///
+    /// **必须在推回复之前调**：客户端 `Write` 的 `Ok` 含义是"这段已落屏"，
+    /// 出帧没送出去就回执，等于把那条承诺改成"排队成功"（§4 否 TX 环的同一条理由）。
+    pub fn take_out(&mut self) -> Vec<u8> {
+        core::mem::take(&mut self.out)
     }
 
     /// 输入线程用：登记"这一行该回给谁、回什么"。
@@ -227,9 +223,9 @@ impl State {
         self.pending.take()
     }
 
-    /// 服务自己的打印（**设备持有者用裸写**，不经协议）。
-    pub fn banner(&self, s: &str) {
-        self.term.write(s);
+    /// 服务自己的打印（`prog-console` 上线时说一句；同样只进出帧槽）。
+    pub fn banner(&mut self, s: &str) {
+        self.emit(s);
     }
 
     /// 处理一条请求。`ReadLine` 只登记等读、**不阻塞**（阻塞会让别的消息排队）。
@@ -304,7 +300,9 @@ impl State {
         }
     }
 
-    /// 写设备：**本服务是唯一写者**。有会话在等读时**先擦当前行、打印、再重画它**。
+    /// 渲一帧：有会话在等读时**先擦当前行、打印、再重画它**。
+    ///
+    /// 字节只落进**出帧槽**（[`State::take_out`]），落屏由请求线程做——本层不认识设备。
     ///
     /// 回执即**同步点**：客户端收到 Ok 才知道这段已落屏。
     fn write(&mut self, client: usize, len: usize, payload: &[u8; PAYLOAD_LEN]) -> Outcome {
@@ -321,9 +319,9 @@ impl State {
             Ok(s) => {
                 // 正在编辑 → 先清行（否则消息会插进用户正在打的输入串中间）
                 if self.reading.is_some() {
-                    self.term.write("\r\x1b[K");
+                    self.emit("\r\x1b[K");
                 }
-                self.term.write(s);
+                self.emit(s);
                 self.redraw();
                 Outcome {
                     reply: Some(Reply::Ok { client }),
@@ -368,21 +366,22 @@ impl State {
     }
 
     /// 重画当前输入行（`\r\x1b[K` + prompt + 缓冲 + 光标定位）。
-    fn redraw(&self) {
+    fn redraw(&mut self) {
         let Some(r) = self.reading.as_ref() else {
             return;
         };
-        let s = r.line.text();
-        self.term.write("\r\x1b[K");
-        self.term.write(&r.prompt);
-        self.term.write(&s);
+        // 先把整帧拼出来再落槽：`emit` 要 `&mut self`，而 `r` 还借着 `self.reading`。
         let back = (r.line.buf.len() - r.line.pos) as u16;
+        let mut frame = String::from("\r\x1b[K");
+        frame.push_str(&r.prompt);
+        frame.push_str(&r.line.text());
         if back > 0 {
-            self.term.write(&format!("\x1b[{back}D"));
+            frame.push_str(&format!("\x1b[{back}D"));
         }
+        self.emit(&frame);
     }
 
-    /// 有没有会话在等读（输入线程据此决定读不读设备）。
+    /// 有没有会话在等读（输入线程据此决定要不要从**投递孔**取字节）。
     pub fn is_reading(&self) -> bool {
         self.reading.is_some()
     }
@@ -422,14 +421,14 @@ impl State {
                     self.redraw();
                 }
                 Key::Enter => {
-                    self.term.write("\r\n");
+                    self.out.extend_from_slice(b"\r\n");
                 }
                 // Ctrl-C / Ctrl-D **也要换行**：这两个键结束的是一整行，若不换行，
                 // 客户端下一轮的重绘是 `\r\x1b[K`（**回到本行行首**）⇒ 新提示符把
                 // 上一个提示符原地盖掉，用户看到"Ctrl-C 之后没有新行"。
                 // 回车那一支同理——三个收尾键在这一件事上必须一致。
                 Key::Interrupt | Key::Eof => {
-                    self.term.write("\r\n");
+                    self.out.extend_from_slice(b"\r\n");
                 }
                 Key::Tab => {
                     r.line.insert('\t');

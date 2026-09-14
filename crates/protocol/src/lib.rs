@@ -46,3 +46,6 @@ pub mod console;
 pub mod dispatch;
 pub mod doom;
 pub mod irq;
+// `uart` 是**设备面**的私有协议（一台串口、一个动词），故不进上面"四个协议"那张表：
+// 那四个是系统语义（名字 / 终端 / 他杀 / 中断线），它是"把字节交给设备"。
+pub mod uart;

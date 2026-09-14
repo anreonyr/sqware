@@ -57,7 +57,11 @@ use programs::uart::Uart;
 
 mod manifest;
 
-/// 要交给 console 服务的那台设备（名字 = boot 给的设备树 basename）。
+/// 串口那台设备的名字（= boot 给的设备树 basename）。
+///
+/// **名字与持有者无关**：它先是"镜像里挑哪一枚门闩"的键（配对块的读者是本域），
+/// 然后作为**属主行**写给 PLIC——而属主现在是 `prog-uart`（设备在它手里）。
+/// 留这个常量名是历史成本，读的时候按"设备名"理解即可。
 const CONSOLE_DEVICE: &str = "serial@10000000";
 
 /// 中断线驱动要的三样：PLIC 的寄存器、设备树本体、内核的 `irq` 门闩。
@@ -69,7 +73,8 @@ const IRQ_CHANNEL: &str = "irq";
 ///
 /// 为什么走静态：门闩句柄是 **per-task** 的——同一个域的两个线程也各有各的表，
 /// 能给另一个线程的只有"它表里的号"。同域 ⇒ 同一地址空间，故一行静态就是最直的
-/// 通道（console 给它的输入线程交门闩走的也是这条：`IRQ_SESSION` / `IRQ_FROM`）。
+/// 通道（console 给它的输入线程交投递孔副本走的也是这条：`DELIVER`；
+/// `prog-uart` 给它的读线程交会话孔同样）。
 ///
 /// 请求孔**不在**这里：它由服务线程自己开——客户端认服务靠 `Reserve(入口门闩).owner`
 /// （门闩的**开辟者**），而门闩是 per-task 的 ⇒ **谁读它，就得谁开它**，否则客户端
@@ -100,7 +105,7 @@ enum Out {
 fn say(s: &str) {
     OUT.with(|o| match o {
         Out::None => {}
-        Out::Device(u) => u.put(s),
+        Out::Device(u) => u.put(s.as_bytes()),
         Out::Session(c) => {
             let _ = c.write(s);
         }
@@ -212,6 +217,27 @@ fn hand_over(
     Ok(())
 }
 
+/// 同上，但配给的是一枚**孔**（投递孔）。
+///
+/// 为什么投递孔由 root 开辟：它是**两个域之间的一条通道**，不属于任何一端；而 root 是
+/// 唯一同时认识两端、且在重发时要再配一次的角色（它**留源副本**，与设备门闩同款，
+/// §3.4）。开在这里还顺带免掉一次"子域把孔交回父域"的逆向握手。
+fn hand_hole(
+    down: &HolePie,
+    token: usize,
+    child: TaskId,
+    subset: env::Permission,
+) -> Result<(), Step> {
+    let at_child = match HolePie::from_token(token).accord(child, subset) {
+        Ok(t) => t,
+        Err(_) => return Err(57),
+    };
+    if Pier::new(at_child).push(down).is_err() {
+        return Err(58);
+    }
+    Ok(())
+}
+
 /// 转授子集的两个常用面：设备要读写，自描述只读。
 fn read_write() -> env::Permission {
     env::Permission::READ | env::Permission::WRITE
@@ -219,6 +245,14 @@ fn read_write() -> env::Permission {
 
 fn read_only() -> env::Permission {
     env::Permission::READ
+}
+
+fn read_vest() -> env::Permission {
+    env::Permission::READ | env::Permission::VEST
+}
+
+fn write_vest() -> env::Permission {
+    env::Permission::WRITE | env::Permission::VEST
 }
 
 /// 把一件**事实**交给子域：写进一枚一次性孔，按配给递出（用的是既有原语——
@@ -298,15 +332,39 @@ fn spawn_service(face: &Face, name: &str) -> Result<(TaskId, HolePie), Step> {
     Ok((child, down))
 }
 
-/// console 的两件配给 + 它那台设备的属主。
+/// uart 驱动的四件配给 + 它那台设备的属主。
 ///
 /// **次序是硬要求**：**先把属主写给中断驱动，再交名字**。客户端一拿到名字就会去登记
 /// （`Register`），而登记读的正是本域刚写的那一行；两件事走的是同一条 FIFO 队列，故先推的
-/// `Refer` 一定先被处理（`docs/driver.md` §12 甲）。
-fn wire_console(face: &Face, down: &HolePie, child: TaskId, uart: usize) -> Result<(), Step> {
+/// `Refer` 一定先被处理（`docs/driver.md` §12 甲）。投递孔排在最后：它是**上线之后**才
+/// 用得着的东西，而前三件决定了"这条线能不能接上"。
+fn wire_uart(
+    face: &Face,
+    down: &HolePie,
+    child: TaskId,
+    uart: usize,
+    deliver: usize,
+) -> Result<(), Step> {
     hand_over(down, uart, child, read_write())?;
     refer_device(face.dir, child, CONSOLE_DEVICE)?;
-    hand_name(down, CONSOLE_DEVICE, child)
+    hand_name(down, CONSOLE_DEVICE, child)?;
+    // **带 `VEST`**：本域读线程要拿一份，而门闩是 per-task 的 ⇒ 它必须能再授一次
+    // （`Accord` 的门槛正是"源门闩持 `VEST`"）。
+    hand_hole(down, deliver, child, write_vest())
+}
+
+/// console 的配给：**只有投递孔**（READ 副本）。
+///
+/// 设备与设备名现在归 uart 驱动（它才是那条线的持有者）；console 与它之间只隔一条投递孔
+/// ——驱动排空设备后把字节投进来，console 在这里取。写方向走 `protocol::uart` 的请求孔
+/// （由 console 自己按目录里的名字连上驱动），不占配给。
+///
+/// **重发走的就是这个函数**：console 换实例之后要把投递孔重新配一次（root 手里留着源
+/// 副本，故不必惊动 uart）。次序上它是新实例的**第一件**配给——拿到它之前，输入线程
+/// 没有任何可等的东西。
+fn wire_console(down: &HolePie, child: TaskId, deliver: usize) -> Result<(), Step> {
+    // **带 `VEST`**：输入线程要拿一份（理由同上）。
+    hand_hole(down, deliver, child, read_vest())
 }
 
 /// plic 收三件：PLIC 的寄存器、设备树本体、内核的 `irq` 门闩。
@@ -484,15 +542,15 @@ const WATCH_PROBE_MS: u64 = 20;
 const DOOR_RETRY: usize = 20;
 const DOOR_RETRY_MS: u64 = 25;
 
-/// 监护线程的行李：目录面（含建域权、清单视图）+ console 那台设备的门闩。
+/// 监护线程的行李：目录面（含建域权、清单视图）+ **投递孔的源副本**。
 ///
 /// 每一枚门闩都是**主线程 `Accord` 到它表里**的那一份（门闩是 per-task 的）。同域两线程只能
 /// 经共享内存交接，故这个形状与 doom 服务的 `DOOM_DIR`/`DOOM_OWNER` 同款，只是行李更多。
 /// 写入在 `Hatch` 之前（`Spawn` 恒产 `Held`）⇒ 线程读到的必然是写好的值。
 struct Kit {
     face: Face,
-    /// UART 门闩（**本任务表里**的 token）——console 的配给。
-    uart: usize,
+    /// 投递孔（**本任务表里**的 token）——重发出来的 console 要从它再取一份 READ 副本。
+    deliver: usize,
 }
 
 static KIT: Lock<Option<Kit>> = Lock::new(None);
@@ -514,9 +572,9 @@ fn now_ms() -> u64 {
 ///      无关，故 console 起不来也挡不住收场）；
 ///   ③ 重发成功 ⇒ 接着等新实例。
 ///
-/// **一条次序依赖**（如实记）：本线程收场会连带走它授出去的副本（UART 门闩、目录那两孔、
-/// 名字孔）——那些副本的持有者是 console，而它那时**已经死透**（`wait_dead` 保证），故无事
-/// 发生；顺序反了就会把还活着的实例的门闩摘掉。
+/// **一条次序依赖**（如实记）：本线程收场会连带走它授出去的副本（目录那两孔、控制孔、
+/// **投递孔的源副本**）——那些副本的持有者是 console，而它那时**已经死透**（`wait_dead`
+/// 保证），故无事发生；顺序反了就会把还活着的实例的门闩摘掉。
 extern "C" fn watcher() -> ! {
     let Some(kit) = KIT.with(|k| k.take()) else {
         exit_with(50);
@@ -555,11 +613,13 @@ extern "C" fn watcher() -> ! {
     }
 }
 
-/// 重发一次：产生 + 配给 + 写属主 + **拿一枚指向新实例的探针**。
+/// 重发一次：产生 + 配给 + **拿一枚指向新实例的探针**。
 /// **与首次走的是同两个函数**（[`spawn_service`] 与 [`wire_console`]），差别只有"谁是调用方"。
 fn restart(kit: &Kit) -> Result<PieToken, Step> {
     let (child, down) = spawn_service(&kit.face, "console")?;
-    wire_console(&kit.face, &down, child, kit.uart)?;
+    // 新实例要**重新拿一次投递孔**：孔是 per-task 的副本，旧实例那一份随它一起没了。
+    // 源副本一直留在本域手里（`Kit`）⇒ 不必惊动 uart 驱动。
+    wire_console(&down, child, kit.deliver)?;
     wait_door(kit).ok_or(60 as Step)
 }
 
@@ -670,21 +730,31 @@ extern "C" fn main() -> ! {
         up: up_dir,
     };
 
-    // 3. plic / echo / console / shell：请 dir 亲授目录请求门闩的 R|W 副本，再配给
+    // 2.9 **投递孔**：uart 驱动 → console 的一条单向通道（驱动排空设备后把字节投进来）。
+    //      由本域开辟：它是两域之间的通道，不属于任何一端；而本域是唯一会**再配一次**
+    //      的角色（console 重发时，源副本在本域手里，不必惊动 uart）。
+    let deliver = match HolePie::unseal(protocol::uart::DELIVER_MTU) {
+        Ok(h) => h,
+        Err(_) => exit_with(59),
+    };
+    let deliver_token = deliver.token();
+
+    // 3. plic / uart / echo / console / shell：请 dir 亲授目录请求门闩的 R|W 副本，再配给
     //    客户端；同时把名字预约给该子域（目录只接受预约者的注册）。
-    //    次序 = 依赖序：plic 是中断面（console 要连它），console 是交互面（shell 要
-    //    连它），故 plic 最先、console 次之、shell 最后。
+    //    次序 = 依赖序：plic 是中断面（uart 要连它），uart 持设备（console 要连它），
+    //    console 是交互面（shell 要连它），故 plic 最先、uart 次之、console 再次、shell 最后。
     //
     //    **表里这些字面量先是"镜像里的 bin 名"**（`kernel/build.rs::INITRD_BINS` 是它的
     //    权威，`spawn_service` 拿它去清单里找 ELF），顺带才是预约给子域的名字——故此处
     //    **不**引 `console::SERVICE`：那是服务名那一侧的出处，改这里等于把两笔账并成
     //    一笔（`Console` 服务自己注册时用的是它，见 `protocol::console::SERVICE`）。
     let mut shell_task = TaskId(0);
-    for name in ["plic", "echo", "console", "shell"] {
+    for name in ["plic", "uart", "echo", "console", "shell"] {
         let (child, down) = fatal(spawn_service(&face, name));
         // 各服务自己的那几件配给——**重发走的是同一对函数**。
         match name {
-            "console" => fatal(wire_console(&face, &down, child, uart_token)),
+            "uart" => fatal(wire_uart(&face, &down, child, uart_token, deliver_token)),
+            "console" => fatal(wire_console(&down, child, deliver_token)),
             "plic" => fatal(wire_plic(&down, child, plic_token, dtb_token, irq_token)),
             _ => {}
         }
@@ -752,13 +822,13 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => exit_with(49),
     };
-    // UART 门闩与建域权：**带 `VEST`、不带 `BACK`**。
-    //   - `VEST`：它产生新实例时要**再授一次**给那个子域（门闩是 per-task 的）；
-    //   - **不能带 `BACK`**：`BACK` 是"回授目标自由"的那一位——**带它的源只能授给 sire 的
-    //     持有者**（`gate::snap::vestable`），而监护线程要授给的正是它刚生的子域 ⇒ 那一授
-    //     会被 `Denied`（实测：重发卡在 `hand_over` 的 `Err(19)`，三次都用完预算）。
+    // 投递孔与建域权：**带 `VEST`、不带 `CAGE`**。
+    //   - `VEST`：它重发 console 时要**再授一次**那份 READ 副本给新实例（门闩是 per-task 的）；
+    //   - **不能带 `CAGE`**：带它的源会被**关住**（交出 = 授出方在交出期间不可用它），而 root
+    //     留源副本正是为了重发时**再配一次**——一旦被关住，这一枚就再也授不出去（实测形状：
+    //     重发卡在 `hand_over` 的 `Err(19)`，三次都用完预算）。它只往下授、不回授。
     let vest_only = env::Permission::READ | env::Permission::WRITE | env::Permission::VEST;
-    let w_uart = match PolePie::from_token(uart_token).accord(watch_task, vest_only) {
+    let w_deliver = match deliver.accord(watch_task, vest_only) {
         Ok(t) => t,
         Err(_) => exit_with(52),
     };
@@ -766,22 +836,11 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => exit_with(53),
     };
-    // **委托写权**（`docs/root.md` §5.3）：重发出来的 console 是个**新 task id**，行表的属主
-    // 得跟着换——而驱动认的是"推者是不是我的 `sire`"，监护线程答不上这一条（它不是域）。
-    // 故由本线程（`sire` 本人）亲口把**这一个名字**的写权委托给它。这一句必须在 `Hatch`
-    // 之前说：它一起来就可能重发，而重发要写属主。
-    let Some(door) = connect(face.dir, irq::SERVICE) else {
-        exit_with(55);
-    };
-    let delegated = match (irq::Line::at(door), Name::new(CONSOLE_DEVICE)) {
-        (Ok(line), Ok(name)) => matches!(line.delegate(&name, watch_task), Ok(irq::Ack::Ok)),
-        _ => false,
-    };
-    let _ = mail::release(door.get());
-    if !delegated {
-        say("root: line authority refused delegation\n");
-        exit_with(56);
-    }
+    // **属主写权的委托**（§8.1.18）在本轮**没有消费者了**：它当年的唯一用途是让监护线程在
+    // 重发 console 时能写那条线的属主（`refer_device`）。设备搬到 `prog-uart` 之后，线的持有者
+    // 与属主都属于 uart，而 uart **不在重发名单上**（监护线程一次只等一台服务的死，见其模块头）
+    // ⇒ 重发路径不再写属主,那一句 `delegate` 也就失了对象。协议侧的动词原样留着（PLIC 仍在
+    // 处理它），但"谁还会用"没有第二个答案——如实记在案。
     KIT.with(|k| {
         *k = Some(Kit {
             face: Face {
@@ -791,7 +850,7 @@ extern "C" fn main() -> ! {
                 control: HolePie::from_token(w_control.get()),
                 up: HolePie::from_token(w_up.get()),
             },
-            uart: w_uart.get(),
+            deliver: w_deliver.get(),
         })
     });
     if utask::hatch(watch_task).is_err() {
@@ -818,11 +877,14 @@ extern "C" fn main() -> ! {
     // 4.3 **先收子域，再放本域自己的空间**——次序是判据，不是顺手。
     //
     // 为什么不能只靠 `exit()` 的级联：级联管的是"父死子随"，而本域退场时**自己那几件资源
-    // 也要收回**（UART 那页设备内存是本域的所有物，`hand_over` 只把副本交给 console）。这两
-    // 件事不是一件原子事（4 核）⇒ 子域可能落在"映射已收、任务还没死"的缝里再读一次设备。
+    // 也要收回**（UART 那页设备内存是本域的所有物，`hand_over` 只把副本交给别人）。这两件
+    // 事不是一件原子事（4 核）⇒ 子域可能落在"映射已收、任务还没死"的缝里再读一次设备。
     // 实测那道缝：`no map for user page fault: Load at VA(0x23001)`——VA 正是 UART 那页、读的
-    // 是 `IER`（符号化 = `programs/src/uart.rs:114 ← :104`，console 输入线程"进门关中断"那一
-    // 步）；对照见 `docs/root.md` §7.6（本轮配置 4 轮里 3 轮出现，干净 master 的 4 轮 0 轮）。
+    // 是 `IER`（符号化 = `programs/src/uart.rs`，**读线程"进门先关门"那一步**）；对照见
+    // `docs/root.md` §7.6（本轮配置 4 轮里 3 轮出现，干净 master 的 4 轮 0 轮）。
+    //
+    // **摸设备的主语现在是 uart 驱动**（设备在它手里、每 20 ms 一轮读写 `LSR`/`IER`），故它
+    // 必须在这句话之前收干净；console 只经投递孔拿字节，走在它前面。
     //
     // 收法与用户杀服务**共用 [`doom::collect`]**（两件事是同一件），且**按名字收、不按 id**：
     // console 可能被重发过（重发出来的是**另一个** id），而"哪个是当前实例"这条账在**目录**
@@ -832,7 +894,7 @@ extern "C" fn main() -> ! {
     // 目录自己**没有名字**（它就是名字的账）：按 id 收，它是本域亲生的 ⇒ `Join` 等得到。
     match Directory::open(HolePie::from_token(my_dir)) {
         Ok(dir) => {
-            for name in [console::SERVICE, irq::SERVICE, "echo"] {
+            for name in [console::SERVICE, "uart", irq::SERVICE, "echo"] {
                 match doom::collect(&dir, name) {
                     // `Ok` = 收干净了；`Dead` = 它本来就已经没了（`kill` 那两步收过的就是它）
                     // ——两种都是这一步要的结果。

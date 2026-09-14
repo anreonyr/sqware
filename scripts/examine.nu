@@ -3,13 +3,13 @@
 # sqware examine 验收门（原名 e2e）——nu 版，取代 scripts/examine.sh。
 #
 # 判据五条，缺一不可（前四条与 .sh 版逐条相同；第 5 条是本轮加的，见它那一行）：
-#   1) 逐步生效：十三条命令（默认档；harden/框架档十六条）**逐个等它的输出出现**再发下一条
+#   1) 逐步生效：十三条命令（默认档；harden/框架档十七条）**逐个等它的输出出现**再发下一条
 #      （expect 式），不是按墙钟盲排；
 #      每步都有独立超时，失败能指到具体哪一条。
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) marker 齐全（默认档十六条；harden/框架档在其上再加非默认档那四条），含
+#   4) marker 齐全（默认档十六条；harden/框架档在其上再加非默认档那五条），含
 #      `task: all tasks exited, system halted` 与
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
 #      `plic: line 10 delivered`。
@@ -159,12 +159,16 @@ const STEPS = [
   {cmd: "badslot",   pat: "badslot: 3/3 rejected, kernel alive"}
   {cmd: "stray",     pat: "stray: 3/3 illegal-id joins denied"}
   {cmd: "cascade",   pat: "cascade: ok"}
+  # 独占交出（`CAGE`）：交出后**我这一枚当场不可用**、至多一个 heir、转交后子枚也被
+  # 关住、逐级复原，且**自持枚授出不带 `CAGE` 的子集照旧允许**（"资格" ≠ "形态"）。
+  # 判据全在一个任务里（目标是自己），故不需要第二方配合。
+  {cmd: "lend",      pat: "lend: caged=1 child=1 twice=1 chain=1 back=1 restore=1 plain=1"}
   # 他杀（`docs/driver.md` §12 的 `kill`）：**经 root 的他杀服务**收掉 echo，
   # 随后一步是它的牙——名字在目录里**再没有活实例**（不是"root 说成了"）。
   {cmd: "kill echo", pat: "kill echo -> ok"}
   {cmd: "dir",       pat: "discover echo -> not found"}
   # 线的权威（`docs/driver.md` §12 甲）：**反证探针**。shell 谁的名下设备都不是
-  # （root 只把 console 那台交出去了）⇒ 抢 console 的名字必须被拒；而设备树里没有的
+  # （root 只把那台串口交给了 `prog-uart`）⇒ 抢它的名字必须被拒；而设备树里没有的
   # 名字必须是"不认识"。两条合起来说明：线号是名字的函数、名字的属主只能由 root 写
   # ——报文里既没有线号，也没有任何能自证"这台设备是我的"的字段。
   {cmd: "line serial@10000000", pat: "line serial@10000000 -> not-yours"}
@@ -175,7 +179,7 @@ const STEPS = [
   #   ② shell 的会话断了又续上（`shell: console reconnected`，客户端那一半）；
   #   ③ 随后那条 `exit` 由此刻**活着的新实例**回显 ⇒ 会话真的活着。
   # 服务侧那一半不在这一步的期望串里：它要求同一句话出现**两次**，故走 `checks` 的
-  # `instances`（见 `run_once`）——`hit` 只问在不在，问不出"两枚实例"。
+  # `instances`（见 `run_once` 与 `INSTANCE_CHECKS`）——`hit` 只问在不在，问不出条数。
   {cmd: "kill console", pat: "shell: console reconnected"}
   {cmd: "exit",      pat: "task: all tasks exited, system halted"}
 ]
@@ -186,11 +190,15 @@ const STEPS = [
 # 于是"输入能用"本身已经隐含了整条链——但它是**隐含**的：把中断登记摘掉，输入会退化成
 # 有界轮询，上面那些步照样全过（实测过：闸门坏了那轮，门是绿的）。
 #
-# 故这里钉一条**只可能由中断产生**的读数：PLIC 驱动域在**第一次 claim → 投递**时打的
-# 那一行（`prog-plic`，一次性标记）。它要成立，必须
-#   设备拉线 → PLIC 置 pending → SEI → 内核推空令牌进 `irq` 门闩 → 驱动 claim 到线号
-#   → 投进 console 的会话门闩 → console 的输入线程被唤醒
-# 这一整条都在。轮询路径**不会**产生它：驱动只在 claim 到东西时说话。
+# 故这里钉**两条**只可能由中断产生的读数（都是各自域里的一次性标记）：
+#   `plic: line <n> delivered`（`prog-plic`）——要成立必须
+#     设备拉线 → PLIC 置 pending → SEI → 内核推空令牌进 `irq` 门闩 → 驱动 claim 到线号
+#     → 投进**持有者**（`prog-uart`）的会话门闩
+#   `uart: irq ok`（`prog-uart`）——要成立必须驱动**真的从会话孔里取到了那枚线号**，
+#     即"投递把驱动叫醒"这一跳也成立。
+# 为什么第二条是必要的：读线程那一等**有 20 ms 兜底**（零散字节可能不产生中断，见
+# `programs/src/bin/supervisor/uart.rs` 的头注），故"输入能用"本身**证明不了**中断链在场
+# ——兜底轮询同样能让输入工作。轮询路径不会打出这两行：两边都只在真拿到东西时说话。
 #
 # **线的权威落地之后这条 marker 的牙更硬了**（`docs/driver.md` §12 甲）：报文的线号字段
 # 已经不存在，客户端只报名字 ⇒ "line 10" 这个数字只能是驱动**自己从设备树解出来**的。
@@ -202,16 +210,23 @@ const IRQ_MARKER = "plic: line 10 delivered"
 # `exit` 指到了 `cascade` ⇒ 默认轮从不 exit、三轮都挂到超时（症状像内核挂，其实是门）。
 # 插 `kill`/`dir`/`line` 那几步时同样要重算（本轮又走了一遍这张表）；插重启那一步
 # （`kill console`）时走了第三遍——`exit` 的下标从 14 挪到 15，两行都跟着改。
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 10, 11, 12, 13, 14, 15]
-const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+# `instances` 这个 check 数的两条计数：模式 + 应有的条数 + 报错时的话。
+# 两句话都要**数**，故它们进不了 MARKERS（那张表只问在不在）。
+const INSTANCE_CHECKS = [
+  {pat: 'uart: line [^ ]+ ok', n: 1, what: "uart 登记线（恰好一次）"}
+  {pat: 'console: uart ok',    n: 2, what: "console 实例（引导期+重发）"}
+]
+
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16]
+const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
 
 # 默认档的构建 features **恒为空串**：那是 `FLAVORS` 里 `default` 那一行（构造上的保证，
 # 不是旋钮，见头注「按档构建」）。
 
 # 全量 marker（含 sleep 探针的 `sleep 300ms`），跑完逐条核。默认档那批是 .sh 版原文
 # 逐字未动；他杀那两条（`kill echo -> ok` / `discover echo -> not found`）是后加的，
-# 一条管回执、一条管复验；非默认档另加四条（票单调不复用 + wipe 的封印唤醒 + 他杀
-# 两条）。计数以实跑为准，报告行里的数字是人写的、要跟着改。
+# 一条管回执、一条管复验；非默认档另加五条（票单调不复用 + wipe 的封印唤醒 + 他杀
+# 两条 + 独占交出 `lend`）。计数以实跑为准，报告行里的数字是人写的、要跟着改。
 const MARKERS = [
   "spawnjoin -> 499500"
   "discover echo -> found"
@@ -234,16 +249,20 @@ const MARKERS = [
   # 把 console 的线抢走（输入随后退化成有界轮询，而这门里输入照旧"能用"）。
   "line serial@10000000 -> not-yours"
   "line rtc@101000 -> unclaimed"
-  # 服务重启：客户端那一半（会话续上了）。服务侧那一半（**新实例**拿到 `Ok`）由
-  # `checks` 里的 `instances` 核——它不能进这张表，因为同一句话要出现两次。
+  # 中断链：驱动**取到线号**那一次（见 `IRQ_MARKER` 段的说明）。
+  "uart: irq ok"
+  # 服务重启：客户端那一半（会话续上了）。服务侧那一半（**新实例**拿到设备服务与
+  # 投递孔）另由 `checks` 里的 `instances` 数条数——这张表只问在不在，不问几次。
+  "console: uart ok"
   "shell: console reconnected"
   "task: all tasks exited, system halted"
 ]
 
-# ── 非默认档**多跑三步**的判词（默认档一条都不跑）──────────────────────────────
+# ── 非默认档**多跑四步**的判词（默认档一条都不跑）──────────────────────────────
 #
-# 名字里没有 audit：这几条与任何 feature 都无关，只是"那三步的期望输出"。三步是
-# `sleep 700`（redeem 的第二个时长）、`stray`（野 id 自检）、`cascade`（级联扑杀）。
+# 名字里没有 audit：这几条与任何 feature 都无关，只是"那四步的期望输出"。四步是
+# `sleep 700`（redeem 的第二个时长）、`stray`（野 id 自检）、`cascade`（级联扑杀）、
+# `lend`（独占交出 `CAGE` 的六段判据）。
 #
 # 1) `redeem`：票**单调不复用**（`Ticket::alloc` 只有 fetch_add），到点兑现走
 #    「票 → 持票人 → 键 → 站点」四步。第二个时长不是把同一个检查做两遍：它是
@@ -256,6 +275,7 @@ const EXTRA_MARKERS = [
   'hole: wait-seal sealed=1 wake=seal'
   "stray: 3/3 illegal-id joins denied"
   "cascade: ok"
+  "lend: caged=1 child=1 twice=1 chain=1 back=1 restore=1 plain=1"
 ]
 # 顺序断言：后者必须出现在前者之后（grep 行号比较；任一缺 ⇒ 直接挂）。
 # 这三步只有**非默认档**跑，故两对顺序在 harden 与框架两档都核（`FLAVORS` 的 `checks`）。
@@ -305,8 +325,9 @@ const FRAMEWORK_MARKER = "\\[case\\] cases 4 ok 4 fail 0"
 #
 # `markers` 三段的含义见 `markers_for`：`base` / `extra` / `case`。
 # `checks` 的取值见 `run_once` 末：`depend`（`[depend]` 点名）、`order`（顺序断言）、
-# `instances`（`console: line … ok` 恰好两次 = 收线的判据）。三档都核 `instances`：
-# 重启那一步三档都跑，判据就该三档都成立。
+# `instances`（见 `INSTANCE_CHECKS`：`uart: line … ok` 恰好一次 + `console: uart ok`
+# 恰好两次 = "线不随 console 死而收"与"新实例拿到了设备服务与投递孔"两条判据）。
+# 三档都核 `instances`：重启那一步三档都跑，判据就该三档都成立。
 const FLAVORS = [
   {name: "default",   profile: "release",   features: "",          steps: "default", markers: "base",            checks: ["instances"]}
   {name: "harden",    profile: "harden",    features: "",          steps: "full",    markers: "base+extra",      checks: ["depend" "order" "instances"]}
@@ -554,22 +575,25 @@ def run_once [cfg: record, i: int, flavor: string] {
   #     「无 panic」抓住；这条是为了在原因串里点名「这是锁序违规」而不是别的 panic。
   #   `order`  —— 两步的先后也是判据（「两句话都在」不等于「第二次真的发生在第一次之后」；
   #     同一句被数两次也能骗过 `hit`）。
-  #   `instances` —— **收线的判据**：`console: line <名字> ok` 恰好出现两次。它是"新实例
-  #     拿到了 `Ok`"的唯一可见证据（驱动答 `Taken` 会走降级路径、不打这句），进不了 marker
-  #     表是因为同一句话要出现**两次**。它成立要求三件事同时在场：驱动把旧实例判成"没了"
-  #     （持有者那枚副本被摘）、root 的监护线程重发、**属主写权的委托**（否则驱动不认新实例
-  #     的 `Refer`）。
+  #   `instances` —— **两条计数的判据**（设备搬到 uart 域之后的形状，见 `INSTANCE_CHECKS`）：
+  #     ① `uart: line <名字> ok` 恰好**一次**：线由持有设备的那个域登记，**不随 console
+  #        的死而收**——重发回来的 console 不再重新登记线（这是拆域顺手解开的那处耦合，
+  #        也正是旧判据"恰好两次"不再成立的原因）；
+  #     ② `console: uart ok` 恰好**两次**：引导期一次 + `kill console` 之后重发的那一次。
+  #        它是新实例"拿到设备服务与投递孔"的唯一可见证据（连不上就收场，不会打这一行）。
   if "depend" in $f.checks and (hit '\[depend\]' $log) {
     $why = (append_why $why "lockdep 违规([depend])")
   }
   mut instances = -1
   if "instances" in $f.checks {
-    let n = ((^grep -oE -- 'console: line [^ ]+ ok' $log | complete).stdout | lines | length)
-    if $n != 2 {
-      $why = (append_why $why $"console 实例数[($n)!=2]（新实例没拿到 Ok？）")
-    } else {
-      # 读数带回调用方去打：并行时轮内 `print` 会互相插队，报告行必须由一处按计划顺序打。
-      $instances = $n
+    for c in $INSTANCE_CHECKS {
+      let n = ((^grep -oE -- $c.pat $log | complete).stdout | lines | length)
+      if $n != $c.n {
+        $why = (append_why $why $"($c.what)[($n)!=($c.n)]")
+      } else {
+        # 读数带回调用方去打：并行时轮内 `print` 会互相插队，报告行必须由一处按计划顺序打。
+        $instances = $n
+      }
     }
   }
   if "order" in $f.checks {
@@ -757,7 +781,7 @@ def main [] {
   for p in $plan {
     let r = ($results | where i == $p.i | first)
     # 轮内不再自己打这行（并行会互相插队）：读数带回这里，按计划顺序打。
-    if $r.instances == 2 { print $"  console 实例：($r.instances)（引导期 + 重发）" }
+    if $r.instances == 2 { print $"  console 实例：($r.instances)（引导期 + 重发；线仍归 uart）" }
     if $r.ok {
       $pass += 1
       print (report_for (flavor $p.flavor) $p.i)

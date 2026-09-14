@@ -6,10 +6,16 @@
 //! 循环     报文（探测：登记 / 写属主）→ irq 门闩（有界等待）→ claim → 投线号 → complete
 //! ```
 //!
+//! # 设备侧在哪
+//!
+//! 寄存器布局、`claim`/`complete`/`enable`/`disable` 与"名字 → 线号"的线表都在
+//! `programs::plic`（**设备侧**，与 `uart.rs` 同形）；本 bin 只做装配与协议适配：
+//! 收配给、登记名字、认动词认人、投递、收线。
+//!
 //! # 它认识什么、不认识什么
 //!
-//! 它认识 PLIC 的寄存器布局与设备树的绑定（**名字 → 线号**）；它**不认识任何设备**
-//! ——不知道 `serial@10000000` 后面是串口还是网卡，只把"哪条线响了"投给持有那条线的
+//! 它认识"哪条线是谁的"（线表 + 属主）；它**不认识任何设备**——不知道
+//! `serial@10000000` 后面是串口还是网卡，只把"哪条线响了"投给持有那条线的
 //! 客户端（`docs/driver.md` §3.2.6：名字 → (线号, 属主, 门闩) 的表活在**本域的内存**
 //! 里，内核不参与）。
 //!
@@ -17,8 +23,7 @@
 //!
 //! `外部中断 → trap_handler 推空令牌进 irq 门闩`（内核只知道"有外部中断"），
 //! 剩下全在这里：`claim`（从 PLIC 领线号）→ 投递 → `complete`。整链两跳
-//! （§3.2.4）。**没有 ack**：客户端下一次进门时 mask 自己的 `IER`、出门再开门
-//! （§3.2.5），静音不需要 PLIC 参与。
+//! （§3.2.4）。**投递即唤醒**：持有者正等在自己那枚会话孔上，`push` 就是叫醒它。
 //!
 //! # 为什么只有一个线程
 //!
@@ -43,148 +48,19 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-use alloc::vec::Vec;
-
 use env::HoleDir;
 use env::Permission;
-use programs::lines::from_tree;
 use protocol::console::Console;
 use protocol::dispatch::client::Directory;
 use protocol::irq::{self, Lines};
+use programs::plic::{LINE_PRIORITY, Plic};
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
 use runtime::env::mail::{self, AnyPie as _, HolePie, PolePie};
 
-/// `irq` 门闩的等待上界（毫秒）——**不能是无穷**：注册报文要有人听（见模块头）。
+/// `irq` 门铃的等待上界（毫秒）——**不能是无穷**：注册报文要有人听（见模块头）。
 /// 中断路径不受它影响（槽满/有信都立即唤醒）。
 const IRQ_WAIT_MS: usize = 20;
-
-/// S 模式外部中断的中断号（`interrupts-extended` 里的 cell 值）。
-const EXT_S: u32 = 9;
-
-/// 一条线的优先级：恒 1（0 = 静音，见 [`Plic::disable`]）。它不再是客户端的字段——
-/// 这个量没有第二个取值，问客户端等于让它替本域做设备侧的决定。
-const LINE_PRIORITY: u32 = 1;
-
-/// PLIC 的寄存器视图（一段有主的、可映射的内存——`docs/driver.md` §1）。
-struct Plic {
-    base: usize,
-    /// 本控制器有多少条线（设备树 `riscv,ndev`）——按它拒绝越界的注册。
-    ndev: u32,
-    /// 所有 **S 外部** context 序号（每颗 hart 一个）。
-    contexts: Vec<u32>,
-}
-
-/// PLIC 寄存器偏移（SiFive PLIC 布局；`reg` 给的是整块 0x600000）。
-const PRIORITY: usize = 0x0000_0000;
-const ENABLE: usize = 0x0000_2000;
-const ENABLE_STRIDE: usize = 0x80;
-const CONTEXT: usize = 0x0020_0000;
-const CONTEXT_STRIDE: usize = 0x1000;
-const THRESHOLD: usize = 0x00;
-const CLAIM: usize = 0x04;
-
-impl Plic {
-    /// 开闩 + 读设备树：把"我是谁、我有哪些 context、这台机器上有哪些中断源"问清楚。
-    ///
-    /// 判据 = `interrupt-controller` 且 `compatible` 里含 `plic` 的节点。**解释设备
-    /// 树是驱动的事**（内核只原样搬运自描述，§3.1.3），故这里可以按 compatible 认。
-    ///
-    /// 返的第二件是**线表**：它由同一棵树建出来（名字 → 线号），本域此后只认名字。
-    fn open(pole: PolePie, dtb: PolePie, sire: env::TaskId) -> Option<(Self, Lines)> {
-        let base = pole.open().ok()?;
-        let dtb_va = dtb.open().ok()?;
-        // SAFETY: DTB 门闩把设备树本体只读借映进了本域；`fdt` 只读它。
-        let fdt = unsafe { fdt::Fdt::from_ptr(dtb_va as *const u8) }.ok()?;
-        let node = fdt.all_nodes().find(|n| {
-            n.property("interrupt-controller").is_some()
-                && n.compatible()
-                    .is_some_and(|c| c.all().any(|s| s.contains("plic")))
-        })?;
-        let ndev = node
-            .property("riscv,ndev")
-            .and_then(|p| p.as_usize())
-            .unwrap_or(0) as u32;
-        // 每项 = <目标 phandle, 中断号…>；中断号的字节数由 `#interrupt-cells` 定。
-        let cells = node
-            .property("#interrupt-cells")
-            .and_then(|p| p.as_usize())
-            .unwrap_or(1);
-        let mut contexts = Vec::new();
-        let prop = node.property("interrupts-extended")?;
-        let stride = 4 + 4 * cells;
-        for (i, entry) in prop.value.chunks_exact(stride).enumerate() {
-            let cell = u32::from_be_bytes(entry[4..8].try_into().ok()?);
-            if cell == EXT_S {
-                contexts.push(i as u32);
-            }
-        }
-        // 线表与控制器同源：同一个 `ndev` 只读一次（它就是"这台控制器有几条线"）。
-        let lines = from_tree(&fdt, &node, ndev, sire);
-        Some((
-            Self {
-                base,
-                ndev,
-                contexts,
-            },
-            lines,
-        ))
-    }
-
-    /// 使能一条线：`priority` 一条、**每个 S context** 各一份 enable。
-    ///
-    /// 为什么每个 context：中断要能在**任意一颗 hart** 上被取到（不引入任务亲和性，
-    /// §3.2.7）。阈值恒 0（不卡仲裁）。
-    fn enable(&self, line: u32, priority: u32) {
-        self.write(PRIORITY + 4 * line as usize, priority);
-        for &ctx in &self.contexts {
-            let at = CONTEXT + CONTEXT_STRIDE * ctx as usize;
-            self.write(at + THRESHOLD, 0);
-            let e = ENABLE + ENABLE_STRIDE * ctx as usize + 4 * (line / 32) as usize;
-            let bits = self.read(e) | 1 << (line % 32);
-            self.write(e, bits);
-        }
-    }
-
-    /// 关一条线（**收线**用，§12 ②）：`priority = 0`。
-    ///
-    /// 这是**可逆静音**，不是把线拆掉（§7.2 量到的语义）：`pending` 照旧置位，但
-    /// `claim` 恒 0 ⇒ 本域不再投递它；重新登记时 [`Plic::enable`] 把优先级写回
-    /// [`LINE_PRIORITY`]。enable 位留着——线号与设备的绑定没变，变的只是"现在有没有
-    /// 人接"。
-    fn disable(&self, line: u32) {
-        self.write(PRIORITY + 4 * line as usize, 0);
-    }
-
-    /// 领一条线号；0 = 没有可领的（**不是错误**：另一颗 hart 的 context 可能已经
-    /// 把它领走了——`claim` 原子清挂起，故第二个 `claim` 拿到 0）。
-    fn claim(&self) -> u32 {
-        let ctx = match self.contexts.first() {
-            Some(&c) => c as usize,
-            None => return 0,
-        };
-        self.read(CONTEXT + CONTEXT_STRIDE * ctx + CLAIM)
-    }
-
-    /// 结一条线（**不是重武装点**：`complete` 不会把中断带回来，§7.2）。
-    fn complete(&self, line: u32) {
-        let ctx = match self.contexts.first() {
-            Some(&c) => c as usize,
-            None => return,
-        };
-        self.write(CONTEXT + CONTEXT_STRIDE * ctx + CLAIM, line);
-    }
-
-    fn read(&self, off: usize) -> u32 {
-        // SAFETY: `base` 是本域已映射的 PLIC 页；偏移落在 `reg` 声明的区间内。
-        unsafe { core::ptr::read_volatile((self.base + off) as *const u32) }
-    }
-
-    fn write(&self, off: usize, v: u32) {
-        // SAFETY: 同上，只写控制器寄存器。
-        unsafe { core::ptr::write_volatile((self.base + off) as *mut u32, v) }
-    }
-}
 
 /// 线表：**名字 → 线号 + 属主 + 活实例**。只在本域的内存里（§3.2.6）。
 ///

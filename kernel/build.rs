@@ -19,7 +19,11 @@ const INITRD_BINS: &[(&str, &str, u32)] = &[
     ("dir", "prog-dir", KIND_SUPERVISOR),
     // 中断线驱动：PLIC 的线 → 客户端门闩里的一个线号（见 docs/driver.md §3.2）。
     ("plic", "prog-plic", KIND_SUPERVISOR),
-    // 控制台服务：任务侧唯一读 UART 的任务（见 crates/protocol/src/console）。
+    // 串口驱动：**设备在它手里**，终端语义仍在 console 服务里（见 docs/console.md）。
+    // **U 态**：驱动不需要"建域 / 铸建域权"那两道 S 态门，取最小特权；两台驱动的特权级
+    // 目前不一致（`plic` 仍是 S 态），把 `plic` 一并降下来是记账待办。
+    ("uart", "prog-uart", KIND_USER),
+    // 控制台服务：读写的**线对侧**（见 crates/protocol/src/console）。
     ("console", "prog-console", KIND_SUPERVISOR),
 ];
 

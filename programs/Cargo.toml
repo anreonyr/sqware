@@ -49,6 +49,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-uart"
+path = "src/bin/supervisor/uart.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-plic"
 path = "src/bin/supervisor/plic.rs"
 test = false
