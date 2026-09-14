@@ -203,6 +203,13 @@ impl Duet for Service {
         [0u8; CALL]
     }
 
+    /// 回复容器与请求容器分开（理由见 [`Duet::Reply`]）。
+    type Reply = [u8; CALL];
+
+    fn reply() -> [u8; CALL] {
+        [0u8; CALL]
+    }
+
     /// 地址槽（前 8 字节）+ 载荷（其余）。**载荷原样搬**：它自己那份布局（目录帧）从载荷
     /// 第 0 字节起算，故"地址在哪儿"这件事在两条线形上是同一个数。
     fn encode(req: &[u8; PAYLOAD_LEN], at: PieToken, out: &mut [u8]) -> usize {

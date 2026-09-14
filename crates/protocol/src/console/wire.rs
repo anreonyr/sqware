@@ -375,6 +375,14 @@ impl Duet for Query {
         [0u8; CAP]
     }
 
+    /// 回复容器与请求容器分开（理由见 [`Duet::Reply`]）。回复最长为
+    /// `1 + ADDRESS_LEN + LINE`（`Line` 那一支），`CAP` 就是它自己的上界。
+    type Reply = [u8; CAP];
+
+    fn reply() -> [u8; CAP] {
+        [0u8; CAP]
+    }
+
     fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
         let (frame, n) = req.encode();
         let Some(slot) = out.get_mut(..n) else {

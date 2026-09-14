@@ -209,9 +209,21 @@ pub trait Duet {
     /// 的那些字节，长了接收侧装不下（`pull` 拒绝且槽不动 ⇒ 这条孔当场死住）。
     const CAP: usize;
 
-    /// 一个空的报文容器。请求与回复**共用一块**：报文推出去之后即可复用——`push`
-    /// 在锁外就把字节搬进了内核那份 staging。
+    /// 一个空的报文容器（**请求**用）。
     fn wire() -> Self::Wire;
+
+    /// 收回复的容器：**不能与请求那块共用**。
+    ///
+    /// 曾经共用过（回复收在请求帧之后的剩余空间里），短请求因此看不出问题——`Open` 只占
+    /// 9 字节，尾巴上还剩得下一帧回复。而 `Write` 一类长请求把容器填到 `CAP - 8`
+    /// （控制台实测 `sent=41`、`CAP=49`），`pull` 的 `max` 只剩 8 字节，回复帧（17）装不下
+    /// ⇒ 内核答 `Denied` ⇒ **一次写就断一条会话**，现象是"输出少半行 + 目录查询全失败"。
+    ///
+    /// 定容的理由与 [`Duet::Wire`] 同款：稳定 Rust 里 `[u8; W::REP]` 用不了，故容器由协议给。
+    type Reply: AsRef<[u8]> + AsMut<[u8]>;
+
+    /// 收回复的容器（空）。
+    fn reply() -> Self::Reply;
 
     /// 布局：把请求写进 `out`，并把**回信地址**写在 `[ADDRESS_AT..)` 上。
     ///
@@ -266,15 +278,15 @@ impl Port {
     /// `call`（与 [`HolePie::pull_timeout`] 的既有契约同款）。
     pub fn call<W: Duet>(&self, req: &W::Req, within: usize) -> EnvResult<W::Rep> {
         let mut wire = W::wire();
+        let mut reply = W::reply();
         let sent = W::encode(req, self.to.seed(), wire.as_mut());
         self.entry
             .push(wire.as_ref().get(..sent).ok_or_else(denied)?)?;
-        let field = wire.as_mut().get_mut(sent..W::CAP).ok_or_else(denied)?;
-        let (len, from) = self.reply.pull_timeout_from(field, within)?;
+        let (len, from) = self.reply.pull_timeout_from(reply.as_mut(), within)?;
         if from != self.to.peer() {
             return Err(denied());
         }
-        W::decode(wire.as_ref().get(sent..sent + len).ok_or_else(denied)?)
+        W::decode(reply.as_ref().get(..len).ok_or_else(denied)?)
     }
 
     /// 关：只放下回信孔（**级联已含对端那枚副本**，不必再 `revoke`——那是旧

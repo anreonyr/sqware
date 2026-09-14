@@ -370,6 +370,13 @@ impl Duet for Query {
         [0u8; CAP]
     }
 
+    /// 回复容器与请求容器分开（理由见 [`Duet::Reply`]）。
+    type Reply = [u8; CAP];
+
+    fn reply() -> [u8; CAP] {
+        [0u8; CAP]
+    }
+
     /// 回信地址（帧首那一格）+ 正文（[`Query::put`] 跳过那一格往后面写）。帧长即
     /// [`Query::len`]，`out` 的其余位置一个字节都不上线。
     fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
