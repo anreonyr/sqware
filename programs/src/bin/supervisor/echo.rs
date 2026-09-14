@@ -17,8 +17,10 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-use protocol::dispatch::CAP;
+use protocol::dispatch::CALL;
 use protocol::dispatch::client::Directory;
+use protocol::dispatch::wire::ADDRESS_AT;
+use runtime::core::port::{ADDRESS_LEN, address_at};
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::port::{Access, Policy, ship};
 use runtime::env::mail::HolePie;
@@ -65,18 +67,27 @@ extern "C" fn main() -> ! {
         runtime::env::room::exit_with(9);
     }
 
-    // 5. 服务循环：pull 请求、+1 载荷、push 到客户端自带的 reply token。
-    let mut req_buf = [0u8; CAP];
+    // 5. 服务循环：pull 请求、+1 载荷、push 回客户端自带的回信孔。
+    //
+    // 三处都按"长度即边界"来，缺一处这条服务就哑：
+    //   · **长度由 `pull` 给**（缓冲按上界 `CALL` 备，帧长当场才知道）；整块回推就等于
+    //     让收侧看见"一个比真实长度长的报文"；
+    //   · **回信地址按协议那张偏移表读**（`wire::ADDRESS_AT` = 帧首），不是硬编码 [0..8)；
+    //   · 正文从 [`ADDRESS_LEN`] 之后开始（本协议没有动词字段，地址就占最前那一格）。
+    let mut req = [0u8; CALL];
     loop {
-        if entry.pull(&mut req_buf).is_err() {
+        let Ok(len) = entry.pull(&mut req) else {
             continue;
-        }
-        let reply_token = usize::from_le_bytes(req_buf[0..8].try_into().unwrap_or([0u8; 8]));
-        req_buf[0..8].fill(0);
-        for b in req_buf[8..].iter_mut() {
+        };
+        let Some(msg) = req.get_mut(..len) else {
+            continue;
+        };
+        let Some(reply_token) = address_at(msg, ADDRESS_AT) else {
+            continue;
+        };
+        for b in msg[ADDRESS_LEN..].iter_mut() {
             *b = b.wrapping_add(1);
         }
-        let client_reply = HolePie::from_token(reply_token);
-        let _ = client_reply.push(&req_buf);
+        let _ = HolePie::from_token(reply_token.get()).push(msg);
     }
 }
