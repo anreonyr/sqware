@@ -239,12 +239,14 @@ extern "C" fn main() -> ! {
         } else {
             SLOW_MS
         };
-        if let Ok(n) = entry.pull_timeout(&mut req, timeout) {
+        if let Ok((n, from)) = entry.pull_timeout_from(&mut req, timeout) {
             // 长度由 `Pull` 给：缓冲按上界（`CAP`）备，**帧长当场才知道**。把整个缓冲交下去
             // 就等于把"帧多长"这件事丢掉——收侧解码会看见一帧比真实长度长 40 字节的报文
             // （`body != ADDRESS_LEN` ⇒ `Short` ⇒ 每条 `Open` 都被拒）。
             let Some(msg) = req.get(..n) else { continue };
-            let outcome = CONSOLE.with(|s| s.serve(msg));
+            // `from` = 内核盖章的推者：`Open` 那一步要**按它**开回信孔并把句柄交回去
+            // （见 `State::open`）。同一趟取回两件事，窗口里不留竞态。
+            let outcome = CONSOLE.with(|s| s.serve(from.get(), msg, &entry));
             // 次序：**先落屏、再回执**（`Ok` 的含义是"这段已落屏"）。
             flush(&writer);
             // `ReadLine`：已登记等读，那一行的回执由输入线程放进共享槽（回执为 `None`）。

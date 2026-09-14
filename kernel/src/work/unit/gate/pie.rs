@@ -167,11 +167,31 @@ impl AnyPie {
     /// 资源开辟者（`EnvCall::Mail(MailCall::Owned)` 的 `owner` 一侧）。
     ///
     /// `None` = Meta 已封印（`Seal` 之后）：答不出完整事实。
+    ///
+    /// 判"谁能封印"用（`Seal` 在 envcall 适配层过它）：封印后 `None` **正是要的答案**
+    /// ——已死的东西不再接受第二次封印。
     pub fn owner(&self) -> Option<usize> {
         match self {
             AnyPie::Hole(p) => p.meta.alive().then(|| p.meta.owner()),
             AnyPie::Pole(p) => p.meta.alive().then(|| p.meta.owner()),
             AnyPie::Nole(p) => p.meta.alive().then(|| p.meta.owner()),
+        }
+    }
+
+    /// **这扇门是谁开的**（不问死活，纯读 Meta 字段）。
+    ///
+    /// 与 [`AnyPie::owner`] 的差别只有一个 `alive()` 闸，而这一格正是**退场钩子**
+    /// 要的：它按"开者是谁"决定封印哪些资源（`gate::doom`）。用 `owner()` 会漏掉
+    /// "已经封印但表项还在"的那些——那不影响结论（封印幂等），却让判据变成
+    /// "取决于封印先后"，而这条边应当是确定性的。
+    ///
+    /// 契约：**只在自家 `pies` 锁里叫**（`p.meta` 的存活与否由 Meta 自己的锁管，
+    /// 与本函数的调用点无关）。
+    pub fn owner_task(&self) -> usize {
+        match self {
+            AnyPie::Hole(p) => p.meta.owner(),
+            AnyPie::Pole(p) => p.meta.owner(),
+            AnyPie::Nole(p) => p.meta.owner(),
         }
     }
 

@@ -1,7 +1,15 @@
 //! console·client — 线对侧：`Console` 会话 + `Readline` 结果。
 //!
 //! 与旧 `programs/src/term` 的 `Terminal`/`Readline` **同形**，但内部改走协议：
-//! 客户端不再碰 UART，只往请求孔推请求、从自己的回信孔收回复。
+//! 客户端不再碰 UART，只往请求孔推请求、从回信孔收回复。
+//!
+//! # 回信孔是**借来的**
+//!
+//! 那枚孔由**服务端**开、把 `WRITE` 副本授给本端、句柄经入口孔交回（[`Console::open`]
+//! 的三步）。理由不是省事：孔的生命挂在对端身上，对端退场时内核封印它，本端**当场
+//! 拿到 `Dead`** ⇒ 「对端还没回」与「对端已经没了」才分得开。旧形状（本端自建、
+//! 授一枚给服务端）里这两件事长得一模一样，服务被打死后本端永久挂住——实测
+//! `kill console` 之后 shell 再也不返回。
 //!
 //! # 同步点在哪
 //!
@@ -29,6 +37,11 @@ use super::wire::{LINE, Query, Reply, denied};
 /// 一次往返的上界（毫秒）。与 dispatch 的 `REPLY_TIMEOUT_MS` 同值。
 const REPLY_TIMEOUT_MS: usize = 1000;
 
+/// 等**回信孔句柄**的上界（毫秒）。比一次往返短：这一段里对端只做"开一枚孔 +
+/// 授出 + 推 9 字节"，没有设备 I/O、也不等用户。给上界是为了让"服务把这条会话
+/// 拒了"（表满 / 报文不合 ⇒ 那枚号永远不会来）落成一次可重试的失败，而不是永久挂起。
+const HANDSHAKE_TIMEOUT_MS: usize = 500;
+
 /// 读一行的结果。与旧 `term::Readline` 同形（`Line`/`Eof`/`Interrupt`）。
 #[derive(Debug)]
 pub enum Readline {
@@ -50,12 +63,26 @@ pub struct Console {
 }
 
 impl Console {
-    /// 打开会话：开一条往返（自建回信孔、把它授给服务）+ `Open`（回信地址随报文交出）。
+    /// 打开会话。
     ///
-    /// 对端 task id 由 `Port::open` 用 `Reserve(entry).owner` 求得——**门闩的开辟者就是
-    /// 服务本身**（root 转发不改 `owner`，只改 `vestor`）。
+    /// 三步，次序是契约（违反它的表现是握手等到超时，不是死锁）：
+    ///   1. [`Port::dial`] 把**首帧**（`Open`，地址槽留零）推给服务，并在入口孔上
+    ///      等一枚句柄回来 —— 那枚就是**服务端为我开的**回信孔（见下）；
+    ///   2. 服务端已经为这条会话开好回信孔、把 `WRITE` 副本授给我、并把句柄交回；
+    ///   3. 首次 [`Port::call`] 发那条 `Open` 的数据帧，拿到会话 id。
+    ///
+    /// # 回信孔为什么由服务端开
+    ///
+    /// 它服务于"服务端出话、客户端收话"，故开者必须是服务端：服务退场时内核的寿命边
+    /// 封印它（"开者退场 ⇒ 它开的资源一起封印"，见 `gate::doom`），睡在它上面的客户端
+    /// **当场拿到 `Dead`** ⇒ 会话被判为断了、走 [`crate::console::client::Console`] 外面
+    /// 那条重连。反过来（本端自建）时服务被打死这扇门不死，本端永久挂在 `Busy` 上，
+    /// 「对端还没回」与「对端已经没了」不可区分。
+    ///
+    /// 对端 task id 由 [`Port::dial`] 用 `Reserve(entry).owner` 求得——**门闩的开辟者
+    /// 就是服务本身**（root 转发不改 `owner`，只改 `vestor`）。
     pub fn open(entry: HolePie) -> EnvResult<Console> {
-        let port = Port::open(&entry)?;
+        let port = Port::dial::<Query>(&entry, &Query::open(), HANDSHAKE_TIMEOUT_MS)?;
         let mut console = Console { port, client: 0 };
         match console.call(&Query::open())? {
             Reply::Ok { client } => {

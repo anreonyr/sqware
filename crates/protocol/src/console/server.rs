@@ -42,6 +42,10 @@ use alloc::vec::Vec;
 
 use anstyle_parse::{Params, Parser, Perform};
 
+use runtime::core::handshake;
+use runtime::env::mail::HolePie;
+use env::TaskId;
+
 use super::wire::{ADDRESS_AT, Query, Reply, Text, WORD};
 
 /// 报文里的一格 `usize`（LE）。解码已保证帧长，故越界这一支不可达。
@@ -154,10 +158,11 @@ impl Outcome {
             to_client: None,
         }
     }
-    fn deny() -> Self {
+    /// 拒一条请求。`from` = 内核盖章的推者（本条问不出会话，只能把话推给推者）。
+    fn deny(from: usize) -> Self {
         Self {
             reply: Some(Reply::Denied),
-            to_client: None,
+            to_client: if from == 0 { None } else { Some(from) },
         }
     }
 }
@@ -234,10 +239,14 @@ impl State {
     }
 
     /// 处理一条请求。`ReadLine` 只登记等读、**不阻塞**（阻塞会让别的消息排队）。
-    pub fn serve(&mut self, msg: &[u8]) -> Outcome {
+    ///
+    /// `from` = 内核在 `Pull` 时盖章的推者（task id）——只有 `Open` 用得上：那时还没
+    /// 有会话，回信孔正要**按它**开出来（见 [`State::open`]）。
+    pub fn serve(&mut self, from: usize, msg: &[u8], entry: &HolePie) -> Outcome {
         match Query::decode(msg) {
+            Ok(Query::Open) => self.open(from, word(msg, ADDRESS_AT), entry),
             Ok(query) => self.handle(query, msg),
-            Err(_) => Outcome::deny(),
+            Err(_) => Outcome::deny(from),
         }
     }
 
@@ -252,17 +261,49 @@ impl State {
     /// 就地取——**长度由帧长给**，故这里没有第二把尺子。
     fn handle(&mut self, query: Query, msg: &[u8]) -> Outcome {
         match query {
-            Query::Open => self.open(word(msg, ADDRESS_AT)),
+            // `Open` 由 [`State::serve`] 直接分派（它要多两个参数），到不了这里。
+            Query::Open => Outcome::deny(0),
             Query::Write { client, .. } => self.write(client, Query::text(msg)),
             Query::ReadLine { client, .. } => self.readline(client, Query::text(msg)),
             Query::Close { client } => self.close(client),
         }
     }
 
-    fn open(&mut self, reply: usize) -> Outcome {
-        if reply == 0 {
-            return Outcome::deny();
-        }
+    /// 开一条会话。`addr` = 请求帧地址槽里那个数，**只用来判"要不要现开回信孔"**。
+    ///
+    /// # 回信孔由服务端开（本协议这一版的判据）
+    ///
+    /// 回信孔服务于"服务端出话、客户端收话"，故它的开者必须是**服务端**：
+    ///
+    /// - 服务端是开者 ⇒ 服务退场时内核的寿命边封印它（"开者退场 ⇒ 它开的资源一起
+    ///   封印"）⇒ 睡在它上面的客户端当场拿到 `Dead`，会话可被识别为"断了"并重连；
+    /// - 反过来（客户端开）时，服务被打死这扇门**不死**，客户端永久挂在 `Busy` 上
+    ///   ——「对端还没回」与「对端已经没了」不可区分。实测现象就是 `kill console`
+    ///   之后 shell 再也不返回。
+    ///
+    /// 交接手法见 [`runtime::core::handshake::grant`]：新孔在**双方**表里各有一枚，
+    /// 服务端留源、客户端那枚的句柄经入口孔交回。
+    ///
+    /// `addr != 0` 走**旧形状**（客户端自建、把 `WRITE` 副本授了过来）——留着它是因为
+    /// 握手那一帧与数据帧共用一条线上形状，老客户端不该因此直接断线；新客户端一律
+    /// 送 0（见 `client::Console::open`）。
+    fn open(&mut self, from: usize, addr: usize, entry: &HolePie) -> Outcome {
+        // 存进 `Slot` 的**必须是本服务自己那枚**（自己表里的号）：`route` 拿它在本
+        // 线程的表里找孔来推。对端那枚的号（`To::seed`）是**另一张表**里的号——存错
+        // 的表现是每次推回复都被判 `Denied` 并静默丢掉，客户端只看到"没开成"
+        // （实测：`[c1] open err code=-1`，而服务端每一条 `Open` 都成功开了会话）。
+        let reply = if addr != 0 {
+            addr
+        } else {
+            if from == 0 {
+                return Outcome::deny(0);
+            }
+            match handshake::grant(entry, TaskId::new(from)) {
+                Ok(hole) => hole.token(),
+                // 授不出去 = 对端已经走不动了：**不占槽**，也不回话（无处可回）。
+                Err(_) => return Outcome::quiet(),
+            }
+        };
         match self.slots.iter().position(Option::is_none) {
             Some(i) => {
                 self.slots[i] = Some(Slot { reply });
@@ -274,7 +315,8 @@ impl State {
                 }
             }
             // 表满：请求合法、服务无容量。协议里没有"稍后重试"的码，故借
-            // `NoSuchClient`——客户端看到的仍是"没开成"。
+            // `NoSuchClient`——客户端看到的仍是"没开成"。此时 `reply` 那枚新孔
+            // **没人再持有**，随本函数返回自然回收（表里没进过它）。
             None => Outcome {
                 reply: Some(Reply::NoSuchClient),
                 to_client: None,

@@ -12,8 +12,9 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::work::mail::PoleMeta;
-use crate::work::mail::pole;
+use crate::work::mail::hole::{self, HoleMeta};
+use crate::work::mail::nole::{self, NoleMeta};
+use crate::work::mail::pole::{self, PoleMeta};
 use crate::work::unit::task::Task;
 
 use super::pie::AnyPie;
@@ -120,6 +121,24 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
 ///
 /// 签名受 `Hook = fn(usize)` 约束，故自取快照并在其中按 id 找到该任务
 /// （此刻收尾者 `reap` 仍持强引用，Weak 可升级）——**不查调度器**。
+///
+/// # 资源寿命边：开者退场 ⇒ 它开的资源一起封印
+///
+/// `owner` 原是"谁能 `Seal`"的判据（envcall 适配层读它）。这里给它**第二重读法**：
+/// 一枚资源挂在它的开辟者身上——开者退场，它开的每一件资源一起封印（[`seal_owned`]）。
+///
+/// 为什么非要这条边：资源寿命 = 能力寿命（最后一份门闩消失即回收，见 `pie.rs` 头注），
+/// 于是一件"**开者是甲方、主用者是乙方**"的资源，乙方死了它**不死**——甲方的门闩还在，
+/// 孔还活着，只是再没人会往里推。等在它上面的乙方拿到的是永久的 `Busy`，不是 `Dead`：
+/// 调用方分不清"对端还没回"与"对端已经没了"。
+///
+/// 实证是控制台会话的回信孔：它服务于"服务端出话"，却由**收话的客户端**开
+/// （`runtime::core::port::Port::open` 自建）⇒ 服务被打死后客户端永久挂住。
+/// 那条路已在协议层翻面（回信孔改由服务端开），本条是它成立的**机制一半**。
+///
+/// 一条不肯放过的次序：**封印在 cull 之前**。反过来的话，`cull` 摘掉根那枚、若它
+/// 正好是 `Arc<Meta>` 的最后一份强引用，`Meta::drop` 自己就会置死并唤醒——效果相同，
+/// 但那是**引用计数的巧合**：一旦别处还留着一份副本，"开者退场 ⇒ 资源死"就静默失效。
 pub(crate) fn doom(tid: usize) {
     let snap = snap::snap();
     let Some(task) = snap::find(tid, &snap) else {
@@ -140,7 +159,93 @@ pub(crate) fn doom(tid: usize) {
         v.extend(pies.iter().map(|p| p.token()));
         v
     };
+    // 寿命边：先封印（次序是判据，见头注），再断派生链。
+    seal_owned(tid, &task);
     for token in tokens {
         cull((task.clone(), token), &snap);
     }
+}
+
+/// 把 `tid` **开的**那些资源封印掉（`owner == tid`），返回封印了几件。
+///
+/// 读 Meta 上那个字段（不由门闩推）：`owner()` 带 `alive()` 闸、封印后答不出
+/// "谁开的"，而这里问的正是那个事实（死没死另说，封印幂等）。
+///
+/// **`owner == 0` 不参与**（内核自建，没有"开者退场"这回事），`tid == 0` 也进不来
+/// （0 是"无任务"，真出现会一次封印掉全部内核资源——故显式挡在门外，而不是靠
+/// "0 号任务永不退场"这条口头约定）。
+///
+/// # 摘不摘表项
+///
+/// **不摘**。本条只做 `seal`（`mail::hole`/`pole`/`nole` 各有一个，同一个语义）：
+/// 置死 + 唤醒两个方向的全部等待者；表项仍由各持有者 `Release` 自己收（与 `Seal`
+/// 同一条契约，见 `envcall::pie::seal` 头注）。这儿跟着 `cull` 摘一遍会与 `cull`
+/// 撞车（同一枚摘两次），且把"封印"与"回收"两件事混成一件。
+///
+/// # 不可失败
+///
+/// 与 [`cull`] 同款：本条在**退场钩子**里（`Hook = fn(usize)`，无错误通道），
+/// 分配失败 ⇒ 这一次封印整个不做（[`cull`] 会补上"最后一份门闩消失即回收"那条
+/// 既有路径），而不是拿整机去换一次封印。
+fn seal_owned(tid: usize, task: &Arc<Task>) -> usize {
+    if tid == 0 {
+        return 0;
+    }
+    // 先挑出"我开的"那些 token（持自己那张表）。**不就地封印**：`doom` 的调用链上
+    // `reap` 无锁，而持表锁调 `messenger::wipe`（L3）就是 3→3 自己撞自己。
+    let owned: Vec<usize> = {
+        let pies = task.pies.lock();
+        let mut v: Vec<usize> = Vec::new();
+        if v.try_reserve(pies.len()).is_err() {
+            return 0;
+        }
+        v.extend(
+            pies.iter()
+                .filter(|p| p.owner_task() == tid)
+                .map(|p| p.token()),
+        );
+        v
+    };
+    let mut sealed = 0;
+    for token in owned {
+        // 表在 `doom` 里不变（`reap` 之后没人再进这张任务表），故按 token 找得到。
+        let meta = {
+            let pies = task.pies.lock();
+            pies.iter()
+                .find(|p| p.token() == token)
+                .map(|p| match p {
+                    AnyPie::Hole(h) => Resource::Hole(h.meta().clone()),
+                    AnyPie::Pole(pl) => Resource::Pole(pl.meta().clone()),
+                    AnyPie::Nole(n) => Resource::Nole(n.meta().clone()),
+                })
+        };
+        // **锁外**封印：`seal` 只碰 Meta 自己的锁 + 唤醒站点，不需要任务表。
+        match meta {
+            Some(Resource::Hole(m)) => {
+                hole::seal(&m);
+                sealed += 1;
+            }
+            Some(Resource::Pole(m)) => {
+                pole::seal(&m);
+                sealed += 1;
+            }
+            Some(Resource::Nole(m)) => {
+                nole::seal(&m);
+                sealed += 1;
+            }
+            None => {}
+        }
+    }
+    sealed
+}
+
+/// 一件资源实体的强引用（封印要用它，且必须**先取出来、后放表锁**）。
+///
+/// 与 [`pole_meta`] 分开而不合并：那个只认 Pole（撤映射要它），这个三种都要
+/// （封印三种都要），而两者都从同一枚门闩上取——合起来会让 Pole 多带一个"我是不是
+/// 为了封印才取的"参数。
+enum Resource {
+    Hole(Arc<HoleMeta>),
+    Pole(Arc<PoleMeta>),
+    Nole(Arc<NoleMeta>),
 }

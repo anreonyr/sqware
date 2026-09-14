@@ -289,6 +289,52 @@ impl Port {
         W::decode(reply.as_ref().get(..len).ok_or_else(denied)?)
     }
 
+    /// **出话**：在对端入口孔上开一条会话，回信孔**由对端开、我借用**。
+    ///
+    /// 与 [`Port::open`] 的差别只有一件事——**回信孔挂在谁身上**；而这决定"对端不在
+    /// 了"能不能被看见（见 [`handshake::grant`] 上面那段）。`open` 是我自建（孔的
+    /// 生命与我绑定，对端先死我看不见）；`dial` 是对端开（它退场时内核的寿命边封印
+    /// 那扇门，我等在上面**当场醒**）。
+    ///
+    /// # 契约：首帧就是握手帧
+    ///
+    /// 本函数只把首帧推出去（地址槽**留零** —— 协议自己的 `encode` 决定这个槽在哪儿、
+    /// 什么时候写），随后在对端入口孔上等一枚句柄回来。故**调用方紧接着必须发那条
+    /// 触发握手的请求**（控制台是 `Open`，且那一条必须是首次 [`Port::call`]）。
+    /// 次序反了的表现是 `dial` 等到超时——不是死锁，是这条契约被违反。
+    ///
+    /// `within` = 等那枚句柄的上界（毫秒）。**必须有界**：对端若拒了这条会话（表满、
+    /// 报文不合），那枚号永远不会来。
+    ///
+    /// # Errors
+    /// - `Denied` — 入口门闩不在表里 / 无开辟者 / 对端没把句柄交回来
+    pub fn dial<W: Duet>(entry: &HolePie, first: &W::Req, within: usize) -> EnvResult<Port> {
+        let peer = mail::reserve(PieToken::new(entry.token()))?.1;
+        if peer.get() == 0 {
+            return Err(denied());
+        }
+        let mut wire = W::wire();
+        let sent = W::encode(first, PieToken::new(0), wire.as_mut());
+        entry.push(wire.as_ref().get(..sent).ok_or_else(denied)?)?;
+        let reply = crate::core::handshake::borrow(entry)?;
+        Ok(Port::adopt(peer, HolePie::from_token(entry.token()), reply))
+    }
+
+    /// 现成的一条会话：对端坐标 + 入口门闩 + **借来的**回信孔。
+    ///
+    /// 给 [`Port::dial`] 用；也给"句柄早就在手里"的场合（如启动期配给）留一条不再
+    /// 建孔的路。
+    pub fn adopt(peer: TaskId, entry: HolePie, reply: HolePie) -> Port {
+        Port {
+            to: To {
+                peer,
+                seed: PieToken::new(reply.token()),
+            },
+            entry,
+            reply,
+        }
+    }
+
     /// 关：只放下回信孔（**级联已含对端那枚副本**，不必再 `revoke`——那是旧
     /// `Channel` 的冗余动作，它一旦失败还会短路后续清理）。
     pub fn close(self) -> EnvResult<()> {
