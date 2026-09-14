@@ -19,7 +19,9 @@
 //! 注册换条路就变味；而信封那一格只能落在载荷最前，故帧首就是唯一两边都成立的位置。
 //!
 //! **名字锚在帧尾**（`entry` 之后）：它的结束由 `entry` 的位置给出、帧长由名字给——名字
-//! 多长帧多长，没有终止 NUL、没有填充。定长头 17 字节，去掉名字那一格**正好**是 [`HEAD`]。
+//! 多长帧多长，没有终止 NUL、没有填充。名字起点是 [`NAME_AT`]（报文绝对偏移），而
+//! 与名字长度无关的那一段是 [`HEAD`]（`op + entry`，**不含地址槽**——地址槽是一格"位置"、
+//! 不是一个"宽度"；把它算进宽度就会让读侧多跳一次，见下面那张偏移表的注）。
 //!
 //! # 回复（变长）
 //! ```text
@@ -90,11 +92,25 @@ pub const TEXT: usize = NAME_LEN - 1;
 /// （见模块头注）。机制只提供"按偏移读写"的口（[`Duet::ADDRESS_AT`]），偏移由协议说了算。
 pub const ADDRESS_AT: usize = 0;
 
-const OP_AT: usize = ADDRESS_AT + ADDRESS_LEN;
+// ── 一张偏移表，全部锚在**报文起点**（不是"帧起点"） ──────────────────────────
+//
+// 这是本协议唯一的布局真相，读侧写侧都只看它。**地址槽是一格"位置"，不是一个"长度"**：
+// 曾经把 `HEAD` 写成 `ENTRY_AT + TAIL`（那时 `ENTRY_AT` 从 `OP_AT = ADDRESS_AT + 8` 推），
+// 于是 `HEAD` 把地址槽那 8 字节算了进去；而 `decode` 与 `Directory::serve` 又各自"跳过"
+// 地址槽一次 ⇒ 名字整整少读 8 字节、落进帧外（实测症状：`BadName(Empty)` ⇒ 目录回
+// `Denied` ⇒ plic 登记失败）。表里每一格都从报文起点数，就没有"跳几次"这种账。
+
+/// 正文起点：地址槽之后（= 地址槽宽度）。
+const BODY_AT: usize = ADDRESS_AT + ADDRESS_LEN;
+/// `entry` 那一格的宽度（一个 `usize`）。
 const TAIL: usize = 8;
-const ENTRY_AT: usize = OP_AT + 1;
-/// 定长头宽度（`地址槽 + op + entry`）：名字起于此、止于帧尾；服务侧按它切帧。
-pub const HEAD: usize = ENTRY_AT + TAIL;
+/// 名字起点 —— **报文绝对偏移**：`[地址槽][op][entry][名字]`。
+///
+/// 表里每一格都锚在**报文起点**，写侧 `put` 也按绝对偏移落笔（帧首与报文首是同一处：
+/// `ADDRESS_AT = 0`），读侧照抄。这样"地址槽跳几次"不再是一笔账——它只是一格**位置**。
+pub const NAME_AT: usize = BODY_AT + 1 + TAIL;
+/// 定长头宽度（`op + entry`）：[`Query::len`] 的常数项，与名字长度无关。
+pub const HEAD: usize = 1 + TAIL;
 
 /// **一块内存要多大装得下任何一条帧**：定长头 + 名字上界。
 ///
@@ -186,10 +202,11 @@ pub enum ProtocolError {
 }
 
 impl Query {
-    /// 这一帧多少字节：定长头 + 名字文本长。**这就是"长度即边界"**——没有 `len` 字段，
-    /// 也没有补零的尾巴，故这个函数不读 `&self` 的任何运行时状态。
+    /// 这一帧多少字节（**含地址槽**，与表里那张偏移同一把尺子）：`地址槽 + op + entry + 名字`。
+    /// **这就是"长度即边界"**——没有 `len` 字段，也没有补零的尾巴，故这个函数不读 `&self`
+    /// 的任何运行时状态。
     pub fn len(&self) -> usize {
-        HEAD + self.name().map(|n| n.text().len()).unwrap_or(0)
+        BODY_AT + HEAD + self.name().map(|n| n.text().len()).unwrap_or(0)
     }
 
     /// 动词号（线上那一格）。
@@ -222,35 +239,39 @@ impl Query {
         }
     }
 
-    /// 把正文写进 `out`——**地址槽那一格跳过**（它归 [`Duet::encode`] 填，见模块头注）。
+    /// 把正文写进 `out` 的开头（**不写地址槽**：那是 [`Duet::encode`] 的事，它按
+    /// [`ADDRESS_AT`] 单独填那一格）。返**本帧的字节数**。
     ///
-    /// 返**本帧的字节数**。
+    /// 注意 `out` 是**帧缓冲**（[`ADDRESS_AT`] 是它在容器里的偏移，不是它内部的前缀）：
+    /// 故这里从头写起。
     fn put(&self, out: &mut [u8]) -> usize {
         let n = self.len();
         let Some(m) = out.get_mut(..n) else {
             return 0;
         };
-        m[OP_AT] = self.op();
-        m[ENTRY_AT..ENTRY_AT + TAIL].copy_from_slice(&self.entry().get().to_le_bytes());
+        m[BODY_AT] = self.op();
+        m[BODY_AT + 1..NAME_AT].copy_from_slice(&self.entry().get().to_le_bytes());
         if let Some(name) = self.name() {
-            m[HEAD..n].copy_from_slice(name.text());
+            m[NAME_AT..NAME_AT + name.text().len()].copy_from_slice(name.text());
         }
         n
     }
 
-    /// 解码：动词、名字、entry 三者都要过。**帧长即那一格**——名字起于定长头、止于
-    /// 帧尾，故不再有"终止 NUL + 全零填充"。地址槽那一格不看（它的读者是服务侧）。
+    /// 解码：动词、名字、entry 三者都要过。**帧长即那一格**——名字起于 [`NAME_AT`]、
+    /// 止于报文尾，故不再有"终止 NUL + 全零填充"。地址槽那一格不看（它的读者是服务侧）：
+    /// 本函数认的是**整条报文**（裸询问帧与服务调用载荷在字节上同形，见模块头注），
+    /// 故偏移一律从报文起点数——"跳过地址槽"这件事在这里只发生一次，而它就是 [`BODY_AT`]。
     pub fn decode(m: &[u8]) -> Result<Query, ProtocolError> {
-        if m.len() < HEAD {
+        if m.len() < NAME_AT {
             return Err(ProtocolError::BadName(NameError::Empty));
         }
-        let op = m[OP_AT];
+        let op = m[BODY_AT];
         if !(1..=6).contains(&op) {
             return Err(ProtocolError::BadOp);
         }
-        let text = &m[HEAD..];
+        let text = &m[NAME_AT..];
         let entry = PieToken(usize::from_le_bytes(
-            m[ENTRY_AT..ENTRY_AT + TAIL].try_into().unwrap_or([0u8; 8]),
+            m[BODY_AT + 1..NAME_AT].try_into().unwrap_or([0u8; 8]),
         ));
         // 只有 Register/Replace 带 entry；其余动词那一格必须为 0（真检查：帧里它存在）。
         if !matches!(op, x if x == Op::Register as u8 || x == Op::Replace as u8) && entry.get() != 0

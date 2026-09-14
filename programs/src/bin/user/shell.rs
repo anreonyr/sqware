@@ -313,13 +313,22 @@ fn console_entry() -> Option<usize> {
     let session = Directory::open(HolePie::from_token(dir)).ok()?;
     // 只要**入口 token**，不要 `connect` 的回信通道：后者要先建再断，而
     // `disconnect` 会 release 掉刚拿到的入口——实测踩过这个坑。
-    let token = session.connect_token(console::SERVICE).ok()?.get();
-    if token != 0 {
-        CONSOLE_ENTRY.store(token, Ordering::Relaxed);
-        Some(token)
-    } else {
-        None
+    //
+    // **有界重试**：`Connect` 的回复可能合法地是"空入口"（`Reply::Connected { entry: 0 }`）
+    // ——那不是错误，是**服务还没注册**。本域排在 console 之后起，但"起来了"与"注册回目录了"
+    // 是两件事（服务自己的时序），故这里按 [`CONSOLE_RETRY`] 等它几次；等不到就返 `None`，
+    // 由调用方的下一次 flush 重来（缓存是空的，下次还会走到这里）。
+    for _ in 0..CONSOLE_RETRY {
+        if let Ok(t) = session.connect_token(console::SERVICE) {
+            let token = t.get();
+            if token != 0 {
+                CONSOLE_ENTRY.store(token, Ordering::Relaxed);
+                return Some(token);
+            }
+        }
+        let _ = sleep(Duration::from_millis(CONSOLE_RETRY_MS as u64));
     }
+    None
 }
 
 /// 打开一次目录会话（每次新建 reply hole；entry 只是重建句柄）。
