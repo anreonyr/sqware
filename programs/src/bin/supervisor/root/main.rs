@@ -47,9 +47,10 @@ use protocol::doom;
 use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay, Refer, Referred};
 use runtime::core::lock::Lock;
+use runtime::core::port::{Access, Policy, ship};
 use runtime::env::chrono;
 use runtime::env::mail::NolePie;
-use runtime::env::mail::{self, AnyPie as _, HolePie, PolePie};
+use runtime::env::mail::{self, AnyPie, HolePie, PolePie};
 use runtime::env::room::{self, exit, exit_with};
 use runtime::env::task as utask;
 
@@ -242,16 +243,20 @@ fn report(child: TaskId, up: &HolePie) -> Result<HolePie, Step> {
 
 /// 转授一枚门闩给子域，并把**对端侧**的句柄经下行孔配给它（配给 = `Pier`）。
 ///
-/// 这是本域对"我手里有一枚、某个子域需要它"的**唯一**出口：转授（`Accord`）+ 配给
+/// 这是本域对"我手里有一枚、某个子域需要它"的**唯一**出口：授出（`ship`）+ 配给
 /// （`Pier`）。失败即判死——配给没送到，子域会卡在等第一件配给上，症状比死更难看。
-fn hand_over(
+///
+/// 泛型于 `AnyPie`：配下去的三种资源都走这里（设备门闩是 `PolePie`、投递孔是
+/// `HolePie`、门铃是 `NolePie`）——权柄操作本就与资源种类无关，句柄由调用点给。
+fn hand_over<P: AnyPie>(
     down: &HolePie,
-    token: usize,
+    pie: &P,
     child: TaskId,
-    subset: env::Permission,
+    access: Access,
+    policy: Policy,
 ) -> Result<(), Step> {
-    let at_child = match PolePie::from_token(token).accord(child, subset) {
-        Ok(t) => t,
+    let at_child = match ship(pie, child, access, policy) {
+        Ok(to) => to.token(),
         Err(_) => return Err(19),
     };
     if Pier::new(at_child).push(down).is_err() {
@@ -267,35 +272,19 @@ fn hand_over(
 /// §3.4）。开在这里还顺带免掉一次"子域把孔交回父域"的逆向握手。
 fn hand_hole(
     down: &HolePie,
-    token: usize,
+    hole: &HolePie,
     child: TaskId,
-    subset: env::Permission,
+    access: Access,
+    policy: Policy,
 ) -> Result<(), Step> {
-    let at_child = match HolePie::from_token(token).accord(child, subset) {
-        Ok(t) => t,
+    let at_child = match ship(hole, child, access, policy) {
+        Ok(to) => to.token(),
         Err(_) => return Err(57),
     };
     if Pier::new(at_child).push(down).is_err() {
         return Err(58);
     }
     Ok(())
-}
-
-/// 转授子集的两个常用面：设备要读写，自描述只读。
-fn read_write() -> env::Permission {
-    env::Permission::READ | env::Permission::WRITE
-}
-
-fn read_only() -> env::Permission {
-    env::Permission::READ
-}
-
-fn read_vest() -> env::Permission {
-    env::Permission::READ | env::Permission::VEST
-}
-
-fn write_vest() -> env::Permission {
-    env::Permission::WRITE | env::Permission::VEST
 }
 
 /// 把一件**事实**交给子域：写进一枚一次性孔，按配给递出（用的是既有原语——
@@ -311,8 +300,8 @@ fn hand_name(down: &HolePie, name: &str, child: TaskId) -> Result<(), Step> {
     if hole.push(name.as_bytes()).is_err() {
         return Err(41);
     }
-    let at_child = match hole.accord(child, read_only()) {
-        Ok(t) => t,
+    let at_child = match ship(&hole, child, Access::READ, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => return Err(42),
     };
     if Pier::new(at_child).push(down).is_err() {
@@ -388,12 +377,24 @@ fn wire_uart(
     uart: usize,
     deliver: usize,
 ) -> Result<(), Step> {
-    hand_over(down, uart, child, read_write())?;
+    hand_over(
+        down,
+        &PolePie::from_token(uart),
+        child,
+        Access::READ | Access::WRITE,
+        Policy::NONE,
+    )?;
     refer_device(face.dir, child, CONSOLE_DEVICE)?;
     hand_name(down, CONSOLE_DEVICE, child)?;
     // **带 `VEST`**：本域读线程要拿一份，而门闩是 per-task 的 ⇒ 它必须能再授一次
     // （`Accord` 的门槛正是"源门闩持 `VEST`"）。
-    hand_hole(down, deliver, child, write_vest())
+    hand_hole(
+        down,
+        &HolePie::from_token(deliver),
+        child,
+        Access::WRITE,
+        Policy::VEST,
+    )
 }
 
 /// console 的配给：**只有投递孔**（READ 副本）。
@@ -407,7 +408,13 @@ fn wire_uart(
 /// 没有任何可等的东西。
 fn wire_console(down: &HolePie, child: TaskId, deliver: usize) -> Result<(), Step> {
     // **带 `VEST`**：输入线程要拿一份（理由同上）。
-    hand_hole(down, deliver, child, read_vest())
+    hand_hole(
+        down,
+        &HolePie::from_token(deliver),
+        child,
+        Access::READ,
+        Policy::VEST,
+    )
 }
 
 /// plic 收三件：PLIC 的寄存器、设备树本体、内核的 `irq` 门铃。
@@ -422,9 +429,28 @@ fn wire_plic(
     dtb: usize,
     irq: usize,
 ) -> Result<(), Step> {
-    hand_over(down, plic, child, read_write())?;
-    hand_over(down, dtb, child, read_only())?;
-    hand_over(down, irq, child, read_only())
+    hand_over(
+        down,
+        &PolePie::from_token(plic),
+        child,
+        Access::READ | Access::WRITE,
+        Policy::NONE,
+    )?;
+    hand_over(
+        down,
+        &PolePie::from_token(dtb),
+        child,
+        Access::READ,
+        Policy::NONE,
+    )?;
+    // 门铃是**一枚 Nole**（`docs/bell.md`）：听与应都在"取"这一侧，故只授 `READ`。
+    hand_over(
+        down,
+        &NolePie::from_token(irq),
+        child,
+        Access::READ,
+        Policy::NONE,
+    )
 }
 
 // ── 他杀服务（`kill` 的机制在核、政策在这里）─────────────────────────────
@@ -862,12 +888,22 @@ extern "C" fn main() -> ! {
         _ => exit_with(47),
     };
     // 控制孔与上行孔：**问答那一条链整条交给它**（主线程此后只走 `Connect`，见 [`my_entry`]）。
-    let w_control = match face.control.accord(watch_task, read_write()) {
-        Ok(t) => t,
+    let w_control = match ship(
+        &face.control,
+        watch_task,
+        Access::READ | Access::WRITE,
+        Policy::NONE,
+    ) {
+        Ok(to) => to.token(),
         Err(_) => exit_with(48),
     };
-    let w_up = match face.up.accord(watch_task, read_write()) {
-        Ok(t) => t,
+    let w_up = match ship(
+        &face.up,
+        watch_task,
+        Access::READ | Access::WRITE,
+        Policy::NONE,
+    ) {
+        Ok(to) => to.token(),
         Err(_) => exit_with(49),
     };
     // 投递孔与建域权：**带 `VEST`、不带 `CAGE`**。
@@ -875,13 +911,22 @@ extern "C" fn main() -> ! {
     //   - **不能带 `CAGE`**：带它的源会被**关住**（交出 = 授出方在交出期间不可用它），而 root
     //     留源副本正是为了重发时**再配一次**——一旦被关住，这一枚就再也授不出去（实测形状：
     //     重发卡在 `hand_over` 的 `Err(19)`，三次都用完预算）。它只往下授、不回授。
-    let vest_only = env::Permission::READ | env::Permission::WRITE | env::Permission::VEST;
-    let w_deliver = match deliver.accord(watch_task, vest_only) {
-        Ok(t) => t,
+    let w_deliver = match ship(
+        &deliver,
+        watch_task,
+        Access::READ | Access::WRITE,
+        Policy::VEST,
+    ) {
+        Ok(to) => to.token(),
         Err(_) => exit_with(52),
     };
-    let w_build = match build_right.accord(watch_task, vest_only) {
-        Ok(t) => t,
+    let w_build = match ship(
+        &build_right,
+        watch_task,
+        Access::READ | Access::WRITE,
+        Policy::VEST,
+    ) {
+        Ok(to) => to.token(),
         Err(_) => exit_with(53),
     };
     // **属主写权的委托**（§8.1.18）在本轮**没有消费者了**：它当年的唯一用途是让监护线程在

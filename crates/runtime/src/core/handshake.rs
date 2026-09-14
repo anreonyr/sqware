@@ -27,9 +27,9 @@
 //!
 //! 通道用完不回收：门闩由各任务的权限表保活到关机，启动通道没有后续语义。
 
-use env::{EnvError, EnvResult, NAME_LEN, Name, Permission, PieToken, TaskId, make_err};
+use env::{EnvError, EnvResult, NAME_LEN, Name, PieToken, TaskId, make_err};
 
-use crate::env::mail::AnyPie as _;
+use crate::core::port::{Access, Policy, ship};
 use crate::env::mail::{self, HolePie};
 
 /// 报文长度：1 字节 tag + 一个 u64。
@@ -244,10 +244,7 @@ impl Referred {
 /// **时序义务**：必须早于 `Hatch(child)`——否则子域起跑时 `moor()` 找不到它。
 pub fn dock(child: TaskId) -> EnvResult<HolePie> {
     let up = HolePie::unseal()?;
-    up.accord(
-        child,
-        Permission::READ | Permission::WRITE | Permission::VEST,
-    )?;
+    ship(&up, child, Access::READ | Access::WRITE, Policy::VEST)?;
     Ok(up)
 }
 

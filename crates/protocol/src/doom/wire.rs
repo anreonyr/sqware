@@ -21,7 +21,13 @@
 //! 谁发起谁备回信通道。
 
 use env::wire::NAME_LEN;
-use env::{Name, PieToken};
+use env::{EnvError, EnvResult, Name, PieToken, make_err};
+use runtime::core::port::Duet;
+
+/// 本协议的负码：无权 / 协议错（与内核码同表）。
+pub(crate) fn denied() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(-1))
+}
 
 /// 服务的名字（目录里登记的那一个；两端共用一份，不各写一遍）。
 pub const SERVICE: &str = "doom";
@@ -81,19 +87,29 @@ impl Ack {
 pub struct Kill {
     pub target: Name,
     /// 回信孔在本协议**服务侧**的 token（服务按此推回执）。
+    ///
+    /// 这是**通道字段**：`decode` 从报文里读出它，[`Duet::encode`] 按本端回信孔填入；
+    /// 客户端造的请求里它是 [`Kill::new`] 给的 0（客户端手里没有那枚 token）。
     pub ack: PieToken,
 }
 
+/// 回信地址在报文里的偏移（通道字段，见 [`Kill::ack`]）。
+const ACK_AT: usize = 1 + NAME_LEN;
+
 impl Kill {
-    pub const fn new(target: Name, ack: PieToken) -> Kill {
-        Kill { target, ack }
+    /// 造一条杀令。回信地址由 [`Duet::encode`] 填，故这里不带参数。
+    pub const fn new(target: Name) -> Kill {
+        Kill {
+            target,
+            ack: PieToken::new(0),
+        }
     }
 
+    /// 编码为线上消息（**不写通道字段**：`[33..41]` 留给 [`Duet::encode`]）。
     pub fn encode(&self) -> [u8; REQ_LEN] {
         let mut msg = [0u8; REQ_LEN];
         msg[0] = OP_KILL;
-        msg[1..1 + NAME_LEN].copy_from_slice(self.target.bytes());
-        msg[1 + NAME_LEN..].copy_from_slice(&self.ack.get().to_le_bytes());
+        msg[1..ACK_AT].copy_from_slice(self.target.bytes());
         msg
     }
 
@@ -103,12 +119,35 @@ impl Kill {
         if msg.len() < REQ_LEN || msg[0] != OP_KILL {
             return None;
         }
-        let bytes: [u8; NAME_LEN] = msg[1..1 + NAME_LEN].try_into().ok()?;
+        let bytes: [u8; NAME_LEN] = msg[1..ACK_AT].try_into().ok()?;
         let target = Name::from_bytes(bytes).ok()?;
-        let ack = usize::from_le_bytes(msg[1 + NAME_LEN..REQ_LEN].try_into().ok()?);
+        let ack = usize::from_le_bytes(msg[ACK_AT..REQ_LEN].try_into().ok()?);
         Some(Kill {
             target,
             ack: PieToken::new(ack),
         })
+    }
+}
+
+/// 报文对：一条杀令、一字节回执。回信地址写在 `[33..41]`（`ACK_AT`）。
+impl Duet for Kill {
+    type Req = Kill;
+    type Rep = Ack;
+    type Wire = [u8; REQ_LEN];
+
+    const REQ: usize = REQ_LEN;
+    const REP: usize = ACK_LEN;
+
+    fn wire() -> [u8; REQ_LEN] {
+        [0u8; REQ_LEN]
+    }
+
+    fn encode(req: &Kill, at: PieToken, out: &mut [u8]) {
+        out[..REQ_LEN].copy_from_slice(&req.encode());
+        out[ACK_AT..ACK_AT + 8].copy_from_slice(&at.get().to_le_bytes());
+    }
+
+    fn decode(buf: &[u8]) -> EnvResult<Ack> {
+        Ok(Ack::from_byte(*buf.first().ok_or_else(denied)?))
     }
 }

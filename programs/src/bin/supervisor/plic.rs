@@ -48,7 +48,6 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-use env::Permission;
 use programs::plic::{LINE_PRIORITY, Plic};
 use protocol::console::Console;
 use protocol::dispatch::client::Directory;
@@ -56,7 +55,8 @@ use protocol::irq::{self, Lines};
 use runtime::core::bell::Bell;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
-use runtime::env::mail::{self, AnyPie as _, HolePie, NolePie, PolePie};
+use runtime::core::port::{Access, Policy, ship};
+use runtime::env::mail::{self, HolePie, NolePie, PolePie};
 
 /// `irq` 门铃的等待上界（毫秒）——**不能是无穷**：注册报文要有人听（见模块头）。
 /// 中断路径不受它影响（铃一响即醒）。
@@ -87,8 +87,8 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => runtime::env::room::exit_with(3),
     };
-    let at_parent = match down.accord(sire, Permission::READ | Permission::WRITE) {
-        Ok(t) => t,
+    let at_parent = match ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(4),
     };
     if Quay::new(at_parent).push(&up).is_err() {

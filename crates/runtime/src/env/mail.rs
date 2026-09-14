@@ -382,14 +382,20 @@ impl HolePie {
     /// 消费它，故 pend 可能是陈旧的）。所以这里按 **deadline 循环**：只有 `clock()`
     /// 真的走完 `millis` 才报 Busy，否则带着剩余时间重试。
     pub fn pull_timeout(&self, buf: &mut [u8], millis: usize) -> EnvResult<usize> {
+        self.pull_timeout_from(buf, millis).map(|(n, _)| n)
+    }
+
+    /// 同 [`HolePie::pull_timeout`]，但一并取回**发送者**——「有界等」与「认来源」
+    /// 是同一次收的两个事实，分成两趟取会把竞态留在中间。
+    pub fn pull_timeout_from(&self, buf: &mut [u8], millis: usize) -> EnvResult<(usize, TaskId)> {
         let deadline = now_ns()?.saturating_add((millis as u64).saturating_mul(1_000_000));
         loop {
-            match pull(self.token, buf.as_mut_ptr(), buf.len()) {
-                Ok(n) => return Ok(n),
+            match pull_from(self.token, buf.as_mut_ptr(), buf.len()) {
+                Ok(v) => return Ok(v),
                 Err(e) if e.source.is_busy() => {
                     let now = now_ns()?;
                     if now >= deadline {
-                        return pull(self.token, buf.as_mut_ptr(), buf.len());
+                        return pull_from(self.token, buf.as_mut_ptr(), buf.len());
                     }
                     let remain_ms = ((deadline - now) / 1_000_000).max(1) as usize;
                     let _ = self.wait(HoleDir::Pull, remain_ms)?;

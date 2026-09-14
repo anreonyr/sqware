@@ -1,25 +1,26 @@
 //! irq 客户端：连上驱动 → 两个动词（登记 / 写属主）。
 //!
 //! 与 `dispatch`/`console`/`doom` 的客户端同形：入口门闩由目录 `Connect` 转授，
-//! 回信孔由**调用方自备**（`unseal` + `Accord` 给驱动，把对端那个 token 随每条请求
-//! 交出去）。
+//! 回信孔由**一次往返**（[`Port`]）自备，它对驱动侧的那枚句柄随每条请求交出。
+//!
+//! **本协议每条请求新开一枚回信孔**（[`Line::ask`]）：驱动不需要会话表，它只认识
+//! "这条回执寄到哪"。代价是每次调用多两次 envcall（开孔 / 放下），收益是对"迟到
+//! 回复污染下一趟"免疫——与 console/dispatch 那种"开一次、长期用"的会话不同。
+//!
+//! 线号不在报文里：线 = 名字的函数，由驱动自己解出来（`docs/driver.md` §12 甲）。
 
-use env::{EnvError, EnvResult, Name, Permission, PieToken, TaskId, make_err};
+use env::{EnvResult, Name, PieToken, TaskId};
 
-use runtime::env::mail::AnyPie as _;
+use runtime::core::port::{Access, Policy, Port, ship};
 use runtime::env::mail::{self, HolePie};
 
+use super::wire::denied;
+use super::{Ack, Request, SERVICE};
 use crate::dispatch::client::Directory;
-
-use super::{ACK_LEN, Ack, Request, SERVICE};
 
 /// 等回执的上界（毫秒）。驱动在同一台机器上做一次查表 + 回执（至多再碰一次 PLIC 寄存器），
 /// 远超实际耗时；有上界才能把"回执被丢"暴露成失败，而不是永久挂起。
 const ACK_TIMEOUT_MS: usize = 1000;
-
-fn denied() -> erra::Error<EnvError> {
-    make_err(EnvError::from_raw(-1))
-}
 
 /// 驱动的一条会话：入口门闩的副本 + **驱动是谁**。
 pub struct Line {
@@ -52,40 +53,36 @@ impl Line {
 
     /// 登记：`session` 是**本任务**的会话门闩（驱动往它投线号）。
     ///
-    /// 本函数负责把 `session` 的 WRITE 副本授给驱动——门闩是 per-task 的，这是唯一
+    /// 本函数负责把 `session` 的 `WRITE` 副本授给驱动——门闩是 per-task 的，这是唯一
     /// 能跨任务交接的方式（"客户端递出门闩"，§3.2.4）。
     pub fn register(&self, name: &Name, session: &HolePie) -> EnvResult<Ack> {
-        let at_driver = session.accord(self.owner, Permission::WRITE)?;
-        self.ask(|ack| Request::register(*name, at_driver, ack))
+        let to = ship(session, self.owner, Access::WRITE, Policy::NONE)?;
+        self.ask(Request::register(*name, to.token()))
     }
 
     /// 写属主：这个名字归 `who`。**只有 root 会调它**（驱动认推者是不是自己的 `sire`）。
     pub fn refer(&self, name: &Name, who: TaskId) -> EnvResult<Ack> {
-        self.ask(|ack| Request::refer(*name, who, ack))
+        self.ask(Request::refer(*name, who))
     }
 
     /// 委托写权：这个名字的属主，从此也可以由 `who` 写。**同样只有 root 会调它**——
     /// 它是"root 把自己那份写权借给自己域里的一个线程"，与 [`Line::refer`] 同一条判据入口。
     pub fn delegate(&self, name: &Name, who: TaskId) -> EnvResult<Ack> {
-        self.ask(|ack| Request::delegate(*name, who, ack))
+        self.ask(Request::delegate(*name, who))
     }
 
-    /// 一次往返：备回信孔 → 报文 → 有界等回执 → **封印回信孔**。
-    fn ask(&self, build: impl FnOnce(PieToken) -> Request) -> EnvResult<Ack> {
-        let ack = HolePie::unseal()?;
-        let at_driver = ack.accord(self.owner, Permission::WRITE)?;
-        let msg = build(at_driver).encode();
-        // 推送**会阻塞**（槽满即等，见 `HolePie::push`）：驱动一定会看到这条报文。
-        // 但"看到"不是"办到"——回执才是，故下一步是等它。
-        HolePie::from_token(self.entry.get()).push(&msg)?;
-        let mut status = [0xFFu8; ACK_LEN];
-        let got = ack.pull_timeout(&mut status, ACK_TIMEOUT_MS);
-        // 回信孔**用完即封印**：一次往返一条回执，此后它没有读者了。不封印的话，驱动
-        // 迟到的 `push` 会落在一条没人排空的槽上——驱动的推送是阻塞的，那会把它挂住。
-        let _ = ack.seal();
-        match got {
-            Ok(ACK_LEN) => Ack::from_byte(status[0]).ok_or_else(denied),
-            _ => Err(denied()),
-        }
+    /// 一次往返：开回信孔 → 报文 → 有界等回执 → **放下回信孔**。
+    ///
+    /// 推送**会阻塞**（槽满即等，见 `HolePie::push`）：驱动一定会看到这条报文。
+    /// 但"看到"不是"办到"——回执才是。
+    ///
+    /// 收尾是 `close`（放下），不是旧版的 `seal`：驱动每请求只推一条回执，迟到的
+    /// 那条落在空槽里、下一请求已换新孔，故这里不必再借"封印"去断它的路。
+    fn ask(&self, request: Request) -> EnvResult<Ack> {
+        let entry = HolePie::from_token(self.entry.get());
+        let port = Port::open(&entry)?;
+        let ack = port.call::<Request>(&request, ACK_TIMEOUT_MS)?;
+        port.close()?;
+        Ok(ack)
     }
 }

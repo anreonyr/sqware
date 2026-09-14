@@ -187,16 +187,12 @@ impl Directory {
 
 // ── 协议适配：线格式 → 核心原语（唯一碰内核处，经 runtime 的机制）──
 
-use env::{Permission, PieToken, TaskId};
+use env::{PieToken, TaskId};
 
-use runtime::env::mail;
+use runtime::core::port::{Access, Policy, ship};
+use runtime::env::mail::{self, HolePie};
 
 use super::wire::{MSG_LEN, Reply, Request};
-
-/// 目录转授给调用方的权限：push 请求 + pull 回复。
-fn caller_permission() -> Permission {
-    Permission::READ | Permission::WRITE
-}
 
 /// 查本任务表里该 token 的 `vestor`（授与人）——注入给核心的**事实来源**。
 ///
@@ -257,12 +253,14 @@ impl Directory {
                 None => Reply::NotFound,
             },
             Request::Connect { name } => match self.entry_of(name) {
-                Some(entry) => match mail::accord(
-                    PieToken::new(entry),
+                // 转授给调用方：push 请求 + pull 回复（`Access` 两族分开写）。
+                Some(entry) => match ship(
+                    &HolePie::from_token(entry),
                     TaskId::new(caller),
-                    caller_permission(),
+                    Access::READ | Access::WRITE,
+                    Policy::NONE,
                 ) {
-                    Ok(token) => Reply::Connected { entry: token },
+                    Ok(to) => Reply::Connected { entry: to.token() },
                     Err(_) => Reply::Denied,
                 },
                 None => Reply::NotFound,

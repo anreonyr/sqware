@@ -17,11 +17,11 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-use env::Permission;
 use protocol::dispatch::MSG_LEN;
 use protocol::dispatch::client::Directory;
 use runtime::core::handshake::{self, Pier, Quay};
-use runtime::env::mail::{AnyPie as _, HolePie};
+use runtime::core::port::{Access, Policy, ship};
+use runtime::env::mail::HolePie;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -43,8 +43,8 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => runtime::env::room::exit_with(4),
     };
-    let at_parent = match down.accord(sire, Permission::READ | Permission::WRITE) {
-        Ok(t) => t,
+    let at_parent = match ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(5),
     };
     if Quay::new(at_parent).push(&up).is_err() {

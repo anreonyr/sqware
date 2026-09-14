@@ -3,13 +3,13 @@
 # sqware examine 验收门（原名 e2e）——nu 版，取代 scripts/examine.sh。
 #
 # 判据五条，缺一不可（前四条与 .sh 版逐条相同；第 5 条是本轮加的，见它那一行）：
-#   1) 逐步生效：十三条命令（默认档；harden/框架档十七条）**逐个等它的输出出现**再发下一条
+#   1) 逐步生效：十四条命令（默认档；harden/框架档十八条）**逐个等它的输出出现**再发下一条
 #      （expect 式），不是按墙钟盲排；
 #      每步都有独立超时，失败能指到具体哪一条。
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) marker 齐全（默认档二十条；harden/框架档在其上再加非默认档那五条），含
+#   4) marker 齐全（默认档二十一条；harden/框架档在其上再加非默认档那五条），含
 #      `task: all tasks exited, system halted` 与
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
 #      `plic: line 10 delivered`。
@@ -181,6 +181,11 @@ const STEPS = [
   # 服务侧那一半不在这一步的期望串里：它要求同一句话出现**两次**，故走 `checks` 的
   # `instances`（见 `run_once` 与 `INSTANCE_CHECKS`）——`hit` 只问在不在，问不出条数。
   {cmd: "kill console", pat: "shell: console reconnected"}
+  # 授出（`docs/port.md` §3、§9）：**十六格逐格核**（`Access` 四取值 × `Policy` 四取值）
+  # ——十五格授给自己并用 `Collect` 读回权限；第十六格是空集，必须**本地拒**。
+  # 末位 `source=1` 是另一条断言的牙：`Port::call` 只认对端推来的回复，冒名的那条被拒。
+  # 放在 `kill console` 之后：它要 `Spawn` 一个子线程，而此刻服务重启刚好试过任务生灭。
+  {cmd: "ship",      pat: "ship: cells=15 empty=1 source=1"}
   {cmd: "exit",      pat: "task: all tasks exited, system halted"}
 ]
 
@@ -217,8 +222,8 @@ const INSTANCE_CHECKS = [
   {pat: 'console: uart ok',    n: 2, what: "console 实例（引导期+重发）"}
 ]
 
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16]
-const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16, 17]
+const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 
 # 默认档的构建 features **恒为空串**：那是 `FLAVORS` 里 `default` 那一行（构造上的保证，
 # 不是旋钮，见头注「按档构建」）。
@@ -241,6 +246,12 @@ const MARKERS = [
   # 按 unseal 时的 mtu 预分配）；"问长度"（`peek`）不动槽 ⇒ 缓冲装不下被拒之后那条消息
   # 仍在，换够大的缓冲仍取得回整条。三个数全 1 才算。
   "hole: len short=1 long=1 nofit=1"
+  # 授出（`docs/port.md` §3、§9）：`cells=15` = 十六格里**十五格**都授得出、且 `Collect`
+  # 读回的权限与签名说的子集**逐格相等**；`empty=1` = 第十六格（`Access::NONE +
+  # Policy::NONE`）本地拒（空集不发 envcall）；`source=1` = `Port::call` 拒了冒名的回复
+  # （发送者不是 `to.who()`）。它的牙在第一格与最后一格：把空集的本地拒去掉、或把来源
+  # 校验去掉，这两个数各自变 0。
+  "ship: cells=15 empty=1 source=1"
   "sleep 300ms"
   "woke"
   "clock [0-9]"
@@ -346,7 +357,7 @@ const FLAVORS = [
 # 按名字取那一行（档案的全部事实都从它读；名字写错就该当场炸，故 `first` 之后必有值）。
 def flavor [name: string] { $FLAVORS | where name == $name | first }
 
-# 本档要核的 marker：`base` = `MARKERS` 那十九条 + 中断链（**每一档都核**：中断面不是某一档的
+# 本档要核的 marker：`base` = `MARKERS` 那二十条 + 中断链（**每一档都核**：中断面不是某一档的
 # 附属品）；`extra` = 非默认档多跑三步的判词；`case` = 用例汇总行（判据是**全过**——
 # `0 fail` 且 `ok` 数 == 用例总数：零用例的症状比失败更坏，绿着、什么都没测，故必须断言
 # 具体条数）。

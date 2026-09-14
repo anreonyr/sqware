@@ -89,14 +89,14 @@ slot = (class << 32) | index      index = 变体在枚举里的**声明顺序**
 - **薄的边界**：一次调用一个函数、零业务逻辑（`runtime/src/env/mod.rs:1-2`；`env/mail.rs:33`
   自称「裸函数层」）。
 - **厚的边界**：组合与封装（`runtime/src/core/mod.rs:11-13` 明写「`HolePie` 是薄句柄；
-  `Channel` 是厚生命周期封装」）。
+  `Port` 是厚的一次往返」）。
 
 同一个 `Push` 在三层的样子：
 
 ```text
 薄   mail::push(token, msg, len)     一次 MailCall::Push，Busy 原样返回
 中   HolePie::push                   在 Busy 上转 wait(Push, usize::MAX) 循环
-厚   Channel::open / close           = unseal + accord(R|W) / revoke + release
+厚   Port::open / close              = unseal + ship(WRITE) / release
 ```
 
 同类：`core::unit::closure` ＝ `spawn` + `hatch` + `Completion` 两位置位仲裁
@@ -120,7 +120,7 @@ slot = (class << 32) | index      index = 变体在枚举里的**声明顺序**
 | 裁决 | 定论 | 理由 |
 |---|---|---|
 | 协议搬出 ABI crate | 新建 `crates/protocol` | env 里躺着 284 行内核读不到的协议 |
-| protocol 依赖 runtime 而非 env | 要用机制（`HolePie` / `Channel`） | 「机制在运行时、语义在协议」的编译期形态 |
+| protocol 依赖 runtime 而非 env | 要用机制（`HolePie` / `Port`） | 「机制在运行时、语义在协议」的编译期形态 |
 | class 5 / 7 拆轴 | Mail ＝ 数据、Pie ＝ 权柄 | 正交判据在臂的调用集合里 |
 | `Doom` 落 class 0（词族 doom） | 与 `Reap` 同族成对：**自杀 ↔ 他杀** | 追加在末尾——判别号 = 声明顺序，插中间即改 ABI（`fid.rs:78-94`） |
 | 他杀**不进** `UnitCall` | 判据是血缘（domain 轴），不是执行单元 | `Join`/`Spawn` 那一轴管"产/放行/等"，"杀"与 `Reap` 同族 |

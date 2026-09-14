@@ -25,7 +25,8 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 | `work/mail/nole.rs` | 无载荷载体：`state` + `owner` + 听者面（`id`/`life`/一位 `ring`）、`seal`（见 [bell.md](bell.md)） |
 | `runtime/switcher/envcall/mail.rs` | class 5 数据轴入口：判权 → 长度校验 → **锁外**暂存 → `try_*` → 盖章 |
 | `runtime/switcher/envcall/pie.rs` | class 7 权柄轴：`Unseal*` / `Open` / `Shut` / `Seal` / `Narrow` / `Release` 的编排 |
-| `crates/runtime/src/env/mail.rs` | 用户侧裸函数层 + `HolePie`/`PolePie`/`NolePie` + `AnyPie` + `pull_timeout` |
+| `crates/runtime/src/env/mail.rs` | 用户侧裸函数层 + `HolePie`/`PolePie`/`NolePie` + `AnyPie` + `pull_timeout`/`pull_timeout_from`/`peek` |
+| `crates/runtime/src/core/port.rs` | 用户侧**用法**层：授出（`ship`）、坐标（`To`）、一次往返（`Port`）、报文对（`Duet`）——见 [port.md](port.md) |
 
 | | Hole | Pole | Nole |
 |---|---|---|---|

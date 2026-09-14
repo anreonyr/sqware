@@ -263,7 +263,7 @@ sender 授给目录的那一枚**（`Reserve(reply).vestor == caller`），否�
 | 变化 | 内容 |
 |---|---|
 | 报文 | `Refer` 多一种线形 `Reserve{who, name}`（tag 5，41B；`Refer` 的 9B 编码不动，additive） |
-| 控制线程 | `pull(C)` → **先 `reserve(name, who)`、再 `H.accord(who)`** → `Referred`（先记预约再开门，客户端拿到门闩时预约必已就位） |
+| 控制线程 | `pull(C)` → **先 `reserve(name, who)`、再 `ship(H, who, R\|W, NONE)`** → `Referred`（先记预约再开门，客户端拿到门闩时预约必已就位） |
 | 注册 | 只填已预约的行；`publisher != caller` → `Denied`；`vestor(entry) != caller` → `Denied` |
 | 未预约的名字 | `Register` → `NotFound`（名字根本不在命名空间里） |
 | 注销 | 只摘实例、**行保留**——名字仍归预约者，可再次注册 |
@@ -281,7 +281,7 @@ sender 授给目录的那一枚**（`Reserve(reply).vestor == caller`），否�
 
 ```text
 root:
-  1. 逐子域串行：dock(child)（开上行孔 + Accord(child, R|W|VEST)）
+  1. 逐子域串行：dock(child)（开上行孔 + ship(up, child, R|W, VEST)）
      → Build + Spawn(Held) → Hatch
      → Quay::pull（子域控制孔在父侧的句柄；校验 Reserve(句柄).vestor == child）
   2. 客户端要目录能力时：`Refer{who, name}` → dir 控制孔；`Referred{token}` ← dir 上行孔
@@ -289,13 +289,13 @@ root:
   ※ root 全程不持任何服务孔（见 docs/root.md §10）
 
 dir:   moor() 认上行孔 → UnsealHole 自建请求门闩 H（**只自己持**）
-       → UnsealHole 自建控制孔 C（装得下名字）→ Accord(root, R|W) → Quay{C 在父侧的句柄}
-       → Spawn 控制线程（Held）→ Accord(H/C/上行孔 三枚副本给它) → Hatch
-       → 主线程服务循环；控制线程 pull(C) → **先 reserve(name, who)** → H.accord(who, R|W) → Referred
-echo:  moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}
+       → UnsealHole 自建控制孔 C（装得下名字）→ ship(C, root, R|W, NONE) → Quay{C 在父侧的句柄}
+       → Spawn 控制线程（Held）→ ship 三份（H、C、上行孔 各一枚副本）→ Hatch
+       → 主线程服务循环；控制线程 pull(C) → **先 reserve(name, who)** → ship(H, who, R|W, NONE) → Referred
+echo:  moor() → UnsealHole 自建控制孔 → ship(control, root, R|W, NONE) → Quay{句柄}
        → UnsealHole 自建入口门闩 → Pier::pull → Directory::open（dir_id = Reserve(门闩).owner）
-       → Directory::register("echo", entry)（内部 Accord(entry, dir_id, R|W|VEST) + 回信 hole）
-shell: moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}
+       → Directory::register("echo", entry)（内部 ship(entry, dir_id, R|W, VEST)；回信孔归 `Port`）
+shell: moor() → UnsealHole 自建控制孔 → ship(control, root, R|W, NONE) → Quay{句柄}
        → Pier::pull → Directory::open(门闩)
 ```
 
@@ -382,7 +382,7 @@ req echo -> "ifmmp.tfswjdf..."     # hello-service 逐字节 +1，走新协议
 ```
 
 `req` 路径：`Directory::open`（收下启动期握手配给的目录请求门闩，自造回信 hole 并
-`Accord` 给目录）→ `Connect("echo")`（目录 `gate::accord` 转授入口门闩）→ 调用方
+授出给目录）→ `Connect("echo")`（目录 `gate::accord` 转授入口门闩）→ 调用方
 `Reserve(entry).owner` 求服务 id → `UnsealHole` + `Accord` 给该 id（自带回信通道）
 → `Push`（前 8 字节回信 token）→ echo `+1` → `Push` 回信 → `Pull` →
 `disconnect`（`Revoke` + `Release`）。

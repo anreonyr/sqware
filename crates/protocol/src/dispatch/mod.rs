@@ -9,7 +9,7 @@
 //! （wire 出的东西在这里一并转出）——协议拆三块是**内部**整理，不动调用方的进口。
 //!
 //! 依赖方向：`protocol → runtime → env`。客户端与服务端都用 `runtime::env::mail`
-//! 的门闩原语 + `runtime::core::channel` 的回信通道；协议层**不碰** `env::ecall`。
+//! 的门闩原语 + `runtime::core::port` 的一次往返；协议层**不碰** `env::ecall`。
 
 pub mod client;
 pub mod server;
@@ -17,4 +17,7 @@ pub mod wire;
 
 pub use client::{Directory, PAYLOAD_LEN, Service};
 pub use server::{DirectoryError, Release, Vestor, release_pie, vestor_of};
-pub use wire::{MSG_LEN, Name, NameError, Op, ProtocolError, REPLY_AT, Reply, Request};
+pub use wire::{
+    E_DENIED, E_NOT_FOUND, E_TAKEN, MSG_LEN, Name, NameError, Op, ProtocolError, REPLY_AT, Reply,
+    Request,
+};

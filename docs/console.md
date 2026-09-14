@@ -52,17 +52,21 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 `0` 恒表示「无会话」**——这是 id 值域约定，不是字段哨兵（`wire.rs:29-32`、`server.rs:227-232`）。
 
 **第一版多开的那枚「数据孔」的下场**：字段已从 `Request::Open` 里删掉（客户端从不推、
-服务从不读，从第一天就是死码），省下每次开会话一次 `Channel::open`（`wire.rs:25-27`）。
+服务从不读，从第一天就是死码），省下每次开会话一次自建孔（`wire.rs:25-27`）。
 **但它的字节区没有收口**：`[16..24]` 既不在字段表里，也不在任何保留检查里——`decode` 只查
 `m[1..8]`，另一半是**空区间、恒不触发**（`wire.rs:175-179`）。这 8 字节现在无文档、无检查。
 
 ## 4 · 结构
 
-**客户端**：`Console { entry: HolePie, client: usize, reply: Channel }`（`client.rs:50-62`）；
-`Channel` ＝「我这枚孔 + 它在对端的号（`at_peer`）」（`crates/runtime/src/core/channel.rs:19-36`）。
-`Readline = Line(String) | Eof | Interrupt`（`client.rs:38-45`）。**生命周期是显式的**：
-`HolePie` 没有 `Drop`，它是句柄值不是 RAII 守卫，所以资源由 `close` 显式放、两枚孔随进程退出
-由内核回收（`client.rs:14-18`）。
+**客户端**：`Console { port: Port, client: usize }`（`crates/protocol/src/console/client.rs`）；
+`Port` ＝「一次往返」——入口门闩（借入）+ 回信孔（自有）+ 对端坐标（`docs/port.md` §4）。
+`Readline = Line(String) | Eof | Interrupt`。**生命周期是显式的**：`HolePie` 没有 `Drop`，
+它是句柄值不是 RAII 守卫，所以资源由 `close` 显式放、两枚孔随进程退出由内核回收。
+
+报文对的形状由 `impl Duet for Request` 说（`wire.rs`）：`REQ = REP = MSG_LEN`，回信地址
+写在 `[8..16]`——**只写在 `Open` 那一条上**（服务把回信孔记进会话表，此后每条请求照表推），
+其余动词那一格必须是 0。那条规矩因此不是纪律而是编码：`Duet::encode` 只对 `Open` 落地址，
+`Request::encode` 一个字节都不碰它。
 
 **服务侧**：`State { slots: [Option<Slot>; 8], reading: Option<Reading>, pending, term }`
 （`server.rs:176-182`）；`Slot` 只存 **token 值**不存句柄（token 是 `Copy`，`server.rs:70-77`）。
@@ -76,10 +80,11 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 
 ## 5 · 时序：`Open → Write → ReadLine → Close`
 
-1. **Open**：客户端 `Channel::open(server)`（unseal + `accord`）→ 服务 id 由
-   `mail::reserve(entry).1`（`owner`）求得（`client.rs:69-76`）→ `push(Open{reply: at_peer})`
-   → 服务建槽、回 `Ok{client = i+1}` 且记下 `to_client`（`server.rs:243-255`）→ 请求线程用该
-   token `push`（`console.rs:167-174`）→ 客户端 `pull_timeout(1000ms)` 收（`client.rs:104-109`）。
+1. **Open**：客户端 `Port::open(entry)`——服务 id 由 `mail::reserve(entry).1`（`owner`）求得，
+   自建回信孔并把它的 `WRITE` 授给服务；随后 `port.call(Request::open(), 1000ms)` 把**回信
+   地址**随报文交出 → 服务建槽、回 `Ok{client = i+1}` 且记下 `to_client`（`server.rs:243-255`）
+   → 请求线程用该 token `push`（`console.rs:167-174`）→ 客户端在有界等里收下，并**核回复
+   来源**（必须是 `Port` 认下的那个对端）。
 2. **Write**：按 ≤ 24 B 分片，各一次往返 → 服务 `write`：若有会话正在等读，先 `\r\x1b[K`
    擦当前行、打印、再 `redraw`（`\r\x1b[K + prompt + 缓冲 + 光标定位`，`server.rs:286-316,
    346-359`）→ 回 `Ok` 即「已落屏」。
@@ -97,8 +102,8 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 
 | 不变量 | 违反会怎样 | 谁守着 |
 |---|---|---|
-| 一条请求孔 + 一条回信孔（**没有数据孔**） | 开会话多一次 `Channel::open`；死码复归 | `console/mod.rs:18-20`、`wire.rs:25-27` |
-| 交出去的必须是 `at_peer` | 服务 `find` 落空 → `Denied` → 客户端白等满 1s 后静默降级直连设备 | `client.rs:82-88` |
+| 一条请求孔 + 一条回信孔（**没有数据孔**） | 开会话多一次自建孔；死码复归 | `console/mod.rs:18-20`、`wire.rs:25-27` |
+| 回信地址由 `Duet::encode` 填、且**只在 `Open`** | 服务把带地址的 `Write` 当坏报文 ⇒ **不回**（`to_client` 为 `None`）⇒ 客户端白等满上界 | `wire.rs` 的 `impl Duet`、`server.rs` 的 `decode` |
 | 只有持 token 的 task 能推 ⇒ **只有请求线程碰孔** | 整行永远递不出去，客户端阻塞在无上界 `pull` 上（现象极具误导性：逐键重绘全对，回车之后什么都没有） | `console.rs:16-26`、`server.rs:32-33` |
 | `Write` 同步（`Ok` ＝ 已落屏），且 prompt 先写后读 | 提示符憋在孔里，用户对着空行打字 | `client.rs:6-10,135-137` |
 | 只在有会话等读时才碰设备；主线程等待不能无穷 | 抢走 shell 的字节（`spawn` 变 `sawn`）；或整行搁浅在共享槽里 | `console.rs:31-36,74-79` |
@@ -112,9 +117,9 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 |---|---|---|
 | `ReadLine` 阻塞还是登记 | **只登记不阻塞** | 就地阻塞 ⇒ 等输入期间别人的 `Write` 排在请求孔里显示不出来；「别的程序能打印」正是控制台存在的理由（`server.rs:5-7,219`） |
 | 整行怎么交付 | **经共享态交接**，只有主线程碰孔 | 跨 task 交接句柄两次都被拒；`Lock<State>` 本来就两线程共写，加一格不引新机制（`console.rs:16-29`） |
-| 回信孔交哪个号 | **`at_peer`** | `push` 在**推者自己**的表里 `find`（`client.rs:82-88`） |
+| 回信孔交哪个号 | **对端表里的那一枚**（`To::token()`） | `push` 在**推者自己**的表里 `find`；地址由 `Port` 持有、调用方写不出（`docs/port.md` §4） |
 | 数据孔 | **删** | 客户端从不推、服务从不读（`wire.rs:25-27`） |
-| 会话寿命 | **开一次活到进程结束** | 旧版每条输出 2 × `Channel::open` + 2 次往返，实测「输出延迟很高」（`shell.rs:91-97`） |
+| 会话寿命 | **开一次活到进程结束** | 旧版每条输出 2 × 开会话 + 2 次往返，实测「输出延迟很高」（`shell.rs` 的 `Terminal` 头注） |
 | 写缓冲 | **按行 / 128 字节合并** | 一条消息只带 24 B，`sq > ` 这种短串也要一次往返（`shell.rs:99-104`） |
 | 提示符 | **随 `ReadLine` 带**（并先同步写一次） | 重绘 ＝ `\r\x1b[K + prompt + 缓冲`；服务不知道 prompt 就只剩输入串（`server.rs:319-321`） |
 | 非 UTF-8 载荷 | `Denied` | 逐字节写会把转义串打成碎片（`server.rs:309-314`） |

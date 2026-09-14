@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! 主线程      H 服务循环（pull 请求 → 认人 → 处理 → push 回复）
-//! 控制线程    pull(C) → 预约（若报文带名字）→ H.accord(who, R|W) → push(上行孔, Referred)
+//! 控制线程    pull(C) → 预约（若报文带名字）→ ship(H, who, R|W) → push(上行孔, Referred)
 //! ```
 //!
 //! **为什么两个线程**：目录要同时听两条输入通道（客户端的请求孔 `H`、父域的引入
@@ -29,12 +29,13 @@ extern crate programs;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::{Permission, TeamId};
+use env::TeamId;
 use protocol::dispatch::server::{Directory, release_pie, vestor_of};
 use protocol::dispatch::{MSG_LEN, REPLY_AT};
 use runtime::core::handshake::{self, Quay, Refer, Referred};
 use runtime::core::lock::Lock;
-use runtime::env::mail::{AnyPie as _, HolePie};
+use runtime::core::port::{Access, Policy, ship};
+use runtime::env::mail::HolePie;
 use runtime::env::task as utask;
 
 /// 控制线程的三枚门闩（主线程写、控制线程读；`Hatch` 是同步点）。
@@ -63,10 +64,14 @@ extern "C" fn control_main() -> ! {
         if let Some(name) = refer.name() {
             DIR.with(|d| d.reserve(name, refer.who().get()));
         }
-        let token = entry
-            .accord(refer.who(), Permission::READ | Permission::WRITE)
-            .map(|t| t.get())
-            .unwrap_or(0);
+        let token = ship(
+            &entry,
+            refer.who(),
+            Access::READ | Access::WRITE,
+            Policy::NONE,
+        )
+        .map(|to| to.token().get())
+        .unwrap_or(0);
         if Referred::new(token).push(&up).is_err() {
             runtime::env::room::exit_with(21);
         }
@@ -98,11 +103,8 @@ extern "C" fn main() -> ! {
     // 时用，见 `docs/root.md` §5.3），而 `Accord` 的门槛是"源门闩持 `VEST`"——与
     // `handshake::dock()` 给上行孔带 `VEST` 是同一条理由（"子域要把这条孔再授给自己的
     // 控制线程"）。多一个转授权不改变这条孔的用途：它本来就只对父域开口。
-    let at_parent = match control.accord(
-        sire,
-        Permission::READ | Permission::WRITE | Permission::VEST,
-    ) {
-        Ok(t) => t,
+    let at_parent = match ship(&control, sire, Access::READ | Access::WRITE, Policy::VEST) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(5),
     };
 
@@ -112,19 +114,16 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => runtime::env::room::exit_with(6),
     };
-    let h2 = match entry.accord(
-        ctrl,
-        Permission::READ | Permission::WRITE | Permission::VEST,
-    ) {
-        Ok(t) => t,
+    let h2 = match ship(&entry, ctrl, Access::READ | Access::WRITE, Policy::VEST) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(7),
     };
-    let c2 = match control.accord(ctrl, Permission::READ | Permission::WRITE) {
-        Ok(t) => t,
+    let c2 = match ship(&control, ctrl, Access::READ | Access::WRITE, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(8),
     };
-    let u2 = match up.accord(ctrl, Permission::READ | Permission::WRITE) {
-        Ok(t) => t,
+    let u2 = match ship(&up, ctrl, Access::READ | Access::WRITE, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(9),
     };
     CTRL[0].store(h2.get(), Ordering::Relaxed);

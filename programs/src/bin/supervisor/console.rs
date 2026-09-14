@@ -49,14 +49,15 @@ extern crate programs;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::{Permission, TeamId};
+use env::TeamId;
 use protocol::console::MSG_LEN;
 use protocol::console::{Decoder, Reply, SERVICE, State, TICK_MS};
 use protocol::dispatch::client::Directory;
 use protocol::uart::Uart;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
-use runtime::env::mail::{AnyPie as _, HolePie};
+use runtime::core::port::{Access, Policy, ship};
+use runtime::env::mail::HolePie;
 use runtime::env::room::sleep;
 use runtime::env::task as utask;
 
@@ -181,8 +182,8 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => runtime::env::room::exit_with(4),
     };
-    let at_parent = match down.accord(sire, Permission::READ | Permission::WRITE) {
-        Ok(t) => t,
+    let at_parent = match ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(5),
     };
     if Quay::new(at_parent).push(&up).is_err() {
@@ -221,8 +222,8 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => runtime::env::room::exit_with(11),
     };
-    let at_input = match deliver.accord(input, Permission::READ) {
-        Ok(t) => t,
+    let at_input = match ship(&deliver, input, Access::READ, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(12),
     };
     DELIVER.store(at_input.get(), Ordering::Release);

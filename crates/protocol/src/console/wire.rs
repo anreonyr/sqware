@@ -15,6 +15,11 @@
 //! （按动词检查保留区）。故"非 Open 的 reply 必须是 0"是一条真检查，
 //! 而不是"必须等于某个魔数"。
 //!
+//! `[8..16]` 是**通道字段**（与 dispatch 的 `[49..57]`、uart 的 `[8..16]` 同一条规矩）：
+//! 它由收方从报文里读、由 [`Duet::encode`] 以**本端回信孔在对端表里的句柄**填入——
+//! 客户端造请求时给不出也不该给，故 `Request::Open` 的 `reply` 只在 `decode` 之后有意义
+//! （值上写 [`PieToken::new(0)`] 的那条路正是 `Request::open`）。
+//!
 //! # 只有一枚客户端孔
 //!
 //! ```text
@@ -24,12 +29,20 @@
 //!
 //! 第一版还开了一枚"数据孔"（客户端往上推整行）——**它从第一天起就是死码**：
 //! 客户端从不推、服务从不读（整行的交付走的是回信孔）。删掉它：每次开会话
-//! 少一次 `Channel::open`。
+//! 少一次自建孔。
 //!
 //! # 会话 id 从 1 起
 //!
 //! 0 恒为"无会话"：`Write{client:0}` / `ReadLine{client:0}` / `Close{0}` 一律
 //! `NoSuchClient`。这是 **id 值域**约定，不是字段哨兵（与 `PieToken(0)` 同款）。
+
+use env::{EnvError, EnvResult, PieToken, make_err};
+use runtime::core::port::Duet;
+
+/// 本协议的负码：无权 / 协议错（与内核码同表）。
+pub(crate) fn denied() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(-1))
+}
 
 /// 服务的名字（目录里登记的那一个；客户端与服务端共用一份，不各写一遍）。
 ///
@@ -98,6 +111,9 @@ pub enum ProtocolError {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Request {
     /// `reply` = 回信孔在服务侧的名字；0 = 非法。
+    ///
+    /// 客户端造不出来（[`Request::open`] 给的是 0）——它由 `decode` 从**通道字段**
+    /// `[8..16]` 读出，由 [`Duet::encode`] 按本端回信孔填入。
     Open { reply: usize },
     /// `payload[..len]` = 要写的字节。
     Write {
@@ -137,17 +153,22 @@ fn word(m: &[u8], at: usize) -> usize {
 }
 
 impl Request {
-    /// 编码为线上消息。
+    /// 开一次会话。回信地址是**通道字段**（见模块头），由 [`Duet::encode`] 填，
+    /// 故这里不带参数——客户端手里根本没有那枚 token。
+    pub const fn open() -> Request {
+        Request::Open { reply: 0 }
+    }
+
+    /// 编码为线上消息（**不写通道字段**：`[8..16]` 留给 [`Duet::encode`]）。
     pub fn encode(&self) -> [u8; MSG_LEN] {
         let mut m = [0u8; MSG_LEN];
-        let (op, rpeer, client, len) = match self {
-            Request::Open { reply } => (Op::Open, *reply, 0, 0),
-            Request::Write { client, len, .. } => (Op::Write, 0, *client, *len),
-            Request::ReadLine { client, len, .. } => (Op::ReadLine, 0, *client, *len),
-            Request::Close { client } => (Op::Close, 0, *client, 0),
+        let (op, client, len) = match self {
+            Request::Open { .. } => (Op::Open, 0, 0),
+            Request::Write { client, len, .. } => (Op::Write, *client, *len),
+            Request::ReadLine { client, len, .. } => (Op::ReadLine, *client, *len),
+            Request::Close { client } => (Op::Close, *client, 0),
         };
         m[0] = op as u8;
-        m[REPLY_PEER_AT..REPLY_PEER_AT + 8].copy_from_slice(&rpeer.to_le_bytes());
         m[CLIENT_AT..CLIENT_AT + 8].copy_from_slice(&client.to_le_bytes());
         m[LEN_AT..LEN_AT + 8].copy_from_slice(&(len as u64).to_le_bytes());
         match self {
@@ -294,5 +315,35 @@ impl Reply {
             STATUS_NO_CLIENT => Ok(Reply::NoSuchClient),
             _ => Err(ProtocolError::BadOp),
         }
+    }
+}
+
+/// 报文对：一条控制台请求、一条控制台回复。回信地址写在 `[8..16]`（`REPLY_PEER_AT`）。
+///
+/// **只有 `Open` 那一条带地址**：本协议是"开一次、长期用"——服务在 `Open` 时把回信孔
+/// 记进会话表（`server::Slot { reply }`），此后每条请求都照表推回复。其余动词那一格
+/// 必须是 0，`decode` 里"非 Open 的 reply 必须为 0"那条因此是真检查。
+impl Duet for Request {
+    type Req = Request;
+    type Rep = Reply;
+    type Wire = [u8; MSG_LEN];
+
+    const REQ: usize = MSG_LEN;
+    const REP: usize = MSG_LEN;
+
+    fn wire() -> [u8; MSG_LEN] {
+        [0u8; MSG_LEN]
+    }
+
+    fn encode(req: &Request, at: PieToken, out: &mut [u8]) {
+        out[..MSG_LEN].copy_from_slice(&req.encode());
+        if matches!(req, Request::Open { .. }) {
+            out[REPLY_PEER_AT..REPLY_PEER_AT + 8].copy_from_slice(&at.get().to_le_bytes());
+        }
+    }
+
+    fn decode(buf: &[u8]) -> EnvResult<Reply> {
+        let m: &[u8; MSG_LEN] = buf.try_into().map_err(|_| denied())?;
+        Reply::decode(m).map_err(|_| denied())
     }
 }

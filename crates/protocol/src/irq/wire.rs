@@ -34,7 +34,13 @@
 //! `Push` 时盖的章）与长度；线号本身它不认识，也不该认识。
 
 use env::wire::NAME_LEN;
-use env::{Name, PieToken, TaskId};
+use env::{EnvError, EnvResult, Name, PieToken, TaskId, make_err};
+use runtime::core::port::Duet;
+
+/// 本协议的负码：无权 / 协议错（与内核码同表）。
+pub(crate) fn denied() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(-1))
+}
 
 /// 服务的名字（目录里登记的那一个）。
 pub const SERVICE: &str = "plic";
@@ -44,6 +50,9 @@ pub const LEN: usize = 1 + 8 + 8 + NAME_LEN;
 
 /// 投递载荷（线号）的字节数。
 pub const LINE_LEN: usize = 2;
+
+/// 回信地址在报文里的偏移（**通道字段**，见三个构造器的注）。
+const ACK_AT: usize = 9;
 
 const OP_REGISTER: u8 = 1;
 const OP_REFER: u8 = 2;
@@ -82,16 +91,31 @@ pub enum Request {
 }
 
 impl Request {
-    pub const fn register(name: Name, session: PieToken, ack: PieToken) -> Request {
-        Request::Register { name, session, ack }
+    /// 三个构造器都**不收回信地址**：它是**通道字段**（`[9..17]`），由 `decode` 从
+    /// 报文里读、由 [`Duet::encode`] 按本端回信孔填——客户端手里没有那枚 token，
+    /// 故请求值里它是 0。
+    pub const fn register(name: Name, session: PieToken) -> Request {
+        Request::Register {
+            name,
+            session,
+            ack: PieToken::new(0),
+        }
     }
 
-    pub const fn refer(name: Name, who: TaskId, ack: PieToken) -> Request {
-        Request::Refer { name, who, ack }
+    pub const fn refer(name: Name, who: TaskId) -> Request {
+        Request::Refer {
+            name,
+            who,
+            ack: PieToken::new(0),
+        }
     }
 
-    pub const fn delegate(name: Name, who: TaskId, ack: PieToken) -> Request {
-        Request::Delegate { name, who, ack }
+    pub const fn delegate(name: Name, who: TaskId) -> Request {
+        Request::Delegate {
+            name,
+            who,
+            ack: PieToken::new(0),
+        }
     }
 
     pub fn name(&self) -> Name {
@@ -110,6 +134,7 @@ impl Request {
         }
     }
 
+    /// 编码为线上消息（**不写通道字段**：`[9..17]` 留给 [`Duet::encode`]）。
     pub fn encode(&self) -> [u8; LEN] {
         let (op, arg) = match self {
             Request::Register { session, .. } => (OP_REGISTER, session.get() as u64),
@@ -119,7 +144,6 @@ impl Request {
         let mut msg = [0u8; LEN];
         msg[0] = op;
         msg[1..9].copy_from_slice(&arg.to_le_bytes());
-        msg[9..17].copy_from_slice(&(self.ack().get() as u64).to_le_bytes());
         msg[17..LEN].copy_from_slice(self.name().bytes());
         msg
     }
@@ -133,7 +157,8 @@ impl Request {
         let bytes: [u8; NAME_LEN] = msg[17..LEN].try_into().ok()?;
         let name = Name::from_bytes(bytes).ok()?;
         let arg = u64::from_le_bytes(msg[1..9].try_into().ok()?);
-        let ack = PieToken::new(u64::from_le_bytes(msg[9..17].try_into().ok()?) as usize);
+        let ack =
+            PieToken::new(u64::from_le_bytes(msg[ACK_AT..ACK_AT + 8].try_into().ok()?) as usize);
         match msg[0] {
             OP_REGISTER => Some(Request::Register {
                 name,
@@ -202,3 +227,26 @@ impl Ack {
 
 /// 回执的字节数（一字节）。
 pub const ACK_LEN: usize = 1;
+
+/// 报文对：一条中断线请求、一字节判据回答。回信地址写在 `[9..17]`（`ACK_AT`）。
+impl Duet for Request {
+    type Req = Request;
+    type Rep = Ack;
+    type Wire = [u8; LEN];
+
+    const REQ: usize = LEN;
+    const REP: usize = ACK_LEN;
+
+    fn wire() -> [u8; LEN] {
+        [0u8; LEN]
+    }
+
+    fn encode(req: &Request, at: PieToken, out: &mut [u8]) {
+        out[..LEN].copy_from_slice(&req.encode());
+        out[ACK_AT..ACK_AT + 8].copy_from_slice(&(at.get() as u64).to_le_bytes());
+    }
+
+    fn decode(buf: &[u8]) -> EnvResult<Ack> {
+        Ack::from_byte(*buf.first().ok_or_else(denied)?).ok_or_else(denied)
+    }
+}

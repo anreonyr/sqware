@@ -3,8 +3,12 @@
 > 路径约定：`文件:行` 相对仓根。权柄模型在 [pie.md](pie.md)，数据面三件套在 [mail.md](mail.md)，
 > 服务目录协议在 [dispatch.md](dispatch.md)，空载荷门铃在 [bell.md](bell.md)。
 >
-> **状态：§5（Hole 的动态长度）已实现**，判据见 §9 末段；`ship` / `To` / `Port` / `Duet`
-> （§2–§4、§6）设计已裁、**未实现**。
+> **状态：§1–§6 全部已实现**（`Access` · `Policy` · `To` · `ship` · `Duet` · `Port`，
+> 以及 §5 的变长孔）。判据见 §9；剩余边界与下一轮的事见 §8。
+>
+> **落地位置**：`crates/runtime/src/core/port.rs`（五个类型 + `ship`）、
+> 各协议 `crates/protocol/src/*/wire.rs` 的 `impl Duet`、五家客户端
+> `crates/protocol/src/*/client.rs`。
 
 ## 1 · 语义定位
 
@@ -112,7 +116,16 @@ impl Port {
 }
 ```
 
-`call` 的五步归口（**今天五个客户端各写一遍，且五处都漏了第三步**）：
+`Duet` 的缓冲由**协议自己给**（`type Wire` + `wire()`）：稳定 Rust 里 `[u8; W::REQ]` 是
+泛型常量表达式（`generic_const_exprs`），用不了 ⇒「报文多大」这份知识只能留在实现侧。
+请求与回复**共用那一块**：报文推出去之后 `push` 已在锁外把字节搬进内核那份 staging，
+故同一个容器接着收回复即可。
+
+**地址写在哪、写几条，是协议的事**：dispatch/doom/irq/uart 每条请求都带；控制台**只在
+`Open` 那一条**上报（服务把回信孔记进会话表，此后照表推回复），其余动词那一格必须是 0
+——`console::wire` 里"非 Open 的 reply 必须为 0"那条检查因此是真检查。
+
+`call` 的五步归口（**此前五个客户端各写一遍，且五处都漏了第三步**）：
 
 | 步 | 谁写 | 今天 |
 |---|---|---|
@@ -193,6 +206,7 @@ impl Port {
 | 空集不成立 | 授出一枚什么都没有的枚 | `ship` 本地拒（不发 envcall） |
 | 回信地址与来源校验成对 | 收到别人的回复而不自知 | `Port::call`（今天五处都没做） |
 | 收尾只 `release` 一次 | 冗余的 `revoke` 失败会短路后续清理 | `Port::close`（级联已含对端副本） |
+| 回信地址只在协议说的那条上报 | 服务把不该有的地址当坏报文（控制台就是这样：`Write` 带地址 ⇒ `UnexpectedField` ⇒ **没有回复**，客户端白等满上界） | `Duet::encode`（`console::wire` 的 impl 只对 `Open` 写） |
 
 ## 7 · 裁决账
 
@@ -212,6 +226,12 @@ impl Port {
 | `Access`/`Policy`/`To` 进 `crates/env` | **否** | 那是内核也依赖的 ABI crate——`protocol` 从 `env` 拆出来的先例记着："284 行内核永远读不到的协议" |
 | 命名 `Wire` | **否** | 与 `crates/env/src/wire/mod.rs` 的 `trait Wire`（字段 ↔ usize）撞名；改 `Duet` |
 | 命名 `Ferry` / `at` / `give` | **改** | 定为 `Port` / `To` / `ship`（同族：`dock` `moor` `Quay` `Pier`） |
+| `Duet` 的报文容器 | **由协议给**（`type Wire` + `wire()`） | 稳定 Rust 用不了 `[u8; W::REQ]`（泛型常量表达式）⇒ 尺寸知识只能留在实现侧；不给容器就只能每次 `Vec`，而 §5.1 刚把"收一条消息零分配"立成判据 |
+| 服务调用（dispatch 的 8+56 载荷）的形状 | **落在 `Service` 自己身上**（`impl Duet for Service`） | 那条协议没有自己的请求类型（载荷不透明）⇒ 不为"转手"单造一个类型 |
+| 控制台的回信地址 | **只在 `Open` 上报** | 它是 per-session 不是 per-request：服务记进会话表，此后照表推 |
+| 自检怎么"读回刚授出的那一枚" | **扫本任务表**（`Collect` + `Reserve`） | `Collect` 是唯一的枚举手段（`handshake::moor` 同款）；`Port::to()` 那种访问器仍不立 |
+| 生产路径上的裸 `accord` | **全部改走 `ship`**（28 处） | §3 的动机即此；`root::hand_over` 顺手泛型于 `AnyPie`——原先门铃（一枚 `Nole`）走的是 `PolePie::from_token`，那是个类型谎 |
+| 自检里的裸 `accord` | **留守**（`shell` 的 `lend`/`cascade`/`spoof`/`name`） | 它们测的是**位表本身**：`accord` 是那个原语，换成语义层就把被测对象换掉了 |
 
 ## 8 · 已知边界
 
@@ -222,30 +242,70 @@ impl Port {
    （今天 `channel.close(self.owner)?` 的 `?` 会一起跳过）。
 3. **五个协议的回信地址偏移不统一**（dispatch `[49..57]`、console `[8..16]`、doom `[33..41]`、
    irq `[9..17]`、uart `[8..16]`）：本轮保留。要不要统一是协议层的事。
-4. **`irq` 是另一种形状**：它每次调用新开一枚回信孔（`crates/protocol/src/irq/client.rs:75-82`），
-   而 console/dispatch 是"开一次、长期用"。前者对"迟到回复污染"免疫。走 `Port` 后它成为
-   `open`/`call`/`close` 每条一趟（envcall 数不变，每请求多两行）。
+4. **`irq` 是另一种形状**：它每次调用新开一枚回信孔（`crates/protocol/src/irq/client.rs` 的
+   `Line::ask`），而 console/dispatch 是"开一次、长期用"。前者对"迟到回复污染"免疫。
+   已按本节走 `Port`：每请求 `open`/`call`/`close` 一趟，envcall 数不变。旧版在收尾处
+   `seal`（让驱动的迟到 `push` 拿 `Dead`）；`Port` 的收尾统一是 `close`，而驱动每请求只推
+   一条回执 ⇒ 迟到那条落在空槽里、下一请求已换新孔，不会把它挂住。
 5. **`Dock` 只占名，`Bell` 已另立**：`Dock` ↔ Pole（共享内存，无背压、同步在契约外）仍是空位；
    `Bell` ↔ Nole 已单独裁决成文（[bell.md](bell.md)：空载荷门铃——内核一位"有待取之事" +
    听者面，`AnyPie` 不加变体）。本轮只做 Hole。
-6. **`narrow` 与 `revoke` 闲置**：生产路径上分别零调用者与仅 `Port::close` 一处
-   （后者本轮摘掉）。ABI 保留（`Accord` 的唯一反向 / 权限代数的完整），账目单列。
+6. **`narrow` 与 `revoke` 闲置**：生产路径上**都是零调用者**了（`revoke` 原先那一处就是
+   `Channel::close`，随旧类型一起摘掉；自检里 `cascade` 仍走一次）。ABI 保留
+   （`Accord` 的唯一反向 / 权限代数的完整），账目单列。
 7. **15 行 port/ring 残留注释**：`work/mod.rs:7` 等 11 个文件在描述一个已被 Pole 取代的
    共享内存 IPC（`DockMeta`/`RingMeta` 代码已删）。`kernel/src/work/mail/pole.rs:75` 的
    `tag!(Ring, …)` 是**唯一还活着的化石**（Pole 的物理帧仍打这个标签）。
-8. **判据未立**：见 §9。
+8. **判据**：见 §9（已立，三档都跑）。
 
-## 9 · 判据与验证（实现后）
+9. **`Channel` 已删**，`handshake::dock` 也改走 `ship`：它仍是"开上行孔 + 授出 + 时序义务
+   （必须早于 `Hatch`）"那三件事的归口，只是不再手写子集。
 
-- **端到端**：`req echo`（五家走新路径：`Directory::open` → `Connect` → `Port::call` → 回复）
-  与 `name`（注册 / 注销 / 非预约者被拒）、`spoof`（身份盖章）三条既有自检不许退。
-- **新机制**：一条 `ship` 自检——对 16 格各授一枚、用 `Collect` 读回 `permission` 断言
-  （给自己授一枚即可读回位，`programs/src/bin/user/shell.rs` 的 `lend` 自检同款手法）；
-  另断言两处：`ship(Access::NONE + Policy::NONE)` 本地拒（不发 envcall）、
-  `Port::call` 收到非 `to.who()` 的回复返 `Denied`。
-- **§5 已落地的判据**：`hole` 自检多打一行 `hole: len short=1 long=1 nofit=1`，门断言它
-  （`scripts/examine.nu` 的 `MARKERS`）：
+10. **`Refer` / `Reserve` / `Referred` 还住在 `runtime::core::handshake`**：它们其实是
+    **父域 ↔ 目录控制线程**的报文（目录协议的一部分，`docs/dispatch.md` 与
+    `prog-dir::control_main` 两头都在用）。搬去 `crates/protocol/src/dispatch` 是**下一轮**
+    的事，本轮不动——那一搬会牵动 root 与 dir 两侧的进口。
+
+## 9 · 判据（已实现，门里在跑）
+
+三档（默认 / harden / 框架）都跑同一套：`scripts/examine.nu` 的 `MARKERS` 里三条与本设计
+有关，**都只可能由本设计成立才能打出**。
+
+### 9.1 · 授出与往返：`ship: cells=15 empty=1 source=1`
+
+`ship` 命令（`programs/src/bin/user/shell.rs` 的 `ship_probe`），三个数各有各的牙：
+
+| 读数 | 断言 | 牙（反向验证：去掉什么它会变） |
+|---|---|---|
+| `cells=15` | 十六格（`Access` 四取值 × `Policy` 四取值）里**十五格**授得出，且 `Collect` 读回的 `permission` 与该格的 `access \| policy` **逐格相等** | 把 `ship` 的 `subset = access \| policy` 改错一位（如漏掉 `VEST`），对应那一格读回不符 ⇒ 15 → 14 |
+| `empty=1` | 第十六格（`Access::NONE + Policy::NONE`）**本地拒**（`Denied`，不发 envcall） | 去掉那条 `subset.is_empty()` 的早返 ⇒ 空集被送进 `Accord`，返回值不再是"本地拒" ⇒ 1 → 0 |
+| `source=1` | `Port::call` 收到**非 `to.who()`** 推来的回复时返 `Denied` | 去掉来源校验 ⇒ 冒名那条被当成回复收下 ⇒ 1 → 0 |
+
+第三条的布置值得记一笔：子线程开一枚孔（**它是那扇门的开辟者**）并把副本授给我 ⇒
+`Port::open` 用 `Reserve(entry).owner` 认出的对端是**它**；随后**我自己**往自己的回信孔推
+一条——内核盖的发送者是"我"而不是对端，故那一条必须被拒。自己推自己的孔在这里是**合法**
+的（回信孔本就在我表里），它模拟的正是"别人往我的回信孔里塞一条"。
+
+### 9.2 · 端到端：既有自检不许退
+
+五家客户端全走了新路径（`Directory::open` → `Connect` → `Port::call` → 校来源 → 回复）：
+
+- `req echo` —— dispatch 的目录往返 + 服务往返（`Service` 那个报文对）；
+- `name` —— 注册 / 注销 / 非预约者被拒 / 死实例不锁名字；
+- `spoof` —— 身份由内核盖章（它**故意**留在裸报文的层上：伪造回信地址正是它的被测对象，
+  而 `Port` 的语义就是"写不出伪造的地址"）；
+- `dir` / `kill echo` / `line …` —— 目录自省、他杀（doom 的 `Kill` → `Ack`）、中断线登记
+  （irq 的每请求一趟）与 uart 的写往返。
+
+### 9.3 · §5 的判据：`hole: len short=1 long=1 nofit=1`
+
+`hole` 自检多打的一行，门断言它：
+
+
   - `short` —— 1 字节的消息进得去出得来；
   - `long` —— **同一条孔**再装 600 字节也进得去出得来（孔不再按 unseal 时的 mtu 预分配）；
   - `nofit` —— 缓冲装不下时 `pull` 被拒、**槽一个字节都不动**（`peek` 仍报 600，换够大的
     缓冲仍取得回整条）。
+
+**实跑**（本轮落地后）：`EXAMINE_HARDEN=1 nu scripts/examine.nu` → **5/5**——默认档 3 轮
+（14 步 / 21 marker）、harden 档（18 步 / 26）、框架档（18 步 / 27），三档都含上面三条读数。

@@ -51,6 +51,28 @@
 //! `after = None` 从头开始；返 `NotFound` 即到头。
 
 use env::wire::PieToken;
+use env::{EnvError, EnvResult, make_err};
+use runtime::core::port::Duet;
+
+/// D1 负码：无权 / 协议错。
+pub const E_DENIED: isize = -1;
+/// D1 负码：名字无实例 / 未预约。
+pub const E_NOT_FOUND: isize = -2;
+/// D1 负码：名字已有活实例（内核码 `-1..-7` 之后自取）。
+pub const E_TAKEN: isize = -8;
+
+/// 负码 → 错误。三个码各自有名，故不合并成一档。
+pub(crate) fn denied() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(E_DENIED))
+}
+
+pub(crate) fn not_found() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(E_NOT_FOUND))
+}
+
+pub(crate) fn taken() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(E_TAKEN))
+}
 
 /// 名字类型与上限的单一真相在 `env::wire`（目录协议与域名字共用）——本 crate 只是
 /// 它的使用者，不转口第二遍。
@@ -282,5 +304,30 @@ impl Reply {
             }
             _ => Err(ProtocolError::BadOp),
         }
+    }
+}
+
+/// 报文对：一条目录请求、一条目录回复。尺寸与布局都由本协议说了算——包括
+/// **回信地址写在 `[49..57]`**（`REPLY_AT`）这件事。
+impl Duet for Request {
+    type Req = Request;
+    type Rep = Reply;
+    type Wire = [u8; MSG_LEN];
+
+    const REQ: usize = MSG_LEN;
+    const REP: usize = MSG_LEN;
+
+    fn wire() -> [u8; MSG_LEN] {
+        [0u8; MSG_LEN]
+    }
+
+    fn encode(req: &Request, at: PieToken, out: &mut [u8]) {
+        out[..MSG_LEN].copy_from_slice(&req.encode());
+        out[REPLY_AT..REPLY_AT + 8].copy_from_slice(&at.get().to_le_bytes());
+    }
+
+    fn decode(buf: &[u8]) -> EnvResult<Reply> {
+        let m: &[u8; MSG_LEN] = buf.try_into().map_err(|_| denied())?;
+        Reply::decode(m).map_err(|_| denied())
     }
 }

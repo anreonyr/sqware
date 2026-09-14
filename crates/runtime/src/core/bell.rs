@@ -1,7 +1,7 @@
 //! Bell — **Nole 的 runtime 封装**：把一枚 Nole 当门铃用（`docs/bell.md`）。
 //!
 //! 内核里它**仍是一枚 Nole**（`AnyPie::Nole`，没有第四种资源）：Nole 上多了"听者面"
-//! ——`id` / `life` / `ring` 一位——而"怎么用"封装在这一层。与 `Channel` 包着
+//! ——`id` / `life` / `ring` 一位——而"怎么用"封装在这一层。与 `Port` 包着
 //! `HolePie` 同构：**种类归内核，用法归 runtime**。
 //!
 //! 三个动词，与 Hole 那一族同形：
@@ -24,9 +24,9 @@
 //! 铃只有一条方向（有事/没事）。签名少一个参数就把这件事说完了，不必写注释解释
 //! "为什么只有 Pull"。
 
-use env::{EnvResult, HoleDir, TaskId};
+use env::{EnvResult, HoleDir};
 
-use crate::env::mail::{self, AnyPie as _, NolePie};
+use crate::env::mail::{self, NolePie};
 
 /// 门铃：一枚 Nole + "怎么用它"。
 pub struct Bell {
@@ -58,10 +58,5 @@ impl Bell {
     /// "自己叫自己"的正当写法——响者由持铃者决定。
     pub fn ring(&self) -> EnvResult<()> {
         mail::ring(self.pie.token())
-    }
-
-    /// 授出一份（走权柄轴；`AnyPie` 那一套对三种资源同形）。
-    pub fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<env::PieToken> {
-        self.pie.accord(dst, subset)
     }
 }

@@ -23,7 +23,13 @@
 //! 一条报文装 `PAYLOAD_MAX` 字节；更长的写由 [`client::Uart::write`] 分片，每片一次往返。
 //! 分片不在这里，因为"要不要合并、合并多大"是调用方的节奏（它知道自己一次有多少字节）。
 
-use env::PieToken;
+use env::{EnvError, EnvResult, PieToken, make_err};
+use runtime::core::port::Duet;
+
+/// 本协议的负码：无权 / 协议错（与内核码同表）。
+pub(crate) fn denied() -> erra::Error<EnvError> {
+    make_err(EnvError::from_raw(-1))
+}
 
 /// 服务的名字（目录里登记的那一个；两端共用一份，不各写一遍）。
 ///
@@ -81,10 +87,12 @@ impl Status {
 }
 
 /// 一条写请求。
+///
+/// **回信地址不在请求里**：它是**通道字段**（`[8..16]`，即 `REPLY_AT`），由收方从
+/// 报文里读（[`view`](Request::view) / [`reply_of`]）、由 [`Duet::encode`] 按本端回信孔
+/// 填入——客户端手里没有那枚 token，故这个类型里也就没有那一格。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Request {
-    /// 回执孔在**驱动侧**的 token（调用方自备回信通道）。
-    pub reply: PieToken,
     /// 有效字节数（`1..=PAYLOAD_MAX`）。
     pub len: usize,
     pub payload: [u8; PAYLOAD_MAX],
@@ -92,23 +100,22 @@ pub struct Request {
 
 impl Request {
     /// 造一条写请求。`bytes` 为空或超过 [`PAYLOAD_MAX`] → `None`（分片是客户端的活）。
-    pub fn write(bytes: &[u8], reply: PieToken) -> Option<Request> {
+    pub fn write(bytes: &[u8]) -> Option<Request> {
         if bytes.is_empty() || bytes.len() > PAYLOAD_MAX {
             return None;
         }
         let mut payload = [0u8; PAYLOAD_MAX];
         payload[..bytes.len()].copy_from_slice(bytes);
         Some(Request {
-            reply,
             len: bytes.len(),
             payload,
         })
     }
 
+    /// 编码为线上消息（**不写通道字段**：`[8..16]` 留给 [`Duet::encode`]）。
     pub fn encode(&self) -> [u8; MSG_LEN] {
         let mut m = [0u8; MSG_LEN];
         m[OP_AT] = OP_WRITE;
-        m[REPLY_AT..REPLY_AT + 8].copy_from_slice(&self.reply.get().to_le_bytes());
         m[LEN_AT..LEN_AT + 8].copy_from_slice(&self.len.to_le_bytes());
         m[PAYLOAD_AT..].copy_from_slice(&self.payload);
         m
@@ -145,4 +152,27 @@ pub fn reply_of(msg: &[u8]) -> Option<PieToken> {
         msg[REPLY_AT..REPLY_AT + 8].try_into().ok()?,
     ));
     if token.get() == 0 { None } else { Some(token) }
+}
+
+/// 报文对：一条写请求、一字节回执。回信地址写在 `[8..16]`（`REPLY_AT`）。
+impl Duet for Request {
+    type Req = Request;
+    type Rep = Status;
+    type Wire = [u8; MSG_LEN];
+
+    const REQ: usize = MSG_LEN;
+    const REP: usize = ACK_LEN;
+
+    fn wire() -> [u8; MSG_LEN] {
+        [0u8; MSG_LEN]
+    }
+
+    fn encode(req: &Request, at: PieToken, out: &mut [u8]) {
+        out[..MSG_LEN].copy_from_slice(&req.encode());
+        out[REPLY_AT..REPLY_AT + 8].copy_from_slice(&at.get().to_le_bytes());
+    }
+
+    fn decode(buf: &[u8]) -> EnvResult<Status> {
+        Status::from_byte(*buf.first().ok_or_else(denied)?).ok_or_else(denied)
+    }
 }

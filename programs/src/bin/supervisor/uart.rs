@@ -47,13 +47,14 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::format;
 
-use env::{HoleDir, Permission, TeamId};
+use env::{HoleDir, TeamId};
 use protocol::dispatch::client::Directory;
 use protocol::irq;
 use protocol::uart::{self, Action, DELIVER_MTU, MSG_LEN, SERVICE, Status};
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
-use runtime::env::mail::{self, AnyPie as _, HolePie, PolePie};
+use runtime::core::port::{Access, Policy, ship};
+use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::task as utask;
 
 use programs::uart::Uart;
@@ -101,8 +102,8 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => runtime::env::room::exit_with(3),
     };
-    let at_parent = match down.accord(sire, Permission::READ | Permission::WRITE) {
-        Ok(t) => t,
+    let at_parent = match ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(4),
     };
     if Quay::new(at_parent).push(&up).is_err() {
@@ -173,12 +174,12 @@ extern "C" fn main() -> ! {
         Ok(t) => t,
         Err(_) => runtime::env::room::exit_with(18),
     };
-    let at_read = match session.accord(read_task, Permission::READ) {
-        Ok(t) => t,
+    let at_read = match ship(&session, read_task, Access::READ, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(19),
     };
-    let deliver_at_read = match deliver.accord(read_task, Permission::WRITE) {
-        Ok(t) => t,
+    let deliver_at_read = match ship(&deliver, read_task, Access::WRITE, Policy::NONE) {
+        Ok(to) => to.token(),
         Err(_) => runtime::env::room::exit_with(20),
     };
     UART.with(|u| *u = Some(uart));

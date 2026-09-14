@@ -22,6 +22,7 @@
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
 //!   lend  — 独占交出自检（CAGE：我不可用 / 至多一个 heir / 转交 / 逐级复原）
+//!   ship  — 授出自检（十六格逐格读回权限 / 空集本地拒 / 来源校验的反证）
 //!   churn — 任务生灭压测（主动探测：反复产生/回收，把关机终值变成刻度）
 //!   reclaim — 资源寿命自检（引用回收 / 封印归属 / 开辟者消亡）
 //!   spoof — 身份伪造自检（发送者由内核盖章，报文里的回信 token 不构成身份）
@@ -51,11 +52,12 @@ use protocol::console::{
     self,
     client::{Console, Readline},
 };
-use protocol::dispatch::client::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
+use protocol::dispatch::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use protocol::doom::{self, Ack, Doom};
 use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
+use runtime::core::port::{Access, Policy, Port, ship};
 use runtime::core::unit;
 use runtime::env::{
     chrono::{self, clock},
@@ -96,7 +98,7 @@ impl Color {
 /// # 会话寿命：**一条会话活到进程结束**（性能修正）
 ///
 /// 第一版每次 `write`/`readline` 各开关一条会话，于是**每条输出**要付
-/// 2× `Channel::open`（各含 unseal+accord）＋ 2 次往返。实测反馈"输出延迟很高"，
+/// 2× 开会话（各含 unseal + 授出）＋ 2 次往返。实测反馈"输出延迟很高"，
 /// 根因就在这里：旧路径一条输出是 **1 次 envcall**，而那时是 4 次往返。
 /// 现在开一次就不关了——服务本来就支持多客户端（`MAX_CLIENTS`），而 shell 自己
 /// 不会并发等读，故"单读者"那条约束一次也不会撞上。
@@ -289,8 +291,8 @@ fn shake() -> env::EnvResult<env::PieToken> {
     let up = handshake::moor()?;
     let down = HolePie::unseal()?;
     let sire = runtime::env::task::sire()?;
-    let at_parent = down.accord(sire, env::Permission::READ | env::Permission::WRITE)?;
-    Quay::new(at_parent).push(&up)?;
+    let at_parent = ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE)?;
+    Quay::new(at_parent.token()).push(&up)?;
     Ok(Pier::pull(&down)?.token())
 }
 
@@ -431,6 +433,169 @@ fn lend(term: &Term) {
         "lend: caged={} child={} twice={} chain={} back={} restore={} plain={}",
         a_caged as u8, b_ok as u8, twice as u8, chain as u8, back as u8, restore as u8, plain as u8
     ));
+}
+
+/// 本任务权限表的一格：`(token, permission, vestor, owner)`。
+type PieRow = (usize, env::Permission, env::TaskId, env::TaskId);
+
+/// 扫本任务表：`Collect` 枚举 + `Reserve` 查来历（哨兵 `token == 0` 即到头）。
+///
+/// 与 `handshake::moor` 同一个手法——`Collect` 是唯一的枚举手段，故自检里"读回我
+/// 刚授出的那一枚"也只能这样问。
+fn my_pies() -> Vec<PieRow> {
+    /// 表量级个位数；给够上限只为防越界扫描跑飞（与 `handshake::MAX_PIES` 同数）。
+    const MAX_PIES: usize = 64;
+    let mut rows = Vec::new();
+    for index in 0..MAX_PIES {
+        let Ok((token, permission, _)) = mail::collect(index) else {
+            break;
+        };
+        if token.get() == 0 {
+            break;
+        }
+        let Ok((vestor, owner)) = mail::reserve(token) else {
+            continue;
+        };
+        rows.push((token.get(), permission, vestor, owner));
+    }
+    rows
+}
+
+/// 等一枚由 `owner` 授来的门闩出现在**本任务表**里（有界）。
+///
+/// 为什么不是"扫一次就够"：`Spawn` 是异步的——`Hatch` 放行之后子线程才可能跑起来，
+/// 故它那枚授权落在哪个瞬间没有承诺。50 × 1 ms 覆盖它那两次 envcall 有余；到点仍
+/// 没有就如实返 `None`（自检宁可报 0，也不无限等）。
+fn wait_pie_from(owner: env::TaskId) -> Option<usize> {
+    for _ in 0..50 {
+        if let Some(token) = my_pies()
+            .into_iter()
+            .find(|row| row.3 == owner)
+            .map(|row| row.0)
+        {
+            return Some(token);
+        }
+        let _ = sleep(Duration::from_millis(1));
+    }
+    None
+}
+
+/// 授出自检（`ship` 命令）——`docs/port.md` §3 与 §9。
+///
+/// 两条断言，都是「少一格就现形」的形状：
+///
+/// ① **十六格**：`Access` 四个取值 × `Policy` 四个取值，逐格授一枚**给自己**（目标是
+///    我自己 ⇒ 子枚落进同一张表，于是能用 `Collect` 读回 `permission`，核对它正是签名
+///    说的那个子集）。空集那一格（`Access::NONE + Policy::NONE`）必须**本地拒**——
+///    那是"授一枚什么都没有的枚"，一条 envcall 都不该发。
+/// ② **来源校验**：`Port::call` 只认 `to.who()` 推来的回复。子线程开一枚孔（**开辟者
+///    是它**）并把副本授给我，故 `Port::open` 认它作对端；随后**我自己**往自己的回信孔
+///    推一条——内核盖的发送者是我，不是对端 ⇒ 必须 `Denied`。
+fn ship_probe(term: &Term) {
+    // 两族的**全部取值**：`Access` 四位、`Policy` 四位，相乘就是那十六格。
+    let access_all = [
+        Access::NONE,
+        Access::READ,
+        Access::WRITE,
+        Access::READ | Access::WRITE,
+    ];
+    let policy_all = [
+        Policy::NONE,
+        Policy::VEST,
+        Policy::CAGE,
+        Policy::VEST | Policy::CAGE,
+    ];
+
+    let Ok(me) = unit::self_id() else {
+        term.writeline("ship: no self id");
+        return;
+    };
+
+    // ── ① 十六格：十五格授出并读回，第十六格本地拒 ──
+    let mut cells = 0u8;
+    let mut empty = 0u8;
+    for access in access_all {
+        for policy in policy_all {
+            let subset = access.bits() | policy.bits();
+            let Ok(src) = HolePie::unseal() else {
+                continue;
+            };
+            match ship(&src, me, access, policy) {
+                Ok(to) => {
+                    let read_back = my_pies()
+                        .iter()
+                        .find(|row| row.0 == to.token().get())
+                        .map(|row| row.1);
+                    if read_back == Some(subset) && !subset.is_empty() {
+                        cells += 1;
+                    }
+                    // 子枚也在本任务表里（目标是我自己），故收尾要放下它。
+                    let _ = HolePie::from_token(to.token().get()).release();
+                }
+                Err(_) if subset.is_empty() => empty += 1,
+                Err(_) => {}
+            }
+            // 源枚放下：`release` 不要任何权限位，被关住（`CAGE` 那一半格子）也放得下。
+            let _ = src.release();
+        }
+    }
+
+    let source = source_probe(me);
+    term.writeline(&format!(
+        "ship: cells={} empty={} source={}",
+        cells, empty as u8, source as u8
+    ));
+}
+
+/// 反证：对端**不是我**时，`Port::call` 必须拒了它。
+///
+/// 布置：子线程开一枚孔（它是那扇门的开辟者）→ 把 `R|W` 副本授给我（故 `Port::open`
+/// 用 `Reserve(entry).owner` 认出的对端是**它**）→ 它等一条请求（"等"同时是"它还活着"
+/// ——它一退场，它授出的那份会被级联摘掉）。
+///
+/// 反证：`Port::open` 刚 unseal 的那枚回信孔**在我自己的表里**（表尾那一格），我自己
+/// 往它推一条——发送者是我 ≠ 对端 ⇒ 读回来的那条必须被拒。
+fn source_probe(me: env::TaskId) -> bool {
+    let Ok(child) = unit::try_closure(move || {
+        let hole = HolePie::unseal().ok()?;
+        ship(&hole, me, Access::READ | Access::WRITE, Policy::NONE).ok()?;
+        // 有界等：父方的请求来了就走人；没来也不至于让 `join` 永久挂住。
+        let mut buf = [0u8; MSG_LEN];
+        hole.pull_timeout(&mut buf, 1_000).ok()?;
+        Some(())
+    }) else {
+        return false;
+    };
+    // 子线程是**异步**起的（`Spawn` 只把任务放进 Held 再 `Hatch`），故它那枚授权
+    // 什么时候落到我表里没有承诺——**有界等**它出现，别赌一次扫描。
+    let Some(entry) = wait_pie_from(child.id()) else {
+        return false;
+    };
+    let Ok(port) = Port::open(&HolePie::from_token(entry)) else {
+        return false;
+    };
+    // 我的回信孔 = `Port::open` 刚 unseal 的那一枚 = 表尾（单线程，`open` 只往我表里
+    // 添这一枚：授出的那份落在**对端**表里）。
+    let Some(reply) = my_pies().last().map(|row| row.0) else {
+        return false;
+    };
+    let injected = HolePie::from_token(reply)
+        .push(b"not from the peer")
+        .is_ok();
+    // 报文内容与本条断言无关（测的是**来源**那一格），故借手边最近的 `Duet`；上界给 0
+    // ——那条冒名顶替的回复已经在槽里，不必等。
+    let Ok(name) = Name::new("ship") else {
+        return false;
+    };
+    let req = Request::Resolve { name };
+    let denied = port
+        .call::<Request>(&req, 0)
+        .err()
+        .map(|e| e.into_source().code())
+        == Some(E_DENIED);
+    let _ = port.close();
+    let _ = child.join();
+    injected && denied
 }
 
 /// 派生级联自检（`cascade` 命令）。
@@ -1235,7 +1400,7 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / churn / reclaim / spoof / name / badslot / stray / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / ship / churn / reclaim / spoof / name / badslot / stray / exit",
             );
         }
         "clock" => {
@@ -1315,6 +1480,9 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "cascade" => {
             cascade(term);
+        }
+        "ship" => {
+            ship_probe(term);
         }
         "lend" => {
             lend(term);
