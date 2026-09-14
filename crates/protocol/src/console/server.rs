@@ -389,8 +389,18 @@ impl State {
                 to_client: Some(client),
             };
         }
-        if self.reading.is_some() {
-            // 行编辑是**单读者**语义：已有会话在等读时不排队。
+        // 已在等读：**只认"同一个会话重问同一条"**，其余照旧不排队（行编辑是单读者
+        // 语义）。这条幂等是**给客户端留的退路**：客户端那边 `readline` 的等待必须
+        // 有界（否则服务被打死而等待没被唤醒时，它就永久挂住——实测过），有界就得
+        // 能在超时后**重发同一条**请求，而重发要被当成"还是那一问"而不是"第二问"。
+        //
+        // 只比 `client` 不比 `prompt`：prompt 是**重绘**用的参数，同一个会话的两条
+        // `ReadLine` 里它必然相同；比它只是多加一处可以不同的地方。
+        if let Some(r) = self.reading.as_ref() {
+            if r.client == client {
+                // 不回复：整行仍由输入线程交付（与首次那一条同样的走法）。
+                return Outcome::quiet();
+            }
             return Outcome {
                 reply: Some(Reply::NoSuchClient),
                 to_client: Some(client),

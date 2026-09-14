@@ -55,6 +55,12 @@ fn next_nonce() -> u64 {
     seed.wrapping_add(NEXT.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
+/// 一次 `ReadLine` 等的上界（毫秒）：超了就**重发同一条**（幂等，见服务侧
+/// `State::readline`）。它**不是**"用户必须在这一段内敲完"——用户一个字没敲也不影响，
+/// 重发不重置服务侧那一行的缓冲。取 3 s 是量出来的折中：短到门那一步（15 s）里能试
+/// 好几次，长到正常打字期间根本不会触发。
+const READLINE_WAIT_MS: usize = 3000;
+
 /// 等**回信孔句柄**的上界（毫秒）。比一次往返短：这一段里对端只做"开一枚孔 +
 /// 授出 + 推 9 字节"，没有设备 I/O、也不等用户。给上界是为了让"服务把这条会话
 /// 拒了"（表满 / 报文不合 ⇒ 那枚号永远不会来）落成一次可重试的失败，而不是永久挂起。
@@ -157,15 +163,30 @@ impl Console {
         let bytes = prompt.as_bytes();
         let query =
             Query::readline(self.client, &bytes[..bytes.len().min(LINE)]).ok_or_else(denied)?;
-        // 上界给 `usize::MAX`（永久）：等多久由用户决定。
-        match self.port.call::<Query>(&query, usize::MAX)? {
-            Reply::Line { text } => {
-                let text = core::str::from_utf8(text.as_bytes()).map_err(|_| denied())?;
-                Ok(Readline::Line(String::from(text)))
+        // **有界等 + 重发同一条**（不是轮询：重发是幂等的，服务侧见 `State::readline`）。
+        //
+        // 为什么要上界：`usize::MAX` 把"用户还没敲完"与"服务已经没了"折成同一件事
+        // ——后者本该由内核封印回信孔来唤醒（`gate::doom` 的寿命边），但那条路一旦
+        // 没走到（竞态），永久等就是**永久挂住**：实测门里那一步卡死 90 s，读数里
+        // 一次 `readline broke` 都没有。
+        //
+        // 有界之后 `Busy` 的含义回到"这一段没有回复"：**重发同一条**即可——服务侧
+        // 对"同会话重问同一条"是幂等的（已有等读会话 ⇒ 不排队、不重置那一行的缓冲），
+        // 故重发既不丢用户已敲的字，也不占第二格。只要服务真死了，重发会拿到
+        // `Dead`/`Denied`，本函数当场返回 `Err`，调用方走 `reconnect()`。
+        loop {
+            match self.port.call::<Query>(&query, READLINE_WAIT_MS) {
+                Ok(Reply::Line { text }) => {
+                    let text = core::str::from_utf8(text.as_bytes()).map_err(|_| denied())?;
+                    return Ok(Readline::Line(String::from(text)));
+                }
+                Ok(Reply::Eof) => return Ok(Readline::Eof),
+                Ok(Reply::Interrupt) => return Ok(Readline::Interrupt),
+                Ok(_) => return Err(denied()),
+                // 超时：服务可能还活着（用户就是没敲完）⇒ 重问同一条。
+                Err(e) if e.source.is_busy() => continue,
+                Err(e) => return Err(e),
             }
-            Reply::Eof => Ok(Readline::Eof),
-            Reply::Interrupt => Ok(Readline::Interrupt),
-            _ => Err(denied()),
         }
     }
 
