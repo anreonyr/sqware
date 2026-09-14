@@ -64,7 +64,7 @@ mod manifest;
 /// 留这个常量名是历史成本，读的时候按"设备名"理解即可。
 const CONSOLE_DEVICE: &str = "serial@10000000";
 
-/// 中断线驱动要的三样：PLIC 的寄存器、设备树本体、内核的 `irq` 门闩。
+/// 中断线驱动要的三样：PLIC 的寄存器、设备树本体、内核的 `irq` 门铃。
 const PLIC_DEVICE: &str = "interrupt-controller@c000000";
 const DTB_DEVICE: &str = "devicetree";
 const IRQ_CHANNEL: &str = "irq";
@@ -110,6 +110,49 @@ fn say(s: &str) {
             let _ = c.write(s);
         }
     });
+}
+
+/// 门铃自检（`docs/bell.md` §9）：在**自己铸的一枚 Nole** 上把四个语义走一遍。
+///
+/// 为什么自铸一枚而不是借建域权那一枚：自检要的是一枚**专门用来响的**铃，
+/// 拿生产那枚去响是借用别人的语义；铸币权本域有（S 态门），铸一枚的代价就是一次
+/// envcall——顺带把 `UnsealNole` 也走一遍。用完 `release`，铃随最后一份门闩消亡
+/// （走的正是 `Drop` → seal + wipe 那条路）。
+///
+/// 八条断言各自回答一个问题：**未响探得 false**（`wait` 不骗人）、**响得动**、
+/// **再响返 `Busy`**（多 hart 同响合成一位）、**响着探得 true 且不清**（`wait` 与
+/// `hush` 分工）、**应得动**、**应完就空**、**未响时返 `Busy`**、**铃没有第二个方向**
+/// （`Wait{Push}` 被拒）。
+///
+/// 坏在这里不停机：它是**自检**不是门——门在 `scripts/examine.nu` 那一侧断言这行字
+/// （八个数全 1）。`Ring` 这条 ABI 动词就是为这一处立的：没有它，门铃的验证只能等
+/// 真中断，那是不确定的。
+fn bell_probe() {
+    let Ok(pie) = NolePie::unseal() else {
+        say("bell: unseal failed\n");
+        return;
+    };
+    let token = pie.token();
+    let quiet = matches!(mail::wait(token, env::HoleDir::Pull, 0), Ok(false));
+    let rung = mail::ring(token).is_ok();
+    let twice = mail::ring(token).is_err();
+    let pending = matches!(mail::wait(token, env::HoleDir::Pull, 0), Ok(true));
+    let hush = mail::hush(token).is_ok();
+    let clear = matches!(mail::wait(token, env::HoleDir::Pull, 0), Ok(false));
+    let empty = mail::hush(token).is_err();
+    let dir = mail::wait(token, env::HoleDir::Push, 0).is_err();
+    say(&format!(
+        "bell: quiet={} rung={} twice={} pending={} hush={} clear={} empty={} dir={}\n",
+        quiet as u8,
+        rung as u8,
+        twice as u8,
+        pending as u8,
+        hush as u8,
+        clear as u8,
+        empty as u8,
+        dir as u8
+    ));
+    let _ = pie.release();
 }
 
 /// 从配对块里按名字找一枚设备门闩的 token。
@@ -262,7 +305,7 @@ fn write_vest() -> env::Permission {
 /// 身份（配对块的 `(名字, token)`）——本域是它的读者，子域要用就得由本域转达，别处
 /// 没有第二个来源（`docs/driver.md` §12 甲）。
 fn hand_name(down: &HolePie, name: &str, child: TaskId) -> Result<(), Step> {
-    let Ok(hole) = HolePie::unseal(env::NAME_LEN) else {
+    let Ok(hole) = HolePie::unseal() else {
         return Err(40);
     };
     if hole.push(name.as_bytes()).is_err() {
@@ -367,8 +410,11 @@ fn wire_console(down: &HolePie, child: TaskId, deliver: usize) -> Result<(), Ste
     hand_hole(down, deliver, child, read_vest())
 }
 
-/// plic 收三件：PLIC 的寄存器、设备树本体、内核的 `irq` 门闩。
+/// plic 收三件：PLIC 的寄存器、设备树本体、内核的 `irq` 门铃。
 /// 它自己不认识"串口"——线号由客户端按名字登记（§3.2.6）。
+///
+/// 门铃**只授 `READ`**：听与应都在"取"这一侧；它 `Ring` 不动它——响它的是内核
+/// （`devices::raise_irq` 持着源实体，不走门闩）。见 `docs/bell.md` §4。
 fn wire_plic(
     down: &HolePie,
     child: TaskId,
@@ -378,7 +424,7 @@ fn wire_plic(
 ) -> Result<(), Step> {
     hand_over(down, plic, child, read_write())?;
     hand_over(down, dtb, child, read_only())?;
-    hand_over(down, irq, child, read_write())
+    hand_over(down, irq, child, read_only())
 }
 
 // ── 他杀服务（`kill` 的机制在核、政策在这里）─────────────────────────────
@@ -407,7 +453,7 @@ extern "C" fn doom_service() -> ! {
     if dir_tok == 0 || owner == 0 {
         exit_with(33);
     }
-    let entry = match HolePie::unseal(doom::REQ_LEN) {
+    let entry = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => exit_with(34),
     };
@@ -710,6 +756,8 @@ extern "C" fn main() -> ! {
         Ok(b) => b,
         Err(_) => exit_with(16),
     };
+    // 1.6 门铃自检：不需要别的域、别的域也不需要它 ⇒ 放在建域之前，坏了当场一行字。
+    bell_probe();
 
     // 2. dir：先建（客户端要它的门闩）。它的控制孔即后续引入请求的通道。
     let dir_task = fatal(build_spawn(&entries, "dir", &build_right));
@@ -733,7 +781,7 @@ extern "C" fn main() -> ! {
     // 2.9 **投递孔**：uart 驱动 → console 的一条单向通道（驱动排空设备后把字节投进来）。
     //      由本域开辟：它是两域之间的通道，不属于任何一端；而本域是唯一会**再配一次**
     //      的角色（console 重发时，源副本在本域手里，不必惊动 uart）。
-    let deliver = match HolePie::unseal(protocol::uart::DELIVER_MTU) {
+    let deliver = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => exit_with(59),
     };

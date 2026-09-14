@@ -19,37 +19,39 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 
 | 文件 | 职责 |
 |---|---|
-| `work/mail/mod.rs` | 共享层：`whole()` 整段区间校验 + `copy_in`/`copy_out` + `HOLE_MTU_MAX = 4096`（`mod.rs:34`） |
-| `work/mail/hole.rs` | 单槽管道：`HoleId` / `Slot` / `HoleMeta`、`try_push` / `try_pull` / `ready` / `key` / `seal` |
+| `work/mail/mod.rs` | 共享层：`whole()` 整段区间校验 + `copy_in`/`copy_out` |
+| `work/mail/hole.rs` | 单槽管道：`HoleId` / `Slot` / `HoleMeta`、`try_push` / `peek` / `try_take` / `ready` / `key` / `seal` |
 | `work/mail/pole.rs` | 页地基：页块 + 视图登记（键 ＝ per-pie token）、`open` / `shut` / `narrow` / `seal` |
-| `work/mail/nole.rs` | 无载荷载体：`state` + `owner`、`seal` |
+| `work/mail/nole.rs` | 无载荷载体：`state` + `owner` + 听者面（`id`/`life`/一位 `ring`）、`seal`（见 [bell.md](bell.md)） |
 | `runtime/switcher/envcall/mail.rs` | class 5 数据轴入口：判权 → 长度校验 → **锁外**暂存 → `try_*` → 盖章 |
 | `runtime/switcher/envcall/pie.rs` | class 7 权柄轴：`Unseal*` / `Open` / `Shut` / `Seal` / `Narrow` / `Release` 的编排 |
 | `crates/runtime/src/env/mail.rs` | 用户侧裸函数层 + `HolePie`/`PolePie`/`NolePie` + `AnyPie` + `pull_timeout` |
 
 | | Hole | Pole | Nole |
 |---|---|---|---|
-| 载荷 | 单槽 `Vec<u8>`（capacity = mtu） | 页块 + 视图表 | **无** |
-| 自有 id | `HoleId`（等待键身份，单调不复用） | 无；映射键 ＝ per-pie `token` | **无 id** |
-| 存活单元 | `Arc<Life>`（两个方向的键都指它） | 无 | 无 |
-| 开辟者 / 状态 | `owner`；`Live`/`Dead` | `owner`；`Live`/`Dead` | `owner`；`Live`/`Dead` |
+| 载荷 | 单槽 `Vec<u8>`（**长度随消息**：整条移进移出，无预分配） | 页块 + 视图表 | **无** |
+| 自有 id | `HoleId`（等待键身份，单调不复用） | 无；映射键 ＝ per-pie `token` | `NoleId`（听者键身份；建域权不看它） |
+| 存活单元 | `Arc<Life>`（两个方向的键都指它） | 无 | `Arc<Life>`（听者键指它） |
+| 开辟者 / 状态 | `owner`；`Live`/`Dead` | `owner`；`Live`/`Dead` | `owner`；`Live`/`Dead` + 一位 `ring` |
 
 **代码里没有 `ResourceId` 类型**：身份由 `HoleId`（孔的等待键身份）与 per-pie `token`
 （门闩句柄 / Pole 映射键）分担。
 
 ## 3 · Hole
 
-- **单槽**：`len()` 既是「消息在不在槽」也是实际字节数——Push `set_len`、Pull `clear`，
-  零额外分配（`hole.rs:75-76,189-199,221-225`）。
-- **mtu**：`UnsealHole` 时定，取值 `1..= HOLE_MTU_MAX`；**唯一校验点** `hole.rs:283-286`。
-  用户侧另有一份同值常量（`crates/runtime/src/env/mail.rs:24`），靠内核兜底。
+- **单槽**：`len()` 既是「消息在不在槽」也是实际字节数——推进来的是**推者那个 `Vec`**
+  （`try_push` 里 swap）、取走时**整条移出**（`try_take` 里 `mem::take`，`hole.rs:189-206,229-246`）。
+  两侧都是移动：零拷贝、锁内不发生分配或回收。
+- **没有 mtu**：孔不预设消息上限（[port.md](port.md) §5）。`UnsealHole` **无参**、解封
+  **不预分配**（空孔零字节）；一条消息多大由推者当时分配得出多少决定（`try_reserve` 失败
+  即 `OoM`）。协议自己的报文尺寸留在各协议里。
 - **方向**：Push 需 `W`、Pull 需 `R`（`envcall/mail.rs:175-178`）；`ready(Pull)` ＝ 槽非空、
-  `ready(Push)` ＝ 槽空（`hole.rs:119-130`）。
-- **盖章**：`from` ＝ 推者 task id，Push 时内核写、**与消息同锁同写**（`envcall/mail.rs:61-62,86`）；
-  Pull 一并交回 `(len, from)`（`hole.rs:224-228`）。
-- **封印**：置死 + `wipe` 两个方向的键，**不回收内存**（`hole.rs:269-273`）；写/读完槽各唤醒
-  对侧（`:200,227`）。
-- **`Drop`**：置死 + wipe 两个方向全部等待者（`hole.rs:139-145`）——调用方的义务是**在锁外**
+  `ready(Push)` ＝ 槽空（`hole.rs:128-134`）。
+- **盖章**：`from` ＝ 推者 task id，Push 时内核写、**与消息同锁同写**（`envcall/mail.rs:61-62,100`）；
+  Pull 一并交回 `(len, from)`、`peek` 只报不改（`hole.rs:211-218,239-241`）。
+- **封印**：置死 + `wipe` 两个方向的键，**不回收内存**（`hole.rs:288-291`）；写/读完槽各唤醒
+  对侧（`:203,244`）。
+- **`Drop`**：置死 + wipe 两个方向全部等待者（`hole.rs:137-145`）——调用方的义务是**在锁外**
   drop 门闩。
 
 ## 4 · Pole
@@ -78,6 +80,12 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 - **消费者 ＝ 建域权**：按 token 在**调用方自己表里**找一枚活着的 Nole（`gate/right.rs:22-33`）；
   铸币权（`UnsealNole`）收在 S 态（`envcall/pie.rs:129-135`）。
 
+**第二条消费者 ＝ 门铃（已裁，未实现）**：把一枚 Nole 当"内核一件事实的出口"用
+（[bell.md](bell.md)）。它给 Nole 加上**听者面**——`id` / `life` / 一位 `ring`——于是上面三条
+要照改：「空」仍是承诺，但**允许一位状态**（没有"多少/哪个"，故不是数据面）；`id` 与 `seal`
+的 `wipe` **因听者而存在**。**建域权那条判据一字不改**：够不够建域由门二（S 态）回答，
+不由"只有一种用途"回答（`gate/right.rs:13` 的**理由句**要换，判据不换）。
+
 ## 6 · 拷贝契约
 
 共用前置 `whole()`：区间**每一个**段都在、权限含 `need`、段长之和恰为 `len`（中途未映射 ⇒
@@ -87,8 +95,8 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 旧版是边写边判权限，失败路径上前面几页已经写脏（`mod.rs:90-92` 自述）。代价是区间多走
 一遍 `Segments`；两遍之间映射可能变（他核 unmap），自认是**既有**窗口（`:44-48`）。
 
-**锁序**：handler 先把数据拷进栈/堆暂存，再进 `try_push`/`try_pull`——槽(`L3`) 与
-`Space.segments`(`L2`) 不得嵌套（`hole.rs:17-19`、`envcall/mail.rs:82-89`）。
+**锁序**：handler 先把数据拷进栈/堆暂存，再进 `try_push`/`try_take`——槽(`L3`) 与
+`Space.segments`(`L2`) 不得嵌套（`hole.rs:17-22`、`envcall/mail.rs:82-89`）。
 
 ## 7 · 不变量
 
@@ -124,17 +132,17 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 1. `HolePie::push`（`env/mail.rs:294-304`）→ 裸层封 `MailCall::Push`（`:65-76`）→ `ebreak`。
 2. class 5 解码（`fid.rs:399`）→ 数据轴 dispatch（`envcall/mail.rs:41-43`）。
 3. 判权与存活：按 token 在 `task.pies` 里找 `AnyPie::Hole`，需 `Need::Write`（`:63-75`）。
-4. 长度校验 `len ∈ [1, meta.mtu]`（`:79`）。
+4. 长度校验 `len ≥ 1`（`:79`；**无上限**——由分配器回答）。
 5. **锁外**拷进暂存（`copy_in`，`:84-89`）。
-6. `try_push`：槽非空 ⇒ `Busy`；否则拷进槽、`set_len`、盖 `from = me`（`hole.rs:189-199`）。
+6. `try_push`：槽非空 ⇒ `Busy`；否则**把这份暂存 swap 进槽**、盖 `from = me`（`hole.rs:189-206`）。
 7. 放锁后 `wake(WakeKey::Hole{hole, dir:Pull}, &meta.life())`（`:200`）。
 8. 站点表：有等待者 ⇒ 摘队首 + `void(票根)` + `rise`（`wait/mod.rs:287-310`）；无 ⇒ **置信标**
    `pend = true`（`site.rs:107-113`）。
 9. 对端 `pull` 的 Busy 循环（`env/mail.rs:307-317`）→ `hole::wait` **先探**就绪位，就绪即不挂起
    （`hole.rs:248-250`——先探不可省：对侧可能已写入并正等我们取）；否则走 `block` 的
    ①信标先探 ②离核 ③发票 + 票根 + `tock` ④入队（锁内判键死活、再查信标）。
-10. 醒来：`rise` 入就绪复跑 → 重试 `pull` → `try_pull` 取消息、清槽、`wake(Push)`，返
-    `(len, from)`（`envcall/mail.rs:150-157`、`hole.rs:212-228`）。
+10. 醒来：`rise` 入就绪复跑 → 重试 `pull` → `try_take` **整条移出**、`wake(Push)`，返
+    `(len, from)`（`envcall/mail.rs:157-176`、`hole.rs:229-246`）。
 
 唤醒键恒为 `(HoleId, HoleDir)`；键的寿命由 `HoleMeta.life` 承担——孔死键即判死、站点当场删
 （`hole.rs:101-107`、`site.rs:195-227`）。
@@ -151,11 +159,13 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 3. ~~**`hole.rs:281` 注释与代码不符**~~ —— **已修（本轮）**（改为「**唯一校验点**」）。原记录：
    称 mtu「envcall 入口已校验，此处 defend」，但入口
    `envcall/pie.rs:109` 把 mtu 直交 `meta()`，没有第二次校验。
-4. **用户侧 `HOLE_MTU_MAX` 是重复常量**（`env/mail.rs:24` ↔ `mail/mod.rs:34`），无编译期绑定。
+4. ~~**用户侧 `HOLE_MTU_MAX` 是重复常量**~~ —— **已删（本轮）**：两份常量随 `mtu` 一起消失
+   （[port.md](port.md) §5.1）。
 5. **`NoleMeta` 未 re-export**：`mod.rs:3,28-29` 只把 Hole/Pole 记为资源实体
    （`gate/pie.rs:107` 走全路径），与同文件 `:9` 的「三面并列」不对称。
-6. **Pull 缓冲下界是调用方义务**：`dst.len() < 消息长度` ⇒ `Denied` 且**不动槽**
-   （`hole.rs:217-219`）；没有长度查询原语，收方须自备 ≥ mtu 的缓冲。
+6. **Pull 缓冲下界是调用方义务**：`max < 消息长度` ⇒ `Denied` 且**槽一个字节都不动**
+   （`hole.rs:235-237`）；**已有长度查询原语**——`Pull { max: 0 }`（`HolePie::peek`）只报
+   长度、不动槽，收方据此备够缓冲（[port.md](port.md) §5.2 F2）。
 7. **`pull_timeout` 超时后该孔不再「干净」**：迟到的回复仍可能落槽，调用方应弃用会话
    （`env/mail.rs:335-336`）。
 8. **（史料）门的字段数曾比内核打印少一个**：`examine.nu` 与旧 trace 记 5 个数，当时的

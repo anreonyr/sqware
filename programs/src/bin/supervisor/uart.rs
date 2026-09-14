@@ -93,7 +93,7 @@ extern "C" fn main() -> ! {
         Ok(u) => u,
         Err(_) => runtime::env::room::exit_with(1),
     };
-    let down = match HolePie::unseal(handshake::MTU) {
+    let down = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(2),
     };
@@ -119,7 +119,7 @@ extern "C" fn main() -> ! {
         Ok(d) => d,
         Err(_) => runtime::env::room::exit_with(7),
     };
-    let entry = match HolePie::unseal(MSG_LEN) {
+    let entry = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(8),
     };
@@ -155,7 +155,7 @@ extern "C" fn main() -> ! {
     let deliver = HolePie::from_token(deliver_pier.token());
 
     // 6. 登记那条线：会话门闩由本线程造，READ 副本给读线程（"客户端递出门闩"）。
-    let session = match HolePie::unseal(irq::LINE_LEN) {
+    let session = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(15),
     };

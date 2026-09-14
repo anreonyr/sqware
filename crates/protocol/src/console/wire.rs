@@ -38,7 +38,7 @@
 /// 谁写错一个字母就得到一次"连不上"，且没有一处可供对账。
 pub const SERVICE: &str = "console";
 
-/// 单消息字节数（与 dispatch 的 `MSG_LEN` 同值：同一代 hole MTU 协商）。
+/// 单消息字节数（与 dispatch 的 `MSG_LEN` 同值：同一代协议）。
 pub const MSG_LEN: usize = 64;
 
 /// 回信孔 token 在消息里的偏移。

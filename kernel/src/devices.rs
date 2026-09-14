@@ -32,7 +32,7 @@ use env::{Name, PAIR_LEN, Pair, PieToken};
 use crate::lock::OnceLock;
 use crate::machine;
 use crate::work::mail;
-use crate::work::mail::HoleMeta;
+use crate::work::mail::nole::NoleMeta;
 use crate::work::unit::gate::{self, AnyPie, GateError, Permission};
 use crate::work::unit::task::Task;
 
@@ -46,24 +46,26 @@ const IRQ_NAME: &str = "irq";
 /// （`docs/driver.md` §3.1.5）。
 const DTB_NAME: &str = "devicetree";
 
-/// 中断门闩的载荷上限——**1 字节，内容恒为零**：内核只知道"有外部中断"这一件事，
-/// 线号由 PLIC 驱动自己去 PLIC 里领（`docs/driver.md` §3.2.3）。
-const IRQ_MTU: usize = 1;
-
-/// 中断门闩的资源实体：**内核永久持源**（§3.2.3 明文裁决）。
+/// 中断门铃**没有载荷**——内核只知道"有外部中断"这一件事，线号由 PLIC 驱动自己去
+/// PLIC 里领（`docs/driver.md` §3.2.3）。
+///
+/// 于是它是一枚 **Nole**（数据面为空）而不是"1 字节的孔、内容恒 0"：那个字节从来不是
+/// 内容，是一个信号。用法（等 / 应 / 响）封装在 runtime 的 `Bell` 里（`docs/bell.md`）。
+///
+/// 中断门铃的资源实体：**内核永久持源**（§3.2.3 明文裁决）。
 ///
 /// 这是"资源寿命 = 能力寿命"的**有意例外**，理由在方向上：它不是谁的资源，是内核
 /// 一件事实的出口。若它也随最后一份门闩消亡，域只要放下手里那份就能把中断面拆掉，
-/// 而 `trap_handler` 还会继续往里推（推到一具尸体上）。
-static IRQ: OnceLock<Arc<HoleMeta>> = OnceLock::new();
+/// 而 `trap_handler` 还会继续响它（响在一具尸体上）。
+static IRQ: OnceLock<Arc<NoleMeta>> = OnceLock::new();
 
-/// 把"有外部中断"推进 `irq` 门闩（**trap 上下文**：不分配、不阻塞）。
+/// 响铃：把"有外部中断"记进门铃（**trap 上下文**：不分配、不阻塞、不搬字节）。
 ///
-/// `Err(Busy)` = 槽里还压着上一枚 ⇒ 调用方（trap 分支）据此关本 hart 的闸门。
+/// `Err(Busy)` = 铃还响着（上一件没人应）⇒ 调用方（trap 分支）据此关本 hart 的闸门。
+/// 闸门的另一半在 `envcall/mail.rs::hush`：用户应铃时立刻重开。
 pub(crate) fn raise_irq() -> Result<(), GateError> {
-    let meta = IRQ.get().expect("irq hole not built (devices::scan)");
-    // `from = 0`：推者是内核，不是哪个域（`HoleMeta.from` 的既有约定）。
-    mail::hole::try_push(meta, &[0u8], 0)
+    let meta = IRQ.get().expect("irq bell not built (devices::scan)");
+    mail::nole::ring(meta)
 }
 
 /// 设备树本体（§3.1.5）：一段终身的、boot 给的物理区，与 initrd 走同一条保留区
@@ -82,23 +84,22 @@ fn supply_dtb() -> (Name, AnyPie) {
     )
 }
 
-/// 中断门闩（§3.2.3）：一枚、`mtu = 1`、空载荷、`owner = 0`、内核永久持源。
+/// 中断门铃（§3.2.3）：一枚、**空载荷**、`owner = 0`、内核永久持源。
 ///
 /// 它进配对块，与设备同列——**它是"设备"吗**？不是：它没有一段内存、没有 `reg`。
 /// 它是**一件内核侧事实的出口**（外部中断的入口在 `trap_handler`，那是内核的领地，
 /// 故必须有一小块内核结构）。同一张账里放两种东西并不冲突：账记的是"boot 交出了
 /// 哪些门闩"，不是"有哪些设备"。
+///
+/// 权限只给 `READ | VEST`：听与应都在"取"这一侧，而**谁也 `Ring` 不动它**——响它的是
+/// 内核（持源实体，不走门闩）。`VEST` 是给 root 把它授给 PLIC 驱动用的。
 fn supply_irq() -> (Name, AnyPie) {
-    let meta = mail::hole::meta(IRQ_MTU, 0).expect("irq hole");
-    assert!(IRQ.set(meta.clone()).is_ok(), "irq hole built twice");
-    let pie = gate::new_pie(
-        meta,
-        Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
-        None,
-    );
+    let meta = NoleMeta::new(0);
+    assert!(IRQ.set(meta.clone()).is_ok(), "irq bell built twice");
+    let pie = gate::new_pie(meta, Permission::READ | Permission::VEST, None);
     (
         Name::new(IRQ_NAME).expect("irq name fits"),
-        AnyPie::Hole(pie),
+        AnyPie::Nole(pie),
     )
 }
 

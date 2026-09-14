@@ -15,6 +15,8 @@
 | [task.md](task.md) | Task / Team / 血缘 / 调度 | 执行单元：产、放行、运行、等、死（两相）与回收 |
 | [pie.md](pie.md) | Pie（权柄） | 门闩：权限位、子集转让、派生边、级联撤销、寿命 |
 | [mail.md](mail.md) | Mail（Hole / Pole / Nole） | 数据面三件套：有槽、有页、什么都没有 |
+| [port.md](port.md) | Port（Hole 的通讯协议） | 授出（`Access` × `Policy`）、坐标 `To`、一次往返 `Port`；**§5（Hole 的动态长度：舍弃 `mtu`）已实现**，`ship`/`Port`/`Duet` 未实现 |
+| [bell.md](bell.md) | Bell（Nole 的 runtime 封装） | 空载荷门铃：内核一位「有待取之事」+ 听者面；建域权那条判据为什么不用改；**已实现**（门铃即 `irq` 中断门，`docs/driver.md` §3.2.3） |
 | [memory.md](memory.md) | 帧与页表 | 帧分配器、pagemeta 一份账、页表 / ASID、缺页 |
 
 ## 语义（README 的 Protocol & Service）

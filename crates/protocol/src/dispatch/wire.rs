@@ -56,7 +56,8 @@ use env::wire::PieToken;
 /// 它的使用者，不转口第二遍。
 pub use env::wire::{NAME_LEN, Name, NameError};
 
-/// hole 单消息字节数（与内核 `HOLE_MTU_MAX` 协商——dispatch 协议定 64B）。
+/// 单条报文的字节数——**协议自己的尺寸**：孔早就不替协议记这件事了
+/// （`docs/port.md` §5），它在这里是因为布局与缓冲都得知道它。
 pub const MSG_LEN: usize = 64;
 
 /// per-caller reply 通道 token 在 wire 中的偏移（`[49..57]`）。

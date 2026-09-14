@@ -40,7 +40,7 @@ impl Uart {
         if owner.get() == 0 {
             return Err(denied());
         }
-        let reply = HolePie::unseal(ACK_LEN)?;
+        let reply = HolePie::unseal()?;
         let at_driver = reply.accord(owner, Permission::READ | Permission::WRITE)?;
         Ok(Uart {
             entry,

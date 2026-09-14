@@ -168,12 +168,12 @@ extern "C" fn main() -> ! {
         Ok(u) => u,
         Err(_) => runtime::env::room::exit_with(1),
     };
-    let down = match HolePie::unseal(handshake::MTU) {
+    let down = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(2),
     };
     // 2. 自建请求孔——服务自己开自己的门。
-    let entry = match HolePie::unseal(MSG_LEN) {
+    let entry = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(3),
     };

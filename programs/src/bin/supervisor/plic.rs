@@ -3,7 +3,7 @@
 //! plic — 中断线驱动（S 态 supervisor 域，**一个线程**）。
 //!
 //! ```text
-//! 循环     报文（探测：登记 / 写属主）→ irq 门闩（有界等待）→ claim → 投线号 → complete
+//! 循环     报文（探测：登记 / 写属主）→ irq 门铃（有界等待）→ claim → 投线号 → complete → 应铃
 //! ```
 //!
 //! # 设备侧在哪
@@ -21,8 +21,8 @@
 //!
 //! # 内核在这一整条路上出现两次，且都不认识设备
 //!
-//! `外部中断 → trap_handler 推空令牌进 irq 门闩`（内核只知道"有外部中断"），
-//! 剩下全在这里：`claim`（从 PLIC 领线号）→ 投递 → `complete`。整链两跳
+//! `外部中断 → trap_handler 记一位进 irq 门铃`（内核只知道"有外部中断"），
+//! 剩下全在这里：`claim`（从 PLIC 领线号）→ 投递 → `complete` → 应铃。整链两跳
 //! （§3.2.4）。**投递即唤醒**：持有者正等在自己那枚会话孔上，`push` 就是叫醒它。
 //!
 //! # 为什么只有一个线程
@@ -31,7 +31,7 @@
 //! 为这件事踩过坑并写进了它的模块头）。报文带来的门闩落在收报文的任务表里，
 //! 故收报文与投递必须同任务。于是循环里两件事共处：报文用**非阻塞探测**（它们是
 //! 引导期事件，晚 20 ms 无所谓），中断用**有界等待**（无界会把报文饿死）。
-//! 中断路径本身不轮询：内核的 `try_push` 会唤醒站点。
+//! 中断路径本身不轮询：内核的 `ring` 把听者唤醒（`docs/bell.md`）。
 //!
 //! # 线号从哪来
 //!
@@ -48,18 +48,18 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-use env::HoleDir;
 use env::Permission;
+use programs::plic::{LINE_PRIORITY, Plic};
 use protocol::console::Console;
 use protocol::dispatch::client::Directory;
 use protocol::irq::{self, Lines};
-use programs::plic::{LINE_PRIORITY, Plic};
+use runtime::core::bell::Bell;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
-use runtime::env::mail::{self, AnyPie as _, HolePie, PolePie};
+use runtime::env::mail::{self, AnyPie as _, HolePie, NolePie, PolePie};
 
 /// `irq` 门铃的等待上界（毫秒）——**不能是无穷**：注册报文要有人听（见模块头）。
-/// 中断路径不受它影响（槽满/有信都立即唤醒）。
+/// 中断路径不受它影响（铃一响即醒）。
 const IRQ_WAIT_MS: usize = 20;
 
 /// 线表：**名字 → 线号 + 属主 + 活实例**。只在本域的内存里（§3.2.6）。
@@ -79,7 +79,7 @@ extern "C" fn main() -> ! {
         Ok(u) => u,
         Err(_) => runtime::env::room::exit_with(1),
     };
-    let down = match HolePie::unseal(handshake::MTU) {
+    let down = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(2),
     };
@@ -106,7 +106,7 @@ extern "C" fn main() -> ! {
     };
     ENTRY.with(|e| *e = Some(pier.token().get()));
     // 自建请求孔：客户端往它推动词（`protocol::irq` 的定长报文，故 `mtu` 就是它）。
-    let entry = match HolePie::unseal(irq::LEN) {
+    let entry = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(8),
     };
@@ -142,7 +142,7 @@ extern "C" fn main() -> ! {
     }
     PLIC.with(|p| *p = Some(plic));
     LINES.with(|l| *l = Some(lines));
-    let irq = HolePie::from_token(irq_pier.token());
+    let irq = Bell::new(NolePie::from_token(irq_pier.token()));
 
     // 4. 上线：本域的工作就是下面这个循环。
     //
@@ -150,7 +150,6 @@ extern "C" fn main() -> ! {
     // 一定在它之后（正是它登记了这条线）。故本域只在**第一次投递**时说一句话。
 
     let mut buf = [0u8; irq::LEN];
-    let mut token = [0u8; 1];
     let mut first = true;
     loop {
         // ① 报文：**非阻塞探测**（晚一拍无所谓——登记与写属主都是引导期事件）。
@@ -160,12 +159,17 @@ extern "C" fn main() -> ! {
         if let Ok((n, from)) = mail::pull_from(entry.token(), buf.as_mut_ptr(), buf.len()) {
             serve(&buf[..n], from);
         }
-        // ② 中断：有界等待内核的空令牌；有信即醒（`try_push` 唤醒站点）。
-        if matches!(irq.wait(HoleDir::Pull, IRQ_WAIT_MS), Ok(true)) {
-            // 槽里可能有不止一枚（多 hart 同时取到 SEI 时内核各推一枚）。
-            while irq.pull_timeout(&mut token, 0).is_ok() {
-                deliver(&mut first);
-            }
+        // ② 中断：有界等待门铃；一响即醒（内核 `ring` 唤醒听者）。
+        //
+        // **排空的判据在 PLIC，不在门铃**：多 hart 同时取到 SEI 时，门铃只合成一位
+        // （第二枚起返 `Busy`），它数不出"还有几枚"；而 `claim` 领到 0 就是"没有可领
+        // 的线了"——线号的权威本来就在 PLIC（`docs/bell.md` §8.3）。
+        if matches!(irq.wait(IRQ_WAIT_MS), Ok(true)) {
+            while deliver(&mut first) {}
+            // ③ 应铃：**排空之后**才应。内核那一位同时就是本 hart 中断闸门的账——
+            //    闸门要等到"没有待取之事"才重开；排空期间新到的那一枚会在应铃后立刻
+            //    再响一次（PLIC 是电平的），故不会漏。
+            let _ = irq.hush();
         }
     }
 }
@@ -251,7 +255,8 @@ fn reply(ack: usize, status: irq::Ack) {
     let _ = mail::release(ack);
 }
 
-/// 领一条线、投给客户端、结掉它；投不出去就**收线**。
+/// 领一条线、投给客户端、结掉它；投不出去就**收线**。返 `true` = 领到了一条线
+/// （调用方据此继续排空——**判据是 `claim` 的结果，不是门铃的计数**）。
 ///
 /// 三条会静默咬人的规矩都在这里落地（§7.2）：claim 之后**必须真的碰设备**
 /// （我们确实在领线号）、`complete` 不是重武装点（所以线还得靠客户端重新等）、
@@ -260,12 +265,12 @@ fn reply(ack: usize, status: irq::Ack) {
 /// 收线的判据是**一次失败**（§12 ②）：`Denied` = 那枚副本已经不在本域表里（客户端死了
 /// ——内核沿派生链把本域手里那一枚一起摘掉了）、`Dead` = 客户端封印了它（自愿退场）。
 /// `Busy` **到不了这里**：`HolePie::push` 对槽满是等（背压），不是报错。
-fn deliver(first: &mut bool) {
+fn deliver(first: &mut bool) -> bool {
     let Some(line) = PLIC.with(|p| p.as_ref().map(|p| p.claim())) else {
-        return;
+        return false;
     };
     if line == 0 {
-        return; // 没东西可领：不 complete（那会把 0 当线号结掉）
+        return false; // 没东西可领：不 complete（那会把 0 当线号结掉）
     }
     let client = LINES.with(|l| l.as_ref().and_then(|l| l.holder(line)));
     let mut carried = false;
@@ -288,6 +293,7 @@ fn deliver(first: &mut bool) {
         *first = false;
         report(line);
     }
+    true
 }
 
 /// 收线：实例摘空（**行保留**）、关掉那条线、放下本域手里那份会话门闩。

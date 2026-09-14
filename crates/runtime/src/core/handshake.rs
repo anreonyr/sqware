@@ -4,7 +4,7 @@
 //! root；客户端要用的目录门闩由 **dir 亲授**（root 只转达「授给谁」）——客户端拿到
 //! 的副本 `vestor == dir`，来源可自证。
 //!
-//! 线格式：`[0] = tag`、`[1..9] = payload u64 LE`，孔 mtu = [`MTU`]。
+//! 线格式：`[0] = tag`、`[1..9] = payload u64 LE`，报文 [`MTU`] 字节。
 //!
 //! ```text
 //! Quay      子 → 父   子域上行孔      我控制孔在父侧的句柄
@@ -243,7 +243,7 @@ impl Referred {
 ///
 /// **时序义务**：必须早于 `Hatch(child)`——否则子域起跑时 `moor()` 找不到它。
 pub fn dock(child: TaskId) -> EnvResult<HolePie> {
-    let up = HolePie::unseal(MTU)?;
+    let up = HolePie::unseal()?;
     up.accord(
         child,
         Permission::READ | Permission::WRITE | Permission::VEST,

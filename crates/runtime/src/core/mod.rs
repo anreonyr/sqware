@@ -1,5 +1,5 @@
 //! core — 运行时的内核实现面：把 `env` 的原语组装成可用的机制。
-//! 任务本地原语（heap/tls/unit）+ Mail 之上封装（channel/handshake）。
+//! 任务本地原语（heap/tls/unit）+ Mail 之上封装（bell/channel/handshake）。
 //! **协议不在本 crate**：目录协议的客户端与服务端已搬去 `crates/protocol::dispatch`，
 //! 本模块对 `protocol` 零引用。
 //!
@@ -12,6 +12,7 @@
 //! 例子：`env::mail::HolePie` 是「薄」门闩句柄；`core::channel::Channel` 是
 //! 「厚」开-关生命周期封装。
 
+pub mod bell;
 pub mod channel;
 pub mod handshake;
 pub mod heap;

@@ -81,12 +81,12 @@ extern "C" fn main() -> ! {
         Err(_) => runtime::env::room::exit_with(1),
     };
     // 2. 自建请求门闩——服务自己开自己的门。
-    let entry = match HolePie::unseal(MSG_LEN) {
+    let entry = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(2),
     };
     // 3. 自建控制孔（只给父域），与请求门闩分离——父域拿不到请求队列。
-    let control = match HolePie::unseal(handshake::REFER_MTU) {
+    let control = match HolePie::unseal() {
         Ok(h) => h,
         Err(_) => runtime::env::room::exit_with(3),
     };

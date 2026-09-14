@@ -1,13 +1,15 @@
 // hole — 数据过内核的管道。
 //
-// holeMeta 是内核侧"门洞"：单槽消息缓冲（`Vec<u8>`，capacity = mtu）+ 状态。
-// 消息长度由 Push 时显式声明、Pull 时显式声明 max——长度是参数不是约定。
+// `HoleMeta` 是内核侧"门洞"：**单槽消息**（一个 `Vec<u8>`，长度随消息——**没有 mtu**）
+// + 状态。消息长度由 Push 时显式声明、Pull 时显式声明 max——长度是参数不是约定。
 // 用户态 Pie<HoleMeta>（含 Weak<HoleMeta>）只持门闩，不参与数据。
 //
 // 数据面原语（全部非阻塞）：
-// - `try_push(meta, src)`：槽空则拷 src 进 slot 并唤醒对侧 Pull。src.len() ∈ [1, mtu]。
-// - `try_pull(meta, dst) -> usize`：槽非空则拷 src.len() 字节进 dst 并唤醒对侧
-//   Push；返回实际长度。dst.len() < src.len() → Denied。
+// - `try_push(meta, msg, from)`：槽空则**把 `msg` 那个 Vec 移进槽**（零拷贝）并唤醒
+//   对侧 Pull。`msg.len() ≥ 1`；上限由**分配器**回答，不由常量回答。
+// - `peek(meta) -> (len, from)`：只看一眼（长度 + 发送者），**一个字节都不动**。
+// - `try_take(meta, max) -> (Vec<u8>, from)`：把整条消息**移出**槽（零拷贝）并唤醒对侧
+//   Push；装不下（`len > max`）→ `Denied` 且**槽原样**。
 // - `ready(dir)`：该方向现在可用吗。
 // - `wait(meta, dir, dur)`：唯一挂起入口——先探、后挂；死则报 Dead。
 // - `key(meta, dir)`：该方向的等待键（命名空间 0，键不出内核）。
@@ -15,8 +17,9 @@
 // 写/读完槽后都 wake 对侧等待者。
 //
 // **锁序约定**：`slot` 是 L3 锁。envcall handler 不在持 slot 锁时调 copy_in/out
-// （后者经 `space.segments` 走 Space 锁 = L2，会违反 2→4 反向嵌套）——handler
-// 先把用户 VA 拷到栈/堆暂存，再调 try_push/try_pull 拷进/拷出 slot 的 Vec 存储。
+// （后者经 `space.segments` 走 Space 锁 = L2，会违反 2→4 反向嵌套）——push 侧先在
+// 锁外把用户 VA 拷进一个 staging Vec、再把**那个 Vec 移动**进槽；pull 侧先把槽里的
+// Vec **移动**出来（锁已放），再 copy_out 给用户。两侧都是移动，不是拷贝。
 
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -27,7 +30,6 @@ use crate::lock::{Level, SpinLock};
 
 use env::HoleDir;
 
-use super::HOLE_MTU_MAX;
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::gate::GateError;
 use crate::work::unit::life::Life;
@@ -53,10 +55,12 @@ pub enum HoleState {
 
 /// 单槽：消息 + 它的来源。
 ///
+/// `buf` **就是消息本体**——推者的 Vec 移进来、收方移出去，长度随消息。空
+/// （`len() == 0`）即"槽是空的"；`capacity` 只说明那条消息曾经多大，不承载语义。
+///
 /// `from` = 推者的 task id，**内核在 Push 时盖章**（syscall 上下文不可伪造）。
 /// 收方 Pull 时一并拿到——身份不再需要从报文里猜。
 struct Slot {
-    /// capacity 恒为 mtu（创建时分配）；`len() > 0` 即有消息。
     buf: Vec<u8>,
     /// 当前槽里这条消息的发送者；空槽时无意义。
     from: usize,
@@ -70,10 +74,8 @@ pub struct HoleMeta {
     /// 本 hole 的**存活单元**（两个方向的等待键都指它）：强持有者是本 Meta ⇒
     /// 最后一份门闩消失时键自然判死，站点随之可删（A2）。见 [`Life`]。
     life: Arc<Life>,
-    /// unseal 时定；`1..=HOLE_MTU_MAX`。Push/Pull 的长度校验上限。
-    pub mtu: usize,
-    /// 单槽消息：`len()` 既是「消息是否在槽」也是「实际占用字节数」——Push 时
-    /// set_len、Pull 时 clear，零额外分配。`from` 与消息同锁同写。
+    /// 单槽消息：`len()` 既是「消息是否在槽」也是「消息多长」。消息**整条移进移出**
+    /// ——不拷贝、不预分配，故没有 mtu 这回事。
     slot: SpinLock<Slot>,
     /// 开辟者：`UnsealHole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
     ///
@@ -83,17 +85,19 @@ pub struct HoleMeta {
 }
 
 impl HoleMeta {
-    pub(super) fn new(mtu: usize, id: HoleId, owner: usize) -> Arc<Self> {
-        let slot = Slot {
-            buf: Vec::with_capacity(mtu),
-            from: 0,
-        };
+    pub(super) fn new(id: HoleId, owner: usize) -> Arc<Self> {
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
             id,
             life: Life::new(),
-            mtu,
-            slot: SpinLock::new_level(Level::L3, slot),
+            // 空槽：**零分配**（capacity 也是 0）。第一条消息由推者带进来。
+            slot: SpinLock::new_level(
+                Level::L3,
+                Slot {
+                    buf: Vec::new(),
+                    from: 0,
+                },
+            ),
             owner,
         })
     }
@@ -119,7 +123,7 @@ impl HoleMeta {
     /// 该方向现在可用吗：`Pull` = 槽里有消息（len > 0），`Push` = 槽空（len == 0）。
     /// 纯查询，不判存活。
     ///
-    /// 与 `wait` 的挂起条件、与 `try_push`/`try_pull` 的唤醒点读同一份 `slot.len()` —
+    /// 与 `wait` 的挂起条件、与 `try_push`/`try_take` 的唤醒点读同一份 `slot.len()` —
     /// 三者必须同源，否则会出现"就绪了却没人唤醒"或"唤醒后仍不满足"。
     pub(crate) fn ready(&self, dir: HoleDir) -> bool {
         let slot = self.slot.lock();
@@ -170,42 +174,59 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
 
 // ── 数据面原语（非阻塞）──
 
-/// 非阻塞 push：槽空则拷 `src` 进 slot 并 wake 等读的；槽满返 Busy。
+/// 非阻塞 push：槽空则**把 `msg` 那个 Vec 移进槽**（零拷贝）并 wake 等读的；槽满返 Busy。
 ///
 /// `from` = 推者 task id（内核在 envcall 入口盖章）——与消息**同锁同写**，收方
 /// Pull 时一并取回。
 ///
-/// 前置：`src.len() ∈ [1, mtu]`。envcall 入口已校验 `len <= mtu`，此处再 defend。
-/// 调用方须在持 `src` 时不持 slot 锁（slot = L3，Space.segments = L2；持 L3
+/// 前置：`msg.len() ≥ 1`（消息为空不是消息）。**没有长度上限**：这条消息多大由
+/// 推者当时分配得出多少决定（`try_reserve` 失败即 `OoM`），不由任何常量决定。
+///
+/// 移动的方向是"推者 → 槽"：`msg` 进槽，槽里原来那个**空** Vec 退回调用方
+/// （空 = capacity 0，drop 它不释放任何东西 ⇒ **锁内不发生分配或回收**）。
+/// 调用方须在持 `msg` 时不持 slot 锁（slot = L3，Space.segments = L2；持 L3
 /// 调 L2 锁为 4→2 反向嵌套）。
-pub(crate) fn try_push(meta: &HoleMeta, src: &[u8], from: usize) -> Result<(), GateError> {
+pub(crate) fn try_push(meta: &HoleMeta, msg: &mut Vec<u8>, from: usize) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
-    let len = src.len();
-    if len == 0 || len > meta.mtu {
+    if msg.is_empty() {
         return Err(GateError::Denied);
     }
     let mut slot = meta.slot.lock();
     if !slot.buf.is_empty() {
         return Err(GateError::Busy);
     }
-    // SAFETY: capacity == mtu >= len；src 含 len 字节。
-    unsafe {
-        core::ptr::copy_nonoverlapping(src.as_ptr(), slot.buf.as_mut_ptr(), len);
-        slot.buf.set_len(len);
-    }
+    core::mem::swap(&mut slot.buf, msg);
     slot.from = from;
     drop(slot);
     let _ = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
     Ok(())
 }
 
-/// 非阻塞 pull：槽非空则拷 `src.len()` 字节进 `dst` 并 wake 等写的；槽空返 Busy。
-/// 返 `(实际长度, 发送者 task id)`。`dst.len() < src.len()` 返 Denied（buf 装不下）。
+/// 看一眼槽里的消息：`(长度, 发送者)`。**一个字节都不动**（槽留原样）。
 ///
-/// 锁序同 try_push：调用方持 `dst` 时不持 slot 锁。
-pub(crate) fn try_pull(meta: &HoleMeta, dst: &mut [u8]) -> Result<(usize, usize), GateError> {
+/// 这是"收方怎么知道该备多大缓冲"的答案：先问长度，再按长度备缓冲，最后
+/// [`try_take`]。空槽返 `Busy`（没有可取之事）。
+pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, usize), GateError> {
+    if !meta.alive() {
+        return Err(GateError::Dead);
+    }
+    let slot = meta.slot.lock();
+    if slot.buf.is_empty() {
+        return Err(GateError::Busy);
+    }
+    Ok((slot.buf.len(), slot.from))
+}
+
+/// 非阻塞 pull：把整条消息**移出**槽（零拷贝）并 wake 等写的；槽空返 Busy。
+/// 返 `(消息, 发送者 task id)`。`max < 消息长度` 返 `Denied` 且**槽原样**
+/// （"要么全取、要么一个字节都不动"）。
+///
+/// 移动的方向是"槽 → 收方"：消息整条出去，槽里留下一个空 Vec（零分配）。
+/// 锁序同 try_push：调用方持返回的 `Vec` 时不持 slot 锁——它是**拷贝给用户之前**
+/// 的落点，`copy_out` 必须在锁外、且在 `space.segments`(L2) 那一侧。
+pub(crate) fn try_take(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, usize), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
@@ -214,18 +235,14 @@ pub(crate) fn try_pull(meta: &HoleMeta, dst: &mut [u8]) -> Result<(usize, usize)
     if len == 0 {
         return Err(GateError::Busy);
     }
-    if dst.len() < len {
+    if len > max {
         return Err(GateError::Denied);
     }
-    // SAFETY: dst 含至少 len 字节；slot 含 len 字节已 set_len。
-    unsafe {
-        core::ptr::copy_nonoverlapping(slot.buf.as_ptr(), dst.as_mut_ptr(), len);
-    }
     let from = slot.from;
-    slot.buf.clear();
+    let msg = core::mem::take(&mut slot.buf);
     drop(slot);
     let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
-    Ok((len, from))
+    Ok((msg, from))
 }
 
 // ── 挂起（唯一入口）──
@@ -280,13 +297,10 @@ pub(crate) fn seal(meta: &HoleMeta) {
 /// envcall 编排（gate::new_pie + pies.push）。返 `Arc`：它既是资源实体，也是
 /// 门闩持有的**唯一强引用**（资源寿命 = 能力寿命）。
 ///
-/// `mtu ∈ [1, HOLE_MTU_MAX]`——**唯一校验点**：`UnsealHole` 在 envcall 入口把 mtu
-/// 直交这里，没有第二道。
+/// **无参数可校验**（对照 `pole::region` 的物理区、`HoleMeta::new` 的空槽）：
+/// 解封一枚孔的代价是零字节——槽里没有缓冲，第一条消息由推者带进来。
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
-pub(crate) fn meta(mtu: usize, owner: usize) -> Result<Arc<HoleMeta>, GateError> {
-    if mtu == 0 || mtu > HOLE_MTU_MAX {
-        return Err(GateError::Denied);
-    }
+pub(crate) fn meta(owner: usize) -> Arc<HoleMeta> {
     // 先分配 id 再建 Meta：id 同时是等待键的身份（见 `key`），必须随 Meta 定型。
-    Ok(HoleMeta::new(mtu, alloc_id(), owner))
+    HoleMeta::new(alloc_id(), owner)
 }

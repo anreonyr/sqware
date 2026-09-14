@@ -72,7 +72,7 @@ impl Line {
 
     /// 一次往返：备回信孔 → 报文 → 有界等回执 → **封印回信孔**。
     fn ask(&self, build: impl FnOnce(PieToken) -> Request) -> EnvResult<Ack> {
-        let ack = HolePie::unseal(ACK_LEN)?;
+        let ack = HolePie::unseal()?;
         let at_driver = ack.accord(self.owner, Permission::WRITE)?;
         let msg = build(at_driver).encode();
         // 推送**会阻塞**（槽满即等，见 `HolePie::push`）：驱动一定会看到这条报文。

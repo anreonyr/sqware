@@ -13,6 +13,8 @@ use core::time::Duration;
 
 use env::{HoleDir, MailCall};
 
+use riscv::register::sie;
+
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
@@ -47,6 +49,8 @@ pub(crate) fn dispatch(
             pull(frame, ident, token.get(), KVirt::from_raw(buf.get()), max)
         }
         MailCall::Wait { token, dir, millis } => wait_dir(frame, ident, token.get(), dir, millis),
+        MailCall::Hush { token } => hush(frame, token.get()),
+        MailCall::Ring { token } => ring(frame, token.get()),
     })
 }
 
@@ -82,21 +86,24 @@ fn push(
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => {
                     let meta = p.meta().clone();
-                    // 长度校验：必须 ≥1 且 ≤ hole.mtu（meta() 入口已校验 mtu∈[1,4096]）。
-                    if len == 0 || len > meta.mtu {
+                    // 长度校验：消息非空即可。**没有上限**——这条消息多大由这次
+                    // `try_reserve` 答不答得出来决定（失败答 `OoM`），不由常量决定。
+                    if len == 0 {
                         Err(GateError::Denied)
                     } else {
                         // 锁外拷入堆暂存：slot = L3，Space.segments = L2，
                         // 持 L3 调 L2 是 4→2 反向嵌套，禁止。
                         // 堆暂存：`try_reserve` 而不是 `vec![0u8; len]`——这一笔不可失败时
                         // 是一次整机 halt，而入口（envcall）本来就能答 `Denied`/`OoM`。
+                        // 这份 staging **整个移进槽**（`try_push` 里 swap）：推之后槽里就是它，
+                        // 故"消息多长槽就多大"，没有第二份拷贝、没有预留容量。
                         let mut staging: Vec<u8> = Vec::new();
                         if staging.try_reserve(len).is_err() {
                             Err(GateError::OoM)
                         } else {
                             staging.resize(len, 0);
                             if mail::copy_in(&ident.team.space, &mut staging, msg.as_usize()) {
-                                mail::hole::try_push(&meta, &staging, me)
+                                mail::hole::try_push(&meta, &mut staging, me)
                             } else {
                                 Err(GateError::Denied)
                             }
@@ -119,9 +126,11 @@ fn push(
     Outcome::Resume
 }
 
-/// 从 hole 取一条消息：权柄判定（R）→ 长度校验 → try_pull → 锁外拷回用户。
+/// 从 hole 取一条消息：权柄判定（R）→ `max == 0` 则**只报长度**，否则把整条消息
+/// 移出槽、锁外拷回用户。
 ///
 /// a0 = 实际长度、a1 = 发送者 task id；发送者是内核在 Push 时盖的章，不可伪造。
+/// `max` = 收方缓冲容量：装不下（`len > max`）答 `Denied` 且**槽一个字节都不动**。
 fn pull(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
@@ -149,29 +158,22 @@ fn pull(
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => {
                     let meta = p.meta().clone();
-                    if max == 0 || max > meta.mtu {
-                        Err(GateError::Denied)
+                    if max == 0 {
+                        // `max == 0` = **只报长度、不动槽**（与 `Wait { millis: 0 }`「只探测
+                        // 不挂起」同一形状的"只问"）：收方据此备出装得下的缓冲。
+                        mail::hole::peek(&meta)
                     } else {
-                        // 同上：Pull 的暂存也不走 `vec!`（≤ mtu，但失败即 halt）。
-                        let mut staging: Vec<u8> = Vec::new();
-                        if staging.try_reserve(max).is_err() {
-                            Err(GateError::OoM)
-                        } else {
-                            staging.resize(max, 0);
-                            match mail::hole::try_pull(&meta, &mut staging) {
-                                Ok((n, from)) => {
-                                    if !mail::copy_out(
-                                        &ident.team.space,
-                                        &staging[..n],
-                                        buf.as_usize(),
-                                    ) {
-                                        Err(GateError::Denied)
-                                    } else {
-                                        Ok((n, from))
-                                    }
+                        // 整条消息**移出**槽：零拷贝、锁外无分配（对照旧版按 `max` 预分配
+                        // 暂存再拷一遍）。消息的 Vec 就是拷给用户之前的落点。
+                        match mail::hole::try_take(&meta, max) {
+                            Ok((msg, from)) => {
+                                if mail::copy_out(&ident.team.space, &msg, buf.as_usize()) {
+                                    Ok((msg.len(), from))
+                                } else {
+                                    Err(GateError::Denied)
                                 }
-                                Err(e) => Err(e),
                             }
+                            Err(e) => Err(e),
                         }
                     }
                 }
@@ -192,11 +194,14 @@ fn pull(
     Outcome::Resume
 }
 
-/// 等某方向就绪：权柄判定（`dir` 决定 R 还是 W）→ 探测或挂起。
+/// 等就绪：权柄判定（`dir` 决定 R 还是 W）→ 探测或挂起。
 ///
 /// `millis == usize::MAX` = 永久；`0` = 只探测不挂起。a0 返 `true` = 本次调用
 /// **当场就绪**（未挂起）；`false` = 未就绪（探测失败，或被唤醒/超时——两者不分）。
 /// **绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
+///
+/// **两条资源通道**：孔有方向（`dir` 要 R 或 W），铃只有一条——故 Nole 只认
+/// `dir == Pull`，别的值返 `Denied`（`docs/bell.md` §4）。
 fn wait_dir(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
@@ -204,6 +209,11 @@ fn wait_dir(
     dir: HoleDir,
     millis: usize,
 ) -> Outcome {
+    /// 等的是哪一条通道：孔指向具体方向，铃就是铃。
+    enum Ready {
+        Hole(Arc<mail::hole::HoleMeta>),
+        Bell(Arc<mail::nole::NoleMeta>),
+    }
     // ① 锁内解析 token ⇒ 抄件：pies 与站点表同为 L3，绝不嵌套；
     //    `running_task` 的临时强引用在闭包内即 drop，不跨挂起。
     let need = match dir {
@@ -226,7 +236,9 @@ fn wait_dir(
         Some(Ok(pie)) => match usable(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
-                AnyPie::Hole(p) => Ok(p.meta().clone()),
+                AnyPie::Hole(p) => Ok(Ready::Hole(p.meta().clone())),
+                // 铃只有"响了"一条方向：别的方向不是"暂时没有"，是不存在这个操作。
+                AnyPie::Nole(p) if dir == HoleDir::Pull => Ok(Ready::Bell(p.meta().clone())),
                 _ => Err(GateError::Denied),
             },
         },
@@ -240,17 +252,95 @@ fn wait_dir(
     };
     match resolved {
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
-        Ok(meta) => {
+        Ok(ready) => {
             // 挂起路径的默认返回 = false（未当场就绪）；可能 halt 的分支先放身份。
             frame.gpr.set_x(Gprs::A0, 0);
             drop(ident);
-            match mail::hole::wait(&meta, dir, dur) {
-                Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
-                // 未离核：当场结论（true = 该方向现在就绪）。
+            // 两条通道的原语**同型**（`Handoff<bool>`），故这里只挑调用、不各写一遍答案：
+            // `Resume(true)` = 该方向/铃**当场就绪**，`Resume(false)` = 未就绪且 `millis == 0`。
+            let parked = match &ready {
+                Ready::Hole(meta) => mail::hole::wait(meta, dir, dur),
+                Ready::Bell(meta) => mail::nole::wait(meta, dur),
+            };
+            match parked {
                 Ok(Handoff::Resume(ready)) => frame.gpr.set_x(Gprs::A0, ready as usize),
                 Ok(Handoff::Switch(pa)) => return Outcome::Park(pa as *mut TrapContext),
+                Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
             }
         }
     }
     Outcome::Resume
+}
+
+/// 应铃：权柄判定（R）→ 清掉"有待取之事"，并**重开本 hart 的外部中断闸门**。
+///
+/// 闸门那一半与 `devices::raise_irq` 的 `Err ⇒ clear_sext` 配对：内核在"响还在"时
+/// 关闸门，用户在这里说"我取走了"。闸门本身是**零状态**的（`trap.rs` 的 timer tick
+/// 无条件重开），故这一句只是让重开**立即**发生，而不是让它成为唯一路径。
+///
+/// 不收 `ident`：本操作不挂起、不 halt（可能 halt 的分支才需要先放身份）。
+fn hush(frame: &mut TrapContext, token: usize) -> Outcome {
+    let r = with_bell(token, Need::Read, mail::nole::hush);
+    if r.is_ok() {
+        // SAFETY: 与 trap 分支那一句同源：只置本 hart 的 SEIE 位。
+        unsafe {
+            sie::set_sext();
+        }
+    }
+    frame.gpr.set_x(
+        Gprs::A0,
+        match r {
+            Ok(()) => 0,
+            Err(e) => e.code() as usize,
+        },
+    );
+    Outcome::Resume
+}
+
+/// 响铃：权柄判定（W）→ 置"有待取之事"并唤醒听者。不搬任何字节。
+fn ring(frame: &mut TrapContext, token: usize) -> Outcome {
+    let r = with_bell(token, Need::Write, mail::nole::ring);
+    frame.gpr.set_x(
+        Gprs::A0,
+        match r {
+            Ok(()) => 0,
+            Err(e) => e.code() as usize,
+        },
+    );
+    Outcome::Resume
+}
+
+/// 应铃／响铃共用的三段：**锁内**定位 + 判权 + 判活 ⇒ 抄件；**锁外**判"被关住"，
+/// 再落那一个动作。
+///
+/// 与 `push`/`pull` 的 ①② 同构（那两个各自内联了一遍）；两者只差 `need` 与落在
+/// meta 上的动作，故收 `op` 而不是抄两遍。
+fn with_bell(
+    token: usize,
+    need: Need,
+    op: fn(&mail::nole::NoleMeta) -> Result<(), GateError>,
+) -> Result<(), GateError> {
+    let found = current().running_task().and_then(|t| {
+        let pies = t.pies.lock();
+        let pie = pies.iter().find(|p| p.token() == token)?.clone();
+        if !pie.allows(need) {
+            return Some(Err(GateError::Denied));
+        }
+        if !pie.alive() {
+            return Some(Err(GateError::Dead));
+        }
+        Some(Ok(pie))
+    });
+    match found {
+        // ② 锁外：第四道判据（陈旧锚在此自愈）。
+        Some(Ok(pie)) => match usable(&pie) {
+            Err(e) => Err(e),
+            Ok(()) => match &pie {
+                AnyPie::Nole(p) => op(p.meta()),
+                _ => Err(GateError::Denied),
+            },
+        },
+        Some(Err(e)) => Err(e),
+        None => Err(GateError::Denied),
+    }
 }

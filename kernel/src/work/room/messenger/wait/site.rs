@@ -32,6 +32,11 @@ pub enum WakeKey {
     /// `hole` 用裸整数而非 `mail::HoleId`：依赖方向必须保持 mail → room 单向，
     /// 引 `HoleId` 就成了环。
     Hole { hole: usize, dir: HoleDir },
+    /// 铃响（`MailCall::Wait`；`nole::ring` 置位并投信、`nole::hush` 清位）。
+    ///
+    /// **没有方向字段**：门铃只有一条方向，键只需身份。同 `Hole`，用裸整数而非
+    /// `mail::NoleId`——依赖方向必须保持 mail → room 单向。
+    Nole { id: usize },
     /// 目标任务回收（`UnitCall::Join`）。
     Task { id: usize },
     /// 无人投信——只有期限会响（`RoomCall::Park`）。
@@ -50,6 +55,9 @@ impl WakeKey {
             WakeKey::Hole { hole, dir } => {
                 (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir as u64
             }
+            // 与 `Hole` 换一个乘数：两个 id 空间各起一份计数器、数值会重叠，
+            // 分片散列因此各走一路（相等性仍由 `Eq` 判，这里只影响分片）。
+            WakeKey::Nole { id } => (id as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9),
             WakeKey::Task { id } => (id as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
             WakeKey::Alarm { task } => (task as u64).wrapping_mul(0xA24B_AED4_963E_E407),
         }

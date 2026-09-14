@@ -234,11 +234,12 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             frame as *mut TrapContext
         }
         // 外部中断：**内核只知道"有外部中断"这一件事**（`docs/driver.md` §3.2.3）。
-        // 把一枚空令牌推进 `irq` 门闩就走人——claim/complete、线号、哪个客户端，
-        // 全在 PLIC 驱动那个域里；内核侧只有这三件（分支、闸门、门闩）。
+        // 记一声铃进 `irq` 门铃就走人——claim/complete、线号、哪个客户端，
+        // 全在 PLIC 驱动那个域里；内核侧只有这三件（分支、闸门、门铃）。
         //
-        // 槽满（消费者还没取走上一枚）⇒ 关**本 hart** 的 SEIE：这就是闸门，也是内核
-        // 侧唯一的"状态"（零状态：这个决定不落任何账，靠 timer tick 无条件重开）。
+        // 铃还响着（消费者还没应）⇒ 关**本 hart** 的 SEIE：这就是闸门，也是内核
+        // 侧唯一的"状态"（零状态：这个决定不落任何账，靠 timer tick 无条件重开；
+        // 用户应铃（`envcall::mail::hush`）时也立即重开一次）。
         Trap::Interrupt(Interrupt::SupervisorExternal) => {
             if crate::devices::raise_irq().is_err() {
                 unsafe {

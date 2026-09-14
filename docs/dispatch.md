@@ -281,7 +281,7 @@ sender 授给目录的那一枚**（`Reserve(reply).vestor == caller`），否�
 
 ```text
 root:
-  1. 逐子域串行：dock(child)（开上行孔 mtu=9 + Accord(child, R|W|VEST)）
+  1. 逐子域串行：dock(child)（开上行孔 + Accord(child, R|W|VEST)）
      → Build + Spawn(Held) → Hatch
      → Quay::pull（子域控制孔在父侧的句柄；校验 Reserve(句柄).vestor == child）
   2. 客户端要目录能力时：`Refer{who, name}` → dir 控制孔；`Referred{token}` ← dir 上行孔
@@ -289,7 +289,7 @@ root:
   ※ root 全程不持任何服务孔（见 docs/root.md §10）
 
 dir:   moor() 认上行孔 → UnsealHole 自建请求门闩 H（**只自己持**）
-       → UnsealHole 自建控制孔 C（mtu = 41，装得下名字）→ Accord(root, R|W) → Quay{C 在父侧的句柄}
+       → UnsealHole 自建控制孔 C（装得下名字）→ Accord(root, R|W) → Quay{C 在父侧的句柄}
        → Spawn 控制线程（Held）→ Accord(H/C/上行孔 三枚副本给它) → Hatch
        → 主线程服务循环；控制线程 pull(C) → **先 reserve(name, who)** → H.accord(who, R|W) → Referred
 echo:  moor() → UnsealHole 自建控制孔 → Accord(root, R|W) → Quay{句柄}

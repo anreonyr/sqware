@@ -166,7 +166,7 @@ crates/runtime/src/core/handshake.rs
 ① 属主   reach(control, up, "plic") → irq::Line::refer(名字, console 的 task)
          推者必须是驱动域的 sire（= 本域主线程）——驱动只认这一条，不看报文里说什么
 ② 名字   hand_name(down, "serial@10000000", console)
-         一枚一次性孔：UnsealHole(32) + push(名字) + Accord(READ) + Pier
+         一枚一次性孔：UnsealHole + push(名字) + Accord(READ) + Pier
 ```
 
 - **次序是硬要求**：**设备门闩 → `Refer`（写属主）→ 交名字**。客户端一拿到名字就去登记，
@@ -307,7 +307,7 @@ debug 档同路径跑通（`dir` + `req` + `exit` → 同样自行复位，无 l
 
 ```text
 root                                       子域
-  dock(child)   开上行孔（mtu=9，每子域一条）+ Accord(child, R|W|VEST)
+  dock(child)   开上行孔（每子域一条）+ Accord(child, R|W|VEST)
   Build+Spawn(Held)                          —— 启动参数为空
   Hatch(child) ───────────────────────────▶  起跑
                                              moor()      认上行孔

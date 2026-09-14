@@ -4,7 +4,7 @@
 // （push/pull/map/unmap）+ 用户空间拷贝（copy_in/out）；
 // 能力模型（Pie/AnyPie/授权）在 `unit::gate`（gate 单向依赖 mail）。
 //
-//   hole.rs   — Hole 数据面（数据过内核，单槽缓冲）+ meta()
+//   hole.rs   — Hole 数据面（数据过内核，单槽消息、长度随消息）+ meta()
 //   pole.rs   — Pole 数据面（页级安全内存，物理帧 + 视图）+ meta()
 //   nole.rs   — Nole **无数据面**（只有身份与存活）——存在权的载体
 //
@@ -27,11 +27,6 @@ pub mod pole;
 // 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（gate → mail 单向依赖）。
 pub(crate) use hole::HoleMeta;
 pub(crate) use pole::PoleMeta;
-
-/// Hole 单消息字节数上限（每 hole unseal 时定 mtu ∈ [1, HOLE_MTU_MAX]；槽缓冲按
-/// mtu 在 HoleMeta 内预分配）。原 HOLE_MSG_LEN 的固定 64B 形态由调用方选 mtu=64
-/// 等价复现——dispatch 协议沿用 64B 不变。
-pub const HOLE_MTU_MAX: usize = 4096;
 
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;

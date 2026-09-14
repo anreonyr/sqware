@@ -19,10 +19,6 @@ use env::{
     EnvResult, HoleDir, MailCall, MailCallRet, PieCall, PieCallRet, PieToken, TaskId, VirtAddr,
 };
 
-/// hole 单消息字节上限（与内核侧 `HOLE_MTU_MAX` 一致）。调用方 unseal 时选
-/// mtu ∈ [1, HOLE_MTU_MAX]；推送时实际字节数由 `push` 的 `len` 决定。
-pub const HOLE_MTU_MAX: usize = 4096;
-
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
 /// timebase 频率）。
 fn now_ns() -> EnvResult<u64> {
@@ -32,9 +28,9 @@ fn now_ns() -> EnvResult<u64> {
 
 // ── 裸函数层（envcall 转发，零业务逻辑）──
 
-/// 解封 Hole（mtu = 该孔单消息上限，1..=4096）。
-pub fn unseal_hole(mtu: usize) -> EnvResult<usize> {
-    let r = PieCall::UnsealHole { mtu }.call()?;
+/// 解封 Hole。**无参数**——孔不预设消息上限（那是协议自己的事），也不预分配槽。
+pub fn unseal_hole() -> EnvResult<usize> {
+    let r = PieCall::UnsealHole.call()?;
     match r {
         PieCallRet::UnsealHole(tk) => Ok(tk.get()),
         _ => unreachable!(),
@@ -61,7 +57,7 @@ pub fn unseal_nole() -> EnvResult<usize> {
     }
 }
 
-/// push 一条消息（`msg[..len]` 进 hole 槽）。`len ∈ [1, 该孔 mtu]`。
+/// push 一条消息（`msg[..len]` 进 hole 槽）。`len ≥ 1`（**无上限**）。
 pub fn push(token: usize, msg: *const u8, len: usize) -> EnvResult<()> {
     let r = MailCall::Push {
         token: PieToken::new(token),
@@ -76,14 +72,23 @@ pub fn push(token: usize, msg: *const u8, len: usize) -> EnvResult<()> {
 }
 
 /// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）；发送者丢弃。
-/// `max ≥ 1`，且 ≤该孔 mtu。
+/// 装不下返 `Denied` 且槽原样；要问长度用 [`pull_len`]。
 pub fn pull(token: usize, buf: *mut u8, max: usize) -> EnvResult<usize> {
     pull_from(token, buf, max).map(|(n, _)| n)
+}
+
+/// 只问长度（**不动槽**）：返槽里那条消息的长度与发送者，一个字节都不取。
+///
+/// 走 `Pull { max: 0 }`——与 `Wait { millis: 0 }`「只探测不挂起」同一形状的"只问"。
+/// 收方据此备出装得下的缓冲，槽因此总能被排空（`docs/port.md` §5.2 F2）。
+pub fn pull_len(token: usize) -> EnvResult<(usize, TaskId)> {
+    pull_from(token, core::ptr::null_mut(), 0)
 }
 
 /// pull 一条消息并取回**发送者**（`(长度, 发送者 TaskId)`）。
 ///
 /// 发送者由内核在 `Push` 时盖章——身份不可伪造，不必再从报文里猜。
+/// `max == 0` ⇒ 只报长度、不动槽（收方缓冲不参与）。
 pub fn pull_from(token: usize, buf: *mut u8, max: usize) -> EnvResult<(usize, TaskId)> {
     let r = MailCall::Pull {
         token: PieToken::new(token),
@@ -99,6 +104,9 @@ pub fn pull_from(token: usize, buf: *mut u8, max: usize) -> EnvResult<(usize, Ta
 
 /// 等 hole 某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
 /// 返回 `true` = 本次调用当场就绪；`false` = 未就绪（探测失败，或挂起过）。
+///
+/// 门铃（Nole）也走这一个：`dir` 必须给 [`HoleDir::Pull`]——铃只有"响了"一条方向，
+/// 别的值内核答 `Denied`。裸函数层不为它另开一个名字：`Bell::wait` 就是这一句。
 pub fn wait(token: usize, dir: HoleDir, millis: usize) -> EnvResult<bool> {
     let r = MailCall::Wait {
         token: PieToken::new(token),
@@ -108,6 +116,30 @@ pub fn wait(token: usize, dir: HoleDir, millis: usize) -> EnvResult<bool> {
     .call()?;
     match r {
         MailCallRet::Wait(ready) => Ok(ready),
+        _ => unreachable!(),
+    }
+}
+
+/// 响铃（门铃专用）：置"有待取之事"并唤醒听者。已响 → `Busy`。
+pub fn ring(token: usize) -> EnvResult<()> {
+    let r = MailCall::Ring {
+        token: PieToken::new(token),
+    }
+    .call()?;
+    match r {
+        MailCallRet::Ring(()) => Ok(()),
+        _ => unreachable!(),
+    }
+}
+
+/// 应铃（门铃专用）：清掉"有待取之事"，内核随即重开本 hart 的中断闸门。
+pub fn hush(token: usize) -> EnvResult<()> {
+    let r = MailCall::Hush {
+        token: PieToken::new(token),
+    }
+    .call()?;
+    match r {
+        MailCallRet::Hush(()) => Ok(()),
         _ => unreachable!(),
     }
 }
@@ -270,10 +302,10 @@ pub struct HolePie {
 }
 
 impl HolePie {
-    /// 解封 Hole（mtu = 该孔单消息上限，1..=4096）。
-    pub fn unseal(mtu: usize) -> EnvResult<Self> {
+    /// 解封 Hole（**无参数**：孔不预设消息上限、不预分配槽）。
+    pub fn unseal() -> EnvResult<Self> {
         Ok(Self {
-            token: unseal_hole(mtu)?,
+            token: unseal_hole()?,
         })
     }
 
@@ -290,7 +322,7 @@ impl HolePie {
         wait(self.token, dir, millis)
     }
 
-    /// 写消息（任意长度 ≤ mtu）：槽满则睡到有空间（让出 CPU）。
+    /// 写消息（长度随消息，**无上限**）：槽满则睡到有空间（让出 CPU）。
     pub fn push(&self, msg: &[u8]) -> EnvResult<()> {
         loop {
             match push(self.token, msg.as_ptr(), msg.len()) {
@@ -304,6 +336,9 @@ impl HolePie {
     }
 
     /// 取消息：槽空则睡到有信（让出 CPU）。返实际收到字节数（≤ `buf.len()`）。
+    ///
+    /// **装不下（消息比 `buf` 长）返 `Denied`，且槽原样**——此时先问 [`HolePie::len`]
+    /// 再备够缓冲，别丢。这里不替调用方把槽丢掉：丢一条消息是不可逆的。
     pub fn pull(&self, buf: &mut [u8]) -> EnvResult<usize> {
         loop {
             match pull(self.token, buf.as_mut_ptr(), buf.len()) {
@@ -329,8 +364,15 @@ impl HolePie {
         }
     }
 
-    /// 有界 pull：槽空则最多等 `millis` 毫秒；仍无消息 → `Err(Busy)`（码 -3）。
+    /// 只看一眼：槽里那条消息的**长度与发送者**，**一个字节都不取**（槽留原样）。
     ///
+    /// 用途是 [`HolePie::pull`] 的前一步：缓冲不够大时先问长度、再备够。
+    /// 槽空 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
+    pub fn peek(&self) -> EnvResult<(usize, TaskId)> {
+        pull_len(self.token)
+    }
+
+    /// 有界 pull：槽空则最多等 `millis` 毫秒；仍无消息 → `Err(Busy)`（码 -3）。    ///
     /// 用于「等对端回复」这类必须有上界的往返：无限等会把协议错误（回复被丢弃、
     /// 对端漏回）变成不可诊断的挂起。**超时后该 hole 不再"干净"**——迟到的回复
     /// 仍可能落进槽里，使下一次 pull 取到上一条；调用方应弃用该会话。

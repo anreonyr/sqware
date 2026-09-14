@@ -56,10 +56,10 @@ CPU 只认识内存：设备的控制寄存器被映射进地址空间，CPU 操
 
 | # | 裁决 |
 |---|---|
-| 3.2.1 | 内核侧只有三件：**`SupervisorExternal` 分支**（今天落在兜底 `trap.rs:227-230`）、**`sie.SEIE` 闸门**、boot 建 `irq` 门闩并入配对块 |
-| 3.2.2 | 闸门政策（**零状态**）：`try_push` 满槽（`Busy`）⇒ 清**本 hart** 的 `SEIE`；本 hart 的下一个 timer tick **无条件重开**。病态情形退化为每 hart 10 Hz 的探测，自愈。<br>**实现**：两半都在（`trap.rs` 的 `SupervisorExternal` / `SupervisorTimer` 两支）。**但"下一拍"只在以陷阱形式取到的 tick 上成立**——空闲核的拍子在 `scheduler/core/fetch.rs` 里用 SIE=0 的 WFI 处理，根本不进陷阱。故那一处也补了重开，**并加一条守卫**：`sip.SEIP` 还置着就不开（那条中断没人领，多半正被闸门挡着；此刻重开只会让 WFI 立刻返回、把空闲核变成一个探测死循环）。实测：带守卫时一次 3 秒停摆只推 7 枚；不带给守卫的重开是 337 枚；把闸门整个删掉是 **2 424 133** 枚且整机停摆（§11）。**裁决**：§8.1.2（**待裁**） |
-| 3.2.3 | `irq` 门闩 = **一枚**，`mtu = 1`、**空载荷**、`owner = 0`、内核永久持源。载荷为空是因为内核只知道"外部中断"这一件事。<br>**实现**：一枚 1 字节的孔，载荷恒 `[0]`（`mtu` 最小是 1，"空"落在内容上）。**内核永久持源**这条落地为一个 `OnceLock<Arc<HoleMeta>>`——这是"资源寿命 = 能力寿命"的**有意例外**，理由在方向上：它不是谁的资源，是内核一件事实的出口；若它也随门闩消亡，域放下手里那份就能把中断面拆掉，而 `trap_handler` 还会继续往里推。**裁决**：§8.1.10（**落地**） |
-| 3.2.4 | PLIC ↔ 设备驱动 = **每中断一跳**（整链 2 跳：内核空令牌 + PLIC 投线号）。**会话门闩由客户端递出**，沿用 console 会话形状（`crates/protocol/src/console/mod.rs:16-20`） |
+| 3.2.1 | 内核侧只有三件：**`SupervisorExternal` 分支**（今天落在兜底 `trap.rs:227-230`）、**`sie.SEIE` 闸门**、boot 建 `irq` 门铃并入配对块 |
+| 3.2.2 | 闸门政策（**零状态**）：`nole::ring` 遇"已响"（`Busy`）⇒ 清**本 hart** 的 `SEIE`；本 hart 的下一个 timer tick **无条件重开**。用户应铃（`MailCall::Hush`）时也立即重开——那条路只是让重开**更早**，不是让它成为唯一路径。病态情形退化为每 hart 10 Hz 的探测，自愈。<br>**实现**：两半都在（`trap.rs` 的 `SupervisorExternal` / `SupervisorTimer` 两支）。**但"下一拍"只在以陷阱形式取到的 tick 上成立**——空闲核的拍子在 `scheduler/core/fetch.rs` 里用 SIE=0 的 WFI 处理，根本不进陷阱。故那一处也补了重开，**并加一条守卫**：`sip.SEIP` 还置着就不开（那条中断没人领，多半正被闸门挡着；此刻重开只会让 WFI 立刻返回、把空闲核变成一个探测死循环）。实测：带守卫时一次 3 秒停摆只推 7 枚；不带给守卫的重开是 337 枚；把闸门整个删掉是 **2 424 133** 枚且整机停摆（§11）。**裁决**：§8.1.2（**待裁**） |
+| 3.2.3 | `irq` 门铃 = **一枚 Nole**（`AnyPie::Nole`）：**空载荷**、`owner = 0`、内核永久持源。载荷为空是因为内核只知道"外部中断"这一件事。<br>**实现（本轮改判）**：一枚 **Nole**——"空载荷"第一次**字面成立**。此前只能是"1 字节的孔、载荷恒 `[0]`"（`mtu` 最小是 1，"空"落在内容上），而那个字节从来不是内容、是一个信号；让**有载荷的类型**承载**无内容的信号**，正是 `Payload::Signal` / `meta_reserved` 那一串草稿的病根。等 / 应 / 响三个用法封装在 runtime 的 `Bell`（`docs/bell.md`）。**内核永久持源**这条落地为一个 `OnceLock<Arc<NoleMeta>>`——这是"资源寿命 = 能力寿命"的**有意例外**，理由在方向上：它不是谁的资源，是内核一件事实的出口；若它也随门闩消亡，域放下手里那份就能把中断面拆掉，而 `trap_handler` 还会继续往里响。**裁决**：§8.1.10（**落地**） |
+| 3.2.4 | PLIC ↔ 设备驱动 = **每中断一跳**（整链 2 跳：内核记一格门铃 + PLIC 投线号）。**会话门闩由客户端递出**，沿用 console 会话形状（`crates/protocol/src/console/mod.rs:16-20`） |
 | 3.2.5 | **静音在设备侧**：客户端进门先 mask 自己的 `IER`，出门再开门。⇒ PLIC 侧**无静音表、无 deadline、无扫描**，只剩 `claim → push → complete`。<br>**实现**：console 的输入线程循环就是 §4 那一行（`drain → unmask → Wait → Pull → mask`）——读它的方向很重要：**等的时候门是开的**，一被叫醒先关门、回到开头排空。只动 `IER`，不碰 `LCR`/`FCR`/波特率（§9.4） |
 | 3.2.6 | `线号 → (客户端, 门闩)` 的表活在 **PLIC 驱动的用户态内存**里；内核不参与。<br>**实现（本轮收口）**：表长成了**三列**——`名字 → (线号, 属主, 活实例)`。线号那一列不再由客户端报，见 3.2.8。**落点（整理后）**：表在 `crates/protocol/src/irq/server.rs`（协议语义），"名字 → 线号"由 `programs/src/lines.rs` 从设备树收出来交进去 |
 | 3.2.7 | **不引入任务亲和性**：实测 `claim` 的 context 由**地址区间**选定，不由访问者选定（§7.2）⇒ 驱动跑在哪颗 hart 上无关 |
@@ -99,10 +99,10 @@ CPU 只认识内存：设备的控制寄存器被映射进地址空间，CPU 操
 | 5.1 | 配对块 = `[(Name, Pie)]`，经 boot 借映交给 root——机制现成（`boot.rs:180-235` 已把 initrd 视图借映进 root 空间当 args）。<br>**实现**：块里放的是 `(名字, token)`，**不是 Pie 本体**——`Pie` 是内核里的 `Arc<Meta>` 强引用，交不出去也不该交；**门闩落进 root 的权限表、块里只留它在 root 表里的号**（这才是"root 拿到了"的准确形状）。记录类型 = `env::wire::Pair`（`crates/env/src/wire/pair.rs`，`repr(C)`、40 字节、`PAIR_LEN` 编译期断言锁死），**内核与 root 共用一份定义**，不各写一遍。块本身 = 页对齐的**内核静态区**（`devices.rs` 的 `BLOCK`，写一次、此后只读；寿命即镜像寿命，用门闩管它只会多一个失败模式）。**裁决**：§8.1.3（**待裁**） |
 | 5.2 | console 协议不变（请求门闩 + 回信孔）；只是它背后的"写设备"从 `io::put` 换成 MMIO。<br>**实现**：协议的写出口从固定调用改成一枚 **`Sink`（`fn(&str)`）**——服务是"一台设备一个实例"的装配体，装配层（`prog-console`）把设备的写函数交进来（`crates/protocol/src/console/server.rs` 的 `State::new(Sink)`），协议层因此**不认识串口**，也不需要认识。**裁决**：§8.1.4（**待裁**） |
 | 5.3 | 中断会话载荷 = **u16 线号**（实测 `ndev = 95`，一字节够；按"长度是参数不是约定"给 u16）；`from` 是内核盖的 PLIC 驱动 task id，客户端可据此验证来源 |
-| 5.4 | 注册协议（PLIC 驱动自己的用户态协议）：`Register { name, line, priority, hole } → Ack \| Denied`。<br>**实现**：报文 57 字节 `[op u8][line u32][priority u32][hole u64][ack u64][name 32]`，回执 1 字节。**回执走客户端自带的回信门闩**（报文里那个 `ack`）——与 dispatch 协议同一条规矩：谁发起谁备回信通道。**客户端是 console 服务**：它自建会话门闩（`mtu = 2`），`READ` 副本给自己的输入线程、`WRITE` 副本给驱动（门闩是 per-task 的，这是唯一能跨 task 交接的方式）；驱动 id 取 `Reserve(entry).owner`，**不取 vestor**（转发会改 vestor，owner 不会）。**裁决**：§8.1.11（**落地**）<br>**改判（本轮，§12 甲）**：报文瘦到 **49 字节**、**线号与优先级都不在报文里**（见 5.5） |
-| 5.5 | **线协议的签名 = 一张定长记录 + 两个动词**（§12 甲落地）：`[op u8][arg u64][ack u64][name 32]`，`LEN = 49`、`mtu = 49`。`arg` 按动词取义：`Register` = 会话门闩在**驱动侧**的 token、`Refer` = 把名字交给谁。回执一字节 = 成功 或 四种拒绝之一（`Refused::{Unknown, Unclaimed, NotYours, Taken}`）。<br>**两个动词、两侧各一个入口**：客户端 `irq::Line::{connect, register}`（自备回信孔、有界等回执、**用完封印**）、root `irq::Line::refer`（`reach` 连上驱动 → 写属主）。**线上没有身份**：`Register` 的"你是谁"由内核盖章的 `from` 回答，`Refer` 的"你够不够格"由驱动域的 `sire` 回答。<br>**落点**：`crates/protocol/src/irq/{wire,client,server}.rs`。**裁决**：§8.1.12（**待裁**） |
+| 5.4 | 注册协议（PLIC 驱动自己的用户态协议）：`Register { name, line, priority, hole } → Ack \| Denied`。<br>**实现**：报文 57 字节 `[op u8][line u32][priority u32][hole u64][ack u64][name 32]`，回执 1 字节。**回执走客户端自带的回信门闩**（报文里那个 `ack`）——与 dispatch 协议同一条规矩：谁发起谁备回信通道。**客户端是 console 服务**：它自建会话门闩（装得下线号那 2 字节），`READ` 副本给自己的输入线程、`WRITE` 副本给驱动（门闩是 per-task 的，这是唯一能跨 task 交接的方式）；驱动 id 取 `Reserve(entry).owner`，**不取 vestor**（转发会改 vestor，owner 不会）。**裁决**：§8.1.11（**落地**）<br>**改判（本轮，§12 甲）**：报文瘦到 **49 字节**、**线号与优先级都不在报文里**（见 5.5） |
+| 5.5 | **线协议的签名 = 一张定长记录 + 两个动词**（§12 甲落地）：`[op u8][arg u64][ack u64][name 32]`，`LEN = 49`（协议自己的报文尺寸；孔不再替它记上限）。`arg` 按动词取义：`Register` = 会话门闩在**驱动侧**的 token、`Refer` = 把名字交给谁。回执一字节 = 成功 或 四种拒绝之一（`Refused::{Unknown, Unclaimed, NotYours, Taken}`）。<br>**两个动词、两侧各一个入口**：客户端 `irq::Line::{connect, register}`（自备回信孔、有界等回执、**用完封印**）、root `irq::Line::refer`（`reach` 连上驱动 → 写属主）。**线上没有身份**：`Register` 的"你是谁"由内核盖章的 `from` 回答，`Refer` 的"你够不够格"由驱动域的 `sire` 回答。<br>**落点**：`crates/protocol/src/irq/{wire,client,server}.rs`。**裁决**：§8.1.12（**待裁**） |
 | 5.6 | **属主写权的委托**（第三个动词 `Delegate{name, who}`）：**只有 `sire` 能委托**，且只对**那一个名字**生效——"这个名字的属主，从此也可以由 `who` 写"。<br>为什么需要它：root 的服务重启落在**它自己域里的监护线程**上（`docs/root.md` §5.3），而线程不是域——驱动认的是"推者是不是我的 `sire`"，监护线程答不上这一条；放弃判据不行（谁都能改属主），放宽成"同一个域"也不行（**驱动拿不到推者的域**：`from` 只是个 task id，域侧没有任何调用能问出"某任务属于哪个域"）。于是让 root 亲口把这份写权借给它信任的那个线程：**判据从"谁的 id"变成"root 有没有为这个名字委托过你"**。<br>**落点**：`crates/protocol/src/irq/server.rs`（`Line.writer`）、`programs/src/lines.rs`（建表收行）、`plic.rs`（`refer` 带 `from`）、`root/main.rs`（`Hatch` 之前委托）。**裁决**：§8.1.18（**待裁**） |
-| 5.7 | **名字的配给**：子域要用哪台设备的名字，由 root **转达**（它才是配对块的读者）。机制不新增：`UnsealHole(NAME_LEN)` + `push(名字)` + `Accord(READ)` + `Pier`——与设备门闩、目录门闩同一条下行通道的第三件配给。<br>**次序是硬要求**：root 在 console 那一步的顺序是 **① 设备门闩 → ② `Refer`（写属主）→ ③ 交名字**。客户端一拿到名字就会去登记，而登记读的正是 ② 写的那一行；两件事走同一条 FIFO 报文队列 ⇒ 先推的一定先被处理。（这不是"约定"，是次序——把 ③ 提到 ② 前面就会出现"名字在手、属主未写"的窗口。）<br>**落点**：`programs/src/bin/supervisor/root/main.rs` 的 `hand_name` / `refer_device`、`console.rs` 的 `take_name`。**裁决**：§8.1.14（**待裁**：为什么不用启动参数带名字） |
+| 5.7 | **名字的配给**：子域要用哪台设备的名字，由 root **转达**（它才是配对块的读者）。机制不新增：`UnsealHole` + `push(名字)` + `Accord(READ)` + `Pier`——与设备门闩、目录门闩同一条下行通道的第三件配给。<br>**次序是硬要求**：root 在 console 那一步的顺序是 **① 设备门闩 → ② `Refer`（写属主）→ ③ 交名字**。客户端一拿到名字就会去登记，而登记读的正是 ② 写的那一行；两件事走同一条 FIFO 报文队列 ⇒ 先推的一定先被处理。（这不是"约定"，是次序——把 ③ 提到 ② 前面就会出现"名字在手、属主未写"的窗口。）<br>**落点**：`programs/src/bin/supervisor/root/main.rs` 的 `hand_name` / `refer_device`、`console.rs` 的 `take_name`。**裁决**：§8.1.14（**待裁**：为什么不用启动参数带名字） |
 
 ## 6 · 一条设备的一生
 
@@ -110,7 +110,7 @@ CPU 只认识内存：设备的控制寄存器被映射进地址空间，CPU 操
 
 ```text
 ① boot    DTB 扫描：把 (serial@10000000, 0x10000000+0x100) 做成一枚 Pole
-          （payload = Region、owner = 0）；DTB 与 irq 门闩各另做一枚
+          （payload = Region、owner = 0）；DTB 与 irq 门铃各另做一枚
           门闩连同名字进配对块（20 条），借映交给 root
 ② root    拿到配对块：留源副本、不 Open。console 还不存在 ⇒ 移交之前 root
           直接 Open 自己那枚 UART 门闩来打印（同一枚门闩，不是第二个来源）
@@ -235,7 +235,7 @@ semihosting 导出的事件流里按 class 数的 envcall（`--features semihost
   驱动做时间判断"，而设备驱动有更直接的旋钮（自己的 `IER`）。
 - **共享页位图 + 一次性提示** → 否：它的真正价值是"让 ack 变成一次内存写"，而 ack 只在 PLIC
   侧静音时才需要；静音归设备侧之后，页、位图、扫描全部不需要。
-- **每 hart 一枚 `irq` 门闩** → 否：实测 context 由地址选定，驱动不需要"哪颗 hart"。
+- **每 hart 一枚 `irq` 门铃** → 否：实测 context 由地址选定，驱动不需要"哪颗 hart"。
 - **给 `IOCall` 加判据 / 保留一条域可直连设备的应急通道** → 否（同 `console.md` §8）。
 - **抖动兜底（同线反复 claim ⇒ 退避静音）** → **先不做**，等真硅上真出现再说。
 - **PLIC 驱动开两个线程（注册 / 投递）** → 否（**实现期**）：投递必须由**持有客户端门闩的那个
@@ -266,7 +266,7 @@ semihosting 导出的事件流里按 class 数的 envcall（`--features semihost
 | 8.1.7 | 供给的失败政策 | 未裁（§3.1.2 只说名字装得下） | 名字装不下 ⇒ 打印 + 跳过（`devices.rs:158-167`）；条数超块 ⇒ panic（`devices.rs:192-199`） | **待裁** · 建议追认两条：失败域不同（一个是"一台设备"，一个是"整张供给清单"） |
 | 8.1.8 | 退出码取值 | 只裁了"`reason ≠ 0`" | `EXIT_PANIC = 0xFFFF_FF01`（`programs/src/entry.rs:33`）、`NO_CONSOLE = 0x51`（`programs/src/bin/user/shell.rs:123`） | **待裁** · 建议追认；若认，这两个码要不要写进 `abi.md` / `root.md` |
 | 8.1.9 | §3.1.7 的字段账 | `hart: HartInfo`（一项收两枚） | 一度拆成五个字段，用户点出后补回（`machine.rs:249-266`） | **已裁**（用户：「改」）——实现服从设计，不是设计迁就实现 |
-| 8.1.10 | §3.2.3 `irq` 门闩 | 一枚、`mtu = 1`、空载荷、**内核永久持源** | `OnceLock<Arc<HoleMeta>>`（`devices.rs:53-58`）；载荷恒 `[0]` | **落地**（原判明文已含"永久持源"；"空"落在内容上——`mtu` 最小是 1） |
+| 8.1.10 | §3.2.3 `irq` 门铃 | 一枚、`mtu = 1`、空载荷、**内核永久持源** | `OnceLock<Arc<NoleMeta>>`（`devices.rs:52-66`）：**"空载荷"字面成立** | **落地**（原判明文已含"永久持源"；本轮改判只把载荷从"1 字节的 0"换成"没有载荷"——`docs/bell.md`） |
 | 8.1.11 | 编码、参数、形状 | §5.3 裁过"长度是参数不是约定"、§3.1.7 裁过"多区间洞" | 报文 57 B / 回执 1 B；`IRQ_WAIT_MS = 20`；`MAX_PAIRS = 64`；`PLIC_RETRY = 20 × 25 ms`；`reserved = [Option<Region>; 2]` + 具名读法；`holes()` 升序表 | **落地**（值不是裁决：改值不动账） |
 | 8.1.12 | §5.5 线协议的字节数 | 本轮草稿记的是 **41**（= `1 + 8 + 32`） | 实做 **49**（= `1 + 8 + 8 + 32`）：那一份草稿把**回执通道**漏掉了 | **待裁** · 建议追认 49：回执是 §5.4 早就裁过的形状（"谁发起谁备回信通道"），而四值拒绝**没有回执就不可观测**；`mtu` 取 49 也就是"最大那条报文"（长度是参数不是约定） |
 | 8.1.13 | 客户端自愿收线（`Unregister`） | §12 裁过"另给客户端一条 `Unregister`" | **没落**：全仓没有会自愿放下线的客户端（console 只随级联死，没有退场路径）——落了就是死机制，与 §4 的 TX 环同一条理由 | **待裁** · 建议按 TX 环的先例**不落**：死亡那条路（`Denied`）与"客户端自己封印"那条路（`Dead`）已经覆盖了收线的两个真实触发点，协议面为此多 41 字节而无人调用。真出现自愿退场的客户端时它是十行 |
@@ -350,7 +350,7 @@ semihosting 导出的事件流里按 class 数的 envcall（`--features semihost
 | 步 | 做什么 | 为什么这一步单独走 | 落点 |
 |---|---|---|---|---|
 | **一 · 所有权** | boot 扫描 + 配对块 + `Payload::Region`/`region(...)` + DTB 门闩与保留区 + console 服务持 UART 门闩，**仍轮询**。`THRE` + `IER` 掩码 + RX 排空 | 这一步的失败模式是 PMP / 页权限 / 映射 / 名字，与中断的失败模式（掩码、抖动、陷阱风暴）完全不同——**混在一起就无法定位**。而且它一步就把"内核从这条路上消失"变成可核的事实（§11） | `kernel/src/devices.rs`（扫描 + 配对块 + `install`）、`kernel/src/boot.rs:190-250`（借映 + 启动参数 + `install`）、`kernel/src/work/mail/pole.rs:20-30,92-115`（`Payload`/`region`）、`kernel/src/machine.rs`（`reserved`）、`kernel/src/memory/allocator/frame.rs`（多区间洞）、`programs/src/uart.rs`（ns16550a 驱动）、`programs/src/bin/supervisor/console.rs`（持设备 + sink）、`programs/src/bin/supervisor/root/main.rs`（配对块 → UART → 移交） |
-| **二 · 中断** | PLIC 驱动域 + `irq` 门闩 + `SupervisorExternal` 分支 + `SEIE` 闸门 + 会话门闩 | §3.2 已裁完，原样可用；把 UART 当第一个中断消费者 | `kernel/src/devices.rs`（`supply_irq`/`raise_irq`）、`kernel/src/runtime/switcher/trap.rs:196-235`（分支 + 闸门）、`trap/stack.rs:200-215`（`set_sext`）、`programs/src/bin/supervisor/plic.rs`（驱动域）、`console.rs`（`register_line` + `input_loop`） |
+| **二 · 中断** | PLIC 驱动域 + `irq` 门铃 + `SupervisorExternal` 分支 + `SEIE` 闸门 + 会话门闩 | §3.2 已裁完，原样可用；把 UART 当第一个中断消费者 | `kernel/src/devices.rs`（`supply_irq`/`raise_irq`）、`kernel/src/runtime/switcher/trap.rs:196-235`（分支 + 闸门）、`trap/stack.rs:200-215`（`set_sext`）、`programs/src/bin/supervisor/plic.rs`（驱动域）、`console.rs`（`register_line` + `input_loop`） |
 | **三 · 收口** | 删 `IOCall::Put`/`Get` 与 `crate::console::push`/`pull`；shell 降级 5 处一并删；U 态 panic 改 `Reap{reason ≠ 0}`；root 移交后走会话 | 到这一步"任务侧根本没有设备可直连"，降级路径自然消失 | `crates/env/src/fid.rs`（class 3 删除 + 空号段说明）、`crates/runtime/src/env/io.rs`（删）、`kernel/src/console.rs`（`push`/`pull`/`PULL_BUF` 删）、`programs/src/entry.rs`（panic → `Reap{EXIT_PANIC}`）、`programs/src/bin/user/shell.rs`（降级路径删） |
 
 ## 11 · 判据与验证
@@ -366,7 +366,7 @@ semihosting 导出的事件流里按 class 数的 envcall（`--features semihost
 - **第二步**：注入一次键盘输入，观察 `claim → 会话投递` 全链。**判据落成一条只可能由中断
   产生的 marker**（`scripts/examine.nu` 的 `IRQ_MARKER`）：`plic: line 10 delivered`——
   PLIC 驱动域在**第一次 claim → 投递**时打的那一行，**三档都核**。
-  它必须成立，就要求整条链在场：设备拉线 → `pending` → SEI → 内核推空令牌 → 驱动 claim →
+  它必须成立，就要求整条链在场：设备拉线 → `pending` → SEI → 内核响一声铃 → 驱动 claim →
   投进会话门闩 → 输入线程被唤醒。**摘掉中断登记这一行会消失**（轮询路径不产生它）。**裁决**：§8.1.6（**待裁**）。
   **这条 marker 是补上的牙**：在此之前，"输入能用"是**隐含**的——把登记摘掉，输入退化成
   有界轮询，门照样全绿（实测过那一轮）。

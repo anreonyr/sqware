@@ -9,7 +9,7 @@
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) marker 齐全（默认档十六条；harden/框架档在其上再加非默认档那五条），含
+#   4) marker 齐全（默认档二十条；harden/框架档在其上再加非默认档那五条），含
 #      `task: all tasks exited, system halted` 与
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
 #      `plic: line 10 delivered`。
@@ -192,7 +192,7 @@ const STEPS = [
 #
 # 故这里钉**两条**只可能由中断产生的读数（都是各自域里的一次性标记）：
 #   `plic: line <n> delivered`（`prog-plic`）——要成立必须
-#     设备拉线 → PLIC 置 pending → SEI → 内核推空令牌进 `irq` 门闩 → 驱动 claim 到线号
+#     设备拉线 → PLIC 置 pending → SEI → 内核响一声铃（`irq` 门铃）→ 驱动 claim 到线号
 #     → 投进**持有者**（`prog-uart`）的会话门闩
 #   `uart: irq ok`（`prog-uart`）——要成立必须驱动**真的从会话孔里取到了那枚线号**，
 #     即"投递把驱动叫醒"这一跳也成立。
@@ -228,10 +228,19 @@ const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
 # 一条管回执、一条管复验；非默认档另加五条（票单调不复用 + wipe 的封印唤醒 + 他杀
 # 两条 + 独占交出 `lend`）。计数以实跑为准，报告行里的数字是人写的、要跟着改。
 const MARKERS = [
+  # 门铃自检（`docs/bell.md` §9）：root 在**铸建域权之前**跑，八个数全 1 才说明
+  # "等 / 响 / 应"三条语义与三条边界（响不清、未响应铃返 `Busy`、铃没有第二个方向）
+  # 都在。它的牙是 `pending` 那一格：把 `ring` 的"置位"去掉、只留唤醒站点，
+  # 响在没人听的那一刻就丢，这一格变 0。
+  "bell: quiet=1 rung=1 twice=1 pending=1 hush=1 clear=1 empty=1 dir=1"
   "spawnjoin -> 499500"
   "discover echo -> found"
   'req echo -> "ifmmp\.tfswjdf'
   'hole got "hi from shell'
+  # 变长孔（`docs/port.md` §5）：**同一条孔**先 1 字节、后 600 字节 ⇒ 长度随消息（孔不再
+  # 按 unseal 时的 mtu 预分配）；"问长度"（`peek`）不动槽 ⇒ 缓冲装不下被拒之后那条消息
+  # 仍在，换够大的缓冲仍取得回整条。三个数全 1 才算。
+  "hole: len short=1 long=1 nofit=1"
   "sleep 300ms"
   "woke"
   "clock [0-9]"
@@ -337,7 +346,7 @@ const FLAVORS = [
 # 按名字取那一行（档案的全部事实都从它读；名字写错就该当场炸，故 `first` 之后必有值）。
 def flavor [name: string] { $FLAVORS | where name == $name | first }
 
-# 本档要核的 marker：`base` = 默认档那十五条 + 中断链（**每一档都核**：中断面不是某一档的
+# 本档要核的 marker：`base` = `MARKERS` 那十九条 + 中断链（**每一档都核**：中断面不是某一档的
 # 附属品）；`extra` = 非默认档多跑三步的判词；`case` = 用例汇总行（判据是**全过**——
 # `0 fail` 且 `ok` 数 == 用例总数：零用例的症状比失败更坏，绿着、什么都没测，故必须断言
 # 具体条数）。

@@ -239,32 +239,40 @@ pub enum HoleDir {
     Push,
 }
 
-/// 通信调用（class 5，mail）—— **数据轴**：消息穿孔。
+/// 通信调用（class 5，mail）—— **数据轴**：消息穿孔 + 门铃。
 ///
-/// 三个操作都作用在一枚 Hole 门闩上：`Push` 写入、`Pull` 取出、`Wait` 等方向就绪。
+/// 前三个操作作用在一枚 Hole 门闩上：`Push` 写入、`Pull` 取出、`Wait` 等方向就绪；
+/// 后两个作用在一枚 Nole 门闩上（门铃，`docs/bell.md`）：`Hush` 应铃、`Ring` 响铃。
 /// 权柄的生死与流动不在此类，见 [`PieCall`]（class 7）。
 ///
 /// **wait 的分界**：事件键等待留 Room（`RoomCall::Wait/Wake` 的键是调用方命名空间
 /// 里的裸整数，内核不解释）；**资源就绪**等待归本类——`Wait` 收 `token`，由内核
-/// 解引用出 hole 的等待键，键不出内核。
+/// 解引用出资源自己的等待键，键不出内核。
 ///
-/// **变长孔**：`UnsealHole { mtu }` 在 unseal 时定该孔消息上限（1..=4096）；
-/// `Push { len }` 与 `Pull { max }` 把长度作为参数传——长度是契约不是约定。
+/// **变长孔**：孔**不预设**消息上限——`Push { len }` 与 `Pull { max }` 把长度作为参数
+/// 传，长度是契约不是约定。一条消息多大由推者**当时分配得出多少**决定（`try_reserve`
+/// 失败即 `OoM`），没有第二条上限。`Pull { max: 0 }` 是"**只问长度**"（不动槽）。
+///
+/// **空载荷**：门铃没有载荷，故它没有 Push/Pull——"有事"就是那一位本身。`Wait` 复用
+/// 在两种资源上，靠 `dir` 分：Hole 两个方向，**Nole 只认 `Pull`**（门铃只有一条方向）。
 #[derive(Envcall)]
 #[call(class = 5)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
-    /// push msg：token + msg VA + 长度（1..=该孔 mtu）。
+    /// push msg：token + msg VA + 长度（≥ 1；**无上限**）。
     #[ret(())]
     Push {
         token: PieToken,
         msg: VirtAddr,
         len: usize,
     },
-    /// pull msg：token + 缓冲 VA + 上限（≥1 且 ≤该孔 mtu）。
+    /// pull msg：token + 缓冲 VA + 缓冲容量。
     ///
     /// 返 `(实际长度, 发送者 TaskId)`——发送者由**内核在 Push 时盖章**（syscall
     /// 上下文，不可伪造），与消息同槽交付。身份不必再从报文里猜。
+    ///
+    /// `max == 0` = **只报长度、不动槽**：收方据此备出装得下的缓冲，槽因此总能被
+    /// 排空（`docs/port.md` §5.2 F2）。装不下（`len > max`）答 `-1 Denied` 且槽原样。
     #[ret((usize, TaskId))]
     Pull {
         token: PieToken,
@@ -276,12 +284,27 @@ pub enum MailCall {
     /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（探测失败，
     /// 或挂起过——被唤醒与超时不分）。**绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
     /// 权利：`Pull` 需 R、`Push` 需 W。
+    ///
+    /// 作用在 Nole（门铃）上时：**`dir` 必须是 `Pull`**——铃只有"响了"这一条方向，
+    /// 别的值返 `-1 Denied`（不静默忽略：ABI 不留一个白填的字段）。权利仍按 `dir` 判。
     #[ret(bool)]
     Wait {
         token: PieToken,
         dir: HoleDir,
         millis: usize,
     },
+    /// 应铃：清掉"有待取之事"（门铃专用）。权利：R——听与应都在"取"这一侧。
+    ///
+    /// 未响 ⇒ `-3 Busy`（没有可取之事）。**不唤醒任何人**：没人等"铃不响"。
+    #[ret(())]
+    Hush { token: PieToken },
+    /// 响铃：置"有待取之事"并唤醒听者（门铃专用）。权利：W。
+    ///
+    /// 已响 ⇒ `-3 Busy`——多 hart 同时响合成一位，第二次起不改变状态。
+    /// 这个动词是给**自检**与"自己叫自己"的：没有它，门铃的验证只能等真中断。
+    /// 内核响中断那道门铃不走这里（它持着源实体，见 `devices.rs`）。
+    #[ret(())]
+    Ring { token: PieToken },
 }
 
 /// 权柄调用（class 7，pie）—— **权柄轴**：许可的生死与流动。
@@ -307,9 +330,10 @@ pub enum MailCall {
 #[call(class = 7)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PieCall {
-    /// 解封 Hole（数据过内核管道）；`mtu` = 该孔单消息上限（1..=4096）。
+    /// 解封 Hole（数据过内核管道）。**无参数**——孔不预设消息上限，也不预分配槽：
+    /// 解封的代价是零字节，消息多长由每条 `Push` 自己带（`docs/port.md` §5）。
     #[ret(PieToken)]
-    UnsealHole { mtu: usize },
+    UnsealHole,
     /// 解封 Pole（页级安全内存；字节数页对齐）。
     #[ret(PieToken)]
     UnsealPole { bytes: usize },

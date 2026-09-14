@@ -83,7 +83,7 @@ impl Directory {
             return Err(denied());
         }
         // 自造 reply：unseal + accord(dir_id)——目录侧那枚 token 即本会话的回信地址。
-        let reply_mine = HolePie::unseal(runtime::env::mail::HOLE_MTU_MAX)?;
+        let reply_mine = HolePie::unseal()?;
         let reply_target = reply_mine.accord(
             TaskId::new(dir_id),
             env::Permission::READ | env::Permission::WRITE,

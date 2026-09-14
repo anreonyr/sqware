@@ -59,7 +59,7 @@ use runtime::core::lock::Lock;
 use runtime::core::unit;
 use runtime::env::{
     chrono::{self, clock},
-    mail::{self, AnyPie as _, HOLE_MTU_MAX, HolePie, PolePie},
+    mail::{self, AnyPie as _, HolePie, PolePie},
     room::{self, sleep},
     task::{heir_at, heir_count, join as task_join},
 };
@@ -287,7 +287,7 @@ impl Term {
 /// 已经注册进目录了，`Connect` 本来就是为这件事存在的操作。
 fn shake() -> env::EnvResult<env::PieToken> {
     let up = handshake::moor()?;
-    let down = HolePie::unseal(handshake::MTU)?;
+    let down = HolePie::unseal()?;
     let sire = runtime::env::task::sire()?;
     let at_parent = down.accord(sire, env::Permission::READ | env::Permission::WRITE)?;
     Quay::new(at_parent).push(&up)?;
@@ -383,7 +383,7 @@ fn lend(term: &Term) {
             return;
         }
     };
-    let a = match HolePie::unseal(HOLE_MTU_MAX) {
+    let a = match HolePie::unseal() {
         Ok(p) => p,
         Err(_) => {
             term.writeline("lend: unseal failed");
@@ -458,7 +458,7 @@ fn cascade(term: &Term) {
             return;
         }
     };
-    let a = match HolePie::unseal(HOLE_MTU_MAX) {
+    let a = match HolePie::unseal() {
         Ok(p) => p,
         Err(_) => {
             term.writeline("cascade: unseal failed");
@@ -534,7 +534,7 @@ fn cascade(term: &Term) {
     term.writeline(&format!("cascade: release={released} D.after={d_dead}"));
 
     // ── 4：任务消亡级联 ──
-    let r = match HolePie::unseal(HOLE_MTU_MAX) {
+    let r = match HolePie::unseal() {
         Ok(p) => p,
         Err(_) => {
             term.writeline("cascade: unseal r failed");
@@ -730,7 +730,7 @@ fn reclaim(term: &Term) {
     };
 
     // ── 2：封印只归开辟者 ──
-    let a = match HolePie::unseal(HOLE_MTU_MAX) {
+    let a = match HolePie::unseal() {
         Ok(p) => p,
         Err(_) => {
             term.writeline("reclaim: unseal a failed");
@@ -781,7 +781,7 @@ fn reclaim(term: &Term) {
 
     let join_e = unit::closure(move || {
         let _ = room::wait(k_open, WAIT);
-        if let Ok(r) = HolePie::unseal(HOLE_MTU_MAX)
+        if let Ok(r) = HolePie::unseal()
             && let Ok(q) = r.accord(me, rw)
         {
             unsafe { (*(q_ptr as *const AtomicUsize)).store(q.get(), Ordering::Relaxed) };
@@ -831,7 +831,7 @@ fn spoof(term: &Term) {
 
     // ── 1：内核盖章 ──
     let self_stamp = (|| -> Option<bool> {
-        let h = HolePie::unseal(64).ok()?;
+        let h = HolePie::unseal().ok()?;
         h.push(b"x").ok()?;
         let mut b = [0u8; 64];
         let (_, from) = h.pull_from(&mut b).ok()?;
@@ -848,7 +848,7 @@ fn spoof(term: &Term) {
         }
     };
     // 本任务自己的回信孔（攻击者身份就用它）。
-    let mine = match HolePie::unseal(HOLE_MTU_MAX) {
+    let mine = match HolePie::unseal() {
         Ok(p) => p,
         Err(_) => {
             term.writeline("spoof: unseal failed");
@@ -874,7 +874,7 @@ fn spoof(term: &Term) {
 
     // 入口门闩必须与回信孔分开：注销会**释放**目录侧那枚入口副本，若回信地址正是
     // 它，回复就无处可推（`unpublish` 先释放、回复后推）。
-    let entry_hole = match HolePie::unseal(HOLE_MTU_MAX) {
+    let entry_hole = match HolePie::unseal() {
         Ok(p) => p,
         Err(_) => {
             term.writeline("spoof: unseal failed");
@@ -952,7 +952,7 @@ fn name(term: &Term) {
     let code = |r: env::EnvResult<()>| r.err().map(|e| e.into_source().code());
 
     // ── 1+2：预约者注册 / 注销只摘实例 ──
-    let publish = match HolePie::unseal(HOLE_MTU_MAX) {
+    let publish = match HolePie::unseal() {
         Ok(h) => dir.register("shell", &h).is_ok(),
         Err(_) => false,
     };
@@ -961,7 +961,7 @@ fn name(term: &Term) {
     let gone = !dir.discover("shell").unwrap_or(true);
 
     // ── 3+4：非预约者 / 未预约的名字（各用一枚门闩；末尾释放以清掉目录侧副本）──
-    let (foreign, ghost) = match HolePie::unseal(HOLE_MTU_MAX) {
+    let (foreign, ghost) = match HolePie::unseal() {
         Ok(h) => {
             let f = code(dir.register("echo", &h)) == Some(E_DENIED);
             let g = code(dir.register("ghost", &h)) == Some(E_NOT_FOUND);
@@ -972,7 +972,7 @@ fn name(term: &Term) {
     };
 
     // ── 5：实例门闩消亡 → 目录侧副本随 sire 级联摘掉 → 名字回到「无实例」──
-    let stale = match HolePie::unseal(HOLE_MTU_MAX) {
+    let stale = match HolePie::unseal() {
         Ok(h) => {
             let reg = dir.register("shell", &h).is_ok();
             let _ = h.release();
@@ -982,7 +982,7 @@ fn name(term: &Term) {
     };
 
     // ── 6：死实例不锁名字；末尾注销，恢复干净状态 ──
-    let reuse = match HolePie::unseal(HOLE_MTU_MAX) {
+    let reuse = match HolePie::unseal() {
         Ok(h) => dir.register("shell", &h).is_ok(),
         Err(_) => false,
     };
@@ -1116,7 +1116,7 @@ fn line_probe(arg: Option<&str>, term: &Term) {
     };
     // 报文要一枚会话门闩（驱动往它投线号）。本探针**不会**读它——故登记万一被接受
     // （不该发生），当场封印：驱动下一次投递拿到 `Dead` ⇒ 它把这条线收掉（§12 ②）。
-    let Ok(session) = HolePie::unseal(irq::LINE_LEN) else {
+    let Ok(session) = HolePie::unseal() else {
         term.writeline(&format!("line {text} -> no session"));
         return;
     };
@@ -1132,13 +1132,57 @@ fn line_probe(arg: Option<&str>, term: &Term) {
     term.writeline(&format!("line {text} -> {verdict}"));
 }
 
+/// 变长孔探针（`docs/port.md` §5）：**长度随消息**，且"问长度"不动槽。
+///
+/// 三段判据，都在**同一条孔**上：
+///   ① `short`：1 字节的消息进得去、出得来；
+///   ② `long`：同一条孔再装 600 字节也进得去、出得来——**孔不预设上限**；
+///   ③ `nofit`：缓冲装不下时 `pull` 被拒，且**槽一个字节都不动**（问长度仍报 600、
+///      换够大的缓冲再取仍取得到整条）。
+///
+/// 为什么三段要同一条孔：①②合起来才是"长度随消息"——孔若仍按 unseal 时的 mtu
+/// 预分配，②会撞上限；槽若只认第一次那条消息的长度，②会撞容量。
+fn len_probe(term: &Term) {
+    let Ok(pie) = HolePie::unseal() else {
+        term.writeline("hole: len-probe unseal failed");
+        return;
+    };
+    // ① 1 字节。
+    let one = [0x5au8; 1];
+    let mut tiny = [0u8; 8];
+    let short = pie.push(&one).is_ok()
+        && matches!(pie.peek(), Ok((1, _)))
+        && matches!(pie.pull(&mut tiny), Ok(1))
+        && tiny[0] == 0x5a;
+    // ② 同一条孔，600 字节（走堆：栈上放不下这么多）。
+    let big: Vec<u8> = alloc::vec![0xa5u8; 600];
+    let mut out: Vec<u8> = alloc::vec![0u8; 600];
+    let long = pie.push(&big).is_ok()
+        && matches!(pie.peek(), Ok((600, _)))
+        && matches!(pie.pull(&mut out), Ok(600))
+        && out[599] == 0xa5;
+    // ③ 装不下：**拒且槽原样**（"要么全取、要么一个字节都不动"）。
+    let mut small = [0u8; 64];
+    let nofit = pie.push(&big).is_ok()
+        && pie.pull(&mut small).is_err()
+        && matches!(pie.peek(), Ok((600, _)))
+        && matches!(pie.pull(&mut out), Ok(600))
+        && out[0] == 0xa5;
+    term.writeline(&format!(
+        "hole: len short={} long={} nofit={}",
+        short as u8, long as u8, nofit as u8
+    ));
+    let _ = pie.release();
+}
+
+/// 封印唤醒探针：以 `seal` 为界各等一次，结论由调用方那一行断言。
 fn seal_wake_probe(term: &Term) {
     /// 一次有界等待的期限：短到不拖慢门，长到足以让「等满」与「当场」区分开。
     const WAIT_MS: usize = 200;
     /// 「当场拿到结论」的读数余量：远大于一次 seal 的实际耗时（微秒级）。
     const WAKE_SLACK_MS: u64 = 5;
 
-    let Ok(probe) = HolePie::unseal(HOLE_MTU_MAX) else {
+    let Ok(probe) = HolePie::unseal() else {
         term.writeline("hole: wait-probe unseal failed");
         return;
     };
@@ -1249,7 +1293,7 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "hole" => {
             let msg = b"hi from shell";
-            let pie = HolePie::unseal(HOLE_MTU_MAX).unwrap();
+            let pie = HolePie::unseal().unwrap();
             let mut buf = [0u8; 64];
             let mut m = [0u8; 64];
             m[..msg.len()].copy_from_slice(msg);
@@ -1259,6 +1303,8 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
                 "hole got {:?}",
                 core::str::from_utf8(&buf).unwrap_or("?")
             ));
+            // ── 变长孔探针（**只加观测量**：上面那句与本命令既有语义逐字未动）──
+            len_probe(term);
             // ── 封印唤醒探针（**只加观测量**：上面那句与本命令既有语义逐字未动）──
             // 既有自测走到了 `seal`（`wipe` 的 hole 调用方），却没有任何断言说
             // 「seal 释放了等待者」。下面在同一轮里以 seal 为界各等一次：**封印前**

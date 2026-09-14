@@ -36,7 +36,7 @@ impl Doom {
         if owner == 0 {
             return Err(denied());
         }
-        let ack = HolePie::unseal(ACK_LEN)?;
+        let ack = HolePie::unseal()?;
         let ack_target = ack.accord(TaskId::new(owner), Permission::READ | Permission::WRITE)?;
         Ok(Doom {
             entry,

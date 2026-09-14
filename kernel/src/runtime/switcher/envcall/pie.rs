@@ -51,7 +51,7 @@ pub(crate) fn dispatch(
 ) -> Option<Outcome> {
     let _ = &ident;
     Some(match call {
-        PieCall::UnsealHole { mtu } => unseal_hole(frame, mtu),
+        PieCall::UnsealHole => unseal_hole(frame),
         PieCall::UnsealPole { bytes } => unseal_pole(frame, bytes),
         PieCall::UnsealNole => unseal_nole(frame, ident),
         PieCall::Open { token } => open(frame, ident, token.get()),
@@ -141,10 +141,13 @@ pub(super) fn usable(pie: &AnyPie) -> Result<(), GateError> {
 ///
 /// 原始自持枚带满四位（含 `CAGE`）：源枚上这一位的读法是"**我有资格交出去**"
 /// ——`covers` 要求 `subset ⊆ 自身`，造物主不带它就永远借不出去。
-fn unseal_hole(frame: &mut TrapContext, mtu: usize) -> Outcome {
+///
+/// **无参数**（与 `UnsealNole` 同形）：孔不再预分配槽，解封的代价是零字节——
+/// 消息多长由每条 Push 自己带（`docs/port.md` §5）。
+fn unseal_hole(frame: &mut TrapContext) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
-        let meta = mail::hole::meta(mtu, task.ident.id)?;
+        let meta = mail::hole::meta(task.ident.id);
         let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
             meta,
             Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
@@ -163,8 +166,9 @@ fn unseal_hole(frame: &mut TrapContext, mtu: usize) -> Outcome {
 
 /// 解封 Nole：建一枚**无载荷**的权柄载体 → 建门闩（全权）→ 返 token。
 ///
-/// 与另两者的差别就是"没有第二步"：Hole 要按 mtu 预分配槽、Pole 要分配物理帧并
-/// auto-map 创建者视图；Nole 建完 meta 就结束了——这正是"无数据面"的含义。
+/// 与另两者的差别就是"没有第二步"：Pole 要分配物理帧并 auto-map 创建者视图，
+/// Hole 要建槽（但**不预分配**——第一条消息由推者带进来）；Nole 建完 meta 就结束了
+/// ——这正是"无数据面"的含义。
 fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         // **铸币权收在 S 态**：不然任何 U 域 `UnsealNole` 一枚就给自己授了建域权，
