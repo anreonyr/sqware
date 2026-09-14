@@ -42,16 +42,26 @@ pub const ADDRESS_AT: usize = 1;
 /// 从任意一条报文里抠出回信地址——**坏报文也要能抠**（拒一条请求仍欠对方一句
 /// `Denied`，而那一句得知道往哪儿推）。`None` = 太短 / 全是 0（0 是本仓的"无句柄"）。
 pub fn address_of(m: &[u8]) -> Option<PieToken> {
-    let slot = m.get(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
-    let token = PieToken::new(usize::from_le_bytes(slot.try_into().ok()?));
-    if token.get() == 0 { None } else { Some(token) }
+    address_at(m, ADDRESS_AT)
 }
 
-/// 把回信地址写进一条报文的地址槽（成帧方用；机制只在 [`Duet::encode`] 里代劳）。
-pub fn put_address(m: &mut [u8], at: PieToken) -> Option<()> {
-    let slot = m.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
-    slot.copy_from_slice(&at.get().to_le_bytes());
+/// 把回信地址写进一条报文的**默认**地址槽（`[ADDRESS_AT..)`）。
+pub fn put_address(m: &mut [u8], token: PieToken) -> Option<()> {
+    put_address_at(m, ADDRESS_AT, token)
+}
+
+/// 同 [`put_address`]，但地址槽在**协议自定**的偏移上（见 [`Duet::ADDRESS_AT`]）。
+pub fn put_address_at(m: &mut [u8], at: usize, token: PieToken) -> Option<()> {
+    let slot = m.get_mut(at..at + ADDRESS_LEN)?;
+    slot.copy_from_slice(&token.get().to_le_bytes());
     Some(())
+}
+
+/// 同 [`address_of`]，但地址槽在协议自定的偏移上。
+pub fn address_at(m: &[u8], at: usize) -> Option<PieToken> {
+    let slot = m.get(at..at + ADDRESS_LEN)?;
+    let token = PieToken::new(usize::from_le_bytes(slot.try_into().ok()?));
+    if token.get() == 0 { None } else { Some(token) }
 }
 
 /// 读写族：对端对这份资源**能做什么**。
@@ -188,6 +198,11 @@ pub trait Duet {
     /// 为什么容器由协议自己给：稳定 Rust 里 `[u8; W::REQ]` 是泛型常量表达式
     /// （要 `generic_const_exprs`），用不了 ⇒「报文多大」这份知识只能留在实现侧。
     type Wire: AsRef<[u8]> + AsMut<[u8]>;
+
+    /// 地址槽在本协议帧里的偏移。默认 [`ADDRESS_AT`]（紧跟首字段）；协议可覆盖——
+    /// 目录协议把它声明成**帧首**：那条协议有两张线形（裸询问 / 服务调用载荷），
+    /// 帧首是唯一让两者逐字相同的位置（见 `dispatch::wire` 模块头注）。
+    const ADDRESS_AT: usize = ADDRESS_AT;
 
     /// **一块内存要多大装得下本协议任何一条帧**——给容器定容用的上界，**不是被推的
     /// 字节数**（那个数由 [`Duet::encode`] 当场报出来）。报文可短不可长：短了正是省下

@@ -132,8 +132,7 @@ impl Directory {
         if self.live(self.bindings[pos].entry).is_some() {
             return Err(DirectoryError::Taken);
         }
-        self.granted(entry, who)?;
-        self.displace(pos);
+        self.granted(entry, who)?;        self.displace(pos);
         self.bindings[pos].entry = Some(entry);
         Ok(())
     }
@@ -216,8 +215,12 @@ impl Directory {
     ///
     /// `caller` = 调用方 task id，**由内核在 `Push` 时盖章**（`Pull` 交回），不来自
     /// 消息体；0 = 无身份。本函数不做 I/O——回复由调用方（域主循环）推送。
-    pub fn serve(&mut self, caller: usize, msg: &[u8]) -> Reply {
-        match Query::decode(msg) {
+    ///
+    /// `payload` = **服务调用载荷里那一段帧**（调用方从 `Pull` 的字节数切出真实长度交进来）。
+    /// 长度必须是真的：载荷缓冲按上界给，尾部有多余的零，不把长度钉住那些零会被算进名字里
+    /// （"长度即边界"在收侧的形态）。
+    pub fn serve(&mut self, caller: usize, payload: &[u8]) -> Reply {
+        match Query::decode(payload) {
             Ok(query) => self.handle(caller, &query),
             Err(_) => Reply::Denied,
         }

@@ -30,14 +30,18 @@ extern crate programs;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::TeamId;
-use protocol::dispatch::CAP;
+use protocol::dispatch::CALL;
 use protocol::dispatch::control::{Refer, Referred};
 use protocol::dispatch::server::{Directory, release_pie, vestor_of};
+use protocol::dispatch::wire::ADDRESS_AT;
 use runtime::core::handshake::{self, Quay};
 use runtime::core::lock::Lock;
-use runtime::core::port::{self, Access, Policy, ship};
+use runtime::core::port::{self, ADDRESS_LEN, Access, Policy, ship};
 use runtime::env::mail::HolePie;
 use runtime::env::task as utask;
+
+/// 帧槽的上界：`CALL` 去掉帧首那 8 字节地址槽——**容量**，不是帧长（帧长由 `Pull` 给）。
+const FRAME_CAP: usize = CALL - 8;
 
 /// 控制线程的三枚门闩（主线程写、控制线程读；`Hatch` 是同步点）。
 ///
@@ -141,22 +145,35 @@ extern "C" fn main() -> ! {
     }
 
     // 6. 服务循环。
-    let mut msg = [0u8; CAP];
+    let mut msg = [0u8; CALL];
     loop {
         // 身份 = **内核盖章的发送者**（`Pull` 一并交回），不信任报文里的任何字段。
-        let Ok((_, from)) = entry.pull_from(&mut msg) else {
+        // 长度也一并交回：载荷按上界给，尾部有多余的零，而帧长只有 `Pull` 知道。
+        let Ok((len, from)) = entry.pull_from(&mut msg) else {
             continue;
         };
         let caller = from.get();
-        // 回信地址从**地址槽**里读（机制那一格，不是本协议的字段）。
-        let reply_token = match port::address_of(&msg) {
+        // 回信地址从**地址槽**里读（传输字段，不是本协议的字段）——偏移取协议声明的那一个；
+        // 本域不自己记数（帧首那一格，`wire::ADDRESS_AT`）。
+        let reply_token = match port::address_at(&msg, ADDRESS_AT) {
             Some(at) => at.get(),
             None => continue,
         };
         // 回信地址必须**确实是 caller 授给本域的那一枚**——否则丢弃回复
         //（防「替他人收信」：把别人的回信 token 塞进自己的请求）。
         let reachable = vestor_of(reply_token) == Some(caller);
-        let (out, n) = DIR.with(|dir| dir.serve(caller, &msg)).encode();
+        // 帧 = 前 `len` 字节里**去掉帧首那 8 字节地址槽**那一段，**取成一份定长的值**。
+        // 取"值"而不是"视图"是刻意的：帧长只有 `Pull` 知道，而载荷缓冲是按上界给的、
+        // 尾部有多余的零 —— 把长度钉进一份新缓冲，收侧就不必再猜边界（长度即边界）。
+        let Some(payload) = msg.get(ADDRESS_LEN..len) else {
+            continue;
+        };
+        let mut frame = [0u8; FRAME_CAP];
+        let Some(frame) = frame.get_mut(..payload.len()) else {
+            continue;
+        };
+        frame.copy_from_slice(payload);
+        let (out, n) = DIR.with(|dir| dir.serve(caller, frame)).encode();
         if !reachable {
             continue;
         }

@@ -23,7 +23,7 @@
 //! （谁有资格注册哪个名字），而 `runtime` 是机制层——`protocol → runtime` 是单向边，
 //! 机制层里躺着某个协议的报文正是那条边被违反的样子。
 
-use env::{EnvError, EnvResult, NAME_LEN, Name, PieToken, TaskId, make_err};
+use env::{EnvError, EnvResult, Name, PieToken, TaskId, make_err};
 
 use runtime::env::mail::HolePie;
 

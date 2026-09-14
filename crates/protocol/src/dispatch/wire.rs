@@ -7,21 +7,27 @@
 //!
 //! # 询问（变长）
 //! ```text
-//! [0]      op      u8        1=Register 2=Unregister 3=Replace 4=Resolve 5=Enumerate 6=Connect
-//! [1..9)   地址槽  usize LE  **传输字段**：调用方回信孔在目录侧的 token（每条都带）
-//! [9..)    name    ≤ 31 字节 目标名字（Enumerate：游标，空 = 从头开始）
-//! 帧尾      entry   usize LE  Register/Replace：入口门闩的目录侧 token（其余动词必须为 0）
+//! [0..8)   地址槽  usize LE  **传输字段**：调用方回信孔在目录侧的 token（每条都带）
+//! [8]      op      u8        1=Register 2=Unregister 3=Replace 4=Resolve 5=Enumerate 6=Connect
+//! [9..17)  entry   usize LE  Register/Replace：入口门闩的目录侧 token（其余动词必须为 0）
+//! [17..)   name    ≤ 31 字节 目标名字——**锚在帧尾**（Enumerate：游标，空 = 从头开始）
 //! ```
 //!
-//! **帧长 = 头 + 名字文本长 + entry + 地址槽**：名字多长帧多长，没有终止 NUL、没有填充。
-//! `entry` 锚在**地址槽之前**（尾部），故名字的结束由它自己的位置给出。
+//! **地址槽排在帧首**（`ADDRESS_AT = 0`），正文紧随其后：这条协议有两张线形——**裸询问**
+//! （客户端直接 `push` 进目录的请求孔）与**服务调用载荷**（同一帧装进 `dispatch::Service`
+//! 的 64 字节 信封，信封自己也要一格放回信地址）。两者字节必须**逐字相同**，否则同一次
+//! 注册换条路就变味；而信封那一格只能落在载荷最前，故帧首就是唯一两边都成立的位置。
+//!
+//! **名字锚在帧尾**（`entry` 之后）：它的结束由 `entry` 的位置给出、帧长由名字给——名字
+//! 多长帧多长，没有终止 NUL、没有填充。定长头 17 字节，去掉名字那一格**正好**是 [`HEAD`]。
 //!
 //! # 回复（变长）
 //! ```text
 //! [0]      status  u8      0=Ok 1=Found 2=Connected 3=NotFound 4=Denied 5=Taken
-//! [1..9)   地址槽  usize LE 恒为 0（回复走对端的回信孔）
-//! [9..)    载荷    Found：名字 / Connected：entry（8 字节）；其余状态无载荷
+//! [1..)    载荷    Found：名字 / Connected：entry（8 字节）；其余状态无载荷
 //! ```
+//!
+//! 回复**不带地址槽**：它走的是对端那枚回信孔（`push` 到哪儿是 `Port` 的事，不必写在帧里）。
 //!
 //! `Query::encode/decode` **不碰地址槽**——由 [`Duet::encode`] 写（见模块头那张字段表）。
 //! 该字段不是询问字段而是「传输字段」，与 op/name/entry 同列但语义独立。
@@ -49,7 +55,7 @@
 
 use env::wire::PieToken;
 use env::{EnvError, EnvResult, make_err};
-use runtime::core::port::{ADDRESS_LEN, Duet, put_address};
+use runtime::core::port::{put_address_at, ADDRESS_LEN, Duet};
 
 /// D1 负码：无权 / 协议错。
 pub const E_DENIED: isize = -1;
@@ -75,16 +81,26 @@ pub(crate) fn taken() -> erra::Error<EnvError> {
 /// 它的使用者，不转口第二遍。
 pub use env::wire::{NAME_LEN, Name, NameError};
 
-/// **一块内存要多大装得下任何一条帧**：`op + 名字(上界) + entry + 地址槽`。
-///
-/// 回复比它小（`status + max(名字, entry)`），故容量取两者的大者。
-pub const CAP: usize = 1 + TEXT + 8 + ADDRESS_LEN;
-
 /// 名字最长能写多少字节（内容上界：定长字段里那一个字节留给终止 NUL）。
 pub const TEXT: usize = NAME_LEN - 1;
 
-const OP_AT: usize = 0;
-const NAME_AT: usize = OP_AT + 1;
+/// 地址槽在**本协议帧里的偏移**——**帧首**。
+///
+/// 本协议**覆盖**机制默认的 `[1..9)`：帧首是唯一让"裸询问"与"服务调用载荷"逐字相同的位置
+/// （见模块头注）。机制只提供"按偏移读写"的口（[`Duet::ADDRESS_AT`]），偏移由协议说了算。
+pub const ADDRESS_AT: usize = 0;
+
+const OP_AT: usize = ADDRESS_AT + ADDRESS_LEN;
+const TAIL: usize = 8;
+const ENTRY_AT: usize = OP_AT + 1;
+/// 定长头宽度（`地址槽 + op + entry`）：名字起于此、止于帧尾；服务侧按它切帧。
+pub const HEAD: usize = ENTRY_AT + TAIL;
+
+/// **一块内存要多大装得下任何一条帧**：定长头 + 名字上界。
+///
+/// 回复比它小（`status + max(名字, entry)`），故容量取两者的大者。这个名字只回答
+/// "容器备多大"，**不回答"这一帧多长"**——帧长当场由 [`Query::len`] 给出。
+pub const CAP: usize = HEAD + TEXT;
 
 const REPLY_STATUS_AT: usize = 0;
 const REPLY_PAYLOAD_AT: usize = REPLY_STATUS_AT + 1;
@@ -169,14 +185,23 @@ pub enum ProtocolError {
     Reserved,
 }
 
-/// 帧尾固定 8 字节：`entry`（询问）或名字/entry 的载荷（回复）。**名字在它之前**，
-/// 故帧长 = 头 + 名字文本长。
-const TAIL: usize = 8;
-
 impl Query {
-    /// 这一帧多少字节：`op + 名字文本 + entry + 地址槽`。
+    /// 这一帧多少字节：定长头 + 名字文本长。**这就是"长度即边界"**——没有 `len` 字段，
+    /// 也没有补零的尾巴，故这个函数不读 `&self` 的任何运行时状态。
     pub fn len(&self) -> usize {
-        NAME_AT + self.name().map(|n| n.text().len()).unwrap_or(0) + TAIL + ADDRESS_LEN
+        HEAD + self.name().map(|n| n.text().len()).unwrap_or(0)
+    }
+
+    /// 动词号（线上那一格）。
+    fn op(&self) -> u8 {
+        match self {
+            Query::Register { .. } => Op::Register as u8,
+            Query::Unregister { .. } => Op::Unregister as u8,
+            Query::Replace { .. } => Op::Replace as u8,
+            Query::Resolve { .. } => Op::Resolve as u8,
+            Query::Enumerate { .. } => Op::Enumerate as u8,
+            Query::Connect { .. } => Op::Connect as u8,
+        }
     }
 
     fn name(&self) -> Option<&Name> {
@@ -197,41 +222,35 @@ impl Query {
         }
     }
 
-    /// 编码（**不写地址槽**：留给 [`Duet::encode`]；尾部不补零）。
-    pub fn encode(&self) -> ([u8; CAP], usize) {
-        let mut m = [0u8; CAP];
-        m[OP_AT] = match self {
-            Query::Register { .. } => Op::Register as u8,
-            Query::Unregister { .. } => Op::Unregister as u8,
-            Query::Replace { .. } => Op::Replace as u8,
-            Query::Resolve { .. } => Op::Resolve as u8,
-            Query::Enumerate { .. } => Op::Enumerate as u8,
-            Query::Connect { .. } => Op::Connect as u8,
-        };
+    /// 把正文写进 `out`——**地址槽那一格跳过**（它归 [`Duet::encode`] 填，见模块头注）。
+    ///
+    /// 返**本帧的字节数**。
+    fn put(&self, out: &mut [u8]) -> usize {
         let n = self.len();
+        let Some(m) = out.get_mut(..n) else {
+            return 0;
+        };
+        m[OP_AT] = self.op();
+        m[ENTRY_AT..ENTRY_AT + TAIL].copy_from_slice(&self.entry().get().to_le_bytes());
         if let Some(name) = self.name() {
-            m[NAME_AT..NAME_AT + name.text().len()].copy_from_slice(name.text());
+            m[HEAD..n].copy_from_slice(name.text());
         }
-        m[n - TAIL - ADDRESS_LEN..n - ADDRESS_LEN]
-            .copy_from_slice(&self.entry().get().to_le_bytes());
-        (m, n)
+        n
     }
 
-    /// 解码：动词、名字、entry 三者都要过。**帧长即那一格**——名字的结束由它在帧里
-    /// 的位置给出（`entry` 之前），故不再有"终止 NUL + 全零填充"。
+    /// 解码：动词、名字、entry 三者都要过。**帧长即那一格**——名字起于定长头、止于
+    /// 帧尾，故不再有"终止 NUL + 全零填充"。地址槽那一格不看（它的读者是服务侧）。
     pub fn decode(m: &[u8]) -> Result<Query, ProtocolError> {
-        let op = *m.first().ok_or(ProtocolError::BadOp)?;
+        if m.len() < HEAD {
+            return Err(ProtocolError::BadName(NameError::Empty));
+        }
+        let op = m[OP_AT];
         if !(1..=6).contains(&op) {
             return Err(ProtocolError::BadOp);
         }
-        if m.len() < NAME_AT + TAIL + ADDRESS_LEN {
-            return Err(ProtocolError::BadName(NameError::Empty));
-        }
-        let text = &m[NAME_AT..m.len() - TAIL - ADDRESS_LEN];
+        let text = &m[HEAD..];
         let entry = PieToken(usize::from_le_bytes(
-            m[m.len() - TAIL - ADDRESS_LEN..m.len() - ADDRESS_LEN]
-                .try_into()
-                .unwrap_or([0u8; 8]),
+            m[ENTRY_AT..ENTRY_AT + TAIL].try_into().unwrap_or([0u8; 8]),
         ));
         // 只有 Register/Replace 带 entry；其余动词那一格必须为 0（真检查：帧里它存在）。
         if !matches!(op, x if x == Op::Register as u8 || x == Op::Replace as u8) && entry.get() != 0
@@ -316,25 +335,25 @@ impl Reply {
 }
 
 /// 报文对：一条目录询问、一条目录应答。尺寸与布局都由本协议说了算——包括
-/// **地址槽在 `[1..9)`**（本协议每问都带）与**帧长 = 头 + 名字文本长**这两件事。
+/// **地址槽在帧首**（本协议每问都带）与**帧长 = 定长头 + 名字文本长**这两件事。
 impl Duet for Query {
     type Req = Query;
     type Rep = Reply;
     type Wire = [u8; CAP];
 
+    /// 帧首（[`ADDRESS_AT`]）——与信封那一格**同一个位置**，故两条线形逐字相同。
+    const ADDRESS_AT: usize = ADDRESS_AT;
     const CAP: usize = CAP;
 
     fn wire() -> [u8; CAP] {
         [0u8; CAP]
     }
 
+    /// 回信地址（帧首那一格）+ 正文（[`Query::put`] 跳过那一格往后面写）。帧长即
+    /// [`Query::len`]，`out` 的其余位置一个字节都不上线。
     fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
-        let (frame, n) = req.encode();
-        let Some(slot) = out.get_mut(..n) else {
-            return 0;
-        };
-        slot.copy_from_slice(&frame[..n]);
-        put_address(out, at);
+        let n = req.put(out);
+        let _ = put_address_at(out, ADDRESS_AT, at);
         n
     }
 

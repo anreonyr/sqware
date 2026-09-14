@@ -46,8 +46,6 @@ use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
-use runtime::core::port::{ADDRESS_AT, ADDRESS_LEN};
-
 use protocol::dispatch::{CAP, Name, Query, Reply};
 
 use protocol::console::{
@@ -59,7 +57,7 @@ use protocol::doom::{self, Ack, Doom};
 use protocol::irq;
 use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
-use runtime::core::port::{Access, Policy, Port, ship};
+use runtime::core::port::{Access, Duet, Policy, Port, ship};
 use runtime::core::unit;
 use runtime::env::{
     chrono::{self, clock},
@@ -1032,8 +1030,8 @@ fn spoof(term: &Term) {
     // `ms` = 等回复的上界：正路径用 WAIT，猜 token 时用 0（只探测、顺便排空）。
     // 裸报文那一层：帧自己给布局，地址槽按机制那一格写（本自检测的正是伪造它）。
     let mut call = |query: &Query, reply_tok: usize, ms: usize| -> Option<Reply> {
-        let (mut msg, n) = query.encode();
-        msg[ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN].copy_from_slice(&reply_tok.to_le_bytes());
+        let mut msg = [0u8; CAP];
+        let n = Query::encode(query, env::PieToken::new(reply_tok), &mut msg);
         entry.push(&msg[..n]).ok()?;
         let (got, _) = mine.pull_timeout_from(&mut buf, ms).ok()?;
         Reply::decode(&buf[..got]).ok()

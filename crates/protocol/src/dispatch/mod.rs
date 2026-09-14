@@ -17,9 +17,10 @@ pub mod control;
 pub mod server;
 pub mod wire;
 
-pub use client::{Directory, PAYLOAD_LEN, Service};
+pub use client::{CALL, Directory, PAYLOAD_LEN, Service};
 pub use control::{Refer, Referred};
 pub use server::{DirectoryError, Release, Vestor, release_pie, vestor_of};
 pub use wire::{
-    CAP, E_DENIED, E_NOT_FOUND, E_TAKEN, Name, NameError, Op, ProtocolError, Query, Reply, TEXT,
+    ADDRESS_AT, CAP, E_DENIED, E_NOT_FOUND, E_TAKEN, HEAD, Name, NameError, Op, ProtocolError,
+    Query, Reply, TEXT,
 };

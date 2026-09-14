@@ -19,10 +19,12 @@ use env::{EnvResult, PieToken, TaskId};
 use runtime::core::port::{Access, Duet, Policy, Port, ship};
 use runtime::env::mail::{self, AnyPie as _, HolePie};
 
+use runtime::core::port::ADDRESS_LEN;
+
 use super::wire::{Name, Query, Reply, denied, not_found, taken};
 
 /// 服务调用报文的字节数：地址槽 8 + 载荷 56。
-const CALL: usize = 8 + PAYLOAD_LEN;
+pub const CALL: usize = 8 + PAYLOAD_LEN;
 
 /// 服务调用载荷字节数。
 ///
@@ -192,23 +194,27 @@ impl Duet for Service {
     type Rep = [u8; PAYLOAD_LEN];
     type Wire = [u8; CALL];
 
+    /// 地址槽在**载荷帧首**（`[0..8)`）：这一格就是目录帧 `[ADDRESS_AT..)` 那一格，
+    /// 故"同一帧装进信封"与"裸帧直接 push"两条线形逐字相同（见 `wire` 模块头注）。
+    const ADDRESS_AT: usize = 0;
     const CAP: usize = CALL;
 
     fn wire() -> [u8; CALL] {
         [0u8; CALL]
     }
 
-    /// 地址槽（前 8 字节）+ 载荷（其余）——本协议没有动词字段，故地址就落在最前面，
-    /// 而这一格正是机制说的那一格（`[ADDRESS_AT..+8)`）。
+    /// 地址槽（前 8 字节）+ 载荷（其余）。**载荷原样搬**：它自己那份布局（目录帧）从载荷
+    /// 第 0 字节起算，故"地址在哪儿"这件事在两条线形上是同一个数。
     fn encode(req: &[u8; PAYLOAD_LEN], at: PieToken, out: &mut [u8]) -> usize {
-        out[..8].copy_from_slice(&at.get().to_le_bytes());
-        out[8..CALL].copy_from_slice(req);
+        out[..ADDRESS_LEN].copy_from_slice(&at.get().to_le_bytes());
+        out[ADDRESS_LEN..CALL].copy_from_slice(req);
         CALL
     }
 
+    /// 回复与请求同形：地址槽 + 载荷。
     fn decode(buf: &[u8]) -> EnvResult<[u8; PAYLOAD_LEN]> {
         let mut out = [0u8; PAYLOAD_LEN];
-        out.copy_from_slice(buf.get(8..CALL).ok_or_else(denied)?);
+        out.copy_from_slice(buf.get(ADDRESS_LEN..CALL).ok_or_else(denied)?);
         Ok(out)
     }
 }
