@@ -239,8 +239,12 @@ extern "C" fn main() -> ! {
         } else {
             SLOW_MS
         };
-        if entry.pull_timeout(&mut req, timeout).is_ok() {
-            let outcome = CONSOLE.with(|s| s.serve(&req));
+        if let Ok(n) = entry.pull_timeout(&mut req, timeout) {
+            // 长度由 `Pull` 给：缓冲按上界（`CAP`）备，**帧长当场才知道**。把整个缓冲交下去
+            // 就等于把"帧多长"这件事丢掉——收侧解码会看见一帧比真实长度长 40 字节的报文
+            // （`body != ADDRESS_LEN` ⇒ `Short` ⇒ 每条 `Open` 都被拒）。
+            let Some(msg) = req.get(..n) else { continue };
+            let outcome = CONSOLE.with(|s| s.serve(msg));
             // 次序：**先落屏、再回执**（`Ok` 的含义是"这段已落屏"）。
             flush(&writer);
             // `ReadLine`：已登记等读，那一行的回执由输入线程放进共享槽（回执为 `None`）。
