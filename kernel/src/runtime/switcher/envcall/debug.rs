@@ -81,6 +81,13 @@ pub(super) fn get(
     frame
 }
 
+/// 开关报文对账（开关住在**发起那一域的静态**里：`Port::call` 读的是它能看见的那一份）。
+pub(super) fn set_trace(on: usize) -> usize {
+    let v = on != 0;
+    crate::runtime::switcher::envcall::TRACE.store(v, core::sync::atomic::Ordering::Relaxed);
+    v as usize
+}
+
 fn err(frame: &mut TrapContext, e: GateError) -> *mut TrapContext {
     frame.gpr.set_x(Gprs::A0, e.code() as usize);
     frame

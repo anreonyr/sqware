@@ -43,6 +43,11 @@ mod debug;
 mod mail;
 mod pie;
 
+/// 报文对账开关：`DebugCall::SetTrace` 写、`Port::call` 读（每域各自一份静态——
+/// 域是独立地址空间，开关不跨域），
+/// 只在调试时打开——布局错位这类病只有真实字节能证（`docs/port.md` §9.3）。
+pub static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// 单次 `Build` 的镜像字节上限（8 MiB）：防止一次调用把内核暂存撑爆。
 const MAX_IMAGE: usize = 8 * 1024 * 1024;
 
@@ -279,6 +284,9 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         }
         EnvCall::Debug(DebugCall::Get { buf, len }) => {
             return debug::get(frame, &ident, buf.get(), len);
+        }
+        EnvCall::Debug(DebugCall::SetTrace { on }) => {
+            frame.gpr.set_x(Gprs::A0, debug::set_trace(on));
         }
         EnvCall::Room(RoomCall::Park { millis }) => {
             drop(ident);

@@ -35,3 +35,51 @@ pub fn get(buf: &mut [u8]) -> EnvResult<usize> {
         _ => unreachable!(),
     }
 }
+
+/// 开关**报文对账**（此后每次一次往返都打两帧的十六进制，见 [`Port::call`]）。
+///
+/// 为什么留在 ABI 上而不是编译期开关：布局错位只有**真实字节**能证，而这类病一旦出现
+/// 就要能在**同一个产物**上打开对账再跑一遍。
+pub fn trace(on: bool) -> EnvResult<()> {
+    set_local(on);
+    let call = DebugCall::SetTrace { on: on as usize };
+    match call.call()? {
+        DebugCallRet::SetTrace(()) => Ok(()),
+        _ => unreachable!(),
+    }
+}
+
+static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// 本域的对账开关（`Port::call` 读它）。域是独立地址空间，这份静态因此**每域一份**：
+/// 内核那份只由 envcall 打开，而"哪个域要打"是调用方在 `trace()` 里当场决定的。
+pub fn tracing() -> bool {
+    TRACE.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// 同 [`trace`]，但只动本地那份（内核侧那份由 envcall 写）。
+pub fn set_local(on: bool) {
+    TRACE.store(on, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// 把一段字节以十六进制打进调试控制台（每行一小段）——**对账用**。
+///
+/// 布局错位这类病的唯一证词就是真实字节；读数形如 `port send: 01 00 ...`。
+pub fn hexdump(tag: &str, bytes: &[u8]) {
+    const LINE: usize = 16;
+    let mut s = alloc::string::String::new();
+    for chunk in bytes.chunks(LINE) {
+        s.clear();
+        s.push_str(tag);
+        s.push_str(": ");
+        for b in chunk {
+            s.push(HEX[(b >> 4) as usize] as char);
+            s.push(HEX[(b & 0xf) as usize] as char);
+            s.push(' ');
+        }
+        s.push('\n');
+        let _ = put(&s);
+    }
+}
+
+const HEX: &[u8; 16] = b"0123456789abcdef";
