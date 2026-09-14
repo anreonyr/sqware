@@ -37,6 +37,24 @@ use super::wire::{LINE, Query, Reply, denied};
 /// 一次往返的上界（毫秒）。与 dispatch 的 `REPLY_TIMEOUT_MS` 同值。
 const REPLY_TIMEOUT_MS: usize = 1000;
 
+/// 认领号：**单调**即可（不必不可预测——它防的是"哪一帧是谁的"这种时序错配，
+/// 不是伪造）。起点掺本任务 id，避免同一次启动里两个域撞上同一个号。
+fn next_nonce() -> u64 {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    static SEED: AtomicU64 = AtomicU64::new(0);
+    let seed = SEED.load(Ordering::Relaxed);
+    let seed = if seed == 0 {
+        let t = runtime::env::task::self_id().map(|t| t.get() as u64).unwrap_or(1);
+        let s = t.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let _ = SEED.compare_exchange(0, s, Ordering::Relaxed, Ordering::Relaxed);
+        SEED.load(Ordering::Relaxed)
+    } else {
+        seed
+    };
+    seed.wrapping_add(NEXT.fetch_add(1, Ordering::Relaxed) + 1)
+}
+
 /// 等**回信孔句柄**的上界（毫秒）。比一次往返短：这一段里对端只做"开一枚孔 +
 /// 授出 + 推 9 字节"，没有设备 I/O、也不等用户。给上界是为了让"服务把这条会话
 /// 拒了"（表满 / 报文不合 ⇒ 那枚号永远不会来）落成一次可重试的失败，而不是永久挂起。
@@ -82,9 +100,13 @@ impl Console {
     /// 对端 task id 由 [`Port::dial`] 用 `Reserve(entry).owner` 求得——**门闩的开辟者
     /// 就是服务本身**（root 转发不改 `owner`，只改 `vestor`）。
     pub fn open(entry: HolePie) -> EnvResult<Console> {
-        let port = Port::dial::<Query>(&entry, &Query::open(), HANDSHAKE_TIMEOUT_MS)?;
+        // 认领号：当场生成（本进程每开一次会话一个），同一个值同时进首帧与 `dial`
+        // ——服务端会把它连同回信孔句柄一起推回来，见 [`Port::dial`]。
+        let nonce = next_nonce();
+        let port = Port::dial::<Query>(&entry, &Query::open(nonce), nonce, HANDSHAKE_TIMEOUT_MS)?;
         let mut console = Console { port, client: 0 };
-        match console.call(&Query::open())? {
+        // 首帧已经推过了，这一条**不再**带认领号：握手那一步已完成。
+        match console.call(&Query::open(0))? {
             Reply::Ok { client } => {
                 console.client = client;
                 Ok(console)

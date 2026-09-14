@@ -296,19 +296,28 @@ impl Port {
     /// 生命与我绑定，对端先死我看不见）；`dial` 是对端开（它退场时内核的寿命边封印
     /// 那扇门，我等在上面**当场醒**）。
     ///
-    /// # 契约：首帧就是握手帧
+    /// # 契约：首帧就是握手帧，且它带一枚**认领号**
     ///
     /// 本函数只把首帧推出去（地址槽**留零** —— 协议自己的 `encode` 决定这个槽在哪儿、
     /// 什么时候写），随后在对端入口孔上等一枚句柄回来。故**调用方紧接着必须发那条
     /// 触发握手的请求**（控制台是 `Open`，且那一条必须是首次 [`Port::call`]）。
     /// 次序反了的表现是 `dial` 等到超时——不是死锁，是这条契约被违反。
     ///
+    /// `nonce` = 本端的认领号（调用方生成，同一个值也写进首帧）。**它为什么必须存在**
+    /// 见 [`handshake::borrow`]：入口孔是双向的，"下一帧就是我的答复"是假前提——实测
+    /// 一条裸 `Close`（正好也是 9 字节）落在同一个槽里，把整条会话当场开坏。
+    ///
     /// `within` = 等那枚句柄的上界（毫秒）。**必须有界**：对端若拒了这条会话（表满、
     /// 报文不合），那枚号永远不会来。
     ///
     /// # Errors
     /// - `Denied` — 入口门闩不在表里 / 无开辟者 / 对端没把句柄交回来
-    pub fn dial<W: Duet>(entry: &HolePie, first: &W::Req, within: usize) -> EnvResult<Port> {
+    pub fn dial<W: Duet>(
+        entry: &HolePie,
+        first: &W::Req,
+        nonce: u64,
+        within: usize,
+    ) -> EnvResult<Port> {
         let peer = mail::reserve(PieToken::new(entry.token()))?.1;
         if peer.get() == 0 {
             return Err(denied());
@@ -316,7 +325,7 @@ impl Port {
         let mut wire = W::wire();
         let sent = W::encode(first, PieToken::new(0), wire.as_mut());
         entry.push(wire.as_ref().get(..sent).ok_or_else(denied)?)?;
-        let reply = crate::core::handshake::borrow(entry)?;
+        let reply = crate::core::handshake::borrow(entry, nonce, within)?;
         Ok(Port::adopt(peer, HolePie::from_token(entry.token()), reply))
     }
 

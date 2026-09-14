@@ -244,7 +244,8 @@ impl State {
     /// 有会话，回信孔正要**按它**开出来（见 [`State::open`]）。
     pub fn serve(&mut self, from: usize, msg: &[u8], entry: &HolePie) -> Outcome {
         match Query::decode(msg) {
-            Ok(Query::Open) => self.open(from, word(msg, ADDRESS_AT), entry),
+            // 认领号在地址槽之后那一格（`Open` 没有 client，那一格正好给它用）。
+            Ok(Query::Open { nonce }) => self.open(from, word(msg, ADDRESS_AT), nonce, entry),
             Ok(query) => self.handle(query, msg),
             Err(_) => Outcome::deny(from),
         }
@@ -262,7 +263,7 @@ impl State {
     fn handle(&mut self, query: Query, msg: &[u8]) -> Outcome {
         match query {
             // `Open` 由 [`State::serve`] 直接分派（它要多两个参数），到不了这里。
-            Query::Open => Outcome::deny(0),
+            Query::Open { .. } => Outcome::deny(0),
             Query::Write { client, .. } => self.write(client, Query::text(msg)),
             Query::ReadLine { client, .. } => self.readline(client, Query::text(msg)),
             Query::Close { client } => self.close(client),
@@ -287,7 +288,7 @@ impl State {
     /// `addr != 0` 走**旧形状**（客户端自建、把 `WRITE` 副本授了过来）——留着它是因为
     /// 握手那一帧与数据帧共用一条线上形状，老客户端不该因此直接断线；新客户端一律
     /// 送 0（见 `client::Console::open`）。
-    fn open(&mut self, from: usize, addr: usize, entry: &HolePie) -> Outcome {
+    fn open(&mut self, from: usize, addr: usize, nonce: u64, entry: &HolePie) -> Outcome {
         // 存进 `Slot` 的**必须是本服务自己那枚**（自己表里的号）：`route` 拿它在本
         // 线程的表里找孔来推。对端那枚的号（`To::seed`）是**另一张表**里的号——存错
         // 的表现是每次推回复都被判 `Denied` 并静默丢掉，客户端只看到"没开成"
@@ -298,7 +299,7 @@ impl State {
             if from == 0 {
                 return Outcome::deny(0);
             }
-            match handshake::grant(entry, TaskId::new(from)) {
+            match handshake::grant(entry, TaskId::new(from), nonce) {
                 Ok(hole) => hole.token(),
                 // 授不出去 = 对端已经走不动了：**不占槽**，也不回话（无处可回）。
                 Err(_) => return Outcome::quiet(),

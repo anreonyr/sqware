@@ -124,8 +124,16 @@ impl Text {
 /// 控制台请求。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Query {
-    /// 开会话：地址槽里是调用方的回信孔（对端 token）。
-    Open,
+    /// 开会话，并认领答复。
+    ///
+    /// 地址槽里留 0（回信孔由服务端开、句柄随答复交回），外加一枚**认领号**：服务端
+    /// 把它连同那枚句柄一起推回来，客户端据此从入口孔那一串帧里认出"哪一枚是给我的
+    /// 答复"（理由见 `runtime::core::handshake::borrow`）。它当场生成，故对端猜不到
+    /// ——"谁在什么时候等哪一枚"这件事不再靠时序。
+    Open {
+        /// 认领号，原样回。
+        nonce: u64,
+    },
     /// 写一批字节（**同步**：`Ok` 即"已落屏"）。
     Write { client: usize, text: Text },
     /// 读一行（带行编辑）。`prompt` 供服务侧重绘。
@@ -195,8 +203,8 @@ fn word(m: &[u8], at: usize) -> usize {
 
 impl Query {
     /// 开一次会话。地址是**传输字段**（见模块头），客户端手里没有那枚 token。
-    pub const fn open() -> Query {
-        Query::Open
+    pub const fn open(nonce: u64) -> Query {
+        Query::Open { nonce }
     }
 
     /// 造一条写请求。空或超过 [`LINE`] ⇒ `None`（分片是客户端的活）。
@@ -221,7 +229,8 @@ impl Query {
     /// 这一帧多少字节。
     pub fn len(&self) -> usize {
         match self {
-            Query::Open => 1 + ADDRESS_LEN,
+            // 地址槽 + 认领号：`Open` 是本协议唯一带认领号的帧。
+            Query::Open { .. } => 1 + ADDRESS_LEN + WORD,
             Query::Write { text, .. } => TEXT_AT + text.as_bytes().len(),
             Query::ReadLine { prompt, .. } => TEXT_AT + prompt.as_bytes().len(),
             Query::Close { .. } => TEXT_AT,
@@ -239,7 +248,7 @@ impl Query {
     pub fn encode(&self) -> ([u8; CAP], usize) {
         let mut m = [0u8; CAP];
         let (op, client, text) = match self {
-            Query::Open => (Op::Open, 0, None),
+            Query::Open { .. } => (Op::Open, 0, None),
             Query::Write { client, text } => (Op::Write, *client, Some(text)),
             Query::ReadLine { client, prompt } => (Op::ReadLine, *client, Some(prompt)),
             Query::Close { client } => (Op::Close, *client, None),
@@ -248,7 +257,11 @@ impl Query {
         if let Some(text) = text {
             let _ = text.encode_into(&mut m, TEXT_AT);
         }
-        if !matches!(self, Query::Open) {
+        if let Query::Open { nonce } = self {
+            // 认领号紧跟在地址槽之后（`CLIENT_AT` 那一格：`Open` 没有 client，
+            // 那一格正好空着给认领号用）。
+            m[CLIENT_AT..CLIENT_AT + WORD].copy_from_slice(&nonce.to_le_bytes());
+        } else {
             m[CLIENT_AT..CLIENT_AT + WORD].copy_from_slice(&client.to_le_bytes());
         }
         (m, self.len())
@@ -260,10 +273,16 @@ impl Query {
         let body = m.len() - 1;
         match op {
             x if x == Op::Open as u8 => {
-                if body != ADDRESS_LEN {
+                if body != ADDRESS_LEN + WORD {
                     return Err(ProtocolError::Short);
                 }
-                Ok(Query::Open)
+                Ok(Query::Open {
+                    nonce: u64::from_le_bytes(
+                        m[CLIENT_AT..CLIENT_AT + WORD]
+                            .try_into()
+                            .unwrap_or([0u8; WORD]),
+                    ),
+                })
             }
             x if x == Op::Write as u8 => {
                 if body < ADDRESS_LEN + WORD {
@@ -389,7 +408,7 @@ impl Duet for Query {
             return 0;
         };
         slot.copy_from_slice(&frame[..n]);
-        if matches!(req, Query::Open) {
+        if matches!(req, Query::Open { .. }) {
             if let Some(slot) = out.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN) {
                 slot.copy_from_slice(&at.get().to_le_bytes());
             }

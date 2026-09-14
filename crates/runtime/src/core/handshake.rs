@@ -43,6 +43,13 @@ const TAG_QUAY: u8 = 1;
 const TAG_PIER: u8 = 2;
 const TAG_GRANT: u8 = 3;
 
+/// `Grant` 那一形状的长度：`tag` + **认领号** + `u64`。
+///
+/// 比另两条多一个 `u64`，那是**认领号**（nonce）：客户端每次开口给一个当场生成的号，
+/// 服务端原样回。理由见 [`borrow`]——入口孔上会有别的帧（实测：一条裸 `Close` 正好
+/// 也是 9 字节、`b0=3`，把"下一帧就是答复"骗过去了）。
+const GRANT_LEN: usize = 1 + 8 + 8;
+
 /// 枚举自己权限表的上限（防越界扫描跑飞；表量级个位数）。
 const MAX_PIES: usize = 64;
 
@@ -198,40 +205,78 @@ pub fn moor() -> EnvResult<HolePie> {
 // 里的号**；而后者只能由客户端认（`from_token` 是零成本重建，故两边对同一个号的
 // 理解必须一致——它就是同一个号）。
 
-/// 服务侧：为**这条会话的对端**开一枚回信孔，把 `WRITE` 副本授给它，并把这枚句柄经
-/// `entry` 交回去。返**我这侧**那枚。
+/// 服务侧：为**这条会话的对端**开一枚回信孔，把 `READ | WRITE` 副本授给它，并把这枚
+/// 句柄（连同 `nonce`）经 `entry` 交回去。返**我这侧**那枚。
 ///
-/// 只要 `WRITE`：对端往它推，读的一侧是本服务（与旧 `Port::open` 授出去的完全同款）。
+/// # 为什么是 `READ | WRITE`
+///
+/// 翻面之后授出去的这一份**就是客户端唯一的句柄**——它要 `pull` 才收得到回复，而
+/// `Pull` 的方向位是 R（`envcall::mail::wait_dir`：`HoleDir::Pull => Need::Read`）。
+/// 只授 W 的表现是**当场 `Denied`**（连等都不等，不是 `Busy`）：实测
+/// `[r9] … PULL ERR code=-1`。旧形状里"只授 W"不算错——那时客户端自己开着这枚孔、
+/// 手里那份是满权限，授出去那份只被服务端用来推。写的是同一行字，读法随"谁开孔"翻面。
 ///
 /// `entry` = 对端请求进来的那条孔（**本服务自己开的那扇门**）——句柄顺着它回去，
 /// 故客户端不必为"送这个号"再自建第二条孔。
 ///
 /// # Errors
 /// - `Denied` — `ship` 授不出去（`peer` 不是个活任务）或 `entry` 推不动（对端已走）
-pub fn grant(entry: &HolePie, peer: env::TaskId) -> EnvResult<HolePie> {
+pub fn grant(entry: &HolePie, peer: env::TaskId, nonce: u64) -> EnvResult<HolePie> {
     let reply = HolePie::unseal()?;
-    // **`READ | WRITE`，不是只有 `WRITE`**：翻面之后授出去的这一份**就是客户端唯一的
-    // 句柄**——它要 `pull` 才收得到回复，而 `Pull` 的方向位是 R
-    // （`envcall::mail::wait_dir`：`HoleDir::Pull => Need::Read`）。只授 W 的表现是
-    // **当场 `Denied`**（连等都不等，不是 `Busy`）：实测 `[r9] … PULL ERR code=-1`。
-    //
-    // 旧形状里"只授 W"不算错：那时客户端自己开着这枚孔、手里那份是满权限，授出去那份
-    // 只被服务端用来推。写的是同一行字，读法随"谁开孔"一起翻面。
     let to = ship(&reply, peer, Access::READ | Access::WRITE, Policy::NONE)?;
-    send(entry, TAG_GRANT, to.seed())?;
+    let mut buf = [0u8; GRANT_LEN];
+    buf[0] = TAG_GRANT;
+    buf[1..9].copy_from_slice(&nonce.to_le_bytes());
+    buf[9..].copy_from_slice(&to.seed().get().to_le_bytes());
+    entry.push(&buf)?;
     Ok(reply)
 }
 
-/// 客户端：在**入口孔**上收服务端交回的那枚回信孔句柄。
+/// 客户端：在**入口孔**上收服务端交回的那枚回信孔句柄，**并认领号**。
 ///
-/// 与 [`moor`] 的分工：`moor` 靠"授与人 = 开者 = 父域"在表里**找**一枚；本函数不找
-/// ——句柄是服务端当场给的号，本侧只把它认成句柄。
+/// # 为什么要有认领号（实测踩出来的）
 ///
-/// **必须有界**：服务端若拒了这条会话（表满 / 报文不合），这枚号永远不会来。无界等
-/// 就把"对面没开成"变成一次永久挂起——调用方给上界（见 `console::client::open`）。
+/// 这条孔是**双向**的：客户端把请求推进去，服务端把答复推回来。于是"下一帧就是我的
+/// 答复"是个**假前提**——入口孔上还会有别的帧（服务端自己的回复、客户端的下一条请求），
+/// 而 `Close` 那一形状正好也是 9 字节、首字节也不等于 [`TAG_GRANT`]……实测到的更坏：
+/// 一条**裸 `Close`**（`n=9`、`b0=3`）落在同一个槽里，`recv` 一看形状不符就答 `Denied`，
+/// 于是**整条会话当场开不成**（`Console::open` 返回 `-1`，shell 启动即退场 ⇒ 级联停机）。
+/// 这个窗口是**时序相关**的：同一份产物五次启动里中招两三次。
+///
+/// 故本函数**不信任下一帧**：它逐帧读到一枚 tag 与 `nonce` 都对得上的才认领，别的一律
+/// 丢掉。`nonce` 由客户端在开口那一帧里给出（`Query::Open` 带它），服务端原样回——
+/// 对端不可能猜到，故"谁在什么时候等哪一枚"这件事不再靠时序。
+///
+/// # 有界
+///
+/// 服务端若拒了这条会话（表满 / 报文不合），这枚号永远不会来。无界等就把"对面没开成"
+/// 变成一次永久挂起——故 `within` 是调用方的义务（见 `console::client::open`）。
 ///
 /// # Errors
-/// - `Denied` — 不是 `Grant` 那一形状（tag / 长度不符）、或入口孔已死
-pub fn borrow(entry: &HolePie) -> EnvResult<HolePie> {
-    Ok(HolePie::from_token(recv(entry, TAG_GRANT)?))
+/// - `Denied` — 界内没等到、入口孔已死
+pub fn borrow(entry: &HolePie, nonce: u64, within: usize) -> EnvResult<HolePie> {
+    let deadline = crate::env::chrono::clock()?
+        .0
+        .saturating_add((within as u64).div_ceil(1000));
+    loop {
+        let now = crate::env::chrono::clock()?.0;
+        if now > deadline {
+            return Err(denied());
+        }
+        let remain_s = (deadline - now).max(1);
+        let mut buf = [0u8; GRANT_LEN];
+        // 逐帧读：**短帧也照读**（`LEN` 那一形状的帧只有 9 字节），不是 `Grant` 就丢。
+        let Ok(n) = entry.pull_timeout(&mut buf, (remain_s * 1000) as usize) else {
+            return Err(denied());
+        };
+        let Some(msg) = buf.get(..n) else { continue };
+        if n != GRANT_LEN || msg[0] != TAG_GRANT {
+            continue;
+        }
+        if u64::from_le_bytes(msg[1..9].try_into().unwrap_or([0u8; 8])) != nonce {
+            continue;
+        }
+        let token = usize::from_le_bytes(msg[9..].try_into().unwrap_or([0u8; 8]));
+        return Ok(HolePie::from_token(token));
+    }
 }
