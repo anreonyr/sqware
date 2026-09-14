@@ -57,7 +57,7 @@ impl Line {
     /// 能跨任务交接的方式（"客户端递出门闩"，§3.2.4）。
     pub fn register(&self, name: &Name, session: &HolePie) -> EnvResult<Ack> {
         let to = ship(session, self.owner, Access::WRITE, Policy::NONE)?;
-        self.ask(Request::register(*name, to.token()))
+        self.ask(Request::register(*name, to.seed()))
     }
 
     /// 写属主：这个名字归 `who`。**只有 root 会调它**（驱动认推者是不是自己的 `sire`）。

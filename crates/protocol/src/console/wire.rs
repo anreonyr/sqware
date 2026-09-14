@@ -54,7 +54,7 @@ pub const SERVICE: &str = "console";
 /// 单消息字节数（与 dispatch 的 `MSG_LEN` 同值：同一代协议）。
 pub const MSG_LEN: usize = 64;
 
-/// 回信孔 token 在消息里的偏移。
+/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在消息里的偏移。
 pub const REPLY_PEER_AT: usize = 8;
 
 /// 会话 id 在消息里的偏移。

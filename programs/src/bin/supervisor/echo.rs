@@ -44,7 +44,7 @@ extern "C" fn main() -> ! {
         Err(_) => runtime::env::room::exit_with(4),
     };
     let at_parent = match ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => runtime::env::room::exit_with(5),
     };
     if Quay::new(at_parent).push(&up).is_err() {

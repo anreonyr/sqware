@@ -5,7 +5,7 @@
 //! ```text
 //! Access / Policy   对端能做什么 / 这一枚能怎么流动（四位分两族，混族不可表达）
 //! ship              授出：子集由两族拼出，空集本地拒（不发 envcall）
-//! To                对端坐标：号（`who`）与它在**那张表里**的句柄（`token`）——两半成对
+//! To                对端坐标：`peer`（那**张表**的主人）与 `seed`（种在**它表里**的那一枚）
 //! Duet              报文对的形状：请求与回复成对绑定，布局归协议
 //! Port              一枚 Hole 门闩上的一次往返：填回信地址 / push / 校来源 / 有界等 / 解码
 //! ```
@@ -97,34 +97,38 @@ impl BitOr for Policy {
     }
 }
 
-/// 对端坐标：**两半成对**——对端是谁（`who`），以及那枚副本在**对端表里**的句柄
-/// （`token`）。
+/// 对端坐标：**两半成对**——`peer`（那**张表**的主人）与 `seed`（种在**它表里**的
+/// 那一枚）。
 ///
-/// 号只在那一张表里有意义，故两半不能分家：字段私有、只有 [`ship`] 能造。旧
-/// `Channel` 的病根正是只存了对端那半（`at_peer`）。
+/// **为什么必须成对**：`seed` 是个号，号只在那一张表里有意义——离开 `peer` 就只是一
+/// 个数（旧 `Channel` 只存 `at_peer` 的病根）。而本仓其余"种出去的号"（`Quay` /
+/// `Pier` / `Referred`）的对端由**方向**给出（子→父 / 父→子 / 一问一答），唯有这里是
+/// **回信孔**：谁都能往它推，方向推不出对端 ⇒ 两半只能一起带着。
+///
+/// 字段私有、只有 [`ship`] 能造。
 #[derive(Clone, Copy, Debug)]
 pub struct To {
-    who: TaskId,
-    token: PieToken,
+    peer: TaskId,
+    seed: PieToken,
 }
 
 impl To {
-    fn new(who: TaskId, token: PieToken) -> To {
-        To { who, token }
+    fn new(peer: TaskId, seed: PieToken) -> To {
+        To { peer, seed }
     }
 
     /// 对端是谁。用于校验"这条回复真是它推的"。
-    pub const fn who(self) -> TaskId {
-        self.who
+    pub const fn peer(self) -> TaskId {
+        self.peer
     }
 
-    /// 那枚副本**在对端表里**的句柄——写进报文，对端按它 push。
-    pub const fn token(self) -> PieToken {
-        self.token
+    /// 种在**对端表里**的那一枚——写进报文，对端按它 push。
+    pub const fn seed(self) -> PieToken {
+        self.seed
     }
 }
 
-/// 授出：把 `pie` 的一个子集授给 `who`，返对端坐标。
+/// 授出：把 `pie` 的一个子集授给 `peer`，返对端坐标。
 ///
 /// **这就是"授出"的全部机制**：子集由两族拼出，混族写不出来；空集本地拒（不发
 /// envcall）。调用点从此写不出裸子集——一份子集写错就是一份多余授权，而
@@ -137,13 +141,13 @@ impl To {
 /// - `Denied` — 空集（本地拒）/ 源枚不持 `VEST` / 子集越界 / 已被关住 / 对端不存在
 /// - `Dead`   — 源枚的资源已封印
 /// - `OoM`    — 对端表备不出容量
-pub fn ship<P: AnyPie>(pie: &P, who: TaskId, access: Access, policy: Policy) -> EnvResult<To> {
+pub fn ship<P: AnyPie>(pie: &P, peer: TaskId, access: Access, policy: Policy) -> EnvResult<To> {
     let subset = access.bits() | policy.bits();
     if subset.is_empty() {
         return Err(denied());
     }
-    let token = pie.accord(who, subset)?;
-    Ok(To::new(who, token))
+    let seed = pie.accord(peer, subset)?;
+    Ok(To::new(peer, seed))
 }
 
 /// 报文对的形状：一条请求、一条回复，**成对绑定**。
@@ -172,9 +176,9 @@ pub trait Duet {
 
     /// 布局：把请求写进 `out`，并把**回信地址**写在该协议自己的偏移上。
     ///
-    /// `at` = 本端回信孔在**对端表里**的句柄（[`To::token`]）——布局归协议：
-    /// 地址写哪、写成几个字节，它说了算。
-    fn encode(req: &Self::Req, at: PieToken, out: &mut [u8]);
+    /// `seed` = 种在对端表里的那一枚（[`To::seed`]）——布局归协议：地址写哪、
+    /// 写成几个字节、要不要每条请求都写，它说了算。
+    fn encode(req: &Self::Req, seed: PieToken, out: &mut [u8]);
 
     /// 解码回复。报文不合法 ⇒ `Denied`。
     fn decode(buf: &[u8]) -> EnvResult<Self::Rep>;
@@ -200,12 +204,12 @@ impl Port {
     /// # Errors
     /// - `Denied` — 入口门闩不在表里 / 无开辟者 / 授不出去
     pub fn open(entry: &HolePie) -> EnvResult<Port> {
-        let who = mail::reserve(PieToken::new(entry.token()))?.1;
-        if who.get() == 0 {
+        let peer = mail::reserve(PieToken::new(entry.token()))?.1;
+        if peer.get() == 0 {
             return Err(denied());
         }
         let reply = HolePie::unseal()?;
-        let to = ship(&reply, who, Access::WRITE, Policy::NONE)?;
+        let to = ship(&reply, peer, Access::WRITE, Policy::NONE)?;
         Ok(Port {
             to,
             entry: HolePie::from_token(entry.token()),
@@ -222,12 +226,12 @@ impl Port {
     /// `call`（与 [`HolePie::pull_timeout`] 的既有契约同款）。
     pub fn call<W: Duet>(&self, req: &W::Req, within: usize) -> EnvResult<W::Rep> {
         let mut wire = W::wire();
-        W::encode(req, self.to.token(), wire.as_mut());
+        W::encode(req, self.to.seed(), wire.as_mut());
         self.entry
             .push(wire.as_ref().get(..W::REQ).ok_or_else(denied)?)?;
         let field = wire.as_mut().get_mut(..W::REP).ok_or_else(denied)?;
         let (len, from) = self.reply.pull_timeout_from(field, within)?;
-        if from != self.to.who() {
+        if from != self.to.peer() {
             return Err(denied());
         }
         W::decode(wire.as_ref().get(..len).ok_or_else(denied)?)

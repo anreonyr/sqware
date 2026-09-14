@@ -249,7 +249,7 @@ const MARKERS = [
   # 授出（`docs/port.md` §3、§9）：`cells=15` = 十六格里**十五格**都授得出、且 `Collect`
   # 读回的权限与签名说的子集**逐格相等**；`empty=1` = 第十六格（`Access::NONE +
   # Policy::NONE`）本地拒（空集不发 envcall）；`source=1` = `Port::call` 拒了冒名的回复
-  # （发送者不是 `to.who()`）。它的牙在第一格与最后一格：把空集的本地拒去掉、或把来源
+  # （发送者不是 `to.peer()`）。它的牙在第一格与最后一格：把空集的本地拒去掉、或把来源
   # 校验去掉，这两个数各自变 0。
   "ship: cells=15 empty=1 source=1"
   "sleep 300ms"

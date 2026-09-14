@@ -82,8 +82,9 @@ pub use env::wire::{NAME_LEN, Name, NameError};
 /// （`docs/port.md` §5），它在这里是因为布局与缓冲都得知道它。
 pub const MSG_LEN: usize = 64;
 
-/// per-caller reply 通道 token 在 wire 中的偏移（`[49..57]`）。
-/// 调用方在 `Request::encode()` 之后用此偏移写入 reply pie 的目录侧 token。
+/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在报文里的位置——`[49..57]`。
+///
+/// `Request::encode()` 一个字节都不碰它，由 [`Duet::encode`] 写（见模块头那张字段表）。
 pub const REPLY_AT: usize = 49;
 
 const OP_AT: usize = 0;

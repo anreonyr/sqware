@@ -23,7 +23,7 @@
 
 | | `Channel` | `Port` |
 |---|---|---|
-| 坐标 | 只存 `at_peer`（号） | `To { who, token }`——**两半成对**（号只在那一张表里有意义） |
+| 坐标 | 只存 `at_peer`（号） | `To { peer, seed }`——**两半成对**（号只在那一张表里有意义） |
 | 收尾 | `revoke(peer, at_peer)?` 后 `release()` | `close` 只 `release()`——**级联已含对端那枚**（`gate/cull.rs` 沿 `sire` BFS 反查全世界） |
 | 句柄 | `mine()` 交出整枚门闩（可 `accord` 出永不撤的副本） | 协议**拿不到句柄**：只给 `Duet` 的两个纯函数 |
 | 往返 | 每个协议各写一遍 | `Port::call` 一处 |
@@ -61,11 +61,11 @@ VEST | CAGE  给  我失去这一枚，对端可以再授出（粘性：它再�
 ## 3 · 授出：`ship`
 
 ```rust
-pub fn ship<P: AnyPie>(pie: &P, who: TaskId, access: Access, policy: Policy) -> EnvResult<To> {
+pub fn ship<P: AnyPie>(pie: &P, peer: TaskId, access: Access, policy: Policy) -> EnvResult<To> {
     let subset = access.bits() | policy.bits();
     if subset.is_empty() { return Err(denied()); }   // 空集本地拒，不发 envcall
-    let token = pie.accord(who, subset)?;
-    Ok(To::new(who, token))
+    let seed = pie.accord(peer, subset)?;
+    Ok(To::new(peer, seed))
 }
 ```
 
@@ -105,7 +105,7 @@ pub struct Port { to: To, entry: HolePie, reply: HolePie }
 pub trait Duet {
     type Req; type Rep;
     const REQ: usize; const REP: usize;
-    fn encode(req: &Self::Req, to: PieToken, out: &mut [u8]);   // 布局归协议：地址写哪它说了算
+    fn encode(req: &Self::Req, seed: PieToken, out: &mut [u8]);   // 布局归协议：地址写哪它说了算
     fn decode(buf: &[u8]) -> EnvResult<Self::Rep>;
 }
 
@@ -131,7 +131,7 @@ impl Port {
 |---|---|---|
 | 把回信地址填进报文 | `Port::call` → `W::encode` | 五家各自手戳 `msg[REPLY_AT..]` |
 | `push`（满则等 = 背压） | `Port::call` | 五家 |
-| **校验回复来源**（`pull_from` vs `to.who()`） | `Port::call` | **一处都没有**（`pull_from` 的调用者全在服务侧与自检里） |
+| **校验回复来源**（`pull_from` vs `to.peer()`） | `Port::call` | **一处都没有**（`pull_from` 的调用者全在服务侧与自检里） |
 | 有界等待 | `Port::call`（`within`，`usize::MAX` = 永久） | 五家各带自己的常量 |
 | 解码 | `W::decode` | 五家 |
 
@@ -141,7 +141,7 @@ impl Port {
 **`type Req` / `type Rep` 成对绑定**是选 trait 而非闭包的理由：闭包版可以把 A 协议的
 `encode` 和 B 协议的 `decode` 一起递进去，编译器不响。trait 版配错不可表达。
 
-**`to` 不跨进 `protocol`**：`encode` 收的是裸 `PieToken`，`who` 只被 `call` 用来校验来源。
+**`to` 不跨进 `protocol`**：`encode` 收的是裸 `PieToken`（那一枚 `seed`），`peer` 只被 `call` 用来校验来源。
 所以 `protocol` 层看不到 `To`——`Port::to()` 这类访问器**不需要存在**（零调用者的访问器不留，
 `programs/src/uart.rs:63-65` 有先例）。
 
@@ -201,7 +201,7 @@ impl Port {
 | 不变量 | 违反会怎样 | 谁守着 |
 |---|---|---|
 | 同一条孔上 `R` 的**可用**持有者恒为一个 | 两个读者各拿一半消息 | 位表（授出 `READ` 必带 `CAGE`）+ `CAGE` 粘性 |
-| `To` 的两半成对 | 号在错的表里查（`Channel` 的病根） | 类型：`To { who, token }` 私有字段，只能由 `ship` 造 |
+| `To` 的两半成对 | 号在错的表里查（`Channel` 的病根） | 类型：`To { peer, seed }` 私有字段，只能由 `ship` 造 |
 | 混族不可表达 | 把 `CAGE` 写进读写位 | 类型：`Access` 与 `Policy` 是两个类型 |
 | 空集不成立 | 授出一枚什么都没有的枚 | `ship` 本地拒（不发 envcall） |
 | 回信地址与来源校验成对 | 收到别人的回复而不自知 | `Port::call`（今天五处都没做） |
@@ -226,6 +226,7 @@ impl Port {
 | `Access`/`Policy`/`To` 进 `crates/env` | **否** | 那是内核也依赖的 ABI crate——`protocol` 从 `env` 拆出来的先例记着："284 行内核永远读不到的协议" |
 | 命名 `Wire` | **否** | 与 `crates/env/src/wire/mod.rs` 的 `trait Wire`（字段 ↔ usize）撞名；改 `Duet` |
 | 命名 `Ferry` / `at` / `give` | **改** | 定为 `Port` / `To` / `ship`（同族：`dock` `moor` `Quay` `Pier`） |
+| `To` 的两半叫 `peer` / `seed` | **成对**（用户裁决） | 号只在那一张表里有意义 ⇒ 名字里必须带上是**谁**的表；`seed` 读作"我种在对端表里的那一枚"，回复沿它回来。本仓其余种出去的号（`Quay`/`Pier`/`Referred`）对端由**方向**给出，故号可以单飞——**回信孔不行**（谁都能往里推），这正是 `Port::call` 要校 `from != to.peer()` 的根 |
 | `Duet` 的报文容器 | **由协议给**（`type Wire` + `wire()`） | 稳定 Rust 用不了 `[u8; W::REQ]`（泛型常量表达式）⇒ 尺寸知识只能留在实现侧；不给容器就只能每次 `Vec`，而 §5.1 刚把"收一条消息零分配"立成判据 |
 | 服务调用（dispatch 的 8+56 载荷）的形状 | **落在 `Service` 自己身上**（`impl Duet for Service`） | 那条协议没有自己的请求类型（载荷不透明）⇒ 不为"转手"单造一个类型 |
 | 控制台的回信地址 | **只在 `Open` 上报** | 它是 per-session 不是 per-request：服务记进会话表，此后照表推 |
@@ -280,7 +281,7 @@ impl Port {
 |---|---|---|
 | `cells=15` | 十六格（`Access` 四取值 × `Policy` 四取值）里**十五格**授得出，且 `Collect` 读回的 `permission` 与该格的 `access \| policy` **逐格相等** | 把 `ship` 的 `subset = access \| policy` 改错一位（如漏掉 `VEST`），对应那一格读回不符 ⇒ 15 → 14 |
 | `empty=1` | 第十六格（`Access::NONE + Policy::NONE`）**本地拒**（`Denied`，不发 envcall） | 去掉那条 `subset.is_empty()` 的早返 ⇒ 空集被送进 `Accord`，返回值不再是"本地拒" ⇒ 1 → 0 |
-| `source=1` | `Port::call` 收到**非 `to.who()`** 推来的回复时返 `Denied` | 去掉来源校验 ⇒ 冒名那条被当成回复收下 ⇒ 1 → 0 |
+| `source=1` | `Port::call` 收到**非 `to.peer()`** 推来的回复时返 `Denied` | 去掉来源校验 ⇒ 冒名那条被当成回复收下 ⇒ 1 → 0 |
 
 第三条的布置值得记一笔：子线程开一枚孔（**它是那扇门的开辟者**）并把副本授给我 ⇒
 `Port::open` 用 `Reserve(entry).owner` 认出的对端是**它**；随后**我自己**往自己的回信孔推

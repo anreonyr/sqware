@@ -260,7 +260,7 @@ impl Directory {
                     Access::READ | Access::WRITE,
                     Policy::NONE,
                 ) {
-                    Ok(to) => Reply::Connected { entry: to.token() },
+                    Ok(to) => Reply::Connected { entry: to.seed() },
                     Err(_) => Reply::Denied,
                 },
                 None => Reply::NotFound,

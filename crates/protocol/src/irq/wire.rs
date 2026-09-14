@@ -51,7 +51,7 @@ pub const LEN: usize = 1 + 8 + 8 + NAME_LEN;
 /// 投递载荷（线号）的字节数。
 pub const LINE_LEN: usize = 2;
 
-/// 回信地址在报文里的偏移（**通道字段**，见三个构造器的注）。
+/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在报文里的偏移（见三个构造器的注）。
 const ACK_AT: usize = 9;
 
 const OP_REGISTER: u8 = 1;

@@ -292,7 +292,7 @@ fn shake() -> env::EnvResult<env::PieToken> {
     let down = HolePie::unseal()?;
     let sire = runtime::env::task::sire()?;
     let at_parent = ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE)?;
-    Quay::new(at_parent.token()).push(&up)?;
+    Quay::new(at_parent.seed()).push(&up)?;
     Ok(Pier::pull(&down)?.token())
 }
 
@@ -488,7 +488,7 @@ fn wait_pie_from(owner: env::TaskId) -> Option<usize> {
 ///    我自己 ⇒ 子枚落进同一张表，于是能用 `Collect` 读回 `permission`，核对它正是签名
 ///    说的那个子集）。空集那一格（`Access::NONE + Policy::NONE`）必须**本地拒**——
 ///    那是"授一枚什么都没有的枚"，一条 envcall 都不该发。
-/// ② **来源校验**：`Port::call` 只认 `to.who()` 推来的回复。子线程开一枚孔（**开辟者
+/// ② **来源校验**：`Port::call` 只认 `to.peer()` 推来的回复。子线程开一枚孔（**开辟者
 ///    是它**）并把副本授给我，故 `Port::open` 认它作对端；随后**我自己**往自己的回信孔
 ///    推一条——内核盖的发送者是我，不是对端 ⇒ 必须 `Denied`。
 fn ship_probe(term: &Term) {
@@ -524,13 +524,13 @@ fn ship_probe(term: &Term) {
                 Ok(to) => {
                     let read_back = my_pies()
                         .iter()
-                        .find(|row| row.0 == to.token().get())
+                        .find(|row| row.0 == to.seed().get())
                         .map(|row| row.1);
                     if read_back == Some(subset) && !subset.is_empty() {
                         cells += 1;
                     }
                     // 子枚也在本任务表里（目标是我自己），故收尾要放下它。
-                    let _ = HolePie::from_token(to.token().get()).release();
+                    let _ = HolePie::from_token(to.seed().get()).release();
                 }
                 Err(_) if subset.is_empty() => empty += 1,
                 Err(_) => {}

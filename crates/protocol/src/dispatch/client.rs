@@ -89,7 +89,7 @@ impl Directory {
         )?;
         self.ack(Request::Register {
             name: parse_name(name)?,
-            entry: to.token(),
+            entry: to.seed(),
         })
     }
 
@@ -110,7 +110,7 @@ impl Directory {
         )?;
         self.ack(Request::Replace {
             name: parse_name(name)?,
-            entry: to.token(),
+            entry: to.seed(),
         })
     }
 

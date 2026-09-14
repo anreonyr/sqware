@@ -257,7 +257,7 @@ fn hand_over<P: AnyPie>(
     policy: Policy,
 ) -> Result<(), Step> {
     let at_child = match ship(pie, child, access, policy) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => return Err(19),
     };
     if Pier::new(at_child).push(down).is_err() {
@@ -279,7 +279,7 @@ fn hand_hole(
     policy: Policy,
 ) -> Result<(), Step> {
     let at_child = match ship(hole, child, access, policy) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => return Err(57),
     };
     if Pier::new(at_child).push(down).is_err() {
@@ -302,7 +302,7 @@ fn hand_name(down: &HolePie, name: &str, child: TaskId) -> Result<(), Step> {
         return Err(41);
     }
     let at_child = match ship(&hole, child, Access::READ, Policy::NONE) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => return Err(42),
     };
     if Pier::new(at_child).push(down).is_err() {
@@ -895,7 +895,7 @@ extern "C" fn main() -> ! {
         Access::READ | Access::WRITE,
         Policy::NONE,
     ) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => exit_with(48),
     };
     let w_up = match ship(
@@ -904,7 +904,7 @@ extern "C" fn main() -> ! {
         Access::READ | Access::WRITE,
         Policy::NONE,
     ) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => exit_with(49),
     };
     // 投递孔与建域权：**带 `VEST`、不带 `CAGE`**。
@@ -918,7 +918,7 @@ extern "C" fn main() -> ! {
         Access::READ | Access::WRITE,
         Policy::VEST,
     ) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => exit_with(52),
     };
     let w_build = match ship(
@@ -927,7 +927,7 @@ extern "C" fn main() -> ! {
         Access::READ | Access::WRITE,
         Policy::VEST,
     ) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => exit_with(53),
     };
     // **属主写权的委托**（§8.1.18）在本轮**没有消费者了**：它当年的唯一用途是让监护线程在

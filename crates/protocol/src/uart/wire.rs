@@ -56,6 +56,7 @@ pub const DELIVER_MTU: usize = 64;
 
 const OP_AT: usize = 0;
 const RESERVED_AT: usize = 1;
+/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在报文里的偏移。
 const REPLY_AT: usize = 8;
 const LEN_AT: usize = 16;
 const PAYLOAD_AT: usize = 24;

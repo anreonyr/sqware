@@ -71,7 +71,7 @@ extern "C" fn control_main() -> ! {
             Access::READ | Access::WRITE,
             Policy::NONE,
         )
-        .map(|to| to.token().get())
+        .map(|to| to.seed().get())
         .unwrap_or(0);
         if Referred::new(token).push(&up).is_err() {
             runtime::env::room::exit_with(21);
@@ -105,7 +105,7 @@ extern "C" fn main() -> ! {
     // `handshake::dock()` 给上行孔带 `VEST` 是同一条理由（"子域要把这条孔再授给自己的
     // 控制线程"）。多一个转授权不改变这条孔的用途：它本来就只对父域开口。
     let at_parent = match ship(&control, sire, Access::READ | Access::WRITE, Policy::VEST) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => runtime::env::room::exit_with(5),
     };
 
@@ -116,15 +116,15 @@ extern "C" fn main() -> ! {
         Err(_) => runtime::env::room::exit_with(6),
     };
     let h2 = match ship(&entry, ctrl, Access::READ | Access::WRITE, Policy::VEST) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => runtime::env::room::exit_with(7),
     };
     let c2 = match ship(&control, ctrl, Access::READ | Access::WRITE, Policy::NONE) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => runtime::env::room::exit_with(8),
     };
     let u2 = match ship(&up, ctrl, Access::READ | Access::WRITE, Policy::NONE) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => runtime::env::room::exit_with(9),
     };
     CTRL[0].store(h2.get(), Ordering::Relaxed);

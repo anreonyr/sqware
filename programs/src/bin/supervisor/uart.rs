@@ -103,7 +103,7 @@ extern "C" fn main() -> ! {
         Err(_) => runtime::env::room::exit_with(3),
     };
     let at_parent = match ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => runtime::env::room::exit_with(4),
     };
     if Quay::new(at_parent).push(&up).is_err() {
@@ -175,11 +175,11 @@ extern "C" fn main() -> ! {
         Err(_) => runtime::env::room::exit_with(18),
     };
     let at_read = match ship(&session, read_task, Access::READ, Policy::NONE) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => runtime::env::room::exit_with(19),
     };
     let deliver_at_read = match ship(&deliver, read_task, Access::WRITE, Policy::NONE) {
-        Ok(to) => to.token(),
+        Ok(to) => to.seed(),
         Err(_) => runtime::env::room::exit_with(20),
     };
     UART.with(|u| *u = Some(uart));

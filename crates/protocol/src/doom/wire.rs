@@ -93,7 +93,7 @@ pub struct Kill {
     pub ack: PieToken,
 }
 
-/// 回信地址在报文里的偏移（通道字段，见 [`Kill::ack`]）。
+/// **通道字段**：种在对端表里的那一枚（`To::seed()`）在报文里的偏移（见 [`Kill::ack`]）。
 const ACK_AT: usize = 1 + NAME_LEN;
 
 impl Kill {
