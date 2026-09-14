@@ -30,9 +30,10 @@ extern crate programs;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::TeamId;
+use protocol::dispatch::control::{Refer, Referred};
 use protocol::dispatch::server::{Directory, release_pie, vestor_of};
 use protocol::dispatch::{MSG_LEN, REPLY_AT};
-use runtime::core::handshake::{self, Quay, Refer, Referred};
+use runtime::core::handshake::{self, Quay};
 use runtime::core::lock::Lock;
 use runtime::core::port::{Access, Policy, ship};
 use runtime::env::mail::HolePie;

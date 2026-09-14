@@ -197,7 +197,8 @@ work/room/mod.rs:3   scheduler / messenger / conductor
 6. **名册与分片表只增**：条目为 `Weak`，关机 `rip` 一次性放掉（`table.rs:94-95`）。
 7. **已实证的假泄漏**：4 hart = 4 个 48B `LastIdent`，故关机前 `badge.clear()`
    （`core/ident.rs:87-90`）。
-8. **`task_exit` 反向耦合只拆了一半**：dock/ring 那一侧仍直调过渡（`messenger/mod.rs:21-22`）。
+8. **`task_exit` 反向耦合已清零**：`bury` 只跑挂上来的钩子，不命名任何子系统——挂的是谁
+   由 `boot::init` 决定（`messenger::doom` + `gate::doom`）。
 9. **同域的兄弟线程不在血缘里**：`heir` 是 **task → 子 Team**（`UnitCall::Spawn{team:0}`
    把线程产进当前 Team，**不产生血缘边**）⇒ ① 杀一个任务 ≠ 杀整个域；② 级联**收不到**
    同域的兄弟线程。root 的他杀服务正因此必须由主线程显式收场（协议里的 `Quit`）。

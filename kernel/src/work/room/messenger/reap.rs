@@ -211,7 +211,7 @@ fn bury() {
 
 // ── 退出钩子注册面 ──
 //
-// mail（dock / ring）在 `boot::init` 把自己的任务退出函数挂到这里。每条收尾的
+// 钩子由 `boot::init` 挂上来（结构面 `messenger::doom` + 能力面 `gate::doom`）。每条收尾的
 // 任务按注册顺序跑一次——本域不命名任何子系统，故不知道挂上来的是谁。
 type Hook = fn(usize);
 

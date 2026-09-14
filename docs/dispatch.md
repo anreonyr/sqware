@@ -405,15 +405,18 @@ spoof: ok
 ```text
 crates/protocol/src/dispatch/
   mod.rs      协议是什么、为什么这么摆；`pub mod` + `pub use` 转出（旧进口路径照旧）
-  wire.rs     线格式：64 字节请求 / 定长回复、6 个动词 + 父域 `Refer`
+  wire.rs     线格式：64 字节请求 / 定长回复、6 个动词
+  control.rs  父域 ↔ 目录**控制孔**上的两条报文：`Refer`（引荐 / 预约）+ `Referred`
   client.rs   调用方会话：open / connect / call / disconnect
   server.rs   服务侧：注册表（预约行 + 至多一个实例）+ 协议适配 `serve`
 
-（这四块是 `crates/protocol/` 里**四个协议共用的形状**——`console` / `doom` / `irq`
-同形；`server.rs` 收多少，按"谁是设备"定，见 `crates/protocol/src/lib.rs` 的模块头。）
+（前四块是 `crates/protocol/` 里**四个协议共用的形状**——`console` / `doom` / `irq`
+同形；`control.rs` 是本协议多出来的那一块：引荐走的是**另一条孔**（控制孔 / 上行孔），
+说话人是父域与目录控制线程。`server.rs` 收多少，按"谁是设备"定，见
+`crates/protocol/src/lib.rs` 的模块头。）
 
 programs/src/bin/supervisor/dir.rs      目录域程序（S 态：请求线程 + 控制线程）
-crates/runtime/src/core/handshake.rs    Refer / Reserve / Referred（父域引入）
+crates/runtime/src/core/handshake.rs    Quay / Pier（启动期握手的两条报文）
 crates/runtime/src/core/lock.rs         用户态互斥（Lock::with）
 
 内核侧（与协议无关，但被它用到）

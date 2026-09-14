@@ -23,7 +23,7 @@ use super::hart::Scheduler;
 pub(in super::super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
 /// 终末释放：halt 路径的关闭钩子——释放 scheduler 在**就绪队列**里持有的全部
-/// task 引用，触发 MailHolds::drop 链透传 mail Arcs 归零（DockMeta::drop → 共享区帧还）。
+/// task 引用，触发 MailHolds::drop 链透传 mail Arcs 归零（`PoleMeta::drop` → 物理帧还）。
 ///
 /// 关闭顺序（conductor::halt → conductor::hooked）：
 ///   1. scheduler::core::rip      ← 本函数：就绪队列强制释放 → mail 透传

@@ -4,7 +4,7 @@
 //
 //   unit   — 任务执行单元（space/team/task/loader/parser）
 //   room   — 调度房间（scheduler + tie）
-//   mail   — 任务间通信（port 内核邮路 / ring 共享内存邮路）
+//   mail   — 任务间通信（Hole 单槽邮路 / Pole 共享页视图 / Nole 权柄载体）
 
 pub mod mail;
 pub mod room;

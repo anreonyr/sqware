@@ -4,7 +4,7 @@
 // 稀疏表（键 i ↔ VA `va + i·PAGE_SIZE`；未物化页不在表——懒映射按触页登记、
 // guard 页永不入帧）。`pending` 表达**未物化页的行为**（与帧所有权正交）：
 //   None       — 无未物化页（全物化）。拥有映射满帧；借用映射（DRAM 恒等、
-//                 trampoline、dock 视图）空帧——leaf 在册、物理帧归外部。
+//                 trampoline、Pole 共享页视图）空帧——leaf 在册、物理帧归外部。
 //   Some(Lazy) — 未物化页缺页时分配零页（懒映射：`ShareWindow::mmap` 的共享区；
 //                 栈体相反，是**立即物化**，见 `window/stack.rs`）。
 //   Some(Guard)— 未物化且禁止物化：触碰即「预留映射访问」（栈守护页）。

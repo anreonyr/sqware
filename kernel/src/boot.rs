@@ -99,10 +99,10 @@ pub fn init() -> ! {
     scheduler::boot::init();
 
     // 钩子注册（一次性；顺序即 halt 时执行顺序）：
-    //   1) dock / ring 注册表清空（触发 Meta drop 归还共享区帧）
-    //   2) 调度器槽载荷归还（per-hart LastIdent Arc）
-    //   3) block 池冲洗（所有 Arc 已归还后帧基线才稳定）
-    // exit 钩子（每条 reaped 任务）：dock::task_exit + ring::task_exit
+    //   1) 调度器槽载荷归还（per-hart LastIdent Arc）
+    //   2) block 池冲洗（所有 Arc 已归还后帧基线才稳定）
+    // mail 的资源不再有自己的关机钩子：它随 `Task::drop` 链透传（`PoleMeta::drop`
+    // 还物理帧）。exit 钩子（每条 reaped 任务）：messenger::doom + gate::doom。
     register_runtime_hooks();
 
     // lockdep 装配（debug 构建）：per-hart 持有集。release 为 no-op。
@@ -167,7 +167,7 @@ fn register_runtime_hooks() {
     crate::work::unit::gate::install(crate::work::room::scheduler::core::roster);
 
     // 关机序列：`scheduler::rip`（清任务队列 + info 槽 + messenger 簿记）→ mail 由
-    //   drop 链透传（DockMeta::drop / RingMeta::drop）→ block 池冲洗。**不看账**：
+    //   drop 链透传（`PoleMeta::drop` 还物理帧）→ block 池冲洗。**不看账**：
     //   审计层的关机判词随那一层删了（见 `docs/memory.md` §5），这里只剩"把东西还回去"。
     const SHUTDOWN_HOOKS: &[fn()] = &[
         crate::work::room::scheduler::core::rip,

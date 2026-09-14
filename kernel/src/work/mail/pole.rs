@@ -72,7 +72,7 @@ impl PoleMeta {
         let layout = core::alloc::Layout::from_size_align(bytes, PAGE_SIZE)
             .map_err(|_| GateError::NotAligned)?;
         let ptr = crate::tag!(
-            Ring,
+            Pole,
             frame::allocator()
                 .allocate(layout)
                 .map_err(|_| GateError::OoM)?

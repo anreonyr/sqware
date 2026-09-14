@@ -45,7 +45,7 @@ use super::salvage::Salvage;
 pub(crate) struct SpaceInner {
     /// 页表树（翻译基础，全空间一棵）。
     pub(crate) root: TableNode,
-    /// 用户半区段 `[free_base, upper)` — 栈/堆/dock 同池（dynamic 前 None）。
+    /// 用户半区段 `[free_base, upper)` — 栈/堆/共享页同池（dynamic 前 None）。
     pub(crate) user: Option<super::segment::Segment>,
     /// 内核 trap 帧常量区段 `[TEAM_FRAME_BASE, +SIZE)`，S-only。
     pub(crate) kernel: super::segment::Segment,
@@ -263,7 +263,7 @@ impl SpaceInner {
     }
 
     /// 借帧连续映射：物理地址已知、一次装连续段，不持帧（帧归外部：机器/
-    /// 内核/DockMeta）。DRAM 恒等、trampoline、dock/ring 视图走这。
+    /// 内核/`PoleMeta`）。DRAM 恒等、trampoline、Pole 共享页视图走这。
     pub(crate) fn borrow(
         &mut self,
         vaddr: VirtAddr,

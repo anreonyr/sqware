@@ -253,18 +253,19 @@ impl Port {
 6. **`narrow` 与 `revoke` 闲置**：生产路径上**都是零调用者**了（`revoke` 原先那一处就是
    `Channel::close`，随旧类型一起摘掉；自检里 `cascade` 仍走一次）。ABI 保留
    （`Accord` 的唯一反向 / 权限代数的完整），账目单列。
-7. **15 行 port/ring 残留注释**：`work/mod.rs:7` 等 11 个文件在描述一个已被 Pole 取代的
-   共享内存 IPC（`DockMeta`/`RingMeta` 代码已删）。`kernel/src/work/mail/pole.rs:75` 的
-   `tag!(Ring, …)` 是**唯一还活着的化石**（Pole 的物理帧仍打这个标签）。
+7. ~~**15 行 port/ring 残留注释**~~ —— **已清**（本轮）：11 个内核文件里描述"已被 Pole 取代
+   的共享内存 IPC"的注释都改说了当前的结构（`Pole` 的共享页视图）；`pole.rs` 那处
+   `tag!(Ring, …)` 是唯一**还活着**的化石（Pole 的物理帧在分配器类目表里仍叫 ring），
+   也一并改名为 `Kind::Pole`（读数里打成 `pole`）。
 8. **判据**：见 §9（已立，三档都跑）。
 
 9. **`Channel` 已删**，`handshake::dock` 也改走 `ship`：它仍是"开上行孔 + 授出 + 时序义务
    （必须早于 `Hatch`）"那三件事的归口，只是不再手写子集。
 
-10. **`Refer` / `Reserve` / `Referred` 还住在 `runtime::core::handshake`**：它们其实是
-    **父域 ↔ 目录控制线程**的报文（目录协议的一部分，`docs/dispatch.md` 与
-    `prog-dir::control_main` 两头都在用）。搬去 `crates/protocol/src/dispatch` 是**下一轮**
-    的事，本轮不动——那一搬会牵动 root 与 dir 两侧的进口。
+10. ~~**`Refer` / `Reserve` / `Referred` 住在 `runtime::core::handshake`**~~ —— **已搬**
+    （本轮）：它们是父域 ↔ 目录控制线程的报文（目录协议的语义），现住
+    `crates/protocol/src/dispatch/control.rs`；`handshake.rs` 只剩 `Quay`/`Pier` 与
+    `dock`/`moor`。`protocol → runtime` 那条单向边因此不再被反向借用。
 
 ## 9 · 判据（已实现，门里在跑）
 

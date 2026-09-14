@@ -175,7 +175,7 @@ impl Space {
     ///
     /// 只作用于**本空间自有**的页（装载段 / 栈堆共享窗口 / mmap / mprotect /
     /// Pole 借映）。两类**内核自有**的页不走此函数：
-    /// - `borrow_map` 借用的内核映射（trampoline / DRAM 恒等 / dock 视图）；
+    /// - `borrow_map` 借用的内核映射（trampoline / DRAM 恒等 / Pole 共享页视图）；
     /// - `FrameWindow`（trap 帧）——落在任务空间里也恒 U=0：trap 入口在 S 态
     ///   （`SUM=0`）把寄存器现场写进它，带 U 会缺页。
     ///
@@ -261,7 +261,7 @@ impl Space {
         self.with(|inner| inner.map(va, size, flags, pending))
     }
 
-    /// 借帧连续映射（DRAM 恒等 / trampoline / dock·ring 视图）。
+    /// 借帧连续映射（DRAM 恒等 / trampoline / Pole 共享页视图）。
     pub fn borrow(
         &self,
         vaddr: VirtAddr,

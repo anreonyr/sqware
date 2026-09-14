@@ -18,8 +18,8 @@
 // wipe/redeem 在块内摘出等待者那一环、块外 push 回 scheduler；bury 块内出队、
 // 块外回收；rip 块内 take 整表、块外 drop。
 //
-// 反向耦合清零：dock / ring 的 task_exit 反向耦合走两步拆——step 5 引入 exit
-// hook 注册面后，bury 不再硬编码子系统名。本 step 暂留直调作为过渡。
+// 反向耦合清零：退出钩子注册面（`reap::hook`）之后，`bury` 不再硬编码任何子系统的
+// 名字——挂上来的是谁由 `boot::init` 决定（今两条级联：`messenger::doom` + `gate::doom`）。
 
 mod doom;
 mod handoff;

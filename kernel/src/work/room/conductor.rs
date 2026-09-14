@@ -105,7 +105,7 @@ pub(crate) fn rooted() {
 /// 全部任务已退出：显式停机（srst；AtomicBool 防双核同时触发——后到者 wfi）。
 ///
 /// 关机屏障：胜出核等全部核到齐后跑注册关机钩子、最后复位。钩子按注册顺序：
-/// dock/ring shutdown → 调度器槽清空 → block flush。
+/// 调度器槽清空（`scheduler::rip`）→ block 池冲洗（`block::flush`）。
 /// 钩子由 `boot::init` 一次性注册，conductor 不直接命名任何子系统。
 pub(super) fn halt() -> ! {
     // 退驻：本核即将卧倒，永不再应答清退——必须先从名册消失，否则关机钩子

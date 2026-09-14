@@ -9,8 +9,9 @@
 // 窗口 = 零状态（策略命名空间 + 文档锚点）。新增窗口种类 = 加一个类型 + 一组方法，
 // `Space` 的 impl、`SpaceInner` 字段零改动。
 //
-// dock / ring 的 `map_shared` 是同构模式（取段 + 借帧装配），但因需在 DockMeta
-// / RingMeta 上登记视图（回收身份），未收回窗口类型——共用 inner 原语，结构同型。
+// 共享页视图（`mail/pole.rs` 的 `PoleMeta::map`）与栈/帧/堆是**同一种拼法**（取段 +
+// 借帧装配），但它要在 `PoleMeta` 上登记视图（回收身份）、且同一个 Space 里 per-pie
+// 各一条 PTE，故没收回窗口类型——共用 inner 原语，结构同型。
 
 mod frame;
 mod heap;

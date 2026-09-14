@@ -94,7 +94,7 @@
   （`adapter.rs:70-72,198-204`）——空间不依赖 room。
 - **space → allocator 单向**：`SpaceInner::frame()` 只领帧，来源标注由窗口的 `tag!` 写下
   （`tag!` 现在只服务"读代码时看得见这一层造的是什么"）；空间从不读分配器的账。
-- **借入映射**服务 machine / `DockMeta` / mail ring：帧归外部所有（`core.rs:215-216`）。
+- **借入映射**服务 machine / `PoleMeta`（共享页）：帧归外部所有（`core.rs:215-216`）。
 
 ## 7 · 已知边界
 

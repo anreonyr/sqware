@@ -1,4 +1,7 @@
-//! handshake — 启动期握手：父域**开上行孔**、子域**靠泊**、四条报文。
+//! handshake — 启动期握手：父域**开上行孔**、子域**靠泊**、两条报文。
+//!
+//! "引荐"那一对报文（`Refer` / `Referred`）住 `protocol::dispatch::control`：它们是
+//! 目录协议的语义，不是机制。
 //!
 //! 目标（B 版）：**父域 root 手里零服务孔**。子域自建**控制孔**并把父侧句柄交给
 //! root；客户端要用的目录门闩由 **dir 亲授**（root 只转达「授给谁」）——客户端拿到
@@ -9,14 +12,7 @@
 //! ```text
 //! Quay      子 → 父   子域上行孔      我控制孔在父侧的句柄
 //! Pier      父 → 子   子域下行孔      目录门闩在本侧的句柄（0 = 无）
-//! Refer     父 → dir  dir 控制孔      请把目录门闩的 R|W 授给 who（只引荐）
-//! Reserve   父 → dir  dir 控制孔      同上，并**先把 name 记给 who**（引荐 + 预约）
-//! Referred  dir → 父  dir 上行孔      已授（对方侧句柄；0 = 失败）
 //! ```
-//!
-//! `Refer` / `Reserve` 是同一条报文类型的两种线形（tag 区分，无哨兵值）：预约必须
-//! 早于开门——否则客户端拿到门闩即可注册，而预约还没落表。控制线程因此按
-//! 「先 `reserve`、再 `accord`」处理。
 //!
 //! **每条孔单一发送者**：上行孔只有子域推、下行孔只有父域推、dir 控制孔只有 root 推。
 //! 「谁能推谁就是谁」是结构性的，故报文里不带任何身份。
@@ -27,22 +23,16 @@
 //!
 //! 通道用完不回收：门闩由各任务的权限表保活到关机，启动通道没有后续语义。
 
-use env::{EnvError, EnvResult, NAME_LEN, Name, PieToken, TaskId, make_err};
+use env::{EnvError, EnvResult, PieToken, TaskId, make_err};
 
 use crate::core::port::{Access, Policy, ship};
 use crate::env::mail::{self, HolePie};
 
-/// 报文长度：1 字节 tag + 一个 u64。
-pub const MTU: usize = 9;
-
-/// 控制孔 MTU：`Reserve` 还要装一个名字（tag + who + name）。
-pub const REFER_MTU: usize = 1 + 8 + NAME_LEN;
+/// 报文长度：1 字节 tag + 一个 u64（本模块自用：两条报文的线形都定长）。
+const MTU: usize = 9;
 
 const TAG_QUAY: u8 = 1;
 const TAG_PIER: u8 = 2;
-const TAG_REFER: u8 = 3;
-const TAG_REFERRED: u8 = 4;
-const TAG_RESERVE: u8 = 5;
 
 /// 枚举自己权限表的上限（防越界扫描跑飞；表量级个位数）。
 const MAX_PIES: usize = 64;
@@ -134,104 +124,6 @@ impl Pier {
     pub fn pull(down: &HolePie) -> EnvResult<Pier> {
         Ok(Pier {
             token: recv_pie(down, TAG_PIER)?,
-        })
-    }
-}
-
-/// 父 → dir：引入请求。请把目录请求门闩的 `R|W` 授给 `who`；`name` 非空时
-/// **先**把该名字预约给 `who`（两种线形，tag 区分）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Refer {
-    who: TaskId,
-    name: Option<Name>,
-}
-
-impl Refer {
-    /// 只引荐。
-    pub fn new(who: TaskId) -> Self {
-        Self { who, name: None }
-    }
-
-    /// 引荐 + 预约：`name` 从此归 `who`（只有它能注册这个名字）。
-    pub fn named(who: TaskId, name: Name) -> Self {
-        Self {
-            who,
-            name: Some(name),
-        }
-    }
-
-    pub fn who(&self) -> TaskId {
-        self.who
-    }
-
-    pub fn name(&self) -> Option<Name> {
-        self.name
-    }
-
-    /// 父侧：往 dir 的控制孔里发引入请求。
-    pub fn push(self, control: &HolePie) -> EnvResult<()> {
-        match self.name {
-            None => send(control, TAG_REFER, self.who.get()),
-            Some(name) => {
-                let mut buf = [0u8; REFER_MTU];
-                buf[0] = TAG_RESERVE;
-                buf[1..MTU].copy_from_slice(&self.who.get().to_le_bytes());
-                buf[MTU..REFER_MTU].copy_from_slice(name.bytes());
-                control.push(&buf)
-            }
-        }
-    }
-
-    /// dir 控制线程：从控制孔里收引入请求（按 tag 分派线形）。
-    pub fn pull(control: &HolePie) -> EnvResult<Refer> {
-        let mut buf = [0u8; REFER_MTU];
-        let len = control.pull(&mut buf)?;
-        let who = || {
-            TaskId(usize::from_le_bytes(
-                buf[1..MTU].try_into().unwrap_or([0u8; 8]),
-            ))
-        };
-        match (buf[0], len) {
-            (TAG_REFER, MTU) => Ok(Refer::new(who())),
-            (TAG_RESERVE, REFER_MTU) => {
-                let mut bytes = [0u8; NAME_LEN];
-                bytes.copy_from_slice(&buf[MTU..REFER_MTU]);
-                let end = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
-                let text = core::str::from_utf8(&bytes[..end]).map_err(|_| denied())?;
-                let name = Name::new(text).map_err(|_| denied())?;
-                Ok(Refer::named(who(), name))
-            }
-            _ => Err(denied()),
-        }
-    }
-}
-
-/// dir → 父：已授。`token` = 对方侧句柄（0 = 失败）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Referred {
-    token: PieToken,
-}
-
-impl Referred {
-    pub fn new(token: impl Into<usize>) -> Self {
-        Self {
-            token: PieToken::new(token.into()),
-        }
-    }
-
-    pub fn token(&self) -> PieToken {
-        self.token
-    }
-
-    /// dir 控制线程：把结果推回父域（dir 上行孔）。
-    pub fn push(self, up: &HolePie) -> EnvResult<()> {
-        send(up, TAG_REFERRED, self.token)
-    }
-
-    /// 父侧：在 dir 上行孔上收结果。
-    pub fn pull(up: &HolePie) -> EnvResult<Referred> {
-        Ok(Referred {
-            token: recv_pie(up, TAG_REFERRED)?,
         })
     }
 }
