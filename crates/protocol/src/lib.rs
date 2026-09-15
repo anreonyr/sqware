@@ -5,9 +5,12 @@
 //! 在那之前不需要协议——跨域要说的话走 `env` 的调试面（`DebugCall`：内核把固件的调试
 //! 控制台直接借给域），一条孔都不用开。`echo` 就是这么说话的。
 //!
-//! **目前只有 [`system`]**：System Protocol 的第一版是**内核 ABI 的叙述**（`env::fid`
-//! 的 `UnitCall` 整类 + `RoomCall` 的 `Reap`/`Doom`），一条域间会话都没有——它的正文
-//! 先落在这里，**代码还没有**。等它长成域间协议（System Server），线上才会有第一条帧。
+//! **目前有两份正文**：[`system`] 与 [`principal`]——两份都**只有文档、没有代码**。
+//!
+//! [`system`] 是**内核 ABI 的叙述**（`env::fid` 的 `UnitCall` 整类 + `RoomCall` 的
+//! `Reap`/`Doom`），一条域间会话都没有；[`principal`] 则**正踩在本 crate 的门槛上**：它要走
+//! 会话去问 Principal Server，而那个 Server 与它的帧形还没落地——等它出现，本 crate 才会
+//! 有第一行代码。
 //!
 //! # 地板（可用，不可改）
 //!
@@ -39,6 +42,7 @@
 //! 6. **写同一个设备的人只有一个**，且一次写必须是一条完整的字（旧树里 root 的设备直连写
 //!    与服务的写互相插字，把期望串插坏 ⇒ 假红）。
 
+pub mod principal;
 pub mod system;
 
 // 依赖先留着：`env` 与 `runtime` 是地板，第一条协议操作出现时立刻要用。
