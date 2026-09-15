@@ -257,9 +257,9 @@ pub(crate) fn running_hart(target: &Arc<Task>) -> Option<usize> {
 ///
 /// # Safety
 /// 仅内核态调用；boot 期 `scheduler::boot::init` 已 `set_scheduler` 填充
-/// （`machine::scheduler()` 的 Acquire 配对 Release store）。指向 SCHEDULERS
+/// （`hart::scheduler()` 的 Acquire 配对 Release store）。指向 SCHEDULERS
 /// 数组元素，'static。
 pub(crate) fn current() -> &'static Scheduler {
     // SAFETY: tp 直达读出的指针非空（boot 后恒填充）且指向 SCHEDULERS 元素。
-    unsafe { &*(crate::machine::scheduler() as *const Scheduler) }
+    unsafe { &*(crate::hart::scheduler() as *const Scheduler) }
 }

@@ -11,8 +11,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::hart;
 use crate::layout::ROOT_STACK_SIZE;
-use crate::machine;
 use crate::runtime::diagnose::report::Report;
 use sbi::{self, ecall::SArgs, fid};
 
@@ -25,7 +25,7 @@ static ALARMER: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 /// 非报警源核「噤声」：就地卧倒（不返回）。正常运行时恒 no-op（一次 Acquire 读 + 分支）。
 pub fn hush() {
-    if ALARM.load(Ordering::Acquire) && ALARMER.load(Ordering::Acquire) != machine::hart_id() {
+    if ALARM.load(Ordering::Acquire) && ALARMER.load(Ordering::Acquire) != hart::hart_id() {
         hunker();
     }
 }
@@ -57,20 +57,20 @@ fn hunker() -> ! {
 fn claim() -> bool {
     if ALARM.swap(true, Ordering::AcqRel) {
         // 已有人报警：唯一例外是本核自己就是报警源（嵌套 panic）——豁免卧倒。
-        if ALARMER.load(Ordering::Acquire) != machine::hart_id() {
+        if ALARMER.load(Ordering::Acquire) != hart::hart_id() {
             hunker();
         }
         return false;
     }
-    ALARMER.store(machine::hart_id(), Ordering::Release);
+    ALARMER.store(hart::hart_id(), Ordering::Release);
     true
 }
 
 /// 向所有其它已启动 hart 广播 SBI IPI（错误尽力而为）。按 64 核一组循环
 /// （SBI `sbi_send_ipi` 掩码至多 XLEN=64 位）；排除自身。
 fn broadcast() {
-    let me = machine::hart_id();
-    let n = machine::hart_count();
+    let me = hart::hart_id();
+    let n = hart::hart_count();
     for w in 0..n.div_ceil(usize::BITS as usize) {
         let base = w * (usize::BITS as usize);
         let hi = (base + (usize::BITS as usize)).min(n).saturating_sub(base);
@@ -182,8 +182,8 @@ extern "C" fn info(info: &PanicInfo) -> ! {
     // 归巢审核：ROOT 栈底 canary 复读——boot 移交后 ROOT 应无人使用；此处捕
     // 「boot 后 ROOT 被误用 / boot 期溢出未捕」类内核 bug。报告一行，不递归。
     // SAFETY: canary 由 `_start` 写入、boot 移交审核过；此处 volatile 复读。
-    let root_ok = unsafe { (crate::machine::root_stack_base() as *const usize).read_volatile() }
-        == crate::machine::ROOT_STACK_CANARY;
+    let root_ok = unsafe { (crate::layout::root_stack_base() as *const usize).read_volatile() }
+        == crate::layout::ROOT_STACK_CANARY;
 
     // 门户后端无锁切到后备仓（spare）：不取锁，即使 panic 恰在持主堆锁现场也绝不卡死。
     crate::memory::allocator::portal::switch(crate::memory::allocator::portal::Backend::Spare);
@@ -207,14 +207,14 @@ extern "C" fn info(info: &PanicInfo) -> ! {
                 i.team_name(),
                 i.id(),
                 i.name(),
-                machine::hart_id()
+                hart::hart_id()
             ))]);
         }
         rows.push(vec![Some(format!("{}", info.message()))]);
         rows.push(vec![Some(format!(
             "root stack @ {} : {}",
             if root_ok { "ok" } else { "CORRUPTED" },
-            machine::hart_id()
+            hart::hart_id()
         ))]);
         report.paragraph("panic", Some(head)).items.extend(rows);
     }

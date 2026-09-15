@@ -35,7 +35,6 @@
 // └─ 内核镜像               [_kernel_start, _kernel_edge)（trampoline 页双映射：
 //                           链接地址 + TRAMPOLINE VA）
 
-use crate::machine::MAX_HART_SLOTS;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 #[cfg(debug_assertions)]
@@ -49,6 +48,20 @@ pub(crate) const TASK_STACK_SIZE: usize = 16384;
 pub(crate) const TASK_STACK_GUARD: usize = PAGE_SIZE;
 /// ROOT 栈 64 KiB（`_kernel_edge` 顶锚向下；boot 期主栈，panic 时作救援栈）。
 pub(crate) const ROOT_STACK_SIZE: usize = 0x1_0000;
+
+/// 可寻址的 per-hart 槽数上限（编译期常量 = hart 帧区 VA 窗口宽度与
+/// per-hart trap 栈窗口宽度，4096 段 = 高位虚拟地址。虚拟地址免费，故放得慷慨：
+/// **窗口宽度与核数解耦**——实际启用核数由 DTB 运行时决定（[`hart_count`]），
+/// 本常量只是页表槽位的编译期防呆上限（超过即 panic，不静默截断）。
+///
+/// 定位即两层制约：本常量 = **VA 布局表达上限**（窗口撑不下即 panic）；
+/// **物理养活上限**由 boot 期 per-hart 开销校验把握（trap::init，内存制约核数
+/// 的运行时落点）。两者之上以 DTB 上报核数为运行真值。
+///
+/// 注意：这不是 SBI 协议边界。SBI 的 `sbi_send_ipi` 每次调用至多寻址
+/// XLEN(=64) 个 hart（掩码寄存器位宽），超过需按 64 核一组多次调用；
+/// 协议对总核数不设上限。
+pub const MAX_HART_SLOTS: usize = 4096;
 
 // ── 内核半区 VA（自 TRAMPOLINE 顶锚向下排布）───────────────
 
@@ -173,4 +186,37 @@ pub(crate) fn validate() {
         TRAP_STACK_BASE.as_usize() + (MAX_HART_SLOTS << TRAP_STACK_SLOT_SHIFT)
             == TEAM_FRAME_BASE.as_usize()
     );
+}
+
+// ── 镜像与 ROOT 栈锚点（链接期符号 + 汇编消费端）──
+
+/// ROOT 栈 canary 值（写在栈底；boot 移交审核 + panic 归巢复读共用）。
+pub(crate) const ROOT_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
+
+/// 镜像结束地址（链接脚本 `_kernel_edge`）——栈与 free 区布局的唯一基准。
+pub(crate) fn kernel_edge() -> usize {
+    (&raw const _kernel_edge).addr()
+}
+unsafe extern "C" {
+    /// 内核镜像结束锚点（见 link.ld）。栈区与 free 区都从它推导。
+    static _kernel_edge: u8;
+}
+
+/// ROOT 栈区偏移（栈大小）——`_start` 汇编加载它算出栈顶 sp。
+/// no_mangle 暴露为符号，global_asm `la t0,_stack; ld t0,0(t0)` 读取，
+/// 栈大小单一来源（此处由 Rust 常量推导），链接脚本不写栈布局。
+#[unsafe(no_mangle)]
+static _stack: usize = ROOT_STACK_SIZE;
+
+#[unsafe(no_mangle)]
+static _canary: usize = ROOT_STACK_CANARY;
+
+/// ROOT 栈底地址（canary 所在）。
+pub(crate) fn root_stack_base() -> usize {
+    kernel_edge()
+}
+
+/// ROOT 栈顶地址（= free 区起点；panic `home` 归巢落点）。
+pub(crate) fn root_stack_edge() -> usize {
+    kernel_edge() + ROOT_STACK_SIZE
 }

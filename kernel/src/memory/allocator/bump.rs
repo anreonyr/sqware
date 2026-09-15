@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use erra::ResultExt;
 
 use crate::memory::allocator::{InitError, InitResult};
-use crate::{lock::SpinLock, machine};
+use crate::{lock::SpinLock, platform::machine};
 
 pub(crate) struct BumpAllocator {
     inner: SpinLock<Option<BumpInner>>,

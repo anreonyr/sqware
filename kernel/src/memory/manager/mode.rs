@@ -12,8 +12,8 @@
 
 use riscv::register::satp;
 
+use crate::layout;
 use crate::lock::OnceLock;
-use crate::machine;
 use crate::memory::PAGE_SHIFT;
 
 use super::addr::VirtAddr;
@@ -136,7 +136,7 @@ fn try_mode(candidate: satp::Mode) -> Result<(), SatpError> {
     }
     let range = (
         (&raw const _kernel_start).addr(),
-        machine::root_stack_edge(),
+        layout::root_stack_edge(),
     );
     let mut va = range.0 & !(crate::memory::PAGE_SIZE - 1);
     while va < range.1 {

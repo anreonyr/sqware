@@ -109,7 +109,7 @@ impl StackReader {
         {
             return Some(base);
         }
-        let edge = crate::machine::dram_edge().unwrap_or(0x9000_0000);
+        let edge = crate::platform::machine::dram_edge().unwrap_or(0x9000_0000);
         let (base, flags) = crate::memory::manager::table::TableNode::walk_raw(
             self.root,
             VirtAddr::from_raw(page),

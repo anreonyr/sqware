@@ -275,7 +275,7 @@ impl Scheduler {
             if t.ident.team.space.asid().is_kernel() {
                 frame
                     .gpr
-                    .set_x(Gprs::TP, crate::machine::per_hart_ptr(self.hart));
+                    .set_x(Gprs::TP, crate::hart::per_hart_ptr(self.hart));
             }
         }
         timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));

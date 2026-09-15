@@ -67,7 +67,7 @@ pub fn trap_stack_edge(hart: usize) -> VirtAddr {
 pub(crate) fn trap_stack_hart(sp: usize) -> Option<usize> {
     let off = sp.checked_sub(TRAP_STACK_BASE.as_usize())?;
     let h = off >> TRAP_STACK_SLOT_SHIFT;
-    if h >= crate::machine::hart_count() {
+    if h >= crate::hart::hart_count() {
         return None;
     }
     let in_seg = off & (TRAP_STACK_SLOT_SIZE - 1);
@@ -80,7 +80,7 @@ pub(crate) fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
     let off = addr.checked_sub(TRAP_STACK_BASE.as_usize())?;
     if off & (TRAP_STACK_SLOT_SIZE - 1) < TRAP_STACK_GUARD {
         let h = off >> TRAP_STACK_SLOT_SHIFT;
-        (h < crate::machine::hart_count()).then_some(h)
+        (h < crate::hart::hart_count()).then_some(h)
     } else {
         None
     }
@@ -98,18 +98,18 @@ pub fn init() {
     //    必须不超出 free 物理池——「内存制约最大核数」的运行时落点（编译期
     //    MAX_HART_SLOTS 只是 VA 布局表达上限，物理养活上限由本校验把握）。
     let per_hart = TRAP_STACK_SLOT_SIZE + PAGE_SIZE;
-    let need = crate::machine::hart_count() * per_hart;
+    let need = crate::hart::hart_count() * per_hart;
     assert!(
-        crate::machine::info().free.size >= need,
+        crate::platform::machine::info().free.size >= need,
         "hart_count {} needs {need:#x} B ({}×{per_hart:#x}) but free pool is {:#x} B",
-        crate::machine::hart_count(),
-        crate::machine::hart_count(),
-        crate::machine::info().free.size,
+        crate::hart::hart_count(),
+        crate::hart::hart_count(),
+        crate::platform::machine::info().free.size,
     );
 
     // 1. per-hart trap 栈：frame 连续分配 + guard 页 + 全部 canary（先于 hart 帧
     //    元数据——帧 kernel_sp 需要指向本 hart 栈顶）。仅 hart 0 调用一次。
-    let segments = crate::machine::hart_count();
+    let segments = crate::hart::hart_count();
     assert!(segments > 0, "no harts");
     assert_eq!(
         TRAP_STACK_SLOT_SIZE,
@@ -165,7 +165,7 @@ pub fn init() {
     //    一份——kernel_sp = 本 hart trap 栈顶，trap 入口按 TP 索引帧页；内核态
     //    故障在**故障核**的帧与 trap 栈上处理。
     let ksatp = satp::read();
-    for h in 0..crate::machine::hart_count() {
+    for h in 0..crate::hart::hart_count() {
         let pa = kernel()
             .expect("kernel team not initialized")
             .space
@@ -204,7 +204,7 @@ pub fn arm_hart() {
     unsafe {
         stvec::write(stvec::Stvec::new(alltraps_va(), stvec::TrapMode::Direct));
         // PerHart.frame 经 tp 直达（执行核帧 VA；与 trap 入口的帧定位同源）。
-        let scr = crate::machine::hart_frame().as_usize();
+        let scr = crate::hart::hart_frame().as_usize();
         core::arch::asm!("csrw sscratch, {}", in(reg) scr);
         sie::set_stimer();
         sie::set_ssoft(); // SSIP 使能：WFI 休眠核被 SBI IPI 唤醒的前提（只唤醒不取中断）

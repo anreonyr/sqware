@@ -6,10 +6,11 @@ use alloc::format;
 use alloc::vec;
 use riscv::register::satp;
 
+use crate::hart;
 use crate::console::Sink;
 use crate::layout::{HART_FRAME_BASE, TRAP_STACK_SLOT_SIZE};
-use crate::machine;
-use crate::machine::{ROOT_STACK_CANARY, root_stack_base};
+use crate::layout::{ROOT_STACK_CANARY, root_stack_base};
+use crate::platform::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::mode;
@@ -48,7 +49,7 @@ pub fn banner() {
         let p = r.paragraph("banner", None);
         for (label, value) in [
             ("hart count", format!("{} H", m.hart.count)),
-            ("hart this", format!("{}", machine::hart_id())),
+            ("hart this", format!("{}", hart::hart_id())),
             ("timebase", format!("{} Hz", m.hart.hertz)),
             (
                 "dram",
@@ -79,9 +80,9 @@ pub fn banner() {
                 "trap stack this",
                 format!(
                     "{} @ {:#x}..{:#x}",
-                    machine::hart_id(),
-                    trap_stack_base(machine::hart_id()).as_usize(),
-                    trap_stack_edge(machine::hart_id()).as_usize()
+                    hart::hart_id(),
+                    trap_stack_base(hart::hart_id()).as_usize(),
+                    trap_stack_edge(hart::hart_id()).as_usize()
                 ),
             ),
         ] {
@@ -108,7 +109,7 @@ pub fn init() -> ! {
     // lockdep 装配（debug 构建）：per-hart 持有集。release 为 no-op。
     // 置于调度器就绪后、spawn 演示任务/HSM 拉起副核前——正是多核 ABBA 的生效窗口。
     #[cfg(debug_assertions)]
-    crate::lock::init_depend(machine::hart_count()).expect("depend init failed");
+    crate::lock::init_depend(hart::hart_count()).expect("depend init failed");
 
     // 用例：两档互斥 —— `--features framework` 走测试框架（逐例打点 + 末行汇总），
     // 否则走 debug 档的健康检查。任一失败 fail-fast（panic）。
@@ -192,7 +193,7 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
     // initrd 区恒等映射（=物理地址），直接按其物理基址读。
     let blob: &'static [u8] =
         unsafe { core::slice::from_raw_parts(region.base as *const u8, region.size) };
-    let elf = crate::initrd::root_image(blob).expect("initrd: root image missing");
+    let elf = crate::platform::initrd::root_image(blob).expect("initrd: root image missing");
 
     let name = env::Name::new("root").expect("root name");
     let team = crate::work::unit::build(
@@ -223,8 +224,8 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
     // 设备供给：**一次设备树扫描**，每台设备一枚门闩（`Payload::Region`）。
     // 扫描在 spawn 之前（条数要进启动参数），落表在 spawn 之后（门闩要落进那个
     // 刚产生的任务）——中间这一小段由本函数的局部量持着，不留内核静态。
-    let devices = crate::devices::scan();
-    let (pairs_pa, pairs_bytes) = crate::devices::block();
+    let devices = crate::platform::devices::scan();
+    let (pairs_pa, pairs_bytes) = crate::platform::devices::block();
     let pairs = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
             let va = inner.allocate(
@@ -252,7 +253,7 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
             devices.len(),
         ])
         .spawn()?;
-    crate::devices::install(&bootstrap, devices);
+    crate::platform::devices::install(&bootstrap, devices);
 
     #[cfg(feature = "framework")]
     team.space.audit();
@@ -276,9 +277,9 @@ fn read_only() -> crate::memory::manager::entry::PteFlags {
 fn boot_harts() {
     // boot hart 不一定是 0（QEMU/OpenSBI 随机选）——它已在运行，须标记为已启动，
     // 并只 HSM 拉起**其它** hart（0..count 中除自身外全部）。
-    let me = machine::hart_id();
-    machine::mark_hart_started(me);
-    let count = machine::hart_count();
+    let me = hart::hart_id();
+    hart::mark_hart_started(me);
+    let count = hart::hart_count();
     let entry = core::ptr::addr_of!(_boot_entry) as usize;
     for hart in 0..count {
         if hart == me {
@@ -299,7 +300,7 @@ fn boot_harts() {
         if r.is_err() {
             panic!("failed to start hart {hart}: {r:?}");
         }
-        machine::mark_hart_started(hart);
+        hart::mark_hart_started(hart);
     }
 }
 
@@ -309,11 +310,11 @@ pub(crate) extern "C" fn boot_main() -> ! {
     // 副核 per-hart 初始化：先取共享内核 token（从**本 hart** 帧读——所有先上
     // 台的核都在 trap::init 填过相同的 kernel_satp，读自身帧语义最贴 per-hart；
     // 其余 per-hart CSR（stvec/sscratch/sie）与 hart 0 走同一原语 trap::arm_hart。
-    let me = machine::hart_id();
+    let me = hart::hart_id();
     let ktc = kernel()
         .expect("kernel team not initialized")
         .space
-        .translate(machine::hart_frame())
+        .translate(hart::hart_frame())
         .expect("kernel frame not mapped")
         .0;
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };

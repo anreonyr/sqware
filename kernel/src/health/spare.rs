@@ -15,7 +15,7 @@ use core::ptr::NonNull;
 
 use alloc::vec::Vec;
 
-use crate::machine;
+use crate::hart;
 use crate::memory::allocator::spare;
 use crate::memory::allocator::spare::DUMP_BUDGET;
 use crate::memory::allocator::statistics;
@@ -23,7 +23,7 @@ use crate::runtime::diagnose::trace;
 
 /// spare 预算验收（用例体；登记在 `mod.rs` 的 `test!` 块）。
 pub(super) fn accept() {
-    let h = machine::hart_count();
+    let h = hart::hart_count();
     let ring = trace::ring_bytes(h);
 
     crate::expect!(

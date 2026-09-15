@@ -4,7 +4,7 @@
 
 use alloc::boxed::Box;
 
-use crate::machine;
+use crate::hart;
 use crate::runtime::switcher::trampoline::restore;
 
 use super::core::{SCHEDULERS, Scheduler};
@@ -13,14 +13,14 @@ use super::trap::run;
 /// 按实际核数（DTB）动态分配 per-hart 调度器状态（调用**恰好一次**，先于任何
 /// 调度器访问）。
 pub fn init() {
-    let n = machine::hart_count();
+    let n = hart::hart_count();
     assert!(n > 0, "no harts");
     let mut sched: Box<[Scheduler]> = (0..n).map(Scheduler::new).collect();
     // per-hart 直达挂接：tp → PerHart.scheduler——借未发布前的 `&mut` 切片回填
     // 每核调度器指针（随后 Box::leak 进 SCHEDULERS；current() 零索引依赖此项，
     // 先于任何调度器访问）。
     for (h, c) in sched.iter_mut().enumerate() {
-        machine::set_scheduler(h, c as *mut Scheduler as *mut ());
+        hart::set_scheduler(h, c as *mut Scheduler as *mut ());
     }
     assert!(
         SCHEDULERS.set(Box::leak(sched)).is_ok(),

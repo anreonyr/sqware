@@ -5,7 +5,7 @@
 use alloc::{string::String, vec::Vec};
 use serde::Serialize;
 
-use crate::machine;
+use crate::hart;
 use crate::runtime::chrono::clock;
 
 /// 报告：全量诊断信息的唯一容器。
@@ -40,7 +40,7 @@ impl Report {
     /// 成册：打戳（hart, ticks），可写借用转只读引用。允许空报告；
     /// 此后仅经 `&Report` 读；重刊须重新借得 `&mut` 后调 [`Report::clear`]。
     pub fn seal(&mut self) -> &Self {
-        self.seal = (machine::hart_id(), clock::now().as_ticks());
+        self.seal = (hart::hart_id(), clock::now().as_ticks());
         self
     }
 

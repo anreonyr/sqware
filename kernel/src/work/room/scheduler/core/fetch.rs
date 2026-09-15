@@ -11,7 +11,7 @@ use core::sync::atomic::Ordering;
 
 use riscv::register::{sie, sip};
 
-use crate::machine;
+use crate::hart;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
@@ -55,8 +55,8 @@ pub(in super::super) fn fetch() -> usize {
 /// 多核同时醒来时各 hart 起点天然分散——避免全从 hart 0 起步造成的 cache
 /// 热点（多 hart 同时对同目标的 L1 锁 RMW → cache line 乒乓 = 雷鸣群）。
 fn steal() -> Option<Arc<Task>> {
-    let me = machine::hart_id();
-    let n = machine::hart_count();
+    let me = hart::hart_id();
+    let n = hart::hart_count();
     if n <= 1 {
         return None;
     }
@@ -88,7 +88,7 @@ fn steal() -> Option<Arc<Task>> {
 /// 协议：置睡眠位 → 复查（防 push 漏唤醒）→ 全退出检查 → 睡到最近 tock → WFI。
 /// 唤醒后：有任务 → 正常出口；到期假醒但无活 → 哑睡壳回睡（保持睡眠位、不打点不清位）。
 fn wait() -> Option<Arc<Task>> {
-    let me = machine::hart_id();
+    let me = hart::hart_id();
     conductor::sleep(me);
     // 置位后复查：防「检查完 → 置位 → 睡」窗口内的 push 漏唤醒
     let found = current().pull().or_else(steal);

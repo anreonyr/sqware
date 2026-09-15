@@ -237,7 +237,7 @@ impl FrameInner {
     }
 
     /// 持久保留区在本分配器窗口内的帧索引区间 `[start, end)` 表（升序，最多
-    /// [`MAX_RESERVED`](crate::machine::MAX_RESERVED) 条）。
+    /// [`MAX_RESERVED`](crate::platform::machine::MAX_RESERVED) 条）。
     ///
     /// 每个保留区可能部分落在窗口外（防御性地截断到 `[base, edge)`）；完全落在
     /// 窗口外的、以及空的，都不进表（表里的每一条都真的挡住一段帧）。
@@ -245,10 +245,10 @@ impl FrameInner {
         base: usize,
         edge: usize,
         max_frame: usize,
-    ) -> [Option<(usize, usize)>; crate::machine::MAX_RESERVED] {
-        let mut out = [None; crate::machine::MAX_RESERVED];
+    ) -> [Option<(usize, usize)>; crate::platform::machine::MAX_RESERVED] {
+        let mut out = [None; crate::platform::machine::MAX_RESERVED];
         let mut n = 0;
-        for r in crate::machine::info().reserved.iter().flatten() {
+        for r in crate::platform::machine::info().reserved.iter().flatten() {
             let (hs, he) = (r.base, r.base + r.size);
             // 洞边界不在窗口内 → 无洞。
             if he <= base || hs >= edge {

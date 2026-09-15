@@ -1,7 +1,7 @@
 // initrd — 引导期程序清单（**临时机制**）。
 //
 // 内核侧只剩两件事：
-//   1) 定位 initrd 区（`machine::info().initrd`，来自 FDT `/chosen`）；
+//   1) 定位 initrd 区（`platform::machine::info().initrd`，来自 FDT `/chosen`）；
 //   2) 按打包期常量取出 **root 镜像**（`ROOT_OFFSET`/`ROOT_LEN`）。
 //
 // 清单的**解释权在 root 域程序**（`programs/src/bin/supervisor/root/manifest.rs`）：

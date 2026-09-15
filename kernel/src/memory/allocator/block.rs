@@ -28,7 +28,8 @@ use alloc::vec::Vec;
 use erra::ResultExt;
 
 
-use crate::machine;
+use crate::hart;
+use crate::platform::machine;
 use crate::memory::PAGE_SIZE;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
@@ -258,7 +259,7 @@ impl BlockAllocator {
     ///
     /// 元数据分配失败（bump 池耗尽） → [`InitError::OutOfMemory`]。
     fn init() -> Result<Self, InitError> {
-        let nodes = machine::hart_count();
+        let nodes = hart::hart_count();
         assert!(nodes > 0, "block init: no harts");
         let m = machine::info();
 
@@ -313,7 +314,7 @@ unsafe impl Allocator for BlockAllocator {
         if power > MAX_POWER || layout.align() > (1usize << power) {
             return Err(AllocError);
         }
-        let me = machine::hart_id();
+        let me = hart::hart_id();
         let pool = &self.blocks[me];
         let addr = pool.pull(power).ok_or(AllocError)?;
         super::statistics::record_block_take(addr, power);
@@ -343,7 +344,7 @@ unsafe impl Allocator for BlockAllocator {
         let Some(home) = self.own(pa) else { return };
         super::statistics::record_block_give(pa, power);
 
-        let me = machine::hart_id();
+        let me = hart::hart_id();
         let pool = &self.blocks[home];
         if home == me {
             pool.push(ptr, power);

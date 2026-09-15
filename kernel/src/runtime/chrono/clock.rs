@@ -13,7 +13,7 @@ use fack::prelude::Error;
 use riscv::register::time;
 
 use crate::lock::OnceLock;
-use crate::machine;
+use crate::platform::machine;
 
 const NANOS_PER_SEC: u128 = 1_000_000_000;
 

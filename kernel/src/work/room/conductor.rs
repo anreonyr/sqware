@@ -12,8 +12,8 @@
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use crate::hart;
 use crate::lock::OnceLock;
-use crate::machine;
 use crate::putln;
 use sbi::ecall::SArgs;
 use sbi::{self, fid};
@@ -45,7 +45,7 @@ static WAITING: [AtomicUsize; WAITING_WORDS] = [const { AtomicUsize::new(0) }; W
 static YELL_CURSOR: AtomicUsize = AtomicUsize::new(0);
 
 /// WAITING 位图字数：每字 64 位（= 协议单次 IPI 掩码窗口）。
-const WAITING_WORDS: usize = crate::machine::MAX_HART_SLOTS / usize::BITS as usize;
+const WAITING_WORDS: usize = crate::layout::MAX_HART_SLOTS / usize::BITS as usize;
 
 /// 任务**产生**计数 +1（PUSHED）。Relaxed 够用：计数只用于相等比较。
 ///
@@ -92,7 +92,7 @@ pub(crate) fn counts() -> (usize, usize) {
 pub(crate) fn barrier() -> (usize, usize) {
     (
         HALT_ARRIVED.load(Ordering::Acquire),
-        crate::machine::hart_count(),
+        crate::hart::hart_count(),
     )
 }
 
@@ -123,7 +123,7 @@ pub(super) fn halt() -> ! {
         // 一次性：只报第一行，之后照旧自旋（诊断不许把停机变成刷屏源）。
         let mut spins = 0usize;
         let mut reported = false;
-        while HALT_ARRIVED.load(Ordering::Acquire) < machine::hart_count() {
+        while HALT_ARRIVED.load(Ordering::Acquire) < hart::hart_count() {
             spins += 1;
             if !reported && spins == BARRIER_REPORT_AT {
                 reported = true;
@@ -174,7 +174,7 @@ fn hooked() {
 /// 标记 hart 进入 WFI 等待。调用方须在置位后**复查队列**再睡。
 pub(super) fn sleep(hart: usize) {
     debug_assert!(
-        hart < crate::machine::MAX_HART_SLOTS,
+        hart < crate::layout::MAX_HART_SLOTS,
         "sleep hart {hart} beyond MAX_HART_SLOTS"
     );
     WAITING[hart / (usize::BITS as usize)]
@@ -184,7 +184,7 @@ pub(super) fn sleep(hart: usize) {
 /// 清除 hart 的等待标记（WFI 唤醒后 / 复查发现任务时调用）。
 pub(super) fn wake(hart: usize) {
     debug_assert!(
-        hart < crate::machine::MAX_HART_SLOTS,
+        hart < crate::layout::MAX_HART_SLOTS,
         "wake hart {hart} beyond MAX_HART_SLOTS"
     );
     WAITING[hart / (usize::BITS as usize)].fetch_and(

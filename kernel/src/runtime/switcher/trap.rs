@@ -7,7 +7,7 @@ use core::time::Duration;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
-use crate::machine;
+use crate::hart;
 use crate::memory::manager::asid::{self, Asid};
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
@@ -69,7 +69,7 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
 fn hart_frame_pa() -> usize {
     // SAFETY: kernel satp 下本 hart 帧恒映射；只读帧头一个字段，不改任何状态。
     unsafe {
-        (*(machine::hart_frame().as_usize() as *const TrapContext))
+        (*(hart::hart_frame().as_usize() as *const TrapContext))
             .user_pa
             .as_usize()
     }
@@ -96,7 +96,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
     }
     let hart = trap_stack_hart(sp).unwrap_or(0);
-    let tp = crate::machine::per_hart_ptr(hart);
+    let tp = crate::hart::per_hart_ptr(hart);
     // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建本 hart PerHart 指针）。
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
@@ -107,7 +107,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     //     此处立刻把 sscratch 换回本 hart 帧 VA——处理期间若再次陷入（内核缺页 /
     //     抢占后回内核态），入口读到的仍是真帧址。这是「陷阱入口不再依赖 tp
     //     定位帧」的另一半（另一半是 `arm_hart` 与 `__restore` 的既有接线）。
-    let frame_va = crate::machine::hart_frame().as_usize();
+    let frame_va = crate::hart::hart_frame().as_usize();
     // SAFETY: 写 sscratch（内核态约定 = 本 hart 帧 VA），无内存副作用。
     unsafe {
         core::arch::asm!(
@@ -128,7 +128,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     //
     //     两个来源必须**同口径**：汇编两个入口交上来的都是帧的**物理**地址
     //     （`ld a0, 0x20(sp)` 取的 `user_pa`），故本 hart 帧也用它的 `user_pa` 比。
-    //     曾经直接与 `machine::hart_frame()`（`HART_FRAME_BASE + id·PAGE` 的**高 VA**）
+    //     曾经直接与 `hart::hart_frame()`（`HART_FRAME_BASE + id·PAGE` 的**高 VA**）
     //     比——口径不同源 ⇒ 恒不相等 ⇒ 判据恒为「来自任务」：内核侧同步异常会被当成
     //     任务故障（误杀无辜任务），`persist` 与「S 态空闲恢复原上下文」两条支路
     //     一起成死代码。
@@ -153,7 +153,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
 
     // 1. 入口校验：per-hart trap 栈 canary 与 hart 帧标记（上一次处理器若溢出，
     //    此处立即暴露——canary 由 init 写在每段栈底）
-    let me = machine::hart_id();
+    let me = hart::hart_id();
     let canary = unsafe { (trap_stack_base(me).as_usize() as *const usize).read() };
     assert_eq!(
         canary, TRAP_STACK_CANARY,
@@ -241,7 +241,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         // 侧唯一的"状态"（零状态：这个决定不落任何账，靠 timer tick 无条件重开；
         // 用户应铃（`envcall::mail::hush`）时也立即重开一次）。
         Trap::Interrupt(Interrupt::SupervisorExternal) => {
-            if crate::devices::raise_irq().is_err() {
+            if crate::platform::devices::raise_irq().is_err() {
                 unsafe {
                     sie::clear_sext();
                 }
@@ -281,7 +281,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             if !from_task {
                 panic!(
                     "kernel page fault on hart {} at sepc={:#x}, stval={:#x}",
-                    machine::hart_id(),
+                    hart::hart_id(),
                     sepc::read(),
                     stval::read()
                 );
@@ -347,7 +347,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     };
 
     // 出口再校验一次 canary（处理器自身栈用量引发的溢出）
-    let me = machine::hart_id();
+    let me = hart::hart_id();
     let canary = unsafe { (trap_stack_base(me).as_usize() as *const usize).read() };
     assert_eq!(
         canary, TRAP_STACK_CANARY,

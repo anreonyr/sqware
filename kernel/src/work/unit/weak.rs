@@ -206,7 +206,7 @@ impl Drop for TaskWeak {
 #[cfg(feature = "framework")]
 fn record(site: Site) -> usize {
     let id = NEXT_ID.fetch_add(1, Relaxed);
-    let meta = site.ix() | (crate::machine::hart_id() << 8);
+    let meta = site.ix() | (crate::hart::hart_id() << 8);
     for i in 0..SLOTS {
         if SLOT_ID[i]
             .compare_exchange(0, id, Relaxed, Relaxed)
@@ -243,7 +243,7 @@ fn record(site: Site) -> usize {
 /// `block` 的挂起点与这里的出身）。
 #[cfg(feature = "framework")]
 pub(crate) fn check_block_heldout() {
-    let me = crate::machine::hart_id();
+    let me = crate::hart::hart_id();
     for i in 0..SLOTS {
         if SLOT_ID[i].load(Relaxed) == 0 {
             continue;

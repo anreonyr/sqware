@@ -47,7 +47,7 @@ fn hex(x: usize) -> String {
 /// 读全部 31 个非零 GPR（x0 恒 0；ra/sp/gp/tp 首页）。
 ///
 /// 注：tp 原值转储（内核态 = PerHart 指针，非裸 hartid；hart 号经
-/// `machine::hart_id()` 读取）。
+/// `hart::hart_id()` 读取）。
 fn gprs() -> [usize; 32] {
     let mut r = [0usize; 32];
     unsafe {
@@ -121,7 +121,7 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// 内核现场采集：经 per-hart 帧（`machine::hart_frame()`）或归巢落盘值取 sp/fp。
+    /// 内核现场采集：经 per-hart 帧（`hart::hart_frame()`）或归巢落盘值取 sp/fp。
     fn capture_kernel() -> Option<Scene> {
         // 内核现场起点：归巢落盘 [sp,fp]（`halt::scene()`；(0,0)=未归巢）。
         let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
@@ -149,7 +149,7 @@ impl Scene {
         let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
         let backtrace = Backtrace::from_walk(r);
         Some(Scene {
-            hart: crate::machine::hart_id(),
+            hart: crate::hart::hart_id(),
             task: ident().map(|i| i.id()),
             space: SpaceKind::Supervisor,
             reg: Registers {
@@ -191,7 +191,7 @@ impl Scene {
         let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
         let backtrace = Backtrace::from_walk(r);
         Some(Scene {
-            hart: crate::machine::hart_id(),
+            hart: crate::hart::hart_id(),
             task: Some(info.id()),
             space: world,
             reg: Registers {
@@ -277,7 +277,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         let kfb = crate::layout::HART_FRAME_BASE.as_usize();
         let n = if scr == 0 {
             "Kernel frame".to_string()
-        } else if scr >= kfb && scr < kfb + crate::machine::MAX_HART_SLOTS * PAGE_SIZE {
+        } else if scr >= kfb && scr < kfb + crate::layout::MAX_HART_SLOTS * PAGE_SIZE {
             format!("Kernel frame @ {}", (scr - kfb) / PAGE_SIZE)
         } else if scr >= crate::layout::TEAM_FRAME_BASE.as_usize()
             && scr < crate::layout::HART_FRAME_BASE.as_usize()
@@ -408,7 +408,7 @@ pub fn dump(r: &mut Report) {
     let hart = kernel_scene
         .as_ref()
         .map(|s| s.hart)
-        .unwrap_or_else(crate::machine::hart_id);
+        .unwrap_or_else(crate::hart::hart_id);
     let scene_head = kernel_scene
         .as_ref()
         .and_then(|s| {

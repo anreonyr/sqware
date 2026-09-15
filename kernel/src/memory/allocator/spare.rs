@@ -17,9 +17,9 @@ use core::ptr::NonNull;
 use alloc::boxed::Box;
 use erra::ResultExt;
 
+use crate::hart;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
-    machine,
     memory::{
         PAGE_SIZE,
         allocator::{InitError, InitResult, Link, hybrid},
@@ -218,7 +218,7 @@ impl SpareAllocator {
     /// 主堆余量不足 → [`InitError::OutOfMemory`]。
     fn init() -> Result<Self, InitError> {
         let cap = {
-            let payload = crate::runtime::diagnose::trace::ring_bytes(machine::hart_count());
+            let payload = crate::runtime::diagnose::trace::ring_bytes(hart::hart_count());
             (payload.next_multiple_of(MAX_ALIGN) + HEADER + DUMP_BUDGET).next_multiple_of(PAGE_SIZE)
         };
         let align = Layout::from_size_align(cap, PAGE_SIZE).map_err(|_| InitError::OutOfMemory)?;

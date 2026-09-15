@@ -27,7 +27,9 @@ use erra::ResultExt;
 
 use riscv::register::satp;
 
-use crate::machine::{self, kernel_edge};
+use crate::hart;
+use crate::layout::kernel_edge;
+use crate::platform::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::{
     MapError,
@@ -174,7 +176,7 @@ pub fn init() -> MapResult<()> {
             kernel_space.borrow(TRAMPOLINE, trampoline_pa(), PAGE_SIZE, tramp_flags)?;
 
             // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页
-            let n = machine::hart_count();
+            let n = hart::hart_count();
             for h in 0..n {
                 let page: crate::memory::manager::table::Frame = crate::tag!(HartFrame, {
                     Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())

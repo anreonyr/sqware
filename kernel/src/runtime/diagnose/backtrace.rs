@@ -96,7 +96,7 @@ impl FrameResolver {
     ///    `.text` 地址。
     fn classify(&self, pc: VirtAddr) -> FrameKind {
         // ROOT 栈区（panic 救援栈）：[_kernel_edge, +ROOT_STACK_SIZE)。
-        let k = crate::machine::kernel_edge();
+        let k = crate::layout::kernel_edge();
         if pc.as_usize() >= k && pc.as_usize() < k + crate::layout::ROOT_STACK_SIZE {
             return FrameKind::Root;
         }

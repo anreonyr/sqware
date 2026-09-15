@@ -18,8 +18,8 @@ use fack::prelude::Error;
 use sbi::ecall::SArgs;
 use sbi::{self, fid};
 
+use crate::hart;
 use crate::lock::{Level, SpinLock};
-use crate::machine;
 use crate::memory::allocator::bitmap::BitmapAllocator;
 
 use super::flush_asid;
@@ -99,7 +99,7 @@ pub fn deallocate(asid: Asid) -> Result<(), Deaf> {
 ///
 /// 幂等：重复登记同一 ASID 无害。
 pub fn set_asid(asid: Asid) {
-    machine::lease_store(asid.get());
+    hart::lease_store(asid.get());
 }
 
 /// 本核退驻：此后不被任何清退选中（写 VACANT）。幂等。
@@ -107,7 +107,7 @@ pub fn set_asid(asid: Asid) {
 /// 调用点：关机/卧倒（conductor::halt、diagnose::halt::hunker）——终态核不再
 /// 应答，必须先离册，否则发起方死等。
 pub fn vacate() {
-    machine::lease_store(VACANT);
+    hart::lease_store(VACANT);
 }
 
 // ── 跨核 TLB 清退（SBI RFENCE）────────────────────────────────
@@ -132,13 +132,13 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
     unsafe { flush_asid(asid.get()) };
 
     // ③ 扫名册生成 hart_mask（本核已在 ② 自刷，排除自己）。
-    let me = machine::hart_id();
+    let me = hart::hart_id();
     let mut mask = 0usize;
-    for hart in 0..machine::hart_count() {
+    for hart in 0..hart::hart_count() {
         if hart == me {
             continue;
         }
-        if machine::lease_load(hart) == asid.get() {
+        if hart::lease_load(hart) == asid.get() {
             mask |= 1usize << (hart % (usize::BITS as usize));
         }
     }

@@ -15,8 +15,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use fack::prelude::Error;
 
+use crate::hart;
 use crate::lock::OnceLock;
-use crate::machine;
 use crate::memory::allocator::spare;
 use crate::memory::manager::fault::FaultKind;
 use crate::runtime::diagnose::report::Report;
@@ -191,7 +191,7 @@ pub fn note(kind: EventKind) {
     let Some(pool) = POOL.get() else {
         return; // 未初始化（init 前）静默跳过——诊断路径不失败
     };
-    let hart = machine::hart_id();
+    let hart = hart::hart_id();
     let Some(t) = pool.get(hart) else {
         return;
     };
@@ -248,7 +248,7 @@ pub fn dump<F: FnMut(&Event)>(hart: usize, k: usize, mut f: F) {
 ///
 /// spare 仓余量不足 → [`TraceInitError::OutOfMemory`]；重复初始化 → [`TraceInitError::AlreadyInit`]。
 pub fn init() -> Result<(), TraceInitError> {
-    let h = machine::hart_count();
+    let h = hart::hart_count();
     let total = ring_bytes(h);
     // 16 为 2 的幂硬对齐，from_size_align 不可失败（不变量）。
     let layout = Layout::from_size_align(total, 16).expect("trace: ring layout");
@@ -343,13 +343,13 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
 
 /// 每 hart 倒出行数（总量平摊）：总额恒 ≤ TRACE_DUMP。
 pub fn hart_rows() -> usize {
-    (TRACE_DUMP / machine::hart_count()).max(1)
+    (TRACE_DUMP / hart::hart_count()).max(1)
 }
 
 /// 崩溃转储：遍历已启动各 hart 的最近窗口，每人开一段（标题 + 两列表 t/描述）
 /// 投进报告（表中首行恒为表头）。只倒最近 hart_rows 条（总量平摊）。
 pub fn panic_dump(r: &mut Report) {
-    for h in 0..machine::hart_count() {
+    for h in 0..hart::hart_count() {
         let mut rows: Vec<Vec<Option<String>>> = vec![
             vec![Some("t".into()), Some("event".into())], // 首行表头
         ];

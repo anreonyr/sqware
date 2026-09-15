@@ -30,7 +30,8 @@ use alloc::format;
 use alloc::vec::Vec;
 
 use super::OnceLock;
-use crate::machine;
+use crate::hart;
+use crate::platform::machine;
 
 /// 锁层级（1 最低、10 最高）。参与锁才有 level；`None` = exempt（不参与、不校验）。
 ///
@@ -212,7 +213,7 @@ pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
     if POOL.get().is_some() {
         return Err(DepInitError::AlreadyInit);
     }
-    let n = hart_count.clamp(1, crate::machine::MAX_HART_SLOTS);
+    let n = hart_count.clamp(1, crate::layout::MAX_HART_SLOTS);
     let cells: Vec<HeldCell> = (0..n)
         .map(|_| HeldCell(UnsafeCell::new(HeldSet::new())))
         .collect();
@@ -224,7 +225,7 @@ pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
 #[cfg(debug_assertions)]
 fn held() -> Option<&'static mut HeldSet> {
     let pool = POOL.get()?;
-    let h = machine::hart_id();
+    let h = hart::hart_id();
     if h >= pool.len() {
         panic!("[depend] hart {h} out of pool ({} slots)", pool.len());
     }

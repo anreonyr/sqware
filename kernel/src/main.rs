@@ -6,15 +6,14 @@ extern crate alloc;
 
 mod boot;
 mod console;
-mod devices;
 #[cfg(feature = "framework")]
 mod framework;
+mod hart;
 mod health;
-mod initrd;
 mod layout;
 mod lock;
-mod machine;
 mod memory;
+mod platform;
 mod runtime;
 mod work;
 
@@ -46,7 +45,7 @@ global_asm!(
 #[unsafe(no_mangle)]
 extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
     console::init();
-    machine::init(dtp);
+    platform::machine::init(dtp);
     allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
     unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
     clock::init().unwrap_or_else(|e| panic!("clock init failed: {e}"));

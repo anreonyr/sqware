@@ -30,7 +30,7 @@ use alloc::vec::Vec;
 use env::{Name, PAIR_LEN, Pair, PieToken};
 
 use crate::lock::OnceLock;
-use crate::machine;
+use crate::platform::machine;
 use crate::work::mail;
 use crate::work::mail::nole::NoleMeta;
 use crate::work::unit::gate::{self, AnyPie, GateError, Permission};

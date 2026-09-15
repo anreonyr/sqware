@@ -42,18 +42,18 @@ use wait::site::{SITE_SHARDS, prune, shard_at};
 ///
 /// 槽与核一一对应：一次退场的全程（写 → `quit` → 读）在同一次 trap 处理里完成，
 /// 不跨核、不跨任务。
-static EXIT_REASON: [core::sync::atomic::AtomicUsize; crate::machine::MAX_HART_SLOTS] =
-    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::machine::MAX_HART_SLOTS];
+static EXIT_REASON: [core::sync::atomic::AtomicUsize; crate::layout::MAX_HART_SLOTS] =
+    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::layout::MAX_HART_SLOTS];
 
 /// 记下本次退场的原因码（见 [`EXIT_REASON`]）。
 pub(crate) fn set_exit_reason(reason: usize) {
-    let slot = crate::machine::hart_id().min(crate::machine::MAX_HART_SLOTS - 1);
+    let slot = crate::hart::hart_id().min(crate::layout::MAX_HART_SLOTS - 1);
     EXIT_REASON[slot].store(reason, core::sync::atomic::Ordering::Relaxed);
 }
 
 /// 取出并清零本次退场的原因码（`quit` 用）。
 fn take_exit_reason() -> usize {
-    let slot = crate::machine::hart_id().min(crate::machine::MAX_HART_SLOTS - 1);
+    let slot = crate::hart::hart_id().min(crate::layout::MAX_HART_SLOTS - 1);
     EXIT_REASON[slot].swap(0, core::sync::atomic::Ordering::Relaxed)
 }
 
