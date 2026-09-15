@@ -23,93 +23,99 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 
 ## 2 · 操作集（4 个，闭环）
 
-| 操作 | 谁调用 | 载体字段 | 失败 |
+| 操作 | 谁调用 | 字段 | 失败 |
 |---|---|---|---|
-| `Open` | `Console::open`（`console/client.rs:86`） | `reply` ＝ 回信孔**在服务侧**的 token（0 非法） | 保留区非零 → `UnexpectedField`/`Reserved`；表满借 `NoSuchClient` |
-| `Write` | `write`（`:122`）、`readline` 的 prompt（`:143`） | `client`、`len`、`payload[24]` | id 不认识 → `NoSuchClient`；非 UTF-8 → `Denied`；`len > 24` → `BadLen` |
-| `ReadLine` | `readline`（`:150`） | `client`、`len`、`prompt[24]` | 已有等读会话 → `NoSuchClient`（单读者） |
-| `Close` | `Console::close`（`:179`，**零调用点**） | `client` | `NoSuchClient` |
+| `Open` | `Console::open`（`console/client.rs`） | **握手孔**（地址槽）+ **认领号** | 表满 → 借 `NoSuchClient`（且**无处可回**，客户端等到上界）；对端没给握手孔 → `quiet` |
+| `Write` | `write`、`readline` 的 prompt | `client` + 字节（≤ `LINE`） | 不认识 / 不是你的 → `Denied`；非 UTF-8 → `Denied`；空载荷 / 超 `LINE` → `BadLen` |
+| `ReadLine` | `readline` | `client` + 提示符 | 已有等读会话 → `NoSuchClient`（单读者）；**同会话重问同一条**是幂等的（客户端有界等的退路） |
+| `Close` | `Console::close`（`session` 自检是它第一个调用点） | `client` | 不认识 / 不是你的 → `Denied` |
 
-`Reply` ＝ `Ok{client}` / `Line{len, payload}` / `Eof` / `Interrupt` / `Denied` / `NoSuchClient`
-（`console/wire.rs:119-136`，状态码 `77-82`）。`ProtocolError` ＝ `BadOp`（未知动词或状态码）/
-`Reserved` / `UnexpectedField`（该动词下不该有的字段非零）/ `BadLen`（`wire.rs:86-95`）；
-客户端一律折成 `denied()` ＝ `-1`（`client.rs:32-34`）。
+`Reply` ＝ `Ok{client}` / `Line{整行}` / `Eof` / `Interrupt` / `Denied` / `NoSuchClient`。
+`ProtocolError` ＝ `BadOp`（未知动词或状态码）/ `BadLen`（空 `Write` / 超过 `LINE`）/
+`Short`（帧长与该动词的表不符）；客户端一律折成 `denied()` ＝ `-1`。
 
-## 3 · 线格式（64 字节）
+**「不是你的」是怎么判的**：会话的归属是**推者**——内核在每一次 `Pull` 上盖的章
+（`entry.pull_timeout_from` 的第二个返回值，syscall 上下文不可伪造），服务端在 `Open` 时
+把它记进 `Slot::owner`。报文里那个 `client` 只是**回述**，认的仍是推者
+（`server.rs` 的 `State::handle`）。凡不合的请求一律 `refuse`：那句话走**推者自己那条会话**。
 
-请求与回复**共用一张表**，按 `op` 判读，不用哨兵（`wire.rs:5-16`）：
+## 3 · 线格式
+
+**一帧就是 `[op][正文]`，只有 `Open` 多一格地址**（`wire.rs` 头注是唯一出处，此处不复制）：
 
 ```text
-[0]      op        u8
-[1..8]   保留
-[8..16]  reply     usize LE   Open：回信孔在**服务侧**的 token
-[24..32] client    usize LE   会话 id
-[32..40] len       u64 LE
-[40..64] payload   Write 的字节 / Line 的整行（不含 \n）
+Open      [0]=1 [1..9) 握手孔  [9..17) 认领号      帧长 17
+Write     [0]=2 [1..9) client  [9..] 字节          帧长 9 + 字节数
+ReadLine  [0]=3 [1..9) client  [9..] 提示符        帧长 9 + 提示符长度
+Close     [0]=4 [1..9) client                      帧长 9
+Ok        [0]=0 [1..9) client                      帧长 9
+Line      [0]=1 [1..] 整行（不含 `\n`）            帧长 1 + 行长
+Eof / Interrupt / Denied / NoSuchClient            帧长 1
 ```
 
-`MSG_LEN = 64`、`PAYLOAD_LEN = LINE_MAX = 24`（`wire.rs:42-60`）。**会话 id 从 1 起，
-`0` 恒表示「无会话」**——这是 id 值域约定，不是字段哨兵（`wire.rs:29-32`、`server.rs:227-232`）。
+`CAP = 1 + 2 * WORD + LINE = 145`（`LINE = 128`，见下）。**没有一处是补的**：没有保留区、没有长度字段、没有定长
+载荷数组，也没有哪一帧带一格恒为零的"以防万一"。六个状态**逐个**核长度。
 
-**第一版多开的那枚「数据孔」的下场**：字段已从 `Request::Open` 里删掉（客户端从不推、
-服务从不读，从第一天就是死码），省下每次开会话一次自建孔（`wire.rs:25-27`）。
-**但它的字节区没有收口**：`[16..24]` 既不在字段表里，也不在任何保留检查里——`decode` 只查
-`m[1..8]`，另一半是**空区间、恒不触发**（`wire.rs:175-179`）。这 8 字节现在无文档、无检查。
+**地址槽装的是握手孔**，不是回信孔：回信孔由服务端开、句柄随握手回执交回
+（`runtime::core::handshake::grant`）。为什么必须有这一格，见 §5 第 1 步。
+
+**`LINE = 128` 是量出来的**：一段字节若超过它，客户端就得切成两条 `Write`，而两条之间可以
+插进**别的写者**的字节——一条 27 字节的报到曾被劈成 `…reconnect` + 别人的一句 + `ed`
+（原样字节），门里那条判据因此常年发飘。取 128 = **客户端门面一次 flush 的上界**
+（`Terminal::CAP`）：一次 flush 永远落成一条消息。
+
+**会话 id 从 1 起，`0` 恒表示「无会话」**——id 值域约定，不是字段哨兵。
 
 ## 4 · 结构
 
-**客户端**：`Console { port: Port, client: usize }`（`crates/protocol/src/console/client.rs`）；
-`Port` ＝「一次往返」——入口门闩（借入）+ 回信孔（自有）+ 对端坐标（`docs/port.md` §4）。
-`Readline = Line(String) | Eof | Interrupt`。**生命周期是显式的**：`HolePie` 没有 `Drop`，
-它是句柄值不是 RAII 守卫，所以资源由 `close` 显式放、两枚孔随进程退出由内核回收。
+**客户端**：`Console { port: Port, client: usize }`——两个字段各指回一个操作（`port` 是往返，
+`client` 是会话号）。`Readline = Line(String) | Eof | Interrupt`。生命周期显式：`HolePie`
+没有 `Drop`，它是句柄值不是 RAII 守卫。
 
-报文对的形状由 `impl Duet for Request` 说（`wire.rs`）：`REQ = REP = MSG_LEN`，回信地址
-写在 `[8..16]`——**只写在 `Open` 那一条上**（服务把回信孔记进会话表，此后每条请求照表推），
-其余动词那一格必须是 0。那条规矩因此不是纪律而是编码：`Duet::encode` 只对 `Open` 落地址，
-`Request::encode` 一个字节都不碰它。
-
-**服务侧**：`State { slots: [Option<Slot>; 8], reading: Option<Reading>, pending, term }`
-（`server.rs:176-182`）；`Slot` 只存 **token 值**不存句柄（token 是 `Copy`，`server.rs:70-77`）。
+**服务侧**：`State { slots: [Option<Slot>; 8], reading, pending, out }`；
+`Slot { owner: TaskId, reply: usize }`——**归属 + 回信孔**，两样都存**值**不存句柄
+（token 是 `Copy`）。`reply` 必须是**本线程表里**那一枚（存成对端表里的号 ⇒ 每次推回复都被
+判 `Denied` 并静默丢掉，实测过）。
 
 **两个线程各只持锁一小段**：
 
 ```text
-请求线程   pull 请求孔 → Open/Write/Close/ReadLine → （该会话的）回信孔
-输入线程   读 UART → VTE 解码 → 改行缓冲 → 重绘 → 回车时把整行**交给共享态**
+请求线程   pull 请求孔 → Open/Write/Close/ReadLine → 出帧落屏 → （该会话的）回信孔
+输入线程   收投递孔（uart 驱动投来的字节）→ VTE 解码 → 改行缓冲 → 重绘（只进出帧槽）
+           → 回车时把整行放进共享态
 ```
 
 ## 5 · 时序：`Open → Write → ReadLine → Close`
 
-1. **Open**：客户端 `Port::open(entry)`——服务 id 由 `mail::reserve(entry).1`（`owner`）求得，
-   自建回信孔并把它的 `WRITE` 授给服务；随后 `port.call(Request::open(), 1000ms)` 把**回信
-   地址**随报文交出 → 服务建槽、回 `Ok{client = i+1}` 且记下 `to_client`（`server.rs:243-255`）
-   → 请求线程用该 token `push`（`console.rs:167-174`）→ 客户端在有界等里收下，并**核回复
-   来源**（必须是 `Port` 认下的那个对端）。
-2. **Write**：按 ≤ 24 B 分片，各一次往返 → 服务 `write`：若有会话正在等读，先 `\r\x1b[K`
-   擦当前行、打印、再 `redraw`（`\r\x1b[K + prompt + 缓冲 + 光标定位`，`server.rs:286-316,
-   346-359`）→ 回 `Ok` 即「已落屏」。
-3. **ReadLine**：客户端先把 prompt **同步写一次**（提示符必须先落屏，`client.rs:138-148`）→
-   `push(ReadLine{client, len, prompt})` → 服务**只登记** `reading`、不回（`server.rs:322-344`）
-   → 客户端在回信孔上**无上界 `pull`**。
-   回车那一下：输入线程 `io::try_get` → `Decoder::advance` → `State::on_key(Enter)` 写 `\r\n`、
-   `reading.take()`、拼 `Reply::Line`（`server.rs:402-435`）→ `set_pending(client, reply)`
-   （`console.rs:88-90`）→ 请求线程 `pull_timeout(IDLE_MS = 20)` 超时 → `take_pending()` →
-   推**该会话的回信孔**（`console.rs:148-160`）→ 客户端 `pull` 返回 → `Readline::Line`。
-4. **Close**：`push(Close)` → 服务清槽，若正是该会话在等读则一并清 `reading`
-   （`server.rs:266-281`）→ 回 `Ok`。
+1. **Open**：客户端 `Port::dial` —— ① 自建一枚**私有的握手孔**并把 `R|W` 副本授给服务；
+   ② 把首帧 `Open` 推给请求孔，**握手孔的句柄写在帧首那 8 字节地址槽里**；
+   ③ 在**自己那枚**握手孔上有界等回执。服务端收到 `Open`：按推者开的**回信孔**（`grant`）
+   把句柄连同认领号推回握手孔，再把 `Ok{client}` 推进刚开的那枚回信孔 ⇒ `dial` 一次收齐
+   （`Port` 的 `take`）⇒ 客户端拿到会话。
+2. **Write**：按 ≤ `LINE` 分片，各一次往返 → 服务：若该会话正在等读，先 `\r\x1b[K` 擦行、
+   打印、再 `redraw`（`\r\x1b[K + prompt + 缓冲 + 光标定位`）→ 回 `Ok` 即「已落屏」。
+3. **ReadLine**：客户端先把 prompt **同步写一次**（提示符必须先落屏）→ `ReadLine{client, prompt}`
+   → 服务**只登记** `reading`、不回 → 客户端在回信孔上**有界等**（超时**重发同一条**，
+   服务侧对同会话重问是幂等的）。回车那一下：输入线程 `on_key(Enter)` 写 `\r\n`、`reading.take()`
+   → 放进共享槽 → 请求线程取走并推**该会话的回信孔** → 客户端 `pull` 返回 → `Readline::Line`。
+4. **Close**：`Close{client}` → 服务**先取孔、再清槽**（反过来的话那句 `Ok` 找不到孔、被丢掉，
+   客户端白等满上界——`session` 自检第一次跑就现形），若正是该会话在等读则一并清 `reading` → 回 `Ok`。
 
 ## 6 · 不变量
 
 | 不变量 | 违反会怎样 | 谁守着 |
 |---|---|---|
-| 一条请求孔 + 一条回信孔（**没有数据孔**） | 开会话多一次自建孔；死码复归 | `console/mod.rs:18-20`、`wire.rs:25-27` |
-| 回信地址由 `Duet::encode` 填、且**只在 `Open`** | 服务把带地址的 `Write` 当坏报文 ⇒ **不回**（`to_client` 为 `None`）⇒ 客户端白等满上界 | `wire.rs` 的 `impl Duet`、`server.rs` 的 `decode` |
-| 只有持 token 的 task 能推 ⇒ **只有请求线程碰孔** | 整行永远递不出去，客户端阻塞在无上界 `pull` 上（现象极具误导性：逐键重绘全对，回车之后什么都没有） | `console.rs:16-26`、`server.rs:32-33` |
-| `Write` 同步（`Ok` ＝ 已落屏），且 prompt 先写后读 | 提示符憋在孔里，用户对着空行打字 | `client.rs:6-10,135-137` |
-| 只在有会话等读时才碰设备；主线程等待不能无穷 | 抢走 shell 的字节（`spawn` 变 `sawn`）；或整行搁浅在共享槽里 | `console.rs:31-36,74-79` |
-| 会话 id 从 1 起，`0` 恒无会话 | `Write`/`ReadLine`/`Close{0}` 一律 `NoSuchClient` | `wire.rs:29-32`、`server.rs:227-232` |
-| 三个收尾键（回车 / Ctrl-C / Ctrl-D）一律写 `\r\n` | 下一轮 `\r\x1b[K` 回到本行行首 ⇒ 新提示符原地盖掉旧的 | `server.rs:402-411` |
-| 单读者 + 行长上界（512 字符 / 交付 24 字节） | 第二个等读被拒；超 24 B 的行被静默截断；超 512 的插入无操作 | `server.rs:329-335,88-90,429-431` |
+| 回信孔由**服务端**开 | 服务被打死那扇门不死 ⇒ 客户端永久挂在 `Busy` 上（「对端还没回」与「对端已经没了」不可区分） | `handshake::grant` + `gate::doom` 的寿命边 |
+| **握手回执走本端私有的孔**，不走请求孔 | 请求孔是一枚单槽信箱、两个方向的消费者：回执会被**服务自己的请求循环**吸回去（实测 50% 开不成） | `Port::dial` 自建 + 地址槽递出去；`State::open` 只推给它 |
+| **一个推者至多一条会话**（重开即换那一格） | 表被**重连次数**吃穿 ⇒ 多次他杀之后连不上 | `State::open` 的 `session_of` |
+| 会话的归属认**推者**（内核盖章），不认报文里的号 | 同域另一个任务猜一个号就能用别人的会话 | `Slot::owner` + `State::handle` 的归属闸 |
+| 回复的落点是**判定那一刻**查出来的孔 | `close` 先清槽再回话 ⇒ 那句 `Ok` 找不到孔、被丢掉，客户端白等满上界 | `Outcome::to_reply` |
+| **只有请求线程碰孔**（回信孔与设备门闩都是 per-task 的） | 整行永远递不出去；现象极具误导性：逐键重绘全对，回车之后什么都没有 | `console.rs` 的共享槽交接 |
+| `Write` 同步（`Ok` ＝ 已落屏），且 prompt 先写后读 | 提示符憋在孔里，用户对着空行打字 | `client.rs` 的 `write`/`readline` |
+| 只在有会话等读时才碰设备；主线程等待不能无穷 | 抢走 shell 的字节（`spawn` 变 `sawn`）；或整行搁浅在共享槽里 | `console.rs` 的两档等待 |
+| 会话 id 从 1 起，`0` 恒无会话 | `Write`/`ReadLine`/`Close{0}` 一律 `NoSuchClient` | `wire.rs` 的 `decode` + `server.rs` 的 `index` |
+| 三个收尾键（回车 / Ctrl-C / Ctrl-D）一律写 `\r\n` | 下一轮 `\r\x1b[K` 回到本行行首 ⇒ 新提示符原地盖掉旧的 | `State::on_key` |
+| 单读者 + 行长上界（512 字符 / 交付 128 字节） | 第二个等读被拒；超 128 B 的行按 `Eof` 回（不截断）；超 512 的插入无操作 | `State::readline` / `Line` / `Text` |
 
 ## 7 · 裁决账
 
@@ -117,13 +123,16 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
 |---|---|---|
 | `ReadLine` 阻塞还是登记 | **只登记不阻塞** | 就地阻塞 ⇒ 等输入期间别人的 `Write` 排在请求孔里显示不出来；「别的程序能打印」正是控制台存在的理由（`server.rs:5-7,219`） |
 | 整行怎么交付 | **经共享态交接**，只有主线程碰孔 | 跨 task 交接句柄两次都被拒；`Lock<State>` 本来就两线程共写，加一格不引新机制（`console.rs:16-29`） |
-| 回信孔交哪个号 | **种在对端表里的那一枚**（`To::seed()`） | `push` 在**推者自己**的表里 `find`；地址由 `Port` 持有、调用方写不出（`docs/port.md` §4） |
+| 回信孔交哪个号 | **种在对端表里的那一枚**（`To::seed()`）；服务端存进 `Slot` 的**必须是本线程表里那一枚** | `push` 在**推者自己**的表里 `find`；对端那枚是另一张表里的号——存错的表现是每次推回复都被判 `Denied` 并静默丢掉 |
 | 数据孔 | **删** | 客户端从不推、服务从不读（`wire.rs:25-27`） |
 | 会话寿命 | **开一次活到进程结束** | 旧版每条输出 2 × 开会话 + 2 次往返，实测「输出延迟很高」（`shell.rs` 的 `Terminal` 头注） |
 | 写缓冲 | **按行 / 128 字节合并** | 一条消息只带 24 B，`sq > ` 这种短串也要一次往返（`shell.rs:99-104`） |
 | 提示符 | **随 `ReadLine` 带**（并先同步写一次） | 重绘 ＝ `\r\x1b[K + prompt + 缓冲`；服务不知道 prompt 就只剩输入串（`server.rs:319-321`） |
 | 非 UTF-8 载荷 | `Denied` | 逐字节写会把转义串打成碎片（`server.rs:309-314`） |
-| 表满 | 借 `NoSuchClient` | 协议里没有「稍后重试」这个码（`server.rs:257-262`） |
+| 表满 | 借 `NoSuchClient` | 协议里没有「稍后重试」这个码；**先判容量再开孔**，免得白开一枚（句柄已交回客户端而回执无处可推，客户端空等满上界） |
+| 开一条会话要不要发两遍 | **不发** | 首帧既是握手帧又是开门请求：再来一遍就是**开第二条会话**，而第二遍的回执会被推给一个按己方表解释的号（永远收不到），表每开一次漏一格 |
+| 「这条会话还算不算数」谁来答 | **机制**，不是比对 | 回信孔归服务端开 ⇒ 它被封印 ⟺ 服务实例没了；客户端下一次往返当场拿到 `Dead`。曾经拿"入口号变没变"当凭据——目录的 `Connect` 每次都转授**一份新副本**，那个号会因为完全无关的原因变化 |
+| 「断了又续上」怎么判 | **按事实**（会话丢过没有） | 旧判据（入口号对不上）在 shell 那条路上**没有出口**：清缓存与会话置空同在一处 ⇒ 那句话一次也打不出来 |
 | 生命周期 | 显式 `close`，**不假装有 `Drop`** | `HolePie` 是句柄值（`client.rs:14-18`） |
 | 重启后谁是这条线的属主 | **root 把该名字的写权 `Delegate` 给监护线程** | 监护线程与 root **同域但不是 root 本人**，而驱动的属主判据问的是「你是不是这台设备的 sire」；「同域」这个放宽**不可表达**（报文里只有一个 `from: TaskId`）⇒ 宁可显式多一个动词（[driver.md](driver.md) §12、[root.md](root.md) §5.3） |
 
@@ -159,18 +168,19 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
    失败仍按原样收场。为什么必须有界：重启那条路自己的上限是「重发预算」（[root.md](root.md)
    §5.3），客户端若在这里无界重试，就把一个**有界**的失败变成一个既挂不住也退不出的活锁。
    为什么给 3 s：实测一次重发 235–943 ms（构建 + 启动 + 登记），3 s 盖得住，而它仍然有界。
-3. **`Close` 零调用点**：`Console::close` / `client()` 没有任何消费者（会话活到进程结束），
-   门里也没有 `Close` 这一步。
-4. **线格式 `[16..24]` 无主**（见 §3）。
-5. **`Outcome` 的文档枚举不全**：注释说 `to_client: None` 只出现在「`Open` 失败、消息非法」，
-   但 `write`/`readline` 的「id 不认识」分支也是 `None`（`server.rs:144-146` vs `:288-293,323-327`）。
+3. ~~**`Close` 零调用点**~~ —— **已有第一个消费者**（本轮）：门里的 `session` 自检逐条开会话、
+   关掉被顶替的那一条，读数 `closed=1`。`client()` 仍无消费者。
+4. ~~**线格式 `[16..24]` 无主**~~ —— **已销**（本轮）：那一整版（保留区 + `len` 字段 +
+   定长载荷）早被换掉了，§3 现在只有一张"每格都指得回一个操作"的表，没有无主字节。
+5. ~~**`Outcome` 的文档枚举不全**~~ —— **已销**（本轮）：那个字段改名 `to_reply`，语义收成
+   **一种读法**（本线程表里那枚回信孔的 token），`None` 只剩"这一条不回复"与"推者没有会话"。
 6. ~~**`client.rs:67` 注释说 `Owned(entry).owner`**~~ —— **已修（本轮）**（改为 `Reserve(entry).owner`）。
    原记录：代码调的是 `mail::reserve`
    （`PieCall::Reserve`）——`Owned` 是旧名（`:70`）。
 7. **`examine.nu` 头注称 stdin EOF 被当 Ctrl-D ⇒ shell 自退停机**，而 `Readline::Eof`
    只是 `continue`（`shell.rs:1200-1203`）；门里的自然停机实际由 `exit` 命令给出。
-8. **`NoSuchClient` 双关**（表满 + id 不认识）；`LINE_CAP`(512 字符) 与 `LINE_MAX`(24 字节)
-   不等 ⇒ 超长行静默截断；`Up`/`Down` 无操作；主线程 20/200 ms 轮询不是事件驱动。
+8. **`NoSuchClient` 双关**（表满 + id 不认识）；`LINE_CAP`(512 字符) 与 `LINE`(128 字节)
+   不等 ⇒ 超 128 字节的行按 `Eof` 回（客户端把它当 Ctrl-D ⇒ `exit`，不是"截断"）；`Up`/`Down` 无操作；主线程 20/200 ms 轮询不是事件驱动。
 9. **本域不认识自己的线号**（**实现期**，`driver.md` §12 甲）：登记时只报**设备名字**，线号由
    PLIC 驱动从设备树解出来。故 debug 档那条投递断言只核**来源与长度**，不再核"线号 == 10"——
    核它就等于在本域存第二份"我是哪条线"的账，而那正是这次改造拿掉的东西。同样的原因，
@@ -193,6 +203,11 @@ root 用 `Accord` 交给本服务，服务 `Open` 它即映射，此后 load/sto
   ④交 `mine` → 白等满 1 s 后静默降级；⑤回执丢在地上 → 三处改走该会话的回信孔；⑥Ctrl-C 不换行。
 - **观测坑**：提示符在每次输入出现**两次**（写一次 + 重绘一次），故 `scripts/quick.sh` 不用它
   计数，改数 `clock <秒>` 行。
+- **会话自检**（`session` 命令，`shell.rs` 的 `session`）：同一推者连开 **12** 条会话，逐条核
+  回执，并关掉被顶替的那一条 ⇒ `console: session opens=12 ok=12 closed=1`（门里逐字断言）。
+  牙：把"重开复用推者那一格"去掉，**实测** `ok` 从 12 变 7（表宽 8）；旧形状（开一次占两格）
+  第 5 次就没。它同时是 `Close` 的第一个调用点。探针会**顶替**门面那条会话（会话的归属是推者，
+  同一推者再开就是换掉它），故它开工前把门面那条取出关掉、收工后把最后开成的装回去。
 - **服务重启有两条判据，分在两侧**（[root.md](root.md) §5.3）：客户端侧是
   `shell: console reconnected`（会话续上了），服务侧是 `console: line <名字> ok` **恰好出现
   两次**——引导期一枚实例、重发之后又一枚（`examine.nu` 的 `checks` 项 `instances`）。后者是

@@ -64,8 +64,15 @@ pub const SERVICE: &str = "console";
 /// 会话 id 的宽度（`usize` LE）。
 pub const WORD: usize = size_of::<usize>();
 
-/// 正文里最大的一段：一次 `Write` 最多带的字节数 = 回复里一行的上界。
-pub const LINE: usize = 24;
+/// 正文里最大的一段：一次 `Write` 最多带的字节数 = 回复里一行的上界 = **128**。
+///
+/// 这个数是量出来的，不是拍的：一段字节若超过它，客户端就得把它切成**两条 `Write`**，
+/// 而两条之间可以插进**别的写者**的字节——一条 27 字节的报到就这样被劈成
+/// `…reconnect` + 别人的一句 + `ed`（实测原样字节：`shell: console reconnect` `root:
+/// console restarted\r\n` `ed`），门里那条判据因此常年发飘。故它取**与客户端门面一次
+/// flush 的上界同一个数**（`programs/src/bin/user/shell.rs` 的 `Terminal::CAP`）：
+/// 一次 flush 永远落成一条消息，谁也不插得进来。
+pub const LINE: usize = 128;
 
 /// 一块内存要多大装得下任何一条帧：`op + 一格 usize + LINE`。
 ///

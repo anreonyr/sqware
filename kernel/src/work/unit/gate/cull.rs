@@ -136,8 +136,9 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
 /// （`runtime::core::port::Port::open` 自建）⇒ 服务被打死后客户端永久挂住。
 /// 那条路已在协议层翻面（回信孔改由服务端开），本条是它成立的**机制一半**。
 ///
-/// # 实测（探针 `[z1]`/`[z2]`，本轮加、留在核心里）
+/// # 实测（探针已撤：读数在这里，代码里不留打印点）
 ///
+/// 当年那对探针（封印点 `[z1]`、唤醒点 `[z2]`）打出的读数——
 /// 封印**确实发生**，且与 `wipe` 一一对上：
 ///
 /// ```text
@@ -237,8 +238,6 @@ fn seal_owned(tid: usize, task: &Arc<Task>) -> usize {
         // **锁外**封印：`seal` 只碰 Meta 自己的锁 + 唤醒站点，不需要任务表。
         match meta {
             Some(Resource::Hole(m)) => {
-                // 探针：封印点。与 `wipe` 那笔按同一个 id 对账。
-                crate::putln!("[z1] seal hole id={}", m.id_for_probe());
                 hole::seal(&m);
                 sealed += 1;
             }

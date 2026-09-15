@@ -110,16 +110,23 @@ pub trait Duet {
 }
 
 impl Port {
-    pub fn open(entry: &HolePie) -> EnvResult<Port>;                    // Reserve(owner) + unseal + ship(WRITE, NONE)
+    pub fn open(entry: &HolePie) -> EnvResult<Port>;   // 客户端自建回信孔 + ship(WRITE, NONE)
+    pub fn dial<W: Duet>(entry: &HolePie, first: &W::Req, nonce: u64, within: usize)
+        -> EnvResult<(Port, W::Rep)>;                  // 服务端开回信孔；**首帧的答复随握手回来**
     pub fn call<W: Duet>(&self, req: &W::Req, within: usize) -> EnvResult<W::Rep>;
-    pub fn close(self) -> EnvResult<()>;                                // reply.release()；entry 不碰
+    pub fn close(self) -> EnvResult<()>;               // reply.release()；entry 不碰
 }
 ```
 
-`Duet` 的缓冲由**协议自己给**（`type Wire` + `wire()`）：稳定 Rust 里 `[u8; W::REQ]` 是
-泛型常量表达式（`generic_const_exprs`），用不了 ⇒「报文多大」这份知识只能留在实现侧。
-请求与回复**共用那一块**：报文推出去之后 `push` 已在锁外把字节搬进内核那份 staging，
-故同一个容器接着收回复即可。
+**两种开场**：`open` 是"我自己开回信孔"（一问一答的协议够用），`dial` 是"**对端**开回信孔、
+句柄随握手交回"。后者多一件事——**对端退场时那扇门会被寿命边封印**（`gate::doom`），
+等在上面的本端**当场拿到 `Dead`**；前者里服务被打死那扇门不死，本端永久挂在 `Busy` 上，
+「对端还没回」与「对端已经没了」不可区分。控制台因此走 `dial`。
+
+`Duet` 的缓冲由**协议自己给**（`type Wire` + `wire()` / `type Reply` + `reply()`）：稳定 Rust 里
+`[u8; W::REQ]` 是泛型常量表达式（`generic_const_exprs`），用不了 ⇒「报文多大」这份知识只能
+留在实现侧。**请求与回复各用一块**：长请求会把请求那块填到 `CAP` 边上，回复就再也收不进来
+（实测：一次 `Write` 断一条会话，现象是"输出少半行 + 目录查询全失败"）。
 
 **地址写在哪、写几条，是协议的事**：dispatch/doom/irq/uart 每条请求都带；控制台**只在
 `Open` 那一条**上报（服务把回信孔记进会话表，此后照表推回复），其余动词那一格必须是 0
@@ -204,7 +211,9 @@ impl Port {
 | `To` 的两半成对 | 号在错的表里查（`Channel` 的病根） | 类型：`To { peer, seed }` 私有字段，只能由 `ship` 造 |
 | 混族不可表达 | 把 `CAGE` 写进读写位 | 类型：`Access` 与 `Policy` 是两个类型 |
 | 空集不成立 | 授出一枚什么都没有的枚 | `ship` 本地拒（不发 envcall） |
-| 回信地址与来源校验成对 | 收到别人的回复而不自知 | `Port::call`（今天五处都没做） |
+| 回信地址与来源校验成对 | 收到别人的回复而不自知 | `Port::call` / `Port::dial` |
+| 回信孔的**开者是对端**时，握手回执走**本端私有的孔** | 推回请求孔 = 推进对端自己的收件箱，被它吸回去 ⇒ 客户端等满上界 | `Port::dial`（自建 + 地址槽递出）+ 服务端只推给它 |
+| 「开一条会话」只发生一次 | 开两条会话、表每开一次漏一格，第 5 次表满 | `Port::dial` 把首帧的答复一次收齐 |
 | 收尾只 `release` 一次 | 冗余的 `revoke` 失败会短路后续清理 | `Port::close`（级联已含对端副本） |
 | 回信地址只在协议说的那条上报 | 服务把不该有的地址当坏报文（控制台就是这样：`Write` 带地址 ⇒ `UnexpectedField` ⇒ **没有回复**，客户端白等满上界） | `Duet::encode`（`console::wire` 的 impl 只对 `Open` 写） |
 
@@ -233,6 +242,9 @@ impl Port {
 | 自检怎么"读回刚授出的那一枚" | **扫本任务表**（`Collect` + `Reserve`） | `Collect` 是唯一的枚举手段（`handshake::moor` 同款）；`Port::to()` 那种访问器仍不立 |
 | 生产路径上的裸 `accord` | **全部改走 `ship`**（28 处） | §3 的动机即此；`root::hand_over` 顺手泛型于 `AnyPie`——原先门铃（一枚 `Nole`）走的是 `PolePie::from_token`，那是个类型谎 |
 | 自检里的裸 `accord` | **留守**（`shell` 的 `lend`/`cascade`/`spoof`/`name`） | 它们测的是**位表本身**：`accord` 是那个原语，换成语义层就把被测对象换掉了 |
+| `dial` 的答复从哪儿来 | **随握手一起回来**（`(Port, W::Rep)`） | 首帧既是握手帧又是那条"开一条会话"的请求，服务端建会话时就把它答了；让调用方"紧接着再发一遍"是**两条会话**——实测表每开一次漏一格，第 5 次表满 |
+| 握手那一枚回执走哪条孔 | **本端为这次握手开的私有孔**（句柄经地址槽递出） | 请求孔是单槽信箱 + 两个方向的消费者：服务自己的请求循环会把回执吸回去（实测 50% 开不成）。也是这一格地址存在的唯一理由 |
+| `Port::entry_token`（比对"会话还对不对得上实例"） | **删** | 零消费者；而入口号本来也不是身份——目录的 `Connect` 每次转授**一份新副本**，那个号会因为完全无关的原因变化。会话算不算数由机制回答（回信孔被封印 ⟺ 实例没了） |
 
 ## 8 · 已知边界
 
@@ -241,8 +253,13 @@ impl Port {
 2. **`entry` 的所有权不在 `Port`**：`Port` 只借入。今天 `Service::disconnect` 释放 entry、
    `Console` 不释放——这是**策略**，不进结构。`Port::close` 失败**不阻断** entry 释放
    （今天 `channel.close(self.owner)?` 的 `?` 会一起跳过）。
-3. **五个协议的回信地址偏移不统一**（dispatch `[49..57]`、console `[8..16]`、doom `[33..41]`、
-   irq `[9..17]`、uart `[8..16]`）：本轮保留。要不要统一是协议层的事。
+3. **五个协议的回信地址偏移不统一**：本轮保留。要不要统一是协议层的事。
+   （console 那条已随本轮改版重排：`Open` 的地址槽在 `[1..9)`，其余动词没有地址槽。）
+
+3b. **`Port::open` 那五家还没有"对端没了"的判据**：`dispatch`/`doom`/`irq`/`uart` 都是一问一答，
+   失败表现为有界的 `Busy`——「对端还没回」与「对端已经没了」在那五条路上仍不可区分。
+   要不要把 `dial` 立成**唯一**的开场，是下一轮的题（控制台是唯一"开一次长期用"的协议，
+   也是唯一真的撞上这件事的）。
 4. **`irq` 是另一种形状**：它每次调用新开一枚回信孔（`crates/protocol/src/irq/client.rs` 的
    `Line::ask`），而 console/dispatch 是"开一次、长期用"。前者对"迟到回复污染"免疫。
    已按本节走 `Port`：每请求 `open`/`call`/`close` 一趟，envcall 数不变。旧版在收尾处
@@ -330,5 +347,15 @@ impl Port {
   - `nofit` —— 缓冲装不下时 `pull` 被拒、**槽一个字节都不动**（`peek` 仍报 600，换够大的
     缓冲仍取得回整条）。
 
+### 9.5 · 会话：`console: session opens=12 ok=12 closed=1`
+
+`session` 命令（`programs/src/bin/user/shell.rs`）——**同一推者连开 12 条会话，逐条核回执**，
+并关掉被顶替的那一条。三个数各有各的牙：
+
+| 读数 | 断言 | 牙（反向实跑） |
+|---|---|---|
+| `ok=12` | 「开一条会话 = 一次往返」且**表不随重开增长**（重开即换推者那一格） | 把"重开复用那一格"去掉 ⇒ 实测 `ok` 从 12 变 **7**（表宽 8）；旧形状（开一次占两格）第 5 次就没 |
+| `closed=1` | `Close` 往返通、且**先取孔再清槽** | 清槽后再取孔 ⇒ 那句 `Ok` 丢掉、客户端等满上界 ⇒ `closed=0`（自检第一次跑就是 0） |
+
 **实跑**（本轮落地后）：`EXAMINE_HARDEN=1 nu scripts/examine.nu` → **5/5**——默认档 3 轮
-（14 步 / 21 marker）、harden 档（18 步 / 26）、框架档（18 步 / 27），三档都含上面三条读数。
+（16 步 / 22 marker）、harden 档（20 步 / 27）、框架档（20 步 / 28），三档都含上面四条读数。

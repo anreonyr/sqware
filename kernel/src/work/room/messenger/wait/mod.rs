@@ -296,12 +296,7 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
         // 拒绝了后来的操作，投信方不存在了）。
         sites.remove(&key).and_then(|site| site.head)
     };
-    // 探针：唤醒点。`woke` = 这一刻键上真正被放行的人数（0 = 封印时没人等）。
-    let woke = rise(Unchain { cur: chain });
-    if let WakeKey::Hole { hole, dir } = key {
-        crate::putln!("[z2] wipe hole id={} dir={:?} woke={}", hole, dir, woke);
-    }
-    woke
+    rise(Unchain { cur: chain })
 }
 /// 空间退役：删掉该空间名下的**全部**空间键站点，放行它们的等待者。返回唤醒数。
 ///
