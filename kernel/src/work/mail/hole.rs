@@ -110,6 +110,11 @@ impl HoleMeta {
         Arc::downgrade(&self.life)
     }
 
+    /// 本 hole 的全局资源 id（探针用：让封印点与唤醒点对上同一个键）。
+    pub(crate) fn id_for_probe(&self) -> usize {
+        self.id.0
+    }
+
     /// 资源开辟者（见字段 `owner`）。
     pub(crate) fn owner(&self) -> usize {
         self.owner

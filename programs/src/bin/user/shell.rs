@@ -50,7 +50,7 @@ use protocol::dispatch::{CAP, Name, Query, Reply};
 
 use protocol::console::{
     self,
-    client::{Console, Readline},
+    client::{Console, Readline, Session},
 };
 use protocol::dispatch::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use protocol::doom::{self, Ack, Doom};
@@ -151,27 +151,12 @@ static TERM: Term = Term(Lock::new(Terminal {
     buf: RefCell::new(String::new()),
 }));
 
-/// **当前这条会话是拿哪一枚入口建起来的**（0 = 还没建过）。
+/// 报到那句读数的正文（会话在 [`with_session`] 里续上时打）。
 ///
-/// 判"断了又续上"的**唯一可靠事实**：服务重启之后，它在目录里登记的是**另一枚入口**
-/// （新实例自建自己的请求孔）。同一个 token 值不会跨实例复用（`next_pie_token` 单调）。
-///
-/// 为什么不能靠"客户端发现断开"：续上会话的路**不止一条**——`readline` 发现断开走
-/// [`reconnect`]，而 [`flush`] 写不出去时是静默丢掉、下一次取会话时重建；更常见的是
-/// **那一拍正好没断**（服务重启得比客户端的下一次请求还快，实测门里就是这么过的：
-/// `[q2]`/`[q4]` 全 0、`[s1] session open entry=191 ok=false`，而随后的命令照常работает）。
-/// 谁先发现是竞态，而判据只认其中一条路 ⇒ 门随机红。
-///
-/// 改成按事实判：**入口变了就是换了实例**，那一刻报一次。`SESSION_ENTRY` 跨
-/// `drop_session` 保留（正是要拿它跟新入口比），只有建成会话时才更新。
-static SESSION_ENTRY: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
-
-/// "入口换过，这一句还没报"。由 [`with_session`] 记、由 [`Term::readline`] 销。
-///
-/// 分开的理由见 [`with_session`] 里那段注：**建会话的路上不能写输出**。
-static REPORT_REJOIN: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+/// **判断归 `Console`**（协议客户端比"手里这枚入口 vs 服务此刻登记的那枚"，
+/// 见 `protocol::console::client::Console::valid`）——本域只做两件它做不了的事：
+/// 从目录取入口、把结果说出来。
+const REJOINED: &str = "shell: console reconnected";
 
 /// 丢掉这一份会话（以及缓存的控制台入口）——它死了。
 ///
@@ -180,7 +165,6 @@ static REPORT_REJOIN: core::sync::atomic::AtomicBool =
 fn drop_session() {
     TERM.0.with(|t| t.session.set(None));
     CONSOLE_ENTRY.store(0, Ordering::Relaxed);
-    // `SESSION_ENTRY` **故意不清**：下一条会话建起来时要拿它比"入口换没换"。
 }
 
 /// 重连一次控制台：**有界重试**（`CONSOLE_RETRY` × `CONSOLE_RETRY_MS`）。
@@ -207,30 +191,32 @@ fn reconnect() -> bool {
 /// 与 [`Term::readline`] 各自的处置。
 fn with_session<T>(f: impl FnOnce(&Console) -> T) -> Option<T> {
     let mut session = TERM.0.with(|t| t.session.take());
+    let mut renewed = false;
     if session.is_none() {
         let token = console_entry()?;
         session = Console::open(HolePie::from_token(token)).ok();
-        if session.is_some() {
-            // 报到挂在**会话建立**这一处，判据是**入口号变了**（见 [`SESSION_ENTRY`]）。
-            // 服务侧那一半因此也被这一句证到：新入口只可能由 root 重发出来的新实例
-            // 登记（`register` 写的是它自己开的请求孔）。
-            let was = SESSION_ENTRY.swap(token, Ordering::Relaxed);
-            if was != 0 && was != token {
-                // **只记账，不在这里写。** 这里正在"建会话"这条路上，而写一句话要走
-                // `flush` → `with_session` —— 那条路此刻**必然失败**：本函数已经
-                // `console_entry()` 过，再问一次就是再 `Connect` 一次，而目录在新实例
-                // 登记之前给不出入口 ⇒ 闭包不执行、`with_session` 返 `None`、那句话
-                // 被原样丢掉。实测（读数）：`[f0] flush enter len=27` 进了、闭包里的
-                // `[f2] in session` 没打、下一条输出直接是提示符 ⇒ 屏幕上少一行。
-                //
-                // 报到交给**下一次 `readline`**：那时本函数已经返回、会话就在手里，
-                // 而 `readline` 无论如何都要先发提示符（同一趟冲出去，不多一次往返）。
-                REPORT_REJOIN.store(true, Ordering::Relaxed);
-            }
+    } else if let Some(c) = session.as_mut() {
+        // **会话还对不对得上当前实例**——问协议客户端，不在这里比对 token
+        // （那件事连同"换了怎么续"一起归 `Console::valid`，本域只提供入口）。
+        // 对不上就地重建，返 `Renewed`。
+        match console_entry().map(|token| c.valid(HolePie::from_token(token))) {
+            Some(Ok(Session::Renewed)) => renewed = true,
+            Some(Ok(Session::Same)) => {}
+            // 取不到入口 / 续接失败：这一份作废，由调用方（`readline` → `reconnect`）
+            // 按"会话没了"处置。
+            _ => session = None,
         }
     }
-    let out = session.as_ref().map(f);
+    // 会话先放回，再报——报要经 `flush` 写控制台，而 `flush` 走 [`with_session`]，
+    // 此刻缓存里必须已经是这条活会话（否则那句话会被原样丢掉，实测踩过）。
     TERM.0.with(|t| t.session.set(session));
+    if renewed {
+        TERM.writeline(REJOINED);
+    }
+    // 借出 → 跑 → 放回（与函数头注里那条次序同款：临界区里只有内存操作）。
+    let held = TERM.0.with(|t| t.session.take());
+    let out = held.as_ref().map(f);
+    TERM.0.with(|t| t.session.set(held));
     out
 }
 
@@ -278,31 +264,6 @@ impl Term {
         self.write(&format!("{s}\n"));
     }
 
-    /// 把"断了又续上"那一句报出去（账在才写、写完即销）。
-    ///
-    /// **为什么是"销账"而不是"在发现处写"**：发现发生在 [`with_session`] 建会话那条路
-    /// 上，而那条路上写输出必然失败（见该函数里的注：本函数已经 `console_entry()` 过，
-    /// 写一句话又要走 `flush` → `with_session` → 再问一次目录，而目录在新实例登记之前
-    /// 给不出入口 ⇒ 闭包不执行、那句话被丢掉）。故发现只记账。
-    ///
-    /// 写到**任何** "会话确实在手里" 的地方：`readline` 的入口（提示符之前）与**出口**
-    /// （读完一行之后）。两个点都要 —— 实测门里有一趟，唯一的一次重建发生在**最后一次
-    /// `readline` 之后**（读数 `[n2] readline pending=false` 后紧跟 `[n1] rejoin queued`），
-    /// 只挂入口就漏了，门随即超时。出口那次是兜底：代价是那句话可能晚一行出现，语义不变。
-    fn report_rejoin(&self) {
-        if !REPORT_REJOIN.load(Ordering::Relaxed) {
-            return;
-        }
-        self.writeline("shell: console reconnected");
-        // **写完才销账**。别用 `swap`：本函数这次 `writeline` 本身就要走
-        // `write` → `flush` → `with_session`，而**它自己就可能是在建会话**（实测
-        // `[n0] session open entry=166 was=127` 就发生在这一句里）。账若在写之前清掉，
-        // 建会话那条路上再 `console_entry()` 一次就是再 `Connect` 一次、目录给不出入口、
-        // 闭包不执行 ⇒ 这句话照旧丢掉（与第一版踩的是同一个坑的另一面）。
-        // 写在前面：写成功即销账；写失败（会话又断了）就留着，下一次再报。
-        REPORT_REJOIN.store(false, Ordering::Relaxed);
-    }
-
     /// 清屏 + 光标回 home（`ESC[2J` + `ESC[H`）。
     fn clear(&self) {
         self.write("\x1b[2J\x1b[H");
@@ -326,7 +287,6 @@ impl Term {
         flush(self);
         // prompt 交给客户端：它自己会先把它同步写出去（`Write` 的 Ok 即"已落屏"），
         // 再把长度与内容带进 `ReadLine` 请求——服务侧重绘要用它。
-        self.report_rejoin();
         match with_session(|c| c.readline(prompt)) {
             Some(Ok(r)) => r,
             // 会话断了：**丢掉它、重连一次**——服务重启之后会话还能续上，靠的就是这一半
@@ -1797,8 +1757,6 @@ extern "C" fn main() {
                 continue;
             }
         };
-        // 出口再销一次账：重建可能就发生在上一次 `readline` 之后（见 [`report_rejoin`]）。
-        term.report_rejoin();
         term.reset();
         let args = split(&line);
         if args.is_empty() {

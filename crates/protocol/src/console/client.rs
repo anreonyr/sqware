@@ -77,6 +77,15 @@ pub enum Readline {
     Interrupt,
 }
 
+/// 会话与对端实例的关系（[`Console::valid`] 的答案）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Session {
+    /// 还是当初那个实例。
+    Same,
+    /// **换了实例、已就地续上**：调用方据此报告一次（"断了又续上"那句话）。
+    Renewed,
+}
+
 /// 控制台会话：一次往返的机制（[`Port`]）+ 会话 id。
 ///
 /// `entry` 由**父域经启动期握手配给**（与目录入口同一套 `Pier`），之后一切走本会话。
@@ -84,6 +93,13 @@ pub struct Console {
     port: Port,
     /// 会话 id（0 = 未开成）。
     client: usize,
+    /// **本会话是从哪一枚入口建起来的**（我表里的 token）。
+    ///
+    /// 它是"这条会话属于哪个服务实例"的**唯一凭据**：服务换了实例，它登记回目录的入口
+    /// 就是另一枚（新实例自建自己的请求孔，token 单调不复用）。故 [`Console::valid`]
+    /// 只需比这一个数，不必靠"某次请求失败"去猜——后者取决于时序：服务重启得比客户端
+    /// 下一次请求还快时，客户端**一次都不会失败**，会话其实已经换了主人而它不知道。
+    entry: usize,
 }
 
 impl Console {
@@ -109,8 +125,13 @@ impl Console {
         // 认领号：当场生成（本进程每开一次会话一个），同一个值同时进首帧与 `dial`
         // ——服务端会把它连同回信孔句柄一起推回来，见 [`Port::dial`]。
         let nonce = next_nonce();
+        let at = entry.token();
         let port = Port::dial::<Query>(&entry, &Query::open(nonce), nonce, HANDSHAKE_TIMEOUT_MS)?;
-        let mut console = Console { port, client: 0 };
+        let mut console = Console {
+            port,
+            client: 0,
+            entry: at,
+        };
         // 首帧已经推过了，这一条**不再**带认领号：握手那一步已完成。
         match console.call(&Query::open(0))? {
             Reply::Ok { client } => {
@@ -124,6 +145,40 @@ impl Console {
     /// 本会话 id（0 = 未开成）。
     pub fn client(&self) -> usize {
         self.client
+    }
+
+    /// **这条会话还算不算数**：对端还是不是当初那个实例；不是就地重建。
+    ///
+    /// # 为什么这件事必须由会话自己回答
+    ///
+    /// "服务换了实例"在会话上**不留痕迹**：入口门闩是同一个号（客户端自始至终没换过手里
+    /// 的东西），回信孔也照旧可用——服务退场时旧的那枚被封印，但新实例走 `Open` 时又给
+    /// 客户端开了一枚新的，客户端照样收到回执。于是它会以为一切正常，直到某一次请求真的
+    /// 失败；而"服务重启得比下一次请求还快"时，**一次失败都不会有**。
+    ///
+    /// 实测（门里读数）：`kill console` 之后命令照常跑、提示符照常重现、`readline`
+    /// 一次都没断过 —— 而判据要的是客户端报告"断了又续上"。
+    ///
+    /// 故判据改成**比事实**：手里这枚入口 vs 服务此刻登记在目录里的那一枚。对不上就是
+    /// 换了实例；此时就地重建（重跑一遍 [`Console::open`] 的三步）。
+    ///
+    /// `entry` = **本端此刻从目录取到的入口**（由调用方注入：本 crate 不该自己去找目录，
+    /// 那是域的策略，见 `programs/src/bin/user/shell.rs` 的 `console_entry`）。
+    ///
+    /// # Errors
+    /// - `Denied` — 重建失败（目录没登记 / 握手不成功）。**原会话已作废**：调用方当作
+    ///   "这条会话没了"处理（本类型其余方法此后都不可信）。
+    pub fn valid(&mut self, entry: HolePie) -> EnvResult<Session> {
+        if entry.token() == self.entry {
+            return Ok(Session::Same);
+        }
+        // 换了实例：重建。旧 `Port` 就地丢掉——它那两枚门闩是句柄值（无 `Drop`），
+        // 随本域退出由内核回收（与 `close` 的纪律同款，见文件头）。
+        let fresh = Console::open(entry)?;
+        self.port = fresh.port;
+        self.client = fresh.client;
+        self.entry = fresh.entry;
+        Ok(Session::Renewed)
     }
 
     /// 一次往返：请求推请求孔、回复从自己的回信孔**有界**收、**核来源**。

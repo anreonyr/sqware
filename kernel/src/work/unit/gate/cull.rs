@@ -222,6 +222,8 @@ fn seal_owned(tid: usize, task: &Arc<Task>) -> usize {
         // **锁外**封印：`seal` 只碰 Meta 自己的锁 + 唤醒站点，不需要任务表。
         match meta {
             Some(Resource::Hole(m)) => {
+                // 探针：封印点。与 `wipe` 那笔按同一个 id 对账。
+                crate::putln!("[z1] seal hole id={}", m.id_for_probe());
                 hole::seal(&m);
                 sealed += 1;
             }
