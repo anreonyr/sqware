@@ -211,7 +211,7 @@ pub fn moor() -> EnvResult<HolePie> {
 // 理解必须一致——它就是同一个号）。
 
 /// 服务侧：为**这条会话的对端**开一枚回信孔，把 `READ | WRITE` 副本授给它，并把这枚
-/// 句柄（连同 `nonce`）经 `entry` 交回去。返**我这侧**那枚。
+/// 句柄（连同 `nonce`）经 `control` 交回去。返**我这侧**那枚。
 ///
 /// # 为什么是 `READ | WRITE`
 ///
@@ -221,32 +221,39 @@ pub fn moor() -> EnvResult<HolePie> {
 /// `[r9] … PULL ERR code=-1`。旧形状里"只授 W"不算错——那时客户端自己开着这枚孔、
 /// 手里那份是满权限，授出去那份只被服务端用来推。写的是同一行字，读法随"谁开孔"翻面。
 ///
-/// `entry` = 对端请求进来的那条孔（**本服务自己开的那扇门**）——句柄顺着它回去，
-/// 故客户端不必为"送这个号"再自建第二条孔。
+/// `control` = 对端**为这次握手自己开的那枚私有孔**（枚号随 `Open` 帧的地址槽递过来，
+/// 见 `port::Port::dial`）——回执只走它。
+///
+/// **它一度是"对端请求进来的那条孔"**（本服务自己开的那扇门），而那条路是错的：请求孔是
+/// 一枚单槽信箱、本服务的请求循环正在上面 `pull`，回执推进去常被**自己**吸回来当成一条
+/// 坏请求拒掉，客户端等满上界（实测：服务建完会话紧接着 `[g3] not yours from=<服务自己>`
+/// 一条，同一次会话照 50% 的概率开不成）。私有孔把这件事变成一问一答。
 ///
 /// # Errors
-/// - `Denied` — `ship` 授不出去（`peer` 不是个活任务）或 `entry` 推不动（对端已走）
-pub fn grant(entry: &HolePie, peer: env::TaskId, nonce: u64) -> EnvResult<HolePie> {
+/// - `Denied` — `ship` 授不出去（`peer` 不是个活任务）或 `control` 推不动（对端已走）
+pub fn grant(control: &HolePie, peer: env::TaskId, nonce: u64) -> EnvResult<HolePie> {
     let reply = HolePie::unseal()?;
     let to = ship(&reply, peer, Access::READ | Access::WRITE, Policy::NONE)?;
     let mut buf = [0u8; GRANT_LEN];
     buf[0] = TAG_GRANT;
     buf[1..9].copy_from_slice(&nonce.to_le_bytes());
     buf[9..].copy_from_slice(&to.seed().get().to_le_bytes());
-    entry.push(&buf)?;
+    control.push(&buf)?;
     Ok(reply)
 }
 
-/// 客户端：在**入口孔**上收服务端交回的那枚回信孔句柄，**并认领号**。
+/// 客户端：在**自己那枚握手孔**上收服务端交回的回信孔句柄，**并认领号**。
 ///
 /// # 为什么要有认领号（实测踩出来的）
 ///
-/// 这条孔是**双向**的：客户端把请求推进去，服务端把答复推回来。于是"下一帧就是我的
-/// 答复"是个**假前提**——入口孔上还会有别的帧（服务端自己的回复、客户端的下一条请求），
-/// 而 `Close` 那一形状正好也是 9 字节、首字节也不等于 [`TAG_GRANT`]……实测到的更坏：
-/// 一条**裸 `Close`**（`n=9`、`b0=3`）落在同一个槽里，`recv` 一看形状不符就答 `Denied`，
-/// 于是**整条会话当场开不成**（`Console::open` 返回 `-1`，shell 启动即退场 ⇒ 级联停机）。
-/// 这个窗口是**时序相关**的：同一份产物五次启动里中招两三次。
+/// 这条孔上还会有别的帧吗？**现在不会了**（它是本端为这次握手私有的，只有服务端往里推一
+/// 条），而当初会：它一度就是请求孔——本端往里推请求、服务端把答复推回来，"下一帧就是我
+/// 的答复"因此是个**假前提**，实测一条**裸 `Close`**（`n=9`、`b0=3`）落在同一个槽里，
+/// `recv` 一看形状不符就答 `Denied`，**整条会话当场开不成**（`Console::open` 返回 `-1`，
+/// shell 启动即退场 ⇒ 级联停机），同一份产物五次启动里中招两三次。
+///
+/// 认领号与私有孔是**两道**保险，都留着：前者让"哪一枚是我的"不靠时序，后者让"这条路上
+/// 只有我和对端"不靠运气。
 ///
 /// 故本函数**不信任下一帧**：它逐帧读到一枚 tag 与 `nonce` 都对得上的才认领，别的一律
 /// 丢掉。`nonce` 由客户端在开口那一帧里给出（`Query::Open` 带它），服务端原样回——
@@ -258,8 +265,8 @@ pub fn grant(entry: &HolePie, peer: env::TaskId, nonce: u64) -> EnvResult<HolePi
 /// 变成一次永久挂起——故 `within` 是调用方的义务（见 `console::client::open`）。
 ///
 /// # Errors
-/// - `Denied` — 界内没等到、入口孔已死
-pub fn borrow(entry: &HolePie, nonce: u64, within: usize) -> EnvResult<HolePie> {
+/// - `Denied` — 界内没等到、握手孔已死
+pub fn borrow(control: &HolePie, nonce: u64, within: usize) -> EnvResult<HolePie> {
     let deadline = crate::env::chrono::clock()?
         .0
         .saturating_add((within as u64).div_ceil(1000));
@@ -271,7 +278,7 @@ pub fn borrow(entry: &HolePie, nonce: u64, within: usize) -> EnvResult<HolePie> 
         let remain_s = (deadline - now).max(1);
         let mut buf = [0u8; GRANT_LEN];
         // 逐帧读：**短帧也照读**（`LEN` 那一形状的帧只有 9 字节），不是 `Grant` 就丢。
-        let Ok(n) = entry.pull_timeout(&mut buf, (remain_s * 1000) as usize) else {
+        let Ok(n) = control.pull_timeout(&mut buf, (remain_s * 1000) as usize) else {
             return Err(denied());
         };
         let Some(msg) = buf.get(..n) else { continue };
