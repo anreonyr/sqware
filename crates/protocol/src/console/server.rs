@@ -246,7 +246,7 @@ impl State {
         match Query::decode(msg) {
             // 认领号在地址槽之后那一格（`Open` 没有 client，那一格正好给它用）。
             Ok(Query::Open { nonce }) => self.open(from, word(msg, ADDRESS_AT), nonce, entry),
-            Ok(query) => self.handle(query, msg),
+            Ok(query) => self.handle(from, query, msg),
             Err(_) => Outcome::deny(from),
         }
     }
@@ -260,13 +260,13 @@ impl State {
 
     /// 正文那一段：`Query::decode` 只认出"哪个动词、哪个会话"，字节本身按同一个偏移
     /// 就地取——**长度由帧长给**，故这里没有第二把尺子。
-    fn handle(&mut self, query: Query, msg: &[u8]) -> Outcome {
+    fn handle(&mut self, from: usize, query: Query, msg: &[u8]) -> Outcome {
         match query {
             // `Open` 由 [`State::serve`] 直接分派（它要多两个参数），到不了这里。
             Query::Open { .. } => Outcome::deny(0),
-            Query::Write { client, .. } => self.write(client, Query::text(msg)),
+            Query::Write { client, .. } => self.write(from, client, Query::text(msg)),
             Query::ReadLine { client, .. } => self.readline(client, Query::text(msg)),
-            Query::Close { client } => self.close(client),
+            Query::Close { client } => self.close(from, client),
         }
     }
 
@@ -325,11 +325,17 @@ impl State {
         }
     }
 
-    fn close(&mut self, client: usize) -> Outcome {
+    /// 关一条会话。`from` = 内核盖章的推者。
+    ///
+    /// **拒一条请求仍欠对方一句**（与 [`Outcome::deny`] 同一条规矩）：本支正在"问不出
+    /// 会话"的场合，而该会话的回信孔正是问不出来的那一样 ⇒ 回执只能走 `from`。原来这里
+    /// 是 `None`，于是那句话永远送不出去，客户端只能等到超时——一次可解释的拒绝因此变成
+    /// 一次无解释的挂起（实测：客户端把它当成"对端换了实例"）。
+    fn close(&mut self, from: usize, client: usize) -> Outcome {
         let Some(i) = self.index(client) else {
             return Outcome {
                 reply: Some(Reply::NoSuchClient),
-                to_client: None,
+                to_client: if from == 0 { None } else { Some(from) },
             };
         };
         self.slots[i] = None;
@@ -347,13 +353,15 @@ impl State {
     /// 字节只落进**出帧槽**（[`State::take_out`]），落屏由请求线程做——本层不认识设备。
     ///
     /// 回执即**同步点**：客户端收到 Ok 才知道这段已落屏。
-    fn write(&mut self, client: usize, text: &[u8]) -> Outcome {
+    /// 写一批字节。`from` = 内核盖章的推者（理由同 [`State::close`]：问不出会话时
+    /// 只有它能把那句拒绝送回去）。
+    fn write(&mut self, from: usize, client: usize, text: &[u8]) -> Outcome {
         if self.index(client).is_none() {
-            // 回执走**该会话的回信孔**——它正是"这个 id 不认识"的原因，故无处可推。
+            // 回执走**推者**：这个 id 不认识时，该会话的回信孔正是问不出来的那一样。
             // 这一支只在客户端用错 id 时出现（排查中真实撞到过）。
             return Outcome {
                 reply: Some(Reply::NoSuchClient),
-                to_client: None,
+                to_client: if from == 0 { None } else { Some(from) },
             };
         }
         match core::str::from_utf8(text) {
