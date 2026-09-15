@@ -182,10 +182,9 @@ fn unseal_hole(frame: &mut TrapContext) -> Outcome {
 /// ——这正是"无数据面"的含义。
 fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
-        // **铸币权收在 S 态**：不然任何 U 域 `UnsealNole` 一枚就给自己授了建域权，
-        // 能力模型立刻自证。这条与 `Build` 的 S 态兜底是**同一条政策**的两端
-        // ——"谁可以铸"与"谁可以用"都由 S 态划界，而"铸出来的那枚能转授给谁"由
-        // 能力代数回答（accord/narrow/revoke）。
+        // **铸币权收在 S 态**：这是一条**政策**，不是能力代数的推论——铃靠 `Accord`
+        // 从父域流下去，不靠子域自铸。铸出来的那枚能转授给谁，仍由能力代数回答
+        // （accord/narrow/revoke）。要加严或放开，动的就是这一行。
         if !ident.team.space.kind().is_supervisor() {
             return Err(GateError::Denied);
         }

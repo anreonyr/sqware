@@ -22,7 +22,6 @@
 //   accord.rs  — 转授 / 交出给其他 Task（写派生边 + 写锚）+ `clear_heir`
 //   narrow.rs  — 就地单调收窄本 pie 权限（`CAGE` 不可撤）
 //   cull.rs    — 级联撤销（cull）+ 退出钩子（doom）
-//   right.rs   — **存在权**的判定与铸造（`Nole` 载体；建域权是第一位消费者）
 //   revoke.rs  — 撤销授与他人的副本（含全部后代）
 //   release.rs — 自释自己持有的一份（含全部后代）
 //
@@ -35,7 +34,6 @@ mod narrow;
 mod pie;
 mod release;
 mod revoke;
-mod right;
 mod snap;
 
 pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, new_pie};
@@ -45,5 +43,4 @@ pub(crate) use cull::{cull, doom};
 pub(crate) use narrow::narrow;
 pub(crate) use release::release;
 pub(crate) use revoke::revoke;
-pub(crate) use right::holds_build_right;
 pub(crate) use snap::{install, snap, vestor};

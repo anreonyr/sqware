@@ -15,7 +15,7 @@ const ROOT_NAME: &str = "root";
 const INITRD_BINS: &[(&str, &str, u32)] = &[
     (ROOT_NAME, "prog-root", KIND_SUPERVISOR),
     // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
-    // 不需要"建域 / 铸建域权"那两道 S 态门。
+    // 够不着建域那道 S 态门。
     ("echo", "prog-echo", KIND_USER),
 ];
 

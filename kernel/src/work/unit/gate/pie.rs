@@ -118,7 +118,7 @@ pub enum AnyPie {
     Hole(Pie<HoleMeta>),
     Pole(Pie<PoleMeta>),
     /// 无数据面的权柄载体（见 `work::mail::nole`）：只有身份与存活，
-    /// 故它是"存在权"的载体——资源权需要资源，存在权不需要。
+    /// 故它承载**无载荷通信**（门铃）——消息要走 Hole，页要走 Pole。
     Nole(Pie<crate::work::mail::nole::NoleMeta>),
 }
 

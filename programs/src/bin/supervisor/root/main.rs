@@ -5,13 +5,12 @@
 //!
 //! 这是**清理后的最小装配**：系统里只有一个子域（`echo`），而且它启动时
 //! **什么都不用配**——`echo` 走 `env` 的调试面，不依赖服务、不依赖设备、不依赖别的域。
-//! 于是本域只剩四件事：
+//! 于是本域只剩三件事：
 //!
 //! ```text
 //! 1  启动参数 → 清单视图（boot 只读借映的 initrd 区）→ 找到 echo
-//! 2  解封建域权（`UnsealNole` 有 S 态门，故只有 root 持有）
-//! 3  Build + Spawn + Hatch（Spawn 产的是**未放行**的引导线程）
-//! 4  等它退场 → 本域退出 ⇒ doom 级联 ⇒ 全部回收 ⇒ 自然停机（srst）
+//! 2  Build + Spawn + Hatch（Spawn 产的是**未放行**的引导线程）
+//! 3  等它退场 → 本域退出 ⇒ doom 级联 ⇒ 全部回收 ⇒ 自然停机（srst）
 //! ```
 //!
 //! **退出即关机**，故门的两条硬判据（自行退出 + 无 panic）照旧成立，不需要外接 timeout。
@@ -27,7 +26,6 @@ extern crate alloc;
 extern crate programs;
 
 use env::TaskId;
-use runtime::env::mail::NolePie;
 use runtime::env::room::exit_with;
 use runtime::env::task as utask;
 
@@ -40,10 +38,9 @@ const ECHO: &str = "echo";
 const E_ARGS: usize = 1;
 const E_MANIFEST: usize = 2;
 const E_PROGRAM: usize = 3;
-const E_BUILD_RIGHT: usize = 4;
-const E_BUILD: usize = 5;
-const E_SPAWN: usize = 6;
-const E_HATCH: usize = 7;
+const E_BUILD: usize = 4;
+const E_SPAWN: usize = 5;
+const E_HATCH: usize = 6;
 const E_EXIT: usize = 0;
 
 #[unsafe(no_mangle)]
@@ -62,13 +59,8 @@ extern "C" fn main() -> ! {
         exit_with(E_PROGRAM);
     };
 
-    // 2. 建域权：本域是唯一持有者，此后一直用它。
-    let Ok(build) = NolePie::unseal() else {
-        exit_with(E_BUILD_RIGHT);
-    };
-
-    // 3. 装域 → 产引导线程 → 放行。
-    let Ok(team) = utask::build(program.elf, program.kind, program.name, &build) else {
+    // 2. 装域 → 产引导线程 → 放行。（建域权 = S 态，本域是 supervisor，没有别的门。）
+    let Ok(team) = utask::build(program.elf, program.kind, program.name) else {
         exit_with(E_BUILD);
     };
     let Ok(child) = utask::spawn(team, 0, &[], 0) else {
@@ -78,7 +70,7 @@ extern "C" fn main() -> ! {
         exit_with(E_HATCH);
     }
 
-    // 4. 等它走。本域退出 ⇒ 级联扑杀 ⇒ 全部任务回收 ⇒ 停机。
+    // 3. 等它走。本域退出 ⇒ 级联扑杀 ⇒ 全部任务回收 ⇒ 停机。
     join_done(child);
     exit_with(E_EXIT)
 }

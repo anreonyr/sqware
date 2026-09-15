@@ -32,7 +32,7 @@ use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff, WakeKey, park, wait, wake};
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::gate::{self, GateError, Permission};
+use crate::work::unit::gate::{GateError, Permission};
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
@@ -433,18 +433,11 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             kind,
             name,
             name_len,
-            build,
         }) => {
-            // 门一：**建域权**——调用方自己表里必须有一枚活着的 `Nole`（存在权的载体）。
-            // 按 token 在**调用方表里**找，故 token 不自证、借来的 token 无效。
-            let holds = current()
-                .running_task()
-                .is_some_and(|me| gate::holds_build_right(&me, build.get()));
-            if !holds {
-                return ret_err(frame, GateError::Denied);
-            }
-            // 门二：S 态兜底（理由见 `fid.rs` 该 variant 的注释：能力管"谁有权"，
-            // S 态管"血缘树能不能伸进沙箱外"）。
+            // 门：**建域权就是 S 态**（理由见 `fid.rs` 该 variant 的注释）。
+            // 能力面不为建域背书——曾有一道"存在权"门收一枚 `Nole`，而 Nole 自铸
+            // 无代价，那道门与本判断等价。删掉它不改变行为，只是不再假装能力管着
+            // 建域，也不再让一枚铃顺带成为建域资格。
             if !ident.team.space.kind().is_supervisor() {
                 return ret_err(frame, GateError::Denied);
             }

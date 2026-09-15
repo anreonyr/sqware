@@ -28,27 +28,20 @@ pub fn args() -> &'static [usize] {
 
 /// 装域：镜像字节 + 特权级 + 名字 → 新域（Space + Team，**无线程**）。
 ///
-/// # 两道门（都要过）
+/// # 门
 ///
-/// 1. `build` = **建域权**：调用方自己表里一枚活着的 `Nole`（`NolePie`，见
-///    [`crate::env::mail::NolePie`]）。典型形态是启动时解封一枚、此后一直用；
-///    它也可经 `Accord` 转授给别人——权威因此可审计、可撤销。
-/// 2. 调用方仍须是 S 态（血缘树不进沙箱外，理由见 `env::fid` 该 variant）。
+/// **建域权就是 S 态**——调用方须是 supervisor 域，没有别的门。能力面不为建域背书：
+/// 早先那道"存在权"门收一枚 `Nole`，而 `UnsealNole` 自铸无代价，与 S 态判断等价，
+/// 已删（理由见 `env::fid` 该 variant）。
 ///
 /// 名字 ≤ 31 字节。失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（门没过）。
-pub fn build(
-    elf: &[u8],
-    kind: ProgramKind,
-    name: &str,
-    build: &crate::env::mail::NolePie,
-) -> EnvResult<TeamId> {
+pub fn build(elf: &[u8], kind: ProgramKind, name: &str) -> EnvResult<TeamId> {
     let r = UnitCall::Build {
         elf: VirtAddr::new(elf.as_ptr() as usize),
         len: elf.len(),
         kind,
         name: VirtAddr::new(name.as_ptr() as usize),
         name_len: name.len(),
-        build: env::PieToken::new(build.token()),
     }
     .call()?;
     match r {

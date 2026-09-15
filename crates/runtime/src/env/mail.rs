@@ -47,8 +47,8 @@ pub fn unseal_pole(size: usize) -> EnvResult<usize> {
 
 /// 解封 Nole（**无数据面**的权柄载体）：造一枚只有身份与存活的许可载体。
 ///
-/// **无参数**——没有 mtu、没有字节数。它承载**存在权**（"你能不能做某件事"），
-/// 与资源权（"你对这份资源能做什么"）正交。
+/// **无参数**——没有 mtu、没有字节数。它承载**无载荷通信**（门铃，见
+/// [`crate::core::bell`]），与资源权（"你对这份资源能做什么"）正交。
 pub fn unseal_nole() -> EnvResult<usize> {
     let r = PieCall::UnsealNole.call()?;
     match r {
