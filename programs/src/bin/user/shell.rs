@@ -315,6 +315,54 @@ impl Term {
     }
 }
 
+/// 会话自检（`session` 命令）：**同一推者连开 12 条会话，条条开得成**。
+///
+/// 读数 `ok` 的牙在"**开一条会话 = 一次往返**"上：首帧既是握手帧又是开门请求，客户端若
+/// 回过味来又发一遍（旧版就是这样），服务端会为它再建一条会话、并把第二遍的回执推给一个
+/// 按己方表解释的号（永远收不到）⇒ 表每开一次漏一格（旧读数 `ok=4`，表宽 8）。
+///
+/// `closed` 是同一趟的第二个读数：`Close` 在全仓**零调用点**（`docs/console.md` §9.3），
+/// 这是它第一个消费者。
+///
+/// # 它为什么**顶替**门面手里那条会话
+///
+/// 会话的归属是**推者**（内核在每一次 `Pull` 上盖的章），故同一个推者再开一次不是"第二条
+/// 会话"，是**这条会话换了一条**。本命令因此在开工前把门面那条取出来（顺手关掉——那正是
+/// `closed` 那一格）、收工后把最后开成的装回去：本命令之后 shell 用的就是新那条。
+///
+/// 不另起子任务：门闩是 per-task 的，而 `Connect` 授下的入口副本**不带 `VEST`**，本任务
+/// 授不出一份给子任务（踩过）。
+fn session(term: &Term) {
+    /// 连开几次。8 是服务侧表宽（`MAX_CLIENTS`）；取 12 是让"每开一次漏一格"那条缺陷在
+    /// 表宽之外照样现形，而不是刚好卡在边界上。
+    const ROUNDS: usize = 12;
+
+    let Some(token) = console_entry() else {
+        term.writeline("console: session probe: no console entry");
+        return;
+    };
+    // 锁内取、锁外关：临界区里只有内存操作（与 `with_session` 同一条次序）。
+    let old = TERM.0.with(|t| t.session.take());
+    let closed = old.is_some_and(|c| c.close().is_ok()) as usize;
+
+    let mut ok = 0usize;
+    let mut last = None;
+    for _ in 0..ROUNDS {
+        match Console::open(HolePie::from_token(token)) {
+            Ok(c) => {
+                ok += 1;
+                last = Some(c);
+            }
+            Err(_) => break,
+        }
+    }
+    // 装回门面（本命令唯一的副作用，写在这里）。
+    TERM.0.with(|t| t.session.set(last));
+    term.writeline(&format!(
+        "console: session opens={ROUNDS} ok={ok} closed={closed}"
+    ));
+}
+
 /// 启动期握手：靠泊 → 自建控制孔并交给父域 → 报到 → 收配给（目录门闩由 dir 亲授）。
 ///
 /// **只有目录那一枚是配给的**。控制台入口不配给，走**目录**取（见
@@ -1443,7 +1491,7 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / ship / churn / reclaim / spoof / name / badslot / stray / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / ship / session / churn / reclaim / spoof / name / badslot / stray / exit",
             );
         }
         "clock" => {
@@ -1529,6 +1577,9 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "lend" => {
             lend(term);
+        }
+        "session" => {
+            session(term);
         }
         // `memtest [rounds]` —— 探针专用：**不牵涉任务**的 alloc/dealloc 闭环。
         // 判据：帧池 free 必须回到同一水平。它把「分配器自己丢帧」与「任务

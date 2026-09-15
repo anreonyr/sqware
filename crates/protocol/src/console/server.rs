@@ -43,10 +43,15 @@ use alloc::vec::Vec;
 use anstyle_parse::{Params, Parser, Perform};
 
 use runtime::core::handshake;
-use runtime::env::mail::HolePie;
+use runtime::env::mail::{AnyPie as _, HolePie};
 use env::TaskId;
 
-use super::wire::{Query, Reply, Text};
+use super::wire::{ADDRESS_AT, Query, Reply, Text, WORD};
+
+/// 握手帧地址槽里那一格 `usize`（LE）。解码已保证帧长，故越界这一支不可达。
+fn word(m: &[u8], at: usize) -> usize {
+    usize::from_le_bytes(m[at..at + WORD].try_into().unwrap_or([0u8; WORD]))
+}
 
 /// 同时在线的客户端上界（会话 id = 槽位 + 1）。
 const MAX_CLIENTS: usize = 8;
@@ -143,26 +148,34 @@ pub enum Key {
     Eof,
 }
 
-/// 一条回复 + 它该走**哪个会话的回信孔**。
+/// 一条回复 + 它该走**哪一枚回信孔**。
 ///
 /// 控制台协议**没有**请求孔回信通道：回复一律走该会话在 `Open` 时登记的那枚回信孔。
 ///
-/// `to_client` **只有一种读法：会话号**。这一条是**类型纪律**，不是约定：早先拒绝路径往里
-/// 塞的是**推者 task id**（两种命名空间挤同一个 `Option<usize>`），而 `route` 只按会话号读
-/// ⇒ 常见情况下那句话根本送不出去（task id 大多大于 `MAX_CLIENTS`），罕见情况下推进**别人
-/// 的**回信孔——而"回复孔里多出一帧"正是让下一次往返错位的那类事故。凡"问不出会话"的场合，
-/// 会话号一律由 [`State::session_of`] 从**推者**求出来（`None` = 它根本没有会话，无处可回）。
+/// `to_reply` **只有一种读法：本线程表里那枚回信孔的 token**。这一条是**类型纪律**，不是
+/// 约定，两处旧病都归它：
+///
+/// - 早先这个字段装的是**会话号**，而拒绝路径往里塞的是**推者 task id**（两种命名空间挤同
+///   一个 `Option<usize>`），而 `route` 只按会话号读 ⇒ 常见情况下那句话根本送不出去（task id
+///   大多大于 `MAX_CLIENTS`），罕见情况下推进**别人的**回信孔——"回复孔里多出一帧"正是让
+///   下一次往返错位的那类事故。
+/// - 装会话号还要求**投递时再查一次表**，于是`close` 清完槽再回话就找不到孔了：那句 `Ok`
+///   被丢掉，客户端白等满上界（`session` 自检第一次跑就现形）。现在**判定那一刻**就把孔定
+///   下来，迟到的表变化影响不到已经做出的决定。
+///
+/// 凡是"问不出会话"的场合，一律由 [`State::session_of`] 从**推者**求出会话、再求它的孔
+/// （`None` = 它根本没有会话，无处可回）。
 pub struct Outcome {
     /// `None` = 这一条**不回复**：`ReadLine` 已登记等读，整行由输入线程交付。
     pub reply: Option<Reply>,
-    pub to_client: Option<usize>,
+    pub to_reply: Option<usize>,
 }
 
 impl Outcome {
     fn quiet() -> Self {
         Self {
             reply: None,
-            to_client: None,
+            to_reply: None,
         }
     }
 }
@@ -242,9 +255,10 @@ impl State {
     ///
     /// `from` = 内核在 `Pull` 时盖章的推者（task id）：`Open` **按它**开回信孔并记下归属，
     /// 其余动词**按它**核"这条会话是不是你的"（见 [`State::handle`]）。
-    pub fn serve(&mut self, from: usize, msg: &[u8], entry: &HolePie) -> Outcome {
+    pub fn serve(&mut self, from: usize, msg: &[u8]) -> Outcome {
         match Query::decode(msg) {
-            Ok(Query::Open { nonce }) => self.open(from, nonce, entry),
+            // 认领号与**握手孔**都在 `Open` 那一帧里（`CLIENT_AT` 与地址槽）。
+            Ok(Query::Open { nonce }) => self.open(from, word(msg, ADDRESS_AT), nonce),
             Ok(query) => self.handle(from, query, msg),
             Err(_) => self.refuse(from),
         }
@@ -274,11 +288,11 @@ impl State {
     /// 拒一条请求：**回执只能走推者自己那条会话**。
     ///
     /// 问不出会话的场合（号不认识 / 为 0 / 报文不合 / 不是它的会话）只有这一条路能把那句
-    /// 拒绝送回去；推者根本没有会话时就无处可回（`to_client: None`），客户端等到上界。
-    fn refuse(&mut self, from: usize) -> Outcome {
+    /// 拒绝送回去；推者根本没有会话时就无处可回（`to_reply: None`），客户端等到上界。
+    fn refuse(&self, from: usize) -> Outcome {
         Outcome {
             reply: Some(Reply::Denied),
-            to_client: self.session_of(from),
+            to_reply: self.session_of(from).and_then(|c| self.reply_token(c)),
         }
     }
 
@@ -328,8 +342,14 @@ impl State {
     /// ——旧孔丢掉、槽复用。这一条是量出来的：客户端每重连一次都要开一条会话，
     /// 若每次新占一格，`MAX_CLIENTS` 就被"重连次数"吃穿（同一条实例上第五次开就没了），
     /// 而表按**客户端数**有界才是对的。
-    fn open(&mut self, from: usize, nonce: u64, entry: &HolePie) -> Outcome {
+    fn open(&mut self, from: usize, control: usize, nonce: u64) -> Outcome {
         if from == 0 {
+            return Outcome::quiet();
+        }
+        // `control` = 对端在握手帧**地址槽**里递过来的那枚孔（本表里的号）：那条回执走它。
+        // **不走请求孔**——请求孔是本服务的收件箱，请求循环正在上面 `pull`；推进去等于
+        // 推给自己，实测会被自己吸回去（见 `Port::dial` 的注）。0 = 对端没给，无处可回。
+        if control == 0 {
             return Outcome::quiet();
         }
         let slot = self
@@ -342,15 +362,19 @@ impl State {
         let Some(i) = slot else {
             return Outcome {
                 reply: Some(Reply::NoSuchClient),
-                to_client: None,
+                to_reply: None,
             };
         };
         // 存进 `Slot` 的**必须是本服务自己那枚**（自己表里的号）：`route` 拿它在本线程的
         // 表里找孔来推。对端那枚的号（`To::seed`）是**另一张表**里的号——存错的表现是每次
         // 推回复都被判 `Denied` 并静默丢掉，客户端只看到"没开成"（实测：`[c1] open err
         // code=-1`，而服务端每一条 `Open` 都成功开了会话）。
-        match handshake::grant(entry, TaskId::new(from), nonce) {
+        let at = HolePie::from_token(control);
+        match handshake::grant(&at, TaskId::new(from), nonce) {
             Ok(hole) => {
+                // 推完就放下本服务这一份：孔由**对端**开，它收下回执后也放下，两边一放
+                // 孔就回收（不留一枚每开一次会话就漏一份的句柄）。
+                let _ = at.release();
                 self.slots[i] = Some(Slot {
                     owner: TaskId::new(from),
                     reply: hole.token(),
@@ -359,7 +383,7 @@ impl State {
                 // （第一版写成 `None` = 丢弃 ⇒ 客户端每条请求都等到超时；实测过。）
                 Outcome {
                     reply: Some(Reply::Ok { client: i + 1 }),
-                    to_client: Some(i + 1),
+                    to_reply: Some(hole.token()),
                 }
             }
             // 授不出去 = 对端已经走不动了：**不占槽**，也不回话（无处可回）。
@@ -372,16 +396,18 @@ impl State {
     /// 到得了这里的请求**已经过了归属闸**（[`State::handle`]）：号在、且是这位推者的。
     /// 故这里不再判"认不认识"——那是另一种失败，已经在上面答过了。
     fn close(&mut self, client: usize) -> Outcome {
-        let Some(i) = self.index(client) else {
-            return Outcome::quiet();
-        };
-        self.slots[i] = None;
+        // **先取孔，再清槽**：清完再查表就没人知道这句回执该往哪儿推了——那条 `Ok` 会被
+        // 丢掉，客户端白等满上界（`session` 自检第一次跑就现形：`closed=0`）。
+        let to_reply = self.reply_token(client);
+        if let Some(i) = self.index(client) {
+            self.slots[i] = None;
+        }
         if self.reading.as_ref().is_some_and(|r| r.client == client) {
             self.reading = None;
         }
         Outcome {
             reply: Some(Reply::Ok { client }),
-            to_client: Some(client),
+            to_reply,
         }
     }
 
@@ -401,14 +427,14 @@ impl State {
                 self.redraw();
                 Outcome {
                     reply: Some(Reply::Ok { client }),
-                    to_client: Some(client),
+                    to_reply: self.reply_token(client),
                 }
             }
             // 非 UTF-8：逐字节写会把转义串打成碎片，故按"不可渲染"拒收。
             // 旧的 `io::put` 收 `&str`，调用方本来就给不出这种载荷。
             Err(_) => Outcome {
                 reply: Some(Reply::Denied),
-                to_client: Some(client),
+                to_reply: self.reply_token(client),
             },
         }
     }
@@ -435,7 +461,7 @@ impl State {
             }
             return Outcome {
                 reply: Some(Reply::NoSuchClient),
-                to_client: Some(client),
+                to_reply: self.reply_token(client),
             };
         }
         let prompt = core::str::from_utf8(prompt).unwrap_or("");
@@ -540,7 +566,10 @@ impl State {
         Some((r.client, reply))
     }
 
-    /// 该会话的回信孔 token（输入线程交付整行用）。
+    /// 该会话的回信孔 token（**本线程表里**那一枚）。
+    ///
+    /// 两个消费者：输入线程交付整行时经它取出孔（那个任务推不动孔，只有主线程推得动）；
+    /// 以及本条回复的落点（[`Outcome::to_reply`]）。
     pub fn reply_token(&self, client: usize) -> Option<usize> {
         let i = self.index(client)?;
         self.slots[i].map(|s| s.reply)

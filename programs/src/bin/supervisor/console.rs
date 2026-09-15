@@ -246,12 +246,12 @@ extern "C" fn main() -> ! {
             let Some(msg) = req.get(..n) else { continue };
             // `from` = 内核盖章的推者：`Open` 那一步要**按它**开回信孔并把句柄交回去
             // （见 `State::open`）。同一趟取回两件事，窗口里不留竞态。
-            let outcome = CONSOLE.with(|s| s.serve(from.get(), msg, &entry));
+            let outcome = CONSOLE.with(|s| s.serve(from.get(), msg));
             // 次序：**先落屏、再回执**（`Ok` 的含义是"这段已落屏"）。
             flush(&writer);
             // `ReadLine`：已登记等读，那一行的回执由输入线程放进共享槽（回执为 `None`）。
             if let Some(reply) = outcome.reply {
-                route(outcome.to_client, reply);
+                route(outcome.to_reply, reply);
             }
             continue;
         }
@@ -259,20 +259,22 @@ extern "C" fn main() -> ! {
         let pending = CONSOLE.with(|s| s.take_pending());
         flush(&writer);
         if let Some((client, reply)) = pending {
-            route(Some(client), reply);
+            // 整行只带**会话号**（它由输入线程经共享槽交来），故这里现查一次孔——与
+            // `serve` 那条路的差别只有这一点：那边的孔是**判定那一刻**就定下来的。
+            route(CONSOLE.with(|s| s.reply_token(client)), reply);
         }
     }
 }
 
-/// 把一条回复推到某会话的回信孔。
+/// 把一条回复推到**某枚回信孔**（token 在本线程表里）。
 ///
-/// **必须在主线程调**：`token` 取自 `State` 的会话表，而那是**本线程**表里的号。
-fn route(to_client: Option<usize>, reply: Reply) {
-    let Some(client) = to_client else {
+/// **必须在主线程调**：那枚 token 取自 `State` 的会话表，而它是**本线程**表里的号。
+/// 收的是 token 而不是会话号：判定那一刻查出来的孔，比投递时再查一次的孔可靠——
+/// `Close` 正是清完槽才回话的那一支（见 `protocol::console::server::Outcome`）。
+fn route(to_reply: Option<usize>, reply: Reply) {
+    let Some(token) = to_reply else {
         return;
     };
     let (msg, n) = reply.encode();
-    if let Some(token) = CONSOLE.with(|s| s.reply_token(client)) {
-        let _ = HolePie::from_token(token).push(&msg[..n]);
-    }
+    let _ = HolePie::from_token(token).push(&msg[..n]);
 }

@@ -338,10 +338,32 @@ impl Port {
         if peer.get() == 0 {
             return Err(denied());
         }
+        // **本端私有的握手孔**：那一条回执只走它，**不走请求孔**。
+        //
+        // 为什么必须私有（实测踩出来的）：请求孔是**双向**的——本端往里推请求，而
+        // 服务端的请求循环正在它上面 `pull`。回执若推回请求孔，等于推进服务自己的收件箱，
+        // 谁先 `pull` 谁拿走。读数：`[o] from=10`（服务建了会话）紧接
+        // `[g3] not yours from=8 client=<本端的认领号>`——**8 就是服务自己**，它把自己的
+        // 回执吸了回去并当成一条坏请求拒掉；本端随后等满上界（`[d3] borrow err`）。
+        // 那不是时序抖动，是这条路的结构：一枚单槽信箱、两个方向的消费者。
+        let control = HolePie::unseal()?;
+        let to = ship(&control, peer, Access::READ | Access::WRITE, Policy::NONE)?;
+        // 孔经**报文里的地址槽**递出去（`Duet::encode` 决定它在哪一格）。
         let mut wire = W::wire();
-        let sent = W::encode(first, PieToken::new(0), wire.as_mut());
-        entry.push(wire.as_ref().get(..sent).ok_or_else(denied)?)?;
-        let reply = crate::core::handshake::borrow(entry, nonce, within)?;
+        let sent = W::encode(first, to.seed(), wire.as_mut());
+        if entry.push(wire.as_ref().get(..sent).ok_or_else(denied)?).is_err() {
+            let _ = control.release();
+            return Err(denied());
+        }
+        let reply = match crate::core::handshake::borrow(&control, nonce, within) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = control.release();
+                return Err(e);
+            }
+        };
+        // 握手孔用完即弃：对端那份在推完回执后也放下，孔随之回收。
+        let _ = control.release();
         let port = Port::adopt(peer, HolePie::from_token(entry.token()), reply);
         let rep = port.take::<W>(within)?;
         Ok((port, rep))
