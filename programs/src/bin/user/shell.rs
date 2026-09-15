@@ -120,6 +120,9 @@ struct Terminal {
     session: Cell<Option<Console>>,
     /// 写缓冲：攒到换行/满再发。
     buf: RefCell<String>,
+    /// **丢过一条会话吗**：那句话的判据（见 [`REJOINED`]），由 [`drop_session`] 置位、
+    /// 由 [`with_session`] 开成新会话时报到并销账。
+    lost: Cell<bool>,
 }
 
 impl Terminal {
@@ -149,21 +152,35 @@ struct Term(Lock<Terminal>);
 static TERM: Term = Term(Lock::new(Terminal {
     session: Cell::new(None),
     buf: RefCell::new(String::new()),
+    lost: Cell::new(false),
 }));
 
-/// 报到那句读数的正文（会话在 [`with_session`] 里续上时打）。
+/// 报到那句读数的正文：**一条会话丢了之后，又开成了一条**。
 ///
-/// **判断归 `Console`**（协议客户端比"手里这枚入口 vs 服务此刻登记的那枚"，
-/// 见 `protocol::console::client::Console::valid`）——本域只做两件它做不了的事：
-/// 从目录取入口、把结果说出来。
+/// 它是**事实**，不是推断：`lost` 那一格由 [`drop_session`] 置位——那是本域唯一能观察到
+/// "这条会话断了"的地方（写失败、读失败、重连失败都经它），开成新会话时报一次、就地销账。
+///
+/// # 曾经拿入口号当凭据（已撤）
+///
+/// 旧版问协议客户端"手里这枚入口还是不是服务此刻登记的那一枚"（`Console::valid`）。两个
+/// 问题：① 目录的 `Connect` 每次都转授**一份新副本**（`dispatch/server.rs`），那个号会因为
+/// 完全无关的原因变化——不是身份；② 而"会话还在 + 缓存被清"这一格在本文件里根本走不到
+/// （清缓存与会话置空同在 [`drop_session`] 里），于是那句话**没有任何一条路能打出来**。
+/// 现在判据回到事实本身。
 const REJOINED: &str = "shell: console reconnected";
 
 /// 丢掉这一份会话（以及缓存的控制台入口）——它死了。
 ///
 /// **入口也要一起丢**：console 一死，内核沿派生链把本域手里**指向它的每一枚副本**都摘掉了
 /// （`gate::doom` 的 BFS，`docs/driver.md` §12 ②），缓存的那个入口 token 已经是空号。
+///
+/// **只有真丢了一条才记账**：开成之前就失败（目录还没起、`Open` 没成）不算"丢"——那种
+/// 时候手里本来就什么都没有，报到会是一句谎话。
 fn drop_session() {
-    TERM.0.with(|t| t.session.set(None));
+    let had = TERM.0.with(|t| t.session.replace(None).is_some());
+    if had {
+        TERM.0.with(|t| t.lost.set(true));
+    }
     CONSOLE_ENTRY.store(0, Ordering::Relaxed);
 }
 
@@ -191,12 +208,20 @@ fn reconnect() -> bool {
 /// 与 [`Term::readline`] 各自的处置。
 fn with_session<T>(f: impl FnOnce(&Console) -> T) -> Option<T> {
     let mut session = TERM.0.with(|t| t.session.take());
+    // 本趟**开成了一条新会话**吗——报到只看这个，不看"缓存里有没有会话"。
+    let mut opened = false;
     if session.is_none() {
         let token = console_entry()?;
         session = Console::open(HolePie::from_token(token)).ok();
+        opened = session.is_some();
     }
-    // 会话先放回缓存——用它的一切（含下面那句报到）都要经它出去。
+    // 会话先放回缓存——报到要经 `flush` 写控制台，而 `flush` 走本函数，此刻缓存里必须已经
+    // 是这条活会话，否则那句话会被原样丢掉（实测踩过）。**账要在写之前销**：`writeline`
+    // 会重新进入本函数，账还挂着就会再报一次。
     TERM.0.with(|t| t.session.set(session));
+    if opened && TERM.0.with(|t| t.lost.replace(false)) {
+        TERM.writeline(REJOINED);
+    }
     // 借出 → 跑 → 放回（与函数头注里那条次序同款：临界区里只有内存操作）。
     let held = TERM.0.with(|t| t.session.take());
     let out = held.as_ref().map(f);
