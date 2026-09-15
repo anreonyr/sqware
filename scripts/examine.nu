@@ -181,6 +181,14 @@ const STEPS = [
   # 服务侧那一半不在这一步的期望串里：它要求同一句话出现**两次**，故走 `checks` 的
   # `instances`（见 `run_once` 与 `INSTANCE_CHECKS`）——`hit` 只问在不在，问不出条数。
   {cmd: "kill console", pat: "shell: console reconnected"}
+  # **第二次**他杀——判据是"多次 kill 也不卡死"（实测报过的症状）。这一步的期望串与上一步
+  # 逐字相同，故 `hit` 会**立刻命中上一步那一次**：真正管用的是 `INSTANCE_CHECKS` 里
+  # `shell: console reconnected` 那条**计数**（恰好两次，两次他杀各一次）。
+  {cmd: "kill console", pat: "shell: console reconnected"}
+  # 会话自检（`docs/console.md` §10）：**同一推者连开 12 条会话，条条开得成**。牙在"表不随
+  # 重开增长"上——去掉"重开复用推者那一格"，实测 `ok` 从 12 变 7；旧形状（开一次占两格、
+  # 表宽 8）第 5 次就没了。末位 `closed` 是 `Close` 在全仓的**第一个调用点**。
+  {cmd: "session",     pat: "console: session opens=12 ok=12 closed=1"}
   # 授出（`docs/port.md` §3、§9）：**十六格逐格核**（`Access` 四取值 × `Policy` 四取值）
   # ——十五格授给自己并用 `Collect` 读回权限；第十六格是空集，必须**本地拒**。
   # 末位 `source=1` 是另一条断言的牙：`Port::call` 只认对端推来的回复，冒名的那条被拒。
@@ -219,11 +227,14 @@ const IRQ_MARKER = "plic: line 10 delivered"
 # 两句话都要**数**，故它们进不了 MARKERS（那张表只问在不在）。
 const INSTANCE_CHECKS = [
   {pat: 'uart: line [^ ]+ ok', n: 1, what: "uart 登记线（恰好一次）"}
-  {pat: 'console: uart ok',    n: 2, what: "console 实例（引导期+重发）"}
+  {pat: 'console: uart ok',    n: 3, what: "console 实例（引导期 + 两次重发）"}
+  # 客户端那一半的**条数**判据：一次他杀报一次。`hit` 只问在不在，问不出"第二次也报了"
+  # ——而"多次 kill 不卡死"正是这条要问的事。
+  {pat: 'shell: console reconnected', n: 2, what: "会话续上（两次他杀各一次）"}
 ]
 
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16, 17]
-const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
 
 # 默认档的构建 features **恒为空串**：那是 `FLAVORS` 里 `default` 那一行（构造上的保证，
 # 不是旋钮，见头注「按档构建」）。
@@ -275,6 +286,9 @@ const MARKERS = [
   # 投递孔）另由 `checks` 里的 `instances` 数条数——这张表只问在不在，不问几次。
   "console: uart ok"
   "shell: console reconnected"
+  # 会话自检（`docs/console.md` §10）：同一推者连开 12 条会话条条开得成 + `Close` 的
+  # 第一个调用点。牙见 `STEPS` 那一条的注。
+  "console: session opens=12 ok=12 closed=1"
   "task: all tasks exited, system halted"
 ]
 

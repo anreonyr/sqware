@@ -1,40 +1,37 @@
 //! console·wire — 控制台协议的报文编解码（纯函数，零依赖）。
 //!
-//! # 一帧的两段：地址 + 正文
+//! # 一帧就是 `[op][正文]`，**只有 `Open` 多一格地址**
 //!
 //! ```text
-//! [0]       op     u8
-//! [1..9)    地址槽  usize LE  **传输字段**：投递孔在服务侧的 token（客户端给不出）
-//! [9..]     正文   ……        按 `op` 排；**正文的结束就是这一帧的结束**
+//! Open      [0]=1 [1..9) 握手孔  [9..17) 认领号          帧长 17
+//! Write     [0]=2 [1..9) client  [9..] 字节              帧长 9 + 字节数
+//! ReadLine  [0]=3 [1..9) client  [9..] 提示符            帧长 9 + 提示符长度
+//! Close     [0]=4 [1..9) client                          帧长 9
+//!
+//! Ok        [0]=0 [1..9) client                          帧长 9
+//! Line      [0]=1 [1..] 整行（不含 `\n`）                 帧长 1 + 行长
+//! Eof       [0]=2 正文 = 空                              帧长 1
+//! Interrupt [0]=3 同上                                   帧长 1
+//! Denied    [0]=4 同上                                   帧长 1
+//! NoSuch…   [0]=5 同上                                   帧长 1
 //! ```
 //!
-//! 动词与正文（请求与回复同一张表，按首字节读）：
+//! **没有一处是补的**：没有保留区、没有长度字段、没有定长载荷数组，也没有哪一帧带一格
+//! 恒为零的"以防万一"。「这条消息多长」就是「这一帧多少字节」，由成帧的人报给 `Port`；
+//! 收方按同一份表精确对账（六个状态**逐个**核长度，短一字节、多一字节都是坏帧）。
 //!
-//! ```text
-//! Open      [1]=1  正文 = 空                          帧长 9
-//! Write     [1]=2  [9..17) client  [17..] 字节         帧长 17 + 字节数
-//! ReadLine  [1]=3  [9..17) client  [17..] 提示符       帧长 17 + 提示符长度
-//! Close     [1]=4  [9..17) client                     帧长 17
+//! # 地址槽只在 `Open` 上，它装的是**握手孔**
 //!
-//! Ok        [1]=0  [9..17) client                     帧长 17
-//! Line      [1]=1  [9..] 整行（不含 `\n`）             帧长 9 + 行长
-//! Eof       [1]=2  正文 = 空                          帧长 9
-//! Interrupt [1]=3  同上                              帧长 9
-//! Denied    [1]=4  同上                              帧长 9
-//! NoSuch…   [1]=5  同上                              帧长 9
-//! ```
+//! `Open` 那 8 字节是本协议唯一一处地址，它不装"回信孔"——回信孔由服务端开、句柄随
+//! 握手回执交回（`runtime::core::handshake::grant`）。它装的是**本端为这次握手开的私有
+//! 孔**：服务端收下 `Open` 后把回执推进它（`server::State::open`）。
 //!
-//! **没有一处是补的**：正文里不再有保留区、不再有长度字段、不再有定长载荷数组。
-//! 「这条消息多长」就是「这一帧多少字节」，由成帧的人报给 `Port`；收方按同一份表
-//! 精确对账（短一字节、多一字节都是坏帧）——那才是"这个动词不该有这一格"的真检查，
-//! 而它不需要任何字节能为 0 才算数。
+//! 为什么这一格必须存在（实测）：握手回执若推回**请求孔**，就等于推进服务自己的收件箱
+//! ——请求孔是一枚单槽信箱，而服务端的请求循环正在上面 `pull`，谁先拿谁得。读数：
+//! 服务建完会话紧接着把自己推的回执吸了回来并当成坏请求拒掉，客户端等满上界，
+//! **同一次会话照 50% 的概率开不成**。私有孔把这条路变成一问一答。
 //!
-//! # 地址槽只在 `Open` 上非零
-//!
-//! 本协议是"开一次、长期用"：服务在 `Open` 时把回信孔记进会话表（`server::Slot`
-//! 的 `reply`），此后每条请求都照表推回复。故只有 `Open` 那一帧带地址，其余动词
-//! 的地址槽恒为 0——这是**本协议的**语义，`Duet::encode` 那三行就是它的落点
-//! （机制只问"地址写哪儿"，不问"哪些动词带"）。
+//! `Duet::encode` 那三行就是它的落点（机制只问"地址写哪儿"，不问"哪些动词带"）。
 //!
 //! # 会话 id 从 1 起
 //!
@@ -70,8 +67,10 @@ pub const WORD: usize = size_of::<usize>();
 /// 正文里最大的一段：一次 `Write` 最多带的字节数 = 回复里一行的上界。
 pub const LINE: usize = 24;
 
-/// 一块内存要多大装得下任何一条帧：`op + 地址槽 + client + LINE`。
-pub const CAP: usize = 1 + ADDRESS_LEN + 2 * WORD + LINE;
+/// 一块内存要多大装得下任何一条帧：`op + 一格 usize + LINE`。
+///
+/// `Open` 那条的**地址槽与认领号**正好占同样两格（`1 + 8 + 8`），也在界内。
+pub const CAP: usize = 1 + 2 * WORD + LINE;
 
 /// 正文里那一段字节：容量定长，`bytes[..len]` 有效。
 ///
@@ -192,8 +191,10 @@ pub enum ProtocolError {
     Short,
 }
 
-/// 正文里 client 的偏移（`op` 与地址槽之后）。仅本模块用。
-const CLIENT_AT: usize = 1 + ADDRESS_LEN;
+/// `client` 的偏移：紧跟 `op`。仅本模块用。
+const CLIENT_AT: usize = 1;
+/// `Open` 那一格**认领号**的偏移：它在地址槽之后（其余动词没有地址槽，故那一格紧跟 `op`）。
+const NONCE_AT: usize = CLIENT_AT + ADDRESS_LEN;
 /// 正文里"变长那一段"的偏移。
 const TEXT_AT: usize = CLIENT_AT + WORD;
 
@@ -258,9 +259,8 @@ impl Query {
             let _ = text.encode_into(&mut m, TEXT_AT);
         }
         if let Query::Open { nonce } = self {
-            // 认领号紧跟在地址槽之后（`CLIENT_AT` 那一格：`Open` 没有 client，
-            // 那一格正好空着给认领号用）。
-            m[CLIENT_AT..CLIENT_AT + WORD].copy_from_slice(&nonce.to_le_bytes());
+            // 认领号在**地址槽之后**（`Open` 没有 client，那两格各归各的）。
+            m[NONCE_AT..NONCE_AT + WORD].copy_from_slice(&nonce.to_le_bytes());
         } else {
             m[CLIENT_AT..CLIENT_AT + WORD].copy_from_slice(&client.to_le_bytes());
         }
@@ -278,15 +278,15 @@ impl Query {
                 }
                 Ok(Query::Open {
                     nonce: u64::from_le_bytes(
-                        m[CLIENT_AT..CLIENT_AT + WORD]
-                            .try_into()
-                            .unwrap_or([0u8; WORD]),
+                        m[NONCE_AT..NONCE_AT + WORD].try_into().unwrap_or([0u8; WORD]),
                     ),
                 })
             }
             x if x == Op::Write as u8 => {
-                if body < ADDRESS_LEN + WORD {
-                    return Err(ProtocolError::Short);
+                // 空载荷不是"短一字节"而是**这个动词不该有这一格**：`Query::write` 本地就
+                // 拒空（分片是客户端的活），解码侧必须同一条表，否则线上能造出本地造不出的帧。
+                if body <= WORD {
+                    return Err(ProtocolError::BadLen);
                 }
                 let text = Text::new(&m[TEXT_AT..]).ok_or(ProtocolError::BadLen)?;
                 Ok(Query::Write {
@@ -295,7 +295,8 @@ impl Query {
                 })
             }
             x if x == Op::ReadLine as u8 => {
-                if body < ADDRESS_LEN + WORD {
+                // 提示符可以为空（`Query::readline` 允许），故只核"client 那一格在不在"。
+                if body < WORD {
                     return Err(ProtocolError::Short);
                 }
                 let prompt = Text::new(&m[TEXT_AT..]).ok_or(ProtocolError::BadLen)?;
@@ -305,7 +306,7 @@ impl Query {
                 })
             }
             x if x == Op::Close as u8 => {
-                if body != ADDRESS_LEN + WORD {
+                if body != WORD {
                     return Err(ProtocolError::Short);
                 }
                 Ok(Query::Close {
@@ -332,7 +333,7 @@ impl Reply {
         m[0] = status;
         match text {
             Some(text) => {
-                let _ = text.encode_into(&mut m, 1 + ADDRESS_LEN);
+                let _ = text.encode_into(&mut m, 1);
             }
             None => {
                 if matches!(self, Reply::Ok { .. }) {
@@ -347,8 +348,8 @@ impl Reply {
     pub fn len(&self) -> usize {
         match self {
             Reply::Ok { .. } => TEXT_AT,
-            Reply::Line { text } => 1 + ADDRESS_LEN + text.as_bytes().len(),
-            _ => 1 + ADDRESS_LEN,
+            Reply::Line { text } => 1 + text.as_bytes().len(),
+            _ => 1,
         }
     }
 
@@ -358,7 +359,7 @@ impl Reply {
         let body = m.len() - 1;
         match status {
             STATUS_OK => {
-                if body != ADDRESS_LEN + WORD {
+                if body != WORD {
                     return Err(ProtocolError::Short);
                 }
                 Ok(Reply::Ok {
@@ -366,16 +367,19 @@ impl Reply {
                 })
             }
             STATUS_LINE => {
-                if body < ADDRESS_LEN {
-                    return Err(ProtocolError::Short);
-                }
-                let text = Text::new(&m[1 + ADDRESS_LEN..]).ok_or(ProtocolError::BadLen)?;
+                // 变长那一支：长度由 `Text` 自己核（> `LINE` ⇒ `BadLen`）。
+                let text = Text::new(&m[1..]).ok_or(ProtocolError::BadLen)?;
                 Ok(Reply::Line { text })
             }
-            STATUS_EOF => Ok(Reply::Eof),
-            STATUS_INTERRUPT => Ok(Reply::Interrupt),
-            STATUS_DENIED => Ok(Reply::Denied),
-            STATUS_NO_CLIENT => Ok(Reply::NoSuchClient),
+            // 四条**无正文**的状态：多一个字节就是坏帧（旧版只核了长度，不核这四个——
+            // 头注那句"短一字节、多一字节都是坏帧"因此曾经是句空话）。
+            STATUS_EOF if body == 0 => Ok(Reply::Eof),
+            STATUS_INTERRUPT if body == 0 => Ok(Reply::Interrupt),
+            STATUS_DENIED if body == 0 => Ok(Reply::Denied),
+            STATUS_NO_CLIENT if body == 0 => Ok(Reply::NoSuchClient),
+            STATUS_EOF | STATUS_INTERRUPT | STATUS_DENIED | STATUS_NO_CLIENT => {
+                Err(ProtocolError::Short)
+            }
             _ => Err(ProtocolError::BadOp),
         }
     }
