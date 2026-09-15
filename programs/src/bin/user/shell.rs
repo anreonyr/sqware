@@ -290,9 +290,17 @@ impl Term {
     /// `readline` 之后**（读数 `[n2] readline pending=false` 后紧跟 `[n1] rejoin queued`），
     /// 只挂入口就漏了，门随即超时。出口那次是兜底：代价是那句话可能晚一行出现，语义不变。
     fn report_rejoin(&self) {
-        if REPORT_REJOIN.swap(false, Ordering::Relaxed) {
-            self.writeline("shell: console reconnected");
+        if !REPORT_REJOIN.load(Ordering::Relaxed) {
+            return;
         }
+        self.writeline("shell: console reconnected");
+        // **写完才销账**。别用 `swap`：本函数这次 `writeline` 本身就要走
+        // `write` → `flush` → `with_session`，而**它自己就可能是在建会话**（实测
+        // `[n0] session open entry=166 was=127` 就发生在这一句里）。账若在写之前清掉，
+        // 建会话那条路上再 `console_entry()` 一次就是再 `Connect` 一次、目录给不出入口、
+        // 闭包不执行 ⇒ 这句话照旧丢掉（与第一版踩的是同一个坑的另一面）。
+        // 写在前面：写成功即销账；写失败（会话又断了）就留着，下一次再报。
+        REPORT_REJOIN.store(false, Ordering::Relaxed);
     }
 
     /// 清屏 + 光标回 home（`ESC[2J` + `ESC[H`）。
