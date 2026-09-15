@@ -1,11 +1,13 @@
 # sqware docs — 机制设计文档
 
-本目录按根 `README.md` 的**脉络**组织：先结构（Space / Map / Task / Team / Pie / Mail），
-再协议与服务，再撑住这些机制的内核底座（陷阱、ABI、锁、诊断）。
+本目录只写**地板**：结构与撑住结构的内核底座。
+
+上层（协议 / 服务 / 程序）**目前是空的**——旧的那一整套在 tag `proto-v1-baseline` 里，
+连同它的四份文档（`console.md` / `dispatch.md` / `root.md` / `driver.md`）一起归档。
+新协议成形时**按新形状重写**，不从那一套里搬：搬结构就是把上一版的病带进下一版。
 
 阅读顺序建议按下面的表往下走——它也是依赖顺序：先说清"东西存在哪"（space / memory），
-再说"谁在动它"（task），再说"凭什么能动"（pie / mail），最后才是"怎么组织成系统"
-（dispatch / console / root）。
+再说"谁在动它"（task），再说"凭什么能动"（pie / mail）。
 
 ## 结构（README 的 Core Structures）
 
@@ -16,20 +18,9 @@
 | [pie.md](pie.md) | Pie（权柄） | 门闩：权限位、子集转让、派生边、级联撤销、寿命 |
 | [mail.md](mail.md) | Mail（Hole / Pole / Nole） | 数据面三件套：有槽、有页、什么都没有 |
 | [port.md](port.md) | Port（Hole 的通讯协议） | 授出（`Access` × `Policy`）、坐标 `To`、**两枚孔的配对** `Port`（`open`/`push`/`pull`/`shut`）；往返与帧格式归各协议；**已实现**（含 §5 舍弃 `mtu` 的变长孔、§10 的分层裁决）；判据见其 §9 |
-| [bell.md](bell.md) | Bell（Nole 的 runtime 封装） | 空载荷门铃：内核一位「有待取之事」+ 听者面；建域权那条判据为什么不用改；**已实现**（门铃即 `irq` 中断门，`docs/driver.md` §3.2.3） |
+| [bell.md](bell.md) | Bell（Nole 的 runtime 封装） | 空载荷门铃：内核一位「有待取之事」+ 听者面；建域权那条判据为什么不用改；**已实现** |
 | [dock.md](dock.md) | Dock（Pole 的 runtime 封装） | 借映 → **视图**（起点与长度成对）；`Open` 返两件；`Shut` 不过存活闸；**已实现**，判据见其 §9 |
 | [memory.md](memory.md) | 帧与页表 | 帧分配器、pagemeta 一份账、页表 / ASID、缺页 |
-
-## 语义（README 的 Protocol & Service）
-
-| 文档 | 机制 | 一句话 |
-|---|---|---|
-| [dispatch.md](dispatch.md) | 服务目录协议 | 名字 → 预约者 + 实例；`Connect` 就是转授门闩 |
-| [console.md](console.md) | 控制台协议与服务 | 唯一读 UART 的服务；会话、行编辑、回信孔 |
-| [doom](root.md) | 他杀协议（`kill`） | 一条请求 + 一字节回执；机制在核（血缘）、政策在 root（§5.1）。**实现在 `crates/protocol/src/doom/`**（服务线程在 root 域） |
-| [irq](driver.md) | 中断线协议 | 按**名字**认领一条线；线号是名字的函数，报文里没有可伪造的线号（§12 甲）。**实现在 `crates/protocol/src/irq/`**（驱动在 `prog-plic`） |
-| [driver.md](driver.md) | 设备与驱动的基础 | 设备 = 一段有主的、可映射的内存；中断门；驱动/服务边界；**线的权威与收线** + **属主写权的委托**（**已实现**：三步 + §12 两条 + 服务重启，门绿；实现期裁决待裁，见其 §8.1） |
-| [root.md](root.md) | 根服务域 | boot 只装 root；其余子域由它建；退出即自然停机；另提供 `kill` 的他杀服务与**监护/重发**（主线程起第一次、监护线程管余生，预算有界） |
 
 ## 底座
 
@@ -48,3 +39,5 @@
 - 代码锚点写作 `路径/文件.rs:行` 或模块名，对应写下时的仓库状态。
 - 术语以代码注释为准：门闩 / 孔 / 槽 / 站点 / 信标 / 躯壳 / 名册 / 窗 / 段 / 簿记 /
   停摆 / 窄尾。**不要**用外来词替换它们（它们各自都指一件很具体的事）。
+- 本目录里的文档若与代码不一致，**以代码为准**；上层那四份的引用（散在 `abi.md` /
+  `bell.md` / `dock.md` / `pie.md` / `port.md` 里共 13 处）指向的是 tag，不是本树。
