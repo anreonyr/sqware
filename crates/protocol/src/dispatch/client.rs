@@ -20,6 +20,7 @@ use runtime::core::port::{Access, Policy, Port, ship};
 use runtime::env::mail::{self, AnyPie as _, HolePie};
 
 use super::wire::{ADDRESS_LEN, CAP, Name, Query, Reply, denied, not_found, put_address, taken};
+use crate::session::push_within;
 
 /// 服务调用报文的字节数：地址槽 8 + 载荷 56。
 pub const CALL: usize = 8 + PAYLOAD_LEN;
@@ -30,8 +31,11 @@ pub const CALL: usize = 8 + PAYLOAD_LEN;
 /// 它与目录询问的容量（`wire::CAP = 48`）不是同一个数，两者各有各的算法。
 pub const PAYLOAD_LEN: usize = 56;
 
-/// 等回复的上界（毫秒）。目录/服务往返都在本域内，1s 远超实际耗时；有上界才能
-/// 把「回复被丢弃」这类协议错误暴露成 `Busy`，而不是永久挂起。
+/// 等回复的上界（毫秒）。目录/服务往返都在本域内，1s 远超实际耗时；有上界才能把
+/// 「服务卡住 / 回复被丢弃」暴露成 `Busy`，而不是永久挂起。
+///
+/// [`Service::call`] 的**推**也用它（这一轮加的）；目录询问那一条的推**没有**上界，
+/// 理由见 [`Directory::call`]。
 const REPLY_TIMEOUT_MS: usize = 1000;
 
 fn parse_name(name: &str) -> EnvResult<Name> {
@@ -68,6 +72,13 @@ impl Directory {
     /// 内建核对来源）→ 解码。
     ///
     /// 超时（`Busy`）或来源不符（`Denied`）后本会话不可复用——迟到的回复会污染下一次。
+    ///
+    /// # 这一处的推**没有上界**——是这一版刻意收回的
+    ///
+    /// 加上界之后门里出现 ~6% 偶发，读数 `closed=0 held=1 code=-1`：手里**有**会话，而
+    /// 服务侧不认它（陈旧会话）。反向实测只做到 3/52 轮 vs 0/15 轮，机制没钉死，故先不收：
+    /// 这条路上唯一的调用者（`shell` 的 `console_entry`）**失败后复用同一个会话**重试，
+    /// 而本协议的契约写着"失败后不可复用"。
     fn call(&self, query: &Query) -> EnvResult<Reply> {
         let (frame, n) = query.encode(self.port.seed());
         self.port.push(frame.get(..n).ok_or_else(denied)?)?;
@@ -192,14 +203,15 @@ pub struct Service {
 
 impl Service {
     /// 一次调用：前 8 字节的回信地址由本协议填，载荷 `PAYLOAD_LEN` 字节。
-    /// 回复有上界（`REPLY_TIMEOUT_MS`）——服务漏回即 `Busy`，不永久挂起。
+    /// **推与回都有上界**（同一个 `REPLY_TIMEOUT_MS`）——服务卡住或漏回即 `Busy`，
+    /// 不永久挂起：走这条路的人多半是**来收场的**。
     pub fn call(&self, payload: &[u8; PAYLOAD_LEN]) -> EnvResult<[u8; PAYLOAD_LEN]> {
         // 信封 = `[地址槽 8][载荷 56]`。地址槽那一格就是目录帧的**帧首**（`wire::ADDRESS_AT`），
         // 故"同一帧装进信封"与"裸帧直接 push"两条线形逐字相同（见 `wire` 模块头注）。
         let mut out = [0u8; CALL];
         let _ = put_address(&mut out, self.port.seed());
         out[ADDRESS_LEN..CALL].copy_from_slice(payload);
-        self.port.push(&out)?;
+        push_within(&self.entry, &out, REPLY_TIMEOUT_MS)?;
         let mut buf = [0u8; CALL];
         let rep = self.port.pull(&mut buf, REPLY_TIMEOUT_MS)?;
         let mut back = [0u8; PAYLOAD_LEN];

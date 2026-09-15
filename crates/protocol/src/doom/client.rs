@@ -10,13 +10,20 @@ use runtime::env::mail::HolePie;
 
 use super::wire::{ACK_LEN, denied};
 use super::{Ack, Query};
+use crate::session::push_within;
 
-/// 等回执的上界（毫秒）。服务在同一台机器上做一次 envcall + 有界 `Join`，远超实际
-/// 耗时；有上界才能把"回执被丢"暴露成 `Busy`，而不是永久挂起。
+/// 一次往返里**推**与**等回执**各一份的上界（毫秒）。服务在同一台机器上做一次 envcall +
+/// 有界 `Join`，远超实际耗时；有上界才能把"服务卡住 / 回执被丢"暴露成 `Busy`，而不是
+/// 永久挂起——**推也要有上界**：`Port::push` 只有"睡到有位置"一种策略，服务不排空就把
+/// 调用方钉死，而这条链上钉死的那个正是**来杀它的**。
 const ACK_TIMEOUT_MS: usize = 2000;
 
 /// 他杀服务的一条会话。
+///
+/// `entry` 是入口门闩的**一份副本**：往返归 [`Port`]，有界推要自己拿一枚（[`Port`] 里
+/// 那份字段私有）。它与 `Port::open` 收下的是同一张表里的同一枚孔。
 pub struct Doom {
+    entry: HolePie,
     port: Port,
 }
 
@@ -26,16 +33,21 @@ impl Doom {
     /// 服务 id 取 `Reserve(entry).owner`——门闩的**开辟者**（`vestor` 会被转发改写成
     /// root，`owner` 不会；与 `console` 认 PLIC 驱动同一个办法）。
     pub fn open(entry: HolePie) -> EnvResult<Doom> {
+        let port = Port::open(&entry)?;
         Ok(Doom {
-            port: Port::open(&entry)?,
+            entry: HolePie::from_token(entry.token()),
+            port,
         })
     }
 
-    /// 本协议的一次往返：编帧（回信地址按**本协议**那一格填）→ 推 → 收（[`Port::pull`]
-    /// 内建核对来源）→ 解回执。
+    /// 本协议的一次往返：编帧（回信地址按**本协议**那一格填）→ **有界**推 → 收
+    /// （[`Port::pull`] 内建核对来源）→ 解回执。
+    ///
+    /// 推不动（`Busy`）或到点没回（`Busy`）后本会话不可复用——迟到的回执会污染下一次。
     fn ask(&self, req: &Query) -> EnvResult<Ack> {
         let (frame, n) = req.encode(self.port.seed());
-        self.port.push(frame.get(..n).ok_or_else(denied)?)?;
+        let frame = frame.get(..n).ok_or_else(denied)?;
+        push_within(&self.entry, frame, ACK_TIMEOUT_MS)?;
         let mut out = [0u8; ACK_LEN];
         Ack::decode(self.port.pull(&mut out, ACK_TIMEOUT_MS)?)
     }

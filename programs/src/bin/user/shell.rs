@@ -20,6 +20,7 @@
 //!   spawn — 派一个算 0..N 的闭包子任务并 join（UnitCall::Spawn + Join）
 //!   heir  — 子域枚举（UnitCall::HeirCount + Heir）
 //!   hole  — Hole 通道自测（unseal/push/pull/seal）
+//!   wedge — 推不动自检（满槽 ⇒ 有界推到点报 Busy，不是永久等）
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
 //!   lend  — 独占交出自检（CAGE：我不可用 / 至多一个 heir / 转交 / 逐级复原）
 //!   ship  — 授出自检（十六格逐格读回权限 / 空集本地拒 / 来源校验的反证）
@@ -56,6 +57,7 @@ use protocol::console::{
 use protocol::dispatch::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use protocol::doom::{self, Ack, Doom};
 use protocol::irq;
+use protocol::session::push_within;
 use protocol::startup::{self, Pier, Quay};
 use runtime::core::dock::{Dock, View};
 use runtime::core::lock::Lock;
@@ -349,7 +351,19 @@ fn session(term: &Term) {
     };
     // 锁内取、锁外关：临界区里只有内存操作（与 `with_session` 同一条次序）。
     let old = TERM.0.with(|t| t.session.take());
-    let closed = old.is_some_and(|c| c.close().is_ok()) as usize;
+    let held = old.is_some() as usize;
+    // `closed=0` 底下是两问，必须分开报：手里**没有**会话可关（`held=0`），还是有会话而
+    // 那一趟没关成——后者把负码打出来：-1 拒（服务侧没这一格）/ -2 死（那扇门已封印）/
+    // -3 忙（到点没回）。没有这个码，三种病根在读数上长得一模一样（实测：偶发 `closed=0`
+    // 时只看得见一个 0，判不出是"会话陈旧"还是"回信迟到"）。
+    let mut closed = 0usize;
+    let mut code = 0isize;
+    if let Some(c) = old {
+        match c.close() {
+            Ok(()) => closed = 1,
+            Err(e) => code = e.source.code(),
+        }
+    }
 
     let mut ok = 0usize;
     let mut last = None;
@@ -365,7 +379,7 @@ fn session(term: &Term) {
     // 装回门面（本命令唯一的副作用，写在这里）。
     TERM.0.with(|t| t.session.set(last));
     term.writeline(&format!(
-        "console: session opens={ROUNDS} ok={ok} closed={closed}"
+        "console: session opens={ROUNDS} ok={ok} closed={closed} held={held} code={code}"
     ));
 }
 
@@ -1561,13 +1575,62 @@ fn wait_verdict(pie: &HolePie, buf: &mut [u8], wait_ms: usize, slack_ms: u64) ->
     }
 }
 
+/// 「推不动就是收场」自检（`wedge` 命令）：单任务里自己把槽占满，再**有界**推一次。
+///
+/// 判据两问，缺一不可：
+///   ① `busy=1` —— 到点报 `Busy`，**不是永久等**（`HolePie::push` 对满槽是永久等，
+///      见 [`caged`] 那段实测：挂住、门超时、QEMU 被外接 timeout 杀掉 rc=124）；
+///   ② `waited=1` —— 它**真的等满了**期限。"当场就拒"也能骗过 ①，故两问缺一不可。
+///
+/// 另两格是这条判据的边界：`full=1` 证明先推进去的那条确实占住了槽（没有它，空孔上的
+/// `Busy` 会来自别处）；`bounded=1` 证明上界**在期限附近**生效，不是睡到天荒地老。
+///
+/// 反向实测：把 [`push_within`] 换成 `hole.push`，本命令当场挂住。
+fn wedge(term: &Term) {
+    /// 有界推的期限：与 [`seal_wake_probe`] 同一档——短到不拖慢门，长到能分辨"等满"。
+    const WITHIN_MS: usize = 200;
+    /// 上界那一侧的余量：期限是**睡出来**的，调度抖动不给它留缝就会变成偶发红。
+    const SLACK_MS: u64 = 600;
+
+    // 时钟是 `(秒, 纳秒)` 两段——分段相减会在纳秒借位时算错，故先各自折成总纳秒。
+    fn ns(t: (u64, u64)) -> u64 {
+        t.0.saturating_mul(1_000_000_000).saturating_add(t.1)
+    }
+
+    let Ok(hole) = HolePie::unseal() else {
+        term.writeline("wedge: unseal failed");
+        return;
+    };
+    let msg = [0x5au8; 8];
+    // 占住唯一那格：本任务里没有第二个排空者，故它一直满着（[`lend`] 那条注释的反面）。
+    let full = hole.push(&msg).is_ok();
+    let t0 = clock().ok();
+    let r = push_within(&hole, &msg, WITHIN_MS);
+    let elapsed_ms = match (t0, clock().ok()) {
+        (Some(a), Some(b)) => ns(b).saturating_sub(ns(a)) / 1_000_000,
+        // 时钟读不到 ⇒ 不给结论：宁可让 `bounded` 这一格变 0 被门拦下，也不拿假读数充数。
+        _ => u64::MAX,
+    };
+    let busy = r.as_ref().err().is_some_and(|e| e.source.is_busy());
+    let waited = elapsed_ms >= WITHIN_MS as u64;
+    let bounded = elapsed_ms <= WITHIN_MS as u64 + SLACK_MS;
+    // 顺手把占的那格取回来（孔是本任务开的；`hole` 自检里同一条规矩）。
+    let mut buf = [0u8; 8];
+    let _ = hole.pull_timeout(&mut buf, 0);
+    let _ = hole.release();
+    term.writeline(&format!(
+        "wedge: full={} busy={} waited={} bounded={} elapsed={elapsed_ms}ms",
+        full as u8, busy as u8, waited as u8, bounded as u8
+    ));
+}
+
 /// 各系统能力命令。全部输出经 `term`（唯一 console 出口）。
 /// 返回 false = 退出（exit 命令）。
 fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / ship / dock / session / churn / reclaim / spoof / name / badslot / stray / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / ship / dock / session / churn / reclaim / spoof / name / badslot / stray / wedge / exit",
             );
         }
         "clock" => {
@@ -1659,6 +1722,9 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "session" => {
             session(term);
+        }
+        "wedge" => {
+            wedge(term);
         }
         // `memtest [rounds]` —— 探针专用：**不牵涉任务**的 alloc/dealloc 闭环。
         // 判据：帧池 free 必须回到同一水平。它把「分配器自己丢帧」与「任务

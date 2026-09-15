@@ -3,13 +3,13 @@
 # sqware examine 验收门（原名 e2e）——nu 版，取代 scripts/examine.sh。
 #
 # 判据五条，缺一不可（前四条与 .sh 版逐条相同；第 5 条是本轮加的，见它那一行）：
-#   1) 逐步生效：十四条命令（默认档；harden/框架档十八条）**逐个等它的输出出现**再发下一条
+#   1) 逐步生效：十五条命令（默认档；harden/框架档十九条）**逐个等它的输出出现**再发下一条
 #      （expect 式），不是按墙钟盲排；
 #      每步都有独立超时，失败能指到具体哪一条。
 #   2) 自行退出：qemu 自己结束（停机走 srst）⇒ 外接 timeout 的退出码不是 124；
 #      捕获里也不该出现 `terminating on signal …`。
 #   3) 无崩溃：捕获里无 `[panic] at`（内核 panic 报告头）。
-#   4) marker 齐全（默认档二十一条；harden/框架档在其上再加非默认档那五条），含
+#   4) marker 齐全（默认档二十四条；harden/框架档在其上再加非默认档那五条），含
 #      `task: all tasks exited, system halted` 与
 #      `badslot: 1/1 abnormal exit reaped, kernel alive`，以及中断链那条
 #      `plic: line 10 delivered`。
@@ -200,6 +200,8 @@ const STEPS = [
   # `remap=1` 要求撤图后重开的那段仍可读写；`sealed-shut=1` 是**封印之后仍撤得掉自己那张
   # 图**——它的牙正是存活闸：闸留着 ⇒ 当场 `Dead`（`docs/mail.md` §10 第 1 条销账）。
   {cmd: "dock",      pat: "dock: size=4096 rw=1 remap=1 sealed-shut=1"}
+  # 推不动：满槽上的**有界**推必须到点报 `Busy`（见 `MARKERS` 里那条的同名说明）。
+  {cmd: "wedge",     pat: "wedge: full=1 busy=1 waited=1 bounded=1"}
   {cmd: "exit",      pat: "task: all tasks exited, system halted"}
 ]
 
@@ -231,6 +233,7 @@ const IRQ_MARKER = "plic: line 10 delivered"
 # （`kill console`）时走了第三遍——`exit` 的下标从 14 挪到 15，两行都跟着改；
 # 本轮**第二次** `kill console` 与 `session` 自检插进来时走了第四遍：`ship` 15→18、
 # `exit` 17→19（默认档与全量档两行都要跟着改，改错的表现是"某一步的期望串永远等不到"）。
+# 本轮往 `exit` 前插 `wedge` 时走了第五遍：`exit` 20→21（默认档与全量档两行都跟着改）。
 # `instances` 这个 check 数的**三条**计数：模式 + 应有的条数 + 报错时的话。
 # 三句话都要**数**，故它们进不了 MARKERS（那张表只问在不在）。
 const INSTANCE_CHECKS = [
@@ -241,8 +244,8 @@ const INSTANCE_CHECKS = [
   {pat: 'shell: console reconnected', n: 2, what: "会话续上（两次他杀各一次）"}
 ]
 
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
 
 # 默认档的构建 features **恒为空串**：那是 `FLAVORS` 里 `default` 那一行（构造上的保证，
 # 不是旋钮，见头注「按档构建」）。
@@ -265,6 +268,12 @@ const MARKERS = [
   # 按 unseal 时的 mtu 预分配）；"问长度"（`peek`）不动槽 ⇒ 缓冲装不下被拒之后那条消息
   # 仍在，换够大的缓冲仍取得回整条。三个数全 1 才算。
   "hole: len short=1 long=1 nofit=1"
+  # 推不动（`docs/port.md` §8 那条链的收场，`programs/.../shell.rs` 的 `wedge`）：单任务里
+  # 自己占满单槽 → **有界**推一次。两问缺一不可：`busy=1` 到点报 `Busy`（不是永久等——
+  # `HolePie::push` 对满槽是永久等，实测挂住、门超时 rc=124）；`waited=1` 它真的等满了期限
+  # （"当场就拒"也能骗过前一问）。`full=1` 证明先那条确实占住了槽；`bounded=1` 证明上界在
+  # 期限附近生效。反向实测：把 `push_within` 换成 `hole.push`，这一步永远等不到 marker。
+  "wedge: full=1 busy=1 waited=1 bounded=1"
   # 授出（`docs/port.md` §3、§9）：`cells=15` = 十六格里**十五格**都授得出、且 `Collect`
   # 读回的权限与签名说的子集**逐格相等**；`empty=1` = 第十六格（`Access::NONE +
   # Policy::NONE`）本地拒（空集不发 envcall）；`source=1` = `Port::pull` 拒了冒名的回复
@@ -383,7 +392,7 @@ const FLAVORS = [
 # 按名字取那一行（档案的全部事实都从它读；名字写错就该当场炸，故 `first` 之后必有值）。
 def flavor [name: string] { $FLAVORS | where name == $name | first }
 
-# 本档要核的 marker：`base` = `MARKERS` 那二十条 + 中断链（**每一档都核**：中断面不是某一档的
+# 本档要核的 marker：`base` = `MARKERS` 那二十三条 + 中断链（**每一档都核**：中断面不是某一档的
 # 附属品）；`extra` = 非默认档多跑三步的判词；`case` = 用例汇总行（判据是**全过**——
 # `0 fail` 且 `ok` 数 == 用例总数：零用例的症状比失败更坏，绿着、什么都没测，故必须断言
 # 具体条数）。
