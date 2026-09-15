@@ -14,6 +14,7 @@
 //! Interrupt [0]=3 同上                                   帧长 1
 //! Denied    [0]=4 同上                                   帧长 1
 //! NoSuch…   [0]=5 同上                                   帧长 1
+//! Waiting   [0]=6 同上                                   帧长 1
 //! ```
 //!
 //! **没有一处是补的**：没有保留区、没有长度字段、没有定长载荷数组，也没有哪一帧带一格
@@ -179,6 +180,16 @@ pub enum Reply {
     Denied,
     /// 会话 id 不认识（未开、已关、0）。
     NoSuchClient,
+    /// ReadLine：**同一条重问，我还在读**——不是失败，是"我在等你"。
+    ///
+    /// 为什么要有它：客户端那边"用户发呆"与"服务不应答"在沉默里长得一样，于是一次总界
+    /// 既会误判发呆（重连、打点、两侧各多留一两枚探针孔），又必须存在（卡死要判得出来）。
+    /// 答一句之后两者分开了：**答了 = 它在等；一声不吭 = 计入总界**。
+    ///
+    /// 代价如实记：这句答复与"整行交付"争**同一枚单槽孔**。撞车的窗口是"客户端的等待
+    /// 正好在推的这一刻到点"，后果是这条 `Waiting` 占了槽、随后那一整行推不进去
+    /// （1 s 后收场）。窗口是微秒级，换掉的是"每 12 s 一次"的确定性误判。
+    Waiting,
 }
 
 /// 控制台请求动词（线上判别号）。
@@ -202,6 +213,7 @@ pub const STATUS_EOF: u8 = 2;
 pub const STATUS_INTERRUPT: u8 = 3;
 pub const STATUS_DENIED: u8 = 4;
 pub const STATUS_NO_CLIENT: u8 = 5;
+pub const STATUS_WAITING: u8 = 6;
 
 /// 线格式错误域。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -355,6 +367,7 @@ impl Reply {
             Reply::Interrupt => (STATUS_INTERRUPT, 0, None),
             Reply::Denied => (STATUS_DENIED, 0, None),
             Reply::NoSuchClient => (STATUS_NO_CLIENT, 0, None),
+            Reply::Waiting => (STATUS_WAITING, 0, None),
         };
         m[0] = status;
         match text {
@@ -403,9 +416,12 @@ impl Reply {
             STATUS_INTERRUPT if body == 0 => Ok(Reply::Interrupt),
             STATUS_DENIED if body == 0 => Ok(Reply::Denied),
             STATUS_NO_CLIENT if body == 0 => Ok(Reply::NoSuchClient),
-            STATUS_EOF | STATUS_INTERRUPT | STATUS_DENIED | STATUS_NO_CLIENT => {
-                Err(ProtocolError::Short)
-            }
+            STATUS_WAITING if body == 0 => Ok(Reply::Waiting),
+            STATUS_EOF
+            | STATUS_INTERRUPT
+            | STATUS_DENIED
+            | STATUS_NO_CLIENT
+            | STATUS_WAITING => Err(ProtocolError::Short),
             _ => Err(ProtocolError::BadOp),
         }
     }

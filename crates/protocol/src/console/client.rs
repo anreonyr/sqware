@@ -53,8 +53,10 @@ fn next_nonce() -> u64 {
     seed.wrapping_add(NEXT.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
-/// 重发的**总次数**：单次有界只挡住"对端没了"，挡不住"对端活着但不应答"——那条路上
-/// 无界重发就是活锁。用尽即返错，由调用方走它那条有界的重连（`shell` 的 `CONSOLE_RETRY`）。
+/// **一声不吭**的到点次数上界（答了"还在读"就清零，见 `readline` 里 ③）。
+///
+/// 单次有界只挡住"对端没了"，挡不住"对端活着但不应答"——那条路上无界重发就是活锁。
+/// 用尽即返错，由调用方走它那条有界的重连（`shell` 的 `CONSOLE_RETRY`）。
 const READLINE_ROUNDS: usize = 4;
 
 /// 一次 `ReadLine` 等的上界（毫秒）：超了就**重发同一条**（幂等，见服务侧
@@ -174,18 +176,21 @@ impl Console {
         let bytes = prompt.as_bytes();
         let query =
             Query::readline(self.client, &bytes[..bytes.len().min(LINE)]).ok_or_else(denied)?;
-        // **有界等 + 重发同一条 + 总次数有界**（不是轮询：重发是幂等的，服务侧见
-        // `State::readline`）。三段各有各的理由：
+        // **有界等 + 重发同一条 + 总次数只数"一声不吭"**（不是轮询：重发是幂等的，服务侧
+        // 见 `State::readline`）。三段各有各的理由：
         //
         // ① 单次有界：`usize::MAX` 把"用户还没敲完"与"服务已经没了"折成同一件事。有界之后
         //    `Busy` 的含义收窄成"**探过、它还在**，只是没回"，而"没了"当场拿到 `Dead`/
         //    `Denied` ⇒ 调用方走重连。
         // ② 重发同一条：服务侧对"同会话重问同一条"是幂等的（已有等读会话 ⇒ 不排队、不重置
-        //    那一行的缓冲），故重发既不丢用户已敲的字，也不占第二格。
-        // ③ 总次数有界：**服务活着但不应答**这条路上，单次有界只是把永久挂起换成永久重发。
-        //    用尽即返错——终局是停机，不是活锁。
-        let mut busy = None;
-        for _ in 0..READLINE_ROUNDS {
+        //    那一行的缓冲），故重发既不丢用户已敲的字，也不占第二格。它现在还**答一句
+        //    "还在读"**（`Reply::Waiting`）——见 ③。
+        // ③ 只把**一声不吭**的到点计入总界：服务答了"还在读"就清零。不这样分，`Busy` 会把
+        //    "用户发呆"与"服务不应答"折成同一件事——前者每 4 × 3 s 就被误判成会话断了、
+        //    重连一次（`shell` 打一行 reconnected，两侧还各多留一两枚探针孔）。真正卡死的
+        //    服务一句都不答，照样用尽总界；用尽即返错——终局是停机，不是活锁。
+        let mut silent = 0usize;
+        loop {
             match self.call(&query, READLINE_WAIT_MS) {
                 Ok(Reply::Line { text }) => {
                     let text = core::str::from_utf8(text.as_bytes()).map_err(|_| denied())?;
@@ -193,12 +198,18 @@ impl Console {
                 }
                 Ok(Reply::Eof) => return Ok(Readline::Eof),
                 Ok(Reply::Interrupt) => return Ok(Readline::Interrupt),
+                // 服务答了"还在读"：它在等我 —— 这一句就是判据，把计数清零。
+                Ok(Reply::Waiting) => silent = 0,
                 Ok(_) => return Err(denied()),
-                Err(e) if e.source.is_busy() => busy = Some(e),
+                Err(e) if e.source.is_busy() => {
+                    silent += 1;
+                    if silent >= READLINE_ROUNDS {
+                        return Err(e);
+                    }
+                }
                 Err(e) => return Err(e),
             }
         }
-        Err(busy.unwrap_or_else(denied))
     }
 
     /// 关会话：撤回服务侧的会话登记。

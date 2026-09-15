@@ -466,13 +466,16 @@ impl State {
         // 语义）。这条幂等是**给客户端留的退路**：客户端那边 `readline` 的等待必须
         // 有界（否则服务被打死而等待没被唤醒时，它就永久挂住——实测过），有界就得
         // 能在超时后**重发同一条**请求，而重发要被当成"还是那一问"而不是"第二问"。
+        // 答复从"沉默"改成"还在读"：沉默让客户端只能按次数猜，而"发呆"与"卡死"在它
+        // 那里长得一模一样。
         //
         // 只比 `client` 不比 `prompt`：prompt 是**重绘**用的参数，同一个会话的两条
         // `ReadLine` 里它必然相同；比它只是多加一处可以不同的地方。
         if let Some(r) = self.reading.as_ref() {
             if r.client == client {
-                // 不回复：整行仍由输入线程交付（与首次那一条同样的走法）。
-                return Outcome::quiet();
+                // 答一句"**还在读**"：整行仍由输入线程交付，但这句答复让客户端能把
+                // "用户发呆"与"服务一声不吭"分开（见 `Reply::Waiting`）。
+                return Outcome::say(Reply::Waiting, self.session(client));
             }
             return Outcome::say(Reply::NoSuchClient, self.session(client));
         }
