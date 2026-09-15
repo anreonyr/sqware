@@ -51,10 +51,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::TeamId;
 use protocol::console::CAP;
-use protocol::console::{Decoder, Reply, SERVICE, State, TICK_MS};
+use protocol::console::{Decoder, REPLY_MS, Reply, SERVICE, State, TICK_MS};
 use protocol::dispatch::client::Directory;
+use protocol::session::Session;
+use protocol::startup::{self, Pier, Quay};
 use protocol::uart::Uart;
-use runtime::core::handshake::{self, Pier, Quay};
 use runtime::core::lock::Lock;
 use runtime::core::port::{Access, Policy, ship};
 use runtime::env::mail::HolePie;
@@ -165,7 +166,7 @@ fn announced(writer: &Uart) {
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     // 1. 靠泊 + 自建控制孔（只给父域；与请求孔分离——父域拿不到请求队列）。
-    let up = match handshake::moor() {
+    let up = match startup::moor() {
         Ok(u) => u,
         Err(_) => runtime::env::room::exit_with(1),
     };
@@ -251,7 +252,7 @@ extern "C" fn main() -> ! {
             flush(&writer);
             // `ReadLine`：已登记等读，那一行的回执由输入线程放进共享槽（回执为 `None`）。
             if let Some(reply) = outcome.reply {
-                route(outcome.to_reply, reply);
+                route(outcome.to_reply, reply, outcome.closing);
             }
             continue;
         }
@@ -259,22 +260,38 @@ extern "C" fn main() -> ! {
         let pending = CONSOLE.with(|s| s.take_pending());
         flush(&writer);
         if let Some((client, reply)) = pending {
-            // 整行只带**会话号**（它由输入线程经共享槽交来），故这里现查一次孔——与
+            // 整行只带**会话号**（它由输入线程经共享槽交来），故这里现查一次会话——与
             // `serve` 那条路的差别只有这一点：那边的孔是**判定那一刻**就定下来的。
-            route(CONSOLE.with(|s| s.reply_token(client)), reply);
+            route(CONSOLE.with(|s| s.session(client)), reply, false);
         }
     }
 }
 
-/// 把一条回复推到**某枚回信孔**（token 在本线程表里）。
+/// 把一条回复推到**那条会话的回信孔**（孔在本线程表里）。
 ///
-/// **必须在主线程调**：那枚 token 取自 `State` 的会话表，而它是**本线程**表里的号。
-/// 收的是 token 而不是会话号：判定那一刻查出来的孔，比投递时再查一次的孔可靠——
+/// **必须在主线程调**：会话的三格取自 `State` 的会话表，而它们是**本线程**表里的号。
+/// 收的是会话而不是会话号：判定那一刻查出来的孔，比投递时再查一次的孔可靠——
 /// `Close` 正是清完槽才回话的那一支（见 `protocol::console::server::Outcome`）。
-fn route(to_reply: Option<usize>, reply: Reply) {
-    let Some(token) = to_reply else {
+///
+/// 推不动（到点仍推不进去）= 这条会话没有出口了：[`Session::push`] 已经就地收场（放掉
+/// 回信孔的 pie），这里只需把那格忘掉。**这是本轮修掉的那条挂死**：旧形状是无界 push，
+/// 一条没人排空的回信就把本域唯一的请求线程钉在那里，全机跟着停。
+///
+/// `closing` = 这条推完就把会话收场（`Close` 的 `Ok` 那一支：它推出时已经不在表里了，
+/// 只剩那枚回复孔要放；**不在锁里放**——这一推可能等满 1 s）。
+fn route(to_reply: Option<Session>, reply: Reply, closing: bool) {
+    let Some(session) = to_reply else {
         return;
     };
     let (msg, n) = reply.encode();
-    let _ = HolePie::from_token(token).push(&msg[..n]);
+    let sent = session.push(&msg[..n], REPLY_MS).is_ok();
+    match (sent, closing) {
+        // 推不动：[`Session::push`] 已经就地收场（放掉回信孔的 pie），这里只须把那格忘掉。
+        (false, _) => CONSOLE.with(|s| s.forget(session)),
+        // 推成了、而这条会话已经不在表里（`Close` 那一支）⇒ 补上收场那一步。
+        (true, true) => {
+            let _ = session.close();
+        }
+        (true, false) => {}
+    }
 }

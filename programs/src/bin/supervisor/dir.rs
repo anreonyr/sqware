@@ -33,10 +33,10 @@ use env::TeamId;
 use protocol::dispatch::CALL;
 use protocol::dispatch::control::{Refer, Referred};
 use protocol::dispatch::server::{Directory, release_pie, vestor_of};
-use protocol::dispatch::wire::ADDRESS_AT;
-use runtime::core::handshake::{self, Quay};
+use protocol::dispatch::wire::address_of;
+use protocol::startup::{self, Quay};
 use runtime::core::lock::Lock;
-use runtime::core::port::{self, Access, Policy, ship};
+use runtime::core::port::{Access, Policy, ship};
 use runtime::env::mail::HolePie;
 use runtime::env::task as utask;
 
@@ -84,7 +84,7 @@ extern "C" fn control_main() -> ! {
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     // 1. 靠泊：认父域开的上行孔。
-    let up = match handshake::moor() {
+    let up = match startup::moor() {
         Ok(u) => u,
         Err(_) => runtime::env::room::exit_with(1),
     };
@@ -104,7 +104,7 @@ extern "C" fn main() -> ! {
     };
     // 控制孔给父域 **R|W|VEST**：父域要把这条孔再授给**它自己的另一个线程**（重发服务名
     // 时用，见 `docs/root.md` §5.3），而 `Accord` 的门槛是"源门闩持 `VEST`"——与
-    // `handshake::dock()` 给上行孔带 `VEST` 是同一条理由（"子域要把这条孔再授给自己的
+    // `startup::berth()` 给上行孔带 `VEST` 是同一条理由（"子域要把这条孔再授给自己的
     // 控制线程"）。多一个转授权不改变这条孔的用途：它本来就只对父域开口。
     let at_parent = match ship(&control, sire, Access::READ | Access::WRITE, Policy::VEST) {
         Ok(to) => to.seed(),
@@ -150,9 +150,9 @@ extern "C" fn main() -> ! {
             continue;
         };
         let caller = from.get();
-        // 回信地址从**地址槽**里读（传输字段，不是本协议的字段）——偏移取协议声明的那一个；
-        // 本域不自己记数（帧首那一格，`wire::ADDRESS_AT`）。
-        let reply_token = match port::address_at(&msg, ADDRESS_AT) {
+        // 回信地址从**地址槽**里读（传输字段，不是本协议的字段）——槽在哪儿由**协议**
+        // 说了算（[`address_of`] 只认本协议那张表，本域不自己记数）。
+        let reply_token = match address_of(&msg) {
             Some(at) => at.get(),
             None => continue,
         };

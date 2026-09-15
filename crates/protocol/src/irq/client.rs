@@ -15,7 +15,7 @@ use runtime::core::port::{Access, Policy, Port, ship};
 use runtime::env::mail::{self, HolePie};
 
 use super::wire::denied;
-use super::{Ack, Query, SERVICE};
+use super::{ACK_LEN, Ack, Query, SERVICE};
 use crate::dispatch::client::Directory;
 
 /// 等回执的上界（毫秒）。驱动在同一台机器上做一次查表 + 回执（至多再碰一次 PLIC 寄存器），
@@ -71,18 +71,22 @@ impl Line {
         self.ask(Query::delegate(*name, who))
     }
 
-    /// 一次往返：开回信孔 → 报文 → 有界等回执 → **放下回信孔**。
+    /// 一次往返：开回信孔 → 编帧（回信地址按**本协议**那一格填）→ 推 → 收（[`Port::pull`]
+    /// 内建核对来源）→ 解回执 → **放下回信孔**。
     ///
     /// 推送**会阻塞**（槽满即等，见 `HolePie::push`）：驱动一定会看到这条报文。
     /// 但"看到"不是"办到"——回执才是。
     ///
-    /// 收尾是 `close`（放下），不是旧版的 `seal`：驱动每请求只推一条回执，迟到的
+    /// 收尾是 `shut`（放下），不是旧版的 `seal`：驱动每请求只推一条回执，迟到的
     /// 那条落在空槽里、下一请求已换新孔，故这里不必再借"封印"去断它的路。
     fn ask(&self, request: Query) -> EnvResult<Ack> {
         let entry = HolePie::from_token(self.entry.get());
         let port = Port::open(&entry)?;
-        let ack = port.call::<Query>(&request, ACK_TIMEOUT_MS)?;
-        port.close()?;
+        let (frame, n) = request.encode(port.seed());
+        port.push(frame.get(..n).ok_or_else(denied)?)?;
+        let mut out = [0u8; ACK_LEN];
+        let ack = Ack::decode(port.pull(&mut out, ACK_TIMEOUT_MS)?)?;
+        port.shut()?;
         Ok(ack)
     }
 }

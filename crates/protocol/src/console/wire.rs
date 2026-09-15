@@ -23,7 +23,7 @@
 //! # 地址槽只在 `Open` 上，它装的是**握手孔**
 //!
 //! `Open` 那 8 字节是本协议唯一一处地址，它不装"回信孔"——回信孔由服务端开、句柄随
-//! 握手回执交回（`runtime::core::handshake::grant`）。它装的是**本端为这次握手开的私有
+//! 握手回执交回（`crate::console::open::grant`）。它装的是**本端为这次握手开的私有
 //! 孔**：服务端收下 `Open` 后把回执推进它（`server::State::open`）。
 //!
 //! 为什么这一格必须存在（实测）：握手回执若推回**请求孔**，就等于推进服务自己的收件箱
@@ -31,7 +31,7 @@
 //! 服务建完会话紧接着把自己推的回执吸了回来并当成坏请求拒掉，客户端等满上界，
 //! **同一次会话照 50% 的概率开不成**。私有孔把这条路变成一问一答。
 //!
-//! `Duet::encode` 那三行就是它的落点（机制只问"地址写哪儿"，不问"哪些动词带"）。
+//! [`Query::encode`] 那一支就是它的落点（地址只在 `Open` 上带，机制不认识这条规矩）。
 //!
 //! # 会话 id 从 1 起
 //!
@@ -41,13 +41,29 @@
 use core::mem::size_of;
 
 use env::{EnvError, EnvResult, PieToken, make_err};
-use runtime::core::port::{ADDRESS_LEN, Duet};
+/// 回信地址的线形：一枚 `PieToken` 的 8 字节小端。
+pub const ADDRESS_LEN: usize = 8;
 
 /// 地址槽在本协议报文里的偏移（就 `op` 之后那一格）。
 ///
-/// 转出 [`runtime::core::port::ADDRESS_AT`] 是为了让**服务侧读地址**不必知道那个数
-/// 从哪儿来：本模块说"槽在这儿"，机制说"槽是这么写的"。
-pub use runtime::core::port::ADDRESS_AT;
+/// 这个数归**本协议**自己声明：机制不知道任何协议的帧长什么样。
+pub const ADDRESS_AT: usize = 1;
+
+/// 把回信地址写进本协议帧的那一格。**只在 `Open` 上调用**：服务把回信孔记进会话表，
+/// 此后照表推回复；其余动词那一格必须是 0（`docs/console.md` §5）。
+pub fn put_address(out: &mut [u8], token: PieToken) -> Option<()> {
+    let slot = out.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    slot.copy_from_slice(&token.get().to_le_bytes());
+    Some(())
+}
+
+/// 从帧里抠出回信地址——**坏报文也要能抠**（拒一条请求仍欠对方一句）。`None` = 太短 /
+/// 全是 0（0 是本仓的"无句柄"）。
+pub fn address_of(m: &[u8]) -> Option<PieToken> {
+    let slot = m.get(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    let token = PieToken::new(usize::from_le_bytes(slot.try_into().ok()?));
+    if token.get() == 0 { None } else { Some(token) }
+}
 
 /// 本协议的负码：协议错（与内核码同表）。
 pub(crate) fn denied() -> erra::Error<EnvError> {
@@ -134,7 +150,7 @@ pub enum Query {
     ///
     /// 地址槽里留 0（回信孔由服务端开、句柄随答复交回），外加一枚**认领号**：服务端
     /// 把它连同那枚句柄一起推回来，客户端据此从入口孔那一串帧里认出"哪一枚是给我的
-    /// 答复"（理由见 `runtime::core::handshake::borrow`）。它当场生成，故对端猜不到
+    /// 答复"（理由见 `crate::console::open::open`）。它当场生成，故对端猜不到
     /// ——"谁在什么时候等哪一枚"这件事不再靠时序。
     Open {
         /// 认领号，原样回。
@@ -252,8 +268,10 @@ impl Query {
         m.get(TEXT_AT..).unwrap_or(&[])
     }
 
-    /// 成帧。**地址槽留 0**——由 [`Duet::encode`] 按本端回信孔填。
-    pub fn encode(&self) -> ([u8; CAP], usize) {
+    /// 成帧。回信地址**只在 `Open` 上带**（[`put_address`]）：服务把回信孔记进会话表，
+    /// 此后照表推回复；其余动词那一格必须是 0。这条规矩的读者是服务侧（`server`），
+    /// 机制不认识它。
+    pub fn encode(&self, at: PieToken) -> ([u8; CAP], usize) {
         let mut m = [0u8; CAP];
         let (op, client, text) = match self {
             Query::Open { .. } => (Op::Open, 0, None),
@@ -268,6 +286,7 @@ impl Query {
         if let Query::Open { nonce } = self {
             // 认领号在**地址槽之后**（`Open` 没有 client，那两格各归各的）。
             m[NONCE_AT..NONCE_AT + WORD].copy_from_slice(&nonce.to_le_bytes());
+            let _ = put_address(&mut m, at);
         } else {
             m[CLIENT_AT..CLIENT_AT + WORD].copy_from_slice(&client.to_le_bytes());
         }
@@ -389,45 +408,5 @@ impl Reply {
             }
             _ => Err(ProtocolError::BadOp),
         }
-    }
-}
-
-/// 报文对：一条控制台询问、一条控制台应答。尺寸与布局都由本协议说了算——包括
-/// **地址槽在 `[1..9)`（`ADDRESS_AT`）**与【地址只在 `Open` 上带】这两件事。
-impl Duet for Query {
-    type Req = Query;
-    type Rep = Reply;
-    type Wire = [u8; CAP];
-
-    const CAP: usize = CAP;
-
-    fn wire() -> [u8; CAP] {
-        [0u8; CAP]
-    }
-
-    /// 回复容器与请求容器分开（理由见 [`Duet::Reply`]）。回复最长为
-    /// `1 + ADDRESS_LEN + LINE`（`Line` 那一支），`CAP` 就是它自己的上界。
-    type Reply = [u8; CAP];
-
-    fn reply() -> [u8; CAP] {
-        [0u8; CAP]
-    }
-
-    fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
-        let (frame, n) = req.encode();
-        let Some(slot) = out.get_mut(..n) else {
-            return 0;
-        };
-        slot.copy_from_slice(&frame[..n]);
-        if matches!(req, Query::Open { .. }) {
-            if let Some(slot) = out.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN) {
-                slot.copy_from_slice(&at.get().to_le_bytes());
-            }
-        }
-        n
-    }
-
-    fn decode(buf: &[u8]) -> EnvResult<Reply> {
-        Reply::decode(buf).map_err(|_| denied())
     }
 }

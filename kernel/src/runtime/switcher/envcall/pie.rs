@@ -52,7 +52,7 @@ pub(crate) fn dispatch(
     let _ = &ident;
     Some(match call {
         PieCall::UnsealHole => unseal_hole(frame),
-        PieCall::UnsealPole { bytes } => unseal_pole(frame, bytes),
+        PieCall::UnsealPole { size } => unseal_pole(frame, size),
         PieCall::UnsealNole => unseal_nole(frame, ident),
         PieCall::Open { token } => open(frame, ident, token.get()),
         PieCall::Shut { token } => shut(frame, ident, token.get()),
@@ -75,6 +75,17 @@ fn answer(frame: &mut TrapContext, r: Result<usize, GateError>) {
             Err(e) => e.code() as usize,
         },
     );
+}
+
+/// 写回 a0 + a1（两件返回；契约见 `crates/env` 的 `FromPair`）。错误路径只写 a0。
+fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), GateError>) {
+    match r {
+        Ok((v0, v1)) => {
+            frame.gpr.set_x(Gprs::A0, v0);
+            frame.gpr.set_x(Gprs::A1, v1);
+        }
+        Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+    }
 }
 
 /// 按 token 在**当前任务**表里取得，判存活、判权。
@@ -197,10 +208,10 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
 }
 
 /// 解封 Pole：建实体 → 建门闩 → **auto-map 创建者视图**（创建者全权 → R|W）。
-fn unseal_pole(frame: &mut TrapContext, bytes: usize) -> Outcome {
+fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
-        let meta = mail::pole::meta(bytes, task.ident.id)?;
+        let meta = mail::pole::meta(size, task.ident.id)?;
         let task_space = task.ident.team.space.clone();
         let pie: Pie<mail::pole::PoleMeta> = gate::new_pie(
             meta.clone(),
@@ -222,7 +233,8 @@ fn unseal_pole(frame: &mut TrapContext, bytes: usize) -> Outcome {
     Outcome::Resume
 }
 
-/// 开闩：借映 Pole 页进当前任务空间 → VA（同 token 幂等复用）。仅对 Pole 成立。
+/// 开闩：借映 Pole 页进当前任务空间 → `(VA, 这一段多大)`（同 token 幂等复用）。
+/// 仅对 Pole 成立。
 fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
     let r = match resolve(token, Need::Read).and_then(|p| usable(&p).map(|()| p)) {
         Err(e) => Err(e),
@@ -240,19 +252,30 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
         // Nole 更没有：它没有载荷可以借映进任何空间。
         Ok(AnyPie::Nole(_)) => Err(GateError::Denied),
     };
-    answer(frame, r);
+    answer_pair(frame, r);
     Outcome::Resume
 }
 
 /// 关闩：撤该 token 的映射（幂等）。仅对 Pole 成立。
+///
+/// **不过存活闸**：撤的是**调用方自己那张 PTE**，资源已封印也得撤得掉——否则
+/// "封印后借入映射撤不掉"（`docs/mail.md` §10 第 1 条）。故这里不走 `resolve`
+/// （它含存活闸），只查表 + 判权 + 判「被关住」；`pole::shut` 里同样没有存活闸，
+/// 两处是同一条语义，与 `Release`「你总得能放下手里的东西」对齐。权限要 `R`。
 fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
     let _ = &ident;
-    let r = match resolve(token, Need::Read).and_then(|p| usable(&p).map(|()| p)) {
-        Err(e) => Err(e),
-        Ok(AnyPie::Pole(p)) => mail::pole::shut(p.meta(), token).map(|()| 0),
-        // Hole 与 Nole 都没有「关闩」这回事（无映射可撤）。
-        Ok(AnyPie::Hole(_) | AnyPie::Nole(_)) => Err(GateError::Denied),
-    };
+    let r = (|| -> Result<usize, GateError> {
+        let pie = find(token)?;
+        if !pie.allows(Need::Read) {
+            return Err(GateError::Denied);
+        }
+        usable(&pie)?;
+        match pie {
+            AnyPie::Pole(p) => mail::pole::shut(p.meta(), token).map(|()| 0),
+            // Hole 与 Nole 都没有「关闩」这回事（无映射可撤）。
+            AnyPie::Hole(_) | AnyPie::Nole(_) => Err(GateError::Denied),
+        }
+    })();
     answer(frame, r);
     Outcome::Resume
 }
@@ -361,7 +384,7 @@ fn revoke(frame: &mut TrapContext, dst_id: usize, token: usize) -> Outcome {
     Outcome::Resume
 }
 
-/// 收拢：报出本任务权限表第 `index` 份——**唯一的枚举手段**（`handshake::moor()`
+/// 收拢：报出本任务权限表第 `index` 份——**唯一的枚举手段**（`protocol::startup::moor()`
 /// 靠它发现「父域授给我的那枚门闩」这类未知句柄）。已知句柄求事实用 `Reserve`。
 ///
 /// 越界 → 全哨兵（token 0 / 权限空 / vestor 0），**不报错**。

@@ -132,7 +132,8 @@ impl Directory {
         if self.live(self.bindings[pos].entry).is_some() {
             return Err(DirectoryError::Taken);
         }
-        self.granted(entry, who)?;        self.displace(pos);
+        self.granted(entry, who)?;
+        self.displace(pos);
         self.bindings[pos].entry = Some(entry);
         Ok(())
     }

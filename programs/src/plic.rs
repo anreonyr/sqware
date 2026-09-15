@@ -1,7 +1,8 @@
 //! plic — PLIC（中断控制器）的**设备侧**：寄存器视图 + 职业动作。
 //!
-//! 与 `uart.rs` 同形：`open`（门闩 → 视图）＋ 本设备自己的动作。**不含**协议报文、
-//! 不含服务循环、不含配给——那些在装配层（`bin/supervisor/plic.rs`）。
+//! 与 `uart.rs` 同形：收下视图 ＋ 本设备自己的动作。**开闩不在这里**（门闩 → 视图是
+//! `Dock::open` 的事）；**不含**协议报文、不含服务循环、不含配给——那些在装配层
+//! （`bin/supervisor/plic.rs`）。
 //!
 //! # 它认识什么、不认识什么
 //!
@@ -20,7 +21,7 @@ use alloc::vec::Vec;
 
 use env::TaskId;
 use protocol::irq::Lines;
-use runtime::env::mail::PolePie;
+use runtime::core::dock::View;
 
 use crate::lines::from_tree;
 
@@ -42,7 +43,7 @@ const CLAIM: usize = 0x04;
 
 /// PLIC 的寄存器视图（一段有主的、可映射的内存——`docs/driver.md` §1）。
 pub struct Plic {
-    base: usize,
+    view: View,
     /// 本控制器有多少条线（设备树 `riscv,ndev`）——按它拒绝越界的注册。
     pub ndev: u32,
     /// 所有 **S 外部** context 序号（每颗 hart 一个）。
@@ -50,16 +51,15 @@ pub struct Plic {
 }
 
 impl Plic {
-    /// 开闩 + 读设备树：把"我是谁、我有哪些 context、这台机器上有哪些中断源"问清楚。
+    /// 收下两段视图 + 读设备树：把"我是谁、我有哪些 context、这台机器上有哪些中断源"问清楚。
     ///
     /// 判据 = `interrupt-controller` 且 `compatible` 里含 `plic` 的节点。**解释设备
     /// 树是驱动的事**（内核只原样搬运自描述，§3.1.3），故这里可以按 compatible 认。
     ///
     /// 返的第二件是**线表**：它由同一棵树建出来（名字 → 线号），本域此后只认名字。
-    pub fn open(pole: PolePie, dtb: PolePie, sire: TaskId) -> Option<(Self, Lines)> {
-        let base = pole.open().ok()?;
-        let dtb_va = dtb.open().ok()?;
-        // SAFETY: DTB 门闩把设备树本体只读借映进了本域；`fdt` 只读它。
+    pub fn new(view: View, dtb: View, sire: TaskId) -> Option<(Self, Lines)> {
+        let dtb_va = dtb.base();
+        // SAFETY: DTB 视图是只读借映（内核按 pie 权限降了 PTE）；`fdt` 只读它。
         let fdt = unsafe { fdt::Fdt::from_ptr(dtb_va as *const u8) }.ok()?;
         let node = fdt.all_nodes().find(|n| {
             n.property("interrupt-controller").is_some()
@@ -88,7 +88,7 @@ impl Plic {
         let lines = from_tree(&fdt, &node, ndev, sire);
         Some((
             Self {
-                base,
+                view,
                 ndev,
                 contexts,
             },
@@ -141,12 +141,12 @@ impl Plic {
     }
 
     fn read(&self, off: usize) -> u32 {
-        // SAFETY: `base` 是本域已映射的 PLIC 页；偏移落在 `reg` 声明的区间内。
-        unsafe { core::ptr::read_volatile((self.base + off) as *const u32) }
+        // SAFETY: `view` 是 `Dock::open` 的产物——PLIC 那段已借映进本域；偏移落在 `reg` 区间内。
+        unsafe { core::ptr::read_volatile((self.view.base() + off) as *const u32) }
     }
 
     fn write(&self, off: usize, v: u32) {
         // SAFETY: 同上，只写控制器寄存器。
-        unsafe { core::ptr::write_volatile((self.base + off) as *mut u32, v) }
+        unsafe { core::ptr::write_volatile((self.view.base() + off) as *mut u32, v) }
     }
 }

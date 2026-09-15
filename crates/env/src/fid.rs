@@ -334,9 +334,9 @@ pub enum PieCall {
     /// 解封的代价是零字节，消息多长由每条 `Push` 自己带（`docs/port.md` §5）。
     #[ret(PieToken)]
     UnsealHole,
-    /// 解封 Pole（页级安全内存；字节数页对齐）。
+    /// 解封 Pole（页级安全内存；大小页对齐）。
     #[ret(PieToken)]
-    UnsealPole { bytes: usize },
+    UnsealPole { size: usize },
     /// 解封 Nole（**无数据面的权柄载体**）：造一枚只有身份与存活的许可载体。
     ///
     /// **无参数**——没有 mtu、没有字节数、没有对齐可校验。它的全部内容就是"这一枚
@@ -344,10 +344,14 @@ pub enum PieCall {
     /// 与 `UnsealHole`/`UnsealPole` 并列，不是它们的特例。
     #[ret(PieToken)]
     UnsealNole,
-    /// 开闩：借映 Pole 物理页进当前 task.space（同 token 幂等复用）→ VA。
+    /// 开闩：借映 Pole 物理页进当前 task.space（同 token 幂等复用）→ VA + **整段多大**。
+    ///
+    /// **两件一起返**：起点与长度是同一段区间的两半，分开取会把"这段有多长"留成
+    /// 调用方的猜测——而它恰好只在内核手里（外来区按页界向两侧撑开，`reg` 声明的
+    /// 长度内核不知道）。
     ///
     /// 仅对 Pole 成立；权利：需 R。
-    #[ret(VirtAddr)]
+    #[ret((VirtAddr, usize))]
     Open { token: PieToken },
     /// 关闩：从当前 task.space 解除该 token 的映射（幂等）。
     ///
@@ -379,7 +383,7 @@ pub enum PieCall {
     /// 收拢：报出本任务权限表第 `index` 份（token + permission + vestor）。
     /// 越界 → `PieToken(0)`（无效哨兵，不报错）；vestor = None 时返 `TaskId(0)`。
     ///
-    /// **唯一的枚举手段**：`handshake::moor()` 靠它发现「父域授给我的那枚门闩」
+    /// **唯一的枚举手段**：`protocol::startup::moor()` 靠它发现「父域授给我的那枚门闩」
     /// （未知句柄）。已知句柄求事实用 `Reserve`。
     #[ret((PieToken, crate::permission::Permission, TaskId))]
     Collect { index: usize },

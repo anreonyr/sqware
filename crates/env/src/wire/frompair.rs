@@ -71,6 +71,13 @@ impl FromPair for (usize, usize) {
     }
 }
 
+/// `Open` 的返回：`(视图起点, 整段多大)`——一段区间的两半，故一起回。
+impl FromPair for (VirtAddr, usize) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (VirtAddr(v0), v1)
+    }
+}
+
 impl FromPair for u64 {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         v0 as u64

@@ -38,3 +38,10 @@ pub mod wire;
 pub use client::Uart;
 pub use server::{Action, serve};
 pub use wire::{ACK_LEN, CAP, DELIVER, HEAD, PAYLOAD_MAX, Query, SERVICE, Status};
+
+/// 一次往返的上界（毫秒）：**两端同一个数**。
+///
+/// 客户端等回执用它，驱动推回执也用它——驱动比客户端先放弃没有意义（对面还在等）。
+/// 为什么必须有上界：无界推的形态下，驱动推一条没人排空的回执会永久挂住本域的写线程，
+/// 上游（console 的落屏）跟着停。
+pub const ACK_MS: usize = 1000;

@@ -15,8 +15,9 @@
 | [task.md](task.md) | Task / Team / 血缘 / 调度 | 执行单元：产、放行、运行、等、死（两相）与回收 |
 | [pie.md](pie.md) | Pie（权柄） | 门闩：权限位、子集转让、派生边、级联撤销、寿命 |
 | [mail.md](mail.md) | Mail（Hole / Pole / Nole） | 数据面三件套：有槽、有页、什么都没有 |
-| [port.md](port.md) | Port（Hole 的通讯协议） | 授出（`Access` × `Policy`）、坐标 `To`、一次往返 `Port`、报文对 `Duet`；**已实现**（含 §5 舍弃 `mtu` 的变长孔）；判据见其 §9 |
+| [port.md](port.md) | Port（Hole 的通讯协议） | 授出（`Access` × `Policy`）、坐标 `To`、**两枚孔的配对** `Port`（`open`/`push`/`pull`/`shut`）；往返与帧格式归各协议；**已实现**（含 §5 舍弃 `mtu` 的变长孔、§10 的分层裁决）；判据见其 §9 |
 | [bell.md](bell.md) | Bell（Nole 的 runtime 封装） | 空载荷门铃：内核一位「有待取之事」+ 听者面；建域权那条判据为什么不用改；**已实现**（门铃即 `irq` 中断门，`docs/driver.md` §3.2.3） |
+| [dock.md](dock.md) | Dock（Pole 的 runtime 封装） | 借映 → **视图**（起点与长度成对）；`Open` 返两件；`Shut` 不过存活闸；**已实现**，判据见其 §9 |
 | [memory.md](memory.md) | 帧与页表 | 帧分配器、pagemeta 一份账、页表 / ASID、缺页 |
 
 ## 语义（README 的 Protocol & Service）

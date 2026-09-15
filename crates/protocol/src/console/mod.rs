@@ -3,10 +3,14 @@
 //! 控制台是**一个服务**（`prog-console`），不是每程序自己读 UART：终端渲染、
 //! 键盘解码、行编辑都住在服务侧，客户端只说"我写了什么"和"给我读一行"。
 //!
-//! 三块分工：
-//!   [`wire`]   —— 线格式：动词 + 变长帧，纯函数；
-//!   [`client`] —— 线对侧：`Console`/`Readline`（与旧 `programs/src/term` 的 API 同形）；
-//!   [`server`] —— 服务侧：ANSI 渲壳 + VTE 解码 + 行编辑 + 客户端表。
+//! 四块分工：
+//!   [`wire`]    —— 线格式：动词 + 变长帧，纯函数；
+//!   [`open`]    —— 开会话：握手的**两端**（私有握手孔 + 认领号 + 回信孔的交接）；
+//!   [`client`]  —— 线对侧：`Console`/`Readline`（与旧 `programs/src/term` 的 API 同形）；
+//!   [`server`]  —— 服务侧：ANSI 渲壳 + VTE 解码 + 行编辑 + 客户端表。
+//!
+//! **判活与收场不在这里**：那是 [`crate::session`]（五家共用的那一件）。本模块只管
+//! "开会话"——那是 console 自己的形状（私有握手孔、认领号、首帧兼开门请求）。
 //!
 //! # 设备不在这一层，也不在这一域
 //!
@@ -32,9 +36,16 @@
 //! ——它才持着写设备那枚门闩（[`server::State::take_out`]）。
 
 pub mod client;
+pub mod open;
 pub mod server;
 pub mod wire;
 
 pub use client::{Console, Readline};
 pub use server::{Decoder, Key, State, TICK_MS};
 pub use wire::{CAP, LINE, Op, ProtocolError, Query, Reply, SERVICE, Text, WORD};
+
+/// 一次往返的上界（毫秒）：**两端同一个数**。
+///
+/// 客户端等回复用它，服务端推回复也用它——服务比客户端先放弃没有意义（对面还在等），
+/// 而后放弃的那一端就是被钉住的那一端：服务只有一个请求线程，它一停，所有客户端一起停。
+pub const REPLY_MS: usize = 1000;

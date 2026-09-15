@@ -19,16 +19,15 @@ extern crate programs;
 
 use protocol::dispatch::CALL;
 use protocol::dispatch::client::Directory;
-use protocol::dispatch::wire::ADDRESS_AT;
-use runtime::core::port::{ADDRESS_LEN, address_at};
-use runtime::core::handshake::{self, Pier, Quay};
+use protocol::dispatch::wire::{ADDRESS_LEN, address_of};
+use protocol::startup::{self, Pier, Quay};
 use runtime::core::port::{Access, Policy, ship};
 use runtime::env::mail::HolePie;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     // 1. 靠泊 + 自建控制孔（只给父域；与入口门闩分离——父域拿不到请求队列）。
-    let up = match handshake::moor() {
+    let up = match startup::moor() {
         Ok(u) => u,
         Err(_) => runtime::env::room::exit_with(1),
     };
@@ -72,7 +71,7 @@ extern "C" fn main() -> ! {
     // 三处都按"长度即边界"来，缺一处这条服务就哑：
     //   · **长度由 `pull` 给**（缓冲按上界 `CALL` 备，帧长当场才知道）；整块回推就等于
     //     让收侧看见"一个比真实长度长的报文"；
-    //   · **回信地址按协议那张偏移表读**（`wire::ADDRESS_AT` = 帧首），不是硬编码 [0..8)；
+    //   · **回信地址按协议那张表读**（[`address_of`] 只认本协议的槽位），不是硬编码 [0..8)；
     //   · 正文从 [`ADDRESS_LEN`] 之后开始（本协议没有动词字段，地址就占最前那一格）。
     let mut req = [0u8; CALL];
     loop {
@@ -82,7 +81,7 @@ extern "C" fn main() -> ! {
         let Some(msg) = req.get_mut(..len) else {
             continue;
         };
-        let Some(reply_token) = address_at(msg, ADDRESS_AT) else {
+        let Some(reply_token) = address_of(msg) else {
             continue;
         };
         for b in msg[ADDRESS_LEN..].iter_mut() {

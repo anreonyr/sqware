@@ -46,7 +46,8 @@ use protocol::dispatch::client::Directory;
 use protocol::dispatch::control::{Refer, Referred};
 use protocol::doom;
 use protocol::irq;
-use runtime::core::handshake::{self, Pier, Quay};
+use protocol::startup::{self, Pier, Quay};
+use runtime::core::dock::Dock;
 use runtime::core::lock::Lock;
 use runtime::core::port::{Access, Policy, ship};
 use runtime::env::chrono;
@@ -215,7 +216,7 @@ fn build_spawn(
 
 /// 开上行孔（`dock`）→ 放行。返上行孔（root 侧）。
 fn launch(child: TaskId) -> Result<HolePie, Step> {
-    let up = match handshake::dock(child) {
+    let up = match startup::berth(child) {
         Ok(u) => u,
         Err(_) => return Err(4),
     };
@@ -756,10 +757,11 @@ extern "C" fn main() -> ! {
     let Some(uart_token) = device_token(pairs, pairs_n, CONSOLE_DEVICE) else {
         exit_with(17);
     };
-    let uart = match Uart::open(PolePie::from_token(uart_token)) {
-        Ok(u) => u,
+    let uart_dock = match Dock::open(PolePie::from_token(uart_token)) {
+        Ok(d) => d,
         Err(_) => exit_with(18),
     };
+    let uart = Uart::new(uart_dock.view());
     OUT.with(|o| *o = Out::Device(uart));
 
     // 1.3 中断面要的那几枚（本域只经手，不开闩、不看内容）。

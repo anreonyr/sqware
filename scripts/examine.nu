@@ -191,9 +191,15 @@ const STEPS = [
   {cmd: "session",     pat: "console: session opens=12 ok=12 closed=1"}
   # 授出（`docs/port.md` §3、§9）：**十六格逐格核**（`Access` 四取值 × `Policy` 四取值）
   # ——十五格授给自己并用 `Collect` 读回权限；第十六格是空集，必须**本地拒**。
-  # 末位 `source=1` 是另一条断言的牙：`Port::call` 只认对端推来的回复，冒名的那条被拒。
+  # 末位 `source=1` 是另一条断言的牙：`Port::pull` 只认对端推来的回复，冒名的那条被拒。
   # 放在 `kill console` 之后：它要 `Spawn` 一个子线程，而此刻服务重启刚好试过任务生灭。
   {cmd: "ship",      pat: "ship: cells=15 empty=1 source=1"}
+  # 泊位（`docs/dock.md`）：借映这件事的四个事实，四格各有各的牙。`size=4096` 是 `Open`
+  # 新返的第二个值——把 a1 填错（填 0、或填设备树 reg 的长度）这一格就不是 4096；`rw=1`
+  # 要求**首字节与末字节**都写得进读得回（长度报大了，末字节落在未映射页，本域当场 fault）；
+  # `remap=1` 要求撤图后重开的那段仍可读写；`sealed-shut=1` 是**封印之后仍撤得掉自己那张
+  # 图**——它的牙正是存活闸：闸留着 ⇒ 当场 `Dead`（`docs/mail.md` §10 第 1 条销账）。
+  {cmd: "dock",      pat: "dock: size=4096 rw=1 remap=1 sealed-shut=1"}
   {cmd: "exit",      pat: "task: all tasks exited, system halted"}
 ]
 
@@ -235,8 +241,8 @@ const INSTANCE_CHECKS = [
   {pat: 'shell: console reconnected', n: 2, what: "会话续上（两次他杀各一次）"}
 ]
 
-const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19]
-const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+const STEPS_DEFAULT = [0, 1, 2, 3, 4, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+const STEPS_FULL    = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
 # 默认档的构建 features **恒为空串**：那是 `FLAVORS` 里 `default` 那一行（构造上的保证，
 # 不是旋钮，见头注「按档构建」）。
@@ -261,10 +267,14 @@ const MARKERS = [
   "hole: len short=1 long=1 nofit=1"
   # 授出（`docs/port.md` §3、§9）：`cells=15` = 十六格里**十五格**都授得出、且 `Collect`
   # 读回的权限与签名说的子集**逐格相等**；`empty=1` = 第十六格（`Access::NONE +
-  # Policy::NONE`）本地拒（空集不发 envcall）；`source=1` = `Port::call` 拒了冒名的回复
+  # Policy::NONE`）本地拒（空集不发 envcall）；`source=1` = `Port::pull` 拒了冒名的回复
   # （发送者不是 `to.peer()`）。它的牙在第一格与最后一格：把空集的本地拒去掉、或把来源
   # 校验去掉，这两个数各自变 0。
   "ship: cells=15 empty=1 source=1"
+  # 泊位（`docs/dock.md`）：`Dock::open` 返成对的两件（起点 + 长度）/ 那段页真能读写 /
+  # 撤图后重开仍可用 / 封印之后仍撤得掉自己那张图。末格是**旧那条已知边界的销账**
+  # （`docs/mail.md` §10 第 1 条）——把 `pole::shut` 的存活闸加回去，它就变 0。
+  "dock: size=4096 rw=1 remap=1 sealed-shut=1"
   "sleep 300ms"
   "woke"
   "clock [0-9]"

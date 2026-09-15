@@ -39,7 +39,7 @@
 | T2-3 | 握手**串行**（hatch 一个 → 收报到 → 配给 → 下一个） |
 | T2-4 | 删 `Reply::Connected.owner`（同一事实由 `Reserve` 给出） |
 | T2-5 | 启动通道**不回收**（`memo` 保活到关机） |
-| T2 命名 | 子→父 `Quay`（报到）/ 父→子 `Pier`（配给）/ `dock`（父侧开孔）/ `moor`（子侧认孔） |
+| T2 命名 | 子→父 `Quay`（报到）/ 父→子 `Pier`（配给）/ `berth`（父侧泊好上行孔，原名 `dock`——这个名字让给了 Pole 的封装 `Dock`）/ `moor`（子侧系上） |
 | K1 | **机制在核、政策在服务**：内核只给 `RoomCall::Doom`（判据只有血缘，传递）；root 是全体域的祖先 ⇒ 跨血缘的"该不该"落在本域——这就是 Linux `kill` 的形状（谁都能请求，够格的那个执行） |
 | K2 | 服务是 root 的**第二个线程**（不是新域）：主线程照旧阻塞在 `wait_dead(shell)`，服务线程无界等请求孔；两边各自"等着"，没有节拍轮询 |
 | K3 | 准入门 = **能力**，不是判据表：入口门闩只亲授给 root 引荐过的域（`Refer`），沙箱里的域连不上目录、也就拿不到副本——"独占不靠判据，靠没有第二个创建入口" |
@@ -113,13 +113,13 @@
 
 ```text
 programs/src/bin/supervisor/root/
-  main.rs      解封建域权（NolePie::unseal）→ 开报到孔 → 逐子域串行握手
+  main.rs      解封建域权（NolePie::unseal）→ 开上行孔（`berth`）→ 逐子域串行握手
                → Join(shell) → exit
   manifest.rs  清单格式（只被 build.rs 与 root 知道）
-crates/runtime/src/core/handshake.rs
-  dock()       父侧：开报到孔（一次）
-  moor()       子侧：认报到孔（vestor == sire 且 owner == sire）
-  Quay / Pier  两条 8 字节报文（方向即类型）
+crates/protocol/src/startup.rs
+  berth(child) 父侧：开上行孔（每子域一条）+ 授 R|W|VEST
+  moor()       子侧：认上行孔（vestor == sire 且 owner == sire）
+  Quay / Pier  两条 9 字节报文（方向即类型）
 ```
 
 - 清单格式与 `build.rs::INITRD_BINS` 对齐；`kind` 仍由**内核打包表**决定，root 原样转交
@@ -231,7 +231,7 @@ crates/runtime/src/core/handshake.rs
    的目录门闩副本（vestor 也是 root）当成报到孔。修法：加 `owner == sire()`——报到孔是
    **父域自己开的门**，转授来的门闩 `owner` 是别人。
 6. **上行孔少了 `VEST`，子域授不出去**（B）：root 把上行孔按 `R|W` 授给子域，子域要把
-   它再交给自己的控制线程时被拒——`Accord` 的门槛是「源门闩持 `VEST`」。修法：`dock()` 改授
+   它再交给自己的控制线程时被拒——`Accord` 的门槛是「源门闩持 `VEST`」。修法：`berth()` 改授
    `R|W|VEST`（**这条孔本来就是「子域往父域推」用的，多一个转授权不改变其用途**）。
 
 ## 7 · 已知边界
@@ -307,7 +307,7 @@ debug 档同路径跑通（`dir` + `req` + `exit` → 同样自行复位，无 l
 
 ```text
 root                                       子域
-  dock(child)   开上行孔（每子域一条）+ Accord(child, R|W|VEST)
+  berth(child)  开上行孔（每子域一条）+ ship(up, child, R|W, VEST)
   Build+Spawn(Held)                          —— 启动参数为空
   Hatch(child) ───────────────────────────▶  起跑
                                              moor()      认上行孔

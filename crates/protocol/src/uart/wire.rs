@@ -24,8 +24,6 @@
 use alloc::vec::Vec;
 
 use env::{EnvError, EnvResult, PieToken, make_err};
-use runtime::core::port::{ADDRESS_LEN, Duet, put_address};
-
 /// 本协议的负码：无权 / 协议错（与内核码同表）。
 pub(crate) fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(-1))
@@ -41,6 +39,27 @@ pub const SERVICE: &str = "uart";
 /// 为什么是 256：`prog-console` 侧一条输出（一整行 + 重绘）绝大多数落在这一条里，
 /// 于是"一行一次跨域"；默认任务栈 16 KiB，收发的报文缓冲各 280 B 不成负担。
 pub const PAYLOAD_MAX: usize = 256;
+
+/// 回信地址的线形：一枚 `PieToken` 的 8 字节小端。
+pub const ADDRESS_LEN: usize = 8;
+
+/// 回信地址在**本协议**帧里的偏移：紧跟 `op`。
+pub const ADDRESS_AT: usize = 1;
+
+/// 把回信地址写进本协议帧的那一格。
+pub fn put_address(out: &mut [u8], token: PieToken) -> Option<()> {
+    let slot = out.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    slot.copy_from_slice(&token.get().to_le_bytes());
+    Some(())
+}
+
+/// 从帧里抠出回信地址——**坏报文也要能抠**（拒一条请求仍欠对方一句，而那一句得知道
+/// 往哪儿推）。`None` = 太短 / 全是 0（0 是本仓的"无句柄"）。
+pub fn address_of(m: &[u8]) -> Option<PieToken> {
+    let slot = m.get(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    let token = PieToken::new(usize::from_le_bytes(slot.try_into().ok()?));
+    if token.get() == 0 { None } else { Some(token) }
+}
 
 /// 一条帧的固定头：`op + 地址槽`。
 pub const HEAD: usize = 1 + ADDRESS_LEN;
@@ -78,6 +97,11 @@ impl Status {
         self as u8
     }
 
+    /// 解一条回执。报文不合法 ⇒ `Denied`。
+    pub fn decode(buf: &[u8]) -> EnvResult<Status> {
+        Status::from_byte(*buf.first().ok_or_else(denied)?).ok_or_else(denied)
+    }
+
     pub fn from_byte(b: u8) -> Option<Status> {
         match b {
             0 => Some(Status::Ok),
@@ -90,11 +114,11 @@ impl Status {
 /// 一条写询问。
 ///
 /// **回信地址不在询问里**：它是**传输字段**（地址槽 `[1..9)`），由收方用
-/// [`address_of`](runtime::core::port::address_of) 从帧里抠、由 [`Duet::encode`]
-/// 按本端回信孔填——客户端手里没有那枚 token，故这个类型里也就没有那一格。
+/// [`address_of`] 从帧里抠、由 [`Query::encode`] 按本端回信孔填——客户端手里没有
+/// 那枚 token，故这个类型里也就没有那一格。
 ///
-/// 字节**自有**：`Port::call` 是同步的，但 `Duet::Req` 那一格没有生命周期参数，
-/// 询问值借不了调用方那块临时缓冲（`alloc` 可用，一次写一趟本来就有一条跨域往返）。
+/// 字节**自有**：一次往返是同步的，但询问值借不了调用方那块临时缓冲
+/// （`alloc` 可用，一次写一趟本来就有一条跨域往返）。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Query {
     bytes: Vec<u8>,
@@ -121,19 +145,21 @@ impl Query {
         PAYLOAD_AT + self.bytes.len()
     }
 
-    /// 编码（**不写地址槽**：留给 [`Duet::encode`]；尾部不补零）。
-    pub fn encode(&self) -> ([u8; CAP], usize) {
+    /// 编码：写出整帧，并把**回信地址**填进本协议那一格（`at` = 回信孔在对端表里的
+    /// token）。尾部不补零——帧长就是那个返回值。
+    pub fn encode(&self, at: PieToken) -> ([u8; CAP], usize) {
         let mut m = [0u8; CAP];
         m[OP_AT] = OP_WRITE;
         let n = self.len();
         m[PAYLOAD_AT..n].copy_from_slice(&self.bytes);
+        let _ = put_address(&mut m, at);
         (m, n)
     }
 
     /// 解码（**零拷贝**）：验动词、验长度区间（长度 = 帧长 − 头）。
     ///
     /// 服务侧用它；未知动词、空载荷、超长一律 `None`——**不 panic**。调用方要回绝的话，
-    /// 回信地址仍可用 [`address_of`](runtime::core::port::address_of) 单独抠出来
+    /// 回信地址仍可用 [`address_of`] 单独抠出来
     /// （坏报文也欠对方一个答复）。
     pub fn view(msg: &[u8]) -> Option<&[u8]> {
         if msg.first() != Some(&OP_WRITE) {
@@ -144,40 +170,5 @@ impl Query {
             return None;
         }
         Some(payload)
-    }
-}
-
-/// 报文对：一条写询问、一字节回执。地址槽在 `[1..9)`，**每条询问都带**。
-
-impl Duet for Query {
-    type Req = Query;
-    type Rep = Status;
-    type Wire = [u8; CAP];
-
-    const CAP: usize = CAP;
-
-    fn wire() -> [u8; CAP] {
-        [0u8; CAP]
-    }
-
-    /// 回复容器与请求容器分开（理由见 [`Duet::Reply`]）。
-    type Reply = [u8; CAP];
-
-    fn reply() -> [u8; CAP] {
-        [0u8; CAP]
-    }
-
-    fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
-        let (frame, n) = req.encode();
-        let Some(slot) = out.get_mut(..n) else {
-            return 0;
-        };
-        slot.copy_from_slice(&frame[..n]);
-        put_address(out, at);
-        n
-    }
-
-    fn decode(buf: &[u8]) -> EnvResult<Status> {
-        Status::from_byte(*buf.first().ok_or_else(denied)?).ok_or_else(denied)
     }
 }

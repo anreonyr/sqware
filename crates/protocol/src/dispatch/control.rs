@@ -19,9 +19,10 @@
 //!
 //! **身份不进报文**：控制孔只有 root 推、上行孔只有子域推，"谁能推谁就是谁"是结构性的。
 //!
-//! 为什么住在 `protocol` 而不是 `runtime::core::handshake`：它们是**目录协议的**语义
-//! （谁有资格注册哪个名字），而 `runtime` 是机制层——`protocol → runtime` 是单向边，
-//! 机制层里躺着某个协议的报文正是那条边被违反的样子。
+//! 为什么住在 `protocol` 而不是 `runtime::core`：它们是**目录协议的**语义（谁有资格注册
+//! 哪个名字），而 `runtime` 是机制层——`protocol → runtime` 是单向边，机制层里躺着某个
+//! 协议的报文正是那条边被违反的样子。（同一条理由后来又把启动期的 `Quay` / `Pier` 从
+//! `runtime::core::handshake` 搬去了 `crate::startup`。）
 
 use env::{EnvError, EnvResult, Name, PieToken, TaskId, make_err};
 

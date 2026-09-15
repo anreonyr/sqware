@@ -37,8 +37,8 @@ pub fn unseal_hole() -> EnvResult<usize> {
     }
 }
 
-pub fn unseal_pole(bytes: usize) -> EnvResult<usize> {
-    let r = PieCall::UnsealPole { bytes }.call()?;
+pub fn unseal_pole(size: usize) -> EnvResult<usize> {
+    let r = PieCall::UnsealPole { size }.call()?;
     match r {
         PieCallRet::UnsealPole(tk) => Ok(tk.get()),
         _ => unreachable!(),
@@ -144,13 +144,17 @@ pub fn hush(token: usize) -> EnvResult<()> {
     }
 }
 
-pub fn open(token: usize) -> EnvResult<usize> {
+/// 开闩：借映 Pole 页进本任务空间 → `(视图起点, 这一段多大)`（同 token 幂等复用）。
+///
+/// **两件一起返**：起点与长度是同一段区间的两半，而长度只在内核手里（外来区按
+/// 页界撑开，设备树 `reg` 声明的长度内核不知道）。
+pub fn open(token: usize) -> EnvResult<(usize, usize)> {
     let r = PieCall::Open {
         token: PieToken::new(token),
     }
     .call()?;
     match r {
-        PieCallRet::Open(va) => Ok(va.get()),
+        PieCallRet::Open((va, size)) => Ok((va.get(), size)),
         _ => unreachable!(),
     }
 }
@@ -217,7 +221,7 @@ pub fn revoke(dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
 /// 收拢：本任务权限表第 `index` 份（token + permission + vestor）。
 /// 越界 → `(0, 空权限, 0)`——哨兵不报错。
 ///
-/// **唯一的枚举手段**：`handshake::moor()` 靠它发现「父域授给我的那枚门闩」。
+/// **唯一的枚举手段**：`protocol::startup::moor()` 靠它发现「父域授给我的那枚门闩」。
 /// 已知句柄求事实用 [`reserve`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
 /// 与 `UnitCall::SelfId` 越界哨兵一致。
 pub fn collect(index: usize) -> EnvResult<(PieToken, env::Permission, TaskId)> {
@@ -511,9 +515,13 @@ pub struct PolePie {
 }
 
 impl PolePie {
-    pub fn unseal(bytes: usize) -> EnvResult<Self> {
+    /// 解封 Pole：一段页级安全内存（**大小页对齐**，清零）。
+    ///
+    /// 创建者的视图由内核顺手落好（`unseal` 内部 `auto-map`），但**那个 VA 不在这里回**
+    /// ——要地址就再 `open` 一次（幂等，返同一个 VA）。
+    pub fn unseal(size: usize) -> EnvResult<Self> {
         Ok(Self {
-            token: unseal_pole(bytes)?,
+            token: unseal_pole(size)?,
         })
     }
 
@@ -524,7 +532,10 @@ impl PolePie {
         }
     }
 
-    pub fn open(&self) -> EnvResult<usize> {
+    /// 开闩：借映进本任务空间 → `(视图起点, 这一段多大)`（同 token 幂等复用）。
+    ///
+    /// 薄层只封这一次 envcall；"视图"这个用法在 [`crate::core::dock`]。
+    pub fn open(&self) -> EnvResult<(usize, usize)> {
         open(self.token)
     }
 

@@ -47,11 +47,13 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::format;
 
-use env::{HoleDir, TeamId};
+use env::{HoleDir, PieToken, TeamId};
 use protocol::dispatch::client::Directory;
 use protocol::irq;
+use protocol::session::push_within;
+use protocol::startup::{self, Pier, Quay};
 use protocol::uart::{self, Action, DELIVER, SERVICE, Status};
-use runtime::core::handshake::{self, Pier, Quay};
+use runtime::core::dock::Dock;
 use runtime::core::lock::Lock;
 use runtime::core::port::{Access, Policy, ship};
 use runtime::env::mail::{self, HolePie, PolePie};
@@ -90,7 +92,7 @@ fn take_name(hole: HolePie) -> Option<env::Name> {
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     // 1. 靠泊 + 自建控制孔（只给父域；与请求孔分离——父域拿不到请求队列）。
-    let up = match handshake::moor() {
+    let up = match startup::moor() {
         Ok(u) => u,
         Err(_) => runtime::env::room::exit_with(1),
     };
@@ -128,15 +130,17 @@ extern "C" fn main() -> ! {
         runtime::env::room::exit_with(9);
     }
 
-    // 3. 收设备：`Open` 之后那段物理区就在本域页表里，此后读写寄存器就是 load/store。
+    // 3. 收设备：`Dock::open` 之后那段物理区就在本域页表里，此后读写寄存器就是 load/store。
+    //    门闩留在 `dock` 手里（本域活多久它活多久）——驱动只要那段视图。
     let dev = match Pier::pull(&down) {
         Ok(p) => p,
         Err(_) => runtime::env::room::exit_with(10),
     };
-    let uart = match Uart::open(PolePie::from_token(dev.token())) {
-        Ok(u) => u,
+    let dock = match Dock::open(PolePie::from_token(dev.token())) {
+        Ok(d) => d,
         Err(_) => runtime::env::room::exit_with(11),
     };
+    let uart = Uart::new(dock.view());
 
     // 4. 收设备名：**root 先写属主、再交名字**（客户端一拿到名字就会去登记，而登记读的
     //    正是刚写的那一行；同一条 FIFO 队列 ⇒ 先推的先被处理）。
@@ -219,14 +223,21 @@ fn write_loop(entry: HolePie, uart: Uart) -> ! {
             // 回执在**写完之后**才推：`Ok` 的含义是"字节已进设备"，不是"收到了"。
             Action::Write { reply, bytes } => {
                 uart.put(bytes);
-                let _ = HolePie::from_token(reply.get()).push(&[Status::Ok.byte()]);
+                ack(reply, Status::Ok);
             }
-            Action::Reply { reply, status } => {
-                let _ = HolePie::from_token(reply.get()).push(&[status.byte()]);
-            }
+            Action::Reply { reply, status } => ack(reply, status),
             Action::Ignore => {}
         }
     }
+}
+
+/// 回一条回执：**有界推**（[`uart::ACK_MS`]），推不动就丢掉那一条。
+///
+/// 无界推在这里的形态：对面（console）不排空这枚单槽孔 ⇒ 本线程永久挂住 ⇒ 写不再被服务。
+/// 丢掉一条回执不算撒谎——对面等不到就会判"这次写没成"，而"没成"正是事实。
+fn ack(reply: PieToken, status: Status) {
+    let msg = [status.byte()];
+    let _ = push_within(&HolePie::from_token(reply.get()), &msg, uart::ACK_MS);
 }
 
 /// 读线程：**排空设备 → 投给下游 → 等 PLIC 会话孔 → 取走线号**（每轮都排空）。

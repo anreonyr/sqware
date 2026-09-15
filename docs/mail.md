@@ -26,7 +26,9 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 | `runtime/switcher/envcall/mail.rs` | class 5 数据轴入口：判权 → 长度校验 → **锁外**暂存 → `try_*` → 盖章 |
 | `runtime/switcher/envcall/pie.rs` | class 7 权柄轴：`Unseal*` / `Open` / `Shut` / `Seal` / `Narrow` / `Release` 的编排 |
 | `crates/runtime/src/env/mail.rs` | 用户侧裸函数层 + `HolePie`/`PolePie`/`NolePie` + `AnyPie` + `pull_timeout`/`pull_timeout_from`/`peek` |
-| `crates/runtime/src/core/port.rs` | 用户侧**用法**层：授出（`ship`）、坐标（`To`）、一次往返（`Port`）、报文对（`Duet`）——见 [port.md](port.md) |
+| `crates/runtime/src/core/port.rs` | 用户侧**用法**层：授出（`ship`）、坐标（`To`）、两枚孔的配对（`Port`：`open`/`push`/`pull`/`shut`）——见 [port.md](port.md) |
+| `crates/runtime/src/core/dock.rs` | 用户侧**用法**层：借映 → 视图（`Dock::open`/`shut`、`View`）——见 [dock.md](dock.md) |
+| `crates/runtime/src/core/bell.rs` | 用户侧**用法**层：Nole 当门铃（`Bell::wait`/`hush`/`ring`）——见 [bell.md](bell.md) |
 
 | | Hole | Pole | Nole |
 |---|---|---|---|
@@ -57,12 +59,19 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 
 ## 4 · Pole
 
-- `unseal` 取页对齐帧并清零（`pole.rs:52-68`）。
-- **`Open`/`Shut` 就是 map/unmap**：`open_into` 做 `allocate(Seg::User, bytes)` +
-  `borrow(va, pa, bytes, flags)`（`:106-117`），登记 `(token, Weak<Space>, Span)`。
+- `unseal(size)` 取页对齐帧并清零（`pole.rs:52-68`）。这一族的"有多大"统一叫 `size`
+  （`UnsealPole { size }` / `PoleMeta.size`）；`PoleMeta::region` 的参数叫 `reg`——
+  那是**设备树声明的那一段**（所有权粒度），与页对齐后的 `size` 不是同一个量。
+- **`Open`/`Shut` 就是 map/unmap**：`open_into` 做 `allocate(Seg::User, size)` +
+  `borrow(va, pa, size, flags)`（`:106-117`），登记 `(token, Weak<Space>, Span)`。
   **键取 per-pie token 而非 per-space**：同一空间里多任务各有一条独立 PTE，`narrow` 只动
   自己那条——`cap ⊆ 页表` 不被共享 PTE 击穿（`pole.rs:37-39`）。`shut_from` 幂等 +
   `space.release(span)`；空间已死则映射随之消失（`:149-165`）。`Drop` 逐视图 release + 还帧。
+- **`Open` 返两件**：`(VA, size)`。长度只在内核手里（外来区按页界撑开，`reg` 的长度内核
+  不知道），故与起点一起回——见 [dock.md](dock.md) §4。
+- **`Shut` 不过存活闸**（与 `Release` 并列的唯一两个）：撤的是调用方自己那张 PTE，
+  资源封印后仍撤得掉——`pole.rs` 的 `shut` 与 envcall 入口的 `shut` 两处都不判。
+  见 [dock.md](dock.md) §7。
 - **所有权闸**：`SpaceInner::protect` 是全树唯一的 flags 写点，借入页的新 flags 必须是
   **当前 PTE flags 的子集**，否则 `WidenDenied`（`space/core.rs:329-346,375-398`）——
   「加宽无路可走」正是 `narrow` 的 `cap ⊆ 页表` 契约的地基；`open` 在 map 之后还会强制
@@ -127,6 +136,9 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 | 封印是否回收内存 | 不回收 | 寿命由引用计数，`Drop` 接管（`hole.rs:263-266`） |
 | `pull_timeout` 的 `wait == false` 算超时吗 | 不算 | 可能是信标被消费或无关唤醒 ⇒ 按 deadline 循环（`env/mail.rs:336-341`） |
 | Hole 的「开闩」是什么 | 就是 Push/Pull | 只有 Pole 有 `Open`/`Shut`（`fid.rs:274-275`） |
+| `Open` 返几个值 | **两个**：`(VA, size)` | 长度只在内核手里；分开取就是让调用方猜"这段有多长"（[dock.md](dock.md) §4） |
+| `Shut` 判不判资源存活 | **不判**（与 `Release` 并列） | 撤的是调用方自己那张 PTE；`cull.rs:114` 那行 `let _ =` 就是旧闸的反证（[dock.md](dock.md) §7） |
+| 这一族的"有多大"叫什么 | `size`；`region` 的参数叫 `reg` | `bytes` 是单位词冒充量名；`reg` 是设备树声明的那一段，与页对齐的 `size` 不是同一个量 |
 
 ## 9 · 时序：`Push` → 对端 `Pull` 醒来
 
@@ -150,13 +162,15 @@ Nole **什么都没有**。内核在 mail 管两件事：**资源实体**（`Hol
 
 ## 10 · 已知边界
 
-1. **Pole 封印后借入映射撤不掉**：`pole::shut` 自带 `alive` 闸（`pole.rs:206-212`），而
-   `Release` 的撤映射走 `cull` 且 `let _ = pole::shut(...)` 吞掉 `Dead`（`cull.rs:81-84`）。
-   Meta 仍活着（另有副本）时映射会留到 Space 或 Meta 死——与 `fid.rs:350`「Pole 同步
-   unmap」的承诺不一致（若该 pie 是最后一份强引用，`PoleMeta::drop` 会补上，`:168-184`）。
-2. **Pole 页数据面无端到端自检**：`PolePie::open`/`shut` 在 `programs/`、`crates/` 里零调用者；
-   唯一消费者是 `reclaim` 的 `unseal(4096) + release × 40000`（`shell.rs:573-582`）。
-   `narrow` 同步降页表、所有权闸都只有内核代码与注释，门里无断言。
+1. ~~**Pole 封印后借入映射撤不掉**~~ —— **已销**：`pole::shut` 与 envcall 入口的 `shut` 两处
+   都不再判存活（与 `Release` 并列），封印之后照样撤得掉自己那张图。原记录：`pole::shut`
+   自带 `alive` 闸，而 `Release` 的撤映射走 `cull` 且用 `let _ = pole::shut(...)` 吞掉
+   `Dead`——那行 `let _ =` 正是旧闸站错位置的反证。裁决与理由见 [dock.md](dock.md) §7，
+   判据是门里的 `dock: … sealed-shut=1`。
+2. ~~**Pole 页数据面无端到端自检**~~ —— **已立**：`dock` 自检命令（`shell.rs` 的
+   `dock_probe`）覆盖映射返成对的两件、页可读写（首字节 + 末字节）、撤图后重开、
+   封印后仍撤得掉，三档都跑（[dock.md](dock.md) §9）。**仍未覆盖**的是 `narrow` 同步降
+   页表与 `SpaceInner::protect` 的所有权闸——它们只有内核代码与注释，门里无断言。
 3. ~~**`hole.rs:281` 注释与代码不符**~~ —— **已修（本轮）**（改为「**唯一校验点**」）。原记录：
    称 mtu「envcall 入口已校验，此处 defend」，但入口
    `envcall/pie.rs:109` 把 mtu 直交 `meta()`，没有第二次校验。

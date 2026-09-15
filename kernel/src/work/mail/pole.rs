@@ -3,8 +3,11 @@
 // PoleMeta 是内核侧"地基"：物理页块 + 各 pie 的视图登记（键 = token）。
 // 用户态 Pie<PoleMeta>（含 Weak<PoleMeta>）只持门闩；map 后用户直接读写页。
 //
-// 数据面原语：`open` / `shut` / `narrow` / `seal`。创建：`unseal(bytes)`。
+// 数据面原语：`open` / `shut` / `narrow` / `seal`。创建：`unseal(size)`。
 // PoleMeta 拥有物理帧；Arc 归零时 `Drop` 链逐视图 unmap + 还帧。
+//
+// **`size` 是这一段有多大**：外来区按页界向两侧撑开，故它是页对齐后的长度；
+// 设备树 `reg` 声明的那一段（所有权粒度）由调用方自己记（`docs/driver.md` §9.1）。
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -48,8 +51,8 @@ pub struct PoleMeta {
     payload: Payload,
     /// 共享物理块首址（恒等映射下 = PA）。
     base: NonNull<u8>,
-    /// 字节数（页对齐）。
-    bytes: usize,
+    /// 这一段多大（页对齐）。`Open` 把它与 VA 一起返给域——**只有内核知道它**。
+    size: usize,
     /// 已映射 (token, Space, Span)。键是 per-pie 身份（全局唯一）而非 per-space：
     /// 同一物理页借映给共享 Space 的多 Task 时，每个 pie 一条独立映射、独立 PTE，
     /// narrow/map 只动自己的那条——cap ⊆ 页表不被共享 PTE 击穿。
@@ -65,11 +68,11 @@ unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
 impl PoleMeta {
-    pub(super) fn allocate(bytes: usize, owner: usize) -> Result<Arc<Self>, GateError> {
-        if bytes == 0 || !bytes.is_multiple_of(PAGE_SIZE) {
+    pub(super) fn allocate(size: usize, owner: usize) -> Result<Arc<Self>, GateError> {
+        if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(GateError::NotAligned);
         }
-        let layout = core::alloc::Layout::from_size_align(bytes, PAGE_SIZE)
+        let layout = core::alloc::Layout::from_size_align(size, PAGE_SIZE)
             .map_err(|_| GateError::NotAligned)?;
         let ptr = crate::tag!(
             Pole,
@@ -80,13 +83,13 @@ impl PoleMeta {
         // SAFETY: 分配返回非空；清零。
         let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };
         unsafe {
-            core::ptr::write_bytes(base.as_ptr(), 0, bytes);
+            core::ptr::write_bytes(base.as_ptr(), 0, size);
         }
         Ok(Arc::new(Self {
             state: SpinLock::new_level(Level::L3, PoleState::Live),
             payload: Payload::Frames,
             base,
-            bytes,
+            size,
             mappings: SpinLock::new(Vec::new()),
             owner,
         }))
@@ -98,21 +101,23 @@ impl PoleMeta {
     /// **不清零**（原样保留外来自述——清零设备寄存器是荒谬的）、**Drop 不归还**
     /// （它不是分配器给的，还回去就是还错东西）。
     ///
-    /// 页是映射粒度、`reg` 是所有权粒度（`docs/driver.md` §9.1）：区间按页界向两侧
+    /// `reg` 是设备树声明的那一段（所有权粒度），页是映射粒度：区间按页界向两侧
     /// 撑开，故同一页里的邻居对持有者可见——UART 的 `reg` 只有 0x100，撑到一页。
-    pub(super) fn region(base: usize, bytes: usize, owner: usize) -> Result<Arc<Self>, GateError> {
-        if bytes == 0 {
+    /// 存下来的 `size` 因此**大于** `reg`。
+    pub(super) fn region(base: usize, reg: usize, owner: usize) -> Result<Arc<Self>, GateError> {
+        if reg == 0 {
             return Err(GateError::NotAligned);
         }
-        let end = base.checked_add(bytes).ok_or(GateError::NotAligned)?;
+        let end = base.checked_add(reg).ok_or(GateError::NotAligned)?;
         let lo = base & !(PAGE_SIZE - 1);
         let hi = end.next_multiple_of(PAGE_SIZE);
         let base = NonNull::new(lo as *mut u8).ok_or(GateError::NotAligned)?;
+        let size = hi - lo;
         Ok(Arc::new(Self {
             state: SpinLock::new_level(Level::L3, PoleState::Live),
             payload: Payload::Region,
             base,
-            bytes: hi - lo,
+            size,
             mappings: SpinLock::new(Vec::new()),
             owner,
         }))
@@ -148,7 +153,7 @@ impl PoleMeta {
         }
         let va = space
             .with_flush(|inner| {
-                let va = inner.allocate(SegmentKind::Normal, self.bytes)?;
+                let va = inner.allocate(SegmentKind::Normal, self.size)?;
                 // 装配失败 ⇒ 只剩段要还（`SpaceInner::allocate` 那条不变量的现场）：
                 // `borrow` 在登记之前就拒，maps 干净；此刻一片 PTE 未落，故还段
                 // 不必等清退，当场还即可。此前这里用 `?` 直返——**段永久泄漏**，
@@ -156,10 +161,10 @@ impl PoleMeta {
                 if let Err(e) = inner.borrow(
                     va,
                     PhysAddr::from_raw(self.base.as_ptr() as usize),
-                    self.bytes,
+                    self.size,
                     flags,
                 ) {
-                    inner.deallocate(SegmentKind::Normal, va.as_usize(), self.bytes);
+                    inner.deallocate(SegmentKind::Normal, va.as_usize(), self.size);
                     return Err(e);
                 }
                 Ok::<_, MapError>(va)
@@ -169,13 +174,13 @@ impl PoleMeta {
         let mut maps = self.mappings.lock();
         if maps.try_reserve(1).is_err() {
             drop(maps);
-            let _ = space.release(Span::new(SegmentKind::Normal, va, self.bytes, None));
+            let _ = space.release(Span::new(SegmentKind::Normal, va, self.size, None));
             return Err(GateError::OoM);
         }
         maps.push((
             token,
             Arc::downgrade(space),
-            Span::new(SegmentKind::Normal, va, self.bytes, None),
+            Span::new(SegmentKind::Normal, va, self.size, None),
         ));
         Ok(va.as_usize())
     }
@@ -195,9 +200,9 @@ impl PoleMeta {
                         .map(|space| (space, s.va.as_usize(), s.size.get()))
                 })
         };
-        if let Some((space, va, bytes)) = target {
+        if let Some((space, va, size)) = target {
             space
-                .protect(VirtAddr::from_raw(va), bytes, flags)
+                .protect(VirtAddr::from_raw(va), size, flags)
                 .map_err(|_| GateError::Denied)?;
         }
         Ok(())
@@ -233,7 +238,7 @@ impl Drop for PoleMeta {
             }
         }
         let layout =
-            core::alloc::Layout::from_size_align(self.bytes, PAGE_SIZE).expect("pole layout valid");
+            core::alloc::Layout::from_size_align(self.size, PAGE_SIZE).expect("pole layout valid");
         // 载荷归属决定这一句：**分配器给的才还回去**。外来区（`Region`）在此什么都不做
         // ——它不是内核的内存，还它就是还错东西（`docs/driver.md` §3.1.1）。
         if self.payload == Payload::Frames {
@@ -248,27 +253,31 @@ impl Drop for PoleMeta {
 
 /// 把物理页借映进 `space`（需 rights & R，flags 由 caller 按 subset 决定）。
 /// `token` = 调用方 pie 的映射身份；同 token 幂等复用，异 token 独立映射。
+///
+/// 返 `(VA, 这一段多大)`——**两件一起返**：长度只在内核手里（外来区按页界撑开，
+/// 设备树 `reg` 的长度内核不知道），分开取就会把它留成调用方的猜测。
 pub(crate) fn open(
     meta: &PoleMeta,
     token: usize,
     space: &Arc<Space>,
     flags: PteFlags,
-) -> Result<usize, GateError> {
+) -> Result<(usize, usize), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
     let va = meta.open_into(token, space, flags)?;
     // 强制翻 PTE flags——map_into 偶遇 superpage / 旧 entry 时 flags 没真落位；
     // protect 走 walk 改 PTE flags，确保 cap ⊆ 页表（无视 superpage 起点）。
-    let _ = space.protect(VirtAddr::from_raw(va), meta.bytes, flags);
-    Ok(va)
+    let _ = space.protect(VirtAddr::from_raw(va), meta.size, flags);
+    Ok((va, meta.size))
 }
 
-/// 从 `space` 解除映射（幂等；需 rights & (R | W)）。`token` 定位该 pie 的映射。
+/// 从 `space` 解除映射（幂等）。`token` 定位该 pie 的映射。
+///
+/// **不过存活闸**：撤的是**我自己那张 PTE**，与资源活不活着无关——`Seal` 之后
+/// 仍得能撤。这与 `Release` 是同一条语义：「你总得能放下手里的东西」（见 `fid.rs`
+/// 的 `Release` 那一格）。`shut_from` 本就幂等：未映射、Space 已死都返 `Ok`。
 pub(crate) fn shut(meta: &PoleMeta, token: usize) -> Result<(), GateError> {
-    if !meta.alive() {
-        return Err(GateError::Dead);
-    }
     meta.shut_from(token)
 }
 
@@ -294,8 +303,8 @@ pub(crate) fn seal(meta: &PoleMeta) {
 /// pies.push + pole::map）。返 `Arc`：它既是资源实体，也是门闩持有的**唯一强
 /// 引用**（资源寿命 = 能力寿命；最后一份消失时 `Drop` 归还帧 + 撤映射）。
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
-pub(crate) fn meta(bytes: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
-    PoleMeta::allocate(bytes, owner)
+pub(crate) fn meta(size: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
+    PoleMeta::allocate(size, owner)
 }
 
 /// 接管一段外来物理区，做成一枚门闩的资源实体（见 [`PoleMeta::region`]）。
@@ -303,6 +312,6 @@ pub(crate) fn meta(bytes: usize, owner: usize) -> Result<Arc<PoleMeta>, GateErro
 /// **只对内核开放**（`pub(crate)`，无 envcall 入口）：设备树是 boot 的事实，
 /// 域不能凭一个物理地址给自己造门闩。独占因此不靠判据，靠**没有第二个创建入口**
 /// （`docs/driver.md` §8）。
-pub(crate) fn region(base: usize, bytes: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
-    PoleMeta::region(base, bytes, owner)
+pub(crate) fn region(base: usize, reg: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
+    PoleMeta::region(base, reg, owner)
 }

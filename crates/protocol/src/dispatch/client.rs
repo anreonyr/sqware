@@ -3,7 +3,7 @@
 //! 协议规范见 `docs/dispatch.md`。四条要点：
 //!
 //! 1. **内核没有目录入口调用**（class 7 已删）：目录请求门闩由**父域经启动期握手
-//!    配给**（`handshake::Pier` 的载荷），`Directory::open` 直接收下这枚句柄。
+//!    配给**（`crate::startup::Pier` 的载荷），`Directory::open` 直接收下这枚句柄。
 //! 2. **对端是谁由 `Owned` 求得**：目录 id = `Reserve(entry).owner`（资源开辟者），
 //!    服务 id 同理——`vestor` 会被转发改写成 root，`owner` 不会。
 //! 3. **身份由内核盖章**：目录认的调用方 = `Push` 时内核写进槽的发送者。回信通道
@@ -16,12 +16,10 @@
 
 use env::{EnvResult, PieToken, TaskId};
 
-use runtime::core::port::{Access, Duet, Policy, Port, ship};
+use runtime::core::port::{Access, Policy, Port, ship};
 use runtime::env::mail::{self, AnyPie as _, HolePie};
 
-use runtime::core::port::ADDRESS_LEN;
-
-use super::wire::{Name, Query, Reply, denied, not_found, taken};
+use super::wire::{ADDRESS_LEN, CAP, Name, Query, Reply, denied, not_found, put_address, taken};
 
 /// 服务调用报文的字节数：地址槽 8 + 载荷 56。
 pub const CALL: usize = 8 + PAYLOAD_LEN;
@@ -66,11 +64,16 @@ impl Directory {
         })
     }
 
-    /// 一次往返：五步（填回信地址 / push / 校来源 / 有界等 / 解码）都在 [`Port::call`]。
+    /// 本协议的一次往返：编帧（回信地址按**本协议**那一格填）→ 推 → 收（[`Port::pull`]
+    /// 内建核对来源）→ 解码。
     ///
     /// 超时（`Busy`）或来源不符（`Denied`）后本会话不可复用——迟到的回复会污染下一次。
     fn call(&self, query: &Query) -> EnvResult<Reply> {
-        self.port.call::<Query>(query, REPLY_TIMEOUT_MS)
+        let (frame, n) = query.encode(self.port.seed());
+        self.port.push(frame.get(..n).ok_or_else(denied)?)?;
+        let mut out = [0u8; CAP];
+        let buf = self.port.pull(&mut out, REPLY_TIMEOUT_MS)?;
+        Reply::decode(buf).map_err(|_| denied())
     }
 
     /// 发一条请求并只认 `Ok`。
@@ -187,57 +190,28 @@ pub struct Service {
     entry: HolePie,
 }
 
-/// 服务调用协议**没有自己的请求类型**：载荷是不透明的 56 字节，前 8 字节是回信地址。
-/// 故报文对的形状就落在句柄自己身上——两端同形，中间不夹一个只为转手的类型。
-impl Duet for Service {
-    type Req = [u8; PAYLOAD_LEN];
-    type Rep = [u8; PAYLOAD_LEN];
-    type Wire = [u8; CALL];
-
-    /// 地址槽在**载荷帧首**（`[0..8)`）：这一格就是目录帧 `[ADDRESS_AT..)` 那一格，
-    /// 故"同一帧装进信封"与"裸帧直接 push"两条线形逐字相同（见 `wire` 模块头注）。
-    const ADDRESS_AT: usize = 0;
-    const CAP: usize = CALL;
-
-    fn wire() -> [u8; CALL] {
-        [0u8; CALL]
-    }
-
-    /// 回复容器与请求容器分开（理由见 [`Duet::Reply`]）。
-    type Reply = [u8; CALL];
-
-    fn reply() -> [u8; CALL] {
-        [0u8; CALL]
-    }
-
-    /// 地址槽（前 8 字节）+ 载荷（其余）。**载荷原样搬**：它自己那份布局（目录帧）从载荷
-    /// 第 0 字节起算，故"地址在哪儿"这件事在两条线形上是同一个数。
-    fn encode(req: &[u8; PAYLOAD_LEN], at: PieToken, out: &mut [u8]) -> usize {
-        out[..ADDRESS_LEN].copy_from_slice(&at.get().to_le_bytes());
-        out[ADDRESS_LEN..CALL].copy_from_slice(req);
-        CALL
-    }
-
-    /// 回复与请求同形：地址槽 + 载荷。
-    fn decode(buf: &[u8]) -> EnvResult<[u8; PAYLOAD_LEN]> {
-        let mut out = [0u8; PAYLOAD_LEN];
-        out.copy_from_slice(buf.get(ADDRESS_LEN..CALL).ok_or_else(denied)?);
-        Ok(out)
-    }
-}
-
 impl Service {
-    /// 一次调用：前 8 字节的回信地址由 `Port` 填，载荷 `PAYLOAD_LEN` 字节。
+    /// 一次调用：前 8 字节的回信地址由本协议填，载荷 `PAYLOAD_LEN` 字节。
     /// 回复有上界（`REPLY_TIMEOUT_MS`）——服务漏回即 `Busy`，不永久挂起。
     pub fn call(&self, payload: &[u8; PAYLOAD_LEN]) -> EnvResult<[u8; PAYLOAD_LEN]> {
-        self.port.call::<Service>(payload, REPLY_TIMEOUT_MS)
+        // 信封 = `[地址槽 8][载荷 56]`。地址槽那一格就是目录帧的**帧首**（`wire::ADDRESS_AT`），
+        // 故"同一帧装进信封"与"裸帧直接 push"两条线形逐字相同（见 `wire` 模块头注）。
+        let mut out = [0u8; CALL];
+        let _ = put_address(&mut out, self.port.seed());
+        out[ADDRESS_LEN..CALL].copy_from_slice(payload);
+        self.port.push(&out)?;
+        let mut buf = [0u8; CALL];
+        let rep = self.port.pull(&mut buf, REPLY_TIMEOUT_MS)?;
+        let mut back = [0u8; PAYLOAD_LEN];
+        back.copy_from_slice(rep.get(ADDRESS_LEN..CALL).ok_or_else(denied)?);
+        Ok(back)
     }
 
     /// 断开：放下回信孔 + 放下入口门闩。目录不记连接状态，故到此为止。
     ///
-    /// 两件事各算各的：`close` 失败**不阻断**入口的释放（旧 `Channel` 那条 `?` 会一起跳过）。
+    /// 两件事各算各的：`shut` 失败**不阻断**入口的释放（旧 `Channel` 那条 `?` 会一起跳过）。
     pub fn disconnect(self) -> EnvResult<()> {
-        let closed = self.port.close();
+        let closed = self.port.shut();
         let released = self.entry.release();
         closed?;
         released

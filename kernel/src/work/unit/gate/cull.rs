@@ -109,7 +109,10 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
         frontier = next;
     }
 
-    // 3. 无锁段：逐条撤 Pole 映射（幂等；资源已回收则无事）。
+    // 3. 无锁段：逐条撤 Pole 映射（幂等；未映射、Space 已死都返 `Ok`）。
+    // `let _ =`：`space.release` 仍可能 `Denied`（段已不在），而这是收尾路径——
+    // 一条撤不掉不该短路掉后面那些。（`pole::shut` 已不判资源存活：撤自己的图与
+    // 资源活不活着无关，故这里曾要吞掉的那个 `Dead` 不存在了。）
     for (meta, token) in unmaps {
         let _ = pole::shut(&meta, token);
     }

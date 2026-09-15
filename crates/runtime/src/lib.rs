@@ -3,13 +3,16 @@
 //!
 //! 两半分居两个模块（判据是"薄/厚"，不是行数）：
 //!   `env`  —— envcall 转发（薄）：一次调用一个函数，零业务逻辑；
-//!   `core` —— 组合与封装（厚）：把 `env` 的原语组装成 channel/unit/handshake 这类机制。
+//!   `core` —— 组合与封装（厚）：把 `env` 的原语组装成可用的机制——三种资源各一件
+//!             封装（Hole → `port`、Pole → `dock`、Nole → `bell`），加任务本地原语。
 //!
 //! 与 `crates/env` 的分工是**依赖方向**：`env` crate 是内核与用户态都要的 ABI
 //! 线格式，本 crate 只跑在镜像侧。
 //!
 //! 边界：本 crate **不认识任何协议**（协议在 `crates/protocol`，反向依赖本 crate），
-//! 也不认识任何程序（程序在 `programs`）。
+//! 也不认识任何程序（程序在 `programs`）。启动期的握手住过这里（`core::handshake`），
+//! 而它是**父域与子域的协议**——已搬去 `crates/protocol::startup`。搬走之后上面这句
+//! 话才第一次是真的。
 
 extern crate alloc;
 

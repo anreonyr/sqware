@@ -31,7 +31,7 @@
 //!
 //! 回复**不带地址槽**：它走的是对端那枚回信孔（`push` 到哪儿是 `Port` 的事，不必写在帧里）。
 //!
-//! `Query::encode/decode` **不碰地址槽**——由 [`Duet::encode`] 写（见模块头那张字段表）。
+//! 地址槽由 [`Query::encode`] 填（见模块头那张字段表）。
 //! 该字段不是询问字段而是「传输字段」，与 op/name/entry 同列但语义独立。
 //!
 //! # 身份不走消息体
@@ -57,8 +57,6 @@
 
 use env::wire::PieToken;
 use env::{EnvError, EnvResult, make_err};
-use runtime::core::port::{put_address_at, ADDRESS_LEN, Duet};
-
 /// D1 负码：无权 / 协议错。
 pub const E_DENIED: isize = -1;
 /// D1 负码：名字无实例 / 未预约。
@@ -88,9 +86,27 @@ pub const TEXT: usize = NAME_LEN - 1;
 
 /// 地址槽在**本协议帧里的偏移**——**帧首**。
 ///
-/// 本协议**覆盖**机制默认的 `[1..9)`：帧首是唯一让"裸询问"与"服务调用载荷"逐字相同的位置
-/// （见模块头注）。机制只提供"按偏移读写"的口（[`Duet::ADDRESS_AT`]），偏移由协议说了算。
+/// 帧首是唯一让"裸询问"与"服务调用载荷"逐字相同的位置（见模块头注）。这个数归**本协议**
+/// 自己声明：机制不知道任何协议的帧长什么样。
 pub const ADDRESS_AT: usize = 0;
+
+/// 回信地址的线形：一枚 `PieToken` 的 8 字节小端。
+pub const ADDRESS_LEN: usize = 8;
+
+/// 把回信地址写进本协议帧的那一格（帧首）。
+pub fn put_address(out: &mut [u8], token: PieToken) -> Option<()> {
+    let slot = out.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    slot.copy_from_slice(&token.get().to_le_bytes());
+    Some(())
+}
+
+/// 从帧里抠出回信地址——**坏报文也要能抠**（拒一条请求仍欠对方一句）。`None` = 太短 /
+/// 全是 0（0 是本仓的"无句柄"）。
+pub fn address_of(m: &[u8]) -> Option<PieToken> {
+    let slot = m.get(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    let token = PieToken::new(usize::from_le_bytes(slot.try_into().ok()?));
+    if token.get() == 0 { None } else { Some(token) }
+}
 
 // ── 一张偏移表，全部锚在**报文起点**（不是"帧起点"） ──────────────────────────
 //
@@ -239,7 +255,7 @@ impl Query {
         }
     }
 
-    /// 把正文写进 `out` 的开头（**不写地址槽**：那是 [`Duet::encode`] 的事，它按
+    /// 把正文写进 `out` 的开头（**不写地址槽**：那是 [`Query::encode`] 的事，它按
     /// [`ADDRESS_AT`] 单独填那一格）。返**本帧的字节数**。
     ///
     /// 注意 `out` 是**帧缓冲**（[`ADDRESS_AT`] 是它在容器里的偏移，不是它内部的前缀）：
@@ -255,6 +271,15 @@ impl Query {
             m[NAME_AT..NAME_AT + name.text().len()].copy_from_slice(name.text());
         }
         n
+    }
+
+    /// 编码：写出整帧（正文见 [`Query::put`]），并把**回信地址**填进帧首那一格
+    /// （[`ADDRESS_AT`] = 0）。帧长即 [`Query::len`]——返回的那一段才是这一帧。
+    pub fn encode(&self, at: PieToken) -> ([u8; CAP], usize) {
+        let mut out = [0u8; CAP];
+        let n = self.put(&mut out);
+        let _ = put_address(&mut out, at);
+        (out, n)
     }
 
     /// 解码：动词、名字、entry 三者都要过。**帧长即那一格**——名字起于 [`NAME_AT`]、
@@ -352,40 +377,5 @@ impl Reply {
             }),
             _ => Err(ProtocolError::BadOp),
         }
-    }
-}
-
-/// 报文对：一条目录询问、一条目录应答。尺寸与布局都由本协议说了算——包括
-/// **地址槽在帧首**（本协议每问都带）与**帧长 = 定长头 + 名字文本长**这两件事。
-impl Duet for Query {
-    type Req = Query;
-    type Rep = Reply;
-    type Wire = [u8; CAP];
-
-    /// 帧首（[`ADDRESS_AT`]）——与信封那一格**同一个位置**，故两条线形逐字相同。
-    const ADDRESS_AT: usize = ADDRESS_AT;
-    const CAP: usize = CAP;
-
-    fn wire() -> [u8; CAP] {
-        [0u8; CAP]
-    }
-
-    /// 回复容器与请求容器分开（理由见 [`Duet::Reply`]）。
-    type Reply = [u8; CAP];
-
-    fn reply() -> [u8; CAP] {
-        [0u8; CAP]
-    }
-
-    /// 回信地址（帧首那一格）+ 正文（[`Query::put`] 跳过那一格往后面写）。帧长即
-    /// [`Query::len`]，`out` 的其余位置一个字节都不上线。
-    fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
-        let n = req.put(out);
-        let _ = put_address_at(out, ADDRESS_AT, at);
-        n
-    }
-
-    fn decode(buf: &[u8]) -> EnvResult<Reply> {
-        Reply::decode(buf).map_err(|_| denied())
     }
 }

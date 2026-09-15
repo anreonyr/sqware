@@ -1,10 +1,12 @@
 //! uart — NS16550A 驱动（virt 板上的第一台设备）的**设备侧**：视图 + 职业动作。
 //!
-//! 与 `plic.rs` 同形：`open`（门闩 → 视图）＋ 本设备自己的动作。**不含**协议报文、
-//! 不含线程、不含配给——那些在装配层（`bin/supervisor/uart.rs`）。
+//! 与 `plic.rs` 同形：收下一段视图 ＋ 本设备自己的动作。**开闩不在这里**（门闩 → 视图
+//! 是 `Dock::open` 的事）；**不含**协议报文、不含线程、不含配给——那些在装配层
+//! （`bin/supervisor/uart.rs`）。
 //!
 //! **不是设备类框架**（`docs/driver.md` §8 裁过）：没有 trait、没有注册表、没有模板
-//! ——第二台设备（PLIC）出现时抽出来的只有"开 + 读写寄存器"这两条，而它连寄存器宽度
+//! ——第二台设备（PLIC）出现时抽出来的只有"**视图 + 读写寄存器**"这两条（"开"那一步归
+//! `runtime::core::dock` 的 `Dock`，见 `docs/dock.md`），而它连寄存器宽度
 //! 都不同（u8 / u32），故两台各写各的，只保证**同形**。
 //!
 //! # 它凭什么能直接读写寄存器
@@ -29,8 +31,7 @@
 //! 接手设备就得接手这条翻译：不然行尾只剩换行、光标不回列首，终端上表现为阶梯。
 //! 这是"驱动程序持设备"最容易被漏掉的一笔——它不是协议，是设备的脾气。
 
-use env::EnvResult;
-use runtime::env::mail::PolePie;
+use runtime::core::dock::View;
 
 /// 寄存器偏移（16550 的经典布局，`reg` 只暴露前 0x100 字节）。
 const RBR_THR: usize = 0; // 读 = RBR，写 = THR
@@ -48,21 +49,21 @@ const IER_RX: u8 = 0x01;
 /// 一枚设备门闩打开后的视图。
 #[derive(Clone, Copy)]
 pub struct Uart {
-    base: usize,
+    view: View,
 }
 
 impl Uart {
-    /// 开闩：把设备门闩映射进本域空间，返回设备视图。
+    /// 收下一段已映射的视图。
     ///
     /// VA 由内核按空间的用户段 lowest-first-fit 选定（`Open` 的返回值）——
-    /// 域只拿到"从哪开始"，不关心映射落在哪。
-    pub fn open(pole: PolePie) -> EnvResult<Self> {
-        Ok(Self { base: pole.open()? })
+    /// 域只拿到"从哪开始"与"有多长"，不关心映射落在哪。
+    pub fn new(view: View) -> Self {
+        Self { view }
     }
 
-    // 旧 `at(base)`（由已映射地址造视图）**已删**：唯一会用到它的场景是"同一个域的第二个
-    // 线程也要一份视图"，而本类型是 `Copy` ⇒ 第二个线程直接从共享静态里拷一份即可，
-    // 不需要第二个构造入口（零调用者的构造器不留，`f2e06d2` 的先例）。
+    // 旧 `at(base)`（由裸地址造视图）**已删**：能造视图的只有 `Dock::open` 的产物，
+    // 一个裸 `usize` 不再是构造入口；同一个域的第二个线程要一份视图，直接拷那个 `Copy`
+    // 的值即可，不需要第二个构造入口（零调用者的构造器不留，`f2e06d2` 的先例）。
 
     /// 写一段字节：逐字节等 `THRE`。
     ///
@@ -117,13 +118,13 @@ impl Uart {
 
     #[inline]
     fn read(&self, off: usize) -> u8 {
-        // SAFETY: `base` 是本域已映射的设备页（`Open` 的产物），偏移固定、只读。
-        unsafe { core::ptr::read_volatile((self.base + off) as *const u8) }
+        // SAFETY: `view` 是 `Dock::open` 的产物——那段设备页已借映进本域；偏移固定、只读。
+        unsafe { core::ptr::read_volatile((self.view.base() + off) as *const u8) }
     }
 
     #[inline]
     fn write(&self, off: usize, v: u8) {
         // SAFETY: 同上，只写设备寄存器。
-        unsafe { core::ptr::write_volatile((self.base + off) as *mut u8, v) }
+        unsafe { core::ptr::write_volatile((self.view.base() + off) as *mut u8, v) }
     }
 }

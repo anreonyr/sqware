@@ -88,18 +88,28 @@ slot = (class << 32) | index      index = 变体在枚举里的**声明顺序**
 
 - **薄的边界**：一次调用一个函数、零业务逻辑（`runtime/src/env/mod.rs:1-2`；`env/mail.rs:33`
   自称「裸函数层」）。
-- **厚的边界**：组合与封装（`runtime/src/core/mod.rs:11-13` 明写「`HolePie` 是薄句柄；
-  `Port` 是厚的一次往返」）。
+- **厚的边界**：组合与封装（`runtime/src/core/mod.rs:11-15`）。而**厚的东西住在谁那里，
+  看它的消费者**：`Port` 的四个动词与 `HolePie` 同名同形（它厚在"把两枚孔配成一对"），
+  而"一次往返"（编帧 → 推 → 有界等 → 校来源 → 解帧）与"开会话的握手"住在
+  `crates/protocol` ——它们的消费者是各家协议，且要用到帧格式。
 
 同一个 `Push` 在三层的样子：
 
 ```text
 薄   mail::push(token, msg, len)     一次 MailCall::Push，Busy 原样返回
 中   HolePie::push                   在 Busy 上转 wait(Push, usize::MAX) 循环
-厚   Port::open / close              = unseal + ship(WRITE) / release
+厚   Port::push / pull               推给**对端那枚**孔 / 从**自己那枚**孔收并校来源
 ```
 
-同类：`core::unit::closure` ＝ `spawn` + `hatch` + `Completion` 两位置位仲裁
+**`Port` 是配对，不是往返**：往返（`ask`，5 行）在各协议自己的 `client.rs` 里——
+`crates/protocol/src/uart/client.rs` 的 `ask` 就是它的最小样子。
+
+**同类三件**（各包一种 primitive）：`Port` 厚在"把两枚孔配成一对"，`Dock` 厚在"起点与长度
+成对的一段视图"（`docs/dock.md`），`Bell` 厚在"铃只有一条方向"（`docs/bell.md`）。启动期的
+握手（`Quay`/`Pier`/`berth`/`moor`）**不在这三件里**——它是一条协议，住
+`crates/protocol/src/startup.rs`。
+
+其余：`core::unit::closure` ＝ `spawn` + `hatch` + `Completion` 两位置位仲裁
 （`core/unit.rs:106-143`）；`core::heap::Heap` 直接装 `#[global_allocator]`（`heap.rs:52-53`）。
 
 ## 6 · 不变量

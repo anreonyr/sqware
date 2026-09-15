@@ -52,10 +52,11 @@ use programs::plic::{LINE_PRIORITY, Plic};
 use protocol::console::Console;
 use protocol::dispatch::client::Directory;
 use protocol::irq::{self, Lines};
+use protocol::startup::{self, Pier, Quay};
 use runtime::core::bell::Bell;
-use runtime::core::handshake::{self, Pier, Quay};
+use runtime::core::dock::Dock;
 use runtime::core::lock::Lock;
-use runtime::core::port::{self, Access, Policy, ship};
+use runtime::core::port::{Access, Policy, ship};
 use runtime::env::mail::{self, HolePie, NolePie, PolePie};
 
 /// `irq` 门铃的等待上界（毫秒）——**不能是无穷**：注册报文要有人听（见模块头）。
@@ -75,7 +76,7 @@ static PLIC: Lock<Option<Plic>> = Lock::new(None);
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     // 1. 靠泊 + 自建控制孔（只给父域）。
-    let up = match handshake::moor() {
+    let up = match startup::moor() {
         Ok(u) => u,
         Err(_) => runtime::env::room::exit_with(1),
     };
@@ -127,11 +128,17 @@ extern "C" fn main() -> ! {
         Ok(p) => p,
         Err(_) => runtime::env::room::exit_with(12),
     };
-    let Some((plic, lines)) = Plic::open(
-        PolePie::from_token(plic_pier.token()),
-        PolePie::from_token(dtb_pier.token()),
-        sire,
-    ) else {
+    // 开两段视图：控制器寄存器（R|W）与设备树（只读）。门闩留在两枚 `Dock` 手里，
+    // 驱动只要视图——`Plic` 从此不碰门闩。
+    let plic_dock = match Dock::open(PolePie::from_token(plic_pier.token())) {
+        Ok(d) => d,
+        Err(_) => runtime::env::room::exit_with(13),
+    };
+    let dtb_dock = match Dock::open(PolePie::from_token(dtb_pier.token())) {
+        Ok(d) => d,
+        Err(_) => runtime::env::room::exit_with(15),
+    };
+    let Some((plic, lines)) = Plic::new(plic_dock.view(), dtb_dock.view(), sire) else {
         runtime::env::room::exit_with(13);
     };
     // 三样都得有：一个 S 外部 context（不然影子都投不出去）、控制器自报的线数、以及
@@ -186,7 +193,7 @@ fn serve(msg: &[u8], from: env::TaskId) {
         return;
     };
     // 回信地址从**地址槽**里读（传输字段，不在询问值里）：坏报文也要能答一句。
-    let Some(ack) = port::address_of(msg) else {
+    let Some(ack) = irq::wire::address_of(msg) else {
         return;
     };
     match query {

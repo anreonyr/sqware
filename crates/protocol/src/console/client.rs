@@ -5,7 +5,7 @@
 //!
 //! # 回信孔是**借来的**
 //!
-//! 那枚孔由**服务端**开、把 `WRITE` 副本授给本端、句柄经入口孔交回（[`Console::open`]
+//! 那枚孔由**服务端**开、把 `READ | WRITE` 副本授给本端、句柄经入口孔交回（[`Console::open`]
 //! 的三步）。理由不是省事：孔的生命挂在对端身上，对端退场时内核封印它，本端**当场
 //! 拿到 `Dead`** ⇒ 「对端还没回」与「对端已经没了」才分得开。旧形状（本端自建、
 //! 授一枚给服务端）里这两件事长得一模一样，服务被打死后本端永久挂住——实测
@@ -17,25 +17,23 @@
 //! 之后的 `readline` 才能安全地等输入。若 `write` 是"推完就算"，提示符会憋在孔里，
 //! 而用户已经在对空行打字。
 //!
-//! 这正是「一次往返」的成熟形（[`Port`]），不新造机制。
+//! 这正是「一次往返」的成熟形（[`Session`]），不新造机制。
 //!
 //! # 生命周期契约（显式，不靠 Drop）
 //!
 //! `HolePie` 没有 `Drop`——它是**句柄值**，不是 RAII 守卫。故本会话的资源由
-//! [`Console::close`] 显式放：会话登记（服务侧）随 `Close` 撤回，两枚孔随进程退出
-//! 由内核回收。**不假装**有 `Drop`——那是这套机制既有的形状，本模块照它写。
+//! [`Console::close`] 显式放：会话登记（服务侧）随 `Close` 撤回，回复孔随
+//! [`Session::close`] 放下，请求孔那枚随进程退出由内核回收。**不假装**有 `Drop`——那是这套机制既有的形状，本模块照它写。
 
 use alloc::string::String;
 
-use env::EnvResult;
+use env::{EnvResult, PieToken};
 
-use runtime::core::port::Port;
 use runtime::env::mail::HolePie;
 
-use super::wire::{LINE, Query, Reply, denied};
-
-/// 一次往返的上界（毫秒）。与 dispatch 的 `REPLY_TIMEOUT_MS` 同值。
-const REPLY_TIMEOUT_MS: usize = 1000;
+use super::{REPLY_MS, open};
+use super::wire::{CAP, LINE, Query, Reply, denied};
+use crate::session::{Session, push_within};
 
 /// 认领号：**单调**即可（不必不可预测——它防的是"哪一帧是谁的"这种时序错配，
 /// 不是伪造）。起点掺本任务 id，避免同一次启动里两个域撞上同一个号。
@@ -55,13 +53,17 @@ fn next_nonce() -> u64 {
     seed.wrapping_add(NEXT.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
+/// 重发的**总次数**：单次有界只挡住"对端没了"，挡不住"对端活着但不应答"——那条路上
+/// 无界重发就是活锁。用尽即返错，由调用方走它那条有界的重连（`shell` 的 `CONSOLE_RETRY`）。
+const READLINE_ROUNDS: usize = 4;
+
 /// 一次 `ReadLine` 等的上界（毫秒）：超了就**重发同一条**（幂等，见服务侧
 /// `State::readline`）。它**不是**"用户必须在这一段内敲完"——用户一个字没敲也不影响，
 /// 重发不重置服务侧那一行的缓冲。取 3 s 是量出来的折中：短到门那一步（15 s）里能试
 /// 好几次，长到正常打字期间根本不会触发。
 const READLINE_WAIT_MS: usize = 3000;
 
-/// **开一条会话**的上界（毫秒）：从推出首帧到收下它的答复，**整件事**的界。
+/// **开一条会话**每一段的上界（毫秒）：推首帧 / 认领那枚孔 / 收首帧的答复各以它为界。
 /// 比一次往返短：这一段里对端只做"开一枚孔 + 授出 + 推一条回执"，没有设备 I/O、
 /// 也不等用户。给上界是为了让"服务把这条会话拒了"（表满 / 报文不合 ⇒ 那枚号永远不会来）
 /// 落成一次可重试的失败，而不是永久挂起。
@@ -78,20 +80,20 @@ pub enum Readline {
     Interrupt,
 }
 
-/// 控制台会话：一次往返的机制（[`Port`]）+ 会话 id。
+/// 控制台会话：**请求那一枚孔** + **回复那一侧**（[`Session`]）+ 会话 id。
 ///
 /// `entry` 由**父域经启动期握手配给**（与目录入口同一套 `Pier`），之后一切走本会话。
 ///
-/// **两个字段各指回一个操作**：`port` 是往返（开 / 写 / 读 / 关都经它），`client` 是本会话
-/// 在服务侧登记的那个号。
+/// **三样东西各指回一个操作**：`entry` 是请求的去路（有界推）、`session` 是回复那一侧
+/// （收 / 判活 / 收场）、`client` 是本会话在服务侧登记的那个号。
 ///
 /// **"这条会话还算不算数"不在这里判**：回信孔由服务端开，服务退场时内核的寿命边封印它
 /// （`gate::doom`）⇒ 本端下一次往返/等读**当场拿到 `Dead`**——那就是答案本身，不需要比
 /// 任何代理量。曾经拿"入口号变没变"当凭据，而目录的 `Connect` 每次都转授**一份新副本**
-/// （`crates/protocol/src/dispatch/server.rs`）⇒ 那个号会因为完全无关的原因变化，是拿错了
-/// 信号。
+/// ⇒ 那个号会因为完全无关的原因变化，是拿错了信号。
 pub struct Console {
-    port: Port,
+    entry: HolePie,
+    session: Session,
     /// 会话 id（0 = 未开成）。
     client: usize,
 }
@@ -99,15 +101,10 @@ pub struct Console {
 impl Console {
     /// 打开会话：**一次往返**。
     ///
-    /// [`Port::dial`] 把首帧（`Open`，带认领号、地址槽留零）推给服务；服务端收到它**即建
-    /// 会话**——开一枚回信孔、把 `READ | WRITE` 副本授给本端、句柄连同认领号经入口孔交回，
-    /// 并把"开成了"那句回执（会话 id）推进**它刚开的那枚孔**。故本函数一次收齐两样：
-    /// 回信孔（`dial` 认领）与会话 id（`dial` 收下的答复）。
-    ///
-    /// **首帧不得再发第二遍**：它就是那条"开一条会话"的请求。发第二遍 = 开第二条会话，
-    /// 而第二遍的回执会被推给一个按己方表解释的号（永远收不到），本端拿到的其实是第一遍
-    /// 的回执——表面一切正常，服务侧的会话表却每开一次漏一格，同一条实例上第五次就被
-    /// 表满拒。
+    /// [`open::open`] 把首帧（`Open`，带认领号、地址槽装本端的私有握手孔）推给服务；
+    /// 服务端收到它**即建会话**——开一枚回信孔、把 `READ | WRITE` 副本授给本端、句柄连同
+    /// 认领号经那枚私有孔交回，并把"开成了"那句回执（会话 id）推进**它刚开的那枚孔**。
+    /// 故本函数一次收齐两样：回信孔（认领）与会话 id（首帧的答复）。
     ///
     /// # 回信孔为什么由服务端开
     ///
@@ -117,16 +114,14 @@ impl Console {
     /// 服务被打死这扇门不死，本端永久挂在 `Busy` 上，「对端还没回」与「对端已经没了」
     /// 不可区分。
     ///
-    /// 对端 task id 由 [`Port::dial`] 用 `Reserve(entry).owner` 求得——**门闩的开辟者
-    /// 就是服务本身**（root 转发不改 `owner`，只改 `vestor`）。
+    /// 这一段（认领号 + 私有握手孔 + 回信孔的交接）是**本协议自己的**，见 [`super::open`]。
     pub fn open(entry: HolePie) -> EnvResult<Console> {
-        // 认领号：当场生成（本进程每开一次会话一个），同一个值同时进首帧与 `dial`
-        // ——服务端会把它连同回信孔句柄一起推回来，见 [`Port::dial`]。
+        // 认领号：当场生成（本进程每开一次会话一个），同一个值同时进首帧与认领那一趟
+        // ——服务端会把它连同回信孔句柄一起推回来。
         let nonce = next_nonce();
-        let (port, rep) =
-            Port::dial::<Query>(&entry, &Query::open(nonce), nonce, HANDSHAKE_TIMEOUT_MS)?;
+        let (session, rep) = open::open(&entry, nonce, HANDSHAKE_TIMEOUT_MS)?;
         match rep {
-            Reply::Ok { client } => Ok(Console { port, client }),
+            Reply::Ok { client } => Ok(Console { entry, session, client }),
             _ => Err(denied()),
         }
     }
@@ -136,9 +131,15 @@ impl Console {
         self.client
     }
 
-    /// 一次往返：请求推请求孔、回复从自己的回信孔**有界**收、**核来源**。
-    fn call(&self, query: &Query) -> EnvResult<Reply> {
-        self.port.call::<Query>(query, REPLY_TIMEOUT_MS)
+    /// 本协议的一次往返：编帧 → **有界**推 → **有界**收（[`Session::pull`] 内建核来源与三态）
+    /// → 解码。`within` 是每一半的上界：写一次用 [`REPLY_MS`]，等一行用 [`READLINE_WAIT_MS`]。
+    fn call(&self, query: &Query, within: usize) -> EnvResult<Reply> {
+        // 回信地址只在 `Open` 上带（那一帧的地址槽装握手孔），其余动词那一格归会话号
+        // ——`Query::encode` 的 `at` 对它们不落笔，故这里给 0。
+        let (frame, n) = query.encode(PieToken::new(0));
+        push_within(&self.entry, frame.get(..n).ok_or_else(denied)?, within)?;
+        let mut buf = [0u8; CAP];
+        Reply::decode(self.session.pull(&mut buf, within)?).map_err(|_| denied())
     }
 
     /// 写字符串：**阻塞到服务确认落屏**。
@@ -151,7 +152,7 @@ impl Console {
         }
         for chunk in s.as_bytes().chunks(LINE) {
             let query = Query::write(self.client, chunk).ok_or_else(denied)?;
-            match self.call(&query)? {
+            match self.call(&query, REPLY_MS)? {
                 Reply::Ok { .. } => {}
                 _ => return Err(denied()),
             }
@@ -159,7 +160,7 @@ impl Console {
         Ok(())
     }
 
-    /// 读一行（带行编辑）。**无上界**——用户在打字，服务端阻塞等回车。
+    /// 读一行（带行编辑）。**每一次等都有界、重发有总次数**（见函数内三段理由）。
     ///
     /// `prompt` 随请求带上（服务侧重绘要用它）：本行先把它同步写到设备上，
     /// 再请求读行——两件事的次序不能颠倒（否则用户对着空行打字）。
@@ -173,19 +174,19 @@ impl Console {
         let bytes = prompt.as_bytes();
         let query =
             Query::readline(self.client, &bytes[..bytes.len().min(LINE)]).ok_or_else(denied)?;
-        // **有界等 + 重发同一条**（不是轮询：重发是幂等的，服务侧见 `State::readline`）。
+        // **有界等 + 重发同一条 + 总次数有界**（不是轮询：重发是幂等的，服务侧见
+        // `State::readline`）。三段各有各的理由：
         //
-        // 为什么要上界：`usize::MAX` 把"用户还没敲完"与"服务已经没了"折成同一件事
-        // ——后者本该由内核封印回信孔来唤醒（`gate::doom` 的寿命边），但那条路一旦
-        // 没走到（竞态），永久等就是**永久挂住**：实测门里那一步卡死 90 s，读数里
-        // 一次 `readline broke` 都没有。
-        //
-        // 有界之后 `Busy` 的含义回到"这一段没有回复"：**重发同一条**即可——服务侧
-        // 对"同会话重问同一条"是幂等的（已有等读会话 ⇒ 不排队、不重置那一行的缓冲），
-        // 故重发既不丢用户已敲的字，也不占第二格。只要服务真死了，重发会拿到
-        // `Dead`/`Denied`，本函数当场返回 `Err`，调用方走 `reconnect()`。
-        loop {
-            match self.port.call::<Query>(&query, READLINE_WAIT_MS) {
+        // ① 单次有界：`usize::MAX` 把"用户还没敲完"与"服务已经没了"折成同一件事。有界之后
+        //    `Busy` 的含义收窄成"**探过、它还在**，只是没回"，而"没了"当场拿到 `Dead`/
+        //    `Denied` ⇒ 调用方走重连。
+        // ② 重发同一条：服务侧对"同会话重问同一条"是幂等的（已有等读会话 ⇒ 不排队、不重置
+        //    那一行的缓冲），故重发既不丢用户已敲的字，也不占第二格。
+        // ③ 总次数有界：**服务活着但不应答**这条路上，单次有界只是把永久挂起换成永久重发。
+        //    用尽即返错——终局是停机，不是活锁。
+        let mut busy = None;
+        for _ in 0..READLINE_ROUNDS {
+            match self.call(&query, READLINE_WAIT_MS) {
                 Ok(Reply::Line { text }) => {
                     let text = core::str::from_utf8(text.as_bytes()).map_err(|_| denied())?;
                     return Ok(Readline::Line(String::from(text)));
@@ -193,24 +194,31 @@ impl Console {
                 Ok(Reply::Eof) => return Ok(Readline::Eof),
                 Ok(Reply::Interrupt) => return Ok(Readline::Interrupt),
                 Ok(_) => return Err(denied()),
-                // 超时：服务可能还活着（用户就是没敲完）⇒ 重问同一条。
-                Err(e) if e.source.is_busy() => continue,
+                Err(e) if e.source.is_busy() => busy = Some(e),
                 Err(e) => return Err(e),
             }
         }
+        Err(busy.unwrap_or_else(denied))
     }
 
     /// 关会话：撤回服务侧的会话登记。
     ///
-    /// 两枚孔的副本随进程退出由内核回收（`HolePie` 不是 RAII 守卫，见文件头）。
+    /// 回复孔随 [`Session::close`] 放下，请求孔那枚随进程退出由内核回收（`HolePie` 不是
+    /// RAII 守卫，见文件头）。
     pub fn close(&self) -> EnvResult<()> {
         if self.client == 0 {
             return Ok(());
         }
-        match self.call(&Query::Close {
-            client: self.client,
-        })? {
-            Reply::Ok { .. } => Ok(()),
+        match self.call(
+            &Query::Close {
+                client: self.client,
+            },
+            REPLY_MS,
+        )? {
+            Reply::Ok { .. } => {
+                let _ = self.session.close();
+                Ok(())
+            }
             _ => Err(denied()),
         }
     }

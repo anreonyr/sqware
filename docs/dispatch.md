@@ -281,7 +281,7 @@ sender 授给目录的那一枚**（`Reserve(reply).vestor == caller`），否�
 
 ```text
 root:
-  1. 逐子域串行：dock(child)（开上行孔 + ship(up, child, R|W, VEST)）
+  1. 逐子域串行：berth(child)（开上行孔 + ship(up, child, R|W, VEST)）
      → Build + Spawn(Held) → Hatch
      → Quay::pull（子域控制孔在父侧的句柄；校验 Reserve(句柄).vestor == child）
   2. 客户端要目录能力时：`Refer{who, name}` → dir 控制孔；`Referred{token}` ← dir 上行孔
@@ -416,7 +416,7 @@ crates/protocol/src/dispatch/
 `crates/protocol/src/lib.rs` 的模块头。）
 
 programs/src/bin/supervisor/dir.rs      目录域程序（S 态：请求线程 + 控制线程）
-crates/runtime/src/core/handshake.rs    Quay / Pier（启动期握手的两条报文）
+crates/protocol/src/startup.rs         Quay / Pier（启动期握手的两条报文；`berth` / `moor`）
 crates/runtime/src/core/lock.rs         用户态互斥（Lock::with）
 
 内核侧（与协议无关，但被它用到）

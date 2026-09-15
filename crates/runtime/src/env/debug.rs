@@ -36,7 +36,7 @@ pub fn get(buf: &mut [u8]) -> EnvResult<usize> {
     }
 }
 
-/// 开关**报文对账**（此后每次一次往返都打两帧的十六进制，见 [`Port::call`]）。
+/// 开关**报文对账**（此后每次一次往返都打两帧的十六进制）。
 ///
 /// 为什么留在 ABI 上而不是编译期开关：布局错位只有**真实字节**能证，而这类病一旦出现
 /// 就要能在**同一个产物**上打开对账再跑一遍。
@@ -51,8 +51,10 @@ pub fn trace(on: bool) -> EnvResult<()> {
 
 static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// 本域的对账开关（`Port::call` 读它）。域是独立地址空间，这份静态因此**每域一份**：
-/// 内核那份只由 envcall 打开，而"哪个域要打"是调用方在 `trace()` 里当场决定的。
+/// 本域的对账开关。域是独立地址空间，这份静态因此**每域一份**：内核那份只由 envcall
+/// 打开，而"哪个域要打"是调用方在 `trace()` 里当场决定的。
+///
+/// **今天零读者**：原先读它的是 `Port::call`，那一层已搬去各协议（`docs/port.md` §10）。
 pub fn tracing() -> bool {
     TRACE.load(core::sync::atomic::Ordering::Relaxed)
 }

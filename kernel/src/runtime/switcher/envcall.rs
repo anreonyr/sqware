@@ -43,8 +43,9 @@ mod debug;
 mod mail;
 mod pie;
 
-/// 报文对账开关：`DebugCall::SetTrace` 写、`Port::call` 读（每域各自一份静态——
-/// 域是独立地址空间，开关不跨域），
+/// 报文对账开关：`DebugCall::SetTrace` 写（每域各自一份静态——域是独立地址空间，
+/// 开关不跨域）。**今天没有读者**：原先读它的是 `Port::call`，那一层已随 Port 那轮
+/// 搬去各协议（见 `docs/port.md` §10）；用户侧那份 `env::debug::tracing()` 因此闲置。
 /// 只在调试时打开——布局错位这类病只有真实字节能证（`docs/port.md` §9.3）。
 pub static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 

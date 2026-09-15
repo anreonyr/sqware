@@ -23,6 +23,7 @@
 //!   cascade — 派生级联自检（三跳撤销 / 无关分支 / release 级联 / 任务消亡级联）
 //!   lend  — 独占交出自检（CAGE：我不可用 / 至多一个 heir / 转交 / 逐级复原）
 //!   ship  — 授出自检（十六格逐格读回权限 / 空集本地拒 / 来源校验的反证）
+//!   dock  — 泊位自检（映射返成对的两件 / 页可读写 / 撤图重开 / 封印后仍撤得掉）
 //!   churn — 任务生灭压测（主动探测：反复产生/回收，把关机终值变成刻度）
 //!   reclaim — 资源寿命自检（引用回收 / 封印归属 / 开辟者消亡）
 //!   spoof — 身份伪造自检（发送者由内核盖章，报文里的回信 token 不构成身份）
@@ -55,9 +56,10 @@ use protocol::console::{
 use protocol::dispatch::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use protocol::doom::{self, Ack, Doom};
 use protocol::irq;
-use runtime::core::handshake::{self, Pier, Quay};
+use protocol::startup::{self, Pier, Quay};
+use runtime::core::dock::{Dock, View};
 use runtime::core::lock::Lock;
-use runtime::core::port::{Access, Duet, Policy, Port, ship};
+use runtime::core::port::{Access, Policy, Port, ship};
 use runtime::core::unit;
 use runtime::env::{
     chrono::{self, clock},
@@ -374,7 +376,7 @@ fn session(term: &Term) {
 /// 目录自己的入口）**只认目录自己**，报文里没有"配哪个服务"的身份位；而控制台
 /// 已经注册进目录了，`Connect` 本来就是为这件事存在的操作。
 fn shake() -> env::EnvResult<env::PieToken> {
-    let up = handshake::moor()?;
+    let up = startup::moor()?;
     let down = HolePie::unseal()?;
     let sire = runtime::env::task::sire()?;
     let at_parent = ship(&down, sire, Access::READ | Access::WRITE, Policy::NONE)?;
@@ -535,10 +537,10 @@ type PieRow = (usize, env::Permission, env::TaskId, env::TaskId);
 
 /// 扫本任务表：`Collect` 枚举 + `Reserve` 查来历（哨兵 `token == 0` 即到头）。
 ///
-/// 与 `handshake::moor` 同一个手法——`Collect` 是唯一的枚举手段，故自检里"读回我
+/// 与 `startup::moor` 同一个手法——`Collect` 是唯一的枚举手段，故自检里"读回我
 /// 刚授出的那一枚"也只能这样问。
 fn my_pies() -> Vec<PieRow> {
-    /// 表量级个位数；给够上限只为防越界扫描跑飞（与 `handshake::MAX_PIES` 同数）。
+    /// 表量级个位数；给够上限只为防越界扫描跑飞（与 `startup::MAX_PIES` 同数）。
     const MAX_PIES: usize = 64;
     let mut rows = Vec::new();
     for index in 0..MAX_PIES {
@@ -583,7 +585,7 @@ fn wait_pie_from(owner: env::TaskId) -> Option<usize> {
 ///    我自己 ⇒ 子枚落进同一张表，于是能用 `Collect` 读回 `permission`，核对它正是签名
 ///    说的那个子集）。空集那一格（`Access::NONE + Policy::NONE`）必须**本地拒**——
 ///    那是"授一枚什么都没有的枚"，一条 envcall 都不该发。
-/// ② **来源校验**：`Port::call` 只认 `to.peer()` 推来的回复。子线程开一枚孔（**开辟者
+/// ② **来源校验**：`Port::pull` 只认 `to.peer()` 推来的回复。子线程开一枚孔（**开辟者
 ///    是它**）并把副本授给我，故 `Port::open` 认它作对端；随后**我自己**往自己的回信孔
 ///    推一条——内核盖的发送者是我，不是对端 ⇒ 必须 `Denied`。
 fn ship_probe(term: &Term) {
@@ -642,7 +644,76 @@ fn ship_probe(term: &Term) {
     ));
 }
 
-/// 反证：对端**不是我**时，`Port::call` 必须拒了它。
+/// 泊位自检（`docs/dock.md`）：把"借映"这件事的四个事实各打一个数，各有各的牙。
+///
+/// ```text
+/// size         `Dock::open` 返的是**映射的那一段**（页对齐），必须与 unseal 报的一致
+///              牙：`Open` 的 a1 填错（填 0、或填设备树 reg 的长度）⇒ 不等于 4096
+/// rw           那段页真是本域的内存：**首字节与末字节**各写一个值、读回来相等
+///              牙：映射没真建起来 ⇒ 读回不符；长度报大了 ⇒ 末字节落在未映射页，本域当场 fault
+/// remap        撤图之后再开一次，重开的那段仍可读写
+///              牙：撤图与重开之间留下"登记还在、段已经还了"的半截状态 ⇒ 重开后写它就 fault
+/// sealed-shut  **资源封印之后仍撤得掉自己那张图**（`Shut` 不过存活闸，与 `Release` 对齐）
+///              牙：存活闸留着 ⇒ 当场 `Dead`（`docs/mail.md` §10 第 1 条那条边界）
+/// ```
+fn dock_probe(term: &Term) {
+    const SIZE: usize = 4096;
+    const A: u8 = 0x5a;
+    const B: u8 = 0xa5;
+
+    /// 首字节与末字节各写一个值、读回来相等（末字节 = `base + size - 1`）。
+    fn touch(view: View, a: u8, b: u8) -> bool {
+        let first = view.base() as *mut u8;
+        // SAFETY: `view` 出自 `Dock::open`——那段页已借映进本域，两个偏移都在 size 之内。
+        unsafe {
+            core::ptr::write(first, a);
+            core::ptr::write(first.add(view.size() - 1), b);
+            core::ptr::read(first) == a && core::ptr::read(first.add(view.size() - 1)) == b
+        }
+    }
+
+    // ── 映射：起点与长度成对回来 ──
+    let Ok(pie) = PolePie::unseal(SIZE) else {
+        term.writeline("dock: unseal failed");
+        return;
+    };
+    let token = pie.token();
+    let Ok(dock) = Dock::open(pie) else {
+        term.writeline("dock: open failed");
+        return;
+    };
+    let view = dock.view();
+    let rw = touch(view, A, B) as u8;
+
+    // ── 撤图 + 重开 ──
+    let remap = if dock.shut().is_ok() {
+        match Dock::open(PolePie::from_token(token)) {
+            Ok(again) => touch(again.view(), B, A) as u8,
+            Err(_) => 0,
+        }
+    } else {
+        0
+    };
+
+    // ── 封印之后仍撤得掉：封印是**开辟者**的权利，本任务就是（`reclaim` 同款） ──
+    let sealed_shut = match Dock::open(PolePie::from_token(token)) {
+        Ok(dock) => {
+            let sealed = PolePie::from_token(token).seal().is_ok();
+            (sealed && dock.shut().is_ok()) as u8
+        }
+        Err(_) => 0,
+    };
+
+    term.writeline(&format!(
+        "dock: size={} rw={} remap={} sealed-shut={}",
+        view.size(),
+        rw,
+        remap,
+        sealed_shut
+    ));
+}
+
+/// 反证：对端**不是我**时，`Port::pull` 必须拒了它。
 ///
 /// 布置：子线程开一枚孔（它是那扇门的开辟者）→ 把 `R|W` 副本授给我（故 `Port::open`
 /// 用 `Reserve(entry).owner` 认出的对端是**它**）→ 它等一条请求（"等"同时是"它还活着"
@@ -677,18 +748,20 @@ fn source_probe(me: env::TaskId) -> bool {
     let injected = HolePie::from_token(reply)
         .push(b"not from the peer")
         .is_ok();
-    // 报文内容与本条断言无关（测的是**来源**那一格），故借手边最近的 `Duet`；上界给 0
-    // ——那条冒名顶替的回复已经在槽里，不必等。
+    // 报文内容与本条断言无关（测的是**来源**那一格）；上界给 0——那条冒名顶替的回复
+    // 已经在槽里，不必等。
     let Ok(name) = Name::new("ship") else {
         return false;
     };
     let req = Query::Resolve { name };
-    let denied = port
-        .call::<Query>(&req, 0)
-        .err()
-        .map(|e| e.into_source().code())
-        == Some(E_DENIED);
-    let _ = port.close();
+    let (frame, n) = req.encode(port.seed());
+    let denied = frame.get(..n).is_some_and(|frame| {
+        port.push(frame).is_ok() && {
+            let mut buf = [0u8; CAP];
+            port.pull(&mut buf, 0).err().map(|e| e.into_source().code()) == Some(E_DENIED)
+        }
+    });
+    let _ = port.shut();
     let _ = child.join();
     injected && denied
 }
@@ -1123,10 +1196,9 @@ fn spoof(term: &Term) {
     };
     let mut buf = [0u8; CAP];
     // `ms` = 等回复的上界：正路径用 WAIT，猜 token 时用 0（只探测、顺便排空）。
-    // 裸报文那一层：帧自己给布局，地址槽按机制那一格写（本自检测的正是伪造它）。
+    // 裸报文那一层：帧由**协议**自己编，地址槽填谁由本自检说了算（它测的正是伪造它）。
     let mut call = |query: &Query, reply_tok: usize, ms: usize| -> Option<Reply> {
-        let mut msg = [0u8; CAP];
-        let n = Query::encode(query, env::PieToken::new(reply_tok), &mut msg);
+        let (msg, n) = Query::encode(query, env::PieToken::new(reply_tok));
         entry.push(&msg[..n]).ok()?;
         let (got, _) = mine.pull_timeout_from(&mut buf, ms).ok()?;
         Reply::decode(&buf[..got]).ok()
@@ -1495,7 +1567,7 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
     match cmd {
         "help" => {
             term.writeline(
-                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / ship / session / churn / reclaim / spoof / name / badslot / stray / exit",
+                "help / clock / ticks / alloc / echo / sleep / spawn / heir / hole / req / dir / kill / line / cascade / lend / ship / dock / session / churn / reclaim / spoof / name / badslot / stray / exit",
             );
         }
         "clock" => {
@@ -1578,6 +1650,9 @@ fn exec(cmd: &str, args: &[String], term: &Term) -> bool {
         }
         "ship" => {
             ship_probe(term);
+        }
+        "dock" => {
+            dock_probe(term);
         }
         "lend" => {
             lend(term);

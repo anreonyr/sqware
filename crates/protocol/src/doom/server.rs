@@ -34,9 +34,7 @@ use runtime::env::room;
 
 use crate::dispatch::client::Directory;
 
-use runtime::core::port::address_of;
-
-use super::wire::{Ack, OP_KILL, OP_QUIT, Query};
+use super::wire::{Ack, OP_KILL, OP_QUIT, Query, address_of};
 
 /// 服务处理一条请求时，等目标**消失**的探测间隔（毫秒）与轮次。
 ///

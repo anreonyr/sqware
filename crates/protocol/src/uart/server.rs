@@ -10,9 +10,8 @@
 //! 没有表、没有会话、没有未决读——**一个纯函数**。
 
 use env::PieToken;
-use runtime::core::port::address_of;
 
-use super::wire::{Query, Status};
+use super::wire::{Query, Status, address_of};
 
 /// 一条报文解出来的动作。
 pub enum Action<'a> {

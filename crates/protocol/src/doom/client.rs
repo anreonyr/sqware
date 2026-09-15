@@ -8,6 +8,7 @@ use env::{EnvResult, Name};
 use runtime::core::port::Port;
 use runtime::env::mail::HolePie;
 
+use super::wire::{ACK_LEN, denied};
 use super::{Ack, Query};
 
 /// 等回执的上界（毫秒）。服务在同一台机器上做一次 envcall + 有界 `Join`，远超实际
@@ -30,11 +31,19 @@ impl Doom {
         })
     }
 
+    /// 本协议的一次往返：编帧（回信地址按**本协议**那一格填）→ 推 → 收（[`Port::pull`]
+    /// 内建核对来源）→ 解回执。
+    fn ask(&self, req: &Query) -> EnvResult<Ack> {
+        let (frame, n) = req.encode(self.port.seed());
+        self.port.push(frame.get(..n).ok_or_else(denied)?)?;
+        let mut out = [0u8; ACK_LEN];
+        Ack::decode(self.port.pull(&mut out, ACK_TIMEOUT_MS)?)
+    }
+
     /// 杀一个域（按名字）。**名字 → 目标**的解析在服务侧做（名字的账在目录里）。
     ///
     /// 回执四值见 [`Ack`]；`Ok` 的含义是"内核确认它回收完了"，不是一个"收到了"。
     pub fn kill(&self, target: &Name) -> EnvResult<Ack> {
-        self.port
-            .call::<Query>(&Query::new(*target), ACK_TIMEOUT_MS)
+        self.ask(&Query::new(*target))
     }
 }

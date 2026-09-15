@@ -35,8 +35,6 @@
 
 use env::wire::NAME_LEN;
 use env::{EnvError, EnvResult, Name, PieToken, TaskId, make_err};
-use runtime::core::port::{ADDRESS_LEN, Duet, put_address};
-
 /// 本协议的负码：无权 / 协议错（与内核码同表）。
 pub(crate) fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(-1))
@@ -47,6 +45,27 @@ pub const SERVICE: &str = "plic";
 
 /// 名字最长能写多少字节（内容上界：定长字段里那一个字节留给终止 NUL）。
 pub const TEXT: usize = NAME_LEN - 1;
+
+/// 回信地址的线形：一枚 `PieToken` 的 8 字节小端。
+pub const ADDRESS_LEN: usize = 8;
+
+/// 回信地址在**本协议**帧里的偏移：紧跟 `op`。
+pub const ADDRESS_AT: usize = 1;
+
+/// 把回信地址写进本协议帧的那一格。
+pub fn put_address(out: &mut [u8], token: PieToken) -> Option<()> {
+    let slot = out.get_mut(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    slot.copy_from_slice(&token.get().to_le_bytes());
+    Some(())
+}
+
+/// 从帧里抠出回信地址——**坏报文也要能抠**（拒一条请求仍欠对方一句）。`None` = 太短 /
+/// 全是 0（0 是本仓的"无句柄"）。
+pub fn address_of(m: &[u8]) -> Option<PieToken> {
+    let slot = m.get(ADDRESS_AT..ADDRESS_AT + ADDRESS_LEN)?;
+    let token = PieToken::new(usize::from_le_bytes(slot.try_into().ok()?));
+    if token.get() == 0 { None } else { Some(token) }
+}
 
 /// 一块内存要多大装得下任何一条帧：`op + 地址槽 + arg + 名字(上界)`。
 pub const CAP: usize = 1 + ADDRESS_LEN + 8 + TEXT;
@@ -84,7 +103,7 @@ pub enum Query {
 }
 
 impl Query {
-    /// 三个构造器都**不收回信地址**：它是**传输字段**（地址槽），由 [`Duet::encode`]
+    /// 三个构造器都**不收回信地址**：它是**传输字段**（地址槽），由 [`Query::encode`]
     /// 按本端回信孔填——客户端手里没有那枚 token，故请求值里没有这一格。
     pub const fn register(name: Name, session: PieToken) -> Query {
         Query::Register { name, session }
@@ -111,8 +130,9 @@ impl Query {
         NAME_AT + self.name().text().len()
     }
 
-    /// 编码为线上消息（**不写地址槽**：留给 [`Duet::encode`]；尾部不补零）。
-    pub fn encode(&self) -> ([u8; CAP], usize) {
+    /// 编码：写出整帧，并把**回信地址**填进本协议那一格。尾部不补零——帧长就是那个
+    /// 返回值。
+    pub fn encode(&self, at: PieToken) -> ([u8; CAP], usize) {
         let (op, arg) = match self {
             Query::Register { session, .. } => (OP_REGISTER, session.get() as u64),
             Query::Refer { who, .. } => (OP_REFER, who.get() as u64),
@@ -125,6 +145,7 @@ impl Query {
         let text = name.text();
         let n = self.len();
         msg[NAME_AT..n].copy_from_slice(text);
+        let _ = put_address(&mut msg, at);
         (msg, n)
     }
 
@@ -194,42 +215,12 @@ impl Ack {
             _ => None,
         }
     }
+
+    /// 解一条回执。空报文 / 不认识的取值 ⇒ `Denied`（**不假装成功**）。
+    pub fn decode(buf: &[u8]) -> EnvResult<Ack> {
+        Ack::from_byte(*buf.first().ok_or_else(denied)?).ok_or_else(denied)
+    }
 }
 
 /// 回执的字节数（一字节）。
 pub const ACK_LEN: usize = 1;
-
-/// 报文对：一条中断线询问、一字节判据应答。地址槽在 `[1..9)`，**每条询问都带**
-/// （本协议每请求一趟：`irq::client` 的 `Line::ask` 每次开一枚新回信孔）。
-impl Duet for Query {
-    type Req = Query;
-    type Rep = Ack;
-    type Wire = [u8; CAP];
-
-    const CAP: usize = CAP;
-
-    fn wire() -> [u8; CAP] {
-        [0u8; CAP]
-    }
-
-    /// 回复容器与请求容器分开（理由见 [`Duet::Reply`]）。
-    type Reply = [u8; CAP];
-
-    fn reply() -> [u8; CAP] {
-        [0u8; CAP]
-    }
-
-    fn encode(req: &Query, at: PieToken, out: &mut [u8]) -> usize {
-        let (frame, n) = req.encode();
-        let Some(slot) = out.get_mut(..n) else {
-            return 0;
-        };
-        slot.copy_from_slice(&frame[..n]);
-        put_address(out, at);
-        n
-    }
-
-    fn decode(buf: &[u8]) -> EnvResult<Ack> {
-        Ack::from_byte(*buf.first().ok_or_else(denied)?).ok_or_else(denied)
-    }
-}
