@@ -242,17 +242,17 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
         },
     )?;
 
-    // 引导线程：args = [清单视图 VA, 清单字节数, 配对块 VA, 设备条数]；boot 立即放行。
-    let bootstrap = team
-        .task()
-        .name("bootstrap")
-        .args(vec![
-            view.as_usize(),
-            region.size,
-            pairs.as_usize(),
-            devices.len(),
-        ])
-        .spawn()?;
+    // 引导线程：args 的布局见 `env::wire::args`（清单区 VA / 字节数 / 配对块 VA / 条数）。
+    // 按常量逐格写，不靠位置——布局与读它的 root 是同一份定义。
+    let mut args = [0usize; env::wire::args::LEN];
+    args[env::wire::args::VIEW] = view.as_usize();
+    args[env::wire::args::VIEW_LEN] = region.size;
+    args[env::wire::args::PAIRS] = pairs.as_usize();
+    args[env::wire::args::COUNT] = devices.len();
+    let bootstrap = team.task().name("bootstrap").args(args.to_vec()).hold()?;
+    // 两步分开：这段的形状就是 System Protocol 的 `Spawn`（恒产 `Held`）→ `Hatch`。
+    // 中间没有要授的东西，但顺序要看得见——内核侧不再有"产并放行"的别名。
+    crate::work::unit::task::Task::release(&bootstrap).expect("freshly held task must release");
     crate::platform::devices::install(&bootstrap, devices);
 
     #[cfg(feature = "framework")]

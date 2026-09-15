@@ -4,8 +4,9 @@
 // TaskBuilder 在团队容器内生成任务：栈 + trap 帧 + 填帧 + 入队。
 //
 // **两段式构造**（D3=B 的顺序要求）：`hold` 产 `Held`（未放行、已入簿记与计数），
-// `spawn` = `hold` + 立即放行。跨域产线程必须走 `hold`，父方 `Accord` 之后再
-// `Hatch`——新线程的权限表起步为空，「先授权、后运行」是安全的一侧。
+// 放行是**单独一步**（`Task::release`，即 ABI 的 `Hatch`）——本层不设"产并放行"的
+// 别名：`UnitCall::Spawn` 只有"产 Held"一个意思。跨域产线程必须走 `hold`，父方
+// `Accord` 之后再放行——新线程的权限表起步为空，「先授权、后运行」是安全的一侧。
 
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -668,13 +669,6 @@ impl TaskBuilder {
         self.team.hold(&task);
         conductor::push();
         trace::note(EventKind::Room(RoomEvent::Spawn { tid: id }));
-        Ok(task)
-    }
-
-    /// 产线程并**立即放行**（`hold` + `Hatch`）。boot 装 root 用。
-    pub fn spawn(self) -> Result<Arc<Task>, MapError> {
-        let task = self.hold()?;
-        Task::release(&task).expect("freshly held task must release");
         Ok(task)
     }
 }

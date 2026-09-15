@@ -11,7 +11,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use env::{EnvResult, TaskId, TeamId};
 
 use crate::core::tls;
-use crate::env::{room, task as env_task};
+use crate::env::{room, unit as env_task};
 
 /// 子任务已完工（result 可取）。
 const DONE: usize = 1;

@@ -26,6 +26,11 @@ semihosting = []
 # 拆成两个 feature 只会造出无意义的四象限（登记了却走崩溃转储 / 没登记却报用例失败）。
 framework = []
 
+[build-dependencies]
+# 清单格式的单一真相在 `env::wire::manifest`：写侧是本 build.rs、读侧是 root 域。
+# 故这里是**宿主侧**依赖——`env` 除 `ecall::trap` 外全部可移植（那一个函数有非 riscv 分支）。
+env = { path = "../crates/env" }
+
 [dependencies]
 env = { path = "../crates/env" }
 sbi = { path = "../crates/sbi" }

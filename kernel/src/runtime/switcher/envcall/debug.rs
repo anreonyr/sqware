@@ -51,9 +51,10 @@ pub(super) fn put(
 
 /// 调试控制台 → 域：内核栈暂存接一次 DBCN 读，再把结果写进域。
 ///
-/// **可能阻塞**：DBCN 的 console read 语义是"等到至少读到一个字节"。单核上会挂住
-/// 整机，多核只挂住调用它的那一核——敢不敢在这儿等，是调用方的判断（见
-/// `env::fid::DebugCall::Get` 的注）。
+/// **不阻塞**：实测（OpenSBI v1.9 / QEMU virt）没数据时立刻返 0 字节，**不是**"等到读到
+/// 一个字节"。这条注释原先写反了——代价是 echo 照着它写成了一条空转的紧循环（宿主
+/// 99%，见 `programs/src/bin/user/echo.rs` 那条"空转的红线"）。调用方拿到 0 必须睡一拍
+/// 或等中断，不能立刻再问。
 pub(super) fn get(
     frame: &mut TrapContext,
     ident: &TaskIdent,

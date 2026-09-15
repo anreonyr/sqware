@@ -10,9 +10,7 @@
 //! 线格式，本 crate 只跑在镜像侧。
 //!
 //! 边界：本 crate **不认识任何协议**（协议在 `crates/protocol`，反向依赖本 crate），
-//! 也不认识任何程序（程序在 `programs`）。启动期的握手住过这里（`core::handshake`），
-//! 而它是**父域与子域的协议**——已搬去 `crates/protocol::startup`。搬走之后上面这句
-//! 话才第一次是真的。
+//! 也不认识任何程序（程序在 `programs`）。
 
 extern crate alloc;
 

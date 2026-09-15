@@ -71,7 +71,10 @@ impl Write for Console {
 /// 域给的缓冲一次都到不了这里——调用方（`envcall/debug.rs`）先备内核栈暂存，读进来
 /// 之后再 `copy_out` 给域。理由只有一条：DBCN 按**物理地址**读写，用户 VA 在这里没有意义。
 ///
-/// **可能阻塞**（SBI 的 console read 语义是"等到至少一个字节"）。`None` = 缓冲不可直读。
+/// **不阻塞**：实测（OpenSBI v1.9 / QEMU virt）没数据时**立刻返 0**，不是"等到至少一个
+/// 字节"。这条差别是**空转的红线**——调用方拿到 0 若立刻再问，就是在 U 态烧一颗核
+/// （实测宿主 99%，见 `programs/src/bin/user/echo.rs` 那条注）。读入方要么睡一毫秒再来，
+/// 要么等中断（那是 console 域的事）。`None` = 缓冲不可直读。
 pub fn read(buf: &mut [u8]) -> Option<usize> {
     if buf.is_empty() {
         return None;

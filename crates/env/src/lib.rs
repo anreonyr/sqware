@@ -10,6 +10,10 @@
 //! `[call]` 载荷由 `derive(Envcall)` 生成 codec（`slot/pack/unpack/call`）。
 //! 返回类型经 `#[ret(T)]` 标注，derive 生成域 `*Ret` 枚举。
 
+// 清单的写侧（`wire::manifest::pack`）要一段可增长的字节缓冲，故本 crate 引 `alloc`
+// （读侧零分配）。`env` 仍在宿主上可编译——`alloc` 两边都有。
+extern crate alloc;
+
 pub mod ecall;
 pub mod fid;
 pub mod permission;

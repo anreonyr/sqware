@@ -298,7 +298,8 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 resolved: ok,
             }));
             if ok {
-                putln!("user page fault resolved: {fault:?}");
+                // 不打印：上一行的 `trace::note` 已经记下这件事（`va` / `fault` / `resolved`），
+                // 而缺页是懒分配的**正常**路径。**失败**那条（下面的 `putln!`）照打。
                 return frame as *mut TrapContext;
             }
             // 不可解析 → 杀 task（不复用 frame：reap 取下一任务的 frame PA）。

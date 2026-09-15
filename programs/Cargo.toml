@@ -3,7 +3,7 @@ name = "programs"
 version.workspace = true
 edition.workspace = true
 
-# 镜像里的两个程序：freestanding、无 std、无 main crt。链接在 IMAGE_BASE
+# 镜像里的三个程序：freestanding、无 std、无 main crt。链接在 IMAGE_BASE
 # (0x10000)、静态 ET_EXEC；由内核 loader 按绝对 VMA 装载，_start 即 e_entry。
 # 内核 `build.rs::INITRD_BINS` 按 bin 名打进 initrd（**唯一**声明特权级处）。
 [lib]
@@ -17,10 +17,20 @@ env = { path = "../crates/env" }
 runtime = { path = "../crates/runtime" }
 # 协议层目前是空的（`crates/protocol/src/lib.rs`），故这里**先不依赖**它：
 # 空依赖只会换来一条 unused 警告。等第一条协议操作出现时把这条边加回来。
+# 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
+# 使用者目前只有 `prog-plic`（要数自己的 context、列自己要接的线）。
+fdt = { version = "0.1.5", default-features = false }
 
 [[bin]]
 name = "prog-echo"
 path = "src/bin/user/echo.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-plic"
+path = "src/bin/supervisor/plic/main.rs"
 test = false
 bench = false
 doctest = false

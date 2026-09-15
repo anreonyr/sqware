@@ -29,15 +29,20 @@
 
 extern crate programs;
 
+use core::time::Duration;
+
 use env::DBCN_MAX;
 use runtime::env::debug;
-use runtime::env::room::exit_with;
+use runtime::env::room::{self, exit_with};
 
 /// 域自己的正常退场码（与 `programs::entry::EXIT_OK` 同号）。
 const EXIT_OK: usize = 0;
 
 /// 一行的上界。更长的行**截断**回显（超过它的行不可能是 `exit`，故收场判据不受影响）。
 const LINE_MAX: usize = 128;
+
+/// 没字节可读时的重问间隔（毫秒）。见主循环那条"空转的红线"。
+const IDLE_MS: u64 = 1;
 
 const READY: &str = "echo: ready";
 const NON_UTF8: &str = "<non-utf8>";
@@ -53,6 +58,12 @@ extern "C" fn main() -> ! {
     'echo: loop {
         // 一次 `get` 给多少字节不定（固件的语义是"至少一个"）。
         let Ok(n) = debug::get(&mut buf) else { break };
+        // **空转的红线**：固件一个字节都没给（`n == 0`）时不能立刻再问——那是把一整颗核
+        // 烧在等键上（实测宿主 99%）。睡一毫秒再来，输入早到晚到一毫秒无所谓。
+        if n == 0 {
+            let _ = room::sleep(Duration::from_millis(IDLE_MS));
+            continue;
+        }
         let Some(chunk) = buf.get(..n) else { break };
 
         for &b in chunk {

@@ -43,6 +43,9 @@ impl Access {
     pub const READ: Access = Access(Permission::READ);
     /// 修改 / 投递 / 写入。
     pub const WRITE: Access = Access(Permission::WRITE);
+    /// 读与写。**只为常量表而设**：`|` 不是 `const fn`，而需求单（`programs::needs`）
+    /// 是编译期常量表——两族各一位，合成走这里。
+    pub const READ_WRITE: Access = Access(Permission::READ.union(Permission::WRITE));
 
     /// 位（交给 `Accord` 的那一半）。
     pub const fn bits(self) -> Permission {
