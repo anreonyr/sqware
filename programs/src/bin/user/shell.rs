@@ -50,7 +50,7 @@ use protocol::dispatch::{CAP, Name, Query, Reply};
 
 use protocol::console::{
     self,
-    client::{Console, Readline, Session},
+    client::{Console, Readline},
 };
 use protocol::dispatch::{Directory, E_DENIED, E_NOT_FOUND, PAYLOAD_LEN};
 use protocol::doom::{self, Ack, Doom};
@@ -191,28 +191,12 @@ fn reconnect() -> bool {
 /// 与 [`Term::readline`] 各自的处置。
 fn with_session<T>(f: impl FnOnce(&Console) -> T) -> Option<T> {
     let mut session = TERM.0.with(|t| t.session.take());
-    let mut renewed = false;
     if session.is_none() {
         let token = console_entry()?;
         session = Console::open(HolePie::from_token(token)).ok();
-    } else if let Some(c) = session.as_mut() {
-        // **会话还对不对得上当前实例**——问协议客户端，不在这里比对 token
-        // （那件事连同"换了怎么续"一起归 `Console::valid`，本域只提供入口）。
-        // 对不上就地重建，返 `Renewed`。
-        match console_entry().map(|token| c.valid(HolePie::from_token(token))) {
-            Some(Ok(Session::Renewed)) => renewed = true,
-            Some(Ok(Session::Same)) => {}
-            // 取不到入口 / 续接失败：这一份作废，由调用方（`readline` → `reconnect`）
-            // 按"会话没了"处置。
-            _ => session = None,
-        }
     }
-    // 会话先放回，再报——报要经 `flush` 写控制台，而 `flush` 走 [`with_session`]，
-    // 此刻缓存里必须已经是这条活会话（否则那句话会被原样丢掉，实测踩过）。
+    // 会话先放回缓存——用它的一切（含下面那句报到）都要经它出去。
     TERM.0.with(|t| t.session.set(session));
-    if renewed {
-        TERM.writeline(REJOINED);
-    }
     // 借出 → 跑 → 放回（与函数头注里那条次序同款：临界区里只有内存操作）。
     let held = TERM.0.with(|t| t.session.take());
     let out = held.as_ref().map(f);

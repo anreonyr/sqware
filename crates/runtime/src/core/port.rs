@@ -278,10 +278,19 @@ impl Port {
     /// `call`（与 [`HolePie::pull_timeout`] 的既有契约同款）。
     pub fn call<W: Duet>(&self, req: &W::Req, within: usize) -> EnvResult<W::Rep> {
         let mut wire = W::wire();
-        let mut reply = W::reply();
         let sent = W::encode(req, self.to.seed(), wire.as_mut());
         self.entry
             .push(wire.as_ref().get(..sent).ok_or_else(denied)?)?;
+        self.take::<W>(within)
+    }
+
+    /// **收**那一半：有界等 → 校来源 → 解码。`call` 与 [`Port::dial`] 共用。
+    ///
+    /// 不外放（`docs/port.md` §7 否掉"只留 `send`/`recv`"）：往返还归本类型。
+    /// `dial` 借它收**首帧的答复**——那条答复由服务端建会话时推出，与本端推了哪一帧无关
+    /// （故 `take` 只收，不推）。
+    fn take<W: Duet>(&self, within: usize) -> EnvResult<W::Rep> {
+        let mut reply = W::reply();
         let (len, from) = self.reply.pull_timeout_from(reply.as_mut(), within)?;
         if from != self.to.peer() {
             return Err(denied());
@@ -296,28 +305,35 @@ impl Port {
     /// 生命与我绑定，对端先死我看不见）；`dial` 是对端开（它退场时内核的寿命边封印
     /// 那扇门，我等在上面**当场醒**）。
     ///
-    /// # 契约：首帧就是握手帧，且它带一枚**认领号**
+    /// # 契约：首帧就是**那条"开一条会话"的请求**，它的答复随握手一起回来
     ///
-    /// 本函数只把首帧推出去（地址槽**留零** —— 协议自己的 `encode` 决定这个槽在哪儿、
-    /// 什么时候写），随后在对端入口孔上等一枚句柄回来。故**调用方紧接着必须发那条
-    /// 触发握手的请求**（控制台是 `Open`，且那一条必须是首次 [`Port::call`]）。
-    /// 次序反了的表现是 `dial` 等到超时——不是死锁，是这条契约被违反。
+    /// 本函数做完整件事：把首帧推出去（地址槽**留零** —— 协议自己的 `encode` 决定这个槽
+    /// 在哪儿、什么时候写）→ 在对端入口孔上认领那枚回信孔 → 在**那枚孔上**收首帧的答复。
+    ///
+    /// **答复为什么在这条路上**：服务端收到首帧即建会话——它开回信孔、把句柄经入口孔交回
+    /// （[`handshake::grant`]），并把"开成了"那句回执推进**它刚开的这枚孔**（`console` 的
+    /// `State::open`）。两者是同一件事的两半，故本函数一次收齐。
+    ///
+    /// **调用方不得再发一遍首帧**——那正是这条契约曾经踩过的坑：首帧既是握手帧又是开门请求，
+    /// 再来一遍就是**开第二条会话**；而第二遍的回执会被服务端推给一个按己方表解释的号，
+    /// 客户端永远收不到，它收到的其实是第一遍的回执（表面一切正常，会话表却每开一次漏一格，
+    /// 实测 `MAX_CLIENTS=8` ⇒ 同一条实例上第五次开会话必被表满拒）。
     ///
     /// `nonce` = 本端的认领号（调用方生成，同一个值也写进首帧）。**它为什么必须存在**
     /// 见 [`handshake::borrow`]：入口孔是双向的，"下一帧就是我的答复"是假前提——实测
     /// 一条裸 `Close`（正好也是 9 字节）落在同一个槽里，把整条会话当场开坏。
     ///
-    /// `within` = 等那枚句柄的上界（毫秒）。**必须有界**：对端若拒了这条会话（表满、
-    /// 报文不合），那枚号永远不会来。
+    /// `within` = **整件事**的上界（认领那枚孔 + 收首帧的答复，两段各分剩余预算）。
+    /// **必须有界**：对端若拒了这条会话（表满、报文不合），那枚号永远不会来。
     ///
     /// # Errors
-    /// - `Denied` — 入口门闩不在表里 / 无开辟者 / 对端没把句柄交回来
+    /// - `Denied` — 入口门闩不在表里 / 无开辟者 / 对端没把句柄交回来 / 答复来源不是对端
     pub fn dial<W: Duet>(
         entry: &HolePie,
         first: &W::Req,
         nonce: u64,
         within: usize,
-    ) -> EnvResult<Port> {
+    ) -> EnvResult<(Port, W::Rep)> {
         let peer = mail::reserve(PieToken::new(entry.token()))?.1;
         if peer.get() == 0 {
             return Err(denied());
@@ -326,7 +342,9 @@ impl Port {
         let sent = W::encode(first, PieToken::new(0), wire.as_mut());
         entry.push(wire.as_ref().get(..sent).ok_or_else(denied)?)?;
         let reply = crate::core::handshake::borrow(entry, nonce, within)?;
-        Ok(Port::adopt(peer, HolePie::from_token(entry.token()), reply))
+        let port = Port::adopt(peer, HolePie::from_token(entry.token()), reply);
+        let rep = port.take::<W>(within)?;
+        Ok((port, rep))
     }
 
     /// 现成的一条会话：对端坐标 + 入口门闩 + **借来的**回信孔。
@@ -342,18 +360,6 @@ impl Port {
             entry,
             reply,
         }
-    }
-
-    /// 本端坐标里**入口那一半**：我表里那枚入口门闩的 token。
-    ///
-    /// 给"这条会话还对不对得上当前的对端实例"这个判断用（见
-    /// `console::client::Console::valid`）：服务换了实例，它在目录里登记的入口就换了
-    /// 一枚；客户端拿手里这一枚去比，对不上就是**这个实例**没了，而不是"某一次请求
-    /// 失败"。
-    ///
-    /// 只读、不改变任何状态：门闩是句柄值（`HolePie` 无 `Drop`），这里给的仍是同一个号。
-    pub fn entry_token(&self) -> usize {
-        self.entry.token()
     }
 
     /// 关：只放下回信孔（**级联已含对端那枚副本**，不必再 `revoke`——那是旧
