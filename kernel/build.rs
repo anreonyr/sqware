@@ -14,17 +14,9 @@ const KIND_SUPERVISOR: u32 = 1;
 const ROOT_NAME: &str = "root";
 const INITRD_BINS: &[(&str, &str, u32)] = &[
     (ROOT_NAME, "prog-root", KIND_SUPERVISOR),
-    ("shell", "prog-shell", KIND_USER),
-    ("echo", "prog-echo", KIND_SUPERVISOR),
-    ("dir", "prog-dir", KIND_SUPERVISOR),
-    // 中断线驱动：PLIC 的线 → 客户端门闩里的一个线号（见 docs/driver.md §3.2）。
-    ("plic", "prog-plic", KIND_SUPERVISOR),
-    // 串口驱动：**设备在它手里**，终端语义仍在 console 服务里（见 docs/console.md）。
-    // **U 态**：驱动不需要"建域 / 铸建域权"那两道 S 态门，取最小特权；两台驱动的特权级
-    // 目前不一致（`plic` 仍是 S 态），把 `plic` 一并降下来是记账待办。
-    ("uart", "prog-uart", KIND_USER),
-    // 控制台服务：读写的**线对侧**（见 crates/protocol/src/console）。
-    ("console", "prog-console", KIND_SUPERVISOR),
+    // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
+    // 不需要"建域 / 铸建域权"那两道 S 态门。
+    ("echo", "prog-echo", KIND_USER),
 ];
 
 fn main() {
