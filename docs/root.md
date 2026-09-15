@@ -17,7 +17,7 @@
 | AC7 | 目录身份不经报文/启动参数传递 | ✅ 客户端用 `Reserve(门闩).owner` 求得（见 §9） |
 | AC8 | 跨血缘的"杀"由本域经内核的他杀原语执行 | ✅ `kill echo` → `kill echo -> ok`，目录侧 `discover echo -> not found`（§5.1） |
 | AC9 | 中断线的**属主**由本域写、设备名字由本域转达 | ✅ `Refer` 写属主 + 一次性孔交名字（§5.2）；判据 = 三档的 `plic: line 10 delivered`（那条线号只能由驱动从设备树解出） |
-| AC10 | 服务崩了能**重发**，且重发出来的实例真的接管了那条线 | ✅ `kill console` → `root: console restarted` + **第二条** `console: line … ok`（新实例拿到 `Ok`）+ `shell: console reconnected`（三档都核，§5.3） |
+| AC10 | 服务崩了能**重发**，且重发出来的实例真的接管了那条线 | ✅ 门里 `kill console` 走**两次**（"多次他杀也不卡死"）：每次都是 `root: console restarted` + **新实例拿到设备服务**（`console: uart ok` 恰好 **3** 次 = 引导期 + 两次重发）+ **客户端那一半** `shell: console reconnected` 恰好 **2** 次。三档都核，逐条**计数**（`INSTANCE_CHECKS`）——一次他杀报一次，问不出条数就不算数（§5.3） |
 
 ## 2 · 裁决账
 

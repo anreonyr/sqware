@@ -222,9 +222,11 @@ const IRQ_MARKER = "plic: line 10 delivered"
 # **改上面那张表就要重算这里**：本轮往 `exit` 前插 `cascade` 时漏算，默认档的 9 从
 # `exit` 指到了 `cascade` ⇒ 默认轮从不 exit、三轮都挂到超时（症状像内核挂，其实是门）。
 # 插 `kill`/`dir`/`line` 那几步时同样要重算（本轮又走了一遍这张表）；插重启那一步
-# （`kill console`）时走了第三遍——`exit` 的下标从 14 挪到 15，两行都跟着改。
-# `instances` 这个 check 数的两条计数：模式 + 应有的条数 + 报错时的话。
-# 两句话都要**数**，故它们进不了 MARKERS（那张表只问在不在）。
+# （`kill console`）时走了第三遍——`exit` 的下标从 14 挪到 15，两行都跟着改；
+# 本轮**第二次** `kill console` 与 `session` 自检插进来时走了第四遍：`ship` 15→18、
+# `exit` 17→19（默认档与全量档两行都要跟着改，改错的表现是"某一步的期望串永远等不到"）。
+# `instances` 这个 check 数的**三条**计数：模式 + 应有的条数 + 报错时的话。
+# 三句话都要**数**，故它们进不了 MARKERS（那张表只问在不在）。
 const INSTANCE_CHECKS = [
   {pat: 'uart: line [^ ]+ ok', n: 1, what: "uart 登记线（恰好一次）"}
   {pat: 'console: uart ok',    n: 3, what: "console 实例（引导期 + 两次重发）"}
@@ -815,7 +817,9 @@ def main [] {
   for p in $plan {
     let r = ($results | where i == $p.i | first)
     # 轮内不再自己打这行（并行会互相插队）：读数带回这里，按计划顺序打。
-    if $r.instances == 2 { print $"  console 实例：($r.instances)（引导期 + 重发；线仍归 uart）" }
+    # 读数是**最后一条** `instances` 检查的数（表里那条是 `console: uart ok`）：引导期一次
+    # + 每次他杀之后重发的一次。门里现在是**两次**他杀 ⇒ 3。
+    if $r.instances == 3 { print $"  console 实例：($r.instances)（引导期 + 两次重发；线仍归 uart）" }
     if $r.ok {
       $pass += 1
       print (report_for (flavor $p.flavor) $p.i)
