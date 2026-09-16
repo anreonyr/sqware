@@ -7,43 +7,40 @@
 //! 全会话的规矩（额度、齐没齐、谁的孔归谁）都在 [`core`](super::core)。这里只做两件事：
 //! **转发一次**、把内核的错误码翻成"没成"。
 
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, TaskId};
 
 use super::core::Claim;
 
 use runtime::core::port::{self, Access, Policy};
+use runtime::core::unit;
 use runtime::env::mail;
+
+/// 我是谁（判据"这枚孔**是不是我开的**"用它）。
+///
+/// 答不出（`SelfId` 的越界哨兵，`TaskId(0)`）时返 `None`：那一刻"我开的孔"判不出来，
+/// 认领于是退回到只排除**本端那几条泊位自己的孔**（比认错强）。
+pub(super) fn me() -> Option<TaskId> {
+    match unit::self_id() {
+        Ok(id) if id.get() != 0 => Some(id),
+        _ => None,
+    }
+}
 
 /// 铸一枚孔（本端那一枚）。
 pub(super) fn mint() -> Result<PieToken, ()> {
     mail::unseal_hole().map(PieToken::new).map_err(|_| ())
 }
 
-/// 名字牌：**名字 32 字节 + 「种在你表里那个号」8 字节**（定长 `NAME_LEN + 8`）。
-///
-/// 名字是双方的坐标；那个号是"你要往哪儿推"——**必须捎上**：交出时换回来的号只
-/// **对端**表里有意义（`accord` 的返回值），本端手里没有它，所以只能由本端把自己
-/// 那个号交给对端。它的形状是泊位自己的牌子，不是一种新帧（帧形与负码表仍归具体协议）。
-pub(super) const CARD: usize = env::wire::NAME_LEN + 8;
-
-/// 把一张名字牌编成字节（名字按定长 32 字节写，尾部 NUL 填充）。
-pub(super) fn card(name: Name, seed: PieToken) -> [u8; CARD] {
-    let mut out = [0u8; CARD];
-    out[..env::wire::NAME_LEN].copy_from_slice(name.bytes());
-    out[env::wire::NAME_LEN..].copy_from_slice(&(seed.get() as u64).to_le_bytes());
-    out
-}
-
-/// 往**本端**那一枚孔里放一张名字牌（孔还没交出去）。
-pub(super) fn post_card(hole: PieToken, name: Name, seed: PieToken) -> Result<(), ()> {
-    let bytes = card(name, seed);
-    mail::push(hole.get(), bytes.as_ptr(), bytes.len()).map_err(|_| ())
-}
-
 /// 交给对端：一枚副本种进它表里，返**种在它表里的那个号**。
+///
+/// 权限给满（`R|W`）**加一格 `VEST`**：对端因此**可以再授出**。那一格不是客气——
+/// 内核的 `Accord` 有一道闸是"持 `VEST` 才交得出去"（`Need::Grant`），而"对端把这一枚
+/// 转给第三方"是本结构里**必然**发生的一步：子方只认得它的生我者，故它交出来的孔先落在
+/// 生我者表里，再由生我者转授（见正文事实 1 的推论；板那条路就是这么接上的）。
+/// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对——看上去像"板坏了"。
 pub(super) fn ship(hole: PieToken, peer: TaskId) -> Result<PieToken, ()> {
     let pie = mail::HolePie::from_token(hole.get());
-    port::ship(&pie, peer, Access::READ | Access::WRITE, Policy::NONE)
+    port::ship(&pie, peer, Access::READ | Access::WRITE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| ())
 }
@@ -103,29 +100,6 @@ pub(super) fn owner_of(hole: PieToken) -> Option<TaskId> {
     match mail::reserve(hole) {
         Ok((_vestor, owner)) if owner.get() != 0 => Some(owner),
         _ => None,
-    }
-}
-
-#[allow(dead_code)]
-pub(super) fn peek(hole: PieToken) -> Result<(usize, TaskId), ()> {
-    mail::HolePie::from_token(hole.get()).peek().map_err(|_| ())
-}
-
-/// 把自己放进去的那张名字牌**读掉**。
-pub(super) fn take_card(hole: PieToken) -> Result<(), ()> {
-    let pie = mail::HolePie::from_token(hole.get());
-    // **先问长度再取**：`pull` 会阻塞（槽空就一直等），而本动作的语义是"有就读掉，
-    // 没有就什么都不做"——`peek` 才是那个不动的探针。
-    match pie.peek() {
-        // **只有"正好一张牌"才读**：槽里若已经是对端推来的正经消息（长度不是牌的
-        // 长度），读掉它就是吃掉对方的话——这正是先前"收到 40 字节、records 丢失"
-        // 那串症状的出处。
-        Ok((len, _)) if len == CARD => {
-            let mut buf = [0u8; CARD];
-            pie.pull(&mut buf).map(|_| ()).map_err(|_| ())
-        }
-        Ok((_, _)) => Ok(()),
-        Err(_) => Err(()),
     }
 }
 

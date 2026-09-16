@@ -1,12 +1,12 @@
 //! service — **装配策略表**：这台机器该起哪些服务、用什么起、起了之后跟它说什么。
 //!
 //! 这张表是"装配"这件事**唯一**的地方：名字、怎么算起来、起跑前塞什么、开哪几条通道、
-//! 要哪些门闩、失败了报哪个号——六样以前散在六个地方（`announce_of`、两个 `const`、
-//! 代码里隐含的通道名、`needs`、各处期限、两套 `E_*`），现在合成一处：
+//! 要哪些门闩、上不上板、失败了报哪个号——七样以前散在七个地方（`announce_of`、两个
+//! `const`、代码里隐含的通道名、`needs`、`board::attach` 的调用点、各处期限、两套 `E_*`），
+//! 现在合成一处：
 //!
 //! ```text
-//!   PLAN  ├─ Program { name, announce, tokens, channels, needs, died }
-//!         └─ 选哪个函子（`wired`）：所有服务都带门闩 ⇒ `all`；只有调试回显例外 ⇒ `plain`
+//!   PLAN  └─ Program { name, announce, tokens, channels, needs, board, died }
 //! ```
 //!
 //! 想加第三个服务：在 [`PLAN`] 里加一行，**`main` 一个字都不用改**。
@@ -19,6 +19,7 @@ use runtime::core::port::ship;
 use runtime::env::mail::{NolePie, PolePie};
 use runtime::env::room::exit_with;
 
+use super::board;
 use super::needs::{self, Kind};
 use super::pairing::Root;
 
@@ -37,6 +38,12 @@ pub struct Program {
     pub channels: &'static [&'static str],
     /// 它要的门闩（`None` = 什么都不要，如调试回显）。
     pub needs: Option<&'static [needs::Need]>,
+    /// 要不要板那条路（[`board::attach`]）。
+    ///
+    /// **它不是 `channels` 里的一行**：那几条是"放行前先装好、起来时交回"，而板那条路由
+    /// **客人在起来之后自己装**（客人才是"问"的那一侧），故本域是等它，不是先装。
+    /// 两端共用这一格：`true` ⇒ 它一定调 [`board::open`]（不然本域要白等一期）。
+    pub board: bool,
     /// 装配死在这一条时报哪个号。
     pub died: Died,
 }
@@ -44,7 +51,7 @@ pub struct Program {
 /// **装配单**：本域按这个顺序起服务。
 pub const PLAN: &[Program] = &[plic(), echo()];
 
-/// 中断面域：常驻，要四枚门闩，起来时交回通道。
+/// 中断面域：常驻，要四枚门闩，起来时交回通道，并挂上板。
 const fn plic() -> Program {
     Program {
         name: "plic",
@@ -52,11 +59,12 @@ const fn plic() -> Program {
         tokens: &[],
         channels: &["records"],
         needs: Some(needs::PLIC),
+        board: true,
         died: E_PLIC,
     }
 }
 
-/// 调试回显：只走调试面，不要门闩、不交通道 ⇒ 放行即起来。
+/// 调试回显：只走调试面，不要门闩、不交通道 ⇒ 放行即起来（它不与谁说话，故也不上板）。
 const fn echo() -> Program {
     Program {
         name: "echo",
@@ -64,6 +72,7 @@ const fn echo() -> Program {
         tokens: &[],
         channels: &[],
         needs: None,
+        board: false,
         died: E_ECHO,
     }
 }
@@ -139,6 +148,16 @@ fn start(table: &mut Table, boot: &Root, p: &Program) -> Result<(), Died> {
     if p.needs.is_some() {
         wire(&quay, p, boot, rep).map_err(|_| {
             step(p, "wire failed");
+            p.died
+        })?;
+    }
+
+    // 五、板：本域是板的宿主 ⇒ 起一枚待客线程，再把客人交出来的那一枚转授给它。
+    //     **在 `records` 之后**：板那条路由客人在起来之后自己装（它是问的那一侧），
+    //     而它要先收到配给才轮得到板那一问。
+    if p.board {
+        board::attach(&mut quay, me, rep, READY_MS).map_err(|why| {
+            step(p, why);
             p.died
         })?;
     }

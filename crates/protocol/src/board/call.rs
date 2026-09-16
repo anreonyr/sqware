@@ -14,7 +14,7 @@ use env::{Name, PieToken, TaskId};
 
 use super::core::{Board, Fail, Free, Probe};
 
-use crate::session::Claim;
+use crate::session::{Claim, Pier};
 
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::unit::self_id;
@@ -28,12 +28,31 @@ pub fn me() -> TaskId {
     self_id().unwrap_or(TaskId::new(0))
 }
 
-/// 活性：这枚入口还在我的表里吗？谁授的？
+/// 活性：这枚入口还在我的表里吗？**谁授给我的**？
+///
+/// 答的是 `Reserve` 的第一格（`vestor` = 这枚门闩谁授的）。`register` 的判据就是它
+/// ——"**那枚入口是你亲手交给我的**"。
+///
+/// 与 [`opened_by`] 分工：这一格答"谁交来的"，那一格答"这扇门本身是谁的"。转手会改写
+/// 这一格（root 转授过的门闩，`vestor` 会变成 root），故**不能用它认"对端是谁"**。
 ///
 /// `reserve` 答"不在我表里"与"令牌越界"是同一个 `Err`，**正是牌子要的粒度**——两种
 /// 情形都是"实例没了"。
 fn probe(entry: PieToken) -> Option<TaskId> {
     mail::reserve(entry).ok().map(|(vestor, _owner)| vestor)
+}
+
+/// 这扇门**本身是谁的**（`Reserve` 的第二格 `owner`：副本共享同一事实，转手不变）。
+///
+/// 板这一层有两处要用它，都是"认出一枚孔"：
+///
+/// - 客侧 [`take`]：板授进来的那一枚，`owner` 是**客人自己**（那扇门是客人开的）；
+/// - 客侧 [`peer_of`]：写端那一枚的 `owner` 就是**板**（板开的扇门）。
+pub fn opened_by(hole: PieToken) -> Option<TaskId> {
+    match mail::reserve(hole) {
+        Ok((_vestor, owner)) if owner.get() != 0 => Some(owner),
+        _ => None,
+    }
 }
 
 /// 放下：自释一份。
@@ -42,27 +61,43 @@ fn free(entry: PieToken) -> Result<(), ()> {
 }
 
 /// 立一块板：把两枚机制函数交给核心（核心因此不 `use` 内核）。
-pub fn board() -> Board {
+///
+/// `const` 是为了它能当 `static` 的初值：板只有一份，住在本域（`supervisor/board.rs`）。
+pub const fn board() -> Board {
     let probe: Probe = probe;
     let free: Free = free;
     Board::new(probe, free)
 }
 
+/// 板是谁：**那枚写端是谁开的**（[`opened_by`] 的 `owner`）。
+///
+/// 客人手里"板在哪"这件事**不能从泊位那一格读出来**——那一格是 `sire`（客人只认得
+/// 生我者，孔也是交给它的，见 `session` 事实 1）；板是生我者**转授**过去的那一位。
+/// 故答案只能从孔本身读：写端是板开的那扇门，`owner` 就是板。
+pub fn peer_of(pier: &Pier) -> Option<TaskId> {
+    opened_by(pier.at_peer())
+}
+
 /// 挂上：把调用方手里那枚入口**交给持板者**（`Accord` 一份副本），返"种在持板者表里"的号。
 ///
 /// 这就是"谁挂的"的来历：板上那枚是**亲手交出去的**，故 `probe` 认得出谁授的它。
-/// 权限给满（`R|W`）：入口要能用来说话，持板者不替调用方裁剪。
+/// 权限给满（`R|W`）**加一格 `VEST`**：入口要能用来说话，而持板者的本职就是**再授出**
+/// （`Query` 的下场）——内核那道"持 `VEST` 才交得出去"的闸（`Need::Grant`）挡的就是
+/// "板查到了却授不出去"。
 pub fn hang_in(entry: PieToken, holder: TaskId) -> Result<PieToken, ()> {
     let pie = mail::HolePie::from_token(entry.get());
-    port::ship(&pie, holder, Access::READ | Access::WRITE, Policy::NONE)
+    port::ship(&pie, holder, Access::READ | Access::WRITE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| ())
 }
 
 /// 授出：把板上那一份入口转授给调用方（`Query` 的下场）。
+///
+/// 与 [`hang_in`] 同一份子集（`R|W|VEST`）：**入口可以再传**——拿到它的人把它转给第三方
+/// 是常态（那正是"一个名字指向一个入口"的用法），故这里不替调用方裁剪。
 pub fn give(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
     let pie = mail::HolePie::from_token(entry.get());
-    port::ship(&pie, to, Access::READ | Access::WRITE, Policy::NONE)
+    port::ship(&pie, to, Access::READ | Access::WRITE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| Fail::Denied)
 }
@@ -84,6 +119,8 @@ pub fn name_of(bytes: &[u8]) -> Option<Name> {
 ///   Reply   [0] status
 /// ```
 ///
+/// 答话那一格的六个码见 [`OK`] / [`UNKNOWN`] / [`TAKEN`] / [`DENIED`] / [`FULL`] / [`BAD`]。
+///
 /// 名字按 [`NAME_LEN`](env::wire::NAME_LEN) 定长写（尾随 NUL 是填充）——**与牌子同
 /// 一个解码面**，故 `Name` 的读法全树只有一处。
 ///
@@ -102,6 +139,18 @@ pub const REGISTER: u8 = 1;
 pub const UNREGISTER: u8 = 2;
 pub const LOOKUP: u8 = 3;
 
+/// 答话那一格。**前五格与 [`Fail`] 一一对应**（`OK` = 一个失败都不是），第六格不是
+/// 失败域的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。
+///
+/// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
+/// 一份（持有者那一侧编、客人那一侧读）。
+pub const OK: u8 = 0;
+pub const UNKNOWN: u8 = 1;
+pub const TAKEN: u8 = 2;
+pub const DENIED: u8 = 3;
+pub const FULL: u8 = 4;
+pub const BAD: u8 = 5;
+
 /// 把一问编成字节。`seed` 只有 [`REGISTER`] 用得上。
 pub fn pack(op: u8, name: Name, seed: Option<PieToken>) -> [u8; ASK] {
     let mut out = [0u8; ASK];
@@ -111,6 +160,20 @@ pub fn pack(op: u8, name: Name, seed: Option<PieToken>) -> [u8; ASK] {
         out[1 + env::wire::NAME_LEN..].copy_from_slice(&(seed.get() as u64).to_le_bytes());
     }
     out
+}
+
+/// 解开一问：`(动作码, 名字, 那一格入口号)`。**读不懂返 `None`**（持板者据此答 `BAD`，
+/// 不猜、不崩）。
+///
+/// 长度为 [`ASK`] 是**帧的契约**（`pack` 产出的就是这个长度），故短一字节即读不懂。
+/// 那一格入口号按 0 = "没带"解——令牌自 1 起，0 是内核的越界哨兵。
+pub fn unpack(bytes: &[u8]) -> Option<(u8, Name, Option<PieToken>)> {
+    let op = *bytes.first()?;
+    let name = name_of(bytes.get(1..)?)?;
+    let at = bytes.get(1 + env::wire::NAME_LEN..ASK)?;
+    let seed = u64::from_le_bytes(at.try_into().ok()?);
+    let seed = (seed != 0).then(|| PieToken::new(seed as usize));
+    Some((op, name, seed))
 }
 
 /// 会话的失败域 → 板的失败域：**"它不在"是一条判据**，故两边只留一个名字

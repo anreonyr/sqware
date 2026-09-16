@@ -70,24 +70,6 @@ impl Pier {
         )
     }
 
-    /// 把这枚孔**此刻装着的那一条**读掉丢掉（没有就什么都不做）。
-    ///
-    /// 用它的场景只有一处：`pair` 亮名字那一步往孔里推过一张牌，而孔是**单槽**——
-    /// 不读走，对端随后推来的第一句话就会被那张牌堵在槽外。牌在归位那一刻就用完了
-    /// （名字与号都进了这一条泊位的字段），故读掉即丢，不是"漏了一条消息"。
-    /// 诊断：本端这一枚孔里此刻装着的那一条有多长、谁推的（**不动槽**）。
-    pub fn peek(&self) -> Result<(usize, TaskId), ()> {
-        call::peek(self.hole)
-    }
-
-    /// 把这枚孔里**此刻装着的那一条**读掉丢掉（没有就什么都不做）。
-    ///
-    /// 用它的场景：对端交孔时捎来的名字牌，在归位那一刻就用完了——孔是单槽，
-    /// 留着它，对端随后推来的第一条消息就会被堵在槽外。
-    pub fn drain(&self) -> Result<(), ()> {
-        call::take_card(self.hole)
-    }
-
     /// 从这条泊位收一句话（有界等：`ms` 三态同全篇）。
     ///
     /// 与 [`Pier::post`] 成对：那一边说的是**对端的孔**，这一边收的是**本端的孔**。
@@ -299,7 +281,7 @@ impl Quay {
         let _ = call::drop_local(p.hole);
     }
 
-    /// 认领对方送来的那一批：扫表 → 按名字归位 → **凑齐才算**。
+    /// 认领对方送来的那一批：扫表 → 按先后归位 → **凑齐才算**。
     ///
     /// **凑不齐就不返回**（不许半条会话）：等到期限还没齐就报 [`Claim`] 的错误码。
     /// 认领下来的泊位留在码头里（那是它的家），用 [`Quay::find`] 取。
@@ -316,7 +298,7 @@ impl Quay {
 
         let mut left = ms;
         loop {
-            self.scan(from)?;
+            self.scan()?;
             if self.ready() {
                 return Ok(());
             }
@@ -332,18 +314,19 @@ impl Quay {
         }
     }
 
-    /// 一问一答的那一档：装上、把名字牌亮明，等对端把回话的那一枚交进来。
+    /// 一问一答的那一档：装上自己那一枚（**本端读**），等对端把本端**写**的那一枚交进来。
     ///
-    /// 与 [`Quay::claim`] 对偶——那一档是**双向**（两侧各装一条，凑齐才算通），这一档
-    /// 只有一条路：本端只读，对端只写。用它的场景是"问一句话、拿一句答"
-    /// （[`board`](crate::board) 的 `Query` 就是），此时要的不是会话而是往返。
+    /// 与 [`Quay::claim`] 对偶——那一档是**双向**（两侧各装一条，凑齐才算通），这一档只有
+    /// 一侧在等：**问的那一侧**装一条、等答复，答的那一侧只管把孔交出来（它用
+    /// [`Quay::seat`] + [`Quay::claim`] 那一对，不必再等什么）。用它的场景是"问一句话、
+    /// 拿一句答"（[`board`](crate::board) 的 `Query` 就是），此时要的不是会话而是往返。
     ///
-    /// **`want` 是给对端的坐标**：名字牌上写的就是它，对端照它把这一条归位（本端这一条
-    /// 的本地名字同样是 `want`——两侧同一个名字，读起来才是一句话）。多个客户端问同一个
-    /// 服务时，`want` 得各不相同：那是名字的额度，不是会话的额度。
+    /// **归位按先后，不按名字**：对端交进来的那一枚落在**本端还没配齐的那条泊位**上
+    /// （见 [`Quay::scan`]）。故一座码头里"等答复的泊位"只该有一条——问一句装一条码头，
+    /// 或者一次只让一条空着；不满足时本动作**超时**（不猜、不错配）。
     ///
-    /// 返那条泊位：答话从它的 [`Pier::pull`] 取。失败域借 [`Claim`]——本动作与认领
-    /// 判的是同一件事（对方那一枚到没到），故不另立一张码表。
+    /// 返那条泊位：答话从它的 [`Pier::pull`] 取。失败域借 [`Claim`]——本动作与认领判的是
+    /// 同一件事（对方那一枚到没到），故不另立一张码表。
     ///
     /// `ms` 三态与全篇一致：`0` 只探一次、`usize::MAX` 一直等、其余毫秒。
     ///
@@ -353,24 +336,20 @@ impl Quay {
     /// - [`Claim::Partial`] 额度用完
     /// - [`Claim::Timeout`] 期限内对方那一枚没来
     pub fn pair(&mut self, want: Name, ms: usize) -> Result<&Pier, Claim> {
-        let hole = {
-            let pier = self.seat(want, 0).map_err(map_seat)?;
-            pier.hole
-        };
-        // 名字牌：把本端这一枚的号捎给它——只交孔不亮名字，它就只能靠编号猜。
-        // **牌上的号填 0**：本动作只有一条路，对端不需要一个"往哪儿推"的句柄；
-        // 它要写，得先把回话那一枚交进来（本端的 `Pier::at_peer` 就是它）。
-        if call::post_card(hole, want, PieToken::new(0)).is_err() {
-            let _ = call::drop_local(hole);
+        // 装上自己那一枚（**本端读**），它就落在对端表里。
+        self.seat(want, 0).map_err(map_seat)?;
+        // **不写字条**：曾经往这一枚孔里推一张"名字 + 号"的牌想让对端按名字归位，但
+        // 交出去的副本与本体**共享同一个槽**（`HoleMeta.slot`，`accord` 只克隆 `Arc`），
+        // 于是本端读就把对端那张一起吃掉、本端不读就占着单槽把对端推来的第一条消息
+        // 堵在槽外——两条路都不通。名字这一层信息由**对端按 `owner` 认领**替代。
+        // 没定对端就无从等起（`seat` 那一半已经报过一次，这里报第二次是给"光等不问"的用法）。
+        if self.peer.is_none() {
             return Err(Claim::NoPeer);
         }
-        let Some(peer) = self.peer else {
-            return Err(Claim::NoPeer);
-        };
         let mut left = ms;
         loop {
-            self.scan(peer)?;
-            // 对端交进来的那一枚归到哪一条是牌上的名字说了算，故这里只认
+            self.scan()?;
+            // 交进来的那一枚归到哪一条由 [`Quay::scan`] 的先后说了算，故这里只认
             // "本端这一条配齐了没有"。
             if self.find(want).is_some_and(Pier::paired) {
                 return self.find(want).ok_or(Claim::Partial);
@@ -476,36 +455,38 @@ impl Quay {
 
     // ── 扫我的表 ────────────────────────────────────────────
 
-    /// 扫一遍：认领**我这对端**送来的、还没归位的那些孔。
+    /// 扫一遍：认领**我没开过的、还没配出去的**那些孔。
     ///
-    /// 认领的判据是**授与人**（内核在投递那一刻盖的戳），不是名字、不是位置、不是内容
-    /// ——那三样都能被伪造或乱序；戳子不能。
-    fn scan(&mut self, from: TaskId) -> Result<(), Claim> {
-        // **写端 = 本端表里"不是我开的"那些孔**，一条泊位认一枚（见下）。
-        //
-        // `from` 是**本端自己**（`claim` 第一道闸就是 `self.peer != Some(from)`）。
-        // 判据的落点是 `owner`（谁开的这扇门）：本端 `mint`/`accord` 出来的每一枚都是
-        // 本端，对端 `ship` 回来的那一枚是**对端**；设备门闩查不出出处。实测（本端 3、
-        // 对端 4）：本端表里 `tok=21 o=3`、`tok=22 o=3`、`tok=28 o=4` —— 要认的是 28。
-        //
-        // 三条走不通的判据都实测过，记在这里免得再走回去：
-        // 1. `h.grantor == from`（对端授的）⇒ 一枚都匹配不上：`accord` 副本的 `vestor`
-        //    是**授出方**（本端自己）。
-        // 2. `grantor == 本端`（本端授的）⇒ 选中本端自己 `seat` 铸的那一枚（它正是本端
-        //    授出的副本）⇒ 写端指回自己的槽，对端永远收不到。
-        // 3. 号码最大的一枚 ⇒ 令牌号是**全局**分配的，与"表尾"无关，选中过本端自己那份。
-        //
-        // **一对配一条**：本端有几条 `seat` 过还没配齐的泊位，就按先后认领几枚对端来的
-        // 孔——一条会话的"我读的那枚 / 我写的那枚"就是这么配上的。
-        let mine = self.seated_holes();
+    /// 判据只有一条：`owner`（内核在 `UnsealHole` 那一刻盖的戳）**不是本端**——副本共享
+    /// 同一事实、转手不变，而名字、位置、内容、号码那四样都能被伪造或乱序。
+    ///
+    /// **对端不参与判据**（故本函数不收这个参数）：`claim` / `pair` 的第一道闸已经比过
+    /// `self.peer`，而"是不是我开的"问的是内核，不是对端。从前这里收一个 `from` 并跳过
+    /// `owner == from`——父域那一侧把 `from` 传成**自己**，于是它**碰巧**等价于本条判据；
+    /// 真有一个不同的对端时（板线程对客人），它会把**正好要认的那一枚**跳过去。
+    ///
+    /// 三条走不通的判据都实测过，记在这里免得再走回去：
+    /// 1. `h.grantor == from`（对端授的）⇒ 一枚都匹配不上：`accord` 副本的 `vestor`
+    ///    是**授出方**（本端自己）。
+    /// 2. `grantor == 本端`（本端授的）⇒ 选中本端自己 `seat` 铸的那一枚（它正是本端
+    ///    授出的副本）⇒ 写端指回自己的槽，对端永远收不到。
+    /// 3. 号码最大的一枚 ⇒ 令牌号是**全局**分配的，与"表尾"无关，选中过本端自己那份。
+    ///
+    /// **一枚孔只配一条泊位**：本端有几条 `seat` 过还没配齐的泊位，就按先后认领几枚对端
+    /// 来的孔——**已经用掉的那几枚不再认**（[`Quay::used_holes`]）。不排除它们，第二次
+    /// 认领会把第一条泊位的写端再配给下一条（一座码头有两条泊位时必现：板那条路就长在
+    /// `records` 那条旁边）。
+    fn scan(&mut self) -> Result<(), Claim> {
+        let me = call::me();
+        let used = self.used_holes();
         let mut free: [Option<PieToken>; Quay::CAP] = [const { None }; Quay::CAP];
         let mut n = 0usize;
         call::each(|h| {
-            // "不是本端开的"就是要的那一枚（见本节正文：判据只此一条站得住）。
-            let Some(owner) = call::owner_of(h.token) else {
+            // "不是我开的"就是要的那一枚（见上：判据只此一条站得住）。
+            let Some(owner) = h.owner else {
                 return Ok(());
             };
-            if owner == from || mine.contains(&h.token) {
+            if Some(owner) == me || used.contains(&h.token) {
                 return Ok(());
             }
             if let Some(slot) = free.get_mut(n) {
@@ -535,13 +516,19 @@ impl Quay {
         Ok(())
     }
 
-    /// 本端 `seat`/`mint` 铸出来的那几枚孔（判据要排除它们）。
-    fn seated_holes(&self) -> [PieToken; Quay::CAP] {
-        let mut out = [PieToken::new(0); Quay::CAP];
-        for (i, p) in self.piers.iter().flatten().enumerate() {
+    /// 本端**已经用掉**的那几枚孔：每条泊位我读的那一枚（[`Pier::hole`]）+ 我已认下的
+    /// 写端（[`Pier::at_peer`]）。判据要排除它们（见 [`Quay::scan`]）。
+    fn used_holes(&self) -> [PieToken; Quay::CAP * 2] {
+        let mut out = [PieToken::new(0); Quay::CAP * 2];
+        let mut i = 0usize;
+        for p in self.piers.iter().flatten() {
             if let Some(slot) = out.get_mut(i) {
                 *slot = p.hole;
             }
+            if let Some(slot) = out.get_mut(i + 1) {
+                *slot = p.at_peer;
+            }
+            i += 2;
         }
         out
     }

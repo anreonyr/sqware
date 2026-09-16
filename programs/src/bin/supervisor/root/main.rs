@@ -34,6 +34,10 @@ extern crate alloc;
 extern crate programs;
 
 // 共享物住在 supervisor 目录里，由两个 bin 各自声明一次（见 `needs.rs` 头注）。
+#[path = "../board.rs"]
+// 本域只用**板侧**那一半（客侧那三手是给服务用的）⇒ 另一半在这里是死码。
+#[allow(dead_code)]
+mod board;
 #[path = "../needs.rs"]
 mod needs;
 #[path = "../pairing.rs"]
