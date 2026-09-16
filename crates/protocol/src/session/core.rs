@@ -256,7 +256,7 @@ impl Quay {
         self.install(name, hole, at_peer, true)?;
         let _ = at_peer;
         if let Some(p) = self.pier_mut(name) {
-            p.at_peer = PieToken::new(0);
+            p.at_peer = PieToken::NONE;
             p.paired = false;
         }
         self.find(name).ok_or(Seat::NoName)
@@ -534,7 +534,7 @@ impl Quay {
     /// 本端**已经用掉**的那几枚孔：每条泊位我读的那一枚（[`Pier::hole`]）+ 我已认下的
     /// 写端（[`Pier::at_peer`]）。判据要排除它们（见 [`Quay::scan`]）。
     fn used_holes(&self) -> [PieToken; Quay::CAP * 2] {
-        let mut out = [PieToken::new(0); Quay::CAP * 2];
+        let mut out = [PieToken::NONE; Quay::CAP * 2];
         let mut i = 0usize;
         for p in self.piers.iter().flatten() {
             if let Some(slot) = out.get_mut(i) {

@@ -35,12 +35,26 @@ pub struct Pair {
 const _: () = assert!(size_of::<Pair>() == PAIR_LEN);
 
 impl Pair {
-    /// 造一条（内核侧）：名字已校验（[`Name`] 是构造期义务）。
+    /// 造一条（root 侧）：名字已校验（[`Name`] 是构造期义务），号已到手。
     pub fn new(name: Name, token: PieToken) -> Self {
         Self {
             name: *name.bytes(),
             token,
         }
+    }
+
+    /// 造一条的**字节**（内核侧）：`token` 是**裸号**——内核持的就是它表里的号，
+    /// 而 [`PieToken`] 是"收号的人"才该有的类型（见 [`env::wire::handle`]）。
+    /// 故内核这一侧根本不经手句柄类型：它写字节，root 那边读成 [`Pair`]。
+    ///
+    /// 两个造法**对偶**：内核 [`bytes`](Pair::bytes)（写）、域 [`new`](Pair::new)（读）。
+    ///
+    /// [`env::wire::handle`]: crate::wire::handle
+    pub fn bytes(name: Name, token: usize) -> [u8; PAIR_LEN] {
+        let mut out = [0u8; PAIR_LEN];
+        out[..NAME_LEN].copy_from_slice(name.bytes());
+        out[NAME_LEN..].copy_from_slice(&(token as u64).to_le_bytes());
+        out
     }
 
     /// 读一条（root 侧）：名字非法（空 / 超长 / 填充不规范 / 非 UTF-8）→ `None`。

@@ -29,18 +29,18 @@ fn now_ns() -> EnvResult<u64> {
 // ── 裸函数层（envcall 转发，零业务逻辑）──
 
 /// 解封 Hole。**无参数**——孔不预设消息上限（那是协议自己的事），也不预分配槽。
-pub fn unseal_hole() -> EnvResult<usize> {
+pub fn unseal_hole() -> EnvResult<PieToken> {
     let r = PieCall::UnsealHole.call()?;
     match r {
-        PieCallRet::UnsealHole(tk) => Ok(tk.get()),
+        PieCallRet::UnsealHole(tk) => Ok(tk),
         _ => unreachable!(),
     }
 }
 
-pub fn unseal_pole(size: usize) -> EnvResult<usize> {
+pub fn unseal_pole(size: usize) -> EnvResult<PieToken> {
     let r = PieCall::UnsealPole { size }.call()?;
     match r {
-        PieCallRet::UnsealPole(tk) => Ok(tk.get()),
+        PieCallRet::UnsealPole(tk) => Ok(tk),
         _ => unreachable!(),
     }
 }
@@ -49,18 +49,18 @@ pub fn unseal_pole(size: usize) -> EnvResult<usize> {
 ///
 /// **无参数**——没有 mtu、没有字节数。它承载**无载荷通信**（门铃，见
 /// [`crate::core::bell`]），与资源权（"你对这份资源能做什么"）正交。
-pub fn unseal_nole() -> EnvResult<usize> {
+pub fn unseal_nole() -> EnvResult<PieToken> {
     let r = PieCall::UnsealNole.call()?;
     match r {
-        PieCallRet::UnsealNole(tk) => Ok(tk.get()),
+        PieCallRet::UnsealNole(tk) => Ok(tk),
         _ => unreachable!(),
     }
 }
 
 /// push 一条消息（`msg[..len]` 进 hole 槽）。`len ≥ 1`（**无上限**）。
-pub fn push(token: usize, msg: *const u8, len: usize) -> EnvResult<()> {
+pub fn push(token: PieToken, msg: *const u8, len: usize) -> EnvResult<()> {
     let r = MailCall::Push {
-        token: PieToken::new(token),
+        token: token,
         msg: VirtAddr::new(msg as usize),
         len,
     }
@@ -73,7 +73,7 @@ pub fn push(token: usize, msg: *const u8, len: usize) -> EnvResult<()> {
 
 /// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）；发送者丢弃。
 /// 装不下返 `Denied` 且槽原样；要问长度用 [`pull_len`]。
-pub fn pull(token: usize, buf: *mut u8, max: usize) -> EnvResult<usize> {
+pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<usize> {
     pull_from(token, buf, max).map(|(n, _)| n)
 }
 
@@ -81,7 +81,7 @@ pub fn pull(token: usize, buf: *mut u8, max: usize) -> EnvResult<usize> {
 ///
 /// 走 `Pull { max: 0 }`——与 `Wait { millis: 0 }`「只探测不挂起」同一形状的"只问"。
 /// 收方据此备出装得下的缓冲，槽因此总能被排空（`docs/port.md` §5.2 F2）。
-pub fn pull_len(token: usize) -> EnvResult<(usize, TaskId)> {
+pub fn pull_len(token: PieToken) -> EnvResult<(usize, TaskId)> {
     pull_from(token, core::ptr::null_mut(), 0)
 }
 
@@ -89,9 +89,9 @@ pub fn pull_len(token: usize) -> EnvResult<(usize, TaskId)> {
 ///
 /// 发送者由内核在 `Push` 时盖章——身份不可伪造，不必再从报文里猜。
 /// `max == 0` ⇒ 只报长度、不动槽（收方缓冲不参与）。
-pub fn pull_from(token: usize, buf: *mut u8, max: usize) -> EnvResult<(usize, TaskId)> {
+pub fn pull_from(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<(usize, TaskId)> {
     let r = MailCall::Pull {
-        token: PieToken::new(token),
+        token: token,
         buf: VirtAddr::new(buf as usize),
         max,
     }
@@ -107,9 +107,9 @@ pub fn pull_from(token: usize, buf: *mut u8, max: usize) -> EnvResult<(usize, Ta
 ///
 /// 门铃（Nole）也走这一个：`dir` 必须给 [`HoleDir::Pull`]——铃只有"响了"一条方向，
 /// 别的值内核答 `Denied`。裸函数层不为它另开一个名字：`Bell::wait` 就是这一句。
-pub fn wait(token: usize, dir: HoleDir, millis: usize) -> EnvResult<bool> {
+pub fn wait(token: PieToken, dir: HoleDir, millis: usize) -> EnvResult<bool> {
     let r = MailCall::Wait {
-        token: PieToken::new(token),
+        token: token,
         dir,
         millis,
     }
@@ -121,9 +121,9 @@ pub fn wait(token: usize, dir: HoleDir, millis: usize) -> EnvResult<bool> {
 }
 
 /// 响铃（门铃专用）：置"有待取之事"并唤醒听者。已响 → `Busy`。
-pub fn ring(token: usize) -> EnvResult<()> {
+pub fn ring(token: PieToken) -> EnvResult<()> {
     let r = MailCall::Ring {
-        token: PieToken::new(token),
+        token: token,
     }
     .call()?;
     match r {
@@ -133,9 +133,9 @@ pub fn ring(token: usize) -> EnvResult<()> {
 }
 
 /// 应铃（门铃专用）：清掉"有待取之事"，内核随即重开本 hart 的中断闸门。
-pub fn hush(token: usize) -> EnvResult<()> {
+pub fn hush(token: PieToken) -> EnvResult<()> {
     let r = MailCall::Hush {
-        token: PieToken::new(token),
+        token: token,
     }
     .call()?;
     match r {
@@ -148,9 +148,9 @@ pub fn hush(token: usize) -> EnvResult<()> {
 ///
 /// **两件一起返**：起点与长度是同一段区间的两半，而长度只在内核手里（外来区按
 /// 页界撑开，设备树 `reg` 声明的长度内核不知道）。
-pub fn open(token: usize) -> EnvResult<(usize, usize)> {
+pub fn open(token: PieToken) -> EnvResult<(usize, usize)> {
     let r = PieCall::Open {
-        token: PieToken::new(token),
+        token: token,
     }
     .call()?;
     match r {
@@ -159,9 +159,9 @@ pub fn open(token: usize) -> EnvResult<(usize, usize)> {
     }
 }
 
-pub fn shut(token: usize) -> EnvResult<()> {
+pub fn shut(token: PieToken) -> EnvResult<()> {
     let r = PieCall::Shut {
-        token: PieToken::new(token),
+        token: token,
     }
     .call()?;
     match r {
@@ -170,9 +170,9 @@ pub fn shut(token: usize) -> EnvResult<()> {
     }
 }
 
-pub fn seal(token: usize) -> EnvResult<()> {
+pub fn seal(token: PieToken) -> EnvResult<()> {
     let r = PieCall::Seal {
-        token: PieToken::new(token),
+        token: token,
     }
     .call()?;
     match r {
@@ -194,9 +194,9 @@ pub fn accord(src: PieToken, dst: TaskId, subset: env::Permission) -> EnvResult<
 }
 
 /// 收窄本 pie 权限（就地改写；Pole 同步降页表）。
-pub fn narrow(token: usize, subset: env::Permission) -> EnvResult<()> {
+pub fn narrow(token: PieToken, subset: env::Permission) -> EnvResult<()> {
     let r = PieCall::Narrow {
-        token: PieToken::new(token),
+        token: token,
         subset,
     }
     .call()?;
@@ -245,9 +245,9 @@ pub fn reserve(token: PieToken) -> EnvResult<(TaskId, TaskId)> {
 }
 
 /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
-pub fn release(token: usize) -> EnvResult<()> {
+pub fn release(token: PieToken) -> EnvResult<()> {
     let r = PieCall::Release {
-        token: PieToken::new(token),
+        token: token,
     }
     .call()?;
     match r {
@@ -302,7 +302,7 @@ pub trait AnyPie {
 
 /// Hole 门闩用户态句柄。
 pub struct HolePie {
-    token: usize,
+    token: PieToken,
 }
 
 impl HolePie {
@@ -314,10 +314,8 @@ impl HolePie {
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: impl Into<usize>) -> Self {
-        Self {
-            token: token.into(),
-        }
+    pub fn from_token(token: PieToken) -> Self {
+        Self { token }
     }
 
     /// 等某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
@@ -409,7 +407,7 @@ impl HolePie {
         }
     }
 
-    pub fn token(&self) -> usize {
+    pub fn token(&self) -> PieToken {
         self.token
     }
 }
@@ -424,7 +422,7 @@ impl AnyPie for NolePie {
     }
 
     fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
-        accord(PieToken::new(self.token), dst, subset)
+        accord(self.token, dst, subset)
     }
 
     fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
@@ -446,7 +444,7 @@ impl AnyPie for PolePie {
     }
 
     fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
-        accord(PieToken::new(self.token), dst, subset)
+        accord(self.token, dst, subset)
     }
 
     fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
@@ -468,7 +466,7 @@ impl AnyPie for HolePie {
     }
 
     fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
-        accord(PieToken::new(self.token), dst, subset)
+        accord(self.token, dst, subset)
     }
 
     fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
@@ -486,7 +484,7 @@ impl AnyPie for HolePie {
 /// 页视图）。它能做的只有 [`AnyPie`] 那一套（`accord`/`narrow`/`revoke`/`release`
 /// /`seal`）——因为它的全部内容就是"我持有这一枚"。
 pub struct NolePie {
-    token: usize,
+    token: PieToken,
 }
 
 impl NolePie {
@@ -498,20 +496,18 @@ impl NolePie {
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: impl Into<usize>) -> Self {
-        Self {
-            token: token.into(),
-        }
+    pub fn from_token(token: PieToken) -> Self {
+        Self { token }
     }
 
-    pub fn token(&self) -> usize {
+    pub fn token(&self) -> PieToken {
         self.token
     }
 }
 
 /// Pole 门闩用户态句柄。
 pub struct PolePie {
-    token: usize,
+    token: PieToken,
 }
 
 impl PolePie {
@@ -526,10 +522,8 @@ impl PolePie {
     }
 
     /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: impl Into<usize>) -> Self {
-        Self {
-            token: token.into(),
-        }
+    pub fn from_token(token: PieToken) -> Self {
+        Self { token }
     }
 
     /// 开闩：借映进本任务空间 → `(视图起点, 这一段多大)`（同 token 幂等复用）。
@@ -543,7 +537,7 @@ impl PolePie {
         shut(self.token)
     }
 
-    pub fn token(&self) -> usize {
+    pub fn token(&self) -> PieToken {
         self.token
     }
 }

@@ -103,9 +103,14 @@ impl<T> Drop for Join<T> {
 /// **生成失败即 panic**（`expect`）：本函数是「产线程」这条语义的便捷面，
 /// 调用点当它不会失败。要**观测**失败（压测/自检要分辨「没生出来」与
 /// 「生出来且回收干净」）用 [`try_closure`]——两者的成功路径是同一份装配。
+///
+/// `T: Send` 是**结果也要过线程边界**这句话：句柄（`PieToken`）是**表**的、
+/// 标着 `!Send`，故"生出来的线程把一枚号交回来"在这里就是**编译不过**——
+/// 跨线程要交的从来不是号，是 `ship` 出去的那一枚副本（`env::wire::handle`）。
 pub fn closure<F, T>(f: F) -> Join<T>
 where
     F: FnOnce() -> T + Send + 'static,
+    T: Send,
 {
     try_closure(f).expect("task spawn failed")
 }
@@ -120,6 +125,7 @@ where
 pub fn try_closure<F, T>(f: F) -> EnvResult<Join<T>>
 where
     F: FnOnce() -> T + Send + 'static,
+    T: Send,
 {
     let slot = Box::into_raw(Box::new(Completion::new()));
     let send_slot = SendSlot(slot);

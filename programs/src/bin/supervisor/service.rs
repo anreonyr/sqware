@@ -119,8 +119,11 @@ pub fn assemble(table: &mut Table, boot: &Root) -> Result<Name, Died> {
     }
 
     // 二、逐条起。**顺序即契约**：先起的先就绪，后面的就能向它要东西。
+    // `tip` = 板线程那条提示之路在**本线程表里**的那一枚：它属于这张表，
+    // 故只能被本线程拿着逐条传（`PieToken` 标着 `!Send + !Sync`）。
+    let mut tip: Option<env::PieToken> = None;
     for p in PLAN {
-        start(table, boot, p)?;
+        start(table, boot, p, &mut tip)?;
     }
 
     // 三、把最后一条的名字交出去（等它退场 = 等这次会话结束）。
@@ -130,7 +133,12 @@ pub fn assemble(table: &mut Table, boot: &Root) -> Result<Name, Died> {
 /// 起一条：登记过的账 + 清单里的镜像 + 它的门闩 + 它的通道。
 ///
 /// 每一步失败都报出**是哪一条、哪一步**（诊断靠这一行，不靠再读一遍代码）。
-fn start(table: &mut Table, boot: &Root, p: &Program) -> Result<(), Died> {
+fn start(
+    table: &mut Table,
+    boot: &Root,
+    p: &Program,
+    tip: &mut Option<env::PieToken>,
+) -> Result<(), Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
 
     // 一、身子：建域 + 产线程（此刻它一步都还没跑）。
@@ -173,7 +181,7 @@ fn start(table: &mut Table, boot: &Root, p: &Program) -> Result<(), Died> {
     //     **在 `records` 之后**：板那条路由客人在起来之后自己装（它是问的那一侧），
     //     而它要先收到配给才轮得到板那一问。
     if p.board {
-        board::attach(&mut quay, me, rep, READY_MS).map_err(|why| {
+        board::attach(&mut quay, me, rep, READY_MS, tip).map_err(|why| {
             step(p, why);
             p.died
         })?;
@@ -215,13 +223,13 @@ fn wire(quay: &Quay, p: &Program, boot: &Root, rep: env::TaskId) -> Result<(), (
     let bytes = match boot.pack(|src, need| {
         let at = match need.kind {
             Kind::Pole => ship(
-                &PolePie::from_token(src.get()),
+                &PolePie::from_token(src),
                 rep,
                 need.access,
                 need.policy,
             ),
             Kind::Nole => ship(
-                &NolePie::from_token(src.get()),
+                &NolePie::from_token(src),
                 rep,
                 need.access,
                 need.policy,

@@ -27,8 +27,10 @@ use runtime::env::mail;
 /// 与 [`opened_by`] 分工：这一格答"谁交来的"，那一格答"这扇门本身是谁的"。转手会改写
 /// 这一格（root 转授过的门闩，`vestor` 会变成 root），故**不能用它认"对端是谁"**。
 ///
-/// `reserve` 答"不在我表里"与"令牌越界"是同一个 `Err`，**正是牌子要的粒度**——两种
-/// 情形都是"实例没了"。
+/// `reserve` 答"不在我表里"与"令牌越界"是同一个 `Err`。这两桩在今天**同粒度**，不是
+/// 因为它们本来就同：句柄是**表**的（`PieToken` 标着 `!Send`，见 `env::wire::handle`），
+/// **外来的号进不了这张表**——故剩下的两种情形才都是"实例没了"。板上那一枚又是**亲手
+/// 交给板的**（板正是持有它的那张表），所以这里读到 `Err` 就是"实例真的没了"。
 fn probe(entry: PieToken) -> Option<TaskId> {
     mail::reserve(entry).ok().map(|(vestor, _owner)| vestor)
 }
@@ -48,7 +50,7 @@ pub fn opened_by(hole: PieToken) -> Option<TaskId> {
 
 /// 放下：自释一份。
 fn free(entry: PieToken) -> Result<(), ()> {
-    mail::release(entry.get()).map_err(|_| ())
+    mail::release(entry).map_err(|_| ())
 }
 
 /// 立一块板：把两枚机制函数交给核心（核心因此不 `use` 内核）。
@@ -76,7 +78,7 @@ pub fn peer_of(pier: &Pier) -> Option<TaskId> {
 /// （`Query` 的下场）——内核那道"持 `VEST` 才交得出去"的闸（`Need::Grant`）挡的就是
 /// "板查到了却授不出去"。
 pub fn hang_in(entry: PieToken, holder: TaskId) -> Result<PieToken, ()> {
-    let pie = mail::HolePie::from_token(entry.get());
+    let pie = mail::HolePie::from_token(entry);
     port::ship(&pie, holder, Access::READ | Access::WRITE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| ())
@@ -87,7 +89,7 @@ pub fn hang_in(entry: PieToken, holder: TaskId) -> Result<PieToken, ()> {
 /// 与 [`hang_in`] 同一份子集（`R|W|VEST`）：**入口可以再传**——拿到它的人把它转给第三方
 /// 是常态（那正是"一个名字指向一个入口"的用法），故这里不替调用方裁剪。
 pub fn give(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
-    let pie = mail::HolePie::from_token(entry.get());
+    let pie = mail::HolePie::from_token(entry);
     port::ship(&pie, to, Access::READ | Access::WRITE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| Fail::Denied)
@@ -148,7 +150,7 @@ pub fn pack(op: u8, name: Name, seed: Option<PieToken>) -> [u8; ASK] {
     out[0] = op;
     out[1..1 + env::wire::NAME_LEN].copy_from_slice(name.bytes());
     if let Some(seed) = seed {
-        out[1 + env::wire::NAME_LEN..].copy_from_slice(&(seed.get() as u64).to_le_bytes());
+        out[1 + env::wire::NAME_LEN..].copy_from_slice(&seed.to_bytes());
     }
     out
 }
@@ -162,8 +164,8 @@ pub fn unpack(bytes: &[u8]) -> Option<(u8, Name, Option<PieToken>)> {
     let op = *bytes.first()?;
     let name = name_of(bytes.get(1..)?)?;
     let at = bytes.get(1 + env::wire::NAME_LEN..ASK)?;
-    let seed = u64::from_le_bytes(at.try_into().ok()?);
-    let seed = (seed != 0).then(|| PieToken::new(seed as usize));
+    let seed = PieToken::from_bytes(at)?;
+    let seed = (seed.get() != 0).then_some(seed);
     Some((op, name, seed))
 }
 

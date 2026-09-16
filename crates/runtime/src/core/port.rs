@@ -172,7 +172,7 @@ impl Port {
     /// # Errors
     /// - `Denied` — 入口门闩不在表里 / 无开辟者 / 授不出去
     pub fn open(entry: &HolePie) -> EnvResult<Port> {
-        let peer = mail::reserve(PieToken::new(entry.token()))?.1;
+        let peer = mail::reserve(entry.token())?.1;
         if peer.get() == 0 {
             return Err(denied());
         }
@@ -223,7 +223,7 @@ impl Port {
         Port {
             to: To {
                 peer,
-                seed: PieToken::new(reply.token()),
+                seed: reply.token(),
             },
             entry,
             reply,

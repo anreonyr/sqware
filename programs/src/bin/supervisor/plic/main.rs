@@ -134,16 +134,16 @@ extern "C" fn main() -> ! {
     };
 
     // 开图 + 读树：控制器、本域的 context、要接的线。
-    let Ok(plic_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Plic as usize].get()))
+    let Ok(plic_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Plic as usize]))
     else {
         exit_with(E_OPEN);
     };
-    let Ok(dtb_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Dtb as usize].get()))
+    let Ok(dtb_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Dtb as usize]))
     else {
         exit_with(E_OPEN);
     };
     let Ok(src_dock) = Dock::open(PolePie::from_token(
-        slots[needs::Slot::Source as usize].get(),
+        slots[needs::Slot::Source as usize],
     )) else {
         exit_with(E_OPEN);
     };
@@ -151,7 +151,7 @@ extern "C" fn main() -> ! {
         exit_with(E_TREE);
     };
     say("plic: docks open");
-    let bell = Bell::new(NolePie::from_token(slots[needs::Slot::Bell as usize].get()));
+    let bell = Bell::new(NolePie::from_token(slots[needs::Slot::Bell as usize]));
 
     for &line in &lines {
         plic.enable(line, LINE_PRIORITY);
@@ -261,7 +261,7 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
     });
 
     // 3. 四枚都要在：少一枚就不必继续（父域按同一张单子发货，缺格即装配错）。
-    let mut out = [PieToken::new(0); needs::PLIC.len()];
+    let mut out = [PieToken::NONE; needs::PLIC.len()];
     for (i, cell) in got.iter().enumerate() {
         out[i] = cell.ok_or(E_GRANT)?;
     }
@@ -312,7 +312,7 @@ fn start_desk(me: env::TaskId) -> Option<PieToken> {
     quay.seat(link, QUAY_MS).ok()?;
     quay.claim(id, QUAY_MS).ok()?;
     let pier = quay.find(link)?;
-    Some(PieToken::new(pier.at_peer().get()))
+    Some(pier.at_peer())
 }
 
 /// 待客：服务入口上有人说话，就记一行、把本域的名字答回去。
@@ -366,7 +366,7 @@ fn desk(me: env::TaskId) -> ! {
 ///
 /// 判据落在 `owner` 上（副本共享同一事实、转手不变）：本端自己铸的每一枚 owner 都是本端，
 /// 客人交进来的那一枚 owner 是客人——**编号比不出来，这一格比得出来**。
-fn opened_for(who: env::TaskId) -> Option<usize> {
+fn opened_for(who: env::TaskId) -> Option<PieToken> {
     let mut index = 0usize;
     let mut found = None;
     loop {
@@ -377,7 +377,7 @@ fn opened_for(who: env::TaskId) -> Option<usize> {
         }
         index += 1;
         if mail::reserve(token).ok().map(|(_v, owner)| owner) == Some(who) {
-            found = Some(token.get());
+            found = Some(token);
         }
     }
 }
@@ -420,7 +420,7 @@ struct BoardTrip {
 fn board_trip(link: &Quay, entry: PieToken) -> Option<BoardTrip> {
     let name = env::Name::new(SERVICE).ok()?;
     let absent = env::Name::new(NOBODY).ok()?;
-    let none = PieToken::new(0);
+    let none = PieToken::NONE;
     let reg = board::ask(link, bcall::REGISTER, name, entry, QUAY_MS).ok()?;
     let miss = board::ask(link, bcall::LOOKUP, absent, none, QUAY_MS).ok()?;
     let hit = board::ask(link, bcall::LOOKUP, name, none, QUAY_MS).ok()?;

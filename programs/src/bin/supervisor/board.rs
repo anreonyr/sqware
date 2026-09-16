@@ -70,10 +70,10 @@ const POLL_MS: usize = 1;
 /// 板线程手里最多几座码头（一位客人一座）。条数是策略，容器要有界。
 const GUESTS: usize = 8;
 
-/// 板线程的号（0 = 还没起）。
+/// 板线程的号（0 = 还没起）。`TaskId` 是**全局身份**，可跨线程，故这一枚放得进 static。
 static HOST: AtomicUsize = AtomicUsize::new(0);
-/// 提示之路在**装配者表里**的那一枚句柄（0 = 还没到手）。装配者往里推客人号。
-static TIP: AtomicUsize = AtomicUsize::new(0);
+// 提示之路在**装配者表里**的那一枚句柄**不放 static**：`PieToken` 是表的身份、标着 `!Sync`
+// （`env::wire::handle`），static 装不下它——它由装配者这一枚线程自己拿着，逐次传下去。
 
 // ── 板侧（装配者与本域的板线程）──────────────────────────────
 
@@ -84,7 +84,13 @@ static TIP: AtomicUsize = AtomicUsize::new(0);
 ///
 /// 返 `Err(哪一步)`：三种因（名字非法 / 席位满 / 等不到客人的那一枚）对调用方是同一件事
 /// ——**这条服务没接上板**——但"死在哪一步"正是装配诊断要的那一格（与 `service::step` 同款）。
-pub fn attach(quay: &mut Quay, me: TaskId, client: TaskId, ms: usize) -> Result<(), &'static str> {
+pub fn attach(
+    quay: &mut Quay,
+    me: TaskId,
+    client: TaskId,
+    ms: usize,
+    tip: &mut Option<PieToken>,
+) -> Result<(), &'static str> {
     let link = Name::new(LINK).map_err(|_| "board:name")?;
     // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：客人往板那一枚写问话）。
     quay.seat(link, ms).map_err(|_| "board:seat")?;
@@ -94,8 +100,11 @@ pub fn attach(quay: &mut Quay, me: TaskId, client: TaskId, ms: usize) -> Result<
     //    板泊位上（一枚孔只配一条泊位）。
     quay.claim(client, ms).map_err(|_| "board:claim")?;
     // 3. 板线程（只起一枚）→ 告诉它来客人了 → 把客人那一枚转授过去。
-    let host = host(me, ms)?;
-    tell(client).map_err(|_| "board:tell")?;
+    let host = host(me, ms, tip)?;
+    let Some(tip) = *tip else {
+        return Err("board:tip");
+    };
+    tell(client, tip).map_err(|_| "board:tell")?;
     hand(quay, host).map_err(|()| "board:hand")
 }
 
@@ -106,7 +115,7 @@ pub fn attach(quay: &mut Quay, me: TaskId, client: TaskId, ms: usize) -> Result<
 /// 线程自己铸：它起来第一件事就是把这枚孔的副本交给**装配者**。`me` 因此得从外面给：
 /// 同域里产出来的线程，`sire` 是**域的**生我者（建这个域的那一枚），不是产它的那一枚
 /// （`UnitCall::Sire` 的正文）——同一个域里的两枚线程，"谁生我"答不出"谁产的"。
-fn host(me: TaskId, ms: usize) -> Result<TaskId, &'static str> {
+fn host(me: TaskId, ms: usize, tip: &mut Option<PieToken>) -> Result<TaskId, &'static str> {
     let had = HOST.load(Ordering::Acquire);
     if had != 0 {
         return Ok(TaskId::new(had));
@@ -120,18 +129,19 @@ fn host(me: TaskId, ms: usize) -> Result<TaskId, &'static str> {
 
     // 认领板线程交回来的那一枚提示孔：本域另开一座码头等它（判据 `owner == 板线程`）。
     // 这条路上只走"客人号"，故本端那一枚交出去也无妨（板线程不用它，也不碍事）。
-    let tip = Name::new(TIP_NAME).map_err(|_| "board:name")?;
+    let slot = Name::new(TIP_NAME).map_err(|_| "board:name")?;
     let mut quay = Quay::open(id);
-    quay.seat(tip, ms).map_err(|_| "board:seat")?;
+    quay.seat(slot, ms).map_err(|_| "board:seat")?;
     quay.claim(id, ms).map_err(|_| "board:tip")?;
-    let pier = quay.find(tip).ok_or("board:tip")?;
-    TIP.store(pier.at_peer().get(), Ordering::Release);
+    let pier = quay.find(slot).ok_or("board:tip")?;
+    // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
+    *tip = Some(pier.at_peer());
     Ok(id)
 }
 
 /// 告诉板线程：来客人了（一个号，8 字节）。**满则等**——那是单槽，板线程一轮就读走。
-fn tell(client: TaskId) -> Result<(), ()> {
-    let tip = mail::HolePie::from_token(TIP.load(Ordering::Acquire));
+fn tell(client: TaskId, tip: PieToken) -> Result<(), ()> {
+    let tip = mail::HolePie::from_token(tip);
     tip.push(&(client.get() as u64).to_le_bytes())
         .map_err(|_| ())
 }
@@ -147,7 +157,7 @@ fn tell(client: TaskId) -> Result<(), ()> {
 fn hand(quay: &Quay, host: TaskId) -> Result<(), ()> {
     let link = Name::new(LINK).map_err(|_| ())?;
     let pier = quay.find(link).ok_or(())?;
-    let hole = mail::HolePie::from_token(pier.at_peer().get());
+    let hole = mail::HolePie::from_token(pier.at_peer());
     port::ship(&hole, host, Access::READ | Access::WRITE, Policy::NONE)
         .map(|_| ())
         .map_err(|_| ())

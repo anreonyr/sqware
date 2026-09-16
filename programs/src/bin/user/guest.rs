@@ -101,10 +101,10 @@ extern "C" fn main() -> ! {
     let Ok(want) = Name::new(WANT) else {
         bail("guest: bad name")
     };
-    let none = PieToken::new(0);
+    let none = PieToken::NONE;
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"guest 在哪"）。
-    let reg = board::ask(&link, bcall::REGISTER, me, PieToken::new(entry), MS).unwrap_or(BAD);
+    let reg = board::ask(&link, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);
 
     // 二、问一句名字。**找不到就再问**，有界：本域可能比 `plic` 先起（板上没有"装配期"）。
     let mut left = MS;
@@ -159,7 +159,7 @@ fn call(at: PieToken, me: Name) -> Option<Name> {
     )
     .ok()?;
     // 说一句：往**它的入口**推本域的名字。
-    let hole = mail::HolePie::from_token(at.get());
+    let hole = mail::HolePie::from_token(at);
     hole.push(me.bytes()).ok()?;
     // 读答话：从**回信孔**读（不是从它的入口读——那一枚的读者是它）。
     let mut buf = [0u8; NAME_LEN];

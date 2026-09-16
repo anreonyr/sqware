@@ -28,7 +28,7 @@ pub(super) fn me() -> Option<TaskId> {
 
 /// 铸一枚孔（本端那一枚）。
 pub(super) fn mint() -> Result<PieToken, ()> {
-    mail::unseal_hole().map(PieToken::new).map_err(|_| ())
+    mail::unseal_hole().map_err(|_| ())
 }
 
 /// 交给对端：一枚副本种进它表里，返**种在它表里的那个号**。
@@ -39,7 +39,7 @@ pub(super) fn mint() -> Result<PieToken, ()> {
 /// 生我者表里，再由生我者转授（见正文事实 1 的推论；板那条路就是这么接上的）。
 /// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对——看上去像"板坏了"。
 pub(super) fn ship(hole: PieToken, peer: TaskId) -> Result<PieToken, ()> {
-    let pie = mail::HolePie::from_token(hole.get());
+    let pie = mail::HolePie::from_token(hole);
     port::ship(&pie, peer, Access::READ | Access::WRITE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| ())
@@ -47,12 +47,12 @@ pub(super) fn ship(hole: PieToken, peer: TaskId) -> Result<PieToken, ()> {
 
 /// 放下本端那一枚孔。
 pub(super) fn drop_local(hole: PieToken) -> Result<(), ()> {
-    mail::release(hole.get()).map_err(|_| ())
+    mail::release(hole).map_err(|_| ())
 }
 
 /// 往**对端**那一条泊位说一句话（号是**种在它表里**的那一枚）。
 pub(super) fn post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
-    mail::HolePie::from_token(at_peer.get())
+    mail::HolePie::from_token(at_peer)
         .push(msg)
         .map_err(|_| ())
 }
@@ -105,7 +105,7 @@ pub(super) fn owner_of(hole: PieToken) -> Option<TaskId> {
 
 /// 从**本端**那一枚孔收一句话（有界等）。
 pub(super) fn pull_own(hole: PieToken, buf: &mut [u8], ms: usize) -> Result<usize, ()> {
-    mail::HolePie::from_token(hole.get())
+    mail::HolePie::from_token(hole)
         .pull_timeout(buf, ms)
         .map_err(|_| ())
 }

@@ -27,7 +27,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{Name, PAIR_LEN, Pair, PieToken};
+use env::{Name, PAIR_LEN, Pair};
 
 use crate::lock::OnceLock;
 use crate::platform::machine;
@@ -199,32 +199,27 @@ pub(crate) fn install(task: &Task, items: Vec<(Name, AnyPie)>) -> usize {
         );
     }
     let (pa, _bytes) = block();
-    let mut n = 0;
-    for (i, (name, pie)) in items.into_iter().enumerate() {
-        let record = Pair::new(name, PieToken::new(pie.token()));
-        // SAFETY: 记录数组与块同源（`Pair` 的尺寸由编译期断言锁定为 `PAIR_LEN`）；
-        // 写偏移恒 < 块长（上面查过条数上限）。用 `write_unaligned` 是因为 `Block`
-        // 只保证页对齐，而记录步长 40 字节——记录自身不要求对齐。
-        unsafe {
-            core::ptr::write_unaligned((pa as *mut u8).add(i * PAIR_LEN).cast::<Pair>(), record);
-        }
-        task.pies.lock().push(pie);
-        n += 1;
-    }
+    let n = items.len();
     // 供给清单打进 boot 日志：这是**这台机器上有什么**的唯一一次陈述（此后内核
     // 零设备概念，要问只能问域）。内核打印走 SBI，不碰设备（`docs/driver.md` §7.3）。
     crate::putln!("devices: {n} handed to root");
-    for i in 0..n {
-        let (pa, _) = block();
-        let at = (pa as *const u8).wrapping_add(i * PAIR_LEN);
-        // SAFETY: 上一条循环刚写完这些记录；只读。
-        let record = unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) };
-        let name = record.name();
-        crate::putln!(
-            "  {} -> token {}",
-            name.as_ref().map(|v| v.as_str()).unwrap_or("?"),
-            record.token().get()
-        );
+    for (i, (name, pie)) in items.into_iter().enumerate() {
+        let token = pie.token();
+        // 内核这一侧写的是**字节**（[`Pair::bytes`]）：它持的是自己表里的号（裸值），
+        // 而 `PieToken` 是"收号的人"才该有的类型（见 `env::wire::handle`）——
+        // 内核根本不经手句柄类型，只写记录。
+        let record = Pair::bytes(name, token);
+        // SAFETY: 记录与块同长（`PAIR_LEN` 是步长，编译期断言锁死）；写偏移恒 < 块长
+        // （上面查过条数上限）。用 `write_unaligned` 是因为 `Block` 只保证页对齐，
+        // 而记录步长 40 字节——记录自身不要求对齐。
+        unsafe {
+            core::ptr::write_unaligned(
+                (pa as *mut u8).add(i * PAIR_LEN).cast::<[u8; PAIR_LEN]>(),
+                record,
+            );
+        }
+        task.pies.lock().push(pie);
+        crate::putln!("  {} -> token {}", name.as_str(), token);
     }
     n
 }

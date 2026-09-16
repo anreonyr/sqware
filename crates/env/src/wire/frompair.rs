@@ -92,14 +92,14 @@ impl FromPair for (u64, u64) {
 
 impl FromPair for (PieToken, PieToken) {
     fn from_pair(v0: usize, v1: usize) -> Self {
-        (PieToken(v0), PieToken(v1))
+        (PieToken::new(v0), PieToken::new(v1))
     }
 }
 
 impl FromPair for (PieToken, crate::permission::Permission) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (
-            PieToken(v0),
+            PieToken::new(v0),
             crate::permission::Permission::from_bits_truncate(v1 as u32),
         )
     }
@@ -111,7 +111,7 @@ impl FromPair for (PieToken, crate::permission::Permission, TaskId) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         let permission = crate::permission::Permission::from_bits_truncate(v1 as u32);
         let vestor = TaskId(v1 >> 32);
-        (PieToken(v0), permission, vestor)
+        (PieToken::new(v0), permission, vestor)
     }
 }
 
@@ -130,7 +130,7 @@ impl FromPair for bool {
 
 impl FromPair for PieToken {
     fn from_pair(v0: usize, _v1: usize) -> Self {
-        PieToken(v0)
+        PieToken::new(v0)
     }
 }
 

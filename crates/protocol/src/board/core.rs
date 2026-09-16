@@ -281,6 +281,12 @@ mod tests {
     static TABLE: [AtomicUsize; Board::CAP + 1] = [const { AtomicUsize::new(0) }; Board::CAP + 1];
     static FREED: AtomicUsize = AtomicUsize::new(0);
 
+    /// 造一枚号给核心用：**唯一的门是"收号"**（`PieToken::from_bytes`），
+    /// 本模块自己不造号（`env::wire::handle`）。
+    fn tok(n: usize) -> PieToken {
+        PieToken::from_bytes(&(n as u64).to_le_bytes()).expect("8 字节")
+    }
+
     fn fake_probe(entry: PieToken) -> Option<TaskId> {
         match entry.get() {
             at if at < TABLE.len() => match TABLE[at].load(Ordering::Relaxed) {
@@ -331,7 +337,7 @@ mod tests {
 
     fn stand(b: &mut Board, text: &str, entry: usize, who: TaskId) -> Result<PieToken, Fail> {
         mine(entry, who);
-        b.register(name(text), PieToken::new(entry), who)
+        b.register(name(text), tok(entry), who)
     }
 
     #[test]
@@ -340,26 +346,26 @@ mod tests {
         let mut b = board();
         gone(1);
         assert_eq!(
-            b.register(name("console"), PieToken::new(1), A),
+            b.register(name("console"), tok(1), A),
             Err(Fail::Denied)
         );
         mine(2, B);
         assert_eq!(
-            b.register(name("console"), PieToken::new(2), A),
+            b.register(name("console"), tok(2), A),
             Err(Fail::Denied)
         );
-        assert_eq!(stand(&mut b, "console", 1, A), Ok(PieToken::new(1)));
-        assert_eq!(b.lookup(name("console")), Ok(PieToken::new(1)));
+        assert_eq!(stand(&mut b, "console", 1, A), Ok(tok(1)));
+        assert_eq!(b.lookup(name("console")), Ok(tok(1)));
     }
 
     #[test]
     fn a_name_standing_for_someone_else_is_taken() {
         let _serial = serial();
         let mut b = board();
-        assert_eq!(stand(&mut b, "console", 1, A), Ok(PieToken::new(1)));
+        assert_eq!(stand(&mut b, "console", 1, A), Ok(tok(1)));
         mine(2, B);
         assert_eq!(
-            b.register(name("console"), PieToken::new(2), B),
+            b.register(name("console"), tok(2), B),
             Err(Fail::Taken)
         );
         assert_eq!(b.unregister(name("console"), B), Err(Fail::Denied));
@@ -375,7 +381,7 @@ mod tests {
         let mut b = board();
         stand(&mut b, "console", 1, A);
         stand(&mut b, "console", 2, A);
-        assert_eq!(b.lookup(name("console")), Ok(PieToken::new(2)));
+        assert_eq!(b.lookup(name("console")), Ok(tok(2)));
         assert!(freed(1) && !freed(2));
         assert_eq!(b.find(name("console")), Some(0));
         assert_eq!(b.rows().count(), 1);
@@ -391,8 +397,8 @@ mod tests {
         assert!(freed(1));
         assert_eq!(b.rows().count(), 0);
         assert_eq!(b.find(name("console")), Some(0));
-        assert_eq!(stand(&mut b, "console", 3, A), Ok(PieToken::new(3)));
-        assert_eq!(b.lookup(name("console")), Ok(PieToken::new(3)));
+        assert_eq!(stand(&mut b, "console", 3, A), Ok(tok(3)));
+        assert_eq!(b.lookup(name("console")), Ok(tok(3)));
     }
 
     #[test]
@@ -404,26 +410,26 @@ mod tests {
             texts.push(std::format!("n{i}"));
             assert_eq!(
                 stand(&mut b, &texts[i], i, A),
-                Ok(PieToken::new(i)),
+                Ok(tok(i)),
                 "第 {i} 枚该挂得上"
             );
         }
         assert_eq!(b.rows().count(), Board::CAP);
         assert_eq!(
-            b.register(name("n17"), PieToken::new(Board::CAP), A),
+            b.register(name("n17"), tok(Board::CAP), A),
             Err(Fail::Denied),
             "没有出处的令牌先被活性挡住——判据的次序是契约"
         );
         assert_eq!(b.find(name("n17")), None);
         assert_eq!(
-            b.register(name("n18"), PieToken::new(0), A),
+            b.register(name("n18"), tok(0), A),
             Err(Fail::Full),
             "令牌是真的、板是满的 ⇒ 这才是 Full"
         );
         assert_eq!(b.find(name("n18")), None);
         assert_eq!(b.unregister(name("n0"), A), Ok(()));
         assert_eq!(
-            b.register(name("n18"), PieToken::new(0), A),
+            b.register(name("n18"), tok(0), A),
             Err(Fail::Full),
             "摘过牌的位子不还给新名字——空位只给**从未用过**的牌子"
         );
@@ -442,8 +448,8 @@ mod tests {
         assert_eq!(b.find(name("console")), Some(0));
         assert_eq!(b.find(name("irq")), Some(1));
         assert_eq!(b.lookup(name("console")), Err(Fail::Unknown));
-        assert_eq!(b.lookup(name("irq")), Ok(PieToken::new(2)));
-        assert_eq!(stand(&mut b, "serial", 3, A), Ok(PieToken::new(3)));
+        assert_eq!(b.lookup(name("irq")), Ok(tok(2)));
+        assert_eq!(stand(&mut b, "serial", 3, A), Ok(tok(3)));
         assert_eq!(b.find(name("serial")), Some(2));
     }
 }
