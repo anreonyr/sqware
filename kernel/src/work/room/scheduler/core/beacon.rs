@@ -108,10 +108,9 @@ fn stalled(pushed: usize, reaped: usize) -> bool {
     }
     let t0 = LAST_PROGRESS.load(Ordering::Relaxed);
     let past = now.wrapping_sub(t0);
-    past
-        >= crate::runtime::chrono::clock::duration_to_ticks(core::time::Duration::from_millis(
-            STALL_MS,
-        ))
+    past >= crate::runtime::chrono::clock::duration_to_ticks(core::time::Duration::from_millis(
+        STALL_MS,
+    ))
 }
 
 /// 空闲核每次决定睡下前调一次（见 [`super::fetch`] 的 WFI 循环）。

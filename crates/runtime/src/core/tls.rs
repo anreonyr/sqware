@@ -19,7 +19,7 @@ pub fn base() -> usize {
     tp
 }
 
-pub fn alloc() -> EnvResult<usize> {
+pub fn allocate() -> EnvResult<usize> {
     memory::allocate(TLS_SIZE)
 }
 
@@ -32,7 +32,7 @@ pub fn alloc() -> EnvResult<usize> {
 ///
 /// 归还走的是**用户态既有原语** `MemoryCall::Deallocate`（内核侧按 `(addr, size)`
 /// 精确匹配 `HeapWindow` 的簿记再摘映射），故不需要任何新 ABI。
-pub fn free() {
+pub fn deallocate() {
     let tp = base();
     if tp == 0 {
         return; // 未装配（理论上不可达）：不制造第二处失败
@@ -44,7 +44,7 @@ pub fn free() {
 /// 仅在主线程出生点（`_start` → `main` 之间）调用恰好一次。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bootstrap() {
-    let addr = alloc().expect("tls bootstrap alloc failed");
+    let addr = allocate().expect("tls bootstrap alloc failed");
     // SAFETY: 写 tp（用户态自由；本线程刚出生，无旧值）。
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) addr, options(nomem, nostack, preserves_flags));

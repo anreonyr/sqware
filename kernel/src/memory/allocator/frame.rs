@@ -41,7 +41,6 @@ impl FrameAllocator {
             inner: SpinLock::new_level(Level::Frame, inner),
         })
     }
-
 }
 
 /// `remove_link` 里"自称桶头、桶头却不是我"的次数（陈旧 `Link` 导致桶头被覆盖）。

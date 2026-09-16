@@ -208,10 +208,7 @@ fn record(site: Site) -> usize {
     let id = NEXT_ID.fetch_add(1, Relaxed);
     let meta = site.ix() | (crate::hart::hart_id() << 8);
     for i in 0..SLOTS {
-        if SLOT_ID[i]
-            .compare_exchange(0, id, Relaxed, Relaxed)
-            .is_ok()
-        {
+        if SLOT_ID[i].compare_exchange(0, id, Relaxed, Relaxed).is_ok() {
             SLOT_META[i].store(meta, Relaxed);
             return id;
         }

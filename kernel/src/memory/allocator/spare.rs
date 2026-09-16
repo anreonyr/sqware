@@ -26,7 +26,6 @@ use crate::{
     },
 };
 
-
 /// 块头字节数：Link(16) + size(8) + 对齐垫(8) → 块首 16B 对齐 ⇒ 载荷 16B 对齐。
 const HEADER: usize = 32;
 /// 支持的请求对齐上限（16B；超限回 Err，不 panic）。

@@ -248,12 +248,18 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             return core::ptr::null_mut();
         }
         EnvCall::Room(RoomCall::Doom { task }) => {
-            // 他杀（与 `Reap` 成对：自杀 ↔ 他杀）。判据只有**血缘**（传递），执行
-            // 复用结构面既有的两相扑杀——语义是**域粒度**：`task` 只是"指认域"的
-            // 手柄，它所属的域连同子树一起走（同域的线程一并，不会剩半个域）。
+            // 他杀（与 `Reap` 成对：自杀 ↔ 他杀）。判据只有**判活**，**没有血缘门**
+            // ——这是 Ruin 口径：收一个域是"命令"，不是"血缘特权"。
             //
-            // 跨血缘的"该不该"不在这里：那是**政策**的活（root 的 `doom` 服务）。
-            // 内核只回答"能不能"——`descends` 沿 `Team.sire` 上溯、比较按域。
+            // 曾经这里要 `descends`（目标域得在我后代链里）。删掉它的理由是判据分家：
+            // 内核只回答"能不能收"（能），"该不该收"归 `protocol::system` 的编排者
+            // （它拿服务表说话）。与建域那一支是同一次分家，见 `UnitCall::Build`。
+            //
+            // 代价照实记：**服务之间因此没有护栏**（任何域都能拆任何域）。收窄只能在
+            // 编排侧做（"谁能申请收谁"），不是内核该长的东西。
+            //
+            // 语义仍是**域粒度**：`task` 只是"指认域"的手柄，它所属的域连同子树一起走
+            // （同域的线程一并，不会剩半个域）——执行复用结构面既有的两相扑杀。
             //
             // 一次调用**只下一道令**，不下场等它回收：要等就 `UnitCall::Join`
             // （Linux 的 `kill` 也是"送到即回"）。
@@ -262,9 +268,6 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 // 名册升不起来 = 从未入册 / 已回收——与 `Join` 判活三态同一口径。
                 return ret_err(frame, GateError::Dead);
             };
-            if !messenger::descends(&ident.team, &target.ident.team) {
-                return ret_err(frame, GateError::Denied);
-            }
             let team = target.ident.team.clone();
             // 下令时记一笔（谁杀的）；死亡时受害者那颗核另记 `Exit { EXIT_DOOM }`
             // ——两条分开是因为它们落在不同的核上（见 `RoomEvent::Doomed`）。
@@ -434,13 +437,14 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             name,
             name_len,
         }) => {
-            // 门：**建域权就是 S 态**（理由见 `fid.rs` 该 variant 的注释）。
-            // 能力面不为建域背书——曾有一道"存在权"门收一枚 `Nole`，而 Nole 自铸
-            // 无代价，那道门与本判断等价。删掉它不改变行为，只是不再假装能力管着
-            // 建域，也不再让一枚铃顺带成为建域资格。
-            if !ident.team.space.kind().is_supervisor() {
-                return ret_err(frame, GateError::Denied);
-            }
+            // 门：**没有门**（Mint 口径）。
+            //
+            // 曾经这里是"建域权就是 S 态"——那是**内核替调用方定"该不该起"的时候**
+            // 留下的。判据现在已经分家：能不能起由本层回答（答"能"），该不该起归
+            // `protocol::system` 的编排者（它拿服务表与策略说话）。
+            //
+            // 放开它**不构成提权**：提权的两条路都还堵着——特权级由内核打包表决定
+            // （调用方说不上话），镜像仍要调用方交字节（Mint-lite 口径，见该协议正文）。
             let name = match read_name(&ident.team.space, KVirt::from_raw(name.get()), name_len) {
                 Some(n) => n,
                 None => return ret_err(frame, GateError::Denied),

@@ -62,7 +62,6 @@ impl WakeKey {
             WakeKey::Alarm { task } => (task as u64).wrapping_mul(0xA24B_AED4_963E_E407),
         }
     }
-
 }
 
 /// 一个唤醒源的等待位：遗留信号（信标）+ **等待链的两头** + 该键的存活单元。

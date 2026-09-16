@@ -103,13 +103,48 @@ fn main() {
         INITRD_BINS.len()
     );
     // 程序侧任何一层变了，initrd 里的程序也得重打包——否则内核重编而镜像是旧的。
-    // 这几条曾经漏掉过一次（"改了程序、initrd 还是旧的"），故四层都 watch。
-    println!("cargo::rerun-if-changed=../programs");
-    println!("cargo::rerun-if-changed=../crates/runtime");
-    println!("cargo::rerun-if-changed=../crates/protocol");
-    // env 是 runtime/protocol/programs 的路径依赖（envcall 骨架/协议编解码）——它变了
-    // initrd 里的程序也得重打包，否则内核重编而用户程序是旧的（曾导致 ebreak 改动未生效）。
-    println!("cargo::rerun-if-changed=../crates/env");
+    //
+    // **逐文件**，不是逐目录：`rerun-if-changed=<目录>` 只在**目录条目增删**时触发，
+    // 原地改一个文件**不触发**（cargo 对目录只比 mtime，而改文件不改目录的 mtime）。
+    // 这几条曾经漏掉过一次，之后改成 watch 目录——但仍然漏掉"原地改文件"，症状是
+    // "改了程序、行为不变"，最费时间的一类假象。逐文件列全之后这一格不再存在。
+    watch(Path::new(".."));
+}
+
+/// 逐文件登记"本脚本要盯的东西"：workspace 的源码与清单。
+///
+/// 走 `../programs`、`../crates` 两棵子树（跳过 `target`）＋工作区清单（`Cargo.toml`
+/// / `Cargo.lock`：依赖版本变了同样要重打包）。**只盯文件，不盯目录**——理由见调用处。
+fn watch(root: &Path) {
+    for tree in ["programs", "crates"] {
+        walk(&root.join(tree));
+    }
+    for manifest in ["Cargo.toml", "Cargo.lock"] {
+        let at = root.join(manifest);
+        if at.is_file() {
+            println!("cargo::rerun-if-changed={}", at.display());
+        }
+    }
+}
+
+/// 递归登记一棵子树里**每一个文件**。
+fn walk(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let at = entry.path();
+        let name = entry.file_name();
+        // 产物目录与隐藏目录不进：它们不是"源"，盯它们只会白白重跑。
+        if name == "target" || name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if at.is_dir() {
+            walk(&at);
+        } else {
+            println!("cargo::rerun-if-changed={}", at.display());
+        }
+    }
 }
 
 /// 从 OUT_DIR（`.../<profile>/build/<pkg>/<hash>/out`）向上找到 `<profile>` 目录：

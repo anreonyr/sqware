@@ -132,7 +132,11 @@ pub(crate) fn heirs(token: usize, snap: &Snap) -> Option<Vec<(Arc<Task>, usize)>
             if kids.try_reserve(pies.len()).is_err() {
                 return None;
             }
-            kids.extend(pies.iter().filter(|p| p.sire() == Some(token)).map(|p| p.token()));
+            kids.extend(
+                pies.iter()
+                    .filter(|p| p.sire() == Some(token))
+                    .map(|p| p.token()),
+            );
         }
         for k in kids {
             if out.try_reserve(1).is_err() {

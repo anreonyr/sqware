@@ -6,14 +6,14 @@ use alloc::format;
 use alloc::vec;
 use riscv::register::satp;
 
-use crate::hart;
 use crate::console::Sink;
+use crate::hart;
 use crate::layout::{HART_FRAME_BASE, TRAP_STACK_SLOT_SIZE};
 use crate::layout::{ROOT_STACK_CANARY, root_stack_base};
-use crate::platform::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::mode;
+use crate::platform::machine;
 use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
@@ -228,10 +228,7 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
     let (pairs_pa, pairs_bytes) = crate::platform::devices::block();
     let pairs = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = inner.allocate(
-                crate::work::unit::space::SegmentKind::Normal,
-                pairs_bytes,
-            )?;
+            let va = inner.allocate(crate::work::unit::space::SegmentKind::Normal, pairs_bytes)?;
             inner.borrow(
                 va,
                 crate::memory::manager::addr::PhysAddr::from_raw(pairs_pa),

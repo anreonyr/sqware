@@ -41,6 +41,12 @@ pub struct Name {
 }
 
 impl Name {
+    /// 空名字：**不是合法名字**，只是占位——定长表的空行要用一个可复制的初值。
+    /// [`Name::is_empty`] 认它，故它天然被排除在"有名字的行"之外。
+    pub const EMPTY: Name = Name {
+        bytes: [0u8; NAME_LEN],
+    };
+
     /// 由字符串构造（校验失败即拒绝，不截断）。
     pub fn new(s: &str) -> Result<Name, NameError> {
         let b = s.as_bytes();

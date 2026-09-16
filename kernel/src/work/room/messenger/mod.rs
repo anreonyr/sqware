@@ -77,7 +77,7 @@ pub(crate) const EXIT_DOOM: usize = 0xFFFF_FFFE;
 pub(crate) const EXIT_CASCADE: usize = 0xFFFF_FFFD;
 
 // 子模块对外重导出：**外部路径一行不改**（`messenger::cull` 等照旧）。
-pub(crate) use doom::{cull, descends, doom, take_doomed};
+pub(crate) use doom::{cull, doom, take_doomed};
 pub(crate) use handoff::Handoff;
 pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;

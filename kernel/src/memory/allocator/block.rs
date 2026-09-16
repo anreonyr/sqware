@@ -27,10 +27,9 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use erra::ResultExt;
 
-
 use crate::hart;
-use crate::platform::machine;
 use crate::memory::PAGE_SIZE;
+use crate::platform::machine;
 use crate::{
     lock::{Level, OnceLock, SpinLock},
     memory::allocator::{InitError, InitResult, bump, frame},
@@ -390,7 +389,6 @@ impl BlockInner {
         let mut g = self.pool.lock();
         let inner = &mut *g;
         if let Some(head) = inner.freepool[power] {
-
             // spare 资格取消：保留页被重新在用 → 释放保留名额
             let page = head.as_ptr() as usize & !(PAGE_SIZE - 1);
             if inner.spare[power] == Some(page) {

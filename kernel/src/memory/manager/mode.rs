@@ -134,10 +134,7 @@ fn try_mode(candidate: satp::Mode) -> Result<(), SatpError> {
     unsafe extern "C" {
         static _kernel_start: u8;
     }
-    let range = (
-        (&raw const _kernel_start).addr(),
-        layout::root_stack_edge(),
-    );
+    let range = ((&raw const _kernel_start).addr(), layout::root_stack_edge());
     let mut va = range.0 & !(crate::memory::PAGE_SIZE - 1);
     while va < range.1 {
         let ppn = (va >> PAGE_SHIFT) as u64;

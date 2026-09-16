@@ -29,7 +29,6 @@ use riscv::register::satp;
 
 use crate::hart;
 use crate::layout::kernel_edge;
-use crate::platform::machine;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::{
     MapError,
@@ -37,6 +36,7 @@ use crate::memory::manager::{
     entry::PteFlags,
     flush_asid, mode,
 };
+use crate::platform::machine;
 
 use crate::layout::{HART_FRAME_BASE, TRAMPOLINE, trampoline_pa};
 use space::SpaceBuilder;

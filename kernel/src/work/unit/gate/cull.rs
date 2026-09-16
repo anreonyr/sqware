@@ -86,7 +86,9 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
         let mut scan: Vec<(Arc<Task>, usize)> = Vec::new();
         for f in frontier.drain(..) {
             // 查询面容量不够 ⇒ 本层到此为止（已摘的照常记着，稍后统一撤映射）。
-            let Some(kin) = snap::heirs(f, snap) else { break };
+            let Some(kin) = snap::heirs(f, snap) else {
+                break;
+            };
             if scan.try_reserve(kin.len()).is_err() {
                 break;
             }
@@ -230,13 +232,11 @@ fn seal_owned(tid: usize, task: &Arc<Task>) -> usize {
         // 表在 `doom` 里不变（`reap` 之后没人再进这张任务表），故按 token 找得到。
         let meta = {
             let pies = task.pies.lock();
-            pies.iter()
-                .find(|p| p.token() == token)
-                .map(|p| match p {
-                    AnyPie::Hole(h) => Resource::Hole(h.meta().clone()),
-                    AnyPie::Pole(pl) => Resource::Pole(pl.meta().clone()),
-                    AnyPie::Nole(n) => Resource::Nole(n.meta().clone()),
-                })
+            pies.iter().find(|p| p.token() == token).map(|p| match p {
+                AnyPie::Hole(h) => Resource::Hole(h.meta().clone()),
+                AnyPie::Pole(pl) => Resource::Pole(pl.meta().clone()),
+                AnyPie::Nole(n) => Resource::Nole(n.meta().clone()),
+            })
         };
         // **锁外**封印：`seal` 只碰 Meta 自己的锁 + 唤醒站点，不需要任务表。
         match meta {

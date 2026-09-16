@@ -221,7 +221,10 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
         // 创建者自留 pie 全权 → 开闩走 R|W（U 位由空间策略决定）。
         // **预留贴在这里**：`open` 会落下创作者视图（映射），那才是不可撤回的一步；
         // 贴它之前而不是函数最前面，是因为前面的东西都能靠 drop 退回。
-        task.pies.lock().try_reserve(1).map_err(|_| GateError::OoM)?;
+        task.pies
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| GateError::OoM)?;
         let creator_flags = task_space
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
         mail::pole::open(&meta, token, &task_space, creator_flags)?;

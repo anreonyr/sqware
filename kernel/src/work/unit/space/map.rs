@@ -207,7 +207,12 @@ impl Drop for Map {
 
 impl Map {
     /// 构造（size 必须非零——调用方保证，见各入口的校验）。帧表初始为空。
-    pub(super) fn new(va: VirtAddr, size: usize, flags: PteFlags, pending: Option<Pending>) -> Self {
+    pub(super) fn new(
+        va: VirtAddr,
+        size: usize,
+        flags: PteFlags,
+        pending: Option<Pending>,
+    ) -> Self {
         Self {
             next: None,
             va,
@@ -331,7 +336,8 @@ impl Map {
         let pages = self.size.get() / PAGE_SIZE;
         debug_assert!(lo_pg < hi_pg && hi_pg <= pages);
         if let Some(hole) = hole {
-            self.frames.move_range(lo_pg, hi_pg, lo_pg, &mut hole.frames);
+            self.frames
+                .move_range(lo_pg, hi_pg, lo_pg, &mut hole.frames);
         }
         if lo_pg == 0 {
             // 洞在头：本图重绕成右段（洞口那截已搬走，余下键原位减 hi_pg）

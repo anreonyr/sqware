@@ -155,7 +155,7 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     // a0 = 启动参数区 VA（`Spawn` 的 args 写在栈顶）；args[0] = 闭包装箱薄指针。
     // 必须在任何调用（tls::alloc）之前读——a0 是 caller-saved。
     let ptr = unsafe { core::ptr::read_volatile(arg as *const usize) };
-    let tls_base = tls::alloc().expect("tls alloc failed");
+    let tls_base = tls::allocate().expect("tls alloc failed");
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) tls_base, options(nomem, nostack, preserves_flags));
     }
@@ -172,6 +172,6 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     // = 真漏）；补上这一行后见同档复测。这页是 `tls::alloc` 自己领的，故由
     // `tls::free` 自己对还——用的是用户态既有原语 `MemoryCall::Deallocate`，
     // 不需要任何新 ABI。
-    tls::free();
+    tls::deallocate();
     room::exit()
 }

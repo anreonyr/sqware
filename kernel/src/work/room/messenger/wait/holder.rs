@@ -63,7 +63,10 @@ pub(in super::super) fn holders() -> &'static HolderTable {
 pub(super) fn hold(ticket: Ticket, key: WakeKey, task: &Arc<Task>) -> Result<(), ()> {
     let mut table = holders().lock();
     table.try_reserve(1).map_err(|_| ())?;
-    table.insert(ticket, (key, TaskWeak::stored(Arc::downgrade(task), Site::Holder)));
+    table.insert(
+        ticket,
+        (key, TaskWeak::stored(Arc::downgrade(task), Site::Holder)),
+    );
     Ok(())
 }
 
