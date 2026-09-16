@@ -17,6 +17,9 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
     // 够不着建域那道 S 态门。
     ("echo", "prog-echo", ProgramKind::User),
+    // 客人：**U 态**（与 `echo` 同一档）——按名字找到一个服务、说一句话。铸孔、交出、
+    // 一问一答都不需要 S 态，故最小特权的域也能用板。
+    ("guest", "prog-guest", ProgramKind::User),
     // 中断面域：**S 态**——它要读写 PLIC 的寄存器（那一页由 root 从配对块取出来授给它，
     // 内核不参与；内核只摇那枚铃）。
     ("plic", "prog-plic", ProgramKind::Supervisor),

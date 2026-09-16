@@ -49,7 +49,7 @@ pub struct Program {
 }
 
 /// **装配单**：本域按这个顺序起服务。
-pub const PLAN: &[Program] = &[plic(), echo()];
+pub const PLAN: &[Program] = &[plic(), guest(), echo()];
 
 /// 中断面域：常驻，要四枚门闩，起来时交回通道，并挂上板。
 const fn plic() -> Program {
@@ -61,6 +61,22 @@ const fn plic() -> Program {
         needs: Some(needs::PLIC),
         board: true,
         died: E_PLIC,
+    }
+}
+
+/// 客人：按名字找到 `plic`、说一句、把答话带回来。
+///
+/// 它什么都不交回（`Announce::None`：本域不等它），故**上板那一格由 `board` 那一支负责**——
+/// 本域等的是它那条板路接上（[`board::attach`] 的第 2 步），不是它说了什么。
+const fn guest() -> Program {
+    Program {
+        name: "guest",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: true,
+        died: E_GUEST,
     }
 }
 
@@ -84,6 +100,7 @@ pub const E_PROGRAM: Died = 3;
 pub const E_TABLE: Died = 4;
 pub const E_PLIC: Died = 5;
 pub const E_ECHO: Died = 6;
+pub const E_GUEST: Died = 7;
 pub const E_OK: Died = 0;
 
 /// 装配：登记整张表，然后按顺序把每条起起来。

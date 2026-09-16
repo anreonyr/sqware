@@ -1,15 +1,29 @@
 #![no_std]
 #![no_main]
 
-//! plic — **中断面域**：外部中断的收与结（S 态 supervisor 域，一个线程）。
+//! plic — **中断面域**：外部中断的收与结（S 态 supervisor 域，**两枚线程**）。
 //!
 //! ```text
 //! 装会话（交一枚孔给父域，父域按名字认领）
 //!   → 收配给（父域按同一张需求单推来记录，按 Slot 归位）
-//!   → 板上一趟（挂上本域的服务入口，再查回来验一遍：授进来的入口指回原物）
+//!   → 板上一趟（挂上本域的服务入口、查回来验一遍：答话三格 + 入口有没有到手）
 //!   → 接上控制器自报的每一条线
-//!   → 循环：等铃 → claim 到空 → 按线静音 + complete → 应铃 → 到点把线放回去
+//!   → 两枚线程各守一个源：
+//!       主线程     等铃 → claim 到空 → 按线静音 + complete → 应铃 → 到点把线放回去
+//!       待客线程   守服务入口（有人敲就记一行、把本域的名字答回去）
 //! ```
+//!
+//! # 为什么是两枚线程
+//!
+//! 本域有两件事要等：**铃**（外部中断）与**服务入口**（有人按名字找上门）。今天没有"同时
+//! 等两个源"——门铃与孔各有各的唤醒键，合并不了；塞进同一枚线程就得靠节拍轮询，而"闲时
+//! 真睡"那条读数会跟着丢掉。**一枚线程守一个源**是今天唯一不退化的办法。
+//!
+//! # 服务入口为什么由待客线程铸
+//!
+//! `PieToken` 是"**我这张表**里的第几个"——**同一个域里两枚线程各有一张表，号过不了线**。
+//! 客人推上来的那一句得由**守在那扇门上**的那枚线程读走，故入口由它铸、它读；本域主线程
+//! 要的是**副本**（拿去挂到板上），那一枚经 `Ship` 过来（同域转授，与跨域同一条路）。
 //!
 //! # 它是怎么被叫醒的
 //!
@@ -28,14 +42,15 @@
 //!
 //! **字节长什么样不在这里**（那是 [`pairing`]，与父域同一份）；本域只说"我要哪几格"。
 //!
-//! # 第一刀：还没有客户端
+//! # 还没有的那一格：投递给客户端
 //!
-//! 本域只做"收与结"：接上所有线、claim、complete、应铃。**没有**"名字 → 线号"的表，
-//! 也没有投递给客户端那一段——那是第二刀。
+//! 本域做"收与结"：接上所有线、claim、complete、应铃。**没有**"名字 → 线号"的表，也没有
+//! 把中断投递给客户端那一段——今天来敲门的只有 `guest`（按名字问一句、本域答一句），
+//! 还没有谁是"要这条线的中断"的人。
 //!
 //! 本域**不读走设备里的字节**：`serial@10000000` 的接收字节归 console。不读 ⇒ 源头一直
 //! 挂着电平，故每领一条线就把它**静音**（`priority = 0`），等铃静下来一拍再把线放回去。
-//! 按线静音本来就是驱动域自己的细杠杆，第一刀正好把它走一遍。
+//! 按线静音本来就是驱动域自己的细杠杆。
 
 extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
@@ -61,6 +76,8 @@ use protocol::board::call as bcall;
 use protocol::session::Quay;
 use runtime::core::bell::Bell;
 use runtime::core::dock::Dock;
+use runtime::core::port::{self, Access, Policy};
+use runtime::core::unit::{Join, closure};
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::mail::{NolePie, PolePie};
@@ -78,8 +95,8 @@ const RECORDS: &str = "records";
 const SERVICE: &str = "plic";
 const NOBODY: &str = "no-such-name";
 
-/// 板那一趟的自检字节：推给"板授进来的那一枚"，再**从本域那一枚**读回来。
-const PING: u8 = b'!';
+/// 与待客线程之间那条路的名字（本域登记它交回来的服务入口时用；它那侧不看名字）。
+const DESK_LINK: &str = "plic-entry";
 
 /// 装泊位/等配给的期限（毫秒）。
 const QUAY_MS: usize = 1000;
@@ -108,6 +125,7 @@ const E_GRANT: usize = 3;
 const E_OPEN: usize = 4;
 const E_TREE: usize = 5;
 const E_BELL: usize = 6;
+const E_DESK: usize = 7;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -150,8 +168,8 @@ extern "C" fn main() -> ! {
     // 循环：等铃 → 领到空 → 逐条静音 + 结 → 应铃 → 到点把静音的放回去。
     //
     // **闲的时候真睡**：`muted == 0` 时 wait 传 `usize::MAX`（永久挂起），本域一次都不醒。
-    // 只有手里还压着静音的线时才退回节拍——那是第一刀唯一能"放回"的手段（没有客户端会来
-    // 说一声"我抽干了"）。第二刀把放回换成事件，这个节拍随之消失。
+    // 只有手里还压着静音的线时才退回节拍——那是今天唯一能"放回"的手段（还没有谁会来说
+    // 一声"我抽干了"）。把放回换成事件，这个节拍随之消失。
     let mut total = 0usize;
     let mut muted: u64 = 0;
     loop {
@@ -248,9 +266,23 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
         out[i] = cell.ok_or(E_GRANT)?;
     }
 
-    // 4. 板（一问一答那一档）：挂上本域的服务入口，再查回来验一遍。
-    //    **它不拦装配**：装不上只报一句读数（板是"起来之后"的事，不是起来的条件）。
-    match board_trip(sire) {
+    // 4. 板那条路：**趁本端表里还是干净的**先装上——`pair` 认的是"我没开过的那一枚"，
+    //    而后面那一步（待客线程把入口副本交回来）也会往本端表里放一枚外来孔。
+    let link = board::open(sire, QUAY_MS).ok();
+
+    // 5. 待客线程 + 服务入口：入口由待客线程铸（谁守那扇门谁读它），副本本域登记。
+    //    **它不拦装配**：起不来就报一句读数（板是"起来之后"的事，不是起来的条件）。
+    let Ok(me) = utask::self_id() else {
+        return Err(E_GRANT);
+    };
+    let entry = start_desk(me);
+
+    // 6. 板上一趟：挂上这一枚入口、再查回来验一遍。
+    let trip = match (link, entry) {
+        (Some(link), Some(entry)) => board_trip(&link, entry),
+        _ => None,
+    };
+    match &trip {
         Some(t) => say(&alloc::format!(
             "plic: board reg={} miss={} hit={} entry={} grant={}",
             t.reg,
@@ -262,6 +294,92 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
         None => say("plic: board: no link"),
     }
     Ok(out)
+}
+
+/// 起待客线程，并把**它的服务入口**收回来（本域登记用的那一枚副本）。
+///
+/// 入口由待客线程铸（`PieToken` 过不了线，见文件头），副本经 `Ship` 交到本线程表里；
+/// 本线程另开一座码头认它——判据是 `owner == 待客线程`（铸的人就是 owner）。
+///
+/// `seat` 那一步也会把本线程铸的一枚交给它（本协议里"认领"要求本端先装一条）：它不用，
+/// 也不碍事。
+fn start_desk(me: env::TaskId) -> Option<PieToken> {
+    let node: Join<()> = closure(move || desk(me));
+    let id = node.id();
+    drop(node);
+    let link = env::Name::new(DESK_LINK).ok()?;
+    let mut quay = Quay::open(id);
+    quay.seat(link, QUAY_MS).ok()?;
+    quay.claim(id, QUAY_MS).ok()?;
+    let pier = quay.find(link)?;
+    Some(PieToken::new(pier.at_peer().get()))
+}
+
+/// 待客：服务入口上有人说话，就记一行、把本域的名字答回去。
+///
+/// **一枚线程守一个源**（见文件头）：本线程只等这一枚孔，故 `usize::MAX` = 真挂起。
+/// 一问一答各 32 字节（一个名字，与牌子同一个解码面），答话走**同一枚孔**——单槽，
+/// 一问一答交替（对面推、本端取、本端推、对面取）。
+fn desk(me: env::TaskId) -> ! {
+    // 服务入口：**本线程铸、本线程读**（`PieToken` 过不了线，见文件头）。
+    let Ok(entry) = mail::unseal_hole() else {
+        exit_with(E_DESK)
+    };
+    // 副本交给本域主线程：它拿去挂到板上——别人按名字找到的就是这一扇门。
+    let said = port::ship(
+        &mail::HolePie::from_token(entry),
+        me,
+        Access::READ | Access::WRITE,
+        Policy::VEST,
+    );
+    if said.is_err() {
+        exit_with(E_DESK)
+    }
+    let hole = mail::HolePie::from_token(entry);
+    let Ok(our) = env::Name::new(SERVICE) else {
+        exit_with(E_DESK)
+    };
+    loop {
+        let mut buf = [0u8; env::wire::NAME_LEN];
+        // **一并取回发送者**：答话要推到"这位客人借给我的那一枚回信孔"上，而"是谁"
+        // 由内核在推的那一刻盖章（报文里没有来源字段，也不必有）。
+        let Ok((n, from)) = hole.pull_timeout_from(&mut buf, usize::MAX) else {
+            exit_with(E_DESK)
+        };
+        // 长度不对 = 对面送来的不是一个名字：照说一句、照答一句（不猜内容）。
+        let who = (n == env::wire::NAME_LEN)
+            .then(|| env::Name::from_bytes(buf).ok())
+            .flatten();
+        let who = who.as_ref().map(env::Name::as_str).unwrap_or("?");
+        say(&alloc::format!("plic: desk {who}"));
+        // 回信孔：本端表里 `owner` 是这位客人的那一枚（副本共享 owner、转手不变）。
+        let Some(back) = opened_for(from) else {
+            continue;
+        };
+        if mail::HolePie::from_token(back).push(our.bytes()).is_err() {
+            exit_with(E_DESK)
+        }
+    }
+}
+
+/// 本端表里**这位的那一枚孔**（客人借过来的回信孔）：`owner == who`，取最后登记的那一枚。
+///
+/// 判据落在 `owner` 上（副本共享同一事实、转手不变）：本端自己铸的每一枚 owner 都是本端，
+/// 客人交进来的那一枚 owner 是客人——**编号比不出来，这一格比得出来**。
+fn opened_for(who: env::TaskId) -> Option<usize> {
+    let mut index = 0usize;
+    let mut found = None;
+    loop {
+        let (token, _perm, _vestor) = mail::collect(index).ok()?;
+        // 越界哨兵：这一遍扫完了。
+        if token.get() == 0 {
+            return found;
+        }
+        index += 1;
+        if mail::reserve(token).ok().map(|(_v, owner)| owner) == Some(who) {
+            found = Some(token.get());
+        }
+    }
 }
 
 /// 板上一趟的读数（`None` = 路都没装上）。
@@ -293,21 +411,20 @@ struct BoardTrip {
 ///   自检                     → 往授进来的那一枚推一个字节，从**本域那一枚**读回来
 /// ```
 ///
-/// 自检那一步验的是"板那句话的实质"：**授进来的入口指回原物**（副本共享同一扇门），
-/// 而不是"另一个长得像的孔"——它没通，板就只是个记名字的本子。第四格返**通得过自检的
-/// 那一枚**（`None` = 没取到 / 取到的推不回去），它必须**不是** `entry` 本身。
-fn board_trip(sire: env::TaskId) -> Option<BoardTrip> {
-    // 本域的服务入口：谁想跟本域说话，就往这一枚里推；本域从它读。
-    let entry = PieToken::new(mail::unseal_hole().ok()?);
-    // 板那条路是**另一座码头**（那只一问一答；`records` 那座是配给）。
-    let link = board::open(sire, QUAY_MS).ok()?;
+/// 第四格是**板授进来的那一枚**（客侧按 `vestor` 认，见 `board::take`）：本域查到的是不是
+/// 自己那一枚，由它证明——`None` = 板答了"查到了"却没把入口交进来。
+///
+/// **推读自检已经拆掉**：本域的服务入口由待客线程读（两个方向各一枚孔），本线程推一句
+/// 进去只会被它读走——"授进来的指回原物"这件事改由**真客人**（`guest`）走一遍，那比自问
+/// 自答结实。
+fn board_trip(link: &Quay, entry: PieToken) -> Option<BoardTrip> {
     let name = env::Name::new(SERVICE).ok()?;
     let absent = env::Name::new(NOBODY).ok()?;
     let none = PieToken::new(0);
-    let reg = board::ask(&link, bcall::REGISTER, name, entry, QUAY_MS).ok()?;
-    let miss = board::ask(&link, bcall::LOOKUP, absent, none, QUAY_MS).ok()?;
-    let hit = board::ask(&link, bcall::LOOKUP, name, none, QUAY_MS).ok()?;
-    let grant = board::take(&link).filter(|granted| ping_back(*granted, entry));
+    let reg = board::ask(link, bcall::REGISTER, name, entry, QUAY_MS).ok()?;
+    let miss = board::ask(link, bcall::LOOKUP, absent, none, QUAY_MS).ok()?;
+    let hit = board::ask(link, bcall::LOOKUP, name, none, QUAY_MS).ok()?;
+    let grant = board::take(link);
     Some(BoardTrip {
         entry,
         reg,
@@ -315,16 +432,6 @@ fn board_trip(sire: env::TaskId) -> Option<BoardTrip> {
         hit,
         grant,
     })
-}
-
-/// 往"板授进来的那一枚"推一个字节，再从**本域那一枚**读回来——同一扇门才算通。
-fn ping_back(granted: PieToken, mine: PieToken) -> bool {
-    let wrote = mail::HolePie::from_token(granted.get())
-        .push(&[PING])
-        .is_ok();
-    let mut buf = [0u8; 1];
-    let read = mail::HolePie::from_token(mine.get()).pull_timeout(&mut buf, QUAY_MS);
-    wrote && matches!(read, Ok(1)) && buf == [PING]
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。

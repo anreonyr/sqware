@@ -29,6 +29,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-guest"
+path = "src/bin/user/guest.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-plic"
 path = "src/bin/supervisor/plic/main.rs"
 test = false

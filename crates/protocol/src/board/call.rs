@@ -8,7 +8,7 @@
 //! **转发一次**、把"不在我表里"翻成 [`None`]、把错误码翻成"没成"。
 //!
 //! 板服务（板侧待客 / 客侧问一句）住在 `programs/src/bin/supervisor/board.rs`：
-//! 本模块只给**两边都要用的那几手**（盖章 / 探活 / 授出 / 放下 / 帧）。
+//! 本模块只给**两边都要用的那几手**（认来源 / 认出这扇门是谁的 / 授出 / 收下 / 帧）。
 
 use env::{Name, PieToken, TaskId};
 
@@ -17,16 +17,7 @@ use super::core::{Board, Fail, Free, Probe};
 use crate::session::{Claim, Pier};
 
 use runtime::core::port::{self, Access, Policy};
-use runtime::core::unit::self_id;
 use runtime::env::mail;
-
-/// 持板者认的调用方身份：**内核在 Push 那一刻盖章**的那个 id。
-///
-/// 不看报文里任何字段——门闩号是全局连续小整数，猜中别人的号就能冒充。
-/// `TaskId(0)` = 没有上下文（内核侧的越界哨兵，与 `UnitCall::SelfId` 同值）。
-pub fn me() -> TaskId {
-    self_id().unwrap_or(TaskId::new(0))
-}
 
 /// 活性：这枚入口还在我的表里吗？**谁授给我的**？
 ///

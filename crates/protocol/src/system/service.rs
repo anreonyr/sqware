@@ -362,11 +362,10 @@ pub fn ready(
     // 它会交回一枚孔 ⇒ 那件事归会话：`claim` 把它认下来（凑齐了才算）。
     if let Some(q) = quay {
         // 它会交回孔、也会自己装一条 ⇒ 那件事归会话：`claim` 等**它装上的每条都配齐**。
-        // 认领的对端由会话自己记着（那是"建它那个域的那枚线程"，不是 `rep`）。
-        let Some(peer) = q.peer() else {
-            return Err(Fail::NotReady);
-        };
-        if q.claim(peer, ms).is_ok() {
+        // 认领的是**它**交上来的那一批（`owner` = 这个孩子）：孔交给的是"生我者"（建域
+        // 那一枚线程），而**"谁的孔"与"我认的对端"是两件事**——见 `Quay::claim` 的正文。
+        q.peer().ok_or(Fail::Unknown)?;
+        if q.claim(rep, ms).is_ok() {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
