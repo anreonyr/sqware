@@ -13,6 +13,7 @@
 use env::{Name, PieToken, TaskId};
 
 use super::core::{Board, Fail, Free, Probe};
+use super::desk::Desk;
 
 use crate::session::{Claim, Pier};
 
@@ -37,10 +38,8 @@ fn probe(entry: PieToken) -> Option<TaskId> {
 
 /// 这扇门**本身是谁的**（`Reserve` 的第二格 `owner`：副本共享同一事实，转手不变）。
 ///
-/// 板这一层有两处要用它，都是"认出一枚孔"：
-///
-/// - 客侧 [`take`]：板授进来的那一枚，`owner` 是**客人自己**（那扇门是客人开的）；
-/// - 客侧 [`peer_of`]：写端那一枚的 `owner` 就是**板**（板开的扇门）。
+/// 板那一侧认孔的两处都读它，且都问同一句——"**是不是这位客人的**"：答话路（客人开的那扇
+/// 门）与问话孔（客人铸的那一枚）。分开这两处的是**另外半格**：来源位（谁交给板的）。
 pub fn opened_by(hole: PieToken) -> Option<TaskId> {
     match mail::reserve(hole) {
         Ok((_vestor, owner)) if owner.get() != 0 => Some(owner),
@@ -62,13 +61,12 @@ pub const fn board() -> Board {
     Board::new(probe, free)
 }
 
-/// 板是谁：**那枚写端是谁开的**（[`opened_by`] 的 `owner`）。
+/// 立一本**板侧的账**（一位客人一格：谁 / 问 / 答）。与 [`board`] 同一个注入（探活那一格）。
 ///
-/// 客人手里"板在哪"这件事**不能从泊位那一格读出来**——那一格是 `sire`（客人只认得
-/// 生我者，孔也是交给它的，见 `session` 事实 1）；板是生我者**转授**过去的那一位。
-/// 故答案只能从孔本身读：写端是板开的那扇门，`owner` 就是板。
-pub fn peer_of(pier: &Pier) -> Option<TaskId> {
-    opened_by(pier.at_peer())
+/// `const` 同理：账只有一本，住在板线程（`supervisor/board.rs`）。
+pub const fn desk() -> Desk {
+    let probe: Probe = probe;
+    Desk::new(probe)
 }
 
 /// 挂上：把调用方手里那枚入口**交给持板者**（`Accord` 一份副本），返"种在持板者表里"的号。

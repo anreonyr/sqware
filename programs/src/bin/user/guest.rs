@@ -7,7 +7,7 @@
 //! （`LOOKUP` 把入口**经会话**授进本域表里，不从报文里来）。
 //!
 //! ```text
-//!   1  板那条路：pair(板) —— 本端那一枚孔交给生我者，它再转授给板线程
+//!   1  板那条路：pair(板) —— 本端那一枚孔交给生我者（装答话路）；另铸一枚**问话孔**给板
 //!   2  REGISTER "guest"：本域的服务入口经会话交给板（于是本域也能被按名字找到）
 //!   3  LOOKUP   "plic" ：板上问一句，入口从会话里进本域表（找不到就再问，有界）
 //!   4  借一枚**回信孔**给它、把 32 字节（**本域的名字** = "谁在敲门"）推进它的入口，
@@ -93,8 +93,14 @@ extern "C" fn main() -> ! {
     // ——它要求本端表**干净**（session 事实 9）。先铸了入口，`pair` 就会偶尔把入口那一枚
     // 认成板那一枚，于是板收到一枚它解不开的帧、答 `BAD`（实测：约十次里一次
     // `guest: reg=5 lookup=5`）。`plic` 的 `boot()` 也是这个次序。
-    let Ok(link) = board::open(sire, MS) else {
+    let Ok((link, board)) = board::open(sire, MS) else {
         bail("guest: no board link")
+    };
+    // 问话孔：本端铸、给板读（本端自窄到只写）——问话从它走，答话走上面那条板路。
+    // `board` = 板路上先到的那一格（**答话的是谁**）：孔只在铸它的表里念得出来，故这个号
+    // 是"板收得到问话"的前提。
+    let Ok(talk) = board::ask_hole(board) else {
+        bail("guest: no ask hole")
     };
     // 本域的服务入口：别人按名字找到本域之后往它说话，本域从它读。它也是要交给板的那一枚。
     let Ok(entry) = mail::unseal_hole() else {
@@ -109,12 +115,12 @@ extern "C" fn main() -> ! {
     let none = PieToken::NONE;
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"guest 在哪"）。
-    let reg = board::ask(&link, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);
+    let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);
 
     // 二、问一句名字。**找不到就再问**，有界：本域可能比 `plic` 先起（板上没有"装配期"）。
     let mut left = MS;
     let lookup = loop {
-        let code = board::ask(&link, bcall::LOOKUP, want, none, MS).unwrap_or(BAD);
+        let code = board::ask(talk, &link, board, bcall::LOOKUP, want, none, MS).unwrap_or(BAD);
         if code != bcall::UNKNOWN || left == 0 {
             break code;
         }
@@ -123,7 +129,7 @@ extern "C" fn main() -> ! {
     };
 
     // 三、查到的那一枚（板经会话授进本域表里）：借一枚回信孔过去、说一句、把答话读回来。
-    let (at, answer) = match board::take(&link) {
+    let (at, answer) = match board::take(&link, board) {
         Some(at) => (at, call(at, me)),
         // 查到了却没在表里认出那一枚：也算没走通（读数里的 `entry=0`）。
         None => (none, None),

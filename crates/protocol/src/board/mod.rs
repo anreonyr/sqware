@@ -88,6 +88,7 @@
 //!
 //! ```text
 //!   core.rs  板 / 牌子 / 失败域 / 三个动作 + 扫牌      —— 不碰内核（判据可机械检查）
+//!   desk.rs  板侧那本账：一位客人一格（谁 / 问 / 答）   —— 同上，判活靠注入
 //!   call.rs  盖章 / 探活 / 授出 / 放下 / 一问一答       —— 一个判断都没有
 //! ```
 //!
@@ -142,5 +143,7 @@
 
 pub mod call;
 pub mod core;
+pub mod desk;
 
 pub use core::{Board, Fail, Free, Probe, Sign};
+pub use desk::{Desk, Guest};

@@ -70,8 +70,8 @@ mod pairing;
 mod plic;
 mod uart;
 
-use env::PieToken;
 use env::wire::PAIR_LEN;
+use env::{PieToken, TaskId};
 use protocol::board::call as bcall;
 use protocol::session::Quay;
 use runtime::core::bell::Bell;
@@ -155,11 +155,6 @@ extern "C" fn main() -> ! {
     // 测试源：把"收到字节就拉线"打开。**必须在 enable 之后**——控制器先就位，线再开闸。
     // 读走字节的仍是内核的调试面（本域只动中断使能这一位），故敲键不会丢给谁。
     uart::arm_rx(src_dock.view());
-    say(&alloc::format!(
-        "plic: ready ({} lines, ctx {})",
-        lines.len(),
-        plic.context()
-    ));
 
     // 循环：等铃 → 领到空 → 逐条静音 + 结 → 应铃 → 到点把静音的放回去。
     //
@@ -199,11 +194,7 @@ extern "C" fn main() -> ! {
                 // 应铃：清掉那一位并让内核**立即**重开本 hart 的闸门。
                 let _ = bell.hush();
                 total += got;
-                if total <= LOG_FIRST || total.is_multiple_of(LOG_EVERY) {
-                    say(&alloc::format!(
-                        "plic: irq #{total} (+{got}) line {first_line}"
-                    ));
-                }
+                if total <= LOG_FIRST || total.is_multiple_of(LOG_EVERY) {}
             }
             // 到点：只把**真被静音过**的那几条放回去，放完就清零 ⇒ 下一轮如果没人再响，
             // 本域回到永久挂起。
@@ -239,14 +230,6 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
     // 2. 收配给：父域按同一张需求单推来记录，**按 `Slot` 归位**（不数第几条）。
     let mut buf = [0u8; CAP];
     let up = quay.find(channel).ok_or(E_UP)?;
-    say(&alloc::format!(
-        "plic: id={} sire={:?} peer={:?} hole={} at_peer={}",
-        utask::self_id().map(|t| t.get()).unwrap_or(0),
-        utask::sire().map(|t| t.get()).ok(),
-        up.peer().get(),
-        up.hole().get(),
-        up.at_peer().get()
-    ));
     let n = up.pull(&mut buf, QUAY_MS).map_err(|_| E_GRANT)?;
     say(&alloc::format!("plic: got {n}"));
     let mut got: [Option<PieToken>; needs::PLIC.len()] = [None; needs::PLIC.len()];
@@ -264,6 +247,8 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
 
     // 4. 板那条路：**趁本端表里还是干净的**先装上——`pair` 认的是"我没开过的那一枚"，
     //    而后面那一步（待客线程把入口副本交回来）也会往本端表里放一枚外来孔。
+    //    返两样：本端这座码头 + **板线程的号**（板路上先到的那一格）：孔只在铸它的表里
+    //    念得出来，故交问话孔、交入口都得先叫得出板是谁。
     let link = board::open(sire, QUAY_MS).ok();
 
     // 5. 待客线程 + 服务入口：入口由待客线程铸（谁守那扇门谁读它），副本本域登记。
@@ -274,8 +259,9 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
     let entry = start_desk(me);
 
     // 6. 板上一趟：挂上这一枚入口、再查回来验一遍。
+    let (no_link, no_desk) = (link.is_none(), entry.is_none());
     let trip = match (link, entry) {
-        (Some(link), Some(entry)) => board_trip(&link, entry),
+        (Some((link, board)), Some(entry)) => board_trip(&link, board, entry),
         _ => None,
     };
     match &trip {
@@ -287,7 +273,13 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
             t.entry.get(),
             t.grant.map(|g| g.get()).unwrap_or(0)
         )),
-        None => say("plic: board: no link"),
+        None => say(if no_link {
+            "plic: board: no link"
+        } else if no_desk {
+            "plic: board: no desk"
+        } else {
+            "plic: board: trip"
+        }),
     }
     Ok(out)
 }
@@ -413,14 +405,26 @@ struct BoardTrip {
 /// **推读自检已经拆掉**：本域的服务入口由待客线程读（两个方向各一枚孔），本线程推一句
 /// 进去只会被它读走——"授进来的指回原物"这件事改由**真客人**（`guest`）走一遍，那比自问
 /// 自答结实。
-fn board_trip(link: &Quay, entry: PieToken) -> Option<BoardTrip> {
+fn ns() -> u64 {
+    runtime::env::chrono::clock()
+        .map(|(s, n)| s.saturating_mul(1_000_000_000).saturating_add(n))
+        .unwrap_or(0)
+}
+
+fn ms_since(t: u64) -> u64 {
+    ns().saturating_sub(t) / 1_000_000
+}
+
+fn board_trip(link: &Quay, board: TaskId, entry: PieToken) -> Option<BoardTrip> {
+    // 问话孔：本端铸、给板读（本端自窄到只写）；答话仍走这条板路。
+    let talk = board::ask_hole(board).ok()?;
     let name = env::Name::new(SERVICE).ok()?;
     let absent = env::Name::new(NOBODY).ok()?;
     let none = PieToken::NONE;
-    let reg = board::ask(link, bcall::REGISTER, name, entry, QUAY_MS).ok()?;
-    let miss = board::ask(link, bcall::LOOKUP, absent, none, QUAY_MS).ok()?;
-    let hit = board::ask(link, bcall::LOOKUP, name, none, QUAY_MS).ok()?;
-    let grant = board::take(link);
+    let reg = board::ask(talk, link, board, bcall::REGISTER, name, entry, QUAY_MS).ok()?;
+    let miss = board::ask(talk, link, board, bcall::LOOKUP, absent, none, QUAY_MS).ok()?;
+    let hit = board::ask(talk, link, board, bcall::LOOKUP, name, none, QUAY_MS).ok()?;
+    let grant = board::take(link, board);
     Some(BoardTrip {
         entry,
         reg,

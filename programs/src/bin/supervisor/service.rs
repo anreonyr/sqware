@@ -151,7 +151,9 @@ fn start(
         step(p, "no self id");
         p.died
     })?;
-    let mut quay = Quay::open(me);
+    // 这座码头的**对端就是客人**（`rep`）——与 `board.rs` 的 `Quay::open(client)` 对称：
+    // 两侧各按对方的身份开码头，`seat` 那一枚才发得到它手里，谁都不必猜。
+    let mut quay = Quay::open(rep);
     for ch in p.channels.iter() {
         let ch = Name::new(ch).ok().ok_or(E_MANIFEST)?;
         quay.seat(ch, READY_MS).map_err(|_| {
