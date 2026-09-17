@@ -110,13 +110,21 @@ pub(super) fn pull_own(hole: PieToken, buf: &mut [u8], ms: usize) -> Result<usiz
         .map_err(|_| ())
 }
 
-/// 让出处理器。认领是**探询**：表里多了一枚孔不是内核的事件，挂不起。
-pub(super) fn nap(ms: usize) {
-    let _ = runtime::env::room::sleep(core::time::Duration::from_millis(ms as u64));
+/// 等"我自己这张权限表里落进一枚"（`UnitCall::Fall`）。
+///
+/// 无参数：等的是本端这张表（键由内核从调用者推出来，伪造不出"你的表变了"）。
+/// `ms` 三态同全篇：`0` = 取一次信标、当场答；`usize::MAX` = 永久。
+/// `false` = 自上次取走以来没落过表（期限到）——**醒来自己扫表分辨**。
+pub(super) fn fall(ms: usize) -> bool {
+    runtime::env::unit::fall(ms).unwrap_or(false)
 }
 
-/// 探询的步长（毫秒）。
-pub(super) const POLL_MS: usize = 1;
+/// 单调时钟读数（纳秒）——有界等待按 deadline 循环用它（不依赖 timebase 频率）。
+pub(super) fn now_ns() -> u64 {
+    runtime::env::chrono::clock()
+        .map(|(secs, nanos)| secs.saturating_mul(1_000_000_000).saturating_add(nanos))
+        .unwrap_or(0)
+}
 
 /// [`core::Quay::unseat`](super::core::Quay::unseat) 过线的那一句话：一个字节。
 ///

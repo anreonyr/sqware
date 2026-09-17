@@ -82,7 +82,7 @@ pub(crate) use handoff::Handoff;
 pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;
 pub(crate) use wait::site::WakeKey;
-pub(crate) use wait::{join, park, redeem, wait, wake, wipe, wipe_space};
+pub(crate) use wait::{fall, join, park, redeem, wait, wake, wipe, wipe_space};
 
 // ── 操作：回收 ──
 

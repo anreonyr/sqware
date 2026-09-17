@@ -39,6 +39,11 @@ pub enum WakeKey {
     Nole { id: usize },
     /// 目标任务回收（`UnitCall::Join`）。
     Task { id: usize },
+    /// 我这枚任务的**权限表**落进一枚新孔（`Accord` 的收方那一侧）。
+    ///
+    /// 信标是**一次事件，不是计数**：落了三枚也只答一次（醒来自己扫表）。投信的只有
+    /// 内核（`gate::accord` 落表之后）——用户态没有投这一族的动词，伪造不出"你的表变了"。
+    Pies { task: usize },
     /// 无人投信——只有期限会响（`RoomCall::Park`）。
     ///
     /// 键就是那个睡眠者本人：park 没有信号源，能唤醒它的只有它自己那次到点登记。
@@ -60,6 +65,7 @@ impl WakeKey {
             WakeKey::Nole { id } => (id as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9),
             WakeKey::Task { id } => (id as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
             WakeKey::Alarm { task } => (task as u64).wrapping_mul(0xA24B_AED4_963E_E407),
+            WakeKey::Pies { task } => (task as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F),
         }
     }
 }

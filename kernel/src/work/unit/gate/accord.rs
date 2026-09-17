@@ -28,6 +28,7 @@
 use alloc::sync::Weak;
 
 use super::pie::{AnyPie, GateError, Heir, Need, Permission, new_pie};
+use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
 /// 授出 / 交出：以 `caller` 表里的 `src` 为源，造一枚 `subset` 的子枚给 `dst`。
@@ -100,6 +101,9 @@ pub(crate) fn accord(
     }
     kids.push(granted);
     drop(kids);
+    // 落表之后**在锁外**投一次信（站点表与 `Task.pies` 同为 L3，绝不嵌套）：
+    // 收方若正等着"我表里落一枚"（`UnitCall::Fall`），这一刻被叫醒。
+    let _ = messenger::wake(WakeKey::Pies { task: target.ident.id }, &target.life());
     Ok(token)
 }
 

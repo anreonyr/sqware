@@ -299,21 +299,26 @@ impl Quay {
             return Err(Claim::Partial);
         }
 
-        let mut left = ms;
+        // **先扫再等**（这一序不能反）：信标是一次事件，先扫过一遍才不会漏掉
+        // "等之前就已经落进来"的那一枚。
+        let left = ms;
+        let deadline = (left != usize::MAX).then(|| call::now_ns().saturating_add(left as u64 * 1_000_000));
         loop {
             self.scan(|h| h.owner == Some(from))?;
             if self.ready() {
                 return Ok(());
             }
-            if left == 0 {
+            let remain = remain_ns(deadline);
+            if left == 0 || remain == 0 {
                 return Err(if self.waiting() == self.quota() {
                     Claim::Timeout
                 } else {
                     Claim::Partial
                 });
             }
-            call::nap(call::POLL_MS);
-            left = left.saturating_sub(call::POLL_MS);
+            // 有界等（`usize::MAX` = 永久）。返回**只是提示**（`wake` 的正文）：真醒还是
+            // 期限到，由下一轮的扫表说了算——故这里不接它的值。
+            let _ = call::fall(remain);
         }
     }
 
@@ -356,7 +361,9 @@ impl Quay {
             return Err(Claim::NoPeer);
         }
         let me = call::me();
-        let mut left = ms;
+        // **先扫再等**，同 `claim`。
+        let left = ms;
+        let deadline = (left != usize::MAX).then(|| call::now_ns().saturating_add(left as u64 * 1_000_000));
         loop {
             // 判据是"**不是本端开的**"，不是"是谁开的"：这一档的对端**可能是第三方**
             // ——板那条路就是（客人的孔由装配者转授给板线程，把写端交回来的是板线程，
@@ -367,11 +374,10 @@ impl Quay {
             if self.find(want).is_some_and(Pier::paired) {
                 return self.find(want).ok_or(Claim::Partial);
             }
-            if left == 0 {
+            if left == 0 || remain_ns(deadline) == 0 {
                 return Err(Claim::Timeout);
             }
-            call::nap(call::POLL_MS);
-            left = left.saturating_sub(call::POLL_MS);
+            let _ = call::fall(remain_ns(deadline));
         }
     }
 
@@ -510,7 +516,7 @@ impl Quay {
             }
             Ok(())
         })?;
-        // **一枚都没等到就不动**：`claim` 是循环（`POLL_MS` 一转），下一转再扫。早绑一次
+        // **一枚都没等到就不动**：`claim` 是循环（`call::fall` 一等），下一转再扫。早绑一次
         // 就钉在自己的孔上——那 160 字节再也到不了对端（实测症状：本端 `post` 返回成功，
         // 对端 `pull` 超时）。
         if n == 0 {
@@ -556,5 +562,13 @@ fn map_seat(seat: Seat) -> Claim {
         Seat::NoHole => Claim::Nameless,
         Seat::NoSeed => Claim::NoPeer,
         Seat::Full => Claim::Partial,
+    }
+}
+
+/// 死线还剩多少纳秒（`None` = 永久）——`usize::MAX` 的等待不设界。
+fn remain_ns(deadline: Option<u64>) -> usize {
+    match deadline {
+        Some(at) => at.saturating_sub(call::now_ns()).min(usize::MAX as u64) as usize,
+        None => usize::MAX,
     }
 }

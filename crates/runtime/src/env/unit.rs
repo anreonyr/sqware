@@ -1,5 +1,5 @@
 //! Unit 域：`UnitCall::*` 转发（`Build` 装域 / `Spawn` 产线程 / `Hatch` 放行 /
-//! `Join` 等结束 + 血缘观察）。
+//! `Join` 等结束 / `Fall` 等落表 + 血缘观察）。
 
 use env::{EnvResult, ProgramKind, TaskId, TeamId, UnitCall, UnitCallRet, VirtAddr};
 
@@ -83,6 +83,15 @@ pub fn join(task: TaskId, millis: usize) -> EnvResult<bool> {
     let r = UnitCall::Join { task, millis }.call()?;
     match r {
         UnitCallRet::Join(b) => Ok(b),
+        _ => unreachable!(),
+    }
+}
+
+/// 等"我自己这张权限表里落进一枚"（`millis` 三态同全树）。
+pub fn fall(millis: usize) -> EnvResult<bool> {
+    let r = UnitCall::Fall { millis }.call()?;
+    match r {
+        UnitCallRet::Fall(b) => Ok(b),
         _ => unreachable!(),
     }
 }

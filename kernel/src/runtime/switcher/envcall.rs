@@ -549,6 +549,32 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Err(e) => return ret_err(frame, e),
             }
         }
+        EnvCall::Unit(UnitCall::Fall { millis }) => {
+            let dur = if millis == usize::MAX {
+                Duration::MAX
+            } else {
+                Duration::from_millis(millis as u64)
+            };
+            // **只等"我自己这张表"**：键由内核从调用者推出来，故这里没有参数、
+            // 也就没有伪造面（同 `SelfId` / `Sire` 那一路）。
+            let Some(me) = current().running_task() else {
+                return ret_err(frame, GateError::Busy);
+            };
+            let mine = TaskLife {
+                id: me.ident.id,
+                life: me.life(),
+            };
+            // 挂起后恢复读到的 a0 = 挂起前预置值 ⇒ 预置 0（没落过）；当场判定再改写。
+            frame.gpr.set_x(Gprs::A0, 0);
+            drop(ident);
+            // 跨挂起不得持强引用（同 `Join` 那条纪律）：只留那份弱引用。
+            drop(me);
+            match messenger::fall(mine, dur) {
+                Ok(Handoff::Resume(landed)) => frame.gpr.set_x(Gprs::A0, landed as usize),
+                Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
+                Err(e) => return ret_err(frame, e),
+            }
+        }
         EnvCall::Control(ControlCall::Backtrace { buf, frames }) => {
             // Normal 任务自诊断回溯：采样当前任务的栈（`user_satp` 根表，零锁不触缺页），
             // 把 pc 数组经 mail::copy_out 写进用户 buf。buf 非法（未映射/不可写）→

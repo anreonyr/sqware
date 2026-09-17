@@ -251,6 +251,23 @@ pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>
 /// 置位）。**非法 id 也在边界判掉**（名册点名无此 id ⇒ `Denied`）——判活只此一条来源，
 /// 本函数因此**没有失败支**：从前那个 `Err(Denied)` 需要 `target_dead ∧ ¬allocated`
 /// 同时成立，而两条来路都蕴含 `allocated`，故它**曾经永远不可达**。
+/// 等"**我自己这张权限表**里落进一枚"（`UnitCall::Fall` 的落点）。
+///
+/// `me` 必须是**调用者自己**的 `TaskLife`——适配层从 `current().running_task()` 取，
+/// 不由参数给：等的是谁的表现在根本没有填的地方。
+///
+/// `Resume(true)` = 取到了信标（自上次取走以来落过表）；**不保证"就是我等的那一枚"**
+/// ——醒来自己扫表分辨。与 [`join`] 的唯一差别是 `dur == ZERO` **不特判**：`join` 探的是
+/// 资源状态（重复问答案一样，故不消费），这里探的是**事件位**——问了就是取了，
+/// 不取就会永远答"是"（`block` 第一步的 `take_beacon` 正好是这件事）。
+pub fn fall(me: TaskLife, dur: Duration) -> Result<Handoff<bool>, GateError> {
+    let TaskLife { id, life } = me;
+    match block(WakeKey::Pies { task: id }, life, dur)? {
+        Handoff::Switch(pa) => Ok(Handoff::Switch(pa)),
+        Handoff::Resume(()) => Ok(Handoff::Resume(true)),
+    }
+}
+
 pub fn join(task: TaskLife, reaped: bool, dur: Duration) -> Result<Handoff<bool>, GateError> {
     if reaped {
         return Ok(Handoff::Resume(true));
