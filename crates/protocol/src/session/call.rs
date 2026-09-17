@@ -52,9 +52,7 @@ pub(super) fn drop_local(hole: PieToken) -> Result<(), ()> {
 
 /// 往**对端**那一条泊位说一句话（号是**种在它表里**的那一枚）。
 pub(super) fn post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
-    mail::HolePie::from_token(at_peer)
-        .push(msg)
-        .map_err(|_| ())
+    mail::HolePie::from_token(at_peer).push(msg).map_err(|_| ())
 }
 
 /// 扫我表里的**每一枚**孔，逐枚交给 `f`。

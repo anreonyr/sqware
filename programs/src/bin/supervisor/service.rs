@@ -222,18 +222,8 @@ fn wire(quay: &Quay, p: &Program, boot: &Root, rep: env::TaskId) -> Result<(), (
     // 条数由需求单自己算（`pack` 内部按 `needs::PLIC` 逐条走），本层不抄"要几样"。
     let bytes = match boot.pack(|src, need| {
         let at = match need.kind {
-            Kind::Pole => ship(
-                &PolePie::from_token(src),
-                rep,
-                need.access,
-                need.policy,
-            ),
-            Kind::Nole => ship(
-                &NolePie::from_token(src),
-                rep,
-                need.access,
-                need.policy,
-            ),
+            Kind::Pole => ship(&PolePie::from_token(src), rep, need.access, need.policy),
+            Kind::Nole => ship(&NolePie::from_token(src), rep, need.access, need.policy),
         };
         at.ok().map(|to| to.seed())
     }) {

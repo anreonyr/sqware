@@ -55,12 +55,7 @@ impl FromPair for (usize, TaskId) {
 /// 计数（32 位足够——只用于诊断，不做精确累加上限语义）。
 impl FromPair for (usize, usize, usize, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {
-        (
-            v0 & 0xffff_ffff,
-            v0 >> 32,
-            v1 & 0xffff_ffff,
-            v1 >> 32,
-        )
+        (v0 & 0xffff_ffff, v0 >> 32, v1 & 0xffff_ffff, v1 >> 32)
     }
 }
 

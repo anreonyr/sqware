@@ -134,17 +134,13 @@ extern "C" fn main() -> ! {
     };
 
     // 开图 + 读树：控制器、本域的 context、要接的线。
-    let Ok(plic_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Plic as usize]))
-    else {
+    let Ok(plic_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Plic as usize])) else {
         exit_with(E_OPEN);
     };
-    let Ok(dtb_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Dtb as usize]))
-    else {
+    let Ok(dtb_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Dtb as usize])) else {
         exit_with(E_OPEN);
     };
-    let Ok(src_dock) = Dock::open(PolePie::from_token(
-        slots[needs::Slot::Source as usize],
-    )) else {
+    let Ok(src_dock) = Dock::open(PolePie::from_token(slots[needs::Slot::Source as usize])) else {
         exit_with(E_OPEN);
     };
     let Some((plic, lines)) = Plic::new(plic_dock.view(), dtb_dock.view()) else {

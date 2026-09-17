@@ -41,8 +41,8 @@ use env::HoleDir;
 use crate::work::mail::hole::{self, HoleId, HoleMeta};
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::gate::GateError;
-use core::time::Duration;
 use crate::work::unit::life::Life;
+use core::time::Duration;
 
 /// Tole 的全局身份（自 1 递增、永不复用）。
 ///
@@ -249,7 +249,13 @@ pub(crate) fn seal(meta: &ToleMeta) {
 fn retire(meta: &ToleMeta) {
     let cells = core::mem::take(&mut *meta.cells.lock());
     for c in &cells {
-        messenger::unforward(WakeKey::Hole { hole: c.hole.0, dir: c.dir }, meta.id.0);
+        messenger::unforward(
+            WakeKey::Hole {
+                hole: c.hole.0,
+                dir: c.dir,
+            },
+            meta.id.0,
+        );
     }
     messenger::wipe(key(meta));
 }
@@ -260,7 +266,13 @@ impl Drop for ToleMeta {
     fn drop(&mut self) {
         let cells = core::mem::take(&mut *self.cells.lock());
         for c in &cells {
-            messenger::unforward(WakeKey::Hole { hole: c.hole.0, dir: c.dir }, self.id.0);
+            messenger::unforward(
+                WakeKey::Hole {
+                    hole: c.hole.0,
+                    dir: c.dir,
+                },
+                self.id.0,
+            );
         }
         messenger::wipe(key(self));
     }

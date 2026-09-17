@@ -122,10 +122,7 @@ pub fn wait(token: PieToken, dir: HoleDir, millis: usize) -> EnvResult<bool> {
 
 /// 响铃（门铃专用）：置"有待取之事"并唤醒听者。已响 → `Busy`。
 pub fn ring(token: PieToken) -> EnvResult<()> {
-    let r = MailCall::Ring {
-        token: token,
-    }
-    .call()?;
+    let r = MailCall::Ring { token: token }.call()?;
     match r {
         MailCallRet::Ring(()) => Ok(()),
         _ => unreachable!(),
@@ -134,10 +131,7 @@ pub fn ring(token: PieToken) -> EnvResult<()> {
 
 /// 应铃（门铃专用）：清掉"有待取之事"，内核随即重开本 hart 的中断闸门。
 pub fn hush(token: PieToken) -> EnvResult<()> {
-    let r = MailCall::Hush {
-        token: token,
-    }
-    .call()?;
+    let r = MailCall::Hush { token: token }.call()?;
     match r {
         MailCallRet::Hush(()) => Ok(()),
         _ => unreachable!(),
@@ -149,10 +143,7 @@ pub fn hush(token: PieToken) -> EnvResult<()> {
 /// **两件一起返**：起点与长度是同一段区间的两半，而长度只在内核手里（外来区按
 /// 页界撑开，设备树 `reg` 声明的长度内核不知道）。
 pub fn open(token: PieToken) -> EnvResult<(usize, usize)> {
-    let r = PieCall::Open {
-        token: token,
-    }
-    .call()?;
+    let r = PieCall::Open { token: token }.call()?;
     match r {
         PieCallRet::Open((va, size)) => Ok((va.get(), size)),
         _ => unreachable!(),
@@ -160,10 +151,7 @@ pub fn open(token: PieToken) -> EnvResult<(usize, usize)> {
 }
 
 pub fn shut(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Shut {
-        token: token,
-    }
-    .call()?;
+    let r = PieCall::Shut { token: token }.call()?;
     match r {
         PieCallRet::Shut(()) => Ok(()),
         _ => unreachable!(),
@@ -171,10 +159,7 @@ pub fn shut(token: PieToken) -> EnvResult<()> {
 }
 
 pub fn seal(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Seal {
-        token: token,
-    }
-    .call()?;
+    let r = PieCall::Seal { token: token }.call()?;
     match r {
         PieCallRet::Seal(()) => Ok(()),
         _ => unreachable!(),
@@ -246,10 +231,7 @@ pub fn reserve(token: PieToken) -> EnvResult<(TaskId, TaskId)> {
 
 /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
 pub fn release(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Release {
-        token: token,
-    }
-    .call()?;
+    let r = PieCall::Release { token: token }.call()?;
     match r {
         PieCallRet::Release(()) => Ok(()),
         _ => unreachable!(),

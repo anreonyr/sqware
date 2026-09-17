@@ -302,7 +302,8 @@ impl Quay {
         // **先扫再等**（这一序不能反）：信标是一次事件，先扫过一遍才不会漏掉
         // "等之前就已经落进来"的那一枚。
         let left = ms;
-        let deadline = (left != usize::MAX).then(|| call::now_ns().saturating_add(left as u64 * 1_000_000));
+        let deadline =
+            (left != usize::MAX).then(|| call::now_ns().saturating_add(left as u64 * 1_000_000));
         loop {
             self.scan(|h| h.owner == Some(from))?;
             if self.ready() {
@@ -363,7 +364,8 @@ impl Quay {
         let me = call::me();
         // **先扫再等**，同 `claim`。
         let left = ms;
-        let deadline = (left != usize::MAX).then(|| call::now_ns().saturating_add(left as u64 * 1_000_000));
+        let deadline =
+            (left != usize::MAX).then(|| call::now_ns().saturating_add(left as u64 * 1_000_000));
         loop {
             // 判据是"**不是本端开的**"，不是"是谁开的"：这一档的对端**可能是第三方**
             // ——板那条路就是（客人的孔由装配者转授给板线程，把写端交回来的是板线程，

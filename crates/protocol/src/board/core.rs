@@ -345,15 +345,9 @@ mod tests {
         let _serial = serial();
         let mut b = board();
         gone(1);
-        assert_eq!(
-            b.register(name("console"), tok(1), A),
-            Err(Fail::Denied)
-        );
+        assert_eq!(b.register(name("console"), tok(1), A), Err(Fail::Denied));
         mine(2, B);
-        assert_eq!(
-            b.register(name("console"), tok(2), A),
-            Err(Fail::Denied)
-        );
+        assert_eq!(b.register(name("console"), tok(2), A), Err(Fail::Denied));
         assert_eq!(stand(&mut b, "console", 1, A), Ok(tok(1)));
         assert_eq!(b.lookup(name("console")), Ok(tok(1)));
     }
@@ -364,10 +358,7 @@ mod tests {
         let mut b = board();
         assert_eq!(stand(&mut b, "console", 1, A), Ok(tok(1)));
         mine(2, B);
-        assert_eq!(
-            b.register(name("console"), tok(2), B),
-            Err(Fail::Taken)
-        );
+        assert_eq!(b.register(name("console"), tok(2), B), Err(Fail::Taken));
         assert_eq!(b.unregister(name("console"), B), Err(Fail::Denied));
         assert!(!freed(1));
         assert_eq!(b.unregister(name("console"), A), Ok(()));
