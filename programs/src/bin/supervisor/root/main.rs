@@ -68,5 +68,9 @@ extern "C" fn main() -> ! {
 
     // 4. 等最后一条退场：它一走 ⇒ 本域退出 ⇒ 级联 ⇒ 全部回收 ⇒ 停机。
     service::wait_last(&mut table, last);
+    // 5. **会话的收尾由会话的主人负责**：常驻线程是它起的，也是它收的。本域里那枚
+    //    板线程没有 `Join` 可等（`attach` 里弃权了），故按号点名收掉——同域线程之间
+    //    没有寿命耦合，内核的子域级联收不到它。
+    board::shut();
     service::die(service::E_OK, "root: done")
 }

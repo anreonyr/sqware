@@ -207,6 +207,22 @@ fn host_loop(me: TaskId) {
     }
 }
 
+/// 收尾：把本域那枚常驻板线程**点名收掉**。幂等；没起过就无事。
+///
+/// 会话的收尾由**会话的主人**负责：这枚线程是 root 起的（`attach` 里 `unit::closure`），
+/// 也是 root 收的。`attach` 当时 `drop(node)` 弃权、没有 `Join` 可等，故只能按 `HOST`
+/// 里那个号点名。
+///
+/// 用的是既有动词 [`room::doom`]——它的粒度是**域**（"杀它所属的域连同它的子树"），
+/// 而这枚线程就住在 root 域里，故这一叫收掉的正是 root 自己那个域：**域亡＝成员清零**。
+pub fn shut() {
+    let id = HOST.load(Ordering::Acquire);
+    if id != 0 {
+        let _ = runtime::env::room::doom(TaskId::new(id));
+        HOST.store(0, Ordering::Release);
+    }
+}
+
 /// 板线程的读数：**只在出岔子时说话**（正常一轮什么都不打）。
 fn say(msg: &str) {
     let _ = runtime::env::debug::put(msg);
