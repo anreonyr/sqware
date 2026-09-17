@@ -107,27 +107,38 @@ pub(in super::super) struct Site {
     ///
     /// 定长（[`FWD_MAX`]）：`wake` 没有失败通道，**读这一格必须零分配**；容量账因此
     /// 落在登记侧（`forward` 返 `Result`，`hang` 有失败域）而不是唤醒侧。
+    ///
+    /// **非空即内容**：它是 [`prune`] 判据的第三项——登记本身就得有个落脚处（`Site`
+    /// 是它唯一的容器，没有第二张表）。故「为转发而建」的站点不会当场被收走。
     pub(in super::super) fwd: Fwd,
 }
 
 /// 一个站点最多被几个组转发（见 [`Site::fwd`]）。满了由 `forward` 报错，不静默丢。
 pub(in super::super) const FWD_MAX: usize = 8;
 
-/// 转发格：定长 + `Copy` ⇒ 唤醒侧在锁内**拷出来**即可，不必持两把分片锁。
-#[derive(Clone, Copy)]
+/// 转发格：定长 ⇒ 唤醒侧在锁内**拷出来**（`Clone`，零分配）即可，不必持两把分片锁。
+///
+/// 每一格带**目标的存活单元**：成员推可能**早于**等组的人入 `block`（组站点还不存在），
+/// 那一刻要替它建一枚"只带信标"的站点，而建站点必须有一条寿命边——没有它就只能建出
+/// 一个会被 `prune` 当场删掉的空壳。弱引用不延长寿命，故这一格仍不算寿命纠缠。
+#[derive(Clone)]
 pub(in super::super) struct Fwd {
     ids: [usize; FWD_MAX],
+    lives: [Weak<Life>; FWD_MAX],
     len: usize,
 }
 
 impl Fwd {
-    pub(in super::super) const EMPTY: Self = Self {
-        ids: [0; FWD_MAX],
-        len: 0,
-    };
+    pub(in super::super) fn empty() -> Self {
+        Self {
+            ids: [0; FWD_MAX],
+            lives: core::array::from_fn(|_| Weak::new()),
+            len: 0,
+        }
+    }
 
     /// 登记一个组（幂等）；满了返 `Err`（登记侧有失败域）。
-    pub(in super::super) fn attach(&mut self, tole: usize) -> Result<(), ()> {
+    pub(in super::super) fn attach(&mut self, tole: usize, life: Weak<Life>) -> Result<(), ()> {
         if self.ids[..self.len].contains(&tole) {
             return Ok(());
         }
@@ -135,6 +146,7 @@ impl Fwd {
             return Err(());
         }
         self.ids[self.len] = tole;
+        self.lives[self.len] = life;
         self.len += 1;
         Ok(())
     }
@@ -143,13 +155,27 @@ impl Fwd {
     pub(in super::super) fn detach(&mut self, tole: usize) {
         if let Some(at) = self.ids[..self.len].iter().position(|&i| i == tole) {
             self.ids.copy_within(at + 1..self.len, at);
+            // 弱引用不是 `Copy`：逐格挪（末格显式放掉，免得多留一份弱计数）。
+            for i in at..self.len - 1 {
+                self.lives.swap(i, i + 1);
+            }
+            self.lives[self.len - 1] = Weak::new();
             self.len -= 1;
         }
     }
 
-    /// 拷出当前登记（`Copy`，零分配）。
-    pub(in super::super) fn ids(&self) -> &[usize] {
-        &self.ids[..self.len]
+    /// 一格都没登记？（定长格里 `len == 0`）——[`prune`] 的判据之一：空转发格的站点
+    /// 与"没有转发格"的站点是同一件事。
+    pub(in super::super) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// 拷出当前登记：`(组号, 那一组的存活单元)`。
+    pub(in super::super) fn entries(&self) -> impl Iterator<Item = (usize, &Weak<Life>)> {
+        self.ids[..self.len]
+            .iter()
+            .copied()
+            .zip(self.lives[..self.len].iter())
     }
 }
 
@@ -221,16 +247,25 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
     taken
 }
 
-/// 站点存在的判据：**链非空 ∨ （信标 ∧ 键还活着）**。不成立即删——空壳站点
-/// 没有语义，留着就是 A2 那条「站点永不回收」的老毛病（`park` 每次睡眠都会留一个）。
-/// 前置：已持有该分片的锁。
+/// 站点存在的判据：**链非空 ∨ （（信标 ∨ 转发格非空）∧ 键还活着）**。不成立即删
+/// ——空壳站点没有语义，留着就是 A2 那条「站点永不回收」的老毛病（`park` 每次睡眠
+/// 都会留一个）。前置：已持有该分片的锁。
 ///
-/// 两项的来历：
+/// 三项的来历：
 ///   - **链非空**：有任务挂在这里，站点是它的容器（原判据）；
 ///   - **信标 ∧ 键还活着**：信标（`wake` 在无人在等时置的遗留信号）**只对未来到达
 ///     的等待者有意义**，而未来的等待者只可能来自活着的键——键一死，这枚信标就再也
 ///     无人认领。故 `life` 已死时信标随站点一起作废：**判据从「队列空 ∧ 无信标」
 ///     扩成「… ∨ 键已死」**（A2 的后半），站点寿命＝资源寿命。
+///   - **转发格非空 ∧ 键还活着**：站点同时是**转发登记的落脚处**——`forward` 把「投信
+///     本键时也认醒这些组」写进 `site.fwd`，而那是 `Site` 的字段、没有第二张表。
+///     成员键上「没有等待者、也没有信标」恰恰是**常态**：等组的人等的是**组自己的
+///     键**（`Tole`），从不挂在成员键上 ⇒ 少了这一项，`hang` 刚登记完就被 `forward`
+///     末尾那次 `prune` 当场连站点一起删掉，登记**静默消失**：成员孔此后一投信只落
+///     一枚没人认领的信标，等组的人睡到期限（无限等则永远）。寿命口径与信标同一条：
+///     键一死投信方就不存在了（`try_push` 先判 `alive`），登记随之作废；活着的键上，
+///     登记的寿命由**登记方**管（`unhang` / `Tole` 封印与 `Drop` 逐个 `unforward`），
+///     故这一项不新增任何"站点随运行增长"的漏口——上限是**活着的组 × 挂着的格**。
 ///
 /// 由此 `wipe` 不再留**墓碑**（「此键已死」那张空站点）：键自己会答（死亡 = 资源
 /// 的强引用归零，`Weak::upgrade` 失败；见 [`Life`](crate::work::unit::life)）。
@@ -238,19 +273,22 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
 /// 这个漏口关掉（实测 `tomb` 34 → 0；**反向验证**——把本判据与 `wipe` 的删站点一并
 /// 改回原样——`tomb` 原样回到 34、总数原样回到 34）。
 ///
-/// 站点因此只剩三种形态，审计计数（`messenger::probe` 的 `live`/`tomb`/`orphan`）
+/// 站点因此只剩四种形态，审计计数（`messenger::probe` 的 `live`/`tomb`/`orphan`）
 /// 按它们分列——**名字与判据只有这一处定义**：
 ///   - **活**（链非空）：有任务挂在这里；
 ///   - **墓碑**（链空 **且** 有信标）：信号留着等**未来的**等待者认领。键还活着时
 ///     它有语义（`wake` 的记忆），故本函数**不删**它；键一死即落到下一类；
-///   - **孤儿**（链空 **且** 无信标）：没有任何语义，正是本函数该删的那一类。
+///   - **转站**（链空 **且** 无信标 **且** 转发格非空）：登记留着等**下一次投信**
+///     （见上第三项）。同样只在键还活着时有语义；
+///   - **孤儿**（链空 **且** 无信标 **且** 无转发格）：没有任何语义，正是本函数该删
+///     的那一类。
 ///
 /// 不变式（判据不含挂起中的等待者，故必须为真）：**链非空 ⇒ 键还活着**——能入链
 /// 就意味着 `block` ④ 在锁内读到过「键活着」，而等待链的强持有者就是那份资源。
 pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
     if let Some(site) = sites.get(&key)
         && site.head.is_none()
-        && (!site.pend || Life::dead(&site.life))
+        && (Life::dead(&site.life) || (!site.pend && site.fwd.is_empty()))
     {
         sites.remove(&key);
     }
@@ -267,7 +305,7 @@ impl Site {
             head: None,
             tail: None,
             life: life.clone(),
-            fwd: Fwd::EMPTY,
+            fwd: Fwd::empty(),
         }
     }
 

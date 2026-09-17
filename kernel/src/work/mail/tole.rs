@@ -195,7 +195,7 @@ pub(crate) fn hang(meta: &ToleMeta, hole: &HoleMeta, dir: HoleDir) -> Result<(),
     // **锁外**登记转发（站点表是 L3，与 `cells` 不嵌套）：那一枚孔今后一投信，
     // 也认醒本组。登记不上（站点表/转发格满）⇒ 把刚挂的那一格退回，不留下
     // "挂着却叫不醒"的半截状态。
-    if messenger::forward(hole::key(hole, dir), hole.life(), meta.id.0).is_err() {
+    if messenger::forward(hole::key(hole, dir), hole.life(), meta.id.0, meta.life()).is_err() {
         let mut cells = meta.cells.lock();
         if let Some(at) = cells.iter().position(|c| (c.hole, c.dir) == want) {
             cells.swap_remove(at);

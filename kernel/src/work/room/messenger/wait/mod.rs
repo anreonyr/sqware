@@ -129,7 +129,8 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
                 true
             }
         };
-        // 撤销阻塞那一支没有留下等待者：空壳站点随手删掉。
+        // 撤销阻塞那一支没有留下等待者：空壳站点随手删掉（判据见 `prune`——链空、
+        // 无信标**且无转发登记**才算空壳；只挂着转发的那一类有语义，要留下）。
         prune(&mut sites, key);
         queued
     };
@@ -317,8 +318,8 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
     // `cells()` 快照复核，死的格子自然不在里面），再放行本键自己的等待者。
     let chain = match chain {
         Some(site) => {
-            for id in site.fwd.ids() {
-                knock(WakeKey::Tole { id: *id });
+            for (id, life) in site.fwd.entries() {
+                knock(WakeKey::Tole { id }, life);
             }
             site.head
         }
@@ -326,20 +327,16 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
     };
     rise(Unchain { cur: chain })
 }
-/// 叫醒一个键上的等待者，**不建站点、不置信标**：站点不在 ⇒ 什么都做（返回 0）。
+/// 叫醒一个键上的等待者；**站点不在就替它建一枚只带信标的站点**（寿命边由调用方给）。
 ///
-/// 用在转发那一跳：组站点是由**等组的人**（② `block`）或曾经的信标建起来的，
-/// 这里没有键的存活单元，凭空建一个只会被 `prune` 当场删掉。
+/// 用在转发那一跳。那一跳**不许落空**：成员推可能早于等组的人入 `block`（组站点还
+/// 不存在），此时若什么都不做，这一条唤醒就丢到期限为止——"等 N 个源"的语义当场破掉。
+/// 故这里带上了目标的存活单元：建出来的站点随目标一起作废（`prune` 的既有判据），
+/// 不留墓碑。目标**已经死了**才什么都不做。
 ///
 /// 站点在而队列空 ⇒ 置信标：那是"等待者正在 ①④ 之间飞"的窗口（它在 ④ 会消费掉
-/// 这一位，当场返回去复核），也是本函数**不丢唤醒**的那一半。
-///
-/// # 残余窗口（照实说）
-///
-/// 站点**完全不存在**（等组的人还没走到 ②）时这一跳落空。那一刻投进去的消息不会
-/// 因此丢失——它躺在孔的槽里，等组的人醒来复核时看得到——但**唤醒可能被推迟到期限**。
-/// 故组等待必须有界（调用方按 deadline 循环，同 `Fall`／`join`）。
-fn knock(key: WakeKey) -> usize {
+/// 这一位，当场返回去复核），也是本函数**不丢唤醒**的另一半。
+fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
     let popped = {
         let mut sites = sites(key).lock();
         let popped = match sites.get_mut(&key) {
@@ -350,7 +347,17 @@ fn knock(key: WakeKey) -> usize {
                     None
                 }
             },
-            None => None,
+            // **站点还不存在**（等组的人还没走到 `block`）：替它建一枚**只带信标**的站点。
+            // 这一跳不许落空——成员推早于等待者入 `block` 时若什么都不做，那条唤醒就丢到
+            // 期限为止。寿命边用**目标**的存活单元：目标死了这枚站点随 `prune` 走，不留墓碑。
+            None => {
+                if !Life::dead(life) && sites.try_reserve(1).is_ok() {
+                    let mut site = Site::new(life);
+                    site.pend = true;
+                    sites.insert(key, site);
+                }
+                None
+            }
         };
         prune(&mut sites, key);
         popped
@@ -364,19 +371,34 @@ fn knock(key: WakeKey) -> usize {
 /// 备不出容量返 `Err`——登记侧有失败域，与唤醒侧的无失败通道正好相对）。
 ///
 /// 幂等：重复登记同一个组不叠加（站点满了返 `Err`，由调用方报 `OoM`，不静默丢）。
-pub(crate) fn forward(key: WakeKey, life: Weak<Life>, tole: usize) -> Result<(), ()> {
+///
+/// **建出来的站点不会当场被 `prune` 收走**：`fwd` 自己就是判据的一项（见 [`prune`]
+/// 头注第三项）。这一条不是修辞——成员键上没有等待者、也没有信标是常态（等组的人等
+/// 的是**组自己的键**），少了它，末尾那次 `prune` 会把刚写下的登记连同站点一起删掉，
+/// 而本函数**照样返 `Ok`**：调用方（`tole::hang`）以为登记成功，投信那一侧却再也叫
+/// 不醒这个组（实测：`await_(usize::MAX)` 的板线程永远不醒，同一段代码改成毫秒轮询
+/// 就好——轮询的唤醒来自到点，不经这条转发）。
+pub(crate) fn forward(
+    key: WakeKey,
+    life: Weak<Life>,
+    tole: usize,
+    tole_life: Weak<Life>,
+) -> Result<(), ()> {
     let mut sites = sites(key).lock();
     if !sites.contains_key(&key) {
         sites.try_reserve(1).map_err(|_| ())?;
         sites.insert(key, Site::new(&life));
     }
     let site = sites.get_mut(&key).ok_or(())?;
-    let r = site.fwd.attach(tole);
+    let r = site.fwd.attach(tole, tole_life);
     prune(&mut sites, key);
     r
 }
 
 /// 撤销转发：投信 `key` 时不再认醒组 `tole`；没登记过即无事。站点不在即无事。
+///
+/// 摘掉最后一格之后，那个「只为转发而存在」的站点（链空、无信标）被 `prune` 当场
+/// 收走——登记的寿命与站点的寿命因此精确对齐，不留"空转发"的壳。
 pub(crate) fn unforward(key: WakeKey, tole: usize) {
     let mut sites = sites(key).lock();
     if let Some(site) = sites.get_mut(&key) {
@@ -441,7 +463,7 @@ pub(crate) fn wipe_space(space: usize) -> usize {
 /// （`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环，见
 /// `docs/dispatch.md` §11.4）。
 pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
-    let mut fwd = Fwd::EMPTY;
+    let mut fwd = Fwd::empty();
     let popped = {
         let mut sites = sites(key).lock();
         if Life::dead(life) {
@@ -471,15 +493,14 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
             }
             // **转发格拷出来**（`Fwd` 是定长 `Copy`）：投信本键时也要叫醒那些组，
             // 但拿别的分片锁必须在放开本片之后（逐片取放，绝不嵌套）。
-            fwd = sites.get(&key).map_or(Fwd::EMPTY, |s| s.fwd);
+            fwd = sites.get(&key).map_or_else(Fwd::empty, |s| s.fwd.clone());
             prune(&mut sites, key);
             popped
         }
     };
-    // 叫醒转发目标（组站点）：站点不在就什么都不做——它们是"有没有人在等组"的答案，
-    // 而不是需要在这里建出来的东西（没有键的存活单元可用，建出来只会被 prune 删掉）。
-    for id in fwd.ids() {
-        knock(WakeKey::Tole { id: *id });
+    // 叫醒转发目标（组站点）：**不许落空**——站点不在就替它建一枚只带信标的（见 `knock`）。
+    for (id, life) in fwd.entries() {
+        knock(WakeKey::Tole { id }, life);
     }
     let Some(mut task) = popped else { return false };
     // 票在摘链那一刻从载荷里读（持分片锁时读得到；见 `Task::blocked_ticket`）。
