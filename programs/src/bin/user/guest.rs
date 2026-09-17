@@ -7,7 +7,8 @@
 //! （`LOOKUP` 把入口**经会话**授进本域表里，不从报文里来）。
 //!
 //! ```text
-//!   1  板那条路：pair(板) —— 本端那一枚孔交给生我者（装答话路）；另铸一枚**问话孔**给板
+//!   1  板那条路：seat(板) + claim(生我者, 板) —— 本端那一枚孔交给生我者（装答话路）；
+//!      另铸一枚**问话孔**给板
 //!   2  REGISTER "guest"：本域的服务入口经会话交给板（于是本域也能被按名字找到）
 //!   3  LOOKUP   "plic" ：板上问一句，入口从会话里进本域表（找不到就再问，有界）
 //!   4  借一枚**回信孔**给它、把 32 字节（**本域的名字** = "谁在敲门"）推进它的入口，
@@ -34,6 +35,8 @@
 //!
 //! 对端凭什么知道答话该往哪儿推：**内核在推的那一刻盖的发送者戳**——它按"我表里
 //! `owner` 是这位客人的那一枚"找（副本共享 `owner`）。故报文里不必带号、也不必带名字。
+//! 而**同一来源的多枚孔**（本域的服务入口、问话孔、回信孔）靠**记号**分开：每铸一枚都
+//! 刻上它那条路的用途名（`entry` / `ask` / `back`）。
 //!
 //! # 特权级由清单定
 //!
@@ -87,12 +90,10 @@ extern "C" fn main() -> ! {
     let Ok(sire) = utask::sire() else {
         bail("guest: no sire")
     };
-    // 板那条路：一问一答那一档（孔交给生我者，它再转授给板线程）。
+    // 板那条路：本端装一条、认下生我者那一枚（孔交给生我者，它再转授给板线程）。
     //
-    // **必须先于铸入口**：`board::open` 走 `pair`，而 `pair` 的判据是"不是我开的那一枚"
-    // ——它要求本端表**干净**（session 事实 9）。先铸了入口，`pair` 就会偶尔把入口那一枚
-    // 认成板那一枚，于是板收到一枚它解不开的帧、答 `BAD`（实测：约十次里一次
-    // `guest: reg=5 lookup=5`）。`plic` 的 `boot()` 也是这个次序。
+    // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
+    // ——牌子这一格只认得"entry"那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
     let Ok((link, board)) = board::open(sire, MS) else {
         bail("guest: no board link")
     };
@@ -102,8 +103,9 @@ extern "C" fn main() -> ! {
     let Ok(talk) = board::ask_hole(board) else {
         bail("guest: no ask hole")
     };
-    // 本域的服务入口：别人按名字找到本域之后往它说话，本域从它读。它也是要交给板的那一枚。
-    let Ok(entry) = mail::unseal_hole() else {
+    // 本域的服务入口：别人按名字找到本域之后往它说话，本域从它读。它也是要交给板的那一枚
+    // ——记号 `entry`：板那侧按它把入口与问话孔分开（两枚都是本端铸、本端交）。
+    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
         bail("guest: no entry")
     };
     let Ok(me) = Name::new(ME) else {
@@ -159,8 +161,9 @@ extern "C" fn main() -> ! {
 ///
 /// 读回来的若不是合法名字（对面答了别的东西），返 [`None`]——**不猜**。
 fn call(at: PieToken, me: Name) -> Option<Name> {
-    // 回信孔：本端铸一枚，副本交给"这扇门的主人"（它只往里写，故只给 `R|W`）。
-    let back = mail::unseal_hole().ok()?;
+    // 回信孔：本端铸一枚（记号 `back`：本端表里此刻已经躺着入口与问话孔，记号把它们分开），
+    // 副本交给"这扇门的主人"（它只往里写，故只给 `R|W`）。
+    let back = mail::unseal_hole("back").ok()?;
     let peer = bcall::opened_by(at)?;
     port::ship(
         &mail::HolePie::from_token(back),

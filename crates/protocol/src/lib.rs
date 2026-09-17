@@ -59,6 +59,11 @@
 //! 6. **写同一个设备的人只有一个**，且一次写必须是一条完整的字（旧树里 root 的设备直连写
 //!    与服务的写互相插字，把期望串插坏 ⇒ 假红）。
 
+// 码头的泊位是**一张可增长的账**（`session::core::Quay`）：条数由调用方按路数决定，
+// 故本 crate 引 `alloc`（与 `env`/`runtime` 同款；备不下时由 `Vec::try_reserve` 如实报
+// `Seat::NoRoom`，不 panic）。
+extern crate alloc;
+
 pub mod board;
 pub mod principal;
 pub mod session;

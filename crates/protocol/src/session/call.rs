@@ -7,28 +7,16 @@
 //! 全会话的规矩（额度、齐没齐、谁的孔归谁）都在 [`core`](super::core)。这里只做两件事：
 //! **转发一次**、把内核的错误码翻成"没成"。
 
-use env::{PieToken, TaskId};
+use env::{Name, PieToken, TaskId};
 
 use super::core::Claim;
 
 use runtime::core::port::{self, Access, Policy};
-use runtime::core::unit;
 use runtime::env::mail;
 
-/// 我是谁（判据"这枚孔**是不是我开的**"用它）。
-///
-/// 答不出（`SelfId` 的越界哨兵，`TaskId(0)`）时返 `None`：那一刻"我开的孔"判不出来，
-/// 认领于是退回到只排除**本端那几条泊位自己的孔**（比认错强）。
-pub(super) fn me() -> Option<TaskId> {
-    match unit::self_id() {
-        Ok(id) if id.get() != 0 => Some(id),
-        _ => None,
-    }
-}
-
-/// 铸一枚孔（本端那一枚）。
-pub(super) fn mint() -> Result<PieToken, ()> {
-    mail::unseal_hole().map_err(|_| ())
+/// 铸一枚孔（本端那一枚），并把**记号**刻在它上面——记号 = 这条路的名字。
+pub(super) fn mint(mark: Name) -> Result<PieToken, ()> {
+    mail::unseal_hole(mark.as_str()).map_err(|_| ())
 }
 
 /// 交给对端：一枚副本种进它表里，返**种在它表里的那个号**。
@@ -61,43 +49,51 @@ pub(super) fn post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
 /// 的一两枚——设一个"最多看几枚"的缓冲会让排在后面的那枚永远看不见。故这里不攒数组，
 /// 只把每一枚交出去；"要不要"由调用方说（正文第 6 条）。
 ///
-/// `Err(Claim::NoPeer)` = 枚举本身失败（我的表读不动了）。
+/// `Err(Claim::Unread)` = 枚举本身失败（我的表读不动了）。
 pub(super) fn each(mut f: impl FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
     let mut index = 0usize;
     loop {
         let Ok((token, _perm, _grantor)) = mail::collect(index) else {
-            return Err(Claim::NoPeer);
+            return Err(Claim::Unread);
         };
         // 越界哨兵：这一遍扫完了。
         if token.get() == 0 {
             return Ok(());
         }
         index += 1;
-        f(Hole {
-            token,
-            owner: owner_of(token),
-        })?;
+        let (owner, mark) = reserve(token);
+        f(Hole { token, owner, mark })?;
     }
 }
 
-/// 我表里的一项：一枚孔 + **谁开的**（[`each`] 交出来的那一格）。
+/// 我表里的一项：一枚孔 + **谁开的** + **刻的什么记号**（[`each`] 交出来的那两格）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Hole {
     pub token: PieToken,
     /// 这扇门谁开的（`None` = 查不出出处，如引导期那批设备门闩）。
     pub owner: Option<TaskId>,
+    /// 这条路上刻的记号（`Name::EMPTY` = 这一枚不是孔、问不到记号）。
+    pub mark: Name,
 }
 
-/// 这枚孔**是谁开的**（`Reserve` 的 `owner`：副本共享同一事实，转手不变）。
+/// 这枚孔的两格事实（**一次 `Reserve` 取回**）：**谁开的** + **刻的什么记号**。
 ///
-/// 认"对端放进来的那一枚"用它：本端 `mint` 出来的 owner 是本端，对端 `ship` 进来的
-/// owner 是对端——**编号比不出来，这一格比得出来**。
+/// `owner`（`Reserve` 第二格）= 这扇门谁开的：副本共享同一事实，转手不变。
+/// `mark`（同一次调用捎回来的那一格）= 铸者刻在孔上的那个名字，同样随副本过线。
+/// 认"对端放进来的那一枚"就认这两格：本端 `mint` 出来的 owner 是本端、记号是本端刻的
+/// 那个；对端 `ship` 进来的 owner 是对端——**编号比不出来，这两格比得出来**。
 ///
-/// `owner` 是 0（引导期那批设备门闩）时报 [`None`]：**查不出出处的不算对端那一枚**。
-pub(super) fn owner_of(hole: PieToken) -> Option<TaskId> {
+/// 记号收在**栈上 [`NAME_LEN`](env::NAME_LEN) 字节**的缓冲里（不分配），随同一次调用
+/// 拷出（装不下就没有答案）。
+///
+/// 答不出的那一类——**这一枚不是孔**（Pole/Nole/Tole 上没有记号）、它已不在表里、
+/// `owner` 是 0（引导期那批设备门闩）——一律报 `(None, Name::EMPTY)`：`Name::EMPTY` 是
+/// "占位、不是合法名"的那一格，故**这一条候选永不匹配**（规格里没有"无名孔"这一态，
+/// 这里说的是"这一条候选不成立"）。
+pub(super) fn reserve(hole: PieToken) -> (Option<TaskId>, Name) {
     match mail::reserve(hole) {
-        Ok((_vestor, owner)) if owner.get() != 0 => Some(owner),
-        _ => None,
+        Ok((_vestor, owner, mark)) if owner.get() != 0 => (Some(owner), mark),
+        _ => (None, Name::EMPTY),
     }
 }
 

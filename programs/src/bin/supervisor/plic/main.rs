@@ -203,14 +203,12 @@ extern "C" fn main() -> ! {
 /// 返那几枚门闩（按需求单的格子），失败给退场码。
 fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
     // 1. 会话：本域那一侧的孔交给"生我者"——就是建本域的那枚线程（父域的装配者）。
+    //    记号 = 这条泊位的名字（`seat` 铸孔时刻上去的）：父域放行之后按 `(本域, records)`
+    //    两格把这一枚认下来（`Quay::claim` 的正文），本域**不必报名字**——记号随副本过线。
     let sire = utask::sire().map_err(|_| E_SIRE)?;
     let channel = env::Name::new(RECORDS).map_err(|_| E_UP)?;
     let mut quay = Quay::open(sire);
-    quay.seat(channel, QUAY_MS).map_err(|_| E_UP)?;
-
-    // `seat` 交出去的那张名字牌，**本端这一枚槽里也有一份**（交出去的是副本）。
-    // 父域读的是它那一份来归位；本端这一份得自己读掉——孔是单槽，牌留着就会把
-    // 父域随后推来的 records 挡在槽外（症状：只收到 40 字节的牌）。
+    quay.seat(channel).map_err(|_| E_UP)?;
 
     // 2. 收配给：父域按同一张需求单推来记录，**按 `Slot` 归位**（不数第几条）。
     let mut buf = [0u8; CAP];
@@ -230,8 +228,7 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
         out[i] = cell.ok_or(E_GRANT)?;
     }
 
-    // 4. 板那条路：**趁本端表里还是干净的**先装上——`pair` 认的是"我没开过的那一枚"，
-    //    而后面那一步（待客线程把入口副本交回来）也会往本端表里放一枚外来孔。
+    // 4. 板那条路：本端装一条、认下生我者那一枚（它再转授给板线程）。
     //    返两样：本端这座码头 + **板线程的号**（板路上先到的那一格）：孔只在铸它的表里
     //    念得出来，故交问话孔、交入口都得先叫得出板是谁。
     let link = board::open(sire, QUAY_MS).ok();
@@ -272,7 +269,8 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
 /// 起待客线程，并把**它的服务入口**收回来（本域登记用的那一枚副本）。
 ///
 /// 入口由待客线程铸（`PieToken` 过不了线，见文件头），副本经 `Ship` 交到本线程表里；
-/// 本线程另开一座码头认它——判据是 `owner == 待客线程`（铸的人就是 owner）。
+/// 本线程另开一座码头认它——判据两格：`owner == 待客线程`（铸的人就是 owner）**且记号是
+/// `entry`**（它铸那一刻刻的就是这个用途名；本线程表里同时还有别的外来孔）。
 ///
 /// `seat` 那一步也会把本线程铸的一枚交给它（本协议里"认领"要求本端先装一条）：它不用，
 /// 也不碍事。
@@ -281,11 +279,12 @@ fn start_desk(me: env::TaskId) -> Option<PieToken> {
     let id = node.id();
     drop(node);
     let link = env::Name::new(DESK_LINK).ok()?;
+    let entry = env::Name::new(board::ENTRY_MARK).ok()?;
     let mut quay = Quay::open(id);
-    quay.seat(link, QUAY_MS).ok()?;
-    quay.claim(id, QUAY_MS).ok()?;
+    quay.seat(link).ok()?;
+    quay.claim(id, entry, QUAY_MS).ok()?;
     let pier = quay.find(link)?;
-    Some(pier.at_peer())
+    pier.at_peer()
 }
 
 /// 待客：服务入口上有人说话，就记一行、把本域的名字答回去。
@@ -294,8 +293,9 @@ fn start_desk(me: env::TaskId) -> Option<PieToken> {
 /// 一问一答各 32 字节（一个名字，与牌子同一个解码面），答话走**同一枚孔**——单槽，
 /// 一问一答交替（对面推、本端取、本端推、对面取）。
 fn desk(me: env::TaskId) -> ! {
-    // 服务入口：**本线程铸、本线程读**（`PieToken` 过不了线，见文件头）。
-    let Ok(entry) = mail::unseal_hole() else {
+    // 服务入口：**本线程铸、本线程读**（`PieToken` 过不了线，见文件头）。记号 `entry`：
+    // 本域主线程认它（它那张表里同时还有别的外来孔），板也按它把入口与问话孔分开。
+    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
         exit_with(E_DESK)
     };
     // 副本交给本域主线程：它拿去挂到板上——别人按名字找到的就是这一扇门。
@@ -339,6 +339,9 @@ fn desk(me: env::TaskId) -> ! {
 ///
 /// 判据落在 `owner` 上（副本共享同一事实、转手不变）：本端自己铸的每一枚 owner 都是本端，
 /// 客人交进来的那一枚 owner 是客人——**编号比不出来，这一格比得出来**。
+///
+/// 记号那一格在这里**故意不读**：客人借过来的那一枚刻的是 `back`（它那条路的名字），
+/// 而这一处要的是"这位的、能收话的那一枚"——问不到记号（不是孔）的候选自然不成立。
 fn opened_for(who: env::TaskId) -> Option<PieToken> {
     let mut index = 0usize;
     let mut found = None;
@@ -349,7 +352,7 @@ fn opened_for(who: env::TaskId) -> Option<PieToken> {
             return found;
         }
         index += 1;
-        if mail::reserve(token).ok().map(|(_v, owner)| owner) == Some(who) {
+        if mail::reserve(token).ok().map(|(_v, owner, _mark)| owner) == Some(who) {
             found = Some(token);
         }
     }

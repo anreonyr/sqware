@@ -154,21 +154,29 @@ fn start(
     // 这座码头的**对端就是客人**（`rep`）——与 `board.rs` 的 `Quay::open(client)` 对称：
     // 两侧各按对方的身份开码头，`seat` 那一枚才发得到它手里，谁都不必猜。
     let mut quay = Quay::open(rep);
+    // `marks` = 要逐条认领的记号：**记号就是这条泊位的名字**（`seat` 铸孔时刻上去的），
+    // 而客侧装的就是同一个通道名 ⇒ 放行之后本域按它逐条把客人的孔认下来（顺序无关）。
+    let mut marks: alloc::vec::Vec<Name> = alloc::vec::Vec::new();
+    marks.try_reserve(p.channels.len()).map_err(|_| {
+        step(p, "no room for marks");
+        p.died
+    })?;
     for ch in p.channels.iter() {
         let ch = Name::new(ch).ok().ok_or(E_MANIFEST)?;
-        quay.seat(ch, READY_MS).map_err(|_| {
+        quay.seat(ch).map_err(|_| {
             step(p, "seat failed");
             p.died
         })?;
+        marks.push(ch);
     }
 
-    // 三、放行 + 等就绪（有通道的那一条顺带等它认领）；四、发门闩。
+    // 三、放行 + 等就绪（有通道的那一条顺带逐条认领）；四、发门闩。
     let ups = if p.channels.is_empty() {
         None
     } else {
         Some(&mut quay)
     };
-    service::start(table, name, rep, p.tokens, ups, READY_MS).map_err(|_| {
+    service::start(table, name, rep, p.tokens, ups, &marks, READY_MS).map_err(|_| {
         step(p, "start failed");
         p.died
     })?;

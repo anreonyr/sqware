@@ -340,10 +340,19 @@ pub enum MailCall {
 #[call(class = 7)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PieCall {
-    /// 解封 Hole（数据过内核管道）。**无参数**——孔不预设消息上限，也不预分配槽：
-    /// 解封的代价是零字节，消息多长由每条 `Push` 自己带（`docs/port.md` §5）。
+    /// 解封 Hole（数据过内核管道）：孔上刻**一格记号**（`mark` 处的 `len` 字节）。
+    ///
+    /// 记号 = **这条路的名字**（[`Name`](crate::wire::Name) 的字节：非空、< 32、无 NUL、
+    /// UTF-8），由铸它的那一方在开门这一刻刻上（构造期定型，往后无 setter）。它随副本
+    /// 过线、转手不变，故"同一位开的多枚孔"也分辨得出（读它走 [`PieCall::Reserve`]）。
+    ///
+    /// **消息本身仍不预设上限**，也不预分配槽：这里多出来的只有记号，解封仍是零字节，
+    /// 消息多长由每条 `Push` 自己带（`docs/port.md` §5）。
+    ///
+    /// `len > NAME_LEN`（[`NAME_LEN`](crate::wire::NAME_LEN)）/ 区间未映射 / 名字非法
+    /// （空、含 NUL、非 UTF-8）⇒ `Denied`，**不截断、不 panic**。
     #[ret(PieToken)]
-    UnsealHole,
+    UnsealHole { mark: VirtAddr, len: usize },
     /// 解封 Pole（页级安全内存；大小页对齐）。
     #[ret(PieToken)]
     UnsealPole { size: usize },
@@ -397,15 +406,26 @@ pub enum PieCall {
     /// （未知句柄）。已知句柄求事实用 `Reserve`。
     #[ret((PieToken, crate::permission::Permission, TaskId))]
     Collect { index: usize },
-    /// 查这枚门闩的来历：`vestor`（谁授的）+ `owner`（资源谁开的）。
+    /// 查这枚门闩的来历：`vestor`（谁授的）+ `owner`（资源谁开的）+ **记号长度**。
     ///
-    /// 两个身份不可混用：`vestor` 是**门闩**的来历，转手（Accord）即改写；
+    /// 三个身份不可混用：`vestor` 是**门闩**的来历，转手（Accord）即改写；
     /// `owner` 是**资源**的来历，任意副本共享同一事实——故「目录是谁」经
     /// `owner` 求得，root 转发门闩也不会把身份转丢。
     ///
-    /// 错误：token 不在本任务表 → `-1 Denied`；资源已封印 → `-2 Dead`。
-    #[ret((TaskId, TaskId))]
-    Reserve { token: PieToken },
+    /// 第三格是随副本过线的**记号**（[`PieCall::UnsealHole`] 刻的那一格），写进 `mark`
+    /// 处至多 `cap` 字节的缓冲，长度由返回值给出（只写内容那一段，尾随填充不上线）。
+    /// 它答的是"**这条路上刻的是哪个名字**"——与 `owner` 合起来才认得出"同一位的哪一枚孔"。
+    ///
+    /// 错误：token 不在本任务表 → `-1 Denied`；资源已封印 → `-2 Dead`；**装不下
+    /// （记号长度 > `cap`）→ `-1 Denied` 且缓冲区一个字节都不动**（要么全取、要么一个
+    /// 字节都不动，同 [`MailCall::Pull`]）；区间未映射 → `-1 Denied`。**记号只长在孔上**
+    /// ——别的资源（Pole/Nole/Tole）问不到记号 ⇒ `-1 Denied`。
+    #[ret((TaskId, TaskId, usize))]
+    Reserve {
+        token: PieToken,
+        mark: VirtAddr,
+        cap: usize,
+    },
     /// 放下：自释本任务的一份门闩（含其全部后代；Pole 同步 unmap）。表里无此 token → -1。
     ///
     /// **唯一不判存活的操作**：`Seal` 不摘表项，若本操作也判存活，封印后的表项

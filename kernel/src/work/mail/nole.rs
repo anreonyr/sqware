@@ -92,7 +92,7 @@ pub struct NoleMeta {
 
 impl NoleMeta {
     /// 造一枚 Nole。**无参数**——没有大小、没有对齐、没有上限可校验，这正是它
-    /// 与 `hole::meta(mtu, owner)` / `pole::allocate(bytes, owner)` 的区别。
+    /// 与 `hole::meta(owner, mark)` / `pole::allocate(bytes, owner)` 的区别。
     /// （另外三个字段都是"听者面"，构造期定型，没有 setter。）
     pub(crate) fn new(owner: usize) -> Arc<Self> {
         Arc::new(Self {

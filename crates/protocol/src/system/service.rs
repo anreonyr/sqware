@@ -281,7 +281,8 @@ pub fn spawn(
 /// 第二相：**放行**，并在放行前塞门闩、定会话。
 ///
 /// `grants` = 放行前要交到它手里的门闩（空 = 什么都不预先给）；`quay` = 与它的会话
-/// （`Announce::Channel` 那一种要用：它就绪的凭据长在这里）；`ms` = 就绪等待
+/// （`Announce::Channel` 那一种要用：它就绪的凭据长在这里）；`marks` = 放行后要逐条
+/// 认领的**记号**（顺序无关；记号即泊位名，装配单给的通道名就是它）；`ms` = 就绪等待
 /// （`0` 只探、`usize::MAX` 无期限、其余毫秒）。
 ///
 /// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、定会话都发生在这段窗口里，这与
@@ -297,16 +298,11 @@ pub fn start(
     name: Name,
     rep: TaskId,
     grants: &[Grant],
-    mut quay: Option<&mut Quay>,
+    quay: Option<&mut Quay>,
+    marks: &[Name],
     ms: usize,
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
-        if let Some(q) = quay.as_deref_mut() {
-            // 对端**只由调用方定**：孩子把孔交给"生我者"（建域那一枚线程），
-            // 而 `rep` 是刚产出的代表线程——两者不是同一个，这里不能替它改。
-            // 这里只确认"已经定过"，没定就是调用方漏了。
-            q.peer().ok_or(Fail::Unknown)?;
-        }
         for g in grants {
             crate::system::call::accord(g.token, rep, g.perm)?;
         }
@@ -318,7 +314,7 @@ pub fn start(
         table.set_state(name, State::Dead);
         return Err(e);
     }
-    ready(table, name, quay.as_deref_mut(), ms)?;
+    ready(table, name, quay, marks, ms)?;
     Ok(())
 }
 
@@ -332,6 +328,7 @@ pub fn ready(
     table: &mut Table,
     name: Name,
     quay: Option<&mut Quay>,
+    marks: &[Name],
     ms: usize,
 ) -> Result<bool, Fail> {
     // 先看表：上一次问过的事实（按这一行自己声明的说法解读）。
@@ -361,11 +358,11 @@ pub fn ready(
 
     // 它会交回一枚孔 ⇒ 那件事归会话：`claim` 把它认下来（凑齐了才算）。
     if let Some(q) = quay {
-        // 它会交回孔、也会自己装一条 ⇒ 那件事归会话：`claim` 等**它装上的每条都配齐**。
-        // 认领的是**它**交上来的那一批（`owner` = 这个孩子）：孔交给的是"生我者"（建域
-        // 那一枚线程），而**"谁的孔"与"我认的对端"是两件事**——见 `Quay::claim` 的正文。
-        q.peer().ok_or(Fail::Unknown)?;
-        if q.claim(rep, ms).is_ok() {
+        // 它会交回孔、也会自己装一条 ⇒ 那件事归会话：**逐条按记号认领**（记号 = 那条
+        // 泊位的名字 = 装配单给的通道名），每条都配齐才算起来。认领的是**它**交上来的
+        // 那一批（`owner` = 这个孩子）：孔交给的是"生我者"（建域那一枚线程），而
+        // **"谁的孔"与"我认的对端"是两件事**——见 `Quay::claim` 的正文。
+        if !marks.is_empty() && marks.iter().all(|mark| q.claim(rep, *mark, ms).is_ok()) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }

@@ -133,6 +133,15 @@ impl FromPair for (TaskId, TaskId) {
     }
 }
 
+/// `Reserve` 返回值打包：v0 = vestor（谁授的）、v1 低 32 位 = owner（资源谁开的）、
+/// v1 高 32 位 = **记号长度**（同 `(PieToken, Permission, TaskId)` 的打包法：第三格进
+/// 高半、第二格留低半）。记号内容不在寄存器里——它经 `mark` 那一段缓冲拷出。
+impl FromPair for (TaskId, TaskId, usize) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (TaskId(v0), TaskId(v1 & 0xffff_ffff), v1 >> 32)
+    }
+}
+
 impl FromPair for bool {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         v0 != 0

@@ -1,23 +1,23 @@
 //! board — **板那两半**：板侧（[`attach`] 起板线程 + 转授），客侧（[`open`] / [`ask`] / [`take`]）。
 //!
 //! 板是**装配者那个域里的一枚线程**（就一枚，招待所有客人），客人是别的域里的线程。
-//! 两侧各用会话的一侧（[`Quay::pair`] 的两半）：
+//! 两侧都用会话的同一对动作（`seat` + `claim`），靠**孔上的记号**对位：
 //!
 //! ```text
 //!   装配者（root）                            客人（服务域）            板线程（一枚）
-//!   quay.seat(板路) + quay.claim(客人) ────▶ pair(板路) ── 交一枚孔 ──▶  按"谁转授的"认领答话写端
-//!   转授：把客人那一枚 Ship 给板线程 ─────────────────────────────────▶  答话路的写端到手
+//!   quay.seat(板路) + quay.claim(客人, 板路) ▶ open: seat(板路) + claim(生我者, 板路)
+//!   转授：把客人那一枚 Ship 给板线程 ─────────────────────────────────▶  按"谁转授的 + 记号"认答话写端
 //!   板路上先递一格：板线程的号 ────────────▶  open 收下 ⇒ 此后叫得出板
 //!   提示：往提示之路推一个客人号 ────────────────────────────────────▶  收一位客人（admit）
-//!                                            铸问话孔、Ship 给板 ──────▶  按"谁交的"认出 ⇒ arm + hang
+//!                                            铸问话孔(ask)、Ship 给板 ─▶  按"谁开的 + 记号"认出 ⇒ arm + hang
 //!                                            推(Query) ────────────────▶  组唤醒 ⇒ pull ⇒ 交给板
 //!                                            读(Reply) ◀───────────────  推(Reply)
 //! ```
 //!
-//! **两条路各一枚孔，两枚都落进板的表里**：答话那条的**写端**由装配者转授（`pair` 建立的
-//! 会话），问话那条由**客人自己铸**再交给板。板按"**这枚是谁交给我的**"认领（来源位
-//! `vestor`），与 `register` 同一判据——客人是**唯一"每位客人各不同"的身份**，故板只能按
-//! 它分人；板自己铸则八位客人的孔同形，反倒认不出是哪位的。
+//! **两条路各一枚孔，两枚都落进板的表里**：答话那条的**写端**由装配者转授（板路那条会话），
+//! 问话那条由**客人自己铸**再交给板。板按 `(谁, 记号)` 认领：答话写端认**记号 `board`**
+//! （交者是装配者），问话孔认**记号 `ask`**（开者是客人）——客人是**唯一"每位客人各不同"
+//! 的身份**，故板只能按它分人；板自己铸则八位客人的孔同形，反倒认不出是哪位的。
 //!
 //! **两枚孔都要客人先叫得出板**：孔是"铸的人那张表里的第几个"，换一张表就念不出来。客人
 //! 只认得生我者（装配者），故装配者在**板路上先递一格 8 字节：答话的是谁**——与提示孔那
@@ -29,7 +29,8 @@
 //! **为什么中间要装配者过一手**：客人只认得它的生我者（孔是交给"生我者"的），板线程不是
 //! 它的生我者 ⇒ 客人交出来的那一枚落在装配者表里。装配者把它**转授**给板线程——装配者本来
 //! 就是设备门闩的第一个持有者与转授者，这里走的是同一条路。转授的是**客人开的那扇门**：
-//! 副本共享 `owner`（`session` 事实 3），故板那一侧照样念得出"这是哪位的孔"。
+//! 副本共享 `owner` **与记号**（`session` 事实 3），故板那一侧照样念得出"这是哪位的孔、
+//! 走的哪条路"。
 //!
 //! # 板为什么就一枚线程
 //!
@@ -78,6 +79,16 @@ use runtime::env::mail::{self, AnyPie};
 /// 板那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
 pub const LINK: &str = "board";
 
+/// 注册入口那一枚孔上的记号（**两侧同一个**：客人铸它时刻上去的，板按它把入口与问话孔
+/// 分开——两枚都是客人铸的、都是客人交来的，只有记号分得开）。
+pub const ENTRY_MARK: &str = "entry";
+
+/// 问话孔那一枚上的记号（同上：客人铸、客人交；板按它认领那枚孔）。
+const ASK_MARK: &str = "ask";
+
+/// 提示孔那一枚上的记号（板线程铸它时刻上去的；装配者按它认领那一枚）。
+const TIP_MARK: &str = "tip";
+
 /// 提示之路的名字（只有装配者那侧用得上：板线程那一枚是它自己铸的，不需要名字）。
 const TIP_NAME: &str = "board-tip";
 
@@ -111,12 +122,13 @@ pub fn attach(
 ) -> Result<(), &'static str> {
     let link = Name::new(LINK).map_err(|_| "board:name")?;
     // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
-    quay.seat(link, ms).map_err(|_| "board:seat")?;
-    // 2. 认领**这位客人**交出来的那一枚。本域给每个孩子各开一座码头，故认的是"它给我的"，
-    //    不是"我没开过的"——不然会把别的客人的孔配到它头上（`Quay::claim` 的正文）。
+    quay.seat(link).map_err(|_| "board:seat")?;
+    // 2. 认领**这位客人**交出来的那一枚（记号 = 板路自己的名字，客侧 `seat` 刻的就是它）。
+    //    本域给每个孩子各开一座码头，故认的是"它给我的"——不然会把别的客人的孔配到它头上
+    //    （`Quay::claim` 的正文）。
     //    **次序**：板那条比 `records` 后到，而 `records` 的写端已经用掉了 ⇒ 这一枚认在
     //    板泊位上（一枚孔只配一条泊位）。
-    quay.claim(client, ms).map_err(|_| "board:claim")?;
+    quay.claim(client, link, ms).map_err(|_| "board:claim")?;
     // 3. 板线程（只起一枚）→ 把客人那一枚转授过去 → 板路上递一格"答话的是谁" → 提示来客人了。
     let host = host(me, ms, tip)?;
     let Some(tip) = *tip else {
@@ -149,15 +161,17 @@ fn host(me: TaskId, ms: usize, tip: &mut Option<PieToken>) -> Result<TaskId, &'s
     drop(node);
     HOST.store(id.get(), Ordering::Release);
 
-    // 认领板线程交回来的那一枚提示孔：本域另开一座码头等它（判据 `owner == 板线程`）。
+    // 认领板线程交回来的那一枚提示孔：本域另开一座码头等它（判据 = `owner == 板线程`
+    // **且** 记号 = `tip`——板线程那一枚是它自己铸的，记号就是它的用途名）。
     // 这条路上只走"客人号"，故本端那一枚交出去也无妨（板线程不用它，也不碍事）。
     let slot = Name::new(TIP_NAME).map_err(|_| "board:name")?;
+    let tip_mark = Name::new(TIP_MARK).map_err(|_| "board:name")?;
     let mut quay = Quay::open(id);
-    quay.seat(slot, ms).map_err(|_| "board:seat")?;
-    quay.claim(id, ms).map_err(|_| "board:tip")?;
+    quay.seat(slot).map_err(|_| "board:seat")?;
+    quay.claim(id, tip_mark, ms).map_err(|_| "board:tip")?;
     let pier = quay.find(slot).ok_or("board:tip")?;
     // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
-    *tip = Some(pier.at_peer());
+    *tip = pier.at_peer();
     Ok(id)
 }
 
@@ -175,7 +189,7 @@ fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
 /// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上板（客人报它自己的超时，不猜）。
 fn hear(quay: &Quay, ms: usize) -> Option<TaskId> {
     let link = Name::new(LINK).ok()?;
-    let pier = quay.find_pier(link)?;
+    let pier = quay.find(link)?;
     let mut buf = [0u8; 8];
     match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, ms) {
         Ok(8) => Some(TaskId::new(u64::from_le_bytes(buf) as usize)),
@@ -186,7 +200,7 @@ fn hear(quay: &Quay, ms: usize) -> Option<TaskId> {
 /// 板路上本端手里那一枚（客人答话路的**写端**）：答话往它推，"答话的是谁"也从它递。
 fn reply_path(quay: &Quay) -> Option<PieToken> {
     let link = Name::new(LINK).ok()?;
-    Some(quay.find(link)?.at_peer())
+    quay.find(link)?.at_peer()
 }
 
 /// 把**客人交出来的那一枚**转授给板线程。
@@ -214,13 +228,14 @@ fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
 /// ```
 ///
 /// **板不用码头**：它要的两枚孔都不是它开的——答话路的**写端**是装配者转授进来的，问话孔的
-/// **读端**是客人交进来的，两枚都按来源位（`vestor`）在本表里认出来。铸一枚孔就会给对端
-/// 送去一枚用不上的写端（那是一枚"码头"，客人表里的渣），故这里一枚也不铸（提示孔除外：
+/// **读端**是客人交进来的，两枚都按 `(谁转的/谁开的, 记号)` 在本表里认出来。铸一枚孔就会给
+/// 对端送去一枚用不上的写端（那是一枚"码头"，客人表里的渣），故这里一枚也不铸（提示孔除外：
 /// 它的副本正是装配者要的那枚）。
 fn host_loop(me: TaskId) {
     // `me` = **装配者**（不是本线程的号）：答话路是它转授来的，故判据的一半是它。
-    // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给装配者。
-    let Ok(tip) = mail::unseal_hole() else {
+    // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给装配者。**记号 = `tip`**：
+    // 装配者认领那一枚时就按它（它那张表里同时躺着别的路）。
+    let Ok(tip) = mail::unseal_hole(TIP_MARK) else {
         say("board: no tip");
         return;
     };
@@ -314,12 +329,21 @@ fn settle(desk: &mut Desk, assembler: TaskId, tole: &Tole, tip: &mail::HolePie) 
 
 /// 装配者转授来的那一枚答话路（**写端**，落在本表里）。
 ///
-/// 两格判据，都是确定的号：
+/// **这枚孔是谁铸的、谁交的**：客人 `seat(板路)` 铸的那一枚（记号 `board`），
+/// **经装配者转授**给板线程——所以这一处读的是"交者"。
+///
+/// 三格判据，都是确定的号：
 ///
 /// - `vestor == assembler` —— **谁转的**。这一格把"客人自己交来的孔"分开：那些的来源位是
 ///   客人自己（见 [`ask_of`]）；
-/// - `owner == who` —— **谁的**。副本共享同一事实（`session` 事实 3），转手不变。
+/// - `owner == who` —— **谁的**：那扇门是**这位客人**开的（副本共享同一事实，转手不变）。
+///   这一格不能省：**板招待的是多位客人**，而每位客人那条板路的记号都是 `board`（那是
+///   *这条路*的名字）⇒ 只按 `(谁转的, 记号)` 认，几位客人的答话路同形（实测栽过：
+///   `plic` 与 `guest` 两位在机上，后到的那位认到了前一位的孔）；
+/// - **记号 == `board`** —— 那一枚是**板路**上的一枚（客侧 `seat` 铸它时刻的就是这条路
+///   的名字 `LINK`；客人自己铸的另两枚刻的是 `ask` / `entry`）。
 fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
+    let board = Name::new(LINK).ok()?;
     let mut index = 0usize;
     loop {
         let (token, _perm, vestor) = mail::collect(index).ok()?;
@@ -328,7 +352,10 @@ fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
             return None;
         }
         index += 1;
-        if vestor == assembler && bcall::opened_by(token) == Some(who) {
+        if vestor == assembler
+            && bcall::opened_by(token) == Some(who)
+            && bcall::mark_of(token) == Some(board)
+        {
             return Some(token);
         }
     }
@@ -336,25 +363,29 @@ fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
 
 /// 客人**自己**交来的那一枚问话孔。
 ///
-/// 判据三格，缺一不可：
+/// **这枚孔是谁铸的、谁交的**：客人铸（[`ask_hole`] 刻的记号就是 `ask`）、客人**直接交给板**
+/// （不经装配者）——所以这一处读的是"开者"。
 ///
-/// - `vestor == who` —— **它亲手交给我的**（与 `register` 同一判据）；
+/// 判据两格，缺一不可：
+///
 /// - `owner == who` —— 那扇门是它开的（副本共享同一事实）；
-/// - **不带 `VEST`** —— 它交来的**入口**（`REGISTER` 的捎带）也满足前两格，而入口是
-///   "能再授出"的那一枚（`hang_in` 给了 `VEST`），问话孔只给了读。
+/// - **记号 == `ask`** —— 它亲手铸的那一枚问话孔（[`ask_hole`] 刻的）。
+///
+/// 从前第三格是"**不带 `VEST`**"：它交来的**入口**也满足前两格（交者、开者都是它），而入口
+/// 是"能再授出"的那一枚（`hang_in` 给了 `VEST`）。那一格是**用权限位兼职表达语义**——权限位
+/// 回答的是"能不能再授出"，不是"这是什么"，故换成记号：入口刻的是 `entry`（见 [`answer`]
+/// 那一支），两枚同来源的孔靠**记号**分开。
 fn ask_of(who: TaskId) -> Option<PieToken> {
+    let ask = Name::new(ASK_MARK).ok()?;
     let mut index = 0usize;
     loop {
-        let (token, perm, vestor) = mail::collect(index).ok()?;
+        let (token, _perm, _vestor) = mail::collect(index).ok()?;
         // 越界哨兵：这一遍扫完了。
         if token.get() == 0 {
             return None;
         }
         index += 1;
-        if vestor == who
-            && bcall::opened_by(token) == Some(who)
-            && !perm.contains(env::Permission::VEST)
-        {
+        if bcall::opened_by(token) == Some(who) && bcall::mark_of(token) == Some(ask) {
             return Some(token);
         }
     }
@@ -409,9 +440,15 @@ fn answer(board: &mut Board, want: &[u8], who: TaskId) -> [u8; 1] {
     };
     let said = match op {
         bcall::REGISTER => match seed {
-            // 入口要**是它刚交过来的那一枚**（判据在核心：`probe(entry) == who`）。
-            Some(entry) => board.register(name, entry, who).map(|_| ()),
-            None => Err(Fail::Denied),
+            // 入口要**是它刚交过来的那一枚**。**这枚孔是谁铸的、谁交的**：客人铸（记号
+            // `entry`）、经会话交给板（`hang_in` ⇒ 板上这一份的来源位是客人）——故判据是
+            // `{交者 == 它, 记号 == entry}`：前格在核心（`probe(entry) == who`），后格在这里。
+            // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
+            // 两件事只有记号分得开。
+            Some(entry) if bcall::mark_of(entry) == Name::new(ENTRY_MARK).ok() => {
+                board.register(name, entry, who).map(|_| ())
+            }
+            _ => Err(Fail::Denied),
         },
         bcall::UNREGISTER => board.unregister(name, who),
         bcall::LOOKUP => {
@@ -441,17 +478,20 @@ fn code(fail: Option<Fail>) -> u8 {
 
 // ── 客侧（服务域）────────────────────────────────────────────
 
-/// 客侧第一步：装上板那条路，并收下"**答话的是谁**"（[`hear`] 那一格）。
+/// 客侧第一步：装上板那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
+/// "**答话的是谁**"（[`hear`] 那一格）。
 ///
 /// 返本端这座码头（**答话**从它走，问话走 [`ask_hole`]）与**板线程的号**。
 ///
 /// `holder` = 客人认的对端 = **它的生我者**（孔交给它，它再转授给板线程）——注意它不是板：
 /// 客人交出来的孔都落在生我者表里，故"板是谁"得由装配者告诉（见文件头），此后客人交孔、
-/// 交入口才叫得出板。
+/// 交入口才叫得出板。认领那一枚按 `(对端, 记号)` 两格认：对端是 `holder`（它 `seat` 出来
+/// 的那一枚），记号就是板路的名字。
 pub fn open(holder: TaskId, ms: usize) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let mut quay = Quay::open(holder);
-    quay.pair(link, ms).map_err(bcall::map_claim)?;
+    quay.seat(link).map_err(bcall::map_seat)?;
+    quay.claim(holder, link, ms).map_err(bcall::map_claim)?;
     let board = hear(&quay, ms).ok_or(Fail::Unknown)?;
     Ok((quay, board))
 }
@@ -461,9 +501,9 @@ pub fn open(holder: TaskId, ms: usize) -> Result<(Quay, TaskId), Fail> {
 /// `board` = [`open`] 收下的那个号。交出去的是可读可写，随后本端 `narrow` 到 `WRITE`：
 /// 一条路上只有一个读者（`session` 事实 2），故**板读、本端写**。
 ///
-/// 判"这是问话孔不是入口"的那一格落在板那侧：它不带 `VEST`（入口带）。
+/// 记号 = [`ASK_MARK`]：板那侧就是按它把这枚孔与**入口**分开的（两枚都由本端铸、本端交）。
 pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
-    let ask = mail::unseal_hole().map_err(|_| Fail::Denied)?;
+    let ask = mail::unseal_hole(ASK_MARK).map_err(|_| Fail::Denied)?;
     let hole = mail::HolePie::from_token(ask);
     port::ship(&hole, board, Access::READ | Access::WRITE, Policy::NONE)
         .map_err(|_| Fail::Denied)?;
@@ -489,7 +529,7 @@ pub fn ask(
     ms: usize,
 ) -> Result<u8, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let pier = link.find_pier(at).ok_or(Fail::Unknown)?;
+    let pier = link.find(at).ok_or(Fail::Unknown)?;
     let seed = match op {
         bcall::REGISTER => Some(bcall::hang_in(entry, board).map_err(|()| Fail::Denied)?),
         _ => None,
@@ -515,7 +555,7 @@ pub fn ask(
 /// 的（查到谁的入口，开者就是谁），客人不是它的开者。
 pub fn take(link: &Quay, board: TaskId) -> Option<PieToken> {
     let at = Name::new(LINK).ok()?;
-    let _ = link.find_pier(at)?;
+    let _ = link.find(at)?;
     let mut index = 0usize;
     let mut found = None;
     loop {

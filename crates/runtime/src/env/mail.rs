@@ -16,7 +16,8 @@
 //! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
 
 use env::{
-    EnvResult, HoleDir, MailCall, MailCallRet, PieCall, PieCallRet, PieToken, TaskId, VirtAddr,
+    EnvResult, HoleDir, MailCall, MailCallRet, Name, PieCall, PieCallRet, PieToken, TaskId,
+    VirtAddr,
 };
 
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
@@ -28,9 +29,18 @@ fn now_ns() -> EnvResult<u64> {
 
 // ── 裸函数层（envcall 转发，零业务逻辑）──
 
-/// 解封 Hole。**无参数**——孔不预设消息上限（那是协议自己的事），也不预分配槽。
-pub fn unseal_hole() -> EnvResult<PieToken> {
-    let r = PieCall::UnsealHole.call()?;
+/// 解封 Hole：孔上刻**一格记号**（`mark` = 这条路的名字）。
+///
+/// **消息本身仍不预设上限**（那是协议自己的事），也不预分配槽——多出来的只有记号：
+/// 它随副本过线、转手不变，故"同一位开的多枚孔"分辨得出（读它走 [`reserve`]）。
+///
+/// 名字非法（空 / 含 NUL / ≥ 32 字节 / 非 UTF-8）或那段字节拷不动 ⇒ `Denied`。
+pub fn unseal_hole(mark: &str) -> EnvResult<PieToken> {
+    let r = PieCall::UnsealHole {
+        mark: VirtAddr::new(mark.as_ptr() as usize),
+        len: mark.len(),
+    }
+    .call()?;
     match r {
         PieCallRet::UnsealHole(tk) => Ok(tk),
         _ => unreachable!(),
@@ -217,14 +227,32 @@ pub fn collect(index: usize) -> EnvResult<(PieToken, env::Permission, TaskId)> {
     }
 }
 
-/// 查询：我持有的这枚门闩——`(vestor, owner)`。
+/// 查询：我持有的这枚门闩——`(vestor, owner, 记号)`。
 ///
 /// `vestor` = 这枚门闩谁授的（转手即改写）；`owner` = 这扇门谁开的（副本共享同一
+/// 事实）；**记号** = **这条路的名字**（[`unseal_hole`] 刻的那一格，副本共享同一
 /// 事实）。求「对端是谁」一律用 `owner`：root 转发过的门闩，`vestor` 会变成 root。
-pub fn reserve(token: PieToken) -> EnvResult<(TaskId, TaskId)> {
-    let r = PieCall::Reserve { token }.call()?;
+///
+/// 记号收在**栈上 [`NAME_LEN`](env::NAME_LEN) 字节**的缓冲里（不分配），由同一次调用
+/// 拷出（"要么全取、要么一个字节都不动"）。装不下、这一枚不是孔（记号只长在孔上）、
+/// 或表里没有它 ⇒ `Denied`。
+pub fn reserve(token: PieToken) -> EnvResult<(TaskId, TaskId, Name)> {
+    let mut raw = [0u8; env::NAME_LEN];
+    let r = PieCall::Reserve {
+        token,
+        mark: VirtAddr::new(raw.as_mut_ptr() as usize),
+        cap: raw.len(),
+    }
+    .call()?;
     match r {
-        PieCallRet::Reserve((vestor, owner)) => Ok((vestor, owner)),
+        PieCallRet::Reserve((vestor, owner, len)) => {
+            // 长度是**这一次调用给的**（与名字的线格式同一个解码面）；越界不可能是
+            // 可处理的失败——内核只会回一格合法记号（非法名在解封那一步就拒了）。
+            match Name::from_slice(raw.get(..len).unwrap_or_default()) {
+                Ok(mark) => Ok((vestor, owner, mark)),
+                Err(_) => unreachable!(),
+            }
+        }
         _ => unreachable!(),
     }
 }
@@ -288,10 +316,10 @@ pub struct HolePie {
 }
 
 impl HolePie {
-    /// 解封 Hole（**无参数**：孔不预设消息上限、不预分配槽）。
-    pub fn unseal() -> EnvResult<Self> {
+    /// 解封 Hole：**记号必填**（`mark` = 这条路的名字，见 [`unseal_hole`]）。
+    pub fn unseal(mark: &str) -> EnvResult<Self> {
         Ok(Self {
-            token: unseal_hole()?,
+            token: unseal_hole(mark)?,
         })
     }
 

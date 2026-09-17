@@ -166,8 +166,8 @@ impl Port {
     /// 开一条会话：`entry` = 对端入口门闩在**我这一份**表里的句柄。
     ///
     /// 做三件事：问出对端是谁（`Reserve(entry).owner`——`vestor` 会被转发改写，
-    /// `owner` 不会）、自建回信孔、把它的 `WRITE` 授给对端。回信孔只要 `WRITE`：
-    /// 对端往它推，读的一侧是我。
+    /// `owner` 不会）、自建**回信孔**（记号 `back`：与 `guest` 借出去的那一枚同用途）、
+    /// 把它的 `WRITE` 授给对端。回信孔只要 `WRITE`：对端往它推，读的一侧是我。
     ///
     /// # Errors
     /// - `Denied` — 入口门闩不在表里 / 无开辟者 / 授不出去
@@ -176,7 +176,7 @@ impl Port {
         if peer.get() == 0 {
             return Err(denied());
         }
-        let reply = HolePie::unseal()?;
+        let reply = HolePie::unseal("back")?;
         let to = ship(&reply, peer, Access::WRITE, Policy::NONE)?;
         Ok(Port {
             to,

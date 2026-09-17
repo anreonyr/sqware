@@ -15,7 +15,7 @@ use env::{Name, PieToken, TaskId};
 use super::core::{Board, Fail, Free, Probe};
 use super::desk::Desk;
 
-use crate::session::{Claim, Pier};
+use crate::session::{Claim, Seat};
 
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
@@ -33,16 +33,33 @@ use runtime::env::mail;
 /// **外来的号进不了这张表**——故剩下的两种情形才都是"实例没了"。板上那一枚又是**亲手
 /// 交给板的**（板正是持有它的那张表），所以这里读到 `Err` 就是"实例真的没了"。
 fn probe(entry: PieToken) -> Option<TaskId> {
-    mail::reserve(entry).ok().map(|(vestor, _owner)| vestor)
+    mail::reserve(entry).ok().map(|(vestor, _owner, _mark)| vestor)
 }
 
 /// 这扇门**本身是谁的**（`Reserve` 的第二格 `owner`：副本共享同一事实，转手不变）。
 ///
 /// 板那一侧认孔的两处都读它，且都问同一句——"**是不是这位客人的**"：答话路（客人开的那扇
 /// 门）与问话孔（客人铸的那一枚）。分开这两处的是**另外半格**：来源位（谁交给板的）。
+///
+/// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：**这一条候选不成立**
+/// （记号只长在孔上，故 Pole/Nole/Tole 一类问不到 owner）。
 pub fn opened_by(hole: PieToken) -> Option<TaskId> {
     match mail::reserve(hole) {
-        Ok((_vestor, owner)) if owner.get() != 0 => Some(owner),
+        Ok((_vestor, owner, _mark)) if owner.get() != 0 => Some(owner),
+        _ => None,
+    }
+}
+
+/// 这条路上刻的**记号**（`Reserve` 的第三格：铸者刻在孔上的那个名字，副本共享同一事实、
+/// 转手不变）。
+///
+/// 板那一侧三处认法都读它，各自问同一句——"**这是哪条路上的那一枚**"：答话路（板路，
+/// 记号 = `board`）、问话孔（记号 = `ask`）、注册入口（记号 = `entry`）；把同一来源的两枚
+/// 分开的是**另外半格**（谁交的 / 谁开的）。问不到记号（这一枚**不是孔**、或它已不在表里）
+/// ⇒ `None`：**这一条候选不成立**。
+pub fn mark_of(hole: PieToken) -> Option<Name> {
+    match mail::reserve(hole) {
+        Ok((_vestor, _owner, mark)) => Some(mark),
         _ => None,
     }
 }
@@ -169,11 +186,28 @@ pub fn unpack(bytes: &[u8]) -> Option<(u8, Name, Option<PieToken>)> {
 
 /// 会话的失败域 → 板的失败域：**"它不在"是一条判据**，故两边只留一个名字
 /// （`Fail::Unknown`）。
+///
+/// 「一笔都没到」与「到了一些、不齐」在上面那一层都归 `Unknown`/`Full`：板这一侧
+/// 只有一格答话码，问的人按它决定要不要重问。
 pub fn map_claim(claim: Claim) -> Fail {
     match claim {
-        Claim::Nameless => Fail::Denied,
-        Claim::NoPeer => Fail::Unknown,
+        // 我的表读不动 ⇒ 这一问没有答案（与"它不在"同一格：都不是"板答了没有"）。
+        Claim::Unread => Fail::Unknown,
         Claim::Timeout => Fail::Unknown,
         Claim::Partial => Fail::Full,
+    }
+}
+
+/// 装一条路的失败域 → 板的失败域。
+///
+/// 与 [`map_claim`] 同一条口径：名字/资源上的毛病（名字非法、同名已装、铸不出孔）是
+/// **调用方写错了** ⇒ `Denied`；交不出去（对端已不在）⇒ `Unknown`（"它不在"）；
+/// 账腾不出来 ⇒ `Full`。
+pub fn map_seat(seat: Seat) -> Fail {
+    match seat {
+        Seat::NoName => Fail::Denied,
+        Seat::NoHole => Fail::Denied,
+        Seat::NoSeed => Fail::Unknown,
+        Seat::NoRoom => Fail::Full,
     }
 }
