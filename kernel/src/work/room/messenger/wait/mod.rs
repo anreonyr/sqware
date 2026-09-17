@@ -20,7 +20,7 @@ use crate::work::unit::life::{Life, TaskLife};
 use crate::work::unit::task::{Task, TaskState};
 
 use self::holder::{Ticket, hold, void};
-use self::site::{SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon};
+use self::site::{Fwd, SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon};
 use super::handoff::Handoff;
 
 // ── 操作：挂起（用 scheduler::core::Scheduler::swap） ──
@@ -311,10 +311,80 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
         // 不 `or_insert`、不留信标：站点是「等待者 + 对未来等待者仍有意义的遗留信号」
         // 的容器，键退役后两者都不该留下（信标同样作废——资源侧的 `alive()` 检查已经
         // 拒绝了后来的操作，投信方不存在了）。
-        sites.remove(&key).and_then(|site| site.head)
+        sites.remove(&key)
+    };
+    // 成员键退役（资源封印/销毁）：**先**叫醒等着这些成员的组（它们醒来会按
+    // `cells()` 快照复核，死的格子自然不在里面），再放行本键自己的等待者。
+    let chain = match chain {
+        Some(site) => {
+            for id in site.fwd.ids() {
+                knock(WakeKey::Tole { id: *id });
+            }
+            site.head
+        }
+        None => None,
     };
     rise(Unchain { cur: chain })
 }
+/// 叫醒一个键上的等待者，**不建站点、不置信标**：站点不在 ⇒ 什么都做（返回 0）。
+///
+/// 用在转发那一跳：组站点是由**等组的人**（② `block`）或曾经的信标建起来的，
+/// 这里没有键的存活单元，凭空建一个只会被 `prune` 当场删掉。
+///
+/// 站点在而队列空 ⇒ 置信标：那是"等待者正在 ①④ 之间飞"的窗口（它在 ④ 会消费掉
+/// 这一位，当场返回去复核），也是本函数**不丢唤醒**的那一半。
+///
+/// # 残余窗口（照实说）
+///
+/// 站点**完全不存在**（等组的人还没走到 ②）时这一跳落空。那一刻投进去的消息不会
+/// 因此丢失——它躺在孔的槽里，等组的人醒来复核时看得到——但**唤醒可能被推迟到期限**。
+/// 故组等待必须有界（调用方按 deadline 循环，同 `Fall`／`join`）。
+fn knock(key: WakeKey) -> usize {
+    let popped = {
+        let mut sites = sites(key).lock();
+        let popped = match sites.get_mut(&key) {
+            Some(site) => match site.pop_front() {
+                Some(task) => Some(task),
+                None => {
+                    site.pend = true;
+                    None
+                }
+            },
+            None => None,
+        };
+        prune(&mut sites, key);
+        popped
+    };
+    let Some(mut task) = popped else { return 0 };
+    void(Task::blocked_ticket(&mut task));
+    rise(core::iter::once(task))
+}
+
+/// 登记转发：投信 `key` 时也认醒组 `tole`。站点不在就建一个（**唯一的分配点**，
+/// 备不出容量返 `Err`——登记侧有失败域，与唤醒侧的无失败通道正好相对）。
+///
+/// 幂等：重复登记同一个组不叠加（站点满了返 `Err`，由调用方报 `OoM`，不静默丢）。
+pub(crate) fn forward(key: WakeKey, life: Weak<Life>, tole: usize) -> Result<(), ()> {
+    let mut sites = sites(key).lock();
+    if !sites.contains_key(&key) {
+        sites.try_reserve(1).map_err(|_| ())?;
+        sites.insert(key, Site::new(&life));
+    }
+    let site = sites.get_mut(&key).ok_or(())?;
+    let r = site.fwd.attach(tole);
+    prune(&mut sites, key);
+    r
+}
+
+/// 撤销转发：投信 `key` 时不再认醒组 `tole`；没登记过即无事。站点不在即无事。
+pub(crate) fn unforward(key: WakeKey, tole: usize) {
+    let mut sites = sites(key).lock();
+    if let Some(site) = sites.get_mut(&key) {
+        site.fwd.detach(tole);
+    }
+    prune(&mut sites, key);
+}
+
 /// 空间退役：删掉该空间名下的**全部**空间键站点，放行它们的等待者。返回唤醒数。
 ///
 /// 与 [`wipe`]（单键）同族，但**触发面不同**：hole 键与 task 键各有自己的退役调用点
@@ -371,6 +441,7 @@ pub(crate) fn wipe_space(space: usize) -> usize {
 /// （`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环，见
 /// `docs/dispatch.md` §11.4）。
 pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
+    let mut fwd = Fwd::EMPTY;
     let popped = {
         let mut sites = sites(key).lock();
         if Life::dead(life) {
@@ -398,10 +469,18 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
                 site.pend = true;
                 sites.insert(key, site);
             }
+            // **转发格拷出来**（`Fwd` 是定长 `Copy`）：投信本键时也要叫醒那些组，
+            // 但拿别的分片锁必须在放开本片之后（逐片取放，绝不嵌套）。
+            fwd = sites.get(&key).map_or(Fwd::EMPTY, |s| s.fwd);
             prune(&mut sites, key);
             popped
         }
     };
+    // 叫醒转发目标（组站点）：站点不在就什么都不做——它们是"有没有人在等组"的答案，
+    // 而不是需要在这里建出来的东西（没有键的存活单元可用，建出来只会被 prune 删掉）。
+    for id in fwd.ids() {
+        knock(WakeKey::Tole { id: *id });
+    }
     let Some(mut task) = popped else { return false };
     // 票在摘链那一刻从载荷里读（持分片锁时读得到；见 `Task::blocked_ticket`）。
     void(Task::blocked_ticket(&mut task));

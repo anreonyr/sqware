@@ -481,6 +481,43 @@ pub enum ControlCall {
 /// `from_wire(slot, regs)` 按 class（高 32 位）分派到各域的 `from_wire`，得到
 /// `PieCall::Seal { .. }` 等带载荷 variant，供 `dispatch` match。用户侧不再构造
 /// 本枚举——直接 `PieCall::X.call()` 发起（R3+B）。
+/// Tole 调用（class 9）—— **多路等待**：一枚"组"的四件事：造、挂、摘、等。
+///
+/// 与 class 7（权柄轴）的分界：本类不搬许可的生死，只改"这一组我关心哪几枚孔"；
+/// 与 class 5（数据轴）的分界：本类不搬载荷。组自己的身份就是 `PieToken`
+/// （与 Hole/Pole/Nole 同款：号只在持有它的那张表里有意义），资源实体见
+/// `work::mail::tole`。
+///
+/// 号段取 9：class 3（原 `IO`）退役后一直空着，不去复活它（见本文件头注的号段口径）。
+#[derive(Envcall)]
+#[call(class = 9)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ToleCall {
+    /// 造一个空组（**无参**：没有大小、没有上限可校验）→ `PieToken`。
+    #[ret(PieToken)]
+    Unseal,
+    /// 把 `pie` 的**一个方向**挂进 `tole`；同（孔，方向）幂等。
+    #[ret(())]
+    Hang {
+        tole: PieToken,
+        pie: PieToken,
+        dir: HoleDir,
+    },
+    /// 从 `tole` 摘掉一格；没挂过即无事。
+    #[ret(())]
+    Unhang {
+        tole: PieToken,
+        pie: PieToken,
+        dir: HoleDir,
+    },
+    /// 等到组里**任意一格**有事 → `(哪一枚, 哪个方向)`；`millis` 三态同全树。
+    ///
+    /// **挂起过一侧返回恒是预置值**（`PieToken::NONE`）：内核没有第二次执行机会
+    /// ——调用方按 deadline 循环、醒来自己按组快照复核（与 `UnitCall::Fall` 同款）。
+    #[ret((PieToken, HoleDir))]
+    Await { tole: PieToken, millis: usize },
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EnvCall {
     Room(RoomCall),
@@ -492,6 +529,8 @@ pub enum EnvCall {
     Pie(PieCall),
     /// 调试面（见 [`DebugCall`]）。
     Debug(DebugCall),
+    /// 多路等待（见 [`ToleCall`]）。
+    Tole(ToleCall),
 }
 
 impl EnvCall {
@@ -507,6 +546,7 @@ impl EnvCall {
             6 => Ok(EnvCall::Control(ControlCall::from_wire(slot, regs)?)),
             7 => Ok(EnvCall::Pie(PieCall::from_wire(slot, regs)?)),
             8 => Ok(EnvCall::Debug(DebugCall::from_wire(slot, regs)?)),
+            9 => Ok(EnvCall::Tole(ToleCall::from_wire(slot, regs)?)),
             _ => Err(crate::wire::Decode::BadSlot),
         }
     }

@@ -15,6 +15,7 @@ use alloc::vec::Vec;
 use crate::work::mail::hole::{self, HoleMeta};
 use crate::work::mail::nole::{self, NoleMeta};
 use crate::work::mail::pole::{self, PoleMeta};
+use crate::work::mail::tole::{self, ToleMeta};
 use crate::work::unit::task::Task;
 
 use super::pie::AnyPie;
@@ -35,7 +36,8 @@ fn pole_meta(pie: &AnyPie) -> Option<Arc<PoleMeta>> {
     match pie {
         AnyPie::Pole(p) => Some(p.meta().clone()),
         // Hole 无映射可撤；Nole 连载荷都没有——两者都不需要"先取强引用"这一步。
-        AnyPie::Hole(_) | AnyPie::Nole(_) => None,
+        // Hole 无映射可撤；Nole 与 Tole 连载荷都没有——都不需要「先取强引用」这一步。
+        AnyPie::Hole(_) | AnyPie::Nole(_) | AnyPie::Tole(_) => None,
     }
 }
 
@@ -236,6 +238,7 @@ fn seal_owned(tid: usize, task: &Arc<Task>) -> usize {
                 AnyPie::Hole(h) => Resource::Hole(h.meta().clone()),
                 AnyPie::Pole(pl) => Resource::Pole(pl.meta().clone()),
                 AnyPie::Nole(n) => Resource::Nole(n.meta().clone()),
+                AnyPie::Tole(t) => Resource::Tole(t.meta().clone()),
             })
         };
         // **锁外**封印：`seal` 只碰 Meta 自己的锁 + 唤醒站点，不需要任务表。
@@ -250,6 +253,10 @@ fn seal_owned(tid: usize, task: &Arc<Task>) -> usize {
             }
             Some(Resource::Nole(m)) => {
                 nole::seal(&m);
+                sealed += 1;
+            }
+            Some(Resource::Tole(m)) => {
+                tole::seal(&m);
                 sealed += 1;
             }
             None => {}
@@ -267,4 +274,5 @@ enum Resource {
     Hole(Arc<HoleMeta>),
     Pole(Arc<PoleMeta>),
     Nole(Arc<NoleMeta>),
+    Tole(Arc<ToleMeta>),
 }

@@ -55,5 +55,10 @@ pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), GateErr
             let alive = p.meta().alive();
             set_perm(p, subset, alive)
         }
+        // Tole 同款：它的数据面只有一张格子表，故 envcall 层也没有第二步。
+        AnyPie::Tole(p) => {
+            let alive = p.meta().alive();
+            set_perm(p, subset, alive)
+        }
     }
 }

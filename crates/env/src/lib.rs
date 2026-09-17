@@ -24,7 +24,7 @@ pub use fid::{DBCN_MAX, DebugCall, DebugCallRet};
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, HoleDir, MailCall,
     MailCallRet, MemoryCall, MemoryCallRet, NOTE_MAX, PieCall, PieCallRet, ProgramKind, RoomCall,
-    RoomCallRet, UnitCall, UnitCallRet,
+    RoomCallRet, ToleCall, ToleCallRet, UnitCall, UnitCallRet,
 };
 pub use permission::Permission;
 pub use wire::{

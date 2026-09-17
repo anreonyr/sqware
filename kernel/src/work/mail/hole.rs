@@ -115,6 +115,11 @@ impl HoleMeta {
         self.owner
     }
 
+    /// 本 hole 的全局身份（`Tole` 的格子按它认目标——格子记资源身份，不记句柄）。
+    pub(crate) fn id(&self) -> HoleId {
+        self.id
+    }
+
     /// 存活：state == Live。
     pub(crate) fn alive(&self) -> bool {
         *self.state.lock() == HoleState::Live

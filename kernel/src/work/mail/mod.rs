@@ -7,6 +7,7 @@
 //   hole.rs   — Hole 数据面（数据过内核，单槽消息、长度随消息）+ meta()
 //   pole.rs   — Pole 数据面（页级安全内存，物理帧 + 视图）+ meta()
 //   nole.rs   — Nole **无数据面**（只有身份与存活）——门铃的载体
+//   tole.rs   — Tole **无自带载荷**（只有一张"我记着哪几枚孔"的格子表）——多路等待的载体
 //
 // **没有全局资源表**：资源寿命 = 能力寿命（门闩持唯一的强引用 `Arc<Meta>`），
 // 最后一份门闩消失即回收。
@@ -14,8 +15,8 @@
 // 数据面不感知 rights；门闩在 envcall 入口 dispatch 时检查。
 // 阻塞语义在调度域 wait/wake，mail 不重造调度器。
 //
-// 三者按"有没有数据面"分：Hole 有槽、Pole 有页、Nole **什么都没有**——故 Nole 是
-// 唯一能承载**无载荷**信号（门铃：有事/没事）的类型。
+// 四者按"装什么"分：Hole 有槽、Pole 有页、Nole **什么都没有**（故能承载**无载荷**
+// 信号，门铃）、Tole **自己不装、只记着别人**（故能承载**多路等待**）。
 //
 // 权限四位：READ / WRITE（读写族）+ VEST / CAGE（传递族；单一真相在 `env::Permission`）。
 // 用户句柄 = per-pie token（全局唯一），envcall 以 token 寻址。
@@ -23,10 +24,12 @@
 pub mod hole;
 pub mod nole;
 pub mod pole;
+pub mod tole;
 
 // 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（gate → mail 单向依赖）。
 pub(crate) use hole::HoleMeta;
 pub(crate) use pole::PoleMeta;
+pub(crate) use tole::ToleMeta;
 
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;

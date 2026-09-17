@@ -75,6 +75,7 @@ pub(crate) fn accord(
             AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), subset, Some(src))),
             AnyPie::Pole(p) => AnyPie::Pole(new_pie(p.meta().clone(), subset, Some(src))),
             AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), subset, Some(src))),
+            AnyPie::Tole(p) => AnyPie::Tole(new_pie(p.meta().clone(), subset, Some(src))),
         };
         if subset.contains(Permission::CAGE) {
             let h = Heir {
@@ -85,6 +86,7 @@ pub(crate) fn accord(
                 AnyPie::Hole(p) => p.heir = Some(h),
                 AnyPie::Pole(p) => p.heir = Some(h),
                 AnyPie::Nole(p) => p.heir = Some(h),
+                AnyPie::Tole(p) => p.heir = Some(h),
             }
         }
         granted
@@ -121,5 +123,6 @@ pub(crate) fn clear_heir(task: &Task, token: usize) -> bool {
         AnyPie::Hole(p) => p.heir.take().is_some(),
         AnyPie::Pole(p) => p.heir.take().is_some(),
         AnyPie::Nole(p) => p.heir.take().is_some(),
+        AnyPie::Tole(p) => p.heir.take().is_some(),
     }
 }

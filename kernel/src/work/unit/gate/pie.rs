@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::Arc;
 
-use crate::work::mail::{HoleMeta, PoleMeta};
+use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 
 // ── 权限位（bitflags）──
 //
@@ -120,6 +120,8 @@ pub enum AnyPie {
     /// 无数据面的权柄载体（见 `work::mail::nole`）：只有身份与存活，
     /// 故它承载**无载荷通信**（门铃）——消息要走 Hole，页要走 Pole。
     Nole(Pie<crate::work::mail::nole::NoleMeta>),
+    /// 多路等待的载体（见 `work::mail::tole`）：自己不装载荷，只记着"哪几枚孔"。
+    Tole(Pie<ToleMeta>),
 }
 
 impl AnyPie {
@@ -128,6 +130,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.permission,
             AnyPie::Pole(p) => p.permission,
             AnyPie::Nole(p) => p.permission,
+            AnyPie::Tole(p) => p.permission,
         }
     }
 
@@ -137,6 +140,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.sire,
             AnyPie::Pole(p) => p.sire,
             AnyPie::Nole(p) => p.sire,
+            AnyPie::Tole(p) => p.sire,
         }
     }
 
@@ -149,6 +153,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.heir.as_ref(),
             AnyPie::Pole(p) => p.heir.as_ref(),
             AnyPie::Nole(p) => p.heir.as_ref(),
+            AnyPie::Tole(p) => p.heir.as_ref(),
         }
     }
 
@@ -175,6 +180,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.meta.alive().then(|| p.meta.owner()),
             AnyPie::Pole(p) => p.meta.alive().then(|| p.meta.owner()),
             AnyPie::Nole(p) => p.meta.alive().then(|| p.meta.owner()),
+            AnyPie::Tole(p) => p.meta.alive().then(|| p.meta.owner()),
         }
     }
 
@@ -192,6 +198,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.meta.owner(),
             AnyPie::Pole(p) => p.meta.owner(),
             AnyPie::Nole(p) => p.meta.owner(),
+            AnyPie::Tole(p) => p.meta.owner(),
         }
     }
 
@@ -200,6 +207,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.token,
             AnyPie::Pole(p) => p.token,
             AnyPie::Nole(p) => p.token,
+            AnyPie::Tole(p) => p.token,
         }
     }
 
@@ -209,6 +217,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.meta.alive(),
             AnyPie::Pole(p) => p.meta.alive(),
             AnyPie::Nole(p) => p.meta.alive(),
+            AnyPie::Tole(p) => p.meta.alive(),
         }
     }
 
@@ -218,6 +227,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.allows(need),
             AnyPie::Pole(p) => p.allows(need),
             AnyPie::Nole(p) => p.allows(need),
+            AnyPie::Tole(p) => p.allows(need),
         }
     }
 
@@ -227,6 +237,7 @@ impl AnyPie {
             AnyPie::Hole(p) => p.covers(subset),
             AnyPie::Pole(p) => p.covers(subset),
             AnyPie::Nole(p) => p.covers(subset),
+            AnyPie::Tole(p) => p.covers(subset),
         }
     }
 }

@@ -253,6 +253,8 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
         Ok(AnyPie::Hole(_)) => Err(GateError::Denied),
         // Nole 更没有：它没有载荷可以借映进任何空间。
         Ok(AnyPie::Nole(_)) => Err(GateError::Denied),
+        // Tole 也没有：它只有一张「我记着哪几枚孔」的格子表。
+        Ok(AnyPie::Tole(_)) => Err(GateError::Denied),
     };
     answer_pair(frame, r);
     Outcome::Resume
@@ -274,8 +276,8 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
         usable(&pie)?;
         match pie {
             AnyPie::Pole(p) => mail::pole::shut(p.meta(), token).map(|()| 0),
-            // Hole 与 Nole 都没有「关闩」这回事（无映射可撤）。
-            AnyPie::Hole(_) | AnyPie::Nole(_) => Err(GateError::Denied),
+            // Hole / Nole / Tole 都没有「关闩」这回事（无映射可撤）。
+            AnyPie::Hole(_) | AnyPie::Nole(_) | AnyPie::Tole(_) => Err(GateError::Denied),
         }
     })();
     answer(frame, r);
@@ -304,6 +306,7 @@ fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
             AnyPie::Hole(h) => mail::hole::seal(h.meta()),
             AnyPie::Pole(pl) => mail::pole::seal(pl.meta()),
             AnyPie::Nole(v) => mail::nole::seal(v.meta()),
+            AnyPie::Tole(t) => mail::tole::seal(t.meta()),
         }
         Ok(0)
     })();
@@ -350,6 +353,13 @@ fn narrow(frame: &mut TrapContext, token: usize, subset: Permission) -> Outcome 
                     None
                 }
                 AnyPie::Pole(p) => Some(p.meta().clone()),
+                // Tole 与 Hole / Nole 同款：收窄只改权限位，没有第二步。
+                AnyPie::Tole(p) => {
+                    if !p.meta().alive() {
+                        return Err(GateError::Dead);
+                    }
+                    None
+                }
                 // Nole 无载荷、无页表映射：收窄只改权限位，没有第二步。
                 AnyPie::Nole(p) => {
                     if !p.meta().alive() {

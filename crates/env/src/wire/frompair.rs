@@ -96,6 +96,22 @@ impl FromPair for (PieToken, PieToken) {
     }
 }
 
+/// `ToleCall::Await` 的返回：`v0` = 哪一枚（`0` = 没等到/没认出），`v1` = 哪个方向。
+///
+/// 方向只占低位两态：`0` = `Pull`、`1` = `Push`（与 `HoleDir` 的声明顺序同源）。
+impl FromPair for (PieToken, crate::HoleDir) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (
+            PieToken::new(v0),
+            if v1 == 1 {
+                crate::HoleDir::Push
+            } else {
+                crate::HoleDir::Pull
+            },
+        )
+    }
+}
+
 impl FromPair for (PieToken, crate::permission::Permission) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (

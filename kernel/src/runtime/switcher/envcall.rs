@@ -42,6 +42,7 @@ use crate::work::unit::weak::{Site, TaskWeak};
 mod debug;
 mod mail;
 mod pie;
+mod tole;
 
 /// 报文对账开关：`DebugCall::SetTrace` 写（每域各自一份静态——域是独立地址空间，
 /// 开关不跨域）。**今天没有读者**：原先读它的是 `Port::call`，那一层已随 Port 那轮
@@ -670,6 +671,15 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         EnvCall::Pie(call) => {
             if let Some(pie::Outcome::Resume) = pie::dispatch(frame, call, ident) {
                 return frame as *mut TrapContext;
+            }
+        }
+        // 多路等待轴：四动词里只有 `Await` 可能换帧，故与数据轴一样带 `Park`。
+        EnvCall::Tole(call) => {
+            if let Some(out) = tole::dispatch(frame, call, ident) {
+                return match out {
+                    mail::Outcome::Resume => frame as *mut TrapContext,
+                    mail::Outcome::Park(next) => next,
+                };
             }
         }
     };

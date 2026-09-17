@@ -44,6 +44,10 @@ pub enum WakeKey {
     /// 信标是**一次事件，不是计数**：落了三枚也只答一次（醒来自己扫表）。投信的只有
     /// 内核（`gate::accord` 落表之后）——用户态没有投这一族的动词，伪造不出"你的表变了"。
     Pies { task: usize },
+    /// 一枚组（`work::mail::tole`）自己的键：**它的等待者总得有个站点可挂**。
+    ///
+    /// 与 `Hole{id}` / `Nole{id}` 同构：组是内核命名的新对象，键取它的全局身份。
+    Tole { id: usize },
     /// 无人投信——只有期限会响（`RoomCall::Park`）。
     ///
     /// 键就是那个睡眠者本人：park 没有信号源，能唤醒它的只有它自己那次到点登记。
@@ -66,6 +70,7 @@ impl WakeKey {
             WakeKey::Task { id } => (id as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
             WakeKey::Alarm { task } => (task as u64).wrapping_mul(0xA24B_AED4_963E_E407),
             WakeKey::Pies { task } => (task as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F),
+            WakeKey::Tole { id } => (id as u64).wrapping_mul(0x1656_67B1_9E37_79F9),
         }
     }
 }
@@ -97,6 +102,55 @@ pub(in super::super) struct Site {
     /// 只有**读**：`prune` 判据与 `block` ④ 各读一次「死没死」。room 不接受任何
     /// 来自外部的「这个键死了」的说法。
     pub(in super::super) life: Weak<Life>,
+    /// **转发格**：投信本键时，也要叫醒这些组站点（裸 id——`room` 不认识 `Tole`，
+    /// 依赖方向必须保持 mail → room 单向）。目标死了/站点不在就当无事，不做寿命纠缠。
+    ///
+    /// 定长（[`FWD_MAX`]）：`wake` 没有失败通道，**读这一格必须零分配**；容量账因此
+    /// 落在登记侧（`forward` 返 `Result`，`hang` 有失败域）而不是唤醒侧。
+    pub(in super::super) fwd: Fwd,
+}
+
+/// 一个站点最多被几个组转发（见 [`Site::fwd`]）。满了由 `forward` 报错，不静默丢。
+pub(in super::super) const FWD_MAX: usize = 8;
+
+/// 转发格：定长 + `Copy` ⇒ 唤醒侧在锁内**拷出来**即可，不必持两把分片锁。
+#[derive(Clone, Copy)]
+pub(in super::super) struct Fwd {
+    ids: [usize; FWD_MAX],
+    len: usize,
+}
+
+impl Fwd {
+    pub(in super::super) const EMPTY: Self = Self {
+        ids: [0; FWD_MAX],
+        len: 0,
+    };
+
+    /// 登记一个组（幂等）；满了返 `Err`（登记侧有失败域）。
+    pub(in super::super) fn attach(&mut self, tole: usize) -> Result<(), ()> {
+        if self.ids[..self.len].contains(&tole) {
+            return Ok(());
+        }
+        if self.len == FWD_MAX {
+            return Err(());
+        }
+        self.ids[self.len] = tole;
+        self.len += 1;
+        Ok(())
+    }
+
+    /// 摘掉一个组；没登记过即无事。
+    pub(in super::super) fn detach(&mut self, tole: usize) {
+        if let Some(at) = self.ids[..self.len].iter().position(|&i| i == tole) {
+            self.ids.copy_within(at + 1..self.len, at);
+            self.len -= 1;
+        }
+    }
+
+    /// 拷出当前登记（`Copy`，零分配）。
+    pub(in super::super) fn ids(&self) -> &[usize] {
+        &self.ids[..self.len]
+    }
 }
 
 // ── 簿记表（全部 L3） ──
@@ -213,6 +267,7 @@ impl Site {
             head: None,
             tail: None,
             life: life.clone(),
+            fwd: Fwd::EMPTY,
         }
     }
 

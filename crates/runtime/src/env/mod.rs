@@ -14,4 +14,5 @@ pub mod debug;
 pub mod mail;
 pub mod memory;
 pub mod room;
+pub mod tole;
 pub mod unit;
