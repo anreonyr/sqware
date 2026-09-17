@@ -87,13 +87,18 @@ extern "C" fn main() -> ! {
     let Ok(sire) = utask::sire() else {
         bail("guest: no sire")
     };
+    // 板那条路：一问一答那一档（孔交给生我者，它再转授给板线程）。
+    //
+    // **必须先于铸入口**：`board::open` 走 `pair`，而 `pair` 的判据是"不是我开的那一枚"
+    // ——它要求本端表**干净**（session 事实 9）。先铸了入口，`pair` 就会偶尔把入口那一枚
+    // 认成板那一枚，于是板收到一枚它解不开的帧、答 `BAD`（实测：约十次里一次
+    // `guest: reg=5 lookup=5`）。`plic` 的 `boot()` 也是这个次序。
+    let Ok(link) = board::open(sire, MS) else {
+        bail("guest: no board link")
+    };
     // 本域的服务入口：别人按名字找到本域之后往它说话，本域从它读。它也是要交给板的那一枚。
     let Ok(entry) = mail::unseal_hole() else {
         bail("guest: no entry")
-    };
-    // 板那条路：一问一答那一档（孔交给生我者，它再转授给板线程）。
-    let Ok(link) = board::open(sire, MS) else {
-        bail("guest: no board link")
     };
     let Ok(me) = Name::new(ME) else {
         bail("guest: bad name")
