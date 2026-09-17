@@ -114,10 +114,6 @@ const MUTE_BITS: u32 = 64;
 /// 发货方不必抄这个数（`pairing::pack` 按单子逐条走）；收货方要它，因为它得**备缓冲**。
 const CAP: usize = PAIR_LEN * needs::PLIC.len();
 
-/// 日志节流：前几次全打（那是"通了没有"的读数），之后每这么多条打一次。
-const LOG_FIRST: usize = 16;
-const LOG_EVERY: usize = 64;
-
 /// 失败编号指"死在装配的哪一步"（本域是常驻的，正常退场码不作数）。
 const E_SIRE: usize = 1;
 const E_UP: usize = 2;
@@ -161,7 +157,6 @@ extern "C" fn main() -> ! {
     // **闲的时候真睡**：`muted == 0` 时 wait 传 `usize::MAX`（永久挂起），本域一次都不醒。
     // 只有手里还压着静音的线时才退回节拍——那是今天唯一能"放回"的手段（还没有谁会来说
     // 一声"我抽干了"）。把放回换成事件，这个节拍随之消失。
-    let mut total = 0usize;
     let mut muted: u64 = 0;
     loop {
         // 铃是一位：闲时（`muted == 0`）即使中断此刻就到，`ring` 也会把本域唤醒——不会漏。
@@ -169,17 +164,10 @@ extern "C" fn main() -> ! {
         match bell.wait(wait) {
             // 铃响：把这一轮该领的都领走。
             Ok(true) => {
-                let mut got = 0usize;
-                // 这一轮领到的第一条线——**日志必须报它**：不报线号就分不清"一次敲键
-                // 一条线报了好几次"与"好几条线各报一次"。
-                let mut first_line = 0u32;
                 loop {
                     let line = plic.claim();
                     if line == 0 {
                         break;
-                    }
-                    if first_line == 0 {
-                        first_line = line;
                     }
                     plic.disable(line);
                     if line < MUTE_BITS {
@@ -189,12 +177,9 @@ extern "C" fn main() -> ! {
                         plic.enable(line, LINE_PRIORITY);
                     }
                     plic.complete(line);
-                    got += 1;
                 }
                 // 应铃：清掉那一位并让内核**立即**重开本 hart 的闸门。
                 let _ = bell.hush();
-                total += got;
-                if total <= LOG_FIRST || total.is_multiple_of(LOG_EVERY) {}
             }
             // 到点：只把**真被静音过**的那几条放回去，放完就清零 ⇒ 下一轮如果没人再响，
             // 本域回到永久挂起。
@@ -405,16 +390,6 @@ struct BoardTrip {
 /// **推读自检已经拆掉**：本域的服务入口由待客线程读（两个方向各一枚孔），本线程推一句
 /// 进去只会被它读走——"授进来的指回原物"这件事改由**真客人**（`guest`）走一遍，那比自问
 /// 自答结实。
-fn ns() -> u64 {
-    runtime::env::chrono::clock()
-        .map(|(s, n)| s.saturating_mul(1_000_000_000).saturating_add(n))
-        .unwrap_or(0)
-}
-
-fn ms_since(t: u64) -> u64 {
-    ns().saturating_sub(t) / 1_000_000
-}
-
 fn board_trip(link: &Quay, board: TaskId, entry: PieToken) -> Option<BoardTrip> {
     // 问话孔：本端铸、给板读（本端自窄到只写）；答话仍走这条板路。
     let talk = board::ask_hole(board).ok()?;
