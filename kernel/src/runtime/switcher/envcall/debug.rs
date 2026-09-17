@@ -8,6 +8,10 @@
 // 走的是固件的调试控制台（内核自己的出口）。设备写仍归持设备者。
 //
 // 不设构建门：见 `env::fid::DebugCall` 那条理由（嵌套构建的 `debug_assertions` 会分叉）。
+//
+// **探针不许在锁里打**：`putln!` 最终要过 `console → translate_kernel → Space`（L2），而
+// 内核那些分片锁是 L3 ⇒ 持着站点表、门闩表一类的锁打印，会以"4→2 反向嵌套"的名义当场
+// panic（层级校验不认"这一句只是调试"）。探针要打，就放到**放锁之后**打。
 
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::putln;
