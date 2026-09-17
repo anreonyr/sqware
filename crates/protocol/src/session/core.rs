@@ -309,7 +309,7 @@ impl Quay {
             if self.ready() {
                 return Ok(());
             }
-            let remain = remain_ns(deadline);
+            let remain = remain_ms(deadline);
             if left == 0 || remain == 0 {
                 return Err(if self.waiting() == self.quota() {
                     Claim::Timeout
@@ -376,10 +376,10 @@ impl Quay {
             if self.find(want).is_some_and(Pier::paired) {
                 return self.find(want).ok_or(Claim::Partial);
             }
-            if left == 0 || remain_ns(deadline) == 0 {
+            if left == 0 || remain_ms(deadline) == 0 {
                 return Err(Claim::Timeout);
             }
-            let _ = call::fall(remain_ns(deadline));
+            let _ = call::fall(remain_ms(deadline));
         }
     }
 
@@ -567,10 +567,16 @@ fn map_seat(seat: Seat) -> Claim {
     }
 }
 
-/// 死线还剩多少纳秒（`None` = 永久）——`usize::MAX` 的等待不设界。
-fn remain_ns(deadline: Option<u64>) -> usize {
+/// 死线还剩多少**毫秒**（`None` = 永久）。`fall` 收的是毫秒。
+///
+/// 向上取整：`1..1_000_000` 纳秒的零头算 1 毫秒（否则会提前判超时）；
+/// 只有真到了死线才给 0——那一格是"期限到"的判据。
+fn remain_ms(deadline: Option<u64>) -> usize {
     match deadline {
-        Some(at) => at.saturating_sub(call::now_ns()).min(usize::MAX as u64) as usize,
+        Some(at) => at
+            .saturating_sub(call::now_ns())
+            .div_ceil(1_000_000)
+            .min(usize::MAX as u64) as usize,
         None => usize::MAX,
     }
 }
