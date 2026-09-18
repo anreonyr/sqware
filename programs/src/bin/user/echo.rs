@@ -18,6 +18,14 @@
 //!
 //! 读到一行 `exit` 就退（域退场 ⇒ root 收场 ⇒ 停机）。门的"自退"判据靠它。
 //!
+//! # 为什么它也上板（`board: true`）
+//!
+//! 与 `passer` 同理、用途不同：**本域要让人看得出它死了**。本域退场时开的那几枚孔随退出
+//! 钩子封印 ⇒ 板当场看出"客人没了" ⇒ 往死亡通知那条路推一格 ⇒ 装配者（`root`）据此记账
+//! 并放下本域那个死域。本域是**最后一条**，故这一格同时就是"会话结束"的信号。
+//!
+//! 挂不上板也照旧回显（本域的主职是回显）——只是那条信号缺席。
+//!
 //! # 两条边界（设计红线）
 //!
 //! 1. **只有一个域读调试面**：读口只有一个，谁 `get` 谁把它拿走。
@@ -27,13 +35,31 @@
 //! 非 UTF-8 的行会在内核那一格折成 `<non-utf8>`（`env::fid::DebugCall` 的既有语义：
 //! 那一段要过 `str`）。调试回显面对的是一台终端，够用——不为它动冻结面。
 
+extern crate alloc;
 extern crate programs;
 
+// 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
+#[path = "../supervisor/board.rs"]
+// 本域只用**客侧**那几手（板侧那一半归 root）⇒ 另一半在这里是死码。
+#[allow(dead_code)]
+mod board;
+
+use alloc::format;
 use core::time::Duration;
 
 use env::DBCN_MAX;
+use env::Name;
+use protocol::board::call as bcall;
 use runtime::env::debug;
+use runtime::env::mail;
 use runtime::env::room::{self, exit_with};
+use runtime::env::unit as utask;
+
+/// 本域挂在板上的名字（板按它分人；`root` 表里那一条也叫这个）。
+const ME: &str = "echo";
+
+/// 等板的总上限（毫秒）。**必须有界**：板死在头几步时本域不能陪着挂死（挂不上照旧回显）。
+const MS: usize = 1000;
 
 /// 域自己的正常退场码（与 `programs::entry::EXIT_OK` 同号）。
 const EXIT_OK: usize = 0;
@@ -50,6 +76,9 @@ const NON_UTF8: &str = "<non-utf8>";
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     let _ = debug::put(READY);
+    // 上板：**注册在回显之前**——板要能看见本域（见头注）。挂不上照旧回显。
+    let reg = register();
+    let _ = debug::put(&format!("echo: reg={reg}"));
 
     let mut buf = [0u8; DBCN_MAX];
     let mut line = [0u8; LINE_MAX];
@@ -88,4 +117,26 @@ extern "C" fn main() -> ! {
     }
 
     exit_with(EXIT_OK)
+}
+
+/// 上板报到（与 `passer` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
+///
+/// 这一挂的唯一用途是让**板看得见本域的死**；挂不上就返 `BAD`，主职照旧。
+fn register() -> u8 {
+    let Ok(sire) = utask::sire() else {
+        return bcall::BAD;
+    };
+    let Ok((link, board)) = board::open(sire, MS) else {
+        return bcall::BAD;
+    };
+    let Ok(talk) = board::ask_hole(board) else {
+        return bcall::BAD;
+    };
+    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
+        return bcall::BAD;
+    };
+    let Ok(me) = Name::new(ME) else {
+        return bcall::BAD;
+    };
+    board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(bcall::BAD)
 }

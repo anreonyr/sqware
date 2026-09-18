@@ -25,7 +25,7 @@ pass=0
 i=1
 while [ "$i" -le "$rounds" ]; do
   log="$out/$tag-$i.log"
-  ( sleep 5; echo exit; sleep 3; echo exit ) | timeout 30 cargo run $prof > "$log" 2>&1
+  ( sleep 5; echo exit; sleep 3; echo exit ) | timeout 15 cargo run $prof > "$log" 2>&1
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
   elif ! { grep -q "plic: board reg=0 miss=1 hit=0" "$log" \

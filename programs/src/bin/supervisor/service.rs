@@ -11,8 +11,8 @@
 //!
 //! 想加第三个服务：在 [`PLAN`] 里加一行，**`main` 一个字都不用改**。
 
-use env::Name;
 use env::wire::manifest::{self, MAX_PROGRAMS};
+use env::Name;
 use protocol::session::Quay;
 use protocol::system::service::{self, Announce, Grant, Table};
 use runtime::core::port::ship;
@@ -99,7 +99,9 @@ const fn passer() -> Program {
     }
 }
 
-/// 调试回显：只走调试面，不要门闩、不交通道 ⇒ 放行即起来（它不与谁说话，故也不上板）。
+/// 调试回显：只走调试面，不要门闩、不交通道。**但它上板**（`board: true`）——只为让板
+/// **看得见它的死**：它退场时开的那几枚孔随退出钩子封印 ⇒ 板当场看出"客人没了" ⇒ 推一格
+/// 死亡通知给装配者。`root` 的监督事件源就是这一条（见 `root/main.rs::supervise`）。
 const fn echo() -> Program {
     Program {
         name: "echo",
@@ -107,7 +109,7 @@ const fn echo() -> Program {
         tokens: &[],
         channels: &[],
         needs: None,
-        board: false,
+        board: true,
         died: E_ECHO,
     }
 }
@@ -126,7 +128,15 @@ pub const E_OK: Died = 0;
 /// 装配：登记整张表，然后按顺序把每条起起来。
 ///
 /// 返最后一条的名字（本域等它退场；它一走 ⇒ 本域退出 ⇒ 级联 ⇒ 停机）。
-pub fn assemble(table: &mut Table, boot: &Root) -> Result<Name, Died> {
+///
+/// `lanes` 是**死亡道**在装配者表里的那一把句柄（一位服务一条，按 `PLAN` 下标对位）：
+/// 装配时随 `board::attach` 各交一份给板线程，装配完由 `root` 拿去监督
+/// （见 `root/main.rs::supervise`）。它**不是**本函数的产物，只是借道穿过。
+pub fn assemble(
+    table: &mut Table,
+    boot: &Root,
+    lanes: &[Option<env::PieToken>],
+) -> Result<Name, Died> {
     // 清单条数不能超过表的格数（`Table::CAP` 与清单上限同值，编译期常量断言过）。
     if boot.programs().size_hint().0 > MAX_PROGRAMS {
         return Err(E_MANIFEST);
@@ -142,8 +152,8 @@ pub fn assemble(table: &mut Table, boot: &Root) -> Result<Name, Died> {
     // `tip` = 板线程那条提示之路在**本线程表里**的那一枚：它属于这张表，
     // 故只能被本线程拿着逐条传（`PieToken` 标着 `!Send + !Sync`）。
     let mut tip: Option<env::PieToken> = None;
-    for p in PLAN {
-        start(table, boot, p, &mut tip)?;
+    for (i, p) in PLAN.iter().enumerate() {
+        start(table, boot, p, &mut tip, lanes.get(i).copied().flatten())?;
     }
 
     // 三、把最后一条的名字交出去（等它退场 = 等这次会话结束）。
@@ -158,6 +168,7 @@ fn start(
     boot: &Root,
     p: &Program,
     tip: &mut Option<env::PieToken>,
+    lane: Option<env::PieToken>,
 ) -> Result<(), Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
 
@@ -211,7 +222,7 @@ fn start(
     //     **在 `records` 之后**：板那条路由客人在起来之后自己装（它是问的那一侧），
     //     而它要先收到配给才轮得到板那一问。
     if p.board {
-        board::attach(&mut quay, me, rep, READY_MS, tip).map_err(|why| {
+        board::attach(&mut quay, me, rep, READY_MS, tip, lane).map_err(|why| {
             step(p, why);
             p.died
         })?;

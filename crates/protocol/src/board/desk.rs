@@ -189,4 +189,25 @@ impl Desk {
         }
         gone
     }
+
+    /// 与 [`Self::sweep`] **同判据**，但把剔掉的那几位的号写进 `out`（返剔了几格）。
+    ///
+    /// 板要用这个号去做第二件事：**推那一位的死亡道**。号只在这里拿得到——客人一旦退场，
+    /// 它挂在板上的牌子随时会被摘掉，摘了就认不出"这一位叫什么"（道的记号是名字）。
+    pub fn sweep_who(&mut self, out: &mut [TaskId]) -> usize {
+        let probe = self.probe;
+        let mut gone = 0;
+        for cell in self.guests.iter_mut() {
+            if let Some(guest) = cell
+                && probe(guest.reply).is_none()
+            {
+                if let Some(slot) = out.get_mut(gone) {
+                    *slot = guest.who();
+                }
+                *cell = None;
+                gone += 1;
+            }
+        }
+        gone
+    }
 }
