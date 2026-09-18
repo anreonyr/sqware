@@ -55,24 +55,6 @@ pub(super) fn running(rep: TaskId) -> bool {
     !reaped(rep).unwrap_or(true)
 }
 
-/// 等它收尾完：`ms` 三态（`0` 只探、`usize::MAX` 挂到它收尾、其余毫秒）。
-/// 返 `true` = **调用开始时**它已经收尾完了。
-pub(super) fn until(rep: TaskId, ms: usize) -> Result<bool, Fail> {
-    if ms == 0 {
-        return reaped(rep);
-    }
-    if reaped(rep)? {
-        return Ok(true);
-    }
-    // 无限期限：直接挂到它收尾（内核在它回收时唤醒等待者）；其余：睡一段再问一次。
-    if ms == usize::MAX {
-        let _ = unit::join(rep, usize::MAX);
-        return Ok(true);
-    }
-    let _ = room::sleep(core::time::Duration::from_millis(ms as u64));
-    reaped(rep)
-}
-
 /// 内核负码 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
 fn fail(e: erra::Error<EnvError>) -> Fail {
     match e.source.code() {

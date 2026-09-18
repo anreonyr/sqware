@@ -211,13 +211,18 @@ pub fn probe_ready(table: &Table, name: Name) -> Ready {
 }
 
 /// 还活着没有。
+///
+/// **照实记（口径未齐）**：本判定读的是"身子里还有没有坐标"，而 [`Slot`] 的裁决是**死亡记账
+/// 不清坐标**（留给重启与放下）⇒ 一位已经收尾的 Service 在这里仍答 [`Watch::Alive`]。也就是说
+/// 这一对名字（`Alive`/`Gone`）现在名不副实：生死该看 [`State`]。今天没有调用者（`watch` 收尾
+/// 时不再 `detach`），故留着不动；要用它的人先裁这一处读法。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Watch {
     Alive,
     Gone,
 }
 
-/// 存活判定（纯）：表里还有身子就算活着——**身子的摘除由适配在确认回收后做**。
+/// 身子判定（纯）：**表里还有没有那对坐标**——不是生死（见 [`Watch`] 的照实记）。
 pub fn probe_watch(table: &Table, name: Name) -> Watch {
     match table.find(name) {
         Some(Service {
@@ -226,6 +231,21 @@ pub fn probe_watch(table: &Table, name: Name) -> Watch {
         }) => Watch::Alive,
         _ => Watch::Gone,
     }
+}
+
+/// "收尾完了没有"的三态判定 —— 与 [`Ready`] 同形：**判决 + 判决的来路**。
+///
+/// 为什么判决还要带"来路"：`Join{millis}` 挂起过之后的返回值是**挂起前的预置值**，
+/// 不是判决（它只说"醒过"，不说"为什么醒"），故判决只认**非阻塞那一问**；而"问了几次"
+/// 正是调用方要写进读数的那一格（`wait=now|waited`）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Reaped {
+    /// 收尾早已完成：**问的那一次**就有结论。
+    Now,
+    /// 问时还没完成，**挂起等到事件后复探**确认（唯一可靠的那条路）。
+    Waited,
+    /// 有界期内复探仍说没有 ⇒ 收尾未定：收场交给本域退场时的级联。
+    Unsettled,
 }
 
 // ── 失败域 ──────────────────────────────────────────────────
@@ -396,26 +416,62 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
     Ok(())
 }
 
-/// 盯着它：`true` = **调用开始时**它已经没了。
+/// 等它收尾：`ms` 三态与 [`ready`] 同款（`0` 只探、`usize::MAX` 挂到它收尾、其余毫秒）。
+/// **只读：不动表**。
 ///
-/// `ms` 三态与 [`ready`] 同款：`0` 只探、`usize::MAX` 挂到它收尾、其余毫秒。
-pub fn watch(table: &mut Table, name: Name, ms: usize) -> Result<bool, Fail> {
-    let Some(Service {
-        slot: Slot::Live { rep, .. },
-        ..
-    }) = table.find(name)
-    else {
+/// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{rep, 0}`）；等只是为了少问几次。
+/// `Join{rep, ms}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探——**"他杀
+/// 偶发不生效"那条错读就是漏了这一步**：把"醒过"当成了"没收到"。
+///
+/// 为什么有界等不需要 clock、也不必睡满 `ms`：`WakeKey::Task{id}` 上的投信方只有 `wipe`，
+/// 而它只在 `bury` 里、`Reaped` 置位**之后**调（`kernel/src/work/room/messenger/reap.rs`）
+/// ⇒ 等待里的"早醒"只可能来自收尾；"到点"那一支由复探分出来（答 [`Reaped::Unsettled`]）。
+///
+/// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
+/// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::system::call) 同一折法。
+pub fn until(table: &Table, name: Name, ms: usize) -> Result<Reaped, Fail> {
+    let Some(rep) = live_rep(table, name) else {
         return Err(Fail::Unknown);
     };
-    let rep = *rep;
-
-    // 内核的事实优先：它说收了就是收了，表随之落定。
-    if crate::system::call::until(rep, ms)? {
-        table.detach(name);
-        table.set_state(name, State::Dead);
-        return Ok(true);
+    if !crate::system::call::running(rep) {
+        return Ok(Reaped::Now);
     }
-    Ok(false)
+    if ms == 0 {
+        return Ok(Reaped::Unsettled);
+    }
+    // 挂起等一记：醒来自收尾（`wipe`）或到点，两者当场分不开 ⇒ 醒来复探，判决只认它。
+    let _ = runtime::env::unit::join(rep, ms);
+    if crate::system::call::running(rep) {
+        Ok(Reaped::Unsettled)
+    } else {
+        Ok(Reaped::Waited)
+    }
+}
+
+/// 这一行身子的代表线程（没有身子 = 没有可等的坐标）。
+fn live_rep(table: &Table, name: Name) -> Option<TaskId> {
+    match table.find(name) {
+        Some(Service {
+            slot: Slot::Live { rep, .. },
+            ..
+        }) => Some(*rep),
+        _ => None,
+    }
+}
+
+/// 盯着它：`true` = 它收尾了（`Now` / `Waited`）。
+///
+/// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（见 [`Slot`]：
+/// 清了就没得放下、也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：
+/// 那是"还没收干净"，不是"收了"。
+pub fn watch(table: &mut Table, name: Name, ms: usize) -> Result<bool, Fail> {
+    match until(table, name, ms)? {
+        Reaped::Now | Reaped::Waited => {
+            table.set_state(name, State::Dead);
+            Ok(true)
+        }
+        Reaped::Unsettled => Ok(false),
+    }
 }
 
 /// 按名字找那一行的只读视图（枚举的入口）。
