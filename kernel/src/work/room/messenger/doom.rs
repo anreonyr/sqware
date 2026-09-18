@@ -7,10 +7,12 @@
 // 两阶段是**正确性要求**，不是优化：钩子会摘门闩，摘门闩会唤醒等待者；若受害者
 // 尚未停摆，它可能被别的核偷走并运行，在「已注定要死」的状态下观察到一个已死的
 // 资源。他核 Running 任务无法被本核同步拉走（会破坏「Reaped 不在 running 槽」
-// 不变量），故走 `doomed` 待杀集合 + SSIP 单点，目标核 trap 自查自退——最终一致。
+// 不变量），故走 `doomed` 待杀集合：**兑现落在任务自己的时刻**（离核前自查 / timer
+// 兜底 / 那一记定向 IPI 的落点），见 [`doomed_nudge`]。
 
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use hashbrown::HashMap;
 
@@ -40,6 +42,24 @@ use super::{prune, void};
 pub(super) fn doomed() -> &'static SpinLock<HashMap<usize, usize>> {
     static T: OnceLock<SpinLock<HashMap<usize, usize>>> = OnceLock::new();
     T.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
+}
+
+/// 表里**有几笔**待杀——只当**门**用。
+///
+/// 为什么要有它：查表是 L3 锁 + HashMap，而"看一眼自己是不是被判死了"落在**热路径**上
+/// （每次离核：`park` / `wait` / `join` / `fall`，以及每个 timer tick）。杀人是极罕见的
+/// 事件，故绝大多数时候这一眼只该花一次原子读。
+///
+/// 观察者纪律（B′）：这是**提示**，不是事实——`0` 的意思是"这一眼没货"，**结论**永远来自
+/// 表锁内那一次 `remove`。故它不与插入配对成同步：计数**跟着表走**（插进新的一笔才加一、
+/// 摘掉一笔才减一），中间那一瞬（已入表、计数未加）看到的 0 只会让人**少看一眼**——下一次
+/// 检查点还会看，**不会错杀**。
+pub(super) static PENDING: AtomicUsize = AtomicUsize::new(0);
+
+/// 关机终末释放（`messenger::rip`）：表与它的门一起清。
+pub(super) fn rip() {
+    doomed().lock().clear();
+    PENDING.store(0, Ordering::Relaxed);
 }
 
 /// 停摆单线程：摘出全部调度/等待容器 → 置 `Doomed`。返 `true` = 本次停摆了它，
@@ -80,7 +100,17 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
                 void(ticket);
                 true
             }
-            TaskTag::Running => return doomed_nudge(task, reason),
+            TaskTag::Running => {
+                // 判它是"在跑"，却**找不到它在跑的那颗核**：那是"已离核、还没进容器"那道缝
+                // （`block` 的 ③`swap` 与 ④入链之间）——缝里没有任何核能替我们收它，而它马上
+                // 就会进容器 ⇒ 重来一轮（下一轮要么 `Blocked` 被站点表摘住，要么确有一颗核在
+                // 跑它）。直接兜底会把这一笔记成一笔**没人兑现**的账，见 [`doomed_nudge`]。
+                let hart = crate::work::room::scheduler::core::running_hart(task);
+                if hart.is_none() {
+                    continue;
+                }
+                return doomed_nudge(task, reason);
+            }
         };
         if taken {
             let mut t = task.clone();
@@ -128,33 +158,105 @@ fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
 /// `Running` 分支（也是重试耗尽的兜底）：记入待杀集合 + 定向 IPI，由目标核在陷阱里
 /// 自查自退。找不到它的在跑核也照样记——记下这一笔至少不把 kill 丢掉。
 ///
-/// # 照实记：这一记是「一次投递」，不是「注定」
+/// # 兑现：这一记只是提示，兑现靠四处
 ///
-/// 本函数只向**此刻在跑的那颗核**发一次 SSIP，而查 `doomed` 的落点在**全树只有一处**
-/// （`runtime::switcher::trap` 的 `SupervisorSoft` 分支），并且它只认「本核**当前**任务」。
-/// 于是有两条路让这一笔成为**孤儿**：① 受害者在那一记被取走之前自己离了核（挂起 /
-/// 被抢占换下）⇒ SSIP 打在别的当前任务上，被无害地清掉；② 调用时它本就不在任何核的
-/// running 槽里（`running_hart` 返 `None`）⇒ 记下了却无处投递。空闲系统里唯一的周期
-/// 事件是 100 ms 的 timer tick，而它**不查** `doomed`。
+/// 记一笔**不等于**兑现。查 `doomed` 的落点原先只有一处（`runtime::switcher::trap` 的
+/// `SupervisorSoft` 分支），而且它只认「本核**当前**任务」⇒ 那一记 IPI 若被别的上下文
+/// 取走（受害者在它到达之前自己离了核），这一笔就成了**孤儿**：全树再没人看它一眼，
+/// 直到关机级联才被收掉（实测：`Doom` 答 `Ok`、目标 300 ms 内没自退，见 `scripts/soak.sh`）。
 ///
-/// 实测：`scripts/soak.sh` 的收尾那一刀上见过 1 轮（debug 30 轮里的第 16 轮）——
-/// `Doom` 答 `Ok`，目标 300 ms 内没自退，最后是根域退场时的级联把它收掉的。
-/// **成因在这一格，不在观察者那一侧**（观察者那个错读已收口，见 `service::until`）。
+/// 故兑现改由**任务自己的时刻**兜底，IPI 退化成"让它尽快"的提示：
 ///
-/// 故今天能承诺的是：**当场摘得掉的一律摘掉**；摘不掉的记入待杀集合，兑现条件写在上
-/// 面两条路之外——"它下次上台时还有一道 IPI 打在它身上"。收窄这一格要动落点，待裁。
+/// | 兑现点 | 盖住的形状 |
+/// |---|---|
+/// | 离核前自查（`wait::block` 的挂起路径） | 点名时它已经睡着 ⇒ 不必等谁来捅，自己就退 |
+/// | `SupervisorTimer`：查本核当前任务 | 它被判死了却还在台上跑 |
+/// | `SupervisorSoft`（此处投的那一记） | 尽量当场、尽快 |
+/// | `SupervisorTimer`：[`sweep_doomed`] | 记在表里那几笔的**兜底**：不问"有没有人在跑它" |
+///
+/// # 照实记（量出来的那一格，口径未闭）
+///
+/// 本轮把上面四处一次装齐，实测（`scripts/soak.sh`，四个批次共 320 轮 debug/release）
+/// 只再见过 **1 轮**孤儿（`Doom` 答 `Ok`、目标 300 ms 内没自退、那一轮板也没扫到封印行）；
+/// 而装它们之前的三批分别见过 1/30、1/60（另一批 1/80 已在装了扫单位之后）。**量级在降
+/// （3.3% → 1.7% → 0.3%），但每一档都只有一两次事件，样本量不足以断言任何一步起效**——
+/// 故正文不写"已收口"。
+///
+/// 其中最要紧的一格是 [`suspend`] 里那条"读 `Running` 却找不到在跑的核"：装上计数探针后
+/// 70 轮里命中 5 次（那正是"已离核、未入链"那道缝，原版会在这里记一笔却无处投递）。
+/// 反过来，**扫单位在这 140 轮里一次也没被用到**（`sweep=0`：记录总在 tick 之前就被
+/// SSIP 或那两处自查吃掉）——它今天是一档**闲置的兜底**，留着是因为它是唯一不依赖投递
+/// 的那条路；把它变成"实测会用上"的那一天，得先有个能把这一格做成可测的压测台。
 fn doomed_nudge(task: &Arc<Task>, reason: usize) -> bool {
     let mut d = doomed().lock();
     // 扩容先试、失败即放弃这一笔（返回值本来就把'没记上'算进语义：不记才会把这次
     // kill 丢掉，故这里**先备后插**，备不出来也不 panic —— 整机照旧活着）。
-    if d.try_reserve(1).is_ok() {
-        d.insert(task.ident.id, reason);
+    if d.try_reserve(1).is_ok() && d.insert(task.ident.id, reason).is_none() {
+        // 门跟着表走：只在**新**记一笔时加一（重复点名不加）。
+        PENDING.fetch_add(1, Ordering::Relaxed);
     }
     drop(d);
-    if let Some(hart) = crate::work::room::scheduler::core::running_hart(task) {
+    let hart = crate::work::room::scheduler::core::running_hart(task);
+    if let Some(hart) = hart {
         crate::work::room::conductor::nudge(hart);
     }
     false
+}
+
+/// 扫单位：把**还躺在待杀表里**的那几笔挨个再问一遍"现在收得掉吗"，收得掉就收掉。
+/// 由 `SupervisorTimer` 每 tick 调（见 [`doomed_nudge`] 的"兑现"一节）。
+///
+/// 为什么它**理应**盖住其余所有形状：命令**记在表里**，故不必等"谁正好在台上"。一个已经
+/// 挂起的孤儿在站点表里挂得好好的（`suspend` 按 `Blocked` 扫分片就能摘下它），一个还在跑
+/// 的由本核/tick 那一处接住，一个名册里已经没有的（已被别的路收掉）则把这一笔作废。
+/// **但它今天是闲置的**：装了探针的 140 轮里一次也没被用到（记录总在 tick 之前就被
+/// SSIP 或那两处自查吃掉）——口径见 [`doomed_nudge`] 的照实记。
+///
+/// 顺带它是**陈旧记录的收尸人**：同一笔可能被别的路先收掉（级联 / 别核的扑杀），那时
+/// 任务已是 `Reaped` 或已出名册 ⇒ 记录作废，`PENDING` 跟着回落（门不该被陈账顶开）。
+///
+/// 锁纪律：锁内只抄 `(tid, reason)`（**定长数组**——tick 里不分配），出锁才 `muster` /
+/// `suspend` / `reap`（它们会取站点表等 L3 表，锁内碰即嵌套）。返本次收掉几笔。
+pub(crate) fn sweep_doomed() -> usize {
+    /// 一轮最多处理几笔：杀人是极罕见的事件，几笔足够；剩下的留给下一 tick。
+    const BATCH: usize = 4;
+
+    if PENDING.load(Ordering::Relaxed) == 0 {
+        return 0;
+    }
+    let mut batch = [(0usize, 0usize); BATCH];
+    let mut n = 0;
+    {
+        let d = doomed().lock();
+        for (tid, reason) in d.iter() {
+            if n == BATCH {
+                break;
+            }
+            batch[n] = (*tid, *reason);
+            n += 1;
+        }
+    }
+    let mut swept = 0;
+    for &(tid, reason) in &batch[..n] {
+        // 名册里没有它（已回收 / 从未入册）：这一笔作废（`take_doomed` 顺带落门）。
+        let Some(task) = muster(tid).and_then(|w| w.upgrade()) else {
+            let _ = take_doomed(tid);
+            continue;
+        };
+        // 已经收尾了（别的路收的）：记录作废。
+        if task.tag() == TaskTag::Reaped {
+            let _ = take_doomed(tid);
+            continue;
+        }
+        // 停摆得掉（挂在容器里 / 未放行 / 排队中）就收掉，并把这一笔摘掉——**取即清**；
+        // 停摆不掉（还在跑 / 已被别核停摆）就留着，下一 tick 再看。
+        if suspend(&task, reason) {
+            reap(task);
+            let _ = take_doomed(tid);
+            swept += 1;
+        }
+    }
+    swept
 }
 
 /// 扑杀整棵血缘子树（**两阶段**）：
@@ -197,10 +299,21 @@ pub(crate) fn doom(tid: usize) {
     }
 }
 
-/// trap(SupervisorSoft) 自退查询：本 hart 当前 running 任务是否被判死。
-/// 在则摘出**原因码**交给调用方（它写进本核的原因槽再 `quit`）。
+/// 自退查询：**本核当前正在跑的那一枚**被判死了没有。在则摘出**原因码**交给调用方
+/// （它写进本核的原因槽再 `quit`）。
+///
+/// 调用点是"任务自己的时刻"那几处（`SupervisorSoft` / `SupervisorTimer` / 离核前自查），
+/// 故它是**取即清**：一笔杀令只兑现一次。表空时由 [`PENDING`] 当场挡掉——这条查询落在
+/// 热路径上（每次离核 + 每个 tick），不该为它去碰 L3 锁。
 pub(crate) fn take_doomed(tid: usize) -> Option<usize> {
-    doomed().lock().remove(&tid)
+    if PENDING.load(Ordering::Relaxed) == 0 {
+        return None;
+    }
+    let out = doomed().lock().remove(&tid);
+    if out.is_some() {
+        PENDING.fetch_sub(1, Ordering::Relaxed);
+    }
+    out
 }
 
 /// 血缘判据：`actor` 是不是 `target` 的**祖先域**（含直接）。

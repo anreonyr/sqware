@@ -27,8 +27,7 @@ mod reap;
 mod wait;
 
 // `doom` / `reap` 按 `super::{...}` 取站点表与票根，5a 拆出的这两个面本轮不动——
-// 故它们要的三个名字在父模块留一份私有 `use`（可见范围与拆分前一致：只到本域）。
-use doom::doomed;
+// 故它们要的几个名字在父模块留一份私有 `use`（可见范围与拆分前一致：只到本域）。
 use reap::HUSKS;
 use wait::holder::{holders, void};
 use wait::site::{SITE_SHARDS, prune, shard_at};
@@ -77,7 +76,7 @@ pub(crate) const EXIT_DOOM: usize = 0xFFFF_FFFE;
 pub(crate) const EXIT_CASCADE: usize = 0xFFFF_FFFD;
 
 // 子模块对外重导出：**外部路径一行不改**（`messenger::cull` 等照旧）。
-pub(crate) use doom::{cull, doom, take_doomed};
+pub(crate) use doom::{cull, doom, sweep_doomed, take_doomed};
 pub(crate) use handoff::Handoff;
 pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;
@@ -100,7 +99,7 @@ pub(crate) fn rip() {
     let husks_out = HUSKS.lock().take();
     drop(husks_out);
     holders().lock().clear(); // 只存 Weak，无 drop 链
-    doomed().lock().clear(); // 只存 id，无 Arc
+    doom::rip(); // 只存 id，无 Arc；门跟着表一起清
 }
 
 /// 另两张簿记表的规模：票根（只存 `Weak`，无 drop 链）与躯壳队列。

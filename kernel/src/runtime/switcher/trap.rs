@@ -204,6 +204,19 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             // 重武装：运行任务抢占量子。
             timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
             redeem();
+            // **兜底**：本核当前 running 任务若被点名（他杀 / 级联的跨核分支），一个 tick
+            // 之内自退。这一处**不依赖任何投递**——投那一记 SSIP 可能被别的上下文取走，
+            // 而"它还在台上跑"这件事每 100 ms 必被本核看见一次（见 `doom::doomed_nudge`）。
+            if let Some(running) = ident.as_ref().and_then(Identity::live)
+                && let Some(reason) = crate::work::room::messenger::take_doomed(running.id)
+            {
+                messenger::set_exit_reason(reason);
+                drop(ident);
+                return crate::work::room::messenger::quit() as *mut TrapContext;
+            }
+            // 兜底之二：表里那些**没有任何核在跑**的笔（点名时它正走在挂起路上 ⇒ 那一记
+            // IPI 没人接）——按**表**办事，一个 tick 之内收掉（表空时只花一次原子读）。
+            crate::work::room::messenger::sweep_doomed();
             if from_task {
                 // 任务（U 态或 S 态域任务）被抢占：现场已在任务帧 → 直接切换
                 run() as *mut TrapContext

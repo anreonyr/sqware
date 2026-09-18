@@ -74,6 +74,20 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
         // 按"条件未就绪"答（`Busy`）。
         return Err(GateError::Busy);
     };
+    // **离核前自查**：我正在离开核——若此刻已被点名（他杀 / 级联的跨核分支），就地自退。
+    //
+    // 为什么落在这里：`doomed` 的兑现必须发生在**任务自己的时刻**。投那一记 SSIP 是"一次
+    // 投递"，它可能被别的上下文取走（见 `doom::doomed_nudge`），而**一个已经挂起的任务
+    // 永远不是"本核当前任务"** ⇒ 它再也等不到第二次机会，那一笔就成了孤儿。挂起的入口
+    // 只有本函数，故这一处就是"它要睡了"那个时刻。
+    //
+    // 位置在**备料之前**：自退不欠任何登记（站点 / 票根 / 到点）一个字都没写。
+    if let Some(reason) = super::take_doomed(me.ident.id) {
+        drop(me);
+        super::set_exit_reason(reason);
+        // 自退：此刻本核仍然持着我（未 `swap`），与 `Reap` / SSIP 那两处同一形状。
+        return Ok(Handoff::Switch(super::quit()));
+    }
     {
         let mut sites = sites(key).lock();
         if !sites.contains_key(&key) {
