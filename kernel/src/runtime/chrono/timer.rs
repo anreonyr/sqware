@@ -47,6 +47,11 @@ static LATE_N: AtomicU64 = AtomicU64::new(0);
 static LATE_SUM: AtomicU64 = AtomicU64::new(0);
 static LATE_MAX: AtomicU64 = AtomicU64::new(0);
 
+/// 登记 / 消音计数：把"没登记上"与"登记了又被取消"分开——A/B 归因时先看这两个。
+/// （`late_n` 只见到期的那一批；`tocks` 是登记的，`mutes` 是被扑杀取消的。）
+static TOCK_N: AtomicU64 = AtomicU64::new(0);
+static MUTE_N: AtomicU64 = AtomicU64::new(0);
+
 /// 节拍计数（ENV_TICKS 兼容）。
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
@@ -156,6 +161,7 @@ pub fn tock(handle: u64, wake_at: u64) -> Result<(), ()> {
     i.heap.try_reserve(1).map_err(|_| ())?;
     i.heap.push(Reverse((wake_at, handle)));
     TIMER_HEAP.recompute_nearest(&i);
+    TOCK_N.fetch_add(1, Ordering::Relaxed);
     Ok(())
 }
 
@@ -166,7 +172,11 @@ pub fn tock(handle: u64, wake_at: u64) -> Result<(), ()> {
 /// 代价 O(n)（n = 未到点 tock 数，通常个位数），只在扑杀路径上调用（3 处）。
 pub fn mute(handle: u64) {
     let mut i = TIMER_HEAP.inner.lock();
+    let before = i.heap.len();
     i.heap.retain(|Reverse((_, h))| *h != handle);
+    if i.heap.len() != before {
+        MUTE_N.fetch_add(1, Ordering::Relaxed);
+    }
     TIMER_HEAP.recompute_nearest(&i);
 }
 
@@ -212,5 +222,16 @@ pub fn late_stats() -> (u64, u64, u64) {
         LATE_N.load(Ordering::Relaxed),
         LATE_MAX.load(Ordering::Relaxed),
         LATE_SUM.load(Ordering::Relaxed),
+    )
+}
+
+/// 登记 / 消音计数 `(登记过的到点, 被扑杀取消掉的到点)`——与 [`late_stats`] 同一读出口。
+///
+/// 用途是把"打点者压根没跑"（两个都小）与"跑了又被取消"（`mutes` 大）分开：`late_n` 只
+/// 见到期的那一批，缺了这两个就分不清"没有到点"和"到点都被取消了"。
+pub fn tock_stats() -> (u64, u64) {
+    (
+        TOCK_N.load(Ordering::Relaxed),
+        MUTE_N.load(Ordering::Relaxed),
     )
 }

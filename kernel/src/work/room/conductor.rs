@@ -153,8 +153,10 @@ pub(super) fn halt() -> ! {
             } else {
                 clock::ticks_to_duration(late_sum / late_n).as_millis()
             };
+            let (tocks, mutes) = timer::tock_stats();
             putln!(
-                "timer: late_n={late_n} late_max_ms={max_ms} late_avg_ms={avg_ms} late_max_tick={late_max}"
+                "timer: late_n={late_n} late_max_ms={max_ms} late_avg_ms={avg_ms} late_max_tick={late_max} traps={} tocks={tocks} mutes={mutes}",
+                timer::ticks()
             );
         }
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(

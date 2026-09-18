@@ -55,3 +55,40 @@ path = "src/bin/supervisor/root/main.rs"
 test = false
 bench = false
 doctest = false
+
+# 压测台：受害者（U 态）与台主（S 态，`SQWARE_ROOT=rig` 时当引导镜像）。
+[[bin]]
+name = "prog-churn"
+path = "src/bin/stress/churn.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-rig"
+path = "src/bin/stress/rig.rs"
+test = false
+bench = false
+doctest = false
+
+# 忙机台：占核者（U 态）与台主（S 态，`SQWARE_ROOT=load` 时当引导镜像）。
+[[bin]]
+name = "prog-busy"
+path = "src/bin/stress/busy.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-park"
+path = "src/bin/stress/park.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-load"
+path = "src/bin/stress/load.rs"
+test = false
+bench = false
+doctest = false

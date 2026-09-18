@@ -11,9 +11,17 @@ use env::wire::manifest;
 /// 内核只按 `ROOT_NAME` 取引导镜像。
 /// 这里是**唯一**声明「程序装成哪种空间」的地方——root 从清单里读，不再硬编码。
 /// 码（`ProgramKind` → u32）在 `env::wire::manifest` 里写死一次，本表只用类型。
-const ROOT_NAME: &str = "root";
+/// 引导镜像的**清单名**：默认 `root`；压测台用 `SQWARE_ROOT=rig` 换一个（见
+/// `programs/src/bin/stress/rig.rs`）——换的只是"谁的镜像被当引导镜像"，内核其余一字不改。
+///
+/// **在 build 脚本里按运行时读**（不是 `option_env!`）：`option_env!` 会把值烘进这台
+/// 脚本自己的二进制，而脚本何时重编不由那个变量决定（实测换变量后引导镜像没换）；
+/// 运行时读 + `rerun-if-env-changed` 才是 build 脚本该用的那一对。
+fn root_name() -> String {
+    std::env::var("SQWARE_ROOT").unwrap_or_else(|_| "root".to_string())
+}
 const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
-    (ROOT_NAME, "prog-root", ProgramKind::Supervisor),
+    ("root", "prog-root", ProgramKind::Supervisor),
     // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
     // 够不着建域那道 S 态门。
     ("echo", "prog-echo", ProgramKind::User),
@@ -26,6 +34,17 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 中断面域：**S 态**——它要读写 PLIC 的寄存器（那一页由 root 从配对块取出来授给它，
     // 内核不参与；内核只摇那枚铃）。
     ("plic", "prog-plic", ProgramKind::Supervisor),
+    // 压测台的两个（`programs/src/bin/stress/`）：`churn` = 受害者——U 态，不停地在
+    // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
+    // S 态，`SQWARE_ROOT=rig` 时当引导镜像，反复造/杀它。
+    ("churn", "prog-churn", ProgramKind::User),
+    ("rig", "prog-rig", ProgramKind::Supervisor),
+    // 忙机台的另外两个：`busy` = 占核者——U 态，纯自旋**永不落核**；`load` = 台主——
+    // S 态，`SQWARE_ROOT=load` 时当引导镜像。它把每一颗核钉住，好让「到点兑现」这条债
+    // 在树内第一次变得可测（`soak`/`rig` 里总有核空闲，空闲核会替全局兑现到点）。
+    ("busy", "prog-busy", ProgramKind::User),
+    ("park", "prog-park", ProgramKind::User),
+    ("load", "prog-load", ProgramKind::Supervisor),
 ];
 
 fn main() {
@@ -35,6 +54,8 @@ fn main() {
     let ld = format!("{}/link.ld", env!("CARGO_MANIFEST_DIR"));
     println!("cargo::rustc-link-arg=-T{ld}");
     println!("cargo::rerun-if-changed=link.ld"); // link.ld 变更自动重链
+    // 换引导镜像（压测台）只改这一个环境变量：让 cargo 在它变时重跑本脚本。
+    println!("cargo::rerun-if-env-changed=SQWARE_ROOT");
 
     // 镜像程序 ELF 打包进 initrd（boot 不再 include_bytes 内嵌）：工作区没有
     // kernel→programs 的依赖边，`cargo clean` 后可能先编 kernel 而程序产物尚不存在
@@ -94,8 +115,8 @@ fn main() {
     // 引导镜像在清单内的偏移/长度（内核不解析清单，按这两个常量取 root 的 ELF）
     let at = INITRD_BINS
         .iter()
-        .position(|(name, _, _)| *name == ROOT_NAME)
-        .expect("initrd: ROOT_NAME not in INITRD_BINS");
+        .position(|(name, _, _)| *name == root_name())
+        .expect("initrd: SQWARE_ROOT not in INITRD_BINS");
     let root_span = spans[at].clone();
     assert!(!root_span.is_empty(), "initrd: root image is empty");
     println!("cargo::rustc-env=ROOT_OFFSET={}", root_span.start);
