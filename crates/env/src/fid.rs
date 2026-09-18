@@ -52,11 +52,28 @@ use crate::wire::{PieToken, TaskId, TeamId, VirtAddr};
 #[derive(Envcall)]
 #[call(class = 0)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// **时间参数的定式**（全树唯一一份，其它处只引用它）：
+///
+/// - **上限**（"等某事发生，至多等这么久"）：`Wait` / `Fall` / `Join` / `MailCall::Wait` /
+///   `ToleCall::Await`，以及协议层的 `service::until/watch`、`Pier::pull`、`Quay::claim`。
+///   三态一律：`0` = **只探测**（当场答，不挂起）、`usize::MAX` = **永久**、其余 = 至多毫秒数。
+///   超时与"条件成立"**按返回值区分**（各自的 `bool` / 预置值），不另立错误码。
+/// - **下限**（"至少这么久不回到我"）：只有 [`RoomCall::Park`]。它的保证成对写成
+///   **"不早于 `millis`，且至多晚一拍"**——晚的那一拍由内核的失明上限兜（见
+///   `chrono::timer::BLIND_MS`），故 `0` 在 `Park` 上没有"只探测"的含义。
+///
+/// 两族语义相反（一个谈"至少"，一个谈"至多"），故**不许只写"毫秒数"**：每个时间参数
+/// 的文档都要能一眼看出它属于哪一族。
 pub enum RoomCall {
     /// 主动让出处理器（词族 starve）。
     #[ret(())]
     Starve,
-    /// 睡眠指定毫秒数（词族 park）。
+    /// 睡眠指定毫秒数（词族 park）——**下限**：不早于 `millis` 才可能回到本任务。
+    ///
+    /// 保证成对：**不早于 `millis`，且至多晚一拍**（那一拍 = 内核的失明上限
+    /// `chrono::timer::BLIND_MS`；武装点已收敛为 `min(本核上限, 最近活到点)`，故只有
+    /// "没有任何核能替它兑现"时才会吃满那一拍）。`millis = 0` 是"让出一拍"，
+    /// **不是**探测——下限族没有三态。
     #[ret(())]
     Park { millis: usize },
     /// 退出当前任务（不返回；词族 reap）。发散，无 Ret。
@@ -79,7 +96,7 @@ pub enum RoomCall {
         note: VirtAddr,
         len: usize,
     },
-    /// 事件等待（词族 wait）：key + 毫秒（usize::MAX = 永久）。
+    /// 事件等待（词族 wait）：key + 毫秒——**上限族**（三态见文件头的定式）。
     #[ret(())]
     Wait { key: usize, millis: usize },
     /// 事件唤醒（词族 wake）：key；返回是否唤到人。
@@ -187,8 +204,7 @@ pub enum UnitCall {
     /// 放行：`Held → Starved`。放行只发生一次——重复调用返回 `-1 Denied`。
     #[ret(())]
     Hatch { task: TaskId },
-    /// 等"我自己这张权限表里落进一枚"：`millis`（0 = 取一次信标、当场答；
-    /// `usize::MAX` = 永久）。
+    /// 等"我自己这张权限表里落进一枚"：`millis`——**上限族**（三态见文件头的定式）。
     ///
     /// **无参数**——等的是调用者自己的表（同 `SelfId` / `Sire`：没有参数就没有伪造面）。
     /// 只报"多了"：只有 `Accord`（别人把副本交进来）会响；自己铸的与 boot 那批不响。
@@ -196,7 +212,7 @@ pub enum UnitCall {
     /// ——醒来自己扫表分辨。
     #[ret(bool)]
     Fall { millis: usize },
-    /// 等目标回收：`millis`（0 = 只探测，`usize::MAX` = 永久）。
+    /// 等目标回收：`millis`——**上限族**（三态见文件头的定式）。
     ///
     /// `true` = **调用开始时**目标已回收（未挂起）；`false` = 未回收（可能挂起过）。
     /// 调用模式（与 `MailCall::Wait` 同款）：
@@ -318,7 +334,7 @@ pub enum MailCall {
         buf: VirtAddr,
         max: usize,
     },
-    /// 等某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
+    /// 等某方向就绪：`millis`——**上限族**（三态见文件头的定式）。
     ///
     /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（探测失败，
     /// 或挂起过——被唤醒与超时不分）。**绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
@@ -559,7 +575,11 @@ pub enum ToleCall {
         pie: PieToken,
         dir: HoleDir,
     },
-    /// 等到组里**任意一格**有事 → `(哪一枚, 哪个方向)`；`millis` 三态同全树。
+    /// 等到组里**任意一格**有事 → `(哪一枚, 哪个方向)`；`millis`——**上限族**
+    /// （三态见文件头的定式）。
+    ///
+    /// **两个 `0` 不是一回事**：入参 `millis = 0` 是"只探测、不挂起"；返回值里
+    /// `PieToken::NONE`（= 0）+ 方向 = "这次没等到"。别把"没探测到"读成"没挂起"。
     ///
     /// **挂起过一侧返回恒是预置值**（`PieToken::NONE`）：内核没有第二次执行机会
     /// ——调用方按 deadline 循环、醒来自己按组快照复核（与 `UnitCall::Fall` 同款）。

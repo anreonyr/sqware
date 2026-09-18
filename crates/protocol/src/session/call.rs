@@ -107,7 +107,7 @@ pub(super) fn pull_own(hole: PieToken, buf: &mut [u8], ms: usize) -> Result<usiz
 /// 等"我自己这张权限表里落进一枚"（`UnitCall::Fall`）。
 ///
 /// 无参数：等的是本端这张表（键由内核从调用者推出来，伪造不出"你的表变了"）。
-/// `ms` 三态同全篇：`0` = 取一次信标、当场答；`usize::MAX` = 永久。
+/// `ms` 属**上限族**（三态口径见 `env::fid` 文件头的定式）。
 /// `false` = 自上次取走以来没落过表（期限到）——**醒来自己扫表分辨**。
 pub(super) fn fall(ms: usize) -> bool {
     runtime::env::unit::fall(ms).unwrap_or(false)

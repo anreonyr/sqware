@@ -315,6 +315,8 @@ pub fn spawn(
 ///
 /// # Errors
 /// 见 [`Fail`]。
+/// `ms` = 就绪判定的**上限族**毫秒（口径见 `env::fid` 文件头的定式：`0` 只探测、
+/// `usize::MAX` 永久）——超时与"成立了"按返回值区分。
 pub fn start(
     table: &mut Table,
     name: Name,
@@ -429,6 +431,8 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 ///
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
 /// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::system::call) 同一折法。
+/// `ms` = **上限族**（口径见 `env::fid` 文件头的定式）；超时那支答 [`Reaped::Unsettled`]，
+/// 不写表。
 pub fn until(table: &Table, name: Name, ms: usize) -> Result<Reaped, Fail> {
     let Some(rep) = live_rep(table, name) else {
         return Err(Fail::Unknown);
@@ -464,6 +468,7 @@ fn live_rep(table: &Table, name: Name) -> Option<TaskId> {
 /// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（见 [`Slot`]：
 /// 清了就没得放下、也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：
 /// 那是"还没收干净"，不是"收了"。
+/// `ms` = **上限族**（口径见 `env::fid` 文件头的定式）。
 pub fn watch(table: &mut Table, name: Name, ms: usize) -> Result<bool, Fail> {
     match until(table, name, ms)? {
         Reaped::Now | Reaped::Waited => {
