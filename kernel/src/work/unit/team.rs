@@ -20,7 +20,7 @@ use env::{Name, TeamId};
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;
 
-use super::task::{Task, TaskBuilder};
+use super::task::{Task, TaskBuilder, TaskTag};
 use super::weak::{Site, TaskWeak};
 
 /// 团队（进程）— 共享地址空间的线程容器。
@@ -84,6 +84,35 @@ impl Team {
             // 瞬时强计数提升）。
             !(Weak::as_ptr(t) == exited_ptr)
         });
+    }
+
+    /// **域里没有还没收尾的线程了吗**（`Oust` 的前置判据）。
+    ///
+    /// 判据是 `Reaped`（**收尾**），不是"回收完了"——后者按 `messenger::bury` 自述
+    /// "对调用方不可观测"：一具正在埋的壳不算在世，它自己会把域对象带到归零。
+    ///
+    /// 两格一起看：`held`（未放行的引导线程）与 `tasks`。其实只读 `tasks` 已经覆盖
+    /// `held`（引导线程也在册，tag 是 `Held` 而非 `Reaped`），多看一格是双保险。
+    ///
+    /// 读法同 [`Self::prune_tasks`]：先用 `Weak::strong_count`（纯 load）滤掉死条目，
+    /// 只对"升得起"的那几枚 `upgrade` 一次读 tag、读完即放（同 `Join` 的活体支）。
+    pub(crate) fn all_reaped(&self) -> bool {
+        {
+            let held = self.held.lock();
+            if !held.is_empty() {
+                return false;
+            }
+        }
+        let g = self.tasks.lock();
+        g.iter().all(|t| match t.upgrade() {
+            Some(task) => {
+                let reaped = task.tag() == TaskTag::Reaped;
+                drop(task);
+                reaped
+            }
+            // 升不起来 = 条目已死（strong == 0）；与 bury 竞态时刚死也算死。
+            None => true,
+        })
     }
 
     /// 成员簿记快照（cull 遍历用：快照后放锁，锁外逐条处理）。

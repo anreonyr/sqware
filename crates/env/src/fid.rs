@@ -125,11 +125,12 @@ pub enum ProgramKind {
 }
 
 /// 执行单元调用（class 1）—— unit 域：`Build`（装域）/ `Spawn`（产线程）/ `Hatch`
-/// （放行）/ `Join`（等结束），外加血缘观察（`Sire`/`HeirCount`/`Heir`）。
+/// （放行）/ `Join`（等结束）/ `Oust`（放下子域），外加血缘观察
+/// （`Sire`/`HeirCount`/`Heir`）。
 ///
 /// **index 是声明顺序判别号**（见文件头）。原 `SpawnTask` 并入 `Spawn` 之后，本枚举
-/// 的 index `0..=7` **连续无空号**：`Build` 落在 5、`Hatch`/`Join` 在 6/7——注释占不住
-/// 槽位，没有变体就没有号。
+/// 的 index `0..=8` **连续无空号**：`Build` 落在 5、`Hatch`/`Join` 在 6/7、`Oust` 在 8
+/// ——注释占不住槽位，没有变体就没有号。
 #[derive(Envcall)]
 #[call(class = 1)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -201,6 +202,33 @@ pub enum UnitCall {
     /// `loop { if Join{task,0} { break } Join{task,MAX} }`。
     #[ret(bool)]
     Join { task: TaskId, millis: usize },
+    /// 放下一个子域：父方**不再认**自己生的这一格（`heir` 表里那一格）。
+    ///
+    /// **不是**杀（那是 [`RoomCall::Doom`]）、**不是**等（[`UnitCall::Join`]）、**不是**转交
+    /// （协议层 `disown` 的"别人接上"那半边）。它只做一件事：把调用者那张血缘表里的一格
+    /// 摘掉，放掉那一份强引用。
+    ///
+    /// # 前置
+    ///
+    /// - 目标必须在**调用者自己**的 `heir` 表里——那张表本身就是凭证（与 `Spawn` 的门同源），
+    ///   故没有第二道权限判据；
+    /// - 目标必须**没有还没收尾的线程**（`Reaped` 只算收尾、不算在世；正在埋的那具壳不挡
+    ///   这一格），且没有未放行的引导线程——由内核判，不干净答 `-3 Busy`。
+    ///
+    /// # 效果
+    ///
+    /// 那一格消失 ⇒ `HeirCount` / `Heir` 不再报它、`Spawn { team }` 对这个域再也通不过、
+    /// `Doom` 级联不再遍历到它 ⇒ 该域除"正在埋的那具壳"外最后一枚长期强引用落地，域对象
+    /// （`Team` 与它的 `Space`）随那具壳埋完而析构。
+    ///
+    /// # 失败
+    ///
+    /// - 不在调用者的 `heir` 里（没生过 / 已放下过 / 别人的子域）⇒ `-1 Denied`；
+    /// - 在表里但还有没收尾的线程 ⇒ `-3 Busy`（"条件未就绪"）。
+    ///
+    /// 一次调用最多摘一格；重复调用答 `Denied`（第二格起它就不在我表里了）。
+    #[ret(())]
+    Oust { team: TeamId },
 }
 
 /// 内存调用（class 2；trace 事件名 `MemoryEvent` 同词）。

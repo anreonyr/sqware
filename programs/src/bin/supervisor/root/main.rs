@@ -7,7 +7,9 @@
 //! 1  启动参数 → 清单（有哪些程序）与配对块（有哪些门闩）——两块都是 boot 只读借映的
 //! 2  按装配单登记整张表（`service::PLAN`）
 //! 3  按装配单逐条起：建域 → 产线程 → 定会话 → 装通道 → 放行 → 等就绪 → 发门闩
-//! 4  等最后一条退场 ⇒ 本域退出 ⇒ 级联扑杀 ⇒ 全部回收 ⇒ 自然停机（srst）
+//! 4  等最后一条退场；顺手把**已经收尾的**子域放下（`Oust`，每个在册服务报一行读数）
+//!    ——没有这一步，那些死域的外壳会一直挂在装配者身上，直到本域退场才随级联走
+//! 5  本域退出 ⇒ 级联扑杀 ⇒ 全部回收 ⇒ 自然停机（srst）
 //! ```
 //!
 //! **本文件只剩流程**：起谁、按什么顺序、怎么发门闩、怎么算起来了，全在
@@ -45,7 +47,7 @@ mod pairing;
 #[path = "../service.rs"]
 mod service;
 
-use protocol::system::service::Table;
+use protocol::system::service::{Slot, Table};
 
 use service::{E_BOOT, E_MANIFEST, E_PROGRAM, E_TABLE};
 
@@ -68,9 +70,35 @@ extern "C" fn main() -> ! {
 
     // 4. 等最后一条退场：它一走 ⇒ 本域退出 ⇒ 级联 ⇒ 全部回收 ⇒ 停机。
     service::wait_last(&mut table, last);
-    // 5. **会话的收尾由会话的主人负责**：常驻线程是它起的，也是它收的。本域里那枚
+    // 5. **半步 restart 的读数**：顺手放下**已经收尾**的子域。没有这一步，那些死域的
+    //    外壳会一直挂在装配者身上（`heir` 只增不减），直到本域退场才随级联走。
+    oust_the_dead(&table);
+    // 6. **会话的收尾由会话的主人负责**：常驻线程是它起的，也是它收的。本域里那枚
     //    板线程没有 `Join` 可等（`attach` 里弃权了），故按号点名收掉——同域线程之间
     //    没有寿命耦合，内核的子域级联收不到它。
     board::shut();
     service::die(service::E_OK, "root: done")
+}
+
+/// 把**已经收尾**的子域放下（`UnitCall::Oust`）：对每一条在册服务试一次，报一行。
+///
+/// **不探活**：`join` 答不出"死透了吗"——死透到名册条目都被 `prune_dead` 摘掉之后，
+/// `Join` 只答 `Denied`（问不出"没了"与"从来没有过"）。判断在这里是**动作自带的**：
+/// 收尾了就摘掉（`ousted=true`），还活着就答 `Busy`（`ousted=false`），两条都报。
+///
+/// 名字从表里读、不写死：加服务仍然只改 `service::PLAN`。`heir` 的计数变化是这一步
+/// 唯一的可见效果。
+fn oust_the_dead(table: &Table) {
+    for row in table.rows() {
+        let Slot::Live { team, .. } = row.slot else {
+            continue;
+        };
+        let before = runtime::env::unit::heir_count().unwrap_or(0);
+        let ousted = runtime::env::unit::oust(team).is_ok();
+        let after = runtime::env::unit::heir_count().unwrap_or(0);
+        let _ = runtime::env::debug::put(&alloc::format!(
+            "root: oust {} ousted={ousted} heir={before}→{after}",
+            row.name.as_str()
+        ));
+    }
 }

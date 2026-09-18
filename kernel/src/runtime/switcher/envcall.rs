@@ -576,6 +576,24 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Err(e) => return ret_err(frame, e),
             }
         }
+        EnvCall::Unit(UnitCall::Oust { team }) => {
+            let Some(me) = current().running_task() else {
+                return ret_err(frame, GateError::Denied);
+            };
+            // 凭证就是**我自己那张血缘表**（同 `Spawn` 的门）：查到 = 我是它的 sire。
+            let Some(child) = me.heir(team) else {
+                return ret_err(frame, GateError::Denied);
+            };
+            // 前置：域里没有还没收尾的线程（判据读法与"回收对调用方不可观测"那条一致）。
+            if !child.all_reaped() {
+                return ret_err(frame, GateError::Busy);
+            }
+            // 手里那份瞬时引用先还掉：摘除只需 id，析构留给锁外。
+            drop(child);
+            // **摘除与析构分开**：`oust` 在表锁内只做 Vec 摘除，交回的那一份在这里落地
+            // ⇒ `Team`（连带 `Space`）的析构不在 L3 锁里走。
+            drop(me.oust(team));
+        }
         EnvCall::Control(ControlCall::Backtrace { buf, frames }) => {
             // Normal 任务自诊断回溯：采样当前任务的栈（`user_satp` 根表，零锁不触缺页），
             // 把 pc 数组经 mail::copy_out 写进用户 buf。buf 非法（未映射/不可写）→

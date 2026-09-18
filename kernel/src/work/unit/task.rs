@@ -408,6 +408,26 @@ impl Task {
         Ok(())
     }
 
+    /// **放下**一个子域：摘掉我 `heir` 里 `team` 那一格，把它**交回**调用方。
+    ///
+    /// 与 [`Self::adopt`] 对偶：那个把一格推进来，这个把一格还出去。摘除在锁内完成、
+    /// 锁随即释放；交回的那一份 `Arc<Team>` **由调用方在锁外落地**——`Team` 的析构要
+    /// 碰 `Space`（`asid::deallocate`）与帧池，不能在 L3 锁里做。
+    ///
+    /// 用 `remove` 而非 `swap_remove`：`heir` 有一个**按索引读的面**（`Heir { index }`），
+    /// 别让放下一次就把剩下的次序洗牌。
+    ///
+    /// 返 `None` = 表里没有这一格（没生过 / 已放下过 ⇒ 调用方按 `Denied` 回）。
+    /// 前置判据（"这域还有没有没收尾的线程"）**不在本函数**：这里只做 −1，条件由
+    /// envcall 臂用 [`Team::all_reaped`] 判，两种失败因此不搅进一个返回值。
+    ///
+    /// [`Team::all_reaped`]: super::team::Team::all_reaped
+    pub(crate) fn oust(&self, team: TeamId) -> Option<Arc<Team>> {
+        let mut g = self.heir.lock();
+        let at = g.iter().position(|t| t.id == team)?;
+        Some(g.remove(at))
+    }
+
     /// 快照我的全部子域（doom 级联遍历用：快照后放锁，锁外逐条处理）。
     pub(crate) fn heirs(&self) -> Vec<Arc<Team>> {
         self.heir.lock().clone()

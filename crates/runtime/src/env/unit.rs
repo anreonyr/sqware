@@ -75,6 +75,15 @@ pub fn hatch(task: TaskId) -> EnvResult<()> {
     Ok(())
 }
 
+/// **放下**一个子域：摘掉我自己 `heir` 表里那一格。
+///
+/// 前置：那域里没有还没收尾的线程（否则 `-3 Busy`）；它必须是我生的（否则 `-1 Denied`）。
+/// 一次一格；重复调用答 `Denied`。想等它收干净，先 `Doom` + `join`。
+pub fn oust(team: TeamId) -> EnvResult<()> {
+    let _ = UnitCall::Oust { team }.call()?;
+    Ok(())
+}
+
 /// 等目标回收：`millis`（0 = 只探测，`usize::MAX` = 永久）。
 ///
 /// `true` = **调用开始时**目标已回收（未挂起）；`false` = 未回收（可能挂起过）。
