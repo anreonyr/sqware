@@ -58,6 +58,7 @@ impl Guest {
 ///
 /// ```text
 ///   Admit   收一位客人（答话路到手）        —— 板线程侧：来客人了
+///   Dismiss 客人说了"我走了"，撤它那一格     —— 与 admit 成对
 ///   Arm     记下它的问话孔在本表里的号      —— 先 arm 才 hang
 ///   Guest   由问话孔的号直达那一格          —— 醒来时唯一要问的一句
 ///   Sweep   剔走已经走了的格子              —— 惰性，不是轮询
@@ -101,6 +102,27 @@ impl Desk {
             ask: None,
             reply,
         });
+        Ok(slot)
+    }
+
+    /// 撤这一位客人的格子，返**撤掉的格子号**；不在账上 ⇒ [`Fail::Unknown`]。
+    ///
+    /// 与 [`Desk::admit`] 成对：一位客人一格，进来一格、走了一格。**只动账**——把它的问话孔
+    /// 从组里摘掉那一手不归它（`Tole` 不在这层，故那一步在程序层，见
+    /// `supervisor/board.rs` 的退场那一支）。
+    ///
+    /// 与 [`Desk::sweep`] 的分工：这一句撤的是**客人自己说了走**的那一格，`sweep` 剔的是
+    /// **答不出来**（答话路那枚孔径死）的那一格——一个是听来的，一个是看出来的，故两句都在。
+    pub fn dismiss(&mut self, who: TaskId) -> Result<usize, Fail> {
+        let Some((slot, cell)) = self
+            .guests
+            .iter_mut()
+            .enumerate()
+            .find(|(_, cell)| cell.as_ref().is_some_and(|g| g.who == who))
+        else {
+            return Err(Fail::Unknown);
+        };
+        *cell = None;
         Ok(slot)
     }
 
@@ -149,8 +171,9 @@ impl Desk {
 
     /// 剔走**已经走了**的客人，返剔了几格；幂等。
     ///
-    /// 判据是注入的那一格（在这棵树里 = "它答话路那一枚还在不在我表里"），故这本账自己
-    /// 不知道"走"是什么意思。
+    /// 判据是注入的那一格（在这棵树里 = "它答话路那一枚还在不在我表里"），故**这一句**认的
+    /// 是**看出来的**那一档：孔死了就剔。**听来的**那一档是 [`Desk::dismiss`]——客人自己说了
+    /// 走，账当场撤（不等孔死）。两档都在，因为没说就走的那种也得有人收。
     pub fn sweep(&mut self) -> usize {
         let probe = self.probe;
         let mut gone = 0;

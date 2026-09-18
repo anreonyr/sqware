@@ -184,6 +184,25 @@ impl Board {
         Ok(())
     }
 
+    /// 摘掉这位挂在板上的**全部**牌子，返摘了几枚（没有它的牌子 ⇒ `0`，**不算错**）。
+    ///
+    /// 与 [`Board::unregister`] 的分工：那一枚是**逐名**对偶的右半（一次一个名字，叫不出
+    /// 名字就摘不下来）；这一句是**整位客人退场**——它挂过的名字一次全放下，故调用方不必
+    /// 先知道它挂过哪些名字。两处走同一只手下牌（[`Board::free_off`]），故"牌子留着、
+    /// 名字不流转"这条规矩一字不差。
+    pub fn free_of(&mut self, who: TaskId) -> usize {
+        let mut freed = 0;
+        for at in 0..self.signs.len() {
+            // `owner` 与 `entry` 同生同灭（`register` 一起写、`lift` 一起清）⇒ 认主人一格
+            // 就够了：牌子还立着才数得进这一笔。
+            if self.signs[at].owner == Some(who) {
+                self.free_off(at);
+                freed += 1;
+            }
+        }
+        freed
+    }
+
     /// 照牌子上的字说出"在哪"。答不出只有两种可能，**且都是同一件事**：
     /// 板上没这一枚，或挂着的那一枚已经不在了。
     pub fn lookup(&mut self, name: Name) -> Result<PieToken, Fail> {

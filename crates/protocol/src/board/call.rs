@@ -33,7 +33,9 @@ use runtime::env::mail;
 /// **外来的号进不了这张表**——故剩下的两种情形才都是"实例没了"。板上那一枚又是**亲手
 /// 交给板的**（板正是持有它的那张表），所以这里读到 `Err` 就是"实例真的没了"。
 fn probe(entry: PieToken) -> Option<TaskId> {
-    mail::reserve(entry).ok().map(|(vestor, _owner, _mark)| vestor)
+    mail::reserve(entry)
+        .ok()
+        .map(|(vestor, _owner, _mark)| vestor)
 }
 
 /// 这扇门**本身是谁的**（`Reserve` 的第二格 `owner`：副本共享同一事实，转手不变）。
@@ -120,10 +122,11 @@ pub fn name_of(bytes: &[u8]) -> Option<Name> {
 
 // ── 一问一答那一步（`Query` 的载体）──────────────────────────
 
-/// 一问一答的帧：**一问一答各一句**，形状只此一种。
+/// 一问一答的帧：**一问一答各一句**。
 ///
 /// ```text
 ///   Query   [0] op   [1..33] name   [33..41] 入口号（只有 Register 用）
+///   Short   [0] op                                （Dismiss：整帧一字节，空载荷）
 ///   Reply   [0] status
 /// ```
 ///
@@ -137,15 +140,19 @@ pub fn name_of(bytes: &[u8]) -> Option<Name> {
 /// 正是旧树 `[33..41]` 那一格的病；**答案那一侧则干脆没有这一格**：查到的那枚入口经
 /// 会话交进客人的表，报文里再放一个号只会多出一份两边都得认的约定。
 ///
-/// 报文的**上限就是 [`ASK`]**：本协议没有第二种消息。长度仍由每次 `push` 自己带
+/// 报文的**上限就是 [`ASK`]**：本协议只有两种帧——这一种有载荷的（[`REGISTER`] /
+/// [`UNREGISTER`] / [`LOOKUP`]）与 [`DISMISS`] 的一字节短帧。长度仍由每次 `push` 自己带
 /// （孔不预设上限），这里只是**声明这一版只用多大**——一处上界。
 pub const ASK: usize = 1 + env::wire::NAME_LEN + 8;
 
-/// 三个动作在报文里的码——**与核心那三个方法同名**（`register` / `unregister` /
-/// `lookup`）：线上与模型是同一件事的两层，不该各起一套词。
+/// 四个动作在报文里的码——**与核心那四个方法同名**（`register` / `unregister` /
+/// `lookup` / `dismiss`）：线上与模型是同一件事的两层，不该各起一套词。
 pub const REGISTER: u8 = 1;
 pub const UNREGISTER: u8 = 2;
 pub const LOOKUP: u8 = 3;
+/// 第四格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节
+/// （给它塞两格空位就白要 40 字节，见 [`op_of`] 与 [`unpack`] 的分工）。
+pub const DISMISS: u8 = 4;
 
 /// 答话那一格。**前五格与 [`Fail`] 一一对应**（`OK` = 一个失败都不是），第六格不是
 /// 失败域的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。
@@ -170,18 +177,22 @@ pub fn pack(op: u8, name: Name, seed: Option<PieToken>) -> [u8; ASK] {
     out
 }
 
-/// 解开一问：`(动作码, 名字, 那一格入口号)`。**读不懂返 `None`**（持板者据此答 `BAD`，
+/// 只读第一格**动作码**——短帧也读得动，故分流先问这一句。空帧 ⇒ `None`
+/// （持板者据此答 `BAD`，不猜、不崩）。
+pub fn op_of(bytes: &[u8]) -> Option<u8> {
+    bytes.first().copied()
+}
+
+/// 解开一问的**载荷**：`(名字, 那一格入口号)`。**读不懂返 `None`**（持板者据此答 `BAD`，
 /// 不猜、不崩）。
 ///
+/// 只在**有载荷**的那几码上叫（[`op_of`] 已经分过流：退场那一句是一字节短帧，不进这里）。
 /// 长度为 [`ASK`] 是**帧的契约**（`pack` 产出的就是这个长度），故短一字节即读不懂。
-/// 那一格入口号按 0 = "没带"解——令牌自 1 起，0 是内核的越界哨兵。
-pub fn unpack(bytes: &[u8]) -> Option<(u8, Name, Option<PieToken>)> {
-    let op = *bytes.first()?;
+/// 那一格入口号按 [`PieToken::NONE`] = "没带"解——令牌自 1 起，0 是内核的越界哨兵。
+pub fn unpack(bytes: &[u8]) -> Option<(Name, PieToken)> {
     let name = name_of(bytes.get(1..)?)?;
     let at = bytes.get(1 + env::wire::NAME_LEN..ASK)?;
-    let seed = PieToken::from_bytes(at)?;
-    let seed = (seed.get() != 0).then_some(seed);
-    Some((op, name, seed))
+    Some((name, PieToken::from_bytes(at)?))
 }
 
 /// 会话的失败域 → 板的失败域：**"它不在"是一条判据**，故两边只留一个名字

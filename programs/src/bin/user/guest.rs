@@ -13,7 +13,8 @@
 //!   3  LOOKUP   "plic" ：板上问一句，入口从会话里进本域表（找不到就再问，有界）
 //!   4  借一枚**回信孔**给它、把 32 字节（**本域的名字** = "谁在敲门"）推进它的入口，
 //!      再从回信孔读回一句答话（它报的是它自己的名字）
-//!   5  报一行读数就退场 —— 一次往返，不留常驻
+//!   5  说一句 DISMISS（**一字节帧**）——"我走了"：板据此撤格 + 摘掉本域挂在板上的牌子
+//!   6  报一行读数就退场 —— 一次往返，不留常驻
 //! ```
 //!
 //! # 一句话就是一个名字
@@ -44,8 +45,9 @@
 //! 故一个最小特权的域也能按名字找到服务——这一刀最想验的就是这一句。（唯一收在 S 态的是
 //! 铸**门铃**，本域用不着。）
 //!
-//! **退场之后**：板上那一行由惰性剔除扫掉（名字的位置留着）；root 域里替本域待客的那枚
-//! 板线程还挂在它的孔上——"客人走了它看不出来"是在账上的一格（见 `supervisor/board.rs`）。
+//! **退场**：本域**自己说**一句 `DISMISS`（一字节帧）——板据此撤掉本域那一格、摘掉本域
+//! 挂在板上的全部牌子、并把本域的问话孔从组里摘掉（名字的位置留着）。**没说就走**的那种
+//! 仍由板**看见**（答话路那枚孔径死）后惰性剔除。
 
 extern crate alloc;
 extern crate programs;
@@ -136,13 +138,17 @@ extern "C" fn main() -> ! {
         // 查到了却没在表里认出那一枚：也算没走通（读数里的 `entry=0`）。
         None => (none, None),
     };
+    // 四、走完这一趟：说一句"我走了"（一字节帧，不带名字也不带入口）。板据此撤掉本域那一格、
+    //     摘掉本域挂在板上的牌子，答一格 `OK`；本域不在板上那本账上则答 `UNKNOWN`。
+    let bye = board::dismiss(talk, &link, MS).unwrap_or(BAD);
+
     let said = answer.as_ref().map(Name::as_str).unwrap_or("?");
     say(&format!(
-        "guest: reg={reg} lookup={lookup} entry={} say={ME} answer={said}",
+        "guest: reg={reg} lookup={lookup} entry={} say={ME} answer={said} bye={bye}",
         at.get()
     ));
 
-    // 四、退场：一次往返，不留常驻（kernel 打的那一行就是这一格的读数）。
+    // 五、退场：一次往返，不留常驻（kernel 打的那一行就是这一格的读数）。
     let walked = reg == bcall::OK && lookup == bcall::OK && answer.is_some();
     exit_with_note(
         if walked { E_OK } else { E_TRIP },

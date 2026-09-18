@@ -224,7 +224,8 @@ fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
 ///   起手  铸一枚提示孔（副本交给装配者），把它与所有问话孔挂进**同一个组**
 ///   循环  补齐两件事（收提示 + 认领答话路 / 认出问话孔并挂组）
 ///         等一格有事（一个等待）—— 提示孔 ⇒ 来客人了；问话孔 ⇒ 读一帧、答一句
-///         惰性剔走已经走了的客人
+///         说了"我走了"的那一位 ⇒ 撤格 + 摘牌 + 把它的问话孔从组里摘掉
+///         惰性剔走**已经死了**的客人（旧交接）
 /// ```
 ///
 /// **板不用码头**：它要的两枚孔都不是它开的——答话路的**写端**是装配者转授进来的，问话孔的
@@ -270,9 +271,10 @@ fn host_loop(me: TaskId) {
         if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut board, guest);
+            serve_one(&mut board, &mut desk, &tole, guest);
         }
-        // 三、客人走了 ⇒ 惰性剔（组里那一格随它的孔一起退化，这里只清账）。
+        // 三、客人**死了**（没道别就没了）⇒ 惰性剔：答话路那枚孔径死就是判据，这里只清账。
+        //     **说了走**的那一位在 `serve_one` 那一支里已经撤干净（撤格 + 摘牌 + 摘孔）。
         desk.sweep();
     }
 }
@@ -416,7 +418,11 @@ fn say(msg: &str) {
 ///
 /// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询
 /// （单槽的路上不会有两句排队：一位客人一次只问一句）。
-fn serve_one(board: &mut Board, guest: protocol::board::Guest) {
+///
+/// `tole` 只为一件事进来：客人说了"我走了"之后，**它的问话孔要从组里摘掉**——退场是客人
+/// 说的一句，而"不再等这一格"落在组上，故摘孔这一步只能在拿得到组的地方做（`Desk` 那层
+/// 够不着组）。
+fn serve_one(board: &mut Board, desk: &mut Desk, tole: &Tole, guest: protocol::board::Guest) {
     let Some(ask) = guest.ask() else {
         return;
     };
@@ -428,18 +434,46 @@ fn serve_one(board: &mut Board, guest: protocol::board::Guest) {
         return;
     };
     // 一问一答：读不懂也答（答 `BAD`），答话走**这位客人的答话路**（一客一路，单槽）。
-    let answer = answer(board, want, guest.who());
+    let answer = answer(board, desk, want, guest.who());
     let _ = mail::HolePie::from_token(guest.reply()).push(&answer);
+    // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
+    // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
+    if bcall::op_of(want) == Some(bcall::DISMISS) {
+        let _ = tole.unhang(&mail::HolePie::from_token(ask), HoleDir::Pull);
+    }
 }
 
 /// 把一条问交给板，编出一句答（**一格**：读不懂也答，答 `BAD`）。
-fn answer(board: &mut Board, want: &[u8], who: TaskId) -> [u8; 1] {
-    let Some((op, name, seed)) = bcall::unpack(want) else {
+///
+/// **先读动作码、再按码取载荷**：退场那一句是**一字节短帧**（[`bcall::DISMISS`]），它没有
+/// 名字也没有入口，故在 [`bcall::unpack`] 之前就分流出去——给它塞两格空位是白要 40 字节。
+fn answer(board: &mut Board, desk: &mut Desk, want: &[u8], who: TaskId) -> [u8; 1] {
+    let Some(op) = bcall::op_of(want) else {
         // 读不懂就答 `BAD`——不猜、不崩。
         return [bcall::BAD];
     };
+    if op == bcall::DISMISS {
+        // 退场：撤它那一格（`Unknown` = **它不在账上**）+ 摘掉它挂在板上的全部牌子。
+        let said = match desk.dismiss(who) {
+            Ok(_slot) => {
+                let names = board.free_of(who);
+                // 破例打一行：退场这一件事的读数只此一处（**只在这一件事上打**，不是刷屏）。
+                say(&format!(
+                    "board: bye tid={} names={names} occupied={}",
+                    who.get(),
+                    desk.occupied()
+                ));
+                Ok(())
+            }
+            Err(fail) => Err(fail),
+        };
+        return [code(said.err())];
+    }
+    let Some((name, seed)) = bcall::unpack(want) else {
+        return [bcall::BAD];
+    };
     let said = match op {
-        bcall::REGISTER => match seed {
+        bcall::REGISTER => match (seed.get() != 0).then_some(seed) {
             // 入口要**是它刚交过来的那一枚**。**这枚孔是谁铸的、谁交的**：客人铸（记号
             // `entry`）、经会话交给板（`hang_in` ⇒ 板上这一份的来源位是客人）——故判据是
             // `{交者 == 它, 记号 == entry}`：前格在核心（`probe(entry) == who`），后格在这里。
@@ -537,6 +571,27 @@ pub fn ask(
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
     mail::HolePie::from_token(say)
         .push(&bcall::pack(op, name, seed))
+        .map_err(|_| Fail::Unknown)?;
+    let mut reply = [0u8; 1];
+    match pier.pull(&mut reply, ms) {
+        Ok(1) => Ok(reply[0]),
+        _ => Err(Fail::Unknown),
+    }
+}
+
+/// 客侧第四步：说一句"**我走了**"，收一格答话。
+///
+/// 与 [`ask`] 同一对动作（推一句问话、从本端板路取一句答话），只少两样：**没有载荷**（不说
+/// 名字、不交入口，故帧只有一字节）与**不带板的号**（没什么要 `hang_in` 给板的）。
+///
+/// 板那侧据此撤格 + 摘掉这一位挂在板上的**全部**牌子；它不在账上则答
+/// [`UNKNOWN`](bcall::UNKNOWN)。
+pub fn dismiss(say: PieToken, link: &Quay, ms: usize) -> Result<u8, Fail> {
+    let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
+    let pier = link.find(at).ok_or(Fail::Unknown)?;
+    // 孔是单槽：与 [`ask`] 同一条路，只是这一帧短。
+    mail::HolePie::from_token(say)
+        .push(&[bcall::DISMISS])
         .map_err(|_| Fail::Unknown)?;
     let mut reply = [0u8; 1];
     match pier.pull(&mut reply, ms) {
