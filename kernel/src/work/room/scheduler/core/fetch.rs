@@ -1,26 +1,49 @@
 // 取活（core::fetch）— 本核没活时怎么拿到活：跨核偷取 + WFI 休眠。
 //
-// `fetch` 是「Idle → Running」的对外入口，顺序**不可重排**：全退出检查须在 steal
+// `fetch` 是「Idle → Running」的对外入口，顺序**不可重排**：全退出检查须在取活
 // **之前**（停机后不得再取活）；`wait` 内部自带全退出复审 + 睡眠位协议，且它睡下
 // 之前与醒来之后都要再取一次活（防「检查完 → 置位 → 睡」窗口内的入队漏唤醒）。
 //
-// `steal` 与 `wait` 都只在本文件内用（对外只有 `fetch`）。
+// # 照实记：跨核偷取已删（用户裁决）
+//
+// 旧版这里还有一条 `steal`：空闲核扫别人的队列把活搬走。它的判据（task-3）是
+// "`starved` 不再需要它"。icount 环境对齐后实测（release，`QEMU_SMP=4`，icount 关，
+// 各 5 轮共 1640 次试验）：steal 开 ⇒ `doom: starved` 合计 23、`rig: lost` 合计 1；
+// steal 关 ⇒ 18、2——**两格都在噪声内**，而 `steals` 从约 80/轮降到 0。故整条路径、
+// 它依赖的 `starved_len` 镜像、`steal_cursor` 与三个读数一起退休。
+//
+// 注：早先"关掉 steal 也无差别"的那次对照是在 `-icount auto,sleep=on`（默认）下取的，
+// 那时瓶颈是 icount 把 WFI 唤醒节流到毫秒，**不作数**；本次是在与验收门一致的环境里取的。
 
 use alloc::sync::Arc;
-use core::sync::atomic::Ordering;
 
 use riscv::register::{sie, sip};
 
 use crate::hart;
 use crate::runtime::chrono::timer;
-use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::messenger;
 use crate::work::unit::task::Task;
 
-use super::table::{current, schedulers};
+use super::table::current;
 
 /// WFI 休眠的推远增量：无待唤醒 tock 时 arm 到「永远」。
+///
+/// # 照实记："睡到永远"曾被怀疑有问题，最后是**台子跑错了环境**
+///
+/// rig A 曾量到"投给一颗睡在 WFI 的核，它 96% 不醒"（`starved` 312~324/328），据此试过
+/// 逐核确认重试、整字广播、以及**把正常期上限从"永远"改成 1 ms 的有界兜底拍**。有界拍
+/// 收益是真的（`starved` 308~324 → 91~115、`nudged` 1~9 → 144~168），但代价是空闲核从
+/// "睡到永远"变成每核每秒约 500~600 拍空转，**被裁决否决**——这一步否对了。
+///
+/// 真因不在内核：`scripts/boot.nu` 默认带 `-icount auto,sleep=on`（按宿主时间给 vCPU
+/// 记账、让它睡够虚拟额度）⇒ **WFI 里的核被 IPI 叫醒要等额度，实测毫秒级**（延迟直方图
+/// 众数 1~10 ms）；而验收门一直是关着 icount 跑的。与门对齐（`QEMU_ICOUNT=`）后，同一颗
+/// ELF 上 `starved` 落到 **0~7/328**、`nudged` **324~328**。环境对齐见
+/// `scripts/{stress,soak,load}.sh`。
+///
+/// 故本值保持"永远"：空闲核**不该**为空转付费，唤醒侧也不欠这一笔——欠的是"台子要和门
+/// 跑在同一个环境里"（照实记，别再走一遍）。
 const WFI_FAR: u64 = 1 << 60;
 
 /// 收尾期的 WFI 拍长（**ticks 与 timebase 同频**：QEMU virt 上 10 MHz ⇒ 25 ms）。
@@ -38,51 +61,10 @@ pub(in super::super) fn fetch() -> usize {
         if conductor::done() {
             conductor::halt();
         }
-        if let Some(task) = steal() {
-            return s.seat(task);
-        }
         if let Some(task) = wait() {
             return s.seat(task);
         }
     }
-}
-
-/// 非阻塞偷取：先读 starved_len（锁外原子读，S 态共享不失效缓存行）——空队列
-/// 不做 RMW，避免对受害者锁行乒乓；有活才 try_lock（失败即跳过——victim 忙时
-/// 不等待，无锁序规则）。锁内 pull 复查队列防竞态。
-///
-/// 起点随机化：每核持 `steal_cursor` 本地 fetch_add(1) % hart_count 派生起点，
-/// 多核同时醒来时各 hart 起点天然分散——避免全从 hart 0 起步造成的 cache
-/// 热点（多 hart 同时对同目标的 L1 锁 RMW → cache line 乒乓 = 雷鸣群）。
-fn steal() -> Option<Arc<Task>> {
-    let me = hart::hart_id();
-    let n = hart::hart_count();
-    if n <= 1 {
-        return None;
-    }
-    conductor::note_steal_try();
-    // 每核独立游标派生起点：fetch_add 是 Relaxed，无内存序代价。
-    let start = current().steal_cursor.fetch_add(1, Ordering::Relaxed) % n;
-    for off in 0..n {
-        let v = (start + off) % n;
-        if v == me {
-            continue;
-        }
-        if schedulers()[v].backlog() == 0 {
-            continue;
-        }
-        let Some(task) = schedulers()[v].try_pull() else {
-            conductor::note_steal_miss();
-            continue;
-        };
-        trace::note(EventKind::Room(RoomEvent::Steal {
-            tid: task.ident.id,
-            src_hart: v,
-        }));
-        crate::work::room::conductor::note_steal();
-        return Some(task);
-    }
-    None
 }
 
 /// 本 hart 进入 WFI 休眠（Idle 自环的「阻塞点」）。`Some` = 睡醒后有活；
@@ -94,7 +76,7 @@ fn wait() -> Option<Arc<Task>> {
     let me = hart::hart_id();
     conductor::sleep(me);
     // 置位后复查：防「检查完 → 置位 → 睡」窗口内的 push 漏唤醒
-    let found = current().pull().or_else(steal);
+    let found = current().pull();
     if let Some(task) = found {
         conductor::wake(me);
         return Some(task);
@@ -104,7 +86,7 @@ fn wait() -> Option<Arc<Task>> {
     }
     loop {
         // 每次决定重新睡下前，先复审全退出：halt 的 yell 会把本核从 WFI 拉起。
-        // 若这里不归队 halt，而 redeem 又无可唤醒任务、steal 也无活，
+        // 若这里不归队 halt，而 redeem 又无可唤醒任务，
         // 就会清 SSIP 后回睡，停机屏障将永远等不到本核的 HALT_ARRIVED。
         if conductor::done() {
             // SAFETY: 写本 hart 自己的 sip CSR，仅清 SSIP 位，无并发别名。
@@ -120,13 +102,14 @@ fn wait() -> Option<Arc<Task>> {
         crate::work::room::scheduler::core::beacon::idle(me);
 
         // WFI 的拍长：有到点登记就睡到最近那一拍；**否则**——收尾期（根任务已
-        // `Reaped`/`Doomed`/已消失）最多睡 `BEACON_TICK`，正常期才睡到"永远"。
+        // `Reaped`/`Doomed`/已消失）最多睡 `BEACON_TICK`，正常期睡到"永远"。
         //
         // 为什么收尾期非要有界：信标只在**本循环顶部**发声，而 `WFI_FAR` 会让核
         // 一睡不醒 ⇒ 信标永远没机会说话。这正是"挂住时一行证据都没有"的原因
         // （本轮实测：`churn 16 4 4` @32 M 稳定卡死，四个核全睡在 WFI，`[stop]`
         // 一个字都没出）。收尾期本来就没人在跑，多醒几拍不值一提；正常期保持
-        // 长睡（那是省电与不被惊扰的正解）。
+        // 长睡——**"永远"这条依赖已被证伪，但有界拍的补救被裁决否掉**（见 [`WFI_FAR`]
+        // 的照实记：门铃只有约四成送达，补救要在唤醒侧做，不在空闲侧兜）。
         // 空闲核的上限：收尾期 `BEACON_TICK`（信标要在陷阱之外也能说话），正常期"永远"。
         // `beat_until` 再与最近**活**到点取 min ⇒ 与原先"有到点就睡到那一拍、否则睡
         // fallback"逐字等价；只有收尾期且到点比 `BEACON_TICK` 更远时会比原先更早醒一拍
@@ -154,16 +137,22 @@ fn wait() -> Option<Arc<Task>> {
         // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）。
         // 注意：不再有清退应答点——RFENCE 由固件强制打断空闲核（含 WFI 态），
         // 目标核进 trap 执行 sfence，无需空闲核主动 sweep。
+        // IPI 自检钩子（framework 档，见 `runtime::diagnose::ipi`）：全是只读计数，
+        // 生产档一行不编。
+        #[cfg(feature = "framework")]
+        crate::runtime::diagnose::ipi::wfi_entry(me);
         unsafe {
             core::arch::asm!("wfi");
         }
+        #[cfg(feature = "framework")]
+        crate::runtime::diagnose::ipi::wfi_exit(me, sip::read().ssoft());
         // timer 到期分派由 messenger 处理（票根 → 键 → 站点，一路）
         if messenger::redeem() {
             break;
         }
-        // 假醒：也可能被 yell 的 IPI 唤来 steal（有活入队）——先复查取活，
+        // 假醒：也可能被 yell 的 IPI 唤来（有活入队）——先复查取活，
         // 有任务即正常出口（睡眠位就在本分支清掉，见下）；真无活才保持睡眠位回睡。
-        if let Some(task) = current().pull().or_else(steal) {
+        if let Some(task) = current().pull() {
             conductor::wake(me);
             return Some(task);
         }

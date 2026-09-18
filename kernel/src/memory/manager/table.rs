@@ -147,8 +147,12 @@ impl TableNode {
         Box::as_ptr(&self.page) as usize >> PAGE_SHIFT
     }
 
-    /// 树中节点总数（根 + 全部子孙；health/自测用，debug-only——非审计链）。
-    #[cfg(debug_assertions)]
+    /// 树中节点总数（根 + 全部子孙；health/自测用——非审计链）。
+    ///
+    /// 门跟着**调用方**走（`Space::table_count`）：它在 `debug_assertions` 与
+    /// `feature = "framework"` 两档都编得进来，而后者能落在 release 上——两处门
+    /// 不一致会让 `cargo build --release --features framework` 编不过（照实记）。
+    #[cfg(any(debug_assertions, feature = "framework"))]
     pub(crate) fn count(&self) -> usize {
         1 + self.children.iter().map(|(_, c)| c.count()).sum::<usize>()
     }

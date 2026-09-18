@@ -13,7 +13,7 @@ use core::time::Duration;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
-use crate::work::room::scheduler::core::current;
+use crate::work::room::scheduler::core::{current, kick};
 use crate::work::room::scheduler::trap::run;
 use crate::work::unit::gate::GateError;
 use crate::work::unit::life::{Life, TaskLife};
@@ -194,19 +194,24 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
 /// 放回就绪——「唤醒」的全部效果就是这一件事。
 ///
 /// `wake` / `wipe` / `redeem` 与撤销阻塞四条路径的收尾完全同形（置 Starved →
-/// 记事件 → 推回本核 starved 队列），故只写一遍。`kick` 提到批量之后：push 先于
-/// 踢，唤醒方进入 steal 必可见（单 tick 的 IPI 量从 O(N) → O(1)）。返回唤醒数。
+/// 记事件 → 踢到 [`pick`](conductor::pick) 挑中的那颗核），故只写一遍。返回唤醒数。
+///
+/// 逐枚 `kick(pick(), t)`（甲案）：游标自然轮转 ⇒ 一批活摊到多颗核上，而不是全堆在
+/// 唤醒者自己的队列里等它 yield；落点核正等着就顺手被叫醒。**入队与唤醒同点**是这条
+/// 路径的要点——旧形状"推本核队列 + 批量后踢一次"把"谁持有活"与"谁被叫醒"分开了，
+/// 而兜底（源核下次 yield 自取）在 S 态域任务上不成立（空转不吃陷阱 ⇒ 永不 yield）。
+///
+/// 批量不再能省成一次 IPI：落点核每枚都可能不同（游标轮转），一记 IPI 只能叫醒一颗核
+/// ——省下来就会把活留在别的核的队列里。真全忙时 `fallback` 记这一笔，活靠落点核下次
+/// 进 `fetch` 自取（那是本路径**仅剩**的兜底）。
 fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
     let mut woke = 0;
     for task in tasks {
         let mut t = task;
         Task::exclusive(&mut t).transform(TaskState::Starved { next: None });
         trace::note(EventKind::Room(RoomEvent::Wake { tid: t.ident.id }));
-        current().push(t);
+        kick(conductor::pick(), t);
         woke += 1;
-    }
-    if woke > 0 {
-        conductor::kick();
     }
     woke
 }
@@ -215,8 +220,9 @@ fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
 /// 并就地摘掉那一环（离开 `Blocked` 必须摘链，`transform` 的断言就立在这上面）。
 ///
 /// 逐环摘而不是整条一次 drop：一次性 drop 会把长链压进调用栈（与 `starved_clear`
-/// 同理）。交给 [`rise`] 当迭代器用，故唤醒仍是**一次** `kick`（逐条踢会让单 tick 的
-/// IPI 量回到 O(N)）。链头进门时已经出了分片锁——本迭代器不上锁、不分配。
+/// 同理）。交给 [`rise`] 当迭代器用——甲案之后 `rise` 是**逐枚** `kick`（落点核游标
+/// 轮转），故这里每吐一环就换一颗核，不再有"整批一次踢"那回事。链头进门时已经出了
+/// 分片锁——本迭代器不上锁、不分配。
 struct Unchain {
     cur: Option<Arc<Task>>,
 }
@@ -557,8 +563,9 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
 /// （防 ABBA）。返回：本次是否撤出过任务（空闲核的哑睡壳判定用）。
 /// 由 trap 路径（S-timer 处理）与空闲核归队时在本 hart 触发。
 pub fn redeem() -> bool {
-    // 两块**栈上**固定缓冲：句柄一块、放行任务一块。批量收集再统一 `rise`——一次
-    // kick 收尾（逐条踢会让 IPI 量回到 O(N)）；两块都由本帧出，故这条路上没有分配。
+    // 两块**栈上**固定缓冲：句柄一块、放行任务一块。批量收集再统一 `rise`——`rise` 里
+    // 逐枚 `kick(pick(), …)`（甲案：落点核由游标轮转，故批量不再能省成一次 IPI，见 `rise`）；
+    // 两块都由本帧出，故这条路上没有分配。
     const MAX_DUE: usize = 64;
     let mut due = [0u64; MAX_DUE];
     let n = timer::drain(clock::now(), &mut due);

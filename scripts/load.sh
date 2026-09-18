@@ -21,6 +21,17 @@
 #   scripts/load.sh [轮数] [--release]      # 默认 1 轮，debug 档
 # 退出码：全过 0，有不过 1。日志落在 target/load/load-<时间戳>-<轮>.log。
 set -u
+
+# ── 环境对齐（必须）：显式**关掉** icount ──
+#
+# `scripts/boot.nu` 的默认是 `-icount auto,sleep=on`：按宿主时间给 vCPU 记账、让它睡够
+# 虚拟额度 ⇒ **WFI 里的核被 IPI 叫醒要等额度（实测毫秒级）**。验收门（`scripts/examine.nu`）
+# 一直是关着 icount 跑的，`fast.sh` / `probe.sh` 也是；台子与忙机台此前没关 ⇒ 两边读数
+# **不可比**（照实记：rig A 的 `starved` 在 icount 开时是 317/328，关掉后是 1~3/328；
+# 同一颗 ELF、同一条命，只差这一个开关）。故这里与门对齐。
+QEMU_ICOUNT=
+export QEMU_ICOUNT
+
 # 默认单核（可用环境变量覆盖）：多核档下这条债量不出来，见头注。
 QEMU_SMP="${QEMU_SMP:-1}"
 export QEMU_SMP

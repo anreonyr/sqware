@@ -4,15 +4,14 @@
 // 递减续跑（不重排），== 1 → 转 Starved 轮转。主动让出走 `starve`：无视剩余
 // 预算立即轮转——抢占与让出各自独立。
 //
-// 结构：Scheduler = inner(SpinLock) + badge(身份槽，无锁) + starved_len(AtomicUsize
-// 锁外镜像)。身份槽的载荷类型与计数协议归 [`Badge`]：写点只有
-// `Badge::{seat,shed,clear}` 三个方法（本文件的装槽 / 让位 / 降级分别调它们）。
+// 结构：Scheduler = inner(SpinLock) + badge(身份槽，无锁)。身份槽的载荷类型与计数
+// 协议归 [`Badge`]：写点只有 `Badge::{seat,shed,clear}` 三个方法（本文件的装槽 /
+// 让位 / 降级分别调它们）。
 //
 // 就绪队列的改动**只有四个入口**：`starved_push` / `starved_pop` / `starved_remove` /
-// `starved_clear`——计数镜像在方法体内与队列操作同一处派生（`recount`），
-// `inner.starved` 对本核心之外私有、另留 `starved_is_empty` 一个持锁读法（旧版是
-// 6 处手工 set_len，`rip` 的 clear 漏过一次）。steal 锁外先读 `backlog` 跳过空队列
-// （不做 RMW），再 try_lock。
+// `starved_clear`；`inner.starved` 对本核心之外私有，跨文件只留 `starved_is_empty`
+// 一个持锁读法。**照实记**：旧版这里还有一面 `starved_len` 锁外镜像 + `backlog()` 预检
+// （给 `steal` 跳过空队列用），`steal` 已删，镜像随之退休（链长不再有第二份事实）。
 //
 // 状态互斥：无原子字段。所有状态变更都经 Task::exclusive（唯一 Arc 所有权
 // + &mut，Arc::get_mut 的 weak≥1 变体）——锁内 take/pull 出任务 → 取 &mut；
@@ -33,7 +32,6 @@
 // 消费（`swap` / `starve` / `push` / `running_task`）。
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::lock::{Level, SpinLock};
 use crate::memory::manager::addr::PhysAddr;
@@ -60,15 +58,6 @@ pub(crate) struct Scheduler {
     pub(super) inner: SpinLock<SchedulerInner>,
     /// 锁外：本核身份槽（[`super::ident::ident`] 的事实源）。
     pub(super) badge: Badge,
-    /// 锁外：starved 长度镜像（steal 预检；与 inner 同结构体共生，不会分家）。
-    /// **派生点唯一**：`starved_push` / `starved_pop` / `starved_remove` /
-    /// `starved_clear` 四个方法体内的 `recount`。
-    starved_len: AtomicUsize,
-    /// 锁外：steal 起点游标（每次 steal 调用 fetch_add(1) % hart_count 拿起点）。
-    /// 多核同时醒来时用本地游标派生不同起点——避免全从 hart 0 起步造成的 cache
-    /// 热点（多 hart 同时对同一目标的 L1 锁 RMW → cache line 乒乓 = 雷鸣群）。
-    /// per-hart 独立，每核 fetch_add 是 Relaxed 无需同步。
-    pub(super) steal_cursor: AtomicUsize,
 }
 
 /// 锁内核心：running（运行中，不在队列）+ starved（就绪队列，FIFO）。
@@ -110,43 +99,7 @@ impl Scheduler {
                 },
             ),
             badge: Badge::new(),
-            starved_len: AtomicUsize::new(0),
-            steal_cursor: AtomicUsize::new(0),
         }
-    }
-
-    /// 锁外读：就绪队列长度（steal 预检；Relaxed 提示，旧读最多少偷一次）。
-    pub(super) fn backlog(&self) -> usize {
-        self.starved_len.load(Ordering::Relaxed)
-    }
-
-    /// 计数镜像与队列**在同一处改动**：每次摘挂各 ±1（须在持 inner 锁时调用）。
-    ///
-    /// 链没有 `.len()`，故这一条从"从容器派生"降为"与容器同处维护"（这就是那条代价）；
-    /// 兜底是调试档整链核算
-    /// [`Self::starved_check`]（只走链，不上热路径）。
-    fn counted(&self, delta: isize) {
-        if delta > 0 {
-            self.starved_len.fetch_add(1, Ordering::Relaxed);
-        } else {
-            self.starved_len.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
-
-    /// 调试档核算：链长与计数镜像必须一致（O(n)，只在断言档跑）。
-    #[cfg(debug_assertions)]
-    fn starved_check(&self, i: &SchedulerInner) {
-        let mut n = 0usize;
-        let mut cur = i.head.clone();
-        while let Some(mut node) = cur {
-            n += 1;
-            cur = Task::starved_next(&mut node).clone();
-        }
-        debug_assert_eq!(
-            n,
-            self.starved_len.load(Ordering::Relaxed),
-            "就绪链长与计数镜像分家"
-        );
     }
 
     // ── 就绪队列的四个改点：镜像在方法体内派生，队列与计数不可能分家 ──
@@ -170,7 +123,6 @@ impl Scheduler {
             Some(mut last) => *Task::starved_next(&mut last) = Some(task.clone()),
         }
         i.tail = Some(task);
-        self.counted(1);
     }
 
     /// 队首出队（**摘链 + 清空离开者的 `next`**）+ 计数 −1；空队列 → None。
@@ -183,9 +135,6 @@ impl Scheduler {
         if i.head.is_none() {
             i.tail = None;
         }
-        self.counted(-1);
-        #[cfg(debug_assertions)]
-        self.starved_check(i);
         Some(head)
     }
 
@@ -211,9 +160,6 @@ impl Scheduler {
                 if was_tail {
                     i.tail = prev;
                 }
-                self.counted(-1);
-                #[cfg(debug_assertions)]
-                self.starved_check(i);
                 return true;
             }
             prev = Some(node.clone());
@@ -228,8 +174,13 @@ impl Scheduler {
         while self.starved_pop(i).is_some() {}
     }
 
-    /// 队尾入队（`launch` / 轮转 / 唤醒共用）：push + 派生计数。
+    /// 队尾入队（**唯一调用方 = `table::kick`**）：push + 派生计数。
     /// 只收 Starved 任务——容器 ⇔ 状态由断言强制。
+    ///
+    /// 「唯一」是甲案的不变量（入队者 = 被叫醒者）在代码上的落点：轮转与 `swap` 取下一枚
+    /// 走本文件内的 `starved_push`（它们不是"产生活"，是本核自产自销），跨核投活一律经
+    /// [`super::table::kick`] ——那里先入队、再按 `conductor::waiting` 决定要不要 IPI。
+    /// 别人再开一口 `push` 就等于绕过那记 IPI：活进队列而没人被告知。
     pub(crate) fn push(&self, mut task: Arc<Task>) {
         debug_assert!(
             matches!(
@@ -248,14 +199,8 @@ impl Scheduler {
         self.starved_pop(&mut i)
     }
 
-    /// steal 用：非阻塞取队首（锁外预检后调用）。None = 队列空或锁忙。
-    pub(super) fn try_pull(&self) -> Option<Arc<Task>> {
-        let mut i = self.inner.try_lock()?;
-        self.starved_pop(&mut i)
-    }
-
     /// 任务即将在本 hart 上运行：置 Running + 满额预算 + 写 kernel_sp（本 hart
-    /// trap 栈顶——steal 迁移正确性的关键）+ 武装定时器。
+    /// trap 栈顶）+ 武装定时器。
     fn prepare(&self, task: &mut Arc<Task>) {
         let t = Task::exclusive(task);
         t.transform(TaskState::Running {

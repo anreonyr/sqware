@@ -4,10 +4,12 @@
 //   全退出停机 — PUSHED/REAPED 任务计数 + ROOTED 守门；ROOTED=true 且
 //              （PUSHED==0 或 REAPED==PUSHED）= 全部退出 → 发 SBI srst 复位；
 //              HALTING 做一次性互斥，防多核同时发复位。
-//   休眠唤醒   — WAITING 位图（bit h = hart h 正 WFI 等待）；入队后 kick
-//              单点唤醒（消雷鸣群），halt 屏障由 yell 广播喊全员归队。
+//   休眠唤醒   — WAITING 位图（bit h = hart h 正 WFI 等待）；入队者先用 `pick`
+//              挑一颗核（优先"在等"的），再把活**踢给它**（`scheduler::core::kick`
+//              ——唯一的入队路径），落点核若在等就发一记定向 IPI（消雷鸣群）；
+//              halt 屏障由 yell 广播喊全员归队。
 //
-// 命名：动词（spawn/exit/done/halt/sleep/wake/**kick**/**yell**/wfi/boot_done）+
+// 命名：动词（spawn/exit/done/halt/sleep/wake/**pick**/**kick**/**yell**/wfi/boot_done）+
 // 计数名词（PUSHED/REAPED/WAITING/HALTING/BOOT_DONE）。
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -38,12 +40,20 @@ static HALT_ARRIVED: AtomicUsize = AtomicUsize::new(0);
 /// 多字：字宽 = SBI 单次 `sbi_send_ipi` 的寻址窗口（XLEN = 64 位），按
 /// MAX_HART_SLOTS 分字。位位置 = hartid。
 static WAITING: [AtomicUsize; WAITING_WORDS] = [const { AtomicUsize::new(0) }; WAITING_WORDS];
-/// 全局旋转游标：`kick` 选位起点用。单点选最低 set bit 会长期偏向同一
-/// hart（最低位 hart 因抢失败一直留位时被反复踢——其他 hart 永不被踢），
-/// 用游标取模 64bit 字宽作为扫描起点，每次踢推到下一个等待 hart，4 hart
-/// 时每 4 次循环一次——保证公平。Relaxed fetch_add 即可（不必严格跨核
-/// 同步：每次 kick 拿不同起点即可）。
-static YELL_CURSOR: AtomicUsize = AtomicUsize::new(0);
+/// 全局旋转游标：`pick` 挑核用（自增）。
+///
+/// 命名（用户裁决）：**pick = 挑一颗核**（选核，只读、不发 IPI）；**kick = 把那枚活
+/// 踢给它**（`scheduler::core::kick`，唯一入队路径 + 必要时定向 IPI）。旧名
+/// `YELL_CURSOR` 随旧的无参 `kick()` 一起退役——那个函数只叫醒等待核、不搬活，
+/// 已经在甲案里被取代（见 `scheduler::core::hart::Scheduler::push` 的头注）。
+///
+/// 为什么挑核优先"在等"的：被挑中的核是**唯一**能拿到这枚活的核（无参 kick 时代的
+/// "源核下次 yield 自取"兜底已经不存在——S 态域任务空转不吃陷阱 ⇒ 源核永不 yield，
+/// rig A 实测 `starved=318/328`）。挑一颗正 WFI 的核 = 它一醒来就在自己的队列里看见活。
+/// 一个都没有（全忙）时才退到 `游标 % n`，那是**提示性**落点：核下次进 `fetch` 自取。
+///
+/// Relaxed fetch_add 即可（不必严格跨核同步：每次 pick 拿不同起点即可）。
+static PICK_CURSOR: AtomicUsize = AtomicUsize::new(0);
 
 /// WAITING 位图字数：每字 64 位（= 协议单次 IPI 掩码窗口）。
 const WAITING_WORDS: usize = crate::layout::MAX_HART_SLOTS / usize::BITS as usize;
@@ -166,13 +176,11 @@ pub(super) fn halt() -> ! {
         {
             let (held, starved, blocked, nudged) = crate::work::room::messenger::branch_stats();
             putln!("doom: held={held} starved={starved} blocked={blocked} nudged={nudged}");
-            // 「唤醒 ⇒ 上台」那一段：踢出几次、偷了几次、看见货却取不到几次。
+            // 「唤醒 ⇒ 上台」那一段：kick 挑核踢活几次（`kicks` = 落点核在等、发了 IPI；
+            // `fallback` = 落点核不在等、活靠它下次自取）。
+            let (kicks, fallback) = kick_stats();
             putln!(
-                "sched: kicks={} steals={} tries={} miss={}",
-                KICKS.load(Ordering::Relaxed),
-                STEALS.load(Ordering::Relaxed),
-                STEAL_TRIES.load(Ordering::Relaxed),
-                STEAL_MISSES.load(Ordering::Relaxed)
+                "sched: kicks={kicks} fallback={fallback}"
             );
         }
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
@@ -231,78 +239,134 @@ pub(super) fn wake(hart: usize) {
     );
 }
 
-/// 单点唤醒 1 个 WFI 等待 hart（push / wake / drain 热路径）。从 WAITING 位
-/// 图用全局旋转游标 `YELL_CURSOR` 选起点扫一个 word 找第一个 set bit——
-/// 唤醒单 hart，**避免雷鸣群**（多 hart 同醒 → 同时抢源 hart 的 L1 → cache
-/// 行乒乓）。
+/// hart 此刻是否登记为"正 WFI 等待"（`Acquire` 读；`sleep`/`wake` 用 `AcqRel` 写，
+/// 本函数的 Acquire 与那两次配对——`scheduler::core::kick` 据此决定要不要发 IPI）。
 ///
-/// 公平性：游标单调推进 → 每个 hart 轮流被踢。4 hart 全等待时周期 0/1/2/3，
-/// 每个 hart 每 4 次循环踢一次；避免最低位 hart 长期被偏爱（之前裸选最低
-/// set bit 时存在的问题：低位 hart 因抢失败留位 → 反复踢同 hart）。
+/// **只是提示**：`false` ⇒ IPI 省掉。活已经进了落点核的队列，它下次进 `fetch` 自取
+/// （唤醒不是正确性依赖，见 `scheduler::core::kick`）。
+pub(crate) fn waiting(hart: usize) -> bool {
+    debug_assert!(
+        hart < crate::layout::MAX_HART_SLOTS,
+        "waiting hart {hart} beyond MAX_HART_SLOTS"
+    );
+    WAITING[hart / (usize::BITS as usize)].load(Ordering::Acquire)
+        & (1usize << (hart % (usize::BITS as usize)))
+        != 0
+}
+
+/// **选核**（甲案：唤醒不再靠偷）：游标自增，从 `游标 % 64` 起在 WAITING 位图里找
+/// 第一个 set bit——命中就挑那颗**正等着的**核（它一醒来就在自己的队列里看见活）。
 ///
-/// 失败兜底：被踢醒 hart 抢失败 → 哑睡壳（保留 sleep 位，等下次事件）；work
-/// 仍留在源 hart 的 starved queue——源 hart 下次 yield 自取（≤ 1 个时间片）。
+/// 一个都没有（全忙）⇒ 取 `游标 % n` 并**跳过本核**（`n == 1` 时只能是本核）。跳本核
+/// 的理由：本核正跑着调用方（S 态域任务空转不吃陷阱 ⇒ 永不 yield），把活放回自己
+/// 队列就是 rig A 量到的 `starved=318/328` 那口井。
 ///
-/// # 照实记：那条兜底在"源核不 yield"时是**死的**（rig A 量到的）
+/// 只读、无失败域、不发 IPI：落点由 [`waiting`] 在 `kick` 里补一记定向 IPI。
+/// 只写 `PICK_CURSOR`（`Relaxed` RMW），调用方可持任何锁调它——它不碰调度锁。
 ///
-/// 上面那句"源 hart 下次 yield 自取"假定源核还会 yield。**S 态域任务空转不吃定时器陷阱**
-/// （实测：单核 6 s 纯空转，`traps` 一次不涨）⇒ 一个空转的 S 态任务**永不 yield** ⇒ 被它唤醒
-/// （`rise` 推到 `current()`）的任务就一直躺在它的就绪队列里没人搬。rig A 的 328 次试验：
-/// 杀令落下时 `starved=318`（就绪却没上台）、`nudged=3`；`kicks=977` 只换来 `steals=31`
-/// （`tries=443`、`miss=0`——没偷到都是"没看见货"，不是抢锁失败）。**让源核让出一拍之后**：
-/// `starved→0`、`nudged→146`、`steals→447`，并且台子当场复现了 `lost=2/328`（"他杀偶发不生效"）。
-/// ⇒ 下一件：让唤醒**直接落到被叫醒那颗核的队列**，而不是等源核 yield。
-pub(super) fn kick() {
-    // 起点游标：fetch_add(1) % 64bit 字宽。下次 call 拿到新起点，跨核亦然。
-    let cursor_mod = YELL_CURSOR.fetch_add(1, Ordering::Relaxed) % (usize::BITS as usize);
-    'word: for (w, word) in WAITING.iter().enumerate() {
-        let waiting = word.load(Ordering::Acquire);
-        if waiting == 0 {
+/// 只读、无失败域：位图里任何 set bit 都只可能是已启动的 hart（`boot` 按实际核数
+/// 注册、`sleep` 的 debug 断言守着 `MAX_HART_SLOTS` 上界）⇒ 返回值恒是合法 hart 下标。
+///
+/// # 照实记：选核曾经偏心过一次，而"位图里没有空闲核"那个结论是错的
+///
+/// 第一版实现先取本字 `trailing_zeros` 再算旋转距离，只把"本字最低位"当候选 ⇒ 游标
+/// 转不到的位置永远轮不上（实测：位图上 0/1 同时在等时永远挑 0）。那组读数当时被读成
+/// "hart 2/3 从没进过 WAITING 位图、空闲核对 `pick` 而言不存在"，**那个结论是错的**
+/// ——那时逐核探针（已撤）量到 `pick` 落在 2/3 上 25+16=41 次，而 `fallback=1`：若 2/3
+/// 从未在位图里，这 41 次落点只可能来自 `seat % n` 兜底，就该有 ≥41 次 `fallback`。
+/// 故 2/3 确实进过位图，偏心在选核自己。
+/// （`fetch::wait` 的 WFI 循环**整段保持睡眠位**，一次假醒也不会丢掉登记——那是当时
+/// 那条解释的第二个错处。）改法：`bits.rotate_right(sm)` 之后取 `trailing_zeros`。
+///
+/// # 照实记：`starved≈95%` 曾经是 **QEMU `-icount auto,sleep=on`** 造成的，不是选核
+///
+/// 甲案之后 rig A 仍量到 `doom: starved` 312~324/328（"就绪却没上台"），当时读成"落点核
+/// 是忙核/门铃不灵"，并据此试过三种补救（逐核重试、整字广播、空闲核 1 ms 有界兜底拍）。
+/// **全部白费**：真因是台子与验收门跑在两个环境里——`scripts/boot.nu` 默认带
+/// `-icount auto,sleep=on`，它按宿主时间给 vCPU 记账并让它睡够虚拟额度，于是 **WFI 里的核
+/// 被 IPI 叫醒要等额度（实测毫秒级，延迟直方图众数 1~10 ms）**；而验收门（`examine.nu`）
+/// 一直是关着 icount 跑的。
+///
+/// 与门对齐后（`QEMU_ICOUNT=`）同一颗 ELF：`starved` **312~324 → 0~7/328**、`nudged`
+/// 1~9 → **324~328**（受害者真正"在台上被杀"）、落点核自己取走活 **24 → 896~1142**。
+/// 5 轮共 1640 次试验：`rig: lost` 1（steal 开）/ 2（steal 关），`starved` 23 / 18。
+/// 环境对齐已写进 `scripts/{stress,soak,load}.sh`（显式 `QEMU_ICOUNT=`）。
+///
+/// 顺带的两条结论：① **"空闲核加有界拍"不该做**（它在补 icount 的账，代价每核每秒
+/// ~500-600 拍，已被裁决否决，读数留在 `fetch::WFI_FAR` 的照实记里）；② 跨核 `steal`
+/// 依判据（task-3）删除——`steals` 从约 80/轮降到 0，而 `lost`/`starved` 都在噪声内。
+pub(crate) fn pick() -> usize {
+    let seat = PICK_CURSOR.fetch_add(1, Ordering::Relaxed);
+    let n = hart::hart_count();
+    debug_assert!(n > 0, "pick with no hart");
+    // 从 seat % 64 起扫位图：找**旋转序里最先碰到**的那个 set bit。
+    // **必须先把字旋转再取最低位**（`rotate_right(sm)` + `trailing_zeros`）：先前那版
+    // 先取本字 `trailing_zeros` 再算旋转距离，只把"本字最低位"当候选 ⇒ 恒定偏爱低位
+    // hart（实测：位图上 0/1 同时在等时永远挑 0，2/3 一次也轮不到——那个落点分布骗过
+    // 了整轮定位）。`best_rel` 用 `usize::MAX` 当"还没找到"的哨兵（相对距离恒 < 64）。
+    let sm = seat % (usize::BITS as usize);
+    let mut best_rel = usize::MAX;
+    let mut best_bit = 0usize;
+    for (w, word) in WAITING.iter().enumerate() {
+        let bits = word.load(Ordering::Acquire);
+        if bits == 0 {
             continue;
         }
-        // 从 cursor 旋转扫描整个 word 找第一个 set bit——最坏 64 次 bit
-        // test ≈ ~10 cycles，远低 SBI ecall 开销。命中即发 1-bit IPI 后返回。
-        for off in 0..(usize::BITS as usize) {
-            let bit_pos = (cursor_mod + off) % (usize::BITS as usize);
-            let bit = 1usize << bit_pos;
-            if waiting & bit != 0 {
-                let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
-                    .args(SArgs {
-                        a0: bit,
-                        a1: w * (usize::BITS as usize),
-                        ..Default::default()
-                    })
-                    .call();
-                KICKS.fetch_add(1, Ordering::Relaxed);
-                break 'word;
-            }
+        let rot = bits.rotate_right(sm as u32);
+        let rel = rot.trailing_zeros() as usize;
+        let bit = w * (usize::BITS as usize) + (sm + rel) % (usize::BITS as usize);
+        if rel < best_rel {
+            best_rel = rel;
+            best_bit = bit;
         }
     }
+    let to = if best_rel != usize::MAX {
+        best_bit
+    } else {
+        // 没有核在等：退到轮转落点。本核要跳过——`seat % n == 我` 时推一格，`(seat + 1) % n`
+        // 恒不等于本核（n ≥ 2；n == 1 时只能是本核，推也没处可推）。
+        let me = hart::hart_id();
+        let mut to = seat % n;
+        if n > 1 && to == me {
+            to = (to + 1) % n;
+        }
+        to
+    };
+    to
 }
 
-/// 单点踢出次数 / 偷取成功次数（只读；停机读出口打）。
-///
-/// 用来回答"唤醒 ⇒ 上台"那一段卡在哪：`kick()` 发出去的 IPI 是**叫醒**（不搬活），活仍留在
-/// 源核的就绪队列里，要由被叫醒的核 `steal` 走。实测 rig A：328 次试验里杀令落下时
-/// `starved=309`（就绪却没上台）——这两个数分开告诉我们是"没人被叫醒"还是"叫醒了却偷不动"。
+// ── 唤醒侧只读计数（停机读出口打）──
+//
+// 甲案之后，"唤醒 ⇒ 上台"这一段不再有"等源核 yield"那一环：入队者就是 `pick` 挑中的
+// 核，`kick` 顺手给它一记 IPI（若它在等）。故 `kicks` 的含义收窄成"**kick 发出的定向
+// IPI 次数**"，`fallback` 则是它的反面：落点核**当时不在等**（IPI 省了，活靠它下次
+// 进 `fetch` 自取）——`fallback` 高 = `pick` 挑核挑得不准（全忙，或"在等"的核没被选中）。
+//
+// **照实记**：这里原有 `steals/tries/miss` 三个偷取读数，随 `steal` 一起退休（判据与
+// 实测见 `scheduler::core::fetch` 文件头的照实记）。
+
+/// `kick` 发出定向 IPI 的次数（落点核在等，才发）。
 static KICKS: AtomicUsize = AtomicUsize::new(0);
-static STEALS: AtomicUsize = AtomicUsize::new(0);
-static STEAL_TRIES: AtomicUsize = AtomicUsize::new(0);
-static STEAL_MISSES: AtomicUsize = AtomicUsize::new(0);
+/// `kick` 的落点核**当时不在等**（IPI 省掉）的次数。
+static FALLBACK: AtomicUsize = AtomicUsize::new(0);
 
-/// 偷取成功一次（`scheduler::core::fetch::steal` 调）。
-pub(super) fn note_steal() {
-    STEALS.fetch_add(1, Ordering::Relaxed);
+/// `kick` 发出一记定向 IPI（落点核正在等）。`scheduler::core::kick` 调。
+pub(crate) fn note_kick_ipi() {
+    KICKS.fetch_add(1, Ordering::Relaxed);
 }
 
-/// 偷取被调用一次（含最终没偷到的）。
-pub(super) fn note_steal_try() {
-    STEAL_TRIES.fetch_add(1, Ordering::Relaxed);
+/// `kick` 的落点核**当时不在等**（IPI 省了，活靠它下次进 `fetch` 自取）。
+/// `scheduler::core::kick` 调。
+pub(crate) fn note_fallback() {
+    FALLBACK.fetch_add(1, Ordering::Relaxed);
 }
 
-/// 看见别的核有货、却 `try_pull` 不出来（队列非空但取不到）。
-pub(super) fn note_steal_miss() {
-    STEAL_MISSES.fetch_add(1, Ordering::Relaxed);
+/// **只读**：`(kick 发出的 IPI 数, 落点核不在等的次数)`——停机读出口打。
+pub(crate) fn kick_stats() -> (usize, usize) {
+    (
+        KICKS.load(Ordering::Relaxed),
+        FALLBACK.load(Ordering::Relaxed),
+    )
 }
 
 /// 广播唤醒所有 WFI 等待 hart（**halt 屏障专用**）。mask = waiting 字保
@@ -326,8 +390,9 @@ pub(super) fn yell() {
 }
 
 /// 定向轻踢单个 hart（kill 的 Running 分支）：给指定 hart 发 1-bit SSIP，迫使
-/// 它在 trap 里查 `doomed` 集合自退。与 `kick`（只踢 WFI 等待者）不同——目标
-/// hart 可能在跑任务，SSIP 直接打断它。a0=1<<bit、a1=word·64，与 kick 同协议。
+/// 它在 trap 里查 `doomed` 集合自退。与 `scheduler::core::kick`（把活**搬**到落点核
+/// 的队列、顺带叫醒它）不同——目标 hart 可能在跑任务，SSIP 直接打断它。a0=1<<bit、
+/// a1=word·64，与 `kick` 的 IPI 同协议。
 pub(super) fn nudge(hart: usize) {
     let bit = 1usize << (hart % (usize::BITS as usize));
     let word = hart / (usize::BITS as usize);

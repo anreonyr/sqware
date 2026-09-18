@@ -127,7 +127,8 @@ pub fn beat(interval: u64) {
 /// （堆空 / 启动期）即退化为 `beat(ceil)`，故三个原 `beat(100ms)` 调用点与今天等价。
 ///
 /// `ceil` 是本核上限：忙核 = [`BLIND_MS`] 的刻度（失明上限），空闲核 = `BEACON_TICK`
-/// / `WFI_FAR`。饱和减法：到点已过 ⇒ 0 ⇒ 立刻再来一拍。
+/// / `WFI_FAR`（后者那条"永远"的依赖已被证伪，但**有界拍的补救被裁决否掉**——见
+/// `scheduler::core::fetch` 的 `WFI_FAR` 照实记）。饱和减法：到点已过 ⇒ 0 ⇒ 立刻再来一拍。
 ///
 /// 不变量：任一时刻「本核武装点 ≤ 最近活到点」。`nearest` 只在持 `TIMER_HEAP` 锁时
 /// 由 `recompute_nearest` 派生，写点仅 `tock`/`mute`/`drain`；每次武装都从该真值

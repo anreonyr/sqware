@@ -3,8 +3,8 @@
 // 四文件按接缝分（自包含、可独立推理，不依赖任何具体调用方）：
 //   hart.rs   本机调度器：容器（running + 就绪队列）、装槽 / 让位 / 轮转 / 续跑
 //   ident.rs  本核身份槽 `Badge` + 身份读法 `ident()`
-//   table.rs  全局表（per-hart 调度器数组）+ 名册 + 全机扫描 + 关机终末释放
-//   fetch.rs  取活：跨核偷取 + WFI 休眠
+//   table.rs  全局表（per-hart 调度器数组）+ 名册 + 全机扫描 + 关机终末释放 + **唯一入队路径 `kick`**
+//   fetch.rs  取活：本核队首 + WFI 休眠（跨核偷取已删，见文件头照实记）
 //
 // 适配面（`scheduler/{boot,trap}.rs`）只经本文件触及核心：本模块内跨到 `scheduler`
 // 一级的条目取 `pub(in super::super)`——刚好到 `scheduler`，不放宽到 `pub(crate)`
@@ -30,6 +30,8 @@ pub(crate) use beacon::arm as beacon_arm;
 // scheduler 之外消费的表面（messenger / envcall / unit / diagnose）。
 pub use ident::{Identity, ident};
 pub(crate) use table::{
-    current, enlist, launch, muster, prune_dead, remove_from_starved, rip, roster, running_hart,
-    try_reserve_roster,
+    current, enlist, kick, launch, muster, prune_dead, remove_from_starved, rip, roster,
+    running_hart, try_reserve_roster,
 };
+#[cfg(feature = "framework")]
+pub(crate) use table::scheduler_addr;

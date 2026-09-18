@@ -136,6 +136,14 @@ pub fn init() -> ! {
     // 多核：HSM 拉起其余副核。
     boot_harts();
 
+    // IPI 自检（framework 档）：副核已在各自 WFI 里，此刻是"一记门铃能不能叫醒它"的
+    // 唯一干净时点（没有任务、没有到点登记 ⇒ 醒了只可能是那一记 IPI）。见 `diagnose::ipi`。
+    #[cfg(feature = "framework")]
+    {
+        crate::runtime::diagnose::ipi::run("early");
+        crate::runtime::diagnose::ipi::start_delayed();
+    }
+
     // ROOT 栈完整性审核：boot 期栈溢出即使未越过 guard 页（4 KiB 内）也会在此暴露。
     let boot_guard = unsafe { (root_stack_base() as *const usize).read() };
     assert!(

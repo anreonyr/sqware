@@ -11,6 +11,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use hashbrown::HashMap;
+use sbi::ecall::SArgs;
+use sbi::{self, fid};
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::room::conductor;
@@ -63,21 +65,63 @@ pub(super) fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
 }
 
-/// 为本核就绪队列**预留**一格（放行路径不分配）。
+/// framework 档自检用：`schedulers()[i]` 的地址——与 `current()`（tp 直达）对得上，
+/// 才说明"投活的那颗核"与"读队列的那颗核"是同一个对象。见 `runtime::diagnose::ipi`。
+#[cfg(feature = "framework")]
+pub(crate) fn scheduler_addr(i: usize) -> usize {
+    core::ptr::addr_of!(schedulers()[i]) as usize
+}
+
+/// 放行一枚新任务（放行路径不分配；`kick` 的链式入队不算分配）。
 ///
-/// 放行入队（`Task::release` 收尾）：入本核就绪队列 **+ 踢醒一个休眠核**。
+/// 放行入队（`Task::release` 收尾）：**挑一颗核，把这枚活踢给它**（甲案：唤醒不再靠偷）。
 /// 簿记（`Team.tasks`）、未放行容器（`Team.held`）、产生计数（PUSHED）与 trace 都在
 /// `TaskBuilder::hold` 完成——**计数挂在产生处**，Held 被父域 kill 时
 /// REAPED/PUSHED 仍配平（否则 `done()` 恒假，系统永不停机）。
 ///
-/// 「踢醒」为什么不在 [`Scheduler::push`] 里：`messenger::rise`
-/// 唤醒一批时**只在批量之后踢一次**（单 tick 的 IPI 量 O(N) → O(1)），并进去会让
-/// 批量路径退化成 N 次踢。新任务出现是单点事件，故踢在这里。
+/// 旧形状是"推本核队列 + 叫醒一枚等待核来偷"，而它的兜底（"源核下次 yield 自取"）
+/// 在"源核不 yield"时是死的：**S 态域任务空转不吃定时器陷阱**（实测：单核 6 s 纯空转，
+/// `traps` 一次不涨）⇒ 空转的台主永不 yield ⇒ 新任务躺在它的队列里直到被杀（rig A
+/// 实测 `starved=318/328`）。改成挑核直投之后，被挑中的核就是**唯一**能拿到这枚活的核，
+/// 且它若正等着就顺手被叫醒。
 pub(crate) fn launch(task: Arc<Task>) {
-    current().push(task);
-    // 新任务出现：单点踢醒 1 个 WFI 休眠核（可 steal 取活；多核广播会触发
-    // 雷鸣群，多 hart 同时抢源 L1 → cache 行乒乓）。
-    conductor::kick();
+    kick(conductor::pick(), task);
+}
+
+/// **唯一的入队路径**：把 `task` 接到 `schedulers()[hart]` 就绪队列的**尾**（含长度
+/// 镜像 +1），落点核此刻仍在等（[`conductor::waiting`]）就给它一记定向 IPI。
+///
+/// 「唯一」是"入队者 = 被叫醒者"这条不变量的执行手段：`Scheduler::push` 只留给本函数
+/// （`rise` / 轮转 / `swap` 取下一枚都不是"产生活"），故**没有任何路径能把活塞进一颗
+/// 核的队列却不告诉它**。核以后要新开入队口，走这里。
+///
+/// **前置：调用方不持任何锁**——本函数要取**别核**的 `Level::Scheduler` 锁，一次一把、
+/// 不嵌套（与 `redeem` 那句"绝不持堆锁取调度锁"同纪律；`rise` / `launch` 的调用点都在
+/// 放锁之后）。
+///
+/// **叫醒是提示，不是正确性依赖**：`waiting` 读到 `false` 只是"省一记 IPI"——活已经进了
+/// 落点核的队列，它下次进 `fetch` 自取（`fetch::fetch` 第一句就是 `current().pull()`）。
+/// 反之 `waiting` 读到 `true` 后目标立刻醒/立刻清位也只是多一记无害的 SSIP（它在 `wait`
+/// 里清一次残留位）。这就是去掉"源核 yield"那一环之后的新兜底：**落点核自己**。
+///
+/// 落点由 [`conductor::pick`] 选；`hart` 越界不是可表达的状态（`pick` 只从"已启动 hart"
+/// 的位图或 `% hart_count` 出值），故本函数**没有失败域**：链式入队零分配。
+pub(crate) fn kick(hart: usize, task: Arc<Task>) {
+    schedulers()[hart].push(task);
+    if conductor::waiting(hart) {
+        conductor::note_kick_ipi();
+        let bit = 1usize << (hart % (usize::BITS as usize));
+        let word = hart / (usize::BITS as usize);
+        let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
+            .args(SArgs {
+                a0: bit,
+                a1: word * (usize::BITS as usize),
+                ..Default::default()
+            })
+            .call();
+    } else {
+        conductor::note_fallback();
+    }
 }
 
 // ── 名册（全世界任务的 id → Weak<Task> 索引）──
