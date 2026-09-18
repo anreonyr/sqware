@@ -1,6 +1,6 @@
 // 本机调度器（core::hart）— per-hart 调度对象的容器与槽位操作：纯功能，无适配代码。
 //
-// 时间片记账：新选中任务获得满额 TIME_SLICE 预算；`advance` 时 Running 预算 > 1 →
+// 时间片记账：新选中任务获得满额 QUANTUM_TICKS 预算；`advance` 时 Running 预算 > 1 →
 // 递减续跑（不重排），== 1 → 转 Starved 轮转。主动让出走 `starve`：无视剩余
 // 预算立即轮转——抢占与让出各自独立。
 //
@@ -43,9 +43,24 @@ use crate::work::unit::task::{Task, TaskIdent, TaskState};
 
 use super::ident::Badge;
 
-/// 新选中任务的满额时间片（量子数）。耗尽才轮转；定时器仍每量子打断，
-/// 只是任务不再每量子切走。park 的 ticks 语义不受影响。
-const TIME_SLICE: u32 = 8;
+/// 新选中任务的满额预算，**单位是"拍"（tick）不是毫秒**——名字里带单位就是为了一眼看住
+/// 这一点。耗尽才轮转；定时器仍每拍打断，只是任务不再每拍切走。park 的 ticks 语义不受影响。
+///
+/// # 照实记：所以"量子"不是时间，而且它被**别人的到点登记**牵着走
+///
+/// 一拍的实测长度 = `min(最近活到点, chrono::timer::BLIND_MS)`（武装点见
+/// `runtime::switcher::trap` 与 `fetch::wait`），于是**有效量子 ∈ (0, 8 × 100 ms]**：
+///
+/// - 有域登记了 1 ms 的到点 ⇒ 全场拍长变 1 ms ⇒ **所有**任务的量子缩到 8 ms；
+/// - 一个到点都没有 ⇒ 拍长吃满 `BLIND_MS = 100 ms` ⇒ 一个任务可连跑 **800 ms** 才轮转。
+///
+/// 这条全局耦合是**今天的事实**（照实记），不是设计承诺。若以后要一个**可承诺的**量子
+/// （按时间而不是按拍），那是结构门：`TaskState::Running { ticks_left }` 的载荷要改成
+/// "上台时刻 + 预算"，`advance` 按经过的时间判——那时再开。
+///
+/// 另注：量子只在**会吃定时器陷阱**的上下文里生效——S 态域任务空转不吃陷阱
+/// （实测：单核 6 s 纯空转 `traps` 不涨）⇒ 量子对它等于不存在。别以为它管一切任务。
+const QUANTUM_TICKS: u32 = 8;
 
 /// 每核调度器：真实数据在锁内，锁外只有身份槽与就绪队列长度镜像。
 ///
@@ -204,7 +219,7 @@ impl Scheduler {
     fn prepare(&self, task: &mut Arc<Task>) {
         let t = Task::exclusive(task);
         t.transform(TaskState::Running {
-            ticks_left: TIME_SLICE,
+            ticks_left: QUANTUM_TICKS,
         });
         // SAFETY: 帧 PA 恒等映射可写；帧属 task 独占（running 或刚从 starved 摘出）。
         unsafe {
@@ -222,7 +237,8 @@ impl Scheduler {
                     .set_x(Gprs::TP, crate::hart::per_hart_ptr(self.hart));
             }
         }
-        // 武装点 = min(本核上限, 最近活到点)——上限即失明上限（原写死的 100ms 抢占量子）。
+        // 武装点 = min(本核上限, 最近活到点)——上限即**失明上限**（旧写法把它叫"抢占量子"，
+        // 正是量子与失明上限混为一谈的由来，见 `QUANTUM_TICKS` 的照实记）。
         timer::beat_until(timer::blind_ceiling());
     }
 

@@ -202,9 +202,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             unsafe {
                 sie::set_sext();
             }
-            // 重武装：**武装点 = min(本核上限, 最近活到点)**。上限即失明上限——原先
-            // 写死的那个 100ms 抢占量子；到点比它更近就按到点（否则登记在别核上的到点
-            // 要等一整拍才被兑现：这正是 `Park{millis}` 在忙机上晚一个量子的病根）。
+            // 重武装：**武装点 = min(本核上限, 最近到点)**。上限是**失明上限**
+            // （`timer::BLIND_MS`），不是"量子"——旧写法把它叫"抢占量子"，让量子与失明
+            // 上限混成一个数（正名见 `scheduler::core::hart` 的 `QUANTUM_TICKS`）。
+            // 到点比它更近就按到点（否则登记在别核上的到点要等一整拍才被兑现：这正是
+            // `Park{millis}` 在忙机上"晚一拍"的病根）。
             timer::beat_until(timer::blind_ceiling());
             redeem();
             // **兜底**：本核当前 running 任务若被点名（他杀 / 级联的跨核分支），一个 tick
