@@ -170,6 +170,11 @@ impl Table {
 ///
 /// 两种拒绝的理由不同，故不压成一个：名字不在表里 = 调用方写错了；
 /// 它已经在跑/在停 = 时机不对。
+///
+/// **重发**：`Dead` 与 `NeverStarted` 同档，故"在同一行上再起"在这道门上是允许的
+/// ——但注意 **`stop` 之后状态是 `Stopping`，把 `Dead` 落地的是 [`watch`]**
+/// （[`until`] 只读不写）。完整序列（stop → watch → Oust → spawn → start）与被踩过的
+/// 两处暗礁见 `crate::system` 的 §六。
 pub fn admit_start(table: &Table, name: Name) -> Result<(), Fail> {
     let Some(s) = table.find(name) else {
         return Err(Fail::Unknown);

@@ -51,6 +51,9 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 到点台的打点者：**S 态**（与两个台主同档），`SQWARE_ROOT=beat` 时当引导镜像。
     // 它不造任何东西，只量"睡到绝对点"漂不漂（两段对照，见程序头注）。
     ("beat", "prog-beat", ProgramKind::Supervisor),
+    // 重启台：**S 态**（要 mint/hatch 那道门），`SQWARE_ROOT=again` 时当引导镜像。
+    // 它在同一张表、同一行上把"起 → 停 → 放下 → 再起"走三遍（协议 §六 的"重发"）。
+    ("again", "prog-again", ProgramKind::Supervisor),
 ];
 
 fn main() {

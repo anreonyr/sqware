@@ -161,9 +161,21 @@
 //! 于是"每重启一次留一个死域的壳"这条不再成立。表这一侧也备好了：`Slot` 是**最近一次
 //! 实例的坐标**，死亡记账**不清它**（见 §一）⇒ 重启时"上一个实例是谁"读得出来。
 //!
-//! 未落地的是**重发那一半**：与首启同一段代码的重发（`start` 复用旧坐标）与**有界预算**
-//! （起不来几次就放弃）。在那之前，第一版承诺的只有：**start / stop / supervise /
-//! dependency + 就绪判定**。
+//! **重发那一半已经走通**（照实记：`programs/src/bin/stress/again.rs` 在**同一张表的同一行**
+//! 上起了三次，`restarts=2 failures=0`）。序列是 **stop → watch → Oust → spawn → start**，
+//! 其中有两处暗礁，都是这台子第一次跑出来的：
+//!
+//! - **`until` 不落地状态**：`stop` 只把 [`State`] 推到 `Stopping`，把 `Dead` 写进表的是
+//!   `watch`（`until` 答 `Unsettled` 时"一个字都不写"）。少了这一步，`admit_start` 就按
+//!   `Stopping` 把重发拒掉——实测第一版正是 `r=2 step=spawn REFUSED`。
+//! - **不许再 `register`**：行是**复用**的（`register` 遇重名即 `Unknown`）；`admit_start`
+//!   本来就允许 `NeverStarted | Dead`，身子由 `Table::attach` 换，`Slot` 记住的旧坐标
+//!   正好给 `Oust` 用。
+//!
+//! **仍然留在 Server 的（协议不落地）**：试几次算放弃、放弃之后怎么办。协议只保证
+//! "能发现它死了"（`until`/`watch`/`probe_ready`）与"能在同一行上再起"；[`State`] 里
+//! **没有**失败/放弃格，故"起不来几次就放弃"要么记在 Server 自己手里，要么另开一门给
+//! 表加记账（未裁）。
 //!
 //! ## 空位：disown（**未定，先搁置**）
 //!
