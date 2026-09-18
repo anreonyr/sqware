@@ -270,6 +270,12 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 return ret_err(frame, GateError::Dead);
             };
             let team = target.ident.team.clone();
+            // **判活是域粒度**：域里已没有还没收尾的线程 ⇒ 与"名册升不起"同答 `Dead`，
+            // 不再"答成功却什么都没做"（读法与 `Team::all_reaped` 同一句）。
+            // 空域够不到这一支——它没有 `TaskId` 手柄，那条边界照旧（见 `protocol::system` §八）。
+            if team.all_reaped() {
+                return ret_err(frame, GateError::Dead);
+            }
             // 下令时记一笔（谁杀的）；死亡时受害者那颗核另记 `Exit { EXIT_DOOM }`
             // ——两条分开是因为它们落在不同的核上（见 `RoomEvent::Doomed`）。
             trace::note(EventKind::Room(RoomEvent::Doomed {

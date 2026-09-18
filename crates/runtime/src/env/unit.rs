@@ -30,11 +30,12 @@ pub fn args() -> &'static [usize] {
 ///
 /// # 门
 ///
-/// **建域权就是 S 态**——调用方须是 supervisor 域，没有别的门。能力面不为建域背书：
-/// 早先那道"存在权"门收一枚 `Nole`，而 `UnsealNole` 自铸无代价，与 S 态判断等价，
-/// 已删（理由见 `env::fid` 该 variant）。
+/// **没有门**——能不能起由内核回答（答"能"），该不该起归 `protocol::system` 的编排者
+/// （那一侧的动词叫 `Mint`）。早先两道门都删了："存在权"门收一枚 `Nole`（而 `UnsealNole`
+/// 自铸无代价，与"是 S 态"等价，是门形的装饰）；S 态门本身也删了。放开**不构成提权**：
+/// 特权级由内核打包表决定（调用方说不上话），镜像仍要调用方交字节。
 ///
-/// 名字 ≤ 31 字节。失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（门没过）。
+/// 名字 ≤ 31 字节。失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（名字非法或字节拷不进来）。
 pub fn build(elf: &[u8], kind: ProgramKind, name: &str) -> EnvResult<TeamId> {
     let r = UnitCall::Build {
         elf: VirtAddr::new(elf.as_ptr() as usize),
@@ -78,7 +79,8 @@ pub fn hatch(task: TaskId) -> EnvResult<()> {
 /// **放下**一个子域：摘掉我自己 `heir` 表里那一格。
 ///
 /// 前置：那域里没有还没收尾的线程（否则 `-3 Busy`）；它必须是我生的（否则 `-1 Denied`）。
-/// 一次一格；重复调用答 `Denied`。想等它收干净，先 `Doom` + `join`。
+/// 一次一格；重复调用答 `Denied`。要等它收干净：先 `Doom { task }`（`task` 只是指认域的
+/// 手柄），再按 `join` 的两段式循环等。
 pub fn oust(team: TeamId) -> EnvResult<()> {
     let _ = UnitCall::Oust { team }.call()?;
     Ok(())
