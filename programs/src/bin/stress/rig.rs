@@ -34,9 +34,41 @@
 //! | 容器里（队列/挂起） | 100% 同步摘掉（读数 `now`） |
 //! | 台上 | 记一笔 + 投递，SSIP 自退（读数 `waited`） |
 //!
-//! 要量"点名落在它**离核那一瞬**"那一格，上台/离核必须**由台主控制**：受害者无限挂起在
-//! 一枚孔上、台主 push 唤醒它（会话那一套 `Quay` 的 seat/claim），于是"醒来跑一小段 → 又挂
-//! 回去"的转折点由台主定，杀令的偏移才有意义。
+//! 要量"点名落在它**离核那一瞬**"那一格，上台/离核必须**由台主控制**——**rig A 已经落在
+//! 这台子上了**（见下面的 `trial`）：受害者换成 `hang`；它自校准完把孔交回来，台主 `claim`
+//! 到它就等于"它已经挂好了"；台主随后 `push` 一记唤醒——于是"醒来跑一小段 → 又挂回去"的
+//! 转折点由台主定，杀令的偏移才真的落在"在台上"那一段的时序上。旧版（`churn` + 放行即跑）
+//! 的读数留在上面那张表里当历史：那台子量不到这一格。
+//!
+//! ```text
+//!   造(hang) → 台主 seat("wake") → Hatch → hang seat("wake") → 台主 claim 认下它（="它挂好了"）
+//!   → 台主 push（正文 = "在台上跑多少轮"，这一句同时就是第一次唤醒）→ 空转 d µs → Doom → 判
+//! ```
+//!
+//! 照实记（**rig A 第一次量到的**，release，`QEMU_SMP=4`）：
+//!
+//! | 跑法 | n | now | waited | late | lost | `doom: culled/nudged` |
+//! |---|---|---|---|---|---|---|
+//! | 台面 20 ms，扫 d ∈ [0, 20 ms] | 328 | 324 | 4 | 0 | 0 | **324 / 4** |
+//! | 台面 20 ms，扫 d ∈ [0, 200 ms]（步 5 ms） | 328 | 328 | 0 | 0 | 0 | **328 / 0** |
+//! | 台面 100 s（一旦上台就不再下去），d = 1 / 20 / 100 ms（各 32） | 96 | 95 | 1 | 0 | 0 | 32/0、31/**1**、32/0 |
+//!
+//! 三条结论：
+//! 1. **这条缝没有复现**：约 1600 次试验里 `late=0 lost=0`（`1fc5778` 那一轮把兑现改由任务
+//!    自己的时刻兜：离核前自查 / timer 兜底 / 扫单位）。
+//! 2. **台子的读数 `now`/`waited` 分不出"在台上"与"在容器里"**——那是"投递"与"复探"谁先到的
+//!    赛跑，不是位置。20 ms 台面下 324/328 是 `now`，而看分支计数才知道真正"在台上被杀"的
+//!    只有 4 次。⇒ 台子缺的那块是 `doom: culled/nudged`（内核只读计数，见 `messenger/doom.rs`），
+//!    本提交补上了。
+//! 3. **"push 唤醒 ⇒ 它上台"这一段本身就慢/不确定**：台面拉到 100 s（一旦上台就不再下去）后，
+//!    d = 1 / 20 / 100 ms 三档的 `nudged` 是 0 / 1 / 0（各 32 次）——即绝大多数轮里**杀令落下
+//!    时它还没被排上台**；诊断探针（`hang.rs::REPORT_WAKE`）在 328 次里只打出 2 行"我被唤醒了"，
+//!    而它出现在"push 能到"的位置上。⇒ 要量"点名落在离核那一瞬"，得先解决这一段（那是另一件
+//!    事：唤醒后的任务在就绪队列里等谁把它 `seat` 上台）。
+//!
+//! 两处要小心：① 每轮台主表里会多留**对端那一枚孔的句柄**（`Quay::shut` 只放本端那一枚）——
+//! 一轮一枚，实测 392 轮不敷用的情况没出现，但它是线性增长；② Doom 之后的判决窗口
+//! （300 ms + 1 s 宽限）**长于**台面，故 `late`/`lost` 一出现就说明"点名落在尾巴上"真的中过。
 //!
 //! 顺带量到一条与本题相邻的事实（**已被 `timer::beat_until` 修掉，此处照实留档**）：当时
 //! **`Park{millis}` 在"有任务的核"上按拍兑现**（定时器在 trap 里固定重武装 100 ms；只有核进
@@ -66,13 +98,22 @@ mod tick;
 use alloc::format;
 
 use env::Name;
+use protocol::session::Quay;
 use protocol::system::service::{self, Announce, Reaped, Slot, Table};
 use runtime::env::debug;
 use runtime::env::room::exit_with;
 use runtime::env::unit;
 
-/// 受害者的清单名（`kernel/build.rs::INITRD_BINS`）。
-const VICTIM: &str = "churn";
+/// 受害者的清单名（`kernel/build.rs::INITRD_BINS`）：**rig A 的握手版受害者**——自校准 →
+/// 把孔交给台主 → 无限挂在自己的孔上等人唤醒。旧版 `churn` 仍在清单里（留档），本台子不再用它。
+const VICTIM: &str = "hang";
+
+/// 握手那条泊位的名字：**两侧同名**（台主 `seat` 一条、受害者也 `seat` 一条、记号相同才配得齐）。
+const LINK: &str = "wake";
+
+/// 等它把手伸出来（`seat`）的上限。它是 `Announce::Channel` 的就绪证据：认领成功 ⇒ 它已经挂好、
+/// 可以被唤醒了。
+const HANDSHAKE_MS: usize = 1_000;
 
 /// 本域给它起的服务名（每轮一张**新表**，故名字可以复用）。
 const ROW: &str = "victim";
@@ -80,10 +121,14 @@ const ROW: &str = "victim";
 /// 每一档延迟做几轮。
 const PER_DELAY: usize = 8;
 
-/// 延迟档：**按真实时间扫**（微秒），覆盖受害者那一整个来回（在台上 1 ms + 睡 1 ms，
-/// 见 `churn.rs`）。档距 ≈ 31 µs；命中哪一档就把那一档附近再扫细。
-const DELAY_MAX_US: usize = 2_000;
-const DELAY_STEP_US: usize = 31;
+/// 受害者在台上空转多久（毫秒）：台主把它换算成"多少轮"随第一条消息发过去（见 `hang.rs`）。
+///
+/// 20 ms 是**扫得动**的台面：档距 500 µs ⇒ 40 档覆盖一整个"在台上"。
+const STAGE_MS: usize = 20;
+
+/// 延迟档：**按真实时间扫**（微秒），覆盖受害者"在台上"那一整段（见 `STAGE_MS`）。
+const DELAY_MAX_US: usize = 20_000;
+const DELAY_STEP_US: usize = 500;
 
 /// 判定窗口（毫秒）：`unsettled` 之后再看宽限（毫秒）——分开"迟到"与"没了"。
 const MS: usize = 300;
@@ -181,13 +226,38 @@ fn trial(
     // （表是纯值，`Table::new()` 不碰全局）。
     let mut table = Table::new();
     table
-        .register(name, Announce::None)
+        .register(name, Announce::Channel)
         .map_err(|_| "register")?;
     let rep = service::spawn(&mut table, name, elf, kind).map_err(|_| "spawn")?;
-    // 放行（门闩空、无会话、不认记号、不等待）：它一起来就进自己那个"空转 + 睡"的循环。
-    service::start(&mut table, name, rep, &[], None, &[], 0).map_err(|_| "start")?;
+    // **rig A：握手**。台主这一侧先 `seat` 一条（顺带给 `claim` 一个"额度"），放行时把码头
+    // 交给受害者；它**自校准完**才把自己的孔交回来（`seat`）⇒ 台主 `claim` 到它就等于
+    // **"它已经挂好了、可以被唤醒了"**。`start` 丢弃 `ready` 的 bool，故下面显式查 `paired`。
+    let Ok(link) = Name::new(LINK) else {
+        return Err("bad link name");
+    };
+    let mut quay = Quay::open(rep);
+    quay.seat(link).map_err(|_| "seat")?;
+    service::start(
+        &mut table,
+        name,
+        rep,
+        &[],
+        Some(&mut quay),
+        &[link],
+        HANDSHAKE_MS,
+    )
+    .map_err(|_| "start")?;
+    let pie = *quay.find(link).ok_or("no pier")?;
+    if !pie.paired() {
+        return Err("handshake unpaired");
+    }
+    // ★ 唤醒，并顺手把"在台上跑多少轮"告诉它（**第一句即第一次唤醒**；此后每句都只是唤醒）。
+    // 那个轮数由台主**空载校准一次**（`main` 里，铺负荷之前），受害者不自己校准——它每轮都是
+    // 一枚新任务，自己校准等于每轮白扔 0.4 s（睡 200 ms + 忙等两格刻度）。
+    let burst = iters_per_ms.saturating_mul(STAGE_MS);
+    pie.post(&burst.to_le_bytes()).map_err(|_| "post")?;
 
-    // 扫时序：空转 `delay_us` 微秒再下令（受害者此刻在它那 1 ms 的某一点上）。
+    // 扫时序：空转 `delay_us` 微秒再下令（受害者此刻在它"在台上"那一段的某一点上）。
     tick::spin_iters(delay_us.saturating_mul(iters_per_ms) / 1_000);
 
     // 杀（域粒度收令）+ 判：判决只认非阻塞那一问（见 `service::until`）。
@@ -206,6 +276,9 @@ fn trial(
     if let Some(Slot::Live { team, .. }) = table.find(name).map(|s| s.slot) {
         let _ = unit::oust(team);
     }
+    // 本端那一枚孔随码头放下。**对端交上来的那一枚留在本端表里**（`Quay::shut` 只放本端
+    // 那一枚）——一轮一枚；够不够用由跑完的读数说话（见头注照实记①）。
+    quay.shut();
     Ok(verdict)
 }
 

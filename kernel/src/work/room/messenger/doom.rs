@@ -56,6 +56,25 @@ pub(super) fn doomed() -> &'static SpinLock<HashMap<usize, usize>> {
 /// 检查点还会看，**不会错杀**。
 pub(super) static PENDING: AtomicUsize = AtomicUsize::new(0);
 
+/// 收令落在**哪一档**的计数（只读；停机读出口打）。
+///
+/// - `CULLED` = 从某个**容器**里同步摘掉（`Held` / `Starved` / `Blocked`）——它当时**不在台上**；
+/// - `NUDGED` = 判它**在台上**（`Running`）⇒ 记一笔 doomed + 定向 IPI，等它自己在 `trap` 里退。
+///
+/// **这两个数才回答 rig A 要问的那一格**："点名落在它**离核那一瞬**"中没中——`nudge > 0`
+/// 就是中过。台子的读数 `now`/`waited` **分不出**这件事（那是"投递"与"复探"谁先到的赛跑，
+/// 不是位置；实测 20 ms 台面下 `now=325/328`，而投递档靠这两个数才看得见）。
+static CULLED: AtomicUsize = AtomicUsize::new(0);
+static NUDGED: AtomicUsize = AtomicUsize::new(0);
+
+/// 上面那一对 `(容器里摘掉, 在台上投递)`——停机读出口用。
+pub(crate) fn branch_stats() -> (usize, usize) {
+    (
+        CULLED.load(Ordering::Relaxed),
+        NUDGED.load(Ordering::Relaxed),
+    )
+}
+
 /// 关机终末释放（`messenger::rip`）：表与它的门一起清。
 pub(super) fn rip() {
     doomed().lock().clear();
@@ -113,6 +132,8 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
             }
         };
         if taken {
+            // 它当时在某个容器里（不在台上）——这一档是"同步摘掉"。
+            CULLED.fetch_add(1, Ordering::Relaxed);
             let mut t = task.clone();
             Task::exclusive(&mut t).transform(TaskState::Doomed);
             return true;
@@ -188,6 +209,8 @@ fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
 /// SSIP 或那两处自查吃掉）——它今天是一档**闲置的兜底**，留着是因为它是唯一不依赖投递
 /// 的那条路；把它变成"实测会用上"的那一天，得先有个能把这一格做成可测的压测台。
 fn doomed_nudge(task: &Arc<Task>, reason: usize) -> bool {
+    // **在台上**那一档（也含重试耗尽的兜底）：记一笔 doomed + 定向 IPI，等它自己退。
+    NUDGED.fetch_add(1, Ordering::Relaxed);
     let mut d = doomed().lock();
     // 扩容先试、失败即放弃这一笔（返回值本来就把'没记上'算进语义：不记才会把这次
     // kill 丢掉，故这里**先备后插**，备不出来也不 panic —— 整机照旧活着）。

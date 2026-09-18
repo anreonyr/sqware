@@ -27,7 +27,9 @@ pass=0
 i=1
 while [ "$i" -le "$rounds" ]; do
   log="$out/$tag-$i.log"
-  SQWARE_ROOT=rig timeout 40 cargo run > "$log" 2>&1
+  # 时限放宽到 300 s：rig A 之后每一轮都要"造 → 握手（认下它交回来的孔）→ 唤醒 → 杀 → 判"，
+  # 而判决窗口是 300 ms + 1 s 宽限 ⇒ 命中 `late`/`lost` 的那些轮本来就慢。
+  SQWARE_ROOT=rig timeout 300 cargo run > "$log" 2>&1
   if ! grep -q "rig: total" "$log"; then
     echo "round $i: FAIL 无汇总行（末行：$(grep -a 'rig:' "$log" | tail -1)）"
   elif ! grep -q "task: all tasks exited, system halted" "$log"; then

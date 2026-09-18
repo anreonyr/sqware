@@ -44,6 +44,9 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 在树内第一次变得可测（`soak`/`rig` 里总有核空闲，空闲核会替全局兑现到点）。
     ("busy", "prog-busy", ProgramKind::User),
     ("park", "prog-park", ProgramKind::User),
+    // 他杀台的握手版受害者（rig A）：无限挂在自己的孔上、由台主 push 唤醒——上台/离核的
+    // 转折点因此由台主定（旧版 `churn` 是"放行即跑"，量到的全是快路径）。
+    ("hang", "prog-hang", ProgramKind::User),
     ("load", "prog-load", ProgramKind::Supervisor),
 ];
 

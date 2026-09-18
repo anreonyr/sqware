@@ -87,6 +87,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-hang"
+path = "src/bin/stress/hang.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-load"
 path = "src/bin/stress/load.rs"
 test = false

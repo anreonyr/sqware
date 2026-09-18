@@ -159,6 +159,13 @@ pub(super) fn halt() -> ! {
                 timer::ticks()
             );
         }
+        // 收令落在哪一档（只读）：`culled` = 从容器里同步摘掉（它当时不在台上）；`nudged` =
+        // 判它在台上 ⇒ 记 doomed + 定向 IPI。**rig A 要问的"点名落在离核那一瞬"就靠这一对**
+        // ——台子的 `now`/`waited` 分不出位置（那是投递与复探的赛跑）。
+        {
+            let (culled, nudged) = crate::work::room::messenger::branch_stats();
+            putln!("doom: culled={culled} nudged={nudged}");
+        }
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,
         ));
