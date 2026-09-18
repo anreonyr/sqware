@@ -23,8 +23,7 @@ use env::{
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
 /// timebase 频率）。
 fn now_ns() -> EnvResult<u64> {
-    let (secs, nanos) = crate::env::chrono::clock()?;
-    Ok(secs.saturating_mul(1_000_000_000).saturating_add(nanos))
+    crate::env::chrono::clock()
 }
 
 // ── 裸函数层（envcall 转发，零业务逻辑）──

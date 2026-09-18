@@ -30,7 +30,7 @@ use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::room::messenger::{self, Handoff, WakeKey, park, wait, wake};
+use crate::work::room::messenger::{self, Handoff, WakeKey, park, park_until, wait, wake};
 use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::{GateError, Permission};
 use crate::work::unit::life::TaskLife;
@@ -307,6 +307,16 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Err(e) => return ret_err(frame, e),
             }
         }
+        EnvCall::Room(RoomCall::ParkUntil { at }) => {
+            drop(ident);
+            match park_until(at) {
+                // 到点已过 ⇒ 未离核即续跑（ABI 契约：当场返回，不是让出一拍）。
+                Ok(None) => {}
+                Ok(Some(pa)) => return pa as *mut TrapContext,
+                // 备料失败（内存耗尽）：本任务**没挂起**，当场答 `OoM`。
+                Err(e) => return ret_err(frame, e),
+            }
+        }
         EnvCall::Room(RoomCall::Wait { key, millis }) => {
             // 键 → 存活单元：**解析在调用方这一层**（room 不认识注册表）。空间键的
             // 寿命就是本任务所属空间的寿命，故弱引用随键一起交给等待机。
@@ -340,9 +350,9 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             frame.gpr.set_x(Gprs::A0, woke as usize);
         }
         EnvCall::Chrono(ChronoCall::Clock) => {
-            let up = clock::uptime();
-            frame.gpr.set_x(Gprs::A0, up.as_secs() as usize);
-            frame.gpr.set_x(Gprs::A1, up.subsec_nanos() as usize);
+            // 单字纳秒（自启动基准）：`u128 → u64` 饱和（584 年，实际到不了）。
+            let ns = clock::uptime().as_nanos().min(u64::MAX as u128) as u64;
+            frame.gpr.set_x(Gprs::A0, ns as usize);
         }
         EnvCall::Memory(MemoryCall::Allocate { size }) => {
             let size = size.max(1).next_multiple_of(PAGE_SIZE);

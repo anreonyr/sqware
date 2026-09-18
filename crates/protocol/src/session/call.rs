@@ -115,9 +115,7 @@ pub(super) fn fall(ms: usize) -> bool {
 
 /// 单调时钟读数（纳秒）——有界等待按 deadline 循环用它（不依赖 timebase 频率）。
 pub(super) fn now_ns() -> u64 {
-    runtime::env::chrono::clock()
-        .map(|(secs, nanos)| secs.saturating_mul(1_000_000_000).saturating_add(nanos))
-        .unwrap_or(0)
+    runtime::env::chrono::clock().unwrap_or(0)
 }
 
 /// [`core::Quay::unseat`](super::core::Quay::unseat) 过线的那一句话：一个字节。

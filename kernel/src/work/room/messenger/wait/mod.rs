@@ -267,6 +267,44 @@ pub fn park(duration: Duration) -> Result<usize, GateError> {
     }
 }
 
+/// 睡到**绝对点**（`RoomCall::ParkUntil`）：`at` = 自启动基准纳秒，与 `Chrono::Clock`
+/// 同基准同单位。
+///
+/// 返回：`Ok(None)` = **到点已过 ⇒ 未离核**（ABI 契约：当场返回，不是让出一拍）；
+/// `Ok(Some(pa))` = 已挂起，切到这一帧。
+///
+/// 路径与 [`park`] 唯一不同在"到点谁算"：`park` 用 `now + duration`，这里用 `at`
+/// 折回的刻度（`duration_to_ticks`，饱和）。折回去用的是**同一个钟**，故"不早于"
+/// 这条下限不受影响。
+pub fn park_until(at: u64) -> Result<Option<usize>, GateError> {
+    // `duration_to_ticks` 自带 u128 中间量与饱和 ⇒ 这里不需要防溢出的钳制。
+    let at_ticks = clock::duration_to_ticks(Duration::from_nanos(at));
+    let now_ticks = clock::now().as_ticks();
+    if at_ticks <= now_ticks {
+        return Ok(None);
+    }
+    let Some(task) = current().running_task() else {
+        // 退化路径（唯一调用点恒在任务上下文）：无任务即无「本核无后继」可谈，直接取活。
+        return Ok(Some(run()));
+    };
+    let me = task.ident.id;
+    trace::note(EventKind::Room(RoomEvent::Park {
+        tid: me,
+        wake_at: at_ticks as usize,
+    }));
+    let life = task.life();
+    drop(task);
+    match block(
+        WakeKey::Alarm { task: me },
+        life,
+        clock::ticks_to_duration(at_ticks - now_ticks),
+    )? {
+        Handoff::Switch(pa) => Ok(Some(pa)),
+        // `Alarm` 无投信方，且键的强持有者就是我（我还在跑）⇒ 信标先探不可能命中。
+        Handoff::Resume(()) => unreachable!("Alarm 无投信方"),
+    }
+}
+
 /// 事件等待（`RoomCall::Wait`）：直通 [`block`]。有投信方的键，信标先探可能命中
 /// 而当场续跑（[`Handoff::Resume`]）；键已死则 ⑤ 的锁内判死把它当场放回。
 pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, GateError> {

@@ -10,10 +10,11 @@ pub fn ticks() -> EnvResult<usize> {
     }
 }
 
-pub fn clock() -> EnvResult<(u64, u64)> {
+/// 自启动基准的**纳秒标量**（单调）——与 `room::sleep_until` 的 `at` 同基准同单位。
+pub fn clock() -> EnvResult<u64> {
     let r = ChronoCall::Clock.call()?;
     match r {
-        ChronoCallRet::Clock(secs) => Ok(secs),
+        ChronoCallRet::Clock(ns) => Ok(ns),
         _ => unreachable!(),
     }
 }

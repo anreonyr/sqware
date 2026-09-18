@@ -63,6 +63,16 @@ pub fn sleep(d: Duration) -> EnvResult<()> {
     Ok(())
 }
 
+/// 睡到**绝对点**（`at` = `chrono::clock()` 的纳秒基准）：**不早于 `at`，且至多晚一拍**；
+/// `at` 已过 ⇒ **当场返回**（不挂起、不报错）。
+///
+/// 周期任务用它才不会漂：`next += period; sleep_until(next)?;` —— 迟到不累积。
+/// 与 [`sleep`] 的分工：那个是"至少睡这么久"（相对），这个是"到某个时刻再回来"（绝对）。
+pub fn sleep_until(at: u64) -> EnvResult<()> {
+    let _ = RoomCall::ParkUntil { at }.call();
+    Ok(())
+}
+
 /// 他杀：把 `task` 送进既有的死亡路径——与 [`exit_with`] 成对（**自杀 ↔ 他杀**）。
 ///
 /// **语义是域粒度**：`task` 只是"指认域"的手柄，它所属的域连同子树一起走（同域的
