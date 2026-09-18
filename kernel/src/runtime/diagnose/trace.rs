@@ -53,10 +53,6 @@ pub enum RoomEvent {
     Starve {
         tid: usize,
     },
-    Steal {
-        tid: usize,
-        src_hart: usize,
-    },
     Park {
         tid: usize,
         wake_at: usize,
@@ -301,9 +297,6 @@ fn fmt_description(e: &Event, w: &mut impl fmt::Write) -> fmt::Result {
             write!(w, "switch {prev_tid}->{next_tid}")
         }
         EventKind::Room(RoomEvent::Starve { tid }) => write!(w, "starve tid={tid}"),
-        EventKind::Room(RoomEvent::Steal { tid, src_hart }) => {
-            write!(w, "steal tid={tid} from hart {src_hart}")
-        }
         EventKind::Room(RoomEvent::Park { tid, wake_at }) => {
             write!(w, "park tid={tid} @{wake_at:#x}")
         }
