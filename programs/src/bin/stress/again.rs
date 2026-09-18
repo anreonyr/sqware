@@ -37,6 +37,12 @@
 //! 每步一行：`again: r=<轮> step=<步> state=<State> slot=<live/none> ready=<Up/Gone/Pending>`
 //! 末行汇总：`again: total restarts=<成功重起的次数> failures=<被拒的次数>`
 //! 判据：**`restarts=2`（第 2、3 轮各一次）且 `failures=0`**，并且末轮 `slot=live`。
+//!
+//! # 收尾那一格：预算与放弃（协议 §六 的 Server 侧配方）
+//!
+//! 走满 `ROUNDS` 之后，本台子再按配方走一遍**有界预算**：预算 2 次、用尽即**放弃**，
+//! 然后印出"放弃之后表里是什么"——判据是 **`state=Dead` 且 `slot=live`**（`Dead` 与
+//! 坐标并存合法 ⇒ "它是什么"读得出来；"要不要再试"只有 Server 知道）。
 
 extern crate alloc;
 extern crate programs;
@@ -150,8 +156,41 @@ extern "C" fn main() -> ! {
         trace(&table, name, round, "ousted");
     }
 
+    // ── 收尾：有界预算 + 放弃（§六 的 Server 侧配方；预算记在**本 Server 自己手里**）──
+    const BUDGET: usize = 2;
+    let mut tries = 0usize;
+    let mut gave_up = 0usize;
+    loop {
+        // `watch`：死了就把 `Dead` 落地（只读的 `until` 不算）。
+        let dead = service::watch(&mut table, name, MS).unwrap_or(false);
+        if !dead {
+            break;
+        }
+        if tries >= BUDGET {
+            gave_up += 1;
+            break;
+        }
+        if let Some(Slot::Live { team, .. }) = table.find(name).map(|s| s.slot) {
+            let _ = unit::oust(team);
+        }
+        let Ok(rep) = service::spawn(&mut table, name, elf, kind) else {
+            failures += 1;
+            break;
+        };
+        if service::start(&mut table, name, rep, &[], None, &[], MS).is_err() {
+            failures += 1;
+            break;
+        }
+        tries += 1;
+        restarts += 1;
+        let _ = service::stop(&mut table, name);
+        let _ = service::watch(&mut table, name, MS);
+    }
+    // 放弃之后表里的样子：**`Dead` 与坐标并存**（这就是"它是什么"的答案）。
+    trace(&table, name, ROUNDS + 1, "gave-up");
+
     say(&format!(
-        "again: total restarts={restarts} failures={failures} rows={}",
+        "again: total restarts={restarts} failures={failures} budget_tries={tries} gave_up={gave_up} rows={}",
         table.rows().count()
     ));
     exit_with(0)
