@@ -60,6 +60,7 @@ fn steal() -> Option<Arc<Task>> {
     if n <= 1 {
         return None;
     }
+    conductor::note_steal_try();
     // 每核独立游标派生起点：fetch_add 是 Relaxed，无内存序代价。
     let start = current().steal_cursor.fetch_add(1, Ordering::Relaxed) % n;
     for off in 0..n {
@@ -71,12 +72,14 @@ fn steal() -> Option<Arc<Task>> {
             continue;
         }
         let Some(task) = schedulers()[v].try_pull() else {
+            conductor::note_steal_miss();
             continue;
         };
         trace::note(EventKind::Room(RoomEvent::Steal {
             tid: task.ident.id,
             src_hart: v,
         }));
+        crate::work::room::conductor::note_steal();
         return Some(task);
     }
     None

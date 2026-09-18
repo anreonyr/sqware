@@ -159,12 +159,21 @@ pub(super) fn halt() -> ! {
                 timer::ticks()
             );
         }
-        // 收令落在哪一档（只读）：`culled` = 从容器里同步摘掉（它当时不在台上）；`nudged` =
-        // 判它在台上 ⇒ 记 doomed + 定向 IPI。**rig A 要问的"点名落在离核那一瞬"就靠这一对**
+        // 收令落在哪一档（只读）：`held` = 还没放行；`starved` = **就绪却没上台**（"唤醒 ⇒ 上台"
+        // 这一段的问题落在这一格）；`blocked` = 还挂在等待点上（唤醒没送到）；`nudged` = 判它在
+        // 台上 ⇒ 记 doomed + 定向 IPI。**rig A 要问的"点名落在离核那一瞬"就靠 `nudged`**
         // ——台子的 `now`/`waited` 分不出位置（那是投递与复探的赛跑）。
         {
-            let (culled, nudged) = crate::work::room::messenger::branch_stats();
-            putln!("doom: culled={culled} nudged={nudged}");
+            let (held, starved, blocked, nudged) = crate::work::room::messenger::branch_stats();
+            putln!("doom: held={held} starved={starved} blocked={blocked} nudged={nudged}");
+            // 「唤醒 ⇒ 上台」那一段：踢出几次、偷了几次、看见货却取不到几次。
+            putln!(
+                "sched: kicks={} steals={} tries={} miss={}",
+                KICKS.load(Ordering::Relaxed),
+                STEALS.load(Ordering::Relaxed),
+                STEAL_TRIES.load(Ordering::Relaxed),
+                STEAL_MISSES.load(Ordering::Relaxed)
+            );
         }
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,
@@ -233,6 +242,16 @@ pub(super) fn wake(hart: usize) {
 ///
 /// 失败兜底：被踢醒 hart 抢失败 → 哑睡壳（保留 sleep 位，等下次事件）；work
 /// 仍留在源 hart 的 starved queue——源 hart 下次 yield 自取（≤ 1 个时间片）。
+///
+/// # 照实记：那条兜底在"源核不 yield"时是**死的**（rig A 量到的）
+///
+/// 上面那句"源 hart 下次 yield 自取"假定源核还会 yield。**S 态域任务空转不吃定时器陷阱**
+/// （实测：单核 6 s 纯空转，`traps` 一次不涨）⇒ 一个空转的 S 态任务**永不 yield** ⇒ 被它唤醒
+/// （`rise` 推到 `current()`）的任务就一直躺在它的就绪队列里没人搬。rig A 的 328 次试验：
+/// 杀令落下时 `starved=318`（就绪却没上台）、`nudged=3`；`kicks=977` 只换来 `steals=31`
+/// （`tries=443`、`miss=0`——没偷到都是"没看见货"，不是抢锁失败）。**让源核让出一拍之后**：
+/// `starved→0`、`nudged→146`、`steals→447`，并且台子当场复现了 `lost=2/328`（"他杀偶发不生效"）。
+/// ⇒ 下一件：让唤醒**直接落到被叫醒那颗核的队列**，而不是等源核 yield。
 pub(super) fn kick() {
     // 起点游标：fetch_add(1) % 64bit 字宽。下次 call 拿到新起点，跨核亦然。
     let cursor_mod = YELL_CURSOR.fetch_add(1, Ordering::Relaxed) % (usize::BITS as usize);
@@ -254,10 +273,36 @@ pub(super) fn kick() {
                         ..Default::default()
                     })
                     .call();
+                KICKS.fetch_add(1, Ordering::Relaxed);
                 break 'word;
             }
         }
     }
+}
+
+/// 单点踢出次数 / 偷取成功次数（只读；停机读出口打）。
+///
+/// 用来回答"唤醒 ⇒ 上台"那一段卡在哪：`kick()` 发出去的 IPI 是**叫醒**（不搬活），活仍留在
+/// 源核的就绪队列里，要由被叫醒的核 `steal` 走。实测 rig A：328 次试验里杀令落下时
+/// `starved=309`（就绪却没上台）——这两个数分开告诉我们是"没人被叫醒"还是"叫醒了却偷不动"。
+static KICKS: AtomicUsize = AtomicUsize::new(0);
+static STEALS: AtomicUsize = AtomicUsize::new(0);
+static STEAL_TRIES: AtomicUsize = AtomicUsize::new(0);
+static STEAL_MISSES: AtomicUsize = AtomicUsize::new(0);
+
+/// 偷取成功一次（`scheduler::core::fetch::steal` 调）。
+pub(super) fn note_steal() {
+    STEALS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// 偷取被调用一次（含最终没偷到的）。
+pub(super) fn note_steal_try() {
+    STEAL_TRIES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// 看见别的核有货、却 `try_pull` 不出来（队列非空但取不到）。
+pub(super) fn note_steal_miss() {
+    STEAL_MISSES.fetch_add(1, Ordering::Relaxed);
 }
 
 /// 广播唤醒所有 WFI 等待 hart（**halt 屏障专用**）。mask = waiting 字保

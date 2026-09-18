@@ -58,19 +58,26 @@ pub(super) static PENDING: AtomicUsize = AtomicUsize::new(0);
 
 /// 收令落在**哪一档**的计数（只读；停机读出口打）。
 ///
-/// - `CULLED` = 从某个**容器**里同步摘掉（`Held` / `Starved` / `Blocked`）——它当时**不在台上**；
-/// - `NUDGED` = 判它**在台上**（`Running`）⇒ 记一笔 doomed + 定向 IPI，等它自己在 `trap` 里退。
+/// - `CULL_HELD` = 还在未放行的容器里（`Held`）；
+/// - `CULL_STARVED` = **就绪但没被跑**（`Starved`：已被唤醒/放行，躺在某颗核的就绪队列里）——
+///   "唤醒 ⇒ 上台"这一段的问题落在这一格；
+/// - `CULL_BLOCKED` = 还挂在某个等待点上（`Blocked`）——**唤醒没送到**；
+/// - `NUDGED` = 判它在台上（`Running`）⇒ 记一笔 doomed + 定向 IPI，等它自己在 `trap` 里退。
 ///
-/// **这两个数才回答 rig A 要问的那一格**："点名落在它**离核那一瞬**"中没中——`nudge > 0`
-/// 就是中过。台子的读数 `now`/`waited` **分不出**这件事（那是"投递"与"复探"谁先到的赛跑，
-/// 不是位置；实测 20 ms 台面下 `now=325/328`，而投递档靠这两个数才看得见）。
-static CULLED: AtomicUsize = AtomicUsize::new(0);
+/// 这四个数才回答 rig A 要问的那一格："点名落在它**离核那一瞬**"中没中——`nudged > 0` 就是
+/// 中过。台子的读数 `now`/`waited` **分不出位置**（那是"投递"与"复探"谁先到的赛跑；实测
+/// 20 ms 台面下 `now=324/328`，而投递档靠这四个数才看得见）。
+static CULL_HELD: AtomicUsize = AtomicUsize::new(0);
+static CULL_STARVED: AtomicUsize = AtomicUsize::new(0);
+static CULL_BLOCKED: AtomicUsize = AtomicUsize::new(0);
 static NUDGED: AtomicUsize = AtomicUsize::new(0);
 
-/// 上面那一对 `(容器里摘掉, 在台上投递)`——停机读出口用。
-pub(crate) fn branch_stats() -> (usize, usize) {
+/// 上面那四格 `(未放行, 就绪未上台, 仍挂起, 在台上投递)`——停机读出口用。
+pub(crate) fn branch_stats() -> (usize, usize, usize, usize) {
     (
-        CULLED.load(Ordering::Relaxed),
+        CULL_HELD.load(Ordering::Relaxed),
+        CULL_STARVED.load(Ordering::Relaxed),
+        CULL_BLOCKED.load(Ordering::Relaxed),
         NUDGED.load(Ordering::Relaxed),
     )
 }
@@ -107,9 +114,20 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
             TaskTag::Held => {
                 // 未放行的引导线程：从 Team.held **按身份**摘出（不是它就不动）。
                 let team = task.ident.team.clone();
-                team.release_held(task)
+                let ok = team.release_held(task);
+                if ok {
+                    CULL_HELD.fetch_add(1, Ordering::Relaxed);
+                }
+                ok
             }
-            TaskTag::Starved => crate::work::room::scheduler::core::remove_from_starved(task),
+            TaskTag::Starved => {
+                let ok = crate::work::room::scheduler::core::remove_from_starved(task);
+                if ok {
+                    // **就绪却一直没上台**——"唤醒 ⇒ 上台"这一段的问题落在这一格。
+                    CULL_STARVED.fetch_add(1, Ordering::Relaxed);
+                }
+                ok
+            }
             TaskTag::Blocked => {
                 // 「读状态再摘容器」做不出来了 ⇒ 问容器：扫分片找它的等待者。
                 let Some(ticket) = pop_waiter(task) else {
@@ -117,6 +135,8 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
                 };
                 // 作废票根 + 消音到点（[`void`] 幂等）。
                 void(ticket);
+                // **还挂在等待点上**：唤醒没送到（或送到了又被重新挂起）。
+                CULL_BLOCKED.fetch_add(1, Ordering::Relaxed);
                 true
             }
             TaskTag::Running => {
@@ -132,8 +152,7 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
             }
         };
         if taken {
-            // 它当时在某个容器里（不在台上）——这一档是"同步摘掉"。
-            CULLED.fetch_add(1, Ordering::Relaxed);
+            // 它当时在某个容器里（不在台上）——具体哪一格已由上面各分支自己记。
             let mut t = task.clone();
             Task::exclusive(&mut t).transform(TaskState::Doomed);
             return true;
