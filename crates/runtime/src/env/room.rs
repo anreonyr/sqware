@@ -45,8 +45,19 @@ pub fn exit_with_note(reason: usize, note: &str) -> ! {
 }
 
 pub fn sleep(d: Duration) -> EnvResult<()> {
+    // **向上取整到毫秒**：`Park{millis}` 是**下限族**（"至少这么久"），而 `Park{0}` 的
+    // 语义是**让出一拍**、不是"睡 0 毫秒"。
+    //
+    // 照实记（修掉的那个坑）：旧写法是 `d.as_millis() as usize`（**向下取整**）⇒
+    // `sleep(500µs)` 静默变成 `Park{0}` = 让出一拍；`sleep(1.5ms)` 变成 `Park{1}`，
+    // 连"至少 1.5 ms"这个下限都没守住。向上取整才与下限族口径一致：
+    // `500µs → 1`、`1.5ms → 2`、`1ms → 1`、`0 → 0`（零时长仍是"让出一拍"）。
+    let mut ms = d.as_millis();
+    if d.subsec_nanos() % 1_000_000 != 0 {
+        ms += 1;
+    }
     let _ = RoomCall::Park {
-        millis: d.as_millis() as usize,
+        millis: ms.min(usize::MAX as u128) as usize,
     }
     .call();
     Ok(())
