@@ -175,11 +175,17 @@ fn rounds(target: usize, broadcast: bool) -> (usize, usize, usize) {
     (woke, ssip, valid)
 }
 
-/// 打一记 IPI：`broadcast` 用整字掩码（同 `conductor::yell`），否则单 bit（同 `kick`）。
+/// 打一记 IPI：`broadcast` 用**合法**整字掩码（只含已启动的 hart，同 `conductor::yell`
+/// 的形状），否则单 bit（同 `kick`）。
+///
+/// **照实记**：第一版广播用的是 `usize::MAX`（含不存在的 hart 位），两种上下文里都几乎
+/// 全是 `0/16` ⇒ 顺带量到一条硬事实：**掩码不合法时 SBI 返 Ok 但不投递**。"`ipi_err=0`
+/// 不等于送到"这句话就是从这一格来的。
 fn send(target: usize, broadcast: bool) {
     let bit = 1usize << (target % (usize::BITS as usize));
     let word = target / (usize::BITS as usize);
-    let mask = if broadcast { usize::MAX } else { bit };
+    let n = hart::hart_count().min(usize::BITS as usize);
+    let mask = if broadcast { (1usize << n) - 1 } else { bit };
     let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
         .args(SArgs {
             a0: mask,

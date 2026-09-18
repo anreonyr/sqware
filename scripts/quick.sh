@@ -61,7 +61,9 @@ wait_prompt() {           # 等第 n 次提示符（最多 25 s）——只用�
 }
 
 # fd 3 = 喂给 QEMU 的 stdin（显式握管，免得跟管道/tee 的 fd 混起来）
-exec 3> >(QEMU_TIMEOUT=45 nu scripts/boot.nu "$elf" 2>&1 | tee "$log" >/dev/null)
+# 与验收门对齐：显式关掉 icount（默认 `auto,sleep=on` 会把 WFI 唤醒按宿主时间节流到
+# 毫秒，往返计时与真相差一个数量级）。
+exec 3> >(QEMU_TIMEOUT=45 QEMU_ICOUNT= nu scripts/boot.nu "$elf" 2>&1 | tee "$log" >/dev/null)
 feed=$!
 
 if ! wait_prompt 1; then echo "quick: 等不到提示符（启动失败？）" >&2; fi
