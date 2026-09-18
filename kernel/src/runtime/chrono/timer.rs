@@ -12,15 +12,40 @@
 use alloc::collections::binary_heap::BinaryHeap;
 use core::cmp::Reverse;
 use core::sync::atomic::{AtomicU64, Ordering};
+use core::time::Duration;
 
 use riscv::register::time;
 
 use crate::lock::{Level, SpinLock};
-use crate::runtime::chrono::clock::Instant;
+use crate::runtime::chrono::clock::{self, Instant};
 use sbi::{TimerCall, ecall::SArgs, fid::Timer};
 
 /// 镜像的无 tock 哨兵（内部；对外以 due() -> None 表达）。
 const NONE: u64 = u64::MAX;
+
+/// **失明上限**——任一核两次「看一眼世界」之间允许的最长时间（毫秒）。
+///
+/// 语义改名，不是新数：它就是原先抢占量子里写死的那个 `100ms`（`trap.rs`、
+/// `hart.rs`、`stack.rs` 三处各写一份）。改名是因为它管的不止"跑多久换人"：
+/// 到点登记（`tock`）发生在别的核上时，登记者自己会按 [`beat_until`] 把**本核**
+/// 武装点收到最近到点，而失明的核最迟在 `BLIND_MS` 后醒来重算
+/// `min(上限, 最近活到点)` ⇒ 自愈。这也是「不变量不会永久破」的来源：破口寿命
+/// ≤ `BLIND_MS`。
+pub const BLIND_MS: u64 = 100;
+
+/// 忙核的 `ceil`：失明上限的刻度。**一个家**——四处调用点不许各抄一份换算。
+pub fn blind_ceiling() -> u64 {
+    clock::duration_to_ticks(Duration::from_millis(BLIND_MS))
+}
+
+/// 到点兑现迟到的累计读数（只读计数器）。
+///
+/// 语义：`late = drain 时的 now − 该项登记的 wake_at`（timebase 刻度）。全部
+/// Relaxed——只被停机读出口读一次，不承载任何同步。热路径只做原子加/取大，
+/// 不分配、不阻塞、不 putln（`drain` 持 `TIMER_HEAP` 锁）。
+static LATE_N: AtomicU64 = AtomicU64::new(0);
+static LATE_SUM: AtomicU64 = AtomicU64::new(0);
+static LATE_MAX: AtomicU64 = AtomicU64::new(0);
 
 /// 节拍计数（ENV_TICKS 兼容）。
 static TICKS: AtomicU64 = AtomicU64::new(0);
@@ -90,6 +115,30 @@ pub fn beat(interval: u64) {
         .unwrap();
 }
 
+/// 武装到 `min(ceil, 最近活到点 − 现在)` —— 即「武装点 = min(本核上限, 最近活到点)」。
+///
+/// 与 [`beat`] 只差**取哪个时刻**：`beat` 认死一个 interval，本函数认 `TIMER_HEAP`
+/// 的锁外真值镜像（[`due`]）——于是「武装」与「登记到点」从此相干。`due() == None`
+/// （堆空 / 启动期）即退化为 `beat(ceil)`，故三个原 `beat(100ms)` 调用点与今天等价。
+///
+/// `ceil` 是本核上限：忙核 = [`BLIND_MS`] 的刻度（失明上限），空闲核 = `BEACON_TICK`
+/// / `WFI_FAR`。饱和减法：到点已过 ⇒ 0 ⇒ 立刻再来一拍。
+///
+/// 不变量：任一时刻「本核武装点 ≤ 最近活到点」。`nearest` 只在持 `TIMER_HEAP` 锁时
+/// 由 `recompute_nearest` 派生，写点仅 `tock`/`mute`/`drain`；每次武装都从该真值
+/// 重算（不沿用上次的绝对点）⇒ 无累积误差、不认上次是谁武装。`min` 只会把武装点
+/// **提前**；`due` 变晚/消失只发生在 `mute`/`drain` 摘掉该项时——那意味着该到点已
+/// 无需兑现。破口寿命 ≤ `BLIND_MS`（每个武装点都重算 ⇒ 自愈）。
+///
+/// SBI 失败即 panic，纪律与 [`beat`] 同。
+pub fn beat_until(ceil: u64) {
+    let delta = match due() {
+        Some(t) => t.as_ticks().saturating_sub(time::read() as u64).min(ceil),
+        None => ceil,
+    };
+    beat(delta);
+}
+
 // ── tock 日程（deadline 注册表）──────────────────────────
 
 /// 在句柄上安排一个到点（tock）事件：入堆 + 刷新最近 tock 镜像。
@@ -141,10 +190,27 @@ pub fn drain(now: Instant, out: &mut [u64]) -> usize {
         if *t > now || n >= out.len() {
             break;
         }
-        let Reverse((_, handle)) = i.heap.pop().expect("peeked non-empty heap entry");
+        let Reverse((wake_at, handle)) = i.heap.pop().expect("peeked non-empty heap entry");
         out[n] = handle;
         n += 1;
+        // 迟到读数：登记的 wake_at 到现在才被兑现（刻度）。锁内只做 Relaxed 原子，
+        // 不分配、不阻塞、不 putln——本函数持 `TIMER_HEAP` 锁。
+        let late = now.saturating_sub(wake_at);
+        LATE_N.fetch_add(1, Ordering::Relaxed);
+        LATE_SUM.fetch_add(late, Ordering::Relaxed);
+        LATE_MAX.fetch_max(late, Ordering::Relaxed);
     }
     TIMER_HEAP.recompute_nearest(&i);
     n
+}
+
+/// 迟到读数 `(项数, 最迟刻度, 迟到刻度总和)`——停机读出口调一次。
+///
+/// 毫秒换算由调用方按 `clock::ticks_to_duration` 的 `hertz()` 现算，不写死频率。
+pub fn late_stats() -> (u64, u64, u64) {
+    (
+        LATE_N.load(Ordering::Relaxed),
+        LATE_MAX.load(Ordering::Relaxed),
+        LATE_SUM.load(Ordering::Relaxed),
+    )
 }

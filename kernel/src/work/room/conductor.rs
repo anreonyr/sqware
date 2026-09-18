@@ -15,6 +15,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::hart;
 use crate::lock::OnceLock;
 use crate::putln;
+use crate::runtime::chrono::{clock, timer};
 use sbi::ecall::SArgs;
 use sbi::{self, fid};
 
@@ -137,6 +138,25 @@ pub(super) fn halt() -> ! {
             core::hint::spin_loop();
         }
         putln!("task: all tasks exited, system halted");
+        // 到点兑现的迟到读数（只读、Relaxed）：此处全部核已过 halt 屏障 ⇒ 计数器不再变。
+        // 毫秒按 `hertz()` 现算（`clock::ticks_to_duration`），不写死频率。`late_n` 只数
+        // **真的等到超时**的到点（被 `mute` 取消的不算），故它随 workload 差三个数量级：
+        // debug soak ≈ 2/轮，release soak ≈ 800/轮（`echo`/`guest` 各以 1 ms 轮询睡眠）。
+        // 注意 `late` 是**兑现时刻**减登记到点，不是"哪个核武装得晚"——树内 workload 里
+        // 总有核在空闲，而空闲核按 `due()` 武装、`redeem` 又是全局的，故这条债在树内
+        // 量不出来（见 `wait::block` 里那次武装的注释）。
+        {
+            let (late_n, late_max, late_sum) = timer::late_stats();
+            let max_ms = clock::ticks_to_duration(late_max).as_millis();
+            let avg_ms = if late_n == 0 {
+                0
+            } else {
+                clock::ticks_to_duration(late_sum / late_n).as_millis()
+            };
+            putln!(
+                "timer: late_n={late_n} late_max_ms={max_ms} late_avg_ms={avg_ms} late_max_tick={late_max}"
+            );
+        }
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,
         ));

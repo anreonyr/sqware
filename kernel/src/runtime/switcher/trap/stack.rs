@@ -7,8 +7,6 @@
 //!
 //! 符号经 `trap` 门面转出（`switcher::trap::trap_stack_edge` 等），公开路径不变。
 
-use core::time::Duration;
-
 use riscv::register::{satp, sie, stvec};
 
 use crate::layout::{
@@ -18,7 +16,7 @@ use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
-use crate::runtime::chrono::{clock, timer};
+use crate::runtime::chrono::timer;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
 use crate::work::unit::team::kernel;
@@ -183,9 +181,10 @@ pub fn init() {
         frame.self_va = HART_FRAME_BASE + h * PAGE_SIZE;
     }
 
-    // 4. 先武装定时器：OpenSBI 可能遗留一个已到期的 stimecmp，若不清掉，
-    //    开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序难看）。
-    timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
+    // 4. 先武装定时器（**武装点 = min(本核上限, 最近活到点)**）：OpenSBI 可能遗留一个
+    //    已到期的 stimecmp，若不清掉，开中断瞬间会立即触发一次 S-timer 陷阱（无害但时序
+    //    难看）。启动期堆必空 ⇒ `due() == None` ⇒ 取上限 ⇒ 与原先 `beat(100ms)` 逐字等价。
+    timer::beat_until(timer::blind_ceiling());
 
     arm_hart();
 }

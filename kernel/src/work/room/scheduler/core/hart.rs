@@ -34,11 +34,10 @@
 
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
 use crate::memory::manager::addr::PhysAddr;
-use crate::runtime::chrono::{clock, timer};
+use crate::runtime::chrono::timer;
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trap::trap_stack_edge;
@@ -278,7 +277,8 @@ impl Scheduler {
                     .set_x(Gprs::TP, crate::hart::per_hart_ptr(self.hart));
             }
         }
-        timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
+        // 武装点 = min(本核上限, 最近活到点)——上限即失明上限（原写死的 100ms 抢占量子）。
+        timer::beat_until(timer::blind_ceiling());
     }
 
     /// 装槽：把 Starved 任务装为本 hart 的 running（自取锁）并记身份槽。空槽

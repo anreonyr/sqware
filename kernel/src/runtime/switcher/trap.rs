@@ -2,15 +2,13 @@
 //!
 //! 陷阱栈的窗口与反解在 `stack` 子模块；本文件只用它的符号，公开路径经此处转出。
 
-use core::time::Duration;
-
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
 use crate::hart;
 use crate::memory::manager::asid::{self, Asid};
 use crate::putln;
-use crate::runtime::chrono::{clock, timer};
+use crate::runtime::chrono::timer;
 use crate::runtime::diagnose::trace::{self, EventKind, MemoryEvent, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::work::room::messenger::{self, redeem};
@@ -201,8 +199,10 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             unsafe {
                 sie::set_sext();
             }
-            // 重武装：运行任务抢占量子。
-            timer::beat(clock::duration_to_ticks(Duration::from_millis(100)));
+            // 重武装：**武装点 = min(本核上限, 最近活到点)**。上限即失明上限——原先
+            // 写死的那个 100ms 抢占量子；到点比它更近就按到点（否则登记在别核上的到点
+            // 要等一整拍才被兑现：这正是 `Park{millis}` 在忙机上晚一个量子的病根）。
+            timer::beat_until(timer::blind_ceiling());
             redeem();
             // **兜底**：本核当前 running 任务若被点名（他杀 / 级联的跨核分支），一个 tick
             // 之内自退。这一处**不依赖任何投递**——投那一记 SSIP 可能被别的上下文取走，

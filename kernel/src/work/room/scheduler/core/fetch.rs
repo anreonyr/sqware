@@ -12,7 +12,7 @@ use core::sync::atomic::Ordering;
 use riscv::register::{sie, sip};
 
 use crate::hart;
-use crate::runtime::chrono::{clock, timer};
+use crate::runtime::chrono::timer;
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::messenger;
@@ -124,17 +124,16 @@ fn wait() -> Option<Arc<Task>> {
         // （本轮实测：`churn 16 4 4` @32 M 稳定卡死，四个核全睡在 WFI，`[stop]`
         // 一个字都没出）。收尾期本来就没人在跑，多醒几拍不值一提；正常期保持
         // 长睡（那是省电与不被惊扰的正解）。
-        let delta = match timer::due() {
-            Some(t) => t.as_ticks().saturating_sub(clock::now().as_ticks()),
-            None => {
-                if crate::work::room::scheduler::core::beacon::shutting_down() {
-                    BEACON_TICK
-                } else {
-                    WFI_FAR
-                }
-            }
+        // 空闲核的上限：收尾期 `BEACON_TICK`（信标要在陷阱之外也能说话），正常期"永远"。
+        // `beat_until` 再与最近**活**到点取 min ⇒ 与原先"有到点就睡到那一拍、否则睡
+        // fallback"逐字等价；只有收尾期且到点比 `BEACON_TICK` 更远时会比原先更早醒一拍
+        // （只多几次信标采样——对"挂住时一行证据都没有"是正向，照实记）。
+        let fallback = if crate::work::room::scheduler::core::beacon::shutting_down() {
+            BEACON_TICK
+        } else {
+            WFI_FAR
         };
-        timer::beat(delta);
+        timer::beat_until(fallback);
         // 外部中断的闸门也在这里重开：「下一拍无条件重开」那条只管**以陷阱形式取到**
         // 的 timer tick，而空闲核的拍子是在这里处理的——SIE=0 的 WFI 只被"挂起"唤醒，
         // 不进陷阱。少了这一句，关过闸门的空闲核就再也不会重开（"自愈"在空闲核上不成立）。

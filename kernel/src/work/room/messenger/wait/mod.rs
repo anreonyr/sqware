@@ -105,6 +105,22 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
             void(ticket); // 到点没登记上 ⇒ 票根也不留（`void` 顺带消音，幂等）
             return Err(GateError::OoM);
         }
+        // **本次改动唯一的新增行为**：到点登记成功后，把**本核**武装点收到
+        // `min(失明上限, 最近活到点)`。登记了却不武装 = 到点没人兑现——这正是病根：
+        // 四核全忙时 `Park{millis}` 晚一个量子、有空闲核时精确，同一调用差 20 倍。
+        //
+        // 为什么**不需要 IPI**：`redeem`/`drain` 是**全局**的（堆全局一份、一次取走全部
+        // 到期项），登记这颗核把自己叫醒就够——证人只需要一个，而登记者就是。
+        //
+        // 照实记（量过）：正因为 `redeem` 全局，**任何一颗空闲核**都会按 `due()` 武装并
+        // 兑现全部到点，树内 workload（soak：全员 1ms 轮询睡眠；rig：只有一枚 churn）里
+        // 永远有核空闲 ⇒ 旧口径也不迟到，这条债在树内**量不出来**（release soak 16k 样本
+        // A/B：有无这一句，`late_max` 36 vs 23 ms、`late_avg` 两边都是 0.00 ms）。要量它，
+        // 得先造一个"四核全忙"的负载。
+        //
+        // 位置必须在 `tock` 之后、**锁外**：`tock` 内部持 `TIMER_HEAP` 锁，SBI ecall
+        // 不许进临界区——故禁止把这次武装塞进 `tock`。
+        timer::beat_until(timer::blind_ceiling());
     }
     // 强引用到此为止：**跨挂起不得持强引用**（`me` 只是登记用的临时量）。
     drop(me);
