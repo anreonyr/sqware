@@ -49,7 +49,10 @@ pub struct Program {
 }
 
 /// **装配单**：本域按这个顺序起服务。
-pub const PLAN: &[Program] = &[plic(), guest(), echo()];
+///
+/// `echo` **必须在最后**：[`assemble`] 返 [`PLAN`] 的最后一条，root 的 `wait_last` 等它
+/// ——那正是"读到一行 `exit` 才收场"的那一格。
+pub const PLAN: &[Program] = &[plic(), guest(), passer(), echo()];
 
 /// 中断面域：常驻，要四枚门闩，起来时交回通道，并挂上板。
 const fn plic() -> Program {
@@ -80,6 +83,22 @@ const fn guest() -> Program {
     }
 }
 
+/// 过客：起来、挂一个名字、**直接死**（不说再见）。
+///
+/// 板那两条判据里"这位还在吗"（`Alive`）那一格就是为它存在的读数：它不说 `DISMISS`，
+/// 故只有"看出来的"那一档收得掉它。
+const fn passer() -> Program {
+    Program {
+        name: "passer",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: true,
+        died: E_PASSER,
+    }
+}
+
 /// 调试回显：只走调试面，不要门闩、不交通道 ⇒ 放行即起来（它不与谁说话，故也不上板）。
 const fn echo() -> Program {
     Program {
@@ -101,6 +120,7 @@ pub const E_TABLE: Died = 4;
 pub const E_PLIC: Died = 5;
 pub const E_ECHO: Died = 6;
 pub const E_GUEST: Died = 7;
+pub const E_PASSER: Died = 8;
 pub const E_OK: Died = 0;
 
 /// 装配：登记整张表，然后按顺序把每条起起来。

@@ -12,13 +12,14 @@
 
 use env::{Name, PieToken, TaskId};
 
-use super::core::{Board, Fail, Free, Probe};
+use super::core::{Alive, Board, Fail, Free, Probe};
 use super::desk::Desk;
 
 use crate::session::{Claim, Seat};
 
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
+use runtime::env::unit;
 
 /// 活性：这枚入口还在我的表里吗？**谁授给我的**？
 ///
@@ -36,6 +37,12 @@ fn probe(entry: PieToken) -> Option<TaskId> {
     mail::reserve(entry)
         .ok()
         .map(|(vestor, _owner, _mark)| vestor)
+}
+
+/// 这位还在吗：`join(who, 0)` 的反面（只探一次，见 `env::fid` 的 `Join{task,0}` 用法）。
+/// **保守方向**：答不出 ⇒ 按"还在"办——漏剔一格无害，误剔会把活着的客人静音。
+pub fn alive(who: TaskId) -> bool {
+    unit::join(who, 0).map(|ended| !ended).unwrap_or(true)
 }
 
 /// 这扇门**本身是谁的**（`Reserve` 的第二格 `owner`：副本共享同一事实，转手不变）。
@@ -71,21 +78,20 @@ fn free(entry: PieToken) -> Result<(), ()> {
     mail::release(entry).map_err(|_| ())
 }
 
-/// 立一块板：把两枚机制函数交给核心（核心因此不 `use` 内核）。
+/// 立一块板：把三枚机制函数交给核心（核心因此不 `use` 内核）。
 ///
 /// `const` 是为了它能当 `static` 的初值：板只有一份，住在本域（`supervisor/board.rs`）。
-pub const fn board() -> Board {
+pub const fn board(alive: Alive) -> Board {
     let probe: Probe = probe;
     let free: Free = free;
-    Board::new(probe, free)
+    Board::new(probe, alive, free)
 }
 
-/// 立一本**板侧的账**（一位客人一格：谁 / 问 / 答）。与 [`board`] 同一个注入（探活那一格）。
+/// 立一本**板侧的账**（一位客人一格：谁 / 问 / 答）。与 [`board`] 同一个注入（问人那一格）。
 ///
 /// `const` 同理：账只有一本，住在板线程（`supervisor/board.rs`）。
-pub const fn desk() -> Desk {
-    let probe: Probe = probe;
-    Desk::new(probe)
+pub const fn desk(alive: Alive) -> Desk {
+    Desk::new(alive)
 }
 
 /// 挂上：把调用方手里那枚入口**交给持板者**（`Accord` 一份副本），返"种在持板者表里"的号。

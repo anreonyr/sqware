@@ -4,8 +4,8 @@
 //!
 //! > `core.rs` 里不出现 `runtime::`。
 //!
-//! "谁授的这枚入口""这枚还活着吗""放下它"全是**注入的事实与动作**（[`Probe`] /
-//! [`Free`]），故一块板的规矩喂两个假闭包就能推理，换载体不必重写。
+//! "谁授的这枚入口""这位还在吗""放下它"全是**注入的事实与动作**（[`Probe`] /
+//! [`Alive`] / [`Free`]），故一块板的规矩喂三个假闭包就能推理，换载体不必重写。
 
 use env::{Name, PieToken, TaskId};
 
@@ -17,7 +17,8 @@ use env::{Name, PieToken, TaskId};
 /// 三者同一个状态），故 `Unknown` 只有一种语义。
 ///
 /// `owner` 是挂牌人：它在**有实例**时才有意义，而实例一死 `sweep_at` 就把牌子扫空
-/// （连 `owner` 一起）——**故它不可能过期**，不需要第二套"owner 还在吗"的规则。
+/// （连 `owner` 一起）——**故它不可能过期**，而扫牌那两条判据里有一条问的正是"这位还在吗"
+/// （[`Alive`]），故读的人不必自己再判一遍。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Sign {
     name: Name,
@@ -85,6 +86,15 @@ pub enum Fail {
 /// **实例没了**。返回的 [`TaskId`] 是授与人（原始自持编码为 `TaskId(0)`）。
 pub type Probe = fn(PieToken) -> Option<TaskId>;
 
+/// **这位还在吗**：`who` 这位（人）还在不在。
+///
+/// 与 [`Probe`] 分工：那一格答的是"这枚入口还在我表里吗"——那是**板自己持有的那一份
+/// 副本**在不在；副本正是板持有的，客人死了它照样活着 ⇒ "人还在不在"不能拿副本当问句。
+///
+/// 答不出（越界 / 没有这一位 / 调用失败）由注入方定成"还在"（**保守方向**：漏剔一格无害，
+/// 误剔会把活着的客人静音）。本文件只问这一句。
+pub type Alive = fn(TaskId) -> bool;
+
 /// **放下**：把自己那一份入口自释。牌子被换掉或扫空时用它，否则那枚门闩漏在板上。
 pub type Free = fn(PieToken) -> Result<(), ()>;
 
@@ -107,6 +117,7 @@ pub type Free = fn(PieToken) -> Result<(), ()>;
 pub struct Board {
     signs: [Sign; Board::CAP],
     probe: Probe,
+    alive: Alive,
     free: Free,
 }
 
@@ -114,12 +125,13 @@ impl Board {
     /// 板上有多少枚牌子。条数是策略，容器要有界。
     pub const CAP: usize = 16;
 
-    /// 立一块板：两个注入的机制事实（活性 / 放下）跟着板走——它们对每一枚牌子同值，
+    /// 立一块板：三个注入的机制事实（探入口 / 问人 / 放下）跟着板走——它们对每一枚牌子同值，
     /// 故不必逐个作参数传。
-    pub const fn new(probe: Probe, free: Free) -> Board {
+    pub const fn new(probe: Probe, alive: Alive, free: Free) -> Board {
         Board {
             signs: [Sign::VACANT; Board::CAP],
             probe,
+            alive,
             free,
         }
     }
@@ -241,16 +253,20 @@ impl Board {
 
     // ── 惰性剔除：板上不留死实例 ──────────────────────────────
 
-    /// 扫一枚牌子：挂着的那枚入口若已不在我的表里，**当场把牌子扫空**——不留死实例，
-    /// 也不留一个"实例已死"的中间状态。
+    /// 扫一枚牌子：**挂牌那位不在**（[`Alive`]）**或**入口不在我表里（[`Probe`]）即
+    /// **当场把牌子扫空**——不留死实例，也不留一个"实例已死"的中间状态。
     ///
     /// 读路径也扫（[`Board::lookup`] 会扫），故"已死"永远不会被答出去；代价是读也要
-    /// 拿一次 `probe`，那份代价由注入方定价（内核那侧是一次表查询）。
+    /// 问一次人，那份代价由注入方定价（内核那侧是一次表查询）。
     fn sweep_at(&mut self, at: usize) {
         let Some(entry) = self.signs[at].entry else {
             return;
         };
-        if (self.probe)(entry).is_none() {
+        // `owner` 与 `entry` 同生同灭 ⇒ 走到这儿主人一定在，认它一格就够。
+        let alive = self.alive;
+        let probe = self.probe;
+        let who_gone = self.signs[at].owner.is_some_and(|who| !alive(who));
+        if who_gone || probe(entry).is_none() {
             self.free_off(at);
         }
     }
@@ -274,7 +290,7 @@ impl Board {
 // 跑法与实测有效的那条路写在 `crates/protocol/Cargo.toml` 的 `[lib]` 注记里
 // （本 crate 依赖 `runtime`，而它含 RISC-V 汇编 ⇒ 临时宿主驱动 `include!` 本文件）。
 //
-// 两个注入点就是全部外部依赖，故喂两张假表即可把板上规矩推理干净。
+// 三个注入点就是全部外部依赖，故喂三张假表即可把板上规矩推理干净。
 
 #[cfg(test)]
 mod tests {
@@ -300,6 +316,12 @@ mod tests {
     static TABLE: [AtomicUsize; Board::CAP + 1] = [const { AtomicUsize::new(0) }; Board::CAP + 1];
     static FREED: AtomicUsize = AtomicUsize::new(0);
 
+    /// 「不在的人」集合：第 `who` 位 = 这位已不在（[`Alive`] 的假注入）。
+    ///
+    /// 与 [`TABLE`] / [`FREED`] 同一套写法（`Alive` 也是函数指针、捕不了环境 ⇒ 进程级静态）。
+    /// 本模块的用例赌的是 `Probe` 那条判据，故这本集合留空时 `fake_alive` 一律答"还在"。
+    static DEAD: AtomicUsize = AtomicUsize::new(0);
+
     /// 造一枚号给核心用：**唯一的门是"收号"**（`PieToken::from_bytes`），
     /// 本模块自己不造号（`env::wire::handle`）。
     fn tok(n: usize) -> PieToken {
@@ -316,6 +338,13 @@ mod tests {
         }
     }
 
+    /// 判活：这位还在吗——**答"不在"当且仅当它在 [`DEAD`] 里**；越界同样答"还在"
+    /// （与 [`Alive`] 契约同一条：答不出按"还在"办）。
+    fn fake_alive(who: TaskId) -> bool {
+        let at = who.get();
+        at >= usize::BITS as usize || DEAD.load(Ordering::Relaxed) & (1usize << at) == 0
+    }
+
     /// 记下"这一枚被放下了"。假表有 `CAP` 位，越界的令牌不记。
     fn fake_free(entry: PieToken) -> Result<(), ()> {
         if entry.get() < TABLE.len() {
@@ -329,7 +358,8 @@ mod tests {
             slot.store(0, Ordering::Relaxed);
         }
         FREED.store(0, Ordering::Relaxed);
-        Board::new(fake_probe, fake_free)
+        DEAD.store(0, Ordering::Relaxed);
+        Board::new(fake_probe, fake_alive, fake_free)
     }
 
     /// 令牌 `entry` 此刻在我表里，且是 `who` 授的。
@@ -344,6 +374,15 @@ mod tests {
         if let Some(slot) = TABLE.get(entry) {
             slot.store(0, Ordering::Relaxed);
         }
+    }
+
+    /// 这位不在了（入 [`DEAD`]）——[`gone`] 在判活那一侧的同一件事。
+    ///
+    /// 本轮一条用例都不叫它（既有用例赌的是 `Probe` 那条判据，上级明令不加测试）⇒ 先挂着
+    /// `allow`，等有用例查"挂牌那位不在"那一格时摘掉。
+    #[allow(dead_code)]
+    fn dead(who: TaskId) {
+        DEAD.fetch_or(1usize << who.get(), Ordering::Relaxed);
     }
 
     fn freed(entry: usize) -> bool {

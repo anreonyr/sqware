@@ -36,6 +36,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-passer"
+path = "src/bin/user/passer.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-plic"
 path = "src/bin/supervisor/plic/main.rs"
 test = false

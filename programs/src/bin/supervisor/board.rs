@@ -256,26 +256,32 @@ fn host_loop(me: TaskId) {
         return;
     }
 
-    let mut board = bcall::board();
-    let mut desk = bcall::desk();
+    let mut board = bcall::board(bcall::alive);
+    let mut desk = bcall::desk(bcall::alive);
+    let mut swept = 0usize;
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
         let settling = settle(&mut desk, me, &tole, &tip_hole);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let ms = if settling { SETTLE_MS } else { usize::MAX };
         let Ok(Some((tok, _dir))) = tole.await_(ms) else {
-            desk.sweep();
+            let n = desk.sweep();
+            if n > 0 { say(&format!("board: swept n={n} occupied={}", desk.occupied())); }
+            swept += n;
             continue;
         };
         // 提示孔那一格由下一轮的 `settle` 收（它非阻塞地拉）；这里只管"是哪位客人的问话孔"。
         if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut board, &mut desk, &tole, guest);
+            serve_one(&mut board, &mut desk, &tole, guest, swept);
         }
-        // 三、客人**死了**（没道别就没了）⇒ 惰性剔：答话路那枚孔径死就是判据，这里只清账。
+        // 三、客人**死了**（没道别就没了）⇒ 惰性剔：这位不在了（`Alive`）**或**入口不在我
+        //     表里（`Probe`）即当场扫空，这里只清账。
         //     **说了走**的那一位在 `serve_one` 那一支里已经撤干净（撤格 + 摘牌 + 摘孔）。
-        desk.sweep();
+        let n = desk.sweep();
+        if n > 0 { say(&format!("board: swept n={n} occupied={}", desk.occupied())); }
+        swept += n;
     }
 }
 
@@ -422,7 +428,13 @@ fn say(msg: &str) {
 /// `tole` 只为一件事进来：客人说了"我走了"之后，**它的问话孔要从组里摘掉**——退场是客人
 /// 说的一句，而"不再等这一格"落在组上，故摘孔这一步只能在拿得到组的地方做（`Desk` 那层
 /// 够不着组）。
-fn serve_one(board: &mut Board, desk: &mut Desk, tole: &Tole, guest: protocol::board::Guest) {
+fn serve_one(
+    board: &mut Board,
+    desk: &mut Desk,
+    tole: &Tole,
+    guest: protocol::board::Guest,
+    swept: usize,
+) {
     let Some(ask) = guest.ask() else {
         return;
     };
@@ -434,7 +446,7 @@ fn serve_one(board: &mut Board, desk: &mut Desk, tole: &Tole, guest: protocol::b
         return;
     };
     // 一问一答：读不懂也答（答 `BAD`），答话走**这位客人的答话路**（一客一路，单槽）。
-    let answer = answer(board, desk, want, guest.who());
+    let answer = answer(board, desk, want, guest.who(), swept);
     let _ = mail::HolePie::from_token(guest.reply()).push(&answer);
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
@@ -447,7 +459,7 @@ fn serve_one(board: &mut Board, desk: &mut Desk, tole: &Tole, guest: protocol::b
 ///
 /// **先读动作码、再按码取载荷**：退场那一句是**一字节短帧**（[`bcall::DISMISS`]），它没有
 /// 名字也没有入口，故在 [`bcall::unpack`] 之前就分流出去——给它塞两格空位是白要 40 字节。
-fn answer(board: &mut Board, desk: &mut Desk, want: &[u8], who: TaskId) -> [u8; 1] {
+fn answer(board: &mut Board, desk: &mut Desk, want: &[u8], who: TaskId, swept: usize) -> [u8; 1] {
     let Some(op) = bcall::op_of(want) else {
         // 读不懂就答 `BAD`——不猜、不崩。
         return [bcall::BAD];
@@ -459,7 +471,7 @@ fn answer(board: &mut Board, desk: &mut Desk, want: &[u8], who: TaskId) -> [u8; 
                 let names = board.free_of(who);
                 // 破例打一行：退场这一件事的读数只此一处（**只在这一件事上打**，不是刷屏）。
                 say(&format!(
-                    "board: bye tid={} names={names} occupied={}",
+                    "board: bye tid={} names={names} occupied={} swept={swept}",
                     who.get(),
                     desk.occupied()
                 ));

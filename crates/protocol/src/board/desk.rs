@@ -4,7 +4,7 @@
 //!
 //! > `desk.rs` 里不出现 `runtime::`。
 //!
-//! ），判活是**注入的事实**（[`Probe`]，与 [`Board`](super::core::Board) 同款）：喂一个假
+//! ），判活是**注入的事实**（[`Alive`]，与 [`Board`](super::core::Board) 同款）：喂一个假
 //! 闭包就能推理这本账，换载体不必重写。
 //!
 //! 板线程醒来时手里只有**一枚孔在本表里的号**（`Tole::await_` 的返回），故这本账的读法
@@ -14,7 +14,7 @@
 
 use env::{PieToken, TaskId};
 
-use super::core::{Fail, Probe};
+use super::core::{Alive, Fail};
 
 // ── 一格 ────────────────────────────────────────────────────
 
@@ -65,7 +65,7 @@ impl Guest {
 /// ```
 pub struct Desk {
     guests: [Option<Guest>; Desk::CAP],
-    probe: Probe,
+    alive: Alive,
 }
 
 impl Desk {
@@ -73,10 +73,10 @@ impl Desk {
     pub const CAP: usize = 8;
 
     /// 立一本账：**判活**跟着账走——它对每一格同值，故不必逐个作参数传。
-    pub const fn new(probe: Probe) -> Desk {
+    pub const fn new(alive: Alive) -> Desk {
         Desk {
             guests: [None; Desk::CAP],
-            probe,
+            alive,
         }
     }
 
@@ -112,7 +112,7 @@ impl Desk {
     /// `supervisor/board.rs` 的退场那一支）。
     ///
     /// 与 [`Desk::sweep`] 的分工：这一句撤的是**客人自己说了走**的那一格，`sweep` 剔的是
-    /// **答不出来**（答话路那枚孔径死）的那一格——一个是听来的，一个是看出来的，故两句都在。
+    /// **这位不在了**（`Alive` 答不在）的那一格——一个是听来的，一个是看出来的，故两句都在。
     pub fn dismiss(&mut self, who: TaskId) -> Result<usize, Fail> {
         let Some((slot, cell)) = self
             .guests
@@ -171,15 +171,16 @@ impl Desk {
 
     /// 剔走**已经走了**的客人，返剔了几格；幂等。
     ///
-    /// 判据是注入的那一格（在这棵树里 = "它答话路那一枚还在不在我表里"），故**这一句**认的
-    /// 是**看出来的**那一档：孔死了就剔。**听来的**那一档是 [`Desk::dismiss`]——客人自己说了
-    /// 走，账当场撤（不等孔死）。两档都在，因为没说就走的那种也得有人收。
+    /// 判据是注入的那一格（在这棵树里 = "**这位还在不在**"，[`Alive`]），故**这一句**认的
+    /// 是**看出来的**那一档：这位不在了（`Alive` 答不在）就剔。**听来的**那一档是
+    /// [`Desk::dismiss`]——客人自己说了走，账当场撤（不等人不在）。两档都在，因为没说就走
+    /// 的那种也得有人收。
     pub fn sweep(&mut self) -> usize {
-        let probe = self.probe;
+        let alive = self.alive;
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
-                && probe(guest.reply).is_none()
+                && !alive(guest.who)
             {
                 *cell = None;
                 gone += 1;
