@@ -99,3 +99,10 @@ path = "src/bin/stress/load.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "prog-beat"
+path = "src/bin/stress/beat.rs"
+test = false
+bench = false
+doctest = false

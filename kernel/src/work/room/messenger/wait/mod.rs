@@ -278,8 +278,12 @@ pub fn park(duration: Duration) -> Result<usize, GateError> {
 /// 这条下限不受影响。
 pub fn park_until(at: u64) -> Result<Option<usize>, GateError> {
     // `duration_to_ticks` 自带 u128 中间量与饱和 ⇒ 这里不需要防溢出的钳制。
+    //
+    // **基准要对齐**：`at` 是 `Chrono::Clock` 的口径 = **自启动**基准，故这里用
+    // `uptime_ticks()` 跟它比；拿 `clock::now()`（**硬件游标**）比会差一个 `CYCLE`
+    // （实测被抓到：`beat` 的绝对段整体早 48 ms 回来，漂移是负的）。
     let at_ticks = clock::duration_to_ticks(Duration::from_nanos(at));
-    let now_ticks = clock::now().as_ticks();
+    let now_ticks = clock::uptime_ticks();
     if at_ticks <= now_ticks {
         return Ok(None);
     }
@@ -288,16 +292,18 @@ pub fn park_until(at: u64) -> Result<Option<usize>, GateError> {
         return Ok(Some(run()));
     };
     let me = task.ident.id;
+    let wait_ticks = at_ticks - now_ticks;
     trace::note(EventKind::Room(RoomEvent::Park {
         tid: me,
-        wake_at: at_ticks as usize,
+        // trace 这一格与 [`park`] 同口径：**硬件游标**上的绝对点（不是 uptime 基准）。
+        wake_at: (clock::now().as_ticks() + wait_ticks) as usize,
     }));
     let life = task.life();
     drop(task);
     match block(
         WakeKey::Alarm { task: me },
         life,
-        clock::ticks_to_duration(at_ticks - now_ticks),
+        clock::ticks_to_duration(wait_ticks),
     )? {
         Handoff::Switch(pa) => Ok(Some(pa)),
         // `Alarm` 无投信方，且键的强持有者就是我（我还在跑）⇒ 信标先探不可能命中。

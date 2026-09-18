@@ -66,6 +66,12 @@ pub fn now() -> Instant {
     Instant(time::read() as u64)
 }
 
+/// 自启动（内核起点）以来的**刻度**——`Chrono::Clock` 面按它解释，故凡拿 ABI 侧的
+/// 绝对点来比"现在"的地方都必须用它（不能用 [`now`]：那个是硬件游标，差一个 `CYCLE`）。
+pub(crate) fn uptime_ticks() -> u64 {
+    (time::read() as u64).wrapping_sub(CYCLE.load(Ordering::Relaxed))
+}
+
 /// 自启动以来的单调时长（uptime）。
 pub fn uptime() -> Duration {
     let boot = CYCLE.load(Ordering::Relaxed);

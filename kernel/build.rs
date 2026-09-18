@@ -48,6 +48,9 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 转折点因此由台主定（旧版 `churn` 是"放行即跑"，量到的全是快路径）。
     ("hang", "prog-hang", ProgramKind::User),
     ("load", "prog-load", ProgramKind::Supervisor),
+    // 到点台的打点者：**S 态**（与两个台主同档），`SQWARE_ROOT=beat` 时当引导镜像。
+    // 它不造任何东西，只量"睡到绝对点"漂不漂（两段对照，见程序头注）。
+    ("beat", "prog-beat", ProgramKind::Supervisor),
 ];
 
 fn main() {
