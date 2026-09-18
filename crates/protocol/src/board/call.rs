@@ -12,16 +12,15 @@
 
 use env::{Name, PieToken, TaskId};
 
-use super::core::{Alive, Board, Fail, Free, Probe};
+use super::core::{Board, Fail, Free, Probe};
 use super::desk::Desk;
 
 use crate::session::{Claim, Seat};
 
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
-use runtime::env::unit;
 
-/// 活性：这枚入口还在我的表里吗？**谁授给我的**？
+/// 活性：这枚入口**还答得出吗**？**谁授给我的**？
 ///
 /// 答的是 `Reserve` 的第一格（`vestor` = 这枚门闩谁授的）。`register` 的判据就是它
 /// ——"**那枚入口是你亲手交给我的**"。
@@ -33,16 +32,17 @@ use runtime::env::unit;
 /// 因为它们本来就同：句柄是**表**的（`PieToken` 标着 `!Send`，见 `env::wire::handle`），
 /// **外来的号进不了这张表**——故剩下的两种情形才都是"实例没了"。板上那一枚又是**亲手
 /// 交给板的**（板正是持有它的那张表），所以这里读到 `Err` 就是"实例真的没了"。
+///
+/// **"实例没了"这一格里就有"那扇门封印了"**：`Reserve` 的 `owner` 那一格带存活闸
+/// （内核 `envcall/pie.rs` 的 `owner().ok_or(GateError::Dead)`，闸在
+/// `work/unit/gate/pie.rs` 的 `alive().then(...)`）⇒ 开者一退场、它开的门随之封印
+/// （`gate/cull.rs` 的退场钩子）⇒ 这里当场答 `Err(-2 Dead)`，与 `env::fid` 的 `Reserve`
+/// 注记写着的那条契约一致。**本格因此不必再问第二个问题**：板侧两本账的"死"判据读的
+/// 都是它，而封印发生在退出钩子里、**早于叫醒板的那一跳** ⇒ 板被叫醒时这一格已是定论。
 fn probe(entry: PieToken) -> Option<TaskId> {
     mail::reserve(entry)
         .ok()
         .map(|(vestor, _owner, _mark)| vestor)
-}
-
-/// 这位还在吗：`join(who, 0)` 的反面（只探一次，见 `env::fid` 的 `Join{task,0}` 用法）。
-/// **保守方向**：答不出 ⇒ 按"还在"办——漏剔一格无害，误剔会把活着的客人静音。
-pub fn alive(who: TaskId) -> bool {
-    unit::join(who, 0).map(|ended| !ended).unwrap_or(true)
 }
 
 /// 这扇门**本身是谁的**（`Reserve` 的第二格 `owner`：副本共享同一事实，转手不变）。
@@ -78,20 +78,21 @@ fn free(entry: PieToken) -> Result<(), ()> {
     mail::release(entry).map_err(|_| ())
 }
 
-/// 立一块板：把三枚机制函数交给核心（核心因此不 `use` 内核）。
+/// 立一块板：把两枚机制函数交给核心（核心因此不 `use` 内核）。
 ///
 /// `const` 是为了它能当 `static` 的初值：板只有一份，住在本域（`supervisor/board.rs`）。
-pub const fn board(alive: Alive) -> Board {
+pub const fn board() -> Board {
     let probe: Probe = probe;
     let free: Free = free;
-    Board::new(probe, alive, free)
+    Board::new(probe, free)
 }
 
-/// 立一本**板侧的账**（一位客人一格：谁 / 问 / 答）。与 [`board`] 同一个注入（问人那一格）。
+/// 立一本**板侧的账**（一位客人一格：谁 / 问 / 答）。与 [`board`] 同一个注入（探活那一格）。
 ///
 /// `const` 同理：账只有一本，住在板线程（`supervisor/board.rs`）。
-pub const fn desk(alive: Alive) -> Desk {
-    Desk::new(alive)
+pub const fn desk() -> Desk {
+    let probe: Probe = probe;
+    Desk::new(probe)
 }
 
 /// 挂上：把调用方手里那枚入口**交给持板者**（`Accord` 一份副本），返"种在持板者表里"的号。

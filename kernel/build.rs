@@ -21,7 +21,7 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 一问一答都不需要 S 态，故最小特权的域也能用板。
     ("guest", "prog-guest", ProgramKind::User),
     // 过客：**U 态**（同上）——起来、挂一个名字、**直接死**（不说再见）。它与 `guest` 只差
-    // 少说那一句退场：板那两条判据里"这位还在吗"（`Alive`）那一格靠它做读数。
+    // 少说那一句退场：板上那两本账的"死"判据读的都是"那一枚入口还答得出吗"（`Probe`）。
     ("passer", "prog-passer", ProgramKind::User),
     // 中断面域：**S 态**——它要读写 PLIC 的寄存器（那一页由 root 从配对块取出来授给它，
     // 内核不参与；内核只摇那枚铃）。

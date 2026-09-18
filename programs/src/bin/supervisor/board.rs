@@ -225,7 +225,7 @@ fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
 ///   循环  补齐两件事（收提示 + 认领答话路 / 认出问话孔并挂组）
 ///         等一格有事（一个等待）—— 提示孔 ⇒ 来客人了；问话孔 ⇒ 读一帧、答一句
 ///         说了"我走了"的那一位 ⇒ 撤格 + 摘牌 + 把它的问话孔从组里摘掉
-///         惰性剔走**已经死了**的客人（旧交接）
+///         惰性剔走**答不出的客人**（`Probe` 答 `None`）
 /// ```
 ///
 /// **板不用码头**：它要的两枚孔都不是它开的——答话路的**写端**是装配者转授进来的，问话孔的
@@ -256,8 +256,8 @@ fn host_loop(me: TaskId) {
         return;
     }
 
-    let mut board = bcall::board(bcall::alive);
-    let mut desk = bcall::desk(bcall::alive);
+    let mut board = bcall::board();
+    let mut desk = bcall::desk();
     let mut swept = 0usize;
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
@@ -276,8 +276,8 @@ fn host_loop(me: TaskId) {
         {
             serve_one(&mut board, &mut desk, &tole, guest, swept);
         }
-        // 三、客人**死了**（没道别就没了）⇒ 惰性剔：这位不在了（`Alive`）**或**入口不在我
-        //     表里（`Probe`）即当场扫空，这里只清账。
+        // 三、客人**死了**（没道别就没了）⇒ 惰性剔：**那一枚入口答不出**（`Probe` 答 `None`
+        //     ——不在我表里，**或**它那扇门已经封印）即当场扫空，这里只清账。
         //     **说了走**的那一位在 `serve_one` 那一支里已经撤干净（撤格 + 摘牌 + 摘孔）。
         let n = desk.sweep();
         if n > 0 { say(&format!("board: swept n={n} occupied={}", desk.occupied())); }

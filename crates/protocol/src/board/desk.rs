@@ -4,7 +4,7 @@
 //!
 //! > `desk.rs` 里不出现 `runtime::`。
 //!
-//! ），判活是**注入的事实**（[`Alive`]，与 [`Board`](super::core::Board) 同款）：喂一个假
+//! ），探活是**注入的事实**（[`Probe`]，与 [`Board`](super::core::Board) 同款）：喂一个假
 //! 闭包就能推理这本账，换载体不必重写。
 //!
 //! 板线程醒来时手里只有**一枚孔在本表里的号**（`Tole::await_` 的返回），故这本账的读法
@@ -14,7 +14,7 @@
 
 use env::{PieToken, TaskId};
 
-use super::core::{Alive, Fail};
+use super::core::{Fail, Probe};
 
 // ── 一格 ────────────────────────────────────────────────────
 
@@ -65,18 +65,18 @@ impl Guest {
 /// ```
 pub struct Desk {
     guests: [Option<Guest>; Desk::CAP],
-    alive: Alive,
+    probe: Probe,
 }
 
 impl Desk {
     /// 板侧最多几位客人。条数是策略，容器要有界（与板线程那个组能挂的格数同值）。
     pub const CAP: usize = 8;
 
-    /// 立一本账：**判活**跟着账走——它对每一格同值，故不必逐个作参数传。
-    pub const fn new(alive: Alive) -> Desk {
+    /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
+    pub const fn new(probe: Probe) -> Desk {
         Desk {
             guests: [None; Desk::CAP],
-            alive,
+            probe,
         }
     }
 
@@ -112,7 +112,8 @@ impl Desk {
     /// `supervisor/board.rs` 的退场那一支）。
     ///
     /// 与 [`Desk::sweep`] 的分工：这一句撤的是**客人自己说了走**的那一格，`sweep` 剔的是
-    /// **这位不在了**（`Alive` 答不在）的那一格——一个是听来的，一个是看出来的，故两句都在。
+    /// **那一枚答不出**（[`Probe`] 答 `None`）的那一格——一个是听来的，一个是看出来的，
+    /// 故两句都在。
     pub fn dismiss(&mut self, who: TaskId) -> Result<usize, Fail> {
         let Some((slot, cell)) = self
             .guests
@@ -171,16 +172,16 @@ impl Desk {
 
     /// 剔走**已经走了**的客人，返剔了几格；幂等。
     ///
-    /// 判据是注入的那一格（在这棵树里 = "**这位还在不在**"，[`Alive`]），故**这一句**认的
-    /// 是**看出来的**那一档：这位不在了（`Alive` 答不在）就剔。**听来的**那一档是
-    /// [`Desk::dismiss`]——客人自己说了走，账当场撤（不等人不在）。两档都在，因为没说就走
-    /// 的那种也得有人收。
+    /// 判据是注入的那一格（在这棵树里 = [`Probe`]：**客人答话路那一枚还答得出吗**），故
+    /// **这一句**认的是**看出来的**那一档：那一枚答 `None`（不在我表里，**或它那扇门已经
+    /// 封印**——见 `core::Probe`）就剔。**听来的**那一档是 [`Desk::dismiss`]——客人自己说了
+    /// 走，账当场撤（不等它的门封印）。两档都在，因为没说就走的那种也得有人收。
     pub fn sweep(&mut self) -> usize {
-        let alive = self.alive;
+        let probe = self.probe;
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
-                && !alive(guest.who)
+                && probe(guest.reply).is_none()
             {
                 *cell = None;
                 gone += 1;
