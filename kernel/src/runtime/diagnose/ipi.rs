@@ -144,7 +144,9 @@ pub(crate) fn run(tag: &str) -> (usize, usize, usize) {
         d_total += d_woke;
         b_total += b_woke;
     }
-    crate::putln!("ipi: {tag} me={me} n={n} tested={tested} directed_woke={d_total} broadcast_woke={b_total}");
+    crate::putln!(
+        "ipi: {tag} me={me} n={n} tested={tested} directed_woke={d_total} broadcast_woke={b_total}"
+    );
     (tested, d_total, b_total)
 }
 

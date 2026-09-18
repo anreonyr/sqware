@@ -179,9 +179,7 @@ pub(super) fn halt() -> ! {
             // 「唤醒 ⇒ 上台」那一段：kick 挑核踢活几次（`kicks` = 落点核在等、发了 IPI；
             // `fallback` = 落点核不在等、活靠它下次自取）。
             let (kicks, fallback) = kick_stats();
-            putln!(
-                "sched: kicks={kicks} fallback={fallback}"
-            );
+            putln!("sched: kicks={kicks} fallback={fallback}");
         }
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,

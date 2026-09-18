@@ -11,8 +11,8 @@
 //!
 //! 想加第三个服务：在 [`PLAN`] 里加一行，**`main` 一个字都不用改**。
 
-use env::wire::manifest::{self, MAX_PROGRAMS};
 use env::Name;
+use env::wire::manifest::{self, MAX_PROGRAMS};
 use protocol::session::Quay;
 use protocol::system::service::{self, Announce, Grant, Table};
 use runtime::core::port::ship;

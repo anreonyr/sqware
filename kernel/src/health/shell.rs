@@ -85,7 +85,9 @@ fn shell_round() {
 /// Task 上的字段，与那枚线程跑没跑起来无关，故这一步不需要调度器。
 fn oust_round() {
     // 父域 + 充当"父亲"的那枚线程。
-    let home_space = SpaceBuilder::user().build().expect("oust: build home space");
+    let home_space = SpaceBuilder::user()
+        .build()
+        .expect("oust: build home space");
     home_space.with_flush(|inner| inner.dynamic(USER_BASE));
     let home = TeamBuilder::new(home_space)
         .name(Name::new("oust-home").expect("oust: home name"))
@@ -133,7 +135,10 @@ fn oust_round() {
     if child.all_reaped() {
         let _ = sire.oust(held_id);
     }
-    crate::expect!(sire.heir(held_id).is_some(), "oust: 判据没通过却把那一格摘了");
+    crate::expect!(
+        sire.heir(held_id).is_some(),
+        "oust: 判据没通过却把那一格摘了"
+    );
     let released = child.release_held(&unborn);
     crate::expect!(released, "oust: 摘出未放行线程失败");
     drop(unborn);

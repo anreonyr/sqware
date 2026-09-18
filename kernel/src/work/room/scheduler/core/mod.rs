@@ -29,9 +29,9 @@ pub(crate) use beacon::arm as beacon_arm;
 
 // scheduler 之外消费的表面（messenger / envcall / unit / diagnose）。
 pub use ident::{Identity, ident};
+#[cfg(feature = "framework")]
+pub(crate) use table::scheduler_addr;
 pub(crate) use table::{
     current, enlist, kick, launch, muster, prune_dead, remove_from_starved, rip, roster,
     running_hart, try_reserve_roster,
 };
-#[cfg(feature = "framework")]
-pub(crate) use table::scheduler_addr;
