@@ -282,7 +282,7 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
 /// 关闩：撤该 token 的映射（幂等）。仅对 Pole 成立。
 ///
 /// **不过存活闸**：撤的是**调用方自己那张 PTE**，资源已封印也得撤得掉——否则
-/// "封印后借入映射撤不掉"（`docs/mail.md` §10 第 1 条）。故这里不走 `resolve`
+/// "封印后借入映射撤不掉"。故这里不走 `resolve`
 /// （它含存活闸），只查表 + 判权 + 判「被关住」；`pole::shut` 里同样没有存活闸，
 /// 两处是同一条语义，与 `Release`「你总得能放下手里的东西」对齐。权限要 `R`。
 fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {

@@ -6,7 +6,7 @@
 //
 // 清单的**解释权在 root 域程序**（`programs/src/bin/supervisor/root/manifest.rs`）：
 // 内核不含清单格式，只把整区只读映射进 root 空间（VA 由 boot 在 root 的用户段里
-// 登记后经启动参数告知）。见 `docs/root.md`。
+// 登记后经启动参数告知）。
 //
 // 格式（LE，root 侧解析；`build.rs` 打包）：
 //   [0..4] count u32 1..=MAX_PROGRAMS

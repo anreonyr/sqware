@@ -169,7 +169,7 @@ fn register_runtime_hooks() {
 
     // 关机序列：`scheduler::rip`（清任务队列 + info 槽 + messenger 簿记）→ mail 由
     //   drop 链透传（`PoleMeta::drop` 还物理帧）→ block 池冲洗。**不看账**：
-    //   审计层的关机判词随那一层删了（见 `docs/memory.md` §5），这里只剩"把东西还回去"。
+    //   审计层的关机判词随那一层删了，这里只剩"把东西还回去"。
     const SHUTDOWN_HOOKS: &[fn()] = &[
         crate::work::room::scheduler::core::rip,
         crate::memory::allocator::block::flush,
@@ -183,7 +183,7 @@ fn register_runtime_hooks() {
 ///
 /// 之后所有任务都由 root 产生（`Build`/`Spawn`/`Hatch`）；系统在全部任务回收后
 /// 自然停机（`conductor::done`）。清单与设备语义的**解释权都在 root**——内核不含
-/// 清单格式，也不解释设备（`docs/driver.md` §3.1.3）。
+/// 清单格式，也不解释设备。
 fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>>, MapError> {
     let Some(region) = machine::info().initrd() else {
         // 无 initrd ⇒ 没有任何任务会被产生；`conductor::done` 的 `PUSHED == 0`

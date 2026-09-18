@@ -1,4 +1,4 @@
-//! Bell — **Nole 的 runtime 封装**：把一枚 Nole 当门铃用（`docs/bell.md`）。
+//! Bell — **Nole 的 runtime 封装**：把一枚 Nole 当门铃用。
 //!
 //! 内核里它**仍是一枚 Nole**（`AnyPie::Nole`，没有第四种资源）：Nole 上多了"听者面"
 //! ——`id` / `life` / `ring` 一位——而"怎么用"封装在这一层。与 `Port` 包着

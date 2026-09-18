@@ -31,7 +31,7 @@ pub fn exit_with(reason: usize) -> ! {
 /// 同 [`exit_with`]，再带**一句话**（`Reap { note }`）：**"哪里算不下去"只有域知道**。
 ///
 /// 内核在入口当场把它拷进栈上的定长缓冲（至多 `env::NOTE_MAX`，超出截断）并**自己打印**
-/// ——不依赖任何服务活着：一个正在退场的域不该先去求一条活路（`docs/driver.md` §3.3.5）。
+/// ——不依赖任何服务活着：一个正在退场的域不该先去求一条活路。
 /// panic 现场那句话由 `programs/src/entry.rs` 的 panic handler 在栈上拼好
 /// （`file:line` 是编译器塞进只读段的字面量，不需要符号表）。
 pub fn exit_with_note(reason: usize, note: &str) -> ! {

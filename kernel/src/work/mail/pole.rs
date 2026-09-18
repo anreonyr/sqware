@@ -7,7 +7,7 @@
 // PoleMeta 拥有物理帧；Arc 归零时 `Drop` 链逐视图 unmap + 还帧。
 //
 // **`size` 是这一段有多大**：外来区按页界向两侧撑开，故它是页对齐后的长度；
-// 设备树 `reg` 声明的那一段（所有权粒度）由调用方自己记（`docs/driver.md` §9.1）。
+// 设备树 `reg` 声明的那一段（所有权粒度）由调用方自己记。
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -240,7 +240,7 @@ impl Drop for PoleMeta {
         let layout =
             core::alloc::Layout::from_size_align(self.size, PAGE_SIZE).expect("pole layout valid");
         // 载荷归属决定这一句：**分配器给的才还回去**。外来区（`Region`）在此什么都不做
-        // ——它不是内核的内存，还它就是还错东西（`docs/driver.md` §3.1.1）。
+        // ——它不是内核的内存，还它就是还错东西。
         if self.payload == Payload::Frames {
             unsafe {
                 frame::allocator().deallocate(self.base, layout);
@@ -310,8 +310,7 @@ pub(crate) fn meta(size: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError
 /// 接管一段外来物理区，做成一枚门闩的资源实体（见 [`PoleMeta::region`]）。
 ///
 /// **只对内核开放**（`pub(crate)`，无 envcall 入口）：设备树是 boot 的事实，
-/// 域不能凭一个物理地址给自己造门闩。独占因此不靠判据，靠**没有第二个创建入口**
-/// （`docs/driver.md` §8）。
+/// 域不能凭一个物理地址给自己造门闩。独占因此不靠判据，靠**没有第二个创建入口**。
 pub(crate) fn region(base: usize, reg: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
     PoleMeta::region(base, reg, owner)
 }

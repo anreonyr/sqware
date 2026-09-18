@@ -54,7 +54,7 @@ static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::n
 /// 本域的对账开关。域是独立地址空间，这份静态因此**每域一份**：内核那份只由 envcall
 /// 打开，而"哪个域要打"是调用方在 `trace()` 里当场决定的。
 ///
-/// **今天零读者**：原先读它的是 `Port::call`，那一层已搬去各协议（`docs/port.md` §10）。
+/// **今天零读者**：原先读它的是 `Port::call`，那一层已搬去各协议。
 pub fn tracing() -> bool {
     TRACE.load(core::sync::atomic::Ordering::Relaxed)
 }

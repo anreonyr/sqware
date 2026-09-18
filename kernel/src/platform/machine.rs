@@ -35,7 +35,7 @@ impl Region {
 
 /// CPU 侧的事实：**一次 `/cpus` 解析所得**的核数与时基频率。
 ///
-/// 为什么这两个住一起（`docs/driver.md` §3.1.7）：它们**同源、同时定型**，而
+/// 为什么这两个住一起：它们**同源、同时定型**，而
 /// `Machine` 的其余字段是**内存侧**的事实（dram / free / reserved）。分组不是装饰
 /// ——它让"这台机器的 CPU 侧长什么样"只有一处可读，读侧也少一次两字段配对的默记。
 ///
@@ -117,7 +117,7 @@ pub fn init(dtp: usize) {
 
     let initrd = initrd_region(&fdt);
     // 设备树本体也是一段**终身的、boot 给的物理区**：它与 initrd 走同一条机制
-    // （保留区），语义逐字相同——`docs/driver.md` §3.1.5。长度取 blob 自述的
+    // （保留区），语义逐字相同。长度取 blob 自述的
     // totalsize（`fdt` 头里的字段），向上取整到页。
     let dtb = Region::new(dtp, dtb_size(dtp as *const u8));
 

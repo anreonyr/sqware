@@ -1,7 +1,7 @@
 # alloc-probe — 分配器的宿主侧压测台
 
 **目的（解耦）**：内核里"分配器的账坏了"和"某个内核对象没析构"读数曾经一个样（都是
-关机审计里一块内存还在册；那道审计已按用户裁决整体删除，见 `docs/memory.md` §5）。
+关机审计里一块内存还在册；那道审计已按用户裁决整体删除）。
 本 crate 是**测试侧**的同一刀：
 
 * 把内核**逐字未改**的分配器源码 `include!` 进来 —— `kernel/src/memory/allocator/`
@@ -196,7 +196,7 @@ dhat         static HOST_ALLOCATOR: dhat::Alloc                       = dhat::Al
 ## 已知边界（本 crate 自己的，都要交代）
 
 1. **类目表不进宿主账**：内核 debug/framework 档的 `statistics::install_frame_kinds` /
-   `install_block_kinds` 会分配逐帧、逐页的类目表（§5.1 那套标注账）。宿主 shim 里它们是
+   `install_block_kinds` 会分配逐帧、逐页的类目表（那套标注账）。宿主 shim 里它们是
    **空壳**（`Ok(())`，见 `lib.rs` 的 shim 注①）—— 在宿主上再实现一遍表尺寸必然与内核漂移
    （"一个事实只有一份账"）。**代价**：本 crate 的宿主用量读数**不含**那份类目表，
    要看它得在内核侧量。

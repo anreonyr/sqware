@@ -197,8 +197,8 @@ pub fn init() {
 /// 调用方：hart 0 由 `init()` 调；副核由 `boot_main` 在切 satp 后调——同一原语。
 ///
 /// SEIE（S 模式外部中断）**从一开始就开着**：它的闸门是 `trap_handler` 的
-/// `SupervisorExternal` 分支（槽满即关本 hart、timer tick 无条件重开——`docs/driver.md`
-/// §3.2.2）。开着不等于会响：外部中断要 PLIC 侧有使能的线才拉得起来，而 PLIC 寄存器
+/// `SupervisorExternal` 分支（槽满即关本 hart、timer tick 无条件重开）。开着不等于会响：
+/// 外部中断要 PLIC 侧有使能的线才拉得起来，而 PLIC 寄存器
 /// 是域的地盘，内核一行都不碰。
 pub fn arm_hart() {
     unsafe {

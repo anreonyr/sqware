@@ -28,7 +28,7 @@ pub fn allocate() -> EnvResult<usize> {
 /// 为什么必须有：TLS 块是内核给的**一整页**（`memory::allocate` 按页取整），
 /// 内核**不认**它是谁的——`bury` 只归还 `TaskIdent` 上记着的那两个 Span（栈 /
 /// trap 帧）。于是每个 spawn 出来的任务都把一页永久留在域空间里：churn
-/// 实测就是这条（order-0 帧随任务数线性流失，见 `docs/` 里的泄漏探针记录）。
+/// 实测就是这条（order-0 帧随任务数线性流失）。
 ///
 /// 归还走的是**用户态既有原语** `MemoryCall::Deallocate`（内核侧按 `(addr, size)`
 /// 精确匹配 `HeapWindow` 的簿记再摘映射），故不需要任何新 ABI。

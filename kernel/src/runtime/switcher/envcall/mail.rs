@@ -201,7 +201,7 @@ fn pull(
 /// **绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
 ///
 /// **两条资源通道**：孔有方向（`dir` 要 R 或 W），铃只有一条——故 Nole 只认
-/// `dir == Pull`，别的值返 `Denied`（`docs/bell.md` §4）。
+/// `dir == Pull`，别的值返 `Denied`。
 fn wait_dir(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,

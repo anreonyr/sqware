@@ -195,7 +195,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         // 帧仅一份，不搬即被下一次 trap 覆写，被抢占内核任务现场丢失。
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             timer::tick();
-            // 闸门重开（`docs/driver.md` §3.2.2 的另一半）：外部中断的闸门是零状态的
+            // 闸门重开：外部中断的闸门是零状态的
             // ——槽满时关掉本 hart 的 SEIE，下一个 timer tick **无条件**重开。病态情形
             // （消费者不取）退化为每 hart 10 Hz 的探测，自愈；健康情形这一句是空转。
             unsafe {
@@ -233,7 +233,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             }
             frame as *mut TrapContext
         }
-        // 外部中断：**内核只知道"有外部中断"这一件事**（`docs/driver.md` §3.2.3）。
+        // 外部中断：**内核只知道"有外部中断"这一件事**。
         // 记一声铃进 `irq` 门铃就走人——claim/complete、线号、哪个客户端，
         // 全在 PLIC 驱动那个域里；内核侧只有这三件（分支、闸门、门铃）。
         //

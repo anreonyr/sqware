@@ -461,8 +461,7 @@ pub(crate) fn wipe_space(space: usize) -> usize {
 /// **信标可能陈旧**：「信号」与「数据」是两份状态——等待者后来直接取走数据
 /// （裸 pull 成功，不经 `wait`）时信标不被消费，下一次 `wait` 就立刻返回「已唤醒」
 /// 而实际无数据。故 `wait` 的返回**只是提示**，调用方必须自己复核条件
-/// （`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环，见
-/// `docs/dispatch.md` §11.4）。
+/// （`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环）。
 pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
     let mut fwd = Fwd::empty();
     let popped = {

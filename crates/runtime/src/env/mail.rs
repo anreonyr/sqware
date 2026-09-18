@@ -90,7 +90,7 @@ pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<usize> {
 /// 只问长度（**不动槽**）：返槽里那条消息的长度与发送者，一个字节都不取。
 ///
 /// 走 `Pull { max: 0 }`——与 `Wait { millis: 0 }`「只探测不挂起」同一形状的"只问"。
-/// 收方据此备出装得下的缓冲，槽因此总能被排空（`docs/port.md` §5.2 F2）。
+/// 收方据此备出装得下的缓冲，槽因此总能被排空。
 pub fn pull_len(token: PieToken) -> EnvResult<(usize, TaskId)> {
     pull_from(token, core::ptr::null_mut(), 0)
 }
