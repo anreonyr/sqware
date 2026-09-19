@@ -260,8 +260,8 @@ fn host_loop(me: TaskId) {
         return;
     }
     // **一个组**：提示孔 + 每位客人的问话孔。提示孔也挂进来，故"来客人了"与"有人问话"
-    // 是**同一个等待**——这正是"等 N 位客人说话"要的那一格。
-    let Ok(tole) = Tole::unseal() else {
+    // 是**同一个等待**——这正是"等 N 位客人说话"要的那一格。本线程独享它（`shared = false`）。
+    let Ok(tole) = Tole::unseal(false) else {
         say("board: no group");
         return;
     };

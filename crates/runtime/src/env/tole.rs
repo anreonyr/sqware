@@ -12,9 +12,13 @@ use super::mail::{HolePie, NolePie};
 
 // ── 裸函数层（envcall 转发，零业务逻辑）──
 
-/// 造一个空组（无参）→ 组的句柄。
-pub fn unseal() -> EnvResult<PieToken> {
-    let r = ToleCall::Unseal.call()?;
+/// 造一个空组 → 组的句柄。
+///
+/// `shared` = 这枚组允不许多个使用者（**造的时候定、之后不可变**，见 `env::fid` 的
+/// `ToleCall::Unseal`）：`false` = 独占组（授出即移交、复制不出来），`true` = 共享组
+/// （可 `accord` 复制给多个任务；组键的唤醒是提示型——放行全链）。
+pub fn unseal(shared: bool) -> EnvResult<PieToken> {
+    let r = ToleCall::Unseal { shared }.call()?;
     match r {
         ToleCallRet::Unseal(t) => Ok(t),
         _ => unreachable!(),
@@ -85,10 +89,10 @@ pub struct TolePie {
 }
 
 impl TolePie {
-    /// 造一个空组。
-    pub fn unseal() -> EnvResult<Self> {
+    /// 造一个空组（种类见 [`crate::env::tole::unseal`]）。
+    pub fn unseal(shared: bool) -> EnvResult<Self> {
         Ok(Self {
-            token: crate::env::tole::unseal()?,
+            token: crate::env::tole::unseal(shared)?,
         })
     }
 

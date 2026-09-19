@@ -69,8 +69,9 @@ extern "C" fn main() -> ! {
     // 2/3. **死亡道**：一位服务一条（本域铸、记号 `gone-<名字>`；装配时各交一份给板线程
     //      —— 见 `service::start` → `board::attach`）。一服务一道 ⇒ **身份就是"哪条道响了"**：
     //      两位同时死也不会挤丢；本线程用一只**组**等任一道（`Tole`），零轮询。
+    //      组是**独占**的（`shared = false`）：本线程是它唯一的使用者。
     let mut lanes: [Option<PieToken>; Table::CAP] = [None; Table::CAP];
-    let Ok(tole) = Tole::unseal() else {
+    let Ok(tole) = Tole::unseal(false) else {
         service::die(E_TABLE, "root: no group");
     };
     for (i, p) in service::PLAN.iter().enumerate() {

@@ -415,26 +415,33 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
     };
     rise(Unchain { cur: chain })
 }
-/// 叫醒一个键上的等待者；**站点不在就替它建一枚只带信标的站点**（寿命边由调用方给）。
+/// **敲一个组键**：提示型唤醒——放行**整链**（组键上每个等待者都有自己的快照，人人自取
+/// 复核）+ 空则置信标；**站点不在就替它建一枚只带信标的**（寿命边由调用方给）。
 ///
-/// 用在转发那一跳。那一跳**不许落空**：成员推可能早于等组的人入 `block`（组站点还
-/// 不存在），此时若什么都不做，这一条唤醒就丢到期限为止——"等 N 个源"的语义当场破掉。
-/// 故这里带上了目标的存活单元：建出来的站点随目标一起作废（`prune` 的既有判据），
-/// 不留墓碑。目标**已经死了**才什么都不做。
+/// 与 [`wake`] 的分界是**有没有东西可交付**：成员键上一条消息只兑现一个读方（交付型，
+/// 放行一人）；组键上没有东西可交付，只有"快照可能变了"（提示型，放行全链）。故组键的
+/// 唤醒只有本函数这一条路——`wake` 里有断言钉住这件事。
 ///
-/// 站点在而队列空 ⇒ 置信标：那是"等待者正在 ①④ 之间飞"的窗口（它在 ④ 会消费掉
-/// 这一位，当场返回去复核），也是本函数**不丢唤醒**的另一半。
-fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
-    let popped = {
+/// 那一跳**不许落空**：成员推可能早于等组的人入 `block`（组站点还不存在），此时若什么
+/// 都不做，这一条唤醒就丢到期限为止——"等 N 个源"的语义当场破掉。故这里带上了目标的
+/// 存活单元：建出来的站点随目标一起作废（`prune` 的既有判据），不留墓碑。目标**已经
+/// 死了**才什么都不做。
+pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
+    let chain = {
         let mut sites = sites(key).lock();
-        let popped = match sites.get_mut(&key) {
-            Some(site) => match site.pop_front() {
-                Some(task) => Some(task),
-                None => {
+        let chain = match sites.get_mut(&key) {
+            Some(site) => {
+                // **整链交出**：链尾那份强引用一并清掉——留着它会把已放行任务的壳扣到
+                // 站点被 `prune` 为止（与 `pop_front` 清 `tail` 同一条理由）。
+                let chain = site.head.take();
+                site.tail = None;
+                // 没人挂在这个键上 ⇒ 置信标：那是"等待者正在 ①④ 之间飞"的窗口（它在 ④
+                // 会消费掉这一位，当场返回去复核）。整链放行与置信标是两条路，不是二选一。
+                if chain.is_none() {
                     site.pend = true;
-                    None
                 }
-            },
+                chain
+            }
             // **站点还不存在**（等组的人还没走到 `block`）：替它建一枚**只带信标**的站点。
             // 这一跳不许落空——成员推早于等待者入 `block` 时若什么都不做，那条唤醒就丢到
             // 期限为止。寿命边用**目标**的存活单元：目标死了这枚站点随 `prune` 走，不留墓碑。
@@ -448,11 +455,9 @@ fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
             }
         };
         prune(&mut sites, key);
-        popped
+        chain
     };
-    let Some(mut task) = popped else { return 0 };
-    void(Task::blocked_ticket(&mut task));
-    rise(core::iter::once(task))
+    rise(Unchain { cur: chain })
 }
 
 /// 登记转发：投信 `key` 时也认醒组 `tole`。站点不在就建一个（**唯一的分配点**，
@@ -531,7 +536,12 @@ pub(crate) fn wipe_space(space: usize) -> usize {
 
 // ── 操作：唤醒 ──
 
-/// 叫醒一个：摘链头 → 放回就绪。无人在等 → 置信标（防漏唤醒）。返回是否唤到人。
+/// **交付型**唤醒：叫醒**一个**（摘链头 → 放回就绪）。无人在等 → 置信标（防漏唤醒）。
+/// 返回是否唤到人。
+///
+/// **只接"一次事件只兑现一个等待者"的键**（成员键、`Pies`）——组键走 [`knock`]（提示型、
+/// 放行整链）。这不是一句规劝：组键走错这里会**静默漏唤醒**（链上其余的人睡到期限），
+/// 故下面有断言，`harden` 与 `framework` 两档都会当场炸。
 ///
 /// **键已死 ⇒ `false` 且不建站点**（A2 裁决）：资源没了，这个键再也不会有等待者，
 /// 给它留站点或信标都是墓碑的另一种叫法。此处顺带把死键的残留站点删掉——
@@ -550,6 +560,10 @@ pub(crate) fn wipe_space(space: usize) -> usize {
 /// 而实际无数据。故 `wait` 的返回**只是提示**，调用方必须自己复核条件
 /// （`hole::wait` 已复核就绪位；有界等待方还须按 deadline 循环）。
 pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
+    debug_assert!(
+        !matches!(key, WakeKey::Tole { .. }),
+        "组键要走 knock（提示型/整链放行），不能走 wake（交付型/一人）"
+    );
     let mut fwd = Fwd::empty();
     let popped = {
         let mut sites = sites(key).lock();
@@ -585,11 +599,11 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
             popped
         }
     };
-    // 叫醒转发目标（组站点）：**不许落空**——站点不在就替它建一枚只带信标的（见 `knock`）。
+    // 叫醒转发目标（**组键**）：不许落空——站点不在就替它建一枚只带信标的（见 `knock`）。
     //
-    // 这一跳的扇出**按组种类**分：今天所有组都是**独占**的（只剩一条等待位）⇒ 摘链头
-    // 一人即可；**共享组**要多一步"放行全链"（人人复核快照）。两种组的定义与"为什么共享
-    // 必须配广播"见 `work::mail::tole` 头注（未实现的待办也在那里）。
+    // 这一跳的扇出由**目标键的种类**决定，不由发起这一跳的键决定：目标是组键 ⇒ `knock`
+    // 放行整链（提示型——组键上每个等待者都有自己的快照）；本键（成员键）那一侧仍然是
+    // "放行一人"（交付型——一条消息只兑现一个读方）。判据是"**有没有东西可交付**"。
     for (id, life) in fwd.entries() {
         knock(WakeKey::Tole { id }, life);
     }

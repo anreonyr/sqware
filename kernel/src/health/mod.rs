@@ -81,7 +81,7 @@ crate::test! {
 
 #[cfg(feature = "framework")]
 crate::test! {
-    "permit: 组成员（孔/铃）挂摘幂等 + 键投影" {
+    "permit: 组成员（孔/铃）挂摘幂等 + 键投影 + 存活过滤" {
         permit::members();
     }
 }

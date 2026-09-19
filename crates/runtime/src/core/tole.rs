@@ -19,9 +19,13 @@ pub struct Tole {
 
 impl Tole {
     /// 造一个空组。
-    pub fn unseal() -> EnvResult<Tole> {
+    ///
+    /// `shared` = 允不许多个使用者（造的时候定、之后不可变）：`false` = 独占组（授出即
+    /// 移交、复制不出来），`true` = 共享组（可交给多个任务各持一枚；组键的唤醒是**提示
+    /// 型**——放行全链，人人醒来自己按组复核）。
+    pub fn unseal(shared: bool) -> EnvResult<Tole> {
         Ok(Tole {
-            pie: TolePie::unseal()?,
+            pie: TolePie::unseal(shared)?,
         })
     }
 

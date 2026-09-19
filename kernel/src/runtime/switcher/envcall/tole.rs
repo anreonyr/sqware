@@ -41,7 +41,7 @@ pub(crate) fn dispatch(
 ) -> Option<Outcome> {
     let _ = &ident;
     Some(match call {
-        ToleCall::Unseal => unseal(frame),
+        ToleCall::Unseal { shared } => unseal(frame, shared),
         ToleCall::Hang { tole, pie, dir } => hang(frame, tole.get(), pie.get(), dir),
         ToleCall::Unhang { tole, pie, dir } => unhang(frame, tole.get(), pie.get(), dir),
         // 唯一可能换帧的一支：不走 `Outcome::Resume` 的统一出口。
@@ -49,22 +49,32 @@ pub(crate) fn dispatch(
     })
 }
 
-/// 造一个空组：建 meta → 建门闩（全权 + `ONLY`）→ 返 token。
+/// 造一个空组：建 meta → 建门闩（`FETCH | STORE | VEST`，独占时再加 `ONLY`）→ 返 token。
 ///
-/// **`ONLY` 是组的定义**：它只有一条等待位（组键一次只兑现一个等待者），故这枚资源
-/// 只允许一个使用者——授出即**移交**（`Accord` 校验、写锚），复制不出来。
+/// **种类只在创建点定**（`shared` 就是从这一枚位推出来的），之后不可变：`narrow` 不得撤
+/// `ONLY` ⇒ 独占组变不成共享组。
+///
+/// - **独占组**（`shared = false`）：门闩带 `ONLY` ⇒ 只有一条等待位（组键一次只兑现一个
+///   等待者），故这枚资源只允许一个使用者——授出即**移交**（`Accord` 校验、写锚），复制
+///   不出来；
+/// - **共享组**（`shared = true`）：门闩**不带** `ONLY` ⇒ 可 `Accord` 复制给多个任务、
+///   没有锚（等待权不会"被关住"）；多个持有者可以同时等同一只组键，故那一路的唤醒是
+///   **提示型**（整链放行，人人自取快照复核，见 `messenger::knock`）。
+///
+/// 两者都带 `VEST`：共享组若不可复制，"多个使用者"就是一句空话。
 ///
 /// **不在 S 态设闸**（与 `UnsealNole` 的铸币权政策不同）：组不授予任何对资源的权柄，
 /// 它只是"我自己关心哪几枚可等地"的账。U 态域等多个源是常态，不该逼它回 S 态。
-fn unseal(frame: &mut TrapContext) -> Outcome {
+fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         let meta = tole::meta(task.ident.id);
-        let pie: Pie<ToleMeta> = gate::new_pie(
-            meta,
-            Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
-            None,
-        );
+        // 读写两支人人有；`VEST` 两种都有（共享组靠它复制出去）；`ONLY` 只给独占组。
+        let mut latch = Permission::FETCH | Permission::STORE | Permission::VEST;
+        if !shared {
+            latch |= Permission::ONLY;
+        }
+        let pie: Pie<ToleMeta> = gate::new_pie(meta, latch, None);
         let token = pie.token;
         // **紧贴 push**：`pie` 是最后一步造的，drop 它即回收资源实体 ⇒ 失败就地退回。
         let mut pies = task.pies.lock();
