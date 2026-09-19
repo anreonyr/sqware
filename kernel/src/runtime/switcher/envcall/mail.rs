@@ -71,7 +71,7 @@ fn push(
     let found = task.and_then(|t| {
         let pies = t.pies.lock();
         let pie = pies.iter().find(|p| p.token() == token)?.clone();
-        if !pie.allows(Need::Write) {
+        if !pie.allows(Need::Store) {
             return Some(Err(GateError::Denied));
         }
         if !pie.alive() {
@@ -143,7 +143,7 @@ fn pull(
     let found = task.and_then(|t| {
         let pies = t.pies.lock();
         let pie = pies.iter().find(|p| p.token() == token)?.clone();
-        if !pie.allows(Need::Read) {
+        if !pie.allows(Need::Fetch) {
             return Some(Err(GateError::Denied));
         }
         if !pie.alive() {
@@ -217,8 +217,8 @@ fn wait_dir(
     // ① 锁内解析 token ⇒ 抄件：pies 与站点表同为 L3，绝不嵌套；
     //    `running_task` 的临时强引用在闭包内即 drop，不跨挂起。
     let need = match dir {
-        HoleDir::Pull => Need::Read,
-        HoleDir::Push => Need::Write,
+        HoleDir::Pull => Need::Fetch,
+        HoleDir::Push => Need::Store,
     };
     let found = current().running_task().and_then(|t| {
         let pies = t.pies.lock();
@@ -280,7 +280,7 @@ fn wait_dir(
 ///
 /// 不收 `ident`：本操作不挂起、不 halt（可能 halt 的分支才需要先放身份）。
 fn hush(frame: &mut TrapContext, token: usize) -> Outcome {
-    let r = with_bell(token, Need::Read, mail::nole::hush);
+    let r = with_bell(token, Need::Fetch, mail::nole::hush);
     if r.is_ok() {
         // SAFETY: 与 trap 分支那一句同源：只置本 hart 的 SEIE 位。
         unsafe {
@@ -299,7 +299,7 @@ fn hush(frame: &mut TrapContext, token: usize) -> Outcome {
 
 /// 响铃：权柄判定（W）→ 置"有待取之事"并唤醒听者。不搬任何字节。
 fn ring(frame: &mut TrapContext, token: usize) -> Outcome {
-    let r = with_bell(token, Need::Write, mail::nole::ring);
+    let r = with_bell(token, Need::Store, mail::nole::ring);
     frame.gpr.set_x(
         Gprs::A0,
         match r {

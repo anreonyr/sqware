@@ -11,16 +11,16 @@
 // `sire` 边上——锚存在的唯一理由是数据面判权不能吃快照（`snap()` 要分配）。
 //
 // 授权语义在此：`Pie::{allows, covers}` 判定「哪个操作需哪些权利位」
-// （`Need::{Read,Write,Grant}`）+ 覆盖子集（narrow/accord 共用）。`Grant` 只看
-// `VEST`（传递族唯一的目标位）；`CAGE` 是形态声明、不授予任何事。**交出**（带
-// `CAGE` 的 accord）在本层自带四道闸，并把源枚的锚写进 `Pie.heir`；envcall 适配层
-// 只「取本核 → 转发」，不在壳内重写规则。
+// （`Need::{Fetch,Store,Grant}`）+ 覆盖子集（narrow/accord 共用）。`Grant` 只看
+// `VEST`（传递族唯一的目标位）；`ONLY` 是**形态位**、不授予任何事——它是资源事实
+// （这枚资源允不许多个使用者），`accord` 只**校验** `subset` 与源枚一致，一致时写锚
+// （那次是移交）。envcall 适配层只「取本核 → 转发」，不在壳内重写规则。
 //
 //   pie.rs     — 门闩（Pie<M>, AnyPie）+ 权限（Permission）+ 操作授权
 //                 （Need/allows/covers）+ 错误（GateError）
 //   snap.rs    — 全世界任务快照 + 沿 sire 的查询（heirs/vestor/find）
 //   accord.rs  — 转授 / 交出给其他 Task（写派生边 + 写锚）+ `clear_heir`
-//   narrow.rs  — 就地单调收窄本 pie 权限（`CAGE` 不可撤）
+//   narrow.rs  — 就地单调收窄本 pie 权限（`ONLY` 不可撤）
 //   cull.rs    — 级联撤销（cull）+ 退出钩子（doom）
 //   revoke.rs  — 撤销授与他人的副本（含全部后代）
 //   release.rs — 自释自己持有的一份（含全部后代）
@@ -36,7 +36,7 @@ mod release;
 mod revoke;
 mod snap;
 
-pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, new_pie};
+pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, form_ok, new_pie};
 
 pub(crate) use accord::{accord, clear_heir};
 pub(crate) use cull::{cull, doom};

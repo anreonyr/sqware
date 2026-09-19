@@ -42,6 +42,7 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 }
 
 pub mod pagetable;
+pub mod permit;
 pub mod shell;
 pub mod spare;
 pub mod stress;
@@ -73,6 +74,20 @@ crate::test! {
 
 #[cfg(feature = "framework")]
 crate::test! {
+    "permit: 形态位一致 + ONLY 不可撤（自持枚亦然）" {
+        permit::form();
+    }
+}
+
+#[cfg(feature = "framework")]
+crate::test! {
+    "permit: 组成员（孔/铃）挂摘幂等 + 键投影" {
+        permit::members();
+    }
+}
+
+#[cfg(feature = "framework")]
+crate::test! {
     "shell: 内核原语外壳（任务/团队/空间）造-收闭环" {
         shell::accept();
     }
@@ -83,7 +98,7 @@ crate::test! {
 // 与框架档互斥：`boot.rs` 按 feature 二选一（同一位置、同一时点）。
 // `debug_assertions` 档才有实体，release 下是空体（与框架落地前一致）。
 
-/// 逐项验收三个用例；任一失败 = fail-fast panic → crash scene。
+/// 逐项验收各用例；任一失败 = fail-fast panic → crash scene。
 pub fn run() {
     #[cfg(all(not(feature = "framework"), debug_assertions))]
     {
@@ -91,5 +106,7 @@ pub fn run() {
         pagetable::pagetable();
         stress::accept();
         shell::accept();
+        permit::form();
+        permit::members();
     }
 }

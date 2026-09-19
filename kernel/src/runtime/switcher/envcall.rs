@@ -57,18 +57,18 @@ const MAX_IMAGE: usize = 8 * 1024 * 1024;
 ///
 /// | subset                  | PteFlags                |
 /// |-------------------------|-------------------------|
-/// | READ                    | V\|R\|A\|D              |
-/// | READ \| WRITE           | V\|R\|W\|A\|D           |
-/// | other（含空 / 仅 WRITE）| Denied                  |
+/// | FETCH                    | V\|R\|A\|D              |
+/// | FETCH \| STORE           | V\|R\|W\|A\|D           |
+/// | other（含空 / 仅 STORE）| Denied                  |
 ///
 /// U 位不在此处决定——由目标空间的 [`Space::pte_policy`] 加。
 fn subset_to_pte(subset: Permission) -> Result<PteFlags, GateError> {
-    if !subset.contains(Permission::READ) {
+    if !subset.contains(Permission::FETCH) {
         return Err(GateError::Denied);
     }
     let mut f = PteFlags::V | PteFlags::A | PteFlags::D;
     f |= PteFlags::R;
-    if subset.contains(Permission::WRITE) {
+    if subset.contains(Permission::STORE) {
         f |= PteFlags::W;
     }
     Ok(f)

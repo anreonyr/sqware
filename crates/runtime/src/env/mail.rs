@@ -290,7 +290,7 @@ pub trait AnyPie {
 
     /// 收窄本 pie 权限（就地改写，单调；`subset` ⊆ 当前权限）。
     ///
-    /// Pole 多一条约束：`subset` 须含 READ（RISC-V PTE 无 R=0 的合法数据叶子），
+    /// Pole 多一条约束：`subset` 须含 FETCH（RISC-V PTE 无 R=0 的合法数据叶子），
     /// 且会同步把已映射段降权。Hole 无映射，故无此约束。
     fn narrow(&self, subset: env::Permission) -> EnvResult<()>;
 

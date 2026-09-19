@@ -302,7 +302,7 @@ fn desk(me: env::TaskId) -> ! {
     let said = port::ship(
         &mail::HolePie::from_token(entry),
         me,
-        Access::READ | Access::WRITE,
+        Access::FETCH | Access::STORE,
         Policy::VEST,
     );
     if said.is_err() {

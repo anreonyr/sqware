@@ -13,9 +13,12 @@
 //!
 //! # 形态（`policy`）
 //!
-//! `CAGE` = **交出**：授出方那份在交出期间不可用，子枚消亡则源枚自动复原——故它声明的
-//! 是"装配者只是保管人，不是使用者"。寄存器一类的门闩同一时刻只该有一个使用者，故用
-//! `CAGE`；自描述（设备树）天然多读者，用 `NONE`（转授，源枚照旧可用）。
+//! 传递族里**只有 `VEST` 一位是这里的选择**（对端能不能再授出）；形态由**源枚**定：
+//! `ONLY` 是资源事实——内核在造寄存器页门闩时就给了它（"同一时刻只该有一个使用者"），
+//! 故那两条写成 `Policy::ONLY`：与源枚一致 ⇒ 这次是**移交**（授出方那份在子枚存活期间
+//! 不可用，子枚消亡则源枚自动复原；装配者只是保管人，不是使用者）。
+//! **写错会被当场拒**：对独占资源写 `NONE` ⇒ `Accord` 答 `Denied`——这是显式失败，
+//! 不是静默复制。自描述（设备树）与中断门铃天然多读者，用 `NONE`（复制，源枚照旧可用）。
 
 use runtime::core::port::{Access, Policy};
 
@@ -68,28 +71,28 @@ pub const PLIC: &[Need] = &[
         slot: Slot::Plic,
         name: "interrupt-controller@c000000",
         kind: Kind::Pole,
-        access: Access::READ_WRITE,
-        policy: Policy::CAGE,
+        access: Access::FETCH_STORE,
+        policy: Policy::ONLY,
     },
     Need {
         slot: Slot::Dtb,
         name: "devicetree",
         kind: Kind::Pole,
-        access: Access::READ,
+        access: Access::FETCH,
         policy: Policy::NONE,
     },
     Need {
         slot: Slot::Bell,
         name: "irq",
         kind: Kind::Nole,
-        access: Access::READ,
+        access: Access::FETCH,
         policy: Policy::NONE,
     },
     Need {
         slot: Slot::Source,
         name: "serial@10000000",
         kind: Kind::Pole,
-        access: Access::READ_WRITE,
-        policy: Policy::CAGE,
+        access: Access::FETCH_STORE,
+        policy: Policy::ONLY,
     },
 ];

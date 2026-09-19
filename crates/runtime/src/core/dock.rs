@@ -75,7 +75,7 @@ impl Dock {
     /// （内核返同一个 VA），但那要求另造一个句柄——本层不为此开入口。
     ///
     /// # Errors
-    /// - `Denied` — 门闩不在本任务表里 / 权限不含 `READ`
+    /// - `Denied` — 门闩不在本任务表里 / 权限不含 `FETCH`
     /// - `Dead`   — 资源已封印
     /// - `OoM`    — 本域空间备不出这么长的一段
     pub fn open(pie: PolePie) -> EnvResult<Dock> {

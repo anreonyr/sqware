@@ -1,6 +1,6 @@
 //! core — 运行时的内核实现面：把 `env` 的原语组装成可用的机制。
-//! 任务本地原语（heap/tls/unit）+ Mail 之上封装（port/dock/bell）——**三件各包一种
-//! primitive**：Hole → `Port`、Pole → `Dock`、Nole → `Bell`。
+//! 任务本地原语（heap/tls/unit）+ Mail 之上封装（port/dock/bell/tole）——**各包一种
+//! primitive**：Hole → `Port`、Pole → `Dock`、Nole → `Bell`、Tole → `Tole`（组）。
 //! **协议不在本 crate**：本模块对 `protocol` 零引用。
 //!
 //! **三个 `core` 各不相同**，读到这个名字先看路径：

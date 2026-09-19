@@ -42,11 +42,11 @@ pub(crate) struct Heir {
 /// 数据面操作所需的权利位（gate 核心判定授权，不感知资源实体）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Need {
-    /// pull / map / unmap —— 需 R。
-    Read,
-    /// push —— 需 W。
-    Write,
-    /// accord 转授 / 交出 —— 需 VEST（唯一的目标位）。
+    /// 取用 / 观察：pull / hush / open / Await —— 需 `FETCH`。
+    Fetch,
+    /// 投递 / 改动：push / ring / hang —— 需 `STORE`。
+    Store,
+    /// accord 转授 / 交出 —— 需 `VEST`（唯一的目标位）。
     Grant,
 }
 
@@ -97,9 +97,9 @@ impl<M> Pie<M> {
     /// 单权利位检查（**不含 alive**：Denied/Dead 语义仍由调用方逐条区分）。
     pub fn allows(&self, need: Need) -> bool {
         match need {
-            Need::Read => self.permission.contains(Permission::READ),
-            Need::Write => self.permission.contains(Permission::WRITE),
-            // Grant = 持 VEST（唯一的目标位）：CAGE 是形态声明，不授予任何事。
+            Need::Fetch => self.permission.contains(Permission::FETCH),
+            Need::Store => self.permission.contains(Permission::STORE),
+            // Grant = 持 VEST（唯一的目标位）：ONLY 是形态位，不授予任何事。
             Need::Grant => self.permission.contains(Permission::VEST),
         }
     }
@@ -108,6 +108,15 @@ impl<M> Pie<M> {
     pub fn covers(&self, subset: Permission) -> bool {
         self.permission.contains(subset) && !subset.is_empty()
     }
+}
+
+/// **形态位一致**：`ONLY` 不是调用方的选择，而是资源事实——授出时两边必须相同。
+///
+/// 不一致的两种情形都到此为止：想**复制**一枚独占资源（源带、subset 不带），
+/// 或想给一枚**共享**资源按上形态位（源不带、subset 带）。
+/// 一致时这次授出的形态由**源枚**定：带 `ONLY` ⇒ 移交；不带 ⇒ 复制。
+pub(crate) fn form_ok(src: Permission, subset: Permission) -> bool {
+    src.contains(Permission::ONLY) == subset.contains(Permission::ONLY)
 }
 
 // ── AnyPie ──
@@ -146,8 +155,11 @@ impl AnyPie {
 
     /// 我交出的那一枚的坐标（本地锚；`None` = 没交出过）。
     ///
-    /// 它是**缓存**，不是第二处真相：真相是"存在一枚带 `CAGE` 的子门闩、其 `sire`
+    /// 它是**缓存**，不是第二处真相：真相是"存在一枚我交出的子门闩、其 `sire`
     /// 指向我"。锚只是让热路径 O(1) 地读它——陈旧只会推迟自愈，方向保守（继续拒）。
+    ///
+    /// 只有**独占资源**（源枚带 `ONLY`）的授出才写锚：那次是**移交**，源枚在子枚
+    /// 存活期间不可用；子枚消亡 ⇒ 锚陈旧 ⇒ [`usable`] 当场清锚、源枚复原。
     pub fn heir(&self) -> Option<&Heir> {
         match self {
             AnyPie::Hole(p) => p.heir.as_ref(),
@@ -155,18 +167,6 @@ impl AnyPie {
             AnyPie::Nole(p) => p.heir.as_ref(),
             AnyPie::Tole(p) => p.heir.as_ref(),
         }
-    }
-
-    /// **借入枚**：带 `CAGE` **且**有 `sire`。
-    ///
-    /// 同一位在两处读法不同：造物主自持的枚（`sire = None`）带它读作"**我有资格交出去**"
-    /// （由 `covers` 保证 `subset ⊆ 自身`，不带它就永远交不出去）；经交出得到的枚
-    /// （`sire = Some`）带它读作"**我是被交出来的那一枚**"。
-    ///
-    /// **只有后者**受下面两条约束（粘性、`Narrow` 不可撤）——否则自持枚连一次普通授予
-    /// 都发不出去（实测：整机起不来，root 的每一次 `Accord(R|W)` 都会被粘性拒掉）。
-    pub fn borrowed(&self) -> bool {
-        self.sire().is_some() && self.permission().contains(Permission::CAGE)
     }
 
     /// 资源开辟者（`EnvCall::Mail(MailCall::Owned)` 的 `owner` 一侧）。
@@ -262,7 +262,7 @@ pub enum GateError {
     Denied,
     /// Meta 已 seal 或 Weak upgrade 失败。
     Dead,
-    /// 这一枚被我交出去了（带 `CAGE` 的那一枚还在）：交回即复原，不是失败。
+    /// 这一枚被我交出去了（接收方手里的那一枚还在）：交回即复原，不是失败。
     Caged,
     /// Hole 槽满 / 槽空（条件未就绪）。
     Busy,

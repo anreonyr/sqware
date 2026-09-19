@@ -18,7 +18,7 @@
 // 四者按"装什么"分：Hole 有槽、Pole 有页、Nole **什么都没有**（故能承载**无载荷**
 // 信号，门铃）、Tole **自己不装、只记着别人**（故能承载**多路等待**）。
 //
-// 权限四位：READ / WRITE（读写族）+ VEST / CAGE（传递族；单一真相在 `env::Permission`）。
+// 权限四位：FETCH / STORE（读写族）+ VEST / ONLY（传递族；单一真相在 `env::Permission`）。
 // 用户句柄 = per-pie token（全局唯一），envcall 以 token 寻址。
 
 pub mod hole;

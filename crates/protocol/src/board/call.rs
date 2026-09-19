@@ -103,7 +103,7 @@ pub const fn desk() -> Desk {
 /// "板查到了却授不出去"。
 pub fn hang_in(entry: PieToken, holder: TaskId) -> Result<PieToken, ()> {
     let pie = mail::HolePie::from_token(entry);
-    port::ship(&pie, holder, Access::READ | Access::WRITE, Policy::VEST)
+    port::ship(&pie, holder, Access::FETCH | Access::STORE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| ())
 }
@@ -114,7 +114,7 @@ pub fn hang_in(entry: PieToken, holder: TaskId) -> Result<PieToken, ()> {
 /// 是常态（那正是"一个名字指向一个入口"的用法），故这里不替调用方裁剪。
 pub fn give(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
     let pie = mail::HolePie::from_token(entry);
-    port::ship(&pie, to, Access::READ | Access::WRITE, Policy::VEST)
+    port::ship(&pie, to, Access::FETCH | Access::STORE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| Fail::Denied)
 }

@@ -124,10 +124,13 @@ fn find(token: usize) -> Result<AnyPie, GateError> {
 
 /// 「被关住」闸——位与存活之外的**第三个判据维度**。
 ///
-/// 读本地锚：锚空 ⇒ 放行；锚指向的那一枚**还在**（且仍带 `CAGE`）⇒ `Caged`；
-/// 已不在 ⇒ **清锚** ⇒ 放行。清锚是唯一的"解关"动作（没有独立动词）——交回、撤销、
-/// 借入方死亡都只是让那一枚消失，而"消失"由这里读出来，故它必须回到**本任务表**
-/// 里写（判据拿到的是抄件）。
+/// 读本地锚：锚空 ⇒ 放行；锚指向的那一枚**还在** ⇒ `Caged`（我把使用权交出去了，
+/// 而接收方还活着）；已不在 ⇒ **清锚** ⇒ 放行。清锚是唯一的"解关"动作（没有独立
+/// 动词）——交回、撤销、接收方死亡都只是让那一枚消失，而"消失"由这里读出来，
+/// 故它必须回到**本任务表**里写（判据拿到的是抄件）。
+///
+/// 锚只有**独占资源**（源枚带 `ONLY`）的授出才写（见 `gate::accord`），故这道闸
+/// 只在独占资源上生效——共享资源没有锚，永远放行。
 ///
 /// 挂点：数据面四个动词 + `Accord` 的源枚。**不挂**查询与收场（`Reserve`/`Collect`/
 /// `Release`/`Revoke`/`Narrow`/`Seal`）。
@@ -138,11 +141,9 @@ pub(super) fn usable(pie: &AnyPie) -> Result<(), GateError> {
     let Some(h) = pie.heir().copied() else {
         return Ok(());
     };
-    let held = muster(h.task).and_then(|t| t.upgrade()).is_some_and(|t| {
-        let pies = t.pies.lock();
-        pies.iter()
-            .any(|p| p.token() == h.token && p.permission().contains(Permission::CAGE))
-    });
+    let held = muster(h.task)
+        .and_then(|t| t.upgrade())
+        .is_some_and(|t| t.pies.lock().iter().any(|p| p.token() == h.token));
     if held {
         return Err(GateError::Caged);
     }
@@ -157,8 +158,9 @@ pub(super) fn usable(pie: &AnyPie) -> Result<(), GateError> {
 ///
 /// 门闩持资源实体的强引用——**寿命即能力寿命**：最后一份消失时资源随之回收。
 ///
-/// 原始自持枚带满四位（含 `CAGE`）：源枚上这一位的读法是"**我有资格交出去**"
-/// ——`covers` 要求 `subset ⊆ 自身`，造物主不带它就永远借不出去。
+/// 原始自持枚带 `FETCH | STORE | VEST`：读写两支（能收能发）＋ 目标位（能再授出）。
+/// **不带 `ONLY`**——用户态铸的资源都是共享的；"只允许一个使用者"是内核决定的事实
+/// （设备 `reg` 段、组），只有那些创建点才给这一位。
 ///
 /// 记号 = **这条路的名字**（`UnsealHole { mark, len }`）：`len == 0` / `len > NAME_LEN` /
 /// 区间未映射 / 非法名（空、含 NUL、非 UTF-8）一律 `Denied`——**不截断、不 panic**。
@@ -180,7 +182,7 @@ fn unseal_hole(frame: &mut TrapContext, ident: &TaskIdent, buf: usize, len: usiz
         let meta = mail::hole::meta(task.ident.id, mark);
         let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
             meta,
-            Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
+            Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
         );
         let token = pie.token;
@@ -211,7 +213,7 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
         let meta = mail::nole::NoleMeta::new(task.ident.id);
         let pie: Pie<mail::nole::NoleMeta> = gate::new_pie(
             meta,
-            Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
+            Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
         );
         let token = pie.token;
@@ -233,7 +235,7 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
         let task_space = task.ident.team.space.clone();
         let pie: Pie<mail::pole::PoleMeta> = gate::new_pie(
             meta.clone(),
-            Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
+            Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
         );
         let token = pie.token;
@@ -257,7 +259,7 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
 /// 开闩：借映 Pole 页进当前任务空间 → `(VA, 这一段多大)`（同 token 幂等复用）。
 /// 仅对 Pole 成立。
 fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
-    let r = match resolve(token, Need::Read).and_then(|p| usable(&p).map(|()| p)) {
+    let r = match resolve(token, Need::Fetch).and_then(|p| usable(&p).map(|()| p)) {
         Err(e) => Err(e),
         Ok(AnyPie::Pole(p)) => match subset_to_pte(p.permission) {
             Err(e) => Err(e),
@@ -289,7 +291,7 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
     let _ = &ident;
     let r = (|| -> Result<usize, GateError> {
         let pie = find(token)?;
-        if !pie.allows(Need::Read) {
+        if !pie.allows(Need::Fetch) {
             return Err(GateError::Denied);
         }
         usable(&pie)?;

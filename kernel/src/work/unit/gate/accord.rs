@@ -3,13 +3,19 @@
 // 纯数据面原语：src 的 permission 不变；新 pie 的 permission = subset、
 // **sire = Some(src.token())**（派生边只写在这里）。
 //
-// 四道闸在本模块（调用方不必重复判）：在表内 / 存活 / 持 VEST / 覆盖子集 /
-// **未被关住**。闸之所以在这里，是因为"交出"要求就地改**调用方自己表里**那一枚
-// ——`find` 给的是抄件，改抄件不动表。
+// 五道闸在本模块（调用方不必重复判）：在表内 / 存活 / 持 VEST / 覆盖子集 /
+// **`ONLY` 一致** / **未被关住**。闸之所以在这里，是因为"交出"要求就地改
+// **调用方自己表里**那一枚——`find` 给的是抄件，改抄件不动表。
+//
+// # 形态由源枚定，不由 `subset` 定
+//
+// `ONLY` 是**资源事实**（这枚资源允不许多个使用者）：源枚带它 ⇒ `subset` 必带它
+// ⇒ 这次是**移交**（写锚、源枚停用）；源枚不带 ⇒ 两边都不带 ⇒ 这次是**复制**。
+// 不一致即拒——所以"复制一枚独占资源"这种请求到不了数据面。
 //
 // # 先关后授（顺序是契约，不是顺手）
 //
-// 带 `CAGE` 的授予 = 一次交出：源枚必须在子枚入表**之前**被关住，否则两者之间留一个
+// 移交的授予：源枚必须在子枚入表**之前**被关住，否则两者之间留一个
 // **"两边都能用"**的窗口（多核真实可见）。反过来，"没人能用"的一小段是合法状态。
 // 正因为它必须先关，就必须能回滚：目标表备不出容量时把锚清掉，等于没交出过。
 //
@@ -20,7 +26,7 @@
 // `Meta::drop`，那是 L3 或更外层的活）。
 //
 // # Errors
-// - `Denied` — 表内无此 token / 不持 VEST / 子集非法 / 目标不存在
+// - `Denied` — 表内无此 token / 不持 VEST / 子集非法 / **`ONLY` 与源枚不一致** / 目标不存在
 // - `Caged`  — 已被关住（"至多一个 heir"，也是独占的守卫）
 // - `Dead`   — 源枚的资源已封印
 // - `OoM`    — 目标表备不出容量（锚已回滚）
@@ -60,15 +66,15 @@ pub(crate) fn accord(
         if !pie.covers(subset) {
             return Err(GateError::Denied);
         }
+        // **形态位不是选择，是一致性**：`ONLY` 是资源事实（这枚资源允不许多个使用者），
+        // 调用方只能在两种资源上各按其实情来授出。不一致 ⇒ 拒：想复制一枚独占资源，
+        // 或想给一枚共享资源按上形态位，都到此为止。
+        if !super::pie::form_ok(pie.permission(), subset) {
+            return Err(GateError::Denied);
+        }
         // 已被关住 ⇒ 不能再交出：一枚门闩在同一时刻至多一个 heir。
         if pie.heir().is_some() {
             return Err(GateError::Caged);
-        }
-        // 粘性（**只约束借入枚**）：转交时子枚必带 `CAGE`——否则"交出"会在下一跳被洗掉
-        // （源枚没有带 `CAGE` 的子枚 ⇒ 它当场复原，而收方那份照样能用 ⇒ 两个使用者）。
-        // 自持枚上的这一位只是"我有资格交出去"，故自持枚**可以**授出不带 `CAGE` 的子集。
-        if pie.borrowed() && !subset.contains(Permission::CAGE) {
-            return Err(GateError::Denied);
         }
         // 派生 = 复制资源实体的强引用（资源寿命随之延长一份）。
         let granted = match &*pie {
@@ -77,7 +83,9 @@ pub(crate) fn accord(
             AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), subset, Some(src))),
             AnyPie::Tole(p) => AnyPie::Tole(new_pie(p.meta().clone(), subset, Some(src))),
         };
-        if subset.contains(Permission::CAGE) {
+        // 独占资源 ⇒ 这次是**移交**：写锚（源枚在子枚存活期间不可用，子枚消亡自动复原）。
+        // 共享资源 ⇒ 不写锚，这次是**复制**。形态由源枚决定，不由 `subset` 决定。
+        if pie.permission().contains(Permission::ONLY) {
             let h = Heir {
                 task: target.ident.id,
                 token: granted.token(),

@@ -7,11 +7,12 @@
 //   - src 存在、资源未封印
 //   - !subset.is_empty()
 //   - subset ⊆ src.permission
-//   - **原带 `CAGE` ⇒ subset 必须仍含 `CAGE`**：撤掉它就把独占链洗掉了——源枚会
-//     立刻复原，而持有方那枚仍在用 ⇒ 两个使用者
+//   - **原带 `ONLY` ⇒ subset 必须仍含 `ONLY`**：撤掉它，这枚资源就能被复制了
+//     ——"只许一个使用者"当场被洗掉。**自持枚也不例外**（它是资源事实，不是"我有
+//     资格交出去"那类可摘的声明）
 //
 // # Errors
-// - `Denied` — 空子集 / 非单调 / 撤 `CAGE`
+// - `Denied` — 空子集 / 非单调 / 撤 `ONLY`
 // - `Dead`   — 资源已封印
 
 use super::pie::{AnyPie, GateError, Permission, Pie};
@@ -25,13 +26,9 @@ fn set_perm<M>(pie: &mut Pie<M>, subset: Permission, alive: bool) -> Result<(), 
     if subset.is_empty() || (subset & pie.permission) != subset {
         return Err(GateError::Denied);
     }
-    // `CAGE` 在**借入枚**上不许被洗掉：这一位在自持枚上只是"我有资格交出去"（摘掉无害，
-    // 只是从此借不出去），在借入枚上却是"我是被交出来的那一枚"——摘掉它，源枚会当场复原
-    // 而这一枚仍能用 ⇒ 两个使用者。
-    if pie.sire.is_some()
-        && pie.permission.contains(Permission::CAGE)
-        && !subset.contains(Permission::CAGE)
-    {
+    // `ONLY` 不许被洗掉，**自持枚也不例外**：它是"这枚资源只允许一个使用者"这条
+    // 资源事实的落点。摘掉它，持有者就能把资源复制出去——独占就此失效。
+    if pie.permission.contains(Permission::ONLY) && !subset.contains(Permission::ONLY) {
         return Err(GateError::Denied);
     }
     pie.permission = subset;

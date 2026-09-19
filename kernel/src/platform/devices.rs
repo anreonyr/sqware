@@ -74,7 +74,8 @@ fn supply_dtb() -> (Name, AnyPie) {
     let meta = mail::pole::region(dtb.base, dtb.size, 0).expect("devicetree region");
     let pie = gate::new_pie(
         meta,
-        Permission::READ | Permission::VEST | Permission::CAGE,
+        // 自描述**天然多读者**：共享（不带 `ONLY`），授出即复制。
+        Permission::FETCH | Permission::VEST,
         None,
     );
     (
@@ -90,12 +91,13 @@ fn supply_dtb() -> (Name, AnyPie) {
 /// 故必须有一小块内核结构）。同一张账里放两种东西并不冲突：账记的是"boot 交出了
 /// 哪些门闩"，不是"有哪些设备"。
 ///
-/// 权限只给 `READ | VEST`：听与应都在"取"这一侧，而**谁也 `Ring` 不动它**——响它的是
+/// 权限只给 `FETCH | VEST`：听与应都在"取"这一侧，而**谁也 `Ring` 不动它**——响它的是
 /// 内核（持源实体，不走门闩）。`VEST` 是给 root 把它授给 PLIC 驱动用的。
+/// **共享**（不带 `ONLY`）：root 留一份、驱动得一份。
 fn supply_irq() -> (Name, AnyPie) {
     let meta = NoleMeta::new(0);
     assert!(IRQ.set(meta.clone()).is_ok(), "irq bell built twice");
-    let pie = gate::new_pie(meta, Permission::READ | Permission::VEST, None);
+    let pie = gate::new_pie(meta, Permission::FETCH | Permission::VEST, None);
     (
         Name::new(IRQ_NAME).expect("irq name fits"),
         AnyPie::Nole(pie),
@@ -172,7 +174,9 @@ pub(crate) fn scan() -> Vec<(Name, AnyPie)> {
             };
             let pie = gate::new_pie(
                 meta,
-                Permission::READ | Permission::WRITE | Permission::VEST | Permission::CAGE,
+                // `ONLY` = **同一时刻只该有一个使用者**（寄存器页）：授出即移交，
+                // 复制不出来。这条判断住在造门闩这一处——内核知道谁是 MMIO。
+                Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
                 None,
             );
             out.push((name, AnyPie::Pole(pie)));

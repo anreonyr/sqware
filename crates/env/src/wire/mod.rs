@@ -132,7 +132,7 @@ impl Wire for crate::fid::ProgramKind {
 /// 替代旧 `from_bits_truncate` 的静默截断）。
 ///
 /// **超宽值同样要拒**：`a2`/`a3` 是整寄存器（`usize`），故「先 `as u32` 再校验」等于
-/// 把 32 位以上静默丢掉后再判合法——`0x1_0000_0002` 会被解成 `WRITE` 而不是 `Invalid`，
+/// 把 32 位以上静默丢掉后再判合法——`0x1_0000_0002` 会被解成 `STORE` 而不是 `Invalid`，
 /// 那正是本条要根除的那类静默截断，只是搬到了高位。故先判宽度、再判位。
 impl Wire for crate::permission::Permission {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {

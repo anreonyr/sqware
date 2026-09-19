@@ -1,4 +1,4 @@
-// Tole — 若干枚孔挂在一处，等其中任意一格有事。
+// Tole — 若干枚可等地挂在一处，等其中任意一格有事。
 //
 // # 名字
 //
@@ -12,20 +12,25 @@
 // # 它是什么
 //
 // 一枚孔只能等一个方向、一枚线程只能等一个键。`Tole` 是"**多路等待**"的资源面：
-// 一张格子表，每格 = 一枚目标孔的**身份 + 存活单元** + 一个方向。等待侧拿这张表
-// 去登记，任意一格有事即醒来（登记在 `room` 那一侧，不属本模块）。
+// 一张格子表，每格 = 一枚**可等地**（孔的一个方向 / 一枚铃）的**身份 + 存活单元**。
+// 等待侧拿这张表去登记，任意一格有事即醒来（登记在 `room` 那一侧，不属本模块）。
 //
-// **格子不持强引用**：目标孔最后一份门闩消失时格子自然失效（`Life` 判死）——格子
+// **成员只有两种**：孔与铃——两者都有"有一位可读的就绪谓词"，故组能当场答出
+// "是哪一格"。页不进来（它没有"有事"这回事），组也不进组（组没有位，判据会变成
+// 沿图的递归，还可能成环）。
+//
+// **格子不持强引用**：成员最后一份门闩消失时格子自然失效（`Life` 判死）——格子
 // 不延长任何资源的寿命，也不新增"已死"这种状态。
 //
 // 数据面原语（全部非阻塞）：
 // - `meta(owner)`：造一个空架子。
-// - `hang(meta, hole, dir)`：挂上一格；同（孔，方向）幂等。同时把本组登记成那一格的
-//   **转发目标**（那一枚孔的站点在投信时要顺带叫醒本组），并叫醒等本组的人重取快照。
-// - `unhang(meta, hole, dir)`：摘下一格（连转发登记一起摘）；没挂过即无事。
+// - `hang(meta, mate, life)`：挂上一格；同 `mate` 幂等。同时把本组登记成那一格的
+//   **转发目标**（那一枚的站点在投信时要顺带叫醒本组），并叫醒等本组的人重取快照。
+// - `unhang(meta, mate)`：摘下一格（连转发登记一起摘）；没挂过即无事。
 // - `seal(meta)` / `Drop`：置死、清表、**撤掉全部转发登记**，并 `wipe` 本组的键
 //   ——成员键退役（`wipe`）时同样会叫醒等本组的人。
-// - `wait_tole(meta, dur)`：等到任意一格有事。
+// - `wait(meta, dur)`：等到任意一格有事。**它只挂、不判**——判据（"我关心的 =
+//   池 ∩ 我的表"）留在适配层，因为格子只持弱引用、核心够不到成员的 meta。
 //
 // **锁序约定**：`cells` 是 L3 锁。本模块**不在持 `cells` 时**调 `messenger`
 // （站点表同为 L3，3→3 禁止）：先改表、放开锁，再登记转发／叫醒。
@@ -38,7 +43,8 @@ use crate::lock::{Level, SpinLock};
 
 use env::HoleDir;
 
-use crate::work::mail::hole::{self, HoleId, HoleMeta};
+use crate::work::mail::hole::HoleId;
+use crate::work::mail::nole::NoleId;
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::gate::GateError;
 use crate::work::unit::life::Life;
@@ -63,33 +69,46 @@ pub enum ToleState {
     Dead,
 }
 
-/// 一格：**哪一枚孔的哪一个方向**。
+/// 一格成员：**能当可等地的东西**（孔的一个方向 / 一枚铃）。
 ///
-/// 记 `HoleId` 而不记 `PieToken`：句柄是**表**的身份（只在持有它的那张表里有意义），
+/// 记**资源身份**而不记 `PieToken`：句柄是**表**的身份（只在持有它的那张表里有意义），
 /// 而架子是资源、要被别的表使用——故格子记的是**资源**的身份（内核命名、永不复用）。
 ///
-/// `life` 是目标孔的存活单元（弱引用）：孔没了，这一格自然失效——不需要摘。
+/// 方向是 `Hole` 变体的一部分：**铃没有方向，这一格在类型里就写不出来**。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Mate {
+    Hole(HoleId, HoleDir),
+    Nole(NoleId),
+}
+
+impl Mate {
+    /// 本成员在 `room` 里的键——**唯一投影**（转发登记、撤登记、退役都走它）。
+    pub(crate) fn key(self) -> WakeKey {
+        match self {
+            Mate::Hole(id, dir) => WakeKey::Hole { hole: id.0, dir },
+            Mate::Nole(id) => WakeKey::Nole { id: id.0 },
+        }
+    }
+}
+
+/// 一格：成员的身份 + 它的存活单元。
+///
+/// `life` 是那枚资源的存活单元（弱引用）：资源没了，这一格自然失效——不需要摘。
 #[derive(Clone)]
 pub(crate) struct Cell {
-    hole: HoleId,
-    dir: HoleDir,
+    mate: Mate,
     life: Weak<Life>,
 }
 
 impl Cell {
-    /// 这一格还指得着东西吗（目标孔仍活着）。
+    /// 这一格还指得着东西吗（成员仍活着）。
     pub(crate) fn live(&self) -> bool {
         !Life::dead(&self.life)
     }
 
-    /// 目标孔的**资源身份**（号是表里的东西，故这里只给身份）。
-    pub(crate) fn hole(&self) -> HoleId {
-        self.hole
-    }
-
-    /// 这一格关心的是哪个方向。
-    pub(crate) fn dir(&self) -> HoleDir {
-        self.dir
+    /// 这一格挂的是谁（判据侧按它分派"有事"的读法）。
+    pub(crate) fn mate(&self) -> Mate {
+        self.mate
     }
 }
 
@@ -168,28 +187,24 @@ impl ToleMeta {
 
 // ── 数据面原语（非阻塞）──
 
-/// 挂上一格：**同（孔，方向）幂等**（重复挂不叠加）。
+/// 挂上一格：**同成员幂等**（重复挂不叠加）。
 ///
-/// 前置：`hole` 是调用方表里的那一枚（判权在 envcall 入口，数据面不感知 rights）。
+/// 前置：`mate` 是调用方表里的那一枚（判权在 envcall 入口，数据面不感知 rights）；
+/// `life` 必须是 `mate` 那枚资源的存活单元（同一入口取出，不重组）。
 ///
-/// 目标孔已死也允许挂（那一格当场就是失效的）——"挂上"这件事与"还活着"无关，
+/// 成员已死也允许挂（那一格当场就是失效的）——"挂上"这件事与"还活着"无关，
 /// 少一种要调用方分辨的状态。
-pub(crate) fn hang(meta: &ToleMeta, hole: &HoleMeta, dir: HoleDir) -> Result<(), GateError> {
+pub(crate) fn hang(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
     let cell = Cell {
-        hole: hole.id(),
-        dir,
-        life: hole.life(),
+        mate,
+        life: life.clone(),
     };
-    let want = (cell.hole, cell.dir);
     {
         let mut cells = meta.cells.lock();
-        if cells
-            .iter()
-            .any(|c| c.hole == cell.hole && c.dir == cell.dir)
-        {
+        if cells.iter().any(|c| c.mate == cell.mate) {
             return Ok(());
         }
         if cells.try_reserve(1).is_err() {
@@ -197,12 +212,12 @@ pub(crate) fn hang(meta: &ToleMeta, hole: &HoleMeta, dir: HoleDir) -> Result<(),
         }
         cells.push(cell);
     }
-    // **锁外**登记转发（站点表是 L3，与 `cells` 不嵌套）：那一枚孔今后一投信，
+    // **锁外**登记转发（站点表是 L3，与 `cells` 不嵌套）：那一枚成员今后一投信，
     // 也认醒本组。登记不上（站点表/转发格满）⇒ 把刚挂的那一格退回，不留下
     // "挂着却叫不醒"的半截状态。
-    if messenger::forward(hole::key(hole, dir), hole.life(), meta.id.0, meta.life()).is_err() {
+    if messenger::forward(mate.key(), life, meta.id.0, meta.life()).is_err() {
         let mut cells = meta.cells.lock();
-        if let Some(at) = cells.iter().position(|c| (c.hole, c.dir) == want) {
+        if let Some(at) = cells.iter().position(|c| c.mate == mate) {
             cells.swap_remove(at);
         }
         return Err(GateError::OoM);
@@ -214,21 +229,20 @@ pub(crate) fn hang(meta: &ToleMeta, hole: &HoleMeta, dir: HoleDir) -> Result<(),
 
 /// 摘下一格：**没挂过即无事**（不返错）。
 ///
-/// 只摘这一格；同孔的另一个方向若也挂着，照旧留着。
-pub(crate) fn unhang(meta: &ToleMeta, hole: &HoleMeta, dir: HoleDir) -> Result<(), GateError> {
+/// 只摘这一格；同一枚成员的另一个方向（孔）若也挂着，照旧留着。
+pub(crate) fn unhang(meta: &ToleMeta, mate: Mate) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
-    let id = hole.id();
     {
         let mut cells = meta.cells.lock();
-        if let Some(at) = cells.iter().position(|c| c.hole == id && c.dir == dir) {
+        if let Some(at) = cells.iter().position(|c| c.mate == mate) {
             cells.swap_remove(at);
         }
     }
     // 锁外撤转发登记（同 `hang` 的锁序）。没挂过也照撤：幂等，且不留下"
     // 格已摘、投信还叫本组"的多余一跳。
-    messenger::unforward(hole::key(hole, dir), meta.id.0);
+    messenger::unforward(mate.key(), meta.id.0);
     Ok(())
 }
 
@@ -247,37 +261,25 @@ pub(crate) fn seal(meta: &ToleMeta) {
 
 /// 清空表格 + 撤掉全部转发登记 + `wipe` 本组的键（放行等本组的人）。
 ///
-/// 三件事都必须做：格子走了，成员孔那一侧的"投信还叫本组"就成了多余的一跳；
+/// 三件事都必须做：格子走了，成员那一侧的"投信还叫本组"就成了多余的一跳；
 /// 而等本组的人若不叫醒，就会抱着一个空快照睡到期限（有界等待会退化成"每次都等满"）。
 ///
 /// 调用方义务：**在锁外**调（站点表是 L3，且 `wipe` 会 `rise` 任务）。
 fn retire(meta: &ToleMeta) {
     let cells = core::mem::take(&mut *meta.cells.lock());
     for c in &cells {
-        messenger::unforward(
-            WakeKey::Hole {
-                hole: c.hole.0,
-                dir: c.dir,
-            },
-            meta.id.0,
-        );
+        messenger::unforward(c.mate.key(), meta.id.0);
     }
     messenger::wipe(key(meta));
 }
 
 impl Drop for ToleMeta {
-    /// 最后一份强引用消失：与 [`hole::HoleMeta`] 的 `Drop` 同形——成员孔那一侧不再
+    /// 最后一份强引用消失：与 `HoleMeta` 的 `Drop` 同形——成员那一侧不再
     /// 记得本组，等本组的人当场放行（键随即判死，站点随 `prune` 走）。
     fn drop(&mut self) {
         let cells = core::mem::take(&mut *self.cells.lock());
         for c in &cells {
-            messenger::unforward(
-                WakeKey::Hole {
-                    hole: c.hole.0,
-                    dir: c.dir,
-                },
-                self.id.0,
-            );
+            messenger::unforward(c.mate.key(), self.id.0);
         }
         messenger::wipe(key(self));
     }
@@ -289,10 +291,19 @@ impl Drop for ToleMeta {
 /// 读到的恒是预置值，故调用方须按 deadline 循环，醒来自己按 [`ToleMeta::cells`] 的
 /// 快照复核（信标只是提示）。
 ///
-/// `dur == ZERO` 走到 `block` 的"只探测"那一支：站点在而链空 ⇒ 置信标、当场返回。
-pub(crate) fn wait_tole(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, GateError> {
+/// **前置：调用方须先按快照复核，未就绪才调**——已就绪的那一格若只靠投信唤醒，
+/// 这一觉就睡到期限了（`hole::wait` 把这一步做进了原语内部，本原语做不进去：
+/// 判据要调用方的表）。
+///
+/// `dur == ZERO` = **只探测**：当场 `Resume(())`（不挂起、也不消费信标）——
+/// 与全树的"上限族"口径一致（[`crates/env` 的时间定式]），与 `hole::wait` /
+/// `nole::wait` 同款；`fall` 那一边不特判是因为它探的**就是**信标本身。
+pub(crate) fn wait(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
+    }
+    if dur == Duration::ZERO {
+        return Ok(Handoff::Resume(()));
     }
     messenger::wait(key(meta), meta.life(), dur)
 }

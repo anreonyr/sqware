@@ -174,7 +174,7 @@ fn call(at: PieToken, me: Name) -> Option<Name> {
     port::ship(
         &mail::HolePie::from_token(back),
         peer,
-        Access::READ | Access::WRITE,
+        Access::FETCH | Access::STORE,
         Policy::NONE,
     )
     .ok()?;

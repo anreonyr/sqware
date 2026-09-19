@@ -1,4 +1,4 @@
-//! Tole（组）：把几枚孔挂到一处，等其中**任意一格**有事。
+//! Tole（组）：把几枚**可等地**（孔的一个方向 / 一枚铃）挂到一处，等其中**任意一格**有事。
 //!
 //! 与 `core/bell.rs` 同一分工：门铃是"一枚无载荷信号怎么用"，这里是"多路等待怎么用"
 //! ——薄封装 + 让调用的形状像一句话；envcall 转发在 `env/tole.rs`。
@@ -10,8 +10,7 @@
 
 use env::{EnvResult, HoleDir, PieToken};
 
-use crate::env::mail::HolePie;
-use crate::env::tole::TolePie;
+use crate::env::tole::{Mate, TolePie};
 
 /// 一个组的使用面。
 pub struct Tole {
@@ -31,14 +30,14 @@ impl Tole {
         Tole { pie }
     }
 
-    /// 把一枚孔的一个方向挂进来（同（孔，方向）幂等）。
-    pub fn hang(&self, hole: &HolePie, dir: HoleDir) -> EnvResult<()> {
-        self.pie.hang(hole, dir)
+    /// 把一枚成员的一个方向挂进来（同成员幂等）。
+    pub fn hang<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        self.pie.hang(mate, dir)
     }
 
     /// 摘掉一格；没挂过即无事。
-    pub fn unhang(&self, hole: &HolePie, dir: HoleDir) -> EnvResult<()> {
-        self.pie.unhang(hole, dir)
+    pub fn unhang<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        self.pie.unhang(mate, dir)
     }
 
     /// 等到任意一格有事：`Some((哪一枚, 哪个方向))`；`None` = 这一轮没等到

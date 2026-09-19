@@ -142,7 +142,7 @@ pub fn attach(
     // 位置在客人那一枚转授之后：板线程这时已经起来（`host` 起过就复用）。
     if let Some(lane) = lane {
         let hole = mail::HolePie::from_token(lane);
-        port::ship(&hole, host, Access::READ | Access::WRITE, Policy::NONE)
+        port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
             .map_err(|_| "board:lane")?;
     }
     let Some(tip) = *tip else {
@@ -222,12 +222,12 @@ fn reply_path(quay: &Quay) -> Option<PieToken> {
 /// 转授的是"客人开的那扇门"（`owner` 是客人），板那侧认领时认的正是它。
 ///
 /// 子集只给 `R|W`，**不加 `VEST`**：板线程用这一枚写答话，不需要再授出——一分不多。
-/// 本域自己那一份转授之后**不收**：内核那侧"交出"（`CAGE`）要求源枚自己带 `CAGE`，而客人
-/// 给过来的这一枚没有（`seat` 给的是 `R|W|VEST`）；收它要多一条 `release`，而这一步之后
-/// 没有任何东西再碰它——本域常驻，随域退场一起回收。
+/// 本域自己那一份转授之后**不收**：客人给过来的这一枚不带 `ONLY`（`seat` 给的是
+/// `R|W|VEST`）⇒ 这次授出是**复制**，源枚在我表里照旧可用；收它要多一条 `release`，
+/// 而这一步之后没有任何东西再碰它——本域常驻，随域退场一起回收。
 fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
     let hole = mail::HolePie::from_token(reply);
-    port::ship(&hole, host, Access::READ | Access::WRITE, Policy::NONE)
+    port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
         .map(|_| ())
         .map_err(|_| ())
 }
@@ -255,7 +255,7 @@ fn host_loop(me: TaskId) {
         return;
     };
     let tip_hole = mail::HolePie::from_token(tip);
-    if port::ship(&tip_hole, me, Access::READ | Access::WRITE, Policy::VEST).is_err() {
+    if port::ship(&tip_hole, me, Access::FETCH | Access::STORE, Policy::VEST).is_err() {
         say("board: tip not handed");
         return;
     }
@@ -642,16 +642,16 @@ pub fn open(holder: TaskId, ms: usize) -> Result<(Quay, TaskId), Fail> {
 
 /// 客侧第一步半：铸**问话孔**并交到板手里（本端随即自窄到只写）。
 ///
-/// `board` = [`open`] 收下的那个号。交出去的是可读可写，随后本端 `narrow` 到 `WRITE`：
+/// `board` = [`open`] 收下的那个号。交出去的是可读可写，随后本端 `narrow` 到 `STORE`：
 /// 一条路上只有一个读者（`session` 事实 2），故**板读、本端写**。
 ///
 /// 记号 = [`ASK_MARK`]：板那侧就是按它把这枚孔与**入口**分开的（两枚都由本端铸、本端交）。
 pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
     let ask = mail::unseal_hole(ASK_MARK).map_err(|_| Fail::Denied)?;
     let hole = mail::HolePie::from_token(ask);
-    port::ship(&hole, board, Access::READ | Access::WRITE, Policy::NONE)
+    port::ship(&hole, board, Access::FETCH | Access::STORE, Policy::NONE)
         .map_err(|_| Fail::Denied)?;
-    hole.narrow(env::Permission::WRITE)
+    hole.narrow(env::Permission::STORE)
         .map_err(|_| Fail::Denied)?;
     Ok(ask)
 }

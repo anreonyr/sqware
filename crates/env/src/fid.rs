@@ -587,10 +587,11 @@ pub enum ControlCall {
 /// 本枚举——直接 `PieCall::X.call()` 发起（R3+B）。
 /// Tole 调用（class 9）—— **多路等待**：一枚"组"的四件事：造、挂、摘、等。
 ///
-/// 与 class 7（权柄轴）的分界：本类不搬许可的生死，只改"这一组我关心哪几枚孔"；
+/// 与 class 7（权柄轴）的分界：本类不搬许可的生死，只改"这一组我关心哪几枚可等地"
+/// ——**成员只有两种：孔（一个方向）与铃**（两者都有"有一位可读的就绪谓词"）；
 /// 与 class 5（数据轴）的分界：本类不搬载荷。组自己的身份就是 `PieToken`
 /// （与 Hole/Pole/Nole 同款：号只在持有它的那张表里有意义），资源实体见
-/// `work::mail::tole`。
+/// `work::mail::tole`。组是**独占资源**（`ONLY`）：只剩一条等待位，授出即移交。
 ///
 /// 号段取 9：class 3（原 `IO`）退役后一直空着，不去复活它（见本文件头注的号段口径）。
 #[derive(Envcall)]
@@ -600,14 +601,18 @@ pub enum ToleCall {
     /// 造一个空组（**无参**：没有大小、没有上限可校验）→ `PieToken`。
     #[ret(PieToken)]
     Unseal,
-    /// 把 `pie` 的**一个方向**挂进 `tole`；同（孔，方向）幂等。
+    /// 把 `pie` 的**一个方向**挂进 `tole`；同成员幂等。
+    ///
+    /// 成员是孔或铃：孔两个方向都收（`Pull` / `Push`），**铃只认 `Pull`**——它只有
+    /// 一条方向（"响了"），别的值不是"暂时没有"，是不存在这个操作（同 `MailCall::Wait`
+    /// 的铃通道）。权利：组需 `STORE`，成员需 `FETCH`。
     #[ret(())]
     Hang {
         tole: PieToken,
         pie: PieToken,
         dir: HoleDir,
     },
-    /// 从 `tole` 摘掉一格；没挂过即无事。
+    /// 从 `tole` 摘掉一格；没挂过即无事。方向归一规则同 [`ToleCall::Hang`]。
     #[ret(())]
     Unhang {
         tole: PieToken,

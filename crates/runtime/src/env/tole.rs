@@ -8,7 +8,7 @@
 
 use env::{EnvResult, HoleDir, PieToken, ToleCall, ToleCallRet};
 
-use super::mail::HolePie;
+use super::mail::{HolePie, NolePie};
 
 // ── 裸函数层（envcall 转发，零业务逻辑）──
 
@@ -21,7 +21,7 @@ pub fn unseal() -> EnvResult<PieToken> {
     }
 }
 
-/// 把 `pie` 的一个方向挂进 `tole`（同（孔，方向）幂等）。
+/// 把 `pie` 的一个方向挂进 `tole`（同成员幂等）。
 pub fn hang(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
     let r = ToleCall::Hang { tole, pie, dir }.call()?;
     match r {
@@ -52,6 +52,31 @@ pub fn await_(tole: PieToken, millis: usize) -> EnvResult<(PieToken, HoleDir)> {
 
 // ── 类型化句柄 ──
 
+/// 能当**一格成员**的东西：孔与铃。
+///
+/// 与内核侧 `mail::tole::Mate` 是同一条边界：页不进组（没有"有事"这回事），组也不
+/// 进组（没有位，判据会变成沿图的递归）。用一个 trait 而不是收 `PieToken`，是为了
+/// 让"能挂什么"在编译期就说得清。
+///
+/// `token` 不在 [`AnyPie`](super::mail::AnyPie) 里（那一位是"表示层转换，与 ABI 无关"）；
+/// 本 trait 的存在理由正是要那个号，故它自带一支。
+pub trait Mate {
+    /// 本成员在**我这张表**里的号。
+    fn token(&self) -> PieToken;
+}
+
+impl Mate for HolePie {
+    fn token(&self) -> PieToken {
+        HolePie::token(self)
+    }
+}
+
+impl Mate for NolePie {
+    fn token(&self) -> PieToken {
+        NolePie::token(self)
+    }
+}
+
 /// 组的用户态句柄（与 [`HolePie`] 同款：只持一枚号，资源实体在内核）。
 ///
 /// 方法集 = 这一个对象上能做的三件事（`unseal` 是**构造**，做不成 `&self` 方法）。
@@ -72,14 +97,14 @@ impl TolePie {
         Self { token }
     }
 
-    /// 把一枚孔的一个方向挂进来。
-    pub fn hang(&self, pie: &HolePie, dir: HoleDir) -> EnvResult<()> {
-        crate::env::tole::hang(self.token, pie.token(), dir)
+    /// 把一枚成员的一个方向挂进来。
+    pub fn hang<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        crate::env::tole::hang(self.token, mate.token(), dir)
     }
 
     /// 摘掉一格。
-    pub fn unhang(&self, pie: &HolePie, dir: HoleDir) -> EnvResult<()> {
-        crate::env::tole::unhang(self.token, pie.token(), dir)
+    pub fn unhang<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        crate::env::tole::unhang(self.token, mate.token(), dir)
     }
 
     /// 等到任意一格有事。

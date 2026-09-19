@@ -30,20 +30,20 @@ fn denied() -> erra::Error<EnvError> {
 /// 读写族：对端对这份资源**能做什么**。
 ///
 /// 与 [`Policy`] 分成两个类型是刻意的：合成一个 `Permission` 时，调用方可以把
-/// `CAGE` 写进"读写"该在的位置，而两族相乘的十六格里有一格是空集、一格只有形态。
+/// 形态位写进"读写"该在的位置，而两族相乘的十六格里有一格是空集、一格只有形态。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Access(Permission);
 
 impl Access {
     /// 什么都没有：两族都取 `NONE` 才是空集（那种授予 `ship` 就地拒）。
     pub const NONE: Access = Access(Permission::empty());
-    /// 观察 / 接收 / 重读。
-    pub const READ: Access = Access(Permission::READ);
-    /// 修改 / 投递 / 写入。
-    pub const WRITE: Access = Access(Permission::WRITE);
-    /// 读与写。**只为常量表而设**：`|` 不是 `const fn`，而需求单（`programs::needs`）
+    /// 取用 / 观察 / 接收（`pull` / `hush` / `open` / `Await`）。
+    pub const FETCH: Access = Access(Permission::FETCH);
+    /// 投递 / 修改（`push` / `ring` / `hang`）。
+    pub const STORE: Access = Access(Permission::STORE);
+    /// 取与投。**只为常量表而设**：`|` 不是 `const fn`，而需求单（`programs::needs`）
     /// 是编译期常量表——两族各一位，合成走这里。
-    pub const READ_WRITE: Access = Access(Permission::READ.union(Permission::WRITE));
+    pub const FETCH_STORE: Access = Access(Permission::FETCH.union(Permission::STORE));
 
     /// 位（交给 `Accord` 的那一半）。
     pub const fn bits(self) -> Permission {
@@ -61,17 +61,18 @@ impl BitOr for Access {
 
 /// 传递族：这一枚**能怎么流动**。
 ///
-/// 四个取值读作四件事：
+/// 四格读作四件事——**后两格只有独占资源上才成立**（源枚带 `ONLY` 才给得出）：
 ///
 /// ```text
 /// NONE         分  双方各持一份，对端不能再授出
 /// VEST         借  双方各持一份，对端可以再授出
-/// CAGE         让  我失去这一枚，对端不能再授出
-/// VEST | CAGE  给  我失去这一枚，对端可以再授出（粘性：它再授出的必带 CAGE）
+/// ONLY         让  我失去这一枚，对端不能再授出
+/// VEST | ONLY  给  我失去这一枚，对端可以再授出
 /// ```
 ///
-/// **`READ` 只可转移、不可复制**：授出 `READ` 不带 `CAGE` ⇒ 源枚仍可用 ⇒ 两个读者。
-/// 单读者因此不是内核机制，是位表的推论。
+/// 这四格里，**只有 `VEST` 一位是调用方的选择**：形态（复制还是移交）由**源枚**定
+/// ——`ONLY` 是资源事实，`Accord` 校验 `subset` 与源枚一致，不一致 ⇒ 拒。
+/// 所以想复制一枚独占资源，在这里就发不出去。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Policy(Permission);
 
@@ -80,8 +81,8 @@ impl Policy {
     pub const NONE: Policy = Policy(Permission::empty());
     /// 对端可以再授出。
     pub const VEST: Policy = Policy(Permission::VEST);
-    /// 一次交出：源枚在交出期间不可用。
-    pub const CAGE: Policy = Policy(Permission::CAGE);
+    /// 与源枚一致：独占资源的授出（这一次是**移交**，源枚在子枚存活期间不可用）。
+    pub const ONLY: Policy = Policy(Permission::ONLY);
 
     /// 位（交给 `Accord` 的那一半）。
     pub const fn bits(self) -> Permission {
@@ -165,7 +166,7 @@ impl Port {
     ///
     /// 做三件事：问出对端是谁（`Reserve(entry).owner`——`vestor` 会被转发改写，
     /// `owner` 不会）、自建**回信孔**（记号 `back`：与 `guest` 借出去的那一枚同用途）、
-    /// 把它的 `WRITE` 授给对端。回信孔只要 `WRITE`：对端往它推，读的一侧是我。
+    /// 把它的 `STORE` 授给对端。回信孔只要 `STORE`：对端往它推，读的一侧是我。
     ///
     /// # Errors
     /// - `Denied` — 入口门闩不在表里 / 无开辟者 / 授不出去
@@ -175,7 +176,7 @@ impl Port {
             return Err(denied());
         }
         let reply = HolePie::unseal("back")?;
-        let to = ship(&reply, peer, Access::WRITE, Policy::NONE)?;
+        let to = ship(&reply, peer, Access::STORE, Policy::NONE)?;
         Ok(Port {
             to,
             entry: HolePie::from_token(entry.token()),

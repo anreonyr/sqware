@@ -28,7 +28,7 @@ pub(super) fn mint(mark: Name) -> Result<PieToken, ()> {
 /// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对——看上去像"板坏了"。
 pub(super) fn ship(hole: PieToken, peer: TaskId) -> Result<PieToken, ()> {
     let pie = mail::HolePie::from_token(hole);
-    port::ship(&pie, peer, Access::READ | Access::WRITE, Policy::VEST)
+    port::ship(&pie, peer, Access::FETCH | Access::STORE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| ())
 }

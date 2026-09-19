@@ -134,7 +134,7 @@ impl PoleMeta {
 
     /// 把物理块借映进 `space`，并登记视图（键 = per-pie token）。
     ///
-    /// `flags` 由 caller 算（envcall 入口按 pie subset 决定：READ→R，READ\|WRITE→R\|W），
+    /// `flags` 由 caller 算（envcall 入口按 pie subset 决定：FETCH→R，FETCH\|STORE→R\|W），
     /// 本函数不读权限——cap ⊆ 页表的语义靠 caller 守。
     ///
     /// `token` 唯一标识调用方 pie；同 token 复用既有视图（幂等 map），异 token
