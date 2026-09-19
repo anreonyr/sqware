@@ -586,6 +586,10 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
         }
     };
     // 叫醒转发目标（组站点）：**不许落空**——站点不在就替它建一枚只带信标的（见 `knock`）。
+    //
+    // 这一跳的扇出**按组种类**分：今天所有组都是**独占**的（只剩一条等待位）⇒ 摘链头
+    // 一人即可；**共享组**要多一步"放行全链"（人人复核快照）。两种组的定义与"为什么共享
+    // 必须配广播"见 `work::mail::tole` 头注（未实现的待办也在那里）。
     for (id, life) in fwd.entries() {
         knock(WakeKey::Tole { id }, life);
     }
