@@ -36,6 +36,22 @@ const FEED = 'sleep 5; printf "ping\n"; sleep 3; printf "exit\n"; sleep 15'
 def main [--repeat: int = 3] {
     let root = ($env.FILE_PWD | path dirname)
     let elf = ($root | path join "target/riscv64gc-unknown-none-elf/release/sqware")
+
+    # ── 门要**自己造**它要测的那颗 ELF（照实记：这里曾经是个坑）──
+    #
+    # `kernel/build.rs` 按 `SQWARE_ROOT` 决定 initrd 里装哪一颗引导镜像（默认 `root`），
+    # 而这颗 ELF 是**上一次构建**留下的：刚跑过 `stress.sh`（`SQWARE_ROOT=rig`）或
+    # `load.sh`（`=load`）之后直接开门，门测的就是台子，不是它要测的那颗内核
+    # （实测：`load.sh` 之后直接跑门 ⇒ 3/3 全红，日志里是 `load: calib …`）。
+    # 门因此**不自足**：它的红绿取决于谁最后构建过。修法是把 `SQWARE_ROOT` **显式写回
+    # 默认值 `root`** 再构建一次，让门与"上一颗 ELF 是谁"彻底无关。
+    let b = (with-env { SQWARE_ROOT: "root" } {
+        ^cargo build --release --manifest-path ($root | path join "Cargo.toml")
+    } | complete)
+    if $b.exit_code != 0 {
+        print $"examine: cargo build --release 失败：($b.stderr | str join "\n")"
+        exit 2
+    }
     if not ($elf | path exists) {
         print $"examine: 找不到 ($elf) —— 先 `cargo build --release`"
         exit 2
