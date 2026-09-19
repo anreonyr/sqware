@@ -110,11 +110,62 @@
 //! `lost` 照实记：icount 关、环境对齐后 1640 次试验里 `lost=1~2`（≈0.1%，与账上那条
 //! 残差 ~1/320 同量级）——**台子现在量到的才是它本来要量的那一格**。
 
-//! 两处要小心：① 每轮台主表里会多留**对端那一枚孔的句柄**（`Quay::shut` 只放本端那一枚）——
-//! 一轮一枚，实测 392 轮不敷用的情况没出现，但它是线性增长；② Doom 之后的判决窗口
-//! （300 ms + 1 s 宽限）**长于**台面，故 `late`/`lost` 一出现就说明"点名落在尾巴上"真的中过。
-//! ③ **甲案落地后 `YIELD_AFTER_PUSH` 默认关** ⇒ `d` 重新是"相对它上台那一刻"的精确偏移
-//! （那一拍原本把时序交给了调度器）；要复现甲案前的对照就把开关置 `true`（见上面的读数表）。
+//! # 照实记：曾疑"每轮漏一枚对端孔的句柄" —— **已量，推翻**
+//!
+//! 原先在这里写着：每轮台主表里会多留**对端那一枚孔的句柄**（理由是 `Quay::shut` 只
+//! `drop_local` 本端那一枚），一轮一枚、线性增长。**这条是读代码读出来的，不是量出来的**
+//! ——量过之后它不成立。
+//!
+//! 量具（临时，量完即撤）：台主**自己的权限表**有几枚门闩——`Collect` 是唯一的枚举手段
+//! （越界答 `token 0`），故从 0 数到第一枚 0。一轮记四个时点（`QEMU_SMP=1`、icount 关、
+//! `n=328 now=328 waited=0 late=0 lost=0`）：
+//!
+//! | 时点 | 表内枚数 | 表里多出来的是谁 |
+//! |---|---|---|
+//! | 空载基线，以及每轮开头 `a` | 20 / 20 | — |
+//! | `seat` + 认下对端交来的那一枚之后 `b` | 22 | 本端 seat 的那一枚 + 对端那一枚 |
+//! | 判决拿到 `Reaped`、**`shut` 之前** `c` | **21** | 只剩本端那枚 ⇒ 对端那枚**已经没了** |
+//! | `quay.shut()` 之后 `d` | **20** | 回到基线 |
+//!
+//! **328/328 轮四个数一模一样**，整场基线 20 不动 ⇒ 没有泄漏。收掉对端那一枚的不是 `shut`
+//! （它只放本端那一枚），是**退场级联**：那一枚是受害者 `ship` 出来的副本，`sire` 指着
+//! 受害者表里那一枚（见 `gate::accord` 头注"派生边只写在这里"），而受害者在 `reap` 里
+//! **先跑退出钩子再置 `Reaped`**（`messenger::reap`：`hooked(...)` 在 `transform(Reaped)`
+//! 之前；钩子里的 `gate::doom` 沿 `sire` 反查全世界、`cull` 摘子树）⇒ 台主拿到 `Reaped`
+//! 那一刻它已经不在我表里了。**结论：对端那一枚不是台主该放的账**，也不需要"放对端"这个
+//! 动作（协议那三对 `open↔shut` / `seat↔unseat` / `claim` 就是全部）。
+//!
+//! # 照实记：台子真正的缺口在**错路**上（读到 → 已补）
+//!
+//! 查台子用法时读到：`trial()` 里 `register` / `spawn` / `seat` / `start` / `post` /
+//! `handshake unpaired` 那几条早退**都不收场**（不 `oust`、不 `shut`）⇒ 真出错时会留下一个
+//! 没起或没杀的受害者域、外加本端那枚孔。实测各场**没有一条 `trial failed`**（早退没发生过），
+//! 故它一直只是"错路上的账"。
+//!
+//! **已补，做法是"收场与正文分开"**：一轮一个 `trial`（造 → **不论成没成都收场**）套一段
+//! `body`（正文），另把 `LINK` 这条编译期常量提到 `main` 里解一次。于是正文里任何一条早退
+//! 都经过同一段收场；剩下不收场的只有 `register` / `spawn`——那时域还没造出来（表是纯值），
+//! 没什么可收。**只动台子，不碰内核面。**
+//!
+//! # 照实记：`lost` 那一格查清了（**是真的；缝在内核的"空闲不扫"**）
+//!
+//! 这台子量到的 `lost` 一度读成"他杀没生效"。逐笔取证之后它是**真的**（不是台子读错）：
+//! 点名正好落在受害者**离核那一瞬**（`d_us ≈ 20 ms`）时，杀令**记上了却没有落点**——
+//! IPI 投到的那颗核上已经不是它（或它正走在"已离核、未入链"那道缝里、`running_hart`
+//! 答 `None` ⇒ 根本没投），而受害者随后挂起、此后再没有"自己的时刻"。本该兜底的**扫单位
+//! 又只在定时器陷阱里跑**，而整机闲着时定时器到期**不进陷阱**（空闲核的 WFI 是 `SIE=0`
+//! 的，到期在 `fetch` 里直接处理）⇒ 那一笔杀令 1.3 s 无人兑现。
+//!
+//! **粗扫抓不到这一格**：它只在"离核那一瞬"出现，500 µs 一档、每档 8 次时一轮 0~1 次。
+//! 把 20 ms 附近按 25 µs 细分（[`EDGE_SWEEP`]，默认关）之后它成了每轮 0~3 次的可测事件
+//! ——修前 **11 次 / 8 轮**、修后 **0 次 / 8 轮**（同一台子、同一条命）。
+//! 根因、修法与逐笔读数写在 `kernel/src/work/room/messenger/doom.rs` 的照实记里
+//! （修的是 `scheduler/core/fetch` 的空闲取活：那条路上也跑扫单位）。
+//!
+//! 另一处要小心：Doom 之后的判决窗口（300 ms + 1 s 宽限）**长于**台面，故 `late`/`lost`
+//! 一出现就说明"点名落在尾巴上"真的中过。**甲案落地后 `YIELD_AFTER_PUSH` 默认关** ⇒ `d`
+//! 重新是"相对它上台那一刻"的精确偏移（那一拍原本把时序交给了调度器）；要复现甲案前的对照
+//! 就把开关置 `true`（见上面的读数表）。
 //!
 //! 顺带量到一条与本题相邻的事实（**已被 `timer::beat_until` 修掉，此处照实留档**）：当时
 //! **`Park{millis}` 在"有任务的核"上按拍兑现**（定时器在 trap 里固定重武装 100 ms；只有核进
@@ -178,6 +229,15 @@ const HANDSHAKE_MS: usize = 1_000;
 /// 甲案前的那组对照读数（同一台子、同一命令，只差这一拍）。
 const YIELD_AFTER_PUSH: bool = false;
 
+/// 边界细扫开关（**默认关**，见 `main` 里那一段）：把 `d_us` 在 20 ms 附近按 25 µs
+/// 细分再扫一遍。开着一轮 656 次试验。
+///
+/// 留着的理由：`lost`（"他杀不生效"）**只在"点名落在受害者离核那一瞬"那一格出现**，
+/// 粗扫（500 µs 一档、每档 8 次）抓不到几个样本；细扫之后它变成每轮 0~3 次的可测事件
+/// ——修那条缝之前/之后的对照读数（11 次 / 8 轮 → 0 次 / 8 轮）就是这么攒的。
+/// 根因、修法与照实记见 `kernel/.../messenger/doom.rs`。
+const EDGE_SWEEP: bool = false;
+
 /// 本域给它起的服务名（每轮一张**新表**，故名字可以复用）。
 const ROW: &str = "victim";
 
@@ -218,6 +278,11 @@ extern "C" fn main() -> ! {
     let Ok(name) = Name::new(ROW) else {
         die("rig: bad row name")
     };
+    // 握手那条泊位的名字：**编译期常量**，只解一次——解不出来就不必跑（它也曾经是每轮
+    // 一条早退的来路，见 `trial` 头注）。
+    let Ok(link) = Name::new(LINK) else {
+        die("rig: bad link name")
+    };
 
     // 校准：本机"一毫秒 = 多少轮空转"。受害者那边量的是同一把尺。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
@@ -230,7 +295,7 @@ extern "C" fn main() -> ! {
     while d_us <= DELAY_MAX_US {
         let mut t = Tally::default();
         for _ in 0..PER_DELAY {
-            match trial(name, elf, kind, d_us, iters_per_ms) {
+            match trial(name, link, elf, kind, d_us, iters_per_ms) {
                 Ok(verdict) => {
                     t.n += 1;
                     match verdict {
@@ -258,6 +323,45 @@ extern "C" fn main() -> ! {
         total.lost += t.lost;
         d_us += DELAY_STEP_US;
     }
+
+    // ── 边界细扫（**诊断开关，默认关**）──────────────────────────
+    //
+    // 为什么留着它：`他杀偶发不生效`（点名落在受害者**离核那一瞬**）那一格只在
+    // `d_us ≈ 20 ms` 出现——粗扫一档 8 轮抓不到几个样本。把 20 ms 附近按 25 µs 细分
+    // 之后，它从"每 2~3 轮一次"变成"每轮 0~3 次"（修前 11 次 / 8 轮的读数就是这么
+    // 攒出来的；根因与修法见 `kernel/.../messenger/doom.rs` 的照实记）。
+    // 开着它一轮 656 次试验（粗扫 328 + 细扫 328），故**默认关**。
+    let mut b_us = if EDGE_SWEEP { 19_500usize } else { 20_600 };
+    while b_us <= 20_500 {
+        let mut t = Tally::default();
+        for _ in 0..PER_DELAY {
+            match trial(name, link, elf, kind, b_us, iters_per_ms) {
+                Ok(v) => {
+                    t.n += 1;
+                    match v {
+                        Verdict::Now => t.now += 1,
+                        Verdict::Waited => t.waited += 1,
+                        Verdict::Late => t.late += 1,
+                        Verdict::Lost => t.lost += 1,
+                    }
+                }
+                Err(why) => {
+                    say(&format!("rig: edge d_us={b_us} trial failed: {why}"));
+                    break;
+                }
+            }
+        }
+        say(&format!(
+            "rig: edge d_us={b_us} n={} now={} waited={} late={} lost={}",
+            t.n, t.now, t.waited, t.late, t.lost
+        ));
+        total.n += t.n;
+        total.now += t.now;
+        total.waited += t.waited;
+        total.late += t.late;
+        total.lost += t.lost;
+        b_us += 25;
+    }
     say(&format!(
         "rig: total n={} now={} waited={} late={} lost={}",
         total.n, total.now, total.waited, total.late, total.lost
@@ -278,8 +382,16 @@ enum Verdict {
 }
 
 /// 造一个受害者、放行、空转 `delay` 轮、杀、判、放下。
+///
+/// **收场与正文分开**：`trial` 只管"造 + 收"，一轮的正文在 [`body`]。这样造不出来的早退
+/// （`seat` / `start` / `no pier` / `handshake unpaired` / `post`）**也照样收场**——否则它们
+/// 会留下一个没起或没杀的受害者域，外加本端那枚孔。（照实记：这条缺口是查台子用法时读到的，
+/// 实测各场没有一条 `trial failed`；现在收场不看这一轮成没成。）
+///
+/// 只有 `register` / `spawn` 两条仍不收场：那时域还没造出来（表是纯值），没什么可收。
 fn trial(
     name: Name,
+    link: Name,
     elf: &'static [u8],
     kind: env::ProgramKind,
     delay_us: usize,
@@ -294,18 +406,37 @@ fn trial(
     let rep = service::spawn(&mut table, name, elf, kind).map_err(|_| "spawn")?;
     // **rig A：握手**。台主这一侧先 `seat` 一条（顺带给 `claim` 一个"额度"），放行时把码头
     // 交给受害者；它**自校准完**才把自己的孔交回来（`seat`）⇒ 台主 `claim` 到它就等于
-    // **"它已经挂好了、可以被唤醒了"**。`start` 丢弃 `ready` 的 bool，故下面显式查 `paired`。
-    let Ok(link) = Name::new(LINK) else {
-        return Err("bad link name");
-    };
+    // **"它已经挂好了、可以被唤醒了"**。`start` 丢弃 `ready` 的 bool，故正文里显式查 `paired`。
     let mut quay = Quay::open(rep);
+    let verdict = body(name, delay_us, iters_per_ms, &mut table, &mut quay, link);
+
+    // ── 收场（**不论这一轮成没成**）────────────────────────
+    // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。
+    if let Some(Slot::Live { team, .. }) = table.find(name).map(|s| s.slot) {
+        let _ = unit::oust(team);
+    }
+    // 本端那一枚孔随码头放下。对端交上来的那一枚不归我：受害者在 `reap` 里先跑退出钩子
+    // （能力级联），台主拿到 `Reaped` 时它已经不在我表里了——**已量，见头注①**。
+    quay.shut();
+    verdict
+}
+
+/// 一轮的正文：起码头之后到判决那一段（**早退也不收场**——收场归 [`trial`]）。
+fn body(
+    name: Name,
+    delay_us: usize,
+    iters_per_ms: usize,
+    table: &mut Table,
+    quay: &mut Quay,
+    link: Name,
+) -> Result<Verdict, &'static str> {
     quay.seat(link).map_err(|_| "seat")?;
     service::start(
-        &mut table,
+        table,
         name,
-        rep,
+        quay.peer(),
         &[],
-        Some(&mut quay),
+        Some(quay),
         &[link],
         HANDSHAKE_MS,
     )
@@ -331,25 +462,16 @@ fn trial(
     tick::spin_iters(delay_us.saturating_mul(iters_per_ms) / 1_000);
 
     // 杀（域粒度收令）+ 判：判决只认非阻塞那一问（见 `service::until`）。
-    let _ = service::stop(&mut table, name);
-    let verdict = match service::until(&table, name, MS) {
+    let _ = service::stop(table, name);
+    Ok(match service::until(table, name, MS) {
         Ok(Reaped::Now) => Verdict::Now,
         Ok(Reaped::Waited) => Verdict::Waited,
         // 判定窗口内没结论 ⇒ 再看一眼宽限：迟到 vs 没了。
-        _ => match service::until(&table, name, LATE_MS) {
+        _ => match service::until(table, name, LATE_MS) {
             Ok(Reaped::Now) | Ok(Reaped::Waited) => Verdict::Late,
             _ => Verdict::Lost,
         },
-    };
-
-    // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。
-    if let Some(Slot::Live { team, .. }) = table.find(name).map(|s| s.slot) {
-        let _ = unit::oust(team);
-    }
-    // 本端那一枚孔随码头放下。**对端交上来的那一枚留在本端表里**（`Quay::shut` 只放本端
-    // 那一枚）——一轮一枚；够不够用由跑完的读数说话（见头注照实记①）。
-    quay.shut();
-    Ok(verdict)
+    })
 }
 
 /// 清单里按名字取镜像（台主只认这一条）。
