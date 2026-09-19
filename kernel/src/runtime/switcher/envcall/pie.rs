@@ -132,8 +132,10 @@ fn find(token: usize) -> Result<AnyPie, GateError> {
 /// 锚只有**独占资源**（源枚带 `ONLY`）的授出才写（见 `gate::accord`），故这道闸
 /// 只在独占资源上生效——共享资源没有锚，永远放行。
 ///
-/// 挂点：数据面四个动词 + `Accord` 的源枚。**不挂**查询与收场（`Reserve`/`Collect`/
-/// `Release`/`Revoke`/`Narrow`/`Seal`）。
+/// 挂点（八个动词、七个调用点）：数据轴五个（`Push`/`Pull`/`Wait`/`Hush`/`Ring`——后两个
+/// 共用 `with_bell` 那一处）、Pole 的两个（`open` 借映 / `shut` 撤映）、`Accord` 的**源枚**。
+/// **不挂**查询与收场（`Reserve`/`Collect`/`Release`/`Revoke`/`Narrow`/`Seal`）；三个
+/// `Unseal*` 也没有源枚可查——它们造的是新的一枚。
 ///
 /// 锁序：核对要摸**别人**的表（L3），故必须**在放开本任务 `pies` 之后**调用；本函数
 /// 自己逐任务取放，绝不嵌套。

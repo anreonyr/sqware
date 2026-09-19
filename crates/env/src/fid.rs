@@ -11,12 +11,12 @@
 //! `slot/pack/unpack` 只依赖 `Wire`——sbi 未来可复用同一 derive。
 //!
 //! 分类按**操作的归属轴**一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2,
-//! Chrono=4, Mail=5, Control=6, **Pie=7**。命名与调度词族（conductor）、
-//! `runtime::chrono` 域及用户侧 `runtime::env` 同词。
+//! Chrono=4, Mail=5, Control=6, **Pie=7**, Debug=8, **Tole=9**。命名与调度词族
+//! （conductor）、`runtime::chrono` 域及用户侧 `runtime::env` 同词。
 //!
 //! **class 3（原 `IO`：`Put`/`Get`）已删**：设备不再是
 //! 内核的事——域持门闩、自己读写寄存器，控制台是服务。号段空着不补：**判别号是声明
-//! 顺序**，把 4..7 挪下来只会在 ABI 里制造一次无意义的位移。空号即"这条路上没有
+//! 顺序**，把 4..9 挪下来只会在 ABI 里制造一次无意义的位移。空号即"这条路上没有
 //! 内核的入口"，这比复用更准确。
 //!
 //! **5 与 7 的分界是两条正交的轴**（不是按资源种类分，也不是按新旧分）：
@@ -31,8 +31,8 @@
 //! 改由父任务 `Accord` 下发）。
 //!
 //! **未知调用号的运行时契约（ABI 的一部分，不是实现细节）**：`a7` 由调用方
-//! 完全控制，故它是**输入**而非可信标识。未声明的 class / index（未分配的 class 8、
-//! 越界索引）一律 decoded 为 `Decode::BadSlot`，
+//! 完全控制，故它是**输入**而非可信标识。未声明的 class / index（今天只有 class 3
+//! 与 ≥ 10 的号段是空的、以及越界索引）一律 decoded 为 `Decode::BadSlot`，
 //! 内核侧按**被拒绝**处理：写回负码（`GateError::Denied`）并**续跑调用方**——
 //! 与其它用户引起的异常同走故障隔离，绝不 panic（否则用户态一发 `ebreak`
 //! 即可停摆整机）。想主动终止有正规原语 `RoomCall::Reap { reason }`——它退的是
@@ -163,8 +163,8 @@ pub enum ProgramKind {
 /// （`Sire`/`HeirCount`/`Heir`）。
 ///
 /// **index 是声明顺序判别号**（见文件头）。原 `SpawnTask` 并入 `Spawn` 之后，本枚举
-/// 的 index `0..=8` **连续无空号**：`Build` 落在 5、`Hatch`/`Join` 在 6/7、`Oust` 在 8
-/// ——注释占不住槽位，没有变体就没有号。
+/// 的 index `0..=9` **连续无空号**：`Build` 落在 5、`Hatch`/`Fall`/`Join` 在 6/7/8、
+/// `Oust` 在 9——注释占不住槽位，没有变体就没有号。
 #[derive(Envcall)]
 #[call(class = 1)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -366,7 +366,10 @@ pub enum MailCall {
     /// 上下文，不可伪造），与消息同槽交付。身份不必再从报文里猜。
     ///
     /// `max == 0` = **只报长度、不动槽**：收方据此备出装得下的缓冲，槽因此总能被
-    /// 排空。装不下（`len > max`）答 `-1 Denied` 且槽原样。
+    /// 排空。装不下（`len > max`）答 `-1 Denied` 且槽原样；**空槽（没有可取之事）答
+    /// `-3 Busy`**——`max == 0` 的探长也一样，因为"没有可取之事"不是错误而是状态。
+    /// 这一格正是 [`MailCall::Wait`] 那句"绝不返 `Busy`"的对照面：同一个"未就绪"，
+    /// 非阻塞的 `Pull` 用 `Busy` 答、阻塞的 `Wait` 用 `false` 答。
     #[ret((usize, TaskId))]
     Pull {
         token: PieToken,
@@ -531,8 +534,8 @@ pub enum PieCall {
 /// 因此这一格恒在；"生产不该用它"是纪律，不是编译期的事（与 `ControlCall::Backtrace`
 /// 同一个折中）。
 ///
-/// class 8 是空的号段（原 class 3 `IO` 删掉后没补，见本文件头注）：判别号是声明顺序，
-/// 新域落在 8 上不多占任何既有号。
+/// 本类落在 **8** 上：class 3（原 `IO`）退役后那个号一直空着，而 8 也没人占——
+/// 判别号是声明顺序，取哪个空号都一样，不占任何既有号。
 #[derive(Envcall)]
 #[call(class = 8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -593,7 +596,8 @@ pub enum ControlCall {
 /// （与 Hole/Pole/Nole 同款：号只在持有它的那张表里有意义），资源实体见
 /// `work::mail::tole`。组是**独占资源**（`ONLY`）：只剩一条等待位，授出即移交。
 ///
-/// 号段取 9：class 3（原 `IO`）退役后一直空着，不去复活它（见本文件头注的号段口径）。
+/// 号段取 9：class 3（原 `IO`）退役后一直空着、也不去复活它（号段口径见文件头）；
+/// 8 已归调试面，故本类顺延到 9——判别号是声明顺序，取号不改任何既有号。
 #[derive(Envcall)]
 #[call(class = 9)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

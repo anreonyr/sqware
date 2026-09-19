@@ -130,7 +130,9 @@ fn push(
 /// 移出槽、锁外拷回用户。
 ///
 /// a0 = 实际长度、a1 = 发送者 task id；发送者是内核在 Push 时盖的章，不可伪造。
-/// `max` = 收方缓冲容量：装不下（`len > max`）答 `Denied` 且**槽一个字节都不动**。
+/// `max` = 收方缓冲容量：装不下（`len > max`）答 `Denied` 且**槽一个字节都不动**；
+/// **空槽答 `Busy`**（没有可取之事，`max == 0` 的探长也一样）——与 `wait` 的
+/// "未就绪答 `false`"是非阻塞/阻塞两面，见 `fid.rs` 的 `Pull` 契约。
 fn pull(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
