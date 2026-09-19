@@ -12,11 +12,15 @@
 //!
 //! ```text
 //!   A 相对：loop { t0 = clock(); sleep(period); t1 = clock(); drift += (t1-t0) - period; }
-//!   B 绝对：next = clock(); loop { next += period; sleep_until(next); drift += clock() - next; }
+//!   B 绝对：next = clock() + period; loop { next += period; sleep_until(next); drift += clock() - next; }
 //! ```
 //!
-//! 判据只有一个：**A 的累计漂移随轮数线性涨（每轮把"上一轮的迟到"吃进下一轮），
-//! B 的累计漂移由**最后一轮的迟到**封顶**（迟到不被累积）。
+//! 判据只有一条：**A 的累计漂移随轮数线性涨**（每轮把"上一轮的迟到"吃进下一轮）；而
+//! **B 的迟到不累积**——它每一轮的目标都是绝对时刻，晚到只落在那一轮里。
+//!
+//! **照实记**：旧注写的是"B 的累计漂移由**最后一轮的迟到**封顶"——那一句对打印出来的
+//! `drift_sum_us` **不成立**（两个轴都是 `sum += drift`，逐轮累加）；"不累积"真正读的是
+//! **`span_ms` 与 `n × period` 的差**（B 的差 ≈ 初值多出的那一个 `period` + 最后一轮迟到）。
 //!
 //! # 怎么跑它
 //!
@@ -75,7 +79,8 @@ extern "C" fn main() -> ! {
         span_rel / 1_000_000
     ));
 
-    // ── B 绝对：到点是绝对的 ⇒ 只有最后一轮的迟到留在账上 ──
+    // ── B 绝对：到点是绝对的 ⇒ 迟到**不落进下一轮**（`drift_sum_us` 仍是逐轮累加，
+    //    真正体现"不累积"的是 `span_ms`：它 ≈ n × period + 初值那一个 period + 末轮迟到）──
     let start = now_ns();
     let mut sum: i64 = 0;
     let mut max: i64 = i64::MIN;

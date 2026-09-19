@@ -296,7 +296,8 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
 /// 封印资源（generic）：**只有资源开辟者**可做（`owner` 是 Meta 字段，O(1) 判定）。
 ///
 /// 只置死 + 唤醒等待者，**不摘表项**——持有者仍须 `Release` 收尾。故 `Release`
-/// 是唯一不过存活闸的操作（否则封印即泄漏表项）。
+/// 与 `Shut` 是**仅有的两处**不过存活闸的操作（理由各异：否则封印即泄漏表项 /
+/// 封印之后自己那张 PTE 撤不掉）。
 fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let me = current().running_task().ok_or(GateError::Denied)?;
@@ -468,8 +469,9 @@ fn reserve(
 
 /// 自释：放下我持有的一份（含其全部后代；Pole 同步撤映射）。
 ///
-/// **唯一不判存活的操作**：`Seal` 不摘表项，若本操作也判存活，封印后的表项就
-/// 永远摘不掉。语义 =「你总得能放下手里的东西」。不需要任何权限位。
+/// **不判存活**——与 `shut` 并列，是**仅有的两处例外**：`Seal` 不摘表项，若本操作
+/// 也判存活，封印后的表项就永远摘不掉。语义 =「你总得能放下手里的东西」。不需要
+/// 任何权限位。
 fn release(frame: &mut TrapContext, token: usize) -> Outcome {
     let r = match current().running_task() {
         Some(task) => gate::release(&task, token, &gate::snap()).map(|_| 0),

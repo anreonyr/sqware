@@ -7,11 +7,14 @@
 //!
 //! **目前有四份正文**：[`system`]、[`principal`]、[`session`] 与 [`board`]。
 //!
-//! 四份里**两份还缺 Server**（[`system`] 与 [`principal`]），另两份**已经跑在机器上**。
+//! 落地程度不一样：**三份已经有代码跑在机器上**（[`system`]、[`session`]、[`board`]），
+//! [`principal`] 只有正文、它的 Server 还没起步。
 //!
 //! - [`system`] = **服务编排**（systemd 那一层）：系统由哪些 Service 构成、怎么起停监督。
 //!   它的载体是内核 ABI（`env::fid` 的 `UnitCall` 整类 + `RoomCall` 的 `Reap`/`Doom`），
-//!   那份载体叙述整体降级为该模块的**附录**——载体不等于协议。
+//!   那份载体叙述整体降级为该模块的**附录**——载体不等于协议。**它的 Server 就是 root
+//!   域**（第一版：同一份代码、同一个域）：`system/service.rs` 是那张服务表，
+//!   `programs/.../supervisor/{root,service}.rs` 是它落地的那一台。
 //! - [`principal`] = **策略身份**："这个请求代表谁"。Server 未落地，但地基已经能看见
 //!   （两条不可伪造的身份凭证）。
 //! - [`session`] = **会话建立**："两个陌生实体怎么建起一条会话"。身份由内核盖、地址靠
@@ -19,12 +22,13 @@
 //! - [`board`] = **命名寻址**："这个名字此刻指向哪个入口"。一块公示板、一枚牌子、
 //!   三个动作；判据只有一条（那枚入口是你亲手交给持板者的），**不存预约表**。
 //!
-//! [`session`] 与 [`board`] 是**已经有代码的两份**：前者是 `system` 起服务时等就绪的那
-//! 一步，后者是 `programs` 里一位客人一枚的**待客线程** + 装配者域里共享的那一份板
+//! [`session`] 是 `system` 起服务时等就绪的那一步；[`board`] 是 `programs` 里那**一枚**
+//! 板线程（招待所有客人，见该模块"板为什么就一枚线程"）+ 装配者域里共享的那一份板
 //! （服务怎么问、装配者怎么把它接上，都写在 `supervisor/board.rs`）。
 //!
-//! 前两份缺的**是同一个东西的两面**：Server 没有地址可寻。编排者要找到自己的 Service、
-//! 客户端要找到 Principal Server，靠的都是 [`board`]。
+//! [`principal`] 缺的是**地址**：客户端要找到 Principal Server，靠的是 [`board`]。
+//! （[`system`] 那一侧的编排者今天不用板查名字——它按静态装配单起服务（`service::PLAN`）、
+//! 拿板当"收尸的道"；板是运行期那一步，接在**客户端与服务**之间。）
 //!
 //! # 地板（可用，不可改）
 //!
@@ -32,6 +36,7 @@
 //! env      ABI：内核与用户态都要的线格式与调用骨架（EnvCall / wire / Permission）
 //! runtime  机制：把 ABI 落成可用的运行时
 //!            mail   投 / 等（Hole / Pole / Nole；单槽、变长、无 mtu）
+//!            tole   组（把几枚可等地挂到一处：孔的一个方向 / 一枚铃）
 //!            pie    授出 / 收下（ship / Accord / Reserve / release）
 //!            unit   任务与域（build / spawn / hatch / join）
 //!            room   域的生死（park / reap / exit / doom）

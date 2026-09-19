@@ -462,12 +462,18 @@ pub enum PieCall {
     /// 关闩：从当前 task.space 解除该 token 的映射（幂等）。
     ///
     /// 仅对 Pole 成立；权利：需 R。
+    ///
+    /// **不过存活闸**——与 [`PieCall::Release`] 并列，是仅有的两处例外：撤的是**调用方
+    /// 自己那张 PTE**，资源已封印也得撤得掉（否则"封印后借入映射撤不掉"）。故已封印的
+    /// token 在这里答 `Ok`，不答 `Dead`。
     #[ret(())]
     Shut { token: PieToken },
     /// 封印资源（generic on Hole/Pole）：token。**只有资源开辟者**可做。
     ///
     /// 只置死 + 唤醒等待者，**不摘表项**——持有者仍须 `Release` 收尾（否则泄漏）。
-    /// 故本操作之后 `Release` 仍须可用：`Release` 是唯一不过存活闸的操作。
+    /// 故本操作之后 `Release` 仍须可用：**`Release` 与 [`PieCall::Shut`] 是仅有的两处
+    /// 不过存活闸的操作**（理由各异：一个是"总得能放下手里的东西"，一个是"撤的是
+    /// 调用方自己那张 PTE"）。
     #[ret(())]
     Seal { token: PieToken },
     /// 转授子集给其他 Task：src_token + dst_id + subset → 新 pie 的 token（撤销句柄）。
@@ -522,8 +528,8 @@ pub enum PieCall {
     },
     /// 放下：自释本任务的一份门闩（含其全部后代；Pole 同步 unmap）。表里无此 token → -1。
     ///
-    /// **唯一不判存活的操作**：`Seal` 不摘表项，若本操作也判存活，封印后的表项
-    /// 就永远摘不掉。语义 =「你总得能放下手里的东西」。
+    /// **不判存活**——与 [`PieCall::Shut`] 并列，是仅有的两处例外：`Seal` 不摘表项，
+    /// 若本操作也判存活，封印后的表项就永远摘不掉。语义 =「你总得能放下手里的东西」。
     #[ret(())]
     Release { token: PieToken },
 }
@@ -549,7 +555,12 @@ pub enum PieCall {
 pub enum DebugCall {
     /// 把域里的一段字节写进调试控制台（SBI DBCN，**不经过任何服务**）。
     ///
-    /// `len == 0` / 区间未映射 / `len > DBCN_MAX` ⇒ 负值；返**写出去的字节数**。
+    /// `len == 0` / 区间未映射 ⇒ 负值；返**写出去的字节数**。
+    ///
+    /// **`len > DBCN_MAX` 是截断，不是错误**：内核那一步是 `len.min(DBCN_MAX)`
+    /// （`envcall/debug.rs::put`），只搬前 `DBCN_MAX` 字节，返回值即搬走的长度——
+    /// 要"一个字都不少"就调用方自己分段。**与 [`DebugCall::Get`] 的"多出即拒"
+    /// 不同形**，这一格是照实测改的（旧注写"⇒ 负值"，与内核不符）。
     #[ret(usize)]
     Put { buf: VirtAddr, len: usize },
     /// 从调试控制台读一段字节写进域：内核一块栈暂存 → `Dbcn::ConsoleRead` → 写回域。

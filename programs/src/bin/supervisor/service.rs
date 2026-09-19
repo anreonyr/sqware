@@ -12,7 +12,7 @@
 //! 想加第三个服务：在 [`PLAN`] 里加一行，**`main` 一个字都不用改**。
 
 use env::Name;
-use env::wire::manifest::{self, MAX_PROGRAMS};
+use env::wire::manifest;
 use protocol::session::Quay;
 use protocol::system::service::{self, Announce, Grant, Table};
 use runtime::core::port::ship;
@@ -137,10 +137,14 @@ pub fn assemble(
     boot: &Root,
     lanes: &[Option<env::PieToken>],
 ) -> Result<Name, Died> {
-    // 清单条数不能超过表的格数（`Table::CAP` 与清单上限同值，编译期常量断言过）。
-    if boot.programs().size_hint().0 > MAX_PROGRAMS {
-        return Err(E_MANIFEST);
-    }
+    // 清单条数与表的格数**同值**（`Table::CAP` = `env::wire::manifest::MAX_PROGRAMS` = 16），
+    // 但这里不需要再查一遍：超限清单在 `Root::take` 就被 `manifest::Entries::new` 挡掉了，
+    // 到不了本函数。
+    //
+    // **照实记**：旧注写的是"清单条数不能超过表的格数……编译期常量断言过"，还跟着一个
+    // `boot.programs().size_hint().0 > MAX_PROGRAMS` 的守卫——**两条都不成立**：全树没有
+    // 那条 `const` 断言（grep `MAX_PROGRAMS` 只命中 manifest 与本文件），而 `Entries` 只
+    // 实现了 `next`、没覆写 `size_hint` ⇒ 它恒返 `(0, None)`，那个守卫永不成立。
 
     // 一、登记：先立账（名字 + 怎么算起来），身子要等真的起了才挂上。
     for p in PLAN {

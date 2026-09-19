@@ -136,8 +136,15 @@ pub(crate) fn kick(hart: usize, task: Arc<Task>) {
 // 源：「已回收」与「从未分配」靠它分开（`muster` 为 `None` ⇔ 从未入册）。除名会把这两态
 // 重新糊在一起（A2 已在站点表上教过一遍：删掉承载事实的东西，就只剩墓碑）。
 //
-// 表只增不删 ⇒ 名册随运行增长；条目是 `Weak`，不钉住对象本体（`ArcInner` 的归还等
+// 名册条目**不是只增的**：除名（`delist`）不实现，但 [`prune_dead`] 每回收一具躯壳清一次
+// （`messenger::bury` 的调用点），把 `strong_count == 0` 的死条目摘掉 ⇒ 名册装的是**在世
+// 任务**，不是"开机以来产生过的任务"；条目是 `Weak`，不钉住对象本体（`ArcInner` 的归还等
 // 关机时的 [`rip`] 一次性放掉全部条目）。锁 = Level::L3，只经下面三个函数触及。
+//
+// **照实记（后补）**：这里原先写的是"表只增不删 ⇒ 名册随运行增长"——`prune_dead` 落地之后那句
+// 不成立了；而这次清理**恰恰**磨掉上面那句话的一角：一个**已经回收干净**的 id 被 prune 之后，
+// `muster` 对它答 `None`，与"从未分配"同形 —— `Join` 因此由 `Ok(true)` 降级成 `Denied`
+// （`crates/runtime` 的 `doom` 与 `programs/.../stress/group.rs` 两处都照实记了这条边界）。
 
 static ROSTER: OnceLock<SpinLock<HashMap<usize, TaskWeak>>> = OnceLock::new();
 

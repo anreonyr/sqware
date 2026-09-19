@@ -69,7 +69,8 @@ impl Sign {
 /// 四个变体各对应**一个不同的下一步**：换个名字 / 摘掉旧牌 / 找持板者要入口 / 扩容。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Fail {
-    /// 板上没这一枚（也没空位放它）。
+    /// 板上没这一枚：查不到（[`Board::lookup`]）/ 那一位已经不在了
+    /// （[`Board::unregister`]）。**"板满"不是这一格**——那是 [`Fail::Full`]。
     Unknown,
     /// 这一枚已经有人挂着了（摘牌或换名，别抢）。
     Taken,

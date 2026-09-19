@@ -36,7 +36,9 @@
 //!
 //! 每步一行：`again: r=<轮> step=<步> state=<State> slot=<live/none> ready=<Up/Gone/Pending>`
 //! 末行汇总：`again: total restarts=<成功重起的次数> failures=<被拒的次数>`
-//! 判据：**`restarts=2`（第 2、3 轮各一次）且 `failures=0`**，并且末轮 `slot=live`。
+//! 判据：**`restarts=4` 且 `failures=0`**，并且末轮 `slot=live`。**4 是两段相加**：
+//! 三轮回用里第 2、3 轮各一次（2 次），加收尾那段有界预算的 2 次（`budget_tries=2`）——
+//! 同一个计数器记两段，故汇总行报的是 4 不是 2（旧注只写"第 2、3 轮各一次"，与打印不符）。
 //!
 //! # 收尾那一格：预算与放弃（协议 §六 的 Server 侧配方）
 //!
@@ -134,7 +136,8 @@ extern "C" fn main() -> ! {
             say(&format!("again: r={round} step=state NEVERSTARTED (bug)"));
         }
 
-        // 让旧实例退场：stop（下令）→ until（等收干净）→ Oust（父方放下那一格）。
+        // 让旧实例退场：stop（下令）→ watch（等它收干净、并把 `Dead` 落地）→ Oust（父方
+        // 放下那一格）。**这里等的是 `watch` 不是 `until`**：`until` 只读，状态归 `watch` 写。
         if service::stop(&mut table, name).is_err() {
             failures += 1;
             say(&format!("again: r={round} step=stop REFUSED"));

@@ -3,7 +3,7 @@ name = "programs"
 version.workspace = true
 edition.workspace = true
 
-# 镜像里的三个程序：freestanding、无 std、无 main crt。链接在 IMAGE_BASE
+# 镜像里的各程序（今天十五个）：freestanding、无 std、无 main crt。链接在 IMAGE_BASE
 # (0x10000)、静态 ET_EXEC；由内核 loader 按绝对 VMA 装载，_start 即 e_entry。
 # 内核 `build.rs::INITRD_BINS` 按 bin 名打进 initrd（**唯一**声明特权级处）。
 [lib]

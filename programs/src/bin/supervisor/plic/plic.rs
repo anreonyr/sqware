@@ -128,7 +128,11 @@ impl Plic {
         self.read(CONTEXT + CONTEXT_STRIDE * self.ctx as usize + CLAIM)
     }
 
-    /// 结一条线（把线号写回去）。**不是重武装点**：`complete` 不会把中断带回来。
+    /// 结一条线（把线号写回去）。本域不在这一格动优先级/使能位——但**电平仍挂着的源
+    /// 会立刻再报**：网关（`enable` 位还在）照旧把它送来，这正是 [`Plic::disable`] 必须
+    /// 挡在 `complete` **之前**的原因。旧注写的是"`complete` 不会把中断带回来"——照实记：
+    /// 那句话与 `disable` 那一注互相矛盾，而本域按"不静音就 claim → complete → 立刻又报"
+    /// 这条读法写（见那两注）。
     pub fn complete(&self, line: u32) {
         self.write(CONTEXT + CONTEXT_STRIDE * self.ctx as usize + CLAIM, line);
     }

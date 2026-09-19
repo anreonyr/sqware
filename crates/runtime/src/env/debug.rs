@@ -7,7 +7,11 @@
 
 use env::{DBCN_MAX, DebugCall, DebugCallRet, EnvResult};
 
-/// 把一个字符串写进调试控制台（`> DBCN_MAX` ⇒ `Denied`，**不截断**）。
+/// 把一个字符串写进调试控制台（`len == 0` ⇒ `Denied`；返**写出去的字节数**）。
+///
+/// **超 [`DBCN_MAX`] 的那一段被内核截断**（本层照 `s.len()` 递上去，不预截）：
+/// 一件长东西只印出前 `DBCN_MAX` 字节，返回值就是那个数。**这不是错误**——与
+/// [`get`] 的"多出即拒"不同形（两处的实测读法见 `env::fid::DebugCall`）。
 pub fn put(s: &str) -> EnvResult<usize> {
     let bytes = s.as_bytes();
     let call = DebugCall::Put {

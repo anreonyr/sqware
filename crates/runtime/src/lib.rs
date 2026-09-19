@@ -3,8 +3,9 @@
 //!
 //! 两半分居两个模块（判据是"薄/厚"，不是行数）：
 //!   `env`  —— envcall 转发（薄）：一次调用一个函数，零业务逻辑；
-//!   `core` —— 组合与封装（厚）：把 `env` 的原语组装成可用的机制——三种资源各一件
-//!             封装（Hole → `port`、Pole → `dock`、Nole → `bell`），加任务本地原语。
+//!   `core` —— 组合与封装（厚）：把 `env` 的原语组装成可用的机制——四种资源各一件
+//!             封装（Hole → `port`、Pole → `dock`、Nole → `bell`、Tole → `tole`），
+//!             加任务本地原语（`heap` / `lock` / `tls` / `unit`）。
 //!
 //! 与 `crates/env` 的分工是**依赖方向**：`env` crate 是内核与用户态都要的 ABI
 //! 线格式，本 crate 只跑在镜像侧。

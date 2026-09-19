@@ -217,7 +217,7 @@ pub fn revoke(dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
 ///
 /// **唯一的枚举手段**：`protocol::startup::moor()` 靠它发现「父域授给我的那枚门闩」。
 /// 已知句柄求事实用 [`reserve`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
-/// 与 `UnitCall::SelfId` 越界哨兵一致。
+/// 与 `UnitCall::SelfId` 的"无上下文也是 0"是**同一条哨兵口径**（0 = 这一格没有答案）。
 pub fn collect(index: usize) -> EnvResult<(PieToken, env::Permission, TaskId)> {
     let r = PieCall::Collect { index }.call()?;
     match r {
@@ -234,7 +234,8 @@ pub fn collect(index: usize) -> EnvResult<(PieToken, env::Permission, TaskId)> {
 ///
 /// 记号收在**栈上 [`NAME_LEN`](env::NAME_LEN) 字节**的缓冲里（不分配），由同一次调用
 /// 拷出（"要么全取、要么一个字节都不动"）。装不下、这一枚不是孔（记号只长在孔上）、
-/// 或表里没有它 ⇒ `Denied`。
+/// 或表里没有它 ⇒ `Denied`；**资源已封印 ⇒ `Dead`(-2)**——`owner` 那一格带存活闸
+/// （见 `env::fid` 的 `Reserve`），故"这一枚答不出"有两个码，别只接 `Denied`。
 pub fn reserve(token: PieToken) -> EnvResult<(TaskId, TaskId, Name)> {
     let mut raw = [0u8; env::NAME_LEN];
     let r = PieCall::Reserve {
@@ -285,7 +286,8 @@ pub trait AnyPie {
     /// 封印资源（**只有资源开辟者**可做）。
     ///
     /// 只置死并唤醒等待者，**不摘表项**——持有者仍须 [`release`](AnyPie::release)
-    /// 收尾，否则表项泄漏。故 `release` 是唯一不过存活闸的操作。
+    /// 收尾，否则表项泄漏。故 `release` 与 [`PolePie::shut`] 是**仅有的两处**不过存活闸
+    /// 的操作（ABI 那一侧的两条注记同时写着这一条：`env::fid` 的 `Release` / `Shut`）。
     fn seal(&self) -> EnvResult<()>;
 
     /// 收窄本 pie 权限（就地改写，单调；`subset` ⊆ 当前权限）。
@@ -383,7 +385,7 @@ impl HolePie {
         pull_len(self.token)
     }
 
-    /// 有界 pull：槽空则最多等 `millis` 毫秒；仍无消息 → `Err(Busy)`（码 -3）。    ///
+    /// 有界 pull：槽空则最多等 `millis` 毫秒；仍无消息 → `Err(Busy)`（码 -3）。
     /// 用于「等对端回复」这类必须有上界的往返：无限等会把协议错误（回复被丢弃、
     /// 对端漏回）变成不可诊断的挂起。**超时后该 hole 不再"干净"**——迟到的回复
     /// 仍可能落进槽里，使下一次 pull 取到上一条；调用方应弃用该会话。
@@ -487,7 +489,8 @@ impl AnyPie for HolePie {
     }
 }
 
-/// Nole 门闩用户态句柄——**三种句柄里唯一没有任何方法的那种**。
+/// Nole 门闩用户态句柄——**三种句柄里唯一没有自己那一套动词的那种**（它只有构造与
+/// [`AnyPie`] 那一套；`HolePie` 多数据面、`PolePie` 多页视图）。
 ///
 /// 它没有 `push`/`pull`（那是 Hole 的数据面）、没有 `open`/`shut`（那是 Pole 的
 /// 页视图）。它能做的只有 [`AnyPie`] 那一套（`accord`/`narrow`/`revoke`/`release`
