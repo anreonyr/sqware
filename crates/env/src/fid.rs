@@ -478,6 +478,13 @@ pub enum PieCall {
         subset: crate::permission::Permission,
     },
     /// 收窄本 pie 权限（就地改写；Pole 同步降页表）：token + subset。
+    ///
+    /// 错误：token 不在本任务表 → `-1 Denied`；**已封印 → `-2 Dead`**；空子集 / 非单调 /
+    /// 撤 `ONLY`（形态位是资源事实）→ `-1 Denied`；Pole 的页表降不下去 → `-1 Denied`。
+    ///
+    /// **死活先于覆盖子集**：一个已封印的 token **不因为"子集越权"这个判据先撞上就换成
+    /// `-1`**——同样的 token 在别的动词上也答 `-2`，答案不该按动词变。这条不是本动词的
+    /// 纪律，是共用的取用判据（`gate::locate` + `gate::accede`）的一部分。
     #[ret(())]
     Narrow {
         token: PieToken,

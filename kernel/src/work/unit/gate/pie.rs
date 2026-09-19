@@ -20,6 +20,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use alloc::sync::Arc;
 
 use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
+use crate::work::unit::task::Task;
 
 // ── 权限位（bitflags）──
 //
@@ -251,6 +252,46 @@ pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<usiz
         token: next_pie_token(),
         meta,
     }
+}
+
+// ── 按 token 取用：判据顺序的唯一一处 ──
+
+/// 在**这张表**里按 token 定位那一枚——**不过任何闸**（死活、权限都不看）。
+///
+/// 用它的是"要那一枚**本身**"的动词：`Release`（放下）、`Reserve`（查来历）、`Accord`
+/// 的源枚（它自己的四道闸在 [`super::accord`] 里）。其余动词要 [`accede`]。
+///
+/// **表里没有 → `Denied`**（不是我的东西）。整枚在放锁前克隆出来：最后一份 clone 落在
+/// 锁外 drop，`Meta::drop`（唤醒等待者 / 撤映射 / 还帧）是 L3 或更外层的活，绝不能压在
+/// `pies` 锁上。
+pub(crate) fn locate(task: &Arc<Task>, token: usize) -> Result<AnyPie, GateError> {
+    let pies = task.pies.lock();
+    pies.iter()
+        .find(|p| p.token() == token)
+        .cloned()
+        .ok_or(GateError::Denied)
+}
+
+/// 定位 + 过两关：**已封印 → `Dead`；权不够 → `Denied`**。
+///
+/// # 顺序只写在这一处，全轴共用
+///
+/// 表里没有 → `Denied`；已封印 → `Dead`；权不够 → `Denied`。**同一个已封印的 token 不因
+/// 动词不同换一个答案**——`Narrow` 曾经把"覆盖子集"排在死活之前，于是「已封印 + 越权
+/// 子集」报 `Denied` 而不是 `Dead`：一个声明过的码在重叠那一格上取不到。判据下沉到这里
+/// 之后，那种"按动词分叉"在结构上就写不出来了（要分叉得再手写一遍查找）。
+///
+/// **不查「被关住」**（第三维，见 `envcall::pie::usable`）：它要摸**别人**的表，必须在
+/// 放开本任务 `pies` 之后判——故调用方拿到这里返回的抄件、放锁之后再问它。
+pub(crate) fn accede(task: &Arc<Task>, token: usize, need: Need) -> Result<AnyPie, GateError> {
+    let pie = locate(task, token)?;
+    if !pie.alive() {
+        return Err(GateError::Dead);
+    }
+    if !pie.allows(need) {
+        return Err(GateError::Denied);
+    }
+    Ok(pie)
 }
 
 // ── GateError ──

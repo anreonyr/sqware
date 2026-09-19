@@ -36,7 +36,7 @@ mod release;
 mod revoke;
 mod snap;
 
-pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, new_pie};
+pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, accede, locate, new_pie};
 // `form_ok` 只有 `accord`（走 `super::pie::` 直呼）与 `health::permit` 两条读者，而后者
 // 在 `debug_assertions` / `framework` 之外不编 ⇒ 无条件重导出会在 release 档报
 // `unused import`。门控它，而不是让 release 背一条假警告。

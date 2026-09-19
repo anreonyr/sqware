@@ -20,7 +20,7 @@ use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
 use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::current;
-use crate::work::unit::gate::{AnyPie, GateError, Need};
+use crate::work::unit::gate::{self, AnyPie, GateError, Need};
 
 use super::pie::usable;
 use crate::work::unit::task::TaskIdent;
@@ -64,24 +64,18 @@ fn push(
     msg: KVirt,
     len: usize,
 ) -> Outcome {
-    let task = current().running_task();
-    let me = task.as_ref().map(|t| t.ident.id).unwrap_or(0);
-    // ① 锁内：定位 + 判权 + 判存活 ⇒ 抄件。"被关住"要核对**别人**的表（L3），
-    //    故必须在放开本任务 `pies` 之后判（L3 绝不嵌套）。
-    let found = task.and_then(|t| {
-        let pies = t.pies.lock();
-        let pie = pies.iter().find(|p| p.token() == token)?.clone();
-        if !pie.allows(Need::Store) {
-            return Some(Err(GateError::Denied));
-        }
-        if !pie.alive() {
-            return Some(Err(GateError::Dead));
-        }
-        Some(Ok(pie))
-    });
+    let me = current().running_task().map(|t| t.ident.id).unwrap_or(0);
+    // ① 取用判据在核心（`gate::accede`）：表里没有 → `Denied`；已封印 → `Dead`；权不够 →
+    //    `Denied`——**顺序只有那一处**，与权柄轴同一个答案。
+    //    "被关住"仍住本层：它要核对**别人**的表（L3），故必须在放开本任务 `pies` 之后判。
+    let found = current()
+        .running_task()
+        .ok_or(GateError::Denied)
+        .and_then(|t| gate::accede(&t, token, Need::Store));
     let r = match found {
+        Err(e) => Err(e),
         // ② 锁外：第四道判据（陈旧锚在此自愈）。
-        Some(Ok(pie)) => match usable(&pie) {
+        Ok(pie) => match usable(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => {
@@ -113,8 +107,6 @@ fn push(
                 _ => Err(GateError::Denied),
             },
         },
-        Some(Err(e)) => Err(e),
-        None => Err(GateError::Denied),
     };
     frame.gpr.set_x(
         Gprs::A0,
@@ -140,22 +132,15 @@ fn pull(
     buf: KVirt,
     max: usize,
 ) -> Outcome {
-    let task = current().running_task();
-    // ① 锁内：定位 + 判权 + 判存活 ⇒ 抄件（"被关住"在锁外判，见 Push）。
-    let found = task.and_then(|t| {
-        let pies = t.pies.lock();
-        let pie = pies.iter().find(|p| p.token() == token)?.clone();
-        if !pie.allows(Need::Fetch) {
-            return Some(Err(GateError::Denied));
-        }
-        if !pie.alive() {
-            return Some(Err(GateError::Dead));
-        }
-        Some(Ok(pie))
-    });
+    // ① 取用判据在核心（`gate::accede`）；"被关住"在锁外判（见 `push` 的同两段）。
+    let found = current()
+        .running_task()
+        .ok_or(GateError::Denied)
+        .and_then(|t| gate::accede(&t, token, Need::Fetch));
     let r = match found {
+        Err(e) => Err(e),
         // ② 锁外：第四道判据（陈旧锚在此自愈）。
-        Some(Ok(pie)) => match usable(&pie) {
+        Ok(pie) => match usable(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => {
@@ -182,8 +167,6 @@ fn pull(
                 _ => Err(GateError::Denied),
             },
         },
-        Some(Err(e)) => Err(e),
-        None => Err(GateError::Denied),
     };
     // 正路径：a0 = 实际长度、a1 = 发送者 task id；错误路径 a0 = 负码。
     match r {
@@ -222,20 +205,14 @@ fn wait_dir(
         HoleDir::Pull => Need::Fetch,
         HoleDir::Push => Need::Store,
     };
-    let found = current().running_task().and_then(|t| {
-        let pies = t.pies.lock();
-        let pie = pies.iter().find(|p| p.token() == token)?.clone();
-        if !pie.allows(need) {
-            return Some(Err(GateError::Denied));
-        }
-        if !pie.alive() {
-            return Some(Err(GateError::Dead));
-        }
-        Some(Ok(pie))
-    });
+    let found = current()
+        .running_task()
+        .ok_or(GateError::Denied)
+        .and_then(|t| gate::accede(&t, token, need));
     // ② 锁外：第四道判据（陈旧锚在此自愈）。
     let resolved = match found {
-        Some(Ok(pie)) => match usable(&pie) {
+        Err(e) => Err(e),
+        Ok(pie) => match usable(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => Ok(Ready::Hole(p.meta().clone())),
@@ -244,8 +221,6 @@ fn wait_dir(
                 _ => Err(GateError::Denied),
             },
         },
-        Some(Err(e)) => Err(e),
-        None => Err(GateError::Denied),
     };
     let dur = if millis == usize::MAX {
         Duration::MAX
@@ -322,27 +297,19 @@ fn with_bell(
     need: Need,
     op: fn(&mail::nole::NoleMeta) -> Result<(), GateError>,
 ) -> Result<(), GateError> {
-    let found = current().running_task().and_then(|t| {
-        let pies = t.pies.lock();
-        let pie = pies.iter().find(|p| p.token() == token)?.clone();
-        if !pie.allows(need) {
-            return Some(Err(GateError::Denied));
-        }
-        if !pie.alive() {
-            return Some(Err(GateError::Dead));
-        }
-        Some(Ok(pie))
-    });
+    let found = current()
+        .running_task()
+        .ok_or(GateError::Denied)
+        .and_then(|t| gate::accede(&t, token, need));
     match found {
+        Err(e) => Err(e),
         // ② 锁外：第四道判据（陈旧锚在此自愈）。
-        Some(Ok(pie)) => match usable(&pie) {
+        Ok(pie) => match usable(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Nole(p) => op(p.meta()),
                 _ => Err(GateError::Denied),
             },
         },
-        Some(Err(e)) => Err(e),
-        None => Err(GateError::Denied),
     }
 }

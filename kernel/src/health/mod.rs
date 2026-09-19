@@ -95,6 +95,13 @@ crate::test! {
 
 #[cfg(feature = "framework")]
 crate::test! {
+    "permit: 取用顺序（死活先于权限：同一个已封印 token 不因动词换答案）" {
+        permit::order();
+    }
+}
+
+#[cfg(feature = "framework")]
+crate::test! {
     "shell: 内核原语外壳（任务/团队/空间）造-收闭环" {
         shell::accept();
     }
@@ -116,5 +123,6 @@ pub fn run() {
         permit::form();
         permit::members();
         permit::fanout();
+        permit::order();
     }
 }

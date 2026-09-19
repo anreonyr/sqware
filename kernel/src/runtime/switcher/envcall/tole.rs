@@ -93,9 +93,10 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
 /// `ONLY` 只在**等待位**上成立，改池子不算用它（见模块头）。
 fn hang(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> Outcome {
     let r = (|| -> Result<(), GateError> {
-        let latch = resolve(group, Need::Store)?;
+        let task = current().running_task().ok_or(GateError::Denied)?;
+        let latch = gate::accede(&task, group, Need::Store)?;
         let meta = rack(&latch)?;
-        let latch = resolve(member, Need::Fetch)?;
+        let latch = gate::accede(&task, member, Need::Fetch)?;
         usable(&latch)?;
         let (mate, life) = mate(&latch, dir)?;
         tole::hang(&meta, mate, life)
@@ -107,9 +108,10 @@ fn hang(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> O
 /// 摘一格：组要 `STORE`，成员要 `FETCH`；**两道「被关住」都不查**（收场动作）。
 fn unhang(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> Outcome {
     let r = (|| -> Result<(), GateError> {
-        let latch = resolve(group, Need::Store)?;
+        let task = current().running_task().ok_or(GateError::Denied)?;
+        let latch = gate::accede(&task, group, Need::Store)?;
         let meta = rack(&latch)?;
-        let latch = resolve(member, Need::Fetch)?;
+        let latch = gate::accede(&task, member, Need::Fetch)?;
         let (mate, _life) = mate(&latch, dir)?;
         tole::unhang(&meta, mate)
     })();
@@ -125,19 +127,26 @@ fn unhang(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) ->
 /// **组的「被关住」在这里查**：等待位是 `ONLY` 保护的那一件事——我把等待权交出去了，
 /// 就轮到对方等，我在交出期间不问。
 ///
-/// **解析失败三种各有其名**（与数据轴 `mail::wait_dir` 同款，不折平）：表里没有 / 权不够
-/// → `Denied`；已封印 → `Dead`；等待权已被我过户（`usable`）→ `Caged`。折成一个码会把
-/// "组没了，换策略"与"号拿错了，修 bug"压成同一件——而这两件事的处置正好相反。
+/// **解析失败三种各有其名**（不折平）：表里没有 / 权不够 → `Denied`；已封印 → `Dead`；
+/// 等待权已被我过户（`usable`）→ `Caged`。折成一个码会把"组没了，换策略"与"号拿错了，
+/// 修 bug"压成同一件——而这两件事的处置正好相反。顺序本身由共用的 `gate::accede` 决定
+/// （死活先于权限），本处只补第三维。
 fn await_(frame: &mut TrapContext, group: usize, millis: usize) -> Outcome {
     let dur = if millis == usize::MAX {
         Duration::MAX
     } else {
         Duration::from_millis(millis as u64)
     };
-    let meta = match resolve(group, Need::Fetch).and_then(|latch| {
-        usable(&latch)?;
-        rack(&latch)
-    }) {
+    // 当前任务那份 `Arc` 是**临时量**：第一段闭包里就落地（跨挂起不得持强引用）。
+    let looked = current()
+        .running_task()
+        .ok_or(GateError::Denied)
+        .and_then(|task| gate::accede(&task, group, Need::Fetch))
+        .and_then(|latch| {
+            usable(&latch)?;
+            rack(&latch)
+        });
+    let meta = match looked {
         Ok(meta) => meta,
         Err(e) => {
             answer_void(frame, Err(e));
@@ -208,24 +217,10 @@ fn ready(meta: &ToleMeta) -> Option<(usize, HoleDir)> {
     None
 }
 
-/// 表里取一枚门闩：表内 → 权限 → 存活（与权柄轴的 `pie::resolve` 同形；锁在这里放开，
-/// 调用方随后可在**锁外**查「被关住」）。
-fn resolve(token: usize, need: Need) -> Result<AnyPie, GateError> {
-    let task = current().running_task().ok_or(GateError::Denied)?;
-    let pies = task.pies.lock();
-    let pie = pies
-        .iter()
-        .find(|p| p.token() == token)
-        .cloned()
-        .ok_or(GateError::Denied)?;
-    if !pie.allows(need) {
-        return Err(GateError::Denied);
-    }
-    if !pie.alive() {
-        return Err(GateError::Dead);
-    }
-    Ok(pie)
-}
+// 按 token 取用（表内 → 死活 → 权限）已下沉到核心 `gate::accede`，本轴不再自己写一份：
+// 那一份曾经把"权限"排在"死活"之前，于是同一个已封印的组/成员在两个轴上答不同的码。
+// 本层只剩三件事：把当前任务递进去、`usable`（"被关住"第三维，必须在放锁后判）、
+// `rack`/`mate`（认成组、认成成员）。
 
 /// 认成一枚架子（组）：不是组 ⇒ `Denied`。
 fn rack(pie: &AnyPie) -> Result<Arc<ToleMeta>, GateError> {

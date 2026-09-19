@@ -3,21 +3,24 @@
 //! 与数据轴（`envcall/mail.rs`）的分界：本模块**不搬运载荷**——传的是许可，
 //! 内容走 class 5。三条轴（资源 / 持有 / 转授）见 `crates/env/src/fid.rs`。
 //!
-//! # 两个查询原语
+//! # 按 token 取用：判据在核心，只有一处
 //!
-//! 「**按 token 在我表里取得，顺带判存活与判权**」这件事在此立为 [`resolve`]（判权）
-//! 与 [`find`]（只判存在）。目标顺序是：表里没有 → `Denied`；已封印 → `Dead`；
-//! 权不够 → `Denied`——同一个已封印的 token 不该按动词报出两个答案。
+//! 两条路住在 `work::unit::gate::pie`，本轴与数据轴**共用**：
 //!
-//! ⚠ **今日只有 `open`/`shut`/`reserve` 三个动词走它**：`accord` 走 `find` +
-//! [`usable`] + 核心自带的四道闸（"交出"要在调用方表内写锚）；`seal`/`narrow`/
-//! `collect` 仍手写查找，`Release` 完全不走 `find`（它必须能在封印后仍摘表项）。
-//! 于是那条现象**没有消失、只是缩小了**：`narrow` 把 `covers` 排在 `alive` 之前，
-//! 故「已封印 + 越权子集」报 `Denied` 而非 `Dead`。把余下几处也收进
-//! `resolve`/`find` 是**独立一步**。
+//! - [`gate::locate`]：**只定位**（表里没有 → `Denied`），死活与权限都不看。给"要那一枚
+//!   **本身**"的动词：`Release`（封印后仍须能收尾）、`Reserve`（`owner` 随资源不变）、
+//!   `Accord` 的源枚（它自己的四道闸在 `gate::accord`）、`Shut`（撤的是自己那张 PTE，
+//!   封印也得撤得掉）、`Seal` 与 `Narrow` 的头一步。
+//! - [`gate::accede`]：**定位 + 死活 + 权限**（已封印 → `Dead`；权不够 → `Denied`）。
+//!   给真要用它的动词：`Open` 与数据轴的 `Push`/`Pull`/`Wait`/`Hush`/`Ring`。
 //!
-//! 显式不过闸的两个：`Release`（自释必须能在封印后收尾，否则表项永远摘不掉）、
-//! `Reserve`（`owner` 是资源来历，封印不使它消失）——它们走 [`find`]。
+//! **顺序只有 `accede` 那一份**——同一个已封印的 token 不因动词换一个答案。这条曾是每个
+//! 动词各自的纪律，于是漏成了两处：`Narrow` 把"覆盖子集"排在死活之前，数据轴四个动词把
+//! "权限"排在死活之前（同一个已封印的 token，在两个轴、五个动词上答 `Denied`，别处答
+//! `Dead`）。判据下沉之后，**"按动词分叉"在结构上写不出来了**——要分叉就得再手写一遍查找。
+//!
+//! [`usable`]（"被关住"那一维）仍住本层：它要摸**别人**的表，必须在放开本任务 `pies`
+//! 之后判。故调用点的形状统一是"先 `accede`/`locate` 拿抄件 → 放锁 → 问 `usable`"。
 //!
 //! `ident` 的所有权移交与门面一致；本轴的操作都不换帧（无挂起）。
 
@@ -94,33 +97,11 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), GateError>) {
     }
 }
 
-/// 按 token 在**当前任务**表里取得，判存活、判权。
-///
-/// 三种失败各有其名：表里没有 → `Denied`（不是我的）；已封印 → `Dead`；
-/// 权不够 → `Denied`。克隆出表后再还锁——`Pie` 必须在锁外 drop（最后一份 drop
-/// 会跑 `Meta::drop`，唤醒等待者/撤映射/还帧全是 L3 或更外层的活）。
-fn resolve(token: usize, need: Need) -> Result<AnyPie, GateError> {
-    let pie = find(token)?;
-    if !pie.alive() {
-        return Err(GateError::Dead);
-    }
-    if !pie.allows(need) {
-        return Err(GateError::Denied);
-    }
-    Ok(pie)
-}
-
-/// 只判「这枚在我表里吗」——不过存活闸。
-///
-/// 给 `Release`（封印后仍须能收尾）与 `Reserve`（`owner` 随资源不变）用。
-fn find(token: usize) -> Result<AnyPie, GateError> {
-    let task = current().running_task().ok_or(GateError::Denied)?;
-    let pies = task.pies.lock();
-    pies.iter()
-        .find(|p| p.token() == token)
-        .cloned()
-        .ok_or(GateError::Denied)
-}
+// 按 token 取用的两条路已下沉到核心：`gate::locate`（只定位）与 `gate::accede`
+// （定位 + 死活 + 权限）。**判据顺序只有那一处**，本层只把**当前任务**递进去。
+//
+// 「被关住」闸（[`usable`]）仍住本层：它要摸**别人**的表，必须在放开本任务 `pies` 之后
+// 判。故调用点的形状统一是"先 `accede`/`locate` 拿抄件 → 放锁 → 问 `usable`"。
 
 /// 「被关住」闸——位与存活之外的**第三个判据维度**。
 ///
@@ -261,7 +242,11 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
 /// 开闩：借映 Pole 页进当前任务空间 → `(VA, 这一段多大)`（同 token 幂等复用）。
 /// 仅对 Pole 成立。
 fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
-    let r = match resolve(token, Need::Fetch).and_then(|p| usable(&p).map(|()| p)) {
+    let looked = current()
+        .running_task()
+        .ok_or(GateError::Denied)
+        .and_then(|task| gate::accede(&task, token, Need::Fetch));
+    let r = match looked.and_then(|p| usable(&p).map(|()| p)) {
         Err(e) => Err(e),
         Ok(AnyPie::Pole(p)) => match subset_to_pte(p.permission) {
             Err(e) => Err(e),
@@ -286,13 +271,14 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
 /// 关闩：撤该 token 的映射（幂等）。仅对 Pole 成立。
 ///
 /// **不过存活闸**：撤的是**调用方自己那张 PTE**，资源已封印也得撤得掉——否则
-/// "封印后借入映射撤不掉"。故这里不走 `resolve`
-/// （它含存活闸），只查表 + 判权 + 判「被关住」；`pole::shut` 里同样没有存活闸，
+/// "封印后借入映射撤不掉"。故这里不走 [`gate::accede`]
+/// （它含存活闸），只 `locate` + 判权 + 判「被关住」；`pole::shut` 里同样没有存活闸，
 /// 两处是同一条语义，与 `Release`「你总得能放下手里的东西」对齐。权限要 `R`。
 fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
     let _ = &ident;
     let r = (|| -> Result<usize, GateError> {
-        let pie = find(token)?;
+        let task = current().running_task().ok_or(GateError::Denied)?;
+        let pie = gate::locate(&task, token)?;
         if !pie.allows(Need::Fetch) {
             return Err(GateError::Denied);
         }
@@ -314,11 +300,9 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
 fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let me = current().running_task().ok_or(GateError::Denied)?;
-        let pie = {
-            let pies = me.pies.lock();
-            pies.iter().find(|p| p.token() == token).cloned()
-        }
-        .ok_or(GateError::Denied)?;
+        // `locate` 只定位；**死活先判、再判"是不是我开的"**——与 `accede` 同一条顺序，
+        // 判据本身不同（`Seal` 要的是 `owner`，不是某一位权）。
+        let pie = gate::locate(&me, token)?;
         if !pie.alive() {
             return Err(GateError::Dead);
         }
@@ -346,7 +330,9 @@ fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
 fn accord(frame: &mut TrapContext, src_token: usize, dst_id: usize, subset: Permission) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let caller = current().running_task().ok_or(GateError::Denied)?;
-        let src = find(src_token)?;
+        // 源枚**只定位**：存活/持 `VEST`/覆盖子集/形态一致这四道闸在 `gate::accord` 里
+        // （"交出"要在调用方表内就地写锚，抄件做不到）。
+        let src = gate::locate(&caller, src_token)?;
         usable(&src)?;
         let dst = muster(dst_id).ok_or(GateError::Denied)?;
         gate::accord(&caller, src_token, &dst, subset)
@@ -356,41 +342,25 @@ fn accord(frame: &mut TrapContext, src_token: usize, dst_id: usize, subset: Perm
 }
 
 /// 收窄本 pie 权限（就地改写，单调）：Pole 同步降页表段权限。
+///
+/// **死活先于覆盖子集**（与 [`gate::accede`] 同一条顺序）：已封印的 token 一律答 `Dead`，
+/// 不因"子集越权"这个恰好排在更前的判据换成 `Denied`——同一个 token 的答案不该按动词变。
+/// `Narrow` 本身不要求任何权利位（它只会把权限收小），故这里不用 `accede`，只
+/// `locate` + 判死活。
 fn narrow(frame: &mut TrapContext, token: usize, subset: Permission) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
-        let pole_meta = {
-            let pies = task.pies.lock();
-            let pie = pies
-                .iter()
-                .find(|p| p.token() == token)
-                .ok_or(GateError::Denied)?;
-            if !pie.covers(subset) {
-                return Err(GateError::Denied);
-            }
-            match pie {
-                AnyPie::Hole(p) => {
-                    if !p.meta().alive() {
-                        return Err(GateError::Dead);
-                    }
-                    None
-                }
-                AnyPie::Pole(p) => Some(p.meta().clone()),
-                // Tole 与 Hole / Nole 同款：收窄只改权限位，没有第二步。
-                AnyPie::Tole(p) => {
-                    if !p.meta().alive() {
-                        return Err(GateError::Dead);
-                    }
-                    None
-                }
-                // Nole 无载荷、无页表映射：收窄只改权限位，没有第二步。
-                AnyPie::Nole(p) => {
-                    if !p.meta().alive() {
-                        return Err(GateError::Dead);
-                    }
-                    None
-                }
-            }
+        let pie = gate::locate(&task, token)?;
+        if !pie.alive() {
+            return Err(GateError::Dead);
+        }
+        if !pie.covers(subset) {
+            return Err(GateError::Denied);
+        }
+        // Pole 的第二步（降页表段权限）要在改写权限位**之前**成功；其余三种只有一步。
+        let pole_meta = match &pie {
+            AnyPie::Pole(p) => Some(p.meta().clone()),
+            AnyPie::Hole(_) | AnyPie::Nole(_) | AnyPie::Tole(_) => None,
         };
         if let Some(meta) = pole_meta {
             mail::pole::narrow(&meta, token, subset_to_pte(subset)?)?;
@@ -465,7 +435,10 @@ fn reserve(
     cap: usize,
 ) -> Outcome {
     let r = (|| -> Result<(usize, usize, usize), GateError> {
-        let p = find(token)?;
+        let task = current().running_task().ok_or(GateError::Denied)?;
+        // **只定位**：`owner` 是资源来历，封印不使它消失（见函数头注）——这里刻意不过
+        // 死活闸，`owner()` 自己用 `alive()` 把"已封印 ⇒ `Dead`"答出来。
+        let p = gate::locate(&task, token)?;
         let owner = p.owner().ok_or(GateError::Dead)?;
         let AnyPie::Hole(h) = &p else {
             return Err(GateError::Denied);

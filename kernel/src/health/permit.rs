@@ -18,7 +18,10 @@ use env::{HoleDir, Name};
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
 use crate::work::room::messenger::{FWD_MAX, WakeKey};
-use crate::work::unit::gate::{self, AnyPie, GateError, Permission};
+use crate::work::room::scheduler::core::prune_dead;
+use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission};
+use crate::work::unit::space::SpaceBuilder;
+use crate::work::unit::team::TeamBuilder;
 
 /// 形态位：一致才放行；`ONLY` 不可撤（自持枚与借入枚同罪）。
 pub(super) fn form() {
@@ -179,4 +182,82 @@ pub(super) fn fanout() {
         groups.iter().all(|g| g.cells().len() == 1),
         "被拒的那一次不该动既有组的格子"
     );
+}
+
+/// 取用顺序：**死活先于权限**——同一个已封印的 token 不因动词换一个答案。
+///
+/// 这条此前是每个动词各自的纪律，漏成了两处：`Narrow` 把"覆盖子集"排在死活之前，数据轴
+/// 四个动词把"权限"排在死活之前。判据下沉到 `gate::{locate, accede}` 之后，这里直接问
+/// 那一处：造一个任务、往它表里放两枚门闩——
+///   ① **已封印**且权也不够 ⇒ 必须 `Dead`（两种失败同时在场，看谁先答）；
+///   ② 活着但权不够 ⇒ `Denied`；权够 ⇒ 取到；
+///   ③ `locate` 不过闸：已封印的那一枚也定位得到（`Release` / `Reserve` 靠它活着）。
+///
+/// 收尾照 `shell` 那两步簿记清理——留下的未放行线程会让"所有任务都退场"永远不成立。
+pub(super) fn order() {
+    const USER_BASE: usize = 0x4000_0000;
+    let space = SpaceBuilder::user().build().expect("order: build space");
+    space.with_flush(|inner| inner.dynamic(USER_BASE));
+    let team = TeamBuilder::new(space)
+        .name(Name::new("order-home").expect("order: team name"))
+        .spawn()
+        .expect("order: spawn team");
+    let task = team
+        .task()
+        .name("order-task")
+        .hold()
+        .expect("order: hold task");
+
+    let dead_meta = hole::meta(0, Name::new("sealed").expect("order: mark"));
+    hole::seal(&dead_meta);
+    let dead = gate::new_pie(dead_meta, Permission::FETCH, None);
+    let dead_token = dead.token;
+    let live = gate::new_pie(
+        hole::meta(0, Name::new("live").expect("order: mark")),
+        Permission::FETCH,
+        None,
+    );
+    let live_token = live.token;
+    {
+        let mut pies = task.pies.lock();
+        pies.push(AnyPie::Hole(dead));
+        pies.push(AnyPie::Hole(live));
+    }
+
+    crate::expect!(
+        matches!(
+            gate::accede(&task, dead_token, Need::Store),
+            Err(GateError::Dead)
+        ),
+        "已封印 + 权不够：必须答 Dead（死活先于权限）"
+    );
+    crate::expect!(
+        matches!(
+            gate::accede(&task, live_token, Need::Store),
+            Err(GateError::Denied)
+        ),
+        "活着但权不够：必须答 Denied"
+    );
+    crate::expect!(
+        matches!(gate::accede(&task, live_token, Need::Fetch), Ok(_)),
+        "活着且权够：必须取到"
+    );
+    crate::expect!(
+        matches!(gate::locate(&task, dead_token), Ok(_)),
+        "locate 不过闸：已封印的那一枚也定位得到"
+    );
+    crate::expect!(
+        matches!(
+            gate::locate(&task, live_token + 4_096),
+            Err(GateError::Denied)
+        ),
+        "表里没有：locate 必须答 Denied"
+    );
+
+    let released = team.release_held(&task);
+    crate::expect!(released, "order: 摘出未放行任务失败");
+    team.prune_tasks(&task);
+    drop(task);
+    drop(team);
+    prune_dead();
 }
