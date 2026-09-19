@@ -241,8 +241,9 @@ pub(crate) fn hang(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), 
         cells.push(cell);
     }
     // **锁外**登记转发（站点表是 L3，与 `cells` 不嵌套）：那一枚成员今后一投信，
-    // 也认醒本组。登记不上（站点表/转发格满）⇒ 把刚挂的那一格退回，不留下
-    // "挂着却叫不醒"的半截状态。
+    // 也认醒本组。登记不上 ⇒ 把刚挂的那一格退回，不留下"挂着却叫不醒"的半截状态。
+    // 两种登记不上的原因都落到这一支：站点表备不出容量（真 OoM），或**这枚成员已被
+    // `FWD_MAX` 只组关心**（容量账，见 `messenger::FWD_MAX`——共享组是减压不是加压）。
     if messenger::forward(mate.key(), life, meta.id.0, meta.life()).is_err() {
         let mut cells = meta.cells.lock();
         if let Some(at) = cells.iter().position(|c| c.mate == mate) {

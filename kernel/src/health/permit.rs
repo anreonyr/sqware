@@ -1,19 +1,23 @@
-// 健康检查 · permit —— 权柄代数的**形态位**（`ONLY`）与组的**成员投影**。
+// 健康检查 · permit —— 权柄代数的**形态位**（`ONLY`）、组的**成员投影**与**转发容量**。
 //
-// 两件事在这里被证（都只经公开接口，不碰内部字段）：
+// 三件事在这里被证（都只经公开接口，不碰内部字段）：
 //
 //   · **形态位不是选择，是一致性**（`gate::form_ok`）+ **`ONLY` 不可撤**
 //     （`gate::narrow`，**自持枚也不例外**）——这两条是"独占资源复制不出去"的两条腿；
 //     缺任一条，`ONLY` 就退回成一句空声明（旧 `CAGE` 的读法就是这么退化的）。
 //   · **组的成员投影**：两种成员（孔 / 铃）都挂得上、同成员幂等、快照按存活过滤，
 //     且各自的等待键由**身份**唯一决定（`Mate::key`）——转发登记全靠这条投影。
+//   · **转发容量**：一枚成员键最多被 `FWD_MAX` 个组关心；满了**显式失败并回滚**，
+//     不留"挂着却叫不醒"的半截状态（`permit::fanout`）。
 #![cfg(any(debug_assertions, feature = "framework"))]
+
+use alloc::vec::Vec;
 
 use env::{HoleDir, Name};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
-use crate::work::room::messenger::WakeKey;
+use crate::work::room::messenger::{FWD_MAX, WakeKey};
 use crate::work::unit::gate::{self, AnyPie, GateError, Permission};
 
 /// 形态位：一致才放行；`ONLY` 不可撤（自持枚与借入枚同罪）。
@@ -130,5 +134,49 @@ pub(super) fn members() {
     crate::expect!(
         group.cells().is_empty(),
         "铃没了之后，它那一格不该再出现在快照里"
+    );
+}
+
+/// 转发容量：一枚成员键最多被 `FWD_MAX` 个组关心。
+///
+/// 三条一起证（判据都在**容量边界**上，不在别处）：
+///   ① 前 `FWD_MAX` 个组都挂得上——每个组各占一格转发登记；
+///   ② 第 `FWD_MAX + 1` 个**报 `OoM` 且把刚挂的那一格退回**——不留"挂着却叫不醒"的
+///      半截状态（那条状态的后果是无限等的人睡到天荒地老）；
+///   ③ 那一次被拒**不动既有组的格子**。
+///
+/// 组用 `Vec` **持着**：`ToleMeta::drop` 会撤掉自己那格转发登记，松了手容量就白测。
+/// 「满」是**容量**账（同一枚成员被多少个组关心），不是内存不足——见 `FWD_MAX` 定义处。
+pub(super) fn fanout() {
+    let mark = Name::new("member").expect("mark 装得下");
+    let hole = hole::meta(0, mark);
+    let mate = Mate::Hole(hole.id(), HoleDir::Pull);
+
+    let mut groups = Vec::new();
+    for i in 0..FWD_MAX {
+        let group = tole::meta(0);
+        tole::hang(&group, mate, hole.life()).expect("前 FWD_MAX 个组都该挂得上");
+        crate::expect!(
+            group.cells().len() == 1,
+            "第 {} 个组应当挂上（容量 {}）",
+            i + 1,
+            FWD_MAX
+        );
+        groups.push(group);
+    }
+
+    let extra = tole::meta(0);
+    crate::expect!(
+        matches!(tole::hang(&extra, mate, hole.life()), Err(GateError::OoM)),
+        "转发格满（{} 个组）时挂格应当报 OoM，不静默丢",
+        FWD_MAX
+    );
+    crate::expect!(
+        extra.cells().is_empty(),
+        "挂不上就得把刚挂的那一格退回（池里不留叫不醒的格子）"
+    );
+    crate::expect!(
+        groups.iter().all(|g| g.cells().len() == 1),
+        "被拒的那一次不该动既有组的格子"
     );
 }

@@ -88,6 +88,13 @@ crate::test! {
 
 #[cfg(feature = "framework")]
 crate::test! {
+    "permit: 转发容量（FWD_MAX 个组挂得上，第 FWD_MAX+1 个报 OoM 且回滚）" {
+        permit::fanout();
+    }
+}
+
+#[cfg(feature = "framework")]
+crate::test! {
     "shell: 内核原语外壳（任务/团队/空间）造-收闭环" {
         shell::accept();
     }
@@ -108,5 +115,6 @@ pub fn run() {
         shell::accept();
         permit::form();
         permit::members();
+        permit::fanout();
     }
 }
