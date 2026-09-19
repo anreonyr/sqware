@@ -7,10 +7,12 @@
 # 钉住，再用**一枚稀疏**打点者（`park`）把"到点兑现迟到"量出来。
 #
 # **核数就是这条债的开关**（默认单核，见下面的 `QEMU_SMP`）：
-#   默认（单核）   机制隔离档：没有第二颗核能替全局兑现 ⇒ 债必然现身；实测修复前
-#                  `late_avg=97 ms / late_max=99 ms`，修复后 `0 ms / 125 µs`。
+#   默认（单核）   机制隔离档：没有第二颗核能替全局兑现 ⇒ 债必然现身。实测（icount 关、
+#                  release、n=81）：**修复前 `late_avg=97 ms / late_max=99 ms`；修复后
+#                  `0 / 0 ms`（`late_max_tick=4800` ≈ 480 µs）**，`traps` 两边一致（643）。
 #   QEMU_SMP=4     对照档：有核空闲 ⇒ 债被"空闲核按 due() 武装"盖住（这正是树内量不出来的
-#                  原因）。用法：`QEMU_SMP=4 scripts/load.sh 1 --release`。
+#                  原因）：修复前只剩 `late_max=4 ms`、修复后 `0 ms`（见 load.rs 的表）。
+#                  用法：`QEMU_SMP=4 scripts/load.sh 1 --release`。
 #
 # 判据（三条一起）：
 #   1) `load: spawned rows=…`（负荷真铺开了）；
