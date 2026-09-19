@@ -146,6 +146,17 @@ fn wait() -> Option<Arc<Task>> {
         }
         #[cfg(feature = "framework")]
         crate::runtime::diagnose::ipi::wfi_exit(me, sip::read().ssoft());
+        // **待杀记录的兜底也要在这一条路上跑**（修的正是"他杀偶发不生效"那一格）。
+        //
+        // 定时器到期在空闲核上是**在这里**处理的：WFI 时 SIE=0（见上），到期只把核
+        // 从 WFI 里放出来，**不进陷阱** ⇒ `SupervisorTimer` 那一支（trap.rs）里挂的
+        // `sweep_doomed` 在本轮**一次也不会跑**。而"已离核、未进容器"那一瞬被点名的
+        // 任务恰恰没有 IPI 可投（`running_hart` 答 `None`，见 `doom::doomed_nudge`），
+        // 它唯一的兑现点就是扫单位 ⇒ **整机闲着的时候那笔杀令无人兑现**（实测：目标
+        // 1.3 s 没收，`until` 两次都答 `Unsettled`；机器一忙起来（下一次陷阱）当场收掉）。
+        //
+        // 代价：一次 `PENDING` 原子读（`sweep_doomed` 第一行就是它），空表时到此为止。
+        crate::work::room::messenger::sweep_doomed();
         // timer 到期分派由 messenger 处理（票根 → 键 → 站点，一路）
         if messenger::redeem() {
             break;
