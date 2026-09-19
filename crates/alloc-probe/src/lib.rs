@@ -15,15 +15,15 @@
 //! 内核侧的对应判据是框架档的用例（`health/{pagetable,spare,stress}.rs`），两边不共享代码，
 //! 只共享同一批不变量。
 //!
-//! # 判据分四层（见 README）
+//! # 判据分三层 + 一个未接线的出口（见 README）
 //!
 //! | 层 | 通道 | 判什么 |
 //! |---|---|---|
 //! | ① 后端（**三选一**，见本文件接管段） | `smartalloc` / `mockalloc` / `dhat` | 孤儿块 / 分配释放**配对** / 宿主堆**用量** |
 //! | ①′ 零依赖后端 | `RUSTFLAGS=-Zsanitizer=leak`（**必须不接管**） | LeakSanitizer 看宿主堆 |
-//! | ② 影子账（`harness` + `tests.rs`） | 本 crate 自己 | 区间不重叠 / 指针满足对齐 / 交付区写读一致 / `block.rs:310` 的请求门必须拒 |
+//! | ② 影子账（`harness` + `tests.rs`） | 本 crate 自己 | 区间不重叠 / 指针满足对齐 / 交付区写读一致 / `block.rs:315` 的请求门必须拒 |
 //! | ③ 随机序列（`tests/{pairing,heap}.rs` + `harness::plan`） | proptest | 把②的判据铺到随机分配/释放序列与随机工作负载上 |
-//! | ④ 当场炸的通道（[`fault::allocator_fault`]） | 本 crate 自己 | 分配器**自身**违例（与"对象泄漏"分开归因） |
+//! | ④ 当场炸的通道（[`fault::allocator_fault`]） | **未接线**（照实记：零调用点） | 分配器**自身**违例本应由它当场炸；目前实际走②的 `Violation`（`Err`）归因 |
 //!
 //! ②③ 两条腿**不依赖后端**：`plain` / `smartalloc` / `mockalloc` / `dhat` 四档都跑同一批判据，
 //! 后端只换读数口径。
@@ -188,6 +188,19 @@ pub mod machine {
     }
 }
 
+/// `crate::hart` 的宿主垫片：`include!` 进来的分配器源码从这里取 hart 数 / 当前 hart
+/// （`block.rs` 的 per-hart 池、`spare.rs` 的仓容量）。宿主上"线程即 hart"（见上
+/// `machine::hart_id`），故这里只是把 `machine` 的两个函数换个内核名字再导出。
+pub mod hart {
+    pub use super::machine::{hart_count, hart_id};
+}
+
+/// `crate::platform::machine` 的宿主垫片：内核帧分配器按 `crate::platform::machine::…`
+/// 取保留区表（`frame.rs` 的 `holes`）。宿主上就是本文件的 `machine`。
+pub mod platform {
+    pub use super::machine;
+}
+
 /// `crate::runtime::diagnose::trace` 的宿主 shim —— `spare::init` 只问一句"每 hart 的 trace
 /// 环多大"（仓容量 = 环字节 + 块头 + `DUMP_BUDGET`，再页对齐）。
 ///
@@ -344,7 +357,7 @@ pub mod memory {
     }
 }
 
-// ── 判据：分配器自身违例的宿主通道（当场炸，不记账）──────────────────────
+// ── 判据：分配器自身违例的宿主通道（**未接线**：照实记，当前零调用点）────────
 
 pub mod fault {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -352,6 +365,9 @@ pub mod fault {
     pub static FAULTS: AtomicUsize = AtomicUsize::new(0);
 
     /// 分配器**自身**的违例：与"对象泄漏"无关，故在这里当场炸。
+    ///
+    /// **未接线**（照实记）：本 crate 里**零调用点** —— 分配器自身的违例目前一律由影子账的
+    /// `Violation`（`Err`）归因。这个出口留着，但没有接上。
     #[cold]
     pub fn allocator_fault(msg: core::fmt::Arguments<'_>) -> ! {
         FAULTS.fetch_add(1, Ordering::Relaxed);

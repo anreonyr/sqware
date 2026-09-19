@@ -8,7 +8,7 @@
 # 多线程（扩展）
 #   ./run.sh mt           # 并发层：守恒 / 模式写读 / per-hart 池 / 跨 hart 回路 + dropcount
 #   ./run.sh tsan         # 数据竞争：ThreadSanitizer
-#   ./run.sh miri         # UB + 数据竞争：Miri（规模自动缩小，见 tests/*.rs 的 cfg(miri)）
+#   ./run.sh miri         # UB：Miri（并发不跑；规模分级，2 分钟，见 README 裁决三）
 #   ./run.sh bench        # 并发压力/吞吐量：malloc-bench-rs（Larson / mstress）× 内核适配器
 # 零后端 / 其它
 #   ./run.sh plain        # 不接管：只看用例过不过（--no-default-features）
@@ -57,10 +57,12 @@ case "$mode" in
       cargo test -Zbuild-std --target "$tgt" --no-default-features --test mt "$@"
     ;;
   miri)
-    # UB + 数据竞争：Miri（解释执行）。`-Zmiri-permissive-provenance` 是必需的：分配器
+    # UB：Miri（解释执行；**并发不跑** —— `tests/mt.rs` 整文件 `not(miri)`，数据竞争归 TSan）。
+    # `-Zmiri-permissive-provenance` 是必需的：分配器
     # 把帧地址当 `usize` 来回搬（`frame_addr`/`ptr.addr()`），严格 provenance 下那类
     # int→ptr 转换会被判非法 —— 内核在真机上本来就靠物理地址恒等映射，这条放宽是**如实**
-    # 而不是掩盖。规模：`tests/*.rs` 里 `cfg(miri)` 把语料与线程数压到秒级。
+    # 而不是掩盖。规模：`cfg(miri)` 把台面缩到 1024 页（4 MiB）、churn 缩到 8 轮 ⇒ 实测
+    # `./run.sh miri` **2 分钟**跑完、4 通过 2 忽略（见 README 裁决三）。
     MIRIFLAGS="-Zmiri-permissive-provenance" \
       cargo miri test --target "$tgt" --no-default-features "$@"
     ;;

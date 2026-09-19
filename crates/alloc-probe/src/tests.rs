@@ -1,11 +1,12 @@
 //! 分配器自己的用例 —— **完全不涉及内核对象生命周期**。
 //!
-//! 判据分四层（与 `lib.rs` 的头注同一张表）：
+//! 判据分三层 + 一个未接线的出口（与 `lib.rs` 的头注同一张表）：
 //!   ① 检测后端（`smartalloc` / `mockalloc` / `dhat` **三选一**，见 README「六条路」）；
 //!   ② 本文件 + `harness` 的**影子账**：区间不重叠、指针满足对齐、交付区写读一致、
-//!      `block.rs:310` 的请求门必须拒、预算内的合法请求必须成；
+//!      `block.rs:315` 的请求门必须拒、预算内的合法请求必须成；
 //!   ③ 收尾对账：借出去的都还回去之后，影子账与分配器自有簿记都回到起点；
-//!   ④ [`crate::fault::allocator_fault`]：分配器**自身**违例的当场炸通道。
+//!   ④ [`crate::fault::allocator_fault`]：**未接线**（照实记：零调用点）—— 分配器自身违例
+//!      目前由②的 `Violation`（`Err`）归因。
 //!
 //! **本文件的用例不依赖任何检测后端**（四档都跑）：随机序列的确定性语料（LCG）+
 //! 伙伴容量守恒 + 耗尽—恢复 + 契约门。proptest 的两条探索腿在 `tests/pairing.rs`
@@ -146,7 +147,7 @@ fn frame_no_double_delivery_under_churn() {
     done();
 }
 
-/// 块：混合档位取还 + **契约门**（`block.rs:310` 的越界/超对齐请求必须被拒）。
+/// 块：混合档位取还 + **契约门**（`block.rs:315` 的越界/超对齐请求必须被拒）。
 #[test]
 fn block_alloc_free_round_trip() {
     let _a = harness::boot();
@@ -172,7 +173,7 @@ fn block_alloc_free_round_trip() {
     );
     assert_eq!(
         r.rejected, 4,
-        "越界/超对齐的 4 条必须被拒（block.rs:310）：{r:?}"
+        "越界/超对齐的 4 条必须被拒（block.rs:315）：{r:?}"
     );
     assert_eq!(r.given, 7, "{r:?}");
     done();

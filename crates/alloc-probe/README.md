@@ -24,7 +24,7 @@
 |---|---|---|---|
 | **甲 · 配对** | `mockalloc` + `proptest`（`tests/pairing.rs`） | 随机**分配/释放序列** | 幕内每一笔宿主分配都配对：泄漏 / 重复释放 / 错指针 / 错尺寸 / 错对齐逐类点名 |
 | **乙 · 用量** | `dhat` + `proptest`（`tests/heap.rs`） | 随机**工作负载**（同一批序列） | 宿主堆用量：装台预算 + 每一幕 `Δtotal_bytes = Δcurr_bytes = Δmax_bytes = 0` |
-| **丙 · 影子账** | 本 crate 自己（`src/harness.rs` + `src/tests.rs`）：被压后端 = `bump`/`frame`/`block` + **`hybrid`（分流）/ `spare`（后备仓）** | 同一批序列（**LCG 确定性语料**，不装 proptest 也跑） | 区间不重叠 / 指针满足 `layout.align()` / 交付区写读一致 / `block.rs:310` 的请求门必须拒 / 预算内的合法请求必须成 |
+| **丙 · 影子账** | 本 crate 自己（`src/harness.rs` + `src/tests.rs`）：被压后端 = `frame`/`block` + **`hybrid`（分流）/ `spare`（后备仓）**（`bump` 不进随机序列：它的 `deallocate` 是空操作） | 同一批序列（**LCG 确定性语料**，不装 proptest 也跑） | 区间不重叠 / 指针满足 `layout.align()` / 交付区写读一致 / `block.rs:315` 的请求门必须拒 / 预算内的合法请求必须成 |
 
 甲、乙各自**自带凭证**（"检测器没响"与"检测器没插上"必须分得开）：
 mockalloc 那条腿拿"一次 `Box` 往返 = 1 笔分配"当凭证、并另有一条**反向对照**（`mem::forget`
@@ -54,10 +54,10 @@ mockalloc 那条腿拿"一次 `Box` 往返 = 1 笔分配"当凭证、并另有�
 | 读数 | 值 | 出处 |
 |---|---|---|
 | 装台期（`bump`→`block`→`frame` 的 `init`）宿主分配 | **10 笔 / 11348 B** | 甲、乙两个后端**逐项相等**（`num_allocs↔Δtotal_blocks`、`mem_allocated↔Δtotal_bytes`、`mem_leaked↔Δcurr_bytes`） |
-| 其中**未配对**（终身表） | **10 笔（全部）** —— 连一笔"取了又还"的临时分配都没有 | 清单见 `harness::INIT_LIFETIME_LEAKS`：`frame.rs:558/165/169`、`block.rs:283/296/590`、`spare.rs:311` |
+| 其中**未配对**（终身表） | **10 笔（全部）** —— 连一笔"取了又还"的临时分配都没有 | 清单见 `harness::INIT_LIFETIME_LEAKS`：`frame.rs:546/165/169`、`block.rs:284/301/596`、`spare.rs:311` |
 | 随机序列幕内的宿主分配 | **0**（64/64 幕判词 `NoData`） | **热路径不上全局堆**：`frame`/`block` 的元数据全在装台期分配好，热路径只有原子计数 |
-| 台面容量（影子账通道） | 取尽得 **3572 个单页块**（13.95 MiB；差的是 `bump` 簿记与后备仓仓区 —— 后者 `ring_bytes(4)+32+1 MiB` ≈ 1.03 MiB，按 buddy 取整成 **2 MiB**）；**两轮取尽页数一致**，还尽后 **4 MiB 大块可取回** | `tests.rs::buddy_capacity_is_conserved_and_recovers` |
-| 确定性语料 | 256 种子 × 96 B = **12288 条动作**：交付 5474 块 / 契约拒 675 / 影子账满跳过 1842 | `tests.rs::deterministic_corpus`（不装 proptest 也跑） |
+| 台面容量（影子账通道） | 取尽得 **3572 个单页块**（13.95 MiB）；**两轮取尽页数一致**，还尽后 **4 MiB 大块可取回**。页数账（实测）：4096（台面）− 6（`bump` 的 `Tally` 表）− 512（仓区：`ring_bytes(4)+32+1 MiB` ≈ 1.02 MiB，按 buddy 取整成 2 MiB）= 3578；标准跑法里 `block` 用例先跑、6 个 size class 各留 1 页迟滞 ⇒ 3572 | `tests.rs::buddy_capacity_is_conserved_and_recovers` |
+| 确定性语料 | 256 种子 × 96 B = **12288 条动作**（`Take` 6149 条）：交付 5805 块 / 契约拒 344 / 跳过 1768（全部是"在册为空时的还"，无一条 `Take` 被影子账挡下） | `tests.rs::deterministic_corpus`（不装 proptest 也跑） |
 
 **为什么装台是甲腿的主战场**：热路径既然一笔都不分配，随机序列的幕里就无事可判（判词
 `NoData`）—— 那条断言本身就是判据："热路径不上全局堆"被固化了，谁往热路径塞一笔宿主分配，
@@ -92,8 +92,8 @@ shim 的 `machine::hart_id()` 改成按线程分配 id（`hart_bind` 给确定�
 | 分配/释放配对 | `mockalloc`（单线程）+ **原子计数器**（并发） | `statistics` 写侧原子账：**块级严格** `take == give`；帧级/池级只差池迟滞（≤ 池数 × 9 档） |
 | 内存使用量/泄漏 | `dhat`（单线程）+ **LeakSanitizer / `dropcount`** | LSan 覆盖单线程 + 并发两层；`dropcount` 判**本层自己的**在途记账对象一个不漏（读数归因的前提） |
 | 随机操作序列 | `proptest` + **原子计数器** | 随机（线程数 × 计划长度）的并发轮次，判据与守恒用例同一批 |
-| 并发压力/吞吐量 | **`malloc-bench-rs`** | Larson / mstress × `GlobalAlloc` 适配器（分流点同 `hybrid.rs:38`），与 `System` 同条件对照 |
-| 数据竞争 | **ThreadSanitizer / Miri** | 见下面两条裁决（TSan 必须 `-Zbuild-std`；Miri 按"调用次数"计费） |
+| 并发压力/吞吐量 | **`malloc-bench-rs`** | Larson / mstress × `GlobalAlloc` 适配器（分流点同 `hybrid.rs:42`），与 `System` 同条件对照 |
+| 数据竞争 | **ThreadSanitizer** | 见裁决二（TSan 必须 `-Zbuild-std`）；Miri 只查 **UB**、并发不跑（裁决三） |
 | 并发交错正确性 | **Loom / Shuttle** | **挂不上** —— 裁决见下 |
 
 实测读数（`./run.sh mt -- --nocapture`）：
@@ -113,7 +113,8 @@ QEMU 里由内核框架档量）。
 ### 裁决一：Loom / Shuttle **现在挂不上**（不是不想挂）
 
 两者的模型都是"同一个闭包跑很多遍、每遍换一种交错"，**要求被测状态在闭包内构造**。本 crate 的
-被测对象是 `bump` / `frame` / `block` 三个 `OnceLock` 单例（内核就是这么写的），状态**跨遍保留**：
+被测对象是 `frame` / `block` / `spare` 三个 `OnceLock` 单例（`bump` / `hybrid` 是普通
+`static`；内核就是这么写的），状态**跨遍保留**：
 第 2 遍起 freelist / 页表 / 池已经不是初始状态，模型检查随之失去意义。要挂上得先在**内核侧**
 开一个口子（二选一）：① 给三个后端各加"实例可构造"的入口；② 把单例换成可注入实例。两条都在
 内核里，超出本 crate 的范围。在此之前，交错覆盖由**对抗线程 + 栅栏**（跨 hart 回路的 `feed→suck`、
@@ -132,7 +133,7 @@ TSan 于是看不见这把锁。改 `-Zbuild-std`（连 std 一起插桩）后�
 Miri 的耗时随**分配器调用次数**线性涨（实测：round-trip 两条秒级；百次级调用的 churn / 语料
 是分钟级，全量跑 20 分钟未完成）。故分工写死在代码里：
 
-* `cfg(miri)` 把台面缩到 **128 页**（512 KiB）、churn 缩到 **8 轮**；
+* `cfg(miri)` 把台面缩到 **1024 页**（4 MiB，再小装台就取不到后备仓的仓区）、churn 缩到 **8 轮**；
 * `buddy_capacity…`（4000+ 次拆分）与 `deterministic_corpus` 在 Miri 下 **`ignore`**（理由写在断言旁）；
 * 结果：`./run.sh miri` **2 分钟跑完、4 通过 2 忽略**，审计的是 UB（裸指针来去、交付区写读）；
 * **并发在 Miri 下不跑**（`tests/mt.rs` 整文件 `not(miri)`）—— 竞争那件事交给 TSan，各管一段。
@@ -210,7 +211,8 @@ dhat         static HOST_ALLOCATOR: dhat::Alloc                       = dhat::Al
    **还尽后大块必可取回**（合并没漏）。
 4. **`bump` 不进随机序列**：它的 `deallocate` 是空操作（一次性推进），没有"释放配对"这回事。
 5. **proptest 不用 `fork`/`timeout`**：默认 feature 会经 `rusty-fork` 起子进程，与"全局分配器
-   + 进程内单例分配器（`bump`/`block`/`frame` 都是 `OnceLock`）+ 台面是一块进程内宿主缓冲"
+   + 进程内单例分配器（`frame`/`block`/`spare` 是 `OnceLock`，`bump`/`hybrid` 是普通 `static`）
+   + 台面是一块进程内宿主缓冲"
    这套构造直接冲突（子进程里另有一份台面）。故 `proptest` 关了默认 feature。
 6. **影子账的容量是 48 块**（在册字节预算 8 MiB）：每步要扫在册区间，容量压小是为了让每步
    便宜；满了 `Take` 不落到分配器上（报告里的 `skipped` 如实记着，不假装跑了）。
@@ -228,7 +230,7 @@ dhat         static HOST_ALLOCATOR: dhat::Alloc                       = dhat::Al
       `tests/pairing.rs::mockalloc_is_watching`（一取一还 = 1 笔）、
       `tests/heap.rs` 的 ①（已知分配 ⇒ 已知字节）；
 * [x] 反向对照：`mockalloc_names_a_deliberate_leak`（`mem::forget` ⇒ 必报 `Leak`）；
-* [x] `harness` 的**影子账**：区间不重叠、对齐、交付区写读一致、`block.rs:310` 的请求门、
+* [x] `harness` 的**影子账**：区间不重叠、对齐、交付区写读一致、`block.rs:315` 的请求门、
       预算内合法请求必成；
 * [x] 收尾对账：借出去的都还回去（`Report.given == Report.taken`），且在册清零；
 * [x] 台面级：容量守恒 + 还尽后大块可取回 + 取尽返 `Err` 不 panic；
@@ -237,4 +239,6 @@ dhat         static HOST_ALLOCATOR: dhat::Alloc                       = dhat::Al
 * [x] 逆向验证：热路径塞一笔宿主分配 ⇒ 甲、乙两条腿各自当场响（见上）；
 * [x] 并发层（`tests/mt.rs`）：per-hart 池分家 + 跨 hart 归还回本池（`own(pa)` 读数）、块级原子账严格平、
       帧级/池级只差迟滞上界、`registry_live() == 0`、`dropcount` 句柄全析构；
-* [x] `fault::allocator_fault`：分配器**自身**违例的当场炸通道（与"对象泄漏"分开归因）。
+* [ ] `fault::allocator_fault`：**未接线**（照实记：`lib.rs` 里只有定义与 `FAULTS` 计数，
+      **零调用点**）—— 分配器**自身**违例目前一律走影子账的 `Violation`（`Err`）归因；这条
+      "当场炸"的出口留着，但没有接上，别把它当已生效的通道。

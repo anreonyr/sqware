@@ -21,7 +21,7 @@
 //! # 适配器说明
 //!
 //! 内核的 `frame` / `block` 实现的是 `core::alloc::Allocator`，而 `malloc-bench-rs` 要的是
-//! `GlobalAlloc`。适配器只做一件事：按 `hybrid.rs:38` 的分流点（≤ 2 KiB 走块池、否则走帧）
+//! `GlobalAlloc`。适配器只做一件事：按 `hybrid.rs:42` 的分流点（≤ 2 KiB 走块池、否则走帧）
 //! 路由，并把 `AllocError` 翻成空指针。**分流点与内核同一个数**，故量的是内核那套形状。
 
 // 示例是**独立 crate**：内核分配器实现的是 `core::alloc::Allocator`（不稳定），
@@ -34,7 +34,7 @@ use alloc_probe::harness;
 use alloc_probe::memory::allocator::{block, frame};
 use malloc_bench_rs::{Config, Workload};
 
-/// 内核 `hybrid.rs:38` 的分流点：≤ 2 KiB 走块池，> 2 KiB 走帧。
+/// 内核 `hybrid.rs:42` 的分流点：≤ 2 KiB 走块池，> 2 KiB 走帧。
 const SPLIT: usize = 2048;
 
 /// 内核分配器的 `GlobalAlloc` 外壳（宿主侧，仿真 `hybrid` 的分流）。

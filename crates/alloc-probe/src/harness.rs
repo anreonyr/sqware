@@ -7,7 +7,7 @@
 //!    `bump` → `block` → `frame`（顺序不可换，见 `block::init` 的文档）；
 //! ② **随机序列**：[`plan`] 把任意字节串翻译成 [`Op`] 序列，[`run`] 执行它 —— proptest
 //!    与"把最小输入贴回语料复现"共用这一个定义，故**换随机源不改判据**；
-//! ③ **影子账模型**：在册交付区间、写读模式、对齐契约、以及 `block.rs:310` 的请求门，
+//! ③ **影子账模型**：在册交付区间、写读模式、对齐契约、以及 `block.rs:315` 的请求门，
 //!    任何一条不成立都由 [`Violation`] 当场指名。它**只**报分配器自身的问题 ——
 //!    "谁没 drop"在这一层根本不在场（那正是本 crate 存在的理由）。
 //!
@@ -23,7 +23,7 @@
 //! | 交付区不与任何在册区间重叠 | `frame::pagemeta` 是"这页在不在手"的唯一答案（`frame.rs:18/68`） | 同一段内存被交付两次 ⇒ 两个调用方写同一块 |
 //! | 交付指针满足 `layout.align()` | `Allocator` 的契约（`GlobalAlloc` 同理） | 上游 smartalloc 就栽在这条上（见 lib.rs 接管段①） |
 //! | 交付区写读一致 | 交付区是调用方的，分配器**自己**的簿记不得踩进来 | 分配器把 `Link`/`Meta` 写进了已交付的块 |
-//! | `block.rs:310` 的请求门必须**拒** | `power > MAX_POWER \|\| align > 1 << power` 是防御门 | 出界/超对齐的请求被接受 ⇒ 交付出来就是越界写 |
+//! | `block.rs:315` 的请求门必须**拒** | `power > MAX_POWER \|\| align > 1 << power` 是防御门 | 出界/超对齐的请求被接受 ⇒ 交付出来就是越界写 |
 //! | 预算内的合法请求必须**成** | 台面（16 MiB）远大于在册预算（8 MiB） | 返 `Err` 只可能是 freelist 坏了或假性耗尽 |
 
 use core::alloc::{Allocator, Layout};
@@ -159,12 +159,12 @@ pub fn init_allocs() -> Option<&'static mockalloc::AllocInfo> {
 // 笔数变了 = 有人偷偷加了一笔宿主分配（那就是本层要抓的"未配对"）；字节数变了但笔数没变
 // = 某张表的尺寸变了（合法重构，改预算即可）。
 //
-// 实测（2025-09，x86-64，debug 档，台面 4096 页）：9 笔 / 11308 B，**9 笔全部未配对**
+// 实测（2025-09，x86-64，debug 档，台面 4096 页）：10 笔 / 11348 B，**10 笔全部未配对**
 // —— 装台期连一笔"取了又还"的临时分配都没有。
 
 /// 装台期的**分配事件数**（mockalloc 的 `num_allocs` / dhat 的 `total_blocks` 增量）。
 ///
-/// 实测 **9**，而且这 9 笔**全部**是终身表（下面那张清单）：装台期一笔临时宿主分配都没有
+/// 实测 **10**，而且这 10 笔**全部**是终身表（下面那张清单）：装台期一笔临时宿主分配都没有
 /// （`Vec<BlockInner>` 的增长与 `into_boxed_slice` 恰好共用同一次分配，其结果就是那张
 /// `'static` 表；`Vec::try_reserve` 的容量一次到位，没有二次增长）。
 pub const INIT_BLOCKS: u64 = 10;
@@ -173,21 +173,22 @@ pub const INIT_BLOCKS: u64 = 10;
 ///
 /// | # | 笔 | 出处 |
 /// |---|---|---|
-/// | 1 | `Box<FrameAllocator>` | `frame.rs:558`（`SpinLock` 非 `Send` ⇒ 存 `&'static`） |
+/// | 1 | `Box<FrameAllocator>` | `frame.rs:546`（`SpinLock` 非 `Send` ⇒ 存 `&'static`） |
 /// | 2 | `freelist` 的 Vec 缓冲 | `frame.rs:165`（`max_power` 条 `Option<NonNull<Link>>`） |
 /// | 3 | `pagemeta` 的 Vec 缓冲 | `frame.rs:169`（free 区每页一条 `Option<Meta>`） |
-/// | 4 | `Box<Tally>` | `block.rs:283`（簿记表本身） |
-/// | 5 | `Box<[BlockInner]>` | `block.rs:296`（per-hart 池集合） |
-/// | 6–9 | 每池 `freepool` 的 Vec 缓冲 ×4 | `block.rs:590`（`Pool::init` 的 `try_reserve`） |
+/// | 4 | `Box<Tally>` | `block.rs:284`（簿记表本身） |
+/// | 5 | `Box<[BlockInner]>` | `block.rs:301`（per-hart 池集合） |
+/// | 6–9 | 每池 `freepool` 的 Vec 缓冲 ×4 | `block.rs:596`（`Pool::init` 的 `try_reserve`） |
+/// | 10 | `Box<SpareAllocator>` | `spare.rs:311`（后备仓本身，同样存 `&'static`） |
 ///
-/// 这 9 笔是**设计**（表要活到进程结束），不是缺陷：判据是"**除它们之外**一笔都不能不配对"。
+/// 这 10 笔是**设计**（表要活到进程结束），不是缺陷：判据是"**除它们之外**一笔都不能不配对"。
 /// 笔数变化 ⇒ 有人加了一笔没还的分配 ⇒ 这条用例当场点名。
 pub const INIT_LIFETIME_LEAKS: u64 = 10;
 
-/// 装台期宿主分配**总量**的上界（含配对的临时）：实测 11308 B，预算取 ~23 倍余量。
+/// 装台期宿主分配**总量**的上界（含配对的临时）：实测 11348 B，预算取 ~23 倍余量。
 pub const INIT_BYTES_BUDGET: u64 = 256 * 1024;
 
-/// 装台期**常驻**（不还的那部分）字节上界：实测 11308 B（与总量相等 —— 一笔都没还），
+/// 装台期**常驻**（不还的那部分）字节上界：实测 11348 B（与总量相等 —— 一笔都没还），
 /// 预算取 ~5.8 倍余量。
 ///
 /// 它同时是"分配器的宿主簿记有多胖"这条读数的判据 —— 尺寸随台面变大而变大
@@ -234,7 +235,7 @@ impl Backend {
 /// `block` 的请求表 `(字节数, 对齐)`；[`Op::Take`] 的 `req` 是它的下标。
 ///
 /// 前 14 条**合法**（size class ≤ 半页 2048，对齐不超过该 size class 的尺寸）；
-/// 后 4 条按 `block.rs:310` 的守护门必须被**拒**：越界/超对齐的请求一旦被交付，
+/// 后 4 条按 `block.rs:315` 的守护门必须被**拒**：越界/超对齐的请求一旦被交付，
 /// 调用方拿到的就是一段越界的块。
 const BLOCK_REQS: [(usize, usize); 18] = [
     (1, 8),
@@ -285,7 +286,7 @@ const SPARE_REQS: [(usize, usize); 8] = [
 pub enum Want {
     /// 合法请求：预算内**必须**成功。
     Ok,
-    /// 越界/超对齐请求：**必须**返 `Err`（`block.rs:310` 的守护门）。
+    /// 越界/超对齐请求：**必须**返 `Err`（`block.rs:315` 的守护门）。
     Err,
 }
 
@@ -484,7 +485,7 @@ pub enum Violation {
         want: u8,
         got: u8,
     },
-    /// 契约要求拒绝的请求被**接受**了（`block.rs:310` 的守护门失灵）。
+    /// 契约要求拒绝的请求被**接受**了（`block.rs:315` 的守护门失灵）。
     Accepted {
         backend: Backend,
         size: usize,
@@ -537,7 +538,7 @@ impl fmt::Display for Violation {
                 align,
             } => write!(
                 f,
-                "{}: 越界/超对齐请求被接受 —— size={size} align={align} 该被拒（block.rs:310 的守护门）",
+                "{}: 越界/超对齐请求被接受 —— size={size} align={align} 该被拒（block.rs:315 的守护门）",
                 backend.name()
             ),
             Violation::Rejected {

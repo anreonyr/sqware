@@ -46,7 +46,8 @@ const THREADS: usize = 4;
 /// 每线程的计划长度（每条动作 2 字节）。
 #[cfg(not(miri))]
 const PLAN_BYTES: usize = 160;
-/// Miri 下缩小 8 倍：解释执行 + 数据竞争检测，规模要压到秒级。
+/// 本文件整文件 `not(miri)`（见上），这条 `cfg(miri)` 分支**恒不生效** —— Miri 只查单线程
+/// 的 UB，并发竞争归 TSan（`./run.sh tsan`）。
 #[cfg(miri)]
 const PLAN_BYTES: usize = 8;
 
