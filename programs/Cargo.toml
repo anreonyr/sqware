@@ -113,3 +113,20 @@ path = "src/bin/stress/again.rs"
 test = false
 bench = false
 doctest = false
+
+# 共享组台：等待者（U 态）与台主（S 态，`SQWARE_ROOT=group` 时当引导镜像）。
+# 台主一次投信，看**两个等待者是不是都醒**（共享组的整链放行），以及那条消息
+# **只归一个人**——见 `programs/src/bin/stress/group.rs` 头注。
+[[bin]]
+name = "prog-waiter"
+path = "src/bin/stress/waiter.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-group"
+path = "src/bin/stress/group.rs"
+test = false
+bench = false
+doctest = false

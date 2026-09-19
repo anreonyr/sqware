@@ -54,6 +54,12 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 重启台：**S 态**（要 mint/hatch 那道门），`SQWARE_ROOT=again` 时当引导镜像。
     // 它在同一张表、同一行上把"起 → 停 → 放下 → 再起"走三遍（协议 §六 的"重发"）。
     ("again", "prog-again", ProgramKind::Supervisor),
+    // 共享组台的两个（`programs/src/bin/stress/`）：`waiter` = 等待者——U 态，把台主
+    // 给的那枚孔挂进**共享组**并等组键（**多个等待者挂同一只键**）；`group` = 台主——
+    // S 态，`SQWARE_ROOT=group` 时当引导镜像：一次投信，看两个等待者是不是**都醒**，
+    // 以及那条消息是不是**只归一个人**。
+    ("waiter", "prog-waiter", ProgramKind::User),
+    ("group", "prog-group", ProgramKind::Supervisor),
 ];
 
 fn main() {
