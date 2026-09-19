@@ -114,18 +114,25 @@ fn unhang(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) ->
 ///
 /// **组的「被关住」在这里查**：等待位是 `ONLY` 保护的那一件事——我把等待权交出去了，
 /// 就轮到对方等，我在交出期间不问。
+///
+/// **解析失败三种各有其名**（与数据轴 `mail::wait_dir` 同款，不折平）：表里没有 / 权不够
+/// → `Denied`；已封印 → `Dead`；等待权已被我过户（`usable`）→ `Caged`。折成一个码会把
+/// "组没了，换策略"与"号拿错了，修 bug"压成同一件——而这两件事的处置正好相反。
 fn await_(frame: &mut TrapContext, group: usize, millis: usize) -> Outcome {
     let dur = if millis == usize::MAX {
         Duration::MAX
     } else {
         Duration::from_millis(millis as u64)
     };
-    let Ok(meta) = resolve(group, Need::Fetch).and_then(|latch| {
+    let meta = match resolve(group, Need::Fetch).and_then(|latch| {
         usable(&latch)?;
         rack(&latch)
-    }) else {
-        answer_void(frame, Err(GateError::Denied));
-        return Outcome::Resume;
+    }) {
+        Ok(meta) => meta,
+        Err(e) => {
+            answer_void(frame, Err(e));
+            return Outcome::Resume;
+        }
     };
     if let Some((token, dir)) = ready(&meta) {
         answer_pair(frame, token, dir);

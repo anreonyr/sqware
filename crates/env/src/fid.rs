@@ -627,6 +627,11 @@ pub enum ToleCall {
     ///
     /// **挂起过一侧返回恒是预置值**（`PieToken::NONE`）：内核没有第二次执行机会
     /// ——调用方按 deadline 循环、醒来自己按组快照复核（与 `UnitCall::Fall` 同款）。
+    ///
+    /// 错误：token 不在本任务表 / 权不够（组需 `FETCH`）/ 不是组（递了孔、铃、页）
+    /// → `-1 Denied`；组已封印 → `-2 Dead`；**组的等待权已被我过户出去**（`ONLY` 的
+    /// 移交）→ `-7 Caged`。三个码**不折平**（与数据轴 [`MailCall::Wait`] 同款口径）：
+    /// `Denied` 是号拿错了、`Dead` 是组没了该换策略、`Caged` 是交回即复原。
     #[ret((PieToken, HoleDir))]
     Await { tole: PieToken, millis: usize },
 }
