@@ -108,8 +108,8 @@ unsafe impl Allocator for FrameAllocator {
                 );
             }
             let index = frame.frame_index(addr);
-            // 归还入总量账（`occupied` 减一）。pagemeta 是"这帧在不在手"的唯一真相，
-            // 总量账只是水位；合并在下一句里做。
+            // 归还入总量账（`occupied` 减一）。freelist 是权威、pagemeta 只是派生
+            // 视图（`in_freelist` 才是合并判据），总量账只是水位；合并在下一句里做。
             super::statistics::record_frame_give(index);
             frame.merge_block(index, power);
         }
@@ -359,24 +359,13 @@ impl FrameInner {
             //    而 `push_link` 在每次拆分/合并都跑 —— 实测把 `churn` 拖慢约 50 倍
             //    （`churn 300 1 1` 从秒级变 100 s 跑不到一半）。
             // 教训与"改完看判据"同源：**没有判据支持的优化，只留代价**。
-            // **唯一入链口：清掉跨度内的过期空闲表项**。
-            //
-            // 为什么必须有：`split_block` 取出 power=k 的整块后，逐级 `push_link`
-            // 把切出的 buddy 填进**原块的跨度**；而旧版只写 buddy 自己那一条，
-            // **原块那条粗粒度表项留在原地**，成了覆盖整段的幽灵。
-            // 后果（`pagedrain` 实测，纯分配/释放、零任务生变，每轮
-            // `pagedrain 500` 净漏 200~570 帧且单调累积）：
-            //   · `merge_block` 按它认定伙伴空闲，`in_freelist` 却找不到 ⇒ 放弃
-            //     合并 ⇒ 那一段永久脱离可用池；
-            //   · 按表项反查"谁拥有这帧"也会读到幽灵而答错。
-            //
-            // **只清 `free == true`**：`free == false` 的表项是**活分配**，它们
-            // 合法地落在一个大空闲块的跨度里（碎片化的正常形态），清掉等于把在用
-            // 的帧标成未知。
-            //
-            // （先前我按"跨度内不得有别的表项"整片清空过，被判据 `overrun` 证伪后
-            //   撤回——那个判据本身是错的：大空闲块的跨度**合法地**包含小块块首。
-            //   现在用的是 pagedrain 的帧数净漏，它不含解读空间。）
+            // **跨度清扫：已撤**（与上段同因）。`push_link` 只写 `pagemeta[index]`
+            // 这一条；"粗表项覆盖伙伴"的幽灵由 `split_block` 收尾**按最终 order
+            // 只写一次**（见其 doc），配 `merge_block` 的 `clear_head` 处理，不靠
+            // 入链时扫跨度。照实记：此前"整片清空 / 只清 `free == true`"两版都随
+            // 判据撤回（`overrun` 那版判据自误——大空闲块的跨度**合法地**含小块
+            // 块首；只清 `free == true` 那版对 `nomerge` 毫无改善、还把 churn
+            // 拖慢约 50 倍）。
             self.pagemeta[index] = Some(Meta::new(true, power as u8));
         }
     }

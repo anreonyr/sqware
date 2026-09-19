@@ -115,8 +115,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         );
     }
 
-    // 0.4 入场入册：`__task_trap`/`__core_trap` 已整表刷（不变量 1），本核转为
-    //     内核租户（内核空间身份 ASID 0）。
+    // 0.4 入场入册：本核转为内核租户（内核空间身份 ASID 0）。此处只写本核 lease 槽
+    //     （`set_asid`），**不刷 TLB**：表已由陷阱入口切好——`__task_trap` 走
+    //     `csrw satp` + `sfence.vma`，`__core_trap` 路径 satp 未动、本就一致。
     asid::set_asid(Asid::kernel());
 
     // 0.45 陷阱来源：`__core_trap` 传本 hart 帧、`__task_trap` 传任务帧。这是

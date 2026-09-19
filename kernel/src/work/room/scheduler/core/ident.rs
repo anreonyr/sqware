@@ -34,7 +34,7 @@ pub struct LastIdent {
 }
 
 /// 身份槽载荷：Live = 本核**在跑**任务（trap 可信）；Last = 末次身份记录
-/// （id/name/符号表；trap **不可信**且类型上不可读）。trap 只经 Live 轴暴露——
+/// （id/name/域名字；trap **不可信**且类型上不可读）。trap 只经 Live 轴暴露——
 /// 悬垂帧读取在类型层不可表达。
 pub enum Identity {
     Live(Arc<TaskIdent>),

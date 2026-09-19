@@ -300,7 +300,7 @@ pub(crate) fn seal(meta: &PoleMeta) {
 
 /// 解封 Pole 的资源实体：分配物理页 + 建 Meta。**不落 pies、不 auto-map**——
 /// 建门闩 + 落 `task.pies` + map 创建者视图由 envcall 编排（gate::new_pie +
-/// pies.push + pole::map）。返 `Arc`：它既是资源实体，也是门闩持有的**唯一强
+/// pies.push + pole::open）。返 `Arc`：它既是资源实体，也是门闩持有的**唯一强
 /// 引用**（资源寿命 = 能力寿命；最后一份消失时 `Drop` 归还帧 + 撤映射）。
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
 pub(crate) fn meta(size: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {

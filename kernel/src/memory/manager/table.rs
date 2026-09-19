@@ -178,27 +178,26 @@ impl TableNode {
         }
     }
 
-    /// 创建一个零页表子节点 + 把它的 PPN 装入 `pte`（V 位；非叶，非超页）。
+    /// 创建一个零页表子节点（非叶，非超页）。**只建表，不碰 PTE**。
     ///
-    /// 一步完成"建表 + 装 PTE 引用"——保证新子节点在 tree 入册前 PTE 已 V，
-    /// 永不指向未登记的表。返回的 child 由调用方 push 进父的 `children`。
+    /// 装 PTE 的时点由调用方（`walk_mut`）推到子节点**入树之后**：此前"建表即
+    /// 写 PTE"在 `try_reserve` 失败时会留下 V 表项，指向随 `Drop` 已归还帧池的
+    /// 帧。先把失败路径走完再写，PTE 才恒是树的函数。
     ///
     /// 命名"leaf"——PTE 视角看这是叶子表节点（被 PTE 指向的下一层表）。
-    fn leaf(pte: &mut PageTableEntry) -> Result<Self, MapError> {
-        let child = Self {
+    fn leaf() -> Result<Self, MapError> {
+        Ok(Self {
             page: PageTable::new()?,
             children: Vec::new(),
-        };
-        let ppn = (Box::as_ptr(&child.page) as usize >> PAGE_SHIFT) as u64;
-        pte.set(ppn, PteFlags::V);
-        Ok(child)
+        })
     }
 
     /// Walk to the leaf PTE (mutable)，沿所有权树下钻。
     ///
     /// `alloc`：缺中间表时是否新建（map/缺页用 true；mprotect 等只读遍历用
-    /// false → [`MapError::NotMapped`]）。新建子表**先入树再写 PTE**——PTE
-    /// 永不指向未登记的表；树与 PTE 同源，无第二份待同步状态。
+    /// false → [`MapError::NotMapped`]）。新建子表**先入树再写 PTE**——建表与
+    /// 清单预留都可能失败，失败路径上父表不留任何表项；PTE 永不指向未登记
+    /// （乃至已归还）的表。树与 PTE 同源，无第二份待同步状态。
     ///
     /// `levels`：下钻层数。正常路径传当前模式层级（[`super::mode::levels`]）；
     /// 模式探测等显式场景传候选层级。
@@ -224,13 +223,17 @@ impl TableNode {
                 if !alloc {
                     return Err(MapError::NotMapped);
                 }
-                let child = Self::leaf(&mut node.page.entries[idx])?;
+                let child = Self::leaf()?;
+                let ppn = child.ppn() as u64;
                 // **紧贴预留**：子表清单的扩容此前是不可失败的（落在缺页建中间表
                 // 这条路上）；现在它答 `OutOfMemory`，与页表帧的取用同一个失败域。
                 node.children
                     .try_reserve(1)
                     .map_err(|_| MapError::OutOfMemory)?;
+                // **入树之后才写 PTE**：上面两步任一失败都会 `?` 走人且 child 随
+                // Drop 还帧——若 PTE 已 V，父表就永久指向一帧已归还的帧。
                 node.children.push((idx, child));
+                node.page.entries[idx].set(ppn, PteFlags::V);
             }
             node = &mut node
                 .children

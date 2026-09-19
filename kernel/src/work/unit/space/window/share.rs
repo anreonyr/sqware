@@ -54,8 +54,8 @@ impl ShareWindow {
     ///
     /// 与 `HeapWindow::deallocate` 一样，此前它把 `Space::release` 的整段流程
     /// （`holds` + `unmap` + `take_span` + `reclaim`）复制了一遍，逐字同构——
-    /// 同一件事三份实现、三套失败语义。收敛后只剩一层：校验与还原走
-    /// [`Space::release_addr`]，拆装与结清只有 `Space::release` 一处。
+    /// 同一件事三份实现、三套失败语义。收敛后只剩一层：校验、拆装与结清都在
+    /// [`Space::release`] 一处。
     ///
     /// 语义不变：该区间不是本段的已分配块 → `false`（状态未动）。
     pub(crate) fn munmap(space: &Space, addr: VirtAddr, size: usize) -> bool {

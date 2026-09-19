@@ -129,8 +129,8 @@ impl Team {
         out
     }
 
-    /// 本团队产出任务 builder（后续 `.name/.entry/.args/.stack/.hold/.spawn`
-    /// 链式构造任务）。
+    /// 本团队产出任务 builder（后续 `.name/.entry/.args/.stack/.hold` 链式构造
+    /// 任务；放行是另一枚动词，不在 builder 上）。
     pub fn task(self: &Arc<Self>) -> TaskBuilder {
         TaskBuilder::new(self.clone())
     }

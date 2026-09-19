@@ -33,6 +33,8 @@ pub type LoadResult<T> = Result<T, MapError>;
 /// # Errors
 ///
 /// 帧耗尽（OutOfMemory）或映射冲突（AlreadyMapped / NotAligned，均不改动 space）。
+/// 文件字节越界不是装载的失败域：`parser::collect` 已验 `offset + filesz ≤ bytes.len()`，
+/// 故 `frames_for_segment` 切 `bytes` 不会越界。
 pub fn load(space: Space, bytes: &[u8], parsed: &ParsedProgram) -> LoadResult<Loaded> {
     // 装载期设置 user 段 + 逐段装配——单个 with_flush 临界区：一次加锁、一次
     // TLB 刷新；任一段失败 → 整体不落（原子装载）。user 段几何随映像（不魔数）。

@@ -87,13 +87,14 @@ impl FrameResolver {
 
     /// 分类：根/内核/用户/未知。
     ///
-    /// 三档裁决，`world` 与 `executable` 都参与：
+    /// 三档裁决：
     /// 1. ROOT 栈区（panic 救援栈）→ [`FrameKind::Root`]。
-    /// 2. 地址域本身（`is_kernel`/`is_user` → Kernel/Normal）——`world` 在**域可自定**
-    ///    时不作用；仅当地址落在**规范空洞**（既非用户也非内核）才由 `world` 兜底。
-    /// 3. 都不中 → 非代码地址（数据指针不足以判执行链）→ [`FrameKind::Unknown`]，
-    ///    但若 `executable`（符号表命中）成立则视为本域代码，避免误杀有效的
-    ///    `.text` 地址。
+    /// 2. 地址域本身（`is_kernel`/`is_user` → Kernel/Normal）。
+    /// 3. 都不中 → 非代码地址（数据指针不足以判执行链）→ [`FrameKind::Unknown`]。
+    ///
+    /// **照实记**：旧注写"`world` 与 `executable` 都参与""符号表命中则视为本域代码，
+    /// 避免误杀有效的 `.text` 地址"——符号表已整体移除，`executable` 是恒 `false` 的
+    /// 桩（见下），故 `world` 兜底那一支**不可达**：两条都不是参与方。
     fn classify(&self, pc: VirtAddr) -> FrameKind {
         // ROOT 栈区（panic 救援栈）：[_kernel_edge, +ROOT_STACK_SIZE)。
         let k = crate::layout::kernel_edge();
@@ -106,10 +107,8 @@ impl FrameResolver {
         if pc.is_user() {
             return FrameKind::Normal;
         }
-        // 规范的地址本身已能定域；此处不落 `self.world`。
-        // 空域（既非用户也非内核）地址：若符号表命中（本域代码）则归本域，否则 Unknown。
-        // `self.world` 在域可自定时不作用——本分支只处理 `is_kernel/is_user` 都判不了的
-        // 规范空洞，此时以现场世界兜底，避免把有效的镜像恒等区地址判成 Unknown。
+        // 规范的地址本身已能定域；空域（既非用户也非内核）地址一律 `Unknown`。
+        // `executable` 是恒 `false` 的桩（符号表已移除），`self.world` 兜底因此不可达。
         if self.executable(pc) {
             return match self.world {
                 SpaceKind::Supervisor => FrameKind::Kernel,

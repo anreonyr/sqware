@@ -1,14 +1,14 @@
 //! 定长名字——域名字与目录协议共用的一个上限。
 //!
-//! [`NAME_LEN`] 是**单一真相**：内容 ≤ 31 字节 + 终止 NUL = 32；`dispatch` 的
-//! 目录协议与 `Team.name` 共用它。`Name` 把「非空、≤ 31 字节、不含 NUL」做成
+//! [`NAME_LEN`] 是**单一真相**：内容 ≤ 31 字节 + 终止 NUL = 32；`crates/protocol/src/board`
+//! 的板协议与 `Team.name` 共用它。`Name` 把「非空、≤ 31 字节、不含 NUL」做成
 //! 构造期义务，非法输入由 [`NameError`] 承载——不 panic、不截断。
 
 // ── 定长名字 ────────────────────────────────────────────────────────────
 
 /// 名字字段字节数（含终止 NUL）。
 ///
-/// 单一真相：目录协议（`dispatch`）与域名字（`Team.name`）共用同一上限——
+/// 单一真相：目录协议（`crates/protocol/src/board`）与域名字（`Team.name`）共用同一上限——
 /// 内容 ≤ 31 字节。
 pub const NAME_LEN: usize = 32;
 
@@ -68,7 +68,8 @@ impl Name {
     /// 对偶**：构造期义务在两条入口上都成立（非法名不可表达）。
     ///
     /// `pub`：它是 `Name` 线格式的**解码面**，使用者是用户态协议
-    /// （`crates/protocol/src/dispatch` 的 decode）；语义上属于本 crate，不随协议搬家。
+    /// （`crates/protocol/src/board/call.rs` 的 `name_of`）与各程序
+    /// （`guest` / `plic` 的 `Name::from_bytes`）；语义上属于本 crate，不随协议搬家。
     pub fn from_bytes(bytes: [u8; NAME_LEN]) -> Result<Name, NameError> {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
         if len == 0 {

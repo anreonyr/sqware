@@ -1,8 +1,9 @@
 // 健康检查 · pt_reclaim — PT 回收自测：map/unmap 循环验证中间表回收，
 // 无孤儿表、无 double-free。
 //
-// 每轮：map 4 MiB（4 KiB 页，根表槽 1）→ 表数 +3（1×L1 + 2×L0）；unmap → 回落；
-// 32 轮后「在途帧 − 堆支撑页」回到轮前。断言用 `expect!`：失败统一报告 + fail-fast。
+// 每轮：map 4 MiB（4 KiB 页）→ 表数 +levels（随模式 3/4/5；Sv39 即
+// 2×L0 + 1×L1，根槽 = 1）；unmap → 回落；32 轮后「在途帧块 − 堆支撑页」回到轮前。
+// 断言用 `expect!`：失败统一报告 + fail-fast。
 
 #![cfg(any(debug_assertions, feature = "framework"))]
 
@@ -19,7 +20,9 @@ pub(super) fn pagetable() {
     // 表数期望随模式层级（4 MiB = 2×L0 + 每层一个中间表 = 共 levels 张表）。
     let levels = crate::memory::manager::mode::geometry(crate::memory::manager::mode::mode()).levels
         as usize;
-    const BASE: usize = 0x4000_0000; // 根表槽 1：堆窗口之后、栈窗口之前的空地
+    // 根槽随模式：Sv39 的高位 VPN 为 1，落槽 1；Sv48/57 高位 VPN 为 0，落槽 0。
+    // 地址本身在堆窗口之后、栈窗口之前的空地。
+    const BASE: usize = 0x4000_0000;
     const SIZE: usize = 4 * 1024 * 1024; // 4 MiB → 2×L0 + (levels−2) 中间表
     const ROUNDS: usize = 32;
 
@@ -29,7 +32,7 @@ pub(super) fn pagetable() {
     let flags =
         space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
     let base_count = space.table_count();
-    // 全动态下块池页已计入 frame.occupied,剔除块池持页得"非块池用途在途帧"。
+    // 全动态下块池页已计入 frame.occupied,剔除块池持页得"非块池用途在途帧块"。
     let held_before = crate::memory::allocator::statistics::frame_occupied()
         - crate::memory::allocator::statistics::block_occupied();
 

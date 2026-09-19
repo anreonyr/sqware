@@ -86,12 +86,13 @@ fn gprs() -> [usize; 32] {
     r
 }
 
-// ── 地址语义（FrameKind）─────────────────────────────────────────────
+// ── 地址语义（FrameKind）与现场寄存器 ───────────────────────────────
 
-/// 地址语义分类 — 由 [`FrameResolver::classify`] 产出，**不挂在 [`Frame`] 上**。
+/// 现场寄存器三元组（当前点 pc/sp/fp）。
 ///
-/// `Frame` 只存裸地址（pc/sp/fp），不携带任何地址语义——语义是 resolve 的产物，
-/// 属于独立通道。`Kind` 与 `Frame` 的解耦是「walk 与 resolve 分离」的类型化。
+/// **地址语义不在这里**：`Frame`（与本结构）只存裸地址、不携带任何地址语义——语义由
+/// [`FrameResolver::classify`] 产出、属独立通道，`Kind` 与 `Frame` 的解耦是「walk 与
+/// resolve 分离」的类型化。
 #[derive(Debug, Clone, Copy)]
 pub struct Registers {
     pub pc: VirtAddr,

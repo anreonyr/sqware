@@ -28,7 +28,8 @@ pub fn init() {
     );
 }
 
-/// 副核 idle 循环：spin + steal；拿到任务即 restore（永不返回）；全退出停机。
+/// 副核 idle 循环：本核队首 + WFI（跨核偷取已删，见 `core::fetch` 的照实记）；
+/// 拿到任务即 restore（永不返回）；全退出停机。
 pub fn idle() -> ! {
     restore(run())
 }

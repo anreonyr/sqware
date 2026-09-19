@@ -103,7 +103,8 @@ struct Header {
     pie: bool,
 }
 
-/// 待装载段 — 校验后的终态。不变量（构造义务）：memsz >= filesz、flags 无 X⊓W。
+/// 待装载段 — 校验后的终态。不变量（构造义务）：memsz >= filesz、flags 无 X⊓W、
+/// `[offset, offset + filesz)` 落在输入字节内（loader 据此切片）。
 pub struct LoadSegment {
     pub vaddr: VirtAddr,
     pub offset: usize,
@@ -182,6 +183,13 @@ fn collect(bytes: &[u8], h: &Header) -> Result<Vec<LoadSegment>, ParseError> {
         // 验段
         if !vaddr.is_multiple_of(PAGE_SIZE) || !offset.is_multiple_of(PAGE_SIZE) {
             return Err(ParseError::BadAlign(vaddr));
+        }
+        // 文件实体必须整段落在 `bytes` 里：loader 按 `[offset + i·PAGE_SIZE,
+        // offset + filesz)` 切 `&bytes[..]`，越界即切片 panic（用户可控的 PT_LOAD
+        // 能构造出来）。need/have 与上面两处截断同形。
+        let file_end = offset.checked_add(filesz).ok_or(ParseError::Overflow)?;
+        if file_end > bytes.len() {
+            return Err(ParseError::Truncated(file_end, bytes.len()));
         }
         if memsz < filesz {
             return Err(ParseError::BssUnderflow);

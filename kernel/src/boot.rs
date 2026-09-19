@@ -94,7 +94,8 @@ pub fn banner() {
     crate::runtime::diagnose::render::render(sealed, &mut sink, 0);
 }
 
-/// 启动多任务：spawn 演示团队后进入首个线程。
+/// 启动：装配钩子与锁序 → 跑用例（framework 档）或健康检查 → 造根服务域
+/// （`spawn_root`）→ HSM 拉起副核。
 pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
     scheduler::boot::init();

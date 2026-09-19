@@ -3,7 +3,7 @@
 //! 方案 3（typed payload）的 proc-macro 实现。输入一个带载荷的调用枚举，输出：
 //!   * `slot(&self) -> usize`       —— 调用号（`#[call(class = N)]` 的 class << 32 | 判别号）
 //!   * `pack(&self) -> [usize; 6]`  —— 字段按声明顺序 wire 化（`Wire::pack`）
-//!   * `unpack(slot, &[usize; 6])`  —— 按 slot 取 variant，逐字段 `Wire::unpack`
+//!   * `from_wire(slot, &[usize; 6])` —— 按 slot 取 variant，逐字段 `Wire::unpack`
 //!   * `Ret` 枚举                   —— 每个标 `#[ret(T)]` 的 variant 一个载荷变体
 //!   * `call(self) -> EnvResult<Ret>`—— 触发并判译（负值即错误）
 //!

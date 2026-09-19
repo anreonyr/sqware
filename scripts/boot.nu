@@ -5,8 +5,8 @@
 #
 # 消费者：
 #   scripts/runner.nu  cargo 集成（交互式跑）：stdin 直接继承调用者。
-#   scripts/examine.nu 验收门：**输入不穿 nu** —— `tail -f -n +1 <命令文件> | nu boot.nu <elf>`
-#                      （长驻写端喂 guest，逐步 expect）。nu 无 `<`，故用管道代 FIFO。
+#   scripts/examine.nu 验收门：**定时喂、不逐步 expect** —— `bash -c <FEED> | timeout <秒> nu boot.nu <elf>`
+#                      （FEED 里是 sleep + 重复 printf，不留长驻写端、不做活读日志）。nu 无 `<`，故用管道代 FIFO。
 #
 # 退出码原样返回（124 = 被外接 timeout 杀）。消费者据此**观察**，不做 pass/fail；
 # 注意 nu 脚本在外部命令非零退出时当场中止，故消费者调用本脚本时也要包 `try`。

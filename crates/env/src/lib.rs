@@ -7,7 +7,7 @@
 //!
 //! 方案 3（typed payload）：各调用域枚举（`RoomCall` 等）是带类型载荷的 variant，
 //! 字段类型为语义句柄（`PieToken`/`TaskId`/`VirtAddr`）或 `Permission`/裸量；
-//! `[call]` 载荷由 `derive(Envcall)` 生成 codec（`slot/pack/unpack/call`）。
+//! `[call]` 载荷由 `derive(Envcall)` 生成 codec（`slot/pack/from_wire/call`）。
 //! 返回类型经 `#[ret(T)]` 标注，derive 生成域 `*Ret` 枚举。
 
 // 清单的写侧（`wire::manifest::pack`）要一段可增长的字节缓冲，故本 crate 引 `alloc`

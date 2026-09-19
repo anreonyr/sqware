@@ -2,7 +2,7 @@
 # quick — 开发期的**单次冷启 + 往返计时**（不做判定；判定在 `examine.nu`）。
 #
 # 为什么要有它：整门是 3 轮 QEMU + 两档 profile 的**验收**判据，定位与调优太贵。
-# 本脚本只做三件事：起一次 guest、等提示符再喂命令、**打印每条命令的往返耗时**。
+# 本脚本只做三件事：起一次 guest、等启动行再喂命令、**打印每条命令的往返耗时**。
 # 永远 exit 0——"什么算通过"不在这里。
 #
 # 用法：
@@ -39,22 +39,15 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
     fi
 fi
 
-# 提示符 `sq > ` 在**每次输入会出现两次**（写一次、重绘一次），故不能用它计数。
-# 稳定可数的是 `clock <秒>` 行——计时序列正好由它夹住。
-clocks() { local n; n=$(grep -ac 'clock [0-9.]* sec' "$log" 2>/dev/null); echo "${n:-0}"; }
-prompts() { local n; n=$(grep -ac 'sq > ' "$log" 2>/dev/null); echo "${n:-0}"; }
-wait_clocks() {           # 等第 n 行 clock（最多 25 s）
-    local want=$1 i
+# 启动读数用 `echo: ready`——当前树里**唯一稳定可数的启动行**：它由 `echo` 域在注册
+# 回显之前从调试面直打（不经过任何服务），一次启动只出现一次，且验收门的第 3 条判据
+# 就是它（`examine.nu` / `soak.sh` 同源）。旧的 `sq > ` 与 `clock <秒>` 出自已删的
+# console 协议，今天没有任何源码会打，拿它们计数只会每次都空等。
+ready() { local n; n=$(grep -ac 'echo: ready' "$log" 2>/dev/null); echo "${n:-0}"; }
+wait_ready() {            # 等 `echo: ready`（最多 25 s）——只用于等启动
+    local i
     for i in $(seq 1 500); do
-        [ "$(clocks)" -ge "$want" ] && return 0
-        sleep 0.05
-    done
-    return 1
-}
-wait_prompt() {           # 等第 n 次提示符（最多 25 s）——只用于等启动
-    local want=$1 i
-    for i in $(seq 1 500); do
-        [ "$(prompts)" -ge "$want" ] && return 0
+        [ "$(ready)" -ge 1 ] && return 0
         sleep 0.05
     done
     return 1
@@ -66,10 +59,10 @@ wait_prompt() {           # 等第 n 次提示符（最多 25 s）——只用�
 exec 3> >(QEMU_TIMEOUT=45 QEMU_ICOUNT= nu scripts/boot.nu "$elf" 2>&1 | tee "$log" >/dev/null)
 feed=$!
 
-if ! wait_prompt 1; then echo "quick: 等不到提示符（启动失败？）" >&2; fi
-echo "quick: 启动完成（$(prompts) 次提示符）"
+if ! wait_ready; then echo "quick: 等不到 echo: ready（启动失败？）" >&2; fi
+echo "quick: 启动完成"
 
-# 依次喂命令（不等"第几次提示符"——那个计数不可靠），跑完留 transcript。
+# 依次喂命令（**固定间隔喂，不等回应**——回应不作判据），跑完留 transcript。
 for c in "${cmds[@]}"; do
     printf '%s\n' "$c" >&3
     sleep 1.5

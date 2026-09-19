@@ -9,8 +9,13 @@
 //              ——唯一的入队路径），落点核若在等就发一记定向 IPI（消雷鸣群）；
 //              halt 屏障由 yell 广播喊全员归队。
 //
-// 命名：动词（spawn/exit/done/halt/sleep/wake/**pick**/**kick**/**yell**/wfi/boot_done）+
-// 计数名词（PUSHED/REAPED/WAITING/HALTING/BOOT_DONE）。
+// 命名：动词（push/exit/done/halt/sleep/wake/**pick**/**kick**/**yell**/**nudge**，其中
+// `kick` = `scheduler::core::kick`，本文件只记它的读数）+ 计数名词
+// （PUSHED/REAPED/WAITING/HALTING/HALT_ARRIVED/KICKS/FALLBACK）。
+//
+// **照实记**：旧表写的是 `spawn`/`wfi`/`boot_done` 与计数名词 `BOOT_DONE`——这四个名字
+// 全树都没有对应符号（`spawn` 在 `boot::spawn_root`，WFI 是 `fetch::wait` 里的一条
+// `asm!`），故照实换成本文件与 `scheduler::core` 里真有的那些。
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -194,9 +199,10 @@ pub(super) fn halt() -> ! {
 
 // ── 关机钩子注册面 ──
 //
-// 子系统（mail / scheduler / allocator）在 `boot::init` 把自己的关机函数挂到
-// 这里——conductor 不硬编码子系统名。每条钩子调一次，顺序 = 注册顺序
-// （mail → scheduler → block::flush），由 boot::init 装配时定。
+// 子系统在 `boot::init` 把自己的关机函数挂到这里——conductor 不硬编码子系统名。每条
+// 钩子调一次，顺序 = 注册顺序（`scheduler::rip` → `block::flush`），由 `boot::init` 装
+// 配时定。**mail 不在其列**：它的资源随 `Task` 的 drop 链透传（`PoleMeta::drop` 还物理
+// 帧），没有自己的关机钩子（见 `boot::init` 里那一段照实记）。
 type Hook = fn();
 
 static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();

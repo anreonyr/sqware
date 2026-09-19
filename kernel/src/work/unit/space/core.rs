@@ -140,10 +140,12 @@ impl SpaceInner {
         // **映射表的增长可失败**：取段之后必有一张新 `Map` 入 `self.maps`
         // （`map` / `claim` / `attach` / `borrow` / 各窗口的 claim 都在这条路上），
         // 而那次 `Vec::push` 的扩容若走 std 默认路径就是 `handle_alloc_error` →
-        // 整机 halt。**预留现在紧贴每个 push 点**（本文件四处 `self.maps.try_reserve(1)`）
-        // ——此前它只在本函数里备一格，而 `StackWindow::claim` 一个入口要推两张
+        // 整机 halt。**预留现在紧贴每个 push 点**——`self.maps.try_reserve(1)` 本文件
+        // 只有 `register` 一处；`unmap` 备的是 `try_reserve(rights)`，`splits` 那张表
+        // 另算。此前它只在本函数里备一格，而 `StackWindow::claim` 一个入口要推两张
         // （guard + 栈体），于是"预留 1 格、推 2 张"，扩容就落在 churn 现场那次
-        // 917504 B（= 8192×112）上。一次预留配一次增长，且两者挨在一起。
+        // 917504 B 上（`= 8192×112` 是过期标定，`Map` 实测 64 B；照实记）。一次预留
+        // 配一次增长，且两者挨在一起。
         let base = match seg {
             SegmentKind::Normal => self
                 .user
@@ -291,10 +293,12 @@ impl SpaceInner {
     /// # 先备后动（本函数的硬约束）
     ///
     /// 这是 `MemoryCall::Deallocate` 的必经之路——**释放不得依赖内存**。旧版
-    /// `mem::take` + 新建 `survivors` 每次调用都重建整张映射表：`Map` 恰 112 B，
-    /// 表涨到 512 条时 `grow_one` 那一步就是一次 **114688 B（28 页）** 的请求，
-    /// 而它落在内存已经吃紧的释放路径上——压垮内核的那次分配，是「释放」自己
-    /// 递上去的（`trace/churn6/console.log` 的实测现场）。
+    /// `mem::take` + 新建 `survivors` 每次调用都重建整张映射表：表涨到 512 条时
+    /// `grow_one` 那一步就是一次 **114688 B（28 页）** 的请求（现场数据，按旧标定的
+    /// `Map` = 112 B 记），而它落在内存已经吃紧的释放路径上——压垮内核的那次分配，
+    /// 是「释放」自己递上去的（`trace/churn6/console.log` 的实测现场）。今天的
+    /// `Map` 实测 64 B（next 8 + va 8 + size 8 + flags 8 + pending 1 + 补齐 7 +
+    /// `Frames(Vec)` 24）；那个 112 B 是过期标定（照实记）。
     ///
     /// 现在两趟走。**第一趟只读**：数出这次要造几张图（洞图 / 右段图）、各要搬
     /// 多少帧，并**当场把容量备足**——任何一步失败都在**状态一字未动**时答
@@ -401,7 +405,7 @@ impl SpaceInner {
     }
 
     /// 只读校验：`(addr, size)` 是否为该段的一个已分配块（拆除路径的失败域
-    /// 前移，见 [`super::seg::Segment::holds`]）。
+    /// 前移，见 [`super::segment::Segment::holds`]）。
     pub(crate) fn holds(&self, seg: SegmentKind, addr: usize, size: usize) -> bool {
         match seg {
             SegmentKind::Normal => self.user.as_ref().is_some_and(|u| u.holds(addr, size)),
@@ -703,8 +707,9 @@ impl<'a> InstallGuard<'a> {
 /// 页槽位里那帧的物理地址（恒等映射下指针值即 PA）。
 ///
 /// 独立函数而不是方法：**唯一使用者是 [`SpaceInner::audit`]**，而它整段是
-/// `#[cfg(feature = "framework")]`——做成结构上的方法会让那个字段在没有用例的档里
-/// 没有任何读点（dead_code 警告），违反"零警告、零 allow"（用户裁决）。
+/// `#[cfg(any(debug_assertions, feature = "framework"))]`——做成结构上的方法会让
+/// 那个字段在没有用例的档里没有任何读点（dead_code 警告），违反"零警告、零
+/// allow"（用户裁决）。
 #[cfg(any(debug_assertions, feature = "framework"))]
 fn page_pa(f: &Frame) -> PhysAddr {
     PhysAddr::from_raw(f.as_ptr() as usize)

@@ -51,8 +51,8 @@ use crate::work::unit::life::Life;
 
 /// Nole 的全局身份（自 1 递增、永不复用）——**听者键的身份**（见 [`key`]）。
 ///
-/// 键取它而不取 `NoleMeta` 的堆地址：站点表的站点从不回收，而地址会被分配器回收
-/// 再利用——死铃留下的陈旧 pend 会被落在同一地址的新铃继承。
+/// 键取它而不取 `NoleMeta` 的堆地址：站点在资源死亡时由 `prune` 删除（不留墓碑），
+/// 而地址会被分配器回收再利用——地址复用会让两枚铃的身份相等。
 ///
 /// 与 `HoleId` **各起一份计数器**：键不同族（`WakeKey::Nole` / `WakeKey::Hole`），
 /// 数值相撞也不撞键；共用一份只会把两个模块的寿命绑在一起。
@@ -151,8 +151,8 @@ impl Drop for NoleMeta {
 /// 听者 → 等待键。**没有方向字段**：门铃只有一条方向（有事/没事），
 /// 这也是 [`wait`] 不收 `dir` 的理由（对照 `hole::key(meta, dir)`）。
 ///
-/// **键取 `NoleId` 而不是 `NoleMeta` 的堆地址**：理由同 `hole::key`——站点表不回收
-/// 站点，地址会被复用，死铃的陈旧 pend 会被同地址的新铃继承。
+/// **键取 `NoleId` 而不是 `NoleMeta` 的堆地址**：理由同 `hole::key`——站点由
+/// `prune` 在资源死亡时删除，而地址会被复用，身份将不再唯一。
 pub(crate) fn key(meta: &NoleMeta) -> WakeKey {
     WakeKey::Nole { id: meta.id.0 }
 }

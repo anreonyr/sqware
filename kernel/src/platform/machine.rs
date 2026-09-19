@@ -17,7 +17,7 @@ use crate::memory::PAGE_SIZE;
 
 /// 半开物理区间 `[base, end)` — 内存池 / MMIO 设备区域通用。
 ///
-/// 长度用 `end - base` 计算，不单独存 size。
+/// 长度由 `base + size` 得到，不单独存 `end`。
 #[derive(Clone, Copy, Debug)]
 pub struct Region {
     pub base: usize,

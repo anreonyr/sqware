@@ -165,21 +165,24 @@ pub enum Suspend {
     SystemSuspend = 0,
 }
 
-/// CPPC 扩展的 FID
+/// CPPC 扩展的 FID（SBI v2.0 §14 表 41）
+///
+/// FID 2（`cppc_read_hi`，读高半）本树**未建模**：没有调用者要它，故这个号空着——
+/// 编号照标准留缝，不是把 Write 挤到 2（取值直接进 a6，挪号就是挪语义）。
 #[repr(usize)]
 #[derive(Clone, Copy)]
 pub enum Cppc {
+    /// 探测 CPPC 寄存器是否支持
+    /// a0 = cppc_reg_id
+    Probe = 0,
+
     /// 读取 CPPC 寄存器
     /// a0 = cppc_reg_id
-    Read = 0,
+    Read = 1,
 
     /// 写入 CPPC 寄存器
     /// a0 = cppc_reg_id，a1 = value
-    Write = 1,
-
-    /// 探测 CPPC 寄存器是否支持
-    /// a0 = cppc_reg_id
-    Probe = 2,
+    Write = 3,
 }
 
 /// Nested Acceleration 扩展的 FID

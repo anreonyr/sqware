@@ -15,8 +15,9 @@
 // 而 data 的写入排在 CAS 之后——Release 覆盖不到它，另一 hart 可见「已初始化」却读到
 // 尚未写入的 data。三态把「抢到写入权」与「对读者可见」拆成两件事。
 //
-// 今日四处消费者（`HERTZ` / `TRAP_STACK_PHYS` / `POOL` / `MACHINE`）都在副核拉起之前
-// 就 `set` 完了，故旧版从未暴露；那是**启动次序的巧合**，不是本原语的性质。
+// 今日的消费者里，`HERTZ` / `TRAP_STACK_PHYS` / `POOL` / `MACHINE` 这几个都在副核
+// 拉起之前就 `set` 完了（`IRQ` / `SCHEDULERS` / `KERNEL_TEAM` 等亦在其列，全树静态
+// `OnceLock` 十来处），故旧版从未暴露；那是**启动次序的巧合**，不是本原语的性质。
 
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
@@ -96,8 +97,9 @@ impl<T> OnceLock<T> {
 
     /// 获取已初始化的值的引用，若未初始化则通过闭包初始化。
     ///
-    /// 即使有多个调用者并发调用 `get_or_init`，保证闭包最多执行一次。
-    /// 若闭包被调用但返回时发现其他调用者已先完成初始化，返回的值会被丢弃。
+    /// **不保证闭包最多执行一次**：先执行闭包、后 `set`，并发调用者可能都过了
+    /// `get()` 的 `None` 分支，于是闭包各跑一遍、先到者胜。
+    /// 保证的是"**最多一个值被发布**"：其余闭包返回值在 `set` 失败时原样丢弃。
     pub fn get_or_init<F>(&self, f: F) -> &T
     where
         F: FnOnce() -> T,

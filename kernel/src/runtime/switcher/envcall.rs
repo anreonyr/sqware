@@ -12,9 +12,10 @@
 // 返回值写回 a0（`Gprs::A0`）；sepc 按**实际指令长度**前进（RVC 2 / 标准 4 字节，
 // 见 `instr_len`；Reap 不返回）。
 // 时间语义统一以毫秒（Duration 边界）表达（Park / Wait）；Ticks 仅作兼容诊断。
-// 调用名与调度词族同词：Starve/Park/Reap/Wait/Wake 分别直呼
-// `scheduler::core::starve` / `messenger::{park, quit, wait, wake}`（服务面转发层
-// 已随内核任务面一并删除）。
+// 调用名与调度词族同词：Starve/Park/Wait/Wake 分别直呼
+// `scheduler::core::starve` / `messenger::{park, wait, wake}`；同一个 `messenger` 面上的
+// `join`/`fall` 也在本层。**Reap 是反向的**：本层只置退出原因并返 `None`（空指针），
+// `quit` 由退场窄尾那一帧调（`trap` 的 `Reap` 分支；服务面转发层已随内核任务面一并删除）。
 
 use core::time::Duration;
 

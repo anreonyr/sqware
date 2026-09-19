@@ -23,7 +23,8 @@ const READER_MASK: usize = !WRITER_BIT;
 pub struct RwLock<T: ?Sized> {
     // WRITER_BIT | reader_count
     state: AtomicUsize,
-    /// 写锁持有者调用点（返回地址；0 = 无写者）——写重入/升级/降级检测与溯源用
+    /// 写锁持有者调用点（返回地址；0 = 无写者）——为溯源留的账。**今日只写不读**：
+    /// 检测用的是入口现取的 ra（见 `read`/`write` 的局部 `caller`）。
     caller: AtomicUsize,
     data: UnsafeCell<T>,
 }
@@ -59,7 +60,9 @@ impl<T> RwLock<T> {
 impl<T: ?Sized> RwLock<T> {
     /// 获取读锁，返回读守卫。多个读者可并发持有。
     ///
-    /// 若已有写者持有或等待，则自旋等待。获取期间关中断。
+    /// 读路径遇写者**不自旋**：当场按死锁处理（debug 报 `write->read downgrade
+    /// deadlock` / release panic）——单 hart 上"写者持有或等待"只可能来自本执行
+    /// 流持写锁再读。获取期间关中断。
     ///
     /// 单 hart 下读重入合法（计数递增）；但持写锁再读（降级）是死锁——
     /// 写者即本执行流，等待写者离开永不发生。
@@ -97,7 +100,8 @@ impl<T: ?Sized> RwLock<T> {
 
     /// 获取写锁，返回写守卫。写者独占。
     ///
-    /// 先置 WRITER_BIT 阻塞新读者，再等待现存读者归零。获取期间关中断。
+    /// 先置 WRITER_BIT 阻塞新读者，再判现存读者：非零即升级死锁（debug 报告 /
+    /// release panic），**不是等待**。获取期间关中断。
     ///
     /// 单 hart 下两个死锁形态在此捕获：写重入（WRITER_BIT 已置位即自己）、
     /// 读→写升级（读者计数非 0 必是自己的读锁）。
@@ -135,7 +139,7 @@ impl<T: ?Sized> RwLock<T> {
             core::hint::spin_loop();
         }
 
-        // 等待现存读者全部离开：单 hart 下读者计数非 0 必是本执行流的读锁（升级死锁）
+        // 判现存读者：单 hart 下读者计数非 0 必是本执行流的读锁（升级死锁）——报警/panic
         if self.state.load(Ordering::Acquire) & READER_MASK != 0 {
             #[cfg(debug_assertions)]
             depend::report(

@@ -17,8 +17,13 @@ pub mod table;
 /// 页表操作错误。
 pub use table::MapError;
 
-/// 刷新指定 ASID 的 TLB 条目（非全局）：`sfence.vma zero, asid`（asid=0 时全刷
-/// 含全局条目，asid≠0 时只刷新该 ASID）。页表修改后按空间 ASID 调用。
+/// 刷新指定 ASID 的 TLB 条目（非全局）：`sfence.vma zero, asid`。**asid 经通用
+/// 寄存器传入 ⇒ 任何取值都按 ASID 匹配、永不失效全局（G=1）条目**——asid=0 亦然
+/// （"asid=0 连全局一起刷"只对 `rs2=x0` 的写法成立）。页表修改后按空间 ASID 调用。
+///
+/// 照实记：`flush_asid(0)`（内核空间，`Asid::kernel`：`space/adapter.rs`，调用点
+/// `unit/mod.rs`）本意是**连全局条目一起全刷**；今日的 asm 不覆盖 G=1 的内核映射。
+/// 尚未见由此产生的故障，但账要这么记。
 ///
 /// # Safety
 ///

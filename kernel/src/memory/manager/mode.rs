@@ -112,7 +112,7 @@ pub fn levels() -> usize {
 /// 内核半区起点（用户/内核分界）= `canonical(1 << split_bit)`。
 ///
 /// Sv39: `0xFFFF_FFC0_0000_0000`· Sv48: `0xFFFF_8000_0000_0000`
-/// · Sv57: `0xFFFF_FF00_0000_0000`。
+/// · Sv57: `0xFF00_0000_0000_0000`（bit 56 的规范符号扩展）。
 pub fn lower() -> VirtAddr {
     VirtAddr::from_raw(1usize << geometry(mode()).split_bit())
 }

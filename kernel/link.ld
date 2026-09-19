@@ -15,8 +15,8 @@ SECTIONS
   .trampoline ALIGN(0x1000) : {
     KEEP(*(.trampoline))
   }
-  /* 代码段尾：alloc-site 回溯守卫用（候选 ra 须落在 [_kernel_start, _text_end)，
-     .data/.bss 的静态符号地址不在其内——防 site 失真）。 */
+  /* 代码段尾：**今日无读者**（旧 alloc-site 回溯守卫随 fence 审计层一起删了；
+     内核域判定今天比的是 `_kernel_edge`）。留着是为了链接脚本的完整性。 */
   _text_end = .;
 
   .data : {

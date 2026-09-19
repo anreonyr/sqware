@@ -18,9 +18,9 @@
 //! D1 契约）说的都是**内核→用户**的答案（`Denied`/`Dead`/`Busy`/…）。把"内核自己违约"
 //! 塞进同一个域，等于让用户程序去处理内核的 bug，且每条 `call()` 都要多一个分支。
 //!
-//! 故这里的纪律是：**只对"纯靠类型收窄、没有任何契约依据"的取值设防**——今天只有一处
-//! （`u8`，见下），并在 `debug_assertions` 档（门的 harden 轮）**真的查**。
-//! 有契约依据的取值（如 `(PieToken, Permission, TaskId)` 从 v1 取位）不设防，
+//! 故这里的纪律是：**只对"纯靠类型收窄、没有任何契约依据"的取值设防**——今天这样的
+//! 取值一处也没有（全树没有 `impl FromPair for u8` 一类），故下面每一处 `from_pair`
+//! 都不校验。有契约依据的取值（如 `(PieToken, Permission, TaskId)` 从 v1 取位）不设防，
 //! 因为那个截断**就是**那条契约本身。
 
 use super::{PieToken, TaskId, TeamId, VirtAddr};
@@ -51,15 +51,20 @@ impl FromPair for (usize, TaskId) {
     }
 }
 
-/// `merge_block` 门计数：`(成功, bound 拒, meta 拒, chain 拒)`，两个寄存器各压两个
-/// 计数（32 位足够——只用于诊断，不做精确累加上限语义）。
+/// 历史遗留：`(成功, bound 拒, meta 拒, chain 拒)` 四格计数，两个寄存器各压两个
+/// （32 位足够——只用于诊断，不做精确累加上限语义）。
+///
+/// **当前 ABI 无调用者**：`fid.rs` 里没有哪条 `#[ret(...)]` 是这个四元组；`merge_block`
+/// 是内核内存分配器内部的一手，不经 envcall 回来。留着备复用。
 impl FromPair for (usize, usize, usize, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (v0 & 0xffff_ffff, v0 >> 32, v1 & 0xffff_ffff, v1 >> 32)
     }
 }
 
-/// 池水位探针的返回：`(pagemeta 在手帧数 = 真相, freelist 走链帧数 = 待审计)`。
+/// 历史遗留：`(pagemeta 在手帧数 = 真相, freelist 走链帧数 = 待审计)` 的两格探针。
+///
+/// **当前 ABI 无调用者**（`fid.rs` 里没有 `#[ret((usize, usize))]` 的探针调用）。留着备复用。
 impl FromPair for (usize, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (v0, v1)
@@ -126,7 +131,11 @@ impl FromPair for (PieToken, crate::permission::Permission, TaskId) {
     }
 }
 
-/// Owned 返回值打包：v0 = vestor（授与人）、v1 = owner（资源开辟者）。
+/// 历史遗留：`(vestor = 授与人, owner = 资源开辟者)` 的两格打包。
+///
+/// **当前 ABI 无调用者**——`MailCall` 没有 `Owned` 这一变体，`fid.rs` 里也没有
+/// `#[ret((TaskId, TaskId))]` 的调用；`(TaskId, TaskId, usize)` 那条（`Reserve`）才是
+/// 活的那一格。留着备复用。
 impl FromPair for (TaskId, TaskId) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (TaskId(v0), TaskId(v1))

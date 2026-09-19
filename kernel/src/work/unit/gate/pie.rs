@@ -170,7 +170,7 @@ impl AnyPie {
         }
     }
 
-    /// 资源开辟者（`EnvCall::Mail(MailCall::Owned)` 的 `owner` 一侧）。
+    /// 资源开辟者（`EnvCall::Pie(PieCall::Reserve)` 的 `owner` 一侧）。
     ///
     /// `None` = Meta 已封印（`Seal` 之后）：答不出完整事实。
     ///

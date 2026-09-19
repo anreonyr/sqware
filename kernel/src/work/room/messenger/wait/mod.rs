@@ -376,7 +376,8 @@ pub fn join(task: TaskLife, reaped: bool, dur: Duration) -> Result<Handoff<bool>
 /// 键退役：放行该键上的**全部**等待者，并把站点**当场删掉**（不留墓碑，也不留空壳）。
 ///
 /// 「目标已回收」与「资源已封印/销毁」是同一件事的两副面孔。这个键再也不会有人投信
-/// ——资源侧只在自己退役的那一刻调本函数（`HoleMeta::drop` / `hole::seal` / `bury`），
+/// ——资源侧只在自己退役的那一刻调本函数（`HoleMeta::drop` / `hole::seal` / `nole` 的
+/// `NoleMeta::drop`/`seal` / `tole` 的 `retire`/`ToleMeta::drop` / `bury`），
 /// 而 `wipe` 之后资源对象就归零或在归零路上。故「此键已死」这个结论**由 [`Life`]
 /// 承担**，不必再靠一张空站点记着：站点值里的 `Weak<Life>` 自己会答，`prune` 的判据
 /// 里也已经含了「键已死」这一项。
@@ -555,7 +556,8 @@ pub(crate) fn wipe_space(space: usize) -> usize {
 /// 本来就只是提示（见下），丢它 = 少一次"当场返回"，不是少一次唤醒。于是这条路上也
 /// 没有"要么扩容要么 halt"。
 ///
-/// 消费方 = envcall 与 mail 的投信方；跨核经 steal 再平衡（同 [`redeem`]）。
+/// 消费方 = envcall 与 mail 的投信方；跨核经 `rise` 逐枚 `kick(pick(), …)` 落点
+/// （同 [`redeem`]）。
 ///
 /// **信标可能陈旧**：「信号」与「数据」是两份状态——等待者后来直接取走数据
 /// （裸 pull 成功，不经 `wait`）时信标不被消费，下一次 `wait` 就立刻返回「已唤醒」

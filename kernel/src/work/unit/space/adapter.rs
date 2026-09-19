@@ -175,7 +175,7 @@ impl Space {
     ///
     /// 只作用于**本空间自有**的页（装载段 / 栈堆共享窗口 / mmap / mprotect /
     /// Pole 借映）。两类**内核自有**的页不走此函数：
-    /// - `borrow_map` 借用的内核映射（trampoline / DRAM 恒等 / Pole 共享页视图）；
+    /// - `borrow` 借用的内核映射（trampoline / DRAM 恒等 / Pole 共享页视图）；
     /// - `FrameWindow`（trap 帧）——落在任务空间里也恒 U=0：trap 入口在 S 态
     ///   （`SUM=0`）把寄存器现场写进它，带 U 会缺页。
     ///
@@ -313,7 +313,7 @@ impl Space {
     /// ——而那正是"一份资源有两个归还者"的温床（本仓实测过：`Munmap` 能拆到用户
     /// 堆页却**不注销账目**，因为 `ShareWindow::munmap` 与堆共用 `Seg::User`）。
     ///
-    /// 现在两个 window 都经 [`Self::release_addr`] 收敛到这里：**一个入口、
+    /// 现在两个 window 都经 [`Self::release`] 收敛到这里：**一个入口、
     /// 一个失败域、一个注销点**。
     ///
     /// # 这条路上不会分配，故它不会失败

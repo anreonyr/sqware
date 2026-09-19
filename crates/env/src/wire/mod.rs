@@ -11,8 +11,8 @@
 //!
 //! 这是方案 3（typed payload）的**唯一类型擦除点**：每个字段类型都实现 [`Wire`]，
 //! 由 [`derive(Envcall)`](envmacros) 生成的 codec 自动接线，用户侧与内核侧不再手写
-//! `as usize` / `from_bits_truncate`。非法位校验收敛在此：`Permission`/`PteFlags`
-//! 的 unpack 是 `from_bits(...).ok_or(...)`，而非静默截断。
+//! `as usize` / `from_bits_truncate`。非法位校验收敛在此：`Permission` 的 unpack
+//! 是 `from_bits(...).ok_or(...)`，而非静默截断。
 //!
 //! 通用性：本 trait 只依赖 `usize`，不绑 U-mode 语义——sbi 等 S-mode 调用封装
 //! 未来可直接复用同一 codec（derive 不写死 envcall 路径）。
@@ -44,7 +44,7 @@ pub enum Decode {
     BadSlot,
     /// 字段数超出 a0..a5。
     Overflow,
-    /// 非法位（如 `Permission`/`PteFlags` 含未定义位，或 bool 非 0/1）。
+    /// 非法位（如 `Permission` 含未定义位，或 bool 非 0/1）。
     Invalid,
 }
 

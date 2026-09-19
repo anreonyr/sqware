@@ -41,7 +41,8 @@ use alloc::sync::{Arc, Weak};
 pub(crate) struct Life;
 
 impl Life {
-    /// 新存活单元。**只由资源的创建者调用**（`Space` / `HoleMeta` / 任务各一次）。
+    /// 新存活单元。**只由资源的创建者调用**（`Space` / `HoleMeta` / `NoleMeta` /
+    /// `ToleMeta` 各一次；任务走 [`Self::try_new`]）。
     pub(crate) fn new() -> Arc<Life> {
         Arc::new(Life)
     }

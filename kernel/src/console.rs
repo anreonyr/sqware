@@ -45,9 +45,10 @@ impl Write for Console {
                 .call()
                 .expect("Dbcn");
         } else if let Some(pa) = translate_kernel(va, bytes.len()) {
-            // 内核空间映射（高半区 trap 栈 / 内核堆 / 镜像恒等区外物理帧）：
-            // 无锁 walk 页表树——关机审计（trap 栈，任务全退 ident=Last）与
-            // panic 现场（其他核已停）都依赖这条路径。
+            // 内核空间映射（高半区 trap 栈 / 内核堆 / 镜像恒等区外物理帧）：经
+            // `Space::translate` 走页表树——**会取 Space 锁（L2）**，不是"无锁 walk"。
+            // 关机审计（trap 栈，任务全退 ident=Last）与 panic 现场（其他核已停）
+            // 都依赖这条路径；持 L3 锁时**不可**打印（4→2 反向嵌套当场 panic）。
             DbcnCall::new(Dbcn::ConsoleWrite)
                 .args(SArgs {
                     a0: bytes.len(),
@@ -105,7 +106,9 @@ pub fn read(buf: &mut [u8]) -> Option<usize> {
 ///
 /// **仅限内核半区地址**：用户半区 VA（如用户堆 0x87xxxxxx）在内核空间虽也有
 /// identity 映射，但用户空间的该 VA 映射到**不同的物理帧**（独立分配）——用
-/// 内核空间翻译会得到错误的 PA。用户地址一律回退活任务空间路径（`push`）。
+/// 内核空间翻译会得到错误的 PA。用户地址一律**直接回退**（返 `None`）——旧注写的
+/// "回退活任务空间路径（`push`）"里那个 `push` 已随设备面删除，今天不存在这条替域
+/// 写出去的路。
 fn translate_kernel(va: usize, len: usize) -> Option<usize> {
     // 用户半区地址：内核空间翻译无意义（见 doc 注释），直接回退。
     if VirtAddr::from_raw(va).is_user() {
@@ -133,7 +136,8 @@ pub fn _write(args: fmt::Arguments) {
 }
 
 /// 让 `fmt::Write` 的格式化器能把整行转发到控制台。
-/// 无锁、无堆；panic/持锁态下安全。
+/// 无堆分配；**恒等区路径无色无锁，非恒等区路径会取 Space 锁（L2）**——故持 L3 锁时
+/// 不可打印（4→2 反向嵌套当场 panic）。panic / 关机现场可用是因为那时没有别的执行流。
 pub struct Sink;
 impl Write for Sink {
     fn write_str(&mut self, s: &str) -> fmt::Result {

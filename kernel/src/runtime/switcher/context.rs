@@ -82,7 +82,7 @@ impl core::fmt::Debug for Gprs {
 pub struct TrapContext {
     /// 切入用户态前的内核 satp token（`__alltraps`切回内核用）。
     pub kernel_satp: satp::Satp,
-    /// 切入用户态前的内核栈指针。两者恒为**执行核**的 per-hart trap 栈顶——
+    /// 切入用户态前的内核栈指针：恒为**执行核**的 per-hart trap 栈顶——
     /// `prepare` 每次上台无条件重写它；任务没有自己的内核栈。
     pub kernel_sp: VirtAddr,
     /// 陷阱处理入口地址（内核镜像链接地址，`jalr`目标）。

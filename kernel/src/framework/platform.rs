@@ -30,8 +30,8 @@ pub(crate) struct Kernel;
 impl Platform for Kernel {
     fn print(&self, args: fmt::Arguments) {
         // 必须走 `putln!` 而不是 `console::_write`：后者不补换行，逐例打点会并成一行
-        // ——而这一行正是门要断言的东西（`examine.nu` 按行 expect）。第一版写错过，
-        // 症状是三例与汇总挤在同一行里。
+        // ——而这一行是**人工读框架档输出**时看的（`examine.nu` 的判据不含 `[case]`，
+        // 它只管那五条）。第一版写错过，症状是三例与汇总挤在同一行里。
         crate::putln!("{args}");
     }
 }

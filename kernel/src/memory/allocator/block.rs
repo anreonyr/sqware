@@ -38,7 +38,8 @@ use crate::{
 // ── 常量 ──
 
 const MIN_POWER: usize = 3;
-/// 块层最大 size class（≤ 半页：多块页，恒有页头）。
+/// 块层最大 size class（≤ 半页：多块页）。块自页首 +0 起、**页内零开销**；
+/// 页头簿记在页外的 `Tally`（见文件头）。
 const MAX_POWER: usize = (PAGE_SIZE / 2).ilog2() as usize;
 /// 页偏移位宽（簿记表下标换算用）。
 const PAGE_SHIFT: usize = PAGE_SIZE.ilog2() as usize;
@@ -293,7 +294,8 @@ impl BlockAllocator {
             pools.push(BlockInner::new(i, tally, pool));
         }
 
-        // 帧侧没有第二份位图："这页在不在手"由 frame::pagemeta 一份账回答。
+        // 帧侧没有第二份位图："这页在不在手"由 frame 的 freelist 回答（权威），
+        // pagemeta 只是它的派生视图（`in_freelist` 才是合并判据）。
 
         Ok(BlockAllocator {
             blocks: Box::leak(pools.into_boxed_slice()),

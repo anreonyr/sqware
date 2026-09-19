@@ -67,6 +67,8 @@ fn push(
     let me = current().running_task().map(|t| t.ident.id).unwrap_or(0);
     // ① 取用判据在核心（`gate::accede`）：表里没有 → `Denied`；已封印 → `Dead`；权不够 →
     //    `Denied`——**顺序只有那一处**，与权柄轴同一个答案。
+    //    落点与拷贝两步另有码：`hole::try_push` 答 `Busy`（槽已满）/`Dead`（封印），
+    //    锁外暂存的 `try_reserve` 答 `OoM`，`len == 0` 与区间未映射答 `Denied`。
     //    "被关住"仍住本层：它要核对**别人**的表（L3），故必须在放开本任务 `pies` 之后判。
     let found = current()
         .running_task()
@@ -123,7 +125,8 @@ fn push(
 ///
 /// a0 = 实际长度、a1 = 发送者 task id；发送者是内核在 Push 时盖的章，不可伪造。
 /// `max` = 收方缓冲容量：装不下（`len > max`）答 `Denied` 且**槽一个字节都不动**；
-/// **空槽答 `Busy`**（没有可取之事，`max == 0` 的探长也一样）——与 `wait` 的
+/// **空槽答 `Busy`**（没有可取之事，`max == 0` 的探长也一样）、**已封印答 `Dead`**
+/// （两条都先过 `meta.alive()`）——与 `wait` 的
 /// "未就绪答 `false`"是非阻塞/阻塞两面，见 `fid.rs` 的 `Pull` 契约。
 fn pull(
     frame: &mut TrapContext,

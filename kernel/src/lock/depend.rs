@@ -18,6 +18,11 @@
 // 无需原子与锁；acquire 在取到后记入（顺带记本次调用点）、release 在 guard
 // Drop 移除。POOL 未装配（boot 早期）时各操作静默跳过。
 //
+// **例外：`BareLock`**（`lock/bare.rs`）**不关中断**（它的契约是"只在启动期 / 纯
+// 任务上下文用"），却照样调 `depend_check!`/`depend_acquire!` ⇒ 上面那条"全程关
+// 中断"对它是假陈述。它的安全性由调用方的 unsafe 契约兜着（`bare.rs` 的 `# Safety`），
+// 不是由本纪律兜着。
+//
 // **exempt 锁（level=None）也记入持有集**（Held.level=None）：acquire/release
 // 双侧都记账才平衡（否则 guard Drop 的 release 必然误报 unheld）；层级校验
 // 只对 `Some(level)` 生效（max 只数参与锁），exempt 条目只作用于 `contains`
@@ -38,7 +43,8 @@ use crate::platform::machine;
 /// **本枚举两档都在**（`SpinLock::new_level` 的签名里就有它——release 也要构造）。
 /// 曾有 `#[allow(dead_code)]`：不是因为整体编译掉，而是**部分变体的读点只在
 /// lockdep 那几段**（档位内），而 `Level` 是**坐标系**——它多一个刻度不算死代码，
-/// 少一个会让锁层级表（`docs` 的锁序表）失去一处出处。这是**该留的 allow**：
+/// 少一个会让**各处内联的锁序注释**（`lock/mod.rs` 的头注、各锁模块的"层级"注）失去一处刻度。
+/// 这是**该留的 allow**：
 /// 与 `lock::{bare,spin}` 那批"锁库预留面"同族。
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]

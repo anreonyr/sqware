@@ -7,7 +7,7 @@
 # 的等待者，再投一次信。
 #
 # 判据（两条一起）：
-#   1) 台主汇总行 `group: PASS`（内含 `hung=2 woke=2 deliver=true control=true`）；
+#   1) 台主先打 `group: hung=… woke=… deliver=… control=…`，紧接一行 `group: PASS`（两行分开，脚本也分开 grep）；
 #   2) 出现 `task: all tasks exited, system halted`（收完自己停，不是被 timeout 杀掉）。
 #
 # 读数（末行汇总）：

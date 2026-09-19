@@ -29,7 +29,8 @@ pub enum InitError {
     /// 空闲区不足一页，无法建立 frame 元数据。
     #[error("no free physical frames available")]
     NoFreeFrames,
-    /// 设备树未报告任何 hart。
+    /// 设备树未报告任何 hart。**今日无人构造**（照实记）：无一 hart 的现状不在
+    /// 这里报错，而是在 `block::init` 直接 panic（`assert!(nodes > 0)`）。
     #[error("no harts reported")]
     NoHarts,
     /// 分配器已被初始化（重复调用 init）。

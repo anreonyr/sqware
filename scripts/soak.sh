@@ -7,7 +7,7 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 五条启动读数仍在（`plic: board reg=0 miss=1 hit=0` / `plic: desk guest` /
+#   2) 六条启动读数仍在（`plic: board reg=0 miss=1 hit=0` / `plic: desk guest` /
 #      `guest: reg=0 lookup=0` / `answer=plic` / `guest: trip ok` / `echo: ready`）。
 #
 # 用法：

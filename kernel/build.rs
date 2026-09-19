@@ -6,9 +6,9 @@ use std::process::Command;
 use env::ProgramKind;
 use env::wire::manifest;
 
-/// initrd 承载的引导期程序（**临时机制**，见 kernel/src/initrd.rs）：
+/// initrd 承载的引导期程序（**临时机制**，见 `kernel/src/platform/initrd.rs`）：
 /// (清单名, cargo bin 名, 特权级)。顺序无关——**清单解释权在 root 域程序**，
-/// 内核只按 `ROOT_NAME` 取引导镜像。
+/// 内核只按 `SQWARE_ROOT`（本脚本运行时读）选出的 `ROOT_OFFSET`/`ROOT_LEN` 取引导镜像。
 /// 这里是**唯一**声明「程序装成哪种空间」的地方——root 从清单里读，不再硬编码。
 /// 码（`ProgramKind` → u32）在 `env::wire::manifest` 里写死一次，本表只用类型。
 /// 引导镜像的**清单名**：默认 `root`；压测台用 `SQWARE_ROOT=rig` 换一个（见

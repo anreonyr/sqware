@@ -6,7 +6,7 @@
 // [`SpaceBuilder`]。布局几何随模式（lower/upper，见 `memory::manager::mode`）。
 //
 // 文件夹结构（纯映射簿记 + 段实体 + 窗口适配层）：
-//   seg       — 段实体（[`Segment`]，几何 + 已分配块表）+ 选段枚举（[`Seg`]）
+//   seg       — 段实体（[`Segment`]，几何 + 已分配块表）+ 选段枚举（[`SegmentKind`]）
 //   map       — VA→PA 簿记的原子单元（[`Map`] / [`Pending`]）
 //   core      — 主类型 [`Space`] / [`SpaceBuilder`] / [`SpaceInner`] + 映射原语
 //   window    — 窗口适配层（[`StackWindow`] / [`FrameWindow`] / [`HeapWindow`] /
