@@ -22,6 +22,13 @@
 # 不逐步 expect（那需要长驻写端 + 活读日志，是旧门复杂度的大头），改成**定时喂**：
 # 调试面读的是固件的串口，**字节先进 UART 的 FIFO**（16 字节），guest 什么时候来读都算数。
 # 故两句输入都很短（`ping` / `exit`，合计 9 字节 < FIFO），早喂、晚喂都不丢。
+#
+# **但"各喂一次"丢过**：实测出现过一整轮"`ping` 已回显、`exit` 没落地 ⇒ 被超时杀"
+# （1/12，见 `trace/gate-20260919-181145/run2.log`）——启动慢的那一轮，只喂一次的那一句
+# 会落在"读口还没就绪"的窗口里。故**重复喂**：丢一次还有下一次，窗口被盖住。
+# 判据全在 guest 侧（`ping` 回显按整行相等、`exit` 谁先读到谁收场），故重复不改变
+# 任何一条判据的含义。若哪天它还红，下一步是把喂法改成**按日志推进**（等 `echo: ready`
+# 再喂）——那要长驻写端 + 活读日志，值不值由那时的事实说话。
 
 const PING = "ping"
 const EXIT = "exit"
@@ -30,8 +37,9 @@ const HALT = "task: all tasks exited, system halted"
 const PANIC = "[panic] at"
 const ECHO_TIMEOUT = 60
 
-# 喂给 guest 的那串动作：等启动 → 一行 → 隔一会儿 → `exit` → 留够关机时间。
-const FEED = 'sleep 5; printf "ping\n"; sleep 3; printf "exit\n"; sleep 15'
+# 喂给 guest 的那串动作：等启动 → **重复**喂 `ping`（盖住慢启动的窗口）→ **重复**喂
+# `exit` → 留够关机时间。
+const FEED = 'sleep 4; for i in 1 2 3 4 5 6; do printf "ping\n"; sleep 1; done; for i in 1 2 3 4; do printf "exit\n"; sleep 1; done; sleep 12'
 
 def main [--repeat: int = 3] {
     let root = ($env.FILE_PWD | path dirname)
