@@ -2,7 +2,7 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`crate::firmware::call`]。
 
-use env::{NAME_LEN, Name, PAIR_LEN, Pair, TaskId};
+use env::{NAME_LEN, Name, PAIR_LEN, TaskId};
 use runtime::core::port::{Access, Policy};
 
 use super::core::Fail;
@@ -234,13 +234,6 @@ pub const fn code_of_fail(fail: Fail) -> u8 {
         Fail::Denied => DENIED,
         Fail::Full => FULL,
     }
-}
-
-/// 一条记录的字节：**名字块 + 句柄**——尺寸由 `Pair` 自己锁死，这里只是一次只读的
-/// 字节视图（`Pair` 是 `repr(C)`，内容即线格式）。
-pub(crate) fn pair_bytes(pair: &Pair) -> &[u8; PAIR_LEN] {
-    // SAFETY: `Pair` 是 `repr(C)`、尺寸由编译期断言等于 `PAIR_LEN`，只读解释为字节安全。
-    unsafe { &*(pair as *const Pair).cast::<[u8; PAIR_LEN]>() }
 }
 
 /// 单子上那一条的字节——与 [`pair_bytes`] 同一条理由（`repr(C)`、尺寸编译期锁死）。

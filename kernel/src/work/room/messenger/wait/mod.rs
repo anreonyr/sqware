@@ -328,7 +328,7 @@ pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>
 ///
 /// **后果（写给调用方）**：真只担保"没有线程会再跑、没有活的通道与门闩"，
 /// **不担保**"内存已归还"——放下/重启那条路（`UnitCall::Oust`）就是按这条边界设计的，
-/// 它不等回收（实测见 `programs/src/bin/stress/again.rs`）。
+/// 它不等回收（实测见 `programs/src/stress/again.rs`）。
 ///
 /// `task.life` = 目标任务的存活单元（弱引用）。调用方（`UnitCall::Join` 入口）本来
 /// 就握着目标的 `Arc<Task>`（授权判定要用），交一枚弱引用最自然——**解析在调用方

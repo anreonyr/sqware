@@ -19,7 +19,6 @@
 use env::{Name, PieToken, TaskId};
 
 use super::core::{Board, Fail, Free, Probe};
-use super::desk::Desk;
 
 use crate::session::{Claim, Seat};
 
@@ -45,7 +44,7 @@ use runtime::env::mail;
 /// （`gate/cull.rs` 的退场钩子）⇒ 这里当场答 `Err(-2 Dead)`，与 `env::fid` 的 `Reserve`
 /// 注记写着的那条契约一致。**本格因此不必再问第二个问题**：板侧两本账的"死"判据读的
 /// 都是它，而封印发生在退出钩子里、**早于叫醒板的那一跳** ⇒ 板被叫醒时这一格已是定论。
-fn probe(entry: PieToken) -> Option<TaskId> {
+pub fn probe(entry: PieToken) -> Option<TaskId> {
     mail::reserve(entry)
         .ok()
         .map(|(vestor, _owner, _mark)| vestor)
@@ -91,14 +90,6 @@ pub const fn board() -> Board {
     let probe: Probe = probe;
     let free: Free = free;
     Board::new(probe, free)
-}
-
-/// 立一本**板侧的账**（一位客人一格：谁 / 问 / 答）。与 [`board`] 同一个注入（探活那一格）。
-///
-/// `const` 同理：账只有一本，住在板那一台（`super::server`）。
-pub const fn desk() -> Desk {
-    let probe: Probe = probe;
-    Desk::new(probe)
 }
 
 /// 挂上：把调用方手里那枚入口**交给持板者**（`Accord` 一份副本），返"种在持板者表里"的号。

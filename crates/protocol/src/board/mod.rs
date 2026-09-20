@@ -106,10 +106,10 @@
 //! [`system`](crate::system) 起服务时靠它把名字对上入口（今天的 `Grant` 是**静态**的
 //! 那一步，板是运行期那一步）。
 //!
-//! **两侧的程序都住在同一个模块里**（`server` / `client` / `bridge`；从前是
-//! 从前是 `bin/supervisor/board.rs` 一个文件里用注释分半）：板线程（**就一枚**，
-//! 招待所有客人）+ 客侧那三手（`open` / `ask` / `take`）；**装配**（谁给谁转授、什么时候
-//! 起板线程）住在 `programs/src/supervisor/service.rs`。今天有三位客人：
+//! **三侧分家住**：**客侧**（`client`：`open` / `ask` / `take`，从外面找上板的那些手）
+//! 在本文这一侧；**板那一台**（`server`，就一枚线程招待所有客人）、它那本客人账（`desk`）
+//! 与**装配侧**（`bridge`：谁给谁转授、什么时候起板线程）住 `programs/src/board/`。
+//! 今天有三位客人：
 //!
 //! ```text
 //!   plic    中断面域（S 态）：挂上自己的服务入口，再查回来验一遍
@@ -134,7 +134,7 @@
 //! 第一个用户**。
 //!
 //! **板只管把入口交到手上，不管拿到之后说什么**：那两位之间那一句是 32 字节的名字
-//! （`programs/src/bin/user/guest.rs` 的头注）——那是**服务自己的事**，不是本协议的一格。
+//! （`programs/src/user/guest.rs` 的头注）——那是**服务自己的事**，不是本协议的一格。
 //! 真要做"调用"，帧形得另开一轮裁决。
 //!
 //! # 授进来的那一枚怎么认出来
@@ -163,9 +163,9 @@
 
 // ── 载体：三侧分别住在哪 ───────────────────────────────────
 //
-// **实现侧** [`server`]（板那一台，装配域里的一枚线程）、**使用侧** [`client`]（客侧三手）、
-// **装配侧** [`bridge`]（把板接上一位客人）。下面这段是那一台的图与次序——它讲的是"怎么跑"，
-// 与上面的协议正文分开写。
+// **使用侧** [`client`]（客侧三手）住这里——那是"别的任务怎么找上板"。**实现侧**（板那一台）
+// 与**装配侧**（把板接上客人）住 `programs/src/board/{server,bridge}.rs`：起那枚线程、转授、
+// 递格都是那一枚域在干活。下面这段是那一台的图与次序——它讲的是"怎么跑"。
 //
 //!  ```text
 //!    装配者（编排域 system）                    客人（服务域）            板线程（一枚）
@@ -206,13 +206,9 @@
 //!
 //! 三步都在 [`bridge::attach`] 里，**次序即契约**。
 
-pub mod bridge;
 pub mod call;
 pub mod client;
 pub mod core;
-pub mod desk;
-pub mod server;
 
 pub use call::{ASK_MARK, ENTRY_MARK, LANE_PREFIX, LINK, TIP_MARK, TIP_NAME};
 pub use core::{Board, Fail, Free, Probe, Sign};
-pub use desk::{Desk, Guest};

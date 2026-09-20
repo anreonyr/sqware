@@ -6,10 +6,9 @@ use env::{PAIR_LEN, Pair, PieToken};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{HolePie, NolePie, PolePie};
 
-use crate::session::Pier;
-
-use super::call::{BAD, Kind, OK, Slip, WANT_MAX, code_of_fail, pair_bytes, reply, slip_of};
-use super::core::Fail;
+use protocol::firmware::call::{BAD, Kind, OK, Slip, WANT_MAX, code_of_fail, reply, slip_of};
+use protocol::firmware::core::Fail;
+use protocol::session::Pier;
 
 /// 供：照单取源、授出、把记录写进 `records`。返**条数**。
 ///
@@ -90,4 +89,11 @@ pub fn serve(
             let _ = pier.post(frame);
         }
     }
+}
+
+/// 一条记录的字节：**名字块 + 句柄**——尺寸由 `Pair` 自己锁死，这里只是一次只读的
+/// 字节视图（`Pair` 是 `repr(C)`，内容即线格式）。
+pub(crate) fn pair_bytes(pair: &Pair) -> &[u8; PAIR_LEN] {
+    // SAFETY: `Pair` 是 `repr(C)`、尺寸由编译期断言等于 `PAIR_LEN`，只读解释为字节安全。
+    unsafe { &*(pair as *const Pair).cast::<[u8; PAIR_LEN]>() }
 }

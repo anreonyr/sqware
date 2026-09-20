@@ -12,7 +12,7 @@ use env::wire::manifest;
 /// 这里是**唯一**声明「程序装成哪种空间」的地方——root 从清单里读，不再硬编码。
 /// 码（`ProgramKind` → u32）在 `env::wire::manifest` 里写死一次，本表只用类型。
 /// 引导镜像的**清单名**：默认 `root`；压测台用 `SQWARE_ROOT=rig` 换一个（见
-/// `programs/src/bin/stress/rig.rs`）——换的只是"谁的镜像被当引导镜像"，内核其余一字不改。
+/// `programs/src/stress/rig.rs`）——换的只是"谁的镜像被当引导镜像"，内核其余一字不改。
 ///
 /// **在 build 脚本里按运行时读**（不是 `option_env!`）：`option_env!` 会把值烘进这台
 /// 脚本自己的二进制，而脚本何时重编不由那个变量决定（实测换变量后引导镜像没换）；
@@ -41,7 +41,7 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，
     // 之后"这批字节交给谁"由域自己决定（见 `platform/devices.rs::supply_initrd`）。
     ("system", "prog-system", ProgramKind::Supervisor),
-    // 压测台的两个（`programs/src/bin/stress/`）：`churn` = 受害者——U 态，不停地在
+    // 压测台的两个（`programs/src/stress/`）：`churn` = 受害者——U 态，不停地在
     // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
     // S 态，`SQWARE_ROOT=rig` 时当引导镜像，反复造/杀它。
     ("churn", "prog-churn", ProgramKind::User),
@@ -61,7 +61,7 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 重启台：**S 态**（要 mint/hatch 那道门），`SQWARE_ROOT=again` 时当引导镜像。
     // 它在同一张表、同一行上把"起 → 停 → 放下 → 再起"走三遍（协议 §六 的"重发"）。
     ("again", "prog-again", ProgramKind::Supervisor),
-    // 共享组台的两个（`programs/src/bin/stress/`）：`waiter` = 等待者——U 态，把台主
+    // 共享组台的两个（`programs/src/stress/`）：`waiter` = 等待者——U 态，把台主
     // 给的那枚孔挂进**共享组**并等组键（**多个等待者挂同一只键**）；`group` = 台主——
     // S 态，`SQWARE_ROOT=group` 时当引导镜像：一次投信，看两个等待者是不是**都醒**，
     // 以及那条消息是不是**只归一个人**。

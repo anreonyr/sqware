@@ -263,7 +263,7 @@ pub enum UnitCall {
     ///
     /// 注意"**不等回收**"是故意的：放下/重启一条路**不需要**等内核把栈/帧/`Space` 还完
     /// （理由与契约边界见 [`UnitCall::Join`]）；实测三轮"起→停→放下→再起"在同一行上
-    /// 不留残留（`programs/src/bin/stress/again.rs`）。
+    /// 不留残留（`programs/src/stress/again.rs`）。
     ///
     /// # 效果
     ///

@@ -10,9 +10,11 @@ use runtime::env::mail;
 use runtime::env::room::exit_with;
 use runtime::env::unit as utask;
 
-use crate::operator::call as ocall;
-pub use crate::operator::{ASK_MARK, LINK, TIP_MARK};
-use crate::operator::{Desk, Fail, Guest, Operator};
+use protocol::operator::call as ocall;
+pub use protocol::operator::{ASK_MARK, LINK, TIP_MARK};
+use protocol::operator::{Fail, Operator};
+
+use super::desk::{Desk, Guest, desk};
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -65,7 +67,7 @@ pub fn serve() -> ! {
     }
 
     let mut tree = ocall::tree();
-    let mut desk = ocall::desk();
+    let mut desk = desk();
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。
         let settling = settle(&mut desk, &tole, &tip_hole);

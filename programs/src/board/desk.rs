@@ -14,7 +14,7 @@
 
 use env::{PieToken, TaskId};
 
-use super::core::{Fail, Probe};
+use protocol::board::core::{Fail, Probe};
 
 // ── 一格 ────────────────────────────────────────────────────
 
@@ -66,6 +66,12 @@ impl Guest {
 pub struct Desk {
     guests: [Option<Guest>; Desk::CAP],
     probe: Probe,
+}
+
+/// 立一本账（一位客人一格）：**注入的是协议那一侧"读内核事实"的那一枚**
+/// （`call::probe`，`Reserve` 那一问）——账是实现的，判定是协议的。
+pub const fn desk() -> Desk {
+    Desk::new(protocol::board::call::probe)
 }
 
 impl Desk {

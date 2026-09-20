@@ -28,7 +28,6 @@
 use env::{Name, PieToken, TaskId};
 
 use super::core::{Fail, Free, Operator, Probe};
-use super::desk::Desk;
 
 use crate::session::{Claim, Seat};
 
@@ -173,7 +172,7 @@ pub fn map_seat(seat: Seat) -> Fail {
 /// `reserve` 答"不在我表里"与"令牌越界"是同一个 `Err`；而"它那扇门封印了"也落在同一格
 /// （存活闸），故这里读到 `Err` 就是"那一枚真的没了"。答出来的 `TaskId` 本正文用不到
 /// （树里没有 owner），只取"答得出吗"。
-fn probe(entry: PieToken) -> Option<TaskId> {
+pub fn probe(entry: PieToken) -> Option<TaskId> {
     mail::reserve(entry)
         .ok()
         .map(|(vestor, _owner, _mark)| vestor)
@@ -212,12 +211,6 @@ pub const fn tree() -> Operator {
     let probe: Probe = probe;
     let free: Free = free;
     Operator::new(probe, free)
-}
-
-/// 立一本**持树者侧的账**（一位客人一格：谁 / 问 / 答）。与 [`tree`] 同一个注入（探活那一格）。
-pub const fn desk() -> Desk {
-    let probe: Probe = probe;
-    Desk::new(probe)
 }
 
 /// **交出去**：把调用方手里那一枚交给持树者（`Accord` 一份副本），返"种在持树者表里"的号。

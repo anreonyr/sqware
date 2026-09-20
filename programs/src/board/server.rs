@@ -10,10 +10,12 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
 
-use crate::board::call as bcall;
-use crate::board::call::ENTRY_MARK;
-pub use crate::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
-use crate::board::{Board, Desk, Fail, Guest};
+use protocol::board::call as bcall;
+use protocol::board::call::ENTRY_MARK;
+pub use protocol::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
+use protocol::board::{Board, Fail};
+
+use super::desk::{Desk, Guest, desk};
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -61,7 +63,7 @@ pub(crate) fn host_loop(me: TaskId) {
     }
 
     let mut board = bcall::board();
-    let mut desk = bcall::desk();
+    let mut desk = desk();
     // `who → 死亡道` 的小表：**在 REGISTER 那一刻**记（那时名字刚到；牌子会被惰性摘掉，
     // 摘了就认不出这位叫什么了）。见 [`lane_for`] / [`take`]。
     let mut lanes: Lanes = [(TaskId::new(0), PieToken::NONE); Desk::CAP];

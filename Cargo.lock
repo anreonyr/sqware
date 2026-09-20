@@ -162,6 +162,7 @@ name = "programs"
 version = "0.1.0"
 dependencies = [
  "env",
+ "erra",
  "fdt",
  "protocol",
  "runtime",

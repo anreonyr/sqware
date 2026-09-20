@@ -20,31 +20,33 @@ protocol = { path = "../crates/protocol" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
 # 使用者目前只有 `prog-plic`（要数自己的 context、列自己要接的线）。
 fdt = { version = "0.1.5", default-features = false }
+# 错误容器：`system::call` 把内核负码包成 `erra::Error<EnvError>`（与 protocol 同款）。
+erra = { version = "0.2.0", default-features = false }
 
 [[bin]]
 name = "prog-echo"
-path = "src/bin/user/echo.rs"
+path = "src/user/echo.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-guest"
-path = "src/bin/user/guest.rs"
+path = "src/user/guest.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-passer"
-path = "src/bin/user/passer.rs"
+path = "src/user/passer.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-plic"
-path = "src/bin/supervisor/plic/main.rs"
+path = "src/plic/main.rs"
 test = false
 bench = false
 doctest = false
@@ -52,7 +54,7 @@ doctest = false
 # 命名树的服务（U 态，独立域，一枚线程）：起那棵树、招待所有客人；接树归编排域。
 [[bin]]
 name = "prog-operator"
-path = "src/bin/supervisor/operator/main.rs"
+path = "src/operator/main.rs"
 test = false
 bench = false
 doctest = false
@@ -60,7 +62,7 @@ doctest = false
 # 编排域（S 态，独立域）：起整批服务、监督、把入口挂上树；配给从引导域领。
 [[bin]]
 name = "prog-system"
-path = "src/bin/supervisor/system/main.rs"
+path = "src/system/main.rs"
 test = false
 bench = false
 doctest = false
@@ -69,7 +71,7 @@ doctest = false
 # 之后只做一件事——照单发货。
 [[bin]]
 name = "prog-root"
-path = "src/bin/supervisor/root/main.rs"
+path = "src/root/main.rs"
 test = false
 bench = false
 doctest = false
@@ -77,14 +79,14 @@ doctest = false
 # 压测台：受害者（U 态）与台主（S 态，`SQWARE_ROOT=rig` 时当引导镜像）。
 [[bin]]
 name = "prog-churn"
-path = "src/bin/stress/churn.rs"
+path = "src/stress/churn.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-rig"
-path = "src/bin/stress/rig.rs"
+path = "src/stress/rig.rs"
 test = false
 bench = false
 doctest = false
@@ -92,59 +94,59 @@ doctest = false
 # 忙机台：占核者（U 态）与台主（S 态，`SQWARE_ROOT=load` 时当引导镜像）。
 [[bin]]
 name = "prog-busy"
-path = "src/bin/stress/busy.rs"
+path = "src/stress/busy.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-park"
-path = "src/bin/stress/park.rs"
+path = "src/stress/park.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-hang"
-path = "src/bin/stress/hang.rs"
+path = "src/stress/hang.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-load"
-path = "src/bin/stress/load.rs"
+path = "src/stress/load.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-beat"
-path = "src/bin/stress/beat.rs"
+path = "src/stress/beat.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-again"
-path = "src/bin/stress/again.rs"
+path = "src/stress/again.rs"
 test = false
 bench = false
 doctest = false
 
 # 共享组台：等待者（U 态）与台主（S 态，`SQWARE_ROOT=group` 时当引导镜像）。
 # 台主一次投信，看**两个等待者是不是都醒**（共享组的整链放行），以及那条消息
-# **只归一个人**——见 `programs/src/bin/stress/group.rs` 头注。
+# **只归一个人**——见 `programs/src/stress/group.rs` 头注。
 [[bin]]
 name = "prog-waiter"
-path = "src/bin/stress/waiter.rs"
+path = "src/stress/waiter.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-group"
-path = "src/bin/stress/group.rs"
+path = "src/stress/group.rs"
 test = false
 bench = false
 doctest = false

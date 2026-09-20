@@ -3,11 +3,16 @@
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
 use env::{Name, Permission, PieToken, ProgramKind, TaskId};
+use runtime::core::tole::Tole;
+use runtime::env::mail::HolePie;
+use runtime::env::unit as utask;
 
-use crate::session::Quay;
+use protocol::session::Quay;
 
-use super::core::{Fail, Ready, Reaped, admit_start, probe_ready};
-use super::desk::{Announce, Service, Slot, State, Table};
+use protocol::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
+use protocol::system::desk::{Announce, Service, Slot, State, Table};
+
+use crate::supervisor::service::Program;
 
 // ── 适配：原语（转发到运行时那几件）──────────────────────────
 
@@ -228,4 +233,149 @@ pub fn watch(table: &mut Table, name: Name, ms: usize) -> Result<bool, Fail> {
 /// 按名字找那一行的只读视图（枚举的入口）。
 pub fn find(table: &Table, name: Name) -> Option<&Service> {
     table.find(name)
+}
+
+/// 监督循环：**发现死亡 + 记账 + 放下死域**（见编排域的头注第 5 条）。
+///
+/// 事件来自**板**：客人一死，它开的孔随退出钩子封印（或它自己说了退场）⇒ 板当场看出来
+/// ⇒ 往**那一位的死亡道**里推一格 ⇒ 本线程从组上醒来。**一服务一道**，故"是哪一位"由
+/// **哪条道响**给出——不必猜、也不会两条挤一格丢名字。
+///
+/// 醒来做两件事：先 `service::until` 等它真的收尾（板报的是"门封印了"，而 `Oust` 要的
+/// 前置是"域里没有还没收尾的线程"——这一步等的是**事件**，不是节拍）；再写 `State::Dead`
+/// （**不 `detach`**：坐标是"上一个实例"，留给重启与放下用）、`oust(team)` 放下那个死域、
+/// 报一行。最后一条（单子最后一条）没了之后，对**仍在跑的**逐个 `stop`（`Ruin` = 域粒度
+/// `Doom`）——它们的死会再走同一条路回来；在册的每一行都 `Dead` 之后才收场。
+pub fn supervise(
+    table: &mut Table,
+    last: Name,
+    lanes: &[Option<PieToken>],
+    tole: &Tole,
+    plan: &[Program],
+) {
+    let mut stopping = false;
+    loop {
+        // 等任一条道响。**`Tole` 的既定用法**（板那一轮同款）：**挂起过的那一侧返回的是
+        // 预置值**——内核没有第二次执行机会，故醒来必须自己按组复核，不能靠返回值拿身份。
+        if tole.await_(usize::MAX).is_err() {
+            // 组坏了：退回"等最后一条退场"，行为与改动前一致。
+            crate::supervisor::service::wait_last(table, last);
+            return;
+        }
+        // 复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次醒来
+        // 可能带走多条（两位前后脚死）。
+        for (i, lane) in lanes.iter().enumerate() {
+            let Some(lane) = *lane else {
+                continue;
+            };
+            let mut one = [0u8; 1];
+            if HolePie::from_token(lane).pull_timeout(&mut one, 0).is_err() {
+                continue; // 这一条没货
+            }
+            let Some(p) = plan.get(i) else {
+                continue;
+            };
+            let Some(name) = Name::new(p.name).ok() else {
+                continue;
+            };
+            account(table, name);
+            // 最后一条走了 ⇒ 会话结束：把仍在跑的显式收掉（只下一次）。
+            if name == last && !stopping {
+                stopping = true;
+                stop_running(table, plan);
+            }
+        }
+        if stopping {
+            // 收场：仍在跑的已经**有界地**下过一刀并等过（见 [`stop_running`]）；等不到的
+            // 那些交给本域退场时的级联——那条路是既有的可靠收场路径，不在这里等。
+            return;
+        }
+    }
+}
+
+/// 收场那一刀：给**仍在跑的**每一位 `stop`（`Ruin` = 域粒度 `Doom`），**有界地**等它
+/// 收尾并记账；等不到就报一行，交给本域退场时的级联。
+///
+/// 为什么有界：`stop` 是"送到即回"（`kill` 的口径），收场不能被一个收不掉的域拖住。
+pub fn stop_running(table: &mut Table, plan: &[Program]) {
+    for q in plan.iter() {
+        let Some(name) = Name::new(q.name).ok() else {
+            continue;
+        };
+        let running = matches!(
+            table.find(name),
+            Some(s) if matches!(s.state, State::Ready | State::Starting)
+        );
+        if !running {
+            continue;
+        }
+        let _ = stop(table, name);
+        // 表里没有可等的坐标（`stop` 也答了 `Unknown`）：没得等，也不算"卡住"。
+        if !matches!(table.find(name).map(|s| s.slot), Some(Slot::Live { .. })) {
+            continue;
+        }
+        match until(table, name, STOP_MS) {
+            Ok(Reaped::Now) => mark_dead(table, name, Reaped::Now),
+            Ok(Reaped::Waited) => mark_dead(table, name, Reaped::Waited),
+            // 有界期内没等出来：照实报，交出这一位。**不是"没收到"**——判决只认非阻塞
+            // 那一问，这里说的是"还没收干净"。
+            Ok(Reaped::Unsettled) | Err(_) => {
+                let _ = runtime::env::debug::put(&alloc::format!(
+                    "system: stuck {} （退场级联接管）",
+                    q.name
+                ));
+            }
+        }
+    }
+}
+
+/// 收场那一刀的等待上限（毫秒）。**必须有界**：收场不能被一个收不掉的域拖住。
+const STOP_MS: usize = 300;
+
+/// 记一位：**先等它收尾**（板报的是"门封印了"，而 `Oust` 要的前置是"域里没有还没收尾的
+/// 线程"，故这一步等的是收尾事件，不是节拍），再写 `Dead`、放下它那个域、报一行。
+///
+/// **幂等**：已经记过（`Dead`）就什么都不做——板报的道与我们自己杀的那一位可能都指到它。
+fn account(table: &mut Table, name: Name) {
+    let Some(row) = table.find(name) else {
+        return;
+    };
+    if matches!(row.state, State::Dead) {
+        return;
+    }
+    let Slot::Live { .. } = row.slot else {
+        return;
+    };
+    let reaped = until(table, name, usize::MAX).unwrap_or(Reaped::Unsettled);
+    mark_dead(table, name, reaped);
+}
+
+/// 写 `Dead`（**不 `detach`**：坐标是"上一个实例"，留给重启与放下用）、放下那个死域、报一行。
+///
+/// `reaped` = 这一位的收尾判决**及它的来路**。读数里那一格是给验收用的：`wait=now` 说明收尾
+/// 早在问之前就完了，`wait=waited` 说明这一次是**等到**的；`wait=unsettled` 则是"没被确认
+/// 收尾"，那时 `ousted=false` 会一起把真相摆出来。
+fn mark_dead(table: &mut Table, name: Name, reaped: Reaped) {
+    let Some(row) = table.find(name) else {
+        return;
+    };
+    if matches!(row.state, State::Dead) {
+        return;
+    }
+    let Slot::Live { team, .. } = row.slot else {
+        return;
+    };
+    table.set_state(name, State::Dead);
+    let before = utask::heir_count().unwrap_or(0);
+    let ousted = utask::oust(team).is_ok();
+    let after = utask::heir_count().unwrap_or(0);
+    let wait = match reaped {
+        Reaped::Now => "now",
+        Reaped::Waited => "waited",
+        Reaped::Unsettled => "unsettled",
+    };
+    let _ = runtime::env::debug::put(&alloc::format!(
+        "system: gone {} state=Dead ousted={ousted} heir={before}→{after} wait={wait}",
+        name.as_str()
+    ));
 }

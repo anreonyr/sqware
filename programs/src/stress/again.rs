@@ -56,9 +56,9 @@ use programs::supervisor::boot;
 use alloc::format;
 
 use env::Name;
+use programs::system::server as service;
 use protocol::system::core::{Ready, probe_ready};
 use protocol::system::desk::{Announce, Slot, State, Table};
-use protocol::system::server as service;
 use runtime::env::debug;
 use runtime::env::room::exit_with;
 use runtime::env::unit;

@@ -10,8 +10,8 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::core::unit::{self, Join};
 use runtime::env::mail;
 
-pub use crate::board::{LINK, TIP_MARK, TIP_NAME};
-use crate::session::Quay;
+pub use protocol::board::{LINK, TIP_MARK, TIP_NAME};
+use protocol::session::Quay;
 
 use super::server::host_loop;
 
@@ -105,19 +105,6 @@ fn host(me: TaskId, ms: usize, tip: &mut Option<PieToken>) -> Result<TaskId, &'s
 pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     let into = mail::HolePie::from_token(into);
     into.push(&(who.get() as u64).to_le_bytes()).map_err(|_| ())
-}
-
-/// 收下板路上那一格：**答话的是谁**（[`tell`] 的对偶）。
-///
-/// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上板（客人报它自己的超时，不猜）。
-pub(crate) fn hear(quay: &Quay, ms: usize) -> Option<TaskId> {
-    let link = Name::new(LINK).ok()?;
-    let pier = quay.find(link)?;
-    let mut buf = [0u8; 8];
-    match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, ms) {
-        Ok(8) => Some(TaskId::new(u64::from_le_bytes(buf) as usize)),
-        _ => None,
-    }
 }
 
 /// 板路上本端手里那一枚（客人答话路的**写端**）：答话往它推，"答话的是谁"也从它递。

@@ -8,6 +8,8 @@
 //!   内核 ABI（机制）     Unit                 Task 怎么创建、运行、结束
 //!        │
 //!   本协议（编排）       Service              系统由哪些 Service 组成、怎么运行
+//!        │                                     （判定与账在本文这一侧）
+//!   实现方               programs/src/system/ 起一条、看/判、放下、收场
 //! ```
 //!
 //! **Unit 的生命周期不在这条正文里**——六个动词、五道门、血缘、两阶段扑杀那份叙述
@@ -146,7 +148,7 @@
 //! 两条都是"Server 主动问"，没有"内核推给 Server"。这条限制决定本协议能承诺什么：
 //! **监督的及时性由观察面决定，不由内核决定**。
 //!
-//! 今天跑着的那一套把这件拆成"看"与"判"两半（见 `programs/.../supervisor/system`，
+//! 今天跑着的那一套把这件拆成"看"与"判"两半（见 `programs/src/system/server.rs`，
 //! 板线程与等待线程都住在编排域里）：
 //!
 //! - **看**：不是"一条服务配一条等待线程"（`Join` 的门只认"同域 或 在我 `heir` 里"，
@@ -170,7 +172,7 @@
 //! 于是"每重启一次留一个死域的壳"这条不再成立。表这一侧也备好了：`Slot` 是**最近一次
 //! 实例的坐标**，死亡记账**不清它**（见 §一）⇒ 重启时"上一个实例是谁"读得出来。
 //!
-//! **重发那一半已经走通**（照实记：`programs/src/bin/stress/again.rs` 在**同一张表的同一行**
+//! **重发那一半已经走通**（照实记：`programs/src/stress/again.rs` 在**同一张表的同一行**
 //! 上起了三次，`restarts=2 failures=0`）。序列是 **stop → watch → Oust → spawn → start**，
 //! 其中有两处暗礁，都是这台子第一次跑出来的：
 //!
@@ -266,7 +268,7 @@
 //!   Ruin(目标 Task)    收一个 Service：收掉目标所属的域（连它的线程一起）
 //! ```
 //!
-//! 两枚都**不住在内核的通用动词里**，但它们**共用内核的执行面**：`system::call` 的
+//! 两枚都**不住在内核的通用动词里**，但它们**共用内核的执行面**：`programs::system::call` 的
 //! `mint` 就是 `unit::build`、`ruin` 就是 `room::doom`——**同一枚动词**，内核并没有为
 //! 它们各加一条入口（加了就有两个执行面，判据会被抄成两份）。判据因此全在本协议这一
 //! 侧，内核只答"能不能"。
@@ -443,12 +445,9 @@
 //!
 //! 策略（该不该杀、该给什么身份）不在这里：**内核只回答"能不能"**。
 
-pub mod call;
 pub mod core;
 pub mod desk;
 pub mod grant;
-pub mod server;
 
 pub use core::{Fail, Ready, Reaped, Watch};
 pub use desk::{Announce, Service, Slot, State, Table};
-pub use server::Grant;

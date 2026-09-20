@@ -58,8 +58,6 @@
 pub mod call;
 pub mod client;
 pub mod core;
-pub mod server;
 
 pub use call::{BOOT, OP_SUPPLY, REPLY_CAP, SLIP_CAP, WANT_MAX};
 pub use core::Fail;
-pub use server::serve;

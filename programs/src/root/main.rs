@@ -40,17 +40,16 @@ use programs::supervisor::{boot, service};
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 本域只用持树者那一份的**装配侧**（`host_of`：认下提示之路）。
-use protocol::operator::bridge as operator;
+use programs::operator::bridge as operator;
 
 use env::{Name, PieToken};
 use protocol::session::Quay;
 // 协议侧那三档（判定 / 账 / 适配）与本地的 `service`（装配机器）**同名不同物**，故逐个取名进来。
+use programs::system::server::{self as core, until};
 use protocol::system::core::{Fail, Reaped};
 use protocol::system::desk::{Announce, Table};
-use protocol::system::server::{self as core, until};
 
 use protocol::firmware;
-
 use service::Catalog;
 
 /// 持树者那一条在清单里的名字。
@@ -144,7 +143,7 @@ extern "C" fn main() -> ! {
     };
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, 0), Ok(Reaped::Now));
-    firmware::serve(&pier, source, alive, &mut ask, &mut out);
+    programs::firmware::server::serve(&pier, source, alive, &mut ask, &mut out);
     service::die(service::E_OK, "root: done")
 }
 

@@ -1,4 +1,4 @@
-//! 共享入口（镜像程序引导 + panic 处理）：**每个 `bin/` 都共用**（各 bin 一声
+//! 共享入口（镜像程序引导 + panic 处理）：**每个程序都共用**（各程序一声
 //! `extern crate programs;` 就是为它——`use` 只带符号，不算真的链上），故住在 lib 面。
 
 use core::arch::global_asm;

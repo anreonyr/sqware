@@ -12,8 +12,6 @@ use crate::board::call as bcall;
 pub use crate::board::{ASK_MARK, ENTRY_MARK, LINK};
 use crate::session::Quay;
 
-use super::bridge::hear;
-
 /// 客侧第一步：装上板那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
 /// "**答话的是谁**"（[`hear`] 那一格）。
 ///
@@ -125,5 +123,18 @@ pub fn take(link: &Quay, board: TaskId) -> Option<PieToken> {
         if vestor == board {
             found = Some(token);
         }
+    }
+}
+
+/// 收下板路上那一格：**答话的是谁**（[`tell`] 的对偶）。
+///
+/// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上板（客人报它自己的超时，不猜）。
+pub(crate) fn hear(quay: &Quay, ms: usize) -> Option<TaskId> {
+    let link = Name::new(LINK).ok()?;
+    let pier = quay.find(link)?;
+    let mut buf = [0u8; 8];
+    match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, ms) {
+        Ok(8) => Some(TaskId::new(u64::from_le_bytes(buf) as usize)),
+        _ => None,
     }
 }

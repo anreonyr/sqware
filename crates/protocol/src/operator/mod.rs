@@ -77,9 +77,9 @@
 
 // ── 载体：三侧分别住在哪 ───────────────────────────────────
 //
-// **实现侧** [`server`]（持树者，自己的域里一枚线程）、**使用侧** [`client`]（客侧三手）、
-// **装配侧** [`bridge`]（把持树者接上一位客人 / 认下提示之路）。下面这段是那一台的说明——
-// 它讲的是"怎么跑"，与上面的协议正文分开写。
+// **使用侧** [`client`]（客侧三手）住这里——那是"别的任务怎么找上树"。**实现侧**（持树者）
+// 与**装配侧**（把持树者接上客人 / 认下提示之路）住 `programs/src/operator/{server,bridge}.rs`。
+// 下面这段是那一台的说明——它讲的是"怎么跑"。
 //
 //!  同一对动作（`seat` + `claim`），靠**孔上的记号**对位。
 //!
@@ -121,13 +121,9 @@
 //!  持树者做的（板那一台也是这么交入口的）。
 //!
 
-pub mod bridge;
 pub mod call;
 pub mod client;
 pub mod core;
-pub mod desk;
-pub mod server;
 
 pub use call::{ASK_MARK, LINK, TIP_MARK, TIP_NAME};
 pub use core::{Entry, Fail, Free, Node, Operator, Probe};
-pub use desk::{Desk, Guest};

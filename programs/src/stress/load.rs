@@ -93,8 +93,8 @@ use alloc::format;
 use core::time::Duration;
 
 use env::Name;
+use programs::system::server as service;
 use protocol::system::desk::{Announce, Table};
-use protocol::system::server as service;
 use runtime::env::debug;
 use runtime::env::room::{self, exit_with};
 

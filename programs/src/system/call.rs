@@ -1,10 +1,11 @@
-//! 适配 —— 把 [`service`](super::service) 的判定落到运行时那几件上。
+//! system::call — **编排者的适配**：把判定落到运行时那几件上（内核 ABI 的转发）。
 //!
 //! 每个函数只做一件事：**转发一次**，再把内核答的事实（或错误码）翻成核心认的字。
-//! 判断一律不在这里（那在 `service.rs`）。
+//! 判断一律不在这里（那在协议那一侧的判定与账里）。
 //!
-//! "它交回了一枚孔"那件事**不在这里**——归 [`session`](crate::session)：会话的建立与
-//! 认领是另一份协议，本文件只剩"起一个服务"需要的那几手。
+//! "它交回了一枚孔"那件事**不在这里**——归 [`session`](protocol::session)：会话的建立与
+//! 认领是另一份协议，本文件只剩"起一个服务"需要的那几手——**它在实现侧**：调内核的是
+//! 编排域那一位，不是协议本身。
 
 use env::{EnvError, Name, Permission, PieToken, ProgramKind, TaskId, TeamId};
 
@@ -12,7 +13,7 @@ use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit;
 
-use super::core::Fail;
+use protocol::system::core::Fail;
 
 /// 建域（Mint）：镜像字节 + 特权级 + 名字 → 新域。
 ///
