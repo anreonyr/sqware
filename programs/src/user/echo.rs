@@ -40,7 +40,7 @@ extern crate programs;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板与树：本域都只用**客侧**那几手。
-use protocol::board::client as board;
+use protocol::system::board::client as board;
 use protocol::operator::client as operator;
 
 use alloc::format;
@@ -48,7 +48,7 @@ use core::time::Duration;
 
 use env::DBCN_MAX;
 use env::{Name, PieToken};
-use protocol::board::call as bcall;
+use protocol::system::board::call as bcall;
 use protocol::operator::call as ocall;
 use runtime::env::debug;
 use runtime::env::mail;

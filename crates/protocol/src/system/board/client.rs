@@ -1,15 +1,15 @@
 //! board::client — **客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）
 //!
 //! 三侧分家之后本文件只放**客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`crate::board::call`]。
+//! 帧与记号见 [`crate::system::board::call`]。
 
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
 
-use crate::board::Fail;
-use crate::board::call as bcall;
-pub use crate::board::{ASK_MARK, ENTRY_MARK, LINK};
+use crate::system::board::Fail;
+use crate::system::board::call as bcall;
+pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 use crate::session::Quay;
 
 /// 客侧第一步：装上板那条路（**记号就是这条路的名字**），认下对端那一枚，并收下

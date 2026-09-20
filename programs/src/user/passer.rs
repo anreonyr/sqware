@@ -31,12 +31,12 @@ extern crate programs;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**客侧**（挂一个名字）。
-use protocol::board::client as board;
+use protocol::system::board::client as board;
 
 use alloc::format;
 
 use env::Name;
-use protocol::board::call as bcall;
+use protocol::system::board::call as bcall;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room::exit_with_note;

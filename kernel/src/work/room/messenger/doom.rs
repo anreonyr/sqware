@@ -349,7 +349,7 @@ pub(crate) fn cull(roots: &[Arc<Team>], reason: usize) {
 ///
 /// **只收子域**：同域线程之间没有寿命耦合——域亡＝成员清零（成员各自退场，都走完就
 /// 没了），加上这里的子域级联。故"域里还留着一枚常驻线程"不是内核该管的事：谁起的
-/// 谁收（会话的收尾由会话的主人负责，见 `programs/.../root/main.rs` 的 `board::shut`）。
+/// 谁收（会话的收尾由会话的主人负责，见 `programs/src/supervisor/system/main.rs` 的 `board::shut`）。
 pub(crate) fn doom(tid: usize) {
     if let Some(task) = muster(tid).and_then(|w| w.upgrade()) {
         // “谁杀的”由父域自己那一笔 `Exit` 记（它先于本行发出）——级联不为子树里每个

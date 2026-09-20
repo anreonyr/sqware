@@ -85,9 +85,9 @@ pub fn sleep_until(at: u64) -> EnvResult<()> {
 /// 答得出（入土之后它问不出"没了"与"从来没有过"的区别）。
 ///
 /// **调用者**（今天三处，都不是政策服务）：`protocol::system` 的收尾路径（`call::ruin`，
-/// 由 `service::stop` 与"起失败"那一支调）、`board::shut()`——root 点名收掉同域的板线程，
-/// 而这一刀按域粒度走，收的是 **root 自己那个域**——与 `stress/group.rs` 的收场那一手
-/// （台子把没醒的等待者收掉，那是**台子自己的**客人，不是政策）。
+/// 由 `service::stop` 与"起失败"那一支调）、`system/board` 那一台的 `shut()`——**编排域**
+/// 点名收掉同域的板线程，而这一刀按域粒度走，收的是**编排域自己那个域**——与
+/// `stress/group.rs` 的收场那一手（台子把没醒的等待者收掉，那是**台子自己的**客人，不是政策）。
 pub fn doom(task: TaskId) -> EnvResult<()> {
     let _ = RoomCall::Doom { task }.call()?;
     Ok(())

@@ -41,7 +41,7 @@ const HEAD_LEN: usize = 2 + 8;
 pub const SLIP_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;
 pub const REPLY_CAP: usize = 2 + PAIR_LEN * WANT_MAX;
 
-/// 回单的状态码（与 operator / board 的码表同族）。
+/// 回单的状态码（与 operator / system::board 的码表同族）。
 pub const OK: u8 = 0;
 pub const UNKNOWN: u8 = 1;
 pub const DENIED: u8 = 2;

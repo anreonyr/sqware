@@ -25,7 +25,7 @@ use protocol::session::{Pier, Quay};
 use protocol::system::desk::{Announce, Table};
 use runtime::env::room::exit_with;
 
-use crate::supervisor::board::bridge as board;
+use crate::supervisor::system::board::bridge as board;
 use crate::supervisor::operator::bridge as operator;
 
 use protocol::firmware;

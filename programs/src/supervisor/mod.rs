@@ -2,9 +2,10 @@
 //!
 //! 判据是特权级（唯一声明处：`kernel/build.rs::INITRD_BINS`）：本目录下都是 `Supervisor`。
 //!
-//! - **实现**：[`board`]（板那一台，跑在装配域的宿主线程里）、[`firmware`]（引导域那圈发货
+//! - **实现**：[`firmware`]（引导域那圈发货
 //!   循环）、[`operator`]（持树者：那棵命名树的服务，也是这台机器的**转授权中枢**——谁在树上
-//!   查到一条，它就 `ship` 一枚带 `VEST` 的副本）、[`system`]（编排域的实现）。
+//!   查到一条，它就 `ship` 一枚带 `VEST` 的副本）、[`system`]（编排域的实现；**板那一台**
+//!   [`system::board`] 也在它里面——板线程跑在编排域的宿主线程里）。
 //! - **程序入口与它那片模块同住**：`root/`（引导域：入口 ＋ 只有它读得到的那两块账）、
 //!   `plic/`（中断面域：入口 ＋ 设备面 ＋ 它自己那张需求单）、`operator/main.rs`、`system/main.rs`。
 //! - **共用件只有 [`service`]**：那台装配机器被**两个装配者**用（`root` 与 `system`），内含到
@@ -17,7 +18,6 @@
 //!
 //! U 态那一档在 [`crate::user`]；压测台**不分档**，整块留在 [`crate::stress`]。
 
-pub mod board;
 pub mod firmware;
 pub mod operator;
 pub mod plic;

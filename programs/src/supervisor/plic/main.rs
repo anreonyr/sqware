@@ -65,7 +65,7 @@ use programs::supervisor::plic::needs;
 use protocol::system::grant;
 
 // 板：本域是**客侧**（挂牌子、查回来）。
-use protocol::board::client as board;
+use protocol::system::board::client as board;
 
 /// 设备侧（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
 mod plic;
@@ -73,7 +73,7 @@ mod uart;
 
 use env::wire::PAIR_LEN;
 use env::{PieToken, TaskId};
-use protocol::board::call as bcall;
+use protocol::system::board::call as bcall;
 use protocol::session::Quay;
 use runtime::core::bell::Bell;
 use runtime::core::dock::Dock;

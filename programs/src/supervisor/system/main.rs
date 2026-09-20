@@ -30,7 +30,7 @@ use programs::supervisor::plic::needs as plic_needs;
 use programs::supervisor::service;
 
 // 板：本域是**装配侧**（把客人接上板、收尾点名）。
-use programs::supervisor::board::bridge as board;
+use programs::supervisor::system::board::bridge as board;
 // 树：本域是**装配侧**（把客人接上树）。
 use programs::supervisor::operator::bridge as operator;
 

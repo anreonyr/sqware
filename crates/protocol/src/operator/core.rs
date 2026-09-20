@@ -68,7 +68,7 @@ pub enum Fail {
 
 /// **活性**：那一枚 Pie 还答得出吗？答不出（`None`）= 它后面的人没了。
 ///
-/// 与 `board` 同一格（`Probe` 的形状照旧）：本正文没有 owner，故这里只取"答得出吗"，
+/// 与 `system::board` 同一格（`Probe` 的形状照旧）：本正文没有 owner，故这里只取"答得出吗"，
 /// 答出来的 `TaskId` 用不到。
 pub type Probe = fn(PieToken) -> Option<TaskId>;
 

@@ -5,12 +5,16 @@
 //! 在那之前不需要协议——跨域要说的话走 `env` 的调试面（`DebugCall`：内核把固件的调试
 //! 控制台直接借给域），一条孔都不用开。`echo` 就是这么说话的。
 //!
-//! **目前有六份正文**：[`system`]、[`principal`]、[`session`]、[`board`]、[`operator`] 与 [`firmware`]。
+//! **目前有五份顶层正文**：[`system`]、[`principal`]、[`session`]、[`operator`] 与 [`firmware`]。
 //!
-//! 落地程度不一样：**四份已经有代码跑在机器上**（[`system`]、[`session`]、[`board`] 与
-//! [`operator`]），[`principal`] 只有正文、它的 Server 还没起步。
+//! 落地程度不一样：**五份里四份已经有代码跑在机器上**（[`system`]（含它下面的 `board`）、
+//! [`session`]、[`operator`] 与 [`firmware`]），[`principal`] 只有正文、它的 Server 还没起步。
 //!
 //! - [`system`] = **服务编排**（systemd 那一层）：系统由哪些 Service 构成、怎么起停监督。
+//!   它**有两半**：**编排**（`core` / `desk` / `grant`）与**运行期命名**（[`system::board`]：
+//!   "这个名字此刻指向哪个入口"——一块公示板、一枚牌子、三个动作，判据只有一条：那枚入口
+//!   是你亲手交给持板者的，**不存预约表**）。两半同住一份正文，因为板线程**就住在编排域里**
+//!   （`root` 那张单上没有板那一格）：名字对上入口的静态那半是 `grant`，运行期这半是 `board`。
 //!   它的载体是内核 ABI（`env::fid` 的 `UnitCall` 整类 + `RoomCall` 的 `Reap`/`Doom`），
 //!   那份载体叙述整体降级为该模块的**附录**——载体不等于协议。**它的 Server 是一个独立域**
 //!   （`prog-system`）：`system/desk.rs` 是那张服务表，`programs/.../supervisor/system/`
@@ -22,20 +26,19 @@
 //! - [`principal`] = **策略身份**："这个请求代表谁"。Server 未落地，但地基已经能看见
 //!   （两条不可伪造的身份凭证）。
 //! - [`session`] = **会话建立**："两个陌生实体怎么建起一条会话"。身份由内核盖、地址靠
-//!   对方交、认领按"谁开的这扇门"——不需要 Server 就能成立，而其余三份都建在它上面。
-//! - [`board`] = **命名寻址**："这个名字此刻指向哪个入口"。一块公示板、一枚牌子、
-//!   三个动作；判据只有一条（那枚入口是你亲手交给持板者的），**不存预约表**。
+//!   对方交、认领按"谁开的这扇门"——不需要 Server 就能成立，而其余几份都建在它上面。
 //! - [`operator`] = **命名寻址（树那一版）**：一个 Operator 管着所有条目，其他任务只是
 //!   操作它——`land` 落 / `part` 分 / `find` 寻 / `trim` 剪（`list` 未上线），落在那棵
 //!   `Entry { 名字, 去处 }`、`Node = Pane | Tile` 的树上。核心、载体、服务三层都在
-//!   （`prog-operator` 一个域 + `service.rs` 装配里那一格）。与 [`board`] 并存——那是
-//!   **另一件事**（公示板 + 待客台账），不是它的旧版。
+//!   （`prog-operator` 一个域 + `service.rs` 装配里那一格）。与 [`system::board`] 并存——
+//!   那是**另一件事**（公示板 + 待客台账），不是它的旧版。
 //!
-//! [`session`] 是 `system` 起服务时等就绪的那一步；[`board`] 是 `programs` 里那**一枚**
-//! 板线程（招待所有客人，见该模块"板为什么就一枚线程"）+ 装配者域里共享的那一份板
-//! （服务怎么问在 [`board::client`]；板那一台与装配侧在 `programs/src/supervisor/board/`）。
+//! [`session`] 是 `system` 起服务时等就绪的那一步；[`system::board`] 是 `programs` 里那**一枚**
+//! 板线程（招待所有客人，见该模块"板为什么就一枚线程"）+ 编排域里共享的那一份板
+//! （服务怎么问在 [`system::board::client`]；板那一台与装配侧在
+//! `programs/src/supervisor/system/board/`）。
 //!
-//! [`principal`] 缺的是**地址**：客户端要找到 Principal Server，靠的是 [`board`]。
+//! [`principal`] 缺的是**地址**：客户端要找到 Principal Server，靠的是 [`system::board`]。
 //! （[`system`] 那一侧的编排者今天不用板查名字——它按静态装配单起服务（`service::PLAN`）、
 //! 拿板当"收尸的道"；板是运行期那一步，接在**客户端与服务**之间。）
 //!
@@ -78,7 +81,6 @@
 // `Seat::NoRoom`，不 panic）。
 extern crate alloc;
 
-pub mod board;
 pub mod firmware;
 pub mod operator;
 pub mod principal;

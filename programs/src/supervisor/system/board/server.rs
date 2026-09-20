@@ -1,7 +1,7 @@
-//! board::server — **板那一台**：装配域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）
+//! board::server — **板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）
 //!
-//! 三侧分家之后本文件只放**板那一台**：装配域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`protocol::board::call`]。
+//! 三侧分家之后本文件只放**板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
+//! 帧与记号见 [`protocol::system::board::call`]。
 
 use alloc::format;
 
@@ -10,10 +10,10 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
 
-use protocol::board::call as bcall;
-use protocol::board::call::ENTRY_MARK;
-pub use protocol::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
-use protocol::board::{Board, Fail};
+use protocol::system::board::call as bcall;
+use protocol::system::board::call::ENTRY_MARK;
+pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
+use protocol::system::board::{Board, Fail};
 
 use super::desk::{Desk, Guest, desk};
 
