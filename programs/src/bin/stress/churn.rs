@@ -27,8 +27,7 @@
 
 extern crate programs;
 
-#[path = "tick.rs"]
-mod tick;
+use programs::stress::tick;
 
 use core::time::Duration;
 

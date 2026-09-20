@@ -23,4 +23,5 @@
 extern crate alloc;
 
 pub mod entry;
+pub mod stress;
 pub mod supervisor;

@@ -189,11 +189,11 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::stress::tick;
+
 use programs::supervisor::boot;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
-#[path = "tick.rs"]
-mod tick;
 
 use alloc::format;
 use core::time::Duration;

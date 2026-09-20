@@ -85,10 +85,9 @@
 extern crate alloc;
 extern crate programs;
 
-use programs::supervisor::boot;
+use programs::stress::tick;
 
-#[path = "tick.rs"]
-mod tick;
+use programs::supervisor::boot;
 
 use alloc::format;
 use core::time::Duration;
