@@ -1,6 +1,6 @@
 //! operator 的转发层 —— **帧、码，与内核那几只手的别名**。
 //!
-//! 本文件**不做裁决**：树上的规矩（谁能挂、什么时候剔死）全在 [`core`](super::core)。
+//! 本文件**不做裁决**：树上的规矩（谁能落、什么时候剔死）全在 [`core`](super::core)。
 //! 这里只有三件事——**编一帧 / 解一帧**、把"不在我表里"翻成 `None`、把失败域翻成答话码。
 //!
 //! 判据只有一条可机械检查的纪律——
@@ -12,7 +12,7 @@
 //!
 //! ```text
 //!   Ask    [0] op   [1] 段数   [2 .. 258] 段（8 段定长，每段 32 字节，尾随 NUL 是填充）
-//!                              [258 .. 266] 入口号（只有 file 用）
+//!                              [258 .. 266] 入口号（只有 `land` 用）
 //!   Reply  [0] status
 //! ```
 //!
@@ -37,12 +37,12 @@ use runtime::env::mail;
 
 // ── 码 ──────────────────────────────────────────────────────
 
-/// 四个动作在报文里的码——**与核心那四条原语同名**（`file` / `tile` / `find` / `trim`）：
+/// 四个动作在报文里的码——**与核心那四条原语同名**（`land` / `part` / `find` / `trim`）：
 /// 线上与模型是同一件事的两层，不该各起一套词。
 ///
 /// `list` 不在其中：**今天不上线**（它的答案是一串名字，带回来要另开帧形——见正文）。
-pub const FILE: u8 = 1;
-pub const TILE: u8 = 2;
+pub const LAND: u8 = 1;
+pub const PART: u8 = 2;
 pub const FIND: u8 = 3;
 pub const TRIM: u8 = 4;
 
@@ -54,8 +54,8 @@ pub const TRIM: u8 = 4;
 pub const OK: u8 = 0;
 pub const UNKNOWN: u8 = 1;
 pub const NONEMPTY: u8 = 2;
-pub const NOTAFILE: u8 = 3;
-pub const NOTATILE: u8 = 4;
+pub const NOTATILE: u8 = 3;
+pub const NOTAPANE: u8 = 4;
 pub const FULL: u8 = 5;
 pub const DEAD: u8 = 6;
 pub const BAD: u8 = 7;
@@ -68,7 +68,7 @@ const SEGS: usize = 2;
 
 // ── 编 / 解 ─────────────────────────────────────────────────
 
-/// 把一条路编成字节。`seed` 只有 [`FILE`] 用得上。
+/// 把一条路编成字节。`seed` 只有 [`LAND`] 用得上。
 ///
 /// **段数写的是真实条数**（哪怕超过 [`Operator::PATH_MAX`]）：那样"路太长"由持树者按
 /// [`Fail::Full`] 答出来，而不是在这里被悄悄截断成另一条路。
@@ -132,8 +132,8 @@ pub fn code(fail: Option<Fail>) -> u8 {
         None => OK,
         Some(Fail::Unknown) => UNKNOWN,
         Some(Fail::NonEmpty) => NONEMPTY,
-        Some(Fail::NotAFile) => NOTAFILE,
         Some(Fail::NotATile) => NOTATILE,
+        Some(Fail::NotAPane) => NOTAPANE,
         Some(Fail::Full) => FULL,
         Some(Fail::Dead) => DEAD,
     }
@@ -200,7 +200,7 @@ pub fn mark_of(hole: PieToken) -> Option<Name> {
     }
 }
 
-/// **放下**：自释一份。剪掉或换掉一条 `File` 时由核心叫它。
+/// **放下**：自释一份。剪掉或换掉一枚 `Tile` 时由核心叫它。
 fn free(entry: PieToken) -> Result<(), ()> {
     mail::release(entry).map_err(|_| ())
 }
@@ -241,3 +241,20 @@ pub fn give(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
         .map(|to| to.seed())
         .map_err(|_| Fail::Unknown)
 }
+
+// ── 载体两侧共用的坐标 ─────────────────────────────────────
+//
+// 这几格是**记号与名字**：两侧都要按它认领/铸孔，故只能有一份（规则 5）。
+
+/// 树那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
+pub const LINK: &str = "operator";
+
+/// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）。
+pub const ASK_MARK: &str = "ask";
+
+/// 提示孔那一枚上的记号（持树者铸它时刻上去的；装配者按它认领那一枚）。
+pub const TIP_MARK: &str = "tip";
+
+/// 提示之路的名字（两侧共用：持树者那侧不用它——它那一枚是自己铸的；引导域用它把
+/// 认来的那一枚挂在"名字 → 我手里的一枚"这张账上，好让编排域按名来要）。
+pub const TIP_NAME: &str = "operator-tip";

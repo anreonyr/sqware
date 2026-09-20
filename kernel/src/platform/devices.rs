@@ -46,6 +46,12 @@ const IRQ_NAME: &str = "irq";
 /// 谁需要解释设备树（如 PLIC 驱动要数自己的 context），谁就自己去解释——内核不代劳。
 const DTB_NAME: &str = "devicetree";
 
+/// initrd 载荷区在配对块里的名字（它不是设备树节点，故名字由内核定）。
+///
+/// 与 [`DTB_NAME`] 并排：两者都是"boot 交出去的一枚门闩"，故在同一张账里——
+/// 这张账记的是**交出了哪些门闩**，不是"有哪些设备"。
+const INITRD_NAME: &str = "initrd";
+
 /// 中断门铃**没有载荷**——内核只知道"有外部中断"这一件事，线号由 PLIC 驱动自己去
 /// PLIC 里领。
 ///
@@ -66,6 +72,27 @@ static IRQ: OnceLock<Arc<NoleMeta>> = OnceLock::new();
 pub(crate) fn raise_irq() -> Result<(), GateError> {
     let meta = IRQ.get().expect("irq bell not built (devices::scan)");
     mail::nole::ring(meta)
+}
+
+/// initrd 载荷区：**与设备树逐字同一条路**（终身的、boot 给的保留区；这里额外给它
+/// 一枚门闩）。区别只有权：只读（`FETCH`），因为它是**要装的字节**，不是要写的东西。
+///
+/// 为什么它也要成为一枚门闩：域侧要"把这块账转手出去"（引导域 → 编排域）时，
+/// **裸映射转不了手**——能转的只有句柄。做成门闩之后，引导域一转手，编排域就能按
+/// 自己的 VA 借映同一批物理页去解析清单、读镜像：**零拷贝**。
+fn supply_initrd() -> Option<(Name, AnyPie)> {
+    let initrd = machine::info().initrd()?;
+    let meta = mail::pole::region(initrd.base, initrd.size, 0).ok()?;
+    let pie = gate::new_pie(
+        meta,
+        // 多读者（清单与每一颗镜像都在里头，收方各自借映）⇒ 共享、授出即复制。
+        Permission::FETCH | Permission::VEST,
+        None,
+    );
+    Some((
+        Name::new(INITRD_NAME).expect("initrd name fits"),
+        AnyPie::Pole(pie),
+    ))
 }
 
 /// 设备树本体：一段终身的、boot 给的物理区，与 initrd 走同一条保留区
@@ -187,6 +214,11 @@ pub(crate) fn scan() -> Vec<(Name, AnyPie)> {
     // 它们不是"设备"，但都是 boot 交出去的门闩——这张账记的是后者。
     out.push(supply_dtb());
     out.push(supply_irq());
+    // initrd 载荷区同列：引导域只借映了它，**手上没有能转手的句柄**——给它一枚，
+    // 它才能把这批字节交给编排域（零拷贝，见 [`supply_initrd`]）。
+    if let Some(pie) = supply_initrd() {
+        out.push(pie);
+    }
     out
 }
 

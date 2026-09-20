@@ -14,15 +14,13 @@
 //! # 为什么一枚线程
 //!
 //! 树上那几枚句柄是"**我这张表里的第几个**"：查到了要授出去，必须由**持有它的那张表**来做。
-//! 故所有条目只能住同一张表，也就是同一枚线程——`supervisor/operator.rs` 的
+//! 故所有条目只能住同一张表，也就是同一枚线程——`protocol::operator::server` 的
 //! "为什么持树者就一枚线程"写了这条（板那一台栽过一次）。
 
 extern crate programs;
 
-#[path = "../operator.rs"]
-// 本域只用持树者侧那一半（`serve`）；装配侧与客侧那几手在这里是死码。
-#[allow(dead_code)]
-mod operator;
+// 本域只跑持树者那一侧（`serve`）；装配侧与客侧住在 protocol 里，本域用不到。
+use protocol::operator::server as operator;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {

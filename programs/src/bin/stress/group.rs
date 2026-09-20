@@ -72,10 +72,7 @@
 extern crate alloc;
 extern crate programs;
 
-#[path = "../supervisor/needs.rs"]
-mod needs;
-#[path = "../supervisor/pairing.rs"]
-mod pairing;
+use programs::supervisor::boot;
 
 use alloc::format;
 
@@ -99,7 +96,7 @@ const SETTLE: u64 = 200;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
-    let Some(boot) = pairing::Root::take() else {
+    let Some(boot) = boot::Root::take() else {
         die("group: boot args unreadable")
     };
     let Some((elf, kind)) = find(&boot, WAITER) else {
@@ -232,7 +229,7 @@ fn sole_refused(dst: TaskId) -> bool {
 }
 
 /// 清单里按名字取镜像（只认这一条，与各台主同款）。
-fn find(boot: &pairing::Root, want: &str) -> Option<(&'static [u8], ProgramKind)> {
+fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], ProgramKind)> {
     let mut list = boot.programs();
     loop {
         let entry = list.next()?;

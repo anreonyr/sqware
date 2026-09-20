@@ -190,7 +190,8 @@ fn register_runtime_hooks() {
 /// S 态域 → 把 initrd 区与**配对块**只读映射进它的空间（root 自己解析清单与设备供给）
 /// → 产并放行引导线程。
 ///
-/// 之后所有任务都由 root 产生（`Build`/`Spawn`/`Hatch`）；系统在全部任务回收后
+/// 之后所有任务都由**域**产生（引导域起编排域，编排域起其余各域；`Build`/`Spawn`/`Hatch`）
+/// ——内核只认识"第一个域"，不认识服务编排那件事；系统在全部任务回收后
 /// 自然停机（`conductor::done`）。清单与设备语义的**解释权都在 root**——内核不含
 /// 清单格式，也不解释设备。
 fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>>, MapError> {

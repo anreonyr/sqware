@@ -1,6 +1,7 @@
 //! initrd 清单——boot 交给 root 的**程序账**（一条 = 一个可装载程序）。
 //!
-//! 打包的一侧是内核的 `build.rs`（宿主程序），读的一侧是 root 域，故格式在此定义一次
+//! 打包的一侧是内核的 `build.rs`（宿主程序），读的一侧是域（引导域读它挑引导镜像，编排域
+//! 读它挑各服务的镜像——同一批字节，见 `platform/devices.rs::supply_initrd`），故格式在此定义一次
 //! （与 [`pair`](super::pair) 同一条理由：跨域的字节布局不留第二份账）。
 //!
 //! ```text
@@ -20,7 +21,10 @@ use core::ops::Range;
 use crate::fid::ProgramKind;
 
 /// 清单条数上限。
-pub const MAX_PROGRAMS: usize = 16;
+///
+/// 20 = 今天的 17 个程序（`kernel/build.rs::INITRD_BINS`）留三格余量：加一个程序不必
+/// 顺手改一个数，而多出来的那几格只占 `Table` 的一小段（见 `protocol::system::desk`）。
+pub const MAX_PROGRAMS: usize = 20;
 /// 一条记录里名字的字节上限（与 [`Name`](super::Name) 同值：名字要能原样进 `Team.name`）。
 pub const MAX_NAME: usize = 32;
 

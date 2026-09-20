@@ -12,7 +12,7 @@ use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit;
 
-use super::service::Fail;
+use super::core::Fail;
 
 /// 建域（Mint）：镜像字节 + 特权级 + 名字 → 新域。
 ///

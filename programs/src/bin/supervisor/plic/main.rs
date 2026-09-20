@@ -60,15 +60,12 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
+use programs::supervisor::needs;
+use protocol::system::grant;
+
 // 共享物住在 supervisor 目录里，由两个 bin 各自声明一次（见 `needs.rs` 头注）。
-#[path = "../board.rs"]
-// 本域只用**客侧**那三手（板侧那一半归 root）⇒ 另一半在这里是死码。
-#[allow(dead_code)]
-mod board;
-#[path = "../needs.rs"]
-mod needs;
-#[path = "../pairing.rs"]
-mod pairing;
+// 板：本域是**客侧**（挂牌子、查回来）。
+use protocol::board::client as board;
 
 /// 设备侧（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
 mod plic;
@@ -225,11 +222,15 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
     let n = up.pull(&mut buf, QUAY_MS).map_err(|_| E_GRANT)?;
     say(&alloc::format!("plic: got {n}"));
     let mut got: [Option<PieToken>; needs::PLIC.len()] = [None; needs::PLIC.len()];
-    pairing::unpack(&buf[..n], |slot, token| {
-        if let Some(cell) = got.get_mut(slot) {
-            *cell = Some(token);
-        }
-    });
+    grant::unpack(
+        &buf[..n],
+        |name| needs::slot_of(name),
+        |slot, token| {
+            if let Some(cell) = got.get_mut(slot) {
+                *cell = Some(token);
+            }
+        },
+    );
 
     // 3. 四枚都要在：少一枚就不必继续（父域按同一张单子发货，缺格即装配错）。
     let mut out = [PieToken::NONE; needs::PLIC.len()];

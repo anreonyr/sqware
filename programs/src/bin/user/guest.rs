@@ -53,10 +53,8 @@ extern crate alloc;
 extern crate programs;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
-#[path = "../supervisor/board.rs"]
-// 本域只用**客侧**那三手（板侧那一半归 root）⇒ 另一半在这里是死码。
-#[allow(dead_code)]
-mod board;
+// 板：本域是**客侧**（挂牌子、查回来）。
+use protocol::board::client as board;
 
 use alloc::format;
 use core::time::Duration;

@@ -189,11 +189,9 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::supervisor::boot;
+
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
-#[path = "../supervisor/needs.rs"]
-mod needs;
-#[path = "../supervisor/pairing.rs"]
-mod pairing;
 #[path = "tick.rs"]
 mod tick;
 
@@ -202,7 +200,9 @@ use core::time::Duration;
 
 use env::Name;
 use protocol::session::Quay;
-use protocol::system::service::{self, Announce, Reaped, Slot, Table};
+use protocol::system::core::Reaped;
+use protocol::system::desk::{Announce, Slot, Table};
+use protocol::system::server as service;
 use runtime::env::debug;
 use runtime::env::room::{self, exit_with};
 use runtime::env::unit;
@@ -275,7 +275,7 @@ struct Tally {
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
-    let Some(boot) = pairing::Root::take() else {
+    let Some(boot) = boot::Root::take() else {
         die("rig: boot args unreadable")
     };
     let Some((elf, kind)) = find(&boot, VICTIM) else {
@@ -482,7 +482,7 @@ fn body(
 }
 
 /// 清单里按名字取镜像（台主只认这一条）。
-fn find(boot: &pairing::Root, want: &str) -> Option<(&'static [u8], env::ProgramKind)> {
+fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], env::ProgramKind)> {
     let mut list = boot.programs();
     loop {
         let entry = list.next()?;

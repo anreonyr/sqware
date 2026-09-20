@@ -1,9 +1,9 @@
 //! needs — **装配契约**：谁要哪几枚门闩、什么权、以什么形态出去。
 //!
-//! 装配者（`prog-root`）按它发货，收方（如 `prog-plic`）按它认领。它住在 supervisor 的
-//! 目录里、由两个 bin 各声明一次（见 `root/main.rs` 与 `plic/main.rs` 头部的 `#[path]`），
-//! 是因为它是**两端必须对上的那件事**——设备语义（寄存器布局 / 线号 / 设备树解析）仍归
-//! 各自的域（`plic/plic.rs`、`plic/uart.rs`）。
+//! 编排域（`prog-system`）按它开单子，收方（如 `prog-plic`）按它认领；**发货的是引导域**
+//! （原件在它手里）。三个 bin 都用它——它住在这里（lib 的 [`crate::supervisor`]）是因为它是
+//! **两端必须对上的那件事**：设备语义（寄存器布局 / 线号 / 设备树解析）仍归各自的域
+//! （`plic/plic.rs`、`plic/uart.rs`）。
 //!
 //! # 名字从哪来
 //!
@@ -22,6 +22,12 @@
 
 use runtime::core::port::{Access, Policy};
 
+use protocol::firmware::call::Want;
+
+/// 门闩的种类住在**协议那一侧**（它是线格式里的一格）：本模块再导出，好让两端的代码
+/// 仍旧写 `needs::Kind`。
+pub use protocol::firmware::call::Kind;
+
 /// 收方给这枚门闩起的名字——**按它归位，不靠位置约定**。
 ///
 /// 判别号即收方那张表的数组下标；收方只用 `Slot` 取自己的格子，不数第几条。
@@ -38,26 +44,14 @@ pub enum Slot {
     Source = 3,
 }
 
-/// 门闩的种类——授出时要挑对那一层句柄（`PolePie` / `NolePie`）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Kind {
-    /// 一段内存（设备寄存器页 / 自描述区）。
-    Pole,
-    /// 空载荷的信号（中断门铃）。
-    Nole,
-}
-
 /// 一条需求：**谁要的** + **boot 给的名字** + 种类 + 权 + 出去的形态。
-// 两个 bin 共享本文件：发货方（root）读全部字段，收货方（plic）只读 `slot` / `name`
-// ——各自只用到一半是正常的，不是死代码。
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct Need {
     /// 收方那一格的编号。
     pub slot: Slot,
     /// boot 给的名字（配对块里的键）。
     pub name: &'static str,
-    /// 门闩的种类。
+    /// 门闩的种类（线格式那一格，定义在 `protocol::firmware::call`）。
     pub kind: Kind,
     /// 要多少权。
     pub access: Access,
@@ -96,3 +90,19 @@ pub const PLIC: &[Need] = &[
         policy: Policy::ONLY,
     },
 ];
+
+impl Need {
+    /// 需求单的一条 → 单子上的一条（名字装不下 ⇒ `None`，不 panic）。
+    ///
+    /// 这一格属**这台机器**：`slot` 与设备名都是它的账；线格式那一半在协议里。
+    pub fn want(&self) -> Option<Want> {
+        Want::new(self.name, self.kind, self.access, self.policy)
+    }
+}
+
+/// 名字 → 收方那本账里的第几格（配给那一段记录的解码要用它）。
+pub fn slot_of(name: &str) -> Option<usize> {
+    PLIC.iter()
+        .find(|n| n.name == name)
+        .map(|n| n.slot as usize)
+}

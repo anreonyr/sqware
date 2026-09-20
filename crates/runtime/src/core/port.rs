@@ -16,7 +16,7 @@
 //! 差别只在三件事——推的是哪一枚、收的是哪一枚、收的时候**校不校来源**。编帧、解帧、
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
 
-use core::ops::BitOr;
+use core::ops::{BitAnd, BitOr, Not};
 
 use env::{EnvError, EnvResult, Permission, PieToken, TaskId, make_err};
 
@@ -34,6 +34,11 @@ fn denied() -> erra::Error<EnvError> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Access(Permission);
 
+/// 读写族那两位（解线上权时用来挡混族）。
+const ACCESS_MASK: Permission = Permission::FETCH.union(Permission::STORE);
+/// 传递族那两位（同上）。
+const POLICY_MASK: Permission = Permission::VEST.union(Permission::ONLY);
+
 impl Access {
     /// 什么都没有：两族都取 `NONE` 才是空集（那种授予 `ship` 就地拒）。
     pub const NONE: Access = Access(Permission::empty());
@@ -48,6 +53,18 @@ impl Access {
     /// 位（交给 `Accord` 的那一半）。
     pub const fn bits(self) -> Permission {
         self.0
+    }
+
+    /// 从线上那几位解回（**只收本族的位**，混族与未知位一律拒）。
+    ///
+    /// 与"调用点写不出裸子集"是同一条：这条入口只认本来就是 `Access` 造出来的值，
+    /// 故它不构成第二条授权路径，只给"过线的权"一个回来的门。
+    pub const fn from_bits(bits: u32) -> Option<Access> {
+        match Permission::from_bits(bits) {
+            Some(p) if p.bits() & ACCESS_MASK.bits() != p.bits() => None,
+            Some(p) => Some(Access(p)),
+            None => None,
+        }
     }
 }
 
@@ -88,6 +105,15 @@ impl Policy {
     pub const fn bits(self) -> Permission {
         self.0
     }
+
+    /// 从线上那几位解回（**只收传递族那两位**）——与 [`Access::from_bits`] 同一条口径。
+    pub const fn from_bits(bits: u32) -> Option<Policy> {
+        match Permission::from_bits(bits) {
+            Some(p) if p.bits() & POLICY_MASK.bits() != p.bits() => None,
+            Some(p) => Some(Policy(p)),
+            None => None,
+        }
+    }
 }
 
 impl BitOr for Policy {
@@ -95,6 +121,27 @@ impl BitOr for Policy {
 
     fn bitor(self, rhs: Policy) -> Policy {
         Policy(self.0 | rhs.0)
+    }
+}
+
+impl BitAnd for Policy {
+    type Output = Policy;
+
+    fn bitand(self, rhs: Policy) -> Policy {
+        Policy(self.0 & rhs.0)
+    }
+}
+
+/// 取反是**为"剔掉某一位"而开的口**：`policy & !Policy::VEST` 读起来就是
+/// "形态照旧，只去掉'能再授出'那一位"——调用点不必为一个动作另起名词。
+///
+/// 取反之后的值可能带上别的族的位（如 `FETCH`），故它**只配与 `&` 联用**：
+/// 单独拿它去 `ship` 就是把两族人造的值当形态发出去。
+impl Not for Policy {
+    type Output = Policy;
+
+    fn not(self) -> Policy {
+        Policy(!self.0)
     }
 }
 

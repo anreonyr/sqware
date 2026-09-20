@@ -5,16 +5,20 @@
 //! 在那之前不需要协议——跨域要说的话走 `env` 的调试面（`DebugCall`：内核把固件的调试
 //! 控制台直接借给域），一条孔都不用开。`echo` 就是这么说话的。
 //!
-//! **目前有五份正文**：[`system`]、[`principal`]、[`session`]、[`board`] 与 [`operator`]。
+//! **目前有六份正文**：[`system`]、[`principal`]、[`session`]、[`board`]、[`operator`] 与 [`firmware`]。
 //!
 //! 落地程度不一样：**四份已经有代码跑在机器上**（[`system`]、[`session`]、[`board`] 与
 //! [`operator`]），[`principal`] 只有正文、它的 Server 还没起步。
 //!
 //! - [`system`] = **服务编排**（systemd 那一层）：系统由哪些 Service 构成、怎么起停监督。
 //!   它的载体是内核 ABI（`env::fid` 的 `UnitCall` 整类 + `RoomCall` 的 `Reap`/`Doom`），
-//!   那份载体叙述整体降级为该模块的**附录**——载体不等于协议。**它的 Server 就是 root
-//!   域**（第一版：同一份代码、同一个域）：`system/service.rs` 是那张服务表，
-//!   `programs/.../supervisor/{root,service}.rs` 是它落地的那一台。
+//!   那份载体叙述整体降级为该模块的**附录**——载体不等于协议。**它的 Server 是一个独立域**
+//!   （`prog-system`）：`system/desk.rs` 是那张服务表，`programs/.../supervisor/system/`
+//!   是它落地的那一台。起它的那一枚（引导域 `root`）只做**固件那一层**的事：读 boot 的
+//!   两块账、把字节与门闩按单子交出去、退出即停机——它不认识服务名，也不记账。
+//! - [`firmware`] = **固件面**：引导域向上层露的那一面——"一张单子换一段记录"（按名发货，
+//!   原件与 `VEST` 都留在引导域手里）。两个角色：`server`（引导域的发货循环）、`client`
+//!   （编排域去领）。
 //! - [`principal`] = **策略身份**："这个请求代表谁"。Server 未落地，但地基已经能看见
 //!   （两条不可伪造的身份凭证）。
 //! - [`session`] = **会话建立**："两个陌生实体怎么建起一条会话"。身份由内核盖、地址靠
@@ -22,14 +26,14 @@
 //! - [`board`] = **命名寻址**："这个名字此刻指向哪个入口"。一块公示板、一枚牌子、
 //!   三个动作；判据只有一条（那枚入口是你亲手交给持板者的），**不存预约表**。
 //! - [`operator`] = **命名寻址（树那一版）**：一个 Operator 管着所有条目，其他任务只是
-//!   操作它——`file` 挂 / `tile` 铺 / `find` 寻 / `trim` 剪（`list` 未上线），落在那棵
-//!   `Entry { 名字, 去处 }`、`Node = Tile | File` 的树上。核心、载体、服务三层都在
+//!   操作它——`land` 落 / `part` 分 / `find` 寻 / `trim` 剪（`list` 未上线），落在那棵
+//!   `Entry { 名字, 去处 }`、`Node = Pane | Tile` 的树上。核心、载体、服务三层都在
 //!   （`prog-operator` 一个域 + `service.rs` 装配里那一格）。与 [`board`] 并存——那是
 //!   **另一件事**（公示板 + 待客台账），不是它的旧版。
 //!
 //! [`session`] 是 `system` 起服务时等就绪的那一步；[`board`] 是 `programs` 里那**一枚**
 //! 板线程（招待所有客人，见该模块"板为什么就一枚线程"）+ 装配者域里共享的那一份板
-//! （服务怎么问、装配者怎么把它接上，都写在 `supervisor/board.rs`）。
+//! （服务怎么问、装配者怎么把它接上，都写在它自己的三侧文件里）。
 //!
 //! [`principal`] 缺的是**地址**：客户端要找到 Principal Server，靠的是 [`board`]。
 //! （[`system`] 那一侧的编排者今天不用板查名字——它按静态装配单起服务（`service::PLAN`）、
@@ -75,6 +79,7 @@
 extern crate alloc;
 
 pub mod board;
+pub mod firmware;
 pub mod operator;
 pub mod principal;
 pub mod session;

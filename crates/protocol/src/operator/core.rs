@@ -1,4 +1,4 @@
-//! operator 的核心 —— **树、五条原语（挂 / 铺 / 寻 / 剪 / 列）、失败域**。
+//! operator 的核心 —— **树、五条原语（落 / 分 / 寻 / 剪 / 列）、失败域**。
 //!
 //! 本文件**不碰内核**：判据只有一条可机械检查的纪律——
 //!
@@ -22,13 +22,13 @@ pub struct Entry {
     node: Node,
 }
 
-/// 去处：一块 [`Node::Tile`]（文件夹，还能往里走）或一枚 [`Node::File`]（文件，到头了）。
+/// 去处：一块 [`Node::Pane`]（窗格，还能往里走）或一枚 [`Node::Tile`]（砖，到头了）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Node {
-    /// 一块 Tile（文件夹）：里面是条目。**还能往里走**。
-    Tile(Vec<Entry>),
-    /// 一枚 File（文件）：到头了，就是内核给的那一枚句柄。
-    File(PieToken),
+    /// 一块 Pane（窗格）：里面是条目。**还能往里走**。
+    Pane(Vec<Entry>),
+    /// 一枚 Tile（砖）：到头了，就是内核给的那一枚句柄。
+    Tile(PieToken),
 }
 
 impl Entry {
@@ -45,24 +45,24 @@ impl Entry {
 
 /// 五条原语会失败在哪一格。**一格对应一个不同的下一步**。
 ///
-/// **没有"名字已被占"那一格**：同名接手一条 `File`、或一块**空的** `Tile`，都是换绑
-/// （见 [`Operator::file`] / [`Operator::tile`]）；而 owner 归 Principal，Operator 分不出
+/// **没有"名字已被占"那一格**：同名接手一枚 `Tile`、或一块**空的** `Pane`，都是换绑
+/// （见 [`Operator::land`] / [`Operator::part`]）；而 owner 归 Principal，Operator 分不出
 /// "自己 / 别人"，所以"已占即拒"在这里无处落脚。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Fail {
-    /// 路上没有这一段 ⇒ 换个名字，或者先把中间层铺出来。
+    /// 路上没有这一段 ⇒ 换个名字，或者先把中间层分出来。
     ///
-    /// **空路也走这一格**：空路是"根"本身，而根不是谁条目里的一条——挂 / 铺 / 剪对根都动手不了。
+    /// **空路也走这一格**：空路是"根"本身，而根不是谁条目里的一条——落 / 分 / 剪对根都动手不了。
     Unknown,
-    /// 那块 `Tile` 里还有东西 ⇒ 先清空。
+    /// 那块 `Pane` 里还有东西 ⇒ 先清空。
     NonEmpty,
-    /// 寻到头是一块 `Tile`，不是文件 ⇒ 改用列，或者再往下走一段。
-    NotAFile,
-    /// 那一段不是一块 `Tile`（是文件）⇒ 走不过去；列的时候则说明"那是枚文件，没什么可列"。
+    /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者再往下走一段。
     NotATile,
-    /// 一块 `Tile` 装不下，或者一条路太长 ⇒ 拆层 / 扩容量。
+    /// 那一段不是一块 `Pane`（是一枚 `Tile`）⇒ 走不过去；列的时候则说明"那是枚 `Tile`，没什么可列"。
+    NotAPane,
+    /// 一块 `Pane` 装不下，或者一条路太长 ⇒ 拆层 / 扩容量。
     Full,
-    /// 那枚 Pie 后面的人没了（探不到）⇒ 重挂 / 重寻。**剔掉那一条的同时**答这一格。
+    /// 那枚 Pie 后面的人没了（探不到）⇒ 重落 / 重寻。**剔掉那一条的同时**答这一格。
     Dead,
 }
 
@@ -72,7 +72,7 @@ pub enum Fail {
 /// 答出来的 `TaskId` 用不到。
 pub type Probe = fn(PieToken) -> Option<TaskId>;
 
-/// **放下**：把我这一份自释。剪掉或换掉一条 `File` 时用它——不加这一格，那一枚句柄就漏在树里。
+/// **放下**：把我这一份自释。剪掉或换掉一枚 `Tile` 时用它——不加这一格，那一枚句柄就漏在树里。
 pub type Free = fn(PieToken) -> Result<(), ()>;
 
 // ── 树 ──────────────────────────────────────────────────────
@@ -87,8 +87,8 @@ pub struct Operator {
 }
 
 impl Operator {
-    /// 一块 `Tile` 里最多几条。条数是策略，容器要有界。
-    pub const TILE_CAP: usize = 16;
+    /// 一块 `Pane` 里最多几条。条数是策略，容器要有界。
+    pub const PANE_CAP: usize = 16;
     /// 一条路最多几段。深也是策略。
     pub const PATH_MAX: usize = 8;
 
@@ -101,54 +101,55 @@ impl Operator {
         }
     }
 
-    /// **挂**：把一枚 Pie 挂到一条路上（放一个文件）。
+    /// **落**：把一枚 Pie 落到一条路上（放一枚 `Tile`）。
     ///
     /// 四条判据，一条不多：
     ///
     /// - 路非空、有界（空路 ⇒ [`Fail::Unknown`]；超深 ⇒ [`Fail::Full`]）；
-    /// - 路上除最后一段外**都得是 `Tile` 且存在**（缺一段 ⇒ [`Fail::Unknown`]；
-    ///   那一段是文件 ⇒ [`Fail::NotATile`]）；
-    /// - 最后一段空着 ⇒ 挂上；
-    /// - 最后一段已经占着 ⇒ **换绑**：旧的那一枚放下（[`Free`]）——除非它是一块**非空** `Tile`
+    /// - 路上除最后一段外**都得是 `Pane` 且存在**（缺一段 ⇒ [`Fail::Unknown`]；
+    ///   那一段是一枚 `Tile` ⇒ [`Fail::NotAPane`]）；
+    /// - 最后一段空着 ⇒ 落上；
+    /// - 最后一段已经占着 ⇒ **换绑**：旧的那一枚放下（[`Free`]）——除非它是一块**非空** `Pane`
     ///   （⇒ [`Fail::NonEmpty`]：要动它先清空）。
-    pub fn file(&mut self, path: &[Name], pie: PieToken) -> Result<(), Fail> {
+    pub fn land(&mut self, path: &[Name], pie: PieToken) -> Result<(), Fail> {
         Self::checked(path)?;
         let free = self.free;
         let last = path[path.len() - 1];
         let level = self.level_mut(path)?;
         match level.iter().position(|e| e.name == last) {
             Some(at) => {
-                // 已占：只有"文件"与"空 Tile"可以换绑；前者那一枚要放下。
+                // 已占：只有"一枚 `Tile`"与"空 `Pane`"可以换绑；前者那一枚要放下。
+
                 let old = match &level[at].node {
-                    Node::File(old) => Some(*old),
-                    Node::Tile(inner) if inner.is_empty() => None,
-                    Node::Tile(_) => return Err(Fail::NonEmpty),
+                    Node::Tile(old) => Some(*old),
+                    Node::Pane(inner) if inner.is_empty() => None,
+                    Node::Pane(_) => return Err(Fail::NonEmpty),
                 };
-                level[at].node = Node::File(pie);
+                level[at].node = Node::Tile(pie);
                 if let Some(old) = old {
                     let _ = free(old);
                 }
                 Ok(())
             }
             None => {
-                if level.len() >= Self::TILE_CAP {
+                if level.len() >= Self::PANE_CAP {
                     return Err(Fail::Full);
                 }
                 level.push(Entry {
                     name: last,
-                    node: Node::File(pie),
+                    node: Node::Tile(pie),
                 });
                 Ok(())
             }
         }
     }
 
-    /// **铺**：在一条路上放一块**空的** `Tile`（开一块文件夹）。
+    /// **分**：在一条路上分出一块**空的** `Pane`（开一块窗格）。
     ///
-    /// 门槛与 [`Operator::file`] 同：路非空、有界，中间那几层都得是 `Tile` 且存在。
-    /// 最后一段：空着 ⇒ 放一块空 `Tile`；已是 `File` ⇒ 换掉它（旧的那一枚放下）；
-    /// 已是**空** `Tile` ⇒ 无事；已是**非空** `Tile` ⇒ [`Fail::NonEmpty`]。
-    pub fn tile(&mut self, path: &[Name]) -> Result<(), Fail> {
+    /// 门槛与 [`Operator::land`] 同：路非空、有界，中间那几层都得是 `Pane` 且存在。
+    /// 最后一段：空着 ⇒ 放一块空 `Pane`；已是 `Tile` ⇒ 换掉它（旧的那一枚放下）；
+    /// 已是**空** `Pane` ⇒ 无事；已是**非空** `Pane` ⇒ [`Fail::NonEmpty`]。
+    pub fn part(&mut self, path: &[Name]) -> Result<(), Fail> {
         Self::checked(path)?;
         let free = self.free;
         let last = path[path.len() - 1];
@@ -156,23 +157,23 @@ impl Operator {
         match level.iter().position(|e| e.name == last) {
             Some(at) => {
                 let old = match &level[at].node {
-                    Node::Tile(inner) if inner.is_empty() => return Ok(()),
-                    Node::Tile(_) => return Err(Fail::NonEmpty),
-                    Node::File(old) => Some(*old),
+                    Node::Pane(inner) if inner.is_empty() => return Ok(()),
+                    Node::Pane(_) => return Err(Fail::NonEmpty),
+                    Node::Tile(old) => Some(*old),
                 };
-                level[at].node = Node::Tile(Vec::new());
+                level[at].node = Node::Pane(Vec::new());
                 if let Some(old) = old {
                     let _ = free(old);
                 }
                 Ok(())
             }
             None => {
-                if level.len() >= Self::TILE_CAP {
+                if level.len() >= Self::PANE_CAP {
                     return Err(Fail::Full);
                 }
                 level.push(Entry {
                     name: last,
-                    node: Node::Tile(Vec::new()),
+                    node: Node::Pane(Vec::new()),
                 });
                 Ok(())
             }
@@ -181,9 +182,9 @@ impl Operator {
 
     /// **寻**：走到头，把那一枚 Pie 交出去。
     ///
-    /// - 走不动（中间那一段是文件）⇒ [`Fail::NotATile`]；缺一段 ⇒ [`Fail::Unknown`]；
-    /// - 到头是一块 `Tile` ⇒ [`Fail::NotAFile`]（**空路也是这一格**：根是一块 `Tile`）；
-    /// - 到头是一条 `File`：**先探一次**（[`Probe`]）——答不出 ⇒ 当场剔掉那一条、放下那一份
+    /// - 走不动（中间那一段是一枚 `Tile`）⇒ [`Fail::NotAPane`]；缺一段 ⇒ [`Fail::Unknown`]；
+    /// - 到头是一块 `Pane` ⇒ [`Fail::NotATile`]（**空路也是这一格**：根是一块 `Pane`）；
+    /// - 到头是一枚 `Tile`：**先探一次**（[`Probe`]）——答不出 ⇒ 当场剔掉那一条、放下那一份
     ///   （[`Free`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `give`。
     ///
     /// `give` 是"交出去"那一手（适配层在这里把 Pie 授给调用方，核心因此不碰内核）。
@@ -192,7 +193,7 @@ impl Operator {
             return Err(Fail::Full);
         }
         if path.is_empty() {
-            return Err(Fail::NotAFile);
+            return Err(Fail::NotATile);
         }
         let probe = self.probe;
         let free = self.free;
@@ -203,8 +204,8 @@ impl Operator {
             .position(|e| e.name == last)
             .ok_or(Fail::Unknown)?;
         let pie = match &level[at].node {
-            Node::Tile(_) => return Err(Fail::NotAFile),
-            Node::File(pie) => *pie,
+            Node::Pane(_) => return Err(Fail::NotATile),
+            Node::Tile(pie) => *pie,
         };
         if probe(pie).is_none() {
             level.remove(at);
@@ -217,8 +218,8 @@ impl Operator {
 
     /// **剪**：把路上那一条剪掉。
     ///
-    /// 那一条得存在；是 `Tile` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
-    /// 剪掉一条 `File` 时那一枚放下（[`Free`]）——它是资源实体的一份引用，不放下就漏水。
+    /// 那一条得存在；是 `Pane` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
+    /// 剪掉一枚 `Tile` 时那一枚放下（[`Free`]）——它是资源实体的一份引用，不放下就漏水。
     pub fn trim(&mut self, path: &[Name]) -> Result<(), Fail> {
         Self::checked(path)?;
         let free = self.free;
@@ -229,9 +230,9 @@ impl Operator {
             .position(|e| e.name == last)
             .ok_or(Fail::Unknown)?;
         let dropped = match &level[at].node {
-            Node::Tile(inner) if inner.is_empty() => None,
-            Node::Tile(_) => return Err(Fail::NonEmpty),
-            Node::File(pie) => Some(*pie),
+            Node::Pane(inner) if inner.is_empty() => None,
+            Node::Pane(_) => return Err(Fail::NonEmpty),
+            Node::Tile(pie) => Some(*pie),
         };
         level.remove(at);
         if let Some(pie) = dropped {
@@ -240,10 +241,10 @@ impl Operator {
         Ok(())
     }
 
-    /// **列**：看一块 `Tile` 里有哪些名字。
+    /// **列**：看一块 `Pane` 里有哪些名字。
     ///
-    /// **空路 = 根**（列根那一层）。缺一段 ⇒ [`Fail::Unknown`]；走不动或到头是文件
-    /// ⇒ [`Fail::NotATile`]。**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
+    /// **空路 = 根**（列根那一层）。缺一段 ⇒ [`Fail::Unknown`]；走不动或到头是一枚 `Tile`
+    /// ⇒ [`Fail::NotAPane`]。**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
     pub fn list(&self, path: &[Name]) -> Result<impl Iterator<Item = Name> + '_, Fail> {
         if path.len() > Self::PATH_MAX {
             return Err(Fail::Full);
@@ -255,8 +256,8 @@ impl Operator {
                 .find(|e| e.name == *step)
                 .ok_or(Fail::Unknown)?;
             level = match &entry.node {
-                Node::Tile(inner) => inner,
-                Node::File(_) => return Err(Fail::NotATile),
+                Node::Pane(inner) => inner,
+                Node::Tile(_) => return Err(Fail::NotAPane),
             };
         }
         Ok(level.iter().map(|e| e.name))
@@ -264,7 +265,7 @@ impl Operator {
 
     // ── 走路 ────────────────────────────────────────────────
 
-    /// 挂 / 铺 / 剪共同的两条门槛：**路非空**（空路是根本身）、**路不超深**。
+    /// 落 / 分 / 剪共同的两条门槛：**路非空**（空路是根本身）、**路不超深**。
     fn checked(path: &[Name]) -> Result<(), Fail> {
         if path.is_empty() {
             return Err(Fail::Unknown);
@@ -287,8 +288,8 @@ impl Operator {
                 .position(|e| e.name == *step)
                 .ok_or(Fail::Unknown)?;
             level = match &mut level[at].node {
-                Node::Tile(inner) => inner,
-                Node::File(_) => return Err(Fail::NotATile),
+                Node::Pane(inner) => inner,
+                Node::Tile(_) => return Err(Fail::NotAPane),
             };
         }
         Ok(level)
@@ -317,10 +318,10 @@ mod tests {
 
     /// 假表：第 i 位非 0 ⇒ 令牌 i 还答得出（"授与人是谁"本正文用不到）。
     ///
-    /// 比 `TILE_CAP` **多一位**：撑满一棵树要 `TILE_CAP` 枚都答得出的令牌，
-    /// 第 `TILE_CAP` 位那个号也在表里——"树满了"必须是 `Full`，不能先被活性挡住。
-    static TABLE: [AtomicUsize; Operator::TILE_CAP + 1] =
-        [const { AtomicUsize::new(0) }; Operator::TILE_CAP + 1];
+    /// 比 `PANE_CAP` **多一位**：撑满一棵树要 `PANE_CAP` 枚都答得出的令牌，
+    /// 第 `PANE_CAP` 位那个号也在表里——"树满了"必须是 `Full`，不能先被活性挡住。
+    static TABLE: [AtomicUsize; Operator::PANE_CAP + 1] =
+        [const { AtomicUsize::new(0) }; Operator::PANE_CAP + 1];
     static FREED: AtomicUsize = AtomicUsize::new(0);
 
     /// 造一枚号给核心用：**唯一的门是"收号"**（`PieToken::from_bytes`）。
@@ -338,7 +339,7 @@ mod tests {
         }
     }
 
-    /// 记下"这一枚被放下了"。假表有 `TILE_CAP + 1` 位，越界的令牌不记。
+    /// 记下"这一枚被放下了"。假表有 `PANE_CAP + 1` 位，越界的令牌不记。
     fn fake_free(entry: PieToken) -> Result<(), ()> {
         if entry.get() < TABLE.len() {
             FREED.fetch_or(1usize << entry.get(), Ordering::Relaxed);
@@ -392,22 +393,22 @@ mod tests {
     }
 
     #[test]
-    fn a_file_hangs_and_find_hands_it_back() {
+    fn a_tile_lands_and_find_hands_it_back() {
         let _serial = serial();
         let mut t = tree();
         live(1);
-        assert_eq!(t.file(&path(&["uart0"]), tok(1)), Ok(()));
+        assert_eq!(t.land(&path(&["uart0"]), tok(1)), Ok(()));
         assert_eq!(look(&mut t, &path(&["uart0"])), Ok(Some(tok(1))));
         assert_eq!(names(&t, &[]), Ok(std::vec![name("uart0")]));
     }
 
     #[test]
-    fn a_tile_opens_a_second_level() {
+    fn a_pane_opens_a_second_level() {
         let _serial = serial();
         let mut t = tree();
-        assert_eq!(t.tile(&path(&["dev"])), Ok(()));
+        assert_eq!(t.part(&path(&["dev"])), Ok(()));
         live(1);
-        assert_eq!(t.file(&path(&["dev", "uart0"]), tok(1)), Ok(()));
+        assert_eq!(t.land(&path(&["dev", "uart0"]), tok(1)), Ok(()));
         assert_eq!(look(&mut t, &path(&["dev", "uart0"])), Ok(Some(tok(1))));
         assert_eq!(names(&t, &path(&["dev"])), Ok(std::vec![name("uart0")]));
         assert_eq!(names(&t, &[]), Ok(std::vec![name("dev")]));
@@ -418,58 +419,58 @@ mod tests {
         let _serial = serial();
         let mut t = tree();
         live(1);
-        assert_eq!(t.file(&path(&["dev", "uart0"]), tok(1)), Err(Fail::Unknown));
-        assert_eq!(t.tile(&path(&["dev", "sub"])), Err(Fail::Unknown));
+        assert_eq!(t.land(&path(&["dev", "uart0"]), tok(1)), Err(Fail::Unknown));
+        assert_eq!(t.part(&path(&["dev", "sub"])), Err(Fail::Unknown));
         assert_eq!(t.trim(&path(&["dev", "uart0"])), Err(Fail::Unknown));
         assert_eq!(look(&mut t, &path(&["dev", "uart0"])), Err(Fail::Unknown));
         assert_eq!(names(&t, &path(&["dev", "uart0"])), Err(Fail::Unknown));
     }
 
     #[test]
-    fn walking_through_a_file_is_not_a_tile() {
+    fn walking_through_a_tile_is_not_a_pane() {
         let _serial = serial();
         let mut t = tree();
         live(1);
-        assert_eq!(t.file(&path(&["log"]), tok(1)), Ok(()));
+        assert_eq!(t.land(&path(&["log"]), tok(1)), Ok(()));
         live(2);
-        assert_eq!(t.file(&path(&["log", "x"]), tok(2)), Err(Fail::NotATile));
-        assert_eq!(t.tile(&path(&["log", "x"])), Err(Fail::NotATile));
-        assert_eq!(t.trim(&path(&["log", "x"])), Err(Fail::NotATile));
-        assert_eq!(look(&mut t, &path(&["log", "x"])), Err(Fail::NotATile));
-        assert_eq!(names(&t, &path(&["log"])), Err(Fail::NotATile));
-        assert_eq!(names(&t, &path(&["log", "x"])), Err(Fail::NotATile));
+        assert_eq!(t.land(&path(&["log", "x"]), tok(2)), Err(Fail::NotAPane));
+        assert_eq!(t.part(&path(&["log", "x"])), Err(Fail::NotAPane));
+        assert_eq!(t.trim(&path(&["log", "x"])), Err(Fail::NotAPane));
+        assert_eq!(look(&mut t, &path(&["log", "x"])), Err(Fail::NotAPane));
+        assert_eq!(names(&t, &path(&["log"])), Err(Fail::NotAPane));
+        assert_eq!(names(&t, &path(&["log", "x"])), Err(Fail::NotAPane));
     }
 
     #[test]
-    fn finding_a_tile_is_not_a_file() {
+    fn finding_a_pane_is_not_a_tile() {
         let _serial = serial();
         let mut t = tree();
-        assert_eq!(t.tile(&path(&["dev"])), Ok(()));
-        assert_eq!(look(&mut t, &path(&["dev"])), Err(Fail::NotAFile));
-        assert_eq!(look(&mut t, &[]), Err(Fail::NotAFile));
+        assert_eq!(t.part(&path(&["dev"])), Ok(()));
+        assert_eq!(look(&mut t, &path(&["dev"])), Err(Fail::NotATile));
+        assert_eq!(look(&mut t, &[]), Err(Fail::NotATile));
     }
 
     #[test]
-    fn listing_a_file_is_not_a_tile() {
+    fn listing_a_tile_is_not_a_pane() {
         let _serial = serial();
         let mut t = tree();
         live(1);
-        assert_eq!(t.file(&path(&["log"]), tok(1)), Ok(()));
-        assert_eq!(names(&t, &path(&["log"])), Err(Fail::NotATile));
+        assert_eq!(t.land(&path(&["log"]), tok(1)), Ok(()));
+        assert_eq!(names(&t, &path(&["log"])), Err(Fail::NotAPane));
     }
 
     #[test]
-    fn a_tile_with_things_in_it_is_not_moved() {
+    fn a_pane_with_things_in_it_is_not_moved() {
         let _serial = serial();
         let mut t = tree();
-        assert_eq!(t.tile(&path(&["dev"])), Ok(()));
+        assert_eq!(t.part(&path(&["dev"])), Ok(()));
         live(1);
-        assert_eq!(t.file(&path(&["dev", "uart0"]), tok(1)), Ok(()));
+        assert_eq!(t.land(&path(&["dev", "uart0"]), tok(1)), Ok(()));
         live(2);
-        assert_eq!(t.file(&path(&["dev"]), tok(2)), Err(Fail::NonEmpty));
-        assert_eq!(t.tile(&path(&["dev"])), Err(Fail::NonEmpty));
+        assert_eq!(t.land(&path(&["dev"]), tok(2)), Err(Fail::NonEmpty));
+        assert_eq!(t.part(&path(&["dev"])), Err(Fail::NonEmpty));
         assert_eq!(t.trim(&path(&["dev"])), Err(Fail::NonEmpty));
-        assert!(!freed(1), "非空那块 Tile 一根毫毛都没动");
+        assert!(!freed(1), "非空那块 Pane 一根毫毛都没动");
         assert_eq!(look(&mut t, &path(&["dev", "uart0"])), Ok(Some(tok(1))));
     }
 
@@ -477,32 +478,35 @@ mod tests {
     fn rebinding_takes_the_name_over_and_lets_the_old_one_go() {
         let _serial = serial();
         let mut t = tree();
-        // 空 Tile ⇒ 换绑成文件（没有旧句柄要放下）
-        assert_eq!(t.tile(&path(&["dev"])), Ok(()));
+        // 空 Pane ⇒ 换绑成一枚 `Tile`（没有旧句柄要放下）
+
+        assert_eq!(t.part(&path(&["dev"])), Ok(()));
         live(1);
-        assert_eq!(t.file(&path(&["dev"]), tok(1)), Ok(()));
+        assert_eq!(t.land(&path(&["dev"]), tok(1)), Ok(()));
         assert_eq!(look(&mut t, &path(&["dev"])), Ok(Some(tok(1))));
 
-        // 文件 ⇒ 换绑：旧的那一枚放下
+        // 一枚 `Tile` ⇒ 换绑：旧的那一枚放下
+
         live(2);
-        assert_eq!(t.file(&path(&["dev"]), tok(2)), Ok(()));
+        assert_eq!(t.land(&path(&["dev"]), tok(2)), Ok(()));
         assert_eq!(look(&mut t, &path(&["dev"])), Ok(Some(tok(2))));
         assert!(freed(1) && !freed(2));
 
-        // 文件 ⇒ 铺成一块空 Tile：旧的那一枚也放下
-        assert_eq!(t.tile(&path(&["dev"])), Ok(()));
+        // 一枚 `Tile` ⇒ 分成一块空 `Pane`：旧的那一枚也放下
+
+        assert_eq!(t.part(&path(&["dev"])), Ok(()));
         assert!(freed(2));
         assert_eq!(names(&t, &[]), Ok(std::vec![name("dev")]));
         assert_eq!(names(&t, &path(&["dev"])), Ok(std::vec![]));
-        assert_eq!(look(&mut t, &path(&["dev"])), Err(Fail::NotAFile));
+        assert_eq!(look(&mut t, &path(&["dev"])), Err(Fail::NotATile));
     }
 
     #[test]
-    fn a_dead_file_is_swept_on_the_read_path() {
+    fn a_dead_tile_is_swept_on_the_read_path() {
         let _serial = serial();
         let mut t = tree();
         live(1);
-        assert_eq!(t.file(&path(&["log"]), tok(1)), Ok(()));
+        assert_eq!(t.land(&path(&["log"]), tok(1)), Ok(()));
         gone(1);
         assert_eq!(look(&mut t, &path(&["log"])), Err(Fail::Dead));
         assert!(freed(1));
@@ -511,12 +515,12 @@ mod tests {
     }
 
     #[test]
-    fn a_dead_file_inside_a_tile_leaves_the_tile_alone() {
+    fn a_dead_tile_inside_a_pane_leaves_the_pane_alone() {
         let _serial = serial();
         let mut t = tree();
-        assert_eq!(t.tile(&path(&["dev"])), Ok(()));
+        assert_eq!(t.part(&path(&["dev"])), Ok(()));
         live(1);
-        assert_eq!(t.file(&path(&["dev", "uart0"]), tok(1)), Ok(()));
+        assert_eq!(t.land(&path(&["dev", "uart0"]), tok(1)), Ok(()));
         gone(1);
         assert_eq!(look(&mut t, &path(&["dev", "uart0"])), Err(Fail::Dead));
         assert_eq!(names(&t, &path(&["dev"])), Ok(std::vec![]));
@@ -525,16 +529,16 @@ mod tests {
     }
 
     #[test]
-    fn trimming_lets_go_of_the_file_and_keeps_empty_tiles() {
+    fn trimming_lets_go_of_the_tile_and_keeps_empty_panes() {
         let _serial = serial();
         let mut t = tree();
         live(1);
-        assert_eq!(t.file(&path(&["log"]), tok(1)), Ok(()));
+        assert_eq!(t.land(&path(&["log"]), tok(1)), Ok(()));
         assert_eq!(t.trim(&path(&["log"])), Ok(()));
         assert!(freed(1));
         assert_eq!(look(&mut t, &path(&["log"])), Err(Fail::Unknown));
 
-        assert_eq!(t.tile(&path(&["dev"])), Ok(()));
+        assert_eq!(t.part(&path(&["dev"])), Ok(()));
         assert_eq!(t.trim(&path(&["dev"])), Ok(()));
         assert_eq!(names(&t, &[]), Ok(std::vec![]));
     }
@@ -544,33 +548,33 @@ mod tests {
         let _serial = serial();
         let mut t = tree();
         let mut texts: Vec<String> = Vec::new();
-        for i in 0..Operator::TILE_CAP {
+        for i in 0..Operator::PANE_CAP {
             live(i);
             let text = std::format!("n{i}");
             assert_eq!(
-                t.file(&path(&[text.as_str()]), tok(i)),
+                t.land(&path(&[text.as_str()]), tok(i)),
                 Ok(()),
-                "第 {i} 条该挂得上"
+                "第 {i} 条该落得上"
             );
             texts.push(text);
         }
-        assert_eq!(names(&t, &[]).map(|v| v.len()), Ok(Operator::TILE_CAP));
+        assert_eq!(names(&t, &[]).map(|v| v.len()), Ok(Operator::PANE_CAP));
 
         // 令牌是真的、树是满的 ⇒ 这才是 Full
-        live(Operator::TILE_CAP);
+        live(Operator::PANE_CAP);
         assert_eq!(
-            t.file(&path(&["n17"]), tok(Operator::TILE_CAP)),
+            t.land(&path(&["n17"]), tok(Operator::PANE_CAP)),
             Err(Fail::Full)
         );
-        assert_eq!(t.tile(&path(&["n18"])), Err(Fail::Full));
+        assert_eq!(t.part(&path(&["n18"])), Err(Fail::Full));
 
         // 路太深：门槛先于走路
         let deep: Vec<Name> = (0..=Operator::PATH_MAX)
             .map(|i| name(&std::format!("d{i}")))
             .collect();
         live(0);
-        assert_eq!(t.tile(&deep), Err(Fail::Full));
-        assert_eq!(t.file(&deep, tok(0)), Err(Fail::Full));
+        assert_eq!(t.part(&deep), Err(Fail::Full));
+        assert_eq!(t.land(&deep, tok(0)), Err(Fail::Full));
         assert_eq!(t.trim(&deep), Err(Fail::Full));
         assert_eq!(look(&mut t, &deep), Err(Fail::Full));
         assert_eq!(names(&t, &deep), Err(Fail::Full));
@@ -581,10 +585,10 @@ mod tests {
         let _serial = serial();
         let mut t = tree();
         live(1);
-        assert_eq!(t.file(&[], tok(1)), Err(Fail::Unknown));
-        assert_eq!(t.tile(&[]), Err(Fail::Unknown));
+        assert_eq!(t.land(&[], tok(1)), Err(Fail::Unknown));
+        assert_eq!(t.part(&[]), Err(Fail::Unknown));
         assert_eq!(t.trim(&[]), Err(Fail::Unknown));
-        assert_eq!(look(&mut t, &[]), Err(Fail::NotAFile));
+        assert_eq!(look(&mut t, &[]), Err(Fail::NotATile));
         assert_eq!(names(&t, &[]), Ok(std::vec![]));
     }
 }

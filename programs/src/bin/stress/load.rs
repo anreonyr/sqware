@@ -85,10 +85,8 @@
 extern crate alloc;
 extern crate programs;
 
-#[path = "../supervisor/needs.rs"]
-mod needs;
-#[path = "../supervisor/pairing.rs"]
-mod pairing;
+use programs::supervisor::boot;
+
 #[path = "tick.rs"]
 mod tick;
 
@@ -96,7 +94,8 @@ use alloc::format;
 use core::time::Duration;
 
 use env::Name;
-use protocol::system::service::{self, Announce, Table};
+use protocol::system::desk::{Announce, Table};
+use protocol::system::server as service;
 use runtime::env::debug;
 use runtime::env::room::{self, exit_with};
 
@@ -135,7 +134,7 @@ const PARKER_NAMES: [&str; PARKERS] = ["park0"];
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
-    let Some(boot) = pairing::Root::take() else {
+    let Some(boot) = boot::Root::take() else {
         die("load: boot args unreadable")
     };
     let Some((hog, hog_kind)) = find(&boot, HOG_ELF) else {
@@ -211,7 +210,7 @@ fn spawn_one(
 }
 
 /// 清单里按名字取镜像（台主只认这两条）。
-fn find(boot: &pairing::Root, want: &str) -> Option<(&'static [u8], env::ProgramKind)> {
+fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], env::ProgramKind)> {
     let mut list = boot.programs();
     loop {
         let entry = list.next()?;

@@ -1,0 +1,158 @@
+//! board::bridge — **装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名
+//!
+//! 三侧分家之后本文件只放**装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
+//! 帧与记号见 [`crate::board::call`]。
+
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+use env::{Name, PieToken, TaskId};
+use runtime::core::port::{self, Access, Policy};
+use runtime::core::unit::{self, Join};
+use runtime::env::mail;
+
+pub use crate::board::{LINK, TIP_MARK, TIP_NAME};
+use crate::session::Quay;
+
+use super::server::host_loop;
+
+/// 板线程的号（0 = 还没起）。`TaskId` 是**全局身份**，可跨线程，故这一枚放得进 static。
+static HOST: AtomicUsize = AtomicUsize::new(0);
+// 提示之路在**装配者表里**的那一枚句柄**不放 static**：`PieToken` 是表的身份、标着 `!Sync`
+// （`env::wire::handle`），static 装不下它——它由装配者这一枚线程自己拿着，逐次传下去。
+
+/// 把板接上一位客人（装配者调用）：**三步**（见文件头"一问一答的次序"）。
+///
+/// `client` = 客人（服务域的主线程 = 装配者刚产出的代表线程）：**客人交出来的那一枚就落在
+/// 本域表里**（客人把孔交给生我者），而它的 `owner` 正是这位客人——故第 2 步认的是**它**。
+///
+/// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 死亡道转授或递格失败……
+/// 对调用方是同一件事——**这条服务没接上板**——但"死在哪一步"正是装配诊断要的那一格
+/// （与 `service::step` 同款；逐字的因就是函数体里那几处 `map_err` 的字符串）。
+pub fn attach(
+    quay: &mut Quay,
+    me: TaskId,
+    client: TaskId,
+    ms: usize,
+    tip: &mut Option<PieToken>,
+    lane: Option<PieToken>,
+) -> Result<(), &'static str> {
+    let link = Name::new(LINK).map_err(|_| "board:name")?;
+    // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
+    quay.seat(link).map_err(|_| "board:seat")?;
+    // 2. 认领**这位客人**交出来的那一枚（记号 = 板路自己的名字，客侧 `seat` 刻的就是它）。
+    //    本域给每个孩子各开一座码头，故认的是"它给我的"——不然会把别的客人的孔配到它头上
+    //    （`Quay::claim` 的正文）。
+    //    **次序**：板那条比 `records` 后到，而 `records` 的写端已经用掉了 ⇒ 这一枚认在
+    //    板泊位上（一枚孔只配一条泊位）。
+    quay.claim(client, link, ms).map_err(|_| "board:claim")?;
+    // 3. 板线程（只起一枚）→ 把客人那一枚转授过去 → 板路上递一格"答话的是谁" → 提示来客人了。
+    let host = host(me, ms, tip)?;
+    // 死亡道：**这一位的那一条**转授给板线程（板按记号 `gone-<名字>` 在自己表里认领它）。
+    // 位置在客人那一枚转授之后：板线程这时已经起来（`host` 起过就复用）。
+    if let Some(lane) = lane {
+        let hole = mail::HolePie::from_token(lane);
+        port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
+            .map_err(|_| "board:lane")?;
+    }
+    let Some(tip) = *tip else {
+        return Err("board:tip");
+    };
+    let reply = reply_path(quay).ok_or("board:hand")?;
+    hand(reply, host).map_err(|()| "board:hand")?;
+    // 客人那一侧的一格：**答话的是谁**（板线程的号，8 字节）——与提示孔那一格对偶。
+    tell(host, reply).map_err(|_| "board:who")?;
+    // 提示在**转授之后**：板据此可以按"提示一到，答话路必已在本表里"办事。
+    tell(client, tip).map_err(|_| "board:tell")
+}
+
+/// 起板线程（**就一枚**），返它的号；起过了就把那个号给回来。
+///
+/// "为什么就一枚"见文件头。这里补**提示之路**的来历：装配者得告诉板线程"来客人了、它是
+/// 谁"，而孔是**铸的人那张表**里的东西（装配者铸的孔，板线程表里没有它）——故这条路由板
+/// 线程自己铸：它起来第一件事就是把这枚孔的副本交给**装配者**。`me` 因此得从外面给：
+/// 同域里产出来的线程，`sire` 是**域的**生我者（建这个域的那一枚），不是产它的那一枚
+/// （`UnitCall::Sire` 的正文）——同一个域里的两枚线程，"谁生我"答不出"谁产的"。
+fn host(me: TaskId, ms: usize, tip: &mut Option<PieToken>) -> Result<TaskId, &'static str> {
+    let had = HOST.load(Ordering::Acquire);
+    if had != 0 {
+        return Ok(TaskId::new(had));
+    }
+    let node: Join<()> = unit::closure(move || host_loop(me));
+    let id = node.id();
+    // **弃权**（`Join` 的 Drop）：不等它的结果，但按协议把完成盒子交回去（板线程长期不
+    // 返回；`mem::forget` 会把它漏掉）。
+    drop(node);
+    HOST.store(id.get(), Ordering::Release);
+
+    // 认领板线程交回来的那一枚提示孔：本域另开一座码头等它（判据 = `owner == 板线程`
+    // **且** 记号 = `tip`——板线程那一枚是它自己铸的，记号就是它的用途名）。
+    // 这条路上只走"客人号"，故本端那一枚交出去也无妨（板线程不用它，也不碍事）。
+    let slot = Name::new(TIP_NAME).map_err(|_| "board:name")?;
+    let tip_mark = Name::new(TIP_MARK).map_err(|_| "board:name")?;
+    let mut quay = Quay::open(id);
+    quay.seat(slot).map_err(|_| "board:seat")?;
+    quay.claim(id, tip_mark, ms).map_err(|_| "board:tip")?;
+    let pier = quay.find(slot).ok_or("board:tip")?;
+    // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
+    *tip = pier.at_peer();
+    Ok(id)
+}
+
+/// 把一个号推过去（8 字节，小端）。
+///
+/// **两处共用这一句**：提示孔那一格（告板"客人是谁"）与板路那一格（告客人"答话的是谁"）。
+/// 两处都是"装配者知道、对方叫不出"的那个号——故 `tell` 只认"推给哪一枚孔"，不认语义。
+pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
+    let into = mail::HolePie::from_token(into);
+    into.push(&(who.get() as u64).to_le_bytes()).map_err(|_| ())
+}
+
+/// 收下板路上那一格：**答话的是谁**（[`tell`] 的对偶）。
+///
+/// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上板（客人报它自己的超时，不猜）。
+pub(crate) fn hear(quay: &Quay, ms: usize) -> Option<TaskId> {
+    let link = Name::new(LINK).ok()?;
+    let pier = quay.find(link)?;
+    let mut buf = [0u8; 8];
+    match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, ms) {
+        Ok(8) => Some(TaskId::new(u64::from_le_bytes(buf) as usize)),
+        _ => None,
+    }
+}
+
+/// 板路上本端手里那一枚（客人答话路的**写端**）：答话往它推，"答话的是谁"也从它递。
+pub(crate) fn reply_path(quay: &Quay) -> Option<PieToken> {
+    let link = Name::new(LINK).ok()?;
+    quay.find(link)?.at_peer()
+}
+
+/// 把**客人交出来的那一枚**转授给板线程。
+///
+/// 转授的是"客人开的那扇门"（`owner` 是客人），板那侧认领时认的正是它。
+///
+/// 子集只给 `R|W`，**不加 `VEST`**：板线程用这一枚写答话，不需要再授出——一分不多。
+/// 本域自己那一份转授之后**不收**：客人给过来的这一枚不带 `ONLY`（`seat` 给的是
+/// `R|W|VEST`）⇒ 这次授出是**复制**，源枚在我表里照旧可用；收它要多一条 `release`，
+/// 而这一步之后没有任何东西再碰它——本域常驻，随域退场一起回收。
+pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
+    let hole = mail::HolePie::from_token(reply);
+    port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
+        .map(|_| ())
+        .map_err(|_| ())
+}
+
+/// 收尾：把本域那枚常驻板线程**点名收掉**。幂等；没起过就无事。
+///
+/// 会话的收尾由**会话的主人**负责：这枚线程是编排域起的（`attach` 里 `unit::closure`），
+/// 也是它收的。`attach` 当时 `drop(node)` 弃权、没有 `Join` 可等，故只能按 `HOST`
+/// 里那个号点名。
+///
+/// 用的是既有动词 [`room::doom`]——它的粒度是**域**（"杀它所属的域连同它的子树"），
+/// 而这枚线程就住在编排域里，故这一叫收掉的正是那个域自己：**域亡＝成员清零**。
+pub fn shut() {
+    let id = HOST.load(Ordering::Acquire);
+    if id != 0 {
+        let _ = runtime::env::room::doom(TaskId::new(id));
+        HOST.store(0, Ordering::Release);
+    }
+}

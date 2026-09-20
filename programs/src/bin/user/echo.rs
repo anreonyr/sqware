@@ -16,12 +16,12 @@
 //!
 //! # 收场
 //!
-//! 读到一行 `exit` 就退（域退场 ⇒ root 收场 ⇒ 停机）。门的"自退"判据靠它。
+//! 读到一行 `exit` 就退（域退场 ⇒ 编排域收场 ⇒ 引导域退 ⇒ 停机）。门的"自退"判据靠它。
 //!
 //! # 为什么它也上板（`board: true`）
 //!
 //! 与 `passer` 同理、用途不同：**本域要让人看得出它死了**。本域退场时开的那几枚孔随退出
-//! 钩子封印 ⇒ 板当场看出"客人没了" ⇒ 往死亡通知那条路推一格 ⇒ 装配者（`root`）据此记账
+//! 钩子封印 ⇒ 板当场看出"客人没了" ⇒ 往死亡通知那条路推一格 ⇒ 装配者（编排域）据此记账
 //! 并放下本域那个死域。本域是**最后一条**，故这一格同时就是"会话结束"的信号。
 //!
 //! 挂不上板也照旧回显（本域的主职是回显）——只是那条信号缺席。
@@ -39,14 +39,9 @@ extern crate alloc;
 extern crate programs;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
-#[path = "../supervisor/board.rs"]
-// 本域只用**客侧**那几手（板侧那一半归 root）⇒ 另一半在这里是死码。
-#[allow(dead_code)]
-mod board;
-#[path = "../supervisor/operator.rs"]
-// 本域同样只用**客侧**那几手（持树者侧那一半归 operator 域、装配侧那一半归 root）。
-#[allow(dead_code)]
-mod operator;
+// 板与树：本域都只用**客侧**那几手。
+use protocol::board::client as board;
+use protocol::operator::client as operator;
 
 use alloc::format;
 use core::time::Duration;
@@ -60,7 +55,7 @@ use runtime::env::mail;
 use runtime::env::room::{self, exit_with};
 use runtime::env::unit as utask;
 
-/// 本域挂在板上的名字（板按它分人；`root` 表里那一条也叫这个）。
+/// 本域挂在板上的名字（板按它分人；编排域表里那一条也叫这个）。
 const ME: &str = "echo";
 
 /// 等板的总上限（毫秒）。**必须有界**：板死在头几步时本域不能陪着挂死（挂不上照旧回显）。
@@ -151,14 +146,14 @@ fn register() -> u8 {
     board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(bcall::BAD)
 }
 
-/// 上树一趟（装配单里本域 `operator: true`）：**铺 → 挂 → 寻 → 收 → 剪**五步。
+/// 上树一趟（装配单里本域 `operator: true`）：**分 → 落 → 寻 → 收 → 剪**五步。
 ///
 /// 返最后那一格（剪的答码，`ocall::OK` = 五步都成）。中间任何一步不成 ⇒ 当场的答码就是
 /// 返回值——**一格里已经有"死在哪一步"**，不需要另立读数。
 ///
-/// 为什么这五步都要走：树上那四支判据各有各的门（铺出第二层、挂一枚真 Pie、寻回来把 Pie
-/// 经会话授出、剪掉一块空 Tile），少走一步就有半条路从来没被走过。挂的是本域自己那一枚
-/// 入口（与上板那一枚同一个记号），故它在树上是一条普通 `File`，不是特权。
+/// 为什么这五步都要走：树上那四支判据各有各的门（分出第二层、落一枚真 Pie、寻回来把 Pie
+/// 经会话授出、剪掉一块空 `Pane`），少走一步就有半条路从来没被走过。挂的是本域自己那一枚
+/// 入口（与上板那一枚同一个记号），故它在树上是一枚普通 `Tile`，不是特权。
 fn trip() -> u8 {
     let Ok(sire) = utask::sire() else {
         return ocall::BAD;
@@ -177,15 +172,15 @@ fn trip() -> u8 {
     };
     let path = [name];
     let none = PieToken::NONE;
-    // 铺一块空 Tile、再在里面挂一条 File——**第二层**因此是实打实走出来的（不是构造出来的）。
-    let a = operator::ask(talk, &link, host, ocall::TILE, &path, none, MS).unwrap_or(ocall::BAD);
-    let b = operator::ask(talk, &link, host, ocall::FILE, &path, entry, MS).unwrap_or(ocall::BAD);
+    // 分出一块空 `Pane`、再在里面落一枚 `Tile`——**第二层**因此是实打实走出来的（不是构造出来的）。
+    let a = operator::ask(talk, &link, host, ocall::PART, &path, none, MS).unwrap_or(ocall::BAD);
+    let b = operator::ask(talk, &link, host, ocall::LAND, &path, entry, MS).unwrap_or(ocall::BAD);
     let c = operator::ask(talk, &link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
     // 寻回来的那一枚：**来源位是持树者**（号不从报文里走，故只能按"谁给的"认）。
     let got = operator::take(&link, host).is_some();
     let d = operator::ask(talk, &link, host, ocall::TRIM, &path, none, MS).unwrap_or(ocall::BAD);
     let _ = debug::put(&format!(
-        "echo: tree tile={a} file={b} find={c} got={got} trim={d}"
+        "echo: tree part={a} land={b} find={c} got={got} trim={d}"
     ));
     d
 }

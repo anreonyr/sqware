@@ -13,7 +13,7 @@
 //! （旧注写的是"这里不出现 `if` / `match`"——**照实记：`map_*` 那两张表与它同一次落地，
 //! 那句话从写下的第一天起就是假的**。）
 //!
-//! 板服务（板侧待客 / 客侧问一句）住在 `programs/src/bin/supervisor/board.rs`：
+//! 板服务（板侧待客 / 客侧问一句）住在同一个模块的三侧文件里（`server` / `client` / `bridge`）：
 //! 本模块只给**两边都要用的那几手**（认来源 / 认出这扇门是谁的 / 授出 / 收下 / 帧）。
 
 use env::{Name, PieToken, TaskId};
@@ -86,7 +86,7 @@ fn free(entry: PieToken) -> Result<(), ()> {
 
 /// 立一块板：把两枚机制函数交给核心（核心因此不 `use` 内核）。
 ///
-/// `const` 是为了它能当 `static` 的初值：板只有一份，住在本域（`supervisor/board.rs`）。
+/// `const` 是为了它能当 `static` 的初值：板只有一份，住在板那一台（`super::server`）。
 pub const fn board() -> Board {
     let probe: Probe = probe;
     let free: Free = free;
@@ -95,7 +95,7 @@ pub const fn board() -> Board {
 
 /// 立一本**板侧的账**（一位客人一格：谁 / 问 / 答）。与 [`board`] 同一个注入（探活那一格）。
 ///
-/// `const` 同理：账只有一本，住在板线程（`supervisor/board.rs`）。
+/// `const` 同理：账只有一本，住在板那一台（`super::server`）。
 pub const fn desk() -> Desk {
     let probe: Probe = probe;
     Desk::new(probe)
@@ -235,3 +235,29 @@ pub fn map_seat(seat: Seat) -> Fail {
         Seat::NoRoom => Fail::Full,
     }
 }
+
+// ── 载体两侧共用的坐标 ─────────────────────────────────────
+//
+// 这几格是**记号与名字**：两侧都要按它认领/铸孔，故只能有一份（规则 5）。
+
+/// 板那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
+pub const LINK: &str = "board";
+
+/// 注册入口那一枚孔上的记号（**两侧同一个**：客人铸它时刻上去的，板按它把入口与问话孔
+/// 分开——两枚都是客人铸的、都是客人交来的，只有记号分得开）。
+pub const ENTRY_MARK: &str = "entry";
+
+/// 问话孔那一枚上的记号（同上：客人铸、客人交；板按它认领那枚孔）。
+pub const ASK_MARK: &str = "ask";
+
+/// 提示孔那一枚上的记号（板线程铸它时刻上去的；装配者按它认领那一枚）。
+pub const TIP_MARK: &str = "tip";
+
+/// 提示之路的名字（只有装配者那侧用得上：板线程那一枚是它自己铸的，不需要名字）。
+pub const TIP_NAME: &str = "board-tip";
+
+/// 死亡道的记号前缀：**一位客人一条**（`gone-<名字>`），由装配者铸、各交一份给板。
+///
+/// 一客人一道 ⇒ **身份就是"哪条道响了"**：两位同时死也不会挤在一格上丢名字，装配者那边
+/// 也不必按名字猜。板按这位客人的**名字**（从它留在板上的牌子上读）找回那一条。
+pub const LANE_PREFIX: &str = "gone-";
