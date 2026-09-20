@@ -1,7 +1,7 @@
 //! operator::server — **持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）
 //!
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`crate::operator::call`]。
+//! 帧与记号见 [`protocol::operator::call`]。
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};

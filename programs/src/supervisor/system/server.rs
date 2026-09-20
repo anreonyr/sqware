@@ -42,8 +42,8 @@ pub fn spawn(
 ) -> Result<TaskId, Fail> {
     admit_start(table, name)?;
 
-    let team = crate::system::call::mint(image, kind, name)?;
-    let Ok(rep) = crate::system::call::bear(team) else {
+    let team = crate::supervisor::system::call::mint(image, kind, name)?;
+    let Ok(rep) = crate::supervisor::system::call::bear(team) else {
         return Err(Fail::NoRoom);
     };
     table.attach(name, team, rep)?;
@@ -79,12 +79,12 @@ pub fn start(
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
-            crate::system::call::accord(g.token, rep, g.perm)?;
+            crate::supervisor::system::call::accord(g.token, rep, g.perm)?;
         }
-        crate::system::call::hatch(rep)
+        crate::supervisor::system::call::hatch(rep)
     })();
     if let Err(e) = launched {
-        crate::system::call::ruin(rep);
+        crate::supervisor::system::call::ruin(rep);
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(e);
@@ -122,7 +122,7 @@ pub fn ready(
 
     // 它不宣布的那一种：放行之后只要还活着就算起来了，没有可等的东西。
     if announce == Announce::None {
-        if crate::system::call::running(rep) {
+        if crate::supervisor::system::call::running(rep) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -142,7 +142,7 @@ pub fn ready(
             return Ok(false);
         }
     }
-    if !crate::system::call::running(rep) {
+    if !crate::supervisor::system::call::running(rep) {
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
@@ -164,7 +164,7 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
         return Err(Fail::Unknown);
     };
     let rep = *rep;
-    crate::system::call::ruin(rep);
+    crate::supervisor::system::call::ruin(rep);
     table.set_state(name, State::Stopping);
     Ok(())
 }
@@ -181,14 +181,14 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// ⇒ 等待里的"早醒"只可能来自收尾；"到点"那一支由复探分出来（答 [`Reaped::Unsettled`]）。
 ///
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
-/// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::system::call) 同一折法。
+/// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::supervisor::system::call) 同一折法。
 /// `ms` = **上限族**（口径见 `env::fid` 文件头的定式）；超时那支答 [`Reaped::Unsettled`]，
 /// 不写表。
 pub fn until(table: &Table, name: Name, ms: usize) -> Result<Reaped, Fail> {
     let Some(rep) = live_rep(table, name) else {
         return Err(Fail::Unknown);
     };
-    if !crate::system::call::running(rep) {
+    if !crate::supervisor::system::call::running(rep) {
         return Ok(Reaped::Now);
     }
     if ms == 0 {
@@ -196,7 +196,7 @@ pub fn until(table: &Table, name: Name, ms: usize) -> Result<Reaped, Fail> {
     }
     // 挂起等一记：醒来自收尾（`wipe`）或到点，两者当场分不开 ⇒ 醒来复探，判决只认它。
     let _ = runtime::env::unit::join(rep, ms);
-    if crate::system::call::running(rep) {
+    if crate::supervisor::system::call::running(rep) {
         Ok(Reaped::Unsettled)
     } else {
         Ok(Reaped::Waited)

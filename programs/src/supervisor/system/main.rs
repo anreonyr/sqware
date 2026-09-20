@@ -29,12 +29,12 @@ use programs::supervisor::{needs, service};
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**装配侧**（把客人接上板、收尾点名）。
-use programs::board::bridge as board;
+use programs::supervisor::board::bridge as board;
 // 树：本域是**装配侧**（把客人接上树）。
-use programs::operator::bridge as operator;
+use programs::user::operator::bridge as operator;
 
 use env::{HoleDir, Name, PieToken, TaskId};
-use programs::system::server;
+use programs::supervisor::system::server;
 use protocol::session::{Pier, Quay};
 use protocol::system::desk::{Announce, Table};
 use runtime::core::dock::Dock;

@@ -1,7 +1,7 @@
 //! operator::bridge — **装配侧**：把持树者接上一位客人（三步），并认下它那条提示之路
 //!
 //! 三侧分家之后本文件只放**装配侧**：把持树者接上一位客人（三步），并认下它那条提示之路；两侧共用的图与说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`crate::operator::call`]。
+//! 帧与记号见 [`protocol::operator::call`]。
 
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};

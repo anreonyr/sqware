@@ -1,7 +1,7 @@
 //! board::bridge — **装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名
 //!
 //! 三侧分家之后本文件只放**装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`crate::board::call`]。
+//! 帧与记号见 [`protocol::board::call`]。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 

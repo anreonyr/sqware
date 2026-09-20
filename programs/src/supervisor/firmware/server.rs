@@ -1,6 +1,6 @@
 //! firmware::server — **引导域那一侧**：照单取源、授出、回一张回单（常驻循环 [`serve`]）
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`crate::firmware::call`]。
+//! 正文见 [`super`]；记号、帧与上限见 [`protocol::firmware::call`]。
 
 use env::{PAIR_LEN, Pair, PieToken};
 use runtime::core::port::{self, Policy};

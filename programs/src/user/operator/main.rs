@@ -20,7 +20,7 @@
 extern crate programs;
 
 // 本域只跑持树者那一侧（`serve`）；装配侧与客侧住在 protocol 里，本域用不到。
-use programs::operator::server as operator;
+use programs::user::operator::server as operator;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {

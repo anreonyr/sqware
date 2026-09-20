@@ -199,7 +199,7 @@ use alloc::format;
 use core::time::Duration;
 
 use env::Name;
-use programs::system::server as service;
+use programs::supervisor::system::server as service;
 use protocol::session::Quay;
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Slot, Table};

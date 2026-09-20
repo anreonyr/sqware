@@ -18,15 +18,15 @@
 //! 装配者再把这**一段字节原样**投到客人那条通道上（客人按记号认领、按名字归位）。
 //! 装配者经手的只有字节，**一枚原件都不经过它**。
 
-use crate::system::server::{self as service, Grant};
+use crate::supervisor::system::server::{self as service, Grant};
 use env::wire::manifest;
 use env::{Name, PieToken, TaskId};
 use protocol::session::{Pier, Quay};
 use protocol::system::desk::{Announce, Table};
 use runtime::env::room::exit_with;
 
-use crate::board::bridge as board;
-use crate::operator::bridge as operator;
+use crate::supervisor::board::bridge as board;
+use crate::user::operator::bridge as operator;
 
 use super::needs::Need;
 use protocol::firmware;

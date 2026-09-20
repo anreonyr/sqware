@@ -46,7 +46,7 @@ doctest = false
 
 [[bin]]
 name = "prog-plic"
-path = "src/plic/main.rs"
+path = "src/supervisor/plic/main.rs"
 test = false
 bench = false
 doctest = false
@@ -54,7 +54,7 @@ doctest = false
 # 命名树的服务（U 态，独立域，一枚线程）：起那棵树、招待所有客人；接树归编排域。
 [[bin]]
 name = "prog-operator"
-path = "src/operator/main.rs"
+path = "src/user/operator/main.rs"
 test = false
 bench = false
 doctest = false
@@ -62,7 +62,7 @@ doctest = false
 # 编排域（S 态，独立域）：起整批服务、监督、把入口挂上树；配给从引导域领。
 [[bin]]
 name = "prog-system"
-path = "src/system/main.rs"
+path = "src/supervisor/system/main.rs"
 test = false
 bench = false
 doctest = false
@@ -71,7 +71,7 @@ doctest = false
 # 之后只做一件事——照单发货。
 [[bin]]
 name = "prog-root"
-path = "src/root/main.rs"
+path = "src/supervisor/root/main.rs"
 test = false
 bench = false
 doctest = false
