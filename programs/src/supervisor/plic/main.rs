@@ -60,10 +60,10 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-use programs::supervisor::needs;
+// 需求单由**本域自己开**（收方那张账）——它就是 lib 里同一份源码。
+use programs::supervisor::plic::needs;
 use protocol::system::grant;
 
-// 共享物住在 supervisor 目录里，由两个 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**客侧**（挂牌子、查回来）。
 use protocol::board::client as board;
 
@@ -113,7 +113,7 @@ const MUTE_BITS: u32 = 64;
 /// 收记录用的缓冲容量：需求单几条就备几条（父域按**同一张单子**推）。
 ///
 /// 发货方不必抄这个数（`pairing::pack` 按单子逐条走）；收货方要它，因为它得**备缓冲**。
-const CAP: usize = PAIR_LEN * needs::PLIC.len();
+const CAP: usize = PAIR_LEN * needs::WANTS.len();
 
 /// 失败编号指"死在装配的哪一步"（本域是常驻的，正常退场码不作数）。
 const E_SIRE: usize = 1;
@@ -207,7 +207,7 @@ extern "C" fn main() -> ! {
 /// 装配的前半：装会话 → 收配给 → 按 `Slot` 归位 → 板上一趟。
 ///
 /// 返那几枚门闩（按需求单的格子），失败给退场码。
-fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
+fn boot() -> Result<[PieToken; needs::WANTS.len()], usize> {
     // 1. 会话：本域那一侧的孔交给"生我者"——就是建本域的那枚线程（父域的装配者）。
     //    记号 = 这条泊位的名字（`seat` 铸孔时刻上去的）：父域放行之后按 `(本域, records)`
     //    两格把这一枚认下来（`Quay::claim` 的正文），本域**不必报名字**——记号随副本过线。
@@ -221,7 +221,7 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
     let up = quay.find(channel).ok_or(E_UP)?;
     let n = up.pull(&mut buf, QUAY_MS).map_err(|_| E_GRANT)?;
     say(&alloc::format!("plic: got {n}"));
-    let mut got: [Option<PieToken>; needs::PLIC.len()] = [None; needs::PLIC.len()];
+    let mut got: [Option<PieToken>; needs::WANTS.len()] = [None; needs::WANTS.len()];
     grant::unpack(
         &buf[..n],
         |name| needs::slot_of(name),
@@ -233,7 +233,7 @@ fn boot() -> Result<[PieToken; needs::PLIC.len()], usize> {
     );
 
     // 3. 四枚都要在：少一枚就不必继续（父域按同一张单子发货，缺格即装配错）。
-    let mut out = [PieToken::NONE; needs::PLIC.len()];
+    let mut out = [PieToken::NONE; needs::WANTS.len()];
     for (i, cell) in got.iter().enumerate() {
         out[i] = cell.ok_or(E_GRANT)?;
     }

@@ -34,9 +34,10 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 中断面域：**S 态**——它要读写 PLIC 的寄存器（那一页由 root 从配对块取出来授给它，
     // 内核不参与；内核只摇那枚铃）。
     ("plic", "prog-plic", ProgramKind::Supervisor),
-    // 命名树的服务：**U 态**（最小特权）——它只搬 Pie（`Accord` 的副本）：不碰 MMIO、
-    // 不读设备、不建域。入口那一枚经会话交出去，故 S 态那几道门它一道也用不上。
-    ("operator", "prog-operator", ProgramKind::User),
+    // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
+    // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
+    // 故它不进"最小特权"那一档（`echo` / `guest` / `passer`），与监督侧同档。
+    ("operator", "prog-operator", ProgramKind::Supervisor),
     // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器
     // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，
     // 之后"这批字节交给谁"由域自己决定（见 `platform/devices.rs::supply_initrd`）。

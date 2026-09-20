@@ -25,13 +25,14 @@
 extern crate alloc;
 extern crate programs;
 
-use programs::supervisor::{needs, service};
+// 需求单归**收方**：`plic` 那一档自己开（lib 里同一份源码），本域只照它开单。
+use programs::supervisor::plic::needs as plic_needs;
+use programs::supervisor::service;
 
-// 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**装配侧**（把客人接上板、收尾点名）。
 use programs::supervisor::board::bridge as board;
 // 树：本域是**装配侧**（把客人接上树）。
-use programs::user::operator::bridge as operator;
+use programs::supervisor::operator::bridge as operator;
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use programs::supervisor::system::server;
@@ -43,9 +44,8 @@ use runtime::core::tole::Tole;
 use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::unit as utask;
 
-use needs::Kind;
 use protocol::firmware;
-use protocol::firmware::call::Want;
+use protocol::firmware::call::{Kind, Want};
 use service::{Catalog, Died, Program};
 
 /// 载荷区那枚门闩在配对块里的名字（boot 定的，见 `kernel/platform/devices.rs`）。
@@ -68,7 +68,7 @@ const fn plic() -> Program {
         announce: Announce::Channel,
         tokens: &[],
         channels: &["records"],
-        needs: Some(needs::PLIC),
+        needs: Some(plic_needs::WANTS),
         board: true,
         operator: false,
         died: E_PLIC,

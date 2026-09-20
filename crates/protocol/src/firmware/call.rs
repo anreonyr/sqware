@@ -50,8 +50,9 @@ pub const BAD: u8 = 4;
 
 /// 单子上的一条：**要哪一枚**（boot 账里的名字）、什么种类、多少权、什么形态。
 ///
-/// 与 [`Need`] 同源不同视角：`Need` 是**收方**的需求（带 `slot`，常量表里的一条），
-/// 这一条是**请求里**要的那样——不带 `slot`，**位置即格**（收方按名字归位）。
+/// **收方那张需求单就是它的常量形态**（[`Want::of`] ＋ [`name_block`]，今天唯一一张在
+/// `programs/src/supervisor/plic/needs.rs`）：收方开单、装配者原样递出。故这一条**不带
+/// `slot`**——位置即格，收方按名字归位（`protocol::system::grant::unpack` 那个闭包）。
 ///
 /// `repr(C)` + 定长字段 ⇒ 尺寸即线格式（编译期断言锁死），与 `Pair` 同一条纪律。
 #[repr(C)]
@@ -90,6 +91,20 @@ impl Want {
         })
     }
 
+    /// 常量构造：`name` 给的是**定长名字块**（[`Name::bytes`] 那一口径，见 [`name_block`]）。
+    ///
+    /// 运行期那条路是 [`Want::new`]；这一条是给**收方那张需求单**用的——它是一张 `const` 表
+    /// （今天的唯一一张在 `programs/src/supervisor/plic/needs.rs`）。
+    pub const fn of(name: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Want {
+        Want {
+            name,
+            access: access.bits().bits(),
+            policy: policy.bits().bits(),
+            kind: kind as u8,
+            pad: [0u8; 3],
+        }
+    }
+
     /// 名字（按 ABI 的定长字段解：`Name::bytes`/`from_bytes` 这一对，与 [`Pair::name`]
     /// 同一条——**不是**帧的变长那一条 `from_slice`，它会拒掉填充的 NUL）。
     pub fn name(&self) -> Option<Name> {
@@ -113,6 +128,21 @@ impl Want {
     pub fn policy(&self) -> Option<Policy> {
         Policy::from_bits(self.policy)
     }
+}
+
+/// 编译期把字面量补零成定长名字块——与 [`Name::new`] 运行期做的是同一件事。
+///
+/// **不做** `Name::new` 那套校验（非空 / UTF-8 / ≤ `NAME_LEN` - 1）：它是给 `const` 表用的，
+/// 字面量写错会在 [`Name::from_bytes`] 读出时当场暴露（表是编译期常量，读的人就在旁边）。
+pub const fn name_block(s: &str) -> [u8; NAME_LEN] {
+    let src = s.as_bytes();
+    let mut out = [0u8; NAME_LEN];
+    let mut i = 0;
+    while i < src.len() && i < NAME_LEN - 1 {
+        out[i] = src[i];
+        i += 1;
+    }
+    out
 }
 
 /// 起一张单子 → 帧。条数越界或缓冲不够 ⇒ `None`（调用方按本地失败处理）。

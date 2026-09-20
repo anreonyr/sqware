@@ -36,11 +36,12 @@
 extern crate alloc;
 extern crate programs;
 
-use programs::supervisor::{boot, service};
+// 两块账在引导域自己那一摊里（只有它读得到）；装配机器是两个装配者共用的一台。
+use programs::supervisor::root::boot;
+use programs::supervisor::service;
 
-// 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 本域只用持树者那一份的**装配侧**（`host_of`：认下提示之路）。
-use programs::user::operator::bridge as operator;
+use programs::supervisor::operator::bridge as operator;
 
 use env::{Name, PieToken};
 use protocol::session::Quay;

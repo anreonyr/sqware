@@ -87,7 +87,7 @@ extern crate programs;
 
 use programs::stress::tick;
 
-use programs::supervisor::boot;
+use programs::supervisor::root::boot;
 
 use alloc::format;
 use core::time::Duration;

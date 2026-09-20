@@ -1,25 +1,26 @@
-//! supervisor — **S 态那一档**：装配面，以及只有监督侧用的那几片实现。
+//! supervisor — **S 态那一档**：只有监督侧用的那几片实现，与它们的程序入口。
 //!
 //! 判据是特权级（唯一声明处：`kernel/build.rs::INITRD_BINS`）：本目录下都是 `Supervisor`。
-//! 两样东西同住：
 //!
-//! - **装配面**（本级的 `boot` / `needs` / `pairing` / `service`）：设备需求单、boot 给的账、
-//!   按单起服务那一台机器。它们都**不是某个程序的私物**：`needs` 是两端共用的契约、
-//!   `pairing` 是三条路共用的编解码、`service` 是"按单起服务"那一台机器。它们从前住在
-//!   `bin/supervisor/` 里，靠 `#[path]` 被七、七、两个程序各声明一遍（各自还得写"另一半是
-//!   死码"）——那是**实现细节绑住了结构**。搬到 lib 之后各程序只 `use programs::supervisor::…`，
-//!   一份源码编一次。它们仍是"这台机器的事实"（设备名、启动参数、谁先起），故留在 `programs`
-//!   这一侧，不进 `crates/protocol`：协议面（判定 / 帧 / 账 / 三个角色）住那边。
-//! - **只有监督侧用的实现**：[`board`]（板那一台，跑在装配域的宿主线程里）、[`firmware`]
-//!   （引导域那圈发货循环）、[`system`]（编排域的实现，与它自己的 `main.rs` 同住）。
+//! - **实现**：[`board`]（板那一台，跑在装配域的宿主线程里）、[`firmware`]（引导域那圈发货
+//!   循环）、[`operator`]（持树者：那棵命名树的服务，也是这台机器的**转授权中枢**——谁在树上
+//!   查到一条，它就 `ship` 一枚带 `VEST` 的副本）、[`system`]（编排域的实现）。
+//! - **程序入口与它那片模块同住**：`root/`（引导域：入口 ＋ 只有它读得到的那两块账）、
+//!   `plic/`（中断面域：入口 ＋ 设备面 ＋ 它自己那张需求单）、`operator/main.rs`、`system/main.rs`。
+//! - **共用件只有 [`service`]**：那台装配机器被**两个装配者**用（`root` 与 `system`），内含到
+//!   任一方都会复制一份，故留在这里。入口样板 [`crate::entry`] 是每个程序共用的，平铺在
+//!   `src/` 根。
 //!
-//! 程序入口与它那片模块同住：`root/main.rs`、`plic/`、`system/main.rs` 都在本目录里。
+//! **表归主人**：硬件需求单在**收方**（[`plic::needs`]）、boot 的两块账在**引导域**
+//! （[`root::boot`]）——装配者只是 `use` 它们。从前这几件都平铺在本级，中间还隔着一层
+//! `Need → Want` 的转换；那一层已经消掉（单子上的形状就是那张表）。
+//!
 //! U 态那一档在 [`crate::user`]；压测台**不分档**，整块留在 [`crate::stress`]。
 
 pub mod board;
-pub mod boot;
 pub mod firmware;
-pub mod needs;
-pub mod pairing;
+pub mod operator;
+pub mod plic;
+pub mod root;
 pub mod service;
 pub mod system;

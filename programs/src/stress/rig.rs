@@ -191,7 +191,7 @@ extern crate programs;
 
 use programs::stress::tick;
 
-use programs::supervisor::boot;
+use programs::supervisor::root::boot;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 

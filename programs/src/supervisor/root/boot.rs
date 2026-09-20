@@ -1,8 +1,8 @@
 //! boot — **boot 给引导域的两块账**：清单（装了哪些程序）与配对块（有哪些门闩）。
 //!
 //! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::wire::args`），行的还是
-//! "谁被装进来了"这件事。固件面（单子与回单）住在 [`protocol::firmware`]；把需求单翻成
-//! 单子上的一条住在 [`crate::supervisor::pairing`]。
+//! "谁被装进来了"这件事。固件面（单子与回单）住在 [`protocol::firmware`]；要哪几样由
+//! **收方**自己开单（[`crate::supervisor::plic::needs`]，开口的形态就是 `Want`）。
 
 use env::wire::{args as boot_args, manifest};
 use env::{PAIR_LEN, Pair, PieToken};

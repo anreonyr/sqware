@@ -54,7 +54,7 @@ doctest = false
 # 命名树的服务（U 态，独立域，一枚线程）：起那棵树、招待所有客人；接树归编排域。
 [[bin]]
 name = "prog-operator"
-path = "src/user/operator/main.rs"
+path = "src/supervisor/operator/main.rs"
 test = false
 bench = false
 doctest = false

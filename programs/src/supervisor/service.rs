@@ -26,13 +26,12 @@ use protocol::system::desk::{Announce, Table};
 use runtime::env::room::exit_with;
 
 use crate::supervisor::board::bridge as board;
-use crate::user::operator::bridge as operator;
+use crate::supervisor::operator::bridge as operator;
 
-use super::needs::Need;
 use protocol::firmware;
+use protocol::firmware::call::Want;
 
-use super::boot;
-use super::pairing;
+use crate::supervisor::root::boot;
 
 /// 装配失败的编号：指"死在装配的哪一步"（沿用旧树那套小整数编号的意思）。
 pub type Died = usize;
@@ -48,7 +47,10 @@ pub struct Program {
     /// 与它之间要开的通道（双方按名字对位，不靠位置约定）。
     pub channels: &'static [&'static str],
     /// 它要的门闩（`None` = 什么都不要，如调试回显）。
-    pub needs: Option<&'static [Need]>,
+    ///
+    /// **就是单子上的那几条**（[`Want`]）：那张表由**收方**自己开（今天唯一一张在
+    /// [`crate::supervisor::plic::needs`]），本域照单递出去——中间不再有"需求 → 单子"的转换。
+    pub needs: Option<&'static [Want]>,
     /// 要不要板那条路（[`board::attach`]）。
     ///
     /// **它不是 `channels` 里的一行**：那几条是"放行前先装好、起来时交回"，而板那条路由
@@ -249,9 +251,10 @@ fn step(p: &Program, what: &str) {
 /// 发货：向引导域领这几样，再把那段记录**原样**推到客人那条通道上。
 ///
 /// **本域不碰原件**：门闩在引导域手里，它直接授进`rep`那张表，回一段"名字 + 号"的记录；
-/// 本域只做一次转投（客人按名字归位）。编码住 [`pairing`]，本层只说"要什么、走哪条通道"。
+/// 本域只做一次转投（客人按名字归位，[`protocol::system::grant::unpack`]）。本层只说
+/// "要什么、走哪条通道"——**要什么就是收方那张表**（[`Program::needs`]），一格都不抄。
 fn wire(root: &Pier, quay: &Quay, p: &Program, rep: env::TaskId) -> Result<(), ()> {
-    let Some(needs) = p.needs else {
+    let Some(wants) = p.needs else {
         return Ok(());
     };
     let Some(ch) = p.channels.first() else {
@@ -267,14 +270,11 @@ fn wire(root: &Pier, quay: &Quay, p: &Program, rep: env::TaskId) -> Result<(), (
         return Err(());
     }
 
-    // 一枚一枚要：条数取自需求单自己，本层不抄"要几样"。
-    let Some((wants, n)) = pairing::wants_of(needs) else {
-        return Err(());
-    };
+    // 一枚一枚要：条数就在那张表里，本层不抄"要几样"（空表 / 超 `WANT_MAX` 由 `draw` 答）。
     let mut ask = [0u8; firmware::SLIP_CAP];
     let mut reply = [0u8; firmware::REPLY_CAP];
-    let records = firmware::client::draw(root, rep, &wants[..n], &mut ask, &mut reply, READY_MS)
-        .map_err(|_| ())?;
+    let records =
+        firmware::client::draw(root, rep, wants, &mut ask, &mut reply, READY_MS).map_err(|_| ())?;
     let said = pier.post(records);
     let _ = runtime::env::debug::put(&alloc::format!(
         "wire: {} bytes, paired={}, post={}",
