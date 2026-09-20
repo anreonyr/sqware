@@ -5,10 +5,11 @@
 //! 在那之前不需要协议——跨域要说的话走 `env` 的调试面（`DebugCall`：内核把固件的调试
 //! 控制台直接借给域），一条孔都不用开。`echo` 就是这么说话的。
 //!
-//! **目前有四份正文**：[`system`]、[`principal`]、[`session`] 与 [`board`]。
+//! **目前有五份正文**：[`system`]、[`principal`]、[`session`]、[`board`] 与 [`operator`]。
 //!
 //! 落地程度不一样：**三份已经有代码跑在机器上**（[`system`]、[`session`]、[`board`]），
-//! [`principal`] 只有正文、它的 Server 还没起步。
+//! [`principal`] 只有正文、它的 Server 还没起步，[`operator`] 只有**核心**（树 + 五条原语 +
+//! 宿主测试）——它的载体（一问一答的帧、客人账、装配）还没设计，故没有程序跑在机器上。
 //!
 //! - [`system`] = **服务编排**（systemd 那一层）：系统由哪些 Service 构成、怎么起停监督。
 //!   它的载体是内核 ABI（`env::fid` 的 `UnitCall` 整类 + `RoomCall` 的 `Reap`/`Doom`），
@@ -21,6 +22,10 @@
 //!   对方交、认领按"谁开的这扇门"——不需要 Server 就能成立，而其余三份都建在它上面。
 //! - [`board`] = **命名寻址**："这个名字此刻指向哪个入口"。一块公示板、一枚牌子、
 //!   三个动作；判据只有一条（那枚入口是你亲手交给持板者的），**不存预约表**。
+//! - [`operator`] = **命名寻址（树那一版）**：一个 Operator 管着所有条目，其他任务只是
+//!   操作它——`file` 挂 / `tile` 铺 / `find` 寻 / `trim` 剪 / `list` 列，五条原语落在那棵
+//!   `Entry { 名字, 去处 }`、`Node = Tile | File` 的树上。与 [`board`] 那张**平表**并存，
+//!   去留不在本文件里定；它今天只有核心，载体还没设计。
 //!
 //! [`session`] 是 `system` 起服务时等就绪的那一步；[`board`] 是 `programs` 里那**一枚**
 //! 板线程（招待所有客人，见该模块"板为什么就一枚线程"）+ 装配者域里共享的那一份板
@@ -70,6 +75,7 @@
 extern crate alloc;
 
 pub mod board;
+pub mod operator;
 pub mod principal;
 pub mod session;
 pub mod system;
