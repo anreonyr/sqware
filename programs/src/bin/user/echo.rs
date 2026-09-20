@@ -43,13 +43,18 @@ extern crate programs;
 // 本域只用**客侧**那几手（板侧那一半归 root）⇒ 另一半在这里是死码。
 #[allow(dead_code)]
 mod board;
+#[path = "../supervisor/operator.rs"]
+// 本域同样只用**客侧**那几手（持树者侧那一半归 operator 域、装配侧那一半归 root）。
+#[allow(dead_code)]
+mod operator;
 
 use alloc::format;
 use core::time::Duration;
 
 use env::DBCN_MAX;
-use env::Name;
+use env::{Name, PieToken};
 use protocol::board::call as bcall;
+use protocol::operator::call as ocall;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room::{self, exit_with};
@@ -79,6 +84,10 @@ extern "C" fn main() -> ! {
     // 上板：**注册在回显之前**——板要能看见本域（见头注）。挂不上照旧回显。
     let reg = register();
     let _ = debug::put(&format!("echo: reg={reg}"));
+    // 上树：**本域是第一位真客人**（装配单里 `operator: true` 的那一条）——把本域的入口挂到
+    // 树上、再查回来取一枚。挂不上照旧回显（本域的主职是回显）。
+    let op = trip();
+    let _ = debug::put(&format!("echo: op={op}"));
 
     let mut buf = [0u8; DBCN_MAX];
     let mut line = [0u8; LINE_MAX];
@@ -140,4 +149,43 @@ fn register() -> u8 {
         return bcall::BAD;
     };
     board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(bcall::BAD)
+}
+
+/// 上树一趟（装配单里本域 `operator: true`）：**铺 → 挂 → 寻 → 收 → 剪**五步。
+///
+/// 返最后那一格（剪的答码，`ocall::OK` = 五步都成）。中间任何一步不成 ⇒ 当场的答码就是
+/// 返回值——**一格里已经有"死在哪一步"**，不需要另立读数。
+///
+/// 为什么这五步都要走：树上那四支判据各有各的门（铺出第二层、挂一枚真 Pie、寻回来把 Pie
+/// 经会话授出、剪掉一块空 Tile），少走一步就有半条路从来没被走过。挂的是本域自己那一枚
+/// 入口（与上板那一枚同一个记号），故它在树上是一条普通 `File`，不是特权。
+fn trip() -> u8 {
+    let Ok(sire) = utask::sire() else {
+        return ocall::BAD;
+    };
+    let Ok((link, host)) = operator::open(sire, MS) else {
+        return ocall::BAD;
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        return ocall::BAD;
+    };
+    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
+        return ocall::BAD;
+    };
+    let Ok(name) = Name::new(ME) else {
+        return ocall::BAD;
+    };
+    let path = [name];
+    let none = PieToken::NONE;
+    // 铺一块空 Tile、再在里面挂一条 File——**第二层**因此是实打实走出来的（不是构造出来的）。
+    let a = operator::ask(talk, &link, host, ocall::TILE, &path, none, MS).unwrap_or(ocall::BAD);
+    let b = operator::ask(talk, &link, host, ocall::FILE, &path, entry, MS).unwrap_or(ocall::BAD);
+    let c = operator::ask(talk, &link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
+    // 寻回来的那一枚：**来源位是持树者**（号不从报文里走，故只能按"谁给的"认）。
+    let got = operator::take(&link, host).is_some();
+    let d = operator::ask(talk, &link, host, ocall::TRIM, &path, none, MS).unwrap_or(ocall::BAD);
+    let _ = debug::put(&format!(
+        "echo: tree tile={a} file={b} find={c} got={got} trim={d}"
+    ));
+    d
 }

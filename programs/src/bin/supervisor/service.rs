@@ -1,12 +1,12 @@
 //! service — **装配策略表**：这台机器该起哪些服务、用什么起、起了之后跟它说什么。
 //!
 //! 这张表是"装配"这件事**唯一**的地方：名字、怎么算起来、起跑前塞什么、开哪几条通道、
-//! 要哪些门闩、上不上板、失败了报哪个号——七样以前散在七个地方（`announce_of`、两个
+//! 要哪些门闩、上不上板、上不上树、失败了报哪个号——八样以前散在八个地方（`announce_of`、两个
 //! `const`、代码里隐含的通道名、`needs`、`board::attach` 的调用点、各处期限、两套 `E_*`），
 //! 现在合成一处：
 //!
 //! ```text
-//!   PLAN  └─ Program { name, announce, tokens, channels, needs, board, died }
+//!   PLAN  └─ Program { name, announce, tokens, channels, needs, board, operator, died }
 //! ```
 //!
 //! 想加第三个服务：在 [`PLAN`] 里加一行，**`main` 一个字都不用改**。
@@ -21,6 +21,7 @@ use runtime::env::room::exit_with;
 
 use super::board;
 use super::needs::{self, Kind};
+use super::operator;
 use super::pairing::Root;
 
 /// 装配失败的编号：指"死在装配的哪一步"（沿用旧树那套小整数编号的意思）。
@@ -44,15 +45,46 @@ pub struct Program {
     /// **客人在起来之后自己装**（客人才是"问"的那一侧），故本域是等它，不是先装。
     /// 两端共用这一格：`true` ⇒ 它一定调 [`board::open`]（不然本域要白等一期）。
     pub board: bool,
+    /// 要不要树那条路（[`operator::attach`]）。
+    ///
+    /// 与 [`Program::board`] 同一个形状、同一格位置（"两端共用"）：`true` ⇒ 它一定调
+    /// [`operator::open`]。**按需发**——拿到这条路的服务，就能动整棵树（本正文不做权限
+    /// 判断，owner 归 Principal），故只有确实要用的那几条打上它。
+    pub operator: bool,
     /// 装配死在这一条时报哪个号。
     pub died: Died,
 }
 
+/// 持树者那一条在 [`PLAN`] 里的名字。**两端共用**：装配单按它对位，`start` 按它认出
+/// "这一条就是持树者"（把它交回来的号记下来给后面几条用）。
+pub const OPERATOR: &str = "operator";
+
 /// **装配单**：本域按这个顺序起服务。
+///
+/// `operator` **必须在最前**：后面几条按需接上它（[`Program::operator`]），而"接上"要它
+/// 已经把提示孔交回来——先起它，后面那几条装路时它早就在了。
 ///
 /// `echo` **必须在最后**：[`assemble`] 返 [`PLAN`] 的最后一条，root 的 `wait_last` 等它
 /// ——那正是"读到一行 `exit` 才收场"的那一格。
-pub const PLAN: &[Program] = &[plic(), guest(), passer(), echo()];
+pub const PLAN: &[Program] = &[tree(), plic(), guest(), passer(), echo()];
+
+/// 命名树的服务（`prog-operator`，U 态、独立域）：它自己要什么？**什么也不要**——不交通道、
+/// 不要门闩、不上板（它不给人挂牌子，它自己就是那棵树）。它只把提示孔交给本域。
+///
+/// **它是唯一一条 `operator: false` 而持有树的服务**：本域把它起起来之后，就按需把别的
+/// 服务接到它那棵树上。
+const fn tree() -> Program {
+    Program {
+        name: OPERATOR,
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: false,
+        died: E_OPERATOR,
+    }
+}
 
 /// 中断面域：常驻，要四枚门闩，起来时交回通道，并挂上板。
 const fn plic() -> Program {
@@ -63,6 +95,7 @@ const fn plic() -> Program {
         channels: &["records"],
         needs: Some(needs::PLIC),
         board: true,
+        operator: false,
         died: E_PLIC,
     }
 }
@@ -79,6 +112,7 @@ const fn guest() -> Program {
         channels: &[],
         needs: None,
         board: true,
+        operator: false,
         died: E_GUEST,
     }
 }
@@ -95,13 +129,18 @@ const fn passer() -> Program {
         channels: &[],
         needs: None,
         board: true,
+        operator: false,
         died: E_PASSER,
     }
 }
 
-/// 调试回显：只走调试面，不要门闩、不交通道。**但它上板**（`board: true`）——只为让板
-/// **看得见它的死**：它退场时开的那几枚孔随退出钩子封印 ⇒ 板当场看出"客人没了" ⇒ 推一格
-/// 死亡通知给装配者。`root` 的监督事件源就是这一条（见 `root/main.rs::supervise`）。
+/// 调试回显：只走调试面，不要门闩、不交通道。**但它上板也上树**：
+///
+/// - 上板（`board: true`）只为让板**看得见它的死**：它退场时开的那几枚孔随退出钩子封印
+///   ⇒ 板当场看出"客人没了" ⇒ 推一格死亡通知给装配者。`root` 的监督事件源就是这一条
+///   （见 `root/main.rs::supervise`）。
+/// - 上树（`operator: true`）是**第一位真客人**：它把本域的入口挂到树上、再查回来取一枚
+///   （`echo.rs::trip` 那几行）——树的载体因此有一条**跑在机器上的读数**，而不是只过了编译。
 const fn echo() -> Program {
     Program {
         name: "echo",
@@ -110,6 +149,7 @@ const fn echo() -> Program {
         channels: &[],
         needs: None,
         board: true,
+        operator: true,
         died: E_ECHO,
     }
 }
@@ -123,6 +163,7 @@ pub const E_PLIC: Died = 5;
 pub const E_ECHO: Died = 6;
 pub const E_GUEST: Died = 7;
 pub const E_PASSER: Died = 8;
+pub const E_OPERATOR: Died = 9;
 pub const E_OK: Died = 0;
 
 /// 装配：登记整张表，然后按顺序把每条起起来。
@@ -153,11 +194,22 @@ pub fn assemble(
     }
 
     // 二、逐条起。**顺序即契约**：先起的先就绪，后面的就能向它要东西。
-    // `tip` = 板线程那条提示之路在**本线程表里**的那一枚：它属于这张表，
-    // 故只能被本线程拿着逐条传（`PieToken` 标着 `!Send + !Sync`）。
+    // `tip` = 板线程那条提示之路在**本线程表里**的那一枚；`otip` = 持树者那条提示之路的
+    // 同一格。两样都属于本线程这张表，故只能被本线程拿着逐条传（`PieToken` 标着
+    // `!Send + !Sync`）。`host` = 持树者的号（起它的那一刻记下来，后面按需用它）。
     let mut tip: Option<env::PieToken> = None;
+    let mut otip: Option<env::PieToken> = None;
+    let mut host: Option<env::TaskId> = None;
     for (i, p) in PLAN.iter().enumerate() {
-        start(table, boot, p, &mut tip, lanes.get(i).copied().flatten())?;
+        start(
+            table,
+            boot,
+            p,
+            &mut tip,
+            &mut otip,
+            &mut host,
+            lanes.get(i).copied().flatten(),
+        )?;
     }
 
     // 三、把最后一条的名字交出去（等它退场 = 等这次会话结束）。
@@ -172,6 +224,8 @@ fn start(
     boot: &Root,
     p: &Program,
     tip: &mut Option<env::PieToken>,
+    otip: &mut Option<env::PieToken>,
+    host: &mut Option<env::TaskId>,
     lane: Option<env::PieToken>,
 ) -> Result<(), Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
@@ -179,6 +233,11 @@ fn start(
     // 一、身子：建域 + 产线程（此刻它一步都还没跑）。
     let entry = find(boot, p.name).ok_or(E_PROGRAM)?;
     let rep = service::spawn(table, name, entry.elf, entry.kind).map_err(|_| p.died)?;
+    // 这一条就是持树者 ⇒ 把它的号记下来：后面的服务要按需接到它那棵树上
+    // （`Accord` 的目的地就是一个号，故"接上"只需要这个号 + 一条答话路）。
+    if p.name == OPERATOR {
+        *host = Some(rep);
+    }
 
     // 二、会话：对端 = **建它那个域的那一枚线程**（= 本域）——它把自己的孔交给"生我者"，
     //     而"生我者"是建域那一枚，**不是刚产出的代表线程**（`rep`）。
@@ -227,6 +286,19 @@ fn start(
     //     而它要先收到配给才轮得到板那一问。
     if p.board {
         board::attach(&mut quay, me, rep, READY_MS, tip, lane).map_err(|why| {
+            step(p, why);
+            p.died
+        })?;
+    }
+
+    // 六、树：**按需**把这条服务接到持树者那棵树上（[`Program::operator`]）。
+    //     **在板之后**：两者各一条路、互不影响；先板后树只为让读数一行行落得整齐。
+    if p.operator {
+        let Some(host) = *host else {
+            step(p, "no tree host");
+            return Err(p.died);
+        };
+        operator::attach(&mut quay, rep, host, READY_MS, otip).map_err(|why| {
             step(p, why);
             p.died
         })?;

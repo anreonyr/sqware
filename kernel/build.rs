@@ -34,6 +34,9 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 中断面域：**S 态**——它要读写 PLIC 的寄存器（那一页由 root 从配对块取出来授给它，
     // 内核不参与；内核只摇那枚铃）。
     ("plic", "prog-plic", ProgramKind::Supervisor),
+    // 命名树的服务：**U 态**（最小特权）——它只搬 Pie（`Accord` 的副本）：不碰 MMIO、
+    // 不读设备、不建域。入口那一枚经会话交出去，故 S 态那几道门它一道也用不上。
+    ("operator", "prog-operator", ProgramKind::User),
     // 压测台的两个（`programs/src/bin/stress/`）：`churn` = 受害者——U 态，不停地在
     // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
     // S 态，`SQWARE_ROOT=rig` 时当引导镜像，反复造/杀它。

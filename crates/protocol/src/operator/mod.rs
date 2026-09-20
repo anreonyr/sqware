@@ -55,10 +55,24 @@
 //!
 //! # 与 [`board`](crate::board) 的关系
 //!
-//! `board` 是一张**平表**那一版；这一份是**树**那一版。两处今天并存，去留不在本正文里定。
-//! 本模块今天只有**核心**（树 + 五条原语 + 宿主测试）：一问一答的帧、客人账、装配那些
-//! **载体**还没设计，故没有程序跑在机器上。
+//! `board` 是**另一件事**：一块公示板 + 一本待客台账（名字可以立着而没有东西、记得"谁挂的"、
+//! 有死亡道、摘牌子不流转）。这一份是**一棵命名树**：结构长在它自己里面、不记 owner、
+//! 谁问都答。两处并存，去留不在本正文里定。
+//!
+//! # 落地程度
+//!
+//! 三层都在：**核心**（[`core`]：树 + 五条原语 + 宿主用例）、**载体**（[`call`] 的帧与转发、
+//! [`desk`] 的客人小账）、**服务**（`programs/src/bin/supervisor/operator.rs` 的
+//! `serve` / `attach` / 客侧三手，加 `prog-operator` 这个域；装配那一格在
+//! `programs/.../service.rs` 的 `Program::operator`）。
+//!
+//! **`list` 没有上线**：它的答案是一串名字，要另开一种帧形（今天只有一问一答一格状态那种），
+//! 故线上只有 `file` / `tile` / `find` / `trim` 四码——`Operator::list` 仍住核心，只给本域
+//! 自己与宿主用例用。
 
+pub mod call;
 pub mod core;
+pub mod desk;
 
 pub use core::{Entry, Fail, Free, Node, Operator, Probe};
+pub use desk::{Desk, Guest};

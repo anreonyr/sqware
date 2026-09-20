@@ -14,10 +14,10 @@
 //! 其余驱动侧（名字→线号 / 终端渲染）随旧树一起清了（tag `proto-v1-baseline`），
 //! 需要时按新形状写——**不从那一套搬**。
 //!
-//! `bin/` 里今天是**十五个**：`prog-echo` / `prog-guest` / `prog-passer`（U 态）、
-//! `prog-root` / `prog-plic`（监督者），加十台压测（`prog-churn` / `prog-rig` /
-//! `prog-busy` / `prog-park` / `prog-hang` / `prog-load` / `prog-beat` / `prog-again` /
-//! `prog-waiter` / `prog-group`）。**特权级不在这里声明**——那一格在
+//! `bin/` 里今天是**十六个**：`prog-echo` / `prog-guest` / `prog-passer` /
+//! `prog-operator`（U 态）、`prog-root` / `prog-plic`（监督者），加十台压测（`prog-churn` /
+//! `prog-rig` / `prog-busy` / `prog-park` / `prog-hang` / `prog-load` / `prog-beat` /
+//! `prog-again` / `prog-waiter` / `prog-group`）。**特权级不在这里声明**——那一格在
 //! `kernel/build.rs::INITRD_BINS`。
 
 pub mod entry;

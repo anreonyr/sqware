@@ -45,6 +45,10 @@ extern crate programs;
 mod board;
 #[path = "../needs.rs"]
 mod needs;
+#[path = "../operator.rs"]
+// 本域只用**装配侧**那一半（`attach`，经 `service::start` 调）⇒ 另外两半在这里是死码。
+#[allow(dead_code)]
+mod operator;
 #[path = "../pairing.rs"]
 mod pairing;
 #[path = "../service.rs"]
