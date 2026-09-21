@@ -9,11 +9,19 @@
 //! ```text
 //!   1  领配给：`rtc@101000` 那枚 ONLY 门闩（真持有那台设备；本域从不映视图、不碰寄存器）
 //!   2  上树一条会话：FIND /device/router ⇒ 那扇门
-//!   3  occupy：报设备名（**线 = 名字的函数**），收一格答码 —— 那条线归本域
-//!   4  报一行读数 `lodger: occupy=<码>`
-//!   5  **直接死**：不说退场、不交回 ⇒ 它铸的那枚孔随退出钩子封印 ⇒ 路由者被叫醒、探活
+//!   3  三趟登记 —— 成功那一格与**失败域**都卖读数（答码见 `line::call` 那张表）：
+//!        占 `rtc@101000`     → `lodger: occupy=0`    （0 = OK：线归本域）
+//!        同一条线再来一次     → `lodger: taken=2`     （2 = TAKEN：主人是本域自己）
+//!        报树里没有的名字     → `lodger: unknown=1`   （1 = UNKNOWN：解树那一处答不出）
+//!   4  **直接死**：不说退场、不交回 ⇒ 它铸的那枚孔随退出钩子封印 ⇒ 路由者被叫醒、探活
 //!      答不出 ⇒ 拆线 + 空出格子（读数 `router: vacate line=11`）
 //! ```
+//!
+//! # `TAKEN` 那一趟为什么拿本域自己的线试
+//!
+//! 拿 `uart` 那条线试会**与它的登记抢时间**（`PLAN` 里 `uart` 排在本域之前，但它的登记在本域
+//! 之后才办完）——谁先到谁得 `OK`，那是竞态，不是读数。拿**本域刚占下的那条线**再来一次，
+//! 答 `TAKEN` 就是**确定**的，而判据一字不改（"这条线有人了"——主人是谁不影响这一格）。
 //!
 //! # 为什么它要真领那枚门闩
 //!
@@ -24,7 +32,8 @@
 //! # 名字与线号
 //!
 //! 设备名只有一处（[`needs`] 那张单子），与 `uart` 同一条纪律：**本域不发明名字**；线号由
-//! 路由者解树解出来，本域从不说它（客户手里没有"线"）。
+//! 路由者解树解出来，本域从不说它（客户手里没有"线"）。唯一一个本域自己编的名字是那趟
+//! `UNKNOWN` 的探针名——它**故意**不是任何节点（"解树答不出"说的就是这个）。
 //!
 //! # 特权级由清单定
 //!
@@ -56,10 +65,13 @@ use runtime::env::unit as utask;
 /// 本域要找的那位服务（线路由者）在树上的名字。
 const SERVICE: &str = "router";
 
+/// `UNKNOWN` 那一趟报的名字：**故意**是树里没有的（解树那一处因此答不出）。
+const NOWHERE: &str = "nosuch@0";
+
 /// 等树 / 办一趟登记的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 两种退场：占上了 / 没占上（都**不是 panic**；kernel 会把那一行连同域号打出来）。
+/// 两种退场：三趟都答对了 / 有一趟不是（都**不是 panic**；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
@@ -76,49 +88,59 @@ extern "C" fn main() -> ! {
     };
     say(&format!("lodger: got {got}"));
 
-    // 2/3. 上树找到线路由者，把本域那条线占住（止步于报设备名——线号是它解出来的）。
-    let (code, _held) = occupy();
-    say(&format!("lodger: occupy={code}"));
+    // 2. 上树一条会话：找到线路由者，取回那扇门——三趟登记都往它推（会话一个域只开一条）。
+    let entry = match find_router() {
+        Some(entry) => entry,
+        None => exit_with_note(E_TRIP, "lodger: no router"),
+    };
+    let Some(device) = needs::WANTS[0].name() else {
+        exit_with_note(E_TRIP, "lodger: no name")
+    };
 
-    // 4. **直接死**：不说退场那一句、不交回。`_held` 那条线活到本域退场为止——它铸的那枚孔
+    // 3. 三趟登记：占上 / 同一条线再来一次 / 树里没有的名字。
+    let (ok, held) = attempt(entry, device);
+    say(&format!("lodger: occupy={ok}"));
+    let (taken, _) = attempt(entry, device);
+    say(&format!("lodger: taken={taken}"));
+    let unknown = match Name::new(NOWHERE) {
+        Ok(nowhere) => attempt(entry, nowhere).0,
+        Err(_) => lcall::BAD,
+    };
+    say(&format!("lodger: unknown={unknown}"));
+
+    // 4. **直接死**：不说退场那一句、不交回。`held` 那条线活到本域退场为止——它铸的那枚孔
     //    随退出钩子封印，路由者那一格因此醒来（`router: vacate line=11`）。
-    let ok = code == lcall::OK;
+    let _held = held;
+    let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;
     exit_with_note(
-        if ok { E_OK } else { E_TRIP },
-        if ok { "lodger: gone" } else { "lodger: failed" },
+        if all { E_OK } else { E_TRIP },
+        if all {
+            "lodger: gone"
+        } else {
+            "lodger: failed"
+        },
     )
 }
 
-/// 占住本域那条线：从树上找到 `/device/router`，报设备名，收一格答码。
+/// 上树一趟：`FIND /device/router` ⇒ 那扇门（登记从它走）。
+fn find_router() -> Option<PieToken> {
+    let sire = utask::sire().ok()?;
+    let (link, host) = operator::open(sire, MS).ok()?;
+    let talk = operator::ask_hole(host).ok()?;
+    let dir = Name::new(protocol::driver::DIR).ok()?;
+    let want = Name::new(SERVICE).ok()?;
+    let path = [dir, want];
+    let code = operator::ask(talk, &link, host, ocall::FIND, &path, PieToken::NONE, MS).ok()?;
+    if code != ocall::OK {
+        return None;
+    }
+    operator::take(&link, host)
+}
+
+/// 占一趟：报设备名、收一格答码。返的第二件是那条线本身（占上了才有）。
 ///
 /// 答码用 [`lcall::code_of`]——**与线上同一张表**（客户端不从失败域另编一套号）。
-/// 返的第二件是那条线本身：它活到本域退场（见 `main` 第 4 步）。
-fn occupy() -> (u8, Option<line::client::Line>) {
-    let Ok(sire) = utask::sire() else {
-        return (lcall::BAD, None);
-    };
-    // 会话：同一个域只开一条（第二次 `open` 会撞同名，见 `driver/uart` 头注）。
-    let Ok((link, host)) = operator::open(sire, MS) else {
-        return (lcall::BAD, None);
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return (lcall::BAD, None);
-    };
-    let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(SERVICE)) else {
-        return (lcall::BAD, None);
-    };
-    let path = [dir, want];
-    let none = PieToken::NONE;
-    let code = operator::ask(talk, &link, host, ocall::FIND, &path, none, MS).unwrap_or(lcall::BAD);
-    if code != ocall::OK {
-        return (lcall::BAD, None);
-    }
-    let Some(entry) = operator::take(&link, host) else {
-        return (lcall::BAD, None);
-    };
-    let Some(device) = needs::WANTS[0].name() else {
-        return (lcall::BAD, None);
-    };
+fn attempt(entry: PieToken, device: Name) -> (u8, Option<line::client::Line>) {
     match line::client::Line::occupy(entry, device, MS) {
         Ok(held) => (lcall::OK, Some(held)),
         Err(fail) => (lcall::code_of(fail), None),
