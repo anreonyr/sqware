@@ -31,7 +31,7 @@
 //! 其余驱动侧（名字→线号 / 终端渲染）随旧树一起清了（tag `proto-v1-baseline`），
 //! 需要时按新形状写——**不从那一套搬**。
 //!
-//! 今天有**十八个**程序：`prog-echo` / `prog-guest` / `prog-passer`（U 态）、
+//! 今天有**十九个**程序：`prog-echo` / `prog-guest` / `prog-passer` / `prog-lodger`（U 态）、
 //! `prog-root` / `prog-system` / `prog-router` / `prog-uart` / `prog-operator`（监督者），
 //! 加十台压测（`prog-churn` / `prog-rig` / `prog-busy` / `prog-park` / `prog-hang` /
 //! `prog-load` / `prog-beat` / `prog-again` / `prog-waiter` / `prog-group`）。

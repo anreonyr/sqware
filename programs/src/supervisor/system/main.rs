@@ -27,10 +27,11 @@
 extern crate alloc;
 extern crate programs;
 
-// 需求单归**收方**：两台驱动自己开（lib 里同一份源码），本域只照它开单。
+// 需求单归**收方**：三张单子自己开（lib 里同一份源码），本域只照它开单。
 use programs::driver::router::needs as router_needs;
 use programs::driver::uart::needs as uart_needs;
 use programs::supervisor::service;
+use programs::user::lodger::needs as lodger_needs;
 
 // 板：本域是**装配侧**（把客人接上板、收尾点名）。树那条路的装配侧在
 // `service::start` 里（本域只管在名单第一位起它、认下它的提示之路）。
@@ -67,6 +68,7 @@ const E_GUEST: Died = 7;
 const E_PASSER: Died = 8;
 const E_UART: Died = 9;
 const E_TREE: Died = 10;
+const E_LODGER: Died = 11;
 
 /// 持树者：那棵命名树的服务（`prog-operator`）。**排第一位**——每位上树的客人都要它在。
 ///
@@ -163,7 +165,31 @@ const fn passer() -> Program {
     }
 }
 
-/// 调试回显：只走调试面，不要门闩、不交通道。**但它上板也上树**：
+/// 房客：**起来、占一条线、直接死**——线那本账探活的读数（见 `programs/src/user/lodger`）。
+///
+/// 它要一枚门闩（`rtc@101000`，那台设备今天没人驱动）：**它真持有那台设备**，却从不映视图、
+/// 不碰寄存器——占住线之后一句话不说就走。路由者那边靠 `sweep` 收掉它（`router: vacate`）。
+///
+/// **有通道就得等通道**（`Announce::Channel`）：配给经 `records` 那条通道发，而通道要先被本域
+/// 认下来（`server::ready` 里那一手）——写成 `None` 就没人认领它，`wire` 当场失败（实测踩过）。
+///
+/// 它不上板（`board: false`）：板上那本账与本域无关，本域要喂的是**线那本账**；它死时
+/// 编排域照样看得见（每条服务一条死亡道）。
+const fn lodger() -> Program {
+    Program {
+        name: "lodger",
+        announce: Announce::Channel,
+        tokens: &[],
+        channels: &["records"],
+        needs: Some(lodger_needs::WANTS),
+        board: false,
+        operator: true,
+        holds_tree: false,
+        died: E_LODGER,
+    }
+}
+
+/// 调试回显：只走调试面、不要门闩、不交通道。**但它上板也上树**：
 ///
 /// - 上板（`board: true`）只为让板**看得见它的死**：它退场时开的那几枚孔随退出钩子封印
 ///   ⇒ 板当场看出"客人没了" ⇒ 推一格死亡通知给装配者。本域的监督事件源就是这一条。
@@ -194,7 +220,15 @@ const fn echo() -> Program {
 /// ——那正是"读到一行 `exit` 才收场"的那一格。
 ///
 /// 两台驱动紧跟在树之后、其余之前：控制器先就位，线再开闸（`uart` 持有那台串口）。
-const PLAN: &[Program] = &[tree(), router(), uart(), guest(), passer(), echo()];
+const PLAN: &[Program] = &[
+    tree(),
+    router(),
+    uart(),
+    guest(),
+    passer(),
+    lodger(),
+    echo(),
+];
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {

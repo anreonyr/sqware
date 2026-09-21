@@ -31,6 +31,11 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 过客：**U 态**（同上）——起来、挂一个名字、**直接死**（不说再见）。它与 `guest` 只差
     // 少说那一句退场：板上那两本账的"死"判据读的都是"那一枚入口还答得出吗"（`Probe`）。
     ("passer", "prog-passer", ProgramKind::User),
+    // 房客：**U 态**（同上）——起来、占一条线、**直接死**。它与 `passer` 在线轴上同形：两位
+    // 喂的都是"看出来的"那一档（板那本账 / 线那本账）。它领一枚门闩（`rtc@101000`）却从不
+    // 映视图——领它只为"主人"这个说法是真的；占住线之后一句话不说就走，路由者靠 `sweep`
+    // 收掉它（读数 `router: vacate line=11`）。
+    ("lodger", "prog-lodger", ProgramKind::User),
     // 线路由者（中断面域）：**S 态**。**照实记**：这里的理由曾经是"它要读写 PLIC 的寄存器"
     // ——那不是理由（banner 里 UART 与 PLIC 的 PMP 都是 S/U (R,W)，U 态读得动设备）；
     // "驱动该 S 还是 U"今天**没有读数**，旧树 `docs/driver.md §2` 裁过"驱动是 U 态域"。

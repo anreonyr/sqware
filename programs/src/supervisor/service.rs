@@ -48,8 +48,9 @@ pub struct Program {
     pub channels: &'static [&'static str],
     /// 它要的门闩（`None` = 什么都不要，如调试回显）。
     ///
-    /// **就是单子上的那几条**（[`Want`]）：那两张表由**收方**自己开（[`crate::driver::router::needs`]
-    /// 与 [`crate::driver::uart::needs`]），本域照单递出去——中间不再有"需求 → 单子"的转换。
+    /// **就是单子上的那几条**（[`Want`]）：那几张表由**收方**自己开
+    /// （[`crate::driver::router::needs`]、[`crate::driver::uart::needs`] 与
+    /// [`crate::user::lodger::needs`]），本域照单递出去——中间不再有"需求 → 单子"的转换。
     pub needs: Option<&'static [Want]>,
     /// 要不要板那条路（[`board::attach`]）。
     ///

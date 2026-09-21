@@ -7,11 +7,12 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 十二条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
+#   2) 十四条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
 #      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `answer=router` / `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
-#      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`**）；
+#      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`** /
+#      **`router: line 11 = rtc@101000`** / **`router: vacate line=11`**）；
 #   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
 #      "还响着" / 其中**空闲核补摇**了几支（见下）。
 #
@@ -34,9 +35,11 @@
 # 字节才说那句话，路由者据此把线放回（`router: exhaust line=10`）——那一行只在"真的排空过"时
 # 出现，故它归 `examine.nu` 那条回显判据一起看，不在这里当固定读数（喂不喂键决定它有没有）。
 #
-# 第四格 `vacate`（收线）**也不在这里**当固定读数：它只在**客人没了**的时候出现——路由者每次醒来
-# 探活（`alive` 答不出的那几条拆线 + 空出格子），而本门不杀客人 ⇒ 这一格在今天这两道门里都走不到。
-# `router: vacate line=<n>` 是它的读数（照实记：这一条路还没有一道门真的走过它）。
+# 第四格 `vacate`（收线）**在这里是固定读数**了：`router: line 11 = rtc@101000` 与
+# `router: vacate line=11` 是**房客**（`prog-lodger`）那一对——它真领了那时钟那一页的门闩、
+# 占住 11 号线，然后**一句话不说就走**（不 `DISMISS`、不 `vacate`）。路由者每次醒来先探活
+# （`alive` 答不出的那几条拆线 + 空出格子）⇒ 收线那一手第一次有了读数，而这一对只在
+# "先占上、后没了"这条路上出现（喂不喂键都要有它：它跑在装配期）。
 #
 # `irq: ring=<n> busy=<m> idle_ring=<i> idle_busy=<j>` 是**铃那一刀的读数**（收尾摘要里印，
 # 与 `timer:` / `doom:` / `sched:` 同族）：`ring` = 内核摇铃几次、`busy` = 其中几次铃还响着
@@ -83,6 +86,8 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "guest: trip ok" "$log" \
         && grep -q "router: line 10 = serial@10000000" "$log" \
         && grep -q "uart: rang n=" "$log" \
+        && grep -q "router: line 11 = rtc@101000" "$log" \
+        && grep -q "router: vacate line=11" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
         && grep -q "echo: console=true" "$log" \
         && grep -q "irq: ring=" "$log" \
