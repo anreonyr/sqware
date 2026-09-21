@@ -143,10 +143,10 @@ extern "C" fn main() -> ! {
 
     // 5. **登记本域那条线**：按名从树上找到线路由者（`/device/router`），报的是本域那张需求单
     //    上的**设备名**——"线 = 名字的函数"那条权威在路由者那边解，本域从不说线号。
-    let Ok(reserved) = register(&link, talk, host) else {
+    let Ok(held) = register(&link, talk, host) else {
         exit_with(E_LINE)
     };
-    say("uart: line reserved");
+    say("uart: line occupied");
 
     // 6. 常驻：那条线一响 ⇒ 排空设备 ⇒ 把这一批字节交给读行的人 ⇒ 说一句"我排空了"。
     //
@@ -154,18 +154,17 @@ extern "C" fn main() -> ! {
     //    （`exhaust` 是一个事件，不是节拍；而它不阻塞，见 `line::client::Line::exhaust`）。
     //    反过来的话，线放回了而字节还挂在设备里，就是"电平一直高、却没人读"的空转。
     let console = HolePie::from_token(entry);
-    let mut buf = [0u8; 8];
     let mut raw = [0u8; DRAIN_MAX];
     loop {
-        let Ok(no) = reserved.recv(&mut buf, usize::MAX) else {
-            exit_with(E_BOARD)
-        };
+        if held.receive(usize::MAX).is_err() {
+            exit_with(E_BOARD);
+        }
         let n = uart::drain(dock.view(), &mut raw);
         // 交给读行的人。**这一手要阻塞**：字节是内容，丢了补不回来；读行的人（`echo`）
         // 总会回到"取一行"那一格，故等它是有界的。
         let handed = n == 0 || console.push(&raw[..n]).is_ok();
-        let _ = reserved.exhaust(no);
-        say(&alloc::format!("uart: line {no} rang n={n} out={handed}"));
+        let _ = held.exhaust();
+        say(&alloc::format!("uart: rang n={n} out={handed}"));
     }
 }
 
@@ -215,7 +214,7 @@ fn register(link: &Quay, talk: PieToken, host: TaskId) -> Result<line::client::L
     }
     let entry = operator::take(link, host).ok_or(())?;
     let device = needs::WANTS[0].name().ok_or(())?;
-    line::client::Line::reserve(entry, device, MS).map_err(|_| ())
+    line::client::Line::occupy(entry, device, MS).map_err(|_| ())
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。

@@ -44,7 +44,7 @@ impl Access {
     pub const NONE: Access = Access(Permission::empty());
     /// 取用 / 观察 / 接收（`pull` / `hush` / `open` / `Await`）。
     pub const FETCH: Access = Access(Permission::FETCH);
-    /// 投递 / 修改（`push` / `ring` / `hang`）。
+    /// 投递 / 修改（`push` / `ring` / `attach`）。
     pub const STORE: Access = Access(Permission::STORE);
     /// 取与投。**只为常量表而设**：`|` 不是 `const fn`，而需求单（`programs::needs`）
     /// 是编译期常量表——两族各一位，合成走这里。

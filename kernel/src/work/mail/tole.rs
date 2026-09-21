@@ -24,9 +24,9 @@
 //
 // 数据面原语（全部非阻塞）：
 // - `meta(owner)`：造一个空架子。
-// - `hang(meta, mate, life)`：挂上一格；同 `mate` 幂等。同时把本组登记成那一格的
+// - `attach(meta, mate, life)`：挂上一格；同 `mate` 幂等。同时把本组登记成那一格的
 //   **转发目标**（那一枚的站点在投信时要顺带叫醒本组），并叫醒等本组的人重取快照。
-// - `unhang(meta, mate)`：摘下一格（连转发登记一起摘）；没挂过即无事。
+// - `detach(meta, mate)`：摘下一格（连转发登记一起摘）；没挂过即无事。
 // - `seal(meta)` / `Drop`：置死、清表、**撤掉全部转发登记**，并 `wipe` 本组的键
 //   ——成员键退役（`wipe`）时同样会叫醒等本组的人。
 // - `wait(meta, dur)`：等到任意一格有事。**它只挂、不判**——判据（"我关心的 =
@@ -53,7 +53,7 @@
 //   故唤醒必须人人复核自己的快照：单播会把那一跳交给判不出就绪的那位并把它消耗掉
 //   （"共享池 ＋ 单播" = 静默漏唤醒）。
 //
-// 叫醒组键有三个触发点、**同一条扇出**：`hang` 自己（快照变了）、成员键投信与退役的
+// 叫醒组键有三个触发点、**同一条扇出**：`attach` 自己（快照变了）、成员键投信与退役的
 // 转发（`messenger::wake` / `wipe` → `knock`）；组键自己退役走 `wipe`（本来就整链放行）。
 // 核心因此**不认识种类**：它读不到门闩的位，也不必读——**种类只活在权限位与创建点**。
 
@@ -141,7 +141,7 @@ pub struct ToleMeta {
     id: ToleId,
     /// 本 Tole 的存活单元：强持有者是本 Meta ⇒ 最后一份门闩消失时它自然判死。
     life: Arc<Life>,
-    /// 格子表。**不持任何强引用**（见 [`Cell`]）；摘除只在显式 `unhang` 与封印时发生。
+    /// 格子表。**不持任何强引用**（见 [`Cell`]）；摘除只在显式 `detach` 与封印时发生。
     cells: SpinLock<Vec<Cell>>,
     /// 开辟者：`UnsealTole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
     /// 语义同 `HoleMeta::owner`：`vestor` 管门闩的来历，`owner` 管资源的来历。
@@ -159,7 +159,7 @@ impl ToleMeta {
             state: SpinLock::new_level(Level::L3, ToleState::Live),
             id,
             life: Life::new(),
-            // 空表：零分配（第一条 `hang` 才要容量）。
+            // 空表：零分配（第一条 `attach` 才要容量）。
             cells: SpinLock::new_level(Level::L3, Vec::new()),
             owner,
         })
@@ -188,8 +188,8 @@ impl ToleMeta {
 
     /// 当前**还有效**的格子（目标孔已死的格子不出现）。
     ///
-    /// **格子只在两处消失**：显式 `unhang`，或成员自己死了（本函数按存活过滤）。持有者
-    /// 退场**不替它清**——池是组级的（见 `unhang`），这是"共享池"明码标出的代价。
+    /// **格子只在两处消失**：显式 `detach`，或成员自己死了（本函数按存活过滤）。持有者
+    /// 退场**不替它清**——池是组级的（见 `detach`），这是"共享池"明码标出的代价。
     ///
     /// 交给等待侧登记用：拿到的是快照，登记期间格子可能失效——失效只会让那一格
     /// 永远等不到，不会叫错人（等待侧按身份复核）。
@@ -222,7 +222,7 @@ impl ToleMeta {
 ///
 /// 尾巴上**敲一次组键**（`knock`，提示型）：快照变了，等本组的人该重取一遍。独占组上
 /// 链长恒 ≤ 1（等价于叫醒那一个），共享组上放行全链——扇出由**键的种类**决定，见头注。
-pub(crate) fn hang(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), GateError> {
+pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
@@ -267,7 +267,7 @@ pub(crate) fn hang(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), 
 /// **这是组级动作，不是个人动作**：格子表是**共享池**（[`Cell`] 不记谁挂的），有组
 /// `STORE` 就能摘任何一格——共享组下"我挂的"与"他挂的"在数据面里没有分别。代价照实记：
 /// 一个持有者退场后，它挂的格子**留到成员死**（`cells()` 按存活过滤），不替它清。
-pub(crate) fn unhang(meta: &ToleMeta, mate: Mate) -> Result<(), GateError> {
+pub(crate) fn detach(meta: &ToleMeta, mate: Mate) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
@@ -277,7 +277,7 @@ pub(crate) fn unhang(meta: &ToleMeta, mate: Mate) -> Result<(), GateError> {
             cells.swap_remove(at);
         }
     }
-    // 锁外撤转发登记（同 `hang` 的锁序）。没挂过也照撤：幂等，且不留下"
+    // 锁外撤转发登记（同 `attach` 的锁序）。没挂过也照撤：幂等，且不留下"
     // 格已摘、投信还叫本组"的多余一跳。
     messenger::unforward(mate.key(), meta.id.0);
     Ok(())

@@ -9,7 +9,7 @@
 //!
 //! 板线程醒来时手里只有**一枚孔在本表里的号**（`Tole::await_` 的返回），故这本账的读法
 //! 就一句：[`Desk::guest`]——这枚号是谁的、答话往哪走。号是 [`Desk::arm`] 时记下的，而
-//! **先 `arm` 才 `hang`** 是适配层的义务（`Tole` 那边只有挂过的孔才会被唤醒）⇒
+//! **先 `arm` 才 `attach`** 是适配层的义务（`Tole` 那边只有挂过的孔才会被唤醒）⇒
 //! "组里有一格认不出是谁"这种状态**不可表达**。
 
 use env::{PieToken, TaskId};
@@ -46,7 +46,7 @@ impl Guest {
         self.reply
     }
 
-    /// 这一格挂上问话孔了没有（`armed` 才可能被 `hang`）。
+    /// 这一格挂上问话孔了没有（`armed` 才可能被 `attach`）。
     pub fn armed(&self) -> bool {
         self.ask.is_some()
     }
@@ -59,7 +59,7 @@ impl Guest {
 /// ```text
 ///   Admit   收一位客人（答话路到手）        —— 板线程侧：来客人了
 ///   Dismiss 客人说了"我走了"，撤它那一格     —— 与 admit 成对
-///   Arm     记下它的问话孔在本表里的号      —— 先 arm 才 hang
+///   Arm     记下它的问话孔在本表里的号      —— 先 arm 才 attach
 ///   Guest   由问话孔的号直达那一格          —— 醒来时唯一要问的一句
 ///   Sweep   剔走已经走了的格子              —— 惰性，不是轮询
 /// ```
@@ -137,7 +137,7 @@ impl Desk {
 
     /// 记下"这位客人的问话孔是**本表里的哪一枚**"。
     ///
-    /// **先 `arm` 才 `hang`**：`arm` 之后的号才会进组，故 [`Desk::guest`] 在"被组唤醒的
+    /// **先 `arm` 才 `attach`**：`arm` 之后的号才会进组，故 [`Desk::guest`] 在"被组唤醒的
     /// 那一枚"上**永不为 `None`**。
     pub fn arm(&mut self, slot: usize, ask: PieToken) -> Result<(), Fail> {
         let Some(guest) = self.guests.get_mut(slot).and_then(Option::as_mut) else {

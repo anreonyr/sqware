@@ -115,20 +115,20 @@ pub(super) fn members() {
         "铃的格子必须投影成 Nole 键"
     );
 
-    tole::hang(&group, hole_mate, hole.life()).expect("挂孔");
+    tole::attach(&group, hole_mate, hole.life()).expect("挂孔");
     crate::expect!(group.cells().len() == 1, "挂一格之后快照应当有一格");
-    tole::hang(&group, hole_mate, hole.life()).expect("重复挂孔");
+    tole::attach(&group, hole_mate, hole.life()).expect("重复挂孔");
     crate::expect!(group.cells().len() == 1, "同成员幂等：重复挂不叠加");
 
-    tole::hang(&group, bell_mate, bell.life()).expect("挂铃");
+    tole::attach(&group, bell_mate, bell.life()).expect("挂铃");
     crate::expect!(
         group.cells().len() == 2,
         "两种成员各占一格（孔的另一个方向可再占一格）"
     );
 
-    tole::unhang(&group, hole_mate).expect("摘孔");
+    tole::detach(&group, hole_mate).expect("摘孔");
     crate::expect!(group.cells().len() == 1, "摘掉一格后只剩铃那一格");
-    tole::unhang(&group, hole_mate).expect("重复摘孔");
+    tole::detach(&group, hole_mate).expect("重复摘孔");
     crate::expect!(
         group.cells().len() == 1,
         "没挂过即无事：重复摘不报错也不多加"
@@ -161,7 +161,7 @@ pub(super) fn fanout() {
     let mut groups = Vec::new();
     for i in 0..FWD_MAX {
         let group = tole::meta(0);
-        tole::hang(&group, mate, hole.life()).expect("前 FWD_MAX 个组都该挂得上");
+        tole::attach(&group, mate, hole.life()).expect("前 FWD_MAX 个组都该挂得上");
         crate::expect!(
             group.cells().len() == 1,
             "第 {} 个组应当挂上（容量 {}）",
@@ -173,7 +173,7 @@ pub(super) fn fanout() {
 
     let extra = tole::meta(0);
     crate::expect!(
-        matches!(tole::hang(&extra, mate, hole.life()), Err(GateError::OoM)),
+        matches!(tole::attach(&extra, mate, hole.life()), Err(GateError::OoM)),
         "转发格满（{} 个组）时挂格应当报 OoM，不静默丢",
         FWD_MAX
     );

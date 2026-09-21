@@ -115,7 +115,7 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), GateError>) {
 ///
 /// 挂点（十个动词、九个调用点）：数据轴五个（`Push`/`Pull`/`Wait`/`Hush`/`Ring`——后两个
 /// 共用 `with_bell` 那一处，故四格）、Pole 的两个（`open` 借映 / `shut` 撤映）、
-/// `Accord` 的**源枚**、`Tole` 的两个（`Hang` 的成员枚 / `Await` 接组时的等待权）。
+/// `Accord` 的**源枚**、`Tole` 的两个（`Attach` 的成员枚 / `Await` 接组时的等待权）。
 /// **不挂**查询与收场（`Reserve`/`Collect`/`Release`/`Revoke`/`Narrow`/`Seal`）；三个
 /// `Unseal*` 也没有源枚可查——它们造的是新的一枚。
 ///

@@ -12,7 +12,7 @@ use crate::session::Pier;
 pub enum Fail {
     /// 本控制器上没有这条线（没有主、或线号越出 `[1, ndev]`）⇒ 回头查树。
     Unknown,
-    /// 这条线有人了 ⇒ 换个名字，或者等它 `release`。
+    /// 这条线有人了 ⇒ 换个名字，或者等它 `vacate`。
     Taken,
     /// 那一帧推不出去（口封了 / 对端没了）⇒ 按"没投成"算，不置忙。
     Denied,
@@ -45,8 +45,8 @@ impl Lines {
         Some(Lines { cells })
     }
 
-    /// **reserve**：保留这一格（登记）。**接线那一手是它的后果**，由适配层紧随其后做。
-    pub fn reserve(&mut self, line: u32, lane: Pier) -> Result<(), Fail> {
+    /// **occupy**：占住这一格（登记）。**接线那一手是它的后果**，由适配层紧随其后做。
+    pub fn occupy(&mut self, line: u32, lane: Pier) -> Result<(), Fail> {
         if line == 0 {
             return Err(Fail::Unknown);
         }
@@ -83,8 +83,8 @@ impl Lines {
         }
     }
 
-    /// **release**：主人没了——空出这一格。**拆线那一手是它的后果**，由适配层紧随其后做。
-    pub fn release(&mut self, line: u32) -> Result<(), Fail> {
+    /// **vacate**：主人没了——空出这一格。**拆线那一手是它的后果**，由适配层紧随其后做。
+    pub fn vacate(&mut self, line: u32) -> Result<(), Fail> {
         match self.cells.get_mut(line as usize) {
             Some(cell @ Cell::Owned { .. }) => {
                 *cell = Cell::Free;
@@ -110,7 +110,7 @@ impl Lines {
         })
     }
 
-    /// 有主的那些条（探活用：答不出的那一条该 `release`）。
+    /// 有主的那些条（探活用：答不出的那一条该 `vacate`）。
     pub fn held(&self) -> impl Iterator<Item = u32> + '_ {
         self.cells.iter().enumerate().filter_map(|(i, c)| match c {
             Cell::Owned { .. } => Some(i as u32),

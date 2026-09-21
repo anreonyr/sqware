@@ -61,7 +61,7 @@ pub fn serve() -> ! {
         say("operator: no group");
         exit_with(E_GROUP);
     };
-    if tole.hang(&tip_hole, HoleDir::Pull).is_err() {
+    if tole.attach(&tip_hole, HoleDir::Pull).is_err() {
         say("operator: tip not hung");
         exit_with(E_GROUP);
     }
@@ -122,7 +122,7 @@ fn settle(desk: &mut Desk, tole: &Tole, tip: &mail::HolePie) -> bool {
             Some(ask) => {
                 let hung = desk.arm(slot, ask).is_ok()
                     && tole
-                        .hang(&mail::HolePie::from_token(ask), HoleDir::Pull)
+                        .attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
                         .is_ok();
                 if !hung {
                     let _ = desk.unarm(slot);

@@ -142,6 +142,21 @@ impl Plic {
         self.write(PRIORITY + 4 * line as usize, 0);
     }
 
+    /// 拆线：**把这一条从本 context 摘出去**——优先级归零 + 清掉 enable 位（[`Plic::enable`]
+    /// 的反面）。
+    ///
+    /// 与 [`Plic::disable`] 不是一回事：静音留着 enable 位（复原走 `enable`，那一格的账没动），
+    /// 拆线是"这条线不归本域管了"——主人没了才做，要再接上只能重新登记一次（`occupy`）。
+    pub fn unwire(&self, line: u32) {
+        if line < 1 || line > self.ndev {
+            return;
+        }
+        self.write(PRIORITY + 4 * line as usize, 0);
+        let e = ENABLE + ENABLE_STRIDE * self.ctx as usize + 4 * (line / 32) as usize;
+        let bits = self.read(e) & !(1 << (line % 32));
+        self.write(e, bits);
+    }
+
     /// 领一条线号；**0 = 没有可领的**（不是错误：别的 context 可能已经领走了）。
     pub fn claim(&self) -> u32 {
         self.read(CONTEXT + CONTEXT_STRIDE * self.ctx as usize + CLAIM)

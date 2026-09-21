@@ -35,13 +35,13 @@ impl Tole {
     }
 
     /// 把一枚成员的一个方向挂进来（同成员幂等）。
-    pub fn hang<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
-        self.pie.hang(mate, dir)
+    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        self.pie.attach(mate, dir)
     }
 
     /// 摘掉一格；没挂过即无事。
-    pub fn unhang<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
-        self.pie.unhang(mate, dir)
+    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        self.pie.detach(mate, dir)
     }
 
     /// 等到任意一格有事：`Some((哪一枚, 哪个方向))`；`None` = 这一轮没等到

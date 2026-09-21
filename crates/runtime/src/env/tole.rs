@@ -26,19 +26,19 @@ pub fn unseal(shared: bool) -> EnvResult<PieToken> {
 }
 
 /// 把 `pie` 的一个方向挂进 `tole`（同成员幂等）。
-pub fn hang(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
-    let r = ToleCall::Hang { tole, pie, dir }.call()?;
+pub fn attach(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
+    let r = ToleCall::Attach { tole, pie, dir }.call()?;
     match r {
-        ToleCallRet::Hang(()) => Ok(()),
+        ToleCallRet::Attach(()) => Ok(()),
         _ => unreachable!(),
     }
 }
 
 /// 从 `tole` 摘掉一格；没挂过即无事。
-pub fn unhang(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
-    let r = ToleCall::Unhang { tole, pie, dir }.call()?;
+pub fn detach(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
+    let r = ToleCall::Detach { tole, pie, dir }.call()?;
     match r {
-        ToleCallRet::Unhang(()) => Ok(()),
+        ToleCallRet::Detach(()) => Ok(()),
         _ => unreachable!(),
     }
 }
@@ -102,13 +102,13 @@ impl TolePie {
     }
 
     /// 把一枚成员的一个方向挂进来。
-    pub fn hang<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
-        crate::env::tole::hang(self.token, mate.token(), dir)
+    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        crate::env::tole::attach(self.token, mate.token(), dir)
     }
 
     /// 摘掉一格。
-    pub fn unhang<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
-        crate::env::tole::unhang(self.token, mate.token(), dir)
+    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        crate::env::tole::detach(self.token, mate.token(), dir)
     }
 
     /// 等到任意一格有事。

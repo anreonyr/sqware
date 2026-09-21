@@ -17,7 +17,7 @@
 //! ```text
 //!          Hole                Pole                          Nole          Tole
 //! FETCH    pull / 等读          open 借映 / shut / 映射可读     wait / hush   Await
-//! STORE    push / 等写          映射可写（PTE W）               ring          hang / unhang
+//! STORE    push / 等写          映射可写（PTE W）               ring          attach / detach
 //! ```
 //!
 //! **收窄（`Narrow`）有一处资源不对称**：
@@ -37,7 +37,7 @@ bitflags! {
     pub struct Permission: u32 {
         /// 取用权：观察 / 接收 / 取走（`pull` / `hush` / `open` / `Await`；Pole 的映射可读）。
         const FETCH = 1 << 0;
-        /// 投递权：修改 / 投递 / 写入（`push` / `ring` / `hang` / `unhang`；Pole 的映射可写）。
+        /// 投递权：修改 / 投递 / 写入（`push` / `ring` / `attach` / `detach`；Pole 的映射可写）。
         const STORE = 1 << 1;
         /// 目标位：把 pie 复制给其他 Task（自身 permission 不变）。
         ///

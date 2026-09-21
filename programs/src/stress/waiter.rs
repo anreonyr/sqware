@@ -54,8 +54,8 @@ extern "C" fn main() -> ! {
     let report = HolePie::from_token(report);
 
     // 挂一格：**一个方向就够**（`Pull` = "有东西可读"）。
-    if tole.hang(&member, HoleDir::Pull).is_err() {
-        bail("waiter: hang");
+    if tole.attach(&member, HoleDir::Pull).is_err() {
+        bail("waiter: attach");
     }
     // 先报"已挂"：台主收齐两枚才投信 ⇒ 投信那一刻两人**都在等**（判据成立的前提）。
     if report.push(b"H").is_err() {

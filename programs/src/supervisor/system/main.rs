@@ -222,7 +222,7 @@ extern "C" fn main() -> ! {
         let Ok(lane) = mail::unseal_hole(&alloc::format!("gone-{}", p.name)) else {
             continue;
         };
-        let _ = tole.hang(&HolePie::from_token(lane), HoleDir::Pull);
+        let _ = tole.attach(&HolePie::from_token(lane), HoleDir::Pull);
         lanes[i] = Some(lane);
     }
 

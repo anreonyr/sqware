@@ -10,8 +10,8 @@
 //! `resolve`（表里取一枚门闩：表内 → 权限 → 存活）、`rack`（认成组）、
 //! `mate`（认成成员：类型 + 方向归一 + 寿命边，**一处产出那一对**，不会错配）。
 //!
-//! **「被关住」的挂点按资源语义判**：`Await` 是"用等待位" ⇒ 查**组**门闩；`Hang` 是
-//! "我要用这枚成员" ⇒ 查**成员**门闩；`Unhang` 是收场 ⇒ 不查（不查才清得掉）。
+//! **「被关住」的挂点按资源语义判**：`Await` 是"用等待位" ⇒ 查**组**门闩；`Attach` 是
+//! "我要用这枚成员" ⇒ 查**成员**门闩；`Detach` 是收场 ⇒ 不查（不查才清得掉）。
 //!
 //! `Await` 是**唯一可能换帧**的动词（其余三个都不挂起）。唤醒只是提示：挂起过一侧
 //! 返回恒是预置值（`PieToken::NONE`），调用方按 deadline 循环、醒来自己按组快照复核。
@@ -42,8 +42,8 @@ pub(crate) fn dispatch(
     let _ = &ident;
     Some(match call {
         ToleCall::Unseal { shared } => unseal(frame, shared),
-        ToleCall::Hang { tole, pie, dir } => hang(frame, tole.get(), pie.get(), dir),
-        ToleCall::Unhang { tole, pie, dir } => unhang(frame, tole.get(), pie.get(), dir),
+        ToleCall::Attach { tole, pie, dir } => attach(frame, tole.get(), pie.get(), dir),
+        ToleCall::Detach { tole, pie, dir } => detach(frame, tole.get(), pie.get(), dir),
         // 唯一可能换帧的一支：不走 `Outcome::Resume` 的统一出口。
         ToleCall::Await { tole, millis } => return Some(await_(frame, tole.get(), millis)),
     })
@@ -91,7 +91,7 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
 /// **成员的「被关住」在这里查**：挂一格就是声明"我要用它"——它若已被我交出去
 /// （`Caged`），挂进来只会让组替我答"它有事"而我又取不走它。组的「被关住」不查：
 /// `ONLY` 只在**等待位**上成立，改池子不算用它（见模块头）。
-fn hang(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> Outcome {
+fn attach(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> Outcome {
     let r = (|| -> Result<(), GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         let latch = gate::accede(&task, group, Need::Store)?;
@@ -99,21 +99,21 @@ fn hang(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> O
         let latch = gate::accede(&task, member, Need::Fetch)?;
         usable(&latch)?;
         let (mate, life) = mate(&latch, dir)?;
-        tole::hang(&meta, mate, life)
+        tole::attach(&meta, mate, life)
     })();
     answer_void(frame, r);
     Outcome::Resume
 }
 
 /// 摘一格：组要 `STORE`，成员要 `FETCH`；**两道「被关住」都不查**（收场动作）。
-fn unhang(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> Outcome {
+fn detach(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> Outcome {
     let r = (|| -> Result<(), GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         let latch = gate::accede(&task, group, Need::Store)?;
         let meta = rack(&latch)?;
         let latch = gate::accede(&task, member, Need::Fetch)?;
         let (mate, _life) = mate(&latch, dir)?;
-        tole::unhang(&meta, mate)
+        tole::detach(&meta, mate)
     })();
     answer_void(frame, r);
     Outcome::Resume

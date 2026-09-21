@@ -647,14 +647,14 @@ pub enum ToleCall {
     /// 一条方向（"响了"），别的值不是"暂时没有"，是不存在这个操作（同 `MailCall::Wait`
     /// 的铃通道）。权利：组需 `STORE`，成员需 `FETCH`。
     #[ret(())]
-    Hang {
+    Attach {
         tole: PieToken,
         pie: PieToken,
         dir: HoleDir,
     },
-    /// 从 `tole` 摘掉一格；没挂过即无事。方向归一规则同 [`ToleCall::Hang`]。
+    /// 从 `tole` 摘掉一格；没挂过即无事。方向归一规则同 [`ToleCall::Attach`]。
     #[ret(())]
-    Unhang {
+    Detach {
         tole: PieToken,
         pie: PieToken,
         dir: HoleDir,

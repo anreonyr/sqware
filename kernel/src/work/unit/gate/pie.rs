@@ -45,7 +45,7 @@ pub(crate) struct Heir {
 pub enum Need {
     /// 取用 / 观察：pull / hush / open / Await —— 需 `FETCH`。
     Fetch,
-    /// 投递 / 改动：push / ring / hang —— 需 `STORE`。
+    /// 投递 / 改动：push / ring / attach —— 需 `STORE`。
     Store,
     /// accord 转授 / 交出 —— 需 `VEST`（唯一的目标位）。
     Grant,

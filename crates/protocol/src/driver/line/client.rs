@@ -1,4 +1,4 @@
-//! line::client — **客侧几手**：装一条线泊位、说一声登记、收投递、说一句排空。
+//! line::client — **客侧几手**：占住一条线泊位、说一声登记、收投递、说一句排空。
 //!
 //! 客户是**持有那台设备的人**：它从不读线号（泊位就是坐标），只报设备名。
 
@@ -16,11 +16,11 @@ pub struct Line {
 }
 
 impl Line {
-    /// 装一条线泊位（记号 [`call::LANE`]）并把登记推给门牌那扇入口，等一格答话。
+    /// 占住这一格（记号 [`call::LANE`]）并把登记推给门牌那扇入口，等一格答话。
     ///
     /// `entry` = 树上查来的那扇门（`/device/router` 下驱动族那一块）；对端 = **那扇门的主人**
     /// （`owner`：副本共享同一事实、转手不变）。
-    pub fn reserve(entry: PieToken, device: Name, ms: usize) -> Result<Line, Fail> {
+    pub fn occupy(entry: PieToken, device: Name, ms: usize) -> Result<Line, Fail> {
         let host = owner_of(entry).ok_or(Fail::Denied)?;
         let mark = Name::new(call::LANE).map_err(|_| Fail::Denied)?;
         let mut quay = Quay::open(host);
@@ -36,7 +36,7 @@ impl Line {
         )
         .map_err(|_| Fail::Denied)?;
         HolePie::from_token(entry)
-            .push(&call::pack_reserve(device))
+            .push(&call::pack_occupy(device))
             .map_err(|_| Fail::Denied)?;
         let mut one = [0u8; 1];
         let code = match HolePie::from_token(back).pull_timeout(&mut one, ms) {
@@ -55,10 +55,12 @@ impl Line {
         Ok(Line { quay })
     }
 
-    /// 收一帧投递（4 字节线号）。`Err(())` = 期限内没等到。
-    pub fn recv(&self, buf: &mut [u8], ms: usize) -> Result<u32, ()> {
-        let n = self.lane()?.pull(buf, ms)?;
-        call::unpack_line(buf.get(..n).ok_or(())?).ok_or(())
+    /// 收一帧投递。`Err(())` = 期限内没等到。
+    ///
+    /// **帧里没有线号**（线在泊位里，见 [`super::mod`]）：这一手对客户就是"我那一格有事"。
+    pub fn receive(&self, ms: usize) -> Result<(), ()> {
+        let mut one = [0u8; 1];
+        self.lane()?.pull(&mut one, ms).map(|_| ())
     }
 
     /// 说一句"这一条我处理完了"。**不阻塞**：路由者那一格还压着上一条没取时，就当已经
@@ -68,8 +70,8 @@ impl Line {
     /// 谁也回不去取自己那一格，机器当场不动（实测）。堵死的那一条只能是**通知**，
     /// 不能是**移交**——真需要送达的那一路（投递）留在 [`super::core::Lines::deliver`] 上，
     /// 它阻塞，且客户**总会**回到收投递那一格（客户从不堵在说排空上）。
-    pub fn exhaust(&self, line: u32) -> Result<(), ()> {
-        self.lane()?.try_post(&call::pack_line(line))
+    pub fn exhaust(&self) -> Result<(), ()> {
+        self.lane()?.try_post(&[call::NOTE])
     }
 
     fn lane(&self) -> Result<&Pier, ()> {
@@ -78,7 +80,7 @@ impl Line {
     }
 }
 
-/// 那扇门的主人（`Reserve` 的第二格）。树上那一枚是**别人**挂的，故不能按记号认。
+/// 那扇门的主人（`Occupy` 的第二格）。树上那一枚是**别人**挂的，故不能按记号认。
 fn owner_of(hole: PieToken) -> Option<TaskId> {
     match mail::reserve(hole) {
         Ok((_vestor, owner, _mark)) if owner.get() != 0 => Some(owner),

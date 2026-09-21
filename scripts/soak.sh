@@ -10,7 +10,7 @@
 #   2) 十二条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
 #      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `answer=router` / `guest: trip ok` / `echo: ready` /
-#      **`router: line 10 = serial@10000000`** / **`uart: line 10 rang`** /
+#      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
 #      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`**）；
 #   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
 #      "还响着" / 其中**空闲核补摇**了几支（见下）。
@@ -25,14 +25,18 @@
 #
 # 四条是**线 + 控制台**那一刀（`protocol::driver::line` 的四格与设备持有者那枚服务孔）：
 # `router: line 10 = serial@10000000` = **登记**——串口驱动报设备名、路由者**解树**（线 = 名字的
-# 函数）并把这条线接上（起域时一条都不接）；`uart: line 10 rang` = **投递**——那一帧真的到了
-# 客户手里；`uart: tree part=2 land=0 find=0 got=true` = **服务门牌**——`uart` 把"读行"那枚孔
+# 函数）并把这条线接上（起域时一条都不接）；`uart: rang n=` = **投递**——那一帧真的到了
+# 客户手里（那一行不带线号：线在泊位里，见 `protocol::driver::line`）；`uart: tree part=2 land=0 find=0 got=true` = **服务门牌**——`uart` 把"读行"那枚孔
 # 落到 `/device/uart`（`part=2` 是"那块目录已经在了"，`router` 先建的）；`echo: console=true`
 # = **客人真的从那枚孔拿到了副本**（它是回显的来路，从前是内核的调试面）。
 #
 # 第三格 `exhaust`（排空）**已经接上真内容**：读口搬到设备持有者之后，客户是真的读走了设备里的
 # 字节才说那句话，路由者据此把线放回（`router: exhaust line=10`）——那一行只在"真的排空过"时
 # 出现，故它归 `examine.nu` 那条回显判据一起看，不在这里当固定读数（喂不喂键决定它有没有）。
+#
+# 第四格 `vacate`（收线）**也不在这里**当固定读数：它只在**客人没了**的时候出现——路由者每次醒来
+# 探活（`alive` 答不出的那几条拆线 + 空出格子），而本门不杀客人 ⇒ 这一格在今天这两道门里都走不到。
+# `router: vacate line=<n>` 是它的读数（照实记：这一条路还没有一道门真的走过它）。
 #
 # `irq: ring=<n> busy=<m> idle_ring=<i> idle_busy=<j>` 是**铃那一刀的读数**（收尾摘要里印，
 # 与 `timer:` / `doom:` / `sched:` 同族）：`ring` = 内核摇铃几次、`busy` = 其中几次铃还响着
@@ -78,7 +82,7 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "answer=router" "$log" \
         && grep -q "guest: trip ok" "$log" \
         && grep -q "router: line 10 = serial@10000000" "$log" \
-        && grep -q "uart: line 10 rang" "$log" \
+        && grep -q "uart: rang n=" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
         && grep -q "echo: console=true" "$log" \
         && grep -q "irq: ring=" "$log" \

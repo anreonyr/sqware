@@ -64,7 +64,7 @@ impl Guest {
 ///
 /// ```text
 ///   Admit   收一位客人（答话路到手）        —— 持树者侧：来客人了
-///   Arm     记下它的问话孔在本表里的号      —— 先 arm 才 hang
+///   Arm     记下它的问话孔在本表里的号      —— 先 arm 才 attach
 ///   Guest   由问话孔的号直达那一格          —— 醒来时唯一要问的一句
 ///   Sweep   剔走已经答不出的格子            —— 惰性，不是轮询
 /// ```
@@ -118,7 +118,7 @@ impl Desk {
 
     /// 记下"这位客人的问话孔是**本表里的哪一枚**"。
     ///
-    /// **先 `arm` 才 `hang`**：`arm` 之后的号才会进组，故 [`Desk::guest`] 在"被组唤醒的
+    /// **先 `arm` 才 `attach`**：`arm` 之后的号才会进组，故 [`Desk::guest`] 在"被组唤醒的
     /// 那一枚"上**永不为 `None`**。
     pub fn arm(&mut self, slot: usize, ask: PieToken) -> Result<(), Fail> {
         let Some(guest) = self.guests.get_mut(slot).and_then(Option::as_mut) else {

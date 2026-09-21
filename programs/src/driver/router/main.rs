@@ -16,6 +16,7 @@
 //!       门上   登记：解树（名字 → 线号）→ 占住那一格 → **接上线** → 把排空那条路挂进组
 //!       铃     领到一条：**往主人手里投一帧** → 投到了才静音 + complete → 应铃
 //!       排空   客人说"我排空了"：那一格回闲 → **把线放回去**
+//!   → 每醒一次先**逐客**（`sweep`）：主人没了的那些线——拆线 + 空出格子（探活）
 //! ```
 //!
 //! **起域时一条线都不接**：接线是登记的直接后果——没登记的线根本不进本 context，本域不再
@@ -54,13 +55,18 @@
 //!
 //! 本域按 [`protocol::driver::line`] 那四个原语办事：**登记**（解树 + 占格 + 接线）、
 //! **投递**（往主人手里推一帧）、**排空**（那一格回闲 + 放回）、**收线**（拆线 + 空出格子）。
-//! 客户是**持有那台设备的人**（今天 `uart`）——它登记、它收投递、**它排空设备**（读口在它手里，
-//! 见 `programs/src/driver/uart/main.rs`），本域从不读线号。
+//! 客户是**持有那台设备的人**（今天 `uart`）——它占线、它收投递、**它排空设备**（读口在它手里，
+//! 见 `programs/src/driver/uart/main.rs`）；**线号只在解树那一处产生**：客户从不报它，投递与
+//! 排空那两帧里也没有它（泊位就是坐标，见 [`lcall`]）。
 //!
 //! **排空是一个事件**（`exhaust`）：客人往它那条泊位的另一半写一句"我排空了"，那条路在登记
 //! 时就挂进了本域这只组（[`desk_face`]）⇒ 本域被叫醒、`drain_exhaust` 取干净、把线放回去。
 //! 旧 `IRQ_WAIT_MS` 那一拍曾兼着"客户端说不出排空"的替身；今天整条等待是**纯事件**的
 //! （无期限，见 `main` 里那一注）——排空由上面那条路说，铃由内核响。
+//!
+//! **逐客也是那一次醒来的一手**（[`sweep`]）：主人一没，它铸的那一枚孔就封印，而那一格正挂在
+//! 本域这只组上 ⇒ **醒来本身就是通知**。故"收线"那一格不靠板、不靠一拍，靠这只组。
+//! （**照实记**：这一跳今天还没有读数——两道门都不杀客人，见 [`sweep`] 那一注。）
 //!
 //! **两个方向的堵法不对称**（实测定下来的）：投递**阻塞**（客户总会回到收投递那一格），
 //! "我排空了"**不阻塞**（它是幂等的状态通知，见 `line::client::Line::exhaust`）——两边都阻塞
@@ -74,6 +80,8 @@
 //!   （串口驱动开闸 ⇒ 设备拉线 ⇒ 控制器 ⇒ 内核摇铃 ⇒ 本域 claim）；
 //! - `router: exhaust line=<n>`——**排空那一趟**：只可能由客户说"我排空了"产生，而这一句
 //!   是它**真的读走了设备里的字节**之后才说的（读口在它手里）。线放回因此是有据的；
+//! - `router: vacate line=<n>`——**逐客那一手**：只可能由"客人没了"产生（探活答不出），
+//!   故它出现一次就是一条线真的被收掉了；
 //! - 账的格数按 `ndev` 要（备不下就拒起，见 [`E_ACCOUNT`]）——账够不够用是**装配期的判据**，
 //!   不是运行期的分支。
 //!
@@ -82,8 +90,8 @@
 //! （`priority = 0`），等客人那一声"我排空了"再把线放回去。按线静音本来就是驱动域自己的
 //! 细杠杆。
 //!
-//! **照实记**：投递投不出去（客户的口封了）时**不静音**——那一格今天就空转（电平还挂着 ⇒
-//! 立刻再报），收场的正解是 `release`（探活），那一格还没落。
+//! **照实记**：投递投不出去（客户的口封了）时**不静音**——那一格在**同一次或下一次醒来**被
+//! [`sweep`] 收掉（探活答不出 ⇒ `vacate` + 拆线），`router: deliver failed line=` 是它的读数。
 
 extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
@@ -229,9 +237,9 @@ extern "C" fn main() -> ! {
     };
     let entry_hole = HolePie::from_token(entry);
     if tole
-        .hang(&NolePie::from_token(bell_token), HoleDir::Pull)
+        .attach(&NolePie::from_token(bell_token), HoleDir::Pull)
         .is_err()
-        || tole.hang(&entry_hole, HoleDir::Pull).is_err()
+        || tole.attach(&entry_hole, HoleDir::Pull).is_err()
     {
         exit_with(E_BELL);
     }
@@ -255,6 +263,9 @@ extern "C" fn main() -> ! {
             // `platform/devices.rs::IRQ`——它是一格防御，不是读数）。
             Err(_) => exit_with(E_BELL),
         }
+        // 逐客：**每次醒来扫一遍有主的那些条**——主人没了就拆线 + 空出格子。放在最前：
+        // 那一格收掉之后再取排空、再登记，账里就只剩还活着的客人。
+        sweep(&mut lines, &plic, &tole);
         // 排空：客人说一句"这一条我排空了" ⇒ 那一格回闲 + **把线放回去**（事件，不是节拍）。
         // **先取排空，再登记**：登记会把新的一条线接上，紧接着到来的那一枚中断才不漏。
         drain_exhaust(&mut lines, &plic);
@@ -274,9 +285,9 @@ extern "C" fn main() -> ! {
             }
             // **静音只在"那一帧真的送到了"之后**：投不出去（客户的口封了）就不静音
             // ——静音是"这一条有人接了"，而没人接的那一条不该由本域替它按下。
-            // **照实记**：这一格今天会空转（电平还挂着 ⇒ 立刻再报），收场的正解是
-            // `release`（探活），那一格还没落；报一行让它看得见。
-            if lines.deliver(line, &lcall::pack_line(line)).is_ok() {
+            // **照实记**：这一格由下一次/同一次的 `sweep` 收掉（探活答不出 ⇒ `vacate`）；
+            // 报一行让它看得见。
+            if lines.deliver(line, &[lcall::NOTE]).is_ok() {
                 plic.disable(line);
             } else {
                 say(&alloc::format!("router: deliver failed line={line}"));
@@ -300,35 +311,62 @@ extern "C" fn main() -> ! {
 
 /// 排空那一件事：客人说一句"这一条我排空了" ⇒ 那一格回闲 + 把那条线放回去。
 ///
-/// **按泊位认线**（不是按帧里的线号）：一条线一枚泊位，谁推的那一枚就是哪一条；帧里的线号
-/// 只当**对账**用——对不上说明两端认的不是同一条（那是接线错，记一行、不动账）。
+/// **按泊位认线**：一条线一枚泊位，谁推的那一枚就是哪一条——**帧里没有线号**（1 字节记号，
+/// 见 [`lcall`]），故这里无需对账，取到就是那一条。
 ///
 /// 非阻塞取干净再回去等：`pull(.., 0)` 期限内没有就是没有，**不是错误**。
 fn drain_exhaust(lines: &mut Lines, plic: &Plic) {
     // **取"忙"的那些**（不是"有主"的那些）：只有"投出去过、还没回闲"的那一格才欠一句
     // 排空；这一句也是那个 `忙` 的唯一读者——账上那一格因此不是写给别人看的。
     let busy: alloc::vec::Vec<u32> = lines.busy().collect();
-    let mut buf = [0u8; lcall::ASK];
+    let mut one = [0u8; 1];
     for line in busy {
         let Some(lane) = lines.lane(line) else {
             continue;
         };
-        while let Ok(n) = lane.pull(&mut buf, 0) {
-            if n == 0 {
-                break;
-            }
-            match lcall::unpack_line(&buf[..n]) {
-                Some(no) if no == line => {
-                    let _ = lines.exhaust(line);
-                    plic.enable(line, LINE_PRIORITY);
-                    say(&alloc::format!("router: exhaust line={line}"));
-                }
-                Some(no) => say(&alloc::format!(
-                    "router: exhaust mismatch lane={line} frame={no}"
-                )),
-                None => say(&alloc::format!("router: exhaust bad frame line={line}")),
-            }
+        while lane.pull(&mut one, 0).is_ok() {
+            let _ = lines.exhaust(line);
+            plic.enable(line, LINE_PRIORITY);
+            say(&alloc::format!("router: exhaust line={line}"));
         }
+    }
+}
+
+/// 逐客：`alive` 答不出的那几条线——**拆线 + 空出格子**（`vacate` 那一手，连它的两个后果）。
+///
+/// 时机是**每一次醒**（组那一次等待回来就扫一遍）：主人一没，它铸的那一枚孔就封印，而那一格
+/// 正挂在本域这只组上（`seal` 走 `wipe` 敲到组键）⇒ 那一次敲键就是把本域叫起来的那一件事。
+/// 故"收线"不靠板、也不靠一拍。
+///
+/// **照实记**：这条链子是**读内核那一侧读出来的**（`work/unit/gate/cull.rs` 的 `seal_owned`
+/// → `messenger::wipe` → 组键）——本刀两道门都不杀客人，故"客人死会把本域叫醒"这一跳**今天
+/// 还没有读数**。
+///
+/// 两个后果缺一不可：不 `unwire` 则线还在本 context 里（电平挂着 ⇒ 白报），不 `detach` 则
+/// 那一格永远留在组里（对端没了 ⇒ 每次都当场就绪）。
+fn sweep(lines: &mut Lines, plic: &Plic, tole: &Tole) {
+    let held: alloc::vec::Vec<u32> = lines.held().collect();
+    for line in held {
+        let Some(lane) = lines.lane(line) else {
+            continue;
+        };
+        if alive(&lane) {
+            continue;
+        }
+        plic.unwire(line);
+        let _ = tole.detach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
+        let _ = lines.vacate(line);
+        say(&alloc::format!("router: vacate line={line}"));
+    }
+}
+
+/// 客人还答得出来吗：**问它铸的那一枚**（`mail::reserve` 走存活闸：封印之后答不出）。
+///
+/// 问的是对端的写端（`at_peer`）而不是本端读的那一枚：本端那一枚的活命随本域，问它恒活。
+fn alive(lane: &Pier) -> bool {
+    match lane.at_peer() {
+        Some(at_peer) => mail::reserve(at_peer).is_ok(),
+        None => false,
     }
 }
 
@@ -368,21 +406,21 @@ fn desk_face(
     frame: &[u8],
     tole: &Tole,
 ) {
-    if let Some(device) = lcall::unpack_reserve(frame) {
+    if let Some(device) = lcall::unpack_occupy(frame) {
         let code = match sources.line_of(device) {
             // 树里没这条线 ⇒ 那个名字不是中断源。
             None => lcall::UNKNOWN,
             Some(line) => match take_lane(from) {
                 // 客户没把泊位交出来（或交不出来）。
                 None => lcall::DENIED,
-                Some(lane) => match lines.reserve(line, lane) {
+                Some(lane) => match lines.occupy(line, lane) {
                     Ok(()) => {
                         // **接线是登记的直接后果。**
                         plic.enable(line, LINE_PRIORITY);
                         // **排空那条路也在这里挂上**：客人往它写一句"我排空了"，本域就被叫醒
                         // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `drain_exhaust`）。
                         if let Some(lane) = lines.lane(line) {
-                            let _ = tole.hang(&HolePie::from_token(lane.hole()), HoleDir::Pull);
+                            let _ = tole.attach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
                         }
                         say(&alloc::format!("router: line {line} = {}", device.as_str()));
                         lcall::OK

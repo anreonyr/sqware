@@ -57,7 +57,7 @@ pub(crate) fn host_loop(me: TaskId) {
         say("board: no group");
         return;
     };
-    if tole.hang(&tip_hole, HoleDir::Pull).is_err() {
+    if tole.attach(&tip_hole, HoleDir::Pull).is_err() {
         say("board: tip not hung");
         return;
     }
@@ -127,7 +127,7 @@ fn settle(desk: &mut Desk, assembler: TaskId, tole: &Tole, tip: &mail::HolePie) 
             Some(ask) => {
                 let hung = desk.arm(slot, ask).is_ok()
                     && tole
-                        .hang(&mail::HolePie::from_token(ask), HoleDir::Pull)
+                        .attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
                         .is_ok();
                 if !hung {
                     let _ = desk.unarm(slot);
@@ -304,7 +304,7 @@ fn serve_one(
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
     if bcall::op_of(want) == Some(bcall::DISMISS) {
-        let _ = tole.unhang(&mail::HolePie::from_token(ask), HoleDir::Pull);
+        let _ = tole.detach(&mail::HolePie::from_token(ask), HoleDir::Pull);
     }
 }
 
