@@ -61,9 +61,15 @@ impl Line {
         call::unpack_line(buf.get(..n).ok_or(())?).ok_or(())
     }
 
-    /// 说一句"这一条我处理完了"。
+    /// 说一句"这一条我处理完了"。**不阻塞**：路由者那一格还压着上一条没取时，就当已经
+    /// 说过——它迟早会取到那一条，而这句话说的是**状态**（那一格回闲 + 把线放回），幂等。
+    ///
+    /// 为什么不能阻塞：路由者投递、客户说排空，两边都是"往对方的单槽里推"。两边都等 ⇒
+    /// 谁也回不去取自己那一格，机器当场不动（实测）。堵死的那一条只能是**通知**，
+    /// 不能是**移交**——真需要送达的那一路（投递）留在 [`super::core::Lines::deliver`] 上，
+    /// 它阻塞，且客户**总会**回到收投递那一格（客户从不堵在说排空上）。
     pub fn exhaust(&self, line: u32) -> Result<(), ()> {
-        self.lane()?.post(&call::pack_line(line))
+        self.lane()?.try_post(&call::pack_line(line))
     }
 
     fn lane(&self) -> Result<&Pier, ()> {

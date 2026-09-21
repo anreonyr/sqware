@@ -47,6 +47,11 @@ pub(super) fn post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
     mail::HolePie::from_token(at_peer).push(msg).map_err(|_| ())
 }
 
+/// 同 [`post`]，但槽满**当场**答 `Err`（`HolePie::push` 会等槽空，这一条不）。
+pub(super) fn try_post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
+    mail::push(at_peer, msg.as_ptr(), msg.len()).map_err(|_| ())
+}
+
 /// 扫我表里的**每一枚**孔，逐枚交给 `f`。
 ///
 /// **不设上限**：表里可能已经有几十枚（设备门闩、别人给的副本……），而认领只关心其中

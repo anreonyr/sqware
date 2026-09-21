@@ -1,39 +1,50 @@
 #![no_std]
 #![no_main]
 
-//! echo — **调试回显**：把调试面读到的一行原样写回去。
+//! echo — **调试回显**：把**控制台服务**读到的一行原样写回去。
 //!
-//! 它不要服务、不要驱动、不要孔、不要配给：走 `env` 的调试面（`DebugCall`，class 8），
-//! 内核把固件的调试控制台直接借给域。**"域能说一句话"不依赖任何别的域**——这就是新
-//! 基线的第一件东西，也是它全部的用途：让任何域在服务还不存在时能说话、能收话。
+//! 写的那一路仍走调试面（`DebugCall::Put`，class 8）——"域能说一句话"不依赖任何别的域；
+//! **读的那一路换了来路**：从前是调试面的 `Get`（内核直通固件的 DBCN，固件代读串口 `RBR`），
+//! 今天是从 `/device/uart` 那枚孔读——那台串口**只有一个读者**，而它的持有者是
+//! `programs/src/driver/uart`：字节由它排空、由它交出来（见那边的头注）。
+//!
+//! ```text
+//!   1  板那条路：seat(板) + claim(生我者, 板) + 另铸一枚问话孔给板（REGISTER 用）
+//!   2  REGISTER "echo"：本域的入口经会话交给板（板据此看得见本域的死）
+//!   3  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
+//!   4  FIND "/device/uart"：**先找控制台**——找到就拿到"从设备读"的那一枚
+//!   5  上树一趟：PART / LAND / FIND / take / TRIM（本域是第一位真客人）
+//!   6  从控制台读：**一条消息 = 一次排空**（字节流，边界无意义）⇒ **攒够一行**写一行
+//!   7  读到一行 `exit` 就退场（域退场 ⇒ 编排域收场 ⇒ 引导域退 ⇒ 停机）
+//! ```
 //!
 //! # 为什么按**行**回显，而不是读到几个字节就写几个
 //!
-//! 内核那一格是行语义（`putln!`）：**一次 `put` 就是一行**。按字节回显会得到
+//! 写的那一侧是行语义（内核 `putln!`）：**一次 `put` 就是一行**。按字节回显会得到
 //! `h\ne\nl\nl\no\n`——不是这台机器的怪癖，是"一次写必须是一条完整的字"这条红线在
-//! 地板上的形态。读入侧则相反：`get` 一次只给一个字节也很正常，故本程序**攒够一行**
-//! 再写。
+//! 地板上的形态。读的那一侧是**字节流**（服务一次排空交一批），故本域攒够一行再写。
 //!
-//! # 收场
+//! # 为什么先找控制台、后落自己那块牌子
 //!
-//! 读到一行 `exit` 就退（域退场 ⇒ 编排域收场 ⇒ 引导域退 ⇒ 停机）。门的"自退"判据靠它。
-//!
-//! # 为什么它也上板（`board: true`）
-//!
-//! 与 `passer` 同理、用途不同：**本域要让人看得出它死了**。本域退场时开的那几枚孔随退出
-//! 钩子封印 ⇒ 板当场看出"客人没了" ⇒ 往死亡通知那条路推一格 ⇒ 装配者（编排域）据此记账
-//! 并放下本域那个死域。本域是**最后一条**，故这一格同时就是"会话结束"的信号。
-//!
-//! 挂不上板也照旧回显（本域的主职是回显）——只是那条信号缺席。
+//! 树上那两趟都是"查回来一枚"，而"认哪一枚"用的是**本端表里最后一份由持树者授进来的孔**
+//! （`operator::take`）⇒ **先查的先认**。本域自己那块门牌也会被授回来一份，若先落牌子再找
+//! 控制台，那一份就会把控制台那一枚盖过去（实测栽过：认错了孔，之后一个字节都读不到）。
 //!
 //! # 两条边界（设计红线）
 //!
-//! 1. **只有一个域读调试面**：读口只有一个，谁 `get` 谁把它拿走。
+//! 1. **一台设备只有一个读者**：这条读口从前在内核的调试面手里（固件代读），今天在设备持有者
+//!    手里——本域只是它的客人。调试面的读入（`DebugCall::Get`）留着，但**今天没有用家**。
 //! 2. **一次写必须是一条完整的字**；写同一个设备的域不止一个时，混着写就会互相插字
 //!    （旧树里 root 的设备直连写与服务的写就是这么插花的：`root: conssoll: coole nsole…`）。
 //!
-//! 非 UTF-8 的行会在内核那一格折成 `<non-utf8>`（`env::fid::DebugCall` 的既有语义：
-//! 那一段要过 `str`）。调试回显面对的是一台终端，够用——不为它动冻结面。
+//! # 为什么它也上板（`board: true`）
+//!
+//! **本域要让人看得出它死了**。本域退场时开的那几枚孔随退出钩子封印 ⇒ 板当场看出"客人没了"
+//! ⇒ 往死亡通知那条路推一格 ⇒ 装配者（编排域）据此记账并放下本域那个死域。本域是**最后一条**，
+//! 故这一格同时就是"会话结束"的信号。挂不上板照旧回显——只是那条信号缺席。
+//!
+//! 非 UTF-8 的一行折成 `<non-utf8>` 再写（内核那一格要过 `str`，见 [`env::fid::DebugCall`] 的
+//! 既有语义）。调试回显面对的是一台终端，够用——不为它动冻结面。
 
 extern crate alloc;
 extern crate programs;
@@ -41,34 +52,49 @@ extern crate programs;
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板与树：本域都只用**客侧**那几手。
 use protocol::operator::client as operator;
+use protocol::session::Quay;
 use protocol::system::board::client as board;
 
 use alloc::format;
 use core::time::Duration;
 
 use env::DBCN_MAX;
-use env::{Name, PieToken};
+use env::{Name, PieToken, TaskId};
 use protocol::operator::call as ocall;
 use protocol::system::board::call as bcall;
 use runtime::env::debug;
-use runtime::env::mail;
+use runtime::env::mail::{self, HolePie};
 use runtime::env::room::{self, exit_with};
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字（板按它分人；编排域表里那一条也叫这个）。
 const ME: &str = "echo";
 
-/// 等板的总上限（毫秒）。**必须有界**：板死在头几步时本域不能陪着挂死（挂不上照旧回显）。
+/// 要找的那位服务在树上的名字：**控制台**（`/device/uart`——名字用服务名）。
+const WANT: &str = "uart";
+
+/// 等板 / 等树 / 找一趟控制台的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
+
+/// 找不到就再问一次的间隔（毫秒）：门牌是驱动落的，本域可能比它先起。
+const RETRY_MS: usize = 1;
 
 /// 域自己的正常退场码（与 `programs::entry::EXIT_OK` 同号）。
 const EXIT_OK: usize = 0;
 
-/// 一行的上界。更长的行**截断**回显（超过它的行不可能是 `exit`，故收场判据不受影响）。
+/// 没搭上（找不到控制台）：一次往返都做不成 ⇒ 报这一格退场。
+const E_NO_CONSOLE: usize = 1;
+
+/// 一行的上界。更长的行**截断**回显（超过它的行不可能是 `exit`，故收场判据不受影响）；
+/// 与设备侧那一条同值（`programs/src/driver/uart/main.rs::DRAIN_MAX` 那个层次的约定）。
 const LINE_MAX: usize = 128;
 
-/// 没字节可读时的重问间隔（毫秒）。见主循环那条"空转的红线"。
-const IDLE_MS: u64 = 1;
+/// 一次从控制台读多少字节的缓冲。
+///
+/// **必须 ≥ 对面一次排空的上界**（今天 `DRAIN_MAX` = 64）：孔那一格**装不下就答 `Denied`
+/// 且一个字节都不动**（内核 `pull` 的口径，不是截断）⇒ 缓冲小了不是丢一行，是**读不动**。
+/// 取 [`DBCN_MAX`]（256）留四倍余量。
+const BUF_MAX: usize = DBCN_MAX;
 
 const READY: &str = "echo: ready";
 const NON_UTF8: &str = "<non-utf8>";
@@ -79,25 +105,38 @@ extern "C" fn main() -> ! {
     // 上板：**注册在回显之前**——板要能看见本域（见头注）。挂不上照旧回显。
     let reg = register();
     let _ = debug::put(&format!("echo: reg={reg}"));
-    // 上树：**本域是第一位真客人**（装配单里 `operator: true` 的那一条）——把本域的入口挂到
-    // 树上、再查回来取一枚。挂不上照旧回显（本域的主职是回显）。
-    let op = trip();
+
+    let Ok(sire) = utask::sire() else {
+        exit_with(E_NO_CONSOLE)
+    };
+    // 树那条路：本域只开一条会话——先找控制台，再落自己那块牌子（次序见头注）。
+    let Ok((tree, host)) = operator::open(sire, MS) else {
+        exit_with(E_NO_CONSOLE)
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        exit_with(E_NO_CONSOLE)
+    };
+
+    // 一、**先找控制台**：`FIND /device/uart` ⇒ 那枚孔经会话授进本域表里。
+    let console = find_console(&tree, talk, host);
+    let _ = debug::put(&format!("echo: console={}", console.is_some()));
+
+    // 二、上树一趟：**本域是第一位真客人**——把入口挂到树上、再查回来取一枚、剪掉一块空 Pane。
+    let op = trip(&tree, talk, host);
     let _ = debug::put(&format!("echo: op={op}"));
 
-    let mut buf = [0u8; DBCN_MAX];
+    let Some(console) = console else {
+        exit_with(E_NO_CONSOLE)
+    };
+    let mut buf = [0u8; BUF_MAX];
     let mut line = [0u8; LINE_MAX];
     let mut n_line = 0usize;
 
     'echo: loop {
-        // 一次 `get` 给多少字节不定，**也可能一个字节都没有**——固件那一格**不阻塞**
-        // （内核 `envcall/debug.rs::get` 的照实记：旧注写"至少一个"，实测是当场返 0）。
-        let Ok(n) = debug::get(&mut buf) else { break };
-        // **空转的红线**：固件一个字节都没给（`n == 0`）时不能立刻再问——那是把一整颗核
-        // 烧在等键上（实测宿主 99%）。睡一毫秒再来，输入早到晚到一毫秒无所谓。
-        if n == 0 {
-            let _ = room::sleep(Duration::from_millis(IDLE_MS));
-            continue;
-        }
+        // **一次读就是一批**（服务排空多少给多少，也可能是半行）：**阻塞读**，没有字节就在核里睡
+        // ——不再轮询、不再空转（从前的 `IDLE_MS` 那一拍随调试面读入一起不用了）。
+        // `Err` = 那枚孔封了（持设备的域没了）或装不下（见 [`BUF_MAX`]）⇒ 收场。
+        let Ok(n) = console.pull(&mut buf) else { break };
         let Some(chunk) = buf.get(..n) else { break };
 
         for &b in chunk {
@@ -124,9 +163,33 @@ extern "C" fn main() -> ! {
     exit_with(EXIT_OK)
 }
 
-/// 上板报到（与 `passer` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
+/// 找控制台：`FIND /device/uart`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///
-/// 这一挂的唯一用途是让**板看得见本域的死**；挂不上就返 `BAD`，主职照旧。
+/// 找到之后那一枚**从会话里**进本域表（报文里没有号，见 [`ocall`]）：认的是"持树者刚授进来的
+/// 那一份"，而本域此刻**还没落自己的门牌** ⇒ 这一趟拿走的一定是它（次序见头注）。
+fn find_console(link: &Quay, talk: PieToken, host: TaskId) -> Option<HolePie> {
+    let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
+        return None;
+    };
+    let path = [dir, want];
+    let none = PieToken::NONE;
+    let mut left = MS;
+    let code = loop {
+        let code =
+            operator::ask(talk, link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
+        if code != ocall::UNKNOWN || left == 0 {
+            break code;
+        }
+        let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
+        left = left.saturating_sub(RETRY_MS);
+    };
+    if code != ocall::OK {
+        return None;
+    }
+    Some(HolePie::from_token(operator::take(link, host)?))
+}
+
+/// 上板报到（与 `passer` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
 fn register() -> u8 {
     let Ok(sire) = utask::sire() else {
         return bcall::BAD;
@@ -154,16 +217,7 @@ fn register() -> u8 {
 /// 为什么这五步都要走：树上那四支判据各有各的门（分出第二层、落一枚真 Pie、寻回来把 Pie
 /// 经会话授出、剪掉一块空 `Pane`），少走一步就有半条路从来没被走过。挂的是本域自己那一枚
 /// 入口（与上板那一枚同一个记号），故它在树上是一枚普通 `Tile`，不是特权。
-fn trip() -> u8 {
-    let Ok(sire) = utask::sire() else {
-        return ocall::BAD;
-    };
-    let Ok((link, host)) = operator::open(sire, MS) else {
-        return ocall::BAD;
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return ocall::BAD;
-    };
+fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
         return ocall::BAD;
     };
@@ -173,12 +227,12 @@ fn trip() -> u8 {
     let path = [name];
     let none = PieToken::NONE;
     // 分出一块空 `Pane`、再在里面落一枚 `Tile`——**第二层**因此是实打实走出来的（不是构造出来的）。
-    let a = operator::ask(talk, &link, host, ocall::PART, &path, none, MS).unwrap_or(ocall::BAD);
-    let b = operator::ask(talk, &link, host, ocall::LAND, &path, entry, MS).unwrap_or(ocall::BAD);
-    let c = operator::ask(talk, &link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
+    let a = operator::ask(talk, link, host, ocall::PART, &path, none, MS).unwrap_or(ocall::BAD);
+    let b = operator::ask(talk, link, host, ocall::LAND, &path, entry, MS).unwrap_or(ocall::BAD);
+    let c = operator::ask(talk, link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
     // 寻回来的那一枚：**来源位是持树者**（号不从报文里走，故只能按"谁给的"认）。
-    let got = operator::take(&link, host).is_some();
-    let d = operator::ask(talk, &link, host, ocall::TRIM, &path, none, MS).unwrap_or(ocall::BAD);
+    let got = operator::take(link, host).is_some();
+    let d = operator::ask(talk, link, host, ocall::TRIM, &path, none, MS).unwrap_or(ocall::BAD);
     let _ = debug::put(&format!(
         "echo: tree part={a} land={b} find={c} got={got} trim={d}"
     ));

@@ -7,10 +7,11 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 十条启动读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
+#   2) 十二条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
 #      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `answer=router` / `guest: trip ok` / `echo: ready` /
-#      **`router: line 10 = serial@10000000`** / **`uart: line 10 rang`**）。
+#      **`router: line 10 = serial@10000000`** / **`uart: line 10 rang`** /
+#      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`**）。
 #
 # 这两条是**驱动侧那两条**：控制器自报 95 条线、本域用的 context 是 1；串口那一台已经把
 # 设备拿在手里、把"收到字节就拉线"打开（`serial@10000000` 那枚 `ONLY` 门闩换了主人）。
@@ -20,10 +21,16 @@
 # `/device/router` 上、再查回来验一遍（`part=0` = 那块目录是它建的；第二台上来会读成 2）。
 # 而 `guest: reg=0 find=0` 里那个 `find` 是**从树上问到的**——按名找服务今天归树，板管生死。
 #
-# 后两条是**线**那一条（`protocol::driver::line` 的四个原语里今天落得了的两格）：
+# 四条是**线 + 控制台**那一刀（`protocol::driver::line` 的四格与设备持有者那枚服务孔）：
 # `router: line 10 = serial@10000000` = **登记**——串口驱动报设备名、路由者**解树**（线 = 名字的
 # 函数）并把这条线接上（起域时一条都不接）；`uart: line 10 rang` = **投递**——那一帧真的到了
-# 客户手里。第三格 `exhaust`（排空）今天没有真内容（读口还在内核调试面），见两域头注。
+# 客户手里；`uart: tree part=2 land=0 find=0 got=true` = **服务门牌**——`uart` 把"读行"那枚孔
+# 落到 `/device/uart`（`part=2` 是"那块目录已经在了"，`router` 先建的）；`echo: console=true`
+# = **客人真的从那枚孔拿到了副本**（它是回显的来路，从前是内核的调试面）。
+#
+# 第三格 `exhaust`（排空）**已经接上真内容**：读口搬到设备持有者之后，客户是真的读走了设备里的
+# 字节才说那句话，路由者据此把线放回（`router: exhaust line=10`）——那一行只在"真的排空过"时
+# 出现，故它归 `examine.nu` 那条回显判据一起看，不在这里当固定读数（喂不喂键决定它有没有）。
 #
 # 用法：
 #   scripts/soak.sh [轮数] [--release]      # 默认 10 轮，debug 档
@@ -63,6 +70,8 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "guest: trip ok" "$log" \
         && grep -q "router: line 10 = serial@10000000" "$log" \
         && grep -q "uart: line 10 rang" "$log" \
+        && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
+        && grep -q "echo: console=true" "$log" \
         && grep -q "echo: ready" "$log"; }; then
     echo "round $i: FAIL 启动读数不全（$log）"
   else
