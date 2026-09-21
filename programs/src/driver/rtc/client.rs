@@ -14,7 +14,6 @@
 //! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
 use env::PieToken;
-use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
 use super::call;
@@ -79,27 +78,8 @@ impl Alarm {
 
 /// 借一枚回信孔过去、把这一帧推上那扇门：返**本端那一枚**（答话与那一声都从它回来）。
 ///
-/// 那扇门的主人（`owner`）从**这一枚门闩自己**问出来——树上那一枚是别人挂的，故只能读它
-/// （`opened_by` = "这扇门谁开的"，副本共享同一事实、转手不变）。
-///
-/// 交出去的权只要 `STORE`：对端只推、读的一侧是本端（与 `port::open` 的回信孔同一格权）。
+/// 身体住在 [`protocol::session::call::lend`]（第二例到了：principle 那一面也是这个形状），
+/// 这里只留本面自己的记号。
 fn lend(entry: PieToken, frame: &[u8]) -> Result<PieToken, Fail> {
-    let host = protocol::session::call::opened_by(entry).ok_or(Fail::Denied)?;
-    let back = mail::unseal_hole(call::BACK).map_err(|_| Fail::Denied)?;
-    if port::ship(
-        &HolePie::from_token(back),
-        host,
-        Access::STORE,
-        Policy::NONE,
-    )
-    .is_err()
-    {
-        let _ = mail::release(back);
-        return Err(Fail::Denied);
-    }
-    if HolePie::from_token(entry).push(frame).is_err() {
-        let _ = mail::release(back);
-        return Err(Fail::Denied);
-    }
-    Ok(back)
+    protocol::session::call::lend(entry, call::BACK, frame).map_err(|()| Fail::Denied)
 }

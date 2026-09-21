@@ -54,6 +54,14 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 客人：**U 态**（同上）——`/device/rtc` 那面服务的第一位用家：问一声现在几点、约一个时刻
     // （失败域那两格也各走一趟，见 `programs/src/user/sleeper.rs`），等到那一声就退场。
     ("sleeper", "prog-sleeper", ProgramKind::User),
+    // 身份服务（**U 态**）：名册（TID → 当前 PolicyId）与谱系（PolicyId 的树）两张表，
+    // 七条原语见 `protocol::principal`。它**不持有、不授予、不解释任何 Pie**——只读写自己
+    // 那两张表，故不进"转授权中枢"那一档（与 `operator` 的差别正是在这里）：目录按角色分、
+    // 特权级各自在这里声明，它是这一族里第一位 **U 态**的服务。
+    ("principal", "prog-principal", ProgramKind::User),
+    // 主体（**U 态**）：身份服务的第一位真客人——问自己是谁、查父（三态）、验自反与否、
+    // 派生一条自己的子身份、再越权趟一次（读数见 `programs/src/user/subject.rs` 头注）。
+    ("subject", "prog-subject", ProgramKind::User),
     // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
     // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
     // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。

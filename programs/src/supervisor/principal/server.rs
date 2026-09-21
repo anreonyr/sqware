@@ -1,0 +1,199 @@
+//! principal::server — **身份服务那一台**：一枚线程守着两张表（名册与谱系）。
+//!
+//! 载体是 rtc 那一面已经量过的形状——**门牌自带回信孔**：客人替这一趟铸一枚回信孔借过来、
+//! 把帧推上门牌，本域从**门牌那一枚**读（发送者由内核在 `Push` 那一刻盖章），办完事从那枚孔
+//! 答回去、当场放下。故这里**没有客人账**：一位客人不需要本域记住任何东西，"往哪回"那一格
+//! 就在这一趟的孔上。
+//!
+//! ```text
+//!   起手：读自己的 Sire（= 装配者，名册的钥匙）
+//!         → 上板（板看得见本域的死）→ 铸门牌那一枚
+//!           门牌两份：一份交给生我者（装配期用它 derive + bind，不必上树查自己）
+//!                     一份经 LAND 落到树上 `/sys/principal`（别的客人按名字找上门）
+//!   常驻：一只组等门牌那一枚 —— 读一帧（连发送者）→ 交给核心 → 从这一趟的回信孔答回去
+//! ```
+
+use alloc::format;
+
+use env::{HoleDir, Name, PieToken, TaskId};
+use protocol::operator::call as ocall;
+use protocol::operator::client as operator;
+use protocol::principal::call as pcall;
+use protocol::principal::core::{PolicyId, Principal};
+use protocol::session::Quay;
+use protocol::session::call as scall;
+use protocol::system::board::call as bcall;
+use protocol::system::board::client as board;
+use runtime::core::port::{self, Access, Policy};
+use runtime::core::tole::Tole;
+use runtime::env::mail::{self, HolePie};
+use runtime::env::room::exit_with;
+use runtime::env::unit as utask;
+
+/// 等板 / 等树的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
+const MS: usize = 1000;
+
+/// 起不来时的编号（指死在头几步的哪一步）。
+const E_SIRE: usize = 1;
+const E_BOARD: usize = 2;
+const E_TREE: usize = 3;
+const E_BOOK: usize = 4;
+const E_DESK: usize = 5;
+
+/// 三格答码共用的"没走到 / 读不懂"那一格（与树自己的 [`ocall::BAD`] 同值）。
+const BAD: u8 = ocall::BAD;
+
+/// 起服务：**读锚 → 上板 → 铸门牌（给生我者 + 上树）→ 一枚线程招待所有客人**。
+pub fn serve() -> ! {
+    // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
+    //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
+    let Ok(assembler) = utask::sire() else {
+        say("principal: no sire");
+        exit_with(E_SIRE);
+    };
+
+    // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
+    let Ok((_link, board_link)) = board::open(assembler, MS) else {
+        say("principal: no board");
+        exit_with(E_BOARD);
+    };
+    if board::ask_hole(board_link).is_err() {
+        say("principal: no board ask");
+        exit_with(E_BOARD);
+    }
+
+    // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
+    let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
+        say("principal: no entry");
+        exit_with(E_TREE);
+    };
+    // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
+    // 只给 `STORE`——装配者只往里推帧，答话走它每一趟自己借来的那枚孔。
+    if port::ship(
+        &HolePie::from_token(entry),
+        assembler,
+        Access::STORE,
+        Policy::NONE,
+    )
+    .is_err()
+    {
+        say("principal: entry not handed");
+        exit_with(E_TREE);
+    }
+
+    // 四、上树：分 `/sys`、落 `/sys/principal`、再查回来验一遍（同 router / rtc 那一趟）。
+    let Ok((tree, host)) = operator::open(assembler, MS) else {
+        say("principal: no tree link");
+        exit_with(E_TREE);
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        say("principal: no tree ask");
+        exit_with(E_TREE);
+    };
+    serve_tree(&tree, talk, host, entry);
+
+    // 五、两张表：名册空着，谱系只有根（零号节点）。
+    let Ok(mut book) = Principal::new(assembler) else {
+        say("principal: no book");
+        exit_with(E_BOOK);
+    };
+
+    // 六、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。
+    let Ok(tole) = Tole::unseal(false) else {
+        say("principal: no group");
+        exit_with(E_DESK);
+    };
+    let entry_hole = HolePie::from_token(entry);
+    if tole.attach(&entry_hole, HoleDir::Pull).is_err() {
+        say("principal: entry not hung");
+        exit_with(E_DESK);
+    }
+
+    // 一问的上界就是 `ASK_LEN`（`pack_ask` 产出的就是这个长度）。
+    let mut buf = [0u8; pcall::ASK_LEN];
+    loop {
+        if tole.await_(usize::MAX).is_err() {
+            exit_with(E_DESK);
+        }
+        // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
+        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
+            turn(&mut book, from, &buf[..len]);
+        }
+    }
+}
+
+/// 门上一句话：解帧 → 交给核心 → **从这一趟自带的那枚孔答回去**。
+///
+/// 认那枚孔靠 [`scall::find`] 的两格正判据（谁给的 + 记号）；`from` 是**内核盖的发送者**，
+/// 名册与谱系的钥匙判据（装配者 / 当前正好代表 `p`）用的就是它。
+fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
+    let Some((op, a, b)) = pcall::unpack_ask(frame) else {
+        // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
+        return;
+    };
+    let Some(back) = scall::find(from, pcall::BACK) else {
+        // 这一趟没把回信孔交进来（或交得不成）：没有可回的路，账一动不动。
+        return;
+    };
+    let _ = HolePie::from_token(back).push(&answer(book, from, op, a, b));
+    let _ = mail::release(back);
+}
+
+/// 把一句问交给核心，编出一句答（**一格**：读不懂也答，答 `BAD`）。
+///
+/// **先读动作码、再解载荷**；动作码定两格载荷的意义（`RESOLVE`/`DERIVE`/`SIRE` 只用 `a`，
+/// `HEIR` 两格都用）。答案与失败分开放（见 [`pcall`]：`OK` + `flag` 是答案，负码表只装失败）。
+fn answer(book: &mut Principal, from: TaskId, op: u8, a: u64, b: u64) -> [u8; pcall::REPLY_LEN] {
+    match op {
+        pcall::BIND => match book.bind(from, TaskId::new(a as usize), PolicyId::new(b as usize)) {
+            Ok(()) => pcall::reply_status(pcall::OK),
+            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+        },
+        pcall::RESOLVE => match book.resolve(TaskId::new(a as usize)) {
+            Some(p) => pcall::reply_present(true, p),
+            None => pcall::reply_present(false, PolicyId::ROOT),
+        },
+        pcall::DERIVE => match book.derive(from, PolicyId::new(a as usize)) {
+            Ok(q) => pcall::reply_value(q),
+            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+        },
+        pcall::SIRE => match book.sire(PolicyId::new(a as usize)) {
+            Ok(Some(q)) => pcall::reply_present(true, q),
+            Ok(None) => pcall::reply_present(false, PolicyId::ROOT),
+            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+        },
+        pcall::HEIR => match book.heir(PolicyId::new(a as usize), PolicyId::new(b as usize)) {
+            Ok(yes) => pcall::reply_yes(yes),
+            // "不是祖先"是一句答（`Ok(false)`），"查无此号"才是这一格。
+            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+        },
+        // 没见过的动作码：与"这一问读不懂"同一格（不另立一格）。
+        _ => pcall::reply_status(pcall::BAD),
+    }
+}
+
+/// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（同 rtc 那一趟）。
+///
+/// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`user/subject`）证——它照同一条路
+/// 找上门、问一句、拿回一条号。故本域不自问自答。
+fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
+    let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
+        say("principal: tree: bad name");
+        return;
+    };
+    let path = [dir, me];
+    let none = PieToken::NONE;
+    let part = operator::ask(talk, link, host, ocall::PART, &[dir], none, MS).unwrap_or(BAD);
+    let land = operator::ask(talk, link, host, ocall::LAND, &path, entry, MS).unwrap_or(BAD);
+    let find = operator::ask(talk, link, host, ocall::FIND, &path, none, MS).unwrap_or(BAD);
+    let got = operator::take(link, host).is_some();
+    say(&format!(
+        "principal: tree part={part} land={land} find={find} got={got} entry={}",
+        entry.get()
+    ));
+}
+
+/// 打一行。调试面是"服务还没起来的嘴"：本域没有控制台，只有它。
+fn say(msg: &str) {
+    let _ = runtime::env::debug::put(msg);
+}

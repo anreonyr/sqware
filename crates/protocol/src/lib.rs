@@ -7,11 +7,11 @@
 //!
 //! **目前有五份顶层正文**：[`system`]、[`driver`]、[`principal`]、[`session`] 与 [`operator`]。
 //!
-//! 落地程度不一样：**五份里四份已经有代码跑在机器上**（[`system`]（含它下面的 `board`）、
+//! 落地程度不一样：**五份都已经有代码跑在机器上**（[`system`]（含它下面的 `board`）、
 //! [`driver`]（**两半都落了**：`supply` 与 `line`——见 [`driver::line`]，四格原语 + 账 +
 //! 客侧几手，`router` / `uart` / `rtc` 与两位客人 `lodger` / `sleeper` 都跑在机器上）、
-//! [`session`] 与 [`operator`]），
-//! [`principal`] 只有正文、它的 Server 还没起步。
+//! [`session`]、[`operator`] 与 [`principal`]（**名册 + 谱系**：七条原语、一台
+//! `prog-principal`、一位真客人 `subject`））。
 //!
 //! - [`system`] = **服务编排**（systemd 那一层）：系统由哪些 Service 构成、怎么起停监督。
 //!   它**有两半**：**编排**（`core` / `desk` / `grant`）与**运行期命名**（[`system::board`]：
@@ -30,8 +30,10 @@
 //!   机器上**，见 [`driver::line`]）。
 //!   它不是驱动框架：设备语义各驱动自带（`programs/src/driver/<域>/`），装配样板住程序侧
 //!   （`programs/src/driver/assemble.rs`），本层只管**跨域约定**。
-//! - [`principal`] = **策略身份**："这个请求代表谁"。Server 未落地，但地基已经能看见
-//!   （两条不可伪造的身份凭证）。
+//! - [`principal`] = **策略身份**：**名册**（TID → 此刻代表的 PolicyId）与**谱系**
+//!   （PolicyId 的一棵只增不改的树）。两条轴都不定义权限——收到它的服务自己解释那条号。
+//!   载体建在会话之上：门牌落在树上 `/sys/principal`，一问一答替这一趟借一枚回信孔过去。
+//!   同一族里还留着一条**横向**的轴（结盟 `Coalition`）没落，正文里只记了它的边界。
 //! - [`session`] = **会话建立**："两个陌生实体怎么建起一条会话"。身份由内核盖、地址靠
 //!   对方交、认领按"谁开的这扇门"——不需要 Server 就能成立，而其余几份都建在它上面。
 //! - [`operator`] = **命名寻址（树那一版）**：一个 Operator 管着所有条目，其他任务只是
@@ -45,9 +47,9 @@
 //! （服务怎么问在 [`system::board::client`]；板那一台与装配侧在
 //! `programs/src/supervisor/system/board/`）。
 //!
-//! [`principal`] 缺的是**地址**：客户端要找到 Principal Server，靠的是 [`system::board`]。
-//! （[`system`] 那一侧的编排者今天不用板查名字——它按静态装配单起服务（`service::PLAN`）、
-//! 拿板当"收尸的道"；板是运行期那一步，接在**客户端与服务**之间。）
+//! [`principal`] 的**地址**走树（`/sys/principal`）：板那一侧已经"照实记"把命名交给树
+//! （板只管生死与牌子）。装配者不必查——身份服务起手就把门牌那一枚交给它的生我者，故装配期
+//! 每一条服务的 `derive` + `bind` 都在放行之前做完（`service::assemble`）。
 //!
 //! # 地板（可用，不可改）
 //!

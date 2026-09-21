@@ -112,6 +112,43 @@ pub fn find(of: TaskId, mark: &str) -> Option<PieToken> {
     found
 }
 
+/// **借一枚回信孔过去、把这一帧推上那扇门**——一问一答的共享体；返**本端那一枚**
+/// （答话从那枚孔回来）。
+///
+/// 三件事，**次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
+/// "谁给的 + 记号"两格认（[`find`]），多枚时取**最后**那一枚——故最后那一枚一定就是这一趟
+/// 那一枚。
+///
+/// `entry` = 对端那一扇门（树上查回来的门牌）；`mark` = 回信孔的记号，**各面自己的**
+/// （rtc 是 `rtc-back`、principal 是 `principal-back`）：同一张表里两面的回信孔若刻同一个
+/// 记号，就分不出这一枚是哪一面的。交出去的权只要 `STORE`——对端只推，读的一侧是本端。
+///
+/// 对端的号从**这一枚门闩自己**问出来（[`opened_by`]）：门牌是别人挂的，故只能读它；
+/// 副本共享同一事实、转手不变。
+///
+/// **第二例到了**（rtc 那一面的客侧先写过一份，principal 是第二个用家）——照本文件开头的
+/// 纪律，身体搬到这里，两处只留各自的名字。
+pub fn lend(entry: PieToken, mark: &str, frame: &[u8]) -> Result<PieToken, ()> {
+    let host = opened_by(entry).ok_or(())?;
+    let back = mint(Name::new(mark).map_err(|_| ())?)?;
+    if port::ship(
+        &mail::HolePie::from_token(back),
+        host,
+        Access::STORE,
+        Policy::NONE,
+    )
+    .is_err()
+    {
+        let _ = mail::release(back);
+        return Err(());
+    }
+    if mail::HolePie::from_token(entry).push(frame).is_err() {
+        let _ = mail::release(back);
+        return Err(());
+    }
+    Ok(back)
+}
+
 /// 我表里的一项：一枚孔 + **谁开的** + **刻的什么记号**（[`each`] 交出来的那两格）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Hole {

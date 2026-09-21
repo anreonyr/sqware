@@ -83,6 +83,22 @@ test = false
 bench = false
 doctest = false
 
+# 身份服务（U 态，独立域，一枚线程）：名册 + 谱系两张表，招待所有客人（门牌 `/sys/principal`）。
+[[bin]]
+name = "prog-principal"
+path = "src/supervisor/principal/main.rs"
+test = false
+bench = false
+doctest = false
+
+# 主体（U 态）：身份服务的第一位真客人——问自己是谁，把六条读数打出来。
+[[bin]]
+name = "prog-subject"
+path = "src/user/subject.rs"
+test = false
+bench = false
+doctest = false
+
 # 命名树的服务（U 态，独立域，一枚线程）：起那棵树、招待所有客人；接树归编排域。
 [[bin]]
 name = "prog-operator"

@@ -17,13 +17,27 @@
 //! [`protocol::driver::supply::client::draw`] 把"要哪几样"递过去，固件把门闩直接授进**客人**的表里并回一段记录，
 //! 装配者再把这**一段字节原样**投到客人那条通道上（客人按记号认领、按名字归位）。
 //! 装配者经手的只有字节，**一枚原件都不经过它**。
+//!
+//! # 身份从哪来
+//!
+//! 装配期每一条服务，都由装配者向**身份服务**要一条号、把它绑到那一条服务的代表线程上
+//! （`derive(root)` + `bind(rep, p)`）——**在 `Hatch` 放行之前**，故服务一起来
+//! `resolve(self)` 就答得出。身份服务自己是 `plan` 里 [`PRINCIPAL`] 那一条：它放行之后，
+//! 本域先认下它交给生我者的门牌，再把**它自己与树**补绑上（那两条起来时它还没在）。
+//! **装配者自己不绑**——它是写名册的那一个，不是被写的那一个。
+
+use core::time::Duration;
 
 use crate::supervisor::system::server::{self as service, Grant};
 use env::wire::manifest;
 use env::{Name, PieToken, TaskId};
+use protocol::principal::client::Face;
+use protocol::principal::core::PolicyId;
+use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
+use protocol::system::board::call as bcall;
 use protocol::system::desk::{Announce, Table};
-use runtime::env::room::exit_with;
+use runtime::env::room::{self, exit_with};
 
 use crate::supervisor::operator::bridge as operator;
 use crate::supervisor::system::board::bridge as board;
@@ -35,6 +49,15 @@ use crate::supervisor::root::boot;
 
 /// 装配失败的编号：指"死在装配的哪一步"（沿用旧树那套小整数编号的意思）。
 pub type Died = usize;
+
+/// 身份服务在装配单上的名字：它一起好，本域就认下它的门牌，此后每条服务都在放行前拿到身份。
+///
+/// **`Program` 不加格**（不必逐条声明"这条要不要身份"）：装配单上的每一条都绑，
+/// 域内自产的线程仍默认没身份（身份是装配期的产物）。
+const PRINCIPAL: &str = "principal";
+
+/// 认身份门牌 / 与它说话的短等间隔（毫秒）：门牌由 Server 起手交出，这里只是短等。
+const RETRY_MS: usize = 1;
 
 /// 一条服务的装配契约。
 pub struct Program {
@@ -122,6 +145,11 @@ impl<'a> Catalog<'a> {
 /// **持树者的号与提示之路不在这里**：持树者自己是 `plan` 的第一条（[`Program::holds_tree`]），
 /// 认下它那条提示之路的那一步就在下面的循环里——从前它由引导域先起、再当一笔货转授过来，
 /// 那一笔已经清掉（它是**服务**，不是引导设施）。
+///
+/// **身份也在装配里**：身份服务（`plan` 里 [`PRINCIPAL`] 那一条）一放行，本域先认下它交给
+/// 生我者的门牌，把**它自己与树**补绑上（它们起来时它还没在）；其后的每一条都在 [`start`] 里、
+/// **放行之前**拿到 `derive(root)` + `bind(rep, p)`。**装配者自己（编排域这一枚）不绑**：
+/// 它是写名册的那一个，不是被写的那一个。
 pub fn assemble<'a>(
     table: &mut Table,
     catalog: &Catalog<'a>,
@@ -146,6 +174,8 @@ pub fn assemble<'a>(
     let mut btip: Option<PieToken> = None;
     let mut tree: Option<TaskId> = None;
     let mut otip: Option<PieToken> = None;
+    // 身份服务那一面：它一起好本域就有，此后每条服务的身份都从它来。
+    let mut face: Option<Face> = None;
     for (i, p) in plan.iter().enumerate() {
         let rep = start(
             table,
@@ -155,6 +185,7 @@ pub fn assemble<'a>(
             tree,
             &mut btip,
             &mut otip,
+            face.as_ref(),
             lanes.get(i).copied().flatten(),
         )?;
         // 它刚把提示之路交给**生我者**（= 本域）⇒ 当场认下来，此后客人上树才有路可走。
@@ -166,13 +197,40 @@ pub fn assemble<'a>(
                 p.died
             })?;
         }
+        // 身份服务本身：它一放行，本域就认下它交给生我者的那一枚门牌，再把**前两条**
+        // （它自己与树）补绑上——它们起来的时候它还没在，没得绑。
+        if p.name == PRINCIPAL {
+            let f = face_of(rep).ok_or_else(|| {
+                step(p, "no identity face");
+                p.died
+            })?;
+            let mine = f.derive(PolicyId::ROOT, READY_MS).map_err(|_| {
+                step(p, "derive self");
+                p.died
+            })?;
+            f.bind(rep, mine, READY_MS).map_err(|_| {
+                step(p, "bind self");
+                p.died
+            })?;
+            if let Some(t) = tree {
+                let pt = f.derive(PolicyId::ROOT, READY_MS).map_err(|_| {
+                    step(p, "derive tree");
+                    p.died
+                })?;
+                f.bind(t, pt, READY_MS).map_err(|_| {
+                    step(p, "bind tree");
+                    p.died
+                })?;
+            }
+            face = Some(f);
+        }
     }
 
     // 三、把最后一条的名字交出去（等它退场 = 等这次会话结束）。
     Name::new(plan.last().map(|p| p.name).unwrap_or("")).map_err(|_| E_PROGRAM)
 }
 
-/// 起一条：登记过的账 + 清单里的镜像 + 它的门闩 + 它的通道。
+/// 起一条：登记过的账 + 清单里的镜像 + **它的身份** + 它的门闩 + 它的通道。
 ///
 /// 每一步失败都报出**是哪一条、哪一步**（诊断靠这一行，不靠再读一遍代码）。
 ///
@@ -189,6 +247,7 @@ pub fn start<'a>(
     tree: Option<TaskId>,
     btip: &mut Option<PieToken>,
     otip: &mut Option<PieToken>,
+    face: Option<&Face>,
     lane: Option<PieToken>,
 ) -> Result<TaskId, Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
@@ -196,6 +255,20 @@ pub fn start<'a>(
     // 一、身子：建域 + 产线程（此刻它一步都还没跑）。
     let entry = catalog.find(p.name).ok_or(E_PROGRAM)?;
     let rep = service::spawn(table, name, entry.elf, entry.kind).map_err(|_| p.died)?;
+
+    // 一之后、二之前：**身份**。装配者给这条服务派生一条号、把它绑到 `rep` 上——**放行之前**
+    // 就做完，故服务一起来 `resolve(self)` 就答得出。（身份服务本身与树不走这里：它们起来时
+    // 它还没在；那两条由 [`assemble`] 在它放行之后补绑。）
+    if let Some(face) = face {
+        let mine = face.derive(PolicyId::ROOT, READY_MS).map_err(|_| {
+            step(p, "derive");
+            p.died
+        })?;
+        face.bind(rep, mine, READY_MS).map_err(|_| {
+            step(p, "bind");
+            p.died
+        })?;
+    }
 
     // 二、会话：对端 = **建它那个域的那一枚线程**（= 本域）——它把自己的孔交给"生我者"，
     //     而"生我者"是建域那一枚，**不是刚产出的代表线程**（`rep`）。
@@ -314,6 +387,25 @@ fn wire(root: &Pier, quay: &Quay, p: &Program, rep: env::TaskId) -> Result<(), (
 /// 等一条服务退场（本域等它 = 等这次会话结束）。
 pub fn wait_last(table: &mut Table, name: Name) {
     while let Ok(false) = service::watch(table, name, usize::MAX) {}
+}
+
+/// 认下身份服务**交给生我者**的那一枚门牌（装配者自己的那一份）。
+///
+/// 装配期**不必上树查自己起的那一枚**：Server 起手就把门牌那一枚 `ship` 进本域表里，本域按
+/// `(开者 = 它, 记号 = entry)` 两格认出来（[`scall::find`] 的两格正判据）。它起手就交，
+/// 故这里是**短等**：还没到就隔一拍再问，问到期限为止。
+fn face_of(host: TaskId) -> Option<Face> {
+    let mut left = READY_MS;
+    loop {
+        if let Some(entry) = scall::find(host, bcall::ENTRY_MARK) {
+            return Face::of(entry).ok();
+        }
+        if left == 0 {
+            return None;
+        }
+        let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
+        left = left.saturating_sub(RETRY_MS);
+    }
 }
 
 /// 起不来时报一行并退出。本域没有会话、没有控制台，调试面是唯一能说话的地方。

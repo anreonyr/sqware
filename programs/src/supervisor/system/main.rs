@@ -58,6 +58,9 @@ const INITRD: &str = "initrd";
 /// 持树者那一条在清单里的名字。
 const TREE: &str = "operator";
 
+/// 身份服务那一条在清单里的名字（装配期"它一起好就补绑"认的就是这一格）。
+const PRINCIPAL: &str = "principal";
+
 /// 结算两条上限（毫秒）：与引导域开会话、以及装配期的等。
 const BOOT_MS: usize = 1000;
 
@@ -72,6 +75,8 @@ const E_TREE: Died = 10;
 const E_LODGER: Died = 11;
 const E_RTC: Died = 12;
 const E_SLEEPER: Died = 13;
+const E_PRINCIPAL: Died = 14;
+const E_SUBJECT: Died = 15;
 
 /// 持树者：那棵命名树的服务（`prog-operator`）。**排第一位**——每位上树的客人都要它在。
 ///
@@ -88,6 +93,28 @@ const fn tree() -> Program {
         operator: false,
         holds_tree: true,
         died: E_TREE,
+    }
+}
+
+/// 身份服务（`prog-principal`，**U 态**）：名册 + 谱系两张表（`protocol::principal`）。
+///
+/// **排在树之后、其余服务之前**：树先立（门牌要落在它上面），而装配期每一条服务的
+/// `derive` + `bind` 都要它已经在——故 [`service::assemble`] 在它放行之后**补绑**它自己与树
+/// 那两条（它们起来时身份服务还没在），其后的每一条都在 `Hatch` 之前拿到身份。
+///
+/// 上板（板看得见它的死）+ 上树（门牌 `/sys/principal`——两段名见
+/// [`protocol::principal::DIR`] / [`protocol::principal::NAME`]）。
+const fn principal() -> Program {
+    Program {
+        name: PRINCIPAL,
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: true,
+        operator: true,
+        holds_tree: false,
+        died: E_PRINCIPAL,
     }
 }
 
@@ -256,18 +283,41 @@ const fn echo() -> Program {
     }
 }
 
+/// 主体（`prog-subject`，U 态）：身份服务的第一位真客人——问自己是谁、验三态、向下派生、
+/// 再越权趟一次（读数见 `programs/src/user/subject.rs` 头注）。
+///
+/// **不上板**（同 `lodger`）：它只做一件事，生死那本账与它无关。**排在 `echo` 之前**：
+/// `echo` 必须是最后一条（本域等它退场收场）。
+const fn subject() -> Program {
+    Program {
+        name: "subject",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: true,
+        holds_tree: false,
+        died: E_SUBJECT,
+    }
+}
+
 /// **装配单**：本域按这个顺序起服务。
 ///
 /// 持树者（`operator`）**排第一**：它是**服务**，但每位上树的客人都要它在——起来之后本域
 /// 当场把它那条提示之路认到手（[`service::assemble`] 的第二段）。
 ///
+/// 身份服务（`principal`）**紧随其后**：装配期每一条服务的 `derive` + `bind` 都要它在
+/// （[`service::assemble`] 在它放行之后补绑它自己与树，其后的每一条都在放行前拿到身份）。
+///
 /// `echo` **必须在最后**：[`service::assemble`] 返 [`PLAN`] 的最后一条，本域等它退场
 /// ——那正是"读到一行 `exit` 才收场"的那一格。
 ///
-/// 三台驱动紧跟在树之后、其余之前：控制器先就位，线再开闸（`uart` / `rtc` 持有那两台设备）。
-/// `sleeper` 排在 `lodger` 之后、`echo` 之前：它要找的那块门牌 `/device/rtc` 由 `rtc` 落。
+/// 三台驱动紧跟在身份服务之后、其余之前：控制器先就位，线再开闸（`uart` / `rtc` 持有那两台设备）。
+/// `sleeper` 排在 `lodger` 之后、`subject` 之前：它要找的那块门牌 `/device/rtc` 由 `rtc` 落。
 const PLAN: &[Program] = &[
     tree(),
+    principal(),
     router(),
     uart(),
     rtc(),
@@ -275,6 +325,7 @@ const PLAN: &[Program] = &[
     passer(),
     lodger(),
     sleeper(),
+    subject(),
     echo(),
 ];
 
