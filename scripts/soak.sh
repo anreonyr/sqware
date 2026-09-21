@@ -7,13 +7,17 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 八条启动读数仍在（`router: board reg=0 miss=1 hit=0` / `router: desk guest` /
-#      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 lookup=0` /
+#   2) 八条启动读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
+#      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `answer=router` / `guest: trip ok` / `echo: ready`）。
 #
 # 这两条是**驱动侧那两条**：控制器自报 95 条线、本域用的 context 是 1；串口那一台已经把
 # 设备拿在手里、把"收到字节就拉线"打开（`serial@10000000` 那枚 `ONLY` 门闩换了主人）。
 # 前者还是"设备树解码还对"的一条判据：解码一改错，这一格先红。
+#
+# `router: tree part=0 land=0 find=0 got=true` 是**门牌**那一条：驱动自己把入口落到
+# `/device/router` 上、再查回来验一遍（`part=0` = 那块目录是它建的；第二台上来会读成 2）。
+# 而 `guest: reg=0 find=0` 里那个 `find` 是**从树上问到的**——按名找服务今天归树，板管生死。
 #
 # 用法：
 #   scripts/soak.sh [轮数] [--release]      # 默认 10 轮，debug 档
@@ -44,11 +48,11 @@ while [ "$i" -le "$rounds" ]; do
   ( sleep 5; echo exit; sleep 3; echo exit ) | timeout 15 cargo run $prof > "$log" 2>&1
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
-  elif ! { grep -q "router: board reg=0 miss=1 hit=0" "$log" \
+  elif ! { grep -q "router: tree part=0 land=0 find=0 got=true" "$log" \
         && grep -q "router: desk guest" "$log" \
         && grep -q "router: ndev=95 ctx=1" "$log" \
         && grep -q "uart: serial@10000000 ier=rx" "$log" \
-        && grep -q "guest: reg=0 lookup=0" "$log" \
+        && grep -q "guest: reg=0 find=0" "$log" \
         && grep -q "answer=router" "$log" \
         && grep -q "guest: trip ok" "$log" \
         && grep -q "echo: ready" "$log"; }; then

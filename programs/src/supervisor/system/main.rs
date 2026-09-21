@@ -86,7 +86,11 @@ const fn tree() -> Program {
     }
 }
 
-/// 线路由者（中断面域）：常驻，要三枚门闩，起来时交回通道，并挂上板。
+/// 线路由者（中断面域）：常驻，要三枚门闩，起来时交回通道；**上板也上树**。
+///
+/// - 上板（`board: true`）只为让板看得见本域的死（编排域监督的事件源）——**它不挂牌子**了。
+/// - 上树（`operator: true`）：它的服务入口落在 `/device/router`（[`protocol::driver::DIR`]）
+///   ——**这就是它的门牌**，按名找它的人从树上问（`guest` 那一趟）。
 const fn router() -> Program {
     Program {
         name: "router",
@@ -95,7 +99,7 @@ const fn router() -> Program {
         channels: &["records"],
         needs: Some(router_needs::WANTS),
         board: true,
-        operator: false,
+        operator: true,
         holds_tree: false,
         died: E_ROUTER,
     }
@@ -118,10 +122,13 @@ const fn uart() -> Program {
     }
 }
 
-/// 客人：按名字找到 `router`、说一句、把答话带回来。
+/// 客人：从**树上**找到 `router`（`/device/router`）、说一句、把答话带回来。
 ///
 /// 它什么都不交回（`Announce::None`：本域不等它），故**上板那一格由 `board` 那一支负责**
 /// ——本域等的是它那条板路接上（[`board::attach`] 的第 2 步），不是它说了什么。
+///
+/// **两条目录都走**：自己那块牌子仍挂板（`REGISTER` + 退场那句 `DISMISS` 只有它在用），
+/// 而"找别人"走树（`operator: true`）——按名找服务从此归树，板管生死。
 const fn guest() -> Program {
     Program {
         name: "guest",
@@ -130,7 +137,7 @@ const fn guest() -> Program {
         channels: &[],
         needs: None,
         board: true,
-        operator: false,
+        operator: true,
         holds_tree: false,
         died: E_GUEST,
     }
@@ -158,8 +165,10 @@ const fn passer() -> Program {
 ///
 /// - 上板（`board: true`）只为让板**看得见它的死**：它退场时开的那几枚孔随退出钩子封印
 ///   ⇒ 板当场看出"客人没了" ⇒ 推一格死亡通知给装配者。本域的监督事件源就是这一条。
-/// - 上树（`operator: true`）是**第一位真客人**：它把本域的入口挂到树上、再查回来取一枚
-///   （`echo.rs::trip` 那几行）——树的载体因此有一条**跑在机器上的读数**。
+/// - 上树（`operator: true`）是**树上第一位客人**：它把本域的入口挂到树上、再查回来取一枚
+///   （`echo.rs::trip` 那几行）——树的载体因此有一条**跑在机器上的读数**。**照实记**：今天树上
+///   的真门牌是驱动族那块 `/device/router`（`protocol::driver::DIR`），而本域仍落在自己名下
+///   ——服务不上 `/device`。
 const fn echo() -> Program {
     Program {
         name: "echo",

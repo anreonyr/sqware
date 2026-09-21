@@ -3,19 +3,27 @@
 
 //! guest — **第一位真客人**：按名字找到一个服务、跟它说一句话、把答话带回来。
 //!
-//! 本域手里只有一样东西：**名字**。`router` 在哪个域、哪一枚孔、谁建的——那三样都由板回答
-//! （`LOOKUP` 把入口**经会话**授进本域表里，不从报文里来）。
+//! 本域手里只有一样东西：**名字**。`router` 在哪个域、哪一枚孔、谁建的——那三样由**树**回答
+//! （`FIND /device/router` 把入口**经会话**授进本域表里，不从报文里来）；**板**那边本域只用
+//! 两格：挂上自己的牌子（`REGISTER`）与退场那句 `DISMISS`。
 //!
 //! ```text
 //!   1  板那条路：seat(板) + claim(生我者, 板) —— 本端那一枚孔交给生我者（装答话路）；
 //!      另铸一枚**问话孔**给板
 //!   2  REGISTER "guest"：本域的服务入口经会话交给板（于是本域也能被按名字找到）
-//!   3  LOOKUP   "router"：板上问一句，入口从会话里进本域表（找不到就再问，有界）
-//!   4  借一枚**回信孔**给它、把 32 字节（**本域的名字** = "谁在敲门"）推进它的入口，
+//!   3  树那条路：seat(树) + claim(生我者, 树)，另铸一枚问话孔给持树者
+//!   4  FIND "/device/router"：树上问一句，入口从会话里进本域表（找不到就再问，有界）
+//!   5  借一枚**回信孔**给它、把 32 字节（**本域的名字** = "谁在敲门"）推进它的入口，
 //!      再从回信孔读回一句答话（它报的是它自己的名字）
-//!   5  说一句 DISMISS（**一字节帧**）——"我走了"：板据此撤格 + 摘掉本域挂在板上的牌子
-//!   6  报一行读数就退场 —— 一次往返，不留常驻
+//!   6  说一句 DISMISS（**一字节帧**）——"我走了"：板据此撤格 + 摘掉本域挂在板上的牌子
+//!   7  报一行读数就退场 —— 一次往返，不留常驻
 //! ```
+//!
+//! # 为什么两条路都走
+//!
+//! **按名找服务归树，板管生死**（用户裁定：驱动挂 `/device`）。故"找 `router`"走树
+//! （[`protocol::driver::DIR`] 那段目录），而自己那块牌子仍挂板：板那一侧的 `DISMISS`
+//! （客人自己说走）只有本域在用。**照实记**：板上的 `LOOKUP` 从此没有真客人。
 //!
 //! # 一句话就是一个名字
 //!
@@ -53,7 +61,9 @@ extern crate alloc;
 extern crate programs;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
-// 板：本域是**客侧**（挂牌子、查回来）。
+// 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
+use protocol::operator::call as ocall;
+use protocol::operator::client as operator;
 use protocol::system::board::client as board;
 
 use alloc::format;
@@ -119,35 +129,47 @@ extern "C" fn main() -> ! {
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"guest 在哪"）。
     let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);
 
-    // 二、问一句名字。**找不到就再问**，有界：本域可能比 `router` 先起（板上没有"装配期"）。
+    // 二、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
+    let Ok((tree, host)) = operator::open(sire, MS) else {
+        bail("guest: no tree link")
+    };
+    let Ok(hedge) = operator::ask_hole(host) else {
+        bail("guest: no tree ask")
+    };
+    let Ok(dir) = Name::new(protocol::driver::DIR) else {
+        bail("guest: bad name")
+    };
+    let path = [dir, want];
+
+    // 三、问一句名字。**找不到就再问**，有界：本域可能比 `router` 先起（树上没有"装配期"）。
     let mut left = MS;
-    let lookup = loop {
-        let code = board::ask(talk, &link, board, bcall::LOOKUP, want, none, MS).unwrap_or(BAD);
-        if code != bcall::UNKNOWN || left == 0 {
+    let find = loop {
+        let code = operator::ask(hedge, &tree, host, ocall::FIND, &path, none, MS).unwrap_or(BAD);
+        if code != ocall::UNKNOWN || left == 0 {
             break code;
         }
         let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
         left = left.saturating_sub(RETRY_MS);
     };
 
-    // 三、查到的那一枚（板经会话授进本域表里）：借一枚回信孔过去、说一句、把答话读回来。
-    let (at, answer) = match board::take(&link, board) {
+    // 四、查到的那一枚（持树者经会话授进本域表里）：借一枚回信孔过去、说一句、把答话读回来。
+    let (at, answer) = match operator::take(&tree, host) {
         Some(at) => (at, call(at, me)),
         // 查到了却没在表里认出那一枚：也算没走通（读数里的 `entry=0`）。
         None => (none, None),
     };
-    // 四、走完这一趟：说一句"我走了"（一字节帧，不带名字也不带入口）。板据此撤掉本域那一格、
+    // 五、走完这一趟：说一句"我走了"（一字节帧，不带名字也不带入口）。板据此撤掉本域那一格、
     //     摘掉本域挂在板上的牌子，答一格 `OK`；本域不在板上那本账上则答 `UNKNOWN`。
     let bye = board::dismiss(talk, &link, MS).unwrap_or(BAD);
 
     let said = answer.as_ref().map(Name::as_str).unwrap_or("?");
     say(&format!(
-        "guest: reg={reg} lookup={lookup} entry={} say={ME} answer={said} bye={bye}",
+        "guest: reg={reg} find={find} entry={} say={ME} answer={said} bye={bye}",
         at.get()
     ));
 
-    // 五、退场：一次往返，不留常驻（kernel 打的那一行就是这一格的读数）。
-    let walked = reg == bcall::OK && lookup == bcall::OK && answer.is_some();
+    // 六、退场：一次往返，不留常驻（kernel 打的那一行就是这一格的读数）。
+    let walked = reg == bcall::OK && find == ocall::OK && answer.is_some();
     exit_with_note(
         if walked { E_OK } else { E_TRIP },
         if walked {

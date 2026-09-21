@@ -50,10 +50,9 @@
 //!
 //! - **线那一半的机制还没落**：功能模型（四个操作 + 权威/属主两格 + 门牌已裁）已立在
 //!   [`line`]，结构与签名未走门；未决照实记在那里，此处不复述。
-//! - **门牌已裁、未落**：驱动的门牌挂 [`operator`](crate::operator) 的 **`/device`**——名字用
-//!   服务名、那块 Pane 由装配侧建一次、按名找服务走树、板只管生死（见
-//!   `programs/src/driver/mod.rs`）。现状两台驱动的 `Program::operator` 仍是 `false`：
-//!   `router` 挂板、`uart` 没有入口可挂。
+//! - **门牌已落（`router`）**：驱动的门牌挂 [`operator`](crate::operator) 的 **`/device`**
+//!   （[`DIR`]）——名字用服务名、那块 Pane 由第一个上树的驱动建、按名找服务走树、板只管生死
+//!   （见 `programs/src/driver/mod.rs`）。`uart` 还没有入口可挂（没有服务面）。
 //! - **驱动的特权级**（S / U）未裁：今天两台都声明 S 态，而 banner 里 UART 与 PLIC 的 PMP 都是
 //!   S/U (R,W)、旧树裁过"驱动是 U 态域"。
 //! - **名字不是单值**：同一个节点的多段 `reg` 造出两条同名记录（实测 `flash@20000000`），
@@ -62,3 +61,12 @@
 
 pub mod line;
 pub mod supply;
+
+/// 驱动族在命名树上的那一段目录：**`/device`**。
+///
+/// 驱动把自己的**服务入口**落在 `/device/<服务名>` 上（`router` ⇒ `/device/router`），名字用
+/// **服务名**——与装配单、日志、板上的名字同一个。
+///
+/// 那块 Pane 归**第一个上树的驱动**建：树上 `part` 落到一块非空 Pane 上答 `NonEmpty`
+/// ⇒ 只有一次创建机会，故"已经在了"必须当成**要的结果**（不是错误）。
+pub const DIR: &str = "device";

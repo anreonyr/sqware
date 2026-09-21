@@ -10,7 +10,8 @@
 //! ```text
 //! 收配给（父域按同一张需求单推来记录，按 Slot 归位：控制器 / 自描述 / 门铃）
 //!   → 读树：本域该用哪个 context、树里指到本控制器的线有哪些（顺带报"没进来的账"）
-//!   → 板上一趟（挂上本域的服务入口、查回来验一遍：答话三格 + 入口有没有到手）
+//!   → 板上一趟（装上板路、交上问话孔——**只为让板看得见本域的死**，不挂牌子）
+//!   → 树上一趟（分出 `/device`、把本域的服务入口落成 `/device/router`、再查回来验一遍）
 //!   → 接上树里指到本控制器的每一条线
 //!   → 两枚线程各守一个源：
 //!       主线程     等铃 → claim 到空 → 按线静音 + complete → 应铃 → 到点把线放回去
@@ -46,6 +47,12 @@
 //! 「名字 + 句柄」的记录推进来，本域按 [`needs::Slot`] 归位。**字节长什么样不在这里**
 //! （那是 [`protocol::system::grant`]，与父域同一份）；本域只说"我要哪几格"。
 //!
+//! # 门牌挂树上，板只管生死
+//!
+//! 两台目录原本都挂着本域的名字，今天分家了（用户裁定）：**按名找服务走树**（本域是
+//! `/device/router`，名字用**服务名**，见 [`protocol::driver::DIR`]），**板**留着看生死——
+//! 编排域监督的事件源就是板那条死亡道。故本域**不再向板挂牌**，只装板路 + 交问话孔。
+//!
 //! # 还没有的那一格：投递给客户端
 //!
 //! 本域做"收与结"：接上树里指到本控制器的线、claim、complete、应铃。**没有**"名字 → 线号"
@@ -78,15 +85,17 @@ extern crate programs;
 use programs::driver::assemble;
 use programs::driver::router::needs;
 
-// 板：本域是**客侧**（挂牌子、查回来）。
+// 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
 use protocol::system::board::client as board;
+// 树：本域也是**客侧**（门牌挂 `/device/router`，见文件头）。
+use protocol::operator::call as ocall;
+use protocol::operator::client as operator;
 
 /// 设备侧（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
 mod plic;
 
 use env::{PieToken, TaskId};
 use protocol::session::Quay;
-use protocol::system::board::call as bcall;
 use runtime::core::bell::Bell;
 use runtime::core::dock::Dock;
 use runtime::core::port::{self, Access, Policy};
@@ -99,11 +108,11 @@ use runtime::env::unit as utask;
 
 use crate::plic::{LINE_PRIORITY, Plic};
 
-/// 本域挂在板上的名字，以及**对照**用的那个"板上没有的名字"。
+/// 本域挂在树上的名字（`/device/router`，[`protocol::driver::DIR`] 之下的那一段）。
 ///
-/// 对照那一问是必要的：只报"查到了"而不知道"查不到会怎样"，那一格读数证明不了什么。
+/// **不带对照那一问**：板上那趟原先配一个"板上没有的名字"当对照，今天留在板上的只有生死，
+/// 名字的真假由树那一趟的 `find` 答（查得到 = 门牌落上了）。
 const SERVICE: &str = "router";
-const NOBODY: &str = "no-such-name";
 
 /// 与待客线程之间那条路的名字（本域登记它交回来的服务入口时用；它那侧不看名字）。
 const DESK_LINK: &str = "router-entry";
@@ -283,39 +292,30 @@ extern "C" fn main() -> ! {
     }
 }
 
-/// 板那条路 + 待客线程：挂上本域的服务入口，再查回来验一遍（读数三格）。
+/// 板那条路 + 待客线程 + **上树挂门牌**。
 ///
-/// **它不拦主循环**：板是"起来之后"的事——挂不上只报一句读数（[`board_trip`] 返 `None`），
-/// 收与结照旧。
+/// **它不拦主循环**：三件都是"起来之后"的事——哪一件没成只报一句读数，收与结照旧。
+///
+/// 板那一趟**只剩生死**：本端装上板路、交上问话孔（不交的那一位在板账上永远"没挂齐"，
+/// 板线程会一直退化成 1 ms 节拍），**不挂牌子**——名字挂树上（下一趟）。
 fn serve_board(sire: TaskId, me: TaskId) {
     // 板那条路：本端装一条、认下生我者那一枚（它再转授给板线程）。返两样：本端这座码头 +
-    // **板线程的号**（板路上先到的那一格）——孔只在铸它的表里念得出来，故交问话孔、交入口
-    // 都得先叫得出板是谁。
+    // **板线程的号**（板路上先到的那一格）——孔只在铸它的表里念得出来，故交问话孔得先
+    // 叫得出板是谁。
     let link = board::open(sire, QUAY_MS).ok();
+    let boarded = match &link {
+        Some((_, board)) => board::ask_hole(*board).is_ok(),
+        None => false,
+    };
     // 待客线程 + 服务入口：入口由待客线程铸（谁守那扇门谁读它），副本本域登记。
     let entry = start_desk(me);
-    // 板上一趟：挂上这一枚入口、再查回来验一遍。
-    let (no_link, no_desk) = (link.is_none(), entry.is_none());
-    let trip = match (link, entry) {
-        (Some((link, board)), Some(entry)) => board_trip(&link, board, entry),
-        _ => None,
-    };
-    match &trip {
-        Some(t) => say(&alloc::format!(
-            "router: board reg={} miss={} hit={} entry={} grant={}",
-            t.reg,
-            t.miss,
-            t.hit,
-            t.entry.get(),
-            t.grant.map(|g| g.get()).unwrap_or(0)
-        )),
-        None => say(if no_link {
-            "router: board: no link"
-        } else if no_desk {
-            "router: board: no desk"
-        } else {
-            "router: board: trip"
-        }),
+    // 上树：本域的门牌 = `/device/router`（名字用服务名，见 [`protocol::driver::DIR`]）。
+    match entry {
+        Some(entry) => tree_trip(sire, entry),
+        None => say("router: tree: no desk"),
+    }
+    if !boarded {
+        say("router: board: no link");
     }
 }
 
@@ -413,60 +413,49 @@ fn opened_for(who: env::TaskId) -> Option<PieToken> {
     }
 }
 
-/// 板上一趟的读数（`None` = 路都没装上）。
+/// 树上一趟：**分目录 → 落门牌 → 查回来验一遍**。读数一行四格 + 入口的号。
 ///
 /// ```text
-///   entry  本域的服务入口（自己铸的那一枚）          —— 谁想跟本域说话就往它推
-///   reg    REGISTER "router" 的答话码                  —— 0 = 板收下了
-///   miss   LOOKUP   "no-such-name" 的答话码          —— 该是 1（UNKNOWN）
-///   hit    LOOKUP   "router" 的答话码                  —— 0 = 查到并把入口授了回来
-///   grant  板经会话授进来的那一枚（`board::take` 的最后一枚）
+///   PART ["device"]              → 0 = 本域建的；2 = 已经在了（前一台驱动建的）——两个都要
+///   LAND ["device","router"]     → 0 = 门牌落上（入口经会话交给持树者）
+///   FIND ["device","router"]     → 0 = 查得到，且那一枚经会话授回本域表里
+///   got                           → 本域在表里认出刚授回来的那一枚了吗
 /// ```
 ///
-/// 四个码各是一格，缺一格这句话就证明不了什么：没有 `miss`，"查到了"是空话；没有 `hit`，
-/// REGISTER 成没成也没对照。**`grant` 只是"授进来的是哪一枚"这个号**——"它指回原物"
-/// 这件事在自检拆掉之后由**真客人**（`guest`）那一趟证（见 [`board_trip`]）。
-struct BoardTrip {
-    entry: PieToken,
-    reg: u8,
-    miss: u8,
-    hit: u8,
-    grant: Option<PieToken>,
+/// `got` **只是"认出了那一枚"**：它指不指得回原物，由**真客人**（`guest`）那一趟证——它
+/// 照同一条路找上门、说一句话、拿回答话。故本域不再自问自答（推读自检早已拆掉）。
+///
+/// 三格答码用的是树自己的失败域（[`ocall::NONEMPTY`] 是"那块目录已经有人建了"，**不是错误**）。
+fn tree_trip(sire: TaskId, entry: PieToken) {
+    let Ok((link, host)) = operator::open(sire, QUAY_MS) else {
+        say("router: tree: no lane");
+        return;
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        say("router: tree: no ask");
+        return;
+    };
+    let (Ok(dir), Ok(me)) = (
+        env::Name::new(protocol::driver::DIR),
+        env::Name::new(SERVICE),
+    ) else {
+        say("router: tree: bad name");
+        return;
+    };
+    let path = [dir, me];
+    let none = PieToken::NONE;
+    let part = operator::ask(talk, &link, host, ocall::PART, &[dir], none, QUAY_MS).unwrap_or(BAD);
+    let land = operator::ask(talk, &link, host, ocall::LAND, &path, entry, QUAY_MS).unwrap_or(BAD);
+    let find = operator::ask(talk, &link, host, ocall::FIND, &path, none, QUAY_MS).unwrap_or(BAD);
+    let got = operator::take(&link, host).is_some();
+    say(&alloc::format!(
+        "router: tree part={part} land={land} find={find} got={got} entry={}",
+        entry.get()
+    ));
 }
 
-/// 板上那一趟：**挂上自己那一枚入口，再查回来验一遍**。返一格读数（`None` = 路都没装上）。
-///
-/// ```text
-///   REGISTER "router"        → 板上挂了本域的服务入口（入口经会话交给板）
-///   LOOKUP   "no-such-name"  → 板上没有的名字必须答 UNKNOWN（否则"查到了"不值钱）
-///   LOOKUP   "router"        → 查回来一枚入口（板经会话授进本域表里）
-/// ```
-///
-/// 第四格是**板授进来的那一枚**（客侧按 `vestor` 认，见 `board::take`）——`None` = 板答了
-/// "查到了"却没把入口交进来。**它只是"那一枚的号"**：指不指得回原物，自检拆掉之后由**真
-/// 客人**那一趟证（下一段）。
-///
-/// **推读自检已经拆掉**：本域的服务入口由待客线程读（两个方向各一枚孔），本线程推一句
-/// 进去只会被它读走——"授进来的指回原物"这件事改由**真客人**（`guest`）走一遍，那比自问
-/// 自答结实。
-fn board_trip(link: &Quay, board: TaskId, entry: PieToken) -> Option<BoardTrip> {
-    // 问话孔：本端铸、给板读（本端自窄到只写）；答话仍走这条板路。
-    let talk = board::ask_hole(board).ok()?;
-    let name = env::Name::new(SERVICE).ok()?;
-    let absent = env::Name::new(NOBODY).ok()?;
-    let none = PieToken::NONE;
-    let reg = board::ask(talk, link, board, bcall::REGISTER, name, entry, QUAY_MS).ok()?;
-    let miss = board::ask(talk, link, board, bcall::LOOKUP, absent, none, QUAY_MS).ok()?;
-    let hit = board::ask(talk, link, board, bcall::LOOKUP, name, none, QUAY_MS).ok()?;
-    let grant = board::take(link, board);
-    Some(BoardTrip {
-        entry,
-        reg,
-        miss,
-        hit,
-        grant,
-    })
-}
+/// 三格答码共用的"没走到 / 读不懂"那一格（与树自己的 [`ocall::BAD`] 同值）。
+const BAD: u8 = ocall::BAD;
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。
 fn say(msg: &str) {
