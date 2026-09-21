@@ -3,11 +3,12 @@
 // 一个 Team 持有唯一 Space（共享地址空间），多个 Task 共享之；每个 Task 持有
 // 自己的 trap 帧（Frame 窗口分配）。
 //
-//   space     — 地址空间（Space/SpaceBuilder、Map/Window/Durable 簿记模型、内核布局）
+//   space     — 地址空间（Space/SpaceBuilder、SpaceInner 映射簿记、window 窗口策略）
 //   gate      — 能力门闩（Pie/AnyPie/授权；单向依赖 mail 的资源实体）
 //   team      — 团队容器（Team/TeamBuilder/kernel 单例 + 运行期装载）
 //   task      — 线程单元（Task/TaskBuilder）
 //   life      — 存活单元（键的寿命 = 资源的寿命；A2 的后半）
+//   weak      — 任务弱引用的出身账（生/亡各记一笔；挂起自检的判据）
 //   loader    — 程序装载（ELF → Space durable）
 //   parser    — ELF 解析（段配方）
 

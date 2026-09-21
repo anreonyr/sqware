@@ -1,10 +1,11 @@
 // 调度核心（scheduler::core）— per-hart 调度：纯功能，无适配代码。
 //
-// 四文件按接缝分（自包含、可独立推理，不依赖任何具体调用方）：
+// 五文件按接缝分（自包含、可独立推理，不依赖任何具体调用方）：
 //   hart.rs   本机调度器：容器（running + 就绪队列）、装槽 / 让位 / 轮转 / 续跑
 //   ident.rs  本核身份槽 `Badge` + 身份读法 `ident()`
 //   table.rs  全局表（per-hart 调度器数组）+ 名册 + 全机扫描 + 关机终末释放 + **唯一入队路径 `kick`**
 //   fetch.rs  取活：本核队首 + WFI 休眠（跨核偷取已删，见文件头照实记）
+//   beacon.rs 停机信标：挂住时唯一的发声口（根任务装出后武装，会话结束的判据）
 //
 // 适配面（`scheduler/{boot,trap}.rs`）只经本文件触及核心：本模块内跨到 `scheduler`
 // 一级的条目取 `pub(in super::super)`——刚好到 `scheduler`，不放宽到 `pub(crate)`
