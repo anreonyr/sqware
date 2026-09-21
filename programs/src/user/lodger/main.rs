@@ -15,7 +15,7 @@
 //!        同一条线再来一次     → `lodger: taken=2`     （2 = TAKEN：主人是本域自己）
 //!        报树里没有的名字     → `lodger: unknown=1`   （1 = UNKNOWN：解树那一处答不出）
 //!   4  **直接死**：不说退场、不交回 ⇒ 它铸的那枚孔随退出钩子封印 ⇒ 路由者被叫醒、探活
-//!      答不出 ⇒ 拆线 + 空出格子（读数 `router: vacate line=11`）
+//!      答不出 ⇒ 拆线 + 空出格子（读数 `router: vacate line=1`）
 //! ```
 //!
 //! # `TAKEN` 那一趟为什么拿本域自己的线试
@@ -110,7 +110,7 @@ extern "C" fn main() -> ! {
     say(&format!("lodger: unknown={unknown}"));
 
     // 4. **直接死**：不说退场那一句、不交回。`held` 那条线活到本域退场为止——它铸的那枚孔
-    //    随退出钩子封印，路由者那一格因此醒来（`router: vacate line=11`）。
+    //    随退出钩子封印，路由者那一格因此醒来（`router: vacate line=1`）。
     let _held = held;
     let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;
     exit_with_note(

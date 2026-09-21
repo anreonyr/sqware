@@ -64,8 +64,8 @@
 //!   就**拆线 + 空出格子**（`sweep`，见 `programs/src/driver/router/main.rs`）。时机是
 //!   "组那一次等待回来"，理由：主人一没，它铸的那一枚孔就封印，而那一格正挂在路由者这只组
 //!   上（`wipe` 敲组键）——**醒来本身就是通知**，不必跟着板、也不必拿一拍去探。
-//!   **读数**：`prog-lodger`（房客）每次冷启动都占住 11 号线、一句话不说就走 ⇒
-//!   `router: line 11 = rtc@101000` 与 `router: vacate line=11`（`scripts/soak.sh` 的固定
+//!   **读数**：`prog-lodger`（房客）每次冷启动都占住 1 号线、一句话不说就走 ⇒
+//!   `router: line 1 = virtio_mmio@10001000` 与 `router: vacate line=1`（`scripts/soak.sh` 的固定
 //!   读数）——"死会叫醒"由此从读代码变成量出来的。
 
 pub mod call;
