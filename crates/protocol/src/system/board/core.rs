@@ -286,6 +286,11 @@ impl Board {
 
 #[cfg(test)]
 mod tests {
+    //! 照实记：本模块**编不到**——`protocol/Cargo.toml` 是 `test = false`（riscv 目标上编不出
+    //! libtest），而这里 `use std::sync::Mutex` 又是宿主侧的东西。故这批判据今天**没有被跑过**；
+    //! 要跑得立宿主 crate（"用完即删"的那一步）。留着它们是因为它们是**读数**——
+    //! `a_dead_entry_is_swept_on_the_read_path` 正是 `Board::lookup` 留着不删的理由
+    //! （见 `board/mod.rs` 末段），不是"编不到就该删"。
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;

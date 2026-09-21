@@ -52,12 +52,12 @@ pub fn sleep(d: Duration) -> EnvResult<()> {
     // `sleep(500µs)` 静默变成 `Park{0}` = 让出一拍；`sleep(1.5ms)` 变成 `Park{1}`，
     // 连"至少 1.5 ms"这个下限都没守住。向上取整才与下限族口径一致：
     // `500µs → 1`、`1.5ms → 2`、`1ms → 1`、`0 → 0`（零时长仍是"让出一拍"）。
-    let mut ms = d.as_millis();
+    let mut millis = d.as_millis();
     if d.subsec_nanos() % 1_000_000 != 0 {
-        ms += 1;
+        millis += 1;
     }
     let _ = RoomCall::Park {
-        millis: ms.min(usize::MAX as u128) as usize,
+        millis: millis.min(usize::MAX as u128) as usize,
     }
     .call();
     Ok(())
@@ -93,8 +93,8 @@ pub fn doom(task: TaskId) -> EnvResult<()> {
     Ok(())
 }
 
-pub fn wait(key: usize, ms: usize) -> EnvResult<()> {
-    let _ = RoomCall::Wait { key, millis: ms }.call();
+pub fn wait(key: usize, millis: usize) -> EnvResult<()> {
+    let _ = RoomCall::Wait { key, millis }.call();
     Ok(())
 }
 

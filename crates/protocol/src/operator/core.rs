@@ -305,6 +305,9 @@ impl Operator {
 
 #[cfg(test)]
 mod tests {
+    //! 照实记：本模块**编不到**——`protocol/Cargo.toml` 是 `test = false`（riscv 目标上编不出
+    //! libtest），而这里 `use std::sync::Mutex` 又是宿主侧的东西。故这批判据今天**没有被跑过**；
+    //! 要跑得立宿主 crate（"用完即删"的那一步）。它们记的是树的读数，不是"编不到就该删"。
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;

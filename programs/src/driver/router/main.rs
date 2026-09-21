@@ -244,7 +244,7 @@ extern "C" fn main() -> ! {
     loop {
         // **等到有事件**：三样（铃 / 门上有人 / 客人的排空）都可等地，醒来就说明有一格有事。
         //
-        // **纯事件（`usize::MAX`），没有兜底的一拍**：旧写法带 20 millis 期限，为的是盖住"偶尔
+        // **纯事件（`usize::MAX`），没有兜底的一拍**：旧写法带 20 ms 期限，为的是盖住"偶尔
         // 一次组等待没被叫醒"（实测：PLIC 的 `pending` 置着、本域不再被叫醒，字节留在设备里）。
         // 那一格的根在铃那一侧——空闲核不进外部 trap，`raise_irq` 在它身上没有调用点，铃
         // 根本没响（见 `kernel/src/work/room/scheduler/core/fetch.rs` 的空闲循环）。根修在
@@ -370,7 +370,7 @@ fn alive(lane: &Pier) -> bool {
 /// **它不拦主循环**：两件都是"起来之后"的事——哪一件没成只报一句读数，收与结照旧。
 fn serve_board(sire: TaskId, entry: PieToken) {
     // 板那条路：本端装一条、认下生我者那一枚（它再转授给板线程），再交一枚问话孔——
-    // 不交的那一位在板账上永远"没挂齐"，板线程会一直退化成 1 millis 节拍。
+    // 不交的那一位在板账上永远"没挂齐"，板线程会一直退化成 1 ms 节拍。
     let link = board::open(sire, QUAY_MS).ok();
     let boarded = match &link {
         Some((_, board)) => board::ask_hole(*board).is_ok(),

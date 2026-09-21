@@ -21,7 +21,7 @@ pub enum Fail {
 /// 一格：没主，或者有主（一条泊位 + 忙不忙）。
 #[derive(Clone, Copy)]
 enum Cell {
-    Free,
+    Idle,
     Owned { lane: Pier, busy: bool },
 }
 
@@ -41,7 +41,7 @@ impl Lines {
     pub fn new(device_count: u32) -> Option<Lines> {
         let mut cells = Vec::new();
         cells.try_reserve(device_count as usize + 1).ok()?;
-        cells.resize(device_count as usize + 1, Cell::Free);
+        cells.resize(device_count as usize + 1, Cell::Idle);
         Some(Lines { cells })
     }
 
@@ -53,7 +53,7 @@ impl Lines {
             return Err(Fail::Unknown);
         }
         match self.cells.get_mut(line as usize) {
-            Some(cell @ Cell::Free) => {
+            Some(cell @ Cell::Idle) => {
                 *cell = Cell::Owned { lane, busy: false };
                 Ok(())
             }
@@ -70,7 +70,7 @@ impl Lines {
                 *busy = true;
                 Ok(())
             }
-            Some(Cell::Free) | None => Err(Fail::Unknown),
+            Some(Cell::Idle) | None => Err(Fail::Unknown),
         }
     }
 
@@ -81,7 +81,7 @@ impl Lines {
                 *busy = false;
                 Ok(())
             }
-            Some(Cell::Free) | None => Err(Fail::Unknown),
+            Some(Cell::Idle) | None => Err(Fail::Unknown),
         }
     }
 
@@ -89,10 +89,10 @@ impl Lines {
     pub fn vacate(&mut self, line: u32) -> Result<(), Fail> {
         match self.cells.get_mut(line as usize) {
             Some(cell @ Cell::Owned { .. }) => {
-                *cell = Cell::Free;
+                *cell = Cell::Idle;
                 Ok(())
             }
-            Some(Cell::Free) | None => Err(Fail::Unknown),
+            Some(Cell::Idle) | None => Err(Fail::Unknown),
         }
     }
 
@@ -100,7 +100,7 @@ impl Lines {
     pub fn lane(&self, line: u32) -> Option<Pier> {
         match self.cells.get(line as usize)? {
             Cell::Owned { lane, .. } => Some(*lane),
-            Cell::Free => None,
+            Cell::Idle => None,
         }
     }
 
