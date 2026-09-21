@@ -33,11 +33,11 @@
 //! 其余驱动侧（名字→线号 / 终端渲染）随旧树一起清了（tag `proto-v1-baseline`），
 //! 需要时按新形状写——**不从那一套搬**。
 //!
-//! 今天有**二十个**程序：`prog-echo` / `prog-guest` / `prog-passer` / `prog-lodger` 与三台驱动
-//! `prog-router` / `prog-uart` / `prog-rtc`（**都是 U 态**），`prog-root` / `prog-system` /
-//! `prog-operator`（监督侧，S 态），加十台压测（`prog-churn` / `prog-rig` / `prog-busy` /
-//! `prog-park` / `prog-hang` / `prog-load` / `prog-beat` / `prog-again` / `prog-waiter` /
-//! `prog-group`）。
+//! 今天有**二十一个**程序：`prog-echo` / `prog-guest` / `prog-passer` / `prog-lodger` /
+//! `prog-sleeper` 与三台驱动 `prog-router` / `prog-uart` / `prog-rtc`（**都是 U 态**），
+//! `prog-root` / `prog-system` / `prog-operator`（监督侧，S 态），加十台压测（`prog-churn` /
+//! `prog-rig` / `prog-busy` / `prog-park` / `prog-hang` / `prog-load` / `prog-beat` /
+//! `prog-again` / `prog-waiter` / `prog-group`）。
 //! **特权级不在这里声明**——那一格在 `kernel/build.rs::INITRD_BINS`。
 
 extern crate alloc;

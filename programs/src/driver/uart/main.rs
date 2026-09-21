@@ -51,7 +51,7 @@
 extern crate alloc;
 extern crate programs;
 
-// 共享件住驱动这一族里：`assemble` 是两台驱动都要写一遍的那段客侧装配。
+// 共享件住驱动这一族里：`assemble` 是三台驱动都要写一遍的那段客侧装配。
 use programs::driver::assemble;
 use programs::driver::uart::needs;
 

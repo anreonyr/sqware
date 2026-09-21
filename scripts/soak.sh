@@ -7,21 +7,29 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 二十一条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
-#      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
+#   2) 三十一条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
+#      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
 #      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`** /
 #      **`router: line 11 = rtc@101000`** / **`rtc: line occupied`** / **`rtc: armed at=`** /
 #      **`router: line=11`** / **`rtc: rang n=1`** / **`router: exhaust line=11`** /
 #      **`router: vacate line=1`** / **`lodger: taken=2`** / **`lodger: unknown=1`** /
-#      **`router: lane dropped line=1 pies=24`**）；
+#      **`router: lane dropped line=1 pies=24`** /
+#      **`rtc: tree part=2 land=0 find=0 got=true`** / **`rtc: asked now=`** /
+#      **`sleeper: reg=0`** / **`sleeper: found`** / **`sleeper: now=`** /
+#      **`sleeper: past=2`** / **`sleeper: armed=0`** / **`sleeper: taken=1`** /
+#      **`sleeper: rang at=`** / **`sleeper: gone`**）；
 #   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
 #      "还响着" / 其中**空闲核补摇**了几支（见下）。
 #
 # 这两条是**驱动侧那两条**：控制器自报 95 条线、本域用的 context 是 1；串口那一台已经把
 # 设备拿在手里、把"收到字节就拉线"打开（`serial@10000000` 那枚 `ONLY` 门闩换了主人）。
 # 前者还是"设备树解码还对"的一条判据：解码一改错，这一格先红。
+#
+# **照实记**：那一格原先是 `router: ndev=95 ctx=1`——`riscv,ndev` 改名回 `device_count` 那一刀
+# （设备树属性名还原）没有回头看这张判据，于是 `soak` 从那天起就一直是红的（读数换了个词，判据
+# 没跟着走）。这一刀顺手改回来：**判据跟着读数走，不是反过来**。
 #
 # `router: tree part=0 land=0 find=0 got=true` 是**门牌**那一条：驱动自己把入口落到
 # `/device/router` 上、再查回来验一遍（`part=0` = 那块目录是它建的；第二台上来会读成 2）。
@@ -72,8 +80,25 @@
 # 那一头；`rtc: armed at=… ier=1 alarm=1` = **闸门开着、闹钟武装上了**（`ier` 读 `IRQ_ENABLED`、
 # `alarm` 读 `ALARM_STATUS`——**它是 `alarm_running`，不是"到点了"**，那是被读数打回来之后
 # 改的说法）；`router: line=11` = **那台设备真的把线拉起来了**（`uart` 那一格是 `router: line=10`）；
-# `rtc: rang n=1 now=… at=…` = 投递到了客户手里、它读走并**清掉**了那一格（`now >= at`）；
-# `router: exhaust line=11` = 排空、线放回（喂不喂键都要有：这一台 100 ms 一次闹钟）。
+# `rtc: rang n=1 now=…` = 投递到了客户手里、它读走并**清掉**了那一格（`now >= at`）；
+# `router: exhaust line=11` = 排空、线放回（喂不喂键都要有：那一次闹钟由客人约在 +50 ms）。
+#
+# 七行是**服务面那一刀**（`rtc` 兼报时服务，门牌 `/device/rtc`，客人 `prog-sleeper`）——这一刀
+# 证的是"**抽象等第二个实例**"：`uart` 那一面只有一个方向（排空读到什么就交什么），这一面
+# **两个方向都有**（客人问 + 设备叫）。`rtc: tree part=2 land=0 find=0 got=true` = **门牌**
+# （`part=2` = 那块目录已经在了，`router` 先建的；与 `uart` 那一格同形）；`rtc: asked now=` 与
+# `sleeper: now=` = **一问一答的两头**（同一趟的两个数**相等**——设备只有一个读者，读数在
+# 驱动手里）；`sleeper: past=2` / `sleeper: taken=1` = **失败域那两格**（客人**有意**各走一趟：
+# 过去的时刻、那一格已经有人——后者拿它自己刚约下的那一次试，故是确定的）；`sleeper: armed=0`
+# = 真约上了；`sleeper: rang at=<at> now=<t>` = **设备叫的那一头**（到点设备自己拉线 ⇒ 路由者
+# 投递 ⇒ 驱动清掉那一格、把"那一声"推回客人手里）。
+#
+# **照实记（因果变了）**：`rtc: armed at=` 那一行从前是驱动**起域时自己武装**的一次（10 Hz
+# 自走），今天是**客人约的那一次**；自走那一圈连同 `PERIOD_NS` 整条撤掉了（有真客人之后它就是
+# 没人要的机制——"没有读数的机制不落"的反面）。`rtc: rang n=1` 同理：还是那台设备自己拉线换来
+# 的投递，只是那一次闹钟是客人定的。服务面那三份（帧形 / 那一格 / 客侧两手）住
+# `programs/src/driver/rtc/`——**不进 `crates/protocol`**：旧 `uart` 协议的死因就是把它放进了
+# 协议层。
 #
 # **照实记（那一刀量出来的三条设备语义）**：读时间要**先低后高**（低半格那次读把高半格锁存
 # 起来）；`ALARM_STATUS` 是"武装着"不是"到点了"；写闹钟要**先高后低**（低半格那次写会当场
@@ -117,7 +142,7 @@ while [ "$i" -le "$rounds" ]; do
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
   elif ! { grep -q "router: tree part=0 land=0 find=0 got=true" "$log" \
-        && grep -q "router: ndev=95 ctx=1" "$log" \
+        && grep -q "router: device_count=95 ctx=1" "$log" \
         && grep -q "uart: serial@10000000 ier=rx" "$log" \
         && grep -q "guest: reg=0 find=0" "$log" \
         && grep -q "guest: trip ok" "$log" \
@@ -126,9 +151,19 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "router: line 11 = rtc@101000" "$log" \
         && grep -q "rtc: line occupied" "$log" \
         && grep -q "rtc: armed at=" "$log" \
+        && grep -q "rtc: tree part=2 land=0 find=0 got=true" "$log" \
+        && grep -q "rtc: asked now=" "$log" \
         && grep -q "router: line=11" "$log" \
         && grep -q "rtc: rang n=1" "$log" \
         && grep -q "router: exhaust line=11" "$log" \
+        && grep -q "sleeper: reg=0" "$log" \
+        && grep -q "sleeper: found" "$log" \
+        && grep -q "sleeper: now=" "$log" \
+        && grep -q "sleeper: past=2" "$log" \
+        && grep -q "sleeper: armed=0" "$log" \
+        && grep -q "sleeper: taken=1" "$log" \
+        && grep -q "sleeper: rang at=" "$log" \
+        && grep -q "sleeper: gone" "$log" \
         && grep -q "router: vacate line=1" "$log" \
         && grep -q "lodger: taken=2" "$log" \
         && grep -q "lodger: unknown=1" "$log" \

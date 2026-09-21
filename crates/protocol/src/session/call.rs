@@ -90,6 +90,28 @@ pub(super) fn each(mut f: impl FnMut(Hole) -> Result<(), Claim>) -> Result<(), C
     }
 }
 
+/// 我表里**这位给的、刻着那个记号的那一枚**。
+///
+/// 判据就是 [`Quay::claim`](super::core::Quay::claim) 认领时用的那两格正判据
+/// （`owner` + `mark`），只是**不要一座码头**：一问一答那一档里，客人每趟借一枚回信孔过来、
+/// 交完就推帧，收的人手里没有泊位可归位，只要那一枚号。
+///
+/// **多枚时给最后那一枚**——表内次序是"什么时候进来的"（`each` 走的是本端那张表），而
+/// 交孔与推帧是**两趟**、且**孔先到**（见 [`ship`] 的调用点）⇒ 最后那一枚就是这一趟那一枚。
+/// 这条次序是契约的一半，不是实现细节。
+///
+/// 枚举本身读不动（[`Claim::Unread`]）时报 `None`：那一格里已经有"我没找到"。
+pub fn find(of: TaskId, mark: &str) -> Option<PieToken> {
+    let mut found = None;
+    let _ = each(|h| {
+        if h.owner == Some(of) && h.mark.as_str() == mark {
+            found = Some(h.token);
+        }
+        Ok(())
+    });
+    found
+}
+
 /// 我表里的一项：一枚孔 + **谁开的** + **刻的什么记号**（[`each`] 交出来的那两格）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Hole {

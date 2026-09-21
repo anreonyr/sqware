@@ -1,0 +1,105 @@
+//! rtc::client — **客侧两手**：问一声现在几点、约一个时刻（约成之后从它等那一声）。
+//!
+//! 客人不碰设备——那台时钟归驱动持有（`ONLY`）；客人只说两句话、收两句话。
+//!
+//! ```text
+//!   now(门牌, ms)        一问一答，自带一枚回信孔，答完就放掉
+//!   arm(门牌, at, ms)    约；**那一枚回信孔留下来**——驱动把它收在那一格里，
+//!                        到点从那枚孔把"那一声"推回来
+//! ```
+//!
+//! **借孔那一趟的次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
+//! "谁给的 + 记号"两格认，多枚时取**最后那一枚**——故最后那一枚一定就是这一趟那一枚。
+//!
+//! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
+
+use env::PieToken;
+use runtime::core::port::{self, Access, Policy};
+use runtime::env::mail::{self, HolePie};
+
+use super::call;
+use super::core::Fail;
+
+/// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数。
+///
+/// 一问一答——这一趟的回信孔只活到这句话答完（同一次往返借一枚，见 `protocol::session`
+/// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）。
+pub fn now(entry: PieToken, millis: usize) -> Result<u64, Fail> {
+    let back = lend(entry, &call::pack_ask())?;
+    let mut buf = [0u8; call::TIME_LEN];
+    let answer = HolePie::from_token(back)
+        .pull_timeout(&mut buf, millis)
+        .ok()
+        .and_then(|n| call::unpack_time(&buf[..n]))
+        .ok_or(Fail::Denied);
+    let _ = mail::release(back);
+    answer
+}
+
+/// 约一个时刻：`at`（绝对纳秒）。成 ⇒ 返那一次约；到点从那枚孔收那一声。
+///
+/// 失败域两格都由**驱动说的话**给出（`Taken` / `Past`），第三格 `Denied` 是这一趟自己没
+/// 走到——三种情况对客人是三个不同的下一步，故不合并成一格。
+pub fn arm(entry: PieToken, at: u64, millis: usize) -> Result<Alarm, Fail> {
+    let back = lend(entry, &call::pack_arm(at))?;
+    let mut one = [0u8; call::CODE_LEN];
+    let code = match HolePie::from_token(back).pull_timeout(&mut one, millis) {
+        Ok(n) if n == call::CODE_LEN => one[0],
+        _ => {
+            let _ = mail::release(back);
+            return Err(Fail::Denied);
+        }
+    };
+    if code == call::OK {
+        // **这一枚不还**：那一格现在收着它，到点从那枚孔回来。
+        return Ok(Alarm {
+            back: HolePie::from_token(back),
+        });
+    }
+    let _ = mail::release(back);
+    Err(call::code_to_fail(code).unwrap_or(Fail::Denied))
+}
+
+/// 一次**约**：那一格里收着的，就是它。
+pub struct Alarm {
+    back: HolePie,
+}
+
+impl Alarm {
+    /// 等那一声。返**响的那一刻**（驱动听见闹钟时读到的计数）。
+    ///
+    /// **无界等**：客人只有这一件事，而对面一没，这一枚孔就封印 ⇒ 当场答 `Err(())`，
+    /// 不是永久挂住（寿命边随它的**开者**——这一枚是客人自己铸的）。
+    pub fn receive(&self) -> Result<u64, ()> {
+        let mut buf = [0u8; call::TIME_LEN];
+        let n = self.back.pull(&mut buf).map_err(|_| ())?;
+        call::unpack_time(&buf[..n]).ok_or(())
+    }
+}
+
+/// 借一枚回信孔过去、把这一帧推上那扇门：返**本端那一枚**（答话与那一声都从它回来）。
+///
+/// 那扇门的主人（`owner`）从**这一枚门闩自己**问出来——树上那一枚是别人挂的，故只能读它
+/// （`opened_by` = "这扇门谁开的"，副本共享同一事实、转手不变）。
+///
+/// 交出去的权只要 `STORE`：对端只推、读的一侧是本端（与 `port::open` 的回信孔同一格权）。
+fn lend(entry: PieToken, frame: &[u8]) -> Result<PieToken, Fail> {
+    let host = protocol::session::call::opened_by(entry).ok_or(Fail::Denied)?;
+    let back = mail::unseal_hole(call::BACK).map_err(|_| Fail::Denied)?;
+    if port::ship(
+        &HolePie::from_token(back),
+        host,
+        Access::STORE,
+        Policy::NONE,
+    )
+    .is_err()
+    {
+        let _ = mail::release(back);
+        return Err(Fail::Denied);
+    }
+    if HolePie::from_token(entry).push(frame).is_err() {
+        let _ = mail::release(back);
+        return Err(Fail::Denied);
+    }
+    Ok(back)
+}

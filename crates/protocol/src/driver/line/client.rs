@@ -2,7 +2,7 @@
 //!
 //! 客户是**持有那台设备的人**：它从不读线号（泊位就是坐标），只报设备名。
 
-use env::{Name, PieToken, TaskId};
+use env::{Name, PieToken};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
@@ -21,7 +21,7 @@ impl Line {
     /// `entry` = 树上查来的那扇门（`/device/router` 下驱动族那一块）；对端 = **那扇门的主人**
     /// （`owner`：副本共享同一事实、转手不变）。
     pub fn occupy(entry: PieToken, device: Name, millis: usize) -> Result<Line, Fail> {
-        let host = owner_of(entry).ok_or(Fail::Denied)?;
+        let host = crate::session::call::opened_by(entry).ok_or(Fail::Denied)?;
         let mark = Name::new(call::LANE).map_err(|_| Fail::Denied)?;
         let mut quay = Quay::open(host);
         // 本端那一枚交给它（它按"谁开的 + 记号"认下来，往这里投递）。
@@ -74,16 +74,15 @@ impl Line {
         self.lane()?.try_post(&[call::NOTE])
     }
 
+    /// 本端读的那一枚（**挂进组**用：一台驱动要同时等"线上有投递"与"门上有人"）。
+    ///
+    /// 与 [`Line::receive`] 读的是同一枚——组等的是**就绪**，取消息仍走 `receive`。
+    pub fn hole(&self) -> Result<PieToken, ()> {
+        Ok(self.lane()?.hole())
+    }
+
     fn lane(&self) -> Result<&Pier, ()> {
         let mark = Name::new(call::LANE).map_err(|_| ())?;
         self.quay.find(mark).ok_or(())
-    }
-}
-
-/// 那扇门的主人（`Occupy` 的第二格）。树上那一枚是**别人**挂的，故不能按记号认。
-fn owner_of(hole: PieToken) -> Option<TaskId> {
-    match mail::reserve(hole) {
-        Ok((_vestor, owner, _mark)) if owner.get() != 0 => Some(owner),
-        _ => None,
     }
 }

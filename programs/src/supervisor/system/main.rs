@@ -71,6 +71,7 @@ const E_UART: Died = 9;
 const E_TREE: Died = 10;
 const E_LODGER: Died = 11;
 const E_RTC: Died = 12;
+const E_SLEEPER: Died = 13;
 
 /// 持树者：那棵命名树的服务（`prog-operator`）。**排第一位**——每位上树的客人都要它在。
 ///
@@ -128,11 +129,11 @@ const fn uart() -> Program {
     }
 }
 
-/// 实时钟驱动：**第二台真设备**（`rtc@101000`，11 号线）——武装闹钟、到点自己拉线；收到投递
-/// 就清掉那一格再武装下一次。
+/// 实时钟驱动：**第二台真设备**（`rtc@101000`，11 号线）——兼**报时服务**（门牌 `/device/rtc`）：
+/// 客人问时间就地答；客人约一个时刻就占住那一格并武装设备，到点把"那一声"推回客人手里。
 ///
-/// 它**没有服务面**：不落门牌（`operator: true` 只用来按名找线路由者），上板只为让板看得见
-/// 它的死（它常驻）。两台设备驱动紧跟在树之后：控制器先就位，线才有人接。
+/// 上树两趟（`operator: true`）：落自己那块门牌 + 按名找线路由者。上板只为让板看得见它的死
+/// （它常驻）。两台设备驱动紧跟在树之后：控制器先就位，线才有人接。
 const fn rtc() -> Program {
     Program {
         name: "rtc",
@@ -212,6 +213,27 @@ const fn lodger() -> Program {
     }
 }
 
+/// 客人：`/device/rtc` 那面服务的第一位用家——问时间、约一个时刻、等到那一声再退场。
+///
+/// 它**不要门闩**（`needs: None`）：那台时钟归 `rtc` 持有（`ONLY` 是资源事实），它拿到的只是
+/// 树上那枚门牌孔的副本。失败域那两格也各走一趟（见 `programs/src/user/sleeper.rs`）。
+///
+/// `Announce::None`（本域不等它说话）+ 上板：与 `guest` 同一档——"它死了"由板那条道看出来。
+/// 它排在 `echo` 之前：`echo` 必须是最后一条（本域等它退场收场）。
+const fn sleeper() -> Program {
+    Program {
+        name: "sleeper",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: true,
+        operator: true,
+        holds_tree: false,
+        died: E_SLEEPER,
+    }
+}
+
 /// 调试回显：只走调试面、不要门闩、不交通道。**但它上板也上树**：
 ///
 /// - 上板（`board: true`）只为让板**看得见它的死**：它退场时开的那几枚孔随退出钩子封印
@@ -242,7 +264,8 @@ const fn echo() -> Program {
 /// `echo` **必须在最后**：[`service::assemble`] 返 [`PLAN`] 的最后一条，本域等它退场
 /// ——那正是"读到一行 `exit` 才收场"的那一格。
 ///
-/// 两台驱动紧跟在树之后、其余之前：控制器先就位，线再开闸（`uart` 持有那台串口）。
+/// 三台驱动紧跟在树之后、其余之前：控制器先就位，线再开闸（`uart` / `rtc` 持有那两台设备）。
+/// `sleeper` 排在 `lodger` 之后、`echo` 之前：它要找的那块门牌 `/device/rtc` 由 `rtc` 落。
 const PLAN: &[Program] = &[
     tree(),
     router(),
@@ -251,6 +274,7 @@ const PLAN: &[Program] = &[
     guest(),
     passer(),
     lodger(),
+    sleeper(),
     echo(),
 ];
 

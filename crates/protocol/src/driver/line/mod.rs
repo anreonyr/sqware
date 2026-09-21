@@ -38,7 +38,8 @@
 //!   core.rs    账 + 四个原语 + 失败域   —— 不碰内核（不出现 runtime::）
 //!   call.rs    帧形与记号
 //!   client.rs  客侧几手（占线 / 收投递 / 说排空）
-//!   （服务面 = 设备持有者自己的具体协议，**不进本 crate**：`driver/uart` 那枚门牌孔）
+//!   （服务面 = 设备持有者自己的具体协议，**不进本 crate**：`driver/uart` 那枚门牌孔、
+//!   `driver/rtc` 那面报时服务）
 //!   （不在协议里）接线 / 静音 / 拆线 / claim / complete —— programs/src/driver/router/plic.rs
 //! ```
 //!

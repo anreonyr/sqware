@@ -58,7 +58,6 @@ use alloc::format;
 use env::{Name, PieToken};
 use protocol::driver::line;
 use protocol::driver::line::call as lcall;
-use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::room::exit_with_note;
 use runtime::env::unit as utask;

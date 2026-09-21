@@ -1,7 +1,8 @@
 //! user — **U 态那一档**：不建域、不读设备、不碰 MMIO，也不转授权。
 //!
 //! 判据是特权级（唯一声明处：`kernel/build.rs::INITRD_BINS`）：本目录下都是 `User`——
-//! `echo.rs` / `guest.rs` / `passer.rs` / `lodger/` 四位客人，各是一份入口（不被 lib 收进来）。
+//! `echo.rs` / `guest.rs` / `passer.rs` / `sleeper.rs` / `lodger/` 五位客人，各是一份入口
+//! （不被 lib 收进来）。
 //!
 //! [`lodger`] 是第四位、也是唯一**领了一枚门闩**的：它领的是那台 virtio 设备的寄存器页
 //! （`virtio_mmio@10001000`，1 号线——**一条没人要的线**），但从不映视图、不读写它：领它只为

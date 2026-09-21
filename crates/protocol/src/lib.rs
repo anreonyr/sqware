@@ -9,7 +9,8 @@
 //!
 //! 落地程度不一样：**五份里四份已经有代码跑在机器上**（[`system`]（含它下面的 `board`）、
 //! [`driver`]（**两半都落了**：`supply` 与 `line`——见 [`driver::line`]，四格原语 + 账 +
-//! 客侧几手，`router` / `uart` / `lodger` 都跑在机器上）、[`session`] 与 [`operator`]），
+//! 客侧几手，`router` / `uart` / `rtc` 与两位客人 `lodger` / `sleeper` 都跑在机器上）、
+//! [`session`] 与 [`operator`]），
 //! [`principal`] 只有正文、它的 Server 还没起步。
 //!
 //! - [`system`] = **服务编排**（systemd 那一层）：系统由哪些 Service 构成、怎么起停监督。
@@ -137,6 +138,10 @@ macro_rules! reserve_reads {
 ///
 /// **反向只在双射时生成**。非双射的表（几种失败归同一个码）**不给反向**——由人写并注明
 /// "反不回来"。这是判据，不是风格：给非双射的表生成反向，等于把"对偶"说成假的。
+///
+/// **出 crate**（`#[macro_export]`）：第二个实例到了——驱动的**具体协议**住各驱动自己的目录
+/// （那一条裁定见 [`driver`]），而它同样要一张"失败域 ↔ 线上那一格"的表。手抄一遍就是两处编。
+#[macro_export]
 macro_rules! fail_codes {
     ($(#[$meta:meta])* bijective $fail:ty; $ok:ident; $($variant:path => $code:ident),+ $(,)?) => {
         $(#[$meta])*
@@ -147,10 +152,13 @@ macro_rules! fail_codes {
             }
         }
 
-        /// 线上答话那一格 → 失败域。`OK`（没失败）与 `BAD`（这一问读不懂）**都不是失败域
-        /// 里的东西**，故两者同一格答 `None`——读的人靠动作码先分流。
+        /// 线上答话那一格 → 失败域。`OK`（没失败）那一格一定答 `None`——读的人靠动作码先分流。
         ///
-        /// **本表是双射**（一个失败一个码），故反向答得回来。
+        /// **`BAD`（这一问读不懂）在不在表里，由各家自己的表说**：板那一侧它独立一格、留在
+        /// 表外（`system::board::call`），`driver::rtc` 那一侧它与"没走到"（`Fail::Denied`）
+        /// 合流——那边的持有者从来不说"我没接住"这句话（接不住就是没有孔可回）。
+        ///
+        /// 表外那一格与读不懂的码一律答 `None`：两个 `None` 不是同一件事，读的人靠动作码先分流。
         pub const fn code_to_fail(code: u8) -> Option<$fail> {
             match code {
                 $ok => None,

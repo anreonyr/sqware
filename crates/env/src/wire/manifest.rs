@@ -22,9 +22,13 @@ use crate::fid::ProgramKind;
 
 /// 清单条数上限。
 ///
-/// 20 = 今天的 17 个程序（`kernel/build.rs::INITRD_BINS`）留三格余量：加一个程序不必
+/// 24 = 今天的 21 个程序（`kernel/build.rs::INITRD_BINS`）留三格余量：加一个程序不必
 /// 顺手改一个数，而多出来的那几格只占 `Table` 的一小段（见 `protocol::system::desk`）。
-pub const MAX_PROGRAMS: usize = 20;
+///
+/// **照实记**：这一格原先写 20、理由那句写的是"今天的 17 个程序"——17 是写那句话时的数，
+/// 后来加到 20 个时没人回头看它，于是"留三格余量"这句在那天起就是假的（20 正好卡满）。
+/// 这一刀（`/device/rtc` 那面服务带来第二十一个程序）把它按同一个意图抬到 24。
+pub const MAX_PROGRAMS: usize = 24;
 /// 一条记录里名字的字节上限（与 [`Name`](super::Name) 同值：名字要能原样进 `Team.name`）。
 pub const MAX_NAME: usize = 32;
 

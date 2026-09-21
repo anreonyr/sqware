@@ -3,7 +3,7 @@ name = "programs"
 version.workspace = true
 edition.workspace = true
 
-# 镜像里的各程序（今天二十个）：freestanding、无 std、无 main crt。链接在 IMAGE_BASE
+# 镜像里的各程序（今天二十一个）：freestanding、无 std、无 main crt。链接在 IMAGE_BASE
 # (0x10000)、静态 ET_EXEC；由内核 loader 按绝对 VMA 装载，_start 即 e_entry。
 # 内核 `build.rs::INITRD_BINS` 按 bin 名打进 initrd（**唯一**声明特权级处）。
 [lib]
@@ -52,6 +52,14 @@ test = false
 bench = false
 doctest = false
 
+# 客人（U 态）：`/device/rtc` 那面服务的第一位用家——问时间、约一个时刻、等到那一声。
+[[bin]]
+name = "prog-sleeper"
+path = "src/user/sleeper.rs"
+test = false
+bench = false
+doctest = false
+
 [[bin]]
 name = "prog-router"
 path = "src/driver/router/main.rs"
@@ -67,7 +75,7 @@ test = false
 bench = false
 doctest = false
 
-# 第二台设备驱动（同一族）：持有 rtc@101000（11 号线），闹钟到点自己拉线；没有服务面。
+# 第二台设备驱动（同一族）：持有 rtc@101000（11 号线），兼报时服务（门牌 `/device/rtc`）。
 [[bin]]
 name = "prog-rtc"
 path = "src/driver/rtc/main.rs"

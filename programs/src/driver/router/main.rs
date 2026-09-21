@@ -100,7 +100,7 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-// 客侧装配与需求单都住在驱动这一族里：`assemble` 是两台驱动共用的那段机器（会话 + 配给）。
+// 客侧装配与需求单都住在驱动这一族里：`assemble` 是三台驱动与房客共用的那段机器（会话 + 配给）。
 use programs::driver::assemble;
 use programs::driver::router::needs;
 
@@ -115,6 +115,7 @@ mod plic;
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::driver::line::{call as lcall, core::Lines};
+use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
 use runtime::core::bell::Bell;
 use runtime::core::dock::Dock;
@@ -424,7 +425,7 @@ fn desk_face(
                 },
             },
         };
-        if let Some(back) = find_mark(from, lcall::BACK_MARK) {
+        if let Some(back) = scall::find(from, lcall::BACK_MARK) {
             let _ = HolePie::from_token(back).push(&[code]);
         }
     }
@@ -484,27 +485,6 @@ fn table_size() -> usize {
             return n;
         }
         n += 1;
-    }
-}
-
-/// 本端表里**这位给的、刻着那个记号的那一枚**（答话那条路）。
-///
-/// 判据两格：`owner == who`（副本共享同一事实、转手不变）+ **记号**——线泊位那两枚也是这位
-/// 的，不按记号认就会认错那一枚。
-fn find_mark(who: TaskId, mark: &str) -> Option<PieToken> {
-    let mut index = 0usize;
-    let mut found = None;
-    loop {
-        let (token, _perm, _vestor) = mail::collect(index).ok()?;
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return found;
-        }
-        index += 1;
-        match mail::reserve(token) {
-            Ok((_v, owner, m)) if owner == who && m.as_str() == mark => found = Some(token),
-            _ => {}
-        }
     }
 }
 
