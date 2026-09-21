@@ -19,12 +19,12 @@ use crate::session::Quay;
 ///
 /// `holder` = 客人认的对端 = **它的生我者**（孔交给它，它再转授给持树者）——注意它不是
 /// 持树者：客人交出来的孔都落在生我者表里，故"持树者是谁"得由装配者告诉（见文件头）。
-pub fn open(holder: TaskId, ms: usize) -> Result<(Quay, TaskId), Fail> {
+pub fn open(holder: TaskId, millis: usize) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let mut quay = Quay::open(holder);
     quay.seat(link).map_err(ocall::map_seat)?;
-    quay.claim(holder, link, ms).map_err(ocall::map_claim)?;
-    let host = hear(&quay, ms).ok_or(Fail::Unknown)?;
+    quay.claim(holder, link, millis).map_err(ocall::map_claim)?;
+    let host = hear(&quay, millis).ok_or(Fail::Unknown)?;
     Ok((quay, host))
 }
 
@@ -57,20 +57,20 @@ pub fn ask(
     op: u8,
     path: &[Name],
     entry: PieToken,
-    ms: usize,
+    millis: usize,
 ) -> Result<u8, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
     let seed = match op {
-        ocall::LAND => Some(ocall::hang_in(entry, host).map_err(|()| Fail::Unknown)?),
+        ocall::LAND => Some(ocall::hang(entry, host).map_err(|()| Fail::Unknown)?),
         _ => None,
     };
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
     mail::HolePie::from_token(say)
-        .push(&ocall::pack(op, path, seed))
+        .push(&ocall::pack_ask(op, path, seed))
         .map_err(|_| Fail::Unknown)?;
     let mut reply = [0u8; 1];
-    match pier.pull(&mut reply, ms) {
+    match pier.pull(&mut reply, millis) {
         Ok(1) => Ok(reply[0]),
         _ => Err(Fail::Unknown),
     }
@@ -104,11 +104,11 @@ pub fn take(link: &Quay, host: TaskId) -> Option<PieToken> {
 /// 收下树路上那一格：**答话的是谁**（[`tell`] 的对偶）。
 ///
 /// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上树（客人报它自己的超时，不猜）。
-pub(crate) fn hear(quay: &Quay, ms: usize) -> Option<TaskId> {
+pub(crate) fn hear(quay: &Quay, millis: usize) -> Option<TaskId> {
     let link = Name::new(LINK).ok()?;
     let pier = quay.find(link)?;
     let mut buf = [0u8; 8];
-    match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, ms) {
+    match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, millis) {
         Ok(8) => Some(TaskId::new(u64::from_le_bytes(buf) as usize)),
         _ => None,
     }

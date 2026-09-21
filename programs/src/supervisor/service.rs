@@ -297,7 +297,7 @@ fn wire(root: &Pier, quay: &Quay, p: &Program, rep: env::TaskId) -> Result<(), (
     }
 
     // 一枚一枚要：条数就在那张表里，本层不抄"要几样"（空表 / 超 `WANT_MAX` 由 `draw` 答）。
-    let mut ask = [0u8; supply::SLIP_CAP];
+    let mut ask = [0u8; supply::ORDER_CAP];
     let mut reply = [0u8; supply::REPLY_CAP];
     let records =
         supply::client::draw(root, rep, wants, &mut ask, &mut reply, READY_MS).map_err(|_| ())?;

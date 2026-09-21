@@ -4,12 +4,12 @@
 //!
 //! > `desk.rs` 里不出现 `runtime::`。
 //!
-//! ），探活是**注入的事实**（[`Probe`]，与 [`Operator`](super::core::Operator) 同款）：
+//! ），探活是**注入的事实**（[`VestedBy`]，与 [`Operator`](super::core::Operator) 同款）：
 //! 喂一个假闭包就能推理这本账，换载体不必重写。
 //!
 //! # 与 `board` 那本账的差别
 //!
-//! `board` 的客人账有两档：**听来的**（客人说了 `DISMISS`，当场撤格）与**看出来的**
+//! `board` 的客人账有两档：**听来的**（客人说了 `EVICT`，当场撤格）与**看出来的**
 //! （那一枚答不出即剔）。这一本**只有看出来的那一档**——本正文里没有"客人退场"这件事：
 //! 谁来问都答，问完就走，树不记账。
 //!
@@ -20,7 +20,7 @@
 
 use env::{PieToken, TaskId};
 
-use protocol::operator::core::{Fail, Probe};
+use protocol::operator::core::{Fail, VestedBy};
 
 // ── 一格 ────────────────────────────────────────────────────
 
@@ -70,13 +70,13 @@ impl Guest {
 /// ```
 pub struct Desk {
     guests: [Option<Guest>; Desk::CAP],
-    probe: Probe,
+    vested_by: VestedBy,
 }
 
 /// 立一本账（一位客人一格）：**注入的是协议那一侧"读内核事实"的那一枚**
-/// （`call::probe`，`Reserve` 那一问）——账是实现的，判定是协议的。
+/// （`call::vested_by`，`Reserve` 那一问）——账是实现的，判定是协议的。
 pub const fn desk() -> Desk {
-    Desk::new(protocol::operator::call::probe)
+    Desk::new(protocol::operator::call::vested_by)
 }
 
 impl Desk {
@@ -85,10 +85,10 @@ impl Desk {
     pub const CAP: usize = 8;
 
     /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
-    pub const fn new(probe: Probe) -> Desk {
+    pub const fn new(vested_by: VestedBy) -> Desk {
         Desk {
             guests: [None; Desk::CAP],
-            probe,
+            vested_by,
         }
     }
 
@@ -161,14 +161,14 @@ impl Desk {
 
     /// 剔走**已经答不出**的客人，返剔了几格；幂等。
     ///
-    /// 判据是注入的那一格（在这棵树里 = [`Probe`]：**客人答话路那一枚还答得出吗**）——
+    /// 判据是注入的那一格（在这棵树里 = [`VestedBy`]：**客人答话路那一枚还答得出吗**）——
     /// 那一枚答 `None`（不在我表里，**或**它那扇门已经封印）就剔。
     pub fn sweep(&mut self) -> usize {
-        let probe = self.probe;
+        let vested_by = self.vested_by;
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
-                && probe(guest.reply).is_none()
+                && vested_by(guest.reply).is_none()
             {
                 *cell = None;
                 gone += 1;

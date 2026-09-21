@@ -10,7 +10,7 @@ use crate::session::Pier;
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Fail {
-    /// 本控制器上没有这条线（没有主、或线号越出 `[1, ndev]`）⇒ 回头查树。
+    /// 本控制器上没有这条线（没有主、或线号越出 `[1, device_count]`）⇒ 回头查树。
     Unknown,
     /// 这条线有人了 ⇒ 换个名字，或者等它 `vacate`。
     Taken,
@@ -29,7 +29,7 @@ enum Cell {
 ///
 /// ```text
 ///   格 = 空（这条线没主） | 有主 { 泊位, 忙 }
-///   线号 = 下标（容量按 ndev 校验 ⇒ 越界不可表达）
+///   线号 = 下标（容量按 device_count 校验 ⇒ 越界不可表达）
 /// ```
 pub struct Lines {
     cells: Vec<Cell>,
@@ -38,10 +38,10 @@ pub struct Lines {
 impl Lines {
     /// 立账：容量按控制器自报的线数要（第 0 格永远空着——0 是"没有可领的"）。装不下 ⇒ `None`：
     /// 起域就拒，不留运行期分支。
-    pub fn new(ndev: u32) -> Option<Lines> {
+    pub fn new(device_count: u32) -> Option<Lines> {
         let mut cells = Vec::new();
-        cells.try_reserve(ndev as usize + 1).ok()?;
-        cells.resize(ndev as usize + 1, Cell::Free);
+        cells.try_reserve(device_count as usize + 1).ok()?;
+        cells.resize(device_count as usize + 1, Cell::Free);
         Some(Lines { cells })
     }
 

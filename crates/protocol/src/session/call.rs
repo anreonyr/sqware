@@ -10,6 +10,21 @@
 //!
 //! （旧注写的是"这里不出现 `if` / `match`"——**照实记：这两处哨兵与它同一次落地，
 //! 那句话从写下的第一天起就是假的**。）
+//!
+//! # 这里也是全层共享身体的家
+//!
+//! 有四个身体原先在板 / 树 / 线各抄一份，且各起一个名；它们现在只住这里，其余模块
+//! `use … as …` 取自己那一侧的名字（名字可以因领域而异，**身体不能**）：
+//!
+//! | 概念 | 地板词 | 共享体（本文件） |
+//! |---|---|---|
+//! | 交出（授出副本） | `port::ship` | [`ship`] |
+//! | 自释一份 | `PieCall::Release` | [`unship`]（`ship` 的反面：装运 / 卸下） |
+//! | `Reserve` 三格 | `vestor` / `owner` / `mark` | [`vested_by`] / [`opened_by`] / [`marked_as`] |
+//!
+//! 三格是一**组**：三个名字读成同一句式的被动式事实（*这枚是谁授的 / 这扇门是谁开的 /
+//! 这枚被标成什么*），故**等长**（9/9/9）——原先板与树是 `probe`5 / `opened_by`9 /
+//! `mark_of`7，不等长本身就是"这一组还没想清楚"的信号。
 
 use env::{Name, PieToken, TaskId};
 
@@ -30,15 +45,15 @@ pub(super) fn mint(mark: Name) -> Result<PieToken, ()> {
 /// 转给第三方"是本结构里**必然**发生的一步：子方只认得它的生我者，故它交出来的孔先落在
 /// 生我者表里，再由生我者转授（见正文事实 1 的推论；板那条路就是这么接上的）。
 /// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对——看上去像"板坏了"。
-pub(super) fn ship(hole: PieToken, peer: TaskId) -> Result<PieToken, ()> {
+pub fn ship(hole: PieToken, peer: TaskId) -> Result<PieToken, ()> {
     let pie = mail::HolePie::from_token(hole);
     port::ship(&pie, peer, Access::FETCH | Access::STORE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| ())
 }
 
-/// 放下本端那一枚孔。
-pub(super) fn drop_local(hole: PieToken) -> Result<(), ()> {
+/// 卸下本端那一枚孔——[`ship`] 的反面：**装运 / 卸下**。
+pub fn unship(hole: PieToken) -> Result<(), ()> {
     mail::release(hole).map_err(|_| ())
 }
 
@@ -52,7 +67,7 @@ pub(super) fn try_post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
     mail::push(at_peer, msg.as_ptr(), msg.len()).map_err(|_| ())
 }
 
-/// 扫我表里的**每一枚**孔，逐枚交给 `f`。
+/// 扫**我表里的每一枚**孔，逐枚交给 `f`。
 ///
 /// **不设上限**：表里可能已经有几十枚（设备门闩、别人给的副本……），而认领只关心其中
 /// 的一两枚——设一个"最多看几枚"的缓冲会让排在后面的那枚永远看不见。故这里不攒数组，
@@ -62,7 +77,7 @@ pub(super) fn try_post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
 pub(super) fn each(mut f: impl FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
     let mut index = 0usize;
     loop {
-        let Ok((token, _perm, _grantor)) = mail::collect(index) else {
+        let Ok((token, _permission, _grantor)) = mail::collect(index) else {
             return Err(Claim::Unread);
         };
         // 越界哨兵：这一遍扫完了。
@@ -106,20 +121,63 @@ pub(super) fn reserve(hole: PieToken) -> (Option<TaskId>, Name) {
     }
 }
 
+// ── `Reserve` 的三格：一个调用的三个事实，一组三个等长名 ──────────────
+
+/// **这枚是谁授的**（`Reserve` 第一格）。
+///
+/// 转手（`Accord`）会改写这一格（root 转授过的门闩，`vestor` 会变成 root），故
+/// **不能用它认"对端是谁"**；要认"这扇门本身是谁的"，读 [`opened_by`]。
+///
+/// **"答不出"这一格里就有"那扇门封印了"**：`Reserve` 的 `owner` 那一格带存活闸
+/// ⇒ 开者一退场，它开的门随之封印 ⇒ 这里当场答 `None`。故 `None` 只读作
+/// "这一条候选不成立"（不在我表里 / 不是孔 / 已封印），**不必再问第二个问题**。
+pub fn vested_by(entry: PieToken) -> Option<TaskId> {
+    mail::reserve(entry)
+        .ok()
+        .map(|(vestor, _owner, _mark)| vestor)
+}
+
+/// **这扇门是谁开的**（`Reserve` 第二格）。副本共享同一事实，转手不变。
+///
+/// 回答"这一位客人自己交来的那一枚"就靠它；与 [`marked_as`] 合起来才分得开
+/// "同一位开的多枚孔"（那一格答"这是哪条路上的"）。
+///
+/// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：这一条候选不成立。
+pub fn opened_by(hole: PieToken) -> Option<TaskId> {
+    match mail::reserve(hole) {
+        Ok((_vestor, owner, _mark)) if owner.get() != 0 => Some(owner),
+        _ => None,
+    }
+}
+
+/// **这枚被标成什么记号**（`Reserve` 第三格）。铸者刻在孔上，副本共享、转手不变。
+///
+/// 持板者 / 持树者那一侧三处认法都读它，各自问同一句——"这是哪条路上的那一枚"
+/// （答话路 / 问话孔 / 注册入口）。
+///
+/// **不能实现成 [`reserve`] 的第二格**：那个在 `owner == 0` 时把记号丢成
+/// `Name::EMPTY`，而这一手照样报记号——引导期那批设备门闩（owner 0）认的就是它。
+pub fn marked_as(hole: PieToken) -> Option<Name> {
+    match mail::reserve(hole) {
+        Ok((_vestor, _owner, mark)) => Some(mark),
+        _ => None,
+    }
+}
+
 /// 从**本端**那一枚孔收一句话（有界等）。
-pub(super) fn pull_own(hole: PieToken, buf: &mut [u8], ms: usize) -> Result<usize, ()> {
+pub(super) fn pull_own(hole: PieToken, buf: &mut [u8], millis: usize) -> Result<usize, ()> {
     mail::HolePie::from_token(hole)
-        .pull_timeout(buf, ms)
+        .pull_timeout(buf, millis)
         .map_err(|_| ())
 }
 
 /// 等"我自己这张权限表里落进一枚"（`UnitCall::Fall`）。
 ///
 /// 无参数：等的是本端这张表（键由内核从调用者推出来，伪造不出"你的表变了"）。
-/// `ms` 属**上限族**（三态口径见 `env::fid` 文件头的定式）。
+/// `millis` 属**上限族**（三态口径见 `env::fid` 文件头的定式）。
 /// `false` = 自上次取走以来没落过表（期限到）——**醒来自己扫表分辨**。
-pub(super) fn fall(ms: usize) -> bool {
-    runtime::env::unit::fall(ms).unwrap_or(false)
+pub(super) fn fall(millis: usize) -> bool {
+    runtime::env::unit::fall(millis).unwrap_or(false)
 }
 
 /// 单调时钟读数（纳秒）——有界等待按 deadline 循环用它（不依赖 timebase 频率）。

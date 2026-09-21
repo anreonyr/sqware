@@ -1,4 +1,4 @@
-//! supply::call — **线上形状**：单子上的一条（`Want`）、单子与回单的读写、上限与状态码——一个字节都不在别处编
+//! supply::call — **线上形状**：单子上的一条（`Want`）、单子与回单的编解、上限与状态码——一个字节都不在别处编
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
 
@@ -38,7 +38,7 @@ pub const WANT_LEN: usize = core::mem::size_of::<Want>();
 const _: () = assert!(WANT_LEN == 44);
 /// 帧头：`[op][条数]` + 那一格"给谁"（8 字节 LE，与 `operator::tell` 同一口径）。
 const HEAD_LEN: usize = 2 + 8;
-pub const SLIP_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;
+pub const ORDER_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;
 pub const REPLY_CAP: usize = 2 + PAIR_LEN * WANT_MAX;
 
 /// 回单的状态码（与 operator / system::board 的码表同族）。
@@ -146,7 +146,7 @@ pub const fn name_block(s: &str) -> [u8; NAME_LEN] {
 }
 
 /// 起一张单子 → 帧。条数越界或缓冲不够 ⇒ `None`（调用方按本地失败处理）。
-pub fn slip<'a>(buf: &'a mut [u8], who: TaskId, wants: &[Want]) -> Option<&'a [u8]> {
+pub fn pack_order<'a>(buf: &'a mut [u8], who: TaskId, wants: &[Want]) -> Option<&'a [u8]> {
     let n = wants.len();
     if n > WANT_MAX {
         return None;
@@ -164,7 +164,7 @@ pub fn slip<'a>(buf: &'a mut [u8], who: TaskId, wants: &[Want]) -> Option<&'a [u
 }
 
 /// 读一张单子。`None` = 帧读不懂（op 不对 / 条数越界 / 缓冲短）。
-pub fn slip_of(bytes: &[u8]) -> Option<Slip<'_>> {
+pub fn unpack_order(bytes: &[u8]) -> Option<Order<'_>> {
     if bytes.len() < HEAD_LEN || bytes[0] != OP_SUPPLY {
         return None;
     }
@@ -172,16 +172,16 @@ pub fn slip_of(bytes: &[u8]) -> Option<Slip<'_>> {
     if n > WANT_MAX || bytes.len() < HEAD_LEN + n * WANT_LEN {
         return None;
     }
-    Some(Slip { bytes })
+    Some(Order { bytes })
 }
 
 /// 读出来的一张单子（借字节）。逐条 `read_unaligned`——缓冲只保证 1 字节对齐
 /// （与 `Pair` 同一条理由：线格式的步长是 44，而块只保证页对齐）。
-pub struct Slip<'a> {
+pub struct Order<'a> {
     bytes: &'a [u8],
 }
 
-impl<'a> Slip<'a> {
+impl<'a> Order<'a> {
     /// 这条单子是**给谁**的（那一格过线的号）。
     pub fn who(&self) -> TaskId {
         let mut raw = [0u8; 8];
@@ -198,7 +198,7 @@ impl<'a> Slip<'a> {
             return None;
         }
         let at = HEAD_LEN + i * WANT_LEN;
-        // SAFETY: 区间由 `len()` 与 `slip_of` 的长度校验保证在缓冲内；缓冲只保证
+        // SAFETY: 区间由 `len()` 与 `unpack_order` 的长度校验保证在缓冲内；缓冲只保证
         // 1 字节对齐，故 `read_unaligned`。
         Some(unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().add(at).cast::<Want>()) })
     }
@@ -207,7 +207,7 @@ impl<'a> Slip<'a> {
 /// 编一张回单：一格状态 + 若干条 [`Pair`] 记录。
 ///
 /// `records` 必须是整条记录（`PAIR_LEN` 步长），条数越界或缓冲不够 ⇒ `None`。
-pub fn reply<'a>(buf: &'a mut [u8], code: u8, records: &[u8]) -> Option<&'a [u8]> {
+pub fn pack_reply<'a>(buf: &'a mut [u8], code: u8, records: &[u8]) -> Option<&'a [u8]> {
     if !records.len().is_multiple_of(PAIR_LEN) {
         return None;
     }
@@ -222,31 +222,42 @@ pub fn reply<'a>(buf: &'a mut [u8], code: u8, records: &[u8]) -> Option<&'a [u8]
     Some(out)
 }
 
-/// 读回单的状态。`None` = 帧读不懂。
-pub fn code_of(bytes: &[u8]) -> Option<u8> {
+/// 读一张回单：形状不对 ⇒ `None`（不猜、不崩）。
+pub fn unpack_reply(bytes: &[u8]) -> Option<Reply<'_>> {
     let head = bytes.get(..2)?;
-    let rest = bytes.get(2..)?;
-    if rest.len() != head[1] as usize * PAIR_LEN {
+    let n = head[1] as usize;
+    if n > WANT_MAX || bytes.len() != 2 + n * PAIR_LEN {
         return None;
     }
-    Some(head[0])
+    Some(Reply { bytes })
 }
 
-/// 读回单里的记录——**就是原样交给客人的那一段**。
-pub fn records_of(bytes: &[u8]) -> Option<&[u8]> {
-    let n = *bytes.get(1)? as usize;
-    if n > WANT_MAX {
-        return None;
+/// 读出来的一张回单（借字节）。两格：**答话那一格**与**记录那一段**。
+///
+/// 与 [`Order`] 同一条形状：编解是**一对自由函数**（[`pack_reply`] / [`unpack_reply`]），
+/// 取格是**视图上的名词方法**——`_of` 后缀只留给"从裸字节里取一格"的查询。
+pub struct Reply<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> Reply<'a> {
+    /// 答话那一格（[`OK`] / [`UNKNOWN`] / [`DENIED`] / [`FULL`] / [`BAD`]）。
+    pub fn code(&self) -> u8 {
+        self.bytes[0]
     }
-    let rest = bytes.get(2..)?;
-    if rest.len() != n * PAIR_LEN {
-        return None;
+
+    /// 记录那一段——**就是原样交给客人的那一段**（整条记录，`PAIR_LEN` 步长）。
+    pub fn records(&self) -> &'a [u8] {
+        &self.bytes[2..]
     }
-    Some(rest)
 }
 
 /// 线上状态码 → 本地失败域。`OK` 不是失败，故返 `None`。
-pub const fn fail_of(code: u8) -> Option<Fail> {
+///
+/// **本表不是双射**：`Fail::Local` 与 `Fail::Bad` 归同一个 `BAD`，故这一手是**尽力而为**的
+/// 反向——`BAD` 只答得回 `Fail::Bad`，`Local` 一去不回。**这一条是成文的**：码表宏不给
+/// 非双射的表生成反向，这一手因此由人写在这里。
+pub const fn code_to_fail(code: u8) -> Option<Fail> {
     match code {
         UNKNOWN => Some(Fail::Unknown),
         DENIED => Some(Fail::Denied),
@@ -256,13 +267,15 @@ pub const fn fail_of(code: u8) -> Option<Fail> {
     }
 }
 
-/// 本地失败域 → 线上状态码。
-pub const fn code_of_fail(fail: Fail) -> u8 {
+/// 本地失败域 → 线上状态码。`None`（没失败）⇒ `OK`——与 [`code_to_fail`] 的 `OK ⇒ None`
+/// 正好是同一格的两侧读法。
+pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
     match fail {
-        Fail::Local | Fail::Bad => BAD,
-        Fail::Unknown => UNKNOWN,
-        Fail::Denied => DENIED,
-        Fail::Full => FULL,
+        None => OK,
+        Some(Fail::Local | Fail::Bad) => BAD,
+        Some(Fail::Unknown) => UNKNOWN,
+        Some(Fail::Denied) => DENIED,
+        Some(Fail::Full) => FULL,
     }
 }
 

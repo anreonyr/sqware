@@ -80,11 +80,11 @@
 //! - **没有撤销**：授出去的门闩归对端；要收回得走 `Revoke`，本协议不带这一格。
 //! - **没有账号**：固件不记账，"谁领过什么"它不知道也不留底。
 //! - **上限是本侧选择**：孔不预设上限（见 `env::fid::PieCall::UnsealHole`），
-//!   `SLIP_CAP`/`REPLY_CAP` 是"一帧一单、不流式"这个选择的尺寸，不是线格式的约束。
+//!   `ORDER_CAP`/`REPLY_CAP` 是"一帧一单、不流式"这个选择的尺寸，不是线格式的约束。
 
 pub mod call;
 pub mod client;
 pub mod core;
 
-pub use call::{BOOT, OP_SUPPLY, REPLY_CAP, SLIP_CAP, WANT_MAX};
+pub use call::{BOOT, OP_SUPPLY, ORDER_CAP, REPLY_CAP, WANT_MAX};
 pub use core::Fail;

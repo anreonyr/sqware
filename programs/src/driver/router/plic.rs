@@ -6,7 +6,7 @@
 //!
 //! # 它为什么要读设备树
 //!
-//! 两件事只有树里有：**这台控制器有几条线**（`riscv,ndev`）与**本域该用哪个 context**
+//! 两件事只有树里有：**这台控制器有几条线**（`riscv,device_count`）与**本域该用哪个 context**
 //! （`interrupts-extended` 的项序，`cell == 9` 才是 S 模式外部中断）。内核不代劳——
 //! 它只把设备树原样搬给域（`platform/devices.rs::supply_dtb`）。
 //!
@@ -26,7 +26,7 @@
 //! - `#interrupt-cells` 取别的值的控制器——本域**拒解**，不猜那一格的含义。
 //!
 //! 「指到本控制器、但本节点没写 `interrupt-parent`」（绑定允许沿父链继承，本域今天不追）
-//! 与「线号越出控制器自报的 `ndev`」也各记一笔。**没进来的每一笔都是一条读数**
+//! 与「线号越出控制器自报的 `device_count`」也各记一笔。**没进来的每一笔都是一条读数**
 //! （[`Sources`]）：线集合因此可复核，不靠注释声称。
 
 use alloc::vec::Vec;
@@ -55,8 +55,8 @@ const CLAIM: usize = 0x04;
 /// PLIC 的寄存器视图 + 这台控制器的事实。
 pub struct Plic {
     view: View,
-    /// 本控制器有多少条线（`riscv,ndev`）——按它拒绝越界的线号。
-    ndev: u32,
+    /// 本控制器有多少条线（`riscv,device_count`）——按它拒绝越界的线号。
+    device_count: u32,
     /// 本域用的**那一个** context。
     ///
     /// `claim` / `complete` 是 **per-context** 的：一条线若在多个 context 上使能，
@@ -80,8 +80,8 @@ impl Plic {
                 && n.compatible()
                     .is_some_and(|c| c.all().any(|s| s.contains("plic")))
         })?;
-        let ndev = node
-            .property("riscv,ndev")
+        let device_count = node
+            .property("riscv,device_count")
             .and_then(|p| p.as_usize())
             .unwrap_or(0) as u32;
         // 一单元的字节数由 `#interrupt-cells` 定；virt 上的 PLIC 实测为 1。
@@ -97,8 +97,12 @@ impl Plic {
             .chunks_exact(stride)
             .position(|e| u32::from_be_bytes([e[4], e[5], e[6], e[7]]) == EXT_S)?
             as u32;
-        let this = Self { view, ndev, ctx };
-        let sources = sources(&fdt, &node, ndev, cells);
+        let this = Self {
+            view,
+            device_count,
+            ctx,
+        };
+        let sources = sources(&fdt, &node, device_count, cells);
         Some((this, sources))
     }
 
@@ -107,17 +111,17 @@ impl Plic {
         self.ctx
     }
 
-    /// 本控制器自报的线数（`riscv,ndev`）。**静音账的容量按它校验**（见 `main` 那一步）。
-    pub fn ndev(&self) -> u32 {
-        self.ndev
+    /// 本控制器自报的线数（`riscv,device_count`）。**静音账的容量按它校验**（见 `main` 那一步）。
+    pub fn device_count(&self) -> u32 {
+        self.device_count
     }
 
     /// 接上一条线：写优先级 + 本 context 的阈值与 enable。
     ///
-    /// 阈值恒 0（不卡仲裁）。线上限由控制器自报的 `ndev` 把握——越界不是错误，是"这条线
+    /// 阈值恒 0（不卡仲裁）。线上限由控制器自报的 `device_count` 把握——越界不是错误，是"这条线
     /// 不在这台控制器上"，接了也没用。
     pub fn enable(&self, line: u32, priority: u32) {
-        if line < 1 || line > self.ndev {
+        if line < 1 || line > self.device_count {
             return;
         }
         self.write(PRIORITY + 4 * line as usize, priority);
@@ -137,7 +141,7 @@ impl Plic {
     /// 第一刀靠它当刹车：本域**不读走设备里的字节**（那是 console 的输入），于是源头一直
     /// 挂着电平；不静音就会 claim → complete → 立刻又报，空转成风暴。
     pub fn disable(&self, line: u32) {
-        if line < 1 || line > self.ndev {
+        if line < 1 || line > self.device_count {
             return;
         }
         self.write(PRIORITY + 4 * line as usize, 0);
@@ -149,7 +153,7 @@ impl Plic {
     /// 与 [`Plic::disable`] 不是一回事：静音留着 enable 位（复原走 `enable`，那一格的账没动），
     /// 拆线是"这条线不归本域管了"——主人没了才做，要再接上只能重新登记一次（`occupy`）。
     pub fn unwire(&self, line: u32) {
-        if line < 1 || line > self.ndev {
+        if line < 1 || line > self.device_count {
             return;
         }
         self.write(PRIORITY + 4 * line as usize, 0);
@@ -191,12 +195,12 @@ impl Plic {
 /// **名字是这一格的关键**：「线 = 名字的函数」那条关系就落在这里——客户登记时报的是名字，
 /// 解树只发生这一处（内核不代劳，它连线号都不知道）。
 pub struct Sources {
-    /// 要接的线，落在 `[1, ndev]` 内（线数的权威是控制器自己）。
+    /// 要接的线，落在 `[1, device_count]` 内（线数的权威是控制器自己）。
     pub lines: Vec<Source>,
     /// 有 `interrupts`、但**本节点自己没写** `interrupt-parent` 的节点数
     /// （绑定允许沿父链继承；本域今天不追父链）。
     pub unparented: usize,
-    /// 指到本控制器、但线号越出 `[1, ndev]` 的节点数。
+    /// 指到本控制器、但线号越出 `[1, device_count]` 的节点数。
     pub beyond: usize,
     /// 带 `interrupt-map` 的节点数（PCIe 那一类）——它的中断由 map 描述，本域不解析。
     pub mapped: usize,
@@ -226,8 +230,13 @@ impl Sources {
 ///
 /// 判据只有一条，且只问树：`interrupt-parent` 等于本控制器的 phandle（**只认节点自己写的**，
 /// 不沿父链继承——没写的那一类记进 `unparented`）。线号取中断说明符的**第一个单元**
-/// （见模块头）；越出 `ndev` 的不接。
-fn sources(fdt: &fdt::Fdt, controller: &fdt::node::FdtNode, ndev: u32, cells: usize) -> Sources {
+/// （见模块头）；越出 `device_count` 的不接。
+fn sources(
+    fdt: &fdt::Fdt,
+    controller: &fdt::node::FdtNode,
+    device_count: u32,
+    cells: usize,
+) -> Sources {
     let mut out = Sources {
         lines: Vec::new(),
         unparented: 0,
@@ -267,7 +276,7 @@ fn sources(fdt: &fdt::Fdt, controller: &fdt::node::FdtNode, ndev: u32, cells: us
             // 指到本控制器、但没有可解的 `interrupts`：它不是中断源，不入账。
             continue;
         };
-        if line < 1 || line > ndev {
+        if line < 1 || line > device_count {
             out.beyond += 1;
             continue;
         }

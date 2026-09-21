@@ -140,11 +140,11 @@ fn find_router() -> Option<PieToken> {
 
 /// 占一趟：报设备名、收一格答码。返的第二件是那条线本身（占上了才有）。
 ///
-/// 答码用 [`lcall::code_of`]——**与线上同一张表**（客户端不从失败域另编一套号）。
+/// 答码用 [`lcall::fail_to_code`]——**与线上同一张表**（客户端不从失败域另编一套号）。
 fn attempt(entry: PieToken, device: Name) -> (u8, Option<line::client::Line>) {
     match line::client::Line::occupy(entry, device, MS) {
         Ok(held) => (lcall::OK, Some(held)),
-        Err(fail) => (lcall::code_of(fail), None),
+        Err(fail) => (lcall::fail_to_code(Some(fail)), None),
     }
 }
 

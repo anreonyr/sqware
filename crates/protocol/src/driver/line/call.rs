@@ -22,13 +22,13 @@ use super::core::Fail;
 pub const OCCUPY: u8 = 1;
 
 /// 登记帧的长度（动作码 + 设备名）。
-pub const ASK: usize = 1 + NAME_LEN;
+pub const OCCUPY_LEN: usize = 1 + NAME_LEN;
 
 /// 线泊位的记号（两侧同一个）。
 pub const LANE: &str = "line";
 
 /// 回信孔的记号（登记那一答从它回来）。
-pub const BACK: &str = "line-back";
+pub const BACK_MARK: &str = "line-back";
 
 /// 线泊位两个方向那一个记号：**帧不报内容，只报"有事"**（形状的下限，见文件头）。
 pub const NOTE: u8 = 1;
@@ -40,18 +40,32 @@ pub const TAKEN: u8 = 2;
 pub const DENIED: u8 = 3;
 pub const BAD: u8 = 4;
 
-/// 失败域 → 状态码（**一处编**：客户与路由者看同一张表）。
-pub fn code_of(fail: Fail) -> u8 {
+/// 失败域 → 状态码（**一处编**：客户与路由者看同一张表）。`None`（没失败）⇒ `OK`。
+pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
     match fail {
-        Fail::Unknown => UNKNOWN,
-        Fail::Taken => TAKEN,
-        Fail::Denied => DENIED,
+        None => OK,
+        Some(Fail::Unknown) => UNKNOWN,
+        Some(Fail::Taken) => TAKEN,
+        Some(Fail::Denied) => DENIED,
+    }
+}
+
+/// 状态码 → 失败域。`OK`（没失败）与 `BAD`（这一帧读不懂）**都不是失败域里的东西**，
+/// 故两者同一格答 `None`——读的人靠 [`unpack_occupy`] 先分流。
+///
+/// **本表是双射**（三个失败一格一码），故反向答得回来。
+pub const fn code_to_fail(code: u8) -> Option<Fail> {
+    match code {
+        UNKNOWN => Some(Fail::Unknown),
+        TAKEN => Some(Fail::Taken),
+        DENIED => Some(Fail::Denied),
+        _ => None,
     }
 }
 
 /// 登记帧：动作码 + 设备名。
-pub fn pack_occupy(device: Name) -> [u8; ASK] {
-    let mut out = [0u8; ASK];
+pub fn pack_occupy(device: Name) -> [u8; OCCUPY_LEN] {
+    let mut out = [0u8; OCCUPY_LEN];
     out[0] = OCCUPY;
     out[1..].copy_from_slice(device.bytes());
     out
@@ -59,9 +73,9 @@ pub fn pack_occupy(device: Name) -> [u8; ASK] {
 
 /// 拆一帧登记：**不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。
 pub fn unpack_occupy(frame: &[u8]) -> Option<Name> {
-    if frame.len() != ASK || frame[0] != OCCUPY {
+    if frame.len() != OCCUPY_LEN || frame[0] != OCCUPY {
         return None;
     }
-    let raw: [u8; NAME_LEN] = frame.get(1..ASK)?.try_into().ok()?;
+    let raw: [u8; NAME_LEN] = frame.get(1..OCCUPY_LEN)?.try_into().ok()?;
     Name::from_bytes(raw).ok()
 }

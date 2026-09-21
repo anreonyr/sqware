@@ -7,7 +7,7 @@
 //! 判据只有一条可机械检查的纪律——
 //!
 //! > 本文件里的 `if` / `match` **一处裁决也没有**，只有三件事：一个 `0` 哨兵
-//! > （[`opened_by`]）、"这一码才带 seed"（[`pack`]）与两张对照表
+//! > （[`opened_by`]）、"这一码才带 seed"（[`pack_ask`]）与两张对照表
 //! > （[`map_claim`] / [`map_seat`]）。
 //!
 //! （旧注写的是"这里不出现 `if` / `match`"——**照实记：`map_*` 那两张表与它同一次落地，
@@ -18,102 +18,46 @@
 
 use env::{Name, PieToken, TaskId};
 
-use super::core::{Board, Fail, Free, Probe};
+use super::core::{Board, Fail, Unship, VestedBy};
 
 use crate::session::{Claim, Seat};
 
-use runtime::core::port::{self, Access, Policy};
-use runtime::env::mail;
+// ── 一个调用的三个事实：身体在 `session::call`，这里只取名字 ──────────
+//
+// 三格是**一组**，三个名字读成同一句式的被动式事实、故等长（9/9/9）：
+// **这枚是谁授的 / 这扇门是谁开的 / 这枚被标成什么**。板这一侧原先各抄一份
+// （`probe`5 / `opened_by`9 / `mark_of`7——不等长本身就是"这一组还没想清楚"的信号），
+// 那一份已删；本模块要讲的话堆在下面这一段。
+pub use crate::session::call::{marked_as, opened_by, vested_by};
 
-/// 活性：这枚入口**还答得出吗**？**谁授给我的**？
-///
-/// 答的是 `Reserve` 的第一格（`vestor` = 这枚门闩谁授的）。`register` 的判据就是它
-/// ——"**那枚入口是你亲手交给我的**"。
-///
-/// 与 [`opened_by`] 分工：这一格答"谁交来的"，那一格答"这扇门本身是谁的"。转手会改写
-/// 这一格（root 转授过的门闩，`vestor` 会变成 root），故**不能用它认"对端是谁"**。
-///
-/// `reserve` 答"不在我表里"与"令牌越界"是同一个 `Err`。这两桩在今天**同粒度**，不是
-/// 因为它们本来就同：句柄是**表**的（`PieToken` 标着 `!Send`，见 `env::wire::handle`），
-/// **外来的号进不了这张表**——故剩下的两种情形才都是"实例没了"。板上那一枚又是**亲手
-/// 交给板的**（板正是持有它的那张表），所以这里读到 `Err` 就是"实例真的没了"。
-///
-/// **"实例没了"这一格里就有"那扇门封印了"**：`Reserve` 的 `owner` 那一格带存活闸
-/// （内核 `envcall/pie.rs` 的 `owner().ok_or(GateError::Dead)`，闸在
-/// `work/unit/gate/pie.rs` 的 `alive().then(...)`）⇒ 开者一退场、它开的门随之封印
-/// （`gate/cull.rs` 的退场钩子）⇒ 这里当场答 `Err(-2 Dead)`，与 `env::fid` 的 `Reserve`
-/// 注记写着的那条契约一致。**本格因此不必再问第二个问题**：板侧两本账的"死"判据读的
-/// 都是它，而封印发生在退出钩子里、**早于叫醒板的那一跳** ⇒ 板被叫醒时这一格已是定论。
-pub fn probe(entry: PieToken) -> Option<TaskId> {
-    mail::reserve(entry)
-        .ok()
-        .map(|(vestor, _owner, _mark)| vestor)
-}
-
-/// 这扇门**本身是谁的**（`Reserve` 的第二格 `owner`：副本共享同一事实，转手不变）。
-///
-/// 板那一侧认孔的两处都读它，且都问同一句——"**是不是这位客人的**"：答话路（客人开的那扇
-/// 门）与问话孔（客人铸的那一枚）。分开这两处的是**另外半格**：来源位（谁交给板的）。
-///
-/// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：**这一条候选不成立**
-/// （记号只长在孔上，故 Pole/Nole/Tole 一类问不到 owner）。
-pub fn opened_by(hole: PieToken) -> Option<TaskId> {
-    match mail::reserve(hole) {
-        Ok((_vestor, owner, _mark)) if owner.get() != 0 => Some(owner),
-        _ => None,
-    }
-}
-
-/// 这条路上刻的**记号**（`Reserve` 的第三格：铸者刻在孔上的那个名字，副本共享同一事实、
-/// 转手不变）。
-///
-/// 板那一侧三处认法都读它，各自问同一句——"**这是哪条路上的那一枚**"：答话路（板路，
-/// 记号 = `board`）、问话孔（记号 = `ask`）、注册入口（记号 = `entry`）；把同一来源的两枚
-/// 分开的是**另外半格**（谁交的 / 谁开的）。问不到记号（这一枚**不是孔**、或它已不在表里）
-/// ⇒ `None`：**这一条候选不成立**。
-pub fn mark_of(hole: PieToken) -> Option<Name> {
-    match mail::reserve(hole) {
-        Ok((_vestor, _owner, mark)) => Some(mark),
-        _ => None,
-    }
-}
-
-/// 放下：自释一份。
-fn free(entry: PieToken) -> Result<(), ()> {
-    mail::release(entry).map_err(|_| ())
-}
+/// 自释一份：**装运 / 卸下**——`ship` 的反面。牌子被换掉或扫空时用它，
+/// 否则那枚门闩漏在板上。身体在 [`crate::session::call::unship`]。
+pub use crate::session::call::unship;
 
 /// 立一块板：把两枚机制函数交给核心（核心因此不 `use` 内核）。
 ///
 /// `const` 是为了它能当 `static` 的初值：板只有一份，住在板那一台（`super::server`）。
 pub const fn board() -> Board {
-    let probe: Probe = probe;
-    let free: Free = free;
-    Board::new(probe, free)
+    let vested_by: VestedBy = vested_by;
+    let unship: Unship = unship;
+    Board::new(vested_by, unship)
 }
 
 /// 挂上：把调用方手里那枚入口**交给持板者**（`Accord` 一份副本），返"种在持板者表里"的号。
 ///
-/// 这就是"谁挂的"的来历：板上那枚是**亲手交出去的**，故 `probe` 认得出谁授的它。
+/// 这就是"谁挂的"的来历：板上那枚是**亲手交出去的**，故 [`vested_by`] 认得出谁授的它。
 /// 权限给满（`R|W`）**加一格 `VEST`**：入口要能用来说话，而持板者的本职就是**再授出**
 /// （`Query` 的下场）——内核那道"持 `VEST` 才交得出去"的闸（`Need::Grant`）挡的就是
-/// "板查到了却授不出去"。
-pub fn hang_in(entry: PieToken, holder: TaskId) -> Result<PieToken, ()> {
-    let pie = mail::HolePie::from_token(entry);
-    port::ship(&pie, holder, Access::FETCH | Access::STORE, Policy::VEST)
-        .map(|to| to.seed())
-        .map_err(|_| ())
-}
+/// "板查到了却授不出去"。身体在 [`crate::session::call::ship`]。
+pub use crate::session::call::ship as hang;
 
 /// 授出：把板上那一份入口转授给调用方（`Query` 的下场）。
 ///
-/// 与 [`hang_in`] 同一份子集（`R|W|VEST`）：**入口可以再传**——拿到它的人把它转给第三方
+/// 与 [`hang`] 同一份子集（`R|W|VEST`）：**入口可以再传**——拿到它的人把它转给第三方
 /// 是常态（那正是"一个名字指向一个入口"的用法），故这里不替调用方裁剪。
+/// **失败域是本模块的**（`Denied`）：身体共用，失败值各自说。
 pub fn give(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
-    let pie = mail::HolePie::from_token(entry);
-    port::ship(&pie, to, Access::FETCH | Access::STORE, Policy::VEST)
-        .map(|to| to.seed())
-        .map_err(|_| Fail::Denied)
+    crate::session::call::ship(entry, to).map_err(|()| Fail::Denied)
 }
 
 /// 牌子上的名字（**定长解码面**：尾随 NUL 是填充，不是内容）。
@@ -140,23 +84,23 @@ pub fn name_of(bytes: &[u8]) -> Option<Name> {
 /// 一个解码面**，故 `Name` 的读法全树只有一处。
 ///
 /// 那一格入口号是**客人把入口交出去之后、换回来的"种在板表里"的号**
-/// （[`hang_in`] 的返回值）——不是"客人的入口是几号"。两个编号空间不同源，互相拿错
+/// （[`hang`] 的返回值）——不是"客人的入口是几号"。两个编号空间不同源，互相拿错
 /// 正是旧树 `[33..41]` 那一格的病；**答案那一侧则干脆没有这一格**：查到的那枚入口经
 /// 会话交进客人的表，报文里再放一个号只会多出一份两边都得认的约定。
 ///
-/// 报文的**上限就是 [`ASK`]**：本协议只有两种帧——这一种有载荷的（[`REGISTER`] /
-/// [`UNREGISTER`] / [`LOOKUP`]）与 [`DISMISS`] 的一字节短帧。长度仍由每次 `push` 自己带
+/// 报文的**上限就是 [`ASK_LEN`]**：本协议只有两种帧——这一种有载荷的（[`REGISTER`] /
+/// [`UNREGISTER`] / [`LOOKUP`]）与 [`EVICT`] 的一字节短帧。长度仍由每次 `push` 自己带
 /// （孔不预设上限），这里只是**声明这一版只用多大**——一处上界。
-pub const ASK: usize = 1 + env::wire::NAME_LEN + 8;
+pub const ASK_LEN: usize = 1 + env::wire::NAME_LEN + 8;
 
 /// 四个动作在报文里的码——**与核心那四个方法同名**（`register` / `unregister` /
-/// `lookup` / `dismiss`）：线上与模型是同一件事的两层，不该各起一套词。
+/// `lookup` / `evict`）：线上与模型是同一件事的两层，不该各起一套词。
 pub const REGISTER: u8 = 1;
 pub const UNREGISTER: u8 = 2;
 pub const LOOKUP: u8 = 3;
 /// 第四格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节
-/// （给它塞两格空位就白要 40 字节，见 [`op_of`] 与 [`unpack`] 的分工）。
-pub const DISMISS: u8 = 4;
+/// （给它塞两格空位就白要 40 字节，见 [`op_of`] 与 [`unpack_ask`] 的分工）。
+pub const EVICT: u8 = 4;
 
 /// 答话那一格。**前五格与 [`Fail`] 一一对应**（`OK` = 一个失败都不是），第六格不是
 /// 失败域的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。
@@ -170,9 +114,37 @@ pub const DENIED: u8 = 3;
 pub const FULL: u8 = 4;
 pub const BAD: u8 = 5;
 
+/// 失败域 → 答话那一格。`None`（没失败）⇒ `OK`。
+///
+/// 板这一侧原先这张表**住在程序侧**（`programs/.../board/server.rs` 里那个私有 `code`），
+/// 故协议层拿不到它——规则 1"一张负码表"就是被这一格破的。它现在与码表同住一处。
+pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
+    match fail {
+        None => OK,
+        Some(Fail::Unknown) => UNKNOWN,
+        Some(Fail::Taken) => TAKEN,
+        Some(Fail::Denied) => DENIED,
+        Some(Fail::Full) => FULL,
+    }
+}
+
+/// 线上答话那一格 → 失败域。`OK`（没失败）与 `BAD`（这一问读不懂）**都不是失败域里的
+/// 东西**，故两者同一格答 `None`——读的人靠 [`op_of`] / [`unpack_ask`] 先分流。
+///
+/// **本表是双射**（四个失败一格一码），故反向答得回来。
+pub const fn code_to_fail(code: u8) -> Option<Fail> {
+    match code {
+        UNKNOWN => Some(Fail::Unknown),
+        TAKEN => Some(Fail::Taken),
+        DENIED => Some(Fail::Denied),
+        FULL => Some(Fail::Full),
+        _ => None,
+    }
+}
+
 /// 把一问编成字节。`seed` 只有 [`REGISTER`] 用得上。
-pub fn pack(op: u8, name: Name, seed: Option<PieToken>) -> [u8; ASK] {
-    let mut out = [0u8; ASK];
+pub fn pack_ask(op: u8, name: Name, seed: Option<PieToken>) -> [u8; ASK_LEN] {
+    let mut out = [0u8; ASK_LEN];
     out[0] = op;
     out[1..1 + env::wire::NAME_LEN].copy_from_slice(name.bytes());
     if let Some(seed) = seed {
@@ -191,11 +163,11 @@ pub fn op_of(bytes: &[u8]) -> Option<u8> {
 /// 不猜、不崩）。
 ///
 /// 只在**有载荷**的那几码上叫（[`op_of`] 已经分过流：退场那一句是一字节短帧，不进这里）。
-/// 长度为 [`ASK`] 是**帧的契约**（`pack` 产出的就是这个长度），故短一字节即读不懂。
+/// 长度为 [`ASK_LEN`] 是**帧的契约**（`pack_ask` 产出的就是这个长度），故短一字节即读不懂。
 /// 那一格入口号按 [`PieToken::NONE`] = "没带"解——令牌自 1 起，0 是内核的越界哨兵。
-pub fn unpack(bytes: &[u8]) -> Option<(Name, PieToken)> {
+pub fn unpack_ask(bytes: &[u8]) -> Option<(Name, PieToken)> {
     let name = name_of(bytes.get(1..)?)?;
-    let at = bytes.get(1 + env::wire::NAME_LEN..ASK)?;
+    let at = bytes.get(1 + env::wire::NAME_LEN..ASK_LEN)?;
     Some((name, PieToken::from_bytes(at)?))
 }
 

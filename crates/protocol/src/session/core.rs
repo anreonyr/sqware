@@ -73,12 +73,12 @@ impl Pier {
         self.at_peer
     }
 
-    /// 从这条泊位收一句话（有界等：`ms` 属**上限族**，三态口径见 `env::fid` 文件头的定式）。
+    /// 从这条泊位收一句话（有界等：`millis` 属**上限族**，三态口径见 `env::fid` 文件头的定式）。
     ///
     /// 与 [`Pier::post`] 成对：那一边说的是**对端的孔**，这一边收的是**本端的孔**。
     /// 收下来的字节数由返回值给出（`Err(())` = 期限内没等到）。
-    pub fn pull(&self, buf: &mut [u8], ms: usize) -> Result<usize, ()> {
-        call::pull_own(self.hole, buf, ms)
+    pub fn pull(&self, buf: &mut [u8], millis: usize) -> Result<usize, ()> {
+        call::pull_own(self.hole, buf, millis)
     }
 
     /// 这条路能不能走了（两头都齐：本端那一枚 + 对端那一枚）。
@@ -180,7 +180,7 @@ impl Quay {
         // 就占着单槽挡住对端推来的第一条消息。名字这一层信息改由**孔上的记号**承担
         // （见 [`Quay::scan`]）。
         if call::ship(hole, self.peer).is_err() {
-            let _ = call::drop_local(hole);
+            let _ = call::unship(hole);
             return Err(Seat::NoSeed);
         }
         // 本端 seat 的那一枚：写的那一半要等对端把它那一枚交进来（认领），故此刻
@@ -200,7 +200,7 @@ impl Quay {
         // 过线的那一句话。发不出去（它已经不在了 / 写端还没到）也算拆成功——它那边
         // 整张表随它消失。
         let _ = p.post(&call::UNSEAT);
-        let _ = call::drop_local(p.hole);
+        let _ = call::unship(p.hole);
     }
 
     /// 认领 **`of` 交给我的、刻着 `mark` 的那一枚**：扫表 → 认下 → 归位。
@@ -218,8 +218,8 @@ impl Quay {
     /// **凑不齐就不返回**（不许半条会话）：等到期限还没齐就报 [`Claim`] 的错误码。
     /// 认领下来的泊位留在码头里（那是它的家），用 [`Quay::find`] 取。
     ///
-    /// `ms` 属**上限族**（三态口径见 `env::fid` 文件头的定式）。
-    pub fn claim(&mut self, of: TaskId, mark: Name, ms: usize) -> Result<(), Claim> {
+    /// `millis` 属**上限族**（三态口径见 `env::fid` 文件头的定式）。
+    pub fn claim(&mut self, of: TaskId, mark: Name, millis: usize) -> Result<(), Claim> {
         if self.piers.is_empty() {
             // 我一条都没 seat 出去 ⇒ 没有额度可认领（对方无从知道该给我几条）。
             return Err(Claim::Partial);
@@ -227,7 +227,7 @@ impl Quay {
 
         // **先扫再等**（这一序不能反）：信标是一次事件，先扫过一遍才不会漏掉
         // "等之前就已经落进来"的那一枚。
-        let left = ms;
+        let left = millis;
         let deadline =
             (left != usize::MAX).then(|| call::now_ns().saturating_add(left as u64 * 1_000_000));
         loop {
@@ -279,7 +279,7 @@ impl Quay {
     /// 故这里没有、也不需要"放对端那一枚"的动作（实测见 `rig.rs` 头注的照实记）。
     pub fn shut(&mut self) {
         for p in self.piers.drain(..) {
-            let _ = call::drop_local(p.hole);
+            let _ = call::unship(p.hole);
         }
     }
 

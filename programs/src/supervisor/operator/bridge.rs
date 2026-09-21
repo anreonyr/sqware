@@ -23,16 +23,17 @@ pub fn attach(
     quay: &mut Quay,
     client: TaskId,
     host: TaskId,
-    ms: usize,
+    millis: usize,
     tip: &mut Option<PieToken>,
 ) -> Result<(), &'static str> {
     let link = Name::new(LINK).map_err(|_| "operator:name")?;
     // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
     quay.seat(link).map_err(|_| "operator:seat")?;
     // 2. 认领**这位客人**交出来的那一枚（记号 = 这条路的名字，客侧 `seat` 刻的就是它）。
-    quay.claim(client, link, ms).map_err(|_| "operator:claim")?;
+    quay.claim(client, link, millis)
+        .map_err(|_| "operator:claim")?;
     // 3. 提示孔（只认一次）→ 把客人那一枚转授给持树者 → 告两边。
-    let _ = host_of(host, ms, tip)?;
+    let _ = host_of(host, millis, tip)?;
     let reply = reply_path(quay).ok_or("operator:hand")?;
     hand(reply, host).map_err(|()| "operator:hand")?;
     // 客人那一侧的一格：**答话的是谁**（持树者的号，8 字节）。
@@ -50,7 +51,7 @@ pub fn attach(
 /// 把这条提示之路先认到手里、再转授给编排域（`root` 引导期的交接那一格）。
 pub fn host_of(
     host: TaskId,
-    ms: usize,
+    millis: usize,
     tip: &mut Option<PieToken>,
 ) -> Result<TaskId, &'static str> {
     if tip.is_some() {
@@ -60,7 +61,7 @@ pub fn host_of(
     let mark = Name::new(TIP_MARK).map_err(|_| "operator:name")?;
     let mut quay = Quay::open(host);
     quay.seat(slot).map_err(|_| "operator:seat")?;
-    quay.claim(host, mark, ms).map_err(|_| "operator:tip")?;
+    quay.claim(host, mark, millis).map_err(|_| "operator:tip")?;
     let pier = quay.find(slot).ok_or("operator:tip")?;
     // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
     *tip = pier.at_peer();

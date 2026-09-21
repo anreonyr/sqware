@@ -20,14 +20,14 @@ impl Line {
     ///
     /// `entry` = 树上查来的那扇门（`/device/router` 下驱动族那一块）；对端 = **那扇门的主人**
     /// （`owner`：副本共享同一事实、转手不变）。
-    pub fn occupy(entry: PieToken, device: Name, ms: usize) -> Result<Line, Fail> {
+    pub fn occupy(entry: PieToken, device: Name, millis: usize) -> Result<Line, Fail> {
         let host = owner_of(entry).ok_or(Fail::Denied)?;
         let mark = Name::new(call::LANE).map_err(|_| Fail::Denied)?;
         let mut quay = Quay::open(host);
         // 本端那一枚交给它（它按"谁开的 + 记号"认下来，往这里投递）。
         quay.seat(mark).map_err(|_| Fail::Denied)?;
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单槽的孔只够一个方向）。
-        let back = mail::unseal_hole(call::BACK).map_err(|_| Fail::Denied)?;
+        let back = mail::unseal_hole(call::BACK_MARK).map_err(|_| Fail::Denied)?;
         port::ship(
             &HolePie::from_token(back),
             host,
@@ -39,7 +39,7 @@ impl Line {
             .push(&call::pack_occupy(device))
             .map_err(|_| Fail::Denied)?;
         let mut one = [0u8; 1];
-        let code = match HolePie::from_token(back).pull_timeout(&mut one, ms) {
+        let code = match HolePie::from_token(back).pull_timeout(&mut one, millis) {
             Ok(1) => one[0],
             _ => call::BAD,
         };
@@ -51,16 +51,16 @@ impl Line {
             });
         }
         // 认下它那一枚：它另装了一条泊位的一半，本端写的那一枚从它来。
-        quay.claim(host, mark, ms).map_err(|_| Fail::Denied)?;
+        quay.claim(host, mark, millis).map_err(|_| Fail::Denied)?;
         Ok(Line { quay })
     }
 
     /// 收一帧投递。`Err(())` = 期限内没等到。
     ///
     /// **帧里没有线号**（线在泊位里，见 [`super::mod`]）：这一手对客户就是"我那一格有事"。
-    pub fn receive(&self, ms: usize) -> Result<(), ()> {
+    pub fn receive(&self, millis: usize) -> Result<(), ()> {
         let mut one = [0u8; 1];
-        self.lane()?.pull(&mut one, ms).map(|_| ())
+        self.lane()?.pull(&mut one, millis).map(|_| ())
     }
 
     /// 说一句"这一条我处理完了"。**不阻塞**：路由者那一格还压着上一条没取时，就当已经

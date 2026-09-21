@@ -55,7 +55,7 @@
 //!
 //! # 两个注入的事实
 //!
-//! [`Probe`]（那一枚 Pie 还答得出吗）与 [`Free`]（把我这一份放下——剪掉或换掉一枚 `Tile` 时用它，
+//! [`VestedBy`]（那一枚 Pie 还答得出吗）与 [`Unship`]（把我这一份放下——剪掉或换掉一枚 `Tile` 时用它，
 //! 不加这一格那一枚句柄就漏在树里）。核心因此不 `use` 内核，喂两个假闭包就能把规矩推理干净。
 //!
 //! # 与 [`system::board`](crate::system::board) 的关系
@@ -128,4 +128,4 @@ pub mod client;
 pub mod core;
 
 pub use call::{ASK_MARK, LINK, TIP_MARK, TIP_NAME};
-pub use core::{Entry, Fail, Free, Node, Operator, Probe};
+pub use core::{Entry, Fail, Node, Operator, Unship, VestedBy};

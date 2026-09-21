@@ -6,7 +6,9 @@ use env::{PAIR_LEN, Pair, PieToken};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{HolePie, NolePie, PolePie};
 
-use protocol::driver::supply::call::{BAD, Kind, OK, Slip, WANT_MAX, code_of_fail, reply, slip_of};
+use protocol::driver::supply::call::{
+    BAD, Kind, OK, Order, WANT_MAX, fail_to_code, pack_reply, unpack_order,
+};
 use protocol::driver::supply::core::Fail;
 use protocol::session::Pier;
 
@@ -19,17 +21,17 @@ use protocol::session::Pier;
 ///   对端了，本层不回滚（回滚要 `Revoke`，那是另一个动作；调用方按 `code` 处置）。
 /// - **形态照请求，唯独 `VEST` 一律剔掉**：固件不发"再授出的权"。
 pub fn supply(
-    slip: &Slip<'_>,
+    order: &Order<'_>,
     src_of: impl Fn(&str) -> Option<PieToken>,
     records: &mut [u8],
 ) -> Result<usize, Fail> {
-    let who = slip.who();
-    let n = slip.len();
+    let who = order.who();
+    let n = order.len();
     if records.len() < n * PAIR_LEN {
         return Err(Fail::Full);
     }
     for i in 0..n {
-        let want = slip.want(i).ok_or(Fail::Bad)?;
+        let want = order.want(i).ok_or(Fail::Bad)?;
         let name = want.name().ok_or(Fail::Bad)?;
         let src = src_of(name.as_str()).ok_or(Fail::Unknown)?;
         let access = want.access().ok_or(Fail::Bad)?;
@@ -55,7 +57,7 @@ pub fn supply(
 ///
 /// 不碰策略：只按单子发货，形态剔 `VEST`。
 ///
-/// 前条件：`ask` ≥ [`SLIP_CAP`]、`out` ≥ [`REPLY_CAP`]。
+/// 前条件：`ask` ≥ [`ORDER_CAP`]、`out` ≥ [`REPLY_CAP`]。
 pub fn serve(
     pier: &Pier,
     src_of: impl Fn(&str) -> Option<PieToken>,
@@ -73,19 +75,19 @@ pub fn serve(
             }
             continue;
         };
-        let code = match ask.get(..n).and_then(slip_of) {
-            Some(slip) => match supply(&slip, &src_of, &mut records) {
+        let code = match ask.get(..n).and_then(unpack_order) {
+            Some(order) => match supply(&order, &src_of, &mut records) {
                 Ok(k) => {
-                    if let Some(frame) = reply(out, OK, &records[..k * PAIR_LEN]) {
+                    if let Some(frame) = pack_reply(out, OK, &records[..k * PAIR_LEN]) {
                         let _ = pier.post(frame);
                     }
                     continue;
                 }
-                Err(fail) => code_of_fail(fail),
+                Err(fail) => fail_to_code(Some(fail)),
             },
             None => BAD,
         };
-        if let Some(frame) = reply(out, code, &[]) {
+        if let Some(frame) = pack_reply(out, code, &[]) {
             let _ = pier.post(frame);
         }
     }

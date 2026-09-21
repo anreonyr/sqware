@@ -32,7 +32,7 @@ pub fn attach(
     quay: &mut Quay,
     me: TaskId,
     client: TaskId,
-    ms: usize,
+    millis: usize,
     tip: &mut Option<PieToken>,
     lane: Option<PieToken>,
 ) -> Result<(), &'static str> {
@@ -44,9 +44,10 @@ pub fn attach(
     //    （`Quay::claim` 的正文）。
     //    **次序**：板那条比 `records` 后到，而 `records` 的写端已经用掉了 ⇒ 这一枚认在
     //    板泊位上（一枚孔只配一条泊位）。
-    quay.claim(client, link, ms).map_err(|_| "board:claim")?;
+    quay.claim(client, link, millis)
+        .map_err(|_| "board:claim")?;
     // 3. 板线程（只起一枚）→ 把客人那一枚转授过去 → 板路上递一格"答话的是谁" → 提示来客人了。
-    let host = host(me, ms, tip)?;
+    let host = host(me, millis, tip)?;
     // 死亡道：**这一位的那一条**转授给板线程（板按记号 `gone-<名字>` 在自己表里认领它）。
     // 位置在客人那一枚转授之后：板线程这时已经起来（`host` 起过就复用）。
     if let Some(lane) = lane {
@@ -72,7 +73,7 @@ pub fn attach(
 /// 线程自己铸：它起来第一件事就是把这枚孔的副本交给**装配者**。`me` 因此得从外面给：
 /// 同域里产出来的线程，`sire` 是**域的**生我者（建这个域的那一枚），不是产它的那一枚
 /// （`UnitCall::Sire` 的正文）——同一个域里的两枚线程，"谁生我"答不出"谁产的"。
-fn host(me: TaskId, ms: usize, tip: &mut Option<PieToken>) -> Result<TaskId, &'static str> {
+fn host(me: TaskId, millis: usize, tip: &mut Option<PieToken>) -> Result<TaskId, &'static str> {
     let had = HOST.load(Ordering::Acquire);
     if had != 0 {
         return Ok(TaskId::new(had));
@@ -91,7 +92,7 @@ fn host(me: TaskId, ms: usize, tip: &mut Option<PieToken>) -> Result<TaskId, &'s
     let tip_mark = Name::new(TIP_MARK).map_err(|_| "board:name")?;
     let mut quay = Quay::open(id);
     quay.seat(slot).map_err(|_| "board:seat")?;
-    quay.claim(id, tip_mark, ms).map_err(|_| "board:tip")?;
+    quay.claim(id, tip_mark, millis).map_err(|_| "board:tip")?;
     let pier = quay.find(slot).ok_or("board:tip")?;
     // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
     *tip = pier.at_peer();

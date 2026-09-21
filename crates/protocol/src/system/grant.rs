@@ -22,10 +22,10 @@ pub fn unpack(
         // SAFETY: 记录与块同源（`Pair` 的尺寸由编译期断言锁死为 `PAIR_LEN`）；缓冲只保证
         // 1 字节对齐，故 `read_unaligned`。越界由上面的除法挡掉。
         let at = unsafe { records.as_ptr().add(i * PAIR_LEN) };
-        let rec = unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) };
-        let Some(name) = rec.name() else { continue };
+        let record = unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) };
+        let Some(name) = record.name() else { continue };
         if let Some(slot) = slot_of(name.as_str()) {
-            f(slot, rec.token());
+            f(slot, record.token());
         }
     }
 }

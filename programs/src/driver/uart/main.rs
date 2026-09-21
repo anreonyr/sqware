@@ -115,7 +115,7 @@ extern "C" fn main() -> ! {
 
     // 3. 上板：**只为让板看得见本域的死**（本域开的那扇门随收尾封印 ⇒ 板当场看出来）。
     //    不挂牌子——名字在树上。**问话孔照交**：不交的那一位在板账上永远"没挂齐"，
-    //    板线程会一直退化成 1 ms 节拍（`board::settle` 的 `unarmed`）。
+    //    板线程会一直退化成 1 millis 节拍（`board::settle` 的 `unarmed`）。
     let Ok(sire) = utask::sire() else {
         exit_with(E_BOARD)
     };

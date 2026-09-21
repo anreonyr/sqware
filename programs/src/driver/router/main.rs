@@ -75,7 +75,7 @@
 //!
 //! # 读数
 //!
-//! - 起域那一行：`ndev` / `ctx` / 树里那些线（**带名字**）/ **没进来的四笔**；
+//! - 起域那一行：`device_count` / `ctx` / 树里那些线（**带名字**）/ **没进来的四笔**；
 //! - `router: line <n> = <设备名>`——**登记那一趟**（解树解出来的权威，只由登记产生）；
 //! - 每条线**第一次**被领到时一行 `router: line=<n>`——**只可能由中断链产生**
 //!   （串口驱动开闸 ⇒ 设备拉线 ⇒ 控制器 ⇒ 内核摇铃 ⇒ 本域 claim）；
@@ -85,7 +85,7 @@
 //!   故它出现一次就是一条线真的被收掉了；
 //! - `router: lane dropped line=<n>`——**登记被拒那一趟**（"这条线有人了"）：这一趟刚交上来的
 //!   泊位被放回去了（房客那趟 `TAKEN` 每次冷启动走一遍）；
-//! - 账的格数按 `ndev` 要（备不下就拒起，见 [`E_ACCOUNT`]）——账够不够用是**装配期的判据**，
+//! - 账的格数按 `device_count` 要（备不下就拒起，见 [`E_ACCOUNT`]）——账够不够用是**装配期的判据**，
 //!   不是运行期的分支。
 //!
 //! 本域**不读走设备里的字节**：`serial@10000000` 的持有者是 [`crate::driver::uart`]。不读 ⇒
@@ -188,8 +188,8 @@ extern "C" fn main() -> ! {
     say("router: docks open");
     // 线集合与四笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
     say(&alloc::format!(
-        "router: ndev={} ctx={} lines={:?} unparented={} beyond={} mapped={} unparsed={}",
-        plic.ndev(),
+        "router: device_count={} ctx={} lines={:?} unparented={} beyond={} mapped={} unparsed={}",
+        plic.device_count(),
         plic.context(),
         sources
             .lines
@@ -205,7 +205,7 @@ extern "C" fn main() -> ! {
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见文件头）。
-    let Some(mut lines) = Lines::new(plic.ndev()) else {
+    let Some(mut lines) = Lines::new(plic.device_count()) else {
         exit_with(E_ACCOUNT)
     };
 
@@ -240,11 +240,11 @@ extern "C" fn main() -> ! {
     }
 
     let mut seen = Seen::default();
-    let mut buf = [0u8; lcall::ASK];
+    let mut buf = [0u8; lcall::OCCUPY_LEN];
     loop {
         // **等到有事件**：三样（铃 / 门上有人 / 客人的排空）都可等地，醒来就说明有一格有事。
         //
-        // **纯事件（`usize::MAX`），没有兜底的一拍**：旧写法带 20 ms 期限，为的是盖住"偶尔
+        // **纯事件（`usize::MAX`），没有兜底的一拍**：旧写法带 20 millis 期限，为的是盖住"偶尔
         // 一次组等待没被叫醒"（实测：PLIC 的 `pending` 置着、本域不再被叫醒，字节留在设备里）。
         // 那一格的根在铃那一侧——空闲核不进外部 trap，`raise_irq` 在它身上没有调用点，铃
         // 根本没响（见 `kernel/src/work/room/scheduler/core/fetch.rs` 的空闲循环）。根修在
@@ -370,7 +370,7 @@ fn alive(lane: &Pier) -> bool {
 /// **它不拦主循环**：两件都是"起来之后"的事——哪一件没成只报一句读数，收与结照旧。
 fn serve_board(sire: TaskId, entry: PieToken) {
     // 板那条路：本端装一条、认下生我者那一枚（它再转授给板线程），再交一枚问话孔——
-    // 不交的那一位在板账上永远"没挂齐"，板线程会一直退化成 1 ms 节拍。
+    // 不交的那一位在板账上永远"没挂齐"，板线程会一直退化成 1 millis 节拍。
     let link = board::open(sire, QUAY_MS).ok();
     let boarded = match &link {
         Some((_, board)) => board::ask_hole(*board).is_ok(),
@@ -419,12 +419,12 @@ fn desk_face(
                     // **拒了就放回去**：这一趟刚交上来的那条泊位不能留在账外（见 `drop_lane`）。
                     Err(fail) => {
                         drop_lane(&mut quay, lane, line);
-                        lcall::code_of(fail)
+                        lcall::fail_to_code(Some(fail))
                     }
                 },
             },
         };
-        if let Some(back) = find_mark(from, lcall::BACK) {
+        if let Some(back) = find_mark(from, lcall::BACK_MARK) {
             let _ = HolePie::from_token(back).push(&[code]);
         }
     }

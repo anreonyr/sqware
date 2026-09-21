@@ -4,7 +4,7 @@
 //!
 //! > `core.rs` 里不出现 `runtime::`。
 //!
-//! 两个外部事实是**注入**的：[`Probe`]（那一枚 Pie 还答得出吗）与 [`Free`]（把我这一份放下）。
+//! 两个外部事实是**注入**的：[`VestedBy`]（那一枚 Pie 还答得出吗）与 [`Unship`]（把我这一份放下）。
 //! 于是喂两个假闭包就能把这棵树与五条原语的规矩推理干净，换载体不必重写。
 
 use alloc::vec::Vec;
@@ -68,12 +68,12 @@ pub enum Fail {
 
 /// **活性**：那一枚 Pie 还答得出吗？答不出（`None`）= 它后面的人没了。
 ///
-/// 与 `system::board` 同一格（`Probe` 的形状照旧）：本正文没有 owner，故这里只取"答得出吗"，
+/// 与 `system::board` 同一格（`VestedBy` 的形状照旧）：本正文没有 owner，故这里只取"答得出吗"，
 /// 答出来的 `TaskId` 用不到。
-pub type Probe = fn(PieToken) -> Option<TaskId>;
+pub type VestedBy = fn(PieToken) -> Option<TaskId>;
 
 /// **放下**：把我这一份自释。剪掉或换掉一枚 `Tile` 时用它——不加这一格，那一枚句柄就漏在树里。
-pub type Free = fn(PieToken) -> Result<(), ()>;
+pub type Unship = fn(PieToken) -> Result<(), ()>;
 
 // ── 树 ──────────────────────────────────────────────────────
 
@@ -82,8 +82,8 @@ pub type Free = fn(PieToken) -> Result<(), ()>;
 /// 根 = `root` 那一叠条目；**空路就是根**（[`Operator::list`] 列的就是它那一层）。
 pub struct Operator {
     root: Vec<Entry>,
-    probe: Probe,
-    free: Free,
+    vested_by: VestedBy,
+    unship: Unship,
 }
 
 impl Operator {
@@ -93,11 +93,11 @@ impl Operator {
     pub const PATH_MAX: usize = 8;
 
     /// 立一棵树：两个注入的机制事实跟着树走——它们对每一条同值，故不必逐个作参数传。
-    pub const fn new(probe: Probe, free: Free) -> Operator {
+    pub const fn new(vested_by: VestedBy, unship: Unship) -> Operator {
         Operator {
             root: Vec::new(),
-            probe,
-            free,
+            vested_by,
+            unship,
         }
     }
 
@@ -109,11 +109,11 @@ impl Operator {
     /// - 路上除最后一段外**都得是 `Pane` 且存在**（缺一段 ⇒ [`Fail::Unknown`]；
     ///   那一段是一枚 `Tile` ⇒ [`Fail::NotAPane`]）；
     /// - 最后一段空着 ⇒ 落上；
-    /// - 最后一段已经占着 ⇒ **换绑**：旧的那一枚放下（[`Free`]）——除非它是一块**非空** `Pane`
+    /// - 最后一段已经占着 ⇒ **换绑**：旧的那一枚放下（[`Unship`]）——除非它是一块**非空** `Pane`
     ///   （⇒ [`Fail::NonEmpty`]：要动它先清空）。
     pub fn land(&mut self, path: &[Name], pie: PieToken) -> Result<(), Fail> {
         Self::checked(path)?;
-        let free = self.free;
+        let unship = self.unship;
         let last = path[path.len() - 1];
         let level = self.level_mut(path)?;
         match level.iter().position(|e| e.name == last) {
@@ -127,7 +127,7 @@ impl Operator {
                 };
                 level[at].node = Node::Tile(pie);
                 if let Some(old) = old {
-                    let _ = free(old);
+                    let _ = unship(old);
                 }
                 Ok(())
             }
@@ -151,7 +151,7 @@ impl Operator {
     /// 已是**空** `Pane` ⇒ 无事；已是**非空** `Pane` ⇒ [`Fail::NonEmpty`]。
     pub fn part(&mut self, path: &[Name]) -> Result<(), Fail> {
         Self::checked(path)?;
-        let free = self.free;
+        let unship = self.unship;
         let last = path[path.len() - 1];
         let level = self.level_mut(path)?;
         match level.iter().position(|e| e.name == last) {
@@ -163,7 +163,7 @@ impl Operator {
                 };
                 level[at].node = Node::Pane(Vec::new());
                 if let Some(old) = old {
-                    let _ = free(old);
+                    let _ = unship(old);
                 }
                 Ok(())
             }
@@ -184,8 +184,8 @@ impl Operator {
     ///
     /// - 走不动（中间那一段是一枚 `Tile`）⇒ [`Fail::NotAPane`]；缺一段 ⇒ [`Fail::Unknown`]；
     /// - 到头是一块 `Pane` ⇒ [`Fail::NotATile`]（**空路也是这一格**：根是一块 `Pane`）；
-    /// - 到头是一枚 `Tile`：**先探一次**（[`Probe`]）——答不出 ⇒ 当场剔掉那一条、放下那一份
-    ///   （[`Free`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `give`。
+    /// - 到头是一枚 `Tile`：**先探一次**（[`VestedBy`]）——答不出 ⇒ 当场剔掉那一条、放下那一份
+    ///   （[`Unship`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `give`。
     ///
     /// `give` 是"交出去"那一手（适配层在这里把 Pie 授给调用方，核心因此不碰内核）。
     pub fn find(&mut self, path: &[Name], mut give: impl FnMut(PieToken)) -> Result<(), Fail> {
@@ -195,8 +195,8 @@ impl Operator {
         if path.is_empty() {
             return Err(Fail::NotATile);
         }
-        let probe = self.probe;
-        let free = self.free;
+        let vested_by = self.vested_by;
+        let unship = self.unship;
         let last = path[path.len() - 1];
         let level = self.level_mut(path)?;
         let at = level
@@ -207,9 +207,9 @@ impl Operator {
             Node::Pane(_) => return Err(Fail::NotATile),
             Node::Tile(pie) => *pie,
         };
-        if probe(pie).is_none() {
+        if vested_by(pie).is_none() {
             level.remove(at);
-            let _ = free(pie);
+            let _ = unship(pie);
             return Err(Fail::Dead);
         }
         give(pie);
@@ -219,10 +219,10 @@ impl Operator {
     /// **剪**：把路上那一条剪掉。
     ///
     /// 那一条得存在；是 `Pane` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
-    /// 剪掉一枚 `Tile` 时那一枚放下（[`Free`]）——它是资源实体的一份引用，不放下就漏水。
+    /// 剪掉一枚 `Tile` 时那一枚放下（[`Unship`]）——它是资源实体的一份引用，不放下就漏水。
     pub fn trim(&mut self, path: &[Name]) -> Result<(), Fail> {
         Self::checked(path)?;
-        let free = self.free;
+        let unship = self.unship;
         let last = path[path.len() - 1];
         let level = self.level_mut(path)?;
         let at = level
@@ -236,7 +236,7 @@ impl Operator {
         };
         level.remove(at);
         if let Some(pie) = dropped {
-            let _ = free(pie);
+            let _ = unship(pie);
         }
         Ok(())
     }
@@ -309,7 +309,7 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    /// 假表是**进程级**的（`Probe` / `Free` 是函数指针，捕不了环境），故测试彼此串行。
+    /// 假表是**进程级**的（`VestedBy` / `Unship` 是函数指针，捕不了环境），故测试彼此串行。
     static SERIAL: Mutex<()> = Mutex::new(());
 
     fn serial() -> std::sync::MutexGuard<'static, ()> {
@@ -329,7 +329,7 @@ mod tests {
         PieToken::from_bytes(&(n as u64).to_le_bytes()).expect("8 字节")
     }
 
-    fn fake_probe(entry: PieToken) -> Option<TaskId> {
+    fn fake_vested_by(entry: PieToken) -> Option<TaskId> {
         match entry.get() {
             at if at < TABLE.len() => match TABLE[at].load(Ordering::Relaxed) {
                 0 => None,
@@ -340,7 +340,7 @@ mod tests {
     }
 
     /// 记下"这一枚被放下了"。假表有 `PANE_CAP + 1` 位，越界的令牌不记。
-    fn fake_free(entry: PieToken) -> Result<(), ()> {
+    fn fake_unship(entry: PieToken) -> Result<(), ()> {
         if entry.get() < TABLE.len() {
             FREED.fetch_or(1usize << entry.get(), Ordering::Relaxed);
         }
@@ -352,7 +352,7 @@ mod tests {
             slot.store(0, Ordering::Relaxed);
         }
         FREED.store(0, Ordering::Relaxed);
-        Operator::new(fake_probe, fake_free)
+        Operator::new(fake_vested_by, fake_unship)
     }
 
     /// 令牌 `entry` 还答得出。
@@ -369,7 +369,7 @@ mod tests {
         }
     }
 
-    fn freed(entry: usize) -> bool {
+    fn unshipped(entry: usize) -> bool {
         FREED.load(Ordering::Relaxed) & (1usize << entry) != 0
     }
 
@@ -470,7 +470,7 @@ mod tests {
         assert_eq!(t.land(&path(&["dev"]), tok(2)), Err(Fail::NonEmpty));
         assert_eq!(t.part(&path(&["dev"])), Err(Fail::NonEmpty));
         assert_eq!(t.trim(&path(&["dev"])), Err(Fail::NonEmpty));
-        assert!(!freed(1), "非空那块 Pane 一根毫毛都没动");
+        assert!(!unshipped(1), "非空那块 Pane 一根毫毛都没动");
         assert_eq!(look(&mut t, &path(&["dev", "uart0"])), Ok(Some(tok(1))));
     }
 
@@ -490,12 +490,12 @@ mod tests {
         live(2);
         assert_eq!(t.land(&path(&["dev"]), tok(2)), Ok(()));
         assert_eq!(look(&mut t, &path(&["dev"])), Ok(Some(tok(2))));
-        assert!(freed(1) && !freed(2));
+        assert!(unshipped(1) && !unshipped(2));
 
         // 一枚 `Tile` ⇒ 分成一块空 `Pane`：旧的那一枚也放下
 
         assert_eq!(t.part(&path(&["dev"])), Ok(()));
-        assert!(freed(2));
+        assert!(unshipped(2));
         assert_eq!(names(&t, &[]), Ok(std::vec![name("dev")]));
         assert_eq!(names(&t, &path(&["dev"])), Ok(std::vec![]));
         assert_eq!(look(&mut t, &path(&["dev"])), Err(Fail::NotATile));
@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(t.land(&path(&["log"]), tok(1)), Ok(()));
         gone(1);
         assert_eq!(look(&mut t, &path(&["log"])), Err(Fail::Dead));
-        assert!(freed(1));
+        assert!(unshipped(1));
         assert_eq!(look(&mut t, &path(&["log"])), Err(Fail::Unknown));
         assert_eq!(names(&t, &[]), Ok(std::vec![]));
     }
@@ -535,7 +535,7 @@ mod tests {
         live(1);
         assert_eq!(t.land(&path(&["log"]), tok(1)), Ok(()));
         assert_eq!(t.trim(&path(&["log"])), Ok(()));
-        assert!(freed(1));
+        assert!(unshipped(1));
         assert_eq!(look(&mut t, &path(&["log"])), Err(Fail::Unknown));
 
         assert_eq!(t.part(&path(&["dev"])), Ok(()));

@@ -31,7 +31,7 @@ const SETTLE_MS: usize = 1;
 ///   循环  补齐两件事（收提示 + 认领答话路 / 认出问话孔并挂组）
 ///         等一格有事（一个等待）—— 提示孔 ⇒ 来客人了；问话孔 ⇒ 读一帧、答一句
 ///         说了"我走了"的那一位 ⇒ 撤格 + 摘牌 + 把它的问话孔从组里摘掉
-///         惰性剔走**答不出的客人**（`Probe` 答 `None`）
+///         惰性剔走**答不出的客人**（`VestedBy` 答 `None`）
 /// ```
 ///
 /// **板不用码头**：它要的两枚孔都不是它开的——答话路的**写端**是装配者转授进来的，问话孔的
@@ -72,8 +72,8 @@ pub(crate) fn host_loop(me: TaskId) {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
         let settling = settle(&mut desk, me, &tole, &tip_hole);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
-        let ms = if settling { SETTLE_MS } else { usize::MAX };
-        let Ok(Some((tok, _dir))) = tole.await_(ms) else {
+        let millis = if settling { SETTLE_MS } else { usize::MAX };
+        let Ok(Some((tok, _dir))) = tole.await_(millis) else {
             swept += tell_gone(&mut desk, &mut lanes);
             continue;
         };
@@ -83,7 +83,7 @@ pub(crate) fn host_loop(me: TaskId) {
         {
             serve_one(&mut board, &mut desk, &tole, guest, swept, &mut lanes);
         }
-        // 三、客人**死了**（没道别就没了）⇒ 惰性剔：**那一枚入口答不出**（`Probe` 答 `None`
+        // 三、客人**死了**（没道别就没了）⇒ 惰性剔：**那一枚入口答不出**（`VestedBy` 答 `None`
         //     ——不在我表里，**或**它那扇门已经封印）即当场扫空，并推它那条死亡道。
         //     **说了走**的那一位在 `serve_one` 那一支里已经撤干净（撤格 + 摘牌 + 摘孔）。
         swept += tell_gone(&mut desk, &mut lanes);
@@ -167,7 +167,7 @@ fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
         index += 1;
         if vestor == assembler
             && bcall::opened_by(token) == Some(who)
-            && bcall::mark_of(token) == Some(board)
+            && bcall::marked_as(token) == Some(board)
         {
             return Some(token);
         }
@@ -187,7 +187,7 @@ fn lane_for(name: Name) -> Option<PieToken> {
             return None;
         }
         index += 1;
-        if bcall::mark_of(token) == Some(want) {
+        if bcall::marked_as(token) == Some(want) {
             return Some(token);
         }
     }
@@ -220,8 +220,8 @@ fn take_lane(lanes: &mut Lanes, who: TaskId) -> Option<PieToken> {
 
 /// 剔掉**已经走了**的客人，并把"没了"这件事推进**它那条死亡道**；返剔了几格。
 ///
-/// 判据全在 `Desk::sweep_who` 那一格（`Probe` 答 `None`）——**看出来的**那一档。
-/// **听来的**那一档（`DISMISS`）在 [`answer`] 里推；两档都推，因为装配者只认道。
+/// 判据全在 `Desk::sweep_who` 那一格（`VestedBy` 答 `None`）——**看出来的**那一档。
+/// **听来的**那一档（`EVICT`）在 [`answer`] 里推；两档都推，因为装配者只认道。
 fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
     let mut dead = [TaskId::new(0); Desk::CAP];
     let n = desk.sweep_who(&mut dead);
@@ -248,7 +248,7 @@ fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
 /// - **记号 == `ask`** —— 它亲手铸的那一枚问话孔（[`ask_hole`] 刻的）。
 ///
 /// 从前第三格是"**不带 `VEST`**"：它交来的**入口**也满足前两格（交者、开者都是它），而入口
-/// 是"能再授出"的那一枚（`hang_in` 给了 `VEST`）。那一格是**用权限位兼职表达语义**——权限位
+/// 是"能再授出"的那一枚（`hang` 给了 `VEST`）。那一格是**用权限位兼职表达语义**——权限位
 /// 回答的是"能不能再授出"，不是"这是什么"，故换成记号：入口刻的是 `entry`（见 [`answer`]
 /// 那一支），两枚同来源的孔靠**记号**分开。
 fn ask_of(who: TaskId) -> Option<PieToken> {
@@ -261,7 +261,7 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
             return None;
         }
         index += 1;
-        if bcall::opened_by(token) == Some(who) && bcall::mark_of(token) == Some(ask) {
+        if bcall::opened_by(token) == Some(who) && bcall::marked_as(token) == Some(ask) {
             return Some(token);
         }
     }
@@ -291,7 +291,7 @@ fn serve_one(
     let Some(ask) = guest.ask() else {
         return;
     };
-    let mut buf = [0u8; bcall::ASK];
+    let mut buf = [0u8; bcall::ASK_LEN];
     let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(&mut buf, 0) else {
         return;
     };
@@ -303,15 +303,15 @@ fn serve_one(
     let _ = mail::HolePie::from_token(guest.reply()).push(&answer);
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
-    if bcall::op_of(want) == Some(bcall::DISMISS) {
+    if bcall::op_of(want) == Some(bcall::EVICT) {
         let _ = tole.detach(&mail::HolePie::from_token(ask), HoleDir::Pull);
     }
 }
 
 /// 把一条问交给板，编出一句答（**一格**：读不懂也答，答 `BAD`）。
 ///
-/// **先读动作码、再按码取载荷**：退场那一句是**一字节短帧**（[`bcall::DISMISS`]），它没有
-/// 名字也没有入口，故在 [`bcall::unpack`] 之前就分流出去——给它塞两格空位是白要 40 字节。
+/// **先读动作码、再按码取载荷**：退场那一句是**一字节短帧**（[`bcall::EVICT`]），它没有
+/// 名字也没有入口，故在 [`bcall::unpack_ask`] 之前就分流出去——给它塞两格空位是白要 40 字节。
 fn answer(
     board: &mut Board,
     desk: &mut Desk,
@@ -324,13 +324,13 @@ fn answer(
         // 读不懂就答 `BAD`——不猜、不崩。
         return [bcall::BAD];
     };
-    if op == bcall::DISMISS {
+    if op == bcall::EVICT {
         // 死亡道：**先取走**（撤格/摘牌之后就只剩道这一条线索了）。
         let lane = take_lane(lanes, who);
         // 退场：撤它那一格（`Unknown` = **它不在账上**）+ 摘掉它挂在板上的全部牌子。
-        let said = match desk.dismiss(who) {
+        let said = match desk.evict(who) {
             Ok(_slot) => {
-                let names = board.free_of(who);
+                let names = board.evict(who);
                 // 破例打一行：退场这一件事的读数只此一处（**只在这一件事上打**，不是刷屏）。
                 say(&format!(
                     "board: bye tid={} names={names} occupied={} swept={swept}",
@@ -345,19 +345,19 @@ fn answer(
         if let Some(lane) = lane {
             let _ = mail::HolePie::from_token(lane).push(&[0u8]);
         }
-        return [code(said.err())];
+        return [bcall::fail_to_code(said.err())];
     }
-    let Some((name, seed)) = bcall::unpack(want) else {
+    let Some((name, seed)) = bcall::unpack_ask(want) else {
         return [bcall::BAD];
     };
     let said = match op {
         bcall::REGISTER => match (seed.get() != 0).then_some(seed) {
             // 入口要**是它刚交过来的那一枚**。**这枚孔是谁铸的、谁交的**：客人铸（记号
-            // `entry`）、经会话交给板（`hang_in` ⇒ 板上这一份的来源位是客人）——故判据是
+            // `entry`）、经会话交给板（`hang` ⇒ 板上这一份的来源位是客人）——故判据是
             // `{交者 == 它, 记号 == entry}`：前格在核心（`probe(entry) == who`），后格在这里。
             // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
             // 两件事只有记号分得开。
-            Some(entry) if bcall::mark_of(entry) == Name::new(ENTRY_MARK).ok() => {
+            Some(entry) if bcall::marked_as(entry) == Name::new(ENTRY_MARK).ok() => {
                 let said = board.register(name, entry, who).map(|_| ());
                 // 名字刚到 ⇒ 现在就把这一位的死亡道认下来（见 [`lane_for`]）：牌子会被惰性
                 // 摘掉，等到死亡那一刻就认不出这位叫什么了。
@@ -382,16 +382,5 @@ fn answer(
         // 没见过的动作码：与"这个名字不在板上"同一句话（不另立一格）。
         _ => Err(Fail::Unknown),
     };
-    [code(said.err())]
-}
-
-/// 失败域 → 答话那一格。
-fn code(fail: Option<Fail>) -> u8 {
-    match fail {
-        None => bcall::OK,
-        Some(Fail::Unknown) => bcall::UNKNOWN,
-        Some(Fail::Taken) => bcall::TAKEN,
-        Some(Fail::Denied) => bcall::DENIED,
-        Some(Fail::Full) => bcall::FULL,
-    }
+    [bcall::fail_to_code(said.err())]
 }

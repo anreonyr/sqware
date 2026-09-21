@@ -4,8 +4,8 @@
 //!
 //! > `core.rs` 里不出现 `runtime::`。
 //!
-//! "谁授的这枚入口""这枚入口还答得出吗""放下它"全是**注入的事实与动作**（[`Probe`] /
-//! [`Free`]），故一块板的规矩喂两个假闭包就能推理，换载体不必重写。
+//! "谁授的这枚入口""这枚入口还答得出吗""放下它"全是**注入的事实与动作**（[`VestedBy`] /
+//! [`Unship`]），故一块板的规矩喂两个假闭包就能推理，换载体不必重写。
 
 use env::{Name, PieToken, TaskId};
 
@@ -84,17 +84,17 @@ pub enum Fail {
 ///
 /// `None` = 答不出——两种情形对牌子是**同一件事**（**实例没了**）：
 ///
-/// - 那一枚**不在我表里**（令牌越界，或它已被 [`Free`] 放下）；
+/// - 那一枚**不在我表里**（令牌越界，或它已被 [`Unship`] 放下）；
 /// - **或**它那扇门**已经封印**：`Reserve` 的 `owner` 那一格带存活闸（内核
 ///   `envcall/pie.rs` 的 `owner().ok_or(GateError::Dead)`，闸在 `work/unit/gate/pie.rs`
 ///   的 `alive().then(...)`）⇒ 门一封印就答 `Err(-2 Dead)`，而 `env::fid` 的 `Reserve`
 ///   注记写着这条契约。**故"答不出"这一格里就有"门封印了"**。
 ///
 /// 返回的 [`TaskId`] 是授与人（原始自持编码为 `TaskId(0)`）。
-pub type Probe = fn(PieToken) -> Option<TaskId>;
+pub type VestedBy = fn(PieToken) -> Option<TaskId>;
 
 /// **放下**：把自己那一份入口自释。牌子被换掉或扫空时用它，否则那枚门闩漏在板上。
-pub type Free = fn(PieToken) -> Result<(), ()>;
+pub type Unship = fn(PieToken) -> Result<(), ()>;
 
 // ── 板 ──────────────────────────────────────────────────────
 
@@ -109,13 +109,13 @@ pub type Free = fn(PieToken) -> Result<(), ()>;
 /// ```
 ///
 /// **不存预约表**：谁能用哪个名字是装配期的事（谁拿到那枚入口），不是板子上的判定。
-/// 故板只管一条判据：`probe(entry) == Some(who)`——**那枚入口是你亲手交给我的**。
+/// 故板只管一条判据：`vested_by(entry) == Some(who)`——**那枚入口是你亲手交给我的**。
 /// 代价照实说：拿到持板者入口的任何服务都能挂**任意未被占用的名字**，"已占用"是唯一
 /// 的护栏。
 pub struct Board {
     signs: [Sign; Board::CAP],
-    probe: Probe,
-    free: Free,
+    vested_by: VestedBy,
+    unship: Unship,
 }
 
 impl Board {
@@ -124,11 +124,11 @@ impl Board {
 
     /// 立一块板：两个注入的机制事实（探入口 / 放下）跟着板走——它们对每一枚牌子同值，
     /// 故不必逐个作参数传。
-    pub const fn new(probe: Probe, free: Free) -> Board {
+    pub const fn new(vested_by: VestedBy, unship: Unship) -> Board {
         Board {
             signs: [Sign::VACANT; Board::CAP],
-            probe,
-            free,
+            vested_by,
+            unship,
         }
     }
 
@@ -142,7 +142,7 @@ impl Board {
     /// - 已有**别人**挂着的实例 ⇒ [`Fail::Taken`]；**自己**挂着的 ⇒ 覆盖（重登 / 换绑）；
     /// - 都没占 ⇒ 找一枚空牌子立上，板满则 [`Fail::Full`]。
     pub fn register(&mut self, name: Name, entry: PieToken, who: TaskId) -> Result<PieToken, Fail> {
-        if (self.probe)(entry) != Some(who) {
+        if (self.vested_by)(entry) != Some(who) {
             return Err(Fail::Denied);
         }
         match self.find(name) {
@@ -154,7 +154,7 @@ impl Board {
                 }
                 // 换绑就是**先摘后挂**：上一枚入口是资源实体的一份引用，不放下就漏水。
                 // 故这里与 `unregister` 走同一只手下牌。
-                self.free_off(at);
+                self.unship_at(at);
                 self.signs[at].entry = Some(entry);
                 self.signs[at].owner = Some(who);
                 Ok(entry)
@@ -188,7 +188,7 @@ impl Board {
         if self.signs[at].owner != Some(who) {
             return Err(Fail::Denied);
         }
-        self.free_off(at);
+        self.unship_at(at);
         Ok(())
     }
 
@@ -196,19 +196,19 @@ impl Board {
     ///
     /// 与 [`Board::unregister`] 的分工：那一枚是**逐名**对偶的右半（一次一个名字，叫不出
     /// 名字就摘不下来）；这一句是**整位客人退场**——它挂过的名字一次全放下，故调用方不必
-    /// 先知道它挂过哪些名字。两处走同一只手下牌（[`Board::free_off`]），故"牌子留着、
+    /// 先知道它挂过哪些名字。两处走同一只手下牌（[`Board::unship_at`]），故"牌子留着、
     /// 名字不流转"这条规矩一字不差。
-    pub fn free_of(&mut self, who: TaskId) -> usize {
-        let mut freed = 0;
+    pub fn evict(&mut self, who: TaskId) -> usize {
+        let mut unshipped = 0;
         for at in 0..self.signs.len() {
             // `owner` 与 `entry` 同生同灭（`register` 一起写、`lift` 一起清）⇒ 认主人一格
             // 就够了：牌子还立着才数得进这一笔。
             if self.signs[at].owner == Some(who) {
-                self.free_off(at);
-                freed += 1;
+                self.unship_at(at);
+                unshipped += 1;
             }
         }
-        freed
+        unshipped
     }
 
     /// 照牌子上的字说出"在哪"。答不出只有两种可能，**且都是同一件事**：
@@ -249,7 +249,7 @@ impl Board {
 
     // ── 惰性剔除：板上不留死实例 ──────────────────────────────
 
-    /// 扫一枚牌子：那一枚入口**答不出**（[`Probe`] 答 `None`——**不在我表里**与**门已封印**
+    /// 扫一枚牌子：那一枚入口**答不出**（[`VestedBy`] 答 `None`——**不在我表里**与**门已封印**
     /// 是同一格）即**当场把牌子扫空**——不留死实例，也不留一个"实例已死"的中间状态。
     ///
     /// 读路径也扫（[`Board::lookup`] 会扫），故"已死"永远不会被答出去；代价是读也要
@@ -258,15 +258,15 @@ impl Board {
         let Some(entry) = self.signs[at].entry else {
             return;
         };
-        if (self.probe)(entry).is_none() {
-            self.free_off(at);
+        if (self.vested_by)(entry).is_none() {
+            self.unship_at(at);
         }
     }
 
     /// 摘实例、清主人，**牌子留着**。
-    fn free_off(&mut self, at: usize) {
+    fn unship_at(&mut self, at: usize) {
         if let Some(entry) = self.signs[at].entry {
-            let _ = (self.free)(entry);
+            let _ = (self.unship)(entry);
         }
         self.signs[at].lift();
     }
@@ -290,7 +290,7 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    /// 假表是**进程级**的（`Probe` 是函数指针，捕不了环境），故测试彼此串行。
+    /// 假表是**进程级**的（`VestedBy` 是函数指针，捕不了环境），故测试彼此串行。
     static SERIAL: Mutex<()> = Mutex::new(());
 
     fn serial() -> std::sync::MutexGuard<'static, ()> {
@@ -314,7 +314,7 @@ mod tests {
         PieToken::from_bytes(&(n as u64).to_le_bytes()).expect("8 字节")
     }
 
-    fn fake_probe(entry: PieToken) -> Option<TaskId> {
+    fn fake_vested_by(entry: PieToken) -> Option<TaskId> {
         match entry.get() {
             at if at < TABLE.len() => match TABLE[at].load(Ordering::Relaxed) {
                 0 => None,
@@ -325,7 +325,7 @@ mod tests {
     }
 
     /// 记下"这一枚被放下了"。假表有 `CAP` 位，越界的令牌不记。
-    fn fake_free(entry: PieToken) -> Result<(), ()> {
+    fn fake_unship(entry: PieToken) -> Result<(), ()> {
         if entry.get() < TABLE.len() {
             FREED.fetch_or(1usize << entry.get(), Ordering::Relaxed);
         }
@@ -337,7 +337,7 @@ mod tests {
             slot.store(0, Ordering::Relaxed);
         }
         FREED.store(0, Ordering::Relaxed);
-        Board::new(fake_probe, fake_free)
+        Board::new(fake_vested_by, fake_unship)
     }
 
     /// 令牌 `entry` 此刻在我表里，且是 `who` 授的。
@@ -354,7 +354,7 @@ mod tests {
         }
     }
 
-    fn freed(entry: usize) -> bool {
+    fn unshipped(entry: usize) -> bool {
         FREED.load(Ordering::Relaxed) & (1usize << entry) != 0
     }
 
@@ -387,9 +387,9 @@ mod tests {
         mine(2, B);
         assert_eq!(b.register(name("console"), tok(2), B), Err(Fail::Taken));
         assert_eq!(b.unregister(name("console"), B), Err(Fail::Denied));
-        assert!(!freed(1));
+        assert!(!unshipped(1));
         assert_eq!(b.unregister(name("console"), A), Ok(()));
-        assert!(freed(1));
+        assert!(unshipped(1));
         assert_eq!(b.lookup(name("console")), Err(Fail::Unknown));
         assert_eq!(b.unregister(name("console"), A), Err(Fail::Unknown));
     }
@@ -400,7 +400,7 @@ mod tests {
         stand(&mut b, "console", 1, A);
         stand(&mut b, "console", 2, A);
         assert_eq!(b.lookup(name("console")), Ok(tok(2)));
-        assert!(freed(1) && !freed(2));
+        assert!(unshipped(1) && !unshipped(2));
         assert_eq!(b.find(name("console")), Some(0));
         assert_eq!(b.rows().count(), 1);
     }
@@ -412,7 +412,7 @@ mod tests {
         stand(&mut b, "console", 1, A);
         gone(1);
         assert_eq!(b.lookup(name("console")), Err(Fail::Unknown));
-        assert!(freed(1));
+        assert!(unshipped(1));
         assert_eq!(b.rows().count(), 0);
         assert_eq!(b.find(name("console")), Some(0));
         assert_eq!(stand(&mut b, "console", 3, A), Ok(tok(3)));

@@ -4,7 +4,7 @@
 //!
 //! > `desk.rs` 里不出现 `runtime::`。
 //!
-//! ），探活是**注入的事实**（[`Probe`]，与 [`Board`](super::core::Board) 同款）：喂一个假
+//! ），探活是**注入的事实**（[`VestedBy`]，与 [`Board`](super::core::Board) 同款）：喂一个假
 //! 闭包就能推理这本账，换载体不必重写。
 //!
 //! 板线程醒来时手里只有**一枚孔在本表里的号**（`Tole::await_` 的返回），故这本账的读法
@@ -14,7 +14,7 @@
 
 use env::{PieToken, TaskId};
 
-use protocol::system::board::core::{Fail, Probe};
+use protocol::system::board::core::{Fail, VestedBy};
 
 // ── 一格 ────────────────────────────────────────────────────
 
@@ -65,13 +65,13 @@ impl Guest {
 /// ```
 pub struct Desk {
     guests: [Option<Guest>; Desk::CAP],
-    probe: Probe,
+    vested_by: VestedBy,
 }
 
 /// 立一本账（一位客人一格）：**注入的是协议那一侧"读内核事实"的那一枚**
-/// （`call::probe`，`Reserve` 那一问）——账是实现的，判定是协议的。
+/// （`call::vested_by`，`Reserve` 那一问）——账是实现的，判定是协议的。
 pub const fn desk() -> Desk {
-    Desk::new(protocol::system::board::call::probe)
+    Desk::new(protocol::system::board::call::vested_by)
 }
 
 impl Desk {
@@ -81,10 +81,10 @@ impl Desk {
     pub const CAP: usize = 8;
 
     /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
-    pub const fn new(probe: Probe) -> Desk {
+    pub const fn new(vested_by: VestedBy) -> Desk {
         Desk {
             guests: [None; Desk::CAP],
-            probe,
+            vested_by,
         }
     }
 
@@ -120,9 +120,9 @@ impl Desk {
     /// `super::server` 的退场那一支）。
     ///
     /// 与 [`Desk::sweep`] 的分工：这一句撤的是**客人自己说了走**的那一格，`sweep` 剔的是
-    /// **那一枚答不出**（[`Probe`] 答 `None`）的那一格——一个是听来的，一个是看出来的，
+    /// **那一枚答不出**（[`VestedBy`] 答 `None`）的那一格——一个是听来的，一个是看出来的，
     /// 故两句都在。
-    pub fn dismiss(&mut self, who: TaskId) -> Result<usize, Fail> {
+    pub fn evict(&mut self, who: TaskId) -> Result<usize, Fail> {
         let Some((slot, cell)) = self
             .guests
             .iter_mut()
@@ -180,16 +180,16 @@ impl Desk {
 
     /// 剔走**已经走了**的客人，返剔了几格；幂等。
     ///
-    /// 判据是注入的那一格（在这棵树里 = [`Probe`]：**客人答话路那一枚还答得出吗**），故
+    /// 判据是注入的那一格（在这棵树里 = [`VestedBy`]：**客人答话路那一枚还答得出吗**），故
     /// **这一句**认的是**看出来的**那一档：那一枚答 `None`（不在我表里，**或它那扇门已经
-    /// 封印**——见 `core::Probe`）就剔。**听来的**那一档是 [`Desk::dismiss`]——客人自己说了
+    /// 封印**——见 `core::VestedBy`）就剔。**听来的**那一档是 [`Desk::evict`]——客人自己说了
     /// 走，账当场撤（不等它的门封印）。两档都在，因为没说就走的那种也得有人收。
     pub fn sweep(&mut self) -> usize {
-        let probe = self.probe;
+        let vested_by = self.vested_by;
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
-                && probe(guest.reply).is_none()
+                && vested_by(guest.reply).is_none()
             {
                 *cell = None;
                 gone += 1;
@@ -203,11 +203,11 @@ impl Desk {
     /// 板要用这个号去做第二件事：**推那一位的死亡道**。号只在这里拿得到——客人一旦退场，
     /// 它挂在板上的牌子随时会被摘掉，摘了就认不出"这一位叫什么"（道的记号是名字）。
     pub fn sweep_who(&mut self, out: &mut [TaskId]) -> usize {
-        let probe = self.probe;
+        let vested_by = self.vested_by;
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
-                && probe(guest.reply).is_none()
+                && vested_by(guest.reply).is_none()
             {
                 if let Some(slot) = out.get_mut(gone) {
                     *slot = guest.who();

@@ -72,8 +72,8 @@ pub fn serve() -> ! {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。
         let settling = settle(&mut desk, &tole, &tip_hole);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
-        let ms = if settling { SETTLE_MS } else { usize::MAX };
-        let Ok(Some((tok, _dir))) = tole.await_(ms) else {
+        let millis = if settling { SETTLE_MS } else { usize::MAX };
+        let Ok(Some((tok, _dir))) = tole.await_(millis) else {
             let _ = desk.sweep();
             continue;
         };
@@ -142,7 +142,7 @@ fn serve_one(tree: &mut Operator, guest: Guest) {
     let Some(ask) = guest.ask() else {
         return;
     };
-    let mut buf = [0u8; ocall::ASK];
+    let mut buf = [0u8; ocall::ASK_LEN];
     let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(&mut buf, 0) else {
         return;
     };
@@ -161,7 +161,7 @@ fn answer(tree: &mut Operator, want: &[u8], who: TaskId) -> [u8; 1] {
     let Some(op) = ocall::op_of(want) else {
         return [ocall::BAD];
     };
-    let Some((segs, count, seed)) = ocall::unpack(want) else {
+    let Some((segs, count, seed)) = ocall::unpack_ask(want) else {
         return [ocall::BAD];
     };
     // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那四条也各有这条判据）。
@@ -189,7 +189,7 @@ fn answer(tree: &mut Operator, want: &[u8], who: TaskId) -> [u8; 1] {
         // 没见过的动作码：与"这条路上没有这一段"同一句话（不另立一格）。
         _ => Err(Fail::Unknown),
     };
-    [ocall::code(said.err())]
+    [ocall::fail_to_code(said.err())]
 }
 
 /// 转授来的那一枚答话路（**写端**，落在本表里）。
@@ -214,7 +214,7 @@ fn reply_of(who: TaskId) -> Option<PieToken> {
         }
         index += 1;
         let _ = vestor;
-        if ocall::opened_by(token) == Some(who) && ocall::mark_of(token) == Some(link) {
+        if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(link) {
             return Some(token);
         }
     }
@@ -234,7 +234,7 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
             return None;
         }
         index += 1;
-        if ocall::opened_by(token) == Some(who) && ocall::mark_of(token) == Some(ask) {
+        if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(ask) {
             return Some(token);
         }
     }

@@ -6,7 +6,7 @@ use env::{PAIR_LEN, Pair, PieToken, TaskId};
 
 use crate::session::Pier;
 
-use super::call::{OK, WANT_MAX, Want, code_of, fail_of, records_of, slip};
+use super::call::{OK, WANT_MAX, Want, code_to_fail, pack_order, unpack_reply};
 use super::core::Fail;
 
 pub fn draw<'r>(
@@ -15,19 +15,20 @@ pub fn draw<'r>(
     wants: &[Want],
     ask: &mut [u8],
     reply: &'r mut [u8],
-    ms: usize,
+    millis: usize,
 ) -> Result<&'r [u8], Fail> {
     if wants.is_empty() || wants.len() > WANT_MAX {
         return Err(Fail::Local);
     }
-    let frame = slip(ask, who, wants).ok_or(Fail::Local)?;
+    let frame = pack_order(ask, who, wants).ok_or(Fail::Local)?;
     pier.post(frame).map_err(|_| Fail::Local)?;
-    let n = pier.pull(reply, ms).map_err(|_| Fail::Local)?;
+    let n = pier.pull(reply, millis).map_err(|_| Fail::Local)?;
     let got: &'r [u8] = reply;
     let got = got.get(..n).ok_or(Fail::Bad)?;
-    match code_of(got).ok_or(Fail::Bad)? {
-        OK => records_of(got).ok_or(Fail::Bad),
-        code => Err(fail_of(code).unwrap_or(Fail::Bad)),
+    let reply = unpack_reply(got).ok_or(Fail::Bad)?;
+    match reply.code() {
+        OK => Ok(reply.records()),
+        code => Err(code_to_fail(code).unwrap_or(Fail::Bad)),
     }
 }
 
@@ -37,9 +38,9 @@ pub fn pick(records: &[u8], want: &str) -> Option<PieToken> {
         // SAFETY: 同 [`unpack`]：记录与块同源，步长由编译期断言锁死，缓冲只保证
         // 1 字节对齐 ⇒ `read_unaligned`；越界由上面的除法挡掉。
         let at = unsafe { records.as_ptr().add(i * PAIR_LEN) };
-        let rec = unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) };
-        if rec.name().is_some_and(|n| n.as_str() == want) {
-            return Some(rec.token());
+        let record = unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) };
+        if record.name().is_some_and(|n| n.as_str() == want) {
+            return Some(record.token());
         }
     }
     None

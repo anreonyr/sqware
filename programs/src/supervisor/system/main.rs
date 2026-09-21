@@ -152,7 +152,7 @@ const fn rtc() -> Program {
 /// 它什么都不交回（`Announce::None`：本域不等它），故**上板那一格由 `board` 那一支负责**
 /// ——本域等的是它那条板路接上（[`board::attach`] 的第 2 步），不是它说了什么。
 ///
-/// **两条目录都走**：自己那块牌子仍挂板（`REGISTER` + 退场那句 `DISMISS` 只有它在用），
+/// **两条目录都走**：自己那块牌子仍挂板（`REGISTER` + 退场那句 `EVICT` 只有它在用），
 /// 而"找别人"走树（`operator: true`）——按名找服务从此归树，板管生死。
 const fn guest() -> Program {
     Program {
@@ -170,8 +170,8 @@ const fn guest() -> Program {
 
 /// 过客：起来、挂一个名字、**直接死**（不说再见）。
 ///
-/// 板上那两本账的"死"判据（"**那一枚入口还答得出吗**"，`Probe` = `Reserve` 那一格）就是为它
-/// 存在的读数：它不说 `DISMISS`，故只有"看出来的"那一档收得掉它。
+/// 板上那两本账的"死"判据（"**那一枚入口还答得出吗**"，`VestedBy` = `Reserve` 那一格）就是为它
+/// 存在的读数：它不说 `EVICT`，故只有"看出来的"那一档收得掉它。
 const fn passer() -> Program {
     Program {
         name: "passer",
@@ -339,7 +339,7 @@ fn take_catalog(pier: &Pier) -> Result<Catalog<'static>, &'static str> {
 fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     let me = utask::self_id().ok()?;
     let name = want.name()?;
-    let mut slip = [0u8; supply::SLIP_CAP];
+    let mut slip = [0u8; supply::ORDER_CAP];
     let mut reply = [0u8; supply::REPLY_CAP];
     let records = supply::client::draw(pier, me, &[want], &mut slip, &mut reply, BOOT_MS).ok()?;
     supply::client::pick(records, name.as_str())

@@ -30,7 +30,7 @@ pub struct Grant {
 /// `image` = 镜像字节（v1 口径）；`kind` = 特权级（**由清单决定**，调用方转交）；
 /// `grants` = **放行前**要交到它手里的门闩（空 = 什么都不预先给）；
 /// `quay` = 与它的会话（`Announce::Channel` 那一种才有：它就绪的凭据长在这里）；
-/// `ms` = 就绪等待（`0` 只探、`usize::MAX` 无期限、其余毫秒）。
+/// `millis` = 就绪等待（`0` 只探、`usize::MAX` 无期限、其余毫秒）。
 ///
 /// **失败时不留下半行**：产线程**之前**失败 ⇒ 表不动；产线程**之后**失败 ⇒ 实例与
 /// 状态都如实留在表里（它确实在跑），调用方用 [`stop`] 收尾。
@@ -55,7 +55,7 @@ pub fn spawn(
 ///
 /// `grants` = 放行前要交到它手里的门闩（空 = 什么都不预先给）；`quay` = 与它的会话
 /// （`Announce::Channel` 那一种要用：它就绪的凭据长在这里）；`marks` = 放行后要逐条
-/// 认领的**记号**（顺序无关；记号即泊位名，装配单给的通道名就是它）；`ms` = 就绪等待
+/// 认领的**记号**（顺序无关；记号即泊位名，装配单给的通道名就是它）；`millis` = 就绪等待
 /// （`0` 只探、`usize::MAX` 无期限、其余毫秒）。
 ///
 /// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、定会话都发生在这段窗口里，这与
@@ -66,7 +66,7 @@ pub fn spawn(
 ///
 /// # Errors
 /// 见 [`Fail`]。
-/// `ms` = 就绪判定的**上限族**毫秒（口径见 `env::fid` 文件头的定式：`0` 只探测、
+/// `millis` = 就绪判定的**上限族**毫秒（口径见 `env::fid` 文件头的定式：`0` 只探测、
 /// `usize::MAX` 永久）——超时与"成立了"按返回值区分。
 pub fn start(
     table: &mut Table,
@@ -75,7 +75,7 @@ pub fn start(
     grants: &[Grant],
     quay: Option<&mut Quay>,
     marks: &[Name],
-    ms: usize,
+    millis: usize,
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
@@ -89,7 +89,7 @@ pub fn start(
         table.set_state(name, State::Dead);
         return Err(e);
     }
-    ready(table, name, quay, marks, ms)?;
+    ready(table, name, quay, marks, millis)?;
     Ok(())
 }
 
@@ -104,7 +104,7 @@ pub fn ready(
     name: Name,
     quay: Option<&mut Quay>,
     marks: &[Name],
-    ms: usize,
+    millis: usize,
 ) -> Result<bool, Fail> {
     // 先看表：上一次问过的事实（按这一行自己声明的说法解读）。
     if let Ready::Up = probe_ready(table, name) {
@@ -137,7 +137,7 @@ pub fn ready(
         // 泊位的名字 = 装配单给的通道名），每条都配齐才算起来。认领的是**它**交上来的
         // 那一批（`owner` = 这个孩子）：孔交给的是"生我者"（建域那一枚线程），而
         // **"谁的孔"与"我认的对端"是两件事**——见 `Quay::claim` 的正文。
-        if !marks.is_empty() && marks.iter().all(|mark| q.claim(rep, *mark, ms).is_ok()) {
+        if !marks.is_empty() && marks.iter().all(|mark| q.claim(rep, *mark, millis).is_ok()) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -148,7 +148,7 @@ pub fn ready(
         return Err(Fail::NotReady);
     }
     // 还活着、只是没宣布：它确实在跑，**实例如实留在表里**（调用方用 `stop` 收尾）。
-    if ms == 0 {
+    if millis == 0 {
         return Ok(false);
     }
     Err(Fail::NotReady)
@@ -169,33 +169,33 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
     Ok(())
 }
 
-/// 等它收尾：`ms` 三态与 [`ready`] 同款（`0` 只探、`usize::MAX` 挂到它收尾、其余毫秒）。
+/// 等它收尾：`millis` 三态与 [`ready`] 同款（`0` 只探、`usize::MAX` 挂到它收尾、其余毫秒）。
 /// **只读：不动表**。
 ///
 /// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{rep, 0}`）；等只是为了少问几次。
-/// `Join{rep, ms}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探——**"他杀
+/// `Join{rep, millis}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探——**"他杀
 /// 偶发不生效"那条错读就是漏了这一步**：把"醒过"当成了"没收到"。
 ///
-/// 为什么有界等不需要 clock、也不必睡满 `ms`：`WakeKey::Task{id}` 上的投信方只有 `wipe`，
+/// 为什么有界等不需要 clock、也不必睡满 `millis`：`WakeKey::Task{id}` 上的投信方只有 `wipe`，
 /// 而它只在 `bury` 里、`Reaped` 置位**之后**调（`kernel/src/work/room/messenger/reap.rs`）
 /// ⇒ 等待里的"早醒"只可能来自收尾；"到点"那一支由复探分出来（答 [`Reaped::Unsettled`]）。
 ///
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
 /// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::supervisor::system::call) 同一折法。
-/// `ms` = **上限族**（口径见 `env::fid` 文件头的定式）；超时那支答 [`Reaped::Unsettled`]，
+/// `millis` = **上限族**（口径见 `env::fid` 文件头的定式）；超时那支答 [`Reaped::Unsettled`]，
 /// 不写表。
-pub fn until(table: &Table, name: Name, ms: usize) -> Result<Reaped, Fail> {
+pub fn until(table: &Table, name: Name, millis: usize) -> Result<Reaped, Fail> {
     let Some(rep) = live_rep(table, name) else {
         return Err(Fail::Unknown);
     };
     if !crate::supervisor::system::call::running(rep) {
         return Ok(Reaped::Now);
     }
-    if ms == 0 {
+    if millis == 0 {
         return Ok(Reaped::Unsettled);
     }
     // 挂起等一记：醒来自收尾（`wipe`）或到点，两者当场分不开 ⇒ 醒来复探，判决只认它。
-    let _ = runtime::env::unit::join(rep, ms);
+    let _ = runtime::env::unit::join(rep, millis);
     if crate::supervisor::system::call::running(rep) {
         Ok(Reaped::Unsettled)
     } else {
@@ -219,9 +219,9 @@ fn live_rep(table: &Table, name: Name) -> Option<TaskId> {
 /// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（见 [`Slot`]：
 /// 清了就没得放下、也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：
 /// 那是"还没收干净"，不是"收了"。
-/// `ms` = **上限族**（口径见 `env::fid` 文件头的定式）。
-pub fn watch(table: &mut Table, name: Name, ms: usize) -> Result<bool, Fail> {
-    match until(table, name, ms)? {
+/// `millis` = **上限族**（口径见 `env::fid` 文件头的定式）。
+pub fn watch(table: &mut Table, name: Name, millis: usize) -> Result<bool, Fail> {
+    match until(table, name, millis)? {
         Reaped::Now | Reaped::Waited => {
             table.set_state(name, State::Dead);
             Ok(true)
