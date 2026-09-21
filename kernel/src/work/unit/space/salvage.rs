@@ -20,8 +20,8 @@
 use alloc::boxed::Box;
 use core::num::NonZeroUsize;
 
-use super::outer::Space;
 use super::map::Map;
+use super::outer::Space;
 use super::segment::SegmentKind;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::asid::{self, Deaf};

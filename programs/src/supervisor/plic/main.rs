@@ -73,8 +73,8 @@ mod uart;
 
 use env::wire::PAIR_LEN;
 use env::{PieToken, TaskId};
-use protocol::system::board::call as bcall;
 use protocol::session::Quay;
+use protocol::system::board::call as bcall;
 use runtime::core::bell::Bell;
 use runtime::core::dock::Dock;
 use runtime::core::port::{self, Access, Policy};

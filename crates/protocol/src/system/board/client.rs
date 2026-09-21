@@ -7,10 +7,10 @@ use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
 
+use crate::session::Quay;
 use crate::system::board::Fail;
 use crate::system::board::call as bcall;
 pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
-use crate::session::Quay;
 
 /// 客侧第一步：装上板那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
 /// "**答话的是谁**"（[`hear`] 那一格）。

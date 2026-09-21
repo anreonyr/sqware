@@ -22,15 +22,15 @@
 //   Map     — VA→PA 原子单元（区间 + 访问属性 + 物化态 + 帧所有权）
 //   SpaceInner 持 root 页表树 + 两段 + 唯一 maps 表；窗口方法操作它。
 
-mod outer;
 mod inner;
 mod map;
+mod outer;
 mod salvage;
 mod segment;
 pub(crate) mod window;
 
-pub use outer::{Space, SpaceBuilder};
 pub(crate) use map::{Pending, PendingState};
+pub use outer::{Space, SpaceBuilder};
 pub(crate) use salvage::Span;
 pub(crate) use segment::SegmentKind;
 

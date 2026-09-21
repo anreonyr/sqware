@@ -10,8 +10,8 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::core::unit::{self, Join};
 use runtime::env::mail;
 
-pub use protocol::system::board::{LINK, TIP_MARK, TIP_NAME};
 use protocol::session::Quay;
+pub use protocol::system::board::{LINK, TIP_MARK, TIP_NAME};
 
 use super::server::host_loop;
 
