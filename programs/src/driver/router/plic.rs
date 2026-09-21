@@ -70,7 +70,8 @@ impl Plic {
     /// 读设备树：认控制器、读线数、定下本域用的 context，并把**要接的线**连同
     /// **没进来的那几笔账**一起交出去（见模块头）。
     ///
-    /// 返的第二件是线号而不是名字：第一刀还没有客户端，故不需要"名字 → 线号"那张表。
+    /// 返的第二件是**源账**（每条带名字与线号，另加那四笔没进来的账）：登记那一趟按
+    /// [`Sources::line_of`] 解"名字 → 线号"——**那条权威只在这一处**。
     pub fn new(view: View, dtb: View) -> Option<(Self, Sources)> {
         // SAFETY: `dtb` 是内核只读借映进本域的整棵设备树（保留区，终身存活）；只读。
         let fdt = unsafe { fdt::Fdt::from_ptr(dtb.base() as *const u8) }.ok()?;
