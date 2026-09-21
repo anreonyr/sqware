@@ -138,8 +138,15 @@ impl Plic {
     /// 把优先级写回 [`LINE_PRIORITY`] 即复原。enable 位留着——线号与设备的绑定没变，
     /// 变的只是"现在有没有人接"。
     ///
-    /// 第一刀靠它当刹车：本域**不读走设备里的字节**（那是 console 的输入），于是源头一直
-    /// 挂着电平；不静音就会 claim → complete → 立刻又报，空转成风暴。
+    /// 它当刹车的作用是**不白叫醒客户**（实测：临时去掉这一手，短跑里就多出两次
+    /// `uart: rang n=0`——设备那一格已经空了，客户被叫起来排到 0 字节）。**"空转成风暴"那
+    /// 句话的来源是另一格**：设备里那一格没清（`rtc` 实测：把 `CLEAR_INTERRUPT` 那一手去掉，
+    /// 同一段运行里投递从 5 次变 3093 次）。
+    ///
+    /// **为什么不是"压着不结"**（`deliver` 之后不 `complete`、押到客户排空）：它同样防得住
+    /// 白叫醒，但**结是那一格的再武装**——见 [`Plic::complete`]。实测：故意不结 line 10 ⇒
+    /// 只投递一次，之后第二次输入再也进不来（回显与停机都没了）。那一格裁在
+    /// `protocol::driver::line` 的"静音还是压着不结"一节里。
     pub fn disable(&self, line: u32) {
         if line < 1 || line > self.device_count {
             return;
@@ -167,11 +174,18 @@ impl Plic {
         self.read(CONTEXT + CONTEXT_STRIDE * self.ctx as usize + CLAIM)
     }
 
-    /// 结一条线（把线号写回去）。本域不在这一格动优先级/使能位——但**电平仍挂着的源
-    /// 会立刻再报**：网关（`enable` 位还在）照旧把它送来，这正是 [`Plic::disable`] 必须
-    /// 挡在 `complete` **之前**的原因。旧注写的是"`complete` 不会把中断带回来"——照实记：
-    /// 那句话与 `disable` 那一注互相矛盾，而本域按"不静音就 claim → complete → 立刻又报"
-    /// 这条读法写（见那两注）。
+    /// 结一条线（把线号写回去）。
+    ///
+    /// **它是那一格的再武装，不是礼貌**（QEMU `hw/intc/sifive_plic.c`）：领走那一步（读
+    /// `claim`）当场置 `claimed`，而仲裁只看 `pending & ~claimed & enable` ⇒ **结没写回去，
+    /// 那一条线就再也不前送**。`claimed` 在那份实现里还是**整台控制器一份**（不像 `enable`
+    /// 按 context 各一份）⇒ 一笔没付出去的结把这条线钉死到重启。
+    ///
+    /// 实测：故意不结 line 10 ⇒ 只投递一次，之后第二次输入再也进不来（回显与停机都没了）。
+    ///
+    /// 故本域**当场结清**（`disable` 挡在它之前——那一手是"这一条现在有没有人接"），
+    /// 而不是把它押到客户排空那一刻。旧注写的是"`complete` 不会把中断带回来"——**照实记**：
+    /// 那句话与 `disable` 那一注互相矛盾，且两句都只说了一半；今天两句都按读数重写了。
     pub fn complete(&self, line: u32) {
         self.write(CONTEXT + CONTEXT_STRIDE * self.ctx as usize + CLAIM, line);
     }
