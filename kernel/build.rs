@@ -44,6 +44,10 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 字节就拉线"打开。**照实记**：这两格从前写 `Supervisor` 是照搬旧树，理由（"要读写
     // 寄存器"）与 banner 里那张 PMP 对不上；改成 U 态之后两道门（examine / soak）照旧全过。
     ("uart", "prog-uart", ProgramKind::User),
+    // 第二台设备驱动：**U 态**（同上）——持有 `rtc@101000`（11 号线），武装闹钟、到点自己
+    // 拉线，收到投递就清掉那一格再武装下一次。**它是"抽象等第二个实例"的那个第二例**：
+    // 线那四格、配给、设备面这一整套在第二台真设备上再走一遍。**没有服务面**（不落门牌）。
+    ("rtc", "prog-rtc", ProgramKind::User),
     // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
     // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
     // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。

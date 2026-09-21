@@ -7,6 +7,7 @@
 //! ```text
 //!   router   线路由者（中断面域）：持有中断控制器，接 / claim / complete 每一条线
 //!   uart     串口驱动：持有 serial@10000000，把"收到字节就拉线"打开
+//!   rtc      实时钟驱动：持有 rtc@101000，武装闹钟、到点自己拉线（**第二台真设备**）
 //! ```
 //!
 //! **线的权威 / 属主 / 登记 / 投递 / 排空 / 收线**那一层在 `crates/protocol/src/driver::line`
@@ -34,12 +35,14 @@
 //! # 两条家族纪律
 //!
 //! - **设备语义各带各的**：谁的设备谁在自己目录里放设备模块（[`router`] 的 `plic.rs`、
-//!   [`uart`] 的 `uart.rs`）——本仓不用一份"驱动框架"去包它们。
-//! - **需求单归收方**：[`router::needs`] / [`uart::needs`] 各开自己那张单，装配者只是
-//!   `use` 它们（见 [`crate::supervisor::service::Program`]）。
+//!   [`uart`] 的 `uart.rs`、[`rtc`] 的 `rtc.rs`）——本仓不用一份"驱动框架"去包它们。
+//! - **需求单归收方**：[`router::needs`] / [`uart::needs`] / [`rtc::needs`] 各开自己那张单，
+//!   装配者只是 `use` 它们（见 [`crate::supervisor::service::Program`]）。
 //!
-//! 本级的 [`assemble`] 是两台驱动**都要写一遍**的那一段客侧装配（会话 + 收配给 + 归位）。
+//! 本级的 [`assemble`] 是三台驱动**都要写一遍**的那一段客侧装配（会话 + 收配给 + 归位）。
+//! **第三台没有服务面**（不落门牌）：服务面是各驱动自己的具体协议，只有真有客人的那一台才开。
 
 pub mod assemble;
 pub mod router;
+pub mod rtc;
 pub mod uart;

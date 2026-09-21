@@ -7,14 +7,15 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 十六条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
+#   2) 二十一条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
 #      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
 #      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`** /
-#      **`router: line 11 = rtc@101000`** / **`router: vacate line=11`** /
-#      **`lodger: taken=2`** / **`lodger: unknown=1`** /
-#      **`router: lane dropped line=11 pies=21`**）；
+#      **`router: line 11 = rtc@101000`** / **`rtc: line occupied`** / **`rtc: armed at=`** /
+#      **`router: line=11`** / **`rtc: rang n=1`** / **`router: exhaust line=11`** /
+#      **`router: vacate line=1`** / **`lodger: taken=2`** / **`lodger: unknown=1`** /
+#      **`router: lane dropped line=1 pies=24`**）；
 #   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
 #      "还响着" / 其中**空闲核补摇**了几支（见下）。
 #
@@ -42,18 +43,21 @@
 # 字节才说那句话，路由者据此把线放回（`router: exhaust line=10`）——那一行只在"真的排空过"时
 # 出现，故它归 `examine.nu` 那条回显判据一起看，不在这里当固定读数（喂不喂键决定它有没有）。
 #
-# 第四格 `vacate`（收线）**在这里是固定读数**了：`router: line 11 = rtc@101000` 与
-# `router: vacate line=11` 是**房客**（`prog-lodger`）那一对——它真领了那时钟那一页的门闩、
-# 占住 11 号线，然后**一句话不说就走**（不 `DISMISS`、不 `vacate`）。路由者每次醒来先探活
+# 第四格 `vacate`（收线）**在这里是固定读数**了：`router: line 1 = virtio_mmio@10001000` 与
+# `router: vacate line=1` 是**房客**（`prog-lodger`）那一对——它真领了一台**没人要**的设备的
+# 门闩、占住 1 号线，然后**一句话不说就走**（不 `DISMISS`、不 `vacate`）。路由者每次醒来先探活
 # （`alive` 答不出的那几条拆线 + 空出格子）⇒ 收线那一手第一次有了读数，而这一对只在
 # "先占上、后没了"这条路上出现（喂不喂键都要有它：它跑在装配期）。
 #
-# 另外两条（`lodger: taken=2` / `lodger: unknown=1`）是**失败域**那两格：房客占下 11 号线之后
+# **照实记**：房客原来占的是 11 号线（那时钟），第二台设备驱动上来之后那条线有主了
+# （`rtc@101000`），故房客换成 1 号线——它要的是**一条没人要的线**。
+#
+# 另外两条（`lodger: taken=2` / `lodger: unknown=1`）是**失败域**那两格：房客占下 1 号线之后
 # 拿**同一条线**再来一次（答 `TAKEN`）与报一个**树里没有的名字**（答 `UNKNOWN`）——三格的答码
 # 都由 `line::call` 那张表给出（`OK` / `UNKNOWN` / `TAKEN` = 0 / 1 / 2）。拿 `uart` 那条线试会
 # 与它的登记抢时间，故 `TAKEN` 这一趟拿房客自己刚占下的线试：读数因此是确定的。
 #
-# `router: lane dropped line=11` 是**被拒那一趟的收尾**：`TAKEN` 这一趟已经 `seat`+`claim` 过
+# `router: lane dropped line=1` 是**被拒那一趟的收尾**：`TAKEN` 这一趟已经 `seat`+`claim` 过
 # 一条泊位（本端铸的那枚 + 从客户手里认下的那枚），而 `Lines::occupy` 收不下它——本域当场把
 # 那两枚放下，不留在账外（否则每失败一次多两枚，直到本域退场）。这条读数与 `lodger: taken=2`
 # 是同一次登记的两头：一头是客户收到的答码，一头是本域把孔放回去。
@@ -62,6 +66,19 @@
 # 那两枚的释放**临时关掉**，同一处读数从 `21` 变成 `23`（正好是"本端铸的那枚 + 从客户手里认下的
 # 那枚"），改回来又是 `21`——故它**跟着孔走**，不是个常数。判据因此钉**整行**：漏放一枚，这一格
 # 就是红的（这是"失败的登记不在账外留孔"这一刀的验法）。
+#
+# 六行是**第二台设备驱动**那一刀（`rtc`，`rtc@101000`，设备树里那条 11 号线）：
+# `router: line 11 = rtc@101000` = **登记**（解树解出来的权威）；`rtc: line occupied` = 客户侧
+# 那一头；`rtc: armed at=… ier=1 alarm=1` = **闸门开着、闹钟武装上了**（`ier` 读 `IRQ_ENABLED`、
+# `alarm` 读 `ALARM_STATUS`——**它是 `alarm_running`，不是"到点了"**，那是被读数打回来之后
+# 改的说法）；`router: line=11` = **那台设备真的把线拉起来了**（`uart` 那一格是 `router: line=10`）；
+# `rtc: rang n=1 now=… at=…` = 投递到了客户手里、它读走并**清掉**了那一格（`now >= at`）；
+# `router: exhaust line=11` = 排空、线放回（喂不喂键都要有：这一台 100 ms 一次闹钟）。
+#
+# **照实记（那一刀量出来的三条设备语义）**：读时间要**先低后高**（低半格那次读把高半格锁存
+# 起来）；`ALARM_STATUS` 是"武装着"不是"到点了"；写闹钟要**先高后低**（低半格那次写会当场
+# 比较一次，首次写时高半格还是 0 ⇒ 当场判成到点，实测第一次武装早报约 99 ms）。另：那一格是
+# **电平源**——把 `CLEAR_INTERRUPT` 那一手临时去掉，同一段运行里投递从 5 次变 3093 次。
 #
 # `irq: ring=<n> busy=<m> idle_ring=<i> idle_busy=<j>` 是**铃那一刀的读数**（收尾摘要里印，
 # 与 `timer:` / `doom:` / `sched:` 同族）：`ring` = 内核摇铃几次、`busy` = 其中几次铃还响着
@@ -107,10 +124,15 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "router: line 10 = serial@10000000" "$log" \
         && grep -q "uart: rang n=" "$log" \
         && grep -q "router: line 11 = rtc@101000" "$log" \
-        && grep -q "router: vacate line=11" "$log" \
+        && grep -q "rtc: line occupied" "$log" \
+        && grep -q "rtc: armed at=" "$log" \
+        && grep -q "router: line=11" "$log" \
+        && grep -q "rtc: rang n=1" "$log" \
+        && grep -q "router: exhaust line=11" "$log" \
+        && grep -q "router: vacate line=1" "$log" \
         && grep -q "lodger: taken=2" "$log" \
         && grep -q "lodger: unknown=1" "$log" \
-        && grep -q "router: lane dropped line=11 pies=21" "$log" \
+        && grep -q "router: lane dropped line=1 pies=24" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
         && grep -q "echo: console=true" "$log" \
         && grep -q "irq: ring=" "$log" \

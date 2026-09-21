@@ -27,8 +27,9 @@
 extern crate alloc;
 extern crate programs;
 
-// 需求单归**收方**：三张单子自己开（lib 里同一份源码），本域只照它开单。
+// 需求单归**收方**：四张单子自己开（lib 里同一份源码），本域只照它开单。
 use programs::driver::router::needs as router_needs;
+use programs::driver::rtc::needs as rtc_needs;
 use programs::driver::uart::needs as uart_needs;
 use programs::supervisor::service;
 use programs::user::lodger::needs as lodger_needs;
@@ -69,6 +70,7 @@ const E_PASSER: Died = 8;
 const E_UART: Died = 9;
 const E_TREE: Died = 10;
 const E_LODGER: Died = 11;
+const E_RTC: Died = 12;
 
 /// 持树者：那棵命名树的服务（`prog-operator`）。**排第一位**——每位上树的客人都要它在。
 ///
@@ -123,6 +125,25 @@ const fn uart() -> Program {
         operator: true,
         holds_tree: false,
         died: E_UART,
+    }
+}
+
+/// 实时钟驱动：**第二台真设备**（`rtc@101000`，11 号线）——武装闹钟、到点自己拉线；收到投递
+/// 就清掉那一格再武装下一次。
+///
+/// 它**没有服务面**：不落门牌（`operator: true` 只用来按名找线路由者），上板只为让板看得见
+/// 它的死（它常驻）。两台设备驱动紧跟在树之后：控制器先就位，线才有人接。
+const fn rtc() -> Program {
+    Program {
+        name: "rtc",
+        announce: Announce::Channel,
+        tokens: &[],
+        channels: &["records"],
+        needs: Some(rtc_needs::WANTS),
+        board: true,
+        operator: true,
+        holds_tree: false,
+        died: E_RTC,
     }
 }
 
@@ -224,6 +245,7 @@ const PLAN: &[Program] = &[
     tree(),
     router(),
     uart(),
+    rtc(),
     guest(),
     passer(),
     lodger(),
