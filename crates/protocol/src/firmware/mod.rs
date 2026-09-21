@@ -44,7 +44,7 @@
 //!
 //! - **该起谁、该给谁什么权** → 编排域的策略（单子就是它的策略，本域只照办）；
 //! - **要哪几样** → **收方**自己那张需求单，就是本协议 [`call::Want`] 的常量形态
-//!   （今天唯一一张在 `programs/src/supervisor/plic/needs.rs`）；本协议只定义怎么把单子
+//!   （今天那两张在 `programs/src/driver/{router,uart}/needs.rs`）；本协议只定义怎么把单子
 //!   递过去、回单怎么读回来；
 //! - **谁代表谁** → Principal Protocol；
 //! - **清单怎么解析** → `env::wire::manifest`（线格式）与域侧那几张表；

@@ -18,7 +18,7 @@ runtime = { path = "../crates/runtime" }
 # 协议层：第一条协议操作出现了（root 用 `protocol::system` 的服务表起子域）。
 protocol = { path = "../crates/protocol" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
-# 使用者目前只有 `prog-plic`（要数自己的 context、列自己要接的线）。
+# 使用者目前只有 `prog-router`（要数自己的 context、列自己要接的线）。
 fdt = { version = "0.1.5", default-features = false }
 # 错误容器：`system::call` 把内核负码包成 `erra::Error<EnvError>`（与 protocol 同款）。
 erra = { version = "0.2.0", default-features = false }
@@ -45,8 +45,16 @@ bench = false
 doctest = false
 
 [[bin]]
-name = "prog-plic"
-path = "src/supervisor/plic/main.rs"
+name = "prog-router"
+path = "src/driver/router/main.rs"
+test = false
+bench = false
+doctest = false
+
+# 串口驱动（同一族：驱动整块住 src/driver/）：持有 serial@10000000，开"收到字节就拉线"。
+[[bin]]
+name = "prog-uart"
+path = "src/driver/uart/main.rs"
 test = false
 bench = false
 doctest = false

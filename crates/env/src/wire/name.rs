@@ -69,7 +69,7 @@ impl Name {
     ///
     /// `pub`：它是 `Name` 线格式的**解码面**，使用者是用户态协议
     /// （`crates/protocol/src/system/board/call.rs` 的 `name_of`）与各程序
-    /// （`guest` / `plic` 的 `Name::from_bytes`）；语义上属于本 crate，不随协议搬家。
+    /// （`guest` / `router` 的 `Name::from_bytes`）；语义上属于本 crate，不随协议搬家。
     pub fn from_bytes(bytes: [u8; NAME_LEN]) -> Result<Name, NameError> {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
         if len == 0 {

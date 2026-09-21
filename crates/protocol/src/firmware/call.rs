@@ -51,7 +51,7 @@ pub const BAD: u8 = 4;
 /// 单子上的一条：**要哪一枚**（boot 账里的名字）、什么种类、多少权、什么形态。
 ///
 /// **收方那张需求单就是它的常量形态**（[`Want::of`] ＋ [`name_block`]，今天唯一一张在
-/// `programs/src/supervisor/plic/needs.rs`）：收方开单、装配者原样递出。故这一条**不带
+/// `programs/src/driver/router/needs.rs`）：收方开单、装配者原样递出。故这一条**不带
 /// `slot`**——位置即格，收方按名字归位（`protocol::system::grant::unpack` 那个闭包）。
 ///
 /// `repr(C)` + 定长字段 ⇒ 尺寸即线格式（编译期断言锁死），与 `Pair` 同一条纪律。
@@ -94,7 +94,7 @@ impl Want {
     /// 常量构造：`name` 给的是**定长名字块**（[`Name::bytes`] 那一口径，见 [`name_block`]）。
     ///
     /// 运行期那条路是 [`Want::new`]；这一条是给**收方那张需求单**用的——它是一张 `const` 表
-    /// （今天的唯一一张在 `programs/src/supervisor/plic/needs.rs`）。
+    /// （今天的两张在 `programs/src/driver/{router,uart}/needs.rs`）。
     pub const fn of(name: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Want {
         Want {
             name,

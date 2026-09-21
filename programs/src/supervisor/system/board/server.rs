@@ -152,7 +152,7 @@ fn settle(desk: &mut Desk, assembler: TaskId, tole: &Tole, tip: &mail::HolePie) 
 /// - `owner == who` —— **谁的**：那扇门是**这位客人**开的（副本共享同一事实，转手不变）。
 ///   这一格不能省：**板招待的是多位客人**，而每位客人那条板路的记号都是 `board`（那是
 ///   *这条路*的名字）⇒ 只按 `(谁转的, 记号)` 认，几位客人的答话路同形（实测栽过：
-///   `plic` 与 `guest` 两位在机上，后到的那位认到了前一位的孔）；
+///   `router` 与 `guest` 两位在机上，后到的那位认到了前一位的孔）；
 /// - **记号 == `board`** —— 那一枚是**板路**上的一枚（客侧 `seat` 铸它时刻的就是这条路
 ///   的名字 `LINK`；客人自己铸的另两枚刻的是 `ask` / `entry`）。
 fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {

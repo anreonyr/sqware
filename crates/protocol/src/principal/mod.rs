@@ -6,7 +6,7 @@
 //! # 实现面在哪里（本模块目前没有代码）
 //!
 //! 与 [`system`](super::system) 不同，这一份**要走会话**：调用方得去问 Principal Server。
-//! 今天树里还没有那个 Server（`programs/` 下是 root / plic / echo / guest / passer 与各台
+//! 今天树里还没有那个 Server（`programs/` 下是 root / router / uart / echo / guest / passer 与各台
 //! 压测程序），故本模块只有正文。
 //! 但它已经站在实地上——内核给了两条**不可伪造**的身份凭证：
 //!

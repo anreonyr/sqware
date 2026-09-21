@@ -56,7 +56,7 @@ impl Bell {
     ///
     /// **今天没有用户调用者**：`irq` 那道门铃由内核在 trap 上下文响
     /// （`kernel/src/platform/devices.rs`，不走门闩），域侧只 `wait` / `hush`
-    /// （见 `supervisor/plic/main.rs`）。留着它是因为"自己叫自己"是正当写法——
+    /// （见 `driver/router/main.rs`）。留着它是因为"自己叫自己"是正当写法——
     /// 响者由持铃者决定，不是内核的特权。
     pub fn ring(&self) -> EnvResult<()> {
         mail::ring(self.pie.token())

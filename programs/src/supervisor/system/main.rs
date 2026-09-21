@@ -25,8 +25,9 @@
 extern crate alloc;
 extern crate programs;
 
-// 需求单归**收方**：`plic` 那一档自己开（lib 里同一份源码），本域只照它开单。
-use programs::supervisor::plic::needs as plic_needs;
+// 需求单归**收方**：两台驱动自己开（lib 里同一份源码），本域只照它开单。
+use programs::driver::router::needs as router_needs;
+use programs::driver::uart::needs as uart_needs;
 use programs::supervisor::service;
 
 // 板：本域是**装配侧**（把客人接上板、收尾点名）。
@@ -56,26 +57,43 @@ const BOOT_MS: usize = 1000;
 
 /// 装配失败编号（按服务分：看日志就知道死在哪儿）。
 const E_BOOT: Died = 1;
-const E_PLIC: Died = 5;
+const E_ROUTER: Died = 5;
 const E_ECHO: Died = 6;
 const E_GUEST: Died = 7;
 const E_PASSER: Died = 8;
+const E_UART: Died = 9;
 
-/// 中断面域：常驻，要四枚门闩，起来时交回通道，并挂上板。
-const fn plic() -> Program {
+/// 线路由者（中断面域）：常驻，要三枚门闩，起来时交回通道，并挂上板。
+const fn router() -> Program {
     Program {
-        name: "plic",
+        name: "router",
         announce: Announce::Channel,
         tokens: &[],
         channels: &["records"],
-        needs: Some(plic_needs::WANTS),
+        needs: Some(router_needs::WANTS),
         board: true,
         operator: false,
-        died: E_PLIC,
+        died: E_ROUTER,
     }
 }
 
-/// 客人：按名字找到 `plic`、说一句、把答话带回来。
+/// 串口驱动：常驻，要一枚门闩（`serial@10000000`），起来时交回通道，并挂上板。
+///
+/// **它排在线路由者之后**：控制器先就位，线再开闸（闸门归持有设备的那一台，见该域头注）。
+const fn uart() -> Program {
+    Program {
+        name: "uart",
+        announce: Announce::Channel,
+        tokens: &[],
+        channels: &["records"],
+        needs: Some(uart_needs::WANTS),
+        board: true,
+        operator: false,
+        died: E_UART,
+    }
+}
+
+/// 客人：按名字找到 `router`、说一句、把答话带回来。
 ///
 /// 它什么都不交回（`Announce::None`：本域不等它），故**上板那一格由 `board` 那一支负责**
 /// ——本域等的是它那条板路接上（[`board::attach`] 的第 2 步），不是它说了什么。
@@ -135,7 +153,9 @@ const fn echo() -> Program {
 ///
 /// `echo` **必须在最后**：[`service::assemble`] 返 [`PLAN`] 的最后一条，本域等它退场
 /// ——那正是"读到一行 `exit` 才收场"的那一格。
-const PLAN: &[Program] = &[plic(), guest(), passer(), echo()];
+///
+/// 两台驱动**排在最前**且线路由者在前：控制器先就位，线再开闸（`uart` 持有那台串口）。
+const PLAN: &[Program] = &[router(), uart(), guest(), passer(), echo()];
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -196,7 +216,7 @@ extern "C" fn main() -> ! {
 ///
 /// 两侧各装一枚（`seat`）、各认下对方那一枚（`claim`）：本域**读**自己那一枚（回单从这来），
 /// **写**对端那一枚（单子往那去）。只 `seat` 不 `claim` 就只有读端——那是只收配给的客人
-/// （如 `plic`）的用法，编排者要问，故两半都要。
+/// （如 `router`）的用法，编排者要问，故两半都要。
 fn talk_to_root() -> Option<Pier> {
     let sire = utask::sire().ok()?;
     let slot = Name::new(firmware::BOOT).ok()?;

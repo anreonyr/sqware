@@ -1,6 +1,6 @@
 #!/usr/bin/env nu
 
-# sqware 验收门（新基线版）——**五条判据，缺一不可**：
+# sqware 验收门 —— **六条判据，缺一不可**：
 #
 #   1) 自行退出：qemu 自己结束（域退场 ⇒ root 收场 ⇒ 级联 ⇒ 停机走 srst）⇒
 #      外接 timeout 的退出码**不是 124**。
@@ -8,9 +8,15 @@
 #   3) `echo: ready` —— 域能说一句话，且**不依赖任何服务**（调试面直通固件）。
 #   4) 回显：喂一行进去，同一行回来 —— 能收能回。
 #   5) `task: all tasks exited, system halted` —— 收场那一句（关机的唯一判据）。
+#   6) `router: line=10` —— **中断链在场**：串口驱动开闸 ⇒ 设备拉线 ⇒ PLIC ⇒ 内核摇铃 ⇒
+#      线路由者（`router`）claim 到那条线（virt 上 UART0 的中断号是 10）。**回显自己走得上轮询**，
+#      故没有这一条，"中断链断了"与"链子好好的"在日志里长得一模一样。
 #
-# 这就是**全部**：新基线里没有服务、没有驱动、没有孔、没有协议，
-# 故"逐步生效 / marker 齐全 / 实例计数"那一套随旧树一起清了。
+# 这就是**全部**：其余一切（逐步 expect、marker 齐全、实例计数）都是定位手段，不是判据
+# ——旧树那一套随旧树一起清了。
+#
+# **照实记**：本文件头注曾经写着"新基线里没有服务、没有驱动、没有孔、没有协议"——那句话
+# 早就不成立了（今天四样都在跑，第 6 条判据正是驱动侧那一条）。
 #
 # 用法：scripts/examine.nu            # 默认连跑 3 次，要求 3/3
 #       scripts/examine.nu --repeat 5
@@ -35,6 +41,7 @@ const EXIT = "exit"
 const READY = "echo: ready"
 const HALT = "task: all tasks exited, system halted"
 const PANIC = "[panic] at"
+const IRQ = "router: line=10"
 const ECHO_TIMEOUT = 60
 
 # 喂给 guest 的那串动作：等启动 → **重复**喂 `ping`（盖住慢启动的窗口）→ **重复**喂
@@ -68,7 +75,7 @@ def main [--repeat: int = 3] {
     mkdir $out
 
     print $"examine: repeat=($repeat) elf=($elf) out=($out)"
-    print $"examine: 判据 = 自退 · 无 panic · ($READY) · 回显 `($PING)` · ($HALT)"
+    print $"examine: 判据 = 自退 · 无 panic · ($READY) · 回显 `($PING)` · ($HALT) · ($IRQ)"
 
     mut pass = 0
     for i in 1..$repeat {
@@ -90,6 +97,7 @@ def main [--repeat: int = 3] {
                 (if ($text | str contains $READY) { "" } else { $"缺[($READY)]" })
                 (if (has_line $text $PING) { "" } else { $"缺回显[($PING)]" })
                 (if ($text | str contains $HALT) { "" } else { $"缺[($HALT)]" })
+                (if ($text | str contains $IRQ) { "" } else { $"缺中断读数[($IRQ)]" })
             ] | where { |s| $s != "" }
         )
         if ($why | is-empty) {

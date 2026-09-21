@@ -16,6 +16,18 @@
 //! （`programs::supervisor::plic::needs`）：本域按 `Slot` 认领自己的那几格，名字不在本文件里第二遍。
 //! 名字本身是 **boot 给的**（设备树节点 basename；`devicetree` / `irq` 两条由内核定）。
 //! 本模块只管这台控制器自己——寄存器布局、几条线、哪个 context。
+//!
+//! # 线集合怎么来的（以及哪两类源**不**进来）
+//!
+//! 线号 = 中断说明符的**第一个单元**：`#interrupt-cells` 数 1 或 2 的控制器都成立
+//! （第一格是中断号，第二格是触发类型）。两类源不进这张表：
+//!
+//! - 带 `interrupt-map` 的节点（PCIe 那一台）——中断由 map 描述，本域**不解析** map；
+//! - `#interrupt-cells` 取别的值的控制器——本域**拒解**，不猜那一格的含义。
+//!
+//! 「指到本控制器、但本节点没写 `interrupt-parent`」（绑定允许沿父链继承，本域今天不追）
+//! 与「线号越出控制器自报的 `ndev`」也各记一笔。**没进来的每一笔都是一条读数**
+//! （[`Sources`]）：线集合因此可复核，不靠注释声称。
 
 use alloc::vec::Vec;
 
@@ -54,10 +66,11 @@ pub struct Plic {
 }
 
 impl Plic {
-    /// 读设备树：认控制器、读线数、定下本域用的 context，并列出**要接的线**。
+    /// 读设备树：认控制器、读线数、定下本域用的 context，并把**要接的线**连同
+    /// **没进来的那几笔账**一起交出去（见模块头）。
     ///
     /// 返的第二件是线号而不是名字：第一刀还没有客户端，故不需要"名字 → 线号"那张表。
-    pub fn new(view: View, dtb: View) -> Option<(Self, Vec<u32>)> {
+    pub fn new(view: View, dtb: View) -> Option<(Self, Sources)> {
         // SAFETY: `dtb` 是内核只读借映进本域的整棵设备树（保留区，终身存活）；只读。
         let fdt = unsafe { fdt::Fdt::from_ptr(dtb.base() as *const u8) }.ok()?;
         let node = fdt.all_nodes().find(|n| {
@@ -83,13 +96,18 @@ impl Plic {
             .position(|e| u32::from_be_bytes([e[4], e[5], e[6], e[7]]) == EXT_S)?
             as u32;
         let this = Self { view, ndev, ctx };
-        let lines = sources(&fdt, &node, ndev);
-        Some((this, lines))
+        let sources = sources(&fdt, &node, ndev, cells);
+        Some((this, sources))
     }
 
     /// 本域用的那个 context 号（日志与判据用；它是本域自己的账，不是别人的）。
     pub fn context(&self) -> u32 {
         self.ctx
+    }
+
+    /// 本控制器自报的线数（`riscv,ndev`）。**静音账的容量按它校验**（见 `main` 那一步）。
+    pub fn ndev(&self) -> u32 {
+        self.ndev
     }
 
     /// 接上一条线：写优先级 + 本 context 的阈值与 enable。
@@ -148,36 +166,82 @@ impl Plic {
     }
 }
 
-/// 树里所有**指到本控制器**的中断源（线号）。
+/// 树里指到本控制器的中断源（线号）+ **没进来的那几笔账**。
+///
+/// 每一项都对应一条"没进 `lines` 的理由"，都是读数不是判断——起域时打一行（见 `main`），
+/// 让这台机器上的线集合可复核，不靠注释声称。
+pub struct Sources {
+    /// 要接的线，落在 `[1, ndev]` 内（线数的权威是控制器自己）。
+    pub lines: Vec<u32>,
+    /// 有 `interrupts`、但**本节点自己没写** `interrupt-parent` 的节点数
+    /// （绑定允许沿父链继承；本域今天不追父链）。
+    pub unparented: usize,
+    /// 指到本控制器、但线号越出 `[1, ndev]` 的节点数。
+    pub beyond: usize,
+    /// 带 `interrupt-map` 的节点数（PCIe 那一类）——它的中断由 map 描述，本域不解析。
+    pub mapped: usize,
+    /// 指到本控制器、但 `#interrupt-cells` 不是 1 / 2 的节点数——本域**拒解**那一格。
+    pub unparsed: usize,
+}
+
+/// 扫一遍树：收线号，顺手把"没进来的"分成四笔。
 ///
 /// 判据只有一条，且只问树：`interrupt-parent` 等于本控制器的 phandle（**只认节点自己写的**，
-/// 不沿父链继承）。线号落在 `ndev` 之内——线数的权威是控制器自己。
-fn sources(fdt: &fdt::Fdt, controller: &fdt::node::FdtNode, ndev: u32) -> Vec<u32> {
+/// 不沿父链继承——没写的那一类记进 `unparented`）。线号取中断说明符的**第一个单元**
+/// （见模块头）；越出 `ndev` 的不接。
+fn sources(fdt: &fdt::Fdt, controller: &fdt::node::FdtNode, ndev: u32, cells: usize) -> Sources {
+    let mut out = Sources {
+        lines: Vec::new(),
+        unparented: 0,
+        beyond: 0,
+        mapped: 0,
+        unparsed: 0,
+    };
     // 控制器自己没有 phandle ⇒ 树里没有任何节点指得到它 ⇒ 空表（这不是错误：
     // 那棵树在说"没有指向它的中断源"）。
     let Some(phandle) = controller.property("phandle").and_then(|p| p.as_usize()) else {
-        return Vec::new();
+        return out;
     };
-    let mut out = Vec::new();
     for node in fdt.all_nodes() {
-        if node.property("interrupt-parent").and_then(|p| p.as_usize()) != Some(phandle) {
+        if node.property("interrupt-map").is_some() {
+            // 走 map 的那一类：它的中断挂在 map 里，不在 `interrupts` 里。
+            out.mapped += 1;
+            continue;
+        }
+        match node.property("interrupt-parent").and_then(|p| p.as_usize()) {
+            Some(parent) if parent == phandle => {}
+            Some(_) => continue,
+            None => {
+                if node.property("interrupts").is_some() {
+                    out.unparented += 1;
+                }
+                continue;
+            }
+        }
+        if !matches!(cells, 1 | 2) {
+            // 说明符的单元数不是 1 / 2 ⇒ 第一格未必是中断号：**不猜**。
+            if node.property("interrupts").is_some() {
+                out.unparsed += 1;
+            }
             continue;
         }
         let Some(line) = first_cell(node) else {
+            // 指到本控制器、但没有可解的 `interrupts`：它不是中断源，不入账。
             continue;
         };
         if line < 1 || line > ndev {
+            out.beyond += 1;
             continue;
         }
-        out.push(line);
+        out.lines.push(line);
     }
     out
 }
 
 /// 节点的第一个中断号（`interrupts = <10>` ⇒ 10）。
 ///
-/// 单元数由**父控制器**的 `#interrupt-cells` 定；这里只认 1 单元（virt 上的 PLIC 实测
-/// 如此）。多单元的中断控制器要另写解码。
+/// 认**第一个单元**：`#interrupt-cells` 数 1 或 2 时它都是中断号（第二格是触发类型）。
+/// 别的取值由调用方拒解（见 [`sources`] 的 `unparsed`）。
 fn first_cell(node: fdt::node::FdtNode) -> Option<u32> {
     let value = node.property("interrupts")?.value;
     Some(u32::from_be_bytes(value.get(..4)?.try_into().ok()?))

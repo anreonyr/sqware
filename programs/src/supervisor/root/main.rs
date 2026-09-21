@@ -71,6 +71,9 @@ extern "C" fn main() -> ! {
     let Some(boot) = boot::Root::take() else {
         service::die(E_BOOT, "root: boot args unreadable");
     };
+    // 配对块的**重名**读数（一行总数 + 每个重名一行）：名字不是单值（同一节点的多段
+    // `reg`），而 `token()` 只够得到第一枚——这台机器上"有没有重名"只有这一行说得出来。
+    boot.report_pairs();
     let Some(catalog) = Catalog::of_boot(&boot) else {
         service::die(service::E_MANIFEST, "root: manifest bad");
     };
