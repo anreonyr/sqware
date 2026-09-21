@@ -226,6 +226,25 @@ pub fn collect(index: usize) -> EnvResult<(PieToken, env::Permission, TaskId)> {
     }
 }
 
+/// 本端这张权限表里现在有几枚门闩（[`collect`] 一路走到越界哨兵）。
+///
+/// **给人看的读数，不是给判据用的机制**：它自己不改任何东西。用途只有一个——把"该放下的
+/// 放了没有"变成**可量**的一格（少放一枚，这一格当场大 1，见
+/// `programs/src/driver/router/main.rs` 的 `drop_lane` 与 `programs/src/user/lodger/main.rs`）。
+pub fn table_size() -> usize {
+    let mut n = 0usize;
+    loop {
+        let Ok((token, _perm, _vestor)) = collect(n) else {
+            return n;
+        };
+        // 越界哨兵：这一遍扫完了。
+        if token.get() == 0 {
+            return n;
+        }
+        n += 1;
+    }
+}
+
 /// 查询：我持有的这枚门闩——`(vestor, owner, 记号)`。
 ///
 /// `vestor` = 这枚门闩谁授的（转手即改写）；`owner` = 这扇门谁开的（副本共享同一

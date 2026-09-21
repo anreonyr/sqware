@@ -20,6 +20,11 @@ impl Line {
     ///
     /// `entry` = 树上查来的那扇门（`/device/router` 下驱动族那一块）；对端 = **那扇门的主人**
     /// （`owner`：副本共享同一事实、转手不变）。
+    ///
+    /// **失败那一趟两边都收干净**：本端 `seat` 出去的那一枚（[`Quay::shut`]）与本趟借出去的
+    /// 那枚回信孔。两枚都**不在任何账上**——账里根本没有这一格，故此后没人会替它收，而路由者
+    /// 那侧**收不了别人的表**（它只放得下自己表里的副本，见 `driver/router` 的 `drop_lane`）。
+    /// 不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，直到它退场。
     pub fn occupy(entry: PieToken, device: Name, millis: usize) -> Result<Line, Fail> {
         let host = crate::session::call::opened_by(entry).ok_or(Fail::Denied)?;
         let mark = Name::new(call::LANE).map_err(|_| Fail::Denied)?;
@@ -28,22 +33,29 @@ impl Line {
         quay.seat(mark).map_err(|_| Fail::Denied)?;
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单槽的孔只够一个方向）。
         let back = mail::unseal_hole(call::BACK_MARK).map_err(|_| Fail::Denied)?;
-        port::ship(
+        // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条泊位）。
+        let sent = port::ship(
             &HolePie::from_token(back),
             host,
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .map_err(|_| Fail::Denied)?;
-        HolePie::from_token(entry)
-            .push(&call::pack_occupy(device))
-            .map_err(|_| Fail::Denied)?;
+        .and_then(|_| HolePie::from_token(entry).push(&call::pack_occupy(device)));
+        if sent.is_err() {
+            let _ = mail::release(back);
+            quay.shut();
+            return Err(Fail::Denied);
+        }
         let mut one = [0u8; 1];
         let code = match HolePie::from_token(back).pull_timeout(&mut one, millis) {
             Ok(1) => one[0],
             _ => call::BAD,
         };
+        // 答话到手 ⇒ 这一枚回信孔这一趟就用完了：**当场放下**（一问一答一个往返，见
+        // `protocol::session` 事实 2）。放下的是本端这一份，路由者那一份由它自己放。
+        let _ = mail::release(back);
         if code != call::OK {
+            quay.shut();
             return Err(match code {
                 call::TAKEN => Fail::Taken,
                 call::UNKNOWN => Fail::Unknown,
@@ -51,7 +63,10 @@ impl Line {
             });
         }
         // 认下它那一枚：它另装了一条泊位的一半，本端写的那一枚从它来。
-        quay.claim(host, mark, millis).map_err(|_| Fail::Denied)?;
+        if quay.claim(host, mark, millis).is_err() {
+            quay.shut();
+            return Err(Fail::Denied);
+        }
         Ok(Line { quay })
     }
 

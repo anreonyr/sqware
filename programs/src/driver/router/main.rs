@@ -427,6 +427,10 @@ fn desk_face(
         };
         if let Some(back) = scall::find(from, lcall::BACK_MARK) {
             let _ = HolePie::from_token(back).push(&[code]);
+            // **答完就放下**：这一枚是这一趟借过来的（一问一答一个往返），它不在本域的账里
+            // ——账里根本没有它，此后没人会替它收。不放的话，每有一次登记就在本域表里多留
+            // 一枚，直到本域退场；读数就带在 `pies=` 那一格上（见 `drop_lane`）。
+            let _ = mail::release(back);
         }
     }
 }
@@ -455,11 +459,15 @@ fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
 /// 故没有别人会替它收；`Quay` 也没有 `Drop`（放下一个 `Pier` 值只丢一个号，孔还在本域表里），
 /// 于是每失败一次，本域表里就多两枚，直到本域退场。对一个会重试的客户，那就是无界增长。
 ///
-/// **照实记**：客户那一侧也在自己表里留了一枚（它没有 `claim`，接不到 `UNSEAT`）；本域收不了
-/// 别人的表——那一枚随它退场清掉（今天两位会走到这里的客户都是短命或只试一次的）。
+/// **照实记（客户那一侧已经自己收干净了）**：从前客户把本端 `seat` 出去的那一枚与借出去的
+/// 回信孔都留在自己表里（它没有 `claim`，接不到 `UNSEAT`），本域也收不了别人的表——那一枚随它
+/// 退场清掉。今天 [`Line::occupy`](protocol::driver::line::client::Line::occupy) 自己收（失败
+/// 那几趟 `Quay::shut` + 放下回信孔），读数在房客那一行 **`lodger: pies=`** 上（探针量过：
+/// 临时关掉那几手，同一处从 `9` 涨到 `14`）。
 ///
 /// 读数带一格 **`pies=`**（本域表里现在有几枚）：'放了没有'这件事因此**可量**——少放一枚，
-/// 这一格当场大 1（判据钉在 `scripts/soak.sh` 里，涨了就是红）。
+/// 这一格当场大 1（判据钉在 `scripts/soak.sh` 里，涨了就是红）。**答完话那一枚回信孔副本**
+/// 也走同一条纪律（见 `desk_face` 尾上那一手）。
 fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
     if let Some(at_peer) = lane.at_peer() {
         let _ = mail::release(at_peer);
@@ -469,23 +477,8 @@ fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
     }
     say(&alloc::format!(
         "router: lane dropped line={line} pies={}",
-        table_size()
+        mail::table_size()
     ));
-}
-
-/// 本域表里现在有几枚（`mail::collect` 一路走到越界哨兵）——**给人看的读数**，不是判据以外的东西。
-fn table_size() -> usize {
-    let mut n = 0usize;
-    loop {
-        let Ok((token, _perm, _vestor)) = mail::collect(n) else {
-            return n;
-        };
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return n;
-        }
-        n += 1;
-    }
 }
 
 /// 树上一趟：**分目录 → 落门牌 → 查回来验一遍**。读数一行四格 + 入口的号。

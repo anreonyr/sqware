@@ -15,7 +15,8 @@
 //!        同一条线再来一次     → `lodger: taken=2`     （2 = TAKEN：主人是本域自己）
 //!        报树里没有的名字     → `lodger: unknown=1`   （1 = UNKNOWN：解树那一处答不出）
 //!   4  **直接死**：不说退场、不交回 ⇒ 它铸的那枚孔随退出钩子封印 ⇒ 路由者被叫醒、探活
-//!      答不出 ⇒ 拆线 + 空出格子（读数 `router: vacate line=1`）
+//!      答不出 ⇒ 拆线 + 空出格子（读数 `router: vacate line=1`）。死之前报一行 `lodger: pies=`
+//!      ——**失败那两趟两边收干净了没有**的读数（见下面那一注）。
 //! ```
 //!
 //! # `TAKEN` 那一趟为什么拿本域自己的线试
@@ -59,6 +60,7 @@ use env::{Name, PieToken};
 use protocol::driver::line;
 use protocol::driver::line::call as lcall;
 use runtime::env::debug;
+use runtime::env::mail;
 use runtime::env::room::exit_with_note;
 use runtime::env::unit as utask;
 
@@ -111,6 +113,10 @@ extern "C" fn main() -> ! {
     // 4. **直接死**：不说退场那一句、不交回。`held` 那条线活到本域退场为止——它铸的那枚孔
     //    随退出钩子封印，路由者那一格因此醒来（`router: vacate line=1`）。
     let _held = held;
+    // 三趟之后本域表里还剩几枚：**失败那两趟两边收干净了没有**的读数——`TAKEN` 与 `UNKNOWN`
+    // 各把本端 `seat` 出去的那一枚（`Quay::shut`）与本趟借出去的那枚回信孔放下（见
+    // `protocol::driver::line::client::Line::occupy`）。少放一枚，这一格当场大 1。
+    say(&format!("lodger: pies={}", mail::table_size()));
     let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;
     exit_with_note(
         if all { E_OK } else { E_TRIP },

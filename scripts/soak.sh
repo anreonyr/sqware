@@ -7,7 +7,7 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 三十一条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
+#   2) 三十二条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
 #      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
@@ -15,7 +15,7 @@
 #      **`router: line 11 = rtc@101000`** / **`rtc: line occupied`** / **`rtc: armed at=`** /
 #      **`router: line=11`** / **`rtc: rang n=1`** / **`router: exhaust line=11`** /
 #      **`router: vacate line=1`** / **`lodger: taken=2`** / **`lodger: unknown=1`** /
-#      **`router: lane dropped line=1 pies=24`** /
+#      **`router: lane dropped line=1 pies=21`** / **`lodger: pies=9`** /
 #      **`rtc: tree part=2 land=0 find=0 got=true`** / **`rtc: asked now=`** /
 #      **`sleeper: reg=0`** / **`sleeper: found`** / **`sleeper: now=`** /
 #      **`sleeper: past=2`** / **`sleeper: armed=0`** / **`sleeper: taken=1`** /
@@ -74,6 +74,16 @@
 # 那两枚的释放**临时关掉**，同一处读数从 `21` 变成 `23`（正好是"本端铸的那枚 + 从客户手里认下的
 # 那枚"），改回来又是 `21`——故它**跟着孔走**，不是个常数。判据因此钉**整行**：漏放一枚，这一格
 # 就是红的（这是"失败的登记不在账外留孔"这一刀的验法）。
+#
+# **照实记（这一格又从 24 回到 21）**：这一行原来钉 `pies=24`——那是 `rtc` 上来之后的值，而
+# 24 里有**三枚是"答完话没放下"的回信孔副本**（`uart` 登记那一趟、`rtc` 登记那一趟、房客第一
+# 趟），它们每登记一次涨一枚、直到本域退场。答完就放下之后，同一处读数是 **21**（24 − 3：
+# 本趟那一枚还没到放下那一步，故只少 3 枚）。判据钉的是**整行**，故它跟着走。
+#
+# 房客那侧另有一格 **`lodger: pies=`**（它自己表里剩几枚），验的是**同一个纪律的另一半**：
+# 失败那两趟把本端 `seat` 出去的那一枚（`Quay::shut`）与借出去的回信孔放下。探针量过——
+# 把那几手**临时关掉**，同一处读数从 `9` 变成 `14`（3 枚回信孔 + 2 枚失败那两趟的泊位孔），
+# 改回来又是 `9`。
 #
 # 六行是**第二台设备驱动**那一刀（`rtc`，`rtc@101000`，设备树里那条 11 号线）：
 # `router: line 11 = rtc@101000` = **登记**（解树解出来的权威）；`rtc: line occupied` = 客户侧
@@ -167,7 +177,8 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "router: vacate line=1" "$log" \
         && grep -q "lodger: taken=2" "$log" \
         && grep -q "lodger: unknown=1" "$log" \
-        && grep -q "router: lane dropped line=1 pies=24" "$log" \
+        && grep -q "router: lane dropped line=1 pies=21" "$log" \
+        && grep -q "lodger: pies=9" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
         && grep -q "echo: console=true" "$log" \
         && grep -q "irq: ring=" "$log" \
