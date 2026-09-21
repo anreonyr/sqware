@@ -7,9 +7,9 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 十七条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
+#   2) 十六条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
 #      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
-#      `answer=router` / `guest: trip ok` / `echo: ready` /
+#      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
 #      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`** /
 #      **`router: line 11 = rtc@101000`** / **`router: vacate line=11`** /
@@ -25,6 +25,11 @@
 # `router: tree part=0 land=0 find=0 got=true` 是**门牌**那一条：驱动自己把入口落到
 # `/device/router` 上、再查回来验一遍（`part=0` = 那块目录是它建的；第二台上来会读成 2）。
 # 而 `guest: reg=0 find=0` 里那个 `find` 是**从树上问到的**——按名找服务今天归树，板管生死。
+#
+# **照实记**：从前这里还有两条读数——`router: desk guest`（"招呼"那一趟）与 `answer=router`
+# （路由者把自己的名字回给客人）。旧 32 字节"招呼"那一形状随用户裁定**整条退休**：门后只剩
+# 登记一种形状（找人走树，见 `guest`）。"一问一答跨域"那格读数没丢——`guest: reg=` 与
+# `find=` 是板上、树上各给的一格答码，线那一面由 `lodger: occupy=0`（路由者给的答码）顶着。
 #
 # 四条是**线 + 控制台**那一刀（`protocol::driver::line` 的四格与设备持有者那枚服务孔）：
 # `router: line 10 = serial@10000000` = **登记**——串口驱动报设备名、路由者**解树**（线 = 名字的
@@ -95,11 +100,9 @@ while [ "$i" -le "$rounds" ]; do
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
   elif ! { grep -q "router: tree part=0 land=0 find=0 got=true" "$log" \
-        && grep -q "router: desk guest" "$log" \
         && grep -q "router: ndev=95 ctx=1" "$log" \
         && grep -q "uart: serial@10000000 ier=rx" "$log" \
         && grep -q "guest: reg=0 find=0" "$log" \
-        && grep -q "answer=router" "$log" \
         && grep -q "guest: trip ok" "$log" \
         && grep -q "router: line 10 = serial@10000000" "$log" \
         && grep -q "uart: rang n=" "$log" \

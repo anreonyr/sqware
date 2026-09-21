@@ -17,8 +17,7 @@
 //! ```
 //!
 //! **一处上界**：本协议只有一种帧，[`ASK`] 就是它的长度——段数封顶 [`Operator::PATH_MAX`]，
-//! 故整帧定长、不预分配槽。名字按 `env::wire::NAME_LEN` 定长写，与树里那一段**同一个解码面**
-//! （[`name_of`]），全树只有一处读法。
+//! 故整帧定长、不预分配槽。名字按 `env::wire::NAME_LEN` 定长写（尾随 NUL 是填充）。
 //!
 //! **入口号是"交出去之后换回来的那个号"**：客人把 Pie 交给持树者（[`hang_in`]），拿回"种在
 //! 持树者表里"的那个号，再写进帧里——不是"客人的 Pie 是几号"。两个编号空间不同源，互相
@@ -113,14 +112,6 @@ pub fn unpack(bytes: &[u8]) -> Option<([Name; Operator::PATH_MAX], usize, PieTok
     let at = SEGS + Operator::PATH_MAX * env::wire::NAME_LEN;
     let seed = PieToken::from_bytes(bytes.get(at..at + 8)?)?;
     Some((segs, count, seed))
-}
-
-/// 一段名字（**定长解码面**：尾随 NUL 是填充，不是内容）。
-pub fn name_of(bytes: &[u8]) -> Option<Name> {
-    let at = bytes.get(..env::wire::NAME_LEN)?;
-    let mut raw = [0u8; env::wire::NAME_LEN];
-    raw.copy_from_slice(at);
-    Name::from_bytes(raw).ok()
 }
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────

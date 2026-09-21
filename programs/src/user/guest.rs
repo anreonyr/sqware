@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! guest — **第一位真客人**：按名字找到一个服务、跟它说一句话、把答话带回来。
+//! guest — **第一位真客人**：按名字找到一个服务，走完一趟就退场。
 //!
 //! 本域手里只有一样东西：**名字**。`router` 在哪个域、哪一枚孔、谁建的——那三样由**树**回答
 //! （`FIND /device/router` 把入口**经会话**授进本域表里，不从报文里来）；**板**那边本域只用
@@ -13,10 +13,8 @@
 //!   2  REGISTER "guest"：本域的服务入口经会话交给板（于是本域也能被按名字找到）
 //!   3  树那条路：seat(树) + claim(生我者, 树)，另铸一枚问话孔给持树者
 //!   4  FIND "/device/router"：树上问一句，入口从会话里进本域表（找不到就再问，有界）
-//!   5  借一枚**回信孔**给它、把 32 字节（**本域的名字** = "谁在敲门"）推进它的入口，
-//!      再从回信孔读回一句答话（它报的是它自己的名字）
-//!   6  说一句 DISMISS（**一字节帧**）——"我走了"：板据此撤格 + 摘掉本域挂在板上的牌子
-//!   7  报一行读数就退场 —— 一次往返，不留常驻
+//!   5  说一句 DISMISS（**一字节帧**）——"我走了"：板据此撤格 + 摘掉本域挂在板上的牌子
+//!   6  报一行读数就退场 —— 一次往返，不留常驻
 //! ```
 //!
 //! # 为什么两条路都走
@@ -25,27 +23,15 @@
 //! （[`protocol::driver::DIR`] 那段目录），而自己那块牌子仍挂板：板那一侧的 `DISMISS`
 //! （客人自己说走）只有本域在用。**照实记**：板上的 `LOOKUP` 从此没有真客人。
 //!
-//! # 一句话就是一个名字
+//! # 一问一答由这两趟各自证
 //!
-//! 两个方向各 32 字节、**定长**（尾随 NUL 是填充）——与牌子同一个解码面（[`Name`]）。
-//! **这不是一份协议**：没有动作码、没有状态码、没有长度前缀也没来源字段。真要做"调用"，
-//! 帧形得另开一轮裁决；这一支只证四步：名字 → 入口 → 说话 → 答话。
+//! 本域不再跟谁说"招呼"：它证的"一问一答"落在板与树那两趟上——两趟都是"本域出一句、
+//! 另一个域回一格码"（读数里的 `reg=` / `find=`）。线那一面（登记 / 投递 / 排空）归线协议
+//! 自己的客人（`lodger`：占一条线就死、失败那趟也走一遍）。
 //!
-//! # 一次调用为什么是两枚孔
-//!
-//! 孔是**单槽**，而一个槽只有一个读者——本端推上去的那一句，**本端自己也会读回来**
-//! （推完立刻读，读到的就是自己那一句），请求因此根本到不了对端。故两个方向**各一枚孔**
-//! （`session` 事实 2 说的就是这件事），各只有一个写者：
-//!
-//! ```text
-//!   回信孔（本端铸、给对端写）  ◀── 答话（它报的名字）
-//!   它的入口（对端铸、本端写）  ──▶ 那一句（本域的名字）
-//! ```
-//!
-//! 对端凭什么知道答话该往哪儿推：**内核在推的那一刻盖的发送者戳**——它按"我表里
-//! `owner` 是这位客人的那一枚"找（副本共享 `owner`）。故报文里不必带号、也不必带名字。
-//! 而**同一来源的多枚孔**（本域的服务入口、问话孔、回信孔）靠**记号**分开：每铸一枚都
-//! 刻上它那条路的用途名（`entry` / `ask` / `back`）。
+//! **照实记**：从前这里还写着"两个方向各 32 字节、与牌子同一个解码面"——那一形状（本域推
+//! 名字进 `router` 的门、它回自己的名字）与"门后只有登记"相冲，用户裁定之后整条退休：
+//! 找人走树，门后只剩带动作码的那一种帧。
 //!
 //! # 特权级由清单定
 //!
@@ -69,10 +55,8 @@ use protocol::system::board::client as board;
 use alloc::format;
 use core::time::Duration;
 
-use env::wire::NAME_LEN;
 use env::{Name, PieToken};
 use protocol::system::board::call as bcall;
-use runtime::core::port::{self, Access, Policy};
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room::{self, exit_with_note};
@@ -152,24 +136,19 @@ extern "C" fn main() -> ! {
         left = left.saturating_sub(RETRY_MS);
     };
 
-    // 四、查到的那一枚（持树者经会话授进本域表里）：借一枚回信孔过去、说一句、把答话读回来。
-    let (at, answer) = match operator::take(&tree, host) {
-        Some(at) => (at, call(at, me)),
-        // 查到了却没在表里认出那一枚：也算没走通（读数里的 `entry=0`）。
-        None => (none, None),
-    };
+    // 四、查到的那一枚（持树者经会话授进本域表里）：本域在表里认得出它吗（读数里的 `entry`）。
+    let at = operator::take(&tree, host).unwrap_or(none);
     // 五、走完这一趟：说一句"我走了"（一字节帧，不带名字也不带入口）。板据此撤掉本域那一格、
     //     摘掉本域挂在板上的牌子，答一格 `OK`；本域不在板上那本账上则答 `UNKNOWN`。
     let bye = board::dismiss(talk, &link, MS).unwrap_or(BAD);
 
-    let said = answer.as_ref().map(Name::as_str).unwrap_or("?");
     say(&format!(
-        "guest: reg={reg} find={find} entry={} say={ME} answer={said} bye={bye}",
+        "guest: reg={reg} find={find} entry={} bye={bye}",
         at.get()
     ));
 
     // 六、退场：一次往返，不留常驻（kernel 打的那一行就是这一格的读数）。
-    let walked = reg == bcall::OK && find == ocall::OK && answer.is_some();
+    let walked = reg == bcall::OK && find == ocall::OK && at != none;
     exit_with_note(
         if walked { E_OK } else { E_TRIP },
         if walked {
@@ -178,37 +157,6 @@ extern "C" fn main() -> ! {
             "guest: trip failed"
         },
     )
-}
-
-/// 一次调用：**借一枚回信孔**给对端，再把话推进它的入口，然后从回信孔读答话。
-///
-/// 为什么是两枚孔，见文件头"一次调用为什么是两枚孔"。对端是谁**从入口本身读**：
-/// `owner` = 那扇门是谁开的（副本共享同一事实），这正是"这扇门的主人"。
-///
-/// 读回来的若不是合法名字（对面答了别的东西），返 [`None`]——**不猜**。
-fn call(at: PieToken, me: Name) -> Option<Name> {
-    // 回信孔：本端铸一枚（记号 `back`：本端表里此刻已经躺着入口与问话孔，记号把它们分开），
-    // 副本交给"这扇门的主人"（它只往里写，故只给 `R|W`）。
-    let back = mail::unseal_hole("back").ok()?;
-    let peer = bcall::opened_by(at)?;
-    port::ship(
-        &mail::HolePie::from_token(back),
-        peer,
-        Access::FETCH | Access::STORE,
-        Policy::NONE,
-    )
-    .ok()?;
-    // 说一句：往**它的入口**推本域的名字。
-    let hole = mail::HolePie::from_token(at);
-    hole.push(me.bytes()).ok()?;
-    // 读答话：从**回信孔**读（不是从它的入口读——那一枚的读者是它）。
-    let mut buf = [0u8; NAME_LEN];
-    let n = mail::HolePie::from_token(back)
-        .pull_timeout(&mut buf, MS)
-        .ok()?;
-    (n == NAME_LEN)
-        .then(|| Name::from_bytes(buf).ok())
-        .flatten()
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

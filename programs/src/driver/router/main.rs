@@ -12,7 +12,7 @@
 //!   → 读树：本域该用哪个 context、树里指到本控制器的线有哪几条（**带名字**；顺带报"没进来的账"）
 //!   → 板上一趟（装上板路、交上问话孔——**只为让板看得见本域的死**，不挂牌子）
 //!   → 树上一趟（分出 `/device`、把本域的服务入口落成 `/device/router`、再查回来验一遍）
-//!   → 等三个源（一只组）：**铃**（外部中断）、**门上有人**（登记 / 招呼）、**客人的排空**
+//!   → 等三个源（一只组）：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**
 //!       门上   登记：解树（名字 → 线号）→ 占住那一格 → **接上线** → 把排空那条路挂进组
 //!       铃     领到一条：**往主人手里投一帧** → 投到了才静音 + complete → 应铃
 //!       排空   客人说"我排空了"：那一格回闲 → **把线放回去**
@@ -24,7 +24,7 @@
 //!
 //! # 为什么是一枚线程（从前是两枚）
 //!
-//! 本域有三件事要等：**铃**（外部中断）、**门上有人**（登记 / 招呼）、**客人的排空**——一只组
+//! 本域有三件事要等：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**——一只组
 //! （`Tole`）就能同时等这几样，故合并本来就没有机制上的障碍（从前分两枚只是分工上的选择）。
 //!
 //! **真正把它定下来的是一条类型事实**：`PieToken` 是"**我这张表**里的第几个"⇒ 同一个域里
@@ -105,7 +105,6 @@ use programs::driver::assemble;
 use programs::driver::router::needs;
 
 // 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
-use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
 // 树：本域也是**客侧**（门牌挂 `/device/router`，见文件头）。
 use protocol::operator::call as ocall;
@@ -130,10 +129,6 @@ use crate::plic::{LINE_PRIORITY, Plic, Sources};
 
 /// 本域挂在树上的名字（`/device/router`，[`protocol::driver::DIR`] 之下的那一段）。
 const SERVICE: &str = "router";
-
-/// 招呼那一趟借过来的回信孔上刻的记号（`guest` 那一趟用的字面量；登记那一句用的是
-/// [`lcall::BACK`]——**同一位给的多枚孔靠记号分开**，不按记号认就会认错）。
-const GREET_BACK: &str = "back";
 
 /// 装泊位 / 等配给 / 办一趟登记的期限（毫秒）。
 const QUAY_MS: usize = 1000;
@@ -222,9 +217,6 @@ extern "C" fn main() -> ! {
     let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
         exit_with(E_DESK)
     };
-    let Ok(our) = Name::new(SERVICE) else {
-        exit_with(E_DESK)
-    };
 
     // 板那趟（装上板路、交上问话孔——只为让板看得见本域的死）+ 上树那趟（门牌）。
     let Ok(sire) = utask::sire() else {
@@ -232,7 +224,7 @@ extern "C" fn main() -> ! {
     };
     serve_board(sire, entry);
 
-    // 等三个源：**铃**（外部中断）、**门上有人**（登记 / 招呼）、**客人的排空**（每登记一条线
+    // 等三个源：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**（每登记一条线
     // 就把那位客户的泊位挂进来，见 `desk_face`）。一只组同时等这三样——三件都是事件，
     // 故等待**没有期限**（见 `main` 里那一注）：会丢的那一次铃已在根上修掉。
     let Ok(tole) = Tole::unseal(false) else {
@@ -272,9 +264,9 @@ extern "C" fn main() -> ! {
         // 排空：客人说一句"这一条我排空了" ⇒ 那一格回闲 + **把线放回去**（事件，不是节拍）。
         // **先取排空，再登记**：登记会把新的一条线接上，紧接着到来的那一枚中断才不漏。
         drain_exhaust(&mut lines, &plic);
-        // 门上：非阻塞地把槽里的都取走（登记 / 招呼）。
+        // 门上：非阻塞地把槽里的都取走（登记）。
         while let Ok((n, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
-            desk_face(&mut lines, &plic, &sources, our, from, &buf[..n], &tole);
+            desk_face(&mut lines, &plic, &sources, from, &buf[..n], &tole);
         }
         // 铃：**领到空**——不按 `bell.wait(0)` 的返回值判。那一位是**中断闸门的账**
         // （响着 ⇒ 本 hart 的 `SEIE` 关着），而组那一次等待会与它互相消费 ⇒ 按返回值
@@ -391,20 +383,16 @@ fn serve_board(sire: TaskId, entry: PieToken) {
     tree_trip(sire, entry);
 }
 
-/// 门上的两种话。
+/// 门上那一句话：**登记**（带动作码）——报一个设备名 ⇒ **解树**（"线 = 名字的函数"，权威只在
+/// 这一处）⇒ 占住那一格 + 接上线 ⇒ 回一格状态码。
 ///
-/// - **登记**（带动作码）：报一个设备名 ⇒ **解树**（"线 = 名字的函数"，权威只在这一处）⇒
-///   占住那一格 + 接上线 ⇒ 回一格状态码；
-/// - **招呼**（旧形状：一个名字）：回自己的名字——`guest` 那一趟还在用它（"还没有协议"时代的
-///   遗留；**同一扇门上靠帧长分开**：32 = 招呼，33 = 登记）。
-///
-/// 答话都推到**客人借过来的那枚回信孔**上（按记号认：两条路各刻各的记号，那位给的多枚孔
-/// 才分得开）。
+/// 答话推到**客人借过来的那枚回信孔**上（按记号认：那位给的多枚孔靠记号分开）。
+/// **照实记**：这一扇门从前还兼着"招呼"（旧形状：一个名字进、一个名字回）——那条路随旧 32
+/// 字节形状一起退休了，今天只有登记一种形状（"找人"走树，见 `guest`）。
 fn desk_face(
     lines: &mut Lines,
     plic: &Plic,
     sources: &Sources,
-    our: Name,
     from: TaskId,
     frame: &[u8],
     tole: &Tole,
@@ -439,15 +427,6 @@ fn desk_face(
         if let Some(back) = find_mark(from, lcall::BACK) {
             let _ = HolePie::from_token(back).push(&[code]);
         }
-        return;
-    }
-    // 招呼：一个名字进来，本域的名字回去。
-    let Some(who) = bcall::name_of(frame) else {
-        return;
-    };
-    say(&alloc::format!("router: desk {}", who.as_str()));
-    if let Some(back) = find_mark(from, GREET_BACK) {
-        let _ = HolePie::from_token(back).push(our.bytes());
     }
 }
 
