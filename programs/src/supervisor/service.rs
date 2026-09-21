@@ -1,11 +1,11 @@
 //! service — **装配的机器**：把一张装配单变成"一批起好的服务"。
 //!
 //! 这张机器只认单子（`Program`）与清单（`Catalog`），不认具体是哪些服务——**单子住在
-//! 各自的域里**：引导域那张只有两条（持树者与编排者），编排域那张是它自己要起的那几条。
+//! 各自的域里**：引导域那张只有一条（编排者），编排域那张是它自己要起的那几条（持树者排第一）。
 //! 于是"引导域不知道系统里还有什么服务"这条不是靠自律，是靠**它手里没有那张单**。
 //!
 //! ```text
-//!   装配单（各域私有）  Program { name, announce, tokens, channels, needs, board, operator, died }
+//!   装配单（各域私有）  Program { name, announce, tokens, channels, needs, board, operator, holds_tree, died }
 //!   清单（两种来源）    Catalog  ── 引导域：boot 借映那块；编排域：它从固件领来的只读视图
 //! ```
 //!
@@ -63,6 +63,12 @@ pub struct Program {
     /// [`operator::open`]。**按需发**——拿到这条路的服务，就能动整棵树（本正文不做权限
     /// 判断，owner 归 Principal），故只有确实要用的那几条打上它。
     pub operator: bool,
+    /// **它就是持树者本身**（不是树的客人）：起来之后本域把它那条提示之路认到手，此后每位
+    /// 上树的客人都往那条路上递号（见 [`assemble`] 的第二段）。
+    ///
+    /// **它必须排在 `plan` 第一位**：排在它前面的客人没树可上——那一支会报 `no tree yet`
+    /// （此刻本域手里还没有持树者的号）。今天只有编排域那张单上有这一条。
+    pub holds_tree: bool,
     /// 装配死在这一条时报哪个号。
     pub died: Died,
 }
@@ -109,16 +115,17 @@ impl<'a> Catalog<'a> {
 ///
 /// 返最后一条的名字（装配者等它退场；它一走 ⇒ 会话结束）。
 ///
-/// `root` = 与**引导域**那条泊位（配给从那儿来）；`host` / `tip` = 持树者的号与提示之路
-/// （在**本线程表里**那一枚，由引导域转授过来）；`lanes` = 死亡道在本线程表里的句柄
+/// `root` = 与**引导域**那条泊位（配给从那儿来）；`lanes` = 死亡道在本线程表里的句柄
 /// （一位服务一条，按单子下标对位），装配时随 `board::attach` 各交一份给板线程。
+///
+/// **持树者的号与提示之路不在这里**：持树者自己是 `plan` 的第一条（[`Program::holds_tree`]），
+/// 认下它那条提示之路的那一步就在下面的循环里——从前它由引导域先起、再当一笔货转授过来，
+/// 那一笔已经清掉（它是**服务**，不是引导设施）。
 pub fn assemble<'a>(
     table: &mut Table,
     catalog: &Catalog<'a>,
     plan: &[Program],
     root: &Pier,
-    host: TaskId,
-    tip: PieToken,
     lanes: &[Option<PieToken>],
 ) -> Result<Name, Died> {
     // 清单条数与表的格数**同值**（`Table::CAP` = `env::wire::manifest::MAX_PROGRAMS` = 20），
@@ -131,22 +138,33 @@ pub fn assemble<'a>(
     }
 
     // 二、逐条起。**顺序即契约**：先起的先就绪，后面的就能向它要东西。
-    // `tip` = 板线程那条提示之路在**本线程表里**那一枚；`otip` = 持树者那条提示之路的
-    // 同一格。两样都属于本线程这张表，故只能被本线程拿着逐条传（`PieToken` 标着
-    // `Send + !Sync` 之外还有"号只在那一张表里有意义"这一条）。
+    //
+    // `btip` = 板线程那条提示之路在**本线程表里**那一枚；`tree` / `otip` = 持树者的号与它
+    // 那条提示之路的同一格。三样都属于本线程这张表，故只能被本线程拿着逐条传
+    // （`PieToken` 标着 `!Send + !Sync`，而号也只在铸它的那张表里有意义）。
     let mut btip: Option<PieToken> = None;
-    let mut otip = Some(tip);
+    let mut tree: Option<TaskId> = None;
+    let mut otip: Option<PieToken> = None;
     for (i, p) in plan.iter().enumerate() {
-        start(
+        let rep = start(
             table,
             catalog,
             p,
             root,
-            host,
+            tree,
             &mut btip,
             &mut otip,
             lanes.get(i).copied().flatten(),
         )?;
+        // 它刚把提示之路交给**生我者**（= 本域）⇒ 当场认下来，此后客人上树才有路可走。
+        if p.holds_tree {
+            tree = Some(rep);
+            otip = None;
+            operator::host_of(rep, READY_MS, &mut otip).map_err(|why| {
+                step(p, why);
+                p.died
+            })?;
+        }
     }
 
     // 三、把最后一条的名字交出去（等它退场 = 等这次会话结束）。
@@ -157,19 +175,21 @@ pub fn assemble<'a>(
 ///
 /// 每一步失败都报出**是哪一条、哪一步**（诊断靠这一行，不靠再读一遍代码）。
 ///
-/// **公开**：引导域那两条（持树者、编排者）不走本模块的装配单（那一张是编排域私有的），
-/// 但它要的仍是同几步——起一条是**同一条路**，不该有两份实现。
+/// **公开**：引导域那一条（编排者）不走本模块的装配单（那一张是编排域私有的），但它要的仍是
+/// 同几步——起一条是**同一条路**，不该有两份实现。
+///
+/// 返**代表的号**（`rep`）：装配者要凭它认下持树者的提示之路（[`assemble`] 那一步）。
 #[allow(clippy::too_many_arguments)]
 pub fn start<'a>(
     table: &mut Table,
     catalog: &Catalog<'a>,
     p: &Program,
     root: &Pier,
-    host: TaskId,
+    tree: Option<TaskId>,
     btip: &mut Option<PieToken>,
     otip: &mut Option<PieToken>,
     lane: Option<PieToken>,
-) -> Result<(), Died> {
+) -> Result<TaskId, Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
 
     // 一、身子：建域 + 产线程（此刻它一步都还没跑）。
@@ -231,12 +251,17 @@ pub fn start<'a>(
     // 六、树：**按需**把这条服务接到持树者那棵树上（[`Program::operator`]）。
     //     **在板之后**：两者各一条路、互不影响；先板后树只为让读数一行行落得整齐。
     if p.operator {
+        // 持树者必须**先于**这位客人起（[`Program::holds_tree`]）：提示之路还没认下就没得接。
+        let host = tree.ok_or_else(|| {
+            step(p, "no tree yet");
+            p.died
+        })?;
         operator::attach(&mut quay, rep, host, READY_MS, otip).map_err(|why| {
             step(p, why);
             p.died
         })?;
     }
-    Ok(())
+    Ok(rep)
 }
 
 /// 报"哪一条、哪一步没成"。

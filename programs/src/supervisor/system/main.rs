@@ -3,14 +3,16 @@
 
 //! system — **编排域**：这台机器上有哪些服务、怎么起、谁死了怎么办。
 //!
-//! 它是 boot 之后**唯一**起服务的地方。引导域（`root`）只把两样东西交给它：**这块字节**
-//! （清单 + 全部镜像，一枚只读门闩）与**持树者的提示之路**；此外一概不给——连"要哪几枚
-//! 设备门闩"都是本域按需求单去问的（配给由引导域直接授进**客人**的表里，本域只转投那段
-//! 记录，一枚原件都不经过它）。
+//! 它是 boot 之后**唯一**起服务的地方。引导域（`root`）只把一样东西交给它：**这块字节**
+//! （清单 + 全部镜像，一枚只读门闩）；此外一概不给——连"要哪几枚设备门闩"都是本域按需求单
+//! 去问的（配给由引导域直接授进**客人**的表里，本域只转投那段记录，一枚原件都不经过它）。
+//!
+//! **持树者也是本域起的服务**（`PLAN` 第一条）：它不另走引导域那条路——引导域不当它的装配者，
+//! 也不替它把提示之路转来转去（那是"它是引导设施"时代的形状，那一笔已经清掉）。
 //!
 //! ```text
 //! 1  会话：交给"生我者"（= 引导域）本域那一枚孔，认下它那一枚 ⇒ 一条问答路
-//! 2  领账：`initrd`（只读门闩）→ 借映 → 清单；`operator-tip`（孔）→ 认下持树者是谁
+//! 2  领账：`initrd`（只读门闩）→ 借映 → 清单
 //! 3  按装配单登记整张表（`PLAN`）
 //! 4  逐条起：建域 → 产线程 → 定会话 → 装通道 → 放行 → 等就绪 → 领配给 → 上板 → 接树
 //! 5  监督：板手里挂着每位客人的孔（封印即投信），它看出谁没了就往死亡道推一格；
@@ -30,12 +32,11 @@ use programs::driver::router::needs as router_needs;
 use programs::driver::uart::needs as uart_needs;
 use programs::supervisor::service;
 
-// 板：本域是**装配侧**（把客人接上板、收尾点名）。
+// 板：本域是**装配侧**（把客人接上板、收尾点名）。树那条路的装配侧在
+// `service::start` 里（本域只管在名单第一位起它、认下它的提示之路）。
 use programs::supervisor::system::board::bridge as board;
-// 树：本域是**装配侧**（把客人接上树）。
-use programs::supervisor::operator::bridge as operator;
 
-use env::{HoleDir, Name, PieToken, TaskId};
+use env::{HoleDir, Name, PieToken};
 use programs::supervisor::system::server;
 use protocol::session::{Pier, Quay};
 use protocol::system::desk::{Announce, Table};
@@ -52,6 +53,9 @@ use service::{Catalog, Died, Program};
 /// 载荷区那枚门闩在配对块里的名字（boot 定的，见 `kernel/platform/devices.rs`）。
 const INITRD: &str = "initrd";
 
+/// 持树者那一条在清单里的名字。
+const TREE: &str = "operator";
+
 /// 结算两条上限（毫秒）：与引导域开会话、以及装配期的等。
 const BOOT_MS: usize = 1000;
 
@@ -62,6 +66,25 @@ const E_ECHO: Died = 6;
 const E_GUEST: Died = 7;
 const E_PASSER: Died = 8;
 const E_UART: Died = 9;
+const E_TREE: Died = 10;
+
+/// 持树者：那棵命名树的服务（`prog-operator`）。**排第一位**——每位上树的客人都要它在。
+///
+/// 它不宣布、无通道（`Announce::None`：放行即起来）、不上板、不上树（**它就是树**）；起来
+/// 之后本域当场把它的提示之路认到手（[`Program::holds_tree`] 那一格）。
+const fn tree() -> Program {
+    Program {
+        name: TREE,
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: false,
+        holds_tree: true,
+        died: E_TREE,
+    }
+}
 
 /// 线路由者（中断面域）：常驻，要三枚门闩，起来时交回通道，并挂上板。
 const fn router() -> Program {
@@ -73,6 +96,7 @@ const fn router() -> Program {
         needs: Some(router_needs::WANTS),
         board: true,
         operator: false,
+        holds_tree: false,
         died: E_ROUTER,
     }
 }
@@ -89,6 +113,7 @@ const fn uart() -> Program {
         needs: Some(uart_needs::WANTS),
         board: true,
         operator: false,
+        holds_tree: false,
         died: E_UART,
     }
 }
@@ -106,6 +131,7 @@ const fn guest() -> Program {
         needs: None,
         board: true,
         operator: false,
+        holds_tree: false,
         died: E_GUEST,
     }
 }
@@ -123,6 +149,7 @@ const fn passer() -> Program {
         needs: None,
         board: true,
         operator: false,
+        holds_tree: false,
         died: E_PASSER,
     }
 }
@@ -142,20 +169,21 @@ const fn echo() -> Program {
         needs: None,
         board: true,
         operator: true,
+        holds_tree: false,
         died: E_ECHO,
     }
 }
 
 /// **装配单**：本域按这个顺序起服务。
 ///
-/// 持树者（`operator`）**不在这张单里**：它由引导域先起，本域只从引导域手里领它那条
-/// 提示之路——于是本域也**不必认识它的号**（`Reserve` 那枚孔就答出来了）。
+/// 持树者（`operator`）**排第一**：它是**服务**，但每位上树的客人都要它在——起来之后本域
+/// 当场把它那条提示之路认到手（[`service::assemble`] 的第二段）。
 ///
 /// `echo` **必须在最后**：[`service::assemble`] 返 [`PLAN`] 的最后一条，本域等它退场
 /// ——那正是"读到一行 `exit` 才收场"的那一格。
 ///
-/// 两台驱动**排在最前**且线路由者在前：控制器先就位，线再开闸（`uart` 持有那台串口）。
-const PLAN: &[Program] = &[router(), uart(), guest(), passer(), echo()];
+/// 两台驱动紧跟在树之后、其余之前：控制器先就位，线再开闸（`uart` 持有那台串口）。
+const PLAN: &[Program] = &[tree(), router(), uart(), guest(), passer(), echo()];
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -165,14 +193,9 @@ extern "C" fn main() -> ! {
     };
 
     // 2. 领账：这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
+    //    树也在这一块里——它是**本域起的服务**（`PLAN` 第一条），本域不向引导域要任何东西。
     let catalog = match take_catalog(&boot_pier) {
         Ok(catalog) => catalog,
-        Err(why) => service::die(E_BOOT, why),
-    };
-    // 与树说话要两样：**它是谁**（那条提示之路的主人，`Reserve` 答出来）与**一条答话路**
-    // （就在我们手里这一枚）。故本域不必问引导域"持树者的号是多少"。
-    let (host, tip) = match take_tree(&boot_pier) {
-        Ok(tree) => tree,
         Err(why) => service::die(E_BOOT, why),
     };
 
@@ -194,7 +217,7 @@ extern "C" fn main() -> ! {
 
     // 登记整张表，再按顺序起（配给从 `boot_pier` 那条路领）。
     let mut table = Table::new();
-    let last = match service::assemble(&mut table, &catalog, PLAN, &boot_pier, host, tip, &lanes) {
+    let last = match service::assemble(&mut table, &catalog, PLAN, &boot_pier, &lanes) {
         Ok(last) => last,
         Err(service::E_MANIFEST) => service::die(service::E_MANIFEST, "system: manifest bad"),
         Err(service::E_TABLE) => service::die(service::E_TABLE, "system: table full"),
@@ -241,22 +264,6 @@ fn take_catalog(pier: &Pier) -> Result<Catalog<'static>, &'static str> {
     let blob: &'static [u8] =
         unsafe { core::slice::from_raw_parts(view.base() as *const u8, view.size()) };
     Catalog::new(blob).ok_or("system: payload manifest")
-}
-
-/// 领取树那条提示之路（由引导域从持树者手里转授过来），并**问出持树者是谁**。
-///
-/// `Reserve` 免费给出 `owner`（资源的来历，转发不丢）⇒ 本域不必让谁转告一个号。
-fn take_tree(pier: &Pier) -> Result<(TaskId, PieToken), &'static str> {
-    let want = Want::new(
-        operator::TIP_NAME,
-        Kind::Hole,
-        Access::FETCH | Access::STORE,
-        Policy::NONE,
-    )
-    .ok_or("system: tree want")?;
-    let tip = take(pier, want).ok_or("system: tree ask")?;
-    let (_, host, _) = mail::reserve(tip).map_err(|_| "system: tree reserve")?;
-    Ok((host, tip))
 }
 
 /// 问引导域要一枚：递一张只有一条的单子，取回那一条的号。
