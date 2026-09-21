@@ -267,16 +267,17 @@ pub const fn code_to_fail(code: u8) -> Option<Fail> {
     }
 }
 
-/// 本地失败域 → 线上状态码。`None`（没失败）⇒ `OK`——与 [`code_to_fail`] 的 `OK ⇒ None`
-/// 正好是同一格的两侧读法。
-pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
-    match fail {
-        None => OK,
-        Some(Fail::Local | Fail::Bad) => BAD,
-        Some(Fail::Unknown) => UNKNOWN,
-        Some(Fail::Denied) => DENIED,
-        Some(Fail::Full) => FULL,
-    }
+fail_codes! {
+    /// 本地失败域 → 线上状态码。`None`（没失败）⇒ `OK`——与下面那个 [`code_to_fail`] 的
+    /// `OK ⇒ None` 正好是同一格的两侧读法。
+    ///
+    /// **本表不是双射**（`Local` 与 `Bad` 同归 `BAD`），故宏**不给反向**：反向由人写在下面，
+    /// 并注明它反不回来。
+    lossy Fail; OK;
+    Fail::Local | Fail::Bad => BAD,
+    Fail::Unknown => UNKNOWN,
+    Fail::Denied => DENIED,
+    Fail::Full => FULL,
 }
 
 /// 单子上那一条的字节——与 [`pair_bytes`] 同一条理由（`repr(C)`、尺寸编译期锁死）。

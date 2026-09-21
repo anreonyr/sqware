@@ -113,33 +113,15 @@ pub fn unpack_ask(bytes: &[u8]) -> Option<([Name; Operator::PATH_MAX], usize, Pi
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────
 
-/// 失败域 → 答话那一格（`None` = 一个失败都不是）。
-pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
-    match fail {
-        None => OK,
-        Some(Fail::Unknown) => UNKNOWN,
-        Some(Fail::NonEmpty) => NONEMPTY,
-        Some(Fail::NotATile) => NOTATILE,
-        Some(Fail::NotAPane) => NOTAPANE,
-        Some(Fail::Full) => FULL,
-        Some(Fail::Dead) => DEAD,
-    }
-}
-
-/// 答话那一格 → 失败域。`OK`（没失败）与 `BAD`（这一问读不懂）**都不是失败域里的东西**，
-/// 故两者同一格答 `None`——读的人靠 [`op_of`] / [`unpack_ask`] 先分流。
-///
-/// **本表是双射**（六个失败一格一码），故反向答得回来。
-pub const fn code_to_fail(code: u8) -> Option<Fail> {
-    match code {
-        UNKNOWN => Some(Fail::Unknown),
-        NONEMPTY => Some(Fail::NonEmpty),
-        NOTATILE => Some(Fail::NotATile),
-        NOTAPANE => Some(Fail::NotAPane),
-        FULL => Some(Fail::Full),
-        DEAD => Some(Fail::Dead),
-        _ => None,
-    }
+fail_codes! {
+    /// 失败域 → 答话那一格（`None` = 一个失败都不是）。
+    bijective Fail; OK;
+    Fail::Unknown => UNKNOWN,
+    Fail::NonEmpty => NONEMPTY,
+    Fail::NotATile => NOTATILE,
+    Fail::NotAPane => NOTAPANE,
+    Fail::Full => FULL,
+    Fail::Dead => DEAD,
 }
 
 /// 会话的失败域 → 树的失败域：**"它不在"是一条判据**，故两边只留一个名字

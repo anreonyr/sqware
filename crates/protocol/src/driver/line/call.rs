@@ -40,27 +40,12 @@ pub const TAKEN: u8 = 2;
 pub const DENIED: u8 = 3;
 pub const BAD: u8 = 4;
 
-/// 失败域 → 状态码（**一处编**：客户与路由者看同一张表）。`None`（没失败）⇒ `OK`。
-pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
-    match fail {
-        None => OK,
-        Some(Fail::Unknown) => UNKNOWN,
-        Some(Fail::Taken) => TAKEN,
-        Some(Fail::Denied) => DENIED,
-    }
-}
-
-/// 状态码 → 失败域。`OK`（没失败）与 `BAD`（这一帧读不懂）**都不是失败域里的东西**，
-/// 故两者同一格答 `None`——读的人靠 [`unpack_occupy`] 先分流。
-///
-/// **本表是双射**（三个失败一格一码），故反向答得回来。
-pub const fn code_to_fail(code: u8) -> Option<Fail> {
-    match code {
-        UNKNOWN => Some(Fail::Unknown),
-        TAKEN => Some(Fail::Taken),
-        DENIED => Some(Fail::Denied),
-        _ => None,
-    }
+fail_codes! {
+    /// 失败域 → 状态码（**一处编**：客户与路由者看同一张表）。`None`（没失败）⇒ `OK`。
+    bijective Fail; OK;
+    Fail::Unknown => UNKNOWN,
+    Fail::Taken => TAKEN,
+    Fail::Denied => DENIED,
 }
 
 /// 登记帧：动作码 + 设备名。

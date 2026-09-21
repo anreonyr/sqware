@@ -114,32 +114,16 @@ pub const DENIED: u8 = 3;
 pub const FULL: u8 = 4;
 pub const BAD: u8 = 5;
 
-/// 失败域 → 答话那一格。`None`（没失败）⇒ `OK`。
-///
-/// 板这一侧原先这张表**住在程序侧**（`programs/.../board/server.rs` 里那个私有 `code`），
-/// 故协议层拿不到它——规则 1"一张负码表"就是被这一格破的。它现在与码表同住一处。
-pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
-    match fail {
-        None => OK,
-        Some(Fail::Unknown) => UNKNOWN,
-        Some(Fail::Taken) => TAKEN,
-        Some(Fail::Denied) => DENIED,
-        Some(Fail::Full) => FULL,
-    }
-}
-
-/// 线上答话那一格 → 失败域。`OK`（没失败）与 `BAD`（这一问读不懂）**都不是失败域里的
-/// 东西**，故两者同一格答 `None`——读的人靠 [`op_of`] / [`unpack_ask`] 先分流。
-///
-/// **本表是双射**（四个失败一格一码），故反向答得回来。
-pub const fn code_to_fail(code: u8) -> Option<Fail> {
-    match code {
-        UNKNOWN => Some(Fail::Unknown),
-        TAKEN => Some(Fail::Taken),
-        DENIED => Some(Fail::Denied),
-        FULL => Some(Fail::Full),
-        _ => None,
-    }
+fail_codes! {
+    /// 失败域 → 答话那一格。`None`（没失败）⇒ `OK`。
+    ///
+    /// 板这一侧原先这张表**住在程序侧**（`programs/.../board/server.rs` 里那个私有 `code`），
+    /// 故协议层拿不到它——规则 1"一张负码表"就是被这一格破的。它现在与码表同住一处。
+    bijective Fail; OK;
+    Fail::Unknown => UNKNOWN,
+    Fail::Taken => TAKEN,
+    Fail::Denied => DENIED,
+    Fail::Full => FULL,
 }
 
 /// 把一问编成字节。`seed` 只有 [`REGISTER`] 用得上。
