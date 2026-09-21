@@ -61,6 +61,12 @@ const TREE: &str = "operator";
 /// 身份服务那一条在清单里的名字（装配期"它一起好就补绑"认的就是这一格）。
 const PRINCIPAL: &str = "principal";
 
+/// 结盟服务那一条在清单里的名字。
+const COALITION: &str = "coalition";
+
+/// 盟友（结盟服务那位客人）在清单里的名字。
+const MEMBER: &str = "member";
+
 /// 结算两条上限（毫秒）：与引导域开会话、以及装配期的等。
 const BOOT_MS: usize = 1000;
 
@@ -77,6 +83,8 @@ const E_RTC: Died = 12;
 const E_SLEEPER: Died = 13;
 const E_PRINCIPAL: Died = 14;
 const E_SUBJECT: Died = 15;
+const E_COALITION: Died = 16;
+const E_MEMBER: Died = 17;
 
 /// 持树者：那棵命名树的服务（`prog-operator`）。**排第一位**——每位上树的客人都要它在。
 ///
@@ -115,6 +123,28 @@ const fn principal() -> Program {
         operator: true,
         holds_tree: false,
         died: E_PRINCIPAL,
+    }
+}
+
+/// 结盟服务（`prog-coalition`，**U 态**）：横向那张盟籍表（`protocol::coalition`）。
+///
+/// **紧随身份服务之后**：它是**身份服务的客人**——起手要按名字在树上找到 `/sys/principal`
+/// （门牌由 principal 自己那一段落下），每条写原语嵌一次 `Resolve(发送者)`。排在 `principal`
+/// 之后是本域能给的唯一次序保证（"就绪"与"上树"不是同一步，故它自己还带一轮有界的重试）。
+///
+/// 上板（板看得见它的死）+ 上树（门牌 `/sys/coalition`——两段名见
+/// [`protocol::coalition::DIR`] / [`protocol::coalition::NAME`]）。
+const fn coalition() -> Program {
+    Program {
+        name: COALITION,
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: true,
+        operator: true,
+        holds_tree: false,
+        died: E_COALITION,
     }
 }
 
@@ -302,6 +332,28 @@ const fn subject() -> Program {
     }
 }
 
+/// 盟友（`prog-member`，U 态）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态，
+/// 再用派生的第二条身份验"同一枚盟里有两位"（读数见 `programs/src/user/member.rs` 头注）。
+///
+/// 它**要两面门牌**（都在树上按名字找）：`/sys/coalition` 是主角，`/sys/principal` 用来派生
+/// 第二条身份（K1 那条"键 = 身份"的定理要在机器上读出来）。
+///
+/// **不上板**（同 `subject` / `lodger`）：它只做一件事，生死那本账与它无关。**排在 `echo`
+/// 之前**：`echo` 必须是最后一条（本域等它退场收场）。
+const fn member() -> Program {
+    Program {
+        name: MEMBER,
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: true,
+        holds_tree: false,
+        died: E_MEMBER,
+    }
+}
+
 /// **装配单**：本域按这个顺序起服务。
 ///
 /// 持树者（`operator`）**排第一**：它是**服务**，但每位上树的客人都要它在——起来之后本域
@@ -309,6 +361,10 @@ const fn subject() -> Program {
 ///
 /// 身份服务（`principal`）**紧随其后**：装配期每一条服务的 `derive` + `bind` 都要它在
 /// （[`service::assemble`] 在它放行之后补绑它自己与树，其后的每一条都在放行前拿到身份）。
+///
+/// 结盟服务（`coalition`）**跟在身份服务之后**：它是身份服务的客人（起手按名字找
+/// `/sys/principal`），故只能在它之后起——这也是本域能给的唯一次序保证（那一台自己还带一轮
+/// 有界的重试，见 [`coalition`] 那一格）。
 ///
 /// `echo` **必须在最后**：[`service::assemble`] 返 [`PLAN`] 的最后一条，本域等它退场
 /// ——那正是"读到一行 `exit` 才收场"的那一格。
@@ -318,6 +374,7 @@ const fn subject() -> Program {
 const PLAN: &[Program] = &[
     tree(),
     principal(),
+    coalition(),
     router(),
     uart(),
     rtc(),
@@ -326,6 +383,7 @@ const PLAN: &[Program] = &[
     lodger(),
     sleeper(),
     subject(),
+    member(),
     echo(),
 ];
 

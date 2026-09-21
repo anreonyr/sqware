@@ -5,9 +5,10 @@
 //! 在那之前不需要协议——跨域要说的话走 `env` 的调试面（`DebugCall`：内核把固件的调试
 //! 控制台直接借给域），一条孔都不用开。`echo` 就是这么说话的。
 //!
-//! **目前有五份顶层正文**：[`system`]、[`driver`]、[`principal`]、[`session`] 与 [`operator`]。
+//! **目前有六份顶层正文**：[`system`]、[`driver`]、[`principal`]、[`coalition`]、[`session`]
+//! 与 [`operator`]。
 //!
-//! 落地程度不一样：**五份都已经有代码跑在机器上**（[`system`]（含它下面的 `board`）、
+//! 落地程度不一样：**六份都已经有代码跑在机器上**（[`system`]（含它下面的 `board`）、
 //! [`driver`]（**两半都落了**：`supply` 与 `line`——见 [`driver::line`]，四格原语 + 账 +
 //! 客侧几手，`router` / `uart` / `rtc` 与两位客人 `lodger` / `sleeper` 都跑在机器上）、
 //! [`session`]、[`operator`] 与 [`principal`]（**名册 + 谱系**：七条原语、一台
@@ -33,7 +34,12 @@
 //! - [`principal`] = **策略身份**：**名册**（TID → 此刻代表的 PolicyId）与**谱系**
 //!   （PolicyId 的一棵只增不改的树）。两条轴都不定义权限——收到它的服务自己解释那条号。
 //!   载体建在会话之上：门牌落在树上 `/sys/principal`，一问一答替这一趟借一枚回信孔过去。
-//!   同一族里还留着一条**横向**的轴（结盟 `Coalition`）没落，正文里只记了它的边界。
+//! - [`coalition`] = **策略结盟**（策略身份那一条轴的**横向**那半）：**一张两列表**——哪条身份
+//!   在哪些盟里、哪枚盟里有谁，反着念是同一个关系的两个方向。号由服务铸（铸过就一直在），
+//!   盟无主（故失败域里没有 `Denied`），不产生 PolicyId、不发 Pie、不解释成员资格的含义。
+//!   六条原语（`found` / `enter` / `leave` / `amid` / `band` / `bloc`），四条上线、两条住核心。
+//!   它是**身份服务的客人**：每条写原语嵌一次 `Resolve(发送者)`——"self"因此在适配层，
+//!   不在核心（正文的"已知边界"里写着这一条的确切含义）。
 //! - [`session`] = **会话建立**："两个陌生实体怎么建起一条会话"。身份由内核盖、地址靠
 //!   对方交、认领按"谁开的这扇门"——不需要 Server 就能成立，而其余几份都建在它上面。
 //! - [`operator`] = **命名寻址（树那一版）**：一个 Operator 管着所有条目，其他任务只是
@@ -180,6 +186,7 @@ macro_rules! fail_codes {
     };
 }
 
+pub mod coalition;
 pub mod driver;
 pub mod operator;
 pub mod principal;

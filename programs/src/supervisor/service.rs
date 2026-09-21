@@ -157,7 +157,7 @@ pub fn assemble<'a>(
     root: &Pier,
     lanes: &[Option<PieToken>],
 ) -> Result<Name, Died> {
-    // 清单条数与表的格数**同值**（`Table::CAP` = `env::wire::manifest::MAX_PROGRAMS` = 24），
+    // 清单条数与表的格数**同值**（`Table::CAP` = `env::wire::manifest::MAX_PROGRAMS` = 28），
     // 但这里不需要再查一遍：超限清单在 `Catalog::new` 就被 `manifest::Entries::new` 挡掉了。
 
     // 一、登记：先立账（名字 + 怎么算起来），身子要等真的起了才挂上。

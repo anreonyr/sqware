@@ -102,10 +102,16 @@ fn settle(desk: &mut Desk, tole: &Tole, tip: &mail::HolePie) -> bool {
     while let Ok(8) = tip.pull_timeout(&mut id, 0) {
         let client = TaskId::new(u64::from_le_bytes(id) as usize);
         match reply_of(client) {
-            // 已经在账上（提示是单槽，可能重放）：不换掉原来那位。
-            Some(reply) => {
-                let _ = desk.admit(client, reply);
-            }
+            Some(reply) => match desk.admit(client, reply) {
+                // 收了。
+                Ok(_) => {}
+                // **重放**（提示是单槽，可能重放）：一位客人只占一格，无事。
+                Err(Fail::NonEmpty) => {}
+                // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
+                // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**；
+                // 格数见 `Desk::CAP` 那条照实记（这一格就是它量出来的那一次）。
+                Err(_) => say("operator: desk full"),
+            },
             // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
             None => say("operator: no reply"),
         }

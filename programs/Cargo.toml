@@ -99,6 +99,23 @@ test = false
 bench = false
 doctest = false
 
+# 结盟服务（U 态，独立域，一枚线程）：横向那张盟籍表（门牌 `/sys/coalition`）；它是身份服务
+# 的客人——每条写原语嵌一次 `Resolve(发送者)`。
+[[bin]]
+name = "prog-coalition"
+path = "src/supervisor/coalition/main.rs"
+test = false
+bench = false
+doctest = false
+
+# 盟友（U 态）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态。
+[[bin]]
+name = "prog-member"
+path = "src/user/member.rs"
+test = false
+bench = false
+doctest = false
+
 # 命名树的服务（U 态，独立域，一枚线程）：起那棵树、招待所有客人；接树归编排域。
 [[bin]]
 name = "prog-operator"

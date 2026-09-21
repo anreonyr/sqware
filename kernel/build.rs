@@ -62,6 +62,14 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 主体（**U 态**）：身份服务的第一位真客人——问自己是谁、查父（三态）、验自反与否、
     // 派生一条自己的子身份、再越权趟一次（读数见 `programs/src/user/subject.rs` 头注）。
     ("subject", "prog-subject", ProgramKind::User),
+    // 结盟服务（**U 态**）：横向那张盟籍表（一条关系 + 一枚计数器），六条原语见
+    // `protocol::coalition`。它同样**不持有、不授予、不解释任何 Pie**；它与身份服务那一台
+    // 的差别只有一处——**它是身份服务的客人**：起手在树上找到 `/sys/principal`，每条写原语
+    // 嵌一次 `Resolve(发送者)`（故"self"在适配层，不在核心）。
+    ("coalition", "prog-coalition", ProgramKind::User),
+    // 盟友（**U 态**）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态，
+    // 再用派生的第二条身份验"同一枚盟里有两位"（读数见 `programs/src/user/member.rs` 头注）。
+    ("member", "prog-member", ProgramKind::User),
     // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
     // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
     // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。

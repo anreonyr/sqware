@@ -7,7 +7,7 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 三十二条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
+#   2) 四十四条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
 #      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
@@ -19,7 +19,16 @@
 #      **`rtc: tree part=2 land=0 find=0 got=true`** / **`rtc: asked now=`** /
 #      **`sleeper: reg=0`** / **`sleeper: found`** / **`sleeper: now=`** /
 #      **`sleeper: past=2`** / **`sleeper: armed=0`** / **`sleeper: taken=1`** /
-#      **`sleeper: rang at=`** / **`sleeper: gone`**）；
+#      **`sleeper: rang at=`** / **`sleeper: gone`** /
+#      **`coalition: tree part=2 land=0 find=0 got=true`**（结盟那台落了门牌）/
+#      **`member: found=0`** / **`member: found=1`**（号由服务发：零号是**一枚普通的盟**、
+#      号单调稠密）/ **`member: amid(me,c0)=false`**（**立了不等于进了**）/
+#      **`member: enter(c0)=ok`** / **`member: leave(c0)=ok`** /
+#      **`member: amid(sub,c0)=true`**（**同一枚盟里有两位**——键 = 身份那条定理）/
+#      **`member: amid(sub,c0)=false`** / **`member: amid(me,c0)=true`**（**出的是那一对，
+#      不是那个人**）/ **`member: amid(me,out)=err:unknown`**（第三态：这枚盟没铸过）/
+#      **`member: amid(out,me)=false`**（伪造的身份号**不是失败**）/
+#      **`member: done`**）；
 #   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
 #      "还响着" / 其中**空闲核补摇**了几支（见下）。
 #
@@ -59,6 +68,40 @@
 #
 # **照实记**：房客原来占的是 11 号线（那时钟），第二台设备驱动上来之后那条线有主了
 # （`rtc@101000`），故房客换成 1 号线——它要的是**一条没人要的线**。
+#
+# 第三十二条之后的十二条是**结盟那一刀**（`protocol::coalition` + `prog-coalition` +
+# `prog-member`）：`coalition: tree part=2 land=0 find=0 got=true` 是**它自己的门牌**（`part=2`
+# 是 `/sys` 已由身份服务建好）；`member` 那十一条把这一族要验的事各钉一格——**号由服务发**
+# （`found=0` / `found=1`：零号是**一枚普通的盟**，盟无根）、**立了不等于进了**、**入**与**出**、
+# **同一枚盟里有两位**（它派生第二条身份再领一次，故那不是"一串任务"而是"一组身份"）、
+# **出的是那一对不是那个人**（出完 `amid(sub,c0)=false` 而 `amid(me,c0)` 照旧 true）、
+# **第三态**（没铸过的号：`err:unknown`）、以及**别人的号只是标签**（伪造的身份号答 `false`，
+# 不是失败）。
+#
+# **照实记：这一刀差点被 `echo: console=true` 判红，而它红得对。** 持树者那本客人账是**八格**
+# （`Desk::CAP`，`programs/src/supervisor/operator/desk.rs`）。结盟送来**第五位常驻上树客人**
+# （`coalition` 要按名字找 `/sys/principal`）与**又多一位会死的**（`member`）之后，八格在
+# "5 常驻 + 3 位同时在场的临时客人"那一刻卡满：最后上树的 `echo` 进不了账，而它自己不知道
+# ——它的问话孔没人管，第二次问话堵在单槽上，整台机器收不了场（第一次读数：`echo: console=false`
+# 之后没有 `system halted`，`qemu-exit=124`）。故这一刀把那一格抬到 **12**（5 常驻 + 4 临时 +
+# 三格余量），并把"满"这一格由**静默丢掉**改成**报一句**（`operator: desk full`）。
+# **照实记**：那本账的老注早就写着"不剔，八格会被死客人占满，后来的连门都进不来"——它说对了，
+# 只是它数的时候客人还没这么多。
+#
+# **照实记（本门一条既有的缺口）**：身份那一刀（`principal` / `prog-subject`）的读数从头到尾
+# 不在上面这张判据表里——它加的时候没人回头看这张门。这一刀没有顺手补它（那要另算一次量），
+# 只把缺口记在这里。
+#
+# **照实记（预算那一格）**：每一轮的外接期限从 **15 秒抬到 40 秒**。它是按"当年的机器"定的，
+# 而**这个门跑的是 debug 档**（`cargo run` 不带 `--release`）：debug 的启动本来就慢一个量级，
+# 结盟那一刀又加上两个程序（服务 + 探针，探针还要在启动期打二十几行读数）。量出来的数是
+# **debug 启动到 `echo: ready` 要约 15 秒**（直接拿 debug ELF 跑，轮询到那一行 15157 ms），
+# 而喂进去的 `exit` 落在启动期、要在启动完成之后才被读到 ⇒ 停机发生在 16 秒上下，正好压着旧
+# 预算的线（读数：10 轮全是"无停机行"，日志停在 `member: done` 一带；同一个 ELF 手工放长到
+# 60 秒就正常停）。40 秒 = 那个数的两倍半余量。**判据没变**——这一格管的是"feed 坏了就早点红"，
+# 不是"必须 15 秒内停"。
+# **照实记**：这一格也照旧把 `cargo run` 的**构建**算在期限里（冷跑时构建可能自己就超）。
+# 今天跑门之前都先 build 过，故那一格没被量到；记在这里，别把它当成"启动慢"。
 #
 # 另外两条（`lodger: taken=2` / `lodger: unknown=1`）是**失败域**那两格：房客占下 1 号线之后
 # 拿**同一条线**再来一次（答 `TAKEN`）与报一个**树里没有的名字**（答 `UNKNOWN`）——三格的答码
@@ -148,7 +191,7 @@ pass=0
 i=1
 while [ "$i" -le "$rounds" ]; do
   log="$out/$tag-$i.log"
-  ( sleep 5; echo exit; sleep 3; echo exit ) | timeout 15 cargo run $prof > "$log" 2>&1
+  ( sleep 5; echo exit; sleep 3; echo exit ) | timeout 40 cargo run $prof > "$log" 2>&1
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
   elif ! { grep -q "router: tree part=0 land=0 find=0 got=true" "$log" \
@@ -181,6 +224,18 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "lodger: pies=9" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
         && grep -q "echo: console=true" "$log" \
+        && grep -q "coalition: tree part=2 land=0 find=0 got=true" "$log" \
+        && grep -q "member: found=0" "$log" \
+        && grep -q "member: found=1" "$log" \
+        && grep -q "member: amid(me,c0)=false" "$log" \
+        && grep -q "member: enter(c0)=ok" "$log" \
+        && grep -q "member: leave(c0)=ok" "$log" \
+        && grep -q "member: amid(sub,c0)=true" "$log" \
+        && grep -q "member: amid(sub,c0)=false" "$log" \
+        && grep -q "member: amid(me,c0)=true" "$log" \
+        && grep -q "member: amid(me,out)=err:unknown" "$log" \
+        && grep -q "member: amid(out,me)=false" "$log" \
+        && grep -q "member: done" "$log" \
         && grep -q "irq: ring=" "$log" \
         && grep -q "echo: ready" "$log"; }; then
     echo "round $i: FAIL 启动读数不全（$log）"
