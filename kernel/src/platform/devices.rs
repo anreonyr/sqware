@@ -36,6 +36,8 @@ use alloc::vec::Vec;
 
 use env::{Name, PAIR_LEN, Pair};
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::lock::OnceLock;
 use crate::platform::machine;
 use crate::work::mail;
@@ -71,13 +73,54 @@ const INITRD_NAME: &str = "initrd";
 /// 而 `trap_handler` 还会继续响它（响在一具尸体上）。
 static IRQ: OnceLock<Arc<NoleMeta>> = OnceLock::new();
 
+/// 这枚铃的读数：**摇了几次 / 其中几次"还响着"**（`Busy`），以及其中的**空闲核补摇**那一支
+/// （`scheduler::core::fetch` 的空闲循环）。
+///
+/// 账落在本模块：`raise_irq` 是内核唯一的摇铃点，故"摇了几次"归它。`idle_*` 是补摇那一支
+/// 的读数——那一支正是"没人可调"窗口的补丁（见 `fetch` 那一段注释），**没有读数就落不下**：
+/// 它多半只在"控制器挂着而核在空闲"时才有非零值，故它为零本身也是读数（那一段没发生）。
+/// 只读、`Relaxed`：收尾印那一行时全部核已过 halt 屏障，计数器不再变。
+static IRQ_RING: AtomicUsize = AtomicUsize::new(0);
+static IRQ_BUSY: AtomicUsize = AtomicUsize::new(0);
+static IRQ_IDLE_RING: AtomicUsize = AtomicUsize::new(0);
+static IRQ_IDLE_BUSY: AtomicUsize = AtomicUsize::new(0);
+
 /// 响铃：把"有外部中断"记进门铃（**trap 上下文**：不分配、不阻塞、不搬字节）。
 ///
 /// `Err(Busy)` = 铃还响着（上一件没人应）⇒ 调用方（trap 分支）据此关本 hart 的闸门。
 /// 闸门的另一半在 `envcall/mail.rs::hush`：用户应铃时立刻重开。
 pub(crate) fn raise_irq() -> Result<(), GateError> {
+    IRQ_RING.fetch_add(1, Ordering::Relaxed);
     let meta = IRQ.get().expect("irq bell not built (devices::scan)");
-    mail::nole::ring(meta)
+    let r = mail::nole::ring(meta);
+    if r.is_err() {
+        IRQ_BUSY.fetch_add(1, Ordering::Relaxed);
+    }
+    r
+}
+
+/// 空闲核那一支的振铃点：与 [`raise_irq`] 同一件事，另记一格"这一次是空闲补摇的"。
+///
+/// 调用点只有一处（`scheduler::core::fetch` 的空闲循环，且只在 `sip.SEIP` 挂着时走）
+/// ⇒ `idle_ring` 同时就是"空闲核见到 `SEIP` 挂着"的轮数，也就是照实记里那个**有界自旋**
+/// 的长度（`idle_busy` = 其中消费者还没应、下一轮还要再看的）。
+pub(crate) fn raise_irq_idle() -> Result<(), GateError> {
+    let r = raise_irq();
+    IRQ_IDLE_RING.fetch_add(1, Ordering::Relaxed);
+    if r.is_err() {
+        IRQ_IDLE_BUSY.fetch_add(1, Ordering::Relaxed);
+    }
+    r
+}
+
+/// 那四格读数（收尾时印一行）。
+pub(crate) fn irq_stats() -> (usize, usize, usize, usize) {
+    (
+        IRQ_RING.load(Ordering::Relaxed),
+        IRQ_BUSY.load(Ordering::Relaxed),
+        IRQ_IDLE_RING.load(Ordering::Relaxed),
+        IRQ_IDLE_BUSY.load(Ordering::Relaxed),
+    )
 }
 
 /// initrd 载荷区：**与设备树逐字同一条路**（终身的、boot 给的保留区；这里额外给它

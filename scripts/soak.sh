@@ -11,7 +11,9 @@
 #      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `answer=router` / `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: line 10 rang`** /
-#      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`**）。
+#      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`**）；
+#   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
+#      "还响着" / 其中**空闲核补摇**了几支（见下）。
 #
 # 这两条是**驱动侧那两条**：控制器自报 95 条线、本域用的 context 是 1；串口那一台已经把
 # 设备拿在手里、把"收到字节就拉线"打开（`serial@10000000` 那枚 `ONLY` 门闩换了主人）。
@@ -31,6 +33,13 @@
 # 第三格 `exhaust`（排空）**已经接上真内容**：读口搬到设备持有者之后，客户是真的读走了设备里的
 # 字节才说那句话，路由者据此把线放回（`router: exhaust line=10`）——那一行只在"真的排空过"时
 # 出现，故它归 `examine.nu` 那条回显判据一起看，不在这里当固定读数（喂不喂键决定它有没有）。
+#
+# `irq: ring=<n> busy=<m> idle_ring=<i> idle_busy=<j>` 是**铃那一刀的读数**（收尾摘要里印，
+# 与 `timer:` / `doom:` / `sched:` 同族）：`ring` = 内核摇铃几次、`busy` = 其中几次铃还响着
+# （trap 据此关本 hart 闸门）；`idle_*` = 其中**空闲核补摇**的那一支。那一支是"没人可调"
+# 窗口的补丁——`idle_ring` 非零说明这一手真的在走，为零也是读数（那一段没发生）；实测它
+# 常在 1 上下、偶发拉高（一次观测到 `idle_ring=173 idle_busy=171`，即**有界自旋**的长度，
+# 消费者认领 PLIC 后收住）。
 #
 # 用法：
 #   scripts/soak.sh [轮数] [--release]      # 默认 10 轮，debug 档
@@ -72,6 +81,7 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "uart: line 10 rang" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
         && grep -q "echo: console=true" "$log" \
+        && grep -q "irq: ring=" "$log" \
         && grep -q "echo: ready" "$log"; }; then
     echo "round $i: FAIL 启动读数不全（$log）"
   else

@@ -185,6 +185,11 @@ pub(super) fn halt() -> ! {
             // `fallback` = 落点核不在等、活靠它下次自取）。
             let (kicks, fallback) = kick_stats();
             putln!("sched: kicks={kicks} fallback={fallback}");
+            // 外部中断那枚铃：**摇了几次 / 其中几次"还响着"**，以及其中的**空闲核补摇**那一支
+            // （`scheduler::core::fetch` 的空闲循环）。那一支是"没人可调"窗口的补丁，故这一行
+            // 是它的读数：`idle_ring` 非零 ⇒ 这一手真的在走；为零 ⇒ 那一段没发生（也是读数）。
+            let (ring, busy, idle_ring, idle_busy) = crate::platform::devices::irq_stats();
+            putln!("irq: ring={ring} busy={busy} idle_ring={idle_ring} idle_busy={idle_busy}");
         }
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,

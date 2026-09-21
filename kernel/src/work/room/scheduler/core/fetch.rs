@@ -146,7 +146,7 @@ fn wait() -> Option<Arc<Task>> {
         // 把 SEIP 落下。旧写法（"挂着就别开"）怕的正是这个自旋，代价的另一半是
         // 关过闸门的空闲核再也开不回来（实测：铃再不响、谁也没醒）。
         if sip::read().sext() {
-            let _ = crate::platform::devices::raise_irq();
+            let _ = crate::platform::devices::raise_irq_idle();
         }
         // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）。
         // 注意：不再有清退应答点——RFENCE 由固件强制打断空闲核（含 WFI 态），
