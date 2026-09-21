@@ -83,6 +83,8 @@
 //!   是它**真的读走了设备里的字节**之后才说的（读口在它手里）。线放回因此是有据的；
 //! - `router: vacate line=<n>`——**逐客那一手**：只可能由"客人没了"产生（探活答不出），
 //!   故它出现一次就是一条线真的被收掉了；
+//! - `router: lane dropped line=<n>`——**登记被拒那一趟**（"这条线有人了"）：这一趟刚交上来的
+//!   泊位被放回去了（房客那趟 `TAKEN` 每次冷启动走一遍）；
 //! - 账的格数按 `ndev` 要（备不下就拒起，见 [`E_ACCOUNT`]）——账够不够用是**装配期的判据**，
 //!   不是运行期的分支。
 //!
@@ -414,7 +416,7 @@ fn desk_face(
             Some(line) => match take_lane(from) {
                 // 客户没把泊位交出来（或交不出来）。
                 None => lcall::DENIED,
-                Some(lane) => match lines.occupy(line, lane) {
+                Some((mut quay, lane)) => match lines.occupy(line, lane) {
                     Ok(()) => {
                         // **接线是登记的直接后果。**
                         plic.enable(line, LINE_PRIORITY);
@@ -426,7 +428,11 @@ fn desk_face(
                         say(&alloc::format!("router: line {line} = {}", device.as_str()));
                         lcall::OK
                     }
-                    Err(fail) => lcall::code_of(fail),
+                    // **拒了就放回去**：这一趟刚交上来的那条泊位不能留在账外（见 `drop_lane`）。
+                    Err(fail) => {
+                        drop_lane(&mut quay, lane, line);
+                        lcall::code_of(fail)
+                    }
                 },
             },
         };
@@ -447,15 +453,38 @@ fn desk_face(
 
 /// 认下这位客户交出来的**线泊位**（记号 [`lcall::LANE`]），并把本端那一枚交给它。
 ///
-/// 返那一格要记的泊位：`post` 往**它**推投递（客户读的那一枚），`pull` 收**它的**排空。
+/// 返那一格要记的泊位（**连码头一起**：收不下时要放回去，见 `drop_lane`）：`post` 往**它**推
+/// 投递（客户读的那一枚），`pull` 收**它的**排空。
 /// 客户在推登记之前先 `seat`（本端那一枚落在本域表里），故这一步通常当场成——认不到就是
 /// 它没交（或交不出来）。
-fn take_lane(from: TaskId) -> Option<Pier> {
+fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
     let mark = Name::new(lcall::LANE).ok()?;
     let mut quay = Quay::open(from);
     quay.seat(mark).ok()?;
     quay.claim(from, mark, QUAY_MS).ok()?;
-    quay.find(mark).copied()
+    // **码头一起交出去**：`Lines` 收不下这条泊位时，得由拿着码头的人把它放回去
+    // （只有码头知道那一枚是本端铸的，见 `drop_lane`）。
+    let pier = quay.find(mark).copied()?;
+    Some((quay, pier))
+}
+
+/// 拒绝那一趟的收尾：**把这一趟刚交上来的泊位放下**——本端铸的那一枚（`unseat`：顺手告诉
+/// 对端"这条别用了"）+ 刚从它手里认下的那一枚。
+///
+/// **为什么非做不可**：`Lines::occupy` 拒了，那两枚就**不在任何账上**（账里根本没有这一格），
+/// 故没有别人会替它收；`Quay` 也没有 `Drop`（放下一个 `Pier` 值只丢一个号，孔还在本域表里），
+/// 于是每失败一次，本域表里就多两枚，直到本域退场。对一个会重试的客户，那就是无界增长。
+///
+/// **照实记**：客户那一侧也在自己表里留了一枚（它没有 `claim`，接不到 `UNSEAT`）；本域收不了
+/// 别人的表——那一枚随它退场清掉（今天两位会走到这里的客户都是短命或只试一次的）。
+fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
+    if let Some(at_peer) = lane.at_peer() {
+        let _ = mail::release(at_peer);
+    }
+    if let Ok(mark) = Name::new(lcall::LANE) {
+        quay.unseat(mark);
+    }
+    say(&alloc::format!("router: lane dropped line={line}"));
 }
 
 /// 本端表里**这位给的、刻着那个记号的那一枚**（答话那条路）。

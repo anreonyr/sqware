@@ -7,13 +7,13 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 十六条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
+#   2) 十七条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` / `router: desk guest` /
 #      `router: ndev=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `answer=router` / `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
 #      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`** /
 #      **`router: line 11 = rtc@101000`** / **`router: vacate line=11`** /
-#      **`lodger: taken=2`** / **`lodger: unknown=1`**）；
+#      **`lodger: taken=2`** / **`lodger: unknown=1`** / **`router: lane dropped line=11`**）；
 #   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
 #      "还响着" / 其中**空闲核补摇**了几支（见下）。
 #
@@ -46,6 +46,11 @@
 # 拿**同一条线**再来一次（答 `TAKEN`）与报一个**树里没有的名字**（答 `UNKNOWN`）——三格的答码
 # 都由 `line::call` 那张表给出（`OK` / `UNKNOWN` / `TAKEN` = 0 / 1 / 2）。拿 `uart` 那条线试会
 # 与它的登记抢时间，故 `TAKEN` 这一趟拿房客自己刚占下的线试：读数因此是确定的。
+#
+# `router: lane dropped line=11` 是**被拒那一趟的收尾**：`TAKEN` 这一趟已经 `seat`+`claim` 过
+# 一条泊位（本端铸的那枚 + 从客户手里认下的那枚），而 `Lines::occupy` 收不下它——本域当场把
+# 那两枚放下，不留在账外（否则每失败一次多两枚，直到本域退场）。这条读数与 `lodger: taken=2`
+# 是同一次登记的两头：一头是客户收到的答码，一头是本域把孔放回去。
 #
 # `irq: ring=<n> busy=<m> idle_ring=<i> idle_busy=<j>` 是**铃那一刀的读数**（收尾摘要里印，
 # 与 `timer:` / `doom:` / `sched:` 同族）：`ring` = 内核摇铃几次、`busy` = 其中几次铃还响着
@@ -96,6 +101,7 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "router: vacate line=11" "$log" \
         && grep -q "lodger: taken=2" "$log" \
         && grep -q "lodger: unknown=1" "$log" \
+        && grep -q "router: lane dropped line=11" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
         && grep -q "echo: console=true" "$log" \
         && grep -q "irq: ring=" "$log" \
