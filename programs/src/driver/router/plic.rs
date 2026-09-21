@@ -31,6 +31,7 @@
 
 use alloc::vec::Vec;
 
+use env::Name;
 use runtime::core::dock::View;
 
 /// S 模式外部中断的中断号：`interrupts-extended` 里 `cell == 9` 的那一项。
@@ -166,13 +167,16 @@ impl Plic {
     }
 }
 
-/// 树里指到本控制器的中断源（线号）+ **没进来的那几笔账**。
+/// 树里指到本控制器的中断源（**名字 + 线号**）+ **没进来的那几笔账**。
 ///
 /// 每一项都对应一条"没进 `lines` 的理由"，都是读数不是判断——起域时打一行（见 `main`），
 /// 让这台机器上的线集合可复核，不靠注释声称。
+///
+/// **名字是这一格的关键**：「线 = 名字的函数」那条关系就落在这里——客户登记时报的是名字，
+/// 解树只发生这一处（内核不代劳，它连线号都不知道）。
 pub struct Sources {
     /// 要接的线，落在 `[1, ndev]` 内（线数的权威是控制器自己）。
-    pub lines: Vec<u32>,
+    pub lines: Vec<Source>,
     /// 有 `interrupts`、但**本节点自己没写** `interrupt-parent` 的节点数
     /// （绑定允许沿父链继承；本域今天不追父链）。
     pub unparented: usize,
@@ -182,6 +186,24 @@ pub struct Sources {
     pub mapped: usize,
     /// 指到本控制器、但 `#interrupt-cells` 不是 1 / 2 的节点数——本域**拒解**那一格。
     pub unparsed: usize,
+}
+
+/// 一条中断源：**名字 + 线号**。
+///
+/// 名字是设备节点的 basename（boot 在配对块里给的就是它——两边同一个名字，故客户报得出）。
+/// basename 装不下 31 字节的节点在这里被跳过：那种节点在内核那一侧也没有门闩（`devices.rs`
+/// 同样跳过），故不存在"有设备、没名字"的线。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Source {
+    pub name: Name,
+    pub line: u32,
+}
+
+impl Sources {
+    /// 名字 → 线号。**权威只在这一处解**；查不到 ⇒ 树里没这条线（那个名字不是中断源）。
+    pub fn line_of(&self, name: Name) -> Option<u32> {
+        self.lines.iter().find(|s| s.name == name).map(|s| s.line)
+    }
 }
 
 /// 扫一遍树：收线号，顺手把"没进来的"分成四笔。
@@ -233,7 +255,12 @@ fn sources(fdt: &fdt::Fdt, controller: &fdt::node::FdtNode, ndev: u32, cells: us
             out.beyond += 1;
             continue;
         }
-        out.lines.push(line);
+        let Some(name) = Name::new(node.name).ok() else {
+            // 名字装不下 31 字节：那台设备在内核那一侧也没有门闩（`devices.rs` 同样跳过）
+            // ⇒ 不存在"有设备、没名字"的线。
+            continue;
+        };
+        out.lines.push(Source { name, line });
     }
     out
 }

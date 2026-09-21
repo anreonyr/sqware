@@ -105,9 +105,11 @@ const fn router() -> Program {
     }
 }
 
-/// 串口驱动：常驻，要一枚门闩（`serial@10000000`），起来时交回通道，并挂上板。
+/// 串口驱动：常驻，要一枚门闩（`serial@10000000`），起来时交回通道；上板、上树。
 ///
 /// **它排在线路由者之后**：控制器先就位，线再开闸（闸门归持有设备的那一台，见该域头注）。
+/// **上树是"按名找人"**：它从树上找到 `/device/router` 那位、把本域那条线**登记**下来
+/// ——线从此归它，投递也到得了它（`line::client` 那几手）。
 const fn uart() -> Program {
     Program {
         name: "uart",
@@ -116,7 +118,7 @@ const fn uart() -> Program {
         channels: &["records"],
         needs: Some(uart_needs::WANTS),
         board: true,
-        operator: false,
+        operator: true,
         holds_tree: false,
         died: E_UART,
     }
