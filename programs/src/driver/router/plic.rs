@@ -6,7 +6,7 @@
 //!
 //! # 它为什么要读设备树
 //!
-//! 两件事只有树里有：**这台控制器有几条线**（`riscv,device_count`）与**本域该用哪个 context**
+//! 两件事只有树里有：**这台控制器有几条线**（`riscv,ndev`）与**本域该用哪个 context**
 //! （`interrupts-extended` 的项序，`cell == 9` 才是 S 模式外部中断）。内核不代劳——
 //! 它只把设备树原样搬给域（`platform/devices.rs::supply_dtb`）。
 //!
@@ -55,7 +55,7 @@ const CLAIM: usize = 0x04;
 /// PLIC 的寄存器视图 + 这台控制器的事实。
 pub struct Plic {
     view: View,
-    /// 本控制器有多少条线（`riscv,device_count`）——按它拒绝越界的线号。
+    /// 本控制器有多少条线（`riscv,ndev`）——按它拒绝越界的线号。
     device_count: u32,
     /// 本域用的**那一个** context。
     ///
@@ -81,7 +81,7 @@ impl Plic {
                     .is_some_and(|c| c.all().any(|s| s.contains("plic")))
         })?;
         let device_count = node
-            .property("riscv,device_count")
+            .property("riscv,ndev")
             .and_then(|p| p.as_usize())
             .unwrap_or(0) as u32;
         // 一单元的字节数由 `#interrupt-cells` 定；virt 上的 PLIC 实测为 1。
@@ -111,7 +111,7 @@ impl Plic {
         self.ctx
     }
 
-    /// 本控制器自报的线数（`riscv,device_count`）。**静音账的容量按它校验**（见 `main` 那一步）。
+    /// 本控制器自报的线数（`riscv,ndev`）。**静音账的容量按它校验**（见 `main` 那一步）。
     pub fn device_count(&self) -> u32 {
         self.device_count
     }
