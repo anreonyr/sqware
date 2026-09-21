@@ -9,7 +9,7 @@
 #       PROBE_SETTLE=3 scripts/probe.sh ...   （等启动的秒数）
 set -u
 elf=${PROBE_ELF:-target/riscv64gc-unknown-none-elf/release/sqware}
-mem=${QEMU_MEM:-64}
+mem=${QEMU_MEM:-128}
 settle=${PROBE_SETTLE:-3}
 deadline=${PROBE_TIMEOUT:-60}
 log=${PROBE_LOG:-trace/probe-$(date +%H%M%S).log}

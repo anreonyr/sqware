@@ -24,7 +24,7 @@
 #
 #   scripts/fast.sh                       # 只启动 + exit
 #   scripts/fast.sh "churn 400 1 1"       # 喂一条命令
-#   QEMU_MEM=64 scripts/fast.sh "..."     # 换内存
+#   QEMU_MEM=192 scripts/fast.sh "..."    # 换内存（默认 128，与 `boot.nu` 同）
 #   SKIP_BUILD=1 scripts/fast.sh "..."    # 已 build 过
 #   FAST_FEATURES=audit scripts/fast.sh   # 带 feature 重建
 #
@@ -33,7 +33,7 @@
 set -u
 
 elf=target/riscv64gc-unknown-none-elf/release/sqware
-mem=${QEMU_MEM:-64}
+mem=${QEMU_MEM:-128}
 settle=${FAST_SETTLE:-2.5}
 deadline=${FAST_TIMEOUT:-60}
 log=${FAST_LOG:-trace/fast-$(date +%H%M%S).log}
