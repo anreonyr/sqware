@@ -1,9 +1,9 @@
-// core — 主类型 [`Space`] / [`SpaceBuilder`] / [`SpaceInner`] + 映射原语
+// inner — [`SpaceInner`] + 全部映射原语（Space 内的这一半：无锁无刷）
 //
-// # 层职责（核心/适配分离）
+// # 层职责（同一把锁的两半）
 //
-// - [`SpaceInner`] = 核心：数据 + 全部操作体，**无锁无刷**（只出现在事务闭包内）。
-// - [`Space`] = 适配：`RelLock` 门（[`with`]/[`with_flush`]）+ 每操作 ≤3 行转发；
+// - [`SpaceInner`] = 内：数据 + 全部操作体，**无锁无刷**（只出现在事务闭包内）。
+// - [`Space`] = 外（`outer.rs`）：`RelLock` 门（[`with`]/[`with_flush`]）+ 每操作 ≤3 行转发；
 //   锁外按本空间 ASID 刷 TLB。`Space` 不知道栈/帧/堆/mmap 是什么。
 //
 // # 锁约定（`Space::inner`，RelLock）

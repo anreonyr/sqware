@@ -8,7 +8,7 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 
-use super::super::core::SpaceInner;
+use super::super::inner::SpaceInner;
 use super::super::salvage::Span;
 use super::super::{SegmentKind, Space};
 

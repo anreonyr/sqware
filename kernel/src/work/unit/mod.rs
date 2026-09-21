@@ -122,7 +122,7 @@ pub fn init() -> MapResult<()> {
             // 1.5 设置内核空间 user 段：从低区起覆盖整个用户半区（段 lowest
             //     first-fit——内核心任务栈与用户栈同池自低端起排槽）。段边界 =
             //     [base, upper)：base = 内核镜像基址，upper = 用户半区顶（可见
-            //     space::core::SpaceInner::dynamic）；与诊断侧 scene 无耦合。
+            //     space::inner::SpaceInner::dynamic）；与诊断侧 scene 无耦合。
             {
                 let this = &kernel_space;
                 let base = crate::layout::IMAGE_BASE.as_usize();

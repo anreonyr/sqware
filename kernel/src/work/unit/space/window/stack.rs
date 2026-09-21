@@ -10,7 +10,7 @@ use crate::layout::TASK_STACK_GUARD;
 use crate::memory::manager::MapError;
 use crate::memory::manager::entry::PteFlags;
 
-use super::super::core::SpaceInner;
+use super::super::inner::SpaceInner;
 use super::super::map::Pending;
 use super::super::salvage::Span;
 use super::super::{SegmentKind, Space};

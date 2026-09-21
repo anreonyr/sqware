@@ -5,7 +5,7 @@
 // 产物 Span 带 `pa`（restore 热路径直接取帧）。帧 VA 无固定地址——切换代码
 // 经帧内 self_va 定位，是每帧可任意放置的前提。
 
-use super::super::core::SpaceInner;
+use super::super::inner::SpaceInner;
 use super::super::salvage::Span;
 use super::super::{SegmentKind, Space};
 use crate::memory::PAGE_SIZE;

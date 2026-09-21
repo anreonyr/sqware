@@ -1,12 +1,12 @@
-// adapter — 适配层：[`Space`] 门 + [`SpaceBuilder`] + [`Space`] 的公开入口面。
+// outer — Space 外的这一半：[`Space`] 门 + [`SpaceBuilder`] + [`Space`] 的公开入口面。
 //!
-//! # 层职责（核心/适配分离的另一半）
+//! # 层职责（同一把锁的两半）
 //!
-//! - [`SpaceInner`](super::core::SpaceInner) = 核心：数据 + 全部操作体，**无锁无刷**。
-//! - 本文件 = 适配：`RelLock` 门（`with` / `with_flush`）+ 每操作 ≤3 行转发；
+//! - [`SpaceInner`](super::inner::SpaceInner) = 内：数据 + 全部操作体，**无锁无刷**。
+//! - 本文件 = 外：`RelLock` 门（`with` / `with_flush`）+ 每操作 ≤3 行转发；
 //!   锁外按本空间 ASID 刷 TLB。
 //!
-//! **适配层不认识领域**：`Space` 不知道栈/帧/堆/mmap 是什么——那些是窗口层
+//! **这一半不认识领域**：`Space` 不知道栈/帧/堆/mmap 是什么——那些是窗口层
 //! （`space::window::*`）的策略，本文件只提供「取锁 → 转发 → 刷」的骨架。
 //!
 //! # 锁约定
@@ -25,7 +25,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use super::SpaceKind;
-use super::core::SpaceInner;
+use super::inner::SpaceInner;
 use super::map::{Pending, PendingState};
 use super::salvage::{Salvage, Span};
 use crate::layout::TRAMPOLINE;

@@ -5,10 +5,14 @@
 // U 态页表），空间身份由独立字段 `Asid` 承载（0 = 内核空间），构造统一走
 // [`SpaceBuilder`]。布局几何随模式（lower/upper，见 `memory::manager::mode`）。
 //
-// 文件夹结构（纯映射簿记 + 段实体 + 窗口适配层）：
-//   seg       — 段实体（[`Segment`]，几何 + 已分配块表）+ 选段枚举（[`SegmentKind`]）
+// 文件夹结构（同一把锁的两半 + 段/图/料箱 + 窗口适配层）：
+//   outer     — 外的这一半：[`Space`] / [`SpaceBuilder`] / `Segments`；`RelLock` 门
+//                 （`with` / `with_flush`）+ 逐操作 ≤3 行转发 + 锁外按 ASID 刷 TLB
+//   inner     — 内的这一半：`SpaceInner`（root 页表树 + 两段 + 唯一 maps 表）+
+//                 全部映射原语，**无锁无刷**（只出现在事务闭包内）
 //   map       — VA→PA 簿记的原子单元（[`Map`] / [`Pending`]）
-//   core      — 主类型 [`Space`] / [`SpaceBuilder`] / [`SpaceInner`] + 映射原语
+//   segment   — 段实体（`Segment`，几何 + 已分配块表）+ 选段枚举（[`SegmentKind`]）
+//   salvage   — 回收侧的词汇（[`Span`] / `Salvage`）
 //   window    — 窗口适配层（[`StackWindow`] / [`FrameWindow`] / [`HeapWindow`] /
 //                 [`ShareWindow`]，操作 `Space` 的领域策略，产物统一 [`Span`]）
 //
@@ -18,14 +22,14 @@
 //   Map     — VA→PA 原子单元（区间 + 访问属性 + 物化态 + 帧所有权）
 //   SpaceInner 持 root 页表树 + 两段 + 唯一 maps 表；窗口方法操作它。
 
-mod adapter;
-mod core;
+mod outer;
+mod inner;
 mod map;
 mod salvage;
 mod segment;
 pub(crate) mod window;
 
-pub use adapter::{Space, SpaceBuilder};
+pub use outer::{Space, SpaceBuilder};
 pub(crate) use map::{Pending, PendingState};
 pub(crate) use salvage::Span;
 pub(crate) use segment::SegmentKind;
