@@ -13,6 +13,11 @@
 //!   7  heir(sub, me)      ⇒ 否定：子代不是祖先
 //!   8  heir(树外号, me)    ⇒ **第三态**：Unknown（与"不是祖先"分得开）
 //!   9  bind(self)         ⇒ Denied：名册只有装配者能写
+//!  10  adopt(sub)         ⇒ **领**：换到自己派生出来的那一支里
+//!  11  resolve(self)      ⇒ 名册真的改了（不是打个印记）
+//!  12  derive(旧起点)      ⇒ **钥匙反证**：已不代表起点 ⇒ Denied
+//!  13  adopt(向上) / adopt(树外) ⇒ Denied / Unknown
+//!  14  waive()            ⇒ **弃**：回到装配给我的那一条（不删格）
 //! ```
 //!
 //! # 为什么不上板
@@ -121,6 +126,35 @@ extern "C" fn main() -> ! {
         "policy: bind(self)={}",
         done(face.bind(me, p, MS))
     ));
+
+    // ── 转换那两条（刀 2）────────────────────────────────────
+    //
+    // 八、领：换到自己刚派生出来的那一支里（`sub` 一定在 `p` 那一支里）。
+    let Some(q) = sub.ok() else {
+        bail("subject: no sub identity")
+    };
+    say(&format!("policy: adopt(sub)={}", done(face.adopt(q, MS))));
+
+    // 九、名册真的改了（不是打个印记）。
+    say(&format!("policy: me={}", one_opt(face.resolve(me, MS))));
+
+    // 十、**钥匙反证**：已不代表 `p`，故"从 `p` 派生"被拒。
+    say(&format!("policy: derive(old)={}", one(face.derive(p, MS))));
+
+    // 十一、向上 / 跨支：`p` 是 `sub` 的父，不在 `sub` 那一支里。
+    say(&format!("policy: adopt(up)={}", done(face.adopt(p, MS))));
+
+    // 十二、树外。
+    say(&format!(
+        "policy: adopt(out)={}",
+        done(face.adopt(PolicyId::new(OUTSIDE), MS))
+    ));
+
+    // 十三、弃：回到装配给我的那一条（不删格）。
+    say(&format!("policy: waive={}", done(face.waive(MS))));
+
+    // 十四、回到起点。
+    say(&format!("policy: me={}", one_opt(face.resolve(me, MS))));
 
     exit_with_note(E_OK, "subject: done")
 }

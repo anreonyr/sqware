@@ -60,6 +60,18 @@ impl Face {
         self.answer(out, |_present, at| Ok(PolicyId::new(at as usize)))
     }
 
+    /// 转换 · 领：把**自己**当前的号换成 `q`（只许沿自己那一支向下）。
+    pub fn adopt(&self, q: PolicyId, millis: usize) -> Result<(), Fail> {
+        let out = self.raw(call::ADOPT, q.get() as u64, 0, millis)?;
+        self.answer(out, |_present, _at| Ok(()))
+    }
+
+    /// 转换 · 弃：回到**装配给我的那一条**（不删格，故还能再领一次）。
+    pub fn waive(&self, millis: usize) -> Result<(), Fail> {
+        let out = self.raw(call::WAIVE, 0, 0, millis)?;
+        self.answer(out, |_present, _at| Ok(()))
+    }
+
     /// 谱系 · 读：直接父。**三态**——`Some` / `None`（它是根）/ `Err(Unknown)`（树外）。
     pub fn sire(&self, p: PolicyId, millis: usize) -> Result<Option<PolicyId>, Fail> {
         let out = self.raw(call::SIRE, p.get() as u64, 0, millis)?;

@@ -33,6 +33,10 @@ pub const RESOLVE: u8 = 2;
 pub const DERIVE: u8 = 3;
 pub const SIRE: u8 = 4;
 pub const HEIR: u8 = 5;
+/// 转换 · 领：`a` = 目标号（发送者由内核盖章，报文里没有"我是谁"那一格）。
+pub const ADOPT: u8 = 6;
+/// 转换 · 弃：两格都空——它只认"发送者是谁"。
+pub const WAIVE: u8 = 7;
 
 /// 答话那一格：失败域前三格 + "读不懂"。
 ///

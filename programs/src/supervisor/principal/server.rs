@@ -167,6 +167,15 @@ fn answer(book: &mut Principal, from: TaskId, op: u8, a: u64, b: u64) -> [u8; pc
             // "不是祖先"是一句答（`Ok(false)`），"查无此号"才是这一格。
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
+        // 转换那两条都只答状态那一格（成功 = `OK`）；钥匙是**发送者**，报文里没有"我是谁"。
+        pcall::ADOPT => match book.adopt(from, PolicyId::new(a as usize)) {
+            Ok(()) => pcall::reply_status(pcall::OK),
+            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+        },
+        pcall::WAIVE => match book.waive(from) {
+            Ok(()) => pcall::reply_status(pcall::OK),
+            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+        },
         // 没见过的动作码：与"这一问读不懂"同一格（不另立一格）。
         _ => pcall::reply_status(pcall::BAD),
     }
