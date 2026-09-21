@@ -36,17 +36,17 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 映视图——领它只为"主人"这个说法是真的；占住线之后一句话不说就走，路由者靠 `sweep`
     // 收掉它（读数 `router: vacate line=11`）。
     ("lodger", "prog-lodger", ProgramKind::User),
-    // 线路由者（中断面域）：**S 态**。**照实记**：这里的理由曾经是"它要读写 PLIC 的寄存器"
-    // ——那不是理由（banner 里 UART 与 PLIC 的 PMP 都是 S/U (R,W)，U 态读得动设备）；
-    // "驱动该 S 还是 U"今天**没有读数**，旧树 `docs/driver.md §2` 裁过"驱动是 U 态域"。
-    // 这一格照搬现状，专门的刀再裁。
-    ("router", "prog-router", ProgramKind::Supervisor),
-    // 串口驱动：**S 态**（同上，照搬）。持有 `serial@10000000`，把"收到字节就拉线"打开；
-    // 读口仍在内核的调试面（那一刀另开）。
-    ("uart", "prog-uart", ProgramKind::Supervisor),
+    // 线路由者（中断面域）：**U 态**——实测（本行下面那条注里的疑点已经量掉）：它只读
+    // PLIC 的寄存器（banner 里 PLIC 的 PMP 是 **S/U (R,W)**）、claim/complete、铸孔、挂组，
+    // 全都不需要 S 态；它那枚铃是**内核给的**（铸铃那一格才是 S 态，本域不铸）。
+    ("router", "prog-router", ProgramKind::User),
+    // 串口驱动：**U 态**（同上）——持有 `serial@10000000`（PMP 也是 S/U (R,W)），把"收到
+    // 字节就拉线"打开。**照实记**：这两格从前写 `Supervisor` 是照搬旧树，理由（"要读写
+    // 寄存器"）与 banner 里那张 PMP 对不上；改成 U 态之后两道门（examine / soak）照旧全过。
+    ("uart", "prog-uart", ProgramKind::User),
     // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
     // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
-    // 故它不进"最小特权"那一档（`echo` / `guest` / `passer`），与监督侧同档。
+    // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。
     ("operator", "prog-operator", ProgramKind::Supervisor),
     // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器
     // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，

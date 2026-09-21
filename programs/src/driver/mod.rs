@@ -1,9 +1,8 @@
 //! driver — **驱动这一族**：设备面的持有者，与它们共用的装配件。
 //!
 //! 判据是**角色**，不是特权级（与 [`crate::stress`] 同款）：本目录下的成员各自在
-//! `kernel/build.rs::INITRD_BINS` 声明自己是哪一档——今天两台都是 `Supervisor`，而
-//! "驱动该 S 还是 U"这一格**还没有读数**（banner 里 UART 与 PLIC 的 PMP 都是 S/U (R,W)，
-//! 故 U 态读得动设备；旧树的 `docs/driver.md §2` 裁过"驱动是 U 态域"）。
+//! `kernel/build.rs::INITRD_BINS` 声明自己是哪一档——今天两台都是 **`User`**：这一格是量出来
+//! 的，不是判据看特权级（读寄存器、`claim`/`complete`、持门闩都不需要 S 态；见 [`uart`] 头注）。
 //!
 //! ```text
 //!   router   线路由者（中断面域）：持有中断控制器，接 / claim / complete 每一条线
