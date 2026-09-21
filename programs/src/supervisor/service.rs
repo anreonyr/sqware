@@ -14,7 +14,7 @@
 //! # 配给从哪来
 //!
 //! 装配者自己**不持**设备门闩——它在引导域手里。故发货走一次往返：
-//! [`protocol::firmware::client::draw`] 把"要哪几样"递过去，固件把门闩直接授进**客人**的表里并回一段记录，
+//! [`protocol::driver::supply::client::draw`] 把"要哪几样"递过去，固件把门闩直接授进**客人**的表里并回一段记录，
 //! 装配者再把这**一段字节原样**投到客人那条通道上（客人按记号认领、按名字归位）。
 //! 装配者经手的只有字节，**一枚原件都不经过它**。
 
@@ -28,8 +28,8 @@ use runtime::env::room::exit_with;
 use crate::supervisor::operator::bridge as operator;
 use crate::supervisor::system::board::bridge as board;
 
-use protocol::firmware;
-use protocol::firmware::call::Want;
+use protocol::driver::supply;
+use protocol::driver::supply::call::Want;
 
 use crate::supervisor::root::boot;
 
@@ -271,10 +271,10 @@ fn wire(root: &Pier, quay: &Quay, p: &Program, rep: env::TaskId) -> Result<(), (
     }
 
     // 一枚一枚要：条数就在那张表里，本层不抄"要几样"（空表 / 超 `WANT_MAX` 由 `draw` 答）。
-    let mut ask = [0u8; firmware::SLIP_CAP];
-    let mut reply = [0u8; firmware::REPLY_CAP];
+    let mut ask = [0u8; supply::SLIP_CAP];
+    let mut reply = [0u8; supply::REPLY_CAP];
     let records =
-        firmware::client::draw(root, rep, wants, &mut ask, &mut reply, READY_MS).map_err(|_| ())?;
+        supply::client::draw(root, rep, wants, &mut ask, &mut reply, READY_MS).map_err(|_| ())?;
     let said = pier.post(records);
     let _ = runtime::env::debug::put(&alloc::format!(
         "wire: {} bytes, paired={}, post={}",

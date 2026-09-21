@@ -5,10 +5,11 @@
 //! 在那之前不需要协议——跨域要说的话走 `env` 的调试面（`DebugCall`：内核把固件的调试
 //! 控制台直接借给域），一条孔都不用开。`echo` 就是这么说话的。
 //!
-//! **目前有五份顶层正文**：[`system`]、[`principal`]、[`session`]、[`operator`] 与 [`firmware`]。
+//! **目前有五份顶层正文**：[`system`]、[`driver`]、[`principal`]、[`session`] 与 [`operator`]。
 //!
 //! 落地程度不一样：**五份里四份已经有代码跑在机器上**（[`system`]（含它下面的 `board`）、
-//! [`session`]、[`operator`] 与 [`firmware`]），[`principal`] 只有正文、它的 Server 还没起步。
+//! [`driver`]（它的 `supply` 那一半）、[`session`] 与 [`operator`]），[`principal`] 只有正文、
+//! 它的 Server 还没起步；[`driver`] 的另一半（`line`）也还只有位置、没有正文。
 //!
 //! - [`system`] = **服务编排**（systemd 那一层）：系统由哪些 Service 构成、怎么起停监督。
 //!   它**有两半**：**编排**（`core` / `desk` / `grant`）与**运行期命名**（[`system::board`]：
@@ -20,9 +21,12 @@
 //!   （`prog-system`）：`system/desk.rs` 是那张服务表，`programs/.../supervisor/system/`
 //!   是它落地的那一台。起它的那一枚（引导域 `root`）只做**固件那一层**的事：读 boot 的
 //!   两块账、把字节与门闩按单子交出去、退出即停机——它不认识服务名，也不记账。
-//! - [`firmware`] = **固件面**：引导域向上层露的那一面——"一张单子换一段记录"（按名发货，
-//!   原件与 `VEST` 都留在引导域手里）。两个角色：`server`（引导域的发货循环）、`client`
-//!   （编排域去领）。
+//! - [`driver`] = **设备轴**：一台设备从"交到某个域手里"到"它的线有人领"这一整段。
+//!   **两半**：**物料到手**（`supply`——引导域向上层露的那一面，"一张单子换一段记录"，
+//!   按名发货、原件与 `VEST` 都留在引导域手里；两个角色：`server`（引导域的发货循环）、
+//!   `client`（编排域去领））与**线**（权威 / 属主 / 登记 / 投递 / 收线——**未落**）。
+//!   它不是驱动框架：设备语义各驱动自带（`programs/src/driver/<域>/`），装配样板住程序侧
+//!   （`programs/src/driver/assemble.rs`），本层只管**跨域约定**。
 //! - [`principal`] = **策略身份**："这个请求代表谁"。Server 未落地，但地基已经能看见
 //!   （两条不可伪造的身份凭证）。
 //! - [`session`] = **会话建立**："两个陌生实体怎么建起一条会话"。身份由内核盖、地址靠
@@ -81,7 +85,7 @@
 // `Seat::NoRoom`，不 panic）。
 extern crate alloc;
 
-pub mod firmware;
+pub mod driver;
 pub mod operator;
 pub mod principal;
 pub mod session;

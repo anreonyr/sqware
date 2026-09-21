@@ -16,7 +16,7 @@
 //!
 //! **判据是「谁在说话」**：从外面找上某份协议的人用的一切（正文、判定、帧、**客侧那几手**）
 //! 住 `crates/protocol`；那位协议的**实现方**（谁循环、谁记账、谁起线程、谁调内核）跟着
-//! **用它那个程序所在的档**走——`supervisor/{firmware,operator,system}`（板的实现方就在
+//! **用它那个程序所在的档**走——`supervisor/{supply,operator,system}`（板的实现方就在
 //! `supervisor/system/board/` 之下：板线程是编排域里的一枚线程，不是另一个域）。
 //! 共享的"干活"住 `supervisor/` 本级、`driver/` 本级与 `stress/`：一份源码编一次，各程序只
 //! `use`，不再有 `#[path]` 复制与"另一半是死码"的 `#[allow(dead_code)]`。

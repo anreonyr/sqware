@@ -4,7 +4,7 @@
 //! 本域照它归位（[`slot_of`] 交给 `grant::unpack`）。名字是 boot 在配对块里给的原样
 //! （设备树节点的 basename，见 `kernel/src/platform/devices.rs`）——**本域不发明名字**。
 
-use protocol::firmware::call::{Kind, Want, name_block};
+use protocol::driver::supply::call::{Kind, Want, name_block};
 use runtime::core::port::{Access, Policy};
 
 /// 收方给这枚门闩起的名字（判别号 = 本域那张表的数组下标）。

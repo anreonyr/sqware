@@ -7,7 +7,7 @@
 //! 1  启动参数 → 清单（有哪些程序）与配对块（有哪些门闩）——两块都是 boot 只读借映的
 //! 2  起两条：持树者（`operator`，不宣布、无通道）与编排者（`system`，一条 `boot` 通道）
 //! 3  认下持树者的提示之路（`operator::host_of`）——它自己备着，编排者来要时才发
-//! 4  发货循环：收一张单子 → 按名取原件、授出 → 回一张回单（[`protocol::firmware::server::serve`]）
+//! 4  发货循环：收一张单子 → 按名取原件、授出 → 回一张回单（[`protocol::driver::supply::server::serve`]）
 //! 5  那枚孔**读不出** = 编排者没了 ⇒ 本域退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
 //! ```
 //!
@@ -50,7 +50,7 @@ use programs::supervisor::system::server::{self as core, until};
 use protocol::system::core::{Fail, Reaped};
 use protocol::system::desk::{Announce, Table};
 
-use protocol::firmware;
+use protocol::driver::supply;
 use service::Catalog;
 
 /// 持树者那一条在清单里的名字。
@@ -80,7 +80,7 @@ extern "C" fn main() -> ! {
     let (Some(tree_name), Some(orch_name)) = (Name::new(TREE).ok(), Name::new(ORCH).ok()) else {
         service::die(service::E_MANIFEST, "root: bad service name");
     };
-    let Some(slot) = Name::new(firmware::BOOT).ok() else {
+    let Some(slot) = Name::new(supply::BOOT).ok() else {
         service::die(service::E_MANIFEST, "root: bad slot name");
     };
 
@@ -134,10 +134,10 @@ extern "C" fn main() -> ! {
         service::die(E_ORCH, "root: no boot pier");
     };
 
-    // 5. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::firmware::server::serve` 的
+    // 5. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::driver::supply::server::serve` 的
     //    `alive`：本域读的那枚孔命随本端，故收场靠探活，不靠"读不出"）。
-    let mut ask = [0u8; firmware::SLIP_CAP];
-    let mut out = [0u8; firmware::REPLY_CAP];
+    let mut ask = [0u8; supply::SLIP_CAP];
+    let mut out = [0u8; supply::REPLY_CAP];
     let source = |want: &str| -> Option<PieToken> {
         if want == operator::TIP_NAME {
             tip
@@ -147,7 +147,7 @@ extern "C" fn main() -> ! {
     };
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, 0), Ok(Reaped::Now));
-    programs::supervisor::firmware::server::serve(&pier, source, alive, &mut ask, &mut out);
+    programs::supervisor::supply::server::serve(&pier, source, alive, &mut ask, &mut out);
     service::die(service::E_OK, "root: done")
 }
 

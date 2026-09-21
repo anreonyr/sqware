@@ -45,8 +45,8 @@ use runtime::core::tole::Tole;
 use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::unit as utask;
 
-use protocol::firmware;
-use protocol::firmware::call::{Kind, Want};
+use protocol::driver::supply;
+use protocol::driver::supply::call::{Kind, Want};
 use service::{Catalog, Died, Program};
 
 /// 载荷区那枚门闩在配对块里的名字（boot 定的，见 `kernel/platform/devices.rs`）。
@@ -219,7 +219,7 @@ extern "C" fn main() -> ! {
 /// （如 `router`）的用法，编排者要问，故两半都要。
 fn talk_to_root() -> Option<Pier> {
     let sire = utask::sire().ok()?;
-    let slot = Name::new(firmware::BOOT).ok()?;
+    let slot = Name::new(supply::BOOT).ok()?;
     let mut quay = Quay::open(sire);
     quay.seat(slot).ok()?;
     quay.claim(sire, slot, BOOT_MS).ok()?;
@@ -265,8 +265,8 @@ fn take_tree(pier: &Pier) -> Result<(TaskId, PieToken), &'static str> {
 fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     let me = utask::self_id().ok()?;
     let name = want.name()?;
-    let mut slip = [0u8; firmware::SLIP_CAP];
-    let mut reply = [0u8; firmware::REPLY_CAP];
-    let records = firmware::client::draw(pier, me, &[want], &mut slip, &mut reply, BOOT_MS).ok()?;
-    firmware::client::pick(records, name.as_str())
+    let mut slip = [0u8; supply::SLIP_CAP];
+    let mut reply = [0u8; supply::REPLY_CAP];
+    let records = supply::client::draw(pier, me, &[want], &mut slip, &mut reply, BOOT_MS).ok()?;
+    supply::client::pick(records, name.as_str())
 }

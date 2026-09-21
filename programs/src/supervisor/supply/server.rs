@@ -1,13 +1,13 @@
-//! firmware::server — **引导域那一侧**：照单取源、授出、回一张回单（常驻循环 [`serve`]）
+//! supply::server — **引导域那一侧**：照单取源、授出、回一张回单（常驻循环 [`serve`]）
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`protocol::firmware::call`]。
+//! 正文见 [`super`]；记号、帧与上限见 [`protocol::driver::supply::call`]。
 
 use env::{PAIR_LEN, Pair, PieToken};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{HolePie, NolePie, PolePie};
 
-use protocol::firmware::call::{BAD, Kind, OK, Slip, WANT_MAX, code_of_fail, reply, slip_of};
-use protocol::firmware::core::Fail;
+use protocol::driver::supply::call::{BAD, Kind, OK, Slip, WANT_MAX, code_of_fail, reply, slip_of};
+use protocol::driver::supply::core::Fail;
 use protocol::session::Pier;
 
 /// 供：照单取源、授出、把记录写进 `records`。返**条数**。

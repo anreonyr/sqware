@@ -1,6 +1,6 @@
-//! firmware::client — **编排域那一侧**：递一张单子、取回一段记录（[`draw`]），并按名字取一枚（[`pick`]）
+//! supply::client — **编排域那一侧**：递一张单子、取回一段记录（[`draw`]），并按名字取一枚（[`pick`]）
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`crate::firmware::call`]。
+//! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
 
 use env::{PAIR_LEN, Pair, PieToken, TaskId};
 

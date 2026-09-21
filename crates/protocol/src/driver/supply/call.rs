@@ -1,6 +1,6 @@
-//! firmware::call — **线上形状**：单子上的一条（`Want`）、单子与回单的读写、上限与状态码——一个字节都不在别处编
+//! supply::call — **线上形状**：单子上的一条（`Want`）、单子与回单的读写、上限与状态码——一个字节都不在别处编
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`crate::firmware::call`]。
+//! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
 
 use env::{NAME_LEN, Name, PAIR_LEN, TaskId};
 use runtime::core::port::{Access, Policy};

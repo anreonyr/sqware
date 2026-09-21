@@ -8,7 +8,7 @@
 //! [`crate::driver::uart`]——**线的闸门归设备持有者**，故本域不去替它领（`ONLY` 是资源事实，
 //! 一张表里只能有一个持有者）。
 
-use protocol::firmware::call::{Kind, Want, name_block};
+use protocol::driver::supply::call::{Kind, Want, name_block};
 use runtime::core::port::{Access, Policy};
 
 /// 收方给这枚门闩起的名字（判别号 = 本域那张表的数组下标）。
