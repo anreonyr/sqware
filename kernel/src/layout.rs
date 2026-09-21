@@ -32,7 +32,7 @@
 // ├─ free DRAM              [root_stack_edge, dram_end)
 // ├─ ROOT 栈 64 KiB         [_kernel_edge, +ROOT_STACK_SIZE)（_kernel_edge 顶锚向下，
 // │                         栈底 ROOT_STACK_CANARY；boot 期主栈 / panic 救援栈）
-// └─ 内核镜像               [_kernel_start, _kernel_edge)（trampoline 页双映射：
+// └─ 内核镜像               [_kernel_base, _kernel_edge)（trampoline 页双映射：
 //                           链接地址 + TRAMPOLINE VA）
 
 use crate::memory::PAGE_SIZE;

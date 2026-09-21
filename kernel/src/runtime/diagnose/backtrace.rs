@@ -31,7 +31,7 @@ const DEPTH: usize = 32;
 pub enum FrameKind {
     /// ROOT 栈区（`[_kernel_edge, +ROOT_STACK_SIZE)`，panic 救援栈）。
     Root,
-    /// 内核域（高半区 或 镜像恒等区 `[_kernel_start, _kernel_edge)`）。
+    /// 内核域（高半区 或 镜像恒等区 `[_kernel_base, _kernel_edge)`）。
     Kernel,
     /// Normal 域（分裂位以下，`is_user`）。
     Normal,

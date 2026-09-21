@@ -36,7 +36,7 @@ pub(crate) use runner::{case_failed, run};
 
 /// 发现全部用例：链接脚本给出的段边界 → 切片。
 ///
-/// 边界符号由 `link.ld` 定义（与 `_kernel_start` / `_rodata_start` 同一手法）。
+/// 边界符号由 `link.ld` 定义（与 `_kernel_base` / `_rodata_start` 同一手法）。
 /// 空段是合法结果（区间长度 0），故本函数不 panic —— 但它也**报不出**"零用例"这件事，
 /// 那是宿主的事（见模块头注）。
 fn discover() -> &'static [Case] {

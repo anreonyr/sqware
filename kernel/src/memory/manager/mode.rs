@@ -132,9 +132,9 @@ fn try_mode(candidate: satp::Mode) -> Result<(), SatpError> {
     let mut root = TableNode::root().map_err(|_| SatpError::OutOfMemory)?;
     // 恒等映射覆盖内核镜像 + ROOT 栈（探测码与栈都在其中，取指可翻译）。
     unsafe extern "C" {
-        static _kernel_start: u8;
+        static _kernel_base: u8;
     }
-    let range = ((&raw const _kernel_start).addr(), layout::root_stack_edge());
+    let range = ((&raw const _kernel_base).addr(), layout::root_stack_edge());
     let mut va = range.0 & !(crate::memory::PAGE_SIZE - 1);
     while va < range.1 {
         let ppn = (va >> PAGE_SHIFT) as u64;

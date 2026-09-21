@@ -5,7 +5,7 @@ SECTIONS
 {
   . = 0x80200000;
 
-  _kernel_start = .;
+  _kernel_base = .;
 
   .text : {
     *(.text._start)

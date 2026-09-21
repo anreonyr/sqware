@@ -55,7 +55,7 @@ impl VirtAddr {
     }
 
     /// 是否为内核域地址：分裂位以上（当前模式内核半区），**或**内核镜像恒等区
-    /// [_kernel_start, _kernel_edge)。
+    /// [_kernel_base, _kernel_edge)。
     ///
     /// 两段都要：镜像恒等映射落在**低半区**（0x80200000 起），纯半区判定会误判。
     #[inline]
@@ -64,12 +64,12 @@ impl VirtAddr {
             return true; // 高半区
         }
         unsafe extern "C" {
-            static _kernel_start: u8;
+            static _kernel_base: u8;
             static _kernel_edge: u8;
         }
         let a = self.0;
         let (s, e) = (
-            (&raw const _kernel_start).addr(),
+            (&raw const _kernel_base).addr(),
             (&raw const _kernel_edge).addr(),
         );
         a >= s && a < e
