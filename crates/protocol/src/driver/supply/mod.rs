@@ -6,7 +6,8 @@
 //! ```text
 //!   设备侧（驱动领）    interrupt-controller@c000000 / serial@10000000（Pole）
 //!                      irq（Nole，空载荷的中断门铃）
-//!   纯物料（编排域领）  devicetree（自描述区） / initrd（载荷区） / operator-tip（提示之路）
+//!   纯物料（谁用谁领）  devicetree（自描述区，router 领）/ initrd（载荷区，编排域领）
+//!                      operator-tip（提示之路，编排域领）
 //! ```
 //!
 //! 后三笔**借这条路**，不因此变成设备（"这张账记的是交出了哪些门闩，不是有哪些设备"）。
