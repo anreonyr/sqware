@@ -477,6 +477,9 @@ fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
 ///
 /// **照实记**：客户那一侧也在自己表里留了一枚（它没有 `claim`，接不到 `UNSEAT`）；本域收不了
 /// 别人的表——那一枚随它退场清掉（今天两位会走到这里的客户都是短命或只试一次的）。
+///
+/// 读数带一格 **`pies=`**（本域表里现在有几枚）：'放了没有'这件事因此**可量**——少放一枚，
+/// 这一格当场大 1（判据钉在 `scripts/soak.sh` 里，涨了就是红）。
 fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
     if let Some(at_peer) = lane.at_peer() {
         let _ = mail::release(at_peer);
@@ -484,7 +487,25 @@ fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
     if let Ok(mark) = Name::new(lcall::LANE) {
         quay.unseat(mark);
     }
-    say(&alloc::format!("router: lane dropped line={line}"));
+    say(&alloc::format!(
+        "router: lane dropped line={line} pies={}",
+        table_size()
+    ));
+}
+
+/// 本域表里现在有几枚（`mail::collect` 一路走到越界哨兵）——**给人看的读数**，不是判据以外的东西。
+fn table_size() -> usize {
+    let mut n = 0usize;
+    loop {
+        let Ok((token, _perm, _vestor)) = mail::collect(n) else {
+            return n;
+        };
+        // 越界哨兵：这一遍扫完了。
+        if token.get() == 0 {
+            return n;
+        }
+        n += 1;
+    }
 }
 
 /// 本端表里**这位给的、刻着那个记号的那一枚**（答话那条路）。

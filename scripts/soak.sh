@@ -13,7 +13,8 @@
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
 #      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`** /
 #      **`router: line 11 = rtc@101000`** / **`router: vacate line=11`** /
-#      **`lodger: taken=2`** / **`lodger: unknown=1`** / **`router: lane dropped line=11`**）；
+#      **`lodger: taken=2`** / **`lodger: unknown=1`** /
+#      **`router: lane dropped line=11 pies=21`**）；
 #   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
 #      "还响着" / 其中**空闲核补摇**了几支（见下）。
 #
@@ -51,6 +52,11 @@
 # 一条泊位（本端铸的那枚 + 从客户手里认下的那枚），而 `Lines::occupy` 收不下它——本域当场把
 # 那两枚放下，不留在账外（否则每失败一次多两枚，直到本域退场）。这条读数与 `lodger: taken=2`
 # 是同一次登记的两头：一头是客户收到的答码，一头是本域把孔放回去。
+#
+# 这一行还带一格 **`pies=`**（本域表里现在有几枚），那一格是**探针量过**的：把 `drop_lane` 里
+# 那两枚的释放**临时关掉**，同一处读数从 `21` 变成 `23`（正好是"本端铸的那枚 + 从客户手里认下的
+# 那枚"），改回来又是 `21`——故它**跟着孔走**，不是个常数。判据因此钉**整行**：漏放一枚，这一格
+# 就是红的（这是"失败的登记不在账外留孔"这一刀的验法）。
 #
 # `irq: ring=<n> busy=<m> idle_ring=<i> idle_busy=<j>` 是**铃那一刀的读数**（收尾摘要里印，
 # 与 `timer:` / `doom:` / `sched:` 同族）：`ring` = 内核摇铃几次、`busy` = 其中几次铃还响着
@@ -101,7 +107,7 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "router: vacate line=11" "$log" \
         && grep -q "lodger: taken=2" "$log" \
         && grep -q "lodger: unknown=1" "$log" \
-        && grep -q "router: lane dropped line=11" "$log" \
+        && grep -q "router: lane dropped line=11 pies=21" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
         && grep -q "echo: console=true" "$log" \
         && grep -q "irq: ring=" "$log" \
