@@ -57,7 +57,7 @@
 //! # 照实记（这台子第一次量到的）
 //!
 //! release、**icount 关**、`n=81`（单核档）/ 84~88（多核档），同一台子、同一颗 ELF，只差
-//! **四处武装点的式子**（`trap.rs` / `hart.rs` / `stack.rs` / `fetch.rs`：`beat(写死 100 ms)`
+//! **四处武装点的式子**（`trap/mod.rs` / `hart.rs` / `stack.rs` / `fetch.rs`：`beat(写死 100 ms)`
 //! → `beat_until(min(上限, 最近到点))`）与 `wait::block` 里那一次"登记后当场重武装"
 //! （**本轮已按用户裁决删掉**，见下④）：
 //!

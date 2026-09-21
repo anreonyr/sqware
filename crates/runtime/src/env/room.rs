@@ -22,7 +22,7 @@ pub fn exit() -> ! {
 /// `ControlCall::Panic`），现已收回。
 ///
 /// 约定：`0` = 自愿/正常；`1..` 留给域自己的诊断编号（各 bin 用 `1`、`2`… 标明
-/// 死在启动握手的哪一步）；内核自己用高位段（见 `kernel/src/runtime/switcher/trap.rs`
+/// 死在启动握手的哪一步）；内核自己用高位段（见 `kernel/src/runtime/switcher/trap/mod.rs`
 /// 的 `EXIT_FAULT`）。
 pub fn exit_with(reason: usize) -> ! {
     exit_with_note(reason, "")

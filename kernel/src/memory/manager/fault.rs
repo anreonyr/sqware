@@ -66,7 +66,7 @@ fn resolve_anonymous(fault: &PageFault, space: &Space) -> bool {
     match space.materialize(vaddr, PAGE_SIZE) {
         // **成功不打**：缺页是懒分配的正常路径，不是事件——域每长过一条页边界都会走这里，
         // 打出来只是把开机日志淹掉（实测一次启动三行）。**事件本身已经进 trace**
-        // （`trap.rs` 的 `EventKind::Memory(MemoryEvent::PageFault { va, fault, resolved })`）。
+        // （`trap/mod.rs` 的 `EventKind::Memory(MemoryEvent::PageFault { va, fault, resolved })`）。
         //
         // 本文件里**留着**的两条 info! 是另一回事：`re-walk`（PTE 已满足却仍缺页 ⇒ 陈旧
         // TLB 条目 / A-D 位竞争）是**异常**路径，它响说明有值得看的事。判据是

@@ -27,7 +27,7 @@
 //!
 //! 用户态用法：envcall 时 `a2 = permission.bits() as usize`。内核侧**不**做
 //! `from_bits_truncate` 式的截断还原——未申明的位一律拒绝（`wire::unpack` 的
-//! 拒绝式解码，见 `kernel/src/runtime/switcher/envcall.rs` 的入口）。
+//! 拒绝式解码，见 `kernel/src/runtime/switcher/envcall/mod.rs` 的入口）。
 
 use bitflags::bitflags;
 

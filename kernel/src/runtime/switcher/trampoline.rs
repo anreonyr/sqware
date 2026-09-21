@@ -25,7 +25,7 @@
 //
 // 页的固有义务：汇编段必须落在一页内（TRAMPOLINE 映射只覆盖一页）——
 // `check_fits_page` 在 boot 装配时校验（链接期才知尺寸，故为运行期断言）。
-// 帧布局与偏移、sscratch 约定、per-hart trap 栈几何见 `context.rs` / `trap.rs`。
+// 帧布局与偏移、sscratch 约定、per-hart trap 栈几何见 `context.rs` / `trap/mod.rs`。
 
 use core::arch::global_asm;
 

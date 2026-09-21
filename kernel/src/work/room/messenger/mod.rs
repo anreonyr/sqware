@@ -40,7 +40,7 @@ use wait::site::{SITE_SHARDS, prune, shard_at};
 /// 可能不一致的路径。
 ///
 /// **照实记**：旧注把理由写成"故障隔离那两条路径此刻已经离核（`current()` 返回
-/// `None`）"——不成立。那两处（`trap.rs` 的 `Identity::live(...)`）正是**从本核
+/// `None`）"——不成立。那两处（`trap/mod.rs` 的 `Identity::live(...)`）正是**从本核
 /// running 任务上**取的身份，`quit` 也要求 running 槽里是 Running 任务（`reap.rs`
 /// 的 `debug_assert!`），即写 reason 时 `current()` 仍返 `Some`。
 ///
@@ -68,7 +68,7 @@ fn take_exit_reason() -> usize {
 // 地方**（一个事实一份账：谁写这格，谁登记它的取值）。
 //
 // 他杀与级联两条路都**不在这颗核上**发生（受害者是在别的核上被 IPI 唤起、自己在
-// `trap.rs` 里自退的），故它们的码随杀令躺在 `doomed` 集合里，由受害者那颗核取出来
+// `trap/mod.rs` 里自退的），故它们的码随杀令躺在 `doomed` 集合里，由受害者那颗核取出来
 // 写进**自己**的槽。
 
 /// 故障隔离杀（不可解析的缺页 / 其它用户异常）。
