@@ -259,6 +259,12 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         // 铃还响着（消费者还没应）⇒ 关**本 hart** 的 SEIE：这就是闸门，也是内核
         // 侧唯一的"状态"（零状态：这个决定不落任何账，靠 timer tick 无条件重开；
         // 用户应铃（`envcall::mail::hush`）时也立即重开一次）。
+        //
+        // **闸门是按 hart 记的**：上面关的是**取到这次 trap 的** hart，而应铃的消费者
+        // 可能在别的 hart 上、`hush` 重开的是它自己那一格。故空闲核在
+        // `scheduler::core::fetch` 的循环里**每轮无条件**重开自己这一格，并在 SEIP
+        // 还挂着时替控制器振一次铃——这两处**振铃点**（外加 timer tick 与 `hush` 两处
+        // **开闸门**）合起来，"关过闸门的那颗核"没有开不回来的路。
         Trap::Interrupt(Interrupt::SupervisorExternal) => {
             if crate::platform::devices::raise_irq().is_err() {
                 unsafe {
