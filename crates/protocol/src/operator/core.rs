@@ -13,6 +13,17 @@
 //! libtest），故这里的 `cfg(test)` 一行都不会被主工作区那几道门编到。用例住
 //! `crates/operator-case`——一个**编外**的宿主 crate，把**本文件逐字**编进它的测试靶里；
 //! 门口是 `scripts/host.sh`。改核心之前先跑它。
+//!
+//! # 坐标：号是唯一的直接坐标
+//!
+//! **名字是间接的**：一条路（`&[Name]`）全系统只有一处用处——[`Operator::seek`] 把路**译成号**。
+//! 译完就按号走：`find` / `trim` / `name` 收号，`land` / `part` / `list` 收**容器坐标**
+//! [`Where`]（根，或某一号）。名字在答话那一侧还留着一条（[`Operator::name`] 按号答名）。
+//!
+//! **树今天仍是嵌套树**（`Entry { 号, 名字, 去处 }`，`Node::Pane(Vec<Entry>)`）：号 → 那一格
+//! 走**一趟扫**（`look` / `holds` / `take` 三个私有助手）。换"按号排的一张表"那一案今天读不出
+//! 差别（树就几十格），而它要 `Entry` 多记一格父、删格要保序、列要扫全表——**留到读数说话**
+//! （这一段是照实记：选的是甲案，不是忘了乙案）。
 
 use alloc::vec::Vec;
 
@@ -28,7 +39,7 @@ use env::{Name, PieToken, TaskId};
 ///
 /// **没有 `ROOT`**（对照另两种号：那两处的 `ROOT` 都在，这里特意没有）：根不是谁条目里的
 /// 一条，故**根没有号**——`EntryId(0)` 是第一个**真格子**（`sys`），不是"没有"。
-/// "没有这个号"由 [`Fail::Unknown`] 答，别拿 0 当空。
+/// "没有这个号"由 [`Fail::Unknown`] 答，别拿 0 当空。根要当坐标时走 [`Where::Root`]。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct EntryId(usize);
 
@@ -56,7 +67,8 @@ impl EntryId {
 
 /// 一条条目：**号 + 名字 + 去处**。
 ///
-/// 名字只是**一段**（`Name`：定长 32 字节、构造即校验），不是整条路。
+/// 名字只是**一段**（`Name`：定长 32 字节、构造即校验），不是整条路——路那一层只剩
+/// [`Operator::seek`] 在用。
 ///
 /// 号是机器的：`part` / `land` 铸一枚，此后**换绑不动号**；`trim` 与 [`Operator::find`]
 /// 的剔死让那一条走掉 ⇒ 号随之失效（水位不回收，号不重用）。
@@ -93,25 +105,41 @@ impl Entry {
     }
 }
 
-/// 六条原语会失败在哪一格。**一格对应一个不同的下一步**。
+/// **容器坐标**：要动的那一块 `Pane` 在哪。
+///
+/// 两种报法：**根**，或**某一号**。根必须显式占一格——**根没有号**（见 [`EntryId`]），
+/// 所以它既不是"0 号"，也不能拿 `Option` 的空位代替：那两样都会被读成"某个真格子"。
+///
+/// 它的对立面是 [`Operator::find`] / [`Operator::trim`] / [`Operator::name`] 的形参：
+/// 那三条要的是**条目**的号，**根根本递不进来**——这是类型义务，不是运行期检查。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Where {
+    /// 根那一层：[`Operator::list`] 列的就是它，`land` / `part` 在它下面立一格。
+    Root,
+    /// 某一号那一块 `Pane` 里。
+    At(EntryId),
+}
+
+/// 七条原语会失败在哪一格。**一格对应一个不同的下一步**。
 ///
 /// **没有"名字已被占"那一格**：同名接手一枚 `Tile`、或一块**空的** `Pane`，都是换绑
 /// （见 [`Operator::land`] / [`Operator::part`]）；而 owner 归 Principal，Operator 分不出
 /// "自己 / 别人"，所以"已占即拒"在这里无处落脚。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Fail {
-    /// 路上没有这一段 ⇒ 换个名字，或者先把中间层分出来。
+    /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来。
     ///
-    /// **空路也走这一格**：空路是"根"本身，而根不是谁条目里的一条——落 / 分 / 剪对根都动手不了，
-    /// 译也对根使不上（**根没有号**，没什么可译）。
+    /// 三条路都走这一格：**没铸过**、`trim` **剪掉了**、[`Operator::find`] **剔死了**
+    /// ——水位只往上走、本层不记墓碑，三者长得一样。空路（根）走 [`Operator::seek`] 时也是这一格。
     Unknown,
     /// 那块 `Pane` 里还有东西 ⇒ 先清空。
     NonEmpty,
-    /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者再往下走一段。
+    /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者往它里面走。
     NotATile,
-    /// 那一段不是一块 `Pane`（是一枚 `Tile`）⇒ 走不过去；列的时候则说明"那是枚 `Tile`，没什么可列"。
+    /// 那一号不是一块 `Pane`（是一枚 `Tile`）⇒ 走不进去；列的时候则说明"那是枚 `Tile`，没什么可列"。
     NotAPane,
-    /// 一块 `Pane` 装不下，或者一条路太长 ⇒ 拆层 / 扩容量。
+    /// 那一块 `Pane` 已经 [`Operator::PANE_CAP`] 条，装不下；或者一条路超过 [`Operator::ROAD_MAX`]
+    /// 段（只有 [`Operator::seek`] 走得到这一格）⇒ 拆层 / 扩容量 / 把路缩短。
     Full,
     /// 那枚 Pie 后面的人没了（探不到）⇒ 重落 / 重寻。**剔掉那一条的同时**答这一格。
     Dead,
@@ -130,7 +158,7 @@ pub type Unship = fn(PieToken) -> Result<(), ()>;
 
 /// 一棵命名树：**一个 Operator 管着所有条目**。
 ///
-/// 根 = `root` 那一叠条目；**空路就是根**（[`Operator::list`] 列的就是它那一层）。
+/// 根 = `root` 那一叠条目；[`Where::Root`] 指的就是它（列根那一层、在根下立一格）。
 pub struct Operator {
     root: Vec<Entry>,
     /// 铸号的水位：**只增**（全文件没有一处减它）。
@@ -145,8 +173,10 @@ pub struct Operator {
 impl Operator {
     /// 一块 `Pane` 里最多几条。条数是策略，容器要有界。
     pub const PANE_CAP: usize = 16;
-    /// 一条路最多几段。深也是策略。
-    pub const PATH_MAX: usize = 8;
+    /// 一条**路**最多几段——只有 [`Operator::seek`] 用得上它（名字只到那一格，往下一律按号）。
+    ///
+    /// 注意：**树本身没有深度上限**（`land` / `part` 收的是号，层层往下立不受这条路的长短约束）。
+    pub const ROAD_MAX: usize = 8;
 
     /// 立一棵树：两个注入的机制事实跟着树走——它们对每一条同值，故不必逐个作参数传。
     pub const fn new(vested_by: VestedBy, unship: Unship) -> Operator {
@@ -158,121 +188,50 @@ impl Operator {
         }
     }
 
-    /// **落**：把一枚 Pie 落到一条路上（放一枚 `Tile`）。
+    /// **落**：在 `at` 那一块 `Pane` 里，给 `name` 这一格贴一枚 `Tile`；答**那一格自己的号**。
     ///
     /// 四条判据，一条不多：
     ///
-    /// - 路非空、有界（空路 ⇒ [`Fail::Unknown`]；超深 ⇒ [`Fail::Full`]）；
-    /// - 路上除最后一段外**都得是 `Pane` 且存在**（缺一段 ⇒ [`Fail::Unknown`]；
-    ///   那一段是一枚 `Tile` ⇒ [`Fail::NotAPane`]）；
-    /// - 最后一段空着 ⇒ 落上；
-    /// - 最后一段已经占着 ⇒ **换绑**：旧的那一枚放下（[`Unship`]）——除非它是一块**非空** `Pane`
-    ///   （⇒ [`Fail::NonEmpty`]：要动它先清空）。
-    pub fn land(&mut self, path: &[Name], pie: PieToken) -> Result<(), Fail> {
-        Self::checked(path)?;
-        let unship = self.unship;
-        let fresh = EntryId::new(self.next);
-        let last = path[path.len() - 1];
-        let level = self.level_mut(path)?;
-        match level.iter().position(|e| e.name == last) {
-            Some(at) => {
-                // 已占：只有"一枚 `Tile`"与"空 `Pane`"可以换绑；前者那一枚要放下。
-                // **换绑不动号**：那一格还是同一格。
-
-                let old = match &level[at].node {
-                    Node::Tile(old) => Some(*old),
-                    Node::Pane(inner) if inner.is_empty() => None,
-                    Node::Pane(_) => return Err(Fail::NonEmpty),
-                };
-                level[at].node = Node::Tile(pie);
-                if let Some(old) = old {
-                    let _ = unship(old);
-                }
-                Ok(())
-            }
-            None => {
-                if level.len() >= Self::PANE_CAP {
-                    return Err(Fail::Full);
-                }
-                level.push(Entry {
-                    id: fresh,
-                    name: last,
-                    node: Node::Tile(pie),
-                });
-                self.next += 1;
-                Ok(())
-            }
-        }
+    /// - `at` 那块 `Pane` 得在（号不在 ⇒ [`Fail::Unknown`]）；它是一枚 `Tile` ⇒ [`Fail::NotAPane`]；
+    /// - `name` 那一格空着 ⇒ **铸一枚新号**放上去；
+    /// - `name` 那一格已占 ⇒ **换绑**：旧的那一枚放下（[`Unship`]）、**号不动**，答原来那一枚号
+    ///   ——除非它是一块**非空** `Pane`（⇒ [`Fail::NonEmpty`]：要动它先清空）；
+    /// - 那一块 `Pane` 已经有 [`Operator::PANE_CAP`] 条 ⇒ [`Fail::Full`]。
+    ///
+    /// **答的是号**（不是一格状态）：这是"号出门"那一手——立的人自己知道它立成了几号。
+    pub fn land(&mut self, at: Where, name: Name, pie: PieToken) -> Result<EntryId, Fail> {
+        self.put(at, name, Node::Tile(pie))
     }
 
-    /// **分**：在一条路上分出一块**空的** `Pane`（开一块窗格）。
+    /// **分**：在 `at` 那一块 `Pane` 里，给 `name` 这一格放一块**空的** `Pane`；答那一格自己的号。
     ///
-    /// 门槛与 [`Operator::land`] 同：路非空、有界，中间那几层都得是 `Pane` 且存在。
-    /// 最后一段：空着 ⇒ 放一块空 `Pane`；已是 `Tile` ⇒ 换掉它（旧的那一枚放下）；
-    /// 已是**空** `Pane` ⇒ 无事；已是**非空** `Pane` ⇒ [`Fail::NonEmpty`]。
-    pub fn part(&mut self, path: &[Name]) -> Result<(), Fail> {
-        Self::checked(path)?;
-        let unship = self.unship;
-        let fresh = EntryId::new(self.next);
-        let last = path[path.len() - 1];
-        let level = self.level_mut(path)?;
-        match level.iter().position(|e| e.name == last) {
-            Some(at) => {
-                let old = match &level[at].node {
-                    Node::Pane(inner) if inner.is_empty() => return Ok(()),
-                    Node::Pane(_) => return Err(Fail::NonEmpty),
-                    Node::Tile(old) => Some(*old),
-                };
-                level[at].node = Node::Pane(Vec::new());
-                if let Some(old) = old {
-                    let _ = unship(old);
-                }
-                Ok(())
-            }
-            None => {
-                if level.len() >= Self::PANE_CAP {
-                    return Err(Fail::Full);
-                }
-                level.push(Entry {
-                    id: fresh,
-                    name: last,
-                    node: Node::Pane(Vec::new()),
-                });
-                self.next += 1;
-                Ok(())
-            }
-        }
+    /// 门槛与 [`Operator::land`] 一字不差，只换"放什么"：已是 `Tile` ⇒ 换掉它（旧的那一枚放下）；
+    /// 已是**空** `Pane` ⇒ 换一块新的空 `Pane`（等价于无事，号照旧）；非空 ⇒ [`Fail::NonEmpty`]。
+    pub fn part(&mut self, at: Where, name: Name) -> Result<EntryId, Fail> {
+        self.put(at, name, Node::Pane(Vec::new()))
     }
 
-    /// **寻**：走到头，把那一枚 Pie 交出去。
+    /// **寻**：把那一号后面那一枚 Pie 交出去。
     ///
-    /// - 走不动（中间那一段是一枚 `Tile`）⇒ [`Fail::NotAPane`]；缺一段 ⇒ [`Fail::Unknown`]；
-    /// - 到头是一块 `Pane` ⇒ [`Fail::NotATile`]（**空路也是这一格**：根是一块 `Pane`）；
-    /// - 到头是一枚 `Tile`：**先探一次**（[`VestedBy`]）——答不出 ⇒ 当场剔掉那一条、放下那一份
+    /// - 号不在树上 ⇒ [`Fail::Unknown`]（剪掉、剔死、从没铸过长得一样）；
+    /// - 那一格是一块 `Pane` ⇒ [`Fail::NotATile`]；
+    /// - 是一枚 `Tile`：**先探一次**（[`VestedBy`]）——答不出 ⇒ 当场剔掉那一条、放下那一份
     ///   （[`Unship`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `give`。
     ///
     /// `give` 是"交出去"那一手（适配层在这里把 Pie 授给调用方，核心因此不碰内核）。
-    pub fn find(&mut self, path: &[Name], mut give: impl FnMut(PieToken)) -> Result<(), Fail> {
-        if path.len() > Self::PATH_MAX {
-            return Err(Fail::Full);
-        }
-        if path.is_empty() {
-            return Err(Fail::NotATile);
-        }
+    pub fn find(&mut self, id: EntryId, mut give: impl FnMut(PieToken)) -> Result<(), Fail> {
         let vested_by = self.vested_by;
         let unship = self.unship;
-        let last = path[path.len() - 1];
-        let level = self.level_mut(path)?;
-        let at = level
-            .iter()
-            .position(|e| e.name == last)
-            .ok_or(Fail::Unknown)?;
-        let pie = match &level[at].node {
-            Node::Pane(_) => return Err(Fail::NotATile),
-            Node::Tile(pie) => *pie,
+        // 先只读地问一遍（借用到此为止），再决定要不要动树。
+        let pie = match Self::look(&self.root, id) {
+            None => return Err(Fail::Unknown),
+            Some(entry) => match &entry.node {
+                Node::Pane(_) => return Err(Fail::NotATile),
+                Node::Tile(pie) => *pie,
+            },
         };
         if vested_by(pie).is_none() {
-            level.remove(at);
+            let _ = Self::take(&mut self.root, id);
             let _ = unship(pie);
             return Err(Fail::Dead);
         }
@@ -280,69 +239,61 @@ impl Operator {
         Ok(())
     }
 
-    /// **剪**：把路上那一条剪掉。
+    /// **剪**：把那一号那一条剪掉。
     ///
-    /// 那一条得存在；是 `Pane` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
+    /// 那一条得存在（否则 [`Fail::Unknown`]）；是 `Pane` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
     /// 剪掉一枚 `Tile` 时那一枚放下（[`Unship`]）——它是资源实体的一份引用，不放下就漏水。
-    pub fn trim(&mut self, path: &[Name]) -> Result<(), Fail> {
-        Self::checked(path)?;
+    pub fn trim(&mut self, id: EntryId) -> Result<(), Fail> {
         let unship = self.unship;
-        let last = path[path.len() - 1];
-        let level = self.level_mut(path)?;
-        let at = level
-            .iter()
-            .position(|e| e.name == last)
-            .ok_or(Fail::Unknown)?;
-        let dropped = match &level[at].node {
-            Node::Pane(inner) if inner.is_empty() => None,
-            Node::Pane(_) => return Err(Fail::NonEmpty),
-            Node::Tile(pie) => Some(*pie),
+        let dropped = match Self::look(&self.root, id) {
+            None => return Err(Fail::Unknown),
+            Some(entry) => match &entry.node {
+                Node::Pane(inner) if inner.is_empty() => None,
+                Node::Pane(_) => return Err(Fail::NonEmpty),
+                Node::Tile(pie) => Some(*pie),
+            },
         };
-        level.remove(at);
+        let _ = Self::take(&mut self.root, id);
         if let Some(pie) = dropped {
             let _ = unship(pie);
         }
         Ok(())
     }
 
-    /// **列**：看一块 `Pane` 里有哪些**号**。
+    /// **列**：看那一块 `Pane` 里有哪些**号**（[`Where::Root`] = 根那一层）。
     ///
-    /// **空路 = 根**（列根那一层）。缺一段 ⇒ [`Fail::Unknown`]；走不动或到头是一枚 `Tile`
-    /// ⇒ [`Fail::NotAPane`]。**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
+    /// 号不在 ⇒ [`Fail::Unknown`]；那一号是一枚 `Tile` ⇒ [`Fail::NotAPane`]。**不过问死活**：
+    /// 剔死是 [`Operator::find`] 那一路上的事。
     ///
     /// 答的是号、不是名字（机器用号，人用名——名字另问 [`Operator::name`]）。
     /// 顺序是**号序**：pane 里本来是登记序，而号单调 ⇒ 两者一致，不必额外排。
-    pub fn list(&self, path: &[Name]) -> Result<impl Iterator<Item = EntryId> + '_, Fail> {
-        if path.len() > Self::PATH_MAX {
-            return Err(Fail::Full);
-        }
-        let mut level = &self.root;
-        for step in path {
-            let entry = level
-                .iter()
-                .find(|e| e.name == *step)
-                .ok_or(Fail::Unknown)?;
-            level = match &entry.node {
-                Node::Pane(inner) => inner,
-                Node::Tile(_) => return Err(Fail::NotAPane),
-            };
-        }
+    pub fn list(&self, at: Where) -> Result<impl Iterator<Item = EntryId> + '_, Fail> {
+        let level: &[Entry] = match at {
+            Where::Root => &self.root,
+            Where::At(id) => match Self::look(&self.root, id) {
+                None => return Err(Fail::Unknown),
+                Some(entry) => match &entry.node {
+                    Node::Pane(inner) => inner,
+                    Node::Tile(_) => return Err(Fail::NotAPane),
+                },
+            },
+        };
         Ok(level.iter().map(|e| e.id))
     }
 
     /// **译**：把一条路**译成那一枚号**——名字只能走到这一格，往下一律按号。
     ///
-    /// 走法与 [`Operator::list`] 一模一样（缺一段 ⇒ [`Fail::Unknown`]，中途是一枚 `Tile`
-    /// ⇒ [`Fail::NotAPane`]，超深 ⇒ [`Fail::Full`]）；差别只在最后一步：`list` 答那一块
-    /// `Pane` 里的号，`seek` 答**走到的那一格自己的号**——故**最后一段是一枚 `Tile` 也行**
-    /// （那正是门牌那一格：`/device/uart` 到头就是一枚砖）。
+    /// 从根起按名字一段段走：缺一段 ⇒ [`Fail::Unknown`]；中途那一段是一枚 `Tile` ⇒
+    /// [`Fail::NotAPane`]；路超过 [`Operator::ROAD_MAX`] 段 ⇒ [`Fail::Full`]。
+    /// 走到头答**那一格自己的号**——故**最后一段是一枚 `Tile` 也行**（那正是门牌那一格：
+    /// `/device/uart` 到头就是一枚砖）。
     ///
     /// **空路 ⇒ [`Fail::Unknown`]**（对照 [`Operator::list`]：它空路却能列——列的是根那一层，
     /// 不需要根有号）：**根没有号**，没什么可译。
     ///
     /// 与 `list` 一样**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
     pub fn seek(&self, road: &[Name]) -> Result<EntryId, Fail> {
-        if road.len() > Self::PATH_MAX {
+        if road.len() > Self::ROAD_MAX {
             return Err(Fail::Full);
         }
         // 空路 ⇒ 根 ⇒ 没有号（`split_last` 那一步就把它挡在这一格）。
@@ -368,56 +319,145 @@ impl Operator {
     /// **名**：这枚号此刻叫什么。
     ///
     /// **一趟全树扫**（O(全树)、零新状态）：要 O(深度) 就得让 `Entry` 记父路，多一格、
-    /// 删格要维护，本刀不取。
+    /// 删格要维护，本刀不取（与上面"树仍是嵌套树"那段照实记同一件事）。
     ///
     /// 号失效（`trim` 剪掉、[`Operator::find`] 剔死）与从来没铸过**长得一样** ⇒ 都答
     /// [`Fail::Unknown`]：水位只往上走，本层不记墓碑，也分不出这两件事。
     pub fn name(&self, id: EntryId) -> Result<Name, Fail> {
-        fn seek(level: &[Entry], id: EntryId) -> Option<Name> {
-            for entry in level {
-                if entry.id == id {
-                    return Some(entry.name);
-                }
-                if let Node::Pane(inner) = &entry.node {
-                    if let Some(found) = seek(inner, id) {
-                        return Some(found);
-                    }
-                }
-            }
-            None
-        }
-        seek(&self.root, id).ok_or(Fail::Unknown)
+        Self::look(&self.root, id)
+            .map(|entry| entry.name)
+            .ok_or(Fail::Unknown)
     }
 
     // ── 走路 ────────────────────────────────────────────────
 
-    /// 落 / 分 / 剪共同的两条门槛：**路非空**（空路是根本身）、**路不超深**。
-    fn checked(path: &[Name]) -> Result<(), Fail> {
-        if path.is_empty() {
-            return Err(Fail::Unknown);
-        }
-        if path.len() > Self::PATH_MAX {
-            return Err(Fail::Full);
-        }
-        Ok(())
+    /// 落 / 分共用的那一手：在 `at` 那一块 `Pane` 里给 `name` 立一格（或换绑那一格）。
+    ///
+    /// **答那一格自己的号**：换绑不动号，故只有"真铸了一格"才动水位。
+    fn put(&mut self, at: Where, name: Name, node: Node) -> Result<EntryId, Fail> {
+        let unship = self.unship;
+        let id = match at {
+            Where::Root => Self::put_in(&mut self.root, None, name, node, &mut self.next, unship)?,
+            Where::At(id) => {
+                Self::put_in(&mut self.root, Some(id), name, node, &mut self.next, unship)?
+            }
+        };
+        Ok(id)
     }
 
-    /// 走到 `path` 的**上一层**（最后一段所在的那一叠）。
+    /// 走到 `target` 那一块 `Pane`（`None` = 根）里，立一格 / 换绑一格。
     ///
-    /// **调用方先过 [`Operator::checked`]**（或自己挡住空路）：这里按 `path[..len - 1]` 切，
-    /// 空路上切不出来。
-    fn level_mut(&mut self, path: &[Name]) -> Result<&mut Vec<Entry>, Fail> {
-        let mut level = &mut self.root;
-        for step in &path[..path.len() - 1] {
-            let at = level
-                .iter()
-                .position(|e| e.name == *step)
-                .ok_or(Fail::Unknown)?;
-            level = match &mut level[at].node {
-                Node::Pane(inner) => inner,
-                Node::Tile(_) => return Err(Fail::NotAPane),
+    /// **先只读地问一遍**（[`Operator::holds`]）再往下递归：这样这一层的返回值是**答案本身**
+    /// （一个号），而不是一个借用——`&mut` 穿过 `iter_mut` 那层循环再返出去是过不了借用检查的。
+    fn put_in(
+        level: &mut Vec<Entry>,
+        target: Option<EntryId>,
+        name: Name,
+        node: Node,
+        next: &mut usize,
+        unship: Unship,
+    ) -> Result<EntryId, Fail> {
+        let Some(target) = target else {
+            return Self::put_here(level, name, node, next, unship);
+        };
+        // 目标就是这一层里的一条 ⇒ 它得是 `Pane`（否则走不进去）。
+        if let Some(slot) = level.iter().position(|e| e.id == target) {
+            return match &mut level[slot].node {
+                Node::Pane(inner) => Self::put_here(inner, name, node, next, unship),
+                Node::Tile(_) => Err(Fail::NotAPane),
             };
         }
-        Ok(level)
+        // 否则往下找：只有"握着它"的那一块才下去。
+        for entry in level.iter_mut() {
+            if let Node::Pane(inner) = &mut entry.node {
+                if Self::holds(inner, target) {
+                    return Self::put_in(inner, Some(target), name, node, next, unship);
+                }
+            }
+        }
+        Err(Fail::Unknown)
+    }
+
+    /// 就在这一层里立一格 / 换绑一格（[`Operator::put_in`] 走到地方之后的那一手）。
+    fn put_here(
+        level: &mut Vec<Entry>,
+        name: Name,
+        node: Node,
+        next: &mut usize,
+        unship: Unship,
+    ) -> Result<EntryId, Fail> {
+        let fresh = EntryId::new(*next);
+        match level.iter().position(|e| e.name == name) {
+            Some(slot) => {
+                // 已占：只有"一枚 `Tile`"与"空 `Pane`"可以换绑；前者那一枚要放下。
+                // **换绑不动号**：那一格还是同一格——答的就是它那个号。
+                let old = match &level[slot].node {
+                    Node::Tile(old) => Some(*old),
+                    Node::Pane(inner) if inner.is_empty() => None,
+                    Node::Pane(_) => return Err(Fail::NonEmpty),
+                };
+                let id = level[slot].id;
+                level[slot].node = node;
+                if let Some(old) = old {
+                    let _ = unship(old);
+                }
+                Ok(id)
+            }
+            None => {
+                if level.len() >= Self::PANE_CAP {
+                    return Err(Fail::Full);
+                }
+                level.push(Entry {
+                    id: fresh,
+                    name,
+                    node,
+                });
+                *next += 1;
+                Ok(fresh)
+            }
+        }
+    }
+
+    /// 这一片子树里有没有 `id` 那一条（只读；递归下去的一趟扫）。
+    fn holds(level: &[Entry], id: EntryId) -> bool {
+        level.iter().any(|entry| {
+            entry.id == id
+                || match &entry.node {
+                    Node::Pane(inner) => Self::holds(inner, id),
+                    Node::Tile(_) => false,
+                }
+        })
+    }
+
+    /// 按号找那一条（只读；一趟全树扫）。号不在 ⇒ `None`。
+    fn look(level: &[Entry], id: EntryId) -> Option<&Entry> {
+        for entry in level {
+            if entry.id == id {
+                return Some(entry);
+            }
+            if let Node::Pane(inner) = &entry.node {
+                if let Some(found) = Self::look(inner, id) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// 按号把那一条**拿走**（交出来的是一条，不是借用）。
+    fn take(level: &mut Vec<Entry>, id: EntryId) -> Option<Entry> {
+        if let Some(slot) = level.iter().position(|e| e.id == id) {
+            return Some(level.remove(slot));
+        }
+        for entry in level.iter_mut() {
+            if let Node::Pane(inner) = &mut entry.node {
+                if Self::holds(inner, id) {
+                    if let Some(found) = Self::take(inner, id) {
+                        return Some(found);
+                    }
+                }
+            }
+        }
+        None
     }
 }

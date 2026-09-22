@@ -135,9 +135,10 @@ fn find_router() -> Option<PieToken> {
     let talk = operator::ask_hole(host).ok()?;
     let dir = Name::new(protocol::driver::DIR).ok()?;
     let want = Name::new(SERVICE).ok()?;
-    let path = [dir, want];
-    let code = operator::ask(talk, &link, host, ocall::FIND, &path, PieToken::NONE, MS).ok()?;
-    if code != ocall::OK {
+    let road = [dir, want];
+    // **间接寻址那一手**：名字先译成号，此后按号。
+    let id = operator::seek(talk, &link, &road, MS).ok()?;
+    if operator::find(talk, &link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
         return None;
     }
     operator::take(&link, host)

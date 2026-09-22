@@ -166,19 +166,20 @@ fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
-    let path = [dir, me];
-    let none = PieToken::NONE;
+    let road = [dir, me];
+    // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
     let mut left = MS;
-    let code = loop {
-        let code =
-            operator::ask(talk, link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
-        if code != ocall::UNKNOWN || left == 0 {
-            break code;
+    let id = loop {
+        match operator::seek(talk, link, &road, MS) {
+            Ok(id) => break id,
+            Err(ocall::UNKNOWN) if left > 0 => {
+                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
+                left = left.saturating_sub(RETRY_MS);
+            }
+            Err(_) => return None,
         }
-        let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-        left = left.saturating_sub(RETRY_MS);
     };
-    if code != ocall::OK {
+    if operator::find(talk, link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
         return None;
     }
     operator::take(link, host)

@@ -112,6 +112,7 @@ use programs::driver::router::needs;
 // 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
 use protocol::system::board::client as board;
 // 树：本域也是**客侧**（门牌挂 `/device/router`，见文件头）。
+use protocol::operator::Where;
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 
@@ -515,23 +516,42 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
         say("router: tree: bad name");
         return;
     };
-    let path = [dir, me];
-    let none = PieToken::NONE;
-    let part = operator::ask(talk, &link, host, ocall::PART, &[dir], none, QUAY_MS).unwrap_or(BAD);
-    let land = operator::ask(talk, &link, host, ocall::LAND, &path, entry, QUAY_MS).unwrap_or(BAD);
-    let find = operator::ask(talk, &link, host, ocall::FIND, &path, none, QUAY_MS).unwrap_or(BAD);
-    let got = operator::take(&link, host).is_some();
-    // **间接寻址那一手**：按同一条路问号，再拿号问名——两格都答得出，才说明这枚号是真坐标。
-    let seek = operator::seek(talk, &link, host, &path, QUAY_MS);
-    let pname = seek
-        .ok()
-        .and_then(|id| operator::name(talk, &link, host, id, QUAY_MS).ok());
-    let (plate, pid) = match seek {
+    // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
+    // **分目录**：`part` 那一格答的是它自己那一手的码（`2` = 那块目录已经在，且里面有东西）。
+    let part = operator::part(talk, &link, Where::Root, dir, QUAY_MS);
+    let (part, dir_at) = match part {
+        Ok(id) => (ocall::OK, Ok(id)),
+        // 已经在 ⇒ **号另问一趟**：名字只能走到 `seek` 这一格（拿到号之后一律按号）。
+        Err(ocall::NONEMPTY) => (
+            ocall::NONEMPTY,
+            operator::seek(talk, &link, &[dir], QUAY_MS),
+        ),
+        Err(code) => (code, Err(code)),
+    };
+    // **落门牌**：答的是门牌自己那一格的号。
+    let (dir_id, plate) = match dir_at {
+        Ok(at) => (
+            at.get(),
+            operator::land(talk, &link, host, Where::At(at), me, entry, QUAY_MS),
+        ),
+        Err(code) => (0, Err(code)),
+    };
+    let (land, pid) = match plate {
         Ok(id) => (ocall::OK, id.get()),
         Err(code) => (code, 0),
     };
+    // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
+    let find = match plate {
+        Ok(id) => operator::find(talk, &link, id, QUAY_MS).unwrap_or(ocall::BAD),
+        Err(code) => code,
+    };
+    let got = operator::take(&link, host).is_some();
+    // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
+    let pname = plate
+        .ok()
+        .and_then(|id| operator::name(talk, &link, id, QUAY_MS).ok());
     say(&alloc::format!(
-        "router: tree part={part} land={land} find={find} got={got} entry={} plate={plate} pid={pid} pname={}",
+        "router: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));

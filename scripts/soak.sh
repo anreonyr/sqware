@@ -7,25 +7,28 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 七十二条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 land=0 find=0 got=true` /
+#   2) 六十八条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 dir=<号> land=0 find=0 got=true` /
 #      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
-#      **`uart: tree part=2 land=0 find=0 got=true`** / **`echo: console=true`** /
+#      **`uart: tree part=2 dir=<号> land=0 find=0 got=true`** / **`echo: console=true`** /
 #      **`router: line 11 = rtc@101000`** / **`rtc: line occupied`** / **`rtc: armed at=`** /
 #      **`router: line=11`** / **`rtc: rang n=1`** / **`router: exhaust line=11`** /
 #      **`router: vacate line=1`** / **`lodger: taken=2`** / **`lodger: unknown=1`** /
 #      **`router: lane dropped line=1 pies=21`** / **`lodger: pies=9`** /
-#      **`rtc: tree part=2 land=0 find=0 got=true`** / **`rtc: asked now=`** /
+#      **`rtc: tree part=2 dir=<号> land=0 find=0 got=true`** / **`rtc: asked now=`** /
 #      **`sleeper: reg=0`** / **`sleeper: found`** / **`sleeper: now=`** /
 #      **`sleeper: past=2`** / **`sleeper: armed=0`** / **`sleeper: taken=1`** /
 #      **`sleeper: rang at=`** / **`sleeper: gone`** /
-#      **`coalition: tree part=2 land=0 find=0 got=true`**（结盟那台落了门牌）/
-#      **六处门牌各多一格 `plate=0 pid=<号> pname=<自己那个名字>`**（**间接寻址**那一刀：
-#      `seek` 把路**译成号**、`name` 再按号答回名字——两格都答得出，才说明那枚号是真坐标；
-#      `echo` 那一格还赶在 `trim` 之前问。**号一个都不钉**：它跟启动次序走，钉的是 `pname`。
-#      这六条锚了行首行尾——**行尾是串口那两个字节 `\r\n`**，故末格写 `[[:space:]]*$`
-#      而不是 `$`：写 `$` 会一条都匹配不上，症状就是"启动读数不全"）/
+#      **`coalition: tree part=2 dir=<号> land=0 find=0 got=true`**（结盟那台落了门牌）/
+#      **六处门牌多出来的那几格**（**整树换号**那一刀：号成了唯一的直接坐标——`part` / `land`
+#      各自答出那一格的号，`find` / `trim` / `name` 此后一律收号，`list` 收容器坐标
+#      `Where::Root` / `Where::At(号)`）：`dir=<目录那格的号>`、`plate=<门牌那格的号>`、
+#      `pname=<拿号问回来的名字>`。`find=0` 与 `got=true` 证明**拿号真的寻得回那一枚**，
+#      `pname` 证明**拿号真的问得回那个名**——两样都答得出，才算那枚号是真坐标。
+#      `echo` 那一格还赶在 `trim` 之前问（它下一步就被剪掉）。**号一个都不钉**：它跟启动次序走，
+#      钉的是 `pname`。这六条锚了行首行尾——**行尾是串口那两个字节 `\r\n`**，故末格写
+#      `[[:space:]]*$` 而不是 `$`：写 `$` 会一条都匹配不上，症状就是"启动读数不全"。/
 #      **`member: found=0`** / **`member: found=1`**（号由服务发：零号是**一枚普通的盟**、
 #      号单调稠密）/ **`member: amid(me,c0)=false`**（**立了不等于进了**）/
 #      **`member: enter(c0)=ok`** / **`member: leave(c0)=ok`** /
@@ -70,7 +73,7 @@
 # （设备树属性名还原）没有回头看这张判据，于是 `soak` 从那天起就一直是红的（读数换了个词，判据
 # 没跟着走）。这一刀顺手改回来：**判据跟着读数走，不是反过来**。
 #
-# `router: tree part=0 land=0 find=0 got=true` 是**门牌**那一条：驱动自己把入口落到
+# `router: tree part=0 dir=<号> land=0 find=0 got=true` 是**门牌**那一条：驱动自己把入口落到
 # `/device/router` 上、再查回来验一遍（`part=0` = 那块目录是它建的；第二台上来会读成 2）。
 # 而 `guest: reg=0 find=0` 里那个 `find` 是**从树上问到的**——按名找服务今天归树，板管生死。
 #
@@ -82,7 +85,7 @@
 # 四条是**线 + 控制台**那一刀（`protocol::driver::line` 的四格与设备持有者那枚服务孔）：
 # `router: line 10 = serial@10000000` = **登记**——串口驱动报设备名、路由者**解树**（线 = 名字的
 # 函数）并把这条线接上（起域时一条都不接）；`uart: rang n=` = **投递**——那一帧真的到了
-# 客户手里（那一行不带线号：线在泊位里，见 `protocol::driver::line`）；`uart: tree part=2 land=0 find=0 got=true` = **服务门牌**——`uart` 把"读行"那枚孔
+# 客户手里（那一行不带线号：线在泊位里，见 `protocol::driver::line`）；`uart: tree part=2 dir=<号> land=0 find=0 got=true` = **服务门牌**——`uart` 把"读行"那枚孔
 # 落到 `/device/uart`（`part=2` 是"那块目录已经在了"，`router` 先建的）；`echo: console=true`
 # = **客人真的从那枚孔拿到了副本**（它是回显的来路，从前是内核的调试面）。
 #
@@ -100,7 +103,7 @@
 # （`rtc@101000`），故房客换成 1 号线——它要的是**一条没人要的线**。
 #
 # 第三十二条之后的十二条是**结盟那一刀**（`protocol::coalition` + `prog-coalition` +
-# `prog-member`）：`coalition: tree part=2 land=0 find=0 got=true` 是**它自己的门牌**（`part=2`
+# `prog-member`）：`coalition: tree part=2 dir=<号> land=0 find=0 got=true` 是**它自己的门牌**（`part=2`
 # 是 `/sys` 已由身份服务建好）；`member` 那十一条把这一族要验的事各钉一格——**号由服务发**
 # （`found=0` / `found=1`：零号是**一枚普通的盟**，盟无根）、**立了不等于进了**、**入**与**出**、
 # **同一枚盟里有两位**（它派生第二条身份再领一次，故那不是"一串任务"而是"一组身份"）、
@@ -186,7 +189,7 @@
 #
 # 七行是**服务面那一刀**（`rtc` 兼报时服务，门牌 `/device/rtc`，客人 `prog-sleeper`）——这一刀
 # 证的是"**抽象等第二个实例**"：`uart` 那一面只有一个方向（排空读到什么就交什么），这一面
-# **两个方向都有**（客人问 + 设备叫）。`rtc: tree part=2 land=0 find=0 got=true` = **门牌**
+# **两个方向都有**（客人问 + 设备叫）。`rtc: tree part=2 dir=<号> land=0 find=0 got=true` = **门牌**
 # （`part=2` = 那块目录已经在了，`router` 先建的；与 `uart` 那一格同形）；`rtc: asked now=` 与
 # `sleeper: now=` = **一问一答的两头**（同一趟的两个数**相等**——设备只有一个读者，读数在
 # 驱动手里）；`sleeper: past=2` / `sleeper: taken=1` = **失败域那两格**（客人**有意**各走一趟：
@@ -268,8 +271,7 @@ while [ "$i" -le "$rounds" ]; do
   me3="$(grep -a "^policy: me=" "$log" | sed -n 3p | sed "s/.*=//")"
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
-  elif ! { grep -q "router: tree part=0 land=0 find=0 got=true" "$log" \
-        && grep -qE "^router: tree part=0 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=router[[:space:]]*$" "$log" \
+  elif ! { grep -qE "^router: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=router[[:space:]]*$" "$log" \
         && grep -q "router: device_count=95 ctx=1" "$log" \
         && grep -q "uart: serial@10000000 ier=rx" "$log" \
         && grep -q "guest: reg=0 find=0" "$log" \
@@ -279,8 +281,7 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "router: line 11 = rtc@101000" "$log" \
         && grep -q "rtc: line occupied" "$log" \
         && grep -q "rtc: armed at=" "$log" \
-        && grep -q "rtc: tree part=2 land=0 find=0 got=true" "$log" \
-        && grep -qE "^rtc: tree part=2 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=rtc[[:space:]]*$" "$log" \
+        && grep -qE "^rtc: tree part=2 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=rtc[[:space:]]*$" "$log" \
         && grep -q "rtc: asked now=" "$log" \
         && grep -q "router: line=11" "$log" \
         && grep -q "rtc: rang n=1" "$log" \
@@ -298,13 +299,11 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "lodger: unknown=1" "$log" \
         && grep -q "router: lane dropped line=1 pies=21" "$log" \
         && grep -q "lodger: pies=9" "$log" \
-        && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
-        && grep -qE "^uart: tree part=2 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=uart[[:space:]]*$" "$log" \
+        && grep -qE "^uart: tree part=2 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=uart[[:space:]]*$" "$log" \
         && grep -q "echo: console=true" "$log" \
-        && grep -qE "^echo: tree part=0 land=0 find=0 got=true trim=0 plate=0 pid=[0-9]+ pname=echo[[:space:]]*$" "$log" \
-        && grep -q "coalition: tree part=2 land=0 find=0 got=true" "$log" \
-        && grep -qE "^coalition: tree part=2 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=coalition[[:space:]]*$" "$log" \
-        && grep -qE "^principal: tree part=0 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=principal[[:space:]]*$" "$log" \
+        && grep -qE "^echo: tree part=0 land=0 find=0 got=true trim=0 plate=[0-9]+ pname=echo[[:space:]]*$" "$log" \
+        && grep -qE "^coalition: tree part=2 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=coalition[[:space:]]*$" "$log" \
+        && grep -qE "^principal: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=principal[[:space:]]*$" "$log" \
         && grep -q "member: found=0" "$log" \
         && grep -q "member: found=1" "$log" \
         && grep -q "member: amid(me,c0)=false" "$log" \

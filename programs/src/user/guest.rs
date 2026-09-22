@@ -127,14 +127,17 @@ extern "C" fn main() -> ! {
     let path = [dir, want];
 
     // 三、问一句名字。**找不到就再问**，有界：本域可能比 `router` 先起（树上没有"装配期"）。
+    // **间接寻址那一手**：名字先译成号（那一格才谈得上"挂上了没有"），拿到号再按号寻。
     let mut left = MS;
     let find = loop {
-        let code = operator::ask(hedge, &tree, host, ocall::FIND, &path, none, MS).unwrap_or(BAD);
-        if code != ocall::UNKNOWN || left == 0 {
-            break code;
+        match operator::seek(hedge, &tree, &path, MS) {
+            Ok(id) => break operator::find(hedge, &tree, id, MS).unwrap_or(BAD),
+            Err(ocall::UNKNOWN) if left > 0 => {
+                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
+                left = left.saturating_sub(RETRY_MS);
+            }
+            Err(code) => break code,
         }
-        let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-        left = left.saturating_sub(RETRY_MS);
     };
 
     // 四、查到的那一枚（持树者经会话授进本域表里）：本域在表里认得出它吗（读数里的 `entry`）。

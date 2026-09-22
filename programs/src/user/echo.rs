@@ -63,7 +63,7 @@ use core::time::Duration;
 use env::DBCN_MAX;
 use env::{Name, PieToken, TaskId};
 use protocol::operator::call as ocall;
-use protocol::operator::{EntryId, Listing};
+use protocol::operator::{EntryId, Listing, Where};
 use protocol::system::board::call as bcall;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
@@ -129,7 +129,7 @@ extern "C" fn main() -> ! {
     let _ = debug::put(&format!("echo: op={op}"));
 
     // 三、上树第二趟：**一串**（列号 → 按号翻名 → 列 `/device` → 问一枚没铸过的号）。
-    let seq = serial(&tree, talk, host);
+    let seq = serial(&tree, talk);
     let _ = debug::put(&format!("echo: seq={seq}"));
 
     let Some(console) = console else {
@@ -178,19 +178,20 @@ fn find_console(link: &Quay, talk: PieToken, host: TaskId) -> Option<HolePie> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
         return None;
     };
-    let path = [dir, want];
-    let none = PieToken::NONE;
+    let road = [dir, want];
+    // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
     let mut left = MS;
-    let code = loop {
-        let code =
-            operator::ask(talk, link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
-        if code != ocall::UNKNOWN || left == 0 {
-            break code;
+    let id = loop {
+        match operator::seek(talk, link, &road, MS) {
+            Ok(id) => break id,
+            Err(ocall::UNKNOWN) if left > 0 => {
+                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
+                left = left.saturating_sub(RETRY_MS);
+            }
+            Err(_) => return None,
         }
-        let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-        left = left.saturating_sub(RETRY_MS);
     };
-    if code != ocall::OK {
+    if operator::find(talk, link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
         return None;
     }
     Some(HolePie::from_token(operator::take(link, host)?))
@@ -231,27 +232,36 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     let Ok(name) = Name::new(ME) else {
         return ocall::BAD;
     };
-    let path = [name];
-    let none = PieToken::NONE;
-    // 分出一块空 `Pane`、再在里面落一枚 `Tile`——**第二层**因此是实打实走出来的（不是构造出来的）。
-    let a = operator::ask(talk, link, host, ocall::PART, &path, none, MS).unwrap_or(ocall::BAD);
-    let b = operator::ask(talk, link, host, ocall::LAND, &path, entry, MS).unwrap_or(ocall::BAD);
-    let c = operator::ask(talk, link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
+    // 分出一块空 `Pane`、再在**同一格**上换绑一枚 `Tile`——**第二层**因此是实打实走出来的。
+    // 那两趟落在同一个（容器，名字）上 ⇒ **号不动**：两格答的是同一枚号。
+    let part = operator::part(talk, link, Where::Root, name, MS);
+    let a = match part {
+        Ok(_) => ocall::OK,
+        Err(code) => code,
+    };
+    let plate = operator::land(talk, link, host, Where::Root, name, entry, MS);
+    let b = match plate {
+        Ok(_) => ocall::OK,
+        Err(code) => code,
+    };
+    // 寻回来那一趟：**按号**（名字只在上面用过，此后一律按号）。
+    let c = match plate {
+        Ok(id) => operator::find(talk, link, id, MS).unwrap_or(ocall::BAD),
+        Err(code) => code,
+    };
     // 寻回来的那一枚：**来源位是持树者**（号不从报文里走，故只能按"谁给的"认）。
     let got = operator::take(link, host).is_some();
-    // **间接寻址那一手**：按同一条路问号，再拿号问名——两格都答得出，才说明这枚号是真坐标。
-    // 这一格**下一步就被剪掉**，故号与名都得赶在 `trim` 之前问。
-    let seek = operator::seek(talk, link, host, &path, MS);
-    let pname = seek
+    // 拿号问名——这一格**下一步就被剪掉**，故号与名都得赶在 `trim` 之前取。
+    let pname = plate
         .ok()
-        .and_then(|id| operator::name(talk, link, host, id, MS).ok());
-    let (plate, pid) = match seek {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
+        .and_then(|id| operator::name(talk, link, id, MS).ok());
+    let d = match plate {
+        Ok(id) => operator::trim(talk, link, id, MS).unwrap_or(ocall::BAD),
+        Err(code) => code,
     };
-    let d = operator::ask(talk, link, host, ocall::TRIM, &path, none, MS).unwrap_or(ocall::BAD);
     let _ = debug::put(&format!(
-        "echo: tree part={a} land={b} find={c} got={got} trim={d} plate={plate} pid={pid} pname={}",
+        "echo: tree part={a} land={b} find={c} got={got} trim={d} plate={} pname={}",
+        plate.ok().map(|id| id.get()).unwrap_or(0),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
     d
@@ -262,9 +272,9 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
 /// **名与号分开**那一刀的四格读数就落在这里：`list` 答号、`name` 按号答名（名字在答话那一侧，
 /// 长短由那一帧说）。返这一趟的答码（`ocall::OK` = 全成）——每一格自己打一行，故中途断了也
 /// 看得出断在哪一条。
-fn serial(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
-    // 根那一层：**空路 = 根**。
-    let Ok(root) = operator::list(talk, link, host, &[], MS) else {
+fn serial(link: &Quay, talk: PieToken) -> u8 {
+    // 根那一层：**`Where::Root` 就是根**（根没有号，故它占的是坐标那一格，不是一个号）。
+    let Ok(root) = operator::list(talk, link, Where::Root, MS) else {
         return ocall::UNKNOWN;
     };
     let _ = debug::put(&format!("echo: list root={}", ids_of(&root)));
@@ -276,7 +286,7 @@ fn serial(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         if !names.is_empty() {
             names.push(',');
         }
-        match operator::name(talk, link, host, id, MS) {
+        match operator::name(talk, link, id, MS) {
             Ok(name) => names.push_str(name.as_str()),
             Err(_) => {
                 names.push('?');
@@ -290,7 +300,10 @@ fn serial(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     let Ok(dir) = Name::new(protocol::driver::DIR) else {
         return ocall::UNKNOWN;
     };
-    match operator::list(talk, link, host, &[dir], MS) {
+    // **间接寻址那一手**：先把那一段名字译成号，再按号列（`list` 收的是容器坐标）。
+    match operator::seek(talk, link, &[dir], MS)
+        .and_then(|at| operator::list(talk, link, Where::At(at), MS))
+    {
         Ok(sub) => {
             let _ = debug::put(&format!("echo: list device={}", ids_of(&sub)));
         }
@@ -301,7 +314,7 @@ fn serial(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     }
 
     // 一枚没铸过的号：**`UNKNOWN`，不是"答了一格空名字"**。
-    let miss = operator::name(talk, link, host, EntryId::new(4095), MS).is_err();
+    let miss = operator::name(talk, link, EntryId::new(4095), MS).is_err();
     let _ = debug::put(&format!("echo: name miss={miss}"));
     if miss { code } else { ocall::BAD }
 }

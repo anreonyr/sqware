@@ -1,7 +1,10 @@
-//! operator::client — **客侧三手**：「持树者是谁」由装配侧递一格，此后一问一答
+//! operator::client — **客侧**：「持树者是谁」由装配侧递一格，此后一问一答
 //!
-//! 三侧分家之后本文件只放**客侧三手**：「持树者是谁」由装配侧递一格，此后一问一答；两侧共用的图与说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`crate::operator::call`]。
+//! 三侧分家之后本文件只放**客侧**：「持树者是谁」由装配侧递一格，此后一问一答；两侧共用的图
+//! 与说明见 [`super`] 的"载体"那一节，帧与记号见 [`crate::operator::call`]。
+//!
+//! **一手对一条原语**（`land` / `part` / `find` / `trim` / `list` / `seek` / `name`）：线上与模型
+//! 是同一件事的两层，客侧这一层也不再拿一个 `op` 码当参数——问什么形状由函数名说。
 
 use env::Mark;
 use env::{Name, PieToken, TaskId};
@@ -11,7 +14,7 @@ use runtime::env::mail::{self, AnyPie};
 use crate::operator::Fail;
 use crate::operator::call as ocall;
 pub use crate::operator::{ASK_MARK, LINK, TIP_NAME};
-use crate::operator::{EntryId, Listing};
+use crate::operator::{EntryId, Listing, Where};
 use crate::session::Quay;
 
 /// 客侧第一步：装上树那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
@@ -47,108 +50,50 @@ pub fn ask_hole(host: TaskId) -> Result<PieToken, Fail> {
     Ok(ask)
 }
 
-/// 客侧第二步：问一句、取一句答（**缓冲由调用方给**，故一串号与一枚名字也走这里）。
+/// 客侧第二步（内里那一手）：**编好的一问推上去，收一句答**。
 ///
 /// 问话推 `say`（[`ask_hole`] 铸的那一枚，持树者读），答话从本端这条树路读（持树者写）。
-/// 返**收到的帧长**；答话那一格在 `reply[0]`。
-///
-/// `tail` 是"随 op 变的那个号"：`land` 那一码要把**入口**捎上——它经会话交给持树者
-/// （`Accord` 一份），故写进帧里的是"种在持树者表里的那个号"，那才是它认得的坐标；
-/// `name` 拿它当条目的号，`list` 不看它。
-pub fn ask_into(
+/// 返**收到的帧长**；答话那一格在 `reply[0]`。缓冲由调用方给，故四种答形都走这里。
+fn ask_out(
     say: PieToken,
     link: &Quay,
-    host: TaskId,
-    op: u8,
-    path: &[Name],
-    tail: [u8; 8],
+    ask: ocall::Ask<'_>,
     reply: &mut [u8],
     millis: usize,
 ) -> Result<usize, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
-    let tail = match op {
-        ocall::LAND => ocall::hang(ocall::entry_in(tail), host)
-            .map_err(|()| Fail::Unknown)?
-            .to_bytes(),
-        _ => tail,
-    };
+    let (frame, len) = ocall::pack_ask(ask);
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
     mail::HolePie::from_token(say)
-        .push(&ocall::pack_ask(op, path, tail))
+        .push(&frame[..len])
         .map_err(|_| Fail::Unknown)?;
     pier.pull(reply, millis).map_err(|_| Fail::Unknown)
 }
 
-/// 客侧第二步（一格状态那一档）：问一句、收下那一格。返答话那一格（[`ocall::OK`] = 收下了）。
-pub fn ask(
+/// 客侧第二步（**落**）：在 `at` 那一块 `Pane` 里给 `name` 贴一枚 `Tile`；答**那一格自己的号**。
+///
+/// `entry` 是客人手里那一枚：它**经会话交给持树者**（`Accord` 一份）后才进帧——报文里走的
+/// 是"种在持树者表里的那个号"，那才是它认得的坐标（见文件头与 [`ocall::hang`]）。
+pub fn land(
     say: PieToken,
     link: &Quay,
     host: TaskId,
-    op: u8,
-    path: &[Name],
+    at: Where,
+    name: Name,
     entry: PieToken,
     millis: usize,
-) -> Result<u8, Fail> {
-    let mut reply = [0u8; 1];
-    let _ = ask_into(
-        say,
-        link,
-        host,
-        op,
-        path,
-        entry.to_bytes(),
-        &mut reply,
-        millis,
-    )?;
-    Ok(reply[0])
-}
-
-/// 客侧第二步（一串号那一档）：列一段路，返那一串**号**。
-///
-/// 答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`：这一条的答案体是数据，码不能当成功值带回来
-/// （对照 [`ask`]：那一档的码本身就是答案）。一推一读之间读不动 / 迟了 ⇒ [`ocall::BAD`]。
-pub fn list(
-    say: PieToken,
-    link: &Quay,
-    host: TaskId,
-    path: &[Name],
-    millis: usize,
-) -> Result<Listing, u8> {
-    let mut reply = [0u8; ocall::LIST_REPLY_LEN];
-    let n = ask_into(
-        say,
-        link,
-        host,
-        ocall::LIST,
-        path,
-        [0u8; 8],
-        &mut reply,
-        millis,
-    )
-    .map_err(|_| ocall::BAD)?;
-    ocall::read_list(&reply[..n])
-}
-
-/// 客侧第二步（**一枚号**那一档）：按一条路问"那一格是几号"——**间接寻址那一手**。
-///
-/// 答话是号那一形（`[0] status [1 .. 9] 号`）：答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`。
-/// 拿到号之后同一条路就不必再念了——其余那几条一律按号走（名字只到这一格为止）。
-pub fn seek(
-    say: PieToken,
-    link: &Quay,
-    host: TaskId,
-    road: &[Name],
-    millis: usize,
 ) -> Result<EntryId, u8> {
+    let shipped = ocall::hang(entry, host).map_err(|()| ocall::BAD)?;
     let mut reply = [0u8; ocall::ID_REPLY_LEN];
-    let n = ask_into(
+    let n = ask_out(
         say,
         link,
-        host,
-        ocall::SEEK,
-        road,
-        [0u8; 8],
+        ocall::Ask::Land {
+            at,
+            name,
+            entry: shipped,
+        },
         &mut reply,
         millis,
     )
@@ -156,28 +101,63 @@ pub fn seek(
     ocall::read_id(&reply[..n])
 }
 
-/// 客侧第二步（一枚名字那一档）：这枚号此刻叫什么。
-///
-/// 名字**不走问话**（段那一格空着、尾格是条目的号），它在答话那一侧——长短由那一帧说。
-pub fn name(
+/// 客侧第二步（**分**）：在 `at` 那一块 `Pane` 里给 `name` 放一块空 `Pane`；答那一格自己的号。
+pub fn part(
     say: PieToken,
     link: &Quay,
-    host: TaskId,
-    id: EntryId,
+    at: Where,
+    name: Name,
     millis: usize,
-) -> Result<Name, u8> {
+) -> Result<EntryId, u8> {
+    let mut reply = [0u8; ocall::ID_REPLY_LEN];
+    let n = ask_out(say, link, ocall::Ask::Part { at, name }, &mut reply, millis)
+        .map_err(|_| ocall::BAD)?;
+    ocall::read_id(&reply[..n])
+}
+
+/// 客侧第二步（**寻**）：把那一号背后那一枚 Pie 要过来（它经会话授进本端表，见 [`take`]）。
+///
+/// 答的是一格状态（[`ocall::OK`] = 授出来了）——那条路走不通（推不动 / 读不到）⇒ `Err(Fail)`。
+pub fn find(say: PieToken, link: &Quay, id: EntryId, millis: usize) -> Result<u8, Fail> {
+    let mut reply = [0u8; 1];
+    ask_out(say, link, ocall::Ask::Find(id), &mut reply, millis)?;
+    Ok(reply[0])
+}
+
+/// 客侧第二步（**剪**）：把那一号剪掉。答一格状态（[`ocall::OK`] = 剪掉了）。
+pub fn trim(say: PieToken, link: &Quay, id: EntryId, millis: usize) -> Result<u8, Fail> {
+    let mut reply = [0u8; 1];
+    ask_out(say, link, ocall::Ask::Trim(id), &mut reply, millis)?;
+    Ok(reply[0])
+}
+
+/// 客侧第二步（**列**）：看那一块 `Pane` 里有哪些**号**（[`Where::Root`] = 根那一层）。
+///
+/// 答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`：这一条的答案体是数据，码不能当成功值带回来
+/// （对照 [`find`]：那一档的码本身就是答案）。一推一读之间读不动 / 迟了 ⇒ [`ocall::BAD`]。
+pub fn list(say: PieToken, link: &Quay, at: Where, millis: usize) -> Result<Listing, u8> {
+    let mut reply = [0u8; ocall::LIST_REPLY_LEN];
+    let n = ask_out(say, link, ocall::Ask::List(at), &mut reply, millis).map_err(|_| ocall::BAD)?;
+    ocall::read_list(&reply[..n])
+}
+
+/// 客侧第二步（**译**）：按一条路问"那一格是几号"——**间接寻址那一手**。
+///
+/// 答话是号那一形（`[0] status [1 .. 9] 号`）：答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`。
+/// 拿到号之后同一条路就不必再念了——其余那几条一律按号走（名字只到这一格为止）。
+pub fn seek(say: PieToken, link: &Quay, road: &[Name], millis: usize) -> Result<EntryId, u8> {
+    let mut reply = [0u8; ocall::ID_REPLY_LEN];
+    let n =
+        ask_out(say, link, ocall::Ask::Road(road), &mut reply, millis).map_err(|_| ocall::BAD)?;
+    ocall::read_id(&reply[..n])
+}
+
+/// 客侧第二步（**名**）：这枚号此刻叫什么。
+///
+/// 名字**在答话那一侧**（问话里只有号）——长短由那一帧说。
+pub fn name(say: PieToken, link: &Quay, id: EntryId, millis: usize) -> Result<Name, u8> {
     let mut reply = [0u8; ocall::NAME_REPLY_LEN];
-    let n = ask_into(
-        say,
-        link,
-        host,
-        ocall::NAME,
-        &[],
-        id.to_bytes(),
-        &mut reply,
-        millis,
-    )
-    .map_err(|_| ocall::BAD)?;
+    let n = ask_out(say, link, ocall::Ask::Name(id), &mut reply, millis).map_err(|_| ocall::BAD)?;
     ocall::read_name(&reply[..n])
 }
 
@@ -206,7 +186,7 @@ pub fn take(link: &Quay, host: TaskId) -> Option<PieToken> {
     }
 }
 
-/// 收下树路上那一格：**答话的是谁**（[`tell`] 的对偶）。
+/// 收下树路上那一格：**答话的是谁**（[`open`] 的对偶）。
 ///
 /// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上树（客人报它自己的超时，不猜）。
 pub(crate) fn hear(quay: &Quay, millis: usize) -> Option<TaskId> {

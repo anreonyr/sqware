@@ -148,7 +148,7 @@ fn serve_one(tree: &mut Operator, guest: Guest) {
     let Some(ask) = guest.ask() else {
         return;
     };
-    let mut buf = [0u8; ocall::ASK_LEN];
+    let mut buf = [0u8; ocall::ASK_MAX];
     let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(&mut buf, 0) else {
         return;
     };
@@ -162,8 +162,9 @@ fn serve_one(tree: &mut Operator, guest: Guest) {
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。
 ///
-/// **先读动作码、再解载荷**；`land` 那一码**必须带入口号**（没带就是一句读不懂的 `file`：
-/// 不猜、不崩）。返**帧长**——答案写进调用方那只缓冲（[`ocall::REPLY_MAX`]）。
+/// **先读动作码、再按那个动作的形状解载荷**（[`ocall::unpack_ask`]）：解不出来就是一句读不懂的
+/// 帧（不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）。返**帧长**——答案写进
+/// 调用方那只缓冲（[`ocall::REPLY_MAX`]）。
 fn answer(
     tree: &mut Operator,
     want: &[u8],
@@ -173,51 +174,59 @@ fn answer(
     let Some(op) = ocall::op_of(want) else {
         return status(out, ocall::BAD);
     };
-    let Some((segs, count, tail)) = ocall::unpack_ask(want) else {
+    let Some(ask) = ocall::unpack_ask(op, want) else {
         return status(out, ocall::BAD);
     };
     // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那七条也各有这条判据）。
-    if count > Operator::PATH_MAX {
-        return status(out, ocall::FULL);
+    if let ocall::AskIn::Road(_, count) = ask {
+        if count > Operator::ROAD_MAX {
+            return status(out, ocall::FULL);
+        }
     }
-    let path = &segs[..count];
-    let said = match op {
-        // 一句没带入口号的 `land`：这不是"树上没有这一段"，是**这一问读不懂** ⇒ `BAD`。
-        ocall::LAND if ocall::entry_in(tail) == PieToken::NONE => return status(out, ocall::BAD),
-        ocall::LAND => tree.land(path, ocall::entry_in(tail)),
-        ocall::PART => tree.part(path),
-        // 查到就**把树上那一份转授给客人**：Pie 不从报文里走，从会话里走。
-        // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
-        ocall::FIND => {
-            let mut grant = Ok(());
-            tree.find(path, |pie| {
-                grant = ocall::give(pie, who).map(|_| ());
-            })
-            .and(grant)
-        }
-        ocall::TRIM => tree.trim(path),
-        // **两条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
-        ocall::LIST => {
-            return match tree.list(path) {
-                Ok(ids) => ocall::pack_list(out, ids),
-                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
-            };
-        }
-        ocall::NAME => {
-            return match tree.name(ocall::id_in(tail)) {
-                Ok(name) => ocall::pack_name(out, name),
-                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
-            };
-        }
-        // **问号那一档**：名字只能走到这里——拿到号之后，其余原语一律按号走。
-        ocall::SEEK => {
-            return match tree.seek(path) {
+    let said = match ask {
+        // **两条答号的**：立/分的人自己得知道立成了几号——答案体不是一格状态。
+        ocall::AskIn::Land { at, name, entry } => {
+            return match tree.land(at, name, entry) {
                 Ok(id) => ocall::pack_id(out, id),
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
             };
         }
-        // 没见过的动作码：与"这条路上没有这一段"同一句话（不另立一格）。
-        _ => Err(Fail::Unknown),
+        ocall::AskIn::Part { at, name } => {
+            return match tree.part(at, name) {
+                Ok(id) => ocall::pack_id(out, id),
+                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+            };
+        }
+        // 查到就**把树上那一份转授给客人**：Pie 不从报文里走，从会话里走。
+        // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
+        ocall::AskIn::Find(id) => {
+            let mut grant = Ok(());
+            tree.find(id, |pie| {
+                grant = ocall::give(pie, who).map(|_| ());
+            })
+            .and(grant)
+        }
+        ocall::AskIn::Trim(id) => tree.trim(id),
+        // **三条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
+        ocall::AskIn::List(at) => {
+            return match tree.list(at) {
+                Ok(ids) => ocall::pack_list(out, ids),
+                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+            };
+        }
+        ocall::AskIn::Name(id) => {
+            return match tree.name(id) {
+                Ok(name) => ocall::pack_name(out, name),
+                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+            };
+        }
+        // **译号那一档**：名字只能走到这里——拿到号之后，其余原语一律按号走。
+        ocall::AskIn::Road(road, count) => {
+            return match tree.seek(&road[..count.min(Operator::ROAD_MAX)]) {
+                Ok(id) => ocall::pack_id(out, id),
+                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+            };
+        }
     };
     status(out, ocall::fail_to_code(said.err()))
 }
