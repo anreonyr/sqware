@@ -3,15 +3,20 @@
 //! 本文件**不做裁决**：盟册的规矩全在 [`core`](super::core)。这里只有三件事——
 //! 编一帧 / 解一帧、把失败域翻成答话码、把答案编进答话那一格。
 //!
-//! # 帧（与 [`principal`](crate::principal::call) 同一形状）
+//! # 帧（与 [`principal`](crate::principal::call) 同一形状；窗那一档多一种答形）
 //!
 //! ```text
 //!   Ask    [0] op   [1..9] a   [9..17] b          ASK_LEN   = 17
 //!   Reply  [0] status  [1] flag  [2..10] a        REPLY_LEN = 10
+//!          [0] status  [1] 未完  [2] 条数  [3..] 号    SEQ_REPLY_LEN = 131
 //! ```
 //!
 //! `a` / `b` 两格的**意义由动作码定**（`FOUND` 两格都空，`ENTER` / `LEAVE` 只用 `a`，
-//! `AMID` 两格都用）；答话定长，故两侧都不用攒缓冲、也不用问长度。
+//! `AMID` 两格都用）；答话的两种形状**各有各的上界**，服务端按 [`REPLY_MAX`] 备一只缓冲。
+//!
+//! **游标是阈值，说在 `b` 那一格**：`b = 游标 + 1`，`0` = 没有游标（从头取）。加一是有理的
+//! ——**零号是真格子**（`PolicyId::ROOT` 是 0、`CoalitionId(0)` 是一枚普通的盟），
+//! 拿 0 当"没有"会把那一位漏掉。取的是**号 > 阈值**的那些，故没有"过期游标"这回事。
 //!
 //! **报文里没有"我是谁"这一格**：发送者由内核在 `Push` 那一刻盖章，Server 拿去名册问。
 //!
@@ -27,18 +32,17 @@
 //! 的顺序**排、`BAD` 收尾。故本族按自己的两格排（见 [`fail_codes!`] 那张表）：照抄别家只会
 //! 让自己表里空出一个号。
 
-use super::core::{CoalitionId, Fail};
+use super::core::{CoalitionId, Fail, Id, WINDOW_CAP, Window};
 
 // ── 码 ──────────────────────────────────────────────────────
 
-/// 四条线上动作——**与核心那四条原语同名**：线上与模型是同一件事的两层，不该各起一套词。
-///
-/// `band` / `bloc` 不在其中：它们**今天不上线**（答案是一串号，带回来要另开一种帧形——
-/// 见正文）。
+/// 六条线上动作——**与核心那六条原语同名**：线上与模型是同一件事的两层，不该各起一套词。
 pub const FOUND: u8 = 1;
 pub const ENTER: u8 = 2;
 pub const LEAVE: u8 = 3;
 pub const AMID: u8 = 4;
+pub const BAND: u8 = 5;
+pub const BLOC: u8 = 6;
 
 /// 答话那一格：失败域那两格 + "读不懂"。
 ///
@@ -54,6 +58,17 @@ pub const ASK_LEN: usize = 1 + 8 + 8;
 
 /// 一答的长度：状态 + 有没有 + 一个 8 字节的答案。
 pub const REPLY_LEN: usize = 1 + 1 + 8;
+
+/// 一窗答话的长度：状态 + **未完** + 条数 + [`WINDOW_CAP`] 枚号。
+///
+/// 盟籍没有上限（一格盟可以有很多人），故这一族**必须带"未完"那一格**——窗装不下是常态；
+/// 对照 operator 那一侧：一条 pane 本来就不超过 `PANE_CAP`，故那边不用带。
+pub const SEQ_REPLY_LEN: usize = 1 + 1 + 1 + WINDOW_CAP * 8;
+
+/// 答话那一侧的上界：**服务端只备这一只缓冲**（两种答形里大的那个）。
+pub const REPLY_MAX: usize = SEQ_REPLY_LEN;
+
+const _: () = assert!(REPLY_LEN <= REPLY_MAX);
 
 // ── 编 / 解 ─────────────────────────────────────────────────
 
@@ -117,6 +132,69 @@ pub fn reply_yes(yes: bool) -> [u8; REPLY_LEN] {
     let mut out = reply_status(OK);
     out[1] = yes as u8;
     out
+}
+
+// ── 窗：游标与一窗号 ────────────────────────────────────────
+
+/// 游标那一格：**`b` = 游标 + 1**，`0` = 没有游标（从头取）。
+///
+/// 加一是那个双射：零号是真格子（`PolicyId::ROOT` 是 0），拿 0 当"没有"会把它漏掉。
+pub fn cursor_of<T: Id>(after: Option<T>) -> u64 {
+    match after {
+        Some(at) => at.get() as u64 + 1,
+        None => 0,
+    }
+}
+
+/// 游标那一格解回来（`0` ⇒ `None`；其余 ⇒ 裸号）。
+pub fn cursor_in(b: u64) -> Option<usize> {
+    if b == 0 { None } else { Some(b as usize - 1) }
+}
+
+/// 把一窗号编成一帧答话（写进服务端那只缓冲），返**帧长**（= `3 + 8 × 枚数`）。
+pub fn pack_seq<T: Id>(out: &mut [u8; REPLY_MAX], window: &Window<T>) -> usize {
+    out[0] = OK;
+    out[1] = window.more() as u8;
+    out[2] = window.len() as u8;
+    for (i, id) in window.iter().enumerate() {
+        let at = 3 + i * 8;
+        out[at..at + 8].copy_from_slice(&(id.get() as u64).to_le_bytes());
+    }
+    3 + window.len() * 8
+}
+
+/// 解开一帧「窗答」：答话那一格不是 [`OK`] ⇒ `Err(那一格)`。
+///
+/// 帧长必须恰好 `3 + 8 × 条数`、条数不超过 [`WINDOW_CAP`]、未完那一格只许 0 / 1——
+/// 短一字节即是读不懂（[`BAD`]）：这一族**不猜**。
+pub fn read_seq<T: Id>(bytes: &[u8]) -> Result<Window<T>, u8> {
+    let Some((&code, rest)) = bytes.split_first() else {
+        return Err(BAD);
+    };
+    if code != OK {
+        return Err(code);
+    }
+    let Some((&more, rest)) = rest.split_first() else {
+        return Err(BAD);
+    };
+    let Some((&count, body)) = rest.split_first() else {
+        return Err(BAD);
+    };
+    let more = match more {
+        0 => false,
+        1 => true,
+        _ => return Err(BAD),
+    };
+    let count = count as usize;
+    if count > WINDOW_CAP || body.len() != count * 8 {
+        return Err(BAD);
+    }
+    let ids = body.chunks_exact(8).map(|chunk| {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(chunk);
+        T::new(u64::from_le_bytes(raw) as usize)
+    });
+    Ok(Window::gather(more, ids))
 }
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────

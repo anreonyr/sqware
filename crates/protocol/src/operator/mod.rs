@@ -7,17 +7,18 @@
 //!   land  落   把一枚 Pie 落到一个名字上（贴一枚 Tile）
 //!   find  寻   走到头，把那一枚 Pie 交出去
 //!   trim  剪   剪掉一条
-//!   list  列   看一块 Pane 里有哪些名字
+//!   list  列   看一块 Pane 里有哪些**号**
+//!   name  名   这枚号此刻叫什么
 //! ```
 //!
-//! 五条都是 4 个字母；两个类型名与两条原语名**不同名**（`part` 建 `Pane`、`land` 落 `Tile`）——
+//! 六条都是 4 个字母；两个类型名与两条原语名**不同名**（`part` 建 `Pane`、`land` 落 `Tile`）——
 //! 这是照实记：名动同形那一格本来留给 `tile`，最后定的是 `land`（"落位"那个画面），
 //! 而 `seat` 因为与会话的 `Seat` / `Quay::seat` 撞在同一个文件里而被否掉。
 //!
 //! # 树
 //!
 //! ```text
-//!   Entry { 名字, 去处 }          名字 = 一段
+//!   Entry { 号, 名字, 去处 }       名字 = 一段，号 = 铸出来的那一个
 //!   Node  = Pane(Vec<Entry>)      窗格：还能往里走（可以再分）
 //!         | Tile(PieToken)        砖：到头了，就是内核那一枚
 //!   根    = 顶层那个 Vec<Entry>    空路 = 根
@@ -26,7 +27,13 @@
 //! 一条路是**段列表**（`&[Name]`），不是一个字符串：一段就是现成的 `Name`（定长 32 字节、
 //! 构造即校验）——于是"名字不合法"在类型上不存在，也没有分隔符 / 转义 / `..` 这些边界。
 //!
-//! # 五条原语
+//! # 名与号分开
+//!
+//! 机器用**号**（[`EntryId`]），人用**名**（`Name`）。号在 `part` / `land` 时铸、**换绑不动号**、
+//! `trim` 与 `find` 剔死则号失效（水位只上不下 ⇒ 号不重用）；**根没有号**，故 0 是第一个真格子。
+//! 名字**只是答话那一侧**的东西：问话仍按路（段列表）走，答话按号或按名各一条。
+//!
+//! # 六条原语
 //!
 //! | 原语 | 干什么 | 落在一枚条目上 |
 //! |---|---|---|
@@ -34,7 +41,8 @@
 //! | [`Operator::land`] | 落 | 贴一枚 `Tile`：最后一段空着就落上，占着就是换绑 |
 //! | [`Operator::find`] | 寻 | 走到头，把那一枚 Pie 交出去 |
 //! | [`Operator::trim`] | 剪 | 把路上那一条剪掉 |
-//! | [`Operator::list`] | 列 | 读一块 `Pane` 里的名字 |
+//! | [`Operator::list`] | 列 | 读一块 `Pane` 里的**号** |
+//! | [`Operator::name`] | 名 | 把一枚号翻成名字（全树扫） |
 //!
 //! **要动一块 `Pane`，先把它清空**——`land`（换绑）与 `trim` 是同一条规矩：
 //! 非空 `Pane` ⇒ [`Fail::NonEmpty`]。
@@ -50,7 +58,7 @@
 //!
 //! # 签名里没有"谁"
 //!
-//! 五条原语都没有 caller 参数、条目也没有 owner 字段：**谁能动由 Principal 那一层回答**
+//! 六条原语都没有 caller 参数、条目也没有 owner 字段：**谁能动由 Principal 那一层回答**
 //! （内核在 Push 时盖的发送者印章是现成的，Principal 拿去用，Operator 不看它）。
 //!
 //! # 两个注入的事实
@@ -66,14 +74,14 @@
 //!
 //! # 落地程度
 //!
-//! 三层都在：**核心**（[`core`]：树 + 五条原语 + 宿主用例）、**载体**（[`call`] 的帧与转发、
-//! [`desk`] 的客人小账）、**服务**（[`server`](/crate::operator::server) 的
+//! 三层都在：**核心**（[`core`]：树 + 六条原语 + 宿主用例）、**载体**（[`call`] 的帧与转发、
+//! 持树者那本客人小账 `desk`）、**服务**（[`server`](/crate::operator::server) 的
 //! `serve` / `attach` / 客侧三手，加 `prog-operator` 这个域；装配那一格在
 //! `programs/.../service.rs` 的 `Program::operator`）。
 //!
-//! **`list` 没有上线**：它的答案是一串名字，要另开一种帧形（今天只有一问一答一格状态那种），
-//! 故线上只有 `land` / `part` / `find` / `trim` 四码——`Operator::list` 仍住核心，只给本域
-//! 自己与宿主用例用。
+//! **六条都在线上**：四条一格状态的（`land` / `part` / `find` / `trim`）与两条答数据的
+//! （`list` 答一串号、`name` 答一枚名字）。**答话那一侧有三种帧形**，各有各的上界
+//! （见 [`call::REPLY_MAX`] 那一段）；`list` 与 `name` 分家，就是"名与号分开"那一条落地。
 
 // ── 载体：三侧分别住在哪 ───────────────────────────────────
 //
@@ -127,5 +135,5 @@ pub mod call;
 pub mod client;
 pub mod core;
 
-pub use call::{ASK_MARK, LINK, TIP_MARK, TIP_NAME};
-pub use core::{Entry, Fail, Node, Operator, Unship, VestedBy};
+pub use call::{ASK_MARK, LINK, Listing, TIP_MARK, TIP_NAME};
+pub use core::{Entry, EntryId, Fail, Node, Operator, Unship, VestedBy};

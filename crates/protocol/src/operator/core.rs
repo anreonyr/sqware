@@ -1,11 +1,11 @@
-//! operator 的核心 —— **树、五条原语（落 / 分 / 寻 / 剪 / 列）、失败域**。
+//! operator 的核心 —— **树、六条原语（落 / 分 / 寻 / 剪 / 列 / 名）、失败域**。
 //!
 //! 本文件**不碰内核**：判据只有一条可机械检查的纪律——
 //!
 //! > `core.rs` 里不出现 `runtime::`。
 //!
 //! 两个外部事实是**注入**的：[`VestedBy`]（那一枚 Pie 还答得出吗）与 [`Unship`]（把我这一份放下）。
-//! 于是喂两个假闭包就能把这棵树与五条原语的规矩推理干净，换载体不必重写。
+//! 于是喂两个假闭包就能把这棵树与六条原语的规矩推理干净，换载体不必重写。
 
 use alloc::vec::Vec;
 
@@ -13,11 +13,49 @@ use env::{Name, PieToken, TaskId};
 
 // ── 结构 ────────────────────────────────────────────────────
 
-/// 一条条目：**名字 + 去处**。
+/// 一枚条目的**号**：机器用的那一个。
+///
+/// **裸号**：与 [`PolicyId`](crate::principal::PolicyId) / [`CoalitionId`](crate::coalition::CoalitionId)
+/// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（[`EntryId::new`]），
+/// "这枚号还在不在"由每条读查一次树答出来。
+///
+/// **没有 `ROOT`**（对照另两种号：那两处的 `ROOT` 都在，这里特意没有）：根不是谁条目里的
+/// 一条，故**根没有号**——`EntryId(0)` 是第一个**真格子**（`sys`），不是"没有"。
+/// "没有这个号"由 [`Fail::Unknown`] 答，别拿 0 当空。
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct EntryId(usize);
+
+impl EntryId {
+    /// 由裸号造一个（线上解码面；已失效的号从这里进来）。
+    pub const fn new(raw: usize) -> EntryId {
+        EntryId(raw)
+    }
+
+    /// 裸号。
+    pub const fn get(self) -> usize {
+        self.0
+    }
+
+    /// 线上的那一格（8 字节小端）。
+    pub const fn to_bytes(self) -> [u8; 8] {
+        (self.0 as u64).to_le_bytes()
+    }
+
+    /// 由线上字节还原（**不校验**：还在不在由核心答）。
+    pub const fn from_bytes(bytes: [u8; 8]) -> EntryId {
+        EntryId(u64::from_le_bytes(bytes) as usize)
+    }
+}
+
+/// 一条条目：**号 + 名字 + 去处**。
 ///
 /// 名字只是**一段**（`Name`：定长 32 字节、构造即校验），不是整条路。
+///
+/// 号是机器的：`part` / `land` 铸一枚，此后**换绑不动号**；`trim` 与 [`Operator::find`]
+/// 的剔死让那一条走掉 ⇒ 号随之失效（水位不回收，号不重用）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
+    id: EntryId,
     name: Name,
     node: Node,
 }
@@ -32,6 +70,11 @@ pub enum Node {
 }
 
 impl Entry {
+    /// 这一条的号。
+    pub fn id(&self) -> EntryId {
+        self.id
+    }
+
     /// 这一条叫什么（一段）。
     pub fn name(&self) -> Name {
         self.name
@@ -43,7 +86,7 @@ impl Entry {
     }
 }
 
-/// 五条原语会失败在哪一格。**一格对应一个不同的下一步**。
+/// 六条原语会失败在哪一格。**一格对应一个不同的下一步**。
 ///
 /// **没有"名字已被占"那一格**：同名接手一枚 `Tile`、或一块**空的** `Pane`，都是换绑
 /// （见 [`Operator::land`] / [`Operator::part`]）；而 owner 归 Principal，Operator 分不出
@@ -82,6 +125,11 @@ pub type Unship = fn(PieToken) -> Result<(), ()>;
 /// 根 = `root` 那一叠条目；**空路就是根**（[`Operator::list`] 列的就是它那一层）。
 pub struct Operator {
     root: Vec<Entry>,
+    /// 铸号的水位：**只增**（全文件没有一处减它）。
+    ///
+    /// 剔掉一条不回收号 ⇒ **号不重用**：一枚旧号要么还指着原来那一格，要么指空
+    /// （[`Fail::Unknown`]），不会悄悄指到后铸的那一条身上。
+    next: usize,
     vested_by: VestedBy,
     unship: Unship,
 }
@@ -96,6 +144,7 @@ impl Operator {
     pub const fn new(vested_by: VestedBy, unship: Unship) -> Operator {
         Operator {
             root: Vec::new(),
+            next: 0,
             vested_by,
             unship,
         }
@@ -114,11 +163,13 @@ impl Operator {
     pub fn land(&mut self, path: &[Name], pie: PieToken) -> Result<(), Fail> {
         Self::checked(path)?;
         let unship = self.unship;
+        let fresh = EntryId::new(self.next);
         let last = path[path.len() - 1];
         let level = self.level_mut(path)?;
         match level.iter().position(|e| e.name == last) {
             Some(at) => {
                 // 已占：只有"一枚 `Tile`"与"空 `Pane`"可以换绑；前者那一枚要放下。
+                // **换绑不动号**：那一格还是同一格。
 
                 let old = match &level[at].node {
                     Node::Tile(old) => Some(*old),
@@ -136,9 +187,11 @@ impl Operator {
                     return Err(Fail::Full);
                 }
                 level.push(Entry {
+                    id: fresh,
                     name: last,
                     node: Node::Tile(pie),
                 });
+                self.next += 1;
                 Ok(())
             }
         }
@@ -152,6 +205,7 @@ impl Operator {
     pub fn part(&mut self, path: &[Name]) -> Result<(), Fail> {
         Self::checked(path)?;
         let unship = self.unship;
+        let fresh = EntryId::new(self.next);
         let last = path[path.len() - 1];
         let level = self.level_mut(path)?;
         match level.iter().position(|e| e.name == last) {
@@ -172,9 +226,11 @@ impl Operator {
                     return Err(Fail::Full);
                 }
                 level.push(Entry {
+                    id: fresh,
                     name: last,
                     node: Node::Pane(Vec::new()),
                 });
+                self.next += 1;
                 Ok(())
             }
         }
@@ -241,11 +297,14 @@ impl Operator {
         Ok(())
     }
 
-    /// **列**：看一块 `Pane` 里有哪些名字。
+    /// **列**：看一块 `Pane` 里有哪些**号**。
     ///
     /// **空路 = 根**（列根那一层）。缺一段 ⇒ [`Fail::Unknown`]；走不动或到头是一枚 `Tile`
     /// ⇒ [`Fail::NotAPane`]。**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
-    pub fn list(&self, path: &[Name]) -> Result<impl Iterator<Item = Name> + '_, Fail> {
+    ///
+    /// 答的是号、不是名字（机器用号，人用名——名字另问 [`Operator::name`]）。
+    /// 顺序是**号序**：pane 里本来是登记序，而号单调 ⇒ 两者一致，不必额外排。
+    pub fn list(&self, path: &[Name]) -> Result<impl Iterator<Item = EntryId> + '_, Fail> {
         if path.len() > Self::PATH_MAX {
             return Err(Fail::Full);
         }
@@ -260,7 +319,31 @@ impl Operator {
                 Node::Tile(_) => return Err(Fail::NotAPane),
             };
         }
-        Ok(level.iter().map(|e| e.name))
+        Ok(level.iter().map(|e| e.id))
+    }
+
+    /// **名**：这枚号此刻叫什么。
+    ///
+    /// **一趟全树扫**（O(全树)、零新状态）：要 O(深度) 就得让 `Entry` 记父路，多一格、
+    /// 删格要维护，本刀不取。
+    ///
+    /// 号失效（`trim` 剪掉、[`Operator::find`] 剔死）与从来没铸过**长得一样** ⇒ 都答
+    /// [`Fail::Unknown`]：水位只往上走，本层不记墓碑，也分不出这两件事。
+    pub fn name(&self, id: EntryId) -> Result<Name, Fail> {
+        fn seek(level: &[Entry], id: EntryId) -> Option<Name> {
+            for entry in level {
+                if entry.id == id {
+                    return Some(entry.name);
+                }
+                if let Node::Pane(inner) = &entry.node {
+                    if let Some(found) = seek(inner, id) {
+                        return Some(found);
+                    }
+                }
+            }
+            None
+        }
+        seek(&self.root, id).ok_or(Fail::Unknown)
     }
 
     // ── 走路 ────────────────────────────────────────────────
@@ -301,7 +384,7 @@ impl Operator {
 // 跑法与实测有效的那条路写在 `crates/protocol/Cargo.toml` 的 `[lib]` 注记里
 // （本 crate 依赖 `runtime`，而它含 RISC-V 汇编 ⇒ 临时宿主驱动 `include!` 本文件）。
 //
-// 两个注入点就是全部外部依赖，故喂两张假表即可把树与五条原语的规矩推理干净。
+// 两个注入点就是全部外部依赖，故喂两张假表即可把树与六条原语的规矩推理干净。
 
 #[cfg(test)]
 mod tests {
@@ -384,9 +467,13 @@ mod tests {
         texts.iter().map(|t| name(t)).collect()
     }
 
-    /// 列一层，收成 `Vec`（免得到处写 `.collect::<Vec<_>>()`）。
+    /// 列一层，把号换回名字，收成 `Vec`（免得到处写 `.collect::<Vec<_>>()`）。
+    ///
+    /// **走的就是线上那一趟**：先 `list` 收号，再逐枚 `name`——故这批判据顺带把
+    /// 「号 ↔ 名」这一对对得起来也记下来了。
     fn names(op: &Operator, at: &[Name]) -> Result<Vec<Name>, Fail> {
-        op.list(at).map(|it| it.collect())
+        let ids: Vec<EntryId> = op.list(at)?.collect();
+        ids.into_iter().map(|id| op.name(id)).collect()
     }
 
     /// 寻一条路，把交出来的那一枚记下来。
@@ -593,5 +680,36 @@ mod tests {
         assert_eq!(t.trim(&[]), Err(Fail::Unknown));
         assert_eq!(look(&mut t, &[]), Err(Fail::NotATile));
         assert_eq!(names(&t, &[]), Ok(std::vec![]));
+    }
+
+    #[test]
+    fn zero_is_a_real_cell() {
+        let _serial = serial();
+        let mut t = tree();
+        // 第一条铸出来的号就是 0——**不是"没有"**：根没有号，0 是真格子。
+        assert_eq!(t.part(&path(&["sys"])), Ok(()));
+        let ids: Vec<EntryId> = t.list(&[]).unwrap().collect();
+        assert_eq!(ids, std::vec![EntryId::new(0)]);
+        assert_eq!(t.name(EntryId::new(0)), Ok(name("sys")));
+        assert_eq!(
+            t.name(EntryId::new(1)),
+            Err(Fail::Unknown),
+            "没铸过 ⇒ Unknown"
+        );
+    }
+
+    #[test]
+    fn rebinding_keeps_the_number_and_trimming_retires_it() {
+        let _serial = serial();
+        let mut t = tree();
+        live(1);
+        assert_eq!(t.land(&path(&["log"]), tok(1)), Ok(()));
+        let id = t.list(&[]).unwrap().next().unwrap();
+        live(2);
+        assert_eq!(t.land(&path(&["log"]), tok(2)), Ok(()));
+        assert_eq!(t.list(&[]).unwrap().next(), Some(id), "换绑不动号");
+        assert_eq!(t.name(id), Ok(name("log")));
+        assert_eq!(t.trim(&path(&["log"])), Ok(()));
+        assert_eq!(t.name(id), Err(Fail::Unknown), "剪掉 ⇒ 号失效");
     }
 }

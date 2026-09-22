@@ -7,8 +7,8 @@
 //! # 一条关系、两个方向、三格写三格读
 //!
 //! ```text
-//!   盟籍   PolicyId ──→ CoalitionId      这条身份在哪些盟里      bloc(p)   核心
-//!          CoalitionId ──→ PolicyId      这枚盟里有谁            band(c)   核心
+//!   盟籍   PolicyId ──→ CoalitionId      这条身份在哪些盟里      bloc(p)   核心 + 上线
+//!          CoalitionId ──→ PolicyId      这枚盟里有谁            band(c)   核心 + 上线
 //!   号     0 .. next                     铸过就一直在（没有墓碑、没有 id 表）
 //! ```
 //!
@@ -26,8 +26,8 @@
 //! | [`Coalition::enter`] | 入 | 把**发送者此刻代表的那条身份**放进 `c` | 发送者那一格 | 是 |
 //! | [`Coalition::leave`] | 出 | 把它从 `c` 拿出来（撞空也成） | 发送者那一格 | 是 |
 //! | [`Coalition::amid`] | 在 | `p` 在不在 `c` 里 | 无（读是公开的） | 是 |
-//! | [`Coalition::band`] | 员 | `c` 的成员（一串号） | 无 | **否**（核心有，同 `operator::list`） |
-//! | [`Coalition::bloc`] | 籍 | `p` 的盟籍（一串号） | 无 | **否**（同上） |
+//! | [`Coalition::band`] | 员 | `c` 的成员（**一趟取窗**：号序 + 阈值游标） | 无 | 是 |
+//! | [`Coalition::bloc`] | 籍 | `p` 的盟籍（同上） | 无 | 是 |
 //!
 //! **写只有三条，读全是公开的**：答案不是秘密，本协议不授予任何东西——故读那三条里
 //! **没有"对端说了不"这一档**，唯一会答的失败是"这枚号没铸过"（[`Fail::Unknown`]）；
@@ -135,8 +135,9 @@
 //! ```text
 //!   Ask    [0] op   [1..9] a   [9..17] b          一问：动作码 + 两个 8 字节的号
 //!   Reply  [0] status  [1] flag  [2..10] a        一答：状态 + 有没有 + 一个号
+//!          [0] status  [1] 未完  [2] 条数  [3..] 号   一窗：状态 + 未完 + 条数 + 一串号
 //!
-//!   动作码  FOUND=1 ENTER=2 LEAVE=3 AMID=4        （band / bloc 无码）
+//!   动作码  FOUND=1 ENTER=2 LEAVE=3 AMID=4 BAND=5 BLOC=6
 //!   答话    OK=0 UNKNOWN=1 NO_ROOM=2 BAD=3        （BAD 在表外）
 //! ```
 //!
@@ -149,6 +150,7 @@
 //!   OK                     enter / leave          只答状态
 //!   OK + 值（a 那一格）     found                  答那枚新号（零号也是合法答案，故不用 flag）
 //!   OK + flag              amid                   是 / 不是
+//!   OK + 未完 + 一串号      band / bloc            一窗号（`more` = 窗外还有）
 //!   UNKNOWN                found / enter / leave / amid / band   盟不存在，或发送者没绑
 //!   NO_ROOM                enter（只有它）         备不下那一行
 //!   表外 BAD               读不懂这一问
@@ -201,7 +203,11 @@
 //! - **不验身份**：表里的 `who` 只有一个来路（`Resolve(发送者)`），而它只答树里的号或"没绑"
 //!   ——**不变量比检查硬**。故本册不去问"这条身份还在不在"：`bloc` 对一条假号答空串，
 //!   `amid` 对一条假号答 `false`，都不是失败。
-//! - **没有语义**：`amid` 为真**不蕴含任何权限**；`band` / `bloc` 的顺序是登记序，不是承诺。
+//! - **没有语义**：`amid` 为真**不蕴含任何权限**；`band` / `bloc` 答**号序升序**（不是登记序）。
+//! - **取窗的游标是阈值**：取的是"号 > 游标"的那些，游标 = 上一趟的**末一枚**。故没有"过期
+//!   游标"这回事（`cookieverf` 那一格不需要）；**代价照实记**：两次取窗之间册变了 ⇒ 跨页
+//!   **只会漏，不会重**。`b` 那一格写成"游标 + 1"（`0` = 没有游标）——零号是真格子
+//!   （`PolicyId::ROOT` 是 0、`CoalitionId(0)` 是一枚普通的盟），拿 0 当"没有"会漏掉它。
 //! - **没有配额**：条数是策略、容器要有界 ⇒ 落点在分配那一格（[`Coalition::enter`] 的
 //!   [`Fail::NoRoom`]）；另两条写与两条读**不分配**。号空间只受 `usize` 宽度约束（`found`
 //!   到不了 `NoRoom`），到 `usize::MAX` 那一步在本仓不可达（铸一枚要一趟问答）——不造机制。
@@ -221,4 +227,4 @@ pub mod client;
 pub mod core;
 
 pub use call::{BACK, DIR, NAME};
-pub use core::{Coalition, CoalitionId, Fail};
+pub use core::{Coalition, CoalitionId, Fail, Id, WINDOW_CAP, Window};

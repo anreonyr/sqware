@@ -7,7 +7,7 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 四十四条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
+#   2) 五十三条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
 #      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
@@ -28,7 +28,18 @@
 #      **`member: amid(sub,c0)=false`** / **`member: amid(me,c0)=true`**（**出的是那一对，
 #      不是那个人**）/ **`member: amid(me,out)=err:unknown`**（第三态：这枚盟没铸过）/
 #      **`member: amid(out,me)=false`**（伪造的身份号**不是失败**）/
-#      **`member: done`**）；
+#      **`member: done`** /
+#      **`echo: list root=0,3`** / **`echo: list names=sys,device`**（**一串**那一刀：
+#      `list` 答号、`name` 按号答名——**名与号分开**；根没有号，故 0 是第一个真格子 `sys`）/
+#      **`echo: list device=4,5,6`**（`/device` 那三个号：router / uart / rtc）/
+#      **`echo: name miss=true`**（没铸过的号答 `Unknown`，不是"答了一格空名字"）/
+#      **`echo: seq=0`** /
+#      **`member: band(c0)=n1 more=false`** / **`member: band(c0,next)=n0 more=false`**
+#      （**游标是阈值**：拿末一枚接着取 ⇒ 空窗，不是错，也没有"过期游标"）/
+#      **`member: band(out)=err:unknown`** / **`member: bloc(me)=n2 more=false`**
+#      （反向：这条身份在两枚盟里）。三格读数里的 `ids=` 只记在日志里，**不钉判据**：
+#      身份号跟着启动次序走（同一份镜像实测 12 / 13 两个值），钉它等于把一条与取窗无关的数
+#      钉进门里——这正是"判据跟着读数走"的另一半：**判据只钉那条轴上的数**）；
 #   3) 收尾摘要那一行 **`irq: ring=…`** 仍在——外部中断那枚铃的读数：摇了几次 / 其中几次
 #      "还响着" / 其中**空闲核补摇**了几支（见下）。
 #
@@ -236,6 +247,15 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "member: amid(me,out)=err:unknown" "$log" \
         && grep -q "member: amid(out,me)=false" "$log" \
         && grep -q "member: done" "$log" \
+        && grep -q "echo: list root=0,3" "$log" \
+        && grep -q "echo: list names=sys,device" "$log" \
+        && grep -q "echo: list device=4,5,6" "$log" \
+        && grep -q "echo: name miss=true" "$log" \
+        && grep -q "echo: seq=0" "$log" \
+        && grep -q "member: band(c0)=n1 more=false" "$log" \
+        && grep -q "member: band(c0,next)=n0 more=false" "$log" \
+        && grep -q "member: band(out)=err:unknown" "$log" \
+        && grep -q "member: bloc(me)=n2 more=false" "$log" \
         && grep -q "irq: ring=" "$log" \
         && grep -q "echo: ready" "$log"; }; then
     echo "round $i: FAIL 启动读数不全（$log）"

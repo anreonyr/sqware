@@ -155,32 +155,36 @@ fn serve_one(tree: &mut Operator, guest: Guest) {
     let Some(want) = buf.get(..n) else {
         return;
     };
-    let answer = answer(tree, want, guest.who());
-    let _ = mail::HolePie::from_token(guest.reply()).push(&answer);
+    let mut reply = [0u8; ocall::REPLY_MAX];
+    let said = answer(tree, want, guest.who(), &mut reply);
+    let _ = mail::HolePie::from_token(guest.reply()).push(&reply[..said]);
 }
 
-/// 把一句问交给树，编出一句答（**一格**：读不懂也答，答 `BAD`）。
+/// 把一句问交给树，编出一句答（**答话有三种形状**，见 [`ocall`] 的帧那一节）。
 ///
 /// **先读动作码、再解载荷**；`land` 那一码**必须带入口号**（没带就是一句读不懂的 `file`：
-/// 不猜、不崩）。
-fn answer(tree: &mut Operator, want: &[u8], who: TaskId) -> [u8; 1] {
+/// 不猜、不崩）。返**帧长**——答案写进调用方那只缓冲（[`ocall::REPLY_MAX`]）。
+fn answer(
+    tree: &mut Operator,
+    want: &[u8],
+    who: TaskId,
+    out: &mut [u8; ocall::REPLY_MAX],
+) -> usize {
     let Some(op) = ocall::op_of(want) else {
-        return [ocall::BAD];
+        return status(out, ocall::BAD);
     };
-    let Some((segs, count, seed)) = ocall::unpack_ask(want) else {
-        return [ocall::BAD];
+    let Some((segs, count, tail)) = ocall::unpack_ask(want) else {
+        return status(out, ocall::BAD);
     };
-    // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那四条也各有这条判据）。
+    // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那六条也各有这条判据）。
     if count > Operator::PATH_MAX {
-        return [ocall::FULL];
+        return status(out, ocall::FULL);
     }
     let path = &segs[..count];
-    // 一句没带入口号的 `land`：这不是"树上没有这一段"，是**这一问读不懂** ⇒ `BAD`。
-    if op == ocall::LAND && seed == PieToken::NONE {
-        return [ocall::BAD];
-    }
     let said = match op {
-        ocall::LAND => tree.land(path, seed),
+        // 一句没带入口号的 `land`：这不是"树上没有这一段"，是**这一问读不懂** ⇒ `BAD`。
+        ocall::LAND if ocall::entry_in(tail) == PieToken::NONE => return status(out, ocall::BAD),
+        ocall::LAND => tree.land(path, ocall::entry_in(tail)),
         ocall::PART => tree.part(path),
         // 查到就**把树上那一份转授给客人**：Pie 不从报文里走，从会话里走。
         // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
@@ -192,10 +196,29 @@ fn answer(tree: &mut Operator, want: &[u8], who: TaskId) -> [u8; 1] {
             .and(grant)
         }
         ocall::TRIM => tree.trim(path),
+        // **两条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
+        ocall::LIST => {
+            return match tree.list(path) {
+                Ok(ids) => ocall::pack_list(out, ids),
+                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+            };
+        }
+        ocall::NAME => {
+            return match tree.name(ocall::id_in(tail)) {
+                Ok(name) => ocall::pack_name(out, name),
+                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+            };
+        }
         // 没见过的动作码：与"这条路上没有这一段"同一句话（不另立一格）。
         _ => Err(Fail::Unknown),
     };
-    [ocall::fail_to_code(said.err())]
+    status(out, ocall::fail_to_code(said.err()))
+}
+
+/// 一格状态的答：写进 `out` 的第一格，返 1。
+fn status(out: &mut [u8; ocall::REPLY_MAX], code: u8) -> usize {
+    out[0] = code;
+    1
 }
 
 /// 转授来的那一枚答话路（**写端**，落在本表里）。

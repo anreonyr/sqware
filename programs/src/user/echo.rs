@@ -14,8 +14,9 @@
 //!   3  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
 //!   4  FIND "/device/uart"：**先找控制台**——找到就拿到"从设备读"的那一枚
 //!   5  上树一趟：PART / LAND / FIND / take / TRIM（本域是第一位真客人）
-//!   6  从控制台读：**一条消息 = 一次排空**（字节流，边界无意义）⇒ **攒够一行**写一行
-//!   7  读到一行 `exit` 就退场（域退场 ⇒ 编排域收场 ⇒ 引导域退 ⇒ 停机）
+//!   6  上树第二趟：**一串**——LIST 列根、NAME 按号翻名、LIST /device、NAME 一枚没铸过的号
+//!   7  从控制台读：**一条消息 = 一次排空**（字节流，边界无意义）⇒ **攒够一行**写一行
+//!   8  读到一行 `exit` 就退场（域退场 ⇒ 编排域收场 ⇒ 引导域退 ⇒ 停机）
 //! ```
 //!
 //! # 为什么按**行**回显，而不是读到几个字节就写几个
@@ -56,11 +57,13 @@ use protocol::session::Quay;
 use protocol::system::board::client as board;
 
 use alloc::format;
+use alloc::string::String;
 use core::time::Duration;
 
 use env::DBCN_MAX;
 use env::{Name, PieToken, TaskId};
 use protocol::operator::call as ocall;
+use protocol::operator::{EntryId, Listing};
 use protocol::system::board::call as bcall;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
@@ -124,6 +127,10 @@ extern "C" fn main() -> ! {
     // 二、上树一趟：**本域是第一位真客人**——把入口挂到树上、再查回来取一枚、剪掉一块空 Pane。
     let op = trip(&tree, talk, host);
     let _ = debug::put(&format!("echo: op={op}"));
+
+    // 三、上树第二趟：**一串**（列号 → 按号翻名 → 列 `/device` → 问一枚没铸过的号）。
+    let seq = serial(&tree, talk, host);
+    let _ = debug::put(&format!("echo: seq={seq}"));
 
     let Some(console) = console else {
         exit_with(E_NO_CONSOLE)
@@ -237,4 +244,68 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         "echo: tree part={a} land={b} find={c} got={got} trim={d}"
     ));
     d
+}
+
+/// 上树第二趟（**一串**）：列根 → 逐枚翻名 → 列 `/device` → 问一枚没铸过的号。
+///
+/// **名与号分开**那一刀的四格读数就落在这里：`list` 答号、`name` 按号答名（名字在答话那一侧，
+/// 长短由那一帧说）。返这一趟的答码（`ocall::OK` = 全成）——每一格自己打一行，故中途断了也
+/// 看得出断在哪一条。
+fn serial(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
+    // 根那一层：**空路 = 根**。
+    let Ok(root) = operator::list(talk, link, host, &[], MS) else {
+        return ocall::UNKNOWN;
+    };
+    let _ = debug::put(&format!("echo: list root={}", ids_of(&root)));
+
+    // 逐枚翻名：`0` 是真的第一个格子（**根没有号**），故它也该翻得出名字。
+    let mut names = String::new();
+    let mut code = ocall::OK;
+    for id in root.iter() {
+        if !names.is_empty() {
+            names.push(',');
+        }
+        match operator::name(talk, link, host, id, MS) {
+            Ok(name) => names.push_str(name.as_str()),
+            Err(_) => {
+                names.push('?');
+                code = ocall::UNKNOWN;
+            }
+        }
+    }
+    let _ = debug::put(&format!("echo: list names={names}"));
+
+    // 第二块 Pane：`/device`（那一段名字本域已经知道——头注里那两条来路之一）。
+    let Ok(dir) = Name::new(protocol::driver::DIR) else {
+        return ocall::UNKNOWN;
+    };
+    match operator::list(talk, link, host, &[dir], MS) {
+        Ok(sub) => {
+            let _ = debug::put(&format!("echo: list device={}", ids_of(&sub)));
+        }
+        Err(code) => {
+            let _ = debug::put(&format!("echo: list device=err:{code}"));
+            return ocall::UNKNOWN;
+        }
+    }
+
+    // 一枚没铸过的号：**`UNKNOWN`，不是"答了一格空名字"**。
+    let miss = operator::name(talk, link, host, EntryId::new(4095), MS).is_err();
+    let _ = debug::put(&format!("echo: name miss={miss}"));
+    if miss { code } else { ocall::BAD }
+}
+
+/// 一串号拼成 `0,3` 这样一段（读数用；一枚都没有拼成 `-`）。
+fn ids_of(ids: &Listing) -> String {
+    let mut out = String::new();
+    for id in ids.iter() {
+        if !out.is_empty() {
+            out.push(',');
+        }
+        out.push_str(&format!("{}", id.get()));
+    }
+    if out.is_empty() {
+        out.push('-');
+    }
+    out
 }

@@ -75,6 +75,128 @@ pub enum Fail {
     NoRoom,
 }
 
+// ── 一窗号 ──────────────────────────────────────────────────
+
+/// 一窗最多几枚号。条数是策略、容器要有界 ⇒ 窗口有顶，**"还有没有"由 `more` 说**。
+pub const WINDOW_CAP: usize = 16;
+
+/// 一条号：窗口只问这两下（由裸号造、看裸号是多少）。
+///
+/// **`new` 不校验**（线上解码面造得出任何号）："这枚号还在不在"不是类型义务——由每册自己的
+/// 判据答（盟那一册是 [`Coalition::band`] 的 [`Fail::Unknown`]）。
+pub trait Id: Copy {
+    /// 由裸号造一个。
+    fn new(raw: usize) -> Self;
+
+    /// 裸号。
+    fn get(self) -> usize;
+}
+
+impl Id for CoalitionId {
+    fn new(raw: usize) -> CoalitionId {
+        CoalitionId::new(raw)
+    }
+
+    fn get(self) -> usize {
+        CoalitionId::get(self)
+    }
+}
+
+impl Id for PolicyId {
+    fn new(raw: usize) -> PolicyId {
+        PolicyId::new(raw)
+    }
+
+    fn get(self) -> usize {
+        PolicyId::get(self)
+    }
+}
+
+/// 一窗号：**一趟读的读数**（最多 [`WINDOW_CAP`] 枚，**号序升序**）。
+///
+/// 空位是 `None` 而不是 `T::new(0)`：**零号是真格子**（[`PolicyId::ROOT`] 就是 0），
+/// 拿它当"这一格空着"正是要避开的那件事。
+///
+/// **取窗落在核心**（[`Coalition::band`] / [`Coalition::bloc`] 扫一遍表就填出来）：服务那一层
+/// 只把它编成帧，不做选择。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window<T: Id> {
+    items: [Option<T>; WINDOW_CAP],
+    n: usize,
+    more: bool,
+}
+
+impl<T: Id> Window<T> {
+    /// 空的那一串（`more = false`）。
+    pub const fn new() -> Window<T> {
+        Window {
+            items: [None; WINDOW_CAP],
+            n: 0,
+            more: false,
+        }
+    }
+
+    /// 由一串号凑一窗（`more` = 窗外还有）——**解码面**：线上收来的那一窗由这里成形。
+    ///
+    /// 收够 [`WINDOW_CAP`] 枚就停：帧长了是帧的毛病，读的人只认窗前这些（帧长与条数对不对
+    /// 由 [`call`](super::call) 那一层先挡掉）。
+    pub fn gather(more: bool, ids: impl Iterator<Item = T>) -> Window<T> {
+        let mut out = Window::new();
+        for id in ids.take(WINDOW_CAP) {
+            out.push(id);
+        }
+        out.more = more;
+        out
+    }
+
+    /// 几枚。
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    /// 一枚都没有。
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// 窗外还有没有（这一趟没答完的那些）。
+    pub fn more(&self) -> bool {
+        self.more
+    }
+
+    /// 第 `at` 枚（号序；越界 ⇒ `None`）。
+    pub fn get(&self, at: usize) -> Option<T> {
+        if at < self.n {
+            self.items.get(at).copied().flatten()
+        } else {
+            None
+        }
+    }
+
+    /// 号序走一遍。
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        self.items[..self.n].iter().filter_map(|slot| *slot)
+    }
+
+    /// 末一枚——**它就是下一页的游标**（空窗 ⇒ `None`）。
+    pub fn last(&self) -> Option<T> {
+        self.n.checked_sub(1).and_then(|at| self.get(at))
+    }
+
+    /// 收一枚（再满就丢：取窗那边收了 [`WINDOW_CAP`] 枚就停）。
+    fn push(&mut self, id: T) {
+        if let Some(slot) = self.items.get_mut(self.n) {
+            *slot = Some(id);
+            self.n += 1;
+        }
+    }
+
+    /// 装满了。
+    fn full(&self) -> bool {
+        self.n == WINDOW_CAP
+    }
+}
+
 // ── 一格盟籍 ────────────────────────────────────────────────
 
 /// 盟籍一格：**一对号，没有第三格**。
@@ -178,24 +300,78 @@ impl Coalition {
         Ok(self.book.iter().any(|a| a.who == p && a.of == c))
     }
 
-    /// 盟 · 读：`c` 里此刻有谁。**核心，不上线**——答案是一串号，本仓还没有那种帧形
-    /// （同 `operator::list` / `Principal::clan` 那一档：核心有、线上不发）。
+    /// 盟 · 读：`c` 里此刻有谁（**一趟取窗**）。
     ///
-    /// 返**惰性迭代器**（借 `&self`，不缓冲、不分配 ⇒ 到不了 [`Fail::NoRoom`]）；顺序是
-    /// 登记序，**不是承诺**。
-    pub fn band(&self, c: CoalitionId) -> Result<impl Iterator<Item = PolicyId> + '_, Fail> {
+    /// 序 = **号序升序**（不是登记序）；`after` 是**阈值**——取号 > 它的那些，`None` = 从头取。
+    /// 零号是真格子（[`PolicyId::ROOT`] 就是 0），故**不能用 0 当"没有游标"**：有没有由
+    /// `Option` 说。
+    ///
+    /// 窗装不下 ⇒ [`Window::more`] 为真，要接着取就把**末一枚**当下一趟的 `after`。
+    /// **照实记（代价）**：两次取窗之间表变了 ⇒ 跨页**只会漏，不会重**（阈值单调，而新进的那些
+    /// 可能落在已走过的阈值之下）——故没有"过期游标"这回事，`cookieverf` 那一格不需要。
+    ///
+    /// 只有一格失败：这枚盟没铸过（[`Fail::Unknown`]）。
+    pub fn band(&self, c: CoalitionId, after: Option<PolicyId>) -> Result<Window<PolicyId>, Fail> {
         if !self.stands(c) {
             return Err(Fail::Unknown);
         }
-        Ok(self.book.iter().filter(move |a| a.of == c).map(|a| a.who))
+        Ok(self.window(|a| a.of == c, |a| a.who, after))
     }
 
-    /// 盟 · 读：`p` 此刻在哪些盟里。**没有失败域**——`p` 是标签，不在任何盟里就是空串。
+    /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序与游标同 [`Coalition::band`]）。
+    ///
+    /// **没有失败域**——`p` 是标签，不在任何盟里就是空窗。
     ///
     /// 这一条的不对称写进了签名：[`Coalition::band`] 答 `Result`（它问的是**本册自己的**
     /// 号空间，故有"查无此盟"），`bloc` 不答（它问的是**别人的**号空间，本册不去问）。
-    pub fn bloc(&self, p: PolicyId) -> impl Iterator<Item = CoalitionId> + '_ {
-        self.book.iter().filter(move |a| a.who == p).map(|a| a.of)
+    pub fn bloc(&self, p: PolicyId, after: Option<CoalitionId>) -> Window<CoalitionId> {
+        self.window(|a| a.who == p, |a| a.of, after)
+    }
+
+    /// 一趟取窗：从 `book` 里挑相符的那些，按**号序**取「大于 `after` 的前 [`WINDOW_CAP`] 枚」。
+    ///
+    /// **零分配的选择扫**：表是登记序，每取一枚都要重扫一遍挑"比上一枚大的里头最小的那个"
+    /// （`O(条数 × 窗宽)`，窗宽封顶 16）。要它成对：多扫一趟就为答 [`Window::more`]——
+    /// 那正是"还有没有"的读数，不能靠"表里还有几行"猜。
+    fn window<K: Id>(
+        &self,
+        keep: impl Fn(&Ally) -> bool,
+        key: impl Fn(&Ally) -> K,
+        after: Option<K>,
+    ) -> Window<K> {
+        let mut out = Window::new();
+        let mut last = after;
+        loop {
+            let mut best: Option<K> = None;
+            for ally in &self.book {
+                if !keep(ally) {
+                    continue;
+                }
+                let at = key(ally);
+                if let Some(mark) = last {
+                    if at.get() <= mark.get() {
+                        continue;
+                    }
+                }
+                match best {
+                    Some(seen) if seen.get() <= at.get() => {}
+                    _ => best = Some(at),
+                }
+            }
+            match best {
+                Some(at) if !out.full() => {
+                    out.push(at);
+                    last = Some(at);
+                }
+                // 窗外还有 ⇒ 这一趟到此为止，"未完"是读数的一部分。
+                Some(_) => {
+                    out.more = true;
+                    break;
+                }
+                None => break,
+            }
+        }
+        out
     }
 
     /// 这枚号铸过没有。**只有这一处读 `next`**——存在性的判据只此一份。
@@ -236,7 +412,7 @@ mod tests {
         assert_eq!(b.enter(A, OUTSIDE), Err(Fail::Unknown));
         assert_eq!(b.leave(A, OUTSIDE), Err(Fail::Unknown));
         assert_eq!(b.amid(A, OUTSIDE), Err(Fail::Unknown));
-        assert!(b.band(OUTSIDE).is_err());
+        assert!(b.band(OUTSIDE, None).is_err());
     }
 
     #[test]
@@ -250,7 +426,7 @@ mod tests {
         assert_eq!(b.leave(A, c), Ok(())); // 撞空也成
         assert_eq!(b.amid(A, c), Ok(false));
         // 假身份：不在任何盟里 ⇒ 空串（**不是** Unknown——本册不去问身份服务）。
-        assert_eq!(b.bloc(PolicyId::new(4095)).count(), 0);
+        assert_eq!(b.bloc(PolicyId::new(4095), None).len(), 0);
     }
 
     #[test]
@@ -261,12 +437,66 @@ mod tests {
         b.enter(A, c0).unwrap();
         b.enter(B, c0).unwrap();
         b.enter(A, c1).unwrap();
-        assert_eq!(b.band(c0).unwrap().collect::<Vec<_>>(), alloc::vec![A, B]);
-        assert_eq!(b.band(c1).unwrap().collect::<Vec<_>>(), alloc::vec![A]);
-        assert_eq!(b.bloc(A).collect::<Vec<_>>(), alloc::vec![c0, c1]);
+        assert_eq!(
+            b.band(c0, None).unwrap().iter().collect::<Vec<_>>(),
+            alloc::vec![A, B]
+        );
+        assert_eq!(
+            b.band(c1, None).unwrap().iter().collect::<Vec<_>>(),
+            alloc::vec![A]
+        );
+        assert_eq!(
+            b.bloc(A, None).iter().collect::<Vec<_>>(),
+            alloc::vec![c0, c1]
+        );
         // 出去的是"这一对"，不是"这个人"。
         b.leave(A, c0).unwrap();
-        assert_eq!(b.band(c0).unwrap().collect::<Vec<_>>(), alloc::vec![B]);
-        assert_eq!(b.bloc(A).collect::<Vec<_>>(), alloc::vec![c1]);
+        assert_eq!(
+            b.band(c0, None).unwrap().iter().collect::<Vec<_>>(),
+            alloc::vec![B]
+        );
+        assert_eq!(b.bloc(A, None).iter().collect::<Vec<_>>(), alloc::vec![c1]);
+    }
+
+    #[test]
+    fn a_window_is_number_ordered_and_the_cursor_is_a_threshold() {
+        let mut b = book();
+        let c = b.found();
+        // 登记序是 B 再 A，号序是 A(11) 再 B(22)——读数按号排，不按登记排。
+        b.enter(B, c).unwrap();
+        b.enter(A, c).unwrap();
+        let all = b.band(c, None).unwrap();
+        assert_eq!(all.iter().collect::<Vec<_>>(), alloc::vec![A, B]);
+        assert!(!all.more());
+        // 阈值：取号 > A 的那些 ⇒ 只剩 B
+        assert_eq!(
+            b.band(c, Some(A)).unwrap().iter().collect::<Vec<_>>(),
+            alloc::vec![B]
+        );
+        // **阈值大于一切 ⇒ 空窗，不是错**（"过期游标"在阈值语义下不存在）
+        assert!(b.band(c, Some(PolicyId::new(4095))).unwrap().is_empty());
+        // 零号是真格子：从最小那一头数起，`PolicyId::ROOT`(0) 那一位也要数得到
+        b.enter(PolicyId::ROOT, c).unwrap();
+        assert_eq!(
+            b.band(c, None).unwrap().iter().collect::<Vec<_>>(),
+            alloc::vec![PolicyId::ROOT, A, B]
+        );
+    }
+
+    #[test]
+    fn a_full_window_says_there_is_more_and_the_last_one_is_the_next_cursor() {
+        let mut b = book();
+        let c = b.found();
+        for i in 0..=WINDOW_CAP {
+            b.enter(PolicyId::new(i), c).unwrap();
+        }
+        let first = b.band(c, None).unwrap();
+        assert_eq!(first.len(), WINDOW_CAP);
+        assert!(first.more());
+        // 拿末一枚当阈值接着取：剩下就是窗外那一条
+        let next = b.band(c, first.last()).unwrap();
+        assert_eq!(next.len(), 1);
+        assert!(!next.more());
+        assert_eq!(next.get(0), Some(PolicyId::new(WINDOW_CAP)));
     }
 }

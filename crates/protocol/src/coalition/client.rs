@@ -4,6 +4,7 @@
 //!   Face::of(门牌)            门牌那一枚是树上查回来的（开者 = 对端）
 //!   found / enter /
 //!   leave / amid              一问一答：替这一趟铸一枚回信孔借过去，答完丢掉
+//!   band / bloc               同上，只是答话里带回**一窗号**（3 + 8n 字节）
 //! ```
 //!
 //! **问话走门牌、答话走这一趟自带的那一枚孔**：报文里没有"往哪回"这一格——号只在持有它的
@@ -20,7 +21,7 @@ use env::{PieToken, TaskId};
 use runtime::env::mail::{self, HolePie};
 
 use super::call::{self, BACK};
-use super::core::{CoalitionId, Fail};
+use super::core::{CoalitionId, Fail, Id, Window};
 
 pub use super::call::opened_by;
 
@@ -72,6 +73,29 @@ impl Face {
         self.answer(out, |present, _at| Ok(present == 1))
     }
 
+    /// 盟 · 读：`c` 里此刻有谁（**一趟取窗**）。
+    ///
+    /// 序 = 号序升序；`after` 是**阈值**（取号 > 它的那些），`None` = 从头取。窗装不下 ⇒
+    /// `Window::more` 为真——接着取就把**末一枚**当下一趟的 `after`。
+    pub fn band(
+        &self,
+        c: CoalitionId,
+        after: Option<PolicyId>,
+        millis: usize,
+    ) -> Result<Window<PolicyId>, Fail> {
+        self.window(call::BAND, c.get() as u64, call::cursor_of(after), millis)
+    }
+
+    /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序与游标同 [`Face::band`]）。
+    pub fn bloc(
+        &self,
+        p: PolicyId,
+        after: Option<CoalitionId>,
+        millis: usize,
+    ) -> Result<Window<CoalitionId>, Fail> {
+        self.window(call::BLOC, p.get() as u64, call::cursor_of(after), millis)
+    }
+
     /// 问一句、取一句答。
     fn raw(&self, op: u8, a: u64, b: u64, millis: usize) -> Result<[u8; call::REPLY_LEN], Fail> {
         let frame = call::pack_ask(op, a, b);
@@ -102,6 +126,36 @@ impl Face {
             // **读不懂在这一侧与"没走到"同一格**（照实记）：对本端是同一个下一步——
             // 别指望这条路；本族没有 `Denied` 这一格可落（盟无主），故两件事都答 `Unknown`。
             None => Err(Fail::Unknown),
+        }
+    }
+
+    /// 问一句、取一句答（**窗那一档**：答话有长有短——窗是 `3 + 8n`，失败只有一格状态）。
+    fn ask_seq(
+        &self,
+        op: u8,
+        a: u64,
+        b: u64,
+        millis: usize,
+    ) -> Result<([u8; call::SEQ_REPLY_LEN], usize), Fail> {
+        let frame = call::pack_ask(op, a, b);
+        let back =
+            crate::session::call::lend(self.entry, BACK, &frame).map_err(|()| Fail::Unknown)?;
+        let mut buf = [0u8; call::SEQ_REPLY_LEN];
+        let got = match HolePie::from_token(back).pull_timeout(&mut buf, millis) {
+            Ok(n) if n <= call::SEQ_REPLY_LEN => Ok((buf, n)),
+            _ => Err(Fail::Unknown),
+        };
+        // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
+        let _ = mail::release(back);
+        got
+    }
+
+    /// 一句窗答：先看状态那一格（失败域 + 读不懂），再把那一串号读出来。
+    fn window<T: Id>(&self, op: u8, a: u64, b: u64, millis: usize) -> Result<Window<T>, Fail> {
+        let (out, n) = self.ask_seq(op, a, b, millis)?;
+        match call::read_seq::<T>(&out[..n]) {
+            Ok(window) => Ok(window),
+            Err(code) => Err(call::code_to_fail(code).unwrap_or(Fail::Unknown)),
         }
     }
 }

@@ -140,14 +140,17 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
         // 这一趟没把回信孔交进来（或交得不成）：没有可回的路，账一动不动。
         return;
     };
-    let _ = HolePie::from_token(back).push(&answer(book, face, from, op, a, b));
+    let mut reply = [0u8; ccall::REPLY_MAX];
+    let said = answer(book, face, from, op, a, b, &mut reply);
+    let _ = HolePie::from_token(back).push(&reply[..said]);
     let _ = mail::release(back);
 }
 
-/// 把一句问交给核心，编出一句答（**一格**：读不懂也答，答 `BAD`）。
+/// 把一句问交给核心，编出一句答（**答话有两种形状**：一格状态、或一窗号）。
 ///
 /// **先读动作码、再解载荷**；三条**写**原语同一个起手：**先拿发送者过名册**（[`who`]）。
-/// 两条读不过名册——`amid` 的 `p` 是问的人给的标签（K6）。
+/// 三条读不过名册——`amid` 的 `p` 与两条取窗的键都是问的人给的标签（K6）。
+/// 返**帧长**——答案写进调用方那只缓冲（[`ccall::REPLY_MAX`]）。
 fn answer(
     book: &mut Coalition,
     face: &Face,
@@ -155,37 +158,51 @@ fn answer(
     op: u8,
     a: u64,
     b: u64,
-) -> [u8; ccall::REPLY_LEN] {
+    out: &mut [u8; ccall::REPLY_MAX],
+) -> usize {
     match op {
         // `found` 的钥匙是"你得是个已绑定的身份"（K3），**解析出来的那条号只当门卫**：
         // 盟无主（K2），不记铸造者——全族唯一一处。
         ccall::FOUND => match who(face, from) {
-            Ok(_) => ccall::reply_value(book.found()),
-            Err(fail) => status(fail),
+            Ok(_) => said(out, ccall::reply_value(book.found())),
+            Err(fail) => status(out, fail),
         },
         ccall::ENTER => match who(face, from) {
             Ok(w) => match book.enter(w, CoalitionId::new(a as usize)) {
-                Ok(()) => ccall::reply_status(ccall::OK),
-                Err(fail) => status(fail),
+                Ok(()) => said(out, ccall::reply_status(ccall::OK)),
+                Err(fail) => status(out, fail),
             },
-            Err(fail) => status(fail),
+            Err(fail) => status(out, fail),
         },
         ccall::LEAVE => match who(face, from) {
             Ok(w) => match book.leave(w, CoalitionId::new(a as usize)) {
-                Ok(()) => ccall::reply_status(ccall::OK),
-                Err(fail) => status(fail),
+                Ok(()) => said(out, ccall::reply_status(ccall::OK)),
+                Err(fail) => status(out, fail),
             },
-            Err(fail) => status(fail),
+            Err(fail) => status(out, fail),
         },
         ccall::AMID => {
             match book.amid(PolicyId::new(a as usize), CoalitionId::new(b as usize)) {
                 // "不在"是一句答（`Ok(false)`），"查无此盟"才是这一格。
-                Ok(yes) => ccall::reply_yes(yes),
-                Err(fail) => status(fail),
+                Ok(yes) => said(out, ccall::reply_yes(yes)),
+                Err(fail) => status(out, fail),
             }
         }
+        // 两条取窗：`a` 是键，`b` 是**游标 + 1**（`0` = 没有游标，见 [`ccall`] 的帧那一节）。
+        ccall::BAND => {
+            let after = ccall::cursor_in(b).map(PolicyId::new);
+            match book.band(CoalitionId::new(a as usize), after) {
+                Ok(window) => ccall::pack_seq(out, &window),
+                Err(fail) => status(out, fail),
+            }
+        }
+        // `bloc` 没有失败域（`p` 是标签，不在任何盟里就是空窗）。
+        ccall::BLOC => {
+            let after = ccall::cursor_in(b).map(CoalitionId::new);
+            ccall::pack_seq(out, &book.bloc(PolicyId::new(a as usize), after))
+        }
         // 没见过的动作码：与"这一问读不懂"同一格（不另立一格）。
-        _ => ccall::reply_status(ccall::BAD),
+        _ => code(out, ccall::BAD),
     }
 }
 
@@ -200,9 +217,21 @@ fn who(face: &Face, from: TaskId) -> Result<PolicyId, Fail> {
         .ok_or(Fail::Unknown)
 }
 
-/// 失败域 → 答话那一格（三格答码只此一处编）。
-fn status(fail: Fail) -> [u8; ccall::REPLY_LEN] {
-    ccall::reply_status(ccall::fail_to_code(Some(fail)))
+/// 失败域 → 答话那一格（三格答码只此一处编）：写进答话缓冲，返帧长（只有状态那一格）。
+fn status(out: &mut [u8; ccall::REPLY_MAX], fail: Fail) -> usize {
+    code(out, ccall::fail_to_code(Some(fail)))
+}
+
+/// 一格状态：读不懂那一档走它（它不是谁失败域里的一格）。
+fn code(out: &mut [u8; ccall::REPLY_MAX], said: u8) -> usize {
+    out[0] = said;
+    1
+}
+
+/// 一格答（[`ccall::REPLY_LEN`] 那一形）抄进答话缓冲，返帧长。
+fn said(out: &mut [u8; ccall::REPLY_MAX], frame: [u8; ccall::REPLY_LEN]) -> usize {
+    out[..ccall::REPLY_LEN].copy_from_slice(&frame);
+    ccall::REPLY_LEN
 }
 
 /// 找**身份服务**那份门牌：`FIND "/sys/principal"`，**找不到就再问**（有界）。

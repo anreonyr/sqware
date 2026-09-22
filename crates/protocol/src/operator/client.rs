@@ -10,6 +10,7 @@ use runtime::env::mail::{self, AnyPie};
 use crate::operator::Fail;
 use crate::operator::call as ocall;
 pub use crate::operator::{ASK_MARK, LINK, TIP_NAME};
+use crate::operator::{EntryId, Listing};
 use crate::session::Quay;
 
 /// 客侧第一步：装上树那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
@@ -44,12 +45,40 @@ pub fn ask_hole(host: TaskId) -> Result<PieToken, Fail> {
     Ok(ask)
 }
 
-/// 客侧第二步：问一句、取一句答。返答话那一格（[`ocall::OK`] = 持树者收下了）。
+/// 客侧第二步：问一句、取一句答（**缓冲由调用方给**，故一串号与一枚名字也走这里）。
 ///
 /// 问话推 `say`（[`ask_hole`] 铸的那一枚，持树者读），答话从本端这条树路读（持树者写）。
+/// 返**收到的帧长**；答话那一格在 `reply[0]`。
 ///
-/// `land` 那一码要把**入口**捎上：它经会话交给持树者（`Accord` 一份），故写进帧里的是
-/// "种在持树者表里的那个号"——那个号才是它认得的坐标。
+/// `tail` 是"随 op 变的那个号"：`land` 那一码要把**入口**捎上——它经会话交给持树者
+/// （`Accord` 一份），故写进帧里的是"种在持树者表里的那个号"，那才是它认得的坐标；
+/// `name` 拿它当条目的号，`list` 不看它。
+pub fn ask_into(
+    say: PieToken,
+    link: &Quay,
+    host: TaskId,
+    op: u8,
+    path: &[Name],
+    tail: [u8; 8],
+    reply: &mut [u8],
+    millis: usize,
+) -> Result<usize, Fail> {
+    let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
+    let pier = link.find(at).ok_or(Fail::Unknown)?;
+    let tail = match op {
+        ocall::LAND => ocall::hang(ocall::entry_in(tail), host)
+            .map_err(|()| Fail::Unknown)?
+            .to_bytes(),
+        _ => tail,
+    };
+    // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
+    mail::HolePie::from_token(say)
+        .push(&ocall::pack_ask(op, path, tail))
+        .map_err(|_| Fail::Unknown)?;
+    pier.pull(reply, millis).map_err(|_| Fail::Unknown)
+}
+
+/// 客侧第二步（一格状态那一档）：问一句、收下那一格。返答话那一格（[`ocall::OK`] = 收下了）。
 pub fn ask(
     say: PieToken,
     link: &Quay,
@@ -59,21 +88,69 @@ pub fn ask(
     entry: PieToken,
     millis: usize,
 ) -> Result<u8, Fail> {
-    let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let pier = link.find(at).ok_or(Fail::Unknown)?;
-    let seed = match op {
-        ocall::LAND => Some(ocall::hang(entry, host).map_err(|()| Fail::Unknown)?),
-        _ => None,
-    };
-    // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
-    mail::HolePie::from_token(say)
-        .push(&ocall::pack_ask(op, path, seed))
-        .map_err(|_| Fail::Unknown)?;
     let mut reply = [0u8; 1];
-    match pier.pull(&mut reply, millis) {
-        Ok(1) => Ok(reply[0]),
-        _ => Err(Fail::Unknown),
-    }
+    let _ = ask_into(
+        say,
+        link,
+        host,
+        op,
+        path,
+        entry.to_bytes(),
+        &mut reply,
+        millis,
+    )?;
+    Ok(reply[0])
+}
+
+/// 客侧第二步（一串号那一档）：列一段路，返那一串**号**。
+///
+/// 答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`：这一条的答案体是数据，码不能当成功值带回来
+/// （对照 [`ask`]：那一档的码本身就是答案）。一推一读之间读不动 / 迟了 ⇒ [`ocall::BAD`]。
+pub fn list(
+    say: PieToken,
+    link: &Quay,
+    host: TaskId,
+    path: &[Name],
+    millis: usize,
+) -> Result<Listing, u8> {
+    let mut reply = [0u8; ocall::LIST_REPLY_LEN];
+    let n = ask_into(
+        say,
+        link,
+        host,
+        ocall::LIST,
+        path,
+        [0u8; 8],
+        &mut reply,
+        millis,
+    )
+    .map_err(|_| ocall::BAD)?;
+    ocall::read_list(&reply[..n])
+}
+
+/// 客侧第二步（一枚名字那一档）：这枚号此刻叫什么。
+///
+/// 名字**不走问话**（段那一格空着、尾格是条目的号），它在答话那一侧——长短由那一帧说。
+pub fn name(
+    say: PieToken,
+    link: &Quay,
+    host: TaskId,
+    id: EntryId,
+    millis: usize,
+) -> Result<Name, u8> {
+    let mut reply = [0u8; ocall::NAME_REPLY_LEN];
+    let n = ask_into(
+        say,
+        link,
+        host,
+        ocall::NAME,
+        &[],
+        id.to_bytes(),
+        &mut reply,
+        millis,
+    )
+    .map_err(|_| ocall::BAD)?;
+    ocall::read_name(&reply[..n])
 }
 
 /// 客侧第三步：把**刚授进来的那一枚**从本端表里取出来（`find` 的下场）。

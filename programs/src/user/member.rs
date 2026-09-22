@@ -18,6 +18,8 @@
 //!  12  waive()               ⇒ 弃回起点，盟籍照旧（键 = 身份那条定理）
 //!  13  没铸过的号             ⇒ amid / enter / leave 都答 Unknown（**第三态**）
 //!  14  伪造的身份号            ⇒ amid 答 false（**不是失败**——`p` 是标签，本册不问名册）
+//!  15  取窗：band(c0) ⇒ 一位；band(c0, 末一枚) ⇒ **空窗**（游标是阈值）；band(out) ⇒ Unknown
+//!  16  bloc(me)               ⇒ 反向：两条盟籍
 //! ```
 //!
 //! # 为什么读数是"一位客人两枚身份"
@@ -41,7 +43,7 @@ use core::time::Duration;
 use env::{Name, PieToken, TaskId};
 use protocol::coalition::call as ccall;
 use protocol::coalition::client::Face as CoalitionFace;
-use protocol::coalition::core::{CoalitionId, Fail};
+use protocol::coalition::core::{CoalitionId, Fail, Id, Window};
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::principal::call as pcall;
@@ -191,6 +193,26 @@ extern "C" fn main() -> ! {
         flag(coal.amid(PolicyId::new(OUTSIDE), c1, MS))
     ));
 
+    // 十一、**一串**（取窗两条）：`band` 答成员、`bloc` 答盟籍（序都是号序）。
+    let band = coal.band(c0, None, MS);
+    say(&format!("member: band(c0)={}", window_ids(band)));
+    // 拿末一枚当游标接着取：**阈值**语义下再往后没有了 ⇒ 空窗，**不是错**（也不是"过期游标"）。
+    let after = band.as_ref().ok().and_then(|w| w.last());
+    say(&format!(
+        "member: band(c0,next)={}",
+        window_ids(coal.band(c0, after, MS))
+    ));
+    // 没铸过的那枚盟：取窗这一条**有失败域**（同 amid）。
+    say(&format!(
+        "member: band(out)={}",
+        window_ids(coal.band(outside, None, MS))
+    ));
+    // 反向那一趟：这条身份在哪些盟里（**没有失败域**：不在任何盟里就是空窗）。
+    say(&format!(
+        "member: bloc(me)={}",
+        window_ids(coal.bloc(p, None, MS))
+    ));
+
     exit_with_note(E_OK, "member: done")
 }
 
@@ -243,6 +265,32 @@ fn one_id<E: Why>(r: Result<CoalitionId, E>) -> String {
         Ok(c) => format!("{}", c.get()),
         Err(fail) => format!("err:{}", fail.why()),
     }
+}
+
+/// 同一行读数：一窗的**三格事实**——几枚、窗外还有没有、是哪些号。
+///
+/// 三格分开写，是因为**只有前两格是判据**：号那一段跟着装配期铸出来的身份号走（同一份镜像、
+/// 不同的启动次序就会差一位），拿它钉判据等于把一条与取窗无关的数钉进门里。
+fn window_ids<T: Id>(r: Result<Window<T>, Fail>) -> String {
+    match r {
+        Ok(w) => format!("n{} more={} ids={}", w.len(), w.more(), ids(&w)),
+        Err(fail) => format!("err:{}", fail.why()),
+    }
+}
+
+/// 一窗号拼成 `11,22`（空窗拼成 `-`）。
+fn ids<T: Id>(w: &Window<T>) -> String {
+    let mut out = String::new();
+    for id in w.iter() {
+        if !out.is_empty() {
+            out.push(',');
+        }
+        out.push_str(&format!("{}", id.get()));
+    }
+    if out.is_empty() {
+        out.push('-');
+    }
+    out
 }
 
 /// 同一行读数：是 / 不是 / 哪一格失败。
