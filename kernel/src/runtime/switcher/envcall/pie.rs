@@ -26,7 +26,7 @@
 
 use alloc::sync::Arc;
 
-use env::{Name, PieCall};
+use env::{Mark, PieCall};
 
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
@@ -36,10 +36,6 @@ use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission, Pie, cl
 use crate::work::unit::task::TaskIdent;
 
 use super::subset_to_pte;
-
-/// 记号（`UnsealHole` 收的那一格名字）一次能收多少字节——与 `env::wire::NAME_LEN` 同值：
-/// 内核在入口把它拷进**栈上的定长缓冲**（解封路径不分配），上限因此必须是常量。
-const NAME_LEN: usize = env::wire::NAME_LEN;
 
 /// 一次权柄 envcall 的落点：本轴从不换帧，故只有一个变体。
 ///
@@ -58,7 +54,7 @@ pub(crate) fn dispatch(
 ) -> Option<Outcome> {
     let _ = &ident;
     Some(match call {
-        PieCall::UnsealHole { mark, len } => unseal_hole(frame, &ident, mark.get(), len),
+        PieCall::UnsealHole { mark } => unseal_hole(frame, &ident, mark),
         PieCall::UnsealPole { size } => unseal_pole(frame, size),
         PieCall::UnsealNole => unseal_nole(frame, ident),
         PieCall::Open { token } => open(frame, ident, token.get()),
@@ -68,9 +64,7 @@ pub(crate) fn dispatch(
         PieCall::Narrow { token, subset } => narrow(frame, token.get(), subset),
         PieCall::Revoke { dst, token } => revoke(frame, dst.get(), token.get()),
         PieCall::Collect { index } => collect(frame, index),
-        PieCall::Reserve { token, mark, cap } => {
-            reserve(frame, &ident, token.get(), mark.get(), cap)
-        }
+        PieCall::Reserve { token } => reserve(frame, &ident, token.get()),
         PieCall::Release { token } => release(frame, token.get()),
     })
 }
@@ -137,7 +131,7 @@ pub(super) fn usable(pie: &AnyPie) -> Result<(), GateError> {
     Ok(())
 }
 
-/// 解封 Hole：**先收记号**（有界拷入 + 按 `Name` 的解码面校验）→ 建资源实体 → 建门闩
+/// 解封 Hole：**先收记号**（一枚 [`Mark`]，从寄存器收下即定型）→ 建资源实体 → 建门闩
 /// （原始自持：无 sire）→ 落表。
 ///
 /// 门闩持资源实体的强引用——**寿命即能力寿命**：最后一份消失时资源随之回收。
@@ -146,22 +140,12 @@ pub(super) fn usable(pie: &AnyPie) -> Result<(), GateError> {
 /// **不带 `ONLY`**——用户态铸的资源都是共享的；"只允许一个使用者"是内核决定的事实
 /// （设备 `reg` 段、组），只有那些创建点才给这一位。
 ///
-/// 记号 = **这条路的名字**（`UnsealHole { mark, len }`）：`len == 0` / `len > NAME_LEN` /
-/// 区间未映射 / 非法名（空、含 NUL、非 UTF-8）一律 `Denied`——**不截断、不 panic**。
-/// 越界那一格先判、再拷：域那一段多长由 `len` 说了算，内核只在自己那 [`NAME_LEN`]
-/// 字节的栈缓冲里收。拷贝走 `mail::copy_in`（整段验完才拷），且**在持 `pies` 锁之前**
-/// ——它要过 `space.segments`（L2），持 L3 锁做反向嵌套会当场 panic。
-fn unseal_hole(frame: &mut TrapContext, ident: &TaskIdent, buf: usize, len: usize) -> Outcome {
+/// 记号 = **这枚孔是干什么用的**（`UnsealHole { mark }`）：一枚 [`Mark`]。
+/// **内核不解释它**——不校验、不比较、不显示；它随副本过线、转手不变。
+/// 故这一步**不再读调用方的内存**（原先要拷 32 字节并校验 UTF-8/非空/NUL，那段连同
+/// "必须在持 `pies` 锁之前拷"的锁序注记一起消失）。
+fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
-        if len == 0 || len > NAME_LEN {
-            return Err(GateError::Denied);
-        }
-        // 记号先落栈缓冲、再校验：非法名到不了 `hole::meta`（那里只收已定型的 `Name`）。
-        let mut raw = [0u8; NAME_LEN];
-        if !mail::copy_in(&ident.team.space, &mut raw[..len], buf) {
-            return Err(GateError::Denied);
-        }
-        let mark = Name::from_slice(&raw[..len]).map_err(|_| GateError::Denied)?;
         let task = current().running_task().ok_or(GateError::Denied)?;
         let meta = mail::hole::meta(task.ident.id, mark);
         let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
@@ -427,15 +411,8 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
 /// 先拒，`copy_out` 自己也是整段验完才写。表里无此 token → `Denied`。
 ///
 /// **记号只长在孔上**：别的资源（Pole/Nole/Tole）问不到它 ⇒ `Denied`——问不到就是
-/// "这一条候选不成立"，不假装有一格空名。拷出在 `find` 放锁之后（它要过
-/// `space.segments` = L2，持 L3 锁做反向嵌套会当场 panic）。
-fn reserve(
-    frame: &mut TrapContext,
-    ident: &TaskIdent,
-    token: usize,
-    buf: usize,
-    cap: usize,
-) -> Outcome {
+/// "这一条候选不成立"，不假装有一格空记号。记号**一格返回**（不再拷出、不再要用户备缓冲）。
+fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: usize) -> Outcome {
     let r = (|| -> Result<(usize, usize, usize), GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         // **只定位**：`owner` 是资源来历，封印不使它消失（见函数头注）——这里刻意不过
@@ -445,23 +422,18 @@ fn reserve(
         let AnyPie::Hole(h) = &p else {
             return Err(GateError::Denied);
         };
-        let mark = h.meta().mark();
-        let len = mark.len();
-        if len > cap {
-            return Err(GateError::Denied);
-        }
-        if !mail::copy_out(&ident.team.space, mark.text(), buf) {
-            return Err(GateError::Denied);
-        }
-        Ok((gate::vestor(&p, &gate::snap()).unwrap_or(0), owner, len))
+        let mark = h.meta().mark().get() as usize;
+        Ok((gate::vestor(&p, &gate::snap()).unwrap_or(0), owner, mark))
     })();
     match r {
-        Ok((vestor_id, owner_id, len)) => {
-            frame.gpr.set_x(Gprs::A0, vestor_id);
-            // 打包见 `env::wire::frompair` 的 `(TaskId, TaskId, usize)`：第三格进高半。
+        Ok((vestor_id, owner_id, mark)) => {
+            // **`a0` 是"成 / 不成"那一格**（用户态按它的符号读 `EnvError`）⇒ 它只能放两枚
+            // 小号（都远小于 2^32）；**整一枚记号放 `a1`**（打包见 `env::fid` 的 `Reserve`）。
+            // 真机栽过一次：记号放 `a0` ⇒ 一半的记号最高位是 1 ⇒ 每次查询都被读成"出错"。
             frame
                 .gpr
-                .set_x(Gprs::A1, (len << 32) | (owner_id & 0xffff_ffff));
+                .set_x(Gprs::A0, (owner_id << 32) | (vestor_id & 0xffff_ffff));
+            frame.gpr.set_x(Gprs::A1, mark);
         }
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
     }

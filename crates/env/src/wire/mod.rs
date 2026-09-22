@@ -25,7 +25,7 @@ pub mod name;
 pub mod pair;
 
 pub use frompair::FromPair;
-pub use handle::{PieToken, TaskId, TeamId, VirtAddr};
+pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 pub use name::{NAME_LEN, Name, NameError};
 pub use pair::{PAIR_LEN, Pair};
 

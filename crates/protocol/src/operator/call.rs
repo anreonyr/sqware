@@ -28,6 +28,7 @@
 //! **答案那一侧则干脆没有这一格**：`find` 查到的那一枚经会话交进客人的表，报文里再放一个号
 //! 只会多出一份两边都得认的约定。
 
+use env::Mark;
 use env::{Name, PieToken, TaskId};
 
 use super::core::{EntryId, Fail, Operator, Unship, VestedBy};
@@ -351,10 +352,10 @@ pub fn give(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
 pub const LINK: &str = "operator";
 
 /// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）。
-pub const ASK_MARK: &str = "ask";
+pub const ASK_MARK: Mark = Mark::of("ask");
 
 /// 提示孔那一枚上的记号（持树者铸它时刻上去的；装配者按它认领那一枚）。
-pub const TIP_MARK: &str = "tip";
+pub const TIP_MARK: Mark = Mark::of("tip");
 
 /// 提示之路的名字（两侧共用：持树者那侧不用它——它那一枚是自己铸的；引导域用它把
 /// 认来的那一枚挂在"名字 → 我手里的一枚"这张账上，好让编排域按名来要）。

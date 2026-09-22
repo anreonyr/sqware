@@ -163,6 +163,74 @@ impl Wire for VirtAddr {
     }
 }
 
+/// 记号：一枚**不透明**的 8 字节键 —— 内核只保管、只递回；**从不解释、从不比较**。
+///
+/// 与 [`PieToken`] 的分工：`PieToken` 答"**哪一枚**"（唯一、表内坐标），`Mark` 答"**干什么用的**"
+/// （可以不唯一，只在"这张表 + 谁开的"里成立）。与 [`Name`](super::Name) 的分工：名字是
+/// **本端的账**（泊位名，文本、人读、不过线），记号是**过线的钥匙**（双方约定、只比较）
+/// ——两者可以不同（提示孔那一路：本端泊位叫 `operator-tip`，孔上刻的是 `tip`）。
+///
+/// **源码里仍写着名字**：协议各处用 [`Mark::of`] 从字面串算出来（`Mark::of("ask")`），
+/// 于是"记号叫什么"在源码里一眼可读，线上只是一枚数。
+///
+/// **照实记**：`of` 是 64 位 FNV-1a —— 两个不同的名字理论上可能撞成同一枚数，撞了是
+/// **静默**的（同一张表里认错孔）。名字总数 ≤ 数十条、空间 2^64，概率 ~1e-17，本仓接受；
+/// 要绝对无撞就得改成手排号表（每个协议自己排号，代价是"记号"这个概念要集中到一处，
+/// 而它今天住在各协议自己的 `call.rs` 里）。
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Mark(u64);
+
+impl Mark {
+    /// 无效哨兵（0）：与 [`PieToken::NONE`] 同一条约定——读的人关心的是"**这枚不是记号**"。
+    pub const NONE: Mark = Mark(0);
+
+    /// 由裸值造一枚（线上解码面）。
+    pub const fn new(raw: u64) -> Mark {
+        Mark(raw)
+    }
+
+    /// 裸值。
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// 由**名字**算出来（源码里仍写着名字）：64 位 FNV-1a，两侧各算同一个数。
+    pub const fn of(name: &str) -> Mark {
+        let bytes = name.as_bytes();
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut i = 0;
+        while i < bytes.len() {
+            h ^= bytes[i] as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            i += 1;
+        }
+        Mark(h)
+    }
+
+    /// 线上的那一格（8 字节小端）。
+    pub const fn to_bytes(self) -> [u8; 8] {
+        self.0.to_le_bytes()
+    }
+
+    /// 由线上字节还原。
+    pub const fn from_bytes(bytes: [u8; 8]) -> Mark {
+        Mark(u64::from_le_bytes(bytes))
+    }
+}
+
+impl Wire for Mark {
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        s[*i] = self.0 as usize;
+        *i += 1;
+    }
+    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
+        let v = *s.get(*i).ok_or(Decode::Overflow)?;
+        *i += 1;
+        Ok(Mark(v as u64))
+    }
+}
+
 /// 团队句柄（域标识；0 = 无效哨兵）。
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]

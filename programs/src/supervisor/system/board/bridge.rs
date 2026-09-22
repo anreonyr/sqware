@@ -4,6 +4,7 @@
 //! 帧与记号见 [`protocol::system::board::call`]。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
+use env::Mark;
 
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
@@ -44,7 +45,7 @@ pub fn attach(
     //    （`Quay::claim` 的正文）。
     //    **次序**：板那条比 `records` 后到，而 `records` 的写端已经用掉了 ⇒ 这一枚认在
     //    板泊位上（一枚孔只配一条泊位）。
-    quay.claim(client, link, millis)
+    quay.claim(client, Mark::of(link.as_str()), millis)
         .map_err(|_| "board:claim")?;
     // 3. 板线程（只起一枚）→ 把客人那一枚转授过去 → 板路上递一格"答话的是谁" → 提示来客人了。
     let host = host(me, millis, tip)?;
@@ -89,10 +90,9 @@ fn host(me: TaskId, millis: usize, tip: &mut Option<PieToken>) -> Result<TaskId,
     // **且** 记号 = `tip`——板线程那一枚是它自己铸的，记号就是它的用途名）。
     // 这条路上只走"客人号"，故本端那一枚交出去也无妨（板线程不用它，也不碍事）。
     let slot = Name::new(TIP_NAME).map_err(|_| "board:name")?;
-    let tip_mark = Name::new(TIP_MARK).map_err(|_| "board:name")?;
     let mut quay = Quay::open(id);
     quay.seat(slot).map_err(|_| "board:seat")?;
-    quay.claim(id, tip_mark, millis).map_err(|_| "board:tip")?;
+    quay.claim(id, TIP_MARK, millis).map_err(|_| "board:tip")?;
     let pier = quay.find(slot).ok_or("board:tip")?;
     // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
     *tip = pier.at_peer();

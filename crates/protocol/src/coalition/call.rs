@@ -33,6 +33,7 @@
 //! 让自己表里空出一个号。
 
 use super::core::{CoalitionId, Fail, Id, WINDOW_CAP, Window};
+use env::Mark;
 
 // ── 码 ──────────────────────────────────────────────────────
 
@@ -219,7 +220,7 @@ pub use crate::session::call::opened_by;
 ///
 /// 与另几面的 `*-back` 同一个形状、不同的记号：同一张表里两面的回信孔若刻同一个记号，
 /// 就分不出这一枚是哪一面的。
-pub const BACK: &str = "coalition-back";
+pub const BACK: Mark = Mark::of("coalition-back");
 
 /// 树上那块窗格的名字（门牌的第一段）：`/sys`。
 pub const DIR: &str = "sys";

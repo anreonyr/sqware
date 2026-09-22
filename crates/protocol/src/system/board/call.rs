@@ -16,6 +16,7 @@
 //! 板服务（板侧待客 / 客侧问一句）住在同一个模块的三侧文件里（`server` / `client` / `bridge`）：
 //! 本模块只给**两边都要用的那几手**（认来源 / 认出这扇门是谁的 / 授出 / 收下 / 帧）。
 
+use env::Mark;
 use env::{Name, PieToken, TaskId};
 
 use super::core::{Board, Fail, Unship, VestedBy};
@@ -192,13 +193,13 @@ pub const LINK: &str = "board";
 
 /// 注册入口那一枚孔上的记号（**两侧同一个**：客人铸它时刻上去的，板按它把入口与问话孔
 /// 分开——两枚都是客人铸的、都是客人交来的，只有记号分得开）。
-pub const ENTRY_MARK: &str = "entry";
+pub const ENTRY_MARK: Mark = Mark::of("entry");
 
 /// 问话孔那一枚上的记号（同上：客人铸、客人交；板按它认领那枚孔）。
-pub const ASK_MARK: &str = "ask";
+pub const ASK_MARK: Mark = Mark::of("ask");
 
 /// 提示孔那一枚上的记号（板线程铸它时刻上去的；装配者按它认领那一枚）。
-pub const TIP_MARK: &str = "tip";
+pub const TIP_MARK: Mark = Mark::of("tip");
 
 /// 提示之路的名字（只有装配者那侧用得上：板线程那一枚是它自己铸的，不需要名字）。
 pub const TIP_NAME: &str = "board-tip";

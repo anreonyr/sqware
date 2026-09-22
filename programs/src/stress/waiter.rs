@@ -36,6 +36,7 @@ extern crate alloc;
 extern crate programs;
 
 use env::HoleDir;
+use env::Mark;
 use env::PieToken;
 use runtime::core::tole::Tole;
 use runtime::env::debug;
@@ -107,11 +108,9 @@ fn discover() -> (Option<PieToken>, Option<PieToken>, Option<PieToken>) {
             break;
         }
         match mail::reserve(tok) {
-            Ok((_, _, mark)) => match mark.as_str() {
-                "member" => member = Some(tok),
-                "report" => report = Some(tok),
-                _ => {}
-            },
+            Ok((_, _, mark)) if mark == Mark::of("member") => member = Some(tok),
+            Ok((_, _, mark)) if mark == Mark::of("report") => report = Some(tok),
+            Ok(_) => {}
             // 记号只长在孔上 ⇒ 认不出记号的就是组。
             Err(_) => group = Some(tok),
         }

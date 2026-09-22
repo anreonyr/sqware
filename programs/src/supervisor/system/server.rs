@@ -2,7 +2,7 @@
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
-use env::{Name, Permission, PieToken, ProgramKind, TaskId};
+use env::{Mark, Name, Permission, PieToken, ProgramKind, TaskId};
 use runtime::core::tole::Tole;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
@@ -74,7 +74,7 @@ pub fn start(
     rep: TaskId,
     grants: &[Grant],
     quay: Option<&mut Quay>,
-    marks: &[Name],
+    marks: &[Mark],
     millis: usize,
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
@@ -103,7 +103,7 @@ pub fn ready(
     table: &mut Table,
     name: Name,
     quay: Option<&mut Quay>,
-    marks: &[Name],
+    marks: &[Mark],
     millis: usize,
 ) -> Result<bool, Fail> {
     // 先看表：上一次问过的事实（按这一行自己声明的说法解读）。

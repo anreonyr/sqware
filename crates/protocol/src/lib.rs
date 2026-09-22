@@ -130,7 +130,7 @@ macro_rules! reserve_reads {
     };
     ($(#[$meta:meta])* $vis:vis fn $name:ident($arg:ident) => mark $(;)?) => {
         $(#[$meta])*
-        $vis fn $name($arg: env::PieToken) -> Option<env::Name> {
+        $vis fn $name($arg: env::PieToken) -> Option<env::Mark> {
             match runtime::env::mail::reserve($arg) {
                 Ok((_vestor, _owner, mark)) => Some(mark),
                 _ => None,

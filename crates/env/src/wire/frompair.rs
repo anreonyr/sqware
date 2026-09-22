@@ -64,7 +64,7 @@ impl FromPair for (usize, usize, usize, usize) {
 
 /// 历史遗留：`(pagemeta 在手帧数 = 真相, freelist 走链帧数 = 待审计)` 的两格探针。
 ///
-/// **当前 ABI 无调用者**（`fid.rs` 里没有 `#[ret((usize, usize))]` 的探针调用）。留着备复用。
+/// 调用者：`PieCall::Reserve`（`a0` = owner 高半 | vestor 低半，`a1` = 整一枚记号）。
 impl FromPair for (usize, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (v0, v1)

@@ -19,6 +19,7 @@
 //! 可共用的只有形状——"失败域 ↔ 线上那一格"那张表用的是 `protocol::fail_codes!`。
 
 use super::core::Fail;
+use env::Mark;
 
 /// 问那一句的动作码：「现在几点」。
 pub const ASK: u8 = 1;
@@ -39,7 +40,7 @@ pub const ASK_LEN: usize = 1;
 pub const ARM_LEN: usize = 1 + TIME_LEN;
 
 /// 回信孔的记号：客人每趟铸一枚、借给驱动（回答与那一声都从它回来）。
-pub const BACK: &str = "rtc-back";
+pub const BACK: Mark = Mark::of("rtc-back");
 
 /// 答话那一格：收下了。
 pub const OK: u8 = 0;

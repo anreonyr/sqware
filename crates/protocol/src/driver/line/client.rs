@@ -2,6 +2,7 @@
 //!
 //! 客户是**持有那台设备的人**：它从不读线号（泊位就是坐标），只报设备名。
 
+use env::Mark;
 use env::{Name, PieToken};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
@@ -63,7 +64,7 @@ impl Line {
             });
         }
         // 认下它那一枚：它另装了一条泊位的一半，本端写的那一枚从它来。
-        if quay.claim(host, mark, millis).is_err() {
+        if quay.claim(host, Mark::of(call::LANE), millis).is_err() {
             quay.shut();
             return Err(Fail::Denied);
         }

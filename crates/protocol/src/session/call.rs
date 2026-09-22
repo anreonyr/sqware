@@ -26,16 +26,16 @@
 //! 这枚被标成什么*），故**等长**（9/9/9）——原先板与树是 `probe`5 / `opened_by`9 /
 //! `mark_of`7，不等长本身就是"这一组还没想清楚"的信号。
 
-use env::{Name, PieToken, TaskId};
+use env::{Mark, PieToken, TaskId};
 
 use super::core::Claim;
 
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-/// 铸一枚孔（本端那一枚），并把**记号**刻在它上面——记号 = 这条路的名字。
-pub(super) fn mint(mark: Name) -> Result<PieToken, ()> {
-    mail::unseal_hole(mark.as_str()).map_err(|_| ())
+/// 铸一枚孔（本端那一枚），并把**记号**刻在它上面。
+pub(super) fn mint(mark: Mark) -> Result<PieToken, ()> {
+    mail::unseal_hole(mark).map_err(|_| ())
 }
 
 /// 交给对端：一枚副本种进它表里，返**种在它表里的那个号**。
@@ -101,10 +101,10 @@ pub(super) fn each(mut f: impl FnMut(Hole) -> Result<(), Claim>) -> Result<(), C
 /// 这条次序是契约的一半，不是实现细节。
 ///
 /// 枚举本身读不动（[`Claim::Unread`]）时报 `None`：那一格里已经有"我没找到"。
-pub fn find(of: TaskId, mark: &str) -> Option<PieToken> {
+pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
     let mut found = None;
     let _ = each(|h| {
-        if h.owner == Some(of) && h.mark.as_str() == mark {
+        if h.owner == Some(of) && h.mark == mark {
             found = Some(h.token);
         }
         Ok(())
@@ -128,9 +128,9 @@ pub fn find(of: TaskId, mark: &str) -> Option<PieToken> {
 ///
 /// **第二例到了**（rtc 那一面的客侧先写过一份，principal 是第二个用家）——照本文件开头的
 /// 纪律，身体搬到这里，两处只留各自的名字。
-pub fn lend(entry: PieToken, mark: &str, frame: &[u8]) -> Result<PieToken, ()> {
+pub fn lend(entry: PieToken, mark: Mark, frame: &[u8]) -> Result<PieToken, ()> {
     let host = opened_by(entry).ok_or(())?;
-    let back = mint(Name::new(mark).map_err(|_| ())?)?;
+    let back = mint(mark)?;
     if port::ship(
         &mail::HolePie::from_token(back),
         host,
@@ -155,8 +155,8 @@ pub(super) struct Hole {
     pub token: PieToken,
     /// 这扇门谁开的（`None` = 查不出出处，如引导期那批设备门闩）。
     pub owner: Option<TaskId>,
-    /// 这条路上刻的记号（`Name::EMPTY` = 这一枚不是孔、问不到记号）。
-    pub mark: Name,
+    /// 这条路上刻的记号（[`Mark::NONE`] = 这一枚不是孔、问不到记号）。
+    pub mark: Mark,
 }
 
 /// 这枚孔的两格事实（**一次 `Reserve` 取回**）：**谁开的** + **刻的什么记号**。
@@ -173,10 +173,10 @@ pub(super) struct Hole {
 /// `owner` 是 0（引导期那批设备门闩）——一律报 `(None, Name::EMPTY)`：`Name::EMPTY` 是
 /// "占位、不是合法名"的那一格，故**这一条候选永不匹配**（规格里没有"无名孔"这一态，
 /// 这里说的是"这一条候选不成立"）。
-pub(super) fn reserve(hole: PieToken) -> (Option<TaskId>, Name) {
+pub(super) fn reserve(hole: PieToken) -> (Option<TaskId>, Mark) {
     match mail::reserve(hole) {
         Ok((_vestor, owner, mark)) if owner.get() != 0 => (Some(owner), mark),
-        _ => (None, Name::EMPTY),
+        _ => (None, Mark::NONE),
     }
 }
 

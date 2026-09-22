@@ -3,7 +3,7 @@
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::operator::call`]。
 
-use env::{HoleDir, Name, PieToken, TaskId};
+use env::{HoleDir, Mark, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
@@ -233,7 +233,7 @@ fn status(out: &mut [u8; ocall::REPLY_MAX], code: u8) -> usize {
 /// 而它认的本来就是"**这扇门是谁开的**、**走的哪条路**"，不是"谁转的"。次序那件事仍由
 /// `settle` 管（答话路没到就先报一句，见那里）。
 fn reply_of(who: TaskId) -> Option<PieToken> {
-    let link = Name::new(LINK).ok()?;
+    let link = Mark::of(LINK);
     let mut index = 0usize;
     loop {
         let (token, _perm, vestor) = mail::collect(index).ok()?;
@@ -254,7 +254,7 @@ fn reply_of(who: TaskId) -> Option<PieToken> {
 /// 判据两格，缺一不可：`owner == who`（那扇门是它开的）**且** 记号 == `ask`（它亲手铸的
 /// 那一枚）——客人交来的**入口**也满足前两格（都是它铸、它交的），两件事只有记号分得开。
 fn ask_of(who: TaskId) -> Option<PieToken> {
-    let ask = Name::new(ASK_MARK).ok()?;
+    let ask = ASK_MARK;
     let mut index = 0usize;
     loop {
         let (token, _perm, _vestor) = mail::collect(index).ok()?;

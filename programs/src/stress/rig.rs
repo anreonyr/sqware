@@ -189,6 +189,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Mark;
 use programs::stress::tick;
 
 use programs::supervisor::root::boot;
@@ -444,7 +445,7 @@ fn body(
         quay.peer(),
         &[],
         Some(quay),
-        &[link],
+        &[Mark::of(link.as_str())],
         HANDSHAKE_MS,
     )
     .map_err(|_| "start")?;

@@ -13,6 +13,7 @@
 //! 都带动作码**（板那一扇的 `REGISTER` 一族、树那一扇的 `land`/`find` 一族）——去掉只省
 //! 1 字节，换来"任何恰好 32 字节推上来的东西都算一次登记"。
 
+use env::Mark;
 use env::Name;
 use env::wire::NAME_LEN;
 
@@ -28,7 +29,7 @@ pub const OCCUPY_LEN: usize = 1 + NAME_LEN;
 pub const LANE: &str = "line";
 
 /// 回信孔的记号（登记那一答从它回来）。
-pub const BACK_MARK: &str = "line-back";
+pub const BACK_MARK: Mark = Mark::of("line-back");
 
 /// 线泊位两个方向那一个记号：**帧不报内容，只报"有事"**（形状的下限，见文件头）。
 pub const NOTE: u8 = 1;

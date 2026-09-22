@@ -24,6 +24,7 @@
 //! 合法答案，故"有没有"只能另占一格。
 
 use super::core::{Fail, PolicyId};
+use env::Mark;
 
 // ── 码 ──────────────────────────────────────────────────────
 
@@ -148,7 +149,7 @@ pub use crate::session::call::opened_by;
 ///
 /// 与 rtc 那一面的 `rtc-back` 同一个形状、不同的记号：两块门牌的回信孔若刻同一个记号，
 /// 同一张表里就分不出这一枚是哪一面的。
-pub const BACK: &str = "principal-back";
+pub const BACK: Mark = Mark::of("principal-back");
 
 /// 树上那块窗格的名字（门牌的第一段）：`/sys`。
 pub const DIR: &str = "sys";

@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`crate::system::board::call`]。
 
+use env::Mark;
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
@@ -25,7 +26,8 @@ pub fn open(holder: TaskId, millis: usize) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let mut quay = Quay::open(holder);
     quay.seat(link).map_err(bcall::map_seat)?;
-    quay.claim(holder, link, millis).map_err(bcall::map_claim)?;
+    quay.claim(holder, Mark::of(link.as_str()), millis)
+        .map_err(bcall::map_claim)?;
     let board = hear(&quay, millis).ok_or(Fail::Unknown)?;
     Ok((quay, board))
 }

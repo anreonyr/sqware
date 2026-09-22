@@ -72,6 +72,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Mark;
 use programs::supervisor::root::boot;
 
 use alloc::format;
@@ -109,7 +110,7 @@ extern "C" fn main() -> ! {
     };
     let group = tole.token();
     // ② 成员：一枚孔（用户态铸的孔不带 `ONLY` ⇒ 也可复制）。
-    let Ok(member) = mail::unseal_hole("member") else {
+    let Ok(member) = mail::unseal_hole(Mark::of("member")) else {
         die("group: member hole")
     };
     let member = HolePie::from_token(member);
@@ -117,7 +118,7 @@ extern "C" fn main() -> ! {
     //    不是被测对象）。
     let mut report = [PieToken::NONE; WAITERS];
     for slot in report.iter_mut() {
-        let Ok(tok) = mail::unseal_hole("report") else {
+        let Ok(tok) = mail::unseal_hole(Mark::of("report")) else {
             die("group: report hole")
         };
         *slot = tok;

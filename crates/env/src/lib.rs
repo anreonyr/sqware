@@ -28,6 +28,6 @@ pub use fid::{
 pub use fid::{DBCN_MAX, DebugCall, DebugCallRet};
 pub use permission::Permission;
 pub use wire::{
-    Decode, FromPair, NAME_LEN, Name, NameError, PAIR_LEN, Pair, PieToken, TaskId, TeamId,
+    Decode, FromPair, Mark, NAME_LEN, Name, NameError, PAIR_LEN, Pair, PieToken, TaskId, TeamId,
     VirtAddr, Wire,
 };

@@ -4,6 +4,7 @@
 //! 帧与记号见 [`protocol::system::board::call`]。
 
 use alloc::format;
+use env::Mark;
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
@@ -156,7 +157,7 @@ fn settle(desk: &mut Desk, assembler: TaskId, tole: &Tole, tip: &mail::HolePie) 
 /// - **记号 == `board`** —— 那一枚是**板路**上的一枚（客侧 `seat` 铸它时刻的就是这条路
 ///   的名字 `LINK`；客人自己铸的另两枚刻的是 `ask` / `entry`）。
 fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
-    let board = Name::new(LINK).ok()?;
+    let board = Mark::of(LINK);
     let mut index = 0usize;
     loop {
         let (token, _perm, vestor) = mail::collect(index).ok()?;
@@ -178,7 +179,7 @@ fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
 ///
 /// **必须在 REGISTER 那一刻就认**：牌子会被惰性摘掉，摘了就认不出这位叫什么了。
 fn lane_for(name: Name) -> Option<PieToken> {
-    let want = Name::new(&format!("{LANE_PREFIX}{}", name.as_str())).ok()?;
+    let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
     let mut index = 0usize;
     loop {
         let (token, _perm, _vestor) = mail::collect(index).ok()?;
@@ -252,7 +253,7 @@ fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
 /// 回答的是"能不能再授出"，不是"这是什么"，故换成记号：入口刻的是 `entry`（见 [`answer`]
 /// 那一支），两枚同来源的孔靠**记号**分开。
 fn ask_of(who: TaskId) -> Option<PieToken> {
-    let ask = Name::new(ASK_MARK).ok()?;
+    let ask = ASK_MARK;
     let mut index = 0usize;
     loop {
         let (token, _perm, _vestor) = mail::collect(index).ok()?;
@@ -357,7 +358,7 @@ fn answer(
             // `{交者 == 它, 记号 == entry}`：前格在核心（`probe(entry) == who`），后格在这里。
             // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
             // 两件事只有记号分得开。
-            Some(entry) if bcall::marked_as(entry) == Name::new(ENTRY_MARK).ok() => {
+            Some(entry) if bcall::marked_as(entry) == Some(ENTRY_MARK) => {
                 let said = board.register(name, entry, who).map(|_| ());
                 // 名字刚到 ⇒ 现在就把这一位的死亡道认下来（见 [`lane_for`]）：牌子会被惰性
                 // 摘掉，等到死亡那一刻就认不出这位叫什么了。

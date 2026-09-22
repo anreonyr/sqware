@@ -28,6 +28,7 @@ extern crate alloc;
 extern crate programs;
 
 // 需求单归**收方**：四张单子自己开（lib 里同一份源码），本域只照它开单。
+use env::Mark;
 use programs::driver::router::needs as router_needs;
 use programs::driver::rtc::needs as rtc_needs;
 use programs::driver::uart::needs as uart_needs;
@@ -410,7 +411,7 @@ extern "C" fn main() -> ! {
         Err(_) => service::die(service::E_TABLE, "system: no group"),
     };
     for (i, p) in PLAN.iter().enumerate() {
-        let Ok(lane) = mail::unseal_hole(&alloc::format!("gone-{}", p.name)) else {
+        let Ok(lane) = mail::unseal_hole(Mark::of(&alloc::format!("gone-{}", p.name))) else {
             continue;
         };
         let _ = tole.attach(&HolePie::from_token(lane), HoleDir::Pull);
@@ -447,7 +448,7 @@ fn talk_to_root() -> Option<Pier> {
     let slot = Name::new(supply::BOOT).ok()?;
     let mut quay = Quay::open(sire);
     quay.seat(slot).ok()?;
-    quay.claim(sire, slot, BOOT_MS).ok()?;
+    quay.claim(sire, Mark::of(supply::BOOT), BOOT_MS).ok()?;
     quay.find(slot).copied()
 }
 

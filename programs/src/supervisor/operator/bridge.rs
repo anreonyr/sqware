@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**装配侧**：把持树者接上一位客人（三步），并认下它那条提示之路；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::operator::call`]。
 
+use env::Mark;
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
@@ -30,7 +31,7 @@ pub fn attach(
     // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
     quay.seat(link).map_err(|_| "operator:seat")?;
     // 2. 认领**这位客人**交出来的那一枚（记号 = 这条路的名字，客侧 `seat` 刻的就是它）。
-    quay.claim(client, link, millis)
+    quay.claim(client, Mark::of(link.as_str()), millis)
         .map_err(|_| "operator:claim")?;
     // 3. 提示孔（只认一次）→ 把客人那一枚转授给持树者 → 告两边。
     let _ = host_of(host, millis, tip)?;
@@ -58,10 +59,10 @@ pub fn host_of(
         return Ok(host);
     }
     let slot = Name::new(TIP_NAME).map_err(|_| "operator:name")?;
-    let mark = Name::new(TIP_MARK).map_err(|_| "operator:name")?;
     let mut quay = Quay::open(host);
     quay.seat(slot).map_err(|_| "operator:seat")?;
-    quay.claim(host, mark, millis).map_err(|_| "operator:tip")?;
+    quay.claim(host, TIP_MARK, millis)
+        .map_err(|_| "operator:tip")?;
     let pier = quay.find(slot).ok_or("operator:tip")?;
     // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
     *tip = pier.at_peer();

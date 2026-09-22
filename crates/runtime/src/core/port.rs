@@ -230,7 +230,7 @@ impl Port {
         if peer.get() == 0 {
             return Err(denied());
         }
-        let reply = HolePie::unseal("back")?;
+        let reply = HolePie::unseal(env::Mark::of("back"))?;
         let to = ship(&reply, peer, Access::STORE, Policy::NONE)?;
         Ok(Port {
             to,

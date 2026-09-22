@@ -16,7 +16,7 @@
 
 use alloc::vec::Vec;
 
-use env::{HoleDir, Name};
+use env::{HoleDir, Mark};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
@@ -50,7 +50,7 @@ pub(super) fn form() {
     );
 
     // `ONLY` 不可撤：**自持枚（sire = None）也不例外**。
-    let name = Name::new("permit").expect("mark 装得下");
+    let name = Mark::of("permit");
     let meta = hole::meta(0, name);
     for sire in [None, Some(1)] {
         let mut pie = AnyPie::Hole(gate::new_pie(meta.clone(), sole, sire));
@@ -94,7 +94,7 @@ pub(super) fn form() {
 /// 成员那一侧不该再记得它"那条契约的落点。
 pub(super) fn members() {
     let group = tole::meta(0);
-    let mark = Name::new("mate").expect("mark 装得下");
+    let mark = Mark::of("mate");
     let hole = hole::meta(0, mark);
     let bell = nole::NoleMeta::new(0);
 
@@ -154,7 +154,7 @@ pub(super) fn members() {
 /// 组用 `Vec` **持着**：`ToleMeta::drop` 会撤掉自己那格转发登记，松了手容量就白测。
 /// 「满」是**容量**账（同一枚成员被多少个组关心），不是内存不足——见 `FWD_MAX` 定义处。
 pub(super) fn fanout() {
-    let mark = Name::new("member").expect("mark 装得下");
+    let mark = Mark::of("member");
     let hole = hole::meta(0, mark);
     let mate = Mate::Hole(hole.id(), HoleDir::Pull);
 
@@ -204,15 +204,11 @@ pub(super) fn order() {
     let team = TeamBuilder::new(space).spawn().expect("order: spawn team");
     let task = team.task().hold().expect("order: hold task");
 
-    let dead_meta = hole::meta(0, Name::new("sealed").expect("order: mark"));
+    let dead_meta = hole::meta(0, Mark::of("sealed"));
     hole::seal(&dead_meta);
     let dead = gate::new_pie(dead_meta, Permission::FETCH, None);
     let dead_token = dead.token;
-    let live = gate::new_pie(
-        hole::meta(0, Name::new("live").expect("order: mark")),
-        Permission::FETCH,
-        None,
-    );
+    let live = gate::new_pie(hole::meta(0, Mark::of("live")), Permission::FETCH, None);
     let live_token = live.token;
     {
         let mut pies = task.pies.lock();

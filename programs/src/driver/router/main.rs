@@ -105,6 +105,7 @@ extern crate alloc;
 extern crate programs;
 
 // 客侧装配与需求单都住在驱动这一族里：`assemble` 是三台驱动与房客共用的那段机器（会话 + 配给）。
+use env::Mark;
 use programs::driver::assemble;
 use programs::driver::router::needs;
 
@@ -449,7 +450,7 @@ fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
     let mark = Name::new(lcall::LANE).ok()?;
     let mut quay = Quay::open(from);
     quay.seat(mark).ok()?;
-    quay.claim(from, mark, QUAY_MS).ok()?;
+    quay.claim(from, Mark::of(lcall::LANE), QUAY_MS).ok()?;
     // **码头一起交出去**：`Lines` 收不下这条泊位时，得由拿着码头的人把它放回去
     // （只有码头知道那一枚是本端铸的，见 `drop_lane`）。
     let pier = quay.find(mark).copied()?;

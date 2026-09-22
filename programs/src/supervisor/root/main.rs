@@ -40,6 +40,7 @@ extern crate alloc;
 extern crate programs;
 
 // 两块账在引导域自己那一摊里（只有它读得到）；装配机器是两个装配者共用的一台。
+use env::Mark;
 use programs::supervisor::root::boot;
 use programs::supervisor::service;
 
@@ -101,7 +102,7 @@ extern "C" fn main() -> ! {
         orch,
         &[],
         Some(&mut quay),
-        &[slot],
+        &[Mark::of(slot.as_str())],
         service::READY_MS,
     )
     .is_err()

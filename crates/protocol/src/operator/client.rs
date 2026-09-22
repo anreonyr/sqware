@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**客侧三手**：「持树者是谁」由装配侧递一格，此后一问一答；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`crate::operator::call`]。
 
+use env::Mark;
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
@@ -24,7 +25,8 @@ pub fn open(holder: TaskId, millis: usize) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let mut quay = Quay::open(holder);
     quay.seat(link).map_err(ocall::map_seat)?;
-    quay.claim(holder, link, millis).map_err(ocall::map_claim)?;
+    quay.claim(holder, Mark::of(link.as_str()), millis)
+        .map_err(ocall::map_claim)?;
     let host = hear(&quay, millis).ok_or(Fail::Unknown)?;
     Ok((quay, host))
 }

@@ -9,7 +9,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Name, PieToken, TaskId};
+use env::{Mark, Name, PieToken, TaskId};
 
 use super::call;
 
@@ -151,8 +151,9 @@ impl Quay {
 
     /// 装上一条泊位，并把本端那一枚孔交给对端。
     ///
-    /// **记号就是这条泊位的名字**：铸孔那一刻刻上去（`call::mint`），副本过线之后仍然
-    /// 是它——故对端认领时按"谁开的 + 记号"就能把这一枚归到同名的这条路上。
+    /// **记号 = 这条泊位名字的指纹**（`Mark::of(name)`）：铸孔那一刻刻上去（`call::mint`），
+    /// 副本过线之后仍然是它——故对端认领时按"谁开的 + 记号"就能把这一枚归到同名的这条路上。
+    /// 名字是本端的账（文本、人读），记号是过线的钥匙（8 字节、只比较）；两者可以不同。
     ///
     /// 返**泊位**：以后从它说话。对端随后也会交给本端一枚（刻着**同一条路的名字**）——
     /// 那一枚到的时候，[`Quay::claim`] 把它归位到这条泊位上。
@@ -174,7 +175,7 @@ impl Quay {
         }
 
         // 本端那一枚：先铸（**记号 = 这条泊位的名字**），再交给对端。
-        let hole = call::mint(name).map_err(|()| Seat::NoHole)?;
+        let hole = call::mint(Mark::of(name.as_str())).map_err(|()| Seat::NoHole)?;
         // **牌不写了**：交出去的副本与本体**共享同一个槽**（`HoleMeta.slot`，
         // `accord` 只克隆 `Arc`）——牌写进去，本端读就把对端那张一起吃掉，本端不读
         // 就占着单槽挡住对端推来的第一条消息。名字这一层信息改由**孔上的记号**承担
@@ -219,7 +220,7 @@ impl Quay {
     /// 认领下来的泊位留在码头里（那是它的家），用 [`Quay::find`] 取。
     ///
     /// `millis` 属**上限族**（三态口径见 `env::fid` 文件头的定式）。
-    pub fn claim(&mut self, of: TaskId, mark: Name, millis: usize) -> Result<(), Claim> {
+    pub fn claim(&mut self, of: TaskId, mark: Mark, millis: usize) -> Result<(), Claim> {
         if self.piers.is_empty() {
             // 我一条都没 seat 出去 ⇒ 没有额度可认领（对方无从知道该给我几条）。
             return Err(Claim::Partial);
@@ -326,7 +327,7 @@ impl Quay {
     ///
     /// **一枚都没等到就不动**：这一条由"贴到已有的路上"自己成立——枚举里没有候选，
     /// 就一次也不进归位那一步（早绑一次就钉在自己的孔上：那 160 字节再也到不了对端）。
-    fn scan(&mut self, of: TaskId, mark: Name) -> Result<(), Claim> {
+    fn scan(&mut self, of: TaskId, mark: Mark) -> Result<(), Claim> {
         let piers = &mut self.piers;
         call::each(|h| {
             // 两格判据 + 已经用掉的那几枚不再认。

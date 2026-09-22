@@ -29,7 +29,7 @@ use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
 
-use env::{HoleDir, Name};
+use env::{HoleDir, Mark};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::gate::GateError;
@@ -89,11 +89,11 @@ pub struct HoleMeta {
     /// 与 `owner` 分工：`owner` = **谁开的这扇门**；`mark` = **这条路叫什么**——铸者
     /// 那张表里这条路的名字。两者都随副本过线、转手不变，故"同一位开的哪一枚孔"由
     /// 这两格一起答（`Reserve` 读它，见 `env::fid::PieCall::Reserve`）。
-    mark: Name,
+    mark: Mark,
 }
 
 impl HoleMeta {
-    pub(super) fn new(id: HoleId, owner: usize, mark: Name) -> Arc<Self> {
+    pub(super) fn new(id: HoleId, owner: usize, mark: Mark) -> Arc<Self> {
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
             id,
@@ -125,7 +125,7 @@ impl HoleMeta {
     }
 
     /// 这条路上刻的记号（见字段 `mark`）。
-    pub(crate) fn mark(&self) -> Name {
+    pub(crate) fn mark(&self) -> Mark {
         self.mark
     }
 
@@ -319,7 +319,7 @@ pub(crate) fn seal(meta: &HoleMeta) {
 /// 解封一枚孔的代价仍是零字节——槽里没有缓冲，第一条消息由推者带进来。多出来的一格是
 /// **记号**：`owner` = 开辟者任务 id（envcall 入口传当前任务），`mark` = 这条路的名字
 /// （同一入口先按 `Name` 的解码面校验过，非法到不了这里）。
-pub(crate) fn meta(owner: usize, mark: Name) -> Arc<HoleMeta> {
+pub(crate) fn meta(owner: usize, mark: Mark) -> Arc<HoleMeta> {
     // 先分配 id 再建 Meta：id 同时是等待键的身份（见 `key`），必须随 Meta 定型。
     HoleMeta::new(alloc_id(), owner, mark)
 }

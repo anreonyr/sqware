@@ -27,6 +27,7 @@
 //! **装配者自己不绑**——它是写名册的那一个，不是被写的那一个。
 
 use core::time::Duration;
+use env::Mark;
 
 use crate::supervisor::system::server::{self as service, Grant};
 use env::wire::manifest;
@@ -281,7 +282,7 @@ pub fn start<'a>(
     let mut quay = Quay::open(rep);
     // `marks` = 要逐条认领的记号：**记号就是这条泊位的名字**（`seat` 铸孔时刻上去的），
     // 而客侧装的就是同一个通道名 ⇒ 放行之后本域按它逐条把客人的孔认下来（顺序无关）。
-    let mut marks: alloc::vec::Vec<Name> = alloc::vec::Vec::new();
+    let mut marks: alloc::vec::Vec<Mark> = alloc::vec::Vec::new();
     marks.try_reserve(p.channels.len()).map_err(|_| {
         step(p, "no room for marks");
         p.died
@@ -292,7 +293,7 @@ pub fn start<'a>(
             step(p, "seat failed");
             p.died
         })?;
-        marks.push(ch);
+        marks.push(Mark::of(ch.as_str()));
     }
 
     // 三、放行 + 等就绪（有通道的那一条顺带逐条认领）；四、发门闩。
