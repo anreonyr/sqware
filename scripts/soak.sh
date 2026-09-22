@@ -103,16 +103,29 @@
 # 不在上面这张判据表里——它加的时候没人回头看这张门。这一刀没有顺手补它（那要另算一次量），
 # 只把缺口记在这里。
 #
-# **照实记（预算那一格）**：每一轮的外接期限从 **15 秒抬到 40 秒**。它是按"当年的机器"定的，
-# 而**这个门跑的是 debug 档**（`cargo run` 不带 `--release`）：debug 的启动本来就慢一个量级，
-# 结盟那一刀又加上两个程序（服务 + 探针，探针还要在启动期打二十几行读数）。量出来的数是
-# **debug 启动到 `echo: ready` 要约 15 秒**（直接拿 debug ELF 跑，轮询到那一行 15157 ms），
-# 而喂进去的 `exit` 落在启动期、要在启动完成之后才被读到 ⇒ 停机发生在 16 秒上下，正好压着旧
-# 预算的线（读数：10 轮全是"无停机行"，日志停在 `member: done` 一带；同一个 ELF 手工放长到
-# 60 秒就正常停）。40 秒 = 那个数的两倍半余量。**判据没变**——这一格管的是"feed 坏了就早点红"，
-# 不是"必须 15 秒内停"。
-# **照实记**：这一格也照旧把 `cargo run` 的**构建**算在期限里（冷跑时构建可能自己就超）。
-# 今天跑门之前都先 build 过，故那一格没被量到；记在这里，别把它当成"启动慢"。
+# **照实记（喂键那一格：两次假红换来的）**：旧版是 `( sleep 5; echo exit; sleep 3; echo exit ) |
+# cargo run`——**按钟表喂**。而这个门跑 debug 档、**启动到装配完成约 15 秒**，那两条 `exit`
+# 落在启动期，`echo` 一就绪就把它们读走 ⇒ **停机级联与探针赛跑**。级联按 heir 链
+# `echo → operator → principal → coalition → … → member` 收域，**member 要用的服务先死**：
+#
+# * 第一次读到（`soak-1790090638-9`）：**无停机行**——`member: done` 已在、`board: swept … occupied=5`
+#   说明级联**正在**收域，只是没在期限里走完（265 行 vs 通过轮 285 行；无 panic、无 `[stop]`）；
+# * 第二次读到（`soak-1790091694-5`）：`system: gone echo … wait=now` 落在 `member: leave(c0)=ok`
+#   之后，`waive` 起每一步都答 `err:unknown` ⇒ 红的正是 `amid(out,me)=false` /
+#   `band(c0)=n1` / `band(c0,next)=n0` / `bloc(me)=n2` 四条。
+#
+# 同一个 ELF 重跑 10/10、HEAD 对照 10/10 ⇒ 不是内核行为，是**这一格的喂键方式**。
+# 故喂键改成**等探针**：日志里出现 `member: done` 再喂第一条 `exit`；`FEED_WAIT` 秒仍没有
+# 就兜底照喂（真出不来时红在判据上，不是红在超时上）。**判据一条没动**——这一格管的是
+# "喂了键就真的走到停机"，不是"必须在第 5 秒喂"。
+#
+# **照实记（预算那一格）**：外接期限原是从 15 秒抬到 40 秒的（按"结盟那一刀 + debug 启动
+# 约 15 秒"定的：那时 10 轮全是"无停机行"、日志停在 `member: done` 一带，同一个 ELF 手工放长到
+# 60 秒就正常停）。喂键改成等探针之后，逐轮的时间变成
+# **等探针 ≤`FEED_WAIT`(25) + 两条 `exit` 间隔 `FEED_HOLD`(3) + 收尾 ≈2 ⇒ 30 秒上下**，
+# 故期限抬到 **45**（那个数的 1.5 倍）。这一格照旧把 `cargo run` 的**构建**算在期限里
+# （冷跑时构建可能自己就超）；今天跑门之前都先 build 过，故那一格没被量到，记在这里，
+# 别把它当成"启动慢"。
 #
 # 另外两条（`lodger: taken=2` / `lodger: unknown=1`）是**失败域**那两格：房客占下 1 号线之后
 # 拿**同一条线**再来一次（答 `TAKEN`）与报一个**树里没有的名字**（答 `UNKNOWN`）——三格的答码
@@ -195,6 +208,12 @@ rounds="${1:-10}"
 [ "$#" -ge 1 ] && shift
 prof=""
 [ "${1:-}" = "--release" ] && prof="--release"
+
+# 喂键那一格（机理与两次读数见文件头）：等探针再喂 + 兜底 + 整轮期限。
+FEED_AFTER="member: done"
+FEED_WAIT=25
+FEED_HOLD=3
+ROUND_LIMIT=45
 out=target/soak
 mkdir -p "$out"
 tag="soak-$(date +%s)"
@@ -202,7 +221,23 @@ pass=0
 i=1
 while [ "$i" -le "$rounds" ]; do
   log="$out/$tag-$i.log"
-  ( sleep 5; echo exit; sleep 3; echo exit ) | timeout 40 cargo run $prof > "$log" 2>&1
+  # 喂键器：轮询**本轮那份日志**，等探针收尾（`FEED_AFTER`）再喂第一条 `exit`；
+  # `FEED_WAIT` 秒仍没有就兜底照喂（那一支注定红在判据上，不是红在超时上）。
+  # 它就在原来那条管道里——`cargo run` 的 stdin 仍是它，形状没变。
+  #
+  # 第二条 `exit` 是**保险**（喂键落在启动期时，第一条可能被别的读者吃掉）；等探针之后
+  # 本轮往往在第一条就收尾，第二条会撞上**断开的管道**——那是预期的收尾，不是错，故喂键器
+  # 的 stderr 闭掉（否则每一轮都在门上刷一行 `Broken pipe`）。
+  (
+    waited=0
+    while [ "$waited" -lt "$FEED_WAIT" ] && ! grep -q "$FEED_AFTER" "$log" 2>/dev/null; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    echo exit
+    sleep "$FEED_HOLD"
+    echo exit
+  ) 2>/dev/null | timeout "$ROUND_LIMIT" cargo run $prof > "$log" 2>&1
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
   elif ! { grep -q "router: tree part=0 land=0 find=0 got=true" "$log" \
