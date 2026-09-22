@@ -72,18 +72,22 @@ const ALL: [Site; NSITE] = [
 #[cfg(feature = "framework")]
 const NSITE: usize = 7;
 
+/// 编译期锁：`ALL` 手写的序必须与 `Site` 的**枚举序**逐格对齐（`ix()` 即枚举序）。
+/// 加一个出身漏改一处，读侧就会把出身认成另一个容器——账只在消息里报个错名字。
+#[cfg(feature = "framework")]
+const _: () = {
+    let mut i = 0;
+    while i < NSITE {
+        assert!(ALL[i] as usize == i);
+        i += 1;
+    }
+};
+
 #[cfg(feature = "framework")]
 impl Site {
+    /// 出身下标 = **枚举序**（不是另一段手写 match：那会让"下标"与"枚举"各有一份事实）。
     fn ix(self) -> usize {
-        match self {
-            Site::Roster => 0,
-            Site::Holder => 1,
-            Site::TeamTasks => 2,
-            Site::Sire => 3,
-            Site::Muster => 4,
-            Site::Snapshot => 5,
-            Site::Empty => 6,
-        }
+        self as usize
     }
 
     /// 记不记账：空弱引用（`Weak::new()`）**不指向任何 `ArcInner`**，既不扣住谁、
@@ -123,13 +127,67 @@ const SLOTS: usize = 48;
 /// 槽位占用标志（0 = 空）；非 0 即已占。
 #[cfg(feature = "framework")]
 static SLOT_ID: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
-/// `出身下标 | hart << 8`（出生处只有这两个小整数，打包进一个字）——挂起自检按
-/// "是不是**本核**出生的抄件"筛，故 hart 必须记下来。
+
+/// 槽位元数据：**出身 + 出生核** 两枚小整数打包成一个字（编码见 [`SlotMeta`]）——
+/// 挂起自检按"是不是**本核**出生的抄件"筛，故出生核必须记下来。
 #[cfg(feature = "framework")]
 static SLOT_META: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// 槽位身份序列（0 = 无效哨兵，故自 1 起）。
 #[cfg(feature = "framework")]
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// 位打包的唯一一扇门：出身在低 `SITE_BITS` 位，出生核占其余高位。
+///
+/// **为什么是一个字而不是两格**：销账是"先撤身份再清元数据"，读侧在 `SLOT_ID != 0`
+/// 之后读这一对；一个字能**原子读**出完整的一对，两格会读到半新半旧的一对——那是
+/// "另一个纪元的抄件"，与本次自检要问的问题无关。
+///
+/// **照实记**：`pack(Site::Roster, HartId::new(0))` 编出来也是 `0`，与"空元数据"同字。
+/// 不冲突：`Site::Empty` 从不记账（`counted()` 为假），且读侧只在 `SLOT_ID != 0` 时读它。
+#[cfg(feature = "framework")]
+#[derive(Clone, Copy)]
+struct SlotMeta(usize);
+
+#[cfg(feature = "framework")]
+const SITE_BITS: u32 = 8;
+
+/// 编译期锁：出身下标必须装得进低 `SITE_BITS` 位。
+#[cfg(feature = "framework")]
+const _: () = assert!(NSITE <= 1 << SITE_BITS);
+
+#[cfg(feature = "framework")]
+impl SlotMeta {
+    /// 空态（清槽用）。
+    const EMPTY: SlotMeta = SlotMeta(0);
+
+    /// 打包（唯一的写入口；往返由 `debug_assert` 站岗）。
+    fn pack(site: Site, hart: crate::hart::HartId) -> SlotMeta {
+        let m = SlotMeta(site.ix() | (hart.get() << SITE_BITS));
+        debug_assert!(
+            m.site() == site && m.hart() == hart,
+            "槽位元数据往返：出身或出生核在打包里丢了"
+        );
+        m
+    }
+
+    /// 出身（低 `SITE_BITS` 位）——本核那几格之外的位一律不看。
+    fn site(self) -> Site {
+        ALL[self.0 & ((1 << SITE_BITS) - 1)]
+    }
+
+    /// 出生核（高位）。
+    fn hart(self) -> crate::hart::HartId {
+        crate::hart::HartId::new(self.0 >> SITE_BITS)
+    }
+
+    fn word(self) -> usize {
+        self.0
+    }
+
+    fn from_word(w: usize) -> SlotMeta {
+        SlotMeta(w)
+    }
+}
 
 // ── 带账的弱引用 ────────────────────────────────────────
 
@@ -190,7 +248,7 @@ impl Drop for TaskWeak {
                 if SLOT_ID[i].load(Relaxed) == self.id {
                     // 先撤身份再清元数据：别的读者要么看不到这一格，要么看到完整的一格。
                     SLOT_ID[i].store(0, Relaxed);
-                    SLOT_META[i].store(0, Relaxed);
+                    SLOT_META[i].store(SlotMeta::EMPTY.word(), Relaxed);
                     return;
                 }
             }
@@ -206,12 +264,10 @@ impl Drop for TaskWeak {
 #[cfg(feature = "framework")]
 fn record(site: Site) -> usize {
     let id = NEXT_ID.fetch_add(1, Relaxed);
-    // 号挤进 meta 高位（诊断槽元数据，不是身份接口）——取裸值；位打包这一处
-    // 属"号被当值"，另有一刀（本刀只把匿名身份收成类型）。
-    let meta = site.ix() | (crate::hart::hart_id().get() << 8);
+    let meta = SlotMeta::pack(site, crate::hart::hart_id());
     for i in 0..SLOTS {
         if SLOT_ID[i].compare_exchange(0, id, Relaxed, Relaxed).is_ok() {
-            SLOT_META[i].store(meta, Relaxed);
+            SLOT_META[i].store(meta.word(), Relaxed);
             return id;
         }
     }
@@ -247,11 +303,11 @@ pub(crate) fn check_block_heldout() {
         if SLOT_ID[i].load(Relaxed) == 0 {
             continue;
         }
-        let meta = SLOT_META[i].load(Relaxed);
-        let site = ALL[meta & 0xff];
+        let meta = SlotMeta::from_word(SLOT_META[i].load(Relaxed));
+        let site = meta.site();
         // "抄件" = 不落容器的两种出身（`Muster` 抄出即用 / `Snapshot` 快照）。
         // 只算**本核**出生的：别的核栈上的抄件归那次自检管。
-        if matches!(site, Site::Muster | Site::Snapshot) && (meta >> 8) == me.get() {
+        if matches!(site, Site::Muster | Site::Snapshot) && meta.hart() == me {
             panic!(
                 "[weak] 挂起自检：本核栈上仍有抄件（出身：{}）—— 跨挂起的弱引用会让外壳 \
                  永远归还不掉（`strong 0 weak 1`）",
