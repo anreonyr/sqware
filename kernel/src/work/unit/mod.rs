@@ -4,7 +4,7 @@
 // 自己的 trap 帧（Frame 窗口分配）。
 //
 //   space     — 地址空间（Space/SpaceBuilder、SpaceInner 映射簿记、window 窗口策略）
-//   gate      — 能力门闩（Pie/AnyPie/授权；单向依赖 mail 的资源实体）
+//   gate      — 能力门闩（Pie/AnyPie/授权；与 mail 互见，见其头注的照实记）
 //   team      — 团队容器（Team/TeamBuilder/kernel 单例 + 运行期装载）
 //   task      — 线程单元（Task/TaskBuilder）
 //   life      — 存活单元（键的寿命 = 资源的寿命；A2 的后半）
