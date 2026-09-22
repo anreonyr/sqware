@@ -2,7 +2,12 @@
 # `crates/alloc-probe` 是**宿主**（x86_64）侧的分配器压测台：主工作区被
 # `.cargo/config.toml` 钉在 `riscv64gc-unknown-none-elf` 上，它进不来（要 std + host ABI）。
 # 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/run.sh` 跑。
-exclude = ["crates/alloc-probe"]
+#
+# `crates/operator-case` 是**同一类**的宿主台：把 `protocol` 的 operator 核心源码
+# `include!` 进来，让树与七条原语的规矩在宿主上真跑一遍（门口 `scripts/host.sh`）。
+# 它进不来的理由与上一条同源，外加一条实测：链接 `protocol` 会带进 `runtime`，
+# 而 `runtime` 里那两处 riscv 内联汇编在宿主上编不过（见那个 crate 的 Cargo.toml）。
+exclude = ["crates/alloc-probe", "crates/operator-case"]
 members = [
     "kernel",
     "programs",

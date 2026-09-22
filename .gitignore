@@ -13,3 +13,4 @@ docs/.obsidian/
 # 那个 crate 是**独立工作区**（被根 workspace `exclude`），故它有自己的一份 target——
 # 根上的 `/target` 只盖根目录那一份。
 crates/alloc-probe/target/
+crates/operator-case/target/
