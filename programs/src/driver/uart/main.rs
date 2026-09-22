@@ -4,12 +4,12 @@
 //! uart — **串口驱动域**：`serial@10000000` 的持有者，兼**控制台服务**（**U 态**，见下）。
 //!
 //! ```text
-//! 收配给（父域按本域那张单子推来记录，按 Slot 归位）
+//! 收配给（父域按本域那张单子推来记录：**位置即格**）
 //!   → 开图：那台串口那一页借映进本域
 //!   → 把"收到字节就拉线"打开（`IER.RX`）——**线的闸门归设备持有者**
 //!   → 上板：板因此看得见本域的死（**不挂牌子**：名字挂在树上）
 //!   → 上树：门牌 `/device/uart` —— 牌子上挂的就是"读行"的那枚孔（见下）
-//!   → 从树上找到线路由者（`/device/router`）、**登记本域那条线**（报设备名，不说线号）
+//!   → 从树上找到线路由者（`/device/router`）、**登记本域那条线**（报那一段区，不说线号）
 //!   → 常驻：那条线一响 ⇒ **排空设备**（读走 `RBR`）⇒ 把这一批字节推给读行的人
 //!            ⇒ 说一句"这一条我排空了"（路由者据此把线放回去）
 //! ```
@@ -112,11 +112,15 @@ extern "C" fn main() -> ! {
         exit_with(E_OPEN)
     };
     uart::arm_rx(dock.view());
-    // 名字**随记录发下来**（发货方才是"哪一台"的权威）：本域只读它、不写死它。
-    let Some(device) = serial.name() else {
+    // 坐标**随记录发下来**（内核按 `reg` 段造的门闩；本域既不写死名字、也不写死地址）。
+    let Some(key) = serial.key() else {
         exit_with(E_OPEN)
     };
-    say(&alloc::format!("uart: {} ier=rx", device.as_str()));
+    let Some(base) = key.base() else {
+        // 设备门的坐标只能是区（内核就是按 `reg` 段造的）；别的形就是配给错了。
+        exit_with(E_OPEN)
+    };
+    say(&alloc::format!("uart: ier=rx at={base:#x}"));
 
     // 3. 上板：**只为让板看得见本域的死**（本域开的那扇门随收尾封印 ⇒ 板当场看出来）。
     //    不挂牌子——名字在树上。**问话孔照交**：不交的那一位在板账上永远"没挂齐"，
@@ -148,9 +152,9 @@ extern "C" fn main() -> ! {
     };
     serve_tree(&link, talk, host, entry);
 
-    // 5. **登记本域那条线**：按名从树上找到线路由者（`/device/router`），报的是**发下来的那台
-    //    设备名**——"线 = 名字的函数"那条权威在路由者那边解，本域从不说线号，也不自己造名字。
-    let Ok(held) = register(&link, talk, host, device) else {
+    // 5. **登记本域那条线**：按名从树上找到线路由者（`/device/router`），报的是**发下来的那一段
+    //    区**——"线 = 区的函数"那条权威在路由者那边解，本域从不说线号，也不自己造坐标。
+    let Ok(held) = register(&link, talk, host, key) else {
         exit_with(E_LINE)
     };
     say("uart: line occupied");
@@ -229,14 +233,14 @@ const BAD: u8 = ocall::BAD;
 
 /// 从树上找到线路由者，把本域那条线登记下来。
 ///
-/// 会话是**上面那一条**（同一个域只开一条，见 `main` 第 4 步）；设备名是**发下来的那一条**
-/// （随配给记录到本域，见 `main` 第 2 步——本域不再写死它）；入口经会话从树上授进来，
+/// 会话是**上面那一条**（同一个域只开一条，见 `main` 第 4 步）；坐标是**发下来的那一段区**
+/// （随配给记录到本域，见 `main` 第 2 步——本域不写死它）；入口经会话从树上授进来，
 /// 泊位由 `line` 那一层装。
 fn register(
     link: &Quay,
     talk: PieToken,
     host: TaskId,
-    device: Name,
+    key: env::Key,
 ) -> Result<line::client::Line, ()> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| ())?;
     let want = Name::new(SERVICE).map_err(|_| ())?;
@@ -248,7 +252,7 @@ fn register(
         return Err(());
     }
     let entry = operator::take(link, host).ok_or(())?;
-    line::client::Line::occupy(entry, device, MS).map_err(|_| ())
+    line::client::Line::occupy(entry, key, MS).map_err(|_| ())
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。

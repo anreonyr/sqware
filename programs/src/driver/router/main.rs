@@ -8,12 +8,12 @@
 //! 那是 [`crate::driver`] 的家族纪律；需求单在 [`needs`]。
 //!
 //! ```text
-//! 收配给（父域按同一张需求单推来记录，按 Slot 归位：控制器 / 自描述 / 门铃）
-//!   → 读树：本域该用哪个 context、树里指到本控制器的线有哪几条（**带名字**；顺带报"没进来的账"）
+//! 收配给（父域按同一张需求单推来记录，**按位次归位**：控制器 / 自描述 / 门铃）
+//!   → 读树：本域该用哪个 context、树里指到本控制器的线有哪几条（**名字只为日志**；顺带报"没进来的账"）
 //!   → 板上一趟（装上板路、交上问话孔——**只为让板看得见本域的死**，不挂牌子）
 //!   → 树上一趟（分出 `/device`、把本域的服务入口落成 `/device/router`、再查回来验一遍）
 //!   → 等三个源（一只组）：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**
-//!       门上   登记：解树（名字 → 线号）→ 占住那一格 → **接上线** → 把排空那条路挂进组
+//!       门上   登记：解树（区 → 线号）→ 占住那一格 → **接上线** → 把排空那条路挂进组
 //!       铃     领到一条：**往主人手里投一帧** → 投到了才静音 + complete → 应铃
 //!       排空   客人说"我排空了"：那一格回闲 → **把线放回去**
 //!   → 每醒一次先**逐客**（`sweep`）：主人没了的那些线——拆线 + 空出格子（探活）
@@ -195,7 +195,7 @@ extern "C" fn main() -> ! {
     say("router: docks open");
     // 线集合与四笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
     say(&alloc::format!(
-        "router: device_count={} ctx={} lines={:?} unparented={} beyond={} mapped={} unparsed={}",
+        "router: device_count={} ctx={} lines={:?} unparented={} beyond={} mapped={} unparsed={} unregion={}",
         plic.device_count(),
         plic.context(),
         sources
@@ -206,7 +206,8 @@ extern "C" fn main() -> ! {
         sources.unparented,
         sources.beyond,
         sources.mapped,
-        sources.unparsed
+        sources.unparsed,
+        sources.unregion
     ));
     let bell = Bell::new(NolePie::from_token(bell_pie.token()));
 
@@ -390,7 +391,7 @@ fn serve_board(sire: TaskId, entry: PieToken) {
     tree_trip(sire, entry);
 }
 
-/// 门上那一句话：**登记**（带动作码）——报一个设备名 ⇒ **解树**（"线 = 名字的函数"，权威只在
+/// 门上那一句话：**登记**（带动作码）——报**那一段区** ⇒ **解树**（"线 = 区的函数"，权威只在
 /// 这一处）⇒ 占住那一格 + 接上线 ⇒ 回一格状态码。
 ///
 /// 答话推到**客人借过来的那枚回信孔**上（按记号认：那位给的多枚孔靠记号分开）。
@@ -404,32 +405,40 @@ fn desk_face(
     frame: &[u8],
     tole: &Tole,
 ) {
-    if let Some(device) = lcall::unpack_occupy(frame) {
-        let code = match sources.line_of(device) {
-            // 树里没这条线 ⇒ 那个名字不是中断源。
+    if let Some(key) = lcall::unpack_occupy(frame) {
+        let code = match sources.line_of(key) {
+            // 树里没这条线 ⇒ 那个坐标不是中断源（线挂在设备上，别的形自然落这一支）。
             None => lcall::UNKNOWN,
-            Some(line) => match take_lane(from) {
-                // 客户没把泊位交出来（或交不出来）。
-                None => lcall::DENIED,
-                Some((mut quay, lane)) => match lines.occupy(line, lane) {
-                    Ok(()) => {
-                        // **接线是登记的直接后果。**
-                        plic.enable(line, LINE_PRIORITY);
-                        // **排空那条路也在这里挂上**：客人往它写一句"我排空了"，本域就被叫醒
-                        // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `drain_exhaust`）。
-                        if let Some(lane) = lines.lane(line) {
-                            let _ = tole.attach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
+            Some(src) => {
+                let (line, name) = (src.line, src.name);
+                match take_lane(from) {
+                    // 客户没把泊位交出来（或交不出来）。
+                    None => lcall::DENIED,
+                    Some((mut quay, lane)) => match lines.occupy(line, lane) {
+                        Ok(()) => {
+                            // **接线是登记的直接后果。**
+                            plic.enable(line, LINE_PRIORITY);
+                            // **排空那条路也在这里挂上**：客人往它写一句"我排空了"，本域就被叫醒
+                            // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `drain_exhaust`）。
+                            if let Some(lane) = lines.lane(line) {
+                                let _ =
+                                    tole.attach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
+                            }
+                            // 名字只为日志：**当场从树里读**（装不下就打 `?`）。
+                            say(&alloc::format!(
+                                "router: line {line} = {}",
+                                name.as_ref().map(|n| n.as_str()).unwrap_or("?")
+                            ));
+                            lcall::OK
                         }
-                        say(&alloc::format!("router: line {line} = {}", device.as_str()));
-                        lcall::OK
-                    }
-                    // **拒了就放回去**：这一趟刚交上来的那条泊位不能留在账外（见 `drop_lane`）。
-                    Err(fail) => {
-                        drop_lane(&mut quay, lane, line);
-                        lcall::fail_to_code(Some(fail))
-                    }
-                },
-            },
+                        // **拒了就放回去**：这一趟刚交上来的那条泊位不能留在账外（见 `drop_lane`）。
+                        Err(fail) => {
+                            drop_lane(&mut quay, lane, line);
+                            lcall::fail_to_code(Some(fail))
+                        }
+                    },
+                }
+            }
         };
         if let Some(back) = scall::find(from, lcall::BACK_MARK) {
             let _ = HolePie::from_token(back).push(&[code]);

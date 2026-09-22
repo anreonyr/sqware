@@ -31,7 +31,7 @@
 
 use alloc::vec::Vec;
 
-use env::Name;
+use env::{Key, Name};
 use runtime::core::dock::View;
 
 /// S 模式外部中断的中断号：`interrupts-extended` 里 `cell == 9` 的那一项。
@@ -73,8 +73,8 @@ impl Plic {
     /// 认控制器用的那个类（`compatible`）与单子上那一格是**同一个常量**
     /// （[`super::needs::PLIC`]）——"我是哪台控制器"这个断言只有一处。
     ///
-    /// 返的第二件是**源账**（每条带名字与线号，另加那几笔没进来的账）：登记那一趟按
-    /// [`Sources::line_of`] 解"名字 → 线号"——**那条权威只在这一处**。
+    /// 返的第二件是**源账**（每条带区与线号，另加那几笔没进来的账）：登记那一趟按
+    /// [`Sources::line_of`] 解"区 → 线号"——**那条权威只在这一处**。
     pub fn new(view: View, dtb: View) -> Option<(Self, Sources)> {
         // SAFETY: `dtb` 是内核只读借映进本域的整棵设备树（保留区，终身存活）；只读。
         let fdt = unsafe { fdt::Fdt::from_ptr(dtb.base() as *const u8) }.ok()?;
@@ -204,13 +204,14 @@ impl Plic {
     }
 }
 
-/// 树里指到本控制器的中断源（**名字 + 线号**）+ **没进来的那几笔账**。
+/// 树里指到本控制器的中断源（**那一段区 + 线号**）+ **没进来的那几笔账**。
 ///
 /// 每一项都对应一条"没进 `lines` 的理由"，都是读数不是判断——起域时打一行（见 `main`），
 /// 让这台机器上的线集合可复核，不靠注释声称。
 ///
-/// **名字是这一格的关键**：「线 = 名字的函数」那条关系就落在这里——客户登记时报的是名字，
-/// 解树只发生这一处（内核不代劳，它连线号都不知道）。
+/// **区是这一格的关键**：「线 = 区的函数」那条关系就落在这里——客户登记时报的是**它手里那件
+/// 东西的区**（内核就是按 `reg` 段造门闩的），解树只发生这一处（内核不代劳，它连线号都不知道）。
+/// 名字只是**日志**：当场从树里读出来，装不下就不打（不影响这条件成立）。
 pub struct Sources {
     /// 要接的线，落在 `[1, device_count]` 内（线数的权威是控制器自己）。
     pub lines: Vec<Source>,
@@ -223,23 +224,26 @@ pub struct Sources {
     pub mapped: usize,
     /// 指到本控制器、但 `#interrupt-cells` 不是 1 / 2 的节点数——本域**拒解**那一格。
     pub unparsed: usize,
+    /// 指到本控制器、但**没有 `reg`** 的节点数——客户只有区可报，故这台报不出来。
+    pub unregion: usize,
 }
 
-/// 一条中断源：**名字 + 线号**。
+/// 一条中断源：**那一段区 + 线号**（`name` 只为日志；装不下 ⇒ `None`）。
 ///
-/// 名字是设备节点的 basename（boot 在配对块里给的就是它——两边同一个名字，故客户报得出）。
-/// basename 装不下 31 字节的节点在这里被跳过：那种节点在内核那一侧也没有门闩（`devices.rs`
-/// 同样跳过），故不存在"有设备、没名字"的线。
+/// 区取节点的 `reg` **首段**：内核就是按 (节点, `reg` 段) 造门闩的，故那一段与内核写进
+/// 配对块的基址逐字相同（两侧读同一棵树）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Source {
-    pub name: Name,
+    pub key: Key,
     pub line: u32,
+    pub name: Option<Name>,
 }
 
 impl Sources {
-    /// 名字 → 线号。**权威只在这一处解**；查不到 ⇒ 树里没这条线（那个名字不是中断源）。
-    pub fn line_of(&self, name: Name) -> Option<u32> {
-        self.lines.iter().find(|s| s.name == name).map(|s| s.line)
+    /// 坐标 → 那条线（**权威只在这一处**）；名字随那条一起给出来，好打日志。
+    /// 查不到 ⇒ 树里没这条线（那个坐标不是中断源）。
+    pub fn line_of(&self, key: Key) -> Option<&Source> {
+        self.lines.iter().find(|s| s.key == key)
     }
 }
 
@@ -260,6 +264,7 @@ fn sources(
         beyond: 0,
         mapped: 0,
         unparsed: 0,
+        unregion: 0,
     };
     // 控制器自己没有 phandle ⇒ 树里没有任何节点指得到它 ⇒ 空表（这不是错误：
     // 那棵树在说"没有指向它的中断源"）。
@@ -297,12 +302,22 @@ fn sources(
             out.beyond += 1;
             continue;
         }
-        let Some(name) = Name::new(node.name).ok() else {
-            // 名字装不下 31 字节：那台设备在内核那一侧也没有门闩（`devices.rs` 同样跳过）
-            // ⇒ 不存在"有设备、没名字"的线。
+        let Some(base) = node
+            .reg()
+            .and_then(|mut r| r.next())
+            .map(|r| r.starting_address as usize)
+        else {
+            // 指到本控制器、但没有 `reg`：客户只有区可报，故这台报不出来（内核也没给它门闩）。
+            out.unregion += 1;
             continue;
         };
-        out.lines.push(Source { name, line });
+        // 名字**只为日志**：装不下就不打（坐标是区，这条线照收）。
+        let name = Name::new(node.name).ok();
+        out.lines.push(Source {
+            key: Key::region(base as u64),
+            line,
+            name,
+        });
     }
     out
 }

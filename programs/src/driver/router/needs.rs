@@ -3,13 +3,15 @@
 //! 它住在本域里，因为它是**收方**开的那张单子：装配者照它开单（[`WANTS`] 那几条原样递出去），
 //! 本域收到记录后**按位次归位**（[`crate::driver::assemble::receive`]——位置即格）。
 //!
-//! **两类坐标都在这一张单上**：控制器按**类**要（`sifive,plic-1.0.0`，树里认）；设备树本体与
-//! 门铃按**名**要——它们不是设备树里的节点，是内核造的门闩（`devicetree` / `irq`）。
+//! **两类坐标都在这一张单上**：控制器按**类**要（`sifive,plic-1.0.0`，树里认 ⇒ 编排域读树
+//! 定坐标）；设备树本体与门铃按**坐标本身**要（[`Key::dtb`] / [`Key::irq`]）——它们不是设备树
+//! 里的节点，是内核造的（这一族里各只有一件，故坐标就是"哪一件"）。
 //!
 //! **只要三枚**：控制器、自描述、门铃。那台串口归 [`crate::driver::uart`]——**线的闸门归设备
 //! 持有者**，故本域不去替它领（`ONLY` 是资源事实，一张表里只能有一个持有者）。
 
-use protocol::driver::supply::call::{Kind, Need, class_block, name_block};
+use env::Key;
+use protocol::driver::supply::call::{Kind, Need, class_block};
 use runtime::core::port::{Access, Policy};
 
 /// 本域认控制器的那个类（`compatible` 串）——**只此一处**：单子上按它要，
@@ -36,11 +38,6 @@ pub const WANTS: &[Need] = &[
         Access::FETCH_STORE,
         Policy::ONLY,
     ),
-    Need::named(
-        name_block("devicetree"),
-        Kind::Pole,
-        Access::FETCH,
-        Policy::NONE,
-    ),
-    Need::named(name_block("irq"), Kind::Nole, Access::FETCH, Policy::NONE),
+    Need::known(Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE),
+    Need::known(Key::irq(), Kind::Nole, Access::FETCH, Policy::NONE),
 ];

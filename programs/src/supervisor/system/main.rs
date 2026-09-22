@@ -54,12 +54,6 @@ use protocol::driver::supply;
 use protocol::driver::supply::call::{Kind, Want};
 use service::{Catalog, Died, Program};
 
-/// 载荷区那枚门闩在配对块里的名字（boot 定的，见 `kernel/platform/devices.rs`）。
-const INITRD: &str = "initrd";
-
-/// 设备树本体那枚门闩在配对块里的名字（同上）——**本域读树用的那一枚**（[`take_machine`]）。
-const DEVICETREE: &str = "devicetree";
-
 /// 持树者那一条在清单里的名字。
 const TREE: &str = "operator";
 
@@ -402,16 +396,21 @@ extern "C" fn main() -> ! {
         service::die(E_BOOT, "system: no firmware");
     };
 
-    // 2. 领账：这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
-    //    树也在这一块里——它是**本域起的服务**（`PLAN` 第一条），本域不向引导域要任何东西。
-    let catalog = match take_catalog(&boot_pier) {
-        Ok(catalog) => catalog,
+    // 2. 领树：本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一段区"要有它。
+    //    坐标是 `Key::dtb()`（"哪一件"那一形：树不知道自己写在哪，故只能这么取）。
+    let machine = match take_machine(&boot_pier) {
+        Ok(machine) => machine,
         Err(why) => service::die(E_BOOT, why),
     };
 
-    // 2′. 领树：本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一台"要有它。
-    let machine = match take_machine(&boot_pier) {
-        Ok(machine) => machine,
+    // 2′. 领账：这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
+    //     载荷区的**坐标从树里读**（`/chosen` 的 `linux,initrd-start`）——机器自己写着它在哪，
+    //     本域不另抄一个名字。树也在这一块里——它是**本域起的服务**（`PLAN` 第一条）。
+    let Some(payload) = machine.payload() else {
+        service::die(E_BOOT, "system: no payload");
+    };
+    let catalog = match take_catalog(&boot_pier, payload) {
+        Ok(catalog) => catalog,
         Err(why) => service::die(E_BOOT, why),
     };
 
@@ -467,24 +466,22 @@ fn talk_to_root() -> Option<Pier> {
 
 /// 领树：与载荷区同一条路（一张只有一条的单子 + 借映）。
 ///
-/// **本域为什么读树**：单子上那一格写的是类（`compatible`），翻成"哪一台"要有设备树；而单子
+/// **本域为什么读树**：单子上那一格写的是类（`compatible`），翻成"哪一段区"要有设备树；而单子
 /// 是本域造的（子方只认得生我者，单子不经过它），故读树只能落在本域（理由见
-/// `system::machine` 头注）。
+/// `system::machine` 头注）。这一枚的坐标是 [`env::Key::dtb`]——**它不是树里的节点**。
 fn take_machine(pier: &Pier) -> Result<Machine, &'static str> {
-    let want = Want::new(DEVICETREE, Kind::Pole, Access::FETCH, Policy::NONE)
-        .ok_or("system: tree name")?;
+    let want = Want::new(env::Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE);
     let token = take(pier, want).ok_or("system: tree ask")?;
     let dock = Dock::open(PolePie::from_token(token)).map_err(|_| "system: tree open")?;
     Machine::of(dock.view())
 }
 
-/// 领那块载荷区并把清单读出来。
+/// 领那块载荷区并把清单读出来。坐标是**机器自己在树里写的那一段**（`/chosen`，见 `main`）。
 ///
-/// **零拷贝**：那 22 MB 不是搬过来的，是同一批物理页借映进本域——固化在清单里的镜像坐标
+/// **零拷贝**：那几十 MB 不是搬过来的，是同一批物理页借映进本域——固化在清单里的镜像坐标
 /// 是**相对这块区**的切片，故换一张表、换一个 VA 照样解析得出来。
-fn take_catalog(pier: &Pier) -> Result<Catalog<'static>, &'static str> {
-    let want =
-        Want::new(INITRD, Kind::Pole, Access::FETCH, Policy::NONE).ok_or("system: payload")?;
+fn take_catalog(pier: &Pier, key: env::Key) -> Result<Catalog<'static>, &'static str> {
+    let want = Want::new(key, Kind::Pole, Access::FETCH, Policy::NONE);
     let token = take(pier, want).ok_or("system: payload ask")?;
     let dock = Dock::open(PolePie::from_token(token)).map_err(|_| "system: payload open")?;
     let view = dock.view();
@@ -495,14 +492,15 @@ fn take_catalog(pier: &Pier) -> Result<Catalog<'static>, &'static str> {
     Catalog::new(blob).ok_or("system: payload manifest")
 }
 
-/// 问引导域要一枚：递一张只有一条的单子，取回那一条的号。
+/// 问引导域要一枚：递一张只有一条的单子，取回那一条的号（按**坐标**认，不按位次——这一手
+/// 是编排域给自己领，与"配给推进客人"那条路无关）。
 ///
 /// 缓冲是本调用的局部（**一问一答**，一问一次）；引导期只发生两次。
 fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     let me = utask::self_id().ok()?;
-    let name = want.name()?;
+    let key = want.key()?;
     let mut slip = [0u8; supply::ORDER_CAP];
     let mut reply = [0u8; supply::REPLY_CAP];
     let records = supply::client::draw(pier, me, &[want], &mut slip, &mut reply, BOOT_MS).ok()?;
-    supply::client::pick(records, name.as_str())
+    supply::client::pick(records, key)
 }

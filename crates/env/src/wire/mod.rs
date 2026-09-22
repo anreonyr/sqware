@@ -5,7 +5,8 @@
 //!   - [`handle`] —— 语义句柄（PieToken / TaskId / TeamId / VirtAddr）；
 //!   - [`frompair`] —— 内核回写的 `(a0, a1)` → 域 Ret 载荷蒸馏；
 //!   - [`name`] —— 定长名字（[`NAME_LEN`] / [`Name`] / [`NameError`]）；
-//!   - [`pair`] —— 配对块（boot → root 的设备供给账，定长记录）；
+//!   - [`key`] —— **坐标**（[`KEY_LEN`] / [`Key`]：区 / 设备树本体 / 门铃）；
+//!   - [`pair`] —— 配对块（boot → root 的门闩账，定长记录：坐标 + 号）；
 //!   - [`args`] —— 引导线程的启动参数（boot → root 的入口账）；
 //!   - [`manifest`] —— initrd 清单（boot → root 的程序账，写侧是内核 `build.rs`）。
 //!
@@ -20,12 +21,14 @@
 pub mod args;
 pub mod frompair;
 pub mod handle;
+pub mod key;
 pub mod manifest;
 pub mod name;
 pub mod pair;
 
 pub use frompair::FromPair;
 pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
+pub use key::{KEY_LEN, Key};
 pub use name::{NAME_LEN, Name, NameError};
 pub use pair::{PAIR_LEN, Pair};
 

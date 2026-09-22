@@ -3,7 +3,7 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
 
-use env::{NAME_LEN, Name, PAIR_LEN, TaskId};
+use env::{Key, NAME_LEN, Name, PAIR_LEN, TaskId};
 use runtime::core::port::{Access, Policy};
 
 use super::core::Fail;
@@ -36,7 +36,7 @@ pub const WANT_MAX: usize = 5;
 /// **不是线格式的上限**：孔不预设上限（见 `env::fid::PieCall::UnsealHole`），这两个数
 /// 是本侧选"一帧一单、不流式"的结果。
 pub const WANT_LEN: usize = core::mem::size_of::<Want>();
-const _: () = assert!(WANT_LEN == 44);
+const _: () = assert!(WANT_LEN == 32);
 /// 帧头：`[op][条数]` + 那一格"给谁"（8 字节 LE，与 `operator::tell` 同一口径）。
 const HEAD_LEN: usize = 2 + 8;
 pub const ORDER_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;
@@ -51,7 +51,7 @@ pub const BAD: u8 = 4;
 
 /// 单子上的一条：**要哪一枚**（坐标已定）、什么种类、多少权、什么形态。
 ///
-/// 它是**线上形**：坐标已经落定（收方那张表里那一格 [`Need`] 经 [`Need::settle`] 翻过）。
+/// 它是**线上形**：坐标已经落定（收方那张表里那一格 [`Need`] 经 [`Need::settle`] 定过）。
 /// 故这一条**不带 `slot`**——**位置即格**（回单与单子同序同长），收方按位次归位
 /// （`protocol::system::grant::each`）。
 ///
@@ -59,7 +59,7 @@ pub const BAD: u8 = 4;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Want {
-    name: [u8; NAME_LEN],
+    key: Key,
     access: u32,
     policy: u32,
     kind: u8,
@@ -72,31 +72,29 @@ const KIND_NOLE: u8 = Kind::Nole as u8;
 const KIND_HOLE: u8 = Kind::Hole as u8;
 
 impl Want {
-    /// 空的一条：填数组用（`name` 全零 = 非法名字，读侧一律答 `None`）。
+    /// 空的一条：填数组用（坐标是 [`Key::NONE`] = 判废的判别号，读侧一律答 `None`）。
     pub const NONE: Want = Want {
-        name: [0u8; NAME_LEN],
+        key: Key::NONE,
         access: 0,
         policy: 0,
         kind: KIND_POLE,
         pad: [0u8; 3],
     };
 
-    /// 运行期构造：`name` 已是定下来的坐标（由 [`Need::settle`] 译出来，或编排域自己点名要）。
-    /// 名字装不下 ⇒ `None`。
-    pub fn new(name: &str, kind: Kind, access: Access, policy: Policy) -> Option<Want> {
-        Some(Want {
-            name: *Name::new(name).ok()?.bytes(),
+    /// 线上那一条：坐标已定（由 [`Need::settle`] 定出来，或编排域自己按坐标要）。
+    pub fn new(key: Key, kind: Kind, access: Access, policy: Policy) -> Want {
+        Want {
+            key,
             access: access.bits().bits(),
             policy: policy.bits().bits(),
             kind: kind as u8,
             pad: [0u8; 3],
-        })
+        }
     }
 
-    /// 名字（按 ABI 的定长字段解：`Name::bytes`/`from_bytes` 这一对，与 [`Pair::name`]
-    /// 同一条——**不是**帧的变长那一条 `from_slice`，它会拒掉填充的 NUL）。
-    pub fn name(&self) -> Option<Name> {
-        Name::from_bytes(self.name).ok()
+    /// 坐标（**判别号不认识 ⇒ `None`**——帧读不懂那一格，调用方按 `Bad` 处置）。
+    pub fn key(&self) -> Option<Key> {
+        Key::of(self.key.parts().0, self.key.parts().1)
     }
 
     pub fn kind(&self) -> Option<Kind> {
@@ -118,11 +116,11 @@ impl Want {
     }
 }
 
-/// 编译期把字面量补零成定长名字块——与 [`Name::new`] 运行期做的是同一件事。
+/// 编译期把 `compatible` 串补零成定长块——与 [`Name::new`] 运行期做的是同一件事。
 ///
 /// **不做** `Name::new` 那套校验（非空 / UTF-8 / ≤ `NAME_LEN` - 1）：它是给 `const` 表用的，
 /// 字面量写错会在 [`Name::from_bytes`] 读出时当场暴露（表是编译期常量，读的人就在旁边）。
-pub const fn name_block(s: &str) -> [u8; NAME_LEN] {
+pub const fn class_block(s: &str) -> [u8; NAME_LEN] {
     let src = s.as_bytes();
     let mut out = [0u8; NAME_LEN];
     let mut i = 0;
@@ -133,77 +131,73 @@ pub const fn name_block(s: &str) -> [u8; NAME_LEN] {
     out
 }
 
-/// 编译期把 `compatible` 串补零成定长块——与 [`name_block`] **逐字同一条**（两条都留：
-/// 一条给"树里认的类"，一条给"boot 给的名"）。
-pub const fn class_block(s: &str) -> [u8; NAME_LEN] {
-    name_block(s)
-}
-
 /// 收方开的单上那一格：**坐标还没定下来**——写的是"凭什么认它"。
 ///
 /// 它与 [`Want`] 是**两个东西**：`Want` 是线上那一条（坐标已定），`Need` 是收方那张 `const`
 /// 表里的一格（坐标未定）。故 `Need` **不是线格式**：没有 `repr(C)`、尺寸不参与任何断言，
 /// 唯一的义务是能被 `const` 造出来。
 ///
-/// 坐标怎么定见 [`Need::settle`]：按类要的那几条在**编排域**翻（设备树只有它读了），
-/// 按名要的那几条原样落下（内核造的门闩不在树里）。
+/// 坐标怎么定见 [`Need::settle`]：按类要的那几条在**编排域**读树定（设备树只有它读了），
+/// 已经知道坐标的那几条原样落下。
 #[derive(Clone, Copy)]
 pub struct Need {
-    at: [u8; NAME_LEN],
-    by: By,
+    at: At,
     kind: Kind,
     access: Access,
     policy: Policy,
 }
 
-/// 坐标的两种来路。
+/// 那一格写的是什么：**树里认的类**，还是**已经知道的坐标**。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum By {
-    /// **树里认**：`at` 是 `compatible` 串（`ns16550a`、`virtio,mmio`…）。
-    Class,
-    /// **boot 给的**：`at` 就是名字（`devicetree` / `irq` / `initrd`）——它们不是树里的节点。
-    Name,
+pub enum At {
+    /// **树里认**：`compatible` 串（`ns16550a`、`virtio,mmio`…）——要读树才定得下来。
+    Class([u8; NAME_LEN]),
+    /// **已经知道**：boot 造的那两件（设备树本体 / 门铃）——它们不在树里，没有"哪一台"可翻。
+    Known(Key),
 }
 
 impl Need {
-    /// 按类要一条（`at` 用 [`class_block`] 写）。
-    pub const fn class(at: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Need {
+    /// 按类要一条（用 [`class_block`] 写）。
+    pub const fn class(class: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Need {
         Need {
-            at,
-            by: By::Class,
+            at: At::Class(class),
             kind,
             access,
             policy,
         }
     }
 
-    /// 按名要一条（`at` 用 [`name_block`] 写）。
-    pub const fn named(at: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Need {
+    /// 按**已知坐标**要一条（boot 造的那两件：`Key::dtb()` / `Key::irq()`）。
+    pub const fn known(key: Key, kind: Kind, access: Access, policy: Policy) -> Need {
         Need {
-            at,
-            by: By::Name,
+            at: At::Known(key),
             kind,
             access,
             policy,
         }
     }
 
-    /// 这一格写的是什么（类或名）——读数是"类 → 名"那一行，它要这两半。
-    pub fn at(&self) -> Option<Name> {
-        Name::from_bytes(self.at).ok()
+    /// 这一格写的是哪一类（**只有类支有**；读数"类 → 坐标"那一行要它当左半）。
+    pub fn class_name(&self) -> Option<Name> {
+        match self.at {
+            At::Class(class) => Name::from_bytes(class).ok(),
+            At::Known(_) => None,
+        }
     }
 
-    /// 定坐标：`Class` 交给 `of`（读树的那一侧），`Name` 原样落进 [`Want`]。
+    /// 定坐标：`Class` 交给 `of`（读树的那一侧），已经知道的原样落进 [`Want`]。
     ///
     /// 返 `None` = **这台机器上没有这一类**（本层的失败域，不是引导域的答话——那一格是
     /// `Fail::Unknown`）。
-    pub fn settle(self, of: impl Fn(&str) -> Option<Name>) -> Option<Want> {
-        let at = Name::from_bytes(self.at).ok()?;
-        let at = match self.by {
-            By::Class => of(at.as_str())?,
-            By::Name => at,
+    pub fn settle(self, of: impl Fn(&str) -> Option<Key>) -> Option<Want> {
+        let key = match self.at {
+            At::Class(class) => {
+                let class = Name::from_bytes(class).ok()?;
+                of(class.as_str())?
+            }
+            At::Known(key) => key,
         };
-        Want::new(at.as_str(), self.kind, self.access, self.policy)
+        Some(Want::new(key, self.kind, self.access, self.policy))
     }
 }
 

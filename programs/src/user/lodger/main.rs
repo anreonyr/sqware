@@ -57,7 +57,7 @@ use protocol::operator::client as operator;
 
 use alloc::format;
 
-use env::{Name, PieToken};
+use env::{Key, Name, PieToken};
 use protocol::driver::line;
 use protocol::driver::line::call as lcall;
 use runtime::env::debug;
@@ -68,8 +68,9 @@ use runtime::env::unit as utask;
 /// 本域要找的那位服务（线路由者）在树上的名字。
 const SERVICE: &str = "router";
 
-/// `UNKNOWN` 那一趟报的名字：**故意**是树里没有的（解树那一处因此答不出）。
-const NOWHERE: &str = "nosuch@0";
+/// `UNKNOWN` 那一趟报的坐标：**故意**是树里没有的那一段——基址 0，而内核扫树时正是把零址的
+/// `reg` 段跳掉的（`platform/devices.rs`）⇒ 那一段从来不是中断源。
+const NOWHERE: u64 = 0;
 
 /// 等树 / 办一趟登记的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
@@ -96,20 +97,17 @@ extern "C" fn main() -> ! {
         Some(entry) => entry,
         None => exit_with_note(E_TRIP, "lodger: no router"),
     };
-    // 设备名**随记录发下来**（本域不写死它；"这一类是哪一台"由编排域读树定）。
-    let Some(device) = grant.name() else {
-        exit_with_note(E_TRIP, "lodger: no name")
+    // 坐标**随记录发下来**（本域不写死它；"这一类是哪一台"由编排域读树定）。
+    let Some(key) = grant.key() else {
+        exit_with_note(E_TRIP, "lodger: no key")
     };
 
-    // 3. 三趟登记：占上 / 同一条线再来一次 / 树里没有的名字。
-    let (ok, held) = attempt(entry, device);
+    // 3. 三趟登记：占上 / 同一条线再来一次 / 树里没有的那一段。
+    let (ok, held) = attempt(entry, key);
     say(&format!("lodger: occupy={ok}"));
-    let (taken, _) = attempt(entry, device);
+    let (taken, _) = attempt(entry, key);
     say(&format!("lodger: taken={taken}"));
-    let unknown = match Name::new(NOWHERE) {
-        Ok(nowhere) => attempt(entry, nowhere).0,
-        Err(_) => lcall::BAD,
-    };
+    let unknown = attempt(entry, Key::region(NOWHERE)).0;
     say(&format!("lodger: unknown={unknown}"));
 
     // 4. **直接死**：不说退场那一句、不交回。`held` 那条线活到本域退场为止——它铸的那枚孔
@@ -146,11 +144,11 @@ fn find_router() -> Option<PieToken> {
     operator::take(&link, host)
 }
 
-/// 占一趟：报设备名、收一格答码。返的第二件是那条线本身（占上了才有）。
+/// 占一趟：报**那一段区**、收一格答码。返的第二件是那条线本身（占上了才有）。
 ///
 /// 答码用 [`lcall::fail_to_code`]——**与线上同一张表**（客户端不从失败域另编一套号）。
-fn attempt(entry: PieToken, device: Name) -> (u8, Option<line::client::Line>) {
-    match line::client::Line::occupy(entry, device, MS) {
+fn attempt(entry: PieToken, key: Key) -> (u8, Option<line::client::Line>) {
+    match line::client::Line::occupy(entry, key, MS) {
         Ok(held) => (lcall::OK, Some(held)),
         Err(fail) => (lcall::fail_to_code(Some(fail)), None),
     }

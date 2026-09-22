@@ -7,9 +7,10 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 六十九条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 dir=<号> land=0 find=0 got=true` /
-#      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` /
-#      **`system: uart ns16550a -> serial@10000000`**（**类 → 哪一台**那条翻译，见下） / `guest: reg=0 find=0` /
+#   2) 七十条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 dir=<号> land=0 find=0 got=true` /
+#      `router: device_count=95 ctx=1` / `uart: ier=rx at=0x10000000` /
+#      **`system: uart ns16550a -> 0x10000000`**（**类 → 哪一段区**那条翻译，见下） /
+#      **`root: block n=21 region=19 dtb=1 irq=1 bad=0`**（配对块按坐标分账） / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
 #      **`uart: tree part=0 dir=<号> land=0 find=0 got=true`** / **`echo: console=true`** /
@@ -83,10 +84,12 @@
 # 登记一种形状（找人走树，见 `guest`）。"一问一答跨域"那格读数没丢——`guest: reg=` 与
 # `find=` 是板上、树上各给的一格答码，线那一面由 `lodger: occupy=0`（路由者给的答码）顶着。
 #
-# **类 → 哪一台**那条翻译（认设备那一刀）：单子上写的是**类**（`ns16550a`…），编排域读一次
-# 设备树把它翻成那一台的名字（`system: uart ns16550a -> serial@10000000`）。钉它是因为
-# 驱动源码里**不再有机器地址**——名字是发下来的、坐标是翻出来的，而"哪一台"这件事只剩
-# 这一行读得出来（其余判据照旧，故这一刀**行为没动**）。
+# **类 → 哪一段区**那条翻译（认设备那一刀）：单子上写的是**类**（`ns16550a`…），编排域读一次
+# 设备树把它翻成那一段区（`system: uart ns16550a -> 0x10000000`）。钉它是因为驱动源码里
+# **既没有机器地址、也没有名字**——坐标是翻出来的；而"哪一段"这件事只剩这一行读得出来。
+# 同一条路上还有一格：配对块按坐标分账（`root: block n=21 region=19 dtb=1 irq=1 bad=0`）
+# ——**名字不再是坐标**（两段 `reg` 各是各的基址，"重名"那笔账不存在了），块里有什么由它说。
+# 其余判据照旧，故这一刀**行为没动**（线号、门牌、房客那三格答码逐条不变）。
 #
 # 四条是**线 + 控制台**那一刀（`protocol::driver::line` 的四格与设备持有者那枚服务孔）：
 # `router: line 10 = serial@10000000` = **登记**——串口驱动**报发下来的设备名**、路由者**解树**（线 = 名字的
@@ -279,8 +282,9 @@ while [ "$i" -le "$rounds" ]; do
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
   elif ! { grep -qE "^router: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=router[[:space:]]*$" "$log" \
         && grep -q "router: device_count=95 ctx=1" "$log" \
-        && grep -q "uart: serial@10000000 ier=rx" "$log" \
-        && grep -q "system: uart ns16550a -> serial@10000000" "$log" \
+        && grep -q "uart: ier=rx at=0x10000000" "$log" \
+        && grep -q "system: uart ns16550a -> 0x10000000" "$log" \
+        && grep -q "root: block n=21 region=19 dtb=1 irq=1 bad=0" "$log" \
         && grep -q "guest: reg=0 find=0" "$log" \
         && grep -q "guest: trip ok" "$log" \
         && grep -q "router: line 10 = serial@10000000" "$log" \

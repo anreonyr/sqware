@@ -6,7 +6,7 @@
 //! ```text
 //! 1  启动参数 → 清单（有哪些程序）与配对块（有哪些门闩）——两块都是 boot 只读借映的
 //! 2  起一条：编排者（`system`，一条 `boot` 通道）
-//! 3  发货循环：收一张单子 → 按名取原件、授出 → 回一张回单（[`protocol::driver::supply::server::serve`]）
+//! 3  发货循环：收一张单子 → 按坐标取原件、授出 → 回一张回单（[`protocol::driver::supply::server::serve`]）
 //! 4  那枚孔**读不出** = 编排者没了 ⇒ 本域退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
 //! ```
 //!
@@ -20,7 +20,7 @@
 //! | 本域做 | 本域不做 |
 //! |---|---|
 //! | 读 boot 的两块账（**只有它读得到**） | 不认识服务名，不排顺序，不记账 |
-//! | 按名发货（原件与 `VEST` **都留在它手里**） | 不接死亡道、不看活、不判就绪 |
+//! | 按坐标发货（原件与 `VEST` **都留在它手里**） | 不接死亡道、不看活、不判就绪 |
 //! | 起**编排者**一条（其余服务由编排者起） | 不起第二个域、不认第二条路 |
 //! | 退出即停机（唯一能结束机器的那一枚） | 不退场、不重启、不做策略 |
 //!
@@ -67,8 +67,10 @@ extern "C" fn main() -> ! {
     let Some(boot) = boot::Root::take() else {
         service::die(E_BOOT, "root: boot args unreadable");
     };
-    // 配对块的**重名**读数（一行总数 + 每个重名一行）：名字不是单值（同一节点的多段
-    // `reg`），而 `token()` 只够得到第一枚——这台机器上"有没有重名"只有这一行说得出来。
+    // 配对块的自述（一行）：按坐标分账——`region` 是区段的条数（设备 + 载荷区），
+    // `dtb` / `irq` 各一件，`bad` 是读不懂的条数。**照实记**：从前这一行报的是"重名"
+    // （同一节点的多段 `reg` 造出两条同名记录，而按名取只够得到第一枚）——坐标换成区之后
+    // 那笔账不存在了（两段各有各的基址）。
     boot.report_pairs();
     let Some(catalog) = Catalog::of_boot(&boot) else {
         service::die(service::E_MANIFEST, "root: manifest bad");
@@ -118,7 +120,7 @@ extern "C" fn main() -> ! {
     let mut ask = [0u8; supply::ORDER_CAP];
     let mut out = [0u8; supply::REPLY_CAP];
     // 取源只有一个：boot 的配对块。持树者那条提示之路不再经过这里（见文件头）。
-    let source = |want: &str| boot.token(want);
+    let source = |key: env::Key| boot.token(key);
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, 0), Ok(Reaped::Now));
     programs::supervisor::supply::server::serve(&pier, source, alive, &mut ask, &mut out);

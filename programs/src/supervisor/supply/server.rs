@@ -2,7 +2,7 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`protocol::driver::supply::call`]。
 
-use env::{PAIR_LEN, Pair, PieToken};
+use env::{Key, PAIR_LEN, Pair, PieToken};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{HolePie, NolePie, PolePie};
 
@@ -14,7 +14,7 @@ use protocol::session::Pier;
 
 /// 供：照单取源、授出、把记录写进 `records`。返**条数**。
 ///
-/// `src_of` = 取源：`名字 → 我手里那一枚`。固件不认识服务，只认识这句话。
+/// `src_of` = 取源：`坐标 → 我手里那一枚`。固件不认识服务、也不认识设备，只认识这句话。
 ///
 /// 契约：
 /// - **逐条进行**：第 i 条不成即停（`Err`）。前面已经授出的**留在对端**——它们已经归
@@ -22,7 +22,7 @@ use protocol::session::Pier;
 /// - **形态照请求，唯独 `VEST` 一律剔掉**：固件不发"再授出的权"。
 pub fn supply(
     order: &Order<'_>,
-    src_of: impl Fn(&str) -> Option<PieToken>,
+    src_of: impl Fn(Key) -> Option<PieToken>,
     records: &mut [u8],
 ) -> Result<usize, Fail> {
     let who = order.who();
@@ -32,8 +32,8 @@ pub fn supply(
     }
     for i in 0..n {
         let want = order.want(i).ok_or(Fail::Bad)?;
-        let name = want.name().ok_or(Fail::Bad)?;
-        let src = src_of(name.as_str()).ok_or(Fail::Unknown)?;
+        let key = want.key().ok_or(Fail::Bad)?;
+        let src = src_of(key).ok_or(Fail::Unknown)?;
         let access = want.access().ok_or(Fail::Bad)?;
         // 形态照请求，**唯独 `VEST` 一律剔掉**（见本函数的契约）。
         let form = want.policy().ok_or(Fail::Bad)? & !Policy::VEST;
@@ -43,7 +43,7 @@ pub fn supply(
             Kind::Hole => port::ship(&HolePie::from_token(src), who, access, form),
         }
         .map_err(|_| Fail::Denied)?;
-        let pair = Pair::new(name, at.seed());
+        let pair = Pair::new(key, at.seed());
         records[i * PAIR_LEN..(i + 1) * PAIR_LEN].copy_from_slice(pair_bytes(&pair));
     }
     Ok(n)
@@ -60,7 +60,7 @@ pub fn supply(
 /// 前条件：`ask` ≥ [`ORDER_CAP`]、`out` ≥ [`REPLY_CAP`]。
 pub fn serve(
     pier: &Pier,
-    src_of: impl Fn(&str) -> Option<PieToken>,
+    src_of: impl Fn(Key) -> Option<PieToken>,
     alive: impl Fn() -> bool,
     ask: &mut [u8],
     out: &mut [u8],

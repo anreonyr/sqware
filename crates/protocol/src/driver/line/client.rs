@@ -1,9 +1,9 @@
 //! line::client — **客侧几手**：占住一条线泊位、说一声登记、收投递、说一句排空。
 //!
-//! 客户是**持有那台设备的人**：它从不读线号（泊位就是坐标），只报设备名。
+//! 客户是**持有那台设备的人**：它从不读线号（泊位就是坐标），只报**那一段区**。
 
 use env::Mark;
-use env::{Name, PieToken};
+use env::{Key, Name, PieToken};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
@@ -26,7 +26,7 @@ impl Line {
     /// 那枚回信孔。两枚都**不在任何账上**——账里根本没有这一格，故此后没人会替它收，而路由者
     /// 那侧**收不了别人的表**（它只放得下自己表里的副本，见 `driver/router` 的 `drop_lane`）。
     /// 不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，直到它退场。
-    pub fn occupy(entry: PieToken, device: Name, millis: usize) -> Result<Line, Fail> {
+    pub fn occupy(entry: PieToken, key: Key, millis: usize) -> Result<Line, Fail> {
         let host = crate::session::call::opened_by(entry).ok_or(Fail::Denied)?;
         let mark = Name::new(call::LANE).map_err(|_| Fail::Denied)?;
         let mut quay = Quay::open(host);
@@ -41,7 +41,7 @@ impl Line {
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .and_then(|_| HolePie::from_token(entry).push(&call::pack_occupy(device)));
+        .and_then(|_| HolePie::from_token(entry).push(&call::pack_occupy(key)));
         if sent.is_err() {
             let _ = mail::release(back);
             quay.shut();

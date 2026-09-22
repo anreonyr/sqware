@@ -11,7 +11,7 @@
 //!   1  领配给：`rtc@101000` 那页寄存器（`ONLY`）
 //!   2  开图 + **自证**：读两次它的纳秒计数器（两次不同 ⇒ 它真的在走）
 //!   3  上板（板看得见本域的死）+ 上树一趟：**落门牌 `/device/rtc`**（报时服务的入口）
-//!   4  占线：报设备名（**线 = 名字的函数**），收一格答码 —— 11 号线归本域
+//!   4  占线：报**那一段区**（**线 = 区的函数**），收一格答码 —— 11 号线归本域
 //!   5  常驻：**一只组等两个源**
 //!        门上有请求（客人借来一枚回信孔）  问时间 → 就地答；定闹钟 → 占住那一格 + 武装设备
 //!        线上有投递（设备自己拉的线）      清掉那一格 ⇒ 那一格到点 ⇒ 从那枚孔推"那一声"
@@ -153,11 +153,11 @@ extern "C" fn main() -> ! {
     };
     serve_tree(&link, talk, host, entry);
 
-    // 4. 占线：报**发下来的那台设备名**（线号由路由者解树解出来，本域从不说它）。
-    let Some(device) = rtc_pie.name() else {
+    // 4. 占线：报**发下来的那一段区**（线号由路由者解树解出来，本域从不说它）。
+    let Some(key) = rtc_pie.key() else {
         exit_with(E_LINE)
     };
-    let Ok(held) = register(&link, talk, host, device) else {
+    let Ok(held) = register(&link, talk, host, key) else {
         exit_with(E_LINE)
     };
     say("rtc: line occupied");
@@ -318,13 +318,13 @@ const BAD: u8 = ocall::BAD;
 
 /// 从树上找到线路由者，把本域那条线登记下来。
 ///
-/// 会话是**上面那一条**（同一个域只开一条，见 `driver/uart` 头注）；设备名是**配给回给本域的
-/// 那一条**（本域不写死它）；入口经会话从树上授进来，泊位由 `line` 那一层装。
+/// 会话是**上面那一条**（同一个域只开一条，见 `driver/uart` 头注）；坐标是**配给回给本域的
+/// 那一段区**（本域不写死它）；入口经会话从树上授进来，泊位由 `line` 那一层装。
 fn register(
     link: &Quay,
     talk: PieToken,
     host: TaskId,
-    device: Name,
+    key: env::Key,
 ) -> Result<line::client::Line, ()> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| ())?;
     let want = Name::new(SERVICE).map_err(|_| ())?;
@@ -336,7 +336,7 @@ fn register(
         return Err(());
     }
     let entry = operator::take(link, host).ok_or(())?;
-    line::client::Line::occupy(entry, device, MS).map_err(|_| ())
+    line::client::Line::occupy(entry, key, MS).map_err(|_| ())
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有控制台，只有它。

@@ -1,33 +1,35 @@
-//! 配对块——boot 交给 root 的**设备供给账**（一条 = 一台设备）。
+//! 配对块 —— boot 交给 root 的**门闩账**（一条 = 一枚我造的门闩）。
 //!
-//! 这不是 envcall 载荷，而是**启动期借映块**的线格式：内核 boot 扫一次设备树，
-//! 把每个 (节点, `reg` 段) 做成一枚门闩，再把「名字 + 我持它的 token」写成定长
-//! 记录、只读借映进 root 的空间（与 initrd 清单视图同一套机制）。
+//! 这不是 envcall 载荷，而是**启动期借映块**的线格式：内核 boot 扫一次设备树，把每台设备
+//! 的一个 `reg` 段、以及它自己造的那两枚（设备树本体 / 门铃）各做成一枚门闩，再把
+//! 「坐标 + 我持它的号」写成定长记录、只读借映进 root 的空间（与 initrd 清单视图同一套机制）。
 //!
 //! ```text
-//! [0..32)  name   [u8; NAME_LEN]  节点 basename（含 `@unit-address`），NUL 填充
-//! [32..40) token  usize LE        该设备门闩**在 root 表里**的句柄
+//! [0..16)  key    [u8; KEY_LEN]   坐标（判别号 + 那个数，见 [`Key`]）
+//! [16..24) token  usize LE        该门闩**在 root 表里**的句柄
 //! ```
 //!
-//! 为什么格式定义在 `env::wire`（而不是内核与 root 各写一遍）：两个字段都是本模块
-//! 已有的类型（[`Name`] 与 [`PieToken`]），两边共用一份定义即无第二份账——
-//! 内核只写不读、root 只读不写，**各自都不解释设备语义**（名字是 DTB 原样搬运）。
+//! 为什么格式定义在 `env::wire`（而不是内核与 root 各写一遍）：两个字段都是本模块已有的类型
+//! （[`Key`] 与 [`PieToken`]），两边共用一份定义即无第二份账——内核只写不读、root 只读不写，
+//! **各自都不解释设备语义**。
 //!
-//! `token = 0` 是无效哨兵（`PieToken` 的约定），故有效记录恒有非零 token。
+//! `token = 0` 是无效哨兵（`PieToken` 的约定），故有效记录恒有非零 token；坐标的判别号
+//! 不认识 ⇒ [`Pair::key`] 答 `None`（记录判废）。
 
-use super::{NAME_LEN, Name, PieToken};
+use super::PieToken;
+use super::key::{KEY_LEN, Key};
 
-/// 一条记录的字面字节数（`NAME_LEN` + 8）。
-pub const PAIR_LEN: usize = NAME_LEN + size_of::<usize>();
+/// 一条记录的字面字节数（`KEY_LEN` + 8）。
+pub const PAIR_LEN: usize = KEY_LEN + size_of::<usize>();
 
-/// 配对块的一条：名字 + 我持它的句柄。
+/// 配对块的一条：坐标 + 我持它的号。
 ///
-/// `repr(C)` + 两个定长字段 ⇒ 尺寸即 [`PAIR_LEN`]（编译期断言锁死），内核可直接把
-/// 记录数组写进借映块、root 直接按块读，不需要序列化步骤。
+/// `repr(C)` + 两个定长字段 ⇒ 尺寸即 [`PAIR_LEN`]（编译期断言锁死），内核可直接把记录数组
+/// 写进借映块、root 直接按块读，不需要序列化步骤。
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pair {
-    name: [u8; NAME_LEN],
+    key: Key,
     token: PieToken,
 }
 
@@ -35,37 +37,32 @@ pub struct Pair {
 const _: () = assert!(size_of::<Pair>() == PAIR_LEN);
 
 impl Pair {
-    /// 造一条（root 侧）：名字已校验（[`Name`] 是构造期义务），号已到手。
-    pub fn new(name: Name, token: PieToken) -> Self {
-        Self {
-            name: *name.bytes(),
-            token,
-        }
+    /// 造一条（root 侧）：坐标已定，号已到手。
+    pub fn new(key: Key, token: PieToken) -> Self {
+        Self { key, token }
     }
 
-    /// 造一条的**字节**（内核侧）：`token` 是**裸号**——内核持的就是它表里的号，
-    /// 而 [`PieToken`] 是"收号的人"才该有的类型（见 [`env::wire::handle`]）。
+    /// 造一条的**字节**（内核侧）：`token` 是**裸号**——内核持的就是它表里的号，而
+    /// [`PieToken`] 是"收号的人"才该有的类型（见 [`env::wire::handle`]）。
     /// 故内核这一侧根本不经手句柄类型：它写字节，root 那边读成 [`Pair`]。
     ///
     /// 两个造法**对偶**：内核 [`bytes`](Pair::bytes)（写）、域 [`new`](Pair::new)（读）。
     ///
     /// [`env::wire::handle`]: crate::wire::handle
-    pub fn bytes(name: Name, token: usize) -> [u8; PAIR_LEN] {
+    pub fn bytes(key: Key, token: usize) -> [u8; PAIR_LEN] {
         let mut out = [0u8; PAIR_LEN];
-        out[..NAME_LEN].copy_from_slice(name.bytes());
-        out[NAME_LEN..].copy_from_slice(&(token as u64).to_le_bytes());
+        out[..KEY_LEN].copy_from_slice(&key.bytes());
+        out[KEY_LEN..].copy_from_slice(&(token as u64).to_le_bytes());
         out
     }
 
-    /// 读一条（root 侧）：名字非法（空 / 超长 / 填充不规范 / 非 UTF-8）→ `None`。
-    ///
-    /// 不 panic：块来自 boot，而 root 是它的读者——读到坏记录应当**就地判废**，
-    /// 由 root 决定是跳过还是拒绝启动（与本仓「非法输入落在返回值上」一致）。
-    pub fn name(&self) -> Option<Name> {
-        Name::from_bytes(self.name).ok()
+    /// 读一条（root 侧）：**判别号不认识 ⇒ `None`**（就地判废，由调用方决定跳过还是拒启，
+    /// 与本仓「非法输入落在返回值上」一致）。
+    pub fn key(&self) -> Option<Key> {
+        Key::from_bytes(self.key.bytes())
     }
 
-    /// 该设备门闩在**本任务**表里的句柄。
+    /// 该门闩在**本任务**表里的句柄。
     pub const fn token(&self) -> PieToken {
         self.token
     }

@@ -1,8 +1,8 @@
 //! line::call — **帧形与记号**：两句话，两份形状。
 //!
 //! ```text
-//!   登记（门牌那条路上一问一答）  [OCCUPY][设备名 32B]   →  [状态码 1B]
-//!   线泊位（路由者 ↔ 客户）       [记号 1B]             两个方向同一份形状
+//!   登记（门牌那条路上一问一答）  [OCCUPY][坐标 16B]   →  [状态码 1B]
+//!   线泊位（路由者 ↔ 客户）       [记号 1B]           两个方向同一份形状
 //! ```
 //!
 //! 投递与排空是**同一条路的两个方向**，故不带动作码、也不带线号——方向就是那一格，而**泊位
@@ -11,19 +11,18 @@
 //! 那一形状分开（同一扇门、靠帧长分），那条形状已经退休。**留着**（用户裁定）：这一格不是死
 //! 字段——[`unpack_occupy`] 真的读它（形状不对就答 `None`，路由器不动账），而且本仓**三扇门
 //! 都带动作码**（板那一扇的 `REGISTER` 一族、树那一扇的 `land`/`find` 一族）——去掉只省
-//! 1 字节，换来"任何恰好 32 字节推上来的东西都算一次登记"。
+//! 1 字节，换来"任何恰好 33 字节推上来的东西都算一次登记"。
 
-use env::Mark;
-use env::Name;
-use env::wire::NAME_LEN;
+use env::wire::KEY_LEN;
+use env::{Key, Mark};
 
 use super::core::Fail;
 
 /// 登记那一句的动作码。
 pub const OCCUPY: u8 = 1;
 
-/// 登记帧的长度（动作码 + 设备名）。
-pub const OCCUPY_LEN: usize = 1 + NAME_LEN;
+/// 登记帧的长度（动作码 + 坐标）。
+pub const OCCUPY_LEN: usize = 1 + KEY_LEN;
 
 /// 线泊位的记号（两侧同一个）。
 pub const LANE: &str = "line";
@@ -49,19 +48,22 @@ fail_codes! {
     Fail::Denied => DENIED,
 }
 
-/// 登记帧：动作码 + 设备名。
-pub fn pack_occupy(device: Name) -> [u8; OCCUPY_LEN] {
+/// 登记帧：动作码 + 坐标。
+pub fn pack_occupy(key: Key) -> [u8; OCCUPY_LEN] {
     let mut out = [0u8; OCCUPY_LEN];
     out[0] = OCCUPY;
-    out[1..].copy_from_slice(device.bytes());
+    out[1..].copy_from_slice(&key.bytes());
     out
 }
 
 /// 拆一帧登记：**不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。
-pub fn unpack_occupy(frame: &[u8]) -> Option<Name> {
+///
+/// 坐标的判别号不认识也答 `None`；**认识但不是"区"的那两形照收**——路由者按坐标查表查不到，
+/// 自然答 `UNKNOWN`（线挂在设备上，那是它的账）。
+pub fn unpack_occupy(frame: &[u8]) -> Option<Key> {
     if frame.len() != OCCUPY_LEN || frame[0] != OCCUPY {
         return None;
     }
-    let raw: [u8; NAME_LEN] = frame.get(1..OCCUPY_LEN)?.try_into().ok()?;
-    Name::from_bytes(raw).ok()
+    let raw: [u8; KEY_LEN] = frame.get(1..OCCUPY_LEN)?.try_into().ok()?;
+    Key::from_bytes(raw)
 }

@@ -5,25 +5,27 @@
 //!
 //! 1. 遍历设备树，对每个 (节点, `reg` 段) 造一枚 `Pole`（`Payload::Region`）；
 //! 2. 给每枚配一个 `Pie`（原始自持、全权），落进 root 的权限表；
-//! 3. 把「名字 + 该句柄」写成定长记录放进**配对块**，由 boot 只读借映进 root 空间。
+//! 3. 把「**坐标** + 该句柄」写成定长记录放进**配对块**，由 boot 只读借映进 root 空间。
 //!
-//! # 为什么名字是 basename
+//! # 坐标是 `reg` 段，名字只喂日志
 //!
-//! 全路径最长 34 > `Name` 的 31（实测，PLIC），basename 最长 28 ⇒ 取 basename。
-//! 同父下的 `@unit-address` 保证同父唯一；跨父不保证——**撞名不是内核的事**：
-//! 内核不去重、不解释，按名取货的那一侧自己担。
+//! 配对标那一格记的是 [`Key::region(base)`](env::Key::region)——**那一段机器摆在哪**，不是
+//! 它叫什么：名字（`serial@10000000` 这种 basename）是**这台设备的标签**，域要它就自己从
+//! 设备树里读（`system::machine`）；内核读出来只为往 boot 日志上打一行，**随即丢掉**——
+//! 它不进任何类型、不进任何表（`scan` 的局部量）。
 //!
-//! **名字在这张账里不是单值**：扫描单位是 (节点, `reg` 段) ⇒ 同一个节点的多段 `reg`
-//! 会造出**两条同名记录**（实测 virt 上 `flash@20000000` 两段 ⇒ token 4 / 5，见 boot
-//! 日志）。取货一侧（引导域 `Root::token`）按名取**第一枚**，其余同名的那几枚今天没有
-//! 取名机制够得到——要够到得先有"第几段"这一格，那是取货侧的账（`Root::report_pairs`
-//! 至少让"这台机器上有重名"这件事有读数）。
+//! 于是"同名"这件事在内核这一侧不再存在：同一个节点的多段 `reg` 各是一条记录、各有各的
+//! 基址，互不遮蔽（实测 virt 上 `flash@20000000` 两段 ⇒ 两条记录）。**边界换了一侧**：
+//! 单子上没有"第几段"这一格，故按类认领认到的是**首段**——那是声明侧的事，不是内核的。
+//!
+//! 装不下的名字（> `NAME_LEN` - 1）不再跳过整台设备：那种节点今天照样按区发货，只是日志里
+//! 打不出它的名字（`node.name` 打不出来就不打）。
 //!
 //! # 为什么内核不留一份强引用
 //!
 //! `Pie` 是资源实体的**唯一强引用**（资源寿命 = 能力寿命）。内核若把造好的门闩留在
 //! 静态里，设备就永远死不了——那正好是"资源寿命 ≠ 能力寿命"。故本模块**只造一次、
-//! 交出去、不留底**：配对块里留下的只是 `(名字, token)`，是**供给清单**，不是第二
+//! 交出去、不留底**：配对块里留下的只是 `(坐标, token)`，是**供给清单**，不是第二
 //! 份设备账。
 //!
 //! # 为什么块是静态区
@@ -34,7 +36,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{Fail, Name, PAIR_LEN, Pair, TaskId};
+use env::{Fail, Key, PAIR_LEN, Pair, TaskId};
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -44,21 +46,6 @@ use crate::work::mail;
 use crate::work::mail::nole::NoleMeta;
 use crate::work::unit::gate::{self, AnyPie, Permission};
 use crate::work::unit::task::Task;
-
-/// 中断门闩在配对块里的名字（root 据此把它交给 PLIC 驱动）。
-const IRQ_NAME: &str = "irq";
-
-/// 设备树本体在配对块里的名字（它不是设备树里的节点，故名字由内核定）。
-///
-/// 给它的门闩与设备同形（`Payload::Region`），用途也一样：**自描述要能被原样读到**。
-/// 谁需要解释设备树（如 PLIC 驱动要数自己的 context），谁就自己去解释——内核不代劳。
-const DTB_NAME: &str = "devicetree";
-
-/// initrd 载荷区在配对块里的名字（它不是设备树节点，故名字由内核定）。
-///
-/// 与 [`DTB_NAME`] 并排：两者都是"boot 交出去的一枚门闩"，故在同一张账里——
-/// 这张账记的是**交出了哪些门闩**，不是"有哪些设备"。
-const INITRD_NAME: &str = "initrd";
 
 /// 中断门铃**没有载荷**——内核只知道"有外部中断"这一件事，线号由 PLIC 驱动自己去
 /// PLIC 里领。
@@ -129,7 +116,9 @@ pub(crate) fn irq_stats() -> (usize, usize, usize, usize) {
 /// 为什么它也要成为一枚门闩：域侧要"把这块账转手出去"（引导域 → 编排域）时，
 /// **裸映射转不了手**——能转的只有句柄。做成门闩之后，引导域一转手，编排域就能按
 /// 自己的 VA 借映同一批物理页去解析清单、读镜像：**零拷贝**。
-fn supply_initrd() -> Option<(Name, AnyPie)> {
+///
+/// 坐标是**它的区**（`/chosen` 的 `linux,initrd-start`）：域侧读同一格属性拿到同一个基址。
+fn supply_initrd() -> Option<(Key, AnyPie)> {
     let initrd = machine::info().initrd()?;
     let meta = mail::pole::region(initrd.base, initrd.size, TaskId::new(0)).ok()?;
     let pie = gate::new_pie(
@@ -138,15 +127,15 @@ fn supply_initrd() -> Option<(Name, AnyPie)> {
         Permission::FETCH | Permission::VEST,
         None,
     );
-    Some((
-        Name::new(INITRD_NAME).expect("initrd name fits"),
-        AnyPie::Pole(pie),
-    ))
+    Some((Key::region(initrd.base as u64), AnyPie::Pole(pie)))
 }
 
 /// 设备树本体：一段终身的、boot 给的物理区，与 initrd 走同一条保留区
 /// 机制；这里额外给它一枚门闩，好让需要读它的域自己去读。
-fn supply_dtb() -> (Name, AnyPie) {
+///
+/// 它是**引子**：域要读树，先得有这一枚——而"树在哪"这件事树自己写不出来（它不知道自己的
+/// 地址），故坐标是 [`Key::dtb()`] 那一形（**这一件**），不是区。
+fn supply_dtb() -> (Key, AnyPie) {
     let dtb = machine::info().dtb();
     let meta = mail::pole::region(dtb.base, dtb.size, TaskId::new(0)).expect("devicetree region");
     let pie = gate::new_pie(
@@ -155,10 +144,7 @@ fn supply_dtb() -> (Name, AnyPie) {
         Permission::FETCH | Permission::VEST,
         None,
     );
-    (
-        Name::new(DTB_NAME).expect("devicetree name fits"),
-        AnyPie::Pole(pie),
-    )
+    (Key::dtb(), AnyPie::Pole(pie))
 }
 
 /// 中断门铃：一枚、**空载荷**、`owner = 0`、内核永久持源。
@@ -166,23 +152,20 @@ fn supply_dtb() -> (Name, AnyPie) {
 /// 它进配对块，与设备同列——**它是"设备"吗**？不是：它没有一段内存、没有 `reg`。
 /// 它是**一件内核侧事实的出口**（外部中断的入口在 `trap_handler`，那是内核的领地，
 /// 故必须有一小块内核结构）。同一张账里放两种东西并不冲突：账记的是"boot 交出了
-/// 哪些门闩"，不是"有哪些设备"。
+/// 哪些门闩"，不是"有哪些设备"——坐标那一格正好分得出这两种（区 / 哪一件）。
 ///
 /// 权限只给 `FETCH | VEST`：听与应都在"取"这一侧，而**谁也 `Ring` 不动它**——响它的是
 /// 内核（持源实体，不走门闩）。`VEST` 是给 root 把它授给 PLIC 驱动用的。
 /// **共享**（不带 `ONLY`）：root 留一份、驱动得一份。
-fn supply_irq() -> (Name, AnyPie) {
+fn supply_irq() -> (Key, AnyPie) {
     let meta = NoleMeta::new(TaskId::new(0));
     assert!(IRQ.set(meta.clone()).is_ok(), "irq bell built twice");
     let pie = gate::new_pie(meta, Permission::FETCH | Permission::VEST, None);
-    (
-        Name::new(IRQ_NAME).expect("irq name fits"),
-        AnyPie::Nole(pie),
-    )
+    (Key::irq(), AnyPie::Nole(pie))
 }
 
 /// 配对块容量（条）。实测 virt 带 `reg` 的节点 17 个（含 `flash` 的两段），
-/// 上限给足一页（64 条 × 40 B = 2560 B）。
+/// 上限给足一页（64 条 × 24 B = 1536 B）。
 pub(crate) const MAX_PAIRS: usize = 64;
 
 /// 配对块字节数——**一整页**（`borrow` 的页对齐义务；`repr(align)` 见下）。
@@ -213,7 +196,10 @@ pub(crate) fn block() -> (usize, usize) {
 /// 豁免两类：
 /// - `memory`：内核已把它解析成 `dram`，再交出去就是第二份账；
 /// - `clint`：内核的时钟与 IPI 经 SBI 走它，交出去等于交出节拍。
-pub(crate) fn scan() -> Vec<(Name, AnyPie)> {
+///
+/// **逐条打印在这一处**（节点名只有这里读得到，且**一读即丢**——它不进任何类型）；
+/// `install` 只印总数那一行。
+pub(crate) fn scan() -> Vec<(Key, AnyPie)> {
     let dtb = machine::info().dtb();
     // SAFETY: dtb 是 boot 交上来的设备树区（已进保留区，终身存活），此处只读。
     let fdt = unsafe { fdt::Fdt::from_ptr(dtb.base as *const u8) }.expect("device tree blob");
@@ -234,16 +220,6 @@ pub(crate) fn scan() -> Vec<(Name, AnyPie)> {
             if base == 0 || size == 0 {
                 continue;
             }
-            let Ok(name) = Name::new(node.name) else {
-                // 名字装不下 = 这台设备没有可表达的身份。**不截断**（截断会把两台
-                // 设备指成同一个名字），也不拖垮整机：报出来、跳过它。
-                crate::putln!(
-                    "devices: node name longer than {} bytes, skipped: {}",
-                    env::NAME_LEN - 1,
-                    node.name
-                );
-                continue;
-            };
             // owner = 0：**内核给的**（`PoleMeta.owner` 的既有约定）。故没有域能
             // `Seal` 一台设备（`Seal` 要求 owner == 自己）——设备无生死可判。
             let Ok(meta) = mail::pole::region(base, size, TaskId::new(0)) else {
@@ -256,17 +232,24 @@ pub(crate) fn scan() -> Vec<(Name, AnyPie)> {
                 Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
                 None,
             );
-            out.push((name, AnyPie::Pole(pie)));
+            let pie = AnyPie::Pole(pie);
+            crate::putln!("  {} -> token {}", node.name, pie.token().get());
+            out.push((Key::region(base as u64), pie));
         }
     }
     // 设备树本体与中断门闩也与设备同列（见 [`supply_dtb`] / [`supply_irq`]）：
     // 它们不是"设备"，但都是 boot 交出去的门闩——这张账记的是后者。
-    out.push(supply_dtb());
-    out.push(supply_irq());
+    let (key, pie) = supply_dtb();
+    crate::putln!("  devicetree -> token {}", pie.token().get());
+    out.push((key, pie));
+    let (key, pie) = supply_irq();
+    crate::putln!("  irq -> token {}", pie.token().get());
+    out.push((key, pie));
     // initrd 载荷区同列：引导域只借映了它，**手上没有能转手的句柄**——给它一枚，
     // 它才能把这批字节交给编排域（零拷贝，见 [`supply_initrd`]）。
-    if let Some(pie) = supply_initrd() {
-        out.push(pie);
+    if let Some((key, pie)) = supply_initrd() {
+        crate::putln!("  initrd -> token {}", pie.token().get());
+        out.push((key, pie));
     }
     out
 }
@@ -274,7 +257,7 @@ pub(crate) fn scan() -> Vec<(Name, AnyPie)> {
 /// 把扫出来的设备交给 `task`：落它的权限表 + 写进配对块。返回块里的条数。
 ///
 /// 所有权**移动**（不是克隆）——门闩交出去之后内核就不再有强引用（见模块头）。
-pub(crate) fn install(task: &Task, items: Vec<(Name, AnyPie)>) -> usize {
+pub(crate) fn install(task: &Task, items: Vec<(Key, AnyPie)>) -> usize {
     if items.len() > MAX_PAIRS {
         // 装不下就是"这台机器的设备表比内核的配对块还大"——内核不能只交一半：
         // 少掉的那台在域侧表现为"设备不存在"，而它其实存在。boot 当场停。
@@ -285,18 +268,18 @@ pub(crate) fn install(task: &Task, items: Vec<(Name, AnyPie)>) -> usize {
     }
     let (pa, _bytes) = block();
     let n = items.len();
-    // 供给清单打进 boot 日志：这是**这台机器上有什么**的唯一一次陈述（此后内核
+    // 供给清单的**总数**打进 boot 日志：这是**这台机器上有什么**的唯一一次陈述（此后内核
     // 零设备概念，要问只能问域）。内核打印走 SBI，不碰设备。
     crate::putln!("devices: {n} handed to root");
-    for (i, (name, pie)) in items.into_iter().enumerate() {
+    for (i, (key, pie)) in items.into_iter().enumerate() {
         let token = pie.token();
         // 内核这一侧写的是**字节**（[`Pair::bytes`]）：配对块是**记录**（线上形），
         // 而号在内核手里是 `PieToken`（见 `env::wire::handle`）——记录里没有类型，
         // 类型是两侧各自的账，故这里只把裸值写进去。
-        let record = Pair::bytes(name, token.get());
+        let record = Pair::bytes(key, token.get());
         // SAFETY: 记录与块同长（`PAIR_LEN` 是步长，编译期断言锁死）；写偏移恒 < 块长
         // （上面查过条数上限）。用 `write_unaligned` 是因为 `Block` 只保证页对齐，
-        // 而记录步长 40 字节——记录自身不要求对齐。
+        // 而记录步长 24 字节——记录自身不要求对齐。
         unsafe {
             core::ptr::write_unaligned(
                 (pa as *mut u8).add(i * PAIR_LEN).cast::<[u8; PAIR_LEN]>(),
@@ -304,7 +287,6 @@ pub(crate) fn install(task: &Task, items: Vec<(Name, AnyPie)>) -> usize {
             );
         }
         task.pies.lock().push(pie);
-        crate::putln!("  {} -> token {}", name.as_str(), token.get());
     }
     n
 }

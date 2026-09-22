@@ -5,7 +5,7 @@
 //!
 //! **写的是类，不是名字**：`ns16550a` 是这台设备的绑定名（树里写在 `compatible` 上），
 //! 而"这一类是哪一台"由编排域读树定下来（`supervisor::system::machine`）——**本域不发明名字，
-//! 也不再冻机器地址**。名字随记录回到本域手里（报线要用它），但它不由本域写死。
+//! 也不冻机器地址**。**坐标**（那一段区）随记录回到本域手里（报线要它），但它不由本域写死。
 
 use protocol::driver::supply::call::{Kind, Need, class_block};
 use runtime::core::port::{Access, Policy};

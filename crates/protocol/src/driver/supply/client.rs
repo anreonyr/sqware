@@ -1,8 +1,8 @@
-//! supply::client — **编排域那一侧**：递一张单子、取回一段记录（[`draw`]），并按名字取一枚（[`pick`]）
+//! supply::client — **编排域那一侧**：递一张单子、取回一段记录（[`draw`]），并按坐标取一枚（[`pick`]）
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
 
-use env::{PAIR_LEN, Pair, PieToken, TaskId};
+use env::{Key, PAIR_LEN, Pair, PieToken, TaskId};
 
 use crate::session::Pier;
 
@@ -32,14 +32,14 @@ pub fn draw<'r>(
     }
 }
 
-/// 按名字从记录里取一枚——**编排域自己领的那几样**用它（它们不按 `Slot` 归位）。
-pub fn pick(records: &[u8], want: &str) -> Option<PieToken> {
+/// 按坐标从记录里取一枚——**编排域自己领的那几样**用它（它们不按位次归位）。
+pub fn pick(records: &[u8], key: Key) -> Option<PieToken> {
     for i in 0..records.len() / PAIR_LEN {
         // SAFETY: 同 [`crate::system::grant::each`]：记录与块同源，步长由编译期断言锁死，缓冲只保证
         // 1 字节对齐 ⇒ `read_unaligned`；越界由上面的除法挡掉。
         let at = unsafe { records.as_ptr().add(i * PAIR_LEN) };
         let record = unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) };
-        if record.name().is_some_and(|n| n.as_str() == want) {
+        if record.key() == Some(key) {
             return Some(record.token());
         }
     }

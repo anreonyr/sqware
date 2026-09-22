@@ -75,7 +75,7 @@ pub struct Program {
     ///
     /// **就是单子上的那几条**（[`Need`]）：那几张表由**收方**自己开
     /// （[`crate::driver::router::needs`]、[`crate::driver::uart::needs`] 与
-    /// [`crate::user::lodger::needs`]），本域照单递出去、并在递之前把"类"翻成"哪一台"
+    /// [`crate::user::lodger::needs`]），本域照单递出去、并在递之前把"类"翻成"哪一段区"
     /// （见 [`wire`]）——中间不再有"需求 → 单子"的转换。
     pub needs: Option<&'static [Need]>,
     /// 要不要板那条路（[`board::attach`]）。
@@ -384,8 +384,8 @@ impl Why {
 /// 本域只做一次转投（客人按位次归位，[`protocol::system::grant::each`]）。本层只说
 /// "要什么、走哪条通道"——**要什么就是收方那张表**（[`Program::needs`]），一格都不抄。
 ///
-/// **翻坐标是本域唯一解释机器自述的地方**：类（`compatible`）是收方写的，翻成哪一台是树说的
-/// ——两半在这条线上合拢，故那条权威只在这里（`system: <程序> <类> -> <名>` 就是它的读数）。
+/// **翻坐标是本域唯一解释机器自述的地方**：类（`compatible`）是收方写的，翻成哪一段区是树说的
+/// ——两半在这条线上合拢，故那条权威只在这里（`system: <程序> <类> -> <区>` 就是它的读数）。
 fn wire(
     root: &Pier,
     quay: &Quay,
@@ -413,20 +413,20 @@ fn wire(
         return Err(Why::Draw(supply::core::Fail::Local));
     }
 
-    // 一格一格定坐标：类翻成名字（读数就是这一行），按名要的原样落下。
+    // 一格一格定坐标：类翻成那一段区（读数就是这一行），已经知道坐标的原样落下。
     let mut wants = [Want::NONE; WANT_MAX];
     for (cell, need) in wants.iter_mut().zip(needs) {
-        let said = need.at();
+        let class = need.class_name();
         *cell = need
-            .settle(|class| machine.name_of(class))
+            .settle(|class| machine.site_of(class))
             .ok_or(Why::Unplaced)?;
-        if let (Some(said), Some(at)) = (said, cell.name()) {
-            // 新机制要有读数：**类 → 名**（翻译那一手看得见、可复核）。
+        if let (Some(class), Some(base)) = (class, cell.key().and_then(|key| key.base())) {
+            // 新机制要有读数：**类 → 那一段区**（翻译那一手看得见、可复核）。
             let _ = runtime::env::debug::put(&alloc::format!(
-                "system: {} {} -> {}",
+                "system: {} {} -> {:#x}",
                 p.name,
-                said.as_str(),
-                at.as_str()
+                class.as_str(),
+                base
             ));
         }
     }
