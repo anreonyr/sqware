@@ -16,15 +16,17 @@
 //!   Reply  [0] status                                  —— 一格的答（旧有）
 //!          [0] status   [1] 条数   [2 ..] 号           —— 列
 //!          [0] status   [1 ..] 名字                     —— 名（长度即名长）
+//!          [0] status   [1 .. 9] 号                     —— 号（`seek` 那一格，定长 9）
 //! ```
 //!
 //! **问话只有一种帧**：[`ASK_LEN`] 就是它的长度——段数封顶 [`Operator::PATH_MAX`]，
 //! 故整帧定长、不预分配槽。名字按 `env::wire::NAME_LEN` 定长写（尾随 NUL 是填充）。
-//! **答话有三种形状、各有各的上界**，服务端按 [`REPLY_MAX`] 备一只缓冲。
+//! **答话有四种形状、各有各的上界**，服务端按 [`REPLY_MAX`] 备一只缓冲。
 //!
 //! **尾格是"随 op 变的那个号"**：`land` / `part` / `find` / `trim` 读它当**入口号**
 //! （[`hang`] 换回来的那个号，不是"客人的 Pie 是几号"），`name` 读它当**条目的号**，
-//! `list` 不看它。两个编号空间不同源，互相拿错正是旧树 `[33..41]` 那一格的病；
+//! `list` / `seek` 不看它——`seek` 要看的东西全在段那一块里（一条路），**号是它的答话**。
+//! 两个编号空间不同源，互相拿错正是旧树 `[33..41]` 那一格的病；
 //! **答案那一侧则干脆没有这一格**：`find` 查到的那一枚经会话交进客人的表，报文里再放一个号
 //! 只会多出一份两边都得认的约定。
 
@@ -45,6 +47,12 @@ pub const FIND: u8 = 3;
 pub const TRIM: u8 = 4;
 pub const LIST: u8 = 5;
 pub const NAME: u8 = 6;
+
+/// **第七个动作**：把一条路**译成号**——名字只能走到这一格，往下一律按号。
+///
+/// 数字取 7 是白捡的：答话那一列里 `BAD` 也是 7，但**动作码与答话码本来就是两张表**
+/// （今天 `LAND`..`NAME` 的 1..6 与 `UNKNOWN`..`DEAD` 的 1..6 已经重号），故两边各按各的序列。
+pub const SEEK: u8 = 7;
 
 /// 答话那一格。**前六格与 [`Fail`] 一一对应**（`OK` = 一个失败都不是），第七格不是失败域
 /// 的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。
@@ -81,10 +89,17 @@ pub const LIST_REPLY_LEN: usize = 2 + Operator::PANE_CAP * 8;
 /// 故那一格仍由状态字节说。
 pub const NAME_REPLY_LEN: usize = 1 + (env::wire::NAME_LEN - 1);
 
-/// 答话那一侧的上界：**服务端只备这一只缓冲**（三种答形里最大的那个）。
+/// 一帧「号」的答话：`[0] status [1 .. 9] 号`——**定长 9**（`seek` 答的那一格）。
+///
+/// 与「名」那一帧同一个道理：号是**数据**，故成败都写在这一帧里；但号不是变长的，
+/// 故长度是死的 9——多一字节、少一字节都是读不懂（[`BAD`]）。
+pub const ID_REPLY_LEN: usize = 1 + 8;
+
+/// 答话那一侧的上界：**服务端只备这一只缓冲**（四种答形里最大的那个）。
 pub const REPLY_MAX: usize = LIST_REPLY_LEN;
 
 const _: () = assert!(NAME_REPLY_LEN <= REPLY_MAX);
+const _: () = assert!(ID_REPLY_LEN <= REPLY_MAX);
 
 // ── 编 / 解 ─────────────────────────────────────────────────
 
@@ -151,7 +166,7 @@ pub fn id_in(tail: [u8; 8]) -> EntryId {
     EntryId::from_bytes(tail)
 }
 
-// ── 答：一串号 / 一枚名字 ───────────────────────────────────
+// ── 答：一串号 / 一枚名字 / 一枚号 ───────────────────────────
 
 /// 一帧「列」的读数：号最多 [`Operator::PANE_CAP`] 枚。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +280,34 @@ pub fn read_name(bytes: &[u8]) -> Result<Name, u8> {
         return Err(code);
     }
     Name::from_slice(text).map_err(|_| BAD)
+}
+
+/// 把一枚号编成一帧答话（写进服务端那只缓冲），返**帧长**（= [`ID_REPLY_LEN`]）。
+///
+/// 号那一侧**不校验"还在不在"**：持树者答出来的那一枚是刚从树里取的，客侧读到的就是它。
+pub fn pack_id(out: &mut [u8; REPLY_MAX], id: EntryId) -> usize {
+    out[0] = OK;
+    out[1..1 + 8].copy_from_slice(&id.to_bytes());
+    ID_REPLY_LEN
+}
+
+/// 解开一帧「号」：答话那一格不是 [`OK`] ⇒ `Err(那一格)`。
+///
+/// **长度必须恰好 9**（对照 [`read_list`]）：短一字节是残帧、长一字节是多出来的东西——
+/// 两种都读不懂（[`BAD`]）。
+pub fn read_id(bytes: &[u8]) -> Result<EntryId, u8> {
+    let Some((&code, body)) = bytes.split_first() else {
+        return Err(BAD);
+    };
+    if code != OK {
+        return Err(code);
+    }
+    if body.len() != 8 {
+        return Err(BAD);
+    }
+    let mut raw = [0u8; 8];
+    raw.copy_from_slice(body);
+    Ok(EntryId::from_bytes(raw))
 }
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────

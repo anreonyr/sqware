@@ -130,6 +130,32 @@ pub fn list(
     ocall::read_list(&reply[..n])
 }
 
+/// 客侧第二步（**一枚号**那一档）：按一条路问"那一格是几号"——**间接寻址那一手**。
+///
+/// 答话是号那一形（`[0] status [1 .. 9] 号`）：答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`。
+/// 拿到号之后同一条路就不必再念了——其余那几条一律按号走（名字只到这一格为止）。
+pub fn seek(
+    say: PieToken,
+    link: &Quay,
+    host: TaskId,
+    road: &[Name],
+    millis: usize,
+) -> Result<EntryId, u8> {
+    let mut reply = [0u8; ocall::ID_REPLY_LEN];
+    let n = ask_into(
+        say,
+        link,
+        host,
+        ocall::SEEK,
+        road,
+        [0u8; 8],
+        &mut reply,
+        millis,
+    )
+    .map_err(|_| ocall::BAD)?;
+    ocall::read_id(&reply[..n])
+}
+
 /// 客侧第二步（一枚名字那一档）：这枚号此刻叫什么。
 ///
 /// 名字**不走问话**（段那一格空着、尾格是条目的号），它在答话那一侧——长短由那一帧说。

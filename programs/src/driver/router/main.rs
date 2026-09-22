@@ -521,9 +521,19 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
     let land = operator::ask(talk, &link, host, ocall::LAND, &path, entry, QUAY_MS).unwrap_or(BAD);
     let find = operator::ask(talk, &link, host, ocall::FIND, &path, none, QUAY_MS).unwrap_or(BAD);
     let got = operator::take(&link, host).is_some();
+    // **间接寻址那一手**：按同一条路问号，再拿号问名——两格都答得出，才说明这枚号是真坐标。
+    let seek = operator::seek(talk, &link, host, &path, QUAY_MS);
+    let pname = seek
+        .ok()
+        .and_then(|id| operator::name(talk, &link, host, id, QUAY_MS).ok());
+    let (plate, pid) = match seek {
+        Ok(id) => (ocall::OK, id.get()),
+        Err(code) => (code, 0),
+    };
     say(&alloc::format!(
-        "router: tree part={part} land={land} find={find} got={got} entry={}",
-        entry.get()
+        "router: tree part={part} land={land} find={find} got={got} entry={} plate={plate} pid={pid} pname={}",
+        entry.get(),
+        pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
 }
 

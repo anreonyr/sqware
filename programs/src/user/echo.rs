@@ -239,9 +239,20 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     let c = operator::ask(talk, link, host, ocall::FIND, &path, none, MS).unwrap_or(ocall::BAD);
     // 寻回来的那一枚：**来源位是持树者**（号不从报文里走，故只能按"谁给的"认）。
     let got = operator::take(link, host).is_some();
+    // **间接寻址那一手**：按同一条路问号，再拿号问名——两格都答得出，才说明这枚号是真坐标。
+    // 这一格**下一步就被剪掉**，故号与名都得赶在 `trim` 之前问。
+    let seek = operator::seek(talk, link, host, &path, MS);
+    let pname = seek
+        .ok()
+        .and_then(|id| operator::name(talk, link, host, id, MS).ok());
+    let (plate, pid) = match seek {
+        Ok(id) => (ocall::OK, id.get()),
+        Err(code) => (code, 0),
+    };
     let d = operator::ask(talk, link, host, ocall::TRIM, &path, none, MS).unwrap_or(ocall::BAD);
     let _ = debug::put(&format!(
-        "echo: tree part={a} land={b} find={c} got={got} trim={d}"
+        "echo: tree part={a} land={b} find={c} got={got} trim={d} plate={plate} pid={pid} pname={}",
+        pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
     d
 }

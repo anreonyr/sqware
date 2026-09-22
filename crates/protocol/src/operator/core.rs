@@ -1,4 +1,4 @@
-//! operator 的核心 —— **树、六条原语（落 / 分 / 寻 / 剪 / 列 / 名）、失败域**。
+//! operator 的核心 —— **树、七条原语（落 / 分 / 寻 / 剪 / 列 / 译 / 名）、失败域**。
 //!
 //! 本文件**不碰内核**：判据只有一条可机械检查的纪律——
 //!
@@ -95,7 +95,8 @@ impl Entry {
 pub enum Fail {
     /// 路上没有这一段 ⇒ 换个名字，或者先把中间层分出来。
     ///
-    /// **空路也走这一格**：空路是"根"本身，而根不是谁条目里的一条——落 / 分 / 剪对根都动手不了。
+    /// **空路也走这一格**：空路是"根"本身，而根不是谁条目里的一条——落 / 分 / 剪对根都动手不了，
+    /// 译也对根使不上（**根没有号**，没什么可译）。
     Unknown,
     /// 那块 `Pane` 里还有东西 ⇒ 先清空。
     NonEmpty,
@@ -320,6 +321,41 @@ impl Operator {
             };
         }
         Ok(level.iter().map(|e| e.id))
+    }
+
+    /// **译**：把一条路**译成那一枚号**——名字只能走到这一格，往下一律按号。
+    ///
+    /// 走法与 [`Operator::list`] 一模一样（缺一段 ⇒ [`Fail::Unknown`]，中途是一枚 `Tile`
+    /// ⇒ [`Fail::NotAPane`]，超深 ⇒ [`Fail::Full`]）；差别只在最后一步：`list` 答那一块
+    /// `Pane` 里的号，`seek` 答**走到的那一格自己的号**——故**最后一段是一枚 `Tile` 也行**
+    /// （那正是门牌那一格：`/device/uart` 到头就是一枚砖）。
+    ///
+    /// **空路 ⇒ [`Fail::Unknown`]**（对照 [`Operator::list`]：它空路却能列——列的是根那一层，
+    /// 不需要根有号）：**根没有号**，没什么可译。
+    ///
+    /// 与 `list` 一样**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
+    pub fn seek(&self, road: &[Name]) -> Result<EntryId, Fail> {
+        if road.len() > Self::PATH_MAX {
+            return Err(Fail::Full);
+        }
+        // 空路 ⇒ 根 ⇒ 没有号（`split_last` 那一步就把它挡在这一格）。
+        let (last, rest) = road.split_last().ok_or(Fail::Unknown)?;
+        let mut level = &self.root;
+        for step in rest {
+            let entry = level
+                .iter()
+                .find(|e| e.name == *step)
+                .ok_or(Fail::Unknown)?;
+            level = match &entry.node {
+                Node::Pane(inner) => inner,
+                Node::Tile(_) => return Err(Fail::NotAPane),
+            };
+        }
+        let entry = level
+            .iter()
+            .find(|e| e.name == *last)
+            .ok_or(Fail::Unknown)?;
+        Ok(entry.id)
     }
 
     /// **名**：这枚号此刻叫什么。
@@ -680,6 +716,35 @@ mod tests {
         assert_eq!(t.trim(&[]), Err(Fail::Unknown));
         assert_eq!(look(&mut t, &[]), Err(Fail::NotATile));
         assert_eq!(names(&t, &[]), Ok(std::vec![]));
+    }
+
+    #[test]
+    fn seeking_translates_a_road_into_the_id_of_that_cell() {
+        let _serial = serial();
+        let mut t = tree();
+        assert_eq!(t.part(&path(&["dev"])), Ok(()));
+        // 走到哪儿答**哪一格自己的号**：`dev` 是第 0 条铸出来的。
+        assert_eq!(t.seek(&path(&["dev"])), Ok(EntryId::new(0)));
+        live(1);
+        assert_eq!(t.land(&path(&["dev", "uart0"]), tok(1)), Ok(()));
+        assert_eq!(t.seek(&path(&["dev", "uart0"])), Ok(EntryId::new(1)));
+        // 最后一段是一枚**砖**也行（`list` 那一格走到同一个地方就答 `NotAPane` 了）。
+        assert_eq!(names(&t, &path(&["dev", "uart0"])), Err(Fail::NotAPane));
+        // 中途是一枚砖 ⇒ 走不过去（与 `list` 同一条走法）。
+        assert_eq!(t.seek(&path(&["dev", "uart0", "x"])), Err(Fail::NotAPane));
+
+        // **换绑不动号**：拿同一枚号回头问，还是那一格、还是那个名字。
+        live(2);
+        assert_eq!(t.land(&path(&["dev", "uart0"]), tok(2)), Ok(()));
+        assert_eq!(t.seek(&path(&["dev", "uart0"])), Ok(EntryId::new(1)));
+        assert_eq!(t.name(EntryId::new(1)), Ok(name("uart0")));
+
+        // 缺一段 ⇒ `Unknown`；**空路是根，根没有号** ⇒ 也是 `Unknown`
+        // （对照 `names(&t, &[])`：列根那一层不需要根有号）。
+        assert_eq!(t.seek(&path(&["dev", "nope"])), Err(Fail::Unknown));
+        assert_eq!(t.seek(&path(&["device", "uart0"])), Err(Fail::Unknown));
+        assert_eq!(t.seek(&[]), Err(Fail::Unknown));
+        assert_eq!(names(&t, &[]), Ok(std::vec![name("dev")]));
     }
 
     #[test]

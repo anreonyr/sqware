@@ -160,7 +160,7 @@ fn serve_one(tree: &mut Operator, guest: Guest) {
     let _ = mail::HolePie::from_token(guest.reply()).push(&reply[..said]);
 }
 
-/// 把一句问交给树，编出一句答（**答话有三种形状**，见 [`ocall`] 的帧那一节）。
+/// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。
 ///
 /// **先读动作码、再解载荷**；`land` 那一码**必须带入口号**（没带就是一句读不懂的 `file`：
 /// 不猜、不崩）。返**帧长**——答案写进调用方那只缓冲（[`ocall::REPLY_MAX`]）。
@@ -176,7 +176,7 @@ fn answer(
     let Some((segs, count, tail)) = ocall::unpack_ask(want) else {
         return status(out, ocall::BAD);
     };
-    // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那六条也各有这条判据）。
+    // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那七条也各有这条判据）。
     if count > Operator::PATH_MAX {
         return status(out, ocall::FULL);
     }
@@ -206,6 +206,13 @@ fn answer(
         ocall::NAME => {
             return match tree.name(ocall::id_in(tail)) {
                 Ok(name) => ocall::pack_name(out, name),
+                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+            };
+        }
+        // **问号那一档**：名字只能走到这里——拿到号之后，其余原语一律按号走。
+        ocall::SEEK => {
+            return match tree.seek(path) {
+                Ok(id) => ocall::pack_id(out, id),
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
             };
         }

@@ -7,7 +7,7 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 六十六条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 land=0 find=0 got=true` /
+#   2) 七十二条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 land=0 find=0 got=true` /
 #      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
@@ -21,6 +21,11 @@
 #      **`sleeper: past=2`** / **`sleeper: armed=0`** / **`sleeper: taken=1`** /
 #      **`sleeper: rang at=`** / **`sleeper: gone`** /
 #      **`coalition: tree part=2 land=0 find=0 got=true`**（结盟那台落了门牌）/
+#      **六处门牌各多一格 `plate=0 pid=<号> pname=<自己那个名字>`**（**间接寻址**那一刀：
+#      `seek` 把路**译成号**、`name` 再按号答回名字——两格都答得出，才说明那枚号是真坐标；
+#      `echo` 那一格还赶在 `trim` 之前问。**号一个都不钉**：它跟启动次序走，钉的是 `pname`。
+#      这六条锚了行首行尾——**行尾是串口那两个字节 `\r\n`**，故末格写 `[[:space:]]*$`
+#      而不是 `$`：写 `$` 会一条都匹配不上，症状就是"启动读数不全"）/
 #      **`member: found=0`** / **`member: found=1`**（号由服务发：零号是**一枚普通的盟**、
 #      号单调稠密）/ **`member: amid(me,c0)=false`**（**立了不等于进了**）/
 #      **`member: enter(c0)=ok`** / **`member: leave(c0)=ok`** /
@@ -264,6 +269,7 @@ while [ "$i" -le "$rounds" ]; do
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
   elif ! { grep -q "router: tree part=0 land=0 find=0 got=true" "$log" \
+        && grep -qE "^router: tree part=0 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=router[[:space:]]*$" "$log" \
         && grep -q "router: device_count=95 ctx=1" "$log" \
         && grep -q "uart: serial@10000000 ier=rx" "$log" \
         && grep -q "guest: reg=0 find=0" "$log" \
@@ -274,6 +280,7 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "rtc: line occupied" "$log" \
         && grep -q "rtc: armed at=" "$log" \
         && grep -q "rtc: tree part=2 land=0 find=0 got=true" "$log" \
+        && grep -qE "^rtc: tree part=2 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=rtc[[:space:]]*$" "$log" \
         && grep -q "rtc: asked now=" "$log" \
         && grep -q "router: line=11" "$log" \
         && grep -q "rtc: rang n=1" "$log" \
@@ -292,8 +299,12 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "router: lane dropped line=1 pies=21" "$log" \
         && grep -q "lodger: pies=9" "$log" \
         && grep -q "uart: tree part=2 land=0 find=0 got=true" "$log" \
+        && grep -qE "^uart: tree part=2 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=uart[[:space:]]*$" "$log" \
         && grep -q "echo: console=true" "$log" \
+        && grep -qE "^echo: tree part=0 land=0 find=0 got=true trim=0 plate=0 pid=[0-9]+ pname=echo[[:space:]]*$" "$log" \
         && grep -q "coalition: tree part=2 land=0 find=0 got=true" "$log" \
+        && grep -qE "^coalition: tree part=2 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=coalition[[:space:]]*$" "$log" \
+        && grep -qE "^principal: tree part=0 land=0 find=0 got=true entry=[0-9]+ plate=0 pid=[0-9]+ pname=principal[[:space:]]*$" "$log" \
         && grep -q "member: found=0" "$log" \
         && grep -q "member: found=1" "$log" \
         && grep -q "member: amid(me,c0)=false" "$log" \
