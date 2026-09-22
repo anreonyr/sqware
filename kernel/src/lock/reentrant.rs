@@ -6,23 +6,52 @@
 // 用途：临界区内可能重入获取同一把锁的场景（如持锁期间触发缺页、
 // 缺页处理器再次获取同一把锁）。获取期间关中断（复用 TrapGuard）。
 //
-// owner 存储 "hart_id + 1"：0 表示空闲（hart 0 是合法 id，故需 +1 偏移）。
-// guard 携带 !Send 标记，保证在本 hart 释放。
+// owner 存锁主 token（[`Owner`]：0 = 空闲，n > 0 = hart (n−1) 号；hart 0 是合法号，
+// 故号整体错开一格）。guard 携带 !Send 标记，保证在本 hart 释放。
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::hart;
+use crate::hart::{self, HartId};
 use crate::platform::machine;
 
 use super::depend;
 use super::trap::TrapGuard;
 
+/// 锁主 token：**一个字**同时表示"空着"与"谁持有"。
+///
+/// 为什么是"号 + 1"而不是裸号：`0` 要留给"空闲"这个哨兵，而 hart 0 是合法号 ⇒
+/// 号整体错开一格。**编码只此一处**，比较也走本类型（`Owner::from_word(..) == me`）
+/// ——四个用点不再各自记得那个 `+1`。
+///
+/// 为什么不把 `Option<HartId>` 直接当字段：字段是 `AtomicUsize`（CAS 的原子单位只能是
+/// 一个字），编码必须落在这个字里；本类型就是那个编码的名字。
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Owner(usize);
+
+impl Owner {
+    /// 空闲（CAS 的期望值、释放时写回的值）。
+    const FREE: Owner = Owner(0);
+
+    /// 本核持有的 token（号 + 1 错开哨兵）。
+    fn of(hart: HartId) -> Owner {
+        Owner(hart.get() + 1)
+    }
+
+    fn word(self) -> usize {
+        self.0
+    }
+
+    fn from_word(w: usize) -> Owner {
+        Owner(w)
+    }
+}
+
 #[derive(Debug)]
 pub struct RelLock<T: ?Sized> {
-    // 持有者 hart_id + 1；0 = 空闲
+    // 持有者 token（编码见 `Owner`）
     owner: AtomicUsize,
     // 重入计数：>0 表示被持有
     count: UnsafeCell<usize>,
@@ -101,12 +130,11 @@ impl<T: ?Sized> RelLock<T> {
         // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入。
         let trap = unsafe { TrapGuard::save() };
         // SAFETY: 读 tp 指向的 PerHart.id（经 hart_id()）无副作用；多 hart 时各核各异。
-        // 锁主 token 是**值**不是号（0 = 无人持有 ⇒ 号 +1 错开哨兵），故此处取裸值。
-        let me = hart::hart_id().get() + 1;
+        let me = Owner::of(hart::hart_id());
 
         // lockdep：非重入（本核尚未持有）才做取前校验；同锁重入合法，跳过。
         #[cfg(debug_assertions)]
-        if self.owner.load(Ordering::Relaxed) != me {
+        if Owner::from_word(self.owner.load(Ordering::Relaxed)) != me {
             depend::check(
                 self as *const Self as *const () as usize,
                 self.level,
@@ -116,10 +144,12 @@ impl<T: ?Sized> RelLock<T> {
 
         loop {
             // Acquire：获取成功后看到前持有者的所有写入
-            match self
-                .owner
-                .compare_exchange(0, me, Ordering::Acquire, Ordering::Relaxed)
-            {
+            match self.owner.compare_exchange(
+                Owner::FREE.word(),
+                me.word(),
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => {
                     // 首次获取：重入计数置 1，记录最外层调用点
                     // SAFETY: 刚获得独占所有权，count 仅本 hart 访问。
@@ -135,7 +165,7 @@ impl<T: ?Sized> RelLock<T> {
                     );
                     break;
                 }
-                Err(cur) if cur == me => {
+                Err(cur) if Owner::from_word(cur) == me => {
                     // 本 hart 已持有：递增重入计数（合法重入，不更新 caller）
                     // SAFETY: 本 hart 持锁，count 仅本 hart 访问。
                     unsafe { *self.count.get() += 1 };
@@ -189,7 +219,7 @@ impl<T: ?Sized> Drop for RelLockGuard<'_, T> {
             depend::release(self.lock as *const _ as *const () as usize);
             // 重入计数归零：释放锁，清除最外层调用点。Release 保证写入对后续获取者可见。
             self.lock.caller.store(0, Ordering::Relaxed);
-            self.lock.owner.store(0, Ordering::Release);
+            self.lock.owner.store(Owner::FREE.word(), Ordering::Release);
         }
         // _trap 随后析构，恢复 SIE
     }
