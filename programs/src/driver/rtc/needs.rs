@@ -1,13 +1,15 @@
-//! rtc::needs — **本域自己那片硬件账**：要哪几枚门闩、什么种类/权/形态，以及"名字 → 本域第几格"。
+//! rtc::needs — **本域自己那片硬件账**：要哪一类设备、什么种类/权/形态。
 //!
 //! 它住在本域里，因为它是**收方**开的那张单子：装配者照它开单（[`WANTS`] 那几条原样递出去），
-//! 本域照它归位（[`slot_of`] 交给 `grant::unpack`）。名字是 boot 在配对块里给的原样
-//! （设备树节点的 basename，见 `kernel/src/platform/devices.rs`）——**本域不发明名字**。
+//! 本域收到记录后**按位次归位**（[`crate::driver::assemble::receive`]——位置即格）。
+//!
+//! **写的是类，不是名字**：`google,goldfish-rtc` 是这台设备的绑定名（树里的 `compatible`），
+//! 而"这一类是哪一台"由编排域读树定下来——**本域不发明名字，也不冻机器地址**。
 
-use protocol::driver::supply::call::{Kind, Want, name_block};
+use protocol::driver::supply::call::{Kind, Need, class_block};
 use runtime::core::port::{Access, Policy};
 
-/// 收方给这枚门闩起的名字（判别号 = 本域那张表的数组下标）。
+/// 本域那张表里的第几格（判别号 = 数组下标；归位按位次 ⇒ 两者同值）。
 #[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slot {
@@ -17,23 +19,13 @@ pub enum Slot {
 
 /// 本域要的那一枚 —— **直接就是单子上的那一条**。
 ///
+/// 类取 `google,goldfish-rtc`（这台实时钟的绑定名）。
+///
 /// `ONLY`（独占）是**资源事实**：一页寄存器同一时刻只该有一个持有者——读时间、写闹钟、清状态
 /// 都是本域在做，故这一枚由**本域**从装配者手里领。权位要 `STORE`：本域真的写那几格。
-pub const WANTS: &[Want] = &[Want::of(
-    name_block("rtc@101000"),
+pub const WANTS: &[Need] = &[Need::class(
+    class_block("google,goldfish-rtc"),
     Kind::Pole,
     Access::FETCH_STORE,
     Policy::ONLY,
 )];
-
-/// 与 [`WANTS`] **同序**的格子：第 i 条要的东西落在第 i 格。
-const SLOTS: [Slot; 1] = [Slot::Rtc];
-
-/// 名字 → 本域那本账里的第几格（`grant::unpack` 的 `slot_of`）。
-pub fn slot_of(name: &str) -> Option<usize> {
-    WANTS
-        .iter()
-        .zip(SLOTS)
-        .find(|(want, _)| want.name().is_some_and(|n| n.as_str() == name))
-        .map(|(_, slot)| slot as usize)
-}

@@ -39,11 +39,11 @@
 //! 故它只能摇铃，**claim 只能由本域做**：claim 是"领走"，谁领谁欠 `complete`，
 //! 内核一领就进了数据面。
 //!
-//! # 配给怎么到手（"名字跟着门闩走"）
+//! # 配给怎么到手（"坐标跟着门闩走"）
 //!
 //! 见 [`crate::driver::assemble`]：本域按会话协议装一条叫 `records` 的泊位，父域按需求单把
-//! 「名字 + 句柄」的记录推进来，本域按 [`needs::Slot`] 归位。**字节长什么样不在这里**
-//! （那是 [`protocol::system::grant`]，与父域同一份）；本域只说"我要哪几格"。
+//! 「坐标 + 号」的记录推进来，本域**按位次归位**（单子第 i 条就是回单第 i 条）。**字节长什么样
+//! 不在这里**（那是 [`protocol::system::grant`]，与父域同一份）；本域只说"我要哪几格"。
 //!
 //! # 门牌挂树上，板只管生死
 //!
@@ -172,21 +172,21 @@ extern "C" fn main() -> ! {
     // 客侧装配：会话 + 收配给（**编号原样带出去**——`assemble` 报的是"死在装配的哪一步"，
     // 折成同一个号就等于把那几个编号变成没人读得到的死码）。
     let mut slots = [None; needs::WANTS.len()];
-    let got = match assemble::receive(&mut slots, needs::slot_of) {
+    let got = match assemble::receive(&mut slots) {
         Ok(n) => n,
         Err(code) => exit_with(code),
     };
     // 三枚都要在：少一枚就不必继续（父域按同一张单子发货，缺格即装配错）。
-    let [Some(plic_token), Some(dtb_token), Some(bell_token)] = slots else {
+    let [Some(plic_pie), Some(dtb_pie), Some(bell_pie)] = slots else {
         exit_with(assemble::E_GRANT)
     };
     say(&alloc::format!("router: got {got}"));
 
     // 开图 + 读树：控制器、本域的 context、要接的线（与"没进来的账"）。
-    let Ok(plic_dock) = Dock::open(PolePie::from_token(plic_token)) else {
+    let Ok(plic_dock) = Dock::open(PolePie::from_token(plic_pie.token())) else {
         exit_with(E_OPEN);
     };
-    let Ok(dtb_dock) = Dock::open(PolePie::from_token(dtb_token)) else {
+    let Ok(dtb_dock) = Dock::open(PolePie::from_token(dtb_pie.token())) else {
         exit_with(E_OPEN);
     };
     let Some((plic, sources)) = Plic::new(plic_dock.view(), dtb_dock.view()) else {
@@ -208,7 +208,7 @@ extern "C" fn main() -> ! {
         sources.mapped,
         sources.unparsed
     ));
-    let bell = Bell::new(NolePie::from_token(bell_token));
+    let bell = Bell::new(NolePie::from_token(bell_pie.token()));
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见文件头）。
@@ -239,7 +239,7 @@ extern "C" fn main() -> ! {
     };
     let entry_hole = HolePie::from_token(entry);
     if tole
-        .attach(&NolePie::from_token(bell_token), HoleDir::Pull)
+        .attach(&NolePie::from_token(bell_pie.token()), HoleDir::Pull)
         .is_err()
         || tole.attach(&entry_hole, HoleDir::Pull).is_err()
     {

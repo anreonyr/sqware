@@ -114,17 +114,17 @@ const E_DESK: usize = 8;
 extern "C" fn main() -> ! {
     // 1. 领配给：那一页寄存器（`ONLY`：同一时刻只该有一个持有者）。
     let mut slots = [None; needs::WANTS.len()];
-    let got = match assemble::receive(&mut slots, needs::slot_of) {
+    let got = match assemble::receive(&mut slots) {
         Ok(n) => n,
         Err(code) => exit_with(code),
     };
-    let [Some(rtc_token)] = slots else {
+    let [Some(rtc_pie)] = slots else {
         exit_with(assemble::E_GRANT)
     };
     say(&format!("rtc: got {got}"));
 
     // 2. 开图 + 自证：那对纳秒格子读两次（两次不同 ⇒ 它是活的）。
-    let Ok(dock) = Dock::open(PolePie::from_token(rtc_token)) else {
+    let Ok(dock) = Dock::open(PolePie::from_token(rtc_pie.token())) else {
         exit_with(E_OPEN)
     };
     let view = dock.view();
@@ -153,8 +153,11 @@ extern "C" fn main() -> ! {
     };
     serve_tree(&link, talk, host, entry);
 
-    // 4. 占线：报设备名（线号由路由者解树解出来，本域从不说它）。
-    let Ok(held) = register(&link, talk, host) else {
+    // 4. 占线：报**发下来的那台设备名**（线号由路由者解树解出来，本域从不说它）。
+    let Some(device) = rtc_pie.name() else {
+        exit_with(E_LINE)
+    };
+    let Ok(held) = register(&link, talk, host, device) else {
         exit_with(E_LINE)
     };
     say("rtc: line occupied");
@@ -315,9 +318,14 @@ const BAD: u8 = ocall::BAD;
 
 /// 从树上找到线路由者，把本域那条线登记下来。
 ///
-/// 会话是**上面那一条**（同一个域只开一条，见 `driver/uart` 头注）；设备名取自**本域那张需求单**
-/// （名字只有一处）；入口经会话从树上授进来，泊位由 `line` 那一层装。
-fn register(link: &Quay, talk: PieToken, host: TaskId) -> Result<line::client::Line, ()> {
+/// 会话是**上面那一条**（同一个域只开一条，见 `driver/uart` 头注）；设备名是**配给回给本域的
+/// 那一条**（本域不写死它）；入口经会话从树上授进来，泊位由 `line` 那一层装。
+fn register(
+    link: &Quay,
+    talk: PieToken,
+    host: TaskId,
+    device: Name,
+) -> Result<line::client::Line, ()> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| ())?;
     let want = Name::new(SERVICE).map_err(|_| ())?;
     let road = [dir, want];
@@ -328,7 +336,6 @@ fn register(link: &Quay, talk: PieToken, host: TaskId) -> Result<line::client::L
         return Err(());
     }
     let entry = operator::take(link, host).ok_or(())?;
-    let device = needs::WANTS[0].name().ok_or(())?;
     line::client::Line::occupy(entry, device, MS).map_err(|_| ())
 }
 

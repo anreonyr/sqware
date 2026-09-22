@@ -15,7 +15,7 @@
 //!
 //! 装配者自己**不持**设备门闩——它在引导域手里。故发货走一次往返：
 //! [`protocol::driver::supply::client::draw`] 把"要哪几样"递过去，固件把门闩直接授进**客人**的表里并回一段记录，
-//! 装配者再把这**一段字节原样**投到客人那条通道上（客人按记号认领、按名字归位）。
+//! 装配者再把这**一段字节原样**投到客人那条通道上（客人按记号认领、**按位次归位**——位置即格）。
 //! 装配者经手的只有字节，**一枚原件都不经过它**。
 //!
 //! # 身份从哪来
@@ -44,9 +44,10 @@ use crate::supervisor::operator::bridge as operator;
 use crate::supervisor::system::board::bridge as board;
 
 use protocol::driver::supply;
-use protocol::driver::supply::call::Want;
+use protocol::driver::supply::call::{Need, WANT_MAX, Want};
 
 use crate::supervisor::root::boot;
+use crate::supervisor::system::machine::Machine;
 
 /// 装配失败的编号：指"死在装配的哪一步"（沿用旧树那套小整数编号的意思）。
 pub type Died = usize;
@@ -72,10 +73,11 @@ pub struct Program {
     pub channels: &'static [&'static str],
     /// 它要的门闩（`None` = 什么都不要，如调试回显）。
     ///
-    /// **就是单子上的那几条**（[`Want`]）：那几张表由**收方**自己开
+    /// **就是单子上的那几条**（[`Need`]）：那几张表由**收方**自己开
     /// （[`crate::driver::router::needs`]、[`crate::driver::uart::needs`] 与
-    /// [`crate::user::lodger::needs`]），本域照单递出去——中间不再有"需求 → 单子"的转换。
-    pub needs: Option<&'static [Want]>,
+    /// [`crate::user::lodger::needs`]），本域照单递出去、并在递之前把"类"翻成"哪一台"
+    /// （见 [`wire`]）——中间不再有"需求 → 单子"的转换。
+    pub needs: Option<&'static [Need]>,
     /// 要不要板那条路（[`board::attach`]）。
     ///
     /// **它不是 `channels` 里的一行**：那几条是"放行前先装好、起来时交回"，而板那条路由
@@ -157,6 +159,7 @@ pub fn assemble<'a>(
     plan: &[Program],
     root: &Pier,
     lanes: &[Option<PieToken>],
+    machine: &Machine,
 ) -> Result<Name, Died> {
     // 清单条数与表的格数**同值**（`Table::CAP` = `env::wire::manifest::MAX_PROGRAMS` = 28），
     // 但这里不需要再查一遍：超限清单在 `Catalog::new` 就被 `manifest::Entries::new` 挡掉了。
@@ -188,6 +191,7 @@ pub fn assemble<'a>(
             &mut otip,
             face.as_ref(),
             lanes.get(i).copied().flatten(),
+            machine,
         )?;
         // 它刚把提示之路交给**生我者**（= 本域）⇒ 当场认下来，此后客人上树才有路可走。
         if p.holds_tree {
@@ -250,6 +254,7 @@ pub fn start<'a>(
     otip: &mut Option<PieToken>,
     face: Option<&Face>,
     lane: Option<PieToken>,
+    machine: &Machine,
 ) -> Result<TaskId, Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
 
@@ -307,8 +312,8 @@ pub fn start<'a>(
         p.died
     })?;
     if p.needs.is_some() {
-        wire(root, &quay, p, rep).map_err(|_| {
-            step(p, "wire failed");
+        wire(root, &quay, p, rep, machine).map_err(|why| {
+            step(p, why.said());
             p.died
         })?;
     }
@@ -348,33 +353,96 @@ fn step(p: &Program, what: &str) {
     let _ = runtime::env::debug::put(what);
 }
 
-/// 发货：向引导域领这几样，再把那段记录**原样**推到客人那条通道上。
+/// 递单那一关的失败：**原因就是读数**（[`step`] 印它）。
 ///
-/// **本域不碰原件**：门闩在引导域手里，它直接授进`rep`那张表，回一段"名字 + 号"的记录；
-/// 本域只做一次转投（客人按名字归位，[`protocol::system::grant::unpack`]）。本层只说
+/// 三格分的是"接下来该干什么"：那条路没得发 / 这台机器上没有那一样 / 引导域答了（或没答）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Why {
+    /// 客人那条通道还没认下（或者写不进去）——装配次序的事，不是设备的事。
+    NoChannel,
+    /// **树里没有这一类**——本层翻不出来（不是引导域的答话，那一格是 `Fail::Unknown`）。
+    Unplaced,
+    /// 引导域那一侧的答复（见 [`protocol::driver::supply::core::Fail`]）。
+    Draw(supply::core::Fail),
+}
+
+impl Why {
+    /// 一行读数的说法。
+    pub fn said(self) -> &'static str {
+        match self {
+            Why::NoChannel => "no channel",
+            Why::Unplaced => "class not in tree",
+            Why::Draw(_) => "draw failed",
+        }
+    }
+}
+
+/// 递单：**先定坐标**（按类要的那几条读树翻），再向引导域领，最后把那**一段字节原样**
+/// 推到客人那条通道上。
+///
+/// **本域不碰原件**：门闩在引导域手里，它直接授进 `rep` 那张表，回一段"坐标 + 号"的记录；
+/// 本域只做一次转投（客人按位次归位，[`protocol::system::grant::each`]）。本层只说
 /// "要什么、走哪条通道"——**要什么就是收方那张表**（[`Program::needs`]），一格都不抄。
-fn wire(root: &Pier, quay: &Quay, p: &Program, rep: env::TaskId) -> Result<(), ()> {
-    let Some(wants) = p.needs else {
+///
+/// **翻坐标是本域唯一解释机器自述的地方**：类（`compatible`）是收方写的，翻成哪一台是树说的
+/// ——两半在这条线上合拢，故那条权威只在这里（`system: <程序> <类> -> <名>` 就是它的读数）。
+fn wire(
+    root: &Pier,
+    quay: &Quay,
+    p: &Program,
+    rep: env::TaskId,
+    machine: &Machine,
+) -> Result<(), Why> {
+    let Some(needs) = p.needs else {
         return Ok(());
     };
     let Some(ch) = p.channels.first() else {
-        return Err(());
+        return Err(Why::NoChannel);
     };
     let Ok(ch) = Name::new(ch) else {
-        return Err(());
+        return Err(Why::NoChannel);
     };
     let Some(pier) = quay.find(ch) else {
-        return Err(());
+        return Err(Why::NoChannel);
     };
     if !pier.paired() {
-        return Err(());
+        return Err(Why::NoChannel);
+    }
+    // 条数上限那一格与 `draw` 同一条（单子装不下）：这里先拦，好按定长缓冲逐格填。
+    if needs.is_empty() || needs.len() > WANT_MAX {
+        return Err(Why::Draw(supply::core::Fail::Local));
     }
 
-    // 一枚一枚要：条数就在那张表里，本层不抄"要几样"（空表 / 超 `WANT_MAX` 由 `draw` 答）。
+    // 一格一格定坐标：类翻成名字（读数就是这一行），按名要的原样落下。
+    let mut wants = [Want::NONE; WANT_MAX];
+    for (cell, need) in wants.iter_mut().zip(needs) {
+        let said = need.at();
+        *cell = need
+            .settle(|class| machine.name_of(class))
+            .ok_or(Why::Unplaced)?;
+        if let (Some(said), Some(at)) = (said, cell.name()) {
+            // 新机制要有读数：**类 → 名**（翻译那一手看得见、可复核）。
+            let _ = runtime::env::debug::put(&alloc::format!(
+                "system: {} {} -> {}",
+                p.name,
+                said.as_str(),
+                at.as_str()
+            ));
+        }
+    }
+
+    // 一枚一枚要：条数就在那张表里，本层不抄"要几样"。
     let mut ask = [0u8; supply::ORDER_CAP];
     let mut reply = [0u8; supply::REPLY_CAP];
-    let records =
-        supply::client::draw(root, rep, wants, &mut ask, &mut reply, READY_MS).map_err(|_| ())?;
+    let records = supply::client::draw(
+        root,
+        rep,
+        &wants[..needs.len()],
+        &mut ask,
+        &mut reply,
+        READY_MS,
+    )
+    .map_err(Why::Draw)?;
     let said = pier.post(records);
     let _ = runtime::env::debug::put(&alloc::format!(
         "wire: {} bytes, paired={}, post={}",
@@ -382,7 +450,7 @@ fn wire(root: &Pier, quay: &Quay, p: &Program, rep: env::TaskId) -> Result<(), (
         pier.paired(),
         said.is_ok()
     ));
-    said.map_err(|_| ())
+    said.map_err(|_| Why::NoChannel)
 }
 
 /// 等一条服务退场（本域等它 = 等这次会话结束）。

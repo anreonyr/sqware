@@ -70,7 +70,10 @@ impl Plic {
     /// 读设备树：认控制器、读线数、定下本域用的 context，并把**要接的线**连同
     /// **没进来的那几笔账**一起交出去（见模块头）。
     ///
-    /// 返的第二件是**源账**（每条带名字与线号，另加那四笔没进来的账）：登记那一趟按
+    /// 认控制器用的那个类（`compatible`）与单子上那一格是**同一个常量**
+    /// （[`super::needs::PLIC`]）——"我是哪台控制器"这个断言只有一处。
+    ///
+    /// 返的第二件是**源账**（每条带名字与线号，另加那几笔没进来的账）：登记那一趟按
     /// [`Sources::line_of`] 解"名字 → 线号"——**那条权威只在这一处**。
     pub fn new(view: View, dtb: View) -> Option<(Self, Sources)> {
         // SAFETY: `dtb` 是内核只读借映进本域的整棵设备树（保留区，终身存活）；只读。
@@ -78,7 +81,7 @@ impl Plic {
         let node = fdt.all_nodes().find(|n| {
             n.property("interrupt-controller").is_some()
                 && n.compatible()
-                    .is_some_and(|c| c.all().any(|s| s.contains("plic")))
+                    .is_some_and(|c| c.all().any(|s| s == super::needs::PLIC))
         })?;
         let device_count = node
             .property("riscv,ndev")

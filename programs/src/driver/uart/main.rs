@@ -94,9 +94,9 @@ const E_TREE: usize = 7;
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
-    // 1. 客侧装配：父域按本域那张单子把 `serial@10000000` 授进来。
+    // 1. 客侧装配：父域按本域那张单子把 `ns16550a` 那一台授进来（坐标由它读树定下来）。
     let mut slots = [None; needs::WANTS.len()];
-    let got = match assemble::receive(&mut slots, needs::slot_of) {
+    let got = match assemble::receive(&mut slots) {
         Ok(n) => n,
         Err(code) => exit_with(code),
     };
@@ -108,11 +108,15 @@ extern "C" fn main() -> ! {
 
     // 2. 开图 + 开闸。**设备到手之后第一件要打开的就是"收到字节就拉线"**：这条线归本域，
     //    因为只有持有设备的人才有资格动它（`ONLY` 是资源事实，见 `needs`）。
-    let Ok(dock) = Dock::open(PolePie::from_token(serial)) else {
+    let Ok(dock) = Dock::open(PolePie::from_token(serial.token())) else {
         exit_with(E_OPEN)
     };
     uart::arm_rx(dock.view());
-    say("uart: serial@10000000 ier=rx");
+    // 名字**随记录发下来**（发货方才是"哪一台"的权威）：本域只读它、不写死它。
+    let Some(device) = serial.name() else {
+        exit_with(E_OPEN)
+    };
+    say(&alloc::format!("uart: {} ier=rx", device.as_str()));
 
     // 3. 上板：**只为让板看得见本域的死**（本域开的那扇门随收尾封印 ⇒ 板当场看出来）。
     //    不挂牌子——名字在树上。**问话孔照交**：不交的那一位在板账上永远"没挂齐"，
@@ -144,9 +148,9 @@ extern "C" fn main() -> ! {
     };
     serve_tree(&link, talk, host, entry);
 
-    // 5. **登记本域那条线**：按名从树上找到线路由者（`/device/router`），报的是本域那张需求单
-    //    上的**设备名**——"线 = 名字的函数"那条权威在路由者那边解，本域从不说线号。
-    let Ok(held) = register(&link, talk, host) else {
+    // 5. **登记本域那条线**：按名从树上找到线路由者（`/device/router`），报的是**发下来的那台
+    //    设备名**——"线 = 名字的函数"那条权威在路由者那边解，本域从不说线号，也不自己造名字。
+    let Ok(held) = register(&link, talk, host, device) else {
         exit_with(E_LINE)
     };
     say("uart: line occupied");
@@ -225,9 +229,15 @@ const BAD: u8 = ocall::BAD;
 
 /// 从树上找到线路由者，把本域那条线登记下来。
 ///
-/// 会话是**上面那一条**（同一个域只开一条，见 `main` 第 4 步）；设备名取自**本域那张需求单**
-/// （名字只有一处）；入口经会话从树上授进来，泊位由 `line` 那一层装。
-fn register(link: &Quay, talk: PieToken, host: TaskId) -> Result<line::client::Line, ()> {
+/// 会话是**上面那一条**（同一个域只开一条，见 `main` 第 4 步）；设备名是**发下来的那一条**
+/// （随配给记录到本域，见 `main` 第 2 步——本域不再写死它）；入口经会话从树上授进来，
+/// 泊位由 `line` 那一层装。
+fn register(
+    link: &Quay,
+    talk: PieToken,
+    host: TaskId,
+    device: Name,
+) -> Result<line::client::Line, ()> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| ())?;
     let want = Name::new(SERVICE).map_err(|_| ())?;
     let road = [dir, want];
@@ -238,7 +248,6 @@ fn register(link: &Quay, talk: PieToken, host: TaskId) -> Result<line::client::L
         return Err(());
     }
     let entry = operator::take(link, host).ok_or(())?;
-    let device = needs::WANTS[0].name().ok_or(())?;
     line::client::Line::occupy(entry, device, MS).map_err(|_| ())
 }
 

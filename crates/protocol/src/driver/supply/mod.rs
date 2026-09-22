@@ -24,9 +24,10 @@
 //!
 //! - **服务端**（发货循环）在引导域：`programs/src/supervisor/supply/server.rs`；
 //! - **客户端**（递单取记录）是**编排域**：[`client::draw`]，今天唯一一个客户；
-//! - **收方**是各驱动：[`call::Want`] 的常量形态就在它们自己那张需求单里
-//!   （`programs/src/driver/{router,uart}/needs.rs`）——单子由编排域**代递**
-//!   （子方只认得生我者，**驱动对固件说不上话**）。
+//! - **收方**是各驱动：[`call::Need`] 的常量形态就在它们自己那张需求单里
+//!   （`programs/src/driver/{router,uart,rtc}/needs.rs` 与 `programs/src/user/lodger/needs.rs`）
+//!   ——单子由编排域**代递**（子方只认得生我者，**驱动对固件说不上话**），递之前它把单子上
+//!   那几格"类"翻成设备树里那一台（[`call::Need::settle`]）。
 //!
 //! ```text
 //!   编排域（client）                          引导域（server）
@@ -67,9 +68,9 @@
 //! # 本协议不负责的
 //!
 //! - **该起谁、该给谁什么权** → 编排域的策略（单子就是它的策略，本域只照办）；
-//! - **要哪几样** → **收方**自己那张需求单，就是本协议 [`call::Want`] 的常量形态
-//!   （今天那两张在 `programs/src/driver/{router,uart}/needs.rs`）；本协议只定义怎么把单子
-//!   递过去、回单怎么读回来；
+//! - **要哪几样** → **收方**自己那张需求单，就是本协议 [`call::Need`] 的常量形态
+//!   （今天那四张在 `programs/src/driver/{router,uart,rtc}/needs.rs` 与
+//!   `programs/src/user/lodger/needs.rs`）；本协议只定义怎么把单子递过去、回单怎么读回来；
 //! - **谁代表谁** → Principal Protocol；
 //! - **清单怎么解析** → `env::wire::manifest`（线格式）与域侧那几张表；
 //! - **装载与建域** → 内核 Unit ABI（本协议的"授出门闩"只是权柄那一步）。

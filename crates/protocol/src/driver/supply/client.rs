@@ -35,7 +35,7 @@ pub fn draw<'r>(
 /// 按名字从记录里取一枚——**编排域自己领的那几样**用它（它们不按 `Slot` 归位）。
 pub fn pick(records: &[u8], want: &str) -> Option<PieToken> {
     for i in 0..records.len() / PAIR_LEN {
-        // SAFETY: 同 [`unpack`]：记录与块同源，步长由编译期断言锁死，缓冲只保证
+        // SAFETY: 同 [`crate::system::grant::each`]：记录与块同源，步长由编译期断言锁死，缓冲只保证
         // 1 字节对齐 ⇒ `read_unaligned`；越界由上面的除法挡掉。
         let at = unsafe { records.as_ptr().add(i * PAIR_LEN) };
         let record = unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) };

@@ -1,21 +1,27 @@
-//! lodger::needs — **本域自己那片硬件账**：要哪几枚门闩、什么种类/权/形态，以及"名字 → 本域第几格"。
+//! lodger::needs — **本域自己那片硬件账**：要哪一类设备、什么种类/权/形态。
 //!
 //! 它住在本域里，因为它是**收方**开的那张单子：装配者照它开单（[`WANTS`] 那几条原样递出去），
-//! 本域照它归位（[`slot_of`] 交给 `grant::unpack`）。名字是 boot 在配对块里给的原样
-//! （设备树节点的 basename，见 `kernel/src/platform/devices.rs`）——**本域不发明名字**。
+//! 本域收到记录后**按位次归位**（[`crate::driver::assemble::receive`]——位置即格）。
+//!
+//! **写的是类，不是名字**：`virtio,mmio` 是这一类设备的绑定名（树里的 `compatible`），
+//! 而"这一类是哪一台"由编排域读树定下来——**本域不发明名字，也不冻机器地址**。
+//!
+//! **照实记**：这一类在本机上有**八台**（`virtio_mmio@1000{1..8}000`），单子上没有"第几台"
+//! 这一格 ⇒ 编排域取 **`reg` 首址最小**的那一台（今天正是房客从前写死的那一台，
+//! 故线号读数没动）。"哪台 virtio 是真的"要靠探设备寄存器去认，那是另一刀。
 
-use protocol::driver::supply::call::{Kind, Want, name_block};
+use protocol::driver::supply::call::{Kind, Need, class_block};
 use runtime::core::port::{Access, Policy};
 
-/// 收方给这枚门闩起的名字（判别号 = 本域那张表的数组下标）。
+/// 本域那张表里的第几格（判别号 = 数组下标；归位按位次 ⇒ 两者同值）。
 #[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slot {
-    /// 那一台 virtio 设备的寄存器页（`virtio_mmio@10001000`，中断号 1）。**本域从不映它、
-    /// 不碰它**：领它只为"主人"这个说法是真的（见本域头注）。
+    /// 那一台 virtio 设备的寄存器页（中断号 1）。**本域从不映它、不碰它**：领它只为"主人"
+    /// 这个说法是真的（见本域头注）。
     ///
-    /// **为什么不是那台已经有人要的设备**：`rtc@101000` 今天归 [`crate::driver::rtc`]（第二台
-    /// 真设备驱动），房客要的是**一条没人要的线**——它占上就死，占的那条线不该是有主的。
+    /// **为什么不是那台已经有人要的设备**：时钟那一台归 [`crate::driver::rtc`]（第二台真设备
+    /// 驱动），房客要的是**一条没人要的线**——它占上就死，占的那条线不该是有主的。
     Virtio = 0,
 }
 
@@ -24,21 +30,9 @@ pub enum Slot {
 /// 权位取**最小**的一格（`FETCH`）：本域只持有它，从不映视图、不读也不写寄存器。`ONLY`
 /// （独占）照旧——一台设备的寄存器页同一时刻只该有一个持有者，那是**资源事实**，与本域
 /// 用不用它无关。
-pub const WANTS: &[Want] = &[Want::of(
-    name_block("virtio_mmio@10001000"),
+pub const WANTS: &[Need] = &[Need::class(
+    class_block("virtio,mmio"),
     Kind::Pole,
     Access::FETCH,
     Policy::ONLY,
 )];
-
-/// 与 [`WANTS`] **同序**的格子：第 i 条要的东西落在第 i 格。
-const SLOTS: [Slot; 1] = [Slot::Virtio];
-
-/// 名字 → 本域那本账里的第几格（`grant::unpack` 的 `slot_of`）。
-pub fn slot_of(name: &str) -> Option<usize> {
-    WANTS
-        .iter()
-        .zip(SLOTS)
-        .find(|(want, _)| want.name().is_some_and(|n| n.as_str() == name))
-        .map(|(_, slot)| slot as usize)
-}

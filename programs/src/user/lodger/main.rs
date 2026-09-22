@@ -7,7 +7,8 @@
 //! 出吗"），本域喂的是**线那本账**——它像一位驱动那样占住一条线，然后一句话不说就走。
 //!
 //! ```text
-//!   1  领配给：`virtio_mmio@10001000`（1 号线）那枚 ONLY 门闩——真持有那台设备，但本域
+//!   1  领配给：**按类 `virtio,mmio` 要**（本机八台同类，编排域取首址最小的那台 =
+//!      `virtio_mmio@10001000`，1 号线）那枚 ONLY 门闩——真持有那台设备，但本域
 //!      从不映视图、不碰寄存器（为什么要一条**没人要**的线，见 [`needs`]）
 //!   2  上树一条会话：FIND /device/router ⇒ 那扇门
 //!   3  三趟登记 —— 成功那一格与**失败域**都卖读数（答码见 `line::call` 那张表）：
@@ -81,11 +82,11 @@ const E_TRIP: usize = 1;
 extern "C" fn main() -> ! {
     // 1. 领配给：门闩到手就是"持有"的全部（本域不映视图、不碰寄存器）。缺格即装配错。
     let mut slots = [None; needs::WANTS.len()];
-    let got = match assemble::receive(&mut slots, needs::slot_of) {
+    let got = match assemble::receive(&mut slots) {
         Ok(n) => n,
         Err(code) => exit_with_note(code, "lodger: assemble"),
     };
-    let [Some(_rtc)] = slots else {
+    let [Some(grant)] = slots else {
         exit_with_note(assemble::E_GRANT, "lodger: no grant")
     };
     say(&format!("lodger: got {got}"));
@@ -95,7 +96,8 @@ extern "C" fn main() -> ! {
         Some(entry) => entry,
         None => exit_with_note(E_TRIP, "lodger: no router"),
     };
-    let Some(device) = needs::WANTS[0].name() else {
+    // 设备名**随记录发下来**（本域不写死它；"这一类是哪一台"由编排域读树定）。
+    let Some(device) = grant.name() else {
         exit_with_note(E_TRIP, "lodger: no name")
     };
 

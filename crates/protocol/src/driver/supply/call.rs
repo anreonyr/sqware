@@ -1,4 +1,5 @@
-//! supply::call — **线上形状**：单子上的一条（`Want`）、单子与回单的编解、上限与状态码——一个字节都不在别处编
+//! supply::call — **线上形状**：单子上的一条（[`Want`]）与收方那张 `const` 表里的一格（[`Need`]）、
+//! 单子与回单的编解、上限与状态码——一个字节都不在别处编
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
 
@@ -48,11 +49,11 @@ pub const DENIED: u8 = 2;
 pub const FULL: u8 = 3;
 pub const BAD: u8 = 4;
 
-/// 单子上的一条：**要哪一枚**（boot 账里的名字）、什么种类、多少权、什么形态。
+/// 单子上的一条：**要哪一枚**（坐标已定）、什么种类、多少权、什么形态。
 ///
-/// **收方那张需求单就是它的常量形态**（[`Want::of`] ＋ [`name_block`]，今天唯一一张在
-/// `programs/src/driver/router/needs.rs`）：收方开单、装配者原样递出。故这一条**不带
-/// `slot`**——位置即格，收方按名字归位（`protocol::system::grant::unpack` 那个闭包）。
+/// 它是**线上形**：坐标已经落定（收方那张表里那一格 [`Need`] 经 [`Need::settle`] 翻过）。
+/// 故这一条**不带 `slot`**——**位置即格**（回单与单子同序同长），收方按位次归位
+/// （`protocol::system::grant::each`）。
 ///
 /// `repr(C)` + 定长字段 ⇒ 尺寸即线格式（编译期断言锁死），与 `Pair` 同一条纪律。
 #[repr(C)]
@@ -80,7 +81,8 @@ impl Want {
         pad: [0u8; 3],
     };
 
-    /// 按名要一样**不在设备需求单里**的东西（如提示之路、载荷区）。名字装不下 ⇒ `None`。
+    /// 运行期构造：`name` 已是定下来的坐标（由 [`Need::settle`] 译出来，或编排域自己点名要）。
+    /// 名字装不下 ⇒ `None`。
     pub fn new(name: &str, kind: Kind, access: Access, policy: Policy) -> Option<Want> {
         Some(Want {
             name: *Name::new(name).ok()?.bytes(),
@@ -89,20 +91,6 @@ impl Want {
             kind: kind as u8,
             pad: [0u8; 3],
         })
-    }
-
-    /// 常量构造：`name` 给的是**定长名字块**（[`Name::bytes`] 那一口径，见 [`name_block`]）。
-    ///
-    /// 运行期那条路是 [`Want::new`]；这一条是给**收方那张需求单**用的——它是一张 `const` 表
-    /// （今天的两张在 `programs/src/driver/{router,uart}/needs.rs`）。
-    pub const fn of(name: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Want {
-        Want {
-            name,
-            access: access.bits().bits(),
-            policy: policy.bits().bits(),
-            kind: kind as u8,
-            pad: [0u8; 3],
-        }
     }
 
     /// 名字（按 ABI 的定长字段解：`Name::bytes`/`from_bytes` 这一对，与 [`Pair::name`]
@@ -143,6 +131,80 @@ pub const fn name_block(s: &str) -> [u8; NAME_LEN] {
         i += 1;
     }
     out
+}
+
+/// 编译期把 `compatible` 串补零成定长块——与 [`name_block`] **逐字同一条**（两条都留：
+/// 一条给"树里认的类"，一条给"boot 给的名"）。
+pub const fn class_block(s: &str) -> [u8; NAME_LEN] {
+    name_block(s)
+}
+
+/// 收方开的单上那一格：**坐标还没定下来**——写的是"凭什么认它"。
+///
+/// 它与 [`Want`] 是**两个东西**：`Want` 是线上那一条（坐标已定），`Need` 是收方那张 `const`
+/// 表里的一格（坐标未定）。故 `Need` **不是线格式**：没有 `repr(C)`、尺寸不参与任何断言，
+/// 唯一的义务是能被 `const` 造出来。
+///
+/// 坐标怎么定见 [`Need::settle`]：按类要的那几条在**编排域**翻（设备树只有它读了），
+/// 按名要的那几条原样落下（内核造的门闩不在树里）。
+#[derive(Clone, Copy)]
+pub struct Need {
+    at: [u8; NAME_LEN],
+    by: By,
+    kind: Kind,
+    access: Access,
+    policy: Policy,
+}
+
+/// 坐标的两种来路。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum By {
+    /// **树里认**：`at` 是 `compatible` 串（`ns16550a`、`virtio,mmio`…）。
+    Class,
+    /// **boot 给的**：`at` 就是名字（`devicetree` / `irq` / `initrd`）——它们不是树里的节点。
+    Name,
+}
+
+impl Need {
+    /// 按类要一条（`at` 用 [`class_block`] 写）。
+    pub const fn class(at: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Need {
+        Need {
+            at,
+            by: By::Class,
+            kind,
+            access,
+            policy,
+        }
+    }
+
+    /// 按名要一条（`at` 用 [`name_block`] 写）。
+    pub const fn named(at: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Need {
+        Need {
+            at,
+            by: By::Name,
+            kind,
+            access,
+            policy,
+        }
+    }
+
+    /// 这一格写的是什么（类或名）——读数是"类 → 名"那一行，它要这两半。
+    pub fn at(&self) -> Option<Name> {
+        Name::from_bytes(self.at).ok()
+    }
+
+    /// 定坐标：`Class` 交给 `of`（读树的那一侧），`Name` 原样落进 [`Want`]。
+    ///
+    /// 返 `None` = **这台机器上没有这一类**（本层的失败域，不是引导域的答话——那一格是
+    /// `Fail::Unknown`）。
+    pub fn settle(self, of: impl Fn(&str) -> Option<Name>) -> Option<Want> {
+        let at = Name::from_bytes(self.at).ok()?;
+        let at = match self.by {
+            By::Class => of(at.as_str())?,
+            By::Name => at,
+        };
+        Want::new(at.as_str(), self.kind, self.access, self.policy)
+    }
 }
 
 /// 起一张单子 → 帧。条数越界或缓冲不够 ⇒ `None`（调用方按本地失败处理）。

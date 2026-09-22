@@ -58,10 +58,13 @@ def main [elf: path] {
     "-serial", "stdio"
     "-monitor", "none"
     "-no-reboot"
-    # 默认 192：**实测的边界**——debug 那份 initrd 今天 64.6 MB（release 31.2 MB），
-    # 与 13.8 MB 的内核一起放进 128 MB 时 QEMU 报 "Not enough memory to place DTB after
-    # kernel/initrd"（`prog-rtc` 上来那一次越过的线）；192 MB 起得来。
-    "-m", ($env.QEMU_MEM? | default "192")
+    # 默认 256：**实测的边界**（两次都量过）——
+    #   ① 原先 128：debug 那份 initrd 64.6 MB（release 31.2 MB）与 13.8 MB 的内核放一起，
+    #      QEMU 报 "Not enough memory to place DTB after kernel/initrd"；抬到 192 起得来。
+    #   ② **照实记**：认设备那一刀（编排域多一份设备树解析）之后，debug 那份 initrd 长到
+    #      98.1 MB（release 48.1 MB）——192 MB 下同一句报错**每一轮都红**（`soak` 0/10、
+    #      `group` 0/3），抬到 256 又起来。**边界量出来就是这样，别把它当"启动慢"。**
+    "-m", ($env.QEMU_MEM? | default "256")
     "-smp", ($env.QEMU_SMP? | default "4")
     ...$seed_args
     ...$icount_args

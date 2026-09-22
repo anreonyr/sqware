@@ -40,6 +40,7 @@ use programs::user::lodger::needs as lodger_needs;
 use programs::supervisor::system::board::bridge as board;
 
 use env::{HoleDir, Name, PieToken};
+use programs::supervisor::system::machine::Machine;
 use programs::supervisor::system::server;
 use protocol::session::{Pier, Quay};
 use protocol::system::desk::{Announce, Table};
@@ -55,6 +56,9 @@ use service::{Catalog, Died, Program};
 
 /// 载荷区那枚门闩在配对块里的名字（boot 定的，见 `kernel/platform/devices.rs`）。
 const INITRD: &str = "initrd";
+
+/// 设备树本体那枚门闩在配对块里的名字（同上）——**本域读树用的那一枚**（[`take_machine`]）。
+const DEVICETREE: &str = "devicetree";
 
 /// 持树者那一条在清单里的名字。
 const TREE: &str = "operator";
@@ -168,7 +172,8 @@ const fn router() -> Program {
     }
 }
 
-/// 串口驱动：常驻，要一枚门闩（`serial@10000000`），起来时交回通道；上板、上树。
+/// 串口驱动：常驻，要一枚门闩（**按类 `ns16550a` 要**——本机上是 `serial@10000000`），
+/// 起来时交回通道；上板、上树。
 ///
 /// **它排在线路由者之后**：控制器先就位，线再开闸（闸门归持有设备的那一台，见该域头注）。
 /// **上树是"按名找人"**：它从树上找到 `/device/router` 那位、把本域那条线**登记**下来
@@ -187,7 +192,8 @@ const fn uart() -> Program {
     }
 }
 
-/// 实时钟驱动：**第二台真设备**（`rtc@101000`，11 号线）——兼**报时服务**（门牌 `/device/rtc`）：
+/// 实时钟驱动：**第二台真设备**（**按类 `google,goldfish-rtc` 要**——本机上是 `rtc@101000`，
+/// 11 号线）——兼**报时服务**（门牌 `/device/rtc`）：
 /// 客人问时间就地答；客人约一个时刻就占住那一格并武装设备，到点把"那一声"推回客人手里。
 ///
 /// 上树两趟（`operator: true`）：落自己那块门牌 + 按名找线路由者。上板只为让板看得见它的死
@@ -247,7 +253,8 @@ const fn passer() -> Program {
 
 /// 房客：**起来、占一条线、直接死**——线那本账探活的读数（见 `programs/src/user/lodger`）。
 ///
-/// 它要一枚门闩（`virtio_mmio@10001000`，1 号线——**一条没人要的线**）：**它真持有那台设备**，
+/// 它要一台 virtio（**按类 `virtio,mmio` 要**——本机上八台同类，编排域取 `reg` 首址最小的那台
+/// = `virtio_mmio@10001000`，**一条没人要的线**）：**它真持有那台设备**，
 /// 却从不映视图、不碰寄存器——占住线之后一句话不说就走。路由者那边靠 `sweep` 收掉它
 /// （`router: vacate line=1`）。**照实记**：它从前占的是 11 号线（那时钟），第二台设备驱动
 /// 上来之后那条线有主了。
@@ -402,6 +409,12 @@ extern "C" fn main() -> ! {
         Err(why) => service::die(E_BOOT, why),
     };
 
+    // 2′. 领树：本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一台"要有它。
+    let machine = match take_machine(&boot_pier) {
+        Ok(machine) => machine,
+        Err(why) => service::die(E_BOOT, why),
+    };
+
     // 3/4. 死亡道：一位服务一条（本域铸、记号 `gone-<名字>`；装配时各交一份给板线程）。
     //      一服务一道 ⇒ **身份就是"哪条道响了"**：两位同时死也不会挤丢；本线程用一只
     //      **组**等任一道（`Tole`），零轮询。组是**独占**的（`shared = false`）。
@@ -420,7 +433,7 @@ extern "C" fn main() -> ! {
 
     // 登记整张表，再按顺序起（配给从 `boot_pier` 那条路领）。
     let mut table = Table::new();
-    let last = match service::assemble(&mut table, &catalog, PLAN, &boot_pier, &lanes) {
+    let last = match service::assemble(&mut table, &catalog, PLAN, &boot_pier, &lanes, &machine) {
         Ok(last) => last,
         Err(service::E_MANIFEST) => service::die(service::E_MANIFEST, "system: manifest bad"),
         Err(service::E_TABLE) => service::die(service::E_TABLE, "system: table full"),
@@ -450,6 +463,19 @@ fn talk_to_root() -> Option<Pier> {
     quay.seat(slot).ok()?;
     quay.claim(sire, Mark::of(supply::BOOT), BOOT_MS).ok()?;
     quay.find(slot).copied()
+}
+
+/// 领树：与载荷区同一条路（一张只有一条的单子 + 借映）。
+///
+/// **本域为什么读树**：单子上那一格写的是类（`compatible`），翻成"哪一台"要有设备树；而单子
+/// 是本域造的（子方只认得生我者，单子不经过它），故读树只能落在本域（理由见
+/// `system::machine` 头注）。
+fn take_machine(pier: &Pier) -> Result<Machine, &'static str> {
+    let want = Want::new(DEVICETREE, Kind::Pole, Access::FETCH, Policy::NONE)
+        .ok_or("system: tree name")?;
+    let token = take(pier, want).ok_or("system: tree ask")?;
+    let dock = Dock::open(PolePie::from_token(token)).map_err(|_| "system: tree open")?;
+    Machine::of(dock.view())
 }
 
 /// 领那块载荷区并把清单读出来。

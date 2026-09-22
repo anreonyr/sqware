@@ -7,8 +7,9 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 六十八条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 dir=<号> land=0 find=0 got=true` /
-#      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
+#   2) 六十九条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 dir=<号> land=0 find=0 got=true` /
+#      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` /
+#      **`system: uart ns16550a -> serial@10000000`**（**类 → 哪一台**那条翻译，见下） / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
 #      **`uart: tree part=0 dir=<号> land=0 find=0 got=true`** / **`echo: console=true`** /
@@ -82,8 +83,13 @@
 # 登记一种形状（找人走树，见 `guest`）。"一问一答跨域"那格读数没丢——`guest: reg=` 与
 # `find=` 是板上、树上各给的一格答码，线那一面由 `lodger: occupy=0`（路由者给的答码）顶着。
 #
+# **类 → 哪一台**那条翻译（认设备那一刀）：单子上写的是**类**（`ns16550a`…），编排域读一次
+# 设备树把它翻成那一台的名字（`system: uart ns16550a -> serial@10000000`）。钉它是因为
+# 驱动源码里**不再有机器地址**——名字是发下来的、坐标是翻出来的，而"哪一台"这件事只剩
+# 这一行读得出来（其余判据照旧，故这一刀**行为没动**）。
+#
 # 四条是**线 + 控制台**那一刀（`protocol::driver::line` 的四格与设备持有者那枚服务孔）：
-# `router: line 10 = serial@10000000` = **登记**——串口驱动报设备名、路由者**解树**（线 = 名字的
+# `router: line 10 = serial@10000000` = **登记**——串口驱动**报发下来的设备名**、路由者**解树**（线 = 名字的
 # 函数）并把这条线接上（起域时一条都不接）；`uart: rang n=` = **投递**——那一帧真的到了
 # 客户手里（那一行不带线号：线在泊位里，见 `protocol::driver::line`）；`uart: tree part=0 dir=<号> land=0 find=0 got=true` = **服务门牌**——`uart` 把"读行"那枚孔
 # 落到 `/device/uart`（`part` 是**幂等**的：那块目录已经在就答它那个号 ⇒ 第二台上来也读成 0）；`echo: console=true`
@@ -274,6 +280,7 @@ while [ "$i" -le "$rounds" ]; do
   elif ! { grep -qE "^router: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=router[[:space:]]*$" "$log" \
         && grep -q "router: device_count=95 ctx=1" "$log" \
         && grep -q "uart: serial@10000000 ier=rx" "$log" \
+        && grep -q "system: uart ns16550a -> serial@10000000" "$log" \
         && grep -q "guest: reg=0 find=0" "$log" \
         && grep -q "guest: trip ok" "$log" \
         && grep -q "router: line 10 = serial@10000000" "$log" \
