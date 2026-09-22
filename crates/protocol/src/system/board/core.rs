@@ -217,18 +217,18 @@ impl Board {
         self.lookup_after(name, |_| ())
     }
 
-    /// 同 [`Board::lookup`]，但拿到入口后先交给 `f`（适配层在这里把入口授给调用方，
-    /// 免得"先查再授"中间再多一次查找）。
+    /// 同 [`Board::lookup`]，但拿到入口后先交给 `ship`（适配层在这里把入口授给调用方，
+    /// 免得"先查再授"中间再多一次查找）——`ship` 是那一手的名字（与 [`Unship`] 成对）。
     pub fn lookup_after(
         &mut self,
         name: Name,
-        mut f: impl FnMut(PieToken),
+        mut ship: impl FnMut(PieToken),
     ) -> Result<PieToken, Fail> {
         let at = self.find(name).ok_or(Fail::Unknown)?;
         self.sweep_at(at);
         match self.signs[at].entry {
             Some(entry) => {
-                f(entry);
+                ship(entry);
                 Ok(entry)
             }
             None => Err(Fail::Unknown),

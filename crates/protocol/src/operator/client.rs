@@ -74,7 +74,7 @@ fn ask_out(
 /// 客侧第二步（**落**）：在 `at` 那一块 `Pane` 里给 `name` 贴一枚 `Tile`；答**那一格自己的号**。
 ///
 /// `entry` 是客人手里那一枚：它**经会话交给持树者**（`Accord` 一份）后才进帧——报文里走的
-/// 是"种在持树者表里的那个号"，那才是它认得的坐标（见文件头与 [`ocall::hang`]）。
+/// 是"种在持树者表里的那个号"，那才是它认得的坐标（见文件头与 [`ocall::ship`]）。
 pub fn land(
     say: PieToken,
     link: &Quay,
@@ -84,7 +84,7 @@ pub fn land(
     entry: PieToken,
     millis: usize,
 ) -> Result<EntryId, u8> {
-    let shipped = ocall::hang(entry, host).map_err(|()| ocall::BAD)?;
+    let shipped = ocall::ship(entry, host).map_err(|_| ocall::BAD)?;
     let mut reply = [0u8; ocall::ID_REPLY_LEN];
     let n = ask_out(
         say,

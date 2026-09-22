@@ -123,13 +123,6 @@ impl Table {
         }
     }
 
-    /// 记下它交回的通道。
-    pub fn hand_over(&mut self, name: Name, root: PieToken) {
-        if let Some(s) = self.row_mut(name) {
-            s.root = Some(root);
-        }
-    }
-
     /// 挂上身子：**一次给全**（域 + 线程）。没登记过 ⇒ `Unknown`。
     pub fn attach(&mut self, name: Name, team: TeamId, rep: TaskId) -> Result<(), Fail> {
         let Some(s) = self.row_mut(name) else {

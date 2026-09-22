@@ -202,7 +202,7 @@ fn answer(
         ocall::AskIn::Find(id) => {
             let mut grant = Ok(());
             tree.find(id, |pie| {
-                grant = ocall::give(pie, who).map(|_| ());
+                grant = ocall::ship(pie, who).map(|_| ());
             })
             .and(grant)
         }

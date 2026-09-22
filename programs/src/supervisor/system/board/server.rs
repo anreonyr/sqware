@@ -249,7 +249,7 @@ fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
 /// - **记号 == `ask`** —— 它亲手铸的那一枚问话孔（[`ask_hole`] 刻的）。
 ///
 /// 从前第三格是"**不带 `VEST`**"：它交来的**入口**也满足前两格（交者、开者都是它），而入口
-/// 是"能再授出"的那一枚（`hang` 给了 `VEST`）。那一格是**用权限位兼职表达语义**——权限位
+/// 是"能再授出"的那一枚（`ship` 给了 `VEST`）。那一格是**用权限位兼职表达语义**——权限位
 /// 回答的是"能不能再授出"，不是"这是什么"，故换成记号：入口刻的是 `entry`（见 [`answer`]
 /// 那一支），两枚同来源的孔靠**记号**分开。
 fn ask_of(who: TaskId) -> Option<PieToken> {
@@ -354,7 +354,7 @@ fn answer(
     let said = match op {
         bcall::REGISTER => match (seed.get() != 0).then_some(seed) {
             // 入口要**是它刚交过来的那一枚**。**这枚孔是谁铸的、谁交的**：客人铸（记号
-            // `entry`）、经会话交给板（`hang` ⇒ 板上这一份的来源位是客人）——故判据是
+            // `entry`）、经会话交给板（`ship` ⇒ 板上这一份的来源位是客人）——故判据是
             // `{交者 == 它, 记号 == entry}`：前格在核心（`probe(entry) == who`），后格在这里。
             // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
             // 两件事只有记号分得开。
@@ -377,7 +377,7 @@ fn answer(
             // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
             let mut grant = Ok(());
             board
-                .lookup_after(name, |entry| grant = bcall::give(entry, who).map(|_| ()))
+                .lookup_after(name, |entry| grant = bcall::ship(entry, who).map(|_| ()))
                 .and(grant)
         }
         // 没见过的动作码：与"这个名字不在板上"同一句话（不另立一格）。

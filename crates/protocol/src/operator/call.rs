@@ -28,7 +28,7 @@
 //! ——没有一个"报法"字段可以填错，也没有第二个意思可读。最长的仍是 `seek` 那一条
 //! （[`ASK_MAX`]，路封顶 [`Operator::ROAD_MAX`] 段），其余都落在十到五十字节。
 //!
-//! **尾格只剩 `land` 用**：入口那一枚经会话交出去（[`hang`] 换回来的那个号，不是"客人的 Pie
+//! **尾格只剩 `land` 用**：入口那一枚经会话交出去（[`ship`] 换回来的那个号，不是"客人的 Pie
 //! 是几号"），报文里走的只是"种在持树者表里的号"。两个编号空间不同源，互相拿错正是旧树
 //! `[33..41]` 那一格的病。
 //!
@@ -130,7 +130,7 @@ pub enum Ask<'a> {
     Part { at: Where, name: Name },
     /// `land`：在那一块 `Pane` 下，给这个新名落一枚。
     ///
-    /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（[`hang`] 换回来的），
+    /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（[`ship`] 换回来的），
     /// 不是"客人的 Pie 是几号"——两个编号空间不同源。
     Land {
         at: Where,
@@ -533,19 +533,17 @@ pub const fn tree() -> Operator {
     Operator::new(vested_by, unship)
 }
 
-/// **交出去**：把调用方手里那一枚交给持树者（`Accord` 一份副本），返"种在持树者表里"的号。
+/// **交出**：把调用方手里那一枚交给持树者（`Accord` 一份副本），返"种在持树者表里"的号；
+/// 反过来的那一半（持树者把树上那一枚转授给客人，`find` 的下场）**是同一件事**，故同一个名字
+/// ——照实记：这两个方向原先叫 `hang` 与 `give`，收口那一刀并成了这一个。
 ///
 /// 权限给满（`R|W`）**加一格 `VEST`**：持树者查到名字时要**再授出**（`find` 的下场）——
-/// 内核那道"持 `VEST` 才交得出去"的闸挡的就是"查到了却授不出去"。
-/// 身体在 [`crate::session::call::ship`]。
-pub use crate::session::call::ship as hang;
-
-/// **授出**：把树上那一枚转授给调用方（`find` 的下场）。
+/// 内核那道"持 `VEST` 才交得出去"的闸挡的就是"查到了却授不出去"；拿到它的人可以再传
+/// ——那正是"一个名字指向一枚 Pie"的用法，故这里也不替调用方裁剪。
 ///
-/// 与 [`hang`] 同一份子集（`R|W|VEST`）：**拿到它的人可以再传**——那正是"一个名字指向
-/// 一枚 Pie"的用法，故这里不替调用方裁剪。
-/// **失败域是本模块的**（`Unknown`）：身体共用，失败值各自说。
-pub fn give(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
+/// 身体在 [`crate::session::call::ship`]（**同名的裸手**）；**失败域是本模块的**
+/// （`Unknown`）：身体共用，失败值各自说（与 [`map_claim`] / [`map_seat`] 同款）。
+pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
     crate::session::call::ship(entry, to).map_err(|()| Fail::Unknown)
 }
 

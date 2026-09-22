@@ -153,6 +153,9 @@ pub enum Fail {
 ///
 /// 与 `system::board` 同一格（`VestedBy` 的形状照旧）：本正文没有 owner，故这里只取"答得出吗"，
 /// 答出来的 `TaskId` 用不到。
+///
+/// **层**：这一格问的是**门闩的授与人**（谁把这一枚交出去的）——与 `Task::heir`（**我生的
+/// 子域**）和 `principal::heir`（**谱系谓词**）同字不同层；内核那两个字段名照旧不动。
 pub type VestedBy = fn(PieToken) -> Option<TaskId>;
 
 /// **放下**：把我这一份自释。剪掉或换掉一枚 `Tile` 时用它——不加这一格，那一枚句柄就漏在树里。
@@ -242,10 +245,11 @@ impl Operator {
     /// - 号不在树上 ⇒ [`Fail::Unknown`]（剪掉、剔死、从没铸过长得一样）；
     /// - 那一格是一块 `Pane` ⇒ [`Fail::NotATile`]；
     /// - 是一枚 `Tile`：**先探一次**（[`VestedBy`]）——答不出 ⇒ 当场剔掉那一条、放下那一份
-    ///   （[`Unship`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `give`。
+    ///   （[`Unship`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `ship`。
     ///
-    /// `give` 是"交出去"那一手（适配层在这里把 Pie 授给调用方，核心因此不碰内核）。
-    pub fn find(&mut self, id: EntryId, mut give: impl FnMut(PieToken)) -> Result<(), Fail> {
+    /// `ship` 是"交出去"那一手（适配层在这里把 Pie 授给调用方，核心因此不碰内核）——与同文件
+    /// 另一个注入事实 [`Unship`] 正好是一式的两半（交出 / 放下）。
+    pub fn find(&mut self, id: EntryId, mut ship: impl FnMut(PieToken)) -> Result<(), Fail> {
         let vested_by = self.vested_by;
         let unship = self.unship;
         // 先只读地问一遍（借用到此为止），再决定要不要动树。
@@ -261,7 +265,7 @@ impl Operator {
             let _ = unship(pie);
             return Err(Fail::Dead);
         }
-        give(pie);
+        ship(pie);
         Ok(())
     }
 

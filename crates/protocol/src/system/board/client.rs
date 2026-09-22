@@ -67,7 +67,7 @@ pub fn ask(
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
     let seed = match op {
-        bcall::REGISTER => Some(bcall::hang(entry, board).map_err(|()| Fail::Denied)?),
+        bcall::REGISTER => Some(bcall::ship(entry, board).map_err(|_| Fail::Denied)?),
         _ => None,
     };
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
@@ -84,7 +84,7 @@ pub fn ask(
 /// 客侧第四步：说一句"**我走了**"，收一格答话。
 ///
 /// 与 [`ask`] 同一对动作（推一句问话、从本端板路取一句答话），只少两样：**没有载荷**（不说
-/// 名字、不交入口，故帧只有一字节）与**不带板的号**（没什么要 `hang` 给板的）。
+/// 名字、不交入口，故帧只有一字节）与**不带板的号**（没什么要 `ship` 给板的）。
 ///
 /// 板那侧据此撤格 + 摘掉这一位挂在板上的**全部**牌子；它不在账上则答
 /// [`UNKNOWN`](bcall::UNKNOWN)。

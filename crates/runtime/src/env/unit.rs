@@ -114,7 +114,10 @@ pub fn self_id() -> EnvResult<TaskId> {
     }
 }
 
-/// 溯源：生我者的 task id（0 = 顶级域 / 父已亡）。
+/// 溯源：**生我者**的 task id（0 = 顶级域 / 父已亡）。
+///
+/// **层**：这一格问的是**任务血缘**（谁生了我）——与 `AnyPie::sire`（这枚门闩从哪一枚派生）
+/// 同字不同层。
 pub fn sire() -> EnvResult<TaskId> {
     let r = UnitCall::Sire.call()?;
     match r {
