@@ -22,7 +22,7 @@ use core::time::Duration;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{ChronoCall, ControlCall, DebugCall, EnvCall, MemoryCall, RoomCall, UnitCall};
+use env::{ChronoCall, ControlCall, DebugCall, EnvCall, MemoryCall, RoomCall, TaskId, UnitCall};
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr as KVirt;
@@ -118,12 +118,15 @@ fn note_out(ident: &TaskIdent, reason: usize, va: usize, len: usize) {
     if !crate::work::mail::copy_in(&ident.team.space, &mut buf[..n], va) {
         crate::putln!(
             "exit tid={} reason={reason:#x} note=<unreadable {len} bytes at {va:#x}>",
-            ident.id
+            ident.id.get()
         );
         return;
     }
     let text = core::str::from_utf8(&buf[..n]).unwrap_or("<non-utf8 note>");
-    crate::putln!("exit tid={} reason={reason:#x} note: {text}", ident.id);
+    crate::putln!(
+        "exit tid={} reason={reason:#x} note: {text}",
+        ident.id.get()
+    );
 }
 
 /// 从调用方空间读一段字节（逐页翻译后拷贝；跨页安全）。
@@ -257,7 +260,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             //
             // 一次调用**只下一道令**，不下场等它回收：要等就 `UnitCall::Join`
             // （Linux 的 `kill` 也是"送到即回"）。
-            let target = muster(task.get()).and_then(|w| w.upgrade());
+            let target = muster(task).and_then(|w| w.upgrade());
             let Some(target) = target else {
                 // 名册升不起来 = 从未入册 / 已回收——与 `Join` 判活三态同一口径。
                 return ret_err(frame, GateError::Dead);
@@ -272,8 +275,8 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // 下令时记一笔（谁杀的）；死亡时受害者那颗核另记 `Exit { EXIT_DOOM }`
             // ——两条分开是因为它们落在不同的核上（见 `RoomEvent::Doomed`）。
             trace::note(EventKind::Room(RoomEvent::Doomed {
-                tid: target.ident.id,
-                by: ident.id,
+                tid: target.ident.id.get(),
+                by: ident.id.get(),
             }));
             drop(target);
             drop(ident);
@@ -403,21 +406,24 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             }
             // 恒产 Held：授权顺序由父方 `Accord` → `Hatch` 保证
             match builder.hold() {
-                Ok(t) => frame.gpr.set_x(Gprs::A0, t.ident.id),
+                Ok(t) => frame.gpr.set_x(Gprs::A0, t.ident.id.get()),
                 Err(e) => return ret_err(frame, map_err(e)),
             }
         }
         EnvCall::Unit(UnitCall::SelfId) => {
-            let id = current().running_task().map(|t| t.ident.id).unwrap_or(0);
-            frame.gpr.set_x(Gprs::A0, id);
+            let id = current()
+                .running_task()
+                .map(|t| t.ident.id)
+                .unwrap_or(TaskId::new(0));
+            frame.gpr.set_x(Gprs::A0, id.get());
         }
         EnvCall::Unit(UnitCall::Sire) => {
             // 溯源：生我者的 task id。0 = 顶级域（boot）或父已亡。
             let id = current()
                 .running_task()
                 .and_then(|t| t.ident.team.sire())
-                .unwrap_or(0);
-            frame.gpr.set_x(Gprs::A0, id);
+                .unwrap_or(TaskId::new(0));
+            frame.gpr.set_x(Gprs::A0, id.get());
         }
         EnvCall::Unit(UnitCall::HeirCount) => {
             // 我生的子域数量（heir 枚举 first pass）。
@@ -470,7 +476,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             }
         }
         EnvCall::Unit(UnitCall::Hatch { task }) => {
-            let target = match muster(task.get()).and_then(|w| w.upgrade()) {
+            let target = match muster(task).and_then(|w| w.upgrade()) {
                 Some(t) => t,
                 None => return ret_err(frame, GateError::Denied),
             };
@@ -502,7 +508,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             //   ② 升不起强引用 ⇒ 已消失（对象已回收）⇒ 当场结论「已回收」；授权无从核对
             //      （照旧放行；寿命无从谈起 ⇒ 空弱引用，站点当场判死、不建站点）。
             //   ③ 仍是活任务 ⇒ 当场核对授权，并把「退出钩子是否已跑完」读出来。
-            let Some(target) = muster(task.get()) else {
+            let Some(target) = muster(task) else {
                 return ret_err(frame, GateError::Denied);
             };
             // **挂起前放掉那枚抄件**（`muster` 抄出来的弱引用）：`target` 只用来当场判活
@@ -530,14 +536,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             frame.gpr.set_x(Gprs::A0, 0);
             drop(ident);
             drop(target);
-            match messenger::join(
-                TaskLife {
-                    id: task.get(),
-                    life,
-                },
-                reaped,
-                dur,
-            ) {
+            match messenger::join(TaskLife { id: task, life }, reaped, dur) {
                 // 未离核：当场结论（true = 调用开始时目标已回收）。
                 Ok(Handoff::Resume(dead)) => frame.gpr.set_x(Gprs::A0, dead as usize),
                 Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,

@@ -13,6 +13,8 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
+use env::TaskId;
+
 use crate::lock::OnceLock;
 use crate::work::unit::task::Task;
 use crate::work::unit::weak::TaskWeak;
@@ -64,13 +66,13 @@ pub(crate) fn snap() -> Vec<TaskWeak> {
 ///
 /// 边界要说清：本核对只挡**明显非法**的指针，挡不住"指向已释放/被覆写但地址
 /// 合法"的那种——那种要靠修根因。它的价值是把"整机死"降级成"少级联一次 + 留证据"。
-pub(crate) fn find(tid: usize, snap: &Snap) -> Option<Arc<Task>> {
+pub(crate) fn find(tid: TaskId, snap: &Snap) -> Option<Arc<Task>> {
     for w in snap {
         if !plausible(w) {
             static BAD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
             let n = BAD.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
             if n <= 8 {
-                crate::putln!("snap::find: skip implausible weak ({n}) tid={tid}");
+                crate::putln!("snap::find: skip implausible weak ({n}) tid={}", tid.get());
             }
             continue;
         }
@@ -92,12 +94,12 @@ fn plausible(w: &Weak<Task>) -> bool {
 }
 
 /// 向上：这枚门闩的授与人（= 父门闩所在任务的 id）。原始自持 → None。
-pub(crate) fn vestor(pie: &AnyPie, snap: &Snap) -> Option<usize> {
+pub(crate) fn vestor(pie: &AnyPie, snap: &Snap) -> Option<TaskId> {
     holder(pie.sire()?, snap)
 }
 
 /// 某枚门闩（按 token）的持有者：快照里谁的表里有它。
-fn holder(token: usize, snap: &Snap) -> Option<usize> {
+fn holder(token: usize, snap: &Snap) -> Option<TaskId> {
     for w in snap {
         let Some(t) = w.upgrade() else { continue };
         // 显式作用域：guard 必须在取 id 之前释放（不跨表）。

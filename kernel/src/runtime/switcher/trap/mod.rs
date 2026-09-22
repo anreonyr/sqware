@@ -178,7 +178,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         debug_assert!(
             sp <= top && top - sp < 0x4000,
             "user trap on hart {me}: sp={sp:#x} top={top:#x} frame.kernel_sp={ksp:#x} (task #{}) — kernel_sp per-switch write missing?",
-            i.id()
+            i.task_id()
         );
     }
 
@@ -328,7 +328,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 return frame as *mut TrapContext;
             }
             // 不可解析 → 杀 task（不复用 frame：reap 取下一任务的 frame PA）。
-            let tid = running.id;
+            let tid = running.id.get();
             let cause_bits = scause::read().bits();
             let stval_bits = stval::read();
             trace::note(EventKind::Room(RoomEvent::FaultKilled {
@@ -348,7 +348,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                     .as_ref()
                     .and_then(Identity::live)
                     .expect("user exception without running task");
-                let tid = running.id;
+                let tid = running.id.get();
                 let cause_bits = scause::read().bits();
                 let stval_bits = stval::read();
                 trace::note(EventKind::Room(RoomEvent::FaultKilled {

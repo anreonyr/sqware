@@ -34,7 +34,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{Name, PAIR_LEN, Pair};
+use env::{Name, PAIR_LEN, Pair, TaskId};
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -131,7 +131,7 @@ pub(crate) fn irq_stats() -> (usize, usize, usize, usize) {
 /// 自己的 VA 借映同一批物理页去解析清单、读镜像：**零拷贝**。
 fn supply_initrd() -> Option<(Name, AnyPie)> {
     let initrd = machine::info().initrd()?;
-    let meta = mail::pole::region(initrd.base, initrd.size, 0).ok()?;
+    let meta = mail::pole::region(initrd.base, initrd.size, TaskId::new(0)).ok()?;
     let pie = gate::new_pie(
         meta,
         // 多读者（清单与每一颗镜像都在里头，收方各自借映）⇒ 共享、授出即复制。
@@ -148,7 +148,7 @@ fn supply_initrd() -> Option<(Name, AnyPie)> {
 /// 机制；这里额外给它一枚门闩，好让需要读它的域自己去读。
 fn supply_dtb() -> (Name, AnyPie) {
     let dtb = machine::info().dtb();
-    let meta = mail::pole::region(dtb.base, dtb.size, 0).expect("devicetree region");
+    let meta = mail::pole::region(dtb.base, dtb.size, TaskId::new(0)).expect("devicetree region");
     let pie = gate::new_pie(
         meta,
         // 自描述**天然多读者**：共享（不带 `ONLY`），授出即复制。
@@ -172,7 +172,7 @@ fn supply_dtb() -> (Name, AnyPie) {
 /// 内核（持源实体，不走门闩）。`VEST` 是给 root 把它授给 PLIC 驱动用的。
 /// **共享**（不带 `ONLY`）：root 留一份、驱动得一份。
 fn supply_irq() -> (Name, AnyPie) {
-    let meta = NoleMeta::new(0);
+    let meta = NoleMeta::new(TaskId::new(0));
     assert!(IRQ.set(meta.clone()).is_ok(), "irq bell built twice");
     let pie = gate::new_pie(meta, Permission::FETCH | Permission::VEST, None);
     (
@@ -246,7 +246,7 @@ pub(crate) fn scan() -> Vec<(Name, AnyPie)> {
             };
             // owner = 0：**内核给的**（`PoleMeta.owner` 的既有约定）。故没有域能
             // `Seal` 一台设备（`Seal` 要求 owner == 自己）——设备无生死可判。
-            let Ok(meta) = mail::pole::region(base, size, 0) else {
+            let Ok(meta) = mail::pole::region(base, size, TaskId::new(0)) else {
                 continue;
             };
             let pie = gate::new_pie(

@@ -43,6 +43,8 @@ use alloc::sync::{Arc, Weak};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
+use env::TaskId;
+
 use crate::lock::{Level, SpinLock};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
@@ -87,14 +89,14 @@ pub struct NoleMeta {
     ring: SpinLock<bool>,
     /// 开辟者：`UnsealNole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
     /// 语义同 `HoleMeta::owner`：`vestor` 管门闩的来历，`owner` 管资源的来历。
-    owner: usize,
+    owner: TaskId,
 }
 
 impl NoleMeta {
     /// 造一枚 Nole。**无参数**——没有大小、没有对齐、没有上限可校验，这正是它
     /// 与 `hole::meta(owner, mark)` / `pole::allocate(bytes, owner)` 的区别。
     /// （另外三个字段都是"听者面"，构造期定型，没有 setter。）
-    pub(crate) fn new(owner: usize) -> Arc<Self> {
+    pub(crate) fn new(owner: TaskId) -> Arc<Self> {
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, NoleState::Live),
             id: alloc_id(),
@@ -111,7 +113,7 @@ impl NoleMeta {
     }
 
     /// 资源开辟者（见字段 `owner`）。
-    pub(crate) fn owner(&self) -> usize {
+    pub(crate) fn owner(&self) -> TaskId {
         self.owner
     }
 

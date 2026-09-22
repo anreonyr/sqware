@@ -63,7 +63,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::lock::{Level, SpinLock};
 
-use env::HoleDir;
+use env::{HoleDir, TaskId};
 
 use crate::work::mail::hole::HoleId;
 use crate::work::mail::nole::NoleId;
@@ -145,7 +145,7 @@ pub struct ToleMeta {
     cells: SpinLock<Vec<Cell>>,
     /// 开辟者：`UnsealTole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
     /// 语义同 `HoleMeta::owner`：`vestor` 管门闩的来历，`owner` 管资源的来历。
-    owner: usize,
+    owner: TaskId,
 }
 
 /// 本组的等待键：组自己的身份（`WakeKey::Tole`，与 `Hole{id}`/`Nole{id}` 同构）。
@@ -154,7 +154,7 @@ pub(crate) fn key(meta: &ToleMeta) -> WakeKey {
 }
 
 impl ToleMeta {
-    fn new(id: ToleId, owner: usize) -> Arc<Self> {
+    fn new(id: ToleId, owner: TaskId) -> Arc<Self> {
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, ToleState::Live),
             id,
@@ -177,7 +177,7 @@ impl ToleMeta {
     }
 
     /// 资源开辟者（见字段 `owner`）。
-    pub(crate) fn owner(&self) -> usize {
+    pub(crate) fn owner(&self) -> TaskId {
         self.owner
     }
 
@@ -352,6 +352,6 @@ pub(crate) fn wait(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, GateEr
 /// 持有的**唯一强引用**（资源寿命 = 能力寿命）。
 ///
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
-pub(crate) fn meta(owner: usize) -> Arc<ToleMeta> {
+pub(crate) fn meta(owner: TaskId) -> Arc<ToleMeta> {
     ToleMeta::new(alloc_id(), owner)
 }

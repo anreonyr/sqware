@@ -205,7 +205,7 @@ extern "C" fn info(info: &PanicInfo) -> ! {
             rows.push(vec![Some(format!(
                 "team #{} / task #{} @ hart {}",
                 i.team_id(),
-                i.id(),
+                i.task_id(),
                 hart::hart_id()
             ))]);
         }

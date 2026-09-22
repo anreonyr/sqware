@@ -14,6 +14,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use env::TaskId;
 use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
@@ -39,8 +40,8 @@ use super::{prune, void};
 ///
 /// 无主簿记——只存 task_id 与原因码，不持 `Arc<Task>`（防「杀者撑着被杀者」）。
 /// Level::L3，与站点表同级。
-pub(super) fn doomed() -> &'static SpinLock<HashMap<usize, usize>> {
-    static T: OnceLock<SpinLock<HashMap<usize, usize>>> = OnceLock::new();
+pub(super) fn doomed() -> &'static SpinLock<HashMap<TaskId, usize>> {
+    static T: OnceLock<SpinLock<HashMap<TaskId, usize>>> = OnceLock::new();
     T.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
@@ -283,7 +284,7 @@ pub(crate) fn sweep_doomed() -> usize {
     if PENDING.load(Ordering::Relaxed) == 0 {
         return 0;
     }
-    let mut batch = [(0usize, 0usize); BATCH];
+    let mut batch = [(TaskId::new(0), 0usize); BATCH];
     let mut n = 0;
     {
         let d = doomed().lock();
@@ -350,7 +351,7 @@ pub(crate) fn cull(roots: &[Arc<Team>], reason: usize) {
 /// **只收子域**：同域线程之间没有寿命耦合——域亡＝成员清零（成员各自退场，都走完就
 /// 没了），加上这里的子域级联。故"域里还留着一枚常驻线程"不是内核该管的事：谁起的
 /// 谁收（会话的收尾由会话的主人负责，见 `programs/src/supervisor/system/main.rs` 的 `board::shut`）。
-pub(crate) fn doom(tid: usize) {
+pub(crate) fn doom(tid: TaskId) {
     if let Some(task) = muster(tid).and_then(|w| w.upgrade()) {
         // “谁杀的”由父域自己那一笔 `Exit` 记（它先于本行发出）——级联不为子树里每个
         // 任务各记一条 `Doomed`。
@@ -364,7 +365,7 @@ pub(crate) fn doom(tid: usize) {
 /// 调用点是"任务自己的时刻"那几处（`SupervisorSoft` / `SupervisorTimer` / 离核前自查），
 /// 故它是**取即清**：一笔杀令只兑现一次。表空时由 [`PENDING`] 当场挡掉——这条查询落在
 /// 热路径上（每次离核 + 每个 tick），不该为它去碰 L3 锁。
-pub(crate) fn take_doomed(tid: usize) -> Option<usize> {
+pub(crate) fn take_doomed(tid: TaskId) -> Option<usize> {
     if PENDING.load(Ordering::Relaxed) == 0 {
         return None;
     }

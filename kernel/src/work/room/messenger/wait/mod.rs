@@ -130,7 +130,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, G
     // ③ 离核
     let (mut task, next_pa) = current().swap();
     trace::note(EventKind::Room(RoomEvent::Wait {
-        tid: task.ident.id,
+        tid: task.ident.id.get(),
         // 诊断用折叠值：键成枚举后不再有「人可读的位打包」形态。
         key: key.fold() as usize,
     }));
@@ -205,7 +205,9 @@ fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
     for task in tasks {
         let mut t = task;
         Task::exclusive(&mut t).transform(TaskState::Starved { next: None });
-        trace::note(EventKind::Room(RoomEvent::Wake { tid: t.ident.id }));
+        trace::note(EventKind::Room(RoomEvent::Wake {
+            tid: t.ident.id.get(),
+        }));
         kick(conductor::pick(), t);
         woke += 1;
     }
@@ -250,7 +252,7 @@ pub fn park(duration: Duration) -> Result<usize, GateError> {
     let me = task.ident.id;
     let wake_at = clock::now().add(duration).as_ticks();
     trace::note(EventKind::Room(RoomEvent::Park {
-        tid: me,
+        tid: me.get(),
         wake_at: wake_at as usize,
     }));
     let life = task.life();
@@ -290,7 +292,7 @@ pub fn park_until(at: u64) -> Result<Option<usize>, GateError> {
     let me = task.ident.id;
     let wait_ticks = at_ticks - now_ticks;
     trace::note(EventKind::Room(RoomEvent::Park {
-        tid: me,
+        tid: me.get(),
         // trace 这一格与 [`park`] 同口径：**硬件游标**上的绝对点（不是 uptime 基准）。
         wake_at: (clock::now().as_ticks() + wait_ticks) as usize,
     }));

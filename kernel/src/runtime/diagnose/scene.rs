@@ -151,7 +151,7 @@ impl Scene {
         let backtrace = Backtrace::from_walk(r);
         Some(Scene {
             hart: crate::hart::hart_id(),
-            task: ident().map(|i| i.id()),
+            task: ident().map(|i| i.task_id()),
             space: SpaceKind::Supervisor,
             reg: Registers {
                 pc: VirtAddr::from_raw(sepc::read()),
@@ -193,7 +193,7 @@ impl Scene {
         let backtrace = Backtrace::from_walk(r);
         Some(Scene {
             hart: crate::hart::hart_id(),
-            task: Some(info.id()),
+            task: Some(info.task_id()),
             space: world,
             reg: Registers {
                 pc: frame.sepc,
@@ -230,8 +230,8 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         if let Some(i) = ident() {
             vec![
                 None,
-                Some(format!("#{}", i.id())),
-                Some(format!("task #{} @ team #{}", i.id(), i.team_id())),
+                Some(format!("#{}", i.task_id())),
+                Some(format!("task #{} @ team #{}", i.task_id(), i.team_id())),
             ]
         } else {
             vec![None, Some("failed to get task info".into()), None]

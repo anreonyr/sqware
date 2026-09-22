@@ -29,7 +29,7 @@ use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
 
-use env::{HoleDir, Mark};
+use env::{HoleDir, Mark, TaskId};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::gate::GateError;
@@ -65,7 +65,7 @@ pub enum HoleState {
 struct Slot {
     buf: Vec<u8>,
     /// 当前槽里这条消息的发送者；空槽时无意义。
-    from: usize,
+    from: TaskId,
 }
 
 /// hole 数据面实体（Arc 持有；最后强引用 drop 时 Meta 释放）。
@@ -83,7 +83,7 @@ pub struct HoleMeta {
     ///
     /// 与门闩的 `sire` 分工：`sire` = **这枚门闩**从哪来（派生边）；`owner` =
     /// **这扇门**谁开的（任意副本共享同一事实）。
-    owner: usize,
+    owner: TaskId,
     /// 记号：开门那一刻刻上的那个名字（构造期定型，无 setter）。
     ///
     /// 与 `owner` 分工：`owner` = **谁开的这扇门**；`mark` = **这条路叫什么**——铸者
@@ -93,7 +93,7 @@ pub struct HoleMeta {
 }
 
 impl HoleMeta {
-    pub(super) fn new(id: HoleId, owner: usize, mark: Mark) -> Arc<Self> {
+    pub(super) fn new(id: HoleId, owner: TaskId, mark: Mark) -> Arc<Self> {
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
             id,
@@ -103,7 +103,7 @@ impl HoleMeta {
                 Level::L3,
                 Slot {
                     buf: Vec::new(),
-                    from: 0,
+                    from: TaskId::new(0),
                 },
             ),
             owner,
@@ -120,7 +120,7 @@ impl HoleMeta {
     }
 
     /// 资源开辟者（见字段 `owner`）。
-    pub(crate) fn owner(&self) -> usize {
+    pub(crate) fn owner(&self) -> TaskId {
         self.owner
     }
 
@@ -204,7 +204,7 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
 /// （空 = capacity 0，drop 它不释放任何东西 ⇒ **锁内不发生分配或回收**）。
 /// 调用方须在持 `msg` 时不持 slot 锁（slot = L3，Space.segments = L2；持 L3
 /// 调 L2 锁为 4→2 反向嵌套）。
-pub(crate) fn try_push(meta: &HoleMeta, msg: &mut Vec<u8>, from: usize) -> Result<(), GateError> {
+pub(crate) fn try_push(meta: &HoleMeta, msg: &mut Vec<u8>, from: TaskId) -> Result<(), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
@@ -226,7 +226,7 @@ pub(crate) fn try_push(meta: &HoleMeta, msg: &mut Vec<u8>, from: usize) -> Resul
 ///
 /// 这是"收方怎么知道该备多大缓冲"的答案：先问长度，再按长度备缓冲，最后
 /// [`try_take`]。空槽返 `Busy`（没有可取之事）。
-pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, usize), GateError> {
+pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
@@ -244,7 +244,7 @@ pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, usize), GateError> {
 /// 移动的方向是"槽 → 收方"：消息整条出去，槽里留下一个空 Vec（零分配）。
 /// 锁序同 try_push：调用方持返回的 `Vec` 时不持 slot 锁——它是**拷贝给用户之前**
 /// 的落点，`copy_out` 必须在锁外、且在 `space.segments`(L2) 那一侧。
-pub(crate) fn try_take(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, usize), GateError> {
+pub(crate) fn try_take(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, TaskId), GateError> {
     if !meta.alive() {
         return Err(GateError::Dead);
     }
@@ -319,7 +319,7 @@ pub(crate) fn seal(meta: &HoleMeta) {
 /// 解封一枚孔的代价仍是零字节——槽里没有缓冲，第一条消息由推者带进来。多出来的一格是
 /// **记号**：`owner` = 开辟者任务 id（envcall 入口传当前任务），`mark` = 这条路的名字
 /// （同一入口先按 `Name` 的解码面校验过，非法到不了这里）。
-pub(crate) fn meta(owner: usize, mark: Mark) -> Arc<HoleMeta> {
+pub(crate) fn meta(owner: TaskId, mark: Mark) -> Arc<HoleMeta> {
     // 先分配 id 再建 Meta：id 同时是等待键的身份（见 `key`），必须随 Meta 定型。
     HoleMeta::new(alloc_id(), owner, mark)
 }

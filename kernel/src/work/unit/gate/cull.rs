@@ -12,6 +12,8 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use env::TaskId;
+
 use crate::work::mail::hole::{self, HoleMeta};
 use crate::work::mail::nole::{self, NoleMeta};
 use crate::work::mail::pole::{self, PoleMeta};
@@ -162,7 +164,7 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
 /// 一条不肯放过的次序：**封印在 cull 之前**。反过来的话，`cull` 摘掉根那枚、若它
 /// 正好是 `Arc<Meta>` 的最后一份强引用，`Meta::drop` 自己就会置死并唤醒——效果相同，
 /// 但那是**引用计数的巧合**：一旦别处还留着一份副本，"开者退场 ⇒ 资源死"就静默失效。
-pub(crate) fn doom(tid: usize) {
+pub(crate) fn doom(tid: TaskId) {
     let snap = snap::snap();
     let Some(task) = snap::find(tid, &snap) else {
         return;
@@ -210,8 +212,8 @@ pub(crate) fn doom(tid: usize) {
 /// 与 [`cull`] 同款：本条在**退场钩子**里（`Hook = fn(usize)`，无错误通道），
 /// 分配失败 ⇒ 这一次封印整个不做（[`cull`] 会补上"最后一份门闩消失即回收"那条
 /// 既有路径），而不是拿整机去换一次封印。
-fn seal_owned(tid: usize, task: &Arc<Task>) -> usize {
-    if tid == 0 {
+fn seal_owned(tid: TaskId, task: &Arc<Task>) -> usize {
+    if tid.get() == 0 {
         return 0;
     }
     // 先挑出"我开的"那些 token（持自己那张表）。**不就地封印**：`doom` 的调用链上

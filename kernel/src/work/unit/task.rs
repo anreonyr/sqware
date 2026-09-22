@@ -12,6 +12,8 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
+use env::TaskId;
+
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::lock::SpinLock;
 use crate::memory::PAGE_SIZE;
@@ -215,7 +217,7 @@ pub struct Task {
 /// 安全窗口使用 `frame.pa`：同 hart trap 内（顺序执行，帧必活）；崩溃现场
 /// （全核冻结，无并发回收）。
 pub(crate) struct TaskIdent {
-    pub(crate) id: usize,
+    pub(crate) id: TaskId,
     pub(crate) team: Arc<Team>,
     /// 栈 slot 区间（user 段，pa=None）——回收经 [`Space::release`]。
     pub(crate) stack: crate::work::unit::space::Span,
@@ -352,7 +354,7 @@ impl Task {
         assert!(
             Arc::strong_count(t) >= 1,
             "task #{}: no holders (strong_count == 0)",
-            t.ident.id
+            t.ident.id.get()
         );
         // SAFETY: 至少一个容器持强引用 ⇒ transform 路径独占（其他 envcall 临时
         // 持有者不触字段）；Team 簿记弱引用不读字段。等价 Arc::get_mut（其要求
@@ -535,7 +537,7 @@ impl TaskBuilder {
     /// 计数在**产生**处而非入队处：Held 线程若被父域 `kill`，`REAPED` 与 `PUSHED`
     /// 必须仍然配平——否则 `done()` 恒假，系统永不停机。
     pub fn hold(self) -> Result<Arc<Task>, MapError> {
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let id = TaskId::new(NEXT_ID.fetch_add(1, Ordering::Relaxed));
 
         // **先备好索引容量，再动帧**（顺序即「失败域最小」）：名册 / 成员簿记 /
         // 未放行容器这三张表都在装配尾部 `insert`/`push`，那时已无错误通道——它们一
@@ -683,7 +685,7 @@ impl TaskBuilder {
         self.team.push_task(&task);
         self.team.hold(&task);
         conductor::push();
-        trace::note(EventKind::Room(RoomEvent::Spawn { tid: id }));
+        trace::note(EventKind::Room(RoomEvent::Spawn { tid: id.get() }));
         Ok(task)
     }
 }

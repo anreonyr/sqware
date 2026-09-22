@@ -38,6 +38,8 @@
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use env::TaskId;
+
 use crate::work::unit::task::Task;
 
 /// 停滞窗口：收尾**毫无进展**持续这么久就报。取 2 s —— 正常收尾全流程 0.3~0.6 s，
@@ -65,7 +67,7 @@ static ROOT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// 注入根任务（`boot::spawn_root` 成功之后一次）。
 pub(crate) fn arm(root: &Arc<Task>) {
-    ROOT_ID.store(root.ident.id, Ordering::Relaxed);
+    ROOT_ID.store(root.ident.id.get(), Ordering::Relaxed);
 }
 
 /// **会话是否已结束**（收尾期的判据）。
@@ -82,7 +84,7 @@ pub(super) fn shutting_down() -> bool {
     if id == 0 {
         return false;
     }
-    match super::table::muster(id) {
+    match super::table::muster(TaskId::new(id)) {
         // 名册里已经没有它（`rip` 清空了名册）⇒ 早已过了收尾。
         None => true,
         Some(w) => match w.upgrade() {

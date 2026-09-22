@@ -16,7 +16,7 @@
 
 use alloc::vec::Vec;
 
-use env::{HoleDir, Mark};
+use env::{HoleDir, Mark, TaskId};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
@@ -51,7 +51,7 @@ pub(super) fn form() {
 
     // `ONLY` 不可撤：**自持枚（sire = None）也不例外**。
     let name = Mark::of("permit");
-    let meta = hole::meta(0, name);
+    let meta = hole::meta(TaskId::new(0), name);
     for sire in [None, Some(1)] {
         let mut pie = AnyPie::Hole(gate::new_pie(meta.clone(), sole, sire));
         crate::expect!(
@@ -93,10 +93,10 @@ pub(super) fn form() {
 /// 收尾顺带走一遍组的 `Drop`（撤全部转发登记 + `wipe` 自己的键）——那正是"组没了，
 /// 成员那一侧不该再记得它"那条契约的落点。
 pub(super) fn members() {
-    let group = tole::meta(0);
+    let group = tole::meta(TaskId::new(0));
     let mark = Mark::of("mate");
-    let hole = hole::meta(0, mark);
-    let bell = nole::NoleMeta::new(0);
+    let hole = hole::meta(TaskId::new(0), mark);
+    let bell = nole::NoleMeta::new(TaskId::new(0));
 
     let hole_mate = Mate::Hole(hole.id(), HoleDir::Pull);
     let bell_mate = Mate::Nole(bell.id());
@@ -155,12 +155,12 @@ pub(super) fn members() {
 /// 「满」是**容量**账（同一枚成员被多少个组关心），不是内存不足——见 `FWD_MAX` 定义处。
 pub(super) fn fanout() {
     let mark = Mark::of("member");
-    let hole = hole::meta(0, mark);
+    let hole = hole::meta(TaskId::new(0), mark);
     let mate = Mate::Hole(hole.id(), HoleDir::Pull);
 
     let mut groups = Vec::new();
     for i in 0..FWD_MAX {
-        let group = tole::meta(0);
+        let group = tole::meta(TaskId::new(0));
         tole::attach(&group, mate, hole.life()).expect("前 FWD_MAX 个组都该挂得上");
         crate::expect!(
             group.cells().len() == 1,
@@ -171,7 +171,7 @@ pub(super) fn fanout() {
         groups.push(group);
     }
 
-    let extra = tole::meta(0);
+    let extra = tole::meta(TaskId::new(0));
     crate::expect!(
         matches!(tole::attach(&extra, mate, hole.life()), Err(GateError::OoM)),
         "转发格满（{} 个组）时挂格应当报 OoM，不静默丢",
@@ -204,11 +204,15 @@ pub(super) fn order() {
     let team = TeamBuilder::new(space).spawn().expect("order: spawn team");
     let task = team.task().hold().expect("order: hold task");
 
-    let dead_meta = hole::meta(0, Mark::of("sealed"));
+    let dead_meta = hole::meta(TaskId::new(0), Mark::of("sealed"));
     hole::seal(&dead_meta);
     let dead = gate::new_pie(dead_meta, Permission::FETCH, None);
     let dead_token = dead.token;
-    let live = gate::new_pie(hole::meta(0, Mark::of("live")), Permission::FETCH, None);
+    let live = gate::new_pie(
+        hole::meta(TaskId::new(0), Mark::of("live")),
+        Permission::FETCH,
+        None,
+    );
     let live_token = live.token;
     {
         let mut pies = task.pies.lock();

@@ -15,7 +15,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::TeamId;
+use env::{TaskId, TeamId};
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;
@@ -169,7 +169,7 @@ impl Team {
 
     /// 溯源：生我者的 task id（boot 顶级域 / 内核域 → None）。
     /// 这是「不可伪造的父身份源」——由内核在建域时强制，非父自愿告知。
-    pub(crate) fn sire(&self) -> Option<usize> {
+    pub(crate) fn sire(&self) -> Option<TaskId> {
         self.sire.upgrade().map(|t| t.ident.id)
     }
 }

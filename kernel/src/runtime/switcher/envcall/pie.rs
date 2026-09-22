@@ -26,7 +26,7 @@
 
 use alloc::sync::Arc;
 
-use env::{Mark, PieCall};
+use env::{Mark, PieCall, TaskId};
 
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
@@ -60,9 +60,9 @@ pub(crate) fn dispatch(
         PieCall::Open { token } => open(frame, ident, token.get()),
         PieCall::Shut { token } => shut(frame, ident, token.get()),
         PieCall::Seal { token } => seal(frame, token.get()),
-        PieCall::Accord { src, dst, subset } => accord(frame, src.get(), dst.get(), subset),
+        PieCall::Accord { src, dst, subset } => accord(frame, src.get(), dst, subset),
         PieCall::Narrow { token, subset } => narrow(frame, token.get(), subset),
-        PieCall::Revoke { dst, token } => revoke(frame, dst.get(), token.get()),
+        PieCall::Revoke { dst, token } => revoke(frame, dst, token.get()),
         PieCall::Collect { index } => collect(frame, index),
         PieCall::Reserve { token } => reserve(frame, &ident, token.get()),
         PieCall::Release { token } => release(frame, token.get()),
@@ -313,7 +313,12 @@ fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
 /// （`gate::accord`）——"交出"要在调用方表内就地写锚，抄件做不到。本层只补两件核心
 /// 做不到的事：**① 过「被关住」闸**（陈旧锚在此自愈；核心不依赖 scheduler，核不了），
 /// **② 把目标解析成 `Weak`**。
-fn accord(frame: &mut TrapContext, src_token: usize, dst_id: usize, subset: Permission) -> Outcome {
+fn accord(
+    frame: &mut TrapContext,
+    src_token: usize,
+    dst_id: TaskId,
+    subset: Permission,
+) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let caller = current().running_task().ok_or(GateError::Denied)?;
         // 源枚**只定位**：存活/持 `VEST`/覆盖子集/形态一致这四道闸在 `gate::accord` 里
@@ -365,7 +370,7 @@ fn narrow(frame: &mut TrapContext, token: usize, subset: Permission) -> Outcome 
 ///
 /// `token` = 该副本在**对端表里**的句柄（`Accord` 的返回值，经线形送达）——
 /// 不是我这边的 token。鉴权 = 「这枚的 `sire` 在我表里」。
-fn revoke(frame: &mut TrapContext, dst_id: usize, token: usize) -> Outcome {
+fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: usize) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let caller = current().running_task().ok_or(GateError::Denied)?;
         let target = muster(dst_id).ok_or(GateError::Denied)?;
@@ -389,14 +394,15 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
         Some(p) => (
             p.token(),
             p.permission().bits() as usize,
-            gate::vestor(&p, &gate::snap()).unwrap_or(0),
+            gate::vestor(&p, &gate::snap()).unwrap_or(TaskId::new(0)),
         ),
-        None => (0, 0, 0),
+        None => (0, 0, TaskId::new(0)),
     };
     frame.gpr.set_x(Gprs::A0, token);
-    frame
-        .gpr
-        .set_x(Gprs::A1, (vestor_id << 32) | (perm_bits & 0xffff_ffff));
+    frame.gpr.set_x(
+        Gprs::A1,
+        (vestor_id.get() << 32) | (perm_bits & 0xffff_ffff),
+    );
     Outcome::Resume
 }
 
@@ -413,7 +419,7 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
 /// **记号只长在孔上**：别的资源（Pole/Nole/Tole）问不到它 ⇒ `Denied`——问不到就是
 /// "这一条候选不成立"，不假装有一格空记号。记号**一格返回**（不再拷出、不再要用户备缓冲）。
 fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: usize) -> Outcome {
-    let r = (|| -> Result<(usize, usize, usize), GateError> {
+    let r = (|| -> Result<(TaskId, TaskId, usize), GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         // **只定位**：`owner` 是资源来历，封印不使它消失（见函数头注）——这里刻意不过
         // 死活闸，`owner()` 自己用 `alive()` 把"已封印 ⇒ `Dead`"答出来。
@@ -423,16 +429,21 @@ fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: usize) -> Outcome
             return Err(GateError::Denied);
         };
         let mark = h.meta().mark().get() as usize;
-        Ok((gate::vestor(&p, &gate::snap()).unwrap_or(0), owner, mark))
+        Ok((
+            gate::vestor(&p, &gate::snap()).unwrap_or(TaskId::new(0)),
+            owner,
+            mark,
+        ))
     })();
     match r {
         Ok((vestor_id, owner_id, mark)) => {
             // **`a0` 是"成 / 不成"那一格**（用户态按它的符号读 `EnvError`）⇒ 它只能放两枚
             // 小号（都远小于 2^32）；**整一枚记号放 `a1`**（打包见 `env::fid` 的 `Reserve`）。
             // 真机栽过一次：记号放 `a0` ⇒ 一半的记号最高位是 1 ⇒ 每次查询都被读成"出错"。
-            frame
-                .gpr
-                .set_x(Gprs::A0, (owner_id << 32) | (vestor_id & 0xffff_ffff));
+            frame.gpr.set_x(
+                Gprs::A0,
+                (owner_id.get() << 32) | (vestor_id.get() & 0xffff_ffff),
+            );
             frame.gpr.set_x(Gprs::A1, mark);
         }
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),

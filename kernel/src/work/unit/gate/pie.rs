@@ -19,6 +19,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::Arc;
 
+use env::TaskId;
+
 use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
 
@@ -36,7 +38,7 @@ pub use env::Permission;
 /// （`snap()` 要分配一个 `Vec<TaskWeak>`，数据面从不这么干）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Heir {
-    pub(crate) task: usize,
+    pub(crate) task: TaskId,
     pub(crate) token: usize,
 }
 
@@ -176,7 +178,7 @@ impl AnyPie {
     ///
     /// 判"谁能封印"用（`Seal` 在 envcall 适配层过它）：封印后 `None` **正是要的答案**
     /// ——已死的东西不再接受第二次封印。
-    pub fn owner(&self) -> Option<usize> {
+    pub fn owner(&self) -> Option<TaskId> {
         match self {
             AnyPie::Hole(p) => p.meta.alive().then(|| p.meta.owner()),
             AnyPie::Pole(p) => p.meta.alive().then(|| p.meta.owner()),
@@ -194,7 +196,7 @@ impl AnyPie {
     ///
     /// 契约：**只在自家 `pies` 锁里叫**（`p.meta` 的存活与否由 Meta 自己的锁管，
     /// 与本函数的调用点无关）。
-    pub fn owner_task(&self) -> usize {
+    pub fn owner_task(&self) -> TaskId {
         match self {
             AnyPie::Hole(p) => p.meta.owner(),
             AnyPie::Pole(p) => p.meta.owner(),

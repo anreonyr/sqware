@@ -13,6 +13,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr::NonNull;
 
+use env::TaskId;
+
 use crate::lock::{Level, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::allocator::frame;
@@ -59,7 +61,7 @@ pub struct PoleMeta {
     mappings: SpinLock<Vec<(usize, alloc::sync::Weak<Space>, Span)>>,
     /// 开辟者：`UnsealPole` 时的任务 id（构造期定型，无 setter）。0 = 内核自建。
     /// 语义同 `HoleMeta::owner`：`vestor` 管门闩的来历，`owner` 管资源的来历。
-    owner: usize,
+    owner: TaskId,
 }
 
 // SAFETY: PoleMeta 经 Arc 跨任务共享；base 指向共享物理帧（仅经 atomic / 直接拷贝
@@ -68,7 +70,7 @@ unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
 impl PoleMeta {
-    pub(super) fn allocate(size: usize, owner: usize) -> Result<Arc<Self>, GateError> {
+    pub(super) fn allocate(size: usize, owner: TaskId) -> Result<Arc<Self>, GateError> {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(GateError::NotAligned);
         }
@@ -104,7 +106,7 @@ impl PoleMeta {
     /// `reg` 是设备树声明的那一段（所有权粒度），页是映射粒度：区间按页界向两侧
     /// 撑开，故同一页里的邻居对持有者可见——UART 的 `reg` 只有 0x100，撑到一页。
     /// 存下来的 `size` 因此**大于** `reg`。
-    pub(super) fn region(base: usize, reg: usize, owner: usize) -> Result<Arc<Self>, GateError> {
+    pub(super) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<Self>, GateError> {
         if reg == 0 {
             return Err(GateError::NotAligned);
         }
@@ -124,7 +126,7 @@ impl PoleMeta {
     }
 
     /// 资源开辟者（见字段 `owner`）。
-    pub(crate) fn owner(&self) -> usize {
+    pub(crate) fn owner(&self) -> TaskId {
         self.owner
     }
 
@@ -303,7 +305,7 @@ pub(crate) fn seal(meta: &PoleMeta) {
 /// pies.push + pole::open）。返 `Arc`：它既是资源实体，也是门闩持有的**唯一强
 /// 引用**（资源寿命 = 能力寿命；最后一份消失时 `Drop` 归还帧 + 撤映射）。
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
-pub(crate) fn meta(size: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
+pub(crate) fn meta(size: usize, owner: TaskId) -> Result<Arc<PoleMeta>, GateError> {
     PoleMeta::allocate(size, owner)
 }
 
@@ -311,6 +313,6 @@ pub(crate) fn meta(size: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError
 ///
 /// **只对内核开放**（`pub(crate)`，无 envcall 入口）：设备树是 boot 的事实，
 /// 域不能凭一个物理地址给自己造门闩。独占因此不靠判据，靠**没有第二个创建入口**。
-pub(crate) fn region(base: usize, reg: usize, owner: usize) -> Result<Arc<PoleMeta>, GateError> {
+pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleMeta>, GateError> {
     PoleMeta::region(base, reg, owner)
 }

@@ -28,6 +28,8 @@
 
 use alloc::sync::{Arc, Weak};
 
+use env::TaskId;
+
 /// 键的存活单元：**无字段标记类型**——死亡就是强引用归零。
 ///
 /// 不变式：**它只回答「资源还在不在」**，不回答「谁在等」——后者仍归站点表。
@@ -77,6 +79,6 @@ impl Life {
 /// 命名：`Weak` 在值里而非键里（键是 map key，必须 `Copy`/`Eq`），故本类型是
 /// 「一对」，不是键的一部分。
 pub(crate) struct TaskLife {
-    pub(crate) id: usize,
+    pub(crate) id: TaskId,
     pub(crate) life: Weak<Life>,
 }

@@ -11,7 +11,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use env::{HoleDir, MailCall};
+use env::{HoleDir, MailCall, TaskId};
 
 use riscv::register::sie;
 
@@ -64,7 +64,10 @@ fn push(
     msg: KVirt,
     len: usize,
 ) -> Outcome {
-    let me = current().running_task().map(|t| t.ident.id).unwrap_or(0);
+    let me = current()
+        .running_task()
+        .map(|t| t.ident.id)
+        .unwrap_or(TaskId::new(0));
     // ① 取用判据在核心（`gate::accede`）：表里没有 → `Denied`；已封印 → `Dead`；权不够 →
     //    `Denied`——**顺序只有那一处**，与权柄轴同一个答案。
     //    落点与拷贝两步另有码：`hole::try_push` 答 `Busy`（槽已满）/`Dead`（封印），
@@ -175,7 +178,7 @@ fn pull(
     match r {
         Ok((n, from)) => {
             frame.gpr.set_x(Gprs::A0, n);
-            frame.gpr.set_x(Gprs::A1, from);
+            frame.gpr.set_x(Gprs::A1, from.get());
         }
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
     }

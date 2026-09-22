@@ -11,6 +11,8 @@
 
 use alloc::sync::Arc;
 
+use env::TaskId;
+
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
@@ -142,7 +144,7 @@ pub fn quit() -> usize {
     // 原因码取自逐核暂存槽（`Reap` / 故障隔离杀在调 `quit` 前写下，见
     // `messenger::EXIT_REASON`）——取即清零，下一次退场重新写。
     trace::note(EventKind::Room(RoomEvent::Exit {
-        tid: exited.ident.id,
+        tid: exited.ident.id.get(),
         reason: super::take_exit_reason(),
     }));
     reap(exited);
@@ -172,7 +174,9 @@ fn bury() {
             };
             z
         };
-        trace::note(EventKind::Room(RoomEvent::Reap { tid: z.ident.id }));
+        trace::note(EventKind::Room(RoomEvent::Reap {
+            tid: z.ident.id.get(),
+        }));
         // 目标已收尾 → 叫醒它的全部 join 等待者（内核驱动，覆盖 fault 死亡）。
         // 站点当场删掉：`WakeKey::Task{id}` 的寿命是目标任务的存活单元，而本站点在
         // 键还在世的最后一次入口上——删掉它，站点表就不随任务回收增长（见 `wipe`）。
@@ -216,7 +220,7 @@ fn bury() {
 //
 // 钩子由 `boot::init` 挂上来（结构面 `messenger::doom` + 能力面 `gate::doom`）。每条收尾的
 // 任务按注册顺序跑一次——本域不命名任何子系统，故不知道挂上来的是谁。
-type Hook = fn(usize);
+type Hook = fn(TaskId);
 
 static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();
 
@@ -226,7 +230,7 @@ pub(crate) fn hook(hooks: &'static [Hook]) {
 }
 
 /// 对 `tid` 跑一遍挂上的钩子（未挂 = 无事）。
-fn hooked(tid: usize) {
+fn hooked(tid: TaskId) {
     if let Some(hooks) = HOOKS.get() {
         for h in hooks.iter() {
             h(tid);

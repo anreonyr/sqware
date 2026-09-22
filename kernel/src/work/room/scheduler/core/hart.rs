@@ -5,8 +5,8 @@
 // 预算立即轮转——抢占与让出各自独立。
 //
 // 结构：Scheduler = inner(SpinLock) + badge(身份槽，无锁)。身份槽的载荷类型与计数
-// 协议归 [`Badge`]：写点只有 `Badge::{seat,shed,clear}` 三个方法（本文件的装槽 /
-// 让位 / 降级分别调它们）。
+// 协议归 [`Badge`]：写点只有 `Badge::{seat,shed}` 两个方法（本文件的装槽 / 降级
+// 分别调它们）。
 //
 // 就绪队列的改动**只有四个入口**：`starved_push` / `starved_pop` / `starved_remove` /
 // `starved_clear`；`inner.starved` 对本核心之外私有，跨文件只留 `starved_is_empty`
@@ -270,10 +270,9 @@ impl Scheduler {
         pa
     }
 
-    // 注：关机清理（原 clear_slot）与降级（原 shed）不在这里——身份槽的两态与计数
-    // 协议整个归 [`Badge`]：`Badge::shed`（reap / park 无后继：TaskIdent → LastIdent）、
-    // `Badge::clear`（关机基线审计前清空槽载荷，否则每 hart 末次 LastIdent 计入块差集
-    // 误报泄漏：已实证 4 hart = 4 个 48B 假泄漏）。本核只负责 running 槽。
+    // 注：降级（原 shed）不在这里——身份槽的两态与计数协议整个归 [`Badge`]：
+    // `Badge::shed`（reap / park 无后继：TaskIdent → 末次两枚号）把末次身份压进那
+    // 一格字，不分配、无计数可还，故没有对应的清槽原语。本核只负责 running 槽。
 
     /// 跨边界原语（messenger 三种过渡共用）：取走 running + 装下一 starved 或
     /// 降级身份槽。返回 (取走的 Arc<Task>, Optional 下一帧 PA)。
@@ -284,7 +283,6 @@ impl Scheduler {
     pub(crate) fn swap(&self) -> (Arc<Task>, Option<usize>) {
         let mut i = self.inner.lock();
         let task = i.running.take().expect("no running task");
-        let ident = task.ident.clone();
         let next = self.starved_pop(&mut i);
         drop(i);
         let next_pa = if let Some(next) = next {
@@ -292,7 +290,7 @@ impl Scheduler {
             self.seat(next);
             Some(pa)
         } else {
-            self.badge.shed(&ident);
+            self.badge.shed(&task.ident);
             None
         };
         (task, next_pa)
@@ -330,7 +328,7 @@ impl Scheduler {
             i.running = Some(cur);
             return pa;
         }
-        let prev_tid = cur.ident.id;
+        let prev_tid = cur.ident.id.get();
         let next = self.rotate(&mut i, cur);
         drop(i);
         let pa = self.seat(next);
@@ -360,9 +358,9 @@ impl Scheduler {
             i.running = Some(cur);
             return Some(pa);
         }
-        let prev_tid = cur.ident.id;
+        let prev_tid = cur.ident.id.get();
         let next = self.rotate(&mut i, cur);
-        let next_tid = next.ident.id;
+        let next_tid = next.ident.id.get();
         drop(i);
         // Switch 事件落在身份槽更新（seat）**之后**：窗口内崩溃不再把已下台
         // 的 prev 报成当前任务（轮转窗口 issue）。

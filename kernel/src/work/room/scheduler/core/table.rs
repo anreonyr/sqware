@@ -14,6 +14,8 @@ use hashbrown::HashMap;
 use sbi::ecall::SArgs;
 use sbi::{self, fid};
 
+use env::TaskId;
+
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::room::conductor;
 use crate::work::room::messenger;
@@ -31,8 +33,13 @@ pub(in super::super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLoc
 ///   1. scheduler::core::rip      ← 本函数：就绪队列强制释放 → mail 透传
 ///   2. block::flush                 ← block 池冲洗
 ///
-/// 注：本函数清 scheduler 持有的 Arc<Task>（就绪队列）+ 身份槽。messenger 簿记
+/// 注：本函数清 scheduler 持有的 Arc<Task>（就绪队列）。messenger 簿记
 /// （sites / holders / husks）由 [`messenger::rip`] 清——本函数连调之。
+///
+/// **身份槽有意不碰**：末次那一态压在一格字里、不持计数，无物可还；在跑那一态那份计数
+/// 则被 `running` 槽的 `Arc<Task>` 保着（而 `running` 下面有意不清），放与不放都不改变
+/// 账面。于是这里既没有"清槽"这一步，也**没有**跨核写别核槽这回事
+/// （见 [`ident`](mod@super::ident) 的头注）。
 ///
 /// **`running` 槽有意不清**（旧头注写「全部 task 引用」，与代码不符，此处改正为事实）：
 /// 关机屏障（`conductor::halt` 等 `HALT_ARRIVED == hart_count`）保证的是**各核已到达**
@@ -50,10 +57,6 @@ pub(crate) fn rip() {
     }
     // 清 messenger 簿记（sites / holders / husks）
     messenger::rip();
-    // 清身份槽（原 shutdown_slots 职责）
-    for c in cs.iter() {
-        c.badge.clear();
-    }
     // 名册**放最后**：强引用先全放掉（就绪队列 / 站点 / 躯壳 / 槽），名册里的弱引用才是
     // `ArcInner` 的最后一道门——放早了也白放（强引用还在，块归还不掉）。
     if let Some(r) = ROSTER.get() {
@@ -146,15 +149,15 @@ pub(crate) fn kick(hart: usize, task: Arc<Task>) {
 // `muster` 对它答 `None`，与"从未分配"同形 —— `Join` 因此由 `Ok(true)` 降级成 `Denied`
 // （`crates/runtime` 的 `doom` 与 `programs/.../stress/group.rs` 两处都照实记了这条边界）。
 
-static ROSTER: OnceLock<SpinLock<HashMap<usize, TaskWeak>>> = OnceLock::new();
+static ROSTER: OnceLock<SpinLock<HashMap<TaskId, TaskWeak>>> = OnceLock::new();
 
-fn roster_table() -> &'static SpinLock<HashMap<usize, TaskWeak>> {
+fn roster_table() -> &'static SpinLock<HashMap<TaskId, TaskWeak>> {
     ROSTER.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
 /// 入册：任务产生处一次性（`Task::hold` 末尾）。`Weak` 升级失败 = 任务已消失 =
 /// 自动失效，无需显式清理。
-pub(crate) fn enlist(id: usize, task: &Arc<Task>) {
+pub(crate) fn enlist(id: TaskId, task: &Arc<Task>) {
     roster_table()
         .lock()
         .insert(id, TaskWeak::stored(Arc::downgrade(task), Site::Roster));
@@ -171,7 +174,7 @@ pub(crate) fn enlist(id: usize, task: &Arc<Task>) {
 /// 的那一步提到**装配之前**——失败时干干净净地退回已领的栈/帧，`Spawn` 照旧答
 /// `-4 OoM`。`try_reserve` 的语义正合此用：容量不够就报错，不做部分改动。
 ///
-/// **不按 `id` 预留**：名册是 `HashMap<usize, Weak<Task>>`，容量是**元素数**的
+/// **不按 `id` 预留**：名册是 `HashMap<TaskId, Weak<Task>>`，容量是**元素数**的
 /// 函数，与键的大小无关——而 `id` 来自全局 `NEXT_ID`，**只增不减**。先前用
 /// `try_reserve(slot + 1)` 是把 `HashMap` 当 `Vec` 的按索引预留用：每产生一个
 /// 任务就要求"再装得下 `id` 个"，于是预留量**随时间线性增长**，把一条恒定的
@@ -187,7 +190,7 @@ pub(crate) fn try_reserve_roster() -> Result<(), ()> {
 /// 强引用」摆在调用点上，而不是藏在查询函数里）。
 ///
 /// `None` = **从未入册**（非法 id）；`Some` 升不起来 = 已消失（对象已回收）。
-pub(crate) fn muster(id: usize) -> Option<TaskWeak> {
+pub(crate) fn muster(id: TaskId) -> Option<TaskWeak> {
     roster_table()
         .lock()
         .get(&id)
@@ -230,7 +233,7 @@ pub(crate) fn roster_live_ids() -> (usize, [usize; 8]) {
             continue;
         }
         if n < 8 {
-            out[n] = *id;
+            out[n] = id.get();
             n += 1;
         } else {
             more += 1;

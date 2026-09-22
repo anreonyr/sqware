@@ -101,7 +101,7 @@ pub fn init() -> ! {
     scheduler::boot::init();
 
     // 钩子注册（一次性；顺序即 halt 时执行顺序）：
-    //   1) 调度器槽载荷归还（per-hart LastIdent Arc）
+    //   1) 调度器就绪队列 + messenger 簿记的强引用归还（`scheduler::rip`）
     //   2) block 池冲洗（所有 Arc 已归还后帧基线才稳定）
     // mail 的资源不再有自己的关机钩子：它随 `Task::drop` 链透传（`PoleMeta::drop`
     // 还物理帧）。exit 钩子（每条 reaped 任务）：messenger::doom + gate::doom。
@@ -166,7 +166,7 @@ fn register_runtime_hooks() {
     // 每条 reaped 任务两条级联：结构面 doom（父删子随，沿 heir 扑杀子域）+
     // 能力面 gate::doom（派生链随其断，沿 sire 反查子树）。mail 资源释放走
     // Task::drop 链透传，无需 task_exit。
-    static EXIT_HOOKS: &[fn(usize)] = &[
+    static EXIT_HOOKS: &[fn(env::TaskId)] = &[
         crate::work::room::messenger::doom,
         crate::work::unit::gate::doom,
     ];
@@ -176,7 +176,7 @@ fn register_runtime_hooks() {
     // ——依赖倒置在此一次性接上（此后 gate::snap() 即可取快照）。
     crate::work::unit::gate::install(crate::work::room::scheduler::core::roster);
 
-    // 关机序列：`scheduler::rip`（清任务队列 + info 槽 + messenger 簿记）→ mail 由
+    // 关机序列：`scheduler::rip`（清任务队列 + messenger 簿记）→ mail 由
     //   drop 链透传（`PoleMeta::drop` 还物理帧）→ block 池冲洗。**不看账**：
     //   审计层的关机判词随那一层删了，这里只剩"把东西还回去"。
     const SHUTDOWN_HOOKS: &[fn()] = &[
