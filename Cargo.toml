@@ -7,7 +7,10 @@
 # `include!` 进来，让树与七条原语的规矩在宿主上真跑一遍（门口 `scripts/host.sh`）。
 # 它进不来的理由与上一条同源，外加一条实测：链接 `protocol` 会带进 `runtime`，
 # 而 `runtime` 里那两处 riscv 内联汇编在宿主上编不过（见那个 crate 的 Cargo.toml）。
-exclude = ["crates/alloc-probe", "crates/operator-case"]
+#
+# `crates/line-case` 与它同门（同一份理由、同一个门口）：line 核心的**账 + 界**在宿主上真跑
+# 一遍——那一台的 `Pier` 是桩（核心只跟泊位说一句 `post`，见那个 crate 的 Cargo.toml）。
+exclude = ["crates/alloc-probe", "crates/operator-case", "crates/line-case"]
 members = [
     "kernel",
     "programs",

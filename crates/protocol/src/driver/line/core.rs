@@ -1,4 +1,7 @@
-//! line::core — **账**：一张按线号索引的表、四个原语、失败域。
+//! line::core — **账**：一张按线号索引的表、四个原语、几个查询、失败域。
+//!
+//! **四个原语**（`occupy` / `deliver` / `exhaust` / `vacate`）动账；**查询**（`lane` / `busy` /
+//! `held` / `told`）只读账（`told` 顺手置一格"报过没有"，见它自己的注）。
 //!
 //! 本文件**不碰内核**（不出现 `runtime::`）：唯一的设备侧动作——接线 / 静音 / 拆线——由适配层
 //! 紧随原语之后做（它要动硬件），故核心只记账、可独立推理。
@@ -31,18 +34,28 @@ enum Cell {
 ///   格 = 空（这条线没主） | 有主 { 泊位, 忙 }
 ///   线号 = 下标（容量按 device_count 校验 ⇒ 越界不可表达）
 /// ```
+///
+/// 另带一格**与格同长**的账：这条线**报过没有**（中断链上第一次领到它时打一行读数用）。
+/// 它与占有无关——**一线一次，退场不清**（见 [`Lines::told`]）。
 pub struct Lines {
     cells: Vec<Cell>,
+    told: Vec<bool>,
 }
 
 impl Lines {
     /// 立账：容量按控制器自报的线数要（第 0 格永远空着——0 是"没有可领的"）。装不下 ⇒ `None`：
     /// 起域就拒，不留运行期分支。
+    ///
+    /// 两本账**同源同长**（都按 `device_count`）：报过没有那一格因此没有自己的容量。
     pub fn new(device_count: u32) -> Option<Lines> {
+        let n = device_count as usize + 1;
         let mut cells = Vec::new();
-        cells.try_reserve(device_count as usize + 1).ok()?;
-        cells.resize(device_count as usize + 1, Cell::Idle);
-        Some(Lines { cells })
+        cells.try_reserve(n).ok()?;
+        cells.resize(n, Cell::Idle);
+        let mut told = Vec::new();
+        told.try_reserve(n).ok()?;
+        told.resize(n, false);
+        Some(Lines { cells, told })
     }
 
     /// **occupy**：占住这一格（登记）。**接线那一手是它的后果**，由适配层紧随其后做；
@@ -118,5 +131,25 @@ impl Lines {
             Cell::Owned { .. } => Some(i as u32),
             _ => None,
         })
+    }
+
+    /// **told**：这条线**报过没有**？（第一次 ⇒ 置上并答 `true`）
+    ///
+    /// 报的是"中断链上第一次领到它"那一行读数——**一线一次**：反复来的中断不打第二行（否则
+    /// 日志变脏），而 `vacate` 之后**也不清**（记的是"这一条线这一趟"，不是"这一位主人"）。
+    /// **越界 ⇒ `false`**（不是"第一次"，也不是错误）。
+    ///
+    /// **照实记**：这一格从前是 router 自己另开的一本定长账（`[u64; 2]`，0..127 号线），容量与
+    /// 本账**不联动**，越界是**裸下标** ⇒ 控制器自报 > 127 条线的机器上第 128 条当场 panic。
+    /// 并进账里之后两本同源同长，"越界不可表达"这条口径对它也成立。
+    pub fn told(&mut self, line: u32) -> bool {
+        match self.told.get_mut(line as usize) {
+            Some(seen) => {
+                let fresh = !*seen;
+                *seen = true;
+                fresh
+            }
+            None => false,
+        }
     }
 }

@@ -1,0 +1,24 @@
+[package]
+name = "line-case"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# 宿主（x86_64）专用 crate：把**真的** line 核心源码
+# （`crates/protocol/src/driver/line/core.rs`）按 `#[path]` 编进宿主的测试靶里，
+# 让"账 + 界"的规矩在宿主上真跑一遍。
+#
+# 为什么单独一个 crate（与 `crates/operator-case` 同一条，那里记着两条实测读数）：
+#
+#   1) `protocol` 是 `[lib] test = false`：riscv 目标上编不出 libtest ⇒ 主工作区那几道门
+#      （`check --all-targets` / `build --release`）一道都不编 `#[cfg(test)]`；
+#   2) **链接 `protocol` 也不行**：它依赖 `runtime`，而 `runtime/src/core/tls.rs` 里那两处
+#      riscv 内联汇编在宿主上编不出来。
+#
+# 故本 crate 与 `crates/alloc-probe` / `crates/operator-case` 走同一条路：**不进工作区**
+# （根 `Cargo.toml` 的 `exclude`）、把核心源码**逐字未改**地 `#[path]` 进来。
+#
+# **照实记**：这份核心 `use crate::session::Pier`（账里有"有主"那一格），故宿主靶里给了
+# 一个**桩**——`Pier` 只要 `post` 一句（核心只跟泊位说这一句话）。桩量不了会话，量得了账。
+#
+# 门口：`scripts/host.sh`。

@@ -13,7 +13,12 @@ pub const BOOT: &str = "boot";
 
 /// 单子上"哪一类东西"那一格（**判别号即线格式**：`repr(u8)`）。
 ///
-/// 三格对应内核那三种门闩句柄（`PolePie` / `NolePie` / `HolePie`）——固件据此挑对那一层。
+/// 两格对应内核那两种门闩句柄（`PolePie` / `NolePie`）——固件据此挑对那一层。
+///
+/// **照实记（第三格为什么退了）**：从前还有一格 `Hole`（孔），它是**持树者那笔提示之路**的
+/// 格子——那一笔从前也经这条供给路发（引导域先认下来、编排域来要时才发）。树改成**编排域
+/// 自己起**的服务之后那一笔整条退了，可它占的格还留着：全仓**没有一处构造 `Kind::Hole`**，
+/// 只有发货端那个 match 臂在接一个永远不会来的东西。本笔删掉它：**机制退了，格也退**。
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -21,8 +26,6 @@ pub enum Kind {
     Pole,
     /// 空载荷的信号（中断门铃）。
     Nole,
-    /// 一扇门（孔）：提示之路那一条由持树者铸、要经固件转手的孔。
-    Hole,
 }
 
 /// 单子的操作码。今天只有"供"这一枚——留着这一格，是为加动作时不必改帧的布局。
@@ -75,7 +78,6 @@ pub struct Want {
 /// 种类那一格的判别号（`Kind` 是 `repr(u8)`，故这就是线格式）。
 const KIND_POLE: u8 = Kind::Pole as u8;
 const KIND_NOLE: u8 = Kind::Nole as u8;
-const KIND_HOLE: u8 = Kind::Hole as u8;
 
 impl Want {
     /// 空的一条：填数组用（坐标是 [`Key::NONE`] = 判废的判别号，读侧一律答 `None`）。
@@ -107,7 +109,6 @@ impl Want {
         match self.kind {
             KIND_POLE => Some(Kind::Pole),
             KIND_NOLE => Some(Kind::Nole),
-            KIND_HOLE => Some(Kind::Hole),
             _ => None,
         }
     }

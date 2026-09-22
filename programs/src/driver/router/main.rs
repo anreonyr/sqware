@@ -150,23 +150,6 @@ const E_DESK: usize = 7;
 /// 账备不下这台控制器的格子：**拒起**，不是运行期降级。
 const E_ACCOUNT: usize = 8;
 
-/// "报过第一次"账：哪几条线已经打过 `router: line=` 那一行（不按每枚中断打，否则日志变脏）。
-///
-/// **只记这一件事**——"手边还压着哪几条"归 [`Lines`] 里那个"忙"，两处不重叠。
-#[derive(Clone, Copy, Default)]
-struct Seen([u64; 2]);
-
-impl Seen {
-    /// 这条线**是第一次**置吗？（置上并回答）
-    fn first(&mut self, line: u32) -> bool {
-        let word = &mut self.0[line as usize / 64];
-        let bit = 1 << (line % 64);
-        let fresh = (*word & bit) == 0;
-        *word |= bit;
-        fresh
-    }
-}
-
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
     // 客侧装配：会话 + 收配给（**编号原样带出去**——`assemble` 报的是"死在装配的哪一步"，
@@ -247,7 +230,6 @@ extern "C" fn main() -> ! {
         exit_with(E_BELL);
     }
 
-    let mut seen = Seen::default();
     let mut buf = [0u8; lcall::OCCUPY_LEN];
     loop {
         // **等到有事件**：三样（铃 / 门上有人 / 客人的排空）都可等地，醒来就说明有一格有事。
@@ -301,7 +283,9 @@ extern "C" fn main() -> ! {
             // 而内核那一格的一次 `put` 是"正文 + 换行"**两次**写（`putln!` 展开成
             // `format_args!("{}\n", ..)`）⇒ 不补换行就可能跟别人正写到一半的那一行
             // 粘住（实测：`pingplic: irq line=10`，本域改名后即 `pingrouter: line=10`）。
-            if seen.first(line) {
+            // **报过没有**那一格归账（[`Lines::told`]）——从前是这里另开的一本定长账，容量
+            // 与账不联动、越界是裸下标（> 127 条线的控制器上当场 panic）。**一线一次，退场不清**。
+            if lines.told(line) {
                 say(&alloc::format!("\nrouter: line={line}"));
             }
             plic.complete(line);

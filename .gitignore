@@ -10,7 +10,9 @@ docs/.obsidian/
 # （沙箱里 `~/.cargo/registry` 只读），内容是 cargo registry 缓存 + 源码，1.5 MB 级。
 # 它是**缓存**不是源码：换台机器跑 `run.sh` 会自动重新拉。
 .cargo-home/
-# 那个 crate 是**独立工作区**（被根 workspace `exclude`），故它有自己的一份 target——
-# 根上的 `/target` 只盖根目录那一份。
+# 那几台 crate 是**独立工作区**（被根 workspace `exclude`），故各自有一份 target——
+# 根上的 `/target` 只盖根目录那一份。**照实记**：`line-case` 那一行是补的——它第一次提交时
+# 漏了（114 个构建产物被带进索引），当场发现后从索引撤下、就地重做那一笔。
 crates/alloc-probe/target/
 crates/operator-case/target/
+crates/line-case/target/

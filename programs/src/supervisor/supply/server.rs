@@ -4,7 +4,7 @@
 
 use env::{Key, PAIR_LEN, Pair, PieToken};
 use runtime::core::port::{self, Policy};
-use runtime::env::mail::{HolePie, NolePie, PolePie};
+use runtime::env::mail::{NolePie, PolePie};
 
 use protocol::driver::supply::call::{
     BAD, Kind, OK, Order, WANT_MAX, fail_to_code, pack_reply, unpack_order,
@@ -40,7 +40,6 @@ pub fn supply(
         let at = match want.kind().ok_or(Fail::Bad)? {
             Kind::Pole => port::ship(&PolePie::from_token(src), who, access, form),
             Kind::Nole => port::ship(&NolePie::from_token(src), who, access, form),
-            Kind::Hole => port::ship(&HolePie::from_token(src), who, access, form),
         }
         .map_err(|_| Fail::Denied)?;
         let pair = Pair::new(key, at.seed());
