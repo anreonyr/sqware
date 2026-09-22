@@ -7,7 +7,7 @@
 #
 # 判据（两条一起）：
 #   1) 日志里出现 `task: all tasks exited, system halted`；
-#   2) 五十三条启动 / 装配读数仍在（`router: tree part=0 land=0 find=0 got=true` /
+#   2) 六十六条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 land=0 find=0 got=true` /
 #      `router: device_count=95 ctx=1` / `uart: serial@10000000 ier=rx` / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
@@ -29,6 +29,20 @@
 #      不是那个人**）/ **`member: amid(me,out)=err:unknown`**（第三态：这枚盟没铸过）/
 #      **`member: amid(out,me)=false`**（伪造的身份号**不是失败**）/
 #      **`member: done`** /
+#      **`policy: sire(root)=none`**（**三态头一格**：根答"没有"，不是 `Unknown`）/
+#      **`policy: sire(me)=0`**（装配把本域绑在 ROOT 那一支下：`PolicyId::ROOT` 是**协议常量
+#      0**，故这一格可钉；身份号不可钉）/
+#      **`policy: heir(me,me)=true`**（自反）/ **`policy: derive(me)=<号>`**（派生出子身份：
+#      只钉"答的是一条号"，号本身不钉）/ **`policy: heir(sub,me)=false`**（子代不是祖先）/
+#      **`policy: heir(out,me)=err:unknown`**（**第三态**：树外的号）/
+#      **`policy: bind(self)=err:denied`**（名册只有装配者能写）/
+#      **`policy: adopt(sub)=ok`**（**领**）/ **`policy: derive(old)=err:denied`**
+#      （**钥匙反证**：已不代表起点 ⇒ 派生被拒）/ **`policy: adopt(up)=err:denied`**（跨支）/
+#      **`policy: adopt(out)=err:unknown`** / **`policy: waive=ok`**（**弃**）/ **`subject: done`** /
+#      外加一条**关系判据**（不是 grep，是三条读数的比较）：三条 `policy: me=` 的值——
+#      装配绑的 / 领之后 / 弃之后 ⇒ **1 ≠ 2**（领**真的改了名册**，不是打个印记）且
+#      **1 = 3**（弃回到起点，不删格）。**号本身一个都不钉**：它跟启动次序走（同一份镜像
+#      实测 11/12 两值），钉它等于把一条与语义无关的数钉进门里；
 #      **`echo: list root=0,3`** / **`echo: list names=sys,device`**（**一串**那一刀：
 #      `list` 答号、`name` 按号答名——**名与号分开**；根没有号，故 0 是第一个真格子 `sys`）/
 #      **`echo: list device=4,5,6`**（`/device` 那三个号：router / uart / rtc）/
@@ -99,9 +113,14 @@
 # **照实记**：那本账的老注早就写着"不剔，八格会被死客人占满，后来的连门都进不来"——它说对了，
 # 只是它数的时候客人还没这么多。
 #
-# **照实记（本门一条既有的缺口）**：身份那一刀（`principal` / `prog-subject`）的读数从头到尾
-# 不在上面这张判据表里——它加的时候没人回头看这张门。这一刀没有顺手补它（那要另算一次量），
-# 只把缺口记在这里。
+# **照实记（那条缺口已补）**：身份那一刀（`principal` / `prog-subject`）的读数**从前**从头到尾
+# 不在这张判据表里——它加的时候没人回头看这张门（原记录只把缺口记在此处）。本刀补上：
+# `policy:` 那一族十三条 + 一条关系判据（三条 `policy: me=` 的比较）。
+# **补的时候按"判据跟着读数走"挑**：只钉确定的那几格（`none` / `true` / `false` / `err:*` /
+# `ok` / `done`）与 ROOT 恒 0 的那一格；`derive(me)` 只钉"答的是一条号"；**身份号一个不钉**
+# ——它们跟启动次序走（同一份镜像实测 11/12 两值），钉号等于把一条与语义无关的数钉进门里。
+# 领/弃那一步的语义不靠号也钉得住：三条 `policy: me=` 的**关系**（1 ≠ 2 且 1 = 3）就是它。
+# 读数：本刀自己连跑 **20 轮全过**（`soak-1790093928-*`，见提交信息）。
 #
 # **照实记（喂键那一格：两次假红换来的）**：旧版是 `( sleep 5; echo exit; sleep 3; echo exit ) |
 # cargo run`——**按钟表喂**。而这个门跑 debug 档、**启动到装配完成约 15 秒**，那两条 `exit`
@@ -238,6 +257,10 @@ while [ "$i" -le "$rounds" ]; do
     sleep "$FEED_HOLD"
     echo exit
   ) 2>/dev/null | timeout "$ROUND_LIMIT" cargo run $prof > "$log" 2>&1
+  # 三条 `policy: me=`（装配绑的 / 领之后 / 弃之后）——**不钉号**，钉关系：见下面判据里那条。
+  me1="$(grep -a "^policy: me=" "$log" | sed -n 1p | sed "s/.*=//")"
+  me2="$(grep -a "^policy: me=" "$log" | sed -n 2p | sed "s/.*=//")"
+  me3="$(grep -a "^policy: me=" "$log" | sed -n 3p | sed "s/.*=//")"
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
   elif ! { grep -q "router: tree part=0 land=0 find=0 got=true" "$log" \
@@ -282,6 +305,20 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "member: amid(me,out)=err:unknown" "$log" \
         && grep -q "member: amid(out,me)=false" "$log" \
         && grep -q "member: done" "$log" \
+        && grep -q "policy: sire(root)=none" "$log" \
+        && grep -q "policy: sire(me)=0" "$log" \
+        && grep -q "policy: heir(me,me)=true" "$log" \
+        && grep -qE "policy: derive\(me\)=[0-9]+" "$log" \
+        && grep -q "policy: heir(sub,me)=false" "$log" \
+        && grep -q "policy: heir(out,me)=err:unknown" "$log" \
+        && grep -q "policy: bind(self)=err:denied" "$log" \
+        && grep -q "policy: adopt(sub)=ok" "$log" \
+        && grep -q "policy: derive(old)=err:denied" "$log" \
+        && grep -q "policy: adopt(up)=err:denied" "$log" \
+        && grep -q "policy: adopt(out)=err:unknown" "$log" \
+        && grep -q "policy: waive=ok" "$log" \
+        && grep -q "subject: done" "$log" \
+        && [ -n "$me1" ] && [ "$me1" != "$me2" ] && [ "$me1" = "$me3" ] \
         && grep -q "echo: list root=0,3" "$log" \
         && grep -q "echo: list names=sys,device" "$log" \
         && grep -q "echo: list device=4,5,6" "$log" \
