@@ -188,7 +188,7 @@ fn bury() {
         // 判据用**唯一强持有**：这个壳是最后一份持有者时，`drop(z)` 之后空间才真死——
         // 故趁 asid 还在手上先把它名下的空间键站点一起退役。
         if Arc::strong_count(&z.ident.team.space) == 1 {
-            wipe_space(z.ident.team.space.asid().get());
+            wipe_space(z.ident.team.space.asid());
         }
         // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);

@@ -2,7 +2,8 @@
 //
 // 与 `platform::machine` 的分工：那个答"这台机器是什么"（几核、多少内存——注入
 // 一次的纯值）；本模块答"**我是哪一号核**"（运行时读 `tp`，不是机器属性），以及
-// 每核那块可变上下文（帧 VA / 调度器指针 / 宿住租约）。
+// 每核那块可变上下文（帧 VA / 调度器指针 / 宿住租约）。号成类型 [`HartId`]；
+// "几核"是**元数**，走 `hart_count() -> usize`——数不装号。
 //
 // 槽数上限 `MAX_HART_SLOTS` **不在这里**：它自述是"VA 布局表达上限"（hart 帧区与
 // per-hart trap 栈窗口的宽度），单一事实源在 `crate::layout`。
@@ -14,16 +15,59 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr;
 use crate::platform::machine;
 
+/// 核的身份 —— hart 号。固件经 HSM `hart_start` / DTB 序授予，**内核不自铸**。
+///
+/// 号即槽：`PER_HART` 下标、trap 栈段号、`WAITING` 与 halt 位图的位、trace 环槽
+/// 都由它派生——五种角色过去共用一个 `usize`（号 / 元数 / 位 / 槽 / 位置），
+/// 故本类型只留三个出口：
+///
+/// - [`HartId::new`] —— 边界铸造（boot 汇编传入的 hartid、DTB 序、槽循环）；
+/// - [`HartId::get`] —— 边界裸值（ABI 字段 `PerHart.id`、IPI 掩码寄存器、
+///   数组下标、诊断与 wire 形状）；
+/// - [`HartId::bit`] —— **号→位的唯一出口**（`1 << (h % 64)` 那类式子不再各处手写；
+///   位序本身仍留 `usize`：广播掩码里的 `b` 是**位置**，不是号）。
+///
+/// 元数（几核）不是号：`hart_count()` 恒返 `usize`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HartId(usize);
+
+impl HartId {
+    /// 铸造：只用于「号从边界进来」的地方。
+    pub const fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    /// 裸值：只给边界（ABI 字段 / 固件寄存器 / 数组下标 / 诊断与 wire 形状）。
+    pub const fn get(self) -> usize {
+        self.0
+    }
+
+    /// 号 →（掩码字序, 字内位）。IPI 掩码与位图两类消费者共用同一个换算。
+    pub const fn bit(self) -> (usize, usize) {
+        (
+            self.0 / usize::BITS as usize,
+            1usize << (self.0 % usize::BITS as usize),
+        )
+    }
+}
+
+impl core::fmt::Display for HartId {
+    /// 裸号形态——诊断行与门的判据逐字不变（`HartId(0)` 那种 Debug 形态不进输出）。
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// 已启动的 hart 集合（进程级进度记录；无功能读者，保留为诊断信息）。
 static STARTED_HARTS: AtomicUsize = AtomicUsize::new(1);
 
 /// 记录某 hart 已启动（HSM `hart_start` 成功后调用）。
-pub fn mark_hart_started(hart: usize) {
+pub fn mark_hart_started(hart: HartId) {
     debug_assert!(
-        hart < MAX_HART_SLOTS,
+        hart.get() < MAX_HART_SLOTS,
         "hart id {hart} beyond MAX_HART_SLOTS {MAX_HART_SLOTS}"
     );
-    STARTED_HARTS.fetch_max(hart + 1, Ordering::Relaxed);
+    STARTED_HARTS.fetch_max(hart.get() + 1, Ordering::Relaxed);
 }
 
 /// 实际活跃核数 = DTB 上报核数（上限 = VA 窗口槽数 MAX_HART_SLOTS）。
@@ -47,7 +91,7 @@ pub fn hart_count() -> usize {
 /// `tp` 是它自己的（S 态域与 U 态域一视同仁）——本模块与 `PerHart` 的其余读点
 /// 全在 `trap_handler` 第 0 步重建**之后**的内核态执行，故不受其影响。
 #[inline]
-pub fn hart_id() -> usize {
+pub fn hart_id() -> HartId {
     let id: usize;
     // SAFETY: 读 tp 指向的 PerHart.id（内核态 tp 恒为本 hart PerHart 指针，无副作用）。
     unsafe {
@@ -57,7 +101,7 @@ pub fn hart_id() -> usize {
             options(nomem, nostack, preserves_flags),
         );
     }
-    id
+    HartId(id)
 }
 
 /// per-hart 上下文块——内核态 tp 指向本结构（替代旧「tp 存裸 hartid」约定）。
@@ -97,7 +141,7 @@ impl PerHart {
             // 布局常量纯算术：帧区基址 + 槽位偏移（同 layout.rs 推导）。
             frame: VirtAddr::wrap(HART_FRAME_BASE.as_usize() + id * PAGE_SIZE),
             scheduler: AtomicPtr::new(core::ptr::null_mut()),
-            lease: AtomicUsize::new(crate::memory::manager::asid::VACANT),
+            lease: AtomicUsize::new(crate::memory::manager::asid::vacant()),
             _pad: [0; 4],
         }
     }
@@ -126,24 +170,24 @@ static PER_HART: [PerHart; MAX_HART_SLOTS] = {
 
 /// 指定 hart 的 PerHart 指针（`tp` 装载值 / 帧 TP 装配共用）。
 #[inline]
-pub fn per_hart_ptr(id: usize) -> usize {
+pub fn per_hart_ptr(id: HartId) -> usize {
     debug_assert!(
-        id < MAX_HART_SLOTS,
+        id.get() < MAX_HART_SLOTS,
         "per_hart_ptr: id {id} beyond MAX_HART_SLOTS"
     );
-    core::ptr::addr_of!(PER_HART[id]) as usize
+    core::ptr::addr_of!(PER_HART[id.get()]) as usize
 }
 
 /// boot 期填充本 hart 调度器指针（`scheduler::boot::init` 调用，每个 hart 恰好
 /// 一次；Release 发布 Scheduler 构建完成——后续所有读取出现在 boot 流程之后
 /// （SCHEDULERS OnceLock、任务 spawn、HSM 启动等系统级屏障之后），Relaxed 读
 /// 亦见稳定值）。
-pub fn set_scheduler(id: usize, p: *mut ()) {
+pub fn set_scheduler(id: HartId, p: *mut ()) {
     debug_assert!(
-        id < MAX_HART_SLOTS,
+        id.get() < MAX_HART_SLOTS,
         "set_scheduler: id {id} beyond MAX_HART_SLOTS"
     );
-    PER_HART[id].scheduler.store(p, Ordering::Release);
+    PER_HART[id.get()].scheduler.store(p, Ordering::Release);
 }
 
 /// 执行核调度器指针（**tp 直达零索引**：`ld 0x10(tp)`，替代
@@ -187,17 +231,21 @@ pub fn hart_frame() -> VirtAddr {
 }
 
 /// 读 hart `hart` 的租约字（他核读，Acquire）。清退协议的唯一跨核读点。
-pub(crate) fn lease_load(hart: usize) -> usize {
+///
+/// **裸字**：这一格的值域含「退驻」哨兵，不是纯号——号的读写语义（`Option<Asid>`）
+/// 归 `memory::manager::asid`（`occupy` / `vacate` / `lease`），本模块只管每核一格。
+pub(crate) fn lease_load(hart: HartId) -> usize {
     debug_assert!(
-        hart < MAX_HART_SLOTS,
+        hart.get() < MAX_HART_SLOTS,
         "lease_load: hart {hart} beyond MAX_HART_SLOTS"
     );
-    PER_HART[hart].lease.load(Ordering::Acquire)
+    PER_HART[hart.get()].lease.load(Ordering::Acquire)
 }
 
 /// 写**本核**租约字（Release）。不收 hart 参数——签名即"只能写自己"。
 pub(crate) fn lease_store(value: usize) {
-    PER_HART[hart_id()].lease.store(value, Ordering::Release);
+    let me = hart_id();
+    PER_HART[me.get()].lease.store(value, Ordering::Release);
 }
 
 /// 编译期断言：PerHart 布局即 ABI（trap 入口/`__restore` 帧定位、调度器 tp 直达

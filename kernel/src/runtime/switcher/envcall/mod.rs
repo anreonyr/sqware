@@ -319,7 +319,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // 寿命就是本任务所属空间的寿命，故弱引用随键一起交给等待机。
             let (space, wlife) = {
                 let s = &ident.team.space;
-                (s.asid().get(), s.life())
+                (s.asid(), s.life())
             };
             let wkey = WakeKey::Space { space, slot: key };
             let dur = if millis == usize::MAX {
@@ -340,7 +340,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         EnvCall::Room(RoomCall::Wake { key }) => {
             let (space, wlife) = {
                 let s = &ident.team.space;
-                (s.asid().get(), s.life())
+                (s.asid(), s.life())
             };
             let wkey = WakeKey::Space { space, slot: key };
             let woke = wake(wkey, &wlife);

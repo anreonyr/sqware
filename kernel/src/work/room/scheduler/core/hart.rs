@@ -68,7 +68,7 @@ const QUANTUM_TICKS: u32 = 8;
 #[repr(align(64))]
 pub(crate) struct Scheduler {
     /// 所属 hart（决定 trap 栈顶）。
-    pub(super) hart: usize,
+    pub(super) hart: crate::hart::HartId,
     /// 锁内：running + starved（本核调度决策的原子单位）。
     pub(super) inner: SpinLock<SchedulerInner>,
     /// 锁外：本核身份槽（[`super::ident::ident`] 的事实源）。
@@ -102,7 +102,7 @@ impl SchedulerInner {
 
 impl Scheduler {
     /// 构造（boot 适配面按实际核数逐 hart 建）。
-    pub(in super::super) fn new(hart: usize) -> Scheduler {
+    pub(in super::super) fn new(hart: crate::hart::HartId) -> Scheduler {
         Scheduler {
             hart,
             inner: SpinLock::new_level(

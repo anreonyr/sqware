@@ -108,7 +108,7 @@ pub struct Registers {
 #[derive(Debug)]
 pub struct Scene {
     /// 现场所属 hart。
-    pub hart: usize,
+    pub hart: crate::hart::HartId,
     /// 现场任务（idle/启动期无任务 → None，不 panic）。
     pub task: Option<usize>,
     /// 现场地址空间（按域归属分类，非 &Space）。

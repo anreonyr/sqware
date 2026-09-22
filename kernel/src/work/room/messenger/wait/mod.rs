@@ -10,6 +10,7 @@ pub(super) mod site;
 use alloc::sync::{Arc, Weak};
 use core::time::Duration;
 
+use crate::memory::manager::asid::Asid;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
@@ -515,7 +516,7 @@ pub(crate) fn unforward(key: WakeKey, tole: usize) {
 /// 调用方 = [`super::reap::bury`]：判定"空间将亡"（唯一强持有者就是这个正在回收的任务）
 /// 之后调。遍历全部分片、**逐片取放**（绝不持跨片锁）；摘出的等待者与键一起退役
 /// （`void(ticket)` 消音到点 + `rise` 放回就绪）。
-pub(crate) fn wipe_space(space: usize) -> usize {
+pub(crate) fn wipe_space(space: Asid) -> usize {
     let mut woken = 0usize;
     for shard in 0..SITE_SHARDS {
         // **一次一个站点**：锁内只摘、锁外处理（`Arc<Task>` 的 drop 链会取 L2），而

@@ -206,7 +206,9 @@ impl Drop for TaskWeak {
 #[cfg(feature = "framework")]
 fn record(site: Site) -> usize {
     let id = NEXT_ID.fetch_add(1, Relaxed);
-    let meta = site.ix() | (crate::hart::hart_id() << 8);
+    // 号挤进 meta 高位（诊断槽元数据，不是身份接口）——取裸值；位打包这一处
+    // 属"号被当值"，另有一刀（本刀只把匿名身份收成类型）。
+    let meta = site.ix() | (crate::hart::hart_id().get() << 8);
     for i in 0..SLOTS {
         if SLOT_ID[i].compare_exchange(0, id, Relaxed, Relaxed).is_ok() {
             SLOT_META[i].store(meta, Relaxed);
@@ -249,7 +251,7 @@ pub(crate) fn check_block_heldout() {
         let site = ALL[meta & 0xff];
         // "抄件" = 不落容器的两种出身（`Muster` 抄出即用 / `Snapshot` 快照）。
         // 只算**本核**出生的：别的核栈上的抄件归那次自检管。
-        if matches!(site, Site::Muster | Site::Snapshot) && (meta >> 8) == me {
+        if matches!(site, Site::Muster | Site::Snapshot) && (meta >> 8) == me.get() {
             panic!(
                 "[weak] 挂起自检：本核栈上仍有抄件（出身：{}）—— 跨挂起的弱引用会让外壳 \
                  永远归还不掉（`strong 0 weak 1`）",

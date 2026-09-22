@@ -147,6 +147,29 @@ pub mod machine {
         *HARTS.get().unwrap_or(&4)
     }
 
+    /// 核的身份 —— 与内核 `crate::hart::HartId` **同形**：`include!` 进来的分配器源码
+    /// 按内核的写法调 `.get()`（`block.rs` 的 per-hart 池）。`bit()` 今日无人调，
+    /// 一并给出是为了**两处形状不分家**——垫片的义务是"同形"，不是"够用就行"。
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct HartId(usize);
+
+    impl HartId {
+        pub const fn new(id: usize) -> Self {
+            Self(id)
+        }
+
+        pub const fn get(self) -> usize {
+            self.0
+        }
+
+        pub const fn bit(self) -> (usize, usize) {
+            (
+                self.0 / usize::BITS as usize,
+                1usize << (self.0 % usize::BITS as usize),
+            )
+        }
+    }
+
     // **一个**线程局部槽，两个函数共用：`thread_local!` 每次展开都是一个**独立的静态**，
     // 在 `hart_id` / `hart_bind` 各写一份就等于各写各的（绑定写进 A、读取读的是 B —— 实测
     // 症状：绑到 hart 1 的线程取到的块仍归属池 0）。
@@ -164,9 +187,9 @@ pub mod machine {
     ///
     /// 单线程用例里恒 0（与"没有多线程"时的旧行为一致）：id 按**首次调用顺序**轮转分配，
     /// 主线程第一个拿到 0。
-    pub fn hart_id() -> usize {
+    pub fn hart_id() -> HartId {
         HART.with(|c| {
-            c.get().unwrap_or_else(|| {
+            HartId::new(c.get().unwrap_or_else(|| {
                 let n = hart_count();
                 let id = if n == 0 {
                     0
@@ -175,7 +198,7 @@ pub mod machine {
                 };
                 c.set(Some(id));
                 id
-            })
+            }))
         })
     }
 
@@ -190,9 +213,9 @@ pub mod machine {
 
 /// `crate::hart` 的宿主垫片：`include!` 进来的分配器源码从这里取 hart 数 / 当前 hart
 /// （`block.rs` 的 per-hart 池、`spare.rs` 的仓容量）。宿主上"线程即 hart"（见上
-/// `machine::hart_id`），故这里只是把 `machine` 的两个函数换个内核名字再导出。
+/// `machine::hart_id`），故这里只是把 `machine` 的类型与函数换个内核名字再导出。
 pub mod hart {
-    pub use super::machine::{hart_count, hart_id};
+    pub use super::machine::{HartId, hart_count, hart_id};
 }
 
 /// `crate::platform::machine` 的宿主垫片：内核帧分配器按 `crate::platform::machine::…`

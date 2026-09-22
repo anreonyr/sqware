@@ -193,7 +193,7 @@ pub fn init() -> MapResult<()> {
             satp::set(mode::mode(), kernel_space.asid().get(), kernel_space.root());
 
             // 7. 刷新 TLB + 运行期布局校验（debug：违例 fail-fast）
-            flush_asid(kernel_space.asid().get());
+            flush_asid(kernel_space.asid());
             #[cfg(debug_assertions)]
             crate::layout::validate();
 

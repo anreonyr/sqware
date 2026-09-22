@@ -9,6 +9,7 @@
 
 use riscv::register::{satp, sie, stvec};
 
+use crate::hart::HartId;
 use crate::layout::{
     HART_FRAME_BASE, TRAP_STACK_BASE, TRAP_STACK_GUARD, TRAP_STACK_SLOT_SHIFT, TRAP_STACK_SLOT_SIZE,
 };
@@ -48,13 +49,13 @@ fn trap_stack_segment(hart: usize) -> (VirtAddr, VirtAddr) {
 }
 
 /// hart 的 trap 栈体底（固定 VA，canary 处）。
-pub fn trap_stack_base(hart: usize) -> VirtAddr {
-    trap_stack_segment(hart).0
+pub fn trap_stack_base(hart: HartId) -> VirtAddr {
+    trap_stack_segment(hart.get()).0
 }
 
 /// hart 的 trap 栈体上边界（固定 VA，排他端；初始 sp 落点）。
-pub fn trap_stack_edge(hart: usize) -> VirtAddr {
-    trap_stack_segment(hart).1
+pub fn trap_stack_edge(hart: HartId) -> VirtAddr {
+    trap_stack_segment(hart.get()).1
 }
 
 /// sp 是否落在某 hart 的 trap 栈体内（guard 之上、edge 之下→含）——反解 hart。
@@ -62,23 +63,23 @@ pub fn trap_stack_edge(hart: usize) -> VirtAddr {
 /// 崩溃路径的瘦身版 tp 重建（与 `trap_handler` 第 0 步同一套反解）：推 hart 不读表、不 panic；越出窗口/guard/
 /// 未启用核一律 None（引导期与非法现场合法返回）。正常路径恒命中：trap handler
 /// 恒在 per-hart trap 栈上执行。
-pub(crate) fn trap_stack_hart(sp: usize) -> Option<usize> {
+pub(crate) fn trap_stack_hart(sp: usize) -> Option<HartId> {
     let off = sp.checked_sub(TRAP_STACK_BASE.as_usize())?;
     let h = off >> TRAP_STACK_SLOT_SHIFT;
     if h >= crate::hart::hart_count() {
         return None;
     }
     let in_seg = off & (TRAP_STACK_SLOT_SIZE - 1);
-    (in_seg > TRAP_STACK_GUARD && in_seg <= TRAP_STACK_SLOT_SIZE).then_some(h)
+    (in_seg > TRAP_STACK_GUARD && in_seg <= TRAP_STACK_SLOT_SIZE).then_some(HartId::new(h))
 }
 
 /// 地址是否落在某 hart 的 trap 栈 guard 页内（返回该 hart 号）——内核故障
 /// 路径据此识别「trap 栈溢出」并给出精确诊断。纯算术，不读表。
-pub(crate) fn trap_stack_guard_hart(addr: usize) -> Option<usize> {
+pub(crate) fn trap_stack_guard_hart(addr: usize) -> Option<HartId> {
     let off = addr.checked_sub(TRAP_STACK_BASE.as_usize())?;
     if off & (TRAP_STACK_SLOT_SIZE - 1) < TRAP_STACK_GUARD {
         let h = off >> TRAP_STACK_SLOT_SHIFT;
-        (h < crate::hart::hart_count()).then_some(h)
+        (h < crate::hart::hart_count()).then_some(HartId::new(h))
     } else {
         None
     }
@@ -163,11 +164,11 @@ pub fn init() {
     //    一份——kernel_sp = 本 hart trap 栈顶，trap 入口按 TP 索引帧页；内核态
     //    故障在**故障核**的帧与 trap 栈上处理。
     let ksatp = satp::read();
-    for h in 0..crate::hart::hart_count() {
+    for h in (0..crate::hart::hart_count()).map(HartId::new) {
         let pa = kernel()
             .expect("kernel team not initialized")
             .space
-            .translate(HART_FRAME_BASE + h * PAGE_SIZE)
+            .translate(HART_FRAME_BASE + h.get() * PAGE_SIZE)
             .expect("kernel frame not mapped")
             .0;
         let frame = unsafe { &mut *(pa.as_usize() as *mut TrapContext) };
@@ -178,7 +179,7 @@ pub fn init() {
         frame.user_pa = pa;
         frame.user_satp = ksatp;
         // self_va：本 hart 帧 VA（restore 切表后经此收尾）
-        frame.self_va = HART_FRAME_BASE + h * PAGE_SIZE;
+        frame.self_va = HART_FRAME_BASE + h.get() * PAGE_SIZE;
     }
 
     // 4. 先武装定时器（**武装点 = min(本核上限, 最近活到点)**）：OpenSBI 可能遗留一个

@@ -15,12 +15,14 @@ use super::trap::run;
 pub fn init() {
     let n = hart::hart_count();
     assert!(n > 0, "no harts");
-    let mut sched: Box<[Scheduler]> = (0..n).map(Scheduler::new).collect();
+    let mut sched: Box<[Scheduler]> = (0..n)
+        .map(|h| Scheduler::new(hart::HartId::new(h)))
+        .collect();
     // per-hart 直达挂接：tp → PerHart.scheduler——借未发布前的 `&mut` 切片回填
     // 每核调度器指针（随后 Box::leak 进 SCHEDULERS；current() 零索引依赖此项，
     // 先于任何调度器访问）。
     for (h, c) in sched.iter_mut().enumerate() {
-        hart::set_scheduler(h, c as *mut Scheduler as *mut ());
+        hart::set_scheduler(hart::HartId::new(h), c as *mut Scheduler as *mut ());
     }
     assert!(
         SCHEDULERS.set(Box::leak(sched)).is_ok(),

@@ -7,7 +7,7 @@ use alloc::vec;
 use riscv::register::satp;
 
 use crate::console::Sink;
-use crate::hart;
+use crate::hart::{self, HartId};
 use crate::layout::{HART_FRAME_BASE, TRAP_STACK_SLOT_SIZE};
 use crate::layout::{ROOT_STACK_CANARY, root_stack_base};
 use crate::memory::PAGE_SIZE;
@@ -72,8 +72,8 @@ pub fn banner() {
                 "trap stack",
                 format!(
                     "{:#x}..{:#x}",
-                    trap_stack_base(0).as_usize(),
-                    trap_stack_edge(0).as_usize()
+                    trap_stack_base(HartId::new(0)).as_usize(),
+                    trap_stack_edge(HartId::new(0)).as_usize()
                 ),
             ),
             (
@@ -287,7 +287,7 @@ fn boot_harts() {
     let count = hart::hart_count();
     let entry = core::ptr::addr_of!(_boot_entry) as usize;
     for hart in 0..count {
-        if hart == me {
+        if HartId::new(hart) == me {
             continue;
         }
         // opaque = trap 栈物理栈顶（装配产物块基址 + 布局常量段偏移组装）
@@ -305,7 +305,7 @@ fn boot_harts() {
         if r.is_err() {
             panic!("failed to start hart {hart}: {r:?}");
         }
-        hart::mark_hart_started(hart);
+        hart::mark_hart_started(HartId::new(hart));
     }
 }
 
@@ -331,10 +331,12 @@ pub(crate) extern "C" fn boot_main() -> ! {
         core::arch::asm!("sfence.vma");
     }
     arm_hart();
-    // 登记内核驻留（ASID 0）：本核刚 `sfence.vma` 过。副核在此之前是 VACANT 态
+    // 登记内核驻留（ASID 0）：本核刚 `sfence.vma` 过。副核在此之前是退驻态
     // （PerHart 静态初值），不会被任何清退选中。
-    crate::memory::manager::asid::set_asid(crate::memory::manager::asid::Asid::kernel());
-    // 启动完成写进 trace（直打控制台会扰 panic 现场）。
-    trace::note(trace::EventKind::Boot(trace::BootEvent::Done { hart: me }));
+    crate::memory::manager::asid::occupy(crate::memory::manager::asid::Asid::kernel());
+    // 启动完成写进 trace（直打控制台会扰 panic 现场）；`hart` 是导出形状，恒裸号。
+    trace::note(trace::EventKind::Boot(trace::BootEvent::Done {
+        hart: me.get(),
+    }));
     scheduler::boot::idle()
 }

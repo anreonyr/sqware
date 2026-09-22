@@ -19,7 +19,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::hart;
+use crate::hart::{self, HartId};
 use crate::lock::OnceLock;
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
@@ -227,25 +227,23 @@ fn hooked() {
 }
 
 /// 标记 hart 进入 WFI 等待。调用方须在置位后**复查队列**再睡。
-pub(super) fn sleep(hart: usize) {
+pub(super) fn sleep(hart: HartId) {
     debug_assert!(
-        hart < crate::layout::MAX_HART_SLOTS,
+        hart.get() < crate::layout::MAX_HART_SLOTS,
         "sleep hart {hart} beyond MAX_HART_SLOTS"
     );
-    WAITING[hart / (usize::BITS as usize)]
-        .fetch_or(1usize << (hart % (usize::BITS as usize)), Ordering::AcqRel);
+    let (word, bit) = hart.bit();
+    WAITING[word].fetch_or(bit, Ordering::AcqRel);
 }
 
 /// 清除 hart 的等待标记（WFI 唤醒后 / 复查发现任务时调用）。
-pub(super) fn wake(hart: usize) {
+pub(super) fn wake(hart: HartId) {
     debug_assert!(
-        hart < crate::layout::MAX_HART_SLOTS,
+        hart.get() < crate::layout::MAX_HART_SLOTS,
         "wake hart {hart} beyond MAX_HART_SLOTS"
     );
-    WAITING[hart / (usize::BITS as usize)].fetch_and(
-        !(1usize << (hart % (usize::BITS as usize))),
-        Ordering::AcqRel,
-    );
+    let (word, bit) = hart.bit();
+    WAITING[word].fetch_and(!bit, Ordering::AcqRel);
 }
 
 /// hart 此刻是否登记为"正 WFI 等待"（`Acquire` 读；`sleep`/`wake` 用 `AcqRel` 写，
@@ -253,14 +251,13 @@ pub(super) fn wake(hart: usize) {
 ///
 /// **只是提示**：`false` ⇒ IPI 省掉。活已经进了落点核的队列，它下次进 `fetch` 自取
 /// （唤醒不是正确性依赖，见 `scheduler::core::kick`）。
-pub(crate) fn waiting(hart: usize) -> bool {
+pub(crate) fn waiting(hart: HartId) -> bool {
     debug_assert!(
-        hart < crate::layout::MAX_HART_SLOTS,
+        hart.get() < crate::layout::MAX_HART_SLOTS,
         "waiting hart {hart} beyond MAX_HART_SLOTS"
     );
-    WAITING[hart / (usize::BITS as usize)].load(Ordering::Acquire)
-        & (1usize << (hart % (usize::BITS as usize)))
-        != 0
+    let (word, bit) = hart.bit();
+    WAITING[word].load(Ordering::Acquire) & bit != 0
 }
 
 /// **选核**（甲案：唤醒不再靠偷）：游标自增，从 `游标 % 64` 起在 WAITING 位图里找
@@ -312,7 +309,7 @@ pub(crate) fn waiting(hart: usize) -> bool {
 /// 顺带的两条结论：① **"空闲核加有界拍"不该做**（它在补 icount 的账，代价每核每秒
 /// ~500-600 拍，已被裁决否决，读数留在 `fetch::WFI_FAR` 的照实记里）；② 跨核 `steal`
 /// 依判据（task-3）删除——`steals` 从约 80/轮降到 0，而 `lost`/`starved` 都在噪声内。
-pub(crate) fn pick() -> usize {
+pub(crate) fn pick() -> HartId {
     let seat = PICK_CURSOR.fetch_add(1, Ordering::Relaxed);
     let n = hart::hart_count();
     debug_assert!(n > 0, "pick with no hart");
@@ -338,16 +335,16 @@ pub(crate) fn pick() -> usize {
         }
     }
     let to = if best_rel != usize::MAX {
-        best_bit
+        HartId::new(best_bit)
     } else {
         // 没有核在等：退到轮转落点。本核要跳过——`seat % n == 我` 时推一格，`(seat + 1) % n`
         // 恒不等于本核（n ≥ 2；n == 1 时只能是本核，推也没处可推）。
         let me = hart::hart_id();
         let mut to = seat % n;
-        if n > 1 && to == me {
+        if n > 1 && to == me.get() {
             to = (to + 1) % n;
         }
-        to
+        HartId::new(to)
     };
     to
 }
@@ -410,9 +407,8 @@ pub(super) fn yell() {
 /// 它在 trap 里查 `doomed` 集合自退。与 `scheduler::core::kick`（把活**搬**到落点核
 /// 的队列、顺带叫醒它）不同——目标 hart 可能在跑任务，SSIP 直接打断它。a0=1<<bit、
 /// a1=word·64，与 `kick` 的 IPI 同协议。
-pub(super) fn nudge(hart: usize) {
-    let bit = 1usize << (hart % (usize::BITS as usize));
-    let word = hart / (usize::BITS as usize);
+pub(super) fn nudge(hart: HartId) {
+    let (word, bit) = hart.bit();
     let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
         .args(SArgs {
             a0: bit,

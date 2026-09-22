@@ -16,6 +16,7 @@ use sbi::{self, fid};
 
 use env::TaskId;
 
+use crate::hart::HartId;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::room::conductor;
 use crate::work::room::messenger;
@@ -71,8 +72,8 @@ pub(super) fn schedulers() -> &'static [Scheduler] {
 /// framework 档自检用：`schedulers()[i]` 的地址——与 `current()`（tp 直达）对得上，
 /// 才说明"投活的那颗核"与"读队列的那颗核"是同一个对象。见 `runtime::diagnose::ipi`。
 #[cfg(feature = "framework")]
-pub(crate) fn scheduler_addr(i: usize) -> usize {
-    core::ptr::addr_of!(schedulers()[i]) as usize
+pub(crate) fn scheduler_addr(i: HartId) -> usize {
+    core::ptr::addr_of!(schedulers()[i.get()]) as usize
 }
 
 /// 放行一枚新任务（放行路径不分配；`kick` 的链式入队不算分配）。
@@ -109,12 +110,11 @@ pub(crate) fn launch(task: Arc<Task>) {
 ///
 /// 落点由 [`conductor::pick`] 选；`hart` 越界不是可表达的状态（`pick` 只从"已启动 hart"
 /// 的位图或 `% hart_count` 出值），故本函数**没有失败域**：链式入队零分配。
-pub(crate) fn kick(hart: usize, task: Arc<Task>) {
-    schedulers()[hart].push(task);
+pub(crate) fn kick(hart: HartId, task: Arc<Task>) {
+    schedulers()[hart.get()].push(task);
     if conductor::waiting(hart) {
         conductor::note_kick_ipi();
-        let bit = 1usize << (hart % (usize::BITS as usize));
-        let word = hart / (usize::BITS as usize);
+        let (word, bit) = hart.bit();
         let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
             .args(SArgs {
                 a0: bit,
@@ -292,7 +292,7 @@ pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
 
 /// 定位指定任务当前 running 于哪个 hart（kill 的 Running 分支）。None = 不在
 /// 任何核 running 槽。逐 hart 锁内 ptr_eq 比较（短暂持 L1）。
-pub(crate) fn running_hart(target: &Arc<Task>) -> Option<usize> {
+pub(crate) fn running_hart(target: &Arc<Task>) -> Option<HartId> {
     for s in schedulers() {
         let i = s.inner.lock();
         if i.running.as_ref().is_some_and(|t| Arc::ptr_eq(t, target)) {

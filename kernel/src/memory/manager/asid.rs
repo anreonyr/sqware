@@ -3,10 +3,10 @@
 // 三职责（原散在 asid.rs / evict.rs，此处合流——一个 ASID 从分配到释放的完整
 // 生命周期集中在一处）：
 //   allocate / deallocate — 位图编号分配（deallocate 先清退再还号，ASID 复用安全）
-//   set_asid / vacate     — 本核宿住登记（per-hart lease 槽，纯 ASID；vacate=退驻）
+//   occupy / vacate / lease — 本核宿住登记（per-hart lease 槽；vacate=退驻、lease=读他核）
 //   shootdown             — 跨核 TLB 清退（SBI RFENCE，一次掩码调用）
 //
-// 命名：动词（allocate/deallocate/set_asid/vacate/shootdown）+ 宾语（ASID）。
+// 命名：动词（allocate/deallocate/occupy/vacate/lease/shootdown）+ 宾语（ASID）。
 //
 // 硬不变量：
 //   1. `shootdown(asid)` 返回即「该 ASID 的旧 TLB 条目在**所有驻留核**上已失效」
@@ -27,7 +27,13 @@ use super::flush_asid;
 /// ASID 位宽（satp 字段 16 位）：用户 ASID 1..=65535，ASID 0 保留给内核空间。
 pub(crate) const ASID_BITS: u32 = 16;
 /// 宿住槽的「退驻」哨兵（写在 lease 槽，表示本核当前不在用户态驻留任何 ASID）。
-pub(crate) const VACANT: usize = 1 << ASID_BITS;
+/// **不出本模块**：出口是 [`occupy`] / [`vacate`] / [`lease`]。
+const VACANT: usize = 1 << ASID_BITS;
+
+/// 退驻哨兵值 —— 只给 `hart::PerHart` 的静态初值用（哨兵名不散到别处）。
+pub(crate) const fn vacant() -> usize {
+    VACANT
+}
 
 static ASID_ALLOCATOR: SpinLock<BitmapAllocator> =
     SpinLock::new_level(Level::Asid, BitmapAllocator::new(1, 65536, 1));
@@ -38,7 +44,7 @@ static ASID_ALLOCATOR: SpinLock<BitmapAllocator> =
 /// 1..=65535 由 [`Asid::allocate`] 发放、[`deallocate`] 归还。分配器永不发 0，
 /// 故 `is_kernel()` ⇔「这是内核空间」——陷阱路由（`trampoline.rs` 的
 /// `__alltraps` 判别）、诊断展开、闭包任务与 `Space::drop` 均以此判别。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Asid(usize);
 
 impl Asid {
@@ -61,7 +67,7 @@ impl Asid {
         Self(asid)
     }
 
-    /// 裸值（写 satp / 组 wait·fence 键 / lease 槽）。
+    /// 裸值 —— 只给边界：`satp` / `sfence.vma` 的寄存器位域、位图分配器、诊断打印。
     pub fn get(self) -> usize {
         self.0
     }
@@ -90,15 +96,19 @@ pub fn deallocate(asid: Asid) -> Result<(), Deaf> {
 }
 
 // ── 本核宿住登记（per-hart lease 槽）────────────────────────
+//
+// 三扇门：`occupy`（本核进驻一枚 ASID）/ `vacate`（退驻）/ `lease`（读他核的驻留）。
+// 槽本身是 `hart::PerHart.lease` 那一个裸字——哨兵与「号在不在」的编码收在本模块，
+// 别处看不到 `VACANT`。
 
-/// 本核登记「当前驻留 ASID」：写本核 lease 槽（纯 ASID，无世代）。
+/// 本核登记「当前驻留 ASID」：写本核 lease 槽。
 ///
 /// 前置：`asid` 为本核即将驻留的合法空间身份（内核空间 = [`Asid::kernel`]）。
 /// 调用点 = trap 入场/出场、trampoline restore、boot——每处都已保证本核 TLB 与
 /// 将要驻留的 ASID 一致。
 ///
 /// 幂等：重复登记同一 ASID 无害。
-pub fn set_asid(asid: Asid) {
+pub fn occupy(asid: Asid) {
     hart::lease_store(asid.get());
 }
 
@@ -108,6 +118,14 @@ pub fn set_asid(asid: Asid) {
 /// 应答，必须先离册，否则发起方死等。
 pub fn vacate() {
     hart::lease_store(VACANT);
+}
+
+/// `hart` 此刻驻留的空间身份（他核读；`None` = 退驻）。清退协议的唯一跨核读点。
+pub(crate) fn lease(hart: crate::hart::HartId) -> Option<Asid> {
+    match hart::lease_load(hart) {
+        VACANT => None,
+        raw => Some(Asid::from_raw(raw)),
+    }
 }
 
 // ── 跨核 TLB 清退（SBI RFENCE）────────────────────────────────
@@ -129,17 +147,19 @@ pub fn vacate() {
 pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
     // ② 本核自刷。
     // SAFETY: 页表已改完，刷后翻译即新映射。
-    unsafe { flush_asid(asid.get()) };
+    unsafe { flush_asid(asid) };
 
     // ③ 扫名册生成 hart_mask（本核已在 ② 自刷，排除自己）。
     let me = hart::hart_id();
     let mut mask = 0usize;
-    for hart in 0..hart::hart_count() {
+    for hart in (0..hart::hart_count()).map(crate::hart::HartId::new) {
         if hart == me {
             continue;
         }
-        if hart::lease_load(hart) == asid.get() {
-            mask |= 1usize << (hart % (usize::BITS as usize));
+        if lease(hart) == Some(asid) {
+            // 字序丢弃：`hart_mask_base = 0`，掩码只认第 0 字（本机核数远小于 64）。
+            let (_, bit) = hart.bit();
+            mask |= bit;
         }
     }
 
@@ -154,16 +174,16 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
             ..Default::default()
         })
         .call();
-    r.map(|_| ()).map_err(|_| Deaf { asid: asid.get() })
+    r.map(|_| ()).map_err(|_| Deaf { asid })
 }
 
 // ── 错误 ────────────────────────────────────────────────────
 
 /// 清退喊不应：RFENCE 失败（目标核未刷 / 固件拒绝）。
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
-#[error("remote sfence failed for asid {asid}")]
+#[error("remote sfence failed for asid {}", asid.get())]
 pub struct Deaf {
-    pub asid: usize,
+    pub asid: Asid,
 }
 
 // 编译期哨兵：ASID_BITS 与 satp 字段宽一致。

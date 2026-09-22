@@ -142,7 +142,9 @@ static MARK: [MarkCell; crate::layout::MAX_HART_SLOTS] =
 #[cfg(any(debug_assertions, feature = "framework"))]
 fn mark_slot() -> &'static MarkCell {
     // 槽位随 `MAX_HART_SLOTS`（VA 布局表达上限）；实际核数由 DTB 决定，二者同界。
-    &MARK[crate::hart::hart_id().min(crate::layout::MAX_HART_SLOTS - 1)]
+    &MARK[crate::hart::hart_id()
+        .get()
+        .min(crate::layout::MAX_HART_SLOTS - 1)]
 }
 
 /// 进入一段**标注作用域**：把本核当前标注置为 `kind`，守卫析构时恢复前一值。

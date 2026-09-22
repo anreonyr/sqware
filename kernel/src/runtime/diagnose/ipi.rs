@@ -128,13 +128,13 @@ pub(crate) fn run(tag: &str) -> (usize, usize, usize) {
     let mut tested = 0;
     let mut d_total = 0;
     let mut b_total = 0;
-    for target in 0..n.min(SLOTS) {
+    for target in (0..n.min(SLOTS)).map(crate::hart::HartId::new) {
         if target == me {
             continue;
         }
         let (d_woke, d_ssip, d_rounds) = rounds(target, false);
         let (b_woke, b_ssip, b_rounds) = rounds(target, true);
-        let self_addr = SELF_ADDR[target].load(Ordering::Relaxed);
+        let self_addr = SELF_ADDR[target.get()].load(Ordering::Relaxed);
         let expect = crate::work::room::scheduler::core::scheduler_addr(target);
         crate::putln!(
             "ipi: {tag} target={target} directed={d_woke}/{d_rounds} ssip={d_ssip} broadcast={b_woke}/{b_rounds} ssip={b_ssip} match={}",
@@ -152,23 +152,25 @@ pub(crate) fn run(tag: &str) -> (usize, usize, usize) {
 
 /// 对 `target` 打 `ROUNDS` 轮，返回 `(醒了轮数, 其中 SSIP 置着的轮数, 有效轮数)`。
 /// `broadcast` ⇒ 整字掩码（与 `yell` 同协议）；否则定向单 bit（与 `kick` 同协议）。
-fn rounds(target: usize, broadcast: bool) -> (usize, usize, usize) {
+fn rounds(target: crate::hart::HartId, broadcast: bool) -> (usize, usize, usize) {
     let mut valid = 0;
     let mut woke = 0;
     let mut ssip = 0;
     for _ in 0..ROUNDS {
         // 等它进 WFI：等不到就跳过这一轮（不当成"没醒"）。
-        if !wait_until(WAIT_TICKS, || IN_WFI[target].load(Ordering::Relaxed) != 0) {
+        if !wait_until(WAIT_TICKS, || {
+            IN_WFI[target.get()].load(Ordering::Relaxed) != 0
+        }) {
             continue;
         }
-        let before = EXIT[target].load(Ordering::Relaxed);
-        let before_ssip = SSIP_EXIT[target].load(Ordering::Relaxed);
+        let before = EXIT[target.get()].load(Ordering::Relaxed);
+        let before_ssip = SSIP_EXIT[target.get()].load(Ordering::Relaxed);
         send(target, broadcast);
         if wait_until(BUDGET_TICKS, || {
-            EXIT[target].load(Ordering::Relaxed) > before
+            EXIT[target.get()].load(Ordering::Relaxed) > before
         }) {
             woke += 1;
-            if SSIP_EXIT[target].load(Ordering::Relaxed) > before_ssip {
+            if SSIP_EXIT[target.get()].load(Ordering::Relaxed) > before_ssip {
                 ssip += 1;
             }
         }
@@ -183,9 +185,8 @@ fn rounds(target: usize, broadcast: bool) -> (usize, usize, usize) {
 /// **照实记**：第一版广播用的是 `usize::MAX`（含不存在的 hart 位），两种上下文里都几乎
 /// 全是 `0/16` ⇒ 顺带量到一条硬事实：**掩码不合法时 SBI 返 Ok 但不投递**。"`ipi_err=0`
 /// 不等于送到"这句话就是从这一格来的。
-fn send(target: usize, broadcast: bool) {
-    let bit = 1usize << (target % (usize::BITS as usize));
-    let word = target / (usize::BITS as usize);
+fn send(target: crate::hart::HartId, broadcast: bool) {
+    let (word, bit) = target.bit();
     let n = hart::hart_count().min(usize::BITS as usize);
     let mask = if broadcast { (1usize << n) - 1 } else { bit };
     let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)

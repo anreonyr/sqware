@@ -227,7 +227,7 @@ impl Space {
         let r = self.with(op);
         // SAFETY: sfence.vma 见 flush_asid
         unsafe {
-            flush_asid(self.asid.get());
+            flush_asid(self.asid);
         }
         r
     }

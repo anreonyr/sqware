@@ -51,13 +51,17 @@ static EXIT_REASON: [core::sync::atomic::AtomicUsize; crate::layout::MAX_HART_SL
 
 /// 记下本次退场的原因码（见 [`EXIT_REASON`]）。
 pub(crate) fn set_exit_reason(reason: usize) {
-    let slot = crate::hart::hart_id().min(crate::layout::MAX_HART_SLOTS - 1);
+    let slot = crate::hart::hart_id()
+        .get()
+        .min(crate::layout::MAX_HART_SLOTS - 1);
     EXIT_REASON[slot].store(reason, core::sync::atomic::Ordering::Relaxed);
 }
 
 /// 取出并清零本次退场的原因码（`quit` 用）。
 fn take_exit_reason() -> usize {
-    let slot = crate::hart::hart_id().min(crate::layout::MAX_HART_SLOTS - 1);
+    let slot = crate::hart::hart_id()
+        .get()
+        .min(crate::layout::MAX_HART_SLOTS - 1);
     EXIT_REASON[slot].swap(0, core::sync::atomic::Ordering::Relaxed)
 }
 

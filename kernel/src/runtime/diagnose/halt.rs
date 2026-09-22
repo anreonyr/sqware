@@ -25,7 +25,7 @@ static ALARMER: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 /// 非报警源核「噤声」：就地卧倒（不返回）。正常运行时恒 no-op（一次 Acquire 读 + 分支）。
 pub fn hush() {
-    if ALARM.load(Ordering::Acquire) && ALARMER.load(Ordering::Acquire) != hart::hart_id() {
+    if ALARM.load(Ordering::Acquire) && ALARMER.load(Ordering::Acquire) != hart::hart_id().get() {
         hunker();
     }
 }
@@ -57,12 +57,12 @@ fn hunker() -> ! {
 fn claim() -> bool {
     if ALARM.swap(true, Ordering::AcqRel) {
         // 已有人报警：唯一例外是本核自己就是报警源（嵌套 panic）——豁免卧倒。
-        if ALARMER.load(Ordering::Acquire) != hart::hart_id() {
+        if ALARMER.load(Ordering::Acquire) != hart::hart_id().get() {
             hunker();
         }
         return false;
     }
-    ALARMER.store(hart::hart_id(), Ordering::Release);
+    ALARMER.store(hart::hart_id().get(), Ordering::Release);
     true
 }
 
@@ -76,8 +76,10 @@ fn broadcast() {
         let hi = (base + (usize::BITS as usize)).min(n).saturating_sub(base);
         let mut mask = 0usize;
         for b in 0..hi {
+            // `b` 是**字内位序**（位置，不是号）：号 → 位只经 `HartId::bit`，
+            // 这里已经站在位上，故直接 `1 << b`。
             let hart = base + b;
-            if hart != me {
+            if crate::hart::HartId::new(hart) != me {
                 mask |= 1usize << b;
             }
         }

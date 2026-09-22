@@ -12,6 +12,7 @@ use crate::runtime::chrono::clock;
 #[derive(Serialize, Default)]
 pub struct Report {
     /// 成册戳 [hart, ticks]（[`Report::seal`] 写入；wire 上一个数组不打两个键）。
+    /// **导出形状**：`hart` 在这里是裸号（与 trace 事件同款），不装类型。
     seal: (usize, u64),
     /// 全部段落。
     pub paras: Vec<Paragraph>,
@@ -40,7 +41,7 @@ impl Report {
     /// 成册：打戳（hart, ticks），可写借用转只读引用。允许空报告；
     /// 此后仅经 `&Report` 读；重刊须重新借得 `&mut` 后调 [`Report::clear`]。
     pub fn seal(&mut self) -> &Self {
-        self.seal = (hart::hart_id(), clock::now().as_ticks());
+        self.seal = (hart::hart_id().get(), clock::now().as_ticks());
         self
     }
 

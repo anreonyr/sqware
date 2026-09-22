@@ -116,7 +116,7 @@ fn stalled(pushed: usize, reaped: usize) -> bool {
 }
 
 /// 空闲核每次决定睡下前调一次（见 [`super::fetch`] 的 WFI 循环）。
-pub(super) fn idle(hart: usize) {
+pub(super) fn idle(hart: crate::hart::HartId) {
     if BEACON_FIRED.load(Ordering::Relaxed) {
         return;
     }

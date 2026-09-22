@@ -246,9 +246,9 @@ unsafe extern "C" {
 pub fn restore(frame_pa: usize) -> ! {
     // 出场登记：必须先于 `__restore` 的 sfence（sfence 后本核带新 ASID 的 TLB，
     // RFENCE 清退需能发现本核驻留）。boot 路径与 `trap_handler` 出口同款——
-    // 凡进 `__restore` 必先 set_asid。
+    // 凡进 `__restore` 必先 occupy。
     // SAFETY: frame_pa 为有效帧物理地址，恒等映射下可解引用。
-    asid::set_asid(Asid::from_raw(unsafe {
+    asid::occupy(Asid::from_raw(unsafe {
         (*(frame_pa as *const TrapContext)).user_satp.asid()
     }));
     let link = core::ptr::addr_of!(__restore) as usize;

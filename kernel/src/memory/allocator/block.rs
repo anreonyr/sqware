@@ -316,7 +316,7 @@ unsafe impl Allocator for BlockAllocator {
             return Err(AllocError);
         }
         let me = hart::hart_id();
-        let pool = &self.blocks[me];
+        let pool = &self.blocks[me.get()];
         let addr = pool.pull(power).ok_or(AllocError)?;
         super::statistics::record_block_take(addr, power);
 
@@ -347,7 +347,7 @@ unsafe impl Allocator for BlockAllocator {
 
         let me = hart::hart_id();
         let pool = &self.blocks[home];
-        if home == me {
+        if home == me.get() {
             pool.push(ptr, power);
         } else {
             pool.feed(ptr, power);

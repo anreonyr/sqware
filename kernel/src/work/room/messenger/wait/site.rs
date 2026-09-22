@@ -12,6 +12,7 @@ use env::{HoleDir, TaskId};
 use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
+use crate::memory::manager::asid::Asid;
 use crate::work::unit::life::Life;
 use crate::work::unit::task::{Task, TaskState};
 
@@ -25,14 +26,15 @@ use crate::work::unit::task::{Task, TaskState};
 /// `#[inline(never)]` 的 mask helper 去躲 size 优化下的错联——枚举下
 /// 这两样都不需要：没有 mask，就没有 mask 错联。
 ///
-/// **为什么任务号带类型、资源号不带**（`Task`/`Pies`/`Alarm` 持 `TaskId`，
-/// `Hole`/`Nole`/`Tole` 是裸整数）：`TaskId` 住在 `env`，room 引它不构成环；而
-/// `HoleId` 那一族住在 `mail`，room 引它就把 mail → room 的单向依赖翻成环
-/// （见下面各变体的注）。
+/// **为什么任务号与空间号带类型、资源号不带**（`Space` 持 [`Asid`]，`Task`/`Pies`/`Alarm`
+/// 持 `TaskId`，`Hole`/`Nole`/`Tole` 是裸整数）：`Asid` 住 `memory::manager`、`TaskId`
+/// 住 `env`，room 引这两处都不构成环；而 `HoleId` 那一族住在 `mail`，room 引它就把
+/// mail → room 的单向依赖翻成环（见下面各变体的注）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WakeKey {
-    /// 调用方命名空间里的裸整数（`RoomCall::Wait` / `Wake`）：空间身份 + 槽位。
-    Space { space: usize, slot: usize },
+    /// 空间事件（`RoomCall::Wait` / `Wake`）：`space` = **调用方自己的空间身份**
+    /// （内核注入：`ident.team.space.asid()`），`slot` = 调用方命名空间里的裸整数。
+    Space { space: Asid, slot: usize },
     /// 资源就绪（`MailCall::Wait`；hole 的 push / pull / seal 投信）。
     ///
     /// `hole` 用裸整数而非 `mail::HoleId`：依赖方向必须保持 mail → room 单向，
@@ -65,7 +67,7 @@ impl WakeKey {
     pub(super) fn fold(self) -> u64 {
         match self {
             WakeKey::Space { space, slot } => {
-                (space as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ slot as u64
+                (space.get() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ slot as u64
             }
             WakeKey::Hole { hole, dir } => {
                 (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir as u64

@@ -232,11 +232,11 @@ pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
 fn held() -> Option<&'static mut HeldSet> {
     let pool = POOL.get()?;
     let h = hart::hart_id();
-    if h >= pool.len() {
+    if h.get() >= pool.len() {
         panic!("[depend] hart {h} out of pool ({} slots)", pool.len());
     }
     Some({
-        let this = &pool[h];
+        let this = &pool[h.get()];
         unsafe { &mut *this.0.get() }
     })
 }

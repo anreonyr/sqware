@@ -188,14 +188,14 @@ pub fn note(kind: EventKind) {
         return; // 未初始化（init 前）静默跳过——诊断路径不失败
     };
     let hart = hart::hart_id();
-    let Some(t) = pool.get(hart) else {
+    let Some(t) = pool.get(hart.get()) else {
         return;
     };
     let when = crate::runtime::chrono::clock::now().as_ticks();
     t.note(kind, when);
-    // 宿主镜像（semihosting）：每条结构化事件送宿主。
+    // 宿主镜像（semihosting）：每条结构化事件送宿主。`hart` 是导出形状，恒裸号。
     #[cfg(feature = "semihosting")]
-    host_note(kind, hart, when);
+    host_note(kind, hart.get(), when);
 }
 
 // ── 宿主镜像适配（feature gate: semihosting）──────────────────────────

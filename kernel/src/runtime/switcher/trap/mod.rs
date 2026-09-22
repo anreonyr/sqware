@@ -5,7 +5,7 @@
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
-use crate::hart;
+use crate::hart::{self, HartId};
 use crate::memory::manager::asid::{self, Asid};
 use crate::putln;
 use crate::runtime::chrono::timer;
@@ -93,7 +93,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     unsafe {
         core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
     }
-    let hart = trap_stack_hart(sp).unwrap_or(0);
+    let hart = trap_stack_hart(sp).unwrap_or(HartId::new(0));
     let tp = crate::hart::per_hart_ptr(hart);
     // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建本 hart PerHart 指针）。
     unsafe {
@@ -116,9 +116,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     }
 
     // 0.4 入场入册：本核转为内核租户（内核空间身份 ASID 0）。此处只写本核 lease 槽
-    //     （`set_asid`），**不刷 TLB**：表已由陷阱入口切好——`__task_trap` 走
+    //     （`occupy`），**不刷 TLB**：表已由陷阱入口切好——`__task_trap` 走
     //     `csrw satp` + `sfence.vma`，`__core_trap` 路径 satp 未动、本就一致。
-    asid::set_asid(Asid::kernel());
+    asid::occupy(Asid::kernel());
 
     // 0.45 陷阱来源：`__core_trap` 传本 hart 帧、`__task_trap` 传任务帧。这是
     //     「被中断者是内核还是任务」的**唯一判据**——S 态 supervisor 域任务的
@@ -384,7 +384,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     // 返回之前——`__restore` 的 sfence 后本核就带新 ASID 的 TLB，RFENCE 清退
     // 需能在该时刻正确发现本核驻留该 ASID。
     // SAFETY: next 恒指向本核有效帧（分发各分支的产物），恒等映射下可解引用。
-    asid::set_asid(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
+    asid::occupy(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
 
     next
 }
