@@ -226,11 +226,33 @@ fn a_pane_with_things_in_it_is_not_moved() {
         Ok(EntryId::new(1))
     );
     live(2);
-    // 非空那块 Pane：落（换绑）/ 分 / 剪 三条都不动它。
+    // 非空那块 Pane：**会毁掉内容**的那两条不许动它（落 = 换绑、剪），**分是幂等的**。
     assert_eq!(t.land(Where::Root, name("dev"), tok(2)), Err(Fail::NonEmpty));
-    assert_eq!(t.part(Where::Root, name("dev")), Err(Fail::NonEmpty));
-    assert_eq!(t.trim(EntryId::new(0)), Err(Fail::NonEmpty));
+    assert_eq!(t.trim(EntryId::new(0)), Err(Fail::NonEmpty), "非空 Pane 剪不动");
+    assert_eq!(
+        t.part(Where::Root, name("dev")),
+        Ok(EntryId::new(0)),
+        "分是幂等的：那儿已经是一块 Pane ⇒ 答它那个号，里面一条不动"
+    );
     assert!(!unshipped(1), "非空那块 Pane 一根毫毛都没动");
+    assert_eq!(look(&mut t, &path(&["dev", "uart0"])), Ok(Some(tok(1))));
+}
+
+#[test]
+fn a_pane_is_already_what_a_part_asks_for() {
+    let _serial = serial();
+    let mut t = tree();
+    // 空 Pane ⇒ 幂等：答同一个号，**不动水位**（下一枚铸出来的是 1，不是 2）。
+    assert_eq!(t.part(Where::Root, name("dev")), Ok(EntryId::new(0)));
+    assert_eq!(t.part(Where::Root, name("dev")), Ok(EntryId::new(0)));
+    live(1);
+    assert_eq!(
+        t.land(Where::At(EntryId::new(0)), name("uart0"), tok(1)),
+        Ok(EntryId::new(1))
+    );
+    // **非空** Pane ⇒ 还是幂等：答它那个号，里面那条一根毫毛没动。
+    assert_eq!(t.part(Where::Root, name("dev")), Ok(EntryId::new(0)));
+    assert_eq!(names(&t, &path(&["dev"])), Ok(std::vec![name("uart0")]));
     assert_eq!(look(&mut t, &path(&["dev", "uart0"])), Ok(Some(tok(1))));
 }
 

@@ -490,7 +490,7 @@ fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
 /// 树上一趟：**分目录 → 落门牌 → 查回来验一遍**。读数一行四格 + 入口的号。
 ///
 /// ```text
-///   PART ["device"]              → 0 = 本域建的；2 = 已经在了（前一台驱动建的）——两个都要
+///   PART ["device"]              → 0 = 拿到那块目录的号（本域建的 / 已经在了——`part` 幂等）
 ///   LAND ["device","router"]     → 0 = 门牌落上（入口经会话交给持树者）
 ///   FIND ["device","router"]     → 0 = 查得到，且那一枚经会话授回本域表里
 ///   got                           → 本域在表里认出刚授回来的那一枚了吗
@@ -517,24 +517,16 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
         return;
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
-    // **分目录**：`part` 那一格答的是它自己那一手的码（`2` = 那块目录已经在，且里面有东西）。
-    let part = operator::part(talk, &link, Where::Root, dir, QUAY_MS);
-    let (part, dir_at) = match part {
-        Ok(id) => (ocall::OK, Ok(id)),
-        // 已经在 ⇒ **号另问一趟**：名字只能走到 `seek` 这一格（拿到号之后一律按号）。
-        Err(ocall::NONEMPTY) => (
-            ocall::NONEMPTY,
-            operator::seek(talk, &link, &[dir], QUAY_MS),
-        ),
-        Err(code) => (code, Err(code)),
+    // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
+    let dir_at = operator::part(talk, &link, Where::Root, dir, QUAY_MS);
+    let (part, dir_id) = match dir_at {
+        Ok(id) => (ocall::OK, id.get()),
+        Err(code) => (code, 0),
     };
     // **落门牌**：答的是门牌自己那一格的号。
-    let (dir_id, plate) = match dir_at {
-        Ok(at) => (
-            at.get(),
-            operator::land(talk, &link, host, Where::At(at), me, entry, QUAY_MS),
-        ),
-        Err(code) => (0, Err(code)),
+    let plate = match dir_at {
+        Ok(at) => operator::land(talk, &link, host, Where::At(at), me, entry, QUAY_MS),
+        Err(code) => Err(code),
     };
     let (land, pid) = match plate {
         Ok(id) => (ocall::OK, id.get()),

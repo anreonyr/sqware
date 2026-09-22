@@ -132,7 +132,11 @@ pub enum Fail {
     /// 三条路都走这一格：**没铸过**、`trim` **剪掉了**、[`Operator::find`] **剔死了**
     /// ——水位只往上走、本层不记墓碑，三者长得一样。空路（根）走 [`Operator::seek`] 时也是这一格。
     Unknown,
-    /// 那块 `Pane` 里还有东西 ⇒ 先清空。
+    /// 那块 `Pane` 里还有东西，而这一手会**毁掉**里面的 ⇒ 先清空。
+    ///
+    /// 今天只有两条原语走得到它：[`Operator::land`] 的换绑（要把那块非空 `Pane` 换成砖）与
+    /// [`Operator::trim`]（要拿走它）。**`part` 不走这一格**——它要的正是那块 `Pane`，
+    /// 已经在就是成了（照实记见 [`Operator::part`] 的注）。
     NonEmpty,
     /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者往它里面走。
     NotATile,
@@ -153,6 +157,18 @@ pub type VestedBy = fn(PieToken) -> Option<TaskId>;
 
 /// **放下**：把我这一份自释。剪掉或换掉一枚 `Tile` 时用它——不加这一格，那一枚句柄就漏在树里。
 pub type Unship = fn(PieToken) -> Result<(), ()>;
+
+/// **落 / 分想要什么**——两条原语共用 [`Operator::put`] 那一手，差别只在这一格。
+///
+/// 照实记：`land` 想要一枚砖（那儿要是块**非空** `Pane` 就是 [`Fail::NonEmpty`]：换绑会毁掉
+/// 里面那些），`part` 只想要"这儿是一块 `Pane`"（**幂等**：已经在就是成了，里面有没有东西不管）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Want {
+    /// 要一枚 `Tile`（[`Operator::land`]）。
+    Tile,
+    /// 要一块 `Pane`（[`Operator::part`]）。
+    Pane,
+}
 
 // ── 树 ──────────────────────────────────────────────────────
 
@@ -200,15 +216,25 @@ impl Operator {
     ///
     /// **答的是号**（不是一格状态）：这是"号出门"那一手——立的人自己知道它立成了几号。
     pub fn land(&mut self, at: Where, name: Name, pie: PieToken) -> Result<EntryId, Fail> {
-        self.put(at, name, Node::Tile(pie))
+        self.put(at, name, Node::Tile(pie), Want::Tile)
     }
 
-    /// **分**：在 `at` 那一块 `Pane` 里，给 `name` 这一格放一块**空的** `Pane`；答那一格自己的号。
+    /// **分**：在 `at` 那一块 `Pane` 里，给 `name` 这一格放一块 `Pane`；答那一格自己的号。
     ///
-    /// 门槛与 [`Operator::land`] 一字不差，只换"放什么"：已是 `Tile` ⇒ 换掉它（旧的那一枚放下）；
-    /// 已是**空** `Pane` ⇒ 换一块新的空 `Pane`（等价于无事，号照旧）；非空 ⇒ [`Fail::NonEmpty`]。
+    /// 门槛与 [`Operator::land`] 同（容器得在、得是 `Pane`），只有"想要什么"这一格不同：
+    ///
+    /// - 那一格空着 ⇒ 铸一枚新号，放一块**空的** `Pane`；
+    /// - 那一格已经是 `Pane` ⇒ **无事**，答它那个号（**幂等**：它要的正是"这儿是一块 `Pane`"，
+    ///   里面有没有东西不管——**非空也是成了**，故 `NonEmpty` 不在它这一列）；
+    /// - 那一格是一枚 `Tile` ⇒ 换掉它（旧的那一枚放下），号不动；
+    /// - 那一块 `Pane` 已经有 [`Operator::PANE_CAP`] 条 ⇒ [`Fail::Full`]。
+    ///
+    /// 照实记：这一格原来答 `NonEmpty`（"那块非空 Pane 不许动"）。靶上读数把它顶掉了——
+    /// 门牌那五处要的是**父格的号**，而它们的父格（`/device`、`/sys`）第二次上来时本来就非空，
+    /// 于是"分"答不了号、落门牌跟着塌（`soak-1790097748-1`）。"非空不许动"那条规矩的正当去处
+    /// 是**会毁掉内容**的那两条：`land` 的换绑与 `trim`，它们照旧答 [`Fail::NonEmpty`]。
     pub fn part(&mut self, at: Where, name: Name) -> Result<EntryId, Fail> {
-        self.put(at, name, Node::Pane(Vec::new()))
+        self.put(at, name, Node::Pane(Vec::new()), Want::Pane)
     }
 
     /// **寻**：把那一号后面那一枚 Pie 交出去。
@@ -334,13 +360,27 @@ impl Operator {
     /// 落 / 分共用的那一手：在 `at` 那一块 `Pane` 里给 `name` 立一格（或换绑那一格）。
     ///
     /// **答那一格自己的号**：换绑不动号，故只有"真铸了一格"才动水位。
-    fn put(&mut self, at: Where, name: Name, node: Node) -> Result<EntryId, Fail> {
+    fn put(&mut self, at: Where, name: Name, node: Node, want: Want) -> Result<EntryId, Fail> {
         let unship = self.unship;
         let id = match at {
-            Where::Root => Self::put_in(&mut self.root, None, name, node, &mut self.next, unship)?,
-            Where::At(id) => {
-                Self::put_in(&mut self.root, Some(id), name, node, &mut self.next, unship)?
-            }
+            Where::Root => Self::put_in(
+                &mut self.root,
+                None,
+                name,
+                node,
+                want,
+                &mut self.next,
+                unship,
+            )?,
+            Where::At(id) => Self::put_in(
+                &mut self.root,
+                Some(id),
+                name,
+                node,
+                want,
+                &mut self.next,
+                unship,
+            )?,
         };
         Ok(id)
     }
@@ -354,16 +394,17 @@ impl Operator {
         target: Option<EntryId>,
         name: Name,
         node: Node,
+        want: Want,
         next: &mut usize,
         unship: Unship,
     ) -> Result<EntryId, Fail> {
         let Some(target) = target else {
-            return Self::put_here(level, name, node, next, unship);
+            return Self::put_here(level, name, node, want, next, unship);
         };
         // 目标就是这一层里的一条 ⇒ 它得是 `Pane`（否则走不进去）。
         if let Some(slot) = level.iter().position(|e| e.id == target) {
             return match &mut level[slot].node {
-                Node::Pane(inner) => Self::put_here(inner, name, node, next, unship),
+                Node::Pane(inner) => Self::put_here(inner, name, node, want, next, unship),
                 Node::Tile(_) => Err(Fail::NotAPane),
             };
         }
@@ -371,7 +412,7 @@ impl Operator {
         for entry in level.iter_mut() {
             if let Node::Pane(inner) = &mut entry.node {
                 if Self::holds(inner, target) {
-                    return Self::put_in(inner, Some(target), name, node, next, unship);
+                    return Self::put_in(inner, Some(target), name, node, want, next, unship);
                 }
             }
         }
@@ -383,20 +424,25 @@ impl Operator {
         level: &mut Vec<Entry>,
         name: Name,
         node: Node,
+        want: Want,
         next: &mut usize,
         unship: Unship,
     ) -> Result<EntryId, Fail> {
         let fresh = EntryId::new(*next);
         match level.iter().position(|e| e.name == name) {
             Some(slot) => {
-                // 已占：只有"一枚 `Tile`"与"空 `Pane`"可以换绑；前者那一枚要放下。
-                // **换绑不动号**：那一格还是同一格——答的就是它那个号。
+                // 已占。**换绑不动号**：那一格还是同一格——答的就是它那个号。
+                let id = level[slot].id;
+                // **分那边幂等**：想要的就是"这儿是一块 `Pane`"，已经在就是成了（`Want::Pane`）。
+                if want == Want::Pane && matches!(level[slot].node, Node::Pane(_)) {
+                    return Ok(id);
+                }
                 let old = match &level[slot].node {
                     Node::Tile(old) => Some(*old),
                     Node::Pane(inner) if inner.is_empty() => None,
+                    // 落到这里只可能是 `Want::Tile`：换绑会毁掉那块非空 `Pane` 里的东西。
                     Node::Pane(_) => return Err(Fail::NonEmpty),
                 };
-                let id = level[slot].id;
                 level[slot].node = node;
                 if let Some(old) = old {
                     let _ = unship(old);
