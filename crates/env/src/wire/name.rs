@@ -1,15 +1,21 @@
-//! 定长名字——域名字与目录协议共用的一个上限。
+//! 定长名字——**协议之间**共用的一个上限（内核不记名字）。
 //!
-//! [`NAME_LEN`] 是**单一真相**：内容 ≤ 31 字节 + 终止 NUL = 32；`crates/protocol/src/system/board`
-//! 的板协议与 `Team.name` 共用它。`Name` 把「非空、≤ 31 字节、不含 NUL」做成
-//! 构造期义务，非法输入由 [`NameError`] 承载——不 panic、不截断。
+//! [`NAME_LEN`] 是**单一真相**：内容 ≤ 31 字节 + 终止 NUL = 32；板协议
+//! （`crates/protocol/src/system/board`）与树协议（`crates/protocol/src/operator`）共用它。
+//! `Name` 把「非空、≤ 31 字节、不含 NUL」做成构造期义务，非法输入由 [`NameError`] 承载
+//! ——不 panic、不截断。
+//!
+//! **内核不在这份名单里**：域名字与线程名那一刀把内核里那两格删了（`Build` 不再收名字，
+//! 身份只留号），故这个上限今天**只钉用户态协议**。内核里还剩两处 `Name`，来路都不是
+//! "用户给的域名字"：设备 basename（内核从 DTB 读，`platform/devices.rs`）与孔记号
+//! （用户给的**不透明匹配键**，`envcall/pie.rs`）——两处内核都不解释、不显示、不分配。
 
 // ── 定长名字 ────────────────────────────────────────────────────────────
 
 /// 名字字段字节数（含终止 NUL）。
 ///
-/// 单一真相：目录协议（`crates/protocol/src/system/board`）与域名字（`Team.name`）共用同一上限——
-/// 内容 ≤ 31 字节。
+/// 单一真相：板协议（`crates/protocol/src/system/board`）与树协议（`crates/protocol/src/operator`）
+/// 共用同一上限——内容 ≤ 31 字节。**域名字不在其中**：内核那一刀把 `Build` 的名字收了回去。
 pub const NAME_LEN: usize = 32;
 
 /// 名字校验失败域。
@@ -92,7 +98,7 @@ impl Name {
     /// 内容原始字节（不含填充）——**线形的编码面**：帧里只写这一段，其余位置不上线。
     ///
     /// 与 [`Name::bytes`] 的分工就是两侧的分工：`bytes` 是 ABI 的定长字段
-    /// （`env/src/wire/pair.rs` 的 `Team.name`），`text` 是协议帧里的变长那一段。
+    /// （`env/src/wire/pair.rs` 的 `Pair.name`，设备 basename），`text` 是协议帧里的变长那一段。
     pub fn text(&self) -> &[u8] {
         &self.bytes[..self.len()]
     }

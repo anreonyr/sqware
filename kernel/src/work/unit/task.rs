@@ -216,7 +216,6 @@ pub struct Task {
 /// （全核冻结，无并发回收）。
 pub(crate) struct TaskIdent {
     pub(crate) id: usize,
-    pub(crate) name: &'static str,
     pub(crate) team: Arc<Team>,
     /// 栈 slot 区间（user 段，pa=None）——回收经 [`Space::release`]。
     pub(crate) stack: crate::work::unit::space::Span,
@@ -352,9 +351,8 @@ impl Task {
         #[cfg(debug_assertions)]
         assert!(
             Arc::strong_count(t) >= 1,
-            "task #{} '{}': no holders (strong_count == 0)",
-            t.ident.id,
-            t.ident.name
+            "task #{}: no holders (strong_count == 0)",
+            t.ident.id
         );
         // SAFETY: 至少一个容器持强引用 ⇒ transform 路径独占（其他 envcall 临时
         // 持有者不触字段）；Team 簿记弱引用不读字段。等价 Arc::get_mut（其要求
@@ -489,7 +487,6 @@ fn write_args(space: &crate::work::unit::space::Space, at: VirtAddr, args: &[usi
 /// 栈/帧分配失败（MapError 原样传播）；失败时已分配资源随 Space drop 回滚。
 pub struct TaskBuilder {
     team: Arc<Team>,
-    name: &'static str,
     entry: VirtAddr,
     args: Vec<usize>,
     /// 栈体大小（页对齐；缺省 `TASK_STACK_SIZE`）。
@@ -506,17 +503,10 @@ impl TaskBuilder {
         };
         TaskBuilder {
             team,
-            name: "task",
             entry,
             args: Vec::new(),
             stack: TASK_STACK_SIZE,
         }
-    }
-
-    /// 线程名（默认 "task"；诊断用角色名——域名字在 `Team.name`）。
-    pub fn name(mut self, name: &'static str) -> TaskBuilder {
-        self.name = name;
-        self
     }
 
     /// 启动参数（写入新任务栈顶；`a0 = args VA`、`a1 = count`）。
@@ -638,7 +628,6 @@ impl TaskBuilder {
                 Arc::try_new_in(
                     TaskIdent {
                         id,
-                        name: self.name,
                         team: self.team.clone(),
                         stack: stack_span,
                         frame: frame_span,

@@ -15,8 +15,6 @@
 
 use alloc::sync::Arc;
 
-use env::Name;
-
 use crate::memory::allocator::statistics;
 use crate::work::room::scheduler::core::prune_dead;
 use crate::work::unit::space::SpaceBuilder;
@@ -53,15 +51,8 @@ fn shell_round() {
     // ——loader 在映像装载结束处做的就是这一步。用户栈走 `SegmentKind::Normal`，
     // 少了它 `StackWindow::claim` 会答 `NoRegion`。
     space.with_flush(|inner| inner.dynamic(USER_BASE));
-    let team = TeamBuilder::new(space)
-        .name(Name::new("probe").expect("shell: team name"))
-        .spawn()
-        .expect("shell: spawn team");
-    let task = team
-        .task()
-        .name("probe-task")
-        .hold()
-        .expect("shell: hold task");
+    let team = TeamBuilder::new(space).spawn().expect("shell: spawn team");
+    let task = team.task().hold().expect("shell: hold task");
 
     // 收：照 `messenger::bury` 的两步簿记清理——团队簿记摘条、名册清死条目。
     // 少了这两步，名册里那枚弱引用会把外壳一直扣着（这正是 `prune_dead` 存在的理由：
@@ -90,21 +81,15 @@ fn oust_round() {
         .expect("oust: build home space");
     home_space.with_flush(|inner| inner.dynamic(USER_BASE));
     let home = TeamBuilder::new(home_space)
-        .name(Name::new("oust-home").expect("oust: home name"))
         .spawn()
         .expect("oust: spawn home");
-    let sire = home
-        .task()
-        .name("oust-sire")
-        .hold()
-        .expect("oust: hold sire");
+    let sire = home.task().hold().expect("oust: hold sire");
 
     // ① 空域（没产线程）：当场算"已收尾" ⇒ 放得下；放下之后表里没有这一格，重复放下答没有。
     let space = SpaceBuilder::user().build().expect("oust: build space");
     space.with_flush(|inner| inner.dynamic(USER_BASE));
     let child = TeamBuilder::new(space)
         .sire(TaskWeak::stored(Arc::downgrade(&sire), Site::Sire))
-        .name(Name::new("oust-empty").expect("oust: child name"))
         .spawn()
         .expect("oust: spawn child");
     let empty_id = child.id;
@@ -120,15 +105,10 @@ fn oust_round() {
     space.with_flush(|inner| inner.dynamic(USER_BASE));
     let child = TeamBuilder::new(space)
         .sire(TaskWeak::stored(Arc::downgrade(&sire), Site::Sire))
-        .name(Name::new("oust-held").expect("oust: child name"))
         .spawn()
         .expect("oust: spawn child");
     let held_id = child.id;
-    let unborn = child
-        .task()
-        .name("oust-unborn")
-        .hold()
-        .expect("oust: hold unborn");
+    let unborn = child.task().hold().expect("oust: hold unborn");
     crate::expect!(!child.all_reaped(), "oust: 有未放行线程的域不该算已收尾");
     // 判据不通过 ⇒ 调用点（envcall 臂）就不摘：这里照那条路的形状走一遍。
     // （`Task::oust` 本身是纯 −1，前置判据按裁决长在臂里，不在方法里。）

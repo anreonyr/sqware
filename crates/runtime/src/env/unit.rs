@@ -35,14 +35,12 @@ pub fn args() -> &'static [usize] {
 /// 自铸无代价，与"是 S 态"等价，是门形的装饰）；S 态门本身也删了。放开**不构成提权**：
 /// 特权级由内核打包表决定（调用方说不上话），镜像仍要调用方交字节。
 ///
-/// 名字 ≤ 31 字节。失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（名字非法或字节拷不进来）。
-pub fn build(elf: &[u8], kind: ProgramKind, name: &str) -> EnvResult<TeamId> {
+/// 失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（字节拷不进来）。
+pub fn build(elf: &[u8], kind: ProgramKind) -> EnvResult<TeamId> {
     let r = UnitCall::Build {
         elf: VirtAddr::new(elf.as_ptr() as usize),
         len: elf.len(),
         kind,
-        name: VirtAddr::new(name.as_ptr() as usize),
-        name_len: name.len(),
     }
     .call()?;
     match r {

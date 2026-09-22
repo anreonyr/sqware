@@ -22,7 +22,7 @@ use core::time::Duration;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{ChronoCall, ControlCall, DebugCall, EnvCall, MemoryCall, Name, RoomCall, UnitCall};
+use env::{ChronoCall, ControlCall, DebugCall, EnvCall, MemoryCall, RoomCall, UnitCall};
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr as KVirt;
@@ -174,14 +174,6 @@ fn copy_words(space: &Space, va: KVirt, count: usize) -> Option<Vec<usize>> {
         out.push(usize::from_le_bytes(w));
     }
     Some(out)
-}
-
-/// 读调用方空间里的域名字（`Build` 的 name/name_len）→ 校验过的 [`Name`]。
-fn read_name(space: &Space, va: KVirt, len: usize) -> Option<Name> {
-    let bytes = copy_in(space, va, len, env::NAME_LEN - 1)?;
-    core::str::from_utf8(&bytes)
-        .ok()
-        .and_then(|s| Name::new(s).ok())
 }
 
 /// envcall 分发。
@@ -405,11 +397,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             } else {
                 entry
             };
-            let mut builder = target
-                .task()
-                .name("u-thread")
-                .entry(KVirt::from_raw(entry_va))
-                .args(words);
+            let mut builder = target.task().entry(KVirt::from_raw(entry_va)).args(words);
             if stack > 0 {
                 builder = builder.stack(stack);
             }
@@ -448,13 +436,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 .unwrap_or(0);
             frame.gpr.set_x(Gprs::A0, id);
         }
-        EnvCall::Unit(UnitCall::Build {
-            elf,
-            len,
-            kind,
-            name,
-            name_len,
-        }) => {
+        EnvCall::Unit(UnitCall::Build { elf, len, kind }) => {
             // 门：**没有门**（Mint 口径）。
             //
             // 曾经这里是"建域权就是 S 态"——那是**内核替调用方定"该不该起"的时候**
@@ -463,10 +445,6 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             //
             // 放开它**不构成提权**：提权的两条路都还堵着——特权级由内核打包表决定
             // （调用方说不上话），镜像仍要调用方交字节（Mint-lite 口径，见该协议正文）。
-            let name = match read_name(&ident.team.space, KVirt::from_raw(name.get()), name_len) {
-                Some(n) => n,
-                None => return ret_err(frame, GateError::Denied),
-            };
             // 镜像：一次拷进内核暂存（字节只活到装载完成）
             let bytes = match copy_in(
                 &ident.team.space,
@@ -486,7 +464,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Some(me) => TaskWeak::stored(Arc::downgrade(&me), Site::Sire),
                 None => TaskWeak::empty(),
             };
-            match crate::work::unit::build(&bytes, SpaceKind::from(kind), name, sire) {
+            match crate::work::unit::build(&bytes, SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 Err(_) => return ret_err(frame, GateError::BadImage),
             }

@@ -7,7 +7,7 @@
 //! 认领是另一份协议，本文件只剩"起一个服务"需要的那几手——**它在实现侧**：调内核的是
 //! 编排域那一位，不是协议本身。
 
-use env::{EnvError, Name, Permission, PieToken, ProgramKind, TaskId, TeamId};
+use env::{EnvError, Permission, PieToken, ProgramKind, TaskId, TeamId};
 
 use runtime::env::mail;
 use runtime::env::room;
@@ -15,12 +15,14 @@ use runtime::env::unit;
 
 use protocol::system::core::Fail;
 
-/// 建域（Mint）：镜像字节 + 特权级 + 名字 → 新域。
+/// 建域（Mint）：镜像字节 + 特权级 → 新域。
 ///
 /// 产出的域归**调用者**（父亲 = 调用者自己）。特权级由**清单**决定、调用方转交
 /// ——程序自称不了特权级（这是"放开建域不构成提权"的那一半）。
-pub(super) fn mint(image: &[u8], kind: ProgramKind, name: Name) -> Result<TeamId, Fail> {
-    unit::build(image, kind, name.as_str()).map_err(fail)
+///
+/// **名字不过这里**：清单名归装配账（`system::desk`），内核不收名字。
+pub(super) fn mint(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
+    unit::build(image, kind).map_err(fail)
 }
 
 /// 产代表线程（未放行）：`entry = 0` ⇒ 走域默认入口。

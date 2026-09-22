@@ -203,10 +203,9 @@ extern "C" fn info(info: &PanicInfo) -> ! {
         // 身份槽读一次（无锁）：Live = 正在跑的任务；Last = 末次任务（idle 核崩溃）。
         if let Some(i) = crate::work::room::scheduler::core::ident() {
             rows.push(vec![Some(format!(
-                "team '{}' / task #{} '{}' @ hart {}",
-                i.team_name(),
+                "team #{} / task #{} @ hart {}",
+                i.team_id(),
                 i.id(),
-                i.name(),
                 hart::hart_id()
             ))]);
         }

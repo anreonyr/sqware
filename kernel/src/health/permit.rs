@@ -201,15 +201,8 @@ pub(super) fn order() {
     const USER_BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("order: build space");
     space.with_flush(|inner| inner.dynamic(USER_BASE));
-    let team = TeamBuilder::new(space)
-        .name(Name::new("order-home").expect("order: team name"))
-        .spawn()
-        .expect("order: spawn team");
-    let task = team
-        .task()
-        .name("order-task")
-        .hold()
-        .expect("order: hold task");
+    let team = TeamBuilder::new(space).spawn().expect("order: spawn team");
+    let task = team.task().hold().expect("order: hold task");
 
     let dead_meta = hole::meta(0, Name::new("sealed").expect("order: mark"));
     hole::seal(&dead_meta);

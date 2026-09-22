@@ -31,7 +31,8 @@ use crate::fid::ProgramKind;
 /// 这一刀（**结盟服务 + 它的探针**带来第二十四个与第二十五个程序）按**同一个意图**再抬到 28
 /// ——同一条照实记已经记过一次，故这次把数一次写准：`INITRD_BINS` 25 条，28 = 25 + 3。
 pub const MAX_PROGRAMS: usize = 28;
-/// 一条记录里名字的字节上限（与 [`Name`](super::Name) 同值：名字要能原样进 `Team.name`）。
+/// 一条记录里名字的字节上限（清单里的**字节段**长度；`Name` 的内容上限是 31——
+/// 清单名是给装配账看的，不必进一枚 `Name`，内核更不收它）。
 pub const MAX_NAME: usize = 32;
 
 /// 清单头（`count`）的字节数。

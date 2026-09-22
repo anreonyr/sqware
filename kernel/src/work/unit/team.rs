@@ -15,7 +15,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::{Name, TeamId};
+use env::TeamId;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;
@@ -37,8 +37,6 @@ pub struct Team {
     pub(crate) space: Arc<Space>,
     /// 成员簿记（弱引用条目；死条目在下次清理时摘除）。
     pub(crate) tasks: SpinLock<Vec<TaskWeak>>,
-    /// 域名字（程序身份；诊断用）。`Build` 时定型，不可改。
-    pub(crate) name: Name,
     /// 未放行的引导线程（`Held`）——`spawn` 填入、`Hatch` 摘出、`kill` 摘出。
     ///
     /// **不是"至多一个"**（曾经是 `Option<Arc<Task>>`）：`Spawn` 可以来自**同域的任何
@@ -129,7 +127,7 @@ impl Team {
         out
     }
 
-    /// 本团队产出任务 builder（后续 `.name/.entry/.args/.stack/.hold` 链式构造
+    /// 本团队产出任务 builder（后续 `.entry/.args/.stack/.hold` 链式构造
     /// 任务；放行是另一枚动词，不在 builder 上）。
     pub fn task(self: &Arc<Self>) -> TaskBuilder {
         TaskBuilder::new(self.clone())
@@ -159,11 +157,6 @@ impl Team {
         }
     }
 
-    /// 域名字（诊断）。
-    pub(crate) fn name(&self) -> Name {
-        self.name
-    }
-
     /// 本域默认执行入口（`spawn` 的 `entry=0` 时取）。未设（内核域）→ 0。
     pub(crate) fn default_entry(&self) -> usize {
         self.default_entry.get().copied().unwrap_or(0)
@@ -185,7 +178,6 @@ impl Team {
 pub struct TeamBuilder {
     space: Space,
     sire: TaskWeak,
-    name: Name,
 }
 
 impl TeamBuilder {
@@ -194,19 +186,12 @@ impl TeamBuilder {
         TeamBuilder {
             space,
             sire: TaskWeak::empty(),
-            name: Name::new("team").expect("default team name"),
         }
     }
 
     /// 定生我者（boot 顶级域 / 内核域默认空 Weak）。构造期定型：sire 不可后改。
     pub fn sire(mut self, sire: TaskWeak) -> TeamBuilder {
         self.sire = sire;
-        self
-    }
-
-    /// 定域名字（程序身份；`Build` 用清单名）。
-    pub fn name(mut self, name: Name) -> TeamBuilder {
-        self.name = name;
         self
     }
 
@@ -226,7 +211,6 @@ impl TeamBuilder {
             Arc::new(Team {
                 space: crate::tag!(Space, Arc::new(self.space)),
                 tasks: SpinLock::new_level(Level::L3, Vec::new()),
-                name: self.name,
                 held: SpinLock::new_level(Level::L3, Vec::new()),
                 id,
                 sire: self.sire,
@@ -253,7 +237,6 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
             Arc::new(Team {
                 space,
                 tasks: SpinLock::new_level(Level::L3, Vec::new()),
-                name: Name::new("kernel").expect("kernel team name"),
                 held: SpinLock::new_level(Level::L3, Vec::new()),
                 id,
                 sire: TaskWeak::empty(),

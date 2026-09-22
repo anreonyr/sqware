@@ -57,7 +57,7 @@ pub type MapResult<T> = erra::Result<T, MapError>;
 ///
 /// `kind` 决定页表特权级与 U 位：`User` 出 U 态团队，`Supervisor` 出 S 态域。
 /// `sire` 在 `TeamBuilder::spawn` 里闭合血缘（非空 ⇒ 立即入 sire.heir）。
-/// `name` 是域名字（程序身份，诊断用）；`default_entry` 由装载所得 `e_entry` 写入。
+/// `default_entry` 由装载所得 `e_entry` 写入。
 ///
 /// # Errors
 ///
@@ -65,7 +65,6 @@ pub type MapResult<T> = erra::Result<T, MapError>;
 pub(crate) fn build(
     elf: &[u8],
     kind: space::SpaceKind,
-    name: env::Name,
     sire: weak::TaskWeak,
 ) -> Result<Arc<team::Team>, team::UnitError> {
     let parsed = parser::parse(elf).map_err(|_| team::UnitError::Load)?;
@@ -78,7 +77,6 @@ pub(crate) fn build(
     let entry = loaded.entry;
     let team = team::TeamBuilder::new(loaded.space)
         .sire(sire)
-        .name(name)
         .spawn()
         .map_err(|_| team::UnitError::Load)?;
     team.set_default_entry(entry.as_usize());

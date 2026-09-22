@@ -126,7 +126,7 @@ extern "C" fn main() -> ! {
     // ④ 两个子域、各一枚线程、各收一份（组 + 成员 + 自己那枚回报孔），放行。
     let mut reps = [TaskId::new(0); WAITERS];
     for i in 0..WAITERS {
-        let Ok(team) = unit::build(elf, kind, &format!("waiter{i}")) else {
+        let Ok(team) = unit::build(elf, kind) else {
             die("group: build")
         };
         let Ok(rep) = unit::spawn(team, 0, &[], 0) else {

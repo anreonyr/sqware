@@ -231,7 +231,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
             vec![
                 None,
                 Some(format!("#{}", i.id())),
-                Some(format!("'{}' @ team '{}'", i.name(), i.team_name())),
+                Some(format!("task #{} @ team #{}", i.id(), i.team_id())),
             ]
         } else {
             vec![None, Some("failed to get task info".into()), None]

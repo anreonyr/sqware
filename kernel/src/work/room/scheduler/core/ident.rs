@@ -1,7 +1,7 @@
 // 本核身份槽（core::ident）— 身份两态、带标签指针与唯一读法 `ident()`。
 //
-// 载荷两态：Live = 本核**在跑**任务（trap 可信）；Last = 末次身份记录（id / 角色名 /
-// 域名字；trap **不可信**且类型上不可读）。标签位与指针在**同一个原子字**里——载荷
+// 载荷两态：Live = 本核**在跑**任务（trap 可信）；Last = 末次身份记录（任务号 /
+// 域号；trap **不可信**且类型上不可读）。标签位与指针在**同一个原子字**里——载荷
 // 类型自描述，读侧无需第二读点（两个写点无读撕裂窗口）。
 //
 // 计数协议：槽持有一份 Arc 强引用。写只有三个方法——[`Badge::seat`]（装 Live）/
@@ -14,6 +14,8 @@
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
+use env::TeamId;
+
 use crate::memory::manager::addr::PhysAddr;
 use crate::work::unit::task::TaskIdent;
 
@@ -24,17 +26,19 @@ use super::table::{SCHEDULERS, current};
 /// 记录）。标签与指针同一原子字——载荷类型自描述，读侧无需第二读点。
 const LAST_TAG: usize = 1;
 
-/// 末次身份记录：降级时从 TaskIdent 复制（id / 角色名 / **域名字**），
+/// 末次身份记录：降级时从 TaskIdent 复制（任务号 + **域号**），
 /// **不含 team/space/trap**——团队 Arc 借此归零即回收整个地址空间。
+///
+/// **照实记**：它曾经还内联一份角色名与域名字（"符号化最小集"那三格）；名字那一刀
+/// 把内核里的名字删干净，故今天只剩两枚号——**号是身份，名字归用户态**。
 pub struct LastIdent {
     pub(crate) id: usize,
-    pub(crate) name: &'static str,
-    /// 域名字（程序身份；内联定长，故仍不持 Team）。
-    pub(crate) team: env::Name,
+    /// 域号（内联一枚号，故仍不持 Team）。
+    pub(crate) team: TeamId,
 }
 
 /// 身份槽载荷：Live = 本核**在跑**任务（trap 可信）；Last = 末次身份记录
-/// （id/name/域名字；trap **不可信**且类型上不可读）。trap 只经 Live 轴暴露——
+/// （任务号 + 域号；trap **不可信**且类型上不可读）。trap 只经 Live 轴暴露——
 /// 悬垂帧读取在类型层不可表达。
 pub enum Identity {
     Live(Arc<TaskIdent>),
@@ -67,13 +71,12 @@ impl Badge {
     }
 
     /// 换牌：Live → Last（本核在跑任务离核且不接续装槽：reap / park 无后继）。
-    /// Last 只留符号化最小集（id/name/域名字），**不持有团队/空间**——团队 Arc 借此
+    /// Last 只留符号化最小集（任务号 + 域号），**不持有团队/空间**——团队 Arc 借此
     /// 归零即回收，地址空间不再被 idle 核钉住（关机零泄漏审计与「末次符号化」兼得）。
     pub(super) fn shed(&self, ident: &Arc<TaskIdent>) {
         let last = Arc::new(LastIdent {
             id: ident.id,
-            name: ident.name,
-            team: ident.team.name(),
+            team: ident.team.id,
         });
         let prev = self.raw.swap(
             (Arc::into_raw(last) as usize | LAST_TAG) as *mut (),
@@ -145,18 +148,11 @@ impl Identity {
         }
     }
 
-    pub fn name(&self) -> &'static str {
+    /// 域号（诊断用）。
+    pub fn team_id(&self) -> usize {
         match self {
-            Identity::Live(t) => t.name,
-            Identity::Last(l) => l.name,
-        }
-    }
-
-    /// 域名字（程序身份；诊断用）。
-    pub fn team_name(&self) -> env::Name {
-        match self {
-            Identity::Live(t) => t.team.name(),
-            Identity::Last(l) => l.team,
+            Identity::Live(t) => t.team.id.get(),
+            Identity::Last(l) => l.team.get(),
         }
     }
 

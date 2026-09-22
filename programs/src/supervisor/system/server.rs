@@ -42,7 +42,7 @@ pub fn spawn(
 ) -> Result<TaskId, Fail> {
     admit_start(table, name)?;
 
-    let team = crate::supervisor::system::call::mint(image, kind, name)?;
+    let team = crate::supervisor::system::call::mint(image, kind)?;
     let Ok(rep) = crate::supervisor::system::call::bear(team) else {
         return Err(Fail::NoRoom);
     };

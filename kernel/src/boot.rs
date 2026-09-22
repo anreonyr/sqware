@@ -205,11 +205,9 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
         unsafe { core::slice::from_raw_parts(region.base as *const u8, region.size) };
     let elf = crate::platform::initrd::root_image(blob).expect("initrd: root image missing");
 
-    let name = env::Name::new("root").expect("root name");
     let team = crate::work::unit::build(
         elf,
         crate::work::unit::space::SpaceKind::Supervisor,
-        name,
         crate::work::unit::weak::TaskWeak::empty(),
     )
     .expect("assemble root elf");
@@ -256,7 +254,7 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
     args[env::wire::args::VIEW_LEN] = region.size;
     args[env::wire::args::PAIRS] = pairs.as_usize();
     args[env::wire::args::COUNT] = devices.len();
-    let bootstrap = team.task().name("bootstrap").args(args.to_vec()).hold()?;
+    let bootstrap = team.task().args(args.to_vec()).hold()?;
     // 两步分开：这段的形状就是 System Protocol 的 `Spawn`（恒产 `Held`）→ `Hatch`。
     // 中间没有要授的东西，但顺序要看得见——内核侧不再有"产并放行"的别名。
     crate::work::unit::task::Task::release(&bootstrap).expect("freshly held task must release");

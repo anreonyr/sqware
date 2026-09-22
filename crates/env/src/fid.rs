@@ -194,9 +194,9 @@ pub enum UnitCall {
     /// 按索引取子域 TeamId（heir 枚举的 second pass；越界 → 0）。
     #[ret(TeamId)]
     Heir { index: usize },
-    /// 装域：镜像字节区间 + 特权级 + 名字 → 新域（Space + Team，**无线程**）。
+    /// 装域：镜像字节区间 + 特权级 → 新域（Space + Team，**无线程**）。
     ///
-    /// 名字 ≤ 31 字节（`Name` 的定长上限）。
+    /// **不收名字**：域名字归装配账，内核一个名字都不记（身份只有号）。
     ///
     /// # 门
     ///
@@ -214,8 +214,6 @@ pub enum UnitCall {
         elf: VirtAddr,
         len: usize,
         kind: ProgramKind,
-        name: VirtAddr,
-        name_len: usize,
     },
     /// 放行：`Held → Starved`。放行只发生一次——重复调用返回 `-1 Denied`。
     #[ret(())]
