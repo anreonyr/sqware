@@ -86,7 +86,7 @@ pub enum Fail {
 ///
 /// - 那一枚**不在我表里**（令牌越界，或它已被 [`Unship`] 放下）；
 /// - **或**它那扇门**已经封印**：`Reserve` 的 `owner` 那一格带存活闸（内核
-///   `envcall/pie.rs` 的 `owner().ok_or(GateError::Dead)`，闸在 `work/unit/gate/pie.rs`
+///   `envcall/pie.rs` 的 `owner().ok_or(Fail::Dead)`，闸在 `work/unit/gate/pie.rs`
 ///   的 `alive().then(...)`）⇒ 门一封印就答 `Err(-2 Dead)`，而 `env::fid` 的 `Reserve`
 ///   注记写着这条契约。**故"答不出"这一格里就有"门封印了"**。
 ///

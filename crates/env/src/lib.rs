@@ -19,7 +19,7 @@ pub mod fid;
 pub mod permission;
 pub mod wire;
 
-pub use ecall::{EnvError, EnvResult, make_err};
+pub use ecall::{EnvError, EnvResult, Fail, make_err};
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, HoleDir, MailCall,
     MailCallRet, MemoryCall, MemoryCallRet, NOTE_MAX, PieCall, PieCallRet, ProgramKind, RoomCall,

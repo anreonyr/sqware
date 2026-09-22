@@ -77,7 +77,7 @@ impl Dock {
     /// # Errors
     /// - `Denied` — 门闩不在本任务表里 / 权限不含 `FETCH`
     /// - `Dead`   — 资源已封印
-    /// - `Caged`  — 这一枚被我交出去了（`ONLY` 资源的锚还在、接收方手里那枚还活着）
+    /// - `HandedOver`  — 这一枚被我交出去了（`ONLY` 资源的锚还在、接收方手里那枚还活着）
     /// - `OoM`    — 本域空间备不出这么长的一段
     pub fn open(pie: PolePie) -> EnvResult<Dock> {
         let (base, size) = pie.open()?;
@@ -96,7 +96,7 @@ impl Dock {
     ///
     /// # Errors
     /// - `Denied` — 门闩已不在表里 / 权限不含 `FETCH`
-    /// - `Caged`  — 这一枚已经交出去了（同 [`Dock::open`]）
+    /// - `HandedOver`  — 这一枚已经交出去了（同 [`Dock::open`]）
     ///
     /// **`Dead` 不在其列，这是刻意的**：撤图撤的是**调用方自己那张 PTE**，故 `shut`
     /// 不过存活闸（`envcall/pie.rs` 的 `shut` 只 `locate` + 判权 + 判锚）——资源封印之后，

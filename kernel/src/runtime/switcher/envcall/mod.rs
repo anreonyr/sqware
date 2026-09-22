@@ -33,12 +33,13 @@ use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff, WakeKey, park, park_until, wait, wake};
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::gate::{GateError, Permission};
+use crate::work::unit::gate::Permission;
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
 use crate::work::unit::weak::{Site, TaskWeak};
+use env::Fail;
 
 mod debug;
 mod mail;
@@ -63,9 +64,9 @@ const MAX_IMAGE: usize = 8 * 1024 * 1024;
 /// | other（含空 / 仅 STORE）| Denied                  |
 ///
 /// U 位不在此处决定——由目标空间的 [`Space::pte_policy`] 加。
-fn subset_to_pte(subset: Permission) -> Result<PteFlags, GateError> {
+fn subset_to_pte(subset: Permission) -> Result<PteFlags, Fail> {
     if !subset.contains(Permission::FETCH) {
-        return Err(GateError::Denied);
+        return Err(Fail::Denied);
     }
     let mut f = PteFlags::V | PteFlags::A | PteFlags::D;
     f |= PteFlags::R;
@@ -76,7 +77,7 @@ fn subset_to_pte(subset: Permission) -> Result<PteFlags, GateError> {
 }
 
 /// 写回错误码并返回待恢复帧。
-fn ret_err(frame: &mut TrapContext, e: GateError) -> *mut TrapContext {
+fn ret_err(frame: &mut TrapContext, e: Fail) -> *mut TrapContext {
     frame.gpr.set_x(Gprs::A0, e.code() as usize);
     frame as *mut TrapContext
 }
@@ -97,10 +98,10 @@ fn instr_len(space: &Space, sepc: KVirt) -> usize {
 }
 
 /// 映射错误 → 负码（`Spawn` 的栈/帧分配失败）。
-fn map_err(e: crate::memory::manager::MapError) -> GateError {
+fn map_err(e: crate::memory::manager::MapError) -> Fail {
     match e {
-        crate::memory::manager::MapError::OutOfMemory => GateError::OoM,
-        _ => GateError::Denied,
+        crate::memory::manager::MapError::OutOfMemory => Fail::OoM,
+        _ => Fail::Denied,
     }
 }
 
@@ -219,7 +220,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
     // （panic 即 U 态一发 ebreak 打死整机）。想主动终止有正规原语 `RoomCall::Reap`。
     let envcall = match EnvCall::from_wire(number, &regs) {
         Ok(c) => c,
-        Err(_) => return ret_err(frame, GateError::Denied),
+        Err(_) => return ret_err(frame, Fail::Denied),
     };
     match envcall {
         EnvCall::Room(RoomCall::Starve) => return current().starve() as *mut TrapContext,
@@ -263,14 +264,14 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             let target = muster(task).and_then(|w| w.upgrade());
             let Some(target) = target else {
                 // 名册升不起来 = 从未入册 / 已回收——与 `Join` 判活三态同一口径。
-                return ret_err(frame, GateError::Dead);
+                return ret_err(frame, Fail::Dead);
             };
             let team = target.ident.team.clone();
             // **判活是域粒度**：域里已没有还没收尾的线程 ⇒ 与"名册升不起"同答 `Dead`，
             // 不再"答成功却什么都没做"（读法与 `Team::all_reaped` 同一句）。
             // 空域够不到这一支——它没有 `TaskId` 手柄，那条边界照旧（见 `protocol::system` §八）。
             if team.all_reaped() {
-                return ret_err(frame, GateError::Dead);
+                return ret_err(frame, Fail::Dead);
             }
             // 下令时记一笔（谁杀的）；死亡时受害者那颗核另记 `Exit { EXIT_DOOM }`
             // ——两条分开是因为它们落在不同的核上（见 `RoomEvent::Doomed`）。
@@ -386,13 +387,13 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             } else {
                 match current().running_task().and_then(|me| me.heir(team)) {
                     Some(t) => t,
-                    None => return ret_err(frame, GateError::Denied),
+                    None => return ret_err(frame, Fail::Denied),
                 }
             };
             // 启动参数：从调用方空间拷（count == 0 → 空）
             let words = match copy_words(&ident.team.space, KVirt::from_raw(args.get()), count) {
                 Some(w) => w,
-                None => return ret_err(frame, GateError::Denied),
+                None => return ret_err(frame, Fail::Denied),
             };
             // entry = 0 → 域默认入口（`Build` 装载所得 e_entry）
             let entry_va = if entry == 0 {
@@ -459,7 +460,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 MAX_IMAGE,
             ) {
                 Some(b) => b,
-                None => return ret_err(frame, GateError::Denied),
+                None => return ret_err(frame, Fail::Denied),
             };
             // sire = 调用方：`build` 内部闭合血缘（域必入我 heir）。
             //
@@ -472,13 +473,13 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             };
             match crate::work::unit::build(&bytes, SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
-                Err(_) => return ret_err(frame, GateError::BadImage),
+                Err(_) => return ret_err(frame, Fail::BadImage),
             }
         }
         EnvCall::Unit(UnitCall::Hatch { task }) => {
             let target = match muster(task).and_then(|w| w.upgrade()) {
                 Some(t) => t,
-                None => return ret_err(frame, GateError::Denied),
+                None => return ret_err(frame, Fail::Denied),
             };
             // 授权：与我同域，或属于我 heir 里的子域
             let same = Arc::ptr_eq(&target.ident.team, &ident.team);
@@ -487,7 +488,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 .map(|me| me.heir(target.ident.team.id).is_some())
                 .unwrap_or(false);
             if !(same || mine) {
-                return ret_err(frame, GateError::Denied);
+                return ret_err(frame, Fail::Denied);
             }
             if let Err(e) = Task::release(&target) {
                 return ret_err(frame, e);
@@ -509,7 +510,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             //      （照旧放行；寿命无从谈起 ⇒ 空弱引用，站点当场判死、不建站点）。
             //   ③ 仍是活任务 ⇒ 当场核对授权，并把「退出钩子是否已跑完」读出来。
             let Some(target) = muster(task) else {
-                return ret_err(frame, GateError::Denied);
+                return ret_err(frame, Fail::Denied);
             };
             // **挂起前放掉那枚抄件**（`muster` 抄出来的弱引用）：`target` 只用来当场判活
             // 与取 `(reaped, life)`，此后它就是一具"跨挂起还压在栈上"的引用 —— 而
@@ -526,7 +527,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                         .map(|me| me.heir(t.ident.team.id).is_some())
                         .unwrap_or(false);
                     if !(same || mine) {
-                        return ret_err(frame, GateError::Denied);
+                        return ret_err(frame, Fail::Denied);
                     }
                     (t.tag() == TaskTag::Reaped, t.life())
                 }
@@ -553,7 +554,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // **只等"我自己这张表"**：键由内核从调用者推出来，故这里没有参数、
             // 也就没有伪造面（同 `SelfId` / `Sire` 那一路）。
             let Some(me) = current().running_task() else {
-                return ret_err(frame, GateError::Busy);
+                return ret_err(frame, Fail::Busy);
             };
             let mine = TaskLife {
                 id: me.ident.id,
@@ -572,15 +573,15 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         }
         EnvCall::Unit(UnitCall::Oust { team }) => {
             let Some(me) = current().running_task() else {
-                return ret_err(frame, GateError::Denied);
+                return ret_err(frame, Fail::Denied);
             };
             // 凭证就是**我自己那张血缘表**（同 `Spawn` 的门）：查到 = 我是它的 sire。
             let Some(child) = me.heir(team) else {
-                return ret_err(frame, GateError::Denied);
+                return ret_err(frame, Fail::Denied);
             };
             // 前置：域里没有还没收尾的线程（判据读法与"回收对调用方不可观测"那条一致）。
             if !child.all_reaped() {
-                return ret_err(frame, GateError::Busy);
+                return ret_err(frame, Fail::Busy);
             }
             // 手里那份瞬时引用先还掉：摘除只需 id，析构留给锁外。
             drop(child);
@@ -613,13 +614,13 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 buf,
             );
             // 用户 buf 非法（未映射 / 不可写）→ 统一错误表（写裸 -1 与 `Denied` 同值，
-            // 但把「通道」写死在一处：D1 负码的单一真相是 `GateError::code`）。
+            // 但把「通道」写死在一处：D1 负码的单一真相是 `Fail::code`）。
             frame.gpr.set_x(
                 Gprs::A0,
                 if ok {
                     keep
                 } else {
-                    GateError::Denied.code() as usize
+                    Fail::Denied.code() as usize
                 },
             );
         }

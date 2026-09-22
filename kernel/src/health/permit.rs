@@ -16,13 +16,13 @@
 
 use alloc::vec::Vec;
 
-use env::{HoleDir, Mark, PieToken, TaskId};
+use env::{Fail, HoleDir, Mark, PieToken, TaskId};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
 use crate::work::room::messenger::{FWD_MAX, WakeKey};
 use crate::work::room::scheduler::core::prune_dead;
-use crate::work::unit::gate::{self, AnyPie, GateError, Need, Permission};
+use crate::work::unit::gate::{self, AnyPie, Need, Permission};
 use crate::work::unit::space::SpaceBuilder;
 use crate::work::unit::team::TeamBuilder;
 
@@ -60,7 +60,7 @@ pub(super) fn form() {
             sire
         );
         crate::expect!(
-            matches!(gate::narrow(&mut pie, shared), Err(GateError::Denied)),
+            matches!(gate::narrow(&mut pie, shared), Err(Fail::Denied)),
             "撤掉 ONLY 应当被拒——**自持枚也不例外**（sire = {:?}）",
             sire
         );
@@ -75,7 +75,7 @@ pub(super) fn form() {
                     &mut pie,
                     Permission::FETCH | Permission::STORE | Permission::ONLY
                 ),
-                Err(GateError::Denied)
+                Err(Fail::Denied)
             ),
             "非单调收窄（要一个已被收掉的位）应当被拒（sire = {:?}）",
             sire
@@ -173,7 +173,7 @@ pub(super) fn fanout() {
 
     let extra = tole::meta(TaskId::new(0));
     crate::expect!(
-        matches!(tole::attach(&extra, mate, hole.life()), Err(GateError::OoM)),
+        matches!(tole::attach(&extra, mate, hole.life()), Err(Fail::OoM)),
         "转发格满（{} 个组）时挂格应当报 OoM，不静默丢",
         FWD_MAX
     );
@@ -223,14 +223,14 @@ pub(super) fn order() {
     crate::expect!(
         matches!(
             gate::accede(&task, dead_token, Need::Store),
-            Err(GateError::Dead)
+            Err(Fail::Dead)
         ),
         "已封印 + 权不够：必须答 Dead（死活先于权限）"
     );
     crate::expect!(
         matches!(
             gate::accede(&task, live_token, Need::Store),
-            Err(GateError::Denied)
+            Err(Fail::Denied)
         ),
         "活着但权不够：必须答 Denied"
     );
@@ -245,7 +245,7 @@ pub(super) fn order() {
     crate::expect!(
         matches!(
             gate::locate(&task, PieToken::mint(live_token.get() + 4_096)),
-            Err(GateError::Denied)
+            Err(Fail::Denied)
         ),
         "表里没有：locate 必须答 Denied"
     );

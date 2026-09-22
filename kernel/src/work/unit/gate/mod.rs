@@ -5,11 +5,9 @@
 // `Pie<M>` 泛型直指 `mail` 的 Meta 类型，并持其**唯一强引用**（`Arc<M>`，资源寿命
 // = 能力寿命）。
 //
-// **照实记（依赖不是单向的）**：旧注写"gate 单向依赖 mail，成 DAG（无环）"，与代码不符
-// —— `mail` 的四个模块各自引 `gate::GateError`（**错误码的单一真相**在 gate），故模块层
-// 是一个二元环。分工仍是单向的（gate 不碰 IPC 数据面与设备账，mail 不碰能力模型），只是
-// "错误码住哪"这一条边反向。要让它成字面意义上的 DAG，得把 `GateError` 挪到中立处——
-// 那是另一刀。
+// **依赖是单向的**（gate → mail）：唯一的反向边是错误码，而它已在"失败词汇"那一刀搬到
+// `env::Fail`——两层从**共同的外部**引它，模块层不再有环。（旧注写"单向依赖 mail，成
+// DAG"，当时并不成立：`mail` 的四个模块各自引 `gate::GateError`。）
 //
 // **派生关系只存一条边**（`sire`）：向上的授与人、向下的子门闩都是查询（`snap`），
 // 吃同一张全世界任务快照——快照由适配层拍、boot 注入，gate 不依赖 scheduler。
@@ -23,7 +21,7 @@
 // （那次是移交）。envcall 适配层只「取本核 → 转发」，不在壳内重写规则。
 //
 //   pie.rs     — 门闩（Pie<M>, AnyPie）+ 权限（Permission）+ 操作授权
-//                 （Need/allows/covers）+ 错误（GateError）
+//                 （Need/allows/covers）+ 错误（Fail）
 //   snap.rs    — 全世界任务快照 + 沿 sire 的查询（heirs/vestor/find）
 //   accord.rs  — 转授 / 交出给其他 Task（写派生边 + 写锚）+ `clear_heir`
 //   narrow.rs  — 就地单调收窄本 pie 权限（`ONLY` 不可撤）
@@ -32,7 +30,7 @@
 //   release.rs — 自释自己持有的一份（含全部后代）
 //
 // 用户态：Task 持 `Vec<AnyPie>`（`unit::task::pies`）；envcall 以 token 寻址。
-// `Permission` 单一真相在 `env`（本层 re-export）；错误码契约见 [`GateError::code`]。
+// `Permission` 单一真相在 `env`（本层 re-export）；错误码契约见 [`Fail::code`]。
 
 mod accord;
 mod cull;
@@ -42,7 +40,7 @@ mod release;
 mod revoke;
 mod snap;
 
-pub(crate) use pie::{AnyPie, GateError, Need, Permission, Pie, accede, locate, new_pie};
+pub(crate) use pie::{AnyPie, Need, Permission, Pie, accede, locate, new_pie};
 // `form_ok` 只有 `accord`（走 `super::pie::` 直呼）与 `health::permit` 两条读者，而后者
 // 在 `debug_assertions` / `framework` 之外不编 ⇒ 无条件重导出会在 release 档报
 // `unused import`。门控它，而不是让 release 背一条假警告。

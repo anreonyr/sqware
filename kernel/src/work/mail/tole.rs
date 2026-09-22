@@ -47,7 +47,7 @@
 // 提示型、放行整链），而 `wake` 只管"一次事件兑现一个读方"（交付型）并**拒收组键**
 // （断言钉住）。于是——
 //
-// - 独占组：`ONLY` ⇒ 任一时刻只有一个能等的持有者（移交期间源枚 `Caged`，见 `envcall`
+// - 独占组：`ONLY` ⇒ 任一时刻只有一个能等的持有者（移交期间源枚 `HandedOver`，见 `envcall`
 //   的 `Await` 挂点）⇒ 链长恒 ≤ 1，放行全链与放行一人**是同一件事**；
 // - 共享组：可 `Accord` 复制 ⇒ 多个持有者各按**自己的表**同时等。判据是"池 ∩ 我的表"，
 //   故唤醒必须人人复核自己的快照：单播会把那一跳交给判不出就绪的那位并把它消耗掉
@@ -68,9 +68,9 @@ use env::{HoleDir, TaskId};
 use crate::work::mail::hole::HoleId;
 use crate::work::mail::nole::NoleId;
 use crate::work::room::messenger::{self, Handoff, WakeKey};
-use crate::work::unit::gate::GateError;
 use crate::work::unit::life::Life;
 use core::time::Duration;
+use env::Fail;
 
 /// Tole 的全局身份（自 1 递增、永不复用）。
 ///
@@ -222,9 +222,9 @@ impl ToleMeta {
 ///
 /// 尾巴上**敲一次组键**（`knock`，提示型）：快照变了，等本组的人该重取一遍。独占组上
 /// 链长恒 ≤ 1（等价于叫醒那一个），共享组上放行全链——扇出由**键的种类**决定，见头注。
-pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), GateError> {
+pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), Fail> {
     if !meta.alive() {
-        return Err(GateError::Dead);
+        return Err(Fail::Dead);
     }
     let cell = Cell {
         mate,
@@ -236,7 +236,7 @@ pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<()
             return Ok(());
         }
         if cells.try_reserve(1).is_err() {
-            return Err(GateError::OoM);
+            return Err(Fail::OoM);
         }
         cells.push(cell);
     }
@@ -249,7 +249,7 @@ pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<()
         if let Some(at) = cells.iter().position(|c| c.mate == mate) {
             cells.swap_remove(at);
         }
-        return Err(GateError::OoM);
+        return Err(Fail::OoM);
     }
     // 叫醒等本组的人：快照变了，它们该重取一遍（信标只是提示，醒来自己复核）。
     //
@@ -267,9 +267,9 @@ pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<()
 /// **这是组级动作，不是个人动作**：格子表是**共享池**（[`Cell`] 不记谁挂的），有组
 /// `STORE` 就能摘任何一格——共享组下"我挂的"与"他挂的"在数据面里没有分别。代价照实记：
 /// 一个持有者退场后，它挂的格子**留到成员死**（`cells()` 按存活过滤），不替它清。
-pub(crate) fn detach(meta: &ToleMeta, mate: Mate) -> Result<(), GateError> {
+pub(crate) fn detach(meta: &ToleMeta, mate: Mate) -> Result<(), Fail> {
     if !meta.alive() {
-        return Err(GateError::Dead);
+        return Err(Fail::Dead);
     }
     {
         let mut cells = meta.cells.lock();
@@ -335,9 +335,9 @@ impl Drop for ToleMeta {
 /// `dur == ZERO` = **只探测**：当场 `Resume(())`（不挂起、也不消费信标）——
 /// 与全树的"上限族"口径一致（[`crates/env` 的时间定式]），与 `hole::wait` /
 /// `nole::wait` 同款；`fall` 那一边不特判是因为它探的**就是**信标本身。
-pub(crate) fn wait(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, GateError> {
+pub(crate) fn wait(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, Fail> {
     if !meta.alive() {
-        return Err(GateError::Dead);
+        return Err(Fail::Dead);
     }
     if dur == Duration::ZERO {
         return Ok(Handoff::Resume(()));

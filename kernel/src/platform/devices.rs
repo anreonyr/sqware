@@ -34,7 +34,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{Name, PAIR_LEN, Pair, TaskId};
+use env::{Fail, Name, PAIR_LEN, Pair, TaskId};
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -42,7 +42,7 @@ use crate::lock::OnceLock;
 use crate::platform::machine;
 use crate::work::mail;
 use crate::work::mail::nole::NoleMeta;
-use crate::work::unit::gate::{self, AnyPie, GateError, Permission};
+use crate::work::unit::gate::{self, AnyPie, Permission};
 use crate::work::unit::task::Task;
 
 /// 中断门闩在配对块里的名字（root 据此把它交给 PLIC 驱动）。
@@ -89,7 +89,7 @@ static IRQ_IDLE_BUSY: AtomicUsize = AtomicUsize::new(0);
 ///
 /// `Err(Busy)` = 铃还响着（上一件没人应）⇒ 调用方（trap 分支）据此关本 hart 的闸门。
 /// 闸门的另一半在 `envcall/mail.rs::hush`：用户应铃时立刻重开。
-pub(crate) fn raise_irq() -> Result<(), GateError> {
+pub(crate) fn raise_irq() -> Result<(), Fail> {
     IRQ_RING.fetch_add(1, Ordering::Relaxed);
     let meta = IRQ.get().expect("irq bell not built (devices::scan)");
     let r = mail::nole::ring(meta);
@@ -104,7 +104,7 @@ pub(crate) fn raise_irq() -> Result<(), GateError> {
 /// 调用点只有一处（`scheduler::core::fetch` 的空闲循环，且只在 `sip.SEIP` 挂着时走）
 /// ⇒ `idle_ring` 同时就是"空闲核见到 `SEIP` 挂着"的轮数，也就是照实记里那个**有界自旋**
 /// 的长度（`idle_busy` = 其中消费者还没应、下一轮还要再看的）。
-pub(crate) fn raise_irq_idle() -> Result<(), GateError> {
+pub(crate) fn raise_irq_idle() -> Result<(), Fail> {
     let r = raise_irq();
     IRQ_IDLE_RING.fetch_add(1, Ordering::Relaxed);
     if r.is_err() {

@@ -27,15 +27,15 @@
 //
 // # Errors
 // - `Denied` — 表内无此 token / 不持 VEST / 子集非法 / **`ONLY` 与源枚不一致** / 目标不存在
-// - `Caged`  — 已被关住（"至多一个 heir"，也是独占的守卫）
+// - `HandedOver`  — 已被关住（"至多一个 heir"，也是独占的守卫）
 // - `Dead`   — 源枚的资源已封印
 // - `OoM`    — 目标表备不出容量（锚已回滚）
 
 use alloc::sync::Weak;
 
-use env::PieToken;
+use env::{Fail, PieToken};
 
-use super::pie::{AnyPie, GateError, Heir, Need, Permission, new_pie};
+use super::pie::{AnyPie, Heir, Need, Permission, new_pie};
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
@@ -50,33 +50,33 @@ pub(crate) fn accord(
     src: PieToken,
     dst: &Weak<Task>,
     subset: Permission,
-) -> Result<usize, GateError> {
-    let target = dst.upgrade().ok_or(GateError::Denied)?;
+) -> Result<usize, Fail> {
+    let target = dst.upgrade().ok_or(Fail::Denied)?;
     // ① 锁内：定位 + 四道闸 + 造子枚（尚未入表）+ 先关。放开锁再做 ②。
     let granted = {
         let mut pies = caller.pies.lock();
         let pie = pies
             .iter_mut()
             .find(|p| p.token() == src)
-            .ok_or(GateError::Denied)?;
+            .ok_or(Fail::Denied)?;
         if !pie.alive() {
-            return Err(GateError::Dead);
+            return Err(Fail::Dead);
         }
         if !pie.allows(Need::Grant) {
-            return Err(GateError::Denied);
+            return Err(Fail::Denied);
         }
         if !pie.covers(subset) {
-            return Err(GateError::Denied);
+            return Err(Fail::Denied);
         }
         // **形态位不是选择，是一致性**：`ONLY` 是资源事实（这枚资源允不许多个使用者），
         // 调用方只能在两种资源上各按其实情来授出。不一致 ⇒ 拒：想复制一枚独占资源，
         // 或想给一枚共享资源按上形态位，都到此为止。
         if !super::pie::form_ok(pie.permission(), subset) {
-            return Err(GateError::Denied);
+            return Err(Fail::Denied);
         }
         // 已被关住 ⇒ 不能再交出：一枚门闩在同一时刻至多一个 heir。
         if pie.heir().is_some() {
-            return Err(GateError::Caged);
+            return Err(Fail::HandedOver);
         }
         // 派生 = 复制资源实体的强引用（资源寿命随之延长一份）。
         let granted = match &*pie {
@@ -109,7 +109,7 @@ pub(crate) fn accord(
         drop(granted);
         // ③ 回滚：清锚（只写本地一格，不会失败）。
         clear_heir(caller, src);
-        return Err(GateError::OoM);
+        return Err(Fail::OoM);
     }
     kids.push(granted);
     drop(kids);

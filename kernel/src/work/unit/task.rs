@@ -12,7 +12,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use env::TaskId;
+use env::{Fail, TaskId};
 
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::lock::SpinLock;
@@ -22,7 +22,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::work::room::conductor;
-use crate::work::unit::gate::{AnyPie, GateError};
+use crate::work::unit::gate::AnyPie;
 use crate::work::unit::life::Life;
 
 use crate::work::unit::space::window::{FrameWindow, StackWindow};
@@ -366,11 +366,11 @@ impl Task {
     ///
     /// 前置：目标仍在所属 `Team.held` 里且状态为 `Held`；否则 `Denied`
     /// （放行只发生一次，不静默）。
-    pub(crate) fn release(task: &Arc<Task>) -> Result<(), GateError> {
+    pub(crate) fn release(task: &Arc<Task>) -> Result<(), Fail> {
         let team = task.ident.team.clone();
         if !team.release_held(task) {
             // 不在未放行表里（已放行过 / 已被他杀摘走）⇒ 报 Denied，**不动别人的**。
-            return Err(GateError::Denied);
+            return Err(Fail::Denied);
         }
         let mut t = task.clone();
         Task::exclusive(&mut t).transform(TaskState::Starved { next: None });

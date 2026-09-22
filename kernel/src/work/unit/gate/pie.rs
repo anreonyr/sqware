@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::Arc;
 
-use env::{PieToken, TaskId};
+use env::{Fail, PieToken, TaskId};
 
 use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
@@ -275,12 +275,12 @@ pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<PieT
 /// **表里没有 → `Denied`**（不是我的东西）。整枚在放锁前克隆出来：最后一份 clone 落在
 /// 锁外 drop，`Meta::drop`（唤醒等待者 / 撤映射 / 还帧）是 L3 或更外层的活，绝不能压在
 /// `pies` 锁上。
-pub(crate) fn locate(task: &Arc<Task>, token: PieToken) -> Result<AnyPie, GateError> {
+pub(crate) fn locate(task: &Arc<Task>, token: PieToken) -> Result<AnyPie, Fail> {
     let pies = task.pies.lock();
     pies.iter()
         .find(|p| p.token() == token)
         .cloned()
-        .ok_or(GateError::Denied)
+        .ok_or(Fail::Denied)
 }
 
 /// 定位 + 过两关：**已封印 → `Dead`；权不够 → `Denied`**。
@@ -294,48 +294,13 @@ pub(crate) fn locate(task: &Arc<Task>, token: PieToken) -> Result<AnyPie, GateEr
 ///
 /// **不查「被关住」**（第三维，见 `envcall::pie::usable`）：它要摸**别人**的表，必须在
 /// 放开本任务 `pies` 之后判——故调用方拿到这里返回的抄件、放锁之后再问它。
-pub(crate) fn accede(task: &Arc<Task>, token: PieToken, need: Need) -> Result<AnyPie, GateError> {
+pub(crate) fn accede(task: &Arc<Task>, token: PieToken, need: Need) -> Result<AnyPie, Fail> {
     let pie = locate(task, token)?;
     if !pie.alive() {
-        return Err(GateError::Dead);
+        return Err(Fail::Dead);
     }
     if !pie.allows(need) {
-        return Err(GateError::Denied);
+        return Err(Fail::Denied);
     }
     Ok(pie)
-}
-
-// ── GateError ──
-
-/// 能力门闩错误类型（D1 负码：见 `GateError::code`）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GateError {
-    /// 权限不足 / pie 不存在 / 类型不匹配。
-    Denied,
-    /// Meta 已 seal 或 Weak upgrade 失败。
-    Dead,
-    /// 这一枚被我交出去了（接收方手里的那一枚还在）：交回即复原，不是失败。
-    Caged,
-    /// Hole 槽满 / 槽空（条件未就绪）。
-    Busy,
-    /// 资源耗尽。
-    OoM,
-    /// 字节数非页对齐 / 非法。
-    NotAligned,
-    /// 镜像不可装载（`Build` 的 parse / 装载任一步失败）。
-    BadImage,
-}
-
-impl GateError {
-    pub const fn code(self) -> isize {
-        match self {
-            GateError::Denied => -1,
-            GateError::Dead => -2,
-            GateError::Busy => -3,
-            GateError::OoM => -4,
-            GateError::NotAligned => -5,
-            GateError::BadImage => -6,
-            GateError::Caged => -7,
-        }
-    }
 }

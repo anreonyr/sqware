@@ -189,11 +189,11 @@ impl To {
 /// - `Denied` — 空集（本地拒）/ 源枚不持 `VEST` / 子集越界 / `ONLY` 与源枚不一致 /
 ///   对端不存在
 /// - `Dead`   — 源枚的资源已封印
-/// - `Caged`  — 源枚**已经交出去过**（一枚门闩至多一个 heir）——不是失败，交回即复原
+/// - `HandedOver`  — 源枚**已经交出去过**（一枚门闩至多一个 heir）——不是失败，交回即复原
 /// - `OoM`    — 对端表备不出容量（锚已回滚：等于没交出过）
 ///
 /// 四个码都不折平（内核 `gate::accord` 的判决原样过线）：旧注把"已被关住"写在
-/// `Denied` 那一行——**照实记：那是错的**，关住的码是 `Caged`(-7)。
+/// `Denied` 那一行——**照实记：那是错的**，关住的码是 `HandedOver`(-7)。
 pub fn ship<P: AnyPie>(pie: &P, peer: TaskId, access: Access, policy: Policy) -> EnvResult<To> {
     let subset = access.bits() | policy.bits();
     if subset.is_empty() {

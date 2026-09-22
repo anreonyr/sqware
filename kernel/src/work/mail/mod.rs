@@ -2,9 +2,8 @@
 //
 // 与 `unit::gate` 的分工：mail 只持**资源实体**（HoleMeta/PoleMeta）+ IPC 数据面
 // （push/pull/map/unmap）+ 用户空间拷贝（copy_in/out）；
-// 能力模型（Pie/AnyPie/授权）在 `unit::gate`；反过来 mail 的四个模块各引
-// `gate::GateError`（错误码的单一真相在 gate）⇒ 模块层是二元环，而**分工仍是单向的**
-// （见 `unit::gate` 头注那条照实记）。
+// 能力模型（Pie/AnyPie/授权）在 `unit::gate`；错误词汇在 `env::Fail`——那是 `unit` 与
+// `mail` 的**共同外部**，故 mail 不引 gate：模块层的依赖只有 `gate → mail` 这一向。
 //
 //   hole.rs   — Hole 数据面（数据过内核，单槽消息、长度随消息）+ meta()
 //   pole.rs   — Pole 数据面（页级安全内存，物理帧 + 视图）+ meta()
@@ -28,7 +27,7 @@ pub mod nole;
 pub mod pole;
 pub mod tole;
 
-// 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（方向见上面那条照实记）。
+// 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（单向，见上头注）。
 pub(crate) use hole::HoleMeta;
 pub(crate) use pole::PoleMeta;
 pub(crate) use tole::ToleMeta;

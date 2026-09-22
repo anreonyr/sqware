@@ -1,11 +1,59 @@
 //! envcall — U-mode → S-mode 环境调用原语 / 错误 / 汇编入口。
 //!
-//! 本文件只保留**跨域共用**的调用骨架：错误（`EnvError`）、结果（`EnvResult`）、
-//! 唯一汇编入口（`trap`）。各域枚举的 `call()/slot()/pack()` 由 `derive(Envcall)`
-//! 生成（见 `fid.rs`），它们调用本文件的 `trap`。
+//! 本文件只保留**跨域共用**的调用骨架：失败词汇（`Fail`）、错误读法（`EnvError`）、
+//! 结果（`EnvResult`）、唯一汇编入口（`trap`）。各域枚举的 `call()/slot()/pack()` 由
+//! `derive(Envcall)` 生成（见 `fid.rs`），它们调用本文件的 `trap`。
 
 /// 环境调用结果。
 pub type EnvResult<T> = Result<T, erra::Error<EnvError>>;
+
+/// envcall 的失败词汇。**负码即契约**（D1）：判别值就是 a0 被读成负数时那一格的值，
+/// 也是内核侧 `ret_err` 写出去的那张表的**唯一真相**（[`EnvError::code`] 的表由此得来，
+/// 不再指向内核）。
+///
+/// 与 [`EnvError`] 的分工：这一枚是**词汇**（哪个码是什么失败），后者是**对线的读法**
+/// （裸 `isize` + 符号 + [`EnvError::is_busy`]）——线上那一格只有数字，没有枚举。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fail {
+    /// 权限不足 / 句柄不存在 / 类型不符。
+    Denied = -1,
+    /// 资源已封印 / 弱引用升不起来。
+    Dead = -2,
+    /// 条件未就绪（用户态 [`EnvError::is_busy`] 消费这一格）。
+    Busy = -3,
+    /// 资源耗尽。
+    OoM = -4,
+    /// 字节数非页对齐 / 非法。
+    NotAligned = -5,
+    /// 镜像不可装载（parse / 装载任一步失败）。
+    BadImage = -6,
+    /// 这一枚**已被我交出**（接收方手里那一枚还在）：交回即复原，**不是失败**。
+    ///
+    /// **照实记（名字的来历）**：它曾叫 `Caged`——那是 `CAGE` 形态位的时代（`aa50a95`
+    /// 用 `ONLY` 取代了 CAGE）。机制今天叫"移交"（`ONLY` 形态位 + `Pie.heir` 锚 + 用户态
+    /// 的「被关住」判据），故名字换成说"已交出"的这一个；**码 −7 一字未动**（ABI 不变）。
+    HandedOver = -7,
+}
+
+impl Fail {
+    /// 那一格里的负码。**判别值即码**，故实现是 `self as isize`——码表只有一处
+    /// （旧形状是一张 `match` 表，与本文件的文档表各写一遍）。
+    pub const fn code(self) -> isize {
+        self as isize
+    }
+}
+
+/// 负码即 ABI 契约：七枚码**一个都不许动**（编译期锁死——改一个就是改 ABI）。
+/// 同 `layout.rs` / `PAIR_LEN` 那类编译期断言的纪律。
+const _: () = {
+    assert!(Fail::Denied.code() == -1);
+    assert!(Fail::Dead.code() == -2);
+    assert!(Fail::Busy.code() == -3);
+    assert!(Fail::OoM.code() == -4);
+    assert!(Fail::NotAligned.code() == -5);
+    assert!(Fail::BadImage.code() == -6);
+    assert!(Fail::HandedOver.code() == -7);
+};
 
 /// 环境调用错误。D1 契约：仅负值构成错误，非负为成功值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,17 +76,10 @@ impl EnvError {
         Self(raw)
     }
 
-    /// 错误码。D1 负值契约（单一真相；内核来源 = `work/unit/gate::GateError::code`）：
+    /// 错误码。D1 负值契约：**仅负值构成错误，非负是成功值**。
     ///
-    /// | code | 含义 | 内核来源 |
-    /// |------|------|----------|
-    /// | -1 | Denied（无权 / 无此句柄 / 类型不符） | `GateError::Denied` |
-    /// | -2 | Dead（资源已封印） | `GateError::Dead` |
-    /// | -3 | Busy（条件未就绪） | `GateError::Busy` |
-    /// | -4 | OoM（资源耗尽） | `GateError::OoM` |
-    /// | -5 | NotAligned（字节数非页对齐） | `GateError::NotAligned` |
-    /// | -6 | BadImage（镜像不可装载） | `GateError::BadImage`（源：`UnitError::Load`——parse / 装载任一步失败） |
-    /// | -7 | Caged（这一枚被我交出去了：接收方手里的那一枚还在） | `GateError::Caged` |
+    /// 每一种码是什么失败，**只有一份账**：[`Fail`] 的判别值（`-1..=-7`）。线上的格子里
+    /// 只有数字，故这里只交数字。
     pub fn code(&self) -> isize {
         self.0
     }

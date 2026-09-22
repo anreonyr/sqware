@@ -11,7 +11,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use env::{HoleDir, MailCall, PieToken, TaskId};
+use env::{Fail, HoleDir, MailCall, PieToken, TaskId};
 
 use riscv::register::sie;
 
@@ -20,7 +20,7 @@ use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
 use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::current;
-use crate::work::unit::gate::{self, AnyPie, GateError, Need};
+use crate::work::unit::gate::{self, AnyPie, Need};
 
 use super::pie::usable;
 use crate::work::unit::task::TaskIdent;
@@ -75,7 +75,7 @@ fn push(
     //    "被关住"仍住本层：它要核对**别人**的表（L3），故必须在放开本任务 `pies` 之后判。
     let found = current()
         .running_task()
-        .ok_or(GateError::Denied)
+        .ok_or(Fail::Denied)
         .and_then(|t| gate::accede(&t, token, Need::Store));
     let r = match found {
         Err(e) => Err(e),
@@ -88,7 +88,7 @@ fn push(
                     // 长度校验：消息非空即可。**没有上限**——这条消息多大由这次
                     // `try_reserve` 答不答得出来决定（失败答 `OoM`），不由常量决定。
                     if len == 0 {
-                        Err(GateError::Denied)
+                        Err(Fail::Denied)
                     } else {
                         // 锁外拷入堆暂存：slot = L3，Space.segments = L2，
                         // 持 L3 调 L2 是 4→2 反向嵌套，禁止。
@@ -98,18 +98,18 @@ fn push(
                         // 故"消息多长槽就多大"，没有第二份拷贝、没有预留容量。
                         let mut staging: Vec<u8> = Vec::new();
                         if staging.try_reserve(len).is_err() {
-                            Err(GateError::OoM)
+                            Err(Fail::OoM)
                         } else {
                             staging.resize(len, 0);
                             if mail::copy_in(&ident.team.space, &mut staging, msg.as_usize()) {
                                 mail::hole::try_push(&meta, &mut staging, me)
                             } else {
-                                Err(GateError::Denied)
+                                Err(Fail::Denied)
                             }
                         }
                     }
                 }
-                _ => Err(GateError::Denied),
+                _ => Err(Fail::Denied),
             },
         },
     };
@@ -141,7 +141,7 @@ fn pull(
     // ① 取用判据在核心（`gate::accede`）；"被关住"在锁外判（见 `push` 的同两段）。
     let found = current()
         .running_task()
-        .ok_or(GateError::Denied)
+        .ok_or(Fail::Denied)
         .and_then(|t| gate::accede(&t, token, Need::Fetch));
     let r = match found {
         Err(e) => Err(e),
@@ -163,14 +163,14 @@ fn pull(
                                 if mail::copy_out(&ident.team.space, &msg, buf.as_usize()) {
                                     Ok((msg.len(), from))
                                 } else {
-                                    Err(GateError::Denied)
+                                    Err(Fail::Denied)
                                 }
                             }
                             Err(e) => Err(e),
                         }
                     }
                 }
-                _ => Err(GateError::Denied),
+                _ => Err(Fail::Denied),
             },
         },
     };
@@ -213,7 +213,7 @@ fn wait_dir(
     };
     let found = current()
         .running_task()
-        .ok_or(GateError::Denied)
+        .ok_or(Fail::Denied)
         .and_then(|t| gate::accede(&t, token, need));
     // ② 锁外：第四道判据（陈旧锚在此自愈）。
     let resolved = match found {
@@ -224,7 +224,7 @@ fn wait_dir(
                 AnyPie::Hole(p) => Ok(Ready::Hole(p.meta().clone())),
                 // 铃只有"响了"一条方向：别的方向不是"暂时没有"，是不存在这个操作。
                 AnyPie::Nole(p) if dir == HoleDir::Pull => Ok(Ready::Bell(p.meta().clone())),
-                _ => Err(GateError::Denied),
+                _ => Err(Fail::Denied),
             },
         },
     };
@@ -301,11 +301,11 @@ fn ring(frame: &mut TrapContext, token: PieToken) -> Outcome {
 fn with_bell(
     token: PieToken,
     need: Need,
-    op: fn(&mail::nole::NoleMeta) -> Result<(), GateError>,
-) -> Result<(), GateError> {
+    op: fn(&mail::nole::NoleMeta) -> Result<(), Fail>,
+) -> Result<(), Fail> {
     let found = current()
         .running_task()
-        .ok_or(GateError::Denied)
+        .ok_or(Fail::Denied)
         .and_then(|t| gate::accede(&t, token, need));
     match found {
         Err(e) => Err(e),
@@ -314,7 +314,7 @@ fn with_bell(
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Nole(p) => op(p.meta()),
-                _ => Err(GateError::Denied),
+                _ => Err(Fail::Denied),
             },
         },
     }
