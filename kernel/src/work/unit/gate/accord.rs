@@ -33,6 +33,8 @@
 
 use alloc::sync::Weak;
 
+use env::PieToken;
+
 use super::pie::{AnyPie, GateError, Heir, Need, Permission, new_pie};
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
@@ -45,7 +47,7 @@ use crate::work::unit::task::Task;
 /// 见模块头。
 pub(crate) fn accord(
     caller: &Task,
-    src: usize,
+    src: PieToken,
     dst: &Weak<Task>,
     subset: Permission,
 ) -> Result<usize, GateError> {
@@ -119,7 +121,7 @@ pub(crate) fn accord(
         },
         &target.life(),
     );
-    Ok(token)
+    Ok(token.get())
 }
 
 /// 清锚：把 `task` 表里 `token` 那一枚的 `heir` 写回 `None`（幂等；返"是否真清了"）。
@@ -127,7 +129,7 @@ pub(crate) fn accord(
 /// `heir` 只有两个写点：本模块的 [`accord`]（写）与**判据**（陈旧时清）。所有
 /// "释放"路径都不需要额外动作——它们只让锚指向的那一枚消失，而"消失"由判据在
 /// 下一次使用时读出来。
-pub(crate) fn clear_heir(task: &Task, token: usize) -> bool {
+pub(crate) fn clear_heir(task: &Task, token: PieToken) -> bool {
     let mut pies = task.pies.lock();
     let Some(pie) = pies.iter_mut().find(|p| p.token() == token) else {
         return false;

@@ -13,7 +13,7 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::TaskId;
+use env::{PieToken, TaskId};
 
 use crate::lock::OnceLock;
 use crate::work::unit::task::Task;
@@ -99,7 +99,7 @@ pub(crate) fn vestor(pie: &AnyPie, snap: &Snap) -> Option<TaskId> {
 }
 
 /// 某枚门闩（按 token）的持有者：快照里谁的表里有它。
-fn holder(token: usize, snap: &Snap) -> Option<TaskId> {
+fn holder(token: PieToken, snap: &Snap) -> Option<TaskId> {
     for w in snap {
         let Some(t) = w.upgrade() else { continue };
         // 显式作用域：guard 必须在取 id 之前释放（不跨表）。
@@ -123,12 +123,12 @@ fn holder(token: usize, snap: &Snap) -> Option<TaskId> {
 /// 逐个 `w` 备容量、而不是先扫一遍数总数：总数要再扫一次表，而这里**在持锁
 /// 迭代**——两次读之间表可能变，数出来的总数不保证够。每次 `out.try_reserve(1)`
 /// 在容量够时是纯比较，够快；不够时才真去扩，失败即放弃。
-pub(crate) fn heirs(token: usize, snap: &Snap) -> Option<Vec<(Arc<Task>, usize)>> {
-    let mut out: Vec<(Arc<Task>, usize)> = Vec::new();
+pub(crate) fn heirs(token: PieToken, snap: &Snap) -> Option<Vec<(Arc<Task>, PieToken)>> {
+    let mut out: Vec<(Arc<Task>, PieToken)> = Vec::new();
     for w in snap {
         let Some(t) = w.upgrade() else { continue };
         // 子 token 先落本地：`try_reserve` 用得上，且避免在持 `pies` 锁时扩 `out`。
-        let mut kids: Vec<usize> = Vec::new();
+        let mut kids: Vec<PieToken> = Vec::new();
         {
             let pies = t.pies.lock();
             if kids.try_reserve(pies.len()).is_err() {

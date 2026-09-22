@@ -11,7 +11,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use env::{HoleDir, MailCall, TaskId};
+use env::{HoleDir, MailCall, PieToken, TaskId};
 
 use riscv::register::sie;
 
@@ -43,14 +43,14 @@ pub(crate) fn dispatch(
 ) -> Option<Outcome> {
     Some(match call {
         MailCall::Push { token, msg, len } => {
-            push(frame, ident, token.get(), KVirt::from_raw(msg.get()), len)
+            push(frame, ident, token, KVirt::from_raw(msg.get()), len)
         }
         MailCall::Pull { token, buf, max } => {
-            pull(frame, ident, token.get(), KVirt::from_raw(buf.get()), max)
+            pull(frame, ident, token, KVirt::from_raw(buf.get()), max)
         }
-        MailCall::Wait { token, dir, millis } => wait_dir(frame, ident, token.get(), dir, millis),
-        MailCall::Hush { token } => hush(frame, token.get()),
-        MailCall::Ring { token } => ring(frame, token.get()),
+        MailCall::Wait { token, dir, millis } => wait_dir(frame, ident, token, dir, millis),
+        MailCall::Hush { token } => hush(frame, token),
+        MailCall::Ring { token } => ring(frame, token),
     })
 }
 
@@ -60,7 +60,7 @@ pub(crate) fn dispatch(
 fn push(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
-    token: usize,
+    token: PieToken,
     msg: KVirt,
     len: usize,
 ) -> Outcome {
@@ -134,7 +134,7 @@ fn push(
 fn pull(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
-    token: usize,
+    token: PieToken,
     buf: KVirt,
     max: usize,
 ) -> Outcome {
@@ -196,7 +196,7 @@ fn pull(
 fn wait_dir(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
-    token: usize,
+    token: PieToken,
     dir: HoleDir,
     millis: usize,
 ) -> Outcome {
@@ -262,7 +262,7 @@ fn wait_dir(
 /// 无条件重开），故这一句只是让重开**立即**发生，而不是让它成为唯一路径。
 ///
 /// 不收 `ident`：本操作不挂起、不 halt（可能 halt 的分支才需要先放身份）。
-fn hush(frame: &mut TrapContext, token: usize) -> Outcome {
+fn hush(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = with_bell(token, Need::Fetch, mail::nole::hush);
     if r.is_ok() {
         // SAFETY: 与 trap 分支那一句同源：只置本 hart 的 SEIE 位。
@@ -281,7 +281,7 @@ fn hush(frame: &mut TrapContext, token: usize) -> Outcome {
 }
 
 /// 响铃：权柄判定（W）→ 置"有待取之事"并唤醒听者。不搬任何字节。
-fn ring(frame: &mut TrapContext, token: usize) -> Outcome {
+fn ring(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = with_bell(token, Need::Store, mail::nole::ring);
     frame.gpr.set_x(
         Gprs::A0,
@@ -299,7 +299,7 @@ fn ring(frame: &mut TrapContext, token: usize) -> Outcome {
 /// 与 `push`/`pull` 的 ①② 同构（那两个各自内联了一遍）；两者只差 `need` 与落在
 /// meta 上的动作，故收 `op` 而不是抄两遍。
 fn with_bell(
-    token: usize,
+    token: PieToken,
     need: Need,
     op: fn(&mail::nole::NoleMeta) -> Result<(), GateError>,
 ) -> Result<(), GateError> {

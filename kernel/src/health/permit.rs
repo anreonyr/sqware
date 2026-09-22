@@ -16,7 +16,7 @@
 
 use alloc::vec::Vec;
 
-use env::{HoleDir, Mark, TaskId};
+use env::{HoleDir, Mark, PieToken, TaskId};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
@@ -52,7 +52,7 @@ pub(super) fn form() {
     // `ONLY` 不可撤：**自持枚（sire = None）也不例外**。
     let name = Mark::of("permit");
     let meta = hole::meta(TaskId::new(0), name);
-    for sire in [None, Some(1)] {
+    for sire in [None, Some(PieToken::mint(1))] {
         let mut pie = AnyPie::Hole(gate::new_pie(meta.clone(), sole, sire));
         crate::expect!(
             gate::narrow(&mut pie, sole).is_ok(),
@@ -244,7 +244,7 @@ pub(super) fn order() {
     );
     crate::expect!(
         matches!(
-            gate::locate(&task, live_token + 4_096),
+            gate::locate(&task, PieToken::mint(live_token.get() + 4_096)),
             Err(GateError::Denied)
         ),
         "表里没有：locate 必须答 Denied"

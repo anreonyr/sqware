@@ -10,6 +10,8 @@
 //   - token 在调用方 task 的权限表内
 //   - 调用方不持任何 L3 锁
 
+use env::PieToken;
+
 use super::cull;
 use super::pie::GateError;
 use super::snap::Snap;
@@ -21,7 +23,7 @@ use crate::work::unit::task::Task;
 /// - `Denied` — 本 task 表里没有该 token
 pub(crate) fn release(
     task: &alloc::sync::Arc<Task>,
-    token: usize,
+    token: PieToken,
     snap: &Snap,
 ) -> Result<usize, GateError> {
     let present = {

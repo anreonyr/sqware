@@ -4,9 +4,9 @@
 // 拿 Hole pie 当 Pole 用在编译期即被拦。运行时擦除由 [`AnyPie`] 的 variant 承担
 // ——variant 即 tag，不再需要 marker 类型 / ResourceKind trait / PieKind 枚举。
 //
-// 运行时身份：每 Pie 持 permission + sire（派生来源：父门闩的 token；None = 原始
-// 自持）+ heir（我交出的那一枚的坐标；None = 没交出过）+ token（全局唯一，用户句柄）
-// + meta（**资源实体的唯一强引用**）。
+// 运行时身份：每 Pie 持 permission + sire（派生来源：父门闩的号；None = 原始
+// 自持）+ heir（我交出的那一枚的坐标；None = 没交出过）+ token（这枚门闩的号，
+// 全局唯一；用户态收到的句柄是同一个 `PieToken`）+ meta（**资源实体的唯一强引用**）。
 //
 // **资源寿命 = 能力寿命**：没有全局资源表，最后一份门闩消失即回收。
 //
@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::Arc;
 
-use env::TaskId;
+use env::{PieToken, TaskId};
 
 use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
@@ -39,7 +39,7 @@ pub use env::Permission;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Heir {
     pub(crate) task: TaskId,
-    pub(crate) token: usize,
+    pub(crate) token: PieToken,
 }
 
 /// 数据面操作所需的权利位（gate 核心判定授权，不感知资源实体）。
@@ -53,30 +53,39 @@ pub enum Need {
     Grant,
 }
 
-/// 全局 pie 身份序列号（自 1 递增）。用户句柄 + accord 撤销句柄。
-fn next_pie_token() -> usize {
-    static NEXT: AtomicUsize = AtomicUsize::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
+/// 全局门闩号序列（自 1 递增、永不复用）——与 `mail` 那三枚号的 `alloc_id` 同款。
+///
+/// 号的**出生地**在这里（`PieToken::mint`）：线上与用户态收到的都是同一个类型。
+fn alloc_id() -> PieToken {
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+    PieToken::mint(NEXT_ID.fetch_add(1, Ordering::Relaxed))
 }
 
-/// 单个门闩：`permission` 控授权、`sire` 是派生来源（父门闩的 token；None = 原始
-/// 自持）、`heir` 是我交出的那一枚（交出时写、判据清）、`token` 是用户句柄、`meta`
+/// 单个门闩：`permission` 控授权、`sire` 是派生来源（父门闩的号；None = 原始
+/// 自持）、`heir` 是我交出的那一枚（交出时写、判据清）、`token` 是这枚门闩的号、`meta`
 /// 是资源实体（唯一的强引用）。
 pub struct Pie<M> {
     pub(crate) permission: Permission,
-    /// 我从哪一枚派生（父门闩的 token）：None = 原始自持；Some = 经 accord 得到。
+    /// 我从哪一枚派生（父门闩的号）：None = 原始自持；Some = 经 accord 得到。
     /// 构造期定型，无 setter。
-    pub(crate) sire: Option<usize>,
+    pub(crate) sire: Option<PieToken>,
     /// 我交出的那一枚（交出时写、判据发现它已不在时清）。**至多一个**：
     /// "已交出"既是"我不可用"的理由，也是"我不能再交出"的理由。
     pub(crate) heir: Option<Heir>,
-    pub(crate) token: usize,
+    pub(crate) token: PieToken,
     /// 资源实体：**唯一强引用**——资源随最后一份门闩一起消亡。
     ///
     /// 纪律：门闩必须在**锁外** drop（最后一份 drop 会跑 `Meta::drop`，它唤醒
     /// 等待者 / 撤映射 / 还帧，全是 L3 或更外层的活）。
     pub(crate) meta: Arc<M>,
 }
+
+// SAFETY: 本类型唯一的 `!Send` 字段是 `token`——`PieToken` 的 `!Send + !Sync` 说的是
+// **号只在它那张表里成立**（用户态怕的是句柄被线程 / 闭包捕获出去）。内核这一侧的表就是
+// `Task.pies`，而核际迁移是**连着表一起走**的：号没有离开它的表，作数据随表迁移没有内存
+// 安全含义。故此处只否掉"跨对象搬运"那一层禁令（`M` 一侧照旧由 `Arc<M>` 的
+// `Send + Sync` 约束管）。
+unsafe impl<M: Send + Sync> Send for Pie<M> {}
 
 // 手动 Clone：显式写清字段复制（Arc 强计数 +1）。
 impl<M> Clone for Pie<M> {
@@ -146,8 +155,8 @@ impl AnyPie {
         }
     }
 
-    /// 派生来源（父门闩的 token）；None = 原始自持。
-    pub fn sire(&self) -> Option<usize> {
+    /// 派生来源（父门闩的号）；None = 原始自持。
+    pub fn sire(&self) -> Option<PieToken> {
         match self {
             AnyPie::Hole(p) => p.sire,
             AnyPie::Pole(p) => p.sire,
@@ -205,7 +214,7 @@ impl AnyPie {
         }
     }
 
-    pub fn token(&self) -> usize {
+    pub fn token(&self) -> PieToken {
         match self {
             AnyPie::Hole(p) => p.token,
             AnyPie::Pole(p) => p.token,
@@ -245,13 +254,13 @@ impl AnyPie {
     }
 }
 
-/// 造 pie（accord / envcall 创建共用）：token 在此分配。
-pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<usize>) -> Pie<M> {
+/// 造 pie（accord / envcall 创建共用）：号在此分配。
+pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<PieToken>) -> Pie<M> {
     Pie {
         permission,
         sire,
         heir: None,
-        token: next_pie_token(),
+        token: alloc_id(),
         meta,
     }
 }
@@ -266,7 +275,7 @@ pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<usiz
 /// **表里没有 → `Denied`**（不是我的东西）。整枚在放锁前克隆出来：最后一份 clone 落在
 /// 锁外 drop，`Meta::drop`（唤醒等待者 / 撤映射 / 还帧）是 L3 或更外层的活，绝不能压在
 /// `pies` 锁上。
-pub(crate) fn locate(task: &Arc<Task>, token: usize) -> Result<AnyPie, GateError> {
+pub(crate) fn locate(task: &Arc<Task>, token: PieToken) -> Result<AnyPie, GateError> {
     let pies = task.pies.lock();
     pies.iter()
         .find(|p| p.token() == token)
@@ -285,7 +294,7 @@ pub(crate) fn locate(task: &Arc<Task>, token: usize) -> Result<AnyPie, GateError
 ///
 /// **不查「被关住」**（第三维，见 `envcall::pie::usable`）：它要摸**别人**的表，必须在
 /// 放开本任务 `pies` 之后判——故调用方拿到这里返回的抄件、放锁之后再问它。
-pub(crate) fn accede(task: &Arc<Task>, token: usize, need: Need) -> Result<AnyPie, GateError> {
+pub(crate) fn accede(task: &Arc<Task>, token: PieToken, need: Need) -> Result<AnyPie, GateError> {
     let pie = locate(task, token)?;
     if !pie.alive() {
         return Err(GateError::Dead);

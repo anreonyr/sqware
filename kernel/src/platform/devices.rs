@@ -290,10 +290,10 @@ pub(crate) fn install(task: &Task, items: Vec<(Name, AnyPie)>) -> usize {
     crate::putln!("devices: {n} handed to root");
     for (i, (name, pie)) in items.into_iter().enumerate() {
         let token = pie.token();
-        // 内核这一侧写的是**字节**（[`Pair::bytes`]）：它持的是自己表里的号（裸值），
-        // 而 `PieToken` 是"收号的人"才该有的类型（见 `env::wire::handle`）——
-        // 内核根本不经手句柄类型，只写记录。
-        let record = Pair::bytes(name, token);
+        // 内核这一侧写的是**字节**（[`Pair::bytes`]）：配对块是**记录**（线上形），
+        // 而号在内核手里是 `PieToken`（见 `env::wire::handle`）——记录里没有类型，
+        // 类型是两侧各自的账，故这里只把裸值写进去。
+        let record = Pair::bytes(name, token.get());
         // SAFETY: 记录与块同长（`PAIR_LEN` 是步长，编译期断言锁死）；写偏移恒 < 块长
         // （上面查过条数上限）。用 `write_unaligned` 是因为 `Block` 只保证页对齐，
         // 而记录步长 40 字节——记录自身不要求对齐。
@@ -304,7 +304,7 @@ pub(crate) fn install(task: &Task, items: Vec<(Name, AnyPie)>) -> usize {
             );
         }
         task.pies.lock().push(pie);
-        crate::putln!("  {} -> token {}", name.as_str(), token);
+        crate::putln!("  {} -> token {}", name.as_str(), token.get());
     }
     n
 }

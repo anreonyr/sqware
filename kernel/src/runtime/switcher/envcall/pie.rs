@@ -26,7 +26,7 @@
 
 use alloc::sync::Arc;
 
-use env::{Mark, PieCall, TaskId};
+use env::{Mark, PieCall, PieToken, TaskId};
 
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
@@ -57,15 +57,15 @@ pub(crate) fn dispatch(
         PieCall::UnsealHole { mark } => unseal_hole(frame, &ident, mark),
         PieCall::UnsealPole { size } => unseal_pole(frame, size),
         PieCall::UnsealNole => unseal_nole(frame, ident),
-        PieCall::Open { token } => open(frame, ident, token.get()),
-        PieCall::Shut { token } => shut(frame, ident, token.get()),
-        PieCall::Seal { token } => seal(frame, token.get()),
-        PieCall::Accord { src, dst, subset } => accord(frame, src.get(), dst, subset),
-        PieCall::Narrow { token, subset } => narrow(frame, token.get(), subset),
-        PieCall::Revoke { dst, token } => revoke(frame, dst, token.get()),
+        PieCall::Open { token } => open(frame, ident, token),
+        PieCall::Shut { token } => shut(frame, ident, token),
+        PieCall::Seal { token } => seal(frame, token),
+        PieCall::Accord { src, dst, subset } => accord(frame, src, dst, subset),
+        PieCall::Narrow { token, subset } => narrow(frame, token, subset),
+        PieCall::Revoke { dst, token } => revoke(frame, dst, token),
         PieCall::Collect { index } => collect(frame, index),
-        PieCall::Reserve { token } => reserve(frame, &ident, token.get()),
-        PieCall::Release { token } => release(frame, token.get()),
+        PieCall::Reserve { token } => reserve(frame, &ident, token),
+        PieCall::Release { token } => release(frame, token),
     })
 }
 
@@ -158,7 +158,7 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
         let mut pies = task.pies.lock();
         pies.try_reserve(1).map_err(|_| GateError::OoM)?;
         pies.push(AnyPie::Hole(pie));
-        Ok(token)
+        Ok(token.get())
     })();
     answer(frame, r);
     Outcome::Resume
@@ -189,7 +189,7 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
         let mut pies = task.pies.lock();
         pies.try_reserve(1).map_err(|_| GateError::OoM)?;
         pies.push(AnyPie::Nole(pie));
-        Ok(token)
+        Ok(token.get())
     })();
     answer(frame, r);
     Outcome::Resume
@@ -218,7 +218,7 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
         mail::pole::open(&meta, token, &task_space, creator_flags)?;
         task.pies.lock().push(AnyPie::Pole(pie));
-        Ok(token)
+        Ok(token.get())
     })();
     answer(frame, r);
     Outcome::Resume
@@ -226,7 +226,7 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
 
 /// 开闩：借映 Pole 页进当前任务空间 → `(VA, 这一段多大)`（同 token 幂等复用）。
 /// 仅对 Pole 成立。
-fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
+fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outcome {
     let looked = current()
         .running_task()
         .ok_or(GateError::Denied)
@@ -259,7 +259,7 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
 /// "封印后借入映射撤不掉"。故这里不走 [`gate::accede`]
 /// （它含存活闸），只 `locate` + 判权 + 判「被关住」；`pole::shut` 里同样没有存活闸，
 /// 两处是同一条语义，与 `Release`「你总得能放下手里的东西」对齐。权限要 `R`。
-fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome {
+fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outcome {
     let _ = &ident;
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
@@ -283,7 +283,7 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: usize) -> Outcome
 /// 只置死 + 唤醒等待者，**不摘表项**——持有者仍须 `Release` 收尾。故 `Release`
 /// 与 `Shut` 是**仅有的两处**不过存活闸的操作（理由各异：否则封印即泄漏表项 /
 /// 封印之后自己那张 PTE 撤不掉）。
-fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
+fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let me = current().running_task().ok_or(GateError::Denied)?;
         // `locate` 只定位；**死活先判、再判"是不是我开的"**——与 `accede` 同一条顺序，
@@ -315,7 +315,7 @@ fn seal(frame: &mut TrapContext, token: usize) -> Outcome {
 /// **② 把目标解析成 `Weak`**。
 fn accord(
     frame: &mut TrapContext,
-    src_token: usize,
+    src_token: PieToken,
     dst_id: TaskId,
     subset: Permission,
 ) -> Outcome {
@@ -338,7 +338,7 @@ fn accord(
 /// 不因"子集越权"这个恰好排在更前的判据换成 `Denied`——同一个 token 的答案不该按动词变。
 /// `Narrow` 本身不要求任何权利位（它只会把权限收小），故这里不用 `accede`，只
 /// `locate` + 判死活。
-fn narrow(frame: &mut TrapContext, token: usize, subset: Permission) -> Outcome {
+fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         let pie = gate::locate(&task, token)?;
@@ -370,7 +370,7 @@ fn narrow(frame: &mut TrapContext, token: usize, subset: Permission) -> Outcome 
 ///
 /// `token` = 该副本在**对端表里**的句柄（`Accord` 的返回值，经线形送达）——
 /// 不是我这边的 token。鉴权 = 「这枚的 `sire` 在我表里」。
-fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: usize) -> Outcome {
+fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
     let r = (|| -> Result<usize, GateError> {
         let caller = current().running_task().ok_or(GateError::Denied)?;
         let target = muster(dst_id).ok_or(GateError::Denied)?;
@@ -396,9 +396,9 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
             p.permission().bits() as usize,
             gate::vestor(&p, &gate::snap()).unwrap_or(TaskId::new(0)),
         ),
-        None => (0, 0, TaskId::new(0)),
+        None => (PieToken::NONE, 0, TaskId::new(0)),
     };
-    frame.gpr.set_x(Gprs::A0, token);
+    frame.gpr.set_x(Gprs::A0, token.get());
     frame.gpr.set_x(
         Gprs::A1,
         (vestor_id.get() << 32) | (perm_bits & 0xffff_ffff),
@@ -418,7 +418,7 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
 ///
 /// **记号只长在孔上**：别的资源（Pole/Nole/Tole）问不到它 ⇒ `Denied`——问不到就是
 /// "这一条候选不成立"，不假装有一格空记号。记号**一格返回**（不再拷出、不再要用户备缓冲）。
-fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: usize) -> Outcome {
+fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outcome {
     let r = (|| -> Result<(TaskId, TaskId, usize), GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         // **只定位**：`owner` 是资源来历，封印不使它消失（见函数头注）——这里刻意不过
@@ -456,7 +456,7 @@ fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: usize) -> Outcome
 /// **不判存活**——与 `shut` 并列，是**仅有的两处例外**：`Seal` 不摘表项，若本操作
 /// 也判存活，封印后的表项就永远摘不掉。语义 =「你总得能放下手里的东西」。不需要
 /// 任何权限位。
-fn release(frame: &mut TrapContext, token: usize) -> Outcome {
+fn release(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = match current().running_task() {
         Some(task) => gate::release(&task, token, &gate::snap()).map(|_| 0),
         None => Err(GateError::Denied),

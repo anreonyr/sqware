@@ -11,6 +11,8 @@
 
 use alloc::sync::Weak;
 
+use env::PieToken;
+
 use super::cull;
 use super::pie::GateError;
 use super::snap::Snap;
@@ -23,7 +25,7 @@ use crate::work::unit::task::Task;
 pub(crate) fn revoke(
     caller: &Task,
     target: &Weak<Task>,
-    token: usize,
+    token: PieToken,
     snap: &Snap,
 ) -> Result<usize, GateError> {
     let target = target.upgrade().ok_or(GateError::Denied)?;

@@ -12,7 +12,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::TaskId;
+use env::{PieToken, TaskId};
 
 use crate::work::mail::hole::{self, HoleMeta};
 use crate::work::mail::nole::{self, NoleMeta};
@@ -26,7 +26,7 @@ use super::snap::{self, Snap};
 /// 摘掉 `t` 表里 `token` 那枚，返回摘下的门闩（表里没有 → None）。
 ///
 /// **调用方须在锁外 drop 返回值**：它可能是资源实体的最后一份强引用。
-fn take(t: &Task, token: usize) -> Option<AnyPie> {
+fn take(t: &Task, token: PieToken) -> Option<AnyPie> {
     let mut pies = t.pies.lock();
     let pos = pies.iter().position(|p| p.token() == token)?;
     Some(pies.remove(pos))
@@ -58,17 +58,17 @@ fn pole_meta(pie: &AnyPie) -> Option<Arc<PoleMeta>> {
 ///
 /// 故**入口处一次备足**，备不出来直接返回 0（一枚未摘，状态原封不动）：
 /// 失败是原子的，代价只是这一次放弃级联——内存缓过来后下次退场仍会级联。
-pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
+pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> usize {
     let (root_task, root_token) = root;
     let mut removed = 0usize;
-    let mut unmaps: Vec<(Arc<PoleMeta>, usize)> = Vec::new();
+    let mut unmaps: Vec<(Arc<PoleMeta>, PieToken)> = Vec::new();
 
     // 上限估计：门闩总数 = 各任务 `pies` 长度之和。取不到容量 ⇒ 放弃本次。
     // （`snap` 是只读快照，长度在本次调用内不变，故这个上界是自洽的。）
     if unmaps.try_reserve(snap.len()).is_err() {
         return 0;
     }
-    let mut frontier: Vec<usize> = Vec::new();
+    let mut frontier: Vec<PieToken> = Vec::new();
     if frontier.try_reserve(1).is_err() {
         return 0;
     }
@@ -86,8 +86,8 @@ pub(crate) fn cull(root: (Arc<Task>, usize), snap: &Snap) -> usize {
 
     // 2. BFS：逐层反查 `sire ∈ frontier` 的子门闩。
     while !frontier.is_empty() {
-        let mut next: Vec<usize> = Vec::new();
-        let mut scan: Vec<(Arc<Task>, usize)> = Vec::new();
+        let mut next: Vec<PieToken> = Vec::new();
+        let mut scan: Vec<(Arc<Task>, PieToken)> = Vec::new();
         for f in frontier.drain(..) {
             // 查询面容量不够 ⇒ 本层到此为止（已摘的照常记着，稍后统一撤映射）。
             let Some(kin) = snap::heirs(f, snap) else {
@@ -175,9 +175,9 @@ pub(crate) fn doom(tid: TaskId) {
     // 里没有错误通道），故"这里不可失败"就等于"一个任务退场时堆一紧 ⇒ 整机
     // halt"。容量备不出来就**放弃级联**——与本条开头"找不到该任务就 `return`"
     // 是同一条语义（不做，而不是崩）。
-    let tokens: Vec<usize> = {
+    let tokens: Vec<PieToken> = {
         let pies = task.pies.lock();
-        let mut v: Vec<usize> = Vec::new();
+        let mut v: Vec<PieToken> = Vec::new();
         if v.try_reserve(pies.len()).is_err() {
             return;
         }
@@ -218,9 +218,9 @@ fn seal_owned(tid: TaskId, task: &Arc<Task>) -> usize {
     }
     // 先挑出"我开的"那些 token（持自己那张表）。**不就地封印**：`doom` 的调用链上
     // `reap` 无锁，而持表锁调 `messenger::wipe`（L3）就是 3→3 自己撞自己。
-    let owned: Vec<usize> = {
+    let owned: Vec<PieToken> = {
         let pies = task.pies.lock();
-        let mut v: Vec<usize> = Vec::new();
+        let mut v: Vec<PieToken> = Vec::new();
         if v.try_reserve(pies.len()).is_err() {
             return 0;
         }

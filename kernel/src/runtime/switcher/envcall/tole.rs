@@ -21,6 +21,8 @@ use core::time::Duration;
 
 use env::{HoleDir, ToleCall};
 
+use env::PieToken;
+
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{ToleMeta, tole};
@@ -42,10 +44,10 @@ pub(crate) fn dispatch(
     let _ = &ident;
     Some(match call {
         ToleCall::Unseal { shared } => unseal(frame, shared),
-        ToleCall::Attach { tole, pie, dir } => attach(frame, tole.get(), pie.get(), dir),
-        ToleCall::Detach { tole, pie, dir } => detach(frame, tole.get(), pie.get(), dir),
+        ToleCall::Attach { tole, pie, dir } => attach(frame, tole, pie, dir),
+        ToleCall::Detach { tole, pie, dir } => detach(frame, tole, pie, dir),
         // 唯一可能换帧的一支：不走 `Outcome::Resume` 的统一出口。
-        ToleCall::Await { tole, millis } => return Some(await_(frame, tole.get(), millis)),
+        ToleCall::Await { tole, millis } => return Some(await_(frame, tole, millis)),
     })
 }
 
@@ -80,7 +82,7 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
         let mut pies = task.pies.lock();
         pies.try_reserve(1).map_err(|_| GateError::OoM)?;
         pies.push(AnyPie::Tole(pie));
-        Ok(token)
+        Ok(token.get())
     })();
     answer(frame, r);
     Outcome::Resume
@@ -91,7 +93,7 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
 /// **成员的「被关住」在这里查**：挂一格就是声明"我要用它"——它若已被我交出去
 /// （`Caged`），挂进来只会让组替我答"它有事"而我又取不走它。组的「被关住」不查：
 /// `ONLY` 只在**等待位**上成立，改池子不算用它（见模块头）。
-fn attach(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> Outcome {
+fn attach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleDir) -> Outcome {
     let r = (|| -> Result<(), GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         let latch = gate::accede(&task, group, Need::Store)?;
@@ -106,7 +108,7 @@ fn attach(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) ->
 }
 
 /// 摘一格：组要 `STORE`，成员要 `FETCH`；**两道「被关住」都不查**（收场动作）。
-fn detach(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) -> Outcome {
+fn detach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleDir) -> Outcome {
     let r = (|| -> Result<(), GateError> {
         let task = current().running_task().ok_or(GateError::Denied)?;
         let latch = gate::accede(&task, group, Need::Store)?;
@@ -131,7 +133,7 @@ fn detach(frame: &mut TrapContext, group: usize, member: usize, dir: HoleDir) ->
 /// 等待权已被我过户（`usable`）→ `Caged`。折成一个码会把"组没了，换策略"与"号拿错了，
 /// 修 bug"压成同一件——而这两件事的处置正好相反。顺序本身由共用的 `gate::accede` 决定
 /// （死活先于权限），本处只补第三维。
-fn await_(frame: &mut TrapContext, group: usize, millis: usize) -> Outcome {
+fn await_(frame: &mut TrapContext, group: PieToken, millis: usize) -> Outcome {
     let dur = if millis == usize::MAX {
         Duration::MAX
     } else {
@@ -158,7 +160,7 @@ fn await_(frame: &mut TrapContext, group: usize, millis: usize) -> Outcome {
         return Outcome::Resume;
     }
     // 挂起后恢复读到的 a0/a1 = 挂起前预置值 ⇒ 预置「没等到」；当场判定再改写。
-    answer_pair(frame, 0, HoleDir::Pull);
+    answer_pair(frame, PieToken::NONE, HoleDir::Pull);
     match tole::wait(&meta, dur) {
         // 未换帧：信标已至（组变过）或期限为零 ⇒ 以当前快照为准再查一遍。
         Ok(Handoff::Resume(())) => {
@@ -182,7 +184,7 @@ fn await_(frame: &mut TrapContext, group: usize, millis: usize) -> Outcome {
 ///
 /// 两种成员各读各的位：孔按方向读槽（空/满），铃读那一位（响/没响）；铃没有方向，
 /// 答出的方向恒 `Pull`（与 `MailCall::Wait` 只认 `Pull` 同一条约定）。
-fn ready(meta: &ToleMeta) -> Option<(usize, HoleDir)> {
+fn ready(meta: &ToleMeta) -> Option<(PieToken, HoleDir)> {
     let task = current().running_task()?;
     let cells = meta.cells();
     let pies = task.pies.lock();
@@ -260,8 +262,8 @@ fn answer_void(frame: &mut TrapContext, r: Result<(), GateError>) {
 }
 
 /// 写回 a0 + a1（两件返回；契约见 `crates/env` 的 `FromPair`）。
-fn answer_pair(frame: &mut TrapContext, token: usize, dir: HoleDir) {
-    frame.gpr.set_x(Gprs::A0, token);
+fn answer_pair(frame: &mut TrapContext, token: PieToken, dir: HoleDir) {
+    frame.gpr.set_x(Gprs::A0, token.get());
     frame.gpr.set_x(
         Gprs::A1,
         match dir {

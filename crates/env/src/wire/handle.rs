@@ -33,11 +33,16 @@ use super::{Decode, Wire};
 /// **表的身份**。注意别把 [`VirtAddr`] 也归进来——那是**空间**的身份，同一个空间里的多枚线程
 /// 共用它，跨线程合法；判它在不在自己手里的是空间，不是表。
 ///
-/// **造号的只有两处**：[`PieToken::from_bytes`]（收号——号从线上/账上到来）与 [`new`]
-/// （只在 `env` 内部：解码面自己用）。故"从一枚自己算出来的数字造个号"在这棵树里
-/// **没有门**：外面拿到的号只能来自 [`from_bytes`]，交出去只能经 [`get`] 变裸值。
+/// **造号的两扇门**：[`PieToken::from_bytes`]（**收号**——号从线上/账上到来）与
+/// [`PieToken::mint`]（**铸号**——给"号的来源"那一侧：内核）。用户态那一面仍然只该经
+/// `from_bytes` 收号；[`new`] 是 `pub(crate)` 的解码面。
+///
+/// **照实记**：`mint` 不动能力面——`from_bytes` 本来就公开，用户态今天就能把任意数字拼
+/// 成号；而伪造的号在**调用方自己那张表**里查不到（`gate::locate` 只查表）⇒ 照旧
+/// `Denied`。两扇门的分工因此是**词汇**的分工："我收到一枚号" vs "我是这枚号的来源"。
 ///
 /// [`from_bytes`]: PieToken::from_bytes
+/// [`mint`]: PieToken::mint
 /// [`new`]: PieToken::new
 /// [`get`]: PieToken::get
 #[repr(transparent)]
@@ -57,6 +62,14 @@ impl PieToken {
     ///
     /// 外面没有这扇门：号只能**到来**（[`PieToken::from_bytes`]）或**交出**（[`PieToken::get`]）。
     pub(crate) const fn new(v: usize) -> Self {
+        Self(v, PhantomData)
+    }
+
+    /// **铸号**：号的来源那一侧（内核）的门——这枚号的出生地。
+    ///
+    /// 用户态那一面没有这扇门的**位置**（它只该经 [`PieToken::from_bytes`] 收号）；
+    /// 这不是一扇新的能力门，理由见本类型头注的照实记。
+    pub const fn mint(v: usize) -> Self {
         Self(v, PhantomData)
     }
 
