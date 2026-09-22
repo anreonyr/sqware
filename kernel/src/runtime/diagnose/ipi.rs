@@ -56,21 +56,21 @@ static SSIP_EXIT: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 static SELF_ADDR: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
 /// WFI 前置位（`fetch::wait` 调；framework 档）。
-pub(crate) fn wfi_entry(hart: usize) {
-    if hart < SLOTS {
-        IN_WFI[hart].store(1, Ordering::Relaxed);
+pub(crate) fn wfi_entry(hart: crate::hart::HartId) {
+    if hart.get() < SLOTS {
+        IN_WFI[hart.get()].store(1, Ordering::Relaxed);
         let me = crate::work::room::scheduler::core::current() as *const _ as usize;
-        SELF_ADDR[hart].store(me, Ordering::Relaxed);
+        SELF_ADDR[hart.get()].store(me, Ordering::Relaxed);
     }
 }
 
 /// WFI 返回后记一笔（`fetch::wait` 调；framework 档）。`ssip` = 返回时 `sip.SSIP` 置否。
-pub(crate) fn wfi_exit(hart: usize, ssip: bool) {
-    if hart < SLOTS {
-        IN_WFI[hart].store(0, Ordering::Relaxed);
-        EXIT[hart].fetch_add(1, Ordering::Relaxed);
+pub(crate) fn wfi_exit(hart: crate::hart::HartId, ssip: bool) {
+    if hart.get() < SLOTS {
+        IN_WFI[hart.get()].store(0, Ordering::Relaxed);
+        EXIT[hart.get()].fetch_add(1, Ordering::Relaxed);
         if ssip {
-            SSIP_EXIT[hart].fetch_add(1, Ordering::Relaxed);
+            SSIP_EXIT[hart.get()].fetch_add(1, Ordering::Relaxed);
         }
     }
 }
