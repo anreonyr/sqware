@@ -9,14 +9,6 @@
 use protocol::driver::supply::call::{Kind, Need, class_block};
 use runtime::core::port::{Access, Policy};
 
-/// 本域那张表里的第几格（判别号 = 数组下标；归位按位次 ⇒ 两者同值）。
-#[repr(usize)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Slot {
-    /// 实时钟那一页寄存器。
-    Rtc = 0,
-}
-
 /// 本域要的那一枚 —— **直接就是单子上的那一条**。
 ///
 /// 类取 `google,goldfish-rtc`（这台实时钟的绑定名）。

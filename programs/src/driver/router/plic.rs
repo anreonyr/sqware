@@ -10,11 +10,12 @@
 //! （`interrupts-extended` 的项序，`cell == 9` 才是 S 模式外部中断）。内核不代劳——
 //! 它只把设备树原样搬给域（`platform/devices.rs::supply_dtb`）。
 //!
-//! # 本域要哪四样
+//! # 本域要哪三样
 //!
 //! 要哪几样、多少权、以什么形态出去，写在**本域自己开的**需求单里
-//! （`programs::supervisor::plic::needs`）：本域按 `Slot` 认领自己的那几格，名字不在本文件里第二遍。
-//! 名字本身是 **boot 给的**（设备树节点 basename；`devicetree` / `irq` 两条由内核定）。
+//! （[`crate::driver::router::needs`]）：本域收到记录后**按位次**认领自己那几格——**控制器
+//! 按类**（`compatible`，编排域读树把类定成那一段区），**设备树本体与门铃按坐标本身**
+//! （`Key::dtb()` / `Key::irq()`：它们不是树里的节点）。名字不在本文件里第二遍。
 //! 本模块只管这台控制器自己——寄存器布局、几条线、哪个 context。
 //!
 //! # 线集合怎么来的（以及哪两类源**不**进来）
@@ -224,14 +225,16 @@ pub struct Sources {
     pub mapped: usize,
     /// 指到本控制器、但 `#interrupt-cells` 不是 1 / 2 的节点数——本域**拒解**那一格。
     pub unparsed: usize,
-    /// 指到本控制器、但**没有 `reg`** 的节点数——客户只有区可报，故这台报不出来。
+    /// 指到本控制器、但**报不出区**的节点数（没有 `reg`，或 `reg` 都不是一段区：零址 / 零长）
+    /// ——客户只有区可报，故这台报不出来。
     pub unregion: usize,
 }
 
 /// 一条中断源：**那一段区 + 线号**（`name` 只为日志；装不下 ⇒ `None`）。
 ///
-/// 区取节点的 `reg` **首段**：内核就是按 (节点, `reg` 段) 造门闩的，故那一段与内核写进
-/// 配对块的基址逐字相同（两侧读同一棵树）。
+/// 区取节点的**第一段有效的** `reg`：内核就是按 (节点, `reg` 段) 造门闩的，且跳过零址 / 零长
+/// 的那种写法（`devices.rs`）——本表跟着跳过同一批，故**两侧报出来的基址逐字相同**（两侧读
+/// 同一棵树，同一条"哪一段才算"的规矩各写了一遍）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Source {
     pub key: Key,
@@ -247,7 +250,7 @@ impl Sources {
     }
 }
 
-/// 扫一遍树：收线号，顺手把"没进来的"分成四笔。
+/// 扫一遍树：收线号，顺手把"没进来的"分成五笔。
 ///
 /// 判据只有一条，且只问树：`interrupt-parent` 等于本控制器的 phandle（**只认节点自己写的**，
 /// 不沿父链继承——没写的那一类记进 `unparented`）。线号取中断说明符的**第一个单元**
@@ -302,12 +305,14 @@ fn sources(
             out.beyond += 1;
             continue;
         }
-        let Some(base) = node
-            .reg()
-            .and_then(|mut r| r.next())
-            .map(|r| r.starting_address as usize)
-        else {
-            // 指到本控制器、但没有 `reg`：客户只有区可报，故这台报不出来（内核也没给它门闩）。
+        // 客户的坐标是内核按**有效的** `reg` 段造的 ⇒ 本表也取第一段有效的（零址 / 零长不算
+        // 一段区，内核那侧同样跳过——两侧同一条规矩，各写了一遍，见 `platform/devices.rs`）。
+        let Some(base) = node.reg().and_then(|regs| {
+            regs.filter(|r| r.size.is_some_and(|size| size != 0))
+                .map(|r| r.starting_address as usize)
+                .find(|base| *base != 0)
+        }) else {
+            // 没有**有效**的 `reg` 段（或压根没有 `reg`）：客户只有区可报，故这台报不出来。
             out.unregion += 1;
             continue;
         };

@@ -18,18 +18,6 @@ use runtime::core::port::{Access, Policy};
 /// [`super::plic`] 按它找节点读属性，两侧同一个字。
 pub const PLIC: &str = "sifive,plic-1.0.0";
 
-/// 本域那张表里的第几格（判别号 = 数组下标；归位按位次 ⇒ 两者同值）。
-#[repr(usize)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Slot {
-    /// 中断控制器那一页寄存器。
-    Plic = 0,
-    /// 设备树本体（只读自描述）。
-    Dtb = 1,
-    /// 中断门铃（空载荷）。
-    Bell = 2,
-}
-
 /// 本域要的三枚 —— **直接就是单子上的那几条**。
 pub const WANTS: &[Need] = &[
     Need::class(

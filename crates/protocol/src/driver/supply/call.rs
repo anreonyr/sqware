@@ -37,6 +37,8 @@ pub const WANT_MAX: usize = 5;
 /// 是本侧选"一帧一单、不流式"的结果。
 pub const WANT_LEN: usize = core::mem::size_of::<Want>();
 const _: () = assert!(WANT_LEN == 32);
+/// **各项之和就是它**——留一格隐式的尾巴，`want_bytes` 就会把未初始化字节读上线（见 `Want` 的注）。
+const _: () = assert!(core::mem::size_of::<Want>() == env::KEY_LEN + 4 + 4 + 1 + 7);
 /// 帧头：`[op][条数]` + 那一格"给谁"（8 字节 LE，与 `operator::tell` 同一口径）。
 const HEAD_LEN: usize = 2 + 8;
 pub const ORDER_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;
@@ -56,6 +58,10 @@ pub const BAD: u8 = 4;
 /// （`protocol::system::grant::each`）。
 ///
 /// `repr(C)` + 定长字段 ⇒ 尺寸即线格式（编译期断言锁死），与 `Pair` 同一条纪律。
+///
+/// **留白 7 字节是明的**（`kind` 之后）：它把记录填满 32——**不许有隐式尾巴**。`want_bytes`
+/// 按整条读，隐式留白就是**未初始化字节上线**（照实记：坐标从 32 字节的名字块换成 16 字节的
+/// `Key` 之后，对齐从 4 跳到 8，尾巴那 4 字节是这么冒出来的；补一格明的就没了）。
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Want {
@@ -63,7 +69,7 @@ pub struct Want {
     access: u32,
     policy: u32,
     kind: u8,
-    pad: [u8; 3],
+    pad: [u8; 7],
 }
 
 /// 种类那一格的判别号（`Kind` 是 `repr(u8)`，故这就是线格式）。
@@ -78,7 +84,7 @@ impl Want {
         access: 0,
         policy: 0,
         kind: KIND_POLE,
-        pad: [0u8; 3],
+        pad: [0u8; 7],
     };
 
     /// 线上那一条：坐标已定（由 [`Need::settle`] 定出来，或编排域自己按坐标要）。
@@ -88,7 +94,7 @@ impl Want {
             access: access.bits().bits(),
             policy: policy.bits().bits(),
             kind: kind as u8,
-            pad: [0u8; 3],
+            pad: [0u8; 7],
         }
     }
 
@@ -232,7 +238,7 @@ pub fn unpack_order(bytes: &[u8]) -> Option<Order<'_>> {
 }
 
 /// 读出来的一张单子（借字节）。逐条 `read_unaligned`——缓冲只保证 1 字节对齐
-/// （与 `Pair` 同一条理由：线格式的步长是 44，而块只保证页对齐）。
+/// （与 `Pair` 同一条理由：线格式的步长是 32，而块只保证页对齐）。
 pub struct Order<'a> {
     bytes: &'a [u8],
 }

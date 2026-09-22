@@ -48,6 +48,11 @@ impl Machine {
     /// 没有 `reg` 的节点**不参与**：内核就是按 `reg` 段造门闩的，那种节点根本没有门闩可取。
     /// 失败：`None` = 树里没有这一类（不是错误：单子要的东西这台机器上没有）。
     ///
+    /// **照实记（两侧同一条规矩，写了两遍）**：零址 / 零长的 `reg` 不代表一段区——内核那侧就是
+    /// 这么跳过它的（`devices.rs`），本函数取**第一段有效的**（同一对条件，写在这里）。不这么办
+    /// 的话，"首址最小"那把尺会拿一段**内核没造过**的区去比，把真有门闩的那一台比下去。要收成
+    /// 一处，得让"哪一段才算"这条定义只写一遍——那是"第几段"那一格的事（与"第几台"同一类）。
+    ///
     /// **照实记**：多段 `reg` 的设备只认**首段**（单子上没有"第几段"这一格，与"第几台"同一类
     /// 问题）；今天 virt 上无人要那种设备。
     pub fn site_of(&self, class: &str) -> Option<Key> {
@@ -59,11 +64,11 @@ impl Machine {
             {
                 continue;
             }
-            let Some(base) = node
-                .reg()
-                .and_then(|mut r| r.next())
-                .map(|r| r.starting_address as usize)
-            else {
+            let Some(base) = node.reg().and_then(|regs| {
+                regs.filter(|r| r.size.is_some_and(|size| size != 0))
+                    .map(|r| r.starting_address as usize)
+                    .find(|base| *base != 0)
+            }) else {
                 continue;
             };
             if hit.is_none_or(|(best, _)| base < best) {
@@ -76,7 +81,11 @@ impl Machine {
     /// 载荷区：`/chosen` 的 `linux,initrd-start` → 那一段区。
     ///
     /// 契约：**只读那一格属性，不做任何换算**（`end` 的页取整是内核那一侧的事，不进坐标——
-    /// 坐标是键，键取直接读到的那一个数）。失败：/chosen 里没有那一对属性 ⇒ `None`。
+    /// 坐标是键，键取直接读到的那一个数）。失败：`/chosen` 里没有那一格 ⇒ `None`。
+    ///
+    /// **照实记**：`end` 不读，内核那三条守卫（`start != 0` / `end > start` / 页对齐）也不重复
+    /// ——它们决定的是**内核造不造那一条记录**。故在一棵写了坏值的树上，这里问到的坐标在块里
+    /// 没有：装配当场停在 `system: payload ask`（**取不到，不是静默取错**）。
     pub fn payload(&self) -> Option<Key> {
         let chosen = self.fdt.find_node("/chosen")?;
         let start = chosen.property("linux,initrd-start")?.as_usize()?;

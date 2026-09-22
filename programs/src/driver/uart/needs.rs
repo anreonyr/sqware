@@ -10,14 +10,6 @@
 use protocol::driver::supply::call::{Kind, Need, class_block};
 use runtime::core::port::{Access, Policy};
 
-/// 本域那张表里的第几格（判别号 = 数组下标；归位按位次 ⇒ 两者同值）。
-#[repr(usize)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Slot {
-    /// 串口那一页寄存器。
-    Serial = 0,
-}
-
 /// 本域要的那一枚 —— **直接就是单子上的那一条**。
 ///
 /// 类取 `ns16550a`（这台串口的绑定名）：**设备的类是驱动的专业**，机器把它摆在哪是树的事。

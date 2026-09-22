@@ -14,7 +14,7 @@
 //!   3  三趟登记 —— 成功那一格与**失败域**都卖读数（答码见 `line::call` 那张表）：
 //!        占那条 virtio 线    → `lodger: occupy=0`    （0 = OK：线归本域）
 //!        同一条线再来一次     → `lodger: taken=2`     （2 = TAKEN：主人是本域自己）
-//!        报树里没有的名字     → `lodger: unknown=1`   （1 = UNKNOWN：解树那一处答不出）
+//!        报一件不是中断源的东西 → `lodger: unknown=1`   （1 = UNKNOWN：源表里没有那个坐标——门铃）
 //!   4  **直接死**：不说退场、不交回 ⇒ 它铸的那枚孔随退出钩子封印 ⇒ 路由者被叫醒、探活
 //!      答不出 ⇒ 拆线 + 空出格子（读数 `router: vacate line=1`）。死之前报一行 `lodger: pies=`
 //!      ——**失败那两趟两边收干净了没有**的读数（见下面那一注）。
@@ -68,10 +68,6 @@ use runtime::env::unit as utask;
 /// 本域要找的那位服务（线路由者）在树上的名字。
 const SERVICE: &str = "router";
 
-/// `UNKNOWN` 那一趟报的坐标：**故意**是树里没有的那一段——基址 0，而内核扫树时正是把零址的
-/// `reg` 段跳掉的（`platform/devices.rs`）⇒ 那一段从来不是中断源。
-const NOWHERE: u64 = 0;
-
 /// 等树 / 办一趟登记的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
@@ -102,12 +98,14 @@ extern "C" fn main() -> ! {
         exit_with_note(E_TRIP, "lodger: no key")
     };
 
-    // 3. 三趟登记：占上 / 同一条线再来一次 / 树里没有的那一段。
+    // 3. 三趟登记：占上 / 同一条线再来一次 / 报一件**不是中断源**的东西。
     let (ok, held) = attempt(entry, key);
     say(&format!("lodger: occupy={ok}"));
     let (taken, _) = attempt(entry, key);
     say(&format!("lodger: taken={taken}"));
-    let unknown = attempt(entry, Key::region(NOWHERE)).0;
+    // 第三趟报**门铃**那一形：坐标本身是合法的（内核真造过它），而**线只挂在设备上**
+    // ——路由者在它那张源表里找不到这个坐标，答 `UNKNOWN`（1）。
+    let unknown = attempt(entry, Key::irq()).0;
     say(&format!("lodger: unknown={unknown}"));
 
     // 4. **直接死**：不说退场那一句、不交回。`held` 那条线活到本域退场为止——它铸的那枚孔

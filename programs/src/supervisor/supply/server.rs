@@ -93,7 +93,7 @@ pub fn serve(
     }
 }
 
-/// 一条记录的字节：**名字块 + 句柄**——尺寸由 `Pair` 自己锁死，这里只是一次只读的
+/// 一条记录的字节：**坐标 + 号**——尺寸由 `Pair` 自己锁死，这里只是一次只读的
 /// 字节视图（`Pair` 是 `repr(C)`，内容即线格式）。
 pub(crate) fn pair_bytes(pair: &Pair) -> &[u8; PAIR_LEN] {
     // SAFETY: `Pair` 是 `repr(C)`、尺寸由编译期断言等于 `PAIR_LEN`，只读解释为字节安全。

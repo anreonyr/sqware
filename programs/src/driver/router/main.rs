@@ -75,7 +75,7 @@
 //!
 //! # 读数
 //!
-//! - 起域那一行：`device_count` / `ctx` / 树里那些线（**带名字**）/ **没进来的四笔**；
+//! - 起域那一行：`device_count` / `ctx` / 树里那些线（**带名字**）/ **没进来的五笔**；
 //! - `router: line <n> = <设备名>`——**登记那一趟**（解树解出来的权威，只由登记产生）；
 //! - 每条线**第一次**被领到时一行 `router: line=<n>`——**只可能由中断链产生**
 //!   （串口驱动开闸 ⇒ 设备拉线 ⇒ 控制器 ⇒ 内核摇铃 ⇒ 本域 claim）；
@@ -193,7 +193,7 @@ extern "C" fn main() -> ! {
         exit_with(E_TREE);
     };
     say("router: docks open");
-    // 线集合与四笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
+    // 线集合与五笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
     say(&alloc::format!(
         "router: device_count={} ctx={} lines={:?} unparented={} beyond={} mapped={} unparsed={} unregion={}",
         plic.device_count(),
