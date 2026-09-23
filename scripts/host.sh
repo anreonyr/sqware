@@ -104,7 +104,7 @@ tag="host-$(date +%s)-$$"
 log="$out/$tag.log"
 total=0
 
-# `--tests`：只跑测试靶（三台都只有测试靶，没有 lib 那一路），不碰文档测试。
+# `--tests`：只跑测试靶（**每一台**都只有测试靶，没有 lib 那一路），不碰文档测试。
 for m in crates/operator-case crates/line-case crates/judge-case crates/principal-case crates/board-case crates/session-case crates/system-case; do
   echo "== $m" >> "$log"
   cargo test --manifest-path "$m/Cargo.toml" \

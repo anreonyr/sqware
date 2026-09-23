@@ -8,7 +8,7 @@ publish = false
 # 与**盟籍核心**（`crates/protocol/src/coalition/core.rs`）按 `#[path]` 编进测试靶，
 # 让"名册与谱系"与"一张两列表"的规矩在宿主上真跑一遍。
 #
-# 为什么单独一个 crate（与另外三台同一条，理由与两条实测读数记在 `crates/operator-case`
+# 为什么单独一个 crate（与别的几台同一条，清单见 `scripts/host.sh` 头注；理由与两条实测读数记在 `crates/operator-case`
 # 的 `Cargo.toml`）：`protocol` 是 `[lib] test = false`（riscv 上编不出 libtest），而
 # **链接 `protocol` 也不行**（它依赖 `runtime`，那里面两处 riscv 内联汇编在宿主上编不出来）。
 # 故**不进工作区**（根 `Cargo.toml` 的 `exclude`）、把核心源码**逐字未改**地 `#[path]` 进来。

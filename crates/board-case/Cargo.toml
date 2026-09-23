@@ -7,7 +7,8 @@ publish = false
 # 宿主（x86_64）专用 crate：把**真的**板核心（`crates/protocol/src/system/board/core.rs`）
 # 按 `#[path]` 编进测试靶，让"公示板 + 待客台账"的规矩在宿主上真跑一遍。
 #
-# 与另外三台同一条路（理由与两条实测读数见 `crates/operator-case` 的 `Cargo.toml`：
+# 与别的几台同一条路（清单与理由见 `scripts/host.sh` 头注；两条实测读数见
+# `crates/operator-case` 的 `Cargo.toml`：
 # `protocol` 是 `[lib] test = false`，而链接 `protocol` 会拖进 `runtime` 的两处 riscv 内联
 # 汇编）。故**不进工作区**、逐字未改地 `#[path]` 进来。
 #

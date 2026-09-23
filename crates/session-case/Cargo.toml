@@ -8,7 +8,7 @@ publish = false
 # 码头 / 泊位 / 认领那台机器）按 `#[path]` 编进测试靶，让"两个陌生实体怎么把会话的两端凑到
 # 各自手里"这套规矩在宿主上真跑一遍。
 #
-# 为什么单独一个 crate（与另外五台同一条，理由与两条实测读数见 `crates/operator-case`）：
+# 为什么单独一个 crate（与别的几台同一条，清单见 `scripts/host.sh` 头注；理由与两条实测读数见 `crates/operator-case`）：
 # `protocol` 是 `[lib] test = false`（riscv 上编不出 libtest），而链接 `protocol` 会拖进
 # `runtime`。故**不进工作区**（根 `Cargo.toml` 的 `exclude`）、核心源码**逐字未改**地
 # `#[path]` 进来。
