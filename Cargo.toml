@@ -23,6 +23,7 @@ exclude = [
     "crates/judge-case",
     "crates/principal-case",
     "crates/board-case",
+    "crates/session-case",
 ]
 members = [
     "kernel",

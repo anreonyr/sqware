@@ -430,7 +430,11 @@ mod tests {
             "谁问都一样：这一格空了"
         );
         assert_eq!(b.rows().count(), 0, "扫干净了");
-        assert_eq!(b.find(name("console")), Some(0), "**名字照旧**（撤牌子不动名字）");
+        assert_eq!(
+            b.find(name("console")),
+            Some(0),
+            "**名字照旧**（撤牌子不动名字）"
+        );
     }
 
     #[test]

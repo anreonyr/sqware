@@ -1,6 +1,7 @@
 #!/bin/sh
-# 宿主档的门 —— **五处纯核心**的规矩，在**宿主**上真跑一遍：
-# 树（八条原语）· 线（账 + 界）· 门禁（三格裁决 + 那本账）· 名册与盟籍（两本册子）· 板（牌子 + 台账）。
+# 宿主档的门 —— **六处纯核心**的规矩，在**宿主**上真跑一遍：
+# 树（八条原语）· 线（账 + 界）· 门禁（三格裁决 + 那本账）· 名册与盟籍（两本册子）·
+# 板（牌子 + 台账）· 会话（码头 / 泊位 / 认领那台机器）。
 #
 # # 为什么要有这一门
 #
@@ -20,7 +21,7 @@
 #   2) **`cargo check` 在同一个目标上是过的**（它不做代码生成）——所以"protocol 在宿主编得过"
 #      这句话只有在 check 那一档才成立。本门第一版就栽在这一格上（照实记）。
 #
-# 故走 `crates/alloc-probe` 那条现成的路：五台**编外**（根 workspace `exclude`）的宿主 crate
+# 故走 `crates/alloc-probe` 那条现成的路：六台**编外**（根 workspace `exclude`）的宿主 crate
 # 各把若干份**逐字未改**的核心源码 `#[path]` 编进自己的测试靶：
 #
 #   `crates/operator-case`   `crates/protocol/src/operator/core.rs`（只依赖 `env`）
@@ -31,6 +32,10 @@
 #                            crate::principal::core::PrincipalId` ⇒ 两本册子同住一台，
 #                            免得那一份核心在两台里各编一遍、用例跑两遍）
 #   `crates/board-case`      `crates/protocol/src/system/board/core.rs`
+#   `crates/session-case`    `crates/protocol/src/session/core.rs`（**这一台桩最大**：会话核心
+#                            只跟运行时那一层说几句话（铸孔 / 交出 / 放下 / 推 / 收 / 扫表 /
+#                            等 / 时钟），故靶里给了一张**进程内的假表** + 一枚**假钟** ——
+#                            于是"有界等"在宿主上是确定性的）
 #
 # **照实记（后两台是"救活"的）**：`principal/core.rs` / `coalition/core.rs` / `board/core.rs`
 # 各自的 `#[cfg(test)]` 模块**从写下那天起一次没跑过**（`protocol` 编不到、也没有别的靶编它）——
@@ -49,7 +54,7 @@
 #
 # # 判据（三条一起）
 #
-#   1) 五台 `cargo test` **退出码都 0**；
+#   1) 六台 `cargo test` **退出码都 0**；
 #   2) 每台的末行汇总 `test result: ok. N passed; 0 failed`，且 **N ≥ 1**（零用例要红：测试靶
 #      没被发现就等于白立一档——`framework.sh` 的"静默零用例"是同一条顾虑）；
 #   3) 全程无 `FAILED` / `panicked`。
@@ -74,7 +79,7 @@ log="$out/$tag.log"
 total=0
 
 # `--tests`：只跑测试靶（三台都只有测试靶，没有 lib 那一路），不碰文档测试。
-for m in crates/operator-case crates/line-case crates/judge-case crates/principal-case crates/board-case; do
+for m in crates/operator-case crates/line-case crates/judge-case crates/principal-case crates/board-case crates/session-case; do
   echo "== $m" >> "$log"
   cargo test --manifest-path "$m/Cargo.toml" \
     --target x86_64-unknown-linux-gnu --tests >> "$log" 2>&1
@@ -102,5 +107,5 @@ if grep -q 'FAILED' "$log"; then
   echo "host: FAIL 有用例失败：$(grep -a 'FAILED' "$log" | head -1)"
   exit 1
 fi
-echo "host: $total 例全过（树 + 线 + 门禁 + 名册/盟籍 + 板，日志 $log）"
+echo "host: $total 例全过（树 + 线 + 门禁 + 名册/盟籍 + 板 + 会话，日志 $log）"
 exit 0
