@@ -417,7 +417,7 @@ fn answer(
     let Some(ask) = ocall::unpack_ask(op, want) else {
         return status(out, ocall::BAD);
     };
-    // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那七条也各有这条判据）。
+    // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那几条原语也各有这条判据）。
     if let ocall::AskIn::Road(_, count) = ask {
         if count > Operator::ROAD_MAX {
             return status(out, ocall::FULL);

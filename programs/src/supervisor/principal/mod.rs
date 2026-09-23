@@ -1,6 +1,6 @@
 //! principal::实现侧 — **身份服务那一台**。
 //!
-//! 判据与 [`crate::supervisor::operator`] 同款：**判定与接口**（正文、七条原语、帧、客侧那一面）
+//! 判据与 [`crate::supervisor::operator`] 同款：**判定与接口**（正文、九条原语、帧、客侧那一面）
 //! 住 `crates/protocol/src/principal/`；**实现方**（真在 `prog-principal` 域里跑的那枚线程）
 //! 住这里。
 //!
