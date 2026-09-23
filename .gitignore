@@ -17,3 +17,6 @@ crates/alloc-probe/target/
 crates/operator-case/target/
 crates/line-case/target/
 crates/judge-case/target/
+
+# `scripts/teeth.py` 是一个 Python 量具：跑它会在旁边落一份字节码缓存。
+__pycache__/

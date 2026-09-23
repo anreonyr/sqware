@@ -54,7 +54,10 @@ set -u
 
 out=target/host
 mkdir -p "$out"
-tag="host-$(date +%s)"
+# 日志名 = **秒 + pid**：光精确到秒不够——本脚本一轮只要一两秒，**同一秒里连跑两次**会复用
+# 同一份日志，而写是追加的 ⇒ 末了那句 `grep -q 'FAILED' "$log"` 扫到的是**上一轮**的失败
+# （实测：一个连跑十几轮的量具把"只改注释"那一轮也判成了红）。加 pid 之后互不相干。
+tag="host-$(date +%s)-$$"
 log="$out/$tag.log"
 total=0
 
