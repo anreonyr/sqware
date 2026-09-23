@@ -119,6 +119,8 @@ const TEMP: &str = "temp";
 const AT_PANE: &str = "at-pane";
 /// 规矩 = `Opens(剪掉的那一枚门牌号)` ⇒ 号**不重用** ⇒ 那一格永远没有开者 ⇒ **判不了**。
 const GONE_DOOR: &str = "gone-door";
+/// 本域**声明归自己**（`mine = true`）的一格——"**改**"那一轴那一条（见 §7.8）。
+const MINE: &str = "mine";
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
@@ -185,6 +187,9 @@ extern "C" fn main() -> ! {
     let Ok(pane) = Name::new(PANE) else {
         bail("probe-rule: bad name")
     };
+    let Ok(mine) = Name::new(MINE) else {
+        bail("probe-rule: bad name")
+    };
     let Ok(at) = operator::part(talk, &tree, Where::Root, dir, MS) else {
         bail("probe-rule: no /sys")
     };
@@ -194,7 +199,15 @@ extern "C" fn main() -> ! {
 
     // 五、落三格，各带一条规矩。`mine = false`：这一台证的是**"用"那一轴**，故不声明归属
     //     （那一轴由 `probe-owner` / `probe-lease` 那两台管）。
-    let is_id = plate(talk, &tree, host, pane_id, IS, Rule::Is(p.get() as u64));
+    let is_id = plate(
+        talk,
+        &tree,
+        host,
+        pane_id,
+        IS,
+        Rule::Is(p.get() as u64),
+        false,
+    );
     let under_id = plate(
         talk,
         &tree,
@@ -202,8 +215,17 @@ extern "C" fn main() -> ! {
         pane_id,
         UNDER,
         Rule::Under(p.get() as u64),
+        false,
     );
-    let in_id = plate(talk, &tree, host, pane_id, IN, Rule::In(c.get() as u64));
+    let in_id = plate(
+        talk,
+        &tree,
+        host,
+        pane_id,
+        IN,
+        Rule::In(c.get() as u64),
+        false,
+    );
     let made = [is_id, under_id, in_id]
         .iter()
         .filter(|id| id.get() != 0)
@@ -216,14 +238,30 @@ extern "C" fn main() -> ! {
     //
     // 两个号都是**树上换来的**（`seek` 把一条路译成号）——那一格的门牌在谁手里，由树说，
     // 不由别人告诉我。故这一台**没有 new 的任何机制**，只是把规矩那一格的号换了个来路。
-    let door_id = plate(talk, &tree, host, pane_id, DOOR, Rule::Public);
-    let open_id = plate(talk, &tree, host, pane_id, OPEN, Rule::Opens(door_id));
+    let door_id = plate(talk, &tree, host, pane_id, DOOR, Rule::Public, false);
+    let open_id = plate(
+        talk,
+        &tree,
+        host,
+        pane_id,
+        OPEN,
+        Rule::Opens(door_id),
+        false,
+    );
     // `/sys/principal` 那一格的号：**点名那一手**（名字 → 号），与 `find_face` 走同一条路。
     let foreign_id = match Name::new(pcall::NAME)
         .ok()
         .and_then(|p| seek_id(&tree, talk, &[dir, p]))
     {
-        Some(principal) => plate(talk, &tree, host, pane_id, FOREIGN, Rule::Opens(principal)),
+        Some(principal) => plate(
+            talk,
+            &tree,
+            host,
+            pane_id,
+            FOREIGN,
+            Rule::Opens(principal),
+            false,
+        ),
         None => EntryId::new(0),
     };
 
@@ -234,12 +272,27 @@ extern "C" fn main() -> ! {
     // 照实记：`UNJUDGED` 这一格此前**只有宿主台的读数**（身份服务不答那一版在真机上要拆整机）。
     // 这两格与它同格不同因：判据不需要"那一格为什么没人"，只需要"**有没有那一位**"。
     let at_pane_id = match seek_id(&tree, talk, &[dir]) {
-        Some(sys) => plate(talk, &tree, host, pane_id, AT_PANE, Rule::Opens(sys)),
+        Some(sys) => plate(talk, &tree, host, pane_id, AT_PANE, Rule::Opens(sys), false),
         None => EntryId::new(0),
     };
-    let temp_id = plate(talk, &tree, host, pane_id, TEMP, Rule::Public);
+    let temp_id = plate(talk, &tree, host, pane_id, TEMP, Rule::Public, false);
     let trimmed = temp_id.get() != 0 && operator::trim(talk, &tree, temp_id, MS).is_ok();
-    let gone_id = plate(talk, &tree, host, pane_id, GONE_DOOR, Rule::Opens(temp_id));
+    let gone_id = plate(
+        talk,
+        &tree,
+        host,
+        pane_id,
+        GONE_DOOR,
+        Rule::Opens(temp_id),
+        false,
+    );
+
+    // 五点七、**"改"那一轴那一格**：本域声明归自己（`mine = true`）。
+    //
+    // 下面在 `adopt(q)` **之后**再落一次同一格——那是这一刀要量的那件事：**归属记的是"命"而不是
+    // "身份"**（账里那两格 `who` + `pie` 都是任务级的）⇒ 主人**换了代表照样能改自己的格子**，
+    // 而同一次 `Is(p)` 已经答了 `8`（"用"那一轴随身份走）。两条轴各问各的问题，各自自洽。
+    let mine_id = plate(talk, &tree, host, pane_id, MINE, Rule::Public, true);
 
     // 六、以 `p` 试五遍——前三条**正证**，后两条是 `Opens` 的正负两面。
     let is = look(talk, &tree, is_id, MS);
@@ -260,6 +313,23 @@ extern "C" fn main() -> ! {
     let under_sub = look(talk, &tree, under_id, MS);
     let in_sub = look(talk, &tree, in_id, MS);
     let open_sub = look(talk, &tree, open_id, MS);
+    // 再用一枚**新孔重落**自己那一格（换绑）：走的就是 `claimable` 那一支。
+    let keep = match mail::unseal_hole(env::Mark::of("rule-entry")) {
+        Ok(entry) if mine_id.get() != 0 => operator::land(
+            talk,
+            &tree,
+            host,
+            Where::At(pane_id),
+            mine,
+            entry,
+            Rule::Public,
+            true,
+            MS,
+        )
+        .err()
+        .unwrap_or(ocall::OK),
+        _ => ocall::BAD,
+    };
 
     // 九、一行读数。
     say(&format!(
@@ -267,12 +337,13 @@ extern "C" fn main() -> ! {
          is={is} under={under} in={inside} \
          is_sub={is_sub} under_sub={under_sub} in_sub={in_sub} \
          door={} open={open} foreign={foreign} open_sub={open_sub} \
-         trim={} at_pane={on_pane} gone_door={on_gone}",
+         trim={} at_pane={on_pane} gone_door={on_gone} mine={} keep={keep}",
         pane_id.get(),
         p.get(),
         adopt as u8,
         door_id.get(),
         trimmed as u8,
+        mine_id.get(),
     ));
 
     // 十、判据：三条正证全 `OK`、两条负证恰是 `DENIED`、`Under` 那一格换人之后仍 `OK`；
@@ -290,6 +361,8 @@ extern "C" fn main() -> ! {
         && on_pane == ocall::UNJUDGED
         && on_gone == ocall::UNJUDGED
         && trimmed
+        // 换一位代表之后，**自己声明归自己的那一格照样改得**（归属记的是"命"，见 §7.8）。
+        && keep == ocall::OK
         && adopt
         && made == 3;
     exit_with_note(
@@ -309,6 +382,7 @@ fn plate(
     at: EntryId,
     name: &str,
     rule: Rule<u64, u64>,
+    mine: bool,
 ) -> EntryId {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("rule-entry")) else {
         return EntryId::new(0);
@@ -316,7 +390,7 @@ fn plate(
     let Ok(one) = Name::new(name) else {
         return EntryId::new(0);
     };
-    operator::land(talk, link, host, Where::At(at), one, entry, rule, false, MS)
+    operator::land(talk, link, host, Where::At(at), one, entry, rule, mine, MS)
         .unwrap_or(EntryId::new(0))
 }
 
