@@ -408,8 +408,10 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
   （见下），先找后铸一上，`operator::ask_hole` 当场把**板那一枚**当成树那一枚交回来 ⇒
   装机就塌（实测 `principal: tree … got=false` + `system: service failed`，`examine` **0/3**）。
   故这一刀同时把两个记号分开：`operator-ask` / `board-ask`。
-- `part` 碰到一块 `Tile` 时静默顶掉它那条（§1.5 的窄口子）——**只在正文记一笔**，不改行为：
-  今天 `/sys`、`/device` 一直是 `Pane`，为一个不会发生的状态动换绑分支不值。
+- `part` 碰到一块 `Tile` 时静默顶掉它那条（§1.5 的窄口子）——**不改行为**：今天 `/sys`、
+  `/device` 一直是 `Pane`，为一个不会发生的状态动换绑分支不值。**已有判据钉住现状**
+  （`crates/operator-case::a_part_over_a_tile_takes_the_name_over_and_keeps_the_number`）：
+  号不动、旧的那一枚被放下、那一名下换成一块**空** `Pane`、寻它答 `NotATile`、它下面能再立一格。
 - ~~规则的形状（`Allow` / `Is` / `Under` / `In` 怎么表达、能不能组合）——闸口跑通后再谈。~~
   → **已做**：闸口跑通了，下一刀（[`operator-rule.md`](operator-rule.md)）把"用"那一轴落成
   逐格的事实，`Is` / `Under` / `In` 三条判据在真机上各有了正证与负证。
@@ -419,7 +421,11 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
   `probe-rule: … open=0 foreign=8 open_sub=0` 与 `probe-other: … foreign=8`。
   见 [`operator-rule.md`](operator-rule.md) §7；剩下一半（"某一位**叫什么**"）仍记在那里。
 - 死亡道（板那条 `gone-<名字>` 树一条都没认领）。
-- 别名（同一枚 Pie 挂两个名 = 两条独立条目）。
+- 别名（同一枚 Pie 挂两个名 = 两条独立条目）——**已有判据钉住现状**
+  （`crates/operator-case::the_same_pie_under_two_names_is_two_independent_entries`）：
+  两条号不同、`opens` 答同一枚（同一扇门）、各自可寻、剪一条不动另一条。
+  树是"名字 → 一枚句柄"的目录，**不查重**——这是裁决，不是遗漏（`land` 的判据里没有
+  "这一枚已经挂过了"这一格）。
 - ~~**深度**（`seek` 封顶 8 段，树本身无上限）~~ → **已收**（见 [`operator-slot.md`](operator-slot.md)：
   号就是表里的下标，四条递归助手一并消失；真机读数从"第 117 层死"变成"512 层每一手都答得出"）。
   下面这一节是**量它**的那一笔，留着当负证：

@@ -391,6 +391,67 @@ fn opens_knows_a_pane_a_tombstone_and_a_sealed_door() {
 }
 
 #[test]
+fn a_part_over_a_tile_takes_the_name_over_and_keeps_the_number() {
+    // **§1.5 那个窄口子**（`operator-gate.md` §8 记着的那一笔）：`part` 碰到一枚 `Tile` 会
+    // **静默**把它顶成一块 `Pane`——号不动、旧的那一枚被放下。今天 `/sys`、`/device` 一直是
+    // `Pane`，故这条路上没有客人；这一条判据只把**现状**钉住（谁要改它，先看这里）。
+    let _serial = serial();
+    let mut t = tree();
+    live(1);
+    assert_eq!(
+        t.land(Where::Root, name("uart0"), tok(1)),
+        Ok(EntryId::new(0))
+    );
+    assert_eq!(
+        t.part(Where::Root, name("uart0")),
+        Ok(EntryId::new(0)),
+        "换绑不动号"
+    );
+    assert!(unshipped(1), "旧的那一枚被放下了（不加这一格就漏在树里）");
+    assert_eq!(
+        t.list(Where::At(EntryId::new(0))).map(Iterator::count),
+        Ok(0),
+        "那一名下现在是一块**空** Pane"
+    );
+    assert_eq!(t.name(EntryId::new(0)), Ok(name("uart0")));
+    // 顶完之后它不是砖了：寻它答 `NotATile`，而它下面能再立一格。
+    assert_eq!(look(&mut t, &path(&["uart0"])), Err(Fail::NotATile));
+    assert_eq!(
+        t.land(Where::At(EntryId::new(0)), name("inner"), tok(2)),
+        Ok(EntryId::new(1))
+    );
+}
+
+#[test]
+fn the_same_pie_under_two_names_is_two_independent_entries() {
+    // **别名**（`operator-gate.md` §8 记着的那一笔）：同一枚 Pie 挂两个名 = 两条**独立**条目。
+    // 树是"名字 → 一枚句柄"的目录，**不查重**（`land` 的判据里没有"这一枚已经挂过了"）。
+    // 这一条只把**现状**钉住：两条各自可寻、各自可剪，剪一条不动另一条。
+    let _serial = serial();
+    let mut t = tree();
+    live(1);
+    assert_eq!(t.land(Where::Root, name("a"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("b"), tok(1)),
+        Ok(EntryId::new(1)),
+        "另一条条目（号不同）"
+    );
+    // 两条指着**同一扇门**：开者那一问答同一个号（`opens` 不看名字，看那一枚句柄）。
+    assert_eq!(
+        t.opens(EntryId::new(0)),
+        t.opens(EntryId::new(1)),
+        "别名：两条指的是同一枚"
+    );
+    assert_eq!(look(&mut t, &path(&["a"])), Ok(Some(tok(1))));
+    assert_eq!(look(&mut t, &path(&["b"])), Ok(Some(tok(1))));
+    // 剪一条：那一份被放下，另一条照旧（各自持着自己那一份）。
+    assert_eq!(t.trim(EntryId::new(0)), Ok(()));
+    assert!(unshipped(1));
+    assert_eq!(names(&t, &[]), Ok(std::vec![name("b")]));
+    assert_eq!(look(&mut t, &path(&["b"])), Ok(Some(tok(1))), "另一条照旧");
+}
+
+#[test]
 fn a_dead_tile_is_swept_on_the_read_path() {
     let _serial = serial();
     let mut t = tree();
