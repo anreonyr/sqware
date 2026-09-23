@@ -135,68 +135,85 @@ MUTATIONS = [
 ]
 
 
+# ── 机器那一侧（`--boot`）：每条变异跑一轮 soak ──────────────────
+#
+# 为什么单列：宿主靶那条路一两秒一轮，**机器这台一轮要重建 + 起一次 QEMU**（约两分钟）。
+# 故这里只放几条**要害**：改一处程序的读数/判词/构造，看 soak 红不红、**报的是哪一条**。
+BOOT = [
+    ("机器·`foreign` 那一格改成公开（该 8 会答 0）",
+     "programs/src/user/probe_rule.rs",
+     "            Rule::Opens(principal),",
+     "            Rule::Public,"),
+    ("机器·撤掉问话孔的「先找后铸」（该 ask_same=1 会 0）",
+     "crates/protocol/src/operator/client.rs",
+     """    if let Some(have) = crate::session::call::find(me()?, ASK_MARK) {
+        return Ok(have);
+    }
+""",
+     ""),
+    ("机器·编排域的判词不落（该有 `system: done`）",
+     "programs/src/supervisor/system/main.rs",
+     '    service::die(service::E_OK, "system: done")',
+     '    service::die(service::E_OK, "system: farewell")'),
+]
+
+
 def run(cmd, **kw):
     return subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True, **kw)
 
 
-def main():
-    only = sys.argv[1] if len(sys.argv) > 1 else None
-    dirty = run("git status --porcelain").stdout.strip()
-    if dirty:
-        print("工作区不干净——本量具会 `git checkout --` 还原，先提交或存起来：\n" + dirty)
-        return 1
+def sweep(mut_list, cmd_of, tag):
     rows = []
-    for name, path, old, new in MUTATIONS:
-        if only and only not in name:
-            continue
+    for name, path, old, new in mut_list:
         src = open(f"{ROOT}/{path}", encoding="utf-8").read()
         if old not in src:
             rows.append((name, "补丁打不上（原文没找到）", ""))
             continue
         open(f"{ROOT}/{path}", "w", encoding="utf-8").write(src.replace(old, new, 1))
-        # `host.sh` 的日志名精确到**秒**且是追加写 ⇒ 一秒内连跑两次会复用同一份日志、
-        # 判词读到上一轮的尾巴（本量具第一次跑就栽在这一格：连"只改注释"都判成了红）。
-        # 故每次清干净、并跨过秒边界。
-        run("rm -f target/host/host-*.log")
-        run("sleep 1.1")
-        p = run("scripts/host.sh")
+        p = run(cmd_of())
         out = p.stdout + p.stderr
-        is_ctrl = name.startswith("对照")
-        verdict = ("绿（对照，理应如此）" if is_ctrl else "**绿**（没牙）") if p.returncode == 0 else "红"
         detail = ""
         if "error[E" in out or "error: could not compile" in out:
             verdict = "**编译红**（不算牙口）"
-            rows.append((name, verdict, ""))
-            run(f"git checkout -- {path}")
-            continue
-        if p.returncode != 0:
-            m = re.search(r"host: FAIL (.+)", out)
-            detail = m.group(1).strip() if m else out.strip().splitlines()[-1][:120]
-            log = re.search(r"（(\S+\.log)）", out)
-            if log:
-                try:
-                    txt = open(f"{ROOT}/{log.group(1)}", encoding="utf-8", errors="ignore").read()
-                except OSError:
-                    txt = ""
-                names = re.findall(r"^test (\S+) \.\.\. FAILED", txt, re.M)
-                sig = re.findall(r"signal: (\d+)", txt)
-                if names:
-                    detail += " ⇒ " + ", ".join(names[:3])
-                elif sig:
-                    detail += f" ⇒ SIG{sig[0]}（进程被信号带走）"
+        elif p.returncode == 0:
+            is_ctrl = name.startswith("对照")
+            verdict = "绿（对照，理应如此）" if is_ctrl else "**绿**（没牙）"
+        else:
+            verdict = "红"
+            miss = re.findall(r"^  (.+)$", out, re.M)
+            fail = [l for l in out.splitlines() if "FAIL" in l]
+            detail = " · ".join((fail[:1] + miss[:2]))[:150] if (fail or miss) else out.strip().splitlines()[-1][:120]
         rows.append((name, verdict, detail))
         run(f"git checkout -- {path}")
-    print(f"\n{'变异':<34}{'门':<10}红在哪")
+    print(f"\n{'变异':<40}{'门':<12}红在哪")
     for n, v, d in rows:
-        print(f"{n:<34}{v:<10}{d}")
+        print(f"{n:<40}{v:<12}{d}")
     red = sum(1 for _, v, _ in rows if v == "红")
     ctrl = [v for n, v, _ in rows if n.startswith("对照")]
     n_mut = len(rows) - len(ctrl)
-    line = f"\n{red}/{n_mut} 条变异被逮住"
+    line = f"\n{tag}：{red}/{n_mut} 条变异被逮住"
     if ctrl:
         line += "；对照" + ("绿（量具可信）" if ctrl[0].startswith("绿") else f"**红了**（{ctrl[0]}——量具坏了）")
     print(line + "\n")
     return 0
+
+
+def main():
+    """默认量**宿主那一侧**（快：一两秒一轮）；`--boot` 量**机器那一侧**（约两分钟一轮）。
+
+    两边的口径同一条：改一处 → 跑那门 → 记下"红不红、报的是哪一条/哪几条" → 还原。
+    """
+    boot = "--boot" in sys.argv
+    only = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
+    dirty = run("git status --porcelain").stdout.strip()
+    if dirty:
+        print("工作区不干净——本量具会 `git checkout --` 还原，先提交或存起来：\n" + dirty)
+        return 1
+    if boot:
+        sel = [m for m in BOOT if not only or only in m[0]]
+        return sweep(sel, lambda: "scripts/soak.sh 1", "机器那一侧（一轮 soak）")
+    sel = [m for m in MUTATIONS if not only or only in m[0]]
+    return sweep(sel, lambda: "scripts/host.sh", "宿主那一侧（`host.sh`）")
 
 
 if __name__ == "__main__":

@@ -333,102 +333,113 @@ while [ "$i" -le "$rounds" ]; do
   me3="$(grep -a "^policy: me=" "$log" | sed -n 3p | sed "s/.*=//")"
   if ! grep -q "task: all tasks exited, system halted" "$log"; then
     echo "round $i: FAIL 无停机行；$(grep -a '\[stop\]' "$log" | head -1)"
-  elif ! { grep -qE "^router: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=router[[:space:]]*$" "$log" \
-        && grep -q "router: device_count=95 ctx=1" "$log" \
-        && grep -q "uart: ier=rx at=0x10000000" "$log" \
-        && grep -q "system: router sifive,plic-1.0.0 -> 0xc000000" "$log" \
-        && grep -q "system: uart ns16550a -> 0x10000000" "$log" \
-        && grep -q "system: rtc google,goldfish-rtc -> 0x101000" "$log" \
-        && grep -q "system: lodger virtio,mmio -> 0x10001000" "$log" \
-        && grep -q "devices: 21 handed to root" "$log" \
-        && grep -qE "wire: [0-9]+ bytes, paired=true, post=true" "$log" \
-        && grep -qE "passer: reg=0 entry=[0-9]+ say=passer" "$log" \
-        && grep -q "note: passer: gone" "$log" \
-        && grep -q "lodger: gone" "$log" \
-        && grep -q "system: done" "$log" \
-        && grep -q "root: block n=21 region=19 dtb=1 irq=1 bad=0" "$log" \
-        && grep -q "guest: reg=0 find=0" "$log" \
-        && grep -q "guest: trip ok" "$log" \
-        && grep -q "router: line 10 = serial@10000000" "$log" \
-        && grep -q "uart: rang n=" "$log" \
-        && grep -q "router: line 11 = rtc@101000" "$log" \
-        && grep -q "rtc: line occupied" "$log" \
-        && grep -q "rtc: armed at=" "$log" \
-        && grep -qE "^rtc: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=rtc[[:space:]]*$" "$log" \
-        && grep -q "rtc: asked now=" "$log" \
-        && grep -q "router: line=11" "$log" \
-        && grep -q "rtc: rang n=1" "$log" \
-        && grep -q "router: exhaust line=11" "$log" \
-        && grep -q "sleeper: reg=0" "$log" \
-        && grep -q "sleeper: found" "$log" \
-        && grep -q "sleeper: now=" "$log" \
-        && grep -q "sleeper: past=2" "$log" \
-        && grep -q "sleeper: armed=0" "$log" \
-        && grep -q "sleeper: taken=1" "$log" \
-        && grep -q "sleeper: rang at=" "$log" \
-        && grep -q "sleeper: gone" "$log" \
-        && grep -q "router: vacate line=1" "$log" \
-        && grep -q "lodger: taken=2" "$log" \
-        && grep -q "lodger: unknown=1" "$log" \
-        && grep -q "router: lane dropped line=1 pies=21" "$log" \
-        && grep -q "lodger: pies=9" "$log" \
-        && grep -qE "^uart: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=uart[[:space:]]*$" "$log" \
-        && grep -q "echo: console=true" "$log" \
-        && grep -qE "^echo: tree part=0 land=0 find=0 got=true trim=0 plate=[0-9]+ pname=echo[[:space:]]*$" "$log" \
-        && grep -qE "^coalition: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=coalition[[:space:]]*$" "$log" \
-        && grep -qE "^principal: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=principal[[:space:]]*$" "$log" \
-        && grep -q "member: found=0" "$log" \
-        && grep -q "member: found=1" "$log" \
-        && grep -q "member: amid(me,c0)=false" "$log" \
-        && grep -q "member: enter(c0)=ok" "$log" \
-        && grep -q "member: leave(c0)=ok" "$log" \
-        && grep -q "member: amid(sub,c0)=true" "$log" \
-        && grep -q "member: amid(sub,c0)=false" "$log" \
-        && grep -q "member: amid(me,c0)=true" "$log" \
-        && grep -q "member: amid(me,out)=err:unknown" "$log" \
-        && grep -q "member: amid(out,me)=false" "$log" \
-        && grep -q "member: done" "$log" \
-        && grep -q "policy: sire(root)=none" "$log" \
-        && grep -q "policy: sire(me)=0" "$log" \
-        && grep -q "policy: heir(me,me)=true" "$log" \
-        && grep -qE "policy: derive\(me\)=[0-9]+" "$log" \
-        && grep -q "policy: heir(sub,me)=false" "$log" \
-        && grep -q "policy: heir(out,me)=err:unknown" "$log" \
-        && grep -q "policy: bind(self)=err:denied" "$log" \
-        && grep -q "policy: adopt(sub)=ok" "$log" \
-        && grep -q "policy: derive(old)=err:denied" "$log" \
-        && grep -q "policy: adopt(up)=err:denied" "$log" \
-        && grep -q "policy: adopt(out)=err:unknown" "$log" \
-        && grep -q "policy: waive=ok" "$log" \
-        && grep -q "subject: done" "$log" \
-        && [ -n "$me1" ] && [ "$me1" != "$me2" ] && [ "$me1" = "$me3" ] \
-        && grep -q "probe: tree land=8 seek=err:1 dir=0" "$log" \
-        && grep -q "probe-denied: denied as expected" "$log" \
-        && grep -q "probe-owner: tree land=8 before=[0-9]* after=id=" "$log" \
-        && grep -q "probe-owner: owner rule held" "$log" \
-        && grep -q "probe-lease: tree land=0 dir=0 plate=[0-9]*" "$log" \
-        && grep -q "probe-lease: landed, leaving" "$log" \
-        && grep -q "probe-owner: lease land=0 id=" "$log" \
-        && grep -qE "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8 door=[0-9]+ open=0 foreign=8 open_sub=0 trim=1 at_pane=9 gone_door=9 mine=[0-9]+ keep=0 ask2=[0-9]+ ask_same=1" "$log" \
-        && grep -q "probe-rule: the rules held" "$log" \
-        && ! grep -q "operator: two asks" "$log" \
-        && grep -q "probe-other: tree is=8 under=8 foreign=8" "$log" \
-        && grep -q "probe-rule-other: all three denied as expected" "$log" \
-        && grep -q "echo: list root=0,3" "$log" \
-        && grep -q "echo: list names=sys,device" "$log" \
-        && grep -q "echo: list device=4,5,6" "$log" \
-        && grep -q "echo: name miss=true" "$log" \
-        && grep -q "echo: seq=0" "$log" \
-        && grep -q "member: band(c0)=n1 more=false" "$log" \
-        && grep -q "member: band(c0,next)=n0 more=false" "$log" \
-        && grep -q "member: band(out)=err:unknown" "$log" \
-        && grep -q "member: bloc(me)=n2 more=false" "$log" \
-        && grep -q "irq: ring=" "$log" \
-        && grep -q "echo: ready" "$log"; }; then
-    echo "round $i: FAIL 启动读数不全（$log）"
   else
-    pass=$((pass + 1))
-    echo "round $i: PASS"
+    # 逐条报：**哪一条没满足就报哪一条**。原来是一条九十来项的 `&&` 长链——
+    # 红了只说"启动读数不全"，等于让人手拆（这一格是本轮把量具伸向机器时最先撞上的）。
+    missing=""
+    need()        { grep -q  "$1" "$log" || missing="$missing\n  $1"; }
+    needE()       { grep -qE "$1" "$log" || missing="$missing\n  $1"; }
+    need_absent() { grep -q  "$1" "$log" && missing="$missing\n  ! $1"; }
+    needE  "^router: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=router[[:space:]]*$"
+    need   "router: device_count=95 ctx=1"
+    need   "uart: ier=rx at=0x10000000"
+    need   "system: router sifive,plic-1.0.0 -> 0xc000000"
+    need   "system: uart ns16550a -> 0x10000000"
+    need   "system: rtc google,goldfish-rtc -> 0x101000"
+    need   "system: lodger virtio,mmio -> 0x10001000"
+    need   "devices: 21 handed to root"
+    needE  "wire: [0-9]+ bytes, paired=true, post=true"
+    needE  "passer: reg=0 entry=[0-9]+ say=passer"
+    need   "note: passer: gone"
+    need   "lodger: gone"
+    need   "system: done"
+    need   "root: block n=21 region=19 dtb=1 irq=1 bad=0"
+    need   "guest: reg=0 find=0"
+    need   "guest: trip ok"
+    need   "router: line 10 = serial@10000000"
+    need   "uart: rang n="
+    need   "router: line 11 = rtc@101000"
+    need   "rtc: line occupied"
+    need   "rtc: armed at="
+    needE  "^rtc: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=rtc[[:space:]]*$"
+    need   "rtc: asked now="
+    need   "router: line=11"
+    need   "rtc: rang n=1"
+    need   "router: exhaust line=11"
+    need   "sleeper: reg=0"
+    need   "sleeper: found"
+    need   "sleeper: now="
+    need   "sleeper: past=2"
+    need   "sleeper: armed=0"
+    need   "sleeper: taken=1"
+    need   "sleeper: rang at="
+    need   "sleeper: gone"
+    need   "router: vacate line=1"
+    need   "lodger: taken=2"
+    need   "lodger: unknown=1"
+    need   "router: lane dropped line=1 pies=21"
+    need   "lodger: pies=9"
+    needE  "^uart: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=uart[[:space:]]*$"
+    need   "echo: console=true"
+    needE  "^echo: tree part=0 land=0 find=0 got=true trim=0 plate=[0-9]+ pname=echo[[:space:]]*$"
+    needE  "^coalition: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=coalition[[:space:]]*$"
+    needE  "^principal: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=principal[[:space:]]*$"
+    need   "member: found=0"
+    need   "member: found=1"
+    need   "member: amid(me,c0)=false"
+    need   "member: enter(c0)=ok"
+    need   "member: leave(c0)=ok"
+    need   "member: amid(sub,c0)=true"
+    need   "member: amid(sub,c0)=false"
+    need   "member: amid(me,c0)=true"
+    need   "member: amid(me,out)=err:unknown"
+    need   "member: amid(out,me)=false"
+    need   "member: done"
+    need   "policy: sire(root)=none"
+    need   "policy: sire(me)=0"
+    need   "policy: heir(me,me)=true"
+    needE  "policy: derive\(me\)=[0-9]+"
+    need   "policy: heir(sub,me)=false"
+    need   "policy: heir(out,me)=err:unknown"
+    need   "policy: bind(self)=err:denied"
+    need   "policy: adopt(sub)=ok"
+    need   "policy: derive(old)=err:denied"
+    need   "policy: adopt(up)=err:denied"
+    need   "policy: adopt(out)=err:unknown"
+    need   "policy: waive=ok"
+    need   "subject: done"
+    need   "probe: tree land=8 seek=err:1 dir=0"
+    need   "probe-denied: denied as expected"
+    need   "probe-owner: tree land=8 before=[0-9]* after=id="
+    need   "probe-owner: owner rule held"
+    need   "probe-lease: tree land=0 dir=0 plate=[0-9]*"
+    need   "probe-lease: landed, leaving"
+    need   "probe-owner: lease land=0 id="
+    needE  "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8 door=[0-9]+ open=0 foreign=8 open_sub=0 trim=1 at_pane=9 gone_door=9 mine=[0-9]+ keep=0 ask2=[0-9]+ ask_same=1"
+    need   "probe-rule: the rules held"
+    need_absent "operator: two asks"
+    need   "probe-other: tree is=8 under=8 foreign=8"
+    need   "probe-rule-other: all three denied as expected"
+    need   "echo: list root=0,3"
+    need   "echo: list names=sys,device"
+    need   "echo: list device=4,5,6"
+    need   "echo: name miss=true"
+    need   "echo: seq=0"
+    need   "member: band(c0)=n1 more=false"
+    need   "member: band(c0,next)=n0 more=false"
+    need   "member: band(out)=err:unknown"
+    need   "member: bloc(me)=n2 more=false"
+    need   "irq: ring="
+    need   "echo: ready"
+    [ -n "$me1" ] && [ "$me1" != "$me2" ] && [ "$me1" = "$me3" ] \
+      || missing="$missing\n  policy: me= 三条的关系（绑 ≠ 领 = 弃）"
+      if [ -n "$missing" ]; then
+        echo "round $i: FAIL 启动读数不全（$log）—— 缺这几条："
+        printf '%b\n' "$missing"
+      else
+        pass=$((pass + 1))
+        echo "round $i: PASS"
+      fi
   fi
   i=$((i + 1))
 done
