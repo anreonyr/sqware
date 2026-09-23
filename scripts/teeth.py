@@ -155,6 +155,27 @@ BOOT = [
      "programs/src/supervisor/system/main.rs",
      '    service::die(service::E_OK, "system: done")',
      '    service::die(service::E_OK, "system: farewell")'),
+    # ── 第三轮新钉的那几条读数，各配一条（读数改了形/值 ⇒ 那条断言该红）──
+    ("机器·设备数那一条读数说谎（该 21 报 20）",
+     "kernel/src/platform/devices.rs",
+     '    crate::putln!("devices: {n} handed to root");',
+     '    crate::putln!("devices: {} handed to root", n - 1);'),
+    ("机器·「类 → 区」那条翻译换了形（四处一起）",
+     "programs/src/supervisor/service.rs",
+     '                "system: {} {} -> {:#x}",',
+     '                "system: {} {} => {:#x}",'),
+    ("机器·递单那一条读数换了形（`paired`/`post` 对调）",
+     "programs/src/supervisor/service.rs",
+     '        "wire: {} bytes, paired={}, post={}",',
+     '        "wire: {} bytes, post={}, paired={}",'),
+    ("机器·`passer` 不上板（该 `reg=0` 会答别的）",
+     "programs/src/user/passer.rs",
+     "    let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);",
+     "    let reg = board::ask(talk, &link, board, bcall::LOOKUP, me, entry, MS).unwrap_or(BAD);"),
+    ("机器·房客的判词改了名（该有 `lodger: gone`）",
+     "programs/src/user/lodger/main.rs",
+     '            "lodger: gone"',
+     '            "lodger: farewell"'),
 ]
 
 
@@ -180,9 +201,13 @@ def sweep(mut_list, cmd_of, tag):
             verdict = "绿（对照，理应如此）" if is_ctrl else "**绿**（没牙）"
         else:
             verdict = "红"
+            # 缺的那几条：缺几条就报几条（只截前四条，末尾缀总数）——"红在哪"这一栏
+            # 是这张表的价值所在，只报两条会让人误以为只红两条。
             miss = re.findall(r"^  (.+)$", out, re.M)
-            fail = [l for l in out.splitlines() if "FAIL" in l]
-            detail = " · ".join((fail[:1] + miss[:2]))[:150] if (fail or miss) else out.strip().splitlines()[-1][:120]
+            shown = " · ".join(miss[:4])
+            if len(miss) > 4:
+                shown += f" … （共 {len(miss)} 条）"
+            detail = shown[:220] if miss else out.strip().splitlines()[-1][:120]
         rows.append((name, verdict, detail))
         run(f"git checkout -- {path}")
     print(f"\n{'变异':<40}{'门':<12}红在哪")
