@@ -399,7 +399,9 @@ const fn probe_denied() -> Program {
 /// 负证客人（第二种，`prog-probe-owner`，U 态）：**有身份**地去顶别人声明归自己的一格。
 ///
 /// 与 `probe-denied` 分工：那一台撞"**没身份**"（第一道门），本台撞"**那一格归谁**"
-/// （`Rule::Owner`）。它**照常绑身份**（`bind` 缺省 `true`）——否则量到的会是同一道门。
+/// （`land` 那一格里 `mine = true`）。它**照常绑身份**（`bind` 缺省 `true`）——否则量到的是
+/// 同一道门。**照实记**：这一句原写的是 `Rule::Owner`，而那个变体在「两轴分家」那一刀就没了
+/// （改那一轴退成 `call::Rule` 那一格 `mine: bool`）。
 const fn probe_owner() -> Program {
     Program {
         name: "probe-owner",

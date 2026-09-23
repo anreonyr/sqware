@@ -67,7 +67,7 @@ use env::{Name, PieToken, TaskId};
 
 use crate::core::{EntryId, Where};
 use crate::gate::{Blind, Code, Control, verdict};
-use crate::judge::{Branch, Id, League, Rule, Ruling, Who, judge};
+use crate::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
 use crate::ledger::{Key, Ledger, Line};
 
 // ── 假事实 ──────────────────────────────────────────────────
@@ -111,6 +111,22 @@ impl League<Id, Id> for Book {
     }
 }
 
+/// 假树：一张 **格号 → 开者** 的表；表外的号答"没有那一位"（`Ok(None)`，与真树三因同落）。
+struct Doors(&'static [(usize, TaskId)]);
+impl Door for Doors {
+    fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
+        Ok(self.0.iter().find(|(e, _)| *e == at.get()).map(|(_, t)| *t))
+    }
+}
+
+/// 假树：**问不到**（树自己出了事）。
+struct Deaf;
+impl Door for Deaf {
+    fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> {
+        Err(())
+    }
+}
+
 // ── 三个身份 / 一个不存在的 TID ─────────────────────────────
 
 const ME: TaskId = TaskId::new(22); // 绑在号 7 上
@@ -126,7 +142,9 @@ fn go(tid: TaskId, rule: Rule<Id, Id>) -> Ruling {
     let chain = Chain(&[(P, Q)]); // P 的父是 Q ⇒ heir(Q, P) = true
 
     let book = Book(&[P]);
-    judge(tid, rule, &roster, &chain, &book)
+    // 第 5 格的门牌是 **OTHER 开的** ⇒ `Opens(5)` 是"许给那一位（不是我）"。
+    let doors = Doors(&[(5, OTHER)]);
+    judge(tid, rule, &roster, &chain, &book, &doors)
 }
 
 // ── 判据 ────────────────────────────────────────────────────
@@ -162,16 +180,76 @@ fn in_looks_at_the_league() {
 }
 
 #[test]
+fn opens_is_about_who_holds_the_door() {
+    // 第 5 格是 OTHER 的门牌 ⇒ 它过；别人（有身份、但不是那一位）拒。
+    // 这一格与 `Is` 的分野就在这儿：`Is` 比"一条身份号"，`Opens` 比"谁占着那一格"。
+    assert_eq!(go(OTHER, Rule::Opens(EntryId::new(5))), Ruling::Allow);
+    assert_eq!(go(ME, Rule::Opens(EntryId::new(5))), Ruling::Deny);
+    assert_eq!(go(UNBOUND, Rule::Opens(EntryId::new(5))), Ruling::Deny);
+}
+
+#[test]
+fn a_missing_door_is_unjudged_but_a_doorless_opener_is_denied() {
+    // 三态各归各位：**"没有那一位"判不了**（挂门牌有先后，可重试）；
+    // **"那一位没身份"是终态拒**（与第一条闸同一分法）；**树问不到**也是判不了。
+    let roster = Roster(&[(ME, P)]);
+    let chain = Chain(&[]);
+    let book = Book(&[P]);
+    assert_eq!(
+        judge(
+            ME,
+            Rule::Opens(EntryId::new(6)),
+            &roster,
+            &chain,
+            &book,
+            &Doors(&[(5, OTHER)])
+        ),
+        Ruling::Unjudged,
+        "那一格不在 / 是块 Pane / 门封印了 —— 同一个 `Ok(None)`"
+    );
+    assert_eq!(
+        judge(
+            ME,
+            Rule::Opens(EntryId::new(5)),
+            &roster,
+            &chain,
+            &book,
+            &Doors(&[(5, UNBOUND)])
+        ),
+        Ruling::Deny,
+        "开者没绑身份 ⇒ 那位没有资格"
+    );
+    assert_eq!(
+        judge(
+            ME,
+            Rule::Opens(EntryId::new(5)),
+            &roster,
+            &chain,
+            &book,
+            &Deaf
+        ),
+        Ruling::Unjudged,
+        "树自己问不到 ⇒ 判不了"
+    );
+}
+
+#[test]
 fn an_unreachable_roster_is_unjudged_never_denied() {
     // **判不了 ≠ 你没资格**。这一条把"身份服务挂了/超时"与"你没有权限"分开——
     // 客人的下一步不同：前者重试，后者放弃。
     let roster = Broken;
     let chain = Chain(&[]);
     let book = Book(&[P]);
-    for rule in [Rule::Public, Rule::Is(P), Rule::Under(P), Rule::In(C)] {
+    for rule in [
+        Rule::Public,
+        Rule::Is(P),
+        Rule::Under(P),
+        Rule::In(C),
+        Rule::Opens(EntryId::new(5)),
+    ] {
         // `Public` 也要先问身份 ⇒ 问不到同样是"判不了"，不是"过"。
         assert_eq!(
-            judge(ME, rule, &roster, &chain, &book),
+            judge(ME, rule, &roster, &chain, &book, &Deaf),
             Ruling::Unjudged,
             "问不到身份：判不了"
         );
@@ -186,7 +264,7 @@ fn an_unbound_caller_never_reaches_the_predicates() {
     let chain = Counting::new();
     let book = Counting2::new();
     assert_eq!(
-        judge(UNBOUND, Rule::Under(P), &roster, &chain, &book),
+        judge(UNBOUND, Rule::Under(P), &roster, &chain, &book, &Deaf),
         Ruling::Deny
     );
     assert_eq!(chain.calls(), 0, "没身份时不该问谱系");
@@ -248,6 +326,10 @@ impl Control for Facts {
     fn amid(&self, me: Id, at: Id) -> Result<bool, ()> {
         Ok(me == P && at == C)
     }
+    fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
+        // 第 5 格是 OTHER 的门牌（与 `go` 那一张假树同一格）。
+        Ok((at.get() == 5).then_some(OTHER))
+    }
 }
 
 #[test]
@@ -258,6 +340,13 @@ fn the_verdict_maps_onto_the_wire_cells() {
     assert_eq!(verdict(&Facts, ME, Rule::Under(Q)), Code::Ok);
     assert_eq!(verdict(&Facts, ME, Rule::In(C)), Code::Ok);
     assert_eq!(verdict(&Facts, ME, Rule::Under(11)), Code::Denied);
+    // 第五格：那一格是 OTHER 的门牌 ⇒ 它过、ME 拒；"没有那一位"是判不了（不是拒）。
+    assert_eq!(verdict(&Facts, OTHER, Rule::Opens(EntryId::new(5))), Code::Ok);
+    assert_eq!(verdict(&Facts, ME, Rule::Opens(EntryId::new(5))), Code::Denied);
+    assert_eq!(
+        verdict(&Facts, ME, Rule::Opens(EntryId::new(6))),
+        Code::Unjudged
+    );
 }
 
 #[test]
@@ -345,7 +434,13 @@ fn both_keys_reach_the_same_line() {
     // **这一条是这一格存在的全部理由**：`land` 手里只有坐标，`find` / `trim` 手里只有号
     // ——两种寻址打的是同一格。第一版按号记，`land` 那一问因此整道判据被跳过（真机读数
     // `probe-owner: tree land=OK id=5`）。
-    for rule in [Rule::Public, Rule::Is(P), Rule::Under(Q), Rule::In(C)] {
+    for rule in [
+        Rule::Public,
+        Rule::Is(P),
+        Rule::Under(Q),
+        Rule::In(C),
+        Rule::Opens(EntryId::new(5)),
+    ] {
         let mut book = one_line(rule, true, 1);
         assert_eq!(book.rule(Key::Id(ID), |_| true), rule, "按号查");
         assert_eq!(

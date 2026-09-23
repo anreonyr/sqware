@@ -101,19 +101,30 @@ fn find_face(who: TaskId) -> Option<PieToken> {
     claim(bcall::ENTRY_MARK, who, None)
 }
 
-/// 门禁要的三条边都从这一份出：问身份（`resolve`）、谱系（`heir`）、盟籍（`amid`）。
-impl Control for Session {
+/// 门禁要的那几条边都从这一份出：问身份（`resolve`）、谱系（`heir`）、盟籍（`amid`），
+/// 外加**树自己**那一问（第 `n` 格是谁的门牌）。
+///
+/// 照实记（第五格那一刀）：`Session` 只拿两枚门牌，而树不住它里面（`&mut` 那一条借用过不去），
+/// 故这一格把**两半**凑在一起——名册/盟册（[`Session`]）+ 树（[`Operator`]）。名字取"那一问在
+/// 哪儿答"，与 [`operator::gate`](protocol::operator::gate) 的裁决/门禁一族同调。
+struct Court<'a> {
+    session: &'a Session,
+    tree: &'a Operator,
+}
+
+impl Control for Court<'_> {
     fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
-        match self.roster.resolve(tid, MS) {
+        match self.session.roster.resolve(tid, MS) {
             // **不截断**：号在模型里的宽度就是 8 字节（`judge::Id`）。照实记：这里原写的是
-            // `p.get() as u32`——号不上帧时看不出来，这一刀之后号要上帧，故一并提宽。
+            // `p.get() as u32`——号不上帧时看不出来，那一刀之后号要上帧，故一并提宽。
             Ok(found) => Ok(found.map(|p| p.get() as Id)),
             Err(_) => Err(()),
         }
     }
 
     fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
-        self.roster
+        self.session
+            .roster
             .heir(
                 PrincipalId::new(a as usize),
                 PrincipalId::new(b as usize),
@@ -125,7 +136,7 @@ impl Control for Session {
     fn amid(&self, me: Id, at: Id) -> Result<bool, ()> {
         // 盟册那一枚没在手里 ⇒ 答"问不到"，而不是答"否"——**判不了**与"不在那枚盟里"是
         // 两件事，后者会让客人当场放弃。
-        let Some(league) = self.league.as_ref() else {
+        let Some(league) = self.session.league.as_ref() else {
             return Err(());
         };
         league
@@ -136,6 +147,12 @@ impl Control for Session {
             )
             .map_err(|_| ())
     }
+
+    fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
+        // **三因同落 `Ok(None)`**：号不在 / 那一号是块 `Pane` / 开者那扇门封印了——判据只需要
+        // "有没有那一位"这一件事（见 `judge::Door`）。这一条**不动树**：剔死是 `find` 的活儿。
+        Ok(self.tree.opens(at).ok())
+    }
 }
 
 /// **门禁的入口**：`session` 为 `None` = **装配期**（树手里还没有门牌）⇒ 放行；`Some` =
@@ -144,10 +161,13 @@ impl Control for Session {
 /// 装配期放行是**定义**不是例外：树接手时（principal 挂 `/sys/principal`、coalition 挂
 /// `/sys/coalition`）整个装配都还没走完，门禁无从判起；而那两条路的来路是装配者**直接铺的**
 /// （他发起的 `Ship`），不是"从问话孔进来的客人请求"。
-fn may(session: Option<&Session>, who: TaskId, rule: Rule<Id, Id>) -> Code {
+///
+/// `tree` 只给第 `n` 格那一问（`Rule::Opens`）：判据要问"那一格是谁的门牌"，而树就在手里
+/// ——故它一并与门牌合成 [`Court`]。
+fn may(tree: &Operator, session: Option<&Session>, who: TaskId, rule: Rule<Id, Id>) -> Code {
     match session {
         None => Code::Ok,
-        Some(s) => match verdict(s, who, rule) {
+        Some(s) => match verdict(&Court { session: s, tree }, who, rule) {
             // 「手里没有门牌」在客人那一侧与「判不了」同一格（都可重试）；`Some` 的时候
             // 不该出现它，真出现了也按"判不了"走，不按"放行"。
             Code::Blind => Code::Unjudged,
@@ -419,12 +439,13 @@ fn answer(
         //
         // 照实记（为什么这里从"全局默认"变成"逐格规矩"，而不是反过来）：上一刀把主人判据也
         // 挂在 `find` 上，`uart` 声明归自己之后，`echo` 当场取不到 `/device/uart`——机器还在，
-        // 控制台没人读（`examine` 0/3）。**读是公开的，写才归属主**：`Rule::Owner` 管的是**改
-        // 这一格**，不是**用这一格**。这一刀让"用"有自己的那一格，故默认值（公开）与主人那
+        // 控制台没人读（`examine` 0/3）。**读是公开的，写才归属主**：改那一轴（`land` 那一格
+        // 的 `mine`，账里记成 `Owner`）管的是**改这一格**，不是**用这一格**。这一刀让「用」有
+        // 自己的那一格，故默认值（公开）与主人那
         // 一轴不再互相牵制。
         ocall::AskIn::Find(id) => {
             let rule = book.rule(Key::Id(id), |id| fresh(tree, id));
-            let ruling = may(session, who, rule);
+            let ruling = may(tree, session, who, rule);
             if !ruling.passed() {
                 return status(out, ruling.wire());
             }
@@ -433,7 +454,7 @@ fn answer(
             if !book.claimable(Key::Id(id), who, |id| fresh(tree, id)) {
                 return status(out, ocall::DENIED);
             }
-            let ruling = may(session, who, Rule::Public);
+            let ruling = may(tree, session, who, Rule::Public);
             if !ruling.passed() {
                 return status(out, ruling.wire());
             }
@@ -443,7 +464,7 @@ fn answer(
         // 往命名空间里塞条目。**实测栽过一次**：漏了这一支，负证客人当场落牌成功
         // （读数 `probe: tree land=OK id=7`）。
         ocall::AskIn::Land { .. } => {
-            let ruling = may(session, who, Rule::Public);
+            let ruling = may(tree, session, who, Rule::Public);
             if !ruling.passed() {
                 return status(out, ruling.wire());
             }

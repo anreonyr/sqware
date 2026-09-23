@@ -38,7 +38,7 @@
 use env::Mark;
 use env::{Name, PieToken, TaskId};
 
-use super::core::{EntryId, Fail, Operator, Unship, VestedBy, Where};
+use super::core::{EntryId, Fail, Operator, Stamps, Unship, Where};
 use super::judge::Id;
 use crate::session::{Claim, Seat};
 
@@ -118,6 +118,8 @@ const RULE_PUBLIC: u8 = 0;
 const RULE_IS: u8 = 1;
 const RULE_UNDER: u8 = 2;
 const RULE_IN: u8 = 3;
+/// `4` 之后的号装的是**格号**（`Rule::Opens`），不是身份号——同一个 8 字节那一格。
+const RULE_OPENS: u8 = 4;
 
 /// 把「用那一轴」写进 `[51]`（标记）与 `[52 .. 60]`（号）。
 fn pack_rule(out: &mut [u8; ASK_MAX], rule: Rule<Id, Id>) {
@@ -126,6 +128,8 @@ fn pack_rule(out: &mut [u8; ASK_MAX], rule: Rule<Id, Id>) {
         Rule::Is(p) => (RULE_IS, p),
         Rule::Under(p) => (RULE_UNDER, p),
         Rule::In(c) => (RULE_IN, c),
+        // 格号与身份号同宽（都是 8 字节）⇒ 帧长一个字节都不动。
+        Rule::Opens(e) => (RULE_OPENS, e.get() as u64),
     };
     out[TAIL_AT + 9] = tag;
     out[TAIL_AT + 10..TAIL_AT + 18].copy_from_slice(&id.to_le_bytes());
@@ -148,6 +152,7 @@ fn unpack_rule(bytes: &[u8]) -> Rule<Id, Id> {
         RULE_IS => Rule::Is(id),
         RULE_UNDER => Rule::Under(id),
         RULE_IN => Rule::In(id),
+        RULE_OPENS => Rule::Opens(EntryId::new(id as usize)),
         _ => Rule::Public,
     }
 }
@@ -632,13 +637,16 @@ pub use crate::session::call::{marked_as, opened_by, vested_by};
 /// **卸下**：自释一份。剪掉或换掉一枚 `Tile` 时由核心叫它。
 pub use crate::session::call::unship;
 
-/// 立一棵树：把两个机制函数交给核心（核心因此不 `use` 内核）。
+/// 立一棵树：把注入的机制交给核心（核心因此不 `use` 内核）。
 ///
 /// `const` 是为了它能当 `static` 的初值——树只有一棵，住在本域（`bin/operator`）。
 pub const fn tree() -> Operator {
-    let vested_by: VestedBy = vested_by;
+    let stamps: Stamps = Stamps {
+        vested_by,
+        opened_by,
+    };
     let unship: Unship = unship;
-    Operator::new(vested_by, unship)
+    Operator::new(stamps, unship)
 }
 
 /// **交出**：把调用方手里那一枚交给持树者（`Accord` 一份副本），返"种在持树者表里"的号；

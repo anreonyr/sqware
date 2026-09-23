@@ -1,11 +1,16 @@
-//! operator 的核心 —— **树、七条原语（落 / 分 / 寻 / 剪 / 列 / 译 / 名）、失败域**。
+//! operator 的核心 —— **树、八条原语（落 / 分 / 寻 / 剪 / 列 / 译 / 名 / 开）、失败域**。
 //!
 //! 本文件**不碰内核**：判据只有一条可机械检查的纪律——
 //!
 //! > `core.rs` 里不出现 `runtime::`。
 //!
-//! 两个外部事实是**注入**的：[`VestedBy`]（那一枚 Pie 还答得出吗）与 [`Unship`]（把我这一份放下）。
-//! 于是喂两个假闭包就能把这棵树与七条原语的规矩推理干净，换载体不必重写。
+//! 外部事实是**注入**的：两枚戳子 [`Stamps`]（那一枚 Pie 还答得出吗、这扇门是谁开的）与
+//! [`Unship`]（把我这一份放下）。于是喂三个假闭包就能把这棵树与八条原语的规矩推理干净，
+//! 换载体不必重写。
+//!
+//! 照实记：**第八条（[`Operator::opens`]）不上线**——它没有动作码，是持树者自己判
+//! [`Rule::Opens`](super::judge::Rule::Opens) 时问的一句（"这一格是谁的门牌"）。对外那一族
+//! 仍是七条（见 [`super::mod`] 那两张表）。
 //!
 //! # 这批判据住在哪
 //!
@@ -123,7 +128,7 @@ pub enum Where {
     At(EntryId),
 }
 
-/// 七条原语会失败在哪一格。**一格对应一个不同的下一步**。
+/// 八条原语会失败在哪一格。**一格对应一个不同的下一步**。
 ///
 /// **没有"名字已被占"那一格**：同名接手一枚 `Tile`、或一块**空的** `Pane`，都是换绑
 /// （见 [`Operator::land`] / [`Operator::part`]）；而 owner 归 Principal，Operator 分不出
@@ -165,6 +170,28 @@ pub type VestedBy = fn(PieToken) -> Option<TaskId>;
 /// **放下**：把我这一份自释。剪掉或换掉一枚 `Tile` 时用它——不加这一格，那一枚句柄就漏在树里。
 pub type Unship = fn(PieToken) -> Result<(), ()>;
 
+/// **这扇门是谁开的**：内核 `Reserve` 第二格（`session::call::opened_by`）。
+///
+/// 与 [`VestedBy`] **同一个类型、不同一句话**——故两枚戳子收在一格里（[`Stamps`]）：谁写反了
+/// **编不过**（照实记：这两枚放成位置参数时是同一个类型，写反照样编过；`session` 那一族认
+/// `owner` 还是 `grantor` 实测栽过一次，同族的坑不再留）。
+///
+/// **"答不出"这一格里就有"那扇门封印了"**：开者一退场，它开的门随之封印 ⇒ 答 `None`。
+/// 故 `None` 只读作"没有那一位"，不必再问第二个问题。
+pub type OpenedBy = fn(PieToken) -> Option<TaskId>;
+
+/// 树要的**两枚戳子**（内核在开门那一刻盖上去的）：这枚还答得出吗 / 这扇门是谁开的。
+///
+/// 两枚对每一条同值，故跟着树走，不必逐个作参数传（[`Operator::new`] 收一格）。
+/// [`Unship`] 不在这里：那两个是**问题**，它是一次**动作**。
+#[derive(Clone, Copy)]
+pub struct Stamps {
+    /// 这一枚还答得出吗（活性）——[`Operator::find`] 的惰性剔死问它。
+    pub vested_by: VestedBy,
+    /// 这扇门是谁开的——[`Operator::opens`] 问它。
+    pub opened_by: OpenedBy,
+}
+
 /// **落 / 分想要什么**——两条原语共用 [`Operator::put`] 那一手，差别只在这一格。
 ///
 /// 照实记：`land` 想要一枚砖（那儿要是块**非空** `Pane` 就是 [`Fail::NonEmpty`]：换绑会毁掉
@@ -192,7 +219,9 @@ pub struct Operator {
     /// （[`Fail::Unknown`]），不会悄悄指到后铸的那一格身上。水位与 `slots.len()` 同值，
     /// 留着它只为把这条纪律写在一处。
     next: usize,
-    vested_by: VestedBy,
+    /// 两枚注入的戳子（[`Stamps`]，对每一条同值）。
+    stamps: Stamps,
+    /// 一次注入的动作（[`Unship`]）。
     unship: Unship,
 }
 
@@ -205,13 +234,16 @@ impl Operator {
     /// 而自从号成了表里的下标，**深度也不再吃调用栈**（见文件头那一节）。
     pub const ROAD_MAX: usize = 8;
 
-    /// 立一棵树：两个注入的机制事实跟着树走——它们对每一条同值，故不必逐个作参数传。
-    pub const fn new(vested_by: VestedBy, unship: Unship) -> Operator {
+    /// 立一棵树：注入的两枚戳子与那一次动作跟着树走——它们对每一条同值，故不必逐个作参数传。
+    ///
+    /// `stamps` 收成**一格具名的组**（照实记：两枚戳子是同型的函数指针，摆成位置参数时写反了
+    /// 编不过才算数——`session` 那一族认 `owner` 还是 `grantor` 实测栽过一次）。
+    pub const fn new(stamps: Stamps, unship: Unship) -> Operator {
         Operator {
             root: Vec::new(),
             slots: Vec::new(),
             next: 0,
-            vested_by,
+            stamps,
             unship,
         }
     }
@@ -259,7 +291,7 @@ impl Operator {
     /// `ship` 是"交出去"那一手（适配层在这里把 Pie 授给调用方，核心因此不碰内核）——与同文件
     /// 另一个注入事实 [`Unship`] 正好是一式的两半（交出 / 放下）。
     pub fn find(&mut self, id: EntryId, mut ship: impl FnMut(PieToken)) -> Result<(), Fail> {
-        let vested_by = self.vested_by;
+        let vested_by = self.stamps.vested_by;
         let unship = self.unship;
         // 先只读地问一遍（借用到此为止），再决定要不要动树。
         let pie = match self.slot(id) {
@@ -276,6 +308,35 @@ impl Operator {
         }
         ship(pie);
         Ok(())
+    }
+
+    /// **开**：第 `id` 格**是谁的门牌**（那一枚句柄的开者）。
+    ///
+    /// 与 [`Operator::find`] **正相反**：这一条什么都不交出去——只答"是谁"，不把那枚句柄递出去；
+    /// 也**不动树**（惰性剔死是 `find` 那一路上的事，这里不顺手销账）。
+    ///
+    /// 三格，与 `find` 对同一格答**同一批码**（差别只在"活着的砖"那一档：`find` 交出句柄，
+    /// 这里答开者）：
+    ///
+    /// - 号不在树上（墓碑 / 从没铸过）⇒ [`Fail::Unknown`]；
+    /// - 那一格是一块 `Pane` ⇒ [`Fail::NotATile`]（**没有开者这一说**）；
+    /// - 是一枚 `Tile`，但开者那扇门封印了 ⇒ [`Fail::Dead`]。
+    ///
+    /// 照实记：`Dead` 那一格是**三因一码**（不是孔 / 不在我表里 / 已封印），与 [`VestedBy`] 的
+    /// 口径同一句。**不许拆它**——今天没有一位客人分得开这三因，分开就是造三个没人读的格。
+    ///
+    /// 谁问它：持树者判 [`Rule::Opens`](super::judge::Rule::Opens) 时，把这一格翻成开者，再拿
+    /// 开者去问名册"这一刻代表谁"。故它答的是 **TID**，不是身份号——两件事两个落点。
+    pub fn opens(&self, id: EntryId) -> Result<TaskId, Fail> {
+        let opened_by = self.stamps.opened_by;
+        let pie = match self.slot(id) {
+            None => return Err(Fail::Unknown),
+            Some(slot) => match &slot.node {
+                Node::Pane(_) => return Err(Fail::NotATile),
+                Node::Tile(pie) => *pie,
+            },
+        };
+        opened_by(pie).ok_or(Fail::Dead)
     }
 
     /// **剪**：把那一号那一格剪掉。

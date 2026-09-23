@@ -402,6 +402,11 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
 - ~~规则的形状（`Allow` / `Is` / `Under` / `In` 怎么表达、能不能组合）——闸口跑通后再谈。~~
   → **已做**：闸口跑通了，下一刀（[`operator-rule.md`](operator-rule.md)）把"用"那一轴落成
   逐格的事实，`Is` / `Under` / `In` 三条判据在真机上各有了正证与负证。
+- ~~**规矩里的号从哪来**（前四格只能指"自己人"，"把这一格许给某一位"这句话说不出来）~~
+  → **已收**：第五个变体 `Rule::Opens(格号)`——**树就是名录**：客人 `seek` 一条路换来格号写进
+  规矩，判的时候持树者问"此刻谁占着那一格"。真机读数
+  `probe-rule: … open=0 foreign=8 open_sub=0` 与 `probe-other: … foreign=8`。
+  见 [`operator-rule.md`](operator-rule.md) §7；剩下一半（"某一位**叫什么**"）仍记在那里。
 - 死亡道（板那条 `gone-<名字>` 树一条都没认领）。
 - 别名（同一枚 Pie 挂两个名 = 两条独立条目）。
 - ~~**深度**（`seek` 封顶 8 段，树本身无上限）~~ → **已收**（见 [`operator-slot.md`](operator-slot.md)：

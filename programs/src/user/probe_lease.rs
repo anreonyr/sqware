@@ -75,7 +75,7 @@ extern "C" fn main() -> ! {
         bail("probe-lease: no entry")
     };
 
-    // 落牌：**声明归本域**（`Rule::Owner`）。落完就走——那一格留成"没主"。
+    // 落牌：**声明归本域**（`mine = true`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
     match operator::land(
         hedge,
         &tree,

@@ -123,7 +123,7 @@ extern "C" fn main() -> ! {
     let denied = land_code == ocall::DENIED;
     let untouched = matches!(after, Ok(id) if id == before);
 
-    // 六、**接手那一格没主的名字**：`probe-lease` 落完 `/sys/lease`（`Rule::Owner`）就死，
+    // 六、**接手那一格没主的名字**：`probe-lease` 落完 `/sys/lease`（`mine = true`）就死，
     //     故它的资源已被退场钩子封印 ⇒ 持树者该让那一格重新可落。**有界重试**：本域可能
     //     比它先跑完那几手（提示是单槽，装配者按计划顺序推）。
     let taken = take_over(hedge, &tree, host);

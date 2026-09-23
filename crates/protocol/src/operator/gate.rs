@@ -2,8 +2,9 @@
 //!
 //! 本文件与 [`judge`](super::judge) 同一站位：**不带载体**。它只做两件事——
 //!
-//! 1. 把"问身份那两条边"收成**一个 trait**（[`Control`]）：树域那一侧用一个真实现
-//!    （两枚门牌 + `Face::resolve` / `heir` / `amid`），宿主台那一侧用假实现；
+//! 1. 把"判据要问的那几条边"收成**一个 trait**（[`Control`]）：树域那一侧用一个真实现
+//!    （两枚门牌 + `Face::resolve` / `heir` / `amid`，外加**树自己**那条"这一格是谁的门牌"），
+//!    宿主台那一侧用假实现；
 //! 2. 把 [`judge`] 那三格答案 + "手里没有门牌"这一格，翻成线上那一格码（[`Code`]）。
 //!
 //! # 四种码，四种下一步
@@ -30,7 +31,8 @@
 //! 照实记：上一刀这里写的是"条目上还没有逐格规则（那是下一刀）"——那一刀所有条目共用这一条
 //! 常量，故 `judge` 里 `Is` / `Under` / `In` 三条判据**一次没被问过**；这一刀通了它们。
 
-use super::judge::{Branch, Id, League, Rule, Ruling, Who, judge};
+use super::core::EntryId;
+use super::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
 use env::TaskId;
 
 // ── 线上那一格：**本文件自己拿一份** ────────────────────────
@@ -72,7 +74,7 @@ impl Code {
     }
 }
 
-/// 问身份那两条边的**一个**出口：树域用它接两枚门牌，宿主台用它喂假事实。
+/// 判据要问的那几条边的**一个**出口：树域用它接两枚门牌与树自己，宿主台用它喂假事实。
 pub trait Control {
     /// **手里有没有协调门牌**。装配期（还没有门牌）答 `false` ⇒ 一律 [`Code::Blind`]。
     ///
@@ -87,9 +89,14 @@ pub trait Control {
     fn heir(&self, a: Id, b: Id) -> Result<bool, ()>;
     /// **`me`** 在这一枚盟里吗（`Err` = 问不到）。两格都要：盟册那一问本来就是这个形状。
     fn amid(&self, me: Id, at: Id) -> Result<bool, ()>;
+    /// 第 `at` 格**是谁开的**（树那条读）。
+    ///
+    /// **三因同落 `Ok(None)` 是有意的**：格不在 / 那一号是块 `Pane` / 开者那扇门封印了——
+    /// 判据（[`Door`]）只需要"有没有那一位"这一件事，三因分开是三个没人读的格。
+    fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()>;
 }
 
-/// **还没有门牌**的那一份实现：`has_face` 答 `false`，其余三问一律答"问不到"。
+/// **还没有门牌**的那一份实现：`has_face` 答 `false`，其余几问一律答"问不到"。
 ///
 /// 它就是 [`Code::Blind`] 的来源——装配期（树手里没有协调门牌）用的正是它。
 pub struct Blind;
@@ -107,9 +114,12 @@ impl Control for Blind {
     fn amid(&self, _: Id, _: Id) -> Result<bool, ()> {
         Err(())
     }
+    fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> {
+        Err(())
+    }
 }
 
-/// 三个假事实拼成 [`judge`] 要的那三个 trait——**本文件的全部粘合**。
+/// 那几条边拼成 [`judge`] 要的那四个 trait——**本文件的全部粘合**。
 struct Facts<'a, C: Control>(&'a C);
 
 impl<C: Control> Who<Id> for Facts<'_, C> {
@@ -130,14 +140,20 @@ impl<C: Control> League<Id, Id> for Facts<'_, C> {
     }
 }
 
-/// 判一格：`control` 是问身份那两条边（装配期喂 [`Blind`]），`rule` 是那一格自己的规矩。
+impl<C: Control> Door for Facts<'_, C> {
+    fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
+        self.0.opens(at)
+    }
+}
+
+/// 判一格：`control` 是那几条边（装配期喂 [`Blind`]），`rule` 是那一格自己的规矩。
 pub fn verdict(control: &impl Control, who: TaskId, rule: Rule<Id, Id>) -> Code {
     // 手里没有门牌 ⇒ 当场答"装配期"，一次问都不发（省一次注定失败的 envcalls）。
     if !control.has_face() {
         return Code::Blind;
     }
     let facts = Facts(control);
-    match judge(who, rule, &facts, &facts, &facts) {
+    match judge(who, rule, &facts, &facts, &facts, &facts) {
         Ruling::Allow => Code::Ok,
         Ruling::Deny => Code::Denied,
         Ruling::Unjudged => Code::Unjudged,
@@ -152,19 +168,28 @@ mod tests {
     use super::*;
 
     const ME: TaskId = TaskId::new(22);
+    const MATE: TaskId = TaskId::new(33);
     const P: Id = 7;
+    const Q: Id = 9;
 
-    /// 一颗能答的身份边。
+    /// 一颗能答的身份边。**第 5 格的门牌是 MATE 开的**（故 `Opens(5)` 只许它）。
     struct Real;
     impl Control for Real {
         fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
-            Ok((tid == ME).then_some(P))
+            Ok(match tid {
+                ME => Some(P),
+                MATE => Some(Q),
+                _ => None,
+            })
         }
         fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
             Ok(a == b)
         }
         fn amid(&self, me: Id, at: Id) -> Result<bool, ()> {
             Ok(me == P && at == P)
+        }
+        fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
+            Ok((at.get() == 5).then_some(MATE))
         }
     }
 
@@ -178,6 +203,9 @@ mod tests {
             Err(())
         }
         fn amid(&self, _: Id, _: Id) -> Result<bool, ()> {
+            Err(())
+        }
+        fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> {
             Err(())
         }
     }
@@ -197,6 +225,20 @@ mod tests {
     }
 
     #[test]
+    fn opens_is_decided_by_the_doors_opener() {
+        // 第 5 格是 MATE 的门牌 ⇒ 它过、ME 拒；"没有那一位"⇒ 判不了（不是拒）。
+        assert_eq!(verdict(&Real, MATE, Rule::Opens(EntryId::new(5))), Code::Ok);
+        assert_eq!(
+            verdict(&Real, ME, Rule::Opens(EntryId::new(5))),
+            Code::Denied
+        );
+        assert_eq!(
+            verdict(&Real, ME, Rule::Opens(EntryId::new(6))),
+            Code::Unjudged
+        );
+    }
+
+    #[test]
     fn a_missing_identity_is_denied_not_unjudged() {
         // 没绑过（名册答 `None`）⇒ **终态拒**：这一格若松成"判不了"，客人会一直重试。
         assert_eq!(verdict(&Real, TaskId::new(99), Rule::Public), Code::Denied);
@@ -213,6 +255,10 @@ mod tests {
         // 装配期（树手里没有门牌）：判不了任何人——但**它不是"放行"**。
         assert_eq!(verdict(&Blind, ME, Rule::Public), Code::Blind);
         assert_eq!(verdict(&Blind, ME, Rule::Under(P)), Code::Blind);
+        assert_eq!(
+            verdict(&Blind, ME, Rule::Opens(EntryId::new(5))),
+            Code::Blind
+        );
         assert!(!Code::Blind.passed(), "没有门牌 ≠ 放行");
     }
 }

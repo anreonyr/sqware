@@ -10,20 +10,28 @@
 //!   list  列   看一块 Pane 里有哪些**号**
 //!   name  名   这枚号此刻叫什么
 //!   seek  译   把一条路**译成号**——名字只到这一格，往下一律按号
+//!   opens 开   第 n 格是谁的门牌（**只读**，不上线：持树者判 `Rule::Opens` 时自己问）
 //! ```
 //!
-//! 七条都是 4 个字母；两个类型名与两条原语名**不同名**（`part` 建 `Pane`、`land` 落 `Tile`）——
-//! 这是照实记：名动同形那一格本来留给 `tile`，最后定的是 `land`（"落位"那个画面），
-//! 而 `seat` 因为与会话的 `Seat` / `Quay::seat` 撞在同一个文件里而被否掉。
+//! 对外那七条都是 4 个字母；第八条是 5 个字母、只读、不发消息——照实记：这一族的字是**语义
+//! 名词/动词**（`part`/`land`/`find`/`trim`/`list`/`seek`/`name`），故 `peek`/`probe`/`look`
+//! 那类实现细节词一个都没用上。
+//!
+//! 两个类型名与两条原语名**不同名**（`part` 建 `Pane`、`land` 落 `Tile`）——这是照实记：名动同形
+//! 那一格本来留给 `tile`，最后定的是 `land`（"落位"那个画面），而 `seat` 因为与会话的
+//! `Seat` / `Quay::seat` 撞在同一个文件里而被否掉。
 //!
 //! # 树
 //!
 //! ```text
-//!   Entry { 号, 名字, 去处 }       名字 = 一段，号 = 铸出来的那一个
-//!   Node  = Pane(Vec<Entry>)      窗格：还能往里走（可以再分）
+//!   slots: Vec<Option<Slot>>      号 i ↔ slots[i]；None = 墓碑（剪掉 / 剔死留下的坑）
+//!   Slot  { 名字, 去处 }          名字 = 一段
+//!   Node  = Pane(Vec<EntryId>)    窗格：装的是**孩子的号**，还能往里走（可以再分）
 //!         | Tile(PieToken)        砖：到头了，就是内核那一枚
-//!   根    = 顶层那个 Vec<Entry>    `Where::Root` 就是它（**根没有号**）
+//!   根    = 顶层那个 Vec<EntryId> `Where::Root` 就是它（**根没有号**）
 //! ```
+//!
+//! **号就是下标**（照实记：原来是一棵嵌套树，按深度递归 ⇒ 持树者死在第 117 层）。
 //!
 //! 一条路是**段列表**（`&[Name]`），不是一个字符串：一段就是现成的 `Name`（定长 32 字节、
 //! 构造即校验）——于是"名字不合法"在类型上不存在，也没有分隔符 / 转义 / `..` 这些边界。
@@ -40,7 +48,7 @@
 //! 也留着一条（[`Operator::name`] 按号答名），于是"人念得出的那半"与"机器认得的那半"各有
 //! 一条路，中间只有 `seek` 这一道闸。
 //!
-//! # 七条原语
+//! # 七条原语（对外）+ 一条只读（不上线）
 //!
 //! | 原语 | 收什么 | 干什么 | 答什么 |
 //! |---|---|---|---|
@@ -50,7 +58,11 @@
 //! | [`Operator::trim`] | 号 | 把那一号剪掉 | 一格状态 |
 //! | [`Operator::list`] | 容器坐标 | 读那一块 `Pane` 里的**号** | 一串号 |
 //! | [`Operator::seek`] | 一条路 | 把路**译成那一枚号**（名字只到这一格） | 一枚号 |
-//! | [`Operator::name`] | 号 | 把一枚号翻成名字（全树扫） | 一枚名字 |
+//! | [`Operator::name`] | 号 | 把一枚号翻成名字 | 一枚名字 |
+//!
+//! **第八条 [`Operator::opens`]（开）不发消息**：它答"第 `n` 格是谁的门牌"，是持树者自己判
+//! [`Rule::Opens`] 时问的一句（**没有动作码**）。与 `find` 正相反——`find` 交出句柄，它只答
+//! "是谁"，不动树、不交东西。也**不分配**（同 `name` 那一档）。
 //!
 //! **要动一块 `Pane`，先把它清空**——`land`（换绑）与 `trim` 是同一条规矩：
 //! 非空 `Pane` ⇒ [`Fail::NonEmpty`]。
@@ -66,13 +78,15 @@
 //!
 //! # 签名里没有"谁"
 //!
-//! 七条原语都没有 caller 参数、条目也没有 owner 字段：**谁能动由 Principal 那一层回答**
+//! 那八条原语都没有 caller 参数、条目也没有 owner 字段：**谁能动由 Principal 那一层回答**
 //! （内核在 Push 时盖的发送者印章是现成的，Principal 拿去用，Operator 不看它）。
 //!
-//! # 两个注入的事实
+//! # 两枚注入的戳子 + 一次注入的动作
 //!
-//! [`VestedBy`]（那一枚 Pie 还答得出吗）与 [`Unship`]（把我这一份放下——剪掉或换掉一枚 `Tile` 时用它，
-//! 不加这一格那一枚句柄就漏在树里）。核心因此不 `use` 内核，喂两个假闭包就能把规矩推理干净。
+//! [`Stamps`]（那一枚 Pie 还答得出吗 / 这扇门是谁开的）与 [`Unship`]（把我这一份放下——剪掉或
+//! 换掉一枚 `Tile` 时用它，不加这一格那一枚句柄就漏在树里）。核心因此不 `use` 内核，喂三个假
+//! 闭包就能把规矩推理干净。两枚戳子收在**一格具名的组**里：它们同型，摆成位置参数时写反了
+//! 编不过（`session` 那一族认 `owner` 还是 `grantor` 实测栽过一次）。
 //!
 //! # 与 [`system::board`](crate::system::board) 的关系
 //!
@@ -82,16 +96,17 @@
 //!
 //! # 落地程度
 //!
-//! 三层都在：**核心**（[`core`]：树 + 七条原语；用例在**编外宿主台**
+//! 三层都在：**核心**（[`core`]：树 + 八条原语；用例在**编外宿主台**
 //! `crates/operator-case`，门口 `scripts/host.sh`）、**载体**（[`call`] 的帧与转发、
 //! 持树者那本客人小账 `desk`）、**服务**（[`server`](/crate::operator::server) 的
 //! `serve` / `attach` / 客侧三手，加 `prog-operator` 这个域；装配那一格在
 //! `programs/.../service.rs` 的 `Program::operator`）。
 //!
-//! **七条都在线上**：两条一格状态的（`find` / `trim`）与**五条答数据的**（`land` / `part`
-//! 各答一枚号、`seek` 答一枚号、`list` 答一串号、`name` 答一枚名字）。**答话那一侧有四种帧形**
-//! （一格状态 / 一串号 / 一枚名字 / 一枚号），各有各的上界（见 [`call::REPLY_MAX`] 那一段）；
-//! `list` / `name` / `seek` 三家分家，就是"名与号分开"那一条落地：**名字只到 `seek` 这一格**。
+//! **七条都在线上**（第八条 `opens` 不上线）：两条一格状态的（`find` / `trim`）与**五条答数据的**
+//! （`land` / `part` 各答一枚号、`seek` 答一枚号、`list` 答一串号、`name` 答一枚名字）。
+//! **答话那一侧有四种帧形**（一格状态 / 一串号 / 一枚名字 / 一枚号），各有各的上界
+//! （见 [`call::REPLY_MAX`] 那一段）；`list` / `name` / `seek` 三家分家，就是"名与号分开"那一条
+//! 落地：**名字只到 `seek` 这一格**。
 //!
 //! **问话那一侧按动作各一条帧形**（`seek` 带路，`land` / `part` 带容器坐标 + 新名，
 //! `list` 带容器坐标，`find` / `trim` / `name` 带号）；最长的仍是 `seek` 那一条
@@ -153,9 +168,9 @@ pub mod judge;
 pub mod ledger;
 
 pub use call::{ASK_MARK, LINK, Listing, TIP_MARK, TIP_NAME};
-pub use core::{EntryId, Fail, Operator, Unship, VestedBy, Where};
+pub use core::{EntryId, Fail, OpenedBy, Operator, Stamps, Unship, VestedBy, Where};
 pub use gate::{Blind, Code, Control, verdict};
-pub use judge::{Branch, Id, League, Rule, Ruling, Who, judge};
+pub use judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
 pub use ledger::{Blank, Key, Ledger, Line, Owner};
 
 /// **同步义务**：`gate.rs` 自己留了那三格线上码（它要在宿主靶里编，而 `call.rs` 拖着 `runtime`

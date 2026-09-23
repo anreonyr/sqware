@@ -37,7 +37,7 @@ use std::sync::Mutex;
 
 use env::{Name, PieToken, TaskId};
 
-use crate::operator::{EntryId, Fail, Operator, Where};
+use crate::operator::{EntryId, Fail, Operator, Stamps, Where};
 
 // ── 一台"分配会失败"的台子（只给下面那一条用例）──────────────────
 //
@@ -108,6 +108,18 @@ fn fake_vested_by(entry: PieToken) -> Option<TaskId> {
     }
 }
 
+/// 假表第二枚戳子：**开者**（与"授与人"分开编号，好让判据里两枚戳子分得开）。
+///
+/// 照实记：这一格读的是**同一张活表**——真机上 `owner` 与 `vestor` 是两格，而"这扇门封印了"
+/// 那件事两枚戳子同时答不出（`Reserve` 的存活闸是共享的）。故 `gone(n)` 在 [`Operator::opens`]
+/// 那一格里就是 [`Fail::Dead`]，而那正是要量的那一格。
+fn fake_opened_by(entry: PieToken) -> Option<TaskId> {
+    fake_vested_by(entry).map(|who| TaskId::new(who.get() + OPENED_BIAS))
+}
+
+/// 开者那一格与授与人那一格的编号偏置（两枚戳子同型 ⇒ 这一格是"分得开"的判据）。
+const OPENED_BIAS: usize = 1000;
+
 /// 记下"这一枚被放下了"。假表有 `PANE_CAP + 1` 位，越界的令牌不记。
 fn fake_unship(entry: PieToken) -> Result<(), ()> {
     if entry.get() < TABLE.len() {
@@ -121,7 +133,13 @@ fn tree() -> Operator {
         slot.store(0, Ordering::Relaxed);
     }
     FREED.store(0, Ordering::Relaxed);
-    Operator::new(fake_vested_by, fake_unship)
+    Operator::new(
+        Stamps {
+            vested_by: fake_vested_by,
+            opened_by: fake_opened_by,
+        },
+        fake_unship,
+    )
 }
 
 /// 令牌 `entry` 还答得出。
@@ -322,6 +340,54 @@ fn rebinding_takes_the_name_over_and_lets_the_old_one_go() {
     assert_eq!(names(&t, &[]), Ok(std::vec![name("dev")]));
     assert_eq!(names(&t, &path(&["dev"])), Ok(std::vec![]));
     assert_eq!(look(&mut t, &path(&["dev"])), Err(Fail::NotATile));
+}
+
+#[test]
+fn opens_answers_the_opener_and_never_hands_the_pie_out() {
+    let _serial = serial();
+    let mut t = tree();
+    live(1);
+    assert_eq!(t.land(Where::Root, name("door"), tok(1)), Ok(EntryId::new(0)));
+    // 开者那一格：**与授与人那一格分得开**（两枚戳子同型 ⇒ 偏置就是这一格的判据）。
+    assert_eq!(
+        t.opens(EntryId::new(0)),
+        Ok(TaskId::new(1 + OPENED_BIAS)),
+        "答的是开者，不是授与人"
+    );
+    // **什么都不交出去**：读它一遍之后那一格照旧在、那一枚照旧没被放下。
+    assert!(!unshipped(1));
+    assert_eq!(t.opens(EntryId::new(0)), Ok(TaskId::new(1 + OPENED_BIAS)));
+    assert_eq!(look(&mut t, &path(&["door"])), Ok(Some(tok(1))), "句柄只有 find 交");
+}
+
+#[test]
+fn opens_knows_a_pane_a_tombstone_and_a_sealed_door() {
+    let _serial = serial();
+    let mut t = tree();
+    // 一块 `Pane`：没有开者这一说。
+    assert_eq!(t.part(Where::Root, name("dev")), Ok(EntryId::new(0)));
+    assert_eq!(t.opens(EntryId::new(0)), Err(Fail::NotATile));
+    // 墓碑：剪掉之后那条号**不重用**，一枚旧号永远答 `Unknown`。
+    live(1);
+    assert_eq!(
+        t.land(Where::At(EntryId::new(0)), name("uart0"), tok(1)),
+        Ok(EntryId::new(1))
+    );
+    assert_eq!(t.trim(EntryId::new(1)), Ok(()));
+    assert_eq!(t.opens(EntryId::new(1)), Err(Fail::Unknown));
+    // 从没铸过的号：与墓碑同一个码。
+    assert_eq!(t.opens(EntryId::new(9)), Err(Fail::Unknown));
+    // 是枚砖，但开者那扇门封印了 ⇒ `Dead`（**三因一码**，与 `find` 同一格）。
+    assert_eq!(
+        t.land(Where::At(EntryId::new(0)), name("uart1"), tok(2)),
+        Ok(EntryId::new(2))
+    );
+    live(2);
+    assert_eq!(t.opens(EntryId::new(2)), Ok(TaskId::new(1 + OPENED_BIAS)));
+    gone(2);
+    assert_eq!(t.opens(EntryId::new(2)), Err(Fail::Dead));
+    // **`opens` 不动树**：剔死是 `find` 那一路上的事，故那一格照旧在。
+    assert_eq!(t.name(EntryId::new(2)), Ok(name("uart1")));
 }
 
 #[test]

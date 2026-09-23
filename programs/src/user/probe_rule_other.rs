@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! probe-rule-other — **另一位客人**：**有身份**地去用别人立了规矩的那两格，期望被拒。
+//! probe-rule-other — **另一位客人**：**有身份**地去用别人立了规矩的那几格，期望被拒。
 //!
 //! `probe-rule` 那一台证的是"**规矩随身份走**"（同一个 TID 换一位代表，答案就变了）。
 //! 而 `Rule::Is` 与 `Rule::Under` 各还有一格**只有另一台客人量得到**：
@@ -14,9 +14,13 @@
 //!
 //! ```text
 //!   1  上树、开一条问话孔（本域不需要门牌：只 `seek` + `find`，不问身份服务）
-//!   2  SEEK /sys/rule/is    ⇒ FIND ⇒ 期望 DENIED(8)
-//!   3  SEEK /sys/rule/under ⇒ FIND ⇒ 期望 DENIED(8)
-//!   4  报一行读数就退场
+//!   2  SEEK /sys/rule/is      ⇒ FIND ⇒ 期望 DENIED(8)
+//!   3  SEEK /sys/rule/under   ⇒ FIND ⇒ 期望 DENIED(8)
+//!   4  SEEK /sys/rule/foreign ⇒ FIND ⇒ 期望 DENIED(8)
+//!      —— 那一格许给的是"**开着 `/sys/principal` 那一格**的那位"（规矩由 `probe-rule` 落，
+//!         按 `seek` 换来的号写），本域不是那一位 ⇒ 同样拒。**这一格不依赖次序**：那枚门牌
+//!         的主人是常驻服务，整轮都活着。
+//!   5  报一行读数就退场
 //! ```
 //!
 //! # 为什么这两格也是必要的（`8` 与 `9` 与 `0` 三里必须落在 `8`）
@@ -27,8 +31,9 @@
 //! **第一道门**（有没有身份），本台量的是**第二道门**（这一格许不许你）。
 //!
 //! 照实记：本台只 `seek` + `find`，**不 `land`**——落牌是"改这一格"那一轴（由 `probe-owner`
-//! 那一台管），而这两格是 `mine = false` 落下的（谁都能改）。若本台顺手落一次，就会**顶掉**
-//! `probe-rule` 那三格（改这一轴不归它管，可"落牌"本身会换绑），后面的读数就全变了。
+//! 那一台管），而那几格是 `mine = false` 落下的（谁都能改）。若本台顺手落一次，就会**顶掉**
+//! `probe-rule` 那几格（改这一轴不归它管，可"落牌"本身会换绑），后面的读数就全变了。
+//! `foreign` 那一格也是 `probe-rule` 落的——本台只负责"换一台客人再去撞一次"。
 
 // 本文件是一份**独立的 bin**（`programs/Cargo.toml` 的 `prog-probe-rule-other`），**不进 lib**
 // ——与 `echo` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
@@ -54,6 +59,8 @@ const DIR: &str = "sys";
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
+/// `probe-rule` 落的第三格：规矩 = `Opens(/sys/principal 那一格)`（许给**别人**）。
+const FOREIGN: &str = "foreign";
 
 /// 等树 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
@@ -65,7 +72,7 @@ const RETRY_MS: usize = 1;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-const OK_NOTE: &str = "probe-rule-other: both denied as expected";
+const OK_NOTE: &str = "probe-rule-other: all three denied as expected";
 const BAD_NOTE: &str = "probe-rule-other: NOT denied";
 
 #[unsafe(no_mangle)]
@@ -81,24 +88,28 @@ extern "C" fn main() -> ! {
     let Ok(talk) = operator::ask_hole(host) else {
         bail("probe-other: no tree ask")
     };
-    let (Ok(dir), Ok(pane), Ok(is_name), Ok(under_name)) = (
+    let (Ok(dir), Ok(pane), Ok(is_name), Ok(under_name), Ok(foreign_name)) = (
         Name::new(DIR),
         Name::new(PANE),
         Name::new(IS),
         Name::new(UNDER),
+        Name::new(FOREIGN),
     ) else {
         bail("probe-other: bad name")
     };
 
-    // 二、按名字取号（**这一手不过门禁**：`seek` 不在闸口里），再 `find`——那一手该被拒。
+    // 二、按名字取号（**这一手不过门禁**：`seek` 不在闸口里），再 `find`——那几手该被拒。
     let is = denied(talk, &tree, &[dir, pane, is_name]);
     let under = denied(talk, &tree, &[dir, pane, under_name]);
+    let foreign = denied(talk, &tree, &[dir, pane, foreign_name]);
 
     // 三、一行读数。
-    say(&format!("probe-other: tree is={is} under={under}"));
+    say(&format!(
+        "probe-other: tree is={is} under={under} foreign={foreign}"
+    ));
 
-    // 四、判据：两格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
-    let held = is == ocall::DENIED && under == ocall::DENIED;
+    // 四、判据：三格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
+    let held = is == ocall::DENIED && under == ocall::DENIED && foreign == ocall::DENIED;
     exit_with_note(
         if held { E_OK } else { E_TRIP },
         if held { OK_NOTE } else { BAD_NOTE },
