@@ -42,6 +42,9 @@
 
 extern crate alloc;
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+
 /// 判据的正文（就是 `crates/protocol/src/operator/judge.rs` 那一份，逐字未改）。
 #[path = "../../protocol/src/operator/judge.rs"]
 mod judge;
@@ -65,10 +68,57 @@ mod ledger;
 
 use env::{Name, PieToken, TaskId};
 
-use crate::core::{EntryId, Where};
+use crate::core::{EntryId, Fail, Where};
 use crate::gate::{Blind, Code, Control, verdict};
 use crate::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
 use crate::ledger::{Key, Ledger, Line};
+
+// ── 一台"分配会失败"的台子（只给账的容量那一条用例）────────────────
+//
+// 账有一格判据是 **fail-closed**：`grow` 备不下 ⇒ 这一问**就该失败**（答 `FULL`），因为
+// "用"那一轴一旦漏记，那一格就从**私名**回落成**公名**（`Publishers` 那版是 fail-soft，
+// 照实记见 `ledger.rs::grow`）。它只有把分配**真的**打掉才量得到——故这里给测试靶换一个
+// **可关掉**的全局分配器（与 `crates/operator-case` 那一台同一款）。
+//
+// 旗帜是**线程局部**的，不是进程级的：libtest 每个用例各一枚线程，而"打掉分配"若做成全局
+// 旗帜，那一条用例亮旗的时候别的用例正好在分配 ⇒ 随机 panic（**随机红的门比没有门更坏**）。
+// 用 `const` 初值：`thread_local!` 的惰性初始化**本身要分配**——在分配器里自指。
+struct Flaky;
+
+thread_local! {
+    static NO_ROOM: Cell<bool> = const { Cell::new(false) };
+}
+
+unsafe impl GlobalAlloc for Flaky {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if NO_ROOM.with(Cell::get) {
+            // 内核里那一条是 `handle_alloc_error`（abort）——宿主上等价的就是**返空**，
+            // 让 `Vec::try_reserve` 如实答 `Err`。
+            //
+            // 照实记：这里只能写 `std::ptr`——本台的 `mod core;` 把 `core` 那个 crate 名
+            // 遮住了（它编的是 `protocol/src/operator/core.rs` 那一份）。
+            return std::ptr::null_mut();
+        }
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new: usize) -> *mut u8 {
+        if NO_ROOM.with(Cell::get) {
+            return std::ptr::null_mut();
+        }
+        unsafe { System.realloc(ptr, layout, new) }
+    }
+}
+
+#[global_allocator]
+static ALLOC: Flaky = Flaky;
+
+/// 打掉（或放开）本线程的分配。
+fn no_room(on: bool) {
+    NO_ROOM.with(|flag| flag.set(on));
+}
 
 // ── 假事实 ──────────────────────────────────────────────────
 
@@ -528,4 +578,25 @@ fn dropping_a_line_makes_the_slot_free_again() {
     assert_eq!(book.len(), 0);
     assert!(book.claimable(Key::Id(ID), OTHER, |id| truth.fresh(id)));
     assert_eq!(book.rule(Key::Id(ID), |id| truth.fresh(id)), Rule::Public);
+}
+
+#[test]
+fn a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind() {
+    // **这一格是"用"那一轴唯一的护栏**：记账失败 ⇒ 这一问**就该失败**（答 `FULL`），
+    // 不能悄悄放过——放过的后果是"树上有、账上没有"，也就是**私名变公名**。
+    // 撤掉 `grow` 那一行 `try_reserve`，这条用例当场变红（分配器按旗帜返空）。
+    let mut book: Ledger<Id, Id> = Ledger::new(vested_by);
+    no_room(true);
+    assert_eq!(book.grow().err(), Some(Fail::Full), "备不下 ⇒ 如实报");
+    no_room(false);
+    assert_eq!(book.len(), 0, "失败不留半个状态");
+
+    // 而且**只失败这一次**：放开之后照样写得进（`Blank` 挡的是"没要位就写"，不是"失败即锁死"）。
+    let blank = book.grow().expect("放开之后腾得出一行");
+    book.write(
+        blank,
+        Line::new(AT, name("uart"), ID, Rule::Is(P), true, ME, pie(1)),
+    );
+    assert_eq!(book.len(), 1);
+    assert_eq!(book.rule(Key::Id(ID), |_| true), Rule::Is(P));
 }

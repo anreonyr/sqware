@@ -278,6 +278,11 @@ exit tid=20 note: probe-rule-other: both denied as expected
 4. **`part` 顶掉 `Tile`** 时那一行是"顺手销掉"的：漏了不会答错（`fresh` 兜着），只是账会留
    一条陈的。
 5. **账的容量**：`grow` 失败 ⇒ `land` 答 `FULL`（fail-closed）。今天条目规模是几十格。
+   **这条有牙**（补记）：`judge-case` 的那台宿主靶换了一个**可关掉的分配器**（线程局部旗帜，
+   与 `operator-case` 那一台同一款），`a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind`
+   钉住三件事——备不下 ⇒ `Err(Full)`、**失败不留半行**、放开之后照样写得进。撤掉 `grow` 里那一行
+   `try_reserve` 它**当场 SIGABRT**（实测 `memory allocation of 16 bytes failed`）：fail-soft 的下一步
+   是 `write` 往没要到位的 `Vec` 里 push ⇒ `handle_alloc_error`。
 6. ~~**`UNJUDGED` 那一格只有宿主台的读数**~~：**已收**（§7.6 那两格）——`Rule::Opens`
    让"判不了"能被**确定性地**量出来（那一号是块 `Pane` / 那一格已经剪掉），真机读数
    `at_pane=9 gone_door=9`。**留下来的是那一条因**：要量"身份服务**不答**"得把整机拆掉
