@@ -67,7 +67,10 @@
 #      末四格是**第五个变体 `Rule::Opens`**：`open=0` 是"许给开着**本域自己**那枚门牌的那位"
 #      （开者就是本域）；`foreign=8` 是"许给开着 **`/sys/principal` 那一格**的那位"——号由
 #      `seek` 从树上换来（**点名那一手**），而那位不是本域 ⇒ 终态拒；`open_sub=0` 是它与 `Is`
-#      的分野：换一位代表之后 `Is` 拒而 `Opens` 照过——**规矩随身份走**）/
+#      的分野：换一位代表之后 `Is` 拒而 `Opens` 照过——**规矩随身份走**。末三格把门禁的第三格
+#      **`UNJUDGED` 搬上了真机**（此前只有宿主台读数）：`at_pane=9` 是"那一号是块 `Pane`"、
+#      `gone_door=9` 是"那一格剪掉了（号不重用 ⇒ 永久没有开者）"——两格都必须落 `9` 而不是
+#      `8`/`0`；`trim=1` 证那一剪真的剪了）/
 #      **`probe-other: tree is=8 under=8 foreign=8`** + **`probe-rule-other: all three denied as
 #      expected`**（**第二道门的负证**：另一位**有身份**的客人用别人立了规矩的那几格 ⇒ 都拒；
 #      上一行 `probe-denied` 量的是第一道门"你没身份"，这一行量的是这一格"不给你"）/
@@ -362,7 +365,7 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "probe-lease: tree land=0 dir=0 plate=[0-9]*" "$log" \
         && grep -q "probe-lease: landed, leaving" "$log" \
         && grep -q "probe-owner: lease land=0 id=" "$log" \
-        && grep -qE "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8 door=[0-9]+ open=0 foreign=8 open_sub=0" "$log" \
+        && grep -qE "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8 door=[0-9]+ open=0 foreign=8 open_sub=0 trim=1 at_pane=9 gone_door=9" "$log" \
         && grep -q "probe-rule: the rules held" "$log" \
         && grep -q "probe-other: tree is=8 under=8 foreign=8" "$log" \
         && grep -q "probe-rule-other: all three denied as expected" "$log" \

@@ -278,9 +278,10 @@ exit tid=20 note: probe-rule-other: both denied as expected
 4. **`part` 顶掉 `Tile`** 时那一行是"顺手销掉"的：漏了不会答错（`fresh` 兜着），只是账会留
    一条陈的。
 5. **账的容量**：`grow` 失败 ⇒ `land` 答 `FULL`（fail-closed）。今天条目规模是几十格。
-6. **`UNJUDGED` 那一格仍然只有宿主台的读数**（`judge-case` 的 `a_mute_identity_service_is_unjudged_not_denied`）：
-   真机上要量到它，得让身份服务**不答**——那会把整机拆掉。这一刀没有为它造那一台，
-   这是一笔**记着的**账。
+6. ~~**`UNJUDGED` 那一格只有宿主台的读数**~~：**已收**（§7.6 那两格）——`Rule::Opens`
+   让"判不了"能被**确定性地**量出来（那一号是块 `Pane` / 那一格已经剪掉），真机读数
+   `at_pane=9 gone_door=9`。**留下来的是那一条因**：要量"身份服务**不答**"得把整机拆掉
+   （`judge-case` 的 `a_mute_identity_service_is_unjudged_not_denied` 仍然是它唯一的读数）。
 
 ---
 
@@ -387,8 +388,9 @@ pub fn judge<P, C>(who, rule, roster, branch, league, door: &impl Door) -> Rulin
 ### 7.6 真机读数
 
 ```
-probe-rule: tree part=9 made=3 p=16 adopt=1 is=0 under=0 in=0 \
-            is_sub=8 under_sub=0 in_sub=8 door=13 open=0 foreign=8 open_sub=0
+probe-rule: tree part=8 made=3 p=16 adopt=1 is=0 under=0 in=0 \
+            is_sub=8 under_sub=0 in_sub=8 door=13 open=0 foreign=8 open_sub=0 \
+            trim=1 at_pane=9 gone_door=9
 exit tid=19 note: probe-rule: the rules held
 
 probe-other: tree is=8 under=8 foreign=8
@@ -401,6 +403,12 @@ exit tid=20 note: probe-rule-other: all three denied as expected
 | `foreign` | `Opens(/sys/principal 的号)` | 本域 | `8` | **"许给某一位"**——号由 `seek` 从树上换来，而那位不是本域 |
 | `foreign` | 同上 | **第三台客人** | `8` | 换一台客人也过不去（`probe-other`） |
 | `open_sub` | `Opens(door 的号)` | 本域（`adopt(q)` 之后） | **`0`** | 与 `is_sub=8` 对照：`Opens` 比的是"**开者那条 TID 此刻代表谁**"，开者与问的人是同一条 TID ⇒ 两边一起变 ⇒ **规矩随身份走** |
+| `at_pane` | `Opens(/sys 那一格)` | 本域 | **`9`** | 那一号是块 `Pane`（**没有开者这一说**）⇒ **判不了**（可重试），不是拒 |
+| `gone_door` | `Opens(temp 的旧号)`（`temp` 先落上、再 `trim`） | 本域 | **`9`** | 那一格剪掉了、而**号不重用** ⇒ 永久没有开者 ⇒ 判不了（§7.7 第 1 条那一笔的读数） |
+
+**末两格是门禁第三格第一次上真机**：`UNJUDGED` 此前只有宿主台的读数（要量"身份服务不答"得把
+整机拆掉）。这两条因各不相同（是块 `Pane` / 已剪掉），而判据**只需要"有没有那一位"**——
+落 `8`（终态拒）会让客人白放弃，落 `0`（放行）等于门禁不存在。
 
 **`foreign` 那一格为什么不依赖次序**：它指的是一枚**长命**门牌（`/sys/principal`，整轮都活着）。
 若改指一位用完就退场的客人，那一格会翻成 `9`（判不了——开者的门封印了）而不是 `8`。
@@ -411,7 +419,8 @@ exit tid=20 note: probe-rule-other: all three denied as expected
 
 1. **规矩绑在"一次挂载"上**：号不重用 ⇒ 那一格被剪/被顶之后 `Opens` 那一格**永久判不了**
    （重挂是**新号**）。这是"此刻占着这一格的那位"的题中之义，不是缺陷；要"换载体规矩不变"
-   就得给身份起名字（那是形状 ①，今天没有客人要它）。
+   就得给身份起名字（那是形状 ①，今天没有客人要它）。**这一条有读数**：`gone_door=9`
+   ——探针把 `temp` 落上、剪掉，再指它那个旧号。
 2. **多一次问答**：`Opens` 那一格 = 一次核心本地读（树）+ 一次 envcalls（名册那一问）。
 3. **`opens` 不上线**：客人读不到"这一格是谁的"——只有持树者判的时候问。今天没有客人要它。
 4. **核心八条、线上七条**：`core.rs` / `operator/mod.rs` / `operator-case` 的口径一并改了

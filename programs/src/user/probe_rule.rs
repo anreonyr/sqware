@@ -19,7 +19,11 @@
 //!        door    ——本域自己挂的一枚门牌（一枚 Tile，**开者就是本域**）
 //!        open    Rule::Opens(door 的号)           —— 许给"开着那一格的那位"（正是本域）
 //!        foreign Rule::Opens(/sys/principal 的号) —— 许给"开着**别人**那一格的那位"（不是本域）
-//!   3  以 p 试五遍   ⇒ is / under / in / open 全答 OK(0)，foreign 答 DENIED(8)
+//!        at-pane Rule::Opens(/sys 那一格)        —— 那一号是块 Pane（没有开者）
+//!        temp    先落一枚门牌，再**剪掉**它
+//!        gone-door Rule::Opens(temp 那个旧号)     —— 号不重用 ⇒ 那一格永久没有开者
+//!   3  以 p 试七遍   ⇒ is / under / in / open 全答 OK(0)、foreign 答 DENIED(8)，
+//!                      而 at-pane 与 gone-door 各答 UNJUDGED(9)（**判不了**，不是拒）
 //!   4  adopt(q)      —— **同一条 TID，换了一位代表**
 //!   5  以 q 再试四遍 ⇒ is 答 DENIED(8)、in 答 DENIED(8)、under 仍答 OK(0)、**open 仍答 OK(0)**
 //!      —— 前两条是**负证**（有身份、但不是那一位 / 不在那枚盟里），
@@ -40,6 +44,16 @@
 //! 照实记：`door` 那一格是必要的——`Opens` 的**正证**要一位"自己开着门牌"的客人；而
 //! `foreign` 那一格指的是一枚**长命**门牌（`/sys/principal`，整轮都活着）⇒ 它的负证**不依赖
 //! 任何次序**（若改指一位用完就退场的客人，那一格会翻成 `9`（判不了）而不是 `8`）。
+//!
+//! # 两格 `UNJUDGED`：这一格里"判不了"第一次上了真机
+//!
+//! 门禁的三格答案里，`UNJUDGED`（判不了：可重试）此前**只有宿主台的读数**——真机上要量到它，
+//! 得让身份服务**不答**，而那会把整机拆掉。`Opens` 让它可以被**确定性地**量出来，而且两条因
+//! 各不相同：那一号是块 `Pane`（没有开者这一说）、那一格已经**剪掉**（号不重用 ⇒ 永久没有开者）。
+//! 判据里这两格必须落在 `9`：落 `8`（终态拒）会让客人白放弃，落 `0`（放行）等于门禁不存在。
+//!
+//! 照实记：`gone-door` 那一格顺带把 [`Rule::Opens`] 的一条**已知边界**量成了读数——"那一格被剪
+//! 掉之后，指它的那条规矩永久判不了（重挂是**新号**）"。
 //!
 //! # 为什么"另一台客人"也要来（`prog-probe-rule-other`）
 //!
@@ -99,6 +113,12 @@ const OPEN: &str = "open";
 /// 这一格就是这一刀要补的那句话：**"把这一格许给某一位"**——号由 [`seek`] 从树上换来
 /// （名字 → 号），不靠别人把号塞给我。
 const FOREIGN: &str = "foreign";
+/// 先落、再**剪掉**的一枚门牌——留给下面 `gone-door` 那一格指它那个**旧号**。
+const TEMP: &str = "temp";
+/// 规矩 = `Opens(/sys 那一格)` ⇒ 那一号是块 **`Pane`**（没有开者这一说）⇒ **判不了**。
+const AT_PANE: &str = "at-pane";
+/// 规矩 = `Opens(剪掉的那一枚门牌号)` ⇒ 号**不重用** ⇒ 那一格永远没有开者 ⇒ **判不了**。
+const GONE_DOOR: &str = "gone-door";
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
@@ -198,10 +218,28 @@ extern "C" fn main() -> ! {
     // 不由别人告诉我。故这一台**没有 new 的任何机制**，只是把规矩那一格的号换了个来路。
     let door_id = plate(talk, &tree, host, pane_id, DOOR, Rule::Public);
     let open_id = plate(talk, &tree, host, pane_id, OPEN, Rule::Opens(door_id));
-    let foreign_id = match road_id(&tree, talk, pcall::DIR, pcall::NAME) {
+    // `/sys/principal` 那一格的号：**点名那一手**（名字 → 号），与 `find_face` 走同一条路。
+    let foreign_id = match Name::new(pcall::NAME)
+        .ok()
+        .and_then(|p| seek_id(&tree, talk, &[dir, p]))
+    {
         Some(principal) => plate(talk, &tree, host, pane_id, FOREIGN, Rule::Opens(principal)),
         None => EntryId::new(0),
     };
+
+    // 五点六、**"判不了"（`UNJUDGED`）那两格**——都是确定性的，不看时序：
+    //   at-pane   —— 规矩 = `Opens(/sys 那一格)`：那一号是块 `Pane`，**没有开者这一说**；
+    //   gone-door —— 规矩 = `Opens(temp 那个**旧号**)`：先把 `temp` 落上、再剪掉，
+    //                而**号不重用** ⇒ 那一格永久没有开者。
+    // 照实记：`UNJUDGED` 这一格此前**只有宿主台的读数**（身份服务不答那一版在真机上要拆整机）。
+    // 这两格与它同格不同因：判据不需要"那一格为什么没人"，只需要"**有没有那一位**"。
+    let at_pane_id = match seek_id(&tree, talk, &[dir]) {
+        Some(sys) => plate(talk, &tree, host, pane_id, AT_PANE, Rule::Opens(sys)),
+        None => EntryId::new(0),
+    };
+    let temp_id = plate(talk, &tree, host, pane_id, TEMP, Rule::Public);
+    let trimmed = temp_id.get() != 0 && operator::trim(talk, &tree, temp_id, MS).is_ok();
+    let gone_id = plate(talk, &tree, host, pane_id, GONE_DOOR, Rule::Opens(temp_id));
 
     // 六、以 `p` 试五遍——前三条**正证**，后两条是 `Opens` 的正负两面。
     let is = look(talk, &tree, is_id, MS);
@@ -209,6 +247,8 @@ extern "C" fn main() -> ! {
     let inside = look(talk, &tree, in_id, MS);
     let open = look(talk, &tree, open_id, MS);
     let foreign = look(talk, &tree, foreign_id, MS);
+    let on_pane = look(talk, &tree, at_pane_id, MS);
+    let on_gone = look(talk, &tree, gone_id, MS);
 
     // 七、**换一位代表**（同一个 TID）：领到自己派生的那条号底下。
     let adopt = policy.adopt(q, MS).is_ok();
@@ -226,11 +266,13 @@ extern "C" fn main() -> ! {
         "probe-rule: tree part={} made={made} p={} adopt={} \
          is={is} under={under} in={inside} \
          is_sub={is_sub} under_sub={under_sub} in_sub={in_sub} \
-         door={} open={open} foreign={foreign} open_sub={open_sub}",
+         door={} open={open} foreign={foreign} open_sub={open_sub} \
+         trim={} at_pane={on_pane} gone_door={on_gone}",
         pane_id.get(),
         p.get(),
         adopt as u8,
         door_id.get(),
+        trimmed as u8,
     ));
 
     // 十、判据：三条正证全 `OK`、两条负证恰是 `DENIED`、`Under` 那一格换人之后仍 `OK`；
@@ -245,6 +287,9 @@ extern "C" fn main() -> ! {
         && open == ocall::OK
         && open_sub == ocall::OK
         && foreign == ocall::DENIED
+        && on_pane == ocall::UNJUDGED
+        && on_gone == ocall::UNJUDGED
+        && trimmed
         && adopt
         && made == 3;
     exit_with_note(
@@ -288,7 +333,10 @@ fn look(talk: PieToken, link: &Quay, id: EntryId, millis: usize) -> u8 {
 /// **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
 /// `find` 把那一枚授过来（持树者 `ship`），本域按"谁给的"认领最后那一枚。
 fn find_face(link: &Quay, talk: PieToken, host: TaskId, dir: &str, name: &str) -> Option<PieToken> {
-    let id = road_id(link, talk, dir, name)?;
+    let (Ok(dir), Ok(one)) = (Name::new(dir), Name::new(name)) else {
+        return None;
+    };
+    let id = seek_id(link, talk, &[dir, one])?;
     if operator::find(talk, link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
         return None;
     }
@@ -298,11 +346,7 @@ fn find_face(link: &Quay, talk: PieToken, host: TaskId, dir: &str, name: &str) -
 /// **点名那一手**：把一条路译成号（名字 → 号），"还没挂上"那一格在那里重试。
 ///
 /// 这是这一刀唯一新用到的读：规矩里那个号的来路从"别人告诉我"变成"**树上换来**"。
-fn road_id(link: &Quay, talk: PieToken, dir: &str, name: &str) -> Option<EntryId> {
-    let (Ok(dir), Ok(one)) = (Name::new(dir), Name::new(name)) else {
-        return None;
-    };
-    let road = [dir, one];
+fn seek_id(link: &Quay, talk: PieToken, road: &[Name]) -> Option<EntryId> {
     let mut left = MS;
     loop {
         match operator::seek(talk, link, &road, MS) {
