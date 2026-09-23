@@ -20,10 +20,36 @@
 //! 译完就按号走：`find` / `trim` / `name` 收号，`land` / `part` / `list` 收**容器坐标**
 //! [`Where`]（根，或某一号）。名字在答话那一侧还留着一条（[`Operator::name`] 按号答名）。
 //!
-//! **树今天仍是嵌套树**（`Entry { 号, 名字, 去处 }`，`Node::Pane(Vec<Entry>)`）：号 → 那一格
-//! 走**一趟扫**（`look` / `holds` / `take` 三个私有助手）。换"按号排的一张表"那一案今天读不出
-//! 差别（树就几十格），而它要 `Entry` 多记一格父、删格要保序、列要扫全表——**留到读数说话**
-//! （这一段是照实记：选的是甲案，不是忘了乙案）。
+//! # 树：**号就是下标**（照实记：那一案原来记着"留到读数说话"，读数说话了）
+//!
+//! 本文件原来是一棵**嵌套树**（`Entry { 号, 名字, 去处 }`，`Node::Pane(Vec<Entry>)`），
+//! 号 → 那一格走**按深度递归**的一趟扫（`look` / `holds` / `take` 三个私有助手）。头注当时
+//! 就把"按号排的一张表"那一案记成**留到读数说话**，而读数来了：
+//!
+//! > `prog-probe-deep` 一层层往下 `part`，**持树者自己死在第 117 层**——四条助手按深度递归，
+//! > 而一台域的栈是 `TASK_STACK_SIZE`（16 KiB）；广度有闸（[`Operator::PANE_CAP`]）、一条路
+//! > 有闸（[`Operator::ROAD_MAX`]）、**深度一个闸都没有**。死法不是"答一格负码"，是
+//! > `user fault killed`：**命名空间整个消失**（实测读数见那份源码的头注）。
+//!
+//! 于是这一版把**号做成表里的下标**：
+//!
+//! ```text
+//!   slots: Vec<Option<Slot>>     号 i ↔ slots[i]；None = 墓碑（剪掉 / 剔死留下的坑）
+//!   root:  Vec<EntryId>          根仍然**没有号**（它不是一个槽）
+//!   Slot::Pane(Vec<EntryId>)     窗格里装的是**孩子的号**，按登记序
+//! ```
+//!
+//! 四条递归助手一并消失，换成三个平函数（[`Operator::slot`] / [`Operator::kids`] /
+//! [`Operator::unlink`]）：**取一格是一趟查表，去一格是从父的 children 里摘一号**。深度不再是
+//! 调用栈上的东西——它只决定"你建了多少格"，而那是**容量**问题（与 `PANE_CAP` / `try_reserve`
+//! / [`Fail::Full`] 同一条线），与 seL4 的"能力地址是一个整数"、DNS 的"整名 ≤ 255 字节"
+//! 同一格。
+//!
+//! **代价照实记**：`trim` 只把那一槽标成 `None`（**不能** `Vec::remove`——号是下标，一移后面
+//! 全错位），故铸过的号永远占一格坑。这一格**不给手拍的上限**：分配失败如实答 [`Fail::Full`]
+//! （上一刀在宿主靶上量过那条判据有牙），而"`part` + `trim` 循环能把槽表单调整长"记在
+//! `docs/operator-gate.md` 的已知边界里。另一笔：`children ↔ 槽` 从此是**两条真相**（谁的孩子
+//! 里有我 / 我在哪个槽），"一格只有一个父"由每条写原语维护，不再是构造性事实。
 
 use alloc::vec::Vec;
 
@@ -35,7 +61,7 @@ use env::{Name, PieToken, TaskId};
 ///
 /// **裸号**：与 [`PrincipalId`](crate::principal::PrincipalId) / [`CoalitionId`](crate::coalition::CoalitionId)
 /// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（[`EntryId::new`]），
-/// "这枚号还在不在"由每条读查一次树答出来。
+/// "这枚号还在不在"由每条读**查一次表**答出来。
 ///
 /// **没有 `ROOT`**（对照另两种号：那两处的 `ROOT` 都在，这里特意没有）：根不是谁条目里的
 /// 一条，故**根没有号**——`EntryId(0)` 是第一个**真格子**（`sys`），不是"没有"。
@@ -65,44 +91,21 @@ impl EntryId {
     }
 }
 
-/// 一条条目：**号 + 名字 + 去处**。
+/// **一格**：名字 + 去处。它住在 [`Operator::slots`] 里，**下标就是它的号**。
 ///
-/// 名字只是**一段**（`Name`：定长 32 字节、构造即校验），不是整条路——路那一层只剩
+/// 名字只是一段（`Name`：定长 32 字节、构造即校验），不是整条路——路那一层只剩
 /// [`Operator::seek`] 在用。
-///
-/// 号是机器的：`part` / `land` 铸一枚，此后**换绑不动号**；`trim` 与 [`Operator::find`]
-/// 的剔死让那一条走掉 ⇒ 号随之失效（水位不回收，号不重用）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Entry {
-    id: EntryId,
+struct Slot {
     name: Name,
     node: Node,
 }
 
 /// 去处：一块 [`Node::Pane`]（窗格，还能往里走）或一枚 [`Node::Tile`]（砖，到头了）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Node {
-    /// 一块 Pane（窗格）：里面是条目。**还能往里走**。
-    Pane(Vec<Entry>),
+enum Node {
+    /// 一块 Pane（窗格）：里面是**孩子的号**（按登记序）。**还能往里走**。
+    Pane(Vec<EntryId>),
     /// 一枚 Tile（砖）：到头了，就是内核给的那一枚句柄。
     Tile(PieToken),
-}
-
-impl Entry {
-    /// 这一条的号。
-    pub fn id(&self) -> EntryId {
-        self.id
-    }
-
-    /// 这一条叫什么（一段）。
-    pub fn name(&self) -> Name {
-        self.name
-    }
-
-    /// 它去哪儿。
-    pub fn node(&self) -> &Node {
-        &self.node
-    }
 }
 
 /// **容器坐标**：要动的那一块 `Pane` 在哪。
@@ -130,7 +133,8 @@ pub enum Fail {
     /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来。
     ///
     /// 三条路都走这一格：**没铸过**、`trim` **剪掉了**、[`Operator::find`] **剔死了**
-    /// ——水位只往上走、本层不记墓碑，三者长得一样。空路（根）走 [`Operator::seek`] 时也是这一格。
+    /// ——表里留着一个墓碑（`None`），但墓碑**不对外答"我这儿死过"**：三条路长得一样。
+    /// 空路（根）走 [`Operator::seek`] 时也是这一格。
     Unknown,
     /// 那块 `Pane` 里还有东西，而这一手会**毁掉**里面的 ⇒ 先清空。
     ///
@@ -177,13 +181,16 @@ enum Want {
 
 /// 一棵命名树：**一个 Operator 管着所有条目**。
 ///
-/// 根 = `root` 那一叠条目；[`Where::Root`] 指的就是它（列根那一层、在根下立一格）。
+/// 根 = `root` 那一叠**孩子的号**（[`Where::Root`] 指的就是它）；其余每一格住 `slots` 里，
+/// **号就是下标**。两个容器的容量**互不牵连**：`root` 管根那一层，`slots` 管"一共铸过几格"。
 pub struct Operator {
-    root: Vec<Entry>,
+    root: Vec<EntryId>,
+    slots: Vec<Option<Slot>>,
     /// 铸号的水位：**只增**（全文件没有一处减它）。
     ///
-    /// 剔掉一条不回收号 ⇒ **号不重用**：一枚旧号要么还指着原来那一格，要么指空
-    /// （[`Fail::Unknown`]），不会悄悄指到后铸的那一条身上。
+    /// 剔掉一格不回收号 ⇒ **号不重用**：一枚旧号要么还指着原来那一格，要么指着墓碑
+    /// （[`Fail::Unknown`]），不会悄悄指到后铸的那一格身上。水位与 `slots.len()` 同值，
+    /// 留着它只为把这条纪律写在一处。
     next: usize,
     vested_by: VestedBy,
     unship: Unship,
@@ -194,13 +201,15 @@ impl Operator {
     pub const PANE_CAP: usize = 16;
     /// 一条**路**最多几段——只有 [`Operator::seek`] 用得上它（名字只到那一格，往下一律按号）。
     ///
-    /// 注意：**树本身没有深度上限**（`land` / `part` 收的是号，层层往下立不受这条路的长短约束）。
+    /// 注意：**树的深度不受这条路的长短约束**（`land` / `part` 收的是号，层层往下立与路无关）；
+    /// 而自从号成了表里的下标，**深度也不再吃调用栈**（见文件头那一节）。
     pub const ROAD_MAX: usize = 8;
 
     /// 立一棵树：两个注入的机制事实跟着树走——它们对每一条同值，故不必逐个作参数传。
     pub const fn new(vested_by: VestedBy, unship: Unship) -> Operator {
         Operator {
             root: Vec::new(),
+            slots: Vec::new(),
             next: 0,
             vested_by,
             unship,
@@ -244,7 +253,7 @@ impl Operator {
     ///
     /// - 号不在树上 ⇒ [`Fail::Unknown`]（剪掉、剔死、从没铸过长得一样）；
     /// - 那一格是一块 `Pane` ⇒ [`Fail::NotATile`]；
-    /// - 是一枚 `Tile`：**先探一次**（[`VestedBy`]）——答不出 ⇒ 当场剔掉那一条、放下那一份
+    /// - 是一枚 `Tile`：**先探一次**（[`VestedBy`]）——答不出 ⇒ 当场剔掉那一格、放下那一份
     ///   （[`Unship`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `ship`。
     ///
     /// `ship` 是"交出去"那一手（适配层在这里把 Pie 授给调用方，核心因此不碰内核）——与同文件
@@ -253,15 +262,15 @@ impl Operator {
         let vested_by = self.vested_by;
         let unship = self.unship;
         // 先只读地问一遍（借用到此为止），再决定要不要动树。
-        let pie = match Self::look(&self.root, id) {
+        let pie = match self.slot(id) {
             None => return Err(Fail::Unknown),
-            Some(entry) => match &entry.node {
+            Some(slot) => match &slot.node {
                 Node::Pane(_) => return Err(Fail::NotATile),
                 Node::Tile(pie) => *pie,
             },
         };
         if vested_by(pie).is_none() {
-            let _ = Self::take(&mut self.root, id);
+            let _ = self.unlink(id);
             let _ = unship(pie);
             return Err(Fail::Dead);
         }
@@ -269,21 +278,24 @@ impl Operator {
         Ok(())
     }
 
-    /// **剪**：把那一号那一条剪掉。
+    /// **剪**：把那一号那一格剪掉。
     ///
-    /// 那一条得存在（否则 [`Fail::Unknown`]）；是 `Pane` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
+    /// 那一格得存在（否则 [`Fail::Unknown`]）；是 `Pane` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
     /// 剪掉一枚 `Tile` 时那一枚放下（[`Unship`]）——它是资源实体的一份引用，不放下就漏水。
+    ///
+    /// **剪掉的那一槽留成墓碑**（`None`），不 `remove`：号是下标，一移后面全错位。故一枚剪过的
+    /// 号从此答 [`Fail::Unknown`]，而**它不会被重新铸出来**（水位只增）。
     pub fn trim(&mut self, id: EntryId) -> Result<(), Fail> {
         let unship = self.unship;
-        let dropped = match Self::look(&self.root, id) {
+        let dropped = match self.slot(id) {
             None => return Err(Fail::Unknown),
-            Some(entry) => match &entry.node {
+            Some(slot) => match &slot.node {
                 Node::Pane(inner) if inner.is_empty() => None,
                 Node::Pane(_) => return Err(Fail::NonEmpty),
                 Node::Tile(pie) => Some(*pie),
             },
         };
-        let _ = Self::take(&mut self.root, id);
+        let _ = self.unlink(id);
         if let Some(pie) = dropped {
             let _ = unship(pie);
         }
@@ -298,17 +310,7 @@ impl Operator {
     /// 答的是号、不是名字（机器用号，人用名——名字另问 [`Operator::name`]）。
     /// 顺序是**号序**：pane 里本来是登记序，而号单调 ⇒ 两者一致，不必额外排。
     pub fn list(&self, at: Where) -> Result<impl Iterator<Item = EntryId> + '_, Fail> {
-        let level: &[Entry] = match at {
-            Where::Root => &self.root,
-            Where::At(id) => match Self::look(&self.root, id) {
-                None => return Err(Fail::Unknown),
-                Some(entry) => match &entry.node {
-                    Node::Pane(inner) => inner,
-                    Node::Tile(_) => return Err(Fail::NotAPane),
-                },
-            },
-        };
-        Ok(level.iter().map(|e| e.id))
+        Ok(self.kids(at)?.iter().copied())
     }
 
     /// **译**：把一条路**译成那一枚号**——名字只能走到这一格，往下一律按号。
@@ -328,192 +330,164 @@ impl Operator {
         }
         // 空路 ⇒ 根 ⇒ 没有号（`split_last` 那一步就把它挡在这一格）。
         let (last, rest) = road.split_last().ok_or(Fail::Unknown)?;
-        let mut level = &self.root;
+        let mut level: &[EntryId] = &self.root;
         for step in rest {
-            let entry = level
-                .iter()
-                .find(|e| e.name == *step)
-                .ok_or(Fail::Unknown)?;
-            level = match &entry.node {
+            let child = self.child(level, *step).ok_or(Fail::Unknown)?;
+            level = match &self.slot(child).ok_or(Fail::Unknown)?.node {
                 Node::Pane(inner) => inner,
                 Node::Tile(_) => return Err(Fail::NotAPane),
             };
         }
-        let entry = level
-            .iter()
-            .find(|e| e.name == *last)
-            .ok_or(Fail::Unknown)?;
-        Ok(entry.id)
+        self.child(level, *last).ok_or(Fail::Unknown)
     }
 
     /// **名**：这枚号此刻叫什么。
     ///
-    /// **一趟全树扫**（O(全树)、零新状态）：要 O(深度) 就得让 `Entry` 记父路，多一格、
-    /// 删格要维护，本刀不取（与上面"树仍是嵌套树"那段照实记同一件事）。
+    /// **一趟查表**（照实记：原来是**一趟全树扫**——那时号不是下标；这一版里
+    /// [`Operator::slot`] 直接取，故 `name` 与 `find` / `trim` 一样是 O(1)）。
     ///
     /// 号失效（`trim` 剪掉、[`Operator::find`] 剔死）与从来没铸过**长得一样** ⇒ 都答
-    /// [`Fail::Unknown`]：水位只往上走，本层不记墓碑，也分不出这两件事。
+    /// [`Fail::Unknown`]：表里那一槽是个墓碑，而墓碑不对外说话。
     pub fn name(&self, id: EntryId) -> Result<Name, Fail> {
-        Self::look(&self.root, id)
-            .map(|entry| entry.name)
-            .ok_or(Fail::Unknown)
+        self.slot(id).map(|slot| slot.name).ok_or(Fail::Unknown)
     }
 
     // ── 走路 ────────────────────────────────────────────────
 
     /// 落 / 分共用的那一手：在 `at` 那一块 `Pane` 里给 `name` 立一格（或换绑那一格）。
     ///
-    /// **答那一格自己的号**：换绑不动号，故只有"真铸了一格"才动水位。
+    /// **答那一格自己的号**：换绑不动号，故只有"真铸了一格"才动水位。**不递归**——
+    /// `at` 那一块 `Pane` 就是一次 [`Operator::kids`]。
+    ///
+    /// **先只读地问一遍**（那一格叫什么号），再动手：这样动手那一段只需要一次
+    /// `slots[i]` 的可变借用，不必在 children 里穿一层 `&mut`（那正是老一版递归的由头）。
     fn put(&mut self, at: Where, name: Name, node: Node, want: Want) -> Result<EntryId, Fail> {
         let unship = self.unship;
-        let id = match at {
-            Where::Root => Self::put_in(
-                &mut self.root,
-                None,
-                name,
-                node,
-                want,
-                &mut self.next,
-                unship,
-            )?,
-            Where::At(id) => Self::put_in(
-                &mut self.root,
-                Some(id),
-                name,
-                node,
-                want,
-                &mut self.next,
-                unship,
-            )?,
-        };
-        Ok(id)
-    }
-
-    /// 走到 `target` 那一块 `Pane`（`None` = 根）里，立一格 / 换绑一格。
-    ///
-    /// **先只读地问一遍**（[`Operator::holds`]）再往下递归：这样这一层的返回值是**答案本身**
-    /// （一个号），而不是一个借用——`&mut` 穿过 `iter_mut` 那层循环再返出去是过不了借用检查的。
-    fn put_in(
-        level: &mut Vec<Entry>,
-        target: Option<EntryId>,
-        name: Name,
-        node: Node,
-        want: Want,
-        next: &mut usize,
-        unship: Unship,
-    ) -> Result<EntryId, Fail> {
-        let Some(target) = target else {
-            return Self::put_here(level, name, node, want, next, unship);
-        };
-        // 目标就是这一层里的一条 ⇒ 它得是 `Pane`（否则走不进去）。
-        if let Some(slot) = level.iter().position(|e| e.id == target) {
-            return match &mut level[slot].node {
-                Node::Pane(inner) => Self::put_here(inner, name, node, want, next, unship),
-                Node::Tile(_) => Err(Fail::NotAPane),
-            };
-        }
-        // 否则往下找：只有"握着它"的那一块才下去。
-        for entry in level.iter_mut() {
-            if let Node::Pane(inner) = &mut entry.node {
-                if Self::holds(inner, target) {
-                    return Self::put_in(inner, Some(target), name, node, want, next, unship);
-                }
-            }
-        }
-        Err(Fail::Unknown)
-    }
-
-    /// 就在这一层里立一格 / 换绑一格（[`Operator::put_in`] 走到地方之后的那一手）。
-    fn put_here(
-        level: &mut Vec<Entry>,
-        name: Name,
-        node: Node,
-        want: Want,
-        next: &mut usize,
-        unship: Unship,
-    ) -> Result<EntryId, Fail> {
-        let fresh = EntryId::new(*next);
-        match level.iter().position(|e| e.name == name) {
-            Some(slot) => {
+        let existing = self
+            .kids(at)?
+            .iter()
+            .copied()
+            .find(|child| self.slot(*child).is_some_and(|slot| slot.name == name));
+        match existing {
+            Some(id) => {
                 // 已占。**换绑不动号**：那一格还是同一格——答的就是它那个号。
-                let id = level[slot].id;
+                let Some(slot) = self.slots.get_mut(id.get()).and_then(Option::as_mut) else {
+                    // 不可能：`kids` 里每一个号都指着一条活槽（那一格不变量）。
+                    return Err(Fail::Unknown);
+                };
                 // **分那边幂等**：想要的就是"这儿是一块 `Pane`"，已经在就是成了（`Want::Pane`）。
-                if want == Want::Pane && matches!(level[slot].node, Node::Pane(_)) {
+                if want == Want::Pane && matches!(slot.node, Node::Pane(_)) {
                     return Ok(id);
                 }
-                let old = match &level[slot].node {
+                let old = match &slot.node {
                     Node::Tile(old) => Some(*old),
                     Node::Pane(inner) if inner.is_empty() => None,
                     // 落到这里只可能是 `Want::Tile`：换绑会毁掉那块非空 `Pane` 里的东西。
                     Node::Pane(_) => return Err(Fail::NonEmpty),
                 };
-                level[slot].node = node;
+                slot.node = node;
                 if let Some(old) = old {
                     let _ = unship(old);
                 }
                 Ok(id)
             }
             None => {
-                if level.len() >= Self::PANE_CAP {
+                if self.kids(at)?.len() >= Self::PANE_CAP {
                     return Err(Fail::Full);
                 }
-                // **先要位、再落格**：上面那一格管的是**条数**（`PANE_CAP`），这一格管
-                // **内存**。少了它，分配失败走的是 `handle_alloc_error`（abort）——而同一句
-                // "备不下就如实报"在仓里另外两处都是 `try_reserve → Full`：`Desk::admit`
+                // **先要位、再落格**：条数那一闸管的是`PANE_CAP`，这两行管**内存**。
+                // 少了它们，分配失败走的是 `handle_alloc_error`（abort）——而同一句"备不下就
+                // 如实报"在仓里另外两处都是 `try_reserve → Full`：`Desk::admit`
                 // （`programs/src/supervisor/operator/desk.rs`）与 `Ledger::grow`
                 // （`crates/protocol/src/operator/ledger.rs`）。**同一句话，三处一个纪律。**
-                level.try_reserve(1).map_err(|_| Fail::Full)?;
-                level.push(Entry {
-                    id: fresh,
-                    name,
-                    node,
-                });
-                *next += 1;
+                //
+                // 两处都要长：一格住 `slots`，一个号进 `root` 或某个 `Pane` 的 children。
+                // 先要位再落格 ⇒ 半路失败**不留半个状态**（下面两处 `push` 都不会再分配）。
+                self.slots.try_reserve(1).map_err(|_| Fail::Full)?;
+                self.kids_mut(at)?.try_reserve(1).map_err(|_| Fail::Full)?;
+                let fresh = EntryId::new(self.next);
+                self.next += 1;
+                self.slots.push(Some(Slot { name, node }));
+                self.kids_mut(at)?.push(fresh);
                 Ok(fresh)
             }
         }
     }
 
-    /// 这一片子树里有没有 `id` 那一条（只读；递归下去的一趟扫）。
-    fn holds(level: &[Entry], id: EntryId) -> bool {
-        level.iter().any(|entry| {
-            entry.id == id
-                || match &entry.node {
-                    Node::Pane(inner) => Self::holds(inner, id),
-                    Node::Tile(_) => false,
-                }
-        })
+    /// 这一块 `Pane` 的孩子（`Where::Root` = 根那一层；`At(id)` = 那一格，得是 `Pane`）。
+    ///
+    /// 三格判据与老一版的走法逐条对齐：号不在 ⇒ [`Fail::Unknown`]；那一格是 `Tile` ⇒
+    /// [`Fail::NotAPane`]。
+    fn kids(&self, at: Where) -> Result<&[EntryId], Fail> {
+        match at {
+            Where::Root => Ok(&self.root),
+            Where::At(id) => match self.slot(id) {
+                None => Err(Fail::Unknown),
+                Some(slot) => match &slot.node {
+                    Node::Pane(inner) => Ok(inner),
+                    Node::Tile(_) => Err(Fail::NotAPane),
+                },
+            },
+        }
     }
 
-    /// 按号找那一条（只读；一趟全树扫）。号不在 ⇒ `None`。
-    fn look(level: &[Entry], id: EntryId) -> Option<&Entry> {
-        for entry in level {
-            if entry.id == id {
-                return Some(entry);
-            }
-            if let Node::Pane(inner) = &entry.node {
-                if let Some(found) = Self::look(inner, id) {
-                    return Some(found);
-                }
-            }
+    /// [`Operator::kids`] 的可变那一半（判据同一份）。
+    fn kids_mut(&mut self, at: Where) -> Result<&mut Vec<EntryId>, Fail> {
+        match at {
+            Where::Root => Ok(&mut self.root),
+            Where::At(id) => match self.slots.get_mut(id.get()).and_then(Option::as_mut) {
+                None => Err(Fail::Unknown),
+                Some(slot) => match &mut slot.node {
+                    Node::Pane(inner) => Ok(inner),
+                    Node::Tile(_) => Err(Fail::NotAPane),
+                },
+            },
         }
-        None
     }
 
-    /// 按号把那一条**拿走**（交出来的是一条，不是借用）。
-    fn take(level: &mut Vec<Entry>, id: EntryId) -> Option<Entry> {
-        if let Some(slot) = level.iter().position(|e| e.id == id) {
-            return Some(level.remove(slot));
+    /// 按号取那一格（只读）。号不在 / 是墓碑 ⇒ `None`。
+    ///
+    /// 这一格是"号就是下标"那一句的全部实现：**一趟查表，不递归、不扫树**。
+    fn slot(&self, id: EntryId) -> Option<&Slot> {
+        self.slots.get(id.get()).and_then(Option::as_ref)
+    }
+
+    /// 在这一块 `Pane` 的孩子里按名字找那个号（只读一趟扫，最多 `PANE_CAP` 次查表）。
+    fn child(&self, level: &[EntryId], name: Name) -> Option<EntryId> {
+        level
+            .iter()
+            .copied()
+            .find(|id| self.slot(*id).is_some_and(|slot| slot.name == name))
+    }
+
+    /// 按号把那**一格拿走**：槽标成墓碑（`None`），再把它从**某一个**父的 children 里摘掉。
+    ///
+    /// **不记父那一格**（照实记：这一版特意不加）。理由两条：
+    ///
+    /// 1. 我们**没有 `..`**（名字只从根往下走），故父不是给"往上走"用的；它唯一的用处是
+    ///    "摘自己"——而那一趟扫是 O(槽数)（几十格），与它换来的一份真相（`children` 与
+    ///    `parent` 互为逆，得多维护一处）相比不划算；
+    /// 2. Linux 的 `dentry->d_parent` 是为 `..` 与 rename 才必须的——我们两样都没有。
+    ///
+    /// 摘的顺序：先看根那一层，再逐槽看是不是 `Pane`。**先摘自己再扫**：故那一趟扫看不见自己
+    /// 这一槽（已是墓碑），不会把自己从自己里摘。
+    fn unlink(&mut self, id: EntryId) -> Option<Slot> {
+        let taken = self.slots.get_mut(id.get())?.take()?;
+        if let Some(at) = self.root.iter().position(|child| *child == id) {
+            self.root.remove(at);
+            return Some(taken);
         }
-        for entry in level.iter_mut() {
-            if let Node::Pane(inner) = &mut entry.node {
-                if Self::holds(inner, id) {
-                    if let Some(found) = Self::take(inner, id) {
-                        return Some(found);
-                    }
-                }
+        for i in 0..self.slots.len() {
+            let Some(Some(one)) = self.slots.get_mut(i) else {
+                continue;
+            };
+            if let Node::Pane(inner) = &mut one.node
+                && let Some(at) = inner.iter().position(|child| *child == id)
+            {
+                inner.remove(at);
+                break;
             }
         }
-        None
+        Some(taken)
     }
 }

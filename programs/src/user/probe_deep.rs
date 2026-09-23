@@ -1,31 +1,22 @@
 #![no_std]
 #![no_main]
 
-//! probe-deep — **深度那一格的证客**：一层层往下 `part`，量出持树者死在哪一层。
+//! probe-deep — **深度那一格的证客**：一层层往下 `part`，再一层层剪回来。
 //!
-//! 树有四条**按深度递归**的私有助手（`look` / `holds` / `take` / `put_in`），而一台域的栈是
-//! `TASK_STACK_SIZE = 16 KiB`。广度有闸（`PANE_CAP = 16`）、一条路有闸（`ROAD_MAX = 8`），
+//! 树原来有四条**按深度递归**的私有助手（`look` / `holds` / `take` / `put_in`），而一台域的栈
+//! 是 `TASK_STACK_SIZE`（16 KiB）。广度有闸（`PANE_CAP = 16`）、一条路有闸（`ROAD_MAX = 8`）、
 //! **深度一个闸都没有**——故"往下打"这一手能直接把持树者从栈上打下去。
 //!
 //! ```text
-//!   part(root, "d0") → id0      （持树者递归 1 层）
+//!   part(root, "d0") → id0      （老一版：持树者递归 1 层）
 //!   part(id0,  "d1") → id1      （递归 2 层）
 //!   …
-//!   一直到来不及答（持树者栈溢出死掉 ⇒ 这一问超时）
 //! ```
 //!
-//! # 这一台**不进 soak**（照实记）——它现在是**装好了但不上电**的
-//!
-//! 它是炸弹：一跑，命名空间就没了——后面每一台客人的 `seek`/`find` 全都没人答。故它挂在
-//! `INITRD_BINS` 上（**装**），但**不在装配单里**（**不上电**）；量死线那一次单独把它塞进
-//! 装配单跑一轮，量完就撤。等树的寻址改成**按号直达**（②那一刀：号就是槽的下标，四条递归
-//! 助手一并消失）之后，同一台探针**反过来是正证**：打到几百层每一手都答得出——那时它才进
-//! 装配单与 soak。
-//!
-//! # 量出来的数（2026-09-24，一次冷启）
+//! # 改前的读数（2026-09-24，一次冷启；这一段是这一刀的**负证**）
 //!
 //! ```text
-//!   operator: tid=3                                   ← 持树者（临时加的一行自报，量完撤）
+//!   operator: tid=3                                   ← 持树者（临时一行自报，量完撤）
 //!   probe-deep: alive at 32 / 64 / 96
 //!   [ERROR] reserved region access: Store at VA(0x1bff8), pc=0x10028
 //!   user fault killed: tid=3 cause=15 stval=0x1bff8   ← **持树者自己被杀**
@@ -33,15 +24,55 @@
 //!                                     ↑ 第 117 手答不出   ↑ 连最浅那一手也答不出：命名空间没了
 //! ```
 //!
-//! **第 117 层死**（`last=116` 成，第 117 手把它打下去）。三格都量到了：
+//! 三格都量到了：**死的是持树者自己**（`tid=3`，用一行临时自报对上的名字）、**死法不是"答一格
+//! 负码"而是整台域被杀**、**后果是命名空间整个消失**。地址也对得上：栈体是
+//! `[0x1c000, 0x20000)`、守护页在它下面（`StackWindow::claim` 明说守护页的用处就是"溢出缺页
+//! 可诊断"），而 `0x1bff8` = `body_start − 8`——**正好溢出第一帧**；16 KiB ÷ 117 ≈ 每帧 140
+//! 字节，与四条递归助手的形状自洽。
 //!
-//! 1. **死的是持树者自己**（`tid=3`，用一行临时自报对上的名字）；
-//! 2. **死法不是"答一格负码"，是整台域被杀**（`user fault killed`）——16 KiB 任务栈 ×
-//!    117 帧 ≈ 每帧 140 字节，正好见底；
-//! 3. **后果是命名空间整个消失**（`after=err:7`：失败之后再打一手最浅的也答不出）。
+//! # 改后的读数（这一刀：号就是表里的下标，四条递归助手一并消失）
 //!
-//! 故"往下打"这一手是**任何一台已绑身份的客人**都做得成的、代价极小的 DoS。数目字本身不是
-//! 判据（帧大小会随代码漂），**"改前会死、改后不死"**才是。
+//! ```text
+//!   probe-deep: tree deep=192 land=0 find=0 clean=1
+//!   exit tid=… note: probe-deep: 192 deep, every hand answered
+//! ```
+//!
+//! 同一台探针：**192 层（老死线 117 的 1.6 倍），落一枚、寻回来、从最底剪几层**。
+//! 故"深度"从此不是调用栈上的东西——它只决定"你建了多少格"，而那是**容量**问题
+//! （与 `PANE_CAP` / `try_reserve` / `Full` 同一条线）。
+//!
+//! # 它**不进 soak**（照实记：试过四种排法，都不稳）
+//!
+//! 这一台是**手工量的那一件**：改前（第 117 层死）与改后（192 层活）两边的读数都出自它，
+//! 而它在**门里**会咬人——四种排法的实测轨迹：
+//!
+//! | 排法 | 结果 | 咬在哪 |
+//! |---|---|---|
+//! | 512 层 + 全剪回来，排在 `echo` 前 | soak **0/10** | 连打 ~1030 手同步往返，把 `echo` 的 1 秒期限挤过期 |
+//! | 256 层 + 每 16 手让一手 | soak **8/10** | 让手粒度不够：一次 16 手的突发在慢机上仍吃得掉那 1 秒 |
+//! | 256 层 + **每层**让一手 | soak **0/10** | `echo` 全对了，但**探针自己被带走**：`echo` 一退，编排域返回，把还在剪链的它收走（连 `exit` 行都没打出来） |
+//! | 挪到装配单**最后** | soak **0/10 "无停机行"** | 编排域等的是最后一条，而它 `board: false`——**板看不见它的死**，那一等没人应 |
+//!
+//! 故它**装得上电、不上电**（`INITRD_BINS` 里有条目，`PLAN` 里没有）：真机那一对读数是
+//! 手工跑的，而**自动的那道门在宿主靶上**——`crates/operator-case` 的
+//! `a_deep_chain_does_not_need_the_call_stack`（把测试线程栈压到 64 KiB 建 500 层链；
+//! 退回递归版它当场 `fatal runtime error: stack overflow`，SIGABRT）。那条门**有牙、且不抖**。
+//!
+//! 这一轮顺带量出三条**装配单的性质**（不管探针去哪，这三条都该记着）：
+//!
+//! 1. **持树者是串行的**：一台客人连打几百手同步往返，会把别的客人的期限挤过期；
+//! 2. **装配单最后一条必须"上板"**（`board: true`）——编排域等的就是它，板看不见它的死就
+//!    **永不停机**（把探针放最后那一次的实测症状就是"无停机行"）；
+//! 3. **`echo` 一退，编排域返回，会把还在跑的子域一起带走**（探针就是这么被半路带走的）。
+//!
+//! # 两件照实记
+//!
+//! 1. **链建在 `/sys/deep` 下**，不落根：落根会动既有的三条读数（`list root=0,3`、
+//!    `list names=sys,device`、`list device=4,5,6`），而这一刀**不该动它们**。
+//! 2. **每层让一手**（[`YIELD_MS`]）：持树者串行，连打上千手会把别的客人挤到超时——那是这一刀
+//!    顺带量出来的**真性质**（记在 `docs/operator-slot.md` §5），而探针不该在门里制造它。
+//! 3. **数目字（第几层）不是判据**：帧大小会随代码漂、表也会随实现变。判据是**"改前会死、
+//!    改后每一手都答得出"**——前者在本文档里，后者在 `scripts/soak.sh` 里。
 
 // 本文件是一份**独立的 bin**（`programs/Cargo.toml` 的 `prog-probe-deep`），**不进 lib**
 // ——与 `echo` / `probe-rule` 同一条：`programs/src/user/mod.rs` 里没有它。
@@ -53,28 +84,55 @@ extern crate alloc;
 extern crate programs;
 
 use alloc::format;
-use alloc::string::String;
+use alloc::vec::Vec;
+use core::time::Duration;
 
 use env::Name;
-use protocol::operator::Where;
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
+use protocol::operator::{EntryId, Where};
 use runtime::env::debug;
-use runtime::env::room::exit_with_note;
+use runtime::env::mail;
+use runtime::env::room::{self, exit_with_note};
 use runtime::env::unit as utask;
 
-/// 一趟的总上限（毫秒）。**必须有界**：持树者死在第 N 层时，第 N+1 手要**及时**答出来。
+/// 一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 打到多少层就收手（还没死的话）。
-const MAX_DEPTH: usize = 512;
+/// 往下打多少层。**改前到不了这里**（第 117 层就把持树者打死了），故这一格要的是"比那条死线
+/// 高出一截"：192 = 117 的 1.6 倍。**为什么不再深**：这一台每层让一手（见 [`YIELD_MS`]），
+/// 而它得在 `echo` 退场之前跑完（编排域等的是 `echo`；`echo` 一退就把还在跑的它带走——实测过
+/// 一次：`echo` 那几行全对，而它**连 `exit` 行都没打出来**）。192 层够证那一格，也留得下余地。
+const MAX_DEPTH: usize = 192;
 
-/// 每几层报一行（免得刷屏——但"活着"这件事要看得见进度）。
-const STEP: usize = 32;
+/// 剪回来多少层。**不是全剪**：`unlink` 的开销与深度无关（一趟 O(槽数) 的扫），故剪最底这几层
+/// 就点得到那一手；而链全剪（192 手往返）会把这一台拖过 `echo` 的命。
+const TRIM_BACK: usize = 16;
 
-/// 退场码：打到收手 / 中途那一手答不出（都不是 panic）。
+/// 每几层报一行（"活着"这件事要看得见进度）。
+const STEP: usize = 64;
+
+/// **每层让一手**（毫秒）。照实记：持树者是**串行**服务的，一台客人连打几百手会把别的客人挤到
+/// 超时（真机实测：不让的那一版 `echo` 的 `part` / `land` / `name` / `trim` / `list` 会连着
+/// 1 秒过期——`land=7 plate=0 op=7 seq=1`）。而**"每 16 手让一次"不够**：一次突发（16 手）在
+/// 慢机上仍能吃掉那 1 秒。故这里**每层让一手**——持树者在每一个让步的窗口里都排得上别的客人。
+///
+/// 它不改变这一台要证的任何东西，只把"独占"去掉；而"连打几百手会挤别人"这件事本身是这一刀
+/// 顺带量出来的**真性质**，记在 `docs/operator-slot.md` §5 之四（要收它是调度/配额那一族的事）。
+const YIELD_MS: u64 = 1;
+
+/// 链的落脚处：`/sys/deep`（**不落根**：root 那三条既有读数一个字都不该动）。
+const DIR: &str = "sys";
+const PANE: &str = "deep";
+/// 最底那一层挂的那一枚的名字。
+const LEAF: &str = "leaf";
+
+/// 退场码：全成 / 有一手不成（都不是 panic）。
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
+
+const OK_NOTE: &str = "probe-deep: 192 deep, every hand answered";
+const BAD_NOTE: &str = "probe-deep: a hand stopped answering";
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -87,25 +145,35 @@ extern "C" fn main() -> ! {
     let Ok(talk) = operator::ask_hole(host) else {
         bail("probe-deep: no tree ask")
     };
-    let Ok(me) = utask::self_id() else {
-        bail("probe-deep: no self id")
+    let (Ok(dir), Ok(pane), Ok(leaf)) = (Name::new(DIR), Name::new(PANE), Name::new(LEAF)) else {
+        bail("probe-deep: bad name")
     };
 
-    // 从根往下：每一层一个名字、一块一格宽的 `Pane`。名字用层号，故不会撞名。
-    let mut at = Where::Root;
-    let mut last = 0usize;
+    // 一、落到 `/sys/deep`（"分"是幂等的，故 `/sys` 已经在也不碍事）。
+    let Ok(sys) = operator::part(talk, &tree, Where::Root, dir, MS) else {
+        bail("probe-deep: no /sys")
+    };
+    let Ok(root) = operator::part(talk, &tree, Where::At(sys), pane, MS) else {
+        bail("probe-deep: no /sys/deep")
+    };
+    let mut at = Where::At(root);
+
+    // 二、往下打 [`MAX_DEPTH`] 层。**记下每一层的号**（剪回来要用；树不记父，故这一串是客人
+    //     自己的账——这也正是"名字只到 `seek` 那一格，往下一律按号"那句话的形状）。
+    let mut chain: Vec<EntryId> = Vec::new();
     let mut code = ocall::OK;
-    while last < MAX_DEPTH {
-        let Ok(one) = Name::new(&format!("d{last}")) else {
+    while chain.len() < MAX_DEPTH {
+        let Ok(one) = Name::new(&format!("d{}", chain.len())) else {
             bail("probe-deep: bad name")
         };
         match operator::part(talk, &tree, at, one, MS) {
             Ok(id) => {
+                chain.push(id);
                 at = Where::At(id);
-                last += 1;
-                if last % STEP == 0 {
-                    say(&format!("probe-deep: alive at {last}"));
+                if chain.len() % 48 == 0 {
+                    say(&format!("probe-deep: alive at {}", chain.len()));
                 }
+                let _ = room::sleep(Duration::from_millis(YIELD_MS));
             }
             Err(one) => {
                 code = one;
@@ -113,31 +181,59 @@ extern "C" fn main() -> ! {
             }
         }
     }
+    let deep = chain.len();
 
-    // **死线之后树还活着吗**：再打一手最浅的（根下）。这一问把"树死了"与"树没事、只是刚才
-    // 那一手答不出"分开——量深度这一刀最要紧的一格就是它。
-    let after = match Name::new("after") {
-        Ok(one) => match operator::part(talk, &tree, Where::Root, one, MS) {
-            Ok(id) => format!("ok:{}", id.get()),
-            Err(one) => format!("err:{one}"),
-        },
-        Err(_) => String::from("badname"),
-    };
+    // 三、**最底那一层真的能用吗**：落一枚砖、寻回来。
+    let mut land = ocall::BAD;
+    let mut find = ocall::BAD;
+    if code == ocall::OK
+        && let Ok(entry) = mail::unseal_hole(env::Mark::of("deep-leaf"))
+    {
+        match operator::land(
+            talk,
+            &tree,
+            host,
+            at,
+            leaf,
+            entry,
+            ocall::Rule::Public,
+            false,
+            MS,
+        ) {
+            Ok(id) => {
+                land = ocall::OK;
+                find = operator::find(talk, &tree, id, MS).unwrap_or(ocall::BAD);
+                // 那一枚回到本域表里了：认领回来（`take` 取"谁给的"那最后一枚）。
+                if let Some(back) = operator::take(&tree, host) {
+                    let _ = mail::release(back);
+                }
+            }
+            Err(one) => land = one,
+        }
+    }
 
-    // 一行读数：**本域是谁**、最后一层成的是第几层、收手的上限、下一手答的码、以及树还在不在。
+    // 四、**从最底往上剪几层**：`unlink` 那一手（"从父的 children 里摘一号"）也得点到。
+    let mut clean = code == ocall::OK;
+    for id in chain.iter().rev().take(TRIM_BACK) {
+        if operator::trim(talk, &tree, *id, MS).is_err() {
+            clean = false;
+            break;
+        }
+        let _ = room::sleep(Duration::from_millis(YIELD_MS));
+    }
+
+    // 五、一行读数。
     say(&format!(
-        "probe-deep: tree tid={} last={last} cap={MAX_DEPTH} code={code} after={after}",
-        me.get()
+        "probe-deep: tree deep={deep} land={land} find={find} clean={}",
+        u8::from(clean)
     ));
 
-    let survived = last == MAX_DEPTH;
+    // 判据：**打满上限**、最底那一层落得上也寻得回、链剪得干净。
+    let held =
+        deep == MAX_DEPTH && code == ocall::OK && land == ocall::OK && find == ocall::OK && clean;
     exit_with_note(
-        if survived { E_OK } else { E_TRIP },
-        if survived {
-            "probe-deep: holder survived to the cap"
-        } else {
-            "probe-deep: a hand stopped answering"
-        },
+        if held { E_OK } else { E_TRIP },
+        if held { OK_NOTE } else { BAD_NOTE },
     )
 }
 

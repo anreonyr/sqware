@@ -153,7 +153,7 @@ pub mod judge;
 pub mod ledger;
 
 pub use call::{ASK_MARK, LINK, Listing, TIP_MARK, TIP_NAME};
-pub use core::{Entry, EntryId, Fail, Node, Operator, Unship, VestedBy, Where};
+pub use core::{EntryId, Fail, Operator, Unship, VestedBy, Where};
 pub use gate::{Blind, Code, Control, verdict};
 pub use judge::{Branch, Id, League, Rule, Ruling, Who, judge};
 pub use ledger::{Blank, Key, Ledger, Line, Owner};

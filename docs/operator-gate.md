@@ -404,7 +404,9 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
   逐格的事实，`Is` / `Under` / `In` 三条判据在真机上各有了正证与负证。
 - 死亡道（板那条 `gone-<名字>` 树一条都没认领）。
 - 别名（同一枚 Pie 挂两个名 = 两条独立条目）。
-- **深度**（`seek` 封顶 8 段，树本身无上限）——**已量，是真洞**：
+- ~~**深度**（`seek` 封顶 8 段，树本身无上限）~~ → **已收**（见 [`operator-slot.md`](operator-slot.md)：
+  号就是表里的下标，四条递归助手一并消失；真机读数从"第 117 层死"变成"512 层每一手都答得出"）。
+  下面这一节是**量它**的那一笔，留着当负证：
   `prog-probe-deep` 一层层往下 `part`，**持树者自己死在第 117 层**（`user fault killed: tid=3`，
   实测读数与三格分析见 `programs/src/user/probe_deep.rs` 的头注）。原因是四条私有助手
   （`look` / `holds` / `take` / `put_in`）**按深度递归**，而一台域的栈是 `TASK_STACK_SIZE`

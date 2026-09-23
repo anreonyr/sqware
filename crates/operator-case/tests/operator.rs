@@ -435,6 +435,51 @@ fn a_pane_that_cannot_be_grown_answers_full() {
 }
 
 #[test]
+fn a_deep_chain_does_not_need_the_call_stack() {
+    // **这一条钉的是"深度不吃调用栈"**。照实记：老一版四条助手（`look` / `holds` / `take` /
+    // `put_in`）按深度递归，而一台域的栈只有 `TASK_STACK_SIZE` = 16 KiB——**真机读数**：
+    // `prog-probe-deep` 让持树者自己死在第 117 层（`user fault killed: tid=3`），命名空间整个
+    // 消失。
+    //
+    // 故这里**故意把测试线程的栈压到 64 KiB**，再建一条 500 层的链：老一版在 500 层上要几十上百
+    // KB，**当场 SIGSEGV**（这台的机制与 `a_pane_that_cannot_be_grown_answers_full` 同一手法：
+    // 把判据做成"资源真的不够时也活得下来"，而不是"跑得完"）。
+    //
+    // 深链只走 `part` / `name` / `list` / `trim`：四条都点得到（老版的）那四个递归助手，而都不碰
+    // 活性表（故不必把 `TABLE` 撑到几百位）。
+    let _serial = serial();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024)
+        .spawn(|| {
+            const DEEP: u32 = 500;
+            let mut t = tree();
+            let mut at = Where::Root;
+            let mut chain: Vec<EntryId> = Vec::new();
+            for i in 0..DEEP {
+                let text = std::format!("d{i}");
+                let id = t.part(at, name(text.as_str())).expect("分得上");
+                chain.push(id);
+                at = Where::At(id);
+            }
+            // 最底那一格：名字答得出、里面是空的（故剪得动）。
+            let deepest = *chain.last().expect("非空");
+            assert_eq!(t.name(deepest), Ok(name("d499")));
+            assert_eq!(t.list(Where::At(deepest)).map(|ids| ids.count()), Ok(0));
+
+            // 从最底往上一层一层剪回去：每一手都要走到那条链的深处。
+            for (i, id) in chain.iter().enumerate().rev() {
+                assert_eq!(t.trim(*id), Ok(()), "剪第 {i} 层");
+                // 剪过的那一号**不对外说话**（墓碑与"从没铸过"长得一样）。
+                assert_eq!(t.name(*id), Err(Fail::Unknown), "第 {i} 层剪过之后");
+            }
+            assert_eq!(names(&t, &[]).map(|v| v.len()), Ok(0), "根那一层也空了");
+        })
+        .expect("起得来线程")
+        .join()
+        .expect("这条链不该把栈打穿");
+}
+
+#[test]
 fn the_root_is_not_an_entry() {
     let _serial = serial();
     let mut t = tree();
