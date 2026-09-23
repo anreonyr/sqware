@@ -14,9 +14,10 @@ docs/.obsidian/
 # 根上的 `/target` 只盖根目录那一份。**照实记**：`line-case` 那一行是补的——它第一次提交时
 # 漏了（114 个构建产物被带进索引），当场发现后从索引撤下、就地重做那一笔。
 crates/alloc-probe/target/
-crates/operator-case/target/
-crates/line-case/target/
-crates/judge-case/target/
+# 编外的宿主靶（`scripts/host.sh` 那几台）：都是**不进工作区**的独立 crate，各自有自己的
+# `target/`。**照实记**：新加那两台时漏了这两行，`git add -A` 把 703 个构建产物带进了索引
+# （与上面那一次"114 个"同一条）——故这里改成一条**通配**，以后新开一台不必再记着加：
+crates/*-case/target/
 
 # `scripts/teeth.py` 是一个 Python 量具：跑它会在旁边落一份字节码缓存。
 __pycache__/

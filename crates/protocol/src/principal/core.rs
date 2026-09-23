@@ -291,10 +291,11 @@ impl Principal {
 
 #[cfg(test)]
 mod tests {
-    //! **照实记：本模块编不到，也跑不到**——`protocol/Cargo.toml` 是 `test = false`（riscv 目标上
-    //! 编不出 libtest）。故下面这几条今天只是**契约的读数**，不是门；真机上跑的是探针那六条
-    //! （`programs/src/user/subject.rs`）。留在这里的理由与 `system::board::core` 那六条同款：
-    //! 换载体时照着它们走。
+    //! **照实记：这一批原先是"编不到、也跑不到"的规格**——`protocol/Cargo.toml` 是
+    //! `test = false`（riscv 目标上编不出 libtest），而主工作区那几道门一道都不编它。
+    //! **现在跑得动了**：`crates/principal-case`（编外宿主靶，`#[path]` 把本文件逐字编进去）
+    //! 把它们当真判据跑，门口 `scripts/host.sh`；真机上另有探针那几条（`programs/src/user/subject.rs`）。
+    //! 留在这里的理由照旧：换载体时照着它们走。
     use super::*;
 
     const A: TaskId = TaskId::new(11); // 装配者

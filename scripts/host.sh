@@ -1,5 +1,6 @@
 #!/bin/sh
-# 宿主档的门 —— 两处**纯核心**的规矩，在**宿主**上真跑一遍：树（七条原语）· 线（账 + 界）。
+# 宿主档的门 —— **五处纯核心**的规矩，在**宿主**上真跑一遍：
+# 树（八条原语）· 线（账 + 界）· 门禁（三格裁决 + 那本账）· 名册与盟籍（两本册子）· 板（牌子 + 台账）。
 #
 # # 为什么要有这一门
 #
@@ -19,12 +20,23 @@
 #   2) **`cargo check` 在同一个目标上是过的**（它不做代码生成）——所以"protocol 在宿主编得过"
 #      这句话只有在 check 那一档才成立。本门第一版就栽在这一格上（照实记）。
 #
-# 故走 `crates/alloc-probe` 那条现成的路：三台**编外**（根 workspace `exclude`）的宿主 crate
-# 各把一份**逐字未改**的核心源码 `#[path]` 编进自己的测试靶：
+# 故走 `crates/alloc-probe` 那条现成的路：五台**编外**（根 workspace `exclude`）的宿主 crate
+# 各把若干份**逐字未改**的核心源码 `#[path]` 编进自己的测试靶：
 #
-#   `crates/operator-case`  `crates/protocol/src/operator/core.rs`（只依赖 `env`）
-#   `crates/line-case`      `crates/protocol/src/driver/line/core.rs`
-#   `crates/judge-case`     `crates/protocol/src/operator/judge.rs`（只依赖 `env`）
+#   `crates/operator-case`   `crates/protocol/src/operator/core.rs`（只依赖 `env`）
+#   `crates/line-case`       `crates/protocol/src/driver/line/core.rs`
+#   `crates/judge-case`      `crates/protocol/src/operator/judge.rs`（只依赖 `env`）
+#   `crates/principal-case`  `crates/protocol/src/principal/core.rs` +
+#                            `crates/protocol/src/coalition/core.rs`（盟籍那一份 `use
+#                            crate::principal::core::PrincipalId` ⇒ 两本册子同住一台，
+#                            免得那一份核心在两台里各编一遍、用例跑两遍）
+#   `crates/board-case`      `crates/protocol/src/system/board/core.rs`
+#
+# **照实记（后两台是"救活"的）**：`principal/core.rs` / `coalition/core.rs` / `board/core.rs`
+# 各自的 `#[cfg(test)]` 模块**从写下那天起一次没跑过**（`protocol` 编不到、也没有别的靶编它）——
+# 那些文件的头注当时就写着"只是契约的读数，不是门"。后两台一开，**19 条**（7 + 6 + 6）当场有了门。
+# 其中唯一一处需要搭桥的是盟籍那一份的 `use crate::principal::core::PrincipalId`：宿主靶里给它
+# 一个**真实的目录模块** `tests/principal/mod.rs`（那块地照实记了"内联模块编不过"那一次）。
 #
 # **照实记（线那一台多一处桩）**：线的核心写的是"有主那一格"，故它 `use crate::session::Pier`
 # ——宿主靶里给了一个**桩**（`Pier` 只要 `post` 一句：核心只跟泊位说这一句话，读/写泊位那一侧
@@ -37,7 +49,7 @@
 #
 # # 判据（三条一起）
 #
-#   1) 三台 `cargo test` **退出码都 0**；
+#   1) 五台 `cargo test` **退出码都 0**；
 #   2) 每台的末行汇总 `test result: ok. N passed; 0 failed`，且 **N ≥ 1**（零用例要红：测试靶
 #      没被发现就等于白立一档——`framework.sh` 的"静默零用例"是同一条顾虑）；
 #   3) 全程无 `FAILED` / `panicked`。
@@ -62,7 +74,7 @@ log="$out/$tag.log"
 total=0
 
 # `--tests`：只跑测试靶（三台都只有测试靶，没有 lib 那一路），不碰文档测试。
-for m in crates/operator-case crates/line-case crates/judge-case; do
+for m in crates/operator-case crates/line-case crates/judge-case crates/principal-case crates/board-case; do
   echo "== $m" >> "$log"
   cargo test --manifest-path "$m/Cargo.toml" \
     --target x86_64-unknown-linux-gnu --tests >> "$log" 2>&1
@@ -90,5 +102,5 @@ if grep -q 'FAILED' "$log"; then
   echo "host: FAIL 有用例失败：$(grep -a 'FAILED' "$log" | head -1)"
   exit 1
 fi
-echo "host: $total 例全过（树 + 线 + 门禁，日志 $log）"
+echo "host: $total 例全过（树 + 线 + 门禁 + 名册/盟籍 + 板，日志 $log）"
 exit 0

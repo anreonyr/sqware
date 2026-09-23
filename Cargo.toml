@@ -16,7 +16,14 @@
 # 而不是一台的两半——那一台钉树的**结构**（七条原语、六格失败域），这一台钉**三格裁决**
 # （放行 / 终态拒 / 判不了）。判据之所以能单独编：`judge.rs` 里两个号是泛型，它既不认识
 # `PolicyId` / `CoalitionId`、也不认识内核。
-exclude = ["crates/alloc-probe", "crates/operator-case", "crates/line-case", "crates/judge-case"]
+exclude = [
+    "crates/alloc-probe",
+    "crates/operator-case",
+    "crates/line-case",
+    "crates/judge-case",
+    "crates/principal-case",
+    "crates/board-case",
+]
 members = [
     "kernel",
     "programs",

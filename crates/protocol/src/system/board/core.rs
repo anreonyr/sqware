@@ -286,9 +286,10 @@ impl Board {
 
 #[cfg(test)]
 mod tests {
-    //! 照实记：本模块**编不到**——`protocol/Cargo.toml` 是 `test = false`（riscv 目标上编不出
-    //! libtest），而这里 `use std::sync::Mutex` 又是宿主侧的东西。故这批判据今天**没有被跑过**；
-    //! 要跑得立宿主 crate（"用完即删"的那一步）。留着它们是因为它们是**读数**——
+    //! 照实记：本模块原先**编不到、也没被跑过**——`protocol/Cargo.toml` 是 `test = false`
+    //! （riscv 目标上编不出 libtest），而这里 `use std::sync::Mutex` 又是宿主侧的东西。
+    //! **现在跑得动了**：`crates/board-case`（编外宿主靶，`#[path]` 把本文件逐字编进去），
+    //! 门口 `scripts/host.sh`。留着它们是因为它们是**读数**——
     //! `a_dead_entry_is_swept_on_the_read_path` 正是 `Board::lookup` 留着不删的理由
     //! （见 `board/mod.rs` 末段），不是"编不到就该删"。
     use super::*;
@@ -408,6 +409,28 @@ mod tests {
         assert!(unshipped(1) && !unshipped(2));
         assert_eq!(b.find(name("console")), Some(0));
         assert_eq!(b.rows().count(), 1);
+    }
+
+    #[test]
+    fn unregistering_a_dead_entry_answers_unknown() {
+        // **撤牌子也走那条"先扫后判"**：那一枚入口答不出（主人退场 / 不在我表里）⇒ 牌子当场被扫空
+        // ⇒ 这一格"没有实例"，答 `Unknown`——**不是**拿一个死实例去比主人（那样会答 `Ok` 或
+        // `Denied`，把"这一格已经空了"读成"这一格还归谁"）。
+        //
+        // 照实记：这一格是牙口量出来的——把 `unregister` 里那次 `sweep_at` 删掉，**原先全门照绿**
+        // （没有一条规格走过"死实例 + 撤牌子"这条路）。
+        let _serial = serial();
+        let mut b = board();
+        stand(&mut b, "console", 1, A);
+        gone(1);
+        assert_eq!(b.unregister(name("console"), A), Err(Fail::Unknown));
+        assert_eq!(
+            b.unregister(name("console"), B),
+            Err(Fail::Unknown),
+            "谁问都一样：这一格空了"
+        );
+        assert_eq!(b.rows().count(), 0, "扫干净了");
+        assert_eq!(b.find(name("console")), Some(0), "**名字照旧**（撤牌子不动名字）");
     }
 
     #[test]

@@ -386,10 +386,10 @@ impl Coalition {
 
 #[cfg(test)]
 mod tests {
-    //! **照实记：本模块编不到，也跑不到**——`protocol/Cargo.toml` 是 `test = false`（riscv 目标上
-    //! 编不出 libtest）。故下面这几条今天只是**契约的读数**，不是门；真机上跑的是探针那几条
-    //! （`programs/src/user/member.rs`）。留在这里的理由与 `principal::core` 那几条同款：
-    //! 换载体时照着它们走。
+    //! **照实记：这一批原先是"编不到、也跑不到"的规格**（`test = false` + 主工作区不编它）。
+    //! **现在跑得动了**：`crates/principal-case`（编外宿主靶——盟籍那一份 `use crate::principal::core`，
+    //! 故与名册那一份同住一台）把它们当真判据跑，门口 `scripts/host.sh`；真机上另有探针那几条
+    //! （`programs/src/user/member.rs`）。
     use super::*;
 
     fn book() -> Coalition {
@@ -426,6 +426,18 @@ mod tests {
         assert_eq!(b.enter(A, c), Ok(()));
         assert_eq!(b.enter(A, c), Ok(())); // 第二次：表不动
         assert_eq!(b.amid(A, c), Ok(true));
+        // **"表不动"看见的样子**：四条读（`amid` / `band` / `bloc` / `leave`）里，同一对
+        // 都只算一格。照实记：这一格是牙口量出来的，结论有点反直觉——把 `enter` 里那次
+        // 查重删掉（同一对真的进两行），**这四条读全都看不出来**：`amid` 照样真、
+        // 两趟取窗本来就按键去重（`window` 挑"比上一枚大的里头最小的"）、`leave` 把两行
+        // 一起拿掉。故那一行是**卫生**（不让表长冗余），不是语义——量具里那一条变异因此
+        // 记成**等价变异**（预期绿）。这一格钉的是"读出来是一格"。
+        assert_eq!(
+            b.band(c, None).expect("铸过的盟").len(),
+            1,
+            "同一对只许一格"
+        );
+        assert_eq!(b.bloc(A, None).len(), 1, "反向那一次也一样");
         assert_eq!(b.leave(A, c), Ok(()));
         assert_eq!(b.leave(A, c), Ok(())); // 撞空也成
         assert_eq!(b.amid(A, c), Ok(false));

@@ -64,8 +64,8 @@ MUTATIONS = [
      "        let opened_by = self.stamps.vested_by;"),
     ("树·trim 允许剪非空窗格",
      "crates/protocol/src/operator/core.rs",
-     "                Node::Pane(_) => return Err(Fail::NonEmpty),",
-     "                Node::Pane(_) => None,"),
+     "                Node::Pane(inner) if inner.is_empty() => None,\n                Node::Pane(_) => return Err(Fail::NonEmpty),",
+     "                Node::Pane(inner) if inner.is_empty() => None,\n                Node::Pane(_) => None,"),
     ("树·seek 不看路长上限",
      "crates/protocol/src/operator/core.rs",
      "        if road.len() > Self::ROAD_MAX {\n            return Err(Fail::Full);\n        }",
@@ -127,6 +127,28 @@ MUTATIONS = [
                 Ok(())
             }""",
      r"""            Some(Cell::Owned { .. }) => Ok(()),"""),
+    # ── 两本册子（principal-case：名册/谱系 + 盟籍）──────
+    ("册·名册不看钥匙（谁都能写）",
+     "crates/protocol/src/principal/core.rs",
+     "        if from != self.assembler {\n            return Err(Fail::Denied);\n        }\n        if self.node(p).is_none() {",
+     "        if self.node(p).is_none() {"),
+    ("册·转换不看支（跨支也能领）",
+     "crates/protocol/src/principal/core.rs",
+     "        if !self.heir(p, q)? {\n            return Err(Fail::Denied);\n        }",
+     "        // 变异：不看支"),
+    ("等价·盟籍入不查重（表里多一行，四条读都看不见）",
+     "crates/protocol/src/coalition/core.rs",
+     "        if self.book.iter().any(|a| a.who == who && a.of == c) {\n            return Ok(());\n        }",
+     "        // 变异：不查重"),
+    # ── 板（board-case）────────────────────────────────
+    ("板·查名字不剔死（死的照旧答得出）",
+     "crates/protocol/src/system/board/core.rs",
+     "        mut ship: impl FnMut(PieToken),\n    ) -> Result<PieToken, Fail> {\n        let at = self.find(name).ok_or(Fail::Unknown)?;\n        self.sweep_at(at);",
+     "        mut ship: impl FnMut(PieToken),\n    ) -> Result<PieToken, Fail> {\n        let at = self.find(name).ok_or(Fail::Unknown)?;\n        // 变异：不扫"),
+    ("板·撤牌子不剔死（死的照旧拦人）",
+     "crates/protocol/src/system/board/core.rs",
+     "    pub fn unregister(&mut self, name: Name, who: TaskId) -> Result<(), Fail> {\n        let at = self.find(name).ok_or(Fail::Unknown)?;\n        self.sweep_at(at);",
+     "    pub fn unregister(&mut self, name: Name, who: TaskId) -> Result<(), Fail> {\n        let at = self.find(name).ok_or(Fail::Unknown)?;\n        // 变异：不扫"),
     # ── 对照：什么都不改（应当全绿）──────────────────────
     ("对照·只改注释",
      "crates/protocol/src/operator/core.rs",
@@ -183,12 +205,34 @@ def run(cmd, **kw):
     return subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True, **kw)
 
 
-def sweep(mut_list, cmd_of, tag):
+def missing_readings(out):
+    """机器那一侧：soak 逐条报出来的"缺这几条"。"""
+    return re.findall(r"^  (.+)$", out, re.M)
+
+
+def failing_tests(out):
+    """宿主那一侧：从 `host.sh` 打出的失败行里取用例名（它自己会说"有用例失败"）。"""
+    log = re.search(r"（(\S+\.log)）", out)
+    names = []
+    if log:
+        try:
+            txt = open(f"{ROOT}/{log.group(1)}", encoding="utf-8", errors="ignore").read()
+        except OSError:
+            txt = ""
+        names = re.findall(r"^test (\S+) \.\.\. FAILED", txt, re.M)
+    return names
+
+
+def sweep(mut_list, cmd_of, tag, parse=None):
     rows = []
     for name, path, old, new in mut_list:
         src = open(f"{ROOT}/{path}", encoding="utf-8").read()
-        if old not in src:
-            rows.append((name, "补丁打不上（原文没找到）", ""))
+        hits = src.count(old)
+        if hits != 1:
+            # **这一格是量具自己的牙口**：锚点出现两次时 `replace(…, 1)` 会打在**前一处**，
+            # 于是"绿"这个结论说的是别处的代码（实测栽过：`sweep_at` 那个锚点在
+            # `unregister` 与 `lookup_after` 里各有一份，我改的是前者，却得出"后者没牙"）。
+            rows.append((name, "**补丁不唯一，拒绝应用**", f"锚点出现 {hits} 次"))
             continue
         open(f"{ROOT}/{path}", "w", encoding="utf-8").write(src.replace(old, new, 1))
         p = run(cmd_of())
@@ -197,17 +241,27 @@ def sweep(mut_list, cmd_of, tag):
         if "error[E" in out or "error: could not compile" in out:
             verdict = "**编译红**（不算牙口）"
         elif p.returncode == 0:
+            # 三种名义：**变异**（该红）、**对照**（该绿，量具本身对不对）、**等价**
+            #（该绿，因为它不改变可观察行为——实测出来的一档，不是"没牙"）。
             is_ctrl = name.startswith("对照")
-            verdict = "绿（对照，理应如此）" if is_ctrl else "**绿**（没牙）"
+            is_equiv = name.startswith("等价")
+            if is_ctrl:
+                verdict = "绿（对照，理应如此）"
+            elif is_equiv:
+                verdict = "绿（等价变异，理应如此）"
+            else:
+                verdict = "**绿**（没牙）"
         else:
             verdict = "红"
-            # 缺的那几条：缺几条就报几条（只截前四条，末尾缀总数）——"红在哪"这一栏
-            # 是这张表的价值所在，只报两条会让人误以为只红两条。
-            miss = re.findall(r"^  (.+)$", out, re.M)
-            shown = " · ".join(miss[:4])
-            if len(miss) > 4:
-                shown += f" … （共 {len(miss)} 条）"
-            detail = shown[:220] if miss else out.strip().splitlines()[-1][:120]
+            # "红在哪"这一栏是这张表的价值所在，故按模式各解析各的：
+            #   机器那一侧 = soak 报的**缺哪几条读数**；宿主那一侧 = 日志里**哪几条用例失败**。
+            # 照实记：这一栏原先一律抓"行首两空格的行"，结果抓到的是 host.sh 自己那些
+            # `  crates/xxx: test result: ok. …` 汇总行——满栏噪声。
+            items = parse(out) if parse else []
+            shown = " · ".join(items[:4])
+            if len(items) > 4:
+                shown += f" … （共 {len(items)} 条）"
+            detail = shown[:220] if items else out.strip().splitlines()[-1][:120]
         rows.append((name, verdict, detail))
         run(f"git checkout -- {path}")
     print(f"\n{'变异':<40}{'门':<12}红在哪")
@@ -215,10 +269,13 @@ def sweep(mut_list, cmd_of, tag):
         print(f"{n:<40}{v:<12}{d}")
     red = sum(1 for _, v, _ in rows if v == "红")
     ctrl = [v for n, v, _ in rows if n.startswith("对照")]
-    n_mut = len(rows) - len(ctrl)
+    equiv = [v for n, v, _ in rows if n.startswith("等价")]
+    n_mut = len(rows) - len(ctrl) - len(equiv)
     line = f"\n{tag}：{red}/{n_mut} 条变异被逮住"
     if ctrl:
         line += "；对照" + ("绿（量具可信）" if ctrl[0].startswith("绿") else f"**红了**（{ctrl[0]}——量具坏了）")
+    if equiv:
+        line += f"；等价变异 {len(equiv)} 条（预期绿）"
     print(line + "\n")
     return 0
 
@@ -236,9 +293,9 @@ def main():
         return 1
     if boot:
         sel = [m for m in BOOT if not only or only in m[0]]
-        return sweep(sel, lambda: "scripts/soak.sh 1", "机器那一侧（一轮 soak）")
+        return sweep(sel, lambda: "scripts/soak.sh 1", "机器那一侧（一轮 soak）", parse=missing_readings)
     sel = [m for m in MUTATIONS if not only or only in m[0]]
-    return sweep(sel, lambda: "scripts/host.sh", "宿主那一侧（`host.sh`）")
+    return sweep(sel, lambda: "scripts/host.sh", "宿主那一侧（`host.sh`）", parse=failing_tests)
 
 
 if __name__ == "__main__":
