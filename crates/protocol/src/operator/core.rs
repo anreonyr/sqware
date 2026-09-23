@@ -457,6 +457,12 @@ impl Operator {
                 if level.len() >= Self::PANE_CAP {
                     return Err(Fail::Full);
                 }
+                // **先要位、再落格**：上面那一格管的是**条数**（`PANE_CAP`），这一格管
+                // **内存**。少了它，分配失败走的是 `handle_alloc_error`（abort）——而同一句
+                // "备不下就如实报"在仓里另外两处都是 `try_reserve → Full`：`Desk::admit`
+                // （`programs/src/supervisor/operator/desk.rs`）与 `Ledger::grow`
+                // （`crates/protocol/src/operator/ledger.rs`）。**同一句话，三处一个纪律。**
+                level.try_reserve(1).map_err(|_| Fail::Full)?;
                 level.push(Entry {
                     id: fresh,
                     name,

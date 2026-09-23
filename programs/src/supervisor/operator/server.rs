@@ -93,20 +93,11 @@ impl Session {
 }
 
 /// 找**某一位域**交给本域的那枚服务门牌（`opened_by == who` 且记号是服务入口）。
+///
+/// 认领的规矩与另外两处同一句（见 [`claim`]）；门牌那一枚走的是**裸 `unseal_hole`**，
+/// 故"一个域只交一枚"同样是纪律而不是判据。
 fn find_face(who: TaskId) -> Option<PieToken> {
-    let mark = bcall::ENTRY_MARK;
-    let mut index = 0usize;
-    loop {
-        let (token, _perm, _vestor) = mail::collect(index).ok()?;
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return None;
-        }
-        index += 1;
-        if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(mark) {
-            return Some(token);
-        }
-    }
+    claim(bcall::ENTRY_MARK, who, "operator: two entries")
 }
 
 /// 门禁要的三条边都从这一份出：问身份（`resolve`）、谱系（`heir`）、盟籍（`amid`）。
@@ -323,8 +314,16 @@ fn settle(
     }
     // 先抄一份"还没挂上的"：`unarmed` 借住这本账，而下面要改它。
     // **先抄一份"还没挂上的"**：`unarmed` 借住这本账，而下面要改它。这里**不按常数开数组**
-    // （那正是"一本账的容量渗到别人的栈上"那一格）：直接 iterate 出来逐条处理即可。
-    let waiting: alloc::vec::Vec<(usize, TaskId)> = desk.unarmed().collect();
+    // （那正是"一本账的容量渗到别人的栈上"那一格），也**不直接 `collect`**：`collect` 里的
+    // 那次分配没有预留，失败同样是 abort（与 `core.rs` 那一处、`Desk::admit`、`Ledger::grow`
+    // 同一条纪律）。备不下就**如实报一句、这一轮先不动**（下一轮再来），而不是崩、
+    // 也不是静默丢一位客人。
+    let mut waiting: alloc::vec::Vec<(usize, TaskId)> = alloc::vec::Vec::new();
+    if waiting.try_reserve(desk.unarmed().count()).is_err() {
+        say("operator: settle no room");
+        return true;
+    }
+    waiting.extend(desk.unarmed());
     for &(slot, who) in &waiting {
         match ask_of(who) {
             Some(ask) => {
@@ -559,20 +558,7 @@ fn status(out: &mut [u8; ocall::REPLY_MAX], code: u8) -> usize {
 /// 而它认的本来就是"**这扇门是谁开的**、**走的哪条路**"，不是"谁转的"。次序那件事仍由
 /// `settle` 管（答话路没到就先报一句，见那里）。
 fn reply_of(who: TaskId) -> Option<PieToken> {
-    let link = Mark::of(LINK);
-    let mut index = 0usize;
-    loop {
-        let (token, _perm, vestor) = mail::collect(index).ok()?;
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return None;
-        }
-        index += 1;
-        let _ = vestor;
-        if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(link) {
-            return Some(token);
-        }
-    }
+    claim(Mark::of(LINK), who, "operator: two replies")
 }
 
 /// 这一位客人**自己**交来的那一枚问话孔。
@@ -580,17 +566,64 @@ fn reply_of(who: TaskId) -> Option<PieToken> {
 /// 判据两格，缺一不可：`owner == who`（那扇门是它开的）**且** 记号 == `ask`（它亲手铸的
 /// 那一枚）——客人交来的**入口**也满足前两格（都是它铸、它交的），两件事只有记号分得开。
 fn ask_of(who: TaskId) -> Option<PieToken> {
-    let ask = ASK_MARK;
+    claim(ASK_MARK, who, "operator: two asks")
+}
+
+/// **认领恰好一枚**：按「谁开的 + 记号」扫全表，答**第一枚**；不止一枚就**报一句**。
+///
+/// 三处认领（答话路 / 问话孔 / 门牌）原先各写一遍同一段扫表，且**都取第一枚而从不看有几枚**。
+/// 三处的底气其实不一样——照实记：
+///
+/// | 处 | 记号 | 底气 |
+/// |---|---|---|
+/// | [`reply_of`] | `LINK` | **`Quay::seat` 的同名判据兜着**："同一位、同一记号只可能有一枚" |
+/// | [`ask_of`] | `ASK` | `ask_hole` 走**裸 `unseal_hole`**，没有同名闸 |
+/// | [`find_face`] | `ENTRY` | 同上：**一个域调两次就是两枚** |
+///
+/// 后面两处的"只可能有一枚"只是**纪律**，不是判据——而破了纪律时是**静默取错**（取错哪一枚
+/// 是最难查的一类）。这一格把那件事说出来。
+///
+/// # 为什么只是"说一句"，不是"拒"（照实记：这一刀收回过一次）
+///
+/// 本来想做成 fail-closed（命中两枚 ⇒ 拒），并为它造一台"开两枚问话孔"的负证客人。**推过之后
+/// 收回了**：两枚孔的出现与持树者查表之间有**天然竞态**——持树者在装配窗口里每 1ms 查一次，
+/// 而两枚孔之间只隔两个 envcalls（微秒级）。于是：
+///
+/// - 报一句 ⇒ **≈99.99% 出现**（而那 0.01% 就是一个间歇红的门）；
+/// - 拒 ⇒ 同样间歇，**且**那位客人从此没人给它挂孔 ⇒ 持树者永远停在"还有人没挂上"那一档
+///   （1ms 轮询，且会每轮重复报同一句）。
+///
+/// 换句话说：**这条判据天生量不出一个确定的东西**。所以这一格只把"赌"变成"**看得见的赌**"，
+/// 行为一字不改（仍取第一枚），也不为它造真机负证。
+///
+/// 干净的关法只有一条（记在 `docs/operator-gate.md` §8）：**让 `ask_hole` 与入口那一枚也走
+/// 有名有姓的泊位**（[`Quay::seat`] 那条路已经有同名闸），把"只可能有一枚"从纪律变成**构造**。
+/// 那是客侧形状的改动，不是纯修。
+///
+/// **报一句的频率是有界的**（照实记，别把它说成"至多一次"）：`reply_of` / `ask_of` 那两处
+/// 只在这一位**还没认下**的时候叫，认下之后不再叫；而 [`find_face`] 是**每收一帧协调帧**
+/// 叫一次（帧数 = 后面起了几条服务，几十）——故最坏是"几十行"，不是"每毫秒一行"。
+fn claim(mark: Mark, who: TaskId, two: &str) -> Option<PieToken> {
+    let mut first = None;
     let mut index = 0usize;
     loop {
-        let (token, _perm, _vestor) = mail::collect(index).ok()?;
+        let (token, _perm, _vestor) = match mail::collect(index) {
+            Ok(one) => one,
+            // 扫不动了（本表读不出来）：**一枚都不认**——与原来那三版同一条（那时是
+            // `.ok()?`）：数不完就不敢说"只有一枚"。
+            Err(_) => return None,
+        };
         // 越界哨兵：这一遍扫完了。
         if token.get() == 0 {
-            return None;
+            return first;
         }
         index += 1;
-        if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(ask) {
-            return Some(token);
+        if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(mark) {
+            if first.is_some() {
+                say(two);
+                return first;
+            }
+            first = Some(token);
         }
     }
 }

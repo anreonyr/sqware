@@ -31,11 +31,52 @@ extern crate alloc;
 mod operator;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::Mutex;
 
 use env::{Name, PieToken, TaskId};
 
 use crate::operator::{EntryId, Fail, Operator, Where};
+
+// ── 一台"分配会失败"的台子（只给下面那一条用例）──────────────────
+//
+// 树那一侧有一格判据是"**备不下就如实报**"（`try_reserve → Fail::Full`）。它只有把分配**真的
+// 打掉**才量得到——故这里给测试靶换一个**可关掉**的全局分配器：
+//
+// - 默认**原样转发**系统分配器（别的用例一字不受影响）；
+// - 旗帜是**线程局部**的，不是进程级的：libtest 每个用例各一枚线程，而"打掉分配"若做成全局
+//   旗帜，那一条用例亮旗的时候别的用例正好在分配 ⇒ 随机 panic（而随机红的门比没有门更坏）；
+// - 用 `const` 初值：`thread_local!` 的惰性初始化**本身要分配**——在分配器里自指。`Cell<bool>`
+//   没有析构，故这条线程局部不注册析构器，也不分配。
+struct Flaky;
+
+thread_local! {
+    static NO_ROOM: Cell<bool> = const { Cell::new(false) };
+}
+
+unsafe impl GlobalAlloc for Flaky {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if NO_ROOM.with(Cell::get) {
+            // 内核里那一条是 `handle_alloc_error`（abort）——宿主上等价的就是**返空**，
+            // 让 `Vec::try_reserve` 如实答 `Err`。
+            return core::ptr::null_mut();
+        }
+        unsafe { System.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new: usize) -> *mut u8 {
+        if NO_ROOM.with(Cell::get) {
+            return core::ptr::null_mut();
+        }
+        unsafe { System.realloc(ptr, layout, new) }
+    }
+}
+
+#[global_allocator]
+static ALLOC: Flaky = Flaky;
 
 /// 假表是**进程级**的（`VestedBy` / `Unship` 是函数指针，捕不了环境），故测试彼此串行。
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -361,6 +402,36 @@ fn the_tree_has_a_bottom() {
         .map(|i| name(&std::format!("d{i}")))
         .collect();
     assert_eq!(t.seek(&deep), Err(Fail::Full));
+}
+
+#[test]
+fn a_pane_that_cannot_be_grown_answers_full() {
+    // **同一句话，三处一个纪律**：`Desk::admit`（`programs/.../desk.rs`）与 `Ledger::grow`
+    // （`crates/protocol/src/operator/ledger.rs`）都是 `try_reserve → Full`，而树这一处原来
+    // 只有**条数**那道闸（`PANE_CAP`）——分配失败走的是 `handle_alloc_error`，客人连一句答话
+    // 都收不到（不是 `Full`，是整机 abort）。
+    //
+    // 照实记：这一条判据**只有把分配真的打掉**才量得到，故本台的分配器是可关的（见文件头那一
+    // 节）。它同时钉住"失败**没有副作用**"：那一格没被占、号水位也没往前走。
+    let _serial = serial();
+    let mut t = tree();
+    live(0);
+
+    NO_ROOM.with(|flag| flag.set(true));
+    let landed = t.land(Where::Root, name("n0"), tok(0));
+    let parted = t.part(Where::Root, name("n1"));
+    NO_ROOM.with(|flag| flag.set(false));
+
+    assert_eq!(landed, Err(Fail::Full), "备不下要如实报 Full，不是 abort");
+    assert_eq!(parted, Err(Fail::Full));
+    assert_eq!(t.seek(&[name("n0")]), Err(Fail::Unknown), "没落上");
+    assert_eq!(
+        t.list(Where::Root).map(|ids| ids.count()),
+        Ok(0),
+        "那一层还是空的"
+    );
+    // 旗一撤，同一次调用就走通了——说明刚才那两下**什么都没留下**（号也没被吃掉）。
+    assert_eq!(t.land(Where::Root, name("n0"), tok(0)), Ok(EntryId::new(0)));
 }
 
 #[test]
