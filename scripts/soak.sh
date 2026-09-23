@@ -40,7 +40,7 @@
 #      **`member: amid(out,me)=false`**（伪造的身份号**不是失败**）/
 #      **`member: done`** /
 #      **`policy: sire(root)=none`**（**三态头一格**：根答"没有"，不是 `Unknown`）/
-#      **`policy: sire(me)=0`**（装配把本域绑在 ROOT 那一支下：`PolicyId::ROOT` 是**协议常量
+#      **`policy: sire(me)=0`**（装配把本域绑在 ROOT 那一支下：`PrincipalId::ROOT` 是**协议常量
 #      0**，故这一格可钉；身份号不可钉）/
 #      **`policy: heir(me,me)=true`**（自反）/ **`policy: derive(me)=<号>`**（派生出子身份：
 #      只钉"答的是一条号"，号本身不钉）/ **`policy: heir(sub,me)=false`**（子代不是祖先）/
@@ -56,7 +56,9 @@
 #      **`echo: list root=0,3`** / **`echo: list names=sys,device`**（**一串**那一刀：
 #      `list` 答号、`name` 按号答名——**名与号分开**；根没有号，故 0 是第一个真格子 `sys`）/
 #      **`echo: list device=4,5,6`**（`/device` 那三个号：router / uart / rtc）/
-#      **`echo: name miss=true`**（没铸过的号答 `Unknown`，不是"答了一格空名字"）/
+#      **`probe: tree land=8 seek=err:1`** + **`probe-denied: denied as expected`**（门禁的**负证**：
+#      一位**没有身份**的客人落牌被拒（`8` = `DENIED`），且随后 `seek` 答 `UNKNOWN`——
+#      **拒绝发生在动树之前**，不是"换绑"/"grep" 那一类读数）/ **`echo: name miss=true`**（没铸过的号答 `Unknown`，不是"答了一格空名字"）/
 #      **`echo: seq=0`** /
 #      **`member: band(c0)=n1 more=false`** / **`member: band(c0,next)=n0 more=false`**
 #      （**游标是阈值**：拿末一枚接着取 ⇒ 空窗，不是错，也没有"过期游标"）/
@@ -340,6 +342,13 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "policy: waive=ok" "$log" \
         && grep -q "subject: done" "$log" \
         && [ -n "$me1" ] && [ "$me1" != "$me2" ] && [ "$me1" = "$me3" ] \
+        && grep -q "probe: tree land=8 seek=err:1 dir=0" "$log" \
+        && grep -q "probe-denied: denied as expected" "$log" \
+        && grep -q "probe-owner: tree land=8 before=[0-9]* after=id=" "$log" \
+        && grep -q "probe-owner: owner rule held" "$log" \
+        && grep -q "probe-lease: tree land=0 dir=0 plate=[0-9]*" "$log" \
+        && grep -q "probe-lease: landed, leaving" "$log" \
+        && grep -q "probe-owner: lease land=0 id=" "$log" \
         && grep -q "echo: list root=0,3" "$log" \
         && grep -q "echo: list names=sys,device" "$log" \
         && grep -q "echo: list device=4,5,6" "$log" \

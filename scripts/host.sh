@@ -19,19 +19,25 @@
 #   2) **`cargo check` 在同一个目标上是过的**（它不做代码生成）——所以"protocol 在宿主编得过"
 #      这句话只有在 check 那一档才成立。本门第一版就栽在这一格上（照实记）。
 #
-# 故走 `crates/alloc-probe` 那条现成的路：两台**编外**（根 workspace `exclude`）的宿主 crate
+# 故走 `crates/alloc-probe` 那条现成的路：三台**编外**（根 workspace `exclude`）的宿主 crate
 # 各把一份**逐字未改**的核心源码 `#[path]` 编进自己的测试靶：
 #
 #   `crates/operator-case`  `crates/protocol/src/operator/core.rs`（只依赖 `env`）
 #   `crates/line-case`      `crates/protocol/src/driver/line/core.rs`
+#   `crates/judge-case`     `crates/protocol/src/operator/judge.rs`（只依赖 `env`）
 #
 # **照实记（线那一台多一处桩）**：线的核心写的是"有主那一格"，故它 `use crate::session::Pier`
 # ——宿主靶里给了一个**桩**（`Pier` 只要 `post` 一句：核心只跟泊位说这一句话，读/写泊位那一侧
 # 在适配层）。桩量不了会话，量得了账——那一台钉的就是账的界。
 #
+# **照实记（树那两台是一份源码的两半，不是一个台子的两半）**：`operator-case` 钉树的**结构**
+# （七条原语、六格失败域），`judge-case` 钉**门外那一问**（三格裁决：放行 / 终态拒 / 判不了）。
+# 分开的理由是两份源码的纪律不同：`judge.rs` 里两个号是泛型（不认识 `PrincipalId` / `CoalitionId`），
+# 故那一台不需要编身份与结盟的核心源码。
+#
 # # 判据（三条一起）
 #
-#   1) 两台 `cargo test` **退出码都 0**；
+#   1) 三台 `cargo test` **退出码都 0**；
 #   2) 每台的末行汇总 `test result: ok. N passed; 0 failed`，且 **N ≥ 1**（零用例要红：测试靶
 #      没被发现就等于白立一档——`framework.sh` 的"静默零用例"是同一条顾虑）；
 #   3) 全程无 `FAILED` / `panicked`。
@@ -52,8 +58,8 @@ tag="host-$(date +%s)"
 log="$out/$tag.log"
 total=0
 
-# `--tests`：只跑测试靶（两台都只有测试靶，没有 lib 那一路），不碰文档测试。
-for m in crates/operator-case crates/line-case; do
+# `--tests`：只跑测试靶（三台都只有测试靶，没有 lib 那一路），不碰文档测试。
+for m in crates/operator-case crates/line-case crates/judge-case; do
   echo "== $m" >> "$log"
   cargo test --manifest-path "$m/Cargo.toml" \
     --target x86_64-unknown-linux-gnu --tests >> "$log" 2>&1
@@ -81,5 +87,5 @@ if grep -q 'FAILED' "$log"; then
   echo "host: FAIL 有用例失败：$(grep -a 'FAILED' "$log" | head -1)"
   exit 1
 fi
-echo "host: $total 例全过（树 + 线，日志 $log）"
+echo "host: $total 例全过（树 + 线 + 门禁，日志 $log）"
 exit 0

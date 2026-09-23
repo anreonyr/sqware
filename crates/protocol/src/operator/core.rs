@@ -33,7 +33,7 @@ use env::{Name, PieToken, TaskId};
 
 /// 一枚条目的**号**：机器用的那一个。
 ///
-/// **裸号**：与 [`PolicyId`](crate::principal::PolicyId) / [`CoalitionId`](crate::coalition::CoalitionId)
+/// **裸号**：与 [`PrincipalId`](crate::principal::PrincipalId) / [`CoalitionId`](crate::coalition::CoalitionId)
 /// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（[`EntryId::new`]），
 /// "这枚号还在不在"由每条读查一次树答出来。
 ///

@@ -69,13 +69,15 @@ impl Guest {
 ///   Sweep   剔走已经答不出的格子            —— 惰性，不是轮询
 /// ```
 pub struct Desk {
-    guests: [Option<Guest>; Desk::CAP],
+    /// **可增长**：上限不再是编译期常数（见 [`Desk::CAP`] 那段照实记——它被撞满过两次，
+    /// 每次都是"加一台服务"逼出来的）。备不下如实报 [`Fail::Full`]，不 `abort`。
+    guests: alloc::vec::Vec<Option<Guest>>,
     vested_by: VestedBy,
 }
 
 /// 立一本账（一位客人一格）：**注入的是协议那一侧"读内核事实"的那一枚**
 /// （`call::vested_by`，`Reserve` 那一问）——账是实现的，判定是协议的。
-pub const fn desk() -> Desk {
+pub fn desk() -> Desk {
     Desk::new(protocol::operator::call::vested_by)
 }
 
@@ -96,12 +98,23 @@ impl Desk {
     /// 12 = **5 位常驻 + 4 位会同时在场的临时客人 + 三格余量**（与 `manifest::MAX_PROGRAMS`
     /// 同一条算法）。**照实记**：这一格的量算与那条"不剔，八格会被死客人占满"的老注同源——
     /// 老注说对了，只是它数的时候客人还没这么多。
-    pub const CAP: usize = 12;
+    /// **不再是数组的长度，只是"起步留几格"**：备不下时 [`Desk::admit`] 如实报
+    /// [`Fail::Full`]（`try_reserve`），故它不再是一道编译期的墙。
+    ///
+    /// 照实记（两次撞墙）：8 是按"当年的七位客人"定的；结盟那一刀带来第五位常驻与又多一位
+    /// 会死的，8 格卡满 ⇒ 最后上树的 `echo` 的 `admit` 答 [`Fail::Full`] 而它自己不知道
+    /// （症状：`echo: console=false`，随后没有 `system halted`）。抬到 12 之后，门禁那一刀
+    /// 又加了**一位负证客人 + 一位协调客人**，12 再次卡满（实测：`examine` 0/3，读数是
+    /// `echo: console=false`）。**两次都是同一个病**——所以这一次不再抬常数，改可增长。
+    pub const CAP: usize = 16;
 
     /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
-    pub const fn new(vested_by: VestedBy) -> Desk {
+    ///
+    /// **不预分配**（`Vec::new()`）：这本账在服务起手就叫一次，而它今天只装几位客人——
+    /// 让 `admit` 按需 `try_reserve` 那一格去报 `Full`，比这里先按一个猜的数占一片更诚实。
+    pub fn new(vested_by: VestedBy) -> Desk {
         Desk {
-            guests: [None; Desk::CAP],
+            guests: alloc::vec::Vec::new(),
             vested_by,
         }
     }
@@ -114,20 +127,26 @@ impl Desk {
         if self.guests.iter().flatten().any(|g| g.who == who) {
             return Err(Fail::NonEmpty);
         }
-        let Some((slot, cell)) = self
-            .guests
-            .iter_mut()
-            .enumerate()
-            .find(|(_, cell)| cell.is_none())
-        else {
-            return Err(Fail::Full);
-        };
-        *cell = Some(Guest {
-            who,
-            ask: None,
-            reply,
-        });
-        Ok(slot)
+        // 先找空格；没有就**新开一格**——备不下如实报 `Full`（不 `abort`）。
+        match self.guests.iter().position(|cell| cell.is_none()) {
+            Some(slot) => {
+                self.guests[slot] = Some(Guest {
+                    who,
+                    ask: None,
+                    reply,
+                });
+                Ok(slot)
+            }
+            None => {
+                self.guests.try_reserve(1).map_err(|_| Fail::Full)?;
+                self.guests.push(Some(Guest {
+                    who,
+                    ask: None,
+                    reply,
+                }));
+                Ok(self.guests.len() - 1)
+            }
+        }
     }
 
     /// 记下"这位客人的问话孔是**本表里的哪一枚**"。

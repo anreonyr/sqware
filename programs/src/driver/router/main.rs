@@ -518,7 +518,16 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
     };
     // **落门牌**：答的是门牌自己那一格的号。
     let plate = match dir_at {
-        Ok(at) => operator::land(talk, &link, host, Where::At(at), me, entry, QUAY_MS),
+        Ok(at) => operator::land(
+            talk,
+            &link,
+            host,
+            Where::At(at),
+            me,
+            entry,
+            ocall::Rule::Public,
+            QUAY_MS,
+        ),
         Err(code) => Err(code),
     };
     let (land, pid) = match plate {

@@ -20,10 +20,10 @@
 //! （`None` 与 `Unknown` 分得开），[`fail_codes!`] 那本双射表于是只装真正的失败——
 //! `OK` 那一格照旧是"一个失败都不是"。
 //!
-//! **`flag` 那一格不能省**：`PolicyId(0)` 是**根**，不是"没有"——`a` 那一格里的 0 是一个
+//! **`flag` 那一格不能省**：`PrincipalId(0)` 是**根**，不是"没有"——`a` 那一格里的 0 是一个
 //! 合法答案，故"有没有"只能另占一格。
 
-use super::core::{Fail, PolicyId};
+use super::core::{Fail, PrincipalId};
 use env::Mark;
 
 // ── 码 ──────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ pub fn reply_status(code: u8) -> [u8; REPLY_LEN] {
 }
 
 /// 编一答：`OK` + **有没有** + 一个号（`RESOLVE` 的"绑没绑"、`SIRE` 的"有没有父"）。
-pub fn reply_present(present: bool, at: PolicyId) -> [u8; REPLY_LEN] {
+pub fn reply_present(present: bool, at: PrincipalId) -> [u8; REPLY_LEN] {
     let mut out = reply_status(OK);
     out[1] = present as u8;
     out[2..10].copy_from_slice(&at.to_bytes());
@@ -111,7 +111,7 @@ pub fn reply_present(present: bool, at: PolicyId) -> [u8; REPLY_LEN] {
 }
 
 /// 编一答：`OK` + 新派生出来的那个号（`DERIVE`）。
-pub fn reply_value(p: PolicyId) -> [u8; REPLY_LEN] {
+pub fn reply_value(p: PrincipalId) -> [u8; REPLY_LEN] {
     let mut out = reply_status(OK);
     out[2..10].copy_from_slice(&p.to_bytes());
     out

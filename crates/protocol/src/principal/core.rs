@@ -3,8 +3,8 @@
 //! 本文件**不 `use` 内核**：喂一串假 TID 就能把七条规矩推理干净。
 //!
 //! ```text
-//!   名册   TID ──→ 当前 PolicyId      按内核盖的章查；可增可删；一 TID 一格
-//!   谱系   PolicyId ──父──→ PolicyId   只增不删；下标即号；零号节点是根
+//!   名册   TID ──→ 当前 PrincipalId      按内核盖的章查；可增可删；一 TID 一格
+//!   谱系   PrincipalId ──父──→ PrincipalId   只增不删；下标即号；零号节点是根
 //! ```
 //!
 //! 两条轴的分工见正文（[`super`]）：**名册**答"这个 Task 此刻代表谁"，**谱系**答
@@ -20,17 +20,17 @@ use env::TaskId;
 ///
 /// **裸号**：与 [`TaskId`] 同形（8 字节、小端上线），但**不同源**——两个号空间互相拿错正是
 /// 旧树栽过的那一格。故"这条号在不在树里"不是类型义务，是每条读操作查一次表答出来的
-/// [`Fail::Unknown`]；[`PolicyId::new`] 造得出任何号，那正是探针验第三态的路子。
+/// [`Fail::Unknown`]；[`PrincipalId::new`] 造得出任何号，那正是探针验第三态的路子。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct PolicyId(usize);
+pub struct PrincipalId(usize);
 
-impl PolicyId {
+impl PrincipalId {
     /// 根：Server 启动时自带的那一枚，**唯一没有父的节点**。
-    pub const ROOT: PolicyId = PolicyId(0);
+    pub const ROOT: PrincipalId = PrincipalId(0);
 
     /// 由裸号造一个（线上解码面；树外的号从这里进来）。
-    pub const fn new(raw: usize) -> PolicyId {
-        PolicyId(raw)
+    pub const fn new(raw: usize) -> PrincipalId {
+        PrincipalId(raw)
     }
 
     /// 裸号。
@@ -44,8 +44,8 @@ impl PolicyId {
     }
 
     /// 由线上字节还原（**不校验**：在不在树里由核心答）。
-    pub const fn from_bytes(bytes: [u8; 8]) -> PolicyId {
-        PolicyId(u64::from_le_bytes(bytes) as usize)
+    pub const fn from_bytes(bytes: [u8; 8]) -> PrincipalId {
+        PrincipalId(u64::from_le_bytes(bytes) as usize)
     }
 }
 
@@ -61,7 +61,7 @@ pub enum Fail {
     /// （`derive`）、或目标不在**你自己那一支**里（`adopt`）。调用方要改的是：**该请谁来做**
     /// 或**换一个目标**。
     Denied,
-    /// 这条 PolicyId 不在树里，或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**。
+    /// 这条 PrincipalId 不在树里，或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**。
     Unknown,
     /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
     ///
@@ -75,7 +75,7 @@ pub enum Fail {
 ///
 /// 没有 setter ⇒ 父不可改；树只 `push` ⇒ 无环、恰好一个根（第二枚无父节点写不出来）。
 struct Node {
-    parent: Option<PolicyId>,
+    parent: Option<PrincipalId>,
 }
 
 /// 名册一格：**一 TID 一格，且必有起点、必有当前**（两格都不是 [`Option`]）。
@@ -91,8 +91,8 @@ struct Node {
 /// "刚才是谁"。板/树那两处的惰性剔除在这里连挂点都没有（没有东西可剔）。
 struct Bound {
     tid: TaskId,
-    origin: PolicyId,
-    current: PolicyId,
+    origin: PrincipalId,
+    current: PrincipalId,
 }
 
 /// 身份服务的权威状态：**两张表 + 一把钥匙**。
@@ -122,13 +122,13 @@ impl Principal {
 
     // ── 名册 ────────────────────────────────────────────────
 
-    /// 名册 · 写：把一条 TID 定到一条**已存在**的 PolicyId 上（只有装配者能写）。
+    /// 名册 · 写：把一条 TID 定到一条**已存在**的 PrincipalId 上（只有装配者能写）。
     ///
     /// 覆盖 = **换绑**（不是 `Taken`）：同一位写第二次要么是更正，要么是装配单写错了，
     /// 都不是"别人抢了"——与 operator 否掉"名字已被占"同一条理由。
     ///
     /// **换绑 = 重定起点**：两格一起写（`origin` 与 `current` 同值）。
-    pub fn bind(&mut self, from: TaskId, tid: TaskId, p: PolicyId) -> Result<(), Fail> {
+    pub fn bind(&mut self, from: TaskId, tid: TaskId, p: PrincipalId) -> Result<(), Fail> {
         if from != self.assembler {
             return Err(Fail::Denied);
         }
@@ -170,7 +170,7 @@ impl Principal {
     ///
     /// **没有失败域**：`None`（没绑）是一个诚实的答案，不是错误码——收到它的人自己决定
     /// 怎么对待一条没身份的请求。读的是 `current`（`adopt` 改过的那一格）。
-    pub fn resolve(&self, tid: TaskId) -> Option<PolicyId> {
+    pub fn resolve(&self, tid: TaskId) -> Option<PrincipalId> {
         self.roster.iter().find(|r| r.tid == tid).map(|r| r.current)
     }
 
@@ -181,7 +181,7 @@ impl Principal {
     /// 钥匙两把，都是内核与名册免费给的：**装配者**，或**当前正好代表 `p` 的那一枚**
     /// （`resolve(from) == Some(p)`）。注意是"正好相等"，不是"`p` 的某个后代"——
     /// 于是"只能沿自己的 lineage 向下"从纪律变成判据，不需要新机制。
-    pub fn derive(&mut self, from: TaskId, p: PolicyId) -> Result<PolicyId, Fail> {
+    pub fn derive(&mut self, from: TaskId, p: PrincipalId) -> Result<PrincipalId, Fail> {
         if from != self.assembler && self.resolve(from) != Some(p) {
             return Err(Fail::Denied);
         }
@@ -189,7 +189,7 @@ impl Principal {
             return Err(Fail::Unknown);
         }
         self.tree.try_reserve(1).map_err(|_| Fail::NoRoom)?;
-        let id = PolicyId(self.tree.len());
+        let id = PrincipalId(self.tree.len());
         self.tree.push(Node { parent: Some(p) });
         Ok(id)
     }
@@ -197,12 +197,12 @@ impl Principal {
     /// 谱系 · 读：直接父。**三态**——`Ok(Some)` 有父 / `Ok(None)` 只有根 / `Err(Unknown)` 树外。
     ///
     /// 三格不许塌成一格：头注第 5 条（一格判据只问一件事）在这里的落点就是它。
-    pub fn sire(&self, p: PolicyId) -> Result<Option<PolicyId>, Fail> {
+    pub fn sire(&self, p: PrincipalId) -> Result<Option<PrincipalId>, Fail> {
         self.node(p).map(|n| n.parent).ok_or(Fail::Unknown)
     }
 
     /// 谱系 · 读：`a ≼ b`（`b` 在 `a` 那一支里，含 `a == b`）。
-    pub fn heir(&self, a: PolicyId, b: PolicyId) -> Result<bool, Fail> {
+    pub fn heir(&self, a: PrincipalId, b: PrincipalId) -> Result<bool, Fail> {
         if self.node(a).is_none() || self.node(b).is_none() {
             return Err(Fail::Unknown);
         }
@@ -220,7 +220,7 @@ impl Principal {
     /// （同 `operator::list` 那一档：核心有、线上不发）。
     ///
     /// 单根 ⇒ 必有解（最坏是根）；`a == b` 时答它自己。
-    pub fn clan(&self, a: PolicyId, b: PolicyId) -> Result<PolicyId, Fail> {
+    pub fn clan(&self, a: PrincipalId, b: PrincipalId) -> Result<PrincipalId, Fail> {
         if self.node(a).is_none() || self.node(b).is_none() {
             return Err(Fail::Unknown);
         }
@@ -232,7 +232,7 @@ impl Principal {
             at = self.node(cur).and_then(|n| n.parent);
         }
         // 到不了：根是所有人的祖先。
-        Ok(PolicyId::ROOT)
+        Ok(PrincipalId::ROOT)
     }
 
     // ── 转换 ────────────────────────────────────────────────
@@ -246,7 +246,7 @@ impl Principal {
     /// - **`heir(p, q)`**；否则 [`Fail::Denied`]——向上、跨支都不在**你自己那一支**里。
     ///
     /// `q == p` 时幂等。不动树、不动 `origin`（故 `origin ≼ current` 仍成立）。
-    pub fn adopt(&mut self, from: TaskId, q: PolicyId) -> Result<(), Fail> {
+    pub fn adopt(&mut self, from: TaskId, q: PrincipalId) -> Result<(), Fail> {
         // 先把三格判据问完（都是读），再去动那一格——借还清楚了，规矩也一眼看得见。
         let Some(p) = self.resolve(from) else {
             return Err(Fail::Unknown);
@@ -282,7 +282,7 @@ impl Principal {
     }
 
     /// 树上一格（树外答 `None`）。
-    fn node(&self, p: PolicyId) -> Option<&Node> {
+    fn node(&self, p: PrincipalId) -> Option<&Node> {
         self.tree.get(p.get())
     }
 }
@@ -305,18 +305,18 @@ mod tests {
     #[test]
     fn the_root_has_no_sire_and_a_tree_outside_id_is_unknown() {
         let b = book();
-        assert_eq!(b.sire(PolicyId::ROOT), Ok(None));
-        assert_eq!(b.sire(PolicyId::new(4095)), Err(Fail::Unknown));
+        assert_eq!(b.sire(PrincipalId::ROOT), Ok(None));
+        assert_eq!(b.sire(PrincipalId::new(4095)), Err(Fail::Unknown));
     }
 
     #[test]
     fn a_bound_task_resolves_and_rebinding_replaces() {
         let mut b = book();
-        let p = b.derive(A, PolicyId::ROOT).expect("装配者能派生");
+        let p = b.derive(A, PrincipalId::ROOT).expect("装配者能派生");
         assert_eq!(b.resolve(ME), None);
         b.bind(A, ME, p).expect("装配者能绑");
         assert_eq!(b.resolve(ME), Some(p));
-        let q = b.derive(A, PolicyId::ROOT).unwrap();
+        let q = b.derive(A, PrincipalId::ROOT).unwrap();
         b.bind(A, ME, q).unwrap();
         assert_eq!(b.resolve(ME), Some(q));
     }
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn only_the_assembler_writes_the_roster() {
         let mut b = book();
-        let p = b.derive(A, PolicyId::ROOT).unwrap();
+        let p = b.derive(A, PrincipalId::ROOT).unwrap();
         assert_eq!(b.bind(ME, ME, p), Err(Fail::Denied));
         assert_eq!(b.unbind(ME, ME), Err(Fail::Denied));
         assert_eq!(b.unbind(A, ME), Err(Fail::Unknown));
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn a_representative_derives_downwards_only() {
         let mut b = book();
-        let p = b.derive(A, PolicyId::ROOT).unwrap();
+        let p = b.derive(A, PrincipalId::ROOT).unwrap();
         b.bind(A, ME, p).unwrap();
         let q = b.derive(ME, p).expect("代表 p 的那一枚能向下派生");
         assert_eq!(b.sire(q), Ok(Some(p)));
@@ -345,21 +345,21 @@ mod tests {
     #[test]
     fn heir_is_reflexive_asymmetric_and_three_state() {
         let mut b = book();
-        let p = b.derive(A, PolicyId::ROOT).unwrap();
+        let p = b.derive(A, PrincipalId::ROOT).unwrap();
         let q = b.derive(A, p).unwrap();
         assert_eq!(b.heir(p, p), Ok(true));
         assert_eq!(b.heir(p, q), Ok(true));
         assert_eq!(b.heir(q, p), Ok(false));
-        assert_eq!(b.heir(PolicyId::new(4095), p), Err(Fail::Unknown));
+        assert_eq!(b.heir(PrincipalId::new(4095), p), Err(Fail::Unknown));
     }
 
     #[test]
     fn clan_meets_at_the_nearest_common_ancestor() {
         let mut b = book();
-        let x = b.derive(A, PolicyId::ROOT).unwrap();
-        let y = b.derive(A, PolicyId::ROOT).unwrap();
+        let x = b.derive(A, PrincipalId::ROOT).unwrap();
+        let y = b.derive(A, PrincipalId::ROOT).unwrap();
         let z = b.derive(A, y).unwrap();
-        assert_eq!(b.clan(x, z), Ok(PolicyId::ROOT));
+        assert_eq!(b.clan(x, z), Ok(PrincipalId::ROOT));
         assert_eq!(b.clan(y, z), Ok(y));
         assert_eq!(b.clan(z, z), Ok(z));
     }
@@ -368,10 +368,10 @@ mod tests {
     fn conversion_keeps_to_its_own_branch_and_waive_returns_to_origin() {
         let mut b = book();
         // 装配给 ME 的起点是 p；p 下再派生 q；另有一支 r 不在 p 下面。
-        let p = b.derive(A, PolicyId::ROOT).unwrap();
+        let p = b.derive(A, PrincipalId::ROOT).unwrap();
         b.bind(A, ME, p).unwrap();
         let q = b.derive(A, p).unwrap();
-        let r = b.derive(A, PolicyId::ROOT).unwrap();
+        let r = b.derive(A, PrincipalId::ROOT).unwrap();
 
         assert_eq!(b.adopt(ME, q), Ok(()));
         assert_eq!(b.resolve(ME), Some(q));
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(b.adopt(ME, p), Err(Fail::Denied));
         assert_eq!(b.adopt(ME, r), Err(Fail::Denied));
         // 树外。
-        assert_eq!(b.adopt(ME, PolicyId::new(4095)), Err(Fail::Unknown));
+        assert_eq!(b.adopt(ME, PrincipalId::new(4095)), Err(Fail::Unknown));
         // 弃 = 回到起点；**不删格**，故还能再领一次。
         assert_eq!(b.waive(ME), Ok(()));
         assert_eq!(b.resolve(ME), Some(p));

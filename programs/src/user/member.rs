@@ -49,7 +49,7 @@ use protocol::operator::client as operator;
 use protocol::principal::call as pcall;
 use protocol::principal::client::Face as PolicyFace;
 use protocol::principal::core::Fail as PolicyFail;
-use protocol::principal::core::PolicyId;
+use protocol::principal::core::PrincipalId;
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::room::{self, exit_with_note};
@@ -190,7 +190,7 @@ extern "C" fn main() -> ! {
     // 十、伪造的**身份**号：答 false，**不是失败**——`p` 是标签，本册不去问名册。
     say(&format!(
         "member: amid(out,me)={}",
-        flag(coal.amid(PolicyId::new(OUTSIDE), c1, MS))
+        flag(coal.amid(PrincipalId::new(OUTSIDE), c1, MS))
     ));
 
     // 十一、**一串**（取窗两条）：`band` 答成员、`bloc` 答盟籍（序都是号序）。
@@ -244,7 +244,7 @@ fn find_face(link: &Quay, talk: PieToken, host: TaskId, dir: &str, name: &str) -
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。
-fn one_opt<E: Why>(r: Result<Option<PolicyId>, E>) -> String {
+fn one_opt<E: Why>(r: Result<Option<PrincipalId>, E>) -> String {
     match r {
         Ok(Some(p)) => format!("{}", p.get()),
         Ok(None) => String::from("none"),
@@ -253,7 +253,7 @@ fn one_opt<E: Why>(r: Result<Option<PolicyId>, E>) -> String {
 }
 
 /// 同一行读数：只答一条身份号的那几条（`derive`）。
-fn one_policy<E: Why>(r: Result<PolicyId, E>) -> String {
+fn one_policy<E: Why>(r: Result<PrincipalId, E>) -> String {
     match r {
         Ok(p) => format!("{}", p.get()),
         Err(fail) => format!("err:{}", fail.why()),

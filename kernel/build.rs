@@ -54,7 +54,7 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 客人：**U 态**（同上）——`/device/rtc` 那面服务的第一位用家：问一声现在几点、约一个时刻
     // （失败域那两格也各走一趟，见 `programs/src/user/sleeper.rs`），等到那一声就退场。
     ("sleeper", "prog-sleeper", ProgramKind::User),
-    // 身份服务（**U 态**）：名册（TID → 当前 PolicyId）与谱系（PolicyId 的树）两张表，
+    // 身份服务（**U 态**）：名册（TID → 当前 PrincipalId）与谱系（PrincipalId 的树）两张表，
     // 七条原语见 `protocol::principal`。它**不持有、不授予、不解释任何 Pie**——只读写自己
     // 那两张表，故不进"转授权中枢"那一档（与 `operator` 的差别正是在这里）：目录按角色分、
     // 特权级各自在这里声明，它是这一族里第一位 **U 态**的服务。
@@ -74,6 +74,13 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
     // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。
     ("operator", "prog-operator", ProgramKind::Supervisor),
+    // 负证客人（**U 态**）：一位**没有身份**的任务去撞树的门（`Program::bind = false`）——
+    // 门禁那条"没绑身份 ⇒ 拒绝"的判据在真机上的反例。读数见 `programs/src/user/probe_denied.rs`。
+    ("probe-denied", "prog-probe-denied", ProgramKind::User),
+    // 第二种负证（**U 态**）：**有身份**、但那一格归别人（`Rule::Owner`）⇒ 也拒。
+    ("probe-owner", "prog-probe-owner", ProgramKind::User),
+    // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
+    ("probe-lease", "prog-probe-lease", ProgramKind::User),
     // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器
     // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，
     // 之后"这批字节交给谁"由域自己决定（见 `platform/devices.rs::supply_initrd`）。

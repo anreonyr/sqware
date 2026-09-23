@@ -239,7 +239,16 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         Ok(_) => ocall::OK,
         Err(code) => code,
     };
-    let plate = operator::land(talk, link, host, Where::Root, name, entry, MS);
+    let plate = operator::land(
+        talk,
+        link,
+        host,
+        Where::Root,
+        name,
+        entry,
+        ocall::Rule::Public,
+        MS,
+    );
     let b = match plate {
         Ok(_) => ocall::OK,
         Err(code) => code,

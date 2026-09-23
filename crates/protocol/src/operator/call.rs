@@ -58,7 +58,8 @@ pub const NAME: u8 = 6;
 pub const SEEK: u8 = 7;
 
 /// 答话那一格。**前六格与 [`Fail`] 一一对应**（`OK` = 一个失败都不是），第七格不是失败域
-/// 的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。
+/// 的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。**第八、九格也不是 [`Fail`]**——那是门外那一问
+/// （[`judge`](crate::operator::judge)）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
 ///
 /// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
 /// 一份（持树者那一侧编、客人那一侧读）。
@@ -70,6 +71,53 @@ pub const NOTAPANE: u8 = 4;
 pub const FULL: u8 = 5;
 pub const DEAD: u8 = 6;
 pub const BAD: u8 = 7;
+/// **门外那一问答"不"**：这一位不许动这一格。**终态**——换人 / 换目标，别重试。
+///
+/// **第八格起不再是 [`Fail`] 的对照表**（[`Fail`] 只有六格）：这两格来自适配层的裁决
+/// （[`judge`](crate::operator::judge)），核心一个字节都不知道它们。分开的理由与
+/// [`UNJUDGED`] 同款——"你不许"的下一步与"没铸过 / 剪掉了"不同。
+pub const DENIED: u8 = 8;
+/// **门外那一问答"判不了"**：问身份那两条边没答上来（对面不在 / 超时 / 答不出那条号）。
+///
+/// 与 [`DENIED`] 分家的理由只有一条，但够硬：**"没资格"与"暂时问不到"的下一步不同**——
+/// 前者该放弃，后者该重试。合成一格，就会把"身份服务挂了"读成"我没权限"。
+pub const UNJUDGED: u8 = 9;
+
+/// **落牌的人给这一格声明的规矩**（`land` 那一帧的第 51 个字节）。
+///
+/// 这是[`judge`](crate::operator::judge) 那套谓词在**线上**的最小一档：今天只分"公开"与
+/// "归落牌的那一位"。逐位身份 / 某一支 / 某一盟（`Rule::Is` / `Under` / `In`）都还没落——
+/// 它们要用 `PrincipalId` / `CoalitionId`，而那两个号空间是 8 字节、要从树这一侧算出来。
+///
+/// **为什么是"落牌的人"而不是"某个身份号"**：树在门口拿得到的那枚印章是**发送者的 TID**
+/// （内核在 `Push` 那一刻盖的），而"归谁"只要与这枚印章比一次——**不花一次到身份服务的问**
+/// （`judge::Rule::Published`）。等真要按身份收窄，再把 `PrincipalId` 搬上帧。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rule {
+    /// 谁都能用（**默认**：既有的装配读数一字不改）。
+    Public,
+    /// **归落牌的那一位**：别人不能接手这一格（换绑会答 [`DENIED`]）。
+    Owner,
+}
+
+impl Rule {
+    /// 线上那一格（`land` 帧尾）。
+    pub const fn wire(self) -> u8 {
+        match self {
+            Rule::Public => 0,
+            Rule::Owner => 1,
+        }
+    }
+
+    /// 由线上那一格还原。**读不懂就不认那条规矩**——按 [`Rule::Public`] 走，
+    /// 而不是把整帧判成坏（一个陌生的规矩字节不该让一句问话变成 `BAD`）。
+    pub const fn from_wire(byte: u8) -> Rule {
+        match byte {
+            1 => Rule::Owner,
+            _ => Rule::Public,
+        }
+    }
+}
 
 /// 问话那一侧的上界：**最长那一条**（`seek`：`op + 段数 + 8 段名字`）。
 ///
@@ -132,10 +180,14 @@ pub enum Ask<'a> {
     ///
     /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（[`ship`] 换回来的），
     /// 不是"客人的 Pie 是几号"——两个编号空间不同源。
+    ///
+    /// `rule` 是**落牌的人给这一格声明的规矩**（[`Rule`]）：默认公开，声明归自己之后
+    /// 别人接手这一格会被拒。
     Land {
         at: Where,
         name: Name,
         entry: PieToken,
+        rule: Rule,
     },
     /// `find`：那一号后面那一枚 Pie。
     Find(EntryId),
@@ -175,11 +227,12 @@ pub enum AskIn {
         at: Where,
         name: Name,
     },
-    /// `land`：容器坐标 + 新名 + 入口那一枚。
+    /// `land`：容器坐标 + 新名 + 入口那一枚 + **这一格归谁**（[`Rule`]）。
     Land {
         at: Where,
         name: Name,
         entry: PieToken,
+        rule: Rule,
     },
     /// `find` / `trim` / `name`：一枚号（三者的形状一样，故解出来仍是三格）。
     Find(EntryId),
@@ -213,11 +266,18 @@ pub fn pack_ask(ask: Ask<'_>) -> ([u8; ASK_MAX], usize) {
             pack_name_in(&mut out, name);
             42
         }
-        Ask::Land { at, name, entry } => {
+        Ask::Land {
+            at,
+            name,
+            entry,
+            rule,
+        } => {
             pack_at(&mut out, at);
             pack_name_in(&mut out, name);
             out[TAIL_AT..TAIL_AT + 8].copy_from_slice(&entry.to_bytes());
-            50
+            // **规矩那一格在最后**（`[50]`）：前 50 字节的形状照旧，加这一格不动任何既有偏移。
+            out[TAIL_AT + 8] = rule.wire();
+            51
         }
         Ask::Find(id) | Ask::Trim(id) | Ask::Name(id) => {
             out[1..9].copy_from_slice(&id.to_bytes());
@@ -279,10 +339,13 @@ pub fn unpack_ask(op: u8, bytes: &[u8]) -> Option<AskIn> {
             name: unpack_name(bytes, NAME_AT)?,
         }),
         // 入口那一枚**必须带**：没带（全 0 ⇒ 解不出令牌）就是一句读不懂的帧，不猜。
+        // 规矩那一格**可以没有**（51 字节之前的老帧）：`None` 就按 [`Rule::Public`] 走
+        // ——帧加一格不该让旧调用方当场变坏。
         LAND => Some(AskIn::Land {
             at: unpack_at(bytes)?,
             name: unpack_name(bytes, NAME_AT)?,
             entry: PieToken::from_bytes(&tail(bytes)?)?,
+            rule: Rule::from_wire(*bytes.get(TAIL_AT + 8).unwrap_or(&0)),
         }),
         FIND | TRIM | NAME => {
             let id = unpack_id(bytes, 1)?;

@@ -10,7 +10,13 @@
 #
 # `crates/line-case` 与它同门（同一份理由、同一个门口）：line 核心的**账 + 界**在宿主上真跑
 # 一遍——那一台的 `Pier` 是桩（核心只跟泊位说一句 `post`，见那个 crate 的 Cargo.toml）。
-exclude = ["crates/alloc-probe", "crates/operator-case", "crates/line-case"]
+#
+# `crates/judge-case` 是**第三台**同一个门口（`scripts/host.sh`）：operator 的**门外那一问**
+# （`crates/protocol/src/operator/judge.rs`）在宿主上真跑一遍。它与 `operator-case` 是两份判据
+# 而不是一台的两半——那一台钉树的**结构**（七条原语、六格失败域），这一台钉**三格裁决**
+# （放行 / 终态拒 / 判不了）。判据之所以能单独编：`judge.rs` 里两个号是泛型，它既不认识
+# `PolicyId` / `CoalitionId`、也不认识内核。
+exclude = ["crates/alloc-probe", "crates/operator-case", "crates/line-case", "crates/judge-case"]
 members = [
     "kernel",
     "programs",
@@ -58,5 +64,3 @@ debug-assertions = true
 # **那套东西已经不存在**：`WakeKey` 改成枚举、没有位打包也就没有 mask（见
 # `kernel/src/work/room/messenger/wait/site.rs` 头注），`low48` 随它一起删了。
 # 今天仍留 2 是照实取舍：没有重新量过"换档会不会再犯别的错"，不擅自改。
-opt-level = 2
-debug = 1

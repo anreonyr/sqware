@@ -13,6 +13,7 @@ use runtime::env::mail::{self, AnyPie};
 
 use crate::operator::Fail;
 use crate::operator::call as ocall;
+use crate::operator::call::Rule;
 pub use crate::operator::{ASK_MARK, LINK, TIP_NAME};
 use crate::operator::{EntryId, Listing, Where};
 use crate::session::Quay;
@@ -82,6 +83,7 @@ pub fn land(
     at: Where,
     name: Name,
     entry: PieToken,
+    rule: Rule,
     millis: usize,
 ) -> Result<EntryId, u8> {
     let shipped = ocall::ship(entry, host).map_err(|_| ocall::BAD)?;
@@ -93,6 +95,7 @@ pub fn land(
             at,
             name,
             entry: shipped,
+            rule,
         },
         &mut reply,
         millis,

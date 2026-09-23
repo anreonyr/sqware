@@ -27,7 +27,7 @@ use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::principal::call as pcall;
 use protocol::principal::client::Face;
-use protocol::principal::core::PolicyId;
+use protocol::principal::core::PrincipalId;
 use protocol::session::Quay;
 use protocol::session::call as scall;
 use protocol::system::board::call as bcall;
@@ -183,7 +183,7 @@ fn answer(
             Err(fail) => status(out, fail),
         },
         ccall::AMID => {
-            match book.amid(PolicyId::new(a as usize), CoalitionId::new(b as usize)) {
+            match book.amid(PrincipalId::new(a as usize), CoalitionId::new(b as usize)) {
                 // "不在"是一句答（`Ok(false)`），"查无此盟"才是这一格。
                 Ok(yes) => said(out, ccall::reply_yes(yes)),
                 Err(fail) => status(out, fail),
@@ -191,7 +191,7 @@ fn answer(
         }
         // 两条取窗：`a` 是键，`b` 是**游标 + 1**（`0` = 没有游标，见 [`ccall`] 的帧那一节）。
         ccall::BAND => {
-            let after = ccall::cursor_in(b).map(PolicyId::new);
+            let after = ccall::cursor_in(b).map(PrincipalId::new);
             match book.band(CoalitionId::new(a as usize), after) {
                 Ok(window) => ccall::pack_seq(out, &window),
                 Err(fail) => status(out, fail),
@@ -200,7 +200,7 @@ fn answer(
         // `bloc` 没有失败域（`p` 是标签，不在任何盟里就是空窗）。
         ccall::BLOC => {
             let after = ccall::cursor_in(b).map(CoalitionId::new);
-            ccall::pack_seq(out, &book.bloc(PolicyId::new(a as usize), after))
+            ccall::pack_seq(out, &book.bloc(PrincipalId::new(a as usize), after))
         }
         // 没见过的动作码：与"这一问读不懂"同一格（不另立一格）。
         _ => code(out, ccall::BAD),
@@ -212,7 +212,7 @@ fn answer(
 /// **照实记：两条失败压成一格**——"这条 TID 没绑"与"身份服务答不上来（超时 / 对面没了）"。
 /// 压它的理由同 rtc 那一格：**调用方的下一步在两种情况下相同**（别指望这条路）；principal
 /// 那枚 `Denied` 翻不过来，因为本族的 `Denied` 是空的（盟无主）。
-fn who(face: &Face, from: TaskId) -> Result<PolicyId, Fail> {
+fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
     face.resolve(from, MS)
         .map_err(|_| Fail::Unknown)?
         .ok_or(Fail::Unknown)
@@ -283,7 +283,16 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // **落门牌**：答的是门牌自己那一格的号。
     let plate = match dir_at {
-        Ok(at) => operator::land(talk, link, host, Where::At(at), me, entry, MS),
+        Ok(at) => operator::land(
+            talk,
+            link,
+            host,
+            Where::At(at),
+            me,
+            entry,
+            ocall::Rule::Public,
+            MS,
+        ),
         Err(code) => Err(code),
     };
     let (land, pid) = match plate {

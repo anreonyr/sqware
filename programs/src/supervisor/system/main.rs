@@ -84,6 +84,9 @@ const E_PRINCIPAL: Died = 14;
 const E_SUBJECT: Died = 15;
 const E_COALITION: Died = 16;
 const E_MEMBER: Died = 17;
+const E_PROBE: Died = 18;
+const E_PROBE_OWNER: Died = 19;
+const E_PROBE_LEASE: Died = 20;
 
 /// 持树者：那棵命名树的服务（`prog-operator`）。**排第一位**——每位上树的客人都要它在。
 ///
@@ -98,6 +101,7 @@ const fn tree() -> Program {
         needs: None,
         board: false,
         operator: false,
+        bind: true,
         holds_tree: true,
         died: E_TREE,
     }
@@ -120,6 +124,7 @@ const fn principal() -> Program {
         needs: None,
         board: true,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_PRINCIPAL,
     }
@@ -142,6 +147,7 @@ const fn coalition() -> Program {
         needs: None,
         board: true,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_COALITION,
     }
@@ -161,6 +167,7 @@ const fn router() -> Program {
         needs: Some(router_needs::WANTS),
         board: true,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_ROUTER,
     }
@@ -181,6 +188,7 @@ const fn uart() -> Program {
         needs: Some(uart_needs::WANTS),
         board: true,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_UART,
     }
@@ -201,6 +209,7 @@ const fn rtc() -> Program {
         needs: Some(rtc_needs::WANTS),
         board: true,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_RTC,
     }
@@ -222,6 +231,7 @@ const fn guest() -> Program {
         needs: None,
         board: true,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_GUEST,
     }
@@ -240,6 +250,7 @@ const fn passer() -> Program {
         needs: None,
         board: true,
         operator: false,
+        bind: true,
         holds_tree: false,
         died: E_PASSER,
     }
@@ -267,6 +278,7 @@ const fn lodger() -> Program {
         needs: Some(lodger_needs::WANTS),
         board: false,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_LODGER,
     }
@@ -288,6 +300,7 @@ const fn sleeper() -> Program {
         needs: None,
         board: true,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_SLEEPER,
     }
@@ -310,6 +323,7 @@ const fn echo() -> Program {
         needs: None,
         board: true,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_ECHO,
     }
@@ -329,6 +343,7 @@ const fn subject() -> Program {
         needs: None,
         board: false,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_SUBJECT,
     }
@@ -351,8 +366,70 @@ const fn member() -> Program {
         needs: None,
         board: false,
         operator: true,
+        bind: true,
         holds_tree: false,
         died: E_MEMBER,
+    }
+}
+
+/// 负证客人（`prog-probe-denied`，U 态）：**没有身份**的任务去撞树的门。
+///
+/// 它是门禁那条"没绑身份 ⇒ 拒绝"判据在**真机上**的反例——`bind: false` 让装配者**不绑它**
+/// （其余每一条都绑），于是它 `resolve(self)` 答 `None`，树那一问答 `DENIED`。它随后再
+/// `seek` 一次，证"拒绝不是换绑"。读数见 `programs/src/user/probe_denied.rs` 头注。
+///
+/// **排在 `echo` 之前**（`echo` 必须最后一条）；它自己退场，不常驻。
+const fn probe_denied() -> Program {
+    Program {
+        name: "probe-denied",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: true,
+        bind: false,
+        holds_tree: false,
+        died: E_PROBE,
+    }
+}
+
+/// 负证客人（第二种，`prog-probe-owner`，U 态）：**有身份**地去顶别人声明归自己的一格。
+///
+/// 与 `probe-denied` 分工：那一台撞"**没身份**"（第一道门），本台撞"**那一格归谁**"
+/// （`Rule::Owner`）。它**照常绑身份**（`bind` 缺省 `true`）——否则量到的会是同一道门。
+const fn probe_owner() -> Program {
+    Program {
+        name: "probe-owner",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        died: E_PROBE_OWNER,
+    }
+}
+
+/// 会死的持有者（`prog-probe-lease`，U 态）：落一块**声明归自己**的门牌（`/sys/lease`）
+/// 然后**直接死**。
+///
+/// 它与 `probe-owner` 是一对：那一台证"活着的持有者顶不掉"，本台留下的那块名字证
+/// "**主人不在场 ⇒ 那一格重新可落**"（否则命名空间里会留一块没人能改的墓碑）。
+const fn probe_lease() -> Program {
+    Program {
+        name: "probe-lease",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        died: E_PROBE_LEASE,
     }
 }
 
@@ -386,6 +463,9 @@ const PLAN: &[Program] = &[
     sleeper(),
     subject(),
     member(),
+    probe_denied(),
+    probe_lease(),
+    probe_owner(),
     echo(),
 ];
 

@@ -6,8 +6,8 @@
 //! （见正文"已知边界"）。
 //!
 //! ```text
-//!   盟籍   PolicyId ──→ CoalitionId     这条身份在哪些盟里     bloc(p)   核心
-//!          CoalitionId ──→ PolicyId     这枚盟里有谁           band(c)   核心
+//!   盟籍   PrincipalId ──→ CoalitionId     这条身份在哪些盟里     bloc(p)   核心
+//!          CoalitionId ──→ PrincipalId     这枚盟里有谁           band(c)   核心
 //!   号     0 .. next                    铸过就一直在（没有墓碑、没有 id 表）
 //! ```
 //!
@@ -16,17 +16,17 @@
 
 use alloc::vec::Vec;
 
-use crate::principal::core::PolicyId;
+use crate::principal::core::PrincipalId;
 
 // ── 号 ──────────────────────────────────────────────────────
 
 /// 盟册上的一枚号。
 ///
-/// **裸号**：与 [`PolicyId`] 同形（8 字节、小端上线），但**不同源**——两个号空间互相拿错正是
+/// **裸号**：与 [`PrincipalId`] 同形（8 字节、小端上线），但**不同源**——两个号空间互相拿错正是
 /// 旧树栽过的那一格。故"这枚号铸过没有"不是类型义务，是每条读查一次计数答出来的
 /// [`Fail::Unknown`]；[`CoalitionId::new`] 造得出任何号，那正是探针验第三态的路子。
 ///
-/// **没有 `ROOT`**：盟无根、无主——零号是一枚**普通的盟**（对照 [`PolicyId::ROOT`]：
+/// **没有 `ROOT`**：盟无根、无主——零号是一枚**普通的盟**（对照 [`PrincipalId::ROOT`]：
 /// 那是身份那一侧"唯一没有父的节点"）。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct CoalitionId(usize);
@@ -102,19 +102,19 @@ impl Id for CoalitionId {
     }
 }
 
-impl Id for PolicyId {
-    fn new(raw: usize) -> PolicyId {
-        PolicyId::new(raw)
+impl Id for PrincipalId {
+    fn new(raw: usize) -> PrincipalId {
+        PrincipalId::new(raw)
     }
 
     fn get(self) -> usize {
-        PolicyId::get(self)
+        PrincipalId::get(self)
     }
 }
 
 /// 一窗号：**一趟读的读数**（最多 [`WINDOW_CAP`] 枚，**号序升序**）。
 ///
-/// 空位是 `None` 而不是 `T::new(0)`：**零号是真格子**（[`PolicyId::ROOT`] 就是 0），
+/// 空位是 `None` 而不是 `T::new(0)`：**零号是真格子**（[`PrincipalId::ROOT`] 就是 0），
 /// 拿它当"这一格空着"正是要避开的那件事。
 ///
 /// **取窗落在核心**（[`Coalition::band`] / [`Coalition::bloc`] 扫一遍表就填出来）：服务那一层
@@ -205,7 +205,7 @@ impl<T: Id> Window<T> {
 /// 唯一性（同一对不许出现两次）类型表达不了，落在 [`Coalition::enter`] 的**先查后推**上
 /// （与 `Principal::bind` 覆盖那一趟同一形状）：**一次线性扫，换掉"两张表要同步"那条义务**。
 struct Ally {
-    who: PolicyId,
+    who: PrincipalId,
     of: CoalitionId,
 }
 
@@ -259,7 +259,7 @@ impl Coalition {
     ///
     /// `who` 由适配层给：**核心收的是"一条已经解析好的身份"**，故"是不是发送者本人"这一格
     /// 不在核心（见正文"已知边界"）。
-    pub fn enter(&mut self, who: PolicyId, c: CoalitionId) -> Result<(), Fail> {
+    pub fn enter(&mut self, who: PrincipalId, c: CoalitionId) -> Result<(), Fail> {
         if !self.stands(c) {
             return Err(Fail::Unknown);
         }
@@ -278,7 +278,7 @@ impl Coalition {
     /// **照实记：这一格与 `Principal::unbind` 的撞空不同**——那边答 [`Fail::Unknown`]，
     /// 因为名册是**账**（"这一格本来就没有"是一条值得如实回答的事实，撤一格是记账动作）；
     /// 这里是**集合**，进与出都是集合运算。
-    pub fn leave(&mut self, who: PolicyId, c: CoalitionId) -> Result<(), Fail> {
+    pub fn leave(&mut self, who: PrincipalId, c: CoalitionId) -> Result<(), Fail> {
         if !self.stands(c) {
             return Err(Fail::Unknown);
         }
@@ -293,7 +293,7 @@ impl Coalition {
     ///
     /// `p` 是不是真身份与它无关：`p` 是标签。故这条读**不过名册**（线上唯一那条读也不需要
     /// 依赖身份服务），第三态只有"查无此盟"一格。
-    pub fn amid(&self, p: PolicyId, c: CoalitionId) -> Result<bool, Fail> {
+    pub fn amid(&self, p: PrincipalId, c: CoalitionId) -> Result<bool, Fail> {
         if !self.stands(c) {
             return Err(Fail::Unknown);
         }
@@ -303,7 +303,7 @@ impl Coalition {
     /// 盟 · 读：`c` 里此刻有谁（**一趟取窗**）。
     ///
     /// 序 = **号序升序**（不是登记序）；`after` 是**阈值**——取号 > 它的那些，`None` = 从头取。
-    /// 零号是真格子（[`PolicyId::ROOT`] 就是 0），故**不能用 0 当"没有游标"**：有没有由
+    /// 零号是真格子（[`PrincipalId::ROOT`] 就是 0），故**不能用 0 当"没有游标"**：有没有由
     /// `Option` 说。
     ///
     /// 窗装不下 ⇒ [`Window::more`] 为真，要接着取就把**末一枚**当下一趟的 `after`。
@@ -311,7 +311,11 @@ impl Coalition {
     /// 可能落在已走过的阈值之下）——故没有"过期游标"这回事，`cookieverf` 那一格不需要。
     ///
     /// 只有一格失败：这枚盟没铸过（[`Fail::Unknown`]）。
-    pub fn band(&self, c: CoalitionId, after: Option<PolicyId>) -> Result<Window<PolicyId>, Fail> {
+    pub fn band(
+        &self,
+        c: CoalitionId,
+        after: Option<PrincipalId>,
+    ) -> Result<Window<PrincipalId>, Fail> {
         if !self.stands(c) {
             return Err(Fail::Unknown);
         }
@@ -324,7 +328,7 @@ impl Coalition {
     ///
     /// 这一条的不对称写进了签名：[`Coalition::band`] 答 `Result`（它问的是**本册自己的**
     /// 号空间，故有"查无此盟"），`bloc` 不答（它问的是**别人的**号空间，本册不去问）。
-    pub fn bloc(&self, p: PolicyId, after: Option<CoalitionId>) -> Window<CoalitionId> {
+    pub fn bloc(&self, p: PrincipalId, after: Option<CoalitionId>) -> Window<CoalitionId> {
         self.window(|a| a.who == p, |a| a.of, after)
     }
 
@@ -392,8 +396,8 @@ mod tests {
         Coalition::new()
     }
 
-    const A: PolicyId = PolicyId::new(11);
-    const B: PolicyId = PolicyId::new(22);
+    const A: PrincipalId = PrincipalId::new(11);
+    const B: PrincipalId = PrincipalId::new(22);
     /// 伪造的线上值：铸过的号是 `0..next`，故这个一定在册外。
     const OUTSIDE: CoalitionId = CoalitionId::new(4095);
 
@@ -426,7 +430,7 @@ mod tests {
         assert_eq!(b.leave(A, c), Ok(())); // 撞空也成
         assert_eq!(b.amid(A, c), Ok(false));
         // 假身份：不在任何盟里 ⇒ 空串（**不是** Unknown——本册不去问身份服务）。
-        assert_eq!(b.bloc(PolicyId::new(4095), None).len(), 0);
+        assert_eq!(b.bloc(PrincipalId::new(4095), None).len(), 0);
     }
 
     #[test]
@@ -474,12 +478,12 @@ mod tests {
             alloc::vec![B]
         );
         // **阈值大于一切 ⇒ 空窗，不是错**（"过期游标"在阈值语义下不存在）
-        assert!(b.band(c, Some(PolicyId::new(4095))).unwrap().is_empty());
-        // 零号是真格子：从最小那一头数起，`PolicyId::ROOT`(0) 那一位也要数得到
-        b.enter(PolicyId::ROOT, c).unwrap();
+        assert!(b.band(c, Some(PrincipalId::new(4095))).unwrap().is_empty());
+        // 零号是真格子：从最小那一头数起，`PrincipalId::ROOT`(0) 那一位也要数得到
+        b.enter(PrincipalId::ROOT, c).unwrap();
         assert_eq!(
             b.band(c, None).unwrap().iter().collect::<Vec<_>>(),
-            alloc::vec![PolicyId::ROOT, A, B]
+            alloc::vec![PrincipalId::ROOT, A, B]
         );
     }
 
@@ -488,7 +492,7 @@ mod tests {
         let mut b = book();
         let c = b.found();
         for i in 0..=WINDOW_CAP {
-            b.enter(PolicyId::new(i), c).unwrap();
+            b.enter(PrincipalId::new(i), c).unwrap();
         }
         let first = b.band(c, None).unwrap();
         assert_eq!(first.len(), WINDOW_CAP);
@@ -497,6 +501,6 @@ mod tests {
         let next = b.band(c, first.last()).unwrap();
         assert_eq!(next.len(), 1);
         assert!(!next.more());
-        assert_eq!(next.get(0), Some(PolicyId::new(WINDOW_CAP)));
+        assert_eq!(next.get(0), Some(PrincipalId::new(WINDOW_CAP)));
     }
 }

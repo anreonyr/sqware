@@ -16,7 +16,7 @@ use env::{PieToken, TaskId};
 use runtime::env::mail::{self, HolePie};
 
 use super::call::{self, BACK};
-use super::core::{Fail, PolicyId};
+use super::core::{Fail, PrincipalId};
 
 pub use super::call::opened_by;
 
@@ -41,27 +41,27 @@ impl Face {
     }
 
     /// 名册 · 写：把一条 TID 定到一条已存在的号上。**只有装配者那一枚问得出 `OK`**。
-    pub fn bind(&self, tid: TaskId, p: PolicyId, millis: usize) -> Result<(), Fail> {
+    pub fn bind(&self, tid: TaskId, p: PrincipalId, millis: usize) -> Result<(), Fail> {
         let out = self.raw(call::BIND, tid.get() as u64, p.get() as u64, millis)?;
         self.answer(out, |_present, _at| Ok(()))
     }
 
     /// 名册 · 读：这条 TID 此刻代表谁。`None` = 没绑（**不是失败**）。
-    pub fn resolve(&self, tid: TaskId, millis: usize) -> Result<Option<PolicyId>, Fail> {
+    pub fn resolve(&self, tid: TaskId, millis: usize) -> Result<Option<PrincipalId>, Fail> {
         let out = self.raw(call::RESOLVE, tid.get() as u64, 0, millis)?;
         self.answer(out, |present, at| {
-            Ok((present == 1).then(|| PolicyId::new(at as usize)))
+            Ok((present == 1).then(|| PrincipalId::new(at as usize)))
         })
     }
 
     /// 谱系 · 写：由 `p` 派生一枚新节点（装配者，或当前正好代表 `p` 的那一枚）。
-    pub fn derive(&self, p: PolicyId, millis: usize) -> Result<PolicyId, Fail> {
+    pub fn derive(&self, p: PrincipalId, millis: usize) -> Result<PrincipalId, Fail> {
         let out = self.raw(call::DERIVE, p.get() as u64, 0, millis)?;
-        self.answer(out, |_present, at| Ok(PolicyId::new(at as usize)))
+        self.answer(out, |_present, at| Ok(PrincipalId::new(at as usize)))
     }
 
     /// 转换 · 领：把**自己**当前的号换成 `q`（只许沿自己那一支向下）。
-    pub fn adopt(&self, q: PolicyId, millis: usize) -> Result<(), Fail> {
+    pub fn adopt(&self, q: PrincipalId, millis: usize) -> Result<(), Fail> {
         let out = self.raw(call::ADOPT, q.get() as u64, 0, millis)?;
         self.answer(out, |_present, _at| Ok(()))
     }
@@ -73,15 +73,15 @@ impl Face {
     }
 
     /// 谱系 · 读：直接父。**三态**——`Some` / `None`（它是根）/ `Err(Unknown)`（树外）。
-    pub fn sire(&self, p: PolicyId, millis: usize) -> Result<Option<PolicyId>, Fail> {
+    pub fn sire(&self, p: PrincipalId, millis: usize) -> Result<Option<PrincipalId>, Fail> {
         let out = self.raw(call::SIRE, p.get() as u64, 0, millis)?;
         self.answer(out, |present, at| {
-            Ok((present == 1).then(|| PolicyId::new(at as usize)))
+            Ok((present == 1).then(|| PrincipalId::new(at as usize)))
         })
     }
 
     /// 谱系 · 读：`a ≼ b`。
-    pub fn heir(&self, a: PolicyId, b: PolicyId, millis: usize) -> Result<bool, Fail> {
+    pub fn heir(&self, a: PrincipalId, b: PrincipalId, millis: usize) -> Result<bool, Fail> {
         let out = self.raw(call::HEIR, a.get() as u64, b.get() as u64, millis)?;
         // `HEIR` 的答案在**有没有**那一格（是 / 不是），8 字节那一格留空。
         self.answer(out, |present, _at| Ok(present == 1))

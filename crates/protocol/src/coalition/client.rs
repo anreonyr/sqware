@@ -25,7 +25,7 @@ use super::core::{CoalitionId, Fail, Id, Window};
 
 pub use super::call::opened_by;
 
-use crate::principal::core::PolicyId;
+use crate::principal::core::PrincipalId;
 
 /// 一面结盟服务：**树上查回来的门牌** + 它的开者（对端）。
 pub struct Face {
@@ -67,7 +67,7 @@ impl Face {
 
     /// 盟 · 读：`p` 在不在 `c` 里。**两件事两个落点**——`Ok(false)` 是不在，
     /// `Err(Unknown)` 是这枚盟不存在。
-    pub fn amid(&self, p: PolicyId, c: CoalitionId, millis: usize) -> Result<bool, Fail> {
+    pub fn amid(&self, p: PrincipalId, c: CoalitionId, millis: usize) -> Result<bool, Fail> {
         let out = self.raw(call::AMID, p.get() as u64, c.get() as u64, millis)?;
         // `AMID` 的答案在**有没有**那一格（在 / 不在），8 字节那一格留空。
         self.answer(out, |present, _at| Ok(present == 1))
@@ -80,16 +80,16 @@ impl Face {
     pub fn band(
         &self,
         c: CoalitionId,
-        after: Option<PolicyId>,
+        after: Option<PrincipalId>,
         millis: usize,
-    ) -> Result<Window<PolicyId>, Fail> {
+    ) -> Result<Window<PrincipalId>, Fail> {
         self.window(call::BAND, c.get() as u64, call::cursor_of(after), millis)
     }
 
     /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序与游标同 [`Face::band`]）。
     pub fn bloc(
         &self,
-        p: PolicyId,
+        p: PrincipalId,
         after: Option<CoalitionId>,
         millis: usize,
     ) -> Result<Window<CoalitionId>, Fail> {

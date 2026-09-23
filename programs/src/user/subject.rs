@@ -42,7 +42,7 @@ use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::principal::call as pcall;
 use protocol::principal::client::Face;
-use protocol::principal::core::{Fail, PolicyId};
+use protocol::principal::core::{Fail, PrincipalId};
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::room::{self, exit_with_note};
@@ -94,7 +94,7 @@ extern "C" fn main() -> ! {
     // 二、三态的头两格。
     say(&format!(
         "policy: sire(root)={}",
-        one_opt(face.sire(PolicyId::ROOT, MS))
+        one_opt(face.sire(PrincipalId::ROOT, MS))
     ));
     say(&format!("policy: sire(me)={}", one_opt(face.sire(p, MS))));
 
@@ -118,7 +118,7 @@ extern "C" fn main() -> ! {
     // 六、第三态：树外的号。
     say(&format!(
         "policy: heir(out,me)={}",
-        flag(face.heir(PolicyId::new(OUTSIDE), p, MS))
+        flag(face.heir(PrincipalId::new(OUTSIDE), p, MS))
     ));
 
     // 七、越权一趟：名册只有装配者能写，本域不是它。
@@ -147,7 +147,7 @@ extern "C" fn main() -> ! {
     // 十二、树外。
     say(&format!(
         "policy: adopt(out)={}",
-        done(face.adopt(PolicyId::new(OUTSIDE), MS))
+        done(face.adopt(PrincipalId::new(OUTSIDE), MS))
     ));
 
     // 十三、弃：回到装配给我的那一条（不删格）。
@@ -186,7 +186,7 @@ fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。
-fn one_opt(r: Result<Option<PolicyId>, Fail>) -> String {
+fn one_opt(r: Result<Option<PrincipalId>, Fail>) -> String {
     match r {
         Ok(Some(p)) => format!("{}", p.get()),
         Ok(None) => String::from("none"),
@@ -195,7 +195,7 @@ fn one_opt(r: Result<Option<PolicyId>, Fail>) -> String {
 }
 
 /// 同一行读数：只答一条号的那几条（`derive`）。
-fn one(r: Result<PolicyId, Fail>) -> String {
+fn one(r: Result<PrincipalId, Fail>) -> String {
     match r {
         Ok(p) => format!("{}", p.get()),
         Err(fail) => format!("err:{}", why(fail)),

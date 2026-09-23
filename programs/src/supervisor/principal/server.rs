@@ -20,7 +20,7 @@ use protocol::operator::Where;
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::principal::call as pcall;
-use protocol::principal::core::{PolicyId, Principal};
+use protocol::principal::core::{Principal, PrincipalId};
 use protocol::session::Quay;
 use protocol::session::call as scall;
 use protocol::system::board::call as bcall;
@@ -69,11 +69,13 @@ pub fn serve() -> ! {
         exit_with(E_TREE);
     };
     // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
-    // 只给 `STORE`——装配者只往里推帧，答话走它每一趟自己借来的那枚孔。
+    // 给 `STORE | FETCH`：装配者只往里推帧，但**它还要把这一枚再转授给树**（门禁那一刀：
+    // 树要问 `resolve` / `heir`）——而 `Accord` 的子集不许越界，故这一格得留出 `FETCH`；
+    // 答话仍走每一趟自己借来的那枚回信孔，读端在装配者这边。
     if port::ship(
         &HolePie::from_token(entry),
         assembler,
-        Access::STORE,
+        Access::STORE | Access::FETCH,
         Policy::NONE,
     )
     .is_err()
@@ -92,6 +94,24 @@ pub fn serve() -> ! {
         exit_with(E_TREE);
     };
     serve_tree(&tree, talk, host, entry);
+
+    // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
+    // `operator::open` 交回来的那一格）。它据此才判得了"这一位此刻代表谁"。
+    //
+    // 为什么是**本域自己**交、不是装配者转授：见 `programs/src/supervisor/operator/bridge.rs`
+    // 的 `COORD` 那段照实记——装配者转授那一版真机报 `operator:coord-ship`（内核 `-1`）。
+    // 这一枚在手时权限是 `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。
+    if port::ship(
+        &HolePie::from_token(entry),
+        host,
+        Access::FETCH | Access::STORE,
+        Policy::NONE,
+    )
+    .is_err()
+    {
+        say("principal: gate not handed");
+        exit_with(E_TREE);
+    }
 
     // 五、两张表：名册空着，谱系只有根（零号节点）。
     let Ok(mut book) = Principal::new(assembler) else {
@@ -146,30 +166,33 @@ fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
 /// `HEIR` 两格都用）。答案与失败分开放（见 [`pcall`]：`OK` + `flag` 是答案，负码表只装失败）。
 fn answer(book: &mut Principal, from: TaskId, op: u8, a: u64, b: u64) -> [u8; pcall::REPLY_LEN] {
     match op {
-        pcall::BIND => match book.bind(from, TaskId::new(a as usize), PolicyId::new(b as usize)) {
+        pcall::BIND => match book.bind(from, TaskId::new(a as usize), PrincipalId::new(b as usize))
+        {
             Ok(()) => pcall::reply_status(pcall::OK),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
         pcall::RESOLVE => match book.resolve(TaskId::new(a as usize)) {
             Some(p) => pcall::reply_present(true, p),
-            None => pcall::reply_present(false, PolicyId::ROOT),
+            None => pcall::reply_present(false, PrincipalId::ROOT),
         },
-        pcall::DERIVE => match book.derive(from, PolicyId::new(a as usize)) {
+        pcall::DERIVE => match book.derive(from, PrincipalId::new(a as usize)) {
             Ok(q) => pcall::reply_value(q),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
-        pcall::SIRE => match book.sire(PolicyId::new(a as usize)) {
+        pcall::SIRE => match book.sire(PrincipalId::new(a as usize)) {
             Ok(Some(q)) => pcall::reply_present(true, q),
-            Ok(None) => pcall::reply_present(false, PolicyId::ROOT),
+            Ok(None) => pcall::reply_present(false, PrincipalId::ROOT),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
-        pcall::HEIR => match book.heir(PolicyId::new(a as usize), PolicyId::new(b as usize)) {
-            Ok(yes) => pcall::reply_yes(yes),
-            // "不是祖先"是一句答（`Ok(false)`），"查无此号"才是这一格。
-            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
-        },
+        pcall::HEIR => {
+            match book.heir(PrincipalId::new(a as usize), PrincipalId::new(b as usize)) {
+                Ok(yes) => pcall::reply_yes(yes),
+                // "不是祖先"是一句答（`Ok(false)`），"查无此号"才是这一格。
+                Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+            }
+        }
         // 转换那两条都只答状态那一格（成功 = `OK`）；钥匙是**发送者**，报文里没有"我是谁"。
-        pcall::ADOPT => match book.adopt(from, PolicyId::new(a as usize)) {
+        pcall::ADOPT => match book.adopt(from, PrincipalId::new(a as usize)) {
             Ok(()) => pcall::reply_status(pcall::OK),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
@@ -200,7 +223,16 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // **落门牌**：答的是门牌自己那一格的号。
     let plate = match dir_at {
-        Ok(at) => operator::land(talk, link, host, Where::At(at), me, entry, MS),
+        Ok(at) => operator::land(
+            talk,
+            link,
+            host,
+            Where::At(at),
+            me,
+            entry,
+            ocall::Rule::Public,
+            MS,
+        ),
         Err(code) => Err(code),
     };
     let (land, pid) = match plate {

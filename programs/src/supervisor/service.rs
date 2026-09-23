@@ -33,7 +33,7 @@ use crate::supervisor::system::server::{self as service, Grant};
 use env::wire::manifest;
 use env::{Name, PieToken, TaskId};
 use protocol::principal::client::Face;
-use protocol::principal::core::PolicyId;
+use protocol::principal::core::PrincipalId;
 use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
 use protocol::system::board::call as bcall;
@@ -87,9 +87,18 @@ pub struct Program {
     /// 要不要树那条路（[`operator::attach`]）。
     ///
     /// 与 [`Program::board`] 同一个形状、同一格位置（"两端共用"）：`true` ⇒ 它一定调
-    /// [`operator::open`]。**按需发**——拿到这条路的服务，就能动整棵树（本正文不做权限
-    /// 判断，owner 归 Principal），故只有确实要用的那几条打上它。
+    /// [`operator::open`]。**按需发**——拿到这条路的服务，就能动整棵树（owner 归 Principal，
+    /// 准入由门外那一问判，见 `docs/operator-gate.md`）。
     pub operator: bool,
+    /// **装配期给不给它一条身份**（`derive(ROOT)` + `bind`）。
+    ///
+    /// 默认 `true`（每一条都绑，与从前一致）。**`false` 是给负证客人的**：门禁那条判据
+    /// 里"没绑身份 ⇒ 拒绝"（`operator::judge` 的第一格）今天在真机上**没有反例**——11 台
+    /// 客人全都是已绑身份、全放行。要读出"拒得住"，就得有一位**真的没身份**的客人去撞门。
+    ///
+    /// 与 [`Program::board`] / [`Program::operator`] 同一形状（两端共用）：`false` ⇒ 装配者
+    /// **不**给它绑，它自己 `resolve(self)` 会答 `None`。
+    pub bind: bool,
     /// **它就是持树者本身**（不是树的客人）：起来之后本域把它那条提示之路认到手，此后每位
     /// 上树的客人都往那条路上递号（见 [`assemble`] 的第二段）。
     ///
@@ -180,6 +189,9 @@ pub fn assemble<'a>(
     let mut otip: Option<PieToken> = None;
     // 身份服务那一面：它一起好本域就有，此后每条服务的身份都从它来。
     let mut face: Option<Face> = None;
+    // **协调那一帧**要带的两格（身份服务的号 + 它那枚门牌在**本表**里的号）——只在身份服务
+    // 那一格填一次，此后随每一条 `attach` 传下去（持树者据此才判得了身份）。
+    let mut coord: Option<TaskId> = None;
     for (i, p) in plan.iter().enumerate() {
         let rep = start(
             table,
@@ -192,6 +204,7 @@ pub fn assemble<'a>(
             face.as_ref(),
             lanes.get(i).copied().flatten(),
             machine,
+            coord,
         )?;
         // 它刚把提示之路交给**生我者**（= 本域）⇒ 当场认下来，此后客人上树才有路可走。
         if p.holds_tree {
@@ -205,11 +218,15 @@ pub fn assemble<'a>(
         // 身份服务本身：它一放行，本域就认下它交给生我者的那一枚门牌，再把**前两条**
         // （它自己与树）补绑上——它们起来的时候它还没在，没得绑。
         if p.name == PRINCIPAL {
+            // **协调那一帧**要带的号：身份服务自己。它那一枚门牌**由它自己**在
+            // `serve_tree` 之后直接交给持树者（见 `operator/bridge.rs` 的 `COORD` 照实记：
+            // 装配者转授那一版真机栽在 `coord-ship`），装配者只剩递一格号这件事。
+            coord = Some(rep);
             let f = face_of(rep).ok_or_else(|| {
                 step(p, "no identity face");
                 p.died
             })?;
-            let mine = f.derive(PolicyId::ROOT, READY_MS).map_err(|_| {
+            let mine = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
                 step(p, "derive self");
                 p.died
             })?;
@@ -218,7 +235,7 @@ pub fn assemble<'a>(
                 p.died
             })?;
             if let Some(t) = tree {
-                let pt = f.derive(PolicyId::ROOT, READY_MS).map_err(|_| {
+                let pt = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
                     step(p, "derive tree");
                     p.died
                 })?;
@@ -255,6 +272,10 @@ pub fn start<'a>(
     face: Option<&Face>,
     lane: Option<PieToken>,
     machine: &Machine,
+    // **协调那一帧**（身份服务的号 + 它那枚门牌在本表里的号）：只有身份服务那一格填过之后
+    // 才非 `None`。它**只推一次**（持树者收到就开闸，重复推只是再落一枚同样的副本），
+    // 故这里 `take()` 掉——第一个上树的客人（= 身份服务自己）那一格用掉它。
+    mut coord: Option<TaskId>,
 ) -> Result<TaskId, Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
 
@@ -265,8 +286,8 @@ pub fn start<'a>(
     // 一之后、二之前：**身份**。装配者给这条服务派生一条号、把它绑到 `rep` 上——**放行之前**
     // 就做完，故服务一起来 `resolve(self)` 就答得出。（身份服务本身与树不走这里：它们起来时
     // 它还没在；那两条由 [`assemble`] 在它放行之后补绑。）
-    if let Some(face) = face {
-        let mine = face.derive(PolicyId::ROOT, READY_MS).map_err(|_| {
+    if let Some(face) = face.filter(|_| p.bind) {
+        let mine = face.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
             step(p, "derive");
             p.died
         })?;
@@ -327,7 +348,6 @@ pub fn start<'a>(
             p.died
         })?;
     }
-
     // 六、树：**按需**把这条服务接到持树者那棵树上（[`Program::operator`]）。
     //     **在板之后**：两者各一条路、互不影响；先板后树只为让读数一行行落得整齐。
     if p.operator {
@@ -336,7 +356,7 @@ pub fn start<'a>(
             step(p, "no tree yet");
             p.died
         })?;
-        operator::attach(&mut quay, rep, host, READY_MS, otip).map_err(|why| {
+        operator::attach(&mut quay, rep, host, READY_MS, otip, coord.take()).map_err(|why| {
             step(p, why);
             p.died
         })?;

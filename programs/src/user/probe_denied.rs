@@ -1,0 +1,163 @@
+#![no_std]
+#![no_main]
+
+//! probe-denied — **负证客人**：一位**没有身份**的任务去撞树的门，期望被拒。
+//!
+//! 门禁那条判据里有一格是"**没绑身份 ⇒ 拒绝**"（`operator::judge` 的第一格）。在这一台之前，
+//! 真机上**没有反例**：11 台客人全都是装配期绑好的身份，全部放行——那条判据只有宿主台
+//! （`crates/judge-case`）喂假事实证过。本程序就是把反例搬到真机上。
+//!
+//! ```text
+//!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
+//!   2  LAND 一枚自己的孔到 /sys/probe  ⇒ 期望 DENIED（本域没身份）
+//!   3  SEEK /sys/probe                ⇒ 期望 UNKNOWN（**拒绝不是换绑**：那一格没被占）
+//!   4  报一行读数就退场
+//! ```
+//!
+//! # 为什么"没身份"这件事落在装配单上
+//!
+//! 装配期每一条服务的 `derive(ROOT)` + `bind` 都是装配者做的；本域要**真的没身份**，就只能
+//! 由装配者**不绑它**——`Program::bind = false`（见 `programs/src/supervisor/service.rs`）。
+//! 本域自己不做任何"放弃身份"的动作：若自己 `waive`，那也只是回到起点，仍是已绑。
+//!
+//! # 两条判据为什么缺一不可
+//!
+//! - `land != OK`（应是 `DENIED`）：**拒得住**。这一格松掉，门禁就成了一条"不去绑身份即可
+//!   绕过"的后门；
+//! - 随后 `seek == UNKNOWN`：**拒绝发生在动树之前**。若被拒的那一手顺手把那一格占了，
+//!   "拒绝"与"换绑"就分不开了——那正是把裁决放在 `tree.land` 之前要买的东西。
+//!
+//! # 照实记：它为什么也挂树上（`operator: true`）
+//!
+//! 没有树那条路就撞不到门。而"没身份"与"有树路"并不冲突：树路是**装配期发的一条通道**
+//! （`operator::attach`），身份是**名册里的一格**（`derive` + `bind`）——这一台正是要把这两件
+//! 事分开读出来。
+
+// 本文件是一份**独立的 bin**（`programs/Cargo.toml` 的 `prog-probe-denied`），**不进 lib**
+// ——与 `echo` / `guest` 同一条：`programs/src/user/mod.rs` 里没有它。
+//
+// 两条 `extern crate` 缺一不可（实测）：`alloc` 是 `format!` 要用；`programs` **不是**为了
+// 用它里面的东西，而是为了把 `libprograms` 链进来——**panic handler 与 `_start` 都住那份
+// lib**（`programs/src/entry.rs`）。少了它，链接期报 `` `#[panic_handler]` function required ``。
+extern crate alloc;
+extern crate programs;
+
+use protocol::operator::call as ocall;
+use protocol::operator::client as operator;
+use protocol::operator::{EntryId, Where};
+
+use alloc::format;
+
+use env::{Name, PieToken};
+use protocol::session::Quay;
+use runtime::env::debug;
+use runtime::env::mail;
+use runtime::env::room::exit_with_note;
+use runtime::env::unit as utask;
+
+/// 本域要落的那一格的名字（在根下，**不进 `/device`**：本域不是设备）。
+const ME: &str = "probe";
+
+/// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
+const MS: usize = 1000;
+
+/// 本地失败编号（读数用）。
+const E_OK: usize = 0;
+const E_TRIP: usize = 1;
+
+/// 三种退场：全对 / 读数不对（kernel 会把这一句连同域号打出来）。
+const OK_NOTE: &str = "probe-denied: denied as expected";
+const BAD_NOTE: &str = "probe-denied: NOT denied";
+
+#[unsafe(no_mangle)]
+extern "C" fn main() -> ! {
+    let Ok(sire) = utask::sire() else {
+        bail("probe-denied: no sire")
+    };
+
+    // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
+    let Ok((tree, host)) = operator::open(sire, MS) else {
+        bail("probe-denied: no tree link")
+    };
+    let Ok(hedge) = operator::ask_hole(host) else {
+        bail("probe-denied: no tree ask")
+    };
+
+    // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `echo` 上树那一趟同一形状）。
+    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
+        bail("probe-denied: no entry")
+    };
+    let Ok(dir) = Name::new("sys") else {
+        bail("probe-denied: bad name")
+    };
+    let Ok(me) = Name::new(ME) else {
+        bail("probe-denied: bad name")
+    };
+
+    // 二·二、它要落进 `/sys`（**已经在**：principal / coalition 起的头）——先分目录、
+    // 再译成号。**这两手不过门禁**（`part` / `seek` 都不在闸口里，见 `docs/operator-gate.md`
+    // 的裁决那一格），故本域虽然没有身份，这两手照旧答得出号。
+    let Some(at) = tree_dir(hedge, &tree, dir) else {
+        bail("probe-denied: no /sys")
+    };
+
+    // 三、落牌——**这一手该被拒**。
+    let land = operator::land(
+        hedge,
+        &tree,
+        host,
+        Where::At(at),
+        me,
+        entry,
+        ocall::Rule::Public,
+        MS,
+    );
+    let land_code = match land {
+        Ok(id) => {
+            // 居然成了：把号也报出来（读数要能指认"哪一格被占了"）。
+            say(&format!("probe: tree land=OK id={}", id.get()));
+            ocall::OK
+        }
+        Err(code) => code,
+    };
+
+    // 四、拒绝之后那一格**在不在**——`UNKNOWN` 才是"没被占"。
+    let after = operator::seek(hedge, &tree, &[dir, me], MS);
+    let seq = match after {
+        Ok(id) => format!("id={}", id.get()),
+        Err(code) => format!("err:{code}"),
+    };
+    say(&format!(
+        "probe: tree land={land_code} seek={seq} dir={}",
+        at.get()
+    ));
+
+    // 五、判据两格：`land == DENIED`（拒得住）且随后 `seek == UNKNOWN`（拒绝发生在动树之前）。
+    let denied = land_code == ocall::DENIED;
+    let unplaced = matches!(after, Err(ocall::UNKNOWN));
+    exit_with_note(
+        if denied && unplaced { E_OK } else { E_TRIP },
+        if denied && unplaced {
+            OK_NOTE
+        } else {
+            BAD_NOTE
+        },
+    )
+}
+
+/// `/sys` 那一格的号：**分目录（幂等）+ 译号**。拿不到就 `None`（调用方报一句退场）。
+fn tree_dir(say_hole: PieToken, link: &Quay, dir: Name) -> Option<EntryId> {
+    operator::part(say_hole, link, Where::Root, dir, MS).ok()?;
+    operator::seek(say_hole, link, &[dir], MS).ok()
+}
+
+/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
+fn bail(note: &str) -> ! {
+    say(note);
+    exit_with_note(E_TRIP, note)
+}
+
+/// 打一行。调试面是本域唯一的嘴（与 `echo` / `guest` 用的是同一格）。
+fn say(msg: &str) {
+    let _ = debug::put(msg);
+}
