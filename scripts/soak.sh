@@ -9,7 +9,16 @@
 #   1) 日志里出现 `task: all tasks exited, system halted`；
 #   2) 七十条启动 / 装配读数 + 一条**关系**判据仍在（`router: tree part=0 dir=<号> land=0 find=0 got=true` /
 #      `router: device_count=95 ctx=1` / `uart: ier=rx at=0x10000000` /
-#      **`system: uart ns16550a -> 0x10000000`**（**类 → 哪一段区**那条翻译，见下） /
+#      **`system: router sifive,plic-1.0.0 -> 0xc000000`** /
+#      **`system: uart ns16550a -> 0x10000000`** /
+#      **`system: rtc google,goldfish-rtc -> 0x101000`** /
+#      **`system: lodger virtio,mmio -> 0x10001000`**
+#      （**类 → 哪一段区**那条翻译：**四处要门闩的域各一条**——"翻坐标是本域唯一解释机器自述的
+#      地方"，故四段区各钉一枚；机器配置一改，这一组先红） /
+#      **`devices: 21 handed to root`**（设备树那 21 枚交给引导域） /
+#      **`wire: <字节数> bytes, paired=true, post=true`**（**装配期递单那一手**：门闩由固件直接
+#      授进客人表里，装配者只转投那段记录——`paired` 与 `post` 两格证明**那一段真的推上了
+#      客人那条通道**） /
 #      **`root: block n=21 region=19 dtb=1 irq=1 bad=0`**（配对块按坐标分账） / `guest: reg=0 find=0` /
 #      `guest: trip ok` / `echo: ready` /
 #      **`router: line 10 = serial@10000000`** / **`uart: rang n=`** /
@@ -80,6 +89,14 @@
 #      **`probe-other: tree is=8 under=8 foreign=8`** + **`probe-rule-other: all three denied as
 #      expected`**（**第二道门的负证**：另一位**有身份**的客人用别人立了规矩的那几格 ⇒ 都拒；
 #      上一行 `probe-denied` 量的是第一道门"你没身份"，这一行量的是这一格"不给你"）/
+#      **`lodger: gone`**（房客那一台的**成功判词**——它的中间读数一直钉着，末句此前漏了）/
+#      **`system: done`**（**编排域自己的判词**：`supervise` 回来 ⇒ 板线程随本域退场 ⇒ 本域退出。
+#      照实记：这一句此前**够不到**——它上面那一手 `board::shut()` 收掉的是**本域自己**
+#      （内核的 `Doom` 是域粒度，而板线程就住在编排域里），故 1005 份日志里 0 次；
+#      把那重复的一刀删掉之后它才成为读数，见 `bridge.rs` 的照实记）/
+#      **`passer: reg=0 entry=<号> say=passer`** + **`note: passer: gone`**（**那一位注册上板
+#      然后不说再见就死**——板那一格由此成为**死实例**，"那一枚还答得出吗"是唯一问得出它的
+#      那句话；它的读数此前**一条都没进门**，这一刀补上）/
 #      **`echo: name miss=true`**（没铸过的号答 `Unknown`，不是"答了一格空名字"）/
 #      **`echo: seq=0`** /
 #      **`member: band(c0)=n1 more=false`** / **`member: band(c0,next)=n0 more=false`**
@@ -307,7 +324,16 @@ while [ "$i" -le "$rounds" ]; do
   elif ! { grep -qE "^router: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=router[[:space:]]*$" "$log" \
         && grep -q "router: device_count=95 ctx=1" "$log" \
         && grep -q "uart: ier=rx at=0x10000000" "$log" \
+        && grep -q "system: router sifive,plic-1.0.0 -> 0xc000000" "$log" \
         && grep -q "system: uart ns16550a -> 0x10000000" "$log" \
+        && grep -q "system: rtc google,goldfish-rtc -> 0x101000" "$log" \
+        && grep -q "system: lodger virtio,mmio -> 0x10001000" "$log" \
+        && grep -q "devices: 21 handed to root" "$log" \
+        && grep -qE "wire: [0-9]+ bytes, paired=true, post=true" "$log" \
+        && grep -qE "passer: reg=0 entry=[0-9]+ say=passer" "$log" \
+        && grep -q "note: passer: gone" "$log" \
+        && grep -q "lodger: gone" "$log" \
+        && grep -q "system: done" "$log" \
         && grep -q "root: block n=21 region=19 dtb=1 irq=1 bad=0" "$log" \
         && grep -q "guest: reg=0 find=0" "$log" \
         && grep -q "guest: trip ok" "$log" \

@@ -35,10 +35,9 @@ use programs::driver::uart::needs as uart_needs;
 use programs::supervisor::service;
 use programs::user::lodger::needs as lodger_needs;
 
-// 板：本域是**装配侧**（把客人接上板、收尾点名）。树那条路的装配侧在
-// `service::start` 里（本域只管在名单第一位起它、认下它的提示之路）。
-use programs::supervisor::system::board::bridge as board;
-
+// 照实记：这里原来还 `use ...::board::bridge as board`——只为收尾那一句 `board::shut()`。
+// 那一手已删（它收掉的是本域自己，见第 7 步的照实记），故这一行也走了。板那一侧的装配
+// （把客人接上板）住 `service::start`，本文件本来就不碰它。
 use env::{HoleDir, Name, PieToken};
 use programs::supervisor::system::machine::Machine;
 use programs::supervisor::system::server;
@@ -572,8 +571,15 @@ extern "C" fn main() -> ! {
     // 会话的收尾由会话的主人负责：常驻线程是它起的，也是它收的。本域里那枚板线程没有
     // `Join` 可等（`attach` 里弃权了），故按号点名收掉——同域线程之间没有寿命耦合。
     // **等待线程也住本域**，这一刀连它们一起收（域亡 = 成员清零）。
-    board::shut();
     // 7. 本域退出 ⇒ 引导域那枚孔封印 ⇒ 它退出 ⇒ 级联 ⇒ 停机。
+    //
+    // **照实记（这一格量出来的）**：这一句上面原来还有一手 `board::shut()`——它点名
+    // `doom` 本域那枚常驻板线程。而内核那一手的粒度是**域**（"杀它所属的域连同它的子树"），
+    // 板线程**就住在编排域里** ⇒ 那一叫收掉的正是**本域自己**：编排域当场被扑杀，
+    // 下面这一句判词**永远够不到**（实测：`TMP-c: board shut returned` 不出现，而
+    // `system: done` 在 **1005 份 soak 日志里一次都没有**）。
+    // 板线程本来就不必点名收：本域一退场，"域亡＝成员清零"把它一起带走——故那一手是
+    // **重复的一刀**，代价是把本机最后一句读数一起收走了。
     service::die(service::E_OK, "system: done")
 }
 
