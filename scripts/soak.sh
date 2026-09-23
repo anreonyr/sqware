@@ -58,7 +58,16 @@
 #      **`echo: list device=4,5,6`**（`/device` 那三个号：router / uart / rtc）/
 #      **`probe: tree land=8 seek=err:1`** + **`probe-denied: denied as expected`**（门禁的**负证**：
 #      一位**没有身份**的客人落牌被拒（`8` = `DENIED`），且随后 `seek` 答 `UNKNOWN`——
-#      **拒绝发生在动树之前**，不是"换绑"/"grep" 那一类读数）/ **`echo: name miss=true`**（没铸过的号答 `Unknown`，不是"答了一格空名字"）/
+#      **拒绝发生在动树之前**，不是"换绑"/"grep" 那一类读数）/
+#      **`probe-rule: tree part=… made=3 p=… adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0
+#      in_sub=8`** + **`probe-rule: the three rules held`**（**"用"那一轴的三条判据**在同一条
+#      TID 上换一位代表就读出两种答案：`Is` 从 `0` 变 `8`、`In` 从 `0` 变 `8`，而 `Under`
+#      换人之后**仍是 `0`**——"看**支**不看相等"。`in=0` 那一格还顺带证了**盟册那枚门牌
+#      到了持树者手里**：没到的话它会是 `9`（判不了），不是 `0`）/
+#      **`probe-other: tree is=8 under=8`** + **`probe-rule-other: both denied as expected`**
+#      （**第二道门的负证**：另一位**有身份**的客人用别人立了规矩的那两格 ⇒ 都拒；上一行
+#      `probe-denied` 量的是第一道门"你没身份"，这一行量的是这一格"不给你"）/
+#      **`echo: name miss=true`**（没铸过的号答 `Unknown`，不是"答了一格空名字"）/
 #      **`echo: seq=0`** /
 #      **`member: band(c0)=n1 more=false`** / **`member: band(c0,next)=n0 more=false`**
 #      （**游标是阈值**：拿末一枚接着取 ⇒ 空窗，不是错，也没有"过期游标"）/
@@ -349,6 +358,10 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "probe-lease: tree land=0 dir=0 plate=[0-9]*" "$log" \
         && grep -q "probe-lease: landed, leaving" "$log" \
         && grep -q "probe-owner: lease land=0 id=" "$log" \
+        && grep -qE "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8" "$log" \
+        && grep -q "probe-rule: the three rules held" "$log" \
+        && grep -q "probe-other: tree is=8 under=8" "$log" \
+        && grep -q "probe-rule-other: both denied as expected" "$log" \
         && grep -q "echo: list root=0,3" "$log" \
         && grep -q "echo: list names=sys,device" "$log" \
         && grep -q "echo: list device=4,5,6" "$log" \

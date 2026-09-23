@@ -83,7 +83,8 @@ extern "C" fn main() -> ! {
         Where::At(at),
         me,
         entry,
-        ocall::Rule::Owner,
+        ocall::Rule::Public,
+        true,
         MS,
     ) {
         Ok(id) => {

@@ -150,11 +150,13 @@ pub mod client;
 pub mod core;
 pub mod gate;
 pub mod judge;
+pub mod ledger;
 
 pub use call::{ASK_MARK, LINK, Listing, TIP_MARK, TIP_NAME};
 pub use core::{Entry, EntryId, Fail, Node, Operator, Unship, VestedBy, Where};
 pub use gate::{Blind, Code, Control, verdict};
-pub use judge::{Branch, League, Rule, Ruling, Who, judge};
+pub use judge::{Branch, Id, League, Rule, Ruling, Who, judge};
+pub use ledger::{Blank, Key, Ledger, Line, Owner};
 
 /// **同步义务**：`gate.rs` 自己留了那三格线上码（它要在宿主靶里编，而 `call.rs` 拖着 `runtime`
 /// 与 `session` ⇒ 编不动）。这里在编译期把两份钉在一起——真正的对照表只有 [`call`] 那一份，

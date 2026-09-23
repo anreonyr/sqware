@@ -51,6 +51,19 @@
 
 use env::TaskId;
 
+// ── 号在模型里的宽度 ────────────────────────────────────────
+
+/// 号在模型里的宽度 —— **与它在自己号空间里的宽度一致**（riscv64：`usize` = 8 字节）。
+///
+/// 本文件与 [`gate`](super::gate) 只认识这一格别名，不认识 `PrincipalId` / `CoalitionId`
+/// （那两个号是泛型的 `P` / `C`，见文件头注）。定死宽度是为了让**上帧的那一格**与这里的
+/// 那一格同宽。
+///
+/// 照实记：这一格原先写的是 `u32`，而适配层接的是 `usize`——`Session::who` 那一处写着
+/// `p.get() as u32`，一次**静默截断**。号不上帧的时候看不出来（装配期的号都是小号）；
+/// 这一刀之后号要上帧（8 字节），故一并提宽。
+pub type Id = u64;
+
 // ── 一格规则 ────────────────────────────────────────────────
 
 /// **这一格谁许用**。四格覆盖"公开 / 就是某一位 / 在某一位那一支里 / 在某枚盟里"。
@@ -96,11 +109,16 @@ pub trait Branch<P> {
     fn heir(&self, a: P, b: P) -> Result<bool, ()>;
 }
 
-/// 盟册那一侧：**这一位此刻在这枚盟里吗**（横向）。
+/// 盟册那一侧：**`me` 此刻在这枚盟里吗**（横向）。
 ///
 /// 与 [`Branch`] 分家（纵向 / 横向），实现上通常都是另一枚门牌。
-pub trait League<C> {
-    fn amid(&self, at: C) -> Result<bool, ()>;
+///
+/// **照实记：这一格原来少一个号。** 第一版写的是 `amid(&self, at: C)`——可盟册那一问本来
+/// 就要两个号（`coalition::client::Face::amid(p, c)`，线上那一帧也带两格）。而 `judge` 手里
+/// 明明有 `me`（第一步就问出来了），却没往下传。今天它是个恒答"问不到"的桩，故这个错一次
+/// 没响过；通线（`Rule::In` 真跑）之前必须补上。
+pub trait League<P, C> {
+    fn amid(&self, me: P, at: C) -> Result<bool, ()>;
 }
 
 // ── 那一问 ─────────────────────────────────────────────────
@@ -117,7 +135,7 @@ pub fn judge<P, C>(
     rule: Rule<P, C>,
     roster: &impl Who<P>,
     branch: &impl Branch<P>,
-    league: &impl League<C>,
+    league: &impl League<P, C>,
 ) -> Ruling
 where
     P: PartialEq + Copy,
@@ -139,7 +157,7 @@ where
             Ok(false) => Ruling::Deny,
             Err(()) => Ruling::Unjudged,
         },
-        Rule::In(c) => match league.amid(c) {
+        Rule::In(c) => match league.amid(me, c) {
             Ok(true) => Ruling::Allow,
             Ok(false) => Ruling::Deny,
             Err(()) => Ruling::Unjudged,
@@ -199,10 +217,13 @@ mod tests {
     }
 
     /// 假盟册：只有 3 号盟，成员是列出来的那几位。
+    ///
+    /// 照实记：这一格原来写的是 `contains(&P)`（拿常量当"我"），因为老签名根本收不到"谁在问"。
+    /// 补上 `me` 之后它才真的在问"**这一位**在不在这枚盟里"。
     struct Book(&'static [u64]);
-    impl League<u64> for Book {
-        fn amid(&self, at: u64) -> Result<bool, ()> {
-            Ok(at == C && self.0.contains(&P))
+    impl League<u64, u64> for Book {
+        fn amid(&self, me: u64, at: u64) -> Result<bool, ()> {
+            Ok(at == C && self.0.contains(&me))
         }
     }
 

@@ -89,7 +89,17 @@ extern "C" fn main() -> ! {
         bail("probe-owner: no entry")
     };
     let at = Where::At(wait_dir(hedge, &tree, dir).unwrap_or(EntryId::new(0)));
-    let land = operator::land(hedge, &tree, host, at, me, entry, ocall::Rule::Public, MS);
+    let land = operator::land(
+        hedge,
+        &tree,
+        host,
+        at,
+        me,
+        entry,
+        ocall::Rule::Public,
+        false,
+        MS,
+    );
     let land_code = match land {
         Ok(id) => {
             say(&format!("probe-owner: tree land=OK id={}", id.get()));
@@ -166,6 +176,7 @@ fn take_over(hedge: PieToken, link: &Quay, host: TaskId) -> Result<EntryId, u8> 
                 me,
                 entry,
                 ocall::Rule::Public,
+                false,
                 MS,
             ) {
                 Ok(id) => return Ok(id),

@@ -231,6 +231,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
             me,
             entry,
             ocall::Rule::Public,
+            false,
             MS,
         ),
         Err(code) => Err(code),

@@ -45,6 +45,20 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-probe-rule"
+path = "src/user/probe_rule.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-probe-rule-other"
+path = "src/user/probe_rule_other.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-echo"
 path = "src/user/echo.rs"
 test = false

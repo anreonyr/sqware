@@ -3,7 +3,7 @@
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::operator::call`]。
 
-use env::{HoleDir, Mark, Name, PieToken, TaskId};
+use env::{HoleDir, Mark, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
@@ -12,12 +12,14 @@ use runtime::env::unit as utask;
 
 use protocol::operator::call as ocall;
 use protocol::operator::gate::{Code, Control, verdict};
+use protocol::operator::judge::{Id, Rule};
+use protocol::operator::ledger::{Key, Ledger, Line};
 pub use protocol::operator::{ASK_MARK, LINK, TIP_MARK};
-use protocol::operator::{EntryId, Fail, Operator, Rule, Where};
+use protocol::operator::{EntryId, Fail, Operator, Where};
 use protocol::system::board::call as bcall;
 
-use alloc::vec::Vec;
-use protocol::principal::client::Face as PolicyFace;
+use protocol::coalition::client::Face as CoalitionFace;
+use protocol::principal::client::Face as PrincipalFace;
 use protocol::principal::core::PrincipalId;
 
 use super::desk::{Desk, Guest, desk};
@@ -27,12 +29,12 @@ use super::desk::{Desk, Guest, desk};
 /// 与 `programs/src/supervisor/operator/bridge.rs` 的同一格必须同值——那边是**推**这一侧。
 const COORD_FRAME: usize = 16;
 
-/// **这一刀先按"公开"判**：条目上还没有逐格规则（那是下一刀），故所有条目共用这一条
-/// 默认值。它的准确含义是"**任何已绑身份都可以**"——没绑的仍然被拒（[`Rule::Public`] 那一格）。
+/// **这一枚是哪一双眼睛**：协调那一帧的后 8 字节（`bridge.rs` 是推的那一侧，两处同值）。
 ///
-/// 默认必须是它，否则既有的 11 条 `tree part=0 … land=0 find=0 got=true` 会当场塌：
-/// 树自己那条提示、principal 补绑之后的每一条服务，全都是已绑身份。
-const DEFAULT_RULE: Rule<u32, u32> = Rule::Public;
+/// 照实记：那 8 字节在门禁那一刀里是**保留零**。这一刀起它有了意思——故门牌可以按位一枚一枚
+/// 地递，"长度即语义"一个字没破。
+const ROLE_ROSTER: u64 = 0;
+const ROLE_LEAGUE: u64 = 1;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -47,52 +49,79 @@ const E_GROUP: usize = 3;
 
 // ── 门外那一问（门禁）────────────────────────────────────────
 
-/// **协调那一份**：身份服务那一枚门牌（装配者转授进来的，见 [`COORD_FRAME`]）。
+/// **两枚门牌**：身份服务那一枚（答"这一位此刻代表谁"与"在不在他那一支里"）与盟册服务那一枚
+/// （答"这一位在那枚盟里吗"）。
 ///
-/// 树**不当自己的客人**：它不去 `seek("/sys/principal")`，而是由装配者直接给。理由见
-/// `programs/src/supervisor/operator/bridge.rs` 的 `COORD` 那段照实记（自指 ⇒ 环）。
+/// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的（见
+/// `programs/src/supervisor/operator/bridge.rs` 的 `COORD` 照实记：装配者转授那一版真机
+/// 栽在 `coord-ship`）。树**不当自己的客人**：它不去 `seek("/sys/principal")`，理由同那一笔
+/// （自指 ⇒ 环）。
+///
+/// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Rule::In`] 那一格答"判不了"，
+/// 其余照旧。**降级是诚实的，不是放行**——`Err(())` 翻出来是 `Unjudged`（可重试），不是 `Ok`。
 struct Session {
-    face: PolicyFace,
+    roster: PrincipalFace,
+    league: Option<CoalitionFace>,
+}
+
+/// 协调那一帧递过来的两格号：**名册是谁、盟册是谁**（各自那一枚门牌由它们自己交）。
+///
+/// 一格一个位、可以分两帧到（次序不定），故这里收着而不是一次性解出来。
+#[derive(Clone, Copy, Default)]
+struct Coord {
+    roster: Option<TaskId>,
+    league: Option<TaskId>,
 }
 
 impl Session {
-    /// 认出协调那一枚门牌：**按"谁开的 + 记号"两格**在本表里找（协调那一帧只带号）。
+    /// 认出那两枚门牌：**按"谁开的 + 记号"两格**在本表里找（协调那一帧只带号）。
     ///
-    /// 两格都是确定的：那扇门是**身份服务**开的（副本共享同一事实），记号 = 服务入口记号
-    /// （`bcall::ENTRY_MARK`）。**不必装配者转授**——身份服务自己在 `serve_tree` 之后把它
-    /// 直接交给持树者（见 `operator/bridge.rs` 的 `COORD` 照实记）。
-    fn of(who: TaskId) -> Option<Session> {
-        let mark = bcall::ENTRY_MARK;
-        let mut index = 0usize;
-        loop {
-            let (token, _perm, _vestor) = mail::collect(index).ok()?;
-            // 越界哨兵：这一遍扫完了。
-            if token.get() == 0 {
-                return None;
-            }
-            index += 1;
-            if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(mark) {
-                let face = PolicyFace::of(token).ok()?;
-                return Some(Session { face });
-            }
+    /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = 服务入口记号
+    /// （`bcall::ENTRY_MARK`）。**不必装配者转授**——各域自己在 `serve_tree` 之后把它直接交给
+    /// 持树者（见 `operator/bridge.rs` 的 `COORD` 照实记）。
+    ///
+    /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ 整格 `None`（读数会喊一句）。盟册那枚
+    /// 认不出 ⇒ 只少 `Rule::In` 那一格。
+    fn of(coord: Coord) -> Option<Session> {
+        let roster = PrincipalFace::of(find_face(coord.roster?)?).ok()?;
+        let league = coord
+            .league
+            .and_then(find_face)
+            .and_then(|token| CoalitionFace::of(token).ok());
+        Some(Session { roster, league })
+    }
+}
+
+/// 找**某一位域**交给本域的那枚服务门牌（`opened_by == who` 且记号是服务入口）。
+fn find_face(who: TaskId) -> Option<PieToken> {
+    let mark = bcall::ENTRY_MARK;
+    let mut index = 0usize;
+    loop {
+        let (token, _perm, _vestor) = mail::collect(index).ok()?;
+        // 越界哨兵：这一遍扫完了。
+        if token.get() == 0 {
+            return None;
+        }
+        index += 1;
+        if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(mark) {
+            return Some(token);
         }
     }
 }
 
-/// 门禁要的两个事实都从这一份出：问身份（`resolve`）与谓词（`heir`）。
-///
-/// **一面门牌在手就够**：`amid` 那一格今天没人问（[`DEFAULT_RULE`] 是 `Public`），故这一刀
-/// 不接结盟那一枚；要接时把它的门牌也递进来、[`Control::amid`] 转发一句即可。
+/// 门禁要的三条边都从这一份出：问身份（`resolve`）、谱系（`heir`）、盟籍（`amid`）。
 impl Control for Session {
-    fn who(&self, tid: TaskId) -> Result<Option<u32>, ()> {
-        match self.face.resolve(tid, MS) {
-            Ok(found) => Ok(found.map(|p| p.get() as u32)),
+    fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
+        match self.roster.resolve(tid, MS) {
+            // **不截断**：号在模型里的宽度就是 8 字节（`judge::Id`）。照实记：这里原写的是
+            // `p.get() as u32`——号不上帧时看不出来，这一刀之后号要上帧，故一并提宽。
+            Ok(found) => Ok(found.map(|p| p.get() as Id)),
             Err(_) => Err(()),
         }
     }
 
-    fn heir(&self, a: u32, b: u32) -> Result<bool, ()> {
-        self.face
+    fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
+        self.roster
             .heir(
                 PrincipalId::new(a as usize),
                 PrincipalId::new(b as usize),
@@ -101,29 +130,51 @@ impl Control for Session {
             .map_err(|_| ())
     }
 
-    fn amid(&self, _: u32) -> Result<bool, ()> {
-        // 这一刀没有 `Rule::In`（见上）：答"问不到"，而不是答"否"——**判不了**与
-        // "不在那枚盟里"是两件事，后者会让客人当场放弃。
-        Err(())
+    fn amid(&self, me: Id, at: Id) -> Result<bool, ()> {
+        // 盟册那一枚没在手里 ⇒ 答"问不到"，而不是答"否"——**判不了**与"不在那枚盟里"是
+        // 两件事，后者会让客人当场放弃。
+        let Some(league) = self.league.as_ref() else {
+            return Err(());
+        };
+        league
+            .amid(
+                PrincipalId::new(me as usize),
+                protocol::coalition::CoalitionId::new(at as usize),
+                MS,
+            )
+            .map_err(|_| ())
     }
 }
 
 /// **门禁的入口**：`session` 为 `None` = **装配期**（树手里还没有门牌）⇒ 放行；`Some` =
-/// 按 [`DEFAULT_RULE`] 判。
+/// 按那一格自己的规矩判（[`Ledger::rule`] 答出来的那一条）。
 ///
 /// 装配期放行是**定义**不是例外：树接手时（principal 挂 `/sys/principal`、coalition 挂
 /// `/sys/coalition`）整个装配都还没走完，门禁无从判起；而那两条路的来路是装配者**直接铺的**
 /// （他发起的 `Ship`），不是"从问话孔进来的客人请求"。
-fn may(session: Option<&Session>, who: TaskId) -> Code {
+fn may(session: Option<&Session>, who: TaskId, rule: Rule<Id, Id>) -> Code {
     match session {
         None => Code::Ok,
-        Some(s) => match verdict(s, who, DEFAULT_RULE) {
+        Some(s) => match verdict(s, who, rule) {
             // 「手里没有门牌」在客人那一侧与「判不了」同一格（都可重试）；`Some` 的时候
             // 不该出现它，真出现了也按"判不了"走，不按"放行"。
             Code::Blind => Code::Unjudged,
             other => other,
         },
     }
+}
+
+/// **账对真相的那一问**：那一号此刻还是**一枚 `Tile`** 吗。
+///
+/// 陈旧的三种样子一次答完（见 `ledger.rs` 那张表）：
+///
+/// - 还在、还是 `Tile` ⇒ 真；
+/// - `trim` 剪掉 / `find` 剔死 ⇒ `name` 答 `Unknown` ⇒ 假；
+/// - `part` 把它顶成一块 `Pane` ⇒ `list` 答得出 ⇒ 假。
+///
+/// 它只在"账要拒"的那一支被叫（账是缓存），故这一趟读不落在热路上。
+fn fresh(tree: &Operator, id: EntryId) -> bool {
+    tree.name(id).is_ok() && tree.list(Where::At(id)).is_err()
 }
 
 /// 问身份那两条边要用的期限（毫秒）。**必须有界**：协调服务不在时不能把树挂死。
@@ -172,11 +223,16 @@ pub fn serve() -> ! {
     let mut desk = desk();
     // **装配期**：还没有协调门牌（装配者那一帧到了才是 `Some`）⇒ 门禁放行，见 [`may`]。
     let mut session: Option<Session> = None;
-    // **规矩那份账**：只记"归落牌那一位"的条目（见 [`Publishers`]）。
-    let mut publishers: Publishers = Vec::new();
+    // 协调那一帧递来的两格号（名册 / 盟册，各自那一域自己把门牌交过来）。**两帧、次序不定**。
+    let mut coord = Coord::default();
+    // **那本账**：一格一条，两轴都记（见 [`Book`]）。
+    //
+    // "活着"那一问与树收的是**同一枚函数指针**（`ocall::vested_by`）——账要问的"主人还在吗"
+    // 与树要问的"这一枚还答得出吗"是同一句话，故不另开一个 trait。
+    let mut book: Book = Ledger::new(ocall::vested_by);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。
-        let settling = settle(&mut desk, &tole, &tip_hole, &mut session);
+        let settling = settle(&mut desk, &tole, &tip_hole, &mut coord, &mut session);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let millis = if settling { SETTLE_MS } else { usize::MAX };
         let Ok(Some((tok, _dir))) = tole.await_(millis) else {
@@ -187,7 +243,7 @@ pub fn serve() -> ! {
         if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut tree, guest, session.as_ref(), &mut publishers);
+            serve_one(&mut tree, guest, session.as_ref(), &mut book);
         }
         // 三、**看出来的**那一档：那一枚答不出 ⇒ 剔格子（没有"他说走了"那一档）。
         let _ = desk.sweep();
@@ -199,15 +255,17 @@ pub fn serve() -> ! {
 /// - **提示**：装配者推来的客人号（一个号，8 字节）。**非阻塞地拉**——必须在这里拉，
 ///   不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进组**（那一条推
 ///   落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它；
-/// - **协调那一帧**（16 字节）：装配者把"身份服务是谁 + 它那枚门牌在本表里的号"直接递过来
-///   （见 `programs/src/supervisor/operator/bridge.rs` 的 [`COORD`]）。收到它就**开闸**——
-///   门禁从此判得了身份。**长度即语义**：8 = 一位客人，16 = 这一帧；
+/// - **协调那一帧**（16 字节）：装配者把"**哪一位域** + **它是哪一双眼睛**"直接递过来
+///   （见 `programs/src/supervisor/operator/bridge.rs` 的 `COORD`）。两帧、次序不定：名册那一
+///   枚到了才开闸（门禁从此判得了身份），盟册那一枚到了 [`Rule::In`] 才判得了。
+///   **长度即语义**：8 = 一位客人，16 = 这一帧；
 /// - **答话路**：装配者转授来的那一枚 ⇒ `admit` 收一位客人；
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
 fn settle(
     desk: &mut Desk,
     tole: &Tole,
     tip: &mail::HolePie,
+    coord: &mut Coord,
     session: &mut Option<Session>,
 ) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
@@ -219,15 +277,29 @@ fn settle(
             break;
         };
         if n == COORD_FRAME {
-            // **开闸**：两格号——身份服务是谁、它那枚门牌种在本表里的哪一号。
-            // 从这里往后，门外那一问（[`gate`](protocol::operator::gate)）判得了身份。
+            // **开闸**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交进来
+            // （装配者只递号）；从这里往后，门外那一问（[`gate`](protocol::operator::gate)）
+            // 判得了身份。
             let who =
                 TaskId::new(u64::from_le_bytes(frame[..8].try_into().unwrap_or([0; 8])) as usize);
-            *session = Session::of(who);
-            if session.is_none() {
-                // 门牌认不出（记号/开者对不上）：**报一句**，别静默——门禁会一直答"判不了"。
+            let role = u64::from_le_bytes(frame[8..16].try_into().unwrap_or([0; 8]));
+            match role {
+                ROLE_ROSTER => coord.roster = Some(who),
+                ROLE_LEAGUE => coord.league = Some(who),
+                // 读不懂的那一格：**报一句，别静默**——门禁会一直判不了，而"为什么"要看得见。
+                _ => {
+                    say("operator: coord role unknown");
+                    continue;
+                }
+            }
+            // 两枚各自到了就各自重建一次（幂等）：名册先到 ⇒ 门禁立刻能判；盟册后到 ⇒ 补上
+            // `Rule::In`。名册认不出（记号/开者对不上）要**报一句**，别静默——门禁会一直答
+            // "判不了"。
+            let renewed = Session::of(*coord);
+            if renewed.is_none() {
                 say("operator: coord not recognised");
             }
+            *session = renewed;
             continue;
         }
         let Some(id) = frame.get(..8) else {
@@ -271,110 +343,26 @@ fn settle(
     pending
 }
 
-/// **谁落的这一格**：`(那一格的坐标, 落牌的 TID, 那一刻挂上去的那一枚 Pie)`。**只登记 `Rule::Owner` 的那些**——默认
-/// （公开）的条目一个字节都不占，既有装配读数因此一字不改。
+/// **那本账**：一格一条，记着两轴（谁许用 / 归谁改）。
 ///
-/// **按坐标记，不按号记**（照实记：第一版按号记，真机上当场量错）。两个理由：
+/// 正文在协议那一侧（[`protocol::operator::ledger`]），本域只做三件事：**接上"活着"那一问**
+/// （`ocall::vested_by`，与树收的是同一枚函数指针）、**接上"那一格还是不是那一格"那一问**
+/// （[`fresh`]，一趟读）、**按钥匙查**。
 ///
-/// 1. **号只在树里认得出**，而门口那一问发生在**动树之前**——要么先查一次（多一趟），
-///    要么拿到的号与那一格对不上；
-/// 2. **换绑不动号**（`land` 那条规矩），所以号也分不出"这一格换过人"。
+/// **照实记（这一格原来住在这里）**：前身是 `type Publishers = Vec<(Where, Name, TaskId,
+/// PieToken)>`，只记"声明归自己"的那些。它在这份文件里量错过两次——第一版按**号**记，而
+/// `land` 那一问手里只有坐标，于是**整道判据被跳过**，`probe-owner` 当场顶掉了 `/device/uart`
+/// 的牌子（读数 `land=OK id=5`）；改按坐标记之后，`find` / `trim` 手里又只有号，于是要补一趟
+/// `container_of`（O(树) 的全树递归）。
 ///
-/// 坐标（`Where` + 名）在 `land` 那一帧里**本来就有**，比对是 O(账长)。这份账是**服务侧的**，
-/// 不是树的一份数据：树的核心（`crates/protocol/src/operator/core.rs`）至今不知道"规矩"这个词。
-/// 代价照实记：**持树者重启这条账就没了**（而条目还在）⇒ 那些格回落到"公开"。今天没有重启
-/// （退出即关机），故这是记着的一笔。另一笔：**落牌那一方退了之后这个主人就永远不在场**，
-/// 那一格从此顶不掉——见 `docs/operator-gate.md` 的已知边界。
-type Publishers = Vec<(Where, Name, TaskId, PieToken)>;
-
-/// 那一格的主人（`None` = 这一格没被声明过归属）。
-fn publisher_of(publishers: &Publishers, at: Where, name: Name) -> Option<(TaskId, PieToken)> {
-    publishers
-        .iter()
-        .find(|(slot_at, slot_name, _, _)| *slot_at == at && *slot_name == name)
-        .map(|(_, _, who, pie)| (*who, *pie))
-}
-
-/// **那一格的主人还在不在场**。
-///
-/// 问的是"挂上去的那一枚还答得出吗"——**与 `VestedBy` 同一句话**（`Reserve` 那一问）：
-/// 落牌那一方退场时，内核的退场钩子把它开的那些资源**封印**（`gate::doom` 的
-/// `seal_owned`）⇒ 这一枚从此答 `None`。故不需要任何看门狗/通知，一次查询就有答案。
-///
-/// **答不出来（表里没这一枚 / 已不在）也按"不在场"算**：那一格的主人已经不可能再
-/// 管它了——见 [`claim`] 那条规矩。反过来，**没有这一格**（`publisher_of` 返回 `None`）
-/// 是另一件事：那是"没声明过归属"，不是"主人没了"。
-fn present(pie: PieToken) -> bool {
-    ocall::vested_by(pie).is_some()
-}
-
-/// 登记/改登记那一格的主人（换绑之后主人跟着换——**能换的人**由上一道判据管）。
-fn remember(publishers: &mut Publishers, at: Where, name: Name, who: TaskId, pie: PieToken) {
-    match publishers
-        .iter_mut()
-        .find(|(slot_at, slot_name, _, _)| *slot_at == at && *slot_name == name)
-    {
-        Some(slot) => {
-            slot.2 = who;
-            slot.3 = pie;
-        }
-        None => {
-            if publishers.try_reserve(1).is_ok() {
-                publishers.push((at, name, who, pie));
-            }
-        }
-    }
-}
-
-/// 那一格**此刻归不归 `who` 管**：是主人本人、或那一格的主人已经不在场（⇒ 谁都能接手）。
-///
-/// 这条规矩是"规矩属于**活着的**主人"的确切含义。**照实记（为什么需要它）**：落牌那一方
-/// 退场之后，它声明归自己的那一格**永远顶不掉**——主人不在场，没人能换绑。今天 `uart`
-/// 不退场也没有重启，所以这只是一笔记着的账；但只要有一台**会死的**服务敢声明归属，
-/// 它一死就会在命名空间里留一块**没人能改的墓碑**。
-///
-/// **接手是"看出来的"，不是"被通知的"**——与树的惰性剔死（`find` 路上剔）同一条形状：
-/// 不问就不动，问了才发现主人没了。
-fn claimable(publishers: &Publishers, at: Where, name: Name, who: TaskId) -> bool {
-    match publisher_of(publishers, at, name) {
-        None => true,                             // 没声明过归属
-        Some((owner, _)) if owner == who => true, // 就是主人本人
-        Some((_, pie)) => !present(pie),          // 主人不在场 ⇒ 可接手
-    }
-}
-
-/// 这一条挂在**哪一块 `Pane`** 下（`None` = 不在树上）。
-///
-/// 只读一趟递归（条目规模是几十格，不设缓存——缓存就是第二处真相）：门口那一问要拿"坐标"
-/// 去比对主人那份账，而 `trim` 那一支手里只有**号**。
-fn container_of(tree: &Operator, id: EntryId) -> Option<Where> {
-    fn walk(tree: &Operator, level: &[Where], want: EntryId, at: Where) -> Option<Where> {
-        let kids: Vec<EntryId> = tree.list(at).ok()?.collect();
-        if kids.contains(&want) {
-            return Some(at);
-        }
-        for kid in kids {
-            let next = Where::At(kid);
-            if tree.list(next).is_ok()
-                && let Some(found) = walk(tree, level, want, next)
-            {
-                return Some(found);
-            }
-        }
-        None
-    }
-    walk(tree, &[], id, Where::Root)
-}
+/// 两条寻址打的是同一格——**这一条现在由结构说话**（一条记录、两把钥匙），不再靠两处各补
+/// 一次补丁。而它搬进 `protocol` 之后第一次进了宿主靶：**没有门的档 = 没有编译过的档**。
+type Book = Ledger<Id, Id>;
 
 /// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**。
 ///
 /// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询。
-fn serve_one(
-    tree: &mut Operator,
-    guest: Guest,
-    session: Option<&Session>,
-    publishers: &mut Publishers,
-) {
+fn serve_one(tree: &mut Operator, guest: Guest, session: Option<&Session>, book: &mut Book) {
     let Some(ask) = guest.ask() else {
         return;
     };
@@ -386,7 +374,7 @@ fn serve_one(
         return;
     };
     let mut reply = [0u8; ocall::REPLY_MAX];
-    let said = answer(tree, want, guest.who(), session, publishers, &mut reply);
+    let said = answer(tree, want, guest.who(), session, book, &mut reply);
     let _ = mail::HolePie::from_token(guest.reply()).push(&reply[..said]);
 }
 
@@ -400,7 +388,7 @@ fn answer(
     want: &[u8],
     who: TaskId,
     session: Option<&Session>,
-    publishers: &mut Publishers,
+    book: &mut Book,
     out: &mut [u8; ocall::REPLY_MAX],
 ) -> usize {
     let Some(op) = ocall::op_of(want) else {
@@ -417,28 +405,35 @@ fn answer(
     }
     // **门外那一问**：两条会**交出权柄 / 毁掉别人那一格**的原语先过门禁——`find`（把那一枚
     // 授出去）与 `trim`（把别人的名字剪掉）。`land` **不在这里**判：它是"改我自己那一格"，
-    // 它的准入是**那一格自己的规矩**（见下面的 `publisher`）——先落的人为什么能覆盖后来的人，
-    // 反过来却不行？因为"谁能改这一格"是那一格的事实，不是"谁在问"。四条只读结构的
+    // 它的准入是**那一格自己的规矩**（见下面的两支）。四条只读结构的
     // （`part` / `list` / `seek` / `name`）一律不判。这一刀的范围见 `docs/operator-gate.md`。
+    //
+    // **两轴分家**（这一刀的新内容）：
+    //
+    // - **用**那一轴（谁许用这一格）住在那一格的账上，由 [`Book::rule`] 答；`find` 判它；
+    // - **改**那一轴（谁许改这一格）同样住在账上，由 [`Book::claimable`] 答；`land` / `trim` 判它；
+    // - 两轴都**不**在树里（树至今不知道"规矩"这个词），也**不**在核心（核心是同步纯函数，
+    //   发不出那两条问身份的消息）。
     match ask {
-        // **`find` 只看身份，不看主人**——"归落牌那一位"管的是**改这一格**（换绑 / 剪掉），
-        // 不是**用这一格**。**实测栽过一次**：把主人判据也挂在 `find` 上，`uart` 声明归自己
-        // 之后，`echo` 当场取不到 `/device/uart`——机器还在，控制台没人读（`examine` 0/3）。
-        // 这与"公开入口"是同一件事：**读是公开的，写才归属主**。
+        // **`find` 看这一格自己的"用"那一轴**。
+        //
+        // 照实记（为什么这里从"全局默认"变成"逐格规矩"，而不是反过来）：上一刀把主人判据也
+        // 挂在 `find` 上，`uart` 声明归自己之后，`echo` 当场取不到 `/device/uart`——机器还在，
+        // 控制台没人读（`examine` 0/3）。**读是公开的，写才归属主**：`Rule::Owner` 管的是**改
+        // 这一格**，不是**用这一格**。这一刀让"用"有自己的那一格，故默认值（公开）与主人那
+        // 一轴不再互相牵制。
         ocall::AskIn::Find(id) => {
-            let _ = id;
-            let ruling = may(session, who);
+            let rule = book.rule(Key::Id(id), |id| fresh(tree, id));
+            let ruling = may(session, who, rule);
             if !ruling.passed() {
                 return status(out, ruling.wire());
             }
         }
         ocall::AskIn::Trim(id) => {
-            if let (Some(at), Some(name)) = (container_of(tree, id), tree.name(id).ok())
-                && !claimable(publishers, at, name, who)
-            {
+            if !book.claimable(Key::Id(id), who, |id| fresh(tree, id)) {
                 return status(out, ocall::DENIED);
             }
-            let ruling = may(session, who);
+            let ruling = may(session, who, Rule::Public);
             if !ruling.passed() {
                 return status(out, ruling.wire());
             }
@@ -448,7 +443,7 @@ fn answer(
         // 往命名空间里塞条目。**实测栽过一次**：漏了这一支，负证客人当场落牌成功
         // （读数 `probe: tree land=OK id=7`）。
         ocall::AskIn::Land { .. } => {
-            let ruling = may(session, who);
+            let ruling = may(session, who, Rule::Public);
             if !ruling.passed() {
                 return status(out, ruling.wire());
             }
@@ -462,21 +457,27 @@ fn answer(
             name,
             entry,
             rule,
+            mine,
         } => {
-            // **"归落牌的那一位"**：落之前先看这一格现在归谁——不是我就拒（这就是 `land` 那一格
-            // 自己的准入）。占了的位置由**先落的人**说了算；空着的位置谁都能落，落了就登记成他的。
+            // **"改这一格"那一轴**：落之前先看这一格现在归谁——不是我就拒。占了的位置由
+            // **活着的主人**说了算；空着的位置谁都能落，落了就登记成他的。
             //
-            // **按坐标查**（不是按号）：门口这一问发生在动树之前，而 `land` 换绑**不动号**——
-            // 见 [`Publishers`] 那段照实记（第一版按号查，真机上把这一道判据整个跳过去了）。
-            if !claimable(publishers, at, name, who) {
+            // **按坐标查**（不是按号）：`land` 那一问发生在动树之前，而 `land` 换绑**不动号**
+            // ——故那一刻手里只有坐标。见 [`Book`] 那段照实记（第一版按号查，真机上把这一道
+            // 判据整个跳过去了）。
+            if !book.claimable(Key::At(at, name), who, |id| fresh(tree, id)) {
                 return status(out, ocall::DENIED);
             }
+            // **先要位、再动树、最后记账**——次序是硬的（见 [`Ledger::grow`]）：记账失败若发生
+            // 在动树之后，那一格就成了"树上有、账上没有"= **私名变公名**。
+            let Ok(blank) = book.grow() else {
+                return status(out, ocall::FULL);
+            };
             return match tree.land(at, name, entry) {
                 Ok(id) => {
-                    if rule == ocall::Rule::Owner {
-                        // 记的是"**那一刻挂上去的那一枚**"：它答不答得出，就是主人还在不在场。
-                        remember(publishers, at, name, who, entry);
-                    }
+                    // 记的是"**那一刻挂上去的那一枚**"：它答不答得出，就是主人还在不在场。
+                    // `mine = false` 是**放弃归属**（连"改规矩"也走这一条）。
+                    book.write(blank, Line::new(at, name, id, rule, mine, who, entry));
                     ocall::pack_id(out, id)
                 }
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
@@ -484,7 +485,14 @@ fn answer(
         }
         ocall::AskIn::Part { at, name } => {
             return match tree.part(at, name) {
-                Ok(id) => ocall::pack_id(out, id),
+                Ok(id) => {
+                    // **§1.5 那个窄口子**：`part` 碰到一枚 `Tile` 会静默把它顶成一块 `Pane`
+                    // ——那一格已经不是"放 Pie 的那一格"了，故账上那一行要销掉。
+                    // （漏了也不会答错：`fresh` 那一次对真相兜着；这只是不让账留一条陈的。）
+                    let _ = id;
+                    book.drop(id);
+                    ocall::pack_id(out, id)
+                }
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
             };
         }
@@ -492,12 +500,23 @@ fn answer(
         // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
         ocall::AskIn::Find(id) => {
             let mut grant = Ok(());
-            tree.find(id, |pie| {
+            let said = tree.find(id, |pie| {
                 grant = ocall::ship(pie, who).map(|_| ());
-            })
-            .and(grant)
+            });
+            if said == Err(Fail::Dead) {
+                // 核心**已经**把那一格剔了（"惰性剔死"）——顺手销账，别留一条陈的。
+                book.drop(id);
+            }
+            said.and(grant)
         }
-        ocall::AskIn::Trim(id) => tree.trim(id),
+        ocall::AskIn::Trim(id) => {
+            let said = tree.trim(id);
+            if said.is_ok() {
+                // 格子从树上没了 ⇒ 那一行也走。
+                book.drop(id);
+            }
+            said
+        }
         // **三条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
         ocall::AskIn::List(at) => {
             return match tree.list(at) {

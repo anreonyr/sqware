@@ -10,18 +10,26 @@
 > | 判据 `operator::judge`（三格裁决 + 三个注入事实，两个号泛型） | ✅ `crates/protocol/src/operator/judge.rs` |
 > | 裁决 → 线上那一格 `operator::gate`（`Code` / `Control` / `Blind` / `verdict`） | ✅ `crates/protocol/src/operator/gate.rs` |
 > | 线上两格新码 `DENIED=8` / `UNJUDGED=9` | ✅ `operator/call.rs`（值与 `gate` 那一份由编译期断言钉住） |
-> | 宿主台第三台（`judge-case`，19 例） | ✅ `scripts/host.sh` 三台共 **42 例全过** |
+> | 宿主台第三台（`judge-case`） | ✅ `scripts/host.sh` 三台共 **42 例全过**（**下一刀之后 25 例 / 48 例**——它同时编 `judge` + `gate` + `ledger`） |
 > | 树那一侧：认门牌 → 开门禁 → 判 `land`/`find`/`trim` | ✅ `programs/src/supervisor/operator/server.rs` |
 > | 装配那一侧：身份服务**自己**把门牌交给持树者 + 递一格号 | ✅ `principal/server.rs` + `operator/bridge.rs` + `service.rs` |
 > | 真机门 | ✅ `examine` **3/3**、`soak` **10/10**（既有 11 条 `tree part=0 …` 与 3 条 `list` 一字未变） |
+> | 下一刀 | [`operator-rule.md`](operator-rule.md)：规矩那一格的形状（`Is` / `Under` / `In` 通线） |
 > | **真机负证（一）**：没身份（`prog-probe-denied` + `Program::bind = false`） | ✅ `probe: tree land=8 seek=err:1` + `probe-denied: denied as expected` |
 > | **真机负证（二）**：有身份但那一格归别人（`prog-probe-owner`，撞 `uart` 的 `/device/uart`） | ✅ `probe-owner: tree land=8 before=5 after=id=5` + `probe-owner: owner rule held` |
 > | **真机正证**：主人**不在场** ⇒ 那一格重新可落（`prog-probe-lease` 落完 `/sys/lease` 就死，`probe-owner` 接手） | ✅ `probe-lease: landed, leaving` + `probe-owner: lease land=0 id=7 (owner gone ⇒ take-over)` |
-> | **规矩那一格**（`call::Rule`，`land` 帧尾第 51 字节） | ✅ 默认 `Public`；`Owner` = "归落牌那一位"。服务侧的账只登记 `Owner` 的那些（`Publishers`） |
+> | **规矩那一格**（`land` 帧尾第 51 字节） | ✅ 这一刀只有"改"那一轴（`Owner` = "归落牌那一位"），服务侧的账只登记它。**"用"那一轴是全局默认 `Public`**——下一刀把它落成逐格的事实 |
 > | `Desk` 从定长数组改成可增长（`Vec` + `try_reserve` 报 `Full`） | ✅ 两次撞满常数（8 → 12 → 门禁这一刀又满），第三次改成可增长 |
 >
-> **还没做的**（见 §8）：逐条目的规则（今天所有条目共用 `Rule::Public` 这个默认值）、
-> `Rule::In` 要的结盟那一枚门牌、`seek` 等四条进不进闸口。
+> **还没做的**（见 §8）——**下一刀做掉了前两条**，见 [`operator-rule.md`](operator-rule.md)：
+>
+> - ~~逐条目的规则（今天所有条目共用 `Rule::Public` 这个默认值）~~ → **已做**：`Ledger` 逐格记
+>   "用"那一轴（`Is` / `Under` / `In` 在真机上各有正负证）；
+> - ~~`Rule::In` 要的结盟那一枚门牌~~ → **已做**：盟册那一枚由 coalition 自己交给持树者；
+> - `seek` / `part` / `list` / `name` 进不进闸口 → **裁决：不进**（规矩挡的是钥匙，不是目录）。
+>
+> 照实记一笔：这一刀留下的 `Publishers`（只记 `Owner` 的那些）与 `container_of`（O(树) 的全树
+> 递归）在下一刀里**整体撤掉**——它们正是"账按一把钥匙记"那个缺陷的两处补丁。
 
 ---
 
@@ -375,7 +383,9 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
 - 甲档坑（按记号认领、转授失败不答 `OK`、`try_reserve`）——树的内部正确性，另一刀。
 - `part` 碰到一块 `Tile` 时静默顶掉它那条（§1.5 的窄口子）——**只在正文记一笔**，不改行为：
   今天 `/sys`、`/device` 一直是 `Pane`，为一个不会发生的状态动换绑分支不值。
-- 规则的形状（`Allow` / `Is` / `Under` / `In` 怎么表达、能不能组合）——闸口跑通后再谈。
+- ~~规则的形状（`Allow` / `Is` / `Under` / `In` 怎么表达、能不能组合）——闸口跑通后再谈。~~
+  → **已做**：闸口跑通了，下一刀（[`operator-rule.md`](operator-rule.md)）把"用"那一轴落成
+  逐格的事实，`Is` / `Under` / `In` 三条判据在真机上各有了正证与负证。
 - 死亡道（板那条 `gone-<名字>` 树一条都没认领）。
 - 别名（同一枚 Pie 挂两个名 = 两条独立条目）。
 - 深度上限（`seek` 封顶 8 段，树本身无上限）。

@@ -110,6 +110,7 @@ extern "C" fn main() -> ! {
         me,
         entry,
         ocall::Rule::Public,
+        false,
         MS,
     );
     let land_code = match land {

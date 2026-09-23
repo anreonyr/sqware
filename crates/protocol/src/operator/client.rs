@@ -13,7 +13,8 @@ use runtime::env::mail::{self, AnyPie};
 
 use crate::operator::Fail;
 use crate::operator::call as ocall;
-use crate::operator::call::Rule;
+use crate::operator::judge::Id;
+use crate::operator::judge::Rule;
 pub use crate::operator::{ASK_MARK, LINK, TIP_NAME};
 use crate::operator::{EntryId, Listing, Where};
 use crate::session::Quay;
@@ -76,6 +77,9 @@ fn ask_out(
 ///
 /// `entry` 是客人手里那一枚：它**经会话交给持树者**（`Accord` 一份）后才进帧——报文里走的
 /// 是"种在持树者表里的那个号"，那才是它认得的坐标（见文件头与 [`ocall::ship`]）。
+///
+/// `rule` / `mine` 是**这一格的两轴条件**（用 / 改）——落牌的人当场声明，此后就由持树者
+/// 那一本账替它记着；默认是"公开 + 不声明归属"（既有的装配读数因此一字不改）。
 pub fn land(
     say: PieToken,
     link: &Quay,
@@ -83,7 +87,8 @@ pub fn land(
     at: Where,
     name: Name,
     entry: PieToken,
-    rule: Rule,
+    rule: Rule<Id, Id>,
+    mine: bool,
     millis: usize,
 ) -> Result<EntryId, u8> {
     let shipped = ocall::ship(entry, host).map_err(|_| ocall::BAD)?;
@@ -96,6 +101,7 @@ pub fn land(
             name,
             entry: shipped,
             rule,
+            mine,
         },
         &mut reply,
         millis,

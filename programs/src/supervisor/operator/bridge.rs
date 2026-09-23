@@ -13,9 +13,12 @@ use protocol::session::Quay;
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
 
-/// **协调那一帧**（16 字节）——装配者告诉持树者"身份服务是谁、它自己把门牌交过来了"。
+/// **协调那一帧**（16 字节）——装配者告诉持树者"哪一位域把门牌交过来了、它是哪一双眼睛"。
 ///
-/// 布局：`[0..8]` = 身份服务的号（小端）｜`[8..16]` = 保留零。
+/// 布局：`[0..8]` = 那一位域自己的号（小端）｜`[8..16]` = [`Role`]（`0` = 名册，`1` = 盟册）。
+///
+/// **照实记（后 8 字节的来历）**：门禁那一刀里它们是**保留零**。这一刀起有了意思——于是两枚
+/// 门牌可以**分两帧、按位递**，"长度即语义"（16 = 这一帧）一个字没破。
 ///
 /// # 为什么门牌不由装配者转授（照实记：这一格返工过）
 ///
@@ -24,21 +27,33 @@ use protocol::session::Quay;
 /// `FETCH|STORE`）、也在表里。那一格的三道闸（覆盖子集 / 持 `VEST` / 形态一致）都不是原因，
 /// 于是这一笔"第二手转授"在装配窗口里带进了说不清的锚与来历问题。
 ///
-/// **改成由身份服务自己交**（它本来就是树的客人：`serve_tree` 那一趟已经握着树路）：
-/// 它 `serve_tree` 之后把门牌那一枚直接 `ship` 给持树者，再把**自己的号**经这一帧递过去。
-/// 于是：
+/// **改成由各域自己交**（它本来就是树的客人：`serve_tree` 那一趟已经握着树路）：
+/// 它 `serve_tree` 之后把门牌那一枚直接 `ship` 给持树者，再把**自己的号 + 哪一双眼睛**经这一
+/// 帧递过去。于是：
 ///
 /// - 持树者拿到的门牌**一手来源**，没有第二手转授；
 /// - 装配者只剩"递一格号"这一件事，`attach` 里不多一次 `Ship`；
-/// - 身份服务本来就与树有一条会话（挂门牌那一趟），这一笔是它的近邻。
+/// - 各域本来就与树有一条会话（挂门牌那一趟），这一笔是它的近邻。
 ///
 /// 长度即语义：**8 字节 = 一位客人**（`settle` 认客人的那一格），**16 字节 = 这一帧**。
 const COORD: usize = 16;
 
-/// 把协调那一帧推给持树者（**只在身份服务那一格调一次**）。
-fn coord_frame(into: PieToken, who: TaskId) -> Result<(), ()> {
+/// **这一枚是哪一双眼睛**：协调那一帧的后 8 字节。
+///
+/// 与 `programs/src/supervisor/operator/server.rs` 的同一格必须同值——那边是**收**这一侧。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Role {
+    /// 名册（`/sys/principal`）：答"这一位此刻代表谁"与"在不在他那一支里"。
+    Roster = 0,
+    /// 盟册（`/sys/coalition`）：答"这一位在那枚盟里吗"。
+    League = 1,
+}
+
+/// 把协调那一帧推给持树者（**每一位递门牌的域各调一次**）。
+fn coord_frame(into: PieToken, who: TaskId, role: Role) -> Result<(), ()> {
     let mut frame = [0u8; COORD];
     frame[..8].copy_from_slice(&(who.get() as u64).to_le_bytes());
+    frame[8..].copy_from_slice(&(role as u64).to_le_bytes());
     mail::HolePie::from_token(into).push(&frame).map_err(|_| ())
 }
 
@@ -46,7 +61,8 @@ fn coord_frame(into: PieToken, who: TaskId) -> Result<(), ()> {
 ///
 /// `host` = 持树者的号（`service::spawn` 交回来的那个，装配者本来就知道它）。
 /// `tip` = 提示之路在**本线程表里**的那一枚（第一次用时认下来，此后逐条传下去）。
-/// `coord` = 协调那一帧要带的号（身份服务那一格才有）：**身份服务的号**。其余每一格传 `None`。
+/// `coord` = 协调那一帧要带的两格（**哪一位域** + **它是哪一双眼睛**）：那位递门牌的域那一格
+/// 才有值，其余留空——**定长两格**，因为这一族只有两双眼睛（[`Role`]）。
 ///
 /// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 提示孔认不到……对调用方是
 /// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格。
@@ -56,7 +72,7 @@ pub fn attach(
     host: TaskId,
     millis: usize,
     tip: &mut Option<PieToken>,
-    coord: Option<TaskId>,
+    coord: &[(Option<TaskId>, Role)],
 ) -> Result<(), &'static str> {
     let link = Name::new(LINK).map_err(|_| "operator:name")?;
     // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
@@ -69,11 +85,14 @@ pub fn attach(
     //    要推的正是它（**不是** `host`：那是持树者的号，推不动）。
     let _ = host_of(host, millis, tip)?;
     let tip_at = (*tip).ok_or("operator:tip")?;
-    // 3.5 **协调那一帧**：把身份服务的号推过去。**门牌不由这里转授**（那是身份服务自己
+    // 3.5 **协调那一帧**：把递门牌那几位域的号推过去。**门牌不由这里转授**（那是各域自己
     // 在 `serve_tree` 之后直接交给持树者的，理由见 [`COORD`] 那段照实记）。
-    // 次序仍是契约：客人号来之前，持树者先认出身份服务那一枚门牌（它按 `owner` + 记号找）。
-    if let Some(who) = coord {
-        coord_frame(tip_at, who).map_err(|_| "operator:coord")?;
+    // 次序仍是契约：客人号来之前，持树者先认出名册那一枚门牌（它按 `owner` + 记号找）；
+    // 两帧按位递、次序不定，收到哪一枚就补上哪一枚（对齐见 `server.rs` 的 `settle`）。
+    for &(who, role) in coord {
+        if let Some(who) = who {
+            coord_frame(tip_at, who, role).map_err(|_| "operator:coord")?;
+        }
     }
     let reply = reply_path(quay).ok_or("operator:hand")?;
     hand(reply, host).map_err(|()| "operator:hand")?;

@@ -79,6 +79,17 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     ("probe-denied", "prog-probe-denied", ProgramKind::User),
     // 第二种负证（**U 态**）：**有身份**、但那一格归别人（`Rule::Owner`）⇒ 也拒。
     ("probe-owner", "prog-probe-owner", ProgramKind::User),
+    // 规矩那一格的证客（**U 态**）：有身份的一台把 `Is` / `Under` / `In` 三条规矩落下去，
+    // 先以自己试（正证），再换一位代表试（负证 + "看支不看相等"）。读数见
+    // `programs/src/user/probe_rule.rs`。
+    ("probe-rule", "prog-probe-rule", ProgramKind::User),
+    // 另一位客人（**U 态**）：**有身份**地去用别人立了规矩的那两格 ⇒ 都该拒。
+    // 那是"第二道门"的反例（第一道由 `probe-denied` 量）。读数见 `probe_rule_other.rs`。
+    (
+        "probe-rule-other",
+        "prog-probe-rule-other",
+        ProgramKind::User,
+    ),
     // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
     ("probe-lease", "prog-probe-lease", ProgramKind::User),
     // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器

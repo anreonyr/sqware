@@ -14,7 +14,8 @@
 //!   Ask    seek   [0] op  [1] 段数  [2 .. 2+32k] 路                （k ≤ ROAD_MAX）
 //!          list   [0] op  [1] 记    [2 .. 10]     号              （记：0 = 根 / 1 = 号）
 //!          part   [0] op  [1] 记    [2 .. 10]     号  [10 .. 42] 名
-//!          land   [0] op  [1] 记    [2 .. 10]     号  [10 .. 42] 名  [42 .. 50] 尾格
+//!          land   [0] op  [1] 记    [2 .. 10] 号 [10 .. 42] 名 [42 .. 50] 尾格
+//!                 [50] 改   [51] 用   [52 .. 60] 号
 //!          find   [0] op  [1 .. 9] 号
 //!          trim   同 find
 //!          name   同 find
@@ -38,6 +39,7 @@ use env::Mark;
 use env::{Name, PieToken, TaskId};
 
 use super::core::{EntryId, Fail, Operator, Unship, VestedBy, Where};
+use super::judge::Id;
 use crate::session::{Claim, Seat};
 
 // ── 码 ──────────────────────────────────────────────────────
@@ -83,39 +85,70 @@ pub const DENIED: u8 = 8;
 /// 前者该放弃，后者该重试。合成一格，就会把"身份服务挂了"读成"我没权限"。
 pub const UNJUDGED: u8 = 9;
 
-/// **落牌的人给这一格声明的规矩**（`land` 那一帧的第 51 个字节）。
+/// **落牌的人给这一格声明的条件** —— 两轴，两格。
 ///
-/// 这是[`judge`](crate::operator::judge) 那套谓词在**线上**的最小一档：今天只分"公开"与
-/// "归落牌的那一位"。逐位身份 / 某一支 / 某一盟（`Rule::Is` / `Under` / `In`）都还没落——
-/// 它们要用 `PrincipalId` / `CoalitionId`，而那两个号空间是 8 字节、要从树这一侧算出来。
+/// ```text
+///   [50] 改那一轴   mine: bool        —— 归不归落牌的那一位
+///   [51] 用那一轴   标记（0..3）
+///   [52 .. 60]      号（8 字节 LE）    —— 只有 1/2/3 那三格用得上
+/// ```
 ///
-/// **为什么是"落牌的人"而不是"某个身份号"**：树在门口拿得到的那枚印章是**发送者的 TID**
-/// （内核在 `Push` 那一刻盖的），而"归谁"只要与这枚印章比一次——**不花一次到身份服务的问**
-/// （`judge::Rule::Published`）。等真要按身份收窄，再把 `PrincipalId` 搬上帧。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rule {
-    /// 谁都能用（**默认**：既有的装配读数一字不改）。
-    Public,
-    /// **归落牌的那一位**：别人不能接手这一格（换绑会答 [`DENIED`]）。
-    Owner,
+/// **两轴是两件事**，故各占各的格：
+///
+/// - **用**那一轴 = [`Rule<Id, Id>`]（[`judge`](super::judge) 那一套四格：公开 / 就是某一位 /
+///   在某一位那一支里 / 在某枚盟里）；
+/// - **改**那一轴 = 今天原来那一格（"归落牌的那一位"），**它本来就只是 0/1**，故退成一个
+///   `bool`——线上值逐字同义（`Owner` 原是 1、`Public` 原是 0）。
+///
+/// 两轴混成一格就会得出"能改的人自然能用"（而反过来才是常见的那一种）。
+///
+/// # 这一格原来是一个叫 `Rule` 的两格枚举（照实记：撞名）
+///
+/// 仓里因此有两个同名的 `Rule`（模型那一侧四格、线上这一侧两格），而持树者那一侧同时
+/// `use` 了两个——再加一轴就会写出"这个 `Rule` 不是那个 `Rule`"的代码。这一刀把它拆开：
+/// 线上一侧只剩 [`Rule`] 这一个名字（**再出口**自模型那一侧），"改"退成 `bool`。
+///
+/// **方向也是挑过的**：本文件反向依赖 [`judge`](super::judge)（同一模块树内），而后者从不
+/// 依赖本文件——故 [`gate`](super::gate) 那条"不与 `call.rs` 沾边"的纪律一字不破（`call.rs`
+/// 拖着 `runtime`，`judge.rs` 不拖）。
+pub use super::judge::Rule;
+
+/// 「用那一轴」在帧里的标记。`0` 是公开，也是**兜底**（读不到 / 读不懂都走它）。
+const RULE_PUBLIC: u8 = 0;
+const RULE_IS: u8 = 1;
+const RULE_UNDER: u8 = 2;
+const RULE_IN: u8 = 3;
+
+/// 把「用那一轴」写进 `[51]`（标记）与 `[52 .. 60]`（号）。
+fn pack_rule(out: &mut [u8; ASK_MAX], rule: Rule<Id, Id>) {
+    let (tag, id) = match rule {
+        Rule::Public => (RULE_PUBLIC, 0),
+        Rule::Is(p) => (RULE_IS, p),
+        Rule::Under(p) => (RULE_UNDER, p),
+        Rule::In(c) => (RULE_IN, c),
+    };
+    out[TAIL_AT + 9] = tag;
+    out[TAIL_AT + 10..TAIL_AT + 18].copy_from_slice(&id.to_le_bytes());
 }
 
-impl Rule {
-    /// 线上那一格（`land` 帧尾）。
-    pub const fn wire(self) -> u8 {
-        match self {
-            Rule::Public => 0,
-            Rule::Owner => 1,
+/// 由线上那两格还原。**读不懂就不认那条规矩**——按 [`Rule::Public`] 走，而不是把整帧判成
+/// 坏（一个陌生/缺失的规矩不该让一句问话变成 [`BAD`]）。§7.5③ 那条兜底的第二次应用：
+/// 51 字节之前的老帧读不到这两格，于是逐字同义地回到"公开"。
+fn unpack_rule(bytes: &[u8]) -> Rule<Id, Id> {
+    let tag = *bytes.get(TAIL_AT + 9).unwrap_or(&RULE_PUBLIC);
+    let id = match bytes.get(TAIL_AT + 10..TAIL_AT + 18) {
+        Some(raw) => {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(raw);
+            Id::from_le_bytes(buf)
         }
-    }
-
-    /// 由线上那一格还原。**读不懂就不认那条规矩**——按 [`Rule::Public`] 走，
-    /// 而不是把整帧判成坏（一个陌生的规矩字节不该让一句问话变成 `BAD`）。
-    pub const fn from_wire(byte: u8) -> Rule {
-        match byte {
-            1 => Rule::Owner,
-            _ => Rule::Public,
-        }
+        None => 0,
+    };
+    match tag {
+        RULE_IS => Rule::Is(id),
+        RULE_UNDER => Rule::Under(id),
+        RULE_IN => Rule::In(id),
+        _ => Rule::Public,
     }
 }
 
@@ -161,6 +194,11 @@ const AT_ID: u8 = 1;
 const NAME_AT: usize = 10;
 /// 问话里"尾格"那一块的起点（只有 `land` 用）。
 const TAIL_AT: usize = NAME_AT + env::wire::NAME_LEN;
+/// `land` 那一帧的长度：**纯追加**扩到 60（原 51）。
+///
+/// 前 51 字节一个偏移都没动，两个新格挂在其后——故 51 字节的老帧照旧解得出来（读不到那两格
+/// ⇒ 用那一轴按 [`Rule::Public`] 走），而"规矩那一格在最后"这条老纪律也还在（见 §7.5③）。
+pub const LAND_FRAME: usize = TAIL_AT + 18;
 
 // ── 问话：一个动作一条形状 ──────────────────────────────────
 
@@ -181,13 +219,14 @@ pub enum Ask<'a> {
     /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（[`ship`] 换回来的），
     /// 不是"客人的 Pie 是几号"——两个编号空间不同源。
     ///
-    /// `rule` 是**落牌的人给这一格声明的规矩**（[`Rule`]）：默认公开，声明归自己之后
-    /// 别人接手这一格会被拒。
+    /// `rule` 是**落牌的人给这一格声明的"用"那一轴**（[`Rule`]），`mine` 是**"改"那一轴**
+    /// （声明归自己之后，别人接手这一格会被拒）。
     Land {
         at: Where,
         name: Name,
         entry: PieToken,
-        rule: Rule,
+        rule: Rule<Id, Id>,
+        mine: bool,
     },
     /// `find`：那一号后面那一枚 Pie。
     Find(EntryId),
@@ -227,12 +266,14 @@ pub enum AskIn {
         at: Where,
         name: Name,
     },
-    /// `land`：容器坐标 + 新名 + 入口那一枚 + **这一格归谁**（[`Rule`]）。
+    /// `land`：容器坐标 + 新名 + 入口那一枚 + **这一格的两轴条件**
+    /// （用那一轴 [`Rule`] / 改那一轴 `mine`）。
     Land {
         at: Where,
         name: Name,
         entry: PieToken,
-        rule: Rule,
+        rule: Rule<Id, Id>,
+        mine: bool,
     },
     /// `find` / `trim` / `name`：一枚号（三者的形状一样，故解出来仍是三格）。
     Find(EntryId),
@@ -271,13 +312,15 @@ pub fn pack_ask(ask: Ask<'_>) -> ([u8; ASK_MAX], usize) {
             name,
             entry,
             rule,
+            mine,
         } => {
             pack_at(&mut out, at);
             pack_name_in(&mut out, name);
             out[TAIL_AT..TAIL_AT + 8].copy_from_slice(&entry.to_bytes());
-            // **规矩那一格在最后**（`[50]`）：前 50 字节的形状照旧，加这一格不动任何既有偏移。
-            out[TAIL_AT + 8] = rule.wire();
-            51
+            // **两轴各一格**：`[50]` 是原来那一格（值逐字同义），`[51]` 起是纯追加。
+            out[TAIL_AT + 8] = mine as u8;
+            pack_rule(&mut out, rule);
+            LAND_FRAME
         }
         Ask::Find(id) | Ask::Trim(id) | Ask::Name(id) => {
             out[1..9].copy_from_slice(&id.to_bytes());
@@ -339,13 +382,15 @@ pub fn unpack_ask(op: u8, bytes: &[u8]) -> Option<AskIn> {
             name: unpack_name(bytes, NAME_AT)?,
         }),
         // 入口那一枚**必须带**：没带（全 0 ⇒ 解不出令牌）就是一句读不懂的帧，不猜。
-        // 规矩那一格**可以没有**（51 字节之前的老帧）：`None` 就按 [`Rule::Public`] 走
-        // ——帧加一格不该让旧调用方当场变坏。
+        // 两轴那两格**可以没有**（60 字节之前的老帧）：`mine` 读 `[50]`（51 字节的老帧本来
+        // 就有它，值逐字同义），用那一轴读不到 ⇒ [`Rule::Public`]——帧加格子不该让旧调用方
+        // 当场变坏，也不该把一个陌生的标记读成"这一问读不懂"。
         LAND => Some(AskIn::Land {
             at: unpack_at(bytes)?,
             name: unpack_name(bytes, NAME_AT)?,
             entry: PieToken::from_bytes(&tail(bytes)?)?,
-            rule: Rule::from_wire(*bytes.get(TAIL_AT + 8).unwrap_or(&0)),
+            rule: unpack_rule(bytes),
+            mine: *bytes.get(TAIL_AT + 8).unwrap_or(&0) != 0,
         }),
         FIND | TRIM | NAME => {
             let id = unpack_id(bytes, 1)?;

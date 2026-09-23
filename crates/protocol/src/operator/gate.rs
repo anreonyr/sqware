@@ -23,10 +23,14 @@
 //! # 默认策略 = 公开
 //!
 //! [`Rule::Public`] 的含义是"**任何已绑身份都可以**"——没绑的仍然不行（那是 [`judge`] 的第一格）。
-//! 这一刀先按它判：条目上还没有逐格规则（那是下一刀），故所有条目共用这一条默认值。
+//! 它今天是**"这一格没记过规矩"那一条**的答案（逐格规矩住在 [`ledger`](super::ledger) 里，
+//! 见 [`Ledger::rule`](super::ledger::Ledger::rule)）：`part` 分出来的格子本来就没有规矩。
 //! **默认必须是它**，否则既有的 11 条 `tree part=0 … land=0 find=0 got=true` 会当场塌。
+//!
+//! 照实记：上一刀这里写的是"条目上还没有逐格规则（那是下一刀）"——那一刀所有条目共用这一条
+//! 常量，故 `judge` 里 `Is` / `Under` / `In` 三条判据**一次没被问过**；这一刀通了它们。
 
-use super::judge::{Branch, League, Rule, Ruling, Who, judge};
+use super::judge::{Branch, Id, League, Rule, Ruling, Who, judge};
 use env::TaskId;
 
 // ── 线上那一格：**本文件自己拿一份** ────────────────────────
@@ -78,11 +82,11 @@ pub trait Control {
         true
     }
     /// 这个 TID 此刻代表哪条号（`Ok(None)` = 没绑；`Err` = 问不到）。
-    fn who(&self, tid: TaskId) -> Result<Option<u32>, ()>;
+    fn who(&self, tid: TaskId) -> Result<Option<Id>, ()>;
     /// `a` 在 `b` 那一支里吗（`Err` = 问不到）。
-    fn heir(&self, a: u32, b: u32) -> Result<bool, ()>;
-    /// 这一位在这枚盟里吗（`Err` = 问不到）。
-    fn amid(&self, at: u32) -> Result<bool, ()>;
+    fn heir(&self, a: Id, b: Id) -> Result<bool, ()>;
+    /// **`me`** 在这一枚盟里吗（`Err` = 问不到）。两格都要：盟册那一问本来就是这个形状。
+    fn amid(&self, me: Id, at: Id) -> Result<bool, ()>;
 }
 
 /// **还没有门牌**的那一份实现：`has_face` 答 `false`，其余三问一律答"问不到"。
@@ -94,13 +98,13 @@ impl Control for Blind {
     fn has_face(&self) -> bool {
         false
     }
-    fn who(&self, _: TaskId) -> Result<Option<u32>, ()> {
+    fn who(&self, _: TaskId) -> Result<Option<Id>, ()> {
         Err(())
     }
-    fn heir(&self, _: u32, _: u32) -> Result<bool, ()> {
+    fn heir(&self, _: Id, _: Id) -> Result<bool, ()> {
         Err(())
     }
-    fn amid(&self, _: u32) -> Result<bool, ()> {
+    fn amid(&self, _: Id, _: Id) -> Result<bool, ()> {
         Err(())
     }
 }
@@ -108,26 +112,26 @@ impl Control for Blind {
 /// 三个假事实拼成 [`judge`] 要的那三个 trait——**本文件的全部粘合**。
 struct Facts<'a, C: Control>(&'a C);
 
-impl<C: Control> Who<u32> for Facts<'_, C> {
-    fn who(&self, tid: TaskId) -> Result<Option<u32>, ()> {
+impl<C: Control> Who<Id> for Facts<'_, C> {
+    fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
         self.0.who(tid)
     }
 }
 
-impl<C: Control> Branch<u32> for Facts<'_, C> {
-    fn heir(&self, a: u32, b: u32) -> Result<bool, ()> {
+impl<C: Control> Branch<Id> for Facts<'_, C> {
+    fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
         self.0.heir(a, b)
     }
 }
 
-impl<C: Control> League<u32> for Facts<'_, C> {
-    fn amid(&self, at: u32) -> Result<bool, ()> {
-        self.0.amid(at)
+impl<C: Control> League<Id, Id> for Facts<'_, C> {
+    fn amid(&self, me: Id, at: Id) -> Result<bool, ()> {
+        self.0.amid(me, at)
     }
 }
 
 /// 判一格：`control` 是问身份那两条边（装配期喂 [`Blind`]），`rule` 是那一格自己的规矩。
-pub fn verdict(control: &impl Control, who: TaskId, rule: Rule<u32, u32>) -> Code {
+pub fn verdict(control: &impl Control, who: TaskId, rule: Rule<Id, Id>) -> Code {
     // 手里没有门牌 ⇒ 当场答"装配期"，一次问都不发（省一次注定失败的 envcalls）。
     if !control.has_face() {
         return Code::Blind;
@@ -148,32 +152,32 @@ mod tests {
     use super::*;
 
     const ME: TaskId = TaskId::new(22);
-    const P: u32 = 7;
+    const P: Id = 7;
 
     /// 一颗能答的身份边。
     struct Real;
     impl Control for Real {
-        fn who(&self, tid: TaskId) -> Result<Option<u32>, ()> {
+        fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
             Ok((tid == ME).then_some(P))
         }
-        fn heir(&self, a: u32, b: u32) -> Result<bool, ()> {
+        fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
             Ok(a == b)
         }
-        fn amid(&self, at: u32) -> Result<bool, ()> {
-            Ok(at == P)
+        fn amid(&self, me: Id, at: Id) -> Result<bool, ()> {
+            Ok(me == P && at == P)
         }
     }
 
     /// 一颗**答不上来**的身份边（服务在，但这一问没答）。
     struct Mute;
     impl Control for Mute {
-        fn who(&self, _: TaskId) -> Result<Option<u32>, ()> {
+        fn who(&self, _: TaskId) -> Result<Option<Id>, ()> {
             Err(())
         }
-        fn heir(&self, _: u32, _: u32) -> Result<bool, ()> {
+        fn heir(&self, _: Id, _: Id) -> Result<bool, ()> {
             Err(())
         }
-        fn amid(&self, _: u32) -> Result<bool, ()> {
+        fn amid(&self, _: Id, _: Id) -> Result<bool, ()> {
             Err(())
         }
     }

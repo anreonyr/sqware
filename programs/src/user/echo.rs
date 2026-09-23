@@ -247,6 +247,7 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         name,
         entry,
         ocall::Rule::Public,
+        false,
         MS,
     );
     let b = match plate {

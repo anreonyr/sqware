@@ -526,6 +526,7 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
             me,
             entry,
             ocall::Rule::Public,
+            false,
             QUAY_MS,
         ),
         Err(code) => Err(code),

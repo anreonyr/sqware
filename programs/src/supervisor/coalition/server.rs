@@ -32,6 +32,7 @@ use protocol::session::Quay;
 use protocol::session::call as scall;
 use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
+use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::room::{self, exit_with};
@@ -91,6 +92,25 @@ pub fn serve() -> ! {
         exit_with(E_TREE);
     };
     serve_tree(&tree, talk, host, entry);
+
+    // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
+    // `operator::open` 交回来的那一格）。它据此才判得了"这一位在那枚盟里吗"（`Rule::In`）。
+    //
+    // 与 principal 那一格同一形状（见 `programs/src/supervisor/operator/bridge.rs` 的 `COORD`
+    // 照实记：装配者转授那一版真机报 `operator:coord-ship`，内核 `-1`）。这一枚在手时权限是
+    // `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。装配者那一侧按位递
+    // `Role::League`——两枚门牌**分两帧、次序不定**，持树者收到哪一枚补哪一枚。
+    if port::ship(
+        &HolePie::from_token(entry),
+        host,
+        Access::FETCH | Access::STORE,
+        Policy::NONE,
+    )
+    .is_err()
+    {
+        say("coalition: gate not handed");
+        exit_with(E_TREE);
+    }
 
     // 五、**身份那一份门牌**：本域是它的客人（K7）。带重试——它可能落得比本域晚。
     let Some(face_entry) = find_face(&tree, talk, host) else {
@@ -291,6 +311,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
             me,
             entry,
             ocall::Rule::Public,
+            false,
             MS,
         ),
         Err(code) => Err(code),

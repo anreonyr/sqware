@@ -58,6 +58,13 @@ pub type Died = usize;
 /// 域内自产的线程仍默认没身份（身份是装配期的产物）。
 const PRINCIPAL: &str = "principal";
 
+/// 结盟服务在装配单上的名字：它一放行，本域就把它的号占进**协调那一帧**的第二格（盟册那一双
+/// 眼睛）——持树者的门禁据此才判得了 [`Rule::In`](protocol::operator::Rule::In)。
+///
+/// 与 [`PRINCIPAL`] 那一格同一形状：名册是**契约**（没它就没有门禁），盟册是**加项**（没它只有
+/// 那一格答"判不了"）。
+const COALITION: &str = "coalition";
+
 /// 认身份门牌 / 与它说话的短等间隔（毫秒）：门牌由 Server 起手交出，这里只是短等。
 const RETRY_MS: usize = 1;
 
@@ -189,9 +196,13 @@ pub fn assemble<'a>(
     let mut otip: Option<PieToken> = None;
     // 身份服务那一面：它一起好本域就有，此后每条服务的身份都从它来。
     let mut face: Option<Face> = None;
-    // **协调那一帧**要带的两格（身份服务的号 + 它那枚门牌在**本表**里的号）——只在身份服务
-    // 那一格填一次，此后随每一条 `attach` 传下去（持树者据此才判得了身份）。
-    let mut coord: Option<TaskId> = None;
+    // **协调那一帧**要带的两位（名册 / 盟册）：各自那一域起来之后就占上那一格，此后随每一条
+    // `attach` 传下去（持树者据此才判得了身份、判得了盟籍）。**定长两格**——这一族只有两双
+    // 眼睛（`operator::Role`）；门牌**不由这里转授**，各域自己在 `serve_tree` 之后交。
+    let mut coord: [(Option<TaskId>, operator::Role); 2] = [
+        (None, operator::Role::Roster),
+        (None, operator::Role::League),
+    ];
     for (i, p) in plan.iter().enumerate() {
         let rep = start(
             table,
@@ -218,10 +229,10 @@ pub fn assemble<'a>(
         // 身份服务本身：它一放行，本域就认下它交给生我者的那一枚门牌，再把**前两条**
         // （它自己与树）补绑上——它们起来的时候它还没在，没得绑。
         if p.name == PRINCIPAL {
-            // **协调那一帧**要带的号：身份服务自己。它那一枚门牌**由它自己**在
-            // `serve_tree` 之后直接交给持树者（见 `operator/bridge.rs` 的 `COORD` 照实记：
-            // 装配者转授那一版真机栽在 `coord-ship`），装配者只剩递一格号这件事。
-            coord = Some(rep);
+            // **协调那一帧**要带的第一格：身份服务自己（名册那一双眼睛）。它那一枚门牌**由它
+            // 自己**在 `serve_tree` 之后直接交给持树者（见 `operator/bridge.rs` 的 `COORD`
+            // 照实记：装配者转授那一版真机栽在 `coord-ship`），装配者只剩递一格号这件事。
+            coord[0].0 = Some(rep);
             let f = face_of(rep).ok_or_else(|| {
                 step(p, "no identity face");
                 p.died
@@ -245,6 +256,13 @@ pub fn assemble<'a>(
                 })?;
             }
             face = Some(f);
+        }
+        // 结盟服务：它一放行，就把它的号占进**协调那一帧**的第二格（盟册那一双眼睛）。
+        // 它的门牌**也是它自己交的**（同 principal 那一格：`serve_tree` 之后直接交给持树者，
+        // 见 `coalition/server.rs`）——装配者这一侧只递号、不转授。它的 `derive`/`bind`
+        // 由上面那条通用路做过（`p.bind`）。
+        if p.name == COALITION {
+            coord[1].0 = Some(rep);
         }
     }
 
@@ -272,10 +290,10 @@ pub fn start<'a>(
     face: Option<&Face>,
     lane: Option<PieToken>,
     machine: &Machine,
-    // **协调那一帧**（身份服务的号 + 它那枚门牌在本表里的号）：只有身份服务那一格填过之后
-    // 才非 `None`。它**只推一次**（持树者收到就开闸，重复推只是再落一枚同样的副本），
-    // 故这里 `take()` 掉——第一个上树的客人（= 身份服务自己）那一格用掉它。
-    mut coord: Option<TaskId>,
+    // **协调那一帧**要带的两格（哪一位域 + 它哪一双眼睛）：只有递门牌那两格填过之后才非空。
+    // 它**重复推**（每一位后续客人的 `attach` 都会推一遍）——持树者收到就按位补上，重复只是
+    // 再建一次同样的会话（幂等，见 `server.rs` 的 `settle`）。
+    coord: [(Option<TaskId>, operator::Role); 2],
 ) -> Result<TaskId, Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
 
@@ -356,7 +374,7 @@ pub fn start<'a>(
             step(p, "no tree yet");
             p.died
         })?;
-        operator::attach(&mut quay, rep, host, READY_MS, otip, coord.take()).map_err(|why| {
+        operator::attach(&mut quay, rep, host, READY_MS, otip, &coord).map_err(|why| {
             step(p, why);
             p.died
         })?;

@@ -87,6 +87,8 @@ const E_MEMBER: Died = 17;
 const E_PROBE: Died = 18;
 const E_PROBE_OWNER: Died = 19;
 const E_PROBE_LEASE: Died = 20;
+const E_PROBE_RULE: Died = 21;
+const E_PROBE_OTHER: Died = 22;
 
 /// 持树者：那棵命名树的服务（`prog-operator`）。**排第一位**——每位上树的客人都要它在。
 ///
@@ -433,6 +435,45 @@ const fn probe_lease() -> Program {
     }
 }
 
+/// 规矩那一格的证客（`prog-probe-rule`，U 态）：有身份的一台把 `Is` / `Under` / `In` 三条
+/// 规矩落到 `/sys/rule` 下，先以自己试（三条正证），再 `adopt` 一条子身份试（两条负证 +
+/// "`Under` 看支不看相等"）。
+///
+/// **排在 `probe-rule-other` 之前**：那一位要按名字去找这三格（它自己带一轮有界重试）。
+/// 它**照常绑身份**（`bind` 缺省 `true`）——否则量到的会是 `probe-denied` 那一格。
+const fn probe_rule() -> Program {
+    Program {
+        name: "probe-rule",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        died: E_PROBE_RULE,
+    }
+}
+
+/// 另一位客人（`prog-probe-rule-other`，U 态）：**有身份**地去用别人立了规矩的那两格。
+///
+/// 它证的是门禁**第二道门**的反例（"这一格不给你"），与 `probe-denied` 那道"你没身份"分工。
+const fn probe_rule_other() -> Program {
+    Program {
+        name: "probe-rule-other",
+        announce: Announce::None,
+        tokens: &[],
+        channels: &[],
+        needs: None,
+        board: false,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        died: E_PROBE_OTHER,
+    }
+}
+
 /// **装配单**：本域按这个顺序起服务。
 ///
 /// 持树者（`operator`）**排第一**：它是**服务**，但每位上树的客人都要它在——起来之后本域
@@ -466,6 +507,8 @@ const PLAN: &[Program] = &[
     probe_denied(),
     probe_lease(),
     probe_owner(),
+    probe_rule(),
+    probe_rule_other(),
     echo(),
 ];
 
