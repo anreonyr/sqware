@@ -39,6 +39,12 @@ pub fn open(holder: TaskId, millis: usize) -> Result<(Quay, TaskId), Fail> {
 ///
 /// 记号 = [`ASK_MARK`]：板那侧就是按它把这枚孔与**入口**分开的（两枚都由本端铸、本端交）。
 pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
+    // **一个域只铸一枚问话孔**：与我这一面同一句（见 `operator::client::ask_hole` 的照实记）
+    // ——先找我表里那一枚，有就不铸第二枚。板那一侧按 `(开者, 记号)` 两格认孔，故第二枚的
+    // 症状是"多出来的那枚永远没人读它的推"。
+    if let Some(have) = crate::session::call::find(me()?, ASK_MARK) {
+        return Ok(have);
+    }
     let ask = mail::unseal_hole(ASK_MARK).map_err(|_| Fail::Denied)?;
     let hole = mail::HolePie::from_token(ask);
     port::ship(&hole, board, Access::FETCH | Access::STORE, Policy::NONE)
@@ -46,6 +52,11 @@ pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
     hole.narrow(env::Permission::STORE)
         .map_err(|_| Fail::Denied)?;
     Ok(ask)
+}
+
+/// **本端是哪一枚线程**（"这一枚孔是谁开的"那一问要它；同 `operator` 那一面）。
+fn me() -> Result<TaskId, Fail> {
+    runtime::env::unit::self_id().map_err(|_| Fail::Unknown)
 }
 
 /// 客侧第二步：问一句、取一句答。返答话那一格（[`bcall::OK`] = 板收下了）。

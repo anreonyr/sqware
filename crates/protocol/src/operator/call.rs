@@ -671,7 +671,16 @@ pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
 pub const LINK: &str = "operator";
 
 /// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）。
-pub const ASK_MARK: Mark = Mark::of("ask");
+///
+/// **带面名**（同 `board` 那面的 `board-ask`、以及两面的 `*-tip`）：问话孔的认领键是
+/// "**谁开的 + 记号**"，而**同一枚任务可能同时是两面的客人**（`echo` / `guest` / `principal`
+/// …都是：一边问板、一边问树）——两枚孔都铸在**它自己那张表**里，记号再一样就分不开了。
+///
+/// 照实记（这一格是**量出来的**，不是想出来的）：把记号统一成 `ask` 之后，客侧"先找后铸"
+/// 的那一手当场把**板那一枚**当成了树那一枚交回来 ⇒ 树那条路永远没有问话孔 ⇒ 装机就塌
+/// （实测 `principal: tree … got=false` + `system: service failed`，`examine` **0/3**）。
+/// 今天两面的孔落进**两张不同的表**（板线程 / 持树者），故这件事从来没露过头。
+pub const ASK_MARK: Mark = Mark::of("operator-ask");
 
 /// 提示孔那一枚上的记号（持树者铸它时刻上去的；装配者按它认领那一枚）。
 pub const TIP_MARK: Mark = Mark::of("tip");

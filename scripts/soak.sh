@@ -73,7 +73,10 @@
 #      `8`/`0`；`trim=1` 证那一剪真的剪了。末两格是**另一条轴**：`mine=…` 是本域声明归自己的那一格，
 #      `keep=0` 是**换一位代表之后照样落得进**——归属记的是"**命**"而不是"身份"（账里那两格
 #      `who` + `pie` 都是任务级的），而同一次 `is_sub=8` 是"用"那一轴随身份走：**两条轴各问各的
-#      问题**，见 `operator-rule.md` §7.8）/
+#      问题**，见 `operator-rule.md` §7.8。末两格是**问话孔的构造**：`ask2=… ask_same=1` ——
+#      同一台客人要了**两次**问话孔，第二次叫回来的是**同一枚**（客侧先找后铸），故下面每一问
+#      （用的正是第二枚那个号）照旧走得通；**并且全程不许出现 `operator: two asks`**——那一句
+#      是持树者"在同一张表里认出两枚问话孔"时才说的，先找后铸之后这一句该一句都没有）/
 #      **`probe-other: tree is=8 under=8 foreign=8`** + **`probe-rule-other: all three denied as
 #      expected`**（**第二道门的负证**：另一位**有身份**的客人用别人立了规矩的那几格 ⇒ 都拒；
 #      上一行 `probe-denied` 量的是第一道门"你没身份"，这一行量的是这一格"不给你"）/
@@ -368,8 +371,9 @@ while [ "$i" -le "$rounds" ]; do
         && grep -q "probe-lease: tree land=0 dir=0 plate=[0-9]*" "$log" \
         && grep -q "probe-lease: landed, leaving" "$log" \
         && grep -q "probe-owner: lease land=0 id=" "$log" \
-        && grep -qE "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8 door=[0-9]+ open=0 foreign=8 open_sub=0 trim=1 at_pane=9 gone_door=9 mine=[0-9]+ keep=0" "$log" \
+        && grep -qE "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8 door=[0-9]+ open=0 foreign=8 open_sub=0 trim=1 at_pane=9 gone_door=9 mine=[0-9]+ keep=0 ask2=[0-9]+ ask_same=1" "$log" \
         && grep -q "probe-rule: the rules held" "$log" \
+        && ! grep -q "operator: two asks" "$log" \
         && grep -q "probe-other: tree is=8 under=8 foreign=8" "$log" \
         && grep -q "probe-rule-other: all three denied as expected" "$log" \
         && grep -q "echo: list root=0,3" "$log" \

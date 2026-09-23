@@ -151,6 +151,14 @@ extern "C" fn main() -> ! {
     let Ok(talk) = operator::ask_hole(host) else {
         bail("probe-rule: no tree ask")
     };
+    // 一点五、**再要一次问话孔**：一个域只该铸一枚 ⇒ 第二次叫回来的是**同一枚**（客侧先找后铸），
+    // 故下面每一问都改用**第二枚**那个号——它要是另一枚孔，持树者认的还是第一枚，
+    // 这些话就全石沉大海（`session` 事实 9 那个症状）。两件事一次量：`ask_same` 与后面所有读数。
+    let Ok(again) = operator::ask_hole(host) else {
+        bail("probe-rule: no second tree ask")
+    };
+    let ask_same = again == talk;
+    let talk = again;
     let Some(entry) = find_face(&tree, talk, host, ccall::DIR, ccall::NAME) else {
         bail("probe-rule: no coalition")
     };
@@ -337,13 +345,16 @@ extern "C" fn main() -> ! {
          is={is} under={under} in={inside} \
          is_sub={is_sub} under_sub={under_sub} in_sub={in_sub} \
          door={} open={open} foreign={foreign} open_sub={open_sub} \
-         trim={} at_pane={on_pane} gone_door={on_gone} mine={} keep={keep}",
+         trim={} at_pane={on_pane} gone_door={on_gone} mine={} keep={keep} \
+         ask2={} ask_same={}",
         pane_id.get(),
         p.get(),
         adopt as u8,
         door_id.get(),
         trimmed as u8,
         mine_id.get(),
+        again.get(),
+        ask_same as u8,
     ));
 
     // 十、判据：三条正证全 `OK`、两条负证恰是 `DENIED`、`Under` 那一格换人之后仍 `OK`；
@@ -363,6 +374,9 @@ extern "C" fn main() -> ! {
         && trimmed
         // 换一位代表之后，**自己声明归自己的那一格照样改得**（归属记的是"命"，见 §7.8）。
         && keep == ocall::OK
+        // **再要一次问话孔，叫回来的是同一枚**（客侧先找后铸）——而上面每一问用的正是第二枚
+        // 那个号：它要是另一枚孔，持树者认的是第一枚，这些话全石沉大海。
+        && ask_same
         && adopt
         && made == 3;
     exit_with_note(

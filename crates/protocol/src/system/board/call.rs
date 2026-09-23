@@ -195,7 +195,11 @@ pub const LINK: &str = "board";
 pub const ENTRY_MARK: Mark = Mark::of("entry");
 
 /// 问话孔那一枚上的记号（同上：客人铸、客人交；板按它认领那枚孔）。
-pub const ASK_MARK: Mark = Mark::of("ask");
+///
+/// **带面名**（`board-ask`）：认领键是"谁开的 + 记号"，而同一枚任务可能同时是两面的客人
+/// ——两枚孔都铸在它自己那张表里，记号再一样就分不开。理由与实测见
+/// [`operator::ASK_MARK`](crate::operator::call::ASK_MARK)。
+pub const ASK_MARK: Mark = Mark::of("board-ask");
 
 /// 提示孔那一枚上的记号（板线程铸它时刻上去的；装配者按它认领那一枚）。
 pub const TIP_MARK: Mark = Mark::of("tip");
