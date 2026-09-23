@@ -266,6 +266,18 @@
 # 常在 1 上下、偶发拉高（一次观测到 `idle_ring=173 idle_busy=171`，即**有界自旋**的长度，
 # 消费者认领 PLIC 后收住）。
 #
+# # 这一门断言的是哪几行读数（一条纪律）
+#
+# **凡在装配单里跑的程序，它打出来的读数都要在这里有一条断言**——要么钉住，要么在正文里
+# 明写"这是手工读数"。对账的法子（一轮一次即可）：把一次 boot 的日志按 `前缀:` 分一分，
+# 与本文里的断言逐条对；剩下的只该是**构建噪声**（`warning:` / `help:`——那些是 rustc 的话，
+# 不是程序的读数）。
+#
+# **今天唯一的例外**是 `prog-probe-deep`：它**装得上电、不上电**（`INITRD_BINS` 里有条目、
+# `PLAN` 里没有），故它那两行（`alive at …` / `tree deep=… clean=…`）是**手工读数**——
+# 自动的那一半在**宿主靶**上（`crates/operator-case::a_deep_chain_does_not_need_the_call_stack`），
+# 理由与四种失败的排法见 `docs/operator-slot.md` §6 与那份源码的头注。
+#
 # 用法：
 #   scripts/soak.sh [轮数] [--release]      # 默认 10 轮，debug 档
 # 退出码：全过 0，有不过 1。日志落在 target/soak/soak-<时间戳>-<轮>.log。
