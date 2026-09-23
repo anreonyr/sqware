@@ -19,8 +19,23 @@
 //!
 //! # 怎么跑它
 //!
-//! `SQWARE_ROOT=rig cargo run`（`kernel/build.rs` 的 `ROOT_NAME` 读那个环境变量）。
+//! `SQWARE_ROOT=rig cargo run --release`（`kernel/build.rs` 的 `ROOT_NAME` 读那个环境变量）。
 //! 普通 `cargo run` 一个字不变——还是 `root`。`scripts/stress.sh` 是它的壳。
+//!
+//! **`--release` 不是偏好，是这一台跑得动的前提**（照实记，量于这一轮）：debug 档下
+//! `iters_per_ms=3522`、release 是 `24576`（差 7 倍），而"台主空转 `delay_us`"与"受害者上台
+//! 20 ms"那两把尺都由这同一个数换算 ⇒ debug 下**每轮都挂在 20 ms 那一缝上**：39 档打完
+//! （末行 `rig: d_us=19000 …`）之后**没有汇总行、也没有停机行**，被 `timeout 300` 杀掉。
+//! **与会话前无关**：拿 `b271e40` 在 worktree 里跑同一台**同样挂**（末行 `d_us=18500 …`
+//! ——挂在哪一档看宿主快慢，都在 18.5~19.5 ms 这一段）。release 下当场绿：
+//!
+//! ```text
+//! rig: total n=328 now=1 waited=327 late=0 lost=0
+//! task: all tasks exited, system halted
+//! ```
+//!
+//! `scripts/stress.sh` 的 profile 默认因此是 `--release`（想复现 debug 那一挂：
+//! `scripts/stress.sh 1 --debug`）。
 //!
 //! # 照实记（装好台子当天量到的）
 //!

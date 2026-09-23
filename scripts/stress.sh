@@ -16,8 +16,25 @@
 #   lost    = 两个窗口都没收掉 —— **"他杀没生效"**，这就是要数的那个数
 #
 # 用法：
-#   scripts/stress.sh [轮数]          # 默认 3 轮（每轮 328 次试验；旧注写 ~168，是加档之前的数）
+#   scripts/stress.sh [轮数] [profile]   # 默认 3 轮（每轮 328 次试验）；profile 默认 --release
 # 退出码：全过 0，有不过 1。日志落在 target/stress/stress-<时间戳>-<轮>.log。
+#
+# ── 必须跑 release（这一格是**量出来的**，不是偏好）──
+#
+# 台子文档里那张表（`starved` / `nudged` / `rig: total`）全是在 **release** 下取的，而本脚本
+# 此前跑的是**裸 `cargo run`（debug）**⇒ 实测**每轮都挂在 20 ms 那一缝上**：39 档打完
+# （末行 `rig: d_us=19000 …`）之后**没有汇总行、也没有停机行**，被 `timeout 300` 杀掉
+# （debug 的 `iters_per_ms=3522`，release 是 `24576`——差 7 倍，"台主空转"与"受害者上台"
+# 那两把尺的比值在 debug 下不再成立）。
+#
+# **这不是这一刀引入的**：拿会话前的提交（`b271e40`）在 worktree 里跑同一台，**同样挂**
+# （末行 `rig: d_us=18500 …`——挂在哪一档看宿主快慢，但都在 18.5~19.5 ms 这一段）。
+# 按文档的跑法（`--release`、`QEMU_SMP=4`、icount 关）同一颗源码当场绿：
+#
+#   rig: total n=328 now=1 waited=327 late=0 lost=0
+#
+# ——与台子文档那张表（`now=0~6 waited=322~328`）一致。故 profile 默认改成 `--release`；
+# 想复现 debug 那一挂就 `scripts/stress.sh 1 --debug`。
 set -u
 
 # ── 环境对齐（必须）：显式**关掉** icount ──
@@ -31,6 +48,7 @@ QEMU_ICOUNT=
 export QEMU_ICOUNT
 
 rounds="${1:-3}"
+prof="${2:---release}"
 out=target/stress
 mkdir -p "$out"
 tag="stress-$(date +%s)"
@@ -40,7 +58,7 @@ while [ "$i" -le "$rounds" ]; do
   log="$out/$tag-$i.log"
   # 时限放宽到 300 s：rig A 之后每一轮都要"造 → 握手（认下它交回来的孔）→ 唤醒 → 杀 → 判"，
   # 而判决窗口是 300 ms + 1 s 宽限 ⇒ 命中 `late`/`lost` 的那些轮本来就慢。
-  SQWARE_ROOT=rig timeout 300 cargo run > "$log" 2>&1
+  SQWARE_ROOT=rig timeout 300 cargo run $prof > "$log" 2>&1
   if ! grep -q "rig: total" "$log"; then
     echo "round $i: FAIL 无汇总行（末行：$(grep -a 'rig:' "$log" | tail -1)）"
   elif ! grep -q "task: all tasks exited, system halted" "$log"; then
