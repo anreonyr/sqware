@@ -90,6 +90,9 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
         "prog-probe-rule-other",
         ProgramKind::User,
     ),
+    // **深度那一格的证客**（**U 态**）：一层层往下 `part`。改前它是炸弹（持树者按深度递归，
+    // 栈是 16 KiB）；改成按号直达之后它是正证。**不进 soak**——读数见 `probe_deep.rs`。
+    ("probe-deep", "prog-probe-deep", ProgramKind::User),
     // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
     ("probe-lease", "prog-probe-lease", ProgramKind::User),
     // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器

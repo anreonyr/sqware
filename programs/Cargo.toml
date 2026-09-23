@@ -59,6 +59,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-probe-deep"
+path = "src/user/probe_deep.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-echo"
 path = "src/user/echo.rs"
 test = false
