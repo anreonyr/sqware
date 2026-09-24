@@ -76,6 +76,17 @@ const AHEAD_NS: u64 = 50_000_000;
 /// 没搭上（找不到那面服务 / 有一条往返没走成）：报这一格退场。
 const E_NO_SERVICE: usize = 1;
 
+/// 没搭上：**报码 ＋ 指名是哪一步**。
+///
+/// **照实记（为什么必须带那句话）**：本域这七条路从前一律 `Report::new(E_NO_SERVICE)`
+/// ——**不带 note**。而内核的 `note_out` 对空 note **一行都不打**（分界见 `env::exit` 与
+/// `runtime::core::exit`：码表在内核读得到的那一半，note 那一半只归域），于是它**死得
+/// 无声**：`soak` 那张"机器好好的、只少了一台"的脸查了很久才落到这里。七处各带一句，
+/// 下次它再踩那些 1000 ms 的上限，现场自己说话。
+fn no_service(step: &'static str) -> Report<'static> {
+    Report::note(E_NO_SERVICE, step)
+}
+
 #[programs::entry]
 fn main() -> Report<'static> {
     // 上板：**注册在前面**——板要能看见本域（挂不上照样往下走，只是那条信号缺席）。
@@ -83,22 +94,22 @@ fn main() -> Report<'static> {
     let _ = debug::put(&format!("sleeper: reg={reg}"));
 
     let Ok(sire) = utask::sire() else {
-        return Report::new(E_NO_SERVICE);
+        return no_service("sleeper: no sire");
     };
     let Ok((tree, host)) = operator::open(sire, MS) else {
-        return Report::new(E_NO_SERVICE);
+        return no_service("sleeper: no operator");
     };
     let Ok(talk) = operator::ask_hole(host) else {
-        return Report::new(E_NO_SERVICE);
+        return no_service("sleeper: no talk hole");
     };
     let Some(face) = find_face(&tree, talk, host) else {
-        return Report::new(E_NO_SERVICE);
+        return no_service("sleeper: no rtc plate");
     };
     let _ = debug::put("sleeper: found");
 
     // 一问一答：现在几点。这一句是后面那两约的**基准**（服务收的是绝对时刻）。
     let Ok(now) = clock::now(face, MS) else {
-        return Report::new(E_NO_SERVICE);
+        return no_service("sleeper: no time");
     };
     let _ = debug::put(&format!("sleeper: now={now}"));
 
@@ -110,7 +121,7 @@ fn main() -> Report<'static> {
     // 真约：那一枚回信孔从此留在驱动手里（本域退场之前它一直活着）。
     let at = now.saturating_add(AHEAD_NS);
     let Ok(armed) = clock::arm(face, at, MS) else {
-        return Report::new(E_NO_SERVICE);
+        return no_service("sleeper: no alarm");
     };
     let _ = debug::put(&format!("sleeper: armed={}", rcall::fail_to_code(None)));
 
@@ -121,7 +132,7 @@ fn main() -> Report<'static> {
 
     // 等到那一声：**无界等**（本域只有这一件事），而对面一没那枚孔就封印、当场答错。
     let Ok(rang) = armed.receive() else {
-        return Report::new(E_NO_SERVICE);
+        return no_service("sleeper: no ring");
     };
     let _ = debug::put(&format!("sleeper: rang at={at} now={rang}"));
 

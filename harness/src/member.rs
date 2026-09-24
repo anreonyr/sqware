@@ -102,17 +102,25 @@ fn main() -> Report<'static> {
     // ——这里每一趟各判一次，四趟答错任何一处都会点名。
     let mut suite = Suite::new("member");
 
-    // 二、立两枚盟：号由服务发（**单调、稠密**——第一枚是零号）。
+    // 二、立两枚盟：号由服务发——**全局单一序列，只增**。
+    //
+    // **照实记（这两格从前钉的是绝对值，`soak` 门因此有一张红脸）**：原来两条断言是
+    // `c0 == 0` 与 `c1 == 1`——钉的是"**我这两枚是全机器头两枚**"。可盟号是**全局**序列，
+    // 而 `harness/src/probe_rule.rs` 那台（位次 15）**也**调 `found()`（它要一枚号来挂规矩）
+    // ⇒ 谁先到谁拿 0。实测同一份 ELF：47 份现场里 **44 份 `found=0`、3 份 `found=1`**
+    // ——时序说了算，不是机器性质。
+    //
+    // 更要紧的是：**"第一枚是零号"没有并发客人能证**（要证它得保证自己是第一枚），"号不跳"
+    // （稠密）同理——两次 `found` 之间**谁都可以插一脚**。故那一对换成唯一可证的那条：
+    // **号只增**。至于号**能用**（进得去、查得着、放得下），由后面那一整串
+    // （`enter` / `leave` / `waive` / `band` / `bloc`）证，不靠这两格。
     let c0 = coal.found(MS);
     say(&format!("member: found={}", one_id(c0)));
     let c1 = coal.found(MS);
     say(&format!("member: found={}", one_id(c1)));
     let (Ok(c0), Ok(c1)) = (c0, c1) else { return bail("member: no coalition id") };
-    suite.case("the_first_coalition_is_zero", move || {
-        assert_eq!(c0.get(), 0)
-    });
-    suite.case("the_second_coalition_is_one", move || {
-        assert_eq!(c1.get(), 1)
+    suite.case("the_ids_the_service_hands_out_only_grow", move || {
+        assert!(c1.get() > c0.get())
     });
 
     // 三、立了不等于进了。

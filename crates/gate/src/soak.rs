@@ -180,8 +180,8 @@ pub const MARKS: &[Mark] = &[
     Mark::Shape("^\\[case\\] sleeper: cases 3 ok 3 fail 0[[:space:]]*$"),
     Mark::Shape("^\\[case\\] lodger: 4 cases[[:space:]]*$"),
     Mark::Shape("^\\[case\\] lodger: cases 4 ok 4 fail 0[[:space:]]*$"),
-    Mark::Shape("^\\[case\\] member: 23 cases[[:space:]]*$"),
-    Mark::Shape("^\\[case\\] member: cases 23 ok 23 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] member: 22 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] member: cases 22 ok 22 fail 0[[:space:]]*$"),
     Mark::Shape("^\\[case\\] policy: 13 cases[[:space:]]*$"),
     Mark::Shape("^\\[case\\] policy: cases 13 ok 13 fail 0[[:space:]]*$"),
     // ── 常驻四台"进常驻之前"那一段（用户裁定"甲 · 只搬那一段"）───────────────
