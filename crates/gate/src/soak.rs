@@ -55,7 +55,6 @@ pub fn feed() -> Schedule {
 }
 
 pub const MARKS: &[Mark] = &[
-    Mark::Shape("^router: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=router[[:space:]]*$"),
     Mark::Literal("router: device_count=95 ctx=1"),
     Mark::Literal("uart: ier=rx at=0x10000000"),
     Mark::Literal("system: router sifive,plic-1.0.0 -> 0xc000000"),
@@ -73,7 +72,6 @@ pub const MARKS: &[Mark] = &[
     Mark::Literal("router: line 11 = rtc@101000"),
     Mark::Literal("rtc: line occupied"),
     Mark::Literal("rtc: armed at="),
-    Mark::Shape("^rtc: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=rtc[[:space:]]*$"),
     Mark::Literal("rtc: asked now="),
     Mark::Literal("router: line=11"),
     Mark::Literal("rtc: rang n=1"),
@@ -84,9 +82,7 @@ pub const MARKS: &[Mark] = &[
     Mark::Literal("router: line=10"),
     Mark::Literal("router: exhaust line=10"),
     Mark::Literal("uart: line occupied"),
-    Mark::Shape("^uart: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=uart[[:space:]]*$"),
     Mark::Literal("echo: console=true"),
-    Mark::Shape("^echo: tree part=0 land=0 find=0 got=true trim=0 plate=[0-9]+ pname=echo[[:space:]]*$"),
     Mark::Shape("^coalition: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=coalition[[:space:]]*$"),
     Mark::Shape("^principal: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=principal[[:space:]]*$"),
     Mark::Literal("subject: done"),
@@ -117,8 +113,6 @@ pub const MARKS: &[Mark] = &[
     Mark::Literal("echo: list root=0,3"),
     Mark::Literal("echo: list names=sys,device"),
     Mark::Literal("echo: list device=4,5,6"),
-    Mark::Literal("echo: name miss=true"),
-    Mark::Literal("echo: seq=0"),
     Mark::Shape("^timer: late_n=[0-9]+ late_max_ms=[0-9]+ late_avg_ms=[0-9]+ late_max_tick=[0-9]+ traps=[0-9]+ tocks=[0-9]+ mutes=[0-9]+[[:space:]]*$"),
     Mark::Shape("^doom: held=[0-9]+ starved=[0-9]+ blocked=[0-9]+ nudged=[0-9]+[[:space:]]*$"),
     Mark::Shape("^sched: kicks=[0-9]+ fallback=[0-9]+[[:space:]]*$"),
@@ -132,9 +126,14 @@ pub const MARKS: &[Mark] = &[
     //   ② **登记了几例 / 跑完几例**（基线——少跑一例也拦得住）；
     //   ③ 走通那一句（`exit … note:` ⇒ 正常退场，不是 panic）。
     //
-    // **照实记（常驻那四台没搬）**：`echo` / `uart` / `rtc` / `router` 的读数是**每事件一行**
-    // （一轮里 `uart: rang` 5 行、`router: exhaust` 6 行），而 `Suite::run()` 是"一轮一次"的
-    // 协议 ⇒ 套不上（硬套就得发明一个"第一次事件时跑一次"的机制，那是新设计）。
+    // **照实记（常驻那四台的"进常驻之前"那一段也搬了）**：`echo` / `uart` / `rtc` / `router`
+    // 的读数分开在**几个互不相干的时刻**——`echo` 有 `trip` / `serial` 两趟，三台驱动各有一趟
+    // `serve_tree` / `tree_trip`。故**一沓一个 helper、名字取趟名**（见 `crates/cases` 的照实记），
+    // 值判据就地判；门这一侧撤掉那四条 tree shape 与 `echo: seq=` / `name miss=`，换成逐沓基线。
+    //
+    // **照实记（事件循环里那一段仍然没搬，那是另一刀）**：一轮里 `uart: rang` 5 行、
+    // `router: exhaust` 6 行——那些在**事件循环里反复发生**，而 `Suite::run()` 是"一趟一次"的
+    // 协议 ⇒ 套不上（硬套就得发明"第一次事件时跑一次"或"收官时跑一次"的机制，那是新设计）。
     Mark::Literal("passer: "),
     Mark::Literal("guest: "),
     Mark::Literal("sleeper: "),
@@ -152,7 +151,32 @@ pub const MARKS: &[Mark] = &[
     Mark::Shape("^\\[case\\] member: 23 cases[[:space:]]*$"),
     Mark::Shape("^\\[case\\] member: cases 23 ok 23 fail 0[[:space:]]*$"),
     Mark::Shape("^\\[case\\] policy: 13 cases[[:space:]]*$"),
-    Mark::Shape("^\\[case\\] policy: cases 13 ok 13 fail 0[[:space:]]*$"),];
+    Mark::Shape("^\\[case\\] policy: cases 13 ok 13 fail 0[[:space:]]*$"),
+    // ── 常驻四台"进常驻之前"那一段（用户裁定"甲 · 只搬那一段"）───────────────
+    //
+    // **一沓一个 helper、名字取趟名**（见 `crates/cases` 的照实记）：`echo` 三沓是**故意的**
+    // ——`trip` / `serial` 各自那一刻，而 `seq` 那一格判在 `main`（**返回值只有消耗它的那层
+    // 看得见**：`serial` 内部看不见自己那一趟被改坏）。
+    Mark::Shape("^\\[case\\] uart-tree: 5 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] uart-tree: cases 5 ok 5 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] rtc-tree: 5 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] rtc-tree: cases 5 ok 5 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] router-tree: 5 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] router-tree: cases 5 ok 5 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] echo-tree: 6 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] echo-tree: cases 6 ok 6 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] echo-serial: 1 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] echo-serial: cases 1 ok 1 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] echo: 1 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] echo: cases 1 ok 1 fail 0[[:space:]]*$"),];
+/// 每个前缀的**档**：`auto` = 每一行都得有人判；`narrative` = 没判的行要落在声明的形状里（棘轮，
+/// **形状是许可、不是断言**——不要求它出现）；`manual` = 写明为什么不判。
+///
+/// **照实记（值判据搬进 SUT 之后，形状要跟着放宽）**：判据住在这个文件里时，那四行
+/// （`{uart,rtc,router,echo}: tree …`）是 `Mark::Shape` ⇒ 值被钉住。搬进各自那一沓之后，它们
+/// 成了**没判的行** ⇒ 必须在这里声明形状，否则 `hold` 报"出格"。**形状按宽松的写**（`part=[0-9]+`、
+/// `pname=[^ ]+`）：值由域里那一例判，这里只声明"这一族读数长这样"——写紧了就是把同一条判据
+/// 留在两处，红了也说不清是谁判的。
 pub const READINGS: &[Reading] = &[
     Reading { prefix: "board", tier: Tier::Auto },
     Reading { prefix: "coalition", tier: Tier::Auto },
@@ -171,15 +195,15 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "sleeper", tier: Tier::Auto },
     Reading { prefix: "timer", tier: Tier::Auto },
     Reading { prefix: "wire", tier: Tier::Auto },
-    Reading { prefix: "echo", tier: Tier::Narrative { shapes: &["^(echo: op=[0-9]+|echo: reg=[0-9]+)$"] } },
+    Reading { prefix: "echo", tier: Tier::Narrative { shapes: &["^(echo: op=[0-9]+|echo: reg=[0-9]+|echo: tree part=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) trim=[0-9]+ plate=[0-9]+ pname=[^ ]+|echo: name miss=(true|false)|echo: seq=[0-9]+)$"] } },
     Reading { prefix: "lodger", tier: Tier::Auto },
     Reading { prefix: "member", tier: Tier::Auto },
     Reading { prefix: "policy", tier: Tier::Auto },
     Reading { prefix: "root", tier: Tier::Narrative { shapes: &["^(root: done)$"] } },
-    Reading { prefix: "router", tier: Tier::Narrative { shapes: &["^(router: docks open|router: got [0-9]+)$"] } },
-    Reading { prefix: "rtc", tier: Tier::Narrative { shapes: &["^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+)$"] } },
+    Reading { prefix: "router", tier: Tier::Narrative { shapes: &["^(router: docks open|router: got [0-9]+|router: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
+    Reading { prefix: "rtc", tier: Tier::Narrative { shapes: &["^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+|rtc: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
     Reading { prefix: "system", tier: Tier::Narrative { shapes: &["^(system: gone [a-z0-9-]+ state=[A-Za-z]+ ousted=(true|false) heir=[^ ]+ wait=[a-z]+)$"] } },
-    Reading { prefix: "uart", tier: Tier::Narrative { shapes: &["^(uart: got [0-9]+)$"] } },
+    Reading { prefix: "uart", tier: Tier::Narrative { shapes: &["^(uart: got [0-9]+|uart: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
     Reading { prefix: "[case]", tier: Tier::Narrative { shapes: &["^\\[case\\] [a-z0-9-]+: (run|ok) [_a-z0-9]+$"] } },
     Reading { prefix: "task", tier: Tier::Manual { why: "只有停机那一行，由本文件 `verdict`（`HALT` 常量）判——原先是 `soak.sh` 里那段 `if grep -q \"task: all tasks exited, system halted\"`，**那份脚本已删**" } },
 ];

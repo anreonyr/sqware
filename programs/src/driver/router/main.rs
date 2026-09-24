@@ -119,6 +119,7 @@ use protocol::operator::client as operator;
 /// 设备侧（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
 mod plic;
 
+use cases::Suite;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::driver::line::{call as lcall, core::Lines};
 use protocol::session::call as scall;
@@ -550,6 +551,20 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
         entry.get(),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
+    // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
+    let mut suite = Suite::new("router-tree");
+    suite.case("the_device_directory_answered", move || {
+        assert_eq!(part, ocall::OK)
+    });
+    suite.case("the_plate_landed", move || assert_eq!(land, ocall::OK));
+    suite.case("the_plate_was_found_by_id", move || {
+        assert_eq!(find, ocall::OK)
+    });
+    suite.case("the_shipped_plate_came_back", move || assert!(got));
+    suite.case("the_id_and_the_name_agree", move || {
+        assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(SERVICE))
+    });
+    suite.run();
 }
 
 /// 三格答码共用的"没走到 / 读不懂"那一格（与树自己的 [`ocall::BAD`] 同值）。

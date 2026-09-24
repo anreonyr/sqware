@@ -61,6 +61,7 @@ use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::system::board::client as board;
 
+use cases::Suite;
 use env::{Name, PieToken, TaskId};
 use protocol::driver::line;
 use protocol::session::Quay;
@@ -236,6 +237,20 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         entry.get(),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
+    // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
+    let mut suite = Suite::new("uart-tree");
+    suite.case("the_device_directory_answered", move || {
+        assert_eq!(part, ocall::OK)
+    });
+    suite.case("the_plate_landed", move || assert_eq!(land, ocall::OK));
+    suite.case("the_plate_was_found_by_id", move || {
+        assert_eq!(find, ocall::OK)
+    });
+    suite.case("the_shipped_plate_came_back", move || assert!(got));
+    suite.case("the_id_and_the_name_agree", move || {
+        assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
+    });
+    suite.run();
 }
 
 /// 三格答码共用的"没走到 / 读不懂"那一格（与树自己的 [`ocall::BAD`] 同值）。

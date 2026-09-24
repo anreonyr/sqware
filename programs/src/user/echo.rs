@@ -60,6 +60,7 @@ use alloc::format;
 use alloc::string::String;
 use core::time::Duration;
 
+use cases::Suite;
 use env::DBCN_MAX;
 use env::{Name, PieToken, TaskId};
 use protocol::operator::call as ocall;
@@ -131,6 +132,13 @@ extern "C" fn main() -> ! {
     // 三、上树第二趟：**一串**（列号 → 按号翻名 → 列 `/device` → 问一枚没铸过的号）。
     let seq = serial(&tree, talk);
     let _ = debug::put(&format!("echo: seq={seq}"));
+
+    // **返回值那一格判在消耗它的这一层**：`serial` 内部看不见自己那一趟被改坏。
+    let mut suite = Suite::new("echo");
+    suite.case("the_serial_trip_answered", move || {
+        assert_eq!(seq, ocall::OK)
+    });
+    suite.run();
 
     let Some(console) = console else {
         exit_with(E_NO_CONSOLE)
@@ -274,6 +282,25 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         plate.ok().map(|id| id.get()).unwrap_or(0),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
+
+    // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
+    let mut suite = Suite::new("echo-tree");
+    suite.case("the_second_pane_was_parted", move || {
+        assert_eq!(a, ocall::OK)
+    });
+    suite.case("the_plate_landed", move || assert_eq!(b, ocall::OK));
+    suite.case("the_plate_was_found_by_id", move || {
+        assert_eq!(c, ocall::OK)
+    });
+    suite.case("the_shipped_plate_came_back", move || assert!(got));
+    suite.case("the_empty_pane_was_trimmed", move || {
+        assert_eq!(d, ocall::OK)
+    });
+    suite.case("the_id_and_the_name_agree", move || {
+        assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
+    });
+    suite.run();
+
     d
 }
 
@@ -326,6 +353,12 @@ fn serial(link: &Quay, talk: PieToken) -> u8 {
     // 一枚没铸过的号：**`UNKNOWN`，不是"答了一格空名字"**。
     let miss = operator::name(talk, link, EntryId::new(4095), MS).is_err();
     let _ = debug::put(&format!("echo: name miss={miss}"));
+
+    // 一枚**本域自己选的**没铸过的号 ⇒ 该答不出（命名空间的契约，不是装配事实）。
+    let mut suite = Suite::new("echo-serial");
+    suite.case("an_unminted_id_has_no_name", move || assert!(miss));
+    suite.run();
+
     if miss { code } else { ocall::BAD }
 }
 

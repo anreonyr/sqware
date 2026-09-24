@@ -60,13 +60,18 @@ use runtime::env::debug;
 
 /// 一沓用例：运行时登记，跑完打印那份协议。
 pub struct Suite {
-    /// 哪一台的用例（进协议行的头一格——门按它钉**逐台**的基线）。
+    /// 这一沓用例的名字（进协议行的头一格——门按它钉**逐沓**的基线）。
     who: &'static str,
     cases: Vec<(&'static str, Box<dyn Fn()>)>,
 }
 
 impl Suite {
-    /// 空的一沓。`who` = 清单名（`probe-rule` / `probe-owner` / …）。
+    /// 空的一沓。`who` = 这一沓的名字（`probe-rule` / `probe-owner` / …）。
+    ///
+    /// **照实记（为什么不再是"清单名"）**：常驻那四台（`echo` / `uart` / `rtc` / `router`）一台上
+    /// 有**几个互不相干的时刻**，读数在各自那个 helper 里算完 ⇒ **一沓一个 helper、名字取趟名**
+    /// （`uart-tree` / `echo-serial` / …）。一次性那几台仍是一台一沓，名字就是清单名。
+    /// 事件循环里那一段（`uart: rang` 那一族）**仍然没搬**——见 `docs/harness-gate.md`。
     pub fn new(who: &'static str) -> Suite {
         Suite {
             who,
