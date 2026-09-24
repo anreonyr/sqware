@@ -10,7 +10,7 @@
 > | 判据 `operator::judge`（三格裁决 + **四个**注入事实——后来加了 `Door`，见 `operator-rule.md` §7，两个号泛型） | ✅ `crates/protocol/src/operator/judge.rs` |
 > | 裁决 → 线上那一格 `operator::gate`（`Code` / `Control` / `Blind` / `verdict`） | ✅ `crates/protocol/src/operator/gate.rs` |
 > | 线上两格新码 `DENIED=8` / `UNJUDGED=9` | ✅ `operator/call.rs`（值与 `gate` 那一份由编译期断言钉住） |
-> | 宿主台第三台（`judge-case`） | ✅ `scripts/host.sh` **当时**三台共 **42 例全过**（**那一刀之后 25 例 / 48 例**——它同时编 `judge` + `gate` + `ledger`）。<br>**照实记（这行的口径）**：这是**当时的读数**，不改写成今天的数字——今日的台数/例数见 `scripts/host.sh` 头注那张清单（它才是权威；今天已是七台） |
+> | 宿主台第三台（`judge-case`） | ✅ `scripts/host.sh` **当时**三台共 **42 例全过**（**那一刀之后 25 例 / 48 例**——它同时编 `judge` + `gate` + `ledger`）。<br>**照实记（这行的口径）**：这是**当时的读数**，不改写成今天的数字——今日的台数/例数见 `scripts/host.sh` 头注那张清单（它才是权威；今天已是八台 / 137 例） |
 > | 树那一侧：认门牌 → 开门禁 → 判 `land`/`find`/`trim` | ✅ `programs/src/supervisor/operator/server.rs` |
 > | 装配那一侧：身份服务**自己**把门牌交给持树者 + 递一格号 | ✅ `principal/server.rs` + `operator/bridge.rs` + `service.rs` |
 > | 真机门 | ✅ `examine` **3/3**、`soak` **10/10**（既有 11 条 `tree part=0 …` 与 3 条 `list` 一字未变） |

@@ -12,11 +12,13 @@
 > - ✅ `operator` / `board`：真切成 `frame.rs`（纯）+ `call.rs`（适配）⇒ 分别进 `judge-case`
 >   （它本来就带着帧要的全部依赖）与 `board-case`（那一台把核心模块改名 `core`，好让
 >   `use super::core::…` 逐字成立）
-> - ☐ `supply`：明写"切不动"（`Access`/`Policy` 长在 `Want`/`Need` 的类型里）；类型搬家单独立门
+> - ✅ `supply`：**那一格也收了**——`Access` / `Policy` 按用户裁定搬进 `env`（见 `docs/supply-gate.md`），
+>   `driver/supply/call.rs` 因此本来就全纯 ⇒ **零切分**，直接编进新台 `crates/supply-case`
 > - ➖ `session`：**没有帧**（它本身就是运行时那一层）
 >
-> **收口读数**：`host.sh` **116 → 129 例**（`judge-case` +8、`board-case` +5）；
-> 机器侧八道门重跑过（拆的是程序侧编进去的源码）。
+> **收口读数**（**当时**）：`host.sh` **116 → 129 例**（`judge-case` +8、`board-case` +5）；
+> 机器侧八道门重跑过（拆的是程序侧编进去的源码）。**今日**的台数与例数见 `scripts/host.sh` 头注那张
+> 清单（它才是权威；后来 `supply-case` 那一台又加进来，**现在是八台 / 137 例**）。
 >
 > 下面保留**裁决时**的原样（读数与分叉），不改写成今天的数字。
 
