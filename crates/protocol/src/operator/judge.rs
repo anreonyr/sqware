@@ -185,8 +185,10 @@ pub trait Branch<P> {
 ///
 /// **照实记：这一格原来少一个号。** 第一版写的是 `amid(&self, at: C)`——可盟册那一问本来
 /// 就要两个号（`coalition::client::Face::amid(p, c)`，线上那一帧也带两格）。而 `judge` 手里
-/// 明明有 `me`（第一步就问出来了），却没往下传。今天它是个恒答"问不到"的桩，故这个错一次
-/// 没响过；通线（`Rule::In` 真跑）之前必须补上。
+/// 明明有 `me`（第一步就问出来了），却没往下传。**当时它是一颗恒答"问不到"的桩**，故那个错
+/// 一次没响过。**已补上**：`Court::amid`（`programs/src/supervisor/operator/server.rs`）真查
+/// 盟册门牌，而 `Rule::In` 有真机读数——`in=0` / `in_sub=8`（`harness/src/probe_rule.rs`
+/// 那一沓；是桩的话这两格只可能答 `9`）。
 pub trait League<P, C> {
     fn amid(&self, me: P, at: C) -> Result<bool, ()>;
 }
