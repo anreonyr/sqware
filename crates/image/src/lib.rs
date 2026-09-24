@@ -46,7 +46,7 @@ fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, Str
         .collect();
     if picked.is_empty() {
         return Err(format!(
-            "未知场景 SQWARE_ROOT={scenario}（认得的：{}）",
+            "不认得的景 {scenario}（认得的：{}）",
             scenes().join(" / ")
         ));
     }

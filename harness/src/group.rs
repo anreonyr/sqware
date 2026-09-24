@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! group — **共享组台**（S 态，`SQWARE_ROOT=group` 时当引导镜像）：
+//! group — **共享组台**（S 态，**景 `group` 的引导镜像**）：
 //! **一次投信，两个等待者都该醒；而那条消息只能归一个人**。
 //!
 //! # 为什么要有它
@@ -66,7 +66,7 @@
 //!
 //! ```text
 //!   crates/gate/tests/group.rs            # 默认 3 轮，判据见上
-//!   SQWARE_ROOT=group QEMU_ICOUNT= cargo run --release   # 与验收门同环境（手跑）
+//!   cargo image group && QEMU_ICOUNT= cargo run --release   # 与验收门同环境（手跑）
 //! ```
 
 extern crate alloc;

@@ -1,4 +1,4 @@
-//! 压测台的门（`SQWARE_ROOT=rig`）。搬自 `scripts/stress.sh`（它已删）。
+//! 压测台的门（**景 `rig`**）。搬自 `scripts/stress.sh`（它已删）。
 //!
 //! # 判据（两条一起）
 //!

@@ -1,4 +1,4 @@
-//! 共享组台的门（`SQWARE_ROOT=group`）。搬自 `scripts/group.sh`（它已删）。
+//! 共享组台的门（**景 `group`**）。搬自 `scripts/group.sh`（它已删）。
 //!
 //! # 判据（两条一起）
 //!

@@ -1,4 +1,4 @@
-//! 忙机台的门（`SQWARE_ROOT=load`）。搬自 `scripts/load.sh`（它已删）。
+//! 忙机台的门（**景 `load`**）。搬自 `scripts/load.sh`（它已删）。
 //!
 //! # 判据（三条一起）
 //!

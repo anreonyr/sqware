@@ -25,8 +25,8 @@
 //! # 怎么跑它
 //!
 //! ```text
-//!   SQWARE_ROOT=beat QEMU_ICOUNT= cargo run --release      # 与验收门同环境（必须）
-//!   SQWARE_ROOT=beat               cargo run --release     # 对照：icount 开（唤醒被节流）
+//!   cargo image beat && QEMU_ICOUNT= cargo run --release    # 与验收门同环境（必须）
+//!                       QEMU_ICOUNT= cargo run --release    # 对照：icount 开（唤醒被节流）
 //! ```
 //!
 //! 两档都值得跑：icount 开时"一记唤醒"是毫秒级（见 `scripts/boot.nu` 的注释与 rig 的

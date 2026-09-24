@@ -188,7 +188,7 @@ pub struct Row {
     /// 这一台是什么：**角色**。"进哪张镜像"是下一格 [`Row::scenes`]——两者**不重合**（常客也在
     /// 产品侧，却不进产品镜像），故不许拿这一格当"装不装"用。
     pub spot: Spot,
-    /// 进哪几张引导镜像（`SQWARE_ROOT` 的那些名字）——**次序即装载次序**。
+    /// 进哪几张引导镜像（**景名**）——**次序即装载次序**。
     pub scenes: &'static [&'static str],
     /// 装配参数；`None` = 不由编排域起。
     pub plan: Option<Plan>,
@@ -286,11 +286,11 @@ pub const ALL: &[Row] = &[
     Row { name: "probe-lease", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 13, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_PROBE_LEASE }) },
     // 压测台的两个（`harness/src/`）：`churn` = 受害者——U 态，不停地在
     // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
-    // S 态，`SQWARE_ROOT=rig` 时当引导镜像，反复造/杀它。
+    // S 态，**景 `rig` 的引导镜像**，反复造/杀它。
     Row { name: "churn", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["again"], plan: None },
     Row { name: "rig", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["rig"], plan: None },
     // 忙机台的另外两个：`busy` = 占核者——U 态，纯自旋**永不落核**；`load` = 台主——
-    // S 态，`SQWARE_ROOT=load` 时当引导镜像。它把每一颗核钉住，好让「到点兑现」这条债
+    // S 态，**景 `load` 的引导镜像**。它把每一颗核钉住，好让「到点兑现」这条债
     // 在树内第一次变得可测（`soak`/`rig` 里总有核空闲，空闲核会替全局兑现到点）。
     Row { name: "busy", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["load"], plan: None },
     Row { name: "park", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["load"], plan: None },
@@ -298,15 +298,15 @@ pub const ALL: &[Row] = &[
     // 转折点因此由台主定（旧版 `churn` 是"放行即跑"，量到的全是快路径）。
     Row { name: "hang", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["rig"], plan: None },
     Row { name: "load", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["load"], plan: None },
-    // 到点台的打点者：**S 态**（与两个台主同档），`SQWARE_ROOT=beat` 时当引导镜像。
+    // 到点台的打点者：**S 态**（与两个台主同档），**景 `beat` 的引导镜像**。
     // 它不造任何东西，只量"睡到绝对点"漂不漂（两段对照，见程序头注）。
     Row { name: "beat", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["beat"], plan: None },
-    // 重启台：**S 态**（要 mint/hatch 那道门），`SQWARE_ROOT=again` 时当引导镜像。
+    // 重启台：**S 态**（要 mint/hatch 那道门），**景 `again` 的引导镜像**。
     // 它在同一张表、同一行上把"起 → 停 → 放下 → 再起"走三遍（协议 §六 的"重发"）。
     Row { name: "again", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["again"], plan: None },
     // 共享组台的两个（`harness/src/`）：`waiter` = 等待者——U 态，把台主
     // 给的那枚孔挂进**共享组**并等组键（**多个等待者挂同一只键**）；`group` = 台主——
-    // S 态，`SQWARE_ROOT=group` 时当引导镜像：一次投信，看两个等待者是不是**都醒**，
+    // S 态，**景 `group` 的引导镜像**：一次投信，看两个等待者是不是**都醒**，
     // 以及那条消息是不是**只归一个人**。
     Row { name: "waiter", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["group"], plan: None },
     Row { name: "group", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["group"], plan: None },

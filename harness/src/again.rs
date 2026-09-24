@@ -29,7 +29,10 @@
 //! # 怎么跑它
 //!
 //! ```text
-//!   SQWARE_ROOT=again QEMU_ICOUNT= cargo run --release      # 与验收门同环境
+//!   cargo image again && QEMU_ICOUNT= cargo run --release   # 与验收门同环境
+//!
+//! （**场景在造镜像那一刻定**——`cargo run` 只管编内核、起旁边那份 `initrd.img`；
+//! 见 `crates/image`。下面那几台同理。）
 //! ```
 //!
 //! # 读数
