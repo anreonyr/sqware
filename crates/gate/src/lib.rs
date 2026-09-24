@@ -480,10 +480,30 @@ impl Mark {
         !matches!(self, Mark::Absent(_))
     }
 
-    fn hits(&self, line: &str) -> bool {
+    fn raw_hits(&self, line: &str) -> bool {
         match self {
             Mark::Literal(s) | Mark::Absent(s) => line.contains(s),
             Mark::Shape(p) => ere(p).is_match(line),
+        }
+    }
+
+    /// 这一条在这一次跑里**兑现了没有**。`Absent` 是"本不该出现" ⇒ 出现了就是不兑现。
+    pub fn holds(&self, t: &Transcript) -> bool {
+        let any = t
+            .text()
+            .lines()
+            .any(|l| self.raw_hits(l.trim_end_matches('\r')));
+        match self {
+            Mark::Absent(_) => !any,
+            _ => any,
+        }
+    }
+
+    /// 报缺口时那一行（`Absent` 前面加个 `!`，与旧的 `missing` 同形）。
+    pub fn describe(&self) -> String {
+        match self {
+            Mark::Literal(s) | Mark::Shape(s) => (*s).to_string(),
+            Mark::Absent(s) => format!("! {s}"),
         }
     }
 }
@@ -558,7 +578,7 @@ pub fn hold(t: &Transcript, marks: &[Mark], table: &[Reading]) -> Result<(), Vec
         if e.undeclared {
             continue;
         }
-        if marks.iter().any(|m| m.judges() && m.hits(line)) {
+        if marks.iter().any(|m| m.judges() && m.raw_hits(line)) {
             e.ok += 1;
             continue;
         }

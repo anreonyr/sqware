@@ -4,8 +4,8 @@
 # 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/run.sh` 跑。
 #
 # `crates/protocol-case` 是**同一类**的宿主台：把 `protocol` 的**八处纯核心**逐字 `#[path]`
-# 进来，让它们的规矩在宿主上真跑一遍（门口 `scripts/host.sh`；八个靶与那张清单住那个 crate
-# 的 `Cargo.toml` 头注）。它进不来的理由与上一条同源，外加一条实测：链接 `protocol` 会带进
+# 进来，让它们的规矩在宿主上真跑一遍（门口是 `crates/gate` 的 `host` 那一门；八个靶与那张
+# 清单住那个 crate 的 `Cargo.toml` 头注）。它进不来的理由与上一条同源，外加一条实测：链接 `protocol` 会带进
 # `runtime`，而 `runtime` 里那两处 riscv 内联汇编在宿主上编不过。
 #
 # **照实记（用户裁定）**：这一台原先**是八台**——`operator-case` / `line-case` / `judge-case` /
