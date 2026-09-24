@@ -25,6 +25,7 @@ pub mod handle;
 pub mod key;
 pub mod manifest;
 pub mod name;
+pub mod supply;
 pub mod pair;
 
 pub use access::{Access, Policy};
