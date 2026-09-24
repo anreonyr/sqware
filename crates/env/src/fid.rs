@@ -148,8 +148,8 @@ pub const NOTE_MAX: usize = 128;
 
 /// 程序装成的空间（`Build` 的特权级参数）：S 态页表 / U 态页表。
 ///
-/// 它是**内核打包表的产物**，不是程序自述：`kernel/build.rs` 的清单 决定，root 服务
-/// 读取清单后原样转交。
+/// 它是**装配单的产物**，不是程序自述：`env::assembly::ALL` 里那一行的 `kind` 决定（打包那一
+/// 侧是 `crates/image`），root 服务读取清单后原样转交。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ProgramKind {
     /// U 态页表（页带 U 位）。
@@ -536,7 +536,7 @@ pub enum PieCall {
 /// 引导期服务全都不存在，而"哪里算不下去"只有域知道。
 ///
 /// **它不设构建门**（曾打算挂在 `debug_assertions` 上，实测不成立）：本仓的程序 ELF 由
-/// `kernel/build.rs` 用**嵌套 cargo** 打包，那条内层构建与内核那一次**不共享
+/// `crates/image`（原先在 `kernel/build.rs`）用**嵌套 cargo** 打包，那条内层构建与内核那一次**不共享
 /// `debug_assertions`** ⇒ ABI 两侧的 `cfg` 会分叉，域调得到一个内核不认的调用号。
 /// 一个"只在某些构建里存在"的调用号是**会分叉的 ABI**，代价大于它省下的那点字节。
 /// 因此这一格恒在；"生产不该用它"是纪律，不是编译期的事（与 `ControlCall::Backtrace`

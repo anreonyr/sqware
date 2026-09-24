@@ -1,15 +1,15 @@
 #![no_std]
 //! programs — 镜像里装载的程序集合（**每个程序一份 `main.rs`**，就住在它那一片模块的目录里）。
 //!
-//! **分档按特权级**（唯一声明处：`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）：[`supervisor`] 是 S 态那一档
+//! **分档按特权级**（唯一声明处：`env::assembly::ALL` 里这一行的 `kind`）：[`supervisor`] 是 S 态那一档
 //! （root / system / operator），[`user`] 是 U 态那一档（echo / guest / passer / lodger）。
 //! **按角色分的那一族不分档**：**驱动整块留在 [`driver`]**——成员的特权级仍各自在
-//! 清单 声明（今天三台驱动都是 **U 态**；见 [`driver`] 的头注）。
+//! 装配单 声明（今天三台驱动都是 **U 态**；见 [`driver`] 的头注）。
 //!
 //! **测具不在这里**（照实记：用户裁定"测试和程序分开"）：探针（`probe-*`）与压测台
 //! （`rig` / `load` / `beat` / `again` / `group` 与它们的受害者）整体搬去了隔壁那个 crate
 //! **`harness`**——它们只借这里的一件共享入口（`extern crate programs;` ⇒ [`entry`] 的
-//! `_start`）。哪几台进哪张镜像，仍在 `kernel/build.rs` 的清单里按场景声明。
+//! `_start`）。哪几台进哪张镜像，仍只在 `env::assembly::ALL` 每行的 `scenes` 里声明。
 //!
 //! **表归主人**：硬件需求单在**收方**（`driver/{router,uart,rtc}/needs.rs` 与
 //! `user/lodger/needs.rs`：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
@@ -41,8 +41,8 @@
 //! `prog-sleeper` / `prog-subject` / `prog-member` 与三台驱动 `prog-router` / `prog-uart` /
 //! `prog-rtc`（**都是 U 态**），`prog-root` / `prog-system` / `prog-principal` /
 //! `prog-coalition` / `prog-operator`（S 态那一档：持树者是转授权中枢，故不在最小特权那档）。
-//! 另有 **16 台测具**住 `harness`（6 探针 + 10 压测台）。
-//! **特权级不在这里声明**——那一格在 `kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`（按场景分表）。
+//! 另有 **15 台测具**住 `harness`（5 探针 + 10 压测台）。
+//! **特权级不在这里声明**——那一格在 `env::assembly::ALL` 里这一行的 `kind`。
 
 extern crate alloc;
 

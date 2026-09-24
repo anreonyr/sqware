@@ -60,7 +60,7 @@
 //!
 //! # 特权级
 //!
-//! **U 态**（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）：读那页寄存器、`claim` / `complete`、持门闩、
+//! **U 态**（`env::assembly::ALL` 里这一行的 `kind`）：读那页寄存器、`claim` / `complete`、持门闩、
 //! 铸孔挂组都不需要 S 态——驱动那一档是量出来的（见 `programs/src/driver/uart/main.rs` 头注）。
 
 extern crate alloc;

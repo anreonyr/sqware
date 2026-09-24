@@ -181,7 +181,7 @@ pub fn entry_of(scene: &str) -> Option<&'static str> {
 /// **装配单的一行**——加一台程序就写这一行（外加 cargo 的 `[[bin]]`，那是 cargo 的要求）。
 #[derive(Clone, Copy)]
 pub struct Row {
-    /// 清单名（也是 cargo 的 bin 名去掉 `prog-`，见 `kernel/build.rs` 那条照实记）。
+    /// 清单名（也是 cargo 的 bin 名去掉 `prog-`，见 `crates/image` 那条照实记）。
     pub name: &'static str,
     /// 装成哪种空间。
     pub kind: ProgramKind,

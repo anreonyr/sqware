@@ -23,7 +23,7 @@
 //!
 //! # 特权级由清单定
 //!
-//! 本域是 **U 态**（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`，与 `guest` 同档）：铸孔、交出、一问一答
+//! 本域是 **U 态**（`env::assembly::ALL` 里这一行的 `kind`，与 `guest` 同档）：铸孔、交出、一问一答
 //! 都不需要 S 态。
 
 extern crate alloc;

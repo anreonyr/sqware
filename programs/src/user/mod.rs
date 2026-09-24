@@ -1,6 +1,6 @@
 //! user — **U 态那一档**：不建域、不读设备、不碰 MMIO，也不转授权。
 //!
-//! 判据是特权级（唯一声明处：`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）：本目录下都是 `User`——
+//! 判据是特权级（唯一声明处：`env::assembly::ALL` 里这一行的 `kind`）：本目录下都是 `User`——
 //! `echo.rs` / `guest.rs` / `passer.rs` / `sleeper.rs` / `subject.rs` / `member.rs` 与
 //! `lodger/`，各是一份入口。
 //!

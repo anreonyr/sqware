@@ -98,7 +98,7 @@ use protocol::system::desk::{Announce, Table};
 use runtime::env::debug;
 use runtime::env::room::{self, exit_with};
 
-/// 占核者与打点者的**清单名**（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）。
+/// 占核者与打点者的**清单名**（`env::assembly::ALL` 里 `scenes` 含 `load` 的那两行）。
 const HOG_ELF: &str = "busy";
 const PARKER_ELF: &str = "park";
 

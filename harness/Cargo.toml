@@ -18,7 +18,8 @@ edition.workspace = true
 #                               `busy` / `waiter`）：**整台替换引导镜像**，与验收场景没有交集。
 #
 # 于是 `kernel/build.rs` 的清单也从"一张并集"拆成"按场景的几张表"（验收那张含探针、台子那张
-# 只含台主与它要的受害者）。
+# 只含台主与它要的受害者）。**那几张表后来也搬走了**：今天这张表只有一处，就是
+# `env::assembly::ALL`（每行的 `kind` 与 `scenes`）。
 #
 # # 与 `programs` 的关系
 #
@@ -26,7 +27,7 @@ edition.workspace = true
 # `_start`（`global_asm!`）与 panic 处理拉进链接。链接脚本与产品同一张
 # （`programs/link.ld`：镜像都链在 `IMAGE_BASE = 0x10000`）。
 #
-# 特权级仍**只在 `kernel/build.rs` 声明**（与产品同一条规矩）。
+# 特权级仍**只在 `env::assembly::ALL` 声明**（每行的 `kind`；与产品同一条规矩）。
 
 # 与 `programs` 同一条：目标 `riscv64gc-unknown-none-elf` 上**编不出 libtest**（它依赖 std），
 # 故 4 个测试/基准目标一律关掉——否则 `cargo check --workspace --all-targets` 会去编它。
@@ -55,11 +56,11 @@ test = false
 bench = false
 doctest = false
 
-# ── 那十七个 bin 的清单 ───────────────────────────────────────────
+# ── 那十五个 bin 的清单 ───────────────────────────────────────────
 #
-# 特权级**不在这里**声明（与产品同一条规矩）：那一格在 `kernel/build.rs` 的清单里
-# （`ProgramKind::User` / `Supervisor`），而且**按场景选表**——验收那张只列探针，
-# 台子那张只列台主与它要的受害者。
+# 特权级**不在这里**声明（与产品同一条规矩）：那一格在 `env::assembly::ALL` 里
+# （`ProgramKind::User` / `Supervisor`），而且**按场景分**（看每行的 `scenes`）——验收那张只列
+# 探针，台子那张只列台主与它要的受害者。
 
 [[bin]]
 name = "prog-probe-owner"

@@ -10,7 +10,7 @@
 //!
 //! 它不建域、不碰 MMIO、不读设备——但**它是这台机器的转授权中枢**：谁在树上查到一条，它就
 //! `ship` 一枚带 `VEST` 的副本出去（`protocol::operator::call::ship`）。故不进"最小特权"
-//! 那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）。
+//! 那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档（`env::assembly::ALL` 里这一行的 `kind`）。
 //!
 //! # 为什么一枚线程
 //!

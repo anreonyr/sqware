@@ -19,8 +19,8 @@
 //!
 //! # 怎么跑它
 //!
-//! `SQWARE_ROOT=rig cargo run --release`（`kernel/build.rs` 的 `ROOT_NAME` 读那个环境变量）。
-//! 普通 `cargo run` 一个字不变——还是 `root`。`crates/gate/tests/stress.rs` 是它的壳。
+//! `cargo image rig && cargo run --release`（**场景在造镜像那一刻定**；内核那一份与场景无关，
+//! 见 `crates/image`）。默认那一景是 `root`。`crates/gate/tests/stress.rs` 是它的壳。
 //!
 //! **`--release` 不是偏好，是这一台跑得动的前提**（照实记，量于这一轮）：debug 档下
 //! `iters_per_ms=3522`、release 是 `24576`（差 7 倍），而"台主空转 `delay_us`"与"受害者上台
@@ -227,7 +227,7 @@ use runtime::env::debug;
 use runtime::env::room::{self, exit_with};
 use runtime::env::unit;
 
-/// 受害者的清单名（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）：**rig A 的握手版受害者**——把孔交给
+/// 受害者的清单名（`env::assembly::ALL` 里 `scenes` 含 `rig` 的那一行）：**rig A 的握手版受害者**——把孔交给
 /// 台主（`seat`）→ 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
 /// （见 `hang.rs` 头注）。旧版 `churn` 仍在清单里（留档），本台子不再用它。
 const VICTIM: &str = "hang";
