@@ -1,4 +1,4 @@
-//! 默认那一景的读数门（搬自 `scripts/soak.sh`，判据一字未改）——**判据住这里**，
+//! 默认那一景的读数门（搬自 `scripts/soak.sh`——**那一刀之后它已删**，判据一字未改）——**判据住这里**，
 //! `tests/soak.rs` 那一层只管起机与报数（变异那一门要能直接调它）。
 //!
 //! # 判据（两条一起）
@@ -203,7 +203,7 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "uart", tier: Tier::Narrative { shapes: &["^(uart: got [0-9]+)$"] } },
     Reading { prefix: "[case]", tier: Tier::Narrative { shapes: &["^\\[case\\] [a-z0-9-]+: (run|ok) [_a-z0-9]+$"] } },
     Reading { prefix: "task", tier: Tier::Manual { why: "只有停机那一行，由 soak.sh 那段 `if grep -q \"task: all tasks exited, system halted\"` 判" } },
-    Reading { prefix: "probe-deep", tier: Tier::Manual { why: "**只在公平台起**（默认装配单里没有它）：判据在 `scripts/fair.sh`，不在 soak 的断言表里" } },
+    Reading { prefix: "probe-deep", tier: Tier::Manual { why: "**只在公平台起**（默认装配单里没有它）：判据在 `crates/gate/tests/fair.rs`，不在 soak 的断言表里" } },
 ];
 
 /// 这一轮读数兑没兑现。**一次报全部缺口**（不是第一条就返回——旧脚本就是"缺这几条"一起报）。

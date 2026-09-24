@@ -1,4 +1,4 @@
-//! 框架档的门 —— 内核内用例 + 挂起自检（`--features framework`）。搬自 `scripts/framework.sh`。
+//! 框架档的门 —— 内核内用例 + 挂起自检（`--features framework`）。搬自 `scripts/framework.sh`（它已删）。
 //!
 //! # 判据（三条一起）
 //!

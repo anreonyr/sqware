@@ -26,7 +26,7 @@ fn root_name() -> String {
 ///
 /// **照实记（为什么要有这一格）**：一开始给 `fair` 另加了一条清单别名指向同一个 `prog-root`
 /// ⇒ initrd 里**同一份镜像装了两遍**、当场变大 ⇒ QEMU 报 `Not enough memory to place DTB
-/// after kernel/initrd`（`scripts/fair.sh` 第一次跑就是这个）。故这里归一名字，镜像仍只有一份。
+/// after kernel/initrd`（`crates/gate/tests/fair.rs` 第一次跑就是这个）。故这里归一名字，镜像仍只有一份。
 fn image_name() -> String {
     let name = root_name();
     if name == "fair" {

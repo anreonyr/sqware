@@ -9,7 +9,7 @@ default = []
 # sqware-diagnose.jsonl 落在 qemu CWD，runner 归档）。**非默认**（`default = []`，
 # 要开须显式 `--features semihosting`）——旧注写「默认开启（default 引入）」与
 # manifest 相反。另注意 qemu 侧的 `-semihosting` 只在 `QEMU_SEMI=1` / `QEMU_FEATURES`
-# 含 semihosting 时才加（`scripts/boot.nu`，**只管 QEMU 侧**），而 `scripts/examine.nu`
+# 含 semihosting 时才加（`scripts/boot.nu`，**只管 QEMU 侧**），而 `crates/gate/tests/examine.rs`
 # 的两档都不带头文件 feature ⇒ 门跑过的产物没有结构化导出。
 semihosting = []
 # 内核内测试框架（framework/ + health/ 的用例 + link.ld 的 `.tests` 段）。

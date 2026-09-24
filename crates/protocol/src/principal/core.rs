@@ -292,7 +292,7 @@ impl Principal {
 // ── 用例不在这里（照实记：用户裁定"测试和运行环境分开"）──────────────
 //
 // 本文件原先那个 `#[cfg(test)] mod tests`（**7 条**）整体搬去了 `crates/protocol-case` 的
-// `roster` 靶里 `principal_core` 那一格，门口 `scripts/host.sh`；**本文件从此没有一行测试**。
+// `roster` 靶里 `principal_core` 那一格，门口 `crates/gate/tests/host.rs`；**本文件从此没有一行测试**。
 //
 // 那一批原先是"编不到、也跑不到"的规格（`protocol` 是 `[lib] test = false`，riscv 上编不出
 // libtest）；它们真正被跑起来，是从那台宿主靶开始。真机上另有探针那几条

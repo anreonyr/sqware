@@ -1,4 +1,4 @@
-//! 门的牙口 —— **判据的判据**（搬自 `scripts/teeth.py`）。
+//! 门的牙口 —— **判据的判据**（搬自 `scripts/teeth.py`——**那一刀之后它已删**）。
 //!
 //! 判据只有一条：**一条断言如果在它守的那件事坏掉之后还不红，它就没有牙**。做法是外科式的——
 //! 每次只改一处（都是**像样的 bug**，不是语法错），把那门跑一遍，记下"红在哪一条"，再还原。
@@ -289,7 +289,7 @@ pub fn ledger_save(book: &BTreeMap<String, String>) {
     );
 }
 
-// ── 表（从 `scripts/teeth.py` 机械抽出来的，一行未改）──────────────────────────
+// ── 表（从 `scripts/teeth.py` 机械抽出来的，一行未改；那份脚本已删）──────────────────────────
 
 const RAW: &[Raw] = &[
     Raw { name: "树·剪掉时把槽移走（号=下标，后面全错位）", path: "crates/protocol/src/operator/core.rs", from: "        let taken = self.slots.get_mut(id.get())?.take()?;", to: "        if id.get() >= self.slots.len() {\n            return None;\n        }\n        let taken = self.slots.remove(id.get())?;", at: Where::Host, hope: Hope::Red },

@@ -20,7 +20,7 @@
 //! # 怎么跑它
 //!
 //! `SQWARE_ROOT=rig cargo run --release`（`kernel/build.rs` 的 `ROOT_NAME` 读那个环境变量）。
-//! 普通 `cargo run` 一个字不变——还是 `root`。`scripts/stress.sh` 是它的壳。
+//! 普通 `cargo run` 一个字不变——还是 `root`。`crates/gate/tests/stress.rs` 是它的壳。
 //!
 //! **`--release` 不是偏好，是这一台跑得动的前提**（照实记，量于这一轮）：debug 档下
 //! `iters_per_ms=3522`、release 是 `24576`（差 7 倍），而"台主空转 `delay_us`"与"受害者上台
@@ -34,15 +34,15 @@
 //! task: all tasks exited, system halted
 //! ```
 //!
-//! `scripts/stress.sh` 的 profile 默认因此是 `--release`（想复现 debug 那一挂：
-//! `scripts/stress.sh 1 --debug`）。
+//! `crates/gate/tests/stress.rs` 的 profile 默认因此是 `--release`（想复现 debug 那一挂：
+//! `crates/gate/tests/stress.rs 1 --debug`）。
 //!
 //! # 照实记（装好台子当天量到的）
 //!
 //! **⚠ 环境警示（后补）：本节与下面"三条结论"的数都是在 `-icount auto,sleep=on`
 //! （当时 `scripts/boot.nu` 的默认）下取的**——icount 按宿主时间给 vCPU 记账、让它睡够
 //! 虚拟额度 ⇒ **WFI 里的核被 IPI 叫醒要等额度（毫秒级）**。台子与验收门对齐环境
-//! （`QEMU_ICOUNT=`，见 `scripts/stress.sh`）之后，同一台子的读数是另一套（见本文件后半
+//! （`QEMU_ICOUNT=`，见 `crates/gate/tests/stress.rs`）之后，同一台子的读数是另一套（见本文件后半
 //! 的照实记：`starved` 312~324 → 0~7/328、`nudged` 1~9 → 324~328）。故本节的数**只作
 //! 历史**；结论里"`starved=318/328`"那一条的**量**要按对齐后的环境复核（判据本身
 //! ——看 `doom: nudged` 而不看 `now/waited`——不受影响）。
@@ -105,7 +105,7 @@
 //!   尾巴到 10~100 ms）。这解释了当时看到的全部现象：投活 980 笔里 976 笔落在正睡在
 //!   WFI 的落点核上、`SendIpi` 一次没返 Err，却只有 393 次 WFI 返回；滞留那 319 笔
 //!   "自那笔投活以来那颗核一次都没醒过"。
-//! - 而**验收门**（`scripts/examine.nu`）与 `fast.sh` / `probe.sh` 一直是**关着 icount**
+//! - 而**验收门**（`crates/gate/tests/examine.rs`）与 `fast.sh` / `probe.sh` 一直是**关着 icount**
 //!   跑的。`stress.sh` / `soak.sh` / `load.sh` 没关 ⇒ 两边读数**不可比**。
 //!
 //! 环境对齐（`scripts/{stress,soak,load}.sh` 显式 `QEMU_ICOUNT=`）之后，同一颗 ELF：

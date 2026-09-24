@@ -18,7 +18,7 @@
 //! 空名字的行、调用点过滤"，默认台当场以 `system: manifest bad` 收场（soak 逮住）。
 //!
 //! **照实记（公平台的那一句自报为什么留着）**：它是量"装配单真的多了一条"用的，
-//! `scripts/fair.sh` 也判它——第一次跑 fair 台时聊天客人一次都没出现，就是靠这一句把
+//! `crates/gate/tests/fair.rs` 也判它——第一次跑 fair 台时聊天客人一次都没出现，就是靠这一句把
 //! "cfg 有没有到这一份"分开的。它现在住在 [`announce`] 里，默认那一景是空操作。
 
 use super::*;
@@ -505,7 +505,7 @@ pub const PLAN: &[Program] = &[
 
 /// 公平台自报一句（默认那一景是**空操作**，故 `main` 里不再有 `#[cfg]`）。
 ///
-/// 照实记：这一句是量"装配单真的多了一条"用的（见文件头），`scripts/fair.sh` 也判它。
+/// 照实记：这一句是量"装配单真的多了一条"用的（见文件头），`crates/gate/tests/fair.rs` 也判它。
 pub fn announce() {
     #[cfg(sqware_fair)]
     {

@@ -1,4 +1,4 @@
-//! 公平台 —— **持树者公平**那一格的读数台（`SQWARE_ROOT=fair`）。搬自 `scripts/fair.sh`。
+//! 公平台 —— **持树者公平**那一格的读数台（`SQWARE_ROOT=fair`）。搬自 `scripts/fair.sh`（它已删）。
 //!
 //! 场景：`fair` 起的是**同一份引导镜像**，只是编排域那张装配单多一条"聊天客人"（`probe-deep`，
 //! 按构建期的 `--cfg sqware_fair` 选），而那一台上它**不让手**（每 16 手才让一次，见

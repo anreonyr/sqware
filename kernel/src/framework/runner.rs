@@ -28,7 +28,7 @@ use super::{Kernel, Platform, Status, clear_running, discover, set_running};
 /// # 通过 = **放行启动**，不是停机
 ///
 /// 全部通过就正常返回，`boot` 继续往下走（`spawn_root` → shell）。测试档要在**同一趟**
-/// 里接着跑验收门那套 shell 交互（重复喂 `ping` / `exit`，见 `scripts/examine.nu`），
+/// 里接着跑验收门那套 shell 交互（重复喂 `ping` / `exit`，见 `crates/gate/tests/examine.rs`），
 /// 停机会把它们全掐掉 —— 这一条第一版写错过
 /// （`Platform::finish` 走了停机自环，症状是 shell 再也起不来）。停机只发生在失败：
 /// 那是 panic 通道（[`case_failed`]）的事。

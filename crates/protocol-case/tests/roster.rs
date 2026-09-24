@@ -7,9 +7,9 @@
 //! （riscv 目标上编不出 libtest），而主工作区那几道门（`check --all-targets` /
 //! `build --release`）一道都不编它——那批规格长期只有"写着的规格"、没有"跑着的判据"。
 //!
-//! 与别的几台同一条路（清单见 `scripts/host.sh` 头注；头几台是 `operator` 靶 /
+//! 与别的几台同一条路（清单见 `crates/gate/tests/host.rs` 头注；头几台是 `operator` 靶 /
 //! `line` 靶 / `judge` 靶）：编外宿主
-//! crate、只依赖 `env`、把核心源码**逐字未改**地 `#[path]` 进来，门口 `scripts/host.sh`。
+//! crate、只依赖 `env`、把核心源码**逐字未改**地 `#[path]` 进来，门口 `crates/gate/tests/host.rs`。
 //!
 //! **两本册子同住一台**：盟籍核心写着 `use crate::principal::core::PrincipalId` —— 它要身份
 //! 那本册子的号。分两台各编一遍的话，`principal/core.rs` 里那批判据会在两个靶里各跑一遍

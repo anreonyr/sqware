@@ -204,7 +204,7 @@ fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
 /// 记一笔**不等于**兑现。查 `doomed` 的落点原先只有一处（`runtime::switcher::trap` 的
 /// `SupervisorSoft` 分支），而且它只认「本核**当前**任务」⇒ 那一记 IPI 若被别的上下文
 /// 取走（受害者在它到达之前自己离了核），这一笔就成了**孤儿**：全树再没人看它一眼，
-/// 直到关机级联才被收掉（实测：`Doom` 答 `Ok`、目标 300 ms 内没自退，见 `scripts/soak.sh`）。
+/// 直到关机级联才被收掉（实测：`Doom` 答 `Ok`、目标 300 ms 内没自退，见 `crates/gate/src/soak.rs`）。
 ///
 /// 故兑现改由**任务自己的时刻**兜底，IPI 退化成"让它尽快"的提示：
 ///

@@ -279,7 +279,7 @@ impl Board {
 // ── 用例不在这里（照实记：用户裁定"测试和运行环境分开"）──────────────
 //
 // 本文件原先那个 `#[cfg(test)] mod tests`（**7 条**）整体搬去了 `crates/protocol-case` 的
-// `board` 靶，门口 `scripts/host.sh`；**本文件从此没有一行测试**。
+// `board` 靶，门口 `crates/gate/tests/host.rs`；**本文件从此没有一行测试**。
 //
 // 那七条里有两条是**读数的出处**，故把结论留在这里：
 //

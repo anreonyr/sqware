@@ -76,9 +76,9 @@
 //!    `operator` 靶::a_deep_chain_does_not_need_the_call_stack`（把测试线程的栈压到
 //!    64 KiB 再建 500 层链；退回递归版它 SIGABRT）。
 //!
-//!    **照实记**：这一句原来写的是"后者在 `scripts/soak.sh` 里"——**不成立**：这一台
+//!    **照实记**：这一句原来写的是"后者在 `crates/gate/src/soak.rs` 里"——**不成立**：这一台
 //!    **不上电**（`PLAN` 里没有它），soak 里它的断言数是 **0**。它那两行是**手工读数**，
-//!    而"手工读数"这件事本身就值得写在这一行上（全库对账的法子见 `scripts/soak.sh` 头注
+//!    而"手工读数"这件事本身就值得写在这一行上（全库对账的法子见 `crates/gate/src/soak.rs` 头注
 //!    那一节"这一门断言的是哪几行读数"）。
 
 // 本文件是一份**独立的 bin**（`programs/Cargo.toml` 的 `prog-probe-deep`），**不进 lib**
@@ -165,7 +165,7 @@ const E_TRIP: usize = 1;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 ///
 /// **照实记**：`BAD_NOTE` 随判据搬进用例而退役。另外这一台**只在公平台起**
-/// （`SQWARE_ROOT=fair`）⇒ 它的 `[case]` 汇总由 `scripts/fair.sh` 判，不归 soak。
+/// （`SQWARE_ROOT=fair`）⇒ 它的 `[case]` 汇总由 `crates/gate/tests/fair.rs` 判，不归 soak。
 const OK_NOTE: &str = "probe-deep: 192 deep, every hand answered";
 
 #[unsafe(no_mangle)]

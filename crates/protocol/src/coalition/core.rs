@@ -388,7 +388,7 @@ impl Coalition {
 //
 // 本文件原先那个 `#[cfg(test)] mod tests`（**6 条**）整体搬去了 `crates/protocol-case` 的
 // `roster` 靶里 `coalition_core` 那一格（盟籍要 `crate::principal::core` 的号，故与名册
-// 同住一个靶），门口 `scripts/host.sh`；**本文件从此没有一行测试**。
+// 同住一个靶），门口 `crates/gate/tests/host.rs`；**本文件从此没有一行测试**。
 //
 // 那一批原先是"编不到、也跑不到"的规格（`protocol` 是 `[lib] test = false`）。真机上另有
 // 探针那几条（`programs/src/user/member.rs`）。

@@ -8,7 +8,7 @@ edition.workspace = true
 # `cargo check --all-targets` 会去编 libtest，编不出来，四道门一起塌。
 #
 # 宿主侧的用例走**编外宿主台** `protocol-case` 的 `operator` 靶（把 `src/operator/core.rs` 逐字编进
-# 测试靶），门口 `scripts/host.sh`。**不能**在本 crate 里加集成测试：那要链接本 crate，
+# 测试靶），门口 `crates/gate/tests/host.rs`。**不能**在本 crate 里加集成测试：那要链接本 crate，
 # 而本 crate 依赖 `runtime`，`runtime` 里那两处 riscv 内联汇编在宿主上编不过
 # （`cargo test -p protocol --target x86_64-unknown-linux-gnu` ⇒
 # `invalid instruction mnemonic 'mv'`；而 `cargo check` 同一个目标是过的——它不做代码生成）。

@@ -1,5 +1,9 @@
 # Operator × Principal × Coalition — 规矩那一格的形状
 
+> **照实记（"完全消除测试脚本"那一刀之后）**：这份记录里提到的 `scripts/*.sh` / `*.nu` / `*.py`
+> **已经收进 `crates/gate`**（只有 `boot.nu` 与 `runner.nu` 留着）。下面写的都是**当时那一版**；
+> 旧 → 新的对照、今天的跑法与那一刀的账见 `docs/gate-crate.md`。
+
 > 上一刀（[`operator-gate.md`](operator-gate.md)）把门**装上**：门口会问"这一位许不许动这一格"，
 > 三格答案（`OK` / `DENIED` / `UNJUDGED`）各归各位。但那一刀的真机上**只有一格实义**——
 > "你得是个已绑身份"：`DEFAULT_RULE` 是一条全局常量，`judge.rs` 里那三格判据

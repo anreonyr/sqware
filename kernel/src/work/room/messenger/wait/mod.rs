@@ -118,7 +118,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, F
         // 最近活到点)"这一式已在四处收成一个家（`timer::beat_until`）。实测（icount 关、
         // release）：6 打点者档把它关掉，**毫秒那几格一字不变**（`late_n=281 late_avg=0
         // late_max=0`），只有亚毫秒那格不同（关掉 744 µs / 留着 396 µs）、`traps` 差 2；
-        // **删掉之后**单核隔离档（`QEMU_SMP=1 scripts/load.sh --release`，3 轮）仍是
+        // **删掉之后**单核隔离档（`QEMU_SMP=1 crates/gate/tests/load.rs --release`，3 轮）仍是
         // `late_n=81 late_avg=0 late_max=0`（`late_max_tick` 2631~4689、`traps=643`，与留着
         // 那句时同档）——逐条读数见 `programs/.../stress/load.rs` 的表。
         //

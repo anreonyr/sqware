@@ -327,7 +327,7 @@ fn drain_exhaust(lines: &mut Lines, plic: &Plic) {
 ///
 /// **这一跳有读数了**：`user/lodger`（房客）每次冷启动都占住 1 号线、然后一句话不说就走
 /// ⇒ 本域被叫醒、`alive` 答不出 ⇒ `router: vacate line=1`（两道门的固定读数，见
-/// `scripts/soak.sh`）。链条本身是 `cull::seal_owned` → `messenger::wipe` → 组键。
+/// `crates/gate/src/soak.rs`）。链条本身是 `cull::seal_owned` → `messenger::wipe` → 组键。
 ///
 /// 两个后果缺一不可：不 `unwire` 则线还在本 context 里（电平挂着 ⇒ 白报），不 `detach` 则
 /// 那一格永远留在组里（对端没了 ⇒ 每次都当场就绪）。
@@ -465,7 +465,7 @@ fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
 /// 临时关掉那几手，同一处从 `9` 涨到 `14`）。
 ///
 /// 读数带一格 **`pies=`**（本域表里现在有几枚）：'放了没有'这件事因此**可量**——少放一枚，
-/// 这一格当场大 1（判据钉在 `scripts/soak.sh` 里，涨了就是红）。**答完话那一枚回信孔副本**
+/// 这一格当场大 1（判据钉在 `crates/gate/src/soak.rs` 里，涨了就是红）。**答完话那一枚回信孔副本**
 /// 也走同一条纪律（见 `desk_face` 尾上那一手）。
 fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
     if let Some(at_peer) = lane.at_peer() {
