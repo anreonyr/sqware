@@ -197,6 +197,7 @@
 pub mod call;
 pub mod client;
 pub mod core;
+pub mod frame;
 
 pub use call::{BACK, DIR, NAME};
 pub use core::{Fail, Principal, PrincipalId};

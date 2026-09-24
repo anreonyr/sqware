@@ -1,4 +1,19 @@
-# 帧上宿主 —— **结构门**（待裁决）
+# 帧上宿主 —— **结构门**
+
+> **裁决（2026-09-24）**：宏走**甲**；先做**零风险三份**（`line` / `principal` / `coalition`）；
+> `supply` 那两个类型**先不挪，单独立门**。
+>
+> **落地情况**：
+> - ✅ 甲：`fail_codes!` 搬进 `crates/protocol/src/fail_codes.rs`（`#[macro_use]` + `#[macro_export]`
+>   两样都要 ⇒ **调用点一行未改**；各宿主靶 `#[macro_use] #[path] mod fail_codes;` 写在帧模块之前）
+> - ✅ `line`：**零切**（那一份本来就全纯）⇒ 编进 `line-case`，加 5 条帧判据
+> - ✅ `principal` / `coalition`：各拆成 `frame.rs`（纯）+ `call.rs`（适配，首行 `pub use super::frame::*;`）
+>   ⇒ 两片编进 `principal-case`，加 8 条帧判据
+> - ☐ `operator` / `board`：**待下一刀**（要真切：`frame.rs` + `call.rs`）；门已裁定，做法照上面两份
+> - ☐ `supply`：明写"切不动"（`Access`/`Policy` 长在 `Want`/`Need` 的类型里）；类型搬家单独立门
+> - ➖ `session`：**没有帧**（它本身就是运行时那一层）
+>
+> 下面保留**裁决时**的原样（读数与分叉），不改写成今天的数字。
 
 > 这一份是**门**，不是实现：按 `design-pipeline` 的门纪律，"纯核心与适配分离"这一步的结构
 > 没裁定之前不动源码。下面每一格都带**量出来的读数**，好让判断在你自己的推理里出现。

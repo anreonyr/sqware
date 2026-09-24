@@ -58,11 +58,36 @@ mod session {
     }
 }
 
-/// 账的正文（就是 `crates/protocol/src/driver/line/core.rs` 那一份，逐字未改）。
-#[path = "../../protocol/src/driver/line/core.rs"]
-mod line;
+/// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**。
+///
+/// 两样都要（见那份文件的照实记）：`#[macro_use]` 把宏带进**下面那些模块**的作用域
+/// （宏的可见性按正文先后 ⇒ 这一行必须在帧模块之前），`#[macro_export]` 保住"出 crate"那一份。
+#[macro_use]
+#[path = "../../protocol/src/fail_codes.rs"]
+mod fail_codes;
 
-use crate::line::{Fail, Lines};
+/// 账的正文（就是 `crates/protocol/src/driver/line/core.rs` 那一份，逐字未改）。
+///
+/// **模块名就叫 `core`**：帧那一份写的是 `use super::core::Fail;`（在协议里它与 `core.rs` 同住
+/// `driver::line`）——宿主靶里把这一份放在**同一层**、名字照旧，那一行才逐字成立
+/// （`judge-case` 当初也是这么叫的；代价是 `core` 这个名字会遮住 `core` crate ⇒ 本文件里
+/// 凡要用标准库的就写 `std::…`）。
+#[path = "../../protocol/src/driver/line/core.rs"]
+mod core;
+
+/// **帧形与记号**那一份（`crates/protocol/src/driver/line/call.rs`，逐字未改）。
+///
+/// 照实记：**这是第一份上宿主的帧形**，而它**不用切结构**——线这一份 `use` 的只有 `env` 与
+/// 同层 `core::Fail`，故"纯核心与适配分离"在这一份上本来就成立。
+///
+/// 照实记：`#[allow(dead_code)]` 是因为本台只叫了它的一部分（`LANE` 那几枚记号由适配层用）。
+#[allow(dead_code)]
+#[path = "../../protocol/src/driver/line/call.rs"]
+mod call;
+
+use env::{Key, Mark};
+use crate::call::{OCCUPY, OCCUPY_LEN, pack_occupy, unpack_occupy};
+use crate::core::{Fail, Lines};
 use crate::session::Pier;
 
 /// 一个够用的账（`device_count = 4` ⇒ 线号 0..=4）。
@@ -160,4 +185,85 @@ fn told_survives_a_vacate() {
     assert_eq!(lines.vacate(3), Ok(()));
     // 主人退了，但"这一条线报过"照旧记着——不然下一次上来的主人会把同一行再打一遍。
     assert!(!lines.told(3));
+}
+
+// ── 帧形那一半（`driver/line/call.rs`）──────────────────────
+//
+// **照实记（这一组为什么值当）**：机器那几道门走的是**顺路**——客户端编一帧、路由者解一帧，
+// 形状对了就继续。下面这些格子机器**一条都走不到**：短一帧 / 长一帧 / 动作码不对、
+// **判别号不认识的坐标**、以及那张失败码表的两端（表外那一格与读不懂的码都答 `None`，
+// 而这两个 `None` **不是同一件事**）。
+
+#[test]
+fn an_occupy_frame_is_the_action_code_then_the_coordinate() {
+    let key = Key::region(0x1000_1000);
+    let frame = pack_occupy(key);
+    assert_eq!(frame.len(), OCCUPY_LEN);
+    assert_eq!(frame[0], OCCUPY, "头一格是动作码");
+    assert_eq!(&frame[1..], &key.bytes(), "其余是坐标，一字不差");
+    assert_eq!(unpack_occupy(&frame), Some(key), "编了再解 = 原来那个坐标");
+}
+
+#[test]
+fn a_frame_that_is_not_that_shape_is_not_guessed_at() {
+    // **不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。
+    let good = pack_occupy(Key::region(0x1000_1000));
+    assert_eq!(unpack_occupy(&[]), None, "空帧");
+    assert_eq!(unpack_occupy(&good[..OCCUPY_LEN - 1]), None, "短一字节");
+    let long = [good.as_slice(), &[0u8]].concat();
+    assert_eq!(unpack_occupy(&long), None, "长一字节");
+
+    let mut wrong_op = good;
+    wrong_op[0] = OCCUPY + 1;
+    assert_eq!(unpack_occupy(&wrong_op), None, "动作码不对");
+    wrong_op[0] = 0;
+    assert_eq!(unpack_occupy(&wrong_op), None, "零不是动作码");
+}
+
+#[test]
+fn an_unknown_coordinate_discriminator_is_refused_but_a_known_non_region_is_taken() {
+    // 两件事分得开（文件头那句"不猜"）：
+    //   - **判别号不认识** ⇒ `None`（这不是本仓的坐标，读它没有意义）；
+    //   - **认识、但不是"区"的那两形**（设备树 / 中断）**照收**——路由者按坐标查表查不到，
+    //     自然答 `UNKNOWN`（线挂在设备上，那是它的账）。
+    let mut frame = pack_occupy(Key::region(0x1000));
+    frame[1] = 0xEE; // 判别号那一格换成一个不认识的
+    assert_eq!(unpack_occupy(&frame), None, "不认识的判别号");
+
+    for key in [Key::dtb(), Key::irq()] {
+        assert_eq!(unpack_occupy(&pack_occupy(key)), Some(key), "认识的非区坐标照收");
+    }
+}
+
+#[test]
+fn the_failure_table_is_bijective_and_keeps_bad_outside() {
+    use crate::call::{BAD, DENIED, OK, TAKEN, UNKNOWN, code_to_fail, fail_to_code};
+
+    assert_eq!(fail_to_code(None), OK, "没失败 ⇒ OK");
+    assert_eq!(fail_to_code(Some(Fail::Unknown)), UNKNOWN);
+    assert_eq!(fail_to_code(Some(Fail::Taken)), TAKEN);
+    assert_eq!(fail_to_code(Some(Fail::Denied)), DENIED);
+
+    // **一端一格**（双射）：解回来是同一位。
+    assert_eq!(code_to_fail(OK), None);
+    assert_eq!(code_to_fail(UNKNOWN), Some(Fail::Unknown));
+    assert_eq!(code_to_fail(TAKEN), Some(Fail::Taken));
+    assert_eq!(code_to_fail(DENIED), Some(Fail::Denied));
+
+    // **表外那一格与读不懂的码都答 `None`**，而这两个 `None` 不是同一件事——读的人靠**动作码**
+    // 先分流：`BAD` 是"这一问读不懂"，`OK` 是"没失败"。
+    assert_eq!(code_to_fail(BAD), None, "`BAD` 在失败域之外（照实记见宏的文档）");
+    assert_eq!(code_to_fail(200), None, "表外的码");
+    assert_ne!(BAD, OK, "两者不同码，才分得开");
+}
+
+#[test]
+fn the_two_marks_of_this_road_do_not_collide() {
+    // **面不相撞**（贯穿全仓的一条纪律）：这一条路上的几枚记号互不相同。
+    use crate::call::{BACK_MARK, LANE, NOTE};
+    assert_eq!(LANE, "line");
+    assert_ne!(BACK_MARK, Mark::of(LANE), "泊位与回信孔是两枚记号");
+    assert_ne!(BACK_MARK, Mark::of("line-tip"));
+    assert_ne!(BACK_MARK, Mark::NONE);
+    assert_eq!(NOTE, 1, "两个方向共用那一格");
 }

@@ -80,10 +80,13 @@
 #        而 `runtime` 在宿主上编不出来（那两处 riscv 内联汇编）——这是这一门的由来，不是漏。
 #        纯的那几格（线上码表）在 `gate.rs` 里**另存一份**，并由 `operator/mod.rs` 末尾那条
 #        `const _: () = assert!(…)` 在**编译期**钉住（一漂就编不过）。
-#      - `coalition/call.rs` / `principal/call.rs` / `driver/line/call.rs` 的 pack/unpack **本身是纯的**，
-#        但它们要同层的 `core.rs`（类型）——而那一份的**判据已经在别的台里跑着**，再编一遍就是
-#        **同一批判据跑两遍**（本仓明说过不这么干：`judge-case` 头注那条"反过来把 `judge.rs`
-#        引进 `operator-case` 会把上面这些再跑一遍"）。故它们的门也是机器那几道。
+#      - 三份 `call.rs` 的**帧那一半**原先也归这一类（纯，但要同层 `core.rs`，而那一份的判据已在
+#        别的台里跑着 ⇒ 再编一遍就是"同一批判据跑两遍"）。**这一格已经收了**（用户裁定见
+#        `docs/frame-gate.md`）：`line` 零切进 `line-case`；`principal`/`coalition` 各拆成
+#        `frame.rs`（纯）+ `call.rs`（适配，`pub use super::frame::*;` ⇒ 调用点零改），两片进
+#        `principal-case`。**剩下的 `operator`/`board` 两份要真切**（待下一刀），`driver/supply`
+#        那一份**切不动**（`Access`/`Policy` 长在 `Want`/`Need` 的类型里），`session/call.rs`
+#        **没有帧**（它本身就是运行时那一层）。
 #   3) **只有类型、没有判据**：`driver/supply/core.rs`（五格失败域）与各 `mod.rs`（正文）——
 #      没有可机械检查的判据，开台只会得到"零用例"，而零用例这一门本来就判红。
 #

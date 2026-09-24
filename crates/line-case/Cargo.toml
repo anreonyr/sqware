@@ -22,3 +22,10 @@ publish = false
 # 一个**桩**——`Pier` 只要 `post` 一句（核心只跟泊位说这一句话）。桩量不了会话，量得了账。
 #
 # 门口：`scripts/host.sh`。
+
+[dev-dependencies]
+# 判据用的 `Key` / `Mark` 是 `env` 的类型；`#[path]` 进来的 `call.rs` 自己 `use env::…`
+# （**照实记**：这一台原先不需要 `env`——那时它只编 `core.rs`，而那一份不认识这几个类型；
+# 帧那一半上宿主之后就要了）。
+env = { path = "../env" }
+

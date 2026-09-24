@@ -147,52 +147,13 @@ macro_rules! reserve_reads {
     };
 }
 
-/// 码表：**失败域 ↔ 线上答话那一格**，四家同一个形状。
-///
-/// - 正向一律 `fail_to_code(Option<Fail>) -> u8`：`None`（没失败）⇒ `OK`；
-/// - 反向一律 `code_to_fail(u8) -> Option<Fail>`：`OK` ⇒ `None`。
-///
-/// **反向只在双射时生成**。非双射的表（几种失败归同一个码）**不给反向**——由人写并注明
-/// "反不回来"。这是判据，不是风格：给非双射的表生成反向，等于把"对偶"说成假的。
-///
-/// **出 crate**（`#[macro_export]`）：第二个实例到了——驱动的**具体协议**住各驱动自己的目录
-/// （那一条裁定见 [`driver`]），而它同样要一张"失败域 ↔ 线上那一格"的表。手抄一遍就是两处编。
-#[macro_export]
-macro_rules! fail_codes {
-    ($(#[$meta:meta])* bijective $fail:ty; $ok:ident; $($variant:path => $code:ident),+ $(,)?) => {
-        $(#[$meta])*
-        pub const fn fail_to_code(fail: Option<$fail>) -> u8 {
-            match fail {
-                None => $ok,
-                $(Some($variant) => $code),+
-            }
-        }
-
-        /// 线上答话那一格 → 失败域。`OK`（没失败）那一格一定答 `None`——读的人靠动作码先分流。
-        ///
-        /// **`BAD`（这一问读不懂）在不在表里，由各家自己的表说**：板那一侧它独立一格、留在
-        /// 表外（`system::board::call`），`driver::rtc` 那一侧它与"没走到"（`Fail::Denied`）
-        /// 合流——那边的持有者从来不说"我没接住"这句话（接不住就是没有孔可回）。
-        ///
-        /// 表外那一格与读不懂的码一律答 `None`：两个 `None` 不是同一件事，读的人靠动作码先分流。
-        pub const fn code_to_fail(code: u8) -> Option<$fail> {
-            match code {
-                $ok => None,
-                $($code => Some($variant)),+,
-                _ => None,
-            }
-        }
-    };
-    ($(#[$meta:meta])* lossy $fail:ty; $ok:ident; $($arm:pat => $code:ident),+ $(,)?) => {
-        $(#[$meta])*
-        pub const fn fail_to_code(fail: Option<$fail>) -> u8 {
-            match fail {
-                None => $ok,
-                $(Some($arm) => $code),+
-            }
-        }
-    };
-}
+// 码表宏自己一份源：协议与**宿主靶**同读这一份（宿主靶不依赖 `protocol`，见那份文件的照实记）。
+//
+// `#[macro_use]` 与 `#[macro_export]` 两样都要：前者把宏带进**本 crate 后面那些模块**的作用域
+// （宏的可见性按正文先后），后者保住"出 crate"那一份（`protocol::fail_codes!`）——**调用点
+// 因此一行都不用改**（照实记：先只留 `#[macro_export]`，编出来 11 处 "cannot find macro"）。
+#[macro_use]
+mod fail_codes;
 
 pub mod coalition;
 pub mod driver;
