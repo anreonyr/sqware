@@ -1,0 +1,78 @@
+//! rtc 这一域的**错误类型**——`main` 的返回类型，`?` 一路把它带出来。
+//!
+//! 号与从前的 `const E_*` **同值**（1–3 归 [`assemble`]，4 起是本域），只是现在有类型、能带话。
+
+use env::EnvError;
+use programs::{Exit, Report};
+
+/// 时钟驱动的死法：**一格 = 死在启动/常驻的哪一步**。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fail {
+    /// 环境调用失败（`sire` / 开会话 / 铸孔这一类）。
+    Env(EnvError),
+    /// `assemble::receive` 带来的号（原样往外带）。
+    Assemble(env::Reason),
+    /// 那一页寄存器开不动。
+    Open,
+    /// 上板那三步。
+    Board,
+    /// 上树那一趟（门牌 / 会话 / 问话孔）。
+    Tree,
+    /// 占线（坐标与登记那一趟）。
+    Line,
+    /// 那只组（门上的请求与线上的投递）。
+    Desk,
+}
+
+impl Fail {
+    fn code(self) -> env::Reason {
+        match self {
+            // 环境负码的**样子**照实带出去：`usize` 是 64 位，负码在自己那段高位上仍互不相同。
+            Fail::Env(e) => e.code() as env::Reason,
+            Fail::Assemble(code) => code,
+            Fail::Open => 4,
+            Fail::Board => 5,
+            Fail::Line => 6,
+            Fail::Tree => 7,
+            Fail::Desk => 8,
+        }
+    }
+
+    const fn text(self) -> &'static str {
+        match self {
+            Fail::Env(_) => "rtc: envcall",
+            Fail::Assemble(_) => "rtc: assemble",
+            Fail::Open => "rtc: device open failed",
+            Fail::Board => "rtc: board",
+            Fail::Tree => "rtc: tree",
+            Fail::Line => "rtc: line",
+            Fail::Desk => "rtc: desk",
+        }
+    }
+}
+
+impl Exit for Fail {
+    fn report(&self) -> Report<'_> {
+        Report::note(self.code(), self.text())
+    }
+}
+
+impl From<EnvError> for Fail {
+    fn from(e: EnvError) -> Self {
+        Fail::Env(e)
+    }
+}
+
+/// `?` 那条路上有两种包装：裸的 [`EnvError`] 与 `erra::Error<EnvError>`。两者都收进同一格
+/// ——号的账是同一本（`EnvError::code`）。
+impl From<erra::Error<EnvError>> for Fail {
+    fn from(e: erra::Error<EnvError>) -> Self {
+        Fail::Env(e.into_source())
+    }
+}
+
+impl From<env::Reason> for Fail {
+    fn from(code: env::Reason) -> Self {
+        Fail::Assemble(code)
+    }
+}

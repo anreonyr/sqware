@@ -83,11 +83,8 @@ const MS: usize = 1000;
 /// 找不到就再问一次的间隔（毫秒）：门牌是驱动落的，本域可能比它先起。
 const RETRY_MS: usize = 1;
 
-/// 域自己的正常退场码：**`env` 那张共用表里的 0 号**（`env::EXIT_OK`）——从前这里抄过一份。
-const EXIT_OK: usize = env::EXIT_OK;
-
 /// 没搭上（找不到控制台）：一次往返都做不成 ⇒ 报这一格退场。
-const E_NO_CONSOLE: usize = 1;
+const E_NO_CONSOLE: env::Reason = 1;
 
 /// 一行的上界。更长的行**截断**回显（超过它的行不可能是 `exit`，故收场判据不受影响）；
 /// 与设备侧那一条同值（`programs/src/driver/uart/main.rs::DRAIN_MAX` 那个层次的约定）。
@@ -103,23 +100,23 @@ const BUF_MAX: usize = DBCN_MAX;
 const READY: &str = "echo: ready";
 const NON_UTF8: &str = "<non-utf8>";
 
-/// 本 bin 的 `main`：**返回类型就是它的退出账**（`Reason` = 只报码）。`-> !` 那两处
-/// 报码从今往后是 `return`——出口那一手在 [`programs::entry`] 里，全仓只有一处。
-extern "C" fn bare_main() -> env::Reason {
+/// 本 bin 的 `main`：**返回类型就是它的退出账**——本域只有一种失败，故直接用 `Reason`
+/// （不立 `Fail` 枚举：一格不值得一个类型）。出口那一手在 [`programs::entry`]，全仓一处。
+fn main() -> Result<(), env::Reason> {
     let _ = debug::put(READY);
     // 上板：**注册在回显之前**——板要能看见本域（见头注）。挂不上照旧回显。
     let reg = register();
     let _ = debug::put(&format!("echo: reg={reg}"));
 
     let Ok(sire) = utask::sire() else {
-        return E_NO_CONSOLE;
+        return Err(E_NO_CONSOLE);
     };
     // 树那条路：本域只开一条会话——先找控制台，再落自己那块牌子（次序见头注）。
     let Ok((tree, host)) = operator::open(sire, MS) else {
-        return E_NO_CONSOLE;
+        return Err(E_NO_CONSOLE);
     };
     let Ok(talk) = operator::ask_hole(host) else {
-        return E_NO_CONSOLE;
+        return Err(E_NO_CONSOLE);
     };
 
     // 一、**先找控制台**：`FIND /device/uart` ⇒ 那枚孔经会话授进本域表里。
@@ -142,7 +139,7 @@ extern "C" fn bare_main() -> env::Reason {
     suite.run();
 
     let Some(console) = console else {
-        return E_NO_CONSOLE;
+        return Err(E_NO_CONSOLE);
     };
     let mut buf = [0u8; BUF_MAX];
     let mut line = [0u8; LINE_MAX];
@@ -176,11 +173,11 @@ extern "C" fn bare_main() -> env::Reason {
         }
     }
 
-    EXIT_OK
+    Ok(())
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_user_echo.rs"));
 
 /// 找控制台：`FIND /device/uart`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///

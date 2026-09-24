@@ -94,6 +94,9 @@ use runtime::env::unit as utask;
 /// 设备面（本域私有：谁的设备谁自己带）。
 mod rtc;
 
+/// 本域的死法（编号 + 那句话）——见那个文件与 `programs::Exit`。
+mod fail;
+
 /// 要找的那位服务（线路由者）在树上的名字。
 const SERVICE: &str = "router";
 
@@ -103,81 +106,53 @@ const ME: &str = "rtc";
 /// 等板 / 等树 / 办一趟登记的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 本地失败编号（装配那三步用 [`assemble`] 的家族编号 1–3）。
-const E_OPEN: usize = 4;
-const E_BOARD: usize = 5;
-const E_LINE: usize = 6;
-const E_TREE: usize = 7;
-const E_DESK: usize = 8;
-
-extern "C" fn bare_main() -> env::Reason {
+/// 本域那一台：**返回类型就是它的死法**——编号与那句话都在 [`fail::Fail`] 里
+/// （装配那三步 `1`–`3` 由 [`assemble`] 那一族共用，本域自己那几格从 4 起）。
+fn main() -> Result<(), fail::Fail> {
     // 1. 领配给：那一页寄存器（`ONLY`：同一时刻只该有一个持有者）。
     let mut slots = [None; needs::WANTS.len()];
-    let got = match assemble::receive(&mut slots) {
-        Ok(n) => n,
-        Err(code) => return code,
-    };
+    let got = assemble::receive(&mut slots)?;
     let [Some(rtc_pie)] = slots else {
-        return assemble::E_GRANT;
+        return Err(fail::Fail::Assemble(assemble::E_GRANT));
     };
     say(&format!("rtc: got {got}"));
 
     // 2. 开图 + 自证：那对纳秒格子读两次（两次不同 ⇒ 它是活的）。
-    let Ok(dock) = Dock::open(PolePie::from_token(rtc_pie.token())) else {
-        return E_OPEN;
-    };
+    let dock = Dock::open(PolePie::from_token(rtc_pie.token())).map_err(|_| fail::Fail::Open)?;
     let view = dock.view();
     let (t0, t1) = (rtc::now(view), rtc::now(view));
     say(&format!("rtc: time {t0} -> {t1}"));
 
     // 3. 上板（只为让板看得见本域的死）+ 上树：门牌 `/device/rtc` 落在树上（那一枚入口先取出来，
     //    树的 LAND 与组的两只耳朵都要它）。
-    let Ok(sire) = utask::sire() else {
-        return E_BOARD;
-    };
-    let Ok((_link, board_link)) = board::open(sire, MS) else {
-        return E_BOARD;
-    };
+    let sire = utask::sire()?;
+    let (_link, board_link) = board::open(sire, MS).map_err(|_| fail::Fail::Board)?;
     if board::ask_hole(board_link).is_err() {
-        return E_BOARD;
+        return Err(fail::Fail::Board);
     }
-    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
-        return E_TREE;
-    };
-    let Ok((link, host)) = operator::open(sire, MS) else {
-        return E_TREE;
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return E_TREE;
-    };
+    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| fail::Fail::Tree)?;
+    let (link, host) = operator::open(sire, MS).map_err(|_| fail::Fail::Tree)?;
+    let talk = operator::ask_hole(host).map_err(|_| fail::Fail::Tree)?;
     serve_tree(&link, talk, host, entry);
 
     // 4. 占线：报**发下来的那一段区**（线号由路由者解树解出来，本域从不说它）。
-    let Some(key) = rtc_pie.key() else {
-        return E_LINE;
-    };
-    let Ok(held) = register(&link, talk, host, key) else {
-        return E_LINE;
-    };
+    let key = rtc_pie.key().ok_or(fail::Fail::Line)?;
+    let held = register(&link, talk, host, key).map_err(|_| fail::Fail::Line)?;
     say("rtc: line occupied");
 
     // 5. 常驻：**一只组等两个源**——门上有请求、线上有投递。
     //
     //    两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的。故等待没有期限。
     //    那只组的成员就是那两枚孔（"就绪"挂进组，"取消息"仍走各自那一手）。
-    let Ok(tole) = Tole::unseal(false) else {
-        return E_DESK;
-    };
+    let tole = Tole::unseal(false).map_err(|_| fail::Fail::Desk)?;
     let entry_hole = HolePie::from_token(entry);
-    let Ok(lane) = held.hole() else {
-        return E_LINE;
-    };
+    let lane = held.hole().map_err(|_| fail::Fail::Line)?;
     if tole.attach(&entry_hole, HoleDir::Pull).is_err()
         || tole
             .attach(&HolePie::from_token(lane), HoleDir::Pull)
             .is_err()
     {
-        return E_DESK;
+        return Err(fail::Fail::Desk);
     }
 
     let mut slot = Slot::new();
@@ -189,7 +164,7 @@ extern "C" fn bare_main() -> env::Reason {
         // 到点才有的说（次序不承担语义，只省一次绕回）。
         match tole.await_(usize::MAX) {
             Ok(_) => {}
-            Err(_) => return E_DESK,
+            Err(_) => return Err(fail::Fail::Desk),
         }
         while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
             desk(&mut slot, view, from, &buf[..len]);
@@ -367,5 +342,6 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_driver_rtc_main.rs"));
