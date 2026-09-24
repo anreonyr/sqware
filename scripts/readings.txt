@@ -1,22 +1,36 @@
 # 读数表 —— **门按这张表对账**：镜像里"会打读数"的每一个前缀，谁是它的判据。
 #
 # 读它的是 `scripts/readings.awk`（由 `scripts/soak.sh` 每一轮末尾调），门那边那批断言
-# **从 soak.sh 自己抽出来**——不另抄一份。三段：`前缀 <TAB> 档 <TAB> 理由`。
+# **从 soak.sh 自己抽出来**——不另抄一份。四段：
+# `前缀 <TAB> 档 <TAB> 理由 [<TAB> 没判的那几行的形状]`。
 #
 #   auto      这一前缀的**每一行**都必须被本门某条断言匹配（新形状没人判 ⇒ 红）
-#   narrative 打了，但只判其中几条形状（**理由必填**）；至少要有一条被匹配
-#   manual    这一前缀的判据**不在断言表里**（由本文件的别的机制判）；理由必填
+#   narrative 打了，但只判其中几条形状（**理由必填**）；至少要有一条被匹配，**并且**必须在第 4
+#             栏声明"没判的那几行长什么样"——本轮没判的行里只要有一行不在那串形状里 ⇒ 红
+#   manual    这一前缀的判据**不在断言表里**（由别的机制判）；理由必填（第 4 栏不适用）
 #
-# **照实记（这张表是量出来的，不是想出来的）**：它是 `scripts/readings.awk --report` 对着
-# `target/soak/` 里一轮真日志跑出来的——每个前缀多少行、其中多少行今天有判据——再逐条写档。
-# 那一跑当场照出一个洞：`board:` 那 9 行**一条判据都没有**（本次已补一条形状断言，故它是 auto）。
+# **照实记（这张表是量出来的，不是想出来的）**：它是 `scripts/readings.awk` 的 `report=1`
+# 对着 `target/soak/` 里一轮真日志跑出来的——每个前缀多少行、其中多少行今天有判据——再逐条
+# 写档。那一跑当场照出一个洞：`board:` 那 9 行**一条判据都没有**（当时补了一条形状断言，故它
+# 是 auto）。
 #
-# **加新前缀、或给 `auto` 的前缀加新形状，都要先改这里**——这正是它的用处。
-# 各档"还没判的那几行"写在理由里：让它们**看得见**，别悄悄长。
+# **照实记（这一版把前几版那几个数改了，而且是改小了）**：对账器一直把 soak.sh 的 `need`（走
+# `grep -q`，**BRE**）当成 `needE`（走 `grep -qE`，**ERE**）来判，于是 22 条带括号的 `need`
+# 断言在这里**永远不命中** ⇒ `member:` 被记成"判 2/27"、`policy:` 被记成"判 2/15"，真相是
+# **25/27** 与 **12/15**；`router:` / `uart:` / `lodger:` 那几个数也跟着动。**门一直是绿的**
+# （grep 那一侧判对了），错的是定档位用的这台量具——修法与实测记在 `scripts/readings.awk` 头注。
 #
-# 前缀	档	理由
+# **顺带露出来、本轮补上的洞**：修对之后重标定，逐条对着 `programs/` 里的程序与 soak.sh 的头注
+# 读，挑出**那台机器当场就判了、只是没人写下来**的：`member:` 六条（第三态那一族的负证、
+# `adopt` / `waive`、第二个号上的那两条）、`router:` / `uart:` / `lodger:` 五条（同一族里漏掉
+# 的那一个实例）。口径与探针那一刀一样——**只搬它已经在判的东西**，不新造判据。
+#
+# **加新前缀、或给某一档加新形状，都要先改这里**——这正是它的用处。叙事那一档也准长，但得先
+# 在第 4 栏写下"它长什么样"：**棘轮是这么咬的**。
+#
+# 前缀	档	理由	没判的那几行的形状（narrative 必填）
 # ── 逐行都有判据（auto）─────────────────────────────────────────────
-board	auto	收尾那两行（`bye …` / `swept …`）：本轮补了一条交替形状；此前 9 行 0 判
+board	auto	收尾那两行（`bye …` / `swept …`）：补了一条交替形状；此前 9 行 0 判
 coalition	auto	上树那一行（`coalition: tree … pname=coalition`）由整行形状判
 devices	auto	`devices: 21 handed to root`——引导域交货那一句
 doom	auto	整行形状（`held/starved/blocked/nudged` 四格都是数）
@@ -33,17 +47,17 @@ sched	auto	整行形状（`kicks/fallback`）
 sleeper	auto	约时刻那一整串（`sleeper: …`）
 timer	auto	整行形状（`late_n/late_max_ms/… traps/tocks/mutes`）
 wire	auto	孔那一趟（`wire: N bytes, paired=true, post=true`）
-# ── 打了、但只判其中几条形状（narrative）───────────────────────────
-echo	narrative	判 8/10：`echo: reg=0`（挂名字那一答）与 `echo: op=` 还没有判据——顺路读数
-lodger	narrative	判 3/5：`lodger: got 1` 与 `occupy=0` 没有判据
-member	narrative	判 2/27：`band`/`bloc`/`amid` 那几条判了，其余 25 行是**叙事**（每轮的号都不一样）
-policy	narrative	判 2/15：`bind(self)`/`adopt(sub)` 等判了；`policy: me=` 那三条由 soak.sh 的关系检查判（绑 ≠ 领 = 弃），其余是叙事
-root	narrative	判 1/2：`root: block n=…` 判了；`root: done` 是收尾叙事
-router	narrative	判 8/18：树/设备那几行判了；`got N` / `docks open` / `lane dropped …` 是叙事
-rtc	narrative	判 5/7：`rtc: got 1` 与 `rtc: time … -> …` 是叙事
-system	narrative	判 5/23：设备交付那几行判了；`gone <名字> state=… heir=… wait=…` 是**每轮不同的叙事**
-uart	narrative	判 8/10：`uart: got 1` 与 `line occupied` 是叙事
+# ── 打了、但只判其中几条形状（narrative；第 4 栏 = 没判的那几行长什么样）──────
+echo	narrative	判 8/10：`reg=`（挂名字那一答）与 `op=`（序号）是**顺路读数**——每轮的值不一样	^(echo: op=[0-9]+|echo: reg=[0-9]+)$
+lodger	narrative	判 4/5：三趟登记那三格都已钉；`got=` 是拿到的线号（顺路读数）	^(lodger: got [0-9]+)$
+member	narrative	判 25/27：`me=` / `derive(me)=` 是每轮不同的号（`adopt` / `waive` / 第三态那几条本轮已补进门）	^(member: derive\(me\)=[0-9]+|member: me=[0-9]+)$
+policy	narrative	判 12/15：`policy: me=` 那三条由 soak.sh 的**关系检查**判（绑 ≠ 领 = 弃），其余都已钉	^(policy: me=[0-9]+)$
+root	narrative	判 1/2：`root: block n=…` 判了；`root: done` 是收尾那一句	^(root: done)$
+router	narrative	判 15/17：树 / 设备 / 线那几行都判了（本轮补了 virtio 那行与 `line=10` / `exhaust line=10`）；`got N` / `docks open` 是开场叙事	^(router: docks open|router: got [0-9]+)$
+rtc	narrative	判 5/7：`got=` 是顺路读数；`time A -> B` 两个时刻每轮都不同——形状能钉、大小关系 grep 钉不了	^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+)$
+system	narrative	判 5/23：设备交付那几行判了；`gone <名字> state=… heir=… wait=…` 每个域一行、名字是装配单的事	^(system: gone [a-z0-9-]+ state=[A-Za-z]+ ousted=(true|false) heir=[^ ]+ wait=[a-z]+)$
+uart	narrative	判 8/9：`uart: got=` 是拿到的线号（顺路读数）	^(uart: got [0-9]+)$
+[case]	narrative	**用例协议**（程序侧）：汇总行由 soak 的**逐台基线**判（默认那一景 5 台 / 25 例）；`run` / `ok` 是一例一行，配对由 soak 那条点名检查判	^\[case\] [a-z0-9-]+: (run|ok) [_a-z0-9]+$
 # ── 判据不在断言表里（manual）─────────────────────────────────────
 task	manual	只有停机那一行，由 soak.sh 那段 `if grep -q "task: all tasks exited, system halted"` 判
 probe-deep	manual	**只在公平台起**（默认装配单里没有它）：判据在 `scripts/fair.sh`，不在 soak 的断言表里
-[case]	narrative	**用例协议**（程序侧 pilot）：末行汇总由 soak 判（基线 16 例）；逐例的 `run`/`ok` 是给人看的

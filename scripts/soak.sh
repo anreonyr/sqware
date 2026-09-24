@@ -275,7 +275,15 @@
 # 现在由每一轮末尾那一步机械地做（`scripts/readings.awk` + `scripts/readings.txt`）：
 #   - 日志里出现的每个 `前缀:` 都要在读数表里声明过（**新读数没人管 ⇒ 红**）；
 #   - `auto` 档的前缀，**每一行**都要被本文里某条断言匹配（新形状没人判 ⇒ 红）；
+#   - `narrative` 档的前缀（打了、但只判其中几条形状的叙事行）**必须**在表第 4 栏写下"没判的
+#     那几行长什么样"（一串形状）——本轮没判的行里只要有一行不在那串形状里 ⇒ 红（**棘轮**）；
 #   - 断言表**从本文件抽出来**（不另抄一份），故加了断言不必同步别处。
+#
+# **照实记（`need` 与 `needE` 不是一回事）**：本文的 `need()` 走 `grep -q`（**BRE**：`(` `)`
+# `{` `}` `+` `?` `|` 在那里都是**字面**），`needE()` 走 `grep -qE`（**ERE**）。对账器早期把两者
+# 都按 ERE 判 ⇒ 带括号的 `need` 在它那里**永远不命中**、把"判了"记成"没人判"（表里 `member:`
+# 曾写着判 2/27，真相 19/27）。修法与实测记在 `scripts/readings.awk` 头注与
+# `docs/harness-gate.md` §7.1。**写断言时不必为了对账器去转义括号**——转义是它的事。
 # 剩下的只该是**构建噪声**（`warning:` / `help:`——那些是 rustc 的话，不是程序的读数）。
 #
 # **今天唯一的例外**是 `prog-probe-deep`：它**装得上电、不上电**（清单里有条目、
@@ -391,6 +399,23 @@ while [ "$i" -le "$rounds" ]; do
     need   "lodger: unknown=1"
     need   "router: lane dropped line=1 pies=21"
     need   "lodger: pies=9"
+    # ── 本轮补的五条（**同一族里漏掉的那一个实例**）─────────────────────────────
+    #
+    # 与上面 `member:` 那六条是同一次标定出来的（把对账器修对之后重跑）。这五条的判据**早就
+    # 在头注里写着**、也已经有一条兄弟断言，只是那一个实例没抄进来——逐条对着本文件的头注读
+    # 出来的，不是我新造的判据：
+    #   `router: line 1 = virtio_mmio@10001000`  房客那一对（头注 146 行点名它是固定读数，
+    #                                            兄弟：`line 10 = serial` / `line 11 = rtc`）
+    #   `router: line=10`                         兄弟 `router: line=11`：uart 那条线也真拉起来了
+    #   `router: exhaust line=10`                 兄弟 `router: exhaust line=11`：uart 那条排空、放回
+    #   `uart: line occupied`                     兄弟 `rtc: line occupied`
+    #   `lodger: occupy=0`                        三趟登记里**成功**那一格（头注：0 = OK，线归本域；
+    #                                            兄弟：`taken=2` / `unknown=1`）
+    need   "router: line 1 = virtio_mmio@10001000"
+    need   "router: line=10"
+    need   "router: exhaust line=10"
+    need   "uart: line occupied"
+    need   "lodger: occupy=0"
     needE  "^uart: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=uart[[:space:]]*$"
     need   "echo: console=true"
     needE  "^echo: tree part=0 land=0 find=0 got=true trim=0 plate=[0-9]+ pname=echo[[:space:]]*$"
@@ -406,6 +431,22 @@ while [ "$i" -le "$rounds" ]; do
     need   "member: amid(me,c0)=true"
     need   "member: amid(me,out)=err:unknown"
     need   "member: amid(out,me)=false"
+    # ── 本轮补的六条（**把对账器修对之后才露出来的洞**）──────────────────────────
+    #
+    # 修 `scripts/readings.awk` 的 BRE/ERE 那一格（见那份文件头注）之后重新标定，`member:`
+    # 那 27 行里还剩 8 行没有判据。逐条对着 `programs/src/user/member.rs` 的头注（那 16 步脚本）
+    # 读过：其中 **6 行是这台机器当场就判了的结论**——第三态那一族的负证（`enter(out)` /
+    # `leave(out)` 要答 `err:unknown`）、步 8 的 `adopt(sub)`、步 12 的 `waive`、以及第二个号
+    # 上的 `enter(c1)` / `amid(me,c1)`（号由服务发，`found` 那两次已经钉了 0 与 1）。
+    # 口径与探针那一刀一样：**只搬它已经在判的东西**，不新造判据。
+    # 剩下那两行（`member: me=` / `member: derive(me)=`）是**叙事**（每轮的号都不一样），
+    # 形状已声明在读数表第 4 栏，不在这里钉值。
+    need   "member: enter(c1)=ok"
+    need   "member: amid(me,c1)=true"
+    need   "member: adopt(sub)=ok"
+    need   "member: waive=ok"
+    need   "member: enter(out)=err:unknown"
+    need   "member: leave(out)=err:unknown"
     need   "member: done"
     need   "policy: sire(root)=none"
     need   "policy: sire(me)=0"
