@@ -8,7 +8,8 @@
 #
 # 判据（每轮）：
 #   1. 有停机行（整机不塌）；
-#   2. 聊天客人自己跑完（`probe-deep: tree deep=`）；
+#   2. 聊天客人自己跑完（`probe-deep: tree deep=`）**且它的五条用例全过**（`[case] cases 5
+#      ok 5 fail 0`——判据搬进了那台探针自己，见 `docs/harness-gate.md` §6）；
 #   3. **受害者的读数没被挤过期**——`echo` 那五条与默认台逐字一致。
 #
 # 照实记（这一台今天是**红**的，红在哪就是读数）：不让手的条件下，持树者是串行的，
@@ -55,6 +56,10 @@ while [ "$i" -le "$rounds" ]; do
     reason="无停机行（末行：$(grep -a 'fair\|probe-deep\|echo:' "$log" | tail -1)）"
   elif ! grep -q "probe-deep: tree deep=" "$log"; then
     reason="聊天客人没跑完"
+  elif ! grep -qE "^\[case\] probe-deep: 5 cases[[:space:]]*$" "$log"; then
+    reason="聊天客人的用例没登记全（$(grep -a '^\[case\]' "$log" | head -1)）"
+  elif ! grep -qE "^\[case\] probe-deep: cases 5 ok 5 fail 0[[:space:]]*$" "$log"; then
+    reason="聊天客人的用例没过：$(grep -a '^\[case\] run ' "$log" | tail -1)"
   elif ! grep -q "echo: list root=0,3" "$log"; then
     reason="受害者被挤过期：$(grep -a 'echo:' "$log" | tr '\n' ' ' | tail -c 150)"
   elif ! grep -q "echo: list names=sys,device" "$log"; then

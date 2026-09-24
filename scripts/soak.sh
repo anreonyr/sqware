@@ -420,25 +420,42 @@ while [ "$i" -le "$rounds" ]; do
     need   "policy: adopt(out)=err:unknown"
     need   "policy: waive=ok"
     need   "subject: done"
-    need   "probe: tree land=8 seek=err:1 dir=0"
-    need   "probe-denied: denied as expected"
-    need   "probe-owner: tree land=8 before=[0-9]* after=id="
-    need   "probe-owner: owner rule held"
-    need   "probe-lease: tree land=0 dir=0 plate=[0-9]*"
-    need   "probe-lease: landed, leaving"
-    need   "probe-owner: lease land=0 id="
-    needE  "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8 door=[0-9]+ open=0 foreign=8 open_sub=0 trim=1 at_pane=9 gone_door=9 mine=[0-9]+ keep=0 ask2=[0-9]+ ask_same=1"
-    need   "probe-rule: the rules held"
-    # ── 用例协议（**程序侧 pilot**：`probe-rule` 那十三条 `&&` 拆成 16 例）──────────
+    # ── 探针那一族（**程序侧用例**，用户裁定：见 `docs/harness-gate.md` §6）──────────
     #
-    # 前一条是"登记了几例"、后一条是"跑完几例"——两条都钉住，与 `host.sh` 那套**基线**同一条
-    # 纪律（少跑一例也拦得住）。逐例的 `run` / `ok` 是给人看的：失败的用例**留不下 `ok`**，
-    # 域当场死（`assert!` 走 panic 通道），故末行也不会出现。
+    # 每台探针的判据都搬进了它**自己**（`harness::cases`）：一例一条、名字即结论，跑完打
+    # `[case] …` 协议。故这里只剩三样：
+    #   ① 读数那一行**还在**（只查前缀；**值**归用例，不再逐个钉形状）；
+    #   ② **登记了几例**与**跑完几例**（基线，与 `host.sh` 同一纪律：少跑一例也拦得住）；
+    #   ③ 走通的那一句（`exit … note:` 里那句 ⇒ 域是**正常退场**，不是 panic）。
+    need   "probe: tree land="
+    need   "probe-denied: denied as expected"
+    need   "probe-owner: tree land="
+    need   "probe-owner: owner rule held"
+    need   "probe-lease: tree land="
+    need   "probe-lease: landed, leaving"
+    need   "probe-owner: lease land="
+    need   "probe-rule: tree part="
+    need   "probe-rule: the rules held"
+    need   "probe-other: tree is="
+    need   "probe-rule-other: all three denied as expected"
+    # 用例协议：**一台两条**（登记了几例 / 跑完几例）。基线写死在下面——与 `host.sh` 同一
+    # 条纪律：少跑一例也拦得住。
     # **照实记（这一格是量出来的）**：`[case]` 在 `grep` 里是**字符类**（c/a/s/e 里任一个）
-    # ——第一版写成 `need "[case] 16 cases"`，门因此报"缺这两条"而日志里那 32 行明明都在。
-    # 故这里走 `needE` + **转义方括号**，并连末尾那格空白一起钉（与 `board:` / `timer:` 同款）。
-    needE  "^\[case\] 16 cases[[:space:]]*$"
-    needE  "^\[case\] cases 16 ok 16 fail 0[[:space:]]*$"
+    # ——第一版写成 `need "[case] 16 cases"`，门因此报"缺这一条"而日志里那 32 行明明都在。
+    # 故走 `needE` + **转义方括号**，并连末尾那格空白一起钉（与 `board:` / `timer:` 同款）。
+    # **照实记（为什么不用一个 shell 函数收这十条）**：试过；而那台读数对账器是**从本文件抽
+    # 断言**的（`sed` 抓 `need/needE "…"`），函数体里那两条抽出的是字面 `$2` ⇒ 它对不上日志
+    # ⇒ 当场红（"`[case]:` 声明为 narrative，但这一轮一行都没被判"）。故这里摊开写。
+    needE  "^\[case\] probe-denied: 2 cases[[:space:]]*$"
+    needE  "^\[case\] probe-denied: cases 2 ok 2 fail 0[[:space:]]*$"
+    needE  "^\[case\] probe-owner: 3 cases[[:space:]]*$"
+    needE  "^\[case\] probe-owner: cases 3 ok 3 fail 0[[:space:]]*$"
+    needE  "^\[case\] probe-rule-other: 3 cases[[:space:]]*$"
+    needE  "^\[case\] probe-rule-other: cases 3 ok 3 fail 0[[:space:]]*$"
+    needE  "^\[case\] probe-lease: 1 cases[[:space:]]*$"
+    needE  "^\[case\] probe-lease: cases 1 ok 1 fail 0[[:space:]]*$"
+    needE  "^\[case\] probe-rule: 16 cases[[:space:]]*$"
+    needE  "^\[case\] probe-rule: cases 16 ok 16 fail 0[[:space:]]*$"
     # 第三条（**这条是点名用的**）：每个 `run` 都要有配对的 `ok`——失败的用例只留下 `run`
     # （`assert!` 走 panic 通道，域当场死），故"最后一条 `run`"就是那一例的名字。
     case_runs="$(grep -ac '^\[case\] run ' "$log")"

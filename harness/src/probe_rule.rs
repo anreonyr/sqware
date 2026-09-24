@@ -363,7 +363,7 @@ extern "C" fn main() -> ! {
     // 照实记：原先这十三条被 `&&` 成**一个** `held`，红了只知道 `probe-rule: a rule did NOT
     // hold`——还得回头看上面那 19 个计数器才认得出是哪一条。现在一例一个名字，而**名字就是
     // 结论**（每一例后面那句"为什么"与头注 §3 / §5 那张表同源）。
-    let mut suite = cases::Suite::new();
+    let mut suite = cases::Suite::new("probe-rule");
     // —— 装配：一条规矩没落上，后面全没意义。故它排第一：红了不会被后面的假红淹没。
     suite.case("three_rules_landed", move || {
         assert!(made == 3, "made={made}")

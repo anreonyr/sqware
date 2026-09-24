@@ -48,6 +48,7 @@ use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken};
+use harness::cases;
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::session::Quay;
@@ -72,8 +73,11 @@ const RETRY_MS: usize = 1;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+///
+/// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
+/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到 `exit_with_note`。
 const OK_NOTE: &str = "probe-rule-other: all three denied as expected";
-const BAD_NOTE: &str = "probe-rule-other: NOT denied";
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -108,12 +112,20 @@ extern "C" fn main() -> ! {
         "probe-other: tree is={is} under={under} foreign={foreign}"
     ));
 
-    // 四、判据：三格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
-    let held = is == ocall::DENIED && under == ocall::DENIED && foreign == ocall::DENIED;
-    exit_with_note(
-        if held { E_OK } else { E_TRIP },
-        if held { OK_NOTE } else { BAD_NOTE },
-    )
+    // 四、判据：**一例一条**——三格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
+    let mut suite = cases::Suite::new("probe-rule-other");
+    suite.case("a_foreign_identity_cannot_use_the_is_cell", move || {
+        assert_eq!(is, ocall::DENIED)
+    });
+    suite.case("nor_the_under_cell", move || {
+        assert_eq!(under, ocall::DENIED)
+    });
+    suite.case("nor_a_cell_pointing_at_someone_elses_door", move || {
+        assert_eq!(foreign, ocall::DENIED)
+    });
+    suite.run();
+
+    exit_with_note(E_OK, OK_NOTE)
 }
 
 /// 沿一条路译成号再 `find`：答线上那一格码（译不出号 ⇒ `UNKNOWN`）。

@@ -128,11 +128,15 @@ suite.run();     // 全过才返回；失败走 panic 通道（域当场死）
 汇报格式（门只认这几行，`harness/src/cases.rs` 是出处）：
 
 ```text
-[case] N cases
-[case] run <名>              ← 开跑前打（内核那头"先打 ok 再跑"撒过谎）
-[case] ok <名>               ← 只有跑完才打
-[case] cases N ok M fail K   ← 全过才有这一行
+[case] <台名>: N cases
+[case] <台名>: run <名>      ← 开跑前打（内核那头"先打 ok 再跑"撒过谎）
+[case] <台名>: ok <名>       ← 只有跑完才打
+[case] <台名>: cases N ok M fail K   ← 全过才有这一行
 ```
+
+**照实记（`<台名>` 那一格是补出来的）**：第一版不带台名，于是 `probe-owner` 与
+`probe-rule-other` 的汇总行**逐字相同**（都恰好 3 例）——门的基线断言因此分不出是哪一台
+（一台没登记、另一台顶上，断言照绿）。台名一进协议行，基线就是**逐台唯一**的了。
 
 **收益（实测）**：把 `in_covers_that_league` 的期望值**故意改错**，一台 soak 报的是
 `[case] run/ok 不配对（run=4 ok=3）——失败的那一例是：[case] run in_covers_that_league`，机器
@@ -156,10 +160,33 @@ hold`，得回头看那 19 个计数器才知道是哪一条。
   当成"`c`/`a`/`s`/`e` 里任一个" ⇒ **永远不匹配**，门报"缺这两条"而日志里那 32 行都在。改走
   `needE "^\[case\] …[[:space:]]*$"`。
 
+### 第二刀：其余五台探针照搬（用户裁定"行"）
+
+| 台 | 例 | 名字（就是结论） |
+|---|---|---|
+| `probe-rule`（第一刀） | 16 | `three_rules_landed` / `opens_refuses_someone_elses_door` / … |
+| `probe-denied` | 2 | `the_landing_is_denied` / `the_cell_is_still_free_after_the_refusal` |
+| `probe-owner` | 3 | `a_living_owners_plate_refuses_me` / `that_cell_did_not_move` / `a_dead_owners_name_can_be_taken_over` |
+| `probe-lease` | 1 | `the_plate_landed` |
+| `probe-rule-other` | 3 | `a_foreign_identity_cannot_use_the_is_cell` / `nor_the_under_cell` / `nor_a_cell_pointing_at_someone_elses_door` |
+| `probe-deep`（只在公平台） | 5 | `the_chain_reaches_the_cap` / … / `the_chain_is_trimmed_clean` |
+
+**口径：只搬每一台**已经在判**的东西**——不新造判据。这一条不是洁癖：账里那两条**等价变异**
+（"租赁那一趟不声明归自己" / "接手那一趟反而声明归自己"）正是"机器读数看不见、宿主靶管着"的
+那两格；若借搬家的机会替探针加一条它原先没有的断言，等效就变红，账会被我改成假的。
+
+**门那一侧跟着缩**：探针那一族原先是一串**钉死值**的形状（`probe-owner: tree land=8 before=… after=id=`、
+`probe-rule: tree part=… 19 个计数器…`），现在只剩三样——① 读数那一行**还在**（只查前缀）、
+② 每台**登记了几例 / 跑完几例**（基线，逐台唯一）、③ 走通那一句（`exit … note:` ⇒ 正常退场
+而不是 panic）。**值归用例**。
+
 ### 下一刀（若要把这条路走完）
 
-1. 其余探针（`probe-owner` / `probe-lease` / `probe-denied` / `probe-deep`）与**服务自己那条
-   契约**照搬；每搬一台，soak 的断言就从"一串形状"缩成"一行汇总 + 基线"。
+1. **服务那一侧要分开谈**：探针的每一行读数**本来就是判据**，所以搬得干净；而
+   `echo` / `guest` / `sleeper` / `subject` / `member` / `router` / `uart` / `rtc` 打的多是
+   **叙事**（"我拿到了哪一号"），它们的契约要么已经由门/probe 证了，要么根本没被断言过。
+   硬搬只会把叙事当判据（假判据），或者把 `bail`（起手没走通）改个名字——两样都不赚。
+   真要做，得先逐条回答"这一行**判的是什么**"，那是另一刀。
 2. 系统级那一半（`devices: 21 handed to root`、停机行、内核 `timer:` / `doom:` / `sched:` /
    `irq:`、时序）**留在宿主的门**——SUT 里的用例看不到它们。
 3. 到那时再看 `scripts/*.sh`：正文应该只剩"起机 · 喂键 · 读汇总"，也就是**一行壳**。

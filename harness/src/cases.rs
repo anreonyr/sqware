@@ -22,7 +22,7 @@
 //! # 用的样子
 //!
 //! ```ignore
-//! let mut suite = cases::Suite::new();
+//! let mut suite = cases::Suite::new("probe-rule");
 //! suite.case("three_rules_landed", || assert!(made == 3, "made={made}"));
 //! suite.case("is_binds_that_identity", || assert_eq!(is, ocall::OK));
 //! …
@@ -32,12 +32,15 @@
 //! # 汇报格式（门只认这几行）
 //!
 //! ```text
-//! [case] N cases
-//! [case] run <名>              ← **开跑前**打（照实记：内核那头"先打 ok 再跑"撒过谎，
+//! [case] <台名>: N cases
+//! [case] <台名>: run <名>      ← **开跑前**打（照实记：内核那头"先打 ok 再跑"撒过谎，
 //!                                故意注入的失败照样报 ok）
-//! [case] ok <名>               ← 只有跑完才打
-//! [case] cases N ok M fail K   ← 全过才有这一行
+//! [case] <台名>: ok <名>       ← 只有跑完才打
+//! [case] <台名>: cases N ok M fail K   ← 全过才有这一行
 //! ```
+//!
+//! **照实记（`<台名>` 那一格是补出来的）**：第一版不带台名，于是两台探针的汇总行**逐字相同**
+//! （都恰好 3 例）——门的基线断言因此分不出是哪一台（一台没登记，另一台顶上，断言照绿）。
 //!
 //! 失败的用例**留不下 `ok`**、也留不下末行：`assert!` 走域内 panic 通道（`programs::entry`
 //! 把"那句话 + `file:line:col`"交给内核，内核在自己的出口上打出来）⇒ 门看到的是
@@ -54,13 +57,18 @@ use runtime::env::debug;
 
 /// 一沓用例：运行时登记，跑完打印那份协议。
 pub struct Suite {
+    /// 哪一台的用例（进协议行的头一格——门按它钉**逐台**的基线）。
+    who: &'static str,
     cases: Vec<(&'static str, Box<dyn Fn()>)>,
 }
 
 impl Suite {
-    /// 空的一沓。
-    pub fn new() -> Suite {
-        Suite { cases: Vec::new() }
+    /// 空的一沓。`who` = 清单名（`probe-rule` / `probe-owner` / …）。
+    pub fn new(who: &'static str) -> Suite {
+        Suite {
+            who,
+            cases: Vec::new(),
+        }
     }
 
     /// 登记一例。`name` 是给**人和门**看的名字（它出现在 `[case] run` / `[case] ok` 两行里）。
@@ -72,15 +80,19 @@ impl Suite {
 
     /// 跑全部用例：逐例打点，末尾给汇总。**全过才返回。**
     pub fn run(&self) {
-        say(&format!("[case] {} cases", self.cases.len()));
+        let who = self.who;
+        say(&format!("[case] {who}: {} cases", self.cases.len()));
         let mut ok = 0usize;
         for (name, body) in &self.cases {
-            say(&format!("[case] run {name}"));
+            say(&format!("[case] {who}: run {name}"));
             body();
             ok += 1;
-            say(&format!("[case] ok {name}"));
+            say(&format!("[case] {who}: ok {name}"));
         }
-        say(&format!("[case] cases {} ok {ok} fail 0", self.cases.len()));
+        say(&format!(
+            "[case] {who}: cases {} ok {ok} fail 0",
+            self.cases.len()
+        ));
     }
 }
 

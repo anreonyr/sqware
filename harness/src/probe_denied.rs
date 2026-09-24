@@ -49,6 +49,7 @@ use protocol::operator::{EntryId, Where};
 use alloc::format;
 
 use env::{Name, PieToken};
+use harness::cases;
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::mail;
@@ -65,9 +66,11 @@ const MS: usize = 1000;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-/// 三种退场：全对 / 读数不对（kernel 会把这一句连同域号打出来）。
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+///
+/// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
+/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到 `exit_with_note`。
 const OK_NOTE: &str = "probe-denied: denied as expected";
-const BAD_NOTE: &str = "probe-denied: NOT denied";
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -133,17 +136,19 @@ extern "C" fn main() -> ! {
         at.get()
     ));
 
-    // 五、判据两格：`land == DENIED`（拒得住）且随后 `seek == UNKNOWN`（拒绝发生在动树之前）。
+    // 五、判据：**一例一条**（原先两格 `&&` 成一句）。名字即结论。
     let denied = land_code == ocall::DENIED;
     let unplaced = matches!(after, Err(ocall::UNKNOWN));
-    exit_with_note(
-        if denied && unplaced { E_OK } else { E_TRIP },
-        if denied && unplaced {
-            OK_NOTE
-        } else {
-            BAD_NOTE
-        },
-    )
+    let mut suite = cases::Suite::new("probe-denied");
+    suite.case("the_landing_is_denied", move || {
+        assert!(denied, "本该被拒，land={land_code}")
+    });
+    suite.case("the_cell_is_still_free_after_the_refusal", move || {
+        assert!(unplaced, "拒了，可那一格动过了（seek 答的不是 UNKNOWN）")
+    });
+    suite.run();
+
+    exit_with_note(E_OK, OK_NOTE)
 }
 
 /// `/sys` 那一格的号：**分目录（幂等）+ 译号**。拿不到就 `None`（调用方报一句退场）。

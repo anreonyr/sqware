@@ -95,6 +95,7 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use env::Name;
+use harness::cases;
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::operator::{EntryId, Where};
@@ -161,8 +162,11 @@ const LEAF: &str = "leaf";
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+///
+/// **照实记**：`BAD_NOTE` 随判据搬进用例而退役。另外这一台**只在公平台起**
+/// （`SQWARE_ROOT=fair`）⇒ 它的 `[case]` 汇总由 `scripts/fair.sh` 判，不归 soak。
 const OK_NOTE: &str = "probe-deep: 192 deep, every hand answered";
-const BAD_NOTE: &str = "probe-deep: a hand stopped answering";
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -262,13 +266,27 @@ extern "C" fn main() -> ! {
         u8::from(clean)
     ));
 
-    // 判据：**打满上限**、最底那一层落得上也寻得回、链剪得干净。
-    let held =
-        deep == MAX_DEPTH && code == ocall::OK && land == ocall::OK && find == ocall::OK && clean;
-    exit_with_note(
-        if held { E_OK } else { E_TRIP },
-        if held { OK_NOTE } else { BAD_NOTE },
-    )
+    // 判据：**一例一条**（原先五格 `&&` 成一句）——打满上限 / 最底那一层落得上也寻得回 /
+    // 链剪得干净。
+    let mut suite = cases::Suite::new("probe-deep");
+    suite.case("the_chain_reaches_the_cap", move || {
+        assert_eq!(deep, MAX_DEPTH, "没打到上限就停了")
+    });
+    suite.case("the_deepest_ask_answered", move || {
+        assert_eq!(code, ocall::OK, "最底那一层那一问没答")
+    });
+    suite.case("the_deepest_cell_lands", move || {
+        assert_eq!(land, ocall::OK)
+    });
+    suite.case("the_deepest_cell_is_found_again", move || {
+        assert_eq!(find, ocall::OK)
+    });
+    suite.case("the_chain_is_trimmed_clean", move || {
+        assert!(clean, "剪链没剪干净（trim 有一次没成）")
+    });
+    suite.run();
+
+    exit_with_note(E_OK, OK_NOTE)
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

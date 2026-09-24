@@ -34,6 +34,7 @@ use protocol::operator::client as operator;
 use alloc::format;
 
 use env::Name;
+use harness::cases;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room::exit_with_note;
@@ -47,11 +48,14 @@ const ME: &str = "lease";
 const MS: usize = 1000;
 
 const E_OK: usize = 0;
+/// 走不下去（`bail`）那一档：**与"判据没过"是两回事**——判据没过走 panic 通道。
 const E_TRIP: usize = 1;
 
-/// 两种退场（都不是 panic；kernel 会把这一句连同域号打出来）。
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+///
+/// **照实记（搬进用例之后）**：`BAD_NOTE` 退役了——"牌没落上"现在是**用例没过**（走 panic
+/// 通道、域当场死），再也走不到 `exit_with_note`；而 `E_TRIP` 留给 `bail` 那几手（起手没走通）。
 const OK_NOTE: &str = "probe-lease: landed, leaving";
-const BAD_NOTE: &str = "probe-lease: failed";
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -76,7 +80,7 @@ extern "C" fn main() -> ! {
     };
 
     // 落牌：**声明归本域**（`mine = true`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
-    match operator::land(
+    let landed = operator::land(
         hedge,
         &tree,
         host,
@@ -86,20 +90,27 @@ extern "C" fn main() -> ! {
         ocall::Rule::Public,
         true,
         MS,
-    ) {
-        Ok(id) => {
-            say(&format!(
-                "probe-lease: tree land=0 dir={} plate={}",
-                at.get(),
-                id.get()
-            ));
-            exit_with_note(E_OK, OK_NOTE)
-        }
-        Err(code) => {
-            say(&format!("probe-lease: tree land={code}"));
-            exit_with_note(E_TRIP, BAD_NOTE)
-        }
+    );
+
+    // 读数那一行照旧（两种形状：落上了报号、没落上报码）——**判据**在下面那一例里。
+    match &landed {
+        Ok(id) => say(&format!(
+            "probe-lease: tree land=0 dir={} plate={}",
+            at.get(),
+            id.get()
+        )),
+        Err(code) => say(&format!("probe-lease: tree land={code}")),
     }
+
+    // 判据：**一例**（这一台只有一条：牌落上了；落完就退场，把那一格留成"没主"）。
+    let ok = landed.is_ok();
+    let mut suite = cases::Suite::new("probe-lease");
+    suite.case("the_plate_landed", move || {
+        assert!(ok, "牌没落上（land 答的是码，见上面那一行读数）")
+    });
+    suite.run();
+
+    exit_with_note(E_OK, OK_NOTE)
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

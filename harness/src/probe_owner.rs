@@ -40,6 +40,7 @@ use protocol::operator::{EntryId, Where};
 use alloc::format;
 
 use env::{Name, PieToken, TaskId};
+use harness::cases;
 use protocol::driver;
 use protocol::session::Quay;
 use runtime::env::debug;
@@ -57,8 +58,11 @@ const MS: usize = 1000;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+///
+/// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
+/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到 `exit_with_note`。
 const OK_NOTE: &str = "probe-owner: owner rule held";
-const BAD_NOTE: &str = "probe-owner: OWNER RULE BROKEN";
 
 #[unsafe(no_mangle)]
 extern "C" fn main() -> ! {
@@ -136,18 +140,24 @@ extern "C" fn main() -> ! {
         }
     ));
 
-    exit_with_note(
-        if denied && untouched && taken.is_ok() {
-            E_OK
-        } else {
-            E_TRIP
-        },
-        if denied && untouched && taken.is_ok() {
-            OK_NOTE
-        } else {
-            BAD_NOTE
-        },
-    )
+    // 七、判据：**一例一条**（原先三格 `&&` 成一句）。
+    let took = taken.is_ok();
+    let mut suite = cases::Suite::new("probe-owner");
+    suite.case("a_living_owners_plate_refuses_me", move || {
+        assert!(
+            denied,
+            "那一格的主人还活着，land 本该被拒（land={land_code}）"
+        )
+    });
+    suite.case("that_cell_did_not_move", move || {
+        assert!(untouched, "被拒之后那一格换号了（不再是 before 那个号）")
+    });
+    suite.case("a_dead_owners_name_can_be_taken_over", move || {
+        assert!(took, "probe-lease 已经死了，那一格该重新可落")
+    });
+    suite.run();
+
+    exit_with_note(E_OK, OK_NOTE)
 }
 
 /// 落 `/sys/lease`——**那一格的主人（`probe-lease`）已经退场**，故这一次该接得上。
