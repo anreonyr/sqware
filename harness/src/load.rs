@@ -198,10 +198,10 @@ fn spawn_one(
     if table.register(name, Announce::None).is_err() {
         return false;
     }
-    let Ok(rep) = service::spawn(table, name, elf, kind) else {
+    let Ok(task) = service::mint(table, name, elf, kind) else {
         return false;
     };
-    service::start(table, name, rep, &[], None, &[], 0).is_ok()
+    service::start(table, name, task, &[], None, &[], 0).is_ok()
 }
 
 /// 清单里按名字取镜像（台主只认这两条）。

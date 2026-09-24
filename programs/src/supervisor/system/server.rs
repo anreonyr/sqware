@@ -28,7 +28,7 @@ pub use env::assembly::Grant;
 ///
 /// **失败时不留下半行**：产线程**之前**失败 ⇒ 表不动；产线程**之后**失败 ⇒ 实例与
 /// 状态都如实留在表里（它确实在跑），调用方用 [`stop`] 收尾。
-pub fn spawn(
+pub fn mint(
     table: &mut Table,
     name: Name,
     image: &[u8],
@@ -36,13 +36,13 @@ pub fn spawn(
 ) -> Result<TaskId, Fail> {
     admit_start(table, name)?;
 
-    let team = crate::supervisor::system::call::mint(image, kind)?;
-    let Ok(rep) = crate::supervisor::system::call::bear(team) else {
+    let team = crate::supervisor::system::call::build(image, kind)?;
+    let Ok(task) = crate::supervisor::system::call::spawn(team) else {
         return Err(Fail::NoRoom);
     };
-    table.attach(name, team, rep)?;
+    table.attach(name, team, task)?;
     table.set_state(name, State::Starting);
-    Ok(rep)
+    Ok(task)
 }
 
 /// 第二相：**放行**，并在放行前塞门闩、定会话。
@@ -65,7 +65,7 @@ pub fn spawn(
 pub fn start(
     table: &mut Table,
     name: Name,
-    rep: TaskId,
+    task: TaskId,
     grants: &[Grant],
     quay: Option<&mut Quay>,
     marks: &[Mark],
@@ -73,12 +73,12 @@ pub fn start(
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
-            crate::supervisor::system::call::accord(g.token, rep, g.perm)?;
+            crate::supervisor::system::call::accord(g.token, task, g.perm)?;
         }
-        crate::supervisor::system::call::hatch(rep)
+        crate::supervisor::system::call::hatch(task)
     })();
     if let Err(e) = launched {
-        crate::supervisor::system::call::ruin(rep);
+        crate::supervisor::system::call::doom(task);
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(e);
@@ -105,18 +105,18 @@ pub fn ready(
         return Ok(true);
     }
     let Some(Service {
-        slot: Slot::Live { rep, .. },
+        slot: Slot::Live { task, .. },
         announce,
         ..
     }) = table.find(name)
     else {
         return Err(Fail::NotReady);
     };
-    let (rep, announce) = (*rep, *announce);
+    let (task, announce) = (*task, *announce);
 
     // 它不宣布的那一种：放行之后只要还活着就算起来了，没有可等的东西。
     if announce == Announce::None {
-        if crate::supervisor::system::call::running(rep) {
+        if crate::supervisor::system::call::running(task) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -131,12 +131,12 @@ pub fn ready(
         // 泊位的名字 = 装配单给的通道名），每条都配齐才算起来。认领的是**它**交上来的
         // 那一批（`owner` = 这个孩子）：孔交给的是"生我者"（建域那一枚线程），而
         // **"谁的孔"与"我认的对端"是两件事**——见 `Quay::claim` 的正文。
-        if !marks.is_empty() && marks.iter().all(|mark| q.claim(rep, *mark, millis).is_ok()) {
+        if !marks.is_empty() && marks.iter().all(|mark| q.claim(task, *mark, millis).is_ok()) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
     }
-    if !crate::supervisor::system::call::running(rep) {
+    if !crate::supervisor::system::call::running(task) {
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
@@ -151,14 +151,14 @@ pub fn ready(
 /// 收掉一个 Service。**下令即回，不等它收完**。
 pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
     let Some(Service {
-        slot: Slot::Live { rep, .. },
+        slot: Slot::Live { task, .. },
         ..
     }) = table.find(name)
     else {
         return Err(Fail::Unknown);
     };
-    let rep = *rep;
-    crate::supervisor::system::call::ruin(rep);
+    let task = *task;
+    crate::supervisor::system::call::doom(task);
     table.set_state(name, State::Stopping);
     Ok(())
 }
@@ -166,8 +166,8 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// 等它收尾：`millis` 三态与 [`ready`] 同款（`0` 只探、`usize::MAX` 挂到它收尾、其余毫秒）。
 /// **只读：不动表**。
 ///
-/// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{rep, 0}`）；等只是为了少问几次。
-/// `Join{rep, millis}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探——**"他杀
+/// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{task, 0}`）；等只是为了少问几次。
+/// `Join{task, millis}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探——**"他杀
 /// 偶发不生效"那条错读就是漏了这一步**：把"醒过"当成了"没收到"。
 ///
 /// 为什么有界等不需要 clock、也不必睡满 `millis`：`WakeKey::Task{id}` 上的投信方只有 `wipe`，
@@ -179,18 +179,18 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// `millis` = **上限族**（口径见 `env::fid` 文件头的定式）；超时那支答 [`Reaped::Unsettled`]，
 /// 不写表。
 pub fn until(table: &Table, name: Name, millis: usize) -> Result<Reaped, Fail> {
-    let Some(rep) = live_rep(table, name) else {
+    let Some(task) = live_rep(table, name) else {
         return Err(Fail::Unknown);
     };
-    if !crate::supervisor::system::call::running(rep) {
+    if !crate::supervisor::system::call::running(task) {
         return Ok(Reaped::Now);
     }
     if millis == 0 {
         return Ok(Reaped::Unsettled);
     }
     // 挂起等一记：醒来自收尾（`wipe`）或到点，两者当场分不开 ⇒ 醒来复探，判决只认它。
-    let _ = runtime::env::unit::join(rep, millis);
-    if crate::supervisor::system::call::running(rep) {
+    let _ = runtime::env::unit::join(task, millis);
+    if crate::supervisor::system::call::running(task) {
         Ok(Reaped::Unsettled)
     } else {
         Ok(Reaped::Waited)
@@ -201,9 +201,9 @@ pub fn until(table: &Table, name: Name, millis: usize) -> Result<Reaped, Fail> {
 fn live_rep(table: &Table, name: Name) -> Option<TaskId> {
     match table.find(name) {
         Some(Service {
-            slot: Slot::Live { rep, .. },
+            slot: Slot::Live { task, .. },
             ..
-        }) => Some(*rep),
+        }) => Some(*task),
         _ => None,
     }
 }
@@ -238,7 +238,7 @@ pub fn find(table: &Table, name: Name) -> Option<&Service> {
 /// 醒来做两件事：先 `service::until` 等它真的收尾（板报的是"门封印了"，而 `Oust` 要的
 /// 前置是"域里没有还没收尾的线程"——这一步等的是**事件**，不是节拍）；再写 `State::Dead`
 /// （**不 `detach`**：坐标是"上一个实例"，留给重启与放下用）、`oust(team)` 放下那个死域、
-/// 报一行。最后一条（单子最后一条）没了之后，对**仍在跑的**逐个 `stop`（`Ruin` = 域粒度
+/// 报一行。最后一条（单子最后一条）没了之后，对**仍在跑的**逐个 `stop`（`doom` = 域粒度
 /// `Doom`）——它们的死会再走同一条路回来；在册的每一行都 `Dead` 之后才收场。
 pub fn supervise(
     table: &mut Table,
@@ -296,7 +296,7 @@ pub fn supervise(
     }
 }
 
-/// 收场那一刀：给**仍在跑的**每一位 `stop`（`Ruin` = 域粒度 `Doom`），**有界地**等它
+/// 收场那一刀：给**仍在跑的**每一位 `stop`（`doom` = 域粒度 `Doom`），**有界地**等它
 /// 收尾并记账；等不到就报一行，交给本域退场时的级联。
 ///
 /// 为什么有界：`stop` 是"送到即回"（`kill` 的口径），收场不能被一个收不掉的域拖住。

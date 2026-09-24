@@ -39,8 +39,8 @@ fn table() -> Table {
     t
 }
 
-fn live(rep: usize) -> (TeamId, TaskId) {
-    (TeamId::new(3), TaskId::new(rep))
+fn live(task: usize) -> (TeamId, TaskId) {
+    (TeamId::new(3), TaskId::new(task))
 }
 
 // ── 账 ──────────────────────────────────────────────────────
@@ -81,10 +81,10 @@ fn attaching_a_body_needs_a_registered_row_and_is_not_yet_ready() {
         Err(Fail::Unknown)
     );
 
-    let (team, rep) = live(7);
-    assert_eq!(t.attach(name("uart"), team, rep), Ok(()));
+    let (team, task) = live(7);
+    assert_eq!(t.attach(name("uart"), team, task), Ok(()));
     let s: &Service = t.find(name("uart")).expect("在");
-    assert_eq!(s.slot, Slot::Live { team, rep });
+    assert_eq!(s.slot, Slot::Live { team, task });
     assert_eq!(s.state, State::NeverStarted, "挂上身子 ≠ 起来了");
     assert_eq!(s.root, None, "通道要等它交回来");
 }
@@ -93,8 +93,8 @@ fn attaching_a_body_needs_a_registered_row_and_is_not_yet_ready() {
 fn detaching_keeps_the_row_so_it_can_still_say_it_once_ran() {
     // **摘身子留行**（`Slot::None`、状态与名字照旧）：表要能说出"起过、现在死了"。
     let mut t = table();
-    let (team, rep) = live(7);
-    t.attach(name("uart"), team, rep).unwrap();
+    let (team, task) = live(7);
+    t.attach(name("uart"), team, task).unwrap();
     t.set_state(name("uart"), State::Ready);
     t.detach(name("uart"));
 

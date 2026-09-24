@@ -117,20 +117,20 @@ fn main() -> Reason {
     }
 
     // ④ 两个子域、各一枚线程、各收一份（组 + 成员 + 自己那枚回报孔），放行。
-    let mut reps = [TaskId::new(0); WAITERS];
+    let mut tasks = [TaskId::new(0); WAITERS];
     for i in 0..WAITERS {
         let Ok(team) = unit::build(elf, kind) else { return die("group: build") };
-        let Ok(rep) = unit::spawn(team, 0, &[], 0) else { return die("group: spawn") };
-        reps[i] = rep;
+        let Ok(task) = unit::spawn(team, 0, &[], 0) else { return die("group: spawn") };
+        tasks[i] = task;
         // 三枚都按 `FETCH | STORE | VEST` 交出去：够"挂 + 等 + 取 + 回报"这件事本身，
         // 而**两种资源的形态事实都不带 `ONLY`**（共享组与用户态铸的孔）。
         let grant = env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST;
         for tok in [group, member.token(), report[i]] {
-            if mail::accord(tok, rep, grant).is_err() {
+            if mail::accord(tok, task, grant).is_err() {
                 return die("group: accord");
             }
         }
-        if unit::hatch(rep).is_err() {
+        if unit::hatch(task).is_err() {
             return die("group: hatch");
         }
     }
@@ -145,7 +145,7 @@ fn main() -> Reason {
 
     // ⑥ 对照：**独占组**在同一位置上的第二次 accord 必须被拒（第一次是移交，源枚已
     //    `HandedOver`）。放在这里是因为此刻两个等待者都停在 `Await` 上、表不再变。
-    let control = sole_refused(reps[0]);
+    let control = sole_refused(tasks[0]);
 
     // ⑦ 稳压 → 一次投信 → 两个都该醒。
     let _ = room::sleep(core::time::Duration::from_millis(SETTLE));
@@ -172,10 +172,10 @@ fn main() -> Reason {
     //    那一格能被观察到收场的原因）。**这一步不设判据**：「都退场了」由机器那一句
     //    `task: all tasks exited, system halted` 担保（脚本读它），而 `Join` 对已经回收
     //    干净的任务答 `Denied`（名册里没了 = "从未分配"）⇒ 它数不出"干净"这个数。
-    for &rep in &reps {
-        if !unit::join(rep, MS).unwrap_or(false) {
-            let _ = room::doom(rep);
-            let _ = unit::join(rep, MS);
+    for &task in &tasks {
+        if !unit::join(task, MS).unwrap_or(false) {
+            let _ = room::doom(task);
+            let _ = unit::join(task, MS);
         }
     }
 

@@ -247,7 +247,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         }
         EnvCall::Room(RoomCall::Doom { task }) => {
             // 他杀（与 `Reap` 成对：自杀 ↔ 他杀）。判据只有**判活**，**没有血缘门**
-            // ——这是 Ruin 口径：收一个域是"命令"，不是"血缘特权"。
+            // ——这是 `doom` 口径：收一个域是"命令"，不是"血缘特权"。
             //
             // 曾经这里要 `descends`（目标域得在我后代链里）。删掉它的理由是判据分家：
             // 内核只回答"能不能收"（能），"该不该收"归 `protocol::system` 的编排者

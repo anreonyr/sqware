@@ -32,7 +32,7 @@ pub enum State {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slot {
     None,
-    Live { team: TeamId, rep: TaskId },
+    Live { team: TeamId, task: TaskId },
 }
 
 /// **怎么知道它起来了**——定义与理由见 [`env::assembly::Announce`]（本处只是转发，调用点不动）。
@@ -114,11 +114,11 @@ impl Table {
     }
 
     /// 挂上身子：**一次给全**（域 + 线程）。没登记过 ⇒ `Unknown`。
-    pub fn attach(&mut self, name: Name, team: TeamId, rep: TaskId) -> Result<(), Fail> {
+    pub fn attach(&mut self, name: Name, team: TeamId, task: TaskId) -> Result<(), Fail> {
         let Some(s) = self.row_mut(name) else {
             return Err(Fail::Unknown);
         };
-        s.slot = Slot::Live { team, rep };
+        s.slot = Slot::Live { team, task };
         s.root = None;
         s.state = State::NeverStarted;
         Ok(())

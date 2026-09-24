@@ -21,7 +21,7 @@
 //! # 身份从哪来
 //!
 //! 装配期每一条服务，都由装配者向**身份服务**要一条号、把它绑到那一条服务的代表线程上
-//! （`derive(root)` + `bind(rep, p)`）——**在 `Hatch` 放行之前**，故服务一起来
+//! （`derive(root)` + `bind(task, p)`）——**在 `Hatch` 放行之前**，故服务一起来
 //! `resolve(self)` 就答得出。身份服务自己是 `plan` 里 [`Eyes::Roster`] 那一条：它放行之后，
 //! 本域先认下它交给生我者的门牌，再把**它自己与树**补绑上（那两条起来时它还没在）。
 //! **装配者自己不绑**——它是写名册的那一个，不是被写的那一个。
@@ -163,7 +163,7 @@ impl<'a> Catalog<'a> {
 ///
 /// **身份也在装配里**：身份服务（`plan` 里 [`Eyes::Roster`] 那一条）一放行，本域先认下它交给
 /// 生我者的门牌，把**它自己与树**补绑上（它们起来时它还没在）；其后的每一条都在 [`start`] 里、
-/// **放行之前**拿到 `derive(root)` + `bind(rep, p)`。**装配者自己（编排域这一枚）不绑**：
+/// **放行之前**拿到 `derive(root)` + `bind(task, p)`。**装配者自己（编排域这一枚）不绑**：
 /// 它是写名册的那一个，不是被写的那一个。
 pub fn assemble<'a>(
     table: &mut Table,
@@ -198,7 +198,7 @@ pub fn assemble<'a>(
     // `serve_tree` 之后交。
     let mut coord = operator::Coord::default();
     for (i, p) in plan.iter().enumerate() {
-        let rep = start(
+        let task = start(
             table,
             catalog,
             p,
@@ -213,9 +213,9 @@ pub fn assemble<'a>(
         )?;
         // 它刚把提示之路交给**生我者**（= 本域）⇒ 当场认下来，此后客人上树才有路可走。
         if p.holds_tree {
-            tree = Some(rep);
+            tree = Some(task);
             otip = None;
-            operator::host_of(rep, READY_MS, &mut otip).map_err(|why| {
+            operator::host_of(task, READY_MS, &mut otip).map_err(|why| {
                 step(p, why);
                 p.died
             })?;
@@ -231,8 +231,8 @@ pub fn assemble<'a>(
                     // **协调那一帧**要带的第一格：身份服务自己（名册那一双眼睛）。它那一枚门牌
                     // **由它自己**在 `serve_tree` 之后直接交给持树者（见 `operator/bridge.rs` 的
                     // `COORD` 照实记：装配者转授那一版真机栽在 `coord-ship`），装配者只剩递一格号。
-                    coord.roster = Some(rep);
-                    let f = face_of(rep).ok_or_else(|| {
+                    coord.roster = Some(task);
+                    let f = face_of(task).ok_or_else(|| {
                         step(p, "no identity face");
                         p.died
                     })?;
@@ -240,7 +240,7 @@ pub fn assemble<'a>(
                         step(p, "derive self");
                         p.died
                     })?;
-                    f.bind(rep, mine, READY_MS).map_err(|_| {
+                    f.bind(task, mine, READY_MS).map_err(|_| {
                         step(p, "bind self");
                         p.died
                     })?;
@@ -271,7 +271,7 @@ pub fn assemble<'a>(
                 // 交的**（同 principal 那一格：`serve_tree` 之后直接交给持树者，见
                 // `coalition/server.rs`）——装配者这一侧只递号、不转授。它的 `derive`/`bind`
                 // 由上面那条通用路做过（`p.bind`）。
-                Eyes::League => coord.league = Some(rep),
+                Eyes::League => coord.league = Some(task),
             }
         }
     }
@@ -287,7 +287,7 @@ pub fn assemble<'a>(
 /// **公开**：引导域那一条（编排者）不走本模块的装配单（那一张是编排域私有的），但它要的仍是
 /// 同几步——起一条是**同一条路**，不该有两份实现。
 ///
-/// 返**代表的号**（`rep`）：装配者要凭它认下持树者的提示之路（[`assemble`] 那一步）。
+/// 返**代表的号**（`task`）：装配者要凭它认下持树者的提示之路（[`assemble`] 那一步）。
 #[allow(clippy::too_many_arguments)]
 pub fn start<'a>(
     table: &mut Table,
@@ -309,9 +309,9 @@ pub fn start<'a>(
 
     // 一、身子：建域 + 产线程（此刻它一步都还没跑）。
     let entry = catalog.find(p.name).ok_or(E_PROGRAM)?;
-    let rep = service::spawn(table, name, entry.elf, entry.kind).map_err(|_| p.died)?;
+    let task = service::mint(table, name, entry.elf, entry.kind).map_err(|_| p.died)?;
 
-    // 一之后、二之前：**身份**。装配者给这条服务派生一条号、把它绑到 `rep` 上——**放行之前**
+    // 一之后、二之前：**身份**。装配者给这条服务派生一条号、把它绑到 `task` 上——**放行之前**
     // 就做完，故服务一起来 `resolve(self)` 就答得出。（身份服务本身与树不走这里：它们起来时
     // 它还没在；那两条由 [`assemble`] 在它放行之后补绑。）
     if let Some(face) = face.filter(|_| p.bind) {
@@ -319,21 +319,21 @@ pub fn start<'a>(
             step(p, "derive");
             p.died
         })?;
-        face.bind(rep, mine, READY_MS).map_err(|_| {
+        face.bind(task, mine, READY_MS).map_err(|_| {
             step(p, "bind");
             p.died
         })?;
     }
 
     // 二、会话：对端 = **建它那个域的那一枚线程**（= 本域）——它把自己的孔交给"生我者"，
-    //     而"生我者"是建域那一枚，**不是刚产出的代表线程**（`rep`）。
+    //     而"生我者"是建域那一枚，**不是刚产出的代表线程**（`task`）。
     let me = runtime::env::unit::self_id().map_err(|_| {
         step(p, "no self id");
         p.died
     })?;
-    // 这座码头的**对端就是客人**（`rep`）——与 `board.rs` 的 `Quay::open(client)` 对称：
+    // 这座码头的**对端就是客人**（`task`）——与 `board.rs` 的 `Quay::open(client)` 对称：
     // 两侧各按对方的身份开码头，`seat` 那一枚才发得到它手里，谁都不必猜。
-    let mut quay = Quay::open(rep);
+    let mut quay = Quay::open(task);
     // `marks` = 要逐条认领的记号：**记号就是这条泊位的名字**（`seat` 铸孔时刻上去的），
     // 而客侧装的就是同一个通道名 ⇒ 放行之后本域按它逐条把客人的孔认下来（顺序无关）。
     let mut marks: alloc::vec::Vec<Mark> = alloc::vec::Vec::new();
@@ -356,12 +356,12 @@ pub fn start<'a>(
     } else {
         Some(&mut quay)
     };
-    service::start(table, name, rep, p.tokens, ups, &marks, READY_MS).map_err(|_| {
+    service::start(table, name, task, p.tokens, ups, &marks, READY_MS).map_err(|_| {
         step(p, "start failed");
         p.died
     })?;
     if p.needs.is_some() {
-        wire(root, &quay, p, rep, machine).map_err(|why| {
+        wire(root, &quay, p, task, machine).map_err(|why| {
             step(p, why.said());
             p.died
         })?;
@@ -371,7 +371,7 @@ pub fn start<'a>(
     //     **在 `records` 之后**：板那条路由客人在起来之后自己装（它是问的那一侧），
     //     而它要先收到配给才轮得到板那一问。
     if p.board {
-        board::attach(&mut quay, me, rep, READY_MS, btip, lane).map_err(|why| {
+        board::attach(&mut quay, me, task, READY_MS, btip, lane).map_err(|why| {
             step(p, why);
             p.died
         })?;
@@ -384,12 +384,12 @@ pub fn start<'a>(
             step(p, "no tree yet");
             p.died
         })?;
-        operator::attach(&mut quay, rep, host, READY_MS, otip, coord).map_err(|why| {
+        operator::attach(&mut quay, task, host, READY_MS, otip, coord).map_err(|why| {
             step(p, why);
             p.died
         })?;
     }
-    Ok(rep)
+    Ok(task)
 }
 
 /// 报"哪一条、哪一步没成"。
@@ -428,7 +428,7 @@ impl Why {
 /// 递单：**先定坐标**（按类要的那几条读树翻），再向引导域领，最后把那**一段字节原样**
 /// 推到客人那条通道上。
 ///
-/// **本域不碰原件**：门闩在引导域手里，它直接授进 `rep` 那张表，回一段"坐标 + 号"的记录；
+/// **本域不碰原件**：门闩在引导域手里，它直接授进 `task` 那张表，回一段"坐标 + 号"的记录；
 /// 本域只做一次转投（客人按位次归位，[`protocol::system::grant::each`]）。本层只说
 /// "要什么、走哪条通道"——**要什么就是收方那张表**（[`Program::needs`]），一格都不抄。
 ///
@@ -438,7 +438,7 @@ fn wire(
     root: &Pier,
     quay: &Quay,
     p: &Program,
-    rep: env::TaskId,
+    task: env::TaskId,
     machine: &Machine,
 ) -> Result<(), Why> {
     let Some(needs) = p.needs else {
@@ -484,7 +484,7 @@ fn wire(
     let mut reply = [0u8; supply::REPLY_CAP];
     let records = supply::client::draw(
         root,
-        rep,
+        task,
         &wants[..needs.len()],
         &mut ask,
         &mut reply,

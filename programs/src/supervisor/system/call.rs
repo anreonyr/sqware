@@ -21,41 +21,41 @@ use protocol::system::core::Fail;
 /// ——程序自称不了特权级（这是"放开建域不构成提权"的那一半）。
 ///
 /// **名字不过这里**：清单名归装配账（`system::desk`），内核不收名字。
-pub(super) fn mint(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
+pub(super) fn build(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
     unit::build(image, kind).map_err(fail)
 }
 
 /// 产代表线程（未放行）：`entry = 0` ⇒ 走域默认入口。
-pub(super) fn bear(team: TeamId) -> Result<TaskId, Fail> {
+pub(super) fn spawn(team: TeamId) -> Result<TaskId, Fail> {
     unit::spawn(team, 0, &[], 0).map_err(fail)
 }
 
 /// 把一枚门闩塞进目标线程手里（放行前做）。**给多大权由调用方定**——这里不替它做主。
-pub(super) fn accord(token: PieToken, rep: TaskId, perm: Permission) -> Result<(), Fail> {
-    mail::accord(token, rep, perm).map_err(fail)?;
+pub(super) fn accord(token: PieToken, task: TaskId, perm: Permission) -> Result<(), Fail> {
+    mail::accord(token, task, perm).map_err(fail)?;
     Ok(())
 }
 
 /// 放行。
-pub(super) fn hatch(rep: TaskId) -> Result<(), Fail> {
-    unit::hatch(rep).map_err(fail)
+pub(super) fn hatch(task: TaskId) -> Result<(), Fail> {
+    unit::hatch(task).map_err(fail)
 }
 
-/// 收掉目标所属的域（连它的线程一起）。**Ruin：不靠血缘。**
+/// 收掉目标所属的域（连它的线程一起）。**`doom`：不靠血缘。**
 ///
 /// 判活照旧：目标不在世 / 从未入册 ⇒ 已经是死的，视作收到（幂等）。
-pub(super) fn ruin(rep: TaskId) {
-    let _ = room::doom(rep);
+pub(super) fn doom(task: TaskId) {
+    let _ = room::doom(task);
 }
 
 /// 它收尾完了没有。
-pub(super) fn reaped(rep: TaskId) -> Result<bool, Fail> {
-    unit::join(rep, 0).map_err(fail)
+pub(super) fn reaped(task: TaskId) -> Result<bool, Fail> {
+    unit::join(task, 0).map_err(fail)
 }
 
 /// 它还活着没有 = "还没收尾完"。
-pub(super) fn running(rep: TaskId) -> bool {
-    !reaped(rep).unwrap_or(true)
+pub(super) fn running(task: TaskId) -> bool {
+    !reaped(task).unwrap_or(true)
 }
 
 /// 内核负码 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。

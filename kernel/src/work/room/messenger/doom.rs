@@ -388,7 +388,7 @@ pub(crate) fn take_doomed(tid: TaskId) -> Option<usize> {
 /// 纯查询：不改任何状态；成本 O(深度)（virt 上 2）。锁纪律：逐级取放 `muster`
 /// （L3），不跨级持锁；`Team::sire()` 只做一次 `Weak::upgrade`，不取锁。
 ///
-/// # 今天没有调用者（`Doom` 已无血缘门，见 envcall 的 Ruin 口径）
+/// # 今天没有调用者（`Doom` 已无血缘门，见 envcall 的 `doom` 口径）
 ///
 /// 留着的理由：它是唯一一份"血缘判据"的实现，而这份判据**会回来**——编排侧要在自己的
 /// 服务表之外做"谁能收谁"的裁决时（或 `disown` 落地之后），第一件要问的还是它。

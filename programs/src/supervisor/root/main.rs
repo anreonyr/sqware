@@ -176,8 +176,8 @@ fn mint(
     let Some(entry) = catalog.find(what) else {
         return Err(Die::Orch(E_ORCH));
     };
-    match core::spawn(table, name, entry.elf, entry.kind) {
-        Ok(rep) => Ok(rep),
+    match core::mint(table, name, entry.elf, entry.kind) {
+        Ok(task) => Ok(task),
         Err(_) => Err(Die::Orch(E_ORCH)),
     }
 }

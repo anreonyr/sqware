@@ -17,7 +17,7 @@
 //! 4  逐条起：建域 → 产线程 → 定会话 → 装通道 → 放行 → 等就绪 → 领配给 → 上板 → 接树
 //! 5  监督：板手里挂着每位客人的孔（封印即投信），它看出谁没了就往死亡道推一格；
 //!    本域从那条路醒来 ⇒ 等它收尾（`service::until`：**问 → 等 → 问**）⇒ 记账 ⇒ 放下死域
-//! 6  最后一条没了 ⇒ 对仍在跑的显式 `stop`（`Ruin` = 域粒度 `Doom`）⇒ 全部记完 ⇒ 收场
+//! 6  最后一条没了 ⇒ 对仍在跑的显式 `stop`（`doom` = 域粒度 `Doom`）⇒ 全部记完 ⇒ 收场
 //! 7  本域退出 ⇒ 引导域那枚孔随之封印 ⇒ 它退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
 //! ```
 //!
@@ -86,7 +86,7 @@ pub enum Fail {
     /// 监督那一趟。
     Supervise,
     /// 收尾那一趟。
-    Ruin,
+    Doom,
 }
 
 impl Fail {
@@ -99,7 +99,7 @@ impl Fail {
             Fail::Manifest => 7,
             Fail::Group => service::E_TABLE,
             Fail::Supervise => 8,
-            Fail::Ruin => 9,
+            Fail::Doom => 9,
         }
     }
 
@@ -112,7 +112,7 @@ impl Fail {
             Fail::Manifest => "system: manifest bad",
             Fail::Group => "system: no group",
             Fail::Supervise => "system: supervise",
-            Fail::Ruin => "system: ruin",
+            Fail::Doom => "system: doom",
         }
     }
 }

@@ -34,7 +34,7 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 /// 铸一枚孔（本端那一枚），并把**记号**刻在它上面。
-pub(super) fn mint(mark: Mark) -> Result<PieToken, ()> {
+pub(super) fn unseal_hole(mark: Mark) -> Result<PieToken, ()> {
     mail::unseal_hole(mark).map_err(|_| ())
 }
 
@@ -133,7 +133,7 @@ pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
 /// 纪律，身体搬到这里，两处只留各自的名字。
 pub fn lend(entry: PieToken, mark: Mark, frame: &[u8]) -> Result<PieToken, ()> {
     let host = opened_by(entry).ok_or(())?;
-    let back = mint(mark)?;
+    let back = unseal_hole(mark)?;
     if port::ship(
         &mail::HolePie::from_token(back),
         host,

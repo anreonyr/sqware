@@ -108,8 +108,8 @@ fn main() -> Reason {
         }
 
         // spawn：`admit_start` 在 `Dead` 上是允许的（这是"重发"的准入那一格）。
-        let rep = match service::spawn(&mut table, name, elf, kind) {
-            Ok(rep) => rep,
+        let task = match service::mint(&mut table, name, elf, kind) {
+            Ok(task) => task,
             Err(_) => {
                 failures += 1;
                 say(&format!("again: r={round} step=spawn REFUSED"));
@@ -119,7 +119,7 @@ fn main() -> Reason {
         say(&format!("again: r={round} step=spawn ok"));
 
         // start（无授权、无会话、放行即起来的那一种）。
-        if service::start(&mut table, name, rep, &[], None, &[], MS).is_err() {
+        if service::start(&mut table, name, task, &[], None, &[], MS).is_err() {
             failures += 1;
             say(&format!("again: r={round} step=start REFUSED"));
             break;
@@ -174,11 +174,11 @@ fn main() -> Reason {
         if let Some(Slot::Live { team, .. }) = table.find(name).map(|s| s.slot) {
             let _ = unit::oust(team);
         }
-        let Ok(rep) = service::spawn(&mut table, name, elf, kind) else {
+        let Ok(task) = service::mint(&mut table, name, elf, kind) else {
             failures += 1;
             break;
         };
-        if service::start(&mut table, name, rep, &[], None, &[], MS).is_err() {
+        if service::start(&mut table, name, task, &[], None, &[], MS).is_err() {
             failures += 1;
             break;
         }

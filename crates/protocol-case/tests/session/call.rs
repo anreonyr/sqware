@@ -121,7 +121,7 @@ pub fn forget(n: usize) {
 pub const UNSEAT: [u8; 1] = [0];
 
 /// 铸一枚孔、刻上记号：往假表里加一行，主人是"本端"。
-pub fn mint(mark: Mark) -> Result<PieToken, ()> {
+pub fn unseal_hole(mark: Mark) -> Result<PieToken, ()> {
     let n = NEXT.with(|n| {
         let v = n.get();
         n.set(v + 1);
