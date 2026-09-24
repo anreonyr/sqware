@@ -42,6 +42,11 @@ mod fail_codes;
 #[path = "../../protocol/src/id.rs"]
 mod id;
 
+/// 定长一问一答的**帧骨架**（`crates/protocol/src/frame.rs`，逐字未改）——principal 与 coalition
+/// 同形的那一份（长度、编 / 解、答话那几手）。两族的 `frame.rs` 都写着 `use crate::frame::…`。
+#[path = "../../protocol/src/frame.rs"]
+mod frame;
+
 /// 身份那本册子（就是 `crates/protocol/src/principal/core.rs` 那一份，逐字未改）。
 ///
 /// 包一层内联模块只为让 `crate::principal::core` 这个名字成立——盟籍那一份正是这么写它的

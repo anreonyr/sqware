@@ -7,9 +7,9 @@
 //! 跑判据；适配那半（`opened_by` 那种内核手的别名）留在 `call.rs`。
 //!
 //! 本文件**不做裁决**：名册与谱系的规矩全在 [`core`](super::core)。这里只有三件事——
-//! 编一帧 / 解一帧、把失败域翻成答话码、把答案编进答话那一格。
+//! 把失败域翻成答话码、把答案编进答话那一格、以及**本族**那几格码与记号。
 //!
-//! # 帧（一处上界各一格）
+//! # 帧（两族同形，故只有一份）
 //!
 //! ```text
 //!   Ask    [0] op   [1..9] a   [9..17] b          ASK_LEN   = 17
@@ -17,7 +17,8 @@
 //! ```
 //!
 //! `a` / `b` 两格的**意义由动作码定**（`RESOLVE`/`DERIVE`/`SIRE` 只填 `a`，`HEIR` 两格都填）；
-//! 答话定长，故两侧都不用攒缓冲、也不用问长度。
+//! 答话定长，故两侧都不用攒缓冲、也不用问长度。**长度与编 / 解那几手的本体在
+//! [`crate::frame`]**（coalition 那一份一字不差），本文件把它们按本族的名字转出来。
 //!
 //! # 答案为什么不进失败表
 //!
@@ -59,85 +60,21 @@ pub const UNKNOWN: u8 = 2;
 pub const NO_ROOM: u8 = 3;
 pub const BAD: u8 = 4;
 
-/// 一问的长度：动作码 + 两个 8 字节的号。
-pub const ASK_LEN: usize = 1 + 8 + 8;
+// ── 帧骨架（两族同形的那一份）───────────────────────────────
+//
+// 长度、编 / 解、答话那几手**本体在 [`crate::frame`]**——principal 与 coalition 同形，故只有
+// 一份；这里只按本族的名字转出来（`call.rs` 那句 `pub use super::frame::*;` 照旧，调用点一处
+// 都不用改）。**本族自己的**是下面那些：码、`reply_present`、失败表、记号。
 
-/// 一答的长度：状态 + 有没有 + 一个 8 字节的答案。
-pub const REPLY_LEN: usize = 1 + 1 + 8;
-
-// ── 编 / 解 ─────────────────────────────────────────────────
-
-/// 编一问：`a` / `b` 两格按动作码填（这条调用的两个号都是 `usize`，线上统一 8 字节小端）。
-pub fn pack_ask(op: u8, a: u64, b: u64) -> [u8; ASK_LEN] {
-    let mut out = [0u8; ASK_LEN];
-    out[0] = op;
-    out[1..9].copy_from_slice(&a.to_le_bytes());
-    out[9..17].copy_from_slice(&b.to_le_bytes());
-    out
-}
-
-/// 只读第一格**动作码**（空帧 ⇒ `None`：Server 据此答 [`BAD`]，不猜、不崩）。
-///
-/// **照实记（谁是这一格的读者）**：**宿主靶**（`protocol-case` 的 `roster` 靶验"动作码在第 0
-/// 字节、短一字节也读得出"）。**本族的服务不按它分派**（`answer` 收的是 `unpack_ask` 解出来的
-/// 三格），故生产路径没有用家——与 `board` / `operator` 那两份不同（那两家的服务先读动作码再
-/// 分派，故有真用家）。**四家 frame 同形**，且靶要验的那条性质只有这一句问得出来
-/// （`unpack_ask` 要全长），故留着这一格、把读者写明。
-pub fn op_of(bytes: &[u8]) -> Option<u8> {
-    bytes.first().copied()
-}
-
-/// 解开一问：`(动作码, a, b)`。**长度不对就是读不懂**（返 `None`，由 Server 答 [`BAD`]）。
-pub fn unpack_ask(bytes: &[u8]) -> Option<(u8, u64, u64)> {
-    if bytes.len() != ASK_LEN {
-        return None;
-    }
-    let op = *bytes.first()?;
-    let mut a = [0u8; 8];
-    a.copy_from_slice(bytes.get(1..9)?);
-    let mut b = [0u8; 8];
-    b.copy_from_slice(bytes.get(9..17)?);
-    Some((op, u64::from_le_bytes(a), u64::from_le_bytes(b)))
-}
-
-/// 解一答：`(状态, 有没有, 答案)`。**长度不对就答 `None`**（读的人按"这一趟没走到"处理）。
-pub fn unpack_reply(bytes: &[u8]) -> Option<(u8, u8, u64)> {
-    if bytes.len() != REPLY_LEN {
-        return None;
-    }
-    let status = *bytes.first()?;
-    let flag = *bytes.get(1)?;
-    let mut a = [0u8; 8];
-    a.copy_from_slice(bytes.get(2..10)?);
-    Some((status, flag, u64::from_le_bytes(a)))
-}
-
-/// 编一答：只有状态那一格（失败，或读不懂）。
-pub fn reply_status(code: u8) -> [u8; REPLY_LEN] {
-    let mut out = [0u8; REPLY_LEN];
-    out[0] = code;
-    out
-}
+pub use crate::frame::{ASK_LEN, REPLY_LEN, op_of, pack_ask, reply_status, reply_value, reply_yes, unpack_ask, unpack_reply};
 
 /// 编一答：`OK` + **有没有** + 一个号（`RESOLVE` 的"绑没绑"、`SIRE` 的"有没有父"）。
+///
+/// **只本族有这一手**：另几家没有"可能没有的一条号"那种答案 ⇒ 一位用家，不搬去共享那一份。
 pub fn reply_present(present: bool, at: PrincipalId) -> [u8; REPLY_LEN] {
     let mut out = reply_status(OK);
     out[1] = present as u8;
     out[2..10].copy_from_slice(&at.to_bytes());
-    out
-}
-
-/// 编一答：`OK` + 新派生出来的那个号（`DERIVE`）。
-pub fn reply_value(p: PrincipalId) -> [u8; REPLY_LEN] {
-    let mut out = reply_status(OK);
-    out[2..10].copy_from_slice(&p.to_bytes());
-    out
-}
-
-/// 编一答：`OK` + 是 / 不是（`HEIR`）。
-pub fn reply_yes(yes: bool) -> [u8; REPLY_LEN] {
-    let mut out = reply_status(OK);
-    out[1] = yes as u8;
     out
 }
 
