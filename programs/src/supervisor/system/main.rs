@@ -178,9 +178,17 @@ fn system() -> programs::Report<'static> {
         Err(_) => return fail(Fail::Machine),
     };
 
-    // 3/4. 死亡道：一位服务一条（本域铸、记号 `gone-<名字>`；装配时各交一份给板线程）。
-    //      一服务一道 ⇒ **身份就是"哪条道响了"**：两位同时死也不会挤丢；本线程用一只
-    //      **组**等任一道（`Tole`），零轮询。组是**独占**的（`shared = false`）。
+    // 3/4. 死亡道：**上板的那几位**一位一条（本域铸、记号 `gone-<名字>`；装配时各交一份给
+    //      板线程）。一服务一道 ⇒ **身份就是"哪条道响了"**：两位同时死也不会挤丢；本线程用
+    //      一只**组**等任一道（`Tole`），零轮询。组是**独占**的（`shared = false`）。
+    //
+    //      **照实记（这一圈原先给名册上每一位都铸）**：写端**只有板有**——`service::start`
+    //      那一手只在 `p.board` 时把道转授出去。故 `board: false` 的那几位（持树者、试客、
+    //      探针）铸出来的是一枚**没有写端的道**：它永远不会响，只占着组里一格与一条转发
+    //      登记。今天这一圈跟着 `p.board` 走 ⇒ **有写端才有道**。读数：产品那一景名册 7 条
+    //      → 道 6 条（少的是持树者），验收那一景 19 条 → 9 条。
+    //      "这几位死不见于本域"是既有的形状——`protocol::operator` 那句"没有死亡道"由此
+    //      **整句为真**（从前是道铸了、只是没人写）。
     let tole = match Tole::unseal(false) {
         Ok(tole) => tole,
         Err(_) => return fail(Fail::Group),
@@ -193,7 +201,13 @@ fn system() -> programs::Report<'static> {
         return fail(Fail::Group);
     }
     for (_, p) in roster.iter() {
-        let road = mail::unseal_hole(Mark::of(&alloc::format!("gone-{}", p.name))).ok();
+        // **有写端才有道**：板不看的那几位不铸（见上面那条照实记）。名册**每一位都在**
+        // `lanes` 里——它在收场那一趟还有另一个读者（`stop_running` 按它点名收）。
+        let road = if p.board {
+            mail::unseal_hole(Mark::of(&alloc::format!("gone-{}", p.name))).ok()
+        } else {
+            None
+        };
         if let Some(road) = road {
             let _ = tole.attach(&HolePie::from_token(road), HoleDir::Pull);
         }

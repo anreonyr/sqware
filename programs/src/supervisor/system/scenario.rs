@@ -123,6 +123,9 @@ pub const INNER: &[(Role, Program)] = &[
             tokens: &[],
             channels: &[],
             needs: None,
+            // **它不上板** ⇒ 本域**不铸它的道**（`system/main.rs` 那一圈：**有写端才有道**）
+            // ⇒ **持树者死了本域看不见**（读数里不会有 `system: gone operator`）。照实记：
+            // 这是**既有的形状**——iii 之前它自成一个域时这一格也是 `false`，iii 一个字没改。
             board: false,
             operator: false,
             bind: true,
