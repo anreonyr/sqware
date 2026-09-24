@@ -3,7 +3,7 @@ name = "programs"
 version.workspace = true
 edition.workspace = true
 
-# 镜像里的**产品程序**（今天**十五个**；测具那 15 台住隔壁的 `harness`）：freestanding、
+# 镜像里的**产品程序**（今天**九个** = 产品镜像那 9 条；测具那 21 台住隔壁的 `harness`）：freestanding、
 # 无 std、无 main crt。链接在 IMAGE_BASE (0x10000)、静态 ET_EXEC；由内核 loader 按绝对 VMA
 # 装载，_start 即 e_entry。
 #
@@ -31,36 +31,6 @@ erra = { version = "0.2.0", default-features = false }
 [[bin]]
 name = "prog-echo"
 path = "src/user/echo.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-guest"
-path = "src/user/guest.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-passer"
-path = "src/user/passer.rs"
-test = false
-bench = false
-doctest = false
-
-# 房客（U 态，同 `passer` 一档）：占一条线、**直接死**——线路由者那本账的探活读数。
-[[bin]]
-name = "prog-lodger"
-path = "src/user/lodger/main.rs"
-test = false
-bench = false
-doctest = false
-
-# 客人（U 态）：`/device/rtc` 那面服务的第一位用家——问时间、约一个时刻、等到那一声。
-[[bin]]
-name = "prog-sleeper"
-path = "src/user/sleeper.rs"
 test = false
 bench = false
 doctest = false
@@ -96,27 +66,11 @@ test = false
 bench = false
 doctest = false
 
-# 主体（U 态）：身份服务的第一位真客人——问自己是谁，把六条读数打出来。
-[[bin]]
-name = "prog-subject"
-path = "src/user/subject.rs"
-test = false
-bench = false
-doctest = false
-
 # 结盟服务（U 态，独立域，一枚线程）：横向那张盟籍表（门牌 `/sys/coalition`）；它是身份服务
 # 的客人——每条写原语嵌一次 `Resolve(发送者)`。
 [[bin]]
 name = "prog-coalition"
 path = "src/supervisor/coalition/main.rs"
-test = false
-bench = false
-doctest = false
-
-# 盟友（U 态）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态。
-[[bin]]
-name = "prog-member"
-path = "src/user/member.rs"
 test = false
 bench = false
 doctest = false

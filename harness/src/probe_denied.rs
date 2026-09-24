@@ -33,7 +33,7 @@
 //! （`operator::attach`），身份是**名册里的一格**（`derive` + `bind`）——这一台正是要把这两件
 //! 事分开读出来。
 
-// 本文件是一份**独立的 bin**（`programs/Cargo.toml` 的 `prog-probe-denied`），**不进 lib**
+// 本文件是一份**独立的 bin**（`harness/Cargo.toml` 的 `prog-probe-denied`），**不进 lib**
 // ——与 `echo` / `guest` 同一条：`programs/src/user/mod.rs` 里没有它。
 //
 // 两条 `extern crate` 缺一不可（实测）：`alloc` 是 `format!` 要用；`programs` **不是**为了

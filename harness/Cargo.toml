@@ -3,7 +3,8 @@ name = "harness"
 version.workspace = true
 edition.workspace = true
 
-# 测具（**不是**产品）：探针（只读数）与压测台（整台替换引导镜像）。
+# 测具（**不是**产品）：探针（只读数）· 试客（量服务）· 压测台（整台替换引导镜像）——
+# 一句话：**不进产品镜像的一切**。
 #
 # # 为什么单开一个 crate（照实记：用户裁定）
 #
@@ -14,6 +15,8 @@ edition.workspace = true
 #
 #   探针（**只读数**，`probe-*`）：进**验收镜像**当客人跑——`soak` / `examine` 的判据
 #                                就是它们打出来的那几行，故它们**必须**在产品的清单里。
+#   试客（`guest` / `passer` / `lodger` / `sleeper` / `subject` / `member`）：**进验收镜像当
+#                                 客人跑**，量的是服务（身份 / 盟籍 / 时钟 / 树 / 生死账）。
 #   压测台（`rig` / `load` / `beat` / `again` / `group` 与它们的受害者 `churn` / `hang` / `park` /
 #                               `busy` / `waiter`）：**整台替换引导镜像**，与验收场景没有交集。
 #
@@ -56,7 +59,7 @@ test = false
 bench = false
 doctest = false
 
-# ── 那十五个 bin 的清单 ───────────────────────────────────────────
+# ── 那二十一个 bin 的清单 ───────────────────────────────────────────
 #
 # 特权级**不在这里**声明（与产品同一条规矩）：那一格在 `env::assembly::ALL` 里
 # （`ProgramKind::User` / `Supervisor`），而且**按场景分**（看每行的 `scenes`）——验收那张只列
@@ -86,6 +89,58 @@ doctest = false
 [[bin]]
 name = "prog-probe-rule-other"
 path = "src/probe_rule_other.rs"
+test = false
+bench = false
+doctest = false
+
+# ── 试客（**进验收镜像当客人跑**，量的是服务）─────────────────────────────
+#
+# **照实记（它们是第二刀搬来的）**：第一刀搬的是探针与压测台，这六位留在 `programs/src/user/`
+# 与产品程序同住一间——而它们早就符合本 crate 的定义（**只为了量**；去掉机器照转，产品镜像
+# 实测过）。用户裁定 **甲**：搬过来。于是边界变成一句话——`programs/` = 产品镜像那 9 条，
+# 本 crate = 不进产品镜像的一切。
+[[bin]]
+name = "prog-guest"
+path = "src/guest.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-passer"
+path = "src/passer.rs"
+test = false
+bench = false
+doctest = false
+
+# 房客（U 态，同 `passer` 一档）：占一条线、**直接死**——线路由者那本账的探活读数。
+[[bin]]
+name = "prog-lodger"
+path = "src/lodger/main.rs"
+test = false
+bench = false
+doctest = false
+
+# 客人（U 态）：`/device/rtc` 那面服务的第一位用家——问时间、约一个时刻、等到那一声。
+[[bin]]
+name = "prog-sleeper"
+path = "src/sleeper.rs"
+test = false
+bench = false
+doctest = false
+
+# 主体（U 态）：身份服务的第一位真客人——问自己是谁，把六条读数打出来。
+[[bin]]
+name = "prog-subject"
+path = "src/subject.rs"
+test = false
+bench = false
+doctest = false
+
+# 盟友（U 态）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态。
+[[bin]]
+name = "prog-member"
+path = "src/member.rs"
 test = false
 bench = false
 doctest = false

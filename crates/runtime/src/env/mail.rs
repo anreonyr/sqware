@@ -226,7 +226,7 @@ pub fn collect(index: usize) -> EnvResult<(PieToken, env::Permission, TaskId)> {
 ///
 /// **给人看的读数，不是给判据用的机制**：它自己不改任何东西。用途只有一个——把"该放下的
 /// 放了没有"变成**可量**的一格（少放一枚，这一格当场大 1，见
-/// `programs/src/driver/router/main.rs` 的 `drop_lane` 与 `programs/src/user/lodger/main.rs`）。
+/// `programs/src/driver/router/main.rs` 的 `drop_lane` 与 `harness/src/lodger/main.rs`）。
 pub fn table_size() -> usize {
     let mut n = 0usize;
     loop {

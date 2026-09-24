@@ -35,7 +35,7 @@
 //! `probe-rule` 那几格（改这一轴不归它管，可"落牌"本身会换绑），后面的读数就全变了。
 //! `foreign` 那一格也是 `probe-rule` 落的——本台只负责"换一台客人再去撞一次"。
 
-// 本文件是一份**独立的 bin**（`programs/Cargo.toml` 的 `prog-probe-rule-other`），**不进 lib**
+// 本文件是一份**独立的 bin**（`harness/Cargo.toml` 的 `prog-probe-rule-other`），**不进 lib**
 // ——与 `echo` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
 //
 // 两条 `extern crate` 缺一不可（实测）：`alloc` 是 `format!` 要用；`programs` **不是**为了

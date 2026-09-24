@@ -49,7 +49,7 @@ extern crate programs;
 // 需求单归**收方**：本域那张单子住 lib 里（装配者要照它开单），同一份源码编一次。
 // 客侧装配也共用驱动那一族那段机器（会话 + 收配给 + 归位）——它领门闩走的是同一条路。
 use programs::driver::assemble;
-use programs::user::lodger::needs;
+use harness::lodger::needs;
 
 // 树：本域是**客侧**（按名找服务）。
 use protocol::operator::call as ocall;

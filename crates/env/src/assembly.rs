@@ -244,7 +244,7 @@ pub const ALL: &[Row] = &[
     // 第二次落地（`uart` 那一面只有一个方向，它这一面两个方向都有）。
     Row { name: "rtc", kind: ProgramKind::User, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 5, announce: Announce::Channel, tokens: &[], channels: &["records"], needs: Some(RTC_WANTS), board: true, operator: true, bind: true, holds_tree: false, died: E_RTC }) },
     // 客人：**U 态**（同上）——`/device/rtc` 那面服务的第一位用家：问一声现在几点、约一个时刻
-    // （失败域那两格也各走一趟，见 `programs/src/user/sleeper.rs`），等到那一声就退场。
+    // （失败域那两格也各走一趟，见 `harness/src/sleeper.rs`），等到那一声就退场。
     Row { name: "sleeper", kind: ProgramKind::User, spot: Spot::Guest, scenes: &["root"], plan: Some(Plan { order: 9, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, died: E_SLEEPER }) },
     // 身份服务（**U 态**）：名册（TID → 当前 PrincipalId）与谱系（PrincipalId 的树）两张表，
     // 七条原语见 `protocol::principal`。它**不持有、不授予、不解释任何 Pie**——只读写自己
@@ -252,7 +252,7 @@ pub const ALL: &[Row] = &[
     // 特权级各自在这里声明，它是这一族里第一位 **U 态**的服务。
     Row { name: "principal", kind: ProgramKind::User, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 1, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, died: E_PRINCIPAL }) },
     // 主体（**U 态**）：身份服务的第一位真客人——问自己是谁、查父（三态）、验自反与否、
-    // 派生一条自己的子身份、再越权趟一次（读数见 `programs/src/user/subject.rs` 头注）。
+    // 派生一条自己的子身份、再越权趟一次（读数见 `harness/src/subject.rs` 头注）。
     Row { name: "subject", kind: ProgramKind::User, spot: Spot::Guest, scenes: &["root"], plan: Some(Plan { order: 10, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_SUBJECT }) },
     // 结盟服务（**U 态**）：横向那张盟籍表（一条关系 + 一枚计数器），六条原语见
     // `protocol::coalition`。它同样**不持有、不授予、不解释任何 Pie**；它与身份服务那一台
@@ -260,7 +260,7 @@ pub const ALL: &[Row] = &[
     // 嵌一次 `Resolve(发送者)`（故"self"在适配层，不在核心）。
     Row { name: "coalition", kind: ProgramKind::User, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 2, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, died: E_COALITION }) },
     // 盟友（**U 态**）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态，
-    // 再用派生的第二条身份验"同一枚盟里有两位"（读数见 `programs/src/user/member.rs` 头注）。
+    // 再用派生的第二条身份验"同一枚盟里有两位"（读数见 `harness/src/member.rs` 头注）。
     Row { name: "member", kind: ProgramKind::User, spot: Spot::Guest, scenes: &["root"], plan: Some(Plan { order: 11, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_MEMBER }) },
     // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
     // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。

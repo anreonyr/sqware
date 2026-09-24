@@ -5,7 +5,7 @@
 //!
 //! `needs.rs` / `call.rs` / `core.rs` / `client.rs` 由本模块收进 lib：需求单是**收方自己开的**
 //! （装配者照它开单），后三份是**服务面**——驱动自己那份具体协议，**不进 `crates/protocol`**。
-//! 客人（`programs/src/user/sleeper.rs`）与驱动 `use` 的是同一份源码。
+//! 客人（`harness/src/sleeper.rs`）与驱动 `use` 的是同一份源码。
 
 pub mod call;
 pub mod client;

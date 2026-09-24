@@ -82,7 +82,7 @@ pub struct Program {
     ///
     /// **就是单子上的那几条**（[`Need`]）：那几张表由**收方**自己开
     /// （[`crate::driver::router::needs`]、[`crate::driver::uart::needs`] 与
-    /// [`crate::user::lodger::needs`]），本域照单递出去、并在递之前把"类"翻成"哪一段区"
+    /// [`env::assembly::LODGER_WANTS`]），本域照单递出去、并在递之前把"类"翻成"哪一段区"
     /// （见 [`wire`]）——中间不再有"需求 → 单子"的转换。
     pub needs: Option<&'static [Need]>,
     /// 要不要板那条路（[`board::attach`]）。

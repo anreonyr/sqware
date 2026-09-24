@@ -2,7 +2,8 @@
 //! programs — 镜像里装载的程序集合（**每个程序一份 `main.rs`**，就住在它那一片模块的目录里）。
 //!
 //! **分档按特权级**（唯一声明处：`env::assembly::ALL` 里这一行的 `kind`）：[`supervisor`] 是 S 态那一档
-//! （root / system / operator），[`user`] 是 U 态那一档（echo / guest / passer / lodger）。
+//! （root / system / operator），[`user`] 是 U 态那一档（今天**只剩 `echo`**：调试回显；
+//! 六位试客搬去了 `harness`，见下面那条照实记）。
 //! **按角色分的那一族不分档**：**驱动整块留在 [`driver`]**——成员的特权级仍各自在
 //! 装配单 声明（今天三台驱动都是 **U 态**；见 [`driver`] 的头注）。
 //!
@@ -12,7 +13,7 @@
 //! `_start`）。哪几台进哪张镜像，仍只在 `env::assembly::ALL` 每行的 `scenes` 里声明。
 //!
 //! **表归主人**：硬件需求单在**收方**（`driver/{router,uart,rtc}/needs.rs` 与
-//! `user/lodger/needs.rs`：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
+//! `harness/src/lodger/needs.rs`：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
 //! **引导域**（`supervisor/root/boot.rs`：只有它读得到）——装配者只是 `use` 它们，不另抄一份。
 //!
 //! 内含之后**共用件只剩三枚**：`entry`（`_start` + panic 处理，每个程序共用）、
@@ -37,11 +38,21 @@
 //! 其余驱动侧（名字→线号 / 终端渲染）随旧树一起清了（tag `proto-v1-baseline`），
 //! 需要时按新形状写——**不从那一套搬**。
 //!
-//! 今天产品这一档有**十五个**程序：`prog-echo` / `prog-guest` / `prog-passer` / `prog-lodger` /
-//! `prog-sleeper` / `prog-subject` / `prog-member` 与三台驱动 `prog-router` / `prog-uart` /
-//! `prog-rtc`（**都是 U 态**），`prog-root` / `prog-system` / `prog-principal` /
-//! `prog-coalition` / `prog-operator`（S 态那一档：持树者是转授权中枢，故不在最小特权那档）。
-//! 另有 **15 台测具**住 `harness`（5 探针 + 10 压测台）。
+//! 今天产品这一档有**九个**程序——**恰好是产品镜像那 9 条**：
+//!
+//! ```text
+//!   U 态  prog-echo    调试回显（产品镜像里排最后一条，编排域等它退场才收场）
+//!         prog-router / prog-uart / prog-rtc      三台驱动
+//!         prog-principal / prog-coalition         （U 态那两位服务：不持有、不授予、不解释 Pie）
+//!   S 态  prog-root / prog-system / prog-operator  引导域 / 编排域 / 命名树
+//! ```
+//!
+//! **另 21 台测具**住 `harness`（**不进产品镜像的一切**：探针 5 + 试客 6 + 压测台 10）。
+//!
+//! **照实记（六位试客是第二刀搬走的）**：`guest` / `passer` / `lodger` / `sleeper` / `subject` /
+//! `member` 原先住这里（`user/` 那一间）——它们量的是**服务**，去掉机器照转（产品镜像实测过），
+//! 于是按用户裁定 **甲** 搬去 `harness`。这条边界因此成了一句可查的话：**本 crate 里的 9 个 bin
+//! 就是产品镜像那 9 条**。
 //! **特权级不在这里声明**——那一格在 `env::assembly::ALL` 里这一行的 `kind`。
 
 extern crate alloc;

@@ -296,4 +296,4 @@ impl Principal {
 //
 // 那一批原先是"编不到、也跑不到"的规格（`protocol` 是 `[lib] test = false`，riscv 上编不出
 // libtest）；它们真正被跑起来，是从那台宿主靶开始。真机上另有探针那几条
-// （`programs/src/user/subject.rs`）。
+// （`harness/src/subject.rs`）。

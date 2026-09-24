@@ -70,7 +70,7 @@
 //! 照实记：`found()` 只是**立一枚号**，"立了不等于进了"（见 `protocol::coalition::core`），
 //! 故本域立完还要 `enter(c)` 一次，否则 `In(c)` 的正证当场变成负证。
 
-// 本文件是一份**独立的 bin**（`programs/Cargo.toml` 的 `prog-probe-rule`），**不进 lib**
+// 本文件是一份**独立的 bin**（`harness/Cargo.toml` 的 `prog-probe-rule`），**不进 lib**
 // ——与 `echo` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
 //
 // 两条 `extern crate` 缺一不可（实测）：`alloc` 是 `format!` 要用；`programs` **不是**为了

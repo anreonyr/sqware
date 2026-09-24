@@ -274,7 +274,7 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
 ///   got                        → 本域在表里认出刚授回来的那一枚了吗
 /// ```
 ///
-/// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`user/sleeper`）证——它照同一条路
+/// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/sleeper.rs`）证——它照同一条路
 /// 找上门、问一句、拿回一个时刻。故本域不自问自答。
 fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     let (Ok(dir), Ok(me)) = (Name::new(protocol::driver::DIR), Name::new(ME)) else {

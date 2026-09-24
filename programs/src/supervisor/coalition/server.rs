@@ -287,7 +287,7 @@ fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
 
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（同 rtc / principal 那一趟）。
 ///
-/// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`user/member`）证——它照同一条路
+/// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/member.rs`）证——它照同一条路
 /// 找上门、立一枚盟、进进出出。故本域不自问自答。
 fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     let (Ok(dir), Ok(me)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {

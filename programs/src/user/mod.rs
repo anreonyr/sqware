@@ -1,22 +1,22 @@
 //! user — **U 态那一档**：不建域、不读设备、不碰 MMIO，也不转授权。
 //!
-//! 判据是特权级（唯一声明处：`env::assembly::ALL` 里这一行的 `kind`）：本目录下都是 `User`——
-//! `echo.rs` / `guest.rs` / `passer.rs` / `sleeper.rs` / `subject.rs` / `member.rs` 与
-//! `lodger/`，各是一份入口。
+//! 判据是特权级（唯一声明处：`env::assembly::ALL` 里这一行的 `kind`）：今天这一档**只剩一台**
+//! ——`echo.rs`，产品侧的**调试回显**（它只走 `env` 的调试面，够不着建域那道 S 态门，故最小特权
+//! 够用）。
 //!
-//! **照实记**：这一句原先列的是"`echo.rs` / `guest.rs` / `passer.rs` / `sleeper.rs` /
-//! `lodger/` 五位客人，各是一份入口（不被 lib 收进来）"——两句都不对了：身份那一刀带来的
-//! `subject` 没被补进这张单子，而 `lodger` 的[需求单](lodger::needs)要进 lib（装配者照它
-//! 开单）。这一刀（结盟服务 + 它的探针）按同一张 清单 把单子补全。
+//! **照实记（这一屋原先住着七台，六位试客是第二刀搬走的）**：`guest` / `passer` / `lodger` /
+//! `sleeper` / `subject` / `member` 与 `echo` 同住这里。它们**量的是服务**（身份 / 盟籍 / 时钟 /
+//! 树 / 生死账），**去掉机器照转**——这一条是实测的：产品镜像里没有它们，9 条照样起、六沓用例
+//! 全绿、停机行在。用户裁定 **甲 · 测试不许住在运行时源里**：六位搬去 `harness`（与探针、压测台
+//! 同屋——那一屋的定义就是"**不进产品镜像的一切**"）。留在这屋的是**产品**：`echo` 正是产品
+//! 镜像那 9 条里的一条。
 //!
-//! [`lodger`] 是唯一**领了一枚门闩**的：它领的是那台 virtio 设备的寄存器页
-//! （`virtio_mmio@10001000`，1 号线——**一条没人要的线**），但从不映视图、不读写它：领它只为
-//! "主人"这个说法是真的（见 `lodger/main.rs` 头注），故"不读设备、不碰 MMIO"照旧成立。
-//! 它与前三位形状上只差一处：它的
-//! [需求单](lodger::needs)要进 lib（装配者照它开单），入口仍是一份 bin。
+//! 于是那条边界可以直接查：
 //!
-//! 持树者（`operator`）**不在这里**：它 `ship` 带 `VEST` 的副本、是这台机器的转授权中枢，
-//! 故与监督侧同档，住 [`crate::supervisor::operator`]。监督侧那一档整体在
-//! [`crate::supervisor`]。
-
-pub mod lodger;
+//! ```text
+//!   programs/ 的 9 个 bin  ==  产品镜像那 9 条（`cargo image product` 打出来那 9 个名字）
+//! ```
+//!
+//! **本文件今天没有一行代码**：这一档只剩一份 bin（`echo.rs`），而 bin **不进 lib**（`programs`
+//! 的共享件只有三枚：`entry` / `supervisor::service` / `driver::assemble`）。留这一份是为了上面
+//! 那条照实记有地方住——`programs/src/lib.rs` 的 `pub mod user;` 认的就是它。

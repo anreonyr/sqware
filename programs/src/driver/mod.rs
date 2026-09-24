@@ -36,7 +36,7 @@
 //!
 //! 服务面 = **各驱动自己的具体协议**，故住各驱动自己的目录、**不进 `crates/protocol`**
 //! （旧 `uart` 协议的死因就是把它放进了协议层）；客人与驱动 `use` 的是同一份源码
-//! （`driver/rtc/{call,core,client}.rs` 那一份，客人是 `user/sleeper`）。
+//! （`driver/rtc/{call,core,client}.rs` 那一份，客人是 `harness/src/sleeper.rs`）。
 //!
 //! 两个实例的形状**不一样**——这正是"抽象等第二个实例"要证的那件事：
 //!
