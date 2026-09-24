@@ -467,26 +467,12 @@ impl Listing {
         }
     }
 
-    /// 几枚。
-    pub fn len(&self) -> usize {
-        self.n
-    }
-
-    /// 一枚都没有。
-    pub fn is_empty(&self) -> bool {
-        self.n == 0
-    }
-
-    /// 第 `at` 枚（越界 ⇒ `None`）。
-    pub fn get(&self, at: usize) -> Option<EntryId> {
-        if at < self.n {
-            self.ids.get(at).copied()
-        } else {
-            None
-        }
-    }
-
     /// 按号序（就是帧里的次序）走一遍。
+    ///
+    /// **照实记（这一份只剩这一个读面）**：原先还有 `len` / `is_empty` / `get` 三格——
+    /// `is_empty` / `get` **全仓零用家**，`len` 只被宿主靶的 `judge` 靶用过（`back.len()`），
+    /// 而生产路径（`echo` 的读数、`pack_list`）与靶都只走 `iter()` ⇒ 三格都删掉，靶里那一处
+    /// 改写成 `iter().count()`。要"几枚"就问这一句。
     pub fn iter(&self) -> impl Iterator<Item = EntryId> + '_ {
         self.ids[..self.n].iter().copied()
     }

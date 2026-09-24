@@ -877,7 +877,8 @@ fn the_list_answer_refuses_a_count_that_disagrees_with_the_frame() {
     let n = f::pack_list(&mut buf, ids.iter().copied());
     assert_eq!(n, 2 + 3 * 8);
     let back = f::read_list(&buf[..n]).expect("读得回来");
-    assert_eq!(back.len(), 3);
+    // 几枚 = 走一遍数出来（`Listing` 的读面只留 `iter` 这一格，见它的照实记）。
+    assert_eq!(back.iter().count(), 3);
     assert_eq!(back.iter().collect::<Vec<_>>(), ids.to_vec());
 
     assert_eq!(f::read_list(&buf[..n - 1]), Err(f::BAD), "短一字节");

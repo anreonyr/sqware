@@ -196,11 +196,6 @@ impl Desk {
             .filter_map(|(slot, cell)| cell.as_ref().filter(|g| !g.armed()).map(|g| (slot, g.who)))
     }
 
-    /// 账上还有几位。
-    pub fn occupied(&self) -> usize {
-        self.guests.iter().flatten().count()
-    }
-
     /// 剔走**已经答不出**的客人，返剔了几格；幂等。
     ///
     /// 判据是注入的那一格（在这棵树里 = [`VestedBy`]：**客人答话路那一枚还答得出吗**）——
