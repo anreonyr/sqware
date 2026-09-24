@@ -29,6 +29,7 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;
+use runtime::PAGE_SIZE;
 
 
 /// 等板 / 等树的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -114,28 +115,20 @@ pub fn serve() -> Result<(), super::fail::Fail> {
         return Err(super::fail::Fail::Desk);
     }
 
-    // 一问的上界就是 `ASK_LEN`（`pack_ask` 产出的就是这个长度）。
-    let mut buf = [0u8; pcall::ASK_LEN];
+    // 一问的形状是 `ASK_LEN`；缓冲给**一页**（载体的界，见 `Push` 的前置条件）——
+    // 于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
+    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    if buf.try_reserve_exact(PAGE_SIZE).is_err() {
+        return Err(super::fail::Fail::Desk);
+    }
+    buf.resize(PAGE_SIZE, 0);
     loop {
         if tole.await_(usize::MAX).is_err() {
             return Err(super::fail::Fail::Desk);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-        // 取帧走 [`scall::receive`]——它带**入站闸**：比 `ASK_LEN` 长的那一枚取出来丢掉
-        // （不然这一扇门取不出也丢不掉，从此卡死）。
-        loop {
-            match scall::receive(&entry_hole, &mut buf, 0) {
-                scall::Arrival::Ask(len, from) => turn(&mut book, from, &buf[..len]),
-                scall::Arrival::Junk(n) => {
-                    say(&alloc::format!("principal: ask too long n={n}"));
-                }
-                // 连丢它那块缓冲都备不下 ⇒ 这一扇门排不空了：报一句**然后去死**（板看得见）。
-                scall::Arrival::Stuck(n) => {
-                    say(&alloc::format!("principal: ask stuck n={n}"));
-                    return Err(super::fail::Fail::Desk);
-                }
-                scall::Arrival::Idle => break,
-            }
+        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
+            turn(&mut book, from, &buf[..len]);
         }
     }
 }

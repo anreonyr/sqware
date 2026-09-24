@@ -115,53 +115,6 @@ pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
     found
 }
 
-/// **收一帧**（门牌那一侧的共享体）的四种下场——**每格一个不同的下一步**。
-pub enum Arrival {
-    /// 这一族的问话：`(长度, 发送者)`，内容已经在调用方那只 `buf` 里。
-    Ask(usize, TaskId),
-    /// 槽里那一枚比 `buf` 长：**已经取出来丢掉**（不处置它这一扇门就卡死，见 [`receive`]）。
-    Junk(usize),
-    /// 同上，但**取不出来**（连那块等长缓冲都备不下）——这一扇门排不空了。
-    Stuck(usize),
-    /// 没有了（空槽 / 这一趟取不成）：这一轮到此为止。
-    Idle,
-}
-
-/// **从门牌上收一帧**——定长门那一族共用的**入站闸**。
-///
-/// 核给的形状是"**先问长度、再备够缓冲**"（`Pull { max: 0 }` 只报长度、不动槽，见 `env::fid`）：
-/// 装不下时 `pull` 答 `Denied` 且**槽原样**，而门牌是**单槽** ⇒ 按定长缓冲硬取，一旦有人推了
-/// 一枚更长的，这一扇门就**取不出、也丢不掉**——从此卡死，且不需要任何权限。
-///
-/// 这一句把那一步补上：够长的那一枚**取出来丢掉**，返它的长度让调用方报一句。丢得起：这一族
-/// 的问话是**定长**的，够长的帧按定义不是它，丢的不是信息。
-///
-/// **代价照实记**：取出它要一块与它**等长**的缓冲（核里没有"只丢不取"那一手；长度是 `Push`
-/// 给的参数）⇒ 这一格只挡得住"卡死"，挡不住"推一枚极大的"（那要核给消息定上界，不在这里）。
-/// 连那块缓冲都备不下 ⇒ [`Arrival::Stuck`]：调用方该**报一句然后去死**（板看得见），
-/// 别在这一格上转圈。
-pub fn receive(hole: &mail::HolePie, buf: &mut [u8], millis: usize) -> Arrival {
-    // 先问长度（`peek` = `Pull{max:0}`：只看，不动槽）。
-    if let Ok((len, _)) = hole.peek()
-        && len > buf.len()
-    {
-        let mut junk: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-        if junk.try_reserve_exact(len).is_err() {
-            return Arrival::Stuck(len);
-        }
-        junk.resize(len, 0);
-        return match hole.pull_timeout_from(&mut junk, millis) {
-            Ok(_) => Arrival::Junk(len),
-            // 取不成（对面撤了 / 槽空了）：当"没有"处理，下一轮再看。
-            Err(_) => Arrival::Idle,
-        };
-    }
-    match hole.pull_timeout_from(buf, millis) {
-        Ok((len, from)) => Arrival::Ask(len, from),
-        Err(_) => Arrival::Idle,
-    }
-}
-
 /// **借一枚回信孔过去、把这一帧推上那扇门**——一问一答的共享体；返**本端那一枚**
 /// （答话从那枚孔回来）。
 ///

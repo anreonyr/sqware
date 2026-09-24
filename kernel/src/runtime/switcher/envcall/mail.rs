@@ -15,6 +15,7 @@ use env::{Fail, HoleDir, MailCall, PieToken, TaskId};
 
 use riscv::register::sie;
 
+use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
@@ -71,7 +72,8 @@ fn push(
     // ① 取用判据在核心（`gate::accede`）：表里没有 → `Denied`；已封印 → `Dead`；权不够 →
     //    `Denied`——**顺序只有那一处**，与权柄轴同一个答案。
     //    落点与拷贝两步另有码：`hole::try_push` 答 `Busy`（槽已满）/`Dead`（封印），
-    //    锁外暂存的 `try_reserve` 答 `OoM`，`len == 0` 与区间未映射答 `Denied`。
+    //    锁外暂存的 `try_reserve` 答 `OoM`（**一页以内**备不下），长度不在 `1..=一页`
+    //    与区间未映射答 `Denied`。
     //    "被关住"仍住本层：它要核对**别人**的表（L3），故必须在放开本任务 `pies` 之后判。
     let found = current()
         .running_task()
@@ -85,9 +87,10 @@ fn push(
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => {
                     let meta = p.meta().clone();
-                    // 长度校验：消息非空即可。**没有上限**——这条消息多大由这次
-                    // `try_reserve` 答不答得出来决定（失败答 `OoM`），不由常量决定。
-                    if len == 0 {
+                    // 长度校验：**一个区间** `1..=一页`。两头同一个下一步（`Denied`），且都在下面
+                    // 那次 `try_reserve` **之前**——界不许先花内存。一页是**载体**的界（不是某一孔
+                    // 的），契约在 `env::fid` 的 `Push`。
+                    if !(1..=PAGE_SIZE).contains(&len) {
                         Err(Fail::Denied)
                     } else {
                         // 锁外拷入堆暂存：slot = L3，Space.segments = L2，

@@ -10,6 +10,7 @@ use env::{HoleDir, Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
+use runtime::PAGE_SIZE;
 
 use protocol::system::board::call as bcall;
 use protocol::system::board::call::ENTRY_MARK;
@@ -69,6 +70,15 @@ pub(crate) fn host_loop(me: TaskId) {
     // 摘了就认不出这位叫什么了）。见 [`lane_for`] / [`take`]。
     let mut lanes: Lanes = [(TaskId::new(0), PieToken::NONE); Desk::CAP];
     let mut swept = 0usize;
+    // 收帧的那一页：**在循环外备一次**——每次收帧再备就是一份按帧的分配，正是这一刀要把
+    // 它从收帧那一刻拿掉的那件事。载体的界是一页（契约见 `env::fid` 的 `Push`），故一页
+    // 装得下任何一条消息；备不下 ⇒ 板起不来（与下面那几处同一个样子）。
+    let mut pad: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    if pad.try_reserve_exact(PAGE_SIZE).is_err() {
+        say("board: no pad");
+        return;
+    }
+    pad.resize(PAGE_SIZE, 0);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
         let settling = settle(&mut desk, me, &tole, &tip_hole);
@@ -82,7 +92,7 @@ pub(crate) fn host_loop(me: TaskId) {
         if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut board, &mut desk, &tole, guest, swept, &mut lanes);
+            serve_one(&mut board, &mut desk, &tole, guest, swept, &mut lanes, &mut pad);
         }
         // 三、客人**死了**（没道别就没了）⇒ 惰性剔：**那一枚入口答不出**（`VestedBy` 答 `None`
         //     ——不在我表里，**或**它那扇门已经封印）即当场扫空，并推它那条死亡道。
@@ -281,6 +291,9 @@ fn say(msg: &str) {
 /// `tole` 只为一件事进来：客人说了"我走了"之后，**它的问话孔要从组里摘掉**——退场是客人
 /// 说的一句，而"不再等这一格"落在组上，故摘孔这一步只能在拿得到组的地方做（`Desk` 那层
 /// 够不着组）。
+///
+/// `buf` = **调用方那一页**（[`host_loop`] 在循环外备一次）：收帧不在这里分配——一页是载体的
+/// 界，装得下任何一条消息。
 fn serve_one(
     board: &mut Board,
     desk: &mut Desk,
@@ -288,12 +301,12 @@ fn serve_one(
     guest: Guest,
     swept: usize,
     lanes: &mut Lanes,
+    buf: &mut [u8],
 ) {
     let Some(ask) = guest.ask() else {
         return;
     };
-    let mut buf = [0u8; bcall::ASK_LEN];
-    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(&mut buf, 0) else {
+    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(buf, 0) else {
         return;
     };
     let Some(want) = buf.get(..n) else {

@@ -30,8 +30,9 @@ fn now_ns() -> EnvResult<u64> {
 
 /// 解封 Hole：孔上刻**一格记号**（`mark` = 这条路的名字）。
 ///
-/// **消息本身仍不预设上限**（那是协议自己的事），也不预分配槽——多出来的只有记号：
-/// 它随副本过线、转手不变，故"同一位开的多枚孔"分辨得出（读它走 [`reserve`]）。
+/// **界只有一条，落在载体上**：一条消息 ≤ **一页**（契约在 `env::fid` 的 `Push`）；孔本身
+/// 不因此多带参数，也不预分配槽——多出来的只有记号：它随副本过线、转手不变，故"同一位开的
+/// 多枚孔"分辨得出（读它走 [`reserve`]）。
 ///
 /// 名字非法（空 / 含 NUL / ≥ 32 字节 / 非 UTF-8）或那段字节拷不动 ⇒ `Denied`。
 pub fn unseal_hole(mark: Mark) -> EnvResult<PieToken> {
@@ -62,7 +63,7 @@ pub fn unseal_nole() -> EnvResult<PieToken> {
     }
 }
 
-/// push 一条消息（`msg[..len]` 进 hole 槽）。`len ≥ 1`（**无上限**）。
+/// push 一条消息（`msg[..len]` 进 hole 槽）。`len ∈ 1..=一页`（破了界答 `Denied`）。
 pub fn push(token: PieToken, msg: *const u8, len: usize) -> EnvResult<()> {
     let r = MailCall::Push {
         token: token,
@@ -77,7 +78,8 @@ pub fn push(token: PieToken, msg: *const u8, len: usize) -> EnvResult<()> {
 }
 
 /// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）；发送者丢弃。
-/// 装不下返 `Denied` 且槽原样；要问长度用 [`pull_len`]。
+/// 装不下返 `Denied` 且槽原样；**给一页就装得下任何一条消息**（载体封顶一页）。
+/// 要问长度用 [`pull_len`]。
 pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<usize> {
     pull_from(token, buf, max).map(|(n, _)| n)
 }
@@ -85,7 +87,8 @@ pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<usize> {
 /// 只问长度（**不动槽**）：返槽里那条消息的长度与发送者，一个字节都不取。
 ///
 /// 走 `Pull { max: 0 }`——与 `Wait { millis: 0 }`「只探测不挂起」同一形状的"只问"。
-/// 收方据此备出装得下的缓冲，槽因此总能被排空。
+/// **不是取消息的前一步**（那一步由载体的界接手：一页缓冲一趟取走）；它的读者是
+/// "等之前先看一眼"那一格（`harness` 的 waiter）。
 pub fn pull_len(token: PieToken) -> EnvResult<(usize, TaskId)> {
     pull_from(token, core::ptr::null_mut(), 0)
 }
@@ -342,7 +345,7 @@ impl HolePie {
         wait(self.token, dir, millis)
     }
 
-    /// 写消息（长度随消息，**无上限**）：槽满则睡到有空间（让出 CPU）。
+    /// 写消息（**`1..=一页`**）：槽满则睡到有空间（让出 CPU）。
     pub fn push(&self, msg: &[u8]) -> EnvResult<()> {
         loop {
             match push(self.token, msg.as_ptr(), msg.len()) {
@@ -357,8 +360,9 @@ impl HolePie {
 
     /// 取消息：槽空则睡到有信（让出 CPU）。返实际收到字节数（≤ `buf.len()`）。
     ///
-    /// **装不下（消息比 `buf` 长）返 `Denied`，且槽原样**——此时先问 [`HolePie::len`]
-    /// 再备够缓冲，别丢。这里不替调用方把槽丢掉：丢一条消息是不可逆的。
+    /// **装不下（消息比 `buf` 长）返 `Denied`，且槽原样**——给一页就装得下任何一条消息
+    /// （载体封顶一页），故这一支只会发生在**你自己给得更小**的时候；真给了小缓冲又不想丢，
+    /// 先问 [`HolePie::peek`] 再备够。这里不替调用方把槽丢掉：丢一条消息是不可逆的。
     pub fn pull(&self, buf: &mut [u8]) -> EnvResult<usize> {
         loop {
             match pull(self.token, buf.as_mut_ptr(), buf.len()) {
@@ -386,7 +390,8 @@ impl HolePie {
 
     /// 只看一眼：槽里那条消息的**长度与发送者**，**一个字节都不取**（槽留原样）。
     ///
-    /// 用途是 [`HolePie::pull`] 的前一步：缓冲不够大时先问长度、再备够。
+    /// **不是取消息的前一步**：载体封顶一页 ⇒ 一座一页缓冲一趟取走任何一条消息。
+    /// 它的读者是"等之前先看一眼"那一格（`harness` 的 waiter）。
     /// 槽空 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
     pub fn peek(&self) -> EnvResult<(usize, TaskId)> {
         pull_len(self.token)
