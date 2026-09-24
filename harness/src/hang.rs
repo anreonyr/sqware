@@ -27,7 +27,7 @@
 
 extern crate programs;
 
-use programs::stress::tick;
+use harness::tick;
 
 use env::Name;
 use protocol::session::Quay;

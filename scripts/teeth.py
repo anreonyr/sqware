@@ -284,7 +284,7 @@ MUTATIONS = [
 # 故这里只放几条**要害**：改一处程序的读数/判词/构造，看 soak 红不红、**报的是哪一条**。
 BOOT = [
     ("机器·`foreign` 那一格改成公开（该 8 会答 0）",
-     "programs/src/user/probe_rule.rs",
+     "harness/src/probe_rule.rs",
      "            Rule::Opens(principal),",
      "            Rule::Public,"),
     ("机器·撤掉问话孔的「先找后铸」（该 ask_same=1 会 0）",
@@ -386,15 +386,15 @@ BOOT = [
     # （`mine = false` 是**放弃归属** ⇒ 从此谁都能落）。实测：删掉 `mine` 那一位，机器读数
     # 一字不变（`lease land=0 id=…` 照样 0），故记成"等价"。
     ("等价·租赁那一趟不声明归自己（机器读数看不见；宿主靶管着那一格）",
-     "programs/src/user/probe_lease.rs",
+     "harness/src/probe_lease.rs",
      "        ocall::Rule::Public,\n        true,",
      "        ocall::Rule::Public,\n        false,"),
     ("等价·接手那一趟反而声明归自己（同上：探针等的就是对方死）",
-     "programs/src/user/probe_owner.rs",
+     "harness/src/probe_owner.rs",
      "        ocall::Rule::Public,\n        false,",
      "        ocall::Rule::Public,\n        true,"),
     ("机器·「该被拒」那一趟的判词换了名",
-     "programs/src/user/probe_denied.rs",
+     "harness/src/probe_denied.rs",
      'const OK_NOTE: &str = "probe-denied: denied as expected";',
      'const OK_NOTE: &str = "probe-denied: denied";'),
     ("机器·回声去问一枚**铸过的**号（`name miss=true` 变 false）",

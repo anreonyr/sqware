@@ -17,9 +17,13 @@ exclude = [
     "crates/alloc-probe",
     "crates/protocol-case",
 ]
+# `harness` 是**工作区成员**，与 `programs` 同一族（同一张链接脚本、同一批"被内核装载的
+# ELF"）：它是**测具**那一档——探针（进验收镜像当客人）与压测台（整台替换引导镜像）。
+# 搬家那一刀的缘由、以及"哪几台进哪张镜像"，见 `harness/Cargo.toml` 与 `kernel/build.rs`。
 members = [
     "kernel",
     "programs",
+    "harness",
     "crates/env",
     "crates/protocol",
     "crates/runtime",

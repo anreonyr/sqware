@@ -298,7 +298,7 @@ pub fn attach(
 | 台 | 证什么 | 落点 |
 |---|---|---|
 | 宿主台 | "被拒 ⇒ 那一格**没被占**" | 照 `protocol-case` 的 `operator` 靶现有假表形状，新增纯 `judge` 模块 |
-| 真机负证 | `land=DENIED` **且** 随后 `seek=UNKNOWN`（第二格才证"拒绝不是换绑"） | ✅ 已落地：`programs/src/user/probe_denied.rs` + `Program::bind = false`（装配者**不绑它**），读数 `probe: tree land=8 seek=err:1` |
+| 真机负证 | `land=DENIED` **且** 随后 `seek=UNKNOWN`（第二格才证"拒绝不是换绑"） | ✅ 已落地：`harness/src/probe_denied.rs` + `Program::bind = false`（装配者**不绑它**），读数 `probe: tree land=8 seek=err:1` |
 | 既有门不许退化 | `scripts/soak.sh` 那 11 条 `tree part=0 dir=… land=0 find=0 got=true` 与 3 条 `list` 一字不变 | 默认策略必须是"**没规则 ⇒ 放行**"，否则整机装不上 |
 | 顺序回归 | 装配顺序与 `echo: seq=0` 不变 | 同 soak |
 
@@ -430,7 +430,7 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
   号就是表里的下标，四条递归助手一并消失；真机读数从"第 117 层死"变成"512 层每一手都答得出"）。
   下面这一节是**量它**的那一笔，留着当负证：
   `prog-probe-deep` 一层层往下 `part`，**持树者自己死在第 117 层**（`user fault killed: tid=3`，
-  实测读数与三格分析见 `programs/src/user/probe_deep.rs` 的头注）。原因是四条私有助手
+  实测读数与三格分析见 `harness/src/probe_deep.rs` 的头注）。原因是四条私有助手
   （`look` / `holds` / `take` / `put_in`）**按深度递归**，而一台域的栈是 `TASK_STACK_SIZE`
   = 16 KiB；广度有闸（`PANE_CAP`）、一条路有闸（`ROAD_MAX`）、**深度一个闸都没有**。
   下场比 abort 更坏：**命名空间整个没了**（同一台探针在那一手之后连最浅的一问都答不出）。

@@ -1,6 +1,6 @@
 //! supervisor — **S 态那一档**：只有监督侧用的那几片实现，与它们的程序入口。
 //!
-//! 判据是特权级（唯一声明处：`kernel/build.rs::INITRD_BINS`）：本目录下**除 [`principal`]
+//! 判据是特权级（唯一声明处：`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）：本目录下**除 [`principal`]
 //! 与 [`coalition`] 外**都是 `Supervisor`。**照实记**：那两条（身份服务、结盟服务）是 **U 态**
 //! ——它们不持有、不授予、不解释任何 Pie，只读写自己那几张表，故不需要 S 态；它们住这里是因为
 //! 目录按**角色**分（同名服务的判定与接口住 `crates/protocol/src/<名>/`），不是因为特权级。
@@ -21,7 +21,7 @@
 //! 在各**收方**那里（[`crate::driver::router::needs`] / [`crate::driver::uart::needs`]）。
 //!
 //! U 态那一档在 [`crate::user`]；**驱动与压测台按角色分档**，整块留在 [`crate::driver`] 与
-//! [`crate::stress`]。
+//! `harness`（测具那一个 crate）。
 
 pub mod coalition;
 pub mod operator;

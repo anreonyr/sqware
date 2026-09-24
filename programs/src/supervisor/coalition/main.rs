@@ -10,7 +10,7 @@
 //!
 //! 它**不持有、不授予、不解释任何 Pie**——只读写自己那两张格。故它不进"转授权中枢"那一档
 //! （`operator` 是 S 态，因为它在树上 `ship` 带 `VEST` 的副本），与 [`principal`] / `echo` /
-//! `guest` 同档（`kernel/build.rs::INITRD_BINS`）。它要的几手（读 `Sire`、铸孔、开会话、挂组、
+//! `guest` 同档（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）。它要的几手（读 `Sire`、铸孔、开会话、挂组、
 //! 按名找身份服务）都不需要 S 态——`rtc` 那一面量过同一条。
 //!
 //! **它与身份服务那一台同档，但多一个客人身份**：起手要在树上找到 `/sys/principal`，

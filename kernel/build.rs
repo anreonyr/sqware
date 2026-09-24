@@ -12,7 +12,7 @@ use env::wire::manifest;
 /// 这里是**唯一**声明「程序装成哪种空间」的地方——root 从清单里读，不再硬编码。
 /// 码（`ProgramKind` → u32）在 `env::wire::manifest` 里写死一次，本表只用类型。
 /// 引导镜像的**清单名**：默认 `root`；压测台用 `SQWARE_ROOT=rig` 换一个（见
-/// `programs/src/stress/rig.rs`）——换的只是"谁的镜像被当引导镜像"，内核其余一字不改。
+/// `harness/src/rig.rs`）——换的只是"谁的镜像被当引导镜像"，内核其余一字不改。
 ///
 /// **在 build 脚本里按运行时读**（不是 `option_env!`）：`option_env!` 会把值烘进这台
 /// 脚本自己的二进制，而脚本何时重编不由那个变量决定（实测换变量后引导镜像没换）；
@@ -35,7 +35,12 @@ fn image_name() -> String {
         name
     }
 }
-const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
+/// 产品那一档（**15 份**）：内核起的那套服务 + 真客人。三张表合起来就是镜像里可能有的全部
+/// 程序；**哪几台进哪一张镜像**由 [`bins_for`] 按场景选。
+///
+/// (清单名, cargo bin 名, 特权级)——**这里是唯一声明「程序装成哪种空间」的地方**：内核与各域
+/// 都从清单里读，不再硬编码。码（`ProgramKind` → u32）在 `env::wire::manifest` 里写死一次。
+const PRODUCTS: &[(&str, &str, ProgramKind)] = &[
     ("root", "prog-root", ProgramKind::Supervisor),
     // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
     // 够不着建域那道 S 态门。
@@ -89,14 +94,25 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
     // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。
     ("operator", "prog-operator", ProgramKind::Supervisor),
+    // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器
+    // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，
+    // 之后"这批字节交给谁"由域自己决定（见 `platform/devices.rs::supply_initrd`）。
+    ("system", "prog-system", ProgramKind::Supervisor),
+];
+
+/// 探针那一档（**6 份**）：**只读数**的客人——`soak` / `examine` / `fair` 的判据就是它们打出来
+/// 的那几行，故它们**必须**在验收镜像里（这是"测具出产品镜像"唯一做不到的一格）。
+///
+/// 它们住在隔壁那个 crate `harness`（照实记：用户裁定"测试和程序分开"）。
+const PROBES: &[(&str, &str, ProgramKind)] = &[
     // 负证客人（**U 态**）：一位**没有身份**的任务去撞树的门（`Program::bind = false`）——
-    // 门禁那条"没绑身份 ⇒ 拒绝"的判据在真机上的反例。读数见 `programs/src/user/probe_denied.rs`。
+    // 门禁那条"没绑身份 ⇒ 拒绝"的判据在真机上的反例。读数见 `harness/src/probe_denied.rs`。
     ("probe-denied", "prog-probe-denied", ProgramKind::User),
     // 第二种负证（**U 态**）：**有身份**、但那一格归别人（`Rule::Owner`）⇒ 也拒。
     ("probe-owner", "prog-probe-owner", ProgramKind::User),
     // 规矩那一格的证客（**U 态**）：有身份的一台把 `Is` / `Under` / `In` 三条规矩落下去，
     // 先以自己试（正证），再换一位代表试（负证 + "看支不看相等"）。读数见
-    // `programs/src/user/probe_rule.rs`。
+    // `harness/src/probe_rule.rs`。
     ("probe-rule", "prog-probe-rule", ProgramKind::User),
     // 另一位客人（**U 态**）：**有身份**地去用别人立了规矩的那两格 ⇒ 都该拒。
     // 那是"第二道门"的反例（第一道由 `probe-denied` 量）。读数见 `probe_rule_other.rs`。
@@ -110,11 +126,14 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     ("probe-deep", "prog-probe-deep", ProgramKind::User),
     // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
     ("probe-lease", "prog-probe-lease", ProgramKind::User),
-    // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器
-    // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，
-    // 之后"这批字节交给谁"由域自己决定（见 `platform/devices.rs::supply_initrd`）。
-    ("system", "prog-system", ProgramKind::Supervisor),
-    // 压测台的两个（`programs/src/stress/`）：`churn` = 受害者——U 态，不停地在
+];
+
+/// 压测台那一档（**10 份**）：台主（S 态，`SQWARE_ROOT=<名字>` 时当引导镜像）与它们的受害者
+/// （U 态）。住 `harness`。
+///
+/// **一台只要它 `find(&boot, …)` 的那几个受害者**，见 [`bins_for`]。
+const RIGS: &[(&str, &str, ProgramKind)] = &[
+    // 压测台的两个（`harness/src/`）：`churn` = 受害者——U 态，不停地在
     // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
     // S 态，`SQWARE_ROOT=rig` 时当引导镜像，反复造/杀它。
     ("churn", "prog-churn", ProgramKind::User),
@@ -134,13 +153,47 @@ const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     // 重启台：**S 态**（要 mint/hatch 那道门），`SQWARE_ROOT=again` 时当引导镜像。
     // 它在同一张表、同一行上把"起 → 停 → 放下 → 再起"走三遍（协议 §六 的"重发"）。
     ("again", "prog-again", ProgramKind::Supervisor),
-    // 共享组台的两个（`programs/src/stress/`）：`waiter` = 等待者——U 态，把台主
+    // 共享组台的两个（`harness/src/`）：`waiter` = 等待者——U 态，把台主
     // 给的那枚孔挂进**共享组**并等组键（**多个等待者挂同一只键**）；`group` = 台主——
     // S 态，`SQWARE_ROOT=group` 时当引导镜像：一次投信，看两个等待者是不是**都醒**，
     // 以及那条消息是不是**只归一个人**。
     ("waiter", "prog-waiter", ProgramKind::User),
     ("group", "prog-group", ProgramKind::Supervisor),
 ];
+
+/// **场景 → 这一张镜像里装哪些程序**。
+///
+/// 照实记（用户裁定）：这原先是一张**并集**——不管跑哪个场景，31 台全打进 initrd。于是默认
+/// （验收）镜像里躺着 10 台压测台（≈1.6 MB / 5.6 MB），而那 10 台在那张镜像里**永远不会被起**；
+/// 反过来 `rig` 镜像（只要一个受害者）也装着整套产品与探针。现在一台只装它真要起的那几台。
+fn bins_for(scenario: &str) -> Vec<(&'static str, &'static str, ProgramKind)> {
+    match scenario {
+        // 验收两景：**同一份镜像**（产品 + 全部探针）。`fair` 与 `root` 的差别只在编排域那张
+        // 装配单多一条"聊天客人"（见 `image_name()`），不在装什么。
+        "root" | "fair" => PRODUCTS.iter().chain(PROBES.iter()).copied().collect(),
+        // 台子那几景：台主 + 它要的受害者（名字取自各台主里的 `const VICTIM` / `*_ELF`）。
+        "rig" => pick(RIGS, &["rig", "hang"]),
+        "again" => pick(RIGS, &["again", "churn"]),
+        "load" => pick(RIGS, &["load", "busy", "park"]),
+        "group" => pick(RIGS, &["group", "waiter"]),
+        "beat" => pick(RIGS, &["beat"]),
+        other => panic!(
+            "未知场景 SQWARE_ROOT={other}（认得的：root / fair / rig / again / load / group / beat）"
+        ),
+    }
+}
+
+/// 从某张表里按名字挑几台——**按表里的次序**（清单次序即装载次序，`ROOT_OFFSET` 按位次算）。
+fn pick(
+    table: &[(&'static str, &'static str, ProgramKind)],
+    want: &[&str],
+) -> Vec<(&'static str, &'static str, ProgramKind)> {
+    table
+        .iter()
+        .copied()
+        .filter(|(name, _, _)| want.contains(name))
+        .collect()
+}
 
 fn main() {
     // 内核链接脚本：workspace 化后不同 crate 用不同 -Tlink.ld（内核 0x80200000 /
@@ -166,8 +219,11 @@ fn main() {
     let cargo = std_env::var("CARGO").expect("CARGO env missing");
     let mut args = vec![
         "build".to_string(),
+        // **两个包一起编**：产品（`programs`）与测具（`harness`）——后者依赖前者的 lib。
         "-p".to_string(),
         "programs".to_string(),
+        "-p".to_string(),
+        "harness".to_string(),
         "--target".to_string(),
         target.clone(),
         "--target-dir".to_string(),
@@ -216,7 +272,8 @@ fn main() {
     let main_profile = main_profile_dir(&std_env::var("OUT_DIR").expect("OUT_DIR env missing"));
     let blob_path = main_profile.join("initrd.img");
     let mut images: Vec<(ProgramKind, &str, Vec<u8>)> = Vec::new();
-    for (name, bin, kind) in INITRD_BINS {
+    let bins = bins_for(&root_name());
+    for (name, bin, kind) in &bins {
         let elf = fs::read(bin_dir.join(bin))
             .unwrap_or_else(|e| panic!("initrd: read {bin} from {}: {e}", bin_dir.display()));
         images.push((*kind, name, elf));
@@ -228,10 +285,10 @@ fn main() {
     let (blob, spans) =
         manifest::pack(&items).expect("initrd: 清单越界（条数 / 名字长度 / 空镜像）");
     // 引导镜像在清单内的偏移/长度（内核不解析清单，按这两个常量取 root 的 ELF）
-    let at = INITRD_BINS
+    let at = bins
         .iter()
         .position(|(name, _, _)| *name == image_name())
-        .expect("initrd: SQWARE_ROOT not in INITRD_BINS");
+        .unwrap_or_else(|| panic!("initrd: SQWARE_ROOT={} 不在这一景的清单里", root_name()));
     let root_span = spans[at].clone();
     assert!(!root_span.is_empty(), "initrd: root image is empty");
     println!("cargo::rustc-env=ROOT_OFFSET={}", root_span.start);
@@ -242,7 +299,7 @@ fn main() {
         "initrd packed: {} ({} B, {} programs)",
         blob_path.display(),
         blob.len(),
-        INITRD_BINS.len()
+        bins.len()
     );
     // 程序侧任何一层变了，initrd 里的程序也得重打包——否则内核重编而镜像是旧的。
     //

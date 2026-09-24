@@ -1,10 +1,15 @@
 #![no_std]
 //! programs — 镜像里装载的程序集合（**每个程序一份 `main.rs`**，就住在它那一片模块的目录里）。
 //!
-//! **分档按特权级**（唯一声明处：`kernel/build.rs::INITRD_BINS`）：[`supervisor`] 是 S 态那一档
+//! **分档按特权级**（唯一声明处：`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）：[`supervisor`] 是 S 态那一档
 //! （root / system / operator），[`user`] 是 U 态那一档（echo / guest / passer / lodger）。
-//! **按角色分的两族不分档**：压测台整块留在 [`stress`]，**驱动整块留在 [`driver`]**——成员的
-//! 特权级仍各自在 `INITRD_BINS` 声明（今天三台驱动都是 **U 态**；见 [`driver`] 的头注）。
+//! **按角色分的那一族不分档**：**驱动整块留在 [`driver`]**——成员的特权级仍各自在
+//! 清单 声明（今天三台驱动都是 **U 态**；见 [`driver`] 的头注）。
+//!
+//! **测具不在这里**（照实记：用户裁定"测试和程序分开"）：探针（`probe-*`）与压测台
+//! （`rig` / `load` / `beat` / `again` / `group` 与它们的受害者）整体搬去了隔壁那个 crate
+//! **`harness`**——它们只借这里的一件共享入口（`extern crate programs;` ⇒ [`entry`] 的
+//! `_start`）。哪几台进哪张镜像，仍在 `kernel/build.rs` 的清单里按场景声明。
 //!
 //! **表归主人**：硬件需求单在**收方**（`driver/{router,uart,rtc}/needs.rs` 与
 //! `user/lodger/needs.rs`：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
@@ -18,13 +23,12 @@
 //! 住 `crates/protocol`；那位协议的**实现方**（谁循环、谁记账、谁起线程、谁调内核）跟着
 //! **用它那个程序所在的档**走——`supervisor/{supply,operator,system}`（板的实现方就在
 //! `supervisor/system/board/` 之下：板线程是编排域里的一枚线程，不是另一个域）。
-//! 共享的"干活"住 `supervisor/` 本级、`driver/` 本级与 `stress/`：一份源码编一次，各程序只
-//! `use`，不再有 `#[path]` 复制与"另一半是死码"的 `#[allow(dead_code)]`。
+//! 共享的"干活"住 `supervisor/` 本级与 `driver/` 本级：一份源码编一次，各程序只 `use`，
+//! 不再有 `#[path]` 复制与"另一半是死码"的 `#[allow(dead_code)]`。
 //!
 //! **目录即程序**：每个程序的入口（`main.rs`）与它那一片模块同住一个目录——`supervisor/system/`
 //! 里既有实现也有 `main.rs`，`supervisor/root/`、`supervisor/operator/`、`driver/router/`、
-//! `driver/uart/`、`driver/rtc/` 同理；`bin/` 那一层撤了。压测的十份入口与共用的 `tick` 一起住
-//! `stress/`。
+//! `driver/uart/`、`driver/rtc/` 同理；`bin/` 那一层撤了。
 //!
 //! **设备侧同理**：谁要读设备，谁的目录里放自己的设备模块（`driver/router/` 下的 `plic.rs`、
 //! `driver/uart/` 下的 `uart.rs`、`driver/rtc/` 下的 `rtc.rs`）——**设备语义各带各的，装配契约才
@@ -33,17 +37,16 @@
 //! 其余驱动侧（名字→线号 / 终端渲染）随旧树一起清了（tag `proto-v1-baseline`），
 //! 需要时按新形状写——**不从那一套搬**。
 //!
-//! 今天有**二十一个**程序：`prog-echo` / `prog-guest` / `prog-passer` / `prog-lodger` /
-//! `prog-sleeper` 与三台驱动 `prog-router` / `prog-uart` / `prog-rtc`（**都是 U 态**），
-//! `prog-root` / `prog-system` / `prog-operator`（监督侧，S 态），加十台压测（`prog-churn` /
-//! `prog-rig` / `prog-busy` / `prog-park` / `prog-hang` / `prog-load` / `prog-beat` /
-//! `prog-again` / `prog-waiter` / `prog-group`）。
-//! **特权级不在这里声明**——那一格在 `kernel/build.rs::INITRD_BINS`。
+//! 今天产品这一档有**十五个**程序：`prog-echo` / `prog-guest` / `prog-passer` / `prog-lodger` /
+//! `prog-sleeper` / `prog-subject` / `prog-member` 与三台驱动 `prog-router` / `prog-uart` /
+//! `prog-rtc`（**都是 U 态**），`prog-root` / `prog-system` / `prog-principal` /
+//! `prog-coalition` / `prog-operator`（S 态那一档：持树者是转授权中枢，故不在最小特权那档）。
+//! 另有 **16 台测具**住 `harness`（6 探针 + 10 压测台）。
+//! **特权级不在这里声明**——那一格在 `kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`（按场景分表）。
 
 extern crate alloc;
 
 pub mod driver;
 pub mod entry;
-pub mod stress;
 pub mod supervisor;
 pub mod user;

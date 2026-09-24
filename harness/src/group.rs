@@ -86,7 +86,7 @@ use runtime::env::mail::{self, HolePie};
 use runtime::env::room::{self, exit_with};
 use runtime::env::unit;
 
-/// 清单里等待者的名字（`kernel/build.rs` 的 `INITRD_BINS` 那一行）。
+/// 清单里等待者的名字（`kernel/build.rs` 的 `RIGS` 那张表里那一行）。
 const WAITER: &str = "waiter";
 /// 几名等待者（共享组的重点就是**不止一个**）。
 const WAITERS: usize = 2;

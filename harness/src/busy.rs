@@ -17,7 +17,7 @@
 
 extern crate programs;
 
-use programs::stress::tick;
+use harness::tick;
 
 /// 一次自旋的块大小：够大以摊掉循环开销，够小以不至于让"被抢占点"太粗。
 const CHUNK: usize = 65_536;

@@ -1,0 +1,48 @@
+# 读数表 —— **门按这张表对账**：镜像里"会打读数"的每一个前缀，谁是它的判据。
+#
+# 读它的是 `scripts/readings.awk`（由 `scripts/soak.sh` 每一轮末尾调），门那边那批断言
+# **从 soak.sh 自己抽出来**——不另抄一份。三段：`前缀 <TAB> 档 <TAB> 理由`。
+#
+#   auto      这一前缀的**每一行**都必须被本门某条断言匹配（新形状没人判 ⇒ 红）
+#   narrative 打了，但只判其中几条形状（**理由必填**）；至少要有一条被匹配
+#   manual    这一前缀的判据**不在断言表里**（由本文件的别的机制判）；理由必填
+#
+# **照实记（这张表是量出来的，不是想出来的）**：它是 `scripts/readings.awk --report` 对着
+# `target/soak/` 里一轮真日志跑出来的——每个前缀多少行、其中多少行今天有判据——再逐条写档。
+# 那一跑当场照出一个洞：`board:` 那 9 行**一条判据都没有**（本次已补一条形状断言，故它是 auto）。
+#
+# **加新前缀、或给 `auto` 的前缀加新形状，都要先改这里**——这正是它的用处。
+# 各档"还没判的那几行"写在理由里：让它们**看得见**，别悄悄长。
+#
+# 前缀	档	理由
+# ── 逐行都有判据（auto）─────────────────────────────────────────────
+board	auto	收尾那两行（`bye …` / `swept …`）：本轮补了一条交替形状；此前 9 行 0 判
+coalition	auto	上树那一行（`coalition: tree … pname=coalition`）由整行形状判
+devices	auto	`devices: 21 handed to root`——引导域交货那一句
+doom	auto	整行形状（`held/starved/blocked/nudged` 四格都是数）
+guest	auto	整行形状（`guest: reg= find= entry= bye=`）
+irq	auto	整行形状（`ring/busy/idle_ring/idle_busy`）
+passer	auto	整行形状（`passer: reg= entry= say=passer`）
+principal	auto	上树那一行，与 `coalition` 同形
+probe	auto	树那三问（`land= seek= dir=`）——第一道门的负证
+probe-lease	auto	落牌 + 退场（`probe-lease: …`）
+probe-other	auto	第二道门的三条负证
+probe-owner	auto	顶牌被拒 / 接手成功（`probe-owner: …`）
+probe-rule	auto	规矩那一格的整行读数
+sched	auto	整行形状（`kicks/fallback`）
+sleeper	auto	约时刻那一整串（`sleeper: …`）
+timer	auto	整行形状（`late_n/late_max_ms/… traps/tocks/mutes`）
+wire	auto	孔那一趟（`wire: N bytes, paired=true, post=true`）
+# ── 打了、但只判其中几条形状（narrative）───────────────────────────
+echo	narrative	判 8/10：`echo: reg=0`（挂名字那一答）与 `echo: op=` 还没有判据——顺路读数
+lodger	narrative	判 3/5：`lodger: got 1` 与 `occupy=0` 没有判据
+member	narrative	判 2/27：`band`/`bloc`/`amid` 那几条判了，其余 25 行是**叙事**（每轮的号都不一样）
+policy	narrative	判 2/15：`bind(self)`/`adopt(sub)` 等判了；`policy: me=` 那三条由 soak.sh 的关系检查判（绑 ≠ 领 = 弃），其余是叙事
+root	narrative	判 1/2：`root: block n=…` 判了；`root: done` 是收尾叙事
+router	narrative	判 8/18：树/设备那几行判了；`got N` / `docks open` / `lane dropped …` 是叙事
+rtc	narrative	判 5/7：`rtc: got 1` 与 `rtc: time … -> …` 是叙事
+system	narrative	判 5/23：设备交付那几行判了；`gone <名字> state=… heir=… wait=…` 是**每轮不同的叙事**
+uart	narrative	判 8/10：`uart: got 1` 与 `line occupied` 是叙事
+# ── 判据不在断言表里（manual）─────────────────────────────────────
+task	manual	只有停机那一行，由 soak.sh 那段 `if grep -q "task: all tasks exited, system halted"` 判
+probe-deep	manual	**只在公平台起**（默认装配单里没有它）：判据在 `scripts/fair.sh`，不在 soak 的断言表里

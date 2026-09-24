@@ -85,7 +85,7 @@
 extern crate alloc;
 extern crate programs;
 
-use programs::stress::tick;
+use harness::tick;
 
 use programs::supervisor::root::boot;
 
@@ -98,7 +98,7 @@ use protocol::system::desk::{Announce, Table};
 use runtime::env::debug;
 use runtime::env::room::{self, exit_with};
 
-/// 占核者与打点者的**清单名**（`kernel/build.rs::INITRD_BINS`）。
+/// 占核者与打点者的**清单名**（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）。
 const HOG_ELF: &str = "busy";
 const PARKER_ELF: &str = "park";
 

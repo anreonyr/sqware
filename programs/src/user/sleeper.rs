@@ -30,7 +30,7 @@
 //!
 //! # 特权级
 //!
-//! **U 态**（`kernel/build.rs::INITRD_BINS`）：铸孔、交孔、上树找服务、一问一答都不需要 S 态。
+//! **U 态**（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）：铸孔、交孔、上树找服务、一问一答都不需要 S 态。
 
 extern crate alloc;
 extern crate programs;

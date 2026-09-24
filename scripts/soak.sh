@@ -269,11 +269,16 @@
 # # 这一门断言的是哪几行读数（一条纪律）
 #
 # **凡在装配单里跑的程序，它打出来的读数都要在这里有一条断言**——要么钉住，要么在正文里
-# 明写"这是手工读数"。对账的法子（一轮一次即可）：把一次 boot 的日志按 `前缀:` 分一分，
-# 与本文里的断言逐条对；剩下的只该是**构建噪声**（`warning:` / `help:`——那些是 rustc 的话，
-# 不是程序的读数）。
+# 明写"这是手工读数"。**照实记（这一条从"人工"改成了"机械"，用户裁定"甲2"）**：原先对账的
+# 法子是"（一轮一次即可）把一次 boot 的日志按 `前缀:` 分一分、与本文里的断言逐条对"——那是
+# 人手维护的第二份清单，而它漏过一次（`prog-probe-deep` 那条例外要专门写一段解释）。
+# 现在由每一轮末尾那一步机械地做（`scripts/readings.awk` + `scripts/readings.txt`）：
+#   - 日志里出现的每个 `前缀:` 都要在读数表里声明过（**新读数没人管 ⇒ 红**）；
+#   - `auto` 档的前缀，**每一行**都要被本文里某条断言匹配（新形状没人判 ⇒ 红）；
+#   - 断言表**从本文件抽出来**（不另抄一份），故加了断言不必同步别处。
+# 剩下的只该是**构建噪声**（`warning:` / `help:`——那些是 rustc 的话，不是程序的读数）。
 #
-# **今天唯一的例外**是 `prog-probe-deep`：它**装得上电、不上电**（`INITRD_BINS` 里有条目、
+# **今天唯一的例外**是 `prog-probe-deep`：它**装得上电、不上电**（清单里有条目、
 # `PLAN` 里没有），故它那两行（`alive at …` / `tree deep=… clean=…`）是**手工读数**——
 # 自动的那一半在**宿主靶**上（`operator` 靶::a_deep_chain_does_not_need_the_call_stack`），
 # 理由与四种失败的排法见 `docs/operator-slot.md` §6 与那份源码的头注。
@@ -348,6 +353,13 @@ while [ "$i" -le "$rounds" ]; do
     need   "system: rtc google,goldfish-rtc -> 0x101000"
     need   "system: lodger virtio,mmio -> 0x10001000"
     need   "devices: 21 handed to root"
+    # 板收尾那两行读数（`bye …` 每轮都有；`swept …` 只在真扫过时才打 ⇒ 一条交替形状既覆盖
+    # 全部 `board:` 行、又不因为"这一轮没扫"而假红）。**照实记**：这两行原先**一条判据都没有**
+    # ——`scripts/readings.awk` 第一次跑就把它照出来了（9 行 0 判）。
+    # **照实记（`\r` 那一格）**：板那几行**带 `\r`**（实测：`od -c` 里是 `swept=0\r\n`）——
+    # 故 `$` 前面要让一格空白，与 `timer:` / `doom:` 那几条同款。第一版没让，`board` 当场被判"9 行
+    # 没判"（对账器逮住：形状写严了也是错的）。
+    needE  "^board: (bye tid=[0-9]+ names=[0-9]+ occupied=[0-9]+ swept=[0-9]+|swept n=[0-9]+ occupied=[0-9]+)[[:space:]]*$"
     needE  "wire: [0-9]+ bytes, paired=true, post=true"
     needE  "passer: reg=0 entry=[0-9]+ say=passer"
     need   "note: passer: gone"
@@ -444,8 +456,21 @@ while [ "$i" -le "$rounds" ]; do
         echo "round $i: FAIL 启动读数不全（$log）—— 缺这几条："
         printf '%b\n' "$missing"
       else
-        pass=$((pass + 1))
-        echo "round $i: PASS"
+        # ── 声明式读数对账（用户裁定"甲2"）──────────────────────────────
+        #
+        # 本门那批断言**从本文件里抽出来**（不另抄一份），连同一张读数表交给 `readings.awk`：
+        # 它就着**这一轮日志**核对两件事——"日志里出现的每个前缀都在表里声明过"与
+        # "`auto` 档的每一行都被某条断言匹配过"。表与理由住 `scripts/readings.txt`。
+        asserts="$out/$tag-$i.asserts"
+        sed -n 's/^[[:space:]]*\(need\|needE\|need_absent\)[[:space:]]*"\(.*\)"[[:space:]]*$/\1|\2/p' "$0" > "$asserts"
+        if readings="$(awk -v asserts="$asserts" -v table=scripts/readings.txt -v report=0 \
+                          -f scripts/readings.awk "$log")"; then
+          pass=$((pass + 1))
+          echo "round $i: PASS"
+        else
+          echo "round $i: FAIL 读数对账不过（$log）—— 下面这几条是没人管的读数："
+          printf '%s\n' "$readings"
+        fi
       fi
   fi
   i=$((i + 1))

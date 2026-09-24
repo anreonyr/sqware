@@ -3,9 +3,12 @@ name = "programs"
 version.workspace = true
 edition.workspace = true
 
-# 镜像里的各程序（今天二十一个）：freestanding、无 std、无 main crt。链接在 IMAGE_BASE
-# (0x10000)、静态 ET_EXEC；由内核 loader 按绝对 VMA 装载，_start 即 e_entry。
-# 内核 `build.rs::INITRD_BINS` 按 bin 名打进 initrd（**唯一**声明特权级处）。
+# 镜像里的**产品程序**（今天**十五个**；测具那 16 台住隔壁的 `harness`）：freestanding、
+# 无 std、无 main crt。链接在 IMAGE_BASE (0x10000)、静态 ET_EXEC；由内核 loader 按绝对 VMA
+# 装载，_start 即 e_entry。
+#
+# 内核 `build.rs` 按 bin 名打进 initrd——**哪几台进哪张镜像按场景选表**（`PRODUCTS` /
+# `PROBES` / `RIGS` + `bins_for`），而"装成哪种空间"（`ProgramKind`）也**只在那里声明**。
 [lib]
 path = "src/lib.rs"
 test = false
@@ -22,48 +25,6 @@ protocol = { path = "../crates/protocol" }
 fdt = { version = "0.1.5", default-features = false }
 # 错误容器：`system::call` 把内核负码包成 `erra::Error<EnvError>`（与 protocol 同款）。
 erra = { version = "0.2.0", default-features = false }
-
-[[bin]]
-name = "prog-probe-lease"
-path = "src/user/probe_lease.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-probe-owner"
-path = "src/user/probe_owner.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-probe-denied"
-path = "src/user/probe_denied.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-probe-rule"
-path = "src/user/probe_rule.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-probe-rule-other"
-path = "src/user/probe_rule_other.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-probe-deep"
-path = "src/user/probe_deep.rs"
-test = false
-bench = false
-doctest = false
 
 [[bin]]
 name = "prog-echo"
@@ -182,82 +143,6 @@ path = "src/supervisor/root/main.rs"
 test = false
 bench = false
 doctest = false
-
-# 压测台：受害者（U 态）与台主（S 态，`SQWARE_ROOT=rig` 时当引导镜像）。
-[[bin]]
-name = "prog-churn"
-path = "src/stress/churn.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-rig"
-path = "src/stress/rig.rs"
-test = false
-bench = false
-doctest = false
-
-# 忙机台：占核者（U 态）与台主（S 态，`SQWARE_ROOT=load` 时当引导镜像）。
-[[bin]]
-name = "prog-busy"
-path = "src/stress/busy.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-park"
-path = "src/stress/park.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-hang"
-path = "src/stress/hang.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-load"
-path = "src/stress/load.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-beat"
-path = "src/stress/beat.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-again"
-path = "src/stress/again.rs"
-test = false
-bench = false
-doctest = false
-
-# 共享组台：等待者（U 态）与台主（S 态，`SQWARE_ROOT=group` 时当引导镜像）。
-# 台主一次投信，看**两个等待者是不是都醒**（共享组的整链放行），以及那条消息
-# **只归一个人**——见 `programs/src/stress/group.rs` 头注。
-[[bin]]
-name = "prog-waiter"
-path = "src/stress/waiter.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-group"
-path = "src/stress/group.rs"
-test = false
-bench = false
-doctest = false
-
 # 场景旗标 `sqware_fair` 由 `kernel/build.rs` 传给嵌套 cargo（见该文件里那条照实记）；
 # 而**直连工作区**编译 `programs`（`cargo check --workspace --all-targets`）时没人传 ⇒ 在这里
 # 声明它的存在，免得吃一条 `unexpected_cfgs` 的警告。

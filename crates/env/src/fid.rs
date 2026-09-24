@@ -148,7 +148,7 @@ pub const NOTE_MAX: usize = 128;
 
 /// 程序装成的空间（`Build` 的特权级参数）：S 态页表 / U 态页表。
 ///
-/// 它是**内核打包表的产物**，不是程序自述：`build.rs::INITRD_BINS` 决定，root 服务
+/// 它是**内核打包表的产物**，不是程序自述：`kernel/build.rs` 的清单 决定，root 服务
 /// 读取清单后原样转交。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ProgramKind {
@@ -261,7 +261,7 @@ pub enum UnitCall {
     ///
     /// 注意"**不等回收**"是故意的：放下/重启一条路**不需要**等内核把栈/帧/`Space` 还完
     /// （理由与契约边界见 [`UnitCall::Join`]）；实测三轮"起→停→放下→再起"在同一行上
-    /// 不留残留（`programs/src/stress/again.rs`）。
+    /// 不留残留（`harness/src/again.rs`）。
     ///
     /// # 效果
     ///

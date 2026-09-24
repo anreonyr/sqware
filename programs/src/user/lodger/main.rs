@@ -40,7 +40,7 @@
 //!
 //! # 特权级由清单定
 //!
-//! 本域是 **U 态**（`kernel/build.rs::INITRD_BINS`）：铸孔、交出、上树找服务、领一枚门闩
+//! 本域是 **U 态**（`kernel/build.rs 的清单（`PRODUCTS` / `PROBES` / `RIGS`，按场景选表）`）：铸孔、交出、上树找服务、领一枚门闩
 //! 都不需要 S 态。
 
 extern crate alloc;
