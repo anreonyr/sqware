@@ -2,8 +2,8 @@
 //! `GlobalAlloc` 适配器，并与 `System` 做同条件对照。
 //!
 //! ```sh
-//! ./run.sh bench            # = cargo run --release --no-default-features --example throughput
-//! ./run.sh bench -- 8 50000 # 线程数 每线程步数
+//! cargo bench               # = cargo run --release --no-default-features --example throughput
+//! cargo bench -- 8 50000    # 线程数 每线程步数
 //! ```
 //!
 //! # 为什么必须 `--no-default-features`

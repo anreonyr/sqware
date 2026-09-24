@@ -417,7 +417,8 @@ macro_rules! tag {
 // ── 宿主堆的接管：三个后端**三选一**（**debug 档**）────────────────────────────
 //
 // rustc 只允许一个 `#[global_allocator]`，而这三个后端的读数口径互不相同，故**三选一**；
-// `run.sh` 各给一条路，`compile_error!` 把"同时开两个"挡在编译期：
+// `.cargo/config.toml` 的别名各给一条路（原先是 `run.sh`，**那份脚本已删**），
+// `compile_error!` 把"同时开两个"挡在编译期：
 //
 //   feature      全局分配器                     读数
 //   smartalloc   smartalloc::SmartAlloc         收尾 `dump_orphans()` 点名还在账上的块
@@ -432,7 +433,7 @@ macro_rules! tag {
     all(feature = "mockalloc", feature = "dhat"),
 ))]
 compile_error!(
-    "宿主堆只能由一个后端接管：`smartalloc` / `mockalloc` / `dhat` **三选一**（见 README「六条路」与 run.sh）"
+    "宿主堆只能由一个后端接管：`smartalloc` / `mockalloc` / `dhat` **三选一**（见 README「六条路」与 `.cargo/config.toml` 的别名）"
 );
 
 // ── 后端甲：`smartalloc`（默认）——"孤儿缓冲"转储 ──────────────────────────────

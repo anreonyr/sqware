@@ -154,7 +154,8 @@ pub fn init_allocs() -> Option<&'static mockalloc::AllocInfo> {
 // `curr_bytes` 增量）**共用的同一本账**：两个后端从不同口径读同一段代码，常数钉在一处，
 // 谁漂了都看得见（口径为何按定义相等，见 `tests/heap.rs` 的头注）。
 //
-// 怎么重标定：`./run.sh mockalloc -- --nocapture` 与 `./run.sh dhat -- --nocapture`，
+// 怎么重标定：`cargo mockalloc -- --nocapture` 与 `cargo dhat -- --nocapture`（原先是
+// `./run.sh mockalloc` / `./run.sh dhat`——**那份脚本已删**，模式词成了 `.cargo/config.toml` 里的别名），
 // 两处都会把实测值打在 `[init-ledger]` 行上。**先看是不是分配器多留了东西**：
 // 笔数变了 = 有人偷偷加了一笔宿主分配（那就是本层要抓的"未配对"）；字节数变了但笔数没变
 // = 某张表的尺寸变了（合法重构，改预算即可）。

@@ -1,7 +1,7 @@
 //! 最小演示：**孤儿缓冲**（分配了、指针丢了）—— 而且走的是**全局分配器**。
 //!
 //! ```sh
-//! ./run.sh orphan      # 等价于 cargo run --target x86_64-unknown-linux-gnu --example orphan
+//! cargo orphan         # = cargo run --target x86_64-unknown-linux-gnu --example orphan
 //! ```
 //!
 //! debug 档的宿主堆由 `smartalloc` 接管（见 `src/lib.rs` 的接管段），故这里不需要任何

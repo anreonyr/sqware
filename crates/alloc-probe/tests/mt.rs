@@ -17,7 +17,7 @@
 //! # 为什么这份文件在 `smartalloc` 档下不编进来
 //!
 //! `smartalloc` 的 C 层是一张**无锁全局链表**（`lib.rs` 接管段②）：多线程并发 alloc/free
-//! 会把它写坏。要跑这层就得关掉接管（`./run.sh mt` 给的就是 `--no-default-features`）。
+//! 会把它写坏。要跑这层就得关掉接管（`cargo mt` 给的就是 `--no-default-features`）。
 //! `mockalloc`（线程局部账）与 `dhat`（全局锁 + 进程级读数）本身是线程安全的，故它们档下
 //! 这层照跑 —— 只是那两档的读数不参与本层的判据。
 
@@ -25,7 +25,7 @@
 // Miri 下**不编进来**（裁决，不是省事）：Miri 在这套负载上要跑几十分钟到小时级 ——
 // 16 MiB 台面 + 千字节级交付区模式写读，解释执行 × 向量时钟（实测：全量 miri 20 分钟
 // 没跑完，已叫停）。分工是明确的：**Miri 查 UB**（裸指针来去、交付区写读 —— 由单线程
-// 那几条 `cfg(miri)` 缩规模的用例承担，秒级）；**并发竞争由 TSan 承担**（`./run.sh tsan`，
+// 那几条 `cfg(miri)` 缩规模的用例承担，秒级）；**并发竞争由 TSan 承担**（`cargo tsan`，
 // `-Zbuild-std`，秒级，实测零报告）。两条路各管一段，别互相顶替。
 // 集成测试是**独立 crate**：内核分配器源码用的是 `core::alloc::Allocator`（不稳定），
 // 故这边也要开同一个 feature（lib 里已开，集成测试不受它的 `#![feature]` 覆盖）。
@@ -47,7 +47,7 @@ const THREADS: usize = 4;
 #[cfg(not(miri))]
 const PLAN_BYTES: usize = 160;
 /// 本文件整文件 `not(miri)`（见上），这条 `cfg(miri)` 分支**恒不生效** —— Miri 只查单线程
-/// 的 UB，并发竞争归 TSan（`./run.sh tsan`）。
+/// 的 UB，并发竞争归 TSan（`cargo tsan`）。
 #[cfg(miri)]
 const PLAN_BYTES: usize = 8;
 

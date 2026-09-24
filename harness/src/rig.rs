@@ -105,10 +105,14 @@
 //!   尾巴到 10~100 ms）。这解释了当时看到的全部现象：投活 980 笔里 976 笔落在正睡在
 //!   WFI 的落点核上、`SendIpi` 一次没返 Err，却只有 393 次 WFI 返回；滞留那 319 笔
 //!   "自那笔投活以来那颗核一次都没醒过"。
-//! - 而**验收门**（`crates/gate/tests/examine.rs`）与 `fast.sh` / `probe.sh` 一直是**关着 icount**
-//!   跑的。`stress.sh` / `soak.sh` / `load.sh` 没关 ⇒ 两边读数**不可比**。
+//! - 而**验收门**（`crates/gate/tests/examine.rs`）与看机那两条（`crates/gate/tests/console.rs`
+//!   的 `fast` / `probe` 档）一直是**关着 icount** 跑的。压测两台（`crates/gate/tests/stress.rs` /
+//!   `tests/load.rs`）与 `tests/soak.rs` 没关 ⇒ 当时两边读数**不可比**。
 //!
-//! 环境对齐（`scripts/{stress,soak,load}.sh` 显式 `QEMU_ICOUNT=`）之后，同一颗 ELF：
+//! **今天这一格已经没了**：门统一在 `gate::run` 里给**每一台**机器置 `QEMU_ICOUNT=""`
+//! （`crates/gate/src/lib.rs` 那段"照实记（`QEMU_ICOUNT` 置空）"），不再靠各台自己声明——
+//! 原先是三份脚本各自显式置空（`scripts/{stress,soak,load}.sh`，**那批脚本已删**，判据搬进
+//! `crates/gate/tests/`）。对齐之后，同一颗 ELF：
 //!
 //! | 读数（release，`QEMU_SMP=4`） | icount 开（默认，作废） | **icount 关（与门一致）** |
 //! |---|---|---|
