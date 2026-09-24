@@ -45,7 +45,7 @@ use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::tole::TolePie;
 
-extern "C" fn bare_main() -> Reason {
+fn main() -> Reason {
     let (Some(group), Some(member), Some(report)) = discover() else { return bail("waiter: table incomplete") };
 
     let tole = Tole::new(TolePie::from_token(group));
@@ -127,5 +127,5 @@ fn bail(msg: &str) -> Reason {
     1
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_waiter.rs"));

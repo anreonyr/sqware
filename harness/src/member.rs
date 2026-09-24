@@ -71,7 +71,7 @@ const E_NO_SERVICE: usize = 1;
 /// 册外那个号（伪造的线上值）。铸过的号是 `0..next`，故这个一定在册外。
 const OUTSIDE: usize = 4095;
 
-extern "C" fn bare_main() -> Report<'static> {
+fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("member: no sire") };
     let Ok(me) = utask::self_id() else { return bail("member: no self id") };
 
@@ -378,5 +378,5 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_member.rs"));

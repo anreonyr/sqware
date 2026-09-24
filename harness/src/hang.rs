@@ -49,7 +49,7 @@ const MARK: &str = "wake";
 /// 那两个数是打开本开关当场量到的，没有留在树上。
 const REPORT_WAKE: bool = false;
 
-extern "C" fn bare_main() -> Reason {
+fn main() -> Reason {
     let Ok(sire) = utask::sire() else { return bail("hang: no sire") };
     let Ok(mark) = Name::new(MARK) else { return bail("hang: bad mark") };
 
@@ -90,5 +90,5 @@ fn bail(msg: &str) -> Reason {
     1
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_hang.rs"));

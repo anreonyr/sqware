@@ -66,8 +66,7 @@ fn write_entry_shims() {
 mod __entry {{
     #[unsafe(no_mangle)]
     extern "C" fn main() {{
-        let out: fn() -> _ = crate::main;
-        programs::entry::finish(programs::Exit::report(&out()))
+        programs::entry::entry(crate::main)
     }}
 }}
 "#

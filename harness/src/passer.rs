@@ -57,7 +57,7 @@ const BAD: u8 = bcall::BAD;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-extern "C" fn bare_main() -> Report<'static> {
+fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("passer: no sire") };
     // 板那条路：本端装一条、认下生我者那一枚（孔交给生我者，它再转授给板线程）。
     //
@@ -106,5 +106,5 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_passer.rs"));

@@ -77,7 +77,7 @@ const MS: usize = 1000;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-extern "C" fn bare_main() -> Report<'static> {
+fn main() -> Report<'static> {
     // 1. 领配给：门闩到手就是"持有"的全部（本域不映视图、不碰寄存器）。缺格即装配错。
     let mut slots = [None; needs::WANTS.len()];
     let got = match assemble::receive(&mut slots) {
@@ -178,5 +178,5 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_lodger_main.rs"));

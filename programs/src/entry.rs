@@ -11,17 +11,23 @@
 //! |---|---|
 //! | `Termination` | [`Exit`] |
 //! | `report(self) -> ExitCode` | [`Exit::report`] → [`Reason`]（`usize`，直接就是 `Reap.reason`） |
-//! | lang item `#[lang_start]` + `rustc_main` | [`boot!`] 生成的那个 `main` + [`entry`] |
-//! | `impl Termination for ()/{!}/Result<T,E>` | 同形三条，见本文件 |
+//! | lang item `#[lang_start]` + `rustc_main` | 生成物里那个 `main` + [`entry`] |
+//! | `impl Termination for ()/{!}/Result<T,E>` | 同形几条，见本文件 |
 //!
-//! **为什么形状是"每个 bin 生成一个 `main`"而不是"汇编直接调 `entry`"**：`entry` 的入参
-//! 是一个**函数指针**，指着本 bin 的 `bare_main`。汇编没法把符号地址当参数传之前就知道
-//! 它落在哪个寄存器里——`la` 那一手得有人写，而那个人就是每个 bin 里 [`boot!`] 展开出的
-//! `main`。汇编只认它：`a0` = 出口槽、`a1` = 那个 `main`。
+//! **那一格是构建脚本生成的**（`programs/build.rs` / `harness/build.rs`）：每个 `[[bin]]`
+//! 得一份 `entry_<路径>.rs`，里面只有一个
 //!
-//! 于是**每个 bin 只写自己的 `main`（`bare_main`），退出的三笔账（`Reason` 从哪来、
-//! note 怎么带、往哪送）全在本文件**——`room::exit` 因此全仓只有两处调用点（这里与
-//! `runtime::core::unit` 的线程收尾）。
+//! ```ignore
+//! mod __entry {
+//!     #[unsafe(no_mangle)]
+//!     extern "C" fn main() { programs::entry::entry(crate::main) }
+//! }
+//! ```
+//!
+//! ——`_start` 那句 `call main` 找的就是它。**裹一层模块**是为了让 bin 自己那个 `main`
+//! 在同名的情况下仍够得着（`crate::main` 从任何模块都指得到）：写程序的人因此既不必改名，
+//! 也不必签 `#[unsafe(no_mangle)]`。退出的三笔账（`Reason` 从哪来、note 怎么带、往哪送）
+//! 全在本文件——`room::exit` 因此全仓只有两处调用点（这里与 `runtime::core::unit` 的线程收尾）。
 
 use core::arch::global_asm;
 use core::fmt::{self, Write};
@@ -177,7 +183,7 @@ impl<T: Exit, E: Exit> Exit for Result<T, E> {
     }
 }
 
-/// 把一份 [`Report`] 送进内核——**[`boot!`] 那条生成物调的就是它**（生成物里没有泛型，
+/// 把一份 [`Report`] 送进内核——**[`entry`] 走到底就是它**（生成物里没有泛型，
 /// 这一步因此与 `main` 的返回类型无关）。
 ///
 /// 这里同时让 `reason` 在 `exit(...)` 返回（不该发生）时留在现场，读的人不至于只看到一句
@@ -188,35 +194,14 @@ pub fn finish(report: Report<'_>) -> ! {
     exit(reason, note)
 }
 
-/// **迁移期的桥**：还没搬去"构建脚本生成入口"的那几条 bin 仍走 [`boot!`]，而那个宏展开的是
-/// 本函数。搬完最后一条就删（今天只在 `echo` / 各驱动 / 各服务之前的那几条上活着）。
-pub extern "C" fn entry<R: Exit>(bare: extern "C" fn() -> R, slot: &mut Reason) -> ! {
-    let out = bare();
-    let report = out.report();
-    *slot = report.reason;
-    finish(report)
-}
-/// 每个 bin 在自己的 `main.rs` 里写一声 `programs::boot!(main);`：本宏**引用**那个函数
-/// （不是 `use`，故它仍住 bin 自己的模块里），并生成汇编要的那个 `main` 符号。
+/// **入口那一手**：`bare` 是 bin 自己那个 `main`（当**函数项**传进来，不在这里调用——
+/// 于是 `R = !` 那一档由类型系统自己落定，生成物里没有"调用之后还写了东西"的死码）。
 ///
-/// 各 bin 的写法因此只剩"自己的 `main` + 一行 `boot!`"——**`main` 的返回类型由它自己挑**：
-///
-/// ```ignore
-/// extern "C" fn main() { }                          // () ⇒ EXIT_OK
-/// extern "C" fn main() -> Reason { … }              // 只报码
-/// extern "C" fn main() -> Report { … }              // 报码 + 带话（Report::note）
-/// extern "C" fn main() -> Result<(), Reason> { … }  // 报码 + `?`
-/// extern "C" fn main() -> ! { … }                   // 自己退（常驻循环、探针回执）
-/// ```
-#[macro_export]
-macro_rules! boot {
-    ($bare:ident) => {
-        /// `_start` 调的就是它：**形状固定**（`a0` = 出口槽的地址），泛型那一层在它后面。
-        #[unsafe(no_mangle)]
-        extern "C" fn main(slot: *mut $crate::Reason) -> ! {
-            $crate::entry::entry($bare, unsafe { &mut *slot })
-        }
-    };
+/// 生成物里的 `main` 只写一句 `entry(crate::main)`；泛型那一层的不透明性因此不泄漏给
+/// 写程序的人。
+#[inline(always)]
+pub fn entry<R: Exit>(bare: fn() -> R) -> ! {
+    finish(bare().report())
 }
 
 /// panic 现场的**那句话**：栈上拼，**不分配**（panic 现场禁忌照旧——`format!` 会分配，
