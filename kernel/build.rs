@@ -22,157 +22,44 @@ fn root_name() -> String {
     std::env::var("SQWARE_ROOT").unwrap_or_else(|_| "root".to_string())
 }
 
-/// **照实记（表里为什么不写 bin 名）**：它一直是**约定** `prog-<名字>`——用户裁定"删掉那一列"，
-/// 而删之前把 30 行逐行对过：**零反例**。故每行只剩两格：**名字**与**特权级**。改约定要改的是
-/// 读它的那一处（`initrd` 那一段的 `prog-{name}`）与各 crate 里的 `[[bin]]`——三处里少了一处。
+/// **装配单在 `env::assembly`**——一处声明：名字 · 特权级 · 是什么 · 进哪几张镜像 · 装配参数。
 ///
-/// 产品那一档（**15 份**）：内核起的那套服务 + 真客人。三张表合起来就是镜像里可能有的全部
-/// 程序；**哪几台进哪一张镜像**由 [`bins_for`] 按场景选。
+/// **照实记（为什么搬走了）**：这里原先有**三张表**（`PRODUCTS` / `PROBES` / `RIGS`）＋`pick`，
+/// 而 `programs/src/supervisor/system/scenario.rs` 里另有一份**同名的** `Program` 行与 `PLAN`
+/// ——同一条事实写了两处（名字、特权级、在不在表里）。用户原话：**"我不想每次加一个 bin 就写
+/// 一个装配表"**。现在两侧读**同一张表**：本脚本（**宿主**）读它决定"哪几台进哪张镜像"，
+/// 编排域（**riscv**）读它决定"起谁、什么次序"——而仓里只有 `env` 两边都编得过（见那一处的头注）。
 ///
-/// (清单名, 特权级)——**这里是唯一声明「程序装成哪种空间」的地方**：内核与各域
-/// 都从清单里读，不再硬编码。码（`ProgramKind` → u32）在 `env::wire::manifest` 里写死一次。
-const PRODUCTS: &[(&str, ProgramKind)] = &[
-    ("root", ProgramKind::Supervisor),
-    // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
-    // 够不着建域那道 S 态门。
-    ("echo", ProgramKind::User),
-    // 客人：**U 态**（与 `echo` 同一档）——按名字找到一个服务、说一句话。铸孔、交出、
-    // 一问一答都不需要 S 态，故最小特权的域也能用板。
-    ("guest", ProgramKind::User),
-    // 过客：**U 态**（同上）——起来、挂一个名字、**直接死**（不说再见）。它与 `guest` 只差
-    // 少说那一句退场：板上那两本账的"死"判据读的都是"那一枚入口还答得出吗"（`Probe`）。
-    ("passer", ProgramKind::User),
-    // 房客：**U 态**（同上）——起来、占一条线、**直接死**。它与 `passer` 在线轴上同形：两位
-    // 喂的都是"看出来的"那一档（板那本账 / 线那本账）。它领一枚门闩（`virtio_mmio@10001000`，
-    // 1 号线——**一条没人要的线**）却从不映视图：领它只为"主人"这个说法是真的；占住线之后
-    // 一句话不说就走，路由者靠 `sweep` 收掉它（读数 `router: line 1 = virtio_mmio@10001000`
-    // 与 `router: vacate line=1`）。**照实记**：它从前占的是 11 号线（那时钟），第二台设备
-    // 驱动上来之后那条线有主了，故换成 1 号线。
-    ("lodger", ProgramKind::User),
-    // 线路由者（中断面域）：**U 态**——实测（本行下面那条注里的疑点已经量掉）：它只读
-    // PLIC 的寄存器（banner 里 PLIC 的 PMP 是 **S/U (R,W)**）、claim/complete、铸孔、挂组，
-    // 全都不需要 S 态；它那枚铃是**内核给的**（铸铃那一格才是 S 态，本域不铸）。
-    ("router", ProgramKind::User),
-    // 串口驱动：**U 态**（同上）——持有 `serial@10000000`（PMP 也是 S/U (R,W)），把"收到
-    // 字节就拉线"打开。**照实记**：这两格从前写 `Supervisor` 是照搬旧树，理由（"要读写
-    // 寄存器"）与 banner 里那张 PMP 对不上；改成 U 态之后两道门（examine / soak）照旧全过。
-    ("uart", ProgramKind::User),
-    // 第二台设备驱动：**U 态**（同上）——持有 `rtc@101000`（11 号线），武装闹钟、到点自己
-    // 拉线；客人定的闹钟到点就清掉那一格、把"那一声"推回去。**它是"抽象等第二个实例"的那个
-    // 第二例**：线那四格、配给、设备面这一整套在第二台真设备上再走一遍，**服务面**也在它上面
-    // 第二次落地（`uart` 那一面只有一个方向，它这一面两个方向都有）。
-    ("rtc", ProgramKind::User),
-    // 客人：**U 态**（同上）——`/device/rtc` 那面服务的第一位用家：问一声现在几点、约一个时刻
-    // （失败域那两格也各走一趟，见 `programs/src/user/sleeper.rs`），等到那一声就退场。
-    ("sleeper", ProgramKind::User),
-    // 身份服务（**U 态**）：名册（TID → 当前 PrincipalId）与谱系（PrincipalId 的树）两张表，
-    // 七条原语见 `protocol::principal`。它**不持有、不授予、不解释任何 Pie**——只读写自己
-    // 那两张表，故不进"转授权中枢"那一档（与 `operator` 的差别正是在这里）：目录按角色分、
-    // 特权级各自在这里声明，它是这一族里第一位 **U 态**的服务。
-    ("principal", ProgramKind::User),
-    // 主体（**U 态**）：身份服务的第一位真客人——问自己是谁、查父（三态）、验自反与否、
-    // 派生一条自己的子身份、再越权趟一次（读数见 `programs/src/user/subject.rs` 头注）。
-    ("subject", ProgramKind::User),
-    // 结盟服务（**U 态**）：横向那张盟籍表（一条关系 + 一枚计数器），六条原语见
-    // `protocol::coalition`。它同样**不持有、不授予、不解释任何 Pie**；它与身份服务那一台
-    // 的差别只有一处——**它是身份服务的客人**：起手在树上找到 `/sys/principal`，每条写原语
-    // 嵌一次 `Resolve(发送者)`（故"self"在适配层，不在核心）。
-    ("coalition", ProgramKind::User),
-    // 盟友（**U 态**）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态，
-    // 再用派生的第二条身份验"同一枚盟里有两位"（读数见 `programs/src/user/member.rs` 头注）。
-    ("member", ProgramKind::User),
-    // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
-    // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
-    // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。
-    ("operator", ProgramKind::Supervisor),
-    // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器
-    // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，
-    // 之后"这批字节交给谁"由域自己决定（见 `platform/devices.rs::supply_initrd`）。
-    ("system", ProgramKind::Supervisor),
-];
-
-/// 探针那一档（**5 份**）：**只读数**的客人——`soak` / `examine` 的判据就是它们打出来
-/// 的那几行，故它们**必须**在验收镜像里（这是"测具出产品镜像"唯一做不到的一格）。
+/// **次序是硬事实**：`ALL` 的次序就是装载次序（`ROOT_OFFSET` 按位次算），各景按 `scenes` 过滤
+/// ⇒ 过滤出来的次序与原先那三张表的次序**逐字一致**（照实记：换表之后 `initrd.img` **逐字节未变**）。
 ///
-/// 它们住在隔壁那个 crate `harness`（照实记：用户裁定"测试和程序分开"）。
-const PROBES: &[(&str, ProgramKind)] = &[
-    // 负证客人（**U 态**）：一位**没有身份**的任务去撞树的门（`Program::bind = false`）——
-    // 门禁那条"没绑身份 ⇒ 拒绝"的判据在真机上的反例。读数见 `harness/src/probe_denied.rs`。
-    ("probe-denied", ProgramKind::User),
-    // 第二种负证（**U 态**）：**有身份**、但那一格归别人（`Rule::Owner`）⇒ 也拒。
-    ("probe-owner", ProgramKind::User),
-    // 规矩那一格的证客（**U 态**）：有身份的一台把 `Is` / `Under` / `In` 三条规矩落下去，
-    // 先以自己试（正证），再换一位代表试（负证 + "看支不看相等"）。读数见
-    // `harness/src/probe_rule.rs`。
-    ("probe-rule", ProgramKind::User),
-    // 另一位客人（**U 态**）：**有身份**地去用别人立了规矩的那两格 ⇒ 都该拒。
-    // 那是"第二道门"的反例（第一道由 `probe-denied` 量）。读数见 `probe_rule_other.rs`。
-    ("probe-rule-other", ProgramKind::User),
-    // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
-    ("probe-lease", ProgramKind::User),
-];
-
-/// 压测台那一档（**10 份**）：台主（S 态，`SQWARE_ROOT=<名字>` 时当引导镜像）与它们的受害者
-/// （U 态）。住 `harness`。
-///
-/// **一台只要它 `find(&boot, …)` 的那几个受害者**，见 [`bins_for`]。
-const RIGS: &[(&str, ProgramKind)] = &[
-    // 压测台的两个（`harness/src/`）：`churn` = 受害者——U 态，不停地在
-    // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
-    // S 态，`SQWARE_ROOT=rig` 时当引导镜像，反复造/杀它。
-    ("churn", ProgramKind::User),
-    ("rig", ProgramKind::Supervisor),
-    // 忙机台的另外两个：`busy` = 占核者——U 态，纯自旋**永不落核**；`load` = 台主——
-    // S 态，`SQWARE_ROOT=load` 时当引导镜像。它把每一颗核钉住，好让「到点兑现」这条债
-    // 在树内第一次变得可测（`soak`/`rig` 里总有核空闲，空闲核会替全局兑现到点）。
-    ("busy", ProgramKind::User),
-    ("park", ProgramKind::User),
-    // 他杀台的握手版受害者（rig A）：无限挂在自己的孔上、由台主 push 唤醒——上台/离核的
-    // 转折点因此由台主定（旧版 `churn` 是"放行即跑"，量到的全是快路径）。
-    ("hang", ProgramKind::User),
-    ("load", ProgramKind::Supervisor),
-    // 到点台的打点者：**S 态**（与两个台主同档），`SQWARE_ROOT=beat` 时当引导镜像。
-    // 它不造任何东西，只量"睡到绝对点"漂不漂（两段对照，见程序头注）。
-    ("beat", ProgramKind::Supervisor),
-    // 重启台：**S 态**（要 mint/hatch 那道门），`SQWARE_ROOT=again` 时当引导镜像。
-    // 它在同一张表、同一行上把"起 → 停 → 放下 → 再起"走三遍（协议 §六 的"重发"）。
-    ("again", ProgramKind::Supervisor),
-    // 共享组台的两个（`harness/src/`）：`waiter` = 等待者——U 态，把台主
-    // 给的那枚孔挂进**共享组**并等组键（**多个等待者挂同一只键**）；`group` = 台主——
-    // S 态，`SQWARE_ROOT=group` 时当引导镜像：一次投信，看两个等待者是不是**都醒**，
-    // 以及那条消息是不是**只归一个人**。
-    ("waiter", ProgramKind::User),
-    ("group", ProgramKind::Supervisor),
-];
-
-/// **场景 → 这一张镜像里装哪些程序**。
-///
-/// 照实记（用户裁定）：这原先是一张**并集**——不管跑哪个场景，31 台全打进 initrd。于是默认
-/// （验收）镜像里躺着 10 台压测台（≈1.6 MB / 5.6 MB），而那 10 台在那张镜像里**永远不会被起**；
-/// 反过来 `rig` 镜像（只要一个受害者）也装着整套产品与探针。现在一台只装它真要起的那几台。
+/// **bin 名不写**：它是约定 `prog-<名字>`（30 行逐行对过，**零反例**）；改约定要改的是读它的
+/// 那一处（下面 `prog-{name}`）与各 crate 的 `[[bin]]`。
 fn bins_for(scenario: &str) -> Vec<(&'static str, ProgramKind)> {
-    match scenario {
-        // 验收那一景：**这一份镜像 = 产品 + 全部探针**。
-        "root" => PRODUCTS.iter().chain(PROBES.iter()).copied().collect(),
-        // 台子那几景：台主 + 它要的受害者（名字取自各台主里的 `const VICTIM` / `*_ELF`）。
-        "rig" => pick(RIGS, &["rig", "hang"]),
-        "again" => pick(RIGS, &["again", "churn"]),
-        "load" => pick(RIGS, &["load", "busy", "park"]),
-        "group" => pick(RIGS, &["group", "waiter"]),
-        "beat" => pick(RIGS, &["beat"]),
-        other => panic!(
-            "未知场景 SQWARE_ROOT={other}（认得的：root / rig / again / load / group / beat）"
-        ),
-    }
+    let picked: Vec<(&'static str, ProgramKind)> = env::assembly::ALL
+        .iter()
+        .filter(|row| row.scenes.contains(&scenario))
+        .map(|row| (row.name, row.kind))
+        .collect();
+    assert!(
+        !picked.is_empty(),
+        "未知场景 SQWARE_ROOT={scenario}（认得的：{}）",
+        scenes().join(" / ")
+    );
+    picked
 }
 
-/// 从某张表里按名字挑几台——**按表里的次序**（清单次序即装载次序，`ROOT_OFFSET` 按位次算）。
-fn pick(table: &[(&'static str, ProgramKind)], want: &[&str]) -> Vec<(&'static str, ProgramKind)> {
-    table
-        .iter()
-        .copied()
-        .filter(|(name, _)| want.contains(name))
-        .collect()
+/// 认得的场景名——**从装配单里收**，故不会与它脱节（原先是 panic 消息里手写的一串）。
+fn scenes() -> Vec<&'static str> {
+    let mut all: Vec<&'static str> = Vec::new();
+    for row in env::assembly::ALL {
+        for scene in row.scenes {
+            if !all.contains(scene) {
+                all.push(scene);
+            }
+        }
+    }
+    all
 }
 
 fn main() {

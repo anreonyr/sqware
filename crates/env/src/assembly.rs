@@ -15,7 +15,8 @@
 //! `Died` 原住 `programs::supervisor::service`——三处现在都是 `pub use` 转发，**调用点一行没改**
 //! （与 `Access`/`Policy` 从 `runtime::core::port` 搬到 `env::wire::access` 是同一条先例）。
 
-use crate::{Permission, PieToken};
+use crate::wire::key::Key;
+use crate::{Permission, PieToken, ProgramKind};
 
 /// **怎么知道它起来了**——每个 Service 自己的一种，**登记时定死**。
 ///
@@ -41,3 +42,219 @@ pub struct Grant {
 
 /// 装配失败的编号：指"死在装配的哪一步"（沿用旧树那套小整数编号的意思）。
 pub type Died = usize;
+
+// ── 死在装配的哪一步（编号沿用旧树那套小整数）───────────────────────────────
+//
+// **照实记**：这 19 个原住 `programs/src/supervisor/system/main.rs`，与装配单同源（"哪一台、
+// 死在第几步"），故随表一起搬下来；那里现在 `pub use` 转发。
+pub const E_BOOT: Died = 1;
+pub const E_ROUTER: Died = 5;
+pub const E_ECHO: Died = 6;
+pub const E_GUEST: Died = 7;
+pub const E_PASSER: Died = 8;
+pub const E_UART: Died = 9;
+pub const E_TREE: Died = 10;
+pub const E_LODGER: Died = 11;
+pub const E_RTC: Died = 12;
+pub const E_SLEEPER: Died = 13;
+pub const E_PRINCIPAL: Died = 14;
+pub const E_SUBJECT: Died = 15;
+pub const E_COALITION: Died = 16;
+pub const E_MEMBER: Died = 17;
+pub const E_PROBE: Died = 18;
+pub const E_PROBE_OWNER: Died = 19;
+pub const E_PROBE_LEASE: Died = 20;
+pub const E_PROBE_RULE: Died = 21;
+pub const E_PROBE_OTHER: Died = 22;
+
+// ── 四张硬件需求单（**收方开的**，逐字从各域的 `needs.rs` 搬下来）────────────
+//
+// **照实记（为什么住这里）**：它们本来住在各自的域里（"它是**收方**开的那张单子"），而装配单
+// 要把它们摆出来（`Plan::needs`）⇒ 必须与装配单同层。各域的 `needs.rs` 现在是 `pub use` 转发，
+// **调用点一行没改**，那句"它住在本域里"仍由那一处读得出来。
+use crate::wire::supply::{Kind, Need, class_block};
+use crate::wire::access::{Access, Policy};
+
+/// 线路由者要的那三样：**中断控制器**（按类要）+ **设备树本体 / 门铃**（boot 造的，按已知坐标）。
+pub const ROUTER_WANTS: &[Need] = &[
+    Need::class(
+        class_block("sifive,plic-1.0.0"),
+        Kind::Pole,
+        Access::FETCH_STORE,
+        Policy::ONLY,
+    ),
+    Need::known(Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE),
+    Need::known(Key::irq(), Kind::Nole, Access::FETCH, Policy::NONE),
+];
+
+/// 串口驱动要的那一枚：**那一台 `ns16550a`**。
+pub const UART_WANTS: &[Need] = &[Need::class(
+    class_block("ns16550a"),
+    Kind::Pole,
+    Access::FETCH_STORE,
+    Policy::ONLY,
+)];
+
+/// 实时钟驱动要的那一枚：**那一台 `google,goldfish-rtc`**。
+pub const RTC_WANTS: &[Need] = &[Need::class(
+    class_block("google,goldfish-rtc"),
+    Kind::Pole,
+    Access::FETCH_STORE,
+    Policy::ONLY,
+)];
+
+/// 房客要的那一枚：**一条没人要的线**（`virtio,mmio`），领上就死。
+pub const LODGER_WANTS: &[Need] = &[Need::class(
+    class_block("virtio,mmio"),
+    Kind::Pole,
+    Access::FETCH,
+    Policy::ONLY,
+)];
+
+/// **这一台是什么**——与"进哪张镜像"分开的一格。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Spot {
+    /// 内核起的那套服务 + 真客人（去掉它，机器不成机器）。
+    Product,
+    /// **只读数**的探针：必须进验收镜像（"测具出产品镜像"唯一做不到的一格）。
+    Probe,
+    /// 压测台与它们的受害者：**整台替换引导镜像**，与验收场景没有交集。
+    Rig,
+}
+
+/// **编排域起它时要的那些格**——`None` = 不经装配单起（引导域 / 编排域自己 / 压测台）。
+#[derive(Clone, Copy)]
+pub struct Plan {
+    /// 默认那一景的**起手位次**。
+    pub order: u8,
+    pub announce: Announce,
+    pub tokens: &'static [Grant],
+    pub channels: &'static [&'static str],
+    pub needs: Option<&'static [Need]>,
+    pub board: bool,
+    pub operator: bool,
+    pub bind: bool,
+    pub holds_tree: bool,
+    pub died: Died,
+}
+
+/// **装配单的一行**——加一台程序就写这一行（外加 cargo 的 `[[bin]]`，那是 cargo 的要求）。
+#[derive(Clone, Copy)]
+pub struct Row {
+    /// 清单名（也是 cargo 的 bin 名去掉 `prog-`，见 `kernel/build.rs` 那条照实记）。
+    pub name: &'static str,
+    /// 装成哪种空间。
+    pub kind: ProgramKind,
+    /// 这一台是什么。
+    pub spot: Spot,
+    /// 进哪几张引导镜像（`SQWARE_ROOT` 的那些名字）——**次序即装载次序**。
+    pub scenes: &'static [&'static str],
+    /// 装配参数；`None` = 不由编排域起。
+    pub plan: Option<Plan>,
+}
+
+/// **装配单**：镜像里可能有的全部程序。
+///
+/// **次序是硬事实**：它就是装载次序（`ROOT_OFFSET` 按位次算），且各景按它过滤 ⇒ 加一行要
+/// 想清楚放哪。**照实记（为什么这一张表能替掉三处）**：它同时答四个问题——装成哪种空间
+/// （`kind`）· 是什么（`spot`）· 进哪几张镜像（`scenes`）· 编排域怎么起它（`plan`）——
+/// 而这些原先散在 `kernel/build.rs` 的三张表与 `scenario.rs` 的 19 个 `const fn` 里。
+pub const ALL: &[Row] = &[
+    Row { name: "root", kind: ProgramKind::Supervisor, spot: Spot::Product, scenes: &["root"], plan: None },
+    // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
+    // 够不着建域那道 S 态门。
+    Row { name: "echo", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 17, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, died: E_ECHO }) },
+    // 客人：**U 态**（与 `echo` 同一档）——按名字找到一个服务、说一句话。铸孔、交出、
+    // 一问一答都不需要 S 态，故最小特权的域也能用板。
+    Row { name: "guest", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 6, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, died: E_GUEST }) },
+    // 过客：**U 态**（同上）——起来、挂一个名字、**直接死**（不说再见）。它与 `guest` 只差
+    // 少说那一句退场：板上那两本账的"死"判据读的都是"那一枚入口还答得出吗"（`Probe`）。
+    Row { name: "passer", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 7, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: false, bind: true, holds_tree: false, died: E_PASSER }) },
+    // 房客：**U 态**（同上）——起来、占一条线、**直接死**。它与 `passer` 在线轴上同形：两位
+    // 喂的都是"看出来的"那一档（板那本账 / 线那本账）。它领一枚门闩（`virtio_mmio@10001000`，
+    // 1 号线——**一条没人要的线**）却从不映视图：领它只为"主人"这个说法是真的；占住线之后
+    // 一句话不说就走，路由者靠 `sweep` 收掉它（读数 `router: line 1 = virtio_mmio@10001000`
+    // 与 `router: vacate line=1`）。**照实记**：它从前占的是 11 号线（那时钟），第二台设备
+    // 驱动上来之后那条线有主了，故换成 1 号线。
+    Row { name: "lodger", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 8, announce: Announce::Channel, tokens: &[], channels: &["records"], needs: Some(LODGER_WANTS), board: false, operator: true, bind: true, holds_tree: false, died: E_LODGER }) },
+    // 线路由者（中断面域）：**U 态**——实测（本行下面那条注里的疑点已经量掉）：它只读
+    // PLIC 的寄存器（banner 里 PLIC 的 PMP 是 **S/U (R,W)**）、claim/complete、铸孔、挂组，
+    // 全都不需要 S 态；它那枚铃是**内核给的**（铸铃那一格才是 S 态，本域不铸）。
+    Row { name: "router", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 3, announce: Announce::Channel, tokens: &[], channels: &["records"], needs: Some(ROUTER_WANTS), board: true, operator: true, bind: true, holds_tree: false, died: E_ROUTER }) },
+    // 串口驱动：**U 态**（同上）——持有 `serial@10000000`（PMP 也是 S/U (R,W)），把"收到
+    // 字节就拉线"打开。**照实记**：这两格从前写 `Supervisor` 是照搬旧树，理由（"要读写
+    // 寄存器"）与 banner 里那张 PMP 对不上；改成 U 态之后两道门（examine / soak）照旧全过。
+    Row { name: "uart", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 4, announce: Announce::Channel, tokens: &[], channels: &["records"], needs: Some(UART_WANTS), board: true, operator: true, bind: true, holds_tree: false, died: E_UART }) },
+    // 第二台设备驱动：**U 态**（同上）——持有 `rtc@101000`（11 号线），武装闹钟、到点自己
+    // 拉线；客人定的闹钟到点就清掉那一格、把"那一声"推回去。**它是"抽象等第二个实例"的那个
+    // 第二例**：线那四格、配给、设备面这一整套在第二台真设备上再走一遍，**服务面**也在它上面
+    // 第二次落地（`uart` 那一面只有一个方向，它这一面两个方向都有）。
+    Row { name: "rtc", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 5, announce: Announce::Channel, tokens: &[], channels: &["records"], needs: Some(RTC_WANTS), board: true, operator: true, bind: true, holds_tree: false, died: E_RTC }) },
+    // 客人：**U 态**（同上）——`/device/rtc` 那面服务的第一位用家：问一声现在几点、约一个时刻
+    // （失败域那两格也各走一趟，见 `programs/src/user/sleeper.rs`），等到那一声就退场。
+    Row { name: "sleeper", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 9, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, died: E_SLEEPER }) },
+    // 身份服务（**U 态**）：名册（TID → 当前 PrincipalId）与谱系（PrincipalId 的树）两张表，
+    // 七条原语见 `protocol::principal`。它**不持有、不授予、不解释任何 Pie**——只读写自己
+    // 那两张表，故不进"转授权中枢"那一档（与 `operator` 的差别正是在这里）：目录按角色分、
+    // 特权级各自在这里声明，它是这一族里第一位 **U 态**的服务。
+    Row { name: "principal", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 1, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, died: E_PRINCIPAL }) },
+    // 主体（**U 态**）：身份服务的第一位真客人——问自己是谁、查父（三态）、验自反与否、
+    // 派生一条自己的子身份、再越权趟一次（读数见 `programs/src/user/subject.rs` 头注）。
+    Row { name: "subject", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 10, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_SUBJECT }) },
+    // 结盟服务（**U 态**）：横向那张盟籍表（一条关系 + 一枚计数器），六条原语见
+    // `protocol::coalition`。它同样**不持有、不授予、不解释任何 Pie**；它与身份服务那一台
+    // 的差别只有一处——**它是身份服务的客人**：起手在树上找到 `/sys/principal`，每条写原语
+    // 嵌一次 `Resolve(发送者)`（故"self"在适配层，不在核心）。
+    Row { name: "coalition", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 2, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, died: E_COALITION }) },
+    // 盟友（**U 态**）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态，
+    // 再用派生的第二条身份验"同一枚盟里有两位"（读数见 `programs/src/user/member.rs` 头注）。
+    Row { name: "member", kind: ProgramKind::User, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 11, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_MEMBER }) },
+    // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
+    // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
+    // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。
+    Row { name: "operator", kind: ProgramKind::Supervisor, spot: Spot::Product, scenes: &["root"], plan: Some(Plan { order: 0, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: false, bind: true, holds_tree: true, died: E_TREE }) },
+    // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器
+    // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，
+    // 之后"这批字节交给谁"由域自己决定（见 `platform/devices.rs::supply_initrd`）。
+    Row { name: "system", kind: ProgramKind::Supervisor, spot: Spot::Product, scenes: &["root"], plan: None },
+    // 负证客人（**U 态**）：一位**没有身份**的任务去撞树的门（`Program::bind = false`）——
+    // 门禁那条"没绑身份 ⇒ 拒绝"的判据在真机上的反例。读数见 `harness/src/probe_denied.rs`。
+    Row { name: "probe-denied", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 12, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: false, holds_tree: false, died: E_PROBE }) },
+    // 第二种负证（**U 态**）：**有身份**、但那一格归别人（`Rule::Owner`）⇒ 也拒。
+    Row { name: "probe-owner", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 14, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_PROBE_OWNER }) },
+    // 规矩那一格的证客（**U 态**）：有身份的一台把 `Is` / `Under` / `In` 三条规矩落下去，
+    // 先以自己试（正证），再换一位代表试（负证 + "看支不看相等"）。读数见
+    // `harness/src/probe_rule.rs`。
+    Row { name: "probe-rule", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 15, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_PROBE_RULE }) },
+    // 另一位客人（**U 态**）：**有身份**地去用别人立了规矩的那两格 ⇒ 都该拒。
+    // 那是"第二道门"的反例（第一道由 `probe-denied` 量）。读数见 `probe_rule_other.rs`。
+    Row { name: "probe-rule-other", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 16, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_PROBE_OTHER }) },
+    // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
+    Row { name: "probe-lease", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 13, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, died: E_PROBE_LEASE }) },
+    // 压测台的两个（`harness/src/`）：`churn` = 受害者——U 态，不停地在
+    // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
+    // S 态，`SQWARE_ROOT=rig` 时当引导镜像，反复造/杀它。
+    Row { name: "churn", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["again"], plan: None },
+    Row { name: "rig", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["rig"], plan: None },
+    // 忙机台的另外两个：`busy` = 占核者——U 态，纯自旋**永不落核**；`load` = 台主——
+    // S 态，`SQWARE_ROOT=load` 时当引导镜像。它把每一颗核钉住，好让「到点兑现」这条债
+    // 在树内第一次变得可测（`soak`/`rig` 里总有核空闲，空闲核会替全局兑现到点）。
+    Row { name: "busy", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["load"], plan: None },
+    Row { name: "park", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["load"], plan: None },
+    // 他杀台的握手版受害者（rig A）：无限挂在自己的孔上、由台主 push 唤醒——上台/离核的
+    // 转折点因此由台主定（旧版 `churn` 是"放行即跑"，量到的全是快路径）。
+    Row { name: "hang", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["rig"], plan: None },
+    Row { name: "load", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["load"], plan: None },
+    // 到点台的打点者：**S 态**（与两个台主同档），`SQWARE_ROOT=beat` 时当引导镜像。
+    // 它不造任何东西，只量"睡到绝对点"漂不漂（两段对照，见程序头注）。
+    Row { name: "beat", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["beat"], plan: None },
+    // 重启台：**S 态**（要 mint/hatch 那道门），`SQWARE_ROOT=again` 时当引导镜像。
+    // 它在同一张表、同一行上把"起 → 停 → 放下 → 再起"走三遍（协议 §六 的"重发"）。
+    Row { name: "again", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["again"], plan: None },
+    // 共享组台的两个（`harness/src/`）：`waiter` = 等待者——U 态，把台主
+    // 给的那枚孔挂进**共享组**并等组键（**多个等待者挂同一只键**）；`group` = 台主——
+    // S 态，`SQWARE_ROOT=group` 时当引导镜像：一次投信，看两个等待者是不是**都醒**，
+    // 以及那条消息是不是**只归一个人**。
+    Row { name: "waiter", kind: ProgramKind::User, spot: Spot::Rig, scenes: &["group"], plan: None },
+    Row { name: "group", kind: ProgramKind::Supervisor, spot: Spot::Rig, scenes: &["group"], plan: None },
+];
