@@ -35,6 +35,8 @@
 
 import re
 import subprocess
+import glob
+import os
 import sys
 
 ROOT = "/home/anreonyr/Develop/sqware"
@@ -332,6 +334,31 @@ BOOT = [
      "kernel/src/work/room/conductor.rs",
      'putln!("irq: ring={ring} busy={busy} idle_ring={idle_ring} idle_busy={idle_busy}");',
      'putln!("irq: ring={ring} busy={busy} idle_busy={idle_busy} idle_ring={idle_ring}");'),
+    # ── 机器·第三批（清单剩下那几簇读数：policy / sleeper / member / echo / uart / rtc）──
+    ("机器·弃那一趟改成领根（`policy: adopt(out)` 那条变）",
+     "programs/src/user/subject.rs",
+     "        done(face.adopt(PrincipalId::new(OUTSIDE), MS))",
+     "        done(face.adopt(PrincipalId::ROOT, MS))"),
+    ("机器·「已经过去」那一格改成将来（`sleeper: past=` 那条变）",
+     "programs/src/user/sleeper.rs",
+     "    let past = refused(clock::arm(face, now.saturating_sub(1_000_000), MS));",
+     "    let past = refused(clock::arm(face, now.saturating_add(60_000_000_000), MS));"),
+    ("机器·盟号对调（`member: found=` 第二条报第一枚）",
+     "programs/src/user/member.rs",
+     '    let c1 = coal.found(MS);\n    say(&format!("member: found={}", one_id(c1)));',
+     '    let c1 = coal.found(MS);\n    say(&format!("member: found={}", one_id(c0)));'),
+    ("机器·回声那一串走错趟（`echo: seq=` 那条变）",
+     "programs/src/user/echo.rs",
+     "    let seq = serial(&tree, talk);",
+     "    let seq = serial(&tree, talk).max(1);"),
+    ("机器·uart 把那句话读反（`ier=rx` 改 `ier=tx`）",
+     "programs/src/driver/uart/main.rs",
+     '    say(&alloc::format!("uart: ier=rx at={base:#x}"));',
+     '    say(&alloc::format!("uart: ier=tx at={base:#x}"));'),
+    ("机器·rtc 那一行换了形（`armed at=` 改 `armed=`）",
+     "programs/src/driver/rtc/main.rs",
+     '                        "rtc: armed at={at} ier={} alarm={}",',
+     '                        "rtc: armed={at} ier={} alarm={}",'),
     ("机器·房客的判词改了名（该有 `lodger: gone`）",
      "programs/src/user/lodger/main.rs",
      '            "lodger: gone"',
@@ -361,7 +388,26 @@ def failing_tests(out):
     return names
 
 
-def sweep(mut_list, cmd_of, tag, parse=None):
+def build_said_red(fresh):
+    """构建是不是红了——**看那一轮新写出来的日志**，不看工具拿到的 stdout。
+
+    照实记：`soak.sh` 把 `cargo run` 的**构建输出重定向进了每轮日志**（`> "$log" 2>&1`），
+    故机器那一侧的编译错误在工具的 stdout 里**看不见**——实测栽过：一条引用未定义变量的变异
+    （`member` 那条）编不过，工具却把它记成"红"（红的是 soak 的"无停机行"）。这一格就是补它。
+    """
+    # **只看这一轮新出现的那些文件**：照实记——第一版按"最新的三份"取，结果读到了上一次
+    # 实验留在目录里的陈旧日志（那一份里有编译错误）⇒ 两条明明该红的变异被记成"编译红"。
+    for f in fresh:
+        try:
+            txt = open(f, encoding="utf-8", errors="ignore").read()
+        except OSError:
+            continue
+        if "error[E" in txt or "error: could not compile" in txt:
+            return os.path.basename(f)
+    return ""
+
+
+def sweep(mut_list, cmd_of, tag, parse=None, scratch=None):
     rows = []
     for name, path, old, new in mut_list:
         src = open(f"{ROOT}/{path}", encoding="utf-8").read()
@@ -373,11 +419,16 @@ def sweep(mut_list, cmd_of, tag, parse=None):
             rows.append((name, "**补丁不唯一，拒绝应用**", f"锚点出现 {hits} 次"))
             continue
         open(f"{ROOT}/{path}", "w", encoding="utf-8").write(src.replace(old, new, 1))
+        before = set(glob.glob(f"{ROOT}/{scratch}")) if scratch else set()
         p = run(cmd_of())
+        fresh = [f for f in glob.glob(f"{ROOT}/{scratch}") if f not in before] if scratch else []
         out = p.stdout + p.stderr
         detail = ""
-        if "error[E" in out or "error: could not compile" in out:
+        from_log = build_said_red(scratch)
+        if "error[E" in out or "error: could not compile" in out or from_log:
             verdict = "**编译红**（不算牙口）"
+            if from_log:
+                detail = f"构建日志里编不过：{from_log}"
         elif p.returncode == 0:
             # 三种名义：**变异**（该红）、**对照**（该绿，量具本身对不对）、**等价**
             #（该绿，因为它不改变可观察行为——实测出来的一档，不是"没牙"）。
@@ -431,7 +482,13 @@ def main():
         return 1
     if boot:
         sel = [m for m in BOOT if not only or only in m[0]]
-        return sweep(sel, lambda: "scripts/soak.sh 1", "机器那一侧（一轮 soak）", parse=missing_readings)
+        return sweep(
+            sel,
+            lambda: "scripts/soak.sh 1",
+            "机器那一侧（一轮 soak）",
+            parse=missing_readings,
+            scratch="target/soak/*.log",
+        )
     sel = [m for m in MUTATIONS if not only or only in m[0]]
     return sweep(sel, lambda: "scripts/host.sh", "宿主那一侧（`host.sh`）", parse=failing_tests)
 
