@@ -446,9 +446,273 @@ impl std::error::Error for BenchFailed {}
 
 /// 门的现场落点：`target/gate/<门>-<秒>.log`。
 pub fn log_path(door: &str) -> PathBuf {
-    let now = std::time::SystemTime::now()
+    root().join(format!("target/gate/{door}-{}.log", stamp()))
+}
+
+/// 门的现场**目录**：`trace/<门>-<秒>/`（要逐轮留一份的那几门）。
+pub fn scene_dir(door: &str) -> PathBuf {
+    root().join(format!("trace/{door}-{}", stamp()))
+}
+
+fn stamp() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
-        .unwrap_or(0);
-    root().join(format!("target/gate/{door}-{now}.log"))
+        .unwrap_or(0)
+}
+
+// ═══ 判据（全是吃 `&Transcript` 的纯函数）═══════════════════════════════════════
+
+/// 一条断言。三种形状就是原先 `soak.sh` 里那三行（`need` / `needE` / `need_absent`）。
+///
+/// **照实记（语义由类型分，不再由"哪个 grep"分）**：今天这三样靠 `grep -q` 与 `grep -qE`
+/// 的差别扛着，而声明式对账器正是栽在那一格上（它把两者都当 ERE 判 ⇒ 22 条带括号的断言
+/// 在它那里永远不命中、把"判了"记成"没人判"）。这里 `Literal` 是**子串**、`Shape` 是**ERE**，
+/// 由类型说了算；行尾的 `\r` 在收的时候就统一剥掉了。
+pub enum Mark {
+    Literal(&'static str),
+    Shape(&'static str),
+    Absent(&'static str),
+}
+
+impl Mark {
+    fn judges(&self) -> bool {
+        !matches!(self, Mark::Absent(_))
+    }
+
+    fn hits(&self, line: &str) -> bool {
+        match self {
+            Mark::Literal(s) | Mark::Absent(s) => line.contains(s),
+            Mark::Shape(p) => ere(p).is_match(line),
+        }
+    }
+}
+
+/// 读数表的一行：一个前缀，以及它属于哪一档。
+pub struct Reading {
+    pub prefix: &'static str,
+    pub tier: Tier,
+}
+
+/// **这一档就是那句纪律**：`Auto` 逐行都要有人判；`Narrative` 打了、但只判其中几条形状，
+/// **没判的那几行必须报出形状**（棘轮）；`Manual` 的判据在断言表外面，写理由。
+///
+/// "narrative 却没写形状"这个状态**不可表达**——原先它是运行时判的（而且判错过一次：
+/// 白名单取回空串 ⇒ `$0 ~ ""` 匹配一切 ⇒ 判绿）。
+pub enum Tier {
+    Auto,
+    Narrative { shapes: &'static [&'static str] },
+    Manual { why: &'static str },
+}
+
+/// 兑不上的一条读数：**要什么** / **看到什么**。今天每一门报的就是这两半。
+#[derive(Debug)]
+pub struct Gap {
+    pub want: String,
+    pub saw: String,
+}
+
+impl fmt::Display for Gap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "要 {}；看到 {}", self.want, self.saw)
+    }
+}
+
+impl std::error::Error for Gap {}
+
+/// 对着读数表兑现一次跑，**一次报全部缺口**（不是第一条就返回——今天是"缺这几条"一起报）。
+pub fn hold(t: &Transcript, marks: &[Mark], table: &[Reading]) -> Result<(), Vec<Gap>> {
+    struct Tally<'a> {
+        prefix: &'a str,
+        ok: usize,
+        bad: usize,
+        stray: usize,
+        undeclared: bool,
+        first_bad: Option<String>,
+        stranger: Option<String>,
+    }
+
+    let mut tallies: Vec<Tally> = Vec::new();
+    for raw in t.text().lines() {
+        let line = raw.trim_end_matches('\r');
+        let Some(p) = prefix_of(line) else { continue };
+        if is_noise(p) {
+            continue;
+        }
+        let idx = match tallies.iter().position(|x| x.prefix == p) {
+            Some(i) => i,
+            None => {
+                tallies.push(Tally {
+                    prefix: p,
+                    ok: 0,
+                    bad: 0,
+                    stray: 0,
+                    undeclared: table.iter().all(|r| r.prefix != p),
+                    first_bad: None,
+                    stranger: None,
+                });
+                tallies.len() - 1
+            }
+        };
+        let e = &mut tallies[idx];
+        if e.undeclared {
+            continue;
+        }
+        if marks.iter().any(|m| m.judges() && m.hits(line)) {
+            e.ok += 1;
+            continue;
+        }
+        e.bad += 1;
+        if e.first_bad.is_none() {
+            e.first_bad = Some(line.to_string());
+        }
+        let tier = &table.iter().find(|r| r.prefix == p).unwrap().tier;
+        if let Tier::Narrative { shapes } = tier
+            && !shapes.iter().any(|s| ere(s).is_match(line))
+        {
+            e.stray += 1;
+            if e.stranger.is_none() {
+                e.stranger = Some(line.to_string());
+            }
+        }
+    }
+
+    let mut gaps = Vec::new();
+    for e in &tallies {
+        let sample = |o: &Option<String>| o.clone().unwrap_or_else(|| "—".to_string());
+        if e.undeclared {
+            gaps.push(Gap {
+                want: format!("前缀 `{}:` 没在读数表里声明（新读数没人管）", e.prefix),
+                saw: sample(&e.first_bad),
+            });
+            continue;
+        }
+        let tier = &table.iter().find(|r| r.prefix == e.prefix).unwrap().tier;
+        match tier {
+            Tier::Auto if e.bad > 0 => gaps.push(Gap {
+                want: format!("`{}:` 每一行都要被判（auto 档逐行）", e.prefix),
+                saw: format!("{} 行没人判 —— 例：{}", e.bad, sample(&e.first_bad)),
+            }),
+            Tier::Narrative { .. } => {
+                if e.ok == 0 {
+                    gaps.push(Gap {
+                        want: format!("`{}:` 声明为 narrative，至少要有一条被判", e.prefix),
+                        saw: sample(&e.first_bad),
+                    });
+                }
+                if e.stray > 0 {
+                    gaps.push(Gap {
+                        want: format!("`{}:` 没判的行要落在声明的形状里（棘轮）", e.prefix),
+                        saw: format!("{} 行出格 —— 例：{}", e.stray, sample(&e.stranger)),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if gaps.is_empty() { Ok(()) } else { Err(gaps) }
+}
+
+/// 同一形状的每一行**按序**交出（第一个捕获组）。
+///
+/// 关系本身留在门里：`me[0] != me[1] && me[0] == me[2]`（绑 ≠ 领 = 弃 是 policy 那一格的
+/// 知识，做成通用原语就得造一个只有一格的关系枚举——那是拿原语装门规）。
+pub fn values<'a>(t: &'a Transcript, shape: &str) -> Result<Vec<&'a str>, Gap> {
+    let re = ere(shape);
+    let mut out = Vec::new();
+    for raw in t.text().lines() {
+        let line = raw.trim_end_matches('\r');
+        let Some(c) = re.captures(line) else { continue };
+        let Some(g) = c.get(1) else {
+            return Err(Gap {
+                want: format!("形状 `{shape}` 要有一个捕获组"),
+                saw: line.to_string(),
+            });
+        };
+        out.push(g.as_str());
+    }
+    if out.is_empty() {
+        Err(Gap {
+            want: format!("形状 `{shape}` 至少要有一行"),
+            saw: "一行都没有".to_string(),
+        })
+    } else {
+        Ok(out)
+    }
+}
+
+/// `[case]`：每个 `run` 都要有配对的 `ok`；不配对时**点名**跑了一半的那一例。
+///
+/// 这条判据是给"用例只报一次失败"那个形状用的：`assert!` 走 panic 通道，域当场死 ⇒ 失败那一例
+/// **只留下 `run`**，故"最后一条 `run`"就是它的名字。
+pub fn pair(t: &Transcript) -> Result<(), Gap> {
+    let runs: Vec<&str> = t
+        .text()
+        .lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .filter(|l| l.starts_with("[case] ") && l.contains(": run "))
+        .collect();
+    let oks = t
+        .text()
+        .lines()
+        .filter(|l| l.trim_end_matches('\r').starts_with("[case] ") && l.contains(": ok "))
+        .count();
+    if runs.len() == oks {
+        return Ok(());
+    }
+    Err(Gap {
+        want: format!("每个 `[case] run` 都要有配对的 `ok`（run={} ok={oks}）", runs.len()),
+        saw: format!("失败的那一例是：{}", runs.last().unwrap_or(&"—")),
+    })
+}
+
+/// 一个形状在这一次跑里出现几行，对不对得上基线。
+pub fn count(t: &Transcript, shape: &str, want: usize) -> Result<(), Gap> {
+    let re = ere(shape);
+    let got: Vec<&str> = t
+        .text()
+        .lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .filter(|l| re.is_match(l))
+        .collect();
+    if got.len() == want {
+        return Ok(());
+    }
+    Err(Gap {
+        want: format!("`{shape}` 要 {want} 行"),
+        saw: format!("实际 {} 行 —— 例：{}", got.len(), got.first().unwrap_or(&"—")),
+    })
+}
+
+/// `[case]` 协议那一行的前缀（`cases.rs` 那个运行器打的）。
+const CASE: &str = "[case]";
+
+/// 读数行的前缀：`名字: …` 与 `[case] …` 两种形状（与今天的对账器同一口径）。
+fn prefix_of(line: &str) -> Option<&str> {
+    if line.starts_with(CASE) {
+        return Some(CASE);
+    }
+    let (head, _) = line.split_once(": ")?;
+    let mut cs = head.chars();
+    let first = cs.next()?;
+    if !first.is_ascii_lowercase() {
+        return None;
+    }
+    if !head
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return None;
+    }
+    Some(head)
+}
+
+/// 构建噪声（rustc 的话，不是程序的读数）。
+fn is_noise(prefix: &str) -> bool {
+    matches!(prefix, "warning" | "help" | "error" | "note")
+}
+
+fn ere(pattern: &str) -> regex::Regex {
+    regex::Regex::new(pattern)
+        .unwrap_or_else(|e| panic!("形状不是合法 ERE：{pattern} —— {e}"))
 }
