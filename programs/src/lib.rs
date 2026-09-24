@@ -27,10 +27,12 @@
 //!
 //! **判据是「谁在说话」**：从外面找上某份协议的人用的一切（正文、判定、帧、**客侧那几手**）
 //! 住 `crates/protocol`；那位协议的**实现方**（谁循环、谁记账、谁起线程、谁调内核）跟着
-//! **用它那个程序所在的档**走——`supervisor/{supply,operator,principal,coalition,system}`
-//! （板的实现方就在 `supervisor/system/board/` 之下：板线程是编排域里的一枚线程，不是另一个域）。
-//! **照实记**：`principal` / `coalition` 这两处是这一刀补的——它们的实现方一直住在这里，这一行
-//! 从前漏了它们（不是 iii 造成的：iii 之前那份 `server.rs` 也在同一处）。
+//! **用它那个程序所在的档**走——于是 `supervisor/` 底下只有**两摊**：[`supervisor::root`]
+//! （引导域：入口 ＋ boot ＋ 发货循环）与 [`supervisor::system`]（编排域：入口 ＋ 装配单 ＋
+//! 机器 ＋ 住本域的那几枚线程——**板**、**持树者**、**名册**、**盟册**）。
+//! **照实记（这一行收过两次口）**：`principal` / `coalition` 两处是先补上的（它们的实现方
+//! 一直住 `supervisor/` 底下，那一行从前漏了它们）；随后用户裁定「搬」，三枚内件连同板一起
+//! 收进 `system/` 之下——**从这里看得出来**：目录与这条判据是同一句话的两种写法。
 //! 共享的"干活"住 `supervisor/` 本级与 `driver/` 本级：一份源码编一次，各程序只 `use`，
 //! 不再有 `#[path]` 复制与"另一半是死码"的 `#[allow(dead_code)]`。
 //!
@@ -38,10 +40,11 @@
 //! 里既有实现也有 `main.rs`，`supervisor/root/`、`driver/router/`、`driver/uart/`、
 //! `driver/rtc/` 同理；`bin/` 那一层撤了。
 //!
-//! **照实记（iii 之后 `supervisor/{operator,principal,coalition}/` 不再有 `main.rs`）**：那三份
-//! 入口退成**角色体**——它们的 `server::serve()` 由 `system/main.rs` 的 `main` 按
+//! **照实记（iii 之后那三枚不再有 `main.rs`；这一刀它们住进 `system/` 之下）**：持树者 / 名册 /
+//! 盟册的入口退成**角色体**——它们的 `server::serve()` 由 `system/main.rs` 的 `main` 按
 //! [`Role`](supervisor::service::Role) 分派（一枚 ELF 只能有一处 `#[entry]` ⇒ 四枚线程共用同一
-//! 个入口，靠 `Spawn` 那一格 `args` 分开）。
+//! 个入口，靠 `Spawn` 那一格 `args` 分开）；目录随之收进 `supervisor/system/{operator,principal,
+//! coalition}/`——与 `board/` 同一条判据（**谁住编排域，谁住 `system/` 之下**）。
 //!
 //! **设备侧同理**：谁要读设备，谁的目录里放自己的设备模块（`driver/router/` 下的 `plic.rs`、
 //! `driver/uart/` 下的 `uart.rs`、`driver/rtc/` 下的 `rtc.rs`）——**设备语义各带各的，装配契约才

@@ -23,7 +23,7 @@
 //!
 //! # 谁在用它
 //!
-//! - **服务端**（发货循环）在引导域：`programs/src/supervisor/supply/server.rs`；
+//! - **服务端**（发货循环）在引导域：`programs/src/supervisor/root/supply/server.rs`；
 //! - **客户端**（递单取记录）是**编排域**：[`client::draw`]，今天唯一一个客户；
 //! - **收方**是各驱动：[`call::Need`] 的常量形态就在它们自己那张需求单里
 //!   （`programs/src/driver/{router,uart,rtc}/needs.rs` 与 `harness/src/lodger/needs.rs`）

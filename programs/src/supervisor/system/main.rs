@@ -49,7 +49,7 @@ use runtime::env::unit as utask;
 use protocol::driver::supply;
 use protocol::driver::supply::call::{Kind, Want};
 use env::assembly::E_BOOT;
-use programs::supervisor::{coalition, operator, principal};
+use programs::supervisor::system::{coalition, operator, principal};
 use service::{Catalog, Lane, Program, Role};
 
 mod scenario;

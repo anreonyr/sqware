@@ -186,7 +186,7 @@
 // （`echo`（自问自答一趟：分 → 落 → 寻 → 收 → 剪）、`router` / `rtc` / `uart`（各把门牌挂上
 // 树）、`principal` / `coalition`（上树那条 `/sys` 路））与测具一串（`harness` 的 `subject` /
 // `member` / `guest` / `lodger` / `sleeper` / `probe_*`）。**实现侧**（持树者）
-// 与**装配侧**（把持树者接上客人 / 认下提示之路）住 `programs/src/supervisor/operator/{server,bridge}.rs`。
+// 与**装配侧**（把持树者接上客人 / 认下提示之路）住 `programs/src/supervisor/system/operator/{server,bridge}.rs`。
 // 下面这段是那一台的说明——它讲的是"怎么跑"。
 //
 //!  同一对动作（`seat` + `claim`），靠**孔上的记号**对位。

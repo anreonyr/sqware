@@ -35,7 +35,7 @@
 //! 它一落地就红了：`operator` 那道门**漏在 A 那一刀之外**（前五处是 principal / coalition /
 //! router / rtc / 板）——那道门的缓冲还是家族帧那么大（`ASK_MAX` = 258），于是 300 字节那一枚
 //! 它取不出、也丢不掉，本端随后那句正经的问**堵在门外**。修法与前五处同一句（一页缓冲，起手
-//! 备一次），见 `programs/src/supervisor/operator/server.rs` 的 `serve`。
+//! 备一次），见 `programs/src/supervisor/system/operator/server.rs` 的 `serve`。
 
 extern crate alloc;
 extern crate programs;

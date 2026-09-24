@@ -80,7 +80,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
     // `operator::open` 交回来的那一格）。它据此才判得了"这一位在那枚盟里吗"（`Rule::In`）。
     //
-    // 与 principal 那一格同一形状（见 `programs/src/supervisor/operator/bridge.rs` 的 `COORD`
+    // 与 principal 那一格同一形状（见 `programs/src/supervisor/system/operator/bridge.rs` 的 `COORD`
     // 照实记：装配者转授那一版真机报 `operator:coord-ship`，内核 `-1`）。这一枚在手时权限是
     // `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。装配者那一侧按装配单上那一格
     // （`Eyes::League`）递——两枚门牌**分两帧、次序不定**，持树者收到哪一枚补哪一枚。

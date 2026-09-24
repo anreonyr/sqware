@@ -203,7 +203,7 @@
 // ── 载体：三份各住哪里 ─────────────────────────────────────
 //
 // **判定与接口**（正文、九条原语、帧、客侧那一面）住在这里；**实现方**（真在
-// `prog-principal` 域里跑的那枚线程）住 `programs/src/supervisor/principal/`。
+// `prog-principal` 域里跑的那枚线程）住 `programs/src/supervisor/system/principal/`。
 // 装配侧（谁在什么时候 `derive` + `bind`）住 `programs/src/supervisor/service.rs`。
 
 pub mod call;

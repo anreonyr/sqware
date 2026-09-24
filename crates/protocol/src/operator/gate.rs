@@ -23,7 +23,7 @@
 //!
 //! [`Code::Blind`] **不是运行期的一格**：它来自"本域手里还没有协调门牌"这个**模型状态**
 //! （[`Blind`] 那一份实现），而生产路径**到不了它**——树域在 `session == None` 时由
-//! `may`（`programs/src/supervisor/operator/server.rs`）**在更早处短路**。理由照实记在
+//! `may`（`programs/src/supervisor/system/operator/server.rs`）**在更早处短路**。理由照实记在
 //! 那个函数自己的头注里：装配期 principal 挂自己门牌那一趟**既没有门牌、又还没有
 //! 身份**（`derive` + `bind` 都在它之后），门禁若在那一刻生效，整机起不来。
 //! ⇒ 这一格留着，是因为它把"手里没门牌"表达成一个**可推理的状态**（宿主靶喂它：

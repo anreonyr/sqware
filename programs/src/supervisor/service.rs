@@ -40,7 +40,7 @@ use protocol::system::board::call as bcall;
 use protocol::system::desk::{Announce, Table};
 use runtime::env::room;
 
-use crate::supervisor::operator::bridge as operator;
+use crate::supervisor::system::operator::bridge as operator;
 use crate::supervisor::system::board::bridge as board;
 
 use protocol::driver::supply;

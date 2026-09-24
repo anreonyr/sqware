@@ -154,7 +154,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
     let source = |key: env::Key| boot.token(key);
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, 0), Ok(Reaped::Now));
-    programs::supervisor::supply::server::serve(&pier, source, alive, &mut ask, &mut out);
+    programs::supervisor::root::supply::server::serve(&pier, source, alive, &mut ask, &mut out);
     Ok(programs::Report::note(env::EXIT_OK, "root: done"))
 }
 
