@@ -20,8 +20,8 @@ use alloc::vec::Vec;
 
 use super::*;
 
-use programs::supervisor::service::Role;
-use programs::supervisor::system::inner::INNER;
+use programs::service::Role;
+use programs::system::inner::INNER;
 
 /// 这一景的装配单：**从 `env::assembly::ALL` 派生**——`plan: Some` 的那些行里、**这张镜像真有的**
 /// 那些，按 `order` 排。
@@ -68,7 +68,7 @@ pub fn plan(catalog: &Catalog) -> Vec<Program> {
 
 /// 装配单的一行 → 编排域认识的 [`Program`]（装配参数逐格搬，名字取自那一行）。
 ///
-/// **照实记（为什么是自由函数，不是 `Program::of`）**：`Program` 住 **lib**（`supervisor::service`），
+/// **照实记（为什么是自由函数，不是 `Program::of`）**：`Program` 住 **lib**（`service`），
 /// 而本文件是 **bin** `prog-system` 的一部分 ⇒ inherent impl 落在"类型所属 crate 之外"，
 /// `E0116` 当场拒绝。自由函数不受这条约束。
 fn of(name: &'static str, p: &env::assembly::Plan) -> Program {

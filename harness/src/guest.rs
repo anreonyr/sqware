@@ -49,7 +49,7 @@ extern crate programs;
 
 use programs::Report;
 
-// 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
+// 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
 use protocol::system::operator::call as ocall;
 use protocol::system::operator::client as operator;

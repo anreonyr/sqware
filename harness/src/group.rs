@@ -75,7 +75,7 @@ extern crate programs;
 use programs::Reason;
 
 use env::Mark;
-use programs::supervisor::root::boot;
+use programs::root::boot;
 
 use alloc::format;
 

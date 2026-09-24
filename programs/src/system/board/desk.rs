@@ -103,9 +103,9 @@ impl Desk {
     /// **照实记（原先是个手挑的数）**：8 → 16（乙那一刀），两次都是"凭余量挑"；而满了是**静默**
     /// 的——`admit` 答 `Full`、调用方是 `let _ =` ⇒ 那一位从此没人监督，日志里一句话都没有。
     /// 今天它由 `boarded_rows` 与
-    /// [`inner::boarded`](crate::supervisor::system::inner::boarded) 数出来：装配单加一位上板的
+    /// [`inner::boarded`](crate::system::inner::boarded) 数出来：装配单加一位上板的
     /// 服务，界自己跟着长。
-    pub const CAP: usize = boarded_rows() + crate::supervisor::system::inner::boarded();
+    pub const CAP: usize = boarded_rows() + crate::system::inner::boarded();
 
     /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
     pub const fn new(vested_by: VestedBy) -> Desk {

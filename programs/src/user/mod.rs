@@ -18,5 +18,5 @@
 //! ```
 //!
 //! **本文件今天没有一行代码**：这一档只剩一份 bin（`echo.rs`），而 bin **不进 lib**（`programs`
-//! 的共享件只有三枚：`entry` / `supervisor::service` / `driver::assemble`）。留这一份是为了上面
+//! 的共享件只有三枚：`entry` / `service` / `driver::assemble`）。留这一份是为了上面
 //! 那条照实记有地方住——`programs/src/lib.rs` 的 `pub mod user;` 认的就是它。

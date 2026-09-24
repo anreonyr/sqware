@@ -41,13 +41,13 @@ extern crate programs;
 
 // 两块账在引导域自己那一摊里（只有它读得到）；装配机器是两个装配者共用的一台。
 use env::Mark;
-use programs::supervisor::root::boot;
-use programs::supervisor::service;
+use programs::root::boot;
+use programs::service;
 
 use env::Name;
 use protocol::session::Quay;
 // 协议侧那三档（判定 / 账 / 适配）与本地的 `service`（装配机器）**同名不同物**，故逐个取名进来。
-use programs::supervisor::system::server::{self as core, until};
+use programs::system::server::{self as core, until};
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Table};
 
@@ -154,7 +154,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
     let source = |key: env::Key| boot.token(key);
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, 0), Ok(Reaped::Now));
-    programs::supervisor::root::supply::server::serve(&pier, source, alive, &mut ask, &mut out);
+    programs::root::supply::server::serve(&pier, source, alive, &mut ask, &mut out);
     Ok(programs::Report::note(env::EXIT_OK, "root: done"))
 }
 

@@ -39,7 +39,7 @@ const SETTLE_MS: usize = 1;
 /// （答"这一位在那枚盟里吗"）。
 ///
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的（见
-/// `programs/src/supervisor/system/operator/bridge.rs` 的 `COORD_FRAME` 照实记：装配者转授那一版真机
+/// `programs/src/system/operator/bridge.rs` 的 `COORD_FRAME` 照实记：装配者转授那一版真机
 /// 栽在 `coord-ship`）。树**不当自己的客人**：它不去 `seek("/sys/principal")`，理由同那一笔
 /// （自指 ⇒ 环）。
 ///
@@ -209,7 +209,7 @@ const MS: usize = 1000;
 pub fn serve() -> Result<(), super::fail::Fail> {
     // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
     // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
-    let Some(assembler) = crate::supervisor::service::assembler() else {
+    let Some(assembler) = crate::service::assembler() else {
         return Err(super::fail::Fail::Sire);
     };
     // **上板**（乙那一刀）：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形
@@ -295,7 +295,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 ///   不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进组**（那一条推
 ///   落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它；
 /// - **协调那一帧**（16 字节）：装配者把"**哪一位域** + **它是哪一双眼睛**"直接递过来
-///   （见 `programs/src/supervisor/system/operator/bridge.rs` 的 `COORD_FRAME`）。两帧、次序不定：名册那一
+///   （见 `programs/src/system/operator/bridge.rs` 的 `COORD_FRAME`）。两帧、次序不定：名册那一
 ///   枚到了才开闸（门禁从此判得了身份），盟册那一枚到了 [`Rule::In`] 才判得了。
 ///   **长度即语义**：8 = 一位客人，16 = 这一帧；
 /// - **答话路**：装配者转授来的那一枚 ⇒ `admit` 收一位客人；

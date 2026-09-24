@@ -51,7 +51,7 @@
 //! - **设备语义各带各的**：谁的设备谁在自己目录里放设备模块（[`router`] 的 `plic.rs`、
 //!   [`uart`] 的 `uart.rs`、[`rtc`] 的 `rtc.rs`）——本仓不用一份"驱动框架"去包它们。
 //! - **需求单归收方**：[`router::needs`] / [`uart::needs`] / [`rtc::needs`] 各开自己那张单，
-//!   装配者只是 `use` 它们（见 [`crate::supervisor::service::Program`]）。
+//!   装配者只是 `use` 它们（见 [`crate::service::Program`]）。
 //!
 //! 本级的 [`assemble`] 是各驱动**都要写一遍**的那一段客侧装配（会话 + 收配给 + 归位）。
 

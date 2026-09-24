@@ -467,7 +467,7 @@ impl Operator {
                 // **先要位、再落格**：条数那一闸管的是`PANE_CAP`，这两行管**内存**。
                 // 少了它们，分配失败走的是 `handle_alloc_error`（abort）——而同一句"备不下就
                 // 如实报"在仓里另外两处都是 `try_reserve → Full`：`Desk::admit`
-                // （`programs/src/supervisor/system/operator/desk.rs`）与 `Ledger::grow`
+                // （`programs/src/system/operator/desk.rs`）与 `Ledger::grow`
                 // （`crates/protocol/src/system/operator/ledger.rs`）。**同一句话，三处一个纪律。**
                 //
                 // 两处都要长：一格住 `slots`，一个号进 `root` 或某个 `Pane` 的 children。

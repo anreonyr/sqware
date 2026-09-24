@@ -89,13 +89,13 @@ use programs::Reason;
 
 use harness::tick;
 
-use programs::supervisor::root::boot;
+use programs::root::boot;
 
 use alloc::format;
 use core::time::Duration;
 
 use env::Name;
-use programs::supervisor::system::server as service;
+use programs::system::server as service;
 use protocol::system::desk::{Announce, Table};
 use runtime::env::debug;
 use runtime::env::room;

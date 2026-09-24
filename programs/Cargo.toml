@@ -63,7 +63,7 @@ doctest = false
 # 编排域（S 态，独立域）：起整批服务、监督、把入口挂上树；配给从引导域领。
 [[bin]]
 name = "prog-system"
-path = "src/supervisor/system/main.rs"
+path = "src/system/main.rs"
 test = false
 bench = false
 doctest = false
@@ -72,7 +72,7 @@ doctest = false
 # 之后只做一件事——照单发货。
 [[bin]]
 name = "prog-root"
-path = "src/supervisor/root/main.rs"
+path = "src/root/main.rs"
 test = false
 bench = false
 doctest = false

@@ -54,14 +54,14 @@ extern crate programs;
 
 use programs::Reason;
 
-use programs::supervisor::root::boot;
+use programs::root::boot;
 
-// 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
+// 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 
 use alloc::format;
 
 use env::Name;
-use programs::supervisor::system::server as service;
+use programs::system::server as service;
 use protocol::system::core::{Ready, probe_ready};
 use protocol::system::desk::{Announce, Slot, State, Table};
 use runtime::env::debug;

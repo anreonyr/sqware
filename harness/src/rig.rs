@@ -213,15 +213,15 @@ use programs::Reason;
 use env::Mark;
 use harness::tick;
 
-use programs::supervisor::root::boot;
+use programs::root::boot;
 
-// 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
+// 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 
 use alloc::format;
 use core::time::Duration;
 
 use env::Name;
-use programs::supervisor::system::server as service;
+use programs::system::server as service;
 use protocol::session::Quay;
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Slot, Table};

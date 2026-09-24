@@ -12,7 +12,7 @@ use protocol::session::Quay;
 use protocol::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::system::desk::{Announce, Service, Slot, State, Table};
 
-use crate::supervisor::service::{Lane, Role};
+use crate::service::{Lane, Role};
 
 // ── 适配：原语（转发到运行时那几件）──────────────────────────
 
@@ -36,8 +36,8 @@ pub fn mint(
 ) -> Result<TaskId, Fail> {
     admit_start(table, name)?;
 
-    let team = crate::supervisor::system::call::build(image, kind)?;
-    let Ok(task) = crate::supervisor::system::call::spawn(team, &[]) else {
+    let team = crate::system::call::build(image, kind)?;
+    let Ok(task) = crate::system::call::spawn(team, &[]) else {
         return Err(Fail::NoRoom);
     };
     table.attach(name, Some(team), task)?;
@@ -59,7 +59,7 @@ pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, F
     let Ok(me) = utask::self_id() else {
         return Err(Fail::Unknown);
     };
-    let Ok(task) = crate::supervisor::system::call::spawn(TeamId::new(0), &role.args(me.get())) else {
+    let Ok(task) = crate::system::call::spawn(TeamId::new(0), &role.args(me.get())) else {
         return Err(Fail::NoRoom);
     };
     table.attach(name, None, task)?;
@@ -95,12 +95,12 @@ pub fn start(
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
-            crate::supervisor::system::call::accord(g.token, task, g.perm)?;
+            crate::system::call::accord(g.token, task, g.perm)?;
         }
-        crate::supervisor::system::call::hatch(task)
+        crate::system::call::hatch(task)
     })();
     if let Err(e) = launched {
-        crate::supervisor::system::call::doom(task);
+        crate::system::call::doom(task);
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(e);
@@ -138,7 +138,7 @@ pub fn ready(
 
     // 它不宣布的那一种：放行之后只要还活着就算起来了，没有可等的东西。
     if announce == Announce::None {
-        if crate::supervisor::system::call::running(task) {
+        if crate::system::call::running(task) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -158,7 +158,7 @@ pub fn ready(
             return Ok(false);
         }
     }
-    if !crate::supervisor::system::call::running(task) {
+    if !crate::system::call::running(task) {
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
@@ -180,7 +180,7 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
         return Err(Fail::Unknown);
     };
     let task = *task;
-    crate::supervisor::system::call::doom(task);
+    crate::system::call::doom(task);
     table.set_state(name, State::Stopping);
     Ok(())
 }
@@ -197,14 +197,14 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// ⇒ 等待里的"早醒"只可能来自收尾；"到点"那一支由复探分出来（答 [`Reaped::Unsettled`]）。
 ///
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
-/// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::supervisor::system::call) 同一折法。
+/// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::system::call) 同一折法。
 /// `millis` = **上限族**（口径见 `env::fid` 文件头的定式）；超时那支答 [`Reaped::Unsettled`]，
 /// 不写表。
 pub fn until(table: &Table, name: Name, millis: usize) -> Result<Reaped, Fail> {
     let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
     };
-    if !crate::supervisor::system::call::running(task) {
+    if !crate::system::call::running(task) {
         return Ok(Reaped::Now);
     }
     if millis == 0 {
@@ -212,7 +212,7 @@ pub fn until(table: &Table, name: Name, millis: usize) -> Result<Reaped, Fail> {
     }
     // 挂起等一记：醒来自收尾（`wipe`）或到点，两者当场分不开 ⇒ 醒来复探，判决只认它。
     let _ = runtime::env::unit::join(task, millis);
-    if crate::supervisor::system::call::running(task) {
+    if crate::system::call::running(task) {
         Ok(Reaped::Unsettled)
     } else {
         Ok(Reaped::Waited)
@@ -279,7 +279,7 @@ pub fn supervise(table: &mut Table, last: Name, lanes: &[Lane], tole: &Tole) {
         // 预置值**——内核没有第二次执行机会，故醒来必须自己按组复核，不能靠返回值拿身份。
         if tole.await_(usize::MAX).is_err() {
             // 组坏了：退回"等最后一条退场"，行为与改动前一致。
-            crate::supervisor::service::wait_last(table, last);
+            crate::service::wait_last(table, last);
             return;
         }
         // 复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次醒来

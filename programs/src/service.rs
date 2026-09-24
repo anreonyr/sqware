@@ -36,7 +36,7 @@
 use core::time::Duration;
 use env::Mark;
 
-use crate::supervisor::system::server::{self as service, Grant};
+use crate::system::server::{self as service, Grant};
 use env::wire::manifest;
 use env::{Name, PieToken, TaskId};
 use protocol::system::principal::client::Face;
@@ -47,14 +47,14 @@ use protocol::system::board::call as bcall;
 use protocol::system::desk::{Announce, Table};
 use runtime::env::room;
 
-use crate::supervisor::system::operator::bridge as operator;
-use crate::supervisor::system::board::bridge as board;
+use crate::system::operator::bridge as operator;
+use crate::system::board::bridge as board;
 
 use protocol::driver::supply;
 use protocol::driver::supply::call::{Need, WANT_MAX, Want};
 
-use crate::supervisor::root::boot;
-use crate::supervisor::system::machine::Machine;
+use crate::root::boot;
+use crate::system::machine::Machine;
 
 /// 装配失败的编号——定义见 [`env::assembly::Died`]（本处只是转发）。
 pub use env::assembly::Died;

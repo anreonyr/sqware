@@ -30,14 +30,14 @@ extern crate alloc;
 extern crate programs;
 
 use env::Mark;
-use programs::supervisor::service;
+use programs::service;
 
 // 照实记：这里原来还 `use ...::board::bridge as board`——只为收尾那一句 `board::shut()`。
 // 那一手已删（它收掉的是本域自己，见第 7 步的照实记），故这一行也走了。板那一侧的装配
 // （把客人接上板）住 `service::start`，本文件本来就不碰它。
 use env::{HoleDir, Name, PieToken};
-use programs::supervisor::system::machine::Machine;
-use programs::supervisor::system::server;
+use programs::system::machine::Machine;
+use programs::system::server;
 use protocol::session::{Pier, Quay};
 use protocol::system::board::LANE_PREFIX;
 use protocol::system::desk::Table;
@@ -50,7 +50,7 @@ use runtime::env::unit as utask;
 use protocol::driver::supply;
 use protocol::driver::supply::call::{Kind, Want};
 use env::assembly::E_BOOT;
-use programs::supervisor::system::{coalition, operator, principal};
+use programs::system::{coalition, operator, principal};
 use service::{Catalog, Lane, Program, Role};
 
 mod scenario;

@@ -186,7 +186,7 @@ pub trait Branch<P> {
 /// **照实记：这一格原来少一个号。** 第一版写的是 `amid(&self, at: C)`——可盟册那一问本来
 /// 就要两个号（`coalition::client::Face::amid(p, c)`，线上那一帧也带两格）。而 `judge` 手里
 /// 明明有 `me`（第一步就问出来了），却没往下传。**当时它是一颗恒答"问不到"的桩**，故那个错
-/// 一次没响过。**已补上**：`Court::amid`（`programs/src/supervisor/system/operator/server.rs`）真查
+/// 一次没响过。**已补上**：`Court::amid`（`programs/src/system/operator/server.rs`）真查
 /// 盟册门牌，而 `Rule::In` 有真机读数——`in=0` / `in_sub=8`（`harness/src/probe_rule.rs`
 /// 那一沓；是桩的话这两格只可能答 `9`）。
 pub trait League<P, C> {
@@ -200,7 +200,7 @@ pub trait League<P, C> {
 ///   判据只需要"有没有那一位"这一件事）。**照实记**：后两因**永远好不了**，而它们在本格与
 ///   "对面暂时不答"同落 ⇒ 判出来都是 [`Ruling::Unjudged`]。把三因分开的是**读数**，不是码：
 ///   树那一侧本来就分得开（`Operator::opens` 答 `Unknown` / `NotATile` / `Dead`），
-///   由 `programs/src/supervisor/system/operator/server.rs` 的 `Court::opens` 把它们说进读数。
+///   由 `programs/src/system/operator/server.rs` 的 `Court::opens` 把它们说进读数。
 /// - `Err(())` = 树自己问不到（⇒ [`Ruling::Unjudged`]）。
 ///
 /// **照实记（这一格生产里到不了，读者是宿主靶）**：`Operator::opens` 只会答

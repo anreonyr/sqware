@@ -11,8 +11,8 @@
 //! [`crate::Policy`] / [`crate::ProgramKind`] 同款。
 //!
 //! **照实记（这些词是从别处搬下来的，旧路径照旧）**：`Announce` 原住
-//! `protocol::system::desk`、`Grant` 原住 `programs::supervisor::system::server`、
-//! `Died` 原住 `programs::supervisor::service`——三处现在都是 `pub use` 转发，**调用点一行没改**
+//! `protocol::system::desk`、`Grant` 原住 `programs::system::server`、
+//! `Died` 原住 `programs::service`——三处现在都是 `pub use` 转发，**调用点一行没改**
 //! （与 `Access`/`Policy` 从 `runtime::core::port` 搬到 `env::wire::access` 是同一条先例）。
 
 use crate::wire::key::Key;
@@ -48,7 +48,7 @@ pub type Died = crate::Reason;
 
 // ── 死在装配的哪一步（编号沿用旧树那套小整数）───────────────────────────────
 //
-// **照实记（iii 之后只剩 16 个：内件那三枚随它们那三行搬去 `scenario.rs`）**：这 19 个原住 `programs/src/supervisor/system/main.rs`，与装配单同源（"哪一台、
+// **照实记（iii 之后只剩 16 个：内件那三枚随它们那三行搬去 `scenario.rs`）**：这 19 个原住 `programs/src/system/main.rs`，与装配单同源（"哪一台、
 // 死在第几步"），故随表一起搬下来；那里现在 `pub use` 转发。
 pub const E_BOOT: Died = 1;
 pub const E_ROUTER: Died = 5;

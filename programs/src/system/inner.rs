@@ -23,7 +23,7 @@
 
 use env::assembly::{Announce, Eyes};
 
-use crate::supervisor::service::{Program, Role};
+use crate::service::{Program, Role};
 
 /// 内件起手失败的三枚号（与原先 `env::assembly` 上那三枚**同值**）。
 mod died {

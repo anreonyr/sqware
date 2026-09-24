@@ -17,7 +17,7 @@
 //! # 为什么"没身份"这件事落在装配单上
 //!
 //! 装配期每一条服务的 `derive(ROOT)` + `bind` 都是装配者做的；本域要**真的没身份**，就只能
-//! 由装配者**不绑它**——`Program::bind = false`（见 `programs/src/supervisor/service.rs`）。
+//! 由装配者**不绑它**——`Program::bind = false`（见 `programs/src/service.rs`）。
 //! 本域自己不做任何"放弃身份"的动作：若自己 `waive`，那也只是回到起点，仍是已绑。
 //!
 //! # 两条判据为什么缺一不可
