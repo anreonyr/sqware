@@ -130,9 +130,79 @@ fn translate_kernel(va: usize, len: usize) -> Option<usize> {
     Some(pa0.as_usize())
 }
 
+/// **一行攒进这具栈缓冲，再一次发出去**（[`_write`] 的照实记）。
+///
+/// 装不下的长行**不会丢字**：攒满那一段先冲出去，此后转成直通（分段）。那种行里没有判据。
+const LINE_MAX: usize = 256;
+
+/// 攒一行的栈缓冲（不分配）。
+struct Line {
+    buf: [u8; LINE_MAX],
+    len: usize,
+}
+
+impl Line {
+    fn new() -> Self {
+        Line {
+            buf: [0u8; LINE_MAX],
+            len: 0,
+        }
+    }
+
+    /// 把攒下的这一段**一次**写出去（一次 `Dbcn::ConsoleWrite`）。
+    fn emit(&mut self) {
+        if self.len == 0 {
+            return;
+        }
+        // 只往里追加过整段 `&str`，故这一段必是合法 UTF-8；下面那句 `else` 只是保险。
+        if let Ok(text) = core::str::from_utf8(&self.buf[..self.len]) {
+            let _ = Console.write_str(text);
+        }
+        self.len = 0;
+    }
+}
+
+impl Write for Line {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        if self.buf.len() - self.len >= s.len() {
+            self.buf[self.len..self.len + s.len()].copy_from_slice(s.as_bytes());
+            self.len += s.len();
+        } else {
+            // 这一行装不下 ⇒ 它本来就不是"一次写得完"的：先把攒下的冲出去，其余照旧分段。
+            self.emit();
+            let _ = Console.write_str(s);
+        }
+        Ok(())
+    }
+}
+
 /// put!/putln!/log logger 的共同出口。
+///
+/// # 照实记（为什么先把一行攒起来，再一次发出去）
+///
+/// 原先这里是 `Console.write_fmt(args)` 直通。而 `fmt::Write` 是**按段**调 `write_str` 的，
+/// 每一段就是一次 `Dbcn::ConsoleWrite` ⇒ **一条读数行要 2~5 次 ecall**。那几次之间是空档：本核
+/// 在两次 ecall 之间被抢占（定时器 / IPI），或者别的核正好挤进那一小段，**别人那一整行就插进来
+/// 了**。实测现场（`trace/gate-1790248225/run2.log:523`）：
+///
+/// ```text
+///     board: swept n=1 occupied=4system: gone principal state=Dead ousted=true heir=13→12 wait=now
+/// ```
+///
+/// ——第一条的后半截（就那一个 `\n`）落在了第二条**后面**。补量：12 份现场 3976 行里 **1 例**
+/// （约每 13 轮一次；`soak` 默认只跑 1 轮，故那是它**假红**的一个来源——`board:` 那一族的形状
+/// 锚了行尾 `$`，胶起来的行两边都不匹配）。更早那批现场里同样的胶行有 6 例（`soak-*` /
+/// `framework-*` / `console-*` 各一份），**全部落在同一个位置上**：最后一段正文之后、`\n` 之前。
+///
+/// 收法：**一行攒进 [`Line`]，再一次发**（一行一次 ecall）。
+///
+/// **照实记（这一收的边界）**：它关掉的是**我们自己**制造的窗口（两次 ecall 之间）。剩下的一档是
+/// "两颗核同时进 M 模式写同一个 UART"——那落在 SBI 那一侧，**今天没有证据**（那 7 例与这一轮补量
+/// 的 1 例，无一例落在段中间）。若日后仍见胶行，那就该在这一层加锁，而**不是**去放宽门的形状。
 pub fn _write(args: fmt::Arguments) {
-    let _ = Console.write_fmt(args);
+    let mut line = Line::new();
+    let _ = fmt::write(&mut line, args);
+    line.emit();
 }
 
 /// 让 `fmt::Write` 的格式化器能把整行转发到控制台。

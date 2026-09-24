@@ -455,8 +455,9 @@ macro_rules! crash_scene {
         $crate::runtime::diagnose::export::export(__sealed);
     }};
     ($($arg:tt)*) => {{
-        $crate::console::_write(format_args!($($arg)*));
-        $crate::put!("\n"); // 消息后换行，[scene] 标题不与消息同段紧贴
+        // **一次写**：`putln!` 把换行并进同一次 ecall。分两次写的话，这条消息与它后面那个
+        // `[scene]` 标题之间就留了一个窗口（见 `crate::console::_write` 的照实记）。
+        $crate::putln!($($arg)*);
         $crate::crash_scene!();
     }};
 }
