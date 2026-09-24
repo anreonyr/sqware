@@ -54,8 +54,8 @@ const SETTLE_MS: usize = 1;
 /// 栽在 `coord-ship`）。树**不当自己的客人**：它不去 `seek("/sys/principal")`，理由同那一笔
 /// （自指 ⇒ 环）。
 ///
-/// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Rule::In`] 那一格答"判不了"，
-/// 其余照旧。**降级是诚实的，不是放行**——`Err(())` 翻出来是 `Unjudged`（可重试），不是 `Ok`。
+/// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Rule::In`] 那一格答"判不了"
+/// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**。
 struct Session {
     roster: PrincipalFace,
     league: Option<CoalitionFace>,
@@ -146,18 +146,49 @@ impl Control for Court<'_> {
     }
 
     fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
-        // **三因同落 `Ok(None)`**：号不在 / 那一号是块 `Pane` / 开者那扇门封印了——判据只需要
-        // "有没有那一位"这一件事（见 `judge::Door`）。这一条**不动树**：剔死是 `find` 的活儿。
-        Ok(self.tree.opens(at).ok())
+        // **判据要的只有"有没有那一位"**（见 `judge::Door`），故三种"没有"在裁决那一侧同落
+        // `Ok(None)`。这一条**不动树**：剔死是 `find` 的活儿。
+        //
+        // **照实记（这一刀）**：三因同落是**判据**要的，但**后两因永远好不了**，而它们与
+        // "对面暂时不答"在线上同落 `UNJUDGED` ⇒ 客人看不见差别（也对：下一步都是当趟放弃）。
+        // 故这里**不压成一句 `.ok()`**：每一因各说一行读数——要的就是"为什么判不了"。
+        match self.tree.opens(at) {
+            Ok(tid) => Ok(Some(tid)),
+            // 碑 / 从没铸过：**永久**。
+            Err(Fail::Unknown) => {
+                say(&alloc::format!("operator: opens gone n={}", at.get()));
+                Ok(None)
+            }
+            // 那一号是块窗格：**永久**（结构事实）。
+            Err(Fail::NotATile) => {
+                say(&alloc::format!("operator: opens pane n={}", at.get()));
+                Ok(None)
+            }
+            // 开者答不出——**永久**。`Dead` 自己仍是**三因一码**（不是孔 / 不在我表里 / 已封印，
+            // 见 [`Fail::Dead`]）：这一行读数是"没有开者"，不声称分得开那三因。
+            Err(Fail::Dead) => {
+                say(&alloc::format!("operator: opens sealed n={}", at.get()));
+                Ok(None)
+            }
+            // 余下三格**到不了**（`core::opens` 的判据表只有上面三条）。一格一格列出来，是为了
+            // 将来 `Fail` 多一格时**编不过**，而不是悄悄落进一个 `_`。
+            Err(Fail::NonEmpty | Fail::NotAPane | Fail::Full) => Ok(None),
+        }
     }
 }
 
-/// **门禁的入口**：`session` 为 `None` = **装配期**（树手里还没有门牌）⇒ 放行；`Some` =
-/// 按那一格自己的规矩判（[`Ledger::rule`] 答出来的那一条）。
+/// **门禁的入口**：`session` 为 `None` ⇒ **放行**；`Some` ⇒ 按那一格自己的规矩判
+/// （[`Ledger::rule`] 答出来的那一条）。
 ///
-/// 装配期放行是**定义**不是例外：树接手时（principal 挂 `/sys/principal`、coalition 挂
-/// `/sys/coalition`）整个装配都还没走完，门禁无从判起；而那两条路的来路是装配者**直接铺的**
-/// （他发起的 `Ship`），不是"从问话孔进来的客人请求"。
+/// **照实记（这一格原来挂着一条"不许放行"的裁决）**：本节原写、`docs/operator-gate.md` §1.3
+/// 也记成已定的是「没有门牌时客人请求答 `UNJUDGED`，**不许**答 `Allow`」。实现是放行，而它
+/// **不是**门禁的例外，是**装配期根本不在门禁这条轴上**：
+///
+/// principal 挂自己门牌那一趟（`part /sys` + `land /sys/principal`）发生在它的 `serve_tree`
+/// 里，而本域**认下它的门牌**与它**拿到身份**（`derive(ROOT)` + `bind`）都在**那之后**
+/// （`service.rs` 的 `assemble` 里那两段）⇒ 那一刻它**既没有门牌、又还没有身份**。门禁若在
+/// 那一刻生效，它连自己的门牌都挂不上，整机起不来。运行期那些客人则都在 `Hatch` 放行之前
+/// 拿到了身份——**挡门的是它们，不是装配这一步**。
 ///
 /// `tree` 只给第 `n` 格那一问（`Rule::Opens`）：判据要问"那一格是谁的门牌"，而树就在手里
 /// ——故它一并与门牌合成 [`Court`]。
@@ -165,8 +196,8 @@ fn may(tree: &Operator, session: Option<&Session>, who: TaskId, rule: Rule<Id, I
     match session {
         None => Code::Ok,
         Some(s) => match verdict(&Court { session: s, tree }, who, rule) {
-            // 「手里没有门牌」在客人那一侧与「判不了」同一格（都可重试）；`Some` 的时候
-            // 不该出现它，真出现了也按"判不了"走，不按"放行"。
+            // 「手里没有门牌」在客人那一侧与「判不了」同一格；`Some` 的时候不该出现它
+            // （`Court` 不覆盖 `has_face`），真出现了也按"判不了"走，不按"放行"。
             Code::Blind => Code::Unjudged,
             other => other,
         },
@@ -225,7 +256,8 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 
     let mut tree = ocall::tree();
     let mut desk = desk();
-    // **装配期**：还没有协调门牌（装配者那一帧到了才是 `Some`）⇒ 门禁放行，见 [`may`]。
+    // **装配期**：还没有协调门牌（装配者那一帧到了才是 `Some`）⇒ 门禁放行——**装配期不在门禁
+    // 这条轴上**（理由见 [`may`]），不是给它的例外。
     let mut session: Option<Session> = None;
     // 协调那一帧递来的两格号（名册 / 盟册，各自那一域自己把门牌交过来）。**两帧、次序不定**。
     let mut coord = Coord::default();

@@ -127,6 +127,10 @@ pub const MARKS: &[Mark] = &[
     Mark::Shape("^\\[case\\] probe-rule: 16 cases[[:space:]]*$"),
     Mark::Shape("^\\[case\\] probe-rule: cases 16 ok 16 fail 0[[:space:]]*$"),
     Mark::Absent("operator: two asks"),
+    // 判不了那一格的**为什么**：`probe-rule` 那两格（`at_pane` / `gone_door`）必落在 `9`，
+    // 而它们各自走 `Court::opens` 的一条臂 ⇒ 这两行读数**必然**在。装配期不产它，产品镜像
+    // 也不产（没有一位客人写 `Rule::Opens`）。
+    Mark::Shape("^operator: opens (gone|pane|sealed) n=[0-9]+$"),
     Mark::Literal("probe-other: tree is=8 under=8 foreign=8"),
     Mark::Literal("probe-rule-other: all three denied as expected"),
     Mark::Literal("echo: list root=0,3"),
@@ -203,6 +207,12 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "doom", tier: Tier::Auto },
     Reading { prefix: "guest", tier: Tier::Auto },
     Reading { prefix: "irq", tier: Tier::Auto },
+    // **判不了那一格的"为什么"**（`opens gone` / `opens pane` / `opens sealed`）：给读日志的人看的
+    // 诊断行，它的**码**由 `probe-rule` 判（`at_pane` / `gone_door` 两例 = `9`），这里判的是
+    // "这一族读数还在、且长这样"。写成 `Narrative` 而不是 `Manual`：**不声明**会让任何一行
+    // `operator:` 都报"没在表里"，而声明成 `Manual` 又会把那个信号一起放掉——`Narrative`
+    // 只许可这一种形状，别的一律出格。
+    Reading { prefix: "operator", tier: Tier::Narrative { shapes: &["^operator: opens (gone|pane|sealed) n=[0-9]+$"] } },
     Reading { prefix: "passer", tier: Tier::Auto },
     Reading { prefix: "principal", tier: Tier::Auto },
     Reading { prefix: "probe", tier: Tier::Auto },

@@ -17,8 +17,9 @@
 //!
 //! 四组判据、按重要性排：
 //!
-//! 1. **三格答案各归各位**：`Allow` / `Deny`（终态）/ `Unjudged`（可重试）——若把"判不了"
-//!    读成"你没资格"，整机就会把"身份服务挂了"报成"没权限"；
+//! 1. **三格答案各归各位**：`Allow` / `Deny`（终态）/ `Unjudged`（判不了——因分"会好的"与
+//!    "好不了的"两类，见 `judge::Ruling`）——若把"判不了"读成"你没资格"，整机就会把
+//!    "身份服务挂了"报成"没权限"；
 //! 2. **没身份就是没资格**：没绑过的 TID 在 `Rule::Public` 上也要被拒（编排域落的正是这一格）
 //!    ——这一条松掉，门禁就成了一条"不绑身份即可绕过"的后门；
 //! 3. **`Ok(false)` 与 `Err` 分家**：前者是"不在"，后者是"问不到"；再加上「手里没有门牌」
@@ -261,8 +262,8 @@ fn opens_is_about_who_holds_the_door() {
 
 #[test]
 fn a_missing_door_is_unjudged_but_a_doorless_opener_is_denied() {
-    // 三态各归各位：**"没有那一位"判不了**（挂门牌有先后，可重试）；
-    // **"那一位没身份"是终态拒**（与第一条闸同一分法）；**树问不到**也是判不了。
+    // 三态各归各位：**"没有那一位"判不了**（挂门牌有先后；这一格里两种因**永远好不了**
+    // ——碑 / 窗格 / 门封印）；**"那一位没身份"是终态拒**；**树问不到**也是判不了。
     let roster = Roster(&[(ME, P)]);
     let chain = Chain(&[]);
     let book = Book(&[P]);
@@ -306,8 +307,8 @@ fn a_missing_door_is_unjudged_but_a_doorless_opener_is_denied() {
 
 #[test]
 fn an_unreachable_roster_is_unjudged_never_denied() {
-    // **判不了 ≠ 你没资格**。这一条把"身份服务挂了/超时"与"你没有权限"分开——
-    // 客人的下一步不同：前者重试，后者放弃。
+    // **判不了 ≠ 你没资格**。这一条把"身份服务挂了/超时"与"你没有权限"分开——客人在这一侧
+    // 的下一步其实是同一个（当趟放弃），分开它们的是**为什么**：码不许把前者读成后者。
     let roster = Broken;
     let chain = Chain(&[]);
     let book = Book(&[P]);
@@ -460,14 +461,16 @@ fn the_verdict_maps_onto_the_wire_cells() {
     assert_eq!(Code::Ok.wire(), WIRE_OK);
     assert_eq!(Code::Denied.wire(), WIRE_DENIED);
     assert_eq!(Code::Unjudged.wire(), WIRE_UNJUDGED);
-    // 「手里没有门牌」在**客人那一侧**与"判不了"同一格（都可重试）——但树侧的读数分得开。
+    // 「手里没有门牌」在**客人那一侧**与"判不了"同一格——但树侧的读数分得开。
     assert_eq!(Code::Blind.wire(), WIRE_UNJUDGED);
 }
 
 #[test]
 fn no_face_at_all_is_blind_and_never_allow() {
-    // **装配期**：树手里还没有协调门牌 ⇒ 判不了任何人。这一格**不是放行**——
-    // 松成放行就等于"协调服务没配上 ⇒ 门禁不存在"。
+    // **手里还没门牌**：判不了任何人。这一格**不是放行**——松成放行就等于"协调服务没配上
+    // ⇒ 门禁不存在"。**照实记**：生产路径到不了这一格——装配期由 `may` 在更早处短路
+    // （装配期 principal 挂自己门牌时既没门牌又没身份，见 `docs/operator-gate.md` §1.3），
+    // 故 [`Blind`] 的读者是**这一台**：它钉的是"这一格在码这一层永远不是 0"。
     assert_eq!(verdict(&Blind, ME, Rule::Public), Code::Blind);
     assert!(!verdict(&Blind, ME, Rule::Public).passed());
     // **一颗盲的门牌对谁都盲**（原 `gate.rs` 的 `the_blind_control_is_blind` 里那两条，
