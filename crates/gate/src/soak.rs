@@ -241,21 +241,27 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "task", tier: Tier::Manual { why: "只有停机那一行，由本文件 `verdict`（`HALT` 常量）判——原先是 `soak.sh` 里那段 `if grep -q \"task: all tasks exited, system halted\"`，**那份脚本已删**" } },
 ];
 
-/// 这一轮读数兑没兑现。**一次报全部缺口**（不是第一条就返回——旧脚本就是"缺这几条"一起报）。
+/// 这一轮读数兑没兑现。**一次报全部缺口**（不是第一条就返回——旧脚本就是"缺这几条"一起报），
+/// 但**"这一轮是怎么收的"排在最前**：它是因，后面那些"缺"是果（见 [`stopped`]）。
 pub fn verdict(t: &Transcript) -> Result<(), Vec<Gap>> {
+    // ① **这一份读数完备吗**：被期限砍断 / 有 panic。照实记（真机红过的那一轮）：这一门原先
+    //    只看文本，于是把"45 秒的期限比这一轮短"报成了"读数里没有这一条"。
+    let mut missing: Vec<Gap> = stopped(t).into_iter().collect();
+    // ② 收场那一句（关机的唯一判据）。没有它就不必往下判——读数还没走到收场；`[stop]` 那几行
+    //    是内核的信标（哪一颗核在哪儿空等），"看到什么"就报它。
     if !t.has(HALT) {
         let stop = t
             .text()
             .lines()
             .find(|l| l.contains("[stop]"))
             .unwrap_or("（没有 [stop] 那一行）");
-        return Err(vec![Gap {
+        missing.push(Gap {
             want: "停机行 `task: all tasks exited, system halted`".to_string(),
             saw: stop.to_string(),
-        }]);
+        });
+        return Err(missing);
     }
 
-    let mut missing: Vec<Gap> = Vec::new();
     for m in MARKS {
         if !m.holds(t) {
             // `Once` 那一族失败有两种样子（零次 / 两次），故"看到什么"要分开报——不然"出现了两次"
@@ -276,6 +282,8 @@ pub fn verdict(t: &Transcript) -> Result<(), Vec<Gap>> {
     if let Err(g) = pair(t) {
         missing.push(g);
     }
+    // ③ 读数表（[`hold`]）只在上面都没话说时才轮得到——[`stopped`] 报过的那一轮到此为止，
+    // 不再逐条列"缺"（列出来只会把因埋进一串回声里）。
     if !missing.is_empty() {
         return Err(missing);
     }

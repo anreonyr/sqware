@@ -35,6 +35,10 @@ fn group() {
         .unwrap_or("无");
 
     let mut gaps = Vec::new();
+    // **先说因**：被期限砍断 / 有 panic（见 `gate::stopped`）——下面那两条多半是它的回声。
+    if let Some(g) = stopped(&t) {
+        gaps.push(g.to_string());
+    }
     if !t.has("group: PASS") {
         gaps.push(format!("台主未判 PASS（读数：{verdict}）"));
     }

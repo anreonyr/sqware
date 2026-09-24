@@ -7,7 +7,8 @@
 //! - **宿主那台**（[`Bench::Host`]）：在**宿主 target** 上跑一次 `cargo test`（那条
 //!   `--target` 不写在门里：它是"宿主"这两个字的落点）。
 //!
-//! **被杀与内核 panic 不是 `Err`**：它们是 [`Transcript`] 里的事实，由门去判。
+//! **被杀与内核 panic 不是 `Err`**：它们是 [`Transcript`] 里的事实，由门去判——判这一格的
+//! 落点是 [`stopped`]（一处措辞，各门把它报在"缺哪条读数"之前）。
 //!
 //! # 照实记（两条流怎么合）
 //!
@@ -292,6 +293,11 @@ pub struct Transcript {
     code: Option<i32>,
 }
 
+/// **这一轮是怎么收的**——三格各自是一件事，故它们不该被读成"某一条读数缺了"。
+///
+/// **谁读它**：[`stopped`] 是唯一一处把它翻成话的地方，各机器门从那里读（`soak` / `load` /
+/// `stress` / `group` / `framework` / `examine` / `product`）。宿主那一门不走这里：它的"被杀"
+/// 就是非零退出码，由 [`Transcript::code`] 判（`host.rs`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// 自己结束（退出码看 [`Transcript::code`]）。
@@ -327,6 +333,44 @@ impl Transcript {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::write(path, &self.text)
+    }
+}
+
+/// **这一轮是怎么收的**：`None` = 自己收住了；有值 = 一条**先说因**的缺口。
+///
+/// 三格（[`Outcome`]）各有各的下一步：自己结束 ⇒ 读数就是全部；**被砍断** ⇒ 读数到那儿就断了，
+/// 同一份报里那些"缺"是这一刀的回声，不是机器报的"没有"；**有 panic** ⇒ 根因是 panic（它若
+/// 走 halt 自旋，必然也被超时杀，故先报它）。
+///
+/// **照实记（为什么要单独一格，以及为什么不并进 `hold`）**：
+///
+///   · 真机上红过一轮：`soak` 的期限 45 秒比那一轮短，机器被 `timeout` 收掉，而门报的是
+///     "这一条读数还在：… ／ 看到 读数里没有这一条"——**把期限砍断报成了读数真缺**（`Transcript`
+///     里这一格一次都没被那张表读过）。故它必须排在"缺"的前面：**先说因，再列果**；
+///   · 不并进 [`hold`]：`hold` 判的是"**读数**对不对得上表"，而"这一轮收没收住"是读数的**边界**，
+///     不是表里的一行；何况 `soak::verdict` 在收场那一句上就先返回了 ⇒ 并进去就是一道没有
+///     读者的门。
+pub fn stopped(t: &Transcript) -> Option<Gap> {
+    // 砍断那两格共用的尾巴：**它是因**，同一份报里那些"缺"是它的回声。
+    const ECHO: &str =
+        "⇒ **读数到此为止**——同一份报里那些'缺'是它的回声，不是机器报的'没有'";
+    match t.outcome() {
+        Outcome::Exited => None,
+        Outcome::Killed => Some(Gap {
+            want: "自己收场（不是被期限砍断）".to_string(),
+            saw: match t.code() {
+                // 124 = 外接 `timeout` 到点（`boot.nu` 里头那一层，见它头注）。
+                Some(124) => format!("被砍断：`QEMU_TIMEOUT` 到点收了 qemu（退出码 124）{ECHO}"),
+                // **没有第三条臂**：兜底那一支是 `child.kill()` 之后直接 `break None`（`run` 里那一段）
+                // ⇒"被杀"与"有退出码"在 [`Transcript`] 里不会同时为真；除 124 之外的码都落在
+                // `Exited` 那一格（那时这一格根本不报）。
+                _ => format!("被砍断：兜底期限到点杀了它（没拿到退出码）{ECHO}"),
+            },
+        }),
+        Outcome::Panicked => Some(Gap {
+            want: "没有 panic".to_string(),
+            saw: format!("读数里有内核 panic 报告头 `[panic] at`{ECHO}"),
+        }),
     }
 }
 
@@ -836,6 +880,40 @@ mod tests {
             outcome: Outcome::Exited,
             code: Some(0),
         }
+    }
+
+    /// 合成一份**没收住**的读数：`Outcome` 与退出码是台子给的（不是文本里的字）。
+    fn cut(text: &str, outcome: Outcome, code: Option<i32>) -> Transcript {
+        Transcript {
+            text: text.to_string(),
+            outcome,
+            code,
+        }
+    }
+
+    #[test]
+    fn a_cut_run_says_it_was_cut_before_it_lists_missing_readings() {
+        // 这一份读数停在半路：收场那一句与它后面每一条都"缺"——而**因只有一个**，
+        // 故它必须排在"缺停机行"的前面（真机上正是这里把期限砍断报成了读数真缺）。
+        let killed = cut("echo: ready\n", Outcome::Killed, Some(124));
+        let gaps = soak::verdict(&killed).expect_err("被砍断的一轮不该判过");
+        assert!(gaps[0].saw.contains("砍断"), "第一条说的是因：{}", gaps[0]);
+        assert!(
+            gaps[0].saw.contains("读数到此为止"),
+            "第一条要说出读数的边界：{}",
+            gaps[0]
+        );
+        assert!(
+            gaps.iter().any(|g| g.want.contains("停机行")),
+            "果照旧列出来：{gaps:?}"
+        );
+
+        // panic 那一格同理（它在 `run` 里先于"被杀"判）。
+        let panicked = cut("[panic] at 0x8000\n", Outcome::Panicked, None);
+        assert!(stopped(&panicked).unwrap().saw.contains("panic"));
+
+        // 自己收住的那一份：这一格什么都不报。
+        assert!(stopped(&said("task: all tasks exited, system halted\n")).is_none());
     }
 
     #[test]

@@ -9,6 +9,10 @@
 //!      线路由者 claim 到那条线（virt 上 UART0 的中断号是 10）。**回显自己走得上轮询**，
 //!      故没有这一条，"中断链断了"与"链子好好的"在日志里长得一模一样。
 //!
+//! 上面前两条从 `gate::stopped` **一处**读（`Transcript` 的 `Outcome` 三格：自己结束 / 被期限
+//! 砍断 / 有 panic）——"被杀"与"panic"原来各写一遍，读的却是同一格。**它报在最前**：被砍断的
+//! 那一轮里，后面每一条"缺…"都是它的回声。
+//!
 //! 其余一切（逐步 expect、marker 齐全、实例计数）都是定位手段，不是判据。
 //!
 //! # 照实记（为什么是定时重复喂，而不是逐步 expect）
@@ -63,24 +67,23 @@ fn examine() {
         let _ = t.keep(&out.join(format!("run{i}.log")));
 
         let echo = t.text().lines().any(|l| l.trim() == PING);
-        let mut why = Vec::new();
-        if t.outcome() == Outcome::Killed {
-            why.push("被超时杀");
-        }
-        if t.outcome() == Outcome::Panicked {
-            why.push("有 panic");
+        let mut why: Vec<String> = Vec::new();
+        // 判据 1、2（自行退出 / 无崩溃）从**一处**出：`stopped` 读的是 `Outcome` 三格——
+        // 自己结束（不报）/ 被期限砍断 / 有 panic。**先说因**：下面那些"缺…"多半是它的回声。
+        if let Some(g) = stopped(&t) {
+            why.push(g.to_string());
         }
         if !t.has(READY) {
-            why.push("缺[echo: ready]");
+            why.push("缺[echo: ready]".to_string());
         }
         if !echo {
-            why.push("缺回显[ping]");
+            why.push("缺回显[ping]".to_string());
         }
         if !t.has(HALT) {
-            why.push("缺[task: all tasks exited, system halted]");
+            why.push("缺[task: all tasks exited, system halted]".to_string());
         }
         if !t.has(IRQ) {
-            why.push("缺中断读数[router: line=10]");
+            why.push("缺中断读数[router: line=10]".to_string());
         }
 
         if why.is_empty() {

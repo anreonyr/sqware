@@ -47,6 +47,10 @@ fn framework() {
     let _ = t.keep(&log_path("framework"));
 
     let mut gaps = Vec::new();
+    // **先说因**：被期限砍断 / 有 panic（见 `gate::stopped`）——下面那些"无…"多半是它的回声。
+    if let Some(g) = stopped(&t) {
+        gaps.push(g.to_string());
+    }
     match t
         .text()
         .lines()
@@ -68,9 +72,6 @@ fn framework() {
     }
     if let Some(l) = t.text().lines().find(|l| l.contains("[case] FAIL")) {
         gaps.push(format!("用例失败：{l}"));
-    }
-    if t.outcome() == Outcome::Panicked {
-        gaps.push("内核 panic".to_string());
     }
     if !t.has(HALT) {
         gaps.push("无停机行（用例过了，收尾没到）".to_string());

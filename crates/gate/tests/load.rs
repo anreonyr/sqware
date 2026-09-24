@@ -38,6 +38,10 @@ fn load() {
     let _ = t.keep(&log_path("load"));
 
     let mut gaps = Vec::new();
+    // **先说因**：被期限砍断 / 有 panic（见 `gate::stopped`）——下面那几条"无…"多半是它的回声。
+    if let Some(g) = stopped(&t) {
+        gaps.push(g.to_string());
+    }
     if !t.has("load: spawned rows=") {
         let tail = t
             .text()

@@ -30,6 +30,10 @@ fn stress() {
     let _ = t.keep(&log_path("stress"));
 
     let mut gaps = Vec::new();
+    // **先说因**：被期限砍断 / 有 panic（见 `gate::stopped`）——下面那几条"无…"多半是它的回声。
+    if let Some(g) = stopped(&t) {
+        gaps.push(g.to_string());
+    }
     if !t.has("rig: total") {
         let tail = t
             .text()

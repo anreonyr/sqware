@@ -141,8 +141,9 @@ fn product() {
     let _ = t.keep(&log_path("product"));
 
     let mut gaps: Vec<String> = Vec::new();
-    if t.outcome() != Outcome::Exited {
-        gaps.push(format!("没自己退场（{:?}，退出码 {:?}）", t.outcome(), t.code()));
+    // **先说因**：被期限砍断 / 有 panic（见 `gate::stopped`）——下面那些"不在"多半是它的回声。
+    if let Some(g) = stopped(&t) {
+        gaps.push(g.to_string());
     }
     if !t.has(HALT) {
         gaps.push(format!("无停机行 `{HALT}`"));
