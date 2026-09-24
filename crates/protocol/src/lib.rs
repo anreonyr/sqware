@@ -36,6 +36,13 @@
 //!   （根上三件共享件：`frame` 帧骨架 · `id` 号的规则 · `fail_codes` 负码表）
 //! ```
 //!
+//! **`frame.rs` 只在"帧那一半要能被单独编"时才单开**（真凭据：[`system::principal::frame`]
+//! 头注写着那个宿主靶"模块树里没有 `driver`"，[`system::operator::gate`] 同理）。`driver` 那
+//! 两半（[`driver::supply`] / [`driver::line`]）的帧**被宿主靶整份编**（`crates/protocol-case/
+//! tests/{supply,line}.rs` 进来的就是那一份）⇒ 没有分家的需要。**故同一个文件名在两族里指两件
+//! 事**：`system/*/call.rs` 是**转发那几手**，`driver/*/call.rs` 是**形状与记号**。名字不并
+//! （改名要动四十余处引用，换一条对称），差异由这一句兜住。
+//!
 //! **照实记（"容纳"是用户裁的）**：`board` 一直在 [`system`] 之下；`operator` / `principal` /
 //! `coalition` 原先是**顶层**（与 `system` 平级），裁定之后收进去。**判据是"谁住编排域"**：
 //! iii 之后这四套协议的落地（板线程 / 持树者 / 名册 / 盟册）都是**编排域里的线程**，
