@@ -1,14 +1,34 @@
 //! 框架（framework）— 内核内测试框架：**登记在链接期，跑在启动后**。
 //!
-//! # 为什么不用 `cargo test`
+//! # 为什么不用 `cargo test`（2026-09-24 又量了一遍，四条读数）
 //!
 //! 本仓的测试对象要**启动后的状态**（帧池、pagemap、页表、`Space` 原语），而 cargo 的
-//! 测试模型是"用例跑在 `main` 之前、内核还没起来"。另有一条实测：`#[reexport_test_
-//! harness_main]` 在**非 `--test` 构建里什么都不生成**（`cannot find function
-//! test_main`）⇒ 不跑 `cargo test`，上游那套发现层就拿不到。
+//! 测试模型是"用例跑在 `main` 之前、内核还没起来"。故沿用
+//! [os-test-framework](https://docs.rs/os-test-framework) 的**形态**（`test!` 宏 + `Platform`
+//! 抽象 + 逐例打点），发现层换成**链接期段收集**。
 //!
-//! 故沿用 [os-test-framework](https://docs.rs/os-test-framework) 的**形态**
-//! （`test!` 宏 + `Platform` 抽象 + 逐例打点），发现层换成链接期段收集。
+//! "官方那条路（`custom_test_frameworks`）能不能换掉发现层"——早先只留下一句结论，那一刀把它
+//! **量全了**，四条：
+//!
+//! ```text
+//!   ① `[[bin]] harness = false`    cargo **不传 `--test`**（只给 `--cfg test`）⇒ 官方那台
+//!                                  机器整个不启动：`cannot find function test_main`（E0425）
+//!   ② `[[test]] path = "src/main.rs"`  同一份源码再挂一个测试靶，**照样不传** `--test`
+//!   ③ `cargo rustc … -- --test`    这一条**能接上**：生成 `test_main` + 收集 `#[test_case]`，
+//!                                  产物仍是 EXEC、入口仍是 `_start`（0x80200000）
+//!   ④ 起机实测                      `test_main` 在真机上被调到、返回，启动继续 ✓
+//!                                  ——**但只收上来 1 例**（我们那 8 条 `test!` 它看不见），
+//!                                  而且**给不出用例名**（`type_name_of_val` = `dyn core::any::Any`）
+//! ```
+//!
+//! ④ 那两句是决定性的：`[case] ok <名字>` 是本仓的协议（门的逐台基线与人读的日志都认它），而官方
+//! 那条路**给不了名字** ⇒ 名字表还得自己另备一份；且 `test_main` 只负责**调我们的运行器** ⇒
+//! 运行器、逐例打点、`RUNNING`（panic 通道靠它挑出口）、`Status`（通过 = 放行启动）**一样都省
+//! 不掉**。真正省下来的只有 `.tests` 那一段（`link.ld` 5 行 + `test!` 13 行 + [`discover`] 14 行），
+//! 代价却是：构建从 `cargo build` 改道成 `cargo rustc … -- --test`，产物从稳定的
+//! `framework/sqware` 变成 `build/kernel/<hash>/out/sqware`（**跟着环境变**）。
+//!
+//! ⇒ **不换**。这条账记在这里，免得下次再量一遍。
 //!
 //! # 一次运行只抓一个失败（是算术，不是缺陷）
 //!
