@@ -87,6 +87,10 @@ pub const WINDOW_CAP: usize = 16;
 /// 空位是 `None` 而不是 `T::new(0)`：**零号是真格子**（[`PrincipalId::ROOT`] 就是 0），
 /// 拿它当"这一格空着"正是要避开的那件事。
 ///
+/// **与 operator 那个 [`Listing`](crate::operator::frame::Listing) 不合并**：那一边一条 pane
+/// **有顶**，故没有"未完"这一格；本族靠 `more` 分页。两处各留一个的理由（连帧形那一半）
+/// 写在那边。
+///
 /// **取窗落在核心**（[`Coalition::band`] / [`Coalition::bloc`] 扫一遍表就填出来）：服务那一层
 /// 只把它编成帧，不做选择。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

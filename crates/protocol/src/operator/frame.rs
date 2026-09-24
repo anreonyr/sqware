@@ -459,6 +459,13 @@ fn tail(bytes: &[u8]) -> Option<[u8; 8]> {
 // ── 答：一串号 / 一枚名字 / 一枚号 ───────────────────────────
 
 /// 一帧「列」的读数：号最多 [`Operator::PANE_CAP`] 枚。
+///
+/// **照实记（为什么不与 `coalition` 的 [`Window`](crate::coalition::core::Window) 并成一个容器）**：
+/// 两者都在搬"一串号"，差的正是**"未完"那一格**——盟籍**没有上限**（一格盟可以很多人）⇒ 那边
+/// 必须带 `more`，并因此把格子存成 `[Option<T>; CAP]`（泛型 + `const new` 造不出 `T` 的占位，
+/// 而零号是**真格子**，不能拿它当空）；**一条 pane 本来就有顶**（[`Operator::PANE_CAP`]）⇒
+/// "还没完"这件事在这一族**不存在**，带 `more` 就是一格**恒假**的字段。故两处各留一个，
+/// **帧形也跟着**（`LIST_REPLY_LEN` 无"未完"、`SEQ_REPLY_LEN` 有）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Listing {
     ids: [EntryId; Operator::PANE_CAP],
