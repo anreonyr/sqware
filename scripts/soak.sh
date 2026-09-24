@@ -429,7 +429,14 @@ while [ "$i" -le "$rounds" ]; do
     need   "member: band(c0,next)=n0 more=false"
     need   "member: band(out)=err:unknown"
     need   "member: bloc(me)=n2 more=false"
-    need   "irq: ring="
+    # 内核收尾那几行统计：**整行形状**（不逐个松标签）——值是这一轮机器的状态（`late_n` /
+    # `traps` / `tocks` 按机器与负载变），故钉的是"这一行在、那几格都在、那几格都是数"，
+    # 与 `irq: ring=` 那条前缀同一条口径，只是收紧到整行（照实记：这四行原先**只有**
+    # `irq: ring=` 一句，`timer:` / `doom:` / `sched:` 三行根本没进判据）。
+    needE  "^timer: late_n=[0-9]+ late_max_ms=[0-9]+ late_avg_ms=[0-9]+ late_max_tick=[0-9]+ traps=[0-9]+ tocks=[0-9]+ mutes=[0-9]+[[:space:]]*$"
+    needE  "^doom: held=[0-9]+ starved=[0-9]+ blocked=[0-9]+ nudged=[0-9]+[[:space:]]*$"
+    needE  "^sched: kicks=[0-9]+ fallback=[0-9]+[[:space:]]*$"
+    needE  "^irq: ring=[0-9]+ busy=[0-9]+ idle_ring=[0-9]+ idle_busy=[0-9]+[[:space:]]*$"
     need   "echo: ready"
     [ -n "$me1" ] && [ "$me1" != "$me2" ] && [ "$me1" = "$me3" ] \
       || missing="$missing\n  policy: me= 三条的关系（绑 ≠ 领 = 弃）"
