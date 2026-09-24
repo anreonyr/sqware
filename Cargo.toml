@@ -36,6 +36,7 @@ members = [
     # 而 `harness` 依赖 `programs` ⇒ 它不能住在任何一边（成环）。见 `crates/cases/Cargo.toml`。
     "crates/cases",
     "crates/env",
+    "crates/contract",
     "crates/protocol",
     "crates/runtime",
     "crates/sbi",

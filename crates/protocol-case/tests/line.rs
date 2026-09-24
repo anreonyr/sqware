@@ -63,7 +63,7 @@ mod session {
 /// 两样都要（见那份文件的照实记）：`#[macro_use]` 把宏带进**下面那些模块**的作用域
 /// （宏的可见性按正文先后 ⇒ 这一行必须在帧模块之前），`#[macro_export]` 保住"出 crate"那一份。
 #[macro_use]
-#[path = "../../protocol/src/fail_codes.rs"]
+#[path = "../../contract/src/fail_codes.rs"]
 mod fail_codes;
 
 /// 账的正文（就是 `crates/protocol/src/driver/line/core.rs` 那一份，逐字未改）。

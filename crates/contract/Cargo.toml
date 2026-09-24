@@ -1,0 +1,13 @@
+[package]
+name = "contract"
+version.workspace = true
+edition.workspace = true
+
+# 与 `protocol` 同款，理由同：riscv 目标上编不出 libtest（libtest 要 std）。
+[lib]
+test = false
+bench = false
+doctest = false
+
+# 第一批搬进来的三件**一个依赖都不要**（`frame` / `id` / `fail_codes` 只碰 `core`）。
+# 后面几批（`system::core` / `desk` / `session::core` …）会各按自己那张表加 `env`。

@@ -34,17 +34,17 @@ extern crate alloc;
 /// 两样都要：`#[macro_use]` 把宏带进**下面那些模块**的作用域（宏的可见性按正文先后 ⇒ 这一行
 /// 必须在帧模块之前），`#[macro_export]` 保住"出 crate"那一份。见那份文件的照实记。
 #[macro_use]
-#[path = "../../protocol/src/fail_codes.rs"]
+#[path = "../../contract/src/fail_codes.rs"]
 mod fail_codes;
 
-/// 号的词汇（`crates/protocol/src/id.rs`，逐字未改）——三个号空间共用的一条规则与那 8 字节。
+/// 号的词汇（`crates/contract/src/id.rs`，逐字未改）——三个号空间共用的一条规则与那 8 字节。
 /// 两本册子与它们的帧都写着 `use crate::id::Id`，故这一台要给它那个名字。
-#[path = "../../protocol/src/id.rs"]
+#[path = "../../contract/src/id.rs"]
 mod id;
 
-/// 定长一问一答的**帧骨架**（`crates/protocol/src/frame.rs`，逐字未改）——principal 与 coalition
+/// 定长一问一答的**帧骨架**（`crates/contract/src/frame.rs`，逐字未改）——principal 与 coalition
 /// 同形的那一份（长度、编 / 解、答话那几手）。两族的 `frame.rs` 都写着 `use crate::frame::…`。
-#[path = "../../protocol/src/frame.rs"]
+#[path = "../../contract/src/frame.rs"]
 mod frame;
 
 /// 身份那本册子（就是 `crates/protocol/src/system/principal/core.rs` 那一份，逐字未改）。

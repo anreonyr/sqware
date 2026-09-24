@@ -67,7 +67,7 @@ pub const NAME: u8 = 6;
 /// （今天 `LAND`..`NAME` 的 1..6 与 `UNKNOWN`..`DEAD` 的 1..6 已经重号），故两边各按各的序列。
 pub const SEEK: u8 = 7;
 
-/// 成功那一格：**全协议同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 
@@ -595,7 +595,7 @@ pub fn read_id(bytes: &[u8]) -> Result<EntryId, u8> {
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────
 
-fail_codes! {
+crate::fail_codes! {
     /// 失败域 → 答话那一格（`None` = 一个失败都不是）。
     bijective Fail; OK;
     Fail::Unknown => UNKNOWN,

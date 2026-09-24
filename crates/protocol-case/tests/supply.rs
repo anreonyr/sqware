@@ -18,7 +18,7 @@ extern crate alloc;
 
 /// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**（见那份文件的照实记）。
 #[macro_use]
-#[path = "../../protocol/src/fail_codes.rs"]
+#[path = "../../contract/src/fail_codes.rs"]
 mod fail_codes;
 
 /// 失败域（就是 `crates/protocol/src/driver/supply/core.rs` 那一份，逐字未改）。

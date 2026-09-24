@@ -48,7 +48,7 @@ pub const ADOPT: u8 = 6;
 /// 转换 · 弃：两格都空——它只认"发送者是谁"。
 pub const WAIVE: u8 = 7;
 
-/// 成功那一格：**全协议同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 
@@ -80,7 +80,7 @@ pub fn reply_present(present: bool, at: PrincipalId) -> [u8; REPLY_LEN] {
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────
 
-fail_codes! {
+crate::fail_codes! {
     /// 失败域 → 答话那一格（`None` = 一个失败都不是）。
     ///
     /// **本表只装写的那两条与"查无此节点"**：读的答案（没绑 / 它是根）走 `OK` + `flag`，

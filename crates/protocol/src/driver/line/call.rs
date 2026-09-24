@@ -40,7 +40,7 @@ const _: () = assert!(BACK_MARK.get() != Mark::NONE.get());
 /// 线泊位两个方向那一个记号：**帧不报内容，只报"有事"**（形状的下限，见文件头）。
 pub const NOTE: u8 = 1;
 
-/// 成功那一格：**全协议同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 
@@ -50,7 +50,7 @@ pub const TAKEN: u8 = 2;
 pub const DENIED: u8 = 3;
 pub const BAD: u8 = 4;
 
-fail_codes! {
+crate::fail_codes! {
     /// 失败域 → 状态码（**一处编**：客户与路由者看同一张表）。`None`（没失败）⇒ `OK`。
     bijective Fail; OK;
     Fail::Unknown => UNKNOWN,

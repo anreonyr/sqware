@@ -69,12 +69,12 @@ mod ledger;
 
 /// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**（见那份文件的照实记）。
 #[macro_use]
-#[path = "../../protocol/src/fail_codes.rs"]
+#[path = "../../contract/src/fail_codes.rs"]
 mod fail_codes;
 
-/// 号的词汇（`crates/protocol/src/id.rs`，逐字未改）——`core.rs` 与 `frame.rs` 都写着
+/// 号的词汇（`crates/contract/src/id.rs`，逐字未改）——`core.rs` 与 `frame.rs` 都写着
 /// `use crate::id::Id`（本台是**摊平**的模块树 ⇒ `crate::id` 就是这一格）。
-#[path = "../../protocol/src/id.rs"]
+#[path = "../../contract/src/id.rs"]
 mod id;
 
 /// **帧那一半**（`crates/protocol/src/system/operator/frame.rs`，逐字未改）—— 在本台里跑判据。

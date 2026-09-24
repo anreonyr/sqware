@@ -54,7 +54,7 @@ pub const LOOKUP: u8 = 3;
 /// （给它塞两格空位就白要 40 字节，见 [`op_of`] 与 [`unpack_ask`] 的分工）。
 pub const EVICT: u8 = 4;
 
-/// 成功那一格：**全协议同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 
@@ -69,7 +69,7 @@ pub const DENIED: u8 = 3;
 pub const FULL: u8 = 4;
 pub const BAD: u8 = 5;
 
-fail_codes! {
+crate::fail_codes! {
     /// 失败域 → 答话那一格。`None`（没失败）⇒ `OK`。
     ///
     /// 板这一侧原先这张表**住在程序侧**（`programs/.../board/server.rs` 里那个私有 `code`），

@@ -16,7 +16,7 @@
 //!
 //! 本文件住**驱动自己那一片目录**，不在 `crates/protocol`：服务面 = 各驱动自己的具体协议
 //! （那一条裁定见 `protocol::driver`），而它由驱动与客人**同一份源码**各 `use` 一次。
-//! 可共用的只有那两样：**"失败域 ↔ 线上那一格"那张表**（`protocol::fail_codes!`）与
+//! 可共用的只有那两样：**"失败域 ↔ 线上那一格"那张表**（`contract::fail_codes!`）与
 //! **成功那一格**（`protocol::OK`）——各家的失败码仍按自己失败域的顺序排。
 
 use super::core::Fail;
@@ -57,7 +57,7 @@ pub const PAST: u8 = 2;
 /// 两处的差别就是"持有者那一侧会不会说出'我没接住'这句话"。
 pub const BAD: u8 = 3;
 
-protocol::fail_codes! {
+contract::fail_codes! {
     /// 失败域 → 答话那一格（**一处编**：客人那一侧与驱动那一侧看同一张表）。
     ///
     /// `None`（没失败）⇒ `OK`；反向（[`code_to_fail`]）只在双射时生成——本表是双射

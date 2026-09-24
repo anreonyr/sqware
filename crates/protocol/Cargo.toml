@@ -20,6 +20,8 @@ doctest = false
 
 [dependencies]
 env = { path = "../env" }
+# 「约」：不碰内核的那一半（形 / 据 / 账 / 不碰内核的适配）。本 crate 是「口」，见 `contract` 头注。
+contract = { path = "../contract" }
 # 协议的用户态实现要用**机制**（门闩 `HolePie`、回信通道 `Channel`）——机制在 runtime。
 # 这条边就是"机制在运行时、语义在协议"的编译期形态（那条临时的边在这里翻正）。
 runtime = { path = "../runtime" }
