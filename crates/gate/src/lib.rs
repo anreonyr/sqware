@@ -542,6 +542,17 @@ pub enum Mark {
     Literal(&'static str),
     Shape(&'static str),
     Absent(&'static str),
+    /// **这一行必须恰好出现一次**（`s` 是 ERE，与 [`Mark::Shape`] 同一套写法）。
+    ///
+    /// **照实记（为什么要有第四种）**：机器自己那本账里有些结论本来就是"**一线一次**"这种形状
+    /// ——`router` 的 `told` 账（一线报一次）、line claim（一条线认一次）、闹钟（响一次）。
+    /// 而 [`Mark::Literal`] 只判得到"≥1" ⇒ "响两次""报两次"这一类 bug 从它眼皮底下过。
+    /// 收紧成"恰好一次"之后，判的仍然是**那本账的结论**（不是门新发明一条判据）。
+    ///
+    /// 体量也量过（用户裁定"路三"那一刀，12 份验收现场）：`soak` 里改用它那 13 条 **1/1 全成立**；
+    /// 而**不该**用它的是那两族**时序产物**——`uart: rang`（3~8 行）、`router: exhaust line=10`
+    /// （4~8 行），它们的条数没有"对的值"。
+    Once(&'static str),
 }
 
 impl Mark {
@@ -552,19 +563,28 @@ impl Mark {
     fn raw_hits(&self, line: &str) -> bool {
         match self {
             Mark::Literal(s) | Mark::Absent(s) => line.contains(s),
-            Mark::Shape(p) => ere(p).is_match(line),
+            Mark::Shape(p) | Mark::Once(p) => ere(p).is_match(line),
         }
     }
 
-    /// 这一条在这一次跑里**兑现了没有**。`Absent` 是"本不该出现" ⇒ 出现了就是不兑现。
-    pub fn holds(&self, t: &Transcript) -> bool {
-        let any = t
-            .text()
+    /// 这一条在一份读数里命中**几行**。
+    pub fn hits(&self, t: &Transcript) -> usize {
+        t.text()
             .lines()
-            .any(|l| self.raw_hits(l.trim_end_matches('\r')));
+            .filter(|l| self.raw_hits(l.trim_end_matches('\r')))
+            .count()
+    }
+
+    /// 这一条在这一次跑里**兑现了没有**。
+    ///
+    /// `Absent` = "本不该出现" ⇒ 出现了就是不兑现；`Once` = **恰好一次** ⇒ 零次与两次都不兑现；
+    /// 其余两种 = "至少一次"。
+    pub fn holds(&self, t: &Transcript) -> bool {
+        let n = self.hits(t);
         match self {
-            Mark::Absent(_) => !any,
-            _ => any,
+            Mark::Absent(_) => n == 0,
+            Mark::Once(_) => n == 1,
+            _ => n > 0,
         }
     }
 
@@ -573,6 +593,7 @@ impl Mark {
         match self {
             Mark::Literal(s) | Mark::Shape(s) => (*s).to_string(),
             Mark::Absent(s) => format!("! {s}"),
+            Mark::Once(s) => format!("{s} —— **恰好一次**"),
         }
     }
 }
@@ -804,4 +825,38 @@ fn is_noise(prefix: &str) -> bool {
 fn ere(pattern: &str) -> regex::Regex {
     regex::Regex::new(pattern)
         .unwrap_or_else(|e| panic!("形状不是合法 ERE：{pattern} —— {e}"))
+}
+
+/// 新判据那一格的语义得能**单独量**（不必起机、不必造机器）：合成几份读数就够。
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 合成一份读数——`Once` 差的正是"出现几次"这件事，而那件事用不着 QEMU 才量得出来。
+    fn said(text: &str) -> Transcript {
+        Transcript {
+            text: text.to_string(),
+            outcome: Outcome::Exited,
+            code: Some(0),
+        }
+    }
+
+    #[test]
+    fn once_means_exactly_one() {
+        let one = said("router: line=10\nrouter: line=11\n");
+        assert!(Mark::Once("^router: line=10$").holds(&one), "一次该兑现");
+
+        let twice = said("router: line=10\nrouter: line=10\n");
+        assert!(!Mark::Once("^router: line=10$").holds(&twice), "两次不该兑现");
+        assert_eq!(Mark::Once("^router: line=10$").hits(&twice), 2);
+
+        let none = said("router: line=11\n");
+        assert!(!Mark::Once("^router: line=10$").holds(&none), "零次不该兑现");
+
+        // **这就是为什么要第四种**：同一条读数在"两次"那一份上，`Literal` 照旧为真。
+        assert!(Mark::Literal("router: line=10").holds(&twice));
+        // 而 `Absent` 的语义与它正交（一次都不许有）。
+        assert!(!Mark::Absent("router: line=10").holds(&one));
+        assert!(Mark::Absent("router: line=99").holds(&one));
+    }
 }

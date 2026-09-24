@@ -55,6 +55,25 @@ pub fn feed() -> Schedule {
 }
 
 pub const MARKS: &[Mark] = &[
+    // ── 机器自己那本账的结论：**恰好一次**（用户裁定"路三"）─────────────────────
+    //
+    // **照实记（为什么是"恰好一次"，以及为什么只有这 13 条）**：下面标 `Once` 的那些，判的是
+    // **机器自己那本账**——`router` 的 `told`（一线报一次）、line claim（一条线认一次）、闹钟
+    // （响一次）——而程序**已经用那本账决定打不打这一行** ⇒ 门读的是那本账的**结论**，不是新发明。
+    //
+    // 体量（**12 份验收现场**，`target/gate/*.log` 与 `target/pre-fix/*.log`）：这 13 条
+    // **每一份都恰好一次**。而**没有**收紧那几族是对的：
+    //
+    //   · `uart: rang …`（**3~8 行**）与 `router: exhaust line=10`（**4~8 行**）——条数由时序定，
+    //     **没有"对的值"**；
+    //   · `rang 条数 == exhaust 条数` **不成立**（**29/30**：`product-1790248191.log` 里 rang=3
+    //     而 exhaust=4）⇒ 那条关系钉不得；
+    //   · `uart: rang … out=` **不该**钉成"∀ 都是 true"：`out=false` 是**合法状态**（读口没了、
+    //     字节没人收），钉它就是把**场景**（喂键刚好赶在 echo 死之前）当成机器性质。
+    //
+    // **照实记（`router: exhaust line=11` 为什么也在里面）**：验收现场 **8/8 恰好一次**（闹钟响
+    // 一次 ⇒ rtc 排空一次）；那 4 份"0 次"的是**产品镜像**（`sleeper` 不在，没人定闹钟）——
+    // 产品那一门判的正是它的**缺席**（`crates/gate/tests/product.rs` 的 `ABSENT`）。
     Mark::Literal("router: device_count=95 ctx=1"),
     Mark::Literal("uart: ier=rx at=0x10000000"),
     Mark::Literal("system: router sifive,plic-1.0.0 -> 0xc000000"),
@@ -67,21 +86,21 @@ pub const MARKS: &[Mark] = &[
     Mark::Literal("note: passer: gone"),
     Mark::Literal("system: done"),
     Mark::Literal("root: block n=21 region=19 dtb=1 irq=1 bad=0"),
-    Mark::Literal("router: line 10 = serial@10000000"),
+    Mark::Once("^router: line 10 = serial@10000000$"),
     Mark::Literal("uart: rang n="),
-    Mark::Literal("router: line 11 = rtc@101000"),
-    Mark::Literal("rtc: line occupied"),
-    Mark::Literal("rtc: armed at="),
-    Mark::Literal("rtc: asked now="),
-    Mark::Literal("router: line=11"),
-    Mark::Literal("rtc: rang n=1"),
-    Mark::Literal("router: exhaust line=11"),
-    Mark::Literal("router: vacate line=1"),
-    Mark::Literal("router: lane dropped line=1 pies=21"),
-    Mark::Literal("router: line 1 = virtio_mmio@10001000"),
-    Mark::Literal("router: line=10"),
+    Mark::Once("^router: line 11 = rtc@101000$"),
+    Mark::Once("^rtc: line occupied$"),
+    Mark::Once("^rtc: armed at=[0-9]+ ier=[0-9]+ alarm=[0-9]+$"),
+    Mark::Once("^rtc: asked now=[0-9]+$"),
+    Mark::Once("^router: line=11$"),
+    Mark::Once("^rtc: rang n=1 now=[0-9]+$"),
+    Mark::Once("^router: exhaust line=11$"),
+    Mark::Once("^router: vacate line=1$"),
+    Mark::Once("^router: lane dropped line=1 pies=21$"),
+    Mark::Once("^router: line 1 = virtio_mmio@10001000$"),
+    Mark::Once("^router: line=10$"),
     Mark::Literal("router: exhaust line=10"),
-    Mark::Literal("uart: line occupied"),
+    Mark::Once("^uart: line occupied$"),
     Mark::Literal("echo: console=true"),
     Mark::Shape("^coalition: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=coalition[[:space:]]*$"),
     Mark::Shape("^principal: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=principal[[:space:]]*$"),
@@ -225,9 +244,15 @@ pub fn verdict(t: &Transcript) -> Result<(), Vec<Gap>> {
     let mut missing: Vec<Gap> = Vec::new();
     for m in MARKS {
         if !m.holds(t) {
+            // `Once` 那一族失败有两种样子（零次 / 两次），故"看到什么"要分开报——不然"出现了两次"
+            // 那一格会写着"读数里没有这一条"（自己骗自己）。
+            let saw = match m {
+                Mark::Once(_) => format!("这一行出现了 {} 次", m.hits(t)),
+                _ => "读数里没有这一条".to_string(),
+            };
             missing.push(Gap {
                 want: format!("这一条读数还在：{}", m.describe()),
-                saw: "读数里没有这一条".to_string(),
+                saw,
             });
         }
     }
