@@ -73,6 +73,12 @@ pub fn pack_ask(op: u8, a: u64, b: u64) -> [u8; ASK_LEN] {
 }
 
 /// 只读第一格**动作码**（空帧 ⇒ `None`：Server 据此答 [`BAD`]，不猜、不崩）。
+///
+/// **照实记（谁是这一格的读者）**：**宿主靶**（`protocol-case` 的 `roster` 靶验"动作码在第 0
+/// 字节、短一字节也读得出"）。**本族的服务不按它分派**（`answer` 收的是 `unpack_ask` 解出来的
+/// 三格），故生产路径没有用家——与 `board` / `operator` 那两份不同（那两家的服务先读动作码再
+/// 分派，故有真用家）。**四家 frame 同形**，且靶要验的那条性质只有这一句问得出来
+/// （`unpack_ask` 要全长），故留着这一格、把读者写明。
 pub fn op_of(bytes: &[u8]) -> Option<u8> {
     bytes.first().copied()
 }

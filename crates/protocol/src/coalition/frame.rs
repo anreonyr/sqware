@@ -86,6 +86,10 @@ pub fn pack_ask(op: u8, a: u64, b: u64) -> [u8; ASK_LEN] {
 }
 
 /// 只读第一格**动作码**（空帧 ⇒ `None`：Server 据此答 [`BAD`]，不猜、不崩）。
+///
+/// **照实记（谁是这一格的读者）**：**宿主靶**（`protocol-case` 的 `roster` 靶验"动作码在第 0
+/// 字节"）——与 `principal/frame.rs` 那一份同一条（本族的服务也不按它分派）。四家 frame 同形，
+/// 故两族都留着这一格、把读者写明。
 pub fn op_of(bytes: &[u8]) -> Option<u8> {
     bytes.first().copied()
 }

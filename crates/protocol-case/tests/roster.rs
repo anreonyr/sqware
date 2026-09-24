@@ -462,7 +462,8 @@ mod coalition_core {
             alloc::vec![B]
         );
         // **阈值大于一切 ⇒ 空窗，不是错**（"过期游标"在阈值语义下不存在）
-        assert!(b.band(c, Some(PrincipalId::new(4095))).unwrap().is_empty());
+        // （"空"用 `len` 问——`Window` 的读面只留 `len` / `more` / `get` / `iter`，见它的注。）
+        assert_eq!(b.band(c, Some(PrincipalId::new(4095))).unwrap().len(), 0);
         // 零号是真格子：从最小那一头数起，`PrincipalId::ROOT`(0) 那一位也要数得到
         b.enter(PrincipalId::ROOT, c).unwrap();
         assert_eq!(

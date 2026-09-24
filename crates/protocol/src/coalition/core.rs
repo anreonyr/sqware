@@ -150,11 +150,6 @@ impl<T: Id> Window<T> {
         self.n
     }
 
-    /// 一枚都没有。
-    pub fn is_empty(&self) -> bool {
-        self.n == 0
-    }
-
     /// 窗外还有没有（这一趟没答完的那些）。
     pub fn more(&self) -> bool {
         self.more
