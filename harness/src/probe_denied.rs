@@ -71,7 +71,7 @@ const E_TRIP: usize = 1;
 ///
 /// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
 /// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到出口那一手。
-const OK_NOTE: &str = "probe-denied: denied as expected";
+const OK_NOTE: &str = "probe-denied: denied";
 
 #[programs::entry]
 fn main() -> Report<'static> {

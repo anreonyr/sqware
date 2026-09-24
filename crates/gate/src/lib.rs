@@ -33,7 +33,6 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-pub mod mutations;
 pub mod soak;
 
 /// 宿主那一档的 target 名字。门里不写它——"宿主"这两个字的落点就在这一句。
@@ -173,10 +172,7 @@ pub fn build(scenario: Scenario, profile: Profile) -> Result<Image, BuildFailed>
     rebuild(scenario, profile)
 }
 
-/// **绕开缓存**重造那颗，并顺手刷新缓存。
-///
-/// 变异那一门要的就是这个：改一处源码之后，磁盘上那颗必须是新的；而跑完还原之后，缓存里也
-/// 不该留着改过的那一颗——否则同一个进程里后面的门会拿回变异过的 ELF。
+/// **绕开缓存**重造那颗，并顺手刷新缓存（同一进程里要换一颗跑时用它）。
 pub(crate) fn rebuild(scenario: Scenario, profile: Profile) -> Result<Image, BuildFailed> {
     let root = root();
     // **造镜像在编内核之外**（用户裁定"initrd 与 kernel 何干"）：`kernel/build.rs` 现在只剩
@@ -185,6 +181,10 @@ pub(crate) fn rebuild(scenario: Scenario, profile: Profile) -> Result<Image, Bui
     // **门要读数**（读数就是判据）：下面两条 cargo 都显式带 `SQWARE_READINGS=1`
     // （`env::READINGS` 是 `option_env!`，认的就是它——见 `env::readings`）。
     // **用 `.env()` 而不用 `set_var`**：只影响这两条命令及其 rustc，不污染同进程的别的构建。
+    // 门每轮重打 initrd ⇒ "内核比它旧"在这里没有信息量（rustc 的指纹比时间戳准）。
+    // `crates/image` 那两个时间戳的口径见它的 `guard_kernel_sibling`。
+    // SAFETY：本函数在所有测试线程起来之前调用一次（且只写一个键），没有并发读写竞争。
+    unsafe { std::env::set_var("SQWARE_IMAGE_ALLOW_STALE", "1") };
     image::build(scenario.name(), profile.dir()).map_err(BuildFailed::Image)?;
     let out = Command::new("cargo")
         .args(["build", "--manifest-path"])

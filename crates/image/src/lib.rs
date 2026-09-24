@@ -140,10 +140,18 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     Ok(at)
 }
 
-/// 核内 ELF 必须已经在 initrd 旁边，而且**不比 initrd 旧**。
+/// 核内 ELF 必须已经在 initrd 旁边（**同目录的兄弟**：`boot.nu` / `runner.nu` 都按"内核同目录"
+/// 推导镜像）。
 ///
-/// 为什么只报不改：编内核那一半归 `cargo build`（"initrd 与 kernel 何干"那条裁定），
-/// 这一层不越界替它编；但"你指定的那一个档"这句话里**包含**那另一半，故由它来说破。
+/// 两档口径，理由不同：
+///
+/// - **不在 ⇒ 错**：镜像落了却没有内核，谁都跑不起来——这一档没有例外。
+/// - **只是比 initrd 旧 ⇒ 报出来，不拦**：`mtime` 差只说明"内核不是这一秒编的"，不说明它错。
+///   拿时间戳替编译器判断，会拦住两件**正确**的事：门每轮重打 initrd（内核当然旧），以及
+///   增量重构（rustc 的指纹比时间戳准）。要拦的是"**你以为编了、其实没有**"那种静默的错，
+///   故这里把两个时间摊开给你看，由你决定。
+/// - 例外只有一条：`SQWARE_IMAGE_ALLOW_STALE=1`（门自己带，见 `crates/gate/src/lib.rs`）
+///   ⇒ 连那句提醒也不打（门不在乎）。
 fn guard_kernel_sibling(initrd: &std::path::Path, profile: &str) -> Result<(), String> {
     let elf = initrd.with_file_name("sqware");
     let build = if profile == "debug" {
@@ -157,17 +165,18 @@ fn guard_kernel_sibling(initrd: &std::path::Path, profile: &str) -> Result<(), S
             elf.display()
         )
     })?;
-    let initrd_at = std::fs::metadata(initrd)
-        .and_then(|m| m.modified())
-        .map_err(|e| format!("读 initrd 时间戳失败：{e}"))?;
-    let elf_at = meta
-        .modified()
-        .map_err(|e| format!("读内核时间戳失败：{e}"))?;
-    if elf_at < initrd_at {
-        return Err(format!(
-            "内核 ELF 比 initrd 旧（档 {profile}）：{}\n  重新编内核：{build}",
+    let initrd_at = std::fs::metadata(initrd).and_then(|m| m.modified()).ok();
+    let elf_at = meta.modified().ok();
+    if std::env::var("SQWARE_IMAGE_ALLOW_STALE").is_ok() {
+        return Ok(());
+    }
+    if let (Some(e), Some(i)) = (elf_at, initrd_at)
+        && e < i
+    {
+        eprintln!(
+            "image: 注意——内核 ELF 比 initrd 旧（档 {profile}）：{}\n  （只是提醒，不拦；要重编：{build}）",
             elf.display()
-        ));
+        );
     }
     Ok(())
 }

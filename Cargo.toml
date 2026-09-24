@@ -17,7 +17,7 @@ exclude = [
     "crates/alloc-probe",
     "crates/protocol-case",
     # `crates/gate` 是**门**那一台（用户裁定"完全消除测试脚本"）：台（起机 / 跑宿主命令）+
-    # 判据 + 变异。它进不来的理由与上面两台同源（要 std + host ABI），跑法见
+    # 判据（含起 QEMU 的那几门）。它进不来的理由与上面两台同源（要 std + host ABI），跑法见
     # `.cargo/config.toml` 的 `[alias] gate`。
     "crates/gate",
     # `crates/image` 是**造镜像那一步**（用户裁定"initrd 与 kernel 何干"）：与上面两台同源，
