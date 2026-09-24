@@ -138,6 +138,7 @@ const E_TRIP: usize = 1;
 
 const OK_NOTE: &str = "probe-rule: the rules held";
 
+#[programs::entry]
 fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("probe-rule: no sire") };
     let Ok(me) = utask::self_id() else { return bail("probe-rule: no self id") };
@@ -472,5 +473,3 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_probe_rule.rs"));

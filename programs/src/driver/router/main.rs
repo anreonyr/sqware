@@ -145,6 +145,7 @@ const QUAY_MS: usize = 1000;
 
 /// 本域那一台：**返回类型就是它的死法**——编号与那句话都在 [`fail::Fail`] 里
 /// （装配那三步 `1`–`3` 由 [`assemble`] 那一族共用，本域自己那几格从 4 起）。
+#[programs::entry]
 fn main() -> Result<(), fail::Fail> {
     // 客侧装配：会话 + 收配给（**编号原样带出去**——`assemble` 报的是"死在装配的哪一步"，
     // 折成同一个号就等于把那几个编号变成没人读得到的死码）。
@@ -555,5 +556,3 @@ fn say(msg: &str) {
 }
 
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_driver_router_main.rs"));

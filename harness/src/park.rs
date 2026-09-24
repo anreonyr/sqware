@@ -21,11 +21,10 @@ use runtime::env::room;
 /// 每轮睡多久（毫秒）——就是被测的那个 `millis`。
 const MS: u64 = 1;
 
+#[programs::entry]
 fn main() -> ! {
     loop {
         let _ = room::sleep(Duration::from_millis(MS));
     }
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_park.rs"));

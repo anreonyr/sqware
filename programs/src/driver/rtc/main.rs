@@ -108,6 +108,7 @@ const MS: usize = 1000;
 
 /// 本域那一台：**返回类型就是它的死法**——编号与那句话都在 [`fail::Fail`] 里
 /// （装配那三步 `1`–`3` 由 [`assemble`] 那一族共用，本域自己那几格从 4 起）。
+#[programs::entry]
 fn main() -> Result<(), fail::Fail> {
     // 1. 领配给：那一页寄存器（`ONLY`：同一时刻只该有一个持有者）。
     let mut slots = [None; needs::WANTS.len()];
@@ -343,5 +344,3 @@ fn say(msg: &str) {
 }
 
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_driver_rtc_main.rs"));

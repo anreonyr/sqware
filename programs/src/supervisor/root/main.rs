@@ -99,6 +99,7 @@ const E_ORCH: service::Died = 6;
 /// 引导那一族共用的号（"启动参数读不出来"那一格）。
 const E_BOOT: service::Died = 1;
 
+#[programs::entry]
 fn main() -> Result<programs::Report<'static>, Die> {
     // 1. 启动参数 → 两块账（清单 + 配对块）。读不出就没得装配。
     let Some(boot) = boot::Root::take() else {
@@ -181,5 +182,3 @@ fn mint(
     }
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_supervisor_root_main.rs"));

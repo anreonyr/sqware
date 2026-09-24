@@ -58,6 +58,7 @@ const E_TRIP: usize = 1;
 /// 通道、域当场死），再也走不到出口那一手；而 `E_TRIP` 留给 `bail` 那几手（起手没走通）。
 const OK_NOTE: &str = "probe-lease: landed, leaving";
 
+#[programs::entry]
 fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("probe-lease: no sire") };
     let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-lease: no tree link") };
@@ -112,5 +113,3 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_probe_lease.rs"));

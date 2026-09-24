@@ -102,6 +102,7 @@ const NON_UTF8: &str = "<non-utf8>";
 
 /// 本 bin 的 `main`：**返回类型就是它的退出账**——本域只有一种失败，故直接用 `Reason`
 /// （不立 `Fail` 枚举：一格不值得一个类型）。出口那一手在 [`programs::entry`]，全仓一处。
+#[programs::entry]
 fn main() -> Result<(), env::Reason> {
     let _ = debug::put(READY);
     // 上板：**注册在回显之前**——板要能看见本域（见头注）。挂不上照旧回显。
@@ -176,8 +177,6 @@ fn main() -> Result<(), env::Reason> {
     Ok(())
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_user_echo.rs"));
 
 /// 找控制台：`FIND /device/uart`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///

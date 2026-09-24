@@ -25,9 +25,8 @@ use programs::supervisor::operator::server as operator;
 
 /// 本 bin 的 `main`：服务那一侧跑完/起不来都把死法带回来——出口那一手由构建脚本生成
 /// （见 `programs/build.rs`），本文件一个字都不碰它。
+#[programs::entry]
 fn main() -> Result<(), programs::supervisor::operator::fail::Fail> {
     operator::serve()
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_supervisor_operator_main.rs"));

@@ -295,6 +295,7 @@ struct Tally {
     lost: usize,
 }
 
+#[programs::entry]
 fn main() -> Reason {
     let Some(boot) = boot::Root::take() else { return die("rig: boot args unreadable") };
     let Some((elf, kind)) = find(&boot, VICTIM) else { return die("rig: victim not in manifest") };
@@ -517,5 +518,3 @@ fn die(msg: &str) -> Reason {
     1
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_rig.rs"));

@@ -53,6 +53,7 @@ const PERIOD_MS: u64 = 5;
 const N: usize = 200;
 
 /// `()` = "没有失败要报"（`Exit for ()` ⇒ `EXIT_OK`）——本台子跑完就是结论。
+#[programs::entry]
 fn main() {
     let period_ns = PERIOD_MS * 1_000_000;
 
@@ -123,5 +124,3 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_beat.rs"));

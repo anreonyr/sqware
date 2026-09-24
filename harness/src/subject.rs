@@ -64,6 +64,7 @@ const E_NO_SERVICE: usize = 1;
 /// 树外那个号（伪造的线上值）。
 const OUTSIDE: usize = 4095;
 
+#[programs::entry]
 fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("subject: no sire") };
     let Ok(me) = utask::self_id() else { return bail("subject: no self id") };
@@ -268,5 +269,3 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_subject.rs"));

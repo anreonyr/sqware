@@ -76,6 +76,7 @@ const ROUNDS: usize = 3;
 /// 就绪/收尾的等待上限（毫秒，**上限族**）。
 const MS: usize = 1_000;
 
+#[programs::entry]
 fn main() -> Reason {
     let Some(boot) = boot::Root::take() else { return die("again: boot args unreadable") };
     let Some((elf, kind)) = find(&boot, VICTIM) else { return die("again: victim not in manifest") };
@@ -246,5 +247,3 @@ fn die(msg: &str) -> Reason {
     1
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_again.rs"));

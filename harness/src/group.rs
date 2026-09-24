@@ -97,6 +97,7 @@ const MS: usize = 2_000;
 /// 投信前的稳压（毫秒；理由见头注的照实记）。
 const SETTLE: u64 = 200;
 
+#[programs::entry]
 fn main() -> Reason {
     let Some(boot) = boot::Root::take() else { return die("group: boot args unreadable") };
     let Some((elf, kind)) = find(&boot, WAITER) else { return die("group: waiter not in manifest") };
@@ -239,5 +240,3 @@ fn die(msg: &str) -> Reason {
     1
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_group.rs"));

@@ -41,6 +41,8 @@ bench = false
 doctest = false
 
 [dependencies]
+# `#[entry]`：同上（21 台测具与产品那 9 条共用这一手）。
+entry-macro = { path = "../crates/entry-macro" }
 # 程序侧用例那一台（搬出去之后仍从这里转出去，见 `src/lib.rs`）。
 cases = { path = "../crates/cases" }
 env = { path = "../crates/env" }

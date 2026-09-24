@@ -133,6 +133,7 @@ const GAP_US: usize = 200;
 const HOG_NAMES: [&str; HOGS] = ["hog0", "hog1"];
 const PARKER_NAMES: [&str; PARKERS] = ["park0"];
 
+#[programs::entry]
 fn main() -> Reason {
     let Some(boot) = boot::Root::take() else { return die("load: boot args unreadable") };
     let Some((hog, hog_kind)) = find(&boot, HOG_ELF) else { return die("load: busy not in manifest") };
@@ -226,5 +227,3 @@ fn die(msg: &str) -> Reason {
     1
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_load.rs"));

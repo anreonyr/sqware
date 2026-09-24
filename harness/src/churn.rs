@@ -33,6 +33,7 @@ use core::time::Duration;
 
 use runtime::env::room;
 
+#[programs::entry]
 fn main() -> ! {
     // 自校准：本机"在台上"那一段 = 多少轮空转（与台主扫时序用的是同一把尺）。
     let (iters_per_ms, _ms_per_tick) = tick::calibrate();
@@ -43,5 +44,3 @@ fn main() -> ! {
     }
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_churn.rs"));

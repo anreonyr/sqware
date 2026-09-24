@@ -22,11 +22,10 @@ use harness::tick;
 /// 一次自旋的块大小：够大以摊掉循环开销，够小以不至于让"被抢占点"太粗。
 const CHUNK: usize = 65_536;
 
+#[programs::entry]
 fn main() -> ! {
     loop {
         tick::spin(CHUNK);
     }
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_busy.rs"));

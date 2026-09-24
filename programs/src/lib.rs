@@ -66,4 +66,7 @@ pub mod user;
 // `main` 返回类型也写 `programs::Report` / `programs::Exit`，故这几个名字得在 crate 根上
 // 够得着。
 pub use entry::{Exit, Report};
+
+/// 入口那一手（过程宏）：bin 里写 `#[entry] fn main() …`，展开与符号名见那个 crate。
+pub use entry_macro::entry;
 pub use env::Reason;

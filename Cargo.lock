@@ -28,6 +28,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
+name = "entry-macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "env"
 version = "0.1.0"
 dependencies = [
@@ -105,6 +114,7 @@ name = "harness"
 version = "0.1.0"
 dependencies = [
  "cases",
+ "entry-macro",
  "env",
  "erra",
  "programs",
@@ -181,6 +191,7 @@ name = "programs"
 version = "0.1.0"
 dependencies = [
  "cases",
+ "entry-macro",
  "env",
  "erra",
  "fdt",

@@ -92,6 +92,7 @@ const DRAIN_MAX: usize = 64;
 
 /// 本域那一台：**返回类型就是它的死法**——`Err(Fail::…)` 一路 `?` 出来，
 /// `Ok(())` 是"跑完了"（常驻域走不到那一格）。
+#[programs::entry]
 fn main() -> Result<(), fail::Fail> {
     // 1. 客侧装配：父域按本域那张单子把 `ns16550a` 那一台授进来（坐标由它读树定下来）。
     let mut slots = [None; needs::WANTS.len()];
@@ -158,8 +159,6 @@ fn main() -> Result<(), fail::Fail> {
     }
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_driver_uart_main.rs"));
 
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（门牌 = 那枚读行的孔）。
 ///

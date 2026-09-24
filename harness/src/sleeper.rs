@@ -79,6 +79,7 @@ const EXIT_OK: usize = 0;
 /// 没搭上（找不到那面服务 / 有一条往返没走成）：报这一格退场。
 const E_NO_SERVICE: usize = 1;
 
+#[programs::entry]
 fn main() -> Report<'static> {
     // 上板：**注册在前面**——板要能看见本域（挂不上照样往下走，只是那条信号缺席）。
     let reg = register();
@@ -205,5 +206,3 @@ fn register() -> u8 {
     board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(bcall::BAD)
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `harness/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_sleeper.rs"));

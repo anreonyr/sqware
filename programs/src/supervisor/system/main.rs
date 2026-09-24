@@ -123,6 +123,7 @@ impl programs::Exit for Fail {
     }
 }
 
+#[programs::entry]
 fn main() -> Result<programs::Report<'static>, Fail> {
     // 1. 与引导域开会话：本域那一枚交给"生我者"，并认下它那一枚（一问一答两个方向）。
     let Some(boot_pier) = talk_to_root() else {
@@ -246,5 +247,3 @@ fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     supply::client::pick(records, key)
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
-include!(concat!(env!("OUT_DIR"), "/entry_supervisor_system_main.rs"));
