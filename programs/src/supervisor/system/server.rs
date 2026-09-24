@@ -247,6 +247,16 @@ pub fn supervise(
     tole: &Tole,
     plan: &[Program],
 ) {
+    // 死亡道那一格：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
+    // 不按"这条路上平常走几个字节"备）。一枚更长的推落进道里时，1 字节的读法取不出也丢不掉，
+    // 那一位的死就永远记不上账。备不下 ⇒ 报一句就交给退场时的级联（那条路本来就是可靠收场
+    // 路径，见本函数尾注），不在这里赌。
+    let mut lane_buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    if lane_buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
+        let _ = runtime::env::debug::put("system: no room");
+        return;
+    }
+    lane_buf.resize(runtime::PAGE_SIZE, 0);
     let mut stopping = false;
     loop {
         // 等任一条道响。**`Tole` 的既定用法**（板那一轮同款）：**挂起过的那一侧返回的是
@@ -262,8 +272,7 @@ pub fn supervise(
             let Some(lane) = *lane else {
                 continue;
             };
-            let mut one = [0u8; 1];
-            if HolePie::from_token(lane).pull_timeout(&mut one, 0).is_err() {
+            if HolePie::from_token(lane).pull_timeout(&mut lane_buf, 0).is_err() {
                 continue; // 这一条没货
             }
             let Some(p) = plan.get(i) else {

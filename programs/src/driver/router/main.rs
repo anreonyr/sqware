@@ -237,7 +237,7 @@ fn main() -> Result<(), fail::Fail> {
         sweep(&mut lines, &plic, &tole);
         // 排空：客人说一句"这一条我排空了" ⇒ 那一格回闲 + **把线放回去**（事件，不是节拍）。
         // **先取排空，再登记**：登记会把新的一条线接上，紧接着到来的那一枚中断才不漏。
-        drain_exhaust(&mut lines, &plic);
+        drain_exhaust(&mut lines, &plic, &mut buf);
         // 门上：非阻塞地把槽里的都取走（登记）。缓冲是**一页**（载体的界，见 `Push` 的前置
         // 条件）——于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
         while let Ok((n, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
@@ -290,16 +290,19 @@ fn main() -> Result<(), fail::Fail> {
 /// 见 [`lcall`]），故这里无需对账，取到就是那一条。
 ///
 /// 非阻塞取干净再回去等：`pull(.., 0)` 期限内没有就是没有，**不是错误**。
-fn drain_exhaust(lines: &mut Lines, plic: &Plic) {
+///
+/// `buf` = **门外那一页**（调用方那只，见 `main` 的常驻循环）：道上的记号虽然只有 1 字节，
+/// 缓冲仍按**载体**的界备——一枚更长的推落进道里时，1 字节的读法取不出也丢不掉，这一条线
+/// 就永远回不了闲（`exhaust` 那一句再也不会跑，线也不会重开）。
+fn drain_exhaust(lines: &mut Lines, plic: &Plic, buf: &mut [u8]) {
     // **取"忙"的那些**（不是"有主"的那些）：只有"投出去过、还没回闲"的那一格才欠一句
     // 排空；这一句也是那个 `忙` 的唯一读者——账上那一格因此不是写给别人看的。
     let busy: alloc::vec::Vec<u32> = lines.busy().collect();
-    let mut one = [0u8; 1];
     for line in busy {
         let Some(lane) = lines.lane(line) else {
             continue;
         };
-        while lane.pull(&mut one, 0).is_ok() {
+        while lane.pull(buf, 0).is_ok() {
             let _ = lines.exhaust(line);
             plic.enable(line, LINE_PRIORITY);
             say(&alloc::format!("router: exhaust line={line}"));
