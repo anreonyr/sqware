@@ -133,50 +133,5 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         blob.len(),
         bins.len()
     );
-    // **档只有一处说话，那就得有人替它兜底**：这一景要的核内 ELF 与 initrd 是**同目录的
-    // 兄弟**（`boot.nu` / `runner.nu` 都按"内核同目录"推导镜像）。少了它、或它比 initrd 旧，
-    // 症状是"起得来、但跑的不是刚打的那一颗"——**不报错的错**。故这里当场说破。
-    guard_kernel_sibling(&at, profile)?;
     Ok(at)
-}
-
-/// 核内 ELF 必须已经在 initrd 旁边（**同目录的兄弟**：`boot.nu` / `runner.nu` 都按"内核同目录"
-/// 推导镜像）。
-///
-/// 两档口径，理由不同：
-///
-/// - **不在 ⇒ 错**：镜像落了却没有内核，谁都跑不起来——这一档没有例外。
-/// - **只是比 initrd 旧 ⇒ 报出来，不拦**：`mtime` 差只说明"内核不是这一秒编的"，不说明它错。
-///   拿时间戳替编译器判断，会拦住两件**正确**的事：门每轮重打 initrd（内核当然旧），以及
-///   增量重构（rustc 的指纹比时间戳准）。要拦的是"**你以为编了、其实没有**"那种静默的错，
-///   故这里把两个时间摊开给你看，由你决定。
-/// - 例外只有一条：`SQWARE_IMAGE_ALLOW_STALE=1`（门自己带，见 `crates/gate/src/lib.rs`）
-///   ⇒ 连那句提醒也不打（门不在乎）。
-fn guard_kernel_sibling(initrd: &std::path::Path, profile: &str) -> Result<(), String> {
-    let elf = initrd.with_file_name("sqware");
-    let build = if profile == "debug" {
-        "cargo build".to_string()
-    } else {
-        format!("cargo build --profile {profile}")
-    };
-    let meta = std::fs::metadata(&elf).map_err(|_| {
-        format!(
-            "initrd 落好了，但同目录没有内核 ELF：{}\n  先编内核：{build}",
-            elf.display()
-        )
-    })?;
-    let initrd_at = std::fs::metadata(initrd).and_then(|m| m.modified()).ok();
-    let elf_at = meta.modified().ok();
-    if std::env::var("SQWARE_IMAGE_ALLOW_STALE").is_ok() {
-        return Ok(());
-    }
-    if let (Some(e), Some(i)) = (elf_at, initrd_at)
-        && e < i
-    {
-        eprintln!(
-            "image: 注意——内核 ELF 比 initrd 旧（档 {profile}）：{}\n  （只是提醒，不拦；要重编：{build}）",
-            elf.display()
-        );
-    }
-    Ok(())
 }
