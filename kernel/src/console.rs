@@ -200,11 +200,6 @@ impl Write for Line {
 /// "两颗核同时进 M 模式写同一个 UART"——那落在 SBI 那一侧，**今天没有证据**（那 7 例与这一轮补量
 /// 的 1 例，无一例落在段中间）。若日后仍见胶行，那就该在这一层加锁，而**不是**去放宽门的形状。
 pub fn _write(args: fmt::Arguments) {
-    // 静默镜像（产品那一颗）：**一个字节都不往控制台写**——`putln!` / `println!` / 内核
-    // 收尾那几行全都过这里，故这一格就是那唯一一道闸（判据见 `env::readings`）。
-    if !env::READINGS {
-        return;
-    }
     let mut line = Line::new();
     let _ = fmt::write(&mut line, args);
     line.emit();

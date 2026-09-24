@@ -13,11 +13,6 @@ use env::{DBCN_MAX, DebugCall, DebugCallRet, EnvResult};
 /// 一件长东西只印出前 `DBCN_MAX` 字节，返回值就是那个数。**这不是错误**——与
 /// [`get`] 的"多出即拒"不同形（两处的实测读法见 `env::fid::DebugCall`）。
 pub fn put(s: &str) -> EnvResult<usize> {
-    // 静默镜像：连那次 ecall 都不发（内核对 DBCN 那一支也会丢掉，但白跑一趟不如不跑）。
-    // 判据见 `env::readings`；`Ok(0)` 与"内核截断到 0 字节"同形，调用方本来就只看成功与否。
-    if !env::READINGS {
-        return Ok(0);
-    }
     let bytes = s.as_bytes();
     let call = DebugCall::Put {
         buf: env::VirtAddr::new(bytes.as_ptr() as usize),

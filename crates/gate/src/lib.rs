@@ -178,15 +178,11 @@ pub(crate) fn rebuild(scenario: Scenario, profile: Profile) -> Result<Image, Bui
     // **造镜像在编内核之外**（用户裁定"initrd 与 kernel 何干"）：`kernel/build.rs` 现在只剩
     // `link-arg`——编内核不再顺带编程序、打 initrd、回喂那两个数。于是**内核那一份与场景无关**
     // （故下面不再传 `SQWARE_ROOT`），而镜像随场景而变：两件事在这里各做各的。
-    // **门要读数**（读数就是判据）：下面两条 cargo 都显式带 `SQWARE_READINGS=1`
-    // （`env::READINGS` 是 `option_env!`，认的就是它——见 `env::readings`）。
-    // **用 `.env()` 而不用 `set_var`**：只影响这两条命令及其 rustc，不污染同进程的别的构建。
     image::build(scenario.name(), profile.dir()).map_err(BuildFailed::Image)?;
     let out = Command::new("cargo")
         .args(["build", "--manifest-path"])
         .arg(root.join("Cargo.toml"))
         .args(profile.args())
-        .env("SQWARE_READINGS", "1")
         .current_dir(&root)
         .stdin(Stdio::null())
         .output()

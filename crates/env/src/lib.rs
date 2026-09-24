@@ -19,12 +19,10 @@ pub mod ecall;
 pub mod exit;
 pub mod fid;
 pub mod permission;
-pub mod readings;
 pub mod wire;
 
 pub use ecall::{EnvError, EnvResult, Fail, make_err};
 pub use exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
-pub use readings::READINGS;
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, EnvCall, HoleDir, MailCall,
     MailCallRet, MemoryCall, MemoryCallRet, NOTE_MAX, PieCall, PieCallRet, ProgramKind, RoomCall,
