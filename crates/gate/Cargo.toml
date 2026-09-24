@@ -33,3 +33,7 @@ publish = false
 # ⇒ 默认走 `~/.cargo`，离线解得开。**换台机器若把 `CARGO_HOME` 指到 `.cargo-home`，这一格会
 # 当场解不开**——那是环境事实，不是本 crate 的事。
 regex = "1"
+# 变异那一门的账（`target/teeth-ledger.json`）：格式一个字没换，故旧账直接接着用。
+serde_json = "1"
+# 账键里的锚点指纹（`sha1(锚点)[:12]`）——与旧量具同一个算法，键因此逐字相同。
+sha1 = "0.10"

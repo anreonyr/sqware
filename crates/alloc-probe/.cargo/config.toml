@@ -10,3 +10,46 @@ CFLAGS = "-std=gnu17 -Wno-old-style-definition -Wno-implicit-function-declaratio
 # "直接用 crate"（不自造封装层），故这里用"单线程跑用例"这条构造性保证替代加锁——
 # 它是 crate 自己的使用前提，写在配置里比写在注释里可靠。
 RUST_TEST_THREADS = "1"
+
+# ── 路（从 `run.sh` 搬来的；判据与开关一个字没改）──────────────────────────────
+#
+# **照实记**：那个 89 行的 shell 只做三件事——（1）把模式词换成一组 cargo 开关；（2）把模式词
+# 从自由参数里**摘掉**（`cargo test smartalloc` 会把 `smartalloc` 当成**测试名过滤器**，跑出
+# "0 passed / N filtered out" 的假绿）；（3）设几个环境变量。第（1）件就是别名本身；第（2）件
+# 在别名里**自动没了**（模式是子命令，不再进参数）；第（3）件分两半，见下。
+#
+#   cargo smartalloc     # 默认：孤儿缓冲转储（总量面）
+#   cargo mockalloc      # 第一层·甲：配对判词（逐笔账）
+#   cargo dhat           # 第一层·乙：宿主堆用量（气压计）
+#   cargo mt             # 并发层：守恒 / 模式写读 / per-hart 池 / 跨 hart 回路 + dropcount
+#   cargo tsan           # 数据竞争：ThreadSanitizer（**要 RUSTFLAGS**）
+#   cargo miri           # UB：Miri（**要 MIRIFLAGS**；并发不跑，规模分级）
+#   cargo bench          # 并发压力/吞吐量：Larson / mstress × 内核适配器
+#   cargo plain          # 不接管：只看用例过不过（--no-default-features）
+#   cargo lsan           # LeakSanitizer（**要 RUSTFLAGS**；必须不接管）
+#   cargo orphan         # 演示：普通 Rust 分配漏掉 ⇒ 收尾转储点名
+#
+# **照实记（`CARGO_HOME` 那一行不用了）**：旧 `run.sh` 把 `CARGO_HOME` 指到仓内的 `.cargo-home`，
+# 理由是"沙箱里 `~/.cargo/registry` 只读，拉依赖会失败"。实测今天**不必**：依赖都在默认 registry
+# 里缓存着，`cargo test --target x86_64-unknown-linux-gnu --no-run` 直接编过。**换台把
+# `CARGO_HOME` 指到仓内那份的机器，这一格会当场解不开**——那是环境事实，不是本文件的事。
+#
+# **照实记（三条 sanitizer 路要一个环境变量，别名与 `[env]` 都表达不了）**：`RUSTFLAGS` /
+# `MIRIFLAGS` 是 **cargo 自己**读的（不是给子进程的），而 `[env]` 是按构建生效、没有"只对这一条
+# 别名生效"这回事——塞进去会把别的路一起改坏。故这三条是一行命令，不是脚本文件：
+#
+#   RUSTFLAGS="-Zsanitizer=thread" cargo tsan     # `-Zbuild-std` 已经在别名里
+#   RUSTFLAGS="-Zsanitizer=leak"   cargo lsan
+#   MIRIFLAGS="-Zmiri-permissive-provenance" cargo miri
+
+[alias]
+smartalloc = "test --target x86_64-unknown-linux-gnu"
+mockalloc = "test --target x86_64-unknown-linux-gnu --no-default-features --features mockalloc"
+dhat = "test --target x86_64-unknown-linux-gnu --no-default-features --features dhat"
+mt = "test --target x86_64-unknown-linux-gnu --no-default-features --test mt"
+tsan = "test -Zbuild-std --target x86_64-unknown-linux-gnu --no-default-features --test mt"
+miri = "miri test --target x86_64-unknown-linux-gnu --no-default-features"
+bench = "run --release --target x86_64-unknown-linux-gnu --no-default-features --example throughput"
+plain = "test --target x86_64-unknown-linux-gnu --no-default-features"
+lsan = "test --target x86_64-unknown-linux-gnu --no-default-features"
+orphan = "run --target x86_64-unknown-linux-gnu --example orphan"

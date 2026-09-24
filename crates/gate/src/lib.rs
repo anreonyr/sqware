@@ -33,11 +33,14 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+pub mod mutations;
+pub mod soak;
+
 /// 宿主那一档的 target 名字。门里不写它——"宿主"这两个字的落点就在这一句。
 pub const HOST: &str = "x86_64-unknown-linux-gnu";
 
 /// 仓根（本 crate 在 `<根>/crates/gate`）。
-fn root() -> PathBuf {
+pub(crate) fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -125,15 +128,23 @@ impl Image {
     }
 }
 
+static BUILT: Mutex<Vec<((Scenario, Profile), Image)>> = Mutex::new(Vec::new());
+
 /// 造那颗要跑的。同一 `(Scenario, Profile)` 在一次测试进程里**只真构一次**。
 pub fn build(scenario: Scenario, profile: Profile) -> Result<Image, BuildFailed> {
-    static DONE: Mutex<Vec<((Scenario, Profile), Image)>> = Mutex::new(Vec::new());
-
-    let mut done = DONE.lock().unwrap();
+    let done = BUILT.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((_, image)) = done.iter().find(|(k, _)| *k == (scenario, profile)) {
         return Ok(image.clone());
     }
+    drop(done);
+    rebuild(scenario, profile)
+}
 
+/// **绕开缓存**重造那颗，并顺手刷新缓存。
+///
+/// 变异那一门要的就是这个：改一处源码之后，磁盘上那颗必须是新的；而跑完还原之后，缓存里也
+/// 不该留着改过的那一颗——否则同一个进程里后面的门会拿回变异过的 ELF。
+pub(crate) fn rebuild(scenario: Scenario, profile: Profile) -> Result<Image, BuildFailed> {
     let root = root();
     let out = Command::new("cargo")
         .args(["build", "--manifest-path"])
@@ -163,6 +174,8 @@ pub fn build(scenario: Scenario, profile: Profile) -> Result<Image, BuildFailed>
     }
 
     let image = Image { elf };
+    let mut done = BUILT.lock().unwrap_or_else(|e| e.into_inner());
+    done.retain(|(k, _)| *k != (scenario, profile));
     done.push(((scenario, profile), image.clone()));
     Ok(image)
 }
