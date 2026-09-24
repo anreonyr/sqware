@@ -87,8 +87,8 @@ fn main() -> Report<'static> {
     let Ok(me) = Name::new(ME) else { return bail("probe-denied: bad name") };
 
     // 二·二、它要落进 `/sys`（**已经在**：principal / coalition 起的头）——先分目录、
-    // 再译成号。**这两手不过门禁**（`part` / `seek` 都不在闸口里，见 `docs/operator-gate.md`
-    // 的裁决那一格），故本域虽然没有身份，这两手照旧答得出号。
+    // 再译成号。**这两手不过门禁**（`part` / `seek` 都不在闸口里），故本域虽然没有身份，
+    // 这两手照旧答得出号。
     let Some(at) = tree_dir(hedge, &tree, dir) else { return bail("probe-denied: no /sys") };
 
     // 三、落牌——**这一手该被拒**。

@@ -469,7 +469,7 @@ fn the_verdict_maps_onto_the_wire_cells() {
 fn no_face_at_all_is_blind_and_never_allow() {
     // **手里还没门牌**：判不了任何人。这一格**不是放行**——松成放行就等于"协调服务没配上
     // ⇒ 门禁不存在"。**照实记**：生产路径到不了这一格——装配期由 `may` 在更早处短路
-    // （装配期 principal 挂自己门牌时既没门牌又没身份，见 `docs/operator-gate.md` §1.3），
+    // （装配期 principal 挂自己门牌时既没门牌又没身份，见 `operator/server.rs` 的 `may`），
     // 故 [`Blind`] 的读者是**这一台**：它钉的是"这一格在码这一层永远不是 0"。
     assert_eq!(verdict(&Blind, ME, Rule::Public), Code::Blind);
     assert!(!verdict(&Blind, ME, Rule::Public).passed());

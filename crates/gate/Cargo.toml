@@ -22,8 +22,6 @@ publish = false
 #
 # 裁定留下的两件：`scripts/boot.nu`（QEMU 起法的**唯一出处**）与 `scripts/runner.nu`
 # （`cargo run` 那条交互路）——这里只 spawn `boot.nu`，起法一个字都不重写。
-#
-# 设计四关（功能模型 / 结构 / 原语 / 签名）的落点与照实记见 `docs/gate-crate.md`。
 
 [dependencies]
 # 整行形状（原先 `soak.sh` 里那一族 `needE`）要一个 ERE。

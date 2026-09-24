@@ -47,7 +47,7 @@
 //! "`[case] run X` 之后没有 `ok X`、也没有末行"，据此点名**哪一例**。
 //!
 //! **一次只报一个失败**（`panic = abort`，没有 unwind，域当场死）——这是把判据搬进 SUT 的
-//! 代价（今天 soak 是"一轮把所有缺的读数一次报全"），写在 `docs/harness-gate.md` 的取舍那一节。
+//! 代价（今天 soak 是"一轮把所有缺的读数一次报全"，两边的取舍在这一格上）。
 
 #![no_std]
 
@@ -71,7 +71,7 @@ impl Suite {
     /// **照实记（为什么不再是"清单名"）**：常驻那四台（`echo` / `uart` / `rtc` / `router`）一台上
     /// 有**几个互不相干的时刻**，读数在各自那个 helper 里算完 ⇒ **一沓一个 helper、名字取趟名**
     /// （`uart-tree` / `echo-serial` / …）。一次性那几台仍是一台一沓，名字就是清单名。
-    /// 事件循环里那一段（`uart: rang` 那一族）**仍然没搬**——见 `docs/harness-gate.md`。
+    /// 事件循环里那一段（`uart: rang` 那一族）**仍然没搬**——不是这一族的事。
     pub fn new(who: &'static str) -> Suite {
         Suite {
             who,

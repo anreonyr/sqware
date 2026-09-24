@@ -427,7 +427,7 @@ fn opens_knows_a_pane_a_tombstone_and_a_sealed_door() {
 
 #[test]
 fn a_part_over_a_tile_takes_the_name_over_and_keeps_the_number() {
-    // **§1.5 那个窄口子**（`operator-gate.md` §8 记着的那一笔）：`part` 碰到一枚 `Tile` 会
+    // **那个窄口子**（`Operator::part` 的那条照实记）：`part` 碰到一枚 `Tile` 会
     // **静默**把它顶成一块 `Pane`——号不动、旧的那一枚被放下。今天 `/sys`、`/device` 一直是
     // `Pane`，故这条路上没有客人；这一条判据只把**现状**钉住（谁要改它，先看这里）。
     let _serial = serial();
@@ -459,7 +459,7 @@ fn a_part_over_a_tile_takes_the_name_over_and_keeps_the_number() {
 
 #[test]
 fn the_same_pie_under_two_names_is_two_independent_entries() {
-    // **别名**（`operator-gate.md` §8 记着的那一笔）：同一枚 Pie 挂两个名 = 两条**独立**条目。
+    // **别名**：同一枚 Pie 挂两个名 = 两条**独立**条目。
     // 树是"名字 → 一枚句柄"的目录，**不查重**（`land` 的判据里没有"这一枚已经挂过了"）。
     // 这一条只把**现状**钉住：两条各自可寻、各自可剪，剪一条不动另一条。
     let _serial = serial();

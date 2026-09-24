@@ -2,8 +2,7 @@
 //!
 //! 帧与码见 [`frame`](super::frame)；`pub use super::frame::*;` 把那一整片照旧转出来 ⇒
 //! **调用点一处都不用改**（`board::call::pack_ask`、`board::call::LINK`、
-//! `board/mod.rs` 里那句 `pub use call::{…}` 全都照旧）。结构那一格与裁定见
-//! `docs/frame-gate.md`。
+//! `board/mod.rs` 里那句 `pub use call::{…}` 全都照旧）。
 //!
 //! 判据只有一条可机械检查的纪律——
 //!

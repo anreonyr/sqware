@@ -2,8 +2,7 @@
 //!
 //! 帧与码见 [`frame`](super::frame)；`pub use super::frame::*;` 把那一整片照旧转出来 ⇒
 //! **调用点一处都不用改**（`operator::call::Ask`、`operator::call::LINK`、
-//! `operator/mod.rs` 里那句 `pub use call::{…}` 全都照旧）。结构那一格与裁定见
-//! `docs/frame-gate.md`。
+//! `operator/mod.rs` 里那句 `pub use call::{…}` 全都照旧）。
 
 use env::{PieToken, TaskId};
 
