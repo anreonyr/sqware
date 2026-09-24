@@ -35,7 +35,8 @@
 //! 的顺序**排、`BAD` 收尾。故本族按自己的两格排（见 [`fail_codes!`] 那张表）：照抄别家只会
 //! 让自己表里空出一个号。
 
-use super::core::{CoalitionId, Fail, Id, WINDOW_CAP, Window};
+use super::core::{CoalitionId, Fail, WINDOW_CAP, Window};
+use crate::id::Id;
 use env::Mark;
 
 // ── 码 ──────────────────────────────────────────────────────

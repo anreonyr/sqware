@@ -30,6 +30,11 @@ extern crate alloc;
 #[path = "../../protocol/src/operator/core.rs"]
 mod operator;
 
+/// 号的词汇（`crates/protocol/src/id.rs`，逐字未改）——三个号空间共用的一条规则与那 8 字节。
+/// 树那一份写着 `use crate::id::Id`，故这一台要给它那个名字。
+#[path = "../../protocol/src/id.rs"]
+mod id;
+
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

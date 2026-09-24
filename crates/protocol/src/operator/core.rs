@@ -66,6 +66,8 @@ use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId};
 
+use crate::id::Id;
+
 // ── 结构 ────────────────────────────────────────────────────
 
 /// 一枚条目的**号**：机器用的那一个。
@@ -90,15 +92,15 @@ impl EntryId {
     pub const fn get(self) -> usize {
         self.0
     }
+}
 
-    /// 线上的那一格（8 字节小端）。
-    pub const fn to_bytes(self) -> [u8; 8] {
-        (self.0 as u64).to_le_bytes()
+impl Id for EntryId {
+    fn new(raw: usize) -> EntryId {
+        EntryId::new(raw)
     }
 
-    /// 由线上字节还原（**不校验**：还在不在由核心答）。
-    pub const fn from_bytes(bytes: [u8; 8]) -> EntryId {
-        EntryId(u64::from_le_bytes(bytes) as usize)
+    fn get(self) -> usize {
+        EntryId::get(self)
     }
 }
 

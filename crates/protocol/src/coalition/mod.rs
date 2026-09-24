@@ -241,4 +241,4 @@ pub mod core;
 pub mod frame;
 
 pub use call::{BACK, DIR, NAME};
-pub use core::{Coalition, CoalitionId, Fail, Id, WINDOW_CAP, Window};
+pub use core::{Coalition, CoalitionId, Fail, WINDOW_CAP, Window};

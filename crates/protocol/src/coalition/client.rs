@@ -21,7 +21,8 @@ use env::{PieToken, TaskId};
 use runtime::env::mail::{self, HolePie};
 
 use super::call::{self, BACK};
-use super::core::{CoalitionId, Fail, Id, Window};
+use super::core::{CoalitionId, Fail, Window};
+use crate::id::Id;
 
 pub use super::call::opened_by;
 

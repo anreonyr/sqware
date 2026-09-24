@@ -72,6 +72,11 @@ mod ledger;
 #[path = "../../protocol/src/fail_codes.rs"]
 mod fail_codes;
 
+/// 号的词汇（`crates/protocol/src/id.rs`，逐字未改）——`core.rs` 与 `frame.rs` 都写着
+/// `use crate::id::Id`（本台是**摊平**的模块树 ⇒ `crate::id` 就是这一格）。
+#[path = "../../protocol/src/id.rs"]
+mod id;
+
 /// **帧那一半**（`crates/protocol/src/operator/frame.rs`，逐字未改）—— 在本台里跑判据。
 ///
 /// 这一台**本来就带着帧要的全部依赖**（`core` / `judge` / `gate` / `ledger` 都在同一层），

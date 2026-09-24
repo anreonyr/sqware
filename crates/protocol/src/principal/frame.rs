@@ -30,6 +30,7 @@
 //! 合法答案，故"有没有"只能另占一格。
 
 use super::core::{Fail, PrincipalId};
+use crate::id::Id;
 use env::Mark;
 
 // ── 码 ──────────────────────────────────────────────────────

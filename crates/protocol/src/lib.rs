@@ -158,6 +158,7 @@ mod fail_codes;
 
 pub mod coalition;
 pub mod driver;
+pub mod id;
 pub mod operator;
 pub mod principal;
 pub mod session;

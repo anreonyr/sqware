@@ -37,6 +37,11 @@ extern crate alloc;
 #[path = "../../protocol/src/fail_codes.rs"]
 mod fail_codes;
 
+/// 号的词汇（`crates/protocol/src/id.rs`，逐字未改）——三个号空间共用的一条规则与那 8 字节。
+/// 两本册子与它们的帧都写着 `use crate::id::Id`，故这一台要给它那个名字。
+#[path = "../../protocol/src/id.rs"]
+mod id;
+
 /// 身份那本册子（就是 `crates/protocol/src/principal/core.rs` 那一份，逐字未改）。
 ///
 /// 包一层内联模块只为让 `crate::principal::core` 这个名字成立——盟籍那一份正是这么写它的

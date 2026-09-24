@@ -16,6 +16,8 @@ use alloc::vec::Vec;
 
 use env::TaskId;
 
+use crate::id::Id;
+
 // ── 号 ──────────────────────────────────────────────────────
 
 /// 谱系上的一个节点。
@@ -39,10 +41,15 @@ impl PrincipalId {
     pub const fn get(self) -> usize {
         self.0
     }
+}
 
-    /// 线上的那一格（8 字节小端）。
-    pub const fn to_bytes(self) -> [u8; 8] {
-        (self.0 as u64).to_le_bytes()
+impl Id for PrincipalId {
+    fn new(raw: usize) -> PrincipalId {
+        PrincipalId::new(raw)
+    }
+
+    fn get(self) -> usize {
+        PrincipalId::get(self)
     }
 }
 

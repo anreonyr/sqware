@@ -45,6 +45,10 @@ use env::{Name, PieToken};
 
 use super::core::{EntryId, Fail, Operator, Where};
 use super::judge::Id;
+// **照实记（同一个词的第二件事）**：本文件里的 `Id` 是 `judge` 的**宽度别名**（u64），
+// 与 [`crate::id::Id`]（号的字节面那一枚 trait）同名不同事；trait 只要在作用域里就够用，
+// 故按 `_` 引入——不让两个 `Id` 在同一个文件里争一个名字。
+use crate::id::Id as _;
 
 // ── 码 ──────────────────────────────────────────────────────
 

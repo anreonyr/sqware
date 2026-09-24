@@ -16,6 +16,7 @@
 
 use alloc::vec::Vec;
 
+use crate::id::Id;
 use crate::principal::core::PrincipalId;
 
 // ── 号 ──────────────────────────────────────────────────────
@@ -41,10 +42,15 @@ impl CoalitionId {
     pub const fn get(self) -> usize {
         self.0
     }
+}
 
-    /// 线上的那一格（8 字节小端）。
-    pub const fn to_bytes(self) -> [u8; 8] {
-        (self.0 as u64).to_le_bytes()
+impl Id for CoalitionId {
+    fn new(raw: usize) -> CoalitionId {
+        CoalitionId::new(raw)
+    }
+
+    fn get(self) -> usize {
+        CoalitionId::get(self)
     }
 }
 
@@ -75,38 +81,6 @@ pub enum Fail {
 
 /// 一窗最多几枚号。条数是策略、容器要有界 ⇒ 窗口有顶，**"还有没有"由 `more` 说**。
 pub const WINDOW_CAP: usize = 16;
-
-/// 一条号：窗口只问这两下（由裸号造、看裸号是多少）。
-///
-/// **`new` 不校验**（线上解码面造得出任何号）："这枚号还在不在"不是类型义务——由每册自己的
-/// 判据答（盟那一册是 [`Coalition::band`] 的 [`Fail::Unknown`]）。
-pub trait Id: Copy {
-    /// 由裸号造一个。
-    fn new(raw: usize) -> Self;
-
-    /// 裸号。
-    fn get(self) -> usize;
-}
-
-impl Id for CoalitionId {
-    fn new(raw: usize) -> CoalitionId {
-        CoalitionId::new(raw)
-    }
-
-    fn get(self) -> usize {
-        CoalitionId::get(self)
-    }
-}
-
-impl Id for PrincipalId {
-    fn new(raw: usize) -> PrincipalId {
-        PrincipalId::new(raw)
-    }
-
-    fn get(self) -> usize {
-        PrincipalId::get(self)
-    }
-}
 
 /// 一窗号：**一趟读的读数**（最多 [`WINDOW_CAP`] 枚，**号序升序**）。
 ///
