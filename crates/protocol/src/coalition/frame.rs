@@ -51,7 +51,7 @@ pub const AMID: u8 = 4;
 pub const BAND: u8 = 5;
 pub const BLOC: u8 = 6;
 
-/// 成功那一格：**六家同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 

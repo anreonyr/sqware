@@ -48,7 +48,7 @@ pub const ADOPT: u8 = 6;
 /// 转换 · 弃：两格都空——它只认"发送者是谁"。
 pub const WAIVE: u8 = 7;
 
-/// 成功那一格：**六家同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 

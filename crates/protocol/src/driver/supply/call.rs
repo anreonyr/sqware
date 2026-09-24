@@ -35,7 +35,7 @@ const HEAD_LEN: usize = 2 + 8;
 pub const ORDER_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;
 pub const REPLY_CAP: usize = 2 + PAIR_LEN * WANT_MAX;
 
-/// 成功那一格：**六家同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 
