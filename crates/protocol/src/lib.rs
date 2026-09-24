@@ -164,7 +164,9 @@ pub mod session;
 pub mod system;
 
 // 依赖先留着：`env` 与 `runtime` 是地板，第一条协议操作出现时立刻要用。
-// （下面那两条编译期断言之外，本文件没有别的代码 ⇒ `cargo` 若报 unused dependency，是预期噪音。）
+// （本文件自己只有：下面那条 `reserve_reads!` 宏、`mod fail_codes`、六个 `pub mod` 与那两条
+// 编译期断言——`env` / `runtime` 只出现在**宏体**里，由调用宏的那些模块去用 ⇒ `cargo` 若在
+// **本文件这一格**报 unused dependency，是预期噪音。）
 
 // ── 面不相撞：三条路的回信孔记号两两不同（**编译期**钉住）──────────────
 //

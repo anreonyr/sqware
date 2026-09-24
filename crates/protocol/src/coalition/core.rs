@@ -46,11 +46,6 @@ impl CoalitionId {
     pub const fn to_bytes(self) -> [u8; 8] {
         (self.0 as u64).to_le_bytes()
     }
-
-    /// 由线上字节还原（**不校验**：铸过没有由核心答）。
-    pub const fn from_bytes(bytes: [u8; 8]) -> CoalitionId {
-        CoalitionId(u64::from_le_bytes(bytes) as usize)
-    }
 }
 
 // ── 失败域 ──────────────────────────────────────────────────

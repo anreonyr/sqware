@@ -44,11 +44,6 @@ impl PrincipalId {
     pub const fn to_bytes(self) -> [u8; 8] {
         (self.0 as u64).to_le_bytes()
     }
-
-    /// 由线上字节还原（**不校验**：在不在树里由核心答）。
-    pub const fn from_bytes(bytes: [u8; 8]) -> PrincipalId {
-        PrincipalId(u64::from_le_bytes(bytes) as usize)
-    }
 }
 
 // ── 失败域 ──────────────────────────────────────────────────
