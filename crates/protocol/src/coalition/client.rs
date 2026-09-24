@@ -97,6 +97,12 @@ impl Face {
     }
 
     /// 问一句、取一句答。
+    ///
+    /// **照实记（传输失败折进语义那一格，同 `principal/client.rs` 那一面）**：借不出回信孔 /
+    /// 超时 / 答话长度不对——三件事都答 [`Fail::Unknown`]，与"**这枚盟没铸过**"同一格。压它的
+    /// 理由与那一面同：**对本端是同一个下一步**（这一趟别指望了），而这一族**没有 `Denied`**
+    /// 可落（盟无主）。要单开一格就得往 [`Fail`] 里加变体，那一份是 `fail_codes!` 的**双射表**
+    /// （加变体 = 加线上码）——较真值得，但它是动协议面的一刀，不混在这一条里。
     fn raw(&self, op: u8, a: u64, b: u64, millis: usize) -> Result<[u8; call::REPLY_LEN], Fail> {
         let frame = call::pack_ask(op, a, b);
         let back =

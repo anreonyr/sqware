@@ -22,7 +22,7 @@ use protocol::coalition::client::Face as CoalitionFace;
 use protocol::principal::client::Face as PrincipalFace;
 use protocol::principal::core::PrincipalId;
 
-use super::desk::{Desk, Guest, desk};
+use super::desk::{Admit, Desk, Guest, desk};
 
 
 /// 协调那一帧的长度（**长度即语义**：8 = 一位客人，16 = 这一帧）。
@@ -348,13 +348,14 @@ fn settle(
             Some(reply) => match desk.admit(client, reply) {
                 // 收了。
                 Ok(_) => {}
-                // **重放**（提示是单槽，可能重放）：一位客人只占一格，无事。
-                Err(Fail::NonEmpty) => {}
+                // **重放**（提示是单槽，可能重放）：一位客人只占一格，旧的那一格**原样留着**
+                // ——这一趟不动账，也不打行（重放是常态）。
+                Err(Admit::Already) => {}
                 // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
                 // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**；
                 // 这本账的上限史（撞满过三次）见 `desk.rs` 里 `Desk` 那一格的照实记——这一格
                 // 就是它量出来的那一次。
-                Err(_) => say("operator: desk full"),
+                Err(Admit::Full) => say("operator: desk full"),
             },
             // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
             None => say("operator: no reply"),
@@ -375,7 +376,7 @@ fn settle(
     for &(slot, who) in &waiting {
         match ask_of(who) {
             Some(ask) => {
-                let hung = desk.arm(slot, ask).is_ok()
+                let hung = desk.arm(slot, ask)
                     && tole
                         .attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
                         .is_ok();

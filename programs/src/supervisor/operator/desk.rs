@@ -20,7 +20,28 @@
 
 use env::{PieToken, TaskId};
 
-use protocol::operator::core::{Fail, VestedBy};
+use protocol::operator::core::VestedBy;
+
+// ── 这本账自己的失败域 ──────────────────────────────────────
+
+/// `admit` 的两种不成——**每格一个不同的下一步**：**重放**不动账（接着办下一件事），
+/// **满了**报一句（别静默丢一位客人）。
+///
+/// **照实记（这一格原来借的是别人的名字）**：`admit` 原先答 `protocol::operator::core::Fail`
+/// 的 `NonEmpty`——那个名字在协议里说的是"**这块 Pane 非空**，要动它先清空"（`land` / `trim`
+/// 的下一步），与"这位客人已经在账上"（重放，无事）**不是同一个下一步**。借名字的代价正是
+/// 这一格：同一个码两种读法，读代码的人得先知道是谁发的。
+///
+/// 这本账的失败**一句都不上线**（只有持树者自己听得见），故它不必是协议那一份 `Fail`：那一份
+/// 的每一格都要有线上码（`fail_codes!` 是**双射表**，加一格 = 加一个线上码）。名字也就不叫
+/// `Fail`——它不是一个族的域，是一问的两种不成。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Admit {
+    /// 这一位已经在账上（重放）：**不动账**——换掉就把原来那位的问话孔丢了。
+    Already,
+    /// 备不下下一格（`try_reserve`）。
+    Full,
+}
 
 // ── 一格 ────────────────────────────────────────────────────
 
@@ -69,7 +90,7 @@ impl Guest {
 ///   Sweep   剔走已经答不出的格子            —— 惰性，不是轮询
 /// ```
 pub struct Desk {
-    /// **可增长**：不是定长数组——按需 `try_reserve`，备不下如实报 [`Fail::Full`]，不 `abort`。
+    /// **可增长**：不是定长数组——按需 `try_reserve`，备不下如实报 [`Admit::Full`]，不 `abort`。
     /// 条数是策略、容器要有界，那一格落在**分配**上，不落在常数上。
     ///
     /// **照实记（上限被撞满过三次，三次都是同一个病）**：上限原来是编译期常数，先是 `8`——按
@@ -78,7 +99,7 @@ pub struct Desk {
     /// `sweep` 又是惰性的（主循环每轮末尾剔一次）⇒"死客人刚走、下一位就来了"那一瞬还占着格。
     /// 结盟那一刀带来**第五位常驻**（`coalition` 要按名字找 `/sys/principal`）与又多一位会死的
     /// （`member`）⇒ `8` 卡满，抬到 `12`；门禁那一刀又加了**一位负证客人 + 一位协调客人**
-    /// ⇒ `12` 再卡满。症状每次一样：最后上树的 `echo` 的 `admit` 答 [`Fail::Full`] **而它自己
+    /// ⇒ `12` 再卡满。症状每次一样：最后上树的 `echo` 的 `admit` 答 [`Admit::Full`] **而它自己
     /// 不知道**，它的问话孔没人管、第二次问话堵在单槽上，整台机器收不了场（读数：
     /// `echo: console=false`，随后没有 `system halted`；门禁那一刀的实测是 `examine` 0/3）。
     /// **第三次不再抬常数**（`b1d1ae1`）：改 `Vec` + `try_reserve`，顺手把 `server.rs` 里那个
@@ -107,11 +128,11 @@ impl Desk {
 
     /// 收一位客人（答话路到手时叫）。返它的格子号。
     ///
-    /// 两种不成：**满**（[`Fail::Full`]）与**这位已经在账上**（重放：一位客人只能占一格，
-    /// 重来的那位要**报出来**，不能静默换掉原来那位——换掉就把它的问话孔丢了）。
-    pub fn admit(&mut self, who: TaskId, reply: PieToken) -> Result<usize, Fail> {
+    /// 两种不成见 [`Admit`]：**满**与**这一位已经在账上**（重放：一位客人只能占一格，重来的
+    /// 那位不当场换掉原来那位——换掉就把它的问话孔丢了）。
+    pub fn admit(&mut self, who: TaskId, reply: PieToken) -> Result<usize, Admit> {
         if self.guests.iter().flatten().any(|g| g.who == who) {
-            return Err(Fail::NonEmpty);
+            return Err(Admit::Already);
         }
         // 先找空格；没有就**新开一格**——备不下如实报 `Full`（不 `abort`）。
         match self.guests.iter().position(|cell| cell.is_none()) {
@@ -124,7 +145,7 @@ impl Desk {
                 Ok(slot)
             }
             None => {
-                self.guests.try_reserve(1).map_err(|_| Fail::Full)?;
+                self.guests.try_reserve(1).map_err(|_| Admit::Full)?;
                 self.guests.push(Some(Guest {
                     who,
                     ask: None,
@@ -135,28 +156,30 @@ impl Desk {
         }
     }
 
-    /// 记下"这位客人的问话孔是**本表里的哪一枚**"。
+    /// 记下"这位客人的问话孔是**本表里的哪一枚**"。返**成不成**。
     ///
-    /// **先 `arm` 才 `attach`**：`arm` 之后的号才会进组，故 [`Desk::guest`] 在"被组唤醒的
-    /// 那一枚"上**永不为 `None`**。
-    pub fn arm(&mut self, slot: usize, ask: PieToken) -> Result<(), Fail> {
+    /// **两桩不成合成一格**（号不在账上 / 这一格已经挂着一枚）：调用方的下一步相同——这一格
+    /// 这一轮不 arm（`server.rs` 的 `settle` 就是这么用的）。**先 `arm` 才 `attach`**：`arm`
+    /// 之后的号才会进组，故 [`Desk::guest`] 在"被组唤醒的那一枚"上**永不为 `None`**。
+    pub fn arm(&mut self, slot: usize, ask: PieToken) -> bool {
         let Some(guest) = self.guests.get_mut(slot).and_then(Option::as_mut) else {
-            return Err(Fail::Unknown);
+            return false;
         };
         if guest.ask.is_some() {
-            return Err(Fail::NonEmpty);
+            return false;
         }
         guest.ask = Some(ask);
-        Ok(())
+        true
     }
 
-    /// 摘掉这一格挂的问话孔（换孔时用）；本就没挂即无事。
-    pub fn unarm(&mut self, slot: usize) -> Result<(), Fail> {
+    /// 摘掉这一格挂的问话孔（换孔时用）；本就没挂即无事。返**成不成**（同 [`Desk::arm`]：
+    /// 号不在账上 = 不成，而调用方那一侧同样无事可做）。
+    pub fn unarm(&mut self, slot: usize) -> bool {
         let Some(guest) = self.guests.get_mut(slot).and_then(Option::as_mut) else {
-            return Err(Fail::Unknown);
+            return false;
         };
         guest.ask = None;
-        Ok(())
+        true
     }
 
     /// 这枚号是哪位客人的（醒来时唯一要问的一句）。认不出返 `None`——**不是失败**
