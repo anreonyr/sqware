@@ -15,7 +15,7 @@
 
 use alloc::format;
 
-use env::{HoleDir, Name, PieToken, TaskId, Reason};
+use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::operator::Where;
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
@@ -30,42 +30,34 @@ use runtime::core::tole::Tole;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;
 
+
 /// 等板 / 等树的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
 /// 起不来时的编号（指死在头几步的哪一步）。
-const E_SIRE: usize = 1;
-const E_BOARD: usize = 2;
-const E_TREE: usize = 3;
-const E_BOOK: usize = 4;
-const E_DESK: usize = 5;
 
 /// 三格答码共用的"没走到 / 读不懂"那一格（与树自己的 [`ocall::BAD`] 同值）。
 const BAD: u8 = ocall::BAD;
 
 /// 起服务：**读锚 → 上板 → 铸门牌（给生我者 + 上树）→ 一枚线程招待所有客人**。
-pub fn serve() -> Reason {
+pub fn serve() -> Result<(), super::fail::Fail> {
     // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
     //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
     let Ok(assembler) = utask::sire() else {
-        say("principal: no sire");
-        return E_SIRE;
+        return Err(super::fail::Fail::Sire);
     };
 
     // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
     let Ok((_link, board_link)) = board::open(assembler, MS) else {
-        say("principal: no board");
-        return E_BOARD;
+        return Err(super::fail::Fail::Board);
     };
     if board::ask_hole(board_link).is_err() {
-        say("principal: no board ask");
-        return E_BOARD;
+        return Err(super::fail::Fail::Board);
     }
 
     // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
     let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
-        say("principal: no entry");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     };
     // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
     // 给 `STORE | FETCH`：装配者只往里推帧，但**它还要把这一枚再转授给树**（门禁那一刀：
@@ -79,18 +71,15 @@ pub fn serve() -> Reason {
     )
     .is_err()
     {
-        say("principal: entry not handed");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     }
 
     // 四、上树：分 `/sys`、落 `/sys/principal`、再查回来验一遍（同 router / rtc 那一趟）。
     let Ok((tree, host)) = operator::open(assembler, MS) else {
-        say("principal: no tree link");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     };
     let Ok(talk) = operator::ask_hole(host) else {
-        say("principal: no tree ask");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     };
     serve_tree(&tree, talk, host, entry);
 
@@ -108,32 +97,28 @@ pub fn serve() -> Reason {
     )
     .is_err()
     {
-        say("principal: gate not handed");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     }
 
     // 五、两张表：名册空着，谱系只有根（零号节点）。
     let Ok(mut book) = Principal::new(assembler) else {
-        say("principal: no book");
-        return E_BOOK;
+        return Err(super::fail::Fail::Book);
     };
 
     // 六、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。
     let Ok(tole) = Tole::unseal(false) else {
-        say("principal: no group");
-        return E_DESK;
+        return Err(super::fail::Fail::Desk);
     };
     let entry_hole = HolePie::from_token(entry);
     if tole.attach(&entry_hole, HoleDir::Pull).is_err() {
-        say("principal: entry not hung");
-        return E_DESK;
+        return Err(super::fail::Fail::Desk);
     }
 
     // 一问的上界就是 `ASK_LEN`（`pack_ask` 产出的就是这个长度）。
     let mut buf = [0u8; pcall::ASK_LEN];
     loop {
         if tole.await_(usize::MAX).is_err() {
-            return E_DESK;
+            return Err(super::fail::Fail::Desk);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
         while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {

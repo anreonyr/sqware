@@ -3,7 +3,7 @@
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::operator::call`]。
 
-use env::{HoleDir, Mark, PieToken, TaskId, Reason};
+use env::{HoleDir, Mark, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
@@ -22,6 +22,7 @@ use protocol::principal::client::Face as PrincipalFace;
 use protocol::principal::core::PrincipalId;
 
 use super::desk::{Desk, Guest, desk};
+
 
 /// 协调那一帧的长度（**长度即语义**：8 = 一位客人，16 = 这一帧）。
 ///
@@ -42,9 +43,6 @@ const ROLE_LEAGUE: u64 = 1;
 const SETTLE_MS: usize = 1;
 
 /// 持树者起不来时的编号（指"死在头几步的哪一步"）。
-const E_SIRE: usize = 1;
-const E_TIP: usize = 2;
-const E_GROUP: usize = 3;
 
 // ── 门外那一问（门禁）────────────────────────────────────────
 
@@ -197,15 +195,13 @@ const MS: usize = 1000;
 ///
 /// 头两步是契约：装配者按 `(本域, tip)` 两格认领提示孔（[`attach`] 的 `host_of`），
 /// 而提示一到它就认为"答话路必已在本表里"（转授在前、提示在后）。
-pub fn serve() -> Reason {
+pub fn serve() -> Result<(), super::fail::Fail> {
     let Ok(assembler) = utask::sire() else {
-        say("operator: no sire");
-        return E_SIRE;
+        return Err(super::fail::Fail::Sire);
     };
     // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(TIP_MARK) else {
-        say("operator: no tip");
-        return E_TIP;
+        return Err(super::fail::Fail::Tip);
     };
     let tip_hole = mail::HolePie::from_token(tip);
     if port::ship(
@@ -216,18 +212,15 @@ pub fn serve() -> Reason {
     )
     .is_err()
     {
-        say("operator: tip not handed");
-        return E_TIP;
+        return Err(super::fail::Fail::Tip);
     }
     // **一个组**：提示孔 + 每位客人的问话孔。提示孔也挂进来，故"来客人了"与"有人问话"
     // 是**同一个等待**。本线程独享它（`shared = false`）。
     let Ok(tole) = Tole::unseal(false) else {
-        say("operator: no group");
-        return E_GROUP;
+        return Err(super::fail::Fail::Group);
     };
     if tole.attach(&tip_hole, HoleDir::Pull).is_err() {
-        say("operator: tip not hung");
-        return E_GROUP;
+        return Err(super::fail::Fail::Group);
     }
 
     let mut tree = ocall::tree();

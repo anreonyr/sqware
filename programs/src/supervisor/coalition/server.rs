@@ -19,7 +19,7 @@
 use alloc::format;
 use core::time::Duration;
 
-use env::{HoleDir, Name, PieToken, TaskId, Reason};
+use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::coalition::call as ccall;
 use protocol::coalition::core::{Coalition, CoalitionId, Fail};
 use protocol::operator::Where;
@@ -38,6 +38,7 @@ use runtime::env::mail::{self, HolePie};
 use runtime::env::room;
 use runtime::env::unit as utask;
 
+
 /// 等板 / 等树 / 问名册的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
@@ -48,48 +49,37 @@ const RETRY_MS: usize = 1;
 ///
 /// **照实记：本域比 principal 那一台少一个编号**（它那儿有一格 `E_BOOK`）——空册起手**不失败**
 /// （`Coalition::new` 不分配），故没有"起那本账失败"这一步可指。
-const E_SIRE: usize = 1;
-const E_BOARD: usize = 2;
-const E_TREE: usize = 3;
-const E_DESK: usize = 4;
-const E_FACE: usize = 5;
 
 /// 三格答码共用的"没走到 / 读不懂"那一格（与树自己的 [`ocall::BAD`] 同值）。
 const BAD: u8 = ocall::BAD;
 
 /// 起服务：**读锚 → 上板 → 铸门牌上树 → 找身份那一份门牌 → 一枚线程招待所有客人**。
-pub fn serve() -> Reason {
+pub fn serve() -> Result<(), super::fail::Fail> {
     // 一、锚：`Sire` = 装配者。**只为上板与上树两条会话**——盟无主，核心不需要它
     //     （对照 principal：那边把它当名册钥匙，注入核心那一格）。
     let Ok(assembler) = utask::sire() else {
-        say("coalition: no sire");
-        return E_SIRE;
+        return Err(super::fail::Fail::Sire);
     };
 
     // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
     let Ok((_link, board_link)) = board::open(assembler, MS) else {
-        say("coalition: no board");
-        return E_BOARD;
+        return Err(super::fail::Fail::Board);
     };
     if board::ask_hole(board_link).is_err() {
-        say("coalition: no board ask");
-        return E_BOARD;
+        return Err(super::fail::Fail::Board);
     }
 
     // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
     let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
-        say("coalition: no entry");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     };
 
     // 四、上树：分 `/sys`、落 `/sys/coalition`、再查回来验一遍（同 router / rtc / principal）。
     let Ok((tree, host)) = operator::open(assembler, MS) else {
-        say("coalition: no tree link");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     };
     let Ok(talk) = operator::ask_hole(host) else {
-        say("coalition: no tree ask");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     };
     serve_tree(&tree, talk, host, entry);
 
@@ -108,18 +98,15 @@ pub fn serve() -> Reason {
     )
     .is_err()
     {
-        say("coalition: gate not handed");
-        return E_TREE;
+        return Err(super::fail::Fail::Tree);
     }
 
     // 五、**身份那一份门牌**：本域是它的客人（K7）。带重试——它可能落得比本域晚。
     let Some(face_entry) = find_face(&tree, talk, host) else {
-        say("coalition: no identity face");
-        return E_FACE;
+        return Err(super::fail::Fail::Face);
     };
     let Ok(face) = Face::of(face_entry) else {
-        say("coalition: bad identity face");
-        return E_FACE;
+        return Err(super::fail::Fail::Face);
     };
 
     // 六、一本空册：一枚号都还没铸（**起手不失败**——空册不分配）。
@@ -127,20 +114,18 @@ pub fn serve() -> Reason {
 
     // 七、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。
     let Ok(tole) = Tole::unseal(false) else {
-        say("coalition: no group");
-        return E_DESK;
+        return Err(super::fail::Fail::Desk);
     };
     let entry_hole = HolePie::from_token(entry);
     if tole.attach(&entry_hole, HoleDir::Pull).is_err() {
-        say("coalition: entry not hung");
-        return E_DESK;
+        return Err(super::fail::Fail::Desk);
     }
 
     // 一问的上界就是 `ASK_LEN`（`pack_ask` 产出的就是这个长度）。
     let mut buf = [0u8; ccall::ASK_LEN];
     loop {
         if tole.await_(usize::MAX).is_err() {
-            return E_DESK;
+            return Err(super::fail::Fail::Desk);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
         while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {

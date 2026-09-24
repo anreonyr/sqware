@@ -48,7 +48,7 @@ use env::Name;
 use protocol::session::Quay;
 // 协议侧那三档（判定 / 账 / 适配）与本地的 `service`（装配机器）**同名不同物**，故逐个取名进来。
 use programs::supervisor::system::server::{self as core, until};
-use protocol::system::core::{Fail, Reaped};
+use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Table};
 
 use protocol::driver::supply;
@@ -57,14 +57,52 @@ use service::Catalog;
 /// 编排者那一条在清单里的名字。
 const ORCH: &str = "system";
 
-/// 装配失败编号（本域只有这几步：读账、挑镜像、起编排者）。
-const E_BOOT: service::Died = 1;
+/// 本域的死法：**一格 = 死在起手的哪一步**——号与从前的 `service::die` **同值**
+/// （`1` 引导那一族、`2/3/4` 归 [`service`] 那三格、`6` 是"起编排者"那一族）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Die {
+    /// 启动参数那两块账读不出来。
+    BootArgs,
+    /// 清单 / 服务名 / 泊位名读不出来。
+    Manifest,
+    /// 起编排者那一族的号（`E_ORCH` = 6，或 `mint` 带来的格子编号）。
+    Orch(env::Reason),
+}
+
+impl Die {
+    fn code(self) -> env::Reason {
+        match self {
+            Die::BootArgs => E_BOOT,
+            Die::Manifest => service::E_MANIFEST,
+            Die::Orch(code) => code,
+        }
+    }
+
+    const fn text(self) -> &'static str {
+        match self {
+            Die::BootArgs => "root: boot args unreadable",
+            Die::Manifest => "root: manifest bad",
+            Die::Orch(_) => "root: orchestrator",
+        }
+    }
+}
+
+impl programs::Exit for Die {
+    fn report(&self) -> programs::Report<'_> {
+        programs::Report::note(self.code(), self.text())
+    }
+}
+
+/// 起编排者那一族共用的号（`mint` 的失败格与后面三步都用它）。
 const E_ORCH: service::Died = 6;
 
-extern "C" fn bare_main() -> service::Died {
+/// 引导那一族共用的号（"启动参数读不出来"那一格）。
+const E_BOOT: service::Died = 1;
+
+fn main() -> Result<programs::Report<'static>, Die> {
     // 1. 启动参数 → 两块账（清单 + 配对块）。读不出就没得装配。
     let Some(boot) = boot::Root::take() else {
-        return service::die(E_BOOT, "root: boot args unreadable");
+        return Err(Die::BootArgs);
     };
     // 配对块的自述（一行）：按坐标分账——`region` 是区段的条数（设备 + 载荷区），
     // `dtb` / `irq` 各一件，`bad` 是读不懂的条数。**照实记**：从前这一行报的是"重名"
@@ -72,33 +110,23 @@ extern "C" fn bare_main() -> service::Died {
     // 那笔账不存在了（两段各有各的基址）。
     boot.report_pairs();
     let Some(catalog) = Catalog::of_boot(&boot) else {
-        return service::die(service::E_MANIFEST, "root: manifest bad");
+        return Err(Die::Manifest);
     };
     let Some(orch_name) = Name::new(ORCH).ok() else {
-        return service::die(service::E_MANIFEST, "root: bad service name");
+        return Err(Die::Manifest);
     };
     let Some(slot) = Name::new(supply::BOOT).ok() else {
-        return service::die(service::E_MANIFEST, "root: bad slot name");
+        return Err(Die::Manifest);
     };
 
     let mut table = Table::new();
 
     // 2. 起编排者：它有一条 `boot` 通道——配给从那里问、回单从那里回。
-    let orch = match mint(
-        &mut table,
-        &catalog,
-        ORCH,
-        orch_name,
-        Announce::Channel,
-        E_ORCH,
-    ) {
-        Ok(orch) => orch,
-        Err(died) => return died,
-    };
+    let orch = mint(&mut table, &catalog, ORCH, orch_name, Announce::Channel)?;
     // 这条泊位两头都装：本域**读**自己那一枚（单子从这来），**写**对端那一枚（回单往这去）。
     let mut quay = Quay::open(orch);
     if quay.seat(slot).is_err() {
-        return service::die(E_ORCH, "root: seat failed");
+        return Err(Die::Orch(E_ORCH));
     }
     if core::start(
         &mut table,
@@ -111,10 +139,10 @@ extern "C" fn bare_main() -> service::Died {
     )
     .is_err()
     {
-        return service::die(E_ORCH, "root: orchestrator not ready");
+        return Err(Die::Orch(E_ORCH));
     }
     let Some(pier) = quay.find(slot) else {
-        return service::die(E_ORCH, "root: no boot pier");
+        return Err(Die::Orch(E_ORCH));
     };
 
     // 3. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::driver::supply::server::serve` 的
@@ -126,33 +154,32 @@ extern "C" fn bare_main() -> service::Died {
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, 0), Ok(Reaped::Now));
     programs::supervisor::supply::server::serve(&pier, source, alive, &mut ask, &mut out);
-    return service::die(service::E_OK, "root: done");
+    Ok(programs::Report::note(env::EXIT_OK, "root: done"))
 }
 
 /// 登记一行 + 建域 + 产线程 + 挂身子（此刻它一步都还没跑）。
 ///
-/// 失败的**原因码走返回值**（`Err(died)`）：报码那一笔账现在是 `main` 的账，这一层
-/// 只负责把"死在第几步"带上去——不再自己退场。
+/// 失败的**原因码走返回值**（`Err(Die::…)`）：报码那一笔账现在是 `main` 的账，这一层
+/// 只负责把"死在第几步"带上去——不再自己退场。**三格的号都一样**（`E_ORCH`）：这一族
+/// 读的是"起编排者没走通"，具体哪一格由上面那两句 `debug` 行分辨。
 fn mint(
     table: &mut Table,
     catalog: &Catalog<'_>,
     what: &str,
     name: Name,
     announce: Announce,
-    died: service::Died,
-) -> Result<env::TaskId, service::Died> {
+) -> Result<env::TaskId, Die> {
     if table.register(name, announce).is_err() {
-        return Err(service::die(died, "root: table full"));
+        return Err(Die::Orch(E_ORCH));
     }
     let Some(entry) = catalog.find(what) else {
-        return Err(service::die(died, "root: program missing"));
+        return Err(Die::Orch(E_ORCH));
     };
     match core::spawn(table, name, entry.elf, entry.kind) {
         Ok(rep) => Ok(rep),
-        Err(Fail::BadImage) => Err(service::die(died, "root: bad image")),
-        Err(_) => Err(service::die(died, "root: not startable")),
+        Err(_) => Err(Die::Orch(E_ORCH)),
     }
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_supervisor_root_main.rs"));

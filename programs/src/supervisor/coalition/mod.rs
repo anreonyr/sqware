@@ -11,4 +11,5 @@
 //! `/sys/principal`，每条**写**原语嵌一次 `Resolve(发送者)`。"self"那一格因此不在核心，
 //! 在这一层（正文"已知边界"里写着这一条的确切含义）。
 
+pub mod fail;
 pub mod server;

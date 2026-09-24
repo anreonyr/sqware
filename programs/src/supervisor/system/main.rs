@@ -67,28 +67,84 @@ const BOOT_MS: usize = 1000;
 // 那些行 [`Program`] 与装配单现在住 `scenario.rs`：本文件是**机器**，
 // 不认识具体哪一台。`PLAN` 仍从那里 `use` 进来，故下面 [`service::assemble`] 那几处一字未改。
 
-extern "C" fn bare_main() -> service::Died {
+/// 本域的死法：**一格 = 死在起手的哪一步**——号与从前的 `service::die` **同值**
+/// （`1` 引导那一族；`2/3/4` 归 [`service`] 那三格；`5/6/7` 是本域自己的）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fail {
+    /// 与引导域那条会话没搭上。
+    Firmware,
+    /// 那台机器的自述（`Key::dtb`）没领到 / 读不懂。
+    Machine,
+    /// 那块载荷区（清单在里面）没领到 / 读不懂。
+    Payload,
+    /// 清单那一条读不懂。
+    Manifest,
+    /// 死亡道那只组。
+    Group,
+    /// 整表装配那一趟带来的号（`service` 那一族原样往外带）。
+    Assemble(env::Reason),
+    /// 监督那一趟。
+    Supervise,
+    /// 收尾那一趟。
+    Ruin,
+}
+
+impl Fail {
+    fn code(self) -> env::Reason {
+        match self {
+            Fail::Firmware => E_BOOT,
+            Fail::Assemble(code) => code,
+            Fail::Machine => 5,
+            Fail::Payload => 6,
+            Fail::Manifest => 7,
+            Fail::Group => service::E_TABLE,
+            Fail::Supervise => 8,
+            Fail::Ruin => 9,
+        }
+    }
+
+    const fn text(self) -> &'static str {
+        match self {
+            Fail::Firmware => "system: no firmware",
+            Fail::Assemble(_) => "system: assemble",
+            Fail::Machine => "system: no machine",
+            Fail::Payload => "system: no payload",
+            Fail::Manifest => "system: manifest bad",
+            Fail::Group => "system: no group",
+            Fail::Supervise => "system: supervise",
+            Fail::Ruin => "system: ruin",
+        }
+    }
+}
+
+impl programs::Exit for Fail {
+    fn report(&self) -> programs::Report<'_> {
+        programs::Report::note(self.code(), self.text())
+    }
+}
+
+fn main() -> Result<programs::Report<'static>, Fail> {
     // 1. 与引导域开会话：本域那一枚交给"生我者"，并认下它那一枚（一问一答两个方向）。
     let Some(boot_pier) = talk_to_root() else {
-        return service::die(E_BOOT, "system: no firmware");
+        return Err(Fail::Firmware);
     };
 
     // 2. 领树：本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一段区"要有它。
     //    坐标是 `Key::dtb()`（"哪一件"那一形：树不知道自己写在哪，故只能这么取）。
     let machine = match take_machine(&boot_pier) {
         Ok(machine) => machine,
-        Err(why) => return service::die(E_BOOT, why),
+        Err(_) => return Err(Fail::Machine),
     };
 
     // 2′. 领账：这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
     //     载荷区的**坐标从树里读**（`/chosen` 的 `linux,initrd-start`）——机器自己写着它在哪，
     //     本域不另抄一个名字。树也在这一块里——它是**本域起的服务**（`PLAN` 第一条）。
     let Some(payload) = machine.payload() else {
-        return service::die(E_BOOT, "system: no payload");
+        return Err(Fail::Payload);
     };
     let catalog = match take_catalog(&boot_pier, payload) {
         Ok(catalog) => catalog,
-        Err(why) => return service::die(E_BOOT, why),
+        Err(_) => return Err(Fail::Machine),
     };
 
     // 3/4. 死亡道：一位服务一条（本域铸、记号 `gone-<名字>`；装配时各交一份给板线程）。
@@ -97,7 +153,7 @@ extern "C" fn bare_main() -> service::Died {
     let mut lanes: [Option<PieToken>; Table::CAP] = [None; Table::CAP];
     let tole = match Tole::unseal(false) {
         Ok(tole) => tole,
-        Err(_) => return service::die(service::E_TABLE, "system: no group"),
+        Err(_) => return Err(Fail::Group),
     };
     // **装配单从 `env::assembly` 派生**（`order` 那一格就是起手位次）。
     let plan = scenario::plan(&catalog);
@@ -114,10 +170,7 @@ extern "C" fn bare_main() -> service::Died {
     let mut table = Table::new();
     let last = match service::assemble(&mut table, &catalog, &plan, &boot_pier, &lanes, &machine) {
         Ok(last) => last,
-        Err(service::E_MANIFEST) => return service::die(service::E_MANIFEST, "system: manifest bad"),
-        Err(service::E_TABLE) => return service::die(service::E_TABLE, "system: table full"),
-        Err(service::E_PROGRAM) => return service::die(service::E_PROGRAM, "system: program missing"),
-        Err(died) => return service::die(died, "system: service failed"),
+        Err(code) => return Err(Fail::Assemble(code)),
     };
 
     // 5/6. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
@@ -134,7 +187,8 @@ extern "C" fn bare_main() -> service::Died {
     // `system: done` 在 **1005 份 soak 日志里一次都没有**）。
     // 板线程本来就不必点名收：本域一退场，"域亡＝成员清零"把它一起带走——故那一手是
     // **重复的一刀**，代价是把本机最后一句读数一起收走了。
-    return service::die(service::E_OK, "system: done");
+    // （本域收场是"被板那一刀扑杀"，故这一句判词**到不了**——留着只为类型闭合。）
+    Ok(programs::Report::note(env::EXIT_OK, "system: done"))
 }
 
 /// 与引导域搭一条**双向**的问答路。
@@ -156,27 +210,27 @@ fn talk_to_root() -> Option<Pier> {
 /// **本域为什么读树**：单子上那一格写的是类（`compatible`），翻成"哪一段区"要有设备树；而单子
 /// 是本域造的（子方只认得生我者，单子不经过它），故读树只能落在本域（理由见
 /// `system::machine` 头注）。这一枚的坐标是 [`env::Key::dtb`]——**它不是树里的节点**。
-fn take_machine(pier: &Pier) -> Result<Machine, &'static str> {
+fn take_machine(pier: &Pier) -> Result<Machine, Fail> {
     let want = Want::new(env::Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE);
-    let token = take(pier, want).ok_or("system: tree ask")?;
-    let dock = Dock::open(PolePie::from_token(token)).map_err(|_| "system: tree open")?;
-    Machine::of(dock.view())
+    let token = take(pier, want).ok_or(Fail::Machine)?;
+    let dock = Dock::open(PolePie::from_token(token)).map_err(|_| Fail::Machine)?;
+    Machine::of(dock.view()).map_err(|_| Fail::Machine)
 }
 
 /// 领那块载荷区并把清单读出来。坐标是**机器自己在树里写的那一段**（`/chosen`，见 `main`）。
 ///
 /// **零拷贝**：那几十 MB 不是搬过来的，是同一批物理页借映进本域——固化在清单里的镜像坐标
 /// 是**相对这块区**的切片，故换一张表、换一个 VA 照样解析得出来。
-fn take_catalog(pier: &Pier, key: env::Key) -> Result<Catalog<'static>, &'static str> {
+fn take_catalog(pier: &Pier, key: env::Key) -> Result<Catalog<'static>, Fail> {
     let want = Want::new(key, Kind::Pole, Access::FETCH, Policy::NONE);
-    let token = take(pier, want).ok_or("system: payload ask")?;
-    let dock = Dock::open(PolePie::from_token(token)).map_err(|_| "system: payload open")?;
+    let token = take(pier, want).ok_or(Fail::Payload)?;
+    let dock = Dock::open(PolePie::from_token(token)).map_err(|_| Fail::Payload)?;
     let view = dock.view();
     // SAFETY: 这段借映在**本域存活期间**一直有效（门闩在本域表里，本域到收场才退出）；
     // 视图只读（`FETCH`），本域只解析、不写。
     let blob: &'static [u8] =
         unsafe { core::slice::from_raw_parts(view.base() as *const u8, view.size()) };
-    Catalog::new(blob).ok_or("system: payload manifest")
+    Catalog::new(blob).ok_or(Fail::Manifest)
 }
 
 /// 问引导域要一枚：递一张只有一条的单子，取回那一条的号（按**坐标**认，不按位次——这一手
@@ -192,5 +246,5 @@ fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     supply::client::pick(records, key)
 }
 
-// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_supervisor_system_main.rs"));

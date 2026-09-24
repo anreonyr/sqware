@@ -21,10 +21,11 @@ extern crate programs;
 // 本域只跑服务那一侧（`serve`）；客侧那一面住在 protocol 里，本域用不到。
 use programs::supervisor::coalition::server;
 
-/// 本 bin 的 `main`：服务那一侧跑完/起不来都把原因码带回来——出口那一手
-/// （`_start` 胶水与 `Reap`）全在 [`programs::entry`]，本文件一个字都不碰它。
-extern "C" fn bare_main() -> programs::Reason {
+/// 本 bin 的 `main`：服务那一侧跑完/起不来都把死法带回来——出口那一手由构建脚本生成
+/// （见 `programs/build.rs`），本文件一个字都不碰它。
+fn main() -> Result<(), programs::supervisor::coalition::fail::Fail> {
     server::serve()
 }
 
-programs::boot!(bare_main);
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）由构建脚本生成——见 `programs/build.rs`。
+include!(concat!(env!("OUT_DIR"), "/entry_supervisor_coalition_main.rs"));
