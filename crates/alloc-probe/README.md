@@ -96,7 +96,7 @@ shim 的 `machine::hart_id()` 改成按线程分配 id（`hart_bind` 给确定�
 | 数据竞争 | **ThreadSanitizer** | 见裁决二（TSan 必须 `-Zbuild-std`）；Miri 只查 **UB**、并发不跑（裁决三） |
 | 并发交错正确性 | **Loom / Shuttle** | **挂不上** —— 裁决见下 |
 
-实测读数（`./run.sh mt -- --nocapture`）：
+实测读数（`cargo mt -- --nocapture`）：
 
 ```text
 [mt] 跨 hart 归还：hart0 池 0 / hart1 池 1 / 交回后归属本池 8/8
@@ -135,25 +135,30 @@ Miri 的耗时随**分配器调用次数**线性涨（实测：round-trip 两条
 
 * `cfg(miri)` 把台面缩到 **1024 页**（4 MiB，再小装台就取不到后备仓的仓区）、churn 缩到 **8 轮**；
 * `buddy_capacity…`（4000+ 次拆分）与 `deterministic_corpus` 在 Miri 下 **`ignore`**（理由写在断言旁）；
-* 结果：`./run.sh miri` **2 分钟跑完、4 通过 2 忽略**，审计的是 UB（裸指针来去、交付区写读）；
+* 结果：`cargo miri` **2 分钟跑完、4 通过 2 忽略**（Miri 要 `MIRIFLAGS`，见下），审计的是 UB（裸指针来去、交付区写读）；
 * **并发在 Miri 下不跑**（`tests/mt.rs` 整文件 `not(miri)`）—— 竞争那件事交给 TSan，各管一段。
 
-## 十条路（互斥，见 `run.sh`）
+## 十条路（互斥）
+
+**路就是 `.cargo/config.toml` 里的十个 `[alias]`**（原先是 `run.sh` 一个模式词参数，
+**那份脚本已删**；模式词摘参数那一格在别名里自动没了）。三条 sanitizer 路要一个环境变量——
+`RUSTFLAGS` / `MIRIFLAGS` 是 **cargo 自己**读的，而 `[env]` 没有"只对这一条别名生效"这回事，
+故它们是**一行命令**：
 
 ```sh
 # 单线程（宿主单元测试）
-./run.sh smartalloc   # 默认：孤儿缓冲转储（总量面）
-./run.sh mockalloc    # 第一层·甲：配对判词（逐笔账）
-./run.sh dhat         # 第一层·乙：宿主堆用量（气压计）
+cargo smartalloc      # 默认：孤儿缓冲转储（总量面）
+cargo mockalloc       # 第一层·甲：配对判词（逐笔账）
+cargo dhat            # 第一层·乙：宿主堆用量（气压计）
 # 多线程（扩展）
-./run.sh mt           # 并发层：守恒 / 模式写读 / per-hart 池 / 跨 hart 回路 + dropcount
-./run.sh tsan         # 数据竞争：ThreadSanitizer（-Zbuild-std，见裁决二）
-./run.sh miri         # UB：Miri（规模分级，2 分钟，见裁决三）
-./run.sh bench        # 并发压力/吞吐量：malloc-bench-rs
+cargo mt              # 并发层：守恒 / 模式写读 / per-hart 池 / 跨 hart 回路 + dropcount
+RUSTFLAGS="-Zsanitizer=thread" cargo tsan   # 数据竞争：ThreadSanitizer（-Zbuild-std，见裁决二）
+MIRIFLAGS="-Zmiri-permissive-provenance" cargo miri   # UB：Miri（规模分级，2 分钟，见裁决三）
+cargo bench           # 并发压力/吞吐量：malloc-bench-rs
 # 零后端 / 其它
-./run.sh plain        # 不接管：只看用例过不过（--no-default-features）
-./run.sh lsan         # LeakSanitizer（必须不接管；覆盖单线程 + 并发两层）
-./run.sh orphan       # 演示：一次普通 Rust 分配漏掉 ⇒ 收尾转储点名
+cargo plain           # 不接管：只看用例过不过（--no-default-features）
+RUSTFLAGS="-Zsanitizer=leak" cargo lsan     # LeakSanitizer（必须不接管；覆盖单线程 + 并发两层）
+cargo orphan          # 演示：一次普通 Rust 分配漏掉 ⇒ 收尾转储点名
 ```
 
 * **三个后端三选一**：rustc 只允许一个 `#[global_allocator]`，而三个后端读数口径不同

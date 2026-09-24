@@ -49,9 +49,9 @@ malloc-bench-rs = "0.1"
 # 每个活块都被 smartalloc 的队列指着，LSan 会把它们全判成 reachable。
 default = ["smartalloc"]
 smartalloc = ["dep:smartalloc"]
-# 第一层·甲：配对判词（`./run.sh mockalloc`）——`tests/pairing.rs`。
+# 第一层·甲：配对判词（`cargo mockalloc`）——`tests/pairing.rs`。
 mockalloc = ["dep:mockalloc"]
-# 第一层·乙：用量读数（`./run.sh dhat`）——`tests/heap.rs`。
+# 第一层·乙：用量读数（`cargo dhat`）——`tests/heap.rs`。
 dhat = ["dep:dhat"]
 # **声明但不启用**：`include!` 进来的内核源码里有 `#[cfg(feature = "framework")]` 分支
 # （内核那边的帧侧范围断言，`frame.rs:71/100`）。不声明它，rustc 会报 `unexpected_cfgs`；

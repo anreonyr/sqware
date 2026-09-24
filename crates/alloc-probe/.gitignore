@@ -1,5 +1,6 @@
 # 本 crate 是**独立工作区**（被根 workspace `exclude`），故它有自己的 target 与 Cargo.lock：
 # 产物不进库。
 /target
-# 本地 CARGO_HOME 是缓存不是源码（`run.sh` 拉到仓库根的 `.cargo-home/`，那是**根仓**的事）。
+# 本地 CARGO_HOME 是缓存不是源码（它由**根仓**的构建拉到仓库根的 `.cargo-home/`；本 crate 原先
+# 那份 `run.sh` 也指过它，**那份脚本已删**，今天默认 registry 就够）。
 /.cargo-home
