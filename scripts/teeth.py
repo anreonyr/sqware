@@ -40,7 +40,7 @@
 **照实记三：这一遍量出一条"没牙"的**——`线·投不出去也置忙`（把 `deliver` 里 `post` 的失败
 忽略掉）**全门照绿**：宿主靶的 `Pier` 桩恒答 `Ok`，故"推不出去 ⇒ 不置忙"那条契约**量不到**。
 已给桩加一个**可关掉的失败开关**（线程局部，同那两台分配器）+ 一条用例
-（`crates/line-case::a_frame_that_cannot_be_posted_leaves_the_line_idle`），并把这一条变异放进
+（`line` 靶::a_frame_that_cannot_be_posted_leaves_the_line_idle`），并把这一条变异放进
 这一遍的清单里——**复跑它就红了**（17/17）。这正是这个量具的用处：不是"证明门很好"，
 是**指出哪一格缺牙**，缺的那一格补上。
 
@@ -61,7 +61,7 @@ ROOT = "/home/anreonyr/Develop/sqware"
 
 # (名字, 文件, 原文, 改成)  —— 每一条都必须是**像样的** bug，不是语法错。
 MUTATIONS = [
-    # ── 树（operator-case）──────────────────────────────
+    # ── 树（`operator` 靶）──────────────────────────────
     ("树·剪掉时把槽移走（号=下标，后面全错位）",
      "crates/protocol/src/operator/core.rs",
      "        let taken = self.slots.get_mut(id.get())?.take()?;",
@@ -90,7 +90,7 @@ MUTATIONS = [
      "crates/protocol/src/operator/core.rs",
      "        if road.len() > Self::ROAD_MAX {\n            return Err(Fail::Full);\n        }",
      "        // 变异：不看路长"),
-    # ── 门禁（judge-case）───────────────────────────────
+    # ── 门禁（`judge` 靶）───────────────────────────────
     ("判·把 Err 读成 Deny（判不了塌成没资格）",
      "crates/protocol/src/operator/judge.rs",
      "    let Some(me) = (match roster.who(who) {\n        Ok(found) => found,\n        Err(()) => return Ruling::Unjudged,\n    }) else {\n        return Ruling::Deny;\n    };",
@@ -115,7 +115,7 @@ MUTATIONS = [
      "crates/protocol/src/operator/ledger.rs",
      "        self.lines.try_reserve(1).map_err(|_| Fail::Full)?;",
      "        let _ = self.lines.try_reserve(1);"),
-    # ── 线（line-case）──────────────────────────────────
+    # ── 线（`line` 靶）──────────────────────────────────
     ("线·占两次不拒（同一格两个主人）",
      "crates/protocol/src/driver/line/core.rs",
      r"            Some(Cell::Owned { .. }) => Err(Fail::Taken),",
@@ -147,7 +147,7 @@ MUTATIONS = [
                 Ok(())
             }""",
      r"""            Some(Cell::Owned { .. }) => Ok(()),"""),
-    # ── 两本册子（principal-case：名册/谱系 + 盟籍）──────
+    # ── 两本册子（`roster` 靶：名册/谱系 + 盟籍）──────
     ("册·名册不看钥匙（谁都能写）",
      "crates/protocol/src/principal/core.rs",
      "        if from != self.assembler {\n            return Err(Fail::Denied);\n        }\n        if self.node(p).is_none() {",
@@ -160,7 +160,7 @@ MUTATIONS = [
      "crates/protocol/src/coalition/core.rs",
      "        if self.book.iter().any(|a| a.who == who && a.of == c) {\n            return Ok(());\n        }",
      "        // 变异：不查重"),
-    # ── 板（board-case）────────────────────────────────
+    # ── 板（`board` 靶）────────────────────────────────
     ("板·查名字不剔死（死的照旧答得出）",
      "crates/protocol/src/system/board/core.rs",
      "        mut ship: impl FnMut(PieToken),\n    ) -> Result<PieToken, Fail> {\n        let at = self.find(name).ok_or(Fail::Unknown)?;\n        self.sweep_at(at);",
@@ -169,7 +169,7 @@ MUTATIONS = [
      "crates/protocol/src/system/board/core.rs",
      "    pub fn unregister(&mut self, name: Name, who: TaskId) -> Result<(), Fail> {\n        let at = self.find(name).ok_or(Fail::Unknown)?;\n        self.sweep_at(at);",
      "    pub fn unregister(&mut self, name: Name, who: TaskId) -> Result<(), Fail> {\n        let at = self.find(name).ok_or(Fail::Unknown)?;\n        // 变异：不扫"),
-    # ── 会话（session-case：码头/泊位/认领）─────────────
+    # ── 会话（`quay` 靶：码头/泊位/认领）─────────────
     ("会·seat 不挡同名（同一位同记号能有两枚）",
      "crates/protocol/src/session/core.rs",
      "        if self.find(name).is_some() {\n            return Err(Seat::NoName);\n        }\n\n        // 本端那一枚：先铸",
@@ -190,7 +190,7 @@ MUTATIONS = [
      "crates/protocol/src/session/core.rs",
      "        if self.piers.is_empty() {\n            // 我一条都没 seat 出去 ⇒ 没有额度可认领（对方无从知道该给我几条）。\n            return Err(Claim::Partial);\n        }",
      "        if false {\n            return Err(Claim::Partial);\n        }"),
-    # ── 编排（system-case：账 / 判定 / 配给）─────────────
+    # ── 编排（`judgement` 靶：账 / 判定 / 配给）─────────────
     ("编·登记不查重名（同名能有两行）",
      "crates/protocol/src/system/desk.rs",
      "        if self.find(name).is_some() {\n            return Err(Fail::Unknown);\n        }",
@@ -253,7 +253,7 @@ MUTATIONS = [
      "crates/protocol/src/system/board/frame.rs",
      "    Name::from_bytes(raw).ok()",
      "    Name::from_slice(&raw).ok()"),
-    # ── 供单（supply-case：帧 / 荷载 / 上限）＋搬进 env 的那两个类型 ──
+    # ── 供单（`supply` 靶：帧 / 荷载 / 上限）＋搬进 env 的那两个类型 ──
     ("供·两族视图收混族的位（`Access` 收下传递族）",
      "crates/env/src/wire/access.rs",
      "            Some(p) if p.bits() & ACCESS_MASK.bits() != p.bits() => None,",
@@ -381,7 +381,7 @@ BOOT = [
     # 这两条是**等价变异**（预期绿），不是"没牙"：机器上那两支探针**等的就是对方死**
     # （`probe-owner` 有界重试到 `/sys/lease` 接得上为止），故"活着时别人顶不掉"这一格
     # 它根本量不到；而那一格由宿主靶管着——
-    # `crates/judge-case::a_living_owner_holds_the_slot_and_a_dead_one_does_not`（主人还在场
+    # `judge` 靶::a_living_owner_holds_the_slot_and_a_dead_one_does_not`（主人还在场
     # ⇒ 别人顶不掉）与 `a_rebind_rewrites_the_same_line_and_can_give_up_the_slot`
     # （`mine = false` 是**放弃归属** ⇒ 从此谁都能落）。实测：删掉 `mine` 那一位，机器读数
     # 一字不变（`lease land=0 id=…` 照样 0），故记成"等价"。

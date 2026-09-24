@@ -197,7 +197,10 @@ fn a_tile_lands_and_find_hands_it_back() {
     let _serial = serial();
     let mut t = tree();
     live(1);
-    assert_eq!(t.land(Where::Root, name("uart0"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("uart0"), tok(1)),
+        Ok(EntryId::new(0))
+    );
     assert_eq!(look(&mut t, &path(&["uart0"])), Ok(Some(tok(1))));
     assert_eq!(names(&t, &[]), Ok(std::vec![name("uart0")]));
 }
@@ -227,7 +230,10 @@ fn a_missing_id_is_unknown() {
         t.land(Where::At(EntryId::new(7)), name("uart0"), tok(1)),
         Err(Fail::Unknown)
     );
-    assert_eq!(t.part(Where::At(EntryId::new(7)), name("sub")), Err(Fail::Unknown));
+    assert_eq!(
+        t.part(Where::At(EntryId::new(7)), name("sub")),
+        Err(Fail::Unknown)
+    );
     assert_eq!(t.trim(EntryId::new(7)), Err(Fail::Unknown));
     assert_eq!(t.name(EntryId::new(7)), Err(Fail::Unknown));
     assert_eq!(look(&mut t, &path(&["dev", "uart0"])), Err(Fail::Unknown));
@@ -239,14 +245,20 @@ fn walking_through_a_tile_is_not_a_pane() {
     let _serial = serial();
     let mut t = tree();
     live(1);
-    assert_eq!(t.land(Where::Root, name("log"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("log"), tok(1)),
+        Ok(EntryId::new(0))
+    );
     live(2);
     // 拿一枚 `Tile` 当容器 ⇒ 走不进去（落 / 分 / 列 三条都走这一格）。
     assert_eq!(
         t.land(Where::At(EntryId::new(0)), name("x"), tok(2)),
         Err(Fail::NotAPane)
     );
-    assert_eq!(t.part(Where::At(EntryId::new(0)), name("x")), Err(Fail::NotAPane));
+    assert_eq!(
+        t.part(Where::At(EntryId::new(0)), name("x")),
+        Err(Fail::NotAPane)
+    );
     assert_eq!(
         t.list(Where::At(EntryId::new(0))).map(|ids| ids.count()),
         Err(Fail::NotAPane)
@@ -270,7 +282,10 @@ fn listing_a_tile_is_not_a_pane() {
     let _serial = serial();
     let mut t = tree();
     live(1);
-    assert_eq!(t.land(Where::Root, name("log"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("log"), tok(1)),
+        Ok(EntryId::new(0))
+    );
     assert_eq!(names(&t, &path(&["log"])), Err(Fail::NotAPane));
 }
 
@@ -286,8 +301,15 @@ fn a_pane_with_things_in_it_is_not_moved() {
     );
     live(2);
     // 非空那块 Pane：**会毁掉内容**的那两条不许动它（落 = 换绑、剪），**分是幂等的**。
-    assert_eq!(t.land(Where::Root, name("dev"), tok(2)), Err(Fail::NonEmpty));
-    assert_eq!(t.trim(EntryId::new(0)), Err(Fail::NonEmpty), "非空 Pane 剪不动");
+    assert_eq!(
+        t.land(Where::Root, name("dev"), tok(2)),
+        Err(Fail::NonEmpty)
+    );
+    assert_eq!(
+        t.trim(EntryId::new(0)),
+        Err(Fail::NonEmpty),
+        "非空 Pane 剪不动"
+    );
     assert_eq!(
         t.part(Where::Root, name("dev")),
         Ok(EntryId::new(0)),
@@ -323,13 +345,19 @@ fn rebinding_takes_the_name_over_and_lets_the_old_one_go() {
 
     assert_eq!(t.part(Where::Root, name("dev")), Ok(EntryId::new(0)));
     live(1);
-    assert_eq!(t.land(Where::Root, name("dev"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("dev"), tok(1)),
+        Ok(EntryId::new(0))
+    );
     assert_eq!(look(&mut t, &path(&["dev"])), Ok(Some(tok(1))));
 
     // 一枚 `Tile` ⇒ 换绑：旧的那一枚放下，号还是那一枚。
 
     live(2);
-    assert_eq!(t.land(Where::Root, name("dev"), tok(2)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("dev"), tok(2)),
+        Ok(EntryId::new(0))
+    );
     assert_eq!(look(&mut t, &path(&["dev"])), Ok(Some(tok(2))));
     assert!(unshipped(1) && !unshipped(2));
 
@@ -347,7 +375,10 @@ fn opens_answers_the_opener_and_never_hands_the_pie_out() {
     let _serial = serial();
     let mut t = tree();
     live(1);
-    assert_eq!(t.land(Where::Root, name("door"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("door"), tok(1)),
+        Ok(EntryId::new(0))
+    );
     // 开者那一格：**与授与人那一格分得开**（两枚戳子同型 ⇒ 偏置就是这一格的判据）。
     assert_eq!(
         t.opens(EntryId::new(0)),
@@ -357,7 +388,11 @@ fn opens_answers_the_opener_and_never_hands_the_pie_out() {
     // **什么都不交出去**：读它一遍之后那一格照旧在、那一枚照旧没被放下。
     assert!(!unshipped(1));
     assert_eq!(t.opens(EntryId::new(0)), Ok(TaskId::new(1 + OPENED_BIAS)));
-    assert_eq!(look(&mut t, &path(&["door"])), Ok(Some(tok(1))), "句柄只有 find 交");
+    assert_eq!(
+        look(&mut t, &path(&["door"])),
+        Ok(Some(tok(1))),
+        "句柄只有 find 交"
+    );
 }
 
 #[test]
@@ -456,7 +491,10 @@ fn a_dead_tile_is_swept_on_the_read_path() {
     let _serial = serial();
     let mut t = tree();
     live(1);
-    assert_eq!(t.land(Where::Root, name("log"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("log"), tok(1)),
+        Ok(EntryId::new(0))
+    );
     gone(1);
     // 寻之前先译号：译号**不过问死活**（与 `list` 一样），剔死落在 `find` 那一格上。
     assert_eq!(t.seek(&path(&["log"])), Ok(EntryId::new(0)));
@@ -488,7 +526,10 @@ fn trimming_lets_go_of_the_tile_and_keeps_empty_panes() {
     let _serial = serial();
     let mut t = tree();
     live(1);
-    assert_eq!(t.land(Where::Root, name("log"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("log"), tok(1)),
+        Ok(EntryId::new(0))
+    );
     assert_eq!(t.trim(EntryId::new(0)), Ok(()));
     assert!(unshipped(1));
     assert_eq!(look(&mut t, &path(&["log"])), Err(Fail::Unknown));
@@ -677,10 +718,17 @@ fn rebinding_keeps_the_number_and_trimming_retires_it() {
     let _serial = serial();
     let mut t = tree();
     live(1);
-    assert_eq!(t.land(Where::Root, name("log"), tok(1)), Ok(EntryId::new(0)));
+    assert_eq!(
+        t.land(Where::Root, name("log"), tok(1)),
+        Ok(EntryId::new(0))
+    );
     let id = t.list(Where::Root).unwrap().next().unwrap();
     live(2);
-    assert_eq!(t.land(Where::Root, name("log"), tok(2)), Ok(id), "换绑不动号");
+    assert_eq!(
+        t.land(Where::Root, name("log"), tok(2)),
+        Ok(id),
+        "换绑不动号"
+    );
     assert_eq!(t.list(Where::Root).unwrap().next(), Some(id), "换绑不动号");
     assert_eq!(t.name(id), Ok(name("log")));
     assert_eq!(t.trim(id), Ok(()));

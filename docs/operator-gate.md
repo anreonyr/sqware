@@ -10,7 +10,7 @@
 > | 判据 `operator::judge`（三格裁决 + **四个**注入事实——后来加了 `Door`，见 `operator-rule.md` §7，两个号泛型） | ✅ `crates/protocol/src/operator/judge.rs` |
 > | 裁决 → 线上那一格 `operator::gate`（`Code` / `Control` / `Blind` / `verdict`） | ✅ `crates/protocol/src/operator/gate.rs` |
 > | 线上两格新码 `DENIED=8` / `UNJUDGED=9` | ✅ `operator/call.rs`（值与 `gate` 那一份由编译期断言钉住） |
-> | 宿主台第三台（`judge-case`） | ✅ `scripts/host.sh` **当时**三台共 **42 例全过**（**那一刀之后 25 例 / 48 例**——它同时编 `judge` + `gate` + `ledger`）。<br>**照实记（这行的口径）**：这是**当时的读数**，不改写成今天的数字——今日的台数/例数见 `scripts/host.sh` 头注那张清单（它才是权威；今天已是八台 / 137 例） |
+> | 宿主台第三台（`judge` 靶） | ✅ `scripts/host.sh` **当时**三台共 **42 例全过**（**那一刀之后 25 例 / 48 例**——它同时编 `judge` + `gate` + `ledger`）。<br>**照实记（这行的口径）**：这是**当时的读数**，不改写成今天的数字——今日的台数/例数见 `scripts/host.sh` 头注那张清单（它才是权威；今天是**一个 crate `crates/protocol-case` / 八个靶 / 118 例**） |
 > | 树那一侧：认门牌 → 开门禁 → 判 `land`/`find`/`trim` | ✅ `programs/src/supervisor/operator/server.rs` |
 > | 装配那一侧：身份服务**自己**把门牌交给持树者 + 递一格号 | ✅ `principal/server.rs` + `operator/bridge.rs` + `service.rs` |
 > | 真机门 | ✅ `examine` **3/3**、`soak` **10/10**（既有 11 条 `tree part=0 …` 与 3 条 `list` 一字未变） |
@@ -281,7 +281,7 @@ pub fn attach(
 
 核心那两个注入事实（`VestedBy` / `Unship`）是**同步纯函数**：它们答"这枚还答得出吗""放下它"。
 而裁决要**发一次 envcalls**（`Resolve`），同步闭包做不到；何况 `core.rs` 不出现 `runtime::`
-是它的可机械检查纪律，也是 `crates/operator-case` 那台宿主门能存在的原因。
+是它的可机械检查纪律，也是 `protocol-case` 的 `operator` 靶那台宿主门能存在的原因。
 
 所以：**核心答"结构上允不允许"（六格 `Fail`），适配层答"这一位许不许"（两格新码）**。
 
@@ -289,7 +289,7 @@ pub fn attach(
 
 - [x] 核心不动，`Fail` 不加格。 ← 已定
 - [ ] 宿主台怎么证：判据要写成一个**能被宿主台编到的纯函数**（住 `server.rs` 之外的小模块），
-      否则 `operator-case` 看不见它。
+      否则 `operator` 靶看不见它。
 
 ---
 
@@ -297,7 +297,7 @@ pub fn attach(
 
 | 台 | 证什么 | 落点 |
 |---|---|---|
-| 宿主台 | "被拒 ⇒ 那一格**没被占**" | 照 `crates/operator-case` 现有假表形状，新增纯 `judge` 模块 |
+| 宿主台 | "被拒 ⇒ 那一格**没被占**" | 照 `protocol-case` 的 `operator` 靶现有假表形状，新增纯 `judge` 模块 |
 | 真机负证 | `land=DENIED` **且** 随后 `seek=UNKNOWN`（第二格才证"拒绝不是换绑"） | ✅ 已落地：`programs/src/user/probe_denied.rs` + `Program::bind = false`（装配者**不绑它**），读数 `probe: tree land=8 seek=err:1` |
 | 既有门不许退化 | `scripts/soak.sh` 那 11 条 `tree part=0 dir=… land=0 find=0 got=true` 与 3 条 `list` 一字不变 | 默认策略必须是"**没规则 ⇒ 放行**"，否则整机装不上 |
 | 顺序回归 | 装配顺序与 `echo: seq=0` 不变 | 同 soak |
@@ -385,7 +385,7 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
 
   | 原记账 | 复核结果 |
   |---|---|
-  | `try_reserve` | **真**，而且是"**同一句话，三处纪律不一致**"：树这一处只有**条数**闸（`PANE_CAP = 16`），分配失败走的是 `handle_alloc_error`（**abort**，客人连一句答话都收不到）；而 `Desk::admit` 与 `Ledger::grow` 都是 `try_reserve → Full`。**已收**：`core.rs::put_here` 加 `try_reserve`（答 `Fail::Full`），`server.rs` 的 `settle` 快照也从裸 `collect()` 改成先 `try_reserve`（备不下就报一句 + 这一轮不动）。**宿主台上量得到**：`crates/operator-case` 换了一台**可关掉的分配器**（线程局部旗帜 ⇒ 不打搅别的用例），`a_pane_that_cannot_be_grown_answers_full` 一次通过；**撤掉那一行它就 SIGABRT**（实测 `memory allocation of 256 bytes failed`）——那一格判据是真有牙的。**补记（后一刀）**：账那一侧（`Ledger::grow`，fail-closed 的那一格）此前**没有门**，现在也有了一台同款的可关分配器 + `a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind`（`crates/judge-case`）：备不下 ⇒ `Err(Full)`、**失败不留半行**、放开之后照样写得进；撤掉 `grow` 里那一行同样 **SIGABRT**（`memory allocation of 16 bytes failed`）。 |
+  | `try_reserve` | **真**，而且是"**同一句话，三处纪律不一致**"：树这一处只有**条数**闸（`PANE_CAP = 16`），分配失败走的是 `handle_alloc_error`（**abort**，客人连一句答话都收不到）；而 `Desk::admit` 与 `Ledger::grow` 都是 `try_reserve → Full`。**已收**：`core.rs::put_here` 加 `try_reserve`（答 `Fail::Full`），`server.rs` 的 `settle` 快照也从裸 `collect()` 改成先 `try_reserve`（备不下就报一句 + 这一轮不动）。**宿主台上量得到**：`protocol-case` 的 `operator` 靶换了一台**可关掉的分配器**（线程局部旗帜 ⇒ 不打搅别的用例），`a_pane_that_cannot_be_grown_answers_full` 一次通过；**撤掉那一行它就 SIGABRT**（实测 `memory allocation of 256 bytes failed`）——那一格判据是真有牙的。**补记（后一刀）**：账那一侧（`Ledger::grow`，fail-closed 的那一格）此前**没有门**，现在也有了一台同款的可关分配器 + `a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind`（`protocol-case` 的 `judge` 靶）：备不下 ⇒ `Err(Full)`、**失败不留半行**、放开之后照样写得进；撤掉 `grow` 里那一行同样 **SIGABRT**（`memory allocation of 16 bytes failed`）。 |
   | 转授失败不答 `OK` | **不准**：`answer` 那一支写的是 `tree.find(…).and(grant)`，`grant` **从 `f326e7a` 那天起就在**（`git log -S` 查过）。真正的缺口在更深一层：`session::call::ship` 是 `port::ship(…).map_err(\|_\| ())`——**失败的原因在会话层就丢了**，于是树只能把"我授不出去"借 `Unknown` 的壳（客人读到的是"那一格不在树上"）。**记着**：要真分得清，得动会话层那一格的失败域（`ship` 现在返 `Result<PieToken, ()>`）——而收益有限：授不出去多半是因为那位客人已经没了，它读不到这一格。 |
   | 按记号认领 | **真，但三处的底气不一样**：`reply_of`（记号 `LINK`）由 `Quay::seat` 的同名判据兜着——"同一位、同一记号只可能有一枚"（`session/core.rs`）；而 `ask_of`（`ASK`）与 `find_face`（`ENTRY`）走的是**裸 `unseal_hole`**，**没有同名闸**——一个域调两次就是两枚。三处原先各写一遍同一段扫表、**都取第一枚而从不看有几枚**。**已收一半**：三处合成一个 `claim(记号, 谁, 一句话)`，扫全表、命中两枚就**报一句**（行为仍是取第一枚）。 |
 
@@ -410,7 +410,7 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
   故这一刀同时把两个记号分开：`operator-ask` / `board-ask`。
 - `part` 碰到一块 `Tile` 时静默顶掉它那条（§1.5 的窄口子）——**不改行为**：今天 `/sys`、
   `/device` 一直是 `Pane`，为一个不会发生的状态动换绑分支不值。**已有判据钉住现状**
-  （`crates/operator-case::a_part_over_a_tile_takes_the_name_over_and_keeps_the_number`）：
+  （`operator` 靶::a_part_over_a_tile_takes_the_name_over_and_keeps_the_number`）：
   号不动、旧的那一枚被放下、那一名下换成一块**空** `Pane`、寻它答 `NotATile`、它下面能再立一格。
 - ~~规则的形状（`Allow` / `Is` / `Under` / `In` 怎么表达、能不能组合）——闸口跑通后再谈。~~
   → **已做**：闸口跑通了，下一刀（[`operator-rule.md`](operator-rule.md)）把"用"那一轴落成
@@ -422,7 +422,7 @@ pub const CAP: usize = 12;           // 5 常驻 + 4 会同时在场的临时 + 
   见 [`operator-rule.md`](operator-rule.md) §7；剩下一半（"某一位**叫什么**"）仍记在那里。
 - 死亡道（板那条 `gone-<名字>` 树一条都没认领）。
 - 别名（同一枚 Pie 挂两个名 = 两条独立条目）——**已有判据钉住现状**
-  （`crates/operator-case::the_same_pie_under_two_names_is_two_independent_entries`）：
+  （`operator` 靶::the_same_pie_under_two_names_is_two_independent_entries`）：
   两条号不同、`opens` 答同一枚（同一扇门）、各自可寻、剪一条不动另一条。
   树是"名字 → 一枚句柄"的目录，**不查重**——这是裁决，不是遗漏（`land` 的判据里没有
   "这一枚已经挂过了"这一格）。

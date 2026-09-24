@@ -16,7 +16,7 @@
 //!
 //! 本文件**不放** `#[cfg(test)]`：`protocol` 是 `[lib] test = false`（riscv 目标上编不出
 //! libtest），故这里的 `cfg(test)` 一行都不会被主工作区那几道门编到。用例住
-//! `crates/operator-case`——一个**编外**的宿主 crate，把**本文件逐字**编进它的测试靶里；
+//! `protocol-case` 的 `operator` 靶——一个**编外**的宿主 crate，把**本文件逐字**编进它的测试靶里；
 //! 门口是 `scripts/host.sh`。改核心之前先跑它。
 //!
 //! # 坐标：号是唯一的直接坐标

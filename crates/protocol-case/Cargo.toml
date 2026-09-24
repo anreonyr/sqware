@@ -1,0 +1,54 @@
+[package]
+name = "protocol-case"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# 宿主（x86_64）那一台：把 `protocol` 的**八处纯核心**按 `#[path]` **逐字未改**地编进测试靶，
+# 让它们的规矩在宿主上真跑一遍。门口 `scripts/host.sh`（判据与清单住它头注）。
+#
+# # 为什么是一台，不是八台（照实记：用户裁定）
+#
+# 原先八处核心各有一个编外 crate（`operator-case` / `line-case` / …），彼此**只差一个文件名**：
+# 八份 `Cargo.toml`、八份 `Cargo.lock`、八个 `target/`，而 `env` 被编了八遍。用户的裁定是
+# **"我希望测试和运行环境分开，而不是交叉在一起"** ⇒ 收成一处（靶名照旧）：
+#
+#   `tests/operator.rs`   树（七条原语 / 六格失败域）
+#   `tests/line.rs`       线的账 + 界
+#   `tests/judge.rs`      门外那一问（三格裁决）+ 那本账 + 线上那三个码
+#   `tests/roster.rs`     名册与谱系（+ 盟籍）；`tests/{principal,coalition}/` 是它要的目录模块
+#   `tests/board.rs`      板（牌子 + 台账）
+#   `tests/quay.rs`       会话（码头 / 泊位 / 认领）；`tests/session/` 是那一台的桩（假表 + 假钟）
+#   `tests/judgement.rs`  编排（账 / 判定 / 配给）
+#   `tests/supply.rs`     供单（需求单 / 回单 / 上限与失败码表）
+#
+# **靶名 = 原来的 crate 名去后缀**（`operator` / `line` / …），故各处的指路由台名改成靶名。
+# `.gitignore` 里 `crates/*-case/target/` 那条通配仍然盖得住本 crate 的 `target/`。
+#
+# **照实记（格式化）**：本 crate 是编外的，`cargo fmt --all` **扫不到它**——故靶子改了之后要
+# 补一句 `cargo fmt --manifest-path crates/protocol-case/Cargo.toml`（合并那一刀顺手跑了一遍：
+# 八份靶原先从没被 workspace 的 rustfmt 碰过，那次是它们的第一次）。
+#
+# **照实记（这一刀的另一半）**：本 crate 成立时，`principal` / `coalition` / `board` / `judge` /
+# `gate` 五份核心源码里那 **34 条 `#[cfg(test)]` 用例**一并搬了出来——"测试不许住在运行时源里"
+# 是用户那句话的直接推论。其中 `judge` / `gate` 那 14 条与 `tests/judge.rs` 里**更强的同名判据**
+# 重复，故**删掉并把独有的那几处并进台里**（照实记写在 `tests/judge.rs` 与那两份源码的末段）。
+#
+# # 为什么它们编不进工作区（两条实测读数，仍是这一台存在的理由）
+#
+#   1) `protocol` 是 `[lib] test = false`：目标 `riscv64gc-unknown-none-elf` 上**编不出 libtest**
+#      （libtest 依赖 std）⇒ `cargo check --workspace --all-targets` 与 `build --release`
+#      **都不编**那批用例——核心的规矩长期只有"写着的规格"、没有"跑着的判据"；
+#   2) **链接 `protocol` 也不行**：它依赖 `runtime`，而 `runtime/src/core/tls.rs` 的两处 riscv
+#      内联汇编（`mv tp, …`）在宿主上 `invalid instruction mnemonic 'mv'`。
+#      （**`cargo check` 在同一个目标上是过的**——它不做代码生成。"check 绿 ≠ 编得过"。）
+#
+# 故走 `crates/alloc-probe` 那条现成的路：**不进工作区**（根 `Cargo.toml` 的 `exclude`）、
+# **只依赖 `env`**、把核心源码 `#[path]` 进来（用 `#[path]` 而不是 `include!`：后者编不过
+# `//!` 开头的文件，`E0753`——照实记在 `tests/operator.rs` 头注）。
+
+[dev-dependencies]
+# 判据用的 `Name` / `PieToken` / `TaskId` / `Mark` / `Key` / `Access` / `Policy` 都是 `env` 的类型；
+# `#[path]` 进来的那几份源码自己 `use env::…`。放 `[dev-dependencies]`：本 crate 只有测试靶，
+# 没有 lib。
+env = { path = "../env" }

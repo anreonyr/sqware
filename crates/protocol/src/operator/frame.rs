@@ -629,3 +629,16 @@ pub const TIP_MARK: Mark = Mark::of("tip");
 /// 提示之路的名字（两侧共用：持树者那侧不用它——它那一枚是自己铸的；引导域用它把
 /// 认来的那一枚挂在"名字 → 我手里的一枚"这张账上，好让编排域按名来要）。
 pub const TIP_NAME: &str = "operator-tip";
+
+// ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
+//
+// 原先这是宿主台的一条运行时用例（`the_operator_marks_do_not_collide_with_the_other_doors`，
+// 搬出运行时源时随用例一起改到这里）：这几枚值各是一枚 FNV 散列（`env::Mark::of`），
+// **撞了就是那次装机塌掉**（见上面 `ASK_MARK` 的照实记）。挪到编译期之后，riscv 那一档也一样
+// 钉着——"一漂就编不过"，且不再占一条用例。
+//
+// 比的是 `.get()` 那个裸值：`Mark` 的 `PartialEq` 不是 `const`，而 `get` 是 `const fn`。
+const _: () = assert!(ASK_MARK.get() != Mark::of("board-ask").get());
+const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
+const _: () = assert!(ASK_MARK.get() != TIP_MARK.get());
+const _: () = assert!(TIP_MARK.get() != Mark::of(TIP_NAME).get());

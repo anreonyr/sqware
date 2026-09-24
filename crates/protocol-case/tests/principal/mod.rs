@@ -19,4 +19,3 @@ pub mod core;
 #[allow(dead_code)]
 #[path = "../../../protocol/src/principal/frame.rs"]
 pub mod frame;
-

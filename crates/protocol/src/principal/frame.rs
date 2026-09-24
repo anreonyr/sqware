@@ -160,3 +160,14 @@ pub const DIR: &str = "sys";
 
 /// 本服务在树上的名字（门牌的第二段）：`/sys/principal`。
 pub const NAME: &str = "principal";
+
+// ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
+//
+// 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`：三条路的回信
+// 孔记号两两不同。**跨门那一对**（与本面的邻居、盟籍那一枚）钉在这里——本文件看得见
+// `crate::coalition`；盟籍那一份钉它自己那几对。
+
+const _: () = assert!(BACK.get() != Mark::of("board-back").get());
+const _: () = assert!(BACK.get() != Mark::NONE.get());
+const _: () = assert!(BACK.get() != Mark::of(NAME).get());
+const _: () = assert!(BACK.get() != crate::coalition::frame::BACK.get());

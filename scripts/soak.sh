@@ -275,7 +275,7 @@
 #
 # **今天唯一的例外**是 `prog-probe-deep`：它**装得上电、不上电**（`INITRD_BINS` 里有条目、
 # `PLAN` 里没有），故它那两行（`alive at …` / `tree deep=… clean=…`）是**手工读数**——
-# 自动的那一半在**宿主靶**上（`crates/operator-case::a_deep_chain_does_not_need_the_call_stack`），
+# 自动的那一半在**宿主靶**上（`operator` 靶::a_deep_chain_does_not_need_the_call_stack`），
 # 理由与四种失败的排法见 `docs/operator-slot.md` §6 与那份源码的头注。
 #
 # 用法：

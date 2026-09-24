@@ -29,16 +29,16 @@
 //! # 为什么这一台也要编 `core.rs`
 //!
 //! `ledger.rs` 的两把钥匙是 [`Where`] / [`EntryId`]，失败域是 [`Fail`]——那三样住在
-//! `operator/core.rs` 里。**多编一份它是挑过的**：`core.rs` 里**没有** `#[cfg(test)]`
-//! （它的用例早搬去 `crates/operator-case` 了），故引它**不带进重复用例**；反过来把
-//! `judge.rs` 引进 `operator-case` 会把上面这些**再跑一遍**。
+//! `operator/core.rs` 里。**多编一份它是挑过的**：`core.rs` 里**没有**测试（它的用例住这台
+//! 靶里 `operator` 那一份），故引它**不带进重复用例**；反过来把 `judge` 那几份并进
+//! `tests/operator.rs` 会把上面这些**再跑一遍**。
 //!
 //! # 为什么这一台不编 `principal/core.rs`
 //!
 //! `judge.rs` 里两个号是**泛型**（`Rule<P, C>`），本台就用 `u64` 当那两个号（= [`Id`]，
 //! 也是线上那一格的宽度）。这不是省事：若判据直接写死 `PrincipalId` / `CoalitionId`，本台
-//! 就得跟着编那两份核心源码，而它们的 `#[cfg(test)]` 一次都没跑过——把新判据挂在没跑过的
-//! 桩上不划算（照实记见 `judge.rs` 头注）。
+//! 就得跟着编那两份核心源码，而那两份的用例住在**别的靶**里（`roster`）——把新判据挂在
+//! 别处跑着的桩上不划算（照实记见 `judge.rs` 头注）。
 
 extern crate alloc;
 
@@ -57,7 +57,7 @@ mod gate;
 /// 那三样**（`Where` / `EntryId` / `Fail` / `VestedBy`），本台不测树本身。
 // 照实记：`core.rs` 那一份**只借它的类型**（本台不测树本身）⇒ 它那一族方法在这一台里
 // 全是"没被叫过"。挂 `allow(dead_code)` 而不是把那几条删掉：那是**逐字未改的源码**，
-// 改它就是改判据的对象。同一个文件在 `crates/operator-case` 那一台里是被叫全的。
+// 改它就是改判据的对象。同一个文件在 `protocol-case` 的 `operator` 靶那一台里是被叫全的。
 #[allow(dead_code)]
 #[path = "../../protocol/src/operator/core.rs"]
 mod core;
@@ -79,10 +79,10 @@ mod fail_codes;
 #[path = "../../protocol/src/operator/frame.rs"]
 mod frame;
 
-use env::{Mark, Name, PieToken, TaskId};
+use env::{Name, PieToken, TaskId};
 
 use crate::core::{EntryId, Fail, Where};
-use crate::gate::{Blind, Code, Control, verdict};
+use crate::gate::{Blind, Code, Control, WIRE_DENIED, WIRE_OK, WIRE_UNJUDGED, verdict};
 use crate::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
 use crate::ledger::{Key, Ledger, Line};
 
@@ -91,7 +91,7 @@ use crate::ledger::{Key, Ledger, Line};
 // 账有一格判据是 **fail-closed**：`grow` 备不下 ⇒ 这一问**就该失败**（答 `FULL`），因为
 // "用"那一轴一旦漏记，那一格就从**私名**回落成**公名**（`Publishers` 那版是 fail-soft，
 // 照实记见 `ledger.rs::grow`）。它只有把分配**真的**打掉才量得到——故这里给测试靶换一个
-// **可关掉**的全局分配器（与 `crates/operator-case` 那一台同一款）。
+// **可关掉**的全局分配器（与 `protocol-case` 的 `operator` 靶那一台同一款）。
 //
 // 旗帜是**线程局部**的，不是进程级的：libtest 每个用例各一枚线程，而"打掉分配"若做成全局
 // 旗帜，那一条用例亮旗的时候别的用例正好在分配 ⇒ 随机 panic（**随机红的门比没有门更坏**）。
@@ -217,7 +217,11 @@ fn public_still_requires_a_bound_identity() {
     // **这一条是门禁的底线**：公开放的只有"已绑身份"，不是"任何人"。
     // 编排域（装配者）没绑身份——它做不了树的客人，这是有意的（不是树的客人就不该有特例）。
     assert_eq!(go(ME, Rule::Public), Ruling::Allow);
-    assert_eq!(go(OTHER, Rule::Public), Ruling::Allow, "别的已绑身份也算公开");
+    assert_eq!(
+        go(OTHER, Rule::Public),
+        Ruling::Allow,
+        "别的已绑身份也算公开"
+    );
     assert_eq!(go(UNBOUND, Rule::Public), Ruling::Deny, "没绑 = 没资格");
 }
 
@@ -239,7 +243,11 @@ fn under_is_reflexive_and_walks_up_the_branch() {
 #[test]
 fn in_looks_at_the_league() {
     assert_eq!(go(ME, Rule::In(C)), Ruling::Allow);
-    assert_eq!(go(ME, Rule::In(4)), Ruling::Deny, "没铸过的盟：false，不是失败");
+    assert_eq!(
+        go(ME, Rule::In(4)),
+        Ruling::Deny,
+        "没铸过的盟：false，不是失败"
+    );
 }
 
 #[test]
@@ -317,6 +325,10 @@ fn an_unreachable_roster_is_unjudged_never_denied() {
             "问不到身份：判不了"
         );
     }
+    // **同一件事在 gate 那一层也成立**（原 `gate.rs` 的
+    // `a_mute_identity_service_is_unjudged_not_denied`，用户裁定后并进这里）：四问全 `Err`
+    // ⇒ 判不了，不是拒。这一格钉的是"服务挂了"与"你没资格"分家。
+    assert_eq!(verdict(&Mute, ME, Rule::Public), Code::Unjudged);
 }
 
 #[test]
@@ -374,7 +386,10 @@ impl League<Id, Id> for Counting2 {
 struct Facts;
 impl Control for Facts {
     fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
-        Ok([(ME, P), (OTHER, 11)].iter().find(|(t, _)| *t == tid).map(|(_, p)| *p))
+        Ok([(ME, P), (OTHER, 11)]
+            .iter()
+            .find(|(t, _)| *t == tid)
+            .map(|(_, p)| *p))
     }
     fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
         let mut at = Some(b);
@@ -395,6 +410,28 @@ impl Control for Facts {
     }
 }
 
+/// 一颗**答不上来**的身份边（服务在，但这一问没答）。
+///
+/// **照实记（用户裁定"测试和运行环境分开"）**：这一颗原先住 `gate.rs` 的 `#[cfg(test)]`
+/// （`a_mute_identity_service_is_unjudged_not_denied`）——那一份源里从此没有测试，这一段搬来
+/// 这里。它与 `Blind` 是**两件事**：`Blind` 是"装配期还没门牌"（那一格是 `Code::Blind`），
+/// 这一颗是"门牌在、问了没人答"（`Err` ⇒ 判不了）。
+struct Mute;
+impl Control for Mute {
+    fn who(&self, _: TaskId) -> Result<Option<Id>, ()> {
+        Err(())
+    }
+    fn heir(&self, _: Id, _: Id) -> Result<bool, ()> {
+        Err(())
+    }
+    fn amid(&self, _: Id, _: Id) -> Result<bool, ()> {
+        Err(())
+    }
+    fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> {
+        Err(())
+    }
+}
+
 #[test]
 fn the_verdict_maps_onto_the_wire_cells() {
     // 放行 / 终态拒 / 判不了——三格各归各位（真值来自上面那三张假表）。
@@ -404,12 +441,27 @@ fn the_verdict_maps_onto_the_wire_cells() {
     assert_eq!(verdict(&Facts, ME, Rule::In(C)), Code::Ok);
     assert_eq!(verdict(&Facts, ME, Rule::Under(11)), Code::Denied);
     // 第五格：那一格是 OTHER 的门牌 ⇒ 它过、ME 拒；"没有那一位"是判不了（不是拒）。
-    assert_eq!(verdict(&Facts, OTHER, Rule::Opens(EntryId::new(5))), Code::Ok);
-    assert_eq!(verdict(&Facts, ME, Rule::Opens(EntryId::new(5))), Code::Denied);
+    assert_eq!(
+        verdict(&Facts, OTHER, Rule::Opens(EntryId::new(5))),
+        Code::Ok
+    );
+    assert_eq!(
+        verdict(&Facts, ME, Rule::Opens(EntryId::new(5))),
+        Code::Denied
+    );
     assert_eq!(
         verdict(&Facts, ME, Rule::Opens(EntryId::new(6))),
         Code::Unjudged
     );
+
+    // 三格码 ↔ **线上那一格**。**照实记（用户裁定"测试和运行环境分开"）**：这四条原先住
+    // `gate.rs` 的 `#[cfg(test)]`（`the_three_codes_map_to_the_three_wire_cells`），那一份源里
+    // 从此没有测试；它们与这一条问的是同一件事（裁决 → 线上那一格），故并进这里。
+    assert_eq!(Code::Ok.wire(), WIRE_OK);
+    assert_eq!(Code::Denied.wire(), WIRE_DENIED);
+    assert_eq!(Code::Unjudged.wire(), WIRE_UNJUDGED);
+    // 「手里没有门牌」在**客人那一侧**与"判不了"同一格（都可重试）——但树侧的读数分得开。
+    assert_eq!(Code::Blind.wire(), WIRE_UNJUDGED);
 }
 
 #[test]
@@ -418,6 +470,13 @@ fn no_face_at_all_is_blind_and_never_allow() {
     // 松成放行就等于"协调服务没配上 ⇒ 门禁不存在"。
     assert_eq!(verdict(&Blind, ME, Rule::Public), Code::Blind);
     assert!(!verdict(&Blind, ME, Rule::Public).passed());
+    // **一颗盲的门牌对谁都盲**（原 `gate.rs` 的 `the_blind_control_is_blind` 里那两条，
+    // 用户裁定"测试和运行环境分开"后并进这里）：不只是 `Public` 那一格。
+    assert_eq!(verdict(&Blind, ME, Rule::Under(P)), Code::Blind);
+    assert_eq!(
+        verdict(&Blind, ME, Rule::Opens(EntryId::new(5))),
+        Code::Blind
+    );
 }
 
 // ── 那一本账（ledger 那一层）────────────────────────────────
@@ -429,7 +488,7 @@ fn no_face_at_all_is_blind_and_never_allow() {
 // **编不进宿主靶**——而它在真机上量错过两次（第一版按号记 ⇒ 整道判据被跳过，`probe-owner`
 // 当场顶掉了 `/device/uart` 的牌子）。这是它第一次被逐字编进测试靶。
 
-/// 造一枚号给账用：**唯一的门是"收号"**（与 `operator-case` 那一台同一条路）。
+/// 造一枚号给账用：**唯一的门是"收号"**（与 `operator` 靶那一台同一条路）。
 fn pie(n: usize) -> PieToken {
     PieToken::from_bytes(&(n as u64).to_le_bytes()).expect("8 字节")
 }
@@ -478,7 +537,10 @@ const ID: EntryId = EntryId::new(9); // 那一格自己的号
 fn one_line(rule: Rule<Id, Id>, mine: bool, n: usize) -> Ledger<Id, Id> {
     let mut book: Ledger<Id, Id> = Ledger::new(vested_by);
     let blank = book.grow().expect("腾得出一行");
-    book.write(blank, Line::new(AT, name("uart"), ID, rule, mine, ME, pie(n)));
+    book.write(
+        blank,
+        Line::new(AT, name("uart"), ID, rule, mine, ME, pie(n)),
+    );
     book
 }
 
@@ -488,7 +550,10 @@ fn an_empty_ledger_answers_public_and_free() {
     let mut book: Ledger<Id, Id> = Ledger::new(vested_by);
     let truth = Truth::new(&[ID]);
     assert_eq!(book.rule(Key::Id(ID), |id| truth.fresh(id)), Rule::Public);
-    assert_eq!(book.rule(Key::At(AT, name("uart")), |id| truth.fresh(id)), Rule::Public);
+    assert_eq!(
+        book.rule(Key::At(AT, name("uart")), |id| truth.fresh(id)),
+        Rule::Public
+    );
     assert!(book.claimable(Key::Id(ID), OTHER, |id| truth.fresh(id)));
 }
 
@@ -551,7 +616,10 @@ fn a_living_owner_holds_the_slot_and_a_dead_one_does_not() {
     let truth = Truth::new(&[ID]);
     alive(1);
     let mut book = one_line(Rule::Public, true, 1);
-    assert!(book.claimable(Key::At(AT, name("uart")), ME, |id| truth.fresh(id)), "主人本人");
+    assert!(
+        book.claimable(Key::At(AT, name("uart")), ME, |id| truth.fresh(id)),
+        "主人本人"
+    );
     assert!(
         !book.claimable(Key::At(AT, name("uart")), OTHER, |id| truth.fresh(id)),
         "主人还在场 ⇒ 别人顶不掉"
@@ -572,9 +640,15 @@ fn a_rebind_rewrites_the_same_line_and_can_give_up_the_slot() {
     alive(2);
     let mut book = one_line(Rule::Public, true, 2);
     let blank = book.grow().expect("腾得出一行");
-    book.write(blank, Line::new(AT, name("uart"), ID, Rule::Is(P), false, ME, pie(2)));
+    book.write(
+        blank,
+        Line::new(AT, name("uart"), ID, Rule::Is(P), false, ME, pie(2)),
+    );
     assert_eq!(book.len(), 1, "重绑不该多出一条");
-    assert_eq!(book.rule(Key::At(AT, name("uart")), |id| truth.fresh(id)), Rule::Is(P));
+    assert_eq!(
+        book.rule(Key::At(AT, name("uart")), |id| truth.fresh(id)),
+        Rule::Is(P)
+    );
     assert!(
         book.claimable(Key::At(AT, name("uart")), OTHER, |id| truth.fresh(id)),
         "放弃之后别人落得进来"
@@ -624,7 +698,10 @@ fn a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind() {
 use crate::frame as f;
 
 fn road(names: &[&str]) -> Vec<Name> {
-    names.iter().map(|n| Name::new(n).expect("名字合法")).collect()
+    names
+        .iter()
+        .map(|n| Name::new(n).expect("名字合法"))
+        .collect()
 }
 
 #[test]
@@ -672,7 +749,10 @@ fn every_ask_shape_round_trips() {
     // list：只有坐标。
     let (buf, len) = f::pack_ask(f::Ask::List(Where::Root));
     assert_eq!(len, 10);
-    assert_eq!(f::unpack_ask(f::LIST, &buf[..len]), Some(f::AskIn::List(Where::Root)));
+    assert_eq!(
+        f::unpack_ask(f::LIST, &buf[..len]),
+        Some(f::AskIn::List(Where::Root))
+    );
 
     // find / trim / name 三者同形（解出来仍是三格）。
     let id = EntryId::new(11);
@@ -720,7 +800,11 @@ fn a_frame_that_is_not_that_shape_is_not_guessed_at() {
         Some(f::AskIn::Find(EntryId::new(1))),
         "解的是荷载，动作码由调用方说了算"
     );
-    assert_eq!(f::unpack_ask(200, &buf[..len]), None, "没见过的动作码 ⇒ 读不懂");
+    assert_eq!(
+        f::unpack_ask(200, &buf[..len]),
+        None,
+        "没见过的动作码 ⇒ 读不懂"
+    );
 }
 
 #[test]
@@ -776,7 +860,11 @@ fn the_rule_cell_round_trips_and_an_unknown_tag_falls_back_to_public() {
     }
 
     // 而**入口那一枚**是必须的：少一个字节就是读不懂（不猜）。
-    assert_eq!(f::unpack_ask(f::LAND, &buf[..tail_at + 7]), None, "缺入口那枚 ⇒ 不猜");
+    assert_eq!(
+        f::unpack_ask(f::LAND, &buf[..tail_at + 7]),
+        None,
+        "缺入口那枚 ⇒ 不猜"
+    );
 }
 
 #[test]
@@ -812,7 +900,10 @@ fn the_name_and_id_answers_are_fixed_shapes() {
     assert_eq!(f::read_name(&buf[..n + 1]), Err(f::BAD), "夹了 NUL");
     let mut longer = buf;
     longer[n] = b'X';
-    assert_eq!(f::read_name(&longer[..n + 1]), Ok(Name::new("uartX").unwrap()));
+    assert_eq!(
+        f::read_name(&longer[..n + 1]),
+        Ok(Name::new("uartX").unwrap())
+    );
 
     // **号那一形是定长格**：短一字节、长一字节都是读不懂。
     // 照实记：`长一字节`这一句是牙口量出来的——把 `!= 8` 放宽成 `< 8` 之后，先前只测"短一字节"
@@ -830,7 +921,10 @@ fn the_name_and_id_answers_are_fixed_shapes() {
 
 #[test]
 fn the_operator_failure_table_is_bijective_and_keeps_bad_outside() {
-    use f::{BAD, DEAD, DENIED, FULL, NONEMPTY, NOTAPANE, NOTATILE, OK, UNKNOWN, code_to_fail, fail_to_code};
+    use f::{
+        BAD, DEAD, DENIED, FULL, NONEMPTY, NOTAPANE, NOTATILE, OK, UNKNOWN, code_to_fail,
+        fail_to_code,
+    };
     assert_eq!(fail_to_code(None), OK);
     for (fail, code) in [
         (Fail::Unknown, UNKNOWN),
@@ -849,14 +943,9 @@ fn the_operator_failure_table_is_bijective_and_keeps_bad_outside() {
     assert_eq!(code_to_fail(150), None, "表外的码");
 }
 
-#[test]
-fn the_operator_marks_do_not_collide_with_the_other_doors() {
-    // **面不相撞**（这一格是**量出来的**，见 `ASK_MARK` 的照实记）：两面的问话孔记号必须分得开。
-    assert_ne!(f::ASK_MARK, Mark::of("board-ask"));
-    assert_ne!(f::ASK_MARK, Mark::of("ask"), "统一成 `ask` 就是那次装机塌掉的原因");
-    assert_ne!(f::TIP_MARK, f::ASK_MARK);
-    assert_ne!(f::TIP_MARK, Mark::of("operator-tip"), "孔上的记号与路名是两回事");
-    assert_eq!(f::LINK, "operator");
-    assert_eq!(f::TIP_NAME, "operator-tip");
-}
-
+// ── 面不相撞那一条用例搬去了**编译期**（用户裁定"常量交给编译器"）────────────
+//
+// `the_operator_marks_do_not_collide_with_the_other_doors` 原先在这里：它比的**全是常量**
+// （`ASK_MARK` / `TIP_MARK` / `LINK` / `TIP_NAME`）。那几条现在写在
+// `crates/protocol/src/operator/frame.rs` 的 `const _: () = assert!(…)` 里——**编译期**，
+// riscv 那一档也一样钉着；比它强，且不再占一条用例。

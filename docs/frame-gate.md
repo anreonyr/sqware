@@ -6,19 +6,20 @@
 > **落地情况**：
 > - ✅ 甲：`fail_codes!` 搬进 `crates/protocol/src/fail_codes.rs`（`#[macro_use]` + `#[macro_export]`
 >   两样都要 ⇒ **调用点一行未改**；各宿主靶 `#[macro_use] #[path] mod fail_codes;` 写在帧模块之前）
-> - ✅ `line`：**零切**（那一份本来就全纯）⇒ 编进 `line-case`，加 5 条帧判据
+> - ✅ `line`：**零切**（那一份本来就全纯）⇒ 编进 `line` 靶，加 5 条帧判据
 > - ✅ `principal` / `coalition`：各拆成 `frame.rs`（纯）+ `call.rs`（适配，首行 `pub use super::frame::*;`）
->   ⇒ 两片编进 `principal-case`，加 8 条帧判据
-> - ✅ `operator` / `board`：真切成 `frame.rs`（纯）+ `call.rs`（适配）⇒ 分别进 `judge-case`
->   （它本来就带着帧要的全部依赖）与 `board-case`（那一台把核心模块改名 `core`，好让
+>   ⇒ 两片编进 `roster` 靶，加 8 条帧判据
+> - ✅ `operator` / `board`：真切成 `frame.rs`（纯）+ `call.rs`（适配）⇒ 分别进 `judge` 靶
+>   （它本来就带着帧要的全部依赖）与 `board` 靶（那一台把核心模块改名 `core`，好让
 >   `use super::core::…` 逐字成立）
 > - ✅ `supply`：**那一格也收了**——`Access` / `Policy` 按用户裁定搬进 `env`（见 `docs/supply-gate.md`），
->   `driver/supply/call.rs` 因此本来就全纯 ⇒ **零切分**，直接编进新台 `crates/supply-case`
+>   `driver/supply/call.rs` 因此本来就全纯 ⇒ **零切分**，直接编进新台 `protocol-case` 的 `supply` 靶
 > - ➖ `session`：**没有帧**（它本身就是运行时那一层）
 >
-> **收口读数**（**当时**）：`host.sh` **116 → 129 例**（`judge-case` +8、`board-case` +5）；
+> **收口读数**（**当时**）：`host.sh` **116 → 129 例**（`judge` 靶 +8、`board` 靶 +5）；
 > 机器侧八道门重跑过（拆的是程序侧编进去的源码）。**今日**的台数与例数见 `scripts/host.sh` 头注那张
-> 清单（它才是权威；后来 `supply-case` 那一台又加进来，**现在是八台 / 137 例**）。
+> 清单（它才是权威；后来 `supply` 那一门又加进来）。**今天**：一个 crate
+> `crates/protocol-case` / 八个靶 / **118 例**——台数与例数一律以 `scripts/host.sh` 头注为准。
 >
 > 下面保留**裁决时**的原样（读数与分叉），不改写成今天的数字。
 
@@ -88,17 +89,17 @@
 
 | 帧那一份 | 并进哪一台 | 为什么是它 |
 |---|---|---|
-| `driver/line/call.rs` | `line-case` | 它要 `env` + `line::core::Fail`，两者都在那台 |
-| `principal/call.rs` | `principal-case` | 那台已编 `principal/core.rs`（要挪走一行 `opened_by`） |
-| `coalition/call.rs` | `principal-case` | 同上（两本册子同住一台那条理由照旧） |
-| `operator/call.rs` | `judge-case` | 那台已编 `core` + `judge` + `gate` + `ledger`——**帧要的依赖一个不缺** |
-| `system/board/call.rs` | `board-case` | 那台已编 `board/core.rs` |
+| `driver/line/call.rs` | `line` 靶 | 它要 `env` + `line::core::Fail`，两者都在那台 |
+| `principal/call.rs` | `roster` 靶 | 那台已编 `principal/core.rs`（要挪走一行 `opened_by`） |
+| `coalition/call.rs` | `roster` 靶 | 同上（两本册子同住一台那条理由照旧） |
+| `operator/call.rs` | `judge` 靶 | 那台已编 `core` + `judge` + `gate` + `ledger`——**帧要的依赖一个不缺** |
+| `system/board/call.rs` | `board` 靶 | 那台已编 `board/core.rs` |
 | `driver/supply/call.rs` | —— | **切不动**（见 §2） |
 | `session/call.rs` | —— | **没有帧** |
 
 **为什么不新开一台 `frame-case`**：那台要把各协议的 `core.rs` 也编进去（帧认得 `EntryId` /
 `Rule` / `Board` …），于是那些 `#[cfg(test)]` 判据会在**第二台里再跑一遍**——本仓明说过不这么干
-（`judge-case` 头注：*"反过来把 `judge.rs` 引进 `operator-case` 会把上面这些再跑一遍"*）。
+（`judge` 靶头注：*"反过来把 `judge.rs` 引进 `operator` 靶会把上面这些再跑一遍"*）。
 
 ### 4.3 宏那一条（§3 的甲乙丙丁）
 
@@ -109,7 +110,7 @@
 - **宿主靶里抄宏**（乙）：两处编。
 - **只上帧、不上表**（丙）：把吃过亏的那一格留在门外面。
 - **顺带给 `supply` 打 runtime 的桩**：桩要造 `Access`/`Policy` 两个**真类型**的行为，
-  那是"用桩假造内核语义"——桩量得了账，量不了语义（`line-case` 头注那条口径）。
+  那是"用桩假造内核语义"——桩量得了账，量不了语义（`line` 靶头注那条口径）。
 
 ## 6 · 悬而未决
 

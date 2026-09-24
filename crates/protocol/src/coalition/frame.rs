@@ -233,3 +233,11 @@ pub const DIR: &str = "sys";
 
 /// 本服务在树上的名字（门牌的第二段）：`/sys/coalition`。
 pub const NAME: &str = "coalition";
+
+// ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
+//
+// 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`；跨门那一对
+// （与名册那一枚）钉在 `crate::principal::frame`，本文件钉自己这几对。
+const _: () = assert!(BACK.get() != Mark::of("board-back").get());
+const _: () = assert!(BACK.get() != Mark::NONE.get());
+const _: () = assert!(BACK.get() != Mark::of(NAME).get());

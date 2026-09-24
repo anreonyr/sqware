@@ -54,7 +54,7 @@
 //! | 挪到装配单**最后** | soak **0/10 "无停机行"** | 编排域等的是最后一条，而它 `board: false`——**板看不见它的死**，那一等没人应 |
 //!
 //! 故它**装得上电、不上电**（`INITRD_BINS` 里有条目，`PLAN` 里没有）：真机那一对读数是
-//! 手工跑的，而**自动的那道门在宿主靶上**——`crates/operator-case` 的
+//! 手工跑的，而**自动的那道门在宿主靶上**——`protocol-case` 的 `operator` 靶的
 //! `a_deep_chain_does_not_need_the_call_stack`（把测试线程栈压到 64 KiB 建 500 层链；
 //! 退回递归版它当场 `fatal runtime error: stack overflow`，SIGABRT）。那条门**有牙、且不抖**。
 //!
@@ -73,7 +73,7 @@
 //!    顺带量出来的**真性质**（记在 `docs/operator-slot.md` §5），而探针不该在门里制造它。
 //! 3. **数目字（第几层）不是判据**：帧大小会随代码漂、表也会随实现变。判据是**"改前会死、
 //!    改后每一手都答得出"**。**自动的那一半在宿主靶上**——
-//!    `crates/operator-case::a_deep_chain_does_not_need_the_call_stack`（把测试线程的栈压到
+//!    `operator` 靶::a_deep_chain_does_not_need_the_call_stack`（把测试线程的栈压到
 //!    64 KiB 再建 500 层链；退回递归版它 SIGABRT）。
 //!
 //!    **照实记**：这一句原来写的是"后者在 `scripts/soak.sh` 里"——**不成立**：这一台

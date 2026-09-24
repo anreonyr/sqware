@@ -40,7 +40,7 @@
 //! # 这一格为什么住在协议里、而不在服务里
 //!
 //! 它是**模型**（"这一位许不许"这句话的定义），住在 `protocol` 才能被宿主台**逐字编进测试靶**
-//! （照 `crates/operator-case` 那台的现成路数；`programs` 那一侧编进宿主要 `runtime` 的 riscv
+//! （照 `protocol-case` 的 `operator` 靶那台的现成路数；`programs` 那一侧编进宿主要 `runtime` 的 riscv
 //! 内联汇编，走不通）。服务那一侧只做装配：把 `principal::client::Face` / `coalition::client::Face`
 //! 套成这三个 trait，再把 [`Ruling`] 翻成线上那一格码。
 //!
@@ -53,9 +53,11 @@
 //! 仍然互相排斥）。
 //!
 //! 照实记：这一格换过一次。第一版签名里写死了 `PrincipalId` / `CoalitionId`，代价是宿主靶要多编
-//! 两个文件，而那两份文件今天的 `cfg(test)` 一次都没跑过——把新判据挂在没跑过的桩上，不划算。
+//! 两个文件——而那两个文件的判据住在**别的靶**里（`roster`），在这里再编一遍就是把同一批判据跑
+//! 第二遍。（写这条时的原话是"那两份的 `cfg(test)` 一次都没跑过"；后来它们搬去 `roster` 靶、
+//! 真正有了门——那是另一刀。）
 //!
-//! 照实记（第五格那一刀）：[`EntryId`] 是**同一个模块族**的核心（`super::core`），而 `judge-case`
+//! 照实记（第五格那一刀）：[`EntryId`] 是**同一个模块族**的核心（`super::core`），而 `judge` 靶
 //! 那一台**本来就编着** `core.rs`（账的两把钥匙就是 `Where` / `EntryId`）——故引它与引
 //! `PrincipalId` 不是一回事，那条纪律一个口子都没开。
 
@@ -220,197 +222,9 @@ where
 const fn allow(ok: bool) -> Ruling {
     if ok { Ruling::Allow } else { Ruling::Deny }
 }
-
-// ── 判据（给宿主台编的规格；`protocol` 自己编不到 `cfg(test)`，见 crate 根的说明）──
-
-#[cfg(test)]
-mod tests {
-    //! 照实记：本模块在 `protocol` 里**编不到、也跑不到**（`[lib] test = false`）。
-    //! 下面这几条是**契约的读数**，真正跑它们的是宿主台（照 `crates/operator-case` 那台搬）。
-
-    use super::*;
-
-    const ME: TaskId = TaskId::new(22);
-    const OTHER: TaskId = TaskId::new(33);
-    const UNBOUND: TaskId = TaskId::new(44);
-    const MATE: TaskId = TaskId::new(55);
-    const P: u64 = 7;
-    const Q: u64 = 9;
-    const C: u64 = 3;
-
-    /// 假名册：只认识 ME。
-    struct Roster(&'static [(TaskId, u64)]);
-    impl Who<u64> for Roster {
-        fn who(&self, tid: TaskId) -> Result<Option<u64>, ()> {
-            Ok(self.0.iter().find(|(t, _)| *t == tid).map(|(_, p)| *p))
-        }
-    }
-
-    /// 问不到的名册。
-    struct Broken;
-    impl Who<u64> for Broken {
-        fn who(&self, _: TaskId) -> Result<Option<u64>, ()> {
-            Err(())
-        }
-    }
-
-    /// 假谱系：一张 子 → 父 的表。
-    struct Chain(&'static [(u64, u64)]);
-    impl Branch<u64> for Chain {
-        fn heir(&self, a: u64, b: u64) -> Result<bool, ()> {
-            let mut at = Some(b);
-            while let Some(cur) = at {
-                if cur == a {
-                    return Ok(true);
-                }
-                at = self.0.iter().find(|(k, _)| *k == cur).map(|(_, v)| *v);
-            }
-            Ok(false)
-        }
-    }
-
-    /// 假盟册：只有 3 号盟，成员是列出来的那几位。
-    ///
-    /// 照实记：这一格原来写的是 `contains(&P)`（拿常量当"我"），因为老签名根本收不到"谁在问"。
-    /// 补上 `me` 之后它才真的在问"**这一位**在不在这枚盟里"。
-    struct Book(&'static [u64]);
-    impl League<u64, u64> for Book {
-        fn amid(&self, me: u64, at: u64) -> Result<bool, ()> {
-            Ok(at == C && self.0.contains(&me))
-        }
-    }
-
-    /// 假树：一张 **格号 → 开者** 的表；表外的号答"没有那一位"（`Ok(None)`），与真树那三因同落。
-    struct Doors(&'static [(usize, TaskId)]);
-    impl Door for Doors {
-        fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
-            Ok(self.0.iter().find(|(e, _)| *e == at.get()).map(|(_, t)| *t))
-        }
-    }
-
-    /// 问不到的树。
-    struct Deaf;
-    impl Door for Deaf {
-        fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> {
-            Err(())
-        }
-    }
-
-    fn go(tid: TaskId, rule: Rule<u64, u64>) -> Ruling {
-        let roster = Roster(&[(ME, P), (MATE, Q)]);
-        let chain = Chain(&[(P, Q)]); // P 的父是 Q ⇒ Q ≼ P
-        let book = Book(&[P]);
-        // 第 5 格的门牌是 **MATE 开的** ⇒ `Opens(5)` 正是"许给那一位（不是我）"。
-        let doors = Doors(&[(5, MATE)]);
-        judge(tid, rule, &roster, &chain, &book, &doors)
-    }
-
-    #[test]
-    fn public_needs_a_bound_identity_but_no_rule_check() {
-        assert_eq!(go(ME, Rule::Public), Ruling::Allow);
-        assert_eq!(go(UNBOUND, Rule::Public), Ruling::Deny);
-        assert_eq!(go(OTHER, Rule::Public), Ruling::Deny);
-    }
-
-    #[test]
-    fn is_matches_the_current_identity_not_the_task() {
-        assert_eq!(go(ME, Rule::Is(P)), Ruling::Allow);
-        assert_eq!(go(ME, Rule::Is(Q)), Ruling::Deny);
-    }
-
-    #[test]
-    fn under_is_about_the_branch_and_heir_is_reflexive() {
-        assert_eq!(go(ME, Rule::Under(P)), Ruling::Allow);
-        assert_eq!(go(ME, Rule::Under(Q)), Ruling::Allow);
-        assert_eq!(go(ME, Rule::Under(11)), Ruling::Deny);
-    }
-
-    #[test]
-    fn in_is_about_the_league() {
-        assert_eq!(go(ME, Rule::In(C)), Ruling::Allow);
-        assert_eq!(go(ME, Rule::In(4)), Ruling::Deny);
-    }
-
-    #[test]
-    fn opens_is_about_who_holds_the_door_not_about_me() {
-        // 第 5 格是 MATE 的门牌 ⇒ 它过；别人（有身份、但不是那一位）拒。
-        assert_eq!(go(MATE, Rule::Opens(EntryId::new(5))), Ruling::Allow);
-        assert_eq!(go(ME, Rule::Opens(EntryId::new(5))), Ruling::Deny);
-        assert_eq!(go(OTHER, Rule::Opens(EntryId::new(5))), Ruling::Deny);
-    }
-
-    #[test]
-    fn opens_without_such_a_door_is_unjudged() {
-        // 「没有那一位」≠「你没资格」：格不在（碑 / 是块 Pane / 门封印）⇒ 判不了，可重试。
-        assert_eq!(go(ME, Rule::Opens(EntryId::new(6))), Ruling::Unjudged);
-        // 树自己问不到 ⇒ 同上。
-        let roster = Roster(&[(ME, P)]);
-        let chain = Chain(&[]);
-        let book = Book(&[P]);
-        assert_eq!(
-            judge(
-                ME,
-                Rule::Opens(EntryId::new(5)),
-                &roster,
-                &chain,
-                &book,
-                &Deaf
-            ),
-            Ruling::Unjudged
-        );
-        // **但开者没绑身份 ⇒ 终态拒**（与"没身份就是没资格"同一条）。
-        let doors = Doors(&[(5, UNBOUND)]);
-        assert_eq!(
-            judge(
-                ME,
-                Rule::Opens(EntryId::new(5)),
-                &roster,
-                &chain,
-                &book,
-                &doors
-            ),
-            Ruling::Deny
-        );
-    }
-
-    #[test]
-    fn an_unreachable_roster_is_unjudged_never_denied() {
-        // 这一格钉的是"判不了 ≠ 你没资格"：把 Err 读成 Deny，整机就会把"身份服务挂了"
-        // 报成"没权限"。
-        let roster = Broken;
-        let chain = Chain(&[]);
-        let book = Book(&[P]);
-        let doors = Doors(&[(5, MATE)]);
-        assert_eq!(
-            judge(ME, Rule::Is(P), &roster, &chain, &book, &doors),
-            Ruling::Unjudged
-        );
-    }
-
-    #[test]
-    fn only_the_verb_is_asked_once_and_after_the_identity_gate() {
-        // 顺序契约：没身份 ⇒ 后面那几条边一次都不发。喂一个"会记账的名册"就能看见这一点
-        // （本格用 Broken 已经覆盖：`Err` 也走不到谓词那两条）。
-        let roster = Roster(&[]);
-        let chain = Chain(&[]);
-        let book = Book(&[]);
-        let doors = Deaf; // 会问到的树一律答"问不到"——这里要证的是"根本没问到它"
-        assert_eq!(
-            judge(ME, Rule::Under(P), &roster, &chain, &book, &doors),
-            Ruling::Deny
-        );
-        // `Opens` 那一格是唯一的例外：**它要多问一次名册**（问的是开者那条 TID）。
-        // 这里量的是"没身份 ⇒ 树那一问也不发"仍然成立（`doors = Deaf` 而不出 `Unjudged`）。
-        assert_eq!(
-            judge(
-                ME,
-                Rule::Opens(EntryId::new(5)),
-                &roster,
-                &chain,
-                &book,
-                &doors
-            ),
-            Ruling::Deny
-        );
-    }
-}
+// ── 用例不在这里（照实记：用户裁定"测试和运行环境分开"）──────────────
+//
+// 本文件原先那个 `#[cfg(test)] mod tests`（**8 条**）搬走了：它们与 `crates/protocol-case`
+// 的 `judge` 靶里那几条**同名或更强**的判据重复（例如这里只能证"没看到 `Unjudged`"，靶里
+// 换成了会**记数**的谓词桩，直接量"一次都没问"）⇒ **删掉并补进台里**，不在运行时源里再留
+// 一份。**本文件从此没有一行测试。**

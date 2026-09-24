@@ -7,7 +7,7 @@ edition.workspace = true
 # libtest**（libtest 依赖 std）。所以这一行**不翻**：翻过来，默认 riscv 目标上的
 # `cargo check --all-targets` 会去编 libtest，编不出来，四道门一起塌。
 #
-# 宿主侧的用例走**编外宿主台** `crates/operator-case`（把 `src/operator/core.rs` 逐字编进
+# 宿主侧的用例走**编外宿主台** `protocol-case` 的 `operator` 靶（把 `src/operator/core.rs` 逐字编进
 # 测试靶），门口 `scripts/host.sh`。**不能**在本 crate 里加集成测试：那要链接本 crate，
 # 而本 crate 依赖 `runtime`，`runtime` 里那两处 riscv 内联汇编在宿主上编不过
 # （`cargo test -p protocol --target x86_64-unknown-linux-gnu` ⇒

@@ -97,7 +97,7 @@
 //! # 落地程度
 //!
 //! 三层都在：**核心**（[`core`]：树 + 八条原语；用例在**编外宿主台**
-//! `crates/operator-case`，门口 `scripts/host.sh`）、**载体**（[`call`] 的帧与转发、
+//! `protocol-case` 的 `operator` 靶，门口 `scripts/host.sh`）、**载体**（[`call`] 的帧与转发、
 //! 持树者那本客人小账 `desk`）、**服务**（[`server`](/crate::operator::server) 的
 //! `serve` / `attach` / 客侧三手，加 `prog-operator` 这个域；装配那一格在
 //! `programs/.../service.rs` 的 `Program::operator`）。

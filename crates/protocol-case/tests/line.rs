@@ -2,7 +2,7 @@
 //!
 //! # 这批判据为什么住在这里
 //!
-//! 与 `operator-case` 同一条：`protocol` 是 `[lib] test = false`（riscv 目标上编不出 libtest），
+//! 与 `operator` 靶同一条：`protocol` 是 `[lib] test = false`（riscv 目标上编不出 libtest），
 //! 故主工作区那几道门**都不编**它的 `#[cfg(test)]`；而**链接 `protocol` 去测**也走不通——它依赖
 //! `runtime`，`runtime/src/core/tls.rs` 里那两处 riscv 内联汇编在宿主编译器上编不出来。
 //!
@@ -30,7 +30,7 @@ extern crate alloc;
 /// **照实记（这一格是牙口量出来的）**：这个桩原先**恒答 `Ok`**，于是 `deliver` 里那条
 /// "**推不出去 ⇒ 不置忙**"的契约**没有任何判据**——把 `post` 的失败忽略掉（"推不出去也置忙"）
 /// 全门照绿（`scripts/teeth.py` 里那一条变异逮出来的）。故给桩加一个**可关掉的失败开关**
-/// （线程局部，照 `operator-case` / `judge-case` 那两台分配器的同款做法：libtest 每个用例
+/// （线程局部，照 `operator` 靶 / `judge` 靶那两台分配器的同款做法：libtest 每个用例
 /// 各一枚线程，全局旗帜会随机打到别人身上）。
 mod session {
     use std::cell::Cell;
@@ -70,7 +70,7 @@ mod fail_codes;
 ///
 /// **模块名就叫 `core`**：帧那一份写的是 `use super::core::Fail;`（在协议里它与 `core.rs` 同住
 /// `driver::line`）——宿主靶里把这一份放在**同一层**、名字照旧，那一行才逐字成立
-/// （`judge-case` 当初也是这么叫的；代价是 `core` 这个名字会遮住 `core` crate ⇒ 本文件里
+/// （`judge` 靶当初也是这么叫的；代价是 `core` 这个名字会遮住 `core` crate ⇒ 本文件里
 /// 凡要用标准库的就写 `std::…`）。
 #[path = "../../protocol/src/driver/line/core.rs"]
 mod core;
@@ -85,10 +85,10 @@ mod core;
 #[path = "../../protocol/src/driver/line/call.rs"]
 mod call;
 
-use env::{Key, Mark};
 use crate::call::{OCCUPY, OCCUPY_LEN, pack_occupy, unpack_occupy};
 use crate::core::{Fail, Lines};
 use crate::session::Pier;
+use env::Key;
 
 /// 一个够用的账（`device_count = 4` ⇒ 线号 0..=4）。
 fn account() -> Lines {
@@ -135,7 +135,11 @@ fn a_frame_that_cannot_be_posted_leaves_the_line_idle() {
         lines.busy().next().is_none(),
         "推不出去的那一帧不该把线置忙"
     );
-    assert_eq!(lines.lane(1), Some(Pier), "主人照旧（失败的是这一帧，不是这一格）");
+    assert_eq!(
+        lines.lane(1),
+        Some(Pier),
+        "主人照旧（失败的是这一帧，不是这一格）"
+    );
     // 放开之后同一格照常投得进、也照常置忙。
     assert_eq!(lines.deliver(1, &[4]), Ok(()));
     assert_eq!(lines.busy().collect::<Vec<_>>(), std::vec![1]);
@@ -231,7 +235,11 @@ fn an_unknown_coordinate_discriminator_is_refused_but_a_known_non_region_is_take
     assert_eq!(unpack_occupy(&frame), None, "不认识的判别号");
 
     for key in [Key::dtb(), Key::irq()] {
-        assert_eq!(unpack_occupy(&pack_occupy(key)), Some(key), "认识的非区坐标照收");
+        assert_eq!(
+            unpack_occupy(&pack_occupy(key)),
+            Some(key),
+            "认识的非区坐标照收"
+        );
     }
 }
 
@@ -252,18 +260,16 @@ fn the_failure_table_is_bijective_and_keeps_bad_outside() {
 
     // **表外那一格与读不懂的码都答 `None`**，而这两个 `None` 不是同一件事——读的人靠**动作码**
     // 先分流：`BAD` 是"这一问读不懂"，`OK` 是"没失败"。
-    assert_eq!(code_to_fail(BAD), None, "`BAD` 在失败域之外（照实记见宏的文档）");
+    assert_eq!(
+        code_to_fail(BAD),
+        None,
+        "`BAD` 在失败域之外（照实记见宏的文档）"
+    );
     assert_eq!(code_to_fail(200), None, "表外的码");
     assert_ne!(BAD, OK, "两者不同码，才分得开");
 }
 
-#[test]
-fn the_two_marks_of_this_road_do_not_collide() {
-    // **面不相撞**（贯穿全仓的一条纪律）：这一条路上的几枚记号互不相同。
-    use crate::call::{BACK_MARK, LANE, NOTE};
-    assert_eq!(LANE, "line");
-    assert_ne!(BACK_MARK, Mark::of(LANE), "泊位与回信孔是两枚记号");
-    assert_ne!(BACK_MARK, Mark::of("line-tip"));
-    assert_ne!(BACK_MARK, Mark::NONE);
-    assert_eq!(NOTE, 1, "两个方向共用那一格");
-}
+// ── 面不相撞那一条用例搬去了**编译期**（用户裁定"常量交给编译器"）────────────
+//
+// `the_two_marks_of_this_road_do_not_collide` 原先在这里，那几条现在写在
+// `crates/protocol/src/driver/line/call.rs` 的 `const _: () = assert!(…)` 里。

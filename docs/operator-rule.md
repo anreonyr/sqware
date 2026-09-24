@@ -278,15 +278,15 @@ exit tid=20 note: probe-rule-other: both denied as expected
 4. **`part` 顶掉 `Tile`** 时那一行是"顺手销掉"的：漏了不会答错（`fresh` 兜着），只是账会留
    一条陈的。
 5. **账的容量**：`grow` 失败 ⇒ `land` 答 `FULL`（fail-closed）。今天条目规模是几十格。
-   **这条有牙**（补记）：`judge-case` 的那台宿主靶换了一个**可关掉的分配器**（线程局部旗帜，
-   与 `operator-case` 那一台同一款），`a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind`
+   **这条有牙**（补记）：`judge` 靶的那台宿主靶换了一个**可关掉的分配器**（线程局部旗帜，
+   与 `operator` 靶那一台同一款），`a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind`
    钉住三件事——备不下 ⇒ `Err(Full)`、**失败不留半行**、放开之后照样写得进。撤掉 `grow` 里那一行
    `try_reserve` 它**当场 SIGABRT**（实测 `memory allocation of 16 bytes failed`）：fail-soft 的下一步
    是 `write` 往没要到位的 `Vec` 里 push ⇒ `handle_alloc_error`。
 6. ~~**`UNJUDGED` 那一格只有宿主台的读数**~~：**已收**（§7.6 那两格）——`Rule::Opens`
    让"判不了"能被**确定性地**量出来（那一号是块 `Pane` / 那一格已经剪掉），真机读数
    `at_pane=9 gone_door=9`。**留下来的是那一条因**：要量"身份服务**不答**"得把整机拆掉
-   （`judge-case` 的 `a_mute_identity_service_is_unjudged_not_denied` 仍然是它唯一的读数）。
+   （`judge` 靶的 `a_mute_identity_service_is_unjudged_not_denied` 仍然是它唯一的读数）。
 
 ---
 
@@ -429,7 +429,7 @@ exit tid=20 note: probe-rule-other: all three denied as expected
    ——探针把 `temp` 落上、剪掉，再指它那个旧号。
 2. **多一次问答**：`Opens` 那一格 = 一次核心本地读（树）+ 一次 envcalls（名册那一问）。
 3. **`opens` 不上线**：客人读不到"这一格是谁的"——只有持树者判的时候问。今天没有客人要它。
-4. **核心八条、线上七条**：`core.rs` / `operator/mod.rs` / `operator-case` 的口径一并改了
+4. **核心八条、线上七条**：`core.rs` / `operator/mod.rs` / `operator` 靶的口径一并改了
    （先例：`principal::clan` 是"核心有、线上不发"；本条的差别是**它有真客人**——持树者自己）。
 
 ### 7.8 顺手裁掉的一条：**归属那一轴跟命，不跟身份**

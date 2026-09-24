@@ -143,3 +143,14 @@ pub const TIP_NAME: &str = "board-tip";
 /// 一客人一道 ⇒ **身份就是"哪条道响了"**：两位同时死也不会挤在一格上丢名字，装配者那边
 /// 也不必按名字猜。板按这位客人的**名字**（从它留在板上的牌子上读）找回那一条。
 pub const LANE_PREFIX: &str = "gone-";
+
+// ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
+//
+// 原先这是宿主台的一条运行时用例（`the_board_marks_and_the_lane_prefix_are_what_they_say`）。
+// 那一格里真会撞的只有下面这几对；余下几条（`LINK == "board"` / `TIP_NAME == "board-tip"` /
+// `LANE_PREFIX == "gone-"`）比的是**常量自己的定义式**，是同义反复，故随用例一起去掉。
+const _: () = assert!(ASK_MARK.get() != Mark::of("operator-ask").get());
+const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
+const _: () = assert!(ASK_MARK.get() != TIP_MARK.get());
+const _: () = assert!(TIP_MARK.get() != Mark::of(TIP_NAME).get());
+const _: () = assert!(ENTRY_MARK.get() != Mark::NONE.get());

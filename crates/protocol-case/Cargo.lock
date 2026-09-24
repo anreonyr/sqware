@@ -33,19 +33,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 
 [[package]]
-name = "principal-case"
-version = "0.1.0"
-dependencies = [
- "env",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "protocol-case"
+version = "0.1.0"
+dependencies = [
+ "env",
 ]
 
 [[package]]

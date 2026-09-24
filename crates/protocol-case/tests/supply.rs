@@ -4,7 +4,7 @@
 //!
 //! `crates/protocol/src/driver/supply/call.rs`（帧、荷载的类型、上限与那张失败码表）与
 //! `crates/protocol/src/driver/supply/core.rs`（五格失败域）——两份都**逐字未改**。
-//! 判据写在靶子里（照 `crates/line-case` 的做法），核心源码一个字不动：
+//! 判据写在靶子里（照 `protocol-case` 的 `line` 靶的做法），核心源码一个字不动：
 //!
 //! ```text
 //!   Want / Need   一格荷载：坐标 + 类别 + **两族视图**（对端能做什么 / 这一枚能怎么流动）
@@ -33,9 +33,9 @@ mod core;
 #[path = "../../protocol/src/driver/supply/call.rs"]
 mod call;
 
-use env::{Access, Key, Name, Policy, TaskId};
 use crate::call::{Kind, Need, Want};
 use crate::core::Fail;
+use env::{Access, Key, Name, Policy, TaskId};
 
 fn name(text: &str) -> Name {
     Name::new(text).expect("名字合法")
@@ -60,7 +60,11 @@ fn a_want_carries_the_coordinate_the_kind_and_the_two_views() {
     assert_eq!(w.policy(), Some(Policy::VEST));
 
     // **两族分家**：`Access` 里写不进传递族那一位（那是"混族不可表达"那一格）。
-    assert_ne!(w.access().map(|a| a.bits()), w.policy().map(|p| p.bits()), "两族是不同的位");
+    assert_ne!(
+        w.access().map(|a| a.bits()),
+        w.policy().map(|p| p.bits()),
+        "两族是不同的位"
+    );
 
     // 空集：四位都空。`ship` 会就地拒（那一条在别的台，这里只钉类型这一格）。
     let none = Want::new(Key::region(8), Kind::Nole, Access::NONE, Policy::NONE);
@@ -81,7 +85,10 @@ fn an_order_frame_round_trips_with_its_count_and_who() {
     let order = crate::call::unpack_order(frame).expect("读得回来");
     assert_eq!(order.who(), who);
     assert_eq!(order.len(), 2);
-    assert_eq!(order.want(0).map(|w| w.key()), Some(Some(Key::region(0x1000))));
+    assert_eq!(
+        order.want(0).map(|w| w.key()),
+        Some(Some(Key::region(0x1000)))
+    );
     assert_eq!(order.want(1).map(|w| w.key()), Some(Some(Key::irq())));
     assert!(order.want(2).is_none(), "越界的那一条没有");
     assert!(order.want(1).is_some());
@@ -97,8 +104,14 @@ fn an_order_that_is_not_that_shape_is_not_guessed_at() {
     let mut wrong_op = good.clone();
     wrong_op[0] = 99;
     assert!(crate::call::unpack_order(&wrong_op).is_none());
-    assert!(crate::call::unpack_order(&good[..9]).is_none(), "连头都不到");
-    assert!(crate::call::unpack_order(&good[..good.len() - 1]).is_none(), "短一字节");
+    assert!(
+        crate::call::unpack_order(&good[..9]).is_none(),
+        "连头都不到"
+    );
+    assert!(
+        crate::call::unpack_order(&good[..good.len() - 1]).is_none(),
+        "短一字节"
+    );
     let mut liar = good.clone();
     liar[1] = 3; // 说有三条，可帧里只有一条
     assert!(crate::call::unpack_order(&liar).is_none(), "条数说谎");
@@ -108,7 +121,10 @@ fn an_order_that_is_not_that_shape_is_not_guessed_at() {
         .map(|i| want(Key::region(8 + i as u64)))
         .collect();
     let mut big = [0u8; crate::call::ORDER_CAP + crate::call::WANT_LEN];
-    assert!(crate::call::pack_order(&mut big, TaskId::new(1), &many).is_none(), "条数越界");
+    assert!(
+        crate::call::pack_order(&mut big, TaskId::new(1), &many).is_none(),
+        "条数越界"
+    );
     let mut small = [0u8; 16];
     assert!(
         crate::call::pack_order(&mut small, TaskId::new(1), &[want(Key::region(8))]).is_none(),
@@ -151,7 +167,10 @@ fn a_reply_frame_round_trips_and_refuses_a_ragged_record_block() {
     );
 
     // 读的时候长度必须与条数对得上。
-    assert!(crate::call::unpack_reply(&good[..good.len() - 1]).is_none(), "短一字节");
+    assert!(
+        crate::call::unpack_reply(&good[..good.len() - 1]).is_none(),
+        "短一字节"
+    );
     let mut liar = good.clone();
     liar[1] = 1;
     assert!(crate::call::unpack_reply(&liar).is_none(), "条数说谎");
@@ -176,10 +195,16 @@ fn a_need_settles_into_a_want_through_the_class_name() {
     // `NAME_LEN - 1` 再补零**。这条口径有一个值得知道的下场：两个只有尾巴不同的长类名会**撞成
     // 同一格**（下面这一句就是它）。今天没有这么长的类名，故只记口径、不改结构。
     let too_long = "this-name-is-way-too-long-for-one-block";
-    assert!(Name::new(too_long).is_err(), "原串本身就太长（`NAME_LEN` 那一格）");
+    assert!(
+        Name::new(too_long).is_err(),
+        "原串本身就太长（`NAME_LEN` 那一格）"
+    );
     let long = class_block(too_long);
     let same_prefix = class_block("this-name-is-way-too-long-for-one-blocc");
-    assert_eq!(long, same_prefix, "前 `NAME_LEN - 1` 字节相同的两个长类名撞成同一格");
+    assert_eq!(
+        long, same_prefix,
+        "前 `NAME_LEN - 1` 字节相同的两个长类名撞成同一格"
+    );
     let truncated = Name::from_bytes(long).expect("截断之后是个合法名字");
     assert_eq!(
         truncated.as_str().len(),
@@ -191,7 +216,10 @@ fn a_need_settles_into_a_want_through_the_class_name() {
     let need = Need::class(class, Kind::Pole, Access::FETCH, Policy::NONE);
     assert_eq!(need.class_name(), Some(name("ns16550a")));
     let settled = need.settle(|name| (name == "ns16550a").then(|| Key::region(0x1000_0000)));
-    assert_eq!(settled.and_then(|w| w.key()), Some(Key::region(0x1000_0000)));
+    assert_eq!(
+        settled.and_then(|w| w.key()),
+        Some(Key::region(0x1000_0000))
+    );
     // **这台机器上没有这一类** ⇒ `None`（本层的失败，不是引导域的答话）。
     let need = Need::class(class, Kind::Pole, Access::FETCH, Policy::NONE);
     assert!(need.settle(|_| None).is_none(), "这台机器上没有这一类");
@@ -202,16 +230,12 @@ fn a_need_settles_into_a_want_through_the_class_name() {
     assert_eq!(settled.and_then(|w| w.key()), Some(Key::region(0x2000)));
 }
 
-#[test]
-fn the_frame_lengths_and_caps_are_what_the_wire_says() {
-    use crate::call::{ORDER_CAP, REPLY_CAP, WANT_LEN, WANT_MAX};
-    use env::PAIR_LEN;
-    assert_eq!(WANT_LEN, 32, "一格的步长");
-    assert_eq!(WANT_MAX, 5);
-    assert_eq!(ORDER_CAP, 2 + 8 + WANT_LEN * WANT_MAX, "头 + 满载");
-    assert_eq!(REPLY_CAP, 2 + PAIR_LEN * WANT_MAX, "状态那一格 + 一格条数 + 满载记录");
-}
-
+// ── 那张长度表那一条用例**删了**（用户裁定"常量交给编译器"）────────────────
+//
+// `the_frame_lengths_and_caps_are_what_the_wire_says` 原先在这里。四条断言里：
+// `WANT_LEN == 32` 在 `crates/protocol/src/driver/supply/call.rs` 里**早就是**
+// `const _: () = assert!(…)`；另外三条（`WANT_MAX` / `ORDER_CAP` / `REPLY_CAP` 各自等于自己
+// 的定义式）是**同义反复** ⇒ 一条都不必再占用例。
 #[test]
 fn the_supply_failure_table_is_lossy_on_purpose_and_keeps_the_two_nones_apart() {
     use crate::call::{BAD, DENIED, FULL, OK, UNKNOWN, code_to_fail, fail_to_code};
@@ -225,7 +249,11 @@ fn the_supply_failure_table_is_lossy_on_purpose_and_keeps_the_two_nones_apart() 
     assert_eq!(fail_to_code(Some(Fail::Local)), BAD);
     assert_eq!(fail_to_code(Some(Fail::Bad)), BAD);
     assert_eq!(code_to_fail(OK), None, "OK 不是失败");
-    assert_eq!(code_to_fail(BAD), Some(Fail::Bad), "两个 BAD 的来源在这里只有一个名字");
+    assert_eq!(
+        code_to_fail(BAD),
+        Some(Fail::Bad),
+        "两个 BAD 的来源在这里只有一个名字"
+    );
     assert_eq!(code_to_fail(UNKNOWN), Some(Fail::Unknown));
     assert_eq!(code_to_fail(DENIED), Some(Fail::Denied));
     assert_eq!(code_to_fail(FULL), Some(Fail::Full));
@@ -238,12 +266,18 @@ fn the_two_views_do_not_accept_the_other_family() {
     // **"一位不多"**：`Access` 只收读写族那两位、`Policy` 只收传递族那两位——混族的值不可表达。
     // 照实记：这两个类型原先住 `runtime::core::port`，搬进 `env` 时**逐字照搬**（判据才第一次
     // 落在它们身上）。
-    assert_eq!(Access::from_bits(Access::FETCH.bits().bits()), Some(Access::FETCH));
+    assert_eq!(
+        Access::from_bits(Access::FETCH.bits().bits()),
+        Some(Access::FETCH)
+    );
     assert_eq!(
         Access::from_bits(Access::FETCH_STORE.bits().bits()),
         Some(Access::FETCH_STORE)
     );
-    assert_eq!(Policy::from_bits(Policy::VEST.bits().bits()), Some(Policy::VEST));
+    assert_eq!(
+        Policy::from_bits(Policy::VEST.bits().bits()),
+        Some(Policy::VEST)
+    );
 
     assert_eq!(
         Access::from_bits(Policy::VEST.bits().bits()),
@@ -270,4 +304,3 @@ fn the_two_views_do_not_accept_the_other_family() {
     // （两族**不能**互相 `|`——那不是"混族不可表达"，那是类型层面就不给）。
     assert_eq!(Access::FETCH | Access::STORE, Access::FETCH_STORE);
 }
-

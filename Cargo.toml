@@ -3,29 +3,19 @@
 # `.cargo/config.toml` 钉在 `riscv64gc-unknown-none-elf` 上，它进不来（要 std + host ABI）。
 # 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/run.sh` 跑。
 #
-# `crates/operator-case` 是**同一类**的宿主台：把 `protocol` 的 operator 核心源码
-# `include!` 进来，让树与七条原语的规矩在宿主上真跑一遍（门口 `scripts/host.sh`）。
-# 它进不来的理由与上一条同源，外加一条实测：链接 `protocol` 会带进 `runtime`，
-# 而 `runtime` 里那两处 riscv 内联汇编在宿主上编不过（见那个 crate 的 Cargo.toml）。
+# `crates/protocol-case` 是**同一类**的宿主台：把 `protocol` 的**八处纯核心**逐字 `#[path]`
+# 进来，让它们的规矩在宿主上真跑一遍（门口 `scripts/host.sh`；八个靶与那张清单住那个 crate
+# 的 `Cargo.toml` 头注）。它进不来的理由与上一条同源，外加一条实测：链接 `protocol` 会带进
+# `runtime`，而 `runtime` 里那两处 riscv 内联汇编在宿主上编不过。
 #
-# `crates/line-case` 与它同门（同一份理由、同一个门口）：line 核心的**账 + 界**在宿主上真跑
-# 一遍——那一台的 `Pier` 是桩（核心只跟泊位说一句 `post`，见那个 crate 的 Cargo.toml）。
-#
-# `crates/judge-case` 是**第三台**同一个门口（`scripts/host.sh`）：operator 的**门外那一问**
-# （`crates/protocol/src/operator/judge.rs`）在宿主上真跑一遍。它与 `operator-case` 是两份判据
-# 而不是一台的两半——那一台钉树的**结构**（七条原语、六格失败域），这一台钉**三格裁决**
-# （放行 / 终态拒 / 判不了）。判据之所以能单独编：`judge.rs` 里两个号是泛型，它既不认识
-# `PolicyId` / `CoalitionId`、也不认识内核。
+# **照实记（用户裁定）**：这一台原先**是八台**——`operator-case` / `line-case` / `judge-case` /
+# `principal-case` / `board-case` / `session-case` / `system-case` / `supply-case`，八份
+# `Cargo.toml` + 八份 `Cargo.lock` + 八个 `target/`，而 `env` 被编了八遍。用户的话是
+# **"我希望测试和运行环境分开，而不是交叉在一起"**，故收成一处：一个 crate、八个靶
+# （靶名 = 原来的 crate 名去后缀）。
 exclude = [
     "crates/alloc-probe",
-    "crates/operator-case",
-    "crates/line-case",
-    "crates/judge-case",
-    "crates/principal-case",
-    "crates/board-case",
-    "crates/session-case",
-    "crates/system-case",
-    "crates/supply-case",
+    "crates/protocol-case",
 ]
 members = [
     "kernel",

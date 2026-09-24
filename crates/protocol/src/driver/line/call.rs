@@ -30,6 +30,13 @@ pub const LANE: &str = "line";
 /// 回信孔的记号（登记那一答从它回来）。
 pub const BACK_MARK: Mark = Mark::of("line-back");
 
+// ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
+//
+// 原先这是宿主台的一条运行时用例（`the_two_marks_of_this_road_do_not_collide`）。
+const _: () = assert!(BACK_MARK.get() != Mark::of(LANE).get());
+const _: () = assert!(BACK_MARK.get() != Mark::of("line-tip").get());
+const _: () = assert!(BACK_MARK.get() != Mark::NONE.get());
+
 /// 线泊位两个方向那一个记号：**帧不报内容，只报"有事"**（形状的下限，见文件头）。
 pub const NOTE: u8 = 1;
 

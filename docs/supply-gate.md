@@ -1,7 +1,7 @@
 # `supply` 的类型搬家 —— **结构门**
 
 > **裁决（2026-09-24）**：走**甲**（`Access` / `Policy` 挪进 `env`）；帧靶**新开
-> `crates/supply-case`**；`env` 里**新开 `crates/env/src/wire/access.rs`**。
+> `protocol-case` 的 `supply` 靶**；`env` 里**新开 `crates/env/src/wire/access.rs`**。
 >
 > **落地读数**：
 > - ✅ 类型搬家：`env/src/wire/access.rs`（两个类型 + 两个掩码 + 全部 `impl`，133 行）；
@@ -9,7 +9,7 @@
 >   **22 个调用点一行未改**（`cargo check --workspace --all-targets` 0 error）
 > - ✅ `driver/supply/call.rs` 那一行 `use` 改成 `env` ⇒ **这一份本来就全纯** ⇒
 >   **不用拆 `frame.rs` + `call.rs`**（与 `line` 那一份同形：零切分，直接编进宿主靶）
-> - ✅ `crates/supply-case`：7 条判据（本章 §4 那份提案照做）
+> - ✅ `protocol-case` 的 `supply` 靶：7 条判据（本章 §4 那份提案照做）
 > - **照实记**：写判据时我猜 `class_block` 对超长类名答 `Err(TooLong)`——**实测是截断到
 >   `NAME_LEN - 1`**（当场红）。这一格现在钉住"截断"这个口径，并顺手钉住它的下场：
 >   **两个只有尾巴不同的长类名会撞成同一格**（今天没有这么长的类名，故只记口径、不改结构）。
@@ -84,18 +84,18 @@ use runtime::core::port::{Access, Policy};      // ← 第 7 行，全文仅此�
 ⇒ 编进哪一台都不会"重复跑判据"。三个选项：
 
 ```text
-  ① 新开 crates/supply-case（名字最诚实：它钉的就是 supply 那一门）
-  ② 并进 crates/line-case（都是 driver 那一层的协议；但那一台的名字会名不副实）
-  ③ 并进 crates/system-case（那一台钉的是编排域的账/判定/配给——supply 是另一件事）
+  ① 新开 `protocol-case` 的 `supply` 靶（名字最诚实：它钉的就是 supply 那一门）
+  ② 并进 `protocol-case` 的 `line` 靶（都是 driver 那一层的协议；但那一台的名字会名不副实）
+  ③ 并进 `protocol-case` 的 `judgement` 靶（那一台钉的是编排域的账/判定/配给——supply 是另一件事）
 ```
 
-**推荐 ①**：与 `line-case` / `board-case` 同一条命名法（一台钉一门），代价只是多一个
+**推荐 ①**：与 `line` 靶 / `board` 靶同一条命名法（一台钉一门），代价只是多一个
 `Cargo.toml` + 一个测试靶。
 
 ## 5 · 悬而未决（要你拍板）
 
 1. **走甲 / 乙 / 丙 / 丁哪一条**（我推荐**甲**）。
-2. **帧靶落在哪一台**（我推荐**新开 `crates/supply-case`**）。
+2. **帧靶落在哪一台**（我推荐**新开 `protocol-case` 的 `supply` 靶**）。
 3. `env` 里那两个类型的**住处**：与 `Permission` 同一个文件，还是新开
    `crates/env/src/wire/access.rs`？（我推荐**新开一个文件**：`permission.rs` 已经不小，
    而"两族视图"是另一件事——名字就叫 `access.rs`，两个类型都在里面。）
@@ -106,6 +106,6 @@ use runtime::core::port::{Access, Policy};      // ← 第 7 行，全文仅此�
   一、搬类型：env 新开 access.rs（两个类型 + 两个掩码 + 全部 impl）；
       runtime::core::port 改成 pub use env::{Access, Policy};（22 个文件的调用点不动）
   二、改那一行 use：protocol/src/driver/supply/call.rs
-  三、拆 frame.rs + 新开 crates/supply-case：往返 + 三种"不成形" + 帧长/上限 + 失败码表两端
+  三、拆 frame.rs + 新开 `protocol-case` 的 `supply` 靶：往返 + 三种"不成形" + 帧长/上限 + 失败码表两端
   四、门：host（+一条新台）+ 机器那八道全跑（搬的是程序侧编进去的源码） + 牙口变异数条
 ```

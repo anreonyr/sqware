@@ -145,7 +145,7 @@ echo: list device=4,5,6
 | 挪到装配单**最后** | **0/10「无停机行」** | 编排域等的是最后一条，而它 `board: false`——板看不见它的死，那一等没人应 |
 
 故：**探针装得上电、不上电**（`INITRD_BINS` 里有条目、`PLAN` 里没有），真机那一对读数是**手工
-跑的**；而**自动的回归门**在宿主靶上——`crates/operator-case` 的
+跑的**；而**自动的回归门**在宿主靶上——`protocol-case` 的 `operator` 靶的
 `a_deep_chain_does_not_need_the_call_stack`：把测试线程的栈压到 64 KiB 再建 500 层链。
 照实记：**退回递归版它当场 `fatal runtime error: stack overflow`（SIGABRT）**，这一版过。
 那条门**有牙、且不抖**——一个已经被守住的属性，不该再让每次 `examine` / `soak` 为一个爱挤人的

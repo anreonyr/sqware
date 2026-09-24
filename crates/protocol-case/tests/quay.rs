@@ -3,7 +3,7 @@
 //! # 这一台钉的是什么
 //!
 //! `crates/protocol/src/session/mod.rs` 那 **九条实测事实**里，能机械检查的那几条在这里成了
-//! 判据。规格写在靶子里（照 `crates/line-case` 的做法），核心那份源码**一个字不动**：
+//! 判据。规格写在靶子里（照 `protocol-case` 的 `line` 靶的做法），核心那份源码**一个字不动**：
 //!
 //! ```text
 //!   seat     同名闸（同一位、同一记号只可能有一枚）；记号 = 这条泊位名字的指纹
@@ -44,7 +44,11 @@ fn seat_refuses_a_duplicate_name() {
     // 靠的就是它，归位那一侧的次序因此不再承担语义。
     let mut q = quay();
     assert!(q.seat(name("records")).is_ok());
-    assert_eq!(q.seat(name("records")).err(), Some(Seat::NoName), "同名的不许再装");
+    assert_eq!(
+        q.seat(name("records")).err(),
+        Some(Seat::NoName),
+        "同名的不许再装"
+    );
     // **拒了这一手不许留痕**：闸在"铸之前"——照实记：这一句是牙口量出来的。把 `seat` 开头
     // 那道闸挪走之后，同名那一问**照样答 `NoName`**（`install` 里还有一道），但它已经先
     // 铸了一枚、交出去一枚、然后把它漏在那儿 ⇒ 只查答码的那一版全门照绿，查副作用才逮得住。
@@ -197,7 +201,11 @@ fn unseat_says_the_word_and_drops_my_hole() {
     let hole = q.find(name("records")).expect("在").hole();
 
     q.unseat(name("records"));
-    assert_eq!(fake::said(), vec![(fake::tok(41), fake::UNSEAT.to_vec())], "往对端那一枚说了一句");
+    assert_eq!(
+        fake::said(),
+        vec![(fake::tok(41), fake::UNSEAT.to_vec())],
+        "往对端那一枚说了一句"
+    );
     assert_eq!(fake::unshipped(), vec![hole], "放下的是本端那一枚");
     assert!(q.find(name("records")).is_none(), "这条泊位不在了");
 
@@ -250,7 +258,11 @@ fn a_pier_without_a_write_end_refuses_to_post() {
     assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
     let pier = *q.find(name("records")).expect("在");
     assert_eq!(pier.post(b"hi"), Ok(()));
-    assert_eq!(fake::said(), vec![(fake::tok(61), b"hi".to_vec())], "推到对端那一枚上");
+    assert_eq!(
+        fake::said(),
+        vec![(fake::tok(61), b"hi".to_vec())],
+        "推到对端那一枚上"
+    );
 
     // 收的那一头走本端那一枚（`pull`），与 `post` 成对。
     fake::put_inbox(1 + 1, b"yo");

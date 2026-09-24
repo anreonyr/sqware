@@ -3,7 +3,7 @@
 //! # 这一台钉的是什么
 //!
 //! `crates/protocol/src/system/{desk,core,grant}.rs` 三份都是纯的（只认 `env`，`core.rs` 另认
-//! 同层 `desk.rs` 的那几个类型），故这一台**无桩**。规格写在靶子里（照 `crates/line-case` 的
+//! 同层 `desk.rs` 的那几个类型），故这一台**无桩**。规格写在靶子里（照 `protocol-case` 的 `line` 靶的
 //! 做法），三份源码**一个字不动**：
 //!
 //! ```text
@@ -33,7 +33,8 @@ fn name(text: &str) -> Name {
 /// 一张登记了两行的表：一行"要通道的"、一行"不宣布的"。
 fn table() -> Table {
     let mut t = Table::new();
-    t.register(name("uart"), Announce::Channel).expect("登记得下");
+    t.register(name("uart"), Announce::Channel)
+        .expect("登记得下");
     t.register(name("echo"), Announce::None).expect("登记得下");
     t
 }
@@ -64,7 +65,10 @@ fn find_and_rows_only_see_named_rows() {
     let t = table();
     assert_eq!(t.find(name("never-registered")), None);
     assert_eq!(t.rows().count(), 2);
-    assert!(t.rows().all(|s| s.name == name("uart") || s.name == name("echo")));
+    assert!(
+        t.rows()
+            .all(|s| s.name == name("uart") || s.name == name("echo"))
+    );
 }
 
 #[test]
@@ -72,7 +76,10 @@ fn attaching_a_body_needs_a_registered_row_and_is_not_yet_ready() {
     // `attach` 挂的是**身子**（域 + 代表线程）；没登记过 ⇒ `Unknown`。
     // 而挂上身子**不等于起来了**：`state` 照旧 `NeverStarted`、通道照旧没有。
     let mut t = table();
-    assert_eq!(t.attach(name("nobody"), TeamId::new(3), TaskId::new(7)), Err(Fail::Unknown));
+    assert_eq!(
+        t.attach(name("nobody"), TeamId::new(3), TaskId::new(7)),
+        Err(Fail::Unknown)
+    );
 
     let (team, rep) = live(7);
     assert_eq!(t.attach(name("uart"), team, rep), Ok(()));
@@ -94,7 +101,11 @@ fn detaching_keeps_the_row_so_it_can_still_say_it_once_ran() {
     let s = t.find(name("uart")).expect("行还在");
     assert_eq!(s.slot, Slot::None, "身子摘了");
     assert_eq!(s.root, None);
-    assert_eq!(s.state, State::Ready, "**状态照旧**——它就是「起过」那半句话");
+    assert_eq!(
+        s.state,
+        State::Ready,
+        "**状态照旧**——它就是「起过」那半句话"
+    );
     assert!(s.name == name("uart"));
     // 摘一个没登记过的名字：什么都不发生（不 panic）。
     t.detach(name("nobody"));
@@ -104,9 +115,13 @@ fn detaching_keeps_the_row_so_it_can_still_say_it_once_ran() {
 #[test]
 fn set_state_with_a_wrong_name_touches_nothing() {
     let mut t = table();
-    t.attach(name("uart"), TeamId::new(3), TaskId::new(7)).unwrap();
+    t.attach(name("uart"), TeamId::new(3), TaskId::new(7))
+        .unwrap();
     t.set_state(name("nobody"), State::Ready);
-    assert_eq!(t.find(name("uart")).map(|s| s.state), Some(State::NeverStarted));
+    assert_eq!(
+        t.find(name("uart")).map(|s| s.state),
+        Some(State::NeverStarted)
+    );
 }
 
 #[test]
@@ -117,7 +132,9 @@ fn the_table_has_a_bottom() {
     loop {
         // 名字各不相同（`s{i}`）。
         let text = alloc::format!("s{made}");
-        let Ok(one) = Name::new(&text) else { panic!("名字合法") };
+        let Ok(one) = Name::new(&text) else {
+            panic!("名字合法")
+        };
         match t.register(one, Announce::None) {
             Ok(()) => made += 1,
             Err(Fail::NoRoom) => break,
@@ -135,7 +152,8 @@ fn admit_start_says_unknown_outside_the_table_and_not_ready_while_running() {
     let mut t = table();
     assert_eq!(admit_start(&t, name("nobody")), Err(Fail::Unknown));
 
-    t.attach(name("uart"), TeamId::new(3), TaskId::new(7)).unwrap();
+    t.attach(name("uart"), TeamId::new(3), TaskId::new(7))
+        .unwrap();
     assert_eq!(admit_start(&t, name("uart")), Ok(()), "没起过 ⇒ 准起");
 
     for state in [State::Starting, State::Ready, State::Stopping] {
@@ -154,15 +172,21 @@ fn admit_start_says_unknown_outside_the_table_and_not_ready_while_running() {
 #[test]
 fn probe_ready_reads_the_way_that_row_said_it_would_announce() {
     let mut t = table();
-    assert_eq!(probe_ready(&t, name("nobody")), Ready::Gone, "不在表里 ⇒ 没了");
+    assert_eq!(
+        probe_ready(&t, name("nobody")),
+        Ready::Gone,
+        "不在表里 ⇒ 没了"
+    );
 
     // 不宣布的那一种：**放行即起来**（身子在 ⇒ Up）。
-    t.attach(name("echo"), TeamId::new(3), TaskId::new(8)).unwrap();
+    t.attach(name("echo"), TeamId::new(3), TaskId::new(8))
+        .unwrap();
     t.set_state(name("echo"), State::Starting);
     assert_eq!(probe_ready(&t, name("echo")), Ready::Up);
 
     // 要通道的那一种：身子在、还没宣布 ⇒ 继续等。
-    t.attach(name("uart"), TeamId::new(3), TaskId::new(7)).unwrap();
+    t.attach(name("uart"), TeamId::new(3), TaskId::new(7))
+        .unwrap();
     t.set_state(name("uart"), State::Starting);
     assert_eq!(probe_ready(&t, name("uart")), Ready::Pending);
 
@@ -188,7 +212,8 @@ fn probe_watch_is_about_the_coordinates_not_about_life_and_death() {
     // 收尾的 Service 在这里仍答 `Alive`。生死要看 `State`。这一格把那条口径钉住。
     let mut t = table();
     assert_eq!(probe_watch(&t, name("nobody")), Watch::Gone);
-    t.attach(name("uart"), TeamId::new(3), TaskId::new(7)).unwrap();
+    t.attach(name("uart"), TeamId::new(3), TaskId::new(7))
+        .unwrap();
     t.set_state(name("uart"), State::Ready);
     assert_eq!(probe_watch(&t, name("uart")), Watch::Alive);
     // 收尾完了（状态是死的），坐标还在 ⇒ 仍答 Alive——**这不是生死**。
@@ -214,7 +239,9 @@ fn grant_each_hands_record_i_to_cell_i() {
     records.extend_from_slice(&[0u8; PAIR_LEN - 1]); // 不足一条的尾巴：不许被解出来
 
     let mut got = alloc::vec::Vec::new();
-    system::grant::each(&records, |i, pair| got.push((i, pair.key(), pair.token().get())));
+    system::grant::each(&records, |i, pair| {
+        got.push((i, pair.key(), pair.token().get()))
+    });
 
     assert_eq!(got.len(), 2, "尾巴不该回调");
     assert_eq!(got[0].0, 0);
