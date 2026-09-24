@@ -20,6 +20,21 @@ use env::wire::manifest;
 fn root_name() -> String {
     std::env::var("SQWARE_ROOT").unwrap_or_else(|_| "root".to_string())
 }
+
+/// 引导镜像在清单里的**名字**：`fair` 那一台用的是**同一份镜像**（`root`）——`SQWARE_ROOT=fair`
+/// 换的是**编排域那张装配单**（多一条"聊天客人"的行），不是镜像本身。
+///
+/// **照实记（为什么要有这一格）**：一开始给 `fair` 另加了一条清单别名指向同一个 `prog-root`
+/// ⇒ initrd 里**同一份镜像装了两遍**、当场变大 ⇒ QEMU 报 `Not enough memory to place DTB
+/// after kernel/initrd`（`scripts/fair.sh` 第一次跑就是这个）。故这里归一名字，镜像仍只有一份。
+fn image_name() -> String {
+    let name = root_name();
+    if name == "fair" {
+        "root".to_string()
+    } else {
+        name
+    }
+}
 const INITRD_BINS: &[(&str, &str, ProgramKind)] = &[
     ("root", "prog-root", ProgramKind::Supervisor),
     // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
@@ -165,8 +180,28 @@ fn main() {
         args.push("--profile".to_string());
         args.push(profile.clone());
     }
+    // **场景旗标**：`SQWARE_ROOT=fair` 时给程序侧一个 `--cfg sqware_fair`。
+    //
+    // 照实记（两处坑，都是实测踩出来的）：
+    //
+    //  1) **不能用 `option_env!("SQWARE_ROOT")`**——cargo 不把 `env!` 读的变量算进指纹
+    //     （本文件头注记着同一个坑：*"脚本何时重编不由那个变量决定（实测换变量后引导镜像没换）"*）。
+    //     旗标得走 `rustflags` 那一族：它**进指纹**，换场景必然重编。
+    //  2) **要写 `CARGO_ENCODED_RUSTFLAGS`，不是 `RUSTFLAGS`**——cargo 给 build 脚本的那个编码
+    //     变量**优先级更高**：只设 `RUSTFLAGS` 会被它整个盖掉（实测：那版跑出来聊天客人一次
+    //     都没出现）。而且编码变量里**已经带着** `.cargo/config.toml` 给本目标配的那几个
+    //     `-C…` 旗标（`relocation-model` / `frame-pointers` / `code-model`）——往它后面追加，
+    //     那几个才不会被顶掉。分隔符是 `\x1f`。
+    let mut encoded = std_env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+    if root_name() == "fair" {
+        if !encoded.is_empty() {
+            encoded.push('\x1f');
+        }
+        encoded.push_str("--cfg\x1fsqware_fair");
+    }
     let status = Command::new(&cargo)
         .args(&args)
+        .env("CARGO_ENCODED_RUSTFLAGS", &encoded)
         .status()
         .expect("failed to spawn cargo for programs crate");
     assert!(
@@ -195,7 +230,7 @@ fn main() {
     // 引导镜像在清单内的偏移/长度（内核不解析清单，按这两个常量取 root 的 ELF）
     let at = INITRD_BINS
         .iter()
-        .position(|(name, _, _)| *name == root_name())
+        .position(|(name, _, _)| *name == image_name())
         .expect("initrd: SQWARE_ROOT not in INITRD_BINS");
     let root_span = spans[at].clone();
     assert!(!root_span.is_empty(), "initrd: root image is empty");

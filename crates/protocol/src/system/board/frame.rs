@@ -12,7 +12,7 @@
 use env::Mark;
 use env::{Name, PieToken};
 
-use super::core::{Board, Fail};
+use super::core::Fail;
 
 pub fn name_of(bytes: &[u8]) -> Option<Name> {
     let at = bytes.get(..env::wire::NAME_LEN)?;

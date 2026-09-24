@@ -257,3 +257,9 @@ path = "src/stress/group.rs"
 test = false
 bench = false
 doctest = false
+
+# 场景旗标 `sqware_fair` 由 `kernel/build.rs` 传给嵌套 cargo（见该文件里那条照实记）；
+# 而**直连工作区**编译 `programs`（`cargo check --workspace --all-targets`）时没人传 ⇒ 在这里
+# 声明它的存在，免得吃一条 `unexpected_cfgs` 的警告。
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sqware_fair)'] }

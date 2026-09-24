@@ -110,11 +110,14 @@ const MS: usize = 1000;
 /// 高出一截"：192 = 117 的 1.6 倍。**为什么不再深**：这一台每层让一手（见 [`YIELD_MS`]），
 /// 而它得在 `echo` 退场之前跑完（编排域等的是 `echo`；`echo` 一退就把还在跑的它带走——实测过
 /// 一次：`echo` 那几行全对，而它**连 `exit` 行都没打出来**）。192 层够证那一格，也留得下余地。
-const MAX_DEPTH: usize = 192;
+/// 链打多深。**公平台上打 512 层**（老表里"512 层 + 全剪回来 ⇒ soak 0/10"那一档：连打
+/// ~1030 手同步往返，把 `echo` 的 1 秒期限挤过期）；默认台还是 192。
+const MAX_DEPTH: usize = if FAIR { 512 } else { 192 };
 
 /// 剪回来多少层。**不是全剪**：`unlink` 的开销与深度无关（一趟 O(槽数) 的扫），故剪最底这几层
 /// 就点得到那一手；而链全剪（192 手往返）会把这一台拖过 `echo` 的命。
-const TRIM_BACK: usize = 16;
+/// 从最底剪回几层。公平台上**全剪回来**（凑够那一千来手）；默认台 16。
+const TRIM_BACK: usize = if FAIR { 512 } else { 16 };
 
 /// 每几层报一行（"活着"这件事要看得见进度）。
 const STEP: usize = 64;
@@ -127,6 +130,26 @@ const STEP: usize = 64;
 /// 它不改变这一台要证的任何东西，只把"独占"去掉；而"连打几百手会挤别人"这件事本身是这一刀
 /// 顺带量出来的**真性质**，记在 `docs/operator-slot.md` §5 之四（要收它是调度/配额那一族的事）。
 const YIELD_MS: u64 = 1;
+
+/// **这一台跑在"公平台"上吗**（`SQWARE_ROOT=fair`，构建期定）。
+///
+/// 公平台要量的正是"**不让手**会把别人挤成什么样"——故那一台上把让手粒度放回**每 16 手**
+/// （就是头注那张表里 soak **8/10** 的那一档：一次 16 手的突发在慢机上仍吃得掉 1 秒）。
+/// 默认场景（`root` / `soak`）**一个字不变**：还是每层让一手。
+#[cfg(sqware_fair)]
+const FAIR: bool = true;
+#[cfg(not(sqware_fair))]
+const FAIR: bool = false;
+
+/// 这一手要不要让：默认台**每手**都让；**公平台一次都不让**——老表里那一档
+/// （"512 层 + 全剪回来，排在 `echo` 前 ⇒ soak 0/10"）就是不让手的版本，而"每 16 手让一次"
+/// 那一档实测仍挤不动 `echo`（本台第一次量到：`echo` 五条读数照旧）。
+///
+/// 让手粒度就是这一台要量的**自变量**：默认台让手（不让门里由探针制造那一格），公平台不让
+/// （把那一格做成读数）。
+fn should_yield(_n: usize) -> bool {
+    !FAIR
+}
 
 /// 链的落脚处：`/sys/deep`（**不落根**：root 那三条既有读数一个字都不该动）。
 const DIR: &str = "sys";
@@ -180,7 +203,9 @@ extern "C" fn main() -> ! {
                 if chain.len() % 48 == 0 {
                     say(&format!("probe-deep: alive at {}", chain.len()));
                 }
-                let _ = room::sleep(Duration::from_millis(YIELD_MS));
+                if should_yield(chain.len()) {
+                    let _ = room::sleep(Duration::from_millis(YIELD_MS));
+                }
             }
             Err(one) => {
                 code = one;
@@ -221,12 +246,14 @@ extern "C" fn main() -> ! {
 
     // 四、**从最底往上剪几层**：`unlink` 那一手（"从父的 children 里摘一号"）也得点到。
     let mut clean = code == ocall::OK;
-    for id in chain.iter().rev().take(TRIM_BACK) {
+    for (i, id) in chain.iter().rev().take(TRIM_BACK).enumerate() {
         if operator::trim(talk, &tree, *id, MS).is_err() {
             clean = false;
             break;
         }
-        let _ = room::sleep(Duration::from_millis(YIELD_MS));
+        if should_yield(i + 1) {
+            let _ = room::sleep(Duration::from_millis(YIELD_MS));
+        }
     }
 
     // 五、一行读数。

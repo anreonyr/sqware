@@ -11,7 +11,7 @@
 
 use core::ops::{BitAnd, BitOr, Not};
 
-use crate::{Permission, wire::NAME_LEN};
+use crate::Permission;
 
 /// 读写族：对端对这份资源**能做什么**。
 ///

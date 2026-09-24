@@ -16,9 +16,7 @@
 //! 差别只在三件事——推的是哪一枚、收的是哪一枚、收的时候**校不校来源**。编帧、解帧、
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
 
-use core::ops::{BitAnd, BitOr, Not};
-
-use env::{EnvError, EnvResult, Permission, PieToken, TaskId, make_err};
+use env::{EnvError, EnvResult, PieToken, TaskId, make_err};
 
 use crate::env::mail::{self, AnyPie, HolePie};
 
