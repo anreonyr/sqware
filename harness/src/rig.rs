@@ -433,7 +433,7 @@ fn trial(
 
     // ── 收场（**不论这一轮成没成**）────────────────────────
     // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。
-    if let Some(Slot::Live { team, .. }) = table.find(name).map(|s| s.slot) {
+    if let Some(Slot::Live { team: Some(team), .. }) = table.find(name).map(|s| s.slot) {
         let _ = unit::oust(team);
     }
     // 本端那一枚孔随码头放下。对端交上来的那一枚不归我：受害者在 `reap` 里先跑退出钩子

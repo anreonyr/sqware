@@ -48,7 +48,7 @@ pub type Died = crate::Reason;
 
 // ── 死在装配的哪一步（编号沿用旧树那套小整数）───────────────────────────────
 //
-// **照实记**：这 19 个原住 `programs/src/supervisor/system/main.rs`，与装配单同源（"哪一台、
+// **照实记（iii 之后只剩 16 个：内件那三枚随它们那三行搬去 `scenario.rs`）**：这 19 个原住 `programs/src/supervisor/system/main.rs`，与装配单同源（"哪一台、
 // 死在第几步"），故随表一起搬下来；那里现在 `pub use` 转发。
 pub const E_BOOT: Died = 1;
 pub const E_ROUTER: Died = 5;
@@ -56,13 +56,10 @@ pub const E_ECHO: Died = 6;
 pub const E_GUEST: Died = 7;
 pub const E_PASSER: Died = 8;
 pub const E_UART: Died = 9;
-pub const E_TREE: Died = 10;
 pub const E_LODGER: Died = 11;
 pub const E_RTC: Died = 12;
 pub const E_SLEEPER: Died = 13;
-pub const E_PRINCIPAL: Died = 14;
 pub const E_SUBJECT: Died = 15;
-pub const E_COALITION: Died = 16;
 pub const E_MEMBER: Died = 17;
 pub const E_PROBE: Died = 18;
 pub const E_PROBE_OWNER: Died = 19;
@@ -128,8 +125,13 @@ pub enum Spot {
     /// 两个**域**：引导域（`root`）与编排域（`system`）——机器本身的骨架，都由内核那 8 字节前言
     /// 指到的那一条派生（见 [`ENTRY`]）。
     Domain,
-    /// **常驻服务**：持树者（`operator`）· 身份（`principal`）· 结盟（`coalition`）· 三台驱动
-    /// （`router` / `uart` / `rtc`）——用户裁定"真正要发出去的那一台"装的就是这几台。
+    /// **常驻服务**：三台驱动（`router` / `uart` / `rtc`）——用户裁定"真正要发出去的那一台"
+    /// 装的就是这几台。
+    ///
+    /// **照实记（原先还列着三个名字）**：持树者（`operator`）· 身份（`principal`）· 结盟
+    /// （`coalition`）原先也是这一档。iii 之后它们**住编排域自己的域里**（`scenario.rs` 的
+    /// `INNER`），不再是镜像里的程序——"装配单里有什么"与"编排域起什么"从此不重合，
+    /// 而后者那三行由**编排域自己**持有。
     Service,
     /// **调试回显**（`echo`）：只走 `env` 调试面的那一条（U 态）——产品镜像里它排**最后一条**，
     /// 编排域等它退场才收场。
@@ -231,11 +233,14 @@ pub struct Row {
 /// （`kind`）· 是什么（`spot`）· 进哪几张镜像（`scenes`）· 编排域怎么起它（`plan`）——
 /// 而这些原先散在 `kernel/build.rs` 的三张表与 `scenario.rs` 的 19 个 `const fn` 里。
 ///
-/// **照实记（`product` 那一景是用户裁定的"7 台"）**：`root` 那一景是**验收镜像**——表里每一条
-/// 都装上（探针与试客都在里面，故那一景读数最全）。而"这台机器真正要发出去的样子"是另一景：
-/// **6 台服务 + `echo`**（外加两个域 `root` / `system`，镜像共 9 条）。`echo` 排在最后，编排域
+/// **照实记（`product` 那一景是用户裁定的"真正要发出去的那一台"）**：`root` 那一景是**验收镜像**
+/// ——表里每一条都装上（探针与试客都在里面，故那一景读数最全）。而"这台机器真正要发出去的样子"
+/// 是另一景：**3 台服务 + `echo`**（外加两个域 `root` / `system`，镜像共 **6** 条）。
+///
+/// **照实记（iii：那一景从 9 条缩到 6 条）**：持树者 / 身份 / 结盟原先也各是一条，现在它们住
+/// **编排域自己的域**里（`scenario.rs` 的 `INNER`）——不在镜像里，故不占条数。`echo` 排在最后，编排域
 /// 等它退场——读到一行 `exit` 才收场（`scenario.rs` 那条照实记）。六位常客（`guest` / `passer` /
-/// `lodger` / `sleeper` / `subject` / `member`）与五台探针**只在验收镜像里**：它们量的是服务，
+/// `lodger` / `sleeper` / `subject` / `member`）与六台探针**只在验收镜像里**：它们量的是服务，
 /// 不是"机器起不起得来"。
 ///
 /// **`spot` 与 `scenes` 是两件事**（用户原话："以后真正的程序放哪里，现在真的很不清晰"）：
@@ -277,26 +282,12 @@ pub const ALL: &[Row] = &[
     // 客人：**U 态**（同上）——`/device/rtc` 那面服务的第一位用家：问一声现在几点、约一个时刻
     // （失败域那两格也各走一趟，见 `harness/src/sleeper.rs`），等到那一声就退场。
     Row { name: "sleeper", kind: ProgramKind::User, spot: Spot::Guest, scenes: &["root"], plan: Some(Plan { order: 9, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, eyes: None, died: E_SLEEPER }) },
-    // 身份服务（**U 态**）：名册（TID → 当前 PrincipalId）与谱系（PrincipalId 的树）两张表，
-    // 七条原语见 `protocol::principal`。它**不持有、不授予、不解释任何 Pie**——只读写自己
-    // 那两张表，故不进"转授权中枢"那一档（与 `operator` 的差别正是在这里）：目录按角色分、
-    // 特权级各自在这里声明，它是这一族里第一位 **U 态**的服务。
-    Row { name: "principal", kind: ProgramKind::User, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 1, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, eyes: Some(Eyes::Roster), died: E_PRINCIPAL }) },
     // 主体（**U 态**）：身份服务的第一位真客人——问自己是谁、查父（三态）、验自反与否、
     // 派生一条自己的子身份、再越权趟一次（读数见 `harness/src/subject.rs` 头注）。
     Row { name: "subject", kind: ProgramKind::User, spot: Spot::Guest, scenes: &["root"], plan: Some(Plan { order: 10, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, eyes: None, died: E_SUBJECT }) },
-    // 结盟服务（**U 态**）：横向那张盟籍表（一条关系 + 一枚计数器），六条原语见
-    // `protocol::coalition`。它同样**不持有、不授予、不解释任何 Pie**；它与身份服务那一台
-    // 的差别只有一处——**它是身份服务的客人**：起手在树上找到 `/sys/principal`，每条写原语
-    // 嵌一次 `Resolve(发送者)`（故"self"在适配层，不在核心）。
-    Row { name: "coalition", kind: ProgramKind::User, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 2, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, eyes: Some(Eyes::League), died: E_COALITION }) },
     // 盟友（**U 态**）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态，
     // 再用派生的第二条身份验"同一枚盟里有两位"（读数见 `harness/src/member.rs` 头注）。
     Row { name: "member", kind: ProgramKind::User, spot: Spot::Guest, scenes: &["root"], plan: Some(Plan { order: 11, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, eyes: None, died: E_MEMBER }) },
-    // 命名树的服务：**S 态**——它不建域、不碰 MMIO、不读设备，但它是这台机器的**转授权
-    // 中枢**：谁在树上查到一条，它就 ship 一枚带 `VEST` 的副本出去（`protocol::operator::call::give`）。
-    // 故它不进"最小特权"那一档（`echo` / `guest` / `passer` / `lodger`），与监督侧同档。
-    Row { name: "operator", kind: ProgramKind::Supervisor, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 0, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: false, bind: true, holds_tree: true, eyes: None, died: E_TREE }) },
     // 编排域：**S 态**——它要 mint/hatch（那是"建域 + 产线程 + 放行"整套），且整台机器
     // 的服务都由它起。它自己由**引导域**起：内核把 initrd 区与配对块只读借映进引导域，
     // 之后"这批字节交给谁"由域自己决定（见 `platform/devices.rs::supply_initrd`）。

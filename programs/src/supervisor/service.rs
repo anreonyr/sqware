@@ -20,7 +20,7 @@
 //!
 //! # 身份从哪来
 //!
-//! 装配期每一条服务，都由装配者向**身份服务**要一条号、把它绑到那一条服务的代表线程上
+//! 装配期每一条服务，都由装配者向**身份服务**要一条号、把它绑到那一条服务的**那一枚线程**上
 //! （`derive(root)` + `bind(task, p)`）——**在 `Hatch` 放行之前**，故服务一起来
 //! `resolve(self)` 就答得出。身份服务自己是 `plan` 里 [`Eyes::Roster`] 那一条：它放行之后，
 //! 本域先认下它交给生我者的门牌，再把**它自己与树**补绑上（那两条起来时它还没在）。
@@ -58,6 +58,7 @@ pub use env::assembly::Eyes;
 const RETRY_MS: usize = 1;
 
 /// 一条服务的装配契约。
+#[derive(Clone, Copy)]
 pub struct Program {
     /// 清单里的程序名 —— 也是本域给它起的服务名（`Build` 的名字与清单名同源）。
     pub name: &'static str,
@@ -112,6 +113,87 @@ pub struct Program {
     pub died: Died,
 }
 
+/// **一枚内件是谁**——一枚 ELF 里四个角色，靠 `Spawn` 的那一格 `args` 分派。
+///
+/// 写它的是装配者（[`assemble`]），读它的是被产出的那枚线程（`system/main.rs` 的 `main`）
+/// ——两侧共读**同一处定义**（照 `Eyes` 的先例：`p.name == "principal"` 那种字符串比对，
+/// 改个名字就静默失灵）。空 `args` ⇒ [`Role::System`]：引导域起编排者那一趟照旧传 `&[]`。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Role {
+    /// 编排域自己那一枚（整个域的宿主线程）。
+    System = 0,
+    /// 持树者。
+    Tree = 1,
+    /// 名册（身份服务）。
+    Roster = 2,
+    /// 盟册（结盟服务）。
+    League = 3,
+}
+
+impl Role {
+    /// 递出去的那两格：角色 ＋ **起我那一枚线程**（编排者自己）。
+    ///
+    /// **照实记（第二格为什么要递，而不是问内核——这一格是实测逼出来的）**：内核的 `Sire`
+    /// 答的是**域级**的生我者（`UnitCall::Sire` 读的是 `t.ident.team.sire()`）——对**住在本域**
+    /// 的那一枚内件，它答的是**编排域的父域**（`root`），**不是"起我那一枚线程"**。第一版照
+    /// 旧用 `sire()`，真机上当场红了：树那枚把提示孔交给了 `root`，装配者等到期限
+    /// （读数 `operator` + `operator:tip` → `system: assemble`，`reason=0xa`）。故这一格由
+    /// 装配者自己递进来（同一个域里，"谁起的我"不是内核记得的那一个）。
+    pub const fn args(self, assembler: usize) -> [usize; 2] {
+        [self as usize, assembler]
+    }
+
+    /// 读回来。**读不懂 ⇒ [`Role::System`]**（照旧那一趟传的是空）。
+    pub const fn of_args(args: &[usize]) -> Role {
+        match args.first() {
+            Some(1) => Role::Tree,
+            Some(2) => Role::Roster,
+            Some(3) => Role::League,
+            _ => Role::System,
+        }
+    }
+
+    /// **起我那一枚线程**的号（第二格）。`None` = 照旧那一趟（域级的 `Sire` 才对）。
+    pub const fn assembler(args: &[usize]) -> Option<usize> {
+        match args {
+            [_, who, ..] => Some(*who),
+            _ => None,
+        }
+    }
+}
+
+/// **起我那一枚线程**是谁（内件用）——从 `Spawn` 那一格 `args` 里读（见 [`Role::args`] 的照实记）。
+///
+/// **为什么不是 `runtime::env::unit::sire()`**：那一手答的是**域级**的生我者（见 `Role::args`）。
+/// 三枚内件要的是"起我那一枚线程"，因为它们的孔要交给**编排者那一枚**，不是交给编排域的父域。
+pub fn assembler() -> Option<TaskId> {
+    Role::assembler(runtime::env::unit::args()).map(TaskId::new)
+}
+
+// **写出去与读回来同源**（"常量交给编译器"）：四条各绕一圈，写反一位**编不过**。
+const _: () = {
+    let all = [Role::System, Role::Tree, Role::Roster, Role::League];
+    let mut i = 0;
+    while i < all.len() {
+        assert!(Role::of_args(&all[i].args(0)) as usize == i);
+        i += 1;
+    }
+};
+
+/// **一条死亡道**：哪一位 + 那一条路（本域铸的孔，记号 `gone-<名字>`）。
+///
+/// **照实记（为什么按名字，不按下标）**：原先道与装配单**按下标**对齐（`lanes[i]` ↔ `plan[i]`，
+/// `supervise` 又按同一个下标把"哪条道响"翻回名字）——`scenario.rs` 早就记过这条耦合的代价
+/// （"两张表必须各自自洽……第一版想'表里插一条空名字的行'，默认台当场以 `system: manifest bad`
+/// 收场"）。iii 让装配单变成**两段相接**（内件 ＋ 镜像里那几台），跨两段维持"位次自洽"正是
+/// 那条隐患复发的地方 ⇒ 改成**按名字**（板那一侧本来就是按记号 `gone-<名字>` 认领的）。
+pub struct Lane {
+    /// 这一位是谁（装配单上的名字）。
+    pub name: &'static str,
+    /// 那一条道（`None` = 本域铸不出孔：交给退场级联）。
+    pub road: Option<PieToken>,
+}
+
 /// 清单的读面：装配者按名字挑镜像。
 ///
 /// 两种来源**同一形状**：引导域手里是 boot 借映的那块字节，编排域手里是它从固件领来的
@@ -150,34 +232,31 @@ impl<'a> Catalog<'a> {
     }
 }
 
-/// 装配：登记整张表，然后按顺序把每条起起来。
+/// 装配：登记**整条名册**，然后按顺序把每一条起起来。
 ///
 /// 返最后一条的名字（装配者等它退场；它一走 ⇒ 会话结束）。
 ///
-/// `root` = 与**引导域**那条泊位（配给从那儿来）；`lanes` = 死亡道在本线程表里的句柄
-/// （一位服务一条，按单子下标对位），装配时随 `board::attach` 各交一份给板线程。
+/// **名册是一条列表、两种来路**（iii）：`Some(role)` = **住本域**的一枚内件（[`Role`]），
+/// `None` = 镜像里的一台（按名字去清单里挑镜像）。次序**只由 `scenario::roster` 那一处给**
+/// ——内件三枚在前、镜像那几台在后，与从前 `assembly::ALL` 的 `order`（0/1/2 内件、3..18
+/// 程序）**逐字相同**。
 ///
-/// **持树者的号与提示之路不在这里**：持树者自己是 `plan` 的第一条（[`Program::holds_tree`]），
-/// 认下它那条提示之路的那一步就在下面的循环里——从前它由引导域先起、再当一笔货转授过来，
-/// 那一笔已经清掉（它是**服务**，不是引导设施）。
+/// **照实记（原先是一条列表、一条来路）**：`plan` 从 `env::assembly::ALL` 派生，装配单里
+/// 每一条都是"镜像里的一台"。iii 之后前三枚不再是程序（没有自己的 bin、没有自己的域），
+/// 故它们不进装配单，但**仍在这条名册上**——次序仍是一个。
 ///
-/// **身份也在装配里**：身份服务（`plan` 里 [`Eyes::Roster`] 那一条）一放行，本域先认下它交给
-/// 生我者的门牌，把**它自己与树**补绑上（它们起来时它还没在）；其后的每一条都在 [`start`] 里、
-/// **放行之前**拿到 `derive(root)` + `bind(task, p)`。**装配者自己（编排域这一枚）不绑**：
-/// 它是写名册的那一个，不是被写的那一个。
+/// 五样跨条目累积的东西（`btip` / `tree` / `otip` / `face` / `coord`）**只有一份**：它们是
+/// "起过的东西"，不是每一条各一份。
 pub fn assemble<'a>(
     table: &mut Table,
     catalog: &Catalog<'a>,
-    plan: &[Program],
+    roster: &[(Option<Role>, Program)],
     root: &Pier,
-    lanes: &[Option<PieToken>],
+    lanes: &[Lane],
     machine: &Machine,
 ) -> Result<Name, Died> {
-    // 清单条数与表的格数**同值**（`Table::CAP` = `env::wire::manifest::MAX_PROGRAMS` = 28），
-    // 但这里不需要再查一遍：超限清单在 `Catalog::new` 就被 `manifest::Entries::new` 挡掉了。
-
     // 一、登记：先立账（名字 + 怎么算起来），身子要等真的起了才挂上。
-    for p in plan {
+    for (_, p) in roster {
         let name = Name::new(p.name).map_err(|_| E_MANIFEST)?;
         table.register(name, p.announce).map_err(|_| E_TABLE)?;
     }
@@ -192,22 +271,31 @@ pub fn assemble<'a>(
     let mut otip: Option<PieToken> = None;
     // 身份服务那一面：它一起好本域就有，此后每条服务的身份都从它来。
     let mut face: Option<Face> = None;
-    // **协调那一帧**要带的两位（名册 / 盟册）：各自那一域起来之后就占上那一格，此后随每一条
-    // `attach` 传下去（持树者据此才判得了身份、判得了盟籍）。**两格各有名字**（[`operator::Coord`]
-    // ——不按位塞数组：`[0]`/`[1]` 那种约定写反一位编得过）；门牌**不由这里转授**，各域自己在
-    // `serve_tree` 之后交。
+    // **协调那一帧**要带的两位（名册 / 盟册）：各自那一枚起来之后就占上那一格。
     let mut coord = operator::Coord::default();
-    for (i, p) in plan.iter().enumerate() {
-        let task = start(
+    for (role, p) in roster {
+        let name = Name::new(p.name).map_err(|_| E_MANIFEST)?;
+        // 死亡道**按名字**取（不是按下标：见 [`Lane`] 那段照实记）。
+        let lane = lanes.iter().find(|l| l.name == p.name).and_then(|l| l.road);
+        // **身子那一格 · 两种来路**（iii 唯一的分叉）：住本域的一枚 / 镜像里的一台。
+        let task = match role {
+            Some(role) => service::spawn_here(table, name, *role).map_err(|_| p.died)?,
+            None => {
+                let entry = catalog.find(p.name).ok_or(E_PROGRAM)?;
+                service::mint(table, name, entry.elf, entry.kind).map_err(|_| p.died)?
+            }
+        };
+        start(
             table,
-            catalog,
+            name,
+            task,
             p,
             root,
             tree,
             &mut btip,
             &mut otip,
             face.as_ref(),
-            lanes.get(i).copied().flatten(),
+            lane,
             machine,
             coord,
         )?;
@@ -220,7 +308,7 @@ pub fn assemble<'a>(
                 p.died
             })?;
         }
-        // **哪一双眼睛**：装配单上那一格说了算（不是拿名字认的——`p.name == "principal"`
+        // **哪一双眼睛**：名册那一格说了算（不是拿名字认的——`p.name == "principal"`
         // 那种写法，改个名字就静默失灵；见 `env::assembly::Eyes` 的照实记）。
         //
         // 名册（`principal`）：它一放行，本域就认下它交给生我者的那一枚门牌，再把**前两条**
@@ -246,10 +334,9 @@ pub fn assemble<'a>(
                     })?;
                     // **树那条身份**：树起来的时候身份服务还没在，故这里补绑。
                     //
-                    // **照实记（这一支的响声）**：走到这一行时树**必已就位**——`plan()` 按 `order`
-                    // 排（树 0、身份 1），两行的 `scenes` 也相同 ⇒ "在不在"是同一件事。故这一支
-                    // 今天到不了；真到了那一天，下面那一句是**唯一的响声**（原来它静默跳过 ⇒
-                    // 门禁会一直判不了身份，而没人知道为什么）。
+                    // **照实记（这一支的响声）**：走到这一行时树**必已就位**——`roster` 把三枚
+                    // 内件排在最前（树 0、身份 1），故这一支今天到不了；真到了那一天，下面那一句
+                    // 是**唯一的响声**（原来它静默跳过 ⇒ 门禁会一直判不了身份，而没人知道为什么）。
                     match tree {
                         Some(t) => {
                             let pt = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
@@ -269,15 +356,14 @@ pub fn assemble<'a>(
                 }
                 // 盟册（`coalition`）：把它的号占进**协调那一帧**的第二格。它的门牌**也是它自己
                 // 交的**（同 principal 那一格：`serve_tree` 之后直接交给持树者，见
-                // `coalition/server.rs`）——装配者这一侧只递号、不转授。它的 `derive`/`bind`
-                // 由上面那条通用路做过（`p.bind`）。
+                // `coalition/server.rs`）——装配者这一侧只递号、不转授。
                 Eyes::League => coord.league = Some(task),
             }
         }
     }
 
     // 三、把最后一条的名字交出去（等它退场 = 等这次会话结束）。
-    Name::new(plan.last().map(|p| p.name).unwrap_or("")).map_err(|_| E_PROGRAM)
+    Name::new(roster.last().map(|(_, p)| p.name).unwrap_or("")).map_err(|_| E_PROGRAM)
 }
 
 /// 起一条：登记过的账 + 清单里的镜像 + **它的身份** + 它的门闩 + 它的通道。
@@ -287,11 +373,16 @@ pub fn assemble<'a>(
 /// **公开**：引导域那一条（编排者）不走本模块的装配单（那一张是编排域私有的），但它要的仍是
 /// 同几步——起一条是**同一条路**，不该有两份实现。
 ///
-/// 返**代表的号**（`task`）：装配者要凭它认下持树者的提示之路（[`assemble`] 那一步）。
+/// 返**那一枚线程的号**（`task`）：装配者要凭它认下持树者的提示之路（[`assemble`] 那一步）。
+///
+/// **照实记（iii 之后这一格变了意思）**：从前每一行背后都是一个域，这一枚就是**那个域的代表
+/// 线程**；iii 之后前三行是**住在本域**的三枚成员线程（[`Role`]）——故本文件里“代表”这个词
+/// 一并中性化（`rep` → `task` 那次改名就是为它铺的路）。
 #[allow(clippy::too_many_arguments)]
-pub fn start<'a>(
+pub fn start(
     table: &mut Table,
-    catalog: &Catalog<'a>,
+    name: Name,
+    task: TaskId,
     p: &Program,
     root: &Pier,
     tree: Option<TaskId>,
@@ -305,11 +396,6 @@ pub fn start<'a>(
     // 再建一次同样的会话（幂等，见 `server.rs` 的 `settle`）。
     coord: operator::Coord,
 ) -> Result<TaskId, Died> {
-    let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
-
-    // 一、身子：建域 + 产线程（此刻它一步都还没跑）。
-    let entry = catalog.find(p.name).ok_or(E_PROGRAM)?;
-    let task = service::mint(table, name, entry.elf, entry.kind).map_err(|_| p.died)?;
 
     // 一之后、二之前：**身份**。装配者给这条服务派生一条号、把它绑到 `task` 上——**放行之前**
     // 就做完，故服务一起来 `resolve(self)` 就答得出。（身份服务本身与树不走这里：它们起来时
@@ -326,7 +412,7 @@ pub fn start<'a>(
     }
 
     // 二、会话：对端 = **建它那个域的那一枚线程**（= 本域）——它把自己的孔交给"生我者"，
-    //     而"生我者"是建域那一枚，**不是刚产出的代表线程**（`task`）。
+    //     而"生我者"是建域那一枚，**不是刚产出的那一枚**（`task`）。
     let me = runtime::env::unit::self_id().map_err(|_| {
         step(p, "no self id");
         p.died

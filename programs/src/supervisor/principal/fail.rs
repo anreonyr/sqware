@@ -16,7 +16,7 @@ pub enum Fail {
 }
 
 impl Fail {
-    fn code(self) -> env::Reason {
+    pub fn code(self) -> env::Reason {
         match self {
             Fail::Sire => 1,
             Fail::Board => 2,
@@ -26,7 +26,7 @@ impl Fail {
         }
     }
 
-    const fn text(self) -> &'static str {
+    pub const fn text(self) -> &'static str {
         match self {
             Fail::Sire => "principal: no sire",
             Fail::Board => "principal: board",

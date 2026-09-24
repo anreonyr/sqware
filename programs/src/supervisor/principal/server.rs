@@ -28,7 +28,6 @@ use protocol::system::board::client as board;
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail::{self, HolePie};
-use runtime::env::unit as utask;
 use runtime::PAGE_SIZE;
 
 
@@ -39,7 +38,9 @@ const MS: usize = 1000;
 pub fn serve() -> Result<(), super::fail::Fail> {
     // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
     //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
-    let Ok(assembler) = utask::sire() else {
+    // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
+    // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
+    let Some(assembler) = crate::supervisor::service::assembler() else {
         return Err(super::fail::Fail::Sire);
     };
 

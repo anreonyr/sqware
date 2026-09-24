@@ -20,7 +20,7 @@ pub enum Fail {
 }
 
 impl Fail {
-    fn code(self) -> env::Reason {
+    pub fn code(self) -> env::Reason {
         match self {
             Fail::Sire => 1,
             Fail::Tip => 2,
@@ -29,7 +29,7 @@ impl Fail {
         }
     }
 
-    const fn text(self) -> &'static str {
+    pub const fn text(self) -> &'static str {
         match self {
             Fail::Sire => "operator: no sire",
             Fail::Tip => "operator: tip",

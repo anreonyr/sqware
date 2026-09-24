@@ -77,14 +77,14 @@ fn attaching_a_body_needs_a_registered_row_and_is_not_yet_ready() {
     // 而挂上身子**不等于起来了**：`state` 照旧 `NeverStarted`、通道照旧没有。
     let mut t = table();
     assert_eq!(
-        t.attach(name("nobody"), TeamId::new(3), TaskId::new(7)),
+        t.attach(name("nobody"), Some(TeamId::new(3)), TaskId::new(7)),
         Err(Fail::Unknown)
     );
 
     let (team, task) = live(7);
-    assert_eq!(t.attach(name("uart"), team, task), Ok(()));
+    assert_eq!(t.attach(name("uart"), Some(team), task), Ok(()));
     let s: &Service = t.find(name("uart")).expect("在");
-    assert_eq!(s.slot, Slot::Live { team, task });
+    assert_eq!(s.slot, Slot::Live { team: Some(team), task });
     assert_eq!(s.state, State::NeverStarted, "挂上身子 ≠ 起来了");
     assert_eq!(s.root, None, "通道要等它交回来");
 }
@@ -94,7 +94,7 @@ fn detaching_keeps_the_row_so_it_can_still_say_it_once_ran() {
     // **摘身子留行**（`Slot::None`、状态与名字照旧）：表要能说出"起过、现在死了"。
     let mut t = table();
     let (team, task) = live(7);
-    t.attach(name("uart"), team, task).unwrap();
+    t.attach(name("uart"), Some(team), task).unwrap();
     t.set_state(name("uart"), State::Ready);
     t.detach(name("uart"));
 
@@ -115,7 +115,7 @@ fn detaching_keeps_the_row_so_it_can_still_say_it_once_ran() {
 #[test]
 fn set_state_with_a_wrong_name_touches_nothing() {
     let mut t = table();
-    t.attach(name("uart"), TeamId::new(3), TaskId::new(7))
+    t.attach(name("uart"), Some(TeamId::new(3)), TaskId::new(7))
         .unwrap();
     t.set_state(name("nobody"), State::Ready);
     assert_eq!(
@@ -152,7 +152,7 @@ fn admit_start_says_unknown_outside_the_table_and_not_ready_while_running() {
     let mut t = table();
     assert_eq!(admit_start(&t, name("nobody")), Err(Fail::Unknown));
 
-    t.attach(name("uart"), TeamId::new(3), TaskId::new(7))
+    t.attach(name("uart"), Some(TeamId::new(3)), TaskId::new(7))
         .unwrap();
     assert_eq!(admit_start(&t, name("uart")), Ok(()), "没起过 ⇒ 准起");
 
@@ -179,13 +179,13 @@ fn probe_ready_reads_the_way_that_row_said_it_would_announce() {
     );
 
     // 不宣布的那一种：**放行即起来**（身子在 ⇒ Up）。
-    t.attach(name("echo"), TeamId::new(3), TaskId::new(8))
+    t.attach(name("echo"), Some(TeamId::new(3)), TaskId::new(8))
         .unwrap();
     t.set_state(name("echo"), State::Starting);
     assert_eq!(probe_ready(&t, name("echo")), Ready::Up);
 
     // 要通道的那一种：身子在、还没宣布 ⇒ 继续等。
-    t.attach(name("uart"), TeamId::new(3), TaskId::new(7))
+    t.attach(name("uart"), Some(TeamId::new(3)), TaskId::new(7))
         .unwrap();
     t.set_state(name("uart"), State::Starting);
     assert_eq!(probe_ready(&t, name("uart")), Ready::Pending);
@@ -212,7 +212,7 @@ fn probe_watch_is_about_the_coordinates_not_about_life_and_death() {
     // 收尾的 Service 在这里仍答 `Alive`。生死要看 `State`。这一格把那条口径钉住。
     let mut t = table();
     assert_eq!(probe_watch(&t, name("nobody")), Watch::Gone);
-    t.attach(name("uart"), TeamId::new(3), TaskId::new(7))
+    t.attach(name("uart"), Some(TeamId::new(3)), TaskId::new(7))
         .unwrap();
     t.set_state(name("uart"), State::Ready);
     assert_eq!(probe_watch(&t, name("uart")), Watch::Alive);

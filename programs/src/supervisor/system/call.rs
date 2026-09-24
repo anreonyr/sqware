@@ -25,9 +25,12 @@ pub(super) fn build(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
     unit::build(image, kind).map_err(fail)
 }
 
-/// 产代表线程（未放行）：`entry = 0` ⇒ 走域默认入口。
-pub(super) fn spawn(team: TeamId) -> Result<TaskId, Fail> {
-    unit::spawn(team, 0, &[], 0).map_err(fail)
+/// 产一枚线程（未放行）：`entry = 0` ⇒ 走域默认入口。
+///
+/// `args` 是 `Spawn` 的那一格（内核拷到新任务栈顶，子方用 `runtime::env::unit::args()` 读）。
+/// 今天只有一处非空：iii 的三枚内件用**同一个入口**、靠这一格分派角色（[`crate::supervisor::service::Role`]）。
+pub(super) fn spawn(team: TeamId, args: &[usize]) -> Result<TaskId, Fail> {
+    unit::spawn(team, 0, args, 0).map_err(fail)
 }
 
 /// 把一枚门闩塞进目标线程手里（放行前做）。**给多大权由调用方定**——这里不替它做主。

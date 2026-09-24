@@ -23,16 +23,22 @@ pub enum State {
     Dead,
 }
 
-/// **最近一次实例的坐标**：域 + 代表线程。生死看 [`State`]——`State::Dead` 与坐标并存
+/// **最近一次实例的坐标**：域 + 那一枚线程。生死看 [`State`]——`State::Dead` 与坐标并存
 /// 是合法的（"起过、现在死了"），坐标留给重启与放下用：**死亡记账不清它**（清了就没得
 /// 放下、也没得重启）。
 ///
-/// **两个句柄绑在同一个变体里**是刻意的：分开成两个字段就允许"有域、没线程"这种
-/// 半死状态被写出来，而现在它不可表达。
+/// **两格绑在同一个变体里**是刻意的：分开成两个字段就允许"有域、没线程"这种半死状态
+/// 被写出来，而现在它不可表达。
+///
+/// `team = None` = **那一枚线程住本域**（iii：编排域的四枚线程里，除编排者自己以外那三枚）。
+/// 这个 `None` 不是"省一格"：`team` 的**唯一读者**是 [`mark_dead`] 那一格（要"放下那个域"），
+/// 而本域那一枚**没有别人的域可放下**——放下它就是扑杀本域自己（板线程那一格量过：
+/// `system: done` 在 1005 份 soak 日志里一次都没有）。把"没有别人的域"写成 `None`，
+/// 那一刀就写不出来。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slot {
     None,
-    Live { team: TeamId, task: TaskId },
+    Live { team: Option<TeamId>, task: TaskId },
 }
 
 /// **怎么知道它起来了**——定义与理由见 [`env::assembly::Announce`]（本处只是转发，调用点不动）。
@@ -114,7 +120,9 @@ impl Table {
     }
 
     /// 挂上身子：**一次给全**（域 + 线程）。没登记过 ⇒ `Unknown`。
-    pub fn attach(&mut self, name: Name, team: TeamId, task: TaskId) -> Result<(), Fail> {
+    ///
+    /// `team = None` = 那一枚线程**住本域**（见 [`Slot`]）。
+    pub fn attach(&mut self, name: Name, team: Option<TeamId>, task: TaskId) -> Result<(), Fail> {
         let Some(s) = self.row_mut(name) else {
             return Err(Fail::Unknown);
         };

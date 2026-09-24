@@ -47,7 +47,8 @@ use runtime::env::unit as utask;
 use protocol::driver::supply;
 use protocol::driver::supply::call::{Kind, Want};
 use env::assembly::E_BOOT;
-use service::{Catalog, Program};
+use programs::supervisor::{coalition, operator, principal};
+use service::{Catalog, Lane, Program, Role};
 
 mod scenario;
 
@@ -124,58 +125,90 @@ impl programs::Exit for Fail {
 }
 
 #[programs::entry]
-fn main() -> Result<programs::Report<'static>, Fail> {
+fn main() -> programs::Report<'static> {
+    // **一枚 ELF 四种角色**（iii）：角色由 `Spawn` 那一格 `args` 递进来（[`Role`]）。空 args
+    // ⇒ **编排域自己那一枚**——引导域起它时走的就是这一路，照旧。
+    //
+    // 四种角色**共用一个出口形状**：成败都折成内核那一格（码 + 一句话），故三分支各写一遍
+    // 那个 match（不用 `?`：它们的失败类型各自是自己的 `Fail`）。
+    match Role::of_args(utask::args()) {
+        Role::System => system(),
+        Role::Tree => match operator::server::serve() {
+            Ok(()) => programs::Report::new(env::EXIT_OK),
+            Err(e) => programs::Report::note(e.code(), e.text()),
+        },
+        Role::Roster => match principal::server::serve() {
+            Ok(()) => programs::Report::new(env::EXIT_OK),
+            Err(e) => programs::Report::note(e.code(), e.text()),
+        },
+        Role::League => match coalition::server::serve() {
+            Ok(()) => programs::Report::new(env::EXIT_OK),
+            Err(e) => programs::Report::note(e.code(), e.text()),
+        },
+    }
+}
+
+/// 本域的死法 → 出口那一格（四种角色共用一个出口类型，故折成 [`programs::Report`]）。
+fn fail(f: Fail) -> programs::Report<'static> {
+    programs::Report::note(f.code(), f.text())
+}
+
+/// **编排域那一枚的身子**（原来就是 `main` 的正文）：这台机器上有哪些服务、怎么起、谁死了怎么办。
+fn system() -> programs::Report<'static> {
     // 1. 与引导域开会话：本域那一枚交给"生我者"，并认下它那一枚（一问一答两个方向）。
     let Some(boot_pier) = talk_to_root() else {
-        return Err(Fail::Firmware);
+        return fail(Fail::Firmware);
     };
 
     // 2. 领树：本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一段区"要有它。
     //    坐标是 `Key::dtb()`（"哪一件"那一形：树不知道自己写在哪，故只能这么取）。
     let machine = match take_machine(&boot_pier) {
         Ok(machine) => machine,
-        Err(_) => return Err(Fail::Machine),
+        Err(_) => return fail(Fail::Machine),
     };
 
     // 2′. 领账：这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
     //     载荷区的**坐标从树里读**（`/chosen` 的 `linux,initrd-start`）——机器自己写着它在哪，
     //     本域不另抄一个名字。树也在这一块里——它是**本域起的服务**（`PLAN` 第一条）。
     let Some(payload) = machine.payload() else {
-        return Err(Fail::Payload);
+        return fail(Fail::Payload);
     };
     let catalog = match take_catalog(&boot_pier, payload) {
         Ok(catalog) => catalog,
-        Err(_) => return Err(Fail::Machine),
+        Err(_) => return fail(Fail::Machine),
     };
 
     // 3/4. 死亡道：一位服务一条（本域铸、记号 `gone-<名字>`；装配时各交一份给板线程）。
     //      一服务一道 ⇒ **身份就是"哪条道响了"**：两位同时死也不会挤丢；本线程用一只
     //      **组**等任一道（`Tole`），零轮询。组是**独占**的（`shared = false`）。
-    let mut lanes: [Option<PieToken>; Table::CAP] = [None; Table::CAP];
     let tole = match Tole::unseal(false) {
         Ok(tole) => tole,
-        Err(_) => return Err(Fail::Group),
+        Err(_) => return fail(Fail::Group),
     };
-    // **装配单从 `env::assembly` 派生**（`order` 那一格就是起手位次）。
-    let plan = scenario::plan(&catalog);
-
-    for (i, p) in plan.iter().enumerate() {
-        let Ok(lane) = mail::unseal_hole(Mark::of(&alloc::format!("gone-{}", p.name))) else {
-            continue;
-        };
-        let _ = tole.attach(&HolePie::from_token(lane), HoleDir::Pull);
-        lanes[i] = Some(lane);
+    // **名册**：内件三枚在前、镜像里那几台在后（`roster` 那一处给次序）。道**自己带着名字**
+    // ——`Lane` 那段照实记说了为什么不再按下标。
+    let roster = scenario::roster(&catalog);
+    let mut lanes: alloc::vec::Vec<Lane> = alloc::vec::Vec::new();
+    if lanes.try_reserve(roster.len()).is_err() {
+        return fail(Fail::Group);
+    }
+    for (_, p) in roster.iter() {
+        let road = mail::unseal_hole(Mark::of(&alloc::format!("gone-{}", p.name))).ok();
+        if let Some(road) = road {
+            let _ = tole.attach(&HolePie::from_token(road), HoleDir::Pull);
+        }
+        lanes.push(Lane { name: p.name, road });
     }
 
-    // 登记整张表，再按顺序起（配给从 `boot_pier` 那条路领）。
+    // 登记整条名册，再按顺序起（配给从 `boot_pier` 那条路领）。
     let mut table = Table::new();
-    let last = match service::assemble(&mut table, &catalog, &plan, &boot_pier, &lanes, &machine) {
+    let last = match service::assemble(&mut table, &catalog, &roster, &boot_pier, &lanes, &machine) {
         Ok(last) => last,
-        Err(code) => return Err(Fail::Assemble(code)),
+        Err(code) => return fail(Fail::Assemble(code)),
     };
 
     // 5/6. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
-    server::supervise(&mut table, last, &lanes, &tole, &plan);
+    server::supervise(&mut table, last, &lanes, &tole);
     // 会话的收尾由会话的主人负责：常驻线程是它起的，也是它收的。本域里那枚板线程没有
     // `Join` 可等（`attach` 里弃权了），故按号点名收掉——同域线程之间没有寿命耦合。
     // **等待线程也住本域**，这一刀连它们一起收（域亡 = 成员清零）。
@@ -189,7 +222,7 @@ fn main() -> Result<programs::Report<'static>, Fail> {
     // 板线程本来就不必点名收：本域一退场，"域亡＝成员清零"把它一起带走——故那一手是
     // **重复的一刀**，代价是把本机最后一句读数一起收走了。
     // （本域收场是"被板那一刀扑杀"，故这一句判词**到不了**——留着只为类型闭合。）
-    Ok(programs::Report::note(env::EXIT_OK, "system: done"))
+    programs::Report::note(env::EXIT_OK, "system: done")
 }
 
 /// 与引导域搭一条**双向**的问答路。

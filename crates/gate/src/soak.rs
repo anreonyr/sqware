@@ -241,7 +241,7 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "root", tier: Tier::Narrative { shapes: &["^(root: done)$"] } },
     Reading { prefix: "router", tier: Tier::Narrative { shapes: &["^(router: docks open|router: got [0-9]+|router: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
     Reading { prefix: "rtc", tier: Tier::Narrative { shapes: &["^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+|rtc: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
-    Reading { prefix: "system", tier: Tier::Narrative { shapes: &["^(system: gone [a-z0-9-]+ state=[A-Za-z]+ ousted=(true|false) heir=[^ ]+ wait=[a-z]+)$"] } },
+    Reading { prefix: "system", tier: Tier::Narrative { shapes: &["^(system: gone [a-z0-9-]+ state=[A-Za-z]+ ousted=(true|false) heir=[^ ]+ wait=[a-z]+( inner)?)$"] } },
     Reading { prefix: "uart", tier: Tier::Narrative { shapes: &["^(uart: got [0-9]+|uart: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
     Reading { prefix: "[case]", tier: Tier::Narrative { shapes: &["^\\[case\\] [a-z0-9-]+: (run|ok) [_a-z0-9]+$"] } },
     Reading { prefix: "task", tier: Tier::Manual { why: "只有停机那一行，由本文件 `verdict`（`HALT` 常量）判——原先是 `soak.sh` 里那段 `if grep -q \"task: all tasks exited, system halted\"`，**那份脚本已删**" } },

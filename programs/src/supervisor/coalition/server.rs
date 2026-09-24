@@ -36,7 +36,6 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::room;
-use runtime::env::unit as utask;
 use runtime::PAGE_SIZE;
 
 
@@ -50,7 +49,9 @@ const RETRY_MS: usize = 1;
 pub fn serve() -> Result<(), super::fail::Fail> {
     // 一、锚：`Sire` = 装配者。**只为上板与上树两条会话**——盟无主，核心不需要它
     //     （对照 principal：那边把它当名册钥匙，注入核心那一格）。
-    let Ok(assembler) = utask::sire() else {
+    // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
+    // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
+    let Some(assembler) = crate::supervisor::service::assembler() else {
         return Err(super::fail::Fail::Sire);
     };
 

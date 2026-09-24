@@ -2,7 +2,7 @@
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
-use env::{Mark, Name, PieToken, ProgramKind, TaskId};
+use env::{Mark, Name, ProgramKind, TaskId, TeamId};
 use runtime::core::tole::Tole;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
@@ -12,7 +12,7 @@ use protocol::session::Quay;
 use protocol::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::system::desk::{Announce, Service, Slot, State, Table};
 
-use crate::supervisor::service::Program;
+use crate::supervisor::service::{Lane, Role};
 
 // ── 适配：原语（转发到运行时那几件）──────────────────────────
 
@@ -37,10 +37,32 @@ pub fn mint(
     admit_start(table, name)?;
 
     let team = crate::supervisor::system::call::build(image, kind)?;
-    let Ok(task) = crate::supervisor::system::call::spawn(team) else {
+    let Ok(task) = crate::supervisor::system::call::spawn(team, &[]) else {
         return Err(Fail::NoRoom);
     };
-    table.attach(name, team, task)?;
+    table.attach(name, Some(team), task)?;
+    table.set_state(name, State::Starting);
+    Ok(task)
+}
+
+/// **本域起一枚内件**（iii：编排域的四枚线程里，除编排者自己以外那三枚）。
+///
+/// 与 [`mint`] 是**同一条路的后半段**，差别只在**身子从哪来**：不建域，就在**我自己的域**里
+/// 产一枚线程（`TeamId(0)` = 当前域，见 `UnitCall::Spawn`），角色由 `args` 那一格递过去
+/// （[`Role::args`]；读它的是同一份 ELF 里的 `main`）。
+///
+/// `team` 记 **`None`**：那一行背后**没有别人的域**——`team` 唯一的用途是"放下那个域"
+/// （见 [`Slot`]），而本域那一枚无域可放。
+pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, Fail> {
+    admit_start(table, name)?;
+
+    let Ok(me) = utask::self_id() else {
+        return Err(Fail::Unknown);
+    };
+    let Ok(task) = crate::supervisor::system::call::spawn(TeamId::new(0), &role.args(me.get())) else {
+        return Err(Fail::NoRoom);
+    };
+    table.attach(name, None, task)?;
     table.set_state(name, State::Starting);
     Ok(task)
 }
@@ -179,7 +201,7 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// `millis` = **上限族**（口径见 `env::fid` 文件头的定式）；超时那支答 [`Reaped::Unsettled`]，
 /// 不写表。
 pub fn until(table: &Table, name: Name, millis: usize) -> Result<Reaped, Fail> {
-    let Some(task) = live_rep(table, name) else {
+    let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
     };
     if !crate::supervisor::system::call::running(task) {
@@ -197,8 +219,8 @@ pub fn until(table: &Table, name: Name, millis: usize) -> Result<Reaped, Fail> {
     }
 }
 
-/// 这一行身子的代表线程（没有身子 = 没有可等的坐标）。
-fn live_rep(table: &Table, name: Name) -> Option<TaskId> {
+/// 这一行身子那一枚线程（没有身子 = 没有可等的坐标）。
+fn live_task(table: &Table, name: Name) -> Option<TaskId> {
     match table.find(name) {
         Some(Service {
             slot: Slot::Live { task, .. },
@@ -240,13 +262,7 @@ pub fn find(table: &Table, name: Name) -> Option<&Service> {
 /// （**不 `detach`**：坐标是"上一个实例"，留给重启与放下用）、`oust(team)` 放下那个死域、
 /// 报一行。最后一条（单子最后一条）没了之后，对**仍在跑的**逐个 `stop`（`doom` = 域粒度
 /// `Doom`）——它们的死会再走同一条路回来；在册的每一行都 `Dead` 之后才收场。
-pub fn supervise(
-    table: &mut Table,
-    last: Name,
-    lanes: &[Option<PieToken>],
-    tole: &Tole,
-    plan: &[Program],
-) {
+pub fn supervise(table: &mut Table, last: Name, lanes: &[Lane], tole: &Tole) {
     // 死亡道那一格：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
     // 不按"这条路上平常走几个字节"备）。一枚更长的推落进道里时，1 字节的读法取不出也丢不掉，
     // 那一位的死就永远记不上账。备不下 ⇒ 报一句就交给退场时的级联（那条路本来就是可靠收场
@@ -268,24 +284,22 @@ pub fn supervise(
         }
         // 复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次醒来
         // 可能带走多条（两位前后脚死）。
-        for (i, lane) in lanes.iter().enumerate() {
-            let Some(lane) = *lane else {
+        for lane in lanes {
+            let Some(road) = lane.road else {
                 continue;
             };
-            if HolePie::from_token(lane).pull_timeout(&mut lane_buf, 0).is_err() {
+            if HolePie::from_token(road).pull_timeout(&mut lane_buf, 0).is_err() {
                 continue; // 这一条没货
             }
-            let Some(p) = plan.get(i) else {
-                continue;
-            };
-            let Some(name) = Name::new(p.name).ok() else {
+            // **道自己带着名字**（不用下标去装配单里翻：见 [`Lane`] 那段照实记）。
+            let Ok(name) = Name::new(lane.name) else {
                 continue;
             };
             account(table, name);
             // 最后一条走了 ⇒ 会话结束：把仍在跑的显式收掉（只下一次）。
             if name == last && !stopping {
                 stopping = true;
-                stop_running(table, plan);
+                stop_running(table, lanes);
             }
         }
         if stopping {
@@ -300,11 +314,19 @@ pub fn supervise(
 /// 收尾并记账；等不到就报一行，交给本域退场时的级联。
 ///
 /// 为什么有界：`stop` 是"送到即回"（`kill` 的口径），收场不能被一个收不掉的域拖住。
-pub fn stop_running(table: &mut Table, plan: &[Program]) {
-    for q in plan.iter() {
-        let Some(name) = Name::new(q.name).ok() else {
+pub fn stop_running(table: &mut Table, lanes: &[Lane]) {
+    for lane in lanes {
+        let Some(name) = Name::new(lane.name).ok() else {
             continue;
         };
+        // **本域那一枚不在这里收**：它的"域"就是本域，收它就是扑杀本域自己（板线程那一格
+        // 量过）。它随本域退场时的"域亡＝成员清零"一起走。
+        if matches!(
+            table.find(name).map(|s| s.slot),
+            Some(Slot::Live { team: None, .. })
+        ) {
+            continue;
+        }
         let running = matches!(
             table.find(name),
             Some(s) if matches!(s.state, State::Ready | State::Starting)
@@ -325,7 +347,7 @@ pub fn stop_running(table: &mut Table, plan: &[Program]) {
             Ok(Reaped::Unsettled) | Err(_) => {
                 let _ = runtime::env::debug::put(&alloc::format!(
                     "system: stuck {} （退场级联接管）",
-                    q.name
+                    lane.name
                 ));
             }
         }
@@ -370,7 +392,13 @@ fn mark_dead(table: &mut Table, name: Name, reaped: Reaped) {
     };
     table.set_state(name, State::Dead);
     let before = utask::heir_count().unwrap_or(0);
-    let ousted = utask::oust(team).is_ok();
+    // **本域那一枚没有别人的域可放下**（`team = None`）：放下它就是扑杀本域自己——板线程
+    // 那一格量过（`system: done` 在 1005 份 soak 日志里一次都没有）。那一枚随"域亡＝成员
+    // 清零"一起走，故这里什么都不做，读数照实说 `inner`。
+    let ousted = match team {
+        Some(team) => utask::oust(team).is_ok(),
+        None => false,
+    };
     let after = utask::heir_count().unwrap_or(0);
     let wait = match reaped {
         Reaped::Now => "now",
@@ -378,7 +406,8 @@ fn mark_dead(table: &mut Table, name: Name, reaped: Reaped) {
         Reaped::Unsettled => "unsettled",
     };
     let _ = runtime::env::debug::put(&alloc::format!(
-        "system: gone {} state=Dead ousted={ousted} heir={before}→{after} wait={wait}",
-        name.as_str()
+        "system: gone {} state=Dead ousted={ousted} heir={before}→{after} wait={wait}{}",
+        name.as_str(),
+        if team.is_none() { " inner" } else { "" }
     ));
 }

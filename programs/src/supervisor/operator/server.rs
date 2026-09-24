@@ -8,7 +8,6 @@ use env::{HoleDir, Mark, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
-use runtime::env::unit as utask;
 use runtime::PAGE_SIZE;
 
 use protocol::operator::call as ocall;
@@ -207,7 +206,9 @@ const MS: usize = 1000;
 /// 头两步是契约：装配者按 `(本域, tip)` 两格认领提示孔（[`attach`] 的 `host_of`），
 /// 而提示一到它就认为"答话路必已在本表里"（转授在前、提示在后）。
 pub fn serve() -> Result<(), super::fail::Fail> {
-    let Ok(assembler) = utask::sire() else {
+    // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
+    // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
+    let Some(assembler) = crate::supervisor::service::assembler() else {
         return Err(super::fail::Fail::Sire);
     };
     // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给生我者。**记号 = `tip`**。
