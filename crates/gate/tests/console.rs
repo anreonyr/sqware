@@ -53,6 +53,7 @@ fn console() {
             then,
         },
         within: secs(45),
+        env: &[],
     })
     .expect("机器那一台起不动");
 

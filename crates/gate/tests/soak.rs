@@ -217,6 +217,7 @@ const READINGS: &[Reading] = &[
 ];
 
 #[test]
+#[ignore = "要起 QEMU"]
 fn soak() {
     let rounds: usize = std::env::var("GATE_ROUNDS")
         .ok()
@@ -231,6 +232,7 @@ fn soak() {
             image: image.clone(),
             sched: feed(),
             within: secs(45),
+            env: &[],
         })
         .expect("机器那一台起不动");
         let _ = t.keep(&log_path(&format!("soak-{i}")));

@@ -217,11 +217,18 @@ pub enum Schedule {
 }
 
 /// 一台要走的台子。
+///
+/// **照实记（`env` 那一格是落签名时才长出来的）**：忙机台那条债的开关**就是核数**
+/// （`QEMU_SMP=1` 是机制隔离档、`=4` 是对照档，见 `scripts/load.sh` 旧头注），而它不是
+/// `Scenario` 能表达的（同一张装配单要能跑两档）。故这一格不是"再想一个字段"，而是把
+/// `boot.nu` **已经有的那套旋钮**原样透给它——起法仍是唯一出处，这里只转发。
 pub enum Bench {
     Machine {
         image: Image,
         sched: Schedule,
         within: Deadline,
+        /// 透给 `boot.nu` 的旋钮（`QEMU_SMP` / `QEMU_MEM` / …），按名传。
+        env: &'static [(&'static str, &'static str)],
     },
     Host {
         /// `--manifest-path` 那一个（宿主那一档只有一个靶场时也只写一个）。
@@ -276,14 +283,24 @@ impl Transcript {
 }
 
 /// 走一趟。**两台子同一条路**：起、喂、收、到点收尾；只有"起不动"才是 `Err`。
+///
+/// **照实记（机器只有一台）**：这条路上有一把进程内的锁——门可以并行跑，**台不能**。一台机器
+/// 就是 4 核 + 256 MB，两门同跑既会互相抢核（`timer:` 那几格是时序读数），也会让"读数不可比"
+/// 这件事换个地方复活。锁在机器那一支上，故几门一起 `--include-ignored` 也是排着走的。
+/// 中毒的锁照用（`into_inner`）：一台子出过事不该把后面的门全锁死。
 pub fn run(bench: &Bench) -> Result<Transcript, BenchFailed> {
+    static MACHINE: Mutex<()> = Mutex::new(());
+
     let root = root();
+    let mut _machine = None;
     let (mut child, within) = match bench {
         Bench::Machine {
             image,
             within,
+            env,
             ..
         } => {
+            _machine = Some(MACHINE.lock().unwrap_or_else(|e| e.into_inner()));
             if !image.elf.exists() {
                 return Err(BenchFailed::NoElf(image.elf.clone()));
             }
@@ -296,6 +313,7 @@ pub fn run(bench: &Bench) -> Result<Transcript, BenchFailed> {
                 .arg(&image.elf)
                 .env("QEMU_ICOUNT", "")
                 .env("QEMU_TIMEOUT", within.get().as_secs().to_string())
+                .envs(env.iter().copied())
                 .current_dir(&root)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())

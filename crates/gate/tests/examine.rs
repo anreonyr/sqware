@@ -43,6 +43,7 @@ fn feed() -> Schedule {
 }
 
 #[test]
+#[ignore = "要起 QEMU"]
 fn examine() {
     const REPEAT: usize = 3;
 
@@ -56,6 +57,7 @@ fn examine() {
             image: image.clone(),
             sched: feed(),
             within: secs(60),
+            env: &[],
         })
         .expect("机器那一台起不动");
         let _ = t.keep(&out.join(format!("run{i}.log")));
