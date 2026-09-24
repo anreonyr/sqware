@@ -80,8 +80,8 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     //
     // 与 principal 那一格同一形状（见 `programs/src/supervisor/operator/bridge.rs` 的 `COORD`
     // 照实记：装配者转授那一版真机报 `operator:coord-ship`，内核 `-1`）。这一枚在手时权限是
-    // `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。装配者那一侧按位递
-    // `Role::League`——两枚门牌**分两帧、次序不定**，持树者收到哪一枚补哪一枚。
+    // `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。装配者那一侧按装配单上那一格
+    // （`Eyes::League`）递——两枚门牌**分两帧、次序不定**，持树者收到哪一枚补哪一枚。
     if port::ship(
         &HolePie::from_token(entry),
         host,

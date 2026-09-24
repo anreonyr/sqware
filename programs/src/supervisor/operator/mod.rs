@@ -8,5 +8,3 @@ pub mod bridge;
 pub mod desk;
 pub mod fail;
 pub mod server;
-
-pub use bridge::Role;

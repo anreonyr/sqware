@@ -218,13 +218,14 @@ enum Want {
 /// **号就是下标**。两个容器的容量**互不牵连**：`root` 管根那一层，`slots` 管"一共铸过几格"。
 pub struct Operator {
     root: Vec<EntryId>,
-    slots: Vec<Option<Slot>>,
-    /// 铸号的水位：**只增**（全文件没有一处减它）。
+    /// 一叠格子：**只增不减**（`unlink` 只把那一格置空，不 `pop`）。
     ///
-    /// 剔掉一格不回收号 ⇒ **号不重用**：一枚旧号要么还指着原来那一格，要么指着墓碑
-    /// （[`Fail::Unknown`]），不会悄悄指到后铸的那一格身上。水位与 `slots.len()` 同值，
-    /// 留着它只为把这条纪律写在一处。
-    next: usize,
+    /// ⇒ **下标即号、号不重用**：一枚旧号要么还指着原来那一格，要么指着墓碑
+    /// （[`Fail::Unknown`]），不会悄悄指到后铸的那一格身上。铸号因此**不必另立水位**——水位
+    /// 就是 `slots.len()`。**照实记**：原先真存过一份 `next`，它的注自己写着"水位与
+    /// `slots.len()` 同值，留着它只为把这条纪律写在一处"——而"两个数必须相等"正是要靠自律
+    /// 的那一条；这一处纪律改住在本字段上。
+    slots: Vec<Option<Slot>>,
     /// 两枚注入的戳子（[`Stamps`]，对每一条同值）。
     stamps: Stamps,
     /// 一次注入的动作（[`Unship`]）。
@@ -248,7 +249,6 @@ impl Operator {
         Operator {
             root: Vec::new(),
             slots: Vec::new(),
-            next: 0,
             stamps,
             unship,
         }
@@ -472,8 +472,9 @@ impl Operator {
                 // 先要位再落格 ⇒ 半路失败**不留半个状态**（下面两处 `push` 都不会再分配）。
                 self.slots.try_reserve(1).map_err(|_| Fail::Full)?;
                 self.kids_mut(at)?.try_reserve(1).map_err(|_| Fail::Full)?;
-                let fresh = EntryId::new(self.next);
-                self.next += 1;
+                // **号就是这一格的下标**（`slots` 只增不减 ⇒ 号不重用）：水位不另存一份
+                // （见 `slots` 那个字段的照实记）。
+                let fresh = EntryId::new(self.slots.len());
                 self.slots.push(Some(Slot { name, node }));
                 self.kids_mut(at)?.push(fresh);
                 Ok(fresh)

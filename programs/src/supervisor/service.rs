@@ -22,7 +22,7 @@
 //!
 //! 装配期每一条服务，都由装配者向**身份服务**要一条号、把它绑到那一条服务的代表线程上
 //! （`derive(root)` + `bind(rep, p)`）——**在 `Hatch` 放行之前**，故服务一起来
-//! `resolve(self)` 就答得出。身份服务自己是 `plan` 里 [`PRINCIPAL`] 那一条：它放行之后，
+//! `resolve(self)` 就答得出。身份服务自己是 `plan` 里 [`Eyes::Roster`] 那一条：它放行之后，
 //! 本域先认下它交给生我者的门牌，再把**它自己与树**补绑上（那两条起来时它还没在）。
 //! **装配者自己不绑**——它是写名册的那一个，不是被写的那一个。
 
@@ -51,20 +51,8 @@ use crate::supervisor::system::machine::Machine;
 
 /// 装配失败的编号——定义见 [`env::assembly::Died`]（本处只是转发）。
 pub use env::assembly::Died;
-
-/// 身份服务在装配单上的名字：它一起好，本域就认下它的门牌，此后每条服务都在放行前拿到身份。
-///
-/// **照实记（这一格原来写着"`Program` 不加格"）**：那一版的口径是"装配单上的每一条都绑，
-/// 不必逐条声明要不要身份"。门禁那一刀（`b1d1ae1`）要一位**真没身份**的客人去撞门（负证），
-/// 于是 [`Program::bind`] 这一格被加了出来——默认 `true`，`false` 只给那一位。旧口径留着当来历。
-const PRINCIPAL: &str = "principal";
-
-/// 结盟服务在装配单上的名字：它一放行，本域就把它的号占进**协调那一帧**的第二格（盟册那一双
-/// 眼睛）——持树者的门禁据此才判得了 [`Rule::In`](protocol::operator::Rule::In)。
-///
-/// 与 [`PRINCIPAL`] 那一格同一形状：名册是**契约**（没它就没有门禁），盟册是**加项**（没它只有
-/// 那一格答"判不了"）。
-const COALITION: &str = "coalition";
+/// **哪一双眼睛**也是装配单上的一格，故两处共读同一个定义。
+pub use env::assembly::Eyes;
 
 /// 认身份门牌 / 与它说话的短等间隔（毫秒）：门牌由 Server 起手交出，这里只是短等。
 const RETRY_MS: usize = 1;
@@ -113,6 +101,13 @@ pub struct Program {
     /// **它必须排在 `plan` 第一位**：排在它前面的客人没树可上——那一支会报 `no tree yet`
     /// （此刻本域手里还没有持树者的号）。今天只有编排域那张单上有这一条。
     pub holds_tree: bool,
+    /// **它是持树者的哪一双眼睛**（见 [`Eyes`]）——`None` = 不是（绝大多数行都不是）。
+    ///
+    /// **照实记（这一格是从字符串比对改过来的）**：原先装配机器拿**名字**认这两条
+    /// （`p.name == "principal"` / `== "coalition"`）——装配单上把那一行改个名，这一段就
+    /// **静默失灵**（门禁从此判不了身份，机器要到真机上才红）。现在与 [`Program::holds_tree`]
+    /// 同一形状：写在单子上、机器照格办事。
+    pub eyes: Option<Eyes>,
     /// 装配死在这一条时报哪个号。
     pub died: Died,
 }
@@ -166,7 +161,7 @@ impl<'a> Catalog<'a> {
 /// 认下它那条提示之路的那一步就在下面的循环里——从前它由引导域先起、再当一笔货转授过来，
 /// 那一笔已经清掉（它是**服务**，不是引导设施）。
 ///
-/// **身份也在装配里**：身份服务（`plan` 里 [`PRINCIPAL`] 那一条）一放行，本域先认下它交给
+/// **身份也在装配里**：身份服务（`plan` 里 [`Eyes::Roster`] 那一条）一放行，本域先认下它交给
 /// 生我者的门牌，把**它自己与树**补绑上（它们起来时它还没在）；其后的每一条都在 [`start`] 里、
 /// **放行之前**拿到 `derive(root)` + `bind(rep, p)`。**装配者自己（编排域这一枚）不绑**：
 /// 它是写名册的那一个，不是被写的那一个。
@@ -199,10 +194,10 @@ pub fn assemble<'a>(
     let mut face: Option<Face> = None;
     // **协调那一帧**要带的两位（名册 / 盟册）：各自那一域起来之后就占上那一格，此后随每一条
     // `attach` 传下去（持树者据此才判得了身份、判得了盟籍）。**定长两格**——这一族只有两双
-    // 眼睛（`operator::Role`）；门牌**不由这里转授**，各域自己在 `serve_tree` 之后交。
-    let mut coord: [(Option<TaskId>, operator::Role); 2] = [
-        (None, operator::Role::Roster),
-        (None, operator::Role::League),
+    // 眼睛（`Eyes`）；门牌**不由这里转授**，各域自己在 `serve_tree` 之后交。
+    let mut coord: [(Option<TaskId>, Eyes); 2] = [
+        (None, Eyes::Roster),
+        (None, Eyes::League),
     ];
     for (i, p) in plan.iter().enumerate() {
         let rep = start(
@@ -227,43 +222,48 @@ pub fn assemble<'a>(
                 p.died
             })?;
         }
-        // 身份服务本身：它一放行，本域就认下它交给生我者的那一枚门牌，再把**前两条**
+        // **哪一双眼睛**：装配单上那一格说了算（不是拿名字认的——`p.name == "principal"`
+        // 那种写法，改个名字就静默失灵；见 `env::assembly::Eyes` 的照实记）。
+        //
+        // 名册（`principal`）：它一放行，本域就认下它交给生我者的那一枚门牌，再把**前两条**
         // （它自己与树）补绑上——它们起来的时候它还没在，没得绑。
-        if p.name == PRINCIPAL {
-            // **协调那一帧**要带的第一格：身份服务自己（名册那一双眼睛）。它那一枚门牌**由它
-            // 自己**在 `serve_tree` 之后直接交给持树者（见 `operator/bridge.rs` 的 `COORD`
-            // 照实记：装配者转授那一版真机栽在 `coord-ship`），装配者只剩递一格号这件事。
-            coord[0].0 = Some(rep);
-            let f = face_of(rep).ok_or_else(|| {
-                step(p, "no identity face");
-                p.died
-            })?;
-            let mine = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
-                step(p, "derive self");
-                p.died
-            })?;
-            f.bind(rep, mine, READY_MS).map_err(|_| {
-                step(p, "bind self");
-                p.died
-            })?;
-            if let Some(t) = tree {
-                let pt = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
-                    step(p, "derive tree");
-                    p.died
-                })?;
-                f.bind(t, pt, READY_MS).map_err(|_| {
-                    step(p, "bind tree");
-                    p.died
-                })?;
+        if let Some(eyes) = p.eyes {
+            match eyes {
+                Eyes::Roster => {
+                    // **协调那一帧**要带的第一格：身份服务自己（名册那一双眼睛）。它那一枚门牌
+                    // **由它自己**在 `serve_tree` 之后直接交给持树者（见 `operator/bridge.rs` 的
+                    // `COORD` 照实记：装配者转授那一版真机栽在 `coord-ship`），装配者只剩递一格号。
+                    coord[0].0 = Some(rep);
+                    let f = face_of(rep).ok_or_else(|| {
+                        step(p, "no identity face");
+                        p.died
+                    })?;
+                    let mine = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
+                        step(p, "derive self");
+                        p.died
+                    })?;
+                    f.bind(rep, mine, READY_MS).map_err(|_| {
+                        step(p, "bind self");
+                        p.died
+                    })?;
+                    if let Some(t) = tree {
+                        let pt = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
+                            step(p, "derive tree");
+                            p.died
+                        })?;
+                        f.bind(t, pt, READY_MS).map_err(|_| {
+                            step(p, "bind tree");
+                            p.died
+                        })?;
+                    }
+                    face = Some(f);
+                }
+                // 盟册（`coalition`）：把它的号占进**协调那一帧**的第二格。它的门牌**也是它自己
+                // 交的**（同 principal 那一格：`serve_tree` 之后直接交给持树者，见
+                // `coalition/server.rs`）——装配者这一侧只递号、不转授。它的 `derive`/`bind`
+                // 由上面那条通用路做过（`p.bind`）。
+                Eyes::League => coord[1].0 = Some(rep),
             }
-            face = Some(f);
-        }
-        // 结盟服务：它一放行，就把它的号占进**协调那一帧**的第二格（盟册那一双眼睛）。
-        // 它的门牌**也是它自己交的**（同 principal 那一格：`serve_tree` 之后直接交给持树者，
-        // 见 `coalition/server.rs`）——装配者这一侧只递号、不转授。它的 `derive`/`bind`
-        // 由上面那条通用路做过（`p.bind`）。
-        if p.name == COALITION {
-            coord[1].0 = Some(rep);
         }
     }
 
@@ -294,7 +294,7 @@ pub fn start<'a>(
     // **协调那一帧**要带的两格（哪一位域 + 它哪一双眼睛）：只有递门牌那两格填过之后才非空。
     // 它**重复推**（每一位后续客人的 `attach` 都会推一遍）——持树者收到就按位补上，重复只是
     // 再建一次同样的会话（幂等，见 `server.rs` 的 `settle`）。
-    coord: [(Option<TaskId>, operator::Role); 2],
+    coord: [(Option<TaskId>, Eyes); 2],
 ) -> Result<TaskId, Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
 

@@ -4,6 +4,7 @@
 //! 帧与记号见 [`protocol::operator::call`]。
 
 use env::Mark;
+use env::assembly::Eyes;
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
@@ -15,7 +16,11 @@ use protocol::session::Quay;
 
 /// **协调那一帧**（16 字节）——装配者告诉持树者"哪一位域把门牌交过来了、它是哪一双眼睛"。
 ///
-/// 布局：`[0..8]` = 那一位域自己的号（小端）｜`[8..16]` = [`Role`]（`0` = 名册，`1` = 盟册）。
+/// 布局：`[0..8]` = 那一位域自己的号（小端）｜`[8..16]` = [`Eyes`]（`0` = 名册，`1` = 盟册）。
+///
+/// **照实记（后 8 字节的对齐方式换过一次）**：原先这一枚枚举（`Role`）与持树者那一侧的
+/// `ROLE_ROSTER` / `ROLE_LEAGUE` 常量**各写一遍** 0/1，靠两边注释说"必须同值"。现在两侧共读
+/// [`Eyes`]（`env::assembly`）——装配单上那一格、这一帧、收的那一侧，一处定义。
 ///
 /// **照实记（后 8 字节的来历）**：门禁那一刀里它们是**保留零**。这一刀起有了意思——于是两枚
 /// 门牌可以**分两帧、按位递**，"长度即语义"（16 = 这一帧）一个字没破。
@@ -39,22 +44,11 @@ use protocol::session::Quay;
 /// 长度即语义：**8 字节 = 一位客人**（`settle` 认客人的那一格），**16 字节 = 这一帧**。
 const COORD: usize = 16;
 
-/// **这一枚是哪一双眼睛**：协调那一帧的后 8 字节。
-///
-/// 与 `programs/src/supervisor/operator/server.rs` 的同一格必须同值——那边是**收**这一侧。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Role {
-    /// 名册（`/sys/principal`）：答"这一位此刻代表谁"与"在不在他那一支里"。
-    Roster = 0,
-    /// 盟册（`/sys/coalition`）：答"这一位在那枚盟里吗"。
-    League = 1,
-}
-
 /// 把协调那一帧推给持树者（**每一位递门牌的域各调一次**）。
-fn coord_frame(into: PieToken, who: TaskId, role: Role) -> Result<(), ()> {
+fn coord_frame(into: PieToken, who: TaskId, eyes: Eyes) -> Result<(), ()> {
     let mut frame = [0u8; COORD];
     frame[..8].copy_from_slice(&(who.get() as u64).to_le_bytes());
-    frame[8..].copy_from_slice(&(role as u64).to_le_bytes());
+    frame[8..].copy_from_slice(&(eyes as u64).to_le_bytes());
     mail::HolePie::from_token(into).push(&frame).map_err(|_| ())
 }
 
@@ -63,7 +57,7 @@ fn coord_frame(into: PieToken, who: TaskId, role: Role) -> Result<(), ()> {
 /// `host` = 持树者的号（`service::spawn` 交回来的那个，装配者本来就知道它）。
 /// `tip` = 提示之路在**本线程表里**的那一枚（第一次用时认下来，此后逐条传下去）。
 /// `coord` = 协调那一帧要带的两格（**哪一位域** + **它是哪一双眼睛**）：那位递门牌的域那一格
-/// 才有值，其余留空——**定长两格**，因为这一族只有两双眼睛（[`Role`]）。
+/// 才有值，其余留空——**定长两格**，因为这一族只有两双眼睛（[`Eyes`]）。
 ///
 /// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 提示孔认不到……对调用方是
 /// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格。
@@ -73,7 +67,7 @@ pub fn attach(
     host: TaskId,
     millis: usize,
     tip: &mut Option<PieToken>,
-    coord: &[(Option<TaskId>, Role)],
+    coord: &[(Option<TaskId>, Eyes)],
 ) -> Result<(), &'static str> {
     let link = Name::new(LINK).map_err(|_| "operator:name")?;
     // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
@@ -90,9 +84,9 @@ pub fn attach(
     // 在 `serve_tree` 之后直接交给持树者的，理由见 [`COORD`] 那段照实记）。
     // 次序仍是契约：客人号来之前，持树者先认出名册那一枚门牌（它按 `owner` + 记号找）；
     // 两帧按位递、次序不定，收到哪一枚就补上哪一枚（对齐见 `server.rs` 的 `settle`）。
-    for &(who, role) in coord {
+    for &(who, eyes) in coord {
         if let Some(who) = who {
-            coord_frame(tip_at, who, role).map_err(|_| "operator:coord")?;
+            coord_frame(tip_at, who, eyes).map_err(|_| "operator:coord")?;
         }
     }
     let reply = reply_path(quay).ok_or("operator:hand")?;

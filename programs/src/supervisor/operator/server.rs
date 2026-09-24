@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::operator::call`]。
 
+use env::assembly::Eyes;
 use env::{HoleDir, Mark, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
@@ -27,14 +28,13 @@ use super::desk::{Desk, Guest, desk};
 /// 协调那一帧的长度（**长度即语义**：8 = 一位客人，16 = 这一帧）。
 ///
 /// 与 `programs/src/supervisor/operator/bridge.rs` 的同一格必须同值——那边是**推**这一侧。
-const COORD_FRAME: usize = 16;
-
-/// **这一枚是哪一双眼睛**：协调那一帧的后 8 字节（`bridge.rs` 是推的那一侧，两处同值）。
 ///
-/// 照实记：那 8 字节在门禁那一刀里是**保留零**。这一刀起它有了意思——故门牌可以按位一枚一枚
-/// 地递，"长度即语义"一个字没破。
-const ROLE_ROSTER: u64 = 0;
-const ROLE_LEAGUE: u64 = 1;
+/// 后 8 字节的**含义**是 [`Eyes`]（哪一双眼睛）：推的那一侧按它写，这里按 [`Eyes::of_wire`]
+/// 翻回来。**照实记（两个常量删了）**：这里原先写着 `ROLE_ROSTER = 0` / `ROLE_LEAGUE = 1`，
+/// 与推的那一侧的 `Role` 枚举**各写一遍**、靠注释说"必须同值"；现在装配单那一格、这一帧、
+/// 收的那一侧共读一处定义。那两个字节能有意思是门禁那一刀的事（之前是**保留零**）——正因为
+/// 有了它，两枚门牌才可以按位一枚一枚地递，"长度即语义"一个字没破。
+const COORD_FRAME: usize = 16;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -318,12 +318,14 @@ fn settle(
             // 判得了身份。
             let who =
                 TaskId::new(u64::from_le_bytes(frame[..8].try_into().unwrap_or([0; 8])) as usize);
-            let role = u64::from_le_bytes(frame[8..16].try_into().unwrap_or([0; 8]));
-            match role {
-                ROLE_ROSTER => coord.roster = Some(who),
-                ROLE_LEAGUE => coord.league = Some(who),
+            let eyes = Eyes::of_wire(u64::from_le_bytes(
+                frame[8..16].try_into().unwrap_or([0; 8]),
+            ));
+            match eyes {
+                Some(Eyes::Roster) => coord.roster = Some(who),
+                Some(Eyes::League) => coord.league = Some(who),
                 // 读不懂的那一格：**报一句，别静默**——门禁会一直判不了，而"为什么"要看得见。
-                _ => {
+                None => {
                     say("operator: coord role unknown");
                     continue;
                 }

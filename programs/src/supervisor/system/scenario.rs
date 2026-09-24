@@ -79,6 +79,7 @@ fn of(name: &'static str, p: &env::assembly::Plan) -> Program {
         operator: p.operator,
         bind: p.bind,
         holds_tree: p.holds_tree,
+        eyes: p.eyes,
         died: p.died,
     }
 }
