@@ -68,7 +68,7 @@ use protocol::operator::{EntryId, Listing, Where};
 use protocol::system::board::call as bcall;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
-use runtime::env::room::{self, exit_with};
+use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字（板按它分人；编排域表里那一条也叫这个）。
@@ -83,8 +83,8 @@ const MS: usize = 1000;
 /// 找不到就再问一次的间隔（毫秒）：门牌是驱动落的，本域可能比它先起。
 const RETRY_MS: usize = 1;
 
-/// 域自己的正常退场码（与 `programs::entry::EXIT_OK` 同号）。
-const EXIT_OK: usize = 0;
+/// 域自己的正常退场码：**`env` 那张共用表里的 0 号**（`env::EXIT_OK`）——从前这里抄过一份。
+const EXIT_OK: usize = env::EXIT_OK;
 
 /// 没搭上（找不到控制台）：一次往返都做不成 ⇒ 报这一格退场。
 const E_NO_CONSOLE: usize = 1;
@@ -103,22 +103,23 @@ const BUF_MAX: usize = DBCN_MAX;
 const READY: &str = "echo: ready";
 const NON_UTF8: &str = "<non-utf8>";
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+/// 本 bin 的 `main`：**返回类型就是它的退出账**（`Reason` = 只报码）。`-> !` 那两处
+/// 报码从今往后是 `return`——出口那一手在 [`programs::entry`] 里，全仓只有一处。
+extern "C" fn bare_main() -> env::Reason {
     let _ = debug::put(READY);
     // 上板：**注册在回显之前**——板要能看见本域（见头注）。挂不上照旧回显。
     let reg = register();
     let _ = debug::put(&format!("echo: reg={reg}"));
 
     let Ok(sire) = utask::sire() else {
-        exit_with(E_NO_CONSOLE)
+        return E_NO_CONSOLE;
     };
     // 树那条路：本域只开一条会话——先找控制台，再落自己那块牌子（次序见头注）。
     let Ok((tree, host)) = operator::open(sire, MS) else {
-        exit_with(E_NO_CONSOLE)
+        return E_NO_CONSOLE;
     };
     let Ok(talk) = operator::ask_hole(host) else {
-        exit_with(E_NO_CONSOLE)
+        return E_NO_CONSOLE;
     };
 
     // 一、**先找控制台**：`FIND /device/uart` ⇒ 那枚孔经会话授进本域表里。
@@ -141,7 +142,7 @@ extern "C" fn main() -> ! {
     suite.run();
 
     let Some(console) = console else {
-        exit_with(E_NO_CONSOLE)
+        return E_NO_CONSOLE;
     };
     let mut buf = [0u8; BUF_MAX];
     let mut line = [0u8; LINE_MAX];
@@ -175,8 +176,11 @@ extern "C" fn main() -> ! {
         }
     }
 
-    exit_with(EXIT_OK)
+    EXIT_OK
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);
 
 /// 找控制台：`FIND /device/uart`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///

@@ -46,6 +46,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 // 需求单归**收方**：本域那张单子住 lib 里（装配者要照它开单），同一份源码编一次。
 // 客侧装配也共用驱动那一族那段机器（会话 + 收配给 + 归位）——它领门闩走的是同一条路。
 use programs::driver::assemble;
@@ -63,7 +65,6 @@ use protocol::driver::line::call as lcall;
 use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
-use runtime::env::room::exit_with_note;
 use runtime::env::unit as utask;
 
 /// 本域要找的那位服务（线路由者）在树上的名字。
@@ -76,27 +77,26 @@ const MS: usize = 1000;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn bare_main() -> Report<'static> {
     // 1. 领配给：门闩到手就是"持有"的全部（本域不映视图、不碰寄存器）。缺格即装配错。
     let mut slots = [None; needs::WANTS.len()];
     let got = match assemble::receive(&mut slots) {
         Ok(n) => n,
-        Err(code) => exit_with_note(code, "lodger: assemble"),
+        Err(code) => return Report::note(code, "lodger: assemble"),
     };
     let [Some(grant)] = slots else {
-        exit_with_note(assemble::E_GRANT, "lodger: no grant")
+        return Report::note(assemble::E_GRANT, "lodger: no grant");
     };
     say(&format!("lodger: got {got}"));
 
     // 2. 上树一条会话：找到线路由者，取回那扇门——三趟登记都往它推（会话一个域只开一条）。
     let entry = match find_router() {
         Some(entry) => entry,
-        None => exit_with_note(E_TRIP, "lodger: no router"),
+        None => return Report::note(E_TRIP, "lodger: no router"),
     };
     // 坐标**随记录发下来**（本域不写死它；"这一类是哪一台"由编排域读树定）。
     let Some(key) = grant.key() else {
-        exit_with_note(E_TRIP, "lodger: no key")
+        return Report::note(E_TRIP, "lodger: no key");
     };
 
     // 3. 三趟登记：占上 / 同一条线再来一次 / 报一件**不是中断源**的东西。
@@ -137,7 +137,7 @@ extern "C" fn main() -> ! {
     suite.run();
 
     let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;
-    exit_with_note(
+    return Report::note(
         if all { E_OK } else { E_TRIP },
         if all {
             "lodger: gone"
@@ -177,3 +177,6 @@ fn attempt(entry: PieToken, key: Key) -> (u8, Option<line::client::Line>) {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

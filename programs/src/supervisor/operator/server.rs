@@ -3,11 +3,10 @@
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::operator::call`]。
 
-use env::{HoleDir, Mark, PieToken, TaskId};
+use env::{HoleDir, Mark, PieToken, TaskId, Reason};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
-use runtime::env::room::exit_with;
 use runtime::env::unit as utask;
 
 use protocol::operator::call as ocall;
@@ -198,15 +197,15 @@ const MS: usize = 1000;
 ///
 /// 头两步是契约：装配者按 `(本域, tip)` 两格认领提示孔（[`attach`] 的 `host_of`），
 /// 而提示一到它就认为"答话路必已在本表里"（转授在前、提示在后）。
-pub fn serve() -> ! {
+pub fn serve() -> Reason {
     let Ok(assembler) = utask::sire() else {
         say("operator: no sire");
-        exit_with(E_SIRE);
+        return E_SIRE;
     };
     // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(TIP_MARK) else {
         say("operator: no tip");
-        exit_with(E_TIP);
+        return E_TIP;
     };
     let tip_hole = mail::HolePie::from_token(tip);
     if port::ship(
@@ -218,17 +217,17 @@ pub fn serve() -> ! {
     .is_err()
     {
         say("operator: tip not handed");
-        exit_with(E_TIP);
+        return E_TIP;
     }
     // **一个组**：提示孔 + 每位客人的问话孔。提示孔也挂进来，故"来客人了"与"有人问话"
     // 是**同一个等待**。本线程独享它（`shared = false`）。
     let Ok(tole) = Tole::unseal(false) else {
         say("operator: no group");
-        exit_with(E_GROUP);
+        return E_GROUP;
     };
     if tole.attach(&tip_hole, HoleDir::Pull).is_err() {
         say("operator: tip not hung");
-        exit_with(E_GROUP);
+        return E_GROUP;
     }
 
     let mut tree = ocall::tree();

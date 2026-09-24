@@ -36,6 +36,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 use alloc::format;
 use alloc::string::String;
 use core::time::Duration;
@@ -53,7 +55,7 @@ use protocol::principal::core::PrincipalId;
 use protocol::session::Quay;
 use cases::Suite;
 use runtime::env::debug;
-use runtime::env::room::{self, exit_with_note};
+use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -69,44 +71,25 @@ const E_NO_SERVICE: usize = 1;
 /// 册外那个号（伪造的线上值）。铸过的号是 `0..next`，故这个一定在册外。
 const OUTSIDE: usize = 4095;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("member: no sire")
-    };
-    let Ok(me) = utask::self_id() else {
-        bail("member: no self id")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("member: no sire") };
+    let Ok(me) = utask::self_id() else { return bail("member: no self id") };
 
     // 上树：本域只开一条链，走两趟按名字找（结盟服务那一面 + 身份服务那一面）。
-    let Ok((tree, host)) = operator::open(sire, MS) else {
-        bail("member: no tree link")
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        bail("member: no tree ask")
-    };
+    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("member: no tree link") };
+    let Ok(talk) = operator::ask_hole(host) else { return bail("member: no tree ask") };
 
-    let Some(entry) = find_face(&tree, talk, host, ccall::DIR, ccall::NAME) else {
-        bail("member: no coalition")
-    };
-    let Ok(coal) = CoalitionFace::of(entry) else {
-        bail("member: bad coalition face")
-    };
+    let Some(entry) = find_face(&tree, talk, host, ccall::DIR, ccall::NAME) else { return bail("member: no coalition") };
+    let Ok(coal) = CoalitionFace::of(entry) else { return bail("member: bad coalition face") };
 
     // 身份那一面：**本域自己也要用它**（派生第二条身份、领、弃）。
-    let Some(entry) = find_face(&tree, talk, host, pcall::DIR, pcall::NAME) else {
-        bail("member: no identity")
-    };
-    let Ok(policy) = PolicyFace::of(entry) else {
-        bail("member: bad identity face")
-    };
+    let Some(entry) = find_face(&tree, talk, host, pcall::DIR, pcall::NAME) else { return bail("member: no identity") };
+    let Ok(policy) = PolicyFace::of(entry) else { return bail("member: bad identity face") };
 
     // 一、此刻代表谁——装配期绑的那一条。
     let mine = policy.resolve(me, MS);
     say(&format!("member: me={}", one_opt(mine)));
-    let Ok(Some(p)) = mine else {
-        bail("member: unbound")
-    };
+    let Ok(Some(p)) = mine else { return bail("member: unbound") };
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——下面每一例的期望，
     // 都是本域头注那 16 步里写着的那一句（旧宿主靶上 `member: …` 那 21 条钉的就是它们）。
@@ -122,9 +105,7 @@ extern "C" fn main() -> ! {
     say(&format!("member: found={}", one_id(c0)));
     let c1 = coal.found(MS);
     say(&format!("member: found={}", one_id(c1)));
-    let (Ok(c0), Ok(c1)) = (c0, c1) else {
-        bail("member: no coalition id")
-    };
+    let (Ok(c0), Ok(c1)) = (c0, c1) else { return bail("member: no coalition id") };
     suite.case("the_first_coalition_is_zero", move || {
         assert_eq!(c0.get(), 0)
     });
@@ -167,9 +148,7 @@ extern "C" fn main() -> ! {
     // 六、领到第二条身份，把它也放进 c0 ⇒ 这枚盟里有**两位**。
     let sub = policy.derive(p, MS);
     say(&format!("member: derive(me)={}", one_policy(sub)));
-    let Some(q) = sub.ok() else {
-        bail("member: no sub identity")
-    };
+    let Some(q) = sub.ok() else { return bail("member: no sub identity") };
     let adopted = policy.adopt(q, MS);
     say(&format!("member: adopt(sub)={}", done(adopted)));
     let q_in = coal.enter(c0, MS);
@@ -264,7 +243,7 @@ extern "C" fn main() -> ! {
     });
     suite.run();
 
-    exit_with_note(E_OK, "member: done")
+    return Report::note(E_OK, "member: done")
 }
 
 /// 按名字找一面服务：`FIND "/<dir>/<name>"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
@@ -390,11 +369,14 @@ impl Why for PolicyFail {
 }
 
 /// 报一行就走（本域没有控制台，调试面是唯一能说话的地方）。
-fn bail(msg: &str) -> ! {
-    exit_with_note(E_NO_SERVICE, msg)
+fn bail<'a>(msg: &'a str) -> Report<'a> {
+    return Report::note(E_NO_SERVICE, msg)
 }
 
 /// 打一行。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

@@ -15,7 +15,7 @@
 
 use alloc::format;
 
-use env::{HoleDir, Name, PieToken, TaskId};
+use env::{HoleDir, Name, PieToken, TaskId, Reason};
 use protocol::operator::Where;
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
@@ -28,7 +28,6 @@ use protocol::system::board::client as board;
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail::{self, HolePie};
-use runtime::env::room::exit_with;
 use runtime::env::unit as utask;
 
 /// 等板 / 等树的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -45,28 +44,28 @@ const E_DESK: usize = 5;
 const BAD: u8 = ocall::BAD;
 
 /// 起服务：**读锚 → 上板 → 铸门牌（给生我者 + 上树）→ 一枚线程招待所有客人**。
-pub fn serve() -> ! {
+pub fn serve() -> Reason {
     // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
     //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
     let Ok(assembler) = utask::sire() else {
         say("principal: no sire");
-        exit_with(E_SIRE);
+        return E_SIRE;
     };
 
     // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
     let Ok((_link, board_link)) = board::open(assembler, MS) else {
         say("principal: no board");
-        exit_with(E_BOARD);
+        return E_BOARD;
     };
     if board::ask_hole(board_link).is_err() {
         say("principal: no board ask");
-        exit_with(E_BOARD);
+        return E_BOARD;
     }
 
     // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
     let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
         say("principal: no entry");
-        exit_with(E_TREE);
+        return E_TREE;
     };
     // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
     // 给 `STORE | FETCH`：装配者只往里推帧，但**它还要把这一枚再转授给树**（门禁那一刀：
@@ -81,17 +80,17 @@ pub fn serve() -> ! {
     .is_err()
     {
         say("principal: entry not handed");
-        exit_with(E_TREE);
+        return E_TREE;
     }
 
     // 四、上树：分 `/sys`、落 `/sys/principal`、再查回来验一遍（同 router / rtc 那一趟）。
     let Ok((tree, host)) = operator::open(assembler, MS) else {
         say("principal: no tree link");
-        exit_with(E_TREE);
+        return E_TREE;
     };
     let Ok(talk) = operator::ask_hole(host) else {
         say("principal: no tree ask");
-        exit_with(E_TREE);
+        return E_TREE;
     };
     serve_tree(&tree, talk, host, entry);
 
@@ -110,31 +109,31 @@ pub fn serve() -> ! {
     .is_err()
     {
         say("principal: gate not handed");
-        exit_with(E_TREE);
+        return E_TREE;
     }
 
     // 五、两张表：名册空着，谱系只有根（零号节点）。
     let Ok(mut book) = Principal::new(assembler) else {
         say("principal: no book");
-        exit_with(E_BOOK);
+        return E_BOOK;
     };
 
     // 六、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。
     let Ok(tole) = Tole::unseal(false) else {
         say("principal: no group");
-        exit_with(E_DESK);
+        return E_DESK;
     };
     let entry_hole = HolePie::from_token(entry);
     if tole.attach(&entry_hole, HoleDir::Pull).is_err() {
         say("principal: entry not hung");
-        exit_with(E_DESK);
+        return E_DESK;
     }
 
     // 一问的上界就是 `ASK_LEN`（`pack_ask` 产出的就是这个长度）。
     let mut buf = [0u8; pcall::ASK_LEN];
     loop {
         if tole.await_(usize::MAX).is_err() {
-            exit_with(E_DESK);
+            return E_DESK;
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
         while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {

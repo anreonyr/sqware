@@ -61,3 +61,8 @@ pub mod driver;
 pub mod entry;
 pub mod supervisor;
 pub mod user;
+
+// 出口那一套的转发：`boot!` 展开在**别的 crate**（`harness` 那 21 台）里，宏里的路径
+// 只能是 `$crate::…`，故这几个名字得在 crate 根上够得着（`$crate::entry::entry` 本就在）。
+pub use entry::{Exit, Report};
+pub use env::Reason;

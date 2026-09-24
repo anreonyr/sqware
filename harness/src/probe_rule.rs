@@ -79,6 +79,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 use alloc::format;
 use core::time::Duration;
 
@@ -94,7 +96,7 @@ use protocol::principal::client::Face as PrincipalFace;
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::mail;
-use runtime::env::room::{self, exit_with_note};
+use runtime::env::room;
 use runtime::env::unit as utask;
 
 use harness::cases;
@@ -136,75 +138,40 @@ const E_TRIP: usize = 1;
 
 const OK_NOTE: &str = "probe-rule: the rules held";
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("probe-rule: no sire")
-    };
-    let Ok(me) = utask::self_id() else {
-        bail("probe-rule: no self id")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("probe-rule: no sire") };
+    let Ok(me) = utask::self_id() else { return bail("probe-rule: no self id") };
 
     // 一、上树：本域开一条会话，走两趟按名字找（盟册那一面 + 名册那一面）——与 `member` 同形。
-    let Ok((tree, host)) = operator::open(sire, MS) else {
-        bail("probe-rule: no tree link")
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        bail("probe-rule: no tree ask")
-    };
+    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-rule: no tree link") };
+    let Ok(talk) = operator::ask_hole(host) else { return bail("probe-rule: no tree ask") };
     // 一点五、**再要一次问话孔**：一个域只该铸一枚 ⇒ 第二次叫回来的是**同一枚**（客侧先找后铸），
     // 故下面每一问都改用**第二枚**那个号——它要是另一枚孔，持树者认的还是第一枚，
     // 这些话就全石沉大海（`session` 事实 9 那个症状）。两件事一次量：`ask_same` 与后面所有读数。
-    let Ok(again) = operator::ask_hole(host) else {
-        bail("probe-rule: no second tree ask")
-    };
+    let Ok(again) = operator::ask_hole(host) else { return bail("probe-rule: no second tree ask") };
     let ask_same = again == talk;
     let talk = again;
-    let Some(entry) = find_face(&tree, talk, host, ccall::DIR, ccall::NAME) else {
-        bail("probe-rule: no coalition")
-    };
-    let Ok(coal) = CoalitionFace::of(entry) else {
-        bail("probe-rule: bad coalition face")
-    };
-    let Some(entry) = find_face(&tree, talk, host, pcall::DIR, pcall::NAME) else {
-        bail("probe-rule: no identity")
-    };
-    let Ok(policy) = PrincipalFace::of(entry) else {
-        bail("probe-rule: bad identity face")
-    };
+    let Some(entry) = find_face(&tree, talk, host, ccall::DIR, ccall::NAME) else { return bail("probe-rule: no coalition") };
+    let Ok(coal) = CoalitionFace::of(entry) else { return bail("probe-rule: bad coalition face") };
+    let Some(entry) = find_face(&tree, talk, host, pcall::DIR, pcall::NAME) else { return bail("probe-rule: no identity") };
+    let Ok(policy) = PrincipalFace::of(entry) else { return bail("probe-rule: bad identity face") };
 
     // 二、我是谁：装配期绑的那一条（`p`），以及它底下的一条（`q`，给"换一位代表"用）。
-    let Ok(Some(p)) = policy.resolve(me, MS) else {
-        bail("probe-rule: unbound")
-    };
-    let Ok(q) = policy.derive(p, MS) else {
-        bail("probe-rule: no sub identity")
-    };
+    let Ok(Some(p)) = policy.resolve(me, MS) else { return bail("probe-rule: unbound") };
+    let Ok(q) = policy.derive(p, MS) else { return bail("probe-rule: no sub identity") };
 
     // 三、立一枚盟并**进去**（"立了不等于进了"：`found` 只发号，成员要靠 `enter`）。
-    let Ok(c) = coal.found(MS) else {
-        bail("probe-rule: no coalition id")
-    };
+    let Ok(c) = coal.found(MS) else { return bail("probe-rule: no coalition id") };
     if coal.enter(c, MS).is_err() {
-        bail("probe-rule: enter failed")
+        return bail("probe-rule: enter failed");
     }
 
     // 四、分 `/sys/rule`（"分"是幂等的，故重来一次也无事）。
-    let Ok(dir) = Name::new(DIR) else {
-        bail("probe-rule: bad name")
-    };
-    let Ok(pane) = Name::new(PANE) else {
-        bail("probe-rule: bad name")
-    };
-    let Ok(mine) = Name::new(MINE) else {
-        bail("probe-rule: bad name")
-    };
-    let Ok(at) = operator::part(talk, &tree, Where::Root, dir, MS) else {
-        bail("probe-rule: no /sys")
-    };
-    let Ok(pane_id) = operator::part(talk, &tree, Where::At(at), pane, MS) else {
-        bail("probe-rule: no /sys/rule")
-    };
+    let Ok(dir) = Name::new(DIR) else { return bail("probe-rule: bad name") };
+    let Ok(pane) = Name::new(PANE) else { return bail("probe-rule: bad name") };
+    let Ok(mine) = Name::new(MINE) else { return bail("probe-rule: bad name") };
+    let Ok(at) = operator::part(talk, &tree, Where::Root, dir, MS) else { return bail("probe-rule: no /sys") };
+    let Ok(pane_id) = operator::part(talk, &tree, Where::At(at), pane, MS) else { return bail("probe-rule: no /sys/rule") };
 
     // 五、落三格，各带一条规矩。`mine = false`：这一台证的是**"用"那一轴**，故不声明归属
     //     （那一轴由 `probe-owner` / `probe-lease` 那两台管）。
@@ -428,7 +395,7 @@ extern "C" fn main() -> ! {
     });
     suite.run();
 
-    exit_with_note(E_OK, OK_NOTE)
+    return Report::note(E_OK, OK_NOTE);
 }
 
 /// 落一格，带一条规矩；答那一格自己的号（`0` = 没落成）。
@@ -495,12 +462,15 @@ fn seek_id(link: &Quay, talk: PieToken, road: &[Name]) -> Option<EntryId> {
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
-fn bail(note: &str) -> ! {
+fn bail<'a>(note: &'a str) -> Report<'a> {
     say(note);
-    exit_with_note(E_TRIP, note)
+    return Report::note(E_TRIP, note);
 }
 
 /// 打一行。调试面是本域唯一的嘴（与 `echo` / `guest` 用的是同一格）。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

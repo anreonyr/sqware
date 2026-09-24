@@ -45,15 +45,15 @@ use core::time::Duration;
 
 use runtime::env::chrono;
 use runtime::env::debug;
-use runtime::env::room::{self, exit_with};
+use runtime::env::room;
 
 /// 每轮要的周期（毫秒）。
 const PERIOD_MS: u64 = 5;
 /// 每档跑多少轮。
 const N: usize = 200;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+/// `()` = "没有失败要报"（`Exit for ()` ⇒ `EXIT_OK`）——本台子跑完就是结论。
+extern "C" fn bare_main() {
     let period_ns = PERIOD_MS * 1_000_000;
 
     // ── A 相对：每轮"至少睡 period" ⇒ 上一轮的迟到被下一轮吃进累计漂移 ──
@@ -110,7 +110,7 @@ extern "C" fn main() -> ! {
         span_abs / 1_000_000,
         (span_rel as i64 - span_abs as i64) / 1_000_000
     ));
-    exit_with(0)
+    // 跑完 = 报 `EXIT_OK`（`()` 折出来的那个码），不必再写一遍。
 }
 
 /// 自启动基准的纳秒标量（与 `sleep_until` 的 `at` 同基准同单位）。
@@ -122,3 +122,6 @@ fn now_ns() -> u64 {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

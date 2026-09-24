@@ -42,6 +42,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::operator::{EntryId, Where};
@@ -53,7 +55,6 @@ use harness::cases;
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::mail;
-use runtime::env::room::exit_with_note;
 use runtime::env::unit as utask;
 
 /// 本域要落的那一格的名字（在根下，**不进 `/device`**：本域不是设备）。
@@ -69,40 +70,25 @@ const E_TRIP: usize = 1;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 ///
 /// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
-/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到 `exit_with_note`。
+/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到出口那一手。
 const OK_NOTE: &str = "probe-denied: denied as expected";
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("probe-denied: no sire")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("probe-denied: no sire") };
 
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
-    let Ok((tree, host)) = operator::open(sire, MS) else {
-        bail("probe-denied: no tree link")
-    };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        bail("probe-denied: no tree ask")
-    };
+    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-denied: no tree link") };
+    let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-denied: no tree ask") };
 
     // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `echo` 上树那一趟同一形状）。
-    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
-        bail("probe-denied: no entry")
-    };
-    let Ok(dir) = Name::new("sys") else {
-        bail("probe-denied: bad name")
-    };
-    let Ok(me) = Name::new(ME) else {
-        bail("probe-denied: bad name")
-    };
+    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else { return bail("probe-denied: no entry") };
+    let Ok(dir) = Name::new("sys") else { return bail("probe-denied: bad name") };
+    let Ok(me) = Name::new(ME) else { return bail("probe-denied: bad name") };
 
     // 二·二、它要落进 `/sys`（**已经在**：principal / coalition 起的头）——先分目录、
     // 再译成号。**这两手不过门禁**（`part` / `seek` 都不在闸口里，见 `docs/operator-gate.md`
     // 的裁决那一格），故本域虽然没有身份，这两手照旧答得出号。
-    let Some(at) = tree_dir(hedge, &tree, dir) else {
-        bail("probe-denied: no /sys")
-    };
+    let Some(at) = tree_dir(hedge, &tree, dir) else { return bail("probe-denied: no /sys") };
 
     // 三、落牌——**这一手该被拒**。
     let land = operator::land(
@@ -148,7 +134,7 @@ extern "C" fn main() -> ! {
     });
     suite.run();
 
-    exit_with_note(E_OK, OK_NOTE)
+    return Report::note(E_OK, OK_NOTE);
 }
 
 /// `/sys` 那一格的号：**分目录（幂等）+ 译号**。拿不到就 `None`（调用方报一句退场）。
@@ -158,12 +144,15 @@ fn tree_dir(say_hole: PieToken, link: &Quay, dir: Name) -> Option<EntryId> {
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
-fn bail(note: &str) -> ! {
+fn bail<'a>(note: &'a str) -> Report<'a> {
     say(note);
-    exit_with_note(E_TRIP, note)
+    return Report::note(E_TRIP, note);
 }
 
 /// 打一行。调试面是本域唯一的嘴（与 `echo` / `guest` 用的是同一格）。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

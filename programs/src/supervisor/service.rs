@@ -38,7 +38,7 @@ use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
 use protocol::system::board::call as bcall;
 use protocol::system::desk::{Announce, Table};
-use runtime::env::room::{self, exit_with};
+use runtime::env::room;
 
 use crate::supervisor::operator::bridge as operator;
 use crate::supervisor::system::board::bridge as board;
@@ -515,10 +515,13 @@ fn face_of(host: TaskId) -> Option<Face> {
     }
 }
 
-/// 起不来时报一行并退出。本域没有会话、没有控制台，调试面是唯一能说话的地方。
-pub fn die(died: Died, msg: &str) -> ! {
+/// 起不来时**报一行**并把原因码交给调用方（调用方 `return` 它，出口那一手在 `entry`）。
+///
+/// **它不再自己退场**（从前直接调 `room::exit`）：报码这笔账现在由返回值走，与所有别的
+/// `main` 同一条路。本域没有会话、没有控制台，调试面是唯一能说话的地方。
+pub fn die(died: Died, msg: &str) -> Died {
     let _ = runtime::env::debug::put(msg);
-    exit_with(died)
+    died
 }
 
 /// 等子域就绪/交通道的上限（毫秒）。**必须有界**：子域要是死在头几步，本域不能陪着挂死。

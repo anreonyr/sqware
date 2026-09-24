@@ -44,6 +44,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 use alloc::format;
 use core::time::Duration;
 
@@ -53,7 +55,7 @@ use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::session::Quay;
 use runtime::env::debug;
-use runtime::env::room::{self, exit_with_note};
+use runtime::env::room;
 use runtime::env::unit as utask;
 
 const DIR: &str = "sys";
@@ -76,31 +78,22 @@ const E_TRIP: usize = 1;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 ///
 /// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
-/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到 `exit_with_note`。
+/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到出口那一手。
 const OK_NOTE: &str = "probe-rule-other: all three denied as expected";
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("probe-other: no sire")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("probe-other: no sire") };
 
     // 一、上树：本域只开一条会话（不找门牌——本台只 `seek` / `find`，不问身份）。
-    let Ok((tree, host)) = operator::open(sire, MS) else {
-        bail("probe-other: no tree link")
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        bail("probe-other: no tree ask")
-    };
+    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-other: no tree link") };
+    let Ok(talk) = operator::ask_hole(host) else { return bail("probe-other: no tree ask") };
     let (Ok(dir), Ok(pane), Ok(is_name), Ok(under_name), Ok(foreign_name)) = (
         Name::new(DIR),
         Name::new(PANE),
         Name::new(IS),
         Name::new(UNDER),
         Name::new(FOREIGN),
-    ) else {
-        bail("probe-other: bad name")
-    };
+    ) else { return bail("probe-other: bad name") };
 
     // 二、按名字取号（**这一手不过门禁**：`seek` 不在闸口里），再 `find`——那几手该被拒。
     let is = denied(talk, &tree, &[dir, pane, is_name]);
@@ -125,7 +118,7 @@ extern "C" fn main() -> ! {
     });
     suite.run();
 
-    exit_with_note(E_OK, OK_NOTE)
+    return Report::note(E_OK, OK_NOTE);
 }
 
 /// 沿一条路译成号再 `find`：答线上那一格码（译不出号 ⇒ `UNKNOWN`）。
@@ -149,12 +142,15 @@ fn denied(talk: PieToken, link: &Quay, road: &[Name]) -> u8 {
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
-fn bail(note: &str) -> ! {
+fn bail<'a>(note: &'a str) -> Report<'a> {
     say(note);
-    exit_with_note(E_TRIP, note)
+    return Report::note(E_TRIP, note);
 }
 
 /// 打一行。调试面是本域唯一的嘴（与 `echo` / `guest` 用的是同一格）。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

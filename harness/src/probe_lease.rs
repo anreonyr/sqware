@@ -27,6 +27,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 use protocol::operator::Where;
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
@@ -37,7 +39,6 @@ use env::Name;
 use harness::cases;
 use runtime::env::debug;
 use runtime::env::mail;
-use runtime::env::room::exit_with_note;
 use runtime::env::unit as utask;
 
 /// 本域要落的那一格：`/sys/lease`——**声明归自己**，随后本域就死。
@@ -54,30 +55,17 @@ const E_TRIP: usize = 1;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 ///
 /// **照实记（搬进用例之后）**：`BAD_NOTE` 退役了——"牌没落上"现在是**用例没过**（走 panic
-/// 通道、域当场死），再也走不到 `exit_with_note`；而 `E_TRIP` 留给 `bail` 那几手（起手没走通）。
+/// 通道、域当场死），再也走不到出口那一手；而 `E_TRIP` 留给 `bail` 那几手（起手没走通）。
 const OK_NOTE: &str = "probe-lease: landed, leaving";
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("probe-lease: no sire")
-    };
-    let Ok((tree, host)) = operator::open(sire, MS) else {
-        bail("probe-lease: no tree link")
-    };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        bail("probe-lease: no tree ask")
-    };
-    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
-        bail("probe-lease: bad name")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("probe-lease: no sire") };
+    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-lease: no tree link") };
+    let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-lease: no tree ask") };
+    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else { return bail("probe-lease: bad name") };
     // `/sys` 已经在（principal / coalition 起的头）；`part` 幂等，故这里照走一遍拿号。
-    let Ok(at) = operator::part(hedge, &tree, Where::Root, dir, MS) else {
-        bail("probe-lease: no /sys")
-    };
-    let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else {
-        bail("probe-lease: no entry")
-    };
+    let Ok(at) = operator::part(hedge, &tree, Where::Root, dir, MS) else { return bail("probe-lease: no /sys") };
+    let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else { return bail("probe-lease: no entry") };
 
     // 落牌：**声明归本域**（`mine = true`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
     let landed = operator::land(
@@ -110,16 +98,19 @@ extern "C" fn main() -> ! {
     });
     suite.run();
 
-    exit_with_note(E_OK, OK_NOTE)
+    return Report::note(E_OK, OK_NOTE);
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
-fn bail(note: &str) -> ! {
+fn bail<'a>(note: &'a str) -> Report<'a> {
     say(note);
-    exit_with_note(E_TRIP, note)
+    return Report::note(E_TRIP, note);
 }
 
 /// 打一行。调试面是本域唯一的嘴。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

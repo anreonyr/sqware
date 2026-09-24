@@ -85,6 +85,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Reason;
+
 use harness::tick;
 
 use programs::supervisor::root::boot;
@@ -96,7 +98,7 @@ use env::Name;
 use programs::supervisor::system::server as service;
 use protocol::system::desk::{Announce, Table};
 use runtime::env::debug;
-use runtime::env::room::{self, exit_with};
+use runtime::env::room;
 
 /// 占核者与打点者的**清单名**（`env::assembly::ALL` 里 `scenes` 含 `load` 的那两行）。
 const HOG_ELF: &str = "busy";
@@ -131,17 +133,10 @@ const GAP_US: usize = 200;
 const HOG_NAMES: [&str; HOGS] = ["hog0", "hog1"];
 const PARKER_NAMES: [&str; PARKERS] = ["park0"];
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Some(boot) = boot::Root::take() else {
-        die("load: boot args unreadable")
-    };
-    let Some((hog, hog_kind)) = find(&boot, HOG_ELF) else {
-        die("load: busy not in manifest")
-    };
-    let Some((parker, parker_kind)) = find(&boot, PARKER_ELF) else {
-        die("load: park not in manifest")
-    };
+extern "C" fn bare_main() -> Reason {
+    let Some(boot) = boot::Root::take() else { return die("load: boot args unreadable") };
+    let Some((hog, hog_kind)) = find(&boot, HOG_ELF) else { return die("load: busy not in manifest") };
+    let Some((parker, parker_kind)) = find(&boot, PARKER_ELF) else { return die("load: park not in manifest") };
 
     // 校准在铺负荷**之前**：此刻机器是静的，量出来的是"空载那把尺"（只用来定放行间隔）。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
@@ -154,14 +149,14 @@ extern "C" fn main() -> ! {
     let mut rows = 0usize;
     for name in PARKER_NAMES {
         if !spawn_one(&mut table, name, parker, parker_kind) {
-            die("load: spawn parker")
+            return die("load: spawn parker");
         }
         rows += 1;
         tick::spin_iters(gap);
     }
     for name in HOG_NAMES {
         if !spawn_one(&mut table, name, hog, hog_kind) {
-            die("load: spawn hog")
+            return die("load: spawn hog");
         }
         rows += 1;
         tick::spin_iters(gap);
@@ -185,7 +180,7 @@ extern "C" fn main() -> ! {
     }
     say("load: stopped all rows");
     // 退场：本域的那些行随级联一起收干净，最后一枚任务退出时内核打停机行 + 读数。
-    exit_with(0)
+    return 0;
 }
 
 /// 造一行：注册名 → 造（`spawn`）→ 放行（`start`，门闩空、无会话、不认记号、不等待）。
@@ -226,7 +221,10 @@ fn say(msg: &str) {
 }
 
 /// 铺不满就没得量。
-fn die(msg: &str) -> ! {
+fn die(msg: &str) -> Reason {
     say(msg);
-    exit_with(1)
+    1
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

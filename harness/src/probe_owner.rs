@@ -33,6 +33,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
 use protocol::operator::{EntryId, Where};
@@ -45,7 +47,6 @@ use protocol::driver;
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::mail;
-use runtime::env::room::exit_with_note;
 use runtime::env::unit as utask;
 
 /// 本域要顶的那一格：`/device/uart`——`uart` 把"读行"那枚孔挂在它下面，并声明**归自己**。
@@ -61,37 +62,24 @@ const E_TRIP: usize = 1;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 ///
 /// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
-/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到 `exit_with_note`。
+/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到出口那一手。
 const OK_NOTE: &str = "probe-owner: owner rule held";
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("probe-owner: no sire")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("probe-owner: no sire") };
 
     // 一、与树开会话（同 `echo` / `probe-denied`）。
-    let Ok((tree, host)) = operator::open(sire, MS) else {
-        bail("probe-owner: no tree link")
-    };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        bail("probe-owner: no tree ask")
-    };
+    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-owner: no tree link") };
+    let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-owner: no tree ask") };
 
-    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
-        bail("probe-owner: bad name")
-    };
+    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else { return bail("probe-owner: bad name") };
     let road = [dir, me];
 
     // 二、那一格**原来**的号（`uart` 落的）。**有界重试**：本域可能比 `uart` 先起。
-    let Some(before) = wait_id(hedge, &tree, &road) else {
-        bail("probe-owner: no /device/uart")
-    };
+    let Some(before) = wait_id(hedge, &tree, &road) else { return bail("probe-owner: no /device/uart") };
 
     // 三、铸一枚自己的孔，去顶那一格——**这一手该被拒**。
-    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
-        bail("probe-owner: no entry")
-    };
+    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else { return bail("probe-owner: no entry") };
     let at = Where::At(wait_dir(hedge, &tree, dir).unwrap_or(EntryId::new(0)));
     let land = operator::land(
         hedge,
@@ -157,7 +145,7 @@ extern "C" fn main() -> ! {
     });
     suite.run();
 
-    exit_with_note(E_OK, OK_NOTE)
+    return Report::note(E_OK, OK_NOTE);
 }
 
 /// 落 `/sys/lease`——**那一格的主人（`probe-lease`）已经退场**，故这一次该接得上。
@@ -228,12 +216,15 @@ fn wait_id(say_hole: PieToken, link: &Quay, road: &[Name]) -> Option<EntryId> {
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
-fn bail(note: &str) -> ! {
+fn bail<'a>(note: &'a str) -> Report<'a> {
     say(note);
-    exit_with_note(E_TRIP, note)
+    return Report::note(E_TRIP, note);
 }
 
 /// 打一行。调试面是本域唯一的嘴。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

@@ -208,6 +208,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Reason;
+
 use env::Mark;
 use harness::tick;
 
@@ -224,7 +226,7 @@ use protocol::session::Quay;
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Slot, Table};
 use runtime::env::debug;
-use runtime::env::room::{self, exit_with};
+use runtime::env::room;
 use runtime::env::unit;
 
 /// 受害者的清单名（`env::assembly::ALL` 里 `scenes` 含 `rig` 的那一行）：**rig A 的握手版受害者**——把孔交给
@@ -293,22 +295,13 @@ struct Tally {
     lost: usize,
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Some(boot) = boot::Root::take() else {
-        die("rig: boot args unreadable")
-    };
-    let Some((elf, kind)) = find(&boot, VICTIM) else {
-        die("rig: victim not in manifest")
-    };
-    let Ok(name) = Name::new(ROW) else {
-        die("rig: bad row name")
-    };
+extern "C" fn bare_main() -> Reason {
+    let Some(boot) = boot::Root::take() else { return die("rig: boot args unreadable") };
+    let Some((elf, kind)) = find(&boot, VICTIM) else { return die("rig: victim not in manifest") };
+    let Ok(name) = Name::new(ROW) else { return die("rig: bad row name") };
     // 握手那条泊位的名字：**编译期常量**，只解一次——解不出来就不必跑（它也曾经是每轮
     // 一条早退的来路，见 `trial` 头注）。
-    let Ok(link) = Name::new(LINK) else {
-        die("rig: bad link name")
-    };
+    let Ok(link) = Name::new(LINK) else { return die("rig: bad link name") };
 
     // 校准：本机"一毫秒 = 多少轮空转"。受害者那边量的是同一把尺。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
@@ -392,7 +385,7 @@ extern "C" fn main() -> ! {
         "rig: total n={} now={} waited={} late={} lost={}",
         total.n, total.now, total.waited, total.late, total.lost
     ));
-    exit_with(0)
+    return 0;
 }
 
 /// 一轮的判决。
@@ -519,7 +512,10 @@ fn say(msg: &str) {
 }
 
 /// 读不出启动账就没得压测。
-fn die(msg: &str) -> ! {
+fn die(msg: &str) -> Reason {
     say(msg);
-    exit_with(1)
+    1
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

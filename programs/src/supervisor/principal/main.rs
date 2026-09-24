@@ -18,7 +18,10 @@ extern crate programs;
 // 本域只跑服务那一侧（`serve`）；客侧那一面住在 protocol 里，本域用不到。
 use programs::supervisor::principal::server;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+/// 本 bin 的 `main`：服务那一侧跑完/起不来都把原因码带回来——出口那一手
+/// （`_start` 胶水与 `Reap`）全在 [`programs::entry`]，本文件一个字都不碰它。
+extern "C" fn bare_main() -> programs::Reason {
     server::serve()
 }
+
+programs::boot!(bare_main);

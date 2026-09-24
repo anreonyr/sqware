@@ -76,7 +76,11 @@ fn take_exit_reason() -> usize {
 // 写进**自己**的槽。
 
 /// 故障隔离杀（不可解析的缺页 / 其它用户异常）。
-pub(crate) const EXIT_FAULT: usize = 0xFFFF_FFFF;
+///
+/// **值住 `env`**（[`env::EXIT_FAULT`]）：这枚码与域侧 `entry` 的 `EXIT_PANIC` 同段，
+/// 从前分居两个 crate、靠注释对齐——现在两侧只读同一张表（`env::exit` 的头注）。
+/// 这里留 `pub(crate) use` 只为"外部路径一行不改"。
+pub(crate) use env::EXIT_FAULT;
 
 /// 他杀（`RoomCall::Doom`）：由别的域下的杀令。
 pub(crate) const EXIT_DOOM: usize = 0xFFFF_FFFE;

@@ -2,46 +2,43 @@
 
 use core::time::Duration;
 
-use env::{EnvResult, RoomCall, RoomCallRet, TaskId, VirtAddr};
+use env::{EnvResult, Reason, RoomCall, RoomCallRet, TaskId, VirtAddr};
 
 pub fn starve() -> EnvResult<()> {
     let _ = RoomCall::Starve.call();
     Ok(())
 }
 
-/// 正常结束（原因码 0）。
-pub fn exit() -> ! {
-    exit_with(0)
-}
-
-/// 带**原因码**结束本任务：内核只把它记进 trace，不解释语义。
+/// 结束本任务：**原因码 + 可选的一句话**——全仓**唯一**的出口原语。
 ///
 /// 为什么原因码长在 `Reap` 上、而不是另立一个"panic 调用"：**"域不可续"
 /// 是域的判断，内核只需要"这个任务不再续跑 + 为什么"**。另立入口等于把域的策略写进
 /// ABI，并让"任务终止"这条不变量在 ABI 里有两个出口——本仓一度就是这样（
 /// `ControlCall::Panic`），现已收回。
 ///
-/// 约定：`0` = 自愿/正常；`1..` 留给域自己的诊断编号（各 bin 用 `1`、`2`… 标明
-/// 死在启动握手的哪一步）；内核自己用高位段（见 `kernel/src/runtime/switcher/trap/mod.rs`
-/// 的 `EXIT_FAULT`）。
-pub fn exit_with(reason: usize) -> ! {
-    exit_with_note(reason, "")
-}
-
-/// 同 [`exit_with`]，再带**一句话**（`Reap { note }`）：**"哪里算不下去"只有域知道**。
+/// `reason` 的约定：`0` = 自愿/正常；`1..` 留给域自己的诊断编号（各 bin 用 `1`、`2`…
+/// 标明死在启动握手的哪一步）；高位段归 ABI（[`env::EXIT_PANIC`] / [`env::EXIT_FAULT`]）。
 ///
-/// 内核在入口当场把它拷进栈上的定长缓冲（至多 `env::NOTE_MAX`，超出截断）并**自己打印**
-/// ——不依赖任何服务活着：一个正在退场的域不该先去求一条活路。
-/// panic 现场那句话由 `programs/src/entry.rs` 的 panic handler 在栈上拼好
-/// （`file:line` 是编译器塞进只读段的字面量，不需要符号表）。
-pub fn exit_with_note(reason: usize, note: &str) -> ! {
+/// `note` 是**"哪里算不下去"那一句**（只有域知道），`None` = 无话。内核在入口当场把它
+/// 拷进栈上的定长缓冲（至多 [`env::NOTE_MAX`]，超出截断）并**自己打印**——不依赖任何
+/// 服务活着：一个正在退场的域不该先去求一条活路。panic 现场那句话由
+/// `programs/src/entry.rs` 的 panic handler 在栈上拼好（`file:line` 是编译器塞进只读段
+/// 的字面量，不需要符号表）。
+///
+/// 名与形状照 `std::process::exit(code)`，第二个参数就是本仓加的那句话；**合并前**
+/// 合并前这里是三个函数（`exit` / `exit_with` / `exit_with_note`），note 那个是前两者的下半。
+pub fn exit(reason: Reason, note: Option<&str>) -> ! {
+    let note = note.unwrap_or("");
     let _ = RoomCall::Reap {
         reason,
         note: VirtAddr::new(note.as_ptr() as usize),
         len: note.len().min(env::NOTE_MAX),
     }
     .call();
-    unsafe { core::hint::unreachable_unchecked() }
+    // 内核的 `Reap` 分支**永不返回帧**（`kernel/src/runtime/switcher/envcall/mod.rs`
+    // 的 `Reap` 分支返空指针，由退场窄尾的 `quit` 收）。真破了这条不变量就走域内
+    // panic 通道（`programs/src/entry.rs` 的 panic handler），不落 UB。
+    unreachable!("Reap 返回了：reason={reason}")
 }
 
 pub fn sleep(d: Duration) -> EnvResult<()> {
@@ -73,7 +70,7 @@ pub fn sleep_until(at: u64) -> EnvResult<()> {
     Ok(())
 }
 
-/// 他杀：把 `task` 送进既有的死亡路径——与 [`exit_with`] 成对（**自杀 ↔ 他杀**）。
+/// 他杀：把 `task` 送进既有的死亡路径——与 [`exit`] 成对（**自杀 ↔ 他杀**）。
 ///
 /// **语义是域粒度**：`task` 只是"指认域"的手柄，它所属的域连同子树一起走（同域的
 /// 线程一并，不会剩半个域）。判据只有**判活**——**没有血缘门**：收一个域是"命令"，

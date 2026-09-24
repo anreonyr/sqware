@@ -89,7 +89,6 @@ use runtime::core::dock::{Dock, View};
 use runtime::core::tole::Tole;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie, PolePie};
-use runtime::env::room::exit_with;
 use runtime::env::unit as utask;
 
 /// 设备面（本域私有：谁的设备谁自己带）。
@@ -111,22 +110,21 @@ const E_LINE: usize = 6;
 const E_TREE: usize = 7;
 const E_DESK: usize = 8;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn bare_main() -> env::Reason {
     // 1. 领配给：那一页寄存器（`ONLY`：同一时刻只该有一个持有者）。
     let mut slots = [None; needs::WANTS.len()];
     let got = match assemble::receive(&mut slots) {
         Ok(n) => n,
-        Err(code) => exit_with(code),
+        Err(code) => return code,
     };
     let [Some(rtc_pie)] = slots else {
-        exit_with(assemble::E_GRANT)
+        return assemble::E_GRANT;
     };
     say(&format!("rtc: got {got}"));
 
     // 2. 开图 + 自证：那对纳秒格子读两次（两次不同 ⇒ 它是活的）。
     let Ok(dock) = Dock::open(PolePie::from_token(rtc_pie.token())) else {
-        exit_with(E_OPEN)
+        return E_OPEN;
     };
     let view = dock.view();
     let (t0, t1) = (rtc::now(view), rtc::now(view));
@@ -135,31 +133,31 @@ extern "C" fn main() -> ! {
     // 3. 上板（只为让板看得见本域的死）+ 上树：门牌 `/device/rtc` 落在树上（那一枚入口先取出来，
     //    树的 LAND 与组的两只耳朵都要它）。
     let Ok(sire) = utask::sire() else {
-        exit_with(E_BOARD)
+        return E_BOARD;
     };
     let Ok((_link, board_link)) = board::open(sire, MS) else {
-        exit_with(E_BOARD)
+        return E_BOARD;
     };
     if board::ask_hole(board_link).is_err() {
-        exit_with(E_BOARD);
+        return E_BOARD;
     }
     let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
-        exit_with(E_TREE)
+        return E_TREE;
     };
     let Ok((link, host)) = operator::open(sire, MS) else {
-        exit_with(E_TREE)
+        return E_TREE;
     };
     let Ok(talk) = operator::ask_hole(host) else {
-        exit_with(E_TREE)
+        return E_TREE;
     };
     serve_tree(&link, talk, host, entry);
 
     // 4. 占线：报**发下来的那一段区**（线号由路由者解树解出来，本域从不说它）。
     let Some(key) = rtc_pie.key() else {
-        exit_with(E_LINE)
+        return E_LINE;
     };
     let Ok(held) = register(&link, talk, host, key) else {
-        exit_with(E_LINE)
+        return E_LINE;
     };
     say("rtc: line occupied");
 
@@ -168,18 +166,18 @@ extern "C" fn main() -> ! {
     //    两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的。故等待没有期限。
     //    那只组的成员就是那两枚孔（"就绪"挂进组，"取消息"仍走各自那一手）。
     let Ok(tole) = Tole::unseal(false) else {
-        exit_with(E_DESK)
+        return E_DESK;
     };
     let entry_hole = HolePie::from_token(entry);
     let Ok(lane) = held.hole() else {
-        exit_with(E_LINE)
+        return E_LINE;
     };
     if tole.attach(&entry_hole, HoleDir::Pull).is_err()
         || tole
             .attach(&HolePie::from_token(lane), HoleDir::Pull)
             .is_err()
     {
-        exit_with(E_DESK);
+        return E_DESK;
     }
 
     let mut slot = Slot::new();
@@ -191,7 +189,7 @@ extern "C" fn main() -> ! {
         // 到点才有的说（次序不承担语义，只省一次绕回）。
         match tole.await_(usize::MAX) {
             Ok(_) => {}
-            Err(_) => exit_with(E_DESK),
+            Err(_) => return E_DESK,
         }
         while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
             desk(&mut slot, view, from, &buf[..len]);
@@ -368,3 +366,6 @@ fn register(
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

@@ -33,6 +33,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 use alloc::format;
 use alloc::string::String;
 use core::time::Duration;
@@ -46,7 +48,7 @@ use protocol::principal::core::{Fail, PrincipalId};
 use protocol::session::Quay;
 use cases::Suite;
 use runtime::env::debug;
-use runtime::env::room::{self, exit_with_note};
+use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -62,35 +64,20 @@ const E_NO_SERVICE: usize = 1;
 /// 树外那个号（伪造的线上值）。
 const OUTSIDE: usize = 4095;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("subject: no sire")
-    };
-    let Ok(me) = utask::self_id() else {
-        bail("subject: no self id")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("subject: no sire") };
+    let Ok(me) = utask::self_id() else { return bail("subject: no self id") };
 
     // 上树：本域只开一条会话——按名字找那面身份服务。
-    let Ok((tree, host)) = operator::open(sire, MS) else {
-        bail("subject: no tree link")
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        bail("subject: no tree ask")
-    };
-    let Some(entry) = find_face(&tree, talk, host) else {
-        bail("subject: no face")
-    };
-    let Ok(face) = Face::of(entry) else {
-        bail("subject: bad face")
-    };
+    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("subject: no tree link") };
+    let Ok(talk) = operator::ask_hole(host) else { return bail("subject: no tree ask") };
+    let Some(entry) = find_face(&tree, talk, host) else { return bail("subject: no face") };
+    let Ok(face) = Face::of(entry) else { return bail("subject: bad face") };
 
     // 一、此刻代表谁——装配期绑的那一条（服务一起来就答得出）。
     let mine = face.resolve(me, MS);
     say(&format!("policy: me={}", one_opt(mine)));
-    let Ok(Some(p)) = mine else {
-        bail("subject: unbound")
-    };
+    let Ok(Some(p)) = mine else { return bail("subject: unbound") };
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——下面每一例的期望，
     // 都是本域头注那 14 步里写着的那一句（旧宿主靶上 `policy: …` 那 12 条钉的就是它们）。
@@ -146,9 +133,7 @@ extern "C" fn main() -> ! {
     });
 
     // ── 转换那两条（刀 2）────────────────────────────────────
-    let Some(q) = child else {
-        bail("subject: no sub identity")
-    };
+    let Some(q) = child else { return bail("subject: no sub identity") };
     // 八、领：换到自己刚派生出来的那一支里（`sub` 一定在 `p` 那一支里）。
     let adopted = face.adopt(q, MS);
     say(&format!("policy: adopt(sub)={}", done(adopted)));
@@ -201,7 +186,7 @@ extern "C" fn main() -> ! {
     });
     suite.run();
 
-    exit_with_note(E_OK, "subject: done")
+    return Report::note(E_OK, "subject: done");
 }
 
 /// 找那面服务：`FIND "/sys/principal"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
@@ -274,11 +259,14 @@ fn why(fail: Fail) -> &'static str {
 }
 
 /// 报一行就走（本域没有控制台，调试面是唯一能说话的地方）。
-fn bail(msg: &str) -> ! {
-    exit_with_note(E_NO_SERVICE, msg)
+fn bail<'a>(msg: &'a str) -> Report<'a> {
+    return Report::note(E_NO_SERVICE, msg);
 }
 
 /// 打一行。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

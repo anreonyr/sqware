@@ -52,6 +52,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Reason;
+
 use programs::supervisor::root::boot;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
@@ -63,7 +65,6 @@ use programs::supervisor::system::server as service;
 use protocol::system::core::{Ready, probe_ready};
 use protocol::system::desk::{Announce, Slot, State, Table};
 use runtime::env::debug;
-use runtime::env::room::exit_with;
 use runtime::env::unit;
 
 /// 被重起的服务（清单里已有的一个常驻程序——它起来就不走，故必须靠 `stop` 收）。
@@ -75,17 +76,10 @@ const ROUNDS: usize = 3;
 /// 就绪/收尾的等待上限（毫秒，**上限族**）。
 const MS: usize = 1_000;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Some(boot) = boot::Root::take() else {
-        die("again: boot args unreadable")
-    };
-    let Some((elf, kind)) = find(&boot, VICTIM) else {
-        die("again: victim not in manifest")
-    };
-    let Ok(name) = Name::new(ROW) else {
-        die("again: bad row name")
-    };
+extern "C" fn bare_main() -> Reason {
+    let Some(boot) = boot::Root::take() else { return die("again: boot args unreadable") };
+    let Some((elf, kind)) = find(&boot, VICTIM) else { return die("again: victim not in manifest") };
+    let Ok(name) = Name::new(ROW) else { return die("again: bad row name") };
 
     // 一整场只用这一张表：**这就是本台子与 rig 的关键差别**（那个每轮造新表）。
     let mut table = Table::new();
@@ -97,7 +91,7 @@ extern "C" fn main() -> ! {
         if round == 1 {
             match table.register(name, Announce::None) {
                 Ok(()) => say(&format!("again: r={round} step=register ok")),
-                Err(_) => die("again: register"),
+                Err(_) => return die("again: register"),
             }
         } else {
             match table.register(name, Announce::None) {
@@ -199,7 +193,7 @@ extern "C" fn main() -> ! {
         "again: total restarts={restarts} failures={failures} budget_tries={tries} gave_up={gave_up} rows={}",
         table.rows().count()
     ));
-    exit_with(0)
+    return 0;
 }
 
 /// 打这一步的表内事实（`state` / `slot` / `Ready` 探针）。
@@ -247,7 +241,10 @@ fn say(msg: &str) {
 }
 
 /// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
-fn die(msg: &str) -> ! {
+fn die(msg: &str) -> Reason {
     say(msg);
-    exit_with(1)
+    1
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

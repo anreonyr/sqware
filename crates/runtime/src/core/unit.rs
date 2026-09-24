@@ -179,5 +179,5 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     // `tls::free` 自己对还——用的是用户态既有原语 `MemoryCall::Deallocate`，
     // 不需要任何新 ABI。
     tls::deallocate();
-    room::exit()
+    room::exit(env::EXIT_OK, None)
 }

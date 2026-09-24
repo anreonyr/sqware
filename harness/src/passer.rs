@@ -12,7 +12,7 @@
 //!   2  问话孔：本端铸、给板读（问话从它走，答话走上面那条板路）
 //!   3  服务入口：本端铸（记号 entry）、经会话交给板 ⇒ 板上挂着"passer 在哪"
 //!   4  REGISTER "passer" —— 报一行读数
-//!   5  **直接死**（`exit_with_note`）：不退场、不交回、无门闩、通道为空
+//!   5  **直接死**（出口那一手带上那句话）：不退场、不交回、无门闩、通道为空
 //! ```
 //!
 //! # 为什么不退场
@@ -29,6 +29,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**客侧**（挂一个名字）。
 use protocol::system::board::client as board;
@@ -40,7 +42,6 @@ use protocol::system::board::call as bcall;
 use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
-use runtime::env::room::exit_with_note;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字 —— 本域知道的全部。
@@ -56,30 +57,19 @@ const BAD: u8 = bcall::BAD;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("passer: no sire")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("passer: no sire") };
     // 板那条路：本端装一条、认下生我者那一枚（孔交给生我者，它再转授给板线程）。
     //
     // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
     // ——牌子那一格只认得 `entry` 那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
-    let Ok((link, board)) = board::open(sire, MS) else {
-        bail("passer: no board link")
-    };
+    let Ok((link, board)) = board::open(sire, MS) else { return bail("passer: no board link") };
     // 问话孔：本端铸、给板读（本端自窄到只写）——问话从它走，答话走上面那条板路。
-    let Ok(talk) = board::ask_hole(board) else {
-        bail("passer: no ask hole")
-    };
+    let Ok(talk) = board::ask_hole(board) else { return bail("passer: no ask hole") };
     // 本域的服务入口：别人按名字找到本域之后往它说话。它也是要交给板的那一枚——记号
     // `entry`：板那侧按它把入口与问话孔分开（两枚都是本端铸、本端交）。
-    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
-        bail("passer: no entry")
-    };
-    let Ok(me) = Name::new(ME) else {
-        bail("passer: bad name")
-    };
+    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else { return bail("passer: no entry") };
+    let Ok(me) = Name::new(ME) else { return bail("passer: bad name") };
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"passer 在哪"）。
     let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);
@@ -96,7 +86,7 @@ extern "C" fn main() -> ! {
     // 二、**直接死**：不说退场那一句、不交回、不留门闩。板上那枚牌子与板侧那一格从此是
     //     死实例——只有"那一枚还答得出吗"（`VestedBy`）问得出来。
     let registered = reg == bcall::OK;
-    exit_with_note(
+    return Report::note(
         if registered { E_OK } else { E_TRIP },
         if registered {
             "passer: gone"
@@ -107,11 +97,14 @@ extern "C" fn main() -> ! {
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
-fn bail(note: &str) -> ! {
-    exit_with_note(E_TRIP, note)
+fn bail<'a>(note: &'a str) -> Report<'a> {
+    return Report::note(E_TRIP, note);
 }
 
 /// 打一行。调试面是本域唯一的嘴（与 `guest` / `echo` 用的是同一格）。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

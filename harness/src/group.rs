@@ -72,6 +72,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Reason;
+
 use env::Mark;
 use programs::supervisor::root::boot;
 
@@ -83,7 +85,7 @@ use env::TaskId;
 use runtime::core::tole::Tole;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
-use runtime::env::room::{self, exit_with};
+use runtime::env::room;
 use runtime::env::unit;
 
 /// 清单里等待者的名字（`env::assembly::ALL` 里 `scenes` 含 `group` 的那一行）。
@@ -95,55 +97,40 @@ const MS: usize = 2_000;
 /// 投信前的稳压（毫秒；理由见头注的照实记）。
 const SETTLE: u64 = 200;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Some(boot) = boot::Root::take() else {
-        die("group: boot args unreadable")
-    };
-    let Some((elf, kind)) = find(&boot, WAITER) else {
-        die("group: waiter not in manifest")
-    };
+extern "C" fn bare_main() -> Reason {
+    let Some(boot) = boot::Root::take() else { return die("group: boot args unreadable") };
+    let Some((elf, kind)) = find(&boot, WAITER) else { return die("group: waiter not in manifest") };
 
     // ① 组：**共享**（不带 `ONLY` ⇒ 同一枚 accord 给两个任务都成立）。
-    let Ok(tole) = Tole::unseal(true) else {
-        die("group: unseal shared")
-    };
+    let Ok(tole) = Tole::unseal(true) else { return die("group: unseal shared") };
     let group = tole.token();
     // ② 成员：一枚孔（用户态铸的孔不带 `ONLY` ⇒ 也可复制）。
-    let Ok(member) = mail::unseal_hole(Mark::of("member")) else {
-        die("group: member hole")
-    };
+    let Ok(member) = mail::unseal_hole(Mark::of("member")) else { return die("group: member hole") };
     let member = HolePie::from_token(member);
     // ③ 回报孔**一人一枚**：孔是单槽，共用一枚时第二条会撞 `Busy`（那是台子的噪声，
     //    不是被测对象）。
     let mut report = [PieToken::NONE; WAITERS];
     for slot in report.iter_mut() {
-        let Ok(tok) = mail::unseal_hole(Mark::of("report")) else {
-            die("group: report hole")
-        };
+        let Ok(tok) = mail::unseal_hole(Mark::of("report")) else { return die("group: report hole") };
         *slot = tok;
     }
 
     // ④ 两个子域、各一枚线程、各收一份（组 + 成员 + 自己那枚回报孔），放行。
     let mut reps = [TaskId::new(0); WAITERS];
     for i in 0..WAITERS {
-        let Ok(team) = unit::build(elf, kind) else {
-            die("group: build")
-        };
-        let Ok(rep) = unit::spawn(team, 0, &[], 0) else {
-            die("group: spawn")
-        };
+        let Ok(team) = unit::build(elf, kind) else { return die("group: build") };
+        let Ok(rep) = unit::spawn(team, 0, &[], 0) else { return die("group: spawn") };
         reps[i] = rep;
         // 三枚都按 `FETCH | STORE | VEST` 交出去：够"挂 + 等 + 取 + 回报"这件事本身，
         // 而**两种资源的形态事实都不带 `ONLY`**（共享组与用户态铸的孔）。
         let grant = env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST;
         for tok in [group, member.token(), report[i]] {
             if mail::accord(tok, rep, grant).is_err() {
-                die("group: accord")
+                return die("group: accord");
             }
         }
         if unit::hatch(rep).is_err() {
-            die("group: hatch")
+            return die("group: hatch");
         }
     }
 
@@ -196,7 +183,7 @@ extern "C" fn main() -> ! {
         "group: hung={hung} woke={woke} deliver={deliver} control={control}"
     ));
     say(if pass { "group: PASS" } else { "group: FAIL" });
-    exit_with(if pass { 0 } else { 1 })
+    return if pass { 0 } else { 1 };
 }
 
 /// 从一枚回报孔取一字节（有界等待；槽空即超时 ⇒ `None`）。
@@ -247,7 +234,10 @@ fn say(msg: &str) {
 }
 
 /// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
-fn die(msg: &str) -> ! {
+fn die(msg: &str) -> Reason {
     say(msg);
-    exit_with(1)
+    1
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

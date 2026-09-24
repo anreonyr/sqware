@@ -47,6 +47,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
 use protocol::operator::call as ocall;
@@ -61,7 +63,7 @@ use protocol::system::board::call as bcall;
 use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
-use runtime::env::room::{self, exit_with_note};
+use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字，与要找的那个服务——**本域知道的全部**。
@@ -81,50 +83,31 @@ const BAD: u8 = bcall::BAD;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("guest: no sire")
-    };
+extern "C" fn bare_main() -> Report<'static> {
+    let Ok(sire) = utask::sire() else { return bail("guest: no sire") };
     // 板那条路：本端装一条、认下生我者那一枚（孔交给生我者，它再转授给板线程）。
     //
     // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
     // ——牌子这一格只认得"entry"那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
-    let Ok((link, board)) = board::open(sire, MS) else {
-        bail("guest: no board link")
-    };
+    let Ok((link, board)) = board::open(sire, MS) else { return bail("guest: no board link") };
     // 问话孔：本端铸、给板读（本端自窄到只写）——问话从它走，答话走上面那条板路。
     // `board` = 板路上先到的那一格（**答话的是谁**）：孔只在铸它的表里念得出来，故这个号
     // 是"板收得到问话"的前提。
-    let Ok(talk) = board::ask_hole(board) else {
-        bail("guest: no ask hole")
-    };
+    let Ok(talk) = board::ask_hole(board) else { return bail("guest: no ask hole") };
     // 本域的服务入口：别人按名字找到本域之后往它说话，本域从它读。它也是要交给板的那一枚
     // ——记号 `entry`：板那侧按它把入口与问话孔分开（两枚都是本端铸、本端交）。
-    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
-        bail("guest: no entry")
-    };
-    let Ok(me) = Name::new(ME) else {
-        bail("guest: bad name")
-    };
-    let Ok(want) = Name::new(WANT) else {
-        bail("guest: bad name")
-    };
+    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else { return bail("guest: no entry") };
+    let Ok(me) = Name::new(ME) else { return bail("guest: bad name") };
+    let Ok(want) = Name::new(WANT) else { return bail("guest: bad name") };
     let none = PieToken::NONE;
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"guest 在哪"）。
     let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);
 
     // 二、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
-    let Ok((tree, host)) = operator::open(sire, MS) else {
-        bail("guest: no tree link")
-    };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        bail("guest: no tree ask")
-    };
-    let Ok(dir) = Name::new(protocol::driver::DIR) else {
-        bail("guest: bad name")
-    };
+    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("guest: no tree link") };
+    let Ok(hedge) = operator::ask_hole(host) else { return bail("guest: no tree ask") };
+    let Ok(dir) = Name::new(protocol::driver::DIR) else { return bail("guest: bad name") };
     let path = [dir, want];
 
     // 三、问一句名字。**找不到就再问**，有界：本域可能比 `router` 先起（树上没有"装配期"）。
@@ -168,7 +151,7 @@ extern "C" fn main() -> ! {
 
     // 六、退场：一次往返，不留常驻（kernel 打的那一行就是这一格的读数）。
     let walked = reg == bcall::OK && find == ocall::OK && at != none;
-    exit_with_note(
+    return Report::note(
         if walked { E_OK } else { E_TRIP },
         if walked {
             "guest: trip ok"
@@ -179,11 +162,14 @@ extern "C" fn main() -> ! {
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
-fn bail(note: &str) -> ! {
-    exit_with_note(E_TRIP, note)
+fn bail<'a>(note: &'a str) -> Report<'a> {
+    return Report::note(E_TRIP, note);
 }
 
 /// 打一行。调试面是本域唯一的嘴（与 `echo` 用的是同一格）。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

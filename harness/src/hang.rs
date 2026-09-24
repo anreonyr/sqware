@@ -27,12 +27,13 @@
 
 extern crate programs;
 
+use programs::Reason;
+
 use harness::tick;
 
 use env::Name;
 use protocol::session::Quay;
 use runtime::env::debug;
-use runtime::env::room::exit_with;
 use runtime::env::unit as utask;
 
 /// 本端那枚泊位的名字（同时刻在孔上）：台主按这个名字认领它。
@@ -48,20 +49,13 @@ const MARK: &str = "wake";
 /// 那两个数是打开本开关当场量到的，没有留在树上。
 const REPORT_WAKE: bool = false;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let Ok(sire) = utask::sire() else {
-        bail("hang: no sire")
-    };
-    let Ok(mark) = Name::new(MARK) else {
-        bail("hang: bad mark")
-    };
+extern "C" fn bare_main() -> Reason {
+    let Ok(sire) = utask::sire() else { return bail("hang: no sire") };
+    let Ok(mark) = Name::new(MARK) else { return bail("hang: bad mark") };
 
     // 码头朝生我者：把本端那一枚孔交出去（台主认领它 ⇒ 台主手里有写端，推得醒本端）。
     let mut quay = Quay::open(sire);
-    let Ok(pie) = quay.seat(mark).map(|p| *p) else {
-        bail("hang: seat")
-    };
+    let Ok(pie) = quay.seat(mark).map(|p| *p) else { return bail("hang: seat") };
 
     // 第一句 = "在台上跑多少轮"（前 4 字节小端）。拿不到就退化成"在台上不占时间"。
     let mut buf = [0u8; 8];
@@ -89,8 +83,12 @@ fn say(msg: &str) {
     let _ = debug::put(msg);
 }
 
-/// 起不来就报哪一句（kernel 收场时把这一句连同域号打出来）。
-fn bail(msg: &str) -> ! {
+/// 起不来就报哪一句（kernel 收场时把这一句连同域号打出来）——**并把原因码交回调用方**：
+/// 报码那一笔现在是 `main` 的账，这一层不再自己退场。
+fn bail(msg: &str) -> Reason {
     say(msg);
-    exit_with(1)
+    1
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

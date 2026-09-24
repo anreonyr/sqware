@@ -130,7 +130,6 @@ use runtime::core::tole::Tole;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::mail::{HolePie, NolePie, PolePie};
-use runtime::env::room::exit_with;
 use runtime::env::unit as utask;
 
 use crate::plic::{LINE_PRIORITY, Plic, Sources};
@@ -151,30 +150,29 @@ const E_DESK: usize = 7;
 /// 账备不下这台控制器的格子：**拒起**，不是运行期降级。
 const E_ACCOUNT: usize = 8;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn bare_main() -> env::Reason {
     // 客侧装配：会话 + 收配给（**编号原样带出去**——`assemble` 报的是"死在装配的哪一步"，
     // 折成同一个号就等于把那几个编号变成没人读得到的死码）。
     let mut slots = [None; needs::WANTS.len()];
     let got = match assemble::receive(&mut slots) {
         Ok(n) => n,
-        Err(code) => exit_with(code),
+        Err(code) => return code,
     };
     // 三枚都要在：少一枚就不必继续（父域按同一张单子发货，缺格即装配错）。
     let [Some(plic_pie), Some(dtb_pie), Some(bell_pie)] = slots else {
-        exit_with(assemble::E_GRANT)
+        return assemble::E_GRANT;
     };
     say(&alloc::format!("router: got {got}"));
 
     // 开图 + 读树：控制器、本域的 context、要接的线（与"没进来的账"）。
     let Ok(plic_dock) = Dock::open(PolePie::from_token(plic_pie.token())) else {
-        exit_with(E_OPEN);
+        return E_OPEN;
     };
     let Ok(dtb_dock) = Dock::open(PolePie::from_token(dtb_pie.token())) else {
-        exit_with(E_OPEN);
+        return E_OPEN;
     };
     let Some((plic, sources)) = Plic::new(plic_dock.view(), dtb_dock.view()) else {
-        exit_with(E_TREE);
+        return E_TREE;
     };
     say("router: docks open");
     // 线集合与五笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
@@ -198,7 +196,7 @@ extern "C" fn main() -> ! {
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见文件头）。
     let Some(mut lines) = Lines::new(plic.device_count()) else {
-        exit_with(E_ACCOUNT)
+        return E_ACCOUNT;
     };
 
     // 服务入口：本线程铸、本线程读——**它就是树上那块门牌**。
@@ -207,12 +205,12 @@ extern "C" fn main() -> ! {
     // 念得出来，而客户往门里推、路由者往客户手里推——两端都得在同一张表里，故这里不再有
     // 第二枚线程。
     let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
-        exit_with(E_DESK)
+        return E_DESK;
     };
 
     // 板那趟（装上板路、交上问话孔——只为让板看得见本域的死）+ 上树那趟（门牌）。
     let Ok(sire) = utask::sire() else {
-        exit_with(assemble::E_SIRE)
+        return assemble::E_SIRE;
     };
     serve_board(sire, entry);
 
@@ -220,7 +218,7 @@ extern "C" fn main() -> ! {
     // 就把那位客户的泊位挂进来，见 `desk_face`）。一只组同时等这三样——三件都是事件，
     // 故等待**没有期限**（见 `main` 里那一注）：会丢的那一次铃已在根上修掉。
     let Ok(tole) = Tole::unseal(false) else {
-        exit_with(E_BELL)
+        return E_BELL;
     };
     let entry_hole = HolePie::from_token(entry);
     if tole
@@ -228,7 +226,7 @@ extern "C" fn main() -> ! {
         .is_err()
         || tole.attach(&entry_hole, HoleDir::Pull).is_err()
     {
-        exit_with(E_BELL);
+        return E_BELL;
     }
 
     let mut buf = [0u8; lcall::OCCUPY_LEN];
@@ -247,7 +245,7 @@ extern "C" fn main() -> ! {
             Ok(None) => {}
             // 组坏了 ⇒ 本域也没事可做（铃那一格今天不可达：它的资源实体由内核**永久持有**，
             // `platform/devices.rs::IRQ`——它是一格防御，不是读数）。
-            Err(_) => exit_with(E_BELL),
+            Err(_) => return E_BELL,
         }
         // 逐客：**每次醒来扫一遍有主的那些条**——主人没了就拆线 + 空出格子。放在最前：
         // 那一格收掉之后再取排空、再登记，账里就只剩还活着的客人。
@@ -577,3 +575,6 @@ const BAD: u8 = ocall::BAD;
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

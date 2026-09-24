@@ -35,6 +35,8 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Report;
+
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
 use protocol::operator::call as ocall;
 use protocol::operator::client as operator;
@@ -53,7 +55,7 @@ use programs::driver::rtc::core::Fail as RFail;
 use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
-use runtime::env::room::{self, exit_with, exit_with_note};
+use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字（板按它分人；编排域表里那一条也叫这个）。
@@ -77,29 +79,28 @@ const EXIT_OK: usize = 0;
 /// 没搭上（找不到那面服务 / 有一条往返没走成）：报这一格退场。
 const E_NO_SERVICE: usize = 1;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn bare_main() -> Report<'static> {
     // 上板：**注册在前面**——板要能看见本域（挂不上照样往下走，只是那条信号缺席）。
     let reg = register();
     let _ = debug::put(&format!("sleeper: reg={reg}"));
 
     let Ok(sire) = utask::sire() else {
-        exit_with(E_NO_SERVICE)
+        return Report::new(E_NO_SERVICE);
     };
     let Ok((tree, host)) = operator::open(sire, MS) else {
-        exit_with(E_NO_SERVICE)
+        return Report::new(E_NO_SERVICE);
     };
     let Ok(talk) = operator::ask_hole(host) else {
-        exit_with(E_NO_SERVICE)
+        return Report::new(E_NO_SERVICE);
     };
     let Some(face) = find_face(&tree, talk, host) else {
-        exit_with(E_NO_SERVICE)
+        return Report::new(E_NO_SERVICE);
     };
     let _ = debug::put("sleeper: found");
 
     // 一问一答：现在几点。这一句是后面那两约的**基准**（服务收的是绝对时刻）。
     let Ok(now) = clock::now(face, MS) else {
-        exit_with(E_NO_SERVICE)
+        return Report::new(E_NO_SERVICE);
     };
     let _ = debug::put(&format!("sleeper: now={now}"));
 
@@ -111,7 +112,7 @@ extern "C" fn main() -> ! {
     // 真约：那一枚回信孔从此留在驱动手里（本域退场之前它一直活着）。
     let at = now.saturating_add(AHEAD_NS);
     let Ok(armed) = clock::arm(face, at, MS) else {
-        exit_with(E_NO_SERVICE)
+        return Report::new(E_NO_SERVICE);
     };
     let _ = debug::put(&format!("sleeper: armed={}", rcall::fail_to_code(None)));
 
@@ -122,7 +123,7 @@ extern "C" fn main() -> ! {
 
     // 等到那一声：**无界等**（本域只有这一件事），而对面一没那枚孔就封印、当场答错。
     let Ok(rang) = armed.receive() else {
-        exit_with(E_NO_SERVICE)
+        return Report::new(E_NO_SERVICE);
     };
     let _ = debug::put(&format!("sleeper: rang at={at} now={rang}"));
 
@@ -146,7 +147,7 @@ extern "C" fn main() -> ! {
     });
     suite.run();
 
-    exit_with_note(EXIT_OK, "sleeper: gone")
+    return Report::note(EXIT_OK, "sleeper: gone");
 }
 
 /// 被拒那一趟的读数：把失败域按**线上那张表**折成一个数（与驱动的答码同源）。
@@ -203,3 +204,6 @@ fn register() -> u8 {
     };
     board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(bcall::BAD)
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

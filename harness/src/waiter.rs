@@ -35,20 +35,18 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::Reason;
+
 use env::HoleDir;
 use env::Mark;
 use env::PieToken;
 use runtime::core::tole::Tole;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
-use runtime::env::room::exit_with;
 use runtime::env::tole::TolePie;
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
-    let (Some(group), Some(member), Some(report)) = discover() else {
-        bail("waiter: table incomplete")
-    };
+extern "C" fn bare_main() -> Reason {
+    let (Some(group), Some(member), Some(report)) = discover() else { return bail("waiter: table incomplete") };
 
     let tole = Tole::new(TolePie::from_token(group));
     let member = HolePie::from_token(member);
@@ -56,11 +54,11 @@ extern "C" fn main() -> ! {
 
     // 挂一格：**一个方向就够**（`Pull` = "有东西可读"）。
     if tole.attach(&member, HoleDir::Pull).is_err() {
-        bail("waiter: attach");
+        return bail("waiter: attach");
     }
     // 先报"已挂"：台主收齐两枚才投信 ⇒ 投信那一刻两人**都在等**（判据成立的前提）。
     if report.push(b"H").is_err() {
-        bail("waiter: report")
+        return bail("waiter: report");
     }
     say("waiter: hung");
 
@@ -77,7 +75,7 @@ extern "C" fn main() -> ! {
     // 别把一次返回当终局）。
     loop {
         if tole.await_(usize::MAX).is_err() {
-            bail("waiter: await")
+            return bail("waiter: await");
         }
         match member.peek() {
             Ok(_) => {
@@ -93,7 +91,7 @@ extern "C" fn main() -> ! {
             }
         }
     }
-    exit_with(0)
+    return 0;
 }
 
 /// 认领本端那三枚：记号认孔，剩下那一枚是组。
@@ -124,7 +122,10 @@ fn say(msg: &str) {
 }
 
 /// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
-fn bail(msg: &str) -> ! {
+fn bail(msg: &str) -> Reason {
     say(msg);
-    exit_with(1)
+    1
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);

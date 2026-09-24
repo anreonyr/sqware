@@ -67,29 +67,28 @@ const BOOT_MS: usize = 1000;
 // 那些行 [`Program`] 与装配单现在住 `scenario.rs`：本文件是**机器**，
 // 不认识具体哪一台。`PLAN` 仍从那里 `use` 进来，故下面 [`service::assemble`] 那几处一字未改。
 
-#[unsafe(no_mangle)]
-extern "C" fn main() -> ! {
+extern "C" fn bare_main() -> service::Died {
     // 1. 与引导域开会话：本域那一枚交给"生我者"，并认下它那一枚（一问一答两个方向）。
     let Some(boot_pier) = talk_to_root() else {
-        service::die(E_BOOT, "system: no firmware");
+        return service::die(E_BOOT, "system: no firmware");
     };
 
     // 2. 领树：本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一段区"要有它。
     //    坐标是 `Key::dtb()`（"哪一件"那一形：树不知道自己写在哪，故只能这么取）。
     let machine = match take_machine(&boot_pier) {
         Ok(machine) => machine,
-        Err(why) => service::die(E_BOOT, why),
+        Err(why) => return service::die(E_BOOT, why),
     };
 
     // 2′. 领账：这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
     //     载荷区的**坐标从树里读**（`/chosen` 的 `linux,initrd-start`）——机器自己写着它在哪，
     //     本域不另抄一个名字。树也在这一块里——它是**本域起的服务**（`PLAN` 第一条）。
     let Some(payload) = machine.payload() else {
-        service::die(E_BOOT, "system: no payload");
+        return service::die(E_BOOT, "system: no payload");
     };
     let catalog = match take_catalog(&boot_pier, payload) {
         Ok(catalog) => catalog,
-        Err(why) => service::die(E_BOOT, why),
+        Err(why) => return service::die(E_BOOT, why),
     };
 
     // 3/4. 死亡道：一位服务一条（本域铸、记号 `gone-<名字>`；装配时各交一份给板线程）。
@@ -98,7 +97,7 @@ extern "C" fn main() -> ! {
     let mut lanes: [Option<PieToken>; Table::CAP] = [None; Table::CAP];
     let tole = match Tole::unseal(false) {
         Ok(tole) => tole,
-        Err(_) => service::die(service::E_TABLE, "system: no group"),
+        Err(_) => return service::die(service::E_TABLE, "system: no group"),
     };
     // **装配单从 `env::assembly` 派生**（`order` 那一格就是起手位次）。
     let plan = scenario::plan(&catalog);
@@ -115,10 +114,10 @@ extern "C" fn main() -> ! {
     let mut table = Table::new();
     let last = match service::assemble(&mut table, &catalog, &plan, &boot_pier, &lanes, &machine) {
         Ok(last) => last,
-        Err(service::E_MANIFEST) => service::die(service::E_MANIFEST, "system: manifest bad"),
-        Err(service::E_TABLE) => service::die(service::E_TABLE, "system: table full"),
-        Err(service::E_PROGRAM) => service::die(service::E_PROGRAM, "system: program missing"),
-        Err(died) => service::die(died, "system: service failed"),
+        Err(service::E_MANIFEST) => return service::die(service::E_MANIFEST, "system: manifest bad"),
+        Err(service::E_TABLE) => return service::die(service::E_TABLE, "system: table full"),
+        Err(service::E_PROGRAM) => return service::die(service::E_PROGRAM, "system: program missing"),
+        Err(died) => return service::die(died, "system: service failed"),
     };
 
     // 5/6. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
@@ -135,7 +134,7 @@ extern "C" fn main() -> ! {
     // `system: done` 在 **1005 份 soak 日志里一次都没有**）。
     // 板线程本来就不必点名收：本域一退场，"域亡＝成员清零"把它一起带走——故那一手是
     // **重复的一刀**，代价是把本机最后一句读数一起收走了。
-    service::die(service::E_OK, "system: done")
+    return service::die(service::E_OK, "system: done");
 }
 
 /// 与引导域搭一条**双向**的问答路。
@@ -192,3 +191,6 @@ fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     let records = supply::client::draw(pier, me, &[want], &mut slip, &mut reply, BOOT_MS).ok()?;
     supply::client::pick(records, key)
 }
+
+// 本 bin 的入口那一手（`_start` 的汇编胶水 + 出口点）——见 `programs::entry` 的头注。
+programs::boot!(bare_main);
