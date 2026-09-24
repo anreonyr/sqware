@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 use super::*;
 
 use programs::supervisor::service::Role;
-use env::assembly::{Announce, Eyes};
+use programs::supervisor::system::inner::INNER;
 
 /// 这一景的装配单：**从 `env::assembly::ALL` 派生**——`plan: Some` 的那些行里、**这张镜像真有的**
 /// 那些，按 `order` 排。
@@ -89,89 +89,9 @@ fn of(name: &'static str, p: &env::assembly::Plan) -> Program {
 
 // ── 内件三枚（iii：住本域的那三枚）─────────────────────────────
 //
-// **照实记（这三行原先在 `env::assembly::ALL` 上）**：那时 principal / coalition / operator
-// 各是一个**程序**（自己的 bin、自己的域、自己的 `[[bin]]`）。iii 之后它们与编排者**共用
-// 一份字节**（`prog-system`），在**本域**里各占一枚线程 ⇒ 它们不是清单里的东西（镜像里没有
-// 它们的字节），但仍是"本域要起的东西" ⇒ 搬到这里，与镜像里那几台**接成一条名册**。
-//
-// **照实记（特权级）**：principal 与 coalition 原先是 **U 态**（"不持有、不授予、不解释任何
-// Pie"）。住进编排域之后它们**随域**变成 S 态——这是用户裁定接受的代价（iii 那一句
-// "接受 U 态那两台升 S 态"）；同域四枚线程**共享一张页表**是这条路的另一半代价。
-
-/// 内件起手失败的三枚号（与原先 `env::assembly` 上那三枚**同值**）。
-mod died {
-    use env::assembly::Died;
-    pub const E_TREE: Died = 10;
-    pub const E_PRINCIPAL: Died = 14;
-    pub const E_COALITION: Died = 16;
-}
-use died::{E_COALITION, E_PRINCIPAL, E_TREE};
-
-/// **内件三条**：住本域的四枚线程里，除编排者自己以外那三枚。
-///
-/// 次序即契约：持树者排第一（客人上树要它在），名册第二（其后的身份都从它来），盟册第三
-/// （它是名册的客人）。这三位与镜像那几台的 `order`（3..18）相接之后，与从前的次序**逐字相同**。
-///
-/// 装配参数里那几格（`announce` / `tokens` / `channels` / `needs`）对它们**都是空的**：
-/// 内件不领配给、不开通道、不宣布"我起来了"——它们与编排者同域，起来就是起来。
-pub const INNER: &[(Role, Program)] = &[
-    (
-        Role::Tree,
-        Program {
-            name: "operator",
-            announce: Announce::None,
-            tokens: &[],
-            channels: &[],
-            needs: None,
-            // **它上板**（乙那一刀）：板据此看得见这一枚的死——与同域另两枚内件（名册 / 盟册）
-            // **同形**。照实记（原先它是 `false`）：那时"上板"确实还不等于"看得见死"——板把
-            // "谁 → 道"记在 **REGISTER** 那一刻，而道按名字认领，三枚内件都不登记 ⇒ 三枚的
-            // 死编排域**一个都看不见**（实测：让盟册在起手之后死掉，`board: swept n=1` 有、
-            // `system: gone coalition` 一条都没有）。乙2 把名字的来源从客人挪到**装配者**
-            // （提示那一格多带一格名字）⇒ 此后 `board: true` 就是"板看得见它的死"。
-            // 价格照实：板的账多占一格（`Desk::CAP` 因此抬到 16——量过：验收那一景同时在
-            // 账上的峰值 6 → 7）。iii 之前它自成一个域时这一格也是 `false`，那笔账照旧记着。
-            board: true,
-            operator: false,
-            bind: true,
-            holds_tree: true,
-            eyes: None,
-            died: E_TREE,
-        },
-    ),
-    (
-        Role::Roster,
-        Program {
-            name: "principal",
-            announce: Announce::None,
-            tokens: &[],
-            channels: &[],
-            needs: None,
-            board: true,
-            operator: true,
-            bind: true,
-            holds_tree: false,
-            eyes: Some(Eyes::Roster),
-            died: E_PRINCIPAL,
-        },
-    ),
-    (
-        Role::League,
-        Program {
-            name: "coalition",
-            announce: Announce::None,
-            tokens: &[],
-            channels: &[],
-            needs: None,
-            board: true,
-            operator: true,
-            bind: true,
-            holds_tree: false,
-            eyes: Some(Eyes::League),
-            died: E_COALITION,
-        },
-    ),
-];
+// 它们那张**表**（`INNER`）搬去本域的实现侧（`inner.rs`）了：读它的有**两处、且不同 crate**
+// ——本文件（把它接在镜像那几台前面，接成一条名册）与**板那本账的界**（`board/desk.rs` 的
+// `Desk::CAP` 要数"内件里有几位上板"）。住在 bin 里，后者数不到。
 
 /// **本次要起的全部成员**，按起手次序：**内件三枚在前，镜像里那几台在后**。
 ///

@@ -74,18 +74,38 @@ pub const fn desk() -> Desk {
     Desk::new(protocol::system::board::call::vested_by)
 }
 
+/// 装配单里 `board: true` 的行数——**全表**，故是**任何一景的上界**（板只收装配者推来的人，
+/// 而提示一位装配单行一条）。
+const fn boarded_rows() -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < env::assembly::ALL.len() {
+        if let Some(plan) = env::assembly::ALL[i].plan {
+            if plan.board {
+                n += 1;
+            }
+        }
+        i += 1;
+    }
+    n
+}
+
 impl Desk {
-    /// 板侧最多几位客人。条数是策略，容器要有界。**这个数是板自己的账，管不着那个组**：
-    /// 板线程的组是可增长的格子表（`mail/tole.rs` 的 `Vec<Cell>`），不替它定上限——
-    /// "组能挂几格"是内存的事，不是本账的事。
+    /// 板侧最多几位客人 —— **不是人挑的数，是两张 `const` 表数出来的**：
     ///
-    /// **照实记（8 → 16，跟着乙那一刀）**：这一格要 ≥ **同时**上板的客人数（验收那一景
-    /// 上板的名册有 10 条：三枚内件 ＋ 三台驱动 ＋ 三个试客 ＋ `echo`），而 8 只剩一格余量
-    /// ——加进持树者（乙）之后实测峰值 **6 → 7**。满了的后果是**静默**的：那条提示已经被
-    /// 拉走，`admit` 答 `Full` 而调用方是 `let _ =` ⇒ 那一位从此没人监督、也没人报。
-    /// 故抬到 **16**（与板自己那张牌子表的界 `Board::CAP` 同值）；**静默那一格仍挂着**
-    /// （见 `4dfe335` 的照实记），今天够不着。
-    pub const CAP: usize = 16;
+    /// > 能同时在账上的客人 = **装配单里 `board: true` 的那些行** ＋ **内件里上板的那几枚**
+    ///
+    /// 任何一景的名册都是全表的子集 ⇒ 这么数出来的是**上界** ⇒ `admit` 的 `Full` **由构造
+    /// 够不着**。**这个数是板自己的账，管不着那个组**：板线程的组是可增长的格子表
+    /// （`mail/tole.rs` 的 `Vec<Cell>`），"组能挂几格"是内存的事，不是本账的事。同一个数还给
+    /// 板线程那三张临时表定界（`server.rs` 的 `Lanes` / `waiting` / `dead`——与 `guests` 逐格对齐）。
+    ///
+    /// **照实记（原先是个手挑的数）**：8 → 16（乙那一刀），两次都是"凭余量挑"；而满了是**静默**
+    /// 的——`admit` 答 `Full`、调用方是 `let _ =` ⇒ 那一位从此没人监督，日志里一句话都没有。
+    /// 今天它由 [`boarded_rows`] 与
+    /// [`inner::boarded`](crate::supervisor::system::inner::boarded) 数出来：装配单加一位上板的
+    /// 服务，界自己跟着长。
+    pub const CAP: usize = boarded_rows() + crate::supervisor::system::inner::boarded();
 
     /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
     pub const fn new(vested_by: VestedBy) -> Desk {
@@ -226,3 +246,4 @@ impl Desk {
         gone
     }
 }
+

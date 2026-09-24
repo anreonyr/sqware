@@ -7,10 +7,10 @@
 //! **板那一台也住这里**（[`board`]）：板线程是**编排域里的一枚线程**（不是另一个域）——
 //! `root` 那张单上没有 `board` 那一格，起板的只有本域。
 //!
-//! **三枚内件也住这里**（[`operator`] 持树者 / [`principal`] 名册 / [`coalition`] 盟册）：
-//! 同一条判据——**谁住编排域，谁住 `system/` 之下**。iii 之后它们与编排者**共用一份字节**
-//! （`prog-system`）、在本域里各占一枚线程，靠 `Spawn` 那一格 `args` 分派
-//! （[`Role`](crate::supervisor::service::Role)）；从前它们各是一个程序、各住
+//! **三枚内件也住这里**（[`operator`] 持树者 / [`principal`] 名册 / [`coalition`] 盟册；
+//! 它们那张**表**在 [`inner`]）：同一条判据——**谁住编排域，谁住 `system/` 之下**。iii 之后
+//! 它们与编排者**共用一份字节**（`prog-system`）、在本域里各占一枚线程，靠 `Spawn` 那一格
+//! `args` 分派（[`Role`](crate::supervisor::service::Role)）；从前它们各是一个程序、各住
 //! [`crate::supervisor`] 本级，这一刀把它们收进来——读者看目录就知道"这三枚与板是同一种
 //! 东西"。
 //!
@@ -20,6 +20,7 @@
 pub mod board;
 pub mod call;
 pub mod coalition;
+pub mod inner;
 pub mod machine;
 pub mod operator;
 pub mod principal;
