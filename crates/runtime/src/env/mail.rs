@@ -1,22 +1,36 @@
-//! Mail 域：门闩操作。
+//! Mail 域 —— **通信面**：门闩（pie）那一族"怎么用"的那一半。
 //!
-//! **两条轴**：权柄（`PieCall`，class 7）走 `unseal_*`/`open`/`shut`/`seal`/`accord`
-//! /`narrow`/`revoke`/`collect`/`reserve`/`release`；数据（`MailCall`，class 5）走
-//! `push`/`pull`/`wait`。本模块是两者的**裸函数层**——每个函数封一次 envcall，
-//! 零业务逻辑。
+//! # 两条轴，两个文件
 //!
-//! 每个调用都是一次 envcall，由内核侧 dispatch 做 alive + rights + 分派。
-//! 用户句柄统一为 per-pie `token`（全局唯一，usize）。
+//! `env::fid` 文件头把 `PieCall`（class 7）与 `MailCall`（class 5）立成两条正交的轴
+//! （权柄 / 数据）。本层按轴分文件：
 //!
-//! 方案 3（typed payload）：`PieCall::X{ .. }.call()?` 直接得 `PieCallRet`，
-//! 参数在构造时类型安全（PieToken/VirtAddr/TaskId/Permission），返回值经 from_pair
-//! 蒸馏为 Ret 载荷。裸函数层只封 Ret、零业务逻辑。
+//!   - **通信面（本文件）**：class 5 的 `Push` / `Pull` / `Wait` / `Hush` / `Ring`，加
+//!     class 9（`ToleCall`：一枚"组"的造 / 挂 / 摘 / 等）。组是**多路等待**——成员是孔的
+//!     一个方向或一枚铃，故它接着本文件那一族的等待语义（分界见 `env::fid`：
+//!     "本类不搬载荷"）；
+//!   - **权柄面**（[`pie`](super::pie)）：class 7 的转发 + [`AnyPie`] 与它的四份实现。
+//!
+//! # 四种资源的用户态句柄都住本文件
+//!
+//! Hole（数据面）、Nole（门铃）、Pole（页视图）、Tole（组）——它们的**权柄面**
+//! （`Seal` / `Narrow` / `Accord` / `Revoke` / `Release`）由 [`AnyPie`] 提供，四份实现
+//! 集中在 `pie.rs`。口径一句话：**句柄一处（本文件），权柄动词一处（`pie.rs`）**。
+//!
+//! Pole 不属通信面，它住这里是因为"句柄一处"这一条：它的数据面是页视图
+//! （`open` / `shut`），而页视图与权柄一样，与"往哪推、从哪收"无关。
+//!
+//! # 名字照旧（本文件为什么有一大段 `pub use`）
+//!
+//! 权柄轴拆去 `pie.rs` 之后，`runtime::env::mail::X` 这一形（`protocol` / `programs` /
+//! `harness` 里十几处调用点）**一行没改**：下面把 `pie.rs` 的每一项按名字转出去。
+//! 这是本仓搬家的既有先例（`Access`/`Policy`、`Announce`/`Grant`/`Died` 都是这么转的）。
 //!
 //! push/pull 的阻塞：内核 Push/Pull 槽满/槽空返 `-3 Busy`；本层转 `Wait` 原语
 //! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
 
 use env::{
-    EnvResult, HoleDir, MailCall, MailCallRet, Mark, PieCall, PieCallRet, PieToken, TaskId,
+    EnvResult, HoleDir, MailCall, MailCallRet, Mark, PieToken, TaskId, ToleCall, ToleCallRet,
     VirtAddr,
 };
 
@@ -26,47 +40,21 @@ fn now_ns() -> EnvResult<u64> {
     crate::env::chrono::clock()
 }
 
-// ── 裸函数层（envcall 转发，零业务逻辑）──
+// ── 权柄轴（class 7）搬去 `pie.rs` 之后的名字照旧 ──────────────────────────
+//
+// 整面转出（**不挑**）：转发是"路径不变"的保证，一旦按"今天谁在用"挑，下一个调用点就得
+// 先认出这层壳才知道自己该写 `pie::`——那正是这一层想免掉的认知成本。
+pub use super::pie::{
+    AnyPie, accord, collect, narrow, open, release, reserve, revoke, seal, shut, table_size,
+    unseal_hole, unseal_nole, unseal_pole,
+};
 
-/// 解封 Hole：孔上刻**一格记号**（`mark` = 这条路的名字）。
-///
-/// **界只有一条，落在载体上**：一条消息 ≤ **一页**（契约在 `env::fid` 的 `Push`）；孔本身
-/// 不因此多带参数，也不预分配槽——多出来的只有记号：它随副本过线、转手不变，故"同一位开的
-/// 多枚孔"分辨得出（读它走 [`reserve`]）。
-///
-/// 名字非法（空 / 含 NUL / ≥ 32 字节 / 非 UTF-8）或那段字节拷不动 ⇒ `Denied`。
-pub fn unseal_hole(mark: Mark) -> EnvResult<PieToken> {
-    let r = PieCall::UnsealHole { mark }.call()?;
-    match r {
-        PieCallRet::UnsealHole(tk) => Ok(tk),
-        _ => unreachable!(),
-    }
-}
-
-pub fn unseal_pole(size: usize) -> EnvResult<PieToken> {
-    let r = PieCall::UnsealPole { size }.call()?;
-    match r {
-        PieCallRet::UnsealPole(tk) => Ok(tk),
-        _ => unreachable!(),
-    }
-}
-
-/// 解封 Nole（**无数据面**的权柄载体）：造一枚只有身份与存活的许可载体。
-///
-/// **无参数**——没有 mtu、没有字节数。它承载**无载荷通信**（门铃，见
-/// [`crate::core::bell`]），与资源权（"你对这份资源能做什么"）正交。
-pub fn unseal_nole() -> EnvResult<PieToken> {
-    let r = PieCall::UnsealNole.call()?;
-    match r {
-        PieCallRet::UnsealNole(tk) => Ok(tk),
-        _ => unreachable!(),
-    }
-}
+// ── 裸函数层（envcall 转发，零业务逻辑）：class 5（数据轴）──
 
 /// push 一条消息（`msg[..len]` 进 hole 槽）。`len ∈ 1..=一页`（破了界答 `Denied`）。
 pub fn push(token: PieToken, msg: *const u8, len: usize) -> EnvResult<()> {
     let r = MailCall::Push {
-        token: token,
+        token,
         msg: VirtAddr::new(msg as usize),
         len,
     }
@@ -99,7 +87,7 @@ pub fn pull_len(token: PieToken) -> EnvResult<(usize, TaskId)> {
 /// `max == 0` ⇒ 只报长度、不动槽（收方缓冲不参与）。
 pub fn pull_from(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<(usize, TaskId)> {
     let r = MailCall::Pull {
-        token: token,
+        token,
         buf: VirtAddr::new(buf as usize),
         max,
     }
@@ -116,12 +104,7 @@ pub fn pull_from(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<(usize,
 /// 门铃（Nole）也走这一个：`dir` 必须给 [`HoleDir::Pull`]——铃只有"响了"一条方向，
 /// 别的值内核答 `Denied`。裸函数层不为它另开一个名字：`Bell::wait` 就是这一句。
 pub fn wait(token: PieToken, dir: HoleDir, millis: usize) -> EnvResult<bool> {
-    let r = MailCall::Wait {
-        token: token,
-        dir,
-        millis,
-    }
-    .call()?;
+    let r = MailCall::Wait { token, dir, millis }.call()?;
     match r {
         MailCallRet::Wait(ready) => Ok(ready),
         _ => unreachable!(),
@@ -130,7 +113,7 @@ pub fn wait(token: PieToken, dir: HoleDir, millis: usize) -> EnvResult<bool> {
 
 /// 响铃（门铃专用）：置"有待取之事"并唤醒听者。已响 → `Busy`。
 pub fn ring(token: PieToken) -> EnvResult<()> {
-    let r = MailCall::Ring { token: token }.call()?;
+    let r = MailCall::Ring { token }.call()?;
     match r {
         MailCallRet::Ring(()) => Ok(()),
         _ => unreachable!(),
@@ -139,189 +122,64 @@ pub fn ring(token: PieToken) -> EnvResult<()> {
 
 /// 应铃（门铃专用）：清掉"有待取之事"，内核随即重开本 hart 的中断闸门。
 pub fn hush(token: PieToken) -> EnvResult<()> {
-    let r = MailCall::Hush { token: token }.call()?;
+    let r = MailCall::Hush { token }.call()?;
     match r {
         MailCallRet::Hush(()) => Ok(()),
         _ => unreachable!(),
     }
 }
 
-/// 开闩：借映 Pole 页进本任务空间 → `(视图起点, 这一段多大)`（同 token 幂等复用）。
+// ── 裸函数层（envcall 转发，零业务逻辑）：class 9（多路等待）──
+
+/// 造一个空组 → 组的句柄。
 ///
-/// **两件一起返**：起点与长度是同一段区间的两半，而长度只在内核手里（外来区按
-/// 页界撑开，设备树 `reg` 声明的长度内核不知道）。
-pub fn open(token: PieToken) -> EnvResult<(usize, usize)> {
-    let r = PieCall::Open { token: token }.call()?;
+/// `shared` = 这枚组允不许多个使用者（**造的时候定、之后不可变**，见 `env::fid` 的
+/// `ToleCall::Unseal`）：`false` = 独占组（授出即移交、复制不出来），`true` = 共享组
+/// （可 `accord` 复制给多个任务；组键的唤醒是提示型——放行全链）。
+pub fn unseal(shared: bool) -> EnvResult<PieToken> {
+    let r = ToleCall::Unseal { shared }.call()?;
     match r {
-        PieCallRet::Open((va, size)) => Ok((va.get(), size)),
+        ToleCallRet::Unseal(t) => Ok(t),
         _ => unreachable!(),
     }
 }
 
-pub fn shut(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Shut { token: token }.call()?;
+/// 把 `pie` 的一个方向挂进 `tole`（同成员幂等）。
+pub fn attach(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
+    let r = ToleCall::Attach { tole, pie, dir }.call()?;
     match r {
-        PieCallRet::Shut(()) => Ok(()),
+        ToleCallRet::Attach(()) => Ok(()),
         _ => unreachable!(),
     }
 }
 
-pub fn seal(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Seal { token: token }.call()?;
+/// 从 `tole` 摘掉一格；没挂过即无事。
+pub fn detach(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
+    let r = ToleCall::Detach { tole, pie, dir }.call()?;
     match r {
-        PieCallRet::Seal(()) => Ok(()),
+        ToleCallRet::Detach(()) => Ok(()),
         _ => unreachable!(),
     }
 }
 
-/// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）。
+/// 等到组里任意一格有事：`(哪一枚, 哪个方向)`；`millis` 三态同全树。
 ///
-/// 返回的是句柄而非裸数：它要经线形送到对方、再由对方 `from_token` 重建——
-/// 全程一个 `PieToken`，中途不化成 `usize` 便不会与别的 id 混。
-pub fn accord(src: PieToken, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
-    let r = PieCall::Accord { src, dst, subset }.call()?;
+/// `PieToken::NONE` = 没等到（或挂起过——见 `env::fid` 的 `ToleCall::Await`）。
+/// 这一格是**裸函数层**：把"没等到"翻成 `Option` 的是 `crate::core::pile::Pile`。
+pub fn await_(tole: PieToken, millis: usize) -> EnvResult<(PieToken, HoleDir)> {
+    let r = ToleCall::Await { tole, millis }.call()?;
     match r {
-        PieCallRet::Accord(tk) => Ok(tk),
+        ToleCallRet::Await(pair) => Ok(pair),
         _ => unreachable!(),
     }
 }
 
-/// 收窄本 pie 权限（就地改写；Pole 同步降页表）。
-pub fn narrow(token: PieToken, subset: env::Permission) -> EnvResult<()> {
-    let r = PieCall::Narrow {
-        token: token,
-        subset,
-    }
-    .call()?;
-    match r {
-        PieCallRet::Narrow(()) => Ok(()),
-        _ => unreachable!(),
-    }
-}
+// ── 四种资源的用户态句柄 ──────────────────────────────────────────────────
 
-/// 收回我授给 `dst` 的副本（含其全部后代）。
+/// Hole 门闩用户态句柄——**数据面那一枚**。
 ///
-/// `at_dst` = 该副本在**对端表里**的句柄（[`accord`] 的返回值，经线形送达）——
-/// **不是我这边的 token**。鉴权 = 「这枚的 `sire` 在我表里」＝「它是我授出的」。
-pub fn revoke(dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
-    let r = PieCall::Revoke { dst, token: at_dst }.call()?;
-    match r {
-        PieCallRet::Revoke(()) => Ok(()),
-        _ => unreachable!(),
-    }
-}
-
-/// 收拢：本任务权限表第 `index` 份（token + permission + vestor）。
-/// 越界 → `(0, 空权限, 0)`——哨兵不报错。
-///
-/// **唯一的枚举手段**：`protocol::startup::moor()` 靠它发现「父域授给我的那枚门闩」。
-/// 已知句柄求事实用 [`reserve`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
-/// 与 `UnitCall::SelfId` 的"无上下文也是 0"是**同一条哨兵口径**（0 = 这一格没有答案）。
-pub fn collect(index: usize) -> EnvResult<(PieToken, env::Permission, TaskId)> {
-    let r = PieCall::Collect { index }.call()?;
-    match r {
-        PieCallRet::Collect(r) => Ok(r),
-        _ => unreachable!(),
-    }
-}
-
-/// 本端这张权限表里现在有几枚门闩（[`collect`] 一路走到越界哨兵）。
-///
-/// **给人看的读数，不是给判据用的机制**：它自己不改任何东西。用途只有一个——把"该放下的
-/// 放了没有"变成**可量**的一格（少放一枚，这一格当场大 1，见
-/// `programs/src/driver/router/main.rs` 的 `drop_lane` 与 `harness/src/lodger/main.rs`）。
-pub fn table_size() -> usize {
-    let mut n = 0usize;
-    loop {
-        let Ok((token, _perm, _vestor)) = collect(n) else {
-            return n;
-        };
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return n;
-        }
-        n += 1;
-    }
-}
-
-/// 查询：我持有的这枚门闩——`(vestor, owner, 记号)`。
-///
-/// `vestor` = 这枚门闩谁授的（转手即改写）；`owner` = 这扇门谁开的（副本共享同一
-/// 事实）；**记号** = **这条路的名字**（[`unseal_hole`] 刻的那一格，副本共享同一
-/// 事实）。求「对端是谁」一律用 `owner`：root 转发过的门闩，`vestor` 会变成 root。
-///
-/// 记号收在**栈上 [`NAME_LEN`](env::NAME_LEN) 字节**的缓冲里（不分配），由同一次调用
-/// **一格返回**（不再有"先问长度、再备缓冲"那一趟）。这一枚不是孔（记号只长在孔上）、
-/// 或表里没有它 ⇒ `Denied`；**资源已封印 ⇒ `Dead`(-2)**——`owner` 那一格带存活闸
-/// （见 `env::fid` 的 `Reserve`），故"这一枚答不出"有两个码，别只接 `Denied`。
-pub fn reserve(token: PieToken) -> EnvResult<(TaskId, TaskId, Mark)> {
-    let r = PieCall::Reserve { token }.call()?;
-    match r {
-        // 打包见 `env::fid` 的 `Reserve`：`a0` = owner 高半 | vestor 低半，`a1` = 记号。
-        PieCallRet::Reserve((pair, mark)) => Ok((
-            TaskId::new(pair & 0xffff_ffff),
-            TaskId::new(pair >> 32),
-            Mark::new(mark as u64),
-        )),
-        _ => unreachable!(),
-    }
-}
-
-/// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
-pub fn release(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Release { token: token }.call()?;
-    match r {
-        PieCallRet::Release(()) => Ok(()),
-        _ => unreachable!(),
-    }
-}
-
-// ── 类型化句柄（编译期区分 Hole / Pole）──
-
-/// 权柄句柄 —— Hole 与 Pole 的**权柄操作同构**，故只写一遍。
-///
-/// 方法集 = `PieCall` 里「实例作用域 ∧ 与资源种类无关」那一类，一一对应，不多不少：
-/// `Seal` / `Narrow` / `Accord` / `Revoke` / `Release`。
-///
-/// 不在本 trait 的，各有其理由：
-/// - **构造**：`unseal*` 产出 `Self`，做不成 `&self` 方法
-/// - **任务作用域**：`Collect`（按 index 枚举我表里的）、`Reserve`（按句柄查来历）
-///   ——它们不作用在「某一个句柄」上
-/// - **资源专属**：`Open`/`Shut`（Pole）、`Push`/`Pull`/`Wait`（Hole）
-/// - **表示层转换**：`from_token` / `token` —— 与 ABI 无关
-///
-/// 镜像内核侧 `gate::AnyPie`（`enum { Hole, Pole }`，提供同一批跨种类方法）：
-/// 同一条「权柄操作与资源种类无关」的知识在两侧各落一次，而不是散成四份。
-pub trait AnyPie {
-    /// 封印资源（**只有资源开辟者**可做）。
-    ///
-    /// 只置死并唤醒等待者，**不摘表项**——持有者仍须 [`release`](AnyPie::release)
-    /// 收尾，否则表项泄漏。故 `release` 与 [`PolePie::shut`] 是**仅有的两处**不过存活闸
-    /// 的操作（ABI 那一侧的两条注记同时写着这一条：`env::fid` 的 `Release` / `Shut`）。
-    fn seal(&self) -> EnvResult<()>;
-
-    /// 收窄本 pie 权限（就地改写，单调；`subset` ⊆ 当前权限）。
-    ///
-    /// Pole 多一条约束：`subset` 须含 FETCH（RISC-V PTE 无 R=0 的合法数据叶子），
-    /// 且会同步把已映射段降权。Hole 无映射，故无此约束。
-    fn narrow(&self, subset: env::Permission) -> EnvResult<()>;
-
-    /// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）——
-    /// 对方用 `from_token(at_dst)` 重建。
-    fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken>;
-
-    /// 收回我授给 `dst` 的副本（含其全部后代，幂等）。
-    ///
-    /// `at_dst` = 该副本在**对端表里**的句柄（[`accord`](AnyPie::accord) 的返回值，
-    /// 经线形送达）——**不是我这边的 token**。鉴权 = 「这枚的 `sire` 在我表里」。
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()>;
-
-    /// 放下我这一份（含其全部后代；Pole 同步撤映射）。资源本身不动——封印用
-    /// [`seal`](AnyPie::seal)。不需要任何权限位。
-    fn release(&self) -> EnvResult<()>;
-}
-
-/// Hole 门闩用户态句柄。
+/// 它的权柄面不在这里：`Seal` / `Narrow` / `Accord` / `Revoke` / `Release` 由 `pie.rs`
+/// 的 [`AnyPie`] impl 提供（见本文件头注）。这里只有构造与数据面。
 pub struct HolePie {
     token: PieToken,
 }
@@ -330,7 +188,7 @@ impl HolePie {
     /// 解封 Hole：**记号必填**（`mark` = 这枚孔干什么用的，见 [`unseal_hole`]）。
     pub fn unseal(mark: Mark) -> EnvResult<Self> {
         Ok(Self {
-            token: unseal_hole(mark)?,
+            token: super::pie::unseal_hole(mark)?,
         })
     }
 
@@ -435,78 +293,15 @@ impl HolePie {
     }
 }
 
-impl AnyPie for NolePie {
-    fn seal(&self) -> EnvResult<()> {
-        seal(self.token)
-    }
-
-    fn narrow(&self, subset: env::Permission) -> EnvResult<()> {
-        narrow(self.token, subset)
-    }
-
-    fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
-        accord(self.token, dst, subset)
-    }
-
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
-        revoke(dst, at_dst)
-    }
-
-    fn release(&self) -> EnvResult<()> {
-        release(self.token)
-    }
-}
-
-impl AnyPie for PolePie {
-    fn seal(&self) -> EnvResult<()> {
-        seal(self.token)
-    }
-
-    fn narrow(&self, subset: env::Permission) -> EnvResult<()> {
-        narrow(self.token, subset)
-    }
-
-    fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
-        accord(self.token, dst, subset)
-    }
-
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
-        revoke(dst, at_dst)
-    }
-
-    fn release(&self) -> EnvResult<()> {
-        release(self.token)
-    }
-}
-
-impl AnyPie for HolePie {
-    fn seal(&self) -> EnvResult<()> {
-        seal(self.token)
-    }
-
-    fn narrow(&self, subset: env::Permission) -> EnvResult<()> {
-        narrow(self.token, subset)
-    }
-
-    fn accord(&self, dst: TaskId, subset: env::Permission) -> EnvResult<PieToken> {
-        accord(self.token, dst, subset)
-    }
-
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
-        revoke(dst, at_dst)
-    }
-
-    fn release(&self) -> EnvResult<()> {
-        release(self.token)
-    }
-}
-
-/// Nole 门闩用户态句柄——**三种句柄里唯一没有自己那一套动词的那种**（它只有构造与
-/// [`AnyPie`] 那一套；`HolePie` 多数据面、`PolePie` 多页视图）。
+/// Nole 门闩用户态句柄——**门铃**：四枚句柄里唯一没有自己那一套动词的那种（它只有构造与
+/// [`AnyPie`] 那一套；`HolePie` 多数据面、`PolePie` 多页视图、`TolePie` 多挂摘等）。
 ///
 /// 它没有 `push`/`pull`（那是 Hole 的数据面）、没有 `open`/`shut`（那是 Pole 的
 /// 页视图）。它能做的只有 [`AnyPie`] 那一套（`accord`/`narrow`/`revoke`/`release`
 /// /`seal`）——因为它的全部内容就是"我持有这一枚"。
+///
+/// **听与应不在这枚类型上**：`Bell::wait` / `Bell::hush` 就是裸函数 [`wait`] / [`hush`]
+/// 那两句（见 `crate::core::bell`）——铃只有一条方向，故不另开名字。
 pub struct NolePie {
     token: PieToken,
 }
@@ -529,7 +324,7 @@ impl NolePie {
     }
 }
 
-/// Pole 门闩用户态句柄。
+/// Pole 门闩用户态句柄——**页视图那一枚**。
 pub struct PolePie {
     token: PieToken,
 }
@@ -563,5 +358,70 @@ impl PolePie {
 
     pub fn token(&self) -> PieToken {
         self.token
+    }
+}
+
+/// 组的用户态句柄（与 [`HolePie`] 同款：只持一枚号，资源实体在内核）。
+///
+/// 方法集 = 这一个对象上能做的三件事（`unseal` 是**构造**，做不成 `&self` 方法）。
+pub struct TolePie {
+    token: PieToken,
+}
+
+impl TolePie {
+    /// 造一个空组（种类见 [`unseal`]）。
+    pub fn unseal(shared: bool) -> EnvResult<Self> {
+        Ok(Self {
+            token: unseal(shared)?,
+        })
+    }
+
+    /// 由 token 重建句柄（用于接收 accord 来的组）。
+    pub fn from_token(token: PieToken) -> Self {
+        Self { token }
+    }
+
+    /// 把一枚成员的一个方向挂进来。
+    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        attach(self.token, mate.token(), dir)
+    }
+
+    /// 摘掉一格。
+    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+        detach(self.token, mate.token(), dir)
+    }
+
+    /// 等到任意一格有事。
+    pub fn await_(&self, millis: usize) -> EnvResult<(PieToken, HoleDir)> {
+        await_(self.token, millis)
+    }
+
+    pub fn token(&self) -> PieToken {
+        self.token
+    }
+}
+
+/// 能当**一格成员**的东西：孔与铃。
+///
+/// 与内核侧 `mail::tole::Mate` 是同一条边界：页不进组（没有"有事"这回事），组也不
+/// 进组（没有位，判据会变成沿图的递归）。用一个 trait 而不是收 `PieToken`，是为了
+/// 让"能挂什么"在编译期就说得清。
+///
+/// `token` 不在 [`AnyPie`] 里（那一位是"表示层转换，与 ABI 无关"）；
+/// 本 trait 的存在理由正是要那个号，故它自带一支。
+pub trait Mate {
+    /// 本成员在**我这张表**里的号。
+    fn token(&self) -> PieToken;
+}
+
+impl Mate for HolePie {
+    fn token(&self) -> PieToken {
+        HolePie::token(self)
+    }
+}
+
+impl Mate for NolePie {
+    fn token(&self) -> PieToken {
+        NolePie::token(self)
     }
 }

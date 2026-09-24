@@ -82,7 +82,7 @@ use alloc::format;
 use env::PieToken;
 use env::ProgramKind;
 use env::TaskId;
-use runtime::core::tole::Tole;
+use runtime::core::pile::Pile;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::room;
@@ -103,8 +103,8 @@ fn main() -> Reason {
     let Some((elf, kind)) = find(&boot, WAITER) else { return die("group: waiter not in manifest") };
 
     // ① 组：**共享**（不带 `ONLY` ⇒ 同一枚 accord 给两个任务都成立）。
-    let Ok(tole) = Tole::unseal(true) else { return die("group: unseal shared") };
-    let group = tole.token();
+    let Ok(pile) = Pile::unseal(true) else { return die("group: unseal shared") };
+    let group = pile.token();
     // ② 成员：一枚孔（用户态铸的孔不带 `ONLY` ⇒ 也可复制）。
     let Ok(member) = mail::unseal_hole(Mark::of("member")) else { return die("group: member hole") };
     let member = HolePie::from_token(member);
@@ -205,7 +205,7 @@ fn pull_byte(tok: PieToken) -> Option<u8> {
 /// **`subset` 必须带 `ONLY`**：源枚带 `ONLY` 而 subset 不带，正是 `form_ok` 要拒的
 /// "想复制一枚独占资源"（第一版就栽在这一格，见头注的照实记）。带上它才是**移交**。
 fn sole_refused(dst: TaskId) -> bool {
-    let Ok(sole) = Tole::unseal(false) else {
+    let Ok(sole) = Pile::unseal(false) else {
         return false;
     };
     let grant = env::Permission::FETCH

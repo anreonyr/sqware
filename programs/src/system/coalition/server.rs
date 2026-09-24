@@ -33,7 +33,7 @@ use protocol::session::call as scall;
 use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
 use runtime::core::port::{self, Access, Policy};
-use runtime::core::tole::Tole;
+use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::room;
 use runtime::PAGE_SIZE;
@@ -107,11 +107,11 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     let mut book = Coalition::new();
 
     // 七、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。
-    let Ok(tole) = Tole::unseal(false) else {
+    let Ok(pile) = Pile::unseal(false) else {
         return Err(super::fail::Fail::Desk);
     };
     let entry_hole = HolePie::from_token(entry);
-    if tole.attach(&entry_hole, HoleDir::Pull).is_err() {
+    if pile.attach(&entry_hole, HoleDir::Pull).is_err() {
         return Err(super::fail::Fail::Desk);
     }
 
@@ -123,7 +123,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
-        if tole.await_(usize::MAX).is_err() {
+        if pile.await_(usize::MAX).is_err() {
             return Err(super::fail::Fail::Desk);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。

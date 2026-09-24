@@ -3,7 +3,7 @@
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
 use env::{Mark, Name, ProgramKind, TaskId, TeamId};
-use runtime::core::tole::Tole;
+use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
 
@@ -262,7 +262,7 @@ pub fn find(table: &Table, name: Name) -> Option<&Service> {
 /// （**不 `detach`**：坐标是"上一个实例"，留给重启与放下用）、`oust(team)` 放下那个死域、
 /// 报一行。最后一条（单子最后一条）没了之后，对**仍在跑的**逐个 `stop`（`doom` = 域粒度
 /// `Doom`）——它们的死会再走同一条路回来；在册的每一行都 `Dead` 之后才收场。
-pub fn supervise(table: &mut Table, last: Name, lanes: &[Lane], tole: &Tole) {
+pub fn supervise(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
     // 死亡道那一格：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
     // 不按"这条路上平常走几个字节"备）。一枚更长的推落进道里时，1 字节的读法取不出也丢不掉，
     // 那一位的死就永远记不上账。备不下 ⇒ 报一句就交给退场时的级联（那条路本来就是可靠收场
@@ -275,9 +275,9 @@ pub fn supervise(table: &mut Table, last: Name, lanes: &[Lane], tole: &Tole) {
     lane_buf.resize(runtime::PAGE_SIZE, 0);
     let mut stopping = false;
     loop {
-        // 等任一条道响。**`Tole` 的既定用法**（板那一轮同款）：**挂起过的那一侧返回的是
+        // 等任一条道响。**`Pile` 的既定用法**（板那一轮同款）：**挂起过的那一侧返回的是
         // 预置值**——内核没有第二次执行机会，故醒来必须自己按组复核，不能靠返回值拿身份。
-        if tole.await_(usize::MAX).is_err() {
+        if pile.await_(usize::MAX).is_err() {
             // 组坏了：退回"等最后一条退场"，行为与改动前一致。
             crate::service::wait_last(table, last);
             return;

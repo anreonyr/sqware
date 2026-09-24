@@ -1,14 +1,24 @@
 //! envcall·wire — 环境调用载荷的字段 ↔ usize 契约（pack 与校验式 unpack）。
 //!
 //! 本文件 = **契约核心**：[`Wire`] trait、[`Decode`] 失败域、基元与权限位的 impl。
-//! 字段**词汇表**按语义分居三个子模块（本文件 re-export，故 `env::wire::X` 路径不变）：
-//!   - [`handle`] —— 语义句柄（PieToken / TaskId / TeamId / VirtAddr）；
+//! 字段**词汇表**按语义分居九个子模块（**声明次序即下表次序**，与下面的 `pub use` 同名）：
+//!   - [`access`] —— **两族视图**（[`Access`] 对端能做什么 / [`Policy`] 这一枚能怎么流动）；
+//!   - [`args`] —— 引导线程的启动参数（boot → root 的入口账；**五个裸常量**）；
 //!   - [`frompair`] —— 内核回写的 `(a0, a1)` → 域 Ret 载荷蒸馏；
-//!   - [`name`] —— 定长名字（[`NAME_LEN`] / [`Name`] / [`NameError`]）；
+//!   - [`handle`] —— 语义句柄（[`PieToken`] / [`TaskId`] / [`TeamId`] / [`VirtAddr`]）＋ 记号 [`Mark`]；
 //!   - [`key`] —— **坐标**（[`KEY_LEN`] / [`Key`]：区 / 设备树本体 / 门铃）；
+//!   - [`manifest`] —— initrd 清单（boot → root 的程序账，写侧是内核 `build.rs`）；
+//!   - [`name`] —— 定长名字（[`NAME_LEN`] / [`Name`] / [`NameError`]）；
 //!   - [`pair`] —— 配对块（boot → root 的门闩账，定长记录：坐标 + 号）；
-//!   - [`args`] —— 引导线程的启动参数（boot → root 的入口账）；
-//!   - [`manifest`] —— initrd 清单（boot → root 的程序账，写侧是内核 `build.rs`）。
+//!   - [`supply`] —— 供给那一族的词汇（[`Need`] / [`Want`] / [`Kind`] / [`At`]）。
+//!
+//! **re-export 的口径**（"`env::wire::X` 路径不变"这句话不是无条件的）：
+//!   - **可命名的类型**一律在下面 re-export，故 `env::wire::Key` 与 `env::wire::key::Key`
+//!     两条路都在；
+//!   - [`args`] 是**唯一**不 re-export 的子模块：它只有五个裸常量（`VIEW` / `VIEW_LEN` /
+//!     `PAIRS` / `COUNT` / `LEN`），平铺到 `env::wire` 根上只会让 `VIEW`、`COUNT` 这种名字
+//!     离开它们的上下文。故它的路径恒是 `env::wire::args::X`（读侧：`kernel/src/boot.rs`、
+//!     `programs/src/root/boot.rs`）。
 //!
 //! 这是方案 3（typed payload）的**唯一类型擦除点**：每个字段类型都实现 [`Wire`]，
 //! 由 [`derive(Envcall)`](envmacros) 生成的 codec 自动接线，用户侧与内核侧不再手写
@@ -25,8 +35,8 @@ pub mod handle;
 pub mod key;
 pub mod manifest;
 pub mod name;
-pub mod supply;
 pub mod pair;
+pub mod supply;
 
 pub use access::{Access, Policy};
 pub use frompair::FromPair;
@@ -34,6 +44,7 @@ pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 pub use key::{KEY_LEN, Key};
 pub use name::{NAME_LEN, Name, NameError};
 pub use pair::{PAIR_LEN, Pair};
+pub use supply::{At, Kind, Need, Want, class_block};
 
 /// 字段 ↔ usize 的契约。
 pub trait Wire: Sized {

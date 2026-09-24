@@ -25,7 +25,7 @@
 //! # 为什么是一枚线程（从前是两枚）
 //!
 //! 本域有三件事要等：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**——一只组
-//! （`Tole`）就能同时等这几样，故合并本来就没有机制上的障碍（从前分两枚只是分工上的选择）。
+//! （`Pile`）就能同时等这几样，故合并本来就没有机制上的障碍（从前分两枚只是分工上的选择）。
 //!
 //! **真正把它定下来的是一条类型事实**：`PieToken` 是"**我这张表**里的第几个"⇒ 同一个域里
 //! 两枚线程各有一张表、号过不了线。线那一面**两端都得在本线程手里**——客户往门里推，本域
@@ -129,7 +129,7 @@ use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
 use runtime::core::bell::Bell;
 use runtime::core::dock::Dock;
-use runtime::core::tole::Tole;
+use runtime::core::pile::Pile;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::mail::{HolePie, NolePie, PolePie};
@@ -199,12 +199,12 @@ fn main() -> Result<(), fail::Fail> {
     // 等三个源：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**（每登记一条线
     // 就把那位客户的泊位挂进来，见 `desk_face`）。一只组同时等这三样——三件都是事件，
     // 故等待**没有期限**（见 `main` 里那一注）：会丢的那一次铃已在根上修掉。
-    let tole = Tole::unseal(false).map_err(|_| fail::Fail::Bell)?;
+    let pile = Pile::unseal(false).map_err(|_| fail::Fail::Bell)?;
     let entry_hole = HolePie::from_token(entry);
-    if tole
+    if pile
         .attach(&NolePie::from_token(bell_pie.token()), HoleDir::Pull)
         .is_err()
-        || tole.attach(&entry_hole, HoleDir::Pull).is_err()
+        || pile.attach(&entry_hole, HoleDir::Pull).is_err()
     {
         return Err(fail::Fail::Bell);
     }
@@ -224,7 +224,7 @@ fn main() -> Result<(), fail::Fail> {
         // 根本没响（见 `kernel/src/work/room/scheduler/core/fetch.rs` 的空闲循环）。根修在
         // 那里，`SEIP` 能挂的那两条长驻态各有振铃点之后这一拍就是多余的：铃一定响，
         // 醒来 `claim`+`hush` 即到。
-        match tole.await_(usize::MAX) {
+        match pile.await_(usize::MAX) {
             Ok(Some(_)) => {}
             // 挂起过（不是期限）：照样往下走一遍——`claim` 领到空就什么也不做。
             Ok(None) => {}
@@ -234,14 +234,14 @@ fn main() -> Result<(), fail::Fail> {
         }
         // 逐客：**每次醒来扫一遍有主的那些条**——主人没了就拆线 + 空出格子。放在最前：
         // 那一格收掉之后再取排空、再登记，账里就只剩还活着的客人。
-        sweep(&mut lines, &plic, &tole);
+        sweep(&mut lines, &plic, &pile);
         // 排空：客人说一句"这一条我排空了" ⇒ 那一格回闲 + **把线放回去**（事件，不是节拍）。
         // **先取排空，再登记**：登记会把新的一条线接上，紧接着到来的那一枚中断才不漏。
         drain_exhaust(&mut lines, &plic, &mut buf);
         // 门上：非阻塞地把槽里的都取走（登记）。缓冲是**一页**（载体的界，见 `Push` 的前置
         // 条件）——于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
         while let Ok((n, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
-            desk_face(&mut lines, &plic, &sources, from, &buf[..n], &tole);
+            desk_face(&mut lines, &plic, &sources, from, &buf[..n], &pile);
         }
         // 铃：**领到空**——不按 `bell.wait(0)` 的返回值判。那一位是**中断闸门的账**
         // （响着 ⇒ 本 hart 的 `SEIE` 关着），而组那一次等待会与它互相消费 ⇒ 按返回值
@@ -322,7 +322,7 @@ fn drain_exhaust(lines: &mut Lines, plic: &Plic, buf: &mut [u8]) {
 ///
 /// 两个后果缺一不可：不 `unwire` 则线还在本 context 里（电平挂着 ⇒ 白报），不 `detach` 则
 /// 那一格永远留在组里（对端没了 ⇒ 每次都当场就绪）。
-fn sweep(lines: &mut Lines, plic: &Plic, tole: &Tole) {
+fn sweep(lines: &mut Lines, plic: &Plic, pile: &Pile) {
     let held: alloc::vec::Vec<u32> = lines.held().collect();
     for line in held {
         let Some(lane) = lines.lane(line) else {
@@ -332,7 +332,7 @@ fn sweep(lines: &mut Lines, plic: &Plic, tole: &Tole) {
             continue;
         }
         plic.unwire(line);
-        let _ = tole.detach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
+        let _ = pile.detach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
         let _ = lines.vacate(line);
         say(&alloc::format!("router: vacate line={line}"));
     }
@@ -378,7 +378,7 @@ fn desk_face(
     sources: &Sources,
     from: TaskId,
     frame: &[u8],
-    tole: &Tole,
+    pile: &Pile,
 ) {
     if let Some(key) = lcall::unpack_occupy(frame) {
         let code = match sources.line_of(key) {
@@ -397,7 +397,7 @@ fn desk_face(
                             // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `drain_exhaust`）。
                             if let Some(lane) = lines.lane(line) {
                                 let _ =
-                                    tole.attach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
+                                    pile.attach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
                             }
                             // 名字只为日志：**当场从树里读**（装不下就打 `?`）。
                             say(&alloc::format!(

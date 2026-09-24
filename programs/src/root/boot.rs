@@ -19,7 +19,7 @@ pub struct Root {
 impl Root {
     /// 从启动参数取出两块账。`None` = 参数不足 / 清单头非法（不该发生）。
     pub fn take() -> Option<Root> {
-        let a = runtime::env::unit::args();
+        let a = runtime::core::unit::args();
         if a.len() < boot_args::LEN {
             return None;
         }

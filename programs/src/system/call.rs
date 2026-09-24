@@ -27,7 +27,7 @@ pub(super) fn build(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
 
 /// 产一枚线程（未放行）：`entry = 0` ⇒ 走域默认入口。
 ///
-/// `args` 是 `Spawn` 的那一格（内核拷到新任务栈顶，子方用 `runtime::env::unit::args()` 读）。
+/// `args` 是 `Spawn` 的那一格（内核拷到新任务栈顶，子方用 `runtime::core::unit::args()` 读）。
 /// 今天只有一处非空：iii 的三枚内件用**同一个入口**、靠这一格分派角色（[`crate::service::Role`]）。
 pub(super) fn spawn(team: TeamId, args: &[usize]) -> Result<TaskId, Fail> {
     unit::spawn(team, 0, args, 0).map_err(fail)

@@ -25,8 +25,10 @@ pub fn starve() -> EnvResult<()> {
 /// `programs/src/entry.rs` 的 panic handler 在栈上拼好（`file:line` 是编译器塞进只读段
 /// 的字面量，不需要符号表）。
 ///
-/// 名与形状照 `std::process::exit(code)`，第二个参数就是本仓加的那句话；**合并前**
-/// 合并前这里是三个函数（`exit` / `exit_with` / `exit_with_note`），note 那个是前两者的下半。
+/// 名与形状照 `std::process::exit(code)`，第二个参数就是本仓加的那句话。
+///
+/// **照实记（合并前）**：这里是三个函数（`exit` / `exit_with` / `exit_with_note`），
+/// note 那个是前两者的下半。
 pub fn exit(reason: Reason, note: Option<&str>) -> ! {
     let note = note.unwrap_or("");
     let _ = RoomCall::Reap {

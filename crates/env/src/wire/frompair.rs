@@ -22,8 +22,18 @@
 //! 取值一处也没有（全树没有 `impl FromPair for u8` 一类），故下面每一处 `from_pair`
 //! 都不校验。有契约依据的取值（如 `(PieToken, Permission, TaskId)` 从 v1 取位）不设防，
 //! 因为那个截断**就是**那条契约本身。
+//!
+//! **照实记（清掉的三处）**：本文件原先有两处 impl 自述"当前 ABI 无调用者…留着备复用"
+//! ——`(usize, usize, usize, usize)`（`merge_block` 的四格计数）与 `(TaskId, TaskId)`
+//! （`MailCall::Owned` 的两格打包）。还有第三处**连自述都写反了**：
+//! `(TaskId, TaskId, usize)` 那条注说"`Reserve` 那条才是活的那一格"，而 `Reserve`
+//! 今天标的是 `#[ret((usize, usize))]`（`a0` = owner 高 32 | vestor 低 32、`a1` = 记号），
+//! 故它同样没有调用者。三处一并删：本仓对这类格子的口径是**"机制退了，格也退"**
+//! （见 [`supply`](crate::wire::supply) 头注里 `Kind::Hole` 那一笔），"备复用"不在其中。
 
 use super::{PieToken, TaskId, TeamId, VirtAddr};
+use crate::HoleDir;
+use crate::permission::Permission;
 
 /// 由内核回写的 `(a0, a1)` 还原「域 Ret 载荷」的契约（R3 蒸馏）。
 ///
@@ -51,20 +61,12 @@ impl FromPair for (usize, TaskId) {
     }
 }
 
-/// 历史遗留：`(成功, bound 拒, meta 拒, chain 拒)` 四格计数，两个寄存器各压两个
-/// （32 位足够——只用于诊断，不做精确累加上限语义）。
+/// `Reserve` 的返回：两格**原样**交出——`a0` = owner 高 32 位 | vestor 低 32 位、
+/// `a1` = **整一枚记号**（打包口径的唯一真相在 `env::fid` 的 `Reserve` 那一格的注里）。
 ///
-/// **当前 ABI 无调用者**：`fid.rs` 里没有哪条 `#[ret(...)]` 是这个四元组；`merge_block`
-/// 是内核内存分配器内部的一手，不经 envcall 回来。留着备复用。
-impl FromPair for (usize, usize, usize, usize) {
-    fn from_pair(v0: usize, v1: usize) -> Self {
-        (v0 & 0xffff_ffff, v0 >> 32, v1 & 0xffff_ffff, v1 >> 32)
-    }
-}
-
-/// 历史遗留：`(pagemeta 在手帧数 = 真相, freelist 走链帧数 = 待审计)` 的两格探针。
-///
-/// 调用者：`PieCall::Reserve`（`a0` = owner 高半 | vestor 低半，`a1` = 整一枚记号）。
+/// 本层**不拆**：拆法属于调用点（`runtime::env::mail::reserve`），同一对寄存器不许有两种
+/// 解释——从前这条注写的是"`(pagemeta 在手帧数, freelist 走链帧数)` 的历史遗留"，
+/// 那是它换用途之前的读者，早已不成立。
 impl FromPair for (usize, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (v0, v1)
@@ -99,55 +101,32 @@ impl FromPair for (PieToken, PieToken) {
 /// `ToleCall::Await` 的返回：`v0` = 哪一枚（`0` = 没等到/没认出），`v1` = 哪个方向。
 ///
 /// 方向只占低位两态：`0` = `Pull`、`1` = `Push`（与 `HoleDir` 的声明顺序同源）。
-impl FromPair for (PieToken, crate::HoleDir) {
+impl FromPair for (PieToken, HoleDir) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (
             PieToken::new(v0),
             if v1 == 1 {
-                crate::HoleDir::Push
+                HoleDir::Push
             } else {
-                crate::HoleDir::Pull
+                HoleDir::Pull
             },
         )
     }
 }
 
-impl FromPair for (PieToken, crate::permission::Permission) {
+impl FromPair for (PieToken, Permission) {
     fn from_pair(v0: usize, v1: usize) -> Self {
-        (
-            PieToken::new(v0),
-            crate::permission::Permission::from_bits_truncate(v1 as u32),
-        )
+        (PieToken::new(v0), Permission::from_bits_truncate(v1 as u32))
     }
 }
 
 /// Collect 返回值打包：v0 = token（usize），v1 低 32 位 = permission bits、v1 高 32 位 = vestor task id。
 /// vestor = None 由内核编码为 `TaskId(0)`（哨兵与原 vestor=None 语义一致）。
-impl FromPair for (PieToken, crate::permission::Permission, TaskId) {
+impl FromPair for (PieToken, Permission, TaskId) {
     fn from_pair(v0: usize, v1: usize) -> Self {
-        let permission = crate::permission::Permission::from_bits_truncate(v1 as u32);
+        let permission = Permission::from_bits_truncate(v1 as u32);
         let vestor = TaskId(v1 >> 32);
         (PieToken::new(v0), permission, vestor)
-    }
-}
-
-/// 历史遗留：`(vestor = 授与人, owner = 资源开辟者)` 的两格打包。
-///
-/// **当前 ABI 无调用者**——`MailCall` 没有 `Owned` 这一变体，`fid.rs` 里也没有
-/// `#[ret((TaskId, TaskId))]` 的调用；`(TaskId, TaskId, usize)` 那条（`Reserve`）才是
-/// 活的那一格。留着备复用。
-impl FromPair for (TaskId, TaskId) {
-    fn from_pair(v0: usize, v1: usize) -> Self {
-        (TaskId(v0), TaskId(v1))
-    }
-}
-
-/// `Reserve` 返回值打包：v0 = vestor（谁授的）、v1 低 32 位 = owner（资源谁开的）、
-/// v1 高 32 位 = **记号长度**（同 `(PieToken, Permission, TaskId)` 的打包法：第三格进
-/// 高半、第二格留低半）。记号内容不在寄存器里——它经 `mark` 那一段缓冲拷出。
-impl FromPair for (TaskId, TaskId, usize) {
-    fn from_pair(v0: usize, v1: usize) -> Self {
-        (TaskId(v0), TaskId(v1 & 0xffff_ffff), v1 >> 32)
     }
 }
 

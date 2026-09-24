@@ -404,17 +404,21 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
 }
 
 /// 查这枚门闩的来历：`vestor`（谁授的，转手即改写）+ `owner`（资源谁开的，任何
-/// 副本共享同一事实）+ **记号**（拷进调用方那段缓冲）。**不过存活闸**：`owner` 随资源
+/// 副本共享同一事实）+ **记号**（随副本过线的那一枚数）。**不过存活闸**：`owner` 随资源
 /// 不变，封印不使它消失。
 ///
-/// a0 = vestor（无 → 0），a1 = 记号长度（高 32）| owner（低 32）；记号的内容经
-/// `buf`/`cap` 那一段拷出，**只拷内容那一段**（尾随填充不上线）。
+/// **打包**（与用户侧 `runtime::env::mail::reserve` 逐位对齐，口径的唯一真相在
+/// `env::fid` 的 `Reserve`）：`a0` = owner（高 32 位）| vestor（低 32 位）、`a1` = **整一枚
+/// 记号**。`a0` 是"成 / 不成"那一格（用户态按它的**符号**读 `EnvError`），故它只放两枚
+/// 小号；记号整枚放 `a1`。
 ///
-/// 契约同 `MailCall::Pull` 的"**要么全取、要么一个字节都不动**"：装不下（长度 > `cap`）
-/// 先拒，`copy_out` 自己也是整段验完才写。表里无此 token → `Denied`。
+/// **照实记（这两段正文过期过）**：这里从前写着"`a0` = vestor、`a1` = 记号长度（高 32）|
+/// owner（低 32），记号经 `buf`/`cap` 那一段拷出"——那是记号还要**另一趟拷贝**的时代；
+/// 记号改成随返回值一格交出之后，`buf`/`cap` 两个参数整个没了，而旧正文的末句
+/// （"记号一格返回"）与它上面那句自相矛盾，正是那一刀没改全留下的痕迹。
 ///
-/// **记号只长在孔上**：别的资源（Pole/Nole/Tole）问不到它 ⇒ `Denied`——问不到就是
-/// "这一条候选不成立"，不假装有一格空记号。记号**一格返回**（不再拷出、不再要用户备缓冲）。
+/// 表里无此 token → `Denied`。**记号只长在孔上**：别的资源（Pole/Nole/Tole）问不到它
+/// ⇒ `Denied`——问不到就是"这一条候选不成立"，不假装有一格空记号。
 fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outcome {
     let r = (|| -> Result<(TaskId, TaskId, usize), Fail> {
         let task = current().running_task().ok_or(Fail::Denied)?;

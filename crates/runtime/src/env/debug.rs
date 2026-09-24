@@ -1,9 +1,17 @@
-//! Debug 域：`DebugCall::*` 转发（借内核的 DBCN 打印/读入）。
+//! Debug 域（class 8）：`DebugCall::*` 转发（借内核的 DBCN 打印/读入）。
 //!
 //! 它们是"服务还没起来的嘴"，不是一条新的控制台通路——生产里域打印仍归 console 服务
 //! （纪律，不是编译期的事：见 `env::fid::DebugCall` 那条"不设构建门"的理由）。
 //!
 //! 每一个函数封一次 envcall，零逻辑，与 `env::chrono`/`env::room` 同形。
+//!
+//! **照实记（删掉的本地那一半）**：本文件原先还有一个**域自己的**对账开关——`TRACE`
+//! 静态 + `tracing()` / `set_local()` 一对读写着，外加把它打出来的 `hexdump()`。
+//! 读它的那一处（`runtime::core::port::Port::call`）早已随"编帧解帧搬去各协议"而消失，
+//! 故 `tracing()` 与 `hexdump()` **零调用者**（内核侧 `envcall/mod.rs` 也记着这一句：
+//! "用户侧那份 `env::debug::tracing()` 因此闲置"），而 `set_local` 只为被它们读而活着
+//! ——整条账一并删。**`DebugCall::SetTrace` 那一格不动**：内核那一侧的对账仍由它开关，
+//! 只是域不再替自己记一份"要不要打"。
 
 use env::{DBCN_MAX, DebugCall, DebugCallRet, EnvResult};
 
@@ -45,47 +53,9 @@ pub fn get(buf: &mut [u8]) -> EnvResult<usize> {
 /// 为什么留在 ABI 上而不是编译期开关：布局错位只有**真实字节**能证，而这类病一旦出现
 /// 就要能在**同一个产物**上打开对账再跑一遍。
 pub fn trace(on: bool) -> EnvResult<()> {
-    set_local(on);
     let call = DebugCall::SetTrace { on: on as usize };
     match call.call()? {
         DebugCallRet::SetTrace(()) => Ok(()),
         _ => unreachable!(),
     }
 }
-
-static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-/// 本域的对账开关。域是独立地址空间，这份静态因此**每域一份**：内核那份只由 envcall
-/// 打开，而"哪个域要打"是调用方在 `trace()` 里当场决定的。
-///
-/// **今天零读者**：原先读它的是 `Port::call`，那一层已搬去各协议。
-pub fn tracing() -> bool {
-    TRACE.load(core::sync::atomic::Ordering::Relaxed)
-}
-
-/// 同 [`trace`]，但只动本地那份（内核侧那份由 envcall 写）。
-pub fn set_local(on: bool) {
-    TRACE.store(on, core::sync::atomic::Ordering::Relaxed);
-}
-
-/// 把一段字节以十六进制打进调试控制台（每行一小段）——**对账用**。
-///
-/// 布局错位这类病的唯一证词就是真实字节；读数形如 `port send: 01 00 ...`。
-pub fn hexdump(tag: &str, bytes: &[u8]) {
-    const LINE: usize = 16;
-    let mut s = alloc::string::String::new();
-    for chunk in bytes.chunks(LINE) {
-        s.clear();
-        s.push_str(tag);
-        s.push_str(": ");
-        for b in chunk {
-            s.push(HEX[(b >> 4) as usize] as char);
-            s.push(HEX[(b & 0xf) as usize] as char);
-            s.push(' ');
-        }
-        s.push('\n');
-        let _ = put(&s);
-    }
-}
-
-const HEX: &[u8; 16] = b"0123456789abcdef";

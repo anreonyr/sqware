@@ -40,12 +40,15 @@
 //! （那条路一度是内核自己的 `panic!`，即"合法退场比非法调用更危险"）。
 //! 本文件是这条契约的**单一真相**：`slot` 的生成与解码都在此处。
 //!
-//! 根除的两处 L3' 漏洞：`Permission`/`PteFlags` 的 unpack 走 `from_bits(...)`
-//! `.ok_or(...)` 校验（见 [`Wire`](crate::wire::Wire)），非法位 → `Err`，不再
-//! `from_bits_truncate` 静默截断。
+//! 根除的两处 L3' 漏洞：**本 crate 这一处**是 `Permission` 的 unpack 走
+//! `from_bits(...).ok_or(...)` 校验（见 [`Wire`](crate::wire::Wire)）；另一处是内核的
+//! `PteFlags`（`kernel/src/runtime/switcher/envcall/mod.rs` 的 `Mprotect` 那一格，
+//! 它不在本 crate 的 `Wire` 面里）。两处都非法位 → `Err`，不再 `from_bits_truncate`
+//! 静默截断。
 
 use envmacros::Envcall;
 
+use crate::permission::Permission;
 use crate::wire::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 
 /// 调度词族调用（class 0；域 = work/room）。
@@ -487,7 +490,7 @@ pub enum PieCall {
     Accord {
         src: PieToken,
         dst: TaskId,
-        subset: crate::permission::Permission,
+        subset: Permission,
     },
     /// 收窄本 pie 权限（就地改写；Pole 同步降页表）：token + subset。
     ///
@@ -498,10 +501,7 @@ pub enum PieCall {
     /// `-1`**——同样的 token 在别的动词上也答 `-2`，答案不该按动词变。这条不是本动词的
     /// 纪律，是共用的取用判据（`gate::locate` + `gate::accede`）的一部分。
     #[ret(())]
-    Narrow {
-        token: PieToken,
-        subset: crate::permission::Permission,
-    },
+    Narrow { token: PieToken, subset: Permission },
     /// 收回授与他人的副本：dst_id + token（`token` = 该副本在**对端表里**的句柄）。
     #[ret(())]
     Revoke { dst: TaskId, token: PieToken },
@@ -510,7 +510,7 @@ pub enum PieCall {
     ///
     /// **唯一的枚举手段**：`protocol::startup::moor()` 靠它发现「父域授给我的那枚门闩」
     /// （未知句柄）。已知句柄求事实用 `Reserve`。
-    #[ret((PieToken, crate::permission::Permission, TaskId))]
+    #[ret((PieToken, Permission, TaskId))]
     Collect { index: usize },
     /// 查这枚门闩的来历：`vestor`（谁授的）+ `owner`（资源谁开的）+ **记号**（第三格）。
     ///
@@ -608,12 +608,6 @@ pub enum ControlCall {
     Backtrace { buf: usize, frames: usize },
 }
 
-/// 环境调用号聚合（内核侧解码总入口）。
-///
-/// `from_wire(slot, regs)` 按 class（高 32 位）分派到各域的 `from_wire`，得到
-/// `PieCall::Seal { .. }` 等带载荷 variant，供 `dispatch` match。用户侧不再构造
-/// 本枚举——直接 `PieCall::X.call()` 发起（R3+B）。
-///
 /// Tole 调用（class 9）—— **多路等待**：一枚"组"的四件事：造、挂、摘、等。
 ///
 /// 与 class 7（权柄轴）的分界：本类不搬许可的生死，只改"这一组我关心哪几枚可等地"
@@ -680,6 +674,11 @@ pub enum ToleCall {
     Await { tole: PieToken, millis: usize },
 }
 
+/// 环境调用号聚合（内核侧解码总入口）。
+///
+/// `from_wire(slot, regs)` 按 class（高 32 位）分派到各域的 `from_wire`，得到
+/// `PieCall::Seal { .. }` 等带载荷 variant，供 `dispatch` match。用户侧不再构造
+/// 本枚举——直接 `PieCall::X.call()` 发起（R3+B）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EnvCall {
     Room(RoomCall),

@@ -40,21 +40,20 @@ use programs::Reason;
 use env::HoleDir;
 use env::Mark;
 use env::PieToken;
-use runtime::core::tole::Tole;
+use runtime::core::pile::Pile;
 use runtime::env::debug;
-use runtime::env::mail::{self, HolePie};
-use runtime::env::tole::TolePie;
+use runtime::env::mail::{self, HolePie, TolePie};
 
 #[programs::entry]
 fn main() -> Reason {
     let (Some(group), Some(member), Some(report)) = discover() else { return bail("waiter: table incomplete") };
 
-    let tole = Tole::new(TolePie::from_token(group));
+    let pile = Pile::new(TolePie::from_token(group));
     let member = HolePie::from_token(member);
     let report = HolePie::from_token(report);
 
     // 挂一格：**一个方向就够**（`Pull` = "有东西可读"）。
-    if tole.attach(&member, HoleDir::Pull).is_err() {
+    if pile.attach(&member, HoleDir::Pull).is_err() {
         return bail("waiter: attach");
     }
     // 先报"已挂"：台主收齐两枚才投信 ⇒ 投信那一刻两人**都在等**（判据成立的前提）。
@@ -75,7 +74,7 @@ fn main() -> Reason {
     // 槽空 ⇒ 那一次只是"快照变了"的提示 ⇒ **继续等**（契约：`await_` 的返回只是提示，
     // 别把一次返回当终局）。
     loop {
-        if tole.await_(usize::MAX).is_err() {
+        if pile.await_(usize::MAX).is_err() {
             return bail("waiter: await");
         }
         match member.peek() {

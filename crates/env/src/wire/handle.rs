@@ -6,6 +6,11 @@
 //!
 //! 与裸 `usize` 的区别只在类型层：把「第几个参数是什么 id」从注释约定变成
 //! 编译期义务（拿 TaskId 当 TeamId 用在编译期即被拦）。
+//!
+//! **那一格是 `pub(crate)`，不是 `pub`**：这五枚类型各自只该有**有名字的门**
+//! （`new` / `mint` / `from_bytes` / `get`），而 `pub` 的元组字段等于给每一枚都开了
+//! 一扇无名门（`TaskId(0)` 与 `TaskId::new(0)` 就分不出哪一种才是本仓的口径）。
+//! `PieToken` 另有第二格（`PhantomData`）挡着，但那是**机制**（`!Send`），不是口径。
 
 use core::marker::PhantomData;
 
@@ -47,7 +52,7 @@ use super::{Decode, Wire};
 /// [`get`]: PieToken::get
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
-pub struct PieToken(pub usize, PhantomData<*const ()>);
+pub struct PieToken(pub(crate) usize, PhantomData<*const ()>);
 
 impl PieToken {
     /// 无效哨兵（0）：内核各处"越界不报错"的既有约定（`Reserve` 的 `TaskId(0)` 同理）。
@@ -114,7 +119,7 @@ impl Wire for PieToken {
 /// 任务句柄（全局唯一 id；0 = 无上下文）。
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
-pub struct TaskId(pub usize);
+pub struct TaskId(pub(crate) usize);
 
 impl TaskId {
     pub const fn new(v: usize) -> Self {
@@ -147,7 +152,7 @@ impl Wire for TaskId {
 /// 转入具体地址语义）。
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
-pub struct VirtAddr(pub usize);
+pub struct VirtAddr(pub(crate) usize);
 
 impl VirtAddr {
     pub const fn new(v: usize) -> Self {
@@ -198,6 +203,11 @@ impl Mark {
     /// 无效哨兵（0）：与 [`PieToken::NONE`] 同一条约定——读的人关心的是"**这枚不是记号**"。
     pub const NONE: Mark = Mark(0);
 
+    /// 记号在**线上**的宽度（8 字节 LE）——"8"这个数在本类型里只此一处（[`Mark::to_bytes`]
+    /// 与 [`Mark::from_bytes`] 的数组长度都从它取）。与 [`PieToken::WIDTH`] 同形：号在线上
+    /// 占多宽是该号自己的事实，不由调用点的 `[u8; 8]` 字面量替它说话。
+    pub const WIDTH: usize = 8;
+
     /// 由裸值造一枚（线上解码面）。
     pub const fn new(raw: u64) -> Mark {
         Mark(raw)
@@ -221,13 +231,13 @@ impl Mark {
         Mark(h)
     }
 
-    /// 线上的那一格（8 字节小端）。
-    pub const fn to_bytes(self) -> [u8; 8] {
+    /// 线上的那一格（[`Mark::WIDTH`] 字节小端）。
+    pub const fn to_bytes(self) -> [u8; Self::WIDTH] {
         self.0.to_le_bytes()
     }
 
     /// 由线上字节还原。
-    pub const fn from_bytes(bytes: [u8; 8]) -> Mark {
+    pub const fn from_bytes(bytes: [u8; Self::WIDTH]) -> Mark {
         Mark(u64::from_le_bytes(bytes))
     }
 }
@@ -247,7 +257,7 @@ impl Wire for Mark {
 /// 团队句柄（域标识；0 = 无效哨兵）。
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
-pub struct TeamId(pub usize);
+pub struct TeamId(pub(crate) usize);
 
 impl TeamId {
     pub const fn new(v: usize) -> Self {

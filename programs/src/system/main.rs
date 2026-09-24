@@ -43,7 +43,7 @@ use protocol::system::board::LANE_PREFIX;
 use protocol::system::desk::Table;
 use runtime::core::dock::Dock;
 use runtime::core::port::{Access, Policy};
-use runtime::core::tole::Tole;
+use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::unit as utask;
 
@@ -135,7 +135,7 @@ fn main() -> programs::Report<'static> {
     //
     // 四种角色**共用一个出口形状**：成败都折成内核那一格（码 + 一句话），故三分支各写一遍
     // 那个 match（不用 `?`：它们的失败类型各自是自己的 `Fail`）。
-    match Role::of_args(utask::args()) {
+    match Role::of_args(runtime::core::unit::args()) {
         Role::System => system(),
         Role::Tree => match operator::server::serve() {
             Ok(()) => programs::Report::new(env::EXIT_OK),
@@ -184,7 +184,7 @@ fn system() -> programs::Report<'static> {
 
     // 3/4. 死亡道：**上板的那几位**一位一条（本域铸、记号 `gone-<名字>`；装配时各交一份给
     //      板线程）。一服务一道 ⇒ **身份就是"哪条道响了"**：两位同时死也不会挤丢；本线程用
-    //      一只**组**等任一道（`Tole`），零轮询。组是**独占**的（`shared = false`）。
+    //      一只**组**等任一道（`Pile`），零轮询。组是**独占**的（`shared = false`）。
     //
     //      **照实记（这一圈原先给名册上每一位都铸）**：写端**只有板有**——`service::start`
     //      那一手只在 `p.board` 时把道转授出去。故 `board: false` 的那几位（试客、探针）
@@ -195,8 +195,8 @@ fn system() -> programs::Report<'static> {
     //      （道按**名字**认领）。乙2 把名字从"客人自己报名"挪到"装配者随提示那一格递"之后，
     //      `p.board = true` 才真的等于"它的死编排域看得见"（此前三枚内件与三台驱动都不报名 ⇒
     //      死了没有读数）。
-    let tole = match Tole::unseal(false) {
-        Ok(tole) => tole,
+    let pile = match Pile::unseal(false) {
+        Ok(pile) => pile,
         Err(_) => return fail(Fail::Group),
     };
     // **名册**：内件三枚在前、镜像里那几台在后（`roster` 那一处给次序）。道**自己带着名字**
@@ -217,7 +217,7 @@ fn system() -> programs::Report<'static> {
             None
         };
         if let Some(road) = road {
-            let _ = tole.attach(&HolePie::from_token(road), HoleDir::Pull);
+            let _ = pile.attach(&HolePie::from_token(road), HoleDir::Pull);
         }
         lanes.push(Lane { name: p.name, road });
     }
@@ -230,7 +230,7 @@ fn system() -> programs::Report<'static> {
     };
 
     // 5/6. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
-    server::supervise(&mut table, last, &lanes, &tole);
+    server::supervise(&mut table, last, &lanes, &pile);
     // 会话的收尾由会话的主人负责：常驻线程是它起的，也是它收的。本域里那枚板线程没有
     // `Join` 可等（`attach` 里弃权了），故按号点名收掉——同域线程之间没有寿命耦合。
     // **等待线程也住本域**，这一刀连它们一起收（域亡 = 成员清零）。

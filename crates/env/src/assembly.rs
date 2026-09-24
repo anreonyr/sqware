@@ -15,7 +15,9 @@
 //! `Died` 原住 `programs::service`——三处现在都是 `pub use` 转发，**调用点一行没改**
 //! （与 `Access`/`Policy` 从 `runtime::core::port` 搬到 `env::wire::access` 是同一条先例）。
 
+use crate::wire::access::{Access, Policy};
 use crate::wire::key::Key;
+use crate::wire::supply::{Kind, Need, class_block};
 use crate::{Permission, PieToken, ProgramKind};
 
 /// **怎么知道它起来了**——每个 Service 自己的一种，**登记时定死**。
@@ -48,8 +50,12 @@ pub type Died = crate::Reason;
 
 // ── 死在装配的哪一步（编号沿用旧树那套小整数）───────────────────────────────
 //
-// **照实记（iii 之后只剩 16 个：内件那三枚随它们那三行搬去 `scenario.rs`）**：这 19 个原住 `programs/src/system/main.rs`，与装配单同源（"哪一台、
-// 死在第几步"），故随表一起搬下来；那里现在 `pub use` 转发。
+// **照实记（iii 之后 16 个；`probe-bound` 那一台上表再添一枚 ⇒ 今天 17 个）**：这批编号原住
+// `programs/src/system/main.rs`，与装配单同源（"哪一台、死在第几步"），故随表一起搬下来；
+// 那里现在 `pub use` 转发。iii 把**内件那三枚**随它们那三行送去了
+// `programs/src/system/inner.rs`（`E_TREE` / `E_PRINCIPAL` / `E_COALITION` = 10 / 14 / 16，
+// 由那一处自己持有）。故下面这几格里有空号（2..4 / 10 / 14 / 16）——**那是旧树的号**
+// （见本节标题），不重排。
 pub const E_BOOT: Died = 1;
 pub const E_ROUTER: Died = 5;
 pub const E_ECHO: Died = 6;
@@ -73,8 +79,6 @@ pub const E_PROBE_BOUND: Died = 23;
 // **照实记（为什么住这里）**：它们本来住在各自的域里（"它是**收方**开的那张单子"），而装配单
 // 要把它们摆出来（`Plan::needs`）⇒ 必须与装配单同层。各域的 `needs.rs` 现在是 `pub use` 转发，
 // **调用点一行没改**，那句"它住在本域里"仍由那一处读得出来。
-use crate::wire::supply::{Kind, Need, class_block};
-use crate::wire::access::{Access, Policy};
 
 /// 线路由者要的那三样：**中断控制器**（按类要）+ **设备树本体 / 门铃**（boot 造的，按已知坐标）。
 pub const ROUTER_WANTS: &[Need] = &[
@@ -247,6 +251,10 @@ pub struct Row {
 /// `spot` 说"这一台是什么"（产品 / 探针 / 压测台），`scenes` 说"这次装不装它"。两者今天**不重合**
 /// ——六位常客的 `spot` 是 [`Spot::Guest`]（它们是产品侧的客人，**不是探针**），却不进 `product` 景。
 /// "真正要发出去的是哪几条"只有一个出处：下面每一行的 `scenes`。
+///
+/// **本表一行一台，`rustfmt` 请绕开**：默认那套会把每台摊成十几行（`Plan` 再嵌一层），
+/// 于是"哪几台进哪张镜像"就没法一眼扫完——而这张表**就是**给人扫的。列宽由人手对齐。
+#[rustfmt::skip]
 pub const ALL: &[Row] = &[
     Row { name: "root", kind: ProgramKind::Supervisor, spot: Spot::Domain, scenes: &["root", "product"], plan: None },
     // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），

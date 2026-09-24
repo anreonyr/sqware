@@ -86,7 +86,7 @@ use protocol::driver::line;
 use protocol::session::Quay;
 use protocol::session::call as scall;
 use runtime::core::dock::{Dock, View};
-use runtime::core::tole::Tole;
+use runtime::core::pile::Pile;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::unit as utask;
@@ -146,11 +146,11 @@ fn main() -> Result<(), fail::Fail> {
     //
     //    两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的。故等待没有期限。
     //    那只组的成员就是那两枚孔（"就绪"挂进组，"取消息"仍走各自那一手）。
-    let tole = Tole::unseal(false).map_err(|_| fail::Fail::Desk)?;
+    let pile = Pile::unseal(false).map_err(|_| fail::Fail::Desk)?;
     let entry_hole = HolePie::from_token(entry);
     let lane = held.hole().map_err(|_| fail::Fail::Line)?;
-    if tole.attach(&entry_hole, HoleDir::Pull).is_err()
-        || tole
+    if pile.attach(&entry_hole, HoleDir::Pull).is_err()
+        || pile
             .attach(&HolePie::from_token(lane), HoleDir::Pull)
             .is_err()
     {
@@ -169,7 +169,7 @@ fn main() -> Result<(), fail::Fail> {
     loop {
         // 等到有事件。非阻塞地把两个源各取干净——**先门后线**：门上的问要就地答，而线那一趟
         // 到点才有的说（次序不承担语义，只省一次绕回）。
-        match tole.await_(usize::MAX) {
+        match pile.await_(usize::MAX) {
             Ok(_) => {}
             Err(_) => return Err(fail::Fail::Desk),
         }

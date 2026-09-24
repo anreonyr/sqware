@@ -6,7 +6,7 @@
 use env::assembly::Eyes;
 use env::{HoleDir, Mark, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
-use runtime::core::tole::Tole;
+use runtime::core::pile::Pile;
 use runtime::env::mail;
 use runtime::PAGE_SIZE;
 
@@ -240,10 +240,10 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     }
     // **一个组**：提示孔 + 每位客人的问话孔。提示孔也挂进来，故"来客人了"与"有人问话"
     // 是**同一个等待**。本线程独享它（`shared = false`）。
-    let Ok(tole) = Tole::unseal(false) else {
+    let Ok(pile) = Pile::unseal(false) else {
         return Err(super::fail::Fail::Group);
     };
-    if tole.attach(&tip_hole, HoleDir::Pull).is_err() {
+    if pile.attach(&tip_hole, HoleDir::Pull).is_err() {
         return Err(super::fail::Fail::Group);
     }
 
@@ -271,10 +271,10 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     buf.resize(PAGE_SIZE, 0);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。
-        let settling = settle(&mut desk, &tole, &tip_hole, &mut coord, &mut session);
+        let settling = settle(&mut desk, &pile, &tip_hole, &mut coord, &mut session);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let millis = if settling { SETTLE_MS } else { usize::MAX };
-        let Ok(Some((tok, _dir))) = tole.await_(millis) else {
+        let Ok(Some((tok, _dir))) = pile.await_(millis) else {
             let _ = desk.sweep();
             continue;
         };
@@ -302,7 +302,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
 fn settle(
     desk: &mut Desk,
-    tole: &Tole,
+    pile: &Pile,
     tip: &mail::HolePie,
     coord: &mut Coord,
     session: &mut Option<Session>,
@@ -381,7 +381,7 @@ fn settle(
         match ask_of(who) {
             Some(ask) => {
                 let hung = desk.arm(slot, ask)
-                    && tole
+                    && pile
                         .attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
                         .is_ok();
                 if !hung {
