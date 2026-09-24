@@ -12,6 +12,7 @@ use runtime::core::unit::{self, Join};
 use runtime::env::mail;
 
 use protocol::session::Quay;
+use protocol::system::board::call as bcall;
 pub use protocol::system::board::{LINK, TIP_MARK, TIP_NAME};
 
 use super::server::host_loop;
@@ -26,6 +27,9 @@ static HOST: AtomicUsize = AtomicUsize::new(0);
 /// `client` = 客人（= 装配者刚起的那一枚线程；iii 之后它可能住**本域**）：**客人交出来的那一枚就落在
 /// 本域表里**（客人把孔交给生我者），而它的 `owner` 正是这位客人——故第 2 步认的是**它**。
 ///
+/// `name` = **装配单上那一位的名字**：它随提示那一格交给板（[`bcall::TIP_LEN`]）——板据此在
+/// `admit` 那一刻就把"谁 → 死亡道"记下（**这一位不必自己报名**，见那一格的照实记）。
+///
 /// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 死亡道转授或递格失败……
 /// 对调用方是同一件事——**这条服务没接上板**——但"死在哪一步"正是装配诊断要的那一格
 /// （与 `service::step` 同款；逐字的因就是函数体里那几处 `map_err` 的字符串）。
@@ -33,6 +37,7 @@ pub fn attach(
     quay: &mut Quay,
     me: TaskId,
     client: TaskId,
+    name: Name,
     millis: usize,
     tip: &mut Option<PieToken>,
     lane: Option<PieToken>,
@@ -64,7 +69,9 @@ pub fn attach(
     // 客人那一侧的一格：**答话的是谁**（板线程的号，8 字节）——与提示孔那一格对偶。
     tell(host, reply).map_err(|_| "board:who")?;
     // 提示在**转授之后**：板据此可以按"提示一到，答话路必已在本表里"办事。
-    tell(client, tip).map_err(|_| "board:tell")
+    // **提示那一格多带一格名字**（号 ＋ 名字）：板据此在 `admit` 那一刻把这一位的死亡道记下，
+    // 不必等它自己报名——见 [`bcall::TIP_LEN`] 的照实记。
+    tell_guest(client, name, tip).map_err(|_| "board:tell")
 }
 
 /// 起板线程（**就一枚**），返它的号；起过了就把那个号给回来。
@@ -88,24 +95,37 @@ fn host(me: TaskId, millis: usize, tip: &mut Option<PieToken>) -> Result<TaskId,
 
     // 认领板线程交回来的那一枚提示孔：本域另开一座码头等它（判据 = `owner == 板线程`
     // **且** 记号 = `tip`——板线程那一枚是它自己铸的，记号就是它的用途名）。
-    // 这条路上只走"客人号"，故本端那一枚交出去也无妨（板线程不用它，也不碍事）。
+    // 这条路上只走"一位新客人"（号 ＋ 名字，见 [`tell_guest`]），故本端那一枚交出去也无妨
+    // （板线程不用它，也不碍事）。
     let slot = Name::new(TIP_NAME).map_err(|_| "board:name")?;
     let mut quay = Quay::open(id);
     quay.seat(slot).map_err(|_| "board:seat")?;
     quay.claim(id, TIP_MARK, millis).map_err(|_| "board:tip")?;
     let pier = quay.find(slot).ok_or("board:tip")?;
-    // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
+    // 交给调用方拿着：同一条路上以后每次都往里推一位新客人（**同一枚线程**用它）。
     *tip = pier.at_peer();
     Ok(id)
 }
 
 /// 把一个号推过去（8 字节，小端）。
 ///
-/// **两处共用这一句**：提示孔那一格（告板"客人是谁"）与板路那一格（告客人"答话的是谁"）。
-/// 两处都是"装配者知道、对方叫不出"的那个号——故 `tell` 只认"推给哪一枚孔"，不认语义。
+/// **一处用**：板路那一格（告客人"答话的是谁"）。提示那一格走 [`tell_guest`]——它多带一格
+/// 名字。两处都是"装配者知道、对方叫不出"的那个号，故 `tell` 只认"推给哪一枚孔"，不认语义。
 pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     let into = mail::HolePie::from_token(into);
     into.push(&(who.get() as u64).to_le_bytes()).map_err(|_| ())
+}
+
+/// 把**一位新客人**推给板：**号（8 字节）＋ 定长名字**（[`bcall::TIP_LEN`]），小端。
+///
+/// **名字为什么从这一格走**：见 [`bcall::TIP_LEN`] 的照实记——道是装配者铸的，名字也在装配
+/// 单里；板据此在 `admit` 那一刻就把"谁 → 道"记下，客人自己不必报名。
+pub(crate) fn tell_guest(who: TaskId, name: Name, into: PieToken) -> Result<(), ()> {
+    let mut rec = [0u8; bcall::TIP_LEN];
+    rec[..8].copy_from_slice(&(who.get() as u64).to_le_bytes());
+    rec[8..].copy_from_slice(name.bytes());
+    let into = mail::HolePie::from_token(into);
+    into.push(&rec).map_err(|_| ())
 }
 
 /// 板路上本端手里那一枚（客人答话路的**写端**）：答话往它推，"答话的是谁"也从它递。

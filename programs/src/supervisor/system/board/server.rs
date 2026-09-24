@@ -7,6 +7,7 @@ use alloc::format;
 use env::Mark;
 
 use env::{HoleDir, Name, PieToken, TaskId};
+use env::wire::NAME_LEN;
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
@@ -66,8 +67,8 @@ pub(crate) fn host_loop(me: TaskId) {
 
     let mut board = bcall::board();
     let mut desk = desk();
-    // `who → 死亡道` 的小表：**在 REGISTER 那一刻**记（那时名字刚到；牌子会被惰性摘掉，
-    // 摘了就认不出这位叫什么了）。见 [`lane_for`] / [`take`]。
+    // `who → 死亡道` 的小表：**在 `admit` 那一刻**记——名字随提示那一格来（[`bcall::TIP_LEN`]），
+    // 而道按名字认领（[`lane_for`]）。见 [`remember_lane`] / [`take_lane`]。
     let mut lanes: Lanes = [(TaskId::new(0), PieToken::NONE); Desk::CAP];
     let mut swept = 0usize;
     // 收帧的那一页：**在循环外备一次**——每次收帧再备就是一份按帧的分配，正是这一刀要把
@@ -81,7 +82,7 @@ pub(crate) fn host_loop(me: TaskId) {
     pad.resize(PAGE_SIZE, 0);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
-        let settling = settle(&mut desk, me, &tole, &tip_hole);
+        let settling = settle(&mut desk, me, &tole, &tip_hole, &mut lanes);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let millis = if settling { SETTLE_MS } else { usize::MAX };
         let Ok(Some((tok, _dir))) = tole.await_(millis) else {
@@ -105,22 +106,37 @@ pub(crate) fn host_loop(me: TaskId) {
 ///
 /// 两件事各有各的来源，故各认各的（判据全是确定的号，没有"猜"）：
 ///
-/// - **提示**：装配者推来的客人号（一个号，8 字节）。**非阻塞地拉**——必须在这里拉，
-///   不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进组**（那一条推
-///   落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它。提示**在转授之后**，
-///   故拉到号就能在同一轮里把答话路认下来（[`reply_of`]）；
+/// - **提示**：装配者推来的一位新客人——**号 ＋ 定长名字**（[`bcall::TIP_LEN`]）。**非阻塞地
+///   拉**——必须在这里拉，不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进
+///   组**（那一条推落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它。提示**在转授
+///   之后**，故拉到就能在同一轮里把答话路认下来（[`reply_of`]）、**并把这一位的死亡道记下**
+///   （`who → 道`：道是装配者铸的、名字也是它递来的 ⇒ **客人不必自己报名**）；
 /// - **答话路**：装配者转授来的那一枚 ⇒ `admit` 收一位客人（`Taken` = 已经在账上）；
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
-fn settle(desk: &mut Desk, assembler: TaskId, tole: &Tole, tip: &mail::HolePie) -> bool {
+fn settle(
+    desk: &mut Desk,
+    assembler: TaskId,
+    tole: &Tole,
+    tip: &mail::HolePie,
+    lanes: &mut Lanes,
+) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
-    let mut id = [0u8; 8];
+    // 长度不对的那一条**不猜**：`while let` 取不出那一条就收工（与从前那 8 字节的写法同款）。
+    let mut rec = [0u8; bcall::TIP_LEN];
     let mut pending = false;
-    while let Ok(8) = tip.pull_timeout(&mut id, 0) {
-        let client = TaskId::new(u64::from_le_bytes(id) as usize);
+    while let Ok(bcall::TIP_LEN) = tip.pull_timeout(&mut rec, 0) {
+        let id = u64::from_le_bytes(rec[..8].try_into().unwrap_or([0u8; 8]));
+        let client = TaskId::new(id as usize);
+        let name = Name::from_bytes(rec[8..].try_into().unwrap_or([0u8; NAME_LEN])).ok();
         match reply_of(assembler, client) {
             // `Taken` = 已经在账上（提示是单槽，可能重放）：不换掉原来那位。
             Some(reply) => {
                 let _ = desk.admit(client, reply);
+                // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
+                // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
+                if let Some(lane) = name.and_then(lane_for) {
+                    remember_lane(lanes, client, lane);
+                }
             }
             // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
             None => say("board: no reply"),
@@ -187,7 +203,9 @@ fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
 
 /// 按**名字**认领这一位的死亡道（`gone-<名字>`；装配者铸、转授给本线程）。
 ///
-/// **必须在 REGISTER 那一刻就认**：牌子会被惰性摘掉，摘了就认不出这位叫什么了。
+/// **在 `admit` 那一刻就认**：名字随提示那一格一起来（[`bcall::TIP_LEN`]），而牌子会被惰性
+/// 摘掉——等到死亡那一刻再想"它叫什么"就没处问了。名字认不出（名字非法 / 那一条道没转授
+/// 过来）⇒ `None`：**这一位死了就没有读数**（与从前"没登记就没读数"同一个静默）。
 fn lane_for(name: Name) -> Option<PieToken> {
     let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
     let mut index = 0usize;
@@ -372,15 +390,11 @@ fn answer(
             // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
             // 两件事只有记号分得开。
             Some(entry) if bcall::marked_as(entry) == Some(ENTRY_MARK) => {
-                let said = board.register(name, entry, who).map(|_| ());
-                // 名字刚到 ⇒ 现在就把这一位的死亡道认下来（见 [`lane_for`]）：牌子会被惰性
-                // 摘掉，等到死亡那一刻就认不出这位叫什么了。
-                if said.is_ok()
-                    && let Some(lane) = lane_for(name)
-                {
-                    remember_lane(lanes, who, lane);
-                }
-                said
+                // **登记只管一件事**：把"名字 → 入口"挂到板上（别人据此按名字找得到它）。
+                // **死亡道不在这里记**——那一条在 `admit` 那一刻就记下了（名字随提示那一格来、
+                // 由装配者递；见 [`bcall::TIP_LEN`] 的照实记）。两件事从此分家：
+                // **一位客人不登记也能被监督**（反过来，登记了也不多一条道）。
+                board.register(name, entry, who).map(|_| ())
             }
             _ => Err(Fail::Denied),
         },

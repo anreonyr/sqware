@@ -17,6 +17,7 @@ use protocol::operator::ledger::{Key, Ledger, Line};
 pub use protocol::operator::{ASK_MARK, LINK, TIP_MARK};
 use protocol::operator::{EntryId, Fail, Operator, Where};
 use protocol::system::board::call as bcall;
+use protocol::system::board::client as board;
 
 use protocol::coalition::client::Face as CoalitionFace;
 use protocol::principal::client::Face as PrincipalFace;
@@ -201,7 +202,7 @@ const MS: usize = 1000;
 
 // ── 持树者侧（本域的服务线程）────────────────────────────────
 
-/// 起服务：**铸提示孔交给装配者，然后一枚线程招待所有客人**。
+/// 起服务：**上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人**。
 ///
 /// 头两步是契约：装配者按 `(本域, tip)` 两格认领提示孔（[`attach`] 的 `host_of`），
 /// 而提示一到它就认为"答话路必已在本表里"（转授在前、提示在后）。
@@ -211,6 +212,17 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     let Some(assembler) = crate::supervisor::service::assembler() else {
         return Err(super::fail::Fail::Sire);
     };
+    // **上板**（乙那一刀）：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形
+    // （名册 / 盟册早就在上板）。**名字不必本域自己报名**：装配者随提示那一格递过来
+    // （[`protocol::system::board::call::TIP_LEN`] 的照实记）；这一格只管把板那条路装上
+    // （装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，故少了这一步装配当场报
+    // `board:claim`——实测栽过一次）。
+    let Ok((_link, board_link)) = board::open(assembler, MS) else {
+        return Err(super::fail::Fail::Board);
+    };
+    if board::ask_hole(board_link).is_err() {
+        return Err(super::fail::Fail::Board);
+    }
     // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(TIP_MARK) else {
         return Err(super::fail::Fail::Tip);

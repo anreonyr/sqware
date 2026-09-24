@@ -39,6 +39,7 @@ use env::{HoleDir, Name, PieToken};
 use programs::supervisor::system::machine::Machine;
 use programs::supervisor::system::server;
 use protocol::session::{Pier, Quay};
+use protocol::system::board::LANE_PREFIX;
 use protocol::system::desk::Table;
 use runtime::core::dock::Dock;
 use runtime::core::port::{Access, Policy};
@@ -186,12 +187,14 @@ fn system() -> programs::Report<'static> {
     //      一只**组**等任一道（`Tole`），零轮询。组是**独占**的（`shared = false`）。
     //
     //      **照实记（这一圈原先给名册上每一位都铸）**：写端**只有板有**——`service::start`
-    //      那一手只在 `p.board` 时把道转授出去。故 `board: false` 的那几位（持树者、试客、
-    //      探针）铸出来的是一枚**没有写端的道**：它永远不会响，只占着组里一格与一条转发
-    //      登记。今天这一圈跟着 `p.board` 走 ⇒ **有写端才有道**。读数：产品那一景名册 7 条
-    //      → 道 6 条（少的是持树者），验收那一景 19 条 → 9 条。
-    //      "这几位死不见于本域"是既有的形状——`protocol::operator` 那句"没有死亡道"由此
-    //      **整句为真**（从前是道铸了、只是没人写）。
+    //      那一手只在 `p.board` 时把道转授出去。故 `board: false` 的那几位（试客、探针）
+    //      铸出来的是一枚**没有写端的道**：它永远不会响，只占着组里一格与一条转发登记。
+    //      今天这一圈跟着 `p.board` 走 ⇒ **有写端才有道**。读数：产品那一景名册 7 条 →
+    //      道 **7** 条（三枚内件全上板），验收那一景 19 条 → **10** 条。
+    //      **照实记（"看得见死"另有一关）**：有写端只是必要条件——板还要认得出那一条道是谁的
+    //      （道按**名字**认领）。乙2 把名字从"客人自己报名"挪到"装配者随提示那一格递"之后，
+    //      `p.board = true` 才真的等于"它的死编排域看得见"（此前三枚内件与三台驱动都不报名 ⇒
+    //      死了没有读数）。
     let tole = match Tole::unseal(false) {
         Ok(tole) => tole,
         Err(_) => return fail(Fail::Group),
@@ -207,7 +210,9 @@ fn system() -> programs::Report<'static> {
         // **有写端才有道**：板不看的那几位不铸（见上面那条照实记）。名册**每一位都在**
         // `lanes` 里——它在收场那一趟还有另一个读者（`stop_running` 按它点名收）。
         let road = if p.board {
-            mail::unseal_hole(Mark::of(&alloc::format!("gone-{}", p.name))).ok()
+            // 记号 = `LANE_PREFIX` ＋ 名字：**前缀只有一处定义**（板那一侧按同一个常量
+            // 拼出来找它——见 `lane_for`）。
+            mail::unseal_hole(Mark::of(&alloc::format!("{LANE_PREFIX}{}", p.name))).ok()
         } else {
             None
         };

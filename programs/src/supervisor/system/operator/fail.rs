@@ -2,6 +2,11 @@
 //!
 //! 号与从前的 `const E_*` **同值**，只是现在有类型、能带话；调用点那两句 `say(...)`
 //! 由 [`Exit::report`] 那一句话接手（内核在出口当场打，不需要控制台活着）。
+//!
+//! **照实记（乙那一刀插进一格，号跟着挪）**：上板那一步排在 `Sire` 之后 ⇒ `Board` 占 2，
+//! 其余三格各往后挪一位（`Tip` 2→3 / `Group` 3→4 / `Room` 4→5）。**"号 = 死在起手的哪一步"
+//! 比"与从前的 `const E_*` 同值"更强，故前者优先**——且那些旧常量随 `programs/.../operator/
+//! main.rs` 一起删了（iii），今天没有第二处读这些号：门里锚的是读数**文本**，不是号。
 
 use crate::{Exit, Report};
 
@@ -9,6 +14,8 @@ use crate::{Exit, Report};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
     Sire,
+    /// 上板那一步（`board::open` / `ask_hole`）——**乙那一刀新开的一格**。
+    Board,
     Tip,
     Group,
     /// 起手要备的那**一页**（收帧的缓冲，见 `server.rs` 的 `serve`）备不下 ⇒ 这道门起不来。
@@ -23,15 +30,17 @@ impl Fail {
     pub fn code(self) -> env::Reason {
         match self {
             Fail::Sire => 1,
-            Fail::Tip => 2,
-            Fail::Group => 3,
-            Fail::Room => 4,
+            Fail::Board => 2,
+            Fail::Tip => 3,
+            Fail::Group => 4,
+            Fail::Room => 5,
         }
     }
 
     pub const fn text(self) -> &'static str {
         match self {
             Fail::Sire => "operator: no sire",
+            Fail::Board => "operator: board",
             Fail::Tip => "operator: tip",
             Fail::Group => "operator: no group",
             Fail::Room => "operator: no room",

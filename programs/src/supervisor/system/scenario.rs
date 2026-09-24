@@ -123,10 +123,15 @@ pub const INNER: &[(Role, Program)] = &[
             tokens: &[],
             channels: &[],
             needs: None,
-            // **它不上板** ⇒ 本域**不铸它的道**（`system/main.rs` 那一圈：**有写端才有道**）
-            // ⇒ **持树者死了本域看不见**（读数里不会有 `system: gone operator`）。照实记：
-            // 这是**既有的形状**——iii 之前它自成一个域时这一格也是 `false`，iii 一个字没改。
-            board: false,
+            // **它上板**（乙那一刀）：板据此看得见这一枚的死——与同域另两枚内件（名册 / 盟册）
+            // **同形**。照实记（原先它是 `false`）：那时"上板"确实还不等于"看得见死"——板把
+            // "谁 → 道"记在 **REGISTER** 那一刻，而道按名字认领，三枚内件都不登记 ⇒ 三枚的
+            // 死编排域**一个都看不见**（实测：让盟册在起手之后死掉，`board: swept n=1` 有、
+            // `system: gone coalition` 一条都没有）。乙2 把名字的来源从客人挪到**装配者**
+            // （提示那一格多带一格名字）⇒ 此后 `board: true` 就是"板看得见它的死"。
+            // 价格照实：板的账多占一格（`Desk::CAP` 因此抬到 16——量过：验收那一景同时在
+            // 账上的峰值 6 → 7）。iii 之前它自成一个域时这一格也是 `false`，那笔账照旧记着。
+            board: true,
             operator: false,
             bind: true,
             holds_tree: true,
