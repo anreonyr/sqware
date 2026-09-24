@@ -163,6 +163,7 @@
 pub mod call;
 pub mod client;
 pub mod core;
+pub mod frame;
 pub mod gate;
 pub mod judge;
 pub mod ledger;

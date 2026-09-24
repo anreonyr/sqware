@@ -66,7 +66,20 @@ mod core;
 #[path = "../../protocol/src/operator/ledger.rs"]
 mod ledger;
 
-use env::{Name, PieToken, TaskId};
+/// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**（见那份文件的照实记）。
+#[macro_use]
+#[path = "../../protocol/src/fail_codes.rs"]
+mod fail_codes;
+
+/// **帧那一半**（`crates/protocol/src/operator/frame.rs`，逐字未改）—— 在本台里跑判据。
+///
+/// 这一台**本来就带着帧要的全部依赖**（`core` / `judge` / `gate` / `ledger` 都在同一层），
+/// 故它是最省的一处落点；那一份写的 `use super::core::…` / `use super::judge::…` 逐字成立。
+#[allow(dead_code)]
+#[path = "../../protocol/src/operator/frame.rs"]
+mod frame;
+
+use env::{Mark, Name, PieToken, TaskId};
 
 use crate::core::{EntryId, Fail, Where};
 use crate::gate::{Blind, Code, Control, verdict};
@@ -600,3 +613,250 @@ fn a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind() {
     assert_eq!(book.len(), 1);
     assert_eq!(book.rule(Key::Id(ID), |_| true), Rule::Is(P));
 }
+
+// ── 帧那一半（`operator/frame.rs`）──────────────────────────
+//
+// **照实记（这一组为什么值当）**：机器那几道门走的是**顺路**——客侧编一帧、持树者解一帧，
+// 形状对了就继续。下面这些格子机器**一条都走不到**：短帧 / 长帧 / 动作码不对、**路数超上限
+// 而那一格仍报真实段数**（那一格是 `FULL` 的判据）、**规矩那一格认不出的标号退回 `Public`**、
+// 列答的"条数与帧长对不上就是读不懂"、以及失败码表的两端。
+
+use crate::frame as f;
+
+fn road(names: &[&str]) -> Vec<Name> {
+    names.iter().map(|n| Name::new(n).expect("名字合法")).collect()
+}
+
+#[test]
+fn every_ask_shape_round_trips() {
+    // seek：路 + 真实段数。
+    let (buf, len) = f::pack_ask(f::Ask::Road(&road(&["sys", "operator"])));
+    assert_eq!(len, 2 + 2 * env::wire::NAME_LEN);
+    assert_eq!(f::op_of(&buf[..len]), Some(f::SEEK));
+    assert_eq!(
+        f::unpack_ask(f::SEEK, &buf[..len]),
+        Some(f::AskIn::Road(
+            {
+                let mut out = [Name::EMPTY; crate::core::Operator::ROAD_MAX];
+                out[0] = Name::new("sys").unwrap();
+                out[1] = Name::new("operator").unwrap();
+                out
+            },
+            2
+        )),
+        "路回来是同一串，段数也对"
+    );
+
+    // land：坐标 + 名 + 入口 + 两轴条件。
+    let at = Where::At(EntryId::new(3));
+    let seed = PieToken::from_bytes(&9u64.to_le_bytes()).unwrap();
+    let (buf, len) = f::pack_ask(f::Ask::Land {
+        at,
+        name: Name::new("uart").unwrap(),
+        entry: seed,
+        rule: Rule::Opens(EntryId::new(7)),
+        mine: true,
+    });
+    assert_eq!(len, f::LAND_FRAME);
+    assert_eq!(
+        f::unpack_ask(f::LAND, &buf[..len]),
+        Some(f::AskIn::Land {
+            at,
+            name: Name::new("uart").unwrap(),
+            entry: seed,
+            rule: Rule::Opens(EntryId::new(7)),
+            mine: true,
+        })
+    );
+
+    // list：只有坐标。
+    let (buf, len) = f::pack_ask(f::Ask::List(Where::Root));
+    assert_eq!(len, 10);
+    assert_eq!(f::unpack_ask(f::LIST, &buf[..len]), Some(f::AskIn::List(Where::Root)));
+
+    // find / trim / name 三者同形（解出来仍是三格）。
+    let id = EntryId::new(11);
+    for (ask, op, want) in [
+        (f::Ask::Find(id), f::FIND, f::AskIn::Find(id)),
+        (f::Ask::Trim(id), f::TRIM, f::AskIn::Trim(id)),
+        (f::Ask::Name(id), f::NAME, f::AskIn::Name(id)),
+    ] {
+        let (buf, len) = f::pack_ask(ask);
+        assert_eq!(len, 9);
+        assert_eq!(f::unpack_ask(op, &buf[..len]), Some(want));
+    }
+}
+
+#[test]
+fn a_road_longer_than_the_cap_still_reports_the_real_count() {
+    // **那一格报的是真实段数**（可能超过上限）：持树者按它答 `FULL`——把帧里的段数裁成上限，
+    // 超长的那一问就会被当成"正好"而悄悄按短的走。
+    let cap = crate::core::Operator::ROAD_MAX;
+    let long: Vec<String> = (0..cap + 3).map(|i| alloc::format!("s{i}")).collect();
+    let names: Vec<&str> = long.iter().map(|s| s.as_str()).collect();
+    let (buf, len) = f::pack_ask(f::Ask::Road(&road(&names)));
+    assert_eq!(buf[1] as usize, cap + 3, "段数那一格报真实值");
+    assert_eq!(len, 2 + cap * env::wire::NAME_LEN, "荷载只装得下上限那么多");
+    match f::unpack_ask(f::SEEK, &buf[..len]) {
+        Some(f::AskIn::Road(_, n)) => assert_eq!(n, cap + 3, "读的人看得到它超了"),
+        other => panic!("该是 Road：{other:?}"),
+    }
+}
+
+#[test]
+fn a_frame_that_is_not_that_shape_is_not_guessed_at() {
+    let (buf, len) = f::pack_ask(f::Ask::Find(EntryId::new(1)));
+    assert_eq!(f::unpack_ask(f::FIND, &buf[..len - 1]), None, "短一字节");
+    assert_eq!(f::unpack_ask(f::FIND, &[]), None, "空帧");
+    assert_eq!(f::op_of(&[]), None, "空帧连动作码都没有");
+
+    // **动作码是调用方给的**（`unpack_ask(op, …)`）：读的人先 `op_of` 那一格，再照它分派——
+    // 故解的时候不再回头看帧里那一格（照实记：我一开始把它写成"帧里那一格与调用方说的不一样
+    // 就答 `None`"，实测当场红——契约不是那样）。没见过的动作码才是"读不懂"。
+    let mut zero_op = buf;
+    zero_op[0] = 0;
+    assert_eq!(
+        f::unpack_ask(f::FIND, &zero_op[..len]),
+        Some(f::AskIn::Find(EntryId::new(1))),
+        "解的是荷载，动作码由调用方说了算"
+    );
+    assert_eq!(f::unpack_ask(200, &buf[..len]), None, "没见过的动作码 ⇒ 读不懂");
+}
+
+#[test]
+fn the_rule_cell_round_trips_and_an_unknown_tag_falls_back_to_public() {
+    // 五格都来回一趟（`Opens` 那一格进的是**门的号**）。
+    for rule in [
+        Rule::Public,
+        Rule::Is(7),
+        Rule::Under(8),
+        Rule::In(9),
+        Rule::Opens(EntryId::new(10)),
+    ] {
+        let (buf, len) = f::pack_ask(f::Ask::Land {
+            at: Where::Root,
+            name: Name::new("x").unwrap(),
+            entry: PieToken::from_bytes(&1u64.to_le_bytes()).unwrap(),
+            rule,
+            mine: false,
+        });
+        match f::unpack_ask(f::LAND, &buf[..len]) {
+            Some(f::AskIn::Land { rule: back, .. }) => assert_eq!(back, rule, "{rule:?} 来回一趟"),
+            other => panic!("该是 Land：{other:?}"),
+        }
+    }
+
+    // 尾格的起点按**文件头那张布局图**算（`[10 .. 42]` 名 ⇒ 尾格从 `10 + NAME_LEN` 起），
+    // 不引那一份内部的私有常量——顺带把"布局与文档一致"也钉住。
+    let tail_at = 10 + env::wire::NAME_LEN;
+    let (mut buf, len) = f::pack_ask(f::Ask::Land {
+        at: Where::Root,
+        name: Name::new("x").unwrap(),
+        entry: PieToken::from_bytes(&1u64.to_le_bytes()).unwrap(),
+        rule: Rule::Public,
+        mine: false,
+    });
+    assert_eq!(len, f::LAND_FRAME);
+
+    // **认不出的标号退回 `Public`**（不是 `None`：这一格是"没有条件"，不是"读不懂"）。
+    buf[tail_at + 9] = 99;
+    match f::unpack_ask(f::LAND, &buf) {
+        Some(f::AskIn::Land { rule, .. }) => assert_eq!(rule, Rule::Public),
+        other => panic!("该是 Land：{other:?}"),
+    }
+
+    // **旧帧**（尾格之前那些字节就够：入口有、两轴那两格没有）⇒ 两轴按"没有条件"读，
+    // **不是读不懂**——帧加格子不该让旧调用方当场变坏。`mine` 读 `[50]`、`rule` 读 `[51]` 起。
+    match f::unpack_ask(f::LAND, &buf[..tail_at + 8]) {
+        Some(f::AskIn::Land { rule, mine, .. }) => {
+            assert_eq!(rule, Rule::Public, "没有那一格 ⇒ 没有条件");
+            assert!(!mine);
+        }
+        other => panic!("该是 Land：{other:?}"),
+    }
+
+    // 而**入口那一枚**是必须的：少一个字节就是读不懂（不猜）。
+    assert_eq!(f::unpack_ask(f::LAND, &buf[..tail_at + 7]), None, "缺入口那枚 ⇒ 不猜");
+}
+
+#[test]
+fn the_list_answer_refuses_a_count_that_disagrees_with_the_frame() {
+    let ids = [EntryId::new(2), EntryId::new(4), EntryId::new(6)];
+    let mut buf = [0u8; f::REPLY_MAX];
+    let n = f::pack_list(&mut buf, ids.iter().copied());
+    assert_eq!(n, 2 + 3 * 8);
+    let back = f::read_list(&buf[..n]).expect("读得回来");
+    assert_eq!(back.len(), 3);
+    assert_eq!(back.iter().collect::<Vec<_>>(), ids.to_vec());
+
+    assert_eq!(f::read_list(&buf[..n - 1]), Err(f::BAD), "短一字节");
+    let mut liar = buf;
+    liar[1] = 4; // 说有四枚，可帧里只有三枚
+    assert_eq!(f::read_list(&liar[..n]), Err(f::BAD), "条数说谎");
+    // 状态那一格不是 `OK` ⇒ 原样把那一格报回去（读的人按它分流）。
+    let mut failed = buf;
+    failed[0] = f::FULL;
+    assert_eq!(f::read_list(&failed[..n]), Err(f::FULL));
+    assert_eq!(f::read_list(&[]), Err(f::BAD), "空帧");
+}
+
+#[test]
+fn the_name_and_id_answers_are_fixed_shapes() {
+    // **名那一形：长度即名长**（不是一个定长格 + 长度格）——故"多出来的"字节会被读成名字的一部分。
+    let mut buf = [0u8; f::REPLY_MAX];
+    let n = f::pack_name(&mut buf, Name::new("uart").unwrap());
+    assert_eq!(n, 1 + 4);
+    assert_eq!(f::read_name(&buf[..n]), Ok(Name::new("uart").unwrap()));
+
+    // 多一个**零**：名字里夹 NUL ⇒ 判废；多一个**别的字节**：那就是另一个名字（读得出来）。
+    assert_eq!(f::read_name(&buf[..n + 1]), Err(f::BAD), "夹了 NUL");
+    let mut longer = buf;
+    longer[n] = b'X';
+    assert_eq!(f::read_name(&longer[..n + 1]), Ok(Name::new("uartX").unwrap()));
+
+    // **号那一形是定长格**：短一字节、长一字节都是读不懂。
+    // 照实记：`长一字节`这一句是牙口量出来的——把 `!= 8` 放宽成 `< 8` 之后，先前只测"短一字节"
+    // 的那一版**全门照绿**。
+    let mut buf = [0u8; f::REPLY_MAX];
+    let n = f::pack_id(&mut buf, EntryId::new(12));
+    assert_eq!(n, f::ID_REPLY_LEN);
+    assert_eq!(f::read_id(&buf[..n]), Ok(EntryId::new(12)));
+    assert_eq!(f::read_id(&buf[..n - 1]), Err(f::BAD), "短一字节");
+    assert_eq!(f::read_id(&buf[..n + 1]), Err(f::BAD), "长一字节");
+    let mut failed = buf;
+    failed[0] = f::DEAD;
+    assert_eq!(f::read_id(&failed[..n]), Err(f::DEAD), "状态那一格原样报回");
+}
+
+#[test]
+fn the_operator_failure_table_is_bijective_and_keeps_bad_outside() {
+    use f::{BAD, DEAD, DENIED, FULL, NONEMPTY, NOTAPANE, NOTATILE, OK, UNKNOWN, code_to_fail, fail_to_code};
+    assert_eq!(fail_to_code(None), OK);
+    for (fail, code) in [
+        (Fail::Unknown, UNKNOWN),
+        (Fail::NonEmpty, NONEMPTY),
+        (Fail::NotATile, NOTATILE),
+        (Fail::NotAPane, NOTAPANE),
+        (Fail::Full, FULL),
+        (Fail::Dead, DEAD),
+    ] {
+        assert_eq!(fail_to_code(Some(fail)), code, "{fail:?}");
+        assert_eq!(code_to_fail(code), Some(fail), "一端一格");
+        assert_ne!(code, OK, "失败不许与 OK 同码");
+    }
+    assert_eq!(code_to_fail(OK), None);
+    assert_eq!(code_to_fail(BAD), None, "读不懂那一格在失败域之外");
+    assert_eq!(code_to_fail(150), None, "表外的码");
+}
+
+#[test]
+fn the_operator_marks_do_not_collide_with_the_other_doors() {
+    // **面不相撞**（这一格是**量出来的**，见 `ASK_MARK` 的照实记）：两面的问话孔记号必须分得开。
+    assert_ne!(f::ASK_MARK, Mark::of("board-ask"));
+    assert_ne!(f::ASK_MARK, Mark::of("ask"), "统一成 `ask` 就是那次装机塌掉的原因");
+    assert_ne!(f::TIP_MARK, f::ASK_MARK);
+    assert_ne!(f::TIP_MARK, Mark::of("operator-tip"), "孔上的记号与路名是两回事");
+    assert_eq!(f::LINK, "operator");
+    assert_eq!(f::TIP_NAME, "operator-tip");
+}
+

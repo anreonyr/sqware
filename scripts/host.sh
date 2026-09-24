@@ -80,13 +80,13 @@
 #        而 `runtime` 在宿主上编不出来（那两处 riscv 内联汇编）——这是这一门的由来，不是漏。
 #        纯的那几格（线上码表）在 `gate.rs` 里**另存一份**，并由 `operator/mod.rs` 末尾那条
 #        `const _: () = assert!(…)` 在**编译期**钉住（一漂就编不过）。
-#      - 三份 `call.rs` 的**帧那一半**原先也归这一类（纯，但要同层 `core.rs`，而那一份的判据已在
-#        别的台里跑着 ⇒ 再编一遍就是"同一批判据跑两遍"）。**这一格已经收了**（用户裁定见
-#        `docs/frame-gate.md`）：`line` 零切进 `line-case`；`principal`/`coalition` 各拆成
-#        `frame.rs`（纯）+ `call.rs`（适配，`pub use super::frame::*;` ⇒ 调用点零改），两片进
-#        `principal-case`。**剩下的 `operator`/`board` 两份要真切**（待下一刀），`driver/supply`
-#        那一份**切不动**（`Access`/`Policy` 长在 `Want`/`Need` 的类型里），`session/call.rs`
-#        **没有帧**（它本身就是运行时那一层）。
+#      - **五份 `call.rs` 的帧那一半都收进来了**（用户裁定见 `docs/frame-gate.md`）：
+#        `line` **零切**（本来就全纯）进 `line-case`；`principal`/`coalition`/`operator`/`board`
+#        各拆成 `frame.rs`（纯）+ `call.rs`（适配，首行 `pub use super::frame::*;` ⇒ **调用点零改**），
+#        分别进 `principal-case` / `judge-case`（它本来就带着帧要的全部依赖）/ `board-case`。
+#        为此 `fail_codes!` 搬成**自己一份源**（协议与各靶同读，见 `protocol/src/fail_codes.rs`）。
+#      - 仍归这一类的：`driver/supply/call.rs` **切不动**（`Access`/`Policy` 长在 `Want`/`Need`
+#        的类型里 ⇒ 类型搬家单独立门），`session/call.rs` **没有帧**（它本身就是运行时那一层）。
 #   3) **只有类型、没有判据**：`driver/supply/core.rs`（五格失败域）与各 `mod.rs`（正文）——
 #      没有可机械检查的判据，开台只会得到"零用例"，而零用例这一门本来就判红。
 #

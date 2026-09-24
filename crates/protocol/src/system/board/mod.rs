@@ -225,6 +225,7 @@
 pub mod call;
 pub mod client;
 pub mod core;
+pub mod frame;
 
 pub use call::{ASK_MARK, ENTRY_MARK, LANE_PREFIX, LINK, TIP_MARK, TIP_NAME};
 pub use core::{Board, Fail, Sign, Unship, VestedBy};
