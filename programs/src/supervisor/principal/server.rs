@@ -60,9 +60,13 @@ pub fn serve() -> Result<(), super::fail::Fail> {
         return Err(super::fail::Fail::Tree);
     };
     // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
-    // 给 `STORE | FETCH`：装配者只往里推帧，但**它还要把这一枚再转授给树**（门禁那一刀：
-    // 树要问 `resolve` / `heir`）——而 `Accord` 的子集不许越界，故这一格得留出 `FETCH`；
-    // 答话仍走每一趟自己借来的那枚回信孔，读端在装配者这边。
+    //
+    // **照实记（这一格的理由换过一次）**：原写的是"给 `FETCH` 是因为**装配者还要把这一枚再
+    // 转授给树**（门禁那一刀：树要问 `resolve` / `heir`）"——那一版真机栽在 `coord-ship`，
+    // 现在**门牌由各域自己交**（见 `operator/bridge.rs` 的 `COORD` 段），那条理由已经不存在。
+    // 今天的实际用法：装配者只往这一枚里**推帧**（`derive` / `bind`），答话走每一趟自己借来的
+    // 回信孔、读端在装配者这边 ⇒ **`STORE` 就够**。多出来的那一格 `FETCH` 是**旧理由的遗留**
+    // ——收不收是另一刀（要真机读数背书）。
     if port::ship(
         &HolePie::from_token(entry),
         assembler,
