@@ -524,7 +524,8 @@ fn answer(
             return match tree.land(at, name, entry) {
                 Ok(id) => {
                     // 记的是"**那一刻挂上去的那一枚**"：它答不答得出，就是主人还在不在场。
-                    // `mine = false` 是**放弃归属**（连"改规矩"也走这一条）。
+                    // `mine = false` 是**放弃归属**——与"改规矩"同走这一条（这两条没有独立入口：
+                    // 这一问是**整值赋值**，见 [`protocol::operator`] 那一节）。
                     book.write(blank, Line::new(at, name, id, rule, mine, who, entry));
                     ocall::pack_id(out, id)
                 }
