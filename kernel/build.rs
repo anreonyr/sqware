@@ -144,17 +144,14 @@ fn main() {
         .iter()
         .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
         .collect();
-    let (blob, spans) =
-        manifest::pack(&items).expect("initrd: 清单越界（条数 / 名字长度 / 空镜像）");
-    // 引导镜像在清单内的偏移/长度（内核不解析清单，按这两个常量取 root 的 ELF）
-    let at = bins
+    let root_at = bins
         .iter()
         .position(|(name, _)| *name == root_name())
         .unwrap_or_else(|| panic!("initrd: SQWARE_ROOT={} 不在这一景的清单里", root_name()));
-    let root_span = spans[at].clone();
-    assert!(!root_span.is_empty(), "initrd: root image is empty");
-    println!("cargo::rustc-env=ROOT_OFFSET={}", root_span.start);
-    println!("cargo::rustc-env=ROOT_LEN={}", root_span.len());
+    // **不再 `println!("cargo::rustc-env=…")` 回喂内核**：引导镜像的两个数写进区里那 8 字节
+    // 前言，内核开机读它（照实记见 `env::wire::manifest` 的 `PREAMBLE`）——那条反馈边就是这么断的。
+    let blob = manifest::pack(&items, root_at)
+        .expect("initrd: 清单越界（条数 / 名字长度 / 空镜像）");
     fs::write(&blob_path, &blob)
         .unwrap_or_else(|e| panic!("initrd: write {}: {e}", blob_path.display()));
     println!(
