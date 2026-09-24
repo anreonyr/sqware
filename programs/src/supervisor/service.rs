@@ -5,7 +5,7 @@
 //! 于是"引导域不知道系统里还有什么服务"这条不是靠自律，是靠**它手里没有那张单**。
 //!
 //! ```text
-//!   装配单（各域私有）  Program { name, announce, tokens, channels, needs, board, operator, holds_tree, died }
+//!   装配单（各域私有）  Program { name, announce, tokens, channels, needs, board, operator, bind, holds_tree, died }
 //!   清单（两种来源）    Catalog  ── 引导域：boot 借映那块；编排域：它从固件领来的只读视图
 //! ```
 //!

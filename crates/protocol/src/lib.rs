@@ -11,8 +11,9 @@
 //! 落地程度不一样：**六份都已经有代码跑在机器上**（[`system`]（含它下面的 `board`）、
 //! [`driver`]（**两半都落了**：`supply` 与 `line`——见 [`driver::line`]，四格原语 + 账 +
 //! 客侧几手，`router` / `uart` / `rtc` 与两位客人 `lodger` / `sleeper` 都跑在机器上）、
-//! [`session`]、[`operator`] 与 [`principal`]（**名册 + 谱系**：九条原语、一台
-//! `prog-principal`、一位真客人 `subject`））。
+//! [`session`]、[`operator`]、[`principal`]（**名册 + 谱系**：九条原语、一台
+//! `prog-principal`、一位真客人 `subject`）与 [`coalition`]（**横向盟籍**：一张两列表 + 一枚
+//! 计数器、六条原语、一台 `prog-coalition`、一位真客人 `member`））。
 //!
 //! - [`system`] = **服务编排**（systemd 那一层）：系统由哪些 Service 构成、怎么起停监督。
 //!   它**有两半**：**编排**（`core` / `desk` / `grant`）与**运行期命名**（[`system::board`]：
@@ -163,4 +164,22 @@ pub mod session;
 pub mod system;
 
 // 依赖先留着：`env` 与 `runtime` 是地板，第一条协议操作出现时立刻要用。
-// （本文件暂时没有代码，故 `cargo` 若报 unused dependency，那是预期内的噪音。）
+// （下面那两条编译期断言之外，本文件没有别的代码 ⇒ `cargo` 若报 unused dependency，是预期噪音。）
+
+// ── 面不相撞：三条路的回信孔记号两两不同（**编译期**钉住）──────────────
+//
+// `principal-back` / `coalition-back` / `line-back`：同一张表里两面的回信孔若刻同一个记号，
+// 就分不出这一枚是哪一面的。三对里 `principal ↔ coalition` 那一对钉在
+// `principal::frame`（那一份的宿主靶两边都在），**跨到 `driver::line` 的这两对钉在这里**——
+// `frame.rs` 那两份要能在宿主靶里**逐字单独编**，而那两个靶的模块树里没有 `driver`（它们
+// 只认得 `env` 与同层 `core`）。这一处看得见整棵树，故由它钉。
+//
+// **照实记（这两对原先一直是空的）**：三条断言原先都写作 `Mark::of("board-back")`，而**那个名字
+// 从来没有存在过**——板那条路的答话走码头（`system/board/client.rs`：问话孔只写、答话从板路
+// 读），它没有 `*-back` 记号。故换成真在的那一条。
+const _: () = assert!(
+    principal::frame::BACK.get() != driver::line::call::BACK_MARK.get()
+);
+const _: () = assert!(
+    coalition::frame::BACK.get() != driver::line::call::BACK_MARK.get()
+);
