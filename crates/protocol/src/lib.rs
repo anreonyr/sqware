@@ -156,6 +156,17 @@ macro_rules! reserve_reads {
 #[macro_use]
 mod fail_codes;
 
+/// **答话那一格的"没失败"**（0）——全协议**一个号**：六家（principal / coalition / operator /
+/// board / line / supply）与驱动各自那几族（如 `programs::driver::rtc`）共用。
+///
+/// 定义在 [`fail_codes`] 那一份源里（`fail_codes!` 的第二个参数就是它）；这里把它**转出
+/// crate**：`fail_codes` 自己是有意私有的（出 crate 的只有那个宏），而驱动那一侧的具体协议住在
+/// `programs` 里，要读这一格只能从 crate 根进来。
+///
+/// **各家的失败码不共用**（同一个概念在两家是别的号，见各族 `frame.rs` 的注）——共用的只有
+/// "没失败"那一格。
+pub use fail_codes::OK;
+
 pub mod coalition;
 pub mod driver;
 pub mod frame;

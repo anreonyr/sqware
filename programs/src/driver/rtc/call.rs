@@ -16,7 +16,8 @@
 //!
 //! 本文件住**驱动自己那一片目录**，不在 `crates/protocol`：服务面 = 各驱动自己的具体协议
 //! （那一条裁定见 `protocol::driver`），而它由驱动与客人**同一份源码**各 `use` 一次。
-//! 可共用的只有形状——"失败域 ↔ 线上那一格"那张表用的是 `protocol::fail_codes!`。
+//! 可共用的只有那两样：**"失败域 ↔ 线上那一格"那张表**（`protocol::fail_codes!`）与
+//! **成功那一格**（`protocol::OK`）——各家的失败码仍按自己失败域的顺序排。
 
 use super::core::Fail;
 use env::Mark;
@@ -42,8 +43,8 @@ pub const ARM_LEN: usize = 1 + TIME_LEN;
 /// 回信孔的记号：客人每趟铸一枚、借给驱动（回答与那一声都从它回来）。
 pub const BACK: Mark = Mark::of("rtc-back");
 
-/// 答话那一格：收下了。
-pub const OK: u8 = 0;
+/// 答话那一格：收下了——**全协议那一个"没失败"**（`protocol::OK`），本族不再写第二遍。
+pub use protocol::OK;
 /// 那一格有人了。
 pub const TAKEN: u8 = 1;
 /// 那个时刻已经过去了。
