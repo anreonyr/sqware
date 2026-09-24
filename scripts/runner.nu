@@ -36,6 +36,14 @@
 #   - **不要**用 `with-env` 包 qemu 调用：它连 `LAST_EXIT_CODE` 一起还原，退出码就丢了。
 
 def main [elf: path] {
+  # **造镜像那一步在编内核之外**（`crates/image`，用户裁定"initrd 与 kernel 何干"）：
+  # `cargo run` 只管编内核 ⇒ 这里查镜像在不在，不在就报一句清楚的话，
+  # **而不是静默起一台没有程序的机器**（那正是最难查的一类假象）。
+  let initrd = ($elf | path dirname | path join "initrd.img")
+  if not ($initrd | path exists) {
+    error make {msg: $"没有镜像：($initrd)
+  先造它：cargo image <场景> <档>   （默认 root release；场景见 crates/image/src/lib.rs）"}
+  }
   let cfg = config $elf
 
   print $"SEED: ($cfg.seed)"

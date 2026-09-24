@@ -32,6 +32,7 @@ publish = false
 # 本体），而真实的 `~/.cargo/registry` 里有 1.13.1 / 1.12.3 / 1.10.6。`CARGO_HOME` 未被设置
 # ⇒ 默认走 `~/.cargo`，离线解得开。**换台机器若把 `CARGO_HOME` 指到 `.cargo-home`，这一格会
 # 当场解不开**——那是环境事实，不是本 crate 的事。
+image = { path = "../image" }
 regex = "1"
 # 变异那一门的账（`target/teeth-ledger.json`）：格式一个字没换，故旧账直接接着用。
 serde_json = "1"

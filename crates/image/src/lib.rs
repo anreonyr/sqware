@@ -1,0 +1,136 @@
+//! image — **造镜像那一步**：编程序（`programs` + `harness`）→ 打 initrd → 放到内核 ELF 旁。
+//!
+//! # 照实记（它为什么不在 `kernel/build.rs` 里）
+//!
+//! 它原先在那儿，那让内核的**编译单元**背上了三件不属于它的事：
+//!
+//!   ① 编全部程序（嵌套 cargo）；② 打 initrd；③ 把引导镜像的偏移/长度**回喂**内核源码
+//!   （`cargo::rustc-env`）。
+//!
+//! 用户原话：**"initrd 与 kernel 何干"**。后果是实测出来的：`watch()` 必须把 programs /
+//! harness / crates 的**每一个文件**登记成 `rerun-if-changed`（否则"改了程序、行为不变"），
+//! 于是**改一个客人的一个字节，内核 crate 就重编**（实测 1.31 s/次），`cargo build` 也永远是
+//! "编内核 + 编全部程序 + 打包"。
+//!
+//! **照实记（`watch()` 那套为什么不必跟过来）**：它存在是因为打包**寄生在 build script 里**
+//! ——build script 只由 cargo 的指纹机制驱动，"镜像新鲜不新鲜"没有任何人负责，只好把源文件
+//! 全盯上。搬出来之后**谁造镜像谁负责新鲜**：门每一轮都造（`crates/gate`），交互式由
+//! `scripts/runner.nu` 先查在不在。那条"逐文件盯"的纪律连同它挡过的两类假象一起消失。
+//!
+//! 造出来的东西与内核**只共享一个约定**：initrd 落在内核 ELF **同目录**（`boot.nu` 就在那儿找）。
+//! 内核也不再需要那两个数——它们写在区里前 8 字节（`env::wire::manifest::PREAMBLE`），开机读。
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// 目标三元组（与根 `.cargo/config.toml` 钉的那个一致）。
+const TARGET: &str = "riscv64gc-unknown-none-elf";
+
+/// 仓库根（本 crate 在 `crates/image`）。
+fn root() -> PathBuf {
+    let at = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    at.canonicalize().unwrap_or(at)
+}
+
+/// 认得的场景名——**从装配单里收**，故不会与它脱节。
+fn scenes() -> Vec<&'static str> {
+    let mut all: Vec<&'static str> = Vec::new();
+    for row in env::assembly::ALL {
+        for scene in row.scenes {
+            if !all.contains(scene) {
+                all.push(scene);
+            }
+        }
+    }
+    all
+}
+
+/// 这一景要装的程序（**装配单按 `scenes` 过滤**；次序即装载次序）。
+fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
+    let picked: Vec<(&'static str, env::ProgramKind)> = env::assembly::ALL
+        .iter()
+        .filter(|row| row.scenes.contains(&scenario))
+        .map(|row| (row.name, row.kind))
+        .collect();
+    if picked.is_empty() {
+        return Err(format!(
+            "未知场景 SQWARE_ROOT={scenario}（认得的：{}）",
+            scenes().join(" / ")
+        ));
+    }
+    Ok(picked)
+}
+
+/// 造这一景这一档的镜像，返 `initrd.img` 的落点（内核 ELF 同目录）。
+pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
+    let root = root();
+    let bins = bins_for(scenario)?;
+
+    // 嵌套 cargo 用**独立 target 目录**：宿主 cargo 会在 target 根持有 `.cargo-build-lock`，
+    // 同目录再起 cargo 会互锁死等（照实记：这一格是从 `kernel/build.rs` 原样搬过来的）。
+    let work = root.join("target/image").join(profile);
+    let mut args = vec![
+        "build".to_string(),
+        // **两个包一起编**：产品（`programs`）与测具（`harness`）——后者依赖前者的 lib。
+        "-p".to_string(),
+        "programs".to_string(),
+        "-p".to_string(),
+        "harness".to_string(),
+        "--target".to_string(),
+        TARGET.to_string(),
+        "--target-dir".to_string(),
+        work.to_string_lossy().into_owned(),
+    ];
+    // `debug` 是 dev profile 的名字——cargo 不接受 `--profile debug`，其余按名透传。
+    if profile != "debug" {
+        args.push("--profile".to_string());
+        args.push(profile.to_string());
+    }
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let status = Command::new(&cargo)
+        .args(&args)
+        .current_dir(&root)
+        .status()
+        .map_err(|e| format!("起不动嵌套 cargo：{e}"))?;
+    if !status.success() {
+        return Err("programs / harness 编不过（上面是它们自己的报错）".to_string());
+    }
+
+    // 读产物：**bin 名是约定** `prog-<名字>`（装配单里不写第二遍）。
+    let bin_dir = work.join(TARGET).join(profile);
+    let mut images = Vec::with_capacity(bins.len());
+    for (name, kind) in &bins {
+        let bin = format!("prog-{name}");
+        let elf =
+            std::fs::read(bin_dir.join(&bin)).map_err(|e| format!("读 {bin} 失败：{e}"))?;
+        images.push((*kind, *name, elf));
+    }
+    let items: Vec<(env::ProgramKind, &str, &[u8])> = images
+        .iter()
+        .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
+        .collect();
+    let root_at = bins
+        .iter()
+        .position(|(name, _)| *name == scenario)
+        .ok_or_else(|| format!("initrd: SQWARE_ROOT={scenario} 不在这一景的清单里"))?;
+    let blob = env::wire::manifest::pack(&items, root_at)
+        .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
+
+    // 落点：内核 ELF 同目录（`boot.nu` 就在那儿找）。
+    let at = root
+        .join("target")
+        .join(TARGET)
+        .join(profile)
+        .join("initrd.img");
+    if let Some(dir) = at.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建 {} 失败：{e}", dir.display()))?;
+    }
+    std::fs::write(&at, &blob).map_err(|e| format!("写 {} 失败：{e}", at.display()))?;
+    println!(
+        "initrd packed: {} ({} B, {} programs)",
+        at.display(),
+        blob.len(),
+        bins.len()
+    );
+    Ok(at)
+}

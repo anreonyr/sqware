@@ -11,6 +11,14 @@ runner = ["nu", "scripts/runner.nu"]
 
 [alias]
 # 门（`crates/gate`）那一台是**编外**的：它要 std + host ABI，而本工作区被上面那两行钉在
+# 造镜像那一步（`crates/image`）——**编内核之外**（用户裁定"initrd 与 kernel 何干"）：
+#
+#   cargo image               默认 root / release
+#   cargo image rig debug     指定场景与档
+#
+# `cargo run` 只管编内核；交互式跑之前先来这一下（`scripts/runner.nu` 会查镜像在不在）。
+image = "run --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linux-gnu --"
+
 # riscv 上。`--target x86_64-unknown-linux-gnu` 就是"宿主"这两个字的落点。一门一条
 # `#[test]`，故：
 #

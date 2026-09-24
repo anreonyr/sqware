@@ -174,11 +174,14 @@ pub fn build(scenario: Scenario, profile: Profile) -> Result<Image, BuildFailed>
 /// 不该留着改过的那一颗——否则同一个进程里后面的门会拿回变异过的 ELF。
 pub(crate) fn rebuild(scenario: Scenario, profile: Profile) -> Result<Image, BuildFailed> {
     let root = root();
+    // **造镜像在编内核之外**（用户裁定"initrd 与 kernel 何干"）：`kernel/build.rs` 现在只剩
+    // `link-arg`——编内核不再顺带编程序、打 initrd、回喂那两个数。于是**内核那一份与场景无关**
+    // （故下面不再传 `SQWARE_ROOT`），而镜像随场景而变：两件事在这里各做各的。
+    image::build(scenario.name(), profile.dir()).map_err(BuildFailed::Image)?;
     let out = Command::new("cargo")
         .args(["build", "--manifest-path"])
         .arg(root.join("Cargo.toml"))
         .args(profile.args())
-        .env("SQWARE_ROOT", scenario.name())
         .current_dir(&root)
         .stdin(Stdio::null())
         .output()
@@ -211,6 +214,8 @@ pub(crate) fn rebuild(scenario: Scenario, profile: Profile) -> Result<Image, Bui
 #[derive(Debug)]
 pub enum BuildFailed {
     Spawn(String),
+    /// **造镜像那一步**（`crates/image`）失败：编程序编不过 / 场景名不认得 / 写不进去。
+    Image(String),
     Cargo {
         scenario: Scenario,
         profile: Profile,
@@ -224,6 +229,7 @@ impl fmt::Display for BuildFailed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BuildFailed::Spawn(e) => write!(f, "cargo 起不动：{e}"),
+            BuildFailed::Image(why) => write!(f, "造镜像失败：{why}"),
             BuildFailed::Cargo {
                 scenario,
                 profile,
