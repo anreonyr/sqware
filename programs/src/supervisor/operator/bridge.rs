@@ -42,11 +42,16 @@ use protocol::session::Quay;
 /// - 各域本来就与树有一条会话（挂门牌那一趟），这一笔是它的近邻。
 ///
 /// 长度即语义：**8 字节 = 一位客人**（`settle` 认客人的那一格），**16 字节 = 这一帧**。
-const COORD: usize = 16;
+///
+/// **收的那一侧也读这一格**：`server.rs` 的 `settle` 按同一个数切帧，后 8 字节按 [`Eyes::of_wire`]
+/// 翻回来。**照实记（两个常量并成一个）**：那边原先自己写着 `COORD_FRAME = 16`，靠注释说"必须
+/// 同值"——同一条长度写两处，改一处漏一处**编得过**，症状要等帧被读成"读不懂"才显形（正是
+/// [`Eyes`] 那一段照实记里同一个毛病的第二次）。现在推、收两侧共读这一格。
+pub(crate) const COORD_FRAME: usize = 16;
 
 /// 把协调那一帧推给持树者（**每一位递门牌的域各调一次**）。
 fn coord_frame(into: PieToken, who: TaskId, eyes: Eyes) -> Result<(), ()> {
-    let mut frame = [0u8; COORD];
+    let mut frame = [0u8; COORD_FRAME];
     frame[..8].copy_from_slice(&(who.get() as u64).to_le_bytes());
     frame[8..].copy_from_slice(&(eyes as u64).to_le_bytes());
     mail::HolePie::from_token(into).push(&frame).map_err(|_| ())
@@ -103,7 +108,7 @@ pub fn attach(
     let _ = host_of(host, millis, tip)?;
     let tip_at = (*tip).ok_or("operator:tip")?;
     // 3.5 **协调那一帧**：把递门牌那几位域的号推过去。**门牌不由这里转授**（那是各域自己
-    // 在 `serve_tree` 之后直接交给持树者的，理由见 [`COORD`] 那段照实记）。
+    // 在 `serve_tree` 之后直接交给持树者的，理由见 [`COORD_FRAME`] 那段照实记）。
     // 次序仍是契约：客人号来之前，持树者先认出名册那一枚门牌（它按 `owner` + 记号找）；
     // 两帧按位递、次序不定，收到哪一枚就补上哪一枚（对齐见 `server.rs` 的 `settle`）。
     for (who, eyes) in coord.pairs() {

@@ -22,20 +22,9 @@ use protocol::coalition::client::Face as CoalitionFace;
 use protocol::principal::client::Face as PrincipalFace;
 use protocol::principal::core::PrincipalId;
 
-use super::bridge::Coord;
+use super::bridge::{COORD_FRAME, Coord};
 use super::desk::{Admit, Desk, Guest, desk};
 
-
-/// 协调那一帧的长度（**长度即语义**：8 = 一位客人，16 = 这一帧）。
-///
-/// 与 `programs/src/supervisor/operator/bridge.rs` 的同一格必须同值——那边是**推**这一侧。
-///
-/// 后 8 字节的**含义**是 [`Eyes`]（哪一双眼睛）：推的那一侧按它写，这里按 [`Eyes::of_wire`]
-/// 翻回来。**照实记（两个常量删了）**：这里原先写着 `ROLE_ROSTER = 0` / `ROLE_LEAGUE = 1`，
-/// 与推的那一侧的 `Role` 枚举**各写一遍**、靠注释说"必须同值"；现在装配单那一格、这一帧、
-/// 收的那一侧共读一处定义。那两个字节能有意思是门禁那一刀的事（之前是**保留零**）——正因为
-/// 有了它，两枚门牌才可以按位一枚一枚地递，"长度即语义"一个字没破。
-const COORD_FRAME: usize = 16;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -43,15 +32,13 @@ const COORD_FRAME: usize = 16;
 /// 里用——那几步的到达是**别人**在做（装配者转授、客人自己交孔）。
 const SETTLE_MS: usize = 1;
 
-/// 持树者起不来时的编号（指"死在头几步的哪一步"）。
-
 // ── 门外那一问（门禁）────────────────────────────────────────
 
 /// **两枚门牌**：身份服务那一枚（答"这一位此刻代表谁"与"在不在他那一支里"）与盟册服务那一枚
 /// （答"这一位在那枚盟里吗"）。
 ///
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的（见
-/// `programs/src/supervisor/operator/bridge.rs` 的 `COORD` 照实记：装配者转授那一版真机
+/// `programs/src/supervisor/operator/bridge.rs` 的 `COORD_FRAME` 照实记：装配者转授那一版真机
 /// 栽在 `coord-ship`）。树**不当自己的客人**：它不去 `seek("/sys/principal")`，理由同那一笔
 /// （自指 ⇒ 环）。
 ///
@@ -67,7 +54,7 @@ impl Session {
     ///
     /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = 服务入口记号
     /// （`bcall::ENTRY_MARK`）。**不必装配者转授**——各域自己在 `serve_tree` 之后把它直接交给
-    /// 持树者（见 `operator/bridge.rs` 的 `COORD` 照实记）。
+    /// 持树者（见 `operator/bridge.rs` 的 `COORD_FRAME` 照实记）。
     ///
     /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ 整格 `None`（读数会喊一句）。盟册那枚
     /// 认不出 ⇒ 只少 `Rule::In` 那一格。
@@ -284,7 +271,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 ///   不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进组**（那一条推
 ///   落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它；
 /// - **协调那一帧**（16 字节）：装配者把"**哪一位域** + **它是哪一双眼睛**"直接递过来
-///   （见 `programs/src/supervisor/operator/bridge.rs` 的 `COORD`）。两帧、次序不定：名册那一
+///   （见 `programs/src/supervisor/operator/bridge.rs` 的 `COORD_FRAME`）。两帧、次序不定：名册那一
 ///   枚到了才开闸（门禁从此判得了身份），盟册那一枚到了 [`Rule::In`] 才判得了。
 ///   **长度即语义**：8 = 一位客人，16 = 这一帧；
 /// - **答话路**：装配者转授来的那一枚 ⇒ `admit` 收一位客人；
