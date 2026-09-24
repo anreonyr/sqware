@@ -21,6 +21,7 @@ entry-macro = { path = "../crates/entry-macro" }
 # **程序侧用例那一台**（用户裁定"服务台搬进 SUT"）：服务域把自己的判据就地登记成一例一例。
 cases = { path = "../crates/cases" }
 env = { path = "../crates/env" }
+plan = { path = "../crates/plan" }
 runtime = { path = "../crates/runtime" }
 # 协议层：第一条协议操作出现了（root 用 `protocol::system` 的服务表起子域）。
 protocol = { path = "../crates/protocol" }

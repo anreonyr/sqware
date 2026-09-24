@@ -151,7 +151,7 @@ pub const NOTE_MAX: usize = 128;
 
 /// 程序装成的空间（`Build` 的特权级参数）：S 态页表 / U 态页表。
 ///
-/// 它是**装配单的产物**，不是程序自述：`env::assembly::ALL` 里那一行的 `kind` 决定（打包那一
+/// 它是**装配单的产物**，不是程序自述：`plan::assembly::ALL` 里那一行的 `kind` 决定（打包那一
 /// 侧是 `crates/image`），root 服务读取清单后原样转交。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ProgramKind {

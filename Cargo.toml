@@ -36,6 +36,9 @@ members = [
     # 而 `harness` 依赖 `programs` ⇒ 它不能住在任何一边（成环）。见 `crates/cases/Cargo.toml`。
     "crates/cases",
     "crates/env",
+    # `crates/plan` 是**装机的账**（装配单 / 需求单 / 坐标 / 开机三笔账）：
+    # 判据见 `crates/plan/src/lib.rs`——"这里只认表与字节，不碰任何运行时代码"。
+    "crates/plan",
     "crates/contract",
     "crates/protocol",
     "crates/runtime",

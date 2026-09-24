@@ -242,7 +242,7 @@ fn register(
     link: &Quay,
     talk: PieToken,
     host: TaskId,
-    key: env::Key,
+    key: plan::Key,
 ) -> Result<line::client::Line, fail::Fail> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| fail::Fail::Line)?;
     let want = Name::new(SERVICE).map_err(|_| fail::Fail::Line)?;

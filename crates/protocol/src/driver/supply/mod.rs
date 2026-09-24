@@ -73,7 +73,7 @@
 //!   （今天那四张在 `programs/src/driver/{router,uart,rtc}/needs.rs` 与
 //!   `harness/src/lodger/needs.rs`）；本协议只定义怎么把单子递过去、回单怎么读回来；
 //! - **谁代表谁** → Principal Protocol；
-//! - **清单怎么解析** → `env::wire::manifest`（线格式）与域侧那几张表；
+//! - **清单怎么解析** → `plan::manifest`（线格式）与域侧那几张表；
 //! - **装载与建域** → 内核 Unit ABI（本协议的"授出门闩"只是权柄那一步）。
 //!
 //! # 已知边界（照实写，不是待办）

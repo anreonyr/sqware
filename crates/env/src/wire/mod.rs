@@ -1,24 +1,19 @@
 //! envcall·wire — 环境调用载荷的字段 ↔ usize 契约（pack 与校验式 unpack）。
 //!
 //! 本文件 = **契约核心**：[`Wire`] trait、[`Decode`] 失败域、基元与权限位的 impl。
-//! 字段**词汇表**按语义分居九个子模块（**声明次序即下表次序**，与下面的 `pub use` 同名）：
-//!   - [`access`] —— **两族视图**（[`Access`] 对端能做什么 / [`Policy`] 这一枚能怎么流动）；
-//!   - [`args`] —— 引导线程的启动参数（boot → root 的入口账；**五个裸常量**）；
+//! 字段**词汇表**按语义分居三个子模块（**声明次序即下表次序**，与下面的 `pub use` 同名）：
 //!   - [`frompair`] —— 内核回写的 `(a0, a1)` → 域 Ret 载荷蒸馏；
 //!   - [`handle`] —— 语义句柄（[`PieToken`] / [`TaskId`] / [`TeamId`] / [`VirtAddr`]）＋ 记号 [`Mark`]；
-//!   - [`key`] —— **坐标**（[`KEY_LEN`] / [`Key`]：区 / 设备树本体 / 门铃）；
-//!   - [`manifest`] —— initrd 清单（boot → root 的程序账，写侧是内核 `build.rs`）；
-//!   - [`name`] —— 定长名字（[`NAME_LEN`] / [`Name`] / [`NameError`]）；
-//!   - [`pair`] —— 配对块（boot → root 的门闩账，定长记录：坐标 + 号）；
-//!   - [`supply`] —— 供给那一族的词汇（[`Need`] / [`Want`] / [`Kind`] / [`At`]）。
+//!   - [`name`] —— 定长名字（[`NAME_LEN`] / [`Name`] / [`NameError`]）。
 //!
-//! **re-export 的口径**（"`env::wire::X` 路径不变"这句话不是无条件的）：
-//!   - **可命名的类型**一律在下面 re-export，故 `env::wire::Key` 与 `env::wire::key::Key`
-//!     两条路都在；
-//!   - [`args`] 是**唯一**不 re-export 的子模块：它只有五个裸常量（`VIEW` / `VIEW_LEN` /
-//!     `PAIRS` / `COUNT` / `LEN`），平铺到 `env::wire` 根上只会让 `VIEW`、`COUNT` 这种名字
-//!     离开它们的上下文。故它的路径恒是 `env::wire::args::X`（读侧：`kernel/src/boot.rs`、
-//!     `programs/src/root/boot.rs`）。
+//! **照实记（原先九个子模块，五个搬走、一个并掉）**：`args` / `key` / `manifest` / `pair` /
+//! `supply` 从前也住这里，理由只是"都是两边要读的字节布局"。但**过线的东西**与**装机的账**
+//! 不是同一件事（`pair.rs` 自己的头注就写着"这不是 envcall 载荷"），故它们随 `crates/plan`
+//! 分了出去。**`access` 那一份并进了 [`permission`](crate::permission)**——`Access` / `Policy`
+//! 是本文件头两段讲的那两个族（读写 / 传递）的视图类型，同一个故事没有理由分两处讲。
+//!
+//! **re-export 的口径**：可命名的类型一律在下面 re-export，故 `env::wire::Name` 与
+//! `env::wire::name::Name` 两条路都在。
 //!
 //! 这是方案 3（typed payload）的**唯一类型擦除点**：每个字段类型都实现 [`Wire`]，
 //! 由 [`derive(Envcall)`](envmacros) 生成的 codec 自动接线，用户侧与内核侧不再手写
@@ -27,24 +22,19 @@
 //!
 //! 通用性：本 trait 只依赖 `usize`，不绑 U-mode 语义——sbi 等 S-mode 调用封装
 //! 未来可直接复用同一 codec（derive 不写死 envcall 路径）。
+//!
+//! **有三个 impl 的"类型在外"**：[`Permission`](crate::Permission) 在
+//! [`permission`](crate::permission)、[`HoleDir`](crate::HoleDir) 与
+//! [`ProgramKind`](crate::ProgramKind) 在 [`fid`](crate::fid)。这是**刻意**的：本仓的
+//! 口径是"非法位校验**只有一处**"（上面那一句），故三个 impl 并排住这里，而不是各回各家。
 
-pub mod access;
-pub mod args;
 pub mod frompair;
 pub mod handle;
-pub mod key;
-pub mod manifest;
 pub mod name;
-pub mod pair;
-pub mod supply;
 
-pub use access::{Access, Policy};
 pub use frompair::FromPair;
 pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
-pub use key::{KEY_LEN, Key};
 pub use name::{NAME_LEN, Name, NameError};
-pub use pair::{PAIR_LEN, Pair};
-pub use supply::{At, Kind, Need, Want, class_block};
 
 /// 字段 ↔ usize 的契约。
 pub trait Wire: Sized {

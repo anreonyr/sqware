@@ -41,8 +41,8 @@ pub enum Slot {
     Live { team: Option<TeamId>, task: TaskId },
 }
 
-/// **怎么知道它起来了**——定义与理由见 [`env::assembly::Announce`]（本处只是转发，调用点不动）。
-pub use env::assembly::Announce;
+/// **怎么知道它起来了**——定义与理由见 [`plan::assembly::Announce`]（本处只是转发，调用点不动）。
+pub use plan::assembly::Announce;
 
 /// 表里的一行。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,7 +77,7 @@ pub struct Table {
 }
 
 impl Table {
-    /// 行数上限（= `env::wire::manifest::MAX_PROGRAMS`）。
+    /// 行数上限（= `plan::manifest::MAX_PROGRAMS`）。
     pub const CAP: usize = 28;
 
     /// 空表：每一行都"占着位但没名字"。

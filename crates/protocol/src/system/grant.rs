@@ -8,7 +8,7 @@
 //! 发的那一半在装配者手里：它向固件**领**（`protocol::driver::supply::client::draw`）拿到这段字节，
 //! 再**原样**推进子域那条通道——本模块不碰原件，也不认识设备。
 
-use env::{PAIR_LEN, Pair};
+use plan::{PAIR_LEN, Pair};
 
 /// 把一段记录解出来，**第 i 条交给第 i 格**（位置即格）。
 ///

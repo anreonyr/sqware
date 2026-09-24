@@ -1,6 +1,6 @@
 //! lodger::needs — **本域自己那片硬件账**：要哪一类设备、什么种类/权/形态。
 //!
-//! **照实记（单子搬去 `env::assembly` 了）**：它本是**收方**开的那张单子：装配者照它开单（[`WANTS`] 那几条原样递出去），
+//! **照实记（单子搬去 `plan::assembly` 了）**：它本是**收方**开的那张单子：装配者照它开单（[`WANTS`] 那几条原样递出去），
 //! 本域收到记录后**按位次归位**（[`programs::driver::assemble::receive`]——位置即格）。
 //!
 //! **写的是类，不是名字**：`virtio,mmio` 是这一类设备的绑定名（树里的 `compatible`），
@@ -10,6 +10,6 @@
 //! 这一格 ⇒ 编排域取 **`reg` 首址最小**的那一台（今天正是房客从前写死的那一台，
 //! 故线号读数没动）。"哪台 virtio 是真的"要靠探设备寄存器去认，那是另一刀。
 
-// 定义搬去 `env::assembly`（装配单要把单子摆出来 ⇒ 必须与它同层，见那一处头注）。
+// 定义搬去 `plan::assembly`（装配单要把单子摆出来 ⇒ 必须与它同层，见那一处头注）。
 // 本处只转发，**调用点一行没改**。
-pub use env::assembly::LODGER_WANTS as WANTS;
+pub use plan::assembly::LODGER_WANTS as WANTS;

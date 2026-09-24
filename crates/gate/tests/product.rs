@@ -6,7 +6,7 @@
 //!      `system`）+ 4 台（3 服务 + `echo`）——**iii 之后持树者 / 身份 / 结盟不再是程序**（它们是
 //!      编排域自己域里的三枚线程，不占条数）；且引导镜像落在 `root` 上——`product` 与验收镜像
 //!      **共用同一个引导域**，故"景名 = 引导镜像名"那条旧巧合在这里断了
-//!      （见 `env::assembly::ENTRY` 的照实记）。
+//!      （见 `plan::assembly::ENTRY` 的照实记）。
 //!   2) **起不起得来**（QEMU）：自己退场 + 停机行 + 六沓用例全绿 + **恰好 4 条 `system: gone`**
 //!      （编排域自己的账——起一条记一条。**iii 之后那本账只记"背后有另一个域"的那几台**：本域
 //!      那三枚随域退场，不记账，见 `PLAN` 那一格）
@@ -118,7 +118,7 @@ const ABSENT: &[&str] = &[
 fn packed(image: &Image) -> Vec<String> {
     let at = image.initrd();
     let blob = std::fs::read(&at).unwrap_or_else(|e| panic!("读不到 {}：{e}", at.display()));
-    let entries = env::wire::manifest::Entries::new(&blob).expect("清单头非法");
+    let entries = plan::manifest::Entries::new(&blob).expect("清单头非法");
     entries
         .map(|e| e.expect("清单里有一条非法").name.to_string())
         .collect()

@@ -4,7 +4,7 @@
 //! 帧与记号见 [`protocol::system::operator::call`]。
 
 use env::Mark;
-use env::assembly::Eyes;
+use plan::assembly::Eyes;
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
@@ -20,7 +20,7 @@ use protocol::session::Quay;
 ///
 /// **照实记（后 8 字节的对齐方式换过一次）**：原先这一枚枚举（`Role`）与持树者那一侧的
 /// `ROLE_ROSTER` / `ROLE_LEAGUE` 常量**各写一遍** 0/1，靠两边注释说"必须同值"。现在两侧共读
-/// [`Eyes`]（`env::assembly`）——装配单上那一格、这一帧、收的那一侧，一处定义。
+/// [`Eyes`]（`plan::assembly`）——装配单上那一格、这一帧、收的那一侧，一处定义。
 ///
 /// **照实记（后 8 字节的来历）**：门禁那一刀里它们是**保留零**。这一刀起有了意思——于是两枚
 /// 门牌可以**分两帧、按位递**，"长度即语义"（16 = 这一帧）一个字没破。

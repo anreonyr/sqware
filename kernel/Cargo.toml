@@ -26,13 +26,13 @@ semihosting = []
 # 拆成两个 feature 只会造出无意义的四象限（登记了却走崩溃转储 / 没登记却报用例失败）。
 framework = []
 
-[build-dependencies]
-# 清单格式的单一真相在 `env::wire::manifest`：写侧是本 build.rs、读侧是 root 域。
-# 故这里是**宿主侧**依赖——`env` 除 `ecall::trap` 外全部可移植（那一个函数有非 riscv 分支）。
-env = { path = "../crates/env" }
-
+# **这里原先有一格 `[build-dependencies] env`**（照实记）：那时 `build.rs` 自己打 initrd、
+# 读清单格式。②③④ 搬去 `crates/image` 之后（见 `build.rs` 头注），本脚本只剩"把链接脚本
+# 交给 rustc"，故那一格**没有读者**——内核读 initrd 是**开机时**的事
+# （`src/platform/initrd.rs`），那归下面的 `[dependencies]`，不归构建脚本。本笔删掉它。
 [dependencies]
 env = { path = "../crates/env" }
+plan = { path = "../crates/plan" }
 sbi = { path = "../crates/sbi" }
 stanza = "0.5.2"
 

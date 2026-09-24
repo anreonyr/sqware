@@ -46,6 +46,7 @@ entry-macro = { path = "../crates/entry-macro" }
 # 程序侧用例那一台（搬出去之后仍从这里转出去，见 `src/lib.rs`）。
 cases = { path = "../crates/cases" }
 env = { path = "../crates/env" }
+plan = { path = "../crates/plan" }
 runtime = { path = "../crates/runtime" }
 protocol = { path = "../crates/protocol" }
 # **共享入口**：`programs::entry` 的 `_start` 与 panic 处理——每个测具一声

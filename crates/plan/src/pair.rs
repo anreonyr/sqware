@@ -16,8 +16,8 @@
 //! `token = 0` 是无效哨兵（`PieToken` 的约定），故有效记录恒有非零 token；坐标的判别号
 //! 不认识 ⇒ [`Pair::key`] 答 `None`（记录判废）。
 
-use super::PieToken;
-use super::key::{KEY_LEN, Key};
+use crate::key::{KEY_LEN, Key};
+use env::PieToken;
 
 /// 一条记录的字面字节数（`KEY_LEN` + 8）。
 pub const PAIR_LEN: usize = KEY_LEN + size_of::<usize>();
@@ -48,7 +48,7 @@ impl Pair {
     ///
     /// 两个造法**对偶**：内核 [`bytes`](Pair::bytes)（写）、域 [`new`](Pair::new)（读）。
     ///
-    /// [`env::wire::handle`]: crate::wire::handle
+    /// [`env::wire::handle`]: env::wire::handle
     pub fn bytes(key: Key, token: usize) -> [u8; PAIR_LEN] {
         let mut out = [0u8; PAIR_LEN];
         out[..KEY_LEN].copy_from_slice(&key.bytes());

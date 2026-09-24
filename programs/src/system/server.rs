@@ -16,8 +16,8 @@ use crate::service::{Lane, Role};
 
 // ── 适配：原语（转发到运行时那几件）──────────────────────────
 
-/// 起跑前要交出去的一枚门闩——定义见 [`env::assembly::Grant`]（本处只是转发）。
-pub use env::assembly::Grant;
+/// 起跑前要交出去的一枚门闩——定义见 [`plan::assembly::Grant`]（本处只是转发）。
+pub use plan::assembly::Grant;
 
 /// 起一个 Service。
 ///

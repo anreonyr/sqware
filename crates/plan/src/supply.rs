@@ -15,9 +15,9 @@
 //! **照实记（`Need` 不是线格式）**：它没有 `repr(C)`、尺寸不参与任何断言，唯一的义务是能被
 //! `const` 造出来；线上那一条是 [`Want`]（`repr(C)` + 定长字段，尺寸即线格式）。
 
-use crate::wire::access::{Access, Policy};
-use crate::wire::key::Key;
-use crate::wire::name::{NAME_LEN, Name};
+use crate::key::Key;
+use env::{Access, Policy};
+use env::{NAME_LEN, Name};
 
 const KIND_POLE: u8 = Kind::Pole as u8;
 const KIND_NOLE: u8 = Kind::Nole as u8;

@@ -35,7 +35,8 @@ mod call;
 
 use crate::call::{Kind, Need, Want};
 use crate::core::Fail;
-use env::{Access, Key, Name, Policy, TaskId};
+use env::{Access, Name, Policy, TaskId};
+use plan::{Key};
 
 fn name(text: &str) -> Name {
     Name::new(text).expect("名字合法")
@@ -134,7 +135,7 @@ fn an_order_that_is_not_that_shape_is_not_guessed_at() {
 
 #[test]
 fn a_reply_frame_round_trips_and_refuses_a_ragged_record_block() {
-    use env::{PAIR_LEN, Pair};
+    use plan::{PAIR_LEN, Pair};
 
     let records = {
         let a = Pair::bytes(Key::region(0x1000), 3);

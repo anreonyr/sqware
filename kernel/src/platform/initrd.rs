@@ -2,7 +2,7 @@
 //
 // 内核侧只剩两件事：
 //   1) 定位 initrd 区（`platform::machine::info().initrd`，来自 FDT `/chosen`）；
-//   2) 按区里**前 8 字节**取出 **root 镜像**（`env::wire::manifest::PREAMBLE` 那一格）。
+//   2) 按区里**前 8 字节**取出 **root 镜像**（`plan::manifest::PREAMBLE` 那一格）。
 //
 // 清单的**解释权在域侧程序**（引导域与编排域各读一遍同一批字节）：内核不含清单格式，
 // 只把整区只读映射进引导域空间（VA 由 boot 在 root 的用户段里

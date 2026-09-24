@@ -13,8 +13,9 @@
 //! 都带动作码**（板那一扇的 `REGISTER` 一族、树那一扇的 `land`/`find` 一族）——去掉只省
 //! 1 字节，换来"任何恰好 17 字节推上来的东西都算一次登记"。
 
-use env::wire::KEY_LEN;
-use env::{Key, Mark};
+use plan::KEY_LEN;
+use env::{Mark};
+use plan::{Key};
 
 use super::core::Fail;
 

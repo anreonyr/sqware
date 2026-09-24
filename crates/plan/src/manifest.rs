@@ -2,7 +2,7 @@
 //!
 //! 打包的一侧是内核的 `build.rs`（宿主程序），读的一侧是域（引导域读它挑引导镜像，编排域
 //! 读它挑各服务的镜像——同一批字节，见 `platform/devices.rs::supply_initrd`），故格式在此定义一次
-//! （与 [`pair`](super::pair) 同一条理由：跨域的字节布局不留第二份账）。
+//! （与 [`pair`](crate::pair) 同一条理由：跨域的字节布局不留第二份账）。
 //!
 //! ```text
 //! [0..4]   root_off u32        ← **给内核的两个数**（见 [`PREAMBLE`]）
@@ -12,7 +12,7 @@
 //! ```
 //!
 //! `kind` 是 [`ProgramKind`] 的码（0 = `User`、1 = `Supervisor`）——**特权级的唯一声明
-//! 处是装配单**（`env::assembly::ALL` 里那一行的 `kind`；打包那一侧是 `crates/image`），
+//! 处是装配单**（`plan::assembly::ALL` 里那一行的 `kind`；打包那一侧是 `crates/image`），
 //! 域只读取并原样转交 `Build`。
 //!
 //! 内核**不解释**这份清单：它只读前 8 字节那两个数取引导镜像（`kernel/src/platform/initrd.rs`）。
@@ -20,7 +20,7 @@
 
 use alloc::vec::Vec;
 
-use crate::fid::ProgramKind;
+use env::ProgramKind;
 
 /// 清单条数上限。
 ///
@@ -33,7 +33,7 @@ use crate::fid::ProgramKind;
 /// `pack` 返 `None`，内核 build.rs（那时打包还在那儿）报"清单越界"。
 ///
 /// **这一刀（用户裁定"测试和程序分开"）之后，压力的成因没了**：清单不再是并集那 31 条——
-/// 装哪几台看 `env::assembly::ALL` 每行的 `scenes`（打包那一侧是 `crates/image`）：
+/// 装哪几台看 `plan::assembly::ALL` 每行的 `scenes`（打包那一侧是 `crates/image`）：
 /// 验收镜像 **18** 台（产品那 6 条 + 六位常客 + 六台探针）、产品镜像 **6** 台，台子那几张只有
 /// 1~3 台 ⇒ 32 今天有 14 格余量。
 ///

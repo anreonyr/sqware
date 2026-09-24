@@ -37,7 +37,7 @@ use core::time::Duration;
 use env::Mark;
 
 use crate::system::server::{self as service, Grant};
-use env::wire::manifest;
+use plan::manifest;
 use env::{Name, PieToken, TaskId};
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::PrincipalId;
@@ -56,10 +56,10 @@ use protocol::driver::supply::call::{Need, WANT_MAX, Want};
 use crate::root::boot;
 use crate::system::machine::Machine;
 
-/// 装配失败的编号——定义见 [`env::assembly::Died`]（本处只是转发）。
-pub use env::assembly::Died;
+/// 装配失败的编号——定义见 [`plan::assembly::Died`]（本处只是转发）。
+pub use plan::assembly::Died;
 /// **哪一双眼睛**也是装配单上的一格，故两处共读同一个定义。
-pub use env::assembly::Eyes;
+pub use plan::assembly::Eyes;
 
 /// 认身份门牌 / 与它说话的短等间隔（毫秒）：门牌由 Server 起手交出，这里只是短等。
 const RETRY_MS: usize = 1;
@@ -79,7 +79,7 @@ pub struct Program {
     ///
     /// **就是单子上的那几条**（[`Need`]）：那几张表由**收方**自己开
     /// （[`crate::driver::router::needs`]、[`crate::driver::uart::needs`] 与
-    /// [`env::assembly::LODGER_WANTS`]），本域照单递出去、并在递之前把"类"翻成"哪一段区"
+    /// [`plan::assembly::LODGER_WANTS`]），本域照单递出去、并在递之前把"类"翻成"哪一段区"
     /// （见 [`wire`]）——中间不再有"需求 → 单子"的转换。
     pub needs: Option<&'static [Need]>,
     /// 要不要板那条路（[`board::attach`]）。
@@ -252,7 +252,7 @@ impl<'a> Catalog<'a> {
 /// ——内件三枚在前、镜像那几台在后，与从前 `assembly::ALL` 的 `order`（0/1/2 内件、3..18
 /// 程序）**逐字相同**。
 ///
-/// **照实记（原先是一条列表、一条来路）**：`plan` 从 `env::assembly::ALL` 派生，装配单里
+/// **照实记（原先是一条列表、一条来路）**：`plan` 从 `plan::assembly::ALL` 派生，装配单里
 /// 每一条都是"镜像里的一台"。iii 之后前三枚不再是程序（没有自己的 bin、没有自己的域），
 /// 故它们不进装配单，但**仍在这条名册上**——次序仍是一个。
 ///
@@ -320,7 +320,7 @@ pub fn assemble<'a>(
             })?;
         }
         // **哪一双眼睛**：名册那一格说了算（不是拿名字认的——`p.name == "principal"`
-        // 那种写法，改个名字就静默失灵；见 `env::assembly::Eyes` 的照实记）。
+        // 那种写法，改个名字就静默失灵；见 `plan::assembly::Eyes` 的照实记）。
         //
         // 名册（`principal`）：它一放行，本域就认下它交给生我者的那一枚门牌，再把**前两条**
         // （它自己与树）补绑上——它们起来的时候它还没在，没得绑。

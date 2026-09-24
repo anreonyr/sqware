@@ -15,6 +15,7 @@ publish = false
 [dependencies]
 # 装配单（`assembly::ALL`）与清单格式（`wire::manifest`）——**两侧共读的那一份**就在 env。
 env = { path = "../env" }
+plan = { path = "../plan" }
 
 [[bin]]
 name = "sqware-image"

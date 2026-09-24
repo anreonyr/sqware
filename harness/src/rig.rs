@@ -229,7 +229,7 @@ use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit;
 
-/// 受害者的清单名（`env::assembly::ALL` 里 `scenes` 含 `rig` 的那一行）：**rig A 的握手版受害者**——把孔交给
+/// 受害者的清单名（`plan::assembly::ALL` 里 `scenes` 含 `rig` 的那一行）：**rig A 的握手版受害者**——把孔交给
 /// 台主（`seat`）→ 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
 /// （见 `hang.rs` 头注）。旧版 `churn` 仍在清单里（留档），本台子不再用它。
 const VICTIM: &str = "hang";

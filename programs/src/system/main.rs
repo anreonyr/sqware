@@ -23,7 +23,7 @@
 //! ```
 //!
 //! **本文件只剩流程**：起谁、按什么顺序、开哪几条通道、要哪些门闩、上不上板、上不上树，
-//! 全在 `scenario.rs`（`INNER` 那三枚 ＋ 从 `env::assembly::ALL` 派生的那几台——**一张表只有
+//! 全在 `scenario.rs`（`INNER` 那三枚 ＋ 从 `plan::assembly::ALL` 派生的那几台——**一张表只有
 //! 一处**）。要加第三个服务 —— 表里加一行，本文件一个字不改。
 
 extern crate alloc;
@@ -49,7 +49,7 @@ use runtime::env::unit as utask;
 
 use protocol::driver::supply;
 use protocol::driver::supply::call::{Kind, Want};
-use env::assembly::E_BOOT;
+use plan::assembly::E_BOOT;
 use programs::system::{coalition, operator, principal};
 use service::{Catalog, Lane, Program, Role};
 
@@ -58,7 +58,7 @@ mod scenario;
 
 // **照实记（这里原先有四个名字常量：`TREE` / `PRINCIPAL` / `COALITION` / `MEMBER`）**：
 // 它们是"装配期认谁"的四个名字，而**认它们的是装配的机器**（`service::assemble` 里那三处
-// `p.name == …`），不是本文件。装配单搬去 `env::assembly` 那一刀之后，本文件只剩流程，
+// `p.name == …`），不是本文件。装配单搬去 `plan::assembly` 那一刀之后，本文件只剩流程，
 // 这四个名字在这里**一个读者都没有**（编译期一直报 `never used`）——留着就是同一条事实
 // 写两处，故删。名字仍各自只有一处：住 `service.rs`（持树者那条在 `Plan::holds_tree` 上）。
 
@@ -265,9 +265,9 @@ fn talk_to_root() -> Option<Pier> {
 ///
 /// **本域为什么读树**：单子上那一格写的是类（`compatible`），翻成"哪一段区"要有设备树；而单子
 /// 是本域造的（子方只认得生我者，单子不经过它），故读树只能落在本域（理由见
-/// `system::machine` 头注）。这一枚的坐标是 [`env::Key::dtb`]——**它不是树里的节点**。
+/// `system::machine` 头注）。这一枚的坐标是 [`plan::Key::dtb`]——**它不是树里的节点**。
 fn take_machine(pier: &Pier) -> Result<Machine, Fail> {
-    let want = Want::new(env::Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE);
+    let want = Want::new(plan::Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE);
     let token = take(pier, want).ok_or(Fail::Machine)?;
     let dock = Dock::open(PolePie::from_token(token)).map_err(|_| Fail::Machine)?;
     Machine::of(dock.view()).map_err(|_| Fail::Machine)
@@ -277,7 +277,7 @@ fn take_machine(pier: &Pier) -> Result<Machine, Fail> {
 ///
 /// **零拷贝**：那几十 MB 不是搬过来的，是同一批物理页借映进本域——固化在清单里的镜像坐标
 /// 是**相对这块区**的切片，故换一张表、换一个 VA 照样解析得出来。
-fn take_catalog(pier: &Pier, key: env::Key) -> Result<Catalog<'static>, Fail> {
+fn take_catalog(pier: &Pier, key: plan::Key) -> Result<Catalog<'static>, Fail> {
     let want = Want::new(key, Kind::Pole, Access::FETCH, Policy::NONE);
     let token = take(pier, want).ok_or(Fail::Payload)?;
     let dock = Dock::open(PolePie::from_token(token)).map_err(|_| Fail::Payload)?;

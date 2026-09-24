@@ -40,7 +40,7 @@
 //!
 //! # 特权级由清单定
 //!
-//! 本域是 **U 态**（`env::assembly::ALL` 里这一行的 `kind`）：铸孔、交出、上树找服务、领一枚门闩
+//! 本域是 **U 态**（`plan::assembly::ALL` 里这一行的 `kind`）：铸孔、交出、上树找服务、领一枚门闩
 //! 都不需要 S 态。
 
 extern crate alloc;
@@ -59,7 +59,8 @@ use protocol::system::operator::client as operator;
 
 use alloc::format;
 
-use env::{Key, Name, PieToken};
+use env::{Name, PieToken};
+use plan::{Key};
 use protocol::driver::line;
 use protocol::driver::line::call as lcall;
 use cases::Suite;

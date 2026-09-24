@@ -3,7 +3,8 @@
 //! 客户是**持有那台设备的人**：它从不读线号（泊位就是坐标），只报**那一段区**。
 
 use env::Mark;
-use env::{Key, Name, PieToken};
+use env::{Name, PieToken};
+use plan::{Key};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 

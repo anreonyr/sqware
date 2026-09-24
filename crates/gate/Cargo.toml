@@ -35,4 +35,5 @@ image = { path = "../image" }
 # 在 `env::wire::manifest`——不在这里抄一遍。`env` 是仓里**唯一两边都编得过**的那一个 crate
 # （宿主 + riscv），故它能被这一台（宿主）直接吃。
 env = { path = "../env" }
+plan = { path = "../plan" }
 regex = "1"

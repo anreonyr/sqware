@@ -1,4 +1,4 @@
-//! 装配单自己的门 —— **不起机、不造镜像**：只看那张表（`env::assembly::ALL` + `ENTRY`）。
+//! 装配单自己的门 —— **不起机、不造镜像**：只看那张表（`plan::assembly::ALL` + `ENTRY`）。
 //!
 //! # 为什么值得单开一门
 //!
@@ -17,7 +17,7 @@
 //! 那条关系写在这里，是**闸**不是第二份账：谁把一位常客塞进产品镜像、或者给某台服务改了角色，
 //! 当场红——而"进哪张镜像"仍然只有 `scenes` 一处说。
 
-use env::assembly::{ALL, ENTRY, Spot, entry_of};
+use plan::assembly::{ALL, ENTRY, Spot, entry_of};
 
 /// 这一景要装的程序（与 `crates/image::bins_for` 同一条过滤；**次序即装载次序**）。
 fn bins(scene: &str) -> Vec<&'static str> {

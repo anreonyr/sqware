@@ -1,6 +1,6 @@
 //! router::needs — **本域自己那片硬件账**：要哪几枚门闩、什么种类/权/形态。
 //!
-//! **照实记（单子搬去 `env::assembly` 了）**：它本是**收方**开的那张单子：装配者照它开单（[`WANTS`] 那几条原样递出去），
+//! **照实记（单子搬去 `plan::assembly` 了）**：它本是**收方**开的那张单子：装配者照它开单（[`WANTS`] 那几条原样递出去），
 //! 本域收到记录后**按位次归位**（[`crate::driver::assemble::receive`]——位置即格）。
 //!
 //! **两类坐标都在这一张单上**：控制器按**类**要（`sifive,plic-1.0.0`，树里认 ⇒ 编排域读树
@@ -10,10 +10,10 @@
 //! **只要三枚**：控制器、自描述、门铃。那台串口归 [`crate::driver::uart`]——**线的闸门归设备
 //! 持有者**，故本域不去替它领（`ONLY` 是资源事实，一张表里只能有一个持有者）。
 
-// 定义搬去 `env::assembly`（装配单要把单子摆出来 ⇒ 必须与它同层，见那一处头注）。
+// 定义搬去 `plan::assembly`（装配单要把单子摆出来 ⇒ 必须与它同层，见那一处头注）。
 // 本处只转发，**调用点一行没改**。
-pub use env::assembly::ROUTER_WANTS as WANTS;
+pub use plan::assembly::ROUTER_WANTS as WANTS;
 
 /// 控制器那一类设备的绑定名——[`crate::driver::router::plic`] 拿它去比对树里的 `compatible`。
-/// 它**不是**装配单的一格（单子本身在 `env::assembly`），故留在本域。
+/// 它**不是**装配单的一格（单子本身在 `plan::assembly`），故留在本域。
 pub const PLIC: &str = "sifive,plic-1.0.0";

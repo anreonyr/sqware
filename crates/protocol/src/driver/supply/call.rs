@@ -3,7 +3,8 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
 
-use env::{PAIR_LEN, TaskId};
+use env::{TaskId};
+use plan::{PAIR_LEN};
 
 use super::core::Fail;
 
@@ -12,9 +13,9 @@ pub const BOOT: &str = "boot";
 
 
 
-// **词汇搬去 `env` 了**（装配单要宿主侧也读得到，见 `env::wire::supply` 头注）：本处只转发，
+// **词汇搬去 `env` 了**（装配单要宿主侧也读得到，见 `plan::supply` 头注）：本处只转发，
 // **调用点一行没改**。
-pub use env::wire::supply::{At, Kind, Need, Want, class_block};
+pub use plan::supply::{At, Kind, Need, Want, class_block};
 
 /// 单子的操作码。今天只有"供"这一枚——留着这一格，是为加动作时不必改帧的布局。
 pub const OP_SUPPLY: u8 = 1;
@@ -29,7 +30,7 @@ pub const WANT_MAX: usize = 5;
 pub const WANT_LEN: usize = core::mem::size_of::<Want>();
 const _: () = assert!(WANT_LEN == 32);
 /// **各项之和就是它**——留一格隐式的尾巴，`want_bytes` 就会把未初始化字节读上线（见 `Want` 的注）。
-const _: () = assert!(core::mem::size_of::<Want>() == env::KEY_LEN + 4 + 4 + 1 + 7);
+const _: () = assert!(core::mem::size_of::<Want>() == plan::KEY_LEN + 4 + 4 + 1 + 7);
 /// 帧头：`[op][条数]` + 那一格"给谁"（8 字节 LE，与 `operator::tell` 同一口径）。
 const HEAD_LEN: usize = 2 + 8;
 pub const ORDER_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;

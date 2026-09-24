@@ -9,7 +9,7 @@
 //!
 //! # 坐标是 `reg` 段，名字只喂日志
 //!
-//! 配对标那一格记的是 [`Key::region(base)`](env::Key::region)——**那一段机器摆在哪**，不是
+//! 配对标那一格记的是 [`Key::region(base)`](plan::Key::region)——**那一段机器摆在哪**，不是
 //! 它叫什么：名字（`serial@10000000` 这种 basename）是**这台设备的标签**，域要它就自己从
 //! 设备树里读（`system::machine`）；内核读出来只为往 boot 日志上打一行，**随即丢掉**——
 //! 它不进任何类型、不进任何表（`scan` 的局部量）。
@@ -36,7 +36,8 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{Fail, Key, PAIR_LEN, Pair, TaskId};
+use env::{Fail, TaskId};
+use plan::{Key, PAIR_LEN, Pair};
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 

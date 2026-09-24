@@ -19,7 +19,7 @@
 //! 的账（`needs::WANTS`）。本模块只保证**回单与单子同序同长**：第 i 条落第 i 格。
 
 use alloc::vec;
-use env::{PAIR_LEN, Pair};
+use plan::{PAIR_LEN, Pair};
 use protocol::session::Quay;
 use protocol::system::grant;
 use runtime::env::unit as utask;

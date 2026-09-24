@@ -2,7 +2,8 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`protocol::driver::supply::call`]。
 
-use env::{Key, PAIR_LEN, Pair, PieToken};
+use env::{PieToken};
+use plan::{Key, PAIR_LEN, Pair};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
 

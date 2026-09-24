@@ -1,14 +1,15 @@
 //! boot — **boot 给引导域的两块账**：清单（装了哪些程序）与配对块（有哪些门闩）。
 //!
-//! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::wire::args`），行的还是
+//! 这是**这台机器的事实**，不是协议：它读的是启动参数（`plan::args`），行的还是
 //! "谁被装进来了"这件事。物料面（单子与回单）住在 [`protocol::driver::supply`]；要哪几样由
 //! **收方**自己开单（[`crate::driver::router::needs`] 等，开口的形态就是 `Need`）。
 
 use alloc::format;
 
-use env::wire::key::{DTB, IRQ, REGION};
-use env::wire::{args as boot_args, manifest};
-use env::{Key, PAIR_LEN, Pair, PieToken};
+use plan::key::{DTB, IRQ, REGION};
+use plan::{args as boot_args, manifest};
+use env::{PieToken};
+use plan::{Key, PAIR_LEN, Pair};
 
 /// boot 给引导域的两块账：清单（装了哪些程序）与配对块（有哪些门闩）。
 pub struct Root {
@@ -24,7 +25,7 @@ impl Root {
             return None;
         }
         let (view, len) = (a[boot_args::VIEW] as *const u8, a[boot_args::VIEW_LEN]);
-        // `COUNT` 是**条数**，不是字节数（布局见 `env::wire::args`）。
+        // `COUNT` 是**条数**，不是字节数（布局见 `plan::args`）。
         let (pairs, count) = (a[boot_args::PAIRS] as *const u8, a[boot_args::COUNT]);
         // SAFETY: boot 把这两区只读映射进本域，长度即启动参数给的字节数；本域只读。
         let view = unsafe { core::slice::from_raw_parts(view, len) };

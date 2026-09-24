@@ -229,7 +229,7 @@ fn probe_watch_is_about_the_coordinates_not_about_life_and_death() {
 #[test]
 fn grant_each_hands_record_i_to_cell_i() {
     // **第 i 条就是单子第 i 条的答**（同序同长）：收方那张表按位次归位，本模块不解释坐标。
-    use env::{Key, PAIR_LEN, Pair};
+    use plan::{Key, PAIR_LEN, Pair};
 
     let a = Pair::bytes(Key::region(0x1000_0000), 11);
     let b = Pair::bytes(Key::irq(), 12);

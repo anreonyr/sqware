@@ -32,7 +32,8 @@
 
 use alloc::vec::Vec;
 
-use env::{Key, Name};
+use env::{Name};
+use plan::{Key};
 use runtime::core::dock::View;
 
 /// S 模式外部中断的中断号：`interrupts-extended` 里 `cell == 9` 的那一项。

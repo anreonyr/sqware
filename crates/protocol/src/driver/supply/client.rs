@@ -2,7 +2,8 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
 
-use env::{Key, PAIR_LEN, Pair, PieToken, TaskId};
+use env::{PieToken, TaskId};
+use plan::{Key, PAIR_LEN, Pair};
 
 use crate::session::Pier;
 

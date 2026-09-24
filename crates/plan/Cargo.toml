@@ -1,0 +1,14 @@
+[package]
+name = "plan"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+test = false
+bench = false
+doctest = false
+
+# 依赖只有 `env`（单向：`plan → env`）：这里的每一件都要那个 crate 的**类型**
+# （`ProgramKind` / `Key` / `Permission` / `Access` / `Policy`），而 `env` 一处也不认识这里。
+[dependencies]
+env = { path = "../env" }

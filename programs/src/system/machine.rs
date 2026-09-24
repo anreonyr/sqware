@@ -19,7 +19,7 @@
 //! 这里全是**核心**：视图进来、坐标出去，没有会话、没有门闩、没有失败策略。领树那一手
 //! （递单 + `Dock::open`）在 `system::main` 里（[`Machine::of`] 之前那几行）。
 
-use env::Key;
+use plan::Key;
 use runtime::core::dock::View;
 
 /// 本域手里那台机器的自述。

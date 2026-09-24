@@ -79,8 +79,8 @@ pub const fn desk() -> Desk {
 const fn boarded_rows() -> usize {
     let mut n = 0;
     let mut i = 0;
-    while i < env::assembly::ALL.len() {
-        if let Some(plan) = env::assembly::ALL[i].plan {
+    while i < plan::assembly::ALL.len() {
+        if let Some(plan) = plan::assembly::ALL[i].plan {
             if plan.board {
                 n += 1;
             }

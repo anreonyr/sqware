@@ -121,6 +121,7 @@ dependencies = [
  "entry-macro",
  "env",
  "erra",
+ "plan",
  "programs",
  "protocol",
  "runtime",
@@ -153,6 +154,7 @@ dependencies = [
  "fdt",
  "hashbrown",
  "log",
+ "plan",
  "riscv",
  "riscv-rt",
  "rustc-demangle",
@@ -182,6 +184,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "plan"
+version = "0.1.0"
+dependencies = [
+ "env",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -200,6 +209,7 @@ dependencies = [
  "env",
  "erra",
  "fdt",
+ "plan",
  "protocol",
  "runtime",
 ]
@@ -211,6 +221,7 @@ dependencies = [
  "contract",
  "env",
  "erra",
+ "plan",
  "runtime",
 ]
 

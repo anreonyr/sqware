@@ -6,7 +6,7 @@
 //!   Role::League    coalition    盟册     它是名册的客人
 //! ```
 //!
-//! **照实记（这三行原先在 `env::assembly::ALL` 上）**：那时 principal / coalition / operator
+//! **照实记（这三行原先在 `plan::assembly::ALL` 上）**：那时 principal / coalition / operator
 //! 各是一个**程序**（自己的 bin、自己的域、自己的 `[[bin]]`）。iii 之后它们与编排者**共用
 //! 一份字节**（`prog-system`），在**本域**里各占一枚线程 ⇒ 它们不是清单里的东西（镜像里没有
 //! 它们的字节），但仍是"本域要起的东西" ⇒ 搬出来，由本域的装配单（`scenario.rs`）与镜像里
@@ -21,13 +21,13 @@
 //! （`board/desk.rs` 的 `Desk::CAP` 要数"内件里有几位上板"）。住在 bin 里，后者数不到，那个
 //! 界就只剩一个手挑的数。
 
-use env::assembly::{Announce, Eyes};
+use plan::assembly::{Announce, Eyes};
 
 use crate::service::{Program, Role};
 
-/// 内件起手失败的三枚号（与原先 `env::assembly` 上那三枚**同值**）。
+/// 内件起手失败的三枚号（与原先 `plan::assembly` 上那三枚**同值**）。
 mod died {
-    use env::assembly::Died;
+    use plan::assembly::Died;
     pub const E_TREE: Died = 10;
     pub const E_PRINCIPAL: Died = 14;
     pub const E_COALITION: Died = 16;

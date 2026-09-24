@@ -52,3 +52,4 @@ publish = false
 # `#[path]` 进来的那几份源码自己 `use env::…`。放 `[dev-dependencies]`：本 crate 只有测试靶，
 # 没有 lib。
 env = { path = "../env" }
+plan = { path = "../plan" }

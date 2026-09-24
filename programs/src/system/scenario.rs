@@ -10,7 +10,7 @@
 //!
 //!   - **本文件 = 数据**：一行台 = 一个 [`Program`]（名字 / 宣布 / 通道 / 需求 / 上不上板……）；
 //!   - **`system/main.rs` = 机器**：登记、按序起、监督、收尾——它不认识具体哪一台；
-//!   - **哪几台进哪张镜像** = `env::assembly::ALL` 的 `scenes` 那一格（**装配单只有一处**）。
+//!   - **哪几台进哪张镜像** = `plan::assembly::ALL` 的 `scenes` 那一格（**装配单只有一处**）。
 //!
 //! **照实记（指标与"道"的位次按位耦合）**：装配单的下标就是"道"的位次（`supervise` 按
 //! `plan.get(i)` 把道上响的那一位翻回名字）。故两张表必须**各自自洽**——第一版想"表里插一条
@@ -23,7 +23,7 @@ use super::*;
 use programs::service::Role;
 use programs::system::inner::INNER;
 
-/// 这一景的装配单：**从 `env::assembly::ALL` 派生**——`plan: Some` 的那些行里、**这张镜像真有的**
+/// 这一景的装配单：**从 `plan::assembly::ALL` 派生**——`plan: Some` 的那些行里、**这张镜像真有的**
 /// 那些，按 `order` 排。
 ///
 /// **照实记（为什么清单要从外面传进来）**：装配单是"本域认识的全部台"，镜像是"这一次真装了哪些"
@@ -56,7 +56,7 @@ use programs::system::inner::INNER;
 /// 三台驱动紧跟在身份服务之后、其余之前：控制器先就位，线再开闸（`uart` / `rtc` 持有那两台设备）。
 /// `sleeper` 排在 `lodger` 之后、`subject` 之前：它要找的那块门牌 `/device/rtc` 由 `rtc` 落。
 pub fn plan(catalog: &Catalog) -> Vec<Program> {
-    let mut rows: Vec<&env::assembly::Row> = env::assembly::ALL
+    let mut rows: Vec<&plan::assembly::Row> = plan::assembly::ALL
         .iter()
         .filter(|row| row.plan.is_some() && catalog.find(row.name).is_some())
         .collect();
@@ -71,7 +71,7 @@ pub fn plan(catalog: &Catalog) -> Vec<Program> {
 /// **照实记（为什么是自由函数，不是 `Program::of`）**：`Program` 住 **lib**（`service`），
 /// 而本文件是 **bin** `prog-system` 的一部分 ⇒ inherent impl 落在"类型所属 crate 之外"，
 /// `E0116` 当场拒绝。自由函数不受这条约束。
-fn of(name: &'static str, p: &env::assembly::Plan) -> Program {
+fn of(name: &'static str, p: &plan::assembly::Plan) -> Program {
     Program {
         name,
         announce: p.announce,

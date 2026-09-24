@@ -6,19 +6,19 @@
 //! （**riscv**）按它起程序。而仓里**只有 `env` 两边都编得过**——`protocol` 拖着 `runtime`
 //! （那两处 riscv 内联汇编在宿主上编不过，`protocol-case` 就是为此用 `#[path]` 手工搬核心的）。
 //!
-//! 故这一层是"**两边都要知道的东西**"的定义处，与 [`crate::fid`]（调用号）、
-//! [`crate::wire::manifest`]（清单格式）、[`crate::Permission`] / [`crate::Access`] /
-//! [`crate::Policy`] / [`crate::ProgramKind`] 同款。
+//! 故这一层是"**两边都要知道的东西**"的定义处，与 [`env::fid`]（调用号）、
+//! [`crate::manifest`]（清单格式）、[`env::Permission`] / [`env::Access`] /
+//! [`env::Policy`] / [`env::ProgramKind`] 同款。
 //!
 //! **照实记（这些词是从别处搬下来的，旧路径照旧）**：`Announce` 原住
 //! `protocol::system::desk`、`Grant` 原住 `programs::system::server`、
 //! `Died` 原住 `programs::service`——三处现在都是 `pub use` 转发，**调用点一行没改**
-//! （与 `Access`/`Policy` 从 `runtime::core::port` 搬到 `env::wire::access` 是同一条先例）。
+//! （与 `Access`/`Policy` 从 `runtime::core::port` 搬到 `env::permission` 是同一条先例）。
 
-use crate::wire::access::{Access, Policy};
-use crate::wire::key::Key;
-use crate::wire::supply::{Kind, Need, class_block};
-use crate::{Permission, PieToken, ProgramKind};
+use crate::key::Key;
+use crate::supply::{Kind, Need, class_block};
+use env::{Access, Policy};
+use env::{Permission, PieToken, ProgramKind};
 
 /// **怎么知道它起来了**——每个 Service 自己的一种，**登记时定死**。
 ///
@@ -44,9 +44,9 @@ pub struct Grant {
 
 /// 装配失败的编号：指"死在装配的哪一步"（沿用旧树那套小整数编号的意思）。
 ///
-/// [`crate::Reason`] 的别名——装配编号只是"域自己的小整数"那一族（见 [`crate::exit`] 的头注），
+/// [`env::Reason`] 的别名——装配编号只是"域自己的小整数"那一族（见 [`env::exit`] 的头注），
 /// 不另立类型；名字留着是因为装配单这张表通篇讲的是"哪一台、死在第几步"。
-pub type Died = crate::Reason;
+pub type Died = env::Reason;
 
 // ── 死在装配的哪一步（编号沿用旧树那套小整数）───────────────────────────────
 //

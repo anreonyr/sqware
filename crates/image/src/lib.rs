@@ -18,7 +18,7 @@
 //! `scripts/runner.nu` 先查在不在。那条"逐文件盯"的纪律连同它挡过的两类假象一起消失。
 //!
 //! 造出来的东西与内核**只共享一个约定**：initrd 落在内核 ELF **同目录**（`boot.nu` 就在那儿找）。
-//! 内核也不再需要那两个数——它们写在区里前 8 字节（`env::wire::manifest::PREAMBLE`），开机读。
+//! 内核也不再需要那两个数——它们写在区里前 8 字节（`plan::manifest::PREAMBLE`），开机读。
 //!
 //! # 瘦身（`slim`）：为什么在**打包侧**剥符号与调试节
 //!
@@ -45,12 +45,12 @@ fn root() -> PathBuf {
 
 /// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
 fn scenes() -> Vec<&'static str> {
-    env::assembly::ENTRY.iter().map(|(s, _)| *s).collect()
+    plan::assembly::ENTRY.iter().map(|(s, _)| *s).collect()
 }
 
 /// 这一景要装的程序（**装配单按 `scenes` 过滤**；次序即装载次序）。
 fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
-    let picked: Vec<(&'static str, env::ProgramKind)> = env::assembly::ALL
+    let picked: Vec<(&'static str, env::ProgramKind)> = plan::assembly::ALL
         .iter()
         .filter(|row| row.scenes.contains(&scenario))
         .map(|row| (row.name, row.kind))
@@ -113,14 +113,14 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
         .collect();
     // 引导镜像**按名字查**（不是"跟景同名"）：`product` 那一景的引导镜像仍是 `root`
-    // （见 `env::assembly::ENTRY` 那条照实记）。它必须在清单里——不在就是装配单写错了。
-    let entry = env::assembly::entry_of(scenario)
+    // （见 `plan::assembly::ENTRY` 那条照实记）。它必须在清单里——不在就是装配单写错了。
+    let entry = plan::assembly::entry_of(scenario)
         .ok_or_else(|| format!("initrd: 不认得的景 {scenario}（认得的：{}）", scenes().join(" / ")))?;
     let root_at = bins
         .iter()
         .position(|(name, _)| *name == entry)
         .ok_or_else(|| format!("initrd: 景 {scenario} 的引导镜像 {entry} 不在这一景的清单里"))?;
-    let blob = env::wire::manifest::pack(&items, root_at)
+    let blob = plan::manifest::pack(&items, root_at)
         .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
 
     // 落点：内核 ELF 同目录（`boot.nu` 就在那儿找）。
