@@ -49,6 +49,8 @@
 //!   就被拒——源枚带 `ONLY`、`subset` 不带，`form_ok` 读作"想复制一枚独占资源"。带上
 //!   `ONLY` 才是"移交"：第一次成立、第二次因源枚已 `HandedOver` 被拒。**那次拒付本身就是
 //!   形态位一致判据的活证据**（`form_ok` 在真机上第一次被触发）。
+//!   （同一个 `subset` 今天写成**两族**：`Access::FETCH_STORE` ＋ `Policy::VEST | Policy::ONLY`
+//!   ——不再手拼裸掩码，见 ④ 的注。）
 //! - **`Join` 数不出"干净"**：已经回收干净的任务在名册里没了 ⇒ `Join` 答 `Denied`
 //!   （口径是"从未分配 = 非法 id"），故 `reaped` 不能进判据（实测第一版 `reaped=1`，
 //!   而两个域都正常退场）。"都退场了"改由机器那一句
@@ -83,12 +85,13 @@ use env::PieToken;
 use env::ProgramKind;
 use env::TaskId;
 use runtime::core::pile::Pile;
+use runtime::core::port::{self, Access, Policy};
 use runtime::env::debug;
-use runtime::env::mail::{self, HolePie};
+use runtime::env::mail::{self, HolePie, TolePie};
 use runtime::env::room;
 use runtime::env::unit;
 
-/// 清单里等待者的名字（`env::assembly::ALL` 里 `scenes` 含 `group` 的那一行）。
+/// 清单里等待者的名字（`plan::assembly::ALL` 里 `scenes` 含 `group` 的那一行）。
 const WAITER: &str = "waiter";
 /// 几名等待者（共享组的重点就是**不止一个**）。
 const WAITERS: usize = 2;
@@ -124,11 +127,20 @@ fn main() -> Reason {
         tasks[i] = task;
         // 三枚都按 `FETCH | STORE | VEST` 交出去：够"挂 + 等 + 取 + 回报"这件事本身，
         // 而**两种资源的形态事实都不带 `ONLY`**（共享组与用户态铸的孔）。
-        let grant = env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST;
-        for tok in [group, member.token(), report[i]] {
-            if mail::accord(tok, task, grant).is_err() {
-                return die("group: accord");
-            }
+        //
+        // **走 `port::ship` 而不是裸 `mail::accord`**（照实记）：组从前是四枚里唯一绕开它
+        // 的那一枚。`ship` 那里子集由**两族**拼出（`Access` 与 `Policy` 混族写不出来）、空集
+        // 本地拒——与孔 / 页 / 铃那三处**同一形**（`programs/src/root/supply/server.rs` 的
+        // `&PolePie::from_token(src)` 就是这么写的）。句柄照旧**现造**（`TolePie::from_token`，
+        // 与 `HolePie::from_token` 同款）：`core::Pile` 仍只管"多路等待"那一件事。
+        let group_pie = TolePie::from_token(group);
+        let report_pie = HolePie::from_token(report[i]);
+        let form = Policy::VEST;
+        if port::ship(&group_pie, task, Access::FETCH_STORE, form).is_err()
+            || port::ship(&member, task, Access::FETCH_STORE, form).is_err()
+            || port::ship(&report_pie, task, Access::FETCH_STORE, form).is_err()
+        {
+            return die("group: accord");
         }
         if unit::hatch(task).is_err() {
             return die("group: hatch");
@@ -202,18 +214,17 @@ fn pull_byte(tok: PieToken) -> Option<u8> {
 /// 目标用**已经开始等的那个子域**：它早已认领完自己的三枚（表不再变），多收一枚不带
 /// 记号的门闩对它无害；组是台主的弃物，子域退场时那道锚自愈。
 ///
-/// **`subset` 必须带 `ONLY`**：源枚带 `ONLY` 而 subset 不带，正是 `form_ok` 要拒的
+/// **`form` 必须带 `ONLY`**：源枚带 `ONLY` 而子集不带，正是 `form_ok` 要拒的
 /// "想复制一枚独占资源"（第一版就栽在这一格，见头注的照实记）。带上它才是**移交**。
 fn sole_refused(dst: TaskId) -> bool {
     let Ok(sole) = Pile::unseal(false) else {
         return false;
     };
-    let grant = env::Permission::FETCH
-        | env::Permission::STORE
-        | env::Permission::VEST
-        | env::Permission::ONLY;
-    let first = mail::accord(sole.token(), dst, grant);
-    let second = mail::accord(sole.token(), dst, grant);
+    // 同一个子集，只是写成两族：`FETCH | STORE` ＋ `VEST | ONLY`。句柄现造（见 ④ 的注）。
+    let form = Policy::VEST | Policy::ONLY;
+    let pie = TolePie::from_token(sole.token());
+    let first = port::ship(&pie, dst, Access::FETCH_STORE, form);
+    let second = port::ship(&pie, dst, Access::FETCH_STORE, form);
     first.is_ok() && second.is_err()
 }
 
