@@ -57,9 +57,15 @@ BEGIN {
 }
 
 {
-    if ($0 !~ /^[a-z][a-z0-9-]*: /) next
-    p = $0
-    sub(/: .*/, "", p)
+    # 两种读数形状：`名字: …`（程序打的）与 `[case] …`（**用例协议**，`cases.rs` 那个运行器打的）。
+    if ($0 ~ /^\[case\] /) {
+        p = "[case]"
+    } else if ($0 ~ /^[a-z][a-z0-9-]*: /) {
+        p = $0
+        sub(/: .*/, "", p)
+    } else {
+        next
+    }
     if (p in noise) next
     seen[p]++
     if (!(p in declared)) {

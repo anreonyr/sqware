@@ -99,4 +99,67 @@ soak.sh 每一轮末尾      awk -v asserts=… -v table=scripts/readings.txt -f
   动的是门的构建档。
 - **镜像程序那一侧没有合用的现成框架**（这一问量过）：`embedded-test` 要 probe-rs + semihosting
   + 单镜像 + 每例复位；这里是多域、initrd、内核装载、控制台走 `DebugCall::Put`。`defmt-test`
-  更窄，`utest` 只认 cortex-m。故 `harness` 不引框架，借的是上面那套"声明 + 对账"的形态。
+  更窄，`utest` 只认 cortex-m。故 `harness` 不引框架——**但"自定义 test"这条自造路走通了**，
+  见下一节。
+
+## 6 · 程序侧 pilot（用户裁定）：一次跑通的读数与代价
+
+> **裁决（用户原话）**："能不能用测试框架把脚本替换掉？" → 量过之后：**能替一半**（判据 +
+> 汇总那一半；**台架**那一半——按场景构建 / 起 QEMU / 等标记喂键 / 超时 / 收日志——不是框架的
+> 活）。再问"**自定义 test？**" ⇒ 先拿**一份探针**（`probe-rule`）做 pilot。
+
+**形状（与内核那台不同，这是 pilot 量出来的结论）**：**运行时登记**——不碰链接脚本、不用
+`cargo test`、构建管线一个字不动。
+
+```rust
+let mut suite = cases::Suite::new();
+suite.case("in_covers_that_league", move || assert_eq!(inside, ocall::OK));
+…
+suite.run();     // 全过才返回；失败走 panic 通道（域当场死）
+```
+
+两条路都省了，各有实测：
+
+| 那条路 | 为什么不用 |
+|---|---|
+| **官方那台**（`custom_test_frameworks` + `#[test_case]` + 自定运行器） | 它的接线**只挂 `--test` 那一档**：同一个 `no_std` 文件编两遍，普通构建报 `warning: function 'run' is never used`、`--test` 那一遍不报（即运行器接上了）⇒ 镜像程序是**嵌套 `cargo build` 出来的 bin**，永远不在那一档 |
+| **链接期段收集**（内核那台的做法） | 要改 `programs/link.ld`（加 `.cases` + 两个边界符号），而读数还在局部变量里——`fn()` 捕不了环境，就得再把读数搬进全局量。程序侧的读数**本来就在同一个 `main` 的同一段**里，就地登记一例只多一行 |
+
+汇报格式（门只认这几行，`harness/src/cases.rs` 是出处）：
+
+```text
+[case] N cases
+[case] run <名>              ← 开跑前打（内核那头"先打 ok 再跑"撒过谎）
+[case] ok <名>               ← 只有跑完才打
+[case] cases N ok M fail K   ← 全过才有这一行
+```
+
+**收益（实测）**：把 `in_covers_that_league` 的期望值**故意改错**，一台 soak 报的是
+`[case] run/ok 不配对（run=4 ok=3）——失败的那一例是：[case] run in_covers_that_league`，机器
+那侧跟着是 ``assertion `left == right` failed  left: 0  right: 8 at harness/src/probe_rule.rs:372:49``
+——**用例名 + 两个值 + 文件:行:列**。对照：同一处断了，以前只报 `probe-rule: a rule did NOT
+hold`，得回头看那 19 个计数器才知道是哪一条。
+
+**代价（实测，`git diff --stat`）**：约 **220 行**——新 `cases.rs` 90 行（一半是照实记）+ 那台
+探针的判据改写 ~70 行（13 条 `&&` → 16 例，一例一行）+ 门那三条与对账器的 `[case]` 支持 ~40 行
++ 顺带修的一格（见下）。其中可复用的（`cases.rs` / 门那三条 / 对账器）是**一次性**的；**再搬
+一台探针约 30–60 行**。
+**一次只报一个失败**（`panic = abort`，没有 unwind）——这是把判据搬进 SUT 的代价，取舍写在 §5。
+
+### 照实记（pilot 当场逮住的两格）
+
+- **`kernel/build.rs` 的"盯哪些文件"漏了 `harness`**：搬家那一刀只走 `programs/` 与 `crates/`，
+  于是**改测具不重打包**——pilot 第一跑就撞上"日志里一行 `[case]` 都没有，而 initrd 里明明有
+  那个串"（`grep -c '\[case\]' initrd.img` = 4、探针产物也是新的）。修法：
+  `for tree in ["programs", "harness", "crates"]`。**这一格是搬家漏的，不是 pilot 引入的。**
+- **`[case]` 在 `grep` 里是字符类**：那两条断言第一版写成 `need "[case] 16 cases"` ⇒ `[case]` 被
+  当成"`c`/`a`/`s`/`e` 里任一个" ⇒ **永远不匹配**，门报"缺这两条"而日志里那 32 行都在。改走
+  `needE "^\[case\] …[[:space:]]*$"`。
+
+### 下一刀（若要把这条路走完）
+
+1. 其余探针（`probe-owner` / `probe-lease` / `probe-denied` / `probe-deep`）与**服务自己那条
+   契约**照搬；每搬一台，soak 的断言就从"一串形状"缩成"一行汇总 + 基线"。
+2. 系统级那一半（`devices: 21 handed to root`、停机行、内核 `timer:` / `doom:` / `sched:` /
+   `irq:`、时序）**留在宿主的门**——SUT 里的用例看不到它们。
+3. 到那时再看 `scripts/*.sh`：正文应该只剩"起机 · 喂键 · 读汇总"，也就是**一行壳**。

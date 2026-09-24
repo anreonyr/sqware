@@ -429,6 +429,23 @@ while [ "$i" -le "$rounds" ]; do
     need   "probe-owner: lease land=0 id="
     needE  "probe-rule: tree part=[0-9]+ made=3 p=[0-9]+ adopt=1 is=0 under=0 in=0 is_sub=8 under_sub=0 in_sub=8 door=[0-9]+ open=0 foreign=8 open_sub=0 trim=1 at_pane=9 gone_door=9 mine=[0-9]+ keep=0 ask2=[0-9]+ ask_same=1"
     need   "probe-rule: the rules held"
+    # ── 用例协议（**程序侧 pilot**：`probe-rule` 那十三条 `&&` 拆成 16 例）──────────
+    #
+    # 前一条是"登记了几例"、后一条是"跑完几例"——两条都钉住，与 `host.sh` 那套**基线**同一条
+    # 纪律（少跑一例也拦得住）。逐例的 `run` / `ok` 是给人看的：失败的用例**留不下 `ok`**，
+    # 域当场死（`assert!` 走 panic 通道），故末行也不会出现。
+    # **照实记（这一格是量出来的）**：`[case]` 在 `grep` 里是**字符类**（c/a/s/e 里任一个）
+    # ——第一版写成 `need "[case] 16 cases"`，门因此报"缺这两条"而日志里那 32 行明明都在。
+    # 故这里走 `needE` + **转义方括号**，并连末尾那格空白一起钉（与 `board:` / `timer:` 同款）。
+    needE  "^\[case\] 16 cases[[:space:]]*$"
+    needE  "^\[case\] cases 16 ok 16 fail 0[[:space:]]*$"
+    # 第三条（**这条是点名用的**）：每个 `run` 都要有配对的 `ok`——失败的用例只留下 `run`
+    # （`assert!` 走 panic 通道，域当场死），故"最后一条 `run`"就是那一例的名字。
+    case_runs="$(grep -ac '^\[case\] run ' "$log")"
+    case_oks="$(grep -ac '^\[case\] ok ' "$log")"
+    if [ "$case_runs" != "$case_oks" ]; then
+      missing="$missing\n  [case] run/ok 不配对（run=$case_runs ok=$case_oks）——失败的那一例是：$(grep -a '^\[case\] run ' "$log" | tail -1)"
+    fi
     need_absent "operator: two asks"
     need   "probe-other: tree is=8 under=8 foreign=8"
     need   "probe-rule-other: all three denied as expected"

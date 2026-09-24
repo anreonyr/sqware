@@ -315,7 +315,10 @@ fn main() {
 /// 走 `../programs`、`../crates` 两棵子树（跳过 `target`）＋工作区清单（`Cargo.toml`
 /// / `Cargo.lock`：依赖版本变了同样要重打包）。**只盯文件，不盯目录**——理由见调用处。
 fn watch(root: &Path) {
-    for tree in ["programs", "crates"] {
+    // **照实记（这一行是漏出来的）**：`harness`（测具那一档）搬出去之后**没被盯上**——
+    // "改了程序、行为不变"那一类假象当场又露了一次头：探测那台的 `[case]` 协议一行都不出现，
+    // 因为 initrd 里装的是**上一版**探针。搬家的那一刀漏的就是这一行。
+    for tree in ["programs", "harness", "crates"] {
         walk(&root.join(tree));
     }
     for manifest in ["Cargo.toml", "Cargo.lock"] {

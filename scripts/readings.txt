@@ -46,3 +46,4 @@ uart	narrative	判 8/10：`uart: got 1` 与 `line occupied` 是叙事
 # ── 判据不在断言表里（manual）─────────────────────────────────────
 task	manual	只有停机那一行，由 soak.sh 那段 `if grep -q "task: all tasks exited, system halted"` 判
 probe-deep	manual	**只在公平台起**（默认装配单里没有它）：判据在 `scripts/fair.sh`，不在 soak 的断言表里
+[case]	narrative	**用例协议**（程序侧 pilot）：末行汇总由 soak 判（基线 16 例）；逐例的 `run`/`ok` 是给人看的
