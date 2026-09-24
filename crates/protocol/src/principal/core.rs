@@ -217,19 +217,27 @@ impl Principal {
     /// （核心有、线上不发）。
     ///
     /// 单根 ⇒ 必有解（最坏是根）；`a == b` 时答它自己。
+    ///
+    /// **照实记（收尾那一格改过一次）**：原来写成 `while let` 上溯 + 循环外一句
+    /// `Ok(PrincipalId::ROOT)`——那一句**到不了**（单根 ⇒ 上溯走到底是根，而 `heir(根, b)` 必真，
+    /// 故循环里那个 `return` 一定先发生）⇒ 一条死尾巴。现在把它并进循环：没有父的那一格就落在
+    /// **根**上，下一轮必答。这样本函数**没有到不了的分支**，也不必 `unwrap` / panic。
     pub fn clan(&self, a: PrincipalId, b: PrincipalId) -> Result<PrincipalId, Fail> {
         if self.node(a).is_none() || self.node(b).is_none() {
             return Err(Fail::Unknown);
         }
-        let mut at = Some(a);
-        while let Some(cur) = at {
+        let mut cur = a;
+        loop {
             if self.heir(cur, b)? {
                 return Ok(cur);
             }
-            at = self.node(cur).and_then(|n| n.parent);
+            // 上溯一步；没有父的那一格就是根——下一轮它必答（根是所有人的祖先）。故这一句不是
+            // "兜底"，是**那一步本身**（连"父指针指到树外"这种坏树也只会落回根，不会转圈）。
+            cur = self
+                .node(cur)
+                .and_then(|n| n.parent)
+                .unwrap_or(PrincipalId::ROOT);
         }
-        // 到不了：根是所有人的祖先。
-        Ok(PrincipalId::ROOT)
     }
 
     // ── 转换 ────────────────────────────────────────────────

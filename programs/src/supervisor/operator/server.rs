@@ -22,6 +22,7 @@ use protocol::coalition::client::Face as CoalitionFace;
 use protocol::principal::client::Face as PrincipalFace;
 use protocol::principal::core::PrincipalId;
 
+use super::bridge::Coord;
 use super::desk::{Admit, Desk, Guest, desk};
 
 
@@ -59,15 +60,6 @@ const SETTLE_MS: usize = 1;
 struct Session {
     roster: PrincipalFace,
     league: Option<CoalitionFace>,
-}
-
-/// 协调那一帧递过来的两格号：**名册是谁、盟册是谁**（各自那一枚门牌由它们自己交）。
-///
-/// 一格一个位、可以分两帧到（次序不定），故这里收着而不是一次性解出来。
-#[derive(Clone, Copy, Default)]
-struct Coord {
-    roster: Option<TaskId>,
-    league: Option<TaskId>,
 }
 
 impl Session {

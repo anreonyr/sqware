@@ -52,6 +52,28 @@ fn coord_frame(into: PieToken, who: TaskId, eyes: Eyes) -> Result<(), ()> {
     mail::HolePie::from_token(into).push(&frame).map_err(|_| ())
 }
 
+/// **协调那一帧要带的两格**：名册那一位域的号 / 盟册那一位域的号（`None` = 还没到）。
+///
+/// 一格一个位、**可以分两帧到**（次序不定），故装配者收着、持树者补着，都不当"一次性解出来"。
+/// 两侧共读这一个类型（`server.rs` 原先自己写了一份同形的私有 `Coord`）。
+///
+/// **照实记（为什么具名，不按位）**：装配机器原先攥着一个 `[(Option<TaskId>, Eyes); 2]`——
+/// "`[0]` 是名册、`[1]` 是盟册"这条约定**只活在装配者的脑子里**，写反一位编得过，症状要到
+/// 门禁判不了身份时才显形。现在两格各有名字；帧要的那两对由 [`Coord::pairs`] **一处**给出
+/// （槽位与眼睛写在同一行上）。
+#[derive(Clone, Copy, Default)]
+pub struct Coord {
+    pub roster: Option<TaskId>,
+    pub league: Option<TaskId>,
+}
+
+impl Coord {
+    /// 递帧要的两对：**槽位由眼睛的名字定**，不由位置定。
+    fn pairs(self) -> [(Option<TaskId>, Eyes); 2] {
+        [(self.roster, Eyes::Roster), (self.league, Eyes::League)]
+    }
+}
+
 /// 把持树者接上一位客人（装配者调用）：**三步**（见文件头那张图）。
 ///
 /// `host` = 持树者的号（`service::spawn` 交回来的那个，装配者本来就知道它）。
@@ -67,7 +89,7 @@ pub fn attach(
     host: TaskId,
     millis: usize,
     tip: &mut Option<PieToken>,
-    coord: &[(Option<TaskId>, Eyes)],
+    coord: Coord,
 ) -> Result<(), &'static str> {
     let link = Name::new(LINK).map_err(|_| "operator:name")?;
     // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
@@ -84,7 +106,7 @@ pub fn attach(
     // 在 `serve_tree` 之后直接交给持树者的，理由见 [`COORD`] 那段照实记）。
     // 次序仍是契约：客人号来之前，持树者先认出名册那一枚门牌（它按 `owner` + 记号找）；
     // 两帧按位递、次序不定，收到哪一枚就补上哪一枚（对齐见 `server.rs` 的 `settle`）。
-    for &(who, eyes) in coord {
+    for (who, eyes) in coord.pairs() {
         if let Some(who) = who {
             coord_frame(tip_at, who, eyes).map_err(|_| "operator:coord")?;
         }

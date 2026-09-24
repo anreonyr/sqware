@@ -193,12 +193,10 @@ pub fn assemble<'a>(
     // 身份服务那一面：它一起好本域就有，此后每条服务的身份都从它来。
     let mut face: Option<Face> = None;
     // **协调那一帧**要带的两位（名册 / 盟册）：各自那一域起来之后就占上那一格，此后随每一条
-    // `attach` 传下去（持树者据此才判得了身份、判得了盟籍）。**定长两格**——这一族只有两双
-    // 眼睛（`Eyes`）；门牌**不由这里转授**，各域自己在 `serve_tree` 之后交。
-    let mut coord: [(Option<TaskId>, Eyes); 2] = [
-        (None, Eyes::Roster),
-        (None, Eyes::League),
-    ];
+    // `attach` 传下去（持树者据此才判得了身份、判得了盟籍）。**两格各有名字**（[`operator::Coord`]
+    // ——不按位塞数组：`[0]`/`[1]` 那种约定写反一位编得过）；门牌**不由这里转授**，各域自己在
+    // `serve_tree` 之后交。
+    let mut coord = operator::Coord::default();
     for (i, p) in plan.iter().enumerate() {
         let rep = start(
             table,
@@ -233,7 +231,7 @@ pub fn assemble<'a>(
                     // **协调那一帧**要带的第一格：身份服务自己（名册那一双眼睛）。它那一枚门牌
                     // **由它自己**在 `serve_tree` 之后直接交给持树者（见 `operator/bridge.rs` 的
                     // `COORD` 照实记：装配者转授那一版真机栽在 `coord-ship`），装配者只剩递一格号。
-                    coord[0].0 = Some(rep);
+                    coord.roster = Some(rep);
                     let f = face_of(rep).ok_or_else(|| {
                         step(p, "no identity face");
                         p.died
@@ -262,7 +260,7 @@ pub fn assemble<'a>(
                 // 交的**（同 principal 那一格：`serve_tree` 之后直接交给持树者，见
                 // `coalition/server.rs`）——装配者这一侧只递号、不转授。它的 `derive`/`bind`
                 // 由上面那条通用路做过（`p.bind`）。
-                Eyes::League => coord[1].0 = Some(rep),
+                Eyes::League => coord.league = Some(rep),
             }
         }
     }
@@ -294,7 +292,7 @@ pub fn start<'a>(
     // **协调那一帧**要带的两格（哪一位域 + 它哪一双眼睛）：只有递门牌那两格填过之后才非空。
     // 它**重复推**（每一位后续客人的 `attach` 都会推一遍）——持树者收到就按位补上，重复只是
     // 再建一次同样的会话（幂等，见 `server.rs` 的 `settle`）。
-    coord: [(Option<TaskId>, Eyes); 2],
+    coord: operator::Coord,
 ) -> Result<TaskId, Died> {
     let name = Name::new(p.name).ok().ok_or(E_MANIFEST)?;
 
@@ -375,7 +373,7 @@ pub fn start<'a>(
             step(p, "no tree yet");
             p.died
         })?;
-        operator::attach(&mut quay, rep, host, READY_MS, otip, &coord).map_err(|why| {
+        operator::attach(&mut quay, rep, host, READY_MS, otip, coord).map_err(|why| {
             step(p, why);
             p.died
         })?;
