@@ -106,7 +106,11 @@ pub const MARKS: &[Mark] = &[
     Mark::Shape("^principal: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=principal[[:space:]]*$"),
     Mark::Literal("subject: done"),
     Mark::Literal("probe: tree land="),
-    Mark::Literal("probe-denied: denied as expected"),
+    // **照实记（这一行跟着读数改过一次）**：原写 `probe-denied: denied as expected`，而
+    // `probe_denied.rs` 的收尾读数在 "删掉变异门" 那一刀（`68e11c8`）里缩短成
+    // `probe-denied: denied` ⇒ 表没跟着改，soak 从那时起一直是红的（那一刀的判据只记了
+    // "宿主门 PASS"，而 soak 要起 QEMU，没跑）。读数表就该跟着读数走。
+    Mark::Literal("probe-denied: denied"),
     Mark::Literal("probe-owner: tree land="),
     Mark::Literal("probe-owner: owner rule held"),
     Mark::Literal("probe-lease: tree land="),
