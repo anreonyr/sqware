@@ -11,10 +11,19 @@
     免得 `git checkout --` 把你正在写的东西抹掉；
   - 每次变异只碰一处、跑完立刻还原；中断了也只要 `git checkout -- <那个文件>`。
 
-跑法（约一分钟：13 条变异各一次增量重编 + 一个测试靶）：
+跑法（**默认只跑没验过的那几条**——账在 `target/teeth-ledger.json`，跑过一条记一条）：
 
-    python3 scripts/teeth.py            # 全跑
+    python3 scripts/teeth.py            # 只跑"没验过"的（第一次全跑，之后增量）
+    python3 scripts/teeth.py --all      # 全跑（换机器 / 想复核时）
     python3 scripts/teeth.py 账         # 只跑名字里带"账"的几条
+    python3 scripts/teeth.py --boot 时间 # 机器那一侧，只跑名字里带"时间"的
+
+**照实记（为什么默认增量）**：全量跑一遍宿主那侧约一分钟、机器那侧约半小时——**用户不想等**
+（原话："别每次都全量测"）。而每一条变异**只碰一处、锚点是逐字比对**：锚点一改，它的账就自动
+失效（键里带锚点的指纹）⇒ "只跑没验过的"与"全跑"在**锚点没动**时等价，锚点一动必然重跑。
+
+**这本账灌过一次**：里面每一条都在第 12 轮（宿主 **47 条**全量复核）与第 15 轮（机器 **28 条**
+全量：26 红 + 2 **等价**）实测过 ⇒ 现在默认跑是**真空跑**（"这次没有实跑的"）。要复核用 `--all`。
 
 **照实记一：`host.sh` 的日志名精确到秒且是追加写**——本量具第一次跑就栽在这一格：一秒内连跑
 两次复用同一份日志，末了那句 `grep -q 'FAILED' "$log"` 扫到的是**上一轮**的失败 ⇒ 连"只改注释"
@@ -36,6 +45,8 @@
 import re
 import subprocess
 import glob
+import hashlib
+import json
 import os
 import sys
 
@@ -359,6 +370,34 @@ BOOT = [
      "programs/src/driver/rtc/main.rs",
      '                        "rtc: armed at={at} ier={} alarm={}",',
      '                        "rtc: armed={at} ier={} alarm={}",'),
+    # ── 机器·第四批（清单最后那几簇：三支树探针 / lodger / echo）──
+    # 这两条是**等价变异**（预期绿），不是"没牙"：机器上那两支探针**等的就是对方死**
+    # （`probe-owner` 有界重试到 `/sys/lease` 接得上为止），故"活着时别人顶不掉"这一格
+    # 它根本量不到；而那一格由宿主靶管着——
+    # `crates/judge-case::a_living_owner_holds_the_slot_and_a_dead_one_does_not`（主人还在场
+    # ⇒ 别人顶不掉）与 `a_rebind_rewrites_the_same_line_and_can_give_up_the_slot`
+    # （`mine = false` 是**放弃归属** ⇒ 从此谁都能落）。实测：删掉 `mine` 那一位，机器读数
+    # 一字不变（`lease land=0 id=…` 照样 0），故记成"等价"。
+    ("等价·租赁那一趟不声明归自己（机器读数看不见；宿主靶管着那一格）",
+     "programs/src/user/probe_lease.rs",
+     "        ocall::Rule::Public,\n        true,",
+     "        ocall::Rule::Public,\n        false,"),
+    ("等价·接手那一趟反而声明归自己（同上：探针等的就是对方死）",
+     "programs/src/user/probe_owner.rs",
+     "        ocall::Rule::Public,\n        false,",
+     "        ocall::Rule::Public,\n        true,"),
+    ("机器·「该被拒」那一趟的判词换了名",
+     "programs/src/user/probe_denied.rs",
+     'const OK_NOTE: &str = "probe-denied: denied as expected";',
+     'const OK_NOTE: &str = "probe-denied: denied";'),
+    ("机器·回声去问一枚**铸过的**号（`name miss=true` 变 false）",
+     "programs/src/user/echo.rs",
+     "    let miss = operator::name(talk, link, EntryId::new(4095), MS).is_err();",
+     "    let miss = operator::name(talk, link, EntryId::new(0), MS).is_err();"),
+    ("机器·房客的表那一条读数说谎（`pies=9` 报 10）",
+     "programs/src/user/lodger/main.rs",
+     '    say(&format!("lodger: pies={}", mail::table_size()));',
+     '    say(&format!("lodger: pies={}", mail::table_size() + 1));'),
     ("机器·房客的判词改了名（该有 `lodger: gone`）",
      "programs/src/user/lodger/main.rs",
      '            "lodger: gone"',
@@ -397,7 +436,7 @@ def build_said_red(fresh):
     """
     # **只看这一轮新出现的那些文件**：照实记——第一版按"最新的三份"取，结果读到了上一次
     # 实验留在目录里的陈旧日志（那一份里有编译错误）⇒ 两条明明该红的变异被记成"编译红"。
-    for f in fresh:
+    for f in fresh or []:
         try:
             txt = open(f, encoding="utf-8", errors="ignore").read()
         except OSError:
@@ -407,9 +446,40 @@ def build_said_red(fresh):
     return ""
 
 
-def sweep(mut_list, cmd_of, tag, parse=None, scratch=None):
+LEDGER = f"{ROOT}/target/teeth-ledger.json"
+
+
+def ledger_load():
+    try:
+        with open(LEDGER, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def ledger_save(book):
+    os.makedirs(os.path.dirname(LEDGER), exist_ok=True)
+    with open(LEDGER, "w", encoding="utf-8") as f:
+        json.dump(book, f, ensure_ascii=False, indent=1, sort_keys=True)
+
+
+def key_of(name, path, old):
+    """一条变异的身份：**名字 + 文件 + 锚点指纹**。
+
+    锚点一改，指纹就变 ⇒ 那条自动回到"没验过"，不必手工清账。
+    """
+    return f"{name}|{path}|{hashlib.sha1(old.encode()).hexdigest()[:12]}"
+
+
+def sweep(mut_list, cmd_of, tag, parse=None, scratch=None, full=False):
     rows = []
+    book = ledger_load()
+    skipped = 0
     for name, path, old, new in mut_list:
+        k = key_of(name, path, old)
+        if not full and k in book:
+            skipped += 1
+            continue
         src = open(f"{ROOT}/{path}", encoding="utf-8").read()
         hits = src.count(old)
         if hits != 1:
@@ -420,39 +490,53 @@ def sweep(mut_list, cmd_of, tag, parse=None, scratch=None):
             continue
         open(f"{ROOT}/{path}", "w", encoding="utf-8").write(src.replace(old, new, 1))
         before = set(glob.glob(f"{ROOT}/{scratch}")) if scratch else set()
-        p = run(cmd_of())
-        fresh = [f for f in glob.glob(f"{ROOT}/{scratch}") if f not in before] if scratch else []
-        out = p.stdout + p.stderr
-        detail = ""
-        from_log = build_said_red(scratch)
-        if "error[E" in out or "error: could not compile" in out or from_log:
-            verdict = "**编译红**（不算牙口）"
-            if from_log:
-                detail = f"构建日志里编不过：{from_log}"
-        elif p.returncode == 0:
-            # 三种名义：**变异**（该红）、**对照**（该绿，量具本身对不对）、**等价**
-            #（该绿，因为它不改变可观察行为——实测出来的一档，不是"没牙"）。
-            is_ctrl = name.startswith("对照")
-            is_equiv = name.startswith("等价")
-            if is_ctrl:
-                verdict = "绿（对照，理应如此）"
-            elif is_equiv:
-                verdict = "绿（等价变异，理应如此）"
+        try:
+            p = run(cmd_of())
+            out = p.stdout + p.stderr
+            fresh = [f for f in glob.glob(f"{ROOT}/{scratch}") if f not in before] if scratch else []
+            detail = ""
+            from_log = build_said_red(fresh)
+            if "error[E" in out or "error: could not compile" in out or from_log:
+                verdict = "**编译红**（不算牙口）"
+                if from_log:
+                    detail = f"构建日志里编不过：{from_log}"
+            elif p.returncode == 0:
+                # 三种名义：**变异**（该红）、**对照**（该绿，量具本身对不对）、**等价**
+                #（该绿，因为它不改变可观察行为——实测出来的一档，不是"没牙"）。
+                is_ctrl = name.startswith("对照")
+                is_equiv = name.startswith("等价")
+                if is_ctrl:
+                    verdict = "绿（对照，理应如此）"
+                elif is_equiv:
+                    verdict = "绿（等价变异，理应如此）"
+                else:
+                    verdict = "**绿**（没牙）"
             else:
-                verdict = "**绿**（没牙）"
-        else:
-            verdict = "红"
-            # "红在哪"这一栏是这张表的价值所在，故按模式各解析各的：
-            #   机器那一侧 = soak 报的**缺哪几条读数**；宿主那一侧 = 日志里**哪几条用例失败**。
-            # 照实记：这一栏原先一律抓"行首两空格的行"，结果抓到的是 host.sh 自己那些
-            # `  crates/xxx: test result: ok. …` 汇总行——满栏噪声。
-            items = parse(out) if parse else []
-            shown = " · ".join(items[:4])
-            if len(items) > 4:
-                shown += f" … （共 {len(items)} 条）"
-            detail = shown[:220] if items else out.strip().splitlines()[-1][:120]
-        rows.append((name, verdict, detail))
-        run(f"git checkout -- {path}")
+                verdict = "红"
+                # "红在哪"这一栏是这张表的价值所在，故按模式各解析各的：
+                #   机器那一侧 = soak 报的**缺哪几条读数**；宿主那一侧 = 日志里**哪几条用例失败**。
+                # 照实记：这一栏原先一律抓"行首两空格的行"，结果抓到的是 host.sh 自己那些
+                # `  crates/xxx: test result: ok. …` 汇总行——满栏噪声。
+                items = parse(out) if parse else []
+                shown = " · ".join(items[:4])
+                if len(items) > 4:
+                    shown += f" … （共 {len(items)} 条）"
+                detail = shown[:220] if items else out.strip().splitlines()[-1][:120]
+            rows.append((name, verdict, detail))
+            # 只把**真结论**记进账：`编译红` / `补丁不唯一` / `打不上` 都不记（那几条要人管）。
+            if verdict.startswith("红") or verdict.startswith("绿"):
+                book[k] = verdict
+        finally:
+            # **无论怎么退出都要还原**：照实记——这一格原先在正常路径末尾，量具自己抛异常
+            # （`TypeError`）时把改过的源码留在了工作区，下一次跑直接被"工作区不干净"挡住。
+            run(f"git checkout -- {path}")
+    if rows:
+        ledger_save(book)
+    if skipped:
+        print(f"（跳过 {skipped} 条：账里已经验过；要全跑加 `--all`）")
+    if not rows:
+        print(f"\n{tag}：这次没有实跑的（都验过了）——`--all` 全跑，或给个名字只跑那几条。\n")
+        return 0
     print(f"\n{'变异':<40}{'门':<12}红在哪")
     for n, v, d in rows:
         print(f"{n:<40}{v:<12}{d}")
@@ -475,6 +559,7 @@ def main():
     两边的口径同一条：改一处 → 跑那门 → 记下"红不红、报的是哪一条/哪几条" → 还原。
     """
     boot = "--boot" in sys.argv
+    full = "--all" in sys.argv
     only = next((a for a in sys.argv[1:] if not a.startswith("--")), None)
     dirty = run("git status --porcelain").stdout.strip()
     if dirty:
@@ -488,6 +573,7 @@ def main():
             "机器那一侧（一轮 soak）",
             parse=missing_readings,
             scratch="target/soak/*.log",
+            full=full,
         )
     sel = [m for m in MUTATIONS if not only or only in m[0]]
     return sweep(sel, lambda: "scripts/host.sh", "宿主那一侧（`host.sh`）", parse=failing_tests)
