@@ -1,46 +1,40 @@
-//! 共享入口（镜像程序引导 + 退出 + panic 处理）：**每个程序都共用**（各程序一声
+//! 共享入口（镜像程序的**引导** + panic 处理）：**每个程序都共用**（各程序一声
 //! `extern crate programs;` 就是为它——`use` 只带符号，不算真的链上），故住在 lib 面。
 //!
-//! # 退出这件事的形状（照 `std` 那套 `Termination`，改了两处名）
+//! **退场那一半不在这里**（照实记）：`main` 的返回类型 `Report` / `Exit`、以及"把它送进
+//! 内核"的 `finish`，三者住 `runtime::core::exit`——判据是**内核读不读它**，那边的照实记
+//! 写全了。本文件因此只剩**入口那一手**：`_start` 的汇编（引导）、[`entry`]（把生成物与
+//! bin 自己的 `main` 接上）、panic 处理。
 //!
-//! `std` 里 `main` 的返回类型是**它自己的事**（`()` / `ExitCode` / `Result` / `!` 都行），
-//! 编译器生成的入口去叫 `Termination::report()` 把它折成一个 **`ExitCode`**，再交给
-//! `std::process::exit`。这里一模一样，只换名与那个"折出来的数"：
+//! # 那一层是**宏展开**出来的（`crates/entry-macro`）
 //!
-//! | `std` | 这里 |
-//! |---|---|
-//! | `Termination` | [`Exit`] |
-//! | `report(self) -> ExitCode` | [`Exit::report`] → [`Reason`]（`usize`，直接就是 `Reap.reason`） |
-//! | lang item `#[lang_start]` + `rustc_main` | 生成物里那个 `main` + [`entry`] |
-//! | `impl Termination for ()/{!}/Result<T,E>` | 同形几条，见本文件 |
-//!
-//! **那一格是构建脚本生成的**（`programs/build.rs` / `harness/build.rs`）：每个 `[[bin]]`
-//! 得一份 `entry_<路径>.rs`，里面只有一个
+//! bin 里写 `#[entry] fn main() …`，宏展开成两件东西（**你写的那个函数一个字没动**）：
 //!
 //! ```ignore
-//! mod __entry {
-//!     #[unsafe(no_mangle)]
-//!     extern "C" fn main() { programs::entry::entry(crate::main) }
-//! }
+//! extern "C" fn clean_ret() { programs::entry::entry(main) }
 //! ```
 //!
-//! ——`_start` 那句 `call main` 找的就是它。**裹一层模块**是为了让 bin 自己那个 `main`
-//! 在同名的情况下仍够得着（`crate::main` 从任何模块都指得到）：写程序的人因此既不必改名，
-//! 也不必签 `#[unsafe(no_mangle)]`。退出的三笔账（`Reason` 从哪来、note 怎么带、往哪送）
-//! 全在本文件——`room::exit` 因此全仓只有两处调用点（这里与 `runtime::core::unit` 的线程收尾）。
+//! ——`_start` 那句 `call clean_ret` 找的就是它。**符号名不再是 `main`**，故写程序的人既不必
+//! 改名，也不必签 `#[unsafe(no_mangle)]`（展开那一侧的照实记在 `crates/entry-macro`）。
+//! 退出的三笔账里，"码从哪来、话怎么带"是 `runtime::core::exit` 的词汇，"往哪送"是本文件
+//! [`entry`] 走到底那一手（`runtime::core::exit::finish`）——`room::exit` 因此全仓只有两处
+//! 调用点（它，与 `runtime::core::unit` 的线程收尾）。
 
 use core::arch::global_asm;
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
 
-use env::{NOTE_MAX, Reason};
-use runtime::env::room::exit;
+use env::NOTE_MAX;
+use runtime::core::exit::{Exit, finish};
 
 // 前两行与从前**一字不差**（顺序是硬的：a0/a1 是寄存器里的入参，save_args 必须最先；
-// TLS 要在任何 Rust 代码碰 `tls` 之前立起来）。后两行是新的出口形状：
-//   a0 = 出口槽的地址（本域自己的栈上，`Reason` 大小）
-//   a1 = 本 bin 那个 `main`（只递地址，不调用）
-//   entry 是 `-> !`，故 `1: j 1b` 那行**必须留着**（编译器不知道它不返回）。
+// TLS 要在任何 Rust 代码碰 `tls` 之前立起来）。后两行是出口的形状；`entry` 是 `-> !`，
+// 故 `1: j 1b` 那行**必须留着**（编译器不知道它不返回）。
+//
+// **照实记（上面那两句注释曾经说过头）**：这里原先写着"a0 = 出口槽的地址、a1 = 本 bin 那个
+// `main`（只递地址，不调用）"——那是更早一版 `mod __entry` 的形状。**今天 `clean_ret` 不带
+// 参数**（宏生成的就是 `extern "C" fn clean_ret()`，`main` 在**展开时**就绑好了），故 a0 那
+// 一格没有读者。它照旧留着不动：撤掉要重新量栈对齐这件事，而它不影响任何行为。
 global_asm!(
     ".section .text._start",
     ".globl _start",
@@ -50,7 +44,7 @@ global_asm!(
     "    addi sp, sp, -8", // 出口槽：`Reason` 就住这里（8 字节，栈对齐）
     "    mv   a0, sp",
     "    call clean_ret", // `#[entry]` 展开出的那一层（形状固定：a0 = 槽）
-    "1: j 1b", // main 返回则兜底循环（它理论上不返回）
+    "1: j 1b",           // main 返回则兜底循环（它理论上不返回）
 );
 
 #[unsafe(no_mangle)]
@@ -58,147 +52,11 @@ extern "C" fn tls_bootstrap() {
     unsafe { runtime::core::tls::bootstrap() }
 }
 
-/// `main` 的返回类型只需要这一个 trait——**每个 bin 的 `main` 是它的一个实现**。
-///
-/// 四条实现就是 `std` 那四条再加一条：`()` = "没有失败要报"（`EXIT_OK`）、`!` = "我自己退"
-/// （`exit` 那条路走不到，但类型上必须能过）、`Reason` = 只报码、`Result<T, E>` = `?` 一路带出来。
-/// **`()` 不是"忘了报"**：真要报失败的程序把 `main` 写成 `Result<(), Reason>`，
-/// 那里 `()` 当不了退出码，忘了报就是编译错误。
-///
-/// 折出来的不是裸码而是 [`Report`]：**note 也得有地方住**——探针那族的回执就是"报码 +
-/// 带一句话"，而那句话常常是**栈上现拼的**（`format!`），故 [`Report`] 借它、不要求 `'static`。
-/// 这正是 `report` 取 `&self` 而不是 `self` 的理由：借出的 note 活不过一个按值消耗的 `self`。
-pub trait Exit {
-    fn report(&self) -> Report<'_>;
-}
-
-/// note 的**线形状**：`(ptr, len)`——`0` 长度即"无话"。
-///
-/// **为什么不用 `Option<&str>`**：这个词要跨 [`entry`] 那个 `extern "C" fn() -> R` 的边界
-/// 回来，而 `Option<&str>` 是带 niche 的枚举、没有 `repr`，编译器（正确地）不肯认它是
-/// FFI-safe。拆成两个标量（与内核 `Reap { note, len }` 同一形）就干净了。
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct RawNote {
-    ptr: *const u8,
-    len: usize,
-}
-
-impl RawNote {
-    /// 无话。
-    const NONE: Self = Self {
-        ptr: core::ptr::null(),
-        len: 0,
-    };
-
-    const fn of(s: &str) -> Self {
-        Self {
-            ptr: s.as_ptr(),
-            len: s.len(),
-        }
-    }
-
-    /// 解回那句话（只有 [`Report::parts`] 这一个读点，故 SAFETY 条件收在那里）。
-    unsafe fn get<'a>(self) -> Option<&'a str> {
-        match self.len {
-            0 => None,
-            n => Some(unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(self.ptr, n)) }),
-        }
-    }
-}
-
-/// 出口点的返回类型：**原因码 + 可选的一句话**——与 [`runtime::env::room::exit`] 的入参同形。
-///
-/// 它就是"`main` 想对内核说的全部"：两格，与 `Reap { reason, note }` 一一对应。
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub struct Report<'a> {
-    pub reason: Reason,
-    note: RawNote,
-    _borrow: core::marker::PhantomData<&'a str>,
-}
-
-impl<'a> Report<'a> {
-    /// 只报码。
-    pub const fn new(reason: Reason) -> Self {
-        Self {
-            reason,
-            note: RawNote::NONE,
-            _borrow: core::marker::PhantomData,
-        }
-    }
-
-    /// 报码 + 一句话（"哪里算不下去"）——那句话借多久都行（只要活到出口）。
-    pub const fn note(reason: Reason, note: &'a str) -> Self {
-        Self {
-            reason,
-            note: RawNote::of(note),
-            _borrow: core::marker::PhantomData,
-        }
-    }
-
-    /// 拆成 [`runtime::env::room::exit`] 那两格（出口点用的就是它）。
-    ///
-    /// SAFETY：`note` 那一对指针要么是 [`RawNote::NONE`]，要么指着 [`Report::note`] 收进来的
-    /// 那个 `&'a str`——`'_` 绑在 `&self` 上，故那句话至少活到本调用返回。
-    pub fn parts(&self) -> (Reason, Option<&'a str>) {
-        (self.reason, unsafe { self.note.get() })
-    }
-}
-
-impl<'a> Exit for Report<'a> {
-    fn report(&self) -> Report<'_> {
-        Report {
-            reason: self.reason,
-            note: self.note,
-            _borrow: core::marker::PhantomData,
-        }
-    }
-}
-
-impl Exit for Reason {
-    fn report(&self) -> Report<'_> {
-        Report::new(*self)
-    }
-}
-
-impl Exit for () {
-    fn report(&self) -> Report<'_> {
-        Report::new(env::EXIT_OK)
-    }
-}
-
-impl Exit for ! {
-    fn report(&self) -> Report<'_> {
-        match *self {}
-    }
-}
-
-impl<T: Exit, E: Exit> Exit for Result<T, E> {
-    fn report(&self) -> Report<'_> {
-        match self {
-            Ok(t) => t.report(),
-            Err(e) => e.report(),
-        }
-    }
-}
-
-/// 把一份 [`Report`] 送进内核——**[`entry`] 走到底就是它**（生成物里没有泛型，
-/// 这一步因此与 `main` 的返回类型无关）。
-///
-/// 这里同时让 `reason` 在 `exit(...)` 返回（不该发生）时留在现场，读的人不至于只看到一句
-/// `unreachable`。
-pub fn finish(report: Report<'_>) -> ! {
-    let reason = report.reason;
-    let (_, note) = report.parts();
-    exit(reason, note)
-}
-
 /// **入口那一手**：`bare` 是 bin 自己那个 `main`（当**函数项**传进来，不在这里调用——
 /// 于是 `R = !` 那一档由类型系统自己落定，生成物里没有"调用之后还写了东西"的死码）。
 ///
-/// 生成物里的 `main` 只写一句 `entry(crate::main)`；泛型那一层的不透明性因此不泄漏给
-/// 写程序的人。
+/// 生成物里的 `clean_ret` 只写一句 `entry(crate::main)`；泛型那一层的不透明性因此不泄漏给
+/// 写程序的人。折码与送内核在 `runtime::core::exit`（[`finish`]）。
 #[inline(always)]
 pub fn entry<R: Exit>(bare: fn() -> R) -> ! {
     finish(bare().report())
@@ -252,7 +110,7 @@ impl fmt::Write for Note {
 /// 现场的三笔账因此各有出处：谁/何时/为何 = trace 的 `RoomEvent::Exit`；`哪里` =
 /// 这句话里的 `file:line:col`；寄存器现场 = 内核故障路径自己留的痕。
 ///
-/// **它不走 [`Exit`]**：panic 物理上必须 `!`，装不进"返回值"那条路——它直接调出口原语
+/// **它不走 `Exit`**：panic 物理上必须 `!`，装不进"返回值"那条路——它直接调出口原语
 /// （带 note 那一支），与 [`entry`] 同住这个文件、同归 `room::exit` 一处。
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -261,5 +119,5 @@ fn panic(info: &PanicInfo) -> ! {
     if let Some(at) = info.location() {
         let _ = write!(note, " at {}:{}:{}", at.file(), at.line(), at.column());
     }
-    exit(env::EXIT_PANIC, Some(note.as_str()))
+    runtime::env::room::exit(env::EXIT_PANIC, Some(note.as_str()))
 }

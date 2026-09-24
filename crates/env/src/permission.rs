@@ -35,6 +35,11 @@
 //! [`Access::from_bits`] 只收读写族那两位、[`Policy::from_bits`] 只收传递族那两位。
 //! 一位不多。
 //!
+//! **同一件事的两种写法**（照实记）：`Access::FETCH_STORE` 与 `Access::FETCH | Access::STORE`
+//! 是同一个值。口径：**常量表写那个 `const`**（`|` 不是 `const fn`，而需求单
+//! （`plan::assembly` 那一张）是编译期常量表），**运行期写 `|`**（与另两位同形，不必记一个
+//! 专门的名字）。两条都留着不是"多一条路"：`BitOr` 给运行期，那个 `const` 给常量表。
+//!
 //! **照实记（`Access` / `Policy` 为什么住本文件）**：它们原先住 `runtime::core::port`
 //! ——由 `ship`（授出那一手）收下；后来搬到 `env::wire::access`，理由是"只认 `Permission`
 //! 与 `core::ops`、一处也不碰内核，而 `crates/protocol` 允许依赖 `env`、不允许依赖
@@ -77,6 +82,17 @@ bitflags! {
 /// 读写族那两位（解线上权时用来挡混族）。
 const ACCESS_MASK: Permission = Permission::FETCH.union(Permission::STORE);
 
+/// 解出 `mask` 那一族的位：**多一位都拒**——"混族不可表达"的机制就这一句。
+///
+/// 两个 `from_bits` 只差这一枚 mask，故判据只有一处。分开写时"只收本族"就成了两条要同时
+/// 维护的纪律（而这类纪律正是本文件头注说的那种会各自漂移的东西）。
+const fn only_this_family(bits: u32, mask: Permission) -> Option<Permission> {
+    match Permission::from_bits(bits) {
+        Some(p) if p.bits() & mask.bits() == p.bits() => Some(p),
+        _ => None,
+    }
+}
+
 /// 读写族：对端对这份资源**能做什么**。
 ///
 /// 与 [`Policy`] 分成两个类型是刻意的：合成一个 `Permission` 时，调用方可以把
@@ -105,8 +121,7 @@ impl Access {
     /// 与"调用点写不出裸子集"是同一条：这条入口只认本来就是 `Access` 造出来的值，
     /// 故它不构成第二条授权路径，只给"过线的权"一个回来的门。
     pub const fn from_bits(bits: u32) -> Option<Access> {
-        match Permission::from_bits(bits) {
-            Some(p) if p.bits() & ACCESS_MASK.bits() != p.bits() => None,
+        match only_this_family(bits, ACCESS_MASK) {
             Some(p) => Some(Access(p)),
             None => None,
         }
@@ -158,8 +173,7 @@ impl Policy {
 
     /// 从线上那几位解回（**只收传递族那两位**）——与 [`Access::from_bits`] 同一条口径。
     pub const fn from_bits(bits: u32) -> Option<Policy> {
-        match Permission::from_bits(bits) {
-            Some(p) if p.bits() & POLICY_MASK.bits() != p.bits() => None,
+        match only_this_family(bits, POLICY_MASK) {
             Some(p) => Some(Policy(p)),
             None => None,
         }

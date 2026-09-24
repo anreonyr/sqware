@@ -73,9 +73,6 @@ const RETRY_MS: usize = 1;
 /// 真约的那一段（纳秒）：够短，短跑里也一定等得到那一行读数。
 const AHEAD_NS: u64 = 50_000_000;
 
-/// 本域自己的正常退场码（与 `programs::entry::EXIT_OK` 同号）。
-const EXIT_OK: usize = 0;
-
 /// 没搭上（找不到那面服务 / 有一条往返没走成）：报这一格退场。
 const E_NO_SERVICE: usize = 1;
 
@@ -148,7 +145,7 @@ fn main() -> Report<'static> {
     });
     suite.run();
 
-    return Report::note(EXIT_OK, "sleeper: gone");
+    return Report::note(env::EXIT_OK, "sleeper: gone");
 }
 
 /// 被拒那一趟的读数：把失败域按**线上那张表**折成一个数（与驱动的答码同源）。

@@ -74,9 +74,14 @@ impl Name {
     /// 由线上字节还原（校验填充规范 + 内容合法）——[`new`](Self::new) 的**线格式
     /// 对偶**：构造期义务在两条入口上都成立（非法名不可表达）。
     ///
-    /// `pub`：它是 `Name` 线格式的**解码面**，使用者是用户态协议
-    /// （`crates/protocol/src/system/board/call.rs` 的 `name_of`）与各程序
-    /// （`guest` / `router` 的 `Name::from_bytes`）；语义上属于本 crate，不随协议搬家。
+    /// `pub`：它是 `Name` 线格式的**解码面**，读者都在**帧那一侧**——协议的两处
+    /// （`crates/protocol/src/system/board/frame.rs` 的 `name_of`、
+    /// `crates/protocol/src/system/operator/frame.rs`）与本仓程序的一处
+    /// （`programs/src/system/board/server.rs` 读板那一帧）；语义上属于本 crate，不随协议搬家。
+    ///
+    /// **照实记（这串路径订正过）**：它从前举的使用者是"`board/call.rs` 的 `name_of` 与
+    /// `guest` / `router` 的 `Name::from_bytes`"——`name_of` 随 protocol 树那次重构搬去了
+    /// `frame.rs`，而 `guest` / `router` 里**一处** `Name::from_bytes` 都没有。
     pub fn from_bytes(bytes: [u8; NAME_LEN]) -> Result<Name, NameError> {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
         if len == 0 {

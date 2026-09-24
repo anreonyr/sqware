@@ -90,8 +90,9 @@ pub mod user;
 
 // 出口那一套的转发：生成物（`entry_<路径>.rs`）里写的是 `programs::…`，各 bin 的
 // `main` 返回类型也写 `programs::Report` / `programs::Exit`，故这几个名字得在 crate 根上
-// 够得着。
-pub use entry::{Exit, Report};
+// 够得着。**本体在 `runtime::core::exit`**（判据是"内核读不读它"，见那边的照实记）——
+// 这里只是转发，故 `use programs::{Exit, Report}` 这一形照旧。
+pub use runtime::core::exit::{Exit, Report};
 
 /// 入口那一手（过程宏）：bin 里写 `#[entry] fn main() …`，展开与符号名见那个 crate。
 pub use entry_macro::entry;

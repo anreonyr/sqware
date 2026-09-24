@@ -42,7 +42,10 @@ use env::ProgramKind;
 pub const MAX_PROGRAMS: usize = 32;
 /// 一条记录里名字的字节上限（清单里的**字节段**长度；`Name` 的内容上限是 31——
 /// 清单名是给装配账看的，不必进一枚 `Name`，内核更不收它）。
-pub const MAX_NAME: usize = 32;
+///
+/// **不是 `pub`**（照实记）：全仓只有本文件两处读它（写侧 `pack`、读侧 `read_one`）——
+/// 打包那一侧（`crates/image`）调 `pack` 就够了，它不必知道这个界。`pub` 会是一扇没有读者的门。
+const MAX_NAME: usize = 32;
 
 /// **前言：给内核的两个数**——引导镜像在区内的偏移与长度。
 ///
