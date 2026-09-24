@@ -26,7 +26,7 @@ use crate::id::Id;
 
 pub use super::call::opened_by;
 
-use crate::principal::core::PrincipalId;
+use crate::system::principal::core::PrincipalId;
 
 /// 一面结盟服务：**树上查回来的门牌** + 它的开者（对端）。
 pub struct Face {

@@ -73,7 +73,7 @@ pub use crate::fail_codes::OK;
 
 /// 答话那一格。**前六格与 [`Fail`] 一一对应**，第七格不是失败域
 /// 的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。**第八、九格也不是 [`Fail`]**——那是门外那一问
-/// （[`judge`](crate::operator::judge)）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
+/// （[`judge`](crate::system::operator::judge)）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
 ///
 /// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
 /// 一份（持树者那一侧编、客人那一侧读）。
@@ -87,7 +87,7 @@ pub const BAD: u8 = 7;
 /// **门外那一问答"不"**：这一位不许动这一格。**终态**——换人 / 换目标，别重试。
 ///
 /// **第八格起不再是 [`Fail`] 的对照表**（[`Fail`] 只有六格）：这两格来自适配层的裁决
-/// （[`judge`](crate::operator::judge)），核心一个字节都不知道它们。分开的理由与
+/// （[`judge`](crate::system::operator::judge)），核心一个字节都不知道它们。分开的理由与
 /// [`UNJUDGED`] 同款——"你不许"的下一步与"没铸过 / 剪掉了"不同。
 pub const DENIED: u8 = 8;
 /// **门外那一问答"判不了"**：这一问要的那条事实问不到——对面不答 / 超时（**会好**），
@@ -460,7 +460,7 @@ fn tail(bytes: &[u8]) -> Option<[u8; 8]> {
 
 /// 一帧「列」的读数：号最多 [`Operator::PANE_CAP`] 枚。
 ///
-/// **照实记（为什么不与 `coalition` 的 [`Window`](crate::coalition::core::Window) 并成一个容器）**：
+/// **照实记（为什么不与 `coalition` 的 [`Window`](crate::system::coalition::core::Window) 并成一个容器）**：
 /// 两者都在搬"一串号"，差的正是**"未完"那一格**——盟籍**没有上限**（一格盟可以很多人）⇒ 那边
 /// 必须带 `more`，并因此把格子存成 `[Option<T>; CAP]`（泛型 + `const new` 造不出 `T` 的占位，
 /// 而零号是**真格子**，不能拿它当空）；**一条 pane 本来就有顶**（[`Operator::PANE_CAP`]）⇒

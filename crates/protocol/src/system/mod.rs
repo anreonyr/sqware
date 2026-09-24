@@ -469,10 +469,23 @@
 //!
 //! 策略（该不该杀、该给什么身份）不在这里：**内核只回答"能不能"**。
 
+//! **它容纳那四套协议**（[`board`] / [`operator`] / [`principal`] / [`coalition`]——用户裁定）：
+//! 判据是"**谁住编排域**"。iii 之后这四套的落地都是**编排域里的线程**（板线程 ＋ 持树者 /
+//! 名册 / 盟册），而"**要找服务得先有目录**——今天那本目录就是 `board`"这句也写在本正文里。
+//! 故协议树与实现树（`programs/src/supervisor/system/`）**同形**：编排那三件
+//! （[`core`] / [`desk`] / [`grant`]）与这四套同一份屋顶。
+//!
+//! **照实记（原先它们住顶层）**：`operator` / `principal` / `coalition` 曾与 [`crate::system`]
+//! 平级（`crates/protocol/src/{operator,principal,coalition}/`）。**被否的那条读法**是
+//! "协议树按'谁在说话'分、不该镜像实现树"——用户裁的是前者，故搬进来了。
+
 pub mod board;
+pub mod coalition;
 pub mod core;
 pub mod desk;
 pub mod grant;
+pub mod operator;
+pub mod principal;
 
 pub use core::{Fail, Ready, Reaped, Watch};
 pub use desk::{Announce, Service, Slot, State, Table};

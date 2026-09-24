@@ -1,7 +1,7 @@
 //! operator::bridge — **装配侧**：把持树者接上一位客人（三步），并认下它那条提示之路
 //!
 //! 三侧分家之后本文件只放**装配侧**；两侧共用的图与说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`protocol::operator::call`]。
+//! 帧与记号见 [`protocol::system::operator::call`]。
 
 use env::Mark;
 use env::assembly::Eyes;
@@ -9,7 +9,7 @@ use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-pub use protocol::operator::{LINK, TIP_MARK, TIP_NAME};
+pub use protocol::system::operator::{LINK, TIP_MARK, TIP_NAME};
 use protocol::session::Quay;
 
 // ── 装配侧（装配者调用）──────────────────────────────────────

@@ -6,7 +6,7 @@
 //! **照实记（这一份为什么拆出来）**：见 `principal/frame.rs` 的同一条——帧形的边角机器走不到，
 //! 拆开之后这一份只认 `env` 与同层 `core`，宿主靶能逐字编进去跑判据。
 //!
-//! # 帧（与 [`principal`](crate::principal::call) 同一形状；窗那一档多一种答形）
+//! # 帧（与 [`system::principal`](crate::system::principal::call) 同一形状；窗那一档多一种答形）
 //!
 //! ```text
 //!   Ask    [0] op   [1..9] a   [9..17] b          ASK_LEN   = 17
@@ -27,7 +27,7 @@
 //!
 //! # 编答的助手**少一个**
 //!
-//! [`principal`](crate::principal::call) 有 `reply_present`（"有没有一条号"），这里不需要——
+//! [`system::principal`](crate::system::principal::call) 有 `reply_present`（"有没有一条号"），这里不需要——
 //! 本族没有"可能没有的一条号"那种答案（`found` 必有号，`amid` 是是非）。**帮手少一个，
 //! 是原语少一条的余数。**
 //!
@@ -174,7 +174,7 @@ pub const NAME: &str = "coalition";
 // ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
 //
 // 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`；**与名册那一对**
-// 钉在 `crate::principal::frame`，**与线那一对**钉在 `lib.rs`——线那一枚住在 `driver::line::call`，
+// 钉在 `crate::system::principal::frame`，**与线那一对**钉在 `lib.rs`——线那一枚住在 `driver::line::call`，
 // 而这一份要能在宿主靶里**单独**编（那个靶的模块树里没有 `driver`）。
 const _: () = assert!(BACK.get() != Mark::NONE.get());
 const _: () = assert!(BACK.get() != Mark::of(NAME).get());

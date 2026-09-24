@@ -20,14 +20,14 @@
 
 use env::{PieToken, TaskId};
 
-use protocol::operator::core::VestedBy;
+use protocol::system::operator::core::VestedBy;
 
 // ── 这本账自己的失败域 ──────────────────────────────────────
 
 /// `admit` 的两种不成——**每格一个不同的下一步**：**重放**不动账（接着办下一件事），
 /// **满了**报一句（别静默丢一位客人）。
 ///
-/// **照实记（这一格原来借的是别人的名字）**：`admit` 原先答 `protocol::operator::core::Fail`
+/// **照实记（这一格原来借的是别人的名字）**：`admit` 原先答 `protocol::system::operator::core::Fail`
 /// 的 `NonEmpty`——那个名字在协议里说的是"**这块 Pane 非空**，要动它先清空"（`land` / `trim`
 /// 的下一步），与"这位客人已经在账上"（重放，无事）**不是同一个下一步**。借名字的代价正是
 /// 这一格：同一个码两种读法，读代码的人得先知道是谁发的。
@@ -116,7 +116,7 @@ pub struct Desk {
 /// 立一本账（一位客人一格）：**注入的是协议那一侧"读内核事实"的那一枚**
 /// （`call::vested_by`，`Reserve` 那一问）——账是实现的，判定是协议的。
 pub fn desk() -> Desk {
-    Desk::new(protocol::operator::call::vested_by)
+    Desk::new(protocol::system::operator::call::vested_by)
 }
 
 impl Desk {

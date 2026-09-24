@@ -47,9 +47,9 @@ use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
 use harness::cases;
-use protocol::operator::call as ocall;
-use protocol::operator::client as operator;
-use protocol::operator::{LINK, Where};
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::{LINK, Where};
 use protocol::session::Quay;
 use runtime::PAGE_SIZE;
 use runtime::env::debug;

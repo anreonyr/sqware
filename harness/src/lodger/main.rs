@@ -54,8 +54,8 @@ use programs::driver::assemble;
 use harness::lodger::needs;
 
 // 树：本域是**客侧**（按名找服务）。
-use protocol::operator::call as ocall;
-use protocol::operator::client as operator;
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::client as operator;
 
 use alloc::format;
 

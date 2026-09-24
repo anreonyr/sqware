@@ -39,8 +39,8 @@ use env::Mark;
 use crate::supervisor::system::server::{self as service, Grant};
 use env::wire::manifest;
 use env::{Name, PieToken, TaskId};
-use protocol::principal::client::Face;
-use protocol::principal::core::PrincipalId;
+use protocol::system::principal::client::Face;
+use protocol::system::principal::core::PrincipalId;
 use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
 use protocol::system::board::call as bcall;
@@ -95,7 +95,7 @@ pub struct Program {
     ///
     /// 与 [`Program::board`] 同一个形状、同一格位置（"两端共用"）：`true` ⇒ 它一定调
     /// [`operator::open`]。**按需发**——拿到这条路的服务，就能动整棵树（owner 归 Principal，
-    /// 准入由门外那一问判，见 `protocol::operator::{judge, gate}`）。
+    /// 准入由门外那一问判，见 `protocol::system::operator::{judge, gate}`）。
     pub operator: bool,
     /// **装配期给不给它一条身份**（`derive(ROOT)` + `bind`）。
     ///

@@ -29,7 +29,7 @@
 //! |---|---|---|
 //! | 递单 / 发货（物料） | [`supply`] | **就是本层** |
 //! | 收物料的**字节形状** | `system::grant`（`Pair` 解）+ [`session`](crate::session) | 引用 |
-//! | 被按名找到（挂牌） | [`system::board`](crate::system::board) / [`operator`](crate::operator) 的客侧几手 | 引用 |
+//! | 被按名找到（挂牌） | [`system::board`](crate::system::board) / [`system::operator`](crate::system::operator) 的客侧几手 | 引用 |
 //! | 就绪宣布 | [`system`](crate::system) 的 `Announce` | 引用 |
 //! | 开设备（门闩 → 视图） | `runtime::core::dock` | 引用 |
 //! | **线的权威 / 登记 / 投递 / 排空 / 收线** | [`line`] | **已落** |
@@ -54,7 +54,7 @@
 //!   登记自己那条线）；**`exhaust` 今天有真内容**——读口搬到设备持有者之后，客户是真的读走了
 //!   设备里的字节才说那句话；**`vacate` 也有调用者了**——路由者每次醒来探活（`alive` 答不出的
 //!   那几条拆线 + 空出格子），时机就是主人那一枚孔封印敲到组键的那一次醒来。
-//! - **门牌已落（三台驱动）**：驱动的门牌挂 [`operator`](crate::operator) 的 **`/device`**
+//! - **门牌已落（三台驱动）**：驱动的门牌挂 [`system::operator`](crate::system::operator) 的 **`/device`**
 //!   （[`DIR`]）——名字用服务名、那块 Pane 由第一个上树的驱动建、按名找服务走树、板只管生死
 //!   （见 `programs/src/driver/mod.rs`）。`uart` 的门牌 `/device/uart` 上挂的是**读行那枚孔**
 //!   （服务面），客人 `echo` 从它读；`rtc` 的 `/device/rtc` 上挂的是**报时服务的入口**，客人

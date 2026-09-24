@@ -1,7 +1,7 @@
 //! 定长名字——**协议之间**共用的一个上限（内核不记名字）。
 //!
 //! [`NAME_LEN`] 是**单一真相**：内容 ≤ 31 字节 + 终止 NUL = 32；板协议
-//! （`crates/protocol/src/system/board`）与树协议（`crates/protocol/src/operator`）共用它。
+//! （`crates/protocol/src/system/board`）与树协议（`crates/protocol/src/system/operator`）共用它。
 //! `Name` 把「非空、≤ 31 字节、不含 NUL」做成构造期义务，非法输入由 [`NameError`] 承载
 //! ——不 panic、不截断。
 //!
@@ -15,7 +15,7 @@
 
 /// 名字字段字节数（含终止 NUL）。
 ///
-/// 单一真相：板协议（`crates/protocol/src/system/board`）与树协议（`crates/protocol/src/operator`）
+/// 单一真相：板协议（`crates/protocol/src/system/board`）与树协议（`crates/protocol/src/system/operator`）
 /// 共用同一上限——内容 ≤ 31 字节。**域名字不在其中**：内核那一刀把 `Build` 的名字收了回去。
 pub const NAME_LEN: usize = 32;
 

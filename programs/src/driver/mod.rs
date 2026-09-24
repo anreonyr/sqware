@@ -17,7 +17,7 @@
 //!
 //! # 门牌（三块都落）
 //!
-//! 驱动的门牌挂 `protocol::operator` 的 **`/device`**（`protocol::driver::DIR`）：名字用
+//! 驱动的门牌挂 `protocol::system::operator` 的 **`/device`**（`protocol::driver::DIR`）：名字用
 //! **服务名**（`router` / `uart` / `rtc`，与装配单、日志同一个名），**按名找服务走树**；板留着
 //! 管生死（编排域监督的唯一事件源是板那条死亡道）。
 //!

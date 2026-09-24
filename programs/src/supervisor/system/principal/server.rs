@@ -16,11 +16,11 @@
 use alloc::format;
 
 use env::{HoleDir, Name, PieToken, TaskId};
-use protocol::operator::Where;
-use protocol::operator::call as ocall;
-use protocol::operator::client as operator;
-use protocol::principal::call as pcall;
-use protocol::principal::core::{Principal, PrincipalId};
+use protocol::system::operator::Where;
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::client as operator;
+use protocol::system::principal::call as pcall;
+use protocol::system::principal::core::{Principal, PrincipalId};
 use protocol::session::Quay;
 use protocol::session::call as scall;
 use protocol::system::board::call as bcall;

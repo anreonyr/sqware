@@ -3,7 +3,7 @@
 //!
 //! # 这批判据钉的是什么
 //!
-//! `crates/protocol/src/operator/judge.rs` 是"这一位许不许动这一格"的**定义**；
+//! `crates/protocol/src/system/operator/judge.rs` 是"这一位许不许动这一格"的**定义**；
 //! `gate.rs` 是它**翻成线上那一格**的那一层；`ledger.rs` 是"这一格的规矩与归属"**记在哪**。
 //! 三份都一行不发消息，故喂假事实就能把规矩推理干净：
 //!
@@ -46,25 +46,25 @@ extern crate alloc;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-/// 判据的正文（就是 `crates/protocol/src/operator/judge.rs` 那一份，逐字未改）。
-#[path = "../../protocol/src/operator/judge.rs"]
+/// 判据的正文（就是 `crates/protocol/src/system/operator/judge.rs` 那一份，逐字未改）。
+#[path = "../../protocol/src/system/operator/judge.rs"]
 mod judge;
 
-/// 裁决 → 线上那一格（就是 `crates/protocol/src/operator/gate.rs` 那一份，逐字未改）。
-#[path = "../../protocol/src/operator/gate.rs"]
+/// 裁决 → 线上那一格（就是 `crates/protocol/src/system/operator/gate.rs` 那一份，逐字未改）。
+#[path = "../../protocol/src/system/operator/gate.rs"]
 mod gate;
 
-/// 树的正文（就是 `crates/protocol/src/operator/core.rs` 那一份，逐字未改）——**只为账要的
+/// 树的正文（就是 `crates/protocol/src/system/operator/core.rs` 那一份，逐字未改）——**只为账要的
 /// 那三样**（`Where` / `EntryId` / `Fail` / `VestedBy`），本台不测树本身。
 // 照实记：`core.rs` 那一份**只借它的类型**（本台不测树本身）⇒ 它那一族方法在这一台里
 // 全是"没被叫过"。挂 `allow(dead_code)` 而不是把那几条删掉：那是**逐字未改的源码**，
 // 改它就是改判据的对象。同一个文件在 `protocol-case` 的 `operator` 靶那一台里是被叫全的。
 #[allow(dead_code)]
-#[path = "../../protocol/src/operator/core.rs"]
+#[path = "../../protocol/src/system/operator/core.rs"]
 mod core;
 
-/// 那一本账（就是 `crates/protocol/src/operator/ledger.rs` 那一份，逐字未改）。
-#[path = "../../protocol/src/operator/ledger.rs"]
+/// 那一本账（就是 `crates/protocol/src/system/operator/ledger.rs` 那一份，逐字未改）。
+#[path = "../../protocol/src/system/operator/ledger.rs"]
 mod ledger;
 
 /// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**（见那份文件的照实记）。
@@ -77,12 +77,12 @@ mod fail_codes;
 #[path = "../../protocol/src/id.rs"]
 mod id;
 
-/// **帧那一半**（`crates/protocol/src/operator/frame.rs`，逐字未改）—— 在本台里跑判据。
+/// **帧那一半**（`crates/protocol/src/system/operator/frame.rs`，逐字未改）—— 在本台里跑判据。
 ///
 /// 这一台**本来就带着帧要的全部依赖**（`core` / `judge` / `gate` / `ledger` 都在同一层），
 /// 故它是最省的一处落点；那一份写的 `use super::core::…` / `use super::judge::…` 逐字成立。
 #[allow(dead_code)]
-#[path = "../../protocol/src/operator/frame.rs"]
+#[path = "../../protocol/src/system/operator/frame.rs"]
 mod frame;
 
 use env::{Name, PieToken, TaskId};
@@ -115,7 +115,7 @@ unsafe impl GlobalAlloc for Flaky {
             // 让 `Vec::try_reserve` 如实答 `Err`。
             //
             // 照实记：这里只能写 `std::ptr`——本台的 `mod core;` 把 `core` 那个 crate 名
-            // 遮住了（它编的是 `protocol/src/operator/core.rs` 那一份）。
+            // 遮住了（它编的是 `protocol/src/system/operator/core.rs` 那一份）。
             return std::ptr::null_mut();
         }
         unsafe { System.alloc(layout) }
@@ -956,5 +956,5 @@ fn the_operator_failure_table_is_bijective_and_keeps_bad_outside() {
 //
 // `the_operator_marks_do_not_collide_with_the_other_doors` 原先在这里：它比的**全是常量**
 // （`ASK_MARK` / `TIP_MARK` / `LINK` / `TIP_NAME`）。那几条现在写在
-// `crates/protocol/src/operator/frame.rs` 的 `const _: () = assert!(…)` 里——**编译期**，
+// `crates/protocol/src/system/operator/frame.rs` 的 `const _: () = assert!(…)` 里——**编译期**，
 // riscv 那一档也一样钉着；比它强，且不再占一条用例。

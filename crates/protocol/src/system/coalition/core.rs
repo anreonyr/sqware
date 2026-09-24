@@ -1,7 +1,7 @@
 //! coalition::core — **盟册**：一条关系、一枚计数器、六条原语。
 //!
 //! 本文件**不 `use` 内核**——连 `TaskId` 都不认识（喂两个假号就能把六条规矩推理干净）。
-//! 这不是风格：身份那一侧归 [`principal`](crate::principal)（名册把内核盖的章翻成一条号），
+//! 这不是风格：身份那一侧归 [`system::principal`](crate::system::principal)（名册把内核盖的章翻成一条号），
 //! 本册只收**一条已经解析好的身份**；故"这条请求是不是发送者本人"不在这一层——它在适配层
 //! （见正文"已知边界"）。
 //!
@@ -17,7 +17,7 @@
 use alloc::vec::Vec;
 
 use crate::id::Id;
-use crate::principal::core::PrincipalId;
+use crate::system::principal::core::PrincipalId;
 
 // ── 号 ──────────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ impl Id for CoalitionId {
 /// 失败域：**两格**，每格一个**不同的下一步**。
 ///
 /// **没有 `Denied`**——本族没有一处"你得请谁来做"的判断：盟无主，三条写里的门要么是
-/// "这条号是假的"，要么是"备不下"。这是横向那条轴与纵向那条轴（[`principal`](crate::principal)
+/// "这条号是假的"，要么是"备不下"。这是横向那条轴与纵向那条轴（[`system::principal`](crate::system::principal)
 /// 有 `Denied`）在失败域上的分野。
 ///
 /// **三条读里只有 `bloc` 没有失败域**：`amid` / `band` 问的是**本册自己的**号空间，故都会答
@@ -87,7 +87,7 @@ pub const WINDOW_CAP: usize = 16;
 /// 空位是 `None` 而不是 `T::new(0)`：**零号是真格子**（[`PrincipalId::ROOT`] 就是 0），
 /// 拿它当"这一格空着"正是要避开的那件事。
 ///
-/// **与 operator 那个 [`Listing`](crate::operator::frame::Listing) 不合并**：那一边一条 pane
+/// **与 operator 那个 [`Listing`](crate::system::operator::frame::Listing) 不合并**：那一边一条 pane
 /// **有顶**，故没有"未完"这一格；本族靠 `more` 分页。两处各留一个的理由（连帧形那一半）
 /// 写在那边。
 ///
@@ -356,7 +356,7 @@ impl Coalition {
 // ── 用例不在这里（照实记：用户裁定"测试和运行环境分开"）──────────────
 //
 // 本文件原先那个 `#[cfg(test)] mod tests`（**6 条**）整体搬去了 `crates/protocol-case` 的
-// `roster` 靶里 `coalition_core` 那一格（盟籍要 `crate::principal::core` 的号，故与名册
+// `roster` 靶里 `coalition_core` 那一格（盟籍要 `crate::system::principal::core` 的号，故与名册
 // 同住一个靶），门口 `crates/gate/tests/host.rs`；**本文件从此没有一行测试**。
 //
 // 那一批原先是"编不到、也跑不到"的规格（`protocol` 是 `[lib] test = false`）。真机上另有

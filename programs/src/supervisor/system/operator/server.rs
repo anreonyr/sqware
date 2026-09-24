@@ -1,7 +1,7 @@
 //! operator::server — **持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）
 //!
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`protocol::operator::call`]。
+//! 帧与记号见 [`protocol::system::operator::call`]。
 
 use env::assembly::Eyes;
 use env::{HoleDir, Mark, PieToken, TaskId};
@@ -10,18 +10,18 @@ use runtime::core::tole::Tole;
 use runtime::env::mail;
 use runtime::PAGE_SIZE;
 
-use protocol::operator::call as ocall;
-use protocol::operator::gate::{Code, Control, verdict};
-use protocol::operator::judge::{Id, Rule};
-use protocol::operator::ledger::{Key, Ledger, Line};
-pub use protocol::operator::{ASK_MARK, LINK, TIP_MARK};
-use protocol::operator::{EntryId, Fail, Operator, Where};
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::gate::{Code, Control, verdict};
+use protocol::system::operator::judge::{Id, Rule};
+use protocol::system::operator::ledger::{Key, Ledger, Line};
+pub use protocol::system::operator::{ASK_MARK, LINK, TIP_MARK};
+use protocol::system::operator::{EntryId, Fail, Operator, Where};
 use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
 
-use protocol::coalition::client::Face as CoalitionFace;
-use protocol::principal::client::Face as PrincipalFace;
-use protocol::principal::core::PrincipalId;
+use protocol::system::coalition::client::Face as CoalitionFace;
+use protocol::system::principal::client::Face as PrincipalFace;
+use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::{COORD_FRAME, Coord};
 use super::desk::{Admit, Desk, Guest, desk};
@@ -83,7 +83,7 @@ fn find_face(who: TaskId) -> Option<PieToken> {
 ///
 /// 照实记（第五格那一刀）：`Session` 只拿两枚门牌，而树不住它里面（`&mut` 那一条借用过不去），
 /// 故这一格把**两半**凑在一起——名册/盟册（[`Session`]）+ 树（[`Operator`]）。名字取"那一问在
-/// 哪儿答"，与 [`operator::gate`](protocol::operator::gate) 的裁决/门禁一族同调。
+/// 哪儿答"，与 [`operator::gate`](protocol::system::operator::gate) 的裁决/门禁一族同调。
 struct Court<'a> {
     session: &'a Session,
     tree: &'a Operator,
@@ -119,7 +119,7 @@ impl Control for Court<'_> {
         league
             .amid(
                 PrincipalId::new(me as usize),
-                protocol::coalition::CoalitionId::new(at as usize),
+                protocol::system::coalition::CoalitionId::new(at as usize),
                 MS,
             )
             .map_err(|_| ())
@@ -317,7 +317,7 @@ fn settle(
         };
         if n == COORD_FRAME {
             // **开闸**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交进来
-            // （装配者只递号）；从这里往后，门外那一问（[`gate`](protocol::operator::gate)）
+            // （装配者只递号）；从这里往后，门外那一问（[`gate`](protocol::system::operator::gate)）
             // 判得了身份。
             let who =
                 TaskId::new(u64::from_le_bytes(frame[..8].try_into().unwrap_or([0; 8])) as usize);
@@ -397,7 +397,7 @@ fn settle(
 
 /// **那本账**：一格一条，记着两轴（谁许用 / 归谁改）。
 ///
-/// 正文在协议那一侧（[`protocol::operator::ledger`]），本域只做三件事：**接上"活着"那一问**
+/// 正文在协议那一侧（[`protocol::system::operator::ledger`]），本域只做三件事：**接上"活着"那一问**
 /// （`ocall::vested_by`，与树收的是同一枚函数指针）、**接上"那一格还是不是那一格"那一问**
 /// （[`fresh`]，一趟读）、**按钥匙查**。
 ///
@@ -538,7 +538,7 @@ fn answer(
                 Ok(id) => {
                     // 记的是"**那一刻挂上去的那一枚**"：它答不答得出，就是主人还在不在场。
                     // `mine = false` 是**放弃归属**——与"改规矩"同走这一条（这两条没有独立入口：
-                    // 这一问是**整值赋值**，见 [`protocol::operator`] 那一节）。
+                    // 这一问是**整值赋值**，见 [`protocol::system::operator`] 那一节）。
                     book.write(blank, Line::new(at, name, id, rule, mine, who, entry));
                     ocall::pack_id(out, id)
                 }

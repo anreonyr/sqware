@@ -40,11 +40,11 @@ use alloc::string::String;
 use core::time::Duration;
 
 use env::{Name, PieToken, TaskId};
-use protocol::operator::call as ocall;
-use protocol::operator::client as operator;
-use protocol::principal::call as pcall;
-use protocol::principal::client::Face;
-use protocol::principal::core::{Fail, PrincipalId};
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::client as operator;
+use protocol::system::principal::call as pcall;
+use protocol::system::principal::client::Face;
+use protocol::system::principal::core::{Fail, PrincipalId};
 use protocol::session::Quay;
 use cases::Suite;
 use runtime::env::debug;

@@ -44,9 +44,9 @@ extern crate programs;
 
 use programs::Report;
 
-use protocol::operator::call as ocall;
-use protocol::operator::client as operator;
-use protocol::operator::{EntryId, Where};
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::{EntryId, Where};
 
 use alloc::format;
 

@@ -1,6 +1,6 @@
 //! Coalition Protocol — **策略结盟**：一组身份共同参与一件事。
 //!
-//! 它是身份之间的**横向**关系（[`principal`](super::principal) 那一条是**纵向**的：从谁而来）。
+//! 它是身份之间的**横向**关系（[`system::principal`](super::principal) 那一条是**纵向**的：从谁而来）。
 //! 它不定义权限、不产生 PrincipalId、不发 Pie、不解释成员资格的含义，也不负责**发现**——
 //! 它只回答一个问题：**这一组身份里有没有它。**
 //!
@@ -181,12 +181,12 @@
 //!
 //! # 与左右两边的关系
 //!
-//! - **与 [`principal`](super::principal)**：纵向（从谁而来）与横向（谁和谁一起）两条轴，
+//! - **与 [`system::principal`](super::principal)**：纵向（从谁而来）与横向（谁和谁一起）两条轴，
 //!   互不推出，只在**一处**相会：键是身份 ⇒ 转换（`adopt` / `waive`）会移动"这个任务问到的
 //!   盟籍"。**谁是谁**归 principal，**成员关系的真值**归本协议；两者都不解释含义。
-//! - **与 [`operator`](super::operator)**：树是**地址**（名字 → 一枚 Pie）——本协议的门牌走它，
+//! - **与 [`system::operator`](super::operator)**：树是**地址**（名字 → 一枚 Pie）——本协议的门牌走它，
 //!   但盟的**号**不上树（树上的条目存不了号）。
-//! - **与 [`system`](super::system) / [`system::board`](super::system::board)**：零交集。
+//! - **与 [`system`](crate::system) / [`system::board`](crate::system::board)**：零交集。
 //!   System 管存在与生命周期、板管生死，两者都在"一个 TID 此刻是什么"上说话，与本协议
 //!   回答的两个问题都不同。
 //! - **与 Pie**：零交集。`System = 存在与生命周期`、`Principal = 策略身份`、

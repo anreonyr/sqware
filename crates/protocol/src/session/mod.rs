@@ -157,7 +157,7 @@
 //! [`system`](crate::system) 起服务时用它等"它交回了控制孔"（按通道名逐条认领）；
 //! [`board`](crate::system::board) 的一问一答也建在它上面（两侧都是 `seat` + `claim`，
 //! 靠记号对位，谁也不认"我没开过的那一枚"）；
-//! [`principal`](crate::principal) 的两条不可伪造凭证就是这里的两个戳子
+//! [`system::principal`](crate::system::principal) 的两条不可伪造凭证就是这里的两个戳子
 //! （"你是谁"内核免费背书，"别人是谁"不免费）。
 
 pub mod call;

@@ -8,7 +8,7 @@
 //!
 //! - `Under(p)` 的负证要一位**不在 p 那一支里**的——同一台客人做不到：`q = derive(p)` 一定
 //!   在 p 那一支里，而 `adopt` 只许**往下**领（`heir(current, q)`，见
-//!   `protocol::principal::core` 的 `Principal::adopt` 三格前置）；
+//!   `protocol::system::principal::core` 的 `Principal::adopt` 三格前置）；
 //! - `Is(p)` 的负证要一位**不是 p** 的——`probe-rule` 用 adopt 演过一次，本台再换**一台客人**
 //!   演一次：装配期每位都是 `derive(ROOT)` 的**兄弟**，故彼此都不在对方那一支里。
 //!
@@ -51,8 +51,8 @@ use core::time::Duration;
 
 use env::{Name, PieToken};
 use harness::cases;
-use protocol::operator::call as ocall;
-use protocol::operator::client as operator;
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::client as operator;
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::room;

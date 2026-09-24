@@ -57,7 +57,7 @@ extern crate programs;
 
 // 共享物住在 supervisor 目录里，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板与树：本域都只用**客侧**那几手。
-use protocol::operator::client as operator;
+use protocol::system::operator::client as operator;
 use protocol::session::Quay;
 use protocol::system::board::client as board;
 
@@ -68,8 +68,8 @@ use core::time::Duration;
 use cases::Suite;
 use env::DBCN_MAX;
 use env::{Name, PieToken, TaskId};
-use protocol::operator::call as ocall;
-use protocol::operator::{EntryId, Listing, Where};
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::{EntryId, Listing, Where};
 use protocol::system::board::call as bcall;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};

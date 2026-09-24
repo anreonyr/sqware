@@ -17,7 +17,7 @@
 //! 上——故报文里没有"我是谁"这一格。
 //!
 //! 三条轴都**不定义**权限：收到"这个请求代表 P"的服务自己解释 P 意味着什么、要不要给它 Pie。
-//! Principal 不持有、不授予、不解释任何 Pie（与 [`system`](super::system)、`operator` 的边界
+//! Principal 不持有、不授予、不解释任何 Pie（与 [`system`](crate::system)、`operator` 的边界
 //! 不重叠）。
 //!
 //! # 九条原语
@@ -107,7 +107,7 @@
 //! 事实。
 //!
 //! **`PrincipalId` 不是名字**：`derive` 不收名字，故号只能由 Server 发（裸号 + 树外答 `Unknown`）。
-//! 可读的名字若将来要，是另挂的一格标签，不是身份；命名归 [`operator`](super::operator) 那棵树。
+//! 可读的名字若将来要，是另挂的一格标签，不是身份；命名归 [`system::operator`](super::operator) 那棵树。
 //!
 //! ## P6 转换：**领**（`adopt`）与**弃**（`waive`）
 //!
@@ -129,7 +129,7 @@
 //! 转换**；真要它落地，那一格的名字已经定好叫 `admit`（纳，5 个字母），与 [`Principal::adopt`]
 //! 的区别写在下一条已知边界里。
 //!
-//! ## P7 **结盟**是另一条轴（已落地，见 [`coalition`](super::coalition)）
+//! ## P7 **结盟**是另一条轴（已落地，见 [`system::coalition`](super::coalition)）
 //!
 //! 身份之间有两条互不推出的关系：**纵向的谱系**（本协议，这份正文）与**横向的结盟**
 //! （`Coalition`：一组身份共同参与一件事，`found` / `enter` / `leave` / `amid`）。
@@ -189,12 +189,12 @@
 //!
 //! # 与左右两边的关系
 //!
-//! - **与 [`system`](super::system)**：System 回答"系统里运行着哪些 Service、怎么起停监督"，
+//! - **与 [`system`](crate::system)**：System 回答"系统里运行着哪些 Service、怎么起停监督"，
 //!   Principal 回答"这个请求代表谁"。两者都落在 TID 上，但**不存在所有权关系**：Service 的
 //!   生命周期归 System，策略身份归 Principal。
-//! - **与 [`system::board`](super::system::board)**：板管生死与牌子，Principal 管身份；
+//! - **与 [`system::board`](crate::system::board)**：板管生死与牌子，Principal 管身份；
 //!   两者都在"一个 TID 此刻是什么"上说话，但**答的是两个问题**（活着没有 / 代表谁）。
-//! - **与 [`operator`](super::operator)**：树是**命名**（名字 → Pie），Principal 是**身份**
+//! - **与 [`system::operator`](super::operator)**：树是**命名**（名字 → Pie），Principal 是**身份**
 //!   （TID → 号）。树的条目没有 owner 字段——**"谁能动这一格"不在树上，在持树者那本账上**
 //!   （`Ledger` 的 `Owner` + `claimable`）：**用**那一轴问的是身份（`Rule`，本协议答），
 //!   **改**那一轴比的是落牌那一枚任务（账里那两格 `who` + `pie` 都是任务级的；为什么记命

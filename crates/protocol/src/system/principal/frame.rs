@@ -3,7 +3,7 @@
 //! **照实记（这一份为什么拆出来）**：帧形今天只有机器在跑，而机器只走**顺路**——边角
 //! （短帧 / 长帧 / 动作码不对 / 答话那一格读不懂）一格都走不到。拆开之后这一份**只认
 //! `env` 与同层 `core`**——**一处例外**：末尾那条"面不相撞"的编译期断言看得见
-//! `crate::coalition`（常量对，不进机器）。宿主靶能把它逐字编进去
+//! `crate::system::coalition`（常量对，不进机器）。宿主靶能把它逐字编进去
 //! 跑判据；适配那半（`opened_by` 那种内核手的别名）留在 `call.rs`。
 //!
 //! 本文件**不做裁决**：名册与谱系的规矩全在 [`core`](super::core)。这里只有三件事——
@@ -109,7 +109,7 @@ pub const NAME: &str = "principal";
 //
 // 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`：三条路的回信
 // 孔记号两两不同（`principal-back` / `coalition-back` / `line-back`）。这里钉得着的是**与盟籍
-// 那一对**（本文件看得见 `crate::coalition`）；**与线那两对钉在 `lib.rs`**——线那一枚住在
+// 那一对**（本文件看得见 `crate::system::coalition`）；**与线那两对钉在 `lib.rs`**——线那一枚住在
 // `driver::line::call`，而帧这一半要能在宿主靶里**单独**编（那个靶的模块树里没有 `driver`）。
 //
 // **照实记（这一条曾经一直是空的）**：跨面那一对原先写作 `Mark::of("board-back")`，而**那个名字
@@ -118,4 +118,4 @@ pub const NAME: &str = "principal";
 
 const _: () = assert!(BACK.get() != Mark::NONE.get());
 const _: () = assert!(BACK.get() != Mark::of(NAME).get());
-const _: () = assert!(BACK.get() != crate::coalition::frame::BACK.get());
+const _: () = assert!(BACK.get() != crate::system::coalition::frame::BACK.get());

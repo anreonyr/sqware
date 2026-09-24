@@ -71,7 +71,7 @@
 //! `amid` 就答"问不到"，那一格会翻成 `UNJUDGED(9)`——而**不是** `0` / `8`。故这一台的
 //! `in` 那两格读数同时证两件事：规矩通了，**门也接上了**。
 //!
-//! 照实记：`found()` 只是**立一枚号**，"立了不等于进了"（见 `protocol::coalition::core`），
+//! 照实记：`found()` 只是**立一枚号**，"立了不等于进了"（见 `protocol::system::coalition::core`），
 //! 故本域立完还要 `enter(c)` 一次，否则 `In(c)` 的正证当场变成负证。
 
 // 本文件是一份**独立的 bin**（`harness/Cargo.toml` 的 `prog-probe-rule`），**不进 lib**
@@ -89,14 +89,14 @@ use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken, TaskId};
-use protocol::coalition::call as ccall;
-use protocol::coalition::client::Face as CoalitionFace;
-use protocol::operator::call as ocall;
-use protocol::operator::client as operator;
-use protocol::operator::judge::Rule;
-use protocol::operator::{EntryId, Where};
-use protocol::principal::call as pcall;
-use protocol::principal::client::Face as PrincipalFace;
+use protocol::system::coalition::call as ccall;
+use protocol::system::coalition::client::Face as CoalitionFace;
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::judge::Rule;
+use protocol::system::operator::{EntryId, Where};
+use protocol::system::principal::call as pcall;
+use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::mail;

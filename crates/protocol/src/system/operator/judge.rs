@@ -51,7 +51,7 @@
 //!
 //! # 为什么两个号是**泛型**，而不是直接写 `PrincipalId` / `CoalitionId`
 //!
-//! 若这里直接 `use crate::principal::core::PrincipalId`，宿主靶就得跟着编 `principal/core.rs` 与
+//! 若这里直接 `use crate::system::principal::core::PrincipalId`，宿主靶就得跟着编 `principal/core.rs` 与
 //! `coalition/core.rs` 两份——而"宿主靶只编一份逐字未改的核心源码"这条纪律会被打破。泛型把线
 //! 划死：本文件只认识四样东西——`env::TaskId`、四个 trait、一个 [`Rule`]、以及 [`EntryId`]。
 //! 调用点写 `judge::<PrincipalId, CoalitionId>`（或让它自己推），类型安全一分不减（两个号空间

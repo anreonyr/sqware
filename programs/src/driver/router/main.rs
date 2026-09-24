@@ -112,9 +112,9 @@ use programs::driver::router::needs;
 // 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
 use protocol::system::board::client as board;
 // 树：本域也是**客侧**（门牌挂 `/device/router`，见文件头）。
-use protocol::operator::Where;
-use protocol::operator::call as ocall;
-use protocol::operator::client as operator;
+use protocol::system::operator::Where;
+use protocol::system::operator::call as ocall;
+use protocol::system::operator::client as operator;
 
 /// 设备侧（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
 mod plic;
