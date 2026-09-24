@@ -69,6 +69,7 @@ pub const E_PROBE_OWNER: Died = 19;
 pub const E_PROBE_LEASE: Died = 20;
 pub const E_PROBE_RULE: Died = 21;
 pub const E_PROBE_OTHER: Died = 22;
+pub const E_PROBE_BOUND: Died = 23;
 
 // ── 四张硬件需求单（**收方开的**，逐字从各域的 `needs.rs` 搬下来）────────────
 //
@@ -244,8 +245,9 @@ pub struct Row {
 pub const ALL: &[Row] = &[
     Row { name: "root", kind: ProgramKind::Supervisor, spot: Spot::Domain, scenes: &["root", "product"], plan: None },
     // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
-    // 够不着建域那道 S 态门。
-    Row { name: "echo", kind: ProgramKind::User, spot: Spot::Console, scenes: &["root", "product"], plan: Some(Plan { order: 17, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, eyes: None, died: E_ECHO }) },
+    // 够不着建域那道 S 态门。**位次 18**（原 17）：`probe-bound` 那一台要赶在它前面起
+    // ——喂键那一套等的是探针收尾，而它一退场整台机器就开始收场（见 `soak` 的门）。
+    Row { name: "echo", kind: ProgramKind::User, spot: Spot::Console, scenes: &["root", "product"], plan: Some(Plan { order: 18, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, eyes: None, died: E_ECHO }) },
     // 客人：**U 态**（与 `echo` 同一档）——按名字找到一个服务、说一句话。铸孔、交出、
     // 一问一答都不需要 S 态，故最小特权的域也能用板。
     Row { name: "guest", kind: ProgramKind::User, spot: Spot::Guest, scenes: &["root"], plan: Some(Plan { order: 6, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, eyes: None, died: E_GUEST }) },
@@ -313,6 +315,9 @@ pub const ALL: &[Row] = &[
     Row { name: "probe-rule-other", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 16, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, eyes: None, died: E_PROBE_OTHER }) },
     // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
     Row { name: "probe-lease", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 13, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, eyes: None, died: E_PROBE_LEASE }) },
+    // **上界的证客**（**U 态**）：一位故意的坏客人——推一页 + 1（该被拒），再推一枚不合族的帧
+    // 到树的门上（门该把它吞下去、照旧答得出）。读数见 `harness/src/probe_bound.rs`。
+    Row { name: "probe-bound", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 17, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, eyes: None, died: E_PROBE_BOUND }) },
     // 压测台的两个（`harness/src/`）：`churn` = 受害者——U 态，不停地在
     // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
     // S 态，**景 `rig` 的引导镜像**，反复造/杀它。

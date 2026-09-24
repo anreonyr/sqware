@@ -130,6 +130,11 @@ pub const MARKS: &[Mark] = &[
     Mark::Shape("^\\[case\\] probe-lease: cases 1 ok 1 fail 0[[:space:]]*$"),
     Mark::Shape("^\\[case\\] probe-rule: 16 cases[[:space:]]*$"),
     Mark::Shape("^\\[case\\] probe-rule: cases 16 ok 16 fail 0[[:space:]]*$"),
+    // 上界那一格的证客（**A 那一刀的读数**）：一页 + 1 被拒的那一行，与"界守住了"那一句。
+    Mark::Literal("probe-bound: push="),
+    Mark::Literal("probe-bound: bound held"),
+    Mark::Shape("^\\[case\\] probe-bound: 3 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] probe-bound: cases 3 ok 3 fail 0[[:space:]]*$"),
     Mark::Absent("operator: two asks"),
     // 判不了那一格的**为什么**：`probe-rule` 那两格（`at_pane` / `gone_door`）必落在 `9`，
     // 而它们各自走 `Court::opens` 的一条臂 ⇒ 这两行读数**必然**在。装配期不产它，产品镜像
@@ -220,6 +225,7 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "passer", tier: Tier::Auto },
     Reading { prefix: "principal", tier: Tier::Auto },
     Reading { prefix: "probe", tier: Tier::Auto },
+    Reading { prefix: "probe-bound", tier: Tier::Auto },
     Reading { prefix: "probe-lease", tier: Tier::Auto },
     Reading { prefix: "probe-other", tier: Tier::Auto },
     Reading { prefix: "probe-owner", tier: Tier::Auto },

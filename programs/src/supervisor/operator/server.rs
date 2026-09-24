@@ -9,6 +9,7 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::core::tole::Tole;
 use runtime::env::mail;
 use runtime::env::unit as utask;
+use runtime::PAGE_SIZE;
 
 use protocol::operator::call as ocall;
 use protocol::operator::gate::{Code, Control, verdict};
@@ -245,6 +246,16 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     // "活着"那一问与树收的是**同一枚函数指针**（`ocall::vested_by`）——账要问的"主人还在吗"
     // 与树要问的"这一枚还答得出吗"是同一句话，故不另开一个 trait。
     let mut book: Book = Ledger::new(ocall::vested_by);
+    // 收帧的那一页：**在循环外备一次**——门的缓冲不再是"这一族最大的那一帧"（`ASK_MAX`），
+    // 而是**载体的一页**：界判在 `Push`，故客人推得进来的最长就是一页；拿家族帧当缓冲时，
+    // 比它长的那一枚（≤ 一页）客人推得进、这道门取不出 ⇒ 那一位客人从此没人招待。
+    // **本处是 A 那一刀漏掉的第六处**（前五处：principal / coalition / router / rtc / 板），
+    // 由 `probe-bound` 那一条探针当场抓出来（读数见 `harness/src/probe_bound.rs`）。
+    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    if buf.try_reserve_exact(PAGE_SIZE).is_err() {
+        return Err(super::fail::Fail::Room);
+    }
+    buf.resize(PAGE_SIZE, 0);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。
         let settling = settle(&mut desk, &tole, &tip_hole, &mut coord, &mut session);
@@ -258,7 +269,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
         if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut tree, guest, session.as_ref(), &mut book);
+            serve_one(&mut tree, guest, session.as_ref(), &mut book, &mut buf);
         }
         // 三、**看出来的**那一档：那一枚答不出 ⇒ 剔格子（没有"他说走了"那一档）。
         let _ = desk.sweep();
@@ -390,12 +401,20 @@ type Book = Ledger<Id, Id>;
 /// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**。
 ///
 /// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询。
-fn serve_one(tree: &mut Operator, guest: Guest, session: Option<&Session>, book: &mut Book) {
+///
+/// `buf` = **调用方那一页**（`serve` 在循环外备一次）：收帧不在这里分配，也不是家族帧那么大
+/// ——客人的最长帧由载体定（一页），门就得有一页才接得住（见 `serve` 那一格的照实记）。
+fn serve_one(
+    tree: &mut Operator,
+    guest: Guest,
+    session: Option<&Session>,
+    book: &mut Book,
+    buf: &mut [u8],
+) {
     let Some(ask) = guest.ask() else {
         return;
     };
-    let mut buf = [0u8; ocall::ASK_MAX];
-    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(&mut buf, 0) else {
+    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(buf, 0) else {
         return;
     };
     let Some(want) = buf.get(..n) else {

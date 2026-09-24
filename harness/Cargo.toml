@@ -82,6 +82,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-probe-bound"
+path = "src/probe_bound.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-probe-rule"
 path = "src/probe_rule.rs"
 test = false
