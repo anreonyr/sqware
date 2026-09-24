@@ -19,6 +19,17 @@
 //!
 //! 造出来的东西与内核**只共享一个约定**：initrd 落在内核 ELF **同目录**（`boot.nu` 就在那儿找）。
 //! 内核也不再需要那两个数——它们写在区里前 8 字节（`env::wire::manifest::PREAMBLE`），开机读。
+//!
+//! # 瘦身（`slim`）：为什么在**打包侧**剥符号与调试节
+//!
+//! `prog-*` 那份字节是**宿主调试用的那一份**（`gdb` 要符号），而进 initrd 的这一份只被内核
+//! 按 ELF 段读——**两个消费者，两份字节**。在这里剥，两边都不亏。实测 31 张：debug
+//! 128.2 MiB → 3.3 MiB（−97.4%），release 5.9 → 1.4 MiB（−77.2%）。省的不只是宿主读盘：
+//! initrd 是 boot 给的**持久保留区**，帧分配器永不分配它（`platform/machine.rs` 的
+//! `reserved`），debug 档那一份原先在 256 MiB 的机器上白占 78 MiB。
+//!
+//! `llvm-objcopy` 原样保留 `p_offset` / `p_vaddr` / `p_filesz`（仍页对齐），故**内核侧一行
+//! 都不用改**——三条判据（`offset`/`vaddr` 页对齐、段落在文件内）在 93 张产物上逐张验过。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -88,13 +99,13 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         return Err("programs / harness 编不过（上面是它们自己的报错）".to_string());
     }
 
-    // 读产物：**bin 名是约定** `prog-<名字>`（装配单里不写第二遍）。
+    // 读产物：**bin 名是约定** `prog-<名字>`（装配单里不写第二遍）；读进来就顺手瘦一遍
+    // （`prog-*` 那份字节不动——它是宿主调试用的那一份，见文件头的"瘦身"那段）。
     let bin_dir = work.join(TARGET).join(profile);
     let mut images = Vec::with_capacity(bins.len());
     for (name, kind) in &bins {
         let bin = format!("prog-{name}");
-        let elf =
-            std::fs::read(bin_dir.join(&bin)).map_err(|e| format!("读 {bin} 失败：{e}"))?;
+        let elf = slim(&bin_dir.join(&bin), &work)?;
         images.push((*kind, *name, elf));
     }
     let items: Vec<(env::ProgramKind, &str, &[u8])> = images
@@ -129,4 +140,41 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         bins.len()
     );
     Ok(at)
+}
+
+/// 瘦一份程序镜像：剥掉符号与调试节，只留可装载内容（见文件头"瘦身"那段）。
+///
+/// `src` = `prog-<名字>`——**不动它**（宿主 `gdb` 要那份）；`out` = 那一档的工作目录
+/// （临时文件落在它下面，随 `target/` 一起清理）。产瘦好的字节。
+///
+/// 临时名带 **pid**：`cargo gate` 的多个测试二进制是**并行**跑的，而两个门可以同档
+/// 同程序（`examine` 与 `product` 都是 release）——不带 pid 就会互相覆写。
+///
+/// # Errors
+///
+/// 工具不在 PATH / 工具报错 / 瘦好的字节读不回来。**三条一律中止，绝不退回原字节**：
+/// 静默退回的后果不是崩，而是那 97% 的收益悄悄消失，症状只剩"initrd 怎么还是这么大"。
+fn slim(src: &Path, out: &Path) -> Result<Vec<u8>, String> {
+    let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("image");
+    let dst = out.join(format!(".slim-{}-{name}", std::process::id()));
+    // 失败路径也要收拾：临时文件不留痕（成功路径同样走这里）。
+    let r = (|| {
+        let status = Command::new("llvm-objcopy")
+            .arg("--strip-all")
+            .arg(src)
+            .arg(&dst)
+            .status()
+            .map_err(|e| {
+                format!(
+                    "起不动 llvm-objcopy（{e}）——造镜像要它剥符号与调试节：装 llvm 包，或 \
+                     `rustup component add llvm-tools` 之后把它放进 PATH"
+                )
+            })?;
+        if !status.success() {
+            return Err(format!("llvm-objcopy 对 {} 报错（{status}）", src.display()));
+        }
+        std::fs::read(&dst).map_err(|e| format!("读瘦好的 {} 失败：{e}", dst.display()))
+    })();
+    let _ = std::fs::remove_file(&dst);
+    r
 }
