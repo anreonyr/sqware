@@ -54,12 +54,15 @@ pub const LOOKUP: u8 = 3;
 /// （给它塞两格空位就白要 40 字节，见 [`op_of`] 与 [`unpack_ask`] 的分工）。
 pub const EVICT: u8 = 4;
 
-/// 答话那一格。**前五格与 [`Fail`] 一一对应**（`OK` = 一个失败都不是），第六格不是
+/// 成功那一格：**六家同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 本族只把它转出来。
+pub use crate::fail_codes::OK;
+
+/// 答话那一格。**前五格与 [`Fail`] 一一对应**，第六格不是
 /// 失败域的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。
 ///
 /// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
 /// 一份（持有者那一侧编、客人那一侧读）。
-pub const OK: u8 = 0;
 pub const UNKNOWN: u8 = 1;
 pub const TAKEN: u8 = 2;
 pub const DENIED: u8 = 3;

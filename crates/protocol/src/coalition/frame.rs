@@ -49,11 +49,14 @@ pub const AMID: u8 = 4;
 pub const BAND: u8 = 5;
 pub const BLOC: u8 = 6;
 
+/// 成功那一格：**六家同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 本族只把它转出来。
+pub use crate::fail_codes::OK;
+
 /// 答话那一格：失败域那两格 + "读不懂"。
 ///
 /// [`BAD`] 在失败表外（同板 / 树 / 身份服务那三家的先例）：它不是"哪个协议说的事"，
 /// 是**这一问读不懂**。
-pub const OK: u8 = 0;
 pub const UNKNOWN: u8 = 1;
 pub const NO_ROOM: u8 = 2;
 pub const BAD: u8 = 3;

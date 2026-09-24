@@ -47,10 +47,13 @@ pub const ADOPT: u8 = 6;
 /// 转换 · 弃：两格都空——它只认"发送者是谁"。
 pub const WAIVE: u8 = 7;
 
-/// 答话那一格：失败域前三格 + "读不懂"。
+/// 成功那一格：**六家同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 本族只把它转出来。
+pub use crate::fail_codes::OK;
+
+/// 答话那一格：失败域那几格 + "读不懂"。
 ///
 /// [`BAD`] 在失败表外（同板/树的先例）：它不是"哪个协议说的事"，是**这一问读不懂**。
-pub const OK: u8 = 0;
 pub const DENIED: u8 = 1;
 pub const UNKNOWN: u8 = 2;
 pub const NO_ROOM: u8 = 3;

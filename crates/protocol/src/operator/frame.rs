@@ -67,13 +67,16 @@ pub const NAME: u8 = 6;
 /// （今天 `LAND`..`NAME` 的 1..6 与 `UNKNOWN`..`DEAD` 的 1..6 已经重号），故两边各按各的序列。
 pub const SEEK: u8 = 7;
 
-/// 答话那一格。**前六格与 [`Fail`] 一一对应**（`OK` = 一个失败都不是），第七格不是失败域
+/// 成功那一格：**六家同一个号**——定义在 `fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 本族只把它转出来。
+pub use crate::fail_codes::OK;
+
+/// 答话那一格。**前六格与 [`Fail`] 一一对应**，第七格不是失败域
 /// 的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。**第八、九格也不是 [`Fail`]**——那是门外那一问
 /// （[`judge`](crate::operator::judge)）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
 ///
 /// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
 /// 一份（持树者那一侧编、客人那一侧读）。
-pub const OK: u8 = 0;
 pub const UNKNOWN: u8 = 1;
 pub const NONEMPTY: u8 = 2;
 pub const NOTATILE: u8 = 3;
