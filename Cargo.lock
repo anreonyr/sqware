@@ -9,6 +9,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "cases"
+version = "0.1.0"
+dependencies = [
+ "runtime",
+]
+
+[[package]]
 name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -97,6 +104,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "harness"
 version = "0.1.0"
 dependencies = [
+ "cases",
  "env",
  "erra",
  "programs",
@@ -172,6 +180,7 @@ dependencies = [
 name = "programs"
 version = "0.1.0"
 dependencies = [
+ "cases",
  "env",
  "erra",
  "fdt",

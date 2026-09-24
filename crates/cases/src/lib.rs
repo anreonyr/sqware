@@ -49,6 +49,9 @@
 //! **一次只报一个失败**（`panic = abort`，没有 unwind，域当场死）——这是把判据搬进 SUT 的
 //! 代价（今天 soak 是"一轮把所有缺的读数一次报全"），写在 `docs/harness-gate.md` 的取舍那一节。
 
+#![no_std]
+
+extern crate alloc;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::vec::Vec;

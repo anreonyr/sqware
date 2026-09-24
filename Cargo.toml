@@ -28,6 +28,9 @@ members = [
     "kernel",
     "programs",
     "harness",
+    # **程序侧用例那一台**（用户裁定"服务台搬进 SUT"）：`programs` 与 `harness` 都要用它，
+    # 而 `harness` 依赖 `programs` ⇒ 它不能住在任何一边（成环）。见 `crates/cases/Cargo.toml`。
+    "crates/cases",
     "crates/env",
     "crates/protocol",
     "crates/runtime",

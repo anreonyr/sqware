@@ -1,0 +1,34 @@
+[package]
+name = "cases"
+version.workspace = true
+edition.workspace = true
+
+# **程序侧用例那一台**（运行时登记 + `[case] …` 协议）。
+#
+# # 为什么它自己一个 crate（用户裁定"服务台搬进 SUT"）
+#
+# 这一台原住在 `harness`（测具）里——探针用它。往服务台上搬的时候撞上一个**方向问题**：
+#
+#   `harness` **依赖** `programs`（每个测具一声 `extern crate programs;` 借那份共享入口
+#   `programs::entry`）⇒ **`programs` 用不了 `harness` 里的东西**（成环）。
+#
+# 而这一台两边都要用（6 台探针 + 11 台服务域）。故它往下搬一层，成为**谁也不欠谁**的一份：
+# `programs` 与 `harness` 各自依赖它，它只依赖 `runtime`（打点那一句）。
+#
+# **照实记（为什么不放进 `runtime` 或 `programs`）**：用户早先裁定过"**我希望测试和运行环境
+# 分开，而不是交叉在一起**"。放进 `runtime` = 把测试协议搬进**运行环境**；放进 `programs` =
+# 把测具搬回**产品**里。两个方向都是那句话反对的。
+#
+# **照实记（一行没改）**：`src/lib.rs` 是从 `harness/src/cases.rs` **逐字**搬过来的（连照实记
+# 一起），只加了 `#![no_std]` 与 `extern crate alloc;` 两行。探针那 6 份一个字没动——
+# `harness` 里留了一句 `pub use cases;`，故它们的 `use harness::cases;` 照旧成立。
+
+[lib]
+path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+# 打点那一句（`runtime::env::debug::put`）——本台唯一的对外依赖。
+runtime = { path = "../runtime" }

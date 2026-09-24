@@ -37,6 +37,8 @@ bench = false
 doctest = false
 
 [dependencies]
+# 程序侧用例那一台（搬出去之后仍从这里转出去，见 `src/lib.rs`）。
+cases = { path = "../crates/cases" }
 env = { path = "../crates/env" }
 runtime = { path = "../crates/runtime" }
 protocol = { path = "../crates/protocol" }
