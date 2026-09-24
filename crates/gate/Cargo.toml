@@ -1,0 +1,35 @@
+[package]
+name = "gate"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# 门 —— 本仓所有**要跑**的判据的落点：台（起机 / 跑宿主命令）+ 判据 + 变异。
+#
+# 它是**编外**的（根 `Cargo.toml` 的 `exclude`），理由与 `crates/protocol-case` 同源：主工作区
+# 被 `.cargo/config.toml` 钉在 `riscv64gc-unknown-none-elf` 上，而这一台要 std + host ABI。
+# 故它跑法里必须显式写 `--target x86_64-unknown-linux-gnu`——那句就是"宿主"这两个字的落点，
+# 已经收进根 `.cargo/config.toml` 的 `[alias] gate`。
+#
+# # 这一台收的是什么（用户裁定："完全消除测试脚本"）
+#
+# 原先那批门是**十六份脚本**（`scripts/host.sh` / `examine.nu` / `soak.sh` / `framework.sh` /
+# `stress.sh` / `load.sh` / `group.sh` / `fair.sh` / `fast.sh` / `quick.sh` / `probe.sh` /
+# `readings.awk` / `readings.txt` / `teeth.py` + `crates/alloc-probe/run.sh`）。收法不是"装一个
+# 测试框架"——**判据与汇总那一半本来就不该是脚本**（`cargo test` 白给：逐例判据、失败点名、
+# 退出码、汇总、过滤、分层），**台架那一半**（选场景构建 / 起 QEMU / 喂键 / 期限 / 收日志）
+# 任何框架都不做，但它也不需要脚本：`std::process::Command` 一样做得成。
+#
+# 裁定留下的两件：`scripts/boot.nu`（QEMU 起法的**唯一出处**）与 `scripts/runner.nu`
+# （`cargo run` 那条交互路）——这里只 spawn `boot.nu`，起法一个字都不重写。
+#
+# 设计四关（功能模型 / 结构 / 原语 / 签名）的落点与照实记见 `docs/gate-crate.md`。
+
+[dependencies]
+# 整行形状（原先 `soak.sh` 里那一族 `needE`）要一个 ERE。
+#
+# **照实记（离线取用）**：repo 内那份 `.cargo-home` 里**只有** `regex-syntax`（没有 `regex`
+# 本体），而真实的 `~/.cargo/registry` 里有 1.13.1 / 1.12.3 / 1.10.6。`CARGO_HOME` 未被设置
+# ⇒ 默认走 `~/.cargo`，离线解得开。**换台机器若把 `CARGO_HOME` 指到 `.cargo-home`，这一格会
+# 当场解不开**——那是环境事实，不是本 crate 的事。
+regex = "1"
