@@ -128,10 +128,46 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     }
     std::fs::write(&at, &blob).map_err(|e| format!("写 {} 失败：{e}", at.display()))?;
     println!(
-        "initrd packed: {} ({} B, {} programs)",
+        "initrd packed: {} ({} B, {} programs, 档 {profile})",
         at.display(),
         blob.len(),
         bins.len()
     );
+    // **档只有一处说话，那就得有人替它兜底**：这一景要的核内 ELF 与 initrd 是**同目录的
+    // 兄弟**（`boot.nu` / `runner.nu` 都按"内核同目录"推导镜像）。少了它、或它比 initrd 旧，
+    // 症状是"起得来、但跑的不是刚打的那一颗"——**不报错的错**。故这里当场说破。
+    guard_kernel_sibling(&at, profile)?;
     Ok(at)
+}
+
+/// 核内 ELF 必须已经在 initrd 旁边，而且**不比 initrd 旧**。
+///
+/// 为什么只报不改：编内核那一半归 `cargo build`（"initrd 与 kernel 何干"那条裁定），
+/// 这一层不越界替它编；但"你指定的那一个档"这句话里**包含**那另一半，故由它来说破。
+fn guard_kernel_sibling(initrd: &std::path::Path, profile: &str) -> Result<(), String> {
+    let elf = initrd.with_file_name("sqware");
+    let build = if profile == "debug" {
+        "cargo build".to_string()
+    } else {
+        format!("cargo build --profile {profile}")
+    };
+    let meta = std::fs::metadata(&elf).map_err(|_| {
+        format!(
+            "initrd 落好了，但同目录没有内核 ELF：{}\n  先编内核：{build}",
+            elf.display()
+        )
+    })?;
+    let initrd_at = std::fs::metadata(initrd)
+        .and_then(|m| m.modified())
+        .map_err(|e| format!("读 initrd 时间戳失败：{e}"))?;
+    let elf_at = meta
+        .modified()
+        .map_err(|e| format!("读内核时间戳失败：{e}"))?;
+    if elf_at < initrd_at {
+        return Err(format!(
+            "内核 ELF 比 initrd 旧（档 {profile}）：{}\n  重新编内核：{build}",
+            elf.display()
+        ));
+    }
+    Ok(())
 }
