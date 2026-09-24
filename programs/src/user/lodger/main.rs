@@ -60,6 +60,7 @@ use alloc::format;
 use env::{Key, Name, PieToken};
 use protocol::driver::line;
 use protocol::driver::line::call as lcall;
+use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room::exit_with_note;
@@ -114,7 +115,27 @@ extern "C" fn main() -> ! {
     // 三趟之后本域表里还剩几枚：**失败那两趟两边收干净了没有**的读数——`TAKEN` 与 `UNKNOWN`
     // 各把本端 `seat` 出去的那一枚（`Quay::shut`）与本趟借出去的那枚回信孔放下（见
     // `protocol::driver::line::client::Line::occupy`）。少放一枚，这一格当场大 1。
-    say(&format!("lodger: pies={}", mail::table_size()));
+    let pies = mail::table_size();
+    say(&format!("lodger: pies={pies}"));
+
+    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**。前三例的期望是
+    // 三趟登记的答码（与读数同一批常量）；第四例 `pies=9` 是**探针良过的那一格**（头注：把失败
+    // 那两趟的释放临时关掉，同一处读数从 9 变成 14）——故它是一个**判据**，不是常数（少放一枚
+    // 孔，这一例就红）。旧宿主靶上 `lodger: occupy=0` / `taken=2` / `unknown=1` / `pies=9` 钉的
+    // 就是这四样。
+    let mut suite = Suite::new("lodger");
+    suite.case("the_line_is_mine", move || assert_eq!(ok, lcall::OK));
+    suite.case("the_same_line_twice_is_taken", move || {
+        assert_eq!(taken, lcall::TAKEN)
+    });
+    suite.case("a_bell_is_not_an_interrupt_source", move || {
+        assert_eq!(unknown, lcall::UNKNOWN)
+    });
+    suite.case("the_failed_attempts_left_no_holes", move || {
+        assert_eq!(pies, 9)
+    });
+    suite.run();
+
     let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;
     exit_with_note(
         if all { E_OK } else { E_TRIP },

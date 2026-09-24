@@ -58,6 +58,7 @@ use core::time::Duration;
 
 use env::{Name, PieToken};
 use protocol::system::board::call as bcall;
+use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room::{self, exit_with_note};
@@ -150,6 +151,20 @@ extern "C" fn main() -> ! {
         "guest: reg={reg} find={find} entry={} bye={bye}",
         at.get()
     ));
+
+    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——那三样都是本站
+    // 此刻就知道的期望（旧宿主靶上 `guest: reg=0 find=0` 那一行钉的就是它们）。
+    let mut suite = Suite::new("guest");
+    suite.case("the_board_took_my_name", move || {
+        assert_eq!(reg, bcall::OK)
+    });
+    suite.case("the_tree_answered_with_the_router", move || {
+        assert_eq!(find, ocall::OK)
+    });
+    suite.case("that_entry_reached_my_table", move || {
+        assert!(at != none);
+    });
+    suite.run();
 
     // 六、退场：一次往返，不留常驻（kernel 打的那一行就是这一格的读数）。
     let walked = reg == bcall::OK && find == ocall::OK && at != none;

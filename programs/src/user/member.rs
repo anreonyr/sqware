@@ -51,6 +51,7 @@ use protocol::principal::client::Face as PolicyFace;
 use protocol::principal::core::Fail as PolicyFail;
 use protocol::principal::core::PrincipalId;
 use protocol::session::Quay;
+use cases::Suite;
 use runtime::env::debug;
 use runtime::env::room::{self, exit_with_note};
 use runtime::env::unit as utask;
@@ -107,7 +108,16 @@ extern "C" fn main() -> ! {
         bail("member: unbound")
     };
 
-    // 二、立两枚盟：号由服务发（第一枚是零号——盟无根，它就是一枚普通的盟）。
+    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——下面每一例的期望，
+    // 都是本域头注那 16 步里写着的那一句（旧宿主靶上 `member: …` 那 21 条钉的就是它们）。
+    // 台名 = 本域打的前缀，门按它钉逐台基线。
+    //
+    // **照实记（这里比宿主那 21 条更强）**：宿主那边是 `need`（**存在一次**就绿），而
+    // `amid(me,c0)` 这一形在本域脚本里出现**四趟**（立了之后 / 入之后 / 领了之后 / 弃了之后）
+    // ——这里每一趟各判一次，四趟答错任何一处都会点名。
+    let mut suite = Suite::new("member");
+
+    // 二、立两枚盟：号由服务发（**单调、稠密**——第一枚是零号）。
     let c0 = coal.found(MS);
     say(&format!("member: found={}", one_id(c0)));
     let c1 = coal.found(MS);
@@ -115,27 +125,44 @@ extern "C" fn main() -> ! {
     let (Ok(c0), Ok(c1)) = (c0, c1) else {
         bail("member: no coalition id")
     };
+    suite.case("the_first_coalition_is_zero", move || {
+        assert_eq!(c0.get(), 0)
+    });
+    suite.case("the_second_coalition_is_one", move || {
+        assert_eq!(c1.get(), 1)
+    });
 
     // 三、立了不等于进了。
-    say(&format!(
-        "member: amid(me,c0)={}",
-        flag(coal.amid(p, c0, MS))
-    ));
+    let apart = coal.amid(p, c0, MS);
+    say(&format!("member: amid(me,c0)={}", flag(apart)));
+    suite.case("standing_apart_is_not_membership", move || {
+        assert_eq!(apart, Ok(false))
+    });
 
     // 四、入：名册真的改了，而且**再入一遍还是 ok**（集合没有"第二次"）。
-    say(&format!("member: enter(c0)={}", done(coal.enter(c0, MS))));
-    say(&format!(
-        "member: amid(me,c0)={}",
-        flag(coal.amid(p, c0, MS))
-    ));
-    say(&format!("member: enter(c0)={}", done(coal.enter(c0, MS))));
+    let entered = coal.enter(c0, MS);
+    say(&format!("member: enter(c0)={}", done(entered)));
+    let inside = coal.amid(p, c0, MS);
+    say(&format!("member: amid(me,c0)={}", flag(inside)));
+    let again = coal.enter(c0, MS);
+    say(&format!("member: enter(c0)={}", done(again)));
+    suite.case("entering_answers_ok", move || assert!(entered.is_ok()));
+    suite.case("entering_really_changed_it", move || {
+        assert_eq!(inside, Ok(true))
+    });
+    suite.case("entering_twice_answers_ok", move || assert!(again.is_ok()));
 
     // 五、同一条身份可以在第二枚盟里。
-    say(&format!("member: enter(c1)={}", done(coal.enter(c1, MS))));
-    say(&format!(
-        "member: amid(me,c1)={}",
-        flag(coal.amid(p, c1, MS))
-    ));
+    let in_c1 = coal.enter(c1, MS);
+    say(&format!("member: enter(c1)={}", done(in_c1)));
+    let amid_c1 = coal.amid(p, c1, MS);
+    say(&format!("member: amid(me,c1)={}", flag(amid_c1)));
+    suite.case("the_second_coalition_takes_the_same_identity", move || {
+        assert!(in_c1.is_ok())
+    });
+    suite.case("that_identity_is_in_the_second_coalition", move || {
+        assert_eq!(amid_c1, Ok(true))
+    });
 
     // 六、领到第二条身份，把它也放进 c0 ⇒ 这枚盟里有**两位**。
     let sub = policy.derive(p, MS);
@@ -143,75 +170,99 @@ extern "C" fn main() -> ! {
     let Some(q) = sub.ok() else {
         bail("member: no sub identity")
     };
-    say(&format!("member: adopt(sub)={}", done(policy.adopt(q, MS))));
-    say(&format!("member: enter(c0)={}", done(coal.enter(c0, MS))));
-    say(&format!(
-        "member: amid(me,c0)={}",
-        flag(coal.amid(p, c0, MS))
-    ));
-    say(&format!(
-        "member: amid(sub,c0)={}",
-        flag(coal.amid(q, c0, MS))
-    ));
+    let adopted = policy.adopt(q, MS);
+    say(&format!("member: adopt(sub)={}", done(adopted)));
+    let q_in = coal.enter(c0, MS);
+    say(&format!("member: enter(c0)={}", done(q_in)));
+    let p_there = coal.amid(p, c0, MS);
+    say(&format!("member: amid(me,c0)={}", flag(p_there)));
+    let q_there = coal.amid(q, c0, MS);
+    say(&format!("member: amid(sub,c0)={}", flag(q_there)));
+    suite.case("a_derived_identity_can_be_adopted", move || {
+        assert!(adopted.is_ok())
+    });
+    suite.case("adopting_lets_it_enter_the_coalition", move || {
+        assert!(q_in.is_ok())
+    });
+    suite.case("both_identities_are_in_that_coalition", move || {
+        assert_eq!(p_there, Ok(true));
+        assert_eq!(q_there, Ok(true));
+    });
 
     // 七、**出的是那一对，不是那个人**：此刻代表 `sub`，故出掉的是 `sub` 那一行。
-    say(&format!("member: leave(c0)={}", done(coal.leave(c0, MS))));
-    say(&format!(
-        "member: amid(sub,c0)={}",
-        flag(coal.amid(q, c0, MS))
-    ));
-    say(&format!(
-        "member: amid(me,c0)={}",
-        flag(coal.amid(p, c0, MS))
-    ));
+    let left = coal.leave(c0, MS);
+    say(&format!("member: leave(c0)={}", done(left)));
+    let q_gone = coal.amid(q, c0, MS);
+    say(&format!("member: amid(sub,c0)={}", flag(q_gone)));
+    let p_still = coal.amid(p, c0, MS);
+    say(&format!("member: amid(me,c0)={}", flag(p_still)));
+    suite.case("leaving_answers_ok", move || assert!(left.is_ok()));
+    suite.case("leaving_took_out_that_pair_not_the_person", move || {
+        assert_eq!(q_gone, Ok(false));
+        assert_eq!(p_still, Ok(true));
+    });
 
     // 八、弃回起点：键 = 身份那条定理的另一半——第一条身份那一行照旧在。
-    say(&format!("member: waive={}", done(policy.waive(MS))));
-    say(&format!(
-        "member: amid(me,c0)={}",
-        flag(coal.amid(p, c0, MS))
-    ));
+    let waived = policy.waive(MS);
+    say(&format!("member: waive={}", done(waived)));
+    let after_waive = coal.amid(p, c0, MS);
+    say(&format!("member: amid(me,c0)={}", flag(after_waive)));
+    suite.case("waiving_answers_ok", move || assert!(waived.is_ok()));
+    suite.case("waiving_keeps_membership", move || {
+        assert_eq!(after_waive, Ok(true))
+    });
 
     // 九、第三态：没铸过的盟（号是伪造的线上值）。
     let outside = CoalitionId::new(OUTSIDE);
-    say(&format!(
-        "member: amid(me,out)={}",
-        flag(coal.amid(p, outside, MS))
-    ));
-    say(&format!(
-        "member: enter(out)={}",
-        done(coal.enter(outside, MS))
-    ));
-    say(&format!(
-        "member: leave(out)={}",
-        done(coal.leave(outside, MS))
-    ));
+    let out_amid = coal.amid(p, outside, MS);
+    say(&format!("member: amid(me,out)={}", flag(out_amid)));
+    let out_enter = coal.enter(outside, MS);
+    say(&format!("member: enter(out)={}", done(out_enter)));
+    let out_leave = coal.leave(outside, MS);
+    say(&format!("member: leave(out)={}", done(out_leave)));
+    suite.case("an_unknown_coalition_is_unknown_not_false", move || {
+        assert!(matches!(out_amid, Err(Fail::Unknown)))
+    });
+    suite.case("an_unknown_coalition_cannot_be_entered", move || {
+        assert!(matches!(out_enter, Err(Fail::Unknown)))
+    });
+    suite.case("an_unknown_coalition_cannot_be_left", move || {
+        assert!(matches!(out_leave, Err(Fail::Unknown)))
+    });
 
     // 十、伪造的**身份**号：答 false，**不是失败**——`p` 是标签，本册不去问名册。
-    say(&format!(
-        "member: amid(out,me)={}",
-        flag(coal.amid(PrincipalId::new(OUTSIDE), c1, MS))
-    ));
+    let forged = coal.amid(PrincipalId::new(OUTSIDE), c1, MS);
+    say(&format!("member: amid(out,me)={}", flag(forged)));
+    suite.case("a_forged_identity_is_false_not_a_failure", move || {
+        assert_eq!(forged, Ok(false))
+    });
 
     // 十一、**一串**（取窗两条）：`band` 答成员、`bloc` 答盟籍（序都是号序）。
     let band = coal.band(c0, None, MS);
     say(&format!("member: band(c0)={}", window_ids(band)));
     // 拿末一枚当游标接着取：**阈值**语义下再往后没有了 ⇒ 空窗，**不是错**（也不是"过期游标"）。
     let after = band.as_ref().ok().and_then(|w| w.last());
-    say(&format!(
-        "member: band(c0,next)={}",
-        window_ids(coal.band(c0, after, MS))
-    ));
+    let empty = coal.band(c0, after, MS);
+    say(&format!("member: band(c0,next)={}", window_ids(empty)));
     // 没铸过的那枚盟：取窗这一条**有失败域**（同 amid）。
-    say(&format!(
-        "member: band(out)={}",
-        window_ids(coal.band(outside, None, MS))
-    ));
+    let out_band = coal.band(outside, None, MS);
+    say(&format!("member: band(out)={}", window_ids(out_band)));
     // 反向那一趟：这条身份在哪些盟里（**没有失败域**：不在任何盟里就是空窗）。
-    say(&format!(
-        "member: bloc(me)={}",
-        window_ids(coal.bloc(p, None, MS))
-    ));
+    let bloc = coal.bloc(p, None, MS);
+    say(&format!("member: bloc(me)={}", window_ids(bloc)));
+    suite.case("the_window_holds_that_one_member", move || {
+        assert_eq!(band.as_ref().ok().map(|w| w.len()), Some(1))
+    });
+    suite.case("the_cursor_is_a_threshold_so_the_next_window_is_empty", move || {
+        assert_eq!(empty.as_ref().ok().map(|w| w.len()), Some(0))
+    });
+    suite.case("an_unknown_coalition_has_no_window", move || {
+        assert!(matches!(out_band, Err(Fail::Unknown)))
+    });
+    suite.case("the_reverse_window_holds_both_coalitions", move || {
+        assert_eq!(bloc.as_ref().ok().map(|w| w.len()), Some(2))
+    });
+    suite.run();
 
     exit_with_note(E_OK, "member: done")
 }

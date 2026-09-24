@@ -65,13 +65,9 @@ pub const MARKS: &[Mark] = &[
     Mark::Literal("devices: 21 handed to root"),
     Mark::Shape("^board: (bye tid=[0-9]+ names=[0-9]+ occupied=[0-9]+ swept=[0-9]+|swept n=[0-9]+ occupied=[0-9]+)[[:space:]]*$"),
     Mark::Shape("wire: [0-9]+ bytes, paired=true, post=true"),
-    Mark::Shape("passer: reg=0 entry=[0-9]+ say=passer"),
     Mark::Literal("note: passer: gone"),
-    Mark::Literal("lodger: gone"),
     Mark::Literal("system: done"),
     Mark::Literal("root: block n=21 region=19 dtb=1 irq=1 bad=0"),
-    Mark::Literal("guest: reg=0 find=0"),
-    Mark::Literal("guest: trip ok"),
     Mark::Literal("router: line 10 = serial@10000000"),
     Mark::Literal("uart: rang n="),
     Mark::Literal("router: line 11 = rtc@101000"),
@@ -82,58 +78,17 @@ pub const MARKS: &[Mark] = &[
     Mark::Literal("router: line=11"),
     Mark::Literal("rtc: rang n=1"),
     Mark::Literal("router: exhaust line=11"),
-    Mark::Literal("sleeper: reg=0"),
-    Mark::Literal("sleeper: found"),
-    Mark::Literal("sleeper: now="),
-    Mark::Literal("sleeper: past=2"),
-    Mark::Literal("sleeper: armed=0"),
-    Mark::Literal("sleeper: taken=1"),
-    Mark::Literal("sleeper: rang at="),
-    Mark::Literal("sleeper: gone"),
     Mark::Literal("router: vacate line=1"),
-    Mark::Literal("lodger: taken=2"),
-    Mark::Literal("lodger: unknown=1"),
     Mark::Literal("router: lane dropped line=1 pies=21"),
-    Mark::Literal("lodger: pies=9"),
     Mark::Literal("router: line 1 = virtio_mmio@10001000"),
     Mark::Literal("router: line=10"),
     Mark::Literal("router: exhaust line=10"),
     Mark::Literal("uart: line occupied"),
-    Mark::Literal("lodger: occupy=0"),
     Mark::Shape("^uart: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=uart[[:space:]]*$"),
     Mark::Literal("echo: console=true"),
     Mark::Shape("^echo: tree part=0 land=0 find=0 got=true trim=0 plate=[0-9]+ pname=echo[[:space:]]*$"),
     Mark::Shape("^coalition: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=coalition[[:space:]]*$"),
     Mark::Shape("^principal: tree part=0 dir=[0-9]+ land=0 find=0 got=true entry=[0-9]+ plate=[0-9]+ pname=principal[[:space:]]*$"),
-    Mark::Literal("member: found=0"),
-    Mark::Literal("member: found=1"),
-    Mark::Literal("member: amid(me,c0)=false"),
-    Mark::Literal("member: enter(c0)=ok"),
-    Mark::Literal("member: leave(c0)=ok"),
-    Mark::Literal("member: amid(sub,c0)=true"),
-    Mark::Literal("member: amid(sub,c0)=false"),
-    Mark::Literal("member: amid(me,c0)=true"),
-    Mark::Literal("member: amid(me,out)=err:unknown"),
-    Mark::Literal("member: amid(out,me)=false"),
-    Mark::Literal("member: enter(c1)=ok"),
-    Mark::Literal("member: amid(me,c1)=true"),
-    Mark::Literal("member: adopt(sub)=ok"),
-    Mark::Literal("member: waive=ok"),
-    Mark::Literal("member: enter(out)=err:unknown"),
-    Mark::Literal("member: leave(out)=err:unknown"),
-    Mark::Literal("member: done"),
-    Mark::Literal("policy: sire(root)=none"),
-    Mark::Literal("policy: sire(me)=0"),
-    Mark::Literal("policy: heir(me,me)=true"),
-    Mark::Shape("policy: derive\\(me\\)=[0-9]+"),
-    Mark::Literal("policy: heir(sub,me)=false"),
-    Mark::Literal("policy: heir(out,me)=err:unknown"),
-    Mark::Literal("policy: bind(self)=err:denied"),
-    Mark::Literal("policy: adopt(sub)=ok"),
-    Mark::Literal("policy: derive(old)=err:denied"),
-    Mark::Literal("policy: adopt(up)=err:denied"),
-    Mark::Literal("policy: adopt(out)=err:unknown"),
-    Mark::Literal("policy: waive=ok"),
     Mark::Literal("subject: done"),
     Mark::Literal("probe: tree land="),
     Mark::Literal("probe-denied: denied as expected"),
@@ -164,16 +119,40 @@ pub const MARKS: &[Mark] = &[
     Mark::Literal("echo: list device=4,5,6"),
     Mark::Literal("echo: name miss=true"),
     Mark::Literal("echo: seq=0"),
-    Mark::Literal("member: band(c0)=n1 more=false"),
-    Mark::Literal("member: band(c0,next)=n0 more=false"),
-    Mark::Literal("member: band(out)=err:unknown"),
-    Mark::Literal("member: bloc(me)=n2 more=false"),
     Mark::Shape("^timer: late_n=[0-9]+ late_max_ms=[0-9]+ late_avg_ms=[0-9]+ late_max_tick=[0-9]+ traps=[0-9]+ tocks=[0-9]+ mutes=[0-9]+[[:space:]]*$"),
     Mark::Shape("^doom: held=[0-9]+ starved=[0-9]+ blocked=[0-9]+ nudged=[0-9]+[[:space:]]*$"),
     Mark::Shape("^sched: kicks=[0-9]+ fallback=[0-9]+[[:space:]]*$"),
     Mark::Shape("^irq: ring=[0-9]+ busy=[0-9]+ idle_ring=[0-9]+ idle_busy=[0-9]+[[:space:]]*$"),
     Mark::Literal("echo: ready"),
-];
+    // ── 服务台搬进 SUT 之后（用户裁定"甲 · 只搬纯判据行"）───────────────
+    //
+    // 一次性那六台（`passer` / `guest` / `sleeper` / `lodger` / `member` / `policy`）的**值判据**
+    // 已经搬进它们自己（`cases::Suite`，47 例）⇒ 这里只剩三样，与探针那一刀同一口径：
+    //   ① **读数那一行还在**（只查前缀；值归用例）；
+    //   ② **登记了几例 / 跑完几例**（基线——少跑一例也拦得住）；
+    //   ③ 走通那一句（`exit … note:` ⇒ 正常退场，不是 panic）。
+    //
+    // **照实记（常驻那四台没搬）**：`echo` / `uart` / `rtc` / `router` 的读数是**每事件一行**
+    // （一轮里 `uart: rang` 5 行、`router: exhaust` 6 行），而 `Suite::run()` 是"一轮一次"的
+    // 协议 ⇒ 套不上（硬套就得发明一个"第一次事件时跑一次"的机制，那是新设计）。
+    Mark::Literal("passer: "),
+    Mark::Literal("guest: "),
+    Mark::Literal("sleeper: "),
+    Mark::Literal("lodger: "),
+    Mark::Literal("member: "),
+    Mark::Literal("policy: "),
+    Mark::Shape("^\\[case\\] passer: 1 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] passer: cases 1 ok 1 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] guest: 3 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] guest: cases 3 ok 3 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] sleeper: 3 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] sleeper: cases 3 ok 3 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] lodger: 4 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] lodger: cases 4 ok 4 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] member: 23 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] member: cases 23 ok 23 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] policy: 13 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] policy: cases 13 ok 13 fail 0[[:space:]]*$"),];
 pub const READINGS: &[Reading] = &[
     Reading { prefix: "board", tier: Tier::Auto },
     Reading { prefix: "coalition", tier: Tier::Auto },
@@ -193,9 +172,9 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "timer", tier: Tier::Auto },
     Reading { prefix: "wire", tier: Tier::Auto },
     Reading { prefix: "echo", tier: Tier::Narrative { shapes: &["^(echo: op=[0-9]+|echo: reg=[0-9]+)$"] } },
-    Reading { prefix: "lodger", tier: Tier::Narrative { shapes: &["^(lodger: got [0-9]+)$"] } },
-    Reading { prefix: "member", tier: Tier::Narrative { shapes: &["^(member: derive\\(me\\)=[0-9]+|member: me=[0-9]+)$"] } },
-    Reading { prefix: "policy", tier: Tier::Narrative { shapes: &["^(policy: me=[0-9]+)$"] } },
+    Reading { prefix: "lodger", tier: Tier::Auto },
+    Reading { prefix: "member", tier: Tier::Auto },
+    Reading { prefix: "policy", tier: Tier::Auto },
     Reading { prefix: "root", tier: Tier::Narrative { shapes: &["^(root: done)$"] } },
     Reading { prefix: "router", tier: Tier::Narrative { shapes: &["^(router: docks open|router: got [0-9]+)$"] } },
     Reading { prefix: "rtc", tier: Tier::Narrative { shapes: &["^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+)$"] } },
@@ -229,18 +208,9 @@ pub fn verdict(t: &Transcript) -> Result<(), Vec<Gap>> {
             });
         }
     }
-    // 三条 `policy: me=`（装配绑的 / 领之后 / 弃之后）——**不钉号**，钉关系：绑 ≠ 领 = 弃。
-    match values(t, r"^policy: me=([0-9]+)$") {
-        Ok(v) if v.len() >= 3 && v[0] != v[1] && v[0] == v[2] => {}
-        Ok(v) => missing.push(Gap {
-            want: "policy: me= 三条的关系（绑 ≠ 领 = 弃）".to_string(),
-            saw: format!("现在是 {v:?}"),
-        }),
-        Err(g) => missing.push(Gap {
-            want: "policy: me= 三条的关系（绑 ≠ 领 = 弃）".to_string(),
-            saw: g.to_string(),
-        }),
-    }
+    // **照实记（这一条判据也搬走了）**：原先这里数三条 `policy: me=`、比"绑 ≠ 领 = 弃"。那三行是
+    // `subject` 自己打的，它当然也知道它们该是什么关系 ⇒ 现在是它那一台的一例
+    // （`adopting_moves_the_name_and_waiving_puts_it_back`）。宿主这一侧从此不数那三行。
     if let Err(g) = pair(t) {
         missing.push(g);
     }

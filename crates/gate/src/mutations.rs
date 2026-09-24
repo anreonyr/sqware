@@ -229,10 +229,13 @@ pub fn mutate(m: &Mutation) -> Result<Verdict, MutateFailed> {
         }
         Bench::Machine { .. } => match soak::verdict(&t) {
             Ok(()) => (false, String::new()),
+            // **`want` 与 `saw` 都要**：`want` 是"缺了哪一条"，`saw` 才是**名字**——`pair` 那一条
+            // 把失败的那一例放在 `saw` 里（第一版只取 `want`，于是变异报的是"run=62 ok=61"而
+            // 说不出是哪一例；这一格是跑完那三条复验当场看出来的）。
             Err(gaps) => (
                 true,
                 gaps.iter()
-                    .map(|g| g.want.clone())
+                    .map(|g| format!("{} —— {}", g.want, g.saw))
                     .collect::<Vec<_>>()
                     .join(" · "),
             ),
@@ -348,14 +351,14 @@ const RAW: &[Raw] = &[
     Raw { name: "机器·`passer` 不上板（该 `reg=0` 会答别的）", path: "programs/src/user/passer.rs", from: "    let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);", to: "    let reg = board::ask(talk, &link, board, bcall::LOOKUP, me, entry, MS).unwrap_or(BAD);", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·客人要的名字树上没有（`find` 与判词两条一起变）", path: "programs/src/user/guest.rs", from: "const WANT: &str = \"router\";", to: "const WANT: &str = \"routr\";", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·boot 域把 dtb 那一类数进区（三条读数一起变）", path: "programs/src/supervisor/root/boot.rs", from: "                Some(DTB) => dtb += 1,", to: "                Some(DTB) => region += 1,", at: Where::Soak, hope: Hope::Red },
-    Raw { name: "机器·该出的那一位没出（入替了出 ⇒ `amid`/`band` 两条变）", path: "programs/src/user/member.rs", from: "    say(&format!(\"member: leave(c0)={}\", done(coal.leave(c0, MS))));", to: "    say(&format!(\"member: leave(c0)={}\", done(coal.enter(c0, MS))));", at: Where::Soak, hope: Hope::Red },
+    Raw { name: "机器·该出的那一位没出（入替了出 ⇒ `amid`/`band` 两条变）", path: "programs/src/user/member.rs", from: "    let left = coal.leave(c0, MS);", to: "    let left = coal.enter(c0, MS);", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·回声列名字那一条换了形", path: "programs/src/user/echo.rs", from: "    let _ = debug::put(&format!(\"echo: list names={names}\"));", to: "    let _ = debug::put(&format!(\"echo: list named={names}\"));", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·停机那一句判词不落（`task: all tasks exited`）", path: "kernel/src/work/room/conductor.rs", from: "        putln!(\"task: all tasks exited, system halted\");", to: "        putln!(\"task: all tasks gone, system halted\");", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·计时那行少一格（`tocks` 不报）", path: "kernel/src/work/room/conductor.rs", from: "\"timer: late_n={late_n} late_max_ms={max_ms} late_avg_ms={avg_ms} late_max_tick={late_max} traps={} tocks={tocks} mutes={mutes}\",", to: "\"timer: late_n={late_n} late_max_ms={max_ms} late_avg_ms={avg_ms} late_max_tick={late_max} traps={}\",", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·末日那行换了形（`doom:` 改 `doomed:`）", path: "kernel/src/work/room/conductor.rs", from: "putln!(\"doom: held={held} starved={starved} blocked={blocked} nudged={nudged}\");", to: "putln!(\"doomed: held={held} starved={starved} blocked={blocked} nudged={nudged}\");", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·调度那行少一格（`fallback` 不报）", path: "kernel/src/work/room/conductor.rs", from: "putln!(\"sched: kicks={kicks} fallback={fallback}\");", to: "putln!(\"sched: kicks={kicks}\");", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·中断那行多一格（`idle_busy` 报错位）", path: "kernel/src/work/room/conductor.rs", from: "putln!(\"irq: ring={ring} busy={busy} idle_ring={idle_ring} idle_busy={idle_busy}\");", to: "putln!(\"irq: ring={ring} busy={busy} idle_busy={idle_busy} idle_ring={idle_ring}\");", at: Where::Soak, hope: Hope::Red },
-    Raw { name: "机器·弃那一趟改成领根（`policy: adopt(out)` 那条变）", path: "programs/src/user/subject.rs", from: "        done(face.adopt(PrincipalId::new(OUTSIDE), MS))", to: "        done(face.adopt(PrincipalId::ROOT, MS))", at: Where::Soak, hope: Hope::Red },
+    Raw { name: "机器·弃那一趟改成领根（`policy: adopt(out)` 那条变）", path: "programs/src/user/subject.rs", from: "    let outside = face.adopt(PrincipalId::new(OUTSIDE), MS);", to: "    let outside = face.adopt(PrincipalId::ROOT, MS);", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·「已经过去」那一格改成将来（`sleeper: past=` 那条变）", path: "programs/src/user/sleeper.rs", from: "    let past = refused(clock::arm(face, now.saturating_sub(1_000_000), MS));", to: "    let past = refused(clock::arm(face, now.saturating_add(60_000_000_000), MS));", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·盟号对调（`member: found=` 第二条报第一枚）", path: "programs/src/user/member.rs", from: "    let c1 = coal.found(MS);\n    say(&format!(\"member: found={}\", one_id(c1)));", to: "    let c1 = coal.found(MS);\n    say(&format!(\"member: found={}\", one_id(c0)));", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·回声那一串走错趟（`echo: seq=` 那条变）", path: "programs/src/user/echo.rs", from: "    let seq = serial(&tree, talk);", to: "    let seq = serial(&tree, talk).max(1);", at: Where::Soak, hope: Hope::Red },
@@ -365,6 +368,6 @@ const RAW: &[Raw] = &[
     Raw { name: "等价·接手那一趟反而声明归自己（同上：探针等的就是对方死）", path: "harness/src/probe_owner.rs", from: "        ocall::Rule::Public,\n        false,", to: "        ocall::Rule::Public,\n        true,", at: Where::Soak, hope: Hope::Equivalent },
     Raw { name: "机器·「该被拒」那一趟的判词换了名", path: "harness/src/probe_denied.rs", from: "const OK_NOTE: &str = \"probe-denied: denied as expected\";", to: "const OK_NOTE: &str = \"probe-denied: denied\";", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·回声去问一枚**铸过的**号（`name miss=true` 变 false）", path: "programs/src/user/echo.rs", from: "    let miss = operator::name(talk, link, EntryId::new(4095), MS).is_err();", to: "    let miss = operator::name(talk, link, EntryId::new(0), MS).is_err();", at: Where::Soak, hope: Hope::Red },
-    Raw { name: "机器·房客的表那一条读数说谎（`pies=9` 报 10）", path: "programs/src/user/lodger/main.rs", from: "    say(&format!(\"lodger: pies={}\", mail::table_size()));", to: "    say(&format!(\"lodger: pies={}\", mail::table_size() + 1));", at: Where::Soak, hope: Hope::Red },
+    Raw { name: "机器·房客的表那一条读数说谎（`pies=9` 报 10）", path: "programs/src/user/lodger/main.rs", from: "    let pies = mail::table_size();", to: "    let pies = mail::table_size() + 1;", at: Where::Soak, hope: Hope::Red },
     Raw { name: "机器·房客的判词改了名（该有 `lodger: gone`）", path: "programs/src/user/lodger/main.rs", from: "            \"lodger: gone\"", to: "            \"lodger: farewell\"", at: Where::Soak, hope: Hope::Red },
 ];

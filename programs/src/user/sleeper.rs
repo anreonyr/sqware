@@ -50,6 +50,7 @@ use protocol::session::Quay;
 use programs::driver::rtc::call as rcall;
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
+use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room::{self, exit_with, exit_with_note};
@@ -124,6 +125,26 @@ extern "C" fn main() -> ! {
         exit_with(E_NO_SERVICE)
     };
     let _ = debug::put(&format!("sleeper: rang at={at} now={rang}"));
+
+    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**。三例的期望都是
+    // 本站此刻就知道的，而且比较用的是**与读数同一批常量**（`bcall::OK` / `rcall::` 那两个码），
+    // 不是新写死的数字。
+    //
+    // **照实记（`sleeper: armed=0` 那一格没搬）**：它是 `fail_to_code(None)` 打出来的——走到
+    // 那一行就恒等于 0，所以"它是 0"是**控制流证据**，不是判据；把它写成
+    // `assert_eq!(armed_code, 0)` 就是把 `bail` 改个名字（这一格是写的时候当场撞上的：
+    // 第一版写了 `assert!(armed.is_ok())`，而 `armed` 根本不是 `Result`）。
+    let mut suite = Suite::new("sleeper");
+    suite.case("the_board_took_my_name", move || {
+        assert_eq!(reg, bcall::OK)
+    });
+    suite.case("arming_the_past_is_refused", move || {
+        assert_eq!(past, rcall::PAST)
+    });
+    suite.case("the_slot_is_already_mine", move || {
+        assert_eq!(taken, rcall::TAKEN)
+    });
+    suite.run();
 
     exit_with_note(EXIT_OK, "sleeper: gone")
 }
