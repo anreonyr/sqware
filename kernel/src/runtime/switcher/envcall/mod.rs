@@ -37,7 +37,9 @@ use crate::work::unit::gate::Permission;
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
 use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
+use crate::work::unit::source::Source;
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
+use crate::work::unit::team::UnitError;
 use crate::work::unit::weak::{Site, TaskWeak};
 use env::Fail;
 
@@ -51,9 +53,6 @@ mod tole;
 /// 搬去各协议；用户侧那份 `env::debug::tracing()` 因此闲置。
 /// 只在调试时打开——布局错位这类病只有真实字节能证。
 pub static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-/// 单次 `Build` 的镜像字节上限（8 MiB）：防止一次调用把内核暂存撑爆。
-const MAX_IMAGE: usize = 8 * 1024 * 1024;
 
 /// Permission 子集 → PteFlags（cap ⊆ 页表的翻译：subset 决定页表实际权限）。
 ///
@@ -130,46 +129,24 @@ fn note_out(ident: &TaskIdent, reason: usize, va: usize, len: usize) {
     );
 }
 
-/// 从调用方空间读一段字节（逐页翻译后拷贝；跨页安全）。
-///
-/// 返回 None = 长度非法 / 区间未映射（调用方按 `Denied` 处理）。一次拷进内核
-/// 暂存：`Build` 的镜像与 `Spawn` 的启动参数都走这里——镜像字节只活到装载完成。
-fn copy_in(space: &Space, va: KVirt, len: usize, cap: usize) -> Option<Vec<u8>> {
-    if len == 0 || len > cap {
-        return None;
-    }
-    // **暂存缓冲不 panic**：`Vec::with_capacity` 走 std 默认 `handle_alloc_error`
-    // （内存吃紧 ⇒ 整机 halt）。失败与「长度非法 / 区间未映射」同路返回 `None`
-    // ——调用方已把这两类都落到 `Denied` / `OoM` 负码上，机器照旧活着。
-    let mut out: Vec<u8> = Vec::new();
-    out.try_reserve(len).ok()?;
-    let mut done = 0usize;
-    while done < len {
-        let at = KVirt::from_raw(va.as_usize() + done);
-        let (pa, _) = space.translate(at)?;
-        let page_rest = PAGE_SIZE - (at.as_usize() % PAGE_SIZE);
-        let n = core::cmp::min(len - done, page_rest);
-        let src = pa.as_usize() as *const u8;
-        for i in 0..n {
-            // SAFETY: 区间已在调用方空间翻译成帧；恒等映射下 PA 可读。
-            out.push(unsafe { core::ptr::read_volatile(src.add(i)) });
-        }
-        done += n;
-    }
-    Some(out)
-}
-
 /// 读调用方空间里的 `count` 个字（`Spawn` 的启动参数）。
+///
+/// 缓冲**定长在栈上**（`MAX_ARGS · 8` = 512 B）：`count` 的界就是 `MAX_ARGS`，不必为
+/// 它分配。源与 `Build` 同一件——见 [`Source`]。
 fn copy_words(space: &Space, va: KVirt, count: usize) -> Option<Vec<usize>> {
-    if count == 0 {
-        return Some(Vec::new());
-    }
     if count > MAX_ARGS {
         return None;
     }
     let width = size_of::<usize>();
-    let bytes = copy_in(space, va, count * width, MAX_ARGS * width)?;
-    // 同 `copy_in`：可失败，不 panic。
+    let len = count * width;
+    let mut bytes = [0u8; MAX_ARGS * size_of::<usize>()];
+    let src = Source::Space { space, va, len };
+    if !src.read(0, &mut bytes[..len]) {
+        return None;
+    }
+    // 同 `Source::read` 那条：**可失败，不 panic**——`Vec::with_capacity` 走
+    // `handle_alloc_error`（内存吃紧 ⇒ 整机 halt），失败与"区间未映射"同路返回
+    // `None`，调用方把两类都落到 `Denied` 上，机器照旧活着。
     let mut out: Vec<usize> = Vec::new();
     out.try_reserve(count).ok()?;
     for i in 0..count {
@@ -452,15 +429,14 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             //
             // 放开它**不构成提权**：提权的两条路都还堵着——特权级由内核打包表决定
             // （调用方说不上话），镜像仍要调用方交字节（Mint-lite 口径，见该协议正文）。
-            // 镜像：一次拷进内核暂存（字节只活到装载完成）
-            let bytes = match copy_in(
-                &ident.team.space,
-                KVirt::from_raw(elf.get()),
+            //
+            // 镜像：**不拷**。`Source` 把"这份字节从哪来"交给 loader 逐段现取——一份
+            // ELF 里 97% 是符号表与调试信息（实测 18 台 debug 镜像：78.2 MiB 文件、
+            // 2.13 MiB 段实体），从前先整份搬进内核暂存再丢掉，是白搬的那一跳。
+            let source = Source::Space {
+                space: &ident.team.space,
+                va: KVirt::from_raw(elf.get()),
                 len,
-                MAX_IMAGE,
-            ) {
-                Some(b) => b,
-                None => return ret_err(frame, Fail::Denied),
             };
             // sire = 调用方：`build` 内部闭合血缘（域必入我 heir）。
             //
@@ -471,9 +447,15 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Some(me) => TaskWeak::stored(Arc::downgrade(&me), Site::Sire),
                 None => TaskWeak::empty(),
             };
-            match crate::work::unit::build(&bytes, SpaceKind::from(kind), sire) {
+            match crate::work::unit::build(&source, SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
-                Err(_) => return ret_err(frame, Fail::BadImage),
+                // 源读不到 = 调用方自己的映射不在（或本域另一枚线程刚放手）——与从前
+                // "暂存拷不进来"同一个负码。
+                Err(UnitError::Unreadable) => return ret_err(frame, Fail::Denied),
+                // 内存不够从"镜像不认"里分出来：`-4` 这一格编排者本来就接
+                // （`protocol::system::core::Fail::NoRoom`），`-6` 没有。
+                Err(UnitError::OoM) => return ret_err(frame, Fail::OoM),
+                Err(UnitError::Load) => return ret_err(frame, Fail::BadImage),
             }
         }
         EnvCall::Unit(UnitCall::Hatch { task }) => {

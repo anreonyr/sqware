@@ -2,6 +2,11 @@
 //!
 //! 只做「读字节 → 出配方」：验头、列段（PT_LOAD）、验段、取入口；可离线单测。
 //!
+//! 输入是**两块事实**：文件头一段前缀（`head`，段表必须落在里头）与文件的真实长度
+//! （`file_len`，段实体必须落在里头）。二者分开是"镜像不再整份拷进内核"的直接后果
+//! ——读的人只取了文件前 [`HEAD`](super::source::HEAD) 字节，段实体要等 loader 逐段
+//! 现取。
+//!
 //! 公开面只留 parse；check/collect/entry 为核心内部原语，不单独暴露，
 //! 保证产物 ParsedProgram 只能以「已验段」形态存在（不变量成为类型义务）。
 //!
@@ -85,6 +90,8 @@ pub enum ParseError {
     BadPerms,
     #[error("segment memsz < filesz")]
     BssUnderflow,
+    #[error("segments overlap in file at {0:#x}")]
+    Overlap(usize),
     #[error("segment range overflows address space")]
     Overflow,
 }
@@ -155,7 +162,10 @@ fn check(bytes: &[u8]) -> Result<Header, ParseError> {
 }
 
 /// 列段 + 验段：抽出 PT_LOAD，逐一校验到终态 LoadSegment。
-fn collect(bytes: &[u8], h: &Header) -> Result<Vec<LoadSegment>, ParseError> {
+///
+/// 两个界各管一件事：**段表**落在 `head` 内（读的人只取了这么多），**段实体**落在
+/// `file_len` 内（loader 逐段现取）。
+fn collect(head: &[u8], h: &Header, file_len: usize) -> Result<Vec<LoadSegment>, ParseError> {
     if h.phentsize < PH_ENTSIZE {
         return Err(ParseError::Truncated(PH_ENTSIZE, h.phentsize));
     }
@@ -164,32 +174,32 @@ fn collect(bytes: &[u8], h: &Header) -> Result<Vec<LoadSegment>, ParseError> {
         .checked_mul(h.phnum)
         .and_then(|n| h.phoff.checked_add(n))
         .ok_or(ParseError::Overflow)?;
-    if table_end > bytes.len() {
-        return Err(ParseError::Truncated(table_end, bytes.len()));
+    if table_end > head.len() {
+        return Err(ParseError::Truncated(table_end, head.len()));
     }
 
-    let mut loads = Vec::new();
+    let mut loads: Vec<LoadSegment> = Vec::new();
     for i in 0..h.phnum {
         let base = h.phoff + i * h.phentsize;
-        if u32(bytes, base + PH_TYPE) != PT_LOAD {
+        if u32(head, base + PH_TYPE) != PT_LOAD {
             continue;
         }
-        let flags = u32(bytes, base + PH_FLAGS);
-        let offset = u64(bytes, base + PH_OFFSET) as usize;
-        let vaddr = u64(bytes, base + PH_VADDR) as usize;
-        let filesz = u64(bytes, base + PH_FILESZ) as usize;
-        let memsz = u64(bytes, base + PH_MEMSZ) as usize;
+        let flags = u32(head, base + PH_FLAGS);
+        let offset = u64(head, base + PH_OFFSET) as usize;
+        let vaddr = u64(head, base + PH_VADDR) as usize;
+        let filesz = u64(head, base + PH_FILESZ) as usize;
+        let memsz = u64(head, base + PH_MEMSZ) as usize;
 
         // 验段
         if !vaddr.is_multiple_of(PAGE_SIZE) || !offset.is_multiple_of(PAGE_SIZE) {
             return Err(ParseError::BadAlign(vaddr));
         }
-        // 文件实体必须整段落在 `bytes` 里：loader 按 `[offset + i·PAGE_SIZE,
-        // offset + filesz)` 切 `&bytes[..]`，越界即切片 panic（用户可控的 PT_LOAD
+        // 文件实体必须整段落在**文件**里（不是落在头窗口里）：loader 按
+        // `[offset, offset + filesz)` 向源现取，越界即源答 `false`（用户可控的 PT_LOAD
         // 能构造出来）。need/have 与上面两处截断同形。
         let file_end = offset.checked_add(filesz).ok_or(ParseError::Overflow)?;
-        if file_end > bytes.len() {
-            return Err(ParseError::Truncated(file_end, bytes.len()));
+        if file_end > file_len {
+            return Err(ParseError::Truncated(file_end, file_len));
         }
         if memsz < filesz {
             return Err(ParseError::BssUnderflow);
@@ -199,6 +209,17 @@ fn collect(bytes: &[u8], h: &Header) -> Result<Vec<LoadSegment>, ParseError> {
         }
         if memsz > usize::MAX - vaddr {
             return Err(ParseError::Overflow);
+        }
+        // 段实体在文件内**两两不重叠**：`Σ filesz ≤ file_len` 这条界靠它成立，而那个和
+        // 就是"这份镜像最多让内核从调用方那里读多少字节"——没有它，一份段表可以点一千段
+        // 全指同一处，把"调用方的映射即上界"那条封顶击穿。半开区间形，故 `filesz == 0`
+        // 的段（`.bss`，常见于紧贴前一段的文件偏移处）天然不参与。
+        if filesz > 0 {
+            for prev in &loads {
+                if prev.filesz > 0 && offset < prev.offset + prev.filesz && prev.offset < file_end {
+                    return Err(ParseError::Overlap(offset.max(prev.offset)));
+                }
+            }
         }
 
         // 只产 ELF 语义（R/W/X）；U 位是映射策略，由 loader 按空间模式加。
@@ -232,11 +253,17 @@ fn entry(h: &Header) -> VirtAddr {
 
 /// 解析：验头 → 列/验段 → 入口，组合出唯一合法的 ParsedProgram。
 ///
+/// `head` = 文件从偏移 0 起的一段**前缀**（读的人按
+/// [`HEAD`](super::source::HEAD) 取的那么多）；`file_len` = 文件的**真实长度**。
+/// 旧形状只有 `bytes.len()` 一个界——"只给前缀"之后它会把每一份合法镜像都判成截断。
+///
+/// 前置：`head` 是文件前缀，且 `head.len() <= file_len`。
+///
 /// 失败显式承载 ParseError，附调用点上下文（erra 约定，匹配 MapResult）。
-pub fn parse(bytes: &[u8]) -> ParseResult<ParsedProgram> {
+pub fn parse(head: &[u8], file_len: usize) -> ParseResult<ParsedProgram> {
     (|| -> Result<ParsedProgram, ParseError> {
-        let h = check(bytes)?;
-        let loads = collect(bytes, &h)?;
+        let h = check(head)?;
+        let loads = collect(head, &h, file_len)?;
         Ok(ParsedProgram {
             entry: entry(&h),
             pie: h.pie,

@@ -261,13 +261,23 @@ pub(crate) fn alloc_team_id() -> TeamId {
 
 // ── 装载错误（UnitError）──────────────────────────────────────
 
-/// 镜像拼装结果错误（parse / build / load 任一步失败）。
+/// 镜像拼装结果错误（取头 / parse / build / load 任一步失败）。
 ///
-/// 三步失败坍缩成一个变体：内核原语只把「成 / 不成」透给用户态（TeamId vs
-/// 负码 `-6 BadImage`），具体失败步由 `erra` 上下文（annotate 链）留痕，无需细分
-/// 枚举在 ABI 上传。
+/// **三格各说一件事**：
+/// - `Load` = 这份镜像不认（parse / 装载不成）⇒ 用户态 `-6 BadImage`；
+/// - `Unreadable` = **源读不到**（头窗口或某一段实体那几页没映射；本域另一枚线程可以
+///   并发 `munmap`，故它消不掉）⇒ `-1 Denied`——与从前"暂存拷不进来"同一个负码；
+/// - `OoM` = **内存不够**（头窗口那一页 / 装载帧 / 簿记）⇒ `-4`。
+///
+/// **照实记（为什么要分三格）**：原先三步失败坍缩成一个 `Load`，于是装载期帧耗尽也
+/// 答 `-6 BadImage`——内存吃紧会被报成"镜像不认"，是个假诊断。而编排者那一侧
+/// `-4` 早就有格子接（`protocol::system::core::Fail::NoRoom`），`-6` 没有。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitError {
     /// parser / SpaceBuilder / loader 任一步失败（不落，无脏域）。
     Load,
+    /// 源读不到：头窗口或段实体那一段区间未映射。
+    Unreadable,
+    /// 内存不够：头窗口那一页、装载帧或簿记分配。
+    OoM,
 }

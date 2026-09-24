@@ -26,7 +26,7 @@ pub fn args() -> &'static [usize] {
     unsafe { core::slice::from_raw_parts(ARGS.load(Ordering::Relaxed) as *const usize, n) }
 }
 
-/// 装域：镜像字节 + 特权级 + 名字 → 新域（Space + Team，**无线程**）。
+/// 装域：镜像字节 + 特权级 → 新域（Space + Team，**无线程**）。
 ///
 /// # 门
 ///
@@ -35,7 +35,12 @@ pub fn args() -> &'static [usize] {
 /// 自铸无代价，与"是 S 态"等价，是门形的装饰）；S 态门本身也删了。放开**不构成提权**：
 /// 特权级由内核打包表决定（调用方说不上话），镜像仍要调用方交字节。
 ///
-/// 失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（字节拷不进来）。
+/// **字节不被拷走**：内核按段现读 `elf` 那几页（从前是整份拷进内核暂存）——故调用期间
+/// 这段区间必须一直映射着，且**读完之前不许 `munmap`**（本域另一枚线程并发放手 ⇒ 恰好
+/// 读不到的那几页答 `-1`）。
+///
+/// 失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（镜像区读不出来）/ `-4 OoM`（头窗口
+/// 或装载帧备不下）。
 pub fn build(elf: &[u8], kind: ProgramKind) -> EnvResult<TeamId> {
     let r = UnitCall::Build {
         elf: VirtAddr::new(elf.as_ptr() as usize),

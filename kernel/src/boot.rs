@@ -205,8 +205,11 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
         unsafe { core::slice::from_raw_parts(region.base as *const u8, region.size) };
     let elf = crate::platform::initrd::root_image(blob).expect("initrd: root image missing");
 
+    // 源 = **内核直读的一块**（initrd 区恒等映射）：`Source::Slice` 的 `read` 只是切片，
+    // 内核这一侧一个字节都不拷。
+    let source = crate::work::unit::source::Source::Slice(elf);
     let team = crate::work::unit::build(
-        elf,
+        &source,
         crate::work::unit::space::SpaceKind::Supervisor,
         crate::work::unit::weak::TaskWeak::empty(),
     )

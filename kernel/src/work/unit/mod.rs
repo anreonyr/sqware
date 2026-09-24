@@ -11,16 +11,19 @@
 //   weak      — 任务弱引用的出身账（生/亡各记一笔；挂起自检的判据）
 //   loader    — 程序装载（ELF → Space durable）
 //   parser    — ELF 解析（段配方）
+//   source    — 镜像源（一份字节从哪来：内核直读的一块 / 别处空间的一段）
 
 pub(crate) mod gate;
 pub(crate) mod life;
 pub(crate) mod loader;
 pub(crate) mod parser;
 pub mod space;
+pub(crate) mod source;
 pub(crate) mod task;
 pub(crate) mod team;
 pub(crate) mod weak;
 
+use alloc::alloc::Allocator;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -51,9 +54,14 @@ unsafe extern "C" {
 /// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
 pub type MapResult<T> = erra::Result<T, MapError>;
 
-/// 装域（`Build` 的唯一核心入口）：parse → SpaceBuilder → loader::load →
+/// 装域（`Build` 的唯一核心入口）：取头 → parse → SpaceBuilder → loader::load →
 /// TeamBuilder::spawn。产**域**（Space + Team），**不产线程**——线程由 `spawn`
 /// 单独产（`Held`），授权后 `Hatch` 放行。
+///
+/// `source` = 镜像字节从哪来（见 [`source::Source`]）：boot 给内核直读的一块，envcall
+/// 给调用方空间里的一段。**不把整份镜像先拷进内核**——一份 ELF 里 97% 是符号表与调试
+/// 信息（实测 18 台 debug 镜像：78.2 MiB 文件、2.13 MiB 段实体），先搬进来再丢掉是白搬。
+/// 头窗口按 [`source::HEAD`] 取，段实体由 loader 逐段现取。
 ///
 /// `kind` 决定页表特权级与 U 位：`User` 出 U 态团队，`Supervisor` 出 S 态域。
 /// `sire` 在 `TeamBuilder::spawn` 里闭合血缘（非空 ⇒ 立即入 sire.heir）。
@@ -61,19 +69,36 @@ pub type MapResult<T> = erra::Result<T, MapError>;
 ///
 /// # Errors
 ///
-/// parse / SpaceBuilder / loader 任一步失败 → [`team::UnitError::Load`]（原子不落）。
+/// - [`team::UnitError::Load`] — parse / SpaceBuilder / loader 任一步失败（原子不落）。
+/// - [`team::UnitError::Unreadable`] — 头窗口读不出来（区间未映射）。
+/// - [`team::UnitError::OoM`] — 头窗口那一页或装载帧备不下。
 pub(crate) fn build(
-    elf: &[u8],
+    source: &source::Source,
     kind: space::SpaceKind,
     sire: weak::TaskWeak,
 ) -> Result<Arc<team::Team>, team::UnitError> {
-    let parsed = parser::parse(elf).map_err(|_| team::UnitError::Load)?;
+    // 头窗口：一页，**堆上取**（trap 栈宝贵，不放 4 KiB）。备不下 = 内存不够，
+    // 不是"镜像不认"——这一格透 `-4`（协议层已认）。
+    let mut head: Box<[u8; source::HEAD], &'static dyn Allocator> = unsafe {
+        Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
+            .map_err(|_| team::UnitError::OoM)?
+            .assume_init()
+    };
+    let n = source.len().min(source::HEAD);
+    if !source.read(0, &mut head[..n]) {
+        return Err(team::UnitError::Unreadable);
+    }
+    let parsed = parser::parse(&head[..n], source.len()).map_err(|_| team::UnitError::Load)?;
     let builder = match kind {
         space::SpaceKind::Supervisor => SpaceBuilder::supervisor(),
         space::SpaceKind::User => SpaceBuilder::user(),
     };
     let space = builder.build().map_err(|_| team::UnitError::Load)?;
-    let loaded = loader::load(space, elf, &parsed).map_err(|_| team::UnitError::Load)?;
+    let loaded = loader::load(space, source, &parsed).map_err(|e| match e {
+        loader::LoadError::Unreadable => team::UnitError::Unreadable,
+        loader::LoadError::Map(MapError::OutOfMemory) => team::UnitError::OoM,
+        loader::LoadError::Map(_) => team::UnitError::Load,
+    })?;
     let entry = loaded.entry;
     let team = team::TeamBuilder::new(loaded.space)
         .sire(sire)
