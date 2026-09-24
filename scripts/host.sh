@@ -1,7 +1,8 @@
 #!/bin/sh
-# 宿主档的门 —— **七处纯核心**的规矩，在**宿主**上真跑一遍：
+# 宿主档的门 —— **八处纯核心**的规矩，在**宿主**上真跑一遍：
 # 树（八条原语）· 线（账 + 界）· 门禁（三格裁决 + 那本账）· 名册与盟籍（两本册子）·
-# 板（牌子 + 台账）· 会话（码头 / 泊位 / 认领那台机器）· 编排（账 / 判定 / 配给）。
+# 板（牌子 + 台账）· 会话（码头 / 泊位 / 认领那台机器）· 编排（账 / 判定 / 配给）·
+# 供单（需求单 / 回单 / 上限与失败码表）。
 #
 # # 为什么要有这一门
 #
@@ -21,7 +22,7 @@
 #   2) **`cargo check` 在同一个目标上是过的**（它不做代码生成）——所以"protocol 在宿主编得过"
 #      这句话只有在 check 那一档才成立。本门第一版就栽在这一格上（照实记）。
 #
-# 故走 `crates/alloc-probe` 那条现成的路：七台**编外**（根 workspace `exclude`）的宿主 crate
+# 故走 `crates/alloc-probe` 那条现成的路：八台**编外**（根 workspace `exclude`）的宿主 crate
 # 各把若干份**逐字未改**的核心源码 `#[path]` 编进自己的测试靶：
 #
 #   `crates/operator-case`   `crates/protocol/src/operator/core.rs`（只依赖 `env`）
@@ -32,6 +33,8 @@
 #                            crate::principal::core::PrincipalId` ⇒ 两本册子同住一台，
 #                            免得那一份核心在两台里各编一遍、用例跑两遍）
 #   `crates/board-case`      `crates/protocol/src/system/board/core.rs`
+#   `crates/supply-case`     `crates/protocol/src/driver/supply/call.rs`（帧 / 荷载 / 上限）+
+#                            `crates/protocol/src/driver/supply/core.rs`（五格失败域）——**无桩**
 #   `crates/system-case`     `crates/protocol/src/system/desk.rs`（账）+
 #                            `crates/protocol/src/system/core.rs`（判定）+
 #                            `crates/protocol/src/system/grant.rs`（配给）——**无桩**
@@ -57,7 +60,7 @@
 #
 # # 判据（三条一起）
 #
-#   1) 七台 `cargo test` **退出码都 0**；
+#   1) 八台 `cargo test` **退出码都 0**；
 #   2) 每台的末行汇总 `test result: ok. N passed; 0 failed`，且 **N ≥ 1**（零用例要红：测试靶
 #      没被发现就等于白立一档——`framework.sh` 的"静默零用例"是同一条顾虑）；
 #   3) 全程无 `FAILED` / `panicked`。
@@ -85,8 +88,13 @@
 #        各拆成 `frame.rs`（纯）+ `call.rs`（适配，首行 `pub use super::frame::*;` ⇒ **调用点零改**），
 #        分别进 `principal-case` / `judge-case`（它本来就带着帧要的全部依赖）/ `board-case`。
 #        为此 `fail_codes!` 搬成**自己一份源**（协议与各靶同读，见 `protocol/src/fail_codes.rs`）。
-#      - 仍归这一类的：`driver/supply/call.rs` **切不动**（`Access`/`Policy` 长在 `Want`/`Need`
-#        的类型里 ⇒ 类型搬家单独立门），`session/call.rs` **没有帧**（它本身就是运行时那一层）。
+#      - **`driver/supply/call.rs` 也收进来了**（用户裁定见 `docs/supply-gate.md`）：它碰 `runtime`
+#        的原本只有一行 `use runtime::core::port::{Access, Policy};`，而那两个类型**长在荷载里**。
+#        故把 `Access` / `Policy`（与 `env::Permission` 同层的纯位视图）搬进 `env`
+#        （`crates/env/src/wire/access.rs`），`runtime::core::port` 里转出 ⇒ **22 个调用点一行未改**；
+#        那一行 `use` 改成 `env` 之后这一份**本来就全纯**（与 `line` 同形：**零切分**），
+#        直接编进 `crates/supply-case`。
+#      - 仍归这一类的只剩：`session/call.rs` **没有帧**（它本身就是运行时那一层）。
 #   3) **只有类型、没有判据**：`driver/supply/core.rs`（五格失败域）与各 `mod.rs`（正文）——
 #      没有可机械检查的判据，开台只会得到"零用例"，而零用例这一门本来就判红。
 #
@@ -108,7 +116,7 @@ log="$out/$tag.log"
 total=0
 
 # `--tests`：只跑测试靶（**每一台**都只有测试靶，没有 lib 那一路），不碰文档测试。
-for m in crates/operator-case crates/line-case crates/judge-case crates/principal-case crates/board-case crates/session-case crates/system-case; do
+for m in crates/operator-case crates/line-case crates/judge-case crates/principal-case crates/board-case crates/session-case crates/system-case crates/supply-case; do
   echo "== $m" >> "$log"
   cargo test --manifest-path "$m/Cargo.toml" \
     --target x86_64-unknown-linux-gnu --tests >> "$log" 2>&1
@@ -136,5 +144,5 @@ if grep -q 'FAILED' "$log"; then
   echo "host: FAIL 有用例失败：$(grep -a 'FAILED' "$log" | head -1)"
   exit 1
 fi
-echo "host: $total 例全过（树 + 线 + 门禁 + 名册/盟籍 + 板 + 会话 + 编排，日志 $log）"
+echo "host: $total 例全过（树 + 线 + 门禁 + 名册/盟籍 + 板 + 会话 + 编排 + 供单，日志 $log）"
 exit 0

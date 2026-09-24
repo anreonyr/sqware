@@ -18,6 +18,7 @@
 //! 通用性：本 trait 只依赖 `usize`，不绑 U-mode 语义——sbi 等 S-mode 调用封装
 //! 未来可直接复用同一 codec（derive 不写死 envcall 路径）。
 
+pub mod access;
 pub mod args;
 pub mod frompair;
 pub mod handle;
@@ -26,6 +27,7 @@ pub mod manifest;
 pub mod name;
 pub mod pair;
 
+pub use access::{Access, Policy};
 pub use frompair::FromPair;
 pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 pub use key::{KEY_LEN, Key};

@@ -25,6 +25,7 @@ exclude = [
     "crates/board-case",
     "crates/session-case",
     "crates/system-case",
+    "crates/supply-case",
 ]
 members = [
     "kernel",
