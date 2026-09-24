@@ -1,7 +1,7 @@
-//! supply::call — **线上形状**：单子上的一条（[`Want`]）与收方那张 `const` 表里的一格（[`Need`]）、
+//! supply::frame — **形**（线上形状）：单子上的一条（[`Want`]）与收方那张 `const` 表里的一格（[`Need`]）、
 //! 单子与回单的编解、上限与状态码——一个字节都不在别处编
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
+//! 正文见 `protocol` 那一侧的 `driver/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
 
 use env::{TaskId};
 use plan::{PAIR_LEN};

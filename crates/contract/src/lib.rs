@@ -46,6 +46,7 @@
 // `protocol` 同款：这里引 `alloc`。
 extern crate alloc;
 
+pub mod driver;
 pub mod fail_codes;
 pub mod frame;
 pub mod id;

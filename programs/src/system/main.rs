@@ -48,7 +48,7 @@ use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::unit as utask;
 
 use protocol::driver::supply;
-use protocol::driver::supply::call::{Kind, Want};
+use contract::driver::supply::frame::{Kind, Want};
 use plan::assembly::E_BOOT;
 use programs::system::{coalition, operator, principal};
 use service::{Catalog, Lane, Program, Role};

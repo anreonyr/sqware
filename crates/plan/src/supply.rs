@@ -7,7 +7,7 @@
 //! 而 `programs` / `protocol` 都拖着 `runtime`（riscv 内联汇编，宿主上编不过）。故凡是
 //! "装配单要摆出来的东西"，定义都得住 `env`。
 //!
-//! **照实记（这几样是从 `protocol::driver::supply::call` 搬下来的）**：那一处现在是
+//! **照实记（这几样是从 `contract::driver::supply::frame` 搬下来的）**：那一处现在是
 //! `pub use` 转发，**调用点一行没改**（与 `Access`/`Policy`、`Announce`/`Grant`/`Died` 同一条
 //! 先例）。搬的时候把 [`Want`] **连同它的 `impl` 一起带走**——`impl` 是 inherent 的，必须与
 //! 类型同住一个 crate，劈开就要改 API；`Need::settle` 正是这么依赖它的。

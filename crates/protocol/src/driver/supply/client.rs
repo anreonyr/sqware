@@ -1,14 +1,14 @@
 //! supply::client — **编排域那一侧**：递一张单子、取回一段记录（[`draw`]），并按坐标取一枚（[`pick`]）
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::call`]。
+//! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::frame`]。
 
 use env::{PieToken, TaskId};
 use plan::{Key, PAIR_LEN, Pair};
 
 use crate::session::Pier;
 
-use super::call::{OK, WANT_MAX, Want, code_to_fail, pack_order, unpack_reply};
-use super::core::Fail;
+use crate::driver::supply::frame::{OK, WANT_MAX, Want, code_to_fail, pack_order, unpack_reply};
+use crate::driver::supply::core::Fail;
 
 pub fn draw<'r>(
     pier: &Pier,

@@ -51,7 +51,7 @@ use crate::system::operator::bridge as operator;
 use crate::system::board::bridge as board;
 
 use protocol::driver::supply;
-use protocol::driver::supply::call::{Need, WANT_MAX, Want};
+use contract::driver::supply::frame::{Need, WANT_MAX, Want};
 
 use crate::root::boot;
 use crate::system::machine::Machine;

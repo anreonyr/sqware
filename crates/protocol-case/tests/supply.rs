@@ -2,7 +2,7 @@
 //!
 //! # 这一台钉的是什么
 //!
-//! `crates/protocol/src/driver/supply/call.rs`（帧、荷载的类型、上限与那张失败码表）与
+//! `crates/contract/src/driver/supply/frame.rs`（帧、荷载的类型、上限与那张失败码表）与
 //! `crates/protocol/src/driver/supply/core.rs`（五格失败域）——两份都**逐字未改**。
 //! 判据写在靶子里（照 `protocol-case` 的 `line` 靶的做法），核心源码一个字不动：
 //!
@@ -22,15 +22,15 @@ extern crate alloc;
 mod fail_codes;
 
 /// 失败域（就是 `crates/protocol/src/driver/supply/core.rs` 那一份，逐字未改）。
-#[path = "../../protocol/src/driver/supply/core.rs"]
+#[path = "../../contract/src/driver/supply/core.rs"]
 mod core;
 
-/// 那一门（就是 `crates/protocol/src/driver/supply/call.rs` 那一份，逐字未改）。
+/// 那一门（就是 `crates/contract/src/driver/supply/frame.rs` 那一份，逐字未改）。
 ///
 /// **模块名就叫 `call`**：它写的是 `use super::core::Fail;`——宿主靶里把两份放在**同一层**、
 /// 名字照旧，那一行才逐字成立。
 #[allow(dead_code)]
-#[path = "../../protocol/src/driver/supply/call.rs"]
+#[path = "../../contract/src/driver/supply/frame.rs"]
 mod call;
 
 use crate::call::{Kind, Need, Want};
@@ -234,7 +234,7 @@ fn a_need_settles_into_a_want_through_the_class_name() {
 // ── 那张长度表那一条用例**删了**（用户裁定"常量交给编译器"）────────────────
 //
 // `the_frame_lengths_and_caps_are_what_the_wire_says` 原先在这里。四条断言里：
-// `WANT_LEN == 32` 在 `crates/protocol/src/driver/supply/call.rs` 里**早就是**
+// `WANT_LEN == 32` 在 `crates/contract/src/driver/supply/frame.rs` 里**早就是**
 // `const _: () = assert!(…)`；另外三条（`WANT_MAX` / `ORDER_CAP` / `REPLY_CAP` 各自等于自己
 // 的定义式）是**同义反复** ⇒ 一条都不必再占用例。
 #[test]
