@@ -27,13 +27,8 @@
 extern crate alloc;
 extern crate programs;
 
-// 需求单归**收方**：四张单子自己开（lib 里同一份源码），本域只照它开单。
 use env::Mark;
-use programs::driver::router::needs as router_needs;
-use programs::driver::rtc::needs as rtc_needs;
-use programs::driver::uart::needs as uart_needs;
 use programs::supervisor::service;
-use programs::user::lodger::needs as lodger_needs;
 
 // 照实记：这里原来还 `use ...::board::bridge as board`——只为收尾那一句 `board::shut()`。
 // 那一手已删（它收掉的是本域自己，见第 7 步的照实记），故这一行也走了。板那一侧的装配
@@ -42,7 +37,7 @@ use env::{HoleDir, Name, PieToken};
 use programs::supervisor::system::machine::Machine;
 use programs::supervisor::system::server;
 use protocol::session::{Pier, Quay};
-use protocol::system::desk::{Announce, Table};
+use protocol::system::desk::Table;
 use runtime::core::dock::Dock;
 use runtime::core::port::{Access, Policy};
 use runtime::core::tole::Tole;
@@ -51,11 +46,11 @@ use runtime::env::unit as utask;
 
 use protocol::driver::supply;
 use protocol::driver::supply::call::{Kind, Want};
-use service::{Catalog, Died, Program};
+use env::assembly::E_BOOT;
+use service::{Catalog, Program};
 
 mod scenario;
 
-use scenario::PLAN;
 
 /// 持树者那一条在清单里的名字。
 const TREE: &str = "operator";
@@ -72,26 +67,6 @@ const MEMBER: &str = "member";
 /// 结算两条上限（毫秒）：与引导域开会话、以及装配期的等。
 const BOOT_MS: usize = 1000;
 
-/// 装配失败编号（按服务分：看日志就知道死在哪儿）。
-const E_BOOT: Died = 1;
-const E_ROUTER: Died = 5;
-const E_ECHO: Died = 6;
-const E_GUEST: Died = 7;
-const E_PASSER: Died = 8;
-const E_UART: Died = 9;
-const E_TREE: Died = 10;
-const E_LODGER: Died = 11;
-const E_RTC: Died = 12;
-const E_SLEEPER: Died = 13;
-const E_PRINCIPAL: Died = 14;
-const E_SUBJECT: Died = 15;
-const E_COALITION: Died = 16;
-const E_MEMBER: Died = 17;
-const E_PROBE: Died = 18;
-const E_PROBE_OWNER: Died = 19;
-const E_PROBE_LEASE: Died = 20;
-const E_PROBE_RULE: Died = 21;
-const E_PROBE_OTHER: Died = 22;
 
 // ── 装配单搬到 `scenario.rs`（用户裁定"测试和程序分开"）──────────────
 //
@@ -131,7 +106,10 @@ extern "C" fn main() -> ! {
         Ok(tole) => tole,
         Err(_) => service::die(service::E_TABLE, "system: no group"),
     };
-    for (i, p) in PLAN.iter().enumerate() {
+    // **装配单从 `env::assembly` 派生**（`order` 那一格就是起手位次）。
+    let plan = scenario::plan();
+
+    for (i, p) in plan.iter().enumerate() {
         let Ok(lane) = mail::unseal_hole(Mark::of(&alloc::format!("gone-{}", p.name))) else {
             continue;
         };
@@ -141,7 +119,7 @@ extern "C" fn main() -> ! {
 
     // 登记整张表，再按顺序起（配给从 `boot_pier` 那条路领）。
     let mut table = Table::new();
-    let last = match service::assemble(&mut table, &catalog, PLAN, &boot_pier, &lanes, &machine) {
+    let last = match service::assemble(&mut table, &catalog, &plan, &boot_pier, &lanes, &machine) {
         Ok(last) => last,
         Err(service::E_MANIFEST) => service::die(service::E_MANIFEST, "system: manifest bad"),
         Err(service::E_TABLE) => service::die(service::E_TABLE, "system: table full"),
@@ -150,7 +128,7 @@ extern "C" fn main() -> ! {
     };
 
     // 5/6. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
-    server::supervise(&mut table, last, &lanes, &tole, PLAN);
+    server::supervise(&mut table, last, &lanes, &tole, &plan);
     // 会话的收尾由会话的主人负责：常驻线程是它起的，也是它收的。本域里那枚板线程没有
     // `Join` 可等（`attach` 里弃权了），故按号点名收掉——同域线程之间没有寿命耦合。
     // **等待线程也住本域**，这一刀连它们一起收（域亡 = 成员清零）。
