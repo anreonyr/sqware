@@ -237,8 +237,8 @@
 
 pub mod call;
 pub mod client;
-pub mod core;
-pub mod frame;
+// 形与据已搬进「约」——转出。
+pub use contract::system::coalition::{core, frame};
 
 pub use call::{BACK, DIR, NAME};
-pub use core::{Coalition, CoalitionId, Fail, WINDOW_CAP, Window};
+pub use crate::system::coalition::core::{Coalition, CoalitionId, Fail, WINDOW_CAP, Window};

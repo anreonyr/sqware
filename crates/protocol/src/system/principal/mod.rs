@@ -212,8 +212,8 @@
 
 pub mod call;
 pub mod client;
-pub mod core;
-pub mod frame;
+// 形与据已搬进「约」——转出。
+pub use contract::system::principal::{core, frame};
 
 pub use call::{BACK, DIR, NAME};
-pub use core::{Fail, Principal, PrincipalId};
+pub use crate::system::principal::core::{Fail, Principal, PrincipalId};

@@ -10,14 +10,14 @@
 
 /// 账：一张定长表（名字 / 身子 / 生命阶段 / 就绪凭据）。
 #[allow(dead_code)]
-#[path = "../../../protocol/src/system/desk.rs"]
+#[path = "../../../contract/src/system/desk.rs"]
 pub mod desk;
 
 /// 判定：纯函数，只读表。
 #[allow(dead_code)]
-#[path = "../../../protocol/src/system/core.rs"]
+#[path = "../../../contract/src/system/core.rs"]
 pub mod core;
 
 /// 配给那一半：那段记录按步长解出来。
-#[path = "../../../protocol/src/system/grant.rs"]
+#[path = "../../../contract/src/system/grant.rs"]
 pub mod grant;

@@ -75,8 +75,8 @@ impl Name {
     /// 对偶**：构造期义务在两条入口上都成立（非法名不可表达）。
     ///
     /// `pub`：它是 `Name` 线格式的**解码面**，读者都在**帧那一侧**——协议的两处
-    /// （`crates/protocol/src/system/board/frame.rs` 的 `name_of`、
-    /// `crates/protocol/src/system/operator/frame.rs`）与本仓程序的一处
+    /// （`crates/contract/src/system/board/frame.rs` 的 `name_of`、
+    /// `crates/contract/src/system/operator/frame.rs`）与本仓程序的一处
     /// （`programs/src/system/board/server.rs` 读板那一帧）；语义上属于本 crate，不随协议搬家。
     ///
     /// **照实记（这串路径订正过）**：它从前举的使用者是"`board/call.rs` 的 `name_of` 与

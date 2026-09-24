@@ -49,9 +49,12 @@ use env::TaskId;
 // `#[path]` 编进测试靶，而 `call.rs` 拖着 `runtime`（门闩那一族）与 `session`，宿主上编不动。
 // 故这三格在本文件里各留一个常量，**同步义务由 `mod.rs` 末尾那条 `const _: () = assert!(…)`
 // 在编译期钉住**：真正的对照表只有一份（`call.rs`），这里这一份只要一漂就编不过。
-pub(crate) const WIRE_OK: u8 = 0;
-pub(crate) const WIRE_DENIED: u8 = 8;
-pub(crate) const WIRE_UNJUDGED: u8 = 9;
+//
+// 这三格是 **`pub` 而不是 `pub(crate)`**：那条同步断言住在搬运之后的**另一侧**
+// （`protocol` 的 `system/operator/mod.rs`——它同时看得见本文件与 `call.rs`），跨 crate 才够得着。
+pub const WIRE_OK: u8 = 0;
+pub const WIRE_DENIED: u8 = 8;
+pub const WIRE_UNJUDGED: u8 = 9;
 
 /// 一颗线上码——裁决那一侧的全部出口。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

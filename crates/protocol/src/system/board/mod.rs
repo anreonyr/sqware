@@ -234,8 +234,8 @@
 
 pub mod call;
 pub mod client;
-pub mod core;
-pub mod frame;
+// 形与据已搬进「约」——转出（`crate::system::board::core` 照旧解析）。
+pub use contract::system::board::{core, frame};
 
 pub use call::{ASK_MARK, ENTRY_MARK, LANE_PREFIX, LINK, TIP_MARK, TIP_NAME};
-pub use core::{Board, Fail, Sign, Unship, VestedBy};
+pub use crate::system::board::core::{Board, Fail, Sign, Unship, VestedBy};

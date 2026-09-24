@@ -18,6 +18,10 @@ dependencies = [
 [[package]]
 name = "contract"
 version = "0.1.0"
+dependencies = [
+ "env",
+ "plan",
+]
 
 [[package]]
 name = "critical-section"

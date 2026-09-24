@@ -481,11 +481,12 @@
 
 pub mod board;
 pub mod coalition;
-pub mod core;
-pub mod desk;
-pub mod grant;
 pub mod operator;
 pub mod principal;
 
-pub use core::{Fail, Ready, Reaped, Watch};
-pub use desk::{Announce, Service, Slot, State, Table};
+// **判定的三件已搬进「约」**（`crates/contract`）——这里**转出**：`crate::system::core` 与
+// `protocol::system::desk::…` 照旧解析，调用点一处不改。正文（那句话是什么）暂时留在本文件。
+pub use contract::system::{core, desk, grant};
+
+pub use crate::system::core::{Fail, Ready, Reaped, Watch};
+pub use crate::system::desk::{Announce, Service, Slot, State, Table};

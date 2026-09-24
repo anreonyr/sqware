@@ -120,8 +120,21 @@ fn main() -> Report<'static> {
 
     // 真约：那一枚回信孔从此留在驱动手里（本域退场之前它一直活着）。
     let at = now.saturating_add(AHEAD_NS);
-    let Ok(armed) = clock::arm(face, at, MS) else {
-        return no_service("sleeper: no alarm");
+    let armed = match clock::arm(face, at, MS) {
+        Ok(armed) => armed,
+        Err(fail) => {
+            // **哪一格失败，落一行**（照实记）：这一格从前只报 `no alarm`，而 `arm` 的三条
+            // 失败路——借孔/推帧没走成、答复没来、答了但不是 `OK`——在读数里长得一模一样。
+            // 真机上那张"偶尔少一台"的脸就卡在这儿。码本在 `programs/src/driver/rtc/core.rs`：
+            // **1 = `Taken`**（那一格有人了）/ **2 = `Past`**（那个时刻已经过去了，而这一格
+            // 的文档写着下一步是"重新问一次现在几点、再算一个"）/ **3 = `Denied`**（这一趟
+            // 自己没走到：孔借不出去 / 帧推不动 / 等到期 / 答话读不懂）。
+            let _ = debug::put(&format!(
+                "sleeper: alarm err={}",
+                rcall::fail_to_code(Some(fail))
+            ));
+            return no_service("sleeper: no alarm");
+        }
     };
     let _ = debug::put(&format!("sleeper: armed={}", rcall::fail_to_code(None)));
 

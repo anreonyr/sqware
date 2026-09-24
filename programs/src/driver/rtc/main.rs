@@ -214,6 +214,11 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
     };
     let Some(back) = scall::find(from, call::BACK) else {
         // 这一趟没把回信孔交进来（或交得不成）：没有可回的路，账一动不动。
+        //
+        // **但它不再无声**（照实记）：这一格从前直接 `return`，于是"我把它丢了"与"客人根本
+        // 没推上来"在读数里**长得一模一样**（两边都是客人超时）——`harness/sleeper` 那张脸
+        // 在真机上查了很久才缩到这一步。丢一趟留一行，谁丢的、丢给谁。
+        say(&format!("rtc: no back hole from {}", from.get()));
         return;
     };
     match ask {

@@ -9,5 +9,10 @@ test = false
 bench = false
 doctest = false
 
+# 判定与账要 `env`（名字、门闩、号）；形那几件不要。
+[dependencies]
+env = { path = "../env" }
+plan = { path = "../plan" }
+
 # 第一批搬进来的三件**一个依赖都不要**（`frame` / `id` / `fail_codes` 只碰 `core`）。
 # 后面几批（`system::core` / `desk` / `session::core` …）会各按自己那张表加 `env`。

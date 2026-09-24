@@ -2,7 +2,7 @@
 //!
 //! # 这一台为什么存在（照实记：这一批是"救活的"）
 //!
-//! `crates/protocol/src/system/principal/core.rs` 与 `crates/protocol/src/system/coalition/core.rs` 各自的
+//! `crates/contract/src/system/principal/core.rs` 与 `crates/contract/src/system/coalition/core.rs` 各自的
 //! `#[cfg(test)]` 模块**从写下那天起一次没跑过**：`protocol` 是 `[lib] test = false`
 //! （riscv 目标上编不出 libtest），而主工作区那几道门（`check --all-targets` /
 //! `build --release`）一道都不编它——那批规格长期只有"写着的规格"、没有"跑着的判据"。
@@ -47,7 +47,7 @@ mod id;
 #[path = "../../contract/src/frame.rs"]
 mod frame;
 
-/// 身份那本册子（就是 `crates/protocol/src/system/principal/core.rs` 那一份，逐字未改）。
+/// 身份那本册子（就是 `crates/contract/src/system/principal/core.rs` 那一份，逐字未改）。
 ///
 /// 包一层目录模块（`tests/principal/`）只为让 `crate::system::principal::core` 这个名字成立
 /// ——盟籍那一份正是这么写它的 `use`（在 `protocol` 里它是 `crate::system::principal::core`，
@@ -257,7 +257,7 @@ fn the_coalition_failure_table_is_bijective_and_keeps_bad_outside() {
 // ── 面不相撞那一条用例搬去了**编译期**（用户裁定"常量交给编译器"）────────────
 //
 // `the_three_back_marks_of_the_three_doors_do_not_collide` 原先在这里，那几条现在写在
-// `crates/protocol/src/system/principal/frame.rs` 与 `coalition/frame.rs` 的
+// `crates/contract/src/system/principal/frame.rs` 与 `coalition/frame.rs` 的
 // `const _: () = assert!(…)` 里（跨门那一对钉在前者——它看得见 `crate::system::coalition`）。
 // ── 名册与谱系那本册子的判据（原住 `principal/core.rs` 的 `#[cfg(test)]`）────────────
 //

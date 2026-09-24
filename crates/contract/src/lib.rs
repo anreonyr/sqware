@@ -42,6 +42,11 @@
 //! `mail::reserve`——**是内核读**。搬它们那一批时按手劈：立板与两张对照表进本 crate，
 //! `ship` 与那三手进口。
 
+// 配给那一段与几本账都是**可增长的**（`Vec::try_reserve`，备不下就如实报，不 panic）——与
+// `protocol` 同款：这里引 `alloc`。
+extern crate alloc;
+
 pub mod fail_codes;
 pub mod frame;
 pub mod id;
+pub mod system;

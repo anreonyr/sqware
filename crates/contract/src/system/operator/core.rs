@@ -1,8 +1,7 @@
 //! operator 的核心 —— **树、八条原语（落 / 分 / 寻 / 剪 / 列 / 译 / 名 / 开）、失败域**。
 //!
-//! 本文件**不碰内核**：判据只有一条可机械检查的纪律——
-//!
-//! > `core.rs` 里不出现 `runtime::`。
+//! 本文件**不碰内核**——这条纪律现在由 **crate 边界**管着（`contract` 全树不碰内核那一层，
+//! 见本 crate 的头注），故这里不再复述。
 //!
 //! 外部事实是**注入**的：两枚戳子 [`Stamps`]（那一枚 Pie 还答得出吗、这扇门是谁开的）与
 //! [`Unship`]（把我这一份放下）。于是喂三个假闭包就能把这棵树与八条原语的规矩推理干净，
@@ -72,7 +71,7 @@ use crate::id::Id;
 
 /// 一枚条目的**号**：机器用的那一个。
 ///
-/// **裸号**：与 [`PrincipalId`](crate::system::principal::PrincipalId) / [`CoalitionId`](crate::system::coalition::CoalitionId)
+/// **裸号**：与 [`PrincipalId`](crate::system::principal::core::PrincipalId) / [`CoalitionId`](crate::system::coalition::core::CoalitionId)
 /// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（[`EntryId::new`]），
 /// "这枚号还在不在"由每条读**查一次表**答出来。
 ///
@@ -468,7 +467,7 @@ impl Operator {
                 // 少了它们，分配失败走的是 `handle_alloc_error`（abort）——而同一句"备不下就
                 // 如实报"在仓里另外两处都是 `try_reserve → Full`：`Desk::admit`
                 // （`programs/src/system/operator/desk.rs`）与 `Ledger::grow`
-                // （`crates/protocol/src/system/operator/ledger.rs`）。**同一句话，三处一个纪律。**
+                // （`crates/contract/src/system/operator/ledger.rs`）。**同一句话，三处一个纪律。**
                 //
                 // 两处都要长：一格住 `slots`，一个号进 `root` 或某个 `Pane` 的 children。
                 // 先要位再落格 ⇒ 半路失败**不留半个状态**（下面两处 `push` 都不会再分配）。

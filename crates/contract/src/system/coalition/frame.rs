@@ -1,4 +1,4 @@
-//! coalition 的**帧那一半** —— 帧与码（内核那一只手的别名在 [`call`](super::call)）。
+//! coalition 的**帧那一半** —— 帧与码（内核那一只手的别名在 `super::call`）。
 //!
 //! 本文件**不做裁决**：盟册的规矩全在 [`core`](super::core)。这里只有三件事——
 //! 把失败域翻成答话码、把答案编进答话那一格、以及**本族**那几格码 / 记号 / **窗**那一档。
@@ -6,7 +6,7 @@
 //! **照实记（这一份为什么拆出来）**：见 `principal/frame.rs` 的同一条——帧形的边角机器走不到，
 //! 拆开之后这一份只认 `env` 与同层 `core`，宿主靶能逐字编进去跑判据。
 //!
-//! # 帧（与 [`system::principal`](crate::system::principal::call) 同一形状；窗那一档多一种答形）
+//! # 帧（与 `system::principal::call` 同一形状；窗那一档多一种答形）
 //!
 //! ```text
 //!   Ask    [0] op   [1..9] a   [9..17] b          ASK_LEN   = 17
@@ -27,14 +27,14 @@
 //!
 //! # 编答的助手**少一个**
 //!
-//! [`system::principal`](crate::system::principal::call) 有 `reply_present`（"有没有一条号"），这里不需要——
+//! `system::principal::call` 有 `reply_present`（"有没有一条号"），这里不需要——
 //! 本族没有"可能没有的一条号"那种答案（`found` 必有号，`amid` 是是非）。**帮手少一个，
 //! 是原语少一条的余数。**
 //!
 //! # 码的数字**不照抄 principal**
 //!
 //! 同一个概念 `UNKNOWN`，operator 那一面是 1、principal 那一面是 2——三家各按**自己失败域
-//! 的顺序**排、`BAD` 收尾。故本族按自己的两格排（见 [`fail_codes!`] 那张表）：照抄别家只会
+//! 的顺序**排、`BAD` 收尾。故本族按自己的两格排（见 `fail_codes!` 那张表）：照抄别家只会
 //! 让自己表里空出一个号。
 
 use super::core::{Fail, WINDOW_CAP, Window};

@@ -9,13 +9,13 @@
 //! 没有自己的文件），`..` 走不过去。改成真实目录模块之后基准是 `tests/principal/`（真的），
 //! 三个 `..` 正好回到 `crates/`。
 
-#[path = "../../../protocol/src/system/principal/core.rs"]
+#[path = "../../../contract/src/system/principal/core.rs"]
 pub mod core;
 
-/// **帧那一半**（`crates/protocol/src/system/principal/frame.rs`，逐字未改）—— 在本台里跑判据。
+/// **帧那一半**（`crates/contract/src/system/principal/frame.rs`，逐字未改）—— 在本台里跑判据。
 ///
 /// 它要 `env` 与同层 `core`（两个都在），外加那张 `fail_codes!` 表（宏自己一份源，见
 /// `tests/roster.rs` 里那行 `#[macro_use]`）。适配那半（`call.rs`）拖 `session::call`，故不来。
 #[allow(dead_code)]
-#[path = "../../../protocol/src/system/principal/frame.rs"]
+#[path = "../../../contract/src/system/principal/frame.rs"]
 pub mod frame;

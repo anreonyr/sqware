@@ -23,7 +23,7 @@
 /// **照实记（这一格原先是七份常量）**：七份 `pub const OK: u8 = 0;` 各写一遍，值全靠自律一致；
 /// 收在这里最省——**本文件每个宿主靶本来就编**（见上面那两行），故一处都不多要。crate 内各家
 /// `pub use crate::fail_codes::OK;`；**出 crate 那一份**（`programs::driver::rtc` —— 驱动自己的
-/// 协议住在 `programs` 里）走 [`crate::OK`] 那条转出。
+/// 协议住在 `programs` 里）走 `protocol::OK` 那条转出（那是本 crate 的**上游**）。
 pub const OK: u8 = 0;
 
 /// 码表：**失败域 ↔ 线上答话那一格**，四家同一个形状。
