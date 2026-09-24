@@ -79,8 +79,13 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         args.push(profile.to_string());
     }
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    // 读数开关：**由调用方的环境决定**（`env::readings` 的 `option_env!`）。门要读数 ⇒
+    // 它在自己的进程里带着 `SQWARE_READINGS=1`（见 `crates/gate/src/lib.rs`）；`cargo image`
+    // 这条人手走的路默认不带 ⇒ 产品那一颗从编出来就是静默的。
+    let readings = std::env::var("SQWARE_READINGS").is_ok();
     let status = Command::new(&cargo)
         .args(&args)
+        .env("SQWARE_READINGS", if readings { "1" } else { "" })
         .current_dir(&root)
         .status()
         .map_err(|e| format!("起不动嵌套 cargo：{e}"))?;
