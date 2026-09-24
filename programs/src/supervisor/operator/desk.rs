@@ -38,6 +38,11 @@ use protocol::operator::core::VestedBy;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Admit {
     /// 这一位已经在账上（重放）：**不动账**——换掉就把原来那位的问话孔丢了。
+    ///
+    /// **照实记（这一趟交来的那一枚也不动，为什么不丢东西）**：重放时调用方手里那一枚
+    /// `reply` 就是**原来那一枚**——它按 `(开者 == 这一位, 记号 == 树路)` 认出来
+    /// （`server.rs` 的 `reply_of`），而一位客人这条路只 `seat` 一次 ⇒ 认出来的必然是同一枚。
+    /// 故"不动账"在这里等于"原样"，不是"丢掉新交来的那条路"。
     Already,
     /// 备不下下一格（`try_reserve`）。
     Full,

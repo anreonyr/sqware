@@ -188,9 +188,12 @@ fn find_console(link: &Quay, talk: PieToken, host: TaskId) -> Option<HolePie> {
     };
     let road = [dir, want];
     // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
+    //
+    // **总预算就是 `MS`**（照实记：原来每一趟都按写死的 `MS` 问，而那一趟自己就能花掉 `MS`
+    // ⇒ "预算"实际是"重试次数 × MS"）。故把**剩下的那点预算**当这一趟的期限递下去。
     let mut left = MS;
     let id = loop {
-        match operator::seek(talk, link, &road, MS) {
+        match operator::seek(talk, link, &road, left) {
             Ok(id) => break id,
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));

@@ -203,6 +203,12 @@ pub trait League<P, C> {
 ///   由 `programs/src/supervisor/operator/server.rs` 的 `Court::opens` 把它们说进读数。
 /// - `Err(())` = 树自己问不到（⇒ [`Ruling::Unjudged`]）。
 ///
+/// **照实记（这一格生产里到不了，读者是宿主靶）**：`Operator::opens` 只会答
+/// `Unknown` / `NotATile` / `Dead` 三因，而生产那一份 `Court::opens` 把它们**一因各说一行
+/// 读数**、一律返 `Ok(None)`（它连 `_` 都不写，就为了将来 `Fail` 多一格时**编不过**）⇒
+/// `Err(())` 只有 `protocol-case` 的 `judge` 靶喂得出来（`Deaf`）。留着这一格不是为生产：
+/// 判据要一个"对面问不到"的**出口**，而 `Who` / `Branch` / `League` 那三条边同形。
+///
 /// 答的是 **TID 不是号**：树的读答"谁开的这扇门"（内核戳），名册那一边答"这个 TID 是谁"——
 /// 两件事两个落点，故 `Rule::Opens` 那一格要走两问。
 pub trait Door {

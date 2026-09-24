@@ -167,8 +167,21 @@ fn main() -> Result<(), fail::Fail> {
             Ok(_) => {}
             Err(_) => return Err(fail::Fail::Desk),
         }
-        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
-            desk(&mut slot, view, from, &buf[..len]);
+        // 取帧走 `scall::receive`（带**入站闸**：比 `ARM_LEN` 长的那一枚取出来丢掉，
+        // 不然这一扇门取不出也丢不掉，从此卡死）。
+        loop {
+            match scall::receive(&entry_hole, &mut buf, 0) {
+                scall::Arrival::Ask(len, from) => desk(&mut slot, view, from, &buf[..len]),
+                scall::Arrival::Junk(n) => {
+                    say(&alloc::format!("rtc: ask too long n={n}"));
+                }
+                // 连丢它那块缓冲都备不下 ⇒ 这一扇门排不空了：报一句**然后去死**（板看得见）。
+                scall::Arrival::Stuck(n) => {
+                    say(&alloc::format!("rtc: ask stuck n={n}"));
+                    return Err(fail::Fail::Desk);
+                }
+                scall::Arrival::Idle => break,
+            }
         }
         while held.receive(0).is_ok() {
             // 一次投递 = 设备那一格拉起来了。顺序与 `uart` 同一条道理：**先把设备那一格清干净**

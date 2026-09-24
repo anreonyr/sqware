@@ -232,9 +232,23 @@ fn main() -> Result<(), fail::Fail> {
         // 排空：客人说一句"这一条我排空了" ⇒ 那一格回闲 + **把线放回去**（事件，不是节拍）。
         // **先取排空，再登记**：登记会把新的一条线接上，紧接着到来的那一枚中断才不漏。
         drain_exhaust(&mut lines, &plic);
-        // 门上：非阻塞地把槽里的都取走（登记）。
-        while let Ok((n, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
-            desk_face(&mut lines, &plic, &sources, from, &buf[..n], &tole);
+        // 门上：非阻塞地把槽里的都取走（登记）。取帧走 `scall::receive`（带**入站闸**：
+        // 比 `OCCUPY_LEN` 长的那一枚取出来丢掉，不然这一扇门取不出也丢不掉，从此卡死）。
+        loop {
+            match scall::receive(&entry_hole, &mut buf, 0) {
+                scall::Arrival::Ask(n, from) => {
+                    desk_face(&mut lines, &plic, &sources, from, &buf[..n], &tole)
+                }
+                scall::Arrival::Junk(n) => {
+                    say(&alloc::format!("router: ask too long n={n}"));
+                }
+                // 连丢它那块缓冲都备不下 ⇒ 这一扇门排不空了：报一句**然后去死**（板看得见）。
+                scall::Arrival::Stuck(n) => {
+                    say(&alloc::format!("router: ask stuck n={n}"));
+                    return Err(fail::Fail::Desk);
+                }
+                scall::Arrival::Idle => break,
+            }
         }
         // 铃：**领到空**——不按 `bell.wait(0)` 的返回值判。那一位是**中断闸门的账**
         // （响着 ⇒ 本 hart 的 `SEIE` 关着），而组那一次等待会与它互相消费 ⇒ 按返回值

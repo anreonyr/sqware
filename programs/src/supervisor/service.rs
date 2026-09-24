@@ -244,15 +244,26 @@ pub fn assemble<'a>(
                         step(p, "bind self");
                         p.died
                     })?;
-                    if let Some(t) = tree {
-                        let pt = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
-                            step(p, "derive tree");
-                            p.died
-                        })?;
-                        f.bind(t, pt, READY_MS).map_err(|_| {
-                            step(p, "bind tree");
-                            p.died
-                        })?;
+                    // **树那条身份**：树起来的时候身份服务还没在，故这里补绑。
+                    //
+                    // **照实记（这一支的响声）**：走到这一行时树**必已就位**——`plan()` 按 `order`
+                    // 排（树 0、身份 1），两行的 `scenes` 也相同 ⇒ "在不在"是同一件事。故这一支
+                    // 今天到不了；真到了那一天，下面那一句是**唯一的响声**（原来它静默跳过 ⇒
+                    // 门禁会一直判不了身份，而没人知道为什么）。
+                    match tree {
+                        Some(t) => {
+                            let pt = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
+                                step(p, "derive tree");
+                                p.died
+                            })?;
+                            f.bind(t, pt, READY_MS).map_err(|_| {
+                                step(p, "bind tree");
+                                p.died
+                            })?;
+                        }
+                        None => {
+                            let _ = runtime::env::debug::put("principal: no tree to bind");
+                        }
                     }
                     face = Some(f);
                 }

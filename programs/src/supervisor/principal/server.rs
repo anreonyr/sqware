@@ -121,8 +121,21 @@ pub fn serve() -> Result<(), super::fail::Fail> {
             return Err(super::fail::Fail::Desk);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
-            turn(&mut book, from, &buf[..len]);
+        // 取帧走 [`scall::receive`]——它带**入站闸**：比 `ASK_LEN` 长的那一枚取出来丢掉
+        // （不然这一扇门取不出也丢不掉，从此卡死）。
+        loop {
+            match scall::receive(&entry_hole, &mut buf, 0) {
+                scall::Arrival::Ask(len, from) => turn(&mut book, from, &buf[..len]),
+                scall::Arrival::Junk(n) => {
+                    say(&alloc::format!("principal: ask too long n={n}"));
+                }
+                // 连丢它那块缓冲都备不下 ⇒ 这一扇门排不空了：报一句**然后去死**（板看得见）。
+                scall::Arrival::Stuck(n) => {
+                    say(&alloc::format!("principal: ask stuck n={n}"));
+                    return Err(super::fail::Fail::Desk);
+                }
+                scall::Arrival::Idle => break,
+            }
         }
     }
 }

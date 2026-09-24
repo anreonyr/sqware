@@ -120,8 +120,21 @@ pub fn serve() -> Result<(), super::fail::Fail> {
             return Err(super::fail::Fail::Desk);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
-            turn(&mut book, &face, from, &buf[..len]);
+        // 取帧走 [`scall::receive`]——它带**入站闸**：比 `ASK_LEN` 长的那一枚取出来丢掉
+        // （不然这一扇门取不出也丢不掉，从此卡死）。
+        loop {
+            match scall::receive(&entry_hole, &mut buf, 0) {
+                scall::Arrival::Ask(len, from) => turn(&mut book, &face, from, &buf[..len]),
+                scall::Arrival::Junk(n) => {
+                    say(&alloc::format!("coalition: ask too long n={n}"));
+                }
+                // 连丢它那块缓冲都备不下 ⇒ 这一扇门排不空了：报一句**然后去死**（板看得见）。
+                scall::Arrival::Stuck(n) => {
+                    say(&alloc::format!("coalition: ask stuck n={n}"));
+                    return Err(super::fail::Fail::Desk);
+                }
+                scall::Arrival::Idle => break,
+            }
         }
     }
 }
@@ -237,6 +250,10 @@ fn said(out: &mut [u8; ccall::REPLY_MAX], frame: [u8; ccall::REPLY_LEN]) -> usiz
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
 /// ——故这一趟**必须有重试**：撞 `UNKNOWN` 就睡 `RETRY_MS` 再来，总预算 [`MS`]。
 ///
+/// **照实记（"总预算"曾经不是预算）**：每一趟 `seek` 的期限原来是写死的 [`MS`]——而那一趟
+/// **自己就能花掉 `MS`**，`left` 却只减 `RETRY_MS` ⇒ 真实墙钟上界是"重试次数 × MS"，
+/// 与这一行字面差三个数量级。现在**把剩下的预算当这一趟的期限**递下去：总账 ≤ `MS` + 一趟。
+///
 /// 取回的那一枚按"谁给的"认（[`operator::take`] 取满足条件的**最后**一枚）：本域表里此刻
 /// 还有刚验完的那一枚自己的门牌副本，故**最后那一枚**正是这一趟找回来的。
 fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
@@ -247,7 +264,7 @@ fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
     // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
     let mut left = MS;
     let id = loop {
-        match operator::seek(talk, link, &road, MS) {
+        match operator::seek(talk, link, &road, left) {
             Ok(id) => break id,
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
