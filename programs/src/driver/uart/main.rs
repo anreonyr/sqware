@@ -233,9 +233,6 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     suite.run();
 }
 
-/// 三格答码共用的"没走到 / 读不懂"那一格（与树自己的 [`ocall::BAD`] 同值）。
-const BAD: u8 = ocall::BAD;
-
 /// 从树上找到线路由者，把本域那条线登记下来。
 ///
 /// 会话是**上面那一条**（同一个域只开一条，见 `main` 第 4 步）；坐标是**发下来的那一段区**
@@ -252,7 +249,7 @@ fn register(
     let road = [dir, want];
     // **间接寻址那一手**：名字先译成号（号才是树的直接坐标），此后按号。
     let id = operator::seek(talk, link, &road, MS).map_err(|_| fail::Fail::Line)?;
-    let code = operator::find(talk, link, id, MS).unwrap_or(BAD);
+    let code = operator::find(talk, link, id, MS).unwrap_or(ocall::BAD);
     if code != ocall::OK {
         return Err(fail::Fail::Line);
     }

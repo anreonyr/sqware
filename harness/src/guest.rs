@@ -116,7 +116,8 @@ fn main() -> Report<'static> {
     let mut left = MS;
     let find = loop {
         match operator::seek(hedge, &tree, &path, MS) {
-            Ok(id) => break operator::find(hedge, &tree, id, MS).unwrap_or(BAD),
+            // **树那一问用树自己的码**（`ocall::BAD` = 7；`BAD` 那一格是板那一面的，值 5）。
+            Ok(id) => break operator::find(hedge, &tree, id, MS).unwrap_or(ocall::BAD),
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
                 left = left.saturating_sub(RETRY_MS);

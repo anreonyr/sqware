@@ -547,9 +547,6 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
     suite.run();
 }
 
-/// 三格答码共用的"没走到 / 读不懂"那一格（与树自己的 [`ocall::BAD`] 同值）。
-const BAD: u8 = ocall::BAD;
-
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。
 fn say(msg: &str) {
     let _ = debug::put(msg);
