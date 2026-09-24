@@ -92,11 +92,10 @@ const E_PROBE_OWNER: Died = 19;
 const E_PROBE_LEASE: Died = 20;
 const E_PROBE_RULE: Died = 21;
 const E_PROBE_OTHER: Died = 22;
-const E_DEEP: Died = 23;
 
 // ── 装配单搬到 `scenario.rs`（用户裁定"测试和程序分开"）──────────────
 //
-// 那 19 行 [`Program`] 与两张表（默认 / 公平台）现在住 `scenario.rs`：本文件是**机器**，
+// 那些行 [`Program`] 与装配单现在住 `scenario.rs`：本文件是**机器**，
 // 不认识具体哪一台。`PLAN` 仍从那里 `use` 进来，故下面 [`service::assemble`] 那几处一字未改。
 
 #[unsafe(no_mangle)]
@@ -139,9 +138,6 @@ extern "C" fn main() -> ! {
         let _ = tole.attach(&HolePie::from_token(lane), HoleDir::Pull);
         lanes[i] = Some(lane);
     }
-
-    // 公平台自报一句（默认那一景是空操作）；见 `scenario.rs` 头注。
-    scenario::announce();
 
     // 登记整张表，再按顺序起（配给从 `boot_pier` 那条路领）。
     let mut table = Table::new();

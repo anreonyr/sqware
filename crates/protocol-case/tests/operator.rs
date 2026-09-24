@@ -605,9 +605,9 @@ fn a_pane_that_cannot_be_grown_answers_full() {
 #[test]
 fn a_deep_chain_does_not_need_the_call_stack() {
     // **这一条钉的是"深度不吃调用栈"**。照实记：老一版四条助手（`look` / `holds` / `take` /
-    // `put_in`）按深度递归，而一台域的栈只有 `TASK_STACK_SIZE` = 16 KiB——**真机读数**：
-    // `prog-probe-deep` 让持树者自己死在第 117 层（`user fault killed: tid=3`），命名空间整个
-    // 消失。
+    // `put_in`）按深度递归，而一台域的栈只有 `TASK_STACK_SIZE` = 16 KiB——**真机读数**
+    // （打这一枪的那台探针 `prog-probe-deep` 已随 `fair` 一景按用户裁定删掉，读数留着）：
+    // 它让持树者自己死在第 117 层（`user fault killed: tid=3`），命名空间整个消失。
     //
     // 故这里**故意把测试线程的栈压到 64 KiB**，再建一条 500 层的链：老一版在 500 层上要几十上百
     // KB，**当场 SIGSEGV**（这台的机制与 `a_pane_that_cannot_be_grown_answers_full` 同一手法：

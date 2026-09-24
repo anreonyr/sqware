@@ -34,7 +34,13 @@
 //! > `prog-probe-deep` 一层层往下 `part`，**持树者自己死在第 117 层**——四条助手按深度递归，
 //! > 而一台域的栈是 `TASK_STACK_SIZE`（16 KiB）；广度有闸（[`Operator::PANE_CAP`]）、一条路
 //! > 有闸（[`Operator::ROAD_MAX`]）、**深度一个闸都没有**。死法不是"答一格负码"，是
-//! > `user fault killed`：**命名空间整个消失**（实测读数见那份源码的头注）。
+//! > `user fault killed`：**命名空间整个消失**。
+//! >
+//! > **照实记（那台探针按用户裁定删了，这四行读数留着）**：`probe-deep` 连同 `SQWARE_ROOT=fair`
+//! > 那一景一并删了——它作为**深度**那一格的证客，职责已由宿主门 `protocol-case` 的
+//! > `a_deep_chain_does_not_need_the_call_stack` 承担；而它作为**公平**那一格的客人，本来就是
+//! > 它被删的理由（见 `crates/gate/src/lib.rs` 里 `Scenario` 那段照实记）。这一段是这一刀改法的
+//! > 依据，故不从注里撤。
 //!
 //! 于是这一版把**号做成表里的下标**：
 //!

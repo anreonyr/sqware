@@ -182,7 +182,6 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "uart", tier: Tier::Narrative { shapes: &["^(uart: got [0-9]+)$"] } },
     Reading { prefix: "[case]", tier: Tier::Narrative { shapes: &["^\\[case\\] [a-z0-9-]+: (run|ok) [_a-z0-9]+$"] } },
     Reading { prefix: "task", tier: Tier::Manual { why: "只有停机那一行，由本文件 `verdict`（`HALT` 常量）判——原先是 `soak.sh` 里那段 `if grep -q \"task: all tasks exited, system halted\"`，**那份脚本已删**" } },
-    Reading { prefix: "probe-deep", tier: Tier::Manual { why: "**只在公平台起**（默认装配单里没有它）：判据在 `crates/gate/tests/fair.rs`，不在 soak 的断言表里" } },
 ];
 
 /// 这一轮读数兑没兑现。**一次报全部缺口**（不是第一条就返回——旧脚本就是"缺这几条"一起报）。

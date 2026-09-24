@@ -21,20 +21,6 @@ fn root_name() -> String {
     std::env::var("SQWARE_ROOT").unwrap_or_else(|_| "root".to_string())
 }
 
-/// 引导镜像在清单里的**名字**：`fair` 那一台用的是**同一份镜像**（`root`）——`SQWARE_ROOT=fair`
-/// 换的是**编排域那张装配单**（多一条"聊天客人"的行），不是镜像本身。
-///
-/// **照实记（为什么要有这一格）**：一开始给 `fair` 另加了一条清单别名指向同一个 `prog-root`
-/// ⇒ initrd 里**同一份镜像装了两遍**、当场变大 ⇒ QEMU 报 `Not enough memory to place DTB
-/// after kernel/initrd`（`crates/gate/tests/fair.rs` 第一次跑就是这个）。故这里归一名字，镜像仍只有一份。
-fn image_name() -> String {
-    let name = root_name();
-    if name == "fair" {
-        "root".to_string()
-    } else {
-        name
-    }
-}
 /// 产品那一档（**15 份**）：内核起的那套服务 + 真客人。三张表合起来就是镜像里可能有的全部
 /// 程序；**哪几台进哪一张镜像**由 [`bins_for`] 按场景选。
 ///
@@ -100,7 +86,7 @@ const PRODUCTS: &[(&str, &str, ProgramKind)] = &[
     ("system", "prog-system", ProgramKind::Supervisor),
 ];
 
-/// 探针那一档（**6 份**）：**只读数**的客人——`soak` / `examine` / `fair` 的判据就是它们打出来
+/// 探针那一档（**5 份**）：**只读数**的客人——`soak` / `examine` 的判据就是它们打出来
 /// 的那几行，故它们**必须**在验收镜像里（这是"测具出产品镜像"唯一做不到的一格）。
 ///
 /// 它们住在隔壁那个 crate `harness`（照实记：用户裁定"测试和程序分开"）。
@@ -121,9 +107,6 @@ const PROBES: &[(&str, &str, ProgramKind)] = &[
         "prog-probe-rule-other",
         ProgramKind::User,
     ),
-    // **深度那一格的证客**（**U 态**）：一层层往下 `part`。改前它是炸弹（持树者按深度递归，
-    // 栈是 16 KiB）；改成按号直达之后它是正证。**不进 soak**——读数见 `probe_deep.rs`。
-    ("probe-deep", "prog-probe-deep", ProgramKind::User),
     // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
     ("probe-lease", "prog-probe-lease", ProgramKind::User),
 ];
@@ -168,9 +151,8 @@ const RIGS: &[(&str, &str, ProgramKind)] = &[
 /// 反过来 `rig` 镜像（只要一个受害者）也装着整套产品与探针。现在一台只装它真要起的那几台。
 fn bins_for(scenario: &str) -> Vec<(&'static str, &'static str, ProgramKind)> {
     match scenario {
-        // 验收两景：**同一份镜像**（产品 + 全部探针）。`fair` 与 `root` 的差别只在编排域那张
-        // 装配单多一条"聊天客人"（见 `image_name()`），不在装什么。
-        "root" | "fair" => PRODUCTS.iter().chain(PROBES.iter()).copied().collect(),
+        // 验收那一景：**这一份镜像 = 产品 + 全部探针**。
+        "root" => PRODUCTS.iter().chain(PROBES.iter()).copied().collect(),
         // 台子那几景：台主 + 它要的受害者（名字取自各台主里的 `const VICTIM` / `*_ELF`）。
         "rig" => pick(RIGS, &["rig", "hang"]),
         "again" => pick(RIGS, &["again", "churn"]),
@@ -178,7 +160,7 @@ fn bins_for(scenario: &str) -> Vec<(&'static str, &'static str, ProgramKind)> {
         "group" => pick(RIGS, &["group", "waiter"]),
         "beat" => pick(RIGS, &["beat"]),
         other => panic!(
-            "未知场景 SQWARE_ROOT={other}（认得的：root / fair / rig / again / load / group / beat）"
+            "未知场景 SQWARE_ROOT={other}（认得的：root / rig / again / load / group / beat）"
         ),
     }
 }
@@ -236,7 +218,8 @@ fn main() {
         args.push("--profile".to_string());
         args.push(profile.clone());
     }
-    // **场景旗标**：`SQWARE_ROOT=fair` 时给程序侧一个 `--cfg sqware_fair`。
+    // **照实记（场景旗标这一格今天没有用户，但那两条坑留着）**：`SQWARE_ROOT=fair` 还在的时候，
+    // 这里给程序侧追加过一个 `--cfg sqware_fair`（装配单按它选表）。下面两条规矩与场景无关：
     //
     // 照实记（两处坑，都是实测踩出来的）：
     //
@@ -246,18 +229,10 @@ fn main() {
     //  2) **要写 `CARGO_ENCODED_RUSTFLAGS`，不是 `RUSTFLAGS`**——cargo 给 build 脚本的那个编码
     //     变量**优先级更高**：只设 `RUSTFLAGS` 会被它整个盖掉（实测：那版跑出来聊天客人一次
     //     都没出现）。而且编码变量里**已经带着** `.cargo/config.toml` 给本目标配的那几个
-    //     `-C…` 旗标（`relocation-model` / `frame-pointers` / `code-model`）——往它后面追加，
-    //     那几个才不会被顶掉。分隔符是 `\x1f`。
-    let mut encoded = std_env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
-    if root_name() == "fair" {
-        if !encoded.is_empty() {
-            encoded.push('\x1f');
-        }
-        encoded.push_str("--cfg\x1fsqware_fair");
-    }
+    //     `-C…` 旗标（`relocation-model` / `frame-pointers` / `code-model`）——要追加就追加在
+    //     它后面，那几个才不会被顶掉。分隔符是 `\x1f`。
     let status = Command::new(&cargo)
         .args(&args)
-        .env("CARGO_ENCODED_RUSTFLAGS", &encoded)
         .status()
         .expect("failed to spawn cargo for programs crate");
     assert!(
@@ -287,7 +262,7 @@ fn main() {
     // 引导镜像在清单内的偏移/长度（内核不解析清单，按这两个常量取 root 的 ELF）
     let at = bins
         .iter()
-        .position(|(name, _, _)| *name == image_name())
+        .position(|(name, _, _)| *name == root_name())
         .unwrap_or_else(|| panic!("initrd: SQWARE_ROOT={} 不在这一景的清单里", root_name()));
     let root_span = spans[at].clone();
     assert!(!root_span.is_empty(), "initrd: root image is empty");

@@ -3,9 +3,8 @@
 //! # 为什么装配单单独立一份源（照实记：用户裁定"测试和程序分开"）
 //!
 //! 这张表原先住 `system/main.rs`——编排的**机器**那一份正文里：15 份产品与 5 台试客
-//! （`probe-*`）都在里面，**外加**我上一轮给"公平台"加的那一套：`#[cfg(sqware_fair)]` 的
-//! `FAIR`、**第二张表**、以及一句自报。于是"某一景多一条聊天客人"这件事，写在了产品程序的
-//! 正文里。用户的原话是**"为什么 programs 里面的测试和程序混在一起？我不希望这样"**。
+//! （`probe-*`）都在里面（外加按场景选的第二张表）。于是"某一景装哪些台"这件事，写在了产品
+//! 程序的正文里。用户的原话是**"为什么 programs 里面的测试和程序混在一起？我不希望这样"**。
 //!
 //! 故场景归场景，三处各归各位：
 //!
@@ -16,10 +15,6 @@
 //! **照实记（指标与"道"的位次按位耦合）**：装配单的下标就是"道"的位次（`supervise` 按
 //! `plan.get(i)` 把道上响的那一位翻回名字）。故两张表必须**各自自洽**——第一版想"表里插一条
 //! 空名字的行、调用点过滤"，默认台当场以 `system: manifest bad` 收场（soak 逮住）。
-//!
-//! **照实记（公平台的那一句自报为什么留着）**：它是量"装配单真的多了一条"用的，
-//! `crates/gate/tests/fair.rs` 也判它——第一次跑 fair 台时聊天客人一次都没出现，就是靠这一句把
-//! "cfg 有没有到这一份"分开的。它现在住在 [`announce`] 里，默认那一景是空操作。
 
 use super::*;
 
@@ -428,60 +423,6 @@ const fn probe_rule_other() -> Program {
 ///
 /// 三台驱动紧跟在身份服务之后、其余之前：控制器先就位，线再开闸（`uart` / `rtc` 持有那两台设备）。
 /// `sleeper` 排在 `lodger` 之后、`subject` 之前：它要找的那块门牌 `/device/rtc` 由 `rtc` 落。
-/// **这一台跑在"公平台"上吗**（`SQWARE_ROOT=fair`）：旗标由 `kernel/build.rs` 经
-/// `CARGO_ENCODED_RUSTFLAGS` 传进程序侧（见那个文件里那条照实记：为什么不能用 `option_env!`）。
-#[cfg(sqware_fair)]
-const FAIR: bool = true;
-#[cfg(not(sqware_fair))]
-const FAIR: bool = false;
-
-/// 聊天客人（`probe-deep` 那一台）：**只有公平台才装**，且排在 `echo` **之前**——受害者在打，
-/// 它还在打（见 `docs/fair-gate.md` 与 `probe_deep.rs` 头注那张粒度表）。
-///
-/// **照实记（为什么是"另给一张表"而不是"表里插一条空名字的行"）**：装配单的**下标与"道"的
-/// 位次是按位耦合的**（`supervise` 按 `plan.get(i)` 把道上响的那一位翻回名字）。插一条空名字的
-/// 行就要在"登记 / 起 / 位次"三处同时跳过——第一版只跳了登记那一处，默认台当场以
-/// `system: manifest bad` 收场（soak 逮住）；改成调用点过滤又在别处露头。**最安全的是两条表
-/// 各自自洽**：默认那张**一个字不动**，fair 那张多一条 `deep()`。
-const fn deep() -> Program {
-    Program {
-        name: "probe-deep",
-        announce: Announce::None,
-        tokens: &[],
-        channels: &[],
-        needs: None,
-        board: false,
-        operator: true,
-        bind: true,
-        holds_tree: false,
-        died: E_DEEP,
-    }
-}
-
-#[cfg(sqware_fair)]
-pub const PLAN: &[Program] = &[
-    tree(),
-    principal(),
-    coalition(),
-    router(),
-    uart(),
-    rtc(),
-    guest(),
-    passer(),
-    lodger(),
-    sleeper(),
-    subject(),
-    member(),
-    probe_denied(),
-    probe_lease(),
-    probe_owner(),
-    probe_rule(),
-    probe_rule_other(),
-    deep(),
-    echo(),
-];
-
-#[cfg(not(sqware_fair))]
 pub const PLAN: &[Program] = &[
     tree(),
     principal(),
@@ -502,14 +443,3 @@ pub const PLAN: &[Program] = &[
     probe_rule_other(),
     echo(),
 ];
-
-/// 公平台自报一句（默认那一景是**空操作**，故 `main` 里不再有 `#[cfg]`）。
-///
-/// 照实记：这一句是量"装配单真的多了一条"用的（见文件头），`crates/gate/tests/fair.rs` 也判它。
-pub fn announce() {
-    #[cfg(sqware_fair)]
-    {
-        use alloc::format;
-        let _ = runtime::env::debug::put(&format!("system: fair scenario, plan={}", PLAN.len()));
-    }
-}

@@ -63,10 +63,39 @@ impl Deadline {
 }
 
 /// 装配单（`SQWARE_ROOT`）：换的是**引导镜像**，由此换掉整张表。
+///
+/// **照实记（用户裁定：`fair` 那一台删了）**：这里曾有一条 `Scenario::Fair`——同一份镜像、编排域
+/// 装配单多一条"聊天客人"（`probe-deep`：512 层往下打再剪回来，**一次都不让手**）。它量出的缺口
+/// **是真的**，而且定到了格：
+///
+/// ```text
+///   echo: tree part=0 land=7 find=7 got=true trim=7 plate=0 pname=-   ← 默认台是 land=0 find=0 trim=0 plate=19 pname=echo
+///   echo: op=7 ; echo: seq=1                                          ← 默认台是 op=0 ; seq=0
+///   （三条 `echo: list …` 一行都没打）
+/// ```
+///
+/// `land=7` 是 `ocall::BAD`，而在 `operator::client::land` 里 `BAD` 只有一个来路：`ask_out` 的
+/// **期限到了**（`millis` = 1 秒）。同一趟里 `serial()` 第一格 `list` 也超时 ⇒ 它 `return UNKNOWN`，
+/// 在打第一行之前就退了。**即：受害者在整整一趟同步往返里一个答话都没拿到。**
+///
+/// 删的理由（用户原话：**"把 fair 删了"**）。两条支撑：
+///
+///   1. 修法是**调度 / 配额**那一族的事，而这一台把**自变量**写成了三种——代码是"一次都不让"
+///      （`fn should_yield(_n) { !FAIR }`；`_n` 空着不用，就是它曾经是 `n % 16 == 0` 的化石），
+///      头注一处写"每 16 手让一次"、另一处又写"每 16 手那一档 `echo` 读数照旧"。**判据自己都
+///      说不清它量的是哪一档**，留着比删掉更坏。
+///   2. 它的判据 #4 查的是**默认台那两个字面量**（`echo: list root=0,3` / `names=sys,device`），
+///      而那一景多一条 `probe-deep`、root 那份列表本就不保证同形 ⇒ **修好之后也会红**，且红的
+///      理由与公平无关。
+///
+/// 深度那一格的职责没丢：它由宿主门 `protocol-case` 的
+/// `a_deep_chain_does_not_need_the_call_stack` 承担（那条有牙、且不抖）。
+///
+/// 顺带照出、**留着**的一格（与场景无关）：`land` **超时了，`take` 仍取到一枚**（`got=true`）
+/// ——超时的 `land` 可能照样把砖投进了收件箱。记在 `operator::client::land` 上。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scenario {
     Root,
-    Fair,
     Rig,
     Load,
     Group,
@@ -76,7 +105,6 @@ impl Scenario {
     fn name(self) -> &'static str {
         match self {
             Scenario::Root => "root",
-            Scenario::Fair => "fair",
             Scenario::Rig => "rig",
             Scenario::Load => "load",
             Scenario::Group => "group",

@@ -12,7 +12,7 @@ edition.workspace = true
 # 在那张镜像里**永远不会被起**（≈1.6 MB / 5.6 MB）。用户的话是
 # **"为什么 programs 里面的测试和程序混在一起？我不希望这样"** ⇒ 测具搬家：
 #
-#   探针（**只读数**，`probe-*`）：进**验收镜像**当客人跑——`soak` / `examine` / `fair` 的判据
+#   探针（**只读数**，`probe-*`）：进**验收镜像**当客人跑——`soak` / `examine` 的判据
 #                                就是它们打出来的那几行，故它们**必须**在产品的清单里。
 #   压测台（`rig` / `load` / `beat` / `again` / `group` 与它们的受害者 `churn` / `hang` / `park` /
 #                               `busy` / `waiter`）：**整台替换引导镜像**，与验收场景没有交集。
@@ -85,13 +85,6 @@ doctest = false
 [[bin]]
 name = "prog-probe-rule-other"
 path = "src/probe_rule_other.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-probe-deep"
-path = "src/probe_deep.rs"
 test = false
 bench = false
 doctest = false
@@ -170,9 +163,3 @@ path = "src/group.rs"
 test = false
 bench = false
 doctest = false
-
-# 场景旗标 `sqware_fair` 由 `kernel/build.rs` 传给嵌套 cargo（见那个文件里那条照实记）；
-# 直连工作区编译（`cargo check --workspace --all-targets`）时没人传 ⇒ 在这里声明它的存在，
-# 免得吃一条 `unexpected_cfgs` 的警告。**探针 `probe-deep` 读它**（公平台上让不让手）。
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sqware_fair)'] }
