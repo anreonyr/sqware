@@ -35,18 +35,8 @@ pub enum Slot {
     Live { team: TeamId, rep: TaskId },
 }
 
-/// **怎么知道它起来了**——每个 Service 自己的一种，**登记时定死**。
-///
-/// 这一格不能一刀切：有的服务起来时会交回一条通道（那枚句柄的到达就是它的"我好了"），
-/// 有的**什么都不交**（比如只走调试面的回显——它没有通道可交）。它是这一行的属性，
-/// 不是调用 `start` 时的一个开关，故与名字、身子、状态同住一行。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Announce {
-    /// 它会交回一枚句柄 ⇒ 那枚到了才算起来。
-    Channel,
-    /// 它不宣布 ⇒ **放行即起来**（"起来了"= 它没死）。
-    None,
-}
+/// **怎么知道它起来了**——定义与理由见 [`env::assembly::Announce`]（本处只是转发，调用点不动）。
+pub use env::assembly::Announce;
 
 /// 表里的一行。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

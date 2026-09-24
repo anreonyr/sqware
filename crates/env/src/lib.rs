@@ -14,6 +14,7 @@
 // （读侧零分配）。`env` 仍在宿主上可编译——`alloc` 两边都有。
 extern crate alloc;
 
+pub mod assembly;
 pub mod ecall;
 pub mod fid;
 pub mod permission;

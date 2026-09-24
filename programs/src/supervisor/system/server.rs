@@ -2,7 +2,7 @@
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
-use env::{Mark, Name, Permission, PieToken, ProgramKind, TaskId};
+use env::{Mark, Name, PieToken, ProgramKind, TaskId};
 use runtime::core::tole::Tole;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
@@ -16,14 +16,8 @@ use crate::supervisor::service::Program;
 
 // ── 适配：原语（转发到运行时那几件）──────────────────────────
 
-/// 起跑前要交出去的一枚门闩：给哪一枚、多大权。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Grant {
-    /// 要交出去的那一枚（**在我表里**的句柄）。
-    pub token: PieToken,
-    /// 交出去的权限子集。
-    pub perm: Permission,
-}
+/// 起跑前要交出去的一枚门闩——定义见 [`env::assembly::Grant`]（本处只是转发）。
+pub use env::assembly::Grant;
 
 /// 起一个 Service。
 ///

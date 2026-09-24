@@ -49,8 +49,8 @@ use protocol::driver::supply::call::{Need, WANT_MAX, Want};
 use crate::supervisor::root::boot;
 use crate::supervisor::system::machine::Machine;
 
-/// 装配失败的编号：指"死在装配的哪一步"（沿用旧树那套小整数编号的意思）。
-pub type Died = usize;
+/// 装配失败的编号——定义见 [`env::assembly::Died`]（本处只是转发）。
+pub use env::assembly::Died;
 
 /// 身份服务在装配单上的名字：它一起好，本域就认下它的门牌，此后每条服务都在放行前拿到身份。
 ///
