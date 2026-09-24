@@ -52,17 +52,11 @@ use service::{Catalog, Program};
 mod scenario;
 
 
-/// 持树者那一条在清单里的名字。
-const TREE: &str = "operator";
-
-/// 身份服务那一条在清单里的名字（装配期"它一起好就补绑"认的就是这一格）。
-const PRINCIPAL: &str = "principal";
-
-/// 结盟服务那一条在清单里的名字。
-const COALITION: &str = "coalition";
-
-/// 盟友（结盟服务那位客人）在清单里的名字。
-const MEMBER: &str = "member";
+// **照实记（这里原先有四个名字常量：`TREE` / `PRINCIPAL` / `COALITION` / `MEMBER`）**：
+// 它们是"装配期认谁"的四个名字，而**认它们的是装配的机器**（`service::assemble` 里那三处
+// `p.name == …`），不是本文件。装配单搬去 `env::assembly` 那一刀之后，本文件只剩流程，
+// 这四个名字在这里**一个读者都没有**（编译期一直报 `never used`）——留着就是同一条事实
+// 写两处，故删。名字仍各自只有一处：住 `service.rs`（持树者那条在 `Plan::holds_tree` 上）。
 
 /// 结算两条上限（毫秒）：与引导域开会话、以及装配期的等。
 const BOOT_MS: usize = 1000;
@@ -107,7 +101,7 @@ extern "C" fn main() -> ! {
         Err(_) => service::die(service::E_TABLE, "system: no group"),
     };
     // **装配单从 `env::assembly` 派生**（`order` 那一格就是起手位次）。
-    let plan = scenario::plan();
+    let plan = scenario::plan(&catalog);
 
     for (i, p) in plan.iter().enumerate() {
         let Ok(lane) = mail::unseal_hole(Mark::of(&alloc::format!("gone-{}", p.name))) else {

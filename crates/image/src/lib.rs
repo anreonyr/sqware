@@ -32,17 +32,9 @@ fn root() -> PathBuf {
     at.canonicalize().unwrap_or(at)
 }
 
-/// 认得的场景名——**从装配单里收**，故不会与它脱节。
+/// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
 fn scenes() -> Vec<&'static str> {
-    let mut all: Vec<&'static str> = Vec::new();
-    for row in env::assembly::ALL {
-        for scene in row.scenes {
-            if !all.contains(scene) {
-                all.push(scene);
-            }
-        }
-    }
-    all
+    env::assembly::ENTRY.iter().map(|(s, _)| *s).collect()
 }
 
 /// 这一景要装的程序（**装配单按 `scenes` 过滤**；次序即装载次序）。
@@ -109,10 +101,14 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .iter()
         .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
         .collect();
+    // 引导镜像**按名字查**（不是"跟景同名"）：`product` 那一景的引导镜像仍是 `root`
+    // （见 `env::assembly::ENTRY` 那条照实记）。它必须在清单里——不在就是装配单写错了。
+    let entry = env::assembly::entry_of(scenario)
+        .ok_or_else(|| format!("initrd: 不认得的景 {scenario}（认得的：{}）", scenes().join(" / ")))?;
     let root_at = bins
         .iter()
-        .position(|(name, _)| *name == scenario)
-        .ok_or_else(|| format!("initrd: SQWARE_ROOT={scenario} 不在这一景的清单里"))?;
+        .position(|(name, _)| *name == entry)
+        .ok_or_else(|| format!("initrd: 景 {scenario} 的引导镜像 {entry} 不在这一景的清单里"))?;
     let blob = env::wire::manifest::pack(&items, root_at)
         .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
 

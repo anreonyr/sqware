@@ -20,7 +20,14 @@ use alloc::vec::Vec;
 
 use super::*;
 
-/// 默认那一景的装配单：**从 `env::assembly::ALL` 派生**——`plan: Some` 的那些行，按 `order` 排。
+/// 这一景的装配单：**从 `env::assembly::ALL` 派生**——`plan: Some` 的那些行里、**这张镜像真有的**
+/// 那些，按 `order` 排。
+///
+/// **照实记（为什么清单要从外面传进来）**：装配单是"本域认识的全部台"，镜像是"这一次真装了哪些"
+/// ——两者**不必相等**（`product` 那一景只有 7 台，五台探针与六位常客都不在里面）。从前按整张表起
+/// 之所以没出事，是因为验收镜像恰好装了表里每一条：那是**巧合**，不是契约。今天不相等了，而
+/// [`assemble`](super::service::assemble) 那一条契约（单子上每一条都必须在镜像里，缺一条报
+/// `E_PROGRAM`）**一个字都不改**——改的是**派生出哪张单**：单只取两边都有的那些。
 ///
 /// **照实记（这里原先有 18 个 `const fn` ＋一份次序）**：那时 `kernel/build.rs` 另有三张同名的
 /// 表（`PRODUCTS` / `PROBES` / `RIGS`），同一条事实写两处——名字、特权级、在不在表里都得改两遍。
@@ -45,10 +52,10 @@ use super::*;
 ///
 /// 三台驱动紧跟在身份服务之后、其余之前：控制器先就位，线再开闸（`uart` / `rtc` 持有那两台设备）。
 /// `sleeper` 排在 `lodger` 之后、`subject` 之前：它要找的那块门牌 `/device/rtc` 由 `rtc` 落。
-pub fn plan() -> Vec<Program> {
+pub fn plan(catalog: &Catalog) -> Vec<Program> {
     let mut rows: Vec<&env::assembly::Row> = env::assembly::ALL
         .iter()
-        .filter(|row| row.plan.is_some())
+        .filter(|row| row.plan.is_some() && catalog.find(row.name).is_some())
         .collect();
     rows.sort_by_key(|row| row.plan.as_ref().map(|p| p.order));
     rows.iter()

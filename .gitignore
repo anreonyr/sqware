@@ -11,15 +11,20 @@ docs/.obsidian/
 # 它是**缓存**不是源码：换台机器跑 `run.sh` 会自动重新拉。
 .cargo-home/
 # 那几台 crate 是**独立工作区**（被根 workspace `exclude`），故各自有一份 target——
-# 根上的 `/target` 只盖根目录那一份。**照实记**：`line-case` 那一行是补的——它第一次提交时
-# 漏了（114 个构建产物被带进索引），当场发现后从索引撤下、就地重做那一笔。
-crates/alloc-probe/target/
-# 编外的宿主靶（`crates/protocol-case` 那八台靶场、`crates/gate` 那一台门）：都是**不进工作区**
-# 的独立 crate，各自有自己的 `target/`。**照实记**：新加那两台时漏了这两行，`git add -A` 把
-# 703 个构建产物带进了索引（与上面那一次"114 个"同一条）——故这里改成一条**通配**，以后新开
-# 一台不必再记着加（`crates/gate` 因此不必单独写一行）：
-crates/*-case/target/
-crates/gate/target/
+# 根上的 `/target` 只盖根目录那一份。
+#
+# **照实记（这一格栽过三次，每次都是同一个形状：新开一台编外 crate、忘了加一行）**：
+#   · `crates/alloc-probe` —— 第一次提交就漏（**114** 个构建产物被带进索引）；
+#   · `crates/protocol-case` + `crates/gate` —— 两道门上来时又漏一次（**703** 个）；
+#   · `crates/image` —— "initrd 与 kernel 何干"那一刀搬出来的新 crate，再漏一次（**351** 个）。
+#
+# 第三次之后不再列名字：**一条通配盖所有编外 crate**（根 `Cargo.toml` 的 `exclude` 列了谁，
+# 这里就盖谁）。
+#
+# **照实记（上一次那句"改成一条通配"其实是假的）**：那一版写的是 `crates/*-case/target/`
+# 与 `crates/gate/target/` 两行**字面量**，注释却写着"通配、以后新开一台不必再记着加"。
+# 下一台（`crates/image`）当场证明了它不是通配——故这一次写的是真通配。
+crates/*/target/
 
 # **照实记**：这一行原先是给 `scripts/teeth.py`（一份 Python 量具）留的——它跑起来会在旁边落
 # 一份字节码缓存。那一门已经收进 `crates/gate/src/mutations.rs`（"完全消除测试脚本"那一刀），

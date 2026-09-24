@@ -89,6 +89,7 @@ checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 name = "gate"
 version = "0.1.0"
 dependencies = [
+ "env",
  "image",
  "regex",
  "serde_json",

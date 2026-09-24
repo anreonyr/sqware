@@ -96,6 +96,9 @@ impl Deadline {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scenario {
     Root,
+    /// **真正要发出去的那一景**（用户裁定"7 台"）：6 台服务 + `echo`，外加两个域 ⇒ 镜像 9 条。
+    /// 验收镜像仍是 [`Scenario::Root`]（它把表里每一条都装上）——这一景量的是"产品自己起不起得来"。
+    Product,
     Rig,
     Load,
     Group,
@@ -105,6 +108,7 @@ impl Scenario {
     fn name(self) -> &'static str {
         match self {
             Scenario::Root => "root",
+            Scenario::Product => "product",
             Scenario::Rig => "rig",
             Scenario::Load => "load",
             Scenario::Group => "group",

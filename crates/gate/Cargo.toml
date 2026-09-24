@@ -33,6 +33,10 @@ publish = false
 # ⇒ 默认走 `~/.cargo`，离线解得开。**换台机器若把 `CARGO_HOME` 指到 `.cargo-home`，这一格会
 # 当场解不开**——那是环境事实，不是本 crate 的事。
 image = { path = "../image" }
+# 产品那一门要**读回**那颗 `initrd.img` 的清单（"这一景真装了什么"），而清单格式的唯一定义处
+# 在 `env::wire::manifest`——不在这里抄一遍。`env` 是仓里**唯一两边都编得过**的那一个 crate
+# （宿主 + riscv），故它能被这一台（宿主）直接吃。
+env = { path = "../env" }
 regex = "1"
 # 变异那一门的账（`target/teeth-ledger.json`）：格式一个字没换，故旧账直接接着用。
 serde_json = "1"
