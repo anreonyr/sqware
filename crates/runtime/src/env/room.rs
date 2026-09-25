@@ -5,9 +5,16 @@ use core::time::Duration;
 
 use env::{EnvResult, Reason, RoomCall, RoomCallRet, TaskId, VirtAddr};
 
-pub fn starve() -> EnvResult<()> {
+/// 让出处理器。
+///
+/// **返 `()`，不返 `EnvResult`**：这一手在**内核里没有失败分支**——`RoomCall::Starve` 那一格
+/// 直接就是"切走"（`envcall/mod.rs`：`return current().starve()`），没有 `ret_err` 那一支。
+/// 从前它写着 `EnvResult<()>` 而函数体 `let _ = …call(); Ok(())`：**签名许诺了一个永不到来的
+/// 失败**，读签名的人会去写 `?`，而那是死代码。
+pub fn starve() {
+    // 唯一能答 `Err` 的是"这一问读不懂"（调用号不对）——那一格由**生成的**调用点排掉，
+    // 不是这一手的失败域（同 `Reap` 之后那句 `unreachable!` 的口径：破的是不变量，不是失败）。
     let _ = RoomCall::Starve.call();
-    Ok(())
 }
 
 /// 结束本任务：**原因码 + 可选的一句话**——全仓**唯一**的出口原语。
@@ -56,10 +63,14 @@ pub fn sleep(d: Duration) -> EnvResult<()> {
     if d.subsec_nanos() % 1_000_000 != 0 {
         millis += 1;
     }
-    let _ = RoomCall::Park {
+    // **`?`，不是 `let _ =`**：这一手**会失败**——内核那一格在"备料失败（内存耗尽）"时
+    // 当场答 `OoM`，而**本任务没挂起**（见 `envcall/mod.rs` 的 `Park` 那一支）。吞掉它
+    // 就是"答 `Ok` 而根本没睡"：调用方以为睡过了，实际是空转。要不要紧由**调用点**说
+    // （它们今天一律 `let _ =`）——那才是政策该在的地方。
+    RoomCall::Park {
         millis: millis.min(usize::MAX as u128) as usize,
     }
-    .call();
+    .call()?;
     Ok(())
 }
 
@@ -69,7 +80,9 @@ pub fn sleep(d: Duration) -> EnvResult<()> {
 /// 周期任务用它才不会漂：`next += period; sleep_until(next)?;` —— 迟到不累积。
 /// 与 [`sleep`] 的分工：那个是"至少睡这么久"（相对），这个是"到某个时刻再回来"（绝对）。
 pub fn sleep_until(at: u64) -> EnvResult<()> {
-    let _ = RoomCall::ParkUntil { at }.call();
+    // 同 [`sleep`]：**会失败**（`ParkUntil` 那一支同样会因备料失败答 `OoM`，而本任务没挂起）
+    // ⇒ 不吞。
+    RoomCall::ParkUntil { at }.call()?;
     Ok(())
 }
 
@@ -94,7 +107,8 @@ pub fn doom(task: TaskId) -> EnvResult<()> {
 }
 
 pub fn wait(key: usize, millis: Wait) -> EnvResult<()> {
-    let _ = RoomCall::Wait { key, millis }.call();
+    // 同 [`sleep`]：**会失败**（`Wait` 那一支的备料同样会答 `OoM`，而本任务没挂起）⇒ 不吞。
+    RoomCall::Wait { key, millis }.call()?;
     Ok(())
 }
 
