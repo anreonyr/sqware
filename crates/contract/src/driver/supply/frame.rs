@@ -1,22 +1,36 @@
-//! supply::frame — **形**（线上形状）：单子上的一条（[`Want`]）与收方那张 `const` 表里的一格（[`Need`]）、
-//! 单子与回单的编解、上限与状态码——一个字节都不在别处编
+//! supply::frame — **形**（线上形状）：单子（[`Order`]）与回单（[`Reply`]）、上限与状态码
+//!
+//! **照实记（这一份从前是什么样）**：单子与回单各有一对**自由函数**（`pack_order` /
+//! `unpack_order`、`pack_reply` / `unpack_reply`）、两个**借字节的视图**（`Order<'a>` /
+//! `Reply<'a>`）、一处手算的帧头（`HEAD_LEN`）——"多长、怎么写、怎么读"散在三处。今天收成报那一层
+//! 那两样：**一张头表**（`env::frame!` 求长）＋ **一个 `impl Message`**（编解一处）；尾巴那两段走
+//! `env::wire::{store_tail, fetch_tail}`。
+//!
+//! **照实记（这一族为什么不上船台）**：两端各有各的理由——
+//!
+//! · **客侧**（[`super::client::draw`]）住 `contract`：这一层看不见 `protocol` 的 `Slip`、也看不见
+//!   内核；它手里是会话核心那条泊位（`Pier::post` / `Pier::pull`）。
+//! · **服务侧**（`programs::root::supply::server`）那圈常驻循环要**分得开**"期限内没等到"（去探
+//!   对端还活着没有）与"读不懂"（答 `BAD`）——`Slip::land` 的 `None` 把这两件事盖成一格；而
+//!   `Pier::post` 自己管"两头还没齐"，`Slip::ship` 要一枚现成的孔。
+//!
+//! ⇒ 这一族的报文层**只有表与 `Message`**：编解一处定义，运输仍走泊位那两下手。
 //!
 //! 正文见 `protocol` 那一侧的 `driver/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
 
-use env::wire::Field;
-use env::{TaskId};
-use plan::{PAIR_LEN};
+use env::TaskId;
+use plan::{PAIR_LEN, Pair};
+
+use crate::message::Message;
 
 use super::core::Fail;
 
 /// 引导域↔编排域那条泊位的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
 pub const BOOT: &str = "boot";
 
-
-
-// **词汇搬去 `env` 了**（装配单要宿主侧也读得到，见 `plan::supply` 头注）：本处只转发，
+// **词汇搬去 `plan` 了**（装配单要宿主侧也读得到，见 `plan::supply` 头注）：本处只转发，
 // **调用点一行没改**。
-pub use plan::supply::{At, Kind, Need, Want, class_block};
+pub use plan::supply::{At, Kind, Need, WANT_LEN, Want, class_block};
 
 /// 单子的操作码。今天只有"供"这一枚——留着这一格，是为加动作时不必改帧的布局。
 pub const OP_SUPPLY: u8 = 1;
@@ -24,22 +38,12 @@ pub const OP_SUPPLY: u8 = 1;
 /// 一条单子最多要五样（今天的单子四样）。
 pub const WANT_MAX: usize = 5;
 
-/// 单子 / 回单的定长缓冲。
+/// 单子 / 回单的定长缓冲：**头 ＋ 上界那么多条**（一处求和）。
 ///
-/// **不是线格式的上限**：孔不预设上限（见 `env::fid::PieCall::UnsealHole`），这两个数
-/// 是本侧选"一帧一单、不流式"的结果。
-pub const WANT_LEN: usize = core::mem::size_of::<Want>();
-const _: () = assert!(WANT_LEN == 32);
-/// **各项之和就是它**——留一格隐式的尾巴，`want_bytes` 就会把未初始化字节读上线（见 `Want` 的注）。
-const _: () = assert!(core::mem::size_of::<Want>() == plan::KEY_LEN + 4 + 4 + 1 + 7);
-/// 帧头：`[op][条数]` + 那一格"给谁"。
-///
-/// **照实记（那个 `8` 退场）**：它从前写的是 `2 + 8`，注里跟着一句"（8 字节 LE，与
-/// `operator::tell` 同一口径）"——一条**"必须同值"的注释**。宽度归
-/// [`Field`](env::wire::Field) 给 [`TaskId`] 的那一对，故这里读的是同一个 `WIDTH`。
-const HEAD_LEN: usize = 2 + TaskId::WIDTH;
-pub const ORDER_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;
-pub const REPLY_CAP: usize = 2 + PAIR_LEN * WANT_MAX;
+/// **不是线格式的上限**：孔不预设上限（见 `env::fid::PieCall::UnsealHole`），这两个数是本侧选
+/// "一帧一单、不流式"的结果。
+pub const ORDER_CAP: usize = OrderHead::LEN + WANT_LEN * WANT_MAX;
+pub const REPLY_CAP: usize = ReplyHead::LEN + PAIR_LEN * WANT_MAX;
 
 /// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
@@ -51,126 +55,193 @@ pub const DENIED: u8 = 2;
 pub const FULL: u8 = 3;
 pub const BAD: u8 = 4;
 
+// ── 一单（问）───────────────────────────────────────────────
 
-
-/// 种类那一格的判别号（`Kind` 是 `repr(u8)`，故这就是线格式）。
-
-
-
-
-
-
-
-
-
-
-
-/// 起一张单子 → 帧。条数越界或缓冲不够 ⇒ `None`（调用方按本地失败处理）。
-pub fn pack_order<'a>(buf: &'a mut [u8], who: TaskId, wants: &[Want]) -> Option<&'a [u8]> {
-    let n = wants.len();
-    if n > WANT_MAX {
-        return None;
-    }
-    let len = HEAD_LEN + n * WANT_LEN;
-    let out = buf.get_mut(..len)?;
-    out[0] = OP_SUPPLY;
-    out[1] = n as u8;
-    who.store(&mut out[2..HEAD_LEN]);
-    for (i, w) in wants.iter().enumerate() {
-        let at = HEAD_LEN + i * WANT_LEN;
-        out[at..at + WANT_LEN].copy_from_slice(want_bytes(w));
-    }
-    Some(out)
-}
-
-/// 读一张单子。`None` = 帧读不懂（op 不对 / 条数越界 / 缓冲短）。
-pub fn unpack_order(bytes: &[u8]) -> Option<Order<'_>> {
-    if bytes.len() < HEAD_LEN || bytes[0] != OP_SUPPLY {
-        return None;
-    }
-    let n = bytes[1] as usize;
-    if n > WANT_MAX || bytes.len() < HEAD_LEN + n * WANT_LEN {
-        return None;
-    }
-    Some(Order { bytes })
-}
-
-/// 读出来的一张单子（借字节）。逐条 `read_unaligned`——缓冲只保证 1 字节对齐
-/// （与 `Pair` 同一条理由：线格式的步长是 32，而块只保证页对齐）。
-pub struct Order<'a> {
-    bytes: &'a [u8],
-}
-
-impl<'a> Order<'a> {
-    /// 这条单子是**给谁**的（那一格过线的号）。
+env::frame! {
+    /// 单子那三格头：**哪一动作**（今天只有 [`OP_SUPPLY`]）＋ 条数 ＋ **给谁**。
     ///
-    /// **它读得回来是既成事实，不是运气**：[`unpack_order`] 已经保证 `bytes.len() >= HEAD_LEN`，
-    /// 而这一格恰是 `TaskId::WIDTH` 字节 ⇒ `unwrap_or` 那一支**到不了**（答 0 = 不是号，与
-    /// `PieToken::NONE` 那 0 同一约定）。
-    pub fn who(&self) -> TaskId {
-        TaskId::fetch(&self.bytes[2..HEAD_LEN]).unwrap_or(TaskId::new(0))
+    /// 条数是**声明**：与后面那一段绑死（读的人两边对不上就是读不懂）。这一族一问只有这一形，
+    /// 故不留"未完"那一格（对照 coalition 那扇窗：盟籍没有上限）。
+    pub struct OrderHead {
+        op: u8,
+        count: u8,
+        who: TaskId,
     }
+}
 
-    pub fn len(&self) -> usize {
-        self.bytes[1] as usize
-    }
+/// **一张单子**：给谁 ＋ 至多 [`WANT_MAX`] 条（尾巴走 [`env::wire::store_tail`]）。
+#[derive(Clone, Copy)]
+pub struct Order {
+    who: TaskId,
+    len: usize,
+    wants: [Want; WANT_MAX],
+}
 
-    pub fn want(&self, i: usize) -> Option<Want> {
-        if i >= self.len() {
+impl Order {
+    /// 起一张单子。**条数越界 ⇒ `None`**（调用方按本地失败处置）。
+    ///
+    /// **照实记（"缓冲不够"那一格退场）**：从前 `pack_order` 还答一格"给的那只缓冲装不下"——
+    /// 今天缓冲就是这一族最长那一只（[`Message::Buf`]），装不下**不可表达**，故那一格没了。
+    pub fn of(who: TaskId, wants: &[Want]) -> Option<Order> {
+        let len = wants.len();
+        if len > WANT_MAX {
             return None;
         }
-        let at = HEAD_LEN + i * WANT_LEN;
-        // SAFETY: 区间由 `len()` 与 `unpack_order` 的长度校验保证在缓冲内；缓冲只保证
-        // 1 字节对齐，故 `read_unaligned`。
-        Some(unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().add(at).cast::<Want>()) })
+        let mut held = [Want::NONE; WANT_MAX];
+        held.get_mut(..len)?.copy_from_slice(wants);
+        Some(Order {
+            who,
+            len,
+            wants: held,
+        })
+    }
+
+    /// 这条单子是**给谁**的（那一格过线的号）。
+    pub fn who(&self) -> TaskId {
+        self.who
+    }
+
+    /// 几条。
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// 第 `i` 条（越界 ⇒ `None`）。
+    pub fn want(&self, i: usize) -> Option<Want> {
+        (i < self.len).then(|| self.wants[i])
     }
 }
 
-/// 编一张回单：一格状态 + 若干条 `Pair` 记录。
+impl Message for Order {
+    /// **写法与读法是同一个**：这一族一问只有一形。
+    type In = Order;
+    type Buf = [u8; ORDER_CAP];
+    const EMPTY: Self::Buf = [0u8; ORDER_CAP];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        let head = OrderHead {
+            op: OP_SUPPLY,
+            count: self.len as u8,
+            who: self.who,
+        };
+        let at = head.store_in(out)?;
+        env::wire::store_tail(out, at, &self.wants[..self.len])
+    }
+
+    /// 解一张单子：`op` 不对 / 条数越界 / **不够长** ⇒ `None`（不猜、不崩）。
+    ///
+    /// **照实记（"够长"就是问那一形的判据）**：从前 `unpack_order` 只要求
+    /// `len >= 头 ＋ n × 32`——长出来那几字节**不算**读不懂；而**回单**那一形要求**恰好**
+    /// （见 [`Reply`] 的 `fetch`）。两条都是旧判据，照抄，没改。
+    fn fetch(bytes: &[u8]) -> Option<Order> {
+        let head = OrderHead::fetch(bytes)?;
+        if head.op != OP_SUPPLY {
+            return None;
+        }
+        let len = head.count as usize;
+        if len > WANT_MAX {
+            return None;
+        }
+        let body = bytes.get(OrderHead::LEN..)?;
+        if body.len() < len * WANT_LEN {
+            return None;
+        }
+        let mut wants = [Want::NONE; WANT_MAX];
+        env::wire::fetch_tail(body, 0, &mut wants[..len])?;
+        Some(Order {
+            who: head.who,
+            len,
+            wants,
+        })
+    }
+}
+
+// ── 一答（回单）─────────────────────────────────────────────
+
+env::frame! {
+    /// 回单那头两格：**答话那一格**（[`OK`] / [`UNKNOWN`] / [`DENIED`] / [`FULL`] / [`BAD`]）
+    /// ＋ 条数。
+    pub struct ReplyHead {
+        code: u8,
+        count: u8,
+    }
+}
+
+/// **一张回单**：答话那一格 ＋ 至多 [`WANT_MAX`] 条记录（坐标 ＋ 号）。
 ///
-/// `records` 必须是整条记录（`PAIR_LEN` 步长），条数越界或缓冲不够 ⇒ `None`。
-pub fn pack_reply<'a>(buf: &'a mut [u8], code: u8, records: &[u8]) -> Option<&'a [u8]> {
-    if !records.len().is_multiple_of(PAIR_LEN) {
-        return None;
-    }
-    let n = records.len() / PAIR_LEN;
-    if n > WANT_MAX {
-        return None;
-    }
-    let out = buf.get_mut(..2 + records.len())?;
-    out[0] = code;
-    out[1] = n as u8;
-    out[2..].copy_from_slice(records);
-    Some(out)
+/// **照实记（记录为什么是 [`Pair`] 而不是字节）**：编那一侧手上就是 `Pair`（`port::ship` 交回
+/// 一枚号，见发货那一侧），读那一侧手上是字节——`Pair` 的那两个 `Field` 手是两者之间**唯一**
+/// 那一处（`repr(C)`、尺寸编译期锁死）。
+#[derive(Clone, Copy)]
+pub struct Reply {
+    code: u8,
+    len: usize,
+    pairs: [Pair; WANT_MAX],
 }
 
-/// 读一张回单：形状不对 ⇒ `None`（不猜、不崩）。
-pub fn unpack_reply(bytes: &[u8]) -> Option<Reply<'_>> {
-    let head = bytes.get(..2)?;
-    let n = head[1] as usize;
-    if n > WANT_MAX || bytes.len() != 2 + n * PAIR_LEN {
-        return None;
+impl Reply {
+    /// 编一张回单。**条数越界 ⇒ `None`**。
+    pub fn of(code: u8, records: &[Pair]) -> Option<Reply> {
+        let len = records.len();
+        if len > WANT_MAX {
+            return None;
+        }
+        let mut held = [Pair::NONE; WANT_MAX];
+        held.get_mut(..len)?.copy_from_slice(records);
+        Some(Reply {
+            code,
+            len,
+            pairs: held,
+        })
     }
-    Some(Reply { bytes })
-}
 
-/// 读出来的一张回单（借字节）。两格：**答话那一格**与**记录那一段**。
-///
-/// 与 [`Order`] 同一条形状：编解是**一对自由函数**（[`pack_reply`] / [`unpack_reply`]），
-/// 取格是**视图上的名词方法**——`_of` 后缀只留给"从裸字节里取一格"的查询。
-pub struct Reply<'a> {
-    bytes: &'a [u8],
-}
-
-impl<'a> Reply<'a> {
     /// 答话那一格（[`OK`] / [`UNKNOWN`] / [`DENIED`] / [`FULL`] / [`BAD`]）。
     pub fn code(&self) -> u8 {
-        self.bytes[0]
+        self.code
     }
 
-    /// 记录那一段——**就是原样交给客人的那一段**（整条记录，`PAIR_LEN` 步长）。
-    pub fn records(&self) -> &'a [u8] {
-        &self.bytes[2..]
+    /// 记录那一段（整条记录，`PAIR_LEN` 步长）。
+    pub fn records(&self) -> &[Pair] {
+        self.pairs.get(..self.len).unwrap_or(&[])
+    }
+}
+
+impl Message for Reply {
+    /// **写法与读法是同一个**：这一族一答只有一形。
+    type In = Reply;
+    type Buf = [u8; REPLY_CAP];
+    const EMPTY: Self::Buf = [0u8; REPLY_CAP];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        let head = ReplyHead {
+            code: self.code,
+            count: self.len as u8,
+        };
+        let at = head.store_in(out)?;
+        env::wire::store_tail(out, at, self.records())
+    }
+
+    /// 解一张回单：条数越界 / **帧长与条数对不上** ⇒ `None`（不猜、不崩）。
+    ///
+    /// **照实记（"恰好"就是答那一形的判据）**：从前 `unpack_reply` 要的是
+    /// `len == 2 ＋ n × PAIR_LEN`——**多一字节也是读不懂**（与问那一形的"够长"相对，见上）。
+    fn fetch(bytes: &[u8]) -> Option<Reply> {
+        let head = ReplyHead::fetch(bytes)?;
+        let len = head.count as usize;
+        if len > WANT_MAX {
+            return None;
+        }
+        let body = bytes.get(ReplyHead::LEN..)?;
+        if body.len() != len * PAIR_LEN {
+            return None;
+        }
+        let mut pairs = [Pair::NONE; WANT_MAX];
+        env::wire::fetch_tail(body, 0, &mut pairs[..len])?;
+        Some(Reply {
+            code: head.code,
+            len,
+            pairs,
+        })
     }
 }
 
@@ -190,20 +261,14 @@ pub const fn code_to_fail(code: u8) -> Option<Fail> {
 }
 
 crate::fail_codes! {
-    /// 本地失败域 → 线上状态码。`None`（没失败）⇒ `OK`——与下面那个 [`code_to_fail`] 的
+    /// 本地失败域 → 线上状态码。`None`（没失败）⇒ `OK`——与上面那个 [`code_to_fail`] 的
     /// `OK ⇒ None` 正好是同一格的两侧读法。
     ///
-    /// **本表不是双射**（`Local` 与 `Bad` 同归 `BAD`），故宏**不给反向**：反向由人写在下面，
+    /// **本表不是双射**（`Local` 与 `Bad` 同归 `BAD`），故宏**不给反向**：反向由人写在上面，
     /// 并注明它反不回来。
     lossy Fail; OK;
     Fail::Local | Fail::Bad => BAD,
     Fail::Unknown => UNKNOWN,
     Fail::Denied => DENIED,
     Fail::Full => FULL,
-}
-
-/// 单子上那一条的字节——与 [`pair_bytes`] 同一条理由（`repr(C)`、尺寸编译期锁死）。
-fn want_bytes(want: &Want) -> &[u8; WANT_LEN] {
-    // SAFETY: `Want` 是 `repr(C)`、尺寸由编译期断言等于 `WANT_LEN`，只读解释为字节安全。
-    unsafe { &*(want as *const Want).cast::<[u8; WANT_LEN]>() }
 }

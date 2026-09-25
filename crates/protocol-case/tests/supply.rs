@@ -24,10 +24,11 @@
 extern crate alloc;
 
 use contract::driver::supply::{core, frame as call};
+use contract::message::Message;
 
 use crate::call::{Kind, Need, Want};
 use crate::core::Fail;
-use env::{Access, Name, Policy, TaskId};
+use env::{Access, Name, PieToken, Policy, TaskId};
 use plan::Key;
 
 fn name(text: &str) -> Name {
@@ -69,110 +70,112 @@ fn a_want_carries_the_coordinate_the_kind_and_the_two_views() {
 fn an_order_frame_round_trips_with_its_count_and_who() {
     let who = TaskId::new(41);
     let wants = [want(Key::region(0x1000)), want(Key::irq())];
-    let mut buf = [0u8; crate::call::ORDER_CAP];
-    let frame = crate::call::pack_order(&mut buf, who, &wants).expect("装得下");
-    assert_eq!(frame.len(), 2 + 8 + 2 * crate::call::WANT_LEN);
-    assert_eq!(frame[0], crate::call::OP_SUPPLY);
-    assert_eq!(frame[1], 2, "条数那一格");
+    // **一处编**：头那三格（`op` / 条数 / 给谁）＋ 尾巴那一段。
+    let order = crate::call::Order::of(who, &wants).expect("两条不越界");
+    let mut buf = crate::call::Order::EMPTY;
+    let n = order.store(&mut buf).expect("装得下");
+    assert_eq!(n, 2 + 8 + 2 * crate::call::WANT_LEN);
+    assert_eq!(buf[0], crate::call::OP_SUPPLY);
+    assert_eq!(buf[1], 2, "条数那一格");
 
-    let order = crate::call::unpack_order(frame).expect("读得回来");
-    assert_eq!(order.who(), who);
-    assert_eq!(order.len(), 2);
+    let back = <crate::call::Order as Message>::fetch(&buf[..n]).expect("读得回来");
+    assert_eq!(back.who(), who);
+    assert_eq!(back.len(), 2);
     assert_eq!(
-        order.want(0).map(|w| w.key()),
+        back.want(0).map(|w| w.key()),
         Some(Some(Key::region(0x1000)))
     );
-    assert_eq!(order.want(1).map(|w| w.key()), Some(Some(Key::irq())));
-    assert!(order.want(2).is_none(), "越界的那一条没有");
-    assert!(order.want(1).is_some());
+    assert_eq!(back.want(1).map(|w| w.key()), Some(Some(Key::irq())));
+    assert!(back.want(2).is_none(), "越界的那一条没有");
+    assert!(back.want(1).is_some());
 }
 
 #[test]
 fn an_order_that_is_not_that_shape_is_not_guessed_at() {
-    let mut buf = [0u8; crate::call::ORDER_CAP];
-    let frame = crate::call::pack_order(&mut buf, TaskId::new(1), &[want(Key::region(8))]).unwrap();
-    let good = frame.to_vec();
+    let order = crate::call::Order::of(TaskId::new(1), &[want(Key::region(8))]).unwrap();
+    let mut buf = crate::call::Order::EMPTY;
+    let n = order.store(&mut buf).unwrap();
+    let good = buf[..n].to_vec();
 
     // 动作码不对 / 太短 / 条数说谎：三种都是"读不懂"。
     let mut wrong_op = good.clone();
     wrong_op[0] = 99;
-    assert!(crate::call::unpack_order(&wrong_op).is_none());
+    assert!(<crate::call::Order as Message>::fetch(&wrong_op).is_none());
     assert!(
-        crate::call::unpack_order(&good[..9]).is_none(),
+        <crate::call::Order as Message>::fetch(&good[..9]).is_none(),
         "连头都不到"
     );
     assert!(
-        crate::call::unpack_order(&good[..good.len() - 1]).is_none(),
+        <crate::call::Order as Message>::fetch(&good[..good.len() - 1]).is_none(),
         "短一字节"
     );
     let mut liar = good.clone();
     liar[1] = 3; // 说有三条，可帧里只有一条
-    assert!(crate::call::unpack_order(&liar).is_none(), "条数说谎");
+    assert!(
+        <crate::call::Order as Message>::fetch(&liar).is_none(),
+        "条数说谎"
+    );
 
-    // 编的时候：条数越界 / 缓冲不够 ⇒ `None`（调用方按本地失败处理，不是 panic）。
+    // 编的时候：**条数越界 ⇒ `None`**（调用方按本地失败处理，不是 panic）。
     let many: Vec<Want> = (0..crate::call::WANT_MAX + 1)
         .map(|i| want(Key::region(8 + i as u64)))
         .collect();
-    let mut big = [0u8; crate::call::ORDER_CAP + crate::call::WANT_LEN];
     assert!(
-        crate::call::pack_order(&mut big, TaskId::new(1), &many).is_none(),
+        crate::call::Order::of(TaskId::new(1), &many).is_none(),
         "条数越界"
     );
-    let mut small = [0u8; 16];
-    assert!(
-        crate::call::pack_order(&mut small, TaskId::new(1), &[want(Key::region(8))]).is_none(),
-        "缓冲不够"
-    );
+    // **照实记（"缓冲不够 ⇒ None"那一格退场）**：从前 `pack_order` 还吃一只**调用方的缓冲**、
+    // 装不下答 `None`；今天缓冲就是这一族最长那一只（`Message::Buf`）⇒ 那一格**不可表达**。
 }
 
 #[test]
 fn a_reply_frame_round_trips_and_refuses_a_ragged_record_block() {
     use plan::{PAIR_LEN, Pair};
 
-    let records = {
-        let a = Pair::bytes(Key::region(0x1000), 3);
-        let b = Pair::bytes(Key::irq(), 4);
-        [a.as_slice(), b.as_slice()].concat()
-    };
-    let mut buf = [0u8; crate::call::REPLY_CAP];
-    let frame = crate::call::pack_reply(&mut buf, crate::call::OK, &records).expect("装得下");
-    assert_eq!(frame.len(), 2 + 2 * PAIR_LEN);
-    assert_eq!(frame[1], 2, "记录条数那一格");
-    // 先拷出来：`frame` 借着那只缓冲，后面还要再编两张。
-    let good = frame.to_vec();
+    // 编那一侧手上是 `Pair`（不是字节）——`port::ship` 交回的是一枚号。
+    let records = [
+        Pair::new(Key::region(0x1000), PieToken::mint(3)),
+        Pair::new(Key::irq(), PieToken::mint(4)),
+    ];
+    let reply = crate::call::Reply::of(crate::call::OK, &records).expect("两条不越界");
+    let mut buf = crate::call::Reply::EMPTY;
+    let n = reply.store(&mut buf).expect("装得下");
+    assert_eq!(n, 2 + 2 * PAIR_LEN);
+    assert_eq!(buf[1], 2, "记录条数那一格");
+    let good = buf[..n].to_vec();
 
-    let reply = crate::call::unpack_reply(&good).expect("读得回来");
-    assert_eq!(reply.code(), crate::call::OK);
-    assert_eq!(reply.records(), &records[..], "记录那一段原样交回");
+    let back = <crate::call::Reply as Message>::fetch(&good).expect("读得回来");
+    assert_eq!(back.code(), crate::call::OK);
+    assert_eq!(back.records(), &records[..], "记录那一段原样交回");
 
-    // **一条记录是 `PAIR_LEN` 步长**：零头那一块不许编（也不许读）。
-    let mut buf2 = [0u8; crate::call::REPLY_CAP];
+    // **一条记录是 `PAIR_LEN` 步长**：零头那一块不许编。
+    // **照实记（"零头"那一格换了落点）**：从前它落在 `pack_reply`（收的是**字节**，故要自己
+    // 检查"整条"）；今天编那一侧收的是 `[Pair]` ⇒ 零头**不可表达**，同一句话只剩读那一侧的
+    // "帧长与条数对不上"（下面那几句）。
+    let too_many = [Pair::NONE; crate::call::WANT_MAX + 1];
     assert!(
-        crate::call::pack_reply(&mut buf2, crate::call::OK, &records[..PAIR_LEN - 1]).is_none(),
-        "零头"
-    );
-    let mut too_many = alloc::vec![0u8; PAIR_LEN * (crate::call::WANT_MAX + 1)];
-    too_many.fill(7);
-    let mut buf3 = [0u8; crate::call::REPLY_CAP];
-    assert!(
-        crate::call::pack_reply(&mut buf3, crate::call::OK, &too_many).is_none(),
+        crate::call::Reply::of(crate::call::OK, &too_many).is_none(),
         "条数越界"
     );
 
     // 读的时候长度必须与条数对得上。
     assert!(
-        crate::call::unpack_reply(&good[..good.len() - 1]).is_none(),
+        <crate::call::Reply as Message>::fetch(&good[..good.len() - 1]).is_none(),
         "短一字节"
     );
     let mut liar = good.clone();
     liar[1] = 1;
-    assert!(crate::call::unpack_reply(&liar).is_none(), "条数说谎");
-    assert!(crate::call::unpack_reply(&[]).is_none(), "空帧");
+    assert!(
+        <crate::call::Reply as Message>::fetch(&liar).is_none(),
+        "条数说谎"
+    );
+    assert!(<crate::call::Reply as Message>::fetch(&[]).is_none(), "空帧");
     // 答话是**失败**码时形状照旧（那一格由调用方读）。
-    let mut buf4 = [0u8; crate::call::REPLY_CAP];
-    let failed = crate::call::pack_reply(&mut buf4, crate::call::DENIED, &[]).unwrap();
+    let failed = crate::call::Reply::of(crate::call::DENIED, &[]).unwrap();
+    let mut buf2 = crate::call::Reply::EMPTY;
+    let m = failed.store(&mut buf2).unwrap();
     assert_eq!(
-        crate::call::unpack_reply(failed).map(|r| (r.code(), r.records().len())),
+        <crate::call::Reply as Message>::fetch(&buf2[..m]).map(|r| (r.code(), r.records().len())),
         Some((crate::call::DENIED, 0))
     );
 }

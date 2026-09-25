@@ -16,6 +16,7 @@
 //! `const` 造出来；线上那一条是 [`Want`]（`repr(C)` + 定长字段，尺寸即线格式）。
 
 use crate::key::Key;
+use env::wire::Field;
 use env::{Access, Policy};
 use env::{NAME_LEN, Name};
 
@@ -72,9 +73,9 @@ pub struct Need {
 ///
 /// `repr(C)` + 定长字段 ⇒ 尺寸即线格式（编译期断言锁死），与 `Pair` 同一条纪律。
 ///
-/// **留白 7 字节是明的**（`kind` 之后）：它把记录填满 32——**不许有隐式尾巴**。`want_bytes`
-/// 按整条读，隐式留白就是**未初始化字节上线**（照实记：坐标从 32 字节的名字块换成 16 字节的
-/// `Key` 之后，对齐从 4 跳到 8，尾巴那 4 字节是这么冒出来的；补一格明的就没了）。
+/// **留白 7 字节是明的**（`kind` 之后）：它把记录填满 32——**不许有隐式尾巴**。那一格是要整条按
+/// 字节搬的（见下面的 `Field`），隐式留白就是**未初始化字节上线**（照实记：坐标从 32 字节的名字块
+/// 换成 16 字节的 `Key` 之后，对齐从 4 跳到 8，尾巴那 4 字节是这么冒出来的；补一格明的就没了）。
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Want {
@@ -126,6 +127,43 @@ impl Want {
     /// 形态**原样**读出；"剔掉 `VEST`"是发货那一侧（`protocol::driver::supply`）的事。
     pub fn policy(&self) -> Option<Policy> {
         Policy::from_bits(self.policy)
+    }
+}
+
+/// 单子上一条的宽度：**尺寸即线格式**（`repr(C)` ＋ 定长字段 ＋ 一格明的留白）。
+pub const WANT_LEN: usize = size_of::<Want>();
+
+/// **各项之和就是它**——若留一格隐式的尾巴，整条按字节搬就会把未初始化字节读上线（见 [`Want`] 的注）。
+const _: () = assert!(WANT_LEN == 32);
+const _: () = assert!(WANT_LEN == crate::key::KEY_LEN + 4 + 4 + 1 + 7);
+
+/// 线上那一条的那一格（单子那一段尾巴要 `T: Field`，见 `contract::driver::supply::frame`）。
+///
+/// **照实记（为什么可以整条按字节搬）**：[`Want`] 是 `repr(C)`、尺寸由上面那两条编译期断言钉死，
+/// 而且**各字段之和 == 尺寸**（没有隐式留白）⇒ 按字节写满、按字节读回都合法。这一手从前散在
+/// `contract` 那一侧（`want_bytes` 的只读视图 ＋ `Order::want` 里的 `read_unaligned`）——今天收在
+/// 类型自己身上（"impl 跟着类型走"）。
+impl Field for Want {
+    const WIDTH: usize = WANT_LEN;
+
+    fn store(&self, out: &mut [u8]) {
+        // SAFETY: 同上（`repr(C)`、无隐式留白、字段全是 POD）。
+        let raw = unsafe { &*(self as *const Want).cast::<[u8; WANT_LEN]>() };
+        out.copy_from_slice(raw);
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        let raw = bytes.get(..WANT_LEN)?;
+        let mut want = Want::NONE;
+        // SAFETY: 同 `store`；`copy_nonoverlapping` 把那 `WANT_LEN` 字节写满。
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                raw.as_ptr(),
+                (&mut want as *mut Want).cast::<u8>(),
+                WANT_LEN,
+            );
+        }
+        Some(want)
     }
 }
 

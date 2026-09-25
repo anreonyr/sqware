@@ -4,13 +4,12 @@
 
 use env::Wait;
 use env::{PieToken};
-use plan::{Key, PAIR_LEN, Pair};
+use plan::{Key, Pair};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
 
-use contract::driver::supply::frame::{
-    BAD, Kind, OK, Order, WANT_MAX, fail_to_code, pack_reply, unpack_order,
-};
+use contract::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
+use contract::message::Message;
 use protocol::driver::supply::core::Fail;
 use protocol::session::Pier;
 
@@ -22,16 +21,17 @@ use protocol::session::Pier;
 /// - **逐条进行**：第 i 条不成即停（`Err`）。前面已经授出的**留在对端**——它们已经归
 ///   对端了，本层不回滚（回滚要 `Revoke`，那是另一个动作；调用方按 `code` 处置）。
 /// - **形态照请求，唯独 `VEST` 一律剔掉**：固件不发"再授出的权"。
+///
+/// **照实记（"记录缓冲装不下"那一格退场）**：那一格从前是
+/// `records.len() < n × PAIR_LEN ⇒ Full`——今天 `records` 恰好是 [`WANT_MAX`] 条，而条数不越界
+/// 由 [`Order`] 那一侧（`fetch`）保证 ⇒ 装不下**不可表达**，那一格没了。
 pub fn supply(
-    order: &Order<'_>,
+    order: &Order,
     src_of: impl Fn(Key) -> Option<PieToken>,
-    records: &mut [u8],
+    records: &mut [Pair; WANT_MAX],
 ) -> Result<usize, Fail> {
     let who = order.who();
     let n = order.len();
-    if records.len() < n * PAIR_LEN {
-        return Err(Fail::Full);
-    }
     for i in 0..n {
         let want = order.want(i).ok_or(Fail::Bad)?;
         let key = want.key().ok_or(Fail::Bad)?;
@@ -44,8 +44,7 @@ pub fn supply(
             Kind::Nole => port::ship(&NolePie::from_token(src), who, access, form),
         }
         .map_err(|_| Fail::Denied)?;
-        let pair = Pair::new(key, at.seed());
-        records[i * PAIR_LEN..(i + 1) * PAIR_LEN].copy_from_slice(pair_bytes(&pair));
+        records[i] = Pair::new(key, at.seed());
     }
     Ok(n)
 }
@@ -68,7 +67,8 @@ pub fn serve(
 ) {
     /// 探活周期（毫秒）：一次超时 = 一次探活。对端活着时这一等就是**空等**。
     const WAIT_MS: usize = 1000;
-    let mut records = [0u8; PAIR_LEN * WANT_MAX];
+    // 记录那一格：至多 [`WANT_MAX`] 条（条数不越界由 `Order` 那一侧保证）。
+    let mut records = [Pair::NONE; WANT_MAX];
     loop {
         let Ok(n) = pier.pull(ask, Wait::AtMost(WAIT_MS)) else {
             if !alive() {
@@ -76,11 +76,14 @@ pub fn serve(
             }
             continue;
         };
-        let code = match ask.get(..n).and_then(unpack_order) {
+        let code = match ask.get(..n).and_then(<Order as Message>::fetch) {
             Some(order) => match supply(&order, &src_of, &mut records) {
                 Ok(k) => {
-                    if let Some(frame) = pack_reply(out, OK, &records[..k * PAIR_LEN]) {
-                        let _ = pier.post(frame);
+                    // 回一张：**一处编**（头那两格 ＋ 记录那一段）。
+                    if let Some(reply) = Reply::of(OK, &records[..k]) {
+                        if let Some(m) = reply.store(out) {
+                            let _ = pier.post(&out[..m]);
+                        }
                     }
                     continue;
                 }
@@ -88,15 +91,10 @@ pub fn serve(
             },
             None => BAD,
         };
-        if let Some(frame) = pack_reply(out, code, &[]) {
-            let _ = pier.post(frame);
+        if let Some(reply) = Reply::of(code, &[]) {
+            if let Some(m) = reply.store(out) {
+                let _ = pier.post(&out[..m]);
+            }
         }
     }
-}
-
-/// 一条记录的字节：**坐标 + 号**——尺寸由 `Pair` 自己锁死，这里只是一次只读的
-/// 字节视图（`Pair` 是 `repr(C)`，内容即线格式）。
-pub(crate) fn pair_bytes(pair: &Pair) -> &[u8; PAIR_LEN] {
-    // SAFETY: `Pair` 是 `repr(C)`、尺寸由编译期断言等于 `PAIR_LEN`，只读解释为字节安全。
-    unsafe { &*(pair as *const Pair).cast::<[u8; PAIR_LEN]>() }
 }

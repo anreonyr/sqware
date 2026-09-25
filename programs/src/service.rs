@@ -580,13 +580,12 @@ fn wire(
     }
 
     // 一枚一枚要：条数就在那张表里，本层不抄"要几样"。
-    let mut ask = [0u8; supply::ORDER_CAP];
+    // **编单子那只缓冲在 `draw` 里头**（一族最长那一只，见 `Message::Buf`）——这一层只备收的那一只。
     let mut reply = [0u8; supply::REPLY_CAP];
     let records = supply::client::draw(
         root,
         task,
         &wants[..needs.len()],
-        &mut ask,
         &mut reply,
         Wait::AtMost(READY_MS),
     )

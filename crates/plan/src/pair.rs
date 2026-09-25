@@ -18,6 +18,7 @@
 
 use crate::key::{KEY_LEN, Key};
 use env::PieToken;
+use env::wire::Field;
 
 /// 一条记录的字面字节数（`KEY_LEN` + 8）。
 pub const PAIR_LEN: usize = KEY_LEN + size_of::<usize>();
@@ -37,6 +38,13 @@ pub struct Pair {
 const _: () = assert!(size_of::<Pair>() == PAIR_LEN);
 
 impl Pair {
+    /// 空的一条：填数组用（坐标那一格是判废的判别号 ⇒ [`Pair::key`] 一律答 `None`，
+    /// 故 `token` 那一格是什么都不影响读侧——与 `Want::NONE` 同一条口径）。
+    pub const NONE: Pair = Pair {
+        key: Key::NONE,
+        token: PieToken::NONE,
+    };
+
     /// 造一条（root 侧）：坐标已定，号已到手。
     pub fn new(key: Key, token: PieToken) -> Self {
         Self { key, token }
@@ -65,5 +73,35 @@ impl Pair {
     /// 该门闩在**本任务**表里的句柄。
     pub const fn token(&self) -> PieToken {
         self.token
+    }
+}
+
+/// 记录的那一格（回单那一段尾巴要 `T: Field`，见 `contract::driver::supply::frame`）。
+///
+/// **照实记（为什么可以整条按字节搬）**：[`Pair`] 是 `repr(C)`、尺寸由上面那条编译期断言钉死、
+/// 字段全是 POD ⇒ 按字节写满、按字节读回都合法。这一手从前散在三处（`programs` 那侧的
+/// `pair_bytes` 只读视图、`grant::each` 与 `supply::client::pick` 里的 `read_unaligned`）——
+/// 今天收在类型自己身上（"impl 跟着类型走"）。
+impl Field for Pair {
+    const WIDTH: usize = PAIR_LEN;
+
+    fn store(&self, out: &mut [u8]) {
+        // SAFETY: 同上（`repr(C)`、尺寸断言锁死、字段全是 POD）。
+        let raw = unsafe { &*(self as *const Pair).cast::<[u8; PAIR_LEN]>() };
+        out.copy_from_slice(raw);
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        let raw = bytes.get(..PAIR_LEN)?;
+        let mut pair = Pair::NONE;
+        // SAFETY: 同 `store`；`copy_nonoverlapping` 把那 `PAIR_LEN` 字节写满。
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                raw.as_ptr(),
+                (&mut pair as *mut Pair).cast::<u8>(),
+                PAIR_LEN,
+            );
+        }
+        Some(pair)
     }
 }
