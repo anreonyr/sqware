@@ -31,6 +31,10 @@
 //!          [0] status   [1 .. 9] 号                       —— 号（`land` / `part` / `seek`，定长 9）
 //! ```
 //!
+//! **答那一侧四种形状在线上分不开**（都以状态那一格起头，而"名"那一条是变长的：**长度即
+//! 名长**）⇒ 收进来的那一面是**原样的字节**（[`Said`]），由**问的人**按自己问的那一条读；
+//! 编的那一面是 [`Rep`]（五种编法：一格状态 / 一串号 / 一枚名字 / 坐标 / 门闩）。
+//!
 //! **问话一个动作一条形状**（不再是"一帧定长、尾格含义由 op 定"）：荷载收什么，帧里就写什么
 //! ——没有一个"报法"字段可以填错，也没有第二个意思可读。最长的仍是 `Road` 那一条
 //! （[`REQ_LEN`]，路封顶 [`Operator::ROAD_MAX`] 段），其余都落在十到五十字节。
@@ -48,7 +52,7 @@
 //! 是几号"），报文里走的只是"种在持树者表里的号"。两个编号空间不同源，互相拿错正是旧树
 //! `[33..41]` 那一格的病。
 //!
-//! **答话有四种形状、各有各的上界**，服务端按 [`REPLY_MAX`] 备一只缓冲。
+//! **答话有四种形状、各有各的上界**，船台那只缓冲按 [`REP_LEN`] 备（最大那一形）。
 
 use env::Mark;
 use env::{Name, PieToken, TaskId};
@@ -147,32 +151,16 @@ pub use super::judge::Rule;
 /// 是字段表求和（`LEN`），`Road` 那一格是 [`env::wire::store_tail`] 交回的游标。
 pub const REQ_LEN: usize = RoadHead::LEN + Operator::ROAD_MAX * env::wire::NAME_LEN;
 
-/// 一帧「列」的答话：`[0] status [1] 条数 [2 ..] 号`（每条 8 字节）。
+/// 一答的**上限**：四种答形里最大的那一形（`[status][条数][号…]`）。一条 `Pane` 本来就不超过
+/// [`Operator::PANE_CAP`] 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
+/// 没有上限，故那里必须带一格"未完"）。
 ///
-/// 一条 pane 本来就不超过 [`Operator::PANE_CAP`] 条 ⇒ **一趟答得完，没有"未完"那一格**
-/// （对照 `coalition` 那一侧：盟籍没有上限，故那里必须带一格"未完"）。
-pub const LIST_REPLY_LEN: usize = 2 + Operator::PANE_CAP * 8;
+/// 船台那只缓冲就是它（[`Message::Buf`]）；另两形都短于它——编译期钉住（`名` 那一形最长是
+/// 状态 ＋ `NAME_LEN - 1` 个字节，`号` 那一形是状态 ＋ 8）。
+pub const REP_LEN: usize = 2 + Operator::PANE_CAP * 8;
 
-/// 一帧「名」的答话：`[0] status [1 ..] 名字`——**长度即名长**（变长就落在这一条上）。
-///
-/// 名字内容最多 `NAME_LEN - 1` 字节（要留终止 NUL，见 `env::wire::Name`）⇒ 整帧不超过
-/// `NAME_LEN`。
-///
-/// **不用"一条空消息"说"没有这个号"**：核里 `msg.len() >= 1`（空不是消息），
-/// 故那一格仍由状态字节说。
-pub const NAME_REPLY_LEN: usize = 1 + (env::wire::NAME_LEN - 1);
-
-/// 一帧「号」的答话：`[0] status [1 .. 9] 号`——**定长 9**（`land` / `part` / `seek` 答的那一格）。
-///
-/// 与「名」那一帧同一个道理：号是**数据**，故成败都写在这一帧里；但号不是变长的，
-/// 故长度是死的 9——多一字节、少一字节都是读不懂（[`BAD`]）。
-pub const ID_REPLY_LEN: usize = 1 + 8;
-
-/// 答话那一侧的上界：**服务端只备这一只缓冲**（四种答形里最大的那个）。
-pub const REPLY_MAX: usize = LIST_REPLY_LEN;
-
-const _: () = assert!(NAME_REPLY_LEN <= REPLY_MAX);
-const _: () = assert!(ID_REPLY_LEN <= REPLY_MAX);
+const _: () = assert!(Status::LEN + (env::wire::NAME_LEN - 1) <= REP_LEN);
+const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= REP_LEN);
 
 // 那几枚偏移常量（`AT_ROOT` / `AT_ID` / `NAME_AT` / `TAIL_AT` / `LAND_FRAME`）随字段表一起退场：
 // "记"归 [`Where`] 自己的 `Field`（它住 `core.rs`——impl 跟着类型走），其余几个数由各张表求和
@@ -423,7 +411,7 @@ impl Message for Req<'_> {
 // 写一遍那九个字节——写者与读者分居文件两头，**错一处编得过**，症状要等那一帧被读成"读不懂"
 // 才显形。今天这三件事各只有一处：`Where` / `Name` / `Rule` 各自的 `Field`。
 
-// ── 答：一串号 / 一枚名字 / 一枚号 ───────────────────────────
+// ── 答：一格状态 / 一串号 / 一枚名字 / 一枚号 ─────────────────
 
 /// 一帧「列」的读数：号最多 [`Operator::PANE_CAP`] 枚。
 ///
@@ -432,7 +420,7 @@ impl Message for Req<'_> {
 /// 必须带 `more`，并因此把格子存成 `[Option<T>; CAP]`（泛型 + `const new` 造不出 `T` 的占位，
 /// 而零号是**真格子**，不能拿它当空）；**一条 pane 本来就有顶**（[`Operator::PANE_CAP`]）⇒
 /// "还没完"这件事在这一族**不存在**，带 `more` 就是一格**恒假**的字段。故两处各留一个，
-/// **帧形也跟着**（`LIST_REPLY_LEN` 无"未完"、`SEQ_REPLY_LEN` 有）。
+/// **帧形也跟着**（[`Tally`] 无"未完"、`SEQ_REPLY_LEN` 有）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Listing {
     ids: [EntryId; Operator::PANE_CAP],
@@ -448,18 +436,34 @@ impl Listing {
         }
     }
 
+    /// 收一串（**收够 [`Operator::PANE_CAP`] 枚就停**：一条 pane 本来就不超过它）。
+    ///
+    /// **照实记（它替掉了 `pack_list` 那一手）**：从前编那一侧直接往缓冲里写（`2 + n * 8`
+    /// 那几个偏移）；现在编的是**这一枚容器**，落字节归 [`Tally`] 与 [`env::wire::store_tail`]。
+    pub fn of(ids: impl Iterator<Item = EntryId>) -> Listing {
+        let mut listing = Listing::new();
+        for id in ids.take(Operator::PANE_CAP) {
+            listing.push(id);
+        }
+        listing
+    }
+
     /// 按号序（就是帧里的次序）走一遍。
     ///
     /// **照实记（这一份只剩这一个读面）**：原先还有 `len` / `is_empty` / `get` 三格——
     /// `is_empty` / `get` **全仓零用家**，`len` 只被宿主靶的 `judge` 靶用过（`back.len()`），
-    /// 而生产路径（`echo` 的读数、`pack_list`）与靶都只走 `iter()` ⇒ 三格都删掉，靶里那一处
-    /// 改写成 `iter().count()`。要"几枚"就问这一句。
+    /// 而生产路径（`echo` 的读数）与靶都只走 `iter()` ⇒ 三格都删掉，靶里那一处改写成
+    /// `iter().count()`。要"几枚"就问这一句。
     pub fn iter(&self) -> impl Iterator<Item = EntryId> + '_ {
         self.ids[..self.n].iter().copied()
     }
 
-    /// 收一枚。**满了就丢**：一条 pane 本来就不超过 [`Operator::PANE_CAP`] 枚，
-    /// 故这一格（`pack_list` 收够就停）不该被走到。
+    /// 那一段号——**编那一侧要它**（`store_tail` 走的是一条切片，不是一个迭代器）。
+    pub fn as_slice(&self) -> &[EntryId] {
+        &self.ids[..self.n]
+    }
+
+    /// 收一枚。**满了就丢**：一条 pane 本来就不超过 [`Operator::PANE_CAP`] 枚。
     fn push(&mut self, id: EntryId) {
         if let Some(slot) = self.ids.get_mut(self.n) {
             *slot = id;
@@ -468,112 +472,208 @@ impl Listing {
     }
 }
 
-/// 把一串号编成一帧答话（写进服务端那只缓冲），返**帧长**（= `2 + 8 × 枚数`）。
-///
-/// `ids` 收够 [`Operator::PANE_CAP`] 枚就停：一条 pane 本来就不超过它。
-pub fn pack_list(out: &mut [u8; REPLY_MAX], ids: impl Iterator<Item = EntryId>) -> usize {
-    let mut n = 0;
-    for id in ids.take(Operator::PANE_CAP) {
-        let at = 2 + n * 8;
-        out[at..at + 8].copy_from_slice(&id.to_bytes());
-        n += 1;
+// ── 答那一侧的三张字段表（四种答形共用它们）──────────────────
+
+env::frame! {
+    /// **头一格**：状态。它自己就是"一格状态"那一形（六格失败与"门外那两格"都走它），也是另外
+    /// 三形的起头。
+    pub struct Status {
+        status: u8,
     }
-    out[0] = OK;
-    out[1] = n as u8;
-    2 + n * 8
 }
 
-/// 解开一帧「列」：答话那一格不是 [`OK`] ⇒ `Err(那一格)`（读的人先看它，再看号）。
-///
-/// **帧长即条数**的对偶面：长度必须恰好 `2 + 8 × 条数`，短一字节即读不懂（[`BAD`]）。
-pub fn read_list(bytes: &[u8]) -> Result<Listing, u8> {
-    let Some((&code, rest)) = bytes.split_first() else {
-        return Err(BAD);
-    };
-    if code != OK {
-        return Err(code);
+env::frame! {
+    /// 「列」那一形的**头两格**：状态 ＋ **条数**（后面跟着那么多个号——那是尾巴，走
+    /// [`env::wire::store_tail`]）。
+    ///
+    /// **这一格的条数与帧长绑死**（读的人两边对不上就判读不懂），故它**不是** `Road` 那一格
+    /// 的条数（那里的条数是**声明**，允许大于实际带的）——两句不同的话，故各说各的。
+    pub struct Tally {
+        status: u8,
+        count: u8,
     }
-    let Some((&count, body)) = rest.split_first() else {
-        return Err(BAD);
-    };
-    let count = count as usize;
-    if count > Operator::PANE_CAP || body.len() != count * 8 {
-        return Err(BAD);
-    }
-    let mut listing = Listing::new();
-    for chunk in body.chunks_exact(8) {
-        let mut raw = [0u8; 8];
-        raw.copy_from_slice(chunk);
-        listing.push(EntryId::from_bytes(raw));
-    }
-    Ok(listing)
 }
 
-/// 把一枚名字编成一帧答话（写进服务端那只缓冲），返**帧长**（= `1 + 名字内容长度`：
-/// 长度即名长）。
-pub fn pack_name(out: &mut [u8; REPLY_MAX], name: Name) -> usize {
-    out[0] = OK;
-    let text = name.text();
-    out[1..1 + text.len()].copy_from_slice(text);
-    1 + text.len()
-}
-
-/// 解开一帧「名」：答话那一格不是 [`OK`] ⇒ `Err(那一格)`。
-///
-/// 名字读不懂（空 / 太长 / 含 NUL / 不是 UTF-8）⇒ `Err(BAD)`：`Name` 那一侧的四格失败域
-/// 在这里**归一格**——问的人能做的补救是同一件（这一帧坏了，重问）。
-pub fn read_name(bytes: &[u8]) -> Result<Name, u8> {
-    let Some((&code, text)) = bytes.split_first() else {
-        return Err(BAD);
-    };
-    if code != OK {
-        return Err(code);
+env::frame! {
+    /// 「号」那一形：`[status][8 字节]`——**定长 9**（`part` / `seek` 答坐标、`find` 答门闩，
+    /// 线上逐字同形）。
+    ///
+    /// **照实记（这一格的类型为什么是裸 8 字节）**：两个号空间（[`EntryId`] / [`PieToken`]）
+    /// 在这一格上分不开，故字段表不假装它是哪一枚——读面见 [`Said::entry`] / [`Said::seed`]。
+    pub struct Word {
+        status: u8,
+        word: [u8; 8],
     }
-    Name::from_slice(text).map_err(|_| BAD)
 }
 
-/// 把一枚号编成一帧答话（写进服务端那只缓冲），返**帧长**（= [`ID_REPLY_LEN`]）。
+/// **一答的形状**——答有四种：一格状态 / 一串号 / 一枚名字 / 一枚号。
 ///
-/// 号那一侧**不校验"还在不在"**：持树者答出来的那一枚是刚从树里取的，客侧读到的就是它。
-pub fn pack_id(out: &mut [u8; REPLY_MAX], id: EntryId) -> usize {
-    out[0] = OK;
-    out[1..1 + 8].copy_from_slice(&id.to_bytes());
-    ID_REPLY_LEN
+/// **照实记（名字）**：这一族从前是 `pack_list` / `pack_name` / `pack_id` / `pack_seed` 四枚
+/// 自由函数（外加 `read_list` / `read_name` / `read_id` 三枚）。用户裁定这一族用
+/// `Req` / `Wire` / `Rep`，而答的**读**那一面叫 [`Said`]——故这里是新生的名字，不是改名。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rep {
+    /// 一格状态（成功 / 六格失败 / 门外那两格）——**没有任何荷载**。
+    Status(u8),
+    /// `list` 的下场：一串号。
+    List(Listing),
+    /// `name` 的下场：一枚名字（**长度即名长**）。
+    Name(Name),
+    /// `part` / `seek` 的下场：那一格**坐标**。
+    Entry(EntryId),
+    /// `find` 的下场：那一格是"我给你的那一枚**在你表里**是几号"（[`PieToken`]）。
+    ///
+    /// **与 [`Rep::Entry`] 同形不同物**（都是 `[OK][8 字节]`）而**另起一格、不复用**：两枚号
+    /// 类型不同，混用就是把"树的坐标"与"你表里的门闩"当成一件事。
+    ///
+    /// **照实记（这一格为什么在帧里）**：从前 `find` 只答一格状态，客人拿到 `OK` 之后还得**扫
+    /// 自己的表**按"谁给的"把那一枚认回来（`operator::take`）。而号本来就在持树者手上
+    /// ——`port::ship` 的 `to.seed()`，原先被 `.map(|_| ())` 扔掉——故随答话一起过来，客人拿它
+    /// 一次 `Reserve` 就验得完。代价照实记：**答话丢了一趟，那一枚号也跟着丢**（今天还能靠扫表
+    /// 侥幸认回来）——与 rtc / principal / coalition 那三面同一个取舍。
+    Seed(PieToken),
 }
 
-/// 把**回信孔那一格**编成一帧答话（`find` 的下场）：与 [`pack_id`] **同形不同物**——
-/// 都是 `[OK][8 字节]`（[`ID_REPLY_LEN`]），但那一枚号是"我给你的那一枚**在你表里**是几号"
-/// （`PieToken`），不是 `EntryId`。故**另起一名、不复用** `pack_id`：两枚号类型不同，混用
-/// 就是把"树的坐标"与"你表里的门闩"当成一件事。
+/// **收进来的一答**：**原样的字节** ＋ 四个读法。
 ///
-/// **照实记（这一格为什么在帧里）**：从前 `find` 只答一格状态，客人拿到 `OK` 之后还得**扫
-/// 自己的表**按"谁给的"把那一枚认回来（`operator::take`）。而号本来就在持树者手上
-/// ——`port::ship` 的 `to.seed()`，原先被 `.map(|_| ())` 扔掉——故随答话一起过来，
-/// 客人拿它一次 `Reserve` 就验得完。代价照实记：**答话丢了一趟，那一枚号也跟着丢**（今天
-/// 还能靠扫表侥幸认回来）——与 rtc / principal / coalition 那三面同一个取舍。
-pub fn pack_seed(out: &mut [u8; REPLY_MAX], seed: PieToken) -> usize {
-    out[0] = OK;
-    out[1..1 + 8].copy_from_slice(&seed.to_bytes());
-    ID_REPLY_LEN
+/// **照实记（答这一侧为什么不像问那一侧那样"一个类型说形状"）**：四种答形**在线上分不开**
+/// ——`[OK][条数][号…]`、`[OK][名字]`、`[OK][8 字节]` 都以状态那一格起头，而"名"那一条是变长的
+/// （**长度即名长**：没有终止符、也没有条数）。分得开它们的是**问的人**——他问的是哪一条自己
+/// 知道。故这一枚把字节原样收下，四个读法各按一形解；**形状不对 ⇒ [`BAD`]**（与从前那三枚
+/// `read_*` 同一个判据，只是收在了一处）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Said {
+    buf: [u8; REP_LEN],
+    len: usize,
 }
 
-/// 解开一帧「号」：答话那一格不是 [`OK`] ⇒ `Err(那一格)`。
-///
-/// **长度必须恰好 9**（对照 [`read_list`]）：短一字节是残帧、长一字节是多出来的东西——
-/// 两种都读不懂（[`BAD`]）。
-pub fn read_id(bytes: &[u8]) -> Result<EntryId, u8> {
-    let Some((&code, body)) = bytes.split_first() else {
-        return Err(BAD);
-    };
-    if code != OK {
-        return Err(code);
+impl Said {
+    /// 这一条答的字节。
+    fn bytes(&self) -> &[u8] {
+        self.buf.get(..self.len).unwrap_or(&[])
     }
-    if body.len() != 8 {
-        return Err(BAD);
+
+    /// 那一格状态（四种答形的头一格都是它）。
+    ///
+    /// 空帧（连状态都没有）⇒ [`BAD`]——核里空不是消息，故这一格只防"读法被用错"。
+    pub fn code(&self) -> u8 {
+        self.bytes().first().copied().unwrap_or(BAD)
     }
-    let mut raw = [0u8; 8];
-    raw.copy_from_slice(body);
-    Ok(EntryId::from_bytes(raw))
+
+    /// 按「号」那一形读（`land` / `part` / `seek` 的下场）：`[status][8 字节]` → **坐标**。
+    ///
+    /// 状态不是 [`OK`] ⇒ `Err(那一格码)`；不是那一形（长度不对）⇒ `Err(BAD)`。
+    pub fn entry(&self) -> Result<EntryId, u8> {
+        Ok(EntryId::from_bytes(self.word()?))
+    }
+
+    /// 按「门闩」那一形读（`find` 的下场）：同一形状 → **你表里的那一枚号**。
+    pub fn seed(&self) -> Result<PieToken, u8> {
+        PieToken::from_bytes(&self.word()?).ok_or(BAD)
+    }
+
+    /// 「号」那一形里的那 8 字节（上面两个读法共用的那一格）。
+    fn word(&self) -> Result<[u8; 8], u8> {
+        let code = self.code();
+        if code != OK {
+            return Err(code);
+        }
+        let bytes = self.bytes();
+        if bytes.len() != Word::LEN {
+            return Err(BAD);
+        }
+        Ok(Word::fetch(bytes).ok_or(BAD)?.word)
+    }
+
+    /// 按「名」那一形读（`name` 的下场）：`[status][名字]` → 一枚名字。
+    ///
+    /// 名字读不懂（空 / 太长 / 含 NUL / 不是 UTF-8）⇒ `Err(BAD)`：`Name` 那一侧的四格失败域
+    /// 在这里**归一格**——问的人能做的补救是同一件（这一帧坏了，重问）。
+    pub fn name(&self) -> Result<Name, u8> {
+        let code = self.code();
+        if code != OK {
+            return Err(code);
+        }
+        let bytes = self.bytes();
+        let text = env::wire::fetch_bytes(bytes, Status::LEN).ok_or(BAD)?;
+        Name::from_slice(text).map_err(|_| BAD)
+    }
+
+    /// 按「列」那一形读（`list` 的下场）：`[status][条数][号…]` → 一串号。
+    ///
+    /// **帧长即条数**：条数与剩下那些字节对不上（或条数超过 [`Operator::PANE_CAP`]）⇒
+    /// `Err(BAD)`——短一字节也是它。
+    pub fn list(&self) -> Result<Listing, u8> {
+        let code = self.code();
+        if code != OK {
+            return Err(code);
+        }
+        let bytes = self.bytes();
+        let head = Tally::fetch(bytes).ok_or(BAD)?;
+        let count = head.count as usize;
+        if count > Operator::PANE_CAP {
+            return Err(BAD);
+        }
+        let body = bytes.get(Tally::LEN..).ok_or(BAD)?;
+        let mut ids = [EntryId::new(0); Operator::PANE_CAP];
+        let end = env::wire::fetch_tail(body, 0, &mut ids[..count]).ok_or(BAD)?;
+        if end != body.len() {
+            return Err(BAD);
+        }
+        Ok(Listing::of(ids[..count].iter().copied()))
+    }
+}
+
+impl Message for Rep {
+    /// 收的那一面是 [`Said`]（**原样的字节**——形状由问的人认，见它的照实记）。
+    type In = Said;
+    /// 这一族的缓冲：**最大那一形**（[`REP_LEN`]）。
+    type Buf = [u8; REP_LEN];
+    const EMPTY: Self::Buf = [0u8; REP_LEN];
+
+    /// 编进 `out`：状态由形状给（不在别处再写一遍），变长那两段交给 `env::wire` 的两个尾巴。
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        match *self {
+            Rep::Status(code) => Status { status: code }.store_in(out),
+            Rep::List(list) => {
+                let ids = list.as_slice();
+                let head = Tally {
+                    status: OK,
+                    count: ids.len() as u8,
+                };
+                head.store_in(out)?;
+                env::wire::store_tail(out, Tally::LEN, ids)
+            }
+            Rep::Name(name) => {
+                let at = Status { status: OK }.store_in(out)?;
+                env::wire::store_bytes(out, at, name.text())
+            }
+            Rep::Entry(id) => Word {
+                status: OK,
+                word: id.to_bytes(),
+            }
+            .store_in(out),
+            Rep::Seed(seed) => Word {
+                status: OK,
+                word: seed.to_bytes(),
+            }
+            .store_in(out),
+        }
+    }
+
+    /// 收一条：**原样收下**（空帧、或长过这一族的缓冲 ⇒ `None`）。形状不在这里判——
+    /// 见 [`Said`] 的照实记。
+    fn fetch(bytes: &[u8]) -> Option<Said> {
+        if bytes.is_empty() {
+            return None;
+        }
+        let mut buf = [0u8; REP_LEN];
+        buf.get_mut(..bytes.len())?.copy_from_slice(bytes);
+        Some(Said {
+            buf,
+            len: bytes.len(),
+        })
+    }
 }
 
 // ── 协调那一帧（**装配者 → 持树者**，不是门外那一问）──────────

@@ -190,7 +190,7 @@ fn main() -> Result<(), env::Reason> {
 
 /// 找控制台：`FIND /device/uart`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///
-/// 找到之后那一枚**从会话里**进本域表，而**它在本域表里的号随答话回来**（[`ocall::pack_seed`]）
+/// 找到之后那一枚**从会话里**进本域表，而**它在本域表里的号随答话回来**（[`ocall::Rep::Seed`]）
 /// ——故这一趟不必认"哪一份"，号就是这一趟自己那一枚（次序那件事见本文件头注的照实记）。
 fn find_console(link: &Quay, talk: PieToken) -> Option<HolePie> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
@@ -284,7 +284,7 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         Err(code) => (code, false),
     };
     // **`got` 换了来路**（乙′）：从前是"扫本端表、按'谁给的'认出一枚"，今天是"答话里带回了
-    // 那一格"——判据由持树者那侧一次 `Reserve` 验过（见 `ocall::pack_seed`）。
+    // 那一格"——判据由持树者那侧一次 `Reserve` 验过（见 `ocall::Rep::Seed`）。
     // 拿号问名——这一格**下一步就被剪掉**，故号与名都得赶在 `trim` 之前取。
     let pname = plate
         .ok()

@@ -39,7 +39,7 @@ pub use name::{NAME_LEN, Name, NameError};
 /// 字段 ↔ usize 的契约。
 pub mod field;
 
-pub use field::{Field, fetch_tail, store_tail};
+pub use field::{Field, fetch_bytes, fetch_tail, store_bytes, store_tail};
 
 pub trait Wire: Sized {
     /// 把自身 pack 进 `s`，游标 `i` 前进一格。

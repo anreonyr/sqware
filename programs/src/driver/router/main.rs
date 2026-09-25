@@ -535,7 +535,7 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
         },
         Err(code) => (code, false),
     };
-    // **`got` 换了来路**（乙′）：见 `ocall::pack_seed` 的照实记。
+    // **`got` 换了来路**（乙′）：见 `ocall::Rep::Seed` 的照实记。
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()

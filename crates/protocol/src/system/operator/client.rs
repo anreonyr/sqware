@@ -78,14 +78,14 @@ fn me() -> Result<TaskId, Fail> {
 /// 客侧第二步（内里那一手）：**编好的一问推上去，收一句答**。
 ///
 /// 问话推 `say`（[`ask_hole`] 铸的那一枚，持树者读），答话从本端这条树路读（持树者写）。
-/// 返**收到的帧长**；答话那一格在 `reply[0]`。缓冲由调用方给，故四种答形都走这里。
+/// 返**收进来的那一答**（[`ocall::Said`]）——**形状由问的人自己读**（答的四种形状在线上分不开，
+/// 见 `Said` 的照实记：他问的是哪一条，他自己知道）。
 fn ask_out(
     say: PieToken,
     link: &Quay,
     ask: ocall::Req<'_>,
-    reply: &mut [u8],
     millis: Wait,
-) -> Result<usize, Fail> {
+) -> Result<ocall::Said, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 发：装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
@@ -94,8 +94,10 @@ fn ask_out(
         .load(ask)
         .ship()
         .map_err(|_| Fail::Unknown)?;
-    // 收：答话那一侧还走老路（**四种答形各有各的上界**，故缓冲由调用方给）——那一半在下一刀。
-    pier.pull(reply, millis).map_err(|_| Fail::Unknown)
+    // 收：答话走本端这条树路——与板那一族同一个形状（`Slip::<Rep>::seal(pier.hole()).land(..)`）。
+    Slip::<ocall::Rep>::seal(pier.hole())
+        .land(millis)
+        .ok_or(Fail::Unknown)
 }
 
 /// 客侧第二步（**落**）：在 `at` 那一块 `Pane` 里给 `name` 贴一枚 `Tile`；答**那一格自己的号**。
@@ -122,8 +124,7 @@ pub fn land(
     millis: Wait,
 ) -> Result<EntryId, u8> {
     let shipped = ocall::ship(entry, host).map_err(|_| ocall::BAD)?;
-    let mut reply = [0u8; ocall::ID_REPLY_LEN];
-    let n = ask_out(
+    ask_out(
         say,
         link,
         ocall::Req::Land {
@@ -133,11 +134,10 @@ pub fn land(
             rule,
             mine,
         },
-        &mut reply,
         millis,
     )
-    .map_err(|_| ocall::BAD)?;
-    ocall::read_id(&reply[..n])
+    .map_err(|_| ocall::BAD)?
+    .entry()
 }
 
 /// 客侧第二步（**分**）：在 `at` 那一块 `Pane` 里给 `name` 放一块空 `Pane`；答那一格自己的号。
@@ -148,14 +148,13 @@ pub fn part(
     name: Name,
     millis: Wait,
 ) -> Result<EntryId, u8> {
-    let mut reply = [0u8; ocall::ID_REPLY_LEN];
-    let n = ask_out(say, link, ocall::Req::Part { at, name }, &mut reply, millis)
-        .map_err(|_| ocall::BAD)?;
-    ocall::read_id(&reply[..n])
+    ask_out(say, link, ocall::Req::Part { at, name }, millis)
+        .map_err(|_| ocall::BAD)?
+        .entry()
 }
 
 /// 客侧第二步（**寻**）：把那一号背后那一枚 Pie 要过来——它经会话授进本端表，而
-/// **它在本端表里的号随这条答话回来**（[`ocall::pack_seed`]），故客人不必再扫表。
+/// **它在本端表里的号随这条答话回来**（[`ocall::Rep::Seed`]），故客人不必再扫表。
 ///
 /// 返 `(状态, 那一格)`：状态是 [`ocall::OK`] 时第二格必有号；其余状态（查不到 / 被拒 /
 /// 授不出去）第二格是 `None`——**不是"零号"**，是"这一趟没有可用的那一格"。
@@ -171,21 +170,21 @@ pub fn find(
     id: EntryId,
     millis: Wait,
 ) -> Result<(u8, Option<PieToken>), Fail> {
-    let mut reply = [0u8; ocall::ID_REPLY_LEN];
-    let n = ask_out(say, link, ocall::Req::Find(id), &mut reply, millis)?;
-    if reply[0] != ocall::OK {
-        return Ok((reply[0], None));
+    let said = ask_out(say, link, ocall::Req::Find(id), millis)?;
+    match said.code() {
+        // 成功那一格必然带着那一枚（[`ocall::Rep::Seed`]）：长度不是那个形状 = 读不懂 ⇒
+        // 与"没走到"同一格（`Ok((码, None))` 说的只是"那一位不在"那一类）。
+        ocall::OK => said
+            .seed()
+            .map(|seed| (ocall::OK, Some(seed)))
+            .map_err(|_| Fail::Unknown),
+        code => Ok((code, None)),
     }
-    // 成功那一格必然带着那一枚（`pack_seed`）：长度不是那个形状 = 读不懂 ⇒ 与"没走到"同一格。
-    let seed = PieToken::from_bytes(reply.get(1..n).unwrap_or(&[])).ok_or(Fail::Unknown)?;
-    Ok((ocall::OK, Some(seed)))
 }
 
 /// 客侧第二步（**剪**）：把那一号剪掉。答一格状态（[`ocall::OK`] = 剪掉了）。
 pub fn trim(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<u8, Fail> {
-    let mut reply = [0u8; 1];
-    ask_out(say, link, ocall::Req::Trim(id), &mut reply, millis)?;
-    Ok(reply[0])
+    Ok(ask_out(say, link, ocall::Req::Trim(id), millis)?.code())
 }
 
 /// 客侧第二步（**列**）：看那一块 `Pane` 里有哪些**号**（[`Where::Root`] = 根那一层）。
@@ -193,9 +192,9 @@ pub fn trim(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<u8,
 /// 答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`：这一条的答案体是数据，码不能当成功值带回来
 /// （对照 [`find`]：那一档的码本身就是答案）。一推一读之间读不动 / 迟了 ⇒ [`ocall::BAD`]。
 pub fn list(say: PieToken, link: &Quay, at: Where, millis: Wait) -> Result<Listing, u8> {
-    let mut reply = [0u8; ocall::LIST_REPLY_LEN];
-    let n = ask_out(say, link, ocall::Req::List(at), &mut reply, millis).map_err(|_| ocall::BAD)?;
-    ocall::read_list(&reply[..n])
+    ask_out(say, link, ocall::Req::List(at), millis)
+        .map_err(|_| ocall::BAD)?
+        .list()
 }
 
 /// 客侧第二步（**译**）：按一条路问"那一格是几号"——**间接寻址那一手**。
@@ -203,19 +202,18 @@ pub fn list(say: PieToken, link: &Quay, at: Where, millis: Wait) -> Result<Listi
 /// 答话是号那一形（`[0] status [1 .. 9] 号`）：答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`。
 /// 拿到号之后同一条路就不必再念了——其余那几条一律按号走（名字只到这一格为止）。
 pub fn seek(say: PieToken, link: &Quay, road: &[Name], millis: Wait) -> Result<EntryId, u8> {
-    let mut reply = [0u8; ocall::ID_REPLY_LEN];
-    let n =
-        ask_out(say, link, ocall::Req::Road(road), &mut reply, millis).map_err(|_| ocall::BAD)?;
-    ocall::read_id(&reply[..n])
+    ask_out(say, link, ocall::Req::Road(road), millis)
+        .map_err(|_| ocall::BAD)?
+        .entry()
 }
 
 /// 客侧第二步（**名**）：这枚号此刻叫什么。
 ///
 /// 名字**在答话那一侧**（问话里只有号）——长短由那一帧说。
 pub fn name(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<Name, u8> {
-    let mut reply = [0u8; ocall::NAME_REPLY_LEN];
-    let n = ask_out(say, link, ocall::Req::Name(id), &mut reply, millis).map_err(|_| ocall::BAD)?;
-    ocall::read_name(&reply[..n])
+    ask_out(say, link, ocall::Req::Name(id), millis)
+        .map_err(|_| ocall::BAD)?
+        .name()
 }
 
 // 照实记（删掉的一处：这一面的 `take`）：它从前在这儿——`find` 只答一格状态，客人于是要

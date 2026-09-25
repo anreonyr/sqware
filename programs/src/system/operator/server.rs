@@ -18,7 +18,7 @@ use protocol::system::operator::gate::{Code, Control, verdict};
 use protocol::system::operator::judge::{Id, Rule};
 use protocol::system::operator::ledger::{Key, Ledger};
 pub use protocol::system::operator::{ASK_MARK, LINK, TIP_MARK};
-use protocol::system::operator::{EntryId, Fail, Operator, Where};
+use protocol::system::operator::{EntryId, Fail, Listing, Operator, Where};
 use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
 
@@ -417,32 +417,31 @@ fn serve_one(
     // 取不出的消息（见 `Slip::land_in` 的照实记与 `probe-bound` 第四条——这一门正是那一格
     // 从前量过的地方）。
     let decoded = Slip::<ocall::Req<'_>>::seal(ask).land_in(buf, Wait::POLL);
-    let mut reply = [0u8; ocall::REPLY_MAX];
-    let said = answer(tree, decoded, guest.who(), session, book, &mut reply);
-    let _ = mail::HolePie::from_token(guest.reply()).push(&reply[..said]);
+    let said = answer(tree, decoded, guest.who(), session, book);
+    // 答一句：**形状由 [`ocall::Rep`] 说**——装与发都不在这一层写字节（那四种答形在线上分不开，
+    // 故读的那一面由问的人认，见 [`ocall::Said`] 的照实记）。
+    let _ = Slip::<ocall::Rep>::seal(guest.reply()).load(said).ship();
 }
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。
 ///
-/// **形状由 [`ocall::Wire`] 说**（收帧那一侧已经按动作解好了）：解不出来就是一句读不懂的帧
-/// （不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）。返**帧长**——答案写进
-/// 调用方那只缓冲（[`ocall::REPLY_MAX`]）。
+/// **形状由 [`ocall::Wire`] 说**（收帧那一侧已经按动作解好了），**答由 [`ocall::Rep`] 说**：
+/// 解不出来就是一句读不懂的帧（不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）。
 fn answer(
     tree: &mut Operator,
     ask: Option<ocall::Wire>,
     who: TaskId,
     session: Option<&Session>,
     book: &mut Book,
-    out: &mut [u8; ocall::REPLY_MAX],
-) -> usize {
+) -> ocall::Rep {
     // 空帧 / 长度不对 / 表外的动作码：读不懂（答 `BAD`）。
     let Some(ask) = ask else {
-        return status(out, ocall::BAD);
+        return ocall::Rep::Status(ocall::BAD);
     };
     // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那几条原语也各有这条判据）。
     if let ocall::Wire::Road(_, count) = ask {
         if count > Operator::ROAD_MAX {
-            return status(out, ocall::FULL);
+            return ocall::Rep::Status(ocall::FULL);
         }
     }
     // **门外那一问**：两条会**交出权柄 / 毁掉别人那一格**的原语先过门禁——`find`（把那一枚
@@ -469,16 +468,16 @@ fn answer(
             let rule = book.rule(Key::Id(id), |id| fresh(tree, id));
             let ruling = may(tree, session, who, rule);
             if !ruling.passed() {
-                return status(out, ruling.wire());
+                return ocall::Rep::Status(ruling.wire());
             }
         }
         ocall::Wire::Trim(id) => {
             if !book.claimable(Key::Id(id), who, |id| fresh(tree, id)) {
-                return status(out, ocall::DENIED);
+                return ocall::Rep::Status(ocall::DENIED);
             }
             let ruling = may(tree, session, who, Rule::Public);
             if !ruling.passed() {
-                return status(out, ruling.wire());
+                return ocall::Rep::Status(ruling.wire());
             }
         }
         // **`land` 也要先问身份**（与 `find`/`trim` 同一道门）：它虽然不动别人的格子，
@@ -488,7 +487,7 @@ fn answer(
         ocall::Wire::Land { .. } => {
             let ruling = may(tree, session, who, Rule::Public);
             if !ruling.passed() {
-                return status(out, ruling.wire());
+                return ocall::Rep::Status(ruling.wire());
             }
         }
         _ => {}
@@ -509,7 +508,7 @@ fn answer(
             // ——故那一刻手里只有坐标。见 [`Book`] 那段照实记（第一版按号查，真机上把这一道
             // 判据整个跳过去了）。
             if !book.claimable(Key::At(at, name), who, |id| fresh(tree, id)) {
-                return status(out, ocall::DENIED);
+                return ocall::Rep::Status(ocall::DENIED);
             }
             // **一问一动**：要位 → 落树 → 记账全在 [`Ledger::land`] 里，漏不掉中间那一步。
             // 账上记的那一枚是**落树那一刻挂上去的**（`entry`）：`mine = false` 是**放弃归属**
@@ -518,8 +517,8 @@ fn answer(
             return match book.land(at, name, entry, rule, mine, who, || {
                 tree.land(at, name, entry)
             }) {
-                Ok(id) => ocall::pack_id(out, id),
-                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+                Ok(id) => ocall::Rep::Entry(id),
+                Err(fail) => ocall::Rep::Status(ocall::fail_to_code(Some(fail))),
             };
         }
         ocall::Wire::Part { at, name } => {
@@ -529,14 +528,14 @@ fn answer(
                     // ——那一格已经不是"放 Pie 的那一格"了，故账上那一行要销掉。
                     // （漏了也不会答错：`fresh` 那一次对真相兜着；这只是不让账留一条陈的。）
                     book.drop(id);
-                    ocall::pack_id(out, id)
+                    ocall::Rep::Entry(id)
                 }
-                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+                Err(fail) => ocall::Rep::Status(ocall::fail_to_code(Some(fail))),
             };
         }
         // 查到就**把树上那一份转授给客人**：Pie 本身不从报文里走，从会话里走；而
-        // **它在客人表里的号**从这条答话里走（`pack_seed`）——客人拿它一次 `Reserve` 就
-        // 认得出，不必扫自己的表（见 [`ocall::pack_seed`] 的照实记）。
+        // **它在客人表里的号**从这条答话里走（[`ocall::Rep::Seed`]）——客人拿它一次 `Reserve`
+        // 就认得出，不必扫自己的表（见 [`ocall::Rep::Seed`] 的照实记）。
         // "查不到"与"授不出去"是两件事，故查的结论优先：`said` 先答，其次才轮到 `grant`。
         ocall::Wire::Find(id) => {
             let mut seed = None;
@@ -551,10 +550,10 @@ fn answer(
             // 三步都成 ⇒ 答 `[OK][那一格]`；任何一步没成 ⇒ 照旧一格状态（不猜）。
             let fail = said.err().or(grant.err());
             return match (fail, seed) {
-                (None, Some(seed)) => ocall::pack_seed(out, seed),
-                (Some(fail), _) => status(out, ocall::fail_to_code(Some(fail))),
+                (None, Some(seed)) => ocall::Rep::Seed(seed),
+                (Some(fail), _) => ocall::Rep::Status(ocall::fail_to_code(Some(fail))),
                 // 授成功却没拿到号：这是内核契约破了（`ship` 的成功值就是那一格），不猜。
-                (None, None) => status(out, ocall::BAD),
+                (None, None) => ocall::Rep::Status(ocall::BAD),
             };
         }
         ocall::Wire::Trim(id) => {
@@ -568,31 +567,25 @@ fn answer(
         // **三条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
         ocall::Wire::List(at) => {
             return match tree.list(at) {
-                Ok(ids) => ocall::pack_list(out, ids),
-                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+                Ok(ids) => ocall::Rep::List(Listing::of(ids)),
+                Err(fail) => ocall::Rep::Status(ocall::fail_to_code(Some(fail))),
             };
         }
         ocall::Wire::Name(id) => {
             return match tree.name(id) {
-                Ok(name) => ocall::pack_name(out, name),
-                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+                Ok(name) => ocall::Rep::Name(name),
+                Err(fail) => ocall::Rep::Status(ocall::fail_to_code(Some(fail))),
             };
         }
         // **译号那一档**：名字只能走到这里——拿到号之后，其余原语一律按号走。
         ocall::Wire::Road(road, count) => {
             return match tree.seek(&road[..count.min(Operator::ROAD_MAX)]) {
-                Ok(id) => ocall::pack_id(out, id),
-                Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
+                Ok(id) => ocall::Rep::Entry(id),
+                Err(fail) => ocall::Rep::Status(ocall::fail_to_code(Some(fail))),
             };
         }
     };
-    status(out, ocall::fail_to_code(said.err()))
-}
-
-/// 一格状态的答：写进 `out` 的第一格，返 1。
-fn status(out: &mut [u8; ocall::REPLY_MAX], code: u8) -> usize {
-    out[0] = code;
-    1
+    ocall::Rep::Status(ocall::fail_to_code(said.err()))
 }
 
 /// 转授来的那一枚答话路（**写端**，落在本表里）。

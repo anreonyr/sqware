@@ -63,6 +63,22 @@ impl Field for bool {
     }
 }
 
+/// **8 个裸字节也算一格**：写什么读什么，**含义归族说**（树那一族答话里"那一格号"就是它
+/// ——`part` / `seek` 读成**坐标**、`find` 读成**门闩**，线上逐字同形）。
+///
+/// **照实记（为什么不拿 `PieToken` / `EntryId` 当这一格的类型）**：那是**两个号空间**，而这一格
+/// 装不下"是哪一种"这条信息；拿其中一枚当类型，就把"问的是哪一条"写进了字段表——而它由
+/// **问的人**认（他自己知道）。与 [`u8`] 那一格同一条口径：`Field` 只管这一格多宽、怎么落字节。
+impl Field for [u8; 8] {
+    const WIDTH: usize = 8;
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(self);
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        bytes.get(..8)?.try_into().ok()
+    }
+}
+
 impl Field for TaskId {
     const WIDTH: usize = 8;
     fn store(&self, out: &mut [u8]) {
@@ -96,14 +112,19 @@ impl Field for Name {
     }
 }
 
-// ── 尾巴：**数得出来的一段** ────────────────────────────────
+// ── 尾巴：**变长那一段**（两种）──────────────────────────────
 //
 // 定长那一支由 `frame!` 的字段表接手（`LEN` = 宽度之和，偏移一处都不写）；**变长**那一支在
-// 本仓只有一种形状：**一格条数 ＋ 那么多个等宽项**（树那一族的 `seek` 路、它的"列"答，供单的
-// `n × 32`，盟籍那一扇窗）。下面这一对就是"那么多个等宽项"那一处定义——**用户裁定：尾巴
-// 不许手写**（族里写 `2 + i * WIDTH` 这种句子，一条形状一处，四处就会漂）。
+// 本仓只有两种形状：
 //
-// 宽度仍归 [`Field::WIDTH`] 说：这一对里出现的每一个偏移都是**跑出来的游标**，没有字面量。
+//   数得出来的   `[条数][条 × 等宽项]`   树那一族的 `seek` 路、它的「列」答，供单的 `n × 32`
+//   长度即内容   `[…… 那些字节]`          树那一族的「名」答（名字多长，这一帧就多长）
+//
+// 下面两对就是这两处定义——**用户裁定：尾巴不许手写**（族里写 `2 + i * WIDTH` 或
+// `out[1..1 + text.len()]` 这种句子，一条形状一处，四处就会漂）。
+//
+// 宽度仍归 [`Field::WIDTH`] 说：`store_tail` / `fetch_tail` 里出现的每一个偏移都是**跑出来的
+// 游标**，没有字面量。
 
 /// 从 `at` 起写下一段**等宽项**，返写完之后的游标（一项都不写 ⇒ 原样返 `at`）。
 ///
@@ -131,6 +152,21 @@ pub fn fetch_tail<T: Field>(bytes: &[u8], at: usize, into: &mut [T]) -> Option<u
         at += T::WIDTH;
     }
     Some(at)
+}
+
+/// 从 `at` 起写下一段**裸字节尾巴**（**长度即内容**：没有条数、也没有终止符），返写完的游标。
+pub fn store_bytes(out: &mut [u8], at: usize, bytes: &[u8]) -> Option<usize> {
+    let end = at.checked_add(bytes.len())?;
+    out.get_mut(at..end)?.copy_from_slice(bytes);
+    Some(end)
+}
+
+/// 从 `at` 起读**到末尾**那一段裸字节（`None` = 起点越界）。
+///
+/// 长度即内容 ⇒ 读的人拿到的就是"这一帧还剩下的那些字节"；**这些字节算不算一段合法的内容由族
+/// 判**（如 `Name::from_slice` 那四格）。
+pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
+    bytes.get(at..)
 }
 
 // ── `frame!`：搬去 `envmacros` 了 ────────────────────────────
