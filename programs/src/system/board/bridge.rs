@@ -65,13 +65,15 @@ pub fn attach(
         return Err("board:tip");
     };
     let reply = reply_path(quay).ok_or("board:hand")?;
-    hand(reply, host).map_err(|()| "board:hand")?;
+    // **转授那一手把"我给你的那一枚在你表里是几号"交出来**（`to.seed()`）：它随提示一起过去，
+    // 板那边一次 `Reserve` 就认得答话路——不必扫自己的表（见 [`bcall::TIP_LEN`] 的照实记）。
+    let seed = hand(reply, host).map_err(|()| "board:hand")?;
     // 客人那一侧的一格：**答话的是谁**（板线程的号，8 字节）——与提示孔那一格对偶。
     tell(host, reply).map_err(|_| "board:who")?;
     // 提示在**转授之后**：板据此可以按"提示一到，答话路必已在本表里"办事。
-    // **提示那一格多带一格名字**（号 ＋ 名字）：板据此在 `admit` 那一刻把这一位的死亡道记下，
-    // 不必等它自己报名——见 [`bcall::TIP_LEN`] 的照实记。
-    tell_guest(client, name, tip).map_err(|_| "board:tell")
+    // **提示那一格多带两格**（名字 ＋ 答话路那一格）：名字让板在 `admit` 那一刻把这一位的死亡道
+    // 记下（不必等它自己报名），末格让板认答话路不必扫表——两笔都见 [`bcall::TIP_LEN`] 的照实记。
+    tell_guest(client, name, seed, tip).map_err(|_| "board:tell")
 }
 
 /// 起板线程（**就一枚**），返它的号；起过了就把那个号给回来。
@@ -116,14 +118,20 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     into.push(&(who.get() as u64).to_le_bytes()).map_err(|_| ())
 }
 
-/// 把**一位新客人**推给板：**号（8 字节）＋ 定长名字**（[`bcall::TIP_LEN`]），小端。
+/// 把**一位新客人**推给板：**号（8 字节）＋ 定长名字 ＋ 答话路那一格**（[`bcall::TIP_LEN`]），小端。
 ///
 /// **名字为什么从这一格走**：见 [`bcall::TIP_LEN`] 的照实记——道是装配者铸的，名字也在装配
 /// 单里；板据此在 `admit` 那一刻就把"谁 → 道"记下，客人自己不必报名。
-pub(crate) fn tell_guest(who: TaskId, name: Name, into: PieToken) -> Result<(), ()> {
+///
+/// **末格同一条理由**：那个号也只有装配者手里有（它刚转授过去），板叫不出——故随这一格一起过去。
+/// 切位按**名字自己的长度**取（`name.bytes().len()`），不写死第二个 `8`：`TIP_LEN` 那三项是
+/// 加起来的关系，这里不该再背一遍。
+pub(crate) fn tell_guest(who: TaskId, name: Name, seed: PieToken, into: PieToken) -> Result<(), ()> {
     let mut rec = [0u8; bcall::TIP_LEN];
     rec[..8].copy_from_slice(&(who.get() as u64).to_le_bytes());
-    rec[8..].copy_from_slice(name.bytes());
+    let at = 8 + name.bytes().len();
+    rec[8..at].copy_from_slice(name.bytes());
+    rec[at..].copy_from_slice(&seed.to_bytes());
     let into = mail::HolePie::from_token(into);
     into.push(&rec).map_err(|_| ())
 }
@@ -134,18 +142,21 @@ pub(crate) fn reply_path(quay: &Quay) -> Option<PieToken> {
     quay.find(link)?.at_peer()
 }
 
-/// 把**客人交出来的那一枚**转授给板线程。
+/// 把**客人交出来的那一枚**转授给板线程，返**它在板表里的号**（`port::ship` 的 `to.seed()`）。
 ///
 /// 转授的是"客人开的那扇门"（`owner` 是客人），板那侧认领时认的正是它。
+///
+/// **返那一格是这一刀的要害**：板拿到它就能一次 `Reserve` 把答话路认下来，不必扫自己的表
+/// （见 [`bcall::TIP_LEN`] 的照实记）。原先这个号被 `.map(|_| ())` 扔了。
 ///
 /// 子集只给 `R|W`，**不加 `VEST`**：板线程用这一枚写答话，不需要再授出——一分不多。
 /// 本域自己那一份转授之后**不收**：客人给过来的这一枚不带 `ONLY`（`seat` 给的是
 /// `R|W|VEST`）⇒ 这次授出是**复制**，源枚在我表里照旧可用；收它要多一条 `release`，
 /// 而这一步之后没有任何东西再碰它——本域常驻，随域退场一起回收。
-pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
+pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<PieToken, ()> {
     let hole = mail::HolePie::from_token(reply);
     port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
-        .map(|_| ())
+        .map(|to| to.seed())
         .map_err(|_| ())
 }
 

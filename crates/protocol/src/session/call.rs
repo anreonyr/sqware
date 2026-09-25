@@ -99,7 +99,7 @@ pub(super) fn each(f: &mut dyn FnMut(Hole) -> Result<(), Claim>) -> Result<(), C
 /// `Collect` 那两格哨兵 → [`Hole`] 要的形状：`owner` 是 `0` 就说"查不出出处"
 /// （`Pie` 那一格同一条口径：`0` = 这一格没有答案）。
 ///
-/// **只此一处**：别处的读者（板的 `reply_of` 那类）是拿 `TaskId` 与一个**真号**比，
+/// **只此一处**：别处的读者（板的 `ask_of` 那类）是拿 `TaskId` 与一个**真号**比，
 /// `0` 本来就比不中——故这条折叠只在这一处需要，不必做成 `Pie` 的形状。
 fn owner_of(owner: TaskId) -> Option<TaskId> {
     if owner.get() != 0 { Some(owner) } else { None }

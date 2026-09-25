@@ -83,7 +83,7 @@ pub(crate) fn host_loop(me: TaskId) {
     pad.resize(PAGE_SIZE, 0);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
-        let settling = settle(&mut desk, me, &pile, &tip_hole, &mut lanes);
+        let settling = settle(&mut desk, &pile, &tip_hole, &mut lanes);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let millis = if settling { SETTLE_MS } else { usize::MAX };
         let Ok(Some((tok, _dir))) = pile.await_(millis) else {
@@ -107,16 +107,17 @@ pub(crate) fn host_loop(me: TaskId) {
 ///
 /// 两件事各有各的来源，故各认各的（判据全是确定的号，没有"猜"）：
 ///
-/// - **提示**：装配者推来的一位新客人——**号 ＋ 定长名字**（[`bcall::TIP_LEN`]）。**非阻塞地
-///   拉**——必须在这里拉，不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进
+/// - **提示**：装配者推来的一位新客人——**号 ＋ 定长名字 ＋ 答话路那一格**
+///   （[`bcall::TIP_LEN`]）。**非阻塞地拉**——必须在这里拉，不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进
 ///   组**（那一条推落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它。提示**在转授
-///   之后**，故拉到就能在同一轮里把答话路认下来（[`reply_of`]）、**并把这一位的死亡道记下**
+///   之后**，故拉到就能在同一轮里把答话路认下来（**末格就在这条记录里**）、**并把这一位的死亡道记下**
 ///   （`who → 道`：道是装配者铸的、名字也是它递来的 ⇒ **客人不必自己报名**）；
-/// - **答话路**：装配者转授来的那一枚 ⇒ `admit` 收一位客人（`Taken` = 已经在账上）；
+/// - **答话路**：那一格随提示一起来（装配者转授时把 `to.seed()` 编进这条记录），板拿它
+///   **一次 `Reserve`** 验过 ⇒ `admit` 收一位客人（`Taken` = 已经在账上）。判据与旧那一扫
+///   一字不差（开者 = 这位客人 ＋ 记号 = 板路），只是不再扫自己的表；
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
 fn settle(
     desk: &mut Desk,
-    assembler: TaskId,
     pile: &Pile,
     tip: &mail::HolePie,
     lanes: &mut Lanes,
@@ -124,25 +125,36 @@ fn settle(
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
     // 长度不对的那一条**不猜**：`while let` 取不出那一条就收工（与从前那 8 字节的写法同款）。
     let mut rec = [0u8; bcall::TIP_LEN];
-    let mut pending = false;
-    while let Ok(bcall::TIP_LEN) = tip.pull_timeout(&mut rec, 0) {
-        let id = u64::from_le_bytes(rec[..8].try_into().unwrap_or([0u8; 8]));
-        let client = TaskId::new(id as usize);
-        let name = Name::from_bytes(rec[8..].try_into().unwrap_or([0u8; NAME_LEN])).ok();
-        match reply_of(assembler, client) {
-            // `Taken` = 已经在账上（提示是单槽，可能重放）：不换掉原来那位。
-            Some(reply) => {
-                let _ = desk.admit(client, reply);
-                // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
-                // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
-                if let Some(lane) = name.and_then(lane_for) {
-                    remember_lane(lanes, client, lane);
+        let mut pending = false;
+        let board = Mark::of(LINK);
+        while let Ok(bcall::TIP_LEN) = tip.pull_timeout(&mut rec, 0) {
+            let id = u64::from_le_bytes(rec[..8].try_into().unwrap_or([0u8; 8]));
+            let client = TaskId::new(id as usize);
+            // 名字按**自己的宽度**切：末格那一枚号就跟在它后面，整段 `try_into` 会因长度不符
+            // 静默退回空名——那是这一格最容易切错的地方。
+            let name =
+                Name::from_bytes(rec[8..8 + NAME_LEN].try_into().unwrap_or([0u8; NAME_LEN])).ok();
+            // 答话路那一格随提示一起来：**一次 `Reserve` 验它**，不扫自己的表。
+            match PieToken::from_bytes(&rec[8 + NAME_LEN..bcall::TIP_LEN]) {
+                Some(reply)
+                    if matches!(
+                        mail::reserve(reply),
+                        Ok((_vestor, owner, mark)) if owner == client && mark == board
+                    ) =>
+                {
+                    let _ = desk.admit(client, reply);
+                    // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
+                    // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
+                    if let Some(lane) = name.and_then(lane_for) {
+                        remember_lane(lanes, client, lane);
+                    }
                 }
+                // 次序被破坏（提示先到、答话路不在本表里 / 那一格指的不是这一位）：报一句；
+                // 客人那边会报它自己的超时。
+                _ => say("board: no reply"),
             }
-            // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
-            None => say("board: no reply"),
         }
-    }
+
     // 先抄一份"还没挂上的"：`unarmed` 借住这本账，而下面要改它。
     let mut waiting = [(0usize, TaskId::new(0)); Desk::CAP];
     let mut n = 0;
@@ -166,34 +178,6 @@ fn settle(
         }
     }
     pending
-}
-
-/// 装配者转授来的那一枚答话路（**写端**，落在本表里）。
-///
-/// **这枚孔是谁铸的、谁交的**：客人 `seat(板路)` 铸的那一枚（记号 `board`），
-/// **经装配者转授**给板线程——所以这一处读的是"交者"。
-///
-/// 三格判据，都是确定的号：
-///
-/// - `vestor == assembler` —— **谁转的**。这一格把"客人自己交来的孔"分开：那些的来源位是
-///   客人自己（见 [`ask_of`]）；
-/// - `owner == who` —— **谁的**：那扇门是**这位客人**开的（副本共享同一事实，转手不变）。
-///   这一格不能省：**板招待的是多位客人**，而每位客人那条板路的记号都是 `board`（那是
-///   *这条路*的名字）⇒ 只按 `(谁转的, 记号)` 认，几位客人的答话路同形（实测栽过：
-///   `router` 与 `guest` 两位在机上，后到的那位认到了前一位的孔）；
-/// - **记号 == `board`** —— 那一枚是**板路**上的一枚（客侧 `seat` 铸它时刻的就是这条路
-///   的名字 `LINK`；客人自己铸的另两枚刻的是 `ask` / `entry`）。
-///
-/// **照实记（`Collect` 加宽那一刀）**：本函数与 [`lane_for`] / [`ask_of`] 从前是**每一枚**
-/// 都要 `bcall::opened_by` 或 `bcall::marked_as` 各问一次 `Reserve`（一枚一到两次 envcall，
-/// 板这一台一轮要扫三遍）；今天那两格随枚举一起回来，判据与哨兵口径**一个字没变**——
-/// `owner == who` 在这里等价于 `opened_by(token) == Some(who)`，因为 `who` 是真号、
-/// 而"查不出"那一格答 `0`（见 `runtime::env::pie::Pie` 的哨兵口径）。
-fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
-    let board = Mark::of(LINK);
-    mail::pies()
-        .find(|p| p.vestor == assembler && p.owner == who && p.mark == board)
-        .map(|p| p.token)
 }
 
 /// 按**名字**认领这一位的死亡道（`gone-<名字>`；装配者铸、转授给本线程）。
