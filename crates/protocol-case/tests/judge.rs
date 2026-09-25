@@ -703,6 +703,7 @@ fn a_ledger_that_cannot_reserve_answers_full_and_never_reaches_the_tree() {
 // 列答的"条数与帧长对不上就是读不懂"、以及失败码表的两端。
 
 use crate::frame as f;
+use contract::message::Message;
 
 fn road(names: &[&str]) -> Vec<Name> {
     names
@@ -711,15 +712,26 @@ fn road(names: &[&str]) -> Vec<Name> {
         .collect()
 }
 
+/// 编一问（**一族一只缓冲**：`Req::Buf` 就是最长那一枚）。
+fn store(m: f::Req<'_>) -> ([u8; f::REQ_LEN], usize) {
+    let mut buf = [0u8; f::REQ_LEN];
+    let n = m.store(&mut buf).expect("这一族的缓冲就是最长那一枚");
+    (buf, n)
+}
+
+/// 解一问。
+fn fetch(bytes: &[u8]) -> Option<f::Wire> {
+    <f::Req<'_> as Message>::fetch(bytes)
+}
+
 #[test]
 fn every_ask_shape_round_trips() {
     // seek：路 + 真实段数。
-    let (buf, len) = f::pack_ask(f::Ask::Road(&road(&["sys", "operator"])));
+    let (buf, len) = store(f::Req::Road(&road(&["sys", "operator"])));
     assert_eq!(len, 2 + 2 * env::wire::NAME_LEN);
-    assert_eq!(f::op_of(&buf[..len]), Some(f::SEEK));
     assert_eq!(
-        f::unpack_ask(f::SEEK, &buf[..len]),
-        Some(f::AskIn::Road(
+        fetch(&buf[..len]),
+        Some(f::Wire::Road(
             {
                 let mut out = [Name::EMPTY; crate::core::Operator::ROAD_MAX];
                 out[0] = Name::new("sys").unwrap();
@@ -730,21 +742,23 @@ fn every_ask_shape_round_trips() {
         )),
         "路回来是同一串，段数也对"
     );
+    // 长度为该形状该有的长度是帧的契约：长一字节也不是它。
+    assert_eq!(fetch(&[&buf[..len], &[0u8]].concat()), None, "多一字节");
 
     // land：坐标 + 名 + 入口 + 两轴条件。
     let at = Where::At(EntryId::new(3));
     let seed = PieToken::from_bytes(&9u64.to_le_bytes()).unwrap();
-    let (buf, len) = f::pack_ask(f::Ask::Land {
+    let (buf, len) = store(f::Req::Land {
         at,
         name: Name::new("uart").unwrap(),
         entry: seed,
         rule: Rule::Opens(EntryId::new(7)),
         mine: true,
     });
-    assert_eq!(len, f::LAND_FRAME);
+    assert_eq!(len, f::Land::LEN, "长度就是那张表求和出来的");
     assert_eq!(
-        f::unpack_ask(f::LAND, &buf[..len]),
-        Some(f::AskIn::Land {
+        fetch(&buf[..len]),
+        Some(f::Wire::Land {
             at,
             name: Name::new("uart").unwrap(),
             entry: seed,
@@ -754,23 +768,20 @@ fn every_ask_shape_round_trips() {
     );
 
     // list：只有坐标。
-    let (buf, len) = f::pack_ask(f::Ask::List(Where::Root));
-    assert_eq!(len, 10);
-    assert_eq!(
-        f::unpack_ask(f::LIST, &buf[..len]),
-        Some(f::AskIn::List(Where::Root))
-    );
+    let (buf, len) = store(f::Req::List(Where::Root));
+    assert_eq!(len, f::List::LEN);
+    assert_eq!(fetch(&buf[..len]), Some(f::Wire::List(Where::Root)));
 
-    // find / trim / name 三者同形（解出来仍是三格）。
+    // find / trim / name 三者同形（解出来仍是三格；**共用一张表**）。
     let id = EntryId::new(11);
-    for (ask, op, want) in [
-        (f::Ask::Find(id), f::FIND, f::AskIn::Find(id)),
-        (f::Ask::Trim(id), f::TRIM, f::AskIn::Trim(id)),
-        (f::Ask::Name(id), f::NAME, f::AskIn::Name(id)),
+    for (ask, want) in [
+        (f::Req::Find(id), f::Wire::Find(id)),
+        (f::Req::Trim(id), f::Wire::Trim(id)),
+        (f::Req::Name(id), f::Wire::Name(id)),
     ] {
-        let (buf, len) = f::pack_ask(ask);
-        assert_eq!(len, 9);
-        assert_eq!(f::unpack_ask(op, &buf[..len]), Some(want));
+        let (buf, len) = store(ask);
+        assert_eq!(len, f::Entry::LEN, "三条共用一张表，长度只有一处");
+        assert_eq!(fetch(&buf[..len]), Some(want));
     }
 }
 
@@ -781,36 +792,63 @@ fn a_road_longer_than_the_cap_still_reports_the_real_count() {
     let cap = crate::core::Operator::ROAD_MAX;
     let long: Vec<String> = (0..cap + 3).map(|i| alloc::format!("s{i}")).collect();
     let names: Vec<&str> = long.iter().map(|s| s.as_str()).collect();
-    let (buf, len) = f::pack_ask(f::Ask::Road(&road(&names)));
-    assert_eq!(buf[1] as usize, cap + 3, "段数那一格报真实值");
+    let (buf, len) = store(f::Req::Road(&road(&names)));
+    let head = f::RoadHead::fetch(&buf).expect("头两格");
+    assert_eq!(head.count as usize, cap + 3, "段数那一格报真实值");
     assert_eq!(len, 2 + cap * env::wire::NAME_LEN, "荷载只装得下上限那么多");
-    match f::unpack_ask(f::SEEK, &buf[..len]) {
-        Some(f::AskIn::Road(_, n)) => assert_eq!(n, cap + 3, "读的人看得到它超了"),
+    match fetch(&buf[..len]) {
+        Some(f::Wire::Road(_, n)) => assert_eq!(n, cap + 3, "读的人看得到它超了"),
         other => panic!("该是 Road：{other:?}"),
     }
 }
 
 #[test]
 fn a_frame_that_is_not_that_shape_is_not_guessed_at() {
-    let (buf, len) = f::pack_ask(f::Ask::Find(EntryId::new(1)));
-    assert_eq!(f::unpack_ask(f::FIND, &buf[..len - 1]), None, "短一字节");
-    assert_eq!(f::unpack_ask(f::FIND, &[]), None, "空帧");
-    assert_eq!(f::op_of(&[]), None, "空帧连动作码都没有");
+    let (buf, len) = store(f::Req::Find(EntryId::new(1)));
+    assert_eq!(fetch(&buf[..len - 1]), None, "短一字节");
+    assert_eq!(fetch(&[&buf[..len], &[0u8]].concat()), None, "长一字节");
+    assert_eq!(fetch(&[]), None, "空帧（连动作码都没有）");
 
-    // **动作码是调用方给的**（`unpack_ask(op, …)`）：读的人先 `op_of` 那一格，再照它分派——
-    // 故解的时候不再回头看帧里那一格（照实记：我一开始把它写成"帧里那一格与调用方说的不一样
-    // 就答 `None`"，实测当场红——契约不是那样）。没见过的动作码才是"读不懂"。
-    let mut zero_op = buf;
-    zero_op[0] = 0;
-    assert_eq!(
-        f::unpack_ask(f::FIND, &zero_op[..len]),
-        Some(f::AskIn::Find(EntryId::new(1))),
-        "解的是荷载，动作码由调用方说了算"
-    );
-    assert_eq!(
-        f::unpack_ask(200, &buf[..len]),
-        None,
-        "没见过的动作码 ⇒ 读不懂"
+    // **表外的动作码**：树这一族**不另立**"表外的码"那一格（对它的答话与"读不懂"同一句，
+    // 见 `frame::Wire` 的照实记）——这与板那一族的 `Wire::Unknown` 是两条族规。
+    let mut outside = buf;
+    outside[0] = 200;
+    assert_eq!(fetch(&outside[..len]), None, "没见过的动作码 ⇒ 读不懂");
+
+    // **坐标那一格的记**：`0` / `1` 之外不是任何一种坐标 ⇒ 整帧读不懂（`Where` 的 `Field`）。
+    let (list, len) = store(f::Req::List(Where::Root));
+    let mut bad_at = list;
+    bad_at[1] = 9;
+    assert_eq!(fetch(&bad_at[..len]), None, "记既不是根也不是号");
+
+    // **名那一格读不成一个 `Name`** ⇒ 整帧读不懂（空名 / 串尾有垃圾 / 不是 UTF-8 在这一格归一）。
+    let (part, len) = store(f::Req::Part {
+        at: Where::Root,
+        name: Name::new("x").unwrap(),
+    });
+    let mut unnamed = part;
+    unnamed[10..42].fill(0);
+    assert_eq!(fetch(&unnamed[..len]), None, "那一格不是名字");
+
+    // **少一字节就不是那一帧**（长度是各张表的契约）：`land` 那一帧短一格也读不懂。
+    let (land, len) = store(f::Req::Land {
+        at: Where::Root,
+        name: Name::new("x").unwrap(),
+        entry: PieToken::from_bytes(&1u64.to_le_bytes()).unwrap(),
+        rule: Rule::Public,
+        mine: false,
+    });
+    assert_eq!(fetch(&land[..len - 1]), None, "短一字节的 land");
+
+    // **照实记（这一格原先的说法是假的）**：旧注写着"入口那一枚必须带（全 0 ⇒ 解不出令牌）"，
+    // 而全零解出来的是一枚**合法的**令牌（0 = "没有"那一格）——真正挡住"缺入口"的是**长度**
+    // （那一条帧根本到不了 60 字节），不是值。判"这枚号合不合法"是核心那一侧的事（见
+    // `system::board::frame` 同款的一句：那一格由核心答 `Denied`）。
+    let mut zero_entry = land;
+    zero_entry[42..50].fill(0);
+    assert!(
+        matches!(fetch(&zero_entry[..len]), Some(f::Wire::Land { .. })),
+        "全零的入口解得出来 ⇒ 它是不是一枚可用的号由核心答"
     );
 }
 
@@ -859,54 +897,42 @@ fn the_rule_cell_round_trips_and_an_unknown_tag_falls_back_to_public() {
         Rule::In(9),
         Rule::Opens(EntryId::new(10)),
     ] {
-        let (buf, len) = f::pack_ask(f::Ask::Land {
+        let (buf, len) = store(f::Req::Land {
             at: Where::Root,
             name: Name::new("x").unwrap(),
             entry: PieToken::from_bytes(&1u64.to_le_bytes()).unwrap(),
             rule,
             mine: false,
         });
-        match f::unpack_ask(f::LAND, &buf[..len]) {
-            Some(f::AskIn::Land { rule: back, .. }) => assert_eq!(back, rule, "{rule:?} 来回一趟"),
+        match fetch(&buf[..len]) {
+            Some(f::Wire::Land { rule: back, .. }) => assert_eq!(back, rule, "{rule:?} 来回一趟"),
             other => panic!("该是 Land：{other:?}"),
         }
     }
 
-    // 尾格的起点按**文件头那张布局图**算（`[10 .. 42]` 名 ⇒ 尾格从 `10 + NAME_LEN` 起），
-    // 不引那一份内部的私有常量——顺带把"布局与文档一致"也钉住。
-    let tail_at = 10 + env::wire::NAME_LEN;
-    let (mut buf, len) = f::pack_ask(f::Ask::Land {
+    // 「用」那一轴在整帧里的起点按**文件头那张布局图**算：`[10 .. 42]` 名、`[42 .. 50]` 入口、
+    // `[50]` 改、`[51 .. 60]` 用——顺带把"布局与文档一致"也钉住。
+    let rule_at = 10 + env::wire::NAME_LEN + 8 + 1;
+    let (mut buf, len) = store(f::Req::Land {
         at: Where::Root,
         name: Name::new("x").unwrap(),
         entry: PieToken::from_bytes(&1u64.to_le_bytes()).unwrap(),
         rule: Rule::Public,
         mine: false,
     });
-    assert_eq!(len, f::LAND_FRAME);
+    assert_eq!(len, f::Land::LEN);
 
     // **认不出的标号退回 `Public`**（不是 `None`：这一格是"没有条件"，不是"读不懂"）。
-    buf[tail_at + 9] = 99;
-    match f::unpack_ask(f::LAND, &buf) {
-        Some(f::AskIn::Land { rule, .. }) => assert_eq!(rule, Rule::Public),
+    buf[rule_at] = 99;
+    match fetch(&buf[..len]) {
+        Some(f::Wire::Land { rule, .. }) => assert_eq!(rule, Rule::Public),
         other => panic!("该是 Land：{other:?}"),
     }
 
-    // **旧帧**（尾格之前那些字节就够：入口有、两轴那两格没有）⇒ 两轴按"没有条件"读，
-    // **不是读不懂**——帧加格子不该让旧调用方当场变坏。`mine` 读 `[50]`、`rule` 读 `[51]` 起。
-    match f::unpack_ask(f::LAND, &buf[..tail_at + 8]) {
-        Some(f::AskIn::Land { rule, mine, .. }) => {
-            assert_eq!(rule, Rule::Public, "没有那一格 ⇒ 没有条件");
-            assert!(!mine);
-        }
-        other => panic!("该是 Land：{other:?}"),
-    }
-
-    // 而**入口那一枚**是必须的：少一个字节就是读不懂（不猜）。
-    assert_eq!(
-        f::unpack_ask(f::LAND, &buf[..tail_at + 7]),
-        None,
-        "缺入口那枚 ⇒ 不猜"
-    );
+    // **老帧那一格退了**（照实记）：从前 50/51 字节起就收——最后那两轴读不到就按 `Public` 走
+    // （那是给"还没写这两轴的调用方"留的兜底）。字段表把长度变成**契约**：短一字节整帧读不懂，
+    // 故 51 字节的老帧不再解得出。**这是这一刀收紧的一格**，不是漏了。
+    assert_eq!(fetch(&buf[..rule_at]), None, "51 字节的老帧");
 }
 
 #[test]

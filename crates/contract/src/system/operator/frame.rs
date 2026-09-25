@@ -17,23 +17,32 @@
 //! # 帧
 //!
 //! ```text
-//!   Ask    seek   [0] op  [1] 段数  [2 .. 2+32k] 路                （k ≤ ROAD_MAX）
-//!          list   [0] op  [1] 记    [2 .. 10]     号              （记：0 = 根 / 1 = 号）
-//!          part   [0] op  [1] 记    [2 .. 10]     号  [10 .. 42] 名
-//!          land   [0] op  [1] 记    [2 .. 10] 号 [10 .. 42] 名 [42 .. 50] 尾格
+//!   Req    Road   [0] op  [1] 段数  [2 .. 2+32k] 路                （k ≤ ROAD_MAX）
+//!          List   [0] op  [1] 记    [2 .. 10]     号              （记：0 = 根 / 1 = 号）
+//!          Part   [0] op  [1] 记    [2 .. 10]     号  [10 .. 42] 名
+//!          Land   [0] op  [1] 记    [2 .. 10] 号 [10 .. 42] 名 [42 .. 50] 尾格
 //!                 [50] 改   [51] 用   [52 .. 60] 号
-//!          find   [0] op  [1 .. 9] 号
-//!          trim   同 find
-//!          name   同 find
-//!   Reply  [0] status                                    —— 一格的答
+//!          Find   [0] op  [1 .. 9] 号
+//!          Trim   同 Find
+//!          Name   同 Find
+//!   Rep    [0] status                                    —— 一格的答
 //!          [0] status   [1] 条数   [2 ..] 号             —— 列
 //!          [0] status   [1 ..] 名字                       —— 名（长度即名长）
 //!          [0] status   [1 .. 9] 号                       —— 号（`land` / `part` / `seek`，定长 9）
 //! ```
 //!
 //! **问话一个动作一条形状**（不再是"一帧定长、尾格含义由 op 定"）：荷载收什么，帧里就写什么
-//! ——没有一个"报法"字段可以填错，也没有第二个意思可读。最长的仍是 `seek` 那一条
-//! （[`ASK_MAX`]，路封顶 [`Operator::ROAD_MAX`] 段），其余都落在十到五十字节。
+//! ——没有一个"报法"字段可以填错，也没有第二个意思可读。最长的仍是 `Road` 那一条
+//! （[`REQ_LEN`]，路封顶 [`Operator::ROAD_MAX`] 段），其余都落在十到五十字节。
+//!
+//! **每一张形状一张字段表**（[`RoadHead`] / [`List`] / [`Part`] / [`Land`] / [`Entry`]）：
+//! 偏移一处都不写。**照实记（表名的口径收窄了一次）**：板那一族的表按**荷载**起名（那一族
+//! 有两个动作共用一张）；这一族**一条问一张表**，只有那三条只报号的（`find` / `trim` /
+//! `name`）共用——那一张按荷载叫 [`Entry`]（它是唯一一处"两个名字落在同一张表上"）。
+//!
+//! **变长那一条只有 `Road`**：它由 [`RoadHead`]（头两格）与 [`env::wire::store_tail`] /
+//! [`env::wire::fetch_tail`]（路那一段）拼成——**族里没有 `2 + i * 32` 这种句子**（用户裁定：
+//! 尾巴不许手写）。
 //!
 //! **尾格只剩 `land` 用**：入口那一枚经会话交出去（`ship` 换回来的那个号，不是"客人的 Pie
 //! 是几号"），报文里走的只是"种在持树者表里的号"。两个编号空间不同源，互相拿错正是旧树
@@ -51,23 +60,27 @@ use super::judge::Id;
 // 与 [`crate::id::Id`]（号的字节面那一枚 trait）同名不同事；trait 只要在作用域里就够用，
 // 故按 `_` 引入——不让两个 `Id` 在同一个文件里争一个名字。
 use crate::id::Id as _;
+use crate::message::Message;
 
 // ── 码 ──────────────────────────────────────────────────────
 
-/// 七个动作在报文里的码——**与核心那七条原语同名**（`land` / `part` / `find` / `trim` /
-/// `list` / `seek` / `name`）：线上与模型是同一件事的两层，不该各起一套词。
-pub const LAND: u8 = 1;
-pub const PART: u8 = 2;
-pub const FIND: u8 = 3;
-pub const TRIM: u8 = 4;
-pub const LIST: u8 = 5;
-pub const NAME: u8 = 6;
-
-/// **第七个动作**：把一条路**译成号**——名字只能走到这一格，往下一律按号。
-///
-/// 数字取 7 是白捡的：答话那一列里 `BAD` 也是 7，但**动作码与答话码本来就是两张表**
-/// （今天 `LAND`..`NAME` 的 1..6 与 `UNKNOWN`..`DEAD` 的 1..6 已经重号），故两边各按各的序列。
-pub const SEEK: u8 = 7;
+// 七个动作在报文里的码——**与核心那七条原语同名**（`land` / `part` / `find` / `trim` /
+// `list` / `seek` / `name`）：线上与模型是同一件事的两层，不该各起一套词。
+//
+// **它们不再是协议面**（照板那一族的先例）：编的那一侧由 [`Req`] 说、解的那一侧由 [`Wire`]
+// 说，每一枚码各被读一次（字段表头一格 `op`）。外面认的是类型 ⇒ 降为私有——没有读者的格不
+// 留在面上。
+const LAND: u8 = 1;
+const PART: u8 = 2;
+const FIND: u8 = 3;
+const TRIM: u8 = 4;
+const LIST: u8 = 5;
+const NAME: u8 = 6;
+// **第七个动作**：把一条路**译成号**——名字只能走到这一格，往下一律按号。
+//
+// 数字取 7 是白捡的：答话那一列里 `BAD` 也是 7，但**动作码与答话码本来就是两张表**
+// （今天 `LAND`..`NAME` 的 1..6 与 `UNKNOWN`..`DEAD` 的 1..6 已经重号），故两边各按各的序列。
+const SEEK: u8 = 7;
 
 /// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
@@ -128,54 +141,11 @@ pub const UNJUDGED: u8 = 9;
 /// 拖着 `runtime`，`judge.rs` 不拖）。
 pub use super::judge::Rule;
 
-/// 「用那一轴」在帧里的标记。`0` 是公开，也是**兜底**（读不到 / 读不懂都走它）。
-const RULE_PUBLIC: u8 = 0;
-const RULE_IS: u8 = 1;
-const RULE_UNDER: u8 = 2;
-const RULE_IN: u8 = 3;
-/// `4` 之后的号装的是**格号**（`Rule::Opens`），不是身份号——同一个 8 字节那一格。
-const RULE_OPENS: u8 = 4;
-
-/// 把「用那一轴」写进 `[51]`（标记）与 `[52 .. 60]`（号）。
-fn pack_rule(out: &mut [u8; ASK_MAX], rule: Rule<Id, Id>) {
-    let (tag, id) = match rule {
-        Rule::Public => (RULE_PUBLIC, 0),
-        Rule::Is(p) => (RULE_IS, p),
-        Rule::Under(p) => (RULE_UNDER, p),
-        Rule::In(c) => (RULE_IN, c),
-        // 格号与身份号同宽（都是 8 字节）⇒ 帧长一个字节都不动。
-        Rule::Opens(e) => (RULE_OPENS, e.get() as u64),
-    };
-    out[TAIL_AT + 9] = tag;
-    out[TAIL_AT + 10..TAIL_AT + 18].copy_from_slice(&id.to_le_bytes());
-}
-
-/// 由线上那两格还原。**读不懂就不认那条规矩**——按 [`Rule::Public`] 走，而不是把整帧判成
-/// 坏（一个陌生/缺失的规矩不该让一句问话变成 [`BAD`]）。**同一句兜底的第二处**：
-/// 51 字节之前的老帧读不到这两格，于是逐字同义地回到"公开"。
-fn unpack_rule(bytes: &[u8]) -> Rule<Id, Id> {
-    let tag = *bytes.get(TAIL_AT + 9).unwrap_or(&RULE_PUBLIC);
-    let id = match bytes.get(TAIL_AT + 10..TAIL_AT + 18) {
-        Some(raw) => {
-            let mut buf = [0u8; 8];
-            buf.copy_from_slice(raw);
-            Id::from_le_bytes(buf)
-        }
-        None => 0,
-    };
-    match tag {
-        RULE_IS => Rule::Is(id),
-        RULE_UNDER => Rule::Under(id),
-        RULE_IN => Rule::In(id),
-        RULE_OPENS => Rule::Opens(EntryId::new(id as usize)),
-        _ => Rule::Public,
-    }
-}
-
-/// 问话那一侧的上界：**最长那一条**（`seek`：`op + 段数 + 8 段名字`）。
+/// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ 段数 ＋ [`Operator::ROAD_MAX`] 段名字）。
 ///
-/// 服务端按它备一只缓冲（收下来的帧不会超过它），各条问话的**实际**长度由 [`pack_ask`] 说话。
-pub const ASK_MAX: usize = 2 + Operator::ROAD_MAX * env::wire::NAME_LEN;
+/// 服务端按它备一只缓冲（收下来的帧不会超过它），各条问话的**实际**长度由形状说——定长那几条
+/// 是字段表求和（`LEN`），`Road` 那一格是 [`env::wire::store_tail`] 交回的游标。
+pub const REQ_LEN: usize = RoadHead::LEN + Operator::ROAD_MAX * env::wire::NAME_LEN;
 
 /// 一帧「列」的答话：`[0] status [1] 条数 [2 ..] 号`（每条 8 字节）。
 ///
@@ -204,30 +174,79 @@ pub const REPLY_MAX: usize = LIST_REPLY_LEN;
 const _: () = assert!(NAME_REPLY_LEN <= REPLY_MAX);
 const _: () = assert!(ID_REPLY_LEN <= REPLY_MAX);
 
-/// 容器坐标那一格的"记"：`0` = 根、`1` = 号（[`Where`] 两种报法在帧里的样子）。
-///
-/// 根那一路后面那 8 字节**照写零**（不省）：帧是定长的，省了就得再想"读到哪儿算数"。
-const AT_ROOT: u8 = 0;
-const AT_ID: u8 = 1;
+// 那几枚偏移常量（`AT_ROOT` / `AT_ID` / `NAME_AT` / `TAIL_AT` / `LAND_FRAME`）随字段表一起退场：
+// "记"归 [`Where`] 自己的 `Field`（它住 `core.rs`——impl 跟着类型走），其余几个数由各张表求和
+// 得出（`Land::LEN` = 60、`Part::LEN` = 42 …），而 `LAND_FRAME` 那个名字没有读者了。
+//
+// **照实记（`land` 的长度契约收紧了）**：从前 50 字节起就收——最后那两轴读不到就按
+// [`Rule::Public`] 走（那是给"还没写这两轴的调用方"留的兜底）。字段表把长度变成**契约**：
+// `Land` 就是 60 字节，短一字节整帧读不懂。仓里没有第二种长度（编那一侧一律写全）。
 
-/// 问话里"名字"那一块的起点（`part` / `land`）。
-const NAME_AT: usize = 10;
-/// 问话里"尾格"那一块的起点（只有 `land` 用）。
-const TAIL_AT: usize = NAME_AT + env::wire::NAME_LEN;
-/// `land` 那一帧的长度：**纯追加**扩到 60（原 51）。
-///
-/// 前 51 字节一个偏移都没动，两个新格挂在其后——故 51 字节的老帧照旧解得出来（读不到那两格
-/// ⇒ 用那一轴按 [`Rule::Public`] 走），而"规矩那一格在最后"这条老纪律也还在。
-pub const LAND_FRAME: usize = TAIL_AT + 18;
+// ── 问话：一个动作一条形状，一张形状一张字段表 ──────────────
 
-// ── 问话：一个动作一条形状 ──────────────────────────────────
+env::frame! {
+    /// `Road` 那一问的**头两格**：动作码 ＋ **段数**。
+    ///
+    /// **段数写的是真实条数**（哪怕超过 [`Operator::ROAD_MAX`]）：那样"路太长"由持树者按
+    /// [`Fail::Full`] 答出来，而不是在这里被悄悄截断成另一条路。故这一格**允许大于实际带的
+    /// 项数**——它是**声明**，不是长度（"尾巴"那一族里只有它这样）。
+    pub struct RoadHead {
+        op: u8,
+        count: u8,
+    }
+}
 
-/// 一问的荷载——**一个动作一条形状**，没有"报法"那一格可以填错。
+env::frame! {
+    /// `List` 那一问：动作码 ＋ 容器坐标。
+    pub struct List {
+        op: u8,
+        at: Where,
+    }
+}
+
+env::frame! {
+    /// `Part` 那一问：动作码 ＋ 容器坐标 ＋ 新名。
+    pub struct Part {
+        op: u8,
+        at: Where,
+        name: Name,
+    }
+}
+
+env::frame! {
+    /// `Land` 那一问：动作码 ＋ 容器坐标 ＋ 新名 ＋ 入口那一枚 ＋ **这一格的两轴条件**
+    /// （改那一轴 `mine` / 用那一轴 `rule`）。
+    pub struct Land {
+        op: u8,
+        at: Where,
+        name: Name,
+        entry: PieToken,
+        mine: bool,
+        rule: Rule<Id, Id>,
+    }
+}
+
+env::frame! {
+    /// `Find` / `Trim` / `Name` 那三问**共用**的形状：动作码 ＋ 一枚号。
+    ///
+    /// **照实记（这三条为什么共用一张表）**：三者的荷载逐字同形（一枚 [`EntryId`]），差别只在
+    /// 动作码那一格——故解出来仍是三格（[`Wire::Find`] / [`Wire::Trim`] / [`Wire::Name`]），
+    /// 而"这一格占多宽"只有一处。
+    pub struct Entry {
+        op: u8,
+        id: EntryId,
+    }
+}
+
+/// **一问的荷载**——一个动作一条形状，没有"报法"那一格可以填错。
 ///
-/// 号那一侧全按 [`EntryId`] 走；名字只出现在两条路上：[`Ask::Road`]（`seek` 收的那条路）
+/// 号那一侧全按 [`EntryId`] 走；名字只出现在两条路上：[`Req::Road`]（`seek` 收的那条路）
 /// 与 `part` / `land` 的**新名**（那是"这一格叫什么"，不是"往哪儿走"）。
+///
+/// **照实记（名字）**：这一族从前叫 `Ask`（收的那一面叫 `AskIn`）。用户裁定 `Ask` / `Reply`
+/// 那一套不要，用 **`Req` / `Wire` / `Rep`**——故这里是新生的名字，不是改名。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Ask<'a> {
+pub enum Req<'a> {
     /// `seek`：把一条路译成号（**路只出现在这一格**）。
     Road(&'a [Name]),
     /// `list`：列那一块 `Pane` 里的号。
@@ -256,27 +275,17 @@ pub enum Ask<'a> {
     Name(EntryId),
 }
 
-impl Ask<'_> {
-    /// 这一问在报文里的**动作码**（与核心那七条原语同名）。
-    pub const fn op(&self) -> u8 {
-        match self {
-            Ask::Road(_) => SEEK,
-            Ask::List(_) => LIST,
-            Ask::Part { .. } => PART,
-            Ask::Land { .. } => LAND,
-            Ask::Find(_) => FIND,
-            Ask::Trim(_) => TRIM,
-            Ask::Name(_) => NAME,
-        }
-    }
-}
-
 /// **解开的一问**（名字已经是 `Name`，故不是借用）。
 ///
-/// 与 [`Ask`] 是一对：编的时候按动作分形状，解的时候也按动作分形状——`op` 与荷载不配
+/// 与 [`Req`] 是一对：编的时候按动作分形状，解的时候也按动作分形状——`op` 与荷载不配
 /// （比如 `LAND` 那一码配上一枚号）解不出来，持树者据此答 [`BAD`]。
+///
+/// **照实记（它为什么与 [`Req`] 是两个类型）**：`Road` 那一格编的时候借一条路（`&[Name]`），
+/// 解出来是**自己那一份**（`[Name; ROAD_MAX]` ＋ 真实段数）——两种形状本来就不一样。
+/// **表外的动作码不另立一格**（与板那一族不同）：树这一侧对它答 [`BAD`]，故解不出来就是
+/// `None`（见 [`Message::fetch`] 那一段）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AskIn {
+pub enum Wire {
     /// `seek`：路（最多 [`Operator::ROAD_MAX`] 段）+ **真实段数**（可能超过上限，那一格答 [`FULL`]）。
     Road([Name; Operator::ROAD_MAX], usize),
     /// `list`：容器坐标。
@@ -301,162 +310,118 @@ pub enum AskIn {
     Name(EntryId),
 }
 
-/// 把一问编成一帧，返 **`(帧, 实际长度)`**。
-///
-/// **段数写的是真实条数**（哪怕超过 [`Operator::ROAD_MAX`]）：那样"路太长"由持树者按
-/// [`Fail::Full`] 答出来，而不是在这里被悄悄截断成另一条路。
-pub fn pack_ask(ask: Ask<'_>) -> ([u8; ASK_MAX], usize) {
-    let mut out = [0u8; ASK_MAX];
-    out[0] = ask.op();
-    let len = match ask {
-        Ask::Road(road) => {
-            let filled = road.len().min(Operator::ROAD_MAX);
-            out[1] = road.len().min(u8::MAX as usize) as u8;
-            for (i, name) in road.iter().take(filled).enumerate() {
-                let at = 2 + i * env::wire::NAME_LEN;
-                out[at..at + env::wire::NAME_LEN].copy_from_slice(name.bytes());
+impl Message for Req<'_> {
+    type In = Wire;
+    /// 这一族的缓冲：**最长那一条**（[`REQ_LEN`]）。
+    type Buf = [u8; REQ_LEN];
+    const EMPTY: Self::Buf = [0u8; REQ_LEN];
+
+    /// 编进 `out`：**动作码由形状给**（不在别处再写一遍），偏移与长度由字段表求和。
+    ///
+    /// 唯一的例外是 `Road` 那一格的**尾巴**（路）：头两格归 [`RoadHead`]，路那一段交给
+    /// [`env::wire::store_tail`]——两处都不写偏移。
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        match *self {
+            Req::Road(road) => {
+                let filled = road.len().min(Operator::ROAD_MAX);
+                let head = RoadHead {
+                    op: SEEK,
+                    count: road.len().min(u8::MAX as usize) as u8,
+                };
+                head.store_in(out)?;
+                env::wire::store_tail(out, RoadHead::LEN, &road[..filled])
             }
-            2 + filled * env::wire::NAME_LEN
-        }
-        Ask::List(at) => {
-            pack_at(&mut out, at);
-            10
-        }
-        Ask::Part { at, name } => {
-            pack_at(&mut out, at);
-            pack_name_in(&mut out, name);
-            42
-        }
-        Ask::Land {
-            at,
-            name,
-            entry,
-            rule,
-            mine,
-        } => {
-            pack_at(&mut out, at);
-            pack_name_in(&mut out, name);
-            out[TAIL_AT..TAIL_AT + 8].copy_from_slice(&entry.to_bytes());
-            // **两轴各一格**：`[50]` 是原来那一格（值逐字同义），`[51]` 起是纯追加。
-            out[TAIL_AT + 8] = mine as u8;
-            pack_rule(&mut out, rule);
-            LAND_FRAME
-        }
-        Ask::Find(id) | Ask::Trim(id) | Ask::Name(id) => {
-            out[1..9].copy_from_slice(&id.to_bytes());
-            9
-        }
-    };
-    (out, len)
-}
-
-/// 把容器坐标写进 `[1 .. 10]`（记 + 号；根那一路的号位照写零）。
-fn pack_at(out: &mut [u8; ASK_MAX], at: Where) {
-    match at {
-        Where::Root => {
-            out[1] = AT_ROOT;
-            out[2..10].copy_from_slice(&EntryId::new(0).to_bytes());
-        }
-        Where::At(id) => {
-            out[1] = AT_ID;
-            out[2..10].copy_from_slice(&id.to_bytes());
-        }
-    }
-}
-
-/// 把新名写进 `[10 .. 42]`。
-fn pack_name_in(out: &mut [u8; ASK_MAX], name: Name) {
-    out[NAME_AT..NAME_AT + env::wire::NAME_LEN].copy_from_slice(name.bytes());
-}
-
-/// 只读第一格**动作码**（空帧 ⇒ `None`：持树者据此答 [`BAD`]，不猜、不崩）。
-pub fn op_of(bytes: &[u8]) -> Option<u8> {
-    bytes.first().copied()
-}
-
-/// 解开一问：**`op` 决定形状**（见文件头那张表）。**读不懂返 `None`**（持树者据此答 [`BAD`]）。
-///
-/// 长度为该动作该有的长度是**帧的契约**（[`pack_ask`] 产出的就是那个长度），故短一字节即读不懂。
-/// 段数**原样报出去**（哪怕超过上限）：那一格该由持树者答 [`Fail::Full`]——两条都由核心的
-/// 判据说了算。
-pub fn unpack_ask(op: u8, bytes: &[u8]) -> Option<AskIn> {
-    match op {
-        SEEK => {
-            let count = *bytes.get(1)? as usize;
-            let mut road = [Name::EMPTY; Operator::ROAD_MAX];
-            // **只解前 `ROAD_MAX` 段**：`pack_ask` 只填了那么多，剩下的段位是零填充——空段不是
-            // 名字，拿它去解会把一整帧判成"读不懂"（真机实测：四格全答 `BAD` 就栽在这里）。
-            let filled = count.min(Operator::ROAD_MAX);
-            for (i, slot) in road.iter_mut().enumerate().take(filled) {
-                let at = 2 + i * env::wire::NAME_LEN;
-                let raw = bytes.get(at..at + env::wire::NAME_LEN)?;
-                let mut buf = [0u8; env::wire::NAME_LEN];
-                buf.copy_from_slice(raw);
-                *slot = Name::from_bytes(buf).ok()?;
+            Req::List(at) => List { op: LIST, at }.store_in(out),
+            Req::Part { at, name } => Part { op: PART, at, name }.store_in(out),
+            Req::Land {
+                at,
+                name,
+                entry,
+                rule,
+                mine,
+            } => Land {
+                op: LAND,
+                at,
+                name,
+                entry,
+                mine,
+                rule,
             }
-            Some(AskIn::Road(road, count))
+            .store_in(out),
+            Req::Find(id) => Entry { op: FIND, id }.store_in(out),
+            Req::Trim(id) => Entry { op: TRIM, id }.store_in(out),
+            Req::Name(id) => Entry { op: NAME, id }.store_in(out),
         }
-        LIST => Some(AskIn::List(unpack_at(bytes)?)),
-        PART => Some(AskIn::Part {
-            at: unpack_at(bytes)?,
-            name: unpack_name(bytes, NAME_AT)?,
-        }),
-        // 入口那一枚**必须带**：没带（全 0 ⇒ 解不出令牌）就是一句读不懂的帧，不猜。
-        // 两轴那两格**可以没有**（60 字节之前的老帧）：`mine` 读 `[50]`（51 字节的老帧本来
-        // 就有它，值逐字同义），用那一轴读不到 ⇒ [`Rule::Public`]——帧加格子不该让旧调用方
-        // 当场变坏，也不该把一个陌生的标记读成"这一问读不懂"。
-        LAND => Some(AskIn::Land {
-            at: unpack_at(bytes)?,
-            name: unpack_name(bytes, NAME_AT)?,
-            entry: PieToken::from_bytes(&tail(bytes)?)?,
-            rule: unpack_rule(bytes),
-            mine: *bytes.get(TAIL_AT + 8).unwrap_or(&0) != 0,
-        }),
-        FIND | TRIM | NAME => {
-            let id = unpack_id(bytes, 1)?;
-            Some(match op {
-                FIND => AskIn::Find(id),
-                TRIM => AskIn::Trim(id),
-                _ => AskIn::Name(id),
-            })
-        }
-        // 没见过的动作码：读不懂（不另立一格）。
-        _ => None,
+    }
+
+    /// 解开一问：**`op` 决定形状**（见文件头那张表）。**读不懂返 `None`**（持树者据此答
+    /// [`BAD`]）。
+    ///
+    /// **长度为该形状该有的长度是帧的契约**（各张表的 `LEN`，`store` 产出的就是那个长度），
+    /// 故短一字节、长一字节都读不懂。**段数原样报出去**（哪怕超过上限）：那一格该由持树者答
+    /// [`Fail::Full`]——两条都由核心的判据说了算。
+    ///
+    /// **只解前 `ROAD_MAX` 段**：编的那一侧只填了那么多，剩下的段位是零填充——空段不是名字，
+    /// 拿它去解会把一整帧判成"读不懂"（真机实测：四格全答 `BAD` 就栽在这里）。
+    ///
+    /// **表外的动作码 ⇒ `None`**：树这一族不另立"表外的码"那一格（对它的答话与"读不懂"
+    /// 同一句，见 [`Wire`] 的照实记）。
+    fn fetch(bytes: &[u8]) -> Option<Wire> {
+        let op = *bytes.first()?;
+        Some(match op {
+            SEEK => {
+                let head = RoadHead::fetch(bytes)?;
+                let count = head.count as usize;
+                // **只解前 `ROAD_MAX` 段**：编的那一侧只填了那么多，剩下的段位是零填充——空段
+                // 不是名字，拿它去解会把一整帧判成"读不懂"（真机实测：四格全答 `BAD` 就栽在
+                // 这里）。**长度也是形状的一部分**：`2 ＋ 填进去的段数 × 32`。
+                let filled = count.min(Operator::ROAD_MAX);
+                if bytes.len() != RoadHead::LEN + filled * env::wire::NAME_LEN {
+                    return None;
+                }
+                let mut road = [Name::EMPTY; Operator::ROAD_MAX];
+                env::wire::fetch_tail(bytes, RoadHead::LEN, &mut road[..filled])?;
+                Wire::Road(road, count)
+            }
+            LIST if bytes.len() == List::LEN => Wire::List(List::fetch(bytes)?.at),
+            PART if bytes.len() == Part::LEN => {
+                let at = Part::fetch(bytes)?;
+                Wire::Part {
+                    at: at.at,
+                    name: at.name,
+                }
+            }
+            LAND if bytes.len() == Land::LEN => {
+                let at = Land::fetch(bytes)?;
+                Wire::Land {
+                    at: at.at,
+                    name: at.name,
+                    entry: at.entry,
+                    rule: at.rule,
+                    mine: at.mine,
+                }
+            }
+            FIND | TRIM | NAME if bytes.len() == Entry::LEN => {
+                let id = Entry::fetch(bytes)?.id;
+                match op {
+                    FIND => Wire::Find(id),
+                    TRIM => Wire::Trim(id),
+                    _ => Wire::Name(id),
+                }
+            }
+            // 没见过的动作码、或长度不是这张形状该有的那个 ⇒ 读不懂（不另立一格）。
+            _ => return None,
+        })
     }
 }
 
-/// 解容器坐标（`[1 .. 10]`：记 + 号）。
-fn unpack_at(bytes: &[u8]) -> Option<Where> {
-    match *bytes.get(1)? {
-        AT_ROOT => Some(Where::Root),
-        AT_ID => Some(Where::At(unpack_id(bytes, 2)?)),
-        _ => None,
-    }
-}
-
-/// 解一枚号（`[at .. at+8]`，8 字节小端；**不校验"还在不在"**：那一格由核心答）。
-fn unpack_id(bytes: &[u8], at: usize) -> Option<EntryId> {
-    let raw = bytes.get(at..at + 8)?;
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(raw);
-    Some(EntryId::from_bytes(buf))
-}
-
-/// 解一段名字（`[at .. at+32]`；解不出来 ⇒ `None`）。
-fn unpack_name(bytes: &[u8], at: usize) -> Option<Name> {
-    let raw = bytes.get(at..at + env::wire::NAME_LEN)?;
-    let mut buf = [0u8; env::wire::NAME_LEN];
-    buf.copy_from_slice(raw);
-    Name::from_bytes(buf).ok()
-}
-
-/// 解尾格（`[42 .. 50]`）。
-fn tail(bytes: &[u8]) -> Option<[u8; 8]> {
-    let raw = bytes.get(TAIL_AT..TAIL_AT + 8)?;
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(raw);
-    Some(buf)
-}
+// 手写的那六手（`op_of` / `unpack_ask` / `unpack_at` / `unpack_id` / `unpack_name` / `tail`）与
+// `pack_ask` 一起退场：编与解各由"一张字段表 ＋ 一条 `match`"说（见上面那一段）。
+//
+// **照实记（那六手都是"同一件事的第二处"）**：`unpack_at` 与 `pack_at` 各写一遍"记 ＋ 号"、
+// `unpack_name` 与 `pack_name_in` 各写一遍"名字那一格怎么切"、`pack_rule` 与 `unpack_rule` 各
+// 写一遍那九个字节——写者与读者分居文件两头，**错一处编得过**，症状要等那一帧被读成"读不懂"
+// 才显形。今天这三件事各只有一处：`Where` / `Name` / `Rule` 各自的 `Field`。
 
 // ── 答：一串号 / 一枚名字 / 一枚号 ───────────────────────────
 

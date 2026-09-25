@@ -47,6 +47,22 @@ impl Field for u8 {
     }
 }
 
+/// **`bool` 那一格是 1 字节**：写出去只写 `0` / `1`，读回来**非零即真**（老帧里那一格是任意
+/// 字节也照旧读得出"真"）。
+///
+/// **照实记（它为什么是一格）**：树那一族 `land` 的"**改**那一轴"在模型里就是 `bool`
+/// （`mine`），而它在线上占一格。族里把它写成 `u8` 再现翻，就把"哪一格是布尔"这条事实挪进了
+/// 族的正文——与上面 [`u8`] 那一格同一条口径：**进出都是这一格**，含义留给族自己那枚私有常量。
+impl Field for bool {
+    const WIDTH: usize = 1;
+    fn store(&self, out: &mut [u8]) {
+        out[0] = *self as u8;
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Some(*bytes.first()? != 0)
+    }
+}
+
 impl Field for TaskId {
     const WIDTH: usize = 8;
     fn store(&self, out: &mut [u8]) {
@@ -78,6 +94,43 @@ impl Field for Name {
     fn fetch(bytes: &[u8]) -> Option<Self> {
         Name::from_bytes(bytes.get(..NAME_LEN)?.try_into().ok()?).ok()
     }
+}
+
+// ── 尾巴：**数得出来的一段** ────────────────────────────────
+//
+// 定长那一支由 `frame!` 的字段表接手（`LEN` = 宽度之和，偏移一处都不写）；**变长**那一支在
+// 本仓只有一种形状：**一格条数 ＋ 那么多个等宽项**（树那一族的 `seek` 路、它的"列"答，供单的
+// `n × 32`，盟籍那一扇窗）。下面这一对就是"那么多个等宽项"那一处定义——**用户裁定：尾巴
+// 不许手写**（族里写 `2 + i * WIDTH` 这种句子，一条形状一处，四处就会漂）。
+//
+// 宽度仍归 [`Field::WIDTH`] 说：这一对里出现的每一个偏移都是**跑出来的游标**，没有字面量。
+
+/// 从 `at` 起写下一段**等宽项**，返写完之后的游标（一项都不写 ⇒ 原样返 `at`）。
+///
+/// `None` = `out` 装不下——与 [`Field::store`] 那一族同一条口径（不猜、不截断）。
+pub fn store_tail<T: Field>(out: &mut [u8], at: usize, items: &[T]) -> Option<usize> {
+    let mut at = at;
+    for item in items {
+        item.store(out.get_mut(at..at + T::WIDTH)?);
+        at += T::WIDTH;
+    }
+    Some(at)
+}
+
+/// 从 `at` 起读一段**等宽项**，装进调用方给的容器；返读完之后的游标。
+///
+/// **容器由调用方给**（`&mut [Name]` / `&mut [EntryId]` / …）：`env` 不认识 `alloc`，也不替族
+/// 决定"装不下时丢哪一头"——**有几格位置就读几条**，游标交回去，于是"到这儿就是底"
+/// （如 `at == bytes.len()`）也由族自己判。
+///
+/// 短一字节、或某一格读不成 ⇒ `None`（与 [`Field::fetch`] 同一句话：这一帧读不懂）。
+pub fn fetch_tail<T: Field>(bytes: &[u8], at: usize, into: &mut [T]) -> Option<usize> {
+    let mut at = at;
+    for slot in into.iter_mut() {
+        *slot = T::fetch(bytes.get(at..at + T::WIDTH)?)?;
+        at += T::WIDTH;
+    }
+    Some(at)
 }
 
 // ── `frame!`：搬去 `envmacros` 了 ────────────────────────────

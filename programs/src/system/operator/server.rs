@@ -13,6 +13,7 @@ use runtime::env::mail;
 use runtime::PAGE_SIZE;
 
 use protocol::system::operator::call as ocall;
+use protocol::session::slip::Slip;
 use protocol::system::operator::gate::{Code, Control, verdict};
 use protocol::system::operator::judge::{Id, Rule};
 use protocol::system::operator::ledger::{Key, Ledger};
@@ -262,7 +263,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     // "活着"那一问与树收的是**同一枚函数指针**（`ocall::vested_by`）——账要问的"主人还在吗"
     // 与树要问的"这一枚还答得出吗"是同一句话，故不另开一个 trait。
     let mut book: Book = Ledger::new(ocall::vested_by);
-    // 收帧的那一页：**在循环外备一次**——门的缓冲不再是"这一族最大的那一帧"（`ASK_MAX`），
+    // 收帧的那一页：**在循环外备一次**——门的缓冲不再是"这一族最大的那一帧"（`REQ_LEN`），
     // 而是**载体的一页**：界判在 `Push`，故客人推得进来的最长就是一页；拿家族帧当缓冲时，
     // 比它长的那一枚（≤ 一页）客人推得进、这道门取不出 ⇒ 那一位客人从此没人招待。
     // **本处是 A 那一刀漏掉的第六处**（前五处：principal / coalition / router / rtc / 板），
@@ -411,38 +412,35 @@ fn serve_one(
     let Some(ask) = guest.ask() else {
         return;
     };
-    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(buf, Wait::POLL) else {
-        return;
-    };
-    let Some(want) = buf.get(..n) else {
-        return;
-    };
+    // **收帧用调用方那一页**（[`Slip::land_in`]）：比家族最长那一枚更长的一条也取得出来、
+    // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。拿船台自己那只家族缓冲收不下它，而核**不丢**
+    // 取不出的消息（见 `Slip::land_in` 的照实记与 `probe-bound` 第四条——这一门正是那一格
+    // 从前量过的地方）。
+    let decoded = Slip::<ocall::Req<'_>>::seal(ask).land_in(buf, Wait::POLL);
     let mut reply = [0u8; ocall::REPLY_MAX];
-    let said = answer(tree, want, guest.who(), session, book, &mut reply);
+    let said = answer(tree, decoded, guest.who(), session, book, &mut reply);
     let _ = mail::HolePie::from_token(guest.reply()).push(&reply[..said]);
 }
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。
 ///
-/// **先读动作码、再按那个动作的形状解载荷**（[`ocall::unpack_ask`]）：解不出来就是一句读不懂的
-/// 帧（不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）。返**帧长**——答案写进
+/// **形状由 [`ocall::Wire`] 说**（收帧那一侧已经按动作解好了）：解不出来就是一句读不懂的帧
+/// （不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）。返**帧长**——答案写进
 /// 调用方那只缓冲（[`ocall::REPLY_MAX`]）。
 fn answer(
     tree: &mut Operator,
-    want: &[u8],
+    ask: Option<ocall::Wire>,
     who: TaskId,
     session: Option<&Session>,
     book: &mut Book,
     out: &mut [u8; ocall::REPLY_MAX],
 ) -> usize {
-    let Some(op) = ocall::op_of(want) else {
-        return status(out, ocall::BAD);
-    };
-    let Some(ask) = ocall::unpack_ask(op, want) else {
+    // 空帧 / 长度不对 / 表外的动作码：读不懂（答 `BAD`）。
+    let Some(ask) = ask else {
         return status(out, ocall::BAD);
     };
     // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那几条原语也各有这条判据）。
-    if let ocall::AskIn::Road(_, count) = ask {
+    if let ocall::Wire::Road(_, count) = ask {
         if count > Operator::ROAD_MAX {
             return status(out, ocall::FULL);
         }
@@ -467,14 +465,14 @@ fn answer(
         // 的 `mine`，账里记成 `Owner`）管的是**改这一格**，不是**用这一格**。这一刀让「用」有
         // 自己的那一格，故默认值（公开）与主人那
         // 一轴不再互相牵制。
-        ocall::AskIn::Find(id) => {
+        ocall::Wire::Find(id) => {
             let rule = book.rule(Key::Id(id), |id| fresh(tree, id));
             let ruling = may(tree, session, who, rule);
             if !ruling.passed() {
                 return status(out, ruling.wire());
             }
         }
-        ocall::AskIn::Trim(id) => {
+        ocall::Wire::Trim(id) => {
             if !book.claimable(Key::Id(id), who, |id| fresh(tree, id)) {
                 return status(out, ocall::DENIED);
             }
@@ -487,7 +485,7 @@ fn answer(
         // 但"往树上挂东西"这件事本身要求来的人是个**已绑身份**——否则没身份的任务就能
         // 往命名空间里塞条目。**实测栽过一次**：漏了这一支，负证客人当场落牌成功
         // （读数 `probe: tree land=OK id=7`）。
-        ocall::AskIn::Land { .. } => {
+        ocall::Wire::Land { .. } => {
             let ruling = may(tree, session, who, Rule::Public);
             if !ruling.passed() {
                 return status(out, ruling.wire());
@@ -497,7 +495,7 @@ fn answer(
     }
     let said = match ask {
         // **两条答号的**：立/分的人自己得知道立成了几号——答案体不是一格状态。
-        ocall::AskIn::Land {
+        ocall::Wire::Land {
             at,
             name,
             entry,
@@ -524,7 +522,7 @@ fn answer(
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
             };
         }
-        ocall::AskIn::Part { at, name } => {
+        ocall::Wire::Part { at, name } => {
             return match tree.part(at, name) {
                 Ok(id) => {
                     // **那个窄口子**：`part` 碰到一枚 `Tile` 会静默把它顶成一块 `Pane`
@@ -540,7 +538,7 @@ fn answer(
         // **它在客人表里的号**从这条答话里走（`pack_seed`）——客人拿它一次 `Reserve` 就
         // 认得出，不必扫自己的表（见 [`ocall::pack_seed`] 的照实记）。
         // "查不到"与"授不出去"是两件事，故查的结论优先：`said` 先答，其次才轮到 `grant`。
-        ocall::AskIn::Find(id) => {
+        ocall::Wire::Find(id) => {
             let mut seed = None;
             let mut grant = Ok(());
             let said = tree.find(id, |pie| {
@@ -559,7 +557,7 @@ fn answer(
                 (None, None) => status(out, ocall::BAD),
             };
         }
-        ocall::AskIn::Trim(id) => {
+        ocall::Wire::Trim(id) => {
             let said = tree.trim(id);
             if said.is_ok() {
                 // 格子从树上没了 ⇒ 那一行也走。
@@ -568,20 +566,20 @@ fn answer(
             said
         }
         // **三条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
-        ocall::AskIn::List(at) => {
+        ocall::Wire::List(at) => {
             return match tree.list(at) {
                 Ok(ids) => ocall::pack_list(out, ids),
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
             };
         }
-        ocall::AskIn::Name(id) => {
+        ocall::Wire::Name(id) => {
             return match tree.name(id) {
                 Ok(name) => ocall::pack_name(out, name),
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
             };
         }
         // **译号那一档**：名字只能走到这里——拿到号之后，其余原语一律按号走。
-        ocall::AskIn::Road(road, count) => {
+        ocall::Wire::Road(road, count) => {
             return match tree.seek(&road[..count.min(Operator::ROAD_MAX)]) {
                 Ok(id) => ocall::pack_id(out, id),
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),

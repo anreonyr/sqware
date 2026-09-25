@@ -103,6 +103,25 @@ impl Id for EntryId {
     }
 }
 
+/// **号那一格线上是 8 字节小端**——与 [`Id`] 给三条号空间定的同一条规则（那一条 trait 的
+/// `to_bytes` / `from_bytes` 就是这一格的正文）。
+///
+/// **照实记（impl 为什么住这一处，不住 `env::wire`）**：impl 跟着类型走——`env` 不认识
+/// [`EntryId`]（依赖是单向的 `contract → env`），故宽度与字节序只能由定义它的这一处给。
+/// 口径与 `plan::assembly::Eyes` 那一处相同（`Field` 那一族的正文记着）。
+///
+/// 读的那一侧**不校验"还在不在"**（[`Id::from_bytes`] 的注）：解出来的号在不在表里由核心答
+/// （[`Fail::Unknown`]）。
+impl env::wire::Field for EntryId {
+    const WIDTH: usize = 8;
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_bytes());
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Some(Self::from_bytes(bytes.get(..8)?.try_into().ok()?))
+    }
+}
+
 /// **一格**：名字 + 去处。它住在 [`Operator::slots`] 里，**下标就是它的号**。
 ///
 /// 名字只是一段（`Name`：定长 32 字节、构造即校验），不是整条路——路那一层只剩
@@ -133,6 +152,43 @@ pub enum Where {
     Root,
     /// 某一号那一块 `Pane` 里。
     At(EntryId),
+}
+
+/// 容器坐标那一格的"记"：`0` = 根、`1` = 号（[`Where`] 两种报法在线上的样子）。
+///
+/// **照实记（它们为什么从 `frame.rs` 搬到这儿）**：这两个数是**这一格自己的编码**
+/// （"根"与"某一号"怎么落在字节上），与"哪一帧用得上它"无关——`Field` 那一族的口径是
+/// **impl 跟着类型走**，故记也跟着类型走。
+const AT_ROOT: u8 = 0;
+const AT_ID: u8 = 1;
+
+/// **容器坐标那一格是"记 ＋ 号"**（9 字节）：`0` = 根（后面 8 字节**照写零**）、`1` = 某一号。
+///
+/// **根为什么占一格、而不是省掉**：字段表要的是"这一格占多宽"（定长），省了就得再想"读到哪儿
+/// 算数"；而根**没有号**（见 [`EntryId`]），不能拿零号代替——那会被读成"某个真格子"。
+///
+/// **表外的记 ⇒ 整帧读不懂**：`0` / `1` 之外的记不是任何一种坐标，`fetch` 答 `None`
+/// （与从前那一手 `unpack_at` 同款：不猜、不崩）。
+impl env::wire::Field for Where {
+    const WIDTH: usize = 1 + <EntryId as env::wire::Field>::WIDTH;
+
+    fn store(&self, out: &mut [u8]) {
+        let (tag, id) = match *self {
+            Where::Root => (AT_ROOT, EntryId::new(0)),
+            Where::At(id) => (AT_ID, id),
+        };
+        out[0] = tag;
+        // 长度恰是 `WIDTH`（`Field::store` 的契约）⇒ 记之后那一段正好是号那一格。
+        id.store(&mut out[1..]);
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        match *bytes.first()? {
+            AT_ROOT => Some(Where::Root),
+            AT_ID => Some(Where::At(EntryId::fetch(bytes.get(1..)?)?)),
+            _ => None,
+        }
+    }
 }
 
 /// 八条原语会失败在哪一格。**一格对应一个不同的下一步**。

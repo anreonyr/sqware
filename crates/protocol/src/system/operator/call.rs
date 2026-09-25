@@ -1,7 +1,7 @@
 //! operator 的**适配那一半** —— 内核那几只手的别名、立树、交出，与两张会话失败域的映射。
 //!
 //! 帧与码见 [`frame`](super::frame)；`pub use super::frame::*;` 把那一整片照旧转出来 ⇒
-//! **调用点一处都不用改**（`operator::call::Ask`、`operator::call::LINK`、
+//! **调用点一处都不用改**（`operator::call::Req`、`operator::call::LINK`、
 //! `operator/mod.rs` 里那句 `pub use call::{…}` 全都照旧）。
 
 use env::{PieToken, TaskId};

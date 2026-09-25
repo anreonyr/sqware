@@ -20,6 +20,7 @@ use crate::system::operator::judge::Rule;
 pub use crate::system::operator::{ASK_MARK, LINK, TIP_NAME};
 use crate::system::operator::{EntryId, Listing, Where};
 use crate::session::Quay;
+use crate::session::slip::Slip;
 
 /// 客侧第一步：装上树那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
 /// "**答话的是谁**"（[`hear`] 那一格）。
@@ -81,17 +82,19 @@ fn me() -> Result<TaskId, Fail> {
 fn ask_out(
     say: PieToken,
     link: &Quay,
-    ask: ocall::Ask<'_>,
+    ask: ocall::Req<'_>,
     reply: &mut [u8],
     millis: Wait,
 ) -> Result<usize, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
-    let (frame, len) = ocall::pack_ask(ask);
+    // 发：装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
-    mail::HolePie::from_token(say)
-        .push(&frame[..len])
+    Slip::<ocall::Req<'_>>::seal(say)
+        .load(ask)
+        .ship()
         .map_err(|_| Fail::Unknown)?;
+    // 收：答话那一侧还走老路（**四种答形各有各的上界**，故缓冲由调用方给）——那一半在下一刀。
     pier.pull(reply, millis).map_err(|_| Fail::Unknown)
 }
 
@@ -123,7 +126,7 @@ pub fn land(
     let n = ask_out(
         say,
         link,
-        ocall::Ask::Land {
+        ocall::Req::Land {
             at,
             name,
             entry: shipped,
@@ -146,7 +149,7 @@ pub fn part(
     millis: Wait,
 ) -> Result<EntryId, u8> {
     let mut reply = [0u8; ocall::ID_REPLY_LEN];
-    let n = ask_out(say, link, ocall::Ask::Part { at, name }, &mut reply, millis)
+    let n = ask_out(say, link, ocall::Req::Part { at, name }, &mut reply, millis)
         .map_err(|_| ocall::BAD)?;
     ocall::read_id(&reply[..n])
 }
@@ -169,7 +172,7 @@ pub fn find(
     millis: Wait,
 ) -> Result<(u8, Option<PieToken>), Fail> {
     let mut reply = [0u8; ocall::ID_REPLY_LEN];
-    let n = ask_out(say, link, ocall::Ask::Find(id), &mut reply, millis)?;
+    let n = ask_out(say, link, ocall::Req::Find(id), &mut reply, millis)?;
     if reply[0] != ocall::OK {
         return Ok((reply[0], None));
     }
@@ -181,7 +184,7 @@ pub fn find(
 /// 客侧第二步（**剪**）：把那一号剪掉。答一格状态（[`ocall::OK`] = 剪掉了）。
 pub fn trim(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<u8, Fail> {
     let mut reply = [0u8; 1];
-    ask_out(say, link, ocall::Ask::Trim(id), &mut reply, millis)?;
+    ask_out(say, link, ocall::Req::Trim(id), &mut reply, millis)?;
     Ok(reply[0])
 }
 
@@ -191,7 +194,7 @@ pub fn trim(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<u8,
 /// （对照 [`find`]：那一档的码本身就是答案）。一推一读之间读不动 / 迟了 ⇒ [`ocall::BAD`]。
 pub fn list(say: PieToken, link: &Quay, at: Where, millis: Wait) -> Result<Listing, u8> {
     let mut reply = [0u8; ocall::LIST_REPLY_LEN];
-    let n = ask_out(say, link, ocall::Ask::List(at), &mut reply, millis).map_err(|_| ocall::BAD)?;
+    let n = ask_out(say, link, ocall::Req::List(at), &mut reply, millis).map_err(|_| ocall::BAD)?;
     ocall::read_list(&reply[..n])
 }
 
@@ -202,7 +205,7 @@ pub fn list(say: PieToken, link: &Quay, at: Where, millis: Wait) -> Result<Listi
 pub fn seek(say: PieToken, link: &Quay, road: &[Name], millis: Wait) -> Result<EntryId, u8> {
     let mut reply = [0u8; ocall::ID_REPLY_LEN];
     let n =
-        ask_out(say, link, ocall::Ask::Road(road), &mut reply, millis).map_err(|_| ocall::BAD)?;
+        ask_out(say, link, ocall::Req::Road(road), &mut reply, millis).map_err(|_| ocall::BAD)?;
     ocall::read_id(&reply[..n])
 }
 
@@ -211,7 +214,7 @@ pub fn seek(say: PieToken, link: &Quay, road: &[Name], millis: Wait) -> Result<E
 /// 名字**在答话那一侧**（问话里只有号）——长短由那一帧说。
 pub fn name(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<Name, u8> {
     let mut reply = [0u8; ocall::NAME_REPLY_LEN];
-    let n = ask_out(say, link, ocall::Ask::Name(id), &mut reply, millis).map_err(|_| ocall::BAD)?;
+    let n = ask_out(say, link, ocall::Req::Name(id), &mut reply, millis).map_err(|_| ocall::BAD)?;
     ocall::read_name(&reply[..n])
 }
 

@@ -7,7 +7,7 @@
 //!   而不是指在展开体里那一行；
 //! - 生成的代码与从前**逐字一样**（见下），故调用点一个字不改。
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{Fields, ItemStruct, parse2};
 
@@ -35,6 +35,14 @@ pub fn expand(input: TokenStream) -> TokenStream {
         types.push(field.ty.clone());
     }
 
+    // **游标与那一截缓冲的名字要**卫生**（`Span::mixed_site`）**：生成的 `let at = …` 与调用方
+    // 那几格字段是**两个不同的标识符**。照实记：这一条是"树那一族"那一刀当场撞出来的——
+    // 它的字段表里有一格就叫 `at`（容器坐标），宏自己的游标被那格遮住，报的是
+    // `binary assignment operation += cannot be applied to type Where`。**这是宏的错，不是
+    // 表的错**：`at` 是个再自然不过的字段名。
+    let at = Ident::new("at", Span::mixed_site());
+    let head = Ident::new("head", Span::mixed_site());
+
     quote! {
         #(#attrs)*
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -58,29 +66,29 @@ pub fn expand(input: TokenStream) -> TokenStream {
             /// 一族常常**只有一只缓冲、形状各有长短**（板那族是 41 / 33 / 1）——从大缓冲里切出来
             /// 的 `&mut [u8]` 转不回定长数组。这一版就是那一格：不 `expect`、不拷贝一次。
             pub fn store_in(&self, out: &mut [u8]) -> Option<usize> {
-                let head = out.get_mut(..Self::LEN)?;
-                let mut at = 0usize;
+                let #head = out.get_mut(..Self::LEN)?;
+                let mut #at = 0usize;
                 #(
                     <#types as ::env::wire::Field>::store(
                         &self.#idents,
-                        &mut head[at..at + <#types as ::env::wire::Field>::WIDTH],
+                        &mut #head[#at..#at + <#types as ::env::wire::Field>::WIDTH],
                     );
-                    at += <#types as ::env::wire::Field>::WIDTH;
+                    #at += <#types as ::env::wire::Field>::WIDTH;
                 )*
-                let _ = at;
+                let _ = #at;
                 Some(Self::LEN)
             }
 
             /// 从 `bytes` 读回来；**长度不足** ⇒ `None`（不猜、不崩）。
             pub fn fetch(bytes: &[u8]) -> Option<Self> {
-                let mut at = 0usize;
+                let mut #at = 0usize;
                 #(
                     let #idents = <#types as ::env::wire::Field>::fetch(
-                        bytes.get(at..at + <#types as ::env::wire::Field>::WIDTH)?,
+                        bytes.get(#at..#at + <#types as ::env::wire::Field>::WIDTH)?,
                     )?;
-                    at += <#types as ::env::wire::Field>::WIDTH;
+                    #at += <#types as ::env::wire::Field>::WIDTH;
                 )*
-                let _ = at;
+                let _ = #at;
                 Some(Self { #(#idents),* })
             }
         }
