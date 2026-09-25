@@ -35,7 +35,7 @@ pub const OK: u8 = 0;
 /// "反不回来"。这是判据，不是风格：给非双射的表生成反向，等于把"对偶"说成假的。
 ///
 /// **出 crate**（`#[macro_export]`）：第二个实例到了——驱动的**具体协议**住各驱动自己的目录
-/// （那一条裁定见 [`driver`]），而它同样要一张"失败域 ↔ 线上那一格"的表。手抄一遍就是两处编。
+/// （那一条裁定见 `driver`），而它同样要一张"失败域 ↔ 线上那一格"的表。手抄一遍就是两处编。
 #[macro_export]
 macro_rules! fail_codes {
     ($(#[$meta:meta])* bijective $fail:ty; $ok:ident; $($variant:path => $code:ident),+ $(,)?) => {

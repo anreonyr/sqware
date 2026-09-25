@@ -119,7 +119,7 @@ impl<'a> Order<'a> {
     }
 }
 
-/// 编一张回单：一格状态 + 若干条 [`Pair`] 记录。
+/// 编一张回单：一格状态 + 若干条 `Pair` 记录。
 ///
 /// `records` 必须是整条记录（`PAIR_LEN` 步长），条数越界或缓冲不够 ⇒ `None`。
 pub fn pack_reply<'a>(buf: &'a mut [u8], code: u8, records: &[u8]) -> Option<&'a [u8]> {

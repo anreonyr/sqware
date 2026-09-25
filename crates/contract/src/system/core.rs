@@ -14,8 +14,8 @@ use super::desk::{Announce, Service, Slot, State, Table};
 /// 它已经在跑/在停 = 时机不对。
 ///
 /// **重发**：`Dead` 与 `NeverStarted` 同档，故"在同一行上再起"在这道门上是允许的
-/// ——但注意 **`stop` 之后状态是 `Stopping`，把 `Dead` 落地的是 [`watch`]**
-/// （[`until`] 只读不写）。完整序列（stop → watch → Oust → spawn → start）与被踩过的
+/// ——但注意 **`stop` 之后状态是 `Stopping`，把 `Dead` 落地的是 `watch`**
+/// （`until` 只读不写）。完整序列（stop → watch → Oust → spawn → start）与被踩过的
 /// 两处暗礁见 `crate::system` 的 §六。
 pub fn admit_start(table: &Table, name: Name) -> Result<(), Fail> {
     let Some(s) = table.find(name) else {
@@ -28,7 +28,7 @@ pub fn admit_start(table: &Table, name: Name) -> Result<(), Fail> {
 }
 
 /// "起来了没有"的三态判定。**只读表**——"它交回句柄了没有"是内核的事实，由适配写进
-/// 表之后这里才读得到（见 [`ready`]）。
+/// 表之后这里才读得到（见 `ready`）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ready {
     /// 已就绪（它宣布过了，或它这一种根本不需要宣布）。

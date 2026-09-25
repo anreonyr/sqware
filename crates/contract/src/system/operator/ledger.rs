@@ -236,7 +236,7 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
     ///
     /// 照实记（`mine = false` 重绑 = 放弃归属）：前身只在 `mine` 为真时才记，旧记录会**永久
     /// 留着**——"改那一轴"因此没有"放弃"这一手。这一刀让它有：主人用一次 `mine = false` 重绑
-    /// 就是声明"这一格不归我了"。走得到这一支的只有主人本人或接手者（前面拦着 [`claimable`]）。
+    /// 就是声明"这一格不归我了"。走得到这一支的只有主人本人或接手者（前面拦着 `claimable`）。
     pub fn write(&mut self, _: Blank, line: Line<P, C>) {
         match self
             .lines
