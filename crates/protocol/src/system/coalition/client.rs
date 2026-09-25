@@ -120,11 +120,14 @@ impl Face {
             return Err(Fail::Unknown);
         }
         // 收：答话走**这一趟借出去的那一枚孔**（船台那一手；缓冲由调用方给＝本族最大那一形）。
+        // 两格失败（没收到 / 解不动）在这一侧落同一格：`Unknown`（对本端是同一个下一步）。
         let mut buf = call::Union::EMPTY;
-        let got = Slip::<call::Union>::seal(back).land(buf.as_mut(), millis);
+        let got = Slip::<call::Union>::seal(back)
+            .land(buf.as_mut(), millis)
+            .map_err(|_| Fail::Unknown);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
         let _ = mail::release(back);
-        got.ok_or(Fail::Unknown)
+        got
     }
 
     /// 一句答（**一格答那一形**）：**不是那一形 ⇒ 读不懂**，是那一形再看状态那一格（失败域），

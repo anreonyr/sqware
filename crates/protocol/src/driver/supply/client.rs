@@ -10,12 +10,10 @@ use env::Wait;
 use env::{PieToken, TaskId};
 use plan::{Key, PAIR_LEN, Pair};
 
-use contract::message::Message;
-
 use crate::driver::supply::core::Fail;
 use crate::driver::supply::frame::{OK, Order, Reply, ReplyHead, WANT_MAX, Want, code_to_fail};
 use crate::session::Pier;
-use crate::session::slip::Slip;
+use crate::session::slip::{Land, Slip};
 
 /// 递一张单子、取回那一段记录。返**记录那一段**（`PAIR_LEN` 步长；借着调用方那只收帧缓冲）。
 pub fn draw<'r>(
@@ -36,17 +34,20 @@ pub fn draw<'r>(
         .load(order)
         .ship()
         .map_err(|_| Fail::Local)?;
-    // 收一张回单：**两件事分得开**——"期限内没等到" ⇒ `Local`；"收下来解不动" ⇒ `Bad`。
-    // （这一格正是 [`Slip::land_frame`] 存在的理由：`land` 会把这两件盖成一个 `None`。）
+    // 收一张回单：**两格失败分得开**（[`Land`] 就是为这一格立的）——"期限内没等到" ⇒ `Local`；
+    // "收下来解不动" ⇒ `Bad`。这两句话与从前 `pier.pull` ＋ `fetch` 那两句一字不差。
     let slip = Slip::<Reply>::seal(pier.hole());
-    let Some(n) = slip.land_frame(reply, millis) else {
-        return Err(Fail::Local);
+    let said = match slip.land(reply, millis) {
+        Ok(said) => said,
+        Err(Land::Expired) => return Err(Fail::Local),
+        Err(Land::Unread) => return Err(Fail::Bad),
     };
-    let got = reply.get(..n).ok_or(Fail::Bad)?;
-    let said = <Reply as Message>::fetch(got).ok_or(Fail::Bad)?;
     match said.code() {
-        // **记录那一段就是原样交给客人的那一段**（帧长已由 `fetch` 判过 ⇒ 切出来正好）。
-        OK => got.get(ReplyHead::LEN..).ok_or(Fail::Bad),
+        // **记录那一段就是原样交给客人的那一段**：从**调用方那只缓冲**里切——帧长由解出来的
+        // 条数定（`fetch` 已判过恰好），故切出来正好。
+        OK => reply
+            .get(ReplyHead::LEN..ReplyHead::LEN + said.records().len() * PAIR_LEN)
+            .ok_or(Fail::Bad),
         code => Err(code_to_fail(code).unwrap_or(Fail::Bad)),
     }
 }

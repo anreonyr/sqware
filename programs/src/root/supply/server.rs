@@ -9,10 +9,10 @@ use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
 
 use contract::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
-use contract::message::Message;
 use protocol::driver::supply::core::Fail;
 use protocol::session::Pier;
 use protocol::session::slip::Slip;
+use protocol::session::slip::Land;
 
 /// 供：照单取源、授出、把记录写进 `records`。返**条数**。
 ///
@@ -72,23 +72,26 @@ pub fn serve(
     let mut records = [Pair::NONE; WANT_MAX];
     let slip = Slip::<Order>::seal(pier.hole());
     loop {
-        // **两件事分得开**（[`Slip::land_frame`] 那一手就是为这一格立的）：期限内没等到 ⇒ 去探活；
-        // 收下来解不动 ⇒ 答一句 `BAD`。`Slip::land` 会把这两件盖成一个 `None`，这一圈用不了它。
-        let Some(n) = slip.land_frame(ask, Wait::AtMost(WAIT_MS)) else {
-            if !alive() {
-                return;
-            }
-            continue;
-        };
-        let code = match <Order as Message>::fetch(ask.get(..n).unwrap_or(&[])) {
-            Some(order) => match supply(&order, &src_of, &mut records) {
-                Ok(k) => {
-                    reply(pier, OK, &records[..k]);
-                    continue;
+        // **两格失败分得开**（[`Land`]）：没收到 ⇒ 去探活；收到了解不动 ⇒ 答一句 `BAD`。
+        let order = match slip.land(ask, Wait::AtMost(WAIT_MS)) {
+            Ok(order) => order,
+            Err(Land::Expired) => {
+                if !alive() {
+                    return;
                 }
-                Err(fail) => fail_to_code(Some(fail)),
-            },
-            None => BAD,
+                continue;
+            }
+            Err(Land::Unread) => {
+                reply(pier, BAD, &[]);
+                continue;
+            }
+        };
+        let code = match supply(&order, &src_of, &mut records) {
+            Ok(k) => {
+                reply(pier, OK, &records[..k]);
+                continue;
+            }
+            Err(fail) => fail_to_code(Some(fail)),
         };
         reply(pier, code, &[]);
     }

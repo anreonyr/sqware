@@ -10,9 +10,9 @@
 //!
 //! · **客侧**（`protocol::driver::supply::client::draw`）：**搬进 `protocol` 之后**才用得上船台
 //!   （那一层同时看得见"孔"与"报"）。它那两句判据仍分得开——"期限内没等到" ⇒ `Local`、
-//!   "收下来解不动" ⇒ `Bad`——靠的是 [`Slip::land_frame`]（`land` 会把这两件盖成一个 `None`）。
-//! · **服务侧**（`programs::root::supply::server`）：收帧走 `land_frame`（"先探活、再解题"那两格
-//!   照旧），回单走 `Slip::<Reply>` 那一手；泊位那头没齐时不发（与从前 `Pier::post` 同一格）。
+//!   "收下来解不动" ⇒ `Bad`——靠的是 `Slip::land` 那两格失败（`Land`：没收到 / 解不动）。
+//! · **服务侧**（`programs::root::supply::server`）：收帧走同一手（"先探活、再解题"那两格照旧），
+//!   回单走 `Slip::<Reply>` 那一手；泊位那头没齐时不发（与从前 `Pier::post` 同一格）。
 //!
 //! ⇒ 编解一处（表 ＋ `Message`）、收发一处（船台），运输只剩"泊位就是那条路"这一件。
 //!

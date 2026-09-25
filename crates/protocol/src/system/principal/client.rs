@@ -112,12 +112,14 @@ impl Face {
             return Err(Fail::Denied);
         }
         // 收：答话走**这一趟借出去的那一枚孔**（船台那一手；缓冲由调用方给——这一形 10 字节）。
-        // 这一形长短都不认（`Reply` 的 `fetch` 判"恰好 10"）：`None` 盖着"期限到了 / 读不懂"。
+        // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
         let mut buf = call::Reply::EMPTY;
-        let got = Slip::<call::Reply>::seal(back).land(buf.as_mut(), millis);
+        let got = Slip::<call::Reply>::seal(back)
+            .land(buf.as_mut(), millis)
+            .map_err(|_| Fail::Denied);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
         let _ = mail::release(back);
-        got.ok_or(Fail::Denied)
+        got
     }
 
     /// 一句答：先看状态那一格（失败域 + 读不懂），再看答案那一格。

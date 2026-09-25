@@ -289,9 +289,9 @@ fn serve_one(
     // 收不下比它更长的一条，核**不丢**取不出的消息 ⇒ 门卡死且空转。
     let decoded = Slip::<bcall::Req>::seal(ask).land(buf, Wait::POLL);
     let said = match decoded {
-        Some(ask) => answer(board, desk, ask, guest.who(), swept, lanes),
-        // 空帧 / 长度不对：读不懂就答 `BAD`——不猜、不崩。
-        None => bcall::BAD,
+        Ok(ask) => answer(board, desk, ask, guest.who(), swept, lanes),
+        // 空帧 / 长度不对 / 期限到了：**两格失败同一落点**——读不懂就答 `BAD`，不猜、不崩。
+        Err(_) => bcall::BAD,
     };
     // 答一句：**一格**（[`bcall::Union`] 那一张形状）——装与发都不在这一层写字节。
     let _ = Slip::<bcall::Union>::seal(guest.reply())
@@ -299,7 +299,7 @@ fn serve_one(
         .ship();
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
-    if matches!(decoded, Some(bcall::Wire::Evict)) {
+    if matches!(decoded, Ok(bcall::Wire::Evict)) {
         let _ = pile.detach(&mail::HolePie::from_token(ask), HoleDir::Pull);
     }
 }

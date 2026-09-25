@@ -100,7 +100,8 @@ fn ask_out(
     let mut buf = ocall::Union::EMPTY;
     Slip::<ocall::Union>::seal(pier.hole())
         .land(buf.as_mut(), millis)
-        .ok_or(Fail::Unknown)
+        // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
+        .map_err(|_| Fail::Unknown)
 }
 
 /// 客侧第二步（**落**）：在 `at` 那一块 `Pane` 里给 `name` 贴一枚 `Tile`；答**那一格自己的号**。

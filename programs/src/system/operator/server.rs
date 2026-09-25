@@ -416,7 +416,8 @@ fn serve_one(
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。拿家族帧那么大的一只缓冲收不下它，而核**不丢**
     // 取不出的消息（见 `Slip::land` 的照实记与 `probe-bound` 那两趟——这一门正是那一格
     // 从前量过的地方）。
-    let decoded = Slip::<ocall::Req<'_>>::seal(ask).land(buf, Wait::POLL);
+    // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
+    let decoded = Slip::<ocall::Req<'_>>::seal(ask).land(buf, Wait::POLL).ok();
     let said = answer(tree, decoded, guest.who(), session, book);
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节（那四种答形在线上分不开，
     // 故读的那一面由问的人认，见 [`ocall::Said`] 的照实记）。

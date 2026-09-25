@@ -5,14 +5,13 @@
 //!         .load(m)                  装上一条报（编进船台自己那只缓冲）
 //!         .ship()                   发出去
 //!
-//!   slip.land_frame(buf, millis)    收下一帧（**不解释**：几字节；期限到了 ⇒ None）
-//!   slip.land(buf, millis)          收一条报（＝上面那一手 ＋ 一次解；读不懂 / 超时 ⇒ None）
+//!   slip.land(buf, millis)          收一条报（缓冲由调用方给；失败两格见 [`Land`]）
 //! ```
 //!
 //! # 为什么它是一层库
 //!
-//! 五个方法只碰**两枚原语**（`HolePie::push` / `pull_timeout`）与**一条约定**
-//! （[`Message`]），与哪一族、哪条路、什么荷载全无关。它住 `protocol`
+//! 四个方法（＋ [`Land`] 那两格失败）只碰**两枚原语**（`HolePie::push` / `pull_timeout`）与
+//! **一条约定**（[`Message`]），与哪一族、哪条路、什么荷载全无关。它住 `protocol`
 //! 是因为只有这一层同时看得见"孔"（`runtime`）与"报"（`contract`）。
 //!
 //! # 本仓每一枚孔是**单向**的
@@ -94,20 +93,15 @@ impl<M: Message> Slip<M> {
             .map_err(|e| env::Fail::of_code(e.source.code()).unwrap_or(env::Fail::Denied))
     }
 
-    /// 收下一帧——**不解释**：返这一帧几字节；`None` = 期限内没等到（或孔不通）。
+    /// 收一条报（**有界等**由参数说，**缓冲由调用方给**）。
     ///
-    /// **照实记（为什么要有这一手）**：[`Slip::land`] 把"期限到了"与"读不懂"折成同一个 `None`
-    /// ——门那两侧正需要这样（两种都答 `BAD`）。但**靠收帧结果判活**的循环要把它们分开：供单那圈
-    /// 发货循环就是——读不出来 ⇒ 去探对端还活着没有；读得出来而解不动 ⇒ 答一句 `BAD`。故把
-    /// "收下一帧"与"解一条报"分成两手：**一处定义**，`land` 只是这一手上面加一次 `M::fetch`。
+    /// 失败两格**分得开**（[`Land`]）：[`Land::Expired`] = 没收到、[`Land::Unread`] = 收到了解不动。
     ///
-    /// 缓冲那一格的义务与 [`Slip::land`] 同：**由调用方给**（门给载体那一页，客侧给本族那只空
-    /// 缓冲）——理由见 `land` 的照实记。
-    pub fn land_frame(&self, buf: &mut [u8], millis: Wait) -> Option<usize> {
-        self.pie.pull_timeout(buf, millis).ok()
-    }
-
-    /// 收一条报（＝ [`Slip::land_frame`] ＋ 一次 `M::fetch`）。
+    /// **照实记（为什么是两格失败，不是折成一个 `None`）**：门那两侧把两格折成同一句 `BAD`
+    /// （`Err(_) ⇒ BAD`，与从前那个 `None` 一字不差）；而**靠收帧结果判活**的循环要把它们分开
+    /// ——供单那圈发货循环就是：没收到 ⇒ 去探对端还活着没有；收到了解不动 ⇒ 答一句 `BAD`。
+    /// 两件事共用一个 `None` 是我上一版写的（照实记在那一刀里），今天由**类型**分开：
+    /// 一件事一个名字，失败落在失败域上。
     ///
     /// **照实记（同词不同事）**：`Ledger::land` / `Operator::land` 是"落一格账 / 落一枚入口"，
     /// 这一手是"从孔里收一条报"。
@@ -121,11 +115,24 @@ impl<M: Message> Slip<M> {
     /// 取得出来、解得失败 ⇒ 照旧答 `BAD`，槽也空了。客侧那一枚孔只有本族对面那一侧会推 ⇒
     /// 拿本族那只空缓冲（[`Message::EMPTY`]）就够。
     ///
-    /// 返 `None` 盖两件事：**期限到了还没到**与**读不懂**——板的持板者正是这么用的
-    /// （`None` ⇒ 答 `BAD`）。表外的动作码**不是** `None`，它是那一族 `In` 自己的一格
-    /// （如 `Wire::Unknown`）。要把那两件事分开的调用方走 [`Slip::land_frame`]。
-    pub fn land(&self, buf: &mut [u8], millis: Wait) -> Option<M::In> {
-        let n = self.land_frame(buf, millis)?;
-        M::fetch(buf.get(..n)?)
+    /// 表外的动作码**不是**任何一格失败，它是那一族 `In` 自己的一格（如 `Wire::Unknown`）。
+    pub fn land(&self, buf: &mut [u8], millis: Wait) -> Result<M::In, Land> {
+        let n = self.pie.pull_timeout(buf, millis).map_err(|_| Land::Expired)?;
+        let frame = buf.get(..n).ok_or(Land::Unread)?;
+        M::fetch(frame).ok_or(Land::Unread)
     }
+}
+
+/// 「收一条报」（[`Slip::land`]）那两格失败——**分得开**。
+///
+/// **照实记（为什么要两格）**：门那两侧只关心"这一问成没成"（两种都答 `BAD`）；而**判活**的循环
+/// 要分开——"没收到"是去探对端还活着没有，"收到了解不动"是这一问自己的毛病。两件事两个下一步，
+/// 故落成两格。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Land {
+    /// **没收到**：期限内没等到（或孔不通——这一层不分辨：今天没有读者要那一格）。
+    Expired,
+    /// **收到了，解不动**：长度不对 / 形状不对（那是这一族 `fetch` 的判据）；
+    /// 缓冲比帧还短也落这一格（那一格类型上到不了：缓冲按本族最长给）。
+    Unread,
 }

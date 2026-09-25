@@ -131,7 +131,8 @@ fn hear_rep(link: &Quay, millis: Wait) -> Result<u8, Fail> {
     Slip::<bcall::Union>::seal(pier.hole())
         .land(buf.as_mut(), millis)
         .map(bcall::Union::get)
-        .ok_or(Fail::Unknown)
+        // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
+        .map_err(|_| Fail::Unknown)
 }
 
 /// 收下板路上那一格：**答话的是谁**（装配侧 `programs/src/system/board/bridge.rs` 的 `tell`
