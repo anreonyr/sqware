@@ -1,10 +1,7 @@
 //! desk —— **持树者侧那本账**：一位客人一格（谁 / 问 / 答）。
 //!
-//! 与 [`core`](super::core) 同一分工：本文件**不碰内核**（判据只有一条可机械检查的纪律——
-//!
-//! > `desk.rs` 里不出现 `runtime::`。
-//!
-//! ），探活是**注入的事实**（[`VestedBy`]，与 [`Operator`](super::core::Operator) 同款）：
+//! 与 [`core`] 同一分工：本文件**不碰内核**——这条纪律现在由 **crate 边界**管着（见本 crate
+//! 头注），故这里不再复述。探活是**注入的事实**（[`VestedBy`]，与 [`Operator`](super::core::Operator) 同款）：
 //! 喂一个假闭包就能推理这本账，换载体不必重写。
 //!
 //! # 与 `board` 那本账的差别
@@ -20,7 +17,7 @@
 
 use env::{PieToken, TaskId};
 
-use protocol::system::operator::core::VestedBy;
+use crate::system::operator::core::VestedBy;
 
 // ── 这本账自己的失败域 ──────────────────────────────────────
 
@@ -113,12 +110,7 @@ pub struct Desk {
     vested_by: VestedBy,
 }
 
-/// 立一本账（一位客人一格）：**注入的是协议那一侧"读内核事实"的那一枚**
-/// （`call::vested_by`，`Reserve` 那一问）——账是实现的，判定是协议的。
-pub fn desk() -> Desk {
-    Desk::new(protocol::system::operator::call::vested_by)
-}
-
+/// **绑真手的那一手不在这里**（在「口」那一侧：`protocol::system::operator::call::desk`）。
 impl Desk {
     /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
     ///

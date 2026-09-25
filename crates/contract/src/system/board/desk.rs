@@ -1,10 +1,7 @@
 //! desk —— **板侧那本账**：一位客人一格（谁 / 问 / 答）。
 //!
-//! 与 [`core`](super::core) 同一分工：本文件**不碰内核**（判据只有一条可机械检查的纪律——
-//!
-//! > `desk.rs` 里不出现 `runtime::`。
-//!
-//! ），探活是**注入的事实**（[`VestedBy`]，与 [`Board`](super::core::Board) 同款）：喂一个假
+//! 与 [`core`] 同一分工：本文件**不碰内核**——这条纪律现在由 **crate 边界**管着（见本 crate
+//! 头注），故这里不再复述。探活是**注入的事实**（[`VestedBy`]，与 [`Board`](super::core::Board) 同款）：喂一个假
 //! 闭包就能推理这本账，换载体不必重写。
 //!
 //! 板线程醒来时手里只有**一枚孔在本表里的号**（`Pile::await_` 的返回），故这本账的读法
@@ -14,7 +11,7 @@
 
 use env::{PieToken, TaskId};
 
-use protocol::system::board::core::{Fail, VestedBy};
+use crate::system::board::core::{Fail, VestedBy};
 
 // ── 一格 ────────────────────────────────────────────────────
 
@@ -68,44 +65,26 @@ pub struct Desk {
     vested_by: VestedBy,
 }
 
-/// 立一本账（一位客人一格）：**注入的是协议那一侧"读内核事实"的那一枚**
-/// （`call::vested_by`，`Reserve` 那一问）——账是实现的，判定是协议的。
-pub const fn desk() -> Desk {
-    Desk::new(protocol::system::board::call::vested_by)
-}
-
-/// 装配单里 `board: true` 的行数——**全表**，故是**任何一景的上界**（板只收装配者推来的人，
-/// 而提示一位装配单行一条）。
-const fn boarded_rows() -> usize {
-    let mut n = 0;
-    let mut i = 0;
-    while i < plan::assembly::ALL.len() {
-        if let Some(plan) = plan::assembly::ALL[i].plan {
-            if plan.board {
-                n += 1;
-            }
-        }
-        i += 1;
-    }
-    n
-}
+/// **绑真手的那一手不在这里**（在「口」那一侧：`protocol::system::board::call::desk`）——
+/// 它给的是"读内核事实"的那一枚（`Reserve` 那一问）；账住「约」，手在「口」。
 
 impl Desk {
-    /// 板侧最多几位客人 —— **不是人挑的数，是两张 `const` 表数出来的**：
+    /// 板侧最多几位客人 —— **本侧选择的上限**（与 `supply::frame` 的 `WANT_MAX`、`coalition` 的
+    /// `WINDOW_CAP` 同款：上限是选择，不是量出来的事实）。
     ///
-    /// > 能同时在账上的客人 = **装配单里 `board: true` 的那些行** ＋ **内件里上板的那几枚**
+    /// 同一个数还给板线程那三张临时表定界（`server.rs` 的 `Lanes` / `waiting` / `dead`——与
+    /// `guests` 逐格对齐）。
     ///
-    /// 任何一景的名册都是全表的子集 ⇒ 这么数出来的是**上界** ⇒ `admit` 的 `Full` **由构造
-    /// 够不着**。**这个数是板自己的账，管不着那个组**：板线程的组是可增长的格子表
-    /// （`mail/tole.rs` 的 `Vec<Cell>`），"组能挂几格"是内存的事，不是本账的事。同一个数还给
-    /// 板线程那三张临时表定界（`server.rs` 的 `Lanes` / `waiting` / `dead`——与 `guests` 逐格对齐）。
-    ///
-    /// **照实记（原先是个手挑的数）**：8 → 16（乙那一刀），两次都是"凭余量挑"；而满了是**静默**
-    /// 的——`admit` 答 `Full`、调用方是 `let _ =` ⇒ 那一位从此没人监督，日志里一句话都没有。
-    /// 今天它由 `boarded_rows` 与
-    /// [`inner::boarded`](crate::system::inner::boarded) 数出来：装配单加一位上板的
-    /// 服务，界自己跟着长。
-    pub const CAP: usize = boarded_rows() + crate::system::inner::boarded();
+    /// **照实记（这个数原来是从装配单数出来的）**：`00de768` 把它写成
+    /// `boarded_rows() + inner::boarded()`（装配单里 `board: true` 的行 ＋ 上板的内件），治的是
+    /// 一个真病——界原先手挑（8 → 16），**满了是静默的**（`admit` 答 `Full`、调用方 `let _ =`
+    /// ⇒ 那一位从此没人监督，日志一句话都没有）。
+    /// **用户裁的乙**把它改回一个**上限**：那个数横跨两个 crate（`plan::assembly::ALL` 在 plan 侧、
+    /// `INNER` 在 programs 侧），而「约」不该知道任何一边的装配事实。
+    /// **挡住那个病的那一条断言搬到了看得见两边的地方**（`programs/src/system/inner.rs` 末尾的
+    /// `const _`）⇒ 装配长过上限**照样编不过**。
+    /// **代价照实记**：宿主靶那一侧不再咬（`INNER` 在 programs，宿主编不到它）。
+    pub const CAP: usize = 16;
 
     /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
     pub const fn new(vested_by: VestedBy) -> Desk {

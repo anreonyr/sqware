@@ -99,8 +99,33 @@ pub const INNER: &[(Role, Program)] = &[
     ),
 ];
 
-/// 内件里**上板**的那几枚——板那本账的界要它（见 `board::desk::Desk::CAP`）。
+/// 内件里**上板**的那几枚——板那本账的界要它（见 `contract::system::board::desk::Desk::CAP`）。
 ///
+/// **装配长过上限 ⇒ 编不过**：板那本账的界是一个**上限**（`Desk::CAP`），它该装得下"装配单里
+/// 上板的行 ＋ 内件里上板的枚"。这条断言就是原来那个病（满了静默地答 `Full`）的挡板。
+///
+/// **照实记（它现在在哪儿咬）**：界原先是从这两处**数出来**的（`00de768`），咬人的地方是数组长度；
+/// 用户裁的乙把它改回上限，咬人的地方挪到这一条。**宿主靶编不到本文件**（`INNER` 在这里）⇒ 宿主
+/// 那一侧不咬，产品这一侧照咬。
+const _: () = assert!(boarded_rows() + boarded() <= contract::system::board::desk::Desk::CAP);
+
+/// 装配单里 `board: true` 的行数——**全表**，故是**任何一景的上界**（板只收装配者推来的人，
+/// 而提示一位装配单行一条）。**从板那本账搬过来的**：那个数横跨两个 crate，故它住在看得见
+/// 两边的地方。
+const fn boarded_rows() -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < plan::assembly::ALL.len() {
+        if let Some(plan) = plan::assembly::ALL[i].plan {
+            if plan.board {
+                n += 1;
+            }
+        }
+        i += 1;
+    }
+    n
+}
+
 /// **一处定义**：这里数的是同一张 [`INNER`]，不是另抄一句"三枚都上板"。
 pub const fn boarded() -> usize {
     let mut n = 0;

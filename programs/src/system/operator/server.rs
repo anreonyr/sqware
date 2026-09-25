@@ -24,7 +24,8 @@ use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::{COORD_FRAME, Coord};
-use super::desk::{Admit, Desk, Guest, desk};
+use contract::system::operator::desk::{Admit, Desk, Guest};
+use protocol::system::operator::call::desk;
 
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。

@@ -6,6 +6,7 @@
 
 use env::{PieToken, TaskId};
 
+use contract::system::operator::desk::Desk;
 use super::core::{Fail, Operator, Stamps, Unship};
 use crate::session::{Claim, Seat};
 
@@ -58,6 +59,11 @@ pub const fn tree() -> Operator {
     };
     let unship: Unship = unship;
     Operator::new(stamps, unship)
+}
+
+/// **立一本账**（一位客人一格）：把"读内核事实"的那一枚接上——账住「约」，手在「口」。
+pub fn desk() -> Desk {
+    Desk::new(vested_by)
 }
 
 /// **交出**：把调用方手里那一枚交给持树者（`Accord` 一份副本），返"种在持树者表里"的号；

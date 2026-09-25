@@ -15,6 +15,7 @@
 
 use env::{PieToken, TaskId};
 
+use contract::system::board::desk::Desk;
 use super::core::{Board, Fail, Unship, VestedBy};
 use crate::session::{Claim, Seat};
 
@@ -39,6 +40,12 @@ pub const fn board() -> Board {
     let vested_by: VestedBy = vested_by;
     let unship: Unship = unship;
     Board::new(vested_by, unship)
+}
+
+/// **立一本账**（一位客人一格）：把"读内核事实"的那一枚接上（`vested_by`，`Reserve` 那一问）
+/// ——**账住「约」，手在「口」**，这一手就是那个接口。
+pub const fn desk() -> Desk {
+    Desk::new(vested_by)
 }
 
 /// **交出**：把调用方手里那枚入口交给持板者（`Accord` 一份副本），返"种在持板者表里"的号；

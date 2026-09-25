@@ -18,7 +18,8 @@ use protocol::system::board::call::ENTRY_MARK;
 pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
 use protocol::system::board::{Board, Fail};
 
-use super::desk::{Desk, Guest, desk};
+use contract::system::board::desk::{Desk, Guest};
+use protocol::system::board::call::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///

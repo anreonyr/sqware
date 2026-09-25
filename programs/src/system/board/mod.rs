@@ -7,5 +7,4 @@
 //! 怎么站住、怎么记账是实现。
 
 pub mod bridge;
-pub mod desk;
 pub mod server;

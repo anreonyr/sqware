@@ -5,6 +5,5 @@
 //! 原先它真在 `prog-operator` 那个域里跑。
 
 pub mod bridge;
-pub mod desk;
 pub mod fail;
 pub mod server;
