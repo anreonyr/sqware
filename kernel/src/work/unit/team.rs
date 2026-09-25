@@ -271,7 +271,7 @@ pub(crate) fn alloc_team_id() -> TeamId {
 ///
 /// **照实记（为什么要分三格）**：原先三步失败坍缩成一个 `Load`，于是装载期帧耗尽也
 /// 答 `-6 BadImage`——内存吃紧会被报成"镜像不认"，是个假诊断。而编排者那一侧
-/// `-4` 早就有格子接（`protocol::system::core::Fail::NoRoom`），`-6` 没有。
+/// `-4` 早就有格子接（`protocol::system::core::Fail::Full`），`-6` 没有。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitError {
     /// parser / SpaceBuilder / loader 任一步失败（不落，无脏域）。

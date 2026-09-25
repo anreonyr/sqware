@@ -325,7 +325,7 @@ fn main() -> Reason {
                         Verdict::Lost => t.lost += 1,
                     }
                 }
-                // 造不出来（NoRoom / 表满…）：这一档作罢，照实报出来。
+                // 造不出来（`Full`：表满 / 备不下）：这一档作罢，照实报出来。
                 Err(why) => {
                     say(&format!("rig: d_us={d_us} trial failed: {why}"));
                     break;

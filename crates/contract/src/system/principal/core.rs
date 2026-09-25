@@ -70,7 +70,7 @@ pub enum Fail {
     /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
     ///
     /// **两条转换原语到不了这一格**（它们不分配）：到得了的是 `new`（立根）、`bind`、`derive`。
-    NoRoom,
+    Full,
 }
 
 // ── 两张表 ──────────────────────────────────────────────────
@@ -112,10 +112,10 @@ pub struct Principal {
 impl Principal {
     /// 立一份账：**自带根**（零号节点，没有父）。
     ///
-    /// 根立不起来就没有身份可言，故备不下时如实报 [`Fail::NoRoom`]（不 panic）。
+    /// 根立不起来就没有身份可言，故备不下时如实报 [`Fail::Full`]（不 panic）。
     pub fn new(assembler: TaskId) -> Result<Principal, Fail> {
         let mut tree = Vec::new();
-        tree.try_reserve(1).map_err(|_| Fail::NoRoom)?;
+        tree.try_reserve(1).map_err(|_| Fail::Full)?;
         tree.push(Node { parent: None });
         Ok(Principal {
             assembler,
@@ -144,7 +144,7 @@ impl Principal {
             row.current = p;
             return Ok(());
         }
-        self.roster.try_reserve(1).map_err(|_| Fail::NoRoom)?;
+        self.roster.try_reserve(1).map_err(|_| Fail::Full)?;
         self.roster.push(Bound {
             tid,
             origin: p,
@@ -192,7 +192,7 @@ impl Principal {
         if self.node(p).is_none() {
             return Err(Fail::Unknown);
         }
-        self.tree.try_reserve(1).map_err(|_| Fail::NoRoom)?;
+        self.tree.try_reserve(1).map_err(|_| Fail::Full)?;
         let id = PrincipalId(self.tree.len());
         self.tree.push(Node { parent: Some(p) });
         Ok(id)

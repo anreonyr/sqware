@@ -38,7 +38,7 @@ pub fn mint(
 
     let team = crate::system::call::build(image, kind)?;
     let Ok(task) = crate::system::call::spawn(team, &[]) else {
-        return Err(Fail::NoRoom);
+        return Err(Fail::Full);
     };
     table.attach(name, Some(team), task)?;
     table.set_state(name, State::Starting);
@@ -60,7 +60,7 @@ pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, F
         return Err(Fail::Unknown);
     };
     let Ok(task) = crate::system::call::spawn(TeamId::new(0), &role.args(me.get())) else {
-        return Err(Fail::NoRoom);
+        return Err(Fail::Full);
     };
     table.attach(name, None, task)?;
     table.set_state(name, State::Starting);

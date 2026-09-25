@@ -35,7 +35,7 @@
 //!
 //! **`found` 没有失败域**：它只动一枚计数器（不分配、不校验）⇒ 全族唯一一条**不可失败**的原语
 //! ——说的是**核心那一条**（[`Coalition::found`] 收不到任何失败理由）；**线上那一格 `FOUND` 还要
-//! 先过 `who` 闸**（发送者没绑过就答 `UNKNOWN`，见下面那张表里那一行）。[`Fail::NoRoom`] 只被
+//! 先过 `who` 闸**（发送者没绑过就答 `UNKNOWN`，见下面那张表里那一行）。[`Fail::Full`] 只被
 //! [`Coalition::enter`] 用。
 //!
 //! # 裁决（连同被否项一起记）
@@ -142,7 +142,7 @@
 //!          [0] status  [1] 未完  [2] 条数  [3..] 号   一窗：状态 + 未完 + 条数 + 一串号
 //!
 //!   动作码  FOUND=1 ENTER=2 LEAVE=3 AMID=4 BAND=5 BLOC=6
-//!   答话    OK=0 UNKNOWN=1 NO_ROOM=2 BAD=3        （BAD 在表外）
+//!   答话    OK=0 UNKNOWN=1 FULL=2    BAD=3        （BAD 在表外）
 //! ```
 //!
 //! **码的数字不照抄 principal**：同一个概念 `UNKNOWN`，operator 那一面是 1、principal 那一面
@@ -156,7 +156,7 @@
 //!   OK + flag              amid                   是 / 不是
 //!   OK + 未完 + 一串号      band / bloc            一窗号（`more` = 窗外还有）
 //!   UNKNOWN                found / enter / leave / amid / band   盟不存在，或发送者没绑
-//!   NO_ROOM                enter（只有它）         备不下那一行
+//!   FULL                   enter（只有它）         备不下那一行
 //!   表外 BAD               读不懂这一问
 //! ```
 //!
@@ -222,8 +222,8 @@
 //!   **只会漏，不会重**。`b` 那一格写成"游标 + 1"（`0` = 没有游标）——零号是真格子
 //!   （`PrincipalId::ROOT` 是 0、`CoalitionId(0)` 是一枚普通的盟），拿 0 当"没有"会漏掉它。
 //! - **没有配额**：条数是策略、容器要有界 ⇒ 落点在分配那一格（[`Coalition::enter`] 的
-//!   [`Fail::NoRoom`]）；另两条写与两条读**不分配**。号空间只受 `usize` 宽度约束（`found`
-//!   到不了 `NoRoom`），到 `usize::MAX` 那一步在本仓不可达（铸一枚要一趟问答）——不造机制。
+//!   [`Fail::Full`]）；另两条写与两条读**不分配**。号空间只受 `usize` 宽度约束（`found`
+//!   到不了 `Full`），到 `usize::MAX` 那一步在本仓不可达（铸一枚要一趟问答）——不造机制。
 //! - **身份空间是会话级的**（同 principal P4）：编排域退 ⇒ 本服务随级联收掉 ⇒ 整本盟册消失。
 //! - **内核侧零存储**：Task 没有盟籍字段——权威状态只在 Server。
 //! - **两个号空间不同型**：`CoalitionId` 与 `PrincipalId` 同形不同源，互相拿错是**编译错误**；

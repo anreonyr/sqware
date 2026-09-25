@@ -10,7 +10,7 @@
 //!   账    register 撞名 ⇒ Unknown；find / rows 只认**有名字的**行；
 //!         attach 没登记过 ⇒ Unknown，且"身子挂上"不等于"起来了"（state 照旧 NeverStarted）；
 //!         detach 摘身子**留行**（"起过、现在死了"说得出）；set_state 找不到名字 ⇒ 什么都不动；
-//!         表满 ⇒ NoRoom（CAP 是常量，与清单上限同值）
+//!         表满 ⇒ Full（CAP 是常量，与清单上限同值）
 //!   判定  admit_start：不在表里 ⇒ Unknown；Dead / NeverStarted ⇒ Ok（**重发那一格**）；
 //!         其余 ⇒ NotReady
 //!         probe_ready：按**这一行自己声明的**说法解读（不宣布的那种"放行即起来"）
@@ -126,7 +126,7 @@ fn set_state_with_a_wrong_name_touches_nothing() {
 
 #[test]
 fn the_table_has_a_bottom() {
-    // **条数是策略、容器要有界**：装满了答 `NoRoom`（不是 panic、也不是悄悄覆盖别人）。
+    // **条数是策略、容器要有界**：装满了答 `Full`（不是 panic、也不是悄悄覆盖别人）。
     let mut t = Table::new();
     let mut made = 0;
     loop {
@@ -137,7 +137,7 @@ fn the_table_has_a_bottom() {
         };
         match t.register(one, Announce::None) {
             Ok(()) => made += 1,
-            Err(Fail::NoRoom) => break,
+            Err(Fail::Full) => break,
             Err(other) => panic!("不该是别的错：{other:?}"),
         }
     }

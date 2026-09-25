@@ -60,7 +60,7 @@ pub use crate::fail_codes::OK;
 /// [`BAD`] 在失败表外（同板 / 树 / 身份服务那三家的先例）：它不是"哪个协议说的事"，
 /// 是**这一问读不懂**。
 pub const UNKNOWN: u8 = 1;
-pub const NO_ROOM: u8 = 2;
+pub const FULL: u8 = 2;
 pub const BAD: u8 = 3;
 
 // ── 帧骨架（两族同形的那一份）───────────────────────────────
@@ -154,7 +154,7 @@ crate::fail_codes! {
     /// 顺序排（`BAD` 收尾且在表外）——别家同一个概念排的是别的号，那不是约定。
     bijective Fail; OK;
     Fail::Unknown => UNKNOWN,
-    Fail::NoRoom => NO_ROOM,
+    Fail::Full => FULL,
 }
 
 // ── 载体两侧共用的坐标 ─────────────────────────────────────

@@ -95,7 +95,7 @@ impl Table {
             return Err(Fail::Unknown);
         }
         let Some(row) = self.rows.iter_mut().find(|s| s.name.is_empty()) else {
-            return Err(Fail::NoRoom);
+            return Err(Fail::Full);
         };
         row.name = name;
         row.announce = announce;

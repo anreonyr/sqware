@@ -57,7 +57,7 @@ pub use crate::fail_codes::OK;
 /// [`BAD`] 在失败表外（同板/树的先例）：它不是"哪个协议说的事"，是**这一问读不懂**。
 pub const DENIED: u8 = 1;
 pub const UNKNOWN: u8 = 2;
-pub const NO_ROOM: u8 = 3;
+pub const FULL: u8 = 3;
 pub const BAD: u8 = 4;
 
 // ── 帧骨架（两族同形的那一份）───────────────────────────────
@@ -88,7 +88,7 @@ crate::fail_codes! {
     bijective Fail; OK;
     Fail::Denied => DENIED,
     Fail::Unknown => UNKNOWN,
-    Fail::NoRoom => NO_ROOM,
+    Fail::Full => FULL,
 }
 
 // ── 载体两侧共用的坐标 ─────────────────────────────────────

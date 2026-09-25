@@ -255,7 +255,7 @@ fn why(fail: Fail) -> &'static str {
     match fail {
         Fail::Denied => "denied",
         Fail::Unknown => "unknown",
-        Fail::NoRoom => "no-room",
+        Fail::Full => "full",
     }
 }
 

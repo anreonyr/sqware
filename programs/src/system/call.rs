@@ -65,7 +65,7 @@ pub(super) fn running(task: TaskId) -> bool {
 fn fail(e: erra::Error<EnvError>) -> Fail {
     match e.source.code() {
         -6 => Fail::BadImage,
-        -4 => Fail::NoRoom,
+        -4 => Fail::Full,
         _ => Fail::Unknown,
     }
 }

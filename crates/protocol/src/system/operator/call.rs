@@ -33,7 +33,7 @@ pub fn map_seat(seat: Seat) -> Fail {
         Seat::NoName => Fail::Unknown,
         Seat::NoHole => Fail::Unknown,
         Seat::NoSeed => Fail::Unknown,
-        Seat::NoRoom => Fail::Full,
+        Seat::Full => Fail::Full,
     }
 }
 

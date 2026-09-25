@@ -74,7 +74,7 @@ pub enum Fail {
     ///
     /// **只有 [`Coalition::enter`] 到得了这一格**：`found` 不分配（只动计数器），
     /// `leave` 与三条读也不分配。
-    NoRoom,
+    Full,
 }
 
 // ── 一窗号 ──────────────────────────────────────────────────
@@ -188,7 +188,7 @@ pub struct Coalition {
     /// 号的存在那一格：**号 < `next` 即铸过**。只增（全文件没有一处减它）。
     ///
     /// 一枚计数器而不是一张表：每枚盟没有任何内容可存（无父、无名、无主），存下来就是一格
-    /// 空行——`found` 因此**不分配**，也到不了 [`Fail::NoRoom`]。
+    /// 空行——`found` 因此**不分配**，也到不了 [`Fail::Full`]。
     next: usize,
     /// 盟籍：一格一对号，可增可删。
     book: Vec<Ally>,
@@ -224,7 +224,7 @@ impl Coalition {
 
     /// 盟 · 写：把 `who` 放进 `c`。**幂等**：已在里面答 `Ok(())`、表不动——集合没有"第二次"。
     ///
-    /// 两格前置各问一件事：`c` 铸过没有（[`Fail::Unknown`]）、备得下那一行吗（[`Fail::NoRoom`]）。
+    /// 两格前置各问一件事：`c` 铸过没有（[`Fail::Unknown`]）、备得下那一行吗（[`Fail::Full`]）。
     ///
     /// `who` 由适配层给：**核心收的是"一条已经解析好的身份"**，故"是不是发送者本人"这一格
     /// 不在核心（见正文"已知边界"）。
@@ -236,7 +236,7 @@ impl Coalition {
         if self.book.iter().any(|a| a.who == who && a.of == c) {
             return Ok(());
         }
-        self.book.try_reserve(1).map_err(|_| Fail::NoRoom)?;
+        self.book.try_reserve(1).map_err(|_| Fail::Full)?;
         self.book.push(Ally { who, of: c });
         Ok(())
     }

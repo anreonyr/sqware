@@ -363,7 +363,7 @@ impl Why for Fail {
     fn why(&self) -> &'static str {
         match self {
             Fail::Unknown => "unknown",
-            Fail::NoRoom => "no-room",
+            Fail::Full => "full",
         }
     }
 }
@@ -373,7 +373,7 @@ impl Why for PolicyFail {
         match self {
             PolicyFail::Denied => "denied",
             PolicyFail::Unknown => "unknown",
-            PolicyFail::NoRoom => "no-room",
+            PolicyFail::Full => "full",
         }
     }
 }

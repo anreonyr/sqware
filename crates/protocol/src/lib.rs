@@ -10,7 +10,7 @@
 
 // 码头的泊位是**一张可增长的账**（`session::core::Quay`）：条数由调用方按路数决定，
 // 故本 crate 引 `alloc`（与 `env`/`runtime` 同款；备不下时由 `Vec::try_reserve` 如实报
-// `Seat::NoRoom`，不 panic）。
+// `Seat::Full`，不 panic）。
 extern crate alloc;
 
 // ── 术语与它的两支宏 ───────────────────────────────────────

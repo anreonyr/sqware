@@ -453,7 +453,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 // "暂存拷不进来"同一个负码。
                 Err(UnitError::Unreadable) => return ret_err(frame, Fail::Denied),
                 // 内存不够从"镜像不认"里分出来：`-4` 这一格编排者本来就接
-                // （`protocol::system::core::Fail::NoRoom`），`-6` 没有。
+                // （`protocol::system::core::Fail::Full`），`-6` 没有。
                 Err(UnitError::OoM) => return ret_err(frame, Fail::OoM),
                 Err(UnitError::Load) => return ret_err(frame, Fail::BadImage),
             }

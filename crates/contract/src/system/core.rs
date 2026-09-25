@@ -105,7 +105,7 @@ pub enum Fail {
     /// 镜像装不上。
     BadImage,
     /// 表满，或线程/帧产不出来。
-    NoRoom,
+    Full,
     /// 没就绪：等到期还没起来、半路死了、或此刻不该起（已在跑）。
     NotReady,
 }

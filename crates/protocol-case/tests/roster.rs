@@ -102,15 +102,15 @@ fn a_principal_answer_is_not_a_failure_so_it_travels_as_ok_plus_a_flag() {
 
 #[test]
 fn the_principal_failure_table_is_bijective_and_keeps_bad_outside() {
-    use pframe::{BAD, DENIED, NO_ROOM, OK, UNKNOWN, code_to_fail, fail_to_code};
+    use pframe::{BAD, DENIED, FULL, OK, UNKNOWN, code_to_fail, fail_to_code};
     assert_eq!(fail_to_code(None), OK);
     assert_eq!(fail_to_code(Some(PFail::Denied)), DENIED);
     assert_eq!(fail_to_code(Some(PFail::Unknown)), UNKNOWN);
-    assert_eq!(fail_to_code(Some(PFail::NoRoom)), NO_ROOM);
+    assert_eq!(fail_to_code(Some(PFail::Full)), FULL);
     assert_eq!(code_to_fail(OK), None);
     assert_eq!(code_to_fail(DENIED), Some(PFail::Denied));
     assert_eq!(code_to_fail(UNKNOWN), Some(PFail::Unknown));
-    assert_eq!(code_to_fail(NO_ROOM), Some(PFail::NoRoom));
+    assert_eq!(code_to_fail(FULL), Some(PFail::Full));
     assert_eq!(code_to_fail(BAD), None, "读不懂那一格在失败域之外");
     assert_eq!(code_to_fail(99), None, "表外的码");
     assert_ne!(BAD, OK);
@@ -220,13 +220,13 @@ fn a_coalition_answer_has_three_shapes_and_they_all_read_back() {
 
 #[test]
 fn the_coalition_failure_table_is_bijective_and_keeps_bad_outside() {
-    use cframe::{BAD, NO_ROOM, OK, UNKNOWN, code_to_fail, fail_to_code};
+    use cframe::{BAD, FULL, OK, UNKNOWN, code_to_fail, fail_to_code};
     assert_eq!(fail_to_code(None), OK);
     assert_eq!(fail_to_code(Some(CFail::Unknown)), UNKNOWN);
-    assert_eq!(fail_to_code(Some(CFail::NoRoom)), NO_ROOM);
+    assert_eq!(fail_to_code(Some(CFail::Full)), FULL);
     assert_eq!(code_to_fail(OK), None);
     assert_eq!(code_to_fail(UNKNOWN), Some(CFail::Unknown));
-    assert_eq!(code_to_fail(NO_ROOM), Some(CFail::NoRoom));
+    assert_eq!(code_to_fail(FULL), Some(CFail::Full));
     assert_eq!(code_to_fail(BAD), None, "读不懂那一格在失败域之外");
     assert_ne!(BAD, OK);
 }

@@ -103,7 +103,7 @@ pub enum Seat {
     /// 这枚交不出去：没资格交 / 子集越界 / 对端已不在。
     NoSeed,
     /// 账腾不出来（本端那本账备不下这一格）。
-    NoRoom,
+    Full,
 }
 
 /// 一批泊位认领不齐时，差在哪。
@@ -173,7 +173,7 @@ impl Quay {
     /// # Errors
     /// - [`Seat::NoName`] 名字非法 / 同名的那一条已经装上 /
     ///   [`Seat::NoHole`] 铸不出孔 / [`Seat::NoSeed`] 交不出去 /
-    ///   [`Seat::NoRoom`] 账腾不出来
+    ///   [`Seat::Full`] 账腾不出来
     pub fn seat(&mut self, name: Name) -> Result<&Pier, Seat> {
         if name.is_empty() {
             return Err(Seat::NoName);
@@ -310,7 +310,7 @@ impl Quay {
             return Err(Seat::NoName);
         }
         // 账腾不出来：本端那本账备不下这一格。**在改它之前**先备——失败就地退回。
-        self.piers.try_reserve(1).map_err(|_| Seat::NoRoom)?;
+        self.piers.try_reserve(1).map_err(|_| Seat::Full)?;
         self.piers.push(Pier {
             name,
             hole,
