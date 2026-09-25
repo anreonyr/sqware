@@ -56,26 +56,43 @@ use principal::frame as pframe;
 fn a_principal_ask_round_trips_and_refuses_other_shapes() {
     // 末格是**回信孔那一格**（甲′）：拿一枚非零的号，验它原样过线。
     let back = env::PieToken::from_bytes(&0x5150u64.to_le_bytes()).expect("8 字节");
-    let frame = pframe::pack_ask(pframe::HEIR, 7, 9, back);
-    assert_eq!(frame.len(), pframe::ASK_LEN);
-    assert_eq!(pframe::op_of(&frame), Some(pframe::HEIR));
-    assert_eq!(pframe::unpack_ask(&frame), Some((pframe::HEIR, 7, 9, back)));
+    // **一条动作一格**：`HEIR` 两格都用（`7 ≼ 9`）——编出来的是那一形 ＋ 这趟的回信孔。
+    let mut bytes = [0u8; pframe::Query::LEN];
+    pframe::Req::Heir(PrincipalId::new(7), PrincipalId::new(9))
+        .query(back)
+        .store(&mut bytes);
+    assert_eq!(pframe::Query::LEN, 25, "一问就是这一形（表求和：一处定义）");
+    assert_eq!(
+        pframe::Wire::take(&bytes),
+        Some((
+            Some(pframe::Wire::Heir(
+                PrincipalId::new(7),
+                PrincipalId::new(9)
+            )),
+            back
+        )),
+        "两格号与回信孔那一格原样回来"
+    );
 
     // 不成形就不猜。
-    assert_eq!(pframe::unpack_ask(&[]), None, "空帧");
+    assert_eq!(pframe::Wire::take(&[]), None, "空帧");
     assert_eq!(
-        pframe::unpack_ask(&frame[..pframe::ASK_LEN - 1]),
+        pframe::Wire::take(&bytes[..pframe::Query::LEN - 1]),
         None,
         "短一字节"
     );
+    let long = [bytes.as_slice(), &[0u8]].concat();
+    assert_eq!(pframe::Wire::take(&long), None, "长一字节");
+
+    // **表外的动作码**：帧读得懂（长度对）、回信的路也在——只是这一码我不认
+    //（持册者据此答 `BAD`，而不是"连往哪回都不知道"）。
+    let mut outside = bytes;
+    outside[0] = 200;
     assert_eq!(
-        pframe::op_of(&frame[..1]),
-        Some(pframe::HEIR),
-        "动作码那一格读得出"
+        pframe::Wire::take(&outside),
+        Some((None, back)),
+        "表外的码 ⇒ 有回信的路、没有动作"
     );
-    assert_eq!(pframe::op_of(&[]), None, "空帧连动作码都没有");
-    let long = [frame.as_slice(), &[0u8]].concat();
-    assert_eq!(pframe::unpack_ask(&long), None, "长一字节");
 }
 
 #[test]
@@ -119,10 +136,19 @@ fn the_principal_failure_table_is_bijective_and_keeps_bad_outside() {
 #[test]
 fn a_coalition_ask_round_trips_and_the_cursor_cell_is_a_bijection() {
     let back = env::PieToken::from_bytes(&0x5150u64.to_le_bytes()).expect("8 字节");
-    let frame = cframe::pack_ask(cframe::BAND, 3, 0, back);
-    assert_eq!(cframe::unpack_ask(&frame), Some((cframe::BAND, 3, 0, back)));
-    assert_eq!(cframe::op_of(&frame), Some(cframe::BAND));
-    assert_eq!(cframe::unpack_ask(&frame[..cframe::ASK_LEN - 1]), None);
+    // `BAND`：`a` = 哪一枚盟、`b` = 游标（`None` = 从头取）。
+    let mut bytes = [0u8; cframe::Query::LEN];
+    cframe::Req::Band(CoalitionId::new(3), None)
+        .query(back)
+        .store(&mut bytes);
+    assert_eq!(
+        cframe::Wire::take(&bytes),
+        Some((
+            Some(cframe::Wire::Band(CoalitionId::new(3), None)),
+            back
+        ))
+    );
+    assert_eq!(cframe::Wire::take(&bytes[..cframe::Query::LEN - 1]), None);
 
     // **游标那一格加一**（双射）：零号是真格子（`PrincipalId::ROOT` 是 0），拿 0 当"没有"
     // 会把它漏掉——故 `0` = 没有游标，`号 + 1` = 从那一号之后接着取。

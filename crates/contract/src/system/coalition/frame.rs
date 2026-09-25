@@ -9,15 +9,19 @@
 //! # 帧（与 `system::principal::call` 同一形状；窗那一档多一种答形）
 //!
 //! ```text
-//!   Ask    [0] op   [1..9] a   [9..17] b          ASK_LEN   = 17
-//!   Reply  [0] status  [1] flag  [2..10] a        REPLY_LEN = 10
+//!   Query  [0] op   [1..9] a   [9..17] b   [17..25] back     25
+//!   Reply  [0] status  [1] flag  [2..10] a                   10
 //!          [0] status  [1] 未完  [2] 条数  [3..] 号    SEQ_REPLY_LEN = 131
 //! ```
 //!
 //! `a` / `b` 两格的**意义由动作码定**（`FOUND` 两格都空，`ENTER` / `LEAVE` 只用 `a`，
-//! `AMID` 两格都用）；答话的两种形状**各有各的上界**，服务端按 [`REPLY_MAX`] 备一只缓冲。
-//! **前两种形状（`ASK_LEN` / `REPLY_LEN`）与编 / 解那几手的本体在 [`crate::frame`]**——两族
-//! 同形，故只有一份；本文件把它们按本族的名字转出来，**窗那一档**留在这里（只此一族）。
+//! `AMID` 两格都用，`BAND` / `BLOC` 的 `b` 是**游标**）——而"这一条有几格"由下面的
+//! [`Req`] / [`Wire`] 按类型说。答话的两种形状**各有各的上界**，服务端按 [`REPLY_MAX`]
+//! 备一只缓冲。**前两种形状的本体在 [`crate::frame`]**——两族同形，故只有一份；本文件把它们
+//! 按本族的名字转出来，**窗那一档**留在这里（只此一族）。
+//!
+//! **照实记（这一行原写"一问 17 字节"）**：那是 `back` 那一格落地之前抄的，此后一问一直是
+//! `1 + 8 + 8 + 8 = 25`（同 `principal/frame.rs` 那条，详见 [`crate::frame`]）。
 //!
 //! **游标是阈值，说在 `b` 那一格**：`b = 游标 + 1`，`0` = 没有游标（从头取）。加一是有理的
 //! ——**零号是真格子**（`PrincipalId::ROOT` 是 0、`CoalitionId(0)` 是一枚普通的盟），
@@ -37,9 +41,10 @@
 //! 的顺序**排、`BAD` 收尾。故本族按自己的两格排（见 `fail_codes!` 那张表）：照抄别家只会
 //! 让自己表里空出一个号。
 
-use super::core::{Fail, WINDOW_CAP, Window};
+use super::core::{CoalitionId, Fail, WINDOW_CAP, Window};
 use crate::id::Id;
-use env::Mark;
+use crate::system::principal::core::PrincipalId;
+use env::{Mark, PieToken};
 
 // ── 码 ──────────────────────────────────────────────────────
 
@@ -69,7 +74,85 @@ pub const BAD: u8 = 3;
 // 的帧就是照它立的），故只有一份；这里只按本族的名字转出来（`call.rs` 那句
 // `pub use super::frame::*;` 照旧，调用点一处都不用改）。
 
-pub use crate::frame::{ASK_LEN, REPLY_LEN, op_of, pack_ask, reply_status, reply_value, reply_yes, unpack_ask, unpack_reply};
+pub use crate::frame::{Query, REPLY_LEN, reply_status, reply_value, reply_yes, unpack_reply};
+
+// ── 一问：一条动作一格 ──────────────────────────────────────
+
+/// **一问的形状**——一条动作一格（同 `principal/frame.rs` 那条照实记：它替掉了
+/// `pack_ask(op, a, b, back)` 那种"任何一枚码配上任何两格数"）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Req {
+    /// `FOUND`：铸一枚新盟——**两格都空**。
+    Found,
+    /// `ENTER`：进 `a` 那一枚盟。
+    Enter(CoalitionId),
+    /// `LEAVE`：离 `a` 那一枚盟。
+    Leave(CoalitionId),
+    /// `AMID`：`a` 此刻在 `b` 那一枚盟里吗（**两格都用**）。
+    Amid(PrincipalId, CoalitionId),
+    /// `BAND`：读 `a` 那一枚盟的盟籍；`b` = **游标**（从哪一枚之后接着读）。
+    Band(CoalitionId, Option<PrincipalId>),
+    /// `BLOC`：读 `a` 那一位在哪些盟里；`b` = **游标**。
+    Bloc(PrincipalId, Option<CoalitionId>),
+}
+
+impl Req {
+    /// 编成线上那一形；`back` = **这一趟的回信孔在对端表里的号**（运输那一格，不是荷载）。
+    pub fn query(self, back: PieToken) -> Query {
+        let (op, a, b) = match self {
+            Req::Found => (FOUND, 0, 0),
+            Req::Enter(c) => (ENTER, c.get() as u64, 0),
+            Req::Leave(c) => (LEAVE, c.get() as u64, 0),
+            Req::Amid(p, c) => (AMID, p.get() as u64, c.get() as u64),
+            Req::Band(c, after) => (BAND, c.get() as u64, cursor_of(after)),
+            Req::Bloc(p, after) => (BLOC, p.get() as u64, cursor_of(after)),
+        };
+        Query { op, a, b, back }
+    }
+}
+
+/// **收进来的一问**（那两格号已经解成模型类型 / 游标）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wire {
+    Found,
+    Enter(CoalitionId),
+    Leave(CoalitionId),
+    Amid(PrincipalId, CoalitionId),
+    Band(CoalitionId, Option<PrincipalId>),
+    Bloc(PrincipalId, Option<CoalitionId>),
+}
+
+impl Wire {
+    /// 解一问：`(读出来的动作, 回信孔那一格)`——**动作读不出来给内层那个 `None`**（表外的动作码：
+    /// 这一问**有回信的路**，只是这一码我不认 ⇒ 持册者答一句 `BAD`）；**长度不对给外层那个
+    /// `None`**（连"往哪回"都没有 ⇒ 不动账、也不回话）。
+    pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
+        if bytes.len() != Query::LEN {
+            return None;
+        }
+        let q = Query::fetch(bytes)?;
+        let ask = match q.op {
+            FOUND => Some(Wire::Found),
+            ENTER => Some(Wire::Enter(CoalitionId::new(q.a as usize))),
+            LEAVE => Some(Wire::Leave(CoalitionId::new(q.a as usize))),
+            AMID => Some(Wire::Amid(
+                PrincipalId::new(q.a as usize),
+                CoalitionId::new(q.b as usize),
+            )),
+            BAND => Some(Wire::Band(
+                CoalitionId::new(q.a as usize),
+                cursor_in(q.b).map(|raw| PrincipalId::new(raw)),
+            )),
+            BLOC => Some(Wire::Bloc(
+                PrincipalId::new(q.a as usize),
+                cursor_in(q.b).map(|raw| CoalitionId::new(raw)),
+            )),
+            // 表外的动作码：这一码不是我的（但"往哪回"读得出来）。
+            _ => None,
+        };
+        Some((ask, q.back))
+    }
+}
 
 /// 一窗答话的长度：状态 + **未完** + 条数 + [`WINDOW_CAP`] 枚号。
 ///

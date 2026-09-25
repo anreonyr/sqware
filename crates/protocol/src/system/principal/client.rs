@@ -43,13 +43,13 @@ impl Face {
 
     /// 名册 · 写：把一条 TID 定到一条已存在的号上。**只有装配者那一枚问得出 `OK`**。
     pub fn bind(&self, tid: TaskId, p: PrincipalId, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(call::BIND, tid.get() as u64, p.get() as u64, millis)?;
+        let out = self.raw(call::Req::Bind(tid, p), millis)?;
         self.answer(out, |_present, _at| Ok(()))
     }
 
     /// 名册 · 读：这条 TID 此刻代表谁。`None` = 没绑（**不是失败**）。
     pub fn resolve(&self, tid: TaskId, millis: Wait) -> Result<Option<PrincipalId>, Fail> {
-        let out = self.raw(call::RESOLVE, tid.get() as u64, 0, millis)?;
+        let out = self.raw(call::Req::Resolve(tid), millis)?;
         self.answer(out, |present, at| {
             Ok((present == 1).then(|| PrincipalId::new(at as usize)))
         })
@@ -57,25 +57,25 @@ impl Face {
 
     /// 谱系 · 写：由 `p` 派生一枚新节点（装配者，或当前正好代表 `p` 的那一枚）。
     pub fn derive(&self, p: PrincipalId, millis: Wait) -> Result<PrincipalId, Fail> {
-        let out = self.raw(call::DERIVE, p.get() as u64, 0, millis)?;
+        let out = self.raw(call::Req::Derive(p), millis)?;
         self.answer(out, |_present, at| Ok(PrincipalId::new(at as usize)))
     }
 
     /// 转换 · 领：把**自己**当前的号换成 `q`（只许沿自己那一支向下）。
     pub fn adopt(&self, q: PrincipalId, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(call::ADOPT, q.get() as u64, 0, millis)?;
+        let out = self.raw(call::Req::Adopt(q), millis)?;
         self.answer(out, |_present, _at| Ok(()))
     }
 
     /// 转换 · 弃：回到**装配给我的那一条**（不删格，故还能再领一次）。
     pub fn waive(&self, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(call::WAIVE, 0, 0, millis)?;
+        let out = self.raw(call::Req::Waive, millis)?;
         self.answer(out, |_present, _at| Ok(()))
     }
 
     /// 谱系 · 读：直接父。**三态**——`Some` / `None`（它是根）/ `Err(Unknown)`（树外）。
     pub fn sire(&self, p: PrincipalId, millis: Wait) -> Result<Option<PrincipalId>, Fail> {
-        let out = self.raw(call::SIRE, p.get() as u64, 0, millis)?;
+        let out = self.raw(call::Req::Sire(p), millis)?;
         self.answer(out, |present, at| {
             Ok((present == 1).then(|| PrincipalId::new(at as usize)))
         })
@@ -83,7 +83,7 @@ impl Face {
 
     /// 谱系 · 读：`a ≼ b`。
     pub fn heir(&self, a: PrincipalId, b: PrincipalId, millis: Wait) -> Result<bool, Fail> {
-        let out = self.raw(call::HEIR, a.get() as u64, b.get() as u64, millis)?;
+        let out = self.raw(call::Req::Heir(a, b), millis)?;
         // `HEIR` 的答案在**有没有**那一格（是 / 不是），8 字节那一格留空。
         self.answer(out, |present, _at| Ok(present == 1))
     }
@@ -96,12 +96,14 @@ impl Face {
     /// 而那一份是 `fail_codes!` 的**双射表**（加变体 = 加一个线上码）——那是动协议面的事。
     /// 分得开它们的那一格在**对面**：`Denied` 是服务真会答的码（判据在 `judge`），
     /// "没走到"是本端自己在码表之外判的。
-    fn raw(&self, op: u8, a: u64, b: u64, millis: Wait) -> Result<[u8; call::REPLY_LEN], Fail> {
+    fn raw(&self, act: call::Req, millis: Wait) -> Result<[u8; call::REPLY_LEN], Fail> {
         // **先铸、先交，再推**（次序是契约的一半，见 `session::call::lend_out`）：那一枚
         // "种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫自己的表。
         let (back, seed) =
             crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Denied)?;
-        let frame = call::pack_ask(op, a, b, seed);
+        // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
+        let mut frame = [0u8; call::Query::LEN];
+        act.query(seed).store(&mut frame);
         if crate::session::call::push_to(self.entry, &frame).is_err() {
             // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来（与 `lend` 同一手收尾）。
             let _ = mail::release(back);

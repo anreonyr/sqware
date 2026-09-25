@@ -79,6 +79,23 @@ impl Field for [u8; 8] {
     }
 }
 
+/// **`u64` 那一格是 8 字节小端**：名册/盟册那一族一问里的 `a` / `b` 两格就是它（那里的意义
+/// 由**动作码**定，故字段表只管这 8 个字节怎么落）。
+///
+/// **照实记（它与 [`TaskId`] / [`PieToken`] 那两个 8 字节的区别）**：那两枚是**过线的号**
+/// （各有校验：令牌自 1 起、`TaskId` 有 0 哨兵），而这一格是**裸的 8 字节数**——它的解释
+/// （是身份号、是盟号、还是游标）归族的正文说，故这里只写宽度与字节序。
+impl Field for u64 {
+    const WIDTH: usize = 8;
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_le_bytes());
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        let raw: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
+        Some(u64::from_le_bytes(raw))
+    }
+}
+
 impl Field for TaskId {
     const WIDTH: usize = 8;
     fn store(&self, out: &mut [u8]) {

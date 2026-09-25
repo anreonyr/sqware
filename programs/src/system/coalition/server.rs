@@ -22,7 +22,7 @@ use core::time::Duration;
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::system::coalition::call as ccall;
-use protocol::system::coalition::core::{Coalition, CoalitionId, Fail};
+use protocol::system::coalition::core::{Coalition, Fail};
 use protocol::system::operator::Where;
 use protocol::system::operator::call as ocall;
 use protocol::system::operator::client as operator;
@@ -115,7 +115,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
         return Err(super::fail::Fail::Desk);
     }
 
-    // 一问的形状是 `ASK_LEN`；缓冲给**一页**（载体的界，见 `Push` 的前置条件）——
+    // 一问的形状是那一形（25 字节）；缓冲给**一页**（载体的界，见 `Push` 的前置条件）——
     // 于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
@@ -138,8 +138,8 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 /// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（同 `principal` 那一面）；
 /// `from` 是**内核盖的发送者**。
 fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
-    let Some((op, a, b, back)) = ccall::unpack_ask(frame) else {
-        // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
+    let Some((ask, back)) = ccall::Wire::take(frame) else {
+        // 不是那个形状（长度不对）：不猜、不动账、也不回话——没有可信的"往哪回"。
         return;
     };
     if !matches!(
@@ -150,68 +150,64 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
         return;
     }
     let mut reply = [0u8; ccall::REPLY_MAX];
-    let said = answer(book, face, from, op, a, b, &mut reply);
+    let said = answer(book, face, from, ask, &mut reply);
     let _ = HolePie::from_token(back).push(&reply[..said]);
     let _ = mail::release(back);
 }
 
 /// 把一句问交给核心，编出一句答（**答话有两种形状**：一格状态、或一窗号）。
 ///
-/// **先读动作码、再解载荷**；三条**写**原语同一个起手：**先拿发送者过名册**（[`who`]）。
-/// 三条读不过名册——`amid` 的 `p` 与两条取窗的键都是问的人给的标签（K6）。
+/// **形状由 [`ccall::Wire`] 说**（收帧那一侧已按动作解好：两格载荷的意义随之定，不再是一枚裸码
+/// ＋ 两个裸数）。三条**写**原语同一个起手：**先拿发送者过名册**（[`who`]）。三条读不过名册
+/// ——`amid` 的 `p` 与两条取窗的键都是问的人给的标签（K6）。
 /// 返**帧长**——答案写进调用方那只缓冲（[`ccall::REPLY_MAX`]）。
 fn answer(
     book: &mut Coalition,
     face: &Face,
     from: TaskId,
-    op: u8,
-    a: u64,
-    b: u64,
+    ask: Option<ccall::Wire>,
     out: &mut [u8; ccall::REPLY_MAX],
 ) -> usize {
-    match op {
+    // 表外的动作码：这一问有回信的路，只是这一码我不认（与"读不懂"同一格）。
+    let Some(ask) = ask else {
+        return code(out, ccall::BAD);
+    };
+    match ask {
         // `found` 的钥匙是"你得是个已绑定的身份"（K3），**解析出来的那条号只当门卫**：
         // 盟无主（K2），不记铸造者——全族唯一一处。
-        ccall::FOUND => match who(face, from) {
+        ccall::Wire::Found => match who(face, from) {
             Ok(_) => said(out, ccall::reply_value(book.found())),
             Err(fail) => status(out, fail),
         },
-        ccall::ENTER => match who(face, from) {
-            Ok(w) => match book.enter(w, CoalitionId::new(a as usize)) {
+        ccall::Wire::Enter(c) => match who(face, from) {
+            Ok(w) => match book.enter(w, c) {
                 Ok(()) => said(out, ccall::reply_status(ccall::OK)),
                 Err(fail) => status(out, fail),
             },
             Err(fail) => status(out, fail),
         },
-        ccall::LEAVE => match who(face, from) {
-            Ok(w) => match book.leave(w, CoalitionId::new(a as usize)) {
+        ccall::Wire::Leave(c) => match who(face, from) {
+            Ok(w) => match book.leave(w, c) {
                 Ok(()) => said(out, ccall::reply_status(ccall::OK)),
                 Err(fail) => status(out, fail),
             },
             Err(fail) => status(out, fail),
         },
-        ccall::AMID => {
-            match book.amid(PrincipalId::new(a as usize), CoalitionId::new(b as usize)) {
+        ccall::Wire::Amid(p, c) => {
+            match book.amid(p, c) {
                 // "不在"是一句答（`Ok(false)`），"查无此盟"才是这一格。
                 Ok(yes) => said(out, ccall::reply_yes(yes)),
                 Err(fail) => status(out, fail),
             }
         }
-        // 两条取窗：`a` 是键，`b` 是**游标 + 1**（`0` = 没有游标，见 [`ccall`] 的帧那一节）。
-        ccall::BAND => {
-            let after = ccall::cursor_in(b).map(PrincipalId::new);
-            match book.band(CoalitionId::new(a as usize), after) {
-                Ok(window) => ccall::pack_seq(out, &window),
-                Err(fail) => status(out, fail),
-            }
-        }
+        // 两条取窗：`a` 是键，`b` 是**游标 + 1**（`0` = 没有游标，见 [`ccall`] 的帧那一节）——
+        // 游标那一手已经在 `Wire` 里解好了。
+        ccall::Wire::Band(c, after) => match book.band(c, after) {
+            Ok(window) => ccall::pack_seq(out, &window),
+            Err(fail) => status(out, fail),
+        },
         // `bloc` 没有失败域（`p` 是标签，不在任何盟里就是空窗）。
-        ccall::BLOC => {
-            let after = ccall::cursor_in(b).map(CoalitionId::new);
-            ccall::pack_seq(out, &book.bloc(PrincipalId::new(a as usize), after))
-        }
-        // 没见过的动作码：与"这一问读不懂"同一格（不另立一格）。
-        _ => code(out, ccall::BAD),
+        ccall::Wire::Bloc(p, after) => ccall::pack_seq(out, &book.bloc(p, after)),
     }
 }
 

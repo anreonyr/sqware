@@ -117,7 +117,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
         return Err(super::fail::Fail::Desk);
     }
 
-    // 一问的形状是 `ASK_LEN`；缓冲给**一页**（载体的界，见 `Push` 的前置条件）——
+    // 一问的形状是那一形（25 字节）；缓冲给**一页**（载体的界，见 `Push` 的前置条件）——
     // 于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
@@ -145,8 +145,8 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 ///
 /// `from` 是**内核盖的发送者**，名册与谱系的钥匙判据（装配者 / 当前正好代表 `p`）用的就是它。
 fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
-    let Some((op, a, b, back)) = pcall::unpack_ask(frame) else {
-        // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
+    let Some((ask, back)) = pcall::Wire::take(frame) else {
+        // 不是那个形状（长度不对）：不猜、不动账、也不回话——没有可信的"往哪回"。
         return;
     };
     if !matches!(
@@ -156,52 +156,53 @@ fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
         // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
         return;
     }
-    let _ = HolePie::from_token(back).push(&answer(book, from, op, a, b));
+    let _ = HolePie::from_token(back).push(&answer(book, from, ask));
     let _ = mail::release(back);
 }
 
 /// 把一句问交给核心，编出一句答（**一格**：读不懂也答，答 `BAD`）。
 ///
-/// **先读动作码、再解载荷**；动作码定两格载荷的意义（`RESOLVE`/`DERIVE`/`SIRE` 只用 `a`，
-/// `HEIR` 两格都用）。答案与失败分开放（见 [`pcall`]：`OK` + `flag` 是答案，负码表只装失败）。
-fn answer(book: &mut Principal, from: TaskId, op: u8, a: u64, b: u64) -> [u8; pcall::REPLY_LEN] {
-    match op {
-        pcall::BIND => match book.bind(from, TaskId::new(a as usize), PrincipalId::new(b as usize))
-        {
+/// **形状由 [`pcall::Wire`] 说**（收帧那一侧已按动作解好了——两格载荷的意义随之定，不再是一枚
+/// 裸码 ＋ 两个裸数）。答案与失败分开放（见 [`pcall`]：`OK` + `flag` 是答案，负码表只装失败）。
+fn answer(book: &mut Principal, from: TaskId, ask: Option<pcall::Wire>) -> [u8; pcall::REPLY_LEN] {
+    // 表外的动作码：这一问有回信的路，只是这一码我不认（与"读不懂"同一格）。
+    let Some(ask) = ask else {
+        return pcall::reply_status(pcall::BAD);
+    };
+    match ask {
+        pcall::Wire::Bind(tid, p) => match book.bind(from, tid, p) {
             Ok(()) => pcall::reply_status(pcall::OK),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
-        pcall::RESOLVE => match book.resolve(TaskId::new(a as usize)) {
+        pcall::Wire::Resolve(tid) => match book.resolve(tid) {
             Some(p) => pcall::reply_present(true, p),
             None => pcall::reply_present(false, PrincipalId::ROOT),
         },
-        pcall::DERIVE => match book.derive(from, PrincipalId::new(a as usize)) {
+        pcall::Wire::Derive(p) => match book.derive(from, p) {
             Ok(q) => pcall::reply_value(q),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
-        pcall::SIRE => match book.sire(PrincipalId::new(a as usize)) {
+        pcall::Wire::Sire(p) => match book.sire(p) {
             Ok(Some(q)) => pcall::reply_present(true, q),
             Ok(None) => pcall::reply_present(false, PrincipalId::ROOT),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
-        pcall::HEIR => {
-            match book.heir(PrincipalId::new(a as usize), PrincipalId::new(b as usize)) {
+        pcall::Wire::Heir(a, b) => {
+            match book.heir(a, b) {
                 Ok(yes) => pcall::reply_yes(yes),
                 // "不是祖先"是一句答（`Ok(false)`），"查无此号"才是这一格。
                 Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
             }
         }
         // 转换那两条都只答状态那一格（成功 = `OK`）；钥匙是**发送者**，报文里没有"我是谁"。
-        pcall::ADOPT => match book.adopt(from, PrincipalId::new(a as usize)) {
+        pcall::Wire::Adopt(p) => match book.adopt(from, p) {
             Ok(()) => pcall::reply_status(pcall::OK),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
-        pcall::WAIVE => match book.waive(from) {
+        pcall::Wire::Waive => match book.waive(from) {
             Ok(()) => pcall::reply_status(pcall::OK),
             Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
         },
-        // 没见过的动作码：与"这一问读不懂"同一格（不另立一格）。
-        _ => pcall::reply_status(pcall::BAD),
     }
 }
 

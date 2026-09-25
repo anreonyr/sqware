@@ -51,26 +51,26 @@ impl Face {
 
     /// 盟 · 写：立一枚新号——**自己是哪一位**由内核盖的印章说。
     pub fn found(&self, millis: Wait) -> Result<CoalitionId, Fail> {
-        let out = self.raw(call::FOUND, 0, 0, millis)?;
+        let out = self.raw(call::Req::Found, millis)?;
         self.answer(out, |_present, at| Ok(CoalitionId::new(at as usize)))
     }
 
     /// 盟 · 写：**我**进 `c`。
     pub fn enter(&self, c: CoalitionId, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(call::ENTER, c.get() as u64, 0, millis)?;
+        let out = self.raw(call::Req::Enter(c), millis)?;
         self.answer(out, |_present, _at| Ok(()))
     }
 
     /// 盟 · 写：**我**出 `c`。撞空也成（集合运算没有"第二次"）。
     pub fn leave(&self, c: CoalitionId, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(call::LEAVE, c.get() as u64, 0, millis)?;
+        let out = self.raw(call::Req::Leave(c), millis)?;
         self.answer(out, |_present, _at| Ok(()))
     }
 
     /// 盟 · 读：`p` 在不在 `c` 里。**两件事两个落点**——`Ok(false)` 是不在，
     /// `Err(Unknown)` 是这枚盟不存在。
     pub fn amid(&self, p: PrincipalId, c: CoalitionId, millis: Wait) -> Result<bool, Fail> {
-        let out = self.raw(call::AMID, p.get() as u64, c.get() as u64, millis)?;
+        let out = self.raw(call::Req::Amid(p, c), millis)?;
         // `AMID` 的答案在**有没有**那一格（在 / 不在），8 字节那一格留空。
         self.answer(out, |present, _at| Ok(present == 1))
     }
@@ -85,7 +85,7 @@ impl Face {
         after: Option<PrincipalId>,
         millis: Wait,
     ) -> Result<Window<PrincipalId>, Fail> {
-        self.window(call::BAND, c.get() as u64, call::cursor_of(after), millis)
+        self.window(call::Req::Band(c, after), millis)
     }
 
     /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序与游标同 [`Face::band`]）。
@@ -95,7 +95,7 @@ impl Face {
         after: Option<CoalitionId>,
         millis: Wait,
     ) -> Result<Window<CoalitionId>, Fail> {
-        self.window(call::BLOC, p.get() as u64, call::cursor_of(after), millis)
+        self.window(call::Req::Bloc(p, after), millis)
     }
 
     /// 问一句、取一句答。
@@ -105,11 +105,13 @@ impl Face {
     /// 理由与那一面同：**对本端是同一个下一步**（这一趟别指望了），而这一族**没有 `Denied`**
     /// 可落（盟无主）。要单开一格就得往 [`Fail`] 里加变体，那一份是 `fail_codes!` 的**双射表**
     /// （加变体 = 加线上码）——较真值得，但它是动协议面的一刀，不混在这一条里。
-    fn raw(&self, op: u8, a: u64, b: u64, millis: Wait) -> Result<[u8; call::REPLY_LEN], Fail> {
+    fn raw(&self, act: call::Req, millis: Wait) -> Result<[u8; call::REPLY_LEN], Fail> {
         // **先铸、先交，再推**（同 `principal/client.rs` 那一面；身体在 `session::call::lend_out`）。
         let (back, seed) =
             crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
-        let frame = call::pack_ask(op, a, b, seed);
+        // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
+        let mut frame = [0u8; call::Query::LEN];
+        act.query(seed).store(&mut frame);
         if crate::session::call::push_to(self.entry, &frame).is_err() {
             let _ = mail::release(back);
             return Err(Fail::Unknown);
@@ -145,15 +147,14 @@ impl Face {
     /// 问一句、取一句答（**窗那一档**：答话有长有短——窗是 `3 + 8n`，失败只有一格状态）。
     fn ask_seq(
         &self,
-        op: u8,
-        a: u64,
-        b: u64,
+        act: call::Req,
         millis: Wait,
     ) -> Result<([u8; call::SEQ_REPLY_LEN], usize), Fail> {
         // **先铸、先交，再推**（同本文件 `raw` 那一支）。
         let (back, seed) =
             crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
-        let frame = call::pack_ask(op, a, b, seed);
+        let mut frame = [0u8; call::Query::LEN];
+        act.query(seed).store(&mut frame);
         if crate::session::call::push_to(self.entry, &frame).is_err() {
             let _ = mail::release(back);
             return Err(Fail::Unknown);
@@ -169,8 +170,8 @@ impl Face {
     }
 
     /// 一句窗答：先看状态那一格（失败域 + 读不懂），再把那一串号读出来。
-    fn window<T: Id>(&self, op: u8, a: u64, b: u64, millis: Wait) -> Result<Window<T>, Fail> {
-        let (out, n) = self.ask_seq(op, a, b, millis)?;
+    fn window<T: Id>(&self, act: call::Req, millis: Wait) -> Result<Window<T>, Fail> {
+        let (out, n) = self.ask_seq(act, millis)?;
         match call::read_seq::<T>(&out[..n]) {
             Ok(window) => Ok(window),
             Err(code) => Err(call::code_to_fail(code).unwrap_or(Fail::Unknown)),

@@ -12,13 +12,17 @@
 //! # 帧（两族同形，故只有一份）
 //!
 //! ```text
-//!   Ask    [0] op   [1..9] a   [9..17] b          ASK_LEN   = 17
-//!   Reply  [0] status  [1] flag  [2..10] a        REPLY_LEN = 10
+//!   Query  [0] op   [1..9] a   [9..17] b   [17..25] back     25
+//!   Reply  [0] status  [1] flag  [2..10] a                   10
 //! ```
 //!
-//! `a` / `b` 两格的**意义由动作码定**（`RESOLVE`/`DERIVE`/`SIRE` 只填 `a`，`HEIR` 两格都填）；
-//! 答话定长，故两侧都不用攒缓冲、也不用问长度。**长度与编 / 解那几手的本体在
-//! [`crate::frame`]**（coalition 那一份一字不差），本文件把它们按本族的名字转出来。
+//! `a` / `b` 两格的**意义由动作码定**（`RESOLVE`/`DERIVE`/`SIRE` 只填 `a`，`HEIR` 两格都填）——
+//! 而"这一条有几格"由下面的 [`Req`] / [`Wire`] **按类型说**（不再是一枚裸码当形参）。
+//! 答话定长，故两侧都不用攒缓冲、也不用问长度。**形状本体在 [`crate::frame`]**
+//! （coalition 那一份一字不差），本文件把它们按本族的名字转出来。
+//!
+//! **照实记（这两行原写"一问 17 字节"）**：那是 `back` 那一格落地之前抄的，此后一问一直是
+//! `1 + 8 + 8 + 8 = 25`；这一刀把它改真（详见 [`crate::frame`] 里那条照实记）。
 //!
 //! # 答案为什么不进失败表
 //!
@@ -32,7 +36,7 @@
 
 use super::core::{Fail, PrincipalId};
 use crate::id::Id;
-use env::Mark;
+use env::{Mark, PieToken, TaskId};
 
 // ── 码 ──────────────────────────────────────────────────────
 
@@ -66,7 +70,91 @@ pub const BAD: u8 = 4;
 // 一份；这里只按本族的名字转出来（`call.rs` 那句 `pub use super::frame::*;` 照旧，调用点一处
 // 都不用改）。**本族自己的**是下面那些：码、`reply_present`、失败表、记号。
 
-pub use crate::frame::{ASK_LEN, REPLY_LEN, op_of, pack_ask, reply_status, reply_value, reply_yes, unpack_ask, unpack_reply};
+pub use crate::frame::{Query, REPLY_LEN, reply_status, reply_value, reply_yes, unpack_reply};
+
+// ── 一问：一条动作一格 ──────────────────────────────────────
+
+/// **一问的形状**——一条动作一格：`a` / `b` 两格在该动作里有几个就有几个（"只填 a"那几条
+/// **再没有第二个号可填**）。
+///
+/// **照实记（它替掉了什么）**：从前是 `pack_ask(op: u8, a: u64, b: u64, back)`——**任何一枚码都能
+/// 配上任何两格数**，"这一条有几格"只活在调用方与服务端那两段 `match` 里；错配**编得过**。
+/// 现在形状由类型说，编解码由 [`Query`] 那张表生成。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Req {
+    /// `BIND`：`a` = 哪一枚线程、`b` = 绑成谁。
+    Bind(TaskId, PrincipalId),
+    /// `RESOLVE`：这一枚线程此刻代表谁（`a` 一格）。
+    Resolve(TaskId),
+    /// `DERIVE`：从 `a` 派生一条新号。
+    Derive(PrincipalId),
+    /// `ADOPT`：转换 · 领——认 `a` 为父。
+    Adopt(PrincipalId),
+    /// `WAIVE`：转换 · 弃——**两格都空**（它只认"发送者是谁"）。
+    Waive,
+    /// `SIRE`：`a` 的父是谁。
+    Sire(PrincipalId),
+    /// `HEIR`：`a` 在 `b` 那一支里吗（**两格都用**）。
+    Heir(PrincipalId, PrincipalId),
+}
+
+impl Req {
+    /// 编成线上那一形；`back` = **这一趟的回信孔在对端表里的号**（运输那一格，不是荷载）。
+    pub fn query(self, back: PieToken) -> Query {
+        let (op, a, b) = match self {
+            Req::Bind(tid, p) => (BIND, tid.get() as u64, p.get() as u64),
+            Req::Resolve(tid) => (RESOLVE, tid.get() as u64, 0),
+            Req::Derive(p) => (DERIVE, p.get() as u64, 0),
+            Req::Adopt(p) => (ADOPT, p.get() as u64, 0),
+            Req::Waive => (WAIVE, 0, 0),
+            Req::Sire(p) => (SIRE, p.get() as u64, 0),
+            Req::Heir(a2, b2) => (HEIR, a2.get() as u64, b2.get() as u64),
+        };
+        Query { op, a, b, back }
+    }
+}
+
+/// **收进来的一问**（那两格号已经解成两个模型类型——线上只有数字，意义在动作码那一格）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Wire {
+    Bind(TaskId, PrincipalId),
+    Resolve(TaskId),
+    Derive(PrincipalId),
+    Adopt(PrincipalId),
+    Waive,
+    Sire(PrincipalId),
+    Heir(PrincipalId, PrincipalId),
+}
+
+impl Wire {
+    /// 解一问：`(读出来的动作, 回信孔那一格)`——**动作读不出来给内层那个 `None`**（表外的动作码：
+    /// 这一问**有回信的路**，只是这一码我不认 ⇒ 持册者答一句 `BAD`）；**长度不对给外层那个
+    /// `None`**（连"往哪回"都没有 ⇒ 不动账、也不回话）。
+    pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
+        if bytes.len() != Query::LEN {
+            return None;
+        }
+        let q = Query::fetch(bytes)?;
+        let ask = match q.op {
+            BIND => Some(Wire::Bind(
+                TaskId::new(q.a as usize),
+                PrincipalId::new(q.b as usize),
+            )),
+            RESOLVE => Some(Wire::Resolve(TaskId::new(q.a as usize))),
+            DERIVE => Some(Wire::Derive(PrincipalId::new(q.a as usize))),
+            ADOPT => Some(Wire::Adopt(PrincipalId::new(q.a as usize))),
+            WAIVE => Some(Wire::Waive),
+            SIRE => Some(Wire::Sire(PrincipalId::new(q.a as usize))),
+            HEIR => Some(Wire::Heir(
+                PrincipalId::new(q.a as usize),
+                PrincipalId::new(q.b as usize),
+            )),
+            // 表外的动作码：这一码不是我的（但"往哪回"读得出来）。
+            _ => None,
+        };
+        Some((ask, q.back))
+    }
+}
 
 /// 编一答：`OK` + **有没有** + 一个号（`RESOLVE` 的"绑没绑"、`SIRE` 的"有没有父"）。
 ///
