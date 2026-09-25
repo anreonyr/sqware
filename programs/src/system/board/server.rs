@@ -73,7 +73,7 @@ pub(crate) fn host_loop(me: TaskId) {
     let mut lanes: Lanes = alloc::vec::Vec::new();
     let mut swept = 0usize;
     // **收帧的那一页**：在循环外备一次。门的缓冲是**载体的一页**，不是家族帧那么大——
-    // 见 [`Slip::land_in`]：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
+    // 见 [`Slip::land`]：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
     // （读不懂就答 `BAD`），否则它永远留在槽里（取不出 ⇒ 槽原样），这道门从此卡死且空转。
     //
     // **照实记（刀一那一句被证伪）**：本处原写着"缓冲躺在船台自己身上，尺寸就是这一族最长
@@ -285,9 +285,9 @@ fn serve_one(
     // **解码只做一次**：答哪一句由它定，下面"要不要摘掉它那枚问话孔"也由它定。
     //
     // **照实记（`buf` 那一页为什么回来）**：收帧用的是**载体那一页**（调用方在循环外备的那
-    // 一只），不是船台自己那只家族缓冲——理由与实测见 [`Slip::land_in`] 的照实记：拿家族缓冲
+    // 一只），不是家族帧那么大的一只——理由与实测见 [`Slip::land`] 的照实记：拿家族缓冲
     // 收不下比它更长的一条，核**不丢**取不出的消息 ⇒ 门卡死且空转。
-    let decoded = Slip::<bcall::Req>::seal(ask).land_in(buf, Wait::POLL);
+    let decoded = Slip::<bcall::Req>::seal(ask).land(buf, Wait::POLL);
     let said = match decoded {
         Some(ask) => answer(board, desk, ask, guest.who(), swept, lanes),
         // 空帧 / 长度不对：读不懂就答 `BAD`——不猜、不崩。

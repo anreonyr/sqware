@@ -6,6 +6,7 @@
 //! **一手对一条原语**（`land` / `part` / `find` / `trim` / `list` / `seek` / `name`）：线上与模型
 //! 是同一件事的两层，客侧这一层也不再拿一个 `op` 码当参数——问什么形状由函数名说。
 
+use contract::message::Message;
 use env::wire::Field;
 use env::Wait;
 use env::Mark;
@@ -94,9 +95,11 @@ fn ask_out(
         .load(ask)
         .ship()
         .map_err(|_| Fail::Unknown)?;
-    // 收：答话走本端这条树路——与板那一族同一个形状（`Slip::<Rep>::seal(pier.hole()).land(..)`）。
+    // 收：答话走本端这条树路——与板那一族同一个形状（`Slip::<Rep>::seal(pier.hole()).land(buf, ..)`）。
+    // 缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲（[`Message::EMPTY`]）就够。
+    let mut buf = ocall::Rep::EMPTY;
     Slip::<ocall::Rep>::seal(pier.hole())
-        .land(millis)
+        .land(buf.as_mut(), millis)
         .ok_or(Fail::Unknown)
 }
 

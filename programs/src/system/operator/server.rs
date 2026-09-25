@@ -412,11 +412,11 @@ fn serve_one(
     let Some(ask) = guest.ask() else {
         return;
     };
-    // **收帧用调用方那一页**（[`Slip::land_in`]）：比家族最长那一枚更长的一条也取得出来、
-    // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。拿船台自己那只家族缓冲收不下它，而核**不丢**
-    // 取不出的消息（见 `Slip::land_in` 的照实记与 `probe-bound` 第四条——这一门正是那一格
+    // **收帧用调用方那一页**（[`Slip::land`]）：比家族最长那一枚更长的一条也取得出来、
+    // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。拿家族帧那么大的一只缓冲收不下它，而核**不丢**
+    // 取不出的消息（见 `Slip::land` 的照实记与 `probe-bound` 那两趟——这一门正是那一格
     // 从前量过的地方）。
-    let decoded = Slip::<ocall::Req<'_>>::seal(ask).land_in(buf, Wait::POLL);
+    let decoded = Slip::<ocall::Req<'_>>::seal(ask).land(buf, Wait::POLL);
     let said = answer(tree, decoded, guest.who(), session, book);
     // 答一句：**形状由 [`ocall::Rep`] 说**——装与发都不在这一层写字节（那四种答形在线上分不开，
     // 故读的那一面由问的人认，见 [`ocall::Said`] 的照实记）。
