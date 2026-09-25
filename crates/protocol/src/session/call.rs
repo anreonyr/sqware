@@ -31,6 +31,8 @@ use env::{Mark, PieToken, TaskId};
 use super::core::Claim;
 
 use runtime::core::port::{self, Access, Policy};
+
+use super::hands::{Hands, Hole};
 use runtime::env::mail;
 
 /// 铸一枚孔（本端那一枚），并把**记号**刻在它上面。
@@ -77,7 +79,7 @@ pub(super) fn try_post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
 /// 只把每一枚交出去；"要不要"由调用方说（正文第 6 条）。
 ///
 /// `Err(Claim::Unread)` = 枚举本身失败（我的表读不动了）。
-pub(super) fn each(mut f: impl FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
+pub(super) fn each(f: &mut dyn FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
     let mut index = 0usize;
     loop {
         let Ok((token, _permission, _grantor)) = mail::collect(index) else {
@@ -106,7 +108,7 @@ pub(super) fn each(mut f: impl FnMut(Hole) -> Result<(), Claim>) -> Result<(), C
 /// 枚举本身读不动（[`Claim::Unread`]）时报 `None`：那一格里已经有"我没找到"。
 pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
     let mut found = None;
-    let _ = each(|h| {
+    let _ = each(&mut |h: Hole| {
         if h.owner == Some(of) && h.mark == mark {
             found = Some(h.token);
         }
@@ -150,16 +152,6 @@ pub fn lend(entry: PieToken, mark: Mark, frame: &[u8]) -> Result<PieToken, ()> {
         return Err(());
     }
     Ok(back)
-}
-
-/// 我表里的一项：一枚孔 + **谁开的** + **刻的什么记号**（[`each`] 交出来的那两格）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) struct Hole {
-    pub token: PieToken,
-    /// 这扇门谁开的（`None` = 查不出出处，如引导期那批设备门闩）。
-    pub owner: Option<TaskId>,
-    /// 这条路上刻的记号（[`Mark::NONE`] = 这一枚不是孔、问不到记号）。
-    pub mark: Mark,
 }
 
 /// 这枚孔的两格事实（**一次 `Reserve` 取回**）：**谁开的** + **刻的什么记号**。
@@ -239,8 +231,25 @@ pub(super) fn now_ns() -> u64 {
     runtime::env::chrono::clock().unwrap_or(0)
 }
 
-/// [`core::Quay::unseat`](super::core::Quay::unseat) 过线的那一句话：一个字节。
+/// **这一层唯一的出口**：把身体已经在这里的那十件，装成一张 [`Hands`]——「约」的 `Quay::open`
+/// 要它。
 ///
-/// **只在自己这一层有意义**——"这条别用了"，不带任何领域语义（帧形与负码表仍归具体
-/// 协议）。它是泊位自己的名字牌，不是一种新帧。
-pub const UNSEAT: [u8; 1] = [0];
+/// **照实记**：这十件从前靠"同住一个模块 + `pub(super)`"给 `core` 用；现在靠**一张函数指针表**，
+/// 于是 `core` 搬走之后**宿主靶不必再冒充整个模块**（它给一张假手表就行，形状由编译器检查——
+/// 从前的影子桩连 `ship` 的返回类型都与真的不一样，照样编得过）。
+///
+/// 拆泊位那句话（`UNSEAT`）**跟着据走了**（[`super::core::UNSEAT`]）：它是一句话，不是一只手。
+pub fn hands() -> Hands {
+    Hands {
+        post,
+        try_post,
+        pull_own,
+        unseal: unseal_hole,
+        ship,
+        unship,
+        each,
+        reserve,
+        fall,
+        now_ns,
+    }
+}

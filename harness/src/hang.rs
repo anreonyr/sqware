@@ -55,7 +55,7 @@ fn main() -> Reason {
     let Ok(mark) = Name::new(MARK) else { return bail("hang: bad mark") };
 
     // 码头朝生我者：把本端那一枚孔交出去（台主认领它 ⇒ 台主手里有写端，推得醒本端）。
-    let mut quay = Quay::open(sire);
+    let mut quay = Quay::open(sire, protocol::session::call::hands());
     let Ok(pie) = quay.seat(mark).map(|p| *p) else { return bail("hang: seat") };
 
     // 第一句 = "在台上跑多少轮"（前 4 字节小端）。拿不到就退化成"在台上不占时间"。

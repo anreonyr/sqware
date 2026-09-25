@@ -428,7 +428,7 @@ fn trial(
     // 交给受害者；它 `seat` 把孔交出来、随即挂在自己那枚孔上 ⇒ 台主 `claim` 到它就等于
     // **"它已经挂好了、可以被唤醒了"**（它**不自己校准**，轮数随后由台主发过去）。
     // `start` 丢弃 `ready` 的 bool，故正文里显式查 `paired`。
-    let mut quay = Quay::open(task);
+    let mut quay = Quay::open(task, protocol::session::call::hands());
     let verdict = body(name, delay_us, iters_per_ms, &mut table, &mut quay, link);
 
     // ── 收场（**不论这一轮成没成**）────────────────────────

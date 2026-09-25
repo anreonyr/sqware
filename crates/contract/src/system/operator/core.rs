@@ -177,7 +177,7 @@ pub type VestedBy = fn(PieToken) -> Option<TaskId>;
 /// **放下**：把我这一份自释。剪掉或换掉一枚 `Tile` 时用它——不加这一格，那一枚句柄就漏在树里。
 pub type Unship = fn(PieToken) -> Result<(), ()>;
 
-/// **这扇门是谁开的**：内核 `Reserve` 第二格（`session::call::opened_by`）。
+/// **这扇门是谁开的**：内核 `Reserve` 第二格（`protocol::session::call::opened_by`）。
 ///
 /// 与 [`VestedBy`] **同一个类型、不同一句话**——故两枚戳子收在一格里（[`Stamps`]）：谁写反了
 /// **编不过**（照实记：这两枚放成位置参数时是同一个类型，写反照样编过；`session` 那一族认

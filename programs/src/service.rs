@@ -430,7 +430,7 @@ pub fn start(
     })?;
     // 这座码头的**对端就是客人**（`task`）——与 `board.rs` 的 `Quay::open(client)` 对称：
     // 两侧各按对方的身份开码头，`seat` 那一枚才发得到它手里，谁都不必猜。
-    let mut quay = Quay::open(task);
+    let mut quay = Quay::open(task, protocol::session::call::hands());
     // `marks` = 要逐条认领的记号：**记号就是这条泊位的名字**（`seat` 铸孔时刻上去的），
     // 而客侧装的就是同一个通道名 ⇒ 放行之后本域按它逐条把客人的孔认下来（顺序无关）。
     let mut marks: alloc::vec::Vec<Mark> = alloc::vec::Vec::new();

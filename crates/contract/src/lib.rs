@@ -50,4 +50,5 @@ pub mod driver;
 pub mod fail_codes;
 pub mod frame;
 pub mod id;
+pub mod session;
 pub mod system;

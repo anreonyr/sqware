@@ -433,7 +433,7 @@ fn desk_face(
 /// 它没交（或交不出来）。
 fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
     let mark = Name::new(lcall::LANE).ok()?;
-    let mut quay = Quay::open(from);
+    let mut quay = Quay::open(from, protocol::session::call::hands());
     quay.seat(mark).ok()?;
     quay.claim(from, Mark::of(lcall::LANE), QUAY_MS).ok()?;
     // **码头一起交出去**：`Lines` 收不下这条泊位时，得由拿着码头的人把它放回去

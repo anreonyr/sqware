@@ -1,17 +1,16 @@
 //! session 的核心 —— **码头、泊位、失败域，与那几个动作**。
 //!
-//! 本文件**不碰内核**：判据只有一条可机械检查的纪律——
-//!
-//! > `core.rs` 里不出现 `runtime::`。
-//!
-//! 表、额度、齐没齐都在这里说清楚；"扫我的表""铸一枚孔""放下"那几手全在
-//! [`call`]。这样会话的规矩喂一张假表就能推理，换载体不必重写。
+//! 本文件**不碰内核**：它要的十件手全部**注入**进来（[`Hands`]），故会话的规矩喂一张假表
+//! 就能推理，换载体不必重写。那条"不碰内核"的纪律现在由 **crate 边界**管着（见本 crate 头注）。
 
 use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken, TaskId};
 
-use super::call;
+use super::hands::{Hands, Hole, NowNs, Post, PullOwn, TryPost};
+
+/// 拆一条泊位时**过线的那一句话**（`[0]`，不携带别的意思）。
+pub const UNSEAT: [u8; 1] = [0];
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -25,6 +24,11 @@ pub struct Pier {
     name: Name,
     /// 本端那一枚孔：**我读**（对端往它推）。铸它的那一刻，**记号就是 `name`**。
     hole: PieToken,
+    /// 往对端推的两条路（**注入**）。
+    post: Post,
+    try_post: TryPost,
+    /// 从本端那一枚收（**注入**）。
+    pull_own: PullOwn,
     /// 对端放给我的那枚孔的**本地句柄**：**我写**（往它推，对端读）。
     ///
     /// 注意不是"种在对端表里的号"——那个号只在对端表里有意义，本端拿它推会被拒。
@@ -45,7 +49,7 @@ impl Pier {
     /// 出去**，不猜、不空转。
     pub fn post(&self, msg: &[u8]) -> Result<(), ()> {
         match self.at_peer {
-            Some(at_peer) => call::post(at_peer, msg),
+            Some(at_peer) => (self.post)(at_peer, msg),
             None => Err(()),
         }
     }
@@ -58,7 +62,7 @@ impl Pier {
     /// "该取一次了"，不是"这条消息必须送达"——推不出去由调用方按幂等的**状态**处理。
     pub fn try_post(&self, msg: &[u8]) -> Result<(), ()> {
         match self.at_peer {
-            Some(at_peer) => call::try_post(at_peer, msg),
+            Some(at_peer) => (self.try_post)(at_peer, msg),
             None => Err(()),
         }
     }
@@ -78,7 +82,7 @@ impl Pier {
     /// 与 [`Pier::post`] 成对：那一边说的是**对端的孔**，这一边收的是**本端的孔**。
     /// 收下来的字节数由返回值给出（`Err(())` = 期限内没等到）。
     pub fn pull(&self, buf: &mut [u8], millis: usize) -> Result<usize, ()> {
-        call::pull_own(self.hole, buf, millis)
+        (self.pull_own)(self.hole, buf, millis)
     }
 
     /// 这条路能不能走了（两头都齐：本端那一枚 + 对端那一枚）。
@@ -121,14 +125,17 @@ pub enum Claim {
 pub struct Quay {
     peer: TaskId,
     piers: Vec<Pier>,
+    /// **十件手**：本文件一件内核都不碰，全靠它（[`Hands`]）。
+    hands: Hands,
 }
 
 impl Quay {
-    /// 起一座码头：对端定下，泊位一条都还没有。
-    pub fn open(to: TaskId) -> Quay {
+    /// 起一座码头：对端定下、**手接上**，泊位一条都还没有。
+    pub fn open(to: TaskId, hands: Hands) -> Quay {
         Quay {
             peer: to,
             piers: Vec::new(),
+            hands,
         }
     }
 
@@ -151,7 +158,7 @@ impl Quay {
 
     /// 装上一条泊位，并把本端那一枚孔交给对端。
     ///
-    /// **记号 = 这条泊位名字的指纹**（`Mark::of(name)`）：铸孔那一刻刻上去（`call::unseal_hole`），
+    /// **记号 = 这条泊位名字的指纹**（`Mark::of(name)`）：铸孔那一刻刻上去（`Unseal`），
     /// 副本过线之后仍然是它——故对端认领时按"谁开的 + 记号"就能把这一枚归到同名的这条路上。
     /// 名字是本端的账（文本、人读），记号是过线的钥匙（8 字节、只比较）；两者可以不同。
     ///
@@ -175,13 +182,13 @@ impl Quay {
         }
 
         // 本端那一枚：先铸（**记号 = 这条泊位的名字**），再交给对端。
-        let hole = call::unseal_hole(Mark::of(name.as_str())).map_err(|()| Seat::NoHole)?;
+        let hole = (self.hands.unseal)(Mark::of(name.as_str())).map_err(|()| Seat::NoHole)?;
         // **牌不写了**：交出去的副本与本体**共享同一个槽**（`HoleMeta.slot`，
         // `accord` 只克隆 `Arc`）——牌写进去，本端读就把对端那张一起吃掉，本端不读
         // 就占着单槽挡住对端推来的第一条消息。名字这一层信息改由**孔上的记号**承担
         // （见 [`Quay::scan`]）。
-        if call::ship(hole, self.peer).is_err() {
-            let _ = call::unship(hole);
+        if (self.hands.ship)(hole, self.peer).is_err() {
+            let _ = (self.hands.unship)(hole);
             return Err(Seat::NoSeed);
         }
         // 本端 seat 的那一枚：写的那一半要等对端把它那一枚交进来（认领），故此刻
@@ -200,8 +207,8 @@ impl Quay {
         let p = self.piers.remove(at);
         // 过线的那一句话。发不出去（它已经不在了 / 写端还没到）也算拆成功——它那边
         // 整张表随它消失。
-        let _ = p.post(&call::UNSEAT);
-        let _ = call::unship(p.hole);
+        let _ = p.post(&UNSEAT);
+        let _ = (self.hands.unship)(p.hole);
     }
 
     /// 认领 **`of` 交给我的、刻着 `mark` 的那一枚**：扫表 → 认下 → 归位。
@@ -213,7 +220,7 @@ impl Quay {
     ///   一侧的孔是**子方**交上来的（子方交给生我者），故那里 `of` = 子方、`peer` = 自己。
     ///   **一座码头只能认自己那一位的孔**：装配者给每个孩子各开一座码头，认错了会把别人
     ///   的孔配到这孩子头上（症状：两边都"配好对了"，可对方永远收不到话）。
-    /// - `mark` = **孔上刻的记号**（`call::unseal_hole` 刻的那一格 = 铸者那张表里这条路的名字）。
+    /// - `mark` = **孔上刻的记号**（`Unseal` 刻的那一格 = 铸者那张表里这条路的名字）。
     ///   有它才分得开"**同一位开的多枚孔**"——只按 `owner` 那一格是分不开的。
     ///
     /// **凑不齐就不返回**（不许半条会话）：等到期限还没齐就报 [`Claim`] 的错误码。
@@ -230,11 +237,11 @@ impl Quay {
         // "等之前就已经落进来"的那一枚。
         let left = millis;
         let deadline =
-            (left != usize::MAX).then(|| call::now_ns().saturating_add(left as u64 * 1_000_000));
+            (left != usize::MAX).then(|| (self.hands.now_ns)().saturating_add(left as u64 * 1_000_000));
         loop {
             self.scan(of, mark)?;
             // **到手了没有**：本端认下的写端里，有没有一枚的两格正是 `(of, mark)`——判据与
-            // [`Quay::scan`] 的 pick **同源**（都读 `call::reserve` 那两格），故"到手"说的
+            // [`Quay::scan`] 的 pick **同源**（都读 `Reserve` 那两格），故"到手"说的
             // 就是"这一枚"，不必再按名字找一条路：记号是**对端**那张表里这条路的名字，
             // 与本端这条泊位的名字**可以不同**（提示孔那一路就是：那枚刻的是 `tip`，本端
             // 这条泊位叫 `board-tip`）。
@@ -242,11 +249,11 @@ impl Quay {
                 .piers
                 .iter()
                 .filter_map(|p| p.at_peer)
-                .any(|t| call::reserve(t) == (Some(of), mark));
+                .any(|t| (self.hands.reserve)(t) == (Some(of), mark));
             if got {
                 return Ok(());
             }
-            let remain = remain_ms(deadline);
+            let remain = remain_ms(deadline, self.hands.now_ns);
             if left == 0 || remain == 0 {
                 // 「一笔都没到」与「到了一些、不齐」是两种下一步（前面那种等于白等，
                 // 后面那种要接着等剩下的）：两条计数只在这一刻用得上，故不再单独立函数
@@ -262,7 +269,7 @@ impl Quay {
             }
             // 有界等（`usize::MAX` = 永久）。返回**只是提示**（`wake` 的正文）：真醒还是
             // 期限到，由下一轮的扫表说了算——故这里不接它的值。
-            let _ = call::fall(remain);
+            let _ = (self.hands.fall)(remain);
         }
     }
 
@@ -280,7 +287,7 @@ impl Quay {
     /// 故这里没有、也不需要"放对端那一枚"的动作（实测见 `rig.rs` 头注的照实记）。
     pub fn shut(&mut self) {
         for p in self.piers.drain(..) {
-            let _ = call::unship(p.hole);
+            let _ = (self.hands.unship)(p.hole);
         }
     }
 
@@ -304,6 +311,9 @@ impl Quay {
         self.piers.push(Pier {
             name,
             hole,
+            post: self.hands.post,
+            try_post: self.hands.try_post,
+            pull_own: self.hands.pull_own,
             at_peer: None,
         });
         Ok(())
@@ -329,7 +339,7 @@ impl Quay {
     /// 就一次也不进归位那一步（早绑一次就钉在自己的孔上：那 160 字节再也到不了对端）。
     fn scan(&mut self, of: TaskId, mark: Mark) -> Result<(), Claim> {
         let piers = &mut self.piers;
-        call::each(|h| {
+        (self.hands.each)(&mut |h: Hole| {
             // 两格判据 + 已经用掉的那几枚不再认。
             if h.owner != Some(of)
                 || h.mark != mark
@@ -351,10 +361,10 @@ impl Quay {
 ///
 /// 向上取整：`1..1_000_000` 纳秒的零头算 1 毫秒（否则会提前判超时）；
 /// 只有真到了死线才给 0——那一格是"期限到"的判据。
-fn remain_ms(deadline: Option<u64>) -> usize {
+fn remain_ms(deadline: Option<u64>, now_ns: NowNs) -> usize {
     match deadline {
         Some(at) => at
-            .saturating_sub(call::now_ns())
+            .saturating_sub(now_ns())
             .div_ceil(1_000_000)
             .min(usize::MAX as u64) as usize,
         None => usize::MAX,

@@ -35,7 +35,7 @@ const PEER: env::TaskId = env::TaskId::new(7);
 
 fn quay() -> Quay {
     fake::reset();
-    Quay::open(PEER)
+    Quay::open(PEER, session::call::hands())
 }
 
 #[test]

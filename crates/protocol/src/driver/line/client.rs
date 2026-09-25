@@ -30,7 +30,7 @@ impl Line {
     pub fn occupy(entry: PieToken, key: Key, millis: usize) -> Result<Line, Fail> {
         let host = crate::session::call::opened_by(entry).ok_or(Fail::Denied)?;
         let mark = Name::new(call::LANE).map_err(|_| Fail::Denied)?;
-        let mut quay = Quay::open(host);
+        let mut quay = Quay::open(host, crate::session::call::hands());
         // 本端那一枚交给它（它按"谁开的 + 记号"认下来，往这里投递）。
         quay.seat(mark).map_err(|_| Fail::Denied)?;
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单槽的孔只够一个方向）。

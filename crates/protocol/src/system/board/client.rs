@@ -24,7 +24,7 @@ pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 /// 的那一枚），记号就是板路的名字。
 pub fn open(holder: TaskId, millis: usize) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let mut quay = Quay::open(holder);
+    let mut quay = Quay::open(holder, crate::session::call::hands());
     quay.seat(link).map_err(bcall::map_seat)?;
     quay.claim(holder, Mark::of(link.as_str()), millis)
         .map_err(bcall::map_claim)?;

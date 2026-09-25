@@ -1,5 +1,5 @@
 //! board 的**帧那一半** —— 帧、码、记号（内核那几只手的别名与两张会话失败域的映射
-//! 在 `super::call`）。
+//! 在 `protocol` 那一侧的 `call`）。
 //!
 //! 本文件**不做裁决**：板上的规矩（谁能挂、挂哪儿、什么时候扫）全在 [`core`](super::core)。
 //! 这里只有**编一帧 / 解一帧**与两张对照表（失败域 ↔ 答话码）。
@@ -131,7 +131,7 @@ pub const ENTRY_MARK: Mark = Mark::of("entry");
 ///
 /// **带面名**（`board-ask`）：认领键是"谁开的 + 记号"，而同一枚任务可能同时是两面的客人
 /// ——两枚孔都铸在它自己那张表里，记号再一样就分不开。理由与实测见
-/// `system::operator::call::ASK_MARK`。
+/// `protocol::system::operator::call::ASK_MARK`。
 pub const ASK_MARK: Mark = Mark::of("board-ask");
 
 /// 提示孔那一枚上的记号（板线程铸它时刻上去的；装配者按它认领那一枚）。

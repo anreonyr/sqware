@@ -98,7 +98,7 @@ fn host(me: TaskId, millis: usize, tip: &mut Option<PieToken>) -> Result<TaskId,
     // 这条路上只走"一位新客人"（号 ＋ 名字，见 [`tell_guest`]），故本端那一枚交出去也无妨
     // （板线程不用它，也不碍事）。
     let slot = Name::new(TIP_NAME).map_err(|_| "board:name")?;
-    let mut quay = Quay::open(id);
+    let mut quay = Quay::open(id, protocol::session::call::hands());
     quay.seat(slot).map_err(|_| "board:seat")?;
     quay.claim(id, TIP_MARK, millis).map_err(|_| "board:tip")?;
     let pier = quay.find(slot).ok_or("board:tip")?;

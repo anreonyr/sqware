@@ -125,7 +125,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
     // 2. 起编排者：它有一条 `boot` 通道——配给从那里问、回单从那里回。
     let orch = mint(&mut table, &catalog, ORCH, orch_name, Announce::Channel)?;
     // 这条泊位两头都装：本域**读**自己那一枚（单子从这来），**写**对端那一枚（回单往这去）。
-    let mut quay = Quay::open(orch);
+    let mut quay = Quay::open(orch, protocol::session::call::hands());
     if quay.seat(slot).is_err() {
         return Err(Die::Orch(E_ORCH));
     }

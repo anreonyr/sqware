@@ -1,4 +1,4 @@
-//! `session::call` 的**桩** —— 会话核心只跟运行时那一层说这几句话：
+//! `session::call` 的**桩** —— 会话核心要的那十件手（[`super::hands::Hands`]）都在这儿：
 //!
 //! ```text
 //!   mint(mark)          铸一枚孔（刻上记号）
@@ -23,6 +23,7 @@ use std::cell::{Cell, RefCell};
 use env::{Mark, Name, PieToken, TaskId};
 
 use super::core::Claim;
+use super::hands::{Hands, Hole};
 
 /// "本端"是谁（`mint` 铸出来的那些孔算在它名下）。
 pub const ME: TaskId = TaskId::new(1);
@@ -30,14 +31,6 @@ pub const ME: TaskId = TaskId::new(1);
 /// 假表里的一行。
 #[derive(Clone, Copy)]
 pub struct Row {
-    pub token: PieToken,
-    pub owner: Option<TaskId>,
-    pub mark: Mark,
-}
-
-/// `each` 交给回调的那一格（形状与真那份一致）。
-#[derive(Clone, Copy)]
-pub struct Hole {
     pub token: PieToken,
     pub owner: Option<TaskId>,
     pub mark: Mark,
@@ -117,8 +110,8 @@ pub fn forget(n: usize) {
 
 // ── 核心要的那几句话（形状与真那份一致）────────────────────
 
-/// 过线的那一句话（真那份是 `[0]`）。
-pub const UNSEAT: [u8; 1] = [0];
+/// 拆泊位那句话**跟着据走了**（它是一句话，不是一只手）——这里转出来给测试用。
+pub use super::core::UNSEAT;
 
 /// 铸一枚孔、刻上记号：往假表里加一行，主人是"本端"。
 pub fn unseal_hole(mark: Mark) -> Result<PieToken, ()> {
@@ -138,10 +131,13 @@ pub fn unseal_hole(mark: Mark) -> Result<PieToken, ()> {
     Ok(token)
 }
 
-/// 交给对端：记一笔（真那一手是 `Accord` 一份副本）。
-pub fn ship(hole: PieToken, peer: TaskId) -> Result<(), ()> {
+/// 交给对端：记一笔，返"种在对端表里"的号（真那一手是 `Accord` 一份副本）。
+///
+/// **照实记**：从前的影子桩返 `Result<(), ()>`，而真那份返 `Result<PieToken, ()>`——照样编得过。
+/// 表化之后这一个字也漂不了。
+pub fn ship(hole: PieToken, peer: TaskId) -> Result<PieToken, ()> {
     SHIPPED.with(|s| s.borrow_mut().push((hole, peer)));
-    Ok(())
+    Ok(hole)
 }
 
 /// 放下我这一份：从我表里拿走 + 记一笔。
@@ -195,7 +191,7 @@ pub fn reserve(hole: PieToken) -> (Option<TaskId>, Mark) {
 ///
 /// **先照一张相再回调**：回调（`scan` 那一支）会反问 `reserve`，而那也是借这张表——
 /// 抱着 `RefCell` 的借用去回调会当场 panic（真那一份是"表在自己手里"，没有这一层）。
-pub fn each(mut f: impl FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
+pub fn each(f: &mut dyn FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
     let snapshot: Vec<Row> = TABLE.with(|t| t.borrow().clone());
     for r in snapshot {
         f(Hole {
@@ -221,4 +217,22 @@ pub fn now_ns() -> u64 {
 /// 名字（测试侧顺手用）。
 pub fn name(text: &str) -> Name {
     Name::new(text).expect("名字合法")
+}
+
+// ── 这一层唯一的出口：一张假手表 ─────────────────────────────
+
+/// 十件手，全在假表上（真那份是 `protocol::session::call::hands`）。
+pub fn hands() -> Hands {
+    Hands {
+        post,
+        try_post,
+        pull_own,
+        unseal: unseal_hole,
+        ship,
+        unship,
+        each,
+        reserve,
+        fall,
+        now_ns,
+    }
 }

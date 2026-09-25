@@ -255,7 +255,7 @@ fn system() -> programs::Report<'static> {
 fn talk_to_root() -> Option<Pier> {
     let sire = utask::sire().ok()?;
     let slot = Name::new(supply::BOOT).ok()?;
-    let mut quay = Quay::open(sire);
+    let mut quay = Quay::open(sire, protocol::session::call::hands());
     quay.seat(slot).ok()?;
     quay.claim(sire, Mark::of(supply::BOOT), BOOT_MS).ok()?;
     quay.find(slot).copied()

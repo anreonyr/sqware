@@ -28,7 +28,7 @@ use crate::session::Quay;
 /// 持树者：客人交出来的孔都落在生我者表里，故"持树者是谁"得由装配者告诉（见文件头）。
 pub fn open(holder: TaskId, millis: usize) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let mut quay = Quay::open(holder);
+    let mut quay = Quay::open(holder, crate::session::call::hands());
     quay.seat(link).map_err(ocall::map_seat)?;
     quay.claim(holder, Mark::of(link.as_str()), millis)
         .map_err(ocall::map_claim)?;
