@@ -150,9 +150,9 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
         // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
         return;
     }
-    // 答一句：**形由 [`ccall::Rep`] 说**（三种答形合一：格状态 / 一格答 / 一窗号）——装与发
+    // 答一句：**形由 [`ccall::Union`] 说**（三种答形合一：格状态 / 一格答 / 一窗号）——装与发
     // 都不在这一层写字节（缓冲是船台自己那只＝本族最大那一形）。
-    let _ = Slip::<ccall::Rep>::seal(back)
+    let _ = Slip::<ccall::Union>::seal(back)
         .load(answer(book, face, from, ask))
         .ship();
     let _ = mail::release(back);
@@ -163,47 +163,47 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
 /// **形状由 [`ccall::Wire`] 说**（收帧那一侧已按动作解好：两格载荷的意义随之定，不再是一枚裸码
 /// ＋ 两个裸数）。三条**写**原语同一个起手：**先拿发送者过名册**（[`who`]）。三条读不过名册
 /// ——`amid` 的 `p` 与两条取窗的键都是问的人给的标签（K6）。
-fn answer(book: &mut Coalition, face: &Face, from: TaskId, ask: Option<ccall::Wire>) -> ccall::Rep {
+fn answer(book: &mut Coalition, face: &Face, from: TaskId, ask: Option<ccall::Wire>) -> ccall::Union {
     // 表外的动作码：这一问有回信的路，只是这一码我不认（与"读不懂"同一格）。
     let Some(ask) = ask else {
-        return ccall::Rep::Status(ccall::BAD);
+        return ccall::Union::Status(ccall::BAD);
     };
     match ask {
         // `found` 的钥匙是"你得是个已绑定的身份"（K3），**解析出来的那条号只当门卫**：
         // 盟无主（K2），不记铸造者——全族唯一一处。
         ccall::Wire::Found => match who(face, from) {
-            Ok(_) => ccall::Rep::One(ccall::Reply::value(book.found())),
-            Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
+            Ok(_) => ccall::Union::One(ccall::Reply::value(book.found())),
+            Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
         },
         ccall::Wire::Enter(c) => match who(face, from) {
             Ok(w) => match book.enter(w, c) {
-                Ok(()) => ccall::Rep::One(ccall::Reply::status(ccall::OK)),
-                Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
+                Ok(()) => ccall::Union::One(ccall::Reply::status(ccall::OK)),
+                Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
             },
-            Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
+            Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
         },
         ccall::Wire::Leave(c) => match who(face, from) {
             Ok(w) => match book.leave(w, c) {
-                Ok(()) => ccall::Rep::One(ccall::Reply::status(ccall::OK)),
-                Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
+                Ok(()) => ccall::Union::One(ccall::Reply::status(ccall::OK)),
+                Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
             },
-            Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
+            Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
         },
         ccall::Wire::Amid(p, c) => {
             match book.amid(p, c) {
                 // "不在"是一句答（`Ok(false)`），"查无此盟"才是这一格。
-                Ok(yes) => ccall::Rep::One(ccall::Reply::yes(yes)),
-                Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
+                Ok(yes) => ccall::Union::One(ccall::Reply::yes(yes)),
+                Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
             }
         }
         // 两条取窗：`a` 是键，`b` 是**游标 + 1**（`0` = 没有游标，见 [`ccall`] 的帧那一节）——
         // 游标那一手已经在 `Wire` 里解好了。
         ccall::Wire::Band(c, after) => match book.band(c, after) {
-            Ok(window) => ccall::Rep::seq(&window),
-            Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
+            Ok(window) => ccall::Union::seq(&window),
+            Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
         },
         // `bloc` 没有失败域（`p` 是标签，不在任何盟里就是空窗）。
-        ccall::Wire::Bloc(p, after) => ccall::Rep::seq(&book.bloc(p, after)),
+        ccall::Wire::Bloc(p, after) => ccall::Union::seq(&book.bloc(p, after)),
     }
 }
 
@@ -296,7 +296,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         },
         Err(code) => (code, false),
     };
-    // **`got` 换了来路**（乙′）：见 `ocall::Rep::Seed` 的照实记。
+    // **`got` 换了来路**（乙′）：见 `ocall::Union::Seed` 的照实记。
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()

@@ -53,16 +53,11 @@ use contract::message::Message;
 use principal::core::{Fail as PFail, PrincipalId};
 use principal::frame as pframe;
 
-/// 收一答（**原样的字节**那一面）：用例自己保证给的是"收得下"的一条。
-fn said(bytes: &[u8]) -> cframe::Said {
-    cframe::Rep::fetch(bytes).expect("收得下")
-}
-
-/// 编一答 ⇒ 原样的字节（收的那一面）。
-fn said_of(rep: cframe::Rep) -> cframe::Said {
-    let mut out = cframe::Rep::EMPTY;
+/// 编一答 ⇒ 字节 ＋ 帧长（收的那一面按长度自己认形状）。
+fn wire(rep: cframe::Union) -> ([u8; cframe::UNION_LEN], usize) {
+    let mut out = cframe::Union::EMPTY;
     let n = rep.store(&mut out).expect("装得下");
-    said(&out[..n])
+    (out, n)
 }
 
 #[test]
@@ -212,15 +207,15 @@ fn a_coalition_window_of_numbers_round_trips_with_its_count_and_more_flag() {
         ]
         .into_iter(),
     );
-    let mut out = cframe::Rep::EMPTY;
-    let n = cframe::Rep::seq(&window)
-        .store(&mut out)
-        .expect("装得下");
+    let (out, n) = wire(cframe::Union::seq(&window));
     assert_eq!(n, 3 + 3 * 8, "帧长 = 3 + 8 × 枚数");
     assert_eq!(out[1], 1, "未完那一格");
     assert_eq!(out[2], 3, "条数那一格");
 
-    let back: Window<PrincipalId> = said(&out[..n]).seq().expect("读得回来");
+    let Some(cframe::Union::Seq(seq)) = cframe::Union::fetch(&out[..n]) else {
+        panic!("窗那一形：长度 3 + 8n");
+    };
+    let back: Window<PrincipalId> = seq.window();
     assert_eq!(back.len(), 3);
     assert!(back.more(), "窗外还有");
     assert_eq!(
@@ -228,79 +223,67 @@ fn a_coalition_window_of_numbers_round_trips_with_its_count_and_more_flag() {
         window.iter().collect::<Vec<_>>()
     );
 
-    // **这一族不猜**：帧长与条数对不上就是读不懂。
-    assert_eq!(
-        said(&out[..n - 1]).seq::<PrincipalId>(),
-        Err(cframe::BAD),
-        "短一字节"
-    );
-    assert_eq!(
-        said(&out[..n + 1]).seq::<PrincipalId>(),
-        Err(cframe::BAD),
-        "多一字节"
-    );
+    // **这一族不猜**：帧长与条数对不上、长度不落在三形里，都是读不懂。
+    assert_eq!(cframe::Union::fetch(&out[..n - 1]), None, "短一字节");
+    assert_eq!(cframe::Union::fetch(&out[..n + 1]), None, "多一字节");
     let mut liar = out;
     liar[2] = 4; // 说有四枚，可帧里只有三枚
-    assert_eq!(
-        said(&liar[..n]).seq::<PrincipalId>(),
-        Err(cframe::BAD),
-        "条数说谎"
-    );
+    assert_eq!(cframe::Union::fetch(&liar[..n]), None, "条数说谎");
     // 「未完」那一格只许 0 / 1（`2` 是读不懂——那一格**不借 `bool`**，正是为了这一条）。
     let mut odd = out;
     odd[1] = 2;
-    assert_eq!(
-        said(&odd[..n]).seq::<PrincipalId>(),
-        Err(cframe::BAD),
-        "未完 = 2"
-    );
+    assert_eq!(cframe::Union::fetch(&odd[..n]), None, "未完 = 2");
 }
 
 #[test]
 fn a_coalition_answer_has_three_shapes_and_they_all_read_back() {
     // 三形：一格状态码 / 一格答（一枚号 或 一个是非）/ 一窗号（上面那一条）。
-    let mut out = cframe::Rep::EMPTY;
-    let n = cframe::Rep::Status(cframe::UNKNOWN)
-        .store(&mut out)
-        .expect("装得下");
+    let status = cframe::Union::Status(cframe::UNKNOWN);
+    let (out, n) = wire(status);
     assert_eq!(n, 1, "失败那一形只有一格状态");
-    assert_eq!(said(&out[..n]).code(), cframe::UNKNOWN, "码交得出来");
     assert_eq!(
-        said(&out[..n]).one(),
-        Err(cframe::BAD),
-        "它不是一格答那一形（**长度先判**，与从前那条 `n == REPLY_LEN` 同）"
+        cframe::Union::fetch(&out[..n]),
+        Some(status),
+        "码就是答话的内容（不是读不懂）"
     );
 
     // `FOUND` 那一形**不用 `flag`**：它必有号（零号也是合法答案），没有"没有"这一档。
-    let value = cframe::Reply::value(CoalitionId::new(12));
+    let value = cframe::Union::One(cframe::Reply::value(CoalitionId::new(12)));
+    let (out, n) = wire(value);
+    assert_eq!(n, cframe::Reply::LEN, "一格答那一形定长");
     assert_eq!(
-        said_of(cframe::Rep::One(value)).one(),
-        Ok(value),
+        cframe::Union::fetch(&out[..n]),
+        Some(value),
         "号在 `a` 那一格"
     );
-    let zero = cframe::Reply::value(CoalitionId::new(0));
+    let zero = cframe::Union::One(cframe::Reply::value(CoalitionId::new(0)));
+    let (out, n) = wire(zero);
     assert_eq!(
-        said_of(cframe::Rep::One(zero)).one(),
-        Ok(zero),
+        cframe::Union::fetch(&out[..n]),
+        Some(zero),
         "零号也读得回来"
     );
 
     // 而 `AMID` 那一形：是非在 `flag` 那一格，`a` 那一格空着。
-    let yes = cframe::Reply::yes(true);
-    let no = cframe::Reply::yes(false);
-    assert_eq!(said_of(cframe::Rep::One(yes)).one(), Ok(yes));
-    assert_eq!(said_of(cframe::Rep::One(no)).one(), Ok(no));
+    let yes = cframe::Union::One(cframe::Reply::yes(true));
+    let no = cframe::Union::One(cframe::Reply::yes(false));
+    let (out, n) = wire(yes);
+    assert_eq!(cframe::Union::fetch(&out[..n]), Some(yes));
+    let (out, n) = wire(no);
+    assert_eq!(cframe::Union::fetch(&out[..n]), Some(no));
     assert_ne!(yes, no, "是非那一格分得开");
 
-    assert_eq!(cframe::Rep::fetch(&[]), None, "空帧");
+    // **形状由长度分**：空帧 / 表外长度 / 比上界更长都读不懂。
+    assert_eq!(cframe::Union::fetch(&[]), None, "空帧");
+    assert_eq!(cframe::Union::fetch(&[cframe::OK; 4]), None, "4 不是三形里任何一形");
     assert_eq!(
-        cframe::Rep::fetch(&[0u8; cframe::REP_LEN + 1]),
+        cframe::Union::fetch(&[0u8; cframe::UNION_LEN + 1]),
         None,
         "比上界更长也收不下"
     );
     let mut short = [0u8; cframe::Reply::LEN - 1];
     short[0] = cframe::OK;
-    assert_eq!(said(&short).one(), Err(cframe::BAD), "短一字节");
+    assert_eq!(cframe::Union::fetch(&short), None, "9 也不是三形里任何一形");
 }
 
 #[test]

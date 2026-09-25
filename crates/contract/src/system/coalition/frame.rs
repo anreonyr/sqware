@@ -12,13 +12,14 @@
 //!   Query  [0] op   [1..9] a   [9..17] b   [17..25] back     25
 //!   Reply  [0] status  [1] flag  [2..10] a                   10（`crate::frame` 那一份）
 //!          [0] status                                        1（失败那几格）
-//!          [0] status  [1] 未完  [2] 条数  [3..] 号           3 + 8n，上界 [`REP_LEN`] = 131
+//!          [0] status  [1] 未完  [2] 条数  [3..] 号           3 + 8n，上界 [`UNION_LEN`] = 131
 //! ```
 //!
 //! `a` / `b` 两格的**意义由动作码定**（`FOUND` 两格都空，`ENTER` / `LEAVE` 只用 `a`，
 //! `AMID` 两格都用，`BAND` / `BLOC` 的 `b` 是**游标**）——而"这一条有几格"由下面的
 //! [`Req`] / [`Wire`] 按类型说。答话的**一格答**那一形本体在 [`crate::frame`]（两族同形，故
-//! 只有一份）；**格状态 ＋ 窗**那两档留在这里（只此一族），三形合成 [`Rep`]，读面是 [`Said`]。
+//! 只有一份）；**格状态 ＋ 窗**那两档留在这里（只此一族），三形合成 [`Union`]——**形状由长度分**，
+//! 故写法与读法是同一个。
 //!
 //! **照实记（这一行原写"一问 17 字节"）**：那是 `back` 那一格落地之前抄的，此后一问一直是
 //! `1 + 8 + 8 + 8 = 25`（同 `principal/frame.rs` 那条，详见 [`crate::frame`]）。
@@ -193,7 +194,7 @@ env::frame! {
     /// 对照 operator 那一侧：一条 pane 本来就不超过 `PANE_CAP`，故那边不用带。
     ///
     /// **`more` 那一格是裸字节、不是 `bool`**：`Field for bool` 的读法是 `!= 0`，而这一形的判据是
-    /// **只许 0 / 1**（[`Said::seq`] 里判）——借 `bool` 会把畸形的 `2` 读成"未完"。
+    /// **只许 0 / 1**（[`Union`] 的 `fetch` 里判）——借 `bool` 会把畸形的 `2` 读成"未完"。
     pub struct SeqHead {
         status: u8,
         more: u8,
@@ -202,12 +203,12 @@ env::frame! {
 }
 
 /// 一答的上界：**最大那一形**（窗：头三格 ＋ [`WINDOW_CAP`] 枚号）。
-pub const REP_LEN: usize = SeqHead::LEN + WINDOW_CAP * 8;
+pub const UNION_LEN: usize = SeqHead::LEN + WINDOW_CAP * 8;
 
 /// 一窗号的**荷载**（编的那一侧用）：未完那一格 ＋ 一串**裸 8 字节号**。
 ///
 /// **照实记（为什么存裸号、不存 `PrincipalId` / `CoalitionId`）**：两个号空间在这一格上
-/// **分不开**（`band` 取的是身份号、`bloc` 取的是盟号，线上逐字同形），而 [`Rep`] 得是**一枚
+/// **分不开**（`band` 取的是身份号、`bloc` 取的是盟号，线上逐字同形），而 [`Union`] 得是**一枚
 /// 具体类型**（服务端一处收尾：装一条、发一条）⇒ 不能按号泛型。与 operator 那格 `Word` 同一条
 /// 口径：字段只管这一格多宽、怎么落字节，含义归问的人认。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -233,14 +234,29 @@ impl Seq {
     fn ids(&self) -> &[u64] {
         self.ids.get(..self.len).unwrap_or(&[])
     }
+
+    /// 按**问的那一族**把裸号造回来（读那一侧；编那一侧是 `of`）。
+    pub fn window<T: Id>(&self) -> Window<T> {
+        Window::gather(
+            self.more,
+            self.ids().iter().map(|raw| T::new(*raw as usize)),
+        )
+    }
 }
 
 /// **一答的形状**——三形：格状态（1）／一格答（10）／一窗号（`3 + 8n`）。
 ///
-/// **照实记（名字）**：这一族与树那一族同名同位——答的**写**那一面叫 `Rep`、**读**那一面叫
-/// [`Said`]（用户裁定）。一格答那一形 [`Reply`] 的本体在 [`crate::frame`]（两族同形）。
+/// **照实记（名字）**：用户裁定这一族与树那一族同名同位——答的**形状**那一面叫 `Union`（同
+/// `board::Req` 那句"一问的形状"，写成 `enum` 就是"几样里的一件"）。一格答那一形 [`Reply`]
+/// 的本体在 [`crate::frame`]（两族同形）。
+///
+/// **照实记（这一族没有一个"原样的字节"读面——树那一族有）**：树那一族的四形**在线上分不开**
+/// （"名"那一条长度即名长、另几形都以状态起头），故它把字节原样收下、由问的人认。这一族**不用
+/// 那一手**：三形的长度互不相撞（`1` / `10` / `3 + 8n`，第三族全是 ≡ 3 mod 8，`n = 0..16`）⇒
+/// **长度一说，形状就定了**。故 `In = Union`——与板那一族、与 [`Reply`] 同一条"写法与读法是
+/// 同一个"。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rep {
+pub enum Union {
     /// 失败那几格（[`UNKNOWN`] / [`FULL`] / [`BAD`]）。
     Status(u8),
     /// 一格答：一枚号 / 是或非。
@@ -249,26 +265,25 @@ pub enum Rep {
     Seq(Seq),
 }
 
-impl Rep {
+impl Union {
     /// 编一答：一窗号（**裸号进窗**——见 [`Seq`] 那条照实记）。
-    pub fn seq<T: Id>(window: &Window<T>) -> Rep {
-        Rep::Seq(Seq::of(window))
+    pub fn seq<T: Id>(window: &Window<T>) -> Union {
+        Union::Seq(Seq::of(window))
     }
 }
 
-impl Message for Rep {
-    /// 收的那一面是 [`Said`]（**原样的字节**——三种答形在线上分不开，形状由问的人认，见它的
-    /// 照实记）。
-    type In = Said;
-    /// 这一族的缓冲：**最大那一形**（[`REP_LEN`]）。
-    type Buf = [u8; REP_LEN];
-    const EMPTY: Self::Buf = [0u8; REP_LEN];
+impl Message for Union {
+    /// **写法与读法是同一个**：形状由长度分得开（见 [`Union`] 那条照实记）。
+    type In = Union;
+    /// 这一族的缓冲：**最大那一形**（[`UNION_LEN`]）。
+    type Buf = [u8; UNION_LEN];
+    const EMPTY: Self::Buf = [0u8; UNION_LEN];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match *self {
-            Rep::Status(code) => Status { status: code }.store_in(out),
-            Rep::One(reply) => reply.store_in(out),
-            Rep::Seq(seq) => {
+            Union::Status(code) => Status { status: code }.store_in(out),
+            Union::One(reply) => reply.store_in(out),
+            Union::Seq(seq) => {
                 let head = SeqHead {
                     status: OK,
                     more: seq.more as u8,
@@ -280,97 +295,45 @@ impl Message for Rep {
         }
     }
 
-    /// 把字节**原样收下**：空帧 / 比上界更长 ⇒ `None`（不猜、不崩）。
-    fn fetch(bytes: &[u8]) -> Option<Said> {
-        let len = bytes.len();
-        if len == 0 || len > REP_LEN {
-            return None;
-        }
-        let mut buf = [0u8; REP_LEN];
-        buf.get_mut(..len)?.copy_from_slice(bytes);
-        Some(Said { buf, len })
-    }
-}
-
-/// **收进来的一答**：**原样的字节** ＋ 三个读法。
-///
-/// **照实记（答这一侧为什么不像问那一侧那样"一个类型说形状"）**：三种答形在线上分不开——
-/// 格状态那一形只有一格，另两形都以状态那一格起头，而窗那一条是变长的。分得开它们的是**问的
-/// 人**（他问的是哪一条自己知道）。故这一枚把字节原样收下，三个读法各按一形解；**形状不对 ⇒
-/// [`BAD`]**。
-///
-/// **照实记（为什么不像 principal 那样 `In = Reply`）**：那一家只有一形（失败也占满 10 字节），
-/// 三格俱全，读的人不必猜。这一家的**失败只有一格状态**，而"是哪一格失败"是读的人要落成
-/// `Fail` 的东西（[`FULL`] 是 `Fail::Full`，不是"读不懂"）⇒ 读面必须能**交出那一格码**。
-///
-/// **照实记（两个读法判次序不一样，正是今天那两条读法的次序）**：[`Said::one`] **先看长度**
-/// （长度不对 ⇒ `BAD`，连码都不看），[`Said::seq`] **先看码**（非 `OK` ⇒ 那一格码）。照抄，
-/// 不改判据：客侧那两条路（一格答 / 窗）今天就是这么读的。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Said {
-    buf: [u8; REP_LEN],
-    len: usize,
-}
-
-impl Said {
-    /// 这一条答的字节。
-    fn bytes(&self) -> &[u8] {
-        self.buf.get(..self.len).unwrap_or(&[])
-    }
-
-    /// 那一格状态（三种答形的头一格都是它；空帧 ⇒ [`BAD`]）。
-    pub fn code(&self) -> u8 {
-        self.bytes().first().copied().unwrap_or(BAD)
-    }
-
-    /// 按「一格答」那一形读：`[OK][flag][号]`。
+    /// 解一答：**先按长度分那一形**，再在该形自己的判据里解——不自洽 ⇒ `None`（不猜、不崩）。
     ///
-    /// **次序**：长度不是 10 ⇒ `Err(BAD)`（**先判长度**——今天客侧那条 `n == REPLY_LEN` 就是
-    /// 它，故一格的失败帧在这一手里读不出 `FULL`，与今天同）；长度对了再看码，码不是 [`OK`] ⇒
-    /// `Err(那一格码)`。
-    pub fn one(&self) -> Result<Reply, u8> {
-        let bytes = self.bytes();
-        if bytes.len() != Reply::LEN {
-            return Err(BAD);
+    /// **照实记（从前那两条读法的次序搬进了这里，结果逐条相同）**：客侧那两条路各有一套次序
+    /// ——`raw` 那条**先判长度**（恰好 [`Reply::LEN`] 才往下走，故一格状态那一形在那条路上读不出
+    /// `FULL`），`read_seq` 那条**先看码**（非 `OK` ⇒ 那一格码，`FULL` 一路走到 `Fail::Full`）。
+    /// 长度一分，两条次序都落在下面：**一格答那一形只认恰好 10**（`Status(FULL)` 落不进它），而
+    /// **窗那一形先看码**（`Status(FULL)` 由它读成那一格码）。客侧那两条路各自认自己那一形
+    /// （见 `coalition/client.rs`），判据一字未改。
+    fn fetch(bytes: &[u8]) -> Option<Union> {
+        match bytes.len() {
+            Status::LEN => Some(Union::Status(Status::fetch(bytes)?.status)),
+            Reply::LEN => Some(Union::One(Reply::fetch(bytes)?)),
+            len if (SeqHead::LEN..=UNION_LEN).contains(&len) => {
+                let head = SeqHead::fetch(bytes)?;
+                let more = match head.more {
+                    0 => false,
+                    1 => true,
+                    // **只许 0 / 1**：`2` 是读不懂——这一格正因如此不借 `bool`。
+                    _ => return None,
+                };
+                let count = head.count as usize;
+                if count > WINDOW_CAP {
+                    return None;
+                }
+                let body = bytes.get(SeqHead::LEN..)?;
+                let mut ids = [0u64; WINDOW_CAP];
+                let end = env::wire::fetch_tail(body, 0, &mut ids[..count])?;
+                // **帧长即条数**：对不上就是不认（短一字节、条数说谎都落在这一句上）。
+                if end != body.len() {
+                    return None;
+                }
+                Some(Union::Seq(Seq {
+                    more,
+                    len: count,
+                    ids,
+                }))
+            }
+            _ => None,
         }
-        let code = self.code();
-        if code != OK {
-            return Err(code);
-        }
-        Reply::fetch(bytes).ok_or(BAD)
-    }
-
-    /// 按「一窗号」那一形读：`[status][未完][条数][号…]` → 一窗号。
-    ///
-    /// **次序**：**先看码**（非 [`OK`] ⇒ `Err(那一格码)`——`FULL` 就是这样一路走到 `Fail::Full`
-    /// 的，与今天同）。**帧长即条数**：条数与剩下那些字节对不上（或条数超过 [`WINDOW_CAP`]）⇒
-    /// `Err(BAD)`——短一字节也是它；未完那一格只许 0 / 1（`2` 是**读不懂**，不猜）。
-    pub fn seq<T: Id>(&self) -> Result<Window<T>, u8> {
-        let code = self.code();
-        if code != OK {
-            return Err(code);
-        }
-        let bytes = self.bytes();
-        let head = SeqHead::fetch(bytes).ok_or(BAD)?;
-        let more = match head.more {
-            0 => false,
-            1 => true,
-            _ => return Err(BAD),
-        };
-        let count = head.count as usize;
-        if count > WINDOW_CAP {
-            return Err(BAD);
-        }
-        let body = bytes.get(SeqHead::LEN..).ok_or(BAD)?;
-        let mut ids = [0u64; WINDOW_CAP];
-        let end = env::wire::fetch_tail(body, 0, &mut ids[..count]).ok_or(BAD)?;
-        if end != body.len() {
-            return Err(BAD);
-        }
-        Ok(Window::gather(
-            more,
-            ids[..count].iter().map(|raw| T::new(*raw as usize)),
-        ))
     }
 }
 

@@ -18,8 +18,8 @@
 //! （`principal-back` / `coalition-back`）、`fail_codes!` 表各装各的失败域——那些都留在各族自己的
 //! `frame.rs`。**身体搬到这里，两处只留各自的名字**（同 `session::call` 那条纪律）。
 //!
-//! **三样不在这里，各有各的理由**：`reply_present`（"有没有一条号"）只有 principal 用 ⇒ **一位
-//! 用家不搬**；`SeqHead` / `Rep` / `Said`（**窗**那一档：coalition 的三种答形）只有那一家用 ⇒
+//! **两样不在这里，各有各的理由**：`reply_present`（"有没有一条号"）只有 principal 用 ⇒ **一位
+//! 用家不搬**；`SeqHead` / `Union`（**窗**那一档：coalition 那三种答形的后两种）只有那一家用 ⇒
 //! 留在 `system::coalition::frame`——operator 的"一条 pane 本来就有顶"不需要"未完"那一格，
 //! 故窗不是这一族的共性。
 //!
