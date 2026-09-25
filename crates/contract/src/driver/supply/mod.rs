@@ -24,7 +24,9 @@
 //! # 谁在用它
 //!
 //! - **服务端**（发货循环）在引导域：`programs/src/root/supply/server.rs`；
-//! - **客户端**（递单取记录）是**编排域**：`client::draw`，今天唯一一个客户；
+//! - **客户端**（递单取记录）是**编排域**：`protocol::driver::supply::client::draw`，今天唯一一个
+//!   客户。**照实记（它为什么不在这一份里）**：它要用**船台**（`Slip`：孔 ＋ 报的那一层），
+//!   而那一层只有 `protocol` 有——故客侧住那边，本 crate 只管"形"与"据"；
 //! - **收方**是各驱动：`call::Need` 的常量形态就在它们自己那张需求单里
 //!   （`programs/src/driver/{router,uart,rtc}/needs.rs` 与 `harness/src/lodger/needs.rs`）
 //!   ——单子由编排域**代递**（子方只认得生我者，**驱动对固件说不上话**），递之前它把单子上
@@ -85,7 +87,6 @@
 //!   `ORDER_CAP`/`REPLY_CAP` 是"一帧一单、不流式"这个选择的尺寸，不是线格式的约束。
 
 
-pub mod client;
 pub mod core;
 pub mod frame;
 

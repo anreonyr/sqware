@@ -12,6 +12,7 @@ use contract::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fai
 use contract::message::Message;
 use protocol::driver::supply::core::Fail;
 use protocol::session::Pier;
+use protocol::session::slip::Slip;
 
 /// 供：照单取源、授出、把记录写进 `records`。返**条数**。
 ///
@@ -57,44 +58,51 @@ pub fn supply(
 ///
 /// 不碰策略：只按单子发货，形态剔 `VEST`。
 ///
-/// 前条件：`ask` ≥ [`ORDER_CAP`]、`out` ≥ [`REPLY_CAP`]。
+/// 前条件：`ask` ≥ [`ORDER_CAP`]（**收帧那一只由调用方给**——理由见 `Slip::land` 的照实记：
+/// 门那一侧收帧拿的是载体那一页；这里给的是本族最长那一只）。
 pub fn serve(
     pier: &Pier,
     src_of: impl Fn(Key) -> Option<PieToken>,
     alive: impl Fn() -> bool,
     ask: &mut [u8],
-    out: &mut [u8],
 ) {
     /// 探活周期（毫秒）：一次超时 = 一次探活。对端活着时这一等就是**空等**。
     const WAIT_MS: usize = 1000;
     // 记录那一格：至多 [`WANT_MAX`] 条（条数不越界由 `Order` 那一侧保证）。
     let mut records = [Pair::NONE; WANT_MAX];
+    let slip = Slip::<Order>::seal(pier.hole());
     loop {
-        let Ok(n) = pier.pull(ask, Wait::AtMost(WAIT_MS)) else {
+        // **两件事分得开**（[`Slip::land_frame`] 那一手就是为这一格立的）：期限内没等到 ⇒ 去探活；
+        // 收下来解不动 ⇒ 答一句 `BAD`。`Slip::land` 会把这两件盖成一个 `None`，这一圈用不了它。
+        let Some(n) = slip.land_frame(ask, Wait::AtMost(WAIT_MS)) else {
             if !alive() {
                 return;
             }
             continue;
         };
-        let code = match ask.get(..n).and_then(<Order as Message>::fetch) {
+        let code = match <Order as Message>::fetch(ask.get(..n).unwrap_or(&[])) {
             Some(order) => match supply(&order, &src_of, &mut records) {
                 Ok(k) => {
-                    // 回一张：**一处编**（头那两格 ＋ 记录那一段）。
-                    if let Some(reply) = Reply::of(OK, &records[..k]) {
-                        if let Some(m) = reply.store(out) {
-                            let _ = pier.post(&out[..m]);
-                        }
-                    }
+                    reply(pier, OK, &records[..k]);
                     continue;
                 }
                 Err(fail) => fail_to_code(Some(fail)),
             },
             None => BAD,
         };
-        if let Some(reply) = Reply::of(code, &[]) {
-            if let Some(m) = reply.store(out) {
-                let _ = pier.post(&out[..m]);
-            }
-        }
+        reply(pier, code, &[]);
+    }
+}
+
+/// 回一张回单：**一处发**（装与发都不在这一层写字节——缓冲是船台自己那只）。
+///
+/// 泊位那头还没齐（`at_peer` 空）⇒ 不发：与从前 `Pier::post` 自己那一格同一个意思
+/// （"没有写端就发不出去"，不猜、不空转）。
+fn reply(pier: &Pier, code: u8, records: &[Pair]) {
+    let Some(at_peer) = pier.at_peer() else {
+        return;
+    };
+    if let Some(reply) = Reply::of(code, records) {
+        let _ = Slip::<Reply>::seal(at_peer).load(reply).ship();
     }
 }

@@ -1,18 +1,23 @@
 //! supply::client — **编排域那一侧**：递一张单子、取回一段记录（[`draw`]），并按坐标取一枚（[`pick`]）
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::frame`]。
+//! **照实记（这一份为什么搬到 `protocol`）**：它从前住「约」（`contract::driver::supply::client`）
+//! ——那时它手里只有会话核心那条泊位（`Pier::post` / `Pier::pull`），编解还是自由函数。搬过来是
+//! 因为它要用**船台**：`Slip` 同时看得见"孔"（`runtime`）与"报"（`contract`），而那一层只有
+//! `protocol` 有。**判据一字未改**——尤其"`Local` 与 `Bad` 分得开"那一条（见 [`draw`]）。
 
 use env::wire::Field;
 use env::Wait;
 use env::{PieToken, TaskId};
 use plan::{Key, PAIR_LEN, Pair};
 
-use crate::message::Message;
-use crate::session::Pier;
+use contract::message::Message;
 
 use crate::driver::supply::core::Fail;
 use crate::driver::supply::frame::{OK, Order, Reply, ReplyHead, WANT_MAX, Want, code_to_fail};
+use crate::session::Pier;
+use crate::session::slip::Slip;
 
+/// 递一张单子、取回那一段记录。返**记录那一段**（`PAIR_LEN` 步长；借着调用方那只收帧缓冲）。
 pub fn draw<'r>(
     pier: &Pier,
     who: TaskId,
@@ -23,13 +28,20 @@ pub fn draw<'r>(
     if wants.is_empty() || wants.len() > WANT_MAX {
         return Err(Fail::Local);
     }
-    // 编一张单子（**一处编**：头那三格 ＋ 尾巴那一段），推过去。
+    // 编一张单子、推过去：**上船台**（编进船台自己那只缓冲＝本族最长那一只）。
+    // 泊位那头还没齐（`at_peer` 空）⇒ 与从前 `Pier::post` 自己那一格同一落点：`Local`。
     let order = Order::of(who, wants).ok_or(Fail::Local)?;
-    let mut frame = Order::EMPTY;
-    let n = order.store(&mut frame).ok_or(Fail::Local)?;
-    pier.post(&frame[..n]).map_err(|_| Fail::Local)?;
-    // 收一张回单：**长度那两格照旧**（"短一字节" / "条数说谎"都由 `fetch` 判）。
-    let n = pier.pull(reply, millis).map_err(|_| Fail::Local)?;
+    let at_peer = pier.at_peer().ok_or(Fail::Local)?;
+    Slip::<Order>::seal(at_peer)
+        .load(order)
+        .ship()
+        .map_err(|_| Fail::Local)?;
+    // 收一张回单：**两件事分得开**——"期限内没等到" ⇒ `Local`；"收下来解不动" ⇒ `Bad`。
+    // （这一格正是 [`Slip::land_frame`] 存在的理由：`land` 会把这两件盖成一个 `None`。）
+    let slip = Slip::<Reply>::seal(pier.hole());
+    let Some(n) = slip.land_frame(reply, millis) else {
+        return Err(Fail::Local);
+    };
     let got = reply.get(..n).ok_or(Fail::Bad)?;
     let said = <Reply as Message>::fetch(got).ok_or(Fail::Bad)?;
     match said.code() {

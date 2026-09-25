@@ -6,15 +6,15 @@
 //! 那两样：**一张头表**（`env::frame!` 求长）＋ **一个 `impl Message`**（编解一处）；尾巴那两段走
 //! `env::wire::{store_tail, fetch_tail}`。
 //!
-//! **照实记（这一族为什么不上船台）**：两端各有各的理由——
+//! **照实记（这一族两端都上了船台——上一版这里写反了）**：
 //!
-//! · **客侧**（[`super::client::draw`]）住 `contract`：这一层看不见 `protocol` 的 `Slip`、也看不见
-//!   内核；它手里是会话核心那条泊位（`Pier::post` / `Pier::pull`）。
-//! · **服务侧**（`programs::root::supply::server`）那圈常驻循环要**分得开**"期限内没等到"（去探
-//!   对端还活着没有）与"读不懂"（答 `BAD`）——`Slip::land` 的 `None` 把这两件事盖成一格；而
-//!   `Pier::post` 自己管"两头还没齐"，`Slip::ship` 要一枚现成的孔。
+//! · **客侧**（`protocol::driver::supply::client::draw`）：**搬进 `protocol` 之后**才用得上船台
+//!   （那一层同时看得见"孔"与"报"）。它那两句判据仍分得开——"期限内没等到" ⇒ `Local`、
+//!   "收下来解不动" ⇒ `Bad`——靠的是 [`Slip::land_frame`]（`land` 会把这两件盖成一个 `None`）。
+//! · **服务侧**（`programs::root::supply::server`）：收帧走 `land_frame`（"先探活、再解题"那两格
+//!   照旧），回单走 `Slip::<Reply>` 那一手；泊位那头没齐时不发（与从前 `Pier::post` 同一格）。
 //!
-//! ⇒ 这一族的报文层**只有表与 `Message`**：编解一处定义，运输仍走泊位那两下手。
+//! ⇒ 编解一处（表 ＋ `Message`）、收发一处（船台），运输只剩"泊位就是那条路"这一件。
 //!
 //! 正文见 `protocol` 那一侧的 `driver/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
 

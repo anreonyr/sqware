@@ -5,12 +5,13 @@
 //!         .load(m)                  装上一条报（编进船台自己那只缓冲）
 //!         .ship()                   发出去
 //!
-//!   slip.land(buf, millis)          收一条（缓冲由调用方给；读不懂 / 超时 ⇒ None）
+//!   slip.land_frame(buf, millis)    收下一帧（**不解释**：几字节；期限到了 ⇒ None）
+//!   slip.land(buf, millis)          收一条报（＝上面那一手 ＋ 一次解；读不懂 / 超时 ⇒ None）
 //! ```
 //!
 //! # 为什么它是一层库
 //!
-//! 四个方法只碰**两枚原语**（`HolePie::push` / `pull_timeout`）与**一条约定**
+//! 五个方法只碰**两枚原语**（`HolePie::push` / `pull_timeout`）与**一条约定**
 //! （[`Message`]），与哪一族、哪条路、什么荷载全无关。它住 `protocol`
 //! 是因为只有这一层同时看得见"孔"（`runtime`）与"报"（`contract`）。
 //!
@@ -93,7 +94,20 @@ impl<M: Message> Slip<M> {
             .map_err(|e| env::Fail::of_code(e.source.code()).unwrap_or(env::Fail::Denied))
     }
 
-    /// 收一条（**有界等**由参数说，**缓冲由调用方给**）。
+    /// 收下一帧——**不解释**：返这一帧几字节；`None` = 期限内没等到（或孔不通）。
+    ///
+    /// **照实记（为什么要有这一手）**：[`Slip::land`] 把"期限到了"与"读不懂"折成同一个 `None`
+    /// ——门那两侧正需要这样（两种都答 `BAD`）。但**靠收帧结果判活**的循环要把它们分开：供单那圈
+    /// 发货循环就是——读不出来 ⇒ 去探对端还活着没有；读得出来而解不动 ⇒ 答一句 `BAD`。故把
+    /// "收下一帧"与"解一条报"分成两手：**一处定义**，`land` 只是这一手上面加一次 `M::fetch`。
+    ///
+    /// 缓冲那一格的义务与 [`Slip::land`] 同：**由调用方给**（门给载体那一页，客侧给本族那只空
+    /// 缓冲）——理由见 `land` 的照实记。
+    pub fn land_frame(&self, buf: &mut [u8], millis: Wait) -> Option<usize> {
+        self.pie.pull_timeout(buf, millis).ok()
+    }
+
+    /// 收一条报（＝ [`Slip::land_frame`] ＋ 一次 `M::fetch`）。
     ///
     /// **照实记（同词不同事）**：`Ledger::land` / `Operator::land` 是"落一格账 / 落一枚入口"，
     /// 这一手是"从孔里收一条报"。
@@ -109,9 +123,9 @@ impl<M: Message> Slip<M> {
     ///
     /// 返 `None` 盖两件事：**期限到了还没到**与**读不懂**——板的持板者正是这么用的
     /// （`None` ⇒ 答 `BAD`）。表外的动作码**不是** `None`，它是那一族 `In` 自己的一格
-    /// （如 `Wire::Unknown`）。
+    /// （如 `Wire::Unknown`）。要把那两件事分开的调用方走 [`Slip::land_frame`]。
     pub fn land(&self, buf: &mut [u8], millis: Wait) -> Option<M::In> {
-        let n = self.pie.pull_timeout(buf, millis).ok()?;
+        let n = self.land_frame(buf, millis)?;
         M::fetch(buf.get(..n)?)
     }
 }

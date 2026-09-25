@@ -149,13 +149,13 @@ fn main() -> Result<programs::Report<'static>, Die> {
 
     // 3. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::driver::supply::server::serve` 的
     //    `alive`：本域读的那枚孔命随本端，故收场靠探活，不靠"读不出"）。
+    // 收帧那一只由本域给（**发**那一侧的缓冲在船台自己身上，见 `serve`）。
     let mut ask = [0u8; supply::ORDER_CAP];
-    let mut out = [0u8; supply::REPLY_CAP];
     // 取源只有一个：boot 的配对块。持树者那条提示之路不再经过这里（见文件头）。
     let source = |key: plan::Key| boot.token(key);
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, Wait::POLL), Ok(Reaped::Now));
-    programs::root::supply::server::serve(&pier, source, alive, &mut ask, &mut out);
+    programs::root::supply::server::serve(&pier, source, alive, &mut ask);
     Ok(programs::Report::note(env::EXIT_OK, "root: done"))
 }
 
