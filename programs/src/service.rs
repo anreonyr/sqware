@@ -469,7 +469,7 @@ pub fn start(
     //     **在 `records` 之后**：板那条路由客人在起来之后自己装（它是问的那一侧），
     //     而它要先收到配给才轮得到板那一问。
     //     `name` 跟着走：板据此在 `admit` 那一刻认下**这一位的死亡道**（道按名字认领，
-    //     而名字只有装配者手里有——见 `protocol::system::board::call::TIP_LEN` 的照实记）。
+    //     而名字只有装配者手里有——见 `protocol::system::board::call::Tip::LEN` 的照实记）。
     if p.board {
         board::attach(&mut quay, me, task, name, Wait::AtMost(READY_MS), btip, lane).map_err(|why| {
             step(p, why);

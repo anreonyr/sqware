@@ -37,6 +37,10 @@ pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 pub use name::{NAME_LEN, Name, NameError};
 
 /// 字段 ↔ usize 的契约。
+pub mod field;
+
+pub use field::Field;
+
 pub trait Wire: Sized {
     /// 把自身 pack 进 `s`，游标 `i` 前进一格。
     fn pack(&self, s: &mut [usize; 6], i: &mut usize);

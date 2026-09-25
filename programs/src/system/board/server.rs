@@ -8,7 +8,6 @@ use alloc::format;
 use env::Mark;
 
 use env::{HoleDir, Name, PieToken, TaskId};
-use env::wire::NAME_LEN;
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::pile::Pile;
 use runtime::env::mail;
@@ -69,7 +68,7 @@ pub(crate) fn host_loop(me: TaskId) {
 
     let mut board = bcall::board();
     let mut desk = desk();
-    // `who → 死亡道` 的小表：**在 `admit` 那一刻**记——名字随提示那一格来（[`bcall::TIP_LEN`]），
+    // `who → 死亡道` 的小表：**在 `admit` 那一刻**记——名字随提示那一格来（[`bcall::Tip::LEN`]），
     // 而道按名字认领（[`lane_for`]）。见 [`remember_lane`] / [`take_lane`]。
     let mut lanes: Lanes = alloc::vec::Vec::new();
     let mut swept = 0usize;
@@ -109,7 +108,7 @@ pub(crate) fn host_loop(me: TaskId) {
 /// 两件事各有各的来源，故各认各的（判据全是确定的号，没有"猜"）：
 ///
 /// - **提示**：装配者推来的一位新客人——**号 ＋ 定长名字 ＋ 答话路那一格**
-///   （[`bcall::TIP_LEN`]）。**非阻塞地拉**——必须在这里拉，不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进
+///   （[`bcall::Tip::LEN`]）。**非阻塞地拉**——必须在这里拉，不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进
 ///   组**（那一条推落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它。提示**在转授
 ///   之后**，故拉到就能在同一轮里把答话路认下来（**末格就在这条记录里**）、**并把这一位的死亡道记下**
 ///   （`who → 道`：道是装配者铸的、名字也是它递来的 ⇒ **客人不必自己报名**）；
@@ -125,28 +124,27 @@ fn settle(
 ) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
     // 长度不对的那一条**不猜**：`while let` 取不出那一条就收工（与从前那 8 字节的写法同款）。
-    let mut rec = [0u8; bcall::TIP_LEN];
+    let mut rec = [0u8; bcall::Tip::LEN];
         let mut pending = false;
         let board = Mark::of(LINK);
-        while let Ok(bcall::TIP_LEN) = tip.pull_timeout(&mut rec, Wait::POLL) {
-            let id = u64::from_le_bytes(rec[..8].try_into().unwrap_or([0u8; 8]));
-            let client = TaskId::new(id as usize);
-            // 名字按**自己的宽度**切：末格那一枚号就跟在它后面，整段 `try_into` 会因长度不符
-            // 静默退回空名——那是这一格最容易切错的地方。
-            let name =
-                Name::from_bytes(rec[8..8 + NAME_LEN].try_into().unwrap_or([0u8; NAME_LEN])).ok();
+        while let Ok(bcall::Tip::LEN) = tip.pull_timeout(&mut rec, Wait::POLL) {
+            // **帧形只有一处**：三格怎么切全在 [`bcall::Tip`] 那一对里。从前这里三行手切，
+            // 其中一句注释自认"最容易切错"（"名字按自己的宽度切……静默退回空名"）——它随这一刀
+            // 一起退场。**代价照实**：名字那一段读不成一个合法 `Name` 时，从前是"当没有名字、
+            // 照样收下这位客人"，现在是**整帧读不懂**（答一句 `board: no reply`，不收）——
+            // 那一格只有装配者推得进来，而它推的一定是合法名字。
+            let Some(tip) = bcall::Tip::fetch(&rec) else {
+                say("board: no reply");
+                continue;
+            };
+            let client = tip.who;
             // 答话路那一格随提示一起来：**一次 `Reserve` 验它**，不扫自己的表。
-            match PieToken::from_bytes(&rec[8 + NAME_LEN..bcall::TIP_LEN]) {
-                Some(reply)
-                    if matches!(
-                        mail::reserve(reply),
-                        Ok((_vestor, owner, mark)) if owner == client && mark == board
-                    ) =>
-                {
-                    let _ = desk.admit(client, reply);
+            match mail::reserve(tip.reply) {
+                Ok((_vestor, owner, mark)) if owner == client && mark == board => {
+                    let _ = desk.admit(client, tip.reply);
                     // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
                     // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
-                    if let Some(lane) = name.and_then(lane_for) {
+                    if let Some(lane) = lane_for(tip.name) {
                         remember_lane(lanes, client, lane);
                     }
                 }
@@ -170,7 +168,7 @@ fn settle(
 
 /// 按**名字**认领这一位的死亡道（`gone-<名字>`；装配者铸、转授给本线程）。
 ///
-/// **在 `admit` 那一刻就认**：名字随提示那一格一起来（[`bcall::TIP_LEN`]），而牌子会被惰性
+/// **在 `admit` 那一刻就认**：名字随提示那一格一起来（[`bcall::Tip::LEN`]），而牌子会被惰性
 /// 摘掉——等到死亡那一刻再想"它叫什么"就没处问了。名字认不出（名字非法 / 那一条道没转授
 /// 过来）⇒ `None`：**这一位死了就没有读数**（与从前"没登记就没读数"同一个静默）。
 fn lane_for(name: Name) -> Option<PieToken> {
@@ -341,7 +339,7 @@ fn answer(
             Some(entry) if bcall::marked_as(entry) == Some(ENTRY_MARK) => {
                 // **登记只管一件事**：把"名字 → 入口"挂到板上（别人据此按名字找得到它）。
                 // **死亡道不在这里记**——那一条在 `admit` 那一刻就记下了（名字随提示那一格来、
-                // 由装配者递；见 [`bcall::TIP_LEN`] 的照实记）。两件事从此分家：
+                // 由装配者递；见 [`bcall::Tip::LEN`] 的照实记）。两件事从此分家：
                 // **一位客人不登记也能被监督**（反过来，登记了也不多一条道）。
                 board.register(name, entry, who).map(|_| ())
             }

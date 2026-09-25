@@ -216,7 +216,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     };
     // **上板**（乙那一刀）：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形
     // （名册 / 盟册早就在上板）。**名字不必本域自己报名**：装配者随提示那一格递过来
-    // （[`protocol::system::board::call::TIP_LEN`] 的照实记）；这一格只管把板那条路装上
+    // （[`protocol::system::board::call::Tip::LEN`] 的照实记）；这一格只管把板那条路装上
     // （装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，故少了这一步装配当场报
     // `board:claim`——实测栽过一次）。
     let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
