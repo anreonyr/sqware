@@ -80,90 +80,11 @@ impl Field for Name {
     }
 }
 
-// ── `frame!`：定长帧的一处定义 ──────────────────────────────
-
-/// **定长帧**那一族的一处定义：给一张字段表，生成结构体 ＋ 长度 ＋ 一对 `store` / `fetch`。
-///
-/// ```ignore
-/// env::frame! {
-///     /// 板那条提示帧：号 ＋ 定长名字 ＋ 答话路那一格。
-///     pub struct Tip {
-///         who: TaskId,
-///         name: Name,
-///         reply: PieToken,
-///     }
-/// }
-/// ```
-///
-/// 生成的东西**一眼看得完**（没有隐藏机制）：`pub struct` ＋ 公开字段、`pub const LEN`
-/// （**字段宽度之和**）、`store(&self, &mut [u8; LEN])`、`fetch(&[u8]) -> Option<Self>`。
-///
-/// **偏移一处都不写**——两半由**同一张字段表**生成，故"同一条长度写两处、改一处漏一处
-/// **编得过**"那个病**写不出来**（协调那一帧栽的正是它：那边的照实记写着"靠注释说
-/// 必须同值"）。
-///
-/// **它只管定长字段序列**：变长（`Ask::Road` 那样一条路几段不定）与重复（计数 ＋ 一段数组）
-/// 那两类**不归它**，那几族本来就各有各的一对 `pack` / `unpack`。
-///
-/// **字段的字节编解码归 [`env::wire::Field`]**（`WIDTH` / `store` / `fetch`）：宏只负责
-/// "顺序与偏移"，一格自己是多宽、怎么写，是那一格自己的事。
-#[macro_export]
-macro_rules! frame {
-    (
-        $(#[$meta:meta])*
-        $vis:vis struct $name:ident {
-            $($field:ident : $ty:ty),+ $(,)?
-        }
-    ) => {
-        $(#[$meta])*
-        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-        $vis struct $name {
-            $(pub $field: $ty),+
-        }
-
-        impl $name {
-            /// 这一帧线上占几字节：**字段宽度之和**（一处定义）。
-            pub const LEN: usize = 0 $(+ <$ty as $crate::wire::Field>::WIDTH)+;
-
-            /// 写进 `out`（**缓冲刚好这么大**——静态成立，故这一手不可能失败）。
-            pub fn store(&self, out: &mut [u8; Self::LEN]) {
-                // 恒 `Some`：`out` 恰好 `LEN` 字节。不是吞失败。
-                let _ = self.store_in(out);
-            }
-
-            /// 写进一只**更大的**缓冲：`out.len() < LEN` ⇒ `None`，否则写完返 [`Self::LEN`]。
-            ///
-            /// **照实记（为什么还要这一版）**：`store` 要的是定长数组（`&mut [u8; LEN]`），而
-            /// 一族常常**只有一只缓冲、形状各有长短**（板那族是 41 / 33 / 1）——从大缓冲里切出来
-            /// 的 `&mut [u8]` 转不回定长数组。这一版就是那一格：不 `expect`、不拷贝一次。
-            pub fn store_in(&self, out: &mut [u8]) -> Option<usize> {
-                let head = out.get_mut(..Self::LEN)?;
-                let mut at = 0usize;
-                $(
-                    <$ty as $crate::wire::Field>::store(
-                        &self.$field,
-                        &mut head[at..at + <$ty as $crate::wire::Field>::WIDTH],
-                    );
-                    at += <$ty as $crate::wire::Field>::WIDTH;
-                )+
-                let _ = at;
-                Some(Self::LEN)
-            }
-
-            /// 从 `bytes` 读回来；**长度不足** ⇒ `None`（不猜、不崩）。
-            pub fn fetch(bytes: &[u8]) -> Option<Self> {
-                let mut at = 0usize;
-                $(
-                    let $field = <$ty as $crate::wire::Field>::fetch(
-                        bytes.get(at..at + <$ty as $crate::wire::Field>::WIDTH)?,
-                    )?;
-                    at += <$ty as $crate::wire::Field>::WIDTH;
-                )+
-                let _ = at;
-                Some(Self { $($field),+ })
-            }
-        }
-    };
-}
-
-
+// ── `frame!`：搬去 `envmacros` 了 ────────────────────────────
+//
+// 它从前就在这一格（`#[macro_export] macro_rules! frame`，故名字落在 **crate 根**上）。
+// 改成**过程宏**（用户裁定）之后，实现住 `crates/envmacros/src/frame_impl.rs`，由 `env` 转出来
+// （`crates/env/src/lib.rs` 的 `pub use envmacros::frame;`）——**调用点一个字没改**。
+//
+// 两件事因此变好：诊断指到**那一格字段**（`macro_rules` 只能报在展开体里）；名字不再在
+// `env` 的 crate 根上当一条"与模块同名的宏"（第一刀与 `contract::frame` 撞的正是那一次）。

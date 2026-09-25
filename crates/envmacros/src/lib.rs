@@ -14,6 +14,42 @@
 //! 通用性：`slot/pack/unpack` 与 `Ret` 只依赖 `Wire`（不绑 env 错误/汇编），sbi 等
 //! S-mode 调用封装未来可复用同一 derive；`call` 则绑定 env 的 `EnvResult`/汇编入口。
 
+mod frame_impl;
+
+/// **定长帧**那一族的一处定义：给一张字段表，生成结构体 ＋ 长度 ＋ 一对 `store` / `fetch`。
+///
+/// ```ignore
+/// env::frame! {
+///     /// 板那条提示帧：号 ＋ 定长名字 ＋ 答话路那一格。
+///     pub struct Tip {
+///         who: TaskId,
+///         name: Name,
+///         reply: PieToken,
+///     }
+/// }
+/// ```
+///
+/// 生成的东西**一眼看得完**（没有隐藏机制）：`pub struct` ＋ 公开字段、`pub const LEN`
+/// （**字段宽度之和**）、`store(&self, &mut [u8; LEN])`、`store_in(&mut [u8]) -> Option<usize>`、
+/// `fetch(&[u8]) -> Option<Self>`。
+///
+/// **偏移一处都不写**——两半由**同一张字段表**生成，故"同一条长度写两处、改一处漏一处
+/// **编得过**"那个病**写不出来**（协调那一帧栽的正是它：那边的照实记写着"靠注释说必须同值"）。
+///
+/// **它只管定长字段序列**：变长（一条路几段不定）与重复（计数 ＋ 一段数组）那两类**不归它**，
+/// 那几族各有各的手写 `store` / `fetch`（今住在各族的 `impl Message` 里）。
+///
+/// **字段的字节编解码归 [`env::wire::Field`]**（`WIDTH` / `store` / `fetch`）：宏只负责
+/// "顺序与偏移"，一格自己是多宽、怎么写，是那一格自己的事。
+///
+/// **照实记（它从前是 `macro_rules!`）**：那时它 `#[macro_export]`，名字落在 `env` 的
+/// **crate 根**上——与同 crate 里的同名模块撞过车。改成过程宏之后诊断能指到**那一格字段**
+/// （哪个字段没实现 `Field`），而生成物与调用点一个字没改。实现见 [`frame_impl`]。
+#[proc_macro]
+pub fn frame(input: TokenStream) -> TokenStream {
+    frame_impl::expand(input.into()).into()
+}
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;

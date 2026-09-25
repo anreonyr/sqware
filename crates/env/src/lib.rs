@@ -40,6 +40,9 @@ pub use fid::{
 };
 pub use permission::{Access, Permission, Policy};
 pub use wait::Wait;
+/// **`frame!`**：定长帧的一处定义。实现在 `envmacros`（**过程宏**那一半），这里只转出来
+/// ——故调用点写 `env::frame! { … }` 照旧。
+pub use envmacros::frame;
 pub use wire::{
     Decode, FromPair, Mark, NAME_LEN, Name, NameError, PieToken, TaskId, TeamId, VirtAddr, Wire,
 };
