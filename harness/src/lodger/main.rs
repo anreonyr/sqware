@@ -11,7 +11,7 @@
 //!      `virtio_mmio@10001000`，1 号线）那枚 ONLY 门闩——真持有那台设备，但本域
 //!      从不映视图、不碰寄存器（为什么要一条**没人要**的线，见 [`needs`]）
 //!   2  上树一条会话：FIND /device/router ⇒ 那扇门
-//!   3  三趟登记 —— 成功那一格与**失败域**都卖读数（答码见 `line::call` 那张表）：
+//!   3  三趟登记 —— 成功那一格与**失败域**都卖读数（答码见 `line::frame` 那张表）：
 //!        占那条 virtio 线    → `lodger: occupy=0`    （0 = OK：线归本域）
 //!        同一条线再来一次     → `lodger: taken=2`     （2 = TAKEN：主人是本域自己）
 //!        报一件不是中断源的东西 → `lodger: unknown=1`   （1 = UNKNOWN：源表里没有那个坐标——门铃）
@@ -62,7 +62,7 @@ use alloc::format;
 use env::{Name, PieToken};
 use plan::{Key};
 use protocol::driver::line;
-use protocol::driver::line::call as lcall;
+use protocol::driver::line::frame as lcall;
 use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;

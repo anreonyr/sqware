@@ -238,8 +238,8 @@ pub mod system;
 // 从来没有存在过**——板那条路的答话走码头（`system/board/client.rs`：问话孔只写、答话从板路
 // 读），它没有 `*-back` 记号。故换成真在的那一条。
 const _: () = assert!(
-    system::principal::frame::BACK.get() != driver::line::call::BACK_MARK.get()
+    system::principal::frame::BACK.get() != driver::line::frame::BACK_MARK.get()
 );
 const _: () = assert!(
-    system::coalition::frame::BACK.get() != driver::line::call::BACK_MARK.get()
+    system::coalition::frame::BACK.get() != driver::line::frame::BACK_MARK.get()
 );

@@ -8,7 +8,7 @@ use plan::{Key};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
-use super::call;
+use super::frame;
 use super::core::Fail;
 use crate::session::{Pier, Quay};
 
@@ -18,7 +18,7 @@ pub struct Line {
 }
 
 impl Line {
-    /// 占住这一格（记号 [`call::LANE`]）并把登记推给门牌那扇入口，等一格答话。
+    /// 占住这一格（记号 [`frame::LANE`]）并把登记推给门牌那扇入口，等一格答话。
     ///
     /// `entry` = 树上查来的那扇门（`/device/router` 下驱动族那一块）；对端 = **那扇门的主人**
     /// （`owner`：副本共享同一事实、转手不变）。
@@ -29,12 +29,12 @@ impl Line {
     /// 不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，直到它退场。
     pub fn occupy(entry: PieToken, key: Key, millis: usize) -> Result<Line, Fail> {
         let host = crate::session::call::opened_by(entry).ok_or(Fail::Denied)?;
-        let mark = Name::new(call::LANE).map_err(|_| Fail::Denied)?;
+        let mark = Name::new(frame::LANE).map_err(|_| Fail::Denied)?;
         let mut quay = Quay::open(host, crate::session::call::hands());
         // 本端那一枚交给它（它按"谁开的 + 记号"认下来，往这里投递）。
         quay.seat(mark).map_err(|_| Fail::Denied)?;
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单槽的孔只够一个方向）。
-        let back = mail::unseal_hole(call::BACK_MARK).map_err(|_| Fail::Denied)?;
+        let back = mail::unseal_hole(frame::BACK_MARK).map_err(|_| Fail::Denied)?;
         // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条泊位）。
         let sent = port::ship(
             &HolePie::from_token(back),
@@ -42,7 +42,7 @@ impl Line {
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .and_then(|_| HolePie::from_token(entry).push(&call::pack_occupy(key)));
+        .and_then(|_| HolePie::from_token(entry).push(&frame::pack_occupy(key)));
         if sent.is_err() {
             let _ = mail::release(back);
             quay.shut();
@@ -51,21 +51,21 @@ impl Line {
         let mut one = [0u8; 1];
         let code = match HolePie::from_token(back).pull_timeout(&mut one, millis) {
             Ok(1) => one[0],
-            _ => call::BAD,
+            _ => frame::BAD,
         };
         // 答话到手 ⇒ 这一枚回信孔这一趟就用完了：**当场放下**（一问一答一个往返，见
         // `protocol::session` 事实 2）。放下的是本端这一份，路由者那一份由它自己放。
         let _ = mail::release(back);
-        if code != call::OK {
+        if code != frame::OK {
             quay.shut();
             return Err(match code {
-                call::TAKEN => Fail::Taken,
-                call::UNKNOWN => Fail::Unknown,
+                frame::TAKEN => Fail::Taken,
+                frame::UNKNOWN => Fail::Unknown,
                 _ => Fail::Denied,
             });
         }
         // 认下它那一枚：它另装了一条泊位的一半，本端写的那一枚从它来。
-        if quay.claim(host, Mark::of(call::LANE), millis).is_err() {
+        if quay.claim(host, Mark::of(frame::LANE), millis).is_err() {
             quay.shut();
             return Err(Fail::Denied);
         }
@@ -88,7 +88,7 @@ impl Line {
     /// 不能是**移交**——真需要送达的那一路（投递）留在 [`super::core::Lines::deliver`] 上，
     /// 它阻塞，且客户**总会**回到收投递那一格（客户从不堵在说排空上）。
     pub fn exhaust(&self) -> Result<(), ()> {
-        self.lane()?.try_post(&[call::NOTE])
+        self.lane()?.try_post(&[frame::NOTE])
     }
 
     /// 本端读的那一枚（**挂进组**用：一台驱动要同时等"线上有投递"与"门上有人"）。
@@ -99,7 +99,7 @@ impl Line {
     }
 
     fn lane(&self) -> Result<&Pier, ()> {
-        let mark = Name::new(call::LANE).map_err(|_| ())?;
+        let mark = Name::new(frame::LANE).map_err(|_| ())?;
         self.quay.find(mark).ok_or(())
     }
 }

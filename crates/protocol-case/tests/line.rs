@@ -7,7 +7,7 @@
 //! `runtime`，`runtime/src/core/tls.rs` 里那两处 riscv 内联汇编在宿主编译器上编不出来。
 //!
 //! 故这一台也走那条现成的路：编外宿主 crate、`#[path]` 把
-//! `crates/protocol/src/driver/line/core.rs` **逐字未改**地当一个模块读进来。
+//! `crates/contract/src/driver/line/core.rs` **逐字未改**地当一个模块读进来。
 //!
 //! **照实记（这一台多一处桩）**：线的核心写的是"有主那一格"，故它 `use crate::session::Pier`
 //! ——宿主靶里给了一个**桩**（`Pier` 只要 `post` 一句：核心只跟泊位说这一句话，读/写泊位那一侧
@@ -66,23 +66,23 @@ mod session {
 #[path = "../../contract/src/fail_codes.rs"]
 mod fail_codes;
 
-/// 账的正文（就是 `crates/protocol/src/driver/line/core.rs` 那一份，逐字未改）。
+/// 账的正文（就是 `crates/contract/src/driver/line/core.rs` 那一份，逐字未改）。
 ///
 /// **模块名就叫 `core`**：帧那一份写的是 `use super::core::Fail;`（在协议里它与 `core.rs` 同住
 /// `driver::line`）——宿主靶里把这一份放在**同一层**、名字照旧，那一行才逐字成立
 /// （`judge` 靶当初也是这么叫的；代价是 `core` 这个名字会遮住 `core` crate ⇒ 本文件里
 /// 凡要用标准库的就写 `std::…`）。
-#[path = "../../protocol/src/driver/line/core.rs"]
+#[path = "../../contract/src/driver/line/core.rs"]
 mod core;
 
-/// **帧形与记号**那一份（`crates/protocol/src/driver/line/call.rs`，逐字未改）。
+/// **帧形与记号**那一份（`crates/contract/src/driver/line/frame.rs`，逐字未改）。
 ///
 /// 照实记：**这是第一份上宿主的帧形**，而它**不用切结构**——线这一份 `use` 的只有 `env` 与
 /// 同层 `core::Fail`，故"纯核心与适配分离"在这一份上本来就成立。
 ///
 /// 照实记：`#[allow(dead_code)]` 是因为本台只叫了它的一部分（`LANE` 那几枚记号由适配层用）。
 #[allow(dead_code)]
-#[path = "../../protocol/src/driver/line/call.rs"]
+#[path = "../../contract/src/driver/line/frame.rs"]
 mod call;
 
 use crate::call::{OCCUPY, OCCUPY_LEN, pack_occupy, unpack_occupy};
@@ -191,7 +191,7 @@ fn told_survives_a_vacate() {
     assert!(!lines.told(3));
 }
 
-// ── 帧形那一半（`driver/line/call.rs`）──────────────────────
+// ── 帧形那一半（`driver/line/frame.rs`）──────────────────────
 //
 // **照实记（这一组为什么值当）**：机器那几道门走的是**顺路**——客户端编一帧、路由者解一帧，
 // 形状对了就继续。下面这些格子机器**一条都走不到**：短一帧 / 长一帧 / 动作码不对、
@@ -272,4 +272,4 @@ fn the_failure_table_is_bijective_and_keeps_bad_outside() {
 // ── 面不相撞那一条用例搬去了**编译期**（用户裁定"常量交给编译器"）────────────
 //
 // `the_two_marks_of_this_road_do_not_collide` 原先在这里，那几条现在写在
-// `crates/protocol/src/driver/line/call.rs` 的 `const _: () = assert!(…)` 里。
+// `crates/contract/src/driver/line/frame.rs` 的 `const _: () = assert!(…)` 里。

@@ -84,9 +84,7 @@
 //! - **上限是本侧选择**：孔不预设上限（见 `env::fid::PieCall::UnsealHole`），
 //!   `ORDER_CAP`/`REPLY_CAP` 是"一帧一单、不流式"这个选择的尺寸，不是线格式的约束。
 
-pub mod client;
-
-// 形与据已搬进「约」——这里**转出**（`crate::driver::supply::{frame,core}` 照旧解析）。
-pub use contract::driver::supply::{core, frame};
+// 形、据、客侧都已搬进「约」——这里**转出**（`crate::driver::supply::{frame,core,client}` 照旧解析）。
+pub use contract::driver::supply::{client, core, frame};
 pub use contract::driver::supply::frame::{BOOT, OP_SUPPLY, ORDER_CAP, REPLY_CAP, WANT_MAX};
 pub use contract::driver::supply::core::Fail;

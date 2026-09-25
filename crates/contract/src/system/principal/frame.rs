@@ -110,7 +110,7 @@ pub const NAME: &str = "principal";
 // 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`：三条路的回信
 // 孔记号两两不同（`principal-back` / `coalition-back` / `line-back`）。这里钉得着的是**与盟籍
 // 那一对**（本文件看得见 `crate::system::coalition`）；**与线那两对钉在 `lib.rs`**——线那一枚住在
-// `driver::line::call`，而帧这一半要能在宿主靶里**单独**编（那个靶的模块树里没有 `driver`）。
+// `driver::line::frame`，而帧这一半要能在宿主靶里**单独**编（那个靶的模块树里没有 `driver`）。
 //
 // **照实记（这一条曾经一直是空的）**：跨面那一对原先写作 `Mark::of("board-back")`，而**那个名字
 // 从来没有存在过**——板那条路的答话走码头（`system/board/client.rs`：问话孔只写、答话从板路

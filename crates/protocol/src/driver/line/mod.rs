@@ -94,8 +94,10 @@
 //!   `router: line 1 = virtio_mmio@10001000` 与 `router: vacate line=1`（`crates/gate/src/soak.rs` 的固定
 //!   读数）——"死会叫醒"由此从读代码变成量出来的。
 
-pub mod call;
 pub mod client;
-pub mod core;
 
-pub use core::{Fail, Lines};
+// 据与形已搬进「约」——这里**转出**（`crate::driver::line::frame` 照旧解析）；
+// **客侧留在本侧**：它自己铸孔、自己 `claim`，碰内核（与 `supply::client` 的判据正好相反——
+// 那一份吃一枚注入的 `&Pier`，故进了「约」）。
+pub use contract::driver::line::{core, frame};
+pub use crate::driver::line::core::{Fail, Lines};

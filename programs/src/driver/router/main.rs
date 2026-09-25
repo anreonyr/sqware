@@ -124,7 +124,7 @@ mod fail;
 
 use cases::Suite;
 use env::{HoleDir, Name, PieToken, TaskId};
-use protocol::driver::line::{call as lcall, core::Lines};
+use protocol::driver::line::{core::Lines, frame as lcall};
 use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
 use runtime::core::bell::Bell;

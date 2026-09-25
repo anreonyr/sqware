@@ -174,7 +174,7 @@ pub const NAME: &str = "coalition";
 // ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
 //
 // 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`；**与名册那一对**
-// 钉在 `crate::system::principal::frame`，**与线那一对**钉在 `lib.rs`——线那一枚住在 `driver::line::call`，
+// 钉在 `crate::system::principal::frame`，**与线那一对**钉在 `lib.rs`——线那一枚住在 `driver::line::frame`，
 // 而这一份要能在宿主靶里**单独**编（那个靶的模块树里没有 `driver`）。
 const _: () = assert!(BACK.get() != Mark::NONE.get());
 const _: () = assert!(BACK.get() != Mark::of(NAME).get());
