@@ -49,8 +49,21 @@ use contract::system::{coalition, principal};
 
 use coalition::core::{CoalitionId, Fail as CFail, Window};
 use coalition::frame as cframe;
+use contract::message::Message;
 use principal::core::{Fail as PFail, PrincipalId};
 use principal::frame as pframe;
+
+/// 收一答（**原样的字节**那一面）：用例自己保证给的是"收得下"的一条。
+fn said(bytes: &[u8]) -> cframe::Said {
+    cframe::Rep::fetch(bytes).expect("收得下")
+}
+
+/// 编一答 ⇒ 原样的字节（收的那一面）。
+fn said_of(rep: cframe::Rep) -> cframe::Said {
+    let mut out = cframe::Rep::EMPTY;
+    let n = rep.store(&mut out).expect("装得下");
+    said(&out[..n])
+}
 
 #[test]
 fn a_principal_ask_round_trips_and_refuses_other_shapes() {
@@ -101,16 +114,40 @@ fn a_principal_answer_is_not_a_failure_so_it_travels_as_ok_plus_a_flag() {
     // 答案 ⇒ 走 `status == OK` + `flag`；而 **`PrincipalId(0)` 是根，不是"没有"**——故 `a`
     // 那一格里的 0 是合法答案，"有没有"只能另占一格（`flag`）。
     let absent = pframe::reply_present(false, PrincipalId::new(0));
-    assert_eq!(absent[0], pframe::OK, "没绑是答案，不是失败");
-    assert_eq!(absent[1], 0, "flag = 没有");
-    assert_eq!(pframe::unpack_reply(&absent), Some((pframe::OK, 0, 0)));
+    assert_eq!(absent.status, pframe::OK, "没绑是答案，不是失败");
+    assert_eq!(absent.flag, false, "flag = 没有");
 
     let root = pframe::reply_present(true, PrincipalId::ROOT);
-    assert_eq!(root[1], 1, "flag = 有");
+    assert_eq!(root.flag, true, "flag = 有");
+
+    // 编 / 解走**同一张表**（`Reply`）：写出去、读回来，逐格对得上。
+    let wrote = |reply: pframe::Reply| {
+        let mut bytes = [0u8; pframe::Reply::LEN];
+        reply.store(&mut bytes);
+        bytes
+    };
+    assert_eq!(wrote(absent)[0], pframe::OK, "第一格是状态");
+    assert_eq!(wrote(absent)[1], 0, "第二格是 flag");
+    // **解走「约」那一手**（`Message::fetch`，不是表上那枚同名的固有手）：它多一条"恰好 10"。
     assert_eq!(
-        pframe::unpack_reply(&root),
-        Some((pframe::OK, 1, 0)),
+        <pframe::Reply as Message>::fetch(&wrote(absent)),
+        Some(absent),
+        "读得回来（号 0 也算）"
+    );
+    assert_eq!(
+        <pframe::Reply as Message>::fetch(&wrote(root)),
+        Some(root),
         "**根（号 0）是一个合法答案**，读得回来"
+    );
+    assert_eq!(
+        <pframe::Reply as Message>::fetch(&wrote(absent)[..pframe::Reply::LEN - 1]),
+        None,
+        "短一字节即读不懂"
+    );
+    assert_eq!(
+        <pframe::Reply as Message>::fetch(&[0u8; pframe::Reply::LEN + 1]),
+        None,
+        "长一字节也读不懂（表那一手只要求「够长」，这一手要求**恰好**）"
     );
 
     // 「没有」与「号 0」分得开：两帧形状不同。
@@ -175,13 +212,15 @@ fn a_coalition_window_of_numbers_round_trips_with_its_count_and_more_flag() {
         ]
         .into_iter(),
     );
-    let mut out = [0u8; cframe::REPLY_MAX];
-    let n = cframe::pack_seq(&mut out, &window);
+    let mut out = cframe::Rep::EMPTY;
+    let n = cframe::Rep::seq(&window)
+        .store(&mut out)
+        .expect("装得下");
     assert_eq!(n, 3 + 3 * 8, "帧长 = 3 + 8 × 枚数");
-    assert_eq!(out[1], 1, "未那一格");
+    assert_eq!(out[1], 1, "未完那一格");
     assert_eq!(out[2], 3, "条数那一格");
 
-    let back: Window<PrincipalId> = cframe::read_seq(&out[..n]).expect("读得回来");
+    let back: Window<PrincipalId> = said(&out[..n]).seq().expect("读得回来");
     assert_eq!(back.len(), 3);
     assert!(back.more(), "窗外还有");
     assert_eq!(
@@ -191,57 +230,77 @@ fn a_coalition_window_of_numbers_round_trips_with_its_count_and_more_flag() {
 
     // **这一族不猜**：帧长与条数对不上就是读不懂。
     assert_eq!(
-        cframe::read_seq::<PrincipalId>(&out[..n - 1]),
+        said(&out[..n - 1]).seq::<PrincipalId>(),
         Err(cframe::BAD),
         "短一字节"
     );
     assert_eq!(
-        cframe::read_seq::<PrincipalId>(&out[..n + 1]),
+        said(&out[..n + 1]).seq::<PrincipalId>(),
         Err(cframe::BAD),
         "多一字节"
     );
     let mut liar = out;
     liar[2] = 4; // 说有四枚，可帧里只有三枚
     assert_eq!(
-        cframe::read_seq::<PrincipalId>(&liar[..n]),
+        said(&liar[..n]).seq::<PrincipalId>(),
         Err(cframe::BAD),
         "条数说谎"
+    );
+    // 「未完」那一格只许 0 / 1（`2` 是读不懂——那一格**不借 `bool`**，正是为了这一条）。
+    let mut odd = out;
+    odd[1] = 2;
+    assert_eq!(
+        said(&odd[..n]).seq::<PrincipalId>(),
+        Err(cframe::BAD),
+        "未完 = 2"
     );
 }
 
 #[test]
 fn a_coalition_answer_has_three_shapes_and_they_all_read_back() {
-    // 三形：一格状态码 / 一枚号 / 一个是非。
-    let status = cframe::reply_status(cframe::UNKNOWN);
-    assert_eq!(cframe::unpack_reply(&status), Some((cframe::UNKNOWN, 0, 0)));
+    // 三形：一格状态码 / 一格答（一枚号 或 一个是非）/ 一窗号（上面那一条）。
+    let mut out = cframe::Rep::EMPTY;
+    let n = cframe::Rep::Status(cframe::UNKNOWN)
+        .store(&mut out)
+        .expect("装得下");
+    assert_eq!(n, 1, "失败那一形只有一格状态");
+    assert_eq!(said(&out[..n]).code(), cframe::UNKNOWN, "码交得出来");
+    assert_eq!(
+        said(&out[..n]).one(),
+        Err(cframe::BAD),
+        "它不是一格答那一形（**长度先判**，与从前那条 `n == REPLY_LEN` 同）"
+    );
 
     // `FOUND` 那一形**不用 `flag`**：它必有号（零号也是合法答案），没有"没有"这一档。
-    let value = cframe::reply_value(CoalitionId::new(12));
+    let value = cframe::Reply::value(CoalitionId::new(12));
     assert_eq!(
-        cframe::unpack_reply(&value),
-        Some((cframe::OK, 0, 12)),
+        said_of(cframe::Rep::One(value)).one(),
+        Ok(value),
         "号在 `a` 那一格"
     );
-    let zero = cframe::reply_value(CoalitionId::new(0));
+    let zero = cframe::Reply::value(CoalitionId::new(0));
     assert_eq!(
-        cframe::unpack_reply(&zero),
-        Some((cframe::OK, 0, 0)),
+        said_of(cframe::Rep::One(zero)).one(),
+        Ok(zero),
         "零号也读得回来"
     );
 
     // 而 `AMID` 那一形：是非在 `flag` 那一格，`a` 那一格空着。
-    let yes = cframe::reply_yes(true);
-    assert_eq!(cframe::unpack_reply(&yes), Some((cframe::OK, 1, 0)));
-    let no = cframe::reply_yes(false);
-    assert_eq!(cframe::unpack_reply(&no), Some((cframe::OK, 0, 0)));
+    let yes = cframe::Reply::yes(true);
+    let no = cframe::Reply::yes(false);
+    assert_eq!(said_of(cframe::Rep::One(yes)).one(), Ok(yes));
+    assert_eq!(said_of(cframe::Rep::One(no)).one(), Ok(no));
     assert_ne!(yes, no, "是非那一格分得开");
 
-    assert_eq!(cframe::unpack_reply(&[]), None, "空帧");
+    assert_eq!(cframe::Rep::fetch(&[]), None, "空帧");
     assert_eq!(
-        cframe::unpack_reply(&yes[..cframe::REPLY_LEN - 1]),
+        cframe::Rep::fetch(&[0u8; cframe::REP_LEN + 1]),
         None,
-        "短一字节"
+        "比上界更长也收不下"
     );
+    let mut short = [0u8; cframe::Reply::LEN - 1];
+    short[0] = cframe::OK;
+    assert_eq!(said(&short).one(), Err(cframe::BAD), "短一字节");
 }
 
 #[test]

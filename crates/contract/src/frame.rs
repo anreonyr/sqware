@@ -2,7 +2,7 @@
 //!
 //! ```text
 //!   Query  [0] op  [1..9] a  [9..17] b  [17..25] back    25（表求和：`Query::LEN`）
-//!   Reply  [0] status  [1] flag  [2..10] a               10（`REPLY_LEN`；下一刀换成表）
+//!   Reply  [0] status  [1] flag  [2..10] a               10（表求和：`Reply::LEN`）
 //! ```
 //!
 //! `a` / `b` 两格的**意义由动作码定**（`RESOLVE`/`DERIVE`/`SIRE` 只填 `a`，`HEIR` 两格都填）；
@@ -18,14 +18,16 @@
 //! （`principal-back` / `coalition-back`）、`fail_codes!` 表各装各的失败域——那些都留在各族自己的
 //! `frame.rs`。**身体搬到这里，两处只留各自的名字**（同 `session::call` 那条纪律）。
 //!
-//! **两样不在这里，各有各的理由**：`reply_present`（"有没有一条号"）只有 principal 用 ⇒ **一位
-//! 用家不搬**；`cursor_of` / `pack_seq` / `read_seq`（**窗**那一档）只有 coalition 用 ⇒ 留在那边
-//! ——operator 的"一条 pane 本来就有顶"不需要 `more` 那一格，故窗不是这一族的共性。
+//! **三样不在这里，各有各的理由**：`reply_present`（"有没有一条号"）只有 principal 用 ⇒ **一位
+//! 用家不搬**；`SeqHead` / `Rep` / `Said`（**窗**那一档：coalition 的三种答形）只有那一家用 ⇒
+//! 留在 `system::coalition::frame`——operator 的"一条 pane 本来就有顶"不需要"未完"那一格，
+//! 故窗不是这一族的共性。
 //!
 //! 本文件是**协议层**的东西，与 `id.rs` / `fail_codes.rs` 同一种编法：宿主靶**真依赖**它。
 
 use crate::fail_codes::OK;
 use crate::id::Id;
+use crate::message::Message;
 use env::PieToken;
 
 // ── 一问那一形 ──────────────────────────────────────────────
@@ -63,50 +65,90 @@ env::frame! {
 // 与 `Slip::ship` 是同一手，板、树两族的客侧正是这么推的），答话那一侧两侧也都是孔（客侧借出的
 // 那一枚、持册者往它推）。问话这一侧用不上船台的**真原因在收的那一头**：持册者要的是**内核盖
 // 章的发送者**（`pull_timeout_from` 那两格——"谁开的 ＋ 记号"就是这一族的钥匙），而船台只返报
-// 文。故这里**不立 `Message`**、也没有 `Slip` 的用家：报那一层的收益在这一族是**一张表 ＋
-// 一处编解**。（答话那一侧的表见下面那一段。）
+// 文。
+//
+// **照实记（"客侧一问也能上船台、3a 是个漏"——这一句收回来）**：照着上面那条，"客侧那一枚确实
+// 是孔 ⇒ 没换是个漏"我写过。细看**不是漏**：`Slip` 要一整个 `Message`（`In` / `fetch` /
+// `EMPTY`），而 [`Query`] 是**两族共用的表**、两族的读面不同（`principal::Wire` 与
+// `coalition::Wire` 是两种类型）⇒ **立不出一个共用的 `In`**；客侧今天那两手（表上的 `store` ＋
+// `session::call::push_to`）已经是最小形状——`Slip` 只多包一层推，收益为零、代价是一张用不上的
+// 读面。故这一族**问话那一侧不上船台，答话那一侧才上**。
 
-// ── 一答那一形（**下一刀换**）────────────────────────────────
+// ── 一答那一形 ──────────────────────────────────────────────
 
-/// 一答的长度：状态 + 有没有 + 一个 8 字节的答案。
-pub const REPLY_LEN: usize = 1 + 1 + 8;
-
-// ── 编 / 解（答话那一侧）─────────────────────────────────────
-
-/// 解一答：`(状态, 有没有, 答案)`。**长度不对就答 `None`**（读的人按"这一趟没走到"处理）。
-pub fn unpack_reply(bytes: &[u8]) -> Option<(u8, u8, u64)> {
-    if bytes.len() != REPLY_LEN {
-        return None;
+env::frame! {
+    /// **一答那一形**（两族同形）：状态 ＋ 有没有 ＋ 一枚号。
+    ///
+    /// `a` 那一格是**裸的 8 字节小端**（[`Id::to_bytes`] 就是它，与 `Field for u64` 同一条
+    /// 口径）：principal 的 `DERIVE` / `SIRE` / `RESOLVE` 与 coalition 的 `FOUND` 都填这一格。
+    ///
+    /// **照实记（`flag` 那一格：`== 1` 变成 `!= 0`）**：换表之前这一格由 `unpack_reply` 交成**裸
+    /// 字节**，读法是**调用方**各写的那一句 `present == 1`；而 `Field for bool` 的读法是 `!= 0`。
+    /// 合法帧（写的那一侧只写 0 / 1）逐字与读法都不变，**畸形的 `2` 从此读成"是"**。要严格就把
+    /// "这一格只许 0 / 1"并进下面 `fetch` 的判据（今天没有这一格）。
+    pub struct Reply {
+        status: u8,
+        flag: bool,
+        a: u64,
     }
-    let status = *bytes.first()?;
-    let flag = *bytes.get(1)?;
-    let mut a = [0u8; 8];
-    a.copy_from_slice(bytes.get(2..10)?);
-    Some((status, flag, u64::from_le_bytes(a)))
 }
 
-/// 编一答：只有状态那一格（失败，或读不懂）。
-pub fn reply_status(code: u8) -> [u8; REPLY_LEN] {
-    let mut out = [0u8; REPLY_LEN];
-    out[0] = code;
-    out
+impl Reply {
+    /// 编一答：只有状态那一格（失败，或读不懂）。
+    pub const fn status(code: u8) -> Reply {
+        Reply {
+            status: code,
+            flag: false,
+            a: 0,
+        }
+    }
+
+    /// 编一答：`OK` + 是 / 不是（principal 的 `HEIR`、coalition 的 `AMID`）。
+    pub const fn yes(yes: bool) -> Reply {
+        Reply {
+            status: OK,
+            flag: yes,
+            a: 0,
+        }
+    }
+
+    /// 编一答：`OK` + 一枚号。
+    ///
+    /// **号的类型是泛型**（[`Id`]）：两族的号是两种类型，而"填进那一格"这件事一模一样。
+    ///
+    /// **`flag` 那一格不用**：这一路的答案**必有**号（零号也是合法答案）——"有没有"是另一条路
+    /// （`principal::frame::reply_present`，只 principal 有）。
+    pub fn value<T: Id>(at: T) -> Reply {
+        Reply {
+            status: OK,
+            flag: false,
+            a: at.get() as u64,
+        }
+    }
 }
 
-/// 编一答：`OK` + 是 / 不是（principal 的 `HEIR`、coalition 的 `AMID`）。
-pub fn reply_yes(yes: bool) -> [u8; REPLY_LEN] {
-    let mut out = reply_status(OK);
-    out[1] = yes as u8;
-    out
-}
+impl Message for Reply {
+    /// **写法与读法是同一个**：这一形三格俱全，读的人不必再问"我问的是哪一条"。
+    type In = Reply;
+    /// 定长一答（[`Reply::LEN`]）。
+    type Buf = [u8; Reply::LEN];
+    const EMPTY: Self::Buf = [0u8; Reply::LEN];
 
-/// 编一答：`OK` + 一枚号（principal 是"新派生出来的那一条"，coalition 是"新铸的那一枚盟"）。
-///
-/// **号的类型是泛型**（[`Id`]）：两族的号是两种类型，而"填进 `[2..10]`"这件事一模一样。
-///
-/// **`flag` 那一格不用**：这一路的答案**必有**号（零号也是合法答案）——"有没有"是另一条路
-/// （`reply_present`，只 principal 有）。
-pub fn reply_value<T: Id>(at: T) -> [u8; REPLY_LEN] {
-    let mut out = reply_status(OK);
-    out[2..10].copy_from_slice(&at.to_bytes());
-    out
+    /// 表那一手 `store_in`（写更大的缓冲、返长度）——正是这一手要的；表上那枚**同名**的 `store`
+    /// 要的是定长数组、返 `()`，两回事。
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        Reply::store_in(self, out)
+    }
+
+    /// **恰好 10 字节**：表那一手只要求"够长"，而这一形今天的判据是"长短都不认"——长一字节也是
+    /// 读不懂（同 `board` 那一族那条照实记）。
+    ///
+    /// `Reply::fetch` 在这里指的是**表那一手**：两枚同名，靠语言那条"固有 impl 优先于 trait"分得
+    /// 开，不是递归。判据是宿主的往返用例（10 说得回来、9 与 11 都读不懂）。
+    fn fetch(bytes: &[u8]) -> Option<Reply> {
+        if bytes.len() != Reply::LEN {
+            return None;
+        }
+        Reply::fetch(bytes)
+    }
 }

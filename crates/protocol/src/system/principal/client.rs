@@ -12,12 +12,14 @@
 //!
 //! **没有会话可选装**：这一面不装码头、不定泊位——门牌自己就是那条路（同 rtc 那一面）。
 
+use contract::message::Message;
 use env::Wait;
 use env::{PieToken, TaskId};
-use runtime::env::mail::{self, HolePie};
+use runtime::env::mail;
 
 use super::call::{self, BACK};
 use super::core::{Fail, PrincipalId};
+use crate::session::slip::Slip;
 
 pub use super::call::opened_by;
 
@@ -44,40 +46,40 @@ impl Face {
     /// 名册 · 写：把一条 TID 定到一条已存在的号上。**只有装配者那一枚问得出 `OK`**。
     pub fn bind(&self, tid: TaskId, p: PrincipalId, millis: Wait) -> Result<(), Fail> {
         let out = self.raw(call::Req::Bind(tid, p), millis)?;
-        self.answer(out, |_present, _at| Ok(()))
+        self.answer(out, |_flag, _at| Ok(()))
     }
 
     /// 名册 · 读：这条 TID 此刻代表谁。`None` = 没绑（**不是失败**）。
     pub fn resolve(&self, tid: TaskId, millis: Wait) -> Result<Option<PrincipalId>, Fail> {
         let out = self.raw(call::Req::Resolve(tid), millis)?;
-        self.answer(out, |present, at| {
-            Ok((present == 1).then(|| PrincipalId::new(at as usize)))
+        self.answer(out, |flag, at| {
+            Ok(flag.then(|| PrincipalId::new(at as usize)))
         })
     }
 
     /// 谱系 · 写：由 `p` 派生一枚新节点（装配者，或当前正好代表 `p` 的那一枚）。
     pub fn derive(&self, p: PrincipalId, millis: Wait) -> Result<PrincipalId, Fail> {
         let out = self.raw(call::Req::Derive(p), millis)?;
-        self.answer(out, |_present, at| Ok(PrincipalId::new(at as usize)))
+        self.answer(out, |_flag, at| Ok(PrincipalId::new(at as usize)))
     }
 
     /// 转换 · 领：把**自己**当前的号换成 `q`（只许沿自己那一支向下）。
     pub fn adopt(&self, q: PrincipalId, millis: Wait) -> Result<(), Fail> {
         let out = self.raw(call::Req::Adopt(q), millis)?;
-        self.answer(out, |_present, _at| Ok(()))
+        self.answer(out, |_flag, _at| Ok(()))
     }
 
     /// 转换 · 弃：回到**装配给我的那一条**（不删格，故还能再领一次）。
     pub fn waive(&self, millis: Wait) -> Result<(), Fail> {
         let out = self.raw(call::Req::Waive, millis)?;
-        self.answer(out, |_present, _at| Ok(()))
+        self.answer(out, |_flag, _at| Ok(()))
     }
 
     /// 谱系 · 读：直接父。**三态**——`Some` / `None`（它是根）/ `Err(Unknown)`（树外）。
     pub fn sire(&self, p: PrincipalId, millis: Wait) -> Result<Option<PrincipalId>, Fail> {
         let out = self.raw(call::Req::Sire(p), millis)?;
-        self.answer(out, |present, at| {
-            Ok((present == 1).then(|| PrincipalId::new(at as usize)))
+        self.answer(out, |flag, at| {
+            Ok(flag.then(|| PrincipalId::new(at as usize)))
         })
     }
 
@@ -85,7 +87,7 @@ impl Face {
     pub fn heir(&self, a: PrincipalId, b: PrincipalId, millis: Wait) -> Result<bool, Fail> {
         let out = self.raw(call::Req::Heir(a, b), millis)?;
         // `HEIR` 的答案在**有没有**那一格（是 / 不是），8 字节那一格留空。
-        self.answer(out, |present, _at| Ok(present == 1))
+        self.answer(out, |flag, _at| Ok(flag))
     }
 
     /// 问一句、取一句答。
@@ -96,7 +98,7 @@ impl Face {
     /// 而那一份是 `fail_codes!` 的**双射表**（加变体 = 加一个线上码）——那是动协议面的事。
     /// 分得开它们的那一格在**对面**：`Denied` 是服务真会答的码（判据在 `judge`），
     /// "没走到"是本端自己在码表之外判的。
-    fn raw(&self, act: call::Req, millis: Wait) -> Result<[u8; call::REPLY_LEN], Fail> {
+    fn raw(&self, act: call::Req, millis: Wait) -> Result<call::Reply, Fail> {
         // **先铸、先交，再推**（次序是契约的一半，见 `session::call::lend_out`）：那一枚
         // "种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫自己的表。
         let (back, seed) =
@@ -109,27 +111,23 @@ impl Face {
             let _ = mail::release(back);
             return Err(Fail::Denied);
         }
-        let mut buf = [0u8; call::REPLY_LEN];
-        let got = match HolePie::from_token(back).pull_timeout(&mut buf, millis) {
-            Ok(n) if n == call::REPLY_LEN => Ok(buf),
-            _ => Err(Fail::Denied),
-        };
+        // 收：答话走**这一趟借出去的那一枚孔**（船台那一手；缓冲由调用方给——这一形 10 字节）。
+        // 这一形长短都不认（`Reply` 的 `fetch` 判"恰好 10"）：`None` 盖着"期限到了 / 读不懂"。
+        let mut buf = call::Reply::EMPTY;
+        let got = Slip::<call::Reply>::seal(back).land(buf.as_mut(), millis);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
         let _ = mail::release(back);
-        got
+        got.ok_or(Fail::Denied)
     }
 
     /// 一句答：先看状态那一格（失败域 + 读不懂），再看答案那一格。
     fn answer<T>(
         &self,
-        out: [u8; call::REPLY_LEN],
-        read: impl FnOnce(u8, u64) -> Result<T, Fail>,
+        reply: call::Reply,
+        read: impl FnOnce(bool, u64) -> Result<T, Fail>,
     ) -> Result<T, Fail> {
-        let Some((status, present, at)) = call::unpack_reply(&out) else {
-            return Err(Fail::Denied);
-        };
-        match call::code_to_fail(status) {
-            None if status == call::OK => read(present, at),
+        match call::code_to_fail(reply.status) {
+            None if reply.status == call::OK => read(reply.flag, reply.a),
             Some(fail) => Err(fail),
             // **读不懂在这一侧与"没走到"同一格**（照实记）：对本端是同一个下一步——
             // 别指望这条路；Principal 那一侧说不出"我没接住"这句话（`BAD` 是 Server 说的，

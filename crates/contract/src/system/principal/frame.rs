@@ -35,7 +35,6 @@
 //! 合法答案，故"有没有"只能另占一格。
 
 use super::core::{Fail, PrincipalId};
-use crate::id::Id;
 use env::{Mark, PieToken, TaskId};
 
 // ── 码 ──────────────────────────────────────────────────────
@@ -70,7 +69,7 @@ pub const BAD: u8 = 4;
 // 一份；这里只按本族的名字转出来（`call.rs` 那句 `pub use super::frame::*;` 照旧，调用点一处
 // 都不用改）。**本族自己的**是下面那些：码、`reply_present`、失败表、记号。
 
-pub use crate::frame::{Query, REPLY_LEN, reply_status, reply_value, reply_yes, unpack_reply};
+pub use crate::frame::{Query, Reply};
 
 // ── 一问：一条动作一格 ──────────────────────────────────────
 
@@ -159,11 +158,11 @@ impl Wire {
 /// 编一答：`OK` + **有没有** + 一个号（`RESOLVE` 的"绑没绑"、`SIRE` 的"有没有父"）。
 ///
 /// **只本族有这一手**：另几家没有"可能没有的一条号"那种答案 ⇒ 一位用家，不搬去共享那一份。
-pub fn reply_present(present: bool, at: PrincipalId) -> [u8; REPLY_LEN] {
-    let mut out = reply_status(OK);
-    out[1] = present as u8;
-    out[2..10].copy_from_slice(&at.to_bytes());
-    out
+pub fn reply_present(present: bool, at: PrincipalId) -> Reply {
+    Reply {
+        flag: present,
+        ..Reply::value(at)
+    }
 }
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────

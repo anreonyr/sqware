@@ -10,15 +10,15 @@
 //!
 //! ```text
 //!   Query  [0] op   [1..9] a   [9..17] b   [17..25] back     25
-//!   Reply  [0] status  [1] flag  [2..10] a                   10
-//!          [0] status  [1] 未完  [2] 条数  [3..] 号    SEQ_REPLY_LEN = 131
+//!   Reply  [0] status  [1] flag  [2..10] a                   10（`crate::frame` 那一份）
+//!          [0] status                                        1（失败那几格）
+//!          [0] status  [1] 未完  [2] 条数  [3..] 号           3 + 8n，上界 [`REP_LEN`] = 131
 //! ```
 //!
 //! `a` / `b` 两格的**意义由动作码定**（`FOUND` 两格都空，`ENTER` / `LEAVE` 只用 `a`，
 //! `AMID` 两格都用，`BAND` / `BLOC` 的 `b` 是**游标**）——而"这一条有几格"由下面的
-//! [`Req`] / [`Wire`] 按类型说。答话的两种形状**各有各的上界**，服务端按 [`REPLY_MAX`]
-//! 备一只缓冲。**前两种形状的本体在 [`crate::frame`]**——两族同形，故只有一份；本文件把它们
-//! 按本族的名字转出来，**窗那一档**留在这里（只此一族）。
+//! [`Req`] / [`Wire`] 按类型说。答话的**一格答**那一形本体在 [`crate::frame`]（两族同形，故
+//! 只有一份）；**格状态 ＋ 窗**那两档留在这里（只此一族），三形合成 [`Rep`]，读面是 [`Said`]。
 //!
 //! **照实记（这一行原写"一问 17 字节"）**：那是 `back` 那一格落地之前抄的，此后一问一直是
 //! `1 + 8 + 8 + 8 = 25`（同 `principal/frame.rs` 那条，详见 [`crate::frame`]）。
@@ -43,6 +43,7 @@
 
 use super::core::{CoalitionId, Fail, WINDOW_CAP, Window};
 use crate::id::Id;
+use crate::message::Message;
 use crate::system::principal::core::PrincipalId;
 use env::{Mark, PieToken};
 
@@ -74,7 +75,7 @@ pub const BAD: u8 = 3;
 // 的帧就是照它立的），故只有一份；这里只按本族的名字转出来（`call.rs` 那句
 // `pub use super::frame::*;` 照旧，调用点一处都不用改）。
 
-pub use crate::frame::{Query, REPLY_LEN, reply_status, reply_value, reply_yes, unpack_reply};
+pub use crate::frame::{Query, Reply};
 
 // ── 一问：一条动作一格 ──────────────────────────────────────
 
@@ -154,17 +155,6 @@ impl Wire {
     }
 }
 
-/// 一窗答话的长度：状态 + **未完** + 条数 + [`WINDOW_CAP`] 枚号。
-///
-/// 盟籍没有上限（一格盟可以有很多人），故这一族**必须带"未完"那一格**——窗装不下是常态；
-/// 对照 operator 那一侧：一条 pane 本来就不超过 `PANE_CAP`，故那边不用带。
-pub const SEQ_REPLY_LEN: usize = 1 + 1 + 1 + WINDOW_CAP * 8;
-
-/// 答话那一侧的上界：**服务端只备这一只缓冲**（两种答形里大的那个）。
-pub const REPLY_MAX: usize = SEQ_REPLY_LEN;
-
-const _: () = assert!(REPLY_LEN <= REPLY_MAX);
-
 // ── 窗：游标与一窗号 ────────────────────────────────────────
 
 /// 游标那一格：**`b` = 游标 + 1**，`0` = 没有游标（从头取）。
@@ -182,50 +172,206 @@ pub fn cursor_in(b: u64) -> Option<usize> {
     if b == 0 { None } else { Some(b as usize - 1) }
 }
 
-/// 把一窗号编成一帧答话（写进服务端那只缓冲），返**帧长**（= `3 + 8 × 枚数`）。
-pub fn pack_seq<T: Id>(out: &mut [u8; REPLY_MAX], window: &Window<T>) -> usize {
-    out[0] = OK;
-    out[1] = window.more() as u8;
-    out[2] = window.len() as u8;
-    for (i, id) in window.iter().enumerate() {
-        let at = 3 + i * 8;
-        out[at..at + 8].copy_from_slice(&id.to_bytes());
+// ── 一答：三种形状（格状态 ＋ 一格答 ＋ 一窗号）──────────────
+
+env::frame! {
+    /// 「格状态」那一形：失败那几格（[`UNKNOWN`] / [`FULL`] / [`BAD`]）只有这一格。
+    ///
+    /// **照实记（为什么这一族多出这一形）**：成功那两形都带回荷载，失败没有——故线上有三种长度
+    /// （1 / 10 / `3 + 8n`），客侧按"我问的是哪一条"认。principal 那一面没有这一形：它的失败也占满
+    /// 10 字节（`Reply` 那一形）。
+    pub struct Status {
+        status: u8,
     }
-    3 + window.len() * 8
 }
 
-/// 解开一帧「窗答」：答话那一格不是 [`OK`] ⇒ `Err(那一格)`。
+env::frame! {
+    /// 「窗」那一形的**头三格**：状态 ＋ 未完 ＋ 条数（后面跟着那么多个号——那是尾巴，走
+    /// [`env::wire::store_tail`]）。
+    ///
+    /// **"未完"那一格为什么只此一族有**：盟籍没有上限（一格盟可以有很多人）⇒ 窗装不下是常态；
+    /// 对照 operator 那一侧：一条 pane 本来就不超过 `PANE_CAP`，故那边不用带。
+    ///
+    /// **`more` 那一格是裸字节、不是 `bool`**：`Field for bool` 的读法是 `!= 0`，而这一形的判据是
+    /// **只许 0 / 1**（[`Said::seq`] 里判）——借 `bool` 会把畸形的 `2` 读成"未完"。
+    pub struct SeqHead {
+        status: u8,
+        more: u8,
+        count: u8,
+    }
+}
+
+/// 一答的上界：**最大那一形**（窗：头三格 ＋ [`WINDOW_CAP`] 枚号）。
+pub const REP_LEN: usize = SeqHead::LEN + WINDOW_CAP * 8;
+
+/// 一窗号的**荷载**（编的那一侧用）：未完那一格 ＋ 一串**裸 8 字节号**。
 ///
-/// 帧长必须恰好 `3 + 8 × 条数`、条数不超过 [`WINDOW_CAP`]、未完那一格只许 0 / 1——
-/// 短一字节即是读不懂（[`BAD`]）：这一族**不猜**。
-pub fn read_seq<T: Id>(bytes: &[u8]) -> Result<Window<T>, u8> {
-    let Some((&code, rest)) = bytes.split_first() else {
-        return Err(BAD);
-    };
-    if code != OK {
-        return Err(code);
+/// **照实记（为什么存裸号、不存 `PrincipalId` / `CoalitionId`）**：两个号空间在这一格上
+/// **分不开**（`band` 取的是身份号、`bloc` 取的是盟号，线上逐字同形），而 [`Rep`] 得是**一枚
+/// 具体类型**（服务端一处收尾：装一条、发一条）⇒ 不能按号泛型。与 operator 那格 `Word` 同一条
+/// 口径：字段只管这一格多宽、怎么落字节，含义归问的人认。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Seq {
+    more: bool,
+    len: usize,
+    ids: [u64; WINDOW_CAP],
+}
+
+impl Seq {
+    fn of<T: Id>(window: &Window<T>) -> Seq {
+        let mut ids = [0u64; WINDOW_CAP];
+        for (slot, id) in ids.iter_mut().zip(window.iter()) {
+            *slot = id.get() as u64;
+        }
+        Seq {
+            more: window.more(),
+            len: window.len(),
+            ids,
+        }
     }
-    let Some((&more, rest)) = rest.split_first() else {
-        return Err(BAD);
-    };
-    let Some((&count, body)) = rest.split_first() else {
-        return Err(BAD);
-    };
-    let more = match more {
-        0 => false,
-        1 => true,
-        _ => return Err(BAD),
-    };
-    let count = count as usize;
-    if count > WINDOW_CAP || body.len() != count * 8 {
-        return Err(BAD);
+
+    fn ids(&self) -> &[u64] {
+        self.ids.get(..self.len).unwrap_or(&[])
     }
-    let ids = body.chunks_exact(8).map(|chunk| {
-        let mut raw = [0u8; 8];
-        raw.copy_from_slice(chunk);
-        T::from_bytes(raw)
-    });
-    Ok(Window::gather(more, ids))
+}
+
+/// **一答的形状**——三形：格状态（1）／一格答（10）／一窗号（`3 + 8n`）。
+///
+/// **照实记（名字）**：这一族与树那一族同名同位——答的**写**那一面叫 `Rep`、**读**那一面叫
+/// [`Said`]（用户裁定）。一格答那一形 [`Reply`] 的本体在 [`crate::frame`]（两族同形）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rep {
+    /// 失败那几格（[`UNKNOWN`] / [`FULL`] / [`BAD`]）。
+    Status(u8),
+    /// 一格答：一枚号 / 是或非。
+    One(Reply),
+    /// 一窗号。
+    Seq(Seq),
+}
+
+impl Rep {
+    /// 编一答：一窗号（**裸号进窗**——见 [`Seq`] 那条照实记）。
+    pub fn seq<T: Id>(window: &Window<T>) -> Rep {
+        Rep::Seq(Seq::of(window))
+    }
+}
+
+impl Message for Rep {
+    /// 收的那一面是 [`Said`]（**原样的字节**——三种答形在线上分不开，形状由问的人认，见它的
+    /// 照实记）。
+    type In = Said;
+    /// 这一族的缓冲：**最大那一形**（[`REP_LEN`]）。
+    type Buf = [u8; REP_LEN];
+    const EMPTY: Self::Buf = [0u8; REP_LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        match *self {
+            Rep::Status(code) => Status { status: code }.store_in(out),
+            Rep::One(reply) => reply.store_in(out),
+            Rep::Seq(seq) => {
+                let head = SeqHead {
+                    status: OK,
+                    more: seq.more as u8,
+                    count: seq.len as u8,
+                };
+                let at = head.store_in(out)?;
+                env::wire::store_tail(out, at, seq.ids())
+            }
+        }
+    }
+
+    /// 把字节**原样收下**：空帧 / 比上界更长 ⇒ `None`（不猜、不崩）。
+    fn fetch(bytes: &[u8]) -> Option<Said> {
+        let len = bytes.len();
+        if len == 0 || len > REP_LEN {
+            return None;
+        }
+        let mut buf = [0u8; REP_LEN];
+        buf.get_mut(..len)?.copy_from_slice(bytes);
+        Some(Said { buf, len })
+    }
+}
+
+/// **收进来的一答**：**原样的字节** ＋ 三个读法。
+///
+/// **照实记（答这一侧为什么不像问那一侧那样"一个类型说形状"）**：三种答形在线上分不开——
+/// 格状态那一形只有一格，另两形都以状态那一格起头，而窗那一条是变长的。分得开它们的是**问的
+/// 人**（他问的是哪一条自己知道）。故这一枚把字节原样收下，三个读法各按一形解；**形状不对 ⇒
+/// [`BAD`]**。
+///
+/// **照实记（为什么不像 principal 那样 `In = Reply`）**：那一家只有一形（失败也占满 10 字节），
+/// 三格俱全，读的人不必猜。这一家的**失败只有一格状态**，而"是哪一格失败"是读的人要落成
+/// `Fail` 的东西（[`FULL`] 是 `Fail::Full`，不是"读不懂"）⇒ 读面必须能**交出那一格码**。
+///
+/// **照实记（两个读法判次序不一样，正是今天那两条读法的次序）**：[`Said::one`] **先看长度**
+/// （长度不对 ⇒ `BAD`，连码都不看），[`Said::seq`] **先看码**（非 `OK` ⇒ 那一格码）。照抄，
+/// 不改判据：客侧那两条路（一格答 / 窗）今天就是这么读的。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Said {
+    buf: [u8; REP_LEN],
+    len: usize,
+}
+
+impl Said {
+    /// 这一条答的字节。
+    fn bytes(&self) -> &[u8] {
+        self.buf.get(..self.len).unwrap_or(&[])
+    }
+
+    /// 那一格状态（三种答形的头一格都是它；空帧 ⇒ [`BAD`]）。
+    pub fn code(&self) -> u8 {
+        self.bytes().first().copied().unwrap_or(BAD)
+    }
+
+    /// 按「一格答」那一形读：`[OK][flag][号]`。
+    ///
+    /// **次序**：长度不是 10 ⇒ `Err(BAD)`（**先判长度**——今天客侧那条 `n == REPLY_LEN` 就是
+    /// 它，故一格的失败帧在这一手里读不出 `FULL`，与今天同）；长度对了再看码，码不是 [`OK`] ⇒
+    /// `Err(那一格码)`。
+    pub fn one(&self) -> Result<Reply, u8> {
+        let bytes = self.bytes();
+        if bytes.len() != Reply::LEN {
+            return Err(BAD);
+        }
+        let code = self.code();
+        if code != OK {
+            return Err(code);
+        }
+        Reply::fetch(bytes).ok_or(BAD)
+    }
+
+    /// 按「一窗号」那一形读：`[status][未完][条数][号…]` → 一窗号。
+    ///
+    /// **次序**：**先看码**（非 [`OK`] ⇒ `Err(那一格码)`——`FULL` 就是这样一路走到 `Fail::Full`
+    /// 的，与今天同）。**帧长即条数**：条数与剩下那些字节对不上（或条数超过 [`WINDOW_CAP`]）⇒
+    /// `Err(BAD)`——短一字节也是它；未完那一格只许 0 / 1（`2` 是**读不懂**，不猜）。
+    pub fn seq<T: Id>(&self) -> Result<Window<T>, u8> {
+        let code = self.code();
+        if code != OK {
+            return Err(code);
+        }
+        let bytes = self.bytes();
+        let head = SeqHead::fetch(bytes).ok_or(BAD)?;
+        let more = match head.more {
+            0 => false,
+            1 => true,
+            _ => return Err(BAD),
+        };
+        let count = head.count as usize;
+        if count > WINDOW_CAP {
+            return Err(BAD);
+        }
+        let body = bytes.get(SeqHead::LEN..).ok_or(BAD)?;
+        let mut ids = [0u64; WINDOW_CAP];
+        let end = env::wire::fetch_tail(body, 0, &mut ids[..count]).ok_or(BAD)?;
+        if end != body.len() {
+            return Err(BAD);
+        }
+        Ok(Window::gather(
+            more,
+            ids[..count].iter().map(|raw| T::new(*raw as usize)),
+        ))
+    }
 }
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────

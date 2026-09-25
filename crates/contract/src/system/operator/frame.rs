@@ -420,7 +420,7 @@ impl Message for Req<'_> {
 /// 必须带 `more`，并因此把格子存成 `[Option<T>; CAP]`（泛型 + `const new` 造不出 `T` 的占位，
 /// 而零号是**真格子**，不能拿它当空）；**一条 pane 本来就有顶**（[`Operator::PANE_CAP`]）⇒
 /// "还没完"这件事在这一族**不存在**，带 `more` 就是一格**恒假**的字段。故两处各留一个，
-/// **帧形也跟着**（[`Tally`] 无"未完"、`SEQ_REPLY_LEN` 有）。
+/// **帧形也跟着**（[`Tally`] 无"未完"、coalition 的 `SeqHead` 有）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Listing {
     ids: [EntryId; Operator::PANE_CAP],

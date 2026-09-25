@@ -30,6 +30,7 @@ use protocol::system::principal::call as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::PrincipalId;
 use protocol::session::Quay;
+use protocol::session::slip::Slip;
 use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
 use runtime::core::port::{self, Access, Policy};
@@ -149,65 +150,60 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
         // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
         return;
     }
-    let mut reply = [0u8; ccall::REPLY_MAX];
-    let said = answer(book, face, from, ask, &mut reply);
-    let _ = HolePie::from_token(back).push(&reply[..said]);
+    // 答一句：**形由 [`ccall::Rep`] 说**（三种答形合一：格状态 / 一格答 / 一窗号）——装与发
+    // 都不在这一层写字节（缓冲是船台自己那只＝本族最大那一形）。
+    let _ = Slip::<ccall::Rep>::seal(back)
+        .load(answer(book, face, from, ask))
+        .ship();
     let _ = mail::release(back);
 }
 
-/// 把一句问交给核心，编出一句答（**答话有两种形状**：一格状态、或一窗号）。
+/// 把一句问交给核心，编出一句答（**三种答形**：格状态 / 一格答 / 一窗号）。
 ///
 /// **形状由 [`ccall::Wire`] 说**（收帧那一侧已按动作解好：两格载荷的意义随之定，不再是一枚裸码
 /// ＋ 两个裸数）。三条**写**原语同一个起手：**先拿发送者过名册**（[`who`]）。三条读不过名册
 /// ——`amid` 的 `p` 与两条取窗的键都是问的人给的标签（K6）。
-/// 返**帧长**——答案写进调用方那只缓冲（[`ccall::REPLY_MAX`]）。
-fn answer(
-    book: &mut Coalition,
-    face: &Face,
-    from: TaskId,
-    ask: Option<ccall::Wire>,
-    out: &mut [u8; ccall::REPLY_MAX],
-) -> usize {
+fn answer(book: &mut Coalition, face: &Face, from: TaskId, ask: Option<ccall::Wire>) -> ccall::Rep {
     // 表外的动作码：这一问有回信的路，只是这一码我不认（与"读不懂"同一格）。
     let Some(ask) = ask else {
-        return code(out, ccall::BAD);
+        return ccall::Rep::Status(ccall::BAD);
     };
     match ask {
         // `found` 的钥匙是"你得是个已绑定的身份"（K3），**解析出来的那条号只当门卫**：
         // 盟无主（K2），不记铸造者——全族唯一一处。
         ccall::Wire::Found => match who(face, from) {
-            Ok(_) => said(out, ccall::reply_value(book.found())),
-            Err(fail) => status(out, fail),
+            Ok(_) => ccall::Rep::One(ccall::Reply::value(book.found())),
+            Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
         },
         ccall::Wire::Enter(c) => match who(face, from) {
             Ok(w) => match book.enter(w, c) {
-                Ok(()) => said(out, ccall::reply_status(ccall::OK)),
-                Err(fail) => status(out, fail),
+                Ok(()) => ccall::Rep::One(ccall::Reply::status(ccall::OK)),
+                Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
             },
-            Err(fail) => status(out, fail),
+            Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
         },
         ccall::Wire::Leave(c) => match who(face, from) {
             Ok(w) => match book.leave(w, c) {
-                Ok(()) => said(out, ccall::reply_status(ccall::OK)),
-                Err(fail) => status(out, fail),
+                Ok(()) => ccall::Rep::One(ccall::Reply::status(ccall::OK)),
+                Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
             },
-            Err(fail) => status(out, fail),
+            Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
         },
         ccall::Wire::Amid(p, c) => {
             match book.amid(p, c) {
                 // "不在"是一句答（`Ok(false)`），"查无此盟"才是这一格。
-                Ok(yes) => said(out, ccall::reply_yes(yes)),
-                Err(fail) => status(out, fail),
+                Ok(yes) => ccall::Rep::One(ccall::Reply::yes(yes)),
+                Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
             }
         }
         // 两条取窗：`a` 是键，`b` 是**游标 + 1**（`0` = 没有游标，见 [`ccall`] 的帧那一节）——
         // 游标那一手已经在 `Wire` 里解好了。
         ccall::Wire::Band(c, after) => match book.band(c, after) {
-            Ok(window) => ccall::pack_seq(out, &window),
-            Err(fail) => status(out, fail),
+            Ok(window) => ccall::Rep::seq(&window),
+            Err(fail) => ccall::Rep::Status(ccall::fail_to_code(Some(fail))),
         },
         // `bloc` 没有失败域（`p` 是标签，不在任何盟里就是空窗）。
-        ccall::Wire::Bloc(p, after) => ccall::pack_seq(out, &book.bloc(p, after)),
+        ccall::Wire::Bloc(p, after) => ccall::Rep::seq(&book.bloc(p, after)),
     }
 }
 
@@ -220,23 +216,6 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
     face.resolve(from, Wait::AtMost(MS))
         .map_err(|_| Fail::Unknown)?
         .ok_or(Fail::Unknown)
-}
-
-/// 失败域 → 答话那一格（三格答码只此一处编）：写进答话缓冲，返帧长（只有状态那一格）。
-fn status(out: &mut [u8; ccall::REPLY_MAX], fail: Fail) -> usize {
-    code(out, ccall::fail_to_code(Some(fail)))
-}
-
-/// 一格状态：读不懂那一档走它（它不是谁失败域里的一格）。
-fn code(out: &mut [u8; ccall::REPLY_MAX], said: u8) -> usize {
-    out[0] = said;
-    1
-}
-
-/// 一格答（[`ccall::REPLY_LEN`] 那一形）抄进答话缓冲，返帧长。
-fn said(out: &mut [u8; ccall::REPLY_MAX], frame: [u8; ccall::REPLY_LEN]) -> usize {
-    out[..ccall::REPLY_LEN].copy_from_slice(&frame);
-    ccall::REPLY_LEN
 }
 
 /// 找**身份服务**那份门牌：`FIND "/sys/principal"`，**找不到就再问**（有界）。

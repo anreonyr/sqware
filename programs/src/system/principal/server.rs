@@ -23,6 +23,7 @@ use protocol::system::operator::client as operator;
 use protocol::system::principal::call as pcall;
 use protocol::system::principal::core::{Principal, PrincipalId};
 use protocol::session::Quay;
+use protocol::session::slip::Slip;
 use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
 use runtime::core::port::{self, Access, Policy};
@@ -156,7 +157,11 @@ fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
         // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
         return;
     }
-    let _ = HolePie::from_token(back).push(&answer(book, from, ask));
+    // 答一句：**一格**（[`pcall::Reply`] 那一形）——走这一趟那枚回信孔，装与发都不在这一层
+    // 写字节（缓冲是船台自己那只：这一形定长 10）。
+    let _ = Slip::<pcall::Reply>::seal(back)
+        .load(answer(book, from, ask))
+        .ship();
     let _ = mail::release(back);
 }
 
@@ -164,44 +169,44 @@ fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
 ///
 /// **形状由 [`pcall::Wire`] 说**（收帧那一侧已按动作解好了——两格载荷的意义随之定，不再是一枚
 /// 裸码 ＋ 两个裸数）。答案与失败分开放（见 [`pcall`]：`OK` + `flag` 是答案，负码表只装失败）。
-fn answer(book: &mut Principal, from: TaskId, ask: Option<pcall::Wire>) -> [u8; pcall::REPLY_LEN] {
+fn answer(book: &mut Principal, from: TaskId, ask: Option<pcall::Wire>) -> pcall::Reply {
     // 表外的动作码：这一问有回信的路，只是这一码我不认（与"读不懂"同一格）。
     let Some(ask) = ask else {
-        return pcall::reply_status(pcall::BAD);
+        return pcall::Reply::status(pcall::BAD);
     };
     match ask {
         pcall::Wire::Bind(tid, p) => match book.bind(from, tid, p) {
-            Ok(()) => pcall::reply_status(pcall::OK),
-            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+            Ok(()) => pcall::Reply::status(pcall::OK),
+            Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))),
         },
         pcall::Wire::Resolve(tid) => match book.resolve(tid) {
             Some(p) => pcall::reply_present(true, p),
             None => pcall::reply_present(false, PrincipalId::ROOT),
         },
         pcall::Wire::Derive(p) => match book.derive(from, p) {
-            Ok(q) => pcall::reply_value(q),
-            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+            Ok(q) => pcall::Reply::value(q),
+            Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))),
         },
         pcall::Wire::Sire(p) => match book.sire(p) {
             Ok(Some(q)) => pcall::reply_present(true, q),
             Ok(None) => pcall::reply_present(false, PrincipalId::ROOT),
-            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+            Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))),
         },
         pcall::Wire::Heir(a, b) => {
             match book.heir(a, b) {
-                Ok(yes) => pcall::reply_yes(yes),
+                Ok(yes) => pcall::Reply::yes(yes),
                 // "不是祖先"是一句答（`Ok(false)`），"查无此号"才是这一格。
-                Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+                Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))),
             }
         }
         // 转换那两条都只答状态那一格（成功 = `OK`）；钥匙是**发送者**，报文里没有"我是谁"。
         pcall::Wire::Adopt(p) => match book.adopt(from, p) {
-            Ok(()) => pcall::reply_status(pcall::OK),
-            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+            Ok(()) => pcall::Reply::status(pcall::OK),
+            Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))),
         },
         pcall::Wire::Waive => match book.waive(from) {
-            Ok(()) => pcall::reply_status(pcall::OK),
-            Err(fail) => pcall::reply_status(pcall::fail_to_code(Some(fail))),
+            Ok(()) => pcall::Reply::status(pcall::OK),
+            Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))),
         },
     }
 }

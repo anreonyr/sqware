@@ -17,13 +17,15 @@
 //! **没有会话可选装**：这一面不装码头、不定泊位——门牌自己就是那条路（同 rtc / principal
 //! 那两面）。
 
+use contract::message::Message;
 use env::Wait;
 use env::{PieToken, TaskId};
-use runtime::env::mail::{self, HolePie};
+use runtime::env::mail;
 
 use super::call::{self, BACK};
 use super::core::{CoalitionId, Fail, Window};
 use crate::id::Id;
+use crate::session::slip::Slip;
 
 pub use super::call::opened_by;
 
@@ -51,28 +53,28 @@ impl Face {
 
     /// 盟 · 写：立一枚新号——**自己是哪一位**由内核盖的印章说。
     pub fn found(&self, millis: Wait) -> Result<CoalitionId, Fail> {
-        let out = self.raw(call::Req::Found, millis)?;
-        self.answer(out, |_present, at| Ok(CoalitionId::new(at as usize)))
+        let said = self.ask(call::Req::Found, millis)?;
+        self.answer(said, |_flag, at| Ok(CoalitionId::new(at as usize)))
     }
 
     /// 盟 · 写：**我**进 `c`。
     pub fn enter(&self, c: CoalitionId, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(call::Req::Enter(c), millis)?;
-        self.answer(out, |_present, _at| Ok(()))
+        let said = self.ask(call::Req::Enter(c), millis)?;
+        self.answer(said, |_flag, _at| Ok(()))
     }
 
     /// 盟 · 写：**我**出 `c`。撞空也成（集合运算没有"第二次"）。
     pub fn leave(&self, c: CoalitionId, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(call::Req::Leave(c), millis)?;
-        self.answer(out, |_present, _at| Ok(()))
+        let said = self.ask(call::Req::Leave(c), millis)?;
+        self.answer(said, |_flag, _at| Ok(()))
     }
 
     /// 盟 · 读：`p` 在不在 `c` 里。**两件事两个落点**——`Ok(false)` 是不在，
     /// `Err(Unknown)` 是这枚盟不存在。
     pub fn amid(&self, p: PrincipalId, c: CoalitionId, millis: Wait) -> Result<bool, Fail> {
-        let out = self.raw(call::Req::Amid(p, c), millis)?;
+        let said = self.ask(call::Req::Amid(p, c), millis)?;
         // `AMID` 的答案在**有没有**那一格（在 / 不在），8 字节那一格留空。
-        self.answer(out, |present, _at| Ok(present == 1))
+        self.answer(said, |flag, _at| Ok(flag))
     }
 
     /// 盟 · 读：`c` 里此刻有谁（**一趟取窗**）。
@@ -98,14 +100,15 @@ impl Face {
         self.window(call::Req::Bloc(p, after), millis)
     }
 
-    /// 问一句、取一句答。
+    /// 问一句、收一答（**原样的字节**：这一族三种答形在线上分不开，形状由问的人认）。
     ///
     /// **照实记（传输失败折进语义那一格，同 `principal/client.rs` 那一面）**：借不出回信孔 /
-    /// 超时 / 答话长度不对——三件事都答 [`Fail::Unknown`]，与"**这枚盟没铸过**"同一格。压它的
-    /// 理由与那一面同：**对本端是同一个下一步**（这一趟别指望了），而这一族**没有 `Denied`**
-    /// 可落（盟无主）。要单开一格就得往 [`Fail`] 里加变体，那一份是 `fail_codes!` 的**双射表**
-    /// （加变体 = 加线上码）——较真值得，但它是动协议面的一刀，不混在这一条里。
-    fn raw(&self, act: call::Req, millis: Wait) -> Result<[u8; call::REPLY_LEN], Fail> {
+    /// 超时 / 收不下一答（空帧、比上界更长）——三件事都答 [`Fail::Unknown`]，与"**这枚盟没铸
+    /// 过**"同一格。压它的理由与那一面同：**对本端是同一个下一步**（这一趟别指望了），而这一族
+    /// **没有 `Denied`** 可落（盟无主）。要单开一格就得往 [`Fail`] 里加变体，那一份是
+    /// `fail_codes!` 的**双射表**（加变体 = 加线上码）——较真值得，但它是动协议面的一刀，不混在
+    /// 这一条里。
+    fn ask(&self, act: call::Req, millis: Wait) -> Result<call::Said, Fail> {
         // **先铸、先交，再推**（同 `principal/client.rs` 那一面；身体在 `session::call::lend_out`）。
         let (back, seed) =
             crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
@@ -116,27 +119,26 @@ impl Face {
             let _ = mail::release(back);
             return Err(Fail::Unknown);
         }
-        let mut buf = [0u8; call::REPLY_LEN];
-        let got = match HolePie::from_token(back).pull_timeout(&mut buf, millis) {
-            Ok(n) if n == call::REPLY_LEN => Ok(buf),
-            _ => Err(Fail::Unknown),
-        };
+        // 收：答话走**这一趟借出去的那一枚孔**（船台那一手；缓冲由调用方给＝本族最大那一形）。
+        let mut buf = call::Rep::EMPTY;
+        let got = Slip::<call::Rep>::seal(back).land(buf.as_mut(), millis);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
         let _ = mail::release(back);
-        got
+        got.ok_or(Fail::Unknown)
     }
 
-    /// 一句答：先看状态那一格（失败域 + 读不懂），再看答案那一格。
+    /// 一句答（**一格答那一形**）：先解形状（读不懂 ⇒ [`Fail::Unknown`]），再看状态那一格
+    /// （失败域），最后才是荷载。
     fn answer<T>(
         &self,
-        out: [u8; call::REPLY_LEN],
-        read: impl FnOnce(u8, u64) -> Result<T, Fail>,
+        said: call::Said,
+        read: impl FnOnce(bool, u64) -> Result<T, Fail>,
     ) -> Result<T, Fail> {
-        let Some((status, present, at)) = call::unpack_reply(&out) else {
-            return Err(Fail::Unknown);
-        };
-        match call::code_to_fail(status) {
-            None if status == call::OK => read(present, at),
+        let reply = said
+            .one()
+            .map_err(|code| call::code_to_fail(code).unwrap_or(Fail::Unknown))?;
+        match call::code_to_fail(reply.status) {
+            None if reply.status == call::OK => read(reply.flag, reply.a),
             Some(fail) => Err(fail),
             // **读不懂在这一侧与"没走到"同一格**（照实记）：对本端是同一个下一步——
             // 别指望这条路；本族没有 `Denied` 这一格可落（盟无主），故两件事都答 `Unknown`。
@@ -144,37 +146,14 @@ impl Face {
         }
     }
 
-    /// 问一句、取一句答（**窗那一档**：答话有长有短——窗是 `3 + 8n`，失败只有一格状态）。
-    fn ask_seq(
-        &self,
-        act: call::Req,
-        millis: Wait,
-    ) -> Result<([u8; call::SEQ_REPLY_LEN], usize), Fail> {
-        // **先铸、先交，再推**（同本文件 `raw` 那一支）。
-        let (back, seed) =
-            crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
-        let mut frame = [0u8; call::Query::LEN];
-        act.query(seed).store(&mut frame);
-        if crate::session::call::push_to(self.entry, &frame).is_err() {
-            let _ = mail::release(back);
-            return Err(Fail::Unknown);
-        }
-        let mut buf = [0u8; call::SEQ_REPLY_LEN];
-        let got = match HolePie::from_token(back).pull_timeout(&mut buf, millis) {
-            Ok(n) if n <= call::SEQ_REPLY_LEN => Ok((buf, n)),
-            _ => Err(Fail::Unknown),
-        };
-        // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
-        let _ = mail::release(back);
-        got
-    }
-
     /// 一句窗答：先看状态那一格（失败域 + 读不懂），再把那一串号读出来。
+    ///
+    /// **照实记（`ask_seq` 退场）**：收那一手从前分两支（`raw` 要恰好 10、`ask_seq` 收
+    /// `≤ 3 + 8 × 16`），而两支的身体逐字同构（铸孔 → 交孔 → 推 → 收 → 放）。改成"原样的字节"
+    /// 那一面之后，两者只差**读法**（`one` / `seq`），故收成一枚 [`Face::ask`]。
     fn window<T: Id>(&self, act: call::Req, millis: Wait) -> Result<Window<T>, Fail> {
-        let (out, n) = self.ask_seq(act, millis)?;
-        match call::read_seq::<T>(&out[..n]) {
-            Ok(window) => Ok(window),
-            Err(code) => Err(call::code_to_fail(code).unwrap_or(Fail::Unknown)),
-        }
+        let said = self.ask(act, millis)?;
+        said.seq::<T>()
+            .map_err(|code| call::code_to_fail(code).unwrap_or(Fail::Unknown))
     }
 }
