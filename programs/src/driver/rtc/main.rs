@@ -207,10 +207,28 @@ fn main() -> Result<(), fail::Fail> {
 ///
 /// **拒了的那一趟也要收尾**：那一枚孔不在任何账上（那一格根本没占上），此后没人会替它收
 /// ⇒ 答完当场放下。这与线那一刀 `drop_lane` 是同一条纪律、同一个理由。
+///
+/// **这一层只打两个戳子**：处理体在 [`desk_`] 里。`t1` = 收到这一帧、`t2` = 答话已推出；
+/// 客人那一侧打 `t0`（决定要说）与 `t3`（答话到手）——**两个钟同基准**
+/// （`chrono::clock()`："自启动基准的纳秒标量（单调）"，与 `room::sleep_until` 的 `at`
+/// 同基准同单位），故"出去 / 服务 / 回来"三段可以直接相减，不必对表。
+///
+/// **照实记（`t2` 必须取在"答话推出去"那一刻，不在这里）**：第一版把 `t2` 取在 [`desk_`]
+/// **返回之后**——而那几行诊断读数（`rtc: asked` / `armed` / `refused`）就夹在中间，一行
+/// ~1.08 ms（上一刀量出来的，**同步 UART**）⇒ 量出来 `back` 是**负的**（客人比驱动的
+/// "答完"还早到，实测 −0.26 ms）。故 [`desk_`] 把那一刻**交回来**，`t2` 用它。
 fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
+    let t1 = runtime::env::chrono::clock().unwrap_or(0);
+    let t2 = desk_(slot, view, from, frame);
+    say(&format!("rtc: legs t1={t1} t2={t2}"));
+}
+
+/// 这一帧的处理体（戳子与那一行读数在 [`desk`] 里）。返**答话推出去那一刻**；没答话的
+/// （帧读不懂 / 没有回信孔）返 0。
+fn desk_(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) -> u64 {
     let Some(ask) = call::unpack_ask(frame) else {
         // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
-        return;
+        return 0;
     };
     let Some(back) = scall::find(from, call::BACK) else {
         // 这一趟没把回信孔交进来（或交得不成）：没有可回的路，账一动不动。
@@ -219,24 +237,16 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
         // 没推上来"在读数里**长得一模一样**（两边都是客人超时）——`harness/sleeper` 那张脸
         // 在真机上查了很久才缩到这一步。丢一趟留一行，谁丢的、丢给谁。
         say(&format!("rtc: no back hole from {}", from.get()));
-        return;
+        return 0;
     };
     match ask {
         call::Ask::Now => {
             let now = rtc::now(view);
             let _ = HolePie::from_token(back).push(&call::pack_time(now));
             let _ = mail::release(back);
-            // **照实记（这一行为什么掐表）**：这一景里"一趟一问一答"的**地板稳在 ~12.5 ms**
-            // （门上九次采样全落在 12.01–13.06 ms），而每一行读数都是一次**同步 UART 写**
-            // ——嫌疑就是它。故给紧跟在答话之后的那一行量一次：`cost_ns` = 这一次 `put`
-            // 花了多少纳秒（单调钟，与 `pull` 的期限同基准）。
-            //
-            // **只量这一行**：量第二行要再打一行，读数自己就成噪声源（与 `refused` 那一行
-            // "不许站进被测的那条路"是同一条纪律）。8 轮 ⇒ 8 个样本。
-            let t0 = runtime::env::chrono::clock().unwrap_or(0);
+            let t = runtime::env::chrono::clock().unwrap_or(0);
             say(&format!("rtc: asked now={now}"));
-            let t1 = runtime::env::chrono::clock().unwrap_or(0);
-            say(&format!("rtc: say cost_ns={}", t1.saturating_sub(t0)));
+            t
         }
         call::Ask::Arm(at) => {
             let now = rtc::now(view);
@@ -252,10 +262,12 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
                     ));
                     // 答码**先于**那一声：那一格已经占上，而设备要过一会儿才拉线。
                     let _ = HolePie::from_token(back).push(&[call::OK]);
+                    runtime::env::chrono::clock().unwrap_or(0)
                 }
                 Err(fail) => {
                     let _ = HolePie::from_token(back).push(&[call::fail_to_code(Some(fail))]);
                     let _ = mail::release(back);
+                    let t = runtime::env::chrono::clock().unwrap_or(0);
                     // **照实记（这一行为什么在，以及为什么排在这里）**：拒绝路从前一个字都不
                     // 打，于是"sleeper 那台偶尔少一台"只剩客人侧一句 `alarm err=2`——**迟到
                     // 多少**量不出来。这一行把那格交出来：`late_ns` = 我拿自己的钟比对时 `at`
@@ -270,6 +282,7 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
                         call::fail_to_code(Some(fail)),
                         now.saturating_sub(at)
                     ));
+                    t
                 }
             }
         }
