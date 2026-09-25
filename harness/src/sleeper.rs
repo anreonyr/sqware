@@ -10,10 +10,10 @@
 //!   1  上板（reg）：只为让板看得见本域的死
 //!   2  上树 FIND "/device/rtc"：**找不到就再问**（门牌是驱动落的，本域可能比它先起）
 //!   3  now()               → sleeper: now=<t>         一问一答，自带一枚回信孔
-//!   4  arm(now - 1ms)      → sleeper: past=2          失败域第一格（那个时刻已经过去了）
+//!   4  （**已退场**：那一格是"约一个过去的时刻"，相对量表达不出过去——见下面那条照实记）
 //!   5  arm(now + 50ms)     → sleeper: armed=0         真约；被答 `Past` 就**重问重算**（有界）
 //!   6  arm(再约一次)        → sleeper: taken=1         失败域第二格（那一格有人了——就是本域自己）
-//!   7  receive()           → sleeper: rang at=<at> now=<t>   等到那一声
+//!   7  receive()           → sleeper: rang after=<ns> now=<t>   等到那一声
 //!   8  退场（退场 ⇒ 本域开的那枚孔封印 ⇒ 驱动那一格从此没人收）
 //! ```
 //!
@@ -70,13 +70,10 @@ const MS: usize = 1000;
 /// 找不到就再问一次的间隔（毫秒）：门牌是驱动落的，本域可能比它先起。
 const RETRY_MS: usize = 1;
 
-/// 真约的提前量（纳秒）：**它只需要罩住一趟往返**——[`arm_next`] 拿的是**刚问到的**那个
-/// `now`（见那一手的照实记）。实测常态一趟 ~12.5 ms（重尾到 0.5 s），这里留约 4× 余量。
-const AHEAD_NS: u64 = 50_000_000;
-
-/// 真约那一手最多重问几次（**有界**）：每重问一次就换一个**刚读到的** `now`，故上一次的
-/// 迟到不往下累积。
-const ARM_TRIES: usize = 5;
+/// 这一槽的**周期**（纳秒）："再过这么久叫我"。`Ask::Arm` 收了相对量之后，这个数就是
+/// **想要的那段距离本身**，不再是"要罩住一趟往返的提前量"——延迟由收帧的驱动承担
+/// （见 `programs/src/driver/rtc/call.rs` 那格的照实记），故它不必再留 4× 余量。
+const SLOT_NS: u64 = 50_000_000;
 
 /// 没搭上（找不到那面服务 / 有一条往返没走成）：报这一格退场。
 const E_NO_SERVICE: usize = 1;
@@ -118,27 +115,39 @@ fn main() -> Report<'static> {
     };
     let _ = debug::put(&format!("sleeper: now={now}"));
 
-    // 失败域第一格：一个**已经过去**的时刻。设备对过去的时刻是当场就报，本面选择当场答 `PAST`
-    // （见 `programs/src/driver/rtc/core.rs` 那一注）——故这一趟不需要等。
-    let past = refused(clock::arm(face, now.saturating_sub(1_000_000), MS));
-    let _ = debug::put(&format!("sleeper: past={past}"));
+    // **照实记（退场的一例：`arming_the_past_is_refused`）**：那一例是"拿 `now - 1ms` 去约，
+    // 期望驱动答 `PAST`"。`Ask::Arm` 收了**相对量**之后"过去"**不可表达** ⇒ 判据与它的
+    // `sleeper: past=…` 读数一起退场（机制退了，判据也退）。驱动的 `PAST` 那一码留着：`after_ns
+    // == 0` 与回绕仍到得了它，只是不再有判据钉着——**这是少了一条判据**，写在这里备查。
 
     // 真约：那一枚回信孔从此留在驱动手里（本域退场之前它一直活着）。
-    let Some((armed, at)) = arm_next(face, now) else {
-        return no_service("sleeper: no alarm");
+    let armed = match clock::arm(face, SLOT_NS, MS) {
+        Ok(alarm) => alarm,
+        Err(fail) => {
+            // **哪一格失败，落一行**（照实记：这一格从前只报 `no alarm`，而 `arm` 的三条失败路
+            // ——借孔/推帧没走成、答复没来、答了但不是 `OK`——在读数里长得一模一样）。
+            // 码本在 `programs/src/driver/rtc/core.rs`：**1 = `Taken`**（那一格有人了）/
+            // **2 = `Past`**（相对量下只剩 `after_ns == 0` 到得了）/ **3 = `Denied`**（这一趟
+            // 自己没走到：孔借不出去 / 帧推不动 / 等到期 / 答话读不懂）。
+            let _ = debug::put(&format!(
+                "sleeper: alarm err={}",
+                rcall::fail_to_code(Some(fail))
+            ));
+            return no_service("sleeper: no alarm");
+        }
     };
     let _ = debug::put(&format!("sleeper: armed={}", rcall::fail_to_code(None)));
 
     // 失败域第二格：再约一次。那一格里有人——就是本域刚约下的那一次（拿自己的线试，
     // 答 `TAKEN` 是确定的）。
-    let taken = refused(clock::arm(face, at.saturating_add(AHEAD_NS), MS));
+    let taken = refused(clock::arm(face, SLOT_NS, MS));
     let _ = debug::put(&format!("sleeper: taken={taken}"));
 
     // 等到那一声：**无界等**（本域只有这一件事），而对面一没那枚孔就封印、当场答错。
     let Ok(rang) = armed.receive() else {
         return no_service("sleeper: no ring");
     };
-    let _ = debug::put(&format!("sleeper: rang at={at} now={rang}"));
+    let _ = debug::put(&format!("sleeper: rang after={SLOT_NS} now={rang}"));
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**。三例的期望都是
     // 本站此刻就知道的，而且比较用的是**与读数同一批常量**（`bcall::OK` / `rcall::` 那两个码），
@@ -152,61 +161,14 @@ fn main() -> Report<'static> {
     suite.case("the_board_took_my_name", move || {
         assert_eq!(reg, bcall::OK)
     });
-    suite.case("arming_the_past_is_refused", move || {
-        assert_eq!(past, rcall::PAST)
-    });
+    // 照实记：`arming_the_past_is_refused` 那一例随 `Ask::Arm` 收相对量而退场（"过去"
+    // 不可表达）——判据数 3 → 2，`crates/gate/src/soak.rs` 那张表跟着改。
     suite.case("the_slot_is_already_mine", move || {
         assert_eq!(taken, rcall::TAKEN)
     });
     suite.run();
 
     return Report::note(env::EXIT_OK, "sleeper: gone");
-}
-
-/// 真约：拿一个 **`now` 读数**去约；被答 `Past` 就**重问一个 `now`、重算一个 `at`**（有界）。
-///
-/// **照实记（这一格为什么改过）**：原先是"问一次 `now`、算 `at = now + AHEAD_NS`、约一次"，
-/// 而那个 `at` 要**隔两趟往返**才用得上（`now` 那一趟 ＋ 失败域那一趟）。门上量出来的：
-/// 常态一趟 **~12.5 ms**、重尾到 **0.5 s**（`rtc: refused=… late_ns=…` 那一行）⇒ 50 ms 那把
-/// 尺子随时会输，而输的代价是**整台域死**——`soak` 那一门六条读数（`rtc: armed` /
-/// `router: line=11` / `rtc: rang` / `router: exhaust line=11` ＋ 本域两条用例）一起没。
-/// `Past` 那一格的文档写着的下一步正是这一句（"重新问一次现在几点、再算一个"）——照它走：
-/// **提前量不必猜多大，只要它罩得住一趟**。
-///
-/// **照实记（那个猜没有被"删掉"，也删不掉）**：`Ask::Arm` 收的是**绝对时刻**，而"这个时刻
-/// 过去了没有"只有驱动那一侧的钟说了算 ⇒ 客人**必须**给一个提前量。这一刀改的不是"猜多大"，
-/// 是"猜的那一段有多长"（两趟 → 一趟）。真要把猜整个删掉，得让那一问改收**相对量**
-/// （"从现在起 x 毫秒"，由驱动在**读到它的那一刻**折算成绝对时刻）——那是帧形与答码的事，
-/// 另一刀。
-///
-/// 返 `(那一枚, 约上的那个时刻)`——后者答话那一行读数要用（`sleeper: rang at=…`）。
-fn arm_next(face: PieToken, first: u64) -> Option<(clock::Alarm, u64)> {
-    let mut now = first;
-    for n in 0..ARM_TRIES {
-        let at = now.saturating_add(AHEAD_NS);
-        match clock::arm(face, at, MS) {
-            Ok(alarm) => return Some((alarm, at)),
-            // **又晚了** ⇒ 重问一个现在、重算一个 `at`（照实记：这就是 `Past` 那一格写的下一步）。
-            Err(RFail::Past) => {
-                now = clock::now(face, MS).ok()?;
-                let _ = debug::put(&format!("sleeper: late n={n} now={now}"));
-            }
-            Err(fail) => {
-                // **哪一格失败，落一行**（照实记）：这一格从前只报 `no alarm`，而 `arm` 的三条
-                // 失败路——借孔/推帧没走成、答复没来、答了但不是 `OK`——在读数里长得一模一样。
-                // 真机上那张"偶尔少一台"的脸就卡在这儿。码本在 `programs/src/driver/rtc/core.rs`：
-                // **1 = `Taken`**（那一格有人了）/ **2 = `Past`**（那个时刻已经过去了 ⇒ 上面那一支
-                // 已接管）/ **3 = `Denied`**（这一趟自己没走到：孔借不出去 / 帧推不动 / 等到期 /
-                // 答话读不懂）。
-                let _ = debug::put(&format!(
-                    "sleeper: alarm err={}",
-                    rcall::fail_to_code(Some(fail))
-                ));
-                return None;
-            }
-        }
-    }
-    None
 }
 
 /// 被拒那一趟的读数：把失败域按**线上那张表**折成一个数（与驱动的答码同源）。

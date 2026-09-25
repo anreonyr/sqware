@@ -233,8 +233,11 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
             let _ = mail::release(back);
             say(&format!("rtc: asked now={now}"));
         }
-        call::Ask::Arm(at) => {
+        call::Ask::Arm { after_ns } => {
+            // **相对量在这一刻落地**：`after_ns` 是"再过多久"，故那个绝对时刻由**收帧的人**算
+            // ——客侧不必猜路有多长（见 `call::Ask` 那一格的照实记）。
             let now = rtc::now(view);
+            let at = now.saturating_add(after_ns);
             match slot.arm(at, back, now) {
                 Ok(()) => {
                     // **设备那一手紧随原语之后**（账记下了，硬件跟上）——与线那一层

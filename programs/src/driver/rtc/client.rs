@@ -39,13 +39,16 @@ pub fn now(entry: PieToken, millis: usize) -> Result<u64, Fail> {
     answer
 }
 
-/// 约一个时刻：`at`（绝对纳秒）。成 ⇒ 返那一次约；到点从那枚孔收那一声。
+/// 约一段**时间**：`after_ns`（相对纳秒，"再过多 long"）。成 ⇒ 返那一次约；到点从那枚孔收那一声。
+///
+/// **照实记（从"时刻"改成"时长"）**：绝对时刻那版要客侧自己补一个送达延迟的猜（见
+/// `call::Ask` 那一格的照实记）；相对量由收帧的驱动算，客侧不必知道路有多长。
 ///
 /// 失败域两格都由**驱动说的话**给出（`Taken` / `Past`），第三格 `Denied` 是这一趟自己没
 /// 走到——三种情况对客人是三个不同的下一步，故不合并成一格。
-pub fn arm(entry: PieToken, at: u64, millis: usize) -> Result<Alarm, Fail> {
+pub fn arm(entry: PieToken, after_ns: u64, millis: usize) -> Result<Alarm, Fail> {
     let (back, seed) = lend_out(entry)?;
-    if push(entry, &call::pack_arm(seed, at)).is_err() {
+    if push(entry, &call::pack_arm(seed, after_ns)).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }

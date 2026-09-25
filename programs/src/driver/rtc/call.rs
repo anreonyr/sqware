@@ -83,8 +83,14 @@ contract::fail_codes! {
 pub enum Ask {
     /// 「现在几点」。
     Now,
-    /// 「在 `at` 叫我」（绝对时刻，纳秒）。
-    Arm(u64),
+    /// 「**再过多 long** 叫我」（**相对量**，纳秒）。
+    ///
+    /// **照实记（为什么是相对量，而不是绝对时刻）**：它从前是绝对时刻，于是客侧要先读一次钟、
+    /// 再**猜**一个送达延迟加上去（`AHEAD_NS = 50 ms`）；猜小了驱动答 `Past`，客侧就重问重算
+    /// （`ARM_TRIES = 5` 那层环），而那个猜随负载漂（实测一趟常态 ~12.5 ms、重尾到 0.5 s）。
+    /// 改成相对量之后 `at = now + after_ns` 由**收帧的人**算——延迟落在谁身上由谁自己承担，
+    /// 客侧一个数都不必猜，`Past` 也由构造不可达。
+    Arm { after_ns: u64 },
 }
 
 /// 编一帧「现在几点」：`[ASK][那一格 8B]`。
@@ -98,12 +104,12 @@ pub fn pack_ask(back: PieToken) -> [u8; ASK_LEN] {
     out
 }
 
-/// 编一帧「在 at 叫我」：`[ARM][那一格 8B][at 8B]`。
-pub fn pack_arm(back: PieToken, at: u64) -> [u8; ARM_LEN] {
+/// 编一帧「再过多 long 叫我」：`[ARM][那一格 8B][after_ns 8B]`——**末格是相对量**（纳秒）。
+pub fn pack_arm(back: PieToken, after_ns: u64) -> [u8; ARM_LEN] {
     let mut out = [0u8; ARM_LEN];
     out[0] = ARM;
     out[1..1 + PieToken::WIDTH].copy_from_slice(&back.to_bytes());
-    out[1 + PieToken::WIDTH..].copy_from_slice(&at.to_le_bytes());
+    out[1 + PieToken::WIDTH..].copy_from_slice(&after_ns.to_le_bytes());
     out
 }
 
@@ -118,7 +124,7 @@ pub fn unpack_ask(frame: &[u8]) -> Option<(PieToken, Ask)> {
         ASK if frame.len() == ASK_LEN => Some((back, Ask::Now)),
         ARM if frame.len() == ARM_LEN => {
             let raw: [u8; TIME_LEN] = frame[1 + PieToken::WIDTH..].try_into().ok()?;
-            Some((back, Ask::Arm(u64::from_le_bytes(raw))))
+            Some((back, Ask::Arm { after_ns: u64::from_le_bytes(raw) }))
         }
         _ => None,
     }
