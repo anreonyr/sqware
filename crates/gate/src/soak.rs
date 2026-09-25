@@ -248,7 +248,7 @@ pub const READINGS: &[Reading] = &[
     // ——那是**老客人的形状**，不是这一面的契约。客人按 `Past` 的文档重问之后（见
     // `harness/src/sleeper.rs::arm_next`），问几次由"那一趟迟没迟"定 ⇒ 契约是**至少一次**。
     // 搬过来仍不放过"一次都没问"：`rtc:` 这一族还有别的 `Once` 判着（`armed` / `rang`）。
-    Reading { prefix: "rtc", tier: Tier::Narrative { shapes: &["^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+|rtc: asked now=[0-9]+|rtc: refused=[0-9]+ at=[0-9]+ now=[0-9]+ late_ns=[0-9]+|rtc: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
+    Reading { prefix: "rtc", tier: Tier::Narrative { shapes: &["^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+|rtc: asked now=[0-9]+|rtc: say cost_ns=[0-9]+|rtc: refused=[0-9]+ at=[0-9]+ now=[0-9]+ late_ns=[0-9]+|rtc: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
     Reading { prefix: "system", tier: Tier::Narrative { shapes: &["^(system: gone [a-z0-9-]+ state=[A-Za-z]+ ousted=(true|false) heir=[^ ]+ wait=[a-z]+( inner)?)$"] } },
     Reading { prefix: "uart", tier: Tier::Narrative { shapes: &["^(uart: got [0-9]+|uart: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
     Reading { prefix: "[case]", tier: Tier::Narrative { shapes: &["^\\[case\\] [a-z0-9-]+: (run|ok) [_a-z0-9]+$"] } },

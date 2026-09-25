@@ -226,7 +226,17 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
             let now = rtc::now(view);
             let _ = HolePie::from_token(back).push(&call::pack_time(now));
             let _ = mail::release(back);
+            // **照实记（这一行为什么掐表）**：这一景里"一趟一问一答"的**地板稳在 ~12.5 ms**
+            // （门上九次采样全落在 12.01–13.06 ms），而每一行读数都是一次**同步 UART 写**
+            // ——嫌疑就是它。故给紧跟在答话之后的那一行量一次：`cost_ns` = 这一次 `put`
+            // 花了多少纳秒（单调钟，与 `pull` 的期限同基准）。
+            //
+            // **只量这一行**：量第二行要再打一行，读数自己就成噪声源（与 `refused` 那一行
+            // "不许站进被测的那条路"是同一条纪律）。8 轮 ⇒ 8 个样本。
+            let t0 = runtime::env::chrono::clock().unwrap_or(0);
             say(&format!("rtc: asked now={now}"));
+            let t1 = runtime::env::chrono::clock().unwrap_or(0);
+            say(&format!("rtc: say cost_ns={}", t1.saturating_sub(t0)));
         }
         call::Ask::Arm(at) => {
             let now = rtc::now(view);
