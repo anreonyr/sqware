@@ -149,7 +149,7 @@ pub enum Spot {
     Rig,
 }
 
-/// **这一台是持树者的哪一双眼睛**——协调那一帧（`operator::bridge` 的 `COORD`）的后 8 字节
+/// **这一台是持树者的哪一双眼睛**——协调那一帧（`operator::bridge` 的 `CoordFrame`）的后 8 字节
 /// 就用它。
 ///
 /// 它是**装配单上的一格**，不是靠名字认的：旧法写 `p.name == "principal"`——装配单上把那一行
@@ -170,6 +170,26 @@ impl Eyes {
             x if x == Eyes::League as u64 => Some(Eyes::League),
             _ => None,
         }
+    }
+}
+
+/// **这一枚在帧里占的那 8 字节**：判别值小端、高位留零。
+///
+/// **它为什么住这里，而不是像 `Wire` 那一族那样住 `env::wire`**：那一族"类型在外"的三个 impl
+/// 并排住在 `env`，理由是"非法位校验只有一处"；而这一枚的校验**就是 [`Eyes::of_wire`]**，
+/// 它只能住本文件——`env` 不认识 `plan`（依赖是单向的 `plan → env`）。故 `Field` 这一族的口径是
+/// **impl 跟着类型走**，与 [`env::wire::field`] 那段一致。
+///
+/// `of_wire` 的 `None`（表外）正对着 `fetch` 的 `None`（这一帧读不懂）——收的那一侧据此报一句、
+/// 不静默（见 `programs/src/system/operator/server.rs`）。
+impl env::wire::Field for Eyes {
+    const WIDTH: usize = 8;
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&(*self as u64).to_le_bytes());
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        let raw: [u8; 8] = bytes.get(..8)?.try_into().ok()?;
+        Eyes::of_wire(u64::from_le_bytes(raw))
     }
 }
 

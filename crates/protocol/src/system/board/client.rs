@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`crate::system::board::call`]。
 
+use env::wire::Field;
 use env::Wait;
 use env::Mark;
 use env::{Name, PieToken, TaskId};
@@ -123,15 +124,17 @@ pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
 // （另一个是 `operator::take`，那一个活的）——乙′ 那一步要把 `vestor` 从 `Collect` 上拿掉，
 // 这就是先少掉的一处。
 
-/// 收下板路上那一格：**答话的是谁**（[`tell`] 的对偶）。
+/// 收下板路上那一格：**答话的是谁**（装配侧 `programs/src/system/board/bridge.rs` 的 `tell`
+/// 的对偶）。宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对
+/// `store` / `fetch`——这一格从前在五处各写一遍（那一对里记着）。
 ///
 /// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上板（客人报它自己的超时，不猜）。
 pub(crate) fn hear(quay: &Quay, millis: Wait) -> Option<TaskId> {
     let link = Name::new(LINK).ok()?;
     let pier = quay.find(link)?;
-    let mut buf = [0u8; 8];
+    let mut buf = [0u8; TaskId::WIDTH];
     match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, millis) {
-        Ok(8) => Some(TaskId::new(u64::from_le_bytes(buf) as usize)),
+        Ok(n) if n == TaskId::WIDTH => TaskId::fetch(&buf),
         _ => None,
     }
 }

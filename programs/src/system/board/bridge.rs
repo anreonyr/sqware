@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board::call`]。
 
+use env::wire::Field;
 use env::Wait;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use env::Mark;
@@ -114,9 +115,15 @@ fn host(me: TaskId, millis: Wait, tip: &mut Option<PieToken>) -> Result<TaskId, 
 ///
 /// **一处用**：板路那一格（告客人"答话的是谁"）。提示那一格走 [`tell_guest`]——它多带一格
 /// 名字。两处都是"装配者知道、对方叫不出"的那个号，故 `tell` 只认"推给哪一枚孔"，不认语义。
+///
+/// **帧形只有一处**：宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对
+/// `store` / `fetch`（从前这里是手写的一遍 `(who.get() as u64).to_le_bytes()`，那一对里记着
+/// 这一格原先散在五处）。
 pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
+    let mut rec = [0u8; TaskId::WIDTH];
+    who.store(&mut rec);
     let into = mail::HolePie::from_token(into);
-    into.push(&(who.get() as u64).to_le_bytes()).map_err(|_| ())
+    into.push(&rec).map_err(|_| ())
 }
 
 /// 把**一位新客人**推给板：**号（8 字节）＋ 定长名字 ＋ 答话路那一格**（[`bcall::Tip::LEN`]），小端。

@@ -6,6 +6,7 @@
 //! **一手对一条原语**（`land` / `part` / `find` / `trim` / `list` / `seek` / `name`）：线上与模型
 //! 是同一件事的两层，客侧这一层也不再拿一个 `op` 码当参数——问什么形状由函数名说。
 
+use env::wire::Field;
 use env::Wait;
 use env::Mark;
 use env::{Name, PieToken, TaskId};
@@ -222,13 +223,17 @@ pub fn name(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<Nam
 
 /// 收下树路上那一格：**答话的是谁**（[`open`] 的对偶）。
 ///
+/// 宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对 `store` / `fetch`
+/// （写它的那一侧是 `programs/src/system/operator/bridge.rs` 的 `tell`）——这一格从前在五处
+/// 各写一遍（那一对里记着）。
+///
 /// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上树（客人报它自己的超时，不猜）。
 pub(crate) fn hear(quay: &Quay, millis: Wait) -> Option<TaskId> {
     let link = Name::new(LINK).ok()?;
     let pier = quay.find(link)?;
-    let mut buf = [0u8; 8];
+    let mut buf = [0u8; TaskId::WIDTH];
     match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, millis) {
-        Ok(8) => Some(TaskId::new(u64::from_le_bytes(buf) as usize)),
+        Ok(n) if n == TaskId::WIDTH => TaskId::fetch(&buf),
         _ => None,
     }
 }
