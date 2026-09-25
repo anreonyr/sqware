@@ -226,6 +226,15 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
         "rtc: legs t1={t1} t2={} unpack={} find={} dev={} slot={} dwrite={} say={} push={} rel={}",
         svc.t2, svc.unpack, svc.find, svc.dev, svc.slot, svc.dwrite, svc.say, svc.push, svc.rel
     ));
+    // **`find` 的价钱是"表有几枚"的函数**（它每帧扫全表，一枚两次内核调用）⇒ 把这个数交出来。
+    //
+    // **照实记（为什么是每帧一行）**：这台域**一轮只经手四帧**（`sleeper` 那四问——板那十几声
+    // `EVICT` 是给板的，不走这里）⇒ 每 4 帧一行等于只有第 0 帧有样本（实测：三轮各一行
+    // `frames=0`）。故**每帧都打**；`table_size()` 自己扫一遍表（~3 ms）落在 `legs` 那一行
+    // **之后** ⇒ 不进任何一格测量。`frames` = 这一帧是第几帧（0 起）。
+    static FRAMES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    let n = FRAMES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    say(&format!("rtc: pies={} frames={n}", mail::table_size()));
 }
 
 /// `svc` 那一段（驱动自己干活）的**分步账**：每格 = 上一个戳子到这一步的纳秒数，这一趟没走
