@@ -95,10 +95,10 @@ fn ask_out(
         .load(ask)
         .ship()
         .map_err(|_| Fail::Unknown)?;
-    // 收：答话走本端这条树路——与板那一族同一个形状（`Slip::<Rep>::seal(pier.hole()).land(buf, ..)`）。
+    // 收：答话走本端这条树路——与板那一族同一个形状（`Slip::<Union>::seal(pier.hole()).land(buf, ..)`）。
     // 缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲（[`Message::EMPTY`]）就够。
-    let mut buf = ocall::Rep::EMPTY;
-    Slip::<ocall::Rep>::seal(pier.hole())
+    let mut buf = ocall::Union::EMPTY;
+    Slip::<ocall::Union>::seal(pier.hole())
         .land(buf.as_mut(), millis)
         .ok_or(Fail::Unknown)
 }
@@ -157,7 +157,7 @@ pub fn part(
 }
 
 /// 客侧第二步（**寻**）：把那一号背后那一枚 Pie 要过来——它经会话授进本端表，而
-/// **它在本端表里的号随这条答话回来**（[`ocall::Rep::Seed`]），故客人不必再扫表。
+/// **它在本端表里的号随这条答话回来**（[`ocall::Union::Seed`]），故客人不必再扫表。
 ///
 /// 返 `(状态, 那一格)`：状态是 [`ocall::OK`] 时第二格必有号；其余状态（查不到 / 被拒 /
 /// 授不出去）第二格是 `None`——**不是"零号"**，是"这一趟没有可用的那一格"。
@@ -175,7 +175,7 @@ pub fn find(
 ) -> Result<(u8, Option<PieToken>), Fail> {
     let said = ask_out(say, link, ocall::Req::Find(id), millis)?;
     match said.code() {
-        // 成功那一格必然带着那一枚（[`ocall::Rep::Seed`]）：长度不是那个形状 = 读不懂 ⇒
+        // 成功那一格必然带着那一枚（[`ocall::Union::Seed`]）：长度不是那个形状 = 读不懂 ⇒
         // 与"没走到"同一格（`Ok((码, None))` 说的只是"那一位不在"那一类）。
         ocall::OK => said
             .seed()

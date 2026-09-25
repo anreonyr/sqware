@@ -935,22 +935,22 @@ fn the_rule_cell_round_trips_and_an_unknown_tag_falls_back_to_public() {
     assert_eq!(fetch(&buf[..rule_at]), None, "51 字节的老帧");
 }
 
-/// 编一答（**一族一只缓冲**：`Rep::Buf` 就是最大那一形）。
-fn say(rep: f::Rep) -> ([u8; f::REP_LEN], usize) {
-    let mut buf = [0u8; f::REP_LEN];
+/// 编一答（**一族一只缓冲**：`Union::Buf` 就是最大那一形）。
+fn say(rep: f::Union) -> ([u8; f::UNION_LEN], usize) {
+    let mut buf = [0u8; f::UNION_LEN];
     let n = rep.store(&mut buf).expect("这一族的缓冲就是最大那一形");
     (buf, n)
 }
 
 /// 收一答（**原样的字节**——形状由问的人按自己的读法认）。
 fn heard(bytes: &[u8]) -> f::Said {
-    <f::Rep as Message>::fetch(bytes).expect("这一族的缓冲就是最大那一形")
+    <f::Union as Message>::fetch(bytes).expect("这一族的缓冲就是最大那一形")
 }
 
 #[test]
 fn the_list_answer_refuses_a_count_that_disagrees_with_the_frame() {
     let ids = [EntryId::new(2), EntryId::new(4), EntryId::new(6)];
-    let (buf, n) = say(f::Rep::List(f::Listing::of(ids.iter().copied())));
+    let (buf, n) = say(f::Union::List(f::Listing::of(ids.iter().copied())));
     assert_eq!(n, 2 + 3 * 8, "状态 ＋ 条数 ＋ 三枚号");
     let back = heard(&buf[..n]).list().expect("读得回来");
     // 几枚 = 走一遍数出来（`Listing` 的读面只留 `iter` 这一格，见它的照实记）。
@@ -972,7 +972,7 @@ fn the_list_answer_refuses_a_count_that_disagrees_with_the_frame() {
 #[test]
 fn the_name_and_id_answers_are_fixed_shapes() {
     // **名那一形：长度即名长**（不是一个定长格 + 长度格）——故"多出来的"字节会被读成名字的一部分。
-    let (buf, n) = say(f::Rep::Name(Name::new("uart").unwrap()));
+    let (buf, n) = say(f::Union::Name(Name::new("uart").unwrap()));
     assert_eq!(n, 1 + 4);
     assert_eq!(heard(&buf[..n]).name(), Ok(Name::new("uart").unwrap()));
 
@@ -988,7 +988,7 @@ fn the_name_and_id_answers_are_fixed_shapes() {
     // **号那一形是定长格**（`[status][8 字节]`）：短一字节、长一字节都是读不懂。
     // 照实记：`长一字节`这一句是牙口量出来的——把 `!= 8` 放宽成 `< 8` 之后，先前只测"短一字节"
     // 的那一版**全门照绿**。
-    let (buf, n) = say(f::Rep::Entry(EntryId::new(12)));
+    let (buf, n) = say(f::Union::Entry(EntryId::new(12)));
     assert_eq!(n, f::Word::LEN);
     assert_eq!(heard(&buf[..n]).entry(), Ok(EntryId::new(12)));
     assert_eq!(heard(&buf[..n - 1]).entry(), Err(f::BAD), "短一字节");
@@ -1001,7 +1001,7 @@ fn the_name_and_id_answers_are_fixed_shapes() {
 
     // **门闩那一形**：与号那一形**逐字同形**、另一个读法（`find` 的下场）。
     let seed = PieToken::from_bytes(&9u64.to_le_bytes()).unwrap();
-    let (buf, n) = say(f::Rep::Seed(seed));
+    let (buf, n) = say(f::Union::Seed(seed));
     assert_eq!(n, f::Word::LEN);
     assert_eq!(heard(&buf[..n]).seed(), Ok(seed));
     assert_eq!(

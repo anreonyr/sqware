@@ -127,10 +127,10 @@ fn hear_rep(link: &Quay, millis: Wait) -> Result<u8, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 收帧的缓冲由调用方给：这条答话路只有板会写 ⇒ 本族那只空缓冲（[`Message::EMPTY`]）就够。
-    let mut buf = bcall::Rep::EMPTY;
-    Slip::<bcall::Rep>::seal(pier.hole())
+    let mut buf = bcall::Union::EMPTY;
+    Slip::<bcall::Union>::seal(pier.hole())
         .land(buf.as_mut(), millis)
-        .map(bcall::Rep::get)
+        .map(bcall::Union::get)
         .ok_or(Fail::Unknown)
 }
 

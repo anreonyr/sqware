@@ -25,7 +25,7 @@
 //!          Find   [0] op  [1 .. 9] 号
 //!          Trim   同 Find
 //!          Name   同 Find
-//!   Rep    [0] status                                    —— 一格的答
+//!   Union    [0] status                                    —— 一格的答
 //!          [0] status   [1] 条数   [2 ..] 号             —— 列
 //!          [0] status   [1 ..] 名字                       —— 名（长度即名长）
 //!          [0] status   [1 .. 9] 号                       —— 号（`land` / `part` / `seek`，定长 9）
@@ -33,7 +33,7 @@
 //!
 //! **答那一侧四种形状在线上分不开**（都以状态那一格起头，而"名"那一条是变长的：**长度即
 //! 名长**）⇒ 收进来的那一面是**原样的字节**（[`Said`]），由**问的人**按自己问的那一条读；
-//! 编的那一面是 [`Rep`]（五种编法：一格状态 / 一串号 / 一枚名字 / 坐标 / 门闩）。
+//! 编的那一面是 [`Union`]（五种编法：一格状态 / 一串号 / 一枚名字 / 坐标 / 门闩）。
 //!
 //! **问话一个动作一条形状**（不再是"一帧定长、尾格含义由 op 定"）：荷载收什么，帧里就写什么
 //! ——没有一个"报法"字段可以填错，也没有第二个意思可读。最长的仍是 `Road` 那一条
@@ -52,7 +52,7 @@
 //! 是几号"），报文里走的只是"种在持树者表里的号"。两个编号空间不同源，互相拿错正是旧树
 //! `[33..41]` 那一格的病。
 //!
-//! **答话有四种形状、各有各的上界**，船台那只缓冲按 [`REP_LEN`] 备（最大那一形）。
+//! **答话有四种形状、各有各的上界**，船台那只缓冲按 [`UNION_LEN`] 备（最大那一形）。
 
 use env::Mark;
 use env::{Name, PieToken, TaskId};
@@ -157,10 +157,10 @@ pub const REQ_LEN: usize = RoadHead::LEN + Operator::ROAD_MAX * env::wire::NAME_
 ///
 /// 船台那只缓冲就是它（[`Message::Buf`]）；另两形都短于它——编译期钉住（`名` 那一形最长是
 /// 状态 ＋ `NAME_LEN - 1` 个字节，`号` 那一形是状态 ＋ 8）。
-pub const REP_LEN: usize = 2 + Operator::PANE_CAP * 8;
+pub const UNION_LEN: usize = 2 + Operator::PANE_CAP * 8;
 
-const _: () = assert!(Status::LEN + (env::wire::NAME_LEN - 1) <= REP_LEN);
-const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= REP_LEN);
+const _: () = assert!(Status::LEN + (env::wire::NAME_LEN - 1) <= UNION_LEN);
+const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= UNION_LEN);
 
 // 那几枚偏移常量（`AT_ROOT` / `AT_ID` / `NAME_AT` / `TAIL_AT` / `LAND_FRAME`）随字段表一起退场：
 // "记"归 [`Where`] 自己的 `Field`（它住 `core.rs`——impl 跟着类型走），其余几个数由各张表求和
@@ -232,7 +232,7 @@ env::frame! {
 /// 与 `part` / `land` 的**新名**（那是"这一格叫什么"，不是"往哪儿走"）。
 ///
 /// **照实记（名字）**：这一族从前叫 `Ask`（收的那一面叫 `AskIn`）。用户裁定 `Ask` / `Reply`
-/// 那一套不要，用 **`Req` / `Wire` / `Rep`**——故这里是新生的名字，不是改名。
+/// 那一套不要，用 **`Req` / `Wire` / `Union`**——故这里是新生的名字，不是改名。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Req<'a> {
     /// `seek`：把一条路译成号（**路只出现在这一格**）。
@@ -510,9 +510,9 @@ env::frame! {
 ///
 /// **照实记（名字）**：这一族从前是 `pack_list` / `pack_name` / `pack_id` / `pack_seed` 四枚
 /// 自由函数（外加 `read_list` / `read_name` / `read_id` 三枚）。用户裁定这一族用
-/// `Req` / `Wire` / `Rep`，而答的**读**那一面叫 [`Said`]——故这里是新生的名字，不是改名。
+/// `Req` / `Wire` / `Union`，而答的**读**那一面叫 [`Said`]——故这里是新生的名字，不是改名。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rep {
+pub enum Union {
     /// 一格状态（成功 / 六格失败 / 门外那两格）——**没有任何荷载**。
     Status(u8),
     /// `list` 的下场：一串号。
@@ -523,7 +523,7 @@ pub enum Rep {
     Entry(EntryId),
     /// `find` 的下场：那一格是"我给你的那一枚**在你表里**是几号"（[`PieToken`]）。
     ///
-    /// **与 [`Rep::Entry`] 同形不同物**（都是 `[OK][8 字节]`）而**另起一格、不复用**：两枚号
+    /// **与 [`Union::Entry`] 同形不同物**（都是 `[OK][8 字节]`）而**另起一格、不复用**：两枚号
     /// 类型不同，混用就是把"树的坐标"与"你表里的门闩"当成一件事。
     ///
     /// **照实记（这一格为什么在帧里）**：从前 `find` 只答一格状态，客人拿到 `OK` 之后还得**扫
@@ -543,7 +543,7 @@ pub enum Rep {
 /// `read_*` 同一个判据，只是收在了一处）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Said {
-    buf: [u8; REP_LEN],
+    buf: [u8; UNION_LEN],
     len: usize,
 }
 
@@ -624,18 +624,18 @@ impl Said {
     }
 }
 
-impl Message for Rep {
+impl Message for Union {
     /// 收的那一面是 [`Said`]（**原样的字节**——形状由问的人认，见它的照实记）。
     type In = Said;
-    /// 这一族的缓冲：**最大那一形**（[`REP_LEN`]）。
-    type Buf = [u8; REP_LEN];
-    const EMPTY: Self::Buf = [0u8; REP_LEN];
+    /// 这一族的缓冲：**最大那一形**（[`UNION_LEN`]）。
+    type Buf = [u8; UNION_LEN];
+    const EMPTY: Self::Buf = [0u8; UNION_LEN];
 
     /// 编进 `out`：状态由形状给（不在别处再写一遍），变长那两段交给 `env::wire` 的两个尾巴。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match *self {
-            Rep::Status(code) => Status { status: code }.store_in(out),
-            Rep::List(list) => {
+            Union::Status(code) => Status { status: code }.store_in(out),
+            Union::List(list) => {
                 let ids = list.as_slice();
                 let head = Tally {
                     status: OK,
@@ -644,16 +644,16 @@ impl Message for Rep {
                 head.store_in(out)?;
                 env::wire::store_tail(out, Tally::LEN, ids)
             }
-            Rep::Name(name) => {
+            Union::Name(name) => {
                 let at = Status { status: OK }.store_in(out)?;
                 env::wire::store_bytes(out, at, name.text())
             }
-            Rep::Entry(id) => Word {
+            Union::Entry(id) => Word {
                 status: OK,
                 word: id.to_bytes(),
             }
             .store_in(out),
-            Rep::Seed(seed) => Word {
+            Union::Seed(seed) => Word {
                 status: OK,
                 word: seed.to_bytes(),
             }
@@ -667,7 +667,7 @@ impl Message for Rep {
         if bytes.is_empty() {
             return None;
         }
-        let mut buf = [0u8; REP_LEN];
+        let mut buf = [0u8; UNION_LEN];
         buf.get_mut(..bytes.len())?.copy_from_slice(bytes);
         Some(Said {
             buf,

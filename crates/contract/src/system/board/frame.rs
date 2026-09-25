@@ -138,7 +138,7 @@ crate::fail_codes! {
 /// `unpack_ask` 两枚自由函数随之退场。
 ///
 /// **照实记（名字）**：这一族从前叫 `Ask` / `AskIn` / `Reply`。用户裁定 `Ask` / `Reply`
-/// 这一对不要，用 **`Req` / `Wire` / `Rep`**——故这里是新生的名字，不是改名；收的那一面
+/// 这一对不要，用 **`Req` / `Wire` / `Union`**——故这里是新生的名字，不是改名；收的那一面
 /// 是 [`Wire`]（它比这里多一格：表外的动作码）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Req {
@@ -232,18 +232,18 @@ impl Message for Req {
 /// **一答的形状**——答只有一句话（[`Status`] 那一格里的码），故这一族没有第二条形状可用。
 ///
 /// **照实记（为什么不拿 `Status` 直接当报）**：字段表是**字段**（那一格谁都能写），而外面要
-/// 认的是"一答"这件事：`Rep::of(code)` 收一句、`Rep::get()` 取那一格。两层与 [`Req`] 那边
+/// 认的是"一答"这件事：`Union::of(code)` 收一句、`Union::get()` 取那一格。两层与 [`Req`] 那边
 /// 同构——那里是**四张形状 ＋ 两个族类型**（`Req` / `Wire`），这里是**一张形状 ＋ 一个族
-/// 类型**（`Rep`）。
+/// 类型**（`Union`）。
 ///
-/// `type In = Rep`：答的写法与读法是同一个。**表外的码不是"读不懂"**，它是一句答话的内容
+/// `type In = Union`：答的写法与读法是同一个。**表外的码不是"读不懂"**，它是一句答话的内容
 /// （[`code_to_fail`] 对它答 `None`，读的人自己去认那一格）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Rep {
+pub struct Union {
     status: u8,
 }
 
-impl Rep {
+impl Union {
     /// 收一句答：那一格是线上的码（[`OK`] / [`UNKNOWN`] / [`TAKEN`] / …）。
     pub const fn of(status: u8) -> Self {
         Self { status }
@@ -255,8 +255,8 @@ impl Rep {
     }
 }
 
-impl Message for Rep {
-    type In = Rep;
+impl Message for Union {
+    type In = Union;
     /// 一答只有一格（[`Status::LEN`] = 1）。
     type Buf = [u8; Status::LEN];
     const EMPTY: Self::Buf = [0u8; Status::LEN];
@@ -270,11 +270,11 @@ impl Message for Rep {
 
     /// 解一句答：**长度也是一格**（[`Status::LEN`]）——多一字节、少一字节都 ⇒ `None`
     /// （收答那一侧据此报 `Unknown`，与从前那一格 `Ok(1) => …` 同一判据）。
-    fn fetch(bytes: &[u8]) -> Option<Rep> {
+    fn fetch(bytes: &[u8]) -> Option<Union> {
         if bytes.len() != Status::LEN {
             return None;
         }
-        Some(Rep {
+        Some(Union {
             status: Status::fetch(bytes)?.status,
         })
     }

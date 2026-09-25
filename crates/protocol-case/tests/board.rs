@@ -142,22 +142,22 @@ fn a_rep_is_exactly_one_byte() {
     // 见失败码表那一条用例），这里钉的是它唯一的契约：**长度**。
     for code in [f::OK, f::UNKNOWN, f::TAKEN, f::DENIED, f::FULL, f::BAD, 200] {
         let mut buf = [0u8; f::Status::LEN];
-        let len = f::Rep::of(code).store(&mut buf).expect("一答只有一格");
+        let len = f::Union::of(code).store(&mut buf).expect("一答只有一格");
         assert_eq!(len, f::Status::LEN, "答就是这一格");
-        assert_eq!(f::Rep::of(code).get(), code, "原样交回");
+        assert_eq!(f::Union::of(code).get(), code, "原样交回");
         assert_eq!(
-            <f::Rep as Message>::fetch(&buf),
-            Some(f::Rep::of(code)),
+            <f::Union as Message>::fetch(&buf),
+            Some(f::Union::of(code)),
             "码是内容，不是判据"
         );
         // 多一字节、少一字节都不是这一条答（收答那一侧因此报 `Unknown`）。
         assert_eq!(
-            <f::Rep as Message>::fetch(&[&buf[..], &[0u8]].concat()),
+            <f::Union as Message>::fetch(&[&buf[..], &[0u8]].concat()),
             None,
             "两字节的答"
         );
     }
-    assert_eq!(<f::Rep as Message>::fetch(&[]), None, "空帧");
+    assert_eq!(<f::Union as Message>::fetch(&[]), None, "空帧");
 }
 
 #[test]

@@ -293,9 +293,9 @@ fn serve_one(
         // 空帧 / 长度不对：读不懂就答 `BAD`——不猜、不崩。
         None => bcall::BAD,
     };
-    // 答一句：**一格**（[`bcall::Rep`] 那一张形状）——装与发都不在这一层写字节。
-    let _ = Slip::<bcall::Rep>::seal(guest.reply())
-        .load(bcall::Rep::of(said))
+    // 答一句：**一格**（[`bcall::Union`] 那一张形状）——装与发都不在这一层写字节。
+    let _ = Slip::<bcall::Union>::seal(guest.reply())
+        .load(bcall::Union::of(said))
         .ship();
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
