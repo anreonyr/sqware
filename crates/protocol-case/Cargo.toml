@@ -46,8 +46,16 @@ publish = false
 # 故走 `crates/alloc-probe` 那条现成的路：**不进工作区**（根 `Cargo.toml` 的 `exclude`）、
 # **只依赖 `env`**、把核心源码 `#[path]` 进来（用 `#[path]` 而不是 `include!`：后者编不过
 # `//!` 开头的文件，`E0753`——照实记在 `tests/operator.rs` 头注）。
+#
+# **照实记（上面第 2 条现在只对「口」成立）**：`protocol` 分家之后，**纯的那一半**（正文 / 形 /
+# 据 / 账 / 不碰内核的适配）住 `crates/contract`，它**只依赖 `env` 与 `plan`**——
+# `cargo tree -p contract` 里没有 `runtime`，故**靶可以直接依赖它**，不必再靠 `#[path]` 复制
+# 模块树。这一步（挂依赖）先落；把八个靶的 `#[path]` 与影子模块逐台换成 `contract::…`
+# 是**下一刀**——那时 `tests/session/`、`tests/{principal,coalition}/` 那几层影子目录一起退场。
 
 [dev-dependencies]
+# 「约」：不碰内核的那一半。靶**直接依赖**它（下一刀把 `#[path]` 换成它）。
+contract = { path = "../contract" }
 # 判据用的 `Name` / `PieToken` / `TaskId` / `Mark` / `Key` / `Access` / `Policy` 都是 `env` 的类型；
 # `#[path]` 进来的那几份源码自己 `use env::…`。放 `[dev-dependencies]`：本 crate 只有测试靶，
 # 没有 lib。
