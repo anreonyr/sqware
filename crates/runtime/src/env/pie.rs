@@ -117,10 +117,10 @@ pub fn revoke(dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
     }
 }
 
-/// 表里的一枚（[`collect`] 收拢出来的那一格）——**四件事实一起**，故不必再问第二次。
+/// 表里的一枚（[`collect`] 收拢出来的那一格）——**三件事实一起**，故不必再问第二次。
 ///
-/// 字段名就是判据：两个 `TaskId` **不可混用**（[`reserve`] 头上那段"三个身份"）——
-/// 一个装元组装不下的地方，正是"两个号挨着、谁是谁"最容易错的地方。
+/// 字段名就是判据：`owner` 是**资源**的来历（副本共享同一事实），与"谁授的"（`vestor`，
+/// 转手即改写）**不是一回事**——那一格这一手不答（见下），要问就走 [`reserve`]。
 ///
 /// 两处哨兵与 `Reserve` 同一条口径：`TaskId(0)` = 这一格没有答案（原初自持 / 已封印 /
 /// 不是孔），[`Mark::NONE`] = 记号那一格没有答案（记号只长在孔上）。
@@ -128,8 +128,6 @@ pub fn revoke(dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
 pub struct Pie {
     /// 这一枚在本任务表里的号（[`unseal_hole`] 那一族铸的）。
     pub token: PieToken,
-    /// **谁授的**（转手即改写）；`0` = 原初自持。
-    pub vestor: TaskId,
     /// **这扇门谁开的**（副本共享同一事实）；`0` = 查不出（已封印 / 不是孔）。
     pub owner: TaskId,
     /// **这条路的名字**（[`unseal_hole`] 刻的那一格）；`NONE` = 这一枚不是孔。
@@ -148,12 +146,7 @@ pub struct Pie {
 pub fn collect(index: usize) -> EnvResult<Pie> {
     let r = PieCall::Collect { index }.call()?;
     match r {
-        PieCallRet::Collect((token, vestor, owner, mark)) => Ok(Pie {
-            token,
-            vestor,
-            owner,
-            mark,
-        }),
+        PieCallRet::Collect((token, owner, mark)) => Ok(Pie { token, owner, mark }),
         _ => unreachable!(),
     }
 }
@@ -167,9 +160,14 @@ pub fn collect(index: usize) -> EnvResult<Pie> {
 /// **名字照实记**：我起初把它叫 `holes()`——**那个名字是错的**：`Collect` 枚举的是整张
 /// 权限表（孔 / 铃 / 页 / 组 / 别人给的副本都在里面），不只是孔。故叫 [`pies`]。
 ///
-/// **每一枚交出去的是四件事实**（[`Pie`]）：token / vestor / owner / 记号。这是 `Collect`
-/// 宽返回的唯一用家——从前那三格（token / permission / vestor）里，**扫表的人都还要再问
-/// 一次 `reserve`** 才拿得到 owner 与记号，而那一问是每一枚一次 envcall。
+/// **每一枚交出去的是三件事实**（[`Pie`]）：token / owner / 记号。这是 `Collect` 宽返回的
+/// 唯一用家——从前那三格（token / permission / vestor）里，**扫表的人都还要再问一次 `reserve`**
+/// 才拿得到 owner 与记号，而那一问是每一枚一次 envcall。
+///
+/// **照实记（`vestor` 进过又出去了）**：加宽那一刀把它也带了进来（它当时有两个读者），
+/// 而算它要 `gate::vestor(.., &gate::snap())`——**每枚一次全世界快照 ＋ 一次分配**，于是扫表
+/// 仍是超线性的（实测 3.36 ms / 16 枚）。乙′ 把那些读者逐个改成"号随交接一起走"（板那一面、
+/// 树那一面、两处 `take`），这一格便没有读者、随之撤掉。
 ///
 /// **`Err` 那一格就此打住**（用户裁定甲）：调用方**无从分辨**"表读不动"与"这一遍扫完"。
 /// 代价照实记两条：① 约那一侧的 `Claim::Unread`（第三个变体）随之退场；② 另外三处

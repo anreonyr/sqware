@@ -138,21 +138,17 @@ impl FromPair for (PieToken, Permission) {
 }
 
 /// `Collect` 返回值打包（本文件唯一一格 [`FromTriple`]）：`v0` = token、
-/// `v1` = owner 高 32 位 | vestor 低 32 位、`v2` = **整一枚记号**。
+/// `v1` = **owner**（这扇门谁开的）、`v2` = **整一枚记号**。
 ///
-/// `v0`/`v1` 两条口径与内核那边的 `Reserve` **逐位同形**：`a0` 兼作"成 / 不成"
-/// 那一格（用户态按符号读 `EnvError`），故只装得下小号，记号整枚另占一格——
-/// 见 `env::fid` 的 `Collect`（口径的唯一真相）。两个 `TaskId` 都读 `0` 作哨兵
-/// （内核在"这一枚不是活着的孔"时两格都答哨兵），故**顺序不可换**：
-/// 第三格是 vestor（谁授的）、第二格是 owner（资源谁开的），换一位就是另一个问题。
-impl FromTriple for (PieToken, TaskId, TaskId, Mark) {
+/// 两条口径与内核那边逐位同形：`v0` 兼作"成 / 不成"那一格（用户态按符号读 `EnvError`），
+/// 故只装小号；记号整枚另占一格（64 位）。**`owner` 读 `0` 作哨兵**（"查不出"）。
+///
+/// **照实记（`vestor` 那一半撤了）**：`v1` 从前是 `owner << 32 | vestor`——挤一格是因为
+/// `Collect` 曾是"扫表"的唯一手段，而那时每枚都要算 `vestor`（全世界快照）。号随交接一起走
+/// 之后扫表的读者归零，这一格没有读者，遂按"没有读者的格不留在 ABI 上"撤掉。
+impl FromTriple for (PieToken, TaskId, Mark) {
     fn from_triple(v0: usize, v1: usize, v2: usize) -> Self {
-        (
-            PieToken::new(v0),
-            TaskId(v1 & 0xffff_ffff),
-            TaskId(v1 >> 32),
-            Mark::new(v2 as u64),
-        )
+        (PieToken::new(v0), TaskId(v1), Mark::new(v2 as u64))
     }
 }
 

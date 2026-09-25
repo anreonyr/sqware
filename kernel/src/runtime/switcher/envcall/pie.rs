@@ -380,11 +380,16 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
 /// 收拢：报出本任务权限表第 `index` 份——**唯一的枚举手段**（对偶是 `Reserve`：一个按
 /// 位置问、一个按句柄问）。
 ///
-/// 越界 → 四格全哨兵（token `NONE` / vestor 0 / owner 0 / 记号 `NONE`），**不报错**。
-/// `a0` = token；`a1` = **owner 高 32 位 | vestor 低 32 位**（与 [`reserve`] 的 `a0`
-/// **逐位同形**——同一份"两个小号挤一格"的口径，故用户侧那两处拆法也只写一遍）；
-/// `a2` = **整一枚记号**（64 位）。
-/// 锁序：先克隆出 pie（还 pies 锁），再取快照求 vestor——两者同为 L3，绝不嵌套。
+/// 越界 → 三格全哨兵（token `NONE` / owner 0 / 记号 `NONE`），**不报错**。
+/// `a0` = token；`a1` = **owner**（这扇门谁开的；查不出答 0）；`a2` = **整一枚记号**（64 位）。
+/// 锁序：只取一次 `pies` 锁、取完即放——**不再有快照那一半**。
+///
+/// **照实记（`vestor` 从这一格退场，乙′ 的末环）**：它从前还报"谁授的"，而那一格要算
+/// `gate::vestor(&p, &gate::snap())`——**一次全世界名册快照 ＋ 一次分配**，而扫表的人**每一枚**
+/// 都要算一次。这正是 `gate/pie.rs` 的 `Heir` 头注里那句"热路径不这么干"（反向查询吃全世界
+/// 快照）。扫表的三处读者（板那一面、树那一面、两处客户端的 `take`）先后改成"**号随交接一起
+/// 走**"，这一格遂没有读者，按"没有读者的格不留在 ABI 上"撤掉。要问"谁授的"仍走 [`reserve`]
+/// ——那一手按句柄问、一次一枚，不在扫表里。
 ///
 /// **四格一起答，是为了省掉"每扫一枚再问一次 `Reserve`"**：那一问是一次 envcall，
 /// 表 16 枚 ⇒ 一趟扫描 6.5 ms（读数见 `programs/src/driver/rtc/main.rs`）。
@@ -397,27 +402,19 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
     let pie = current()
         .running_task()
         .and_then(|t| t.pies.lock().get(index).cloned());
-    let (token, vestor_id, owner_id, mark) = match &pie {
+    let (token, owner_id, mark) = match &pie {
         Some(p) => {
-            let vestor = gate::vestor(p, &gate::snap()).unwrap_or(TaskId::new(0));
             // `AnyPie::owner()` 自带存活闸（封印 ⇒ `None`）；再过一道"是不是孔"。
             let (owner, mark) = match (p.owner(), p) {
                 (Some(o), AnyPie::Hole(h)) => (o, h.meta().mark()),
                 _ => (TaskId::new(0), Mark::NONE),
             };
-            (p.token(), vestor, owner, mark)
+            (p.token(), owner, mark)
         }
-        None => (
-            PieToken::NONE,
-            TaskId::new(0),
-            TaskId::new(0),
-            Mark::NONE,
-        ),
+        None => (PieToken::NONE, TaskId::new(0), Mark::NONE),
     };
     frame.gpr.set_x(Gprs::A0, token.get());
-    frame
-        .gpr
-        .set_x(Gprs::A1, (owner_id.get() << 32) | (vestor_id.get() & 0xffff_ffff));
+    frame.gpr.set_x(Gprs::A1, owner_id.get());
     frame.gpr.set_x(Gprs::A2, mark.get() as usize);
     Outcome::Resume
 }
