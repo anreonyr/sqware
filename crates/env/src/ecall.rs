@@ -41,6 +41,42 @@ impl Fail {
     pub const fn code(self) -> isize {
         self as isize
     }
+
+    /// 七枚词汇（次序就是 [`Fail::of_code`] 走的那一趟）。**它与枚举是两处**，见下。
+    const ALL: [Self; 7] = [
+        Self::Denied,
+        Self::Dead,
+        Self::Busy,
+        Self::OoM,
+        Self::NotAligned,
+        Self::BadImage,
+        Self::HandedOver,
+    ];
+
+    /// **读法**：a0 里那一格负码，是七枚里的哪一枚；表外（含 `0` 与正数）⇒ `None`。
+    ///
+    /// 这是 [`EnvError`] 那一格的**唯一一道读法**（[`Fail::code`] 的逆）：`HolePie::push`
+    /// 那一族报回来的 `erra::Error<EnvError>` 就靠它收成词汇（收的那一手在
+    /// `protocol::session::slip` 的 `Slip::ship`）。
+    ///
+    /// **照实记（为什么不是一张 `match` 码表）**：那会把 `-1..=-7` 在那些支里再写一遍——
+    /// 正是 [`Fail::code`] 的注里说的那个旧形状（一张 `match` 表 ＋ 文档表各写一遍）。
+    /// 这一趟里**一个数都不写**：比的是判别值自己。
+    ///
+    /// **照实记（`ALL` 与枚举是两处——已知的空隙）**：Rust 没有"枚举的变体表"
+    /// （`core::mem::variant_count` 在本仓这条 nightly 上实测 `E0658`，还在 unstable 口上），
+    /// 故加一枚词汇要**两处都改**。兜底是本文件紧接着那条编译期断言：它逐枚验"读得回来"
+    /// （**写错**一枚编不过），但**盯不了"漏写"**——新加的那一枚若没进 `ALL`，那一条不会知道。
+    pub const fn of_code(code: isize) -> Option<Self> {
+        let mut at = 0;
+        while at < Self::ALL.len() {
+            if Self::ALL[at].code() == code {
+                return Some(Self::ALL[at]);
+            }
+            at += 1;
+        }
+        None
+    }
 }
 
 /// 负码即 ABI 契约：七枚码**一个都不许动**（编译期锁死——改一个就是改 ABI）。
@@ -53,6 +89,40 @@ const _: () = {
     assert!(Fail::NotAligned.code() == -5);
     assert!(Fail::BadImage.code() == -6);
     assert!(Fail::HandedOver.code() == -7);
+};
+
+/// **读法**那一侧也锁死（同一条纪律：写错一枚就是"另一种失败"）：七枚逐枚读得回来、
+/// 表外答 `None`。
+///
+/// **为什么是编译期断言、不是宿主靶**：这一格全是常量，而用户裁定过"**常量交给编译器**"
+/// （板那几条"面不相撞"的判据就是这么从运行时用例搬过来的）——故它在**编的时候**红，
+/// 比在某一台上红早一步，也不给"少跑一台"留缝。码一律从判别值取，故这一块里一个数都不写。
+const _: () = {
+    assert!(matches!(
+        Fail::of_code(Fail::Denied.code()),
+        Some(Fail::Denied)
+    ));
+    assert!(matches!(Fail::of_code(Fail::Dead.code()), Some(Fail::Dead)));
+    assert!(matches!(Fail::of_code(Fail::Busy.code()), Some(Fail::Busy)));
+    assert!(matches!(Fail::of_code(Fail::OoM.code()), Some(Fail::OoM)));
+    assert!(matches!(
+        Fail::of_code(Fail::NotAligned.code()),
+        Some(Fail::NotAligned)
+    ));
+    assert!(matches!(
+        Fail::of_code(Fail::BadImage.code()),
+        Some(Fail::BadImage)
+    ));
+    assert!(matches!(
+        Fail::of_code(Fail::HandedOver.code()),
+        Some(Fail::HandedOver)
+    ));
+    // 表外：**不是"某一枚失败"**（`0` 与正数按 D1 就不是错误；更负的码这一版不认得）。
+    assert!(matches!(Fail::of_code(0), None));
+    assert!(matches!(Fail::of_code(1), None));
+    assert!(matches!(Fail::of_code(-8), None));
+    assert!(matches!(Fail::of_code(isize::MIN), None));
+    assert!(matches!(Fail::of_code(isize::MAX), None));
 };
 
 /// 环境调用错误。D1 契约：仅负值构成错误，非负为成功值。
