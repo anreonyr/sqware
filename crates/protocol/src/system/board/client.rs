@@ -113,25 +113,14 @@ pub fn evict(say: PieToken, link: &Quay, millis: usize) -> Result<u8, Fail> {
     }
 }
 
-/// 客侧第三步：把**板刚授进来的那一枚**从本端表里取出来（`LOOKUP` 的下场）。
-///
-/// 一格判据：**来源位是板**（这一份是板交给本端的——`Reply` 里没有号，故只能按"谁给的"认），
-/// 取满足的那些里**最后**一枚（表按登记先后枚举；一次一问一答只授一枚，故"最后"就是刚授的）。
-///
-/// **为什么一格就够**：板只往客人表里送一样东西——查到的入口（它自己不铸码头，见
-/// `host_loop`），故"板给的"里没有第二样能与它混。**`owner` 在这里没用**：那扇门是别人开
-/// 的（查到谁的入口，开者就是谁），客人不是它的开者。
-pub fn take(link: &Quay, board: TaskId) -> Option<PieToken> {
-    let at = Name::new(LINK).ok()?;
-    let _ = link.find(at)?;
-    let mut found = None;
-    for p in mail::pies() {
-        if p.vestor == board {
-            found = Some(p.token);
-        }
-    }
-    found
-}
+// 照实记（删掉的一处：板那一面的 `take`）：它从前在这儿，形状与 `operator::take` 逐字同构
+// ——"板刚授进来的那一枚"按**来源位是板**（`vestor`）扫本表认回来。**它一天都没有调用者**：
+// 客人拿板查到的那个入口走的是另一条路（`service.rs::face_of` 按"开者 = 板 ＋ 记号 = 入口"
+// 问，`session::call::find` 那两格正判据），板这一面从来不靠"谁给的"认。
+//
+// 按"没有读者的格不留在协议面上"的口径删掉。它顺带也是 `vestor` 在扫描里的**第二个**读者
+// （另一个是 `operator::take`，那一个活的）——乙′ 那一步要把 `vestor` 从 `Collect` 上拿掉，
+// 这就是先少掉的一处。
 
 /// 收下板路上那一格：**答话的是谁**（[`tell`] 的对偶）。
 ///
