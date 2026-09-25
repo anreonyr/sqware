@@ -240,7 +240,11 @@ pub const READINGS: &[Reading] = &[
     Reading { prefix: "policy", tier: Tier::Auto },
     Reading { prefix: "root", tier: Tier::Narrative { shapes: &["^(root: done)$"] } },
     Reading { prefix: "router", tier: Tier::Narrative { shapes: &["^(router: docks open|router: got [0-9]+|router: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
-    Reading { prefix: "rtc", tier: Tier::Narrative { shapes: &["^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+|rtc: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
+    // **照实记（`rtc: refused` 那一形为什么是 narrative 而不是 `Once`）**：它每轮出现
+    // **一到两次**——失败域第一格（过去那个时刻）**每轮必到**，而第二次出现与否正是
+    // `sleeper` 那条路上被量出来的那一格（真约那一趟迟到了 ⇒ 也答 `Past`）。条数不声明，
+    // 只声明形状：这一行是**读数**，判它的是别处，不是这一门。
+    Reading { prefix: "rtc", tier: Tier::Narrative { shapes: &["^(rtc: got [0-9]+|rtc: time [0-9]+ -> [0-9]+|rtc: refused=[0-9]+ at=[0-9]+ now=[0-9]+ late_ns=[0-9]+|rtc: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
     Reading { prefix: "system", tier: Tier::Narrative { shapes: &["^(system: gone [a-z0-9-]+ state=[A-Za-z]+ ousted=(true|false) heir=[^ ]+ wait=[a-z]+( inner)?)$"] } },
     Reading { prefix: "uart", tier: Tier::Narrative { shapes: &["^(uart: got [0-9]+|uart: tree part=[0-9]+ dir=[0-9]+ land=[0-9]+ find=[0-9]+ got=(true|false) entry=[0-9]+ plate=[0-9]+ pname=[^ ]+)$"] } },
     Reading { prefix: "[case]", tier: Tier::Narrative { shapes: &["^\\[case\\] [a-z0-9-]+: (run|ok) [_a-z0-9]+$"] } },

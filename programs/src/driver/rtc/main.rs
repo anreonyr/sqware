@@ -246,6 +246,20 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
                 Err(fail) => {
                     let _ = HolePie::from_token(back).push(&[call::fail_to_code(Some(fail))]);
                     let _ = mail::release(back);
+                    // **照实记（这一行为什么在，以及为什么排在这里）**：拒绝路从前一个字都不
+                    // 打，于是"sleeper 那台偶尔少一台"只剩客人侧一句 `alarm err=2`——**迟到
+                    // 多少**量不出来。这一行把那格交出来：`late_ns` = 我拿自己的钟比对时 `at`
+                    // 已经过去了多久（`Past` 那一支 `at <= now`，故它 ≥ 0；`Taken` 那一支
+                    // `at` 还在前头，按 0 记）。形状声明在 `crates/gate/src/soak.rs` 的读数表里。
+                    //
+                    // **照实记（它为什么在 `push` 之后）**：第一版排在 `push` 之前，而 `say`
+                    // 是**同步 UART**（一行 ~3 ms）——量的人自己站进了被测的那条路上，把客人
+                    // 等答话的时间撑长了。故答话先走、读数后打：这一行不许改变它要量的东西。
+                    say(&format!(
+                        "rtc: refused={} at={at} now={now} late_ns={}",
+                        call::fail_to_code(Some(fail)),
+                        now.saturating_sub(at)
+                    ));
                 }
             }
         }
