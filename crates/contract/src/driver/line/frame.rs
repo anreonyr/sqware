@@ -9,21 +9,19 @@
 //! 就是坐标**（客户手里没有"线"，见 `super::mod`）。那 1 字节不是信息，是**形状的下限**：
 //! 孔不收 0 字节的报文。登记那一句带一个动作码（`OCCUPY`）——**照实记**：它原来是为了与"招呼"
 //! 那一形状分开（同一扇门、靠帧长分），那条形状已经退休。**留着**（用户裁定）：这一格不是死
-//! 字段——[`unpack_occupy`] 真的读它（形状不对就答 `None`，路由器不动账），而且本仓**三扇门
+//! 字段——[`Message::fetch`] 真的读它（形状不对就答 `None`，路由器不动账），而且本仓**三扇门
 //! 都带动作码**（板那一扇的 `REGISTER` 一族、树那一扇的 `land`/`find` 一族）——去掉只省
 //! 1 字节，换来"任何恰好 17 字节推上来的东西都算一次登记"。
 
-use plan::KEY_LEN;
-use env::{Mark};
-use plan::{Key};
+use env::Mark;
+use plan::Key;
+
+use crate::message::Message;
 
 use super::core::Fail;
 
 /// 登记那一句的动作码。
 pub const OCCUPY: u8 = 1;
-
-/// 登记帧的长度（动作码 + 坐标）。
-pub const OCCUPY_LEN: usize = 1 + KEY_LEN;
 
 /// 线泊位的记号（两侧同一个）。
 pub const LANE: &str = "line";
@@ -59,22 +57,51 @@ crate::fail_codes! {
     Fail::Denied => DENIED,
 }
 
-/// 登记帧：动作码 + 坐标。
-pub fn pack_occupy(key: Key) -> [u8; OCCUPY_LEN] {
-    let mut out = [0u8; OCCUPY_LEN];
-    out[0] = OCCUPY;
-    out[1..].copy_from_slice(&key.bytes());
-    out
+env::frame! {
+    /// 登记那一帧：动作码 ＋ 坐标。
+    ///
+    /// **照实记（这一份从前是什么样）**：它从前是一对**自由函数**（`pack_occupy` /
+    /// `unpack_occupy`）＋ 一处手算的长度（`OCCUPY_LEN = 1 + KEY_LEN`）。今天收成报那一层那两样：
+    /// **一张表**（`env::frame!` 求长）＋ **一个 `impl Message`**（编解一处）。
+    ///
+    /// **`op` 那一格留着**（用户裁定，见文件头）：[`Message::fetch`] 真的读它——形状不对就答
+    /// `None`，路由器不动账。
+    pub struct Occupy {
+        op: u8,
+        key: Key,
+    }
 }
 
-/// 拆一帧登记：**不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。
-///
-/// 坐标的判别号不认识也答 `None`；**认识但不是"区"的那两形照收**——路由者按坐标查表查不到，
-/// 自然答 `UNKNOWN`（线挂在设备上，那是它的账）。
-pub fn unpack_occupy(frame: &[u8]) -> Option<Key> {
-    if frame.len() != OCCUPY_LEN || frame[0] != OCCUPY {
-        return None;
+impl Occupy {
+    /// 编一句登记：动作码固定 [`OCCUPY`]，荷载是那一段区。
+    pub fn of(key: Key) -> Occupy {
+        Occupy { op: OCCUPY, key }
     }
-    let raw: [u8; KEY_LEN] = frame.get(1..OCCUPY_LEN)?.try_into().ok()?;
-    Key::from_bytes(raw)
+}
+
+impl Message for Occupy {
+    /// **读出来就是那个坐标**：动作码是形状的一部分（`fetch` 里认），读的人要的就是它
+    /// （从前 `unpack_occupy` 答的也是它）。
+    type In = Key;
+    type Buf = [u8; Occupy::LEN];
+    const EMPTY: Self::Buf = [0u8; Occupy::LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_in(out)
+    }
+
+    /// 拆一帧登记：**不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。
+    ///
+    /// **照实记（"恰好 17"那一格）**：表那一手只要求"够长"，而这一形的判据是**恰好**
+    /// `Occupy::LEN`——长短都不认，故这里补回这一格（同从前 `unpack_occupy` 的第一句）。
+    ///
+    /// 坐标那一格的判别号不认识也答 `None`（[`Key`] 那一手判废）；**认识、但不是"区"的那两形
+    /// 照收**——路由者按坐标查表查不到，自然答 `UNKNOWN`（线挂在设备上，那是它的账）。
+    fn fetch(bytes: &[u8]) -> Option<Key> {
+        if bytes.len() != Occupy::LEN {
+            return None;
+        }
+        let occupy = Occupy::fetch(bytes)?;
+        (occupy.op == OCCUPY).then_some(occupy.key)
+    }
 }

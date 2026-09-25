@@ -20,6 +20,8 @@
 
 use core::mem::size_of;
 
+use env::wire::Field;
+
 /// 坐标的字节数（判别号 1 + 留白 7 + 那一个数 8）。
 pub const KEY_LEN: usize = 16;
 
@@ -116,5 +118,24 @@ impl Key {
         // 平凡位模式，读出来交给 `of` 校验。
         let k = unsafe { core::ptr::read_unaligned(raw.as_ptr().cast::<Key>()) };
         Key::of(k.parts().0, k.parts().1)
+    }
+}
+
+/// 线上那一格（帧表里"坐标"那一格要 `T: Field`，见 `contract::driver::line::frame`）。
+///
+/// **照实记（这条 impl 为什么只有两行）**：这一格的两手早就在类型自己身上（[`Key::bytes`] /
+/// [`Key::from_bytes`]）——它们说的是"这一格怎么落字节、判别号不认识怎么判废"。`Field` 只是把
+/// 同一对交给帧表，故这里一个字都不新写，**判废那一格照旧**：判别号不认识 ⇒ `None`（读的人按
+/// 读不懂处置，见登记那一帧的 `fetch`）。
+impl Field for Key {
+    const WIDTH: usize = KEY_LEN;
+
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.bytes());
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        let raw: [u8; KEY_LEN] = bytes.get(..KEY_LEN)?.try_into().ok()?;
+        Key::from_bytes(raw)
     }
 }

@@ -64,8 +64,9 @@ use env::Mark;
 use session::call as fake;
 use session::core::{Pier, Quay};
 
-use crate::call::{OCCUPY, OCCUPY_LEN, pack_occupy, unpack_occupy};
+use crate::call::{OCCUPY, Occupy};
 use crate::core::{Fail, Lines};
+use contract::message::Message;
 use plan::Key;
 
 /// 对端（另一个域）。
@@ -202,27 +203,47 @@ fn told_survives_a_vacate() {
 #[test]
 fn an_occupy_frame_is_the_action_code_then_the_coordinate() {
     let key = Key::region(0x1000_1000);
-    let frame = pack_occupy(key);
-    assert_eq!(frame.len(), OCCUPY_LEN);
+    // **一处编**：动作码 ＋ 坐标那一格。
+    //
+    // **照实记（两枚同名的 `store`——这一台当场撞过）**：[`Occupy`] 既是字段表又是那枚报——表那
+    // 一枚**固有** `store` 要定长数组、且不可能失败（故返 `()`），`Message` 那一枚写更大的缓冲、
+    // 返长度。方法调用式的 `x.store(&mut 定长数组)` 选的是**固有**那一枚（于是 `.expect` 编不过）；
+    // 这一台用返长度的 `store_in`（两枚落的是同一段字节），而 `Message::store` 那一手由客侧的
+    // 船台真跑（`protocol::driver::line::client::occupy`）。
+    let mut frame = Occupy::EMPTY;
+    let n = Occupy::of(key).store_in(&mut frame).expect("装得下");
+    assert_eq!(n, Occupy::LEN, "动作码 ＋ 坐标 16 字节（表求和）");
     assert_eq!(frame[0], OCCUPY, "头一格是动作码");
-    assert_eq!(&frame[1..], &key.bytes(), "其余是坐标，一字不差");
-    assert_eq!(unpack_occupy(&frame), Some(key), "编了再解 = 原来那个坐标");
+    assert_eq!(&frame[1..n], &key.bytes(), "其余是坐标，一字不差");
+    assert_eq!(
+        <Occupy as Message>::fetch(&frame[..n]),
+        Some(key),
+        "编了再解 = 原来那个坐标"
+    );
 }
 
 #[test]
 fn a_frame_that_is_not_that_shape_is_not_guessed_at() {
     // **不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。
-    let good = pack_occupy(Key::region(0x1000_1000));
-    assert_eq!(unpack_occupy(&[]), None, "空帧");
-    assert_eq!(unpack_occupy(&good[..OCCUPY_LEN - 1]), None, "短一字节");
+    let mut buf = Occupy::EMPTY;
+    let n = Occupy::of(Key::region(0x1000_1000))
+        .store_in(&mut buf)
+        .expect("装得下");
+    let good = buf[..n].to_vec();
+    assert_eq!(<Occupy as Message>::fetch(&[]), None, "空帧");
+    assert_eq!(
+        <Occupy as Message>::fetch(&good[..Occupy::LEN - 1]),
+        None,
+        "短一字节"
+    );
     let long = [good.as_slice(), &[0u8]].concat();
-    assert_eq!(unpack_occupy(&long), None, "长一字节");
+    assert_eq!(<Occupy as Message>::fetch(&long), None, "长一字节");
 
     let mut wrong_op = good;
     wrong_op[0] = OCCUPY + 1;
-    assert_eq!(unpack_occupy(&wrong_op), None, "动作码不对");
+    assert_eq!(<Occupy as Message>::fetch(&wrong_op), None, "动作码不对");
     wrong_op[0] = 0;
-    assert_eq!(unpack_occupy(&wrong_op), None, "零不是动作码");
+    assert_eq!(<Occupy as Message>::fetch(&wrong_op), None, "零不是动作码");
 }
 
 #[test]
@@ -231,13 +252,20 @@ fn an_unknown_coordinate_discriminator_is_refused_but_a_known_non_region_is_take
     //   - **判别号不认识** ⇒ `None`（这不是本仓的坐标，读它没有意义）；
     //   - **认识、但不是"区"的那两形**（设备树 / 中断）**照收**——路由者按坐标查表查不到，
     //     自然答 `UNKNOWN`（线挂在设备上，那是它的账）。
-    let mut frame = pack_occupy(Key::region(0x1000));
-    frame[1] = 0xEE; // 判别号那一格换成一个不认识的
-    assert_eq!(unpack_occupy(&frame), None, "不认识的判别号");
+    let mut buf = Occupy::EMPTY;
+    let n = Occupy::of(Key::region(0x1000)).store_in(&mut buf).expect("装得下");
+    buf[1] = 0xEE; // 判别号那一格换成一个不认识的
+    assert_eq!(
+        <Occupy as Message>::fetch(&buf[..n]),
+        None,
+        "不认识的判别号"
+    );
 
     for key in [Key::dtb(), Key::irq()] {
+        let mut frame = Occupy::EMPTY;
+        let n = Occupy::of(key).store_in(&mut frame).expect("装得下");
         assert_eq!(
-            unpack_occupy(&pack_occupy(key)),
+            <Occupy as Message>::fetch(&frame[..n]),
             Some(key),
             "认识的非区坐标照收"
         );

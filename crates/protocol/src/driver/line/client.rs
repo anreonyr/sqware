@@ -11,6 +11,7 @@ use runtime::env::mail::{self, HolePie};
 
 use super::frame;
 use super::core::Fail;
+use crate::session::slip::Slip;
 use crate::session::{Pier, Quay};
 
 /// 客户手里那一条线：一条泊位（本端读投递、写排空）。
@@ -43,7 +44,15 @@ impl Line {
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .and_then(|_| HolePie::from_token(entry).push(&frame::pack_occupy(key)));
+        .map_err(|_| ())
+        .and_then(|_| {
+            // 登记那一句：**上船台**（这一族一问只有一形：动作码 ＋ 坐标）——装与发都不在这一层
+            // 写字节（缓冲是船台自己那只：这一形定长 [`frame::Occupy::LEN`]）。
+            Slip::<frame::Occupy>::seal(entry)
+                .load(frame::Occupy::of(key))
+                .ship()
+                .map_err(|_| ())
+        });
         if sent.is_err() {
             let _ = mail::release(back);
             quay.shut();

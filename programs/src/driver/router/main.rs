@@ -111,6 +111,7 @@ use programs::driver::assemble;
 use programs::driver::router::needs;
 
 // 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
+use contract::message::Message;
 use protocol::system::board::client as board;
 // 树：本域也是**客侧**（门牌挂 `/device/router`，见文件头）。
 use protocol::system::operator::Where;
@@ -210,7 +211,7 @@ fn main() -> Result<(), fail::Fail> {
         return Err(fail::Fail::Bell);
     }
 
-    // 一问的形状是 `OCCUPY_LEN`；缓冲给**一页**（载体的界，见 `Push` 的前置条件）。
+    // 一问的形状是 `lcall::Occupy::LEN`；缓冲给**一页**（载体的界，见 `Push` 的前置条件）。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(fail::Fail::Desk);
@@ -381,7 +382,7 @@ fn desk_face(
     frame: &[u8],
     pile: &Pile,
 ) {
-    if let Some(key) = lcall::unpack_occupy(frame) {
+    if let Some(key) = <lcall::Occupy as Message>::fetch(frame) {
         let code = match sources.line_of(key) {
             // 树里没这条线 ⇒ 那个坐标不是中断源（线挂在设备上，别的形自然落这一支）。
             None => lcall::UNKNOWN,
