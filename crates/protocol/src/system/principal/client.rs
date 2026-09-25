@@ -96,9 +96,16 @@ impl Face {
     /// 分得开它们的那一格在**对面**：`Denied` 是服务真会答的码（判据在 `judge`），
     /// "没走到"是本端自己在码表之外判的。
     fn raw(&self, op: u8, a: u64, b: u64, millis: usize) -> Result<[u8; call::REPLY_LEN], Fail> {
-        let frame = call::pack_ask(op, a, b);
-        let back =
-            crate::session::call::lend(self.entry, BACK, &frame).map_err(|()| Fail::Denied)?;
+        // **先铸、先交，再推**（次序是契约的一半，见 `session::call::lend_out`）：那一枚
+        // "种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫自己的表。
+        let (back, seed) =
+            crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Denied)?;
+        let frame = call::pack_ask(op, a, b, seed);
+        if crate::session::call::push_to(self.entry, &frame).is_err() {
+            // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来（与 `lend` 同一手收尾）。
+            let _ = mail::release(back);
+            return Err(Fail::Denied);
+        }
         let mut buf = [0u8; call::REPLY_LEN];
         let got = match HolePie::from_token(back).pull_timeout(&mut buf, millis) {
             Ok(n) if n == call::REPLY_LEN => Ok(buf),

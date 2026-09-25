@@ -54,10 +54,12 @@ use principal::frame as pframe;
 
 #[test]
 fn a_principal_ask_round_trips_and_refuses_other_shapes() {
-    let frame = pframe::pack_ask(pframe::HEIR, 7, 9);
+    // 末格是**回信孔那一格**（甲′）：拿一枚非零的号，验它原样过线。
+    let back = env::PieToken::from_bytes(&0x5150u64.to_le_bytes()).expect("8 字节");
+    let frame = pframe::pack_ask(pframe::HEIR, 7, 9, back);
     assert_eq!(frame.len(), pframe::ASK_LEN);
     assert_eq!(pframe::op_of(&frame), Some(pframe::HEIR));
-    assert_eq!(pframe::unpack_ask(&frame), Some((pframe::HEIR, 7, 9)));
+    assert_eq!(pframe::unpack_ask(&frame), Some((pframe::HEIR, 7, 9, back)));
 
     // 不成形就不猜。
     assert_eq!(pframe::unpack_ask(&[]), None, "空帧");
@@ -116,8 +118,9 @@ fn the_principal_failure_table_is_bijective_and_keeps_bad_outside() {
 
 #[test]
 fn a_coalition_ask_round_trips_and_the_cursor_cell_is_a_bijection() {
-    let frame = cframe::pack_ask(cframe::BAND, 3, 0);
-    assert_eq!(cframe::unpack_ask(&frame), Some((cframe::BAND, 3, 0)));
+    let back = env::PieToken::from_bytes(&0x5150u64.to_le_bytes()).expect("8 字节");
+    let frame = cframe::pack_ask(cframe::BAND, 3, 0, back);
+    assert_eq!(cframe::unpack_ask(&frame), Some((cframe::BAND, 3, 0, back)));
     assert_eq!(cframe::op_of(&frame), Some(cframe::BAND));
     assert_eq!(cframe::unpack_ask(&frame[..cframe::ASK_LEN - 1]), None);
 

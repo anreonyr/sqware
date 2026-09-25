@@ -29,7 +29,6 @@ use protocol::system::principal::call as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::PrincipalId;
 use protocol::session::Quay;
-use protocol::session::call as scall;
 use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
 use runtime::core::port::{self, Access, Policy};
@@ -135,16 +134,20 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 
 /// 门上一句话：解帧 → 先过名册 → 交给核心 → **从这一趟自带的那枚孔答回去**。
 ///
-/// 认那枚孔靠 [`scall::find`] 的两格正判据（谁给的 + 记号）；`from` 是**内核盖的发送者**。
+/// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（同 `principal` 那一面）；
+/// `from` 是**内核盖的发送者**。
 fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
-    let Some((op, a, b)) = ccall::unpack_ask(frame) else {
+    let Some((op, a, b, back)) = ccall::unpack_ask(frame) else {
         // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
         return;
     };
-    let Some(back) = scall::find(from, ccall::BACK) else {
-        // 这一趟没把回信孔交进来（或交得不成）：没有可回的路，账一动不动。
+    if !matches!(
+        mail::reserve(back),
+        Ok((_vestor, owner, mark)) if owner == from && mark == ccall::BACK
+    ) {
+        // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
         return;
-    };
+    }
     let mut reply = [0u8; ccall::REPLY_MAX];
     let said = answer(book, face, from, op, a, b, &mut reply);
     let _ = HolePie::from_token(back).push(&reply[..said]);

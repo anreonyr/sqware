@@ -22,7 +22,6 @@ use protocol::system::operator::client as operator;
 use protocol::system::principal::call as pcall;
 use protocol::system::principal::core::{Principal, PrincipalId};
 use protocol::session::Quay;
-use protocol::session::call as scall;
 use protocol::system::board::call as bcall;
 use protocol::system::board::client as board;
 use runtime::core::port::{self, Access, Policy};
@@ -62,7 +61,8 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     // **装配者还要把这一枚再转授给树**（门禁那一刀：树要问 `resolve` / `heir`）"——那一版真机
     // 栽在 `coord-ship`，现在**门牌由各域自己交**（见 `operator/bridge.rs` 的 `COORD` 段），
     // 那条理由已经不存在。装配者用这一枚只有**一条**路：往里**推帧**（`derive` / `bind`）；
-    // 答话走每一趟自己铸的那枚回信孔（`session::call::lend`：铸孔 → 交 `STORE` → 推帧），
+    // 答话走每一趟自己铸的那枚回信孔（`session::call::lend_out` ＋ `push_to`：铸孔 → 交
+    // `STORE` → 把"那一格"编进帧 → 推），
     // 读端在装配者这边。⇒ **`STORE` 就是这一格的全部需要**（孔上：`STORE` = `push`、
     // `FETCH` = `pull`，见 `env::permission` 的位表）；`FETCH` 是旧理由留下的，已收。
     if port::ship(
@@ -136,17 +136,25 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 
 /// 门上一句话：解帧 → 交给核心 → **从这一趟自带的那枚孔答回去**。
 ///
-/// 认那枚孔靠 [`scall::find`] 的两格正判据（谁给的 + 记号）；`from` 是**内核盖的发送者**，
-/// 名册与谱系的钥匙判据（装配者 / 当前正好代表 `p`）用的就是它。
+/// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（用户裁定甲′）：那一格是
+/// "客人借来的那枚回信孔**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——
+/// 否则客人能让本域往**别人的孔**里写。旧写法是扫本表按"谁给的 ＋ 记号"找（每趟请求一遍全表，
+/// 见 `session::call::find` 与其 `Collect` 的价钱）。判据一字未改，只是从"扫遍全表找 match"
+/// 变成"验这一格 match"。
+///
+/// `from` 是**内核盖的发送者**，名册与谱系的钥匙判据（装配者 / 当前正好代表 `p`）用的就是它。
 fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
-    let Some((op, a, b)) = pcall::unpack_ask(frame) else {
+    let Some((op, a, b, back)) = pcall::unpack_ask(frame) else {
         // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
         return;
     };
-    let Some(back) = scall::find(from, pcall::BACK) else {
-        // 这一趟没把回信孔交进来（或交得不成）：没有可回的路，账一动不动。
+    if !matches!(
+        mail::reserve(back),
+        Ok((_vestor, owner, mark)) if owner == from && mark == pcall::BACK
+    ) {
+        // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
         return;
-    };
+    }
     let _ = HolePie::from_token(back).push(&answer(book, from, op, a, b));
     let _ = mail::release(back);
 }

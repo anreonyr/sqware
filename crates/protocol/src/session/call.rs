@@ -127,55 +127,19 @@ pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
     found
 }
 
-/// **借一枚回信孔过去、把这一帧推上那扇门**——一问一答的共享体；返**本端那一枚**
-/// （答话从那枚孔回来）。
-///
-/// 三件事，**次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
-/// "谁给的 + 记号"两格认（[`find`]），多枚时取**最后**那一枚——故最后那一枚一定就是这一趟
-/// 那一枚。
-///
-/// `entry` = 对端那一扇门（树上查回来的门牌）；`mark` = 回信孔的记号，**各面自己的**
-/// （rtc 是 `rtc-back`、principal 是 `principal-back`）：同一张表里两面的回信孔若刻同一个
-/// 记号，就分不出这一枚是哪一面的。交出去的权只要 `STORE`——对端只推，读的一侧是本端。
-///
-/// 对端的号从**这一枚门闩自己**问出来（[`opened_by`]）：门牌是别人挂的，故只能读它；
-/// 副本共享同一事实、转手不变。
-///
-/// **第二例到了**（rtc 那一面的客侧先写过一份，principal 是第二个用家）——照本文件开头的
-/// 纪律，身体搬到这里，两处只留各自的名字。
-pub fn lend(entry: PieToken, mark: Mark, frame: &[u8]) -> Result<PieToken, ()> {
-    let host = opened_by(entry).ok_or(())?;
-    let back = unseal_hole(mark)?;
-    if port::ship(
-        &mail::HolePie::from_token(back),
-        host,
-        Access::STORE,
-        Policy::NONE,
-    )
-    .is_err()
-    {
-        let _ = mail::release(back);
-        return Err(());
-    }
-    if mail::HolePie::from_token(entry).push(frame).is_err() {
-        let _ = mail::release(back);
-        return Err(());
-    }
-    Ok(back)
-}
-
 /// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`。
 ///
-/// **照实记（用户裁定甲′；这是 [`lend`] 那一版丢掉的一格）**：`port::ship` 的 `to.seed()`
-/// 就是"**我给你的那一枚在你表里是几号**"，而 [`lend`] 把它扔了 ⇒ 收方只能**扫全表**按
-/// "谁给的 ＋ 记号"把这一枚认回来。门上量出来那一扫是**每帧 ~6.5 ms**（表 16 枚 ⇒ O(n²)，
-/// 见 `programs/src/driver/rtc/main.rs` 的读数）。故这一手把第二格交出来，好让它**随帧
-/// 一起过去**；帧由调用方自己推（[`push_to`]）。
+/// **照实记（用户裁定甲′）**：`port::ship` 的 `to.seed()` 就是"**我给你的那一枚在你表里是几号**"，
+/// 而从前那一版（`lend`）把它扔了 ⇒ 收方只能**扫全表**按"谁给的 ＋ 记号"把这一枚认回来。
+/// 门上量出来那一扫是**每帧 ~6.5 ms**（表 16 枚 ⇒ O(n²)，见 `programs/src/driver/rtc/main.rs`
+/// 的读数）。故这一手把第二格交出来，好让它**随帧一起过去**；帧由调用方自己推（[`push_to`]）。
 ///
 /// 次序仍是契约的一半：**先铸、先交**（这一手），**再推**（下一手）。
 ///
-/// **旧形状留着**：principal / coalition 那两面仍旧"借完就推、收方自己扫"——它们那一刀还没
-/// 搬，[`lend`] 因此一个字不改（一处定义，两处用家先分家，搬完再合并）。
+/// **照实记（`lend` 那一版已退场）**：它曾留着给"还没搬的三面"用，本文件的注因此写着
+/// "搬完再合并"。这一刀把 principal / coalition 那两面也搬完（它们的帧末尾多了一格），
+/// `lend` 遂**没有读者**——按本仓"机制退了，格也退"的口径一并删掉：今天"借一枚回信孔"
+/// 只有这一条路，没有第二种次序可挑。
 pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
     let host = opened_by(entry).ok_or(())?;
     let back = unseal_hole(mark)?;

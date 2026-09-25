@@ -89,8 +89,8 @@ impl Alarm {
 /// 借一枚回信孔（铸 ＋ 交）：返 `(本端那一枚, **在驱动表里那一枚**)`——后者要写进帧
 /// （用户裁定甲′：收方拿它一次 `reserve` 就用，不必扫全表）。
 ///
-/// 身体住在 [`protocol::session::call::lend_out`]（那一手与 [`protocol::session::call::lend`]
-/// 只差"推不推"这一步），这里只留本面自己的记号。
+/// 身体住在 [`protocol::session::call::lend_out`]（"借一枚回信孔"只有那一手），
+/// 这里只留本面自己的记号。
 fn lend_out(entry: PieToken) -> Result<(PieToken, PieToken), Fail> {
     protocol::session::call::lend_out(entry, call::BACK).map_err(|()| Fail::Denied)
 }

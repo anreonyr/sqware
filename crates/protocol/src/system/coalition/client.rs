@@ -105,9 +105,14 @@ impl Face {
     /// 可落（盟无主）。要单开一格就得往 [`Fail`] 里加变体，那一份是 `fail_codes!` 的**双射表**
     /// （加变体 = 加线上码）——较真值得，但它是动协议面的一刀，不混在这一条里。
     fn raw(&self, op: u8, a: u64, b: u64, millis: usize) -> Result<[u8; call::REPLY_LEN], Fail> {
-        let frame = call::pack_ask(op, a, b);
-        let back =
-            crate::session::call::lend(self.entry, BACK, &frame).map_err(|()| Fail::Unknown)?;
+        // **先铸、先交，再推**（同 `principal/client.rs` 那一面；身体在 `session::call::lend_out`）。
+        let (back, seed) =
+            crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
+        let frame = call::pack_ask(op, a, b, seed);
+        if crate::session::call::push_to(self.entry, &frame).is_err() {
+            let _ = mail::release(back);
+            return Err(Fail::Unknown);
+        }
         let mut buf = [0u8; call::REPLY_LEN];
         let got = match HolePie::from_token(back).pull_timeout(&mut buf, millis) {
             Ok(n) if n == call::REPLY_LEN => Ok(buf),
@@ -144,9 +149,14 @@ impl Face {
         b: u64,
         millis: usize,
     ) -> Result<([u8; call::SEQ_REPLY_LEN], usize), Fail> {
-        let frame = call::pack_ask(op, a, b);
-        let back =
-            crate::session::call::lend(self.entry, BACK, &frame).map_err(|()| Fail::Unknown)?;
+        // **先铸、先交，再推**（同本文件 `raw` 那一支）。
+        let (back, seed) =
+            crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
+        let frame = call::pack_ask(op, a, b, seed);
+        if crate::session::call::push_to(self.entry, &frame).is_err() {
+            let _ = mail::release(back);
+            return Err(Fail::Unknown);
+        }
         let mut buf = [0u8; call::SEQ_REPLY_LEN];
         let got = match HolePie::from_token(back).pull_timeout(&mut buf, millis) {
             Ok(n) if n <= call::SEQ_REPLY_LEN => Ok((buf, n)),
