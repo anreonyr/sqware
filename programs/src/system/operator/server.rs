@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator::call`]。
 
+use env::Wait;
 use plan::assembly::Eyes;
 use env::{HoleDir, Mark, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
@@ -30,7 +31,7 @@ use protocol::system::operator::call::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
-/// **不是轮询**：账补齐之后这一等就变成 `usize::MAX`（由组唤醒）；这个短期限只在装配窗口
+/// **不是轮询**：账补齐之后这一等就变成 `Wait::Forever`（由组唤醒）；这个短期限只在装配窗口
 /// 里用——那几步的到达是**别人**在做（装配者转授、客人自己交孔）。
 const SETTLE_MS: usize = 1;
 
@@ -92,7 +93,7 @@ struct Court<'a> {
 
 impl Control for Court<'_> {
     fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
-        match self.session.roster.resolve(tid, MS) {
+        match self.session.roster.resolve(tid, Wait::AtMost(MS)) {
             // **不截断**：号在模型里的宽度就是 8 字节（`judge::Id`）。照实记：这里原写的是
             // `p.get() as u32`——号不上帧时看不出来，那一刀之后号要上帧，故一并提宽。
             Ok(found) => Ok(found.map(|p| p.get() as Id)),
@@ -106,7 +107,7 @@ impl Control for Court<'_> {
             .heir(
                 PrincipalId::new(a as usize),
                 PrincipalId::new(b as usize),
-                MS,
+                Wait::AtMost(MS),
             )
             .map_err(|_| ())
     }
@@ -121,7 +122,7 @@ impl Control for Court<'_> {
             .amid(
                 PrincipalId::new(me as usize),
                 protocol::system::coalition::CoalitionId::new(at as usize),
-                MS,
+                Wait::AtMost(MS),
             )
             .map_err(|_| ())
     }
@@ -218,7 +219,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     // （[`protocol::system::board::call::TIP_LEN`] 的照实记）；这一格只管把板那条路装上
     // （装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，故少了这一步装配当场报
     // `board:claim`——实测栽过一次）。
-    let Ok((_link, board_link)) = board::open(assembler, MS) else {
+    let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
         return Err(super::fail::Fail::Board);
     };
     if board::ask_hole(board_link).is_err() {
@@ -274,7 +275,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。
         let settling = settle(&mut desk, &pile, &tip_hole, &mut coord, &mut session);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
-        let millis = if settling { SETTLE_MS } else { usize::MAX };
+        let millis = if settling { Wait::AtMost(SETTLE_MS) } else { Wait::Forever };
         let Ok(Some((tok, _dir))) = pile.await_(millis) else {
             let _ = desk.sweep();
             continue;
@@ -313,7 +314,7 @@ fn settle(
     let mut frame = [0u8; COORD_FRAME];
     let mut pending = false;
     loop {
-        let Ok(n) = tip.pull_timeout(&mut frame, 0) else {
+        let Ok(n) = tip.pull_timeout(&mut frame, Wait::POLL) else {
             break;
         };
         if n == COORD_FRAME {
@@ -412,7 +413,7 @@ fn serve_one(
     let Some(ask) = guest.ask() else {
         return;
     };
-    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(buf, 0) else {
+    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(buf, Wait::POLL) else {
         return;
     };
     let Some(want) = buf.get(..n) else {

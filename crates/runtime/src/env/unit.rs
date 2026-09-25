@@ -5,6 +5,7 @@
 //! 读侧），不是一次 envcall 转发——已随其余任务本地原语搬去 `crate::core::unit`
 //! （那一处新开"启动参数面"一节）。本文件因此只剩"一次调用一个函数"。
 
+use env::Wait;
 use env::{EnvResult, ProgramKind, TaskId, TeamId, UnitCall, UnitCallRet, VirtAddr};
 
 /// 装域：镜像字节 + 特权级 → 新域（Space + Team，**无线程**）。
@@ -70,11 +71,11 @@ pub fn oust(team: TeamId) -> EnvResult<()> {
     Ok(())
 }
 
-/// 等目标回收：`millis`（0 = 只探测，`usize::MAX` = 永久）。
+/// 等目标回收：`millis`（上限族，`Wait`）。
 ///
 /// `true` = **调用开始时**目标已回收（未挂起）；`false` = 未回收（可能挂起过）。
-/// 调用模式：`loop { if join(task, 0)? { break } join(task, usize::MAX)? }`。
-pub fn join(task: TaskId, millis: usize) -> EnvResult<bool> {
+/// 调用模式：`loop { if join(task, Wait::POLL)? { break } join(task, Wait::Forever)? }`。
+pub fn join(task: TaskId, millis: Wait) -> EnvResult<bool> {
     let r = UnitCall::Join { task, millis }.call()?;
     match r {
         UnitCallRet::Join(b) => Ok(b),
@@ -82,8 +83,8 @@ pub fn join(task: TaskId, millis: usize) -> EnvResult<bool> {
     }
 }
 
-/// 等"我自己这张权限表里落进一枚"（`millis` 三态同全树）。
-pub fn fall(millis: usize) -> EnvResult<bool> {
+/// 等"我自己这张权限表里落进一枚"（`millis` 上限族，同全树）。
+pub fn fall(millis: Wait) -> EnvResult<bool> {
     let r = UnitCall::Fall { millis }.call()?;
     match r {
         UnitCallRet::Fall(b) => Ok(b),

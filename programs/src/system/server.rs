@@ -2,6 +2,7 @@
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
+use env::Wait;
 use env::{Mark, Name, ProgramKind, TaskId, TeamId};
 use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
@@ -24,7 +25,7 @@ pub use plan::assembly::Grant;
 /// `image` = 镜像字节（v1 口径）；`kind` = 特权级（**由清单决定**，调用方转交）；
 /// `grants` = **放行前**要交到它手里的门闩（空 = 什么都不预先给）；
 /// `quay` = 与它的会话（`Announce::Channel` 那一种才有：它就绪的凭据长在这里）；
-/// `millis` = 就绪等待（`0` 只探、`usize::MAX` 无期限、其余毫秒）。
+/// `millis` = 就绪等待（上限族，`Wait`）。
 ///
 /// **失败时不留下半行**：产线程**之前**失败 ⇒ 表不动；产线程**之后**失败 ⇒ 实例与
 /// 状态都如实留在表里（它确实在跑），调用方用 [`stop`] 收尾。
@@ -72,7 +73,7 @@ pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, F
 /// `grants` = 放行前要交到它手里的门闩（空 = 什么都不预先给）；`quay` = 与它的会话
 /// （`Announce::Channel` 那一种要用：它就绪的凭据长在这里）；`marks` = 放行后要逐条
 /// 认领的**记号**（顺序无关；记号即泊位名，装配单给的通道名就是它）；`millis` = 就绪等待
-/// （`0` 只探、`usize::MAX` 无期限、其余毫秒）。
+/// （上限族，`Wait`）。
 ///
 /// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、定会话都发生在这段窗口里，这与
 /// 载体的"恒产未放行"是同一条。
@@ -82,8 +83,8 @@ pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, F
 ///
 /// # Errors
 /// 见 [`Fail`]。
-/// `millis` = 就绪判定的**上限族**毫秒（口径见 `env::fid` 文件头的定式：`0` 只探测、
-/// `usize::MAX` 永久）——超时与"成立了"按返回值区分。
+/// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）——超时与"成立了"
+/// 按返回值区分。
 pub fn start(
     table: &mut Table,
     name: Name,
@@ -91,7 +92,7 @@ pub fn start(
     grants: &[Grant],
     quay: Option<&mut Quay>,
     marks: &[Mark],
-    millis: usize,
+    millis: Wait,
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
@@ -120,7 +121,7 @@ pub fn ready(
     name: Name,
     quay: Option<&mut Quay>,
     marks: &[Mark],
-    millis: usize,
+    millis: Wait,
 ) -> Result<bool, Fail> {
     // 先看表：上一次问过的事实（按这一行自己声明的说法解读）。
     if let Ready::Up = probe_ready(table, name) {
@@ -164,7 +165,7 @@ pub fn ready(
         return Err(Fail::NotReady);
     }
     // 还活着、只是没宣布：它确实在跑，**实例如实留在表里**（调用方用 `stop` 收尾）。
-    if millis == 0 {
+    if millis == Wait::POLL {
         return Ok(false);
     }
     Err(Fail::NotReady)
@@ -185,29 +186,30 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
     Ok(())
 }
 
-/// 等它收尾：`millis` 三态与 [`ready`] 同款（`0` 只探、`usize::MAX` 挂到它收尾、其余毫秒）。
+/// 等它收尾：`millis` 与 [`ready`] 同款（上限族，`Wait`）。
 /// **只读：不动表**。
 ///
 /// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{task, 0}`）；等只是为了少问几次。
 /// `Join{task, millis}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探——**"他杀
 /// 偶发不生效"那条错读就是漏了这一步**：把"醒过"当成了"没收到"。
 ///
-/// 为什么有界等不需要 clock、也不必睡满 `millis`：`WakeKey::Task{id}` 上的投信方只有 `wipe`，
+/// 为什么有界等不需要 clock、也不必睡满那一格：`WakeKey::Task{id}` 上的投信方只有 `wipe`，
 /// 而它只在 `bury` 里、`Reaped` 置位**之后**调（`kernel/src/work/room/messenger/reap.rs`）
 /// ⇒ 等待里的"早醒"只可能来自收尾；"到点"那一支由复探分出来（答 [`Reaped::Unsettled`]）。
 ///
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
 /// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::system::call) 同一折法。
-/// `millis` = **上限族**（口径见 `env::fid` 文件头的定式）；超时那支答 [`Reaped::Unsettled`]，
+/// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）；超时那支答
+/// [`Reaped::Unsettled`]，
 /// 不写表。
-pub fn until(table: &Table, name: Name, millis: usize) -> Result<Reaped, Fail> {
+pub fn until(table: &Table, name: Name, millis: Wait) -> Result<Reaped, Fail> {
     let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
     };
     if !crate::system::call::running(task) {
         return Ok(Reaped::Now);
     }
-    if millis == 0 {
+    if millis == Wait::POLL {
         return Ok(Reaped::Unsettled);
     }
     // 挂起等一记：醒来自收尾（`wipe`）或到点，两者当场分不开 ⇒ 醒来复探，判决只认它。
@@ -235,8 +237,8 @@ fn live_task(table: &Table, name: Name) -> Option<TaskId> {
 /// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（见 [`Slot`]：
 /// 清了就没得放下、也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：
 /// 那是"还没收干净"，不是"收了"。
-/// `millis` = **上限族**（口径见 `env::fid` 文件头的定式）。
-pub fn watch(table: &mut Table, name: Name, millis: usize) -> Result<bool, Fail> {
+/// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）。
+pub fn watch(table: &mut Table, name: Name, millis: Wait) -> Result<bool, Fail> {
     match until(table, name, millis)? {
         Reaped::Now | Reaped::Waited => {
             table.set_state(name, State::Dead);
@@ -277,7 +279,7 @@ pub fn supervise(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
     loop {
         // 等任一条道响。**`Pile` 的既定用法**（板那一轮同款）：**挂起过的那一侧返回的是
         // 预置值**——内核没有第二次执行机会，故醒来必须自己按组复核，不能靠返回值拿身份。
-        if pile.await_(usize::MAX).is_err() {
+        if pile.await_(Wait::Forever).is_err() {
             // 组坏了：退回"等最后一条退场"，行为与改动前一致。
             crate::service::wait_last(table, last);
             return;
@@ -288,7 +290,7 @@ pub fn supervise(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
             let Some(road) = lane.road else {
                 continue;
             };
-            if HolePie::from_token(road).pull_timeout(&mut lane_buf, 0).is_err() {
+            if HolePie::from_token(road).pull_timeout(&mut lane_buf, Wait::POLL).is_err() {
                 continue; // 这一条没货
             }
             // **道自己带着名字**（不用下标去装配单里翻：见 [`Lane`] 那段照实记）。
@@ -339,7 +341,7 @@ pub fn stop_running(table: &mut Table, lanes: &[Lane]) {
         if !matches!(table.find(name).map(|s| s.slot), Some(Slot::Live { .. })) {
             continue;
         }
-        match until(table, name, STOP_MS) {
+        match until(table, name, Wait::AtMost(STOP_MS)) {
             Ok(Reaped::Now) => mark_dead(table, name, Reaped::Now),
             Ok(Reaped::Waited) => mark_dead(table, name, Reaped::Waited),
             // 有界期内没等出来：照实报，交出这一位。**不是"没收到"**——判决只认非阻塞
@@ -371,7 +373,7 @@ fn account(table: &mut Table, name: Name) {
     let Slot::Live { .. } = row.slot else {
         return;
     };
-    let reaped = until(table, name, usize::MAX).unwrap_or(Reaped::Unsettled);
+    let reaped = until(table, name, Wait::Forever).unwrap_or(Reaped::Unsettled);
     mark_dead(table, name, reaped);
 }
 

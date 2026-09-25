@@ -42,6 +42,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 use protocol::system::operator::call as ocall;
@@ -78,7 +79,7 @@ fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("probe-denied: no sire") };
 
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
-    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-denied: no tree link") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-denied: no tree link") };
     let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-denied: no tree ask") };
 
     // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `echo` 上树那一趟同一形状）。
@@ -101,7 +102,7 @@ fn main() -> Report<'static> {
         entry,
         ocall::Rule::Public,
         false,
-        MS,
+        Wait::AtMost(MS),
     );
     let land_code = match land {
         Ok(id) => {
@@ -113,7 +114,7 @@ fn main() -> Report<'static> {
     };
 
     // 四、拒绝之后那一格**在不在**——`UNKNOWN` 才是"没被占"。
-    let after = operator::seek(hedge, &tree, &[dir, me], MS);
+    let after = operator::seek(hedge, &tree, &[dir, me], Wait::AtMost(MS));
     let seq = match after {
         Ok(id) => format!("id={}", id.get()),
         Err(code) => format!("err:{code}"),
@@ -140,8 +141,8 @@ fn main() -> Report<'static> {
 
 /// `/sys` 那一格的号：**分目录（幂等）+ 译号**。拿不到就 `None`（调用方报一句退场）。
 fn tree_dir(say_hole: PieToken, link: &Quay, dir: Name) -> Option<EntryId> {
-    operator::part(say_hole, link, Where::Root, dir, MS).ok()?;
-    operator::seek(say_hole, link, &[dir], MS).ok()
+    operator::part(say_hole, link, Where::Root, dir, Wait::AtMost(MS)).ok()?;
+    operator::seek(say_hole, link, &[dir], Wait::AtMost(MS)).ok()
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

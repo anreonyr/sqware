@@ -33,6 +33,7 @@
 //! 本域先认下它交给生我者的门牌，再把**它自己与树**补绑上（那两条起来时它还没在）。
 //! **装配者自己不绑**——它是写名册的那一个，不是被写的那一个。
 
+use env::Wait;
 use core::time::Duration;
 use env::Mark;
 
@@ -314,7 +315,7 @@ pub fn assemble<'a>(
         if p.holds_tree {
             tree = Some(task);
             otip = None;
-            operator::host_of(task, READY_MS, &mut otip).map_err(|why| {
+            operator::host_of(task, Wait::AtMost(READY_MS), &mut otip).map_err(|why| {
                 step(p, why);
                 p.died
             })?;
@@ -335,11 +336,11 @@ pub fn assemble<'a>(
                         step(p, "no identity face");
                         p.died
                     })?;
-                    let mine = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
+                    let mine = f.derive(PrincipalId::ROOT, Wait::AtMost(READY_MS)).map_err(|_| {
                         step(p, "derive self");
                         p.died
                     })?;
-                    f.bind(task, mine, READY_MS).map_err(|_| {
+                    f.bind(task, mine, Wait::AtMost(READY_MS)).map_err(|_| {
                         step(p, "bind self");
                         p.died
                     })?;
@@ -350,11 +351,11 @@ pub fn assemble<'a>(
                     // 是**唯一的响声**（原来它静默跳过 ⇒ 门禁会一直判不了身份，而没人知道为什么）。
                     match tree {
                         Some(t) => {
-                            let pt = f.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
+                            let pt = f.derive(PrincipalId::ROOT, Wait::AtMost(READY_MS)).map_err(|_| {
                                 step(p, "derive tree");
                                 p.died
                             })?;
-                            f.bind(t, pt, READY_MS).map_err(|_| {
+                            f.bind(t, pt, Wait::AtMost(READY_MS)).map_err(|_| {
                                 step(p, "bind tree");
                                 p.died
                             })?;
@@ -412,11 +413,11 @@ pub fn start(
     // 就做完，故服务一起来 `resolve(self)` 就答得出。（身份服务本身与树不走这里：它们起来时
     // 它还没在；那两条由 [`assemble`] 在它放行之后补绑。）
     if let Some(face) = face.filter(|_| p.bind) {
-        let mine = face.derive(PrincipalId::ROOT, READY_MS).map_err(|_| {
+        let mine = face.derive(PrincipalId::ROOT, Wait::AtMost(READY_MS)).map_err(|_| {
             step(p, "derive");
             p.died
         })?;
-        face.bind(task, mine, READY_MS).map_err(|_| {
+        face.bind(task, mine, Wait::AtMost(READY_MS)).map_err(|_| {
             step(p, "bind");
             p.died
         })?;
@@ -453,7 +454,7 @@ pub fn start(
     } else {
         Some(&mut quay)
     };
-    service::start(table, name, task, p.tokens, ups, &marks, READY_MS).map_err(|_| {
+    service::start(table, name, task, p.tokens, ups, &marks, Wait::AtMost(READY_MS)).map_err(|_| {
         step(p, "start failed");
         p.died
     })?;
@@ -470,7 +471,7 @@ pub fn start(
     //     `name` 跟着走：板据此在 `admit` 那一刻认下**这一位的死亡道**（道按名字认领，
     //     而名字只有装配者手里有——见 `protocol::system::board::call::TIP_LEN` 的照实记）。
     if p.board {
-        board::attach(&mut quay, me, task, name, READY_MS, btip, lane).map_err(|why| {
+        board::attach(&mut quay, me, task, name, Wait::AtMost(READY_MS), btip, lane).map_err(|why| {
             step(p, why);
             p.died
         })?;
@@ -483,7 +484,7 @@ pub fn start(
             step(p, "no tree yet");
             p.died
         })?;
-        operator::attach(&mut quay, task, host, READY_MS, otip, coord).map_err(|why| {
+        operator::attach(&mut quay, task, host, Wait::AtMost(READY_MS), otip, coord).map_err(|why| {
             step(p, why);
             p.died
         })?;
@@ -587,7 +588,7 @@ fn wire(
         &wants[..needs.len()],
         &mut ask,
         &mut reply,
-        READY_MS,
+        Wait::AtMost(READY_MS),
     )
     .map_err(Why::Draw)?;
     let said = pier.post(records);
@@ -602,7 +603,7 @@ fn wire(
 
 /// 等一条服务退场（本域等它 = 等这次会话结束）。
 pub fn wait_last(table: &mut Table, name: Name) {
-    while let Ok(false) = service::watch(table, name, usize::MAX) {}
+    while let Ok(false) = service::watch(table, name, Wait::Forever) {}
 }
 
 /// 认下身份服务**交给生我者**的那一枚门牌（装配者自己的那一份）。

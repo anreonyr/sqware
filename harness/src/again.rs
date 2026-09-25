@@ -52,6 +52,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Reason;
 
 use programs::root::boot;
@@ -119,7 +120,7 @@ fn main() -> Reason {
         say(&format!("again: r={round} step=spawn ok"));
 
         // start（无授权、无会话、放行即起来的那一种）。
-        if service::start(&mut table, name, task, &[], None, &[], MS).is_err() {
+        if service::start(&mut table, name, task, &[], None, &[], Wait::AtMost(MS)).is_err() {
             failures += 1;
             say(&format!("again: r={round} step=start REFUSED"));
             break;
@@ -142,7 +143,7 @@ fn main() -> Reason {
             break;
         }
         // **落地 `Dead`**：`until` 只读，写表的是 `watch`（见头注的照实记）。
-        match service::watch(&mut table, name, MS) {
+        match service::watch(&mut table, name, Wait::AtMost(MS)) {
             Ok(true) => {}
             _ => {
                 failures += 1;
@@ -165,7 +166,7 @@ fn main() -> Reason {
     let mut gave_up = 0usize;
     loop {
         // `watch`：死了就把 `Dead` 落地（只读的 `until` 不算）。
-        let dead = service::watch(&mut table, name, MS).unwrap_or(false);
+        let dead = service::watch(&mut table, name, Wait::AtMost(MS)).unwrap_or(false);
         if !dead {
             break;
         }
@@ -182,14 +183,14 @@ fn main() -> Reason {
             failures += 1;
             break;
         };
-        if service::start(&mut table, name, task, &[], None, &[], MS).is_err() {
+        if service::start(&mut table, name, task, &[], None, &[], Wait::AtMost(MS)).is_err() {
             failures += 1;
             break;
         }
         tries += 1;
         restarts += 1;
         let _ = service::stop(&mut table, name);
-        let _ = service::watch(&mut table, name, MS);
+        let _ = service::watch(&mut table, name, Wait::AtMost(MS));
     }
     // 放弃之后表里的样子：**`Dead` 与坐标并存**（这就是"它是什么"的答案）。
     trace(&table, name, ROUNDS + 1, "gave-up");

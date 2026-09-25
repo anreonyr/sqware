@@ -2,6 +2,7 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`crate::driver::supply::frame`]。
 
+use env::Wait;
 use env::{PieToken, TaskId};
 use plan::{Key, PAIR_LEN, Pair};
 
@@ -16,7 +17,7 @@ pub fn draw<'r>(
     wants: &[Want],
     ask: &mut [u8],
     reply: &'r mut [u8],
-    millis: usize,
+    millis: Wait,
 ) -> Result<&'r [u8], Fail> {
     if wants.is_empty() || wants.len() > WANT_MAX {
         return Err(Fail::Local);

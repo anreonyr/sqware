@@ -83,6 +83,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 use alloc::format;
@@ -148,7 +149,7 @@ fn main() -> Report<'static> {
     let Ok(me) = utask::self_id() else { return bail("probe-rule: no self id") };
 
     // 一、上树：本域开一条会话，走两趟按名字找（盟册那一面 + 名册那一面）——与 `member` 同形。
-    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-rule: no tree link") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-rule: no tree link") };
     let Ok(talk) = operator::ask_hole(host) else { return bail("probe-rule: no tree ask") };
     // 一点五、**再要一次问话孔**：一个域只该铸一枚 ⇒ 第二次叫回来的是**同一枚**（客侧先找后铸），
     // 故下面每一问都改用**第二枚**那个号——它要是另一枚孔，持树者认的还是第一枚，
@@ -162,12 +163,12 @@ fn main() -> Report<'static> {
     let Ok(policy) = PrincipalFace::of(entry) else { return bail("probe-rule: bad identity face") };
 
     // 二、我是谁：装配期绑的那一条（`p`），以及它底下的一条（`q`，给"换一位代表"用）。
-    let Ok(Some(p)) = policy.resolve(me, MS) else { return bail("probe-rule: unbound") };
-    let Ok(q) = policy.derive(p, MS) else { return bail("probe-rule: no sub identity") };
+    let Ok(Some(p)) = policy.resolve(me, Wait::AtMost(MS)) else { return bail("probe-rule: unbound") };
+    let Ok(q) = policy.derive(p, Wait::AtMost(MS)) else { return bail("probe-rule: no sub identity") };
 
     // 三、立一枚盟并**进去**（"立了不等于进了"：`found` 只发号，成员要靠 `enter`）。
-    let Ok(c) = coal.found(MS) else { return bail("probe-rule: no coalition id") };
-    if coal.enter(c, MS).is_err() {
+    let Ok(c) = coal.found(Wait::AtMost(MS)) else { return bail("probe-rule: no coalition id") };
+    if coal.enter(c, Wait::AtMost(MS)).is_err() {
         return bail("probe-rule: enter failed");
     }
 
@@ -175,8 +176,8 @@ fn main() -> Report<'static> {
     let Ok(dir) = Name::new(DIR) else { return bail("probe-rule: bad name") };
     let Ok(pane) = Name::new(PANE) else { return bail("probe-rule: bad name") };
     let Ok(mine) = Name::new(MINE) else { return bail("probe-rule: bad name") };
-    let Ok(at) = operator::part(talk, &tree, Where::Root, dir, MS) else { return bail("probe-rule: no /sys") };
-    let Ok(pane_id) = operator::part(talk, &tree, Where::At(at), pane, MS) else { return bail("probe-rule: no /sys/rule") };
+    let Ok(at) = operator::part(talk, &tree, Where::Root, dir, Wait::AtMost(MS)) else { return bail("probe-rule: no /sys") };
+    let Ok(pane_id) = operator::part(talk, &tree, Where::At(at), pane, Wait::AtMost(MS)) else { return bail("probe-rule: no /sys/rule") };
 
     // 五、落三格，各带一条规矩。`mine = false`：这一台证的是**"用"那一轴**，故不声明归属
     //     （那一轴由 `probe-owner` / `probe-lease` 那两台管）。
@@ -257,7 +258,7 @@ fn main() -> Report<'static> {
         None => EntryId::new(0),
     };
     let temp_id = plate(talk, &tree, host, pane_id, TEMP, Rule::Public, false);
-    let trimmed = temp_id.get() != 0 && operator::trim(talk, &tree, temp_id, MS).is_ok();
+    let trimmed = temp_id.get() != 0 && operator::trim(talk, &tree, temp_id, Wait::AtMost(MS)).is_ok();
     let gone_id = plate(
         talk,
         &tree,
@@ -276,24 +277,24 @@ fn main() -> Report<'static> {
     let mine_id = plate(talk, &tree, host, pane_id, MINE, Rule::Public, true);
 
     // 六、以 `p` 试五遍——前三条**正证**，后两条是 `Opens` 的正负两面。
-    let is = look(talk, &tree, is_id, MS);
-    let under = look(talk, &tree, under_id, MS);
-    let inside = look(talk, &tree, in_id, MS);
-    let open = look(talk, &tree, open_id, MS);
-    let foreign = look(talk, &tree, foreign_id, MS);
-    let on_pane = look(talk, &tree, at_pane_id, MS);
-    let on_gone = look(talk, &tree, gone_id, MS);
+    let is = look(talk, &tree, is_id, Wait::AtMost(MS));
+    let under = look(talk, &tree, under_id, Wait::AtMost(MS));
+    let inside = look(talk, &tree, in_id, Wait::AtMost(MS));
+    let open = look(talk, &tree, open_id, Wait::AtMost(MS));
+    let foreign = look(talk, &tree, foreign_id, Wait::AtMost(MS));
+    let on_pane = look(talk, &tree, at_pane_id, Wait::AtMost(MS));
+    let on_gone = look(talk, &tree, gone_id, Wait::AtMost(MS));
 
     // 七、**换一位代表**（同一个 TID）：领到自己派生的那条号底下。
-    let adopt = policy.adopt(q, MS).is_ok();
+    let adopt = policy.adopt(q, Wait::AtMost(MS)).is_ok();
 
     // 八、以 `q` 再试——前两条**负证**、第三条仍是正证（"看支不看相等"）；
     //     `open` 那一格**照旧过**：开者与问的人是**同一条 TID**，换代表之后两边一起变成 `q`
     //     ——这正是"规矩随**身份**走、不随 TID 走"与 `Is` 那一格（拒）的分野。
-    let is_sub = look(talk, &tree, is_id, MS);
-    let under_sub = look(talk, &tree, under_id, MS);
-    let in_sub = look(talk, &tree, in_id, MS);
-    let open_sub = look(talk, &tree, open_id, MS);
+    let is_sub = look(talk, &tree, is_id, Wait::AtMost(MS));
+    let under_sub = look(talk, &tree, under_id, Wait::AtMost(MS));
+    let in_sub = look(talk, &tree, in_id, Wait::AtMost(MS));
+    let open_sub = look(talk, &tree, open_id, Wait::AtMost(MS));
     // 再用一枚**新孔重落**自己那一格（换绑）：走的就是 `claimable` 那一支。
     let keep = match mail::unseal_hole(env::Mark::of("rule-entry")) {
         Ok(entry) if mine_id.get() != 0 => operator::land(
@@ -305,7 +306,7 @@ fn main() -> Report<'static> {
             entry,
             Rule::Public,
             true,
-            MS,
+            Wait::AtMost(MS),
         )
         .err()
         .unwrap_or(ocall::OK),
@@ -422,12 +423,12 @@ fn plate(
     let Ok(one) = Name::new(name) else {
         return EntryId::new(0);
     };
-    operator::land(talk, link, host, Where::At(at), one, entry, rule, mine, MS)
+    operator::land(talk, link, host, Where::At(at), one, entry, rule, mine, Wait::AtMost(MS))
         .unwrap_or(EntryId::new(0))
 }
 
 /// 拿那一格去 `find`：答线上那一格码（`OK` = 放行；本程序只看码，不看那一枚）。
-fn look(talk: PieToken, link: &Quay, id: EntryId, millis: usize) -> u8 {
+fn look(talk: PieToken, link: &Quay, id: EntryId, millis: Wait) -> u8 {
     if id.get() == 0 {
         return ocall::UNKNOWN;
     }
@@ -446,7 +447,7 @@ fn find_face(link: &Quay, talk: PieToken, dir: &str, name: &str) -> Option<PieTo
         return None;
     };
     let id = seek_id(link, talk, &[dir, one])?;
-    match operator::find(talk, link, id, MS) {
+    match operator::find(talk, link, id, Wait::AtMost(MS)) {
         Ok((ocall::OK, Some(entry))) => Some(entry),
         _ => None,
     }
@@ -458,7 +459,7 @@ fn find_face(link: &Quay, talk: PieToken, dir: &str, name: &str) -> Option<PieTo
 fn seek_id(link: &Quay, talk: PieToken, road: &[Name]) -> Option<EntryId> {
     let mut left = MS;
     loop {
-        match operator::seek(talk, link, &road, MS) {
+        match operator::seek(talk, link, &road, Wait::AtMost(MS)) {
             Ok(id) => return Some(id),
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));

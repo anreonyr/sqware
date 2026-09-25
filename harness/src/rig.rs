@@ -208,6 +208,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Reason;
 
 use env::Mark;
@@ -459,7 +460,7 @@ fn body(
         &[],
         Some(quay),
         &[Mark::of(link.as_str())],
-        HANDSHAKE_MS,
+        Wait::AtMost(HANDSHAKE_MS),
     )
     .map_err(|_| "start")?;
     let pie = *quay.find(link).ok_or("no pier")?;
@@ -484,11 +485,11 @@ fn body(
 
     // 杀（域粒度收令）+ 判：判决只认非阻塞那一问（见 `service::until`）。
     let _ = service::stop(table, name);
-    Ok(match service::until(table, name, MS) {
+    Ok(match service::until(table, name, Wait::AtMost(MS)) {
         Ok(Reaped::Now) => Verdict::Now,
         Ok(Reaped::Waited) => Verdict::Waited,
         // 判定窗口内没结论 ⇒ 再看一眼宽限：迟到 vs 没了。
-        _ => match service::until(table, name, LATE_MS) {
+        _ => match service::until(table, name, Wait::AtMost(LATE_MS)) {
             Ok(Reaped::Now) | Ok(Reaped::Waited) => Verdict::Late,
             _ => Verdict::Lost,
         },

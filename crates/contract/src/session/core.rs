@@ -3,6 +3,7 @@
 //! 本文件**不碰内核**：它要的十件手全部**注入**进来（[`Hands`]），故会话的规矩喂一张假表
 //! 就能推理，换载体不必重写。那条"不碰内核"的纪律现在由 **crate 边界**管着（见本 crate 头注）。
 
+use env::Wait;
 use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken, TaskId};
@@ -81,7 +82,7 @@ impl Pier {
     ///
     /// 与 [`Pier::post`] 成对：那一边说的是**对端的孔**，这一边收的是**本端的孔**。
     /// 收下来的字节数由返回值给出（`Err(())` = 期限内没等到）。
-    pub fn pull(&self, buf: &mut [u8], millis: usize) -> Result<usize, ()> {
+    pub fn pull(&self, buf: &mut [u8], millis: Wait) -> Result<usize, ()> {
         (self.pull_own)(self.hole, buf, millis)
     }
 
@@ -230,7 +231,7 @@ impl Quay {
     /// 认领下来的泊位留在码头里（那是它的家），用 [`Quay::find`] 取。
     ///
     /// `millis` 属**上限族**（三态口径见 `env::fid` 文件头的定式）。
-    pub fn claim(&mut self, of: TaskId, mark: Mark, millis: usize) -> Result<(), Claim> {
+    pub fn claim(&mut self, of: TaskId, mark: Mark, millis: Wait) -> Result<(), Claim> {
         if self.piers.is_empty() {
             // 我一条都没 seat 出去 ⇒ 没有额度可认领（对方无从知道该给我几条）。
             return Err(Claim::Partial);
@@ -238,9 +239,16 @@ impl Quay {
 
         // **先扫再等**（这一序不能反）：信标是一次事件，先扫过一遍才不会漏掉
         // "等之前就已经落进来"的那一枚。
-        let left = millis;
-        let deadline =
-            (left != usize::MAX).then(|| (self.hands.now_ns)().saturating_add(left as u64 * 1_000_000));
+        // 期限那一格：**永久落成一个"到不了的点"，不落成 `Wait::Forever`**——理由与
+        // `HolePie::pull_timeout_from` 那条照实记同源（内核的武装点被 `BLIND_MS` 收着，故
+        // "到不了的点" = 每 ~100 ms 复探一次，那是这条等待今天的护栏）。**这一格是这一刀里
+        // 唯一刻意保留旧形状的地方**：把永久改成不武装定时器要先动内核，不在这一刀里。
+        let deadline = match millis {
+            Wait::Forever => u64::MAX,
+            Wait::AtMost(ms) => {
+                (self.hands.now_ns)().saturating_add(ms as u64 * 1_000_000)
+            }
+        };
         loop {
             self.scan(of, mark)?;
             // **到手了没有**：本端认下的写端里，有没有一枚的两格正是 `(of, mark)`——判据与
@@ -256,8 +264,8 @@ impl Quay {
             if got {
                 return Ok(());
             }
-            let remain = remain_ms(deadline, self.hands.now_ns);
-            if left == 0 || remain == 0 {
+            let remain = remain_wait(deadline, self.hands.now_ns);
+            if millis == Wait::POLL || remain == Wait::POLL {
                 // 「一笔都没到」与「到了一些、不齐」是两种下一步（前面那种等于白等，
                 // 后面那种要接着等剩下的）：两条计数只在这一刻用得上，故不再单独立函数
                 // ——额度 = 我装上的条数（本端每一条路都在 `piers` 里），欠账 = 还没配齐
@@ -270,7 +278,7 @@ impl Quay {
                     Claim::Partial
                 });
             }
-            // 有界等（`usize::MAX` = 永久）。返回**只是提示**（`wake` 的正文）：真醒还是
+            // 有界等（[`Wait::Forever`] = 永久）。返回**只是提示**（`wake` 的正文）：真醒还是
             // 期限到，由下一轮的扫表说了算——故这里不接它的值。
             let _ = (self.hands.fall)(remain);
         }
@@ -360,16 +368,14 @@ impl Quay {
     }
 }
 
-/// 死线还剩多少**毫秒**（`None` = 永久）。`fall` 收的是毫秒。
+/// 死线**还剩多久**。`fall` 收的就是这一格。
 ///
 /// 向上取整：`1..1_000_000` 纳秒的零头算 1 毫秒（否则会提前判超时）；
-/// 只有真到了死线才给 0——那一格是"期限到"的判据。
-fn remain_ms(deadline: Option<u64>, now_ns: NowNs) -> usize {
-    match deadline {
-        Some(at) => at
-            .saturating_sub(now_ns())
-            .div_ceil(1_000_000)
-            .min(usize::MAX as u64) as usize,
-        None => usize::MAX,
-    }
+/// 只有真到了死线才给 [`Wait::POLL`]——那一格是"期限到"的判据。
+///
+/// **照实记（这一刀在这里少了一格）**：从前它返 `usize`，末尾挂着一句
+/// `.min(usize::MAX as u64)`——把"算出来的毫秒数"压回哨兵那一格。上限族成了类型之后那句
+/// 钳位不必再要（死线是 `u64`，"到不了的点"就是 `u64::MAX`，除法结果落在 `usize` 里绰绰有余）。
+fn remain_wait(deadline: u64, now_ns: NowNs) -> Wait {
+    Wait::AtMost(deadline.saturating_sub(now_ns()).div_ceil(1_000_000) as usize)
 }

@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`crate::system::board::call`]。
 
+use env::Wait;
 use env::Mark;
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
@@ -22,7 +23,7 @@ pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 /// 客人交出来的孔都落在生我者表里，故"板是谁"得由装配者告诉（见文件头），此后客人交孔、
 /// 交入口才叫得出板。认领那一枚按 `(对端, 记号)` 两格认：对端是 `holder`（它 `seat` 出来
 /// 的那一枚），记号就是板路的名字。
-pub fn open(holder: TaskId, millis: usize) -> Result<(Quay, TaskId), Fail> {
+pub fn open(holder: TaskId, millis: Wait) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let mut quay = Quay::open(holder, crate::session::call::hands());
     quay.seat(link).map_err(bcall::map_seat)?;
@@ -73,7 +74,7 @@ pub fn ask(
     op: u8,
     name: Name,
     entry: PieToken,
-    millis: usize,
+    millis: Wait,
 ) -> Result<u8, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
@@ -99,7 +100,7 @@ pub fn ask(
 ///
 /// 板那侧据此撤格 + 摘掉这一位挂在板上的**全部**牌子；它不在账上则答
 /// [`UNKNOWN`](bcall::UNKNOWN)。
-pub fn evict(say: PieToken, link: &Quay, millis: usize) -> Result<u8, Fail> {
+pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 孔是单槽：与 [`ask`] 同一条路，只是这一帧短。
@@ -125,7 +126,7 @@ pub fn evict(say: PieToken, link: &Quay, millis: usize) -> Result<u8, Fail> {
 /// 收下板路上那一格：**答话的是谁**（[`tell`] 的对偶）。
 ///
 /// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上板（客人报它自己的超时，不猜）。
-pub(crate) fn hear(quay: &Quay, millis: usize) -> Option<TaskId> {
+pub(crate) fn hear(quay: &Quay, millis: Wait) -> Option<TaskId> {
     let link = Name::new(LINK).ok()?;
     let pier = quay.find(link)?;
     let mut buf = [0u8; 8];

@@ -16,6 +16,7 @@
 //! 就答 0），树那条路是"按名找人"的现成一步；而身份那一份门牌**只能按名字找**——本域不是
 //! 装配者，拿不到它手里那一份副本（正文 K7 的被否项：转授要新装配机制）。
 
+use env::Wait;
 use alloc::format;
 use core::time::Duration;
 
@@ -55,7 +56,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     };
 
     // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
-    let Ok((_link, board_link)) = board::open(assembler, MS) else {
+    let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
         return Err(super::fail::Fail::Board);
     };
     if board::ask_hole(board_link).is_err() {
@@ -68,7 +69,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     };
 
     // 四、上树：分 `/sys`、落 `/sys/coalition`、再查回来验一遍（同 router / rtc / principal）。
-    let Ok((tree, host)) = operator::open(assembler, MS) else {
+    let Ok((tree, host)) = operator::open(assembler, Wait::AtMost(MS)) else {
         return Err(super::fail::Fail::Tree);
     };
     let Ok(talk) = operator::ask_hole(host) else {
@@ -122,11 +123,11 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
-        if pile.await_(usize::MAX).is_err() {
+        if pile.await_(Wait::Forever).is_err() {
             return Err(super::fail::Fail::Desk);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
+        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, Wait::POLL) {
             turn(&mut book, &face, from, &buf[..len]);
         }
     }
@@ -220,7 +221,7 @@ fn answer(
 /// 压它的理由同 rtc 那一格：**调用方的下一步在两种情况下相同**（别指望这条路）；principal
 /// 那枚 `Denied` 翻不过来，因为本族的 `Denied` 是空的（盟无主）。
 fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
-    face.resolve(from, MS)
+    face.resolve(from, Wait::AtMost(MS))
         .map_err(|_| Fail::Unknown)?
         .ok_or(Fail::Unknown)
 }
@@ -262,7 +263,7 @@ fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
     // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
     let mut left = MS;
     let id = loop {
-        match operator::seek(talk, link, &road, left) {
+        match operator::seek(talk, link, &road, Wait::AtMost(left)) {
             Ok(id) => break id,
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
@@ -271,7 +272,7 @@ fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
             Err(_) => return None,
         }
     };
-    match operator::find(talk, link, id, MS) {
+    match operator::find(talk, link, id, Wait::AtMost(MS)) {
         Ok((ocall::OK, Some(entry))) => Some(entry),
         _ => None,
     }
@@ -288,7 +289,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
     // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, link, Where::Root, dir, MS);
+    let dir_at = operator::part(talk, link, Where::Root, dir, Wait::AtMost(MS));
     let (part, dir_id) = match dir_at {
         Ok(id) => (ocall::OK, id.get()),
         Err(code) => (code, 0),
@@ -304,7 +305,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
             entry,
             ocall::Rule::Public,
             false,
-            MS,
+            Wait::AtMost(MS),
         ),
         Err(code) => Err(code),
     };
@@ -314,7 +315,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
     let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, link, id, MS) {
+        Ok(id) => match operator::find(talk, link, id, Wait::AtMost(MS)) {
             Ok((code, entry)) => (code, entry.is_some()),
             Err(_) => (ocall::BAD, false),
         },
@@ -324,7 +325,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()
-        .and_then(|id| operator::name(talk, link, id, MS).ok());
+        .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
     say(&format!(
         "coalition: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),

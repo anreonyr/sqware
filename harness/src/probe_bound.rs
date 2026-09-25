@@ -40,6 +40,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 use alloc::format;
@@ -77,7 +78,7 @@ fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("probe-bound: no sire") };
 
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
-    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-bound: no tree link") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-bound: no tree link") };
     let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-bound: no tree ask") };
     let Ok(dir) = Name::new("sys") else { return bail("probe-bound: bad name") };
 
@@ -144,11 +145,11 @@ fn junk_trip(hedge: PieToken, tree: &Quay, dir: Name) -> (bool, bool, bool) {
     let said = Name::new(LINK)
         .ok()
         .and_then(|at| tree.find(at))
-        .and_then(|pier| pier.pull(&mut back, MS).ok());
+        .and_then(|pier| pier.pull(&mut back, Wait::AtMost(MS)).ok());
     let bad = matches!(said, Some(1) if back[0] == ocall::BAD);
 
     // 正经的一问：**门还在答**。
-    let after = operator::part(hedge, tree, Where::Root, dir, MS).is_ok();
+    let after = operator::part(hedge, tree, Where::Root, dir, Wait::AtMost(MS)).is_ok();
     (pushed, bad, after)
 }
 

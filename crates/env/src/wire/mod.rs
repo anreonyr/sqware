@@ -81,6 +81,19 @@ impl Wire for u64 {
     }
 }
 
+impl Wire for crate::wait::Wait {
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        s[*i] = self.to_wire();
+        *i += 1;
+    }
+    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
+        let v = *s.get(*i).ok_or(Decode::Overflow)?;
+        *i += 1;
+        // 满射（每个 `usize` 都有一格）⇒ 解码这一步没有非法位可拒。
+        Ok(crate::wait::Wait::from_wire(v))
+    }
+}
+
 impl Wire for bool {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
         s[*i] = *self as usize;

@@ -57,6 +57,7 @@ mod session {
 /// **照实记（`#[path]` 退场）**：这两份原先各拿一行 `#[path]` 逐字编进靶，外加 `fail_codes!`
 /// 码表一份（宏的可见性按正文先后 ⇒ `#[macro_use]` 那两行必须写在帧模块之前）。真依赖挂上
 /// 之后三行一起退场：码表随 `frame.rs` 住在 `contract` 里，本台一处都不碰。
+use env::Wait;
 use contract::driver::line::{core, frame as call};
 
 use env::Mark;
@@ -80,7 +81,7 @@ fn pier(text: &str) -> Pier {
     let mut q = Quay::open(PEER, session::call::hands());
     q.seat(fake::name(text)).expect("装得上");
     fake::put(9, PEER, Mark::of(text));
-    q.claim(PEER, Mark::of(text), 0).expect("对端那一枚到了");
+    q.claim(PEER, Mark::of(text), Wait::AtMost(0)).expect("对端那一枚到了");
     *q.find(fake::name(text)).expect("在")
 }
 

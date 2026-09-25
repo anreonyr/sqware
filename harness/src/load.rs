@@ -85,6 +85,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Reason;
 
 use harness::tick;
@@ -201,7 +202,7 @@ fn spawn_one(
     let Ok(task) = service::mint(table, name, elf, kind) else {
         return false;
     };
-    service::start(table, name, task, &[], None, &[], 0).is_ok()
+    service::start(table, name, task, &[], None, &[], Wait::POLL).is_ok()
 }
 
 /// 清单里按名字取镜像（台主只认这两条）。

@@ -46,6 +46,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 // 需求单归**收方**：本域那张单子住 lib 里（装配者要照它开单），同一份源码编一次。
@@ -152,14 +153,14 @@ fn main() -> Report<'static> {
 /// 上树一趟：`FIND /device/router` ⇒ 那扇门（登记从它走）。
 fn find_router() -> Option<PieToken> {
     let sire = utask::sire().ok()?;
-    let (link, host) = operator::open(sire, MS).ok()?;
+    let (link, host) = operator::open(sire, Wait::AtMost(MS)).ok()?;
     let talk = operator::ask_hole(host).ok()?;
     let dir = Name::new(protocol::driver::DIR).ok()?;
     let want = Name::new(SERVICE).ok()?;
     let road = [dir, want];
     // **间接寻址那一手**：名字先译成号，此后按号。
-    let id = operator::seek(talk, &link, &road, MS).ok()?;
-    match operator::find(talk, &link, id, MS) {
+    let id = operator::seek(talk, &link, &road, Wait::AtMost(MS)).ok()?;
+    match operator::find(talk, &link, id, Wait::AtMost(MS)) {
         Ok((ocall::OK, Some(entry))) => Some(entry),
         _ => None,
     }
@@ -169,7 +170,7 @@ fn find_router() -> Option<PieToken> {
 ///
 /// 答码用 [`lcall::fail_to_code`]——**与线上同一张表**（客户端不从失败域另编一套号）。
 fn attempt(entry: PieToken, key: Key) -> (u8, Option<line::client::Line>) {
-    match line::client::Line::occupy(entry, key, MS) {
+    match line::client::Line::occupy(entry, key, Wait::AtMost(MS)) {
         Ok(held) => (lcall::OK, Some(held)),
         Err(fail) => (lcall::fail_to_code(Some(fail)), None),
     }

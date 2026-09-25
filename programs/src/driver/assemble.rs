@@ -18,6 +18,7 @@
 //! （`let [Some(a), ..] = slots else { … }`）——缺一格就是装配错，而"该有几格"是收方那张单
 //! 的账（`needs::WANTS`）。本模块只保证**回单与单子同序同长**：第 i 条落第 i 格。
 
+use env::Wait;
 use alloc::vec;
 use plan::{PAIR_LEN, Pair};
 use protocol::session::Quay;
@@ -48,7 +49,7 @@ pub fn receive(slots: &mut [Option<Pair>]) -> Result<usize, usize> {
     let up = quay.find(channel).ok_or(E_UP)?;
     // 缓冲按本域那张单子备：需求单几条就备几条（发货方不必抄这个数）。
     let mut buf = vec![0u8; PAIR_LEN * slots.len()];
-    let n = up.pull(&mut buf, MS).map_err(|_| E_GRANT)?;
+    let n = up.pull(&mut buf, Wait::AtMost(MS)).map_err(|_| E_GRANT)?;
     if n != PAIR_LEN * slots.len() {
         // 短了/长了都算这次配给不成立：位置即格，条数对不上就没有"第 i 格"可言。
         return Err(E_GRANT);

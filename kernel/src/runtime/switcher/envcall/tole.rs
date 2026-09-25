@@ -17,11 +17,10 @@
 //! 返回恒是预置值（`PieToken::NONE`），调用方按 deadline 循环、醒来自己按组快照复核。
 
 use alloc::sync::{Arc, Weak};
-use core::time::Duration;
 
 use env::{HoleDir, ToleCall};
 
-use env::{Fail, PieToken};
+use env::{Fail, PieToken, Wait};
 
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail::tole::Mate;
@@ -133,12 +132,8 @@ fn detach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleD
 /// 等待权已被我过户（`usable`）→ `HandedOver`。折成一个码会把"组没了，换策略"与"号拿错了，
 /// 修 bug"压成同一件——而这两件事的处置正好相反。顺序本身由共用的 `gate::accede` 决定
 /// （死活先于权限），本处只补第三维。
-fn await_(frame: &mut TrapContext, group: PieToken, millis: usize) -> Outcome {
-    let dur = if millis == usize::MAX {
-        Duration::MAX
-    } else {
-        Duration::from_millis(millis as u64)
-    };
+fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
+    let dur = millis.into_duration();
     // 当前任务那份 `Arc` 是**临时量**：第一段闭包里就落地（跨挂起不得持强引用）。
     let looked = current()
         .running_task()

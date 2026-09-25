@@ -299,11 +299,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 (s.asid(), s.life())
             };
             let wkey = WakeKey::Space { space, slot: key };
-            let dur = if millis == usize::MAX {
-                Duration::MAX
-            } else {
-                Duration::from_millis(millis as u64)
-            };
+            let dur = millis.into_duration();
             drop(ident);
             // `wlife` **按值**交给等待机（站点是它唯一的持有者）。
             match wait(wkey, wlife, dur) {
@@ -477,11 +473,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             }
         }
         EnvCall::Unit(UnitCall::Join { task, millis }) => {
-            let dur = if millis == usize::MAX {
-                Duration::MAX
-            } else {
-                Duration::from_millis(millis as u64)
-            };
+            let dur = millis.into_duration();
             // 判活三态**在边界一次问清**（room 不查注册表）：
             //   ① 名册里没有这个 id ⇒ **从未分配** = 非法 id ⇒ Denied。旧版把这一支与
             //      「目标仍活」折在一起（判活有两个真相源时必然如此），于是非法 id 拿到
@@ -528,11 +520,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             }
         }
         EnvCall::Unit(UnitCall::Fall { millis }) => {
-            let dur = if millis == usize::MAX {
-                Duration::MAX
-            } else {
-                Duration::from_millis(millis as u64)
-            };
+            let dur = millis.into_duration();
             // **只等"我自己这张表"**：键由内核从调用者推出来，故这里没有参数、
             // 也就没有伪造面（同 `SelfId` / `Sire` 那一路）。
             let Some(me) = current().running_task() else {

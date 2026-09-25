@@ -35,6 +35,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Reason;
 
 use env::HoleDir;
@@ -74,7 +75,7 @@ fn main() -> Reason {
     // 槽空 ⇒ 那一次只是"快照变了"的提示 ⇒ **继续等**（契约：`await_` 的返回只是提示，
     // 别把一次返回当终局）。
     loop {
-        if pile.await_(usize::MAX).is_err() {
+        if pile.await_(Wait::Forever).is_err() {
             return bail("waiter: await");
         }
         match member.peek() {

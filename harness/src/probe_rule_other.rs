@@ -44,6 +44,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 use alloc::format;
@@ -86,7 +87,7 @@ fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("probe-other: no sire") };
 
     // 一、上树：本域只开一条会话（不找门牌——本台只 `seek` / `find`，不问身份）。
-    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-other: no tree link") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-other: no tree link") };
     let Ok(talk) = operator::ask_hole(host) else { return bail("probe-other: no tree ask") };
     let (Ok(dir), Ok(pane), Ok(is_name), Ok(under_name), Ok(foreign_name)) = (
         Name::new(DIR),
@@ -128,7 +129,7 @@ fn main() -> Report<'static> {
 fn denied(talk: PieToken, link: &Quay, road: &[Name]) -> u8 {
     let mut left = MS;
     let id = loop {
-        match operator::seek(talk, link, road, MS) {
+        match operator::seek(talk, link, road, Wait::AtMost(MS)) {
             Ok(id) => break id,
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
@@ -140,7 +141,7 @@ fn denied(talk: PieToken, link: &Quay, road: &[Name]) -> u8 {
     // `find` 的失败域是 `Fail`（六格），答话码是另一张表——这里只关心"拒没拒"，
     // 故译不出号/推不动都按 [`ocall::BAD`] 记（读数上分得开）。
     // （`find` 的第二格 = 那一枚入口在本域表里的号：这一支不看它，只要状态。）
-    operator::find(talk, link, id, MS)
+    operator::find(talk, link, id, Wait::AtMost(MS))
         .map(|(code, _entry)| code)
         .unwrap_or(ocall::BAD)
 }

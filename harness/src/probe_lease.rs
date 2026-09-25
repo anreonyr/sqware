@@ -27,6 +27,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 use protocol::system::operator::Where;
@@ -61,11 +62,11 @@ const OK_NOTE: &str = "probe-lease: landed, leaving";
 #[programs::entry]
 fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("probe-lease: no sire") };
-    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-lease: no tree link") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-lease: no tree link") };
     let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-lease: no tree ask") };
     let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else { return bail("probe-lease: bad name") };
     // `/sys` 已经在（principal / coalition 起的头）；`part` 幂等，故这里照走一遍拿号。
-    let Ok(at) = operator::part(hedge, &tree, Where::Root, dir, MS) else { return bail("probe-lease: no /sys") };
+    let Ok(at) = operator::part(hedge, &tree, Where::Root, dir, Wait::AtMost(MS)) else { return bail("probe-lease: no /sys") };
     let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else { return bail("probe-lease: no entry") };
 
     // 落牌：**声明归本域**（`mine = true`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
@@ -78,7 +79,7 @@ fn main() -> Report<'static> {
         entry,
         ocall::Rule::Public,
         true,
-        MS,
+        Wait::AtMost(MS),
     );
 
     // 读数那一行照旧（两种形状：落上了报号、没落上报码）——**判据**在下面那一例里。

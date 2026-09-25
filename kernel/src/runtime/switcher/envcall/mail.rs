@@ -9,9 +9,8 @@
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::time::Duration;
 
-use env::{Fail, HoleDir, MailCall, PieToken, TaskId};
+use env::{Fail, HoleDir, MailCall, PieToken, TaskId, Wait};
 
 use riscv::register::sie;
 
@@ -190,7 +189,8 @@ fn pull(
 
 /// 等就绪：权柄判定（`dir` 决定 R 还是 W）→ 探测或挂起。
 ///
-/// `millis == usize::MAX` = 永久；`0` = 只探测不挂起。a0 返 `true` = 本次调用
+/// `millis` 是上限族（`Wait::Forever` = 永久、`Wait::POLL` = 只探测不挂起；
+/// 过线那一格拼成 `usize::MAX` / `0`）。a0 返 `true` = 本次调用
 /// **当场就绪**（未挂起）；`false` = 未就绪（探测失败，或被唤醒/超时——两者不分）。
 /// **绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
 ///
@@ -201,7 +201,7 @@ fn wait_dir(
     ident: Arc<TaskIdent>,
     token: PieToken,
     dir: HoleDir,
-    millis: usize,
+    millis: Wait,
 ) -> Outcome {
     /// 等的是哪一条通道：孔指向具体方向，铃就是铃。
     enum Ready {
@@ -231,11 +231,7 @@ fn wait_dir(
             },
         },
     };
-    let dur = if millis == usize::MAX {
-        Duration::MAX
-    } else {
-        Duration::from_millis(millis as u64)
-    };
+    let dur = millis.into_duration();
     match resolved {
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
         Ok(ready) => {

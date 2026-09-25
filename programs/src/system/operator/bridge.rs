@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**装配侧**；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator::call`]。
 
+use env::Wait;
 use env::Mark;
 use plan::assembly::Eyes;
 use env::{Name, PieToken, TaskId};
@@ -92,7 +93,7 @@ pub fn attach(
     quay: &mut Quay,
     client: TaskId,
     host: TaskId,
-    millis: usize,
+    millis: Wait,
     tip: &mut Option<PieToken>,
     coord: Coord,
 ) -> Result<(), &'static str> {
@@ -133,7 +134,7 @@ pub fn attach(
 /// 把这条提示之路先认到手里、再转授给编排域（`root` 引导期的交接那一格）。
 pub fn host_of(
     host: TaskId,
-    millis: usize,
+    millis: Wait,
     tip: &mut Option<PieToken>,
 ) -> Result<TaskId, &'static str> {
     if tip.is_some() {

@@ -28,6 +28,7 @@ pub mod ecall;
 pub mod exit;
 pub mod fid;
 pub mod permission;
+pub mod wait;
 pub mod wire;
 
 pub use ecall::{EnvError, EnvResult, Fail, make_err};
@@ -38,6 +39,7 @@ pub use fid::{
     PieCallRet, ProgramKind, RoomCall, RoomCallRet, ToleCall, ToleCallRet, UnitCall, UnitCallRet,
 };
 pub use permission::{Access, Permission, Policy};
+pub use wait::Wait;
 pub use wire::{
     Decode, FromPair, Mark, NAME_LEN, Name, NameError, PieToken, TaskId, TeamId, VirtAddr, Wire,
 };

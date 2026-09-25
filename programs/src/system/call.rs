@@ -7,6 +7,7 @@
 //! 认领是另一份协议，本文件只剩"起一个服务"需要的那几手——**它在实现侧**：调内核的是
 //! 编排域那一位，不是协议本身。
 
+use env::Wait;
 use env::{EnvError, Permission, PieToken, ProgramKind, TaskId, TeamId};
 
 use runtime::env::mail;
@@ -53,7 +54,7 @@ pub(super) fn doom(task: TaskId) {
 
 /// 它收尾完了没有。
 pub(super) fn reaped(task: TaskId) -> Result<bool, Fail> {
-    unit::join(task, 0).map_err(fail)
+    unit::join(task, Wait::POLL).map_err(fail)
 }
 
 /// 它还活着没有 = "还没收尾完"。

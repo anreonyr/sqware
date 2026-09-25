@@ -475,7 +475,7 @@ pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
 /// 头注第三项）。这一条不是修辞——成员键上没有等待者、也没有信标是常态（等组的人等
 /// 的是**组自己的键**），少了它，末尾那次 `prune` 会把刚写下的登记连同站点一起删掉，
 /// 而本函数**照样返 `Ok`**：调用方（`tole::attach`）以为登记成功，投信那一侧却再也叫
-/// 不醒这个组（实测：`await_(usize::MAX)` 的板线程永远不醒，同一段代码改成毫秒轮询
+/// 不醒这个组（实测：`await_(Wait::Forever)` 的板线程永远不醒，同一段代码改成毫秒轮询
 /// 就好——轮询的唤醒来自到点，不经这条转发）。
 pub(crate) fn forward(
     key: WakeKey,

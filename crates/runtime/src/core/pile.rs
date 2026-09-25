@@ -17,6 +17,7 @@
 //! `Option`（`None` = 这一轮没等到），调用方就不必自己认哨兵——但也**必须**按 deadline
 //! 循环，否则 `None` 会被误当成"永远没有"。
 
+use env::Wait;
 use env::{EnvResult, HoleDir, PieToken};
 
 use crate::env::mail::{Mate, TolePie};
@@ -55,7 +56,7 @@ impl Pile {
 
     /// 等到任意一格有事：`Some((哪一枚, 哪个方向))`；`None` = 这一轮没等到
     /// （挂起过，或期限到）——**继续等就再叫一次**，别把 `None` 当成终局。
-    pub fn await_(&self, millis: usize) -> EnvResult<Option<(PieToken, HoleDir)>> {
+    pub fn await_(&self, millis: Wait) -> EnvResult<Option<(PieToken, HoleDir)>> {
         let (token, dir) = self.pie.await_(millis)?;
         Ok((token != PieToken::NONE).then_some((token, dir)))
     }

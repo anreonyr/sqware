@@ -35,6 +35,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
@@ -98,7 +99,7 @@ fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else {
         return no_service("sleeper: no sire");
     };
-    let Ok((tree, host)) = operator::open(sire, MS) else {
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
         return no_service("sleeper: no operator");
     };
     let Ok(talk) = operator::ask_hole(host) else {
@@ -110,7 +111,7 @@ fn main() -> Report<'static> {
     let _ = debug::put("sleeper: found");
 
     // 一问一答：现在几点。这一句是后面那两约的**基准**（服务收的是绝对时刻）。
-    let Ok(now) = clock::now(face, MS) else {
+    let Ok(now) = clock::now(face, Wait::AtMost(MS)) else {
         return no_service("sleeper: no time");
     };
     let _ = debug::put(&format!("sleeper: now={now}"));
@@ -121,7 +122,7 @@ fn main() -> Report<'static> {
     // == 0` 与回绕仍到得了它，只是不再有判据钉着——**这是少了一条判据**，写在这里备查。
 
     // 真约：那一枚回信孔从此留在驱动手里（本域退场之前它一直活着）。
-    let armed = match clock::arm(face, SLOT_NS, MS) {
+    let armed = match clock::arm(face, SLOT_NS, Wait::AtMost(MS)) {
         Ok(alarm) => alarm,
         Err(fail) => {
             // **哪一格失败，落一行**（照实记：这一格从前只报 `no alarm`，而 `arm` 的三条失败路
@@ -140,7 +141,7 @@ fn main() -> Report<'static> {
 
     // 失败域第二格：再约一次。那一格里有人——就是本域刚约下的那一次（拿自己的线试，
     // 答 `TAKEN` 是确定的）。
-    let taken = refused(clock::arm(face, SLOT_NS, MS));
+    let taken = refused(clock::arm(face, SLOT_NS, Wait::AtMost(MS)));
     let _ = debug::put(&format!("sleeper: taken={taken}"));
 
     // 等到那一声：**无界等**（本域只有这一件事），而对面一没那枚孔就封印、当场答错。
@@ -191,7 +192,7 @@ fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
     // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
     let mut left = MS;
     let id = loop {
-        match operator::seek(talk, link, &road, MS) {
+        match operator::seek(talk, link, &road, Wait::AtMost(MS)) {
             Ok(id) => break id,
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
@@ -200,7 +201,7 @@ fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
             Err(_) => return None,
         }
     };
-    match operator::find(talk, link, id, MS) {
+    match operator::find(talk, link, id, Wait::AtMost(MS)) {
         Ok((ocall::OK, Some(entry))) => Some(entry),
         _ => None,
     }
@@ -211,7 +212,7 @@ fn register() -> u8 {
     let Ok(sire) = utask::sire() else {
         return bcall::BAD;
     };
-    let Ok((link, board)) = board::open(sire, MS) else {
+    let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else {
         return bcall::BAD;
     };
     let Ok(talk) = board::ask_hole(board) else {
@@ -223,6 +224,6 @@ fn register() -> u8 {
     let Ok(me) = Name::new(ME) else {
         return bcall::BAD;
     };
-    board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(bcall::BAD)
+    board::ask(talk, &link, board, bcall::REGISTER, me, entry, Wait::AtMost(MS)).unwrap_or(bcall::BAD)
 }
 

@@ -33,6 +33,7 @@
 //! 铃只有一条方向（有事/没事）。签名少一个参数就把这件事说完了，不必写注释解释
 //! "为什么只有 Pull"。
 
+use env::Wait;
 use env::{EnvResult, HoleDir};
 
 use crate::env::mail::{self, NolePie};
@@ -48,11 +49,11 @@ impl Bell {
         Bell { pie }
     }
 
-    /// 等铃响：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
+    /// 等铃响：`millis`（上限族，`Wait`）。
     ///
     /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（挂起过、或超时
     /// ——两者不分）。**不清**那一位，见模块头。
-    pub fn wait(&self, millis: usize) -> EnvResult<bool> {
+    pub fn wait(&self, millis: Wait) -> EnvResult<bool> {
         mail::wait(self.pie.token(), HoleDir::Pull, millis)
     }
 

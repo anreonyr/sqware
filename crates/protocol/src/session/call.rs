@@ -26,6 +26,7 @@
 //! 这枚被标成什么*），故**等长**（9/9/9）——原先板与树是 `probe`5 / `opened_by`9 /
 //! `mark_of`7，不等长本身就是"这一组还没想清楚"的信号。
 
+use env::Wait;
 use env::{Mark, PieToken, TaskId};
 
 use super::core::Claim;
@@ -229,7 +230,7 @@ reserve_reads! {
 }
 
 /// 从**本端**那一枚孔收一句话（有界等）。
-pub(super) fn pull_own(hole: PieToken, buf: &mut [u8], millis: usize) -> Result<usize, ()> {
+pub(super) fn pull_own(hole: PieToken, buf: &mut [u8], millis: Wait) -> Result<usize, ()> {
     mail::HolePie::from_token(hole)
         .pull_timeout(buf, millis)
         .map_err(|_| ())
@@ -240,7 +241,7 @@ pub(super) fn pull_own(hole: PieToken, buf: &mut [u8], millis: usize) -> Result<
 /// 无参数：等的是本端这张表（键由内核从调用者推出来，伪造不出"你的表变了"）。
 /// `millis` 属**上限族**（三态口径见 `env::fid` 文件头的定式）。
 /// `false` = 自上次取走以来没落过表（期限到）——**醒来自己扫表分辨**。
-pub(super) fn fall(millis: usize) -> bool {
+pub(super) fn fall(millis: Wait) -> bool {
     runtime::env::unit::fall(millis).unwrap_or(false)
 }
 

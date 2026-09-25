@@ -1,5 +1,6 @@
 //! Room 域：`RoomCall::*` 转发（调度词族）。
 
+use env::Wait;
 use core::time::Duration;
 
 use env::{EnvResult, Reason, RoomCall, RoomCallRet, TaskId, VirtAddr};
@@ -92,7 +93,7 @@ pub fn doom(task: TaskId) -> EnvResult<()> {
     Ok(())
 }
 
-pub fn wait(key: usize, millis: usize) -> EnvResult<()> {
+pub fn wait(key: usize, millis: Wait) -> EnvResult<()> {
     let _ = RoomCall::Wait { key, millis }.call();
     Ok(())
 }

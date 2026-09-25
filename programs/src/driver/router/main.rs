@@ -105,6 +105,7 @@ extern crate alloc;
 extern crate programs;
 
 // 客侧装配与需求单都住在驱动这一族里：`assemble` 是三台驱动与房客共用的那段机器（会话 + 配给）。
+use env::Wait;
 use env::Mark;
 use programs::driver::assemble;
 use programs::driver::router::needs;
@@ -218,13 +219,13 @@ fn main() -> Result<(), fail::Fail> {
     loop {
         // **等到有事件**：三样（铃 / 门上有人 / 客人的排空）都可等地，醒来就说明有一格有事。
         //
-        // **纯事件（`usize::MAX`），没有兜底的一拍**：旧写法带 20 ms 期限，为的是盖住"偶尔
+        // **纯事件（`Wait::Forever`），没有兜底的一拍**：旧写法带 20 ms 期限，为的是盖住"偶尔
         // 一次组等待没被叫醒"（实测：PLIC 的 `pending` 置着、本域不再被叫醒，字节留在设备里）。
         // 那一格的根在铃那一侧——空闲核不进外部 trap，`raise_irq` 在它身上没有调用点，铃
         // 根本没响（见 `kernel/src/work/room/scheduler/core/fetch.rs` 的空闲循环）。根修在
         // 那里，`SEIP` 能挂的那两条长驻态各有振铃点之后这一拍就是多余的：铃一定响，
         // 醒来 `claim`+`hush` 即到。
-        match pile.await_(usize::MAX) {
+        match pile.await_(Wait::Forever) {
             Ok(Some(_)) => {}
             // 挂起过（不是期限）：照样往下走一遍——`claim` 领到空就什么也不做。
             Ok(None) => {}
@@ -240,7 +241,7 @@ fn main() -> Result<(), fail::Fail> {
         drain_exhaust(&mut lines, &plic, &mut buf);
         // 门上：非阻塞地把槽里的都取走（登记）。缓冲是**一页**（载体的界，见 `Push` 的前置
         // 条件）——于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
-        while let Ok((n, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
+        while let Ok((n, from)) = entry_hole.pull_timeout_from(&mut buf, Wait::POLL) {
             desk_face(&mut lines, &plic, &sources, from, &buf[..n], &pile);
         }
         // 铃：**领到空**——不按 `bell.wait(0)` 的返回值判。那一位是**中断闸门的账**
@@ -302,7 +303,7 @@ fn drain_exhaust(lines: &mut Lines, plic: &Plic, buf: &mut [u8]) {
         let Some(lane) = lines.lane(line) else {
             continue;
         };
-        while lane.pull(buf, 0).is_ok() {
+        while lane.pull(buf, Wait::POLL).is_ok() {
             let _ = lines.exhaust(line);
             plic.enable(line, LINE_PRIORITY);
             say(&alloc::format!("router: exhaust line={line}"));
@@ -354,7 +355,7 @@ fn alive(lane: &Pier) -> bool {
 fn serve_board(sire: TaskId, entry: PieToken) {
     // 板那条路：本端装一条、认下生我者那一枚（它再转授给板线程），再交一枚问话孔——
     // 不交的那一位在板账上永远"没挂齐"，板线程会一直退化成 1 ms 节拍。
-    let link = board::open(sire, QUAY_MS).ok();
+    let link = board::open(sire, Wait::AtMost(QUAY_MS)).ok();
     let boarded = match &link {
         Some((_, board)) => board::ask_hole(*board).is_ok(),
         None => false,
@@ -435,7 +436,7 @@ fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
     let mark = Name::new(lcall::LANE).ok()?;
     let mut quay = Quay::open(from, protocol::session::call::hands());
     quay.seat(mark).ok()?;
-    quay.claim(from, Mark::of(lcall::LANE), QUAY_MS).ok()?;
+    quay.claim(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS)).ok()?;
     // **码头一起交出去**：`Lines` 收不下这条泊位时，得由拿着码头的人把它放回去
     // （只有码头知道那一枚是本端铸的，见 `drop_lane`）。
     let pier = quay.find(mark).copied()?;
@@ -485,7 +486,7 @@ fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
 ///
 /// 三格答码用的是树自己的失败域（[`ocall::NONEMPTY`] 是"那块目录已经有人建了"，**不是错误**）。
 fn tree_trip(sire: TaskId, entry: PieToken) {
-    let Ok((link, host)) = operator::open(sire, QUAY_MS) else {
+    let Ok((link, host)) = operator::open(sire, Wait::AtMost(QUAY_MS)) else {
         say("router: tree: no lane");
         return;
     };
@@ -502,7 +503,7 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
     // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, &link, Where::Root, dir, QUAY_MS);
+    let dir_at = operator::part(talk, &link, Where::Root, dir, Wait::AtMost(QUAY_MS));
     let (part, dir_id) = match dir_at {
         Ok(id) => (ocall::OK, id.get()),
         Err(code) => (code, 0),
@@ -518,7 +519,7 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
             entry,
             ocall::Rule::Public,
             false,
-            QUAY_MS,
+            Wait::AtMost(QUAY_MS),
         ),
         Err(code) => Err(code),
     };
@@ -528,7 +529,7 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
     let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, &link, id, QUAY_MS) {
+        Ok(id) => match operator::find(talk, &link, id, Wait::AtMost(QUAY_MS)) {
             Ok((code, entry)) => (code, entry.is_some()),
             Err(_) => (ocall::BAD, false),
         },
@@ -538,7 +539,7 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()
-        .and_then(|id| operator::name(talk, &link, id, QUAY_MS).ok());
+        .and_then(|id| operator::name(talk, &link, id, Wait::AtMost(QUAY_MS)).ok());
     say(&alloc::format!(
         "router: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),

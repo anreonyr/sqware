@@ -29,6 +29,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 // 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
@@ -64,7 +65,7 @@ fn main() -> Report<'static> {
     //
     // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
     // ——牌子那一格只认得 `entry` 那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
-    let Ok((link, board)) = board::open(sire, MS) else { return bail("passer: no board link") };
+    let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else { return bail("passer: no board link") };
     // 问话孔：本端铸、给板读（本端自窄到只写）——问话从它走，答话走上面那条板路。
     let Ok(talk) = board::ask_hole(board) else { return bail("passer: no ask hole") };
     // 本域的服务入口：别人按名字找到本域之后往它说话。它也是要交给板的那一枚——记号
@@ -73,7 +74,7 @@ fn main() -> Report<'static> {
     let Ok(me) = Name::new(ME) else { return bail("passer: bad name") };
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"passer 在哪"）。
-    let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(BAD);
+    let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
     say(&format!("passer: reg={reg} entry={} say={ME}", entry.get()));
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——"挂名字该成功"

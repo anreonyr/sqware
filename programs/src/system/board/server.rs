@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board::call`]。
 
+use env::Wait;
 use alloc::format;
 use env::Mark;
 
@@ -23,7 +24,7 @@ use protocol::system::board::call::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
-/// **不是轮询**：账补齐之后这一等就变成 `usize::MAX`（无限等，由组唤醒）；这个短期限只在
+/// **不是轮询**：账补齐之后这一等就变成 `Wait::Forever`（由组唤醒）；这个短期限只在
 /// 装配窗口里用——那几步的到达是**别人**在做（装配者转授、客人自己交孔），板线程没有别的
 /// 东西可等。
 const SETTLE_MS: usize = 1;
@@ -85,7 +86,7 @@ pub(crate) fn host_loop(me: TaskId) {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
         let settling = settle(&mut desk, &pile, &tip_hole, &mut lanes);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
-        let millis = if settling { SETTLE_MS } else { usize::MAX };
+        let millis = if settling { Wait::AtMost(SETTLE_MS) } else { Wait::Forever };
         let Ok(Some((tok, _dir))) = pile.await_(millis) else {
             swept += tell_gone(&mut desk, &mut lanes);
             continue;
@@ -127,7 +128,7 @@ fn settle(
     let mut rec = [0u8; bcall::TIP_LEN];
         let mut pending = false;
         let board = Mark::of(LINK);
-        while let Ok(bcall::TIP_LEN) = tip.pull_timeout(&mut rec, 0) {
+        while let Ok(bcall::TIP_LEN) = tip.pull_timeout(&mut rec, Wait::POLL) {
             let id = u64::from_le_bytes(rec[..8].try_into().unwrap_or([0u8; 8]));
             let client = TaskId::new(id as usize);
             // 名字按**自己的宽度**切：末格那一枚号就跟在它后面，整段 `try_into` 会因长度不符
@@ -272,7 +273,7 @@ fn serve_one(
     let Some(ask) = guest.ask() else {
         return;
     };
-    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(buf, 0) else {
+    let Ok(n) = mail::HolePie::from_token(ask).pull_timeout(buf, Wait::POLL) else {
         return;
     };
     let Some(want) = buf.get(..n) else {

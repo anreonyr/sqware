@@ -48,6 +48,8 @@
 
 use envmacros::Envcall;
 
+use crate::wait::Wait;
+
 use crate::permission::Permission;
 use crate::wire::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 
@@ -59,8 +61,12 @@ use crate::wire::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 ///
 /// - **上限**（"等某事发生，至多等这么久"）：`Wait` / `Fall` / `Join` / `MailCall::Wait` /
 ///   `ToleCall::Await`，以及协议层的 `service::until/watch`、`Pier::pull`、`Quay::claim`。
-///   三态一律：`0` = **只探测**（当场答，不挂起）、`usize::MAX` = **永久**、其余 = 至多毫秒数。
+///   **参数类型是 [`Wait`](crate::wait::Wait)**（上限族都在那一格上）：`Wait::AtMost(0)` =
+///   **只探测**（当场答，不挂起）、`Wait::Forever` = **永久**、`Wait::AtMost(ms)` = 至多毫秒数。
 ///   超时与"条件成立"**按返回值区分**（各自的 `bool` / 预置值），不另立错误码。
+///
+///   **过线那一格仍拼成 `usize`**：`0` = 只探测、`usize::MAX` = 永久、其余 = 毫秒——这一句
+///   仍是**唯一一处**；两端各转一次（`Wait::from_wire` / `Wait::to_wire`）。
 /// - **下限**（"至少这么久不回到我"）：只有 [`RoomCall::Park`]。它的保证成对写成
 ///   **"不早于 `millis`，且至多晚一拍"**——晚的那一拍由内核的失明上限兜（见
 ///   `chrono::timer::BLIND_MS`），故 `0` 在 `Park` 上没有"只探测"的含义。
@@ -103,9 +109,9 @@ pub enum RoomCall {
         note: VirtAddr,
         len: usize,
     },
-    /// 事件等待（词族 wait）：key + 毫秒——**上限族**（三态见文件头的定式）。
+    /// 事件等待（词族 wait）：key + 期限——**上限族**（三态见文件头的定式）。
     #[ret(())]
-    Wait { key: usize, millis: usize },
+    Wait { key: usize, millis: Wait },
     /// 事件唤醒（词族 wake）：key；返回是否唤到人。
     #[ret(bool)]
     Wake { key: usize },
@@ -227,15 +233,15 @@ pub enum UnitCall {
     /// 放行：`Held → Starved`。放行只发生一次——重复调用返回 `-1 Denied`。
     #[ret(())]
     Hatch { task: TaskId },
-    /// 等"我自己这张权限表里落进一枚"：`millis`——**上限族**（三态见文件头的定式）。
+    /// 等"我自己这张权限表里落进一枚"：`millis`——**上限族**（定式见文件头）。
     ///
     /// **无参数**——等的是调用者自己的表（同 `SelfId` / `Sire`：没有参数就没有伪造面）。
     /// 只报"多了"：只有 `Accord`（别人把副本交进来）会响；自己铸的与 boot 那批不响。
     /// `true` = **调用开始时**已落过（自你上次取走以来），不保证"就是你要的那一枚"
     /// ——醒来自己扫表分辨。
     #[ret(bool)]
-    Fall { millis: usize },
-    /// 等目标**死透**：`millis`——**上限族**（三态见文件头的定式）。
+    Fall { millis: Wait },
+    /// 等目标**死透**：`millis`——**上限族**（定式见文件头）。
     ///
     /// `true` = **调用开始时**目标已死透（未挂起）；`false` = 还没（可能挂起过）。
     /// 调用模式（与 `MailCall::Wait` 同款）：
@@ -254,7 +260,7 @@ pub enum UnitCall {
     /// "放下/重启它"的那条路（[`UnitCall::Oust`]）本来就**不等**回收——它只要求
     /// "没有还没收尾的线程"。
     #[ret(bool)]
-    Join { task: TaskId, millis: usize },
+    Join { task: TaskId, millis: Wait },
     /// 放下一个子域：父方**不再认**自己生的这一格（`heir` 表里那一格）。
     ///
     /// **不是**杀（那是 [`RoomCall::Doom`]）、**不是**等（[`UnitCall::Join`]）、**不是**转交
@@ -388,7 +394,7 @@ pub enum MailCall {
         buf: VirtAddr,
         max: usize,
     },
-    /// 等某方向就绪：`millis`——**上限族**（三态见文件头的定式）。
+    /// 等某方向就绪：`millis`——**上限族**（定式见文件头）。
     ///
     /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（探测失败，
     /// 或挂起过——被唤醒与超时不分）。**绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
@@ -400,7 +406,7 @@ pub enum MailCall {
     Wait {
         token: PieToken,
         dir: HoleDir,
-        millis: usize,
+        millis: Wait,
     },
     /// 应铃：清掉"有待取之事"（门铃专用）。权利：R——听与应都在"取"这一侧。
     ///
@@ -694,7 +700,7 @@ pub enum ToleCall {
     /// 移交）→ `-7 HandedOver`。三个码**不折平**（与数据轴 [`MailCall::Wait`] 同款口径）：
     /// `Denied` 是号拿错了、`Dead` 是组没了该换策略、`HandedOver` 是交回即复原。
     #[ret((PieToken, HoleDir))]
-    Await { tole: PieToken, millis: usize },
+    Await { tole: PieToken, millis: Wait },
 }
 
 /// 环境调用号聚合（内核侧解码总入口）。

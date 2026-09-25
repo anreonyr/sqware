@@ -16,6 +16,7 @@
 //! 差别只在三件事——推的是哪一枚、收的是哪一枚、收的时候**校不校来源**。编帧、解帧、
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
 
+use env::Wait;
 use env::{EnvError, EnvResult, PieToken, TaskId, make_err};
 
 use crate::env::mail::{self, AnyPie, HolePie};
@@ -140,7 +141,7 @@ impl Port {
     /// 收一帧：有界等 → **核对推者是不是对端** → 返恰好那一帧。
     ///
     /// 推者不符 ⇒ `Denied`，该会话应弃用（迟到的真回复仍可能落槽、污染下一次）。
-    pub fn pull<'a>(&self, buf: &'a mut [u8], within: usize) -> EnvResult<&'a [u8]> {
+    pub fn pull<'a>(&self, buf: &'a mut [u8], within: Wait) -> EnvResult<&'a [u8]> {
         let (len, from) = self.reply.pull_timeout_from(buf, within)?;
         if from != self.to.peer() {
             return Err(denied());

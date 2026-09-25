@@ -29,6 +29,7 @@
 //! push/pull 的阻塞：内核 Push/Pull 槽满/槽空返 `-3 Busy`；本层转 `Wait` 原语
 //! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
 
+use env::Wait;
 use env::{
     EnvResult, HoleDir, MailCall, MailCallRet, Mark, PieToken, TaskId, ToleCall, ToleCallRet,
     VirtAddr,
@@ -74,7 +75,7 @@ pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<usize> {
 
 /// 只问长度（**不动槽**）：返槽里那条消息的长度与发送者，一个字节都不取。
 ///
-/// 走 `Pull { max: 0 }`——与 `Wait { millis: 0 }`「只探测不挂起」同一形状的"只问"。
+/// 走 `Pull { max: 0 }`——与 `Wait::POLL`「只探测不挂起」同一形状的"只问"。
 /// **不是取消息的前一步**（那一步由载体的界接手：一页缓冲一趟取走）；它的读者是
 /// "等之前先看一眼"那一格（`harness` 的 waiter）。
 pub fn pull_len(token: PieToken) -> EnvResult<(usize, TaskId)> {
@@ -98,12 +99,12 @@ pub fn pull_from(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<(usize,
     }
 }
 
-/// 等 hole 某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
+/// 等 hole 某方向就绪：`millis`（上限族，`Wait`）。
 /// 返回 `true` = 本次调用当场就绪；`false` = 未就绪（探测失败，或挂起过）。
 ///
 /// 门铃（Nole）也走这一个：`dir` 必须给 [`HoleDir::Pull`]——铃只有"响了"一条方向，
 /// 别的值内核答 `Denied`。裸函数层不为它另开一个名字：`Bell::wait` 就是这一句。
-pub fn wait(token: PieToken, dir: HoleDir, millis: usize) -> EnvResult<bool> {
+pub fn wait(token: PieToken, dir: HoleDir, millis: Wait) -> EnvResult<bool> {
     let r = MailCall::Wait { token, dir, millis }.call()?;
     match r {
         MailCallRet::Wait(ready) => Ok(ready),
@@ -162,11 +163,11 @@ pub fn detach(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
     }
 }
 
-/// 等到组里任意一格有事：`(哪一枚, 哪个方向)`；`millis` 三态同全树。
+/// 等到组里任意一格有事：`(哪一枚, 哪个方向)`；`millis` 上限族，同全树。
 ///
 /// `PieToken::NONE` = 没等到（或挂起过——见 `env::fid` 的 `ToleCall::Await`）。
 /// 这一格是**裸函数层**：把"没等到"翻成 `Option` 的是 `crate::core::pile::Pile`。
-pub fn await_(tole: PieToken, millis: usize) -> EnvResult<(PieToken, HoleDir)> {
+pub fn await_(tole: PieToken, millis: Wait) -> EnvResult<(PieToken, HoleDir)> {
     let r = ToleCall::Await { tole, millis }.call()?;
     match r {
         ToleCallRet::Await(pair) => Ok(pair),
@@ -197,9 +198,9 @@ impl HolePie {
         Self { token }
     }
 
-    /// 等某方向就绪：`millis` 毫秒（`usize::MAX` = 永久，`0` = 只探测不挂起）。
+    /// 等某方向就绪：`millis`（上限族，`Wait`）。
     /// 返回 `true` = 调用当场就绪；`false` = 未就绪（探测失败，或挂起过）。
-    pub fn wait(&self, dir: HoleDir, millis: usize) -> EnvResult<bool> {
+    pub fn wait(&self, dir: HoleDir, millis: Wait) -> EnvResult<bool> {
         wait(self.token, dir, millis)
     }
 
@@ -209,7 +210,7 @@ impl HolePie {
             match push(self.token, msg.as_ptr(), msg.len()) {
                 Ok(()) => return Ok(()),
                 Err(e) if e.source.is_busy() => {
-                    self.wait(HoleDir::Push, usize::MAX)?;
+                    self.wait(HoleDir::Push, Wait::Forever)?;
                 }
                 Err(e) => return Err(e),
             }
@@ -226,7 +227,7 @@ impl HolePie {
             match pull(self.token, buf.as_mut_ptr(), buf.len()) {
                 Ok(n) => return Ok(n),
                 Err(e) if e.source.is_busy() => {
-                    self.wait(HoleDir::Pull, usize::MAX)?;
+                    self.wait(HoleDir::Pull, Wait::Forever)?;
                 }
                 Err(e) => return Err(e),
             }
@@ -239,7 +240,7 @@ impl HolePie {
             match pull_from(self.token, buf.as_mut_ptr(), buf.len()) {
                 Ok(v) => return Ok(v),
                 Err(e) if e.source.is_busy() => {
-                    self.wait(HoleDir::Pull, usize::MAX)?;
+                    self.wait(HoleDir::Pull, Wait::Forever)?;
                 }
                 Err(e) => return Err(e),
             }
@@ -255,7 +256,7 @@ impl HolePie {
         pull_len(self.token)
     }
 
-    /// 有界 pull：槽空则最多等 `millis` 毫秒；仍无消息 → `Err(Busy)`（码 -3）。
+    /// 有界 pull：槽空则最多等 `millis`；仍无消息 → `Err(Busy)`（码 -3）。
     /// 用于「等对端回复」这类必须有上界的往返：无限等会把协议错误（回复被丢弃、
     /// 对端漏回）变成不可诊断的挂起。**超时后该 hole 不再"干净"**——迟到的回复
     /// 仍可能落进槽里，使下一次 pull 取到上一条；调用方应弃用该会话。
@@ -264,14 +265,22 @@ impl HolePie {
     /// 或一次无关唤醒（见 `messenger::wake`：无等待者时置 pend，而成功裸 pull 不会
     /// 消费它，故 pend 可能是陈旧的）。所以这里按 **deadline 循环**：只有 `clock()`
     /// 真的走完 `millis` 才报 Busy，否则带着剩余时间重试。
-    pub fn pull_timeout(&self, buf: &mut [u8], millis: usize) -> EnvResult<usize> {
+    pub fn pull_timeout(&self, buf: &mut [u8], millis: Wait) -> EnvResult<usize> {
         self.pull_timeout_from(buf, millis).map(|(n, _)| n)
     }
 
     /// 同 [`HolePie::pull_timeout`]，但一并取回**发送者**——「有界等」与「认来源」
     /// 是同一次收的两个事实，分成两趟取会把竞态留在中间。
-    pub fn pull_timeout_from(&self, buf: &mut [u8], millis: usize) -> EnvResult<(usize, TaskId)> {
-        let deadline = now_ns()?.saturating_add((millis as u64).saturating_mul(1_000_000));
+    pub fn pull_timeout_from(&self, buf: &mut [u8], millis: Wait) -> EnvResult<(usize, TaskId)> {
+        // **永久那一格在这里落成一个"到不了的点"，不落成 `Wait::Forever`**——照实记：内核的
+        // 武装点被 `min(最近活到点, chrono::timer::BLIND_MS)` 收着（`chrono/timer.rs`），故
+        // "一个到不了的点" = **每 ~100 ms 被叫醒一次、自己复探**；那一层复探是这条等待今天的
+        // 护栏（`kernel/src/work/room/messenger/wait/mod.rs` 记着"`await_(…::MAX)` 的板线程
+        // 永远不醒"那条实测）。落成真永久 = 不武装定时器，要先动内核那一格——**不在这一刀里**。
+        let deadline = match millis {
+            Wait::Forever => u64::MAX,
+            Wait::AtMost(ms) => now_ns()?.saturating_add((ms as u64).saturating_mul(1_000_000)),
+        };
         loop {
             match pull_from(self.token, buf.as_mut_ptr(), buf.len()) {
                 Ok(v) => return Ok(v),
@@ -281,7 +290,7 @@ impl HolePie {
                         return pull_from(self.token, buf.as_mut_ptr(), buf.len());
                     }
                     let remain_ms = ((deadline - now) / 1_000_000).max(1) as usize;
-                    let _ = self.wait(HoleDir::Pull, remain_ms)?;
+                    let _ = self.wait(HoleDir::Pull, Wait::AtMost(remain_ms))?;
                 }
                 Err(e) => return Err(e),
             }
@@ -392,7 +401,7 @@ impl TolePie {
     }
 
     /// 等到任意一格有事。
-    pub fn await_(&self, millis: usize) -> EnvResult<(PieToken, HoleDir)> {
+    pub fn await_(&self, millis: Wait) -> EnvResult<(PieToken, HoleDir)> {
         await_(self.token, millis)
     }
 

@@ -24,6 +24,7 @@ extern crate alloc;
 
 mod session;
 
+use env::Wait;
 use env::Mark;
 use session::call as fake;
 use session::core::{Claim, Pier, Quay, Seat};
@@ -88,7 +89,7 @@ fn claim_without_any_berth_is_partial_not_a_wait() {
     // **一条泊位都没装上 ⇒ `Partial`**：对方无从知道该给我几条，这不是"白等"（`Claim::Partial`
     // 的头注写着这一格）。故它**一次都不该去等**（假钟不许被拨动）。
     let mut q = quay();
-    assert_eq!(q.claim(ME, Mark::of("records"), 5), Err(Claim::Partial));
+    assert_eq!(q.claim(ME, Mark::of("records"), Wait::AtMost(5)), Err(Claim::Partial));
     assert_eq!(fake::now_ns(), 0, "额度为零时不该进等待");
 }
 
@@ -100,17 +101,17 @@ fn claim_takes_only_holes_whose_both_cells_match() {
 
     // 主人对、**记号对不上** ⇒ 不认。
     fake::put(11, PEER, Mark::of("other"));
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Err(Claim::Timeout));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Err(Claim::Timeout));
     assert!(!q.find(name("records")).expect("还在").paired());
 
     // 记号对、**主人不对** ⇒ 也不认（`owner` 那一格认的是"谁开的这扇门"）。
     fake::put(12, env::TaskId::new(9), Mark::of("records"));
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Err(Claim::Timeout));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Err(Claim::Timeout));
     assert!(!q.find(name("records")).expect("还在").paired());
 
     // 两格都对 ⇒ 认下，且归到那条路上（不是归到别的路）。
     fake::put(13, PEER, Mark::of("records"));
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Ok(()));
     let got = q.find(name("records")).expect("还在");
     assert!(got.paired(), "认下了");
     assert_eq!(
@@ -137,8 +138,8 @@ fn one_hole_is_paired_to_one_berth_only() {
     fake::put(21, PEER, Mark::of("control"));
     fake::put(22, PEER, Mark::of("records"));
 
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
-    assert_eq!(q.claim(PEER, Mark::of("control"), 0), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("control"), Wait::AtMost(0)), Ok(()));
     let (ra, rb) = (
         q.find(name("records")).expect("在"),
         q.find(name("control")).expect("在"),
@@ -159,9 +160,9 @@ fn a_hole_already_taken_is_not_paired_again() {
     q.seat(name("control")).expect("装得上");
     fake::put(23, PEER, Mark::of("records"));
 
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Ok(()));
     // 重试（记号与第一次一样）：那一枚已经在第一条路上了。
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Ok(()));
     let b = q.find(name("control")).expect("在");
     assert!(!b.paired(), "第二条路**不该**分到同一枚孔");
     assert_eq!(b.at_peer(), None);
@@ -173,7 +174,7 @@ fn claim_says_nothing_arrived_when_the_clock_runs_out() {
     // **期限到、一笔都没到 ⇒ `Timeout`**（"白等"那一格，与 `Partial` 的下一步不同）。
     let mut q = quay();
     q.seat(name("records")).expect("装得上");
-    assert_eq!(q.claim(PEER, Mark::of("records"), 5), Err(Claim::Timeout));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(5)), Err(Claim::Timeout));
     assert!(fake::now_ns() > 0, "它真的等过（假钟被拨过）");
 }
 
@@ -184,10 +185,10 @@ fn claim_says_partial_when_something_arrived_but_that_one_is_gone() {
     let mut q = quay();
     q.seat(name("records")).expect("装得上");
     fake::put(31, PEER, Mark::of("records"));
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Ok(()));
     // 那一枚走了（对端退场会把它的副本一起带走）。
     fake::forget(31);
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Err(Claim::Partial));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Err(Claim::Partial));
 }
 
 #[test]
@@ -197,7 +198,7 @@ fn unseat_says_the_word_and_drops_my_hole() {
     let mut q = quay();
     q.seat(name("records")).expect("装得上");
     fake::put(41, PEER, Mark::of("records"));
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Ok(()));
     let hole = q.find(name("records")).expect("在").hole();
 
     q.unseat(name("records"));
@@ -238,7 +239,7 @@ fn ready_means_every_berth_has_both_ends() {
     q.seat(name("records")).expect("装得上");
     assert!(!q.ready(), "装上了、对端那一枚还没到 ⇒ 还不算通");
     fake::put(51, PEER, Mark::of("records"));
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Ok(()));
     assert!(q.ready(), "两头都齐了");
     // 第二条路一来，整体又变回"不通"（`ready` 说的是**每一条**）。
     q.seat(name("control")).expect("装得上");
@@ -255,7 +256,7 @@ fn a_pier_without_a_write_end_refuses_to_post() {
     assert!(fake::said().is_empty());
 
     fake::put(61, PEER, Mark::of("records"));
-    assert_eq!(q.claim(PEER, Mark::of("records"), 0), Ok(()));
+    assert_eq!(q.claim(PEER, Mark::of("records"), Wait::AtMost(0)), Ok(()));
     let pier = *q.find(name("records")).expect("在");
     assert_eq!(pier.post(b"hi"), Ok(()));
     assert_eq!(
@@ -267,5 +268,5 @@ fn a_pier_without_a_write_end_refuses_to_post() {
     // 收的那一头走本端那一枚（`pull`），与 `post` 成对。
     fake::put_inbox(1 + 1, b"yo");
     let mut buf = [0u8; 8];
-    assert_eq!(pier.pull(&mut buf, 0), Err(()), "那一枚上没有话");
+    assert_eq!(pier.pull(&mut buf, Wait::POLL), Err(()), "那一枚上没有话");
 }

@@ -33,6 +33,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use programs::Report;
 
 use protocol::system::operator::call as ocall;
@@ -70,7 +71,7 @@ fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("probe-owner: no sire") };
 
     // 一、与树开会话（同 `echo` / `probe-denied`）。
-    let Ok((tree, host)) = operator::open(sire, MS) else { return bail("probe-owner: no tree link") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-owner: no tree link") };
     let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-owner: no tree ask") };
 
     let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else { return bail("probe-owner: bad name") };
@@ -91,7 +92,7 @@ fn main() -> Report<'static> {
         entry,
         ocall::Rule::Public,
         false,
-        MS,
+        Wait::AtMost(MS),
     );
     let land_code = match land {
         Ok(id) => {
@@ -102,7 +103,7 @@ fn main() -> Report<'static> {
     };
 
     // 四、那一格**还在不在**（应是原来那个号）。
-    let after = operator::seek(hedge, &tree, &road, MS);
+    let after = operator::seek(hedge, &tree, &road, Wait::AtMost(MS));
     let seq = match after {
         Ok(id) => format!("id={}", id.get()),
         Err(code) => format!("err:{code}"),
@@ -157,13 +158,13 @@ fn take_over(hedge: PieToken, link: &Quay, host: TaskId) -> Result<EntryId, u8> 
         return Err(ocall::BAD);
     };
     let road = [dir, me];
-    let Ok(at) = operator::part(hedge, link, Where::Root, dir, MS) else {
+    let Ok(at) = operator::part(hedge, link, Where::Root, dir, Wait::AtMost(MS)) else {
         return Err(ocall::BAD);
     };
     let mut left = MS;
     loop {
         // 那一格先得**已经在树上**（`probe-lease` 落过）——否则本域量的是"落一个新名字"。
-        if operator::seek(hedge, link, &road, MS).is_ok() {
+        if operator::seek(hedge, link, &road, Wait::AtMost(MS)).is_ok() {
             let Ok(entry) = mail::unseal_hole(env::Mark::of("takeover-entry")) else {
                 return Err(ocall::BAD);
             };
@@ -176,7 +177,7 @@ fn take_over(hedge: PieToken, link: &Quay, host: TaskId) -> Result<EntryId, u8> 
                 entry,
                 ocall::Rule::Public,
                 false,
-                MS,
+                Wait::AtMost(MS),
             ) {
                 Ok(id) => return Ok(id),
                 Err(ocall::DENIED) if left > 0 => {
@@ -197,15 +198,15 @@ fn take_over(hedge: PieToken, link: &Quay, host: TaskId) -> Result<EntryId, u8> 
 
 /// `/device` 那一格的号（分目录幂等 + 译号）。
 fn wait_dir(say_hole: PieToken, link: &Quay, dir: Name) -> Option<EntryId> {
-    operator::part(say_hole, link, Where::Root, dir, MS).ok()?;
-    operator::seek(say_hole, link, &[dir], MS).ok()
+    operator::part(say_hole, link, Where::Root, dir, Wait::AtMost(MS)).ok()?;
+    operator::seek(say_hole, link, &[dir], Wait::AtMost(MS)).ok()
 }
 
 /// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。
 fn wait_id(say_hole: PieToken, link: &Quay, road: &[Name]) -> Option<EntryId> {
     let mut left = MS;
     loop {
-        match operator::seek(say_hole, link, road, MS) {
+        match operator::seek(say_hole, link, road, Wait::AtMost(MS)) {
             Ok(id) => return Some(id),
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));

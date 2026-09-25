@@ -2,6 +2,7 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`contract::driver::supply::frame`]。
 
+use env::Wait;
 use env::{PieToken};
 use plan::{Key, PAIR_LEN, Pair};
 use runtime::core::port::{self, Policy};
@@ -69,7 +70,7 @@ pub fn serve(
     const WAIT_MS: usize = 1000;
     let mut records = [0u8; PAIR_LEN * WANT_MAX];
     loop {
-        let Ok(n) = pier.pull(ask, WAIT_MS) else {
+        let Ok(n) = pier.pull(ask, Wait::AtMost(WAIT_MS)) else {
             if !alive() {
                 return;
             }

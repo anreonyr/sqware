@@ -61,6 +61,7 @@ extern crate programs;
 
 // 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板与树：本域都只用**客侧**那几手。
+use env::Wait;
 use protocol::system::operator::client as operator;
 use protocol::session::Quay;
 use protocol::system::board::client as board;
@@ -122,7 +123,7 @@ fn main() -> Result<(), env::Reason> {
         return Err(E_NO_CONSOLE);
     };
     // 树那条路：本域只开一条会话——先找控制台，再落自己那块牌子（次序见头注）。
-    let Ok((tree, host)) = operator::open(sire, MS) else {
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
         return Err(E_NO_CONSOLE);
     };
     let Ok(talk) = operator::ask_hole(host) else {
@@ -202,7 +203,7 @@ fn find_console(link: &Quay, talk: PieToken) -> Option<HolePie> {
     // ⇒ "预算"实际是"重试次数 × MS"）。故把**剩下的那点预算**当这一趟的期限递下去。
     let mut left = MS;
     let id = loop {
-        match operator::seek(talk, link, &road, left) {
+        match operator::seek(talk, link, &road, Wait::AtMost(left)) {
             Ok(id) => break id,
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
@@ -211,7 +212,7 @@ fn find_console(link: &Quay, talk: PieToken) -> Option<HolePie> {
             Err(_) => return None,
         }
     };
-    match operator::find(talk, link, id, MS) {
+    match operator::find(talk, link, id, Wait::AtMost(MS)) {
         Ok((ocall::OK, Some(entry))) => Some(HolePie::from_token(entry)),
         _ => None,
     }
@@ -222,7 +223,7 @@ fn register() -> u8 {
     let Ok(sire) = utask::sire() else {
         return bcall::BAD;
     };
-    let Ok((link, board)) = board::open(sire, MS) else {
+    let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else {
         return bcall::BAD;
     };
     let Ok(talk) = board::ask_hole(board) else {
@@ -234,7 +235,7 @@ fn register() -> u8 {
     let Ok(me) = Name::new(ME) else {
         return bcall::BAD;
     };
-    board::ask(talk, &link, board, bcall::REGISTER, me, entry, MS).unwrap_or(bcall::BAD)
+    board::ask(talk, &link, board, bcall::REGISTER, me, entry, Wait::AtMost(MS)).unwrap_or(bcall::BAD)
 }
 
 /// 上树一趟（装配单里本域 `operator: true`）：**分 → 落 → 寻 → 收 → 剪**五步。
@@ -254,7 +255,7 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     };
     // 分出一块空 `Pane`、再在**同一格**上换绑一枚 `Tile`——**第二层**因此是实打实走出来的。
     // 那两趟落在同一个（容器，名字）上 ⇒ **号不动**：两格答的是同一枚号。
-    let part = operator::part(talk, link, Where::Root, name, MS);
+    let part = operator::part(talk, link, Where::Root, name, Wait::AtMost(MS));
     let a = match part {
         Ok(_) => ocall::OK,
         Err(code) => code,
@@ -268,7 +269,7 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         entry,
         ocall::Rule::Public,
         false,
-        MS,
+        Wait::AtMost(MS),
     );
     let b = match plate {
         Ok(_) => ocall::OK,
@@ -276,7 +277,7 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     };
     // 寻回来那一趟：**按号**（名字只在上面用过，此后一律按号）。
     let (c, got) = match plate {
-        Ok(id) => match operator::find(talk, link, id, MS) {
+        Ok(id) => match operator::find(talk, link, id, Wait::AtMost(MS)) {
             Ok((code, entry)) => (code, entry.is_some()),
             Err(_) => (ocall::BAD, false),
         },
@@ -287,9 +288,9 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     // 拿号问名——这一格**下一步就被剪掉**，故号与名都得赶在 `trim` 之前取。
     let pname = plate
         .ok()
-        .and_then(|id| operator::name(talk, link, id, MS).ok());
+        .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
     let d = match plate {
-        Ok(id) => operator::trim(talk, link, id, MS).unwrap_or(ocall::BAD),
+        Ok(id) => operator::trim(talk, link, id, Wait::AtMost(MS)).unwrap_or(ocall::BAD),
         Err(code) => code,
     };
     let _ = debug::put(&format!(
@@ -326,7 +327,7 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
 /// 看得出断在哪一条。
 fn serial(link: &Quay, talk: PieToken) -> u8 {
     // 根那一层：**`Where::Root` 就是根**（根没有号，故它占的是坐标那一格，不是一个号）。
-    let Ok(root) = operator::list(talk, link, Where::Root, MS) else {
+    let Ok(root) = operator::list(talk, link, Where::Root, Wait::AtMost(MS)) else {
         return ocall::UNKNOWN;
     };
     let _ = debug::put(&format!("echo: list root={}", ids_of(&root)));
@@ -338,7 +339,7 @@ fn serial(link: &Quay, talk: PieToken) -> u8 {
         if !names.is_empty() {
             names.push(',');
         }
-        match operator::name(talk, link, id, MS) {
+        match operator::name(talk, link, id, Wait::AtMost(MS)) {
             Ok(name) => names.push_str(name.as_str()),
             Err(_) => {
                 names.push('?');
@@ -353,8 +354,8 @@ fn serial(link: &Quay, talk: PieToken) -> u8 {
         return ocall::UNKNOWN;
     };
     // **间接寻址那一手**：先把那一段名字译成号，再按号列（`list` 收的是容器坐标）。
-    match operator::seek(talk, link, &[dir], MS)
-        .and_then(|at| operator::list(talk, link, Where::At(at), MS))
+    match operator::seek(talk, link, &[dir], Wait::AtMost(MS))
+        .and_then(|at| operator::list(talk, link, Where::At(at), Wait::AtMost(MS)))
     {
         Ok(sub) => {
             let _ = debug::put(&format!("echo: list device={}", ids_of(&sub)));
@@ -366,7 +367,7 @@ fn serial(link: &Quay, talk: PieToken) -> u8 {
     }
 
     // 一枚没铸过的号：**`UNKNOWN`，不是"答了一格空名字"**。
-    let miss = operator::name(talk, link, EntryId::new(4095), MS).is_err();
+    let miss = operator::name(talk, link, EntryId::new(4095), Wait::AtMost(MS)).is_err();
     let _ = debug::put(&format!("echo: name miss={miss}"));
 
     // 一枚**本域自己选的**没铸过的号 ⇒ 该答不出（命名空间的契约，不是装配事实）。

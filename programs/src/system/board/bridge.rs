@@ -3,6 +3,7 @@
 //! 三侧分家之后本文件只放**装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board::call`]。
 
+use env::Wait;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use env::Mark;
 
@@ -38,7 +39,7 @@ pub fn attach(
     me: TaskId,
     client: TaskId,
     name: Name,
-    millis: usize,
+    millis: Wait,
     tip: &mut Option<PieToken>,
     lane: Option<PieToken>,
 ) -> Result<(), &'static str> {
@@ -83,7 +84,7 @@ pub fn attach(
 /// 线程自己铸：它起来第一件事就是把这枚孔的副本交给**装配者**。`me` 因此得从外面给：
 /// 同域里产出来的线程，`sire` 是**域的**生我者（建这个域的那一枚），不是产它的那一枚
 /// （`UnitCall::Sire` 的正文）——同一个域里的两枚线程，"谁生我"答不出"谁产的"。
-fn host(me: TaskId, millis: usize, tip: &mut Option<PieToken>) -> Result<TaskId, &'static str> {
+fn host(me: TaskId, millis: Wait, tip: &mut Option<PieToken>) -> Result<TaskId, &'static str> {
     let had = HOST.load(Ordering::Acquire);
     if had != 0 {
         return Ok(TaskId::new(had));

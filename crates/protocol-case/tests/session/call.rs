@@ -18,6 +18,7 @@
 //! `mint` 往里**加**一行（主人是"本端"），测试可以用 [`put`] 往里放任意两格的孔——这正是
 //! `scan` 那两格判据要辨别的东西。
 
+use env::Wait;
 use std::cell::{Cell, RefCell};
 
 use env::{Mark, Name, PieToken, TaskId};
@@ -178,7 +179,7 @@ pub fn try_post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
 }
 
 /// 从我这一枚收一句话（有就取走，没有就报期限内没等到）。
-pub fn pull_own(hole: PieToken, buf: &mut [u8], _millis: usize) -> Result<usize, ()> {
+pub fn pull_own(hole: PieToken, buf: &mut [u8], _millis: Wait) -> Result<usize, ()> {
     let taken = INBOX.with(|i| {
         let mut inbox = i.borrow_mut();
         inbox
@@ -223,8 +224,15 @@ pub fn each(f: &mut dyn FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
 }
 
 /// 有界等：**假钟往前拨 `millis`**，故"期限到"在宿主上是确定性的（返回 `false` = 没被叫醒）。
-pub fn fall(millis: usize) -> bool {
-    CLOCK.with(|c| c.set(c.get().saturating_add(millis as u64 * 1_000_000)));
+pub fn fall(millis: Wait) -> bool {
+    // **`Forever` 那一格把假钟拨到底**：假台上没有"永远等下去"这回事，而挂死的用例比一个
+    // 饱和的读数更坏。真那一侧等的是 `Duration::MAX`（见 `env::wait`）。
+    CLOCK.with(|c| {
+        c.set(match millis {
+            Wait::AtMost(ms) => c.get().saturating_add(ms as u64 * 1_000_000),
+            Wait::Forever => u64::MAX,
+        })
+    });
     false
 }
 

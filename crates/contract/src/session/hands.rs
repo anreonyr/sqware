@@ -13,6 +13,7 @@
 //!
 //! 甲（函数指针）是用户裁的；house 里已有同款的注入（`Board::new(vested_by, unship)`）。
 
+use env::Wait;
 use env::{Mark, PieToken, TaskId};
 
 use super::core::Claim;
@@ -32,7 +33,7 @@ pub type Post = fn(PieToken, &[u8]) -> Result<(), ()>;
 /// 同上，槽满**当场**答 `Err`（不等）。
 pub type TryPost = fn(PieToken, &[u8]) -> Result<(), ()>;
 /// 从**本端**那一枚收一句话（有界等）。
-pub type PullOwn = fn(PieToken, &mut [u8], usize) -> Result<usize, ()>;
+pub type PullOwn = fn(PieToken, &mut [u8], Wait) -> Result<usize, ()>;
 /// 铸一枚孔（记号刻在上面）。
 pub type Unseal = fn(Mark) -> Result<PieToken, ()>;
 /// 交出一枚副本（返"种在对端表里"的号）。
@@ -44,7 +45,7 @@ pub type Each = fn(&mut dyn FnMut(Hole) -> Result<(), Claim>) -> Result<(), Clai
 /// 这枚孔的两格事实：谁开的 / 刻的什么记号。
 pub type Reserve = fn(PieToken) -> (Option<TaskId>, Mark);
 /// 有界等（返 `false` = 没被叫醒）。
-pub type Fall = fn(usize) -> bool;
+pub type Fall = fn(Wait) -> bool;
 /// 单调钟（纳秒）。
 pub type NowNs = fn() -> u64;
 

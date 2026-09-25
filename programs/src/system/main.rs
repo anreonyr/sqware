@@ -29,6 +29,7 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
 use env::Mark;
 use programs::service;
 
@@ -257,7 +258,7 @@ fn talk_to_root() -> Option<Pier> {
     let slot = Name::new(supply::BOOT).ok()?;
     let mut quay = Quay::open(sire, protocol::session::call::hands());
     quay.seat(slot).ok()?;
-    quay.claim(sire, Mark::of(supply::BOOT), BOOT_MS).ok()?;
+    quay.claim(sire, Mark::of(supply::BOOT), Wait::AtMost(BOOT_MS)).ok()?;
     quay.find(slot).copied()
 }
 
@@ -298,7 +299,7 @@ fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     let key = want.key()?;
     let mut slip = [0u8; supply::ORDER_CAP];
     let mut reply = [0u8; supply::REPLY_CAP];
-    let records = supply::client::draw(pier, me, &[want], &mut slip, &mut reply, BOOT_MS).ok()?;
+    let records = supply::client::draw(pier, me, &[want], &mut slip, &mut reply, Wait::AtMost(BOOT_MS)).ok()?;
     supply::client::pick(records, key)
 }
 

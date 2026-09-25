@@ -13,6 +13,7 @@
 //!
 //! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
+use env::Wait;
 use env::PieToken;
 use runtime::env::mail::{self, HolePie};
 
@@ -23,7 +24,7 @@ use super::core::Fail;
 ///
 /// 一问一答——这一趟的回信孔只活到这句话答完（同一次往返借一枚，见 `protocol::session`
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）。
-pub fn now(entry: PieToken, millis: usize) -> Result<u64, Fail> {
+pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     let (back, seed) = lend_out(entry)?;
     if push(entry, &call::pack_ask(seed)).is_err() {
         let _ = mail::release(back);
@@ -46,7 +47,7 @@ pub fn now(entry: PieToken, millis: usize) -> Result<u64, Fail> {
 ///
 /// 失败域两格都由**驱动说的话**给出（`Taken` / `Past`），第三格 `Denied` 是这一趟自己没
 /// 走到——三种情况对客人是三个不同的下一步，故不合并成一格。
-pub fn arm(entry: PieToken, after_ns: u64, millis: usize) -> Result<Alarm, Fail> {
+pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> {
     let (back, seed) = lend_out(entry)?;
     if push(entry, &call::pack_arm(seed, after_ns)).is_err() {
         let _ = mail::release(back);

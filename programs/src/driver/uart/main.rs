@@ -52,6 +52,7 @@ extern crate alloc;
 extern crate programs;
 
 // 共享件住驱动这一族里：`assemble` 是三台驱动都要写一遍的那段客侧装配。
+use env::Wait;
 use programs::driver::assemble;
 use programs::driver::uart::needs;
 
@@ -117,7 +118,7 @@ fn main() -> Result<(), fail::Fail> {
     //    不挂牌子——名字在树上。**问话孔照交**：不交的那一位在板账上永远"没挂齐"，
     //    板线程会一直退化成 1 ms 节拍（`board::settle` 的 `unarmed`）。
     let sire = utask::sire()?;
-    let (_link, board) = board::open(sire, MS).map_err(|_| fail::Fail::Board)?;
+    let (_link, board) = board::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Board)?;
     if board::ask_hole(board).is_err() {
         return Err(fail::Fail::Board);
     }
@@ -128,7 +129,7 @@ fn main() -> Result<(), fail::Fail> {
     //    同一个域开第二条会撞同名（`Seat::NoName`）——而两次 `open` 拿到的还是两条*不同*的
     //    会话，孔各自归各自的表，混用更糟。故这里一次开、几手都用它（实测栽过：第二趟
     //    `open` 失败 ⇒ 本域当场退出，客人那一侧读一枚封了的孔，一个字节都读不到）。
-    let (link, host) = operator::open(sire, MS).map_err(|_| fail::Fail::Tree)?;
+    let (link, host) = operator::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Tree)?;
     let talk = operator::ask_hole(host).map_err(|_| fail::Fail::Tree)?;
     let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| fail::Fail::Tree)?;
     serve_tree(&link, talk, host, entry);
@@ -147,7 +148,7 @@ fn main() -> Result<(), fail::Fail> {
     let mut raw = [0u8; DRAIN_MAX];
     loop {
         // 这一格失败 = 那条线没了 ⇒ 这个域没有可继续的状态（照实报 `Dead`）。
-        if held.receive(usize::MAX).is_err() {
+        if held.receive(Wait::Forever).is_err() {
             return Err(fail::Fail::Dead);
         }
         let n = uart::drain(dock.view(), &mut raw);
@@ -178,7 +179,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
     // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, link, Where::Root, dir, MS);
+    let dir_at = operator::part(talk, link, Where::Root, dir, Wait::AtMost(MS));
     let (part, dir_id) = match dir_at {
         Ok(id) => (ocall::OK, id.get()),
         Err(code) => (code, 0),
@@ -194,7 +195,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
             entry,
             ocall::Rule::Public,
             true,
-            MS,
+            Wait::AtMost(MS),
         ),
         Err(code) => Err(code),
     };
@@ -204,7 +205,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
     let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, link, id, MS) {
+        Ok(id) => match operator::find(talk, link, id, Wait::AtMost(MS)) {
             Ok((code, entry)) => (code, entry.is_some()),
             Err(_) => (ocall::BAD, false),
         },
@@ -214,7 +215,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()
-        .and_then(|id| operator::name(talk, link, id, MS).ok());
+        .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
     say(&alloc::format!(
         "uart: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),
@@ -250,13 +251,13 @@ fn register(
     let want = Name::new(SERVICE).map_err(|_| fail::Fail::Line)?;
     let road = [dir, want];
     // **间接寻址那一手**：名字先译成号（号才是树的直接坐标），此后按号。
-    let id = operator::seek(talk, link, &road, MS).map_err(|_| fail::Fail::Line)?;
-    let entry = match operator::find(talk, link, id, MS) {
+    let id = operator::seek(talk, link, &road, Wait::AtMost(MS)).map_err(|_| fail::Fail::Line)?;
+    let entry = match operator::find(talk, link, id, Wait::AtMost(MS)) {
         Ok((ocall::OK, Some(entry))) => entry,
         // **查不到**与**授不出去**都落进这一格（`find` 的状态那一格说得出是哪一种）。
         _ => return Err(fail::Fail::Line),
     };
-    line::client::Line::occupy(entry, key, MS).map_err(|_| fail::Fail::Line)
+    line::client::Line::occupy(entry, key, Wait::AtMost(MS)).map_err(|_| fail::Fail::Line)
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。

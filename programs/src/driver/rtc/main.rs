@@ -67,6 +67,7 @@ extern crate alloc;
 extern crate programs;
 
 // 共享件住驱动这一族里：`assemble` 是各驱动都要写一遍的那段客侧装配，需求单同一份源码编一次。
+use env::Wait;
 use programs::driver::assemble;
 use programs::driver::rtc::needs;
 // 服务面那三份：帧形与记号、那一格、客侧两手（客人 `use` 的是同一份）。
@@ -127,12 +128,12 @@ fn main() -> Result<(), fail::Fail> {
     // 3. 上板（只为让板看得见本域的死）+ 上树：门牌 `/device/rtc` 落在树上（那一枚入口先取出来，
     //    树的 LAND 与组的两只耳朵都要它）。
     let sire = utask::sire()?;
-    let (_link, board_link) = board::open(sire, MS).map_err(|_| fail::Fail::Board)?;
+    let (_link, board_link) = board::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Board)?;
     if board::ask_hole(board_link).is_err() {
         return Err(fail::Fail::Board);
     }
     let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| fail::Fail::Tree)?;
-    let (link, host) = operator::open(sire, MS).map_err(|_| fail::Fail::Tree)?;
+    let (link, host) = operator::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Tree)?;
     let talk = operator::ask_hole(host).map_err(|_| fail::Fail::Tree)?;
     serve_tree(&link, talk, host, entry);
 
@@ -168,16 +169,16 @@ fn main() -> Result<(), fail::Fail> {
     loop {
         // 等到有事件。非阻塞地把两个源各取干净——**先门后线**：门上的问要就地答，而线那一趟
         // 到点才有的说（次序不承担语义，只省一次绕回）。
-        match pile.await_(usize::MAX) {
+        match pile.await_(Wait::Forever) {
             Ok(_) => {}
             Err(_) => return Err(fail::Fail::Desk),
         }
         // 门牌是**单槽**：一趟把槽里的都取走。缓冲是一页（见上），故"取不出也丢不掉"
         // 那个状态不存在。
-        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
+        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, Wait::POLL) {
             desk(&mut slot, view, from, &buf[..len]);
         }
-        while held.receive(0).is_ok() {
+        while held.receive(Wait::POLL).is_ok() {
             // 一次投递 = 设备那一格拉起来了。顺序与 `uart` 同一条道理：**先把设备那一格清干净**
             // （清 `irq_pending`：电平源，不清线就一直挂着），再看那一格到点没有，最后说"排空了"。
             let now = rtc::now(view);
@@ -292,7 +293,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
     // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, link, Where::Root, dir, MS);
+    let dir_at = operator::part(talk, link, Where::Root, dir, Wait::AtMost(MS));
     let (part, dir_id) = match dir_at {
         Ok(id) => (ocall::OK, id.get()),
         Err(code) => (code, 0),
@@ -308,7 +309,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
             entry,
             ocall::Rule::Public,
             false,
-            MS,
+            Wait::AtMost(MS),
         ),
         Err(code) => Err(code),
     };
@@ -318,7 +319,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
     let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, link, id, MS) {
+        Ok(id) => match operator::find(talk, link, id, Wait::AtMost(MS)) {
             Ok((code, entry)) => (code, entry.is_some()),
             Err(_) => (ocall::BAD, false),
         },
@@ -328,7 +329,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()
-        .and_then(|id| operator::name(talk, link, id, MS).ok());
+        .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
     say(&format!(
         "rtc: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),
@@ -363,12 +364,12 @@ fn register(
     let want = Name::new(SERVICE).map_err(|_| ())?;
     let road = [dir, want];
     // **间接寻址那一手**：名字先译成号（号才是树的直接坐标），此后按号。
-    let id = operator::seek(talk, link, &road, MS).map_err(|_| ())?;
-    let entry = match operator::find(talk, link, id, MS) {
+    let id = operator::seek(talk, link, &road, Wait::AtMost(MS)).map_err(|_| ())?;
+    let entry = match operator::find(talk, link, id, Wait::AtMost(MS)) {
         Ok((ocall::OK, Some(entry))) => entry,
         _ => return Err(()),
     };
-    line::client::Line::occupy(entry, key, MS).map_err(|_| ())
+    line::client::Line::occupy(entry, key, Wait::AtMost(MS)).map_err(|_| ())
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有控制台，只有它。

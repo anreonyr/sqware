@@ -13,6 +13,7 @@
 //!   常驻：一只组等门牌那一枚 —— 读一帧（连发送者）→ 交给核心 → 从这一趟的回信孔答回去
 //! ```
 
+use env::Wait;
 use alloc::format;
 
 use env::{HoleDir, Name, PieToken, TaskId};
@@ -44,7 +45,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     };
 
     // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
-    let Ok((_link, board_link)) = board::open(assembler, MS) else {
+    let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
         return Err(super::fail::Fail::Board);
     };
     if board::ask_hole(board_link).is_err() {
@@ -77,7 +78,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     }
 
     // 四、上树：分 `/sys`、落 `/sys/principal`、再查回来验一遍（同 router / rtc 那一趟）。
-    let Ok((tree, host)) = operator::open(assembler, MS) else {
+    let Ok((tree, host)) = operator::open(assembler, Wait::AtMost(MS)) else {
         return Err(super::fail::Fail::Tree);
     };
     let Ok(talk) = operator::ask_hole(host) else {
@@ -124,11 +125,11 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
-        if pile.await_(usize::MAX).is_err() {
+        if pile.await_(Wait::Forever).is_err() {
             return Err(super::fail::Fail::Desk);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, 0) {
+        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, Wait::POLL) {
             turn(&mut book, from, &buf[..len]);
         }
     }
@@ -215,7 +216,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
     // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, link, Where::Root, dir, MS);
+    let dir_at = operator::part(talk, link, Where::Root, dir, Wait::AtMost(MS));
     let (part, dir_id) = match dir_at {
         Ok(id) => (ocall::OK, id.get()),
         Err(code) => (code, 0),
@@ -231,7 +232,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
             entry,
             ocall::Rule::Public,
             false,
-            MS,
+            Wait::AtMost(MS),
         ),
         Err(code) => Err(code),
     };
@@ -241,7 +242,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
     let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, link, id, MS) {
+        Ok(id) => match operator::find(talk, link, id, Wait::AtMost(MS)) {
             Ok((code, entry)) => (code, entry.is_some()),
             Err(_) => (ocall::BAD, false),
         },
@@ -251,7 +252,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()
-        .and_then(|id| operator::name(talk, link, id, MS).ok());
+        .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
     say(&format!(
         "principal: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),

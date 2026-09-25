@@ -6,6 +6,7 @@
 //             排除双释放与漏释放。
 //             SendSlot 整个传给方法走（whole-struct 捕获，使 Send 生效）。
 
+use env::Wait;
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -78,7 +79,7 @@ impl<T> Join<T> {
                 unsafe { drop(Box::from_raw(slot)) };
                 return r;
             }
-            let _ = room::wait(slot as usize, 1_000);
+            let _ = room::wait(slot as usize, Wait::AtMost(1_000));
         }
     }
 }
