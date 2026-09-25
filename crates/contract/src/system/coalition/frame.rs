@@ -106,7 +106,7 @@ pub fn pack_seq<T: Id>(out: &mut [u8; REPLY_MAX], window: &Window<T>) -> usize {
     out[2] = window.len() as u8;
     for (i, id) in window.iter().enumerate() {
         let at = 3 + i * 8;
-        out[at..at + 8].copy_from_slice(&(id.get() as u64).to_le_bytes());
+        out[at..at + 8].copy_from_slice(&id.to_bytes());
     }
     3 + window.len() * 8
 }
@@ -140,7 +140,7 @@ pub fn read_seq<T: Id>(bytes: &[u8]) -> Result<Window<T>, u8> {
     let ids = body.chunks_exact(8).map(|chunk| {
         let mut raw = [0u8; 8];
         raw.copy_from_slice(chunk);
-        T::new(u64::from_le_bytes(raw) as usize)
+        T::from_bytes(raw)
     });
     Ok(Window::gather(more, ids))
 }

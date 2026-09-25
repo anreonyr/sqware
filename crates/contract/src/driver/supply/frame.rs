@@ -3,6 +3,7 @@
 //!
 //! 正文见 `protocol` 那一侧的 `driver/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
 
+use env::wire::Field;
 use env::{TaskId};
 use plan::{PAIR_LEN};
 
@@ -31,8 +32,12 @@ pub const WANT_LEN: usize = core::mem::size_of::<Want>();
 const _: () = assert!(WANT_LEN == 32);
 /// **各项之和就是它**——留一格隐式的尾巴，`want_bytes` 就会把未初始化字节读上线（见 `Want` 的注）。
 const _: () = assert!(core::mem::size_of::<Want>() == plan::KEY_LEN + 4 + 4 + 1 + 7);
-/// 帧头：`[op][条数]` + 那一格"给谁"（8 字节 LE，与 `operator::tell` 同一口径）。
-const HEAD_LEN: usize = 2 + 8;
+/// 帧头：`[op][条数]` + 那一格"给谁"。
+///
+/// **照实记（那个 `8` 退场）**：它从前写的是 `2 + 8`，注里跟着一句"（8 字节 LE，与
+/// `operator::tell` 同一口径）"——一条**"必须同值"的注释**。宽度归
+/// [`Field`](env::wire::Field) 给 [`TaskId`] 的那一对，故这里读的是同一个 `WIDTH`。
+const HEAD_LEN: usize = 2 + TaskId::WIDTH;
 pub const ORDER_CAP: usize = HEAD_LEN + WANT_LEN * WANT_MAX;
 pub const REPLY_CAP: usize = 2 + PAIR_LEN * WANT_MAX;
 
@@ -70,7 +75,7 @@ pub fn pack_order<'a>(buf: &'a mut [u8], who: TaskId, wants: &[Want]) -> Option<
     let out = buf.get_mut(..len)?;
     out[0] = OP_SUPPLY;
     out[1] = n as u8;
-    out[2..HEAD_LEN].copy_from_slice(&(who.get() as u64).to_le_bytes());
+    who.store(&mut out[2..HEAD_LEN]);
     for (i, w) in wants.iter().enumerate() {
         let at = HEAD_LEN + i * WANT_LEN;
         out[at..at + WANT_LEN].copy_from_slice(want_bytes(w));
@@ -98,10 +103,12 @@ pub struct Order<'a> {
 
 impl<'a> Order<'a> {
     /// 这条单子是**给谁**的（那一格过线的号）。
+    ///
+    /// **它读得回来是既成事实，不是运气**：[`unpack_order`] 已经保证 `bytes.len() >= HEAD_LEN`，
+    /// 而这一格恰是 `TaskId::WIDTH` 字节 ⇒ `unwrap_or` 那一支**到不了**（答 0 = 不是号，与
+    /// `PieToken::NONE` 那 0 同一约定）。
     pub fn who(&self) -> TaskId {
-        let mut raw = [0u8; 8];
-        raw.copy_from_slice(&self.bytes[2..HEAD_LEN]);
-        TaskId::new(u64::from_le_bytes(raw) as usize)
+        TaskId::fetch(&self.bytes[2..HEAD_LEN]).unwrap_or(TaskId::new(0))
     }
 
     pub fn len(&self) -> usize {
