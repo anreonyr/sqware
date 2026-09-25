@@ -88,7 +88,7 @@ impl<M: Message> Slip<M> {
     ///
     /// 返 `None` 盖两件事：**期限到了还没到**与**读不懂**——板的持板者正是这么用的
     /// （`None` ⇒ 答 `BAD`）。表外的动作码**不是** `None`，它是那一族 `In` 自己的一格
-    /// （如 `ReqIn::Unknown`）。
+    /// （如 `Wire::Unknown`）。
     pub fn land(&self, millis: Wait) -> Option<M::In> {
         // `Buf: Copy` ⇒ 借一份出来收（`&self` 不动自己那只）。
         let mut buf = self.buf;

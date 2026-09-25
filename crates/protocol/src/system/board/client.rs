@@ -82,8 +82,6 @@ pub fn register(
     entry: PieToken,
     millis: Wait,
 ) -> Result<u8, Fail> {
-    let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 先把入口交出去、换回"它在板表里是几号"，再编帧——两个编号空间不同源。
     let seed = bcall::ship(entry, board).map_err(|_| Fail::Denied)?;
     // 装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
@@ -92,11 +90,7 @@ pub fn register(
         .load(bcall::Req::Register { name, seed })
         .ship()
         .map_err(|_| Fail::Unknown)?;
-    let mut reply = [0u8; 1];
-    match pier.pull(&mut reply, millis) {
-        Ok(1) => Ok(reply[0]),
-        _ => Err(Fail::Unknown),
-    }
+    hear_rep(link, millis)
 }
 
 /// 客侧第四步：说一句"**我走了**"，收一格答话。
@@ -107,18 +101,12 @@ pub fn register(
 /// 板那侧据此撤格 + 摘掉这一位挂在板上的**全部**牌子；它不在账上则答
 /// [`UNKNOWN`](bcall::UNKNOWN)。
 pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
-    let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 孔是单槽：与 [`register`] 同一条路，只是这一条报短（长度由形状说）。
     Slip::<bcall::Req>::seal(say)
         .load(bcall::Req::Evict)
         .ship()
         .map_err(|_| Fail::Unknown)?;
-    let mut reply = [0u8; 1];
-    match pier.pull(&mut reply, millis) {
-        Ok(1) => Ok(reply[0]),
-        _ => Err(Fail::Unknown),
-    }
+    hear_rep(link, millis)
 }
 
 // 照实记（删掉的一处：板那一面的 `take`）：它从前在这儿，形状与 `operator::take` 逐字同构
@@ -129,6 +117,19 @@ pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
 // 按"没有读者的格不留在协议面上"的口径删掉。它顺带也是 `vestor` 在扫描里的**第二个**读者
 // （另一个是 `operator::take`，那一个活的）——乙′ 那一步要把 `vestor` 从 `Collect` 上拿掉，
 // 这就是先少掉的一处。
+
+/// 收下板路上那一格：**一句答**（登记与退场共用）——[`hear`] 的答话侧对偶。
+///
+/// 返答话那一格码（[`bcall::OK`] = 板收下了），或 `Unknown`：`land` 那个 `None` 盖着
+/// "期限到了 / 读不懂 / 孔空了"，问的人拿这一个码决定要不要重问。
+fn hear_rep(link: &Quay, millis: Wait) -> Result<u8, Fail> {
+    let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
+    let pier = link.find(at).ok_or(Fail::Unknown)?;
+    Slip::<bcall::Rep>::seal(pier.hole())
+        .land(millis)
+        .map(bcall::Rep::get)
+        .ok_or(Fail::Unknown)
+}
 
 /// 收下板路上那一格：**答话的是谁**（装配侧 `programs/src/system/board/bridge.rs` 的 `tell`
 /// 的对偶）。宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对

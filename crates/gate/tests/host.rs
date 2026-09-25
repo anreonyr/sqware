@@ -8,7 +8,11 @@
 //!   1) `cargo test` 退出码 0；
 //!   2) **八个靶每个都要有**汇总行 `test result: ok. N passed; 0 failed`，且 **N = 基线**；
 //!   3) 全程无 `FAILED`；
-//!   4) 总和 **= 118**（多一个靶、少一个靶都拦得住）。
+//!   4) 总和 **= 120**（多一个靶、少一个靶都拦得住）。
+//!
+//! **照实记（这一行与下面那个常量曾经不一致）**：它写 `118`，而 `TOTAL` 是 `119`——上一刀
+//! 加了判据、改了常量，这一行没跟着改。今天两个数都是 `120`（板那一族加了
+//! `a_rep_is_exactly_one_byte`，见 `crates/protocol-case/tests/board.rs`）。
 //!
 //! **照实记（为什么要有基线）**：这一门原先每台只查"**≥ 1 例**"，于是**少跑**成了唯一看不见的
 //! 坏消息——那 34 条 `#[cfg(test)]` 用例只在"某个靶恰好把那几份源码纳进判据"的前提下才跑，
@@ -28,13 +32,13 @@ const BASELINE: &[(&str, usize)] = &[
     ("line", 11),
     ("judge", 25),
     ("roster", 20),
-    ("board", 11),
+    ("board", 12),
     ("quay", 12),
     ("judgement", 10),
     ("supply", 7),
 ];
 
-const TOTAL: usize = 119;
+const TOTAL: usize = 120;
 
 /// 一个靶的汇总行。
 struct Summary {

@@ -29,7 +29,7 @@ use contract::system::board::{core, frame};
 //
 // **照实记（这一组为什么值当）**：机器那几道门走的是**顺路**——客侧编一帧、板侧解一帧。
 // 下面这些格子机器**一条都走不到**：短帧 / 空帧 / 长一字节、**"哪一条动作带哪份荷载"那一格**
-// （注销与查那两枚只带名字）、表外的动作码、
+// （注销与查那两枚只带名字）、表外的动作码、**答那一格的长度**（答只有一格）、
 // 名字那几格的判废（空 / 串尾有垃圾 / 不是 UTF-8）、以及失败码表的两端。
 
 use crate::core::{Board, Fail};
@@ -49,7 +49,7 @@ fn store(m: f::Req) -> ([u8; f::REQ_LEN], usize) {
 }
 
 /// 解一条报。
-fn fetch(bytes: &[u8]) -> Option<f::ReqIn> {
+fn fetch(bytes: &[u8]) -> Option<f::Wire> {
     <f::Req as Message>::fetch(bytes)
 }
 
@@ -60,10 +60,10 @@ fn a_req_carries_the_name_and_a_seed_only_for_the_action_that_has_one() {
         name: name("console"),
         seed,
     });
-    assert_eq!(len, f::RegisterFrame::LEN, "动作码 ＋ 名字 ＋ 那一格入口号");
+    assert_eq!(len, f::Seed::LEN, "动作码 ＋ 名字 ＋ 那一格入口号");
     assert_eq!(
         fetch(&frame[..len]),
-        Some(f::ReqIn::Register {
+        Some(f::Wire::Register {
             name: name("console"),
             seed
         }),
@@ -76,7 +76,7 @@ fn a_req_carries_the_name_and_a_seed_only_for_the_action_that_has_one() {
             f::Req::Unregister {
                 name: name("console"),
             },
-            f::ReqIn::Unregister {
+            f::Wire::Unregister {
                 name: name("console"),
             },
         ),
@@ -84,13 +84,13 @@ fn a_req_carries_the_name_and_a_seed_only_for_the_action_that_has_one() {
             f::Req::Lookup {
                 name: name("console"),
             },
-            f::ReqIn::Lookup {
+            f::Wire::Lookup {
                 name: name("console"),
             },
         ),
     ] {
         let (frame, len) = store(req);
-        assert_eq!(len, f::NameFrame::LEN, "动作码 ＋ 名字，没有尾巴");
+        assert_eq!(len, f::Name::LEN, "动作码 ＋ 名字，没有尾巴");
         assert_eq!(fetch(&frame[..len]), Some(want));
         // 长一字节（旧形状那一帧）**不再是它**：长度为该动作该有的长度是帧的契约。
         assert_eq!(
@@ -102,8 +102,8 @@ fn a_req_carries_the_name_and_a_seed_only_for_the_action_that_has_one() {
 
     // **退场那一句只有一字节**——形状说了它没有荷载，编不出"41 字节的退场"。
     let (frame, len) = store(f::Req::Evict);
-    assert_eq!(len, f::EvictFrame::LEN, "空载荷");
-    assert_eq!(fetch(&frame[..len]), Some(f::ReqIn::Evict));
+    assert_eq!(len, f::Evict::LEN, "空载荷");
+    assert_eq!(fetch(&frame[..len]), Some(f::Wire::Evict));
 }
 
 #[test]
@@ -124,16 +124,40 @@ fn a_board_frame_that_is_not_that_shape_is_not_guessed_at() {
     let mut outside = reg;
     outside[0] = 200;
     assert_eq!(
-        fetch(&outside[..f::NameFrame::LEN]),
-        Some(f::ReqIn::Unknown),
+        fetch(&outside[..f::Name::LEN]),
+        Some(f::Wire::Unknown),
         "码不是我的"
     );
     // **码先于长度**：长度是"某一条动作的契约"，表外的码没有契约可言 ⇒ 任何长度都是 `Unknown`。
     assert_eq!(
         fetch(&[0u8; f::REQ_LEN - 1]),
-        Some(f::ReqIn::Unknown),
+        Some(f::Wire::Unknown),
         "0 也不是这四枚之一"
     );
+}
+
+#[test]
+fn a_rep_is_exactly_one_byte() {
+    // 答那一侧的形状：**一格**。`of` 不筛码——表外的码是一句答话的**内容**（读的人自己去认，
+    // 见失败码表那一条用例），这里钉的是它唯一的契约：**长度**。
+    for code in [f::OK, f::UNKNOWN, f::TAKEN, f::DENIED, f::FULL, f::BAD, 200] {
+        let mut buf = [0u8; f::Status::LEN];
+        let len = f::Rep::of(code).store(&mut buf).expect("一答只有一格");
+        assert_eq!(len, f::Status::LEN, "答就是这一格");
+        assert_eq!(f::Rep::of(code).get(), code, "原样交回");
+        assert_eq!(
+            <f::Rep as Message>::fetch(&buf),
+            Some(f::Rep::of(code)),
+            "码是内容，不是判据"
+        );
+        // 多一字节、少一字节都不是这一条答（收答那一侧因此报 `Unknown`）。
+        assert_eq!(
+            <f::Rep as Message>::fetch(&[&buf[..], &[0u8]].concat()),
+            None,
+            "两字节的答"
+        );
+    }
+    assert_eq!(<f::Rep as Message>::fetch(&[]), None, "空帧");
 }
 
 #[test]
