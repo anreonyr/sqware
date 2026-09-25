@@ -6,12 +6,16 @@
 //! 故主工作区那几道门**都不编**它的 `#[cfg(test)]`；而**链接 `protocol` 去测**也走不通——它依赖
 //! `runtime`，`runtime/src/core/tls.rs` 里那两处 riscv 内联汇编在宿主编译器上编不出来。
 //!
-//! 故这一台也走那条现成的路：编外宿主 crate、`#[path]` 把
-//! `crates/contract/src/driver/line/core.rs` **逐字未改**地当一个模块读进来。
+//! 故这一台也走那条现成的路：编外宿主 crate、**真依赖**「约」`contract`——
+//! `crates/contract/src/driver/line/core.rs`（账）与 `frame.rs`（帧形与记号）逐字同一份源码。
 //!
-//! **照实记（这一台多一处桩）**：线的核心写的是"有主那一格"，故它 `use crate::session::Pier`
-//! ——宿主靶里给了一个**桩**（`Pier` 只要 `post` 一句：核心只跟泊位说这一句话，读/写泊位那一侧
-//! 在适配层）。桩量不了会话，量得了账——本台钉的就是**账的界**。
+//! **照实记（这一台原先那一处桩已退场）**：线的核心写的是"有主那一格"，故它要一个 `Pier`。
+//! `#[path]` 那一版把核心逐字编进靶时，靶里给了一个**同名的桩类型**（`pub struct Pier;`，
+//! 外加一个可关掉的 `post` 失败开关）。**那是个影子**：桩与真那份只共享一个名字，形状漂了
+//! 也没人喊。真依赖之后 `Pier` 是**会话核心铸的那一枚**（字段私有 ⇒ 只有 `Quay` 造得出），
+//! 故靶得**真把一条泊位配齐**（`seat` → 对端那一枚进假表 → `claim`，见 [`pier`]）；
+//! 那个失败开关搬到**假手表**上（`tests/session/call.rs` 的 `refuse`），判据一个字没松。
+//! 桩量不了会话，量得了账——本台钉的仍是**账的界**。
 //!
 //! # 这批判据钉的是什么
 //!
@@ -25,70 +29,60 @@
 
 extern crate alloc;
 
-/// 泊位那一格的**桩**：核心只跟它说一句 `post`（排空那一侧在适配层）。
+/// 会话那一层：**假手表 + 真据**。
 ///
-/// **照实记（这一格是"改坏一格看门红不红"量出来的）**：这个桩原先**恒答 `Ok`**，于是 `deliver`
-/// 里那条"**推不出去 ⇒ 不置忙**"的契约**没有任何判据**——把 `post` 的失败忽略掉
-/// （"推不出去也置忙"）全门照绿。故给桩加一个**可关掉的失败开关**
-/// （线程局部，照 `operator` 靶 / `judge` 靶那两台分配器的同款做法：libtest 每个用例
-/// 各一枚线程，全局旗帜会随机打到别人身上）。
+/// `#[path = "call.rs"]` 里的基准目录是 `tests/session/`（内联模块的 `#[path]` 基准跟着模块名走，
+/// 照实记见 `roster` 靶）——故这一台与 `quay` 靶读的是**同一份假手表**。
 mod session {
-    use std::cell::Cell;
+    /// 本台的**假手表**（十个假手 ＋ 测试侧的观察面）。
+    ///
+    /// **照实记（`#[allow(dead_code)]`）**：这一份是**两台共读**的（`quay` 靶与这一台），
+    /// 而这一台只叫得着其中几件（`reset` / `name` / `put` / `refuse`）——挂 allow 而不是把
+    /// 其余几件删掉：删了 `quay` 靶就编不过。
+    #[allow(dead_code)]
+    #[path = "call.rs"]
+    pub mod call;
 
-    thread_local! {
-        /// 本线程上 `post` 是否失败。
-        static REFUSE: Cell<bool> = const { Cell::new(false) };
-    }
-
-    /// 把本线程的 `post` 打成失败（或放开）。
-    pub fn refuse(on: bool) {
-        REFUSE.with(|flag| flag.set(on));
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct Pier;
-
-    impl Pier {
-        pub fn post(&mut self, _frame: &[u8]) -> Result<(), ()> {
-            if REFUSE.with(Cell::get) {
-                return Err(());
-            }
-            Ok(())
-        }
-    }
+    /// 会话的据与表的形状——**真依赖** `contract`（逐字同一份源码）。
+    pub use contract::session::{core, hands};
 }
 
-/// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**。
+/// 账 + 帧形与记号——**真依赖** `contract::driver::line` 那两份（逐字同一份源码）。
 ///
-/// 两样都要（见那份文件的照实记）：`#[macro_use]` 把宏带进**下面那些模块**的作用域
-/// （宏的可见性按正文先后 ⇒ 这一行必须在帧模块之前），`#[macro_export]` 保住"出 crate"那一份。
-#[macro_use]
-#[path = "../../contract/src/fail_codes.rs"]
-mod fail_codes;
+/// **模块名照旧**（`core` / `call`）：帧那一份写的是 `use super::core::Fail;`（在协议里它与
+/// `core.rs` 同住 `driver::line`）——**那份源码在 `contract` 里本来就成立**；靶这侧那些
+/// `use crate::core::…` 也一个字不改。代价照实记：`core` 这个名字会遮住 `core` crate
+/// ⇒ 本文件里凡要用标准库的就写 `std::…`。
+///
+/// **照实记（`#[path]` 退场）**：这两份原先各拿一行 `#[path]` 逐字编进靶，外加 `fail_codes!`
+/// 码表一份（宏的可见性按正文先后 ⇒ `#[macro_use]` 那两行必须写在帧模块之前）。真依赖挂上
+/// 之后三行一起退场：码表随 `frame.rs` 住在 `contract` 里，本台一处都不碰。
+use contract::driver::line::{core, frame as call};
 
-/// 账的正文（就是 `crates/contract/src/driver/line/core.rs` 那一份，逐字未改）。
-///
-/// **模块名就叫 `core`**：帧那一份写的是 `use super::core::Fail;`（在协议里它与 `core.rs` 同住
-/// `driver::line`）——宿主靶里把这一份放在**同一层**、名字照旧，那一行才逐字成立
-/// （`judge` 靶当初也是这么叫的；代价是 `core` 这个名字会遮住 `core` crate ⇒ 本文件里
-/// 凡要用标准库的就写 `std::…`）。
-#[path = "../../contract/src/driver/line/core.rs"]
-mod core;
-
-/// **帧形与记号**那一份（`crates/contract/src/driver/line/frame.rs`，逐字未改）。
-///
-/// 照实记：**这是第一份上宿主的帧形**，而它**不用切结构**——线这一份 `use` 的只有 `env` 与
-/// 同层 `core::Fail`，故"纯核心与适配分离"在这一份上本来就成立。
-///
-/// 照实记：`#[allow(dead_code)]` 是因为本台只叫了它的一部分（`LANE` 那几枚记号由适配层用）。
-#[allow(dead_code)]
-#[path = "../../contract/src/driver/line/frame.rs"]
-mod call;
+use env::Mark;
+use session::call as fake;
+use session::core::{Pier, Quay};
 
 use crate::call::{OCCUPY, OCCUPY_LEN, pack_occupy, unpack_occupy};
 use crate::core::{Fail, Lines};
-use crate::session::Pier;
 use plan::Key;
+
+/// 对端（另一个域）。
+const PEER: env::TaskId = env::TaskId::new(7);
+
+/// 一条**配齐了的**泊位——真的 [`Pier`]（会话核心铸的那一枚），不是桩。
+///
+/// 三步就是线上那一趟：本端 `seat`（铸本端那一枚、交给对端）→ 对端那一枚**进假表**
+/// （`put`：主人是对端、记号是同一条路的名字）→ `claim` 把它认到这条路上。
+/// 认完 `Quay` 就可以丢：`Pier` 是 `Copy`、那两枚孔住在假表里，与码头本体的寿命无关。
+fn pier(text: &str) -> Pier {
+    fake::reset();
+    let mut q = Quay::open(PEER, session::call::hands());
+    q.seat(fake::name(text)).expect("装得上");
+    fake::put(9, PEER, Mark::of(text));
+    q.claim(PEER, Mark::of(text), 0).expect("对端那一枚到了");
+    *q.find(fake::name(text)).expect("在")
+}
 
 /// 一个够用的账（`device_count = 4` ⇒ 线号 0..=4）。
 fn account() -> Lines {
@@ -99,27 +93,32 @@ fn account() -> Lines {
 fn a_line_outside_the_account_is_not_a_line() {
     let mut lines = account();
     // 0 号：控制器领到空的那一格，永远不是一条线。
-    assert_eq!(lines.occupy(0, Pier), Err(Fail::Unknown));
+    assert_eq!(lines.occupy(0, pier("zero")), Err(Fail::Unknown));
     assert_eq!(lines.deliver(0, &[1]), Err(Fail::Unknown));
     assert_eq!(lines.exhaust(0), Err(Fail::Unknown));
     assert_eq!(lines.vacate(0), Err(Fail::Unknown));
-    assert_eq!(lines.lane(0), None);
+    assert!(lines.lane(0).is_none());
     // 越界（`device_count = 4` ⇒ 5 号之外没有格子）。
-    assert_eq!(lines.occupy(5, Pier), Err(Fail::Unknown));
+    assert_eq!(lines.occupy(5, pier("beyond")), Err(Fail::Unknown));
     assert_eq!(lines.deliver(9, &[1]), Err(Fail::Unknown));
-    assert_eq!(lines.lane(9), None);
+    assert!(lines.lane(9).is_none());
 }
 
 #[test]
 fn occupying_twice_is_taken_and_the_lane_comes_back() {
     let mut lines = account();
-    assert_eq!(lines.occupy(1, Pier), Ok(()));
-    assert_eq!(lines.occupy(1, Pier), Err(Fail::Taken));
-    assert_eq!(lines.lane(1), Some(Pier));
+    let first = pier("uart");
+    assert_eq!(lines.occupy(1, first), Ok(()));
+    assert_eq!(lines.occupy(1, pier("echo")), Err(Fail::Taken));
+    assert_eq!(
+        lines.lane(1).map(|p| p.name()),
+        Some(first.name()),
+        "还回来的仍是那一条泊位"
+    );
     assert_eq!(lines.vacate(1), Ok(()));
-    assert_eq!(lines.lane(1), None);
+    assert!(lines.lane(1).is_none());
     // 退场之后再占上：同一条线可以换主人。
-    assert_eq!(lines.occupy(1, Pier), Ok(()));
+    assert_eq!(lines.occupy(1, pier("rtc")), Ok(()));
 }
 
 #[test]
@@ -127,17 +126,18 @@ fn a_frame_that_cannot_be_posted_leaves_the_line_idle() {
     // **`deliver` 的那一半契约**：推不出去 ⇒ 答 `Denied`，而且**不置忙**——"那一帧没送到"
     // 这件事必须在账上留痕，否则排空那一侧会去排一条从没收到东西的线。
     let mut lines = account();
-    assert_eq!(lines.occupy(1, Pier), Ok(()));
-    crate::session::refuse(true);
+    let owner = pier("uart");
+    assert_eq!(lines.occupy(1, owner), Ok(()));
+    fake::refuse(true);
     assert_eq!(lines.deliver(1, &[1, 2, 3]), Err(Fail::Denied));
-    crate::session::refuse(false);
+    fake::refuse(false);
     assert!(
         lines.busy().next().is_none(),
         "推不出去的那一帧不该把线置忙"
     );
     assert_eq!(
-        lines.lane(1),
-        Some(Pier),
+        lines.lane(1).map(|p| p.name()),
+        Some(owner.name()),
         "主人照旧（失败的是这一帧，不是这一格）"
     );
     // 放开之后同一格照常投得进、也照常置忙。
@@ -148,7 +148,7 @@ fn a_frame_that_cannot_be_posted_leaves_the_line_idle() {
 #[test]
 fn busy_means_delivered_and_not_yet_drained() {
     let mut lines = account();
-    assert_eq!(lines.occupy(2, Pier), Ok(()));
+    assert_eq!(lines.occupy(2, pier("uart")), Ok(()));
     assert_eq!(lines.busy().collect::<Vec<_>>(), Vec::<u32>::new());
     assert_eq!(lines.deliver(2, &[1]), Ok(()));
     assert_eq!(lines.busy().collect::<Vec<_>>(), vec![2]);
@@ -183,7 +183,7 @@ fn told_outside_the_account_answers_false_instead_of_panicking() {
 #[test]
 fn told_survives_a_vacate() {
     let mut lines = account();
-    assert_eq!(lines.occupy(3, Pier), Ok(()));
+    assert_eq!(lines.occupy(3, pier("uart")), Ok(()));
     assert!(lines.told(3));
     assert!(!lines.told(3));
     assert_eq!(lines.vacate(3), Ok(()));

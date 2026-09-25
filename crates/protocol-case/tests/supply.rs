@@ -2,9 +2,16 @@
 //!
 //! # 这一台钉的是什么
 //!
-//! `crates/contract/src/driver/supply/frame.rs`（帧、荷载的类型、上限与那张失败码表）与
-//! `crates/protocol/src/driver/supply/core.rs`（五格失败域）——两份都**逐字未改**。
+//! [`contract::driver::supply`]：帧、荷载的类型、上限与那张失败码表（`frame`）＋五格失败域
+//! （`core`）——**真依赖**（`[dev-dependencies] contract`），不是 `#[path]` 复制模块树。
 //! 判据写在靶子里（照 `protocol-case` 的 `line` 靶的做法），核心源码一个字不动：
+//!
+//! **照实记（这一刀换掉的东西）**：这一台原先用 `#[path = "…/contract/src/…"] mod …;` 把核心
+//! 源码**逐字编进靶**（用 `#[path]` 而不是 `include!`：后者编不过 `//!` 开头的文件，`E0753`）。
+//! 那是「约」分家**之前**的唯一出路——那时这几份源码住在 `protocol` 里，而链接 `protocol` 会拖
+//! `runtime` 的两处 riscv 内联汇编，宿主编不过。分家之后它们住 `contract`（只依赖 `env` 与
+//! `plan`）⇒ 靶直接依赖它：三行 `#[path]` 换一条 `use`。**模块名照旧**（`frame as call`）——
+//! 台里那些 `crate::call::…` 一字不改，`frame.rs` 里 `use super::core::Fail;` 也仍是同一层。
 //!
 //! ```text
 //!   Want / Need   一格荷载：坐标 + 类别 + **两族视图**（对端能做什么 / 这一枚能怎么流动）
@@ -16,27 +23,12 @@
 
 extern crate alloc;
 
-/// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**（见那份文件的照实记）。
-#[macro_use]
-#[path = "../../contract/src/fail_codes.rs"]
-mod fail_codes;
-
-/// 失败域（就是 `crates/protocol/src/driver/supply/core.rs` 那一份，逐字未改）。
-#[path = "../../contract/src/driver/supply/core.rs"]
-mod core;
-
-/// 那一门（就是 `crates/contract/src/driver/supply/frame.rs` 那一份，逐字未改）。
-///
-/// **模块名就叫 `call`**：它写的是 `use super::core::Fail;`——宿主靶里把两份放在**同一层**、
-/// 名字照旧，那一行才逐字成立。
-#[allow(dead_code)]
-#[path = "../../contract/src/driver/supply/frame.rs"]
-mod call;
+use contract::driver::supply::{core, frame as call};
 
 use crate::call::{Kind, Need, Want};
 use crate::core::Fail;
 use env::{Access, Name, Policy, TaskId};
-use plan::{Key};
+use plan::Key;
 
 fn name(text: &str) -> Name {
     Name::new(text).expect("名字合法")

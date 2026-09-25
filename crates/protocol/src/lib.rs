@@ -56,14 +56,15 @@ macro_rules! reserve_reads {
     };
 }
 
-// 码表宏自己一份源：**「约」与各宿主靶**同读这一份（靶不依赖本 crate，见那份文件的照实记）。
+// 码表宏自己一份源：**「约」与宿主靶**同读这一份（靶那一侧走依赖边、读的就是「约」那一份；
+// 它**不依赖本 crate**——本 crate 拖 `runtime`，宿主上编不动。见那份文件的照实记）。
 //
 // 三件共享件搬进 `crates/contract`（「约」）之后 `#[macro_use]` 仍要——它把那个宏带进
 // **本 crate 后面那些模块**的作用域（宏的可见性按正文先后），本 crate 那几处
 // `crate::fail_codes! { … }` 靠它；**出 crate 那一份**从此是 `contract::fail_codes!`。
 // 转出「约」那一份**模块**（宏也在里面）：`crate::fail_codes::OK` 与
-// `crate::fail_codes! { … }` 两条路都解析——**宿主靶也一样**（它把调用宏的那几份
-// `call.rs` 逐字编进去，`crate` 指靶，而靶自己也有这份模块）。
+// `crate::fail_codes! { … }` 两条路都解析——**宿主靶那边不再需要这一层**：调用宏的那几份
+// `frame.rs` 住在「约」里，`crate` 指的就是「约」的根。
 pub use contract::fail_codes;
 
 /// **答话那一格的"没失败"**（0）——全协议**一个号**：六家（principal / coalition / operator /
@@ -79,13 +80,12 @@ pub use contract::fail_codes::OK;
 
 pub mod driver;
 // 转出「约」那两件：`crate::frame` / `crate::id` 与 `protocol::frame` / `protocol::id` **照旧解析**
-// ⇒ 调用点一处不改（宿主靶那几处 `#[path]` 改指新家，见 `crates/protocol-case`）。
+// ⇒ 调用点一处不改（宿主靶那几处引用照旧解析，见 `crates/protocol-case`）。
 pub use contract::{frame, id};
 pub mod session;
 pub mod system;
 
 // 依赖先留着：`env` 与 `runtime` 是地板，第一条协议操作出现时立刻要用。
-// （本文件自己只有：下面那条 `reserve_reads!` 宏、`mod fail_codes`、五个 `pub mod` 与那两条
+// （本文件自己只有：下面那条 `reserve_reads!` 宏、上面那几条转出、五个 `pub mod` 与那两条
 // 编译期断言——`env` / `runtime` 只出现在**宏体**里，由调用宏的那些模块去用 ⇒ `cargo` 若在
 // **本文件这一格**报 unused dependency，是预期噪音。）
-

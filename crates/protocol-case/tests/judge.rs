@@ -46,44 +46,27 @@ extern crate alloc;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-/// 判据的正文（就是 `crates/contract/src/system/operator/judge.rs` 那一份，逐字未改）。
-#[path = "../../contract/src/system/operator/judge.rs"]
-mod judge;
-
-/// 裁决 → 线上那一格（就是 `crates/contract/src/system/operator/gate.rs` 那一份，逐字未改）。
-#[path = "../../contract/src/system/operator/gate.rs"]
-mod gate;
-
-/// 树的正文（就是 `crates/contract/src/system/operator/core.rs` 那一份，逐字未改）——**只为账要的
-/// 那三样**（`Where` / `EntryId` / `Fail` / `VestedBy`），本台不测树本身。
-// 照实记：`core.rs` 那一份**只借它的类型**（本台不测树本身）⇒ 它那一族方法在这一台里
-// 全是"没被叫过"。挂 `allow(dead_code)` 而不是把那几条删掉：那是**逐字未改的源码**，
-// 改它就是改判据的对象。同一个文件在 `protocol-case` 的 `operator` 靶那一台里是被叫全的。
-#[allow(dead_code)]
-#[path = "../../contract/src/system/operator/core.rs"]
-mod core;
-
-/// 那一本账（就是 `crates/contract/src/system/operator/ledger.rs` 那一份，逐字未改）。
-#[path = "../../contract/src/system/operator/ledger.rs"]
-mod ledger;
-
-/// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**（见那份文件的照实记）。
-#[macro_use]
-#[path = "../../contract/src/fail_codes.rs"]
-mod fail_codes;
-
-/// 号的词汇（`crates/contract/src/id.rs`，逐字未改）——`core.rs` 与 `frame.rs` 都写着
-/// `use crate::id::Id`（本台是**摊平**的模块树 ⇒ `crate::id` 就是这一格）。
-#[path = "../../contract/src/id.rs"]
-mod id;
-
-/// **帧那一半**（`crates/contract/src/system/operator/frame.rs`，逐字未改）—— 在本台里跑判据。
+/// 这一台要的五份——`judge`（判据的正文）/ `gate`（裁决 → 线上那一格）/ `core`（**只为账要的
+/// 那三样**：`Where` / `EntryId` / `Fail` / `VestedBy`，本台不测树本身）/ `ledger`（那一本账）/
+/// `frame`（帧那一半）——全是**真依赖** `contract::system::operator`（逐字同一份源码）。
 ///
-/// 这一台**本来就带着帧要的全部依赖**（`core` / `judge` / `gate` / `ledger` 都在同一层），
-/// 故它是最省的一处落点；那一份写的 `use super::core::…` / `use super::judge::…` 逐字成立。
-#[allow(dead_code)]
-#[path = "../../contract/src/system/operator/frame.rs"]
-mod frame;
+/// **模块名照旧**（`core` / `gate` / `judge` / `ledger` / `frame`）：那几份源码里的
+/// `use super::…` / `use crate::id::Id` **在 `contract` 里本来就成立**，靶这侧那些
+/// `use crate::core::…` 也一个字不改。**靶自己不再需要 `id` 那一片**——`#[path]` 那一版要它，
+/// 是因为源码里的 `crate::id` 落在**靶**的根上；现在落在 `contract` 的根上。
+///
+/// **照实记（`#[path]` 退场）**：这六份原先各拿一行 `#[path]` 逐字编进靶（外加 `fail_codes!`
+/// 码表一份、`core` 上一个 `#[allow(dead_code)]`——本台只借它的类型，那一族方法在这台里
+/// 全是"没被叫过"）。真依赖挂上之后这些一起退场：`dead_code` 按**定义它的 crate** 算，
+/// `contract` 是依赖、不重算；那批用例也不会被带进来（`contract` 是 `test = false`）。
+/// **为什么当初要编 `core.rs`**：`ledger.rs` 的两把钥匙是 `Where` / `EntryId`、失败域是 `Fail`，
+/// 三样都住 `operator/core.rs`；**这就是"这一台要它"的全部理由**，与"要不要测树"无关。
+///
+/// **为什么这一台不编 `principal/core.rs`**：`judge.rs` 里两个号是**泛型**（`Rule<P, C>`），
+/// 本台就用 `u64` 当那两个号（= `Id`，也是线上那一格的宽度）。那不是省事：若判据直接写死
+/// `PrincipalId` / `CoalitionId`，这一台就得跟着编那两份核心源码，而那两份的用例住在**别的靶**
+/// 里（`roster`）——把新判据挂在别处跑着的桩上不划算（照实记见 `judge.rs` 头注）。
+use contract::system::operator::{core, frame, gate, judge, ledger};
 
 use env::{Name, PieToken, TaskId};
 
@@ -494,7 +477,7 @@ fn no_face_at_all_is_blind_and_never_allow() {
 //
 // 照实记（为什么这批判据值得写）：账的前身（`server.rs` 的 `Publishers`）住在适配层，
 // **编不进宿主靶**——而它在真机上量错过两次（第一版按号记 ⇒ 整道判据被跳过，`probe-owner`
-// 当场顶掉了 `/device/uart` 的牌子）。这是它第一次被逐字编进测试靶。
+// 当场顶掉了 `/device/uart` 的牌子）。这是它第一次进宿主靶的判据。
 
 /// 造一枚号给账用：**唯一的门是"收号"**（与 `operator` 靶那一台同一条路）。
 fn pie(n: usize) -> PieToken {

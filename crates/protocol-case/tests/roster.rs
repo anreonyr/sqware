@@ -8,16 +8,22 @@
 //! `build --release`）一道都不编它——那批规格长期只有"写着的规格"、没有"跑着的判据"。
 //!
 //! 与别的几台同一条路（清单见 `crates/gate/tests/host.rs` 头注；头几台是 `operator` 靶 /
-//! `line` 靶 / `judge` 靶）：编外宿主
-//! crate、只依赖 `env`、把核心源码**逐字未改**地 `#[path]` 进来，门口 `crates/gate/tests/host.rs`。
+//! `line` 靶 / `judge` 靶）：编外宿主 crate、**真依赖**「约」`contract`，门口 `crates/gate/tests/host.rs`。
 //!
 //! **两本册子同住一台**：盟籍核心写着 `use crate::system::principal::core::PrincipalId` —— 它要身份
 //! 那本册子的号。分两台各编一遍的话，`principal/core.rs` 里那批判据会在两个靶里各跑一遍
 //! （`judge` 靶的头注记过同一条）。故同住一台。
 //!
-//! **照实记（这一台的文件名）**：靶子的根文件叫 `roster.rs` 而不是 `principal.rs`——因为
-//! 它要给 `crate::system::principal::core` 一个**真实的目录模块**（`tests/principal/mod.rs`），
-//! 而 `tests/principal.rs` 与 `tests/principal/` 同名会撞（E0761）。
+//! **照实记（五处影子随这一刀退场）**：这一台原先为了给那几份源码凑出它们要的名字，摆了
+//! 一层假树——`tests/principal/` 与 `tests/coalition/` 两个**目录模块**（只为让
+//! `crate::system::principal::core` 与它们内部的 `use super::core` 成立）、根上的 `mod id` /
+//! `mod frame`（给 `use crate::id::Id` / `use crate::frame::…`）、外加一句
+//! `mod system { pub(crate) use crate::{coalition, principal}; }`。真依赖之后**一个都不需要**：
+//! 那些 `crate::…` 路径在 `contract` 里本来就成立。两片目录连同那句桩一起**删掉**。
+//!
+//! **照实记（这一台的文件名）**：靶子的根文件曾必须叫 `roster.rs` 而不是 `principal.rs`——
+//! 因为 `tests/principal.rs` 与 `tests/principal/` 同名会撞（E0761）。那两片目录没了，
+//! 但名字**照着不动**：改名要动门口那张清单（`crates/gate/tests/host.rs`），换不来什么。
 //!
 //! # 这一台钉的是什么
 //!
@@ -29,42 +35,10 @@
 
 extern crate alloc;
 
-/// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**。
-///
-/// 两样都要：`#[macro_use]` 把宏带进**下面那些模块**的作用域（宏的可见性按正文先后 ⇒ 这一行
-/// 必须在帧模块之前），`#[macro_export]` 保住"出 crate"那一份。见那份文件的照实记。
-#[macro_use]
-#[path = "../../contract/src/fail_codes.rs"]
-mod fail_codes;
-
-/// 号的词汇（`crates/contract/src/id.rs`，逐字未改）——三个号空间共用的一条规则与那 8 字节。
-/// 两本册子与它们的帧都写着 `use crate::id::Id`，故这一台要给它那个名字。
-#[path = "../../contract/src/id.rs"]
-mod id;
-
-/// 定长一问一答的**帧骨架**（`crates/contract/src/frame.rs`，逐字未改）——principal 与 coalition
-/// 同形的那一份（长度、编 / 解、答话那几手）。两族的 `frame.rs` 都写着 `use crate::frame::…`。
-#[path = "../../contract/src/frame.rs"]
-mod frame;
-
-/// 身份那本册子（就是 `crates/contract/src/system/principal/core.rs` 那一份，逐字未改）。
-///
-/// 包一层目录模块（`tests/principal/`）只为让 `crate::system::principal::core` 这个名字成立
-/// ——盟籍那一份正是这么写它的 `use`（在 `protocol` 里它是 `crate::system::principal::core`，
-/// 这里逐字同形）。
-mod principal;
-
-/// 盟籍那两片（`crates/protocol/src/system/coalition/{core,frame}.rs`，逐字未改）住在
-/// `tests/coalition/` 那个**目录模块**里——帧那一份写的是 `use super::core::…`，故两片必须同层。
-mod coalition;
-
-/// 搬进 `system/` 之后（用户裁定），被**逐字**编进来的那两份源码里写的是
-/// `crate::system::{principal, coalition}`；而靶自己的模块树仍按"要哪几片编哪几片"摆在根上。
-/// 故这里补一个**只做转出的桩**让那个名字成立——不是再挖一层目录：`#[path]` 的基准会跟着变，
-/// 那个坑记在 `tests/principal/mod.rs`。
-mod system {
-    pub(crate) use crate::{coalition, principal};
-}
+/// 身份与盟籍两本册子（连同它们各自的帧）——**真依赖** `contract::system` 那两份
+/// （逐字同一份源码）。**模块名照旧**（`principal` / `coalition`）：下面那些
+/// `principal::core::…` / `coalition::frame::…` 一字不改。
+use contract::system::{coalition, principal};
 
 // ── 帧那一半（`principal/frame.rs` 与 `coalition/frame.rs`）──────────
 //

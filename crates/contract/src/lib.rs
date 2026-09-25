@@ -24,7 +24,7 @@
 //!
 //! **照实记（这三件为什么同批）**：`frame` 要 `id` 与 `fail_codes` ⇒ 三件是一组，只搬一件编不过。
 //! 搬完 `protocol` 用 `pub use contract::{frame, id};` 与 `pub use contract::fail_codes::OK;`
-//! **转出** ⇒ 调用点一处不改；宿主靶那几处 `#[path]` 改指新家。
+//! **转出** ⇒ 调用点一处不改；宿主靶**真依赖**本 crate 取它们。
 //!
 //! # 面会长成什么样（后面几批）
 //!
@@ -47,8 +47,8 @@
 //!    某份协议的人**只需要这一面**；
 //! 2. **能在宿主上跑的实现** —— 只判、只记、不发消息的那几份（`operator` 的 `judge` / `gate` /
 //!    `ledger` 是今天的全部）：它们**不是**给别的 task 用的，是**实现方**的东西；住在这里的
-//!    理由是**进得了宿主靶**（`crates/protocol-case` 把核心**逐字** `#[path]` 编进来跑判据——
-//!    而 `programs` 编不进宿主，拖着 riscv 内联汇编）。
+//!    理由是**进得了宿主靶**（`crates/protocol-case` **真依赖**本 crate 来跑判据——而
+//!    `programs` 编不进宿主，拖着 riscv 内联汇编）。
 //!
 //! **照实记（第二句是补上的那一半）**：原先只写了第 1 句。第 2 句管的是**依赖面**那条判据
 //! ——"别的 task 不该依赖实现"——而它今天**事实上成立**（那三份的读者只有持树者与宿主靶两处，
@@ -74,8 +74,8 @@
 //!
 //! **`frame.rs` 只在"帧那一半要能被单独编"时才单开**（真凭据：[`system::principal::frame`]
 //! 头注写着那个宿主靶"模块树里没有 `driver`"，[`system::operator::gate`] 同理）。`driver` 那
-//! 两半（[`driver::supply`] / [`driver::line`]）的帧**被宿主靶整份编**（`crates/protocol-case/
-//! tests/{supply,line}.rs` 进来的就是那一份）⇒ 没有分家的需要。**故同一个文件名在两族里指两件
+//! 两半（[`driver::supply`] / [`driver::line`]）的帧**整份都在宿主靶的判据里**（`crates/protocol-case/
+//! tests/{supply,line}.rs` 跑的就是那一份）⇒ 没有分家的需要。**故同一个文件名在两族里指两件
 //! 事**：`system/*/call.rs` 是**转发那几手**，`driver/*/call.rs` 是**形状与记号**。名字不并
 //! （改名要动四十余处引用，换一条对称），差异由这一句兜住。
 //!

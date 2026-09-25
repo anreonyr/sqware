@@ -44,6 +44,7 @@ thread_local! {
     static UNSHIPPED: RefCell<Vec<PieToken>> = const { RefCell::new(Vec::new()) };
     static SAID: RefCell<Vec<(PieToken, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
     static INBOX: RefCell<Vec<(PieToken, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
+    static REFUSE: Cell<bool> = const { Cell::new(false) };
 }
 
 // ── 测试侧的手 ──────────────────────────────────────────────
@@ -57,6 +58,17 @@ pub fn reset() {
     UNSHIPPED.with(|s| s.borrow_mut().clear());
     SAID.with(|s| s.borrow_mut().clear());
     INBOX.with(|i| i.borrow_mut().clear());
+    REFUSE.with(|flag| flag.set(false));
+}
+
+/// 把本线程的 `post` / `try_post` 打成失败（或放开）。
+///
+/// **照实记（这一格搬过一次家）**：它原本长在 `line` 靶**自己那个 `Pier` 桩**里——`deliver`
+/// 那条"推不出去 ⇒ 不置忙"的契约，就是靠这个开关才量得出来（桩恒答 `Ok` 的那一版全门照绿）。
+/// `line` 靶改成真 `Pier` 之后，这一格跟着搬到**假手表**上：判据要的那件事（`post` 会失败）
+/// 在真的 `Pier::post` 上照样成立，故它没有消失，只是换了一层。
+pub fn refuse(on: bool) {
+    REFUSE.with(|flag| flag.set(on));
 }
 
 /// 造一枚号（**唯一的门是"收号"**，与另外几台同一条）。
@@ -111,6 +123,10 @@ pub fn forget(n: usize) {
 // ── 核心要的那几句话（形状与真那份一致）────────────────────
 
 /// 拆泊位那句话**跟着据走了**（它是一句话，不是一只手）——这里转出来给测试用。
+///
+/// **照实记（`#[allow(unused_imports)]`）**：这一份假手表是**两台共读**的（`quay` 靶与 `line` 靶），
+/// 而 `line` 靶不拆泊位 ⇒ 对它来说这一行是空转的。挂 allow 而不是删：删了 `quay` 靶就编不过。
+#[allow(unused_imports)]
 pub use super::core::UNSEAT;
 
 /// 铸一枚孔、刻上记号：往假表里加一行，主人是"本端"。
@@ -147,8 +163,11 @@ pub fn unship(hole: PieToken) -> Result<(), ()> {
     Ok(())
 }
 
-/// 推一句话（等的那一版）。
+/// 推一句话（等的那一版）。`refuse(true)` 时答错——见那个开关的照实记。
 pub fn post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
+    if REFUSE.with(Cell::get) {
+        return Err(());
+    }
     SAID.with(|s| s.borrow_mut().push((at_peer, msg.to_vec())));
     Ok(())
 }

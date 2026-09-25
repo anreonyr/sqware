@@ -5,8 +5,7 @@
 //! `crates/contract/src/system/board/core.rs` 的 `#[cfg(test)]` 模块**从写下那天起一次没跑过**
 //! ——`protocol` 是 `[lib] test = false`（riscv 上编不出 libtest），主工作区那几道门一道都不编它。
 //! 与别的几台同一条路（**那张清单与理由住 `crates/gate/tests/host.rs` 的头注**——这里不写台数：
-//! 台数每加一台就要改一遍，而"话要能指回源头"）：编外宿主 crate、只依赖 `env`、
-//! 把核心源码**逐字未改**地 `#[path]` 进来，
+//! 台数每加一台就要改一遍，而"话要能指回源头"）：编外宿主 crate、**真依赖**「约」`contract`，
 //! 门口 `crates/gate/tests/host.rs`。这一份**无桩**（只认 `env` 那几个类型）。
 //!
 //! # 这一台钉的是什么
@@ -15,26 +14,16 @@
 
 extern crate alloc;
 
-/// 码表宏（`fail_codes!`）自己一份源——**协议与宿主靶同读这一份**。
+/// 板那本账与**帧那一半**——**真依赖** `contract::system::board` 那两份（逐字同一份源码）。
 ///
-/// 两样都要（见那份文件的照实记）：`#[macro_use]` 把宏带进**下面那些模块**的作用域
-/// （宏的可见性按正文先后 ⇒ 这一行必须在帧模块之前），`#[macro_export]` 保住"出 crate"那一份。
-#[macro_use]
-#[path = "../../contract/src/fail_codes.rs"]
-mod fail_codes;
-
-/// 板那本账（就是 `crates/contract/src/system/board/core.rs` 那一份，逐字未改）。
+/// **模块名照旧**（`core` / `frame`）：帧那一份写的是 `use super::core::{Board, Fail};`，
+/// **那份源码在 `contract` 里本来就成立**；靶这侧那两行 `use crate::core::…` / `use crate::frame as f`
+/// 也一个字不改。代价照实记：`core` 这个名字会遮住 `core` crate ⇒ 本文件里用标准库的地方写 `std::…`。
 ///
-/// **模块名就叫 `core`**：帧那一份写的是 `use super::core::{Board, Fail};`——宿主靶里把这一份
-/// 放在**同一层**、名字照旧，那一行才逐字成立（`judge` 靶 / `line` 靶当初也是这么叫的；
-/// 代价是 `core` 这个名字会遮住 `core` crate ⇒ 本文件里用标准库的地方写 `std::…`）。
-#[path = "../../contract/src/system/board/core.rs"]
-mod core;
-
-/// **帧那一半**（`crates/contract/src/system/board/frame.rs`，逐字未改）—— 在本台里跑判据。
-#[allow(dead_code)]
-#[path = "../../contract/src/system/board/frame.rs"]
-mod frame;
+/// **照实记（`#[path]` 退场）**：这三份原先各拿一行 `#[path]` 逐字编进靶，那张 `fail_codes!`
+/// 码表也要跟着复制一份（宏的可见性按正文先后 ⇒ `#[macro_use]` 那两行必须写在帧模块之前）。
+/// 真依赖挂上之后三行一起退场：码表随 `frame.rs` 住在 `contract` 里，本台一处都不碰。
+use contract::system::board::{core, frame};
 
 // ── 帧那一半（`system/board/frame.rs`）──────────────────────
 //

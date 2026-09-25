@@ -7,13 +7,15 @@
 //! `#[cfg(test)]`；而**链接 `protocol` 去测**也走不通——它依赖 `runtime`，`runtime` 里那两处
 //! riscv 内联汇编在宿主编译器上编不出来（见本 crate 的 `Cargo.toml`，那里记着实测读数）。
 //!
-//! 故这一台与 `crates/alloc-probe` 同路：宿主 crate、只依赖 `env`，把
-//! `crates/contract/src/system/operator/core.rs` **逐字未改**地编进测试靶里。
+//! 故这一台与 `crates/alloc-probe` 同路：宿主 crate、**真依赖**「约」`contract`——
+//! `crates/contract/src/system/operator/core.rs`（树）与 `crates/contract/src/id.rs`（号的词汇）。
 //!
-//! 用 `#[path]` 而不是 `include!`——**照实记**：`include!` 那一版第一跑就红，
-//! `error[E0753]: expected outer doc comment` 报了六次：被编进来的文件以 `//!` 开头
-//! （模块内文档），而宏展开出来的内部属性落不到"模块体的开头"那个位置上。
-//! `#[path]` 把它当一个真正的模块文件读，`//!` 就正正经经是那个模块的文档。
+//! **照实记（`#[path]` 退场）**：这一台原先用 `#[path]` 把那两份逐字编进靶。
+//! 用 `#[path]` 而不是 `include!` 的另一条**照实记**：`include!` 那一版第一跑就红，
+//! `error[E0753]: expected outer doc comment` 报了六次——被编进来的文件以 `//!` 开头
+//! （模块内文档），而宏展开出来的内部属性落不到"模块体的开头"那个位置上；`#[path]` 把它当
+//! 一个真正的模块文件读，`//!` 就正正经经是那个模块的文档。分家之后（那两份住 `contract`，
+//! 只依赖 `env` 与 `plan`）`#[path]` 也不再需要：**那一份源码本来就是模块**，真依赖即可。
 //!
 //! # 这批判据钉的是什么
 //!
@@ -26,14 +28,13 @@
 
 extern crate alloc;
 
-/// 树的正文（就是 `crates/contract/src/system/operator/core.rs` 那一份，逐字未改）。
-#[path = "../../contract/src/system/operator/core.rs"]
-mod operator;
-
-/// 号的词汇（`crates/contract/src/id.rs`，逐字未改）——三个号空间共用的一条规则与那 8 字节。
-/// 树那一份写着 `use crate::id::Id`，故这一台要给它那个名字。
-#[path = "../../contract/src/id.rs"]
-mod id;
+/// 树的正文——**真依赖** `contract::system::operator::core`（逐字同一份源码）。
+/// **模块名就叫 `operator`**：靶里那些 `use crate::operator::…` 一字不改。
+///
+/// **照实记（这一台原先还要一片 `id`）**：树那一份写着 `use crate::id::Id`，`#[path]` 那一版
+/// 里那个 `crate` 指的是**靶**的根 ⇒ 靶得把 `contract/src/id.rs` 也编一份进来。真依赖之后
+/// 那一行落在 `contract` 的根上，**靶不再需要它**。
+use contract::system::operator::core as operator;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::alloc::{GlobalAlloc, Layout, System};

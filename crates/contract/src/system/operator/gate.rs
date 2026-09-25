@@ -45,10 +45,12 @@ use env::TaskId;
 
 // ── 线上那一格：**本文件自己拿一份** ────────────────────────
 //
-// 照实记：这里**不 `use super::call::*`**。理由是宿主台——本文件要与 `judge.rs` 一起被
-// `#[path]` 编进测试靶，而 `call.rs` 拖着 `runtime`（门闩那一族）与 `session`，宿主上编不动。
-// 故这三格在本文件里各留一个常量，**同步义务由 `mod.rs` 末尾那条 `const _: () = assert!(…)`
-// 在编译期钉住**：真正的对照表只有一份（`call.rs`），这里这一份只要一漂就编不过。
+// 照实记：这里**不 `use super::call::*`**。转发表那一份住 **`protocol`** 的
+// `system/operator/call.rs`（它拖着 `runtime` 与 `session`），而本文件住 `contract`
+// ——`contract` 在 `protocol` 的**下游**、够不着它（宿主靶能不能编它是另一回事）。
+// 故这三格在本文件里各留一个常量，**同步义务由 `protocol` 的 `system/operator/mod.rs` 末尾
+// 那条 `const _: () = assert!(…)` 在编译期钉住**：真正的对照表只有一份（`call.rs`），
+// 这里这一份只要一漂就编不过。
 //
 // 这三格是 **`pub` 而不是 `pub(crate)`**：那条同步断言住在搬运之后的**另一侧**
 // （`protocol` 的 `system/operator/mod.rs`——它同时看得见本文件与 `call.rs`），跨 crate 才够得着。

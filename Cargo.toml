@@ -3,10 +3,13 @@
 # `.cargo/config.toml` 钉在 `riscv64gc-unknown-none-elf` 上，它进不来（要 std + host ABI）。
 # 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/.cargo/config.toml` 里那十条别名跑。
 #
-# `crates/protocol-case` 是**同一类**的宿主台：把 `protocol` 的**八处纯核心**逐字 `#[path]`
-# 进来，让它们的规矩在宿主上真跑一遍（门口是 `crates/gate` 的 `host` 那一门；八个靶与那张
-# 清单住那个 crate 的 `Cargo.toml` 头注）。它进不来的理由与上一条同源，外加一条实测：链接 `protocol` 会带进
+# `crates/protocol-case` 是**同一类**的宿主台：八个靶，把「约」那八处纯核心的规矩在宿主上
+# 真跑一遍（门口是 `crates/gate` 的 `host` 那一门；八个靶与那张清单住那个 crate 的
+# `Cargo.toml` 头注）。它进不来的理由与上一条同源，外加一条实测：链接 `protocol` 会带进
 # `runtime`，而 `runtime` 里那两处 riscv 内联汇编在宿主上编不过。
+#
+# **照实记**：这八个靶原先靠 `#[path]` 把源码逐字搬进靶（那是「约」分家**之前**的唯一出路），
+# 现在**真依赖** `crates/contract`——同一份源码，走依赖边。
 #
 # **照实记（用户裁定）**：这一台原先**是八台**——`operator-case` / `line-case` / `judge-case` /
 # `principal-case` / `board-case` / `session-case` / `system-case` / `supply-case`，八份

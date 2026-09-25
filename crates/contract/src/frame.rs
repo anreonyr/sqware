@@ -16,7 +16,7 @@
 //! 用家不搬**；`cursor_of` / `pack_seq` / `read_seq`（**窗**那一档）只有 coalition 用 ⇒ 留在那边
 //! ——operator 的"一条 pane 本来就有顶"不需要 `more` 那一格，故窗不是这一族的共性。
 //!
-//! 本文件是**协议层**的东西，与 `id.rs` / `fail_codes.rs` 同一种编法：宿主靶按 `#[path]` 逐字编它。
+//! 本文件是**协议层**的东西，与 `id.rs` / `fail_codes.rs` 同一种编法：宿主靶**真依赖**它。
 
 use crate::fail_codes::OK;
 use crate::id::Id;

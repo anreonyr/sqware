@@ -4,8 +4,14 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# 宿主（x86_64）那一台：把 `protocol` 的**八处纯核心**按 `#[path]` **逐字未改**地编进测试靶，
-# 让它们的规矩在宿主上真跑一遍。门口是 `crates/gate/tests/host.rs`（判据与清单住它头注）。
+# 宿主（x86_64）那一台：把 `protocol` 的**八处纯核心**在宿主上真跑一遍。门口是
+# `crates/gate/tests/host.rs`（判据与清单住它头注）。
+#
+# **照实记（"逐字未改"这四个字换了个落点）**：那一批源码原先靠 `#[path]` **逐字编进靶**
+# （复制模块树）；「约」分家之后它们住 `crates/contract`，靶改成**真依赖**它——**同一份源码、
+# 一个字不改**，但走的是编译器认的那条依赖边，不再是一份影子。（这一刀逐台落，八个靶与
+# `tests/{principal,coalition}/` 那两片影子目录一起退场；`tests/session/` 留着，它本来就不是
+# 影子——是一张**假手表**，见下。）
 #
 # # 为什么是一台，不是八台（照实记：用户裁定）
 #
@@ -16,9 +22,9 @@ publish = false
 #   `tests/operator.rs`   树（七条原语 / 六格失败域）
 #   `tests/line.rs`       线的账 + 界
 #   `tests/judge.rs`      门外那一问（三格裁决）+ 那本账 + 线上那三个码
-#   `tests/roster.rs`     名册与谱系（+ 盟籍）；`tests/{principal,coalition}/` 是它要的目录模块
+#   `tests/roster.rs`     名册与谱系（+ 盟籍）
 #   `tests/board.rs`      板（牌子 + 台账）
-#   `tests/quay.rs`       会话（码头 / 泊位 / 认领）；`tests/session/` 是那一台的桩（假表 + 假钟）
+#   `tests/quay.rs`       会话（码头 / 泊位 / 认领）；`tests/session/` 是假手表（假表 + 假钟）
 #   `tests/judgement.rs`  编排（账 / 判定 / 配给）
 #   `tests/supply.rs`     供单（需求单 / 回单 / 上限与失败码表）
 #
@@ -44,20 +50,18 @@ publish = false
 #      （**`cargo check` 在同一个目标上是过的**——它不做代码生成。"check 绿 ≠ 编得过"。）
 #
 # 故走 `crates/alloc-probe` 那条现成的路：**不进工作区**（根 `Cargo.toml` 的 `exclude`）、
-# **只依赖 `env`**、把核心源码 `#[path]` 进来（用 `#[path]` 而不是 `include!`：后者编不过
-# `//!` 开头的文件，`E0753`——照实记在 `tests/operator.rs` 头注）。
+# 宿主 `--target x86_64-unknown-linux-gnu`、真依赖「约」`contract`。
 #
-# **照实记（上面第 2 条现在只对「口」成立）**：`protocol` 分家之后，**纯的那一半**（正文 / 形 /
-# 据 / 账 / 不碰内核的适配）住 `crates/contract`，它**只依赖 `env` 与 `plan`**——
-# `cargo tree -p contract` 里没有 `runtime`，故**靶可以直接依赖它**，不必再靠 `#[path]` 复制
-# 模块树。这一步（挂依赖）先落；把八个靶的 `#[path]` 与影子模块逐台换成 `contract::…`
-# 是**下一刀**——那时 `tests/session/`、`tests/{principal,coalition}/` 那几层影子目录一起退场。
+# **照实记（这条理由原先还管着"怎么拿到源码"）**：`#[path]` 是「约」分家**之前**的唯一出路——
+# 那时这几份源码住在 `protocol` 里，链接它就撞上面第 2 条。分家之后纯的那一半（正文 / 形 /
+# 据 / 账 / 不碰内核的适配）住 `crates/contract`、**只依赖 `env` 与 `plan`**
+# （`cargo tree -p contract --depth 1` 里没有 `protocol`），故靶**直接依赖**它即可：
+# `#[path]` 那一层复制（连同为它凑名字的几处影子模块）**一起退场**。
 
 [dev-dependencies]
-# 「约」：不碰内核的那一半。靶**直接依赖**它（下一刀把 `#[path]` 换成它）。
+# 「约」：不碰内核的那一半。八个靶都**直接依赖**它（源码仍是同一份）。
 contract = { path = "../contract" }
 # 判据用的 `Name` / `PieToken` / `TaskId` / `Mark` / `Key` / `Access` / `Policy` 都是 `env` 的类型；
-# `#[path]` 进来的那几份源码自己 `use env::…`。放 `[dev-dependencies]`：本 crate 只有测试靶，
-# 没有 lib。
+# 靶自己与「约」都 `use env::…`。放 `[dev-dependencies]`：本 crate 只有测试靶，没有 lib。
 env = { path = "../env" }
 plan = { path = "../plan" }
