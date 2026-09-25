@@ -11,7 +11,7 @@
 //!   2  上树 FIND "/device/rtc"：**找不到就再问**（门牌是驱动落的，本域可能比它先起）
 //!   3  now()               → sleeper: now=<t>         一问一答，自带一枚回信孔
 //!   4  arm(now - 1ms)      → sleeper: past=2          失败域第一格（那个时刻已经过去了）
-//!   5  arm(now + 50ms)     → sleeper: armed=0         真约（那一枚回信孔从此留在驱动手里）
+//!   5  arm(now + 50ms)     → sleeper: armed=0         真约；被答 `Past` 就**重问重算**（有界）
 //!   6  arm(再约一次)        → sleeper: taken=1         失败域第二格（那一格有人了——就是本域自己）
 //!   7  receive()           → sleeper: rang at=<at> now=<t>   等到那一声
 //!   8  退场（退场 ⇒ 本域开的那枚孔封印 ⇒ 驱动那一格从此没人收）
@@ -70,8 +70,13 @@ const MS: usize = 1000;
 /// 找不到就再问一次的间隔（毫秒）：门牌是驱动落的，本域可能比它先起。
 const RETRY_MS: usize = 1;
 
-/// 真约的那一段（纳秒）：够短，短跑里也一定等得到那一行读数。
+/// 真约的提前量（纳秒）：**它只需要罩住一趟往返**——[`arm_next`] 拿的是**刚问到的**那个
+/// `now`（见那一手的照实记）。实测常态一趟 ~12.5 ms（重尾到 0.5 s），这里留约 4× 余量。
 const AHEAD_NS: u64 = 50_000_000;
+
+/// 真约那一手最多重问几次（**有界**）：每重问一次就换一个**刚读到的** `now`，故上一次的
+/// 迟到不往下累积。
+const ARM_TRIES: usize = 5;
 
 /// 没搭上（找不到那面服务 / 有一条往返没走成）：报这一格退场。
 const E_NO_SERVICE: usize = 1;
@@ -119,22 +124,8 @@ fn main() -> Report<'static> {
     let _ = debug::put(&format!("sleeper: past={past}"));
 
     // 真约：那一枚回信孔从此留在驱动手里（本域退场之前它一直活着）。
-    let at = now.saturating_add(AHEAD_NS);
-    let armed = match clock::arm(face, at, MS) {
-        Ok(armed) => armed,
-        Err(fail) => {
-            // **哪一格失败，落一行**（照实记）：这一格从前只报 `no alarm`，而 `arm` 的三条
-            // 失败路——借孔/推帧没走成、答复没来、答了但不是 `OK`——在读数里长得一模一样。
-            // 真机上那张"偶尔少一台"的脸就卡在这儿。码本在 `programs/src/driver/rtc/core.rs`：
-            // **1 = `Taken`**（那一格有人了）/ **2 = `Past`**（那个时刻已经过去了，而这一格
-            // 的文档写着下一步是"重新问一次现在几点、再算一个"）/ **3 = `Denied`**（这一趟
-            // 自己没走到：孔借不出去 / 帧推不动 / 等到期 / 答话读不懂）。
-            let _ = debug::put(&format!(
-                "sleeper: alarm err={}",
-                rcall::fail_to_code(Some(fail))
-            ));
-            return no_service("sleeper: no alarm");
-        }
+    let Some((armed, at)) = arm_next(face, now) else {
+        return no_service("sleeper: no alarm");
     };
     let _ = debug::put(&format!("sleeper: armed={}", rcall::fail_to_code(None)));
 
@@ -170,6 +161,52 @@ fn main() -> Report<'static> {
     suite.run();
 
     return Report::note(env::EXIT_OK, "sleeper: gone");
+}
+
+/// 真约：拿一个 **`now` 读数**去约；被答 `Past` 就**重问一个 `now`、重算一个 `at`**（有界）。
+///
+/// **照实记（这一格为什么改过）**：原先是"问一次 `now`、算 `at = now + AHEAD_NS`、约一次"，
+/// 而那个 `at` 要**隔两趟往返**才用得上（`now` 那一趟 ＋ 失败域那一趟）。门上量出来的：
+/// 常态一趟 **~12.5 ms**、重尾到 **0.5 s**（`rtc: refused=… late_ns=…` 那一行）⇒ 50 ms 那把
+/// 尺子随时会输，而输的代价是**整台域死**——`soak` 那一门六条读数（`rtc: armed` /
+/// `router: line=11` / `rtc: rang` / `router: exhaust line=11` ＋ 本域两条用例）一起没。
+/// `Past` 那一格的文档写着的下一步正是这一句（"重新问一次现在几点、再算一个"）——照它走：
+/// **提前量不必猜多大，只要它罩得住一趟**。
+///
+/// **照实记（那个猜没有被"删掉"，也删不掉）**：`Ask::Arm` 收的是**绝对时刻**，而"这个时刻
+/// 过去了没有"只有驱动那一侧的钟说了算 ⇒ 客人**必须**给一个提前量。这一刀改的不是"猜多大"，
+/// 是"猜的那一段有多长"（两趟 → 一趟）。真要把猜整个删掉，得让那一问改收**相对量**
+/// （"从现在起 x 毫秒"，由驱动在**读到它的那一刻**折算成绝对时刻）——那是帧形与答码的事，
+/// 另一刀。
+///
+/// 返 `(那一枚, 约上的那个时刻)`——后者答话那一行读数要用（`sleeper: rang at=…`）。
+fn arm_next(face: PieToken, first: u64) -> Option<(clock::Alarm, u64)> {
+    let mut now = first;
+    for n in 0..ARM_TRIES {
+        let at = now.saturating_add(AHEAD_NS);
+        match clock::arm(face, at, MS) {
+            Ok(alarm) => return Some((alarm, at)),
+            // **又晚了** ⇒ 重问一个现在、重算一个 `at`（照实记：这就是 `Past` 那一格写的下一步）。
+            Err(RFail::Past) => {
+                now = clock::now(face, MS).ok()?;
+                let _ = debug::put(&format!("sleeper: late n={n} now={now}"));
+            }
+            Err(fail) => {
+                // **哪一格失败，落一行**（照实记）：这一格从前只报 `no alarm`，而 `arm` 的三条
+                // 失败路——借孔/推帧没走成、答复没来、答了但不是 `OK`——在读数里长得一模一样。
+                // 真机上那张"偶尔少一台"的脸就卡在这儿。码本在 `programs/src/driver/rtc/core.rs`：
+                // **1 = `Taken`**（那一格有人了）/ **2 = `Past`**（那个时刻已经过去了 ⇒ 上面那一支
+                // 已接管）/ **3 = `Denied`**（这一趟自己没走到：孔借不出去 / 帧推不动 / 等到期 /
+                // 答话读不懂）。
+                let _ = debug::put(&format!(
+                    "sleeper: alarm err={}",
+                    rcall::fail_to_code(Some(fail))
+                ));
+                return None;
+            }
+        }
+    }
+    None
 }
 
 /// 被拒那一趟的读数：把失败域按**线上那张表**折成一个数（与驱动的答码同源）。
