@@ -19,8 +19,6 @@ pub use super::frame::*;
 /// 一格答话码，问的人按它决定要不要重问。
 pub fn map_claim(claim: Claim) -> Fail {
     match claim {
-        // 我的表读不动 ⇒ 这一问没有答案（与"它不在"同一格：都不是"树上答了没有"）。
-        Claim::Unread => Fail::Unknown,
         Claim::Timeout => Fail::Unknown,
         Claim::Partial => Fail::Full,
     }

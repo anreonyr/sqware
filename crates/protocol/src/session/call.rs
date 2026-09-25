@@ -78,21 +78,15 @@ pub(super) fn try_post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
 /// 的一两枚——设一个"最多看几枚"的缓冲会让排在后面的那枚永远看不见。故这里不攒数组，
 /// 只把每一枚交出去；"要不要"由调用方说（正文第 6 条）。
 ///
-/// `Err(Claim::Unread)` = 枚举本身失败（我的表读不动了）。
+/// **"枚举本身失败"那一格不再分辨**（照实记：用户裁定甲）：[`mail::pies`] 读到读不动就
+/// **打住**，与"这一遍扫完了"合流 ⇒ `Claim::Unread` 那个变体随之退场（照实记在
+/// `contract/src/session/core.rs` 那一份里）。
 pub(super) fn each(f: &mut dyn FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
-    let mut index = 0usize;
-    loop {
-        let Ok((token, _permission, _grantor)) = mail::collect(index) else {
-            return Err(Claim::Unread);
-        };
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return Ok(());
-        }
-        index += 1;
+    for (token, _permission, _grantor) in mail::pies() {
         let (owner, mark) = reserve(token);
         f(Hole { token, owner, mark })?;
     }
+    Ok(())
 }
 
 /// 我表里**这位给的、刻着那个记号的那一枚**。
@@ -105,7 +99,7 @@ pub(super) fn each(f: &mut dyn FnMut(Hole) -> Result<(), Claim>) -> Result<(), C
 /// 交孔与推帧是**两趟**、且**孔先到**（见 [`ship`] 的调用点）⇒ 最后那一枚就是这一趟那一枚。
 /// 这条次序是契约的一半，不是实现细节。
 ///
-/// 枚举本身读不动（[`Claim::Unread`]）时报 `None`：那一格里已经有"我没找到"。
+/// 枚举读不动 ⇒ 与"扫完了"同一下场（`None`）——**这一分辨已被裁定甲收掉**（见 `each`）。
 pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
     let mut found = None;
     let _ = each(&mut |h: Hole| {

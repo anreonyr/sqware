@@ -205,19 +205,13 @@ pub fn name(say: PieToken, link: &Quay, id: EntryId, millis: usize) -> Result<Na
 pub fn take(link: &Quay, host: TaskId) -> Option<PieToken> {
     let at = Name::new(LINK).ok()?;
     let _ = link.find(at)?;
-    let mut index = 0usize;
     let mut found = None;
-    loop {
-        let (token, _perm, vestor) = mail::collect(index).ok()?;
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return found;
-        }
-        index += 1;
+    for (token, _perm, vestor) in mail::pies() {
         if vestor == host {
             found = Some(token);
         }
     }
+    found
 }
 
 /// 收下树路上那一格：**答话的是谁**（[`open`] 的对偶）。

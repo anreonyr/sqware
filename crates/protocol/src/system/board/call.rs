@@ -68,8 +68,6 @@ pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
 
 pub fn map_claim(claim: Claim) -> Fail {
     match claim {
-        // 我的表读不动 ⇒ 这一问没有答案（与"它不在"同一格：都不是"板答了没有"）。
-        Claim::Unread => Fail::Unknown,
         Claim::Timeout => Fail::Unknown,
         Claim::Partial => Fail::Full,
     }

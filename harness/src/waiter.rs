@@ -97,14 +97,7 @@ fn main() -> Reason {
 /// 认领本端那三枚：记号认孔，剩下那一枚是组。
 fn discover() -> (Option<PieToken>, Option<PieToken>, Option<PieToken>) {
     let (mut group, mut member, mut report) = (None, None, None);
-    for i in 0.. {
-        let Ok((tok, _perm, _vestor)) = mail::collect(i) else {
-            break;
-        };
-        // 越界 ⇒ 全哨兵（`Collect` 契约：不报错）。
-        if tok == PieToken::NONE {
-            break;
-        }
+    for (tok, _perm, _vestor) in mail::pies() {
         match mail::reserve(tok) {
             Ok((_, _, mark)) if mark == Mark::of("member") => member = Some(tok),
             Ok((_, _, mark)) if mark == Mark::of("report") => report = Some(tok),

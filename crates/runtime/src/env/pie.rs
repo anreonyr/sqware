@@ -131,23 +131,64 @@ pub fn collect(index: usize) -> EnvResult<(PieToken, Permission, TaskId)> {
     }
 }
 
-/// 本端这张权限表里现在有几枚门闩（[`collect`] 一路走到越界哨兵）。
+/// [`collect`] 那条枚举：**0 起、哨兵收尾、越界不报错**——这句话**只写这一处**。
+///
+/// **照实记（这是"手搓游标"那一刀收出来的）**：先前九处调用点各自把这套仪式抄一遍
+/// （起 0 → `collect(i)` → 查哨兵 → `index += 1`），哨兵有两种拼法、`Err` 有三种处置，
+/// 而"哪一种对"在源码里没有一处定义。收成迭代器之后，九处只剩"要找什么"。
+///
+/// **名字照实记**：我起初把它叫 `holes()`——**那个名字是错的**：`Collect` 枚举的是整张
+/// 权限表（孔 / 铃 / 页 / 组 / 别人给的副本都在里面），不只是孔。故叫 [`pies`]。
+///
+/// **`Err` 那一格就此打住**（用户裁定甲）：调用方**无从分辨**"表读不动"与"这一遍扫完"。
+/// 代价照实记两条：① 约那一侧的 `Claim::Unread`（第三个变体）随之退场；② 另外三处
+/// （`operator/server.rs::claim` 与两处 `client.rs::take`）原先"读不动就整趟作废"的
+/// fail-closed 一起松掉——`Err` 之前已经认到的那一枚**照旧交出去**。
+pub struct Pies {
+    index: usize,
+    done: bool,
+}
+
+impl Iterator for Pies {
+    type Item = (PieToken, Permission, TaskId);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        match collect(self.index) {
+            // 越界哨兵：这一遍扫完了（`Collect` 契约：不报错）。
+            Ok((token, _, _)) if token == PieToken::NONE => {
+                self.done = true;
+                None
+            }
+            Ok(one) => {
+                self.index += 1;
+                Some(one)
+            }
+            Err(_) => {
+                self.done = true;
+                None
+            }
+        }
+    }
+}
+
+/// 我这张权限表里的每一份（[`collect`] 的 0 起枚举，哨兵收尾）。
+pub fn pies() -> Pies {
+    Pies {
+        index: 0,
+        done: false,
+    }
+}
+
+/// 本端这张权限表里现在有几枚门闩（[`pies`] 数一遍）。
 ///
 /// **给人看的读数，不是给判据用的机制**：它自己不改任何东西。用途只有一个——把"该放下的
 /// 放了没有"变成**可量**的一格（少放一枚，这一格当场大 1，见
 /// `programs/src/driver/router/main.rs` 的 `drop_lane` 与 `harness/src/lodger/main.rs`）。
 pub fn table_size() -> usize {
-    let mut n = 0usize;
-    loop {
-        let Ok((token, _perm, _vestor)) = collect(n) else {
-            return n;
-        };
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return n;
-        }
-        n += 1;
-    }
+    pies().count()
 }
 
 /// 查询：我持有的这枚门闩——`(vestor, owner, 记号)`。

@@ -185,21 +185,13 @@ fn settle(
 ///   的名字 `LINK`；客人自己铸的另两枚刻的是 `ask` / `entry`）。
 fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
     let board = Mark::of(LINK);
-    let mut index = 0usize;
-    loop {
-        let (token, _perm, vestor) = mail::collect(index).ok()?;
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return None;
-        }
-        index += 1;
-        if vestor == assembler
-            && bcall::opened_by(token) == Some(who)
-            && bcall::marked_as(token) == Some(board)
-        {
-            return Some(token);
-        }
-    }
+    mail::pies()
+        .find(|(token, _, vestor)| {
+            *vestor == assembler
+                && bcall::opened_by(*token) == Some(who)
+                && bcall::marked_as(*token) == Some(board)
+        })
+        .map(|(token, _, _)| token)
 }
 
 /// 按**名字**认领这一位的死亡道（`gone-<名字>`；装配者铸、转授给本线程）。
@@ -209,18 +201,9 @@ fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
 /// 过来）⇒ `None`：**这一位死了就没有读数**（与从前"没登记就没读数"同一个静默）。
 fn lane_for(name: Name) -> Option<PieToken> {
     let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
-    let mut index = 0usize;
-    loop {
-        let (token, _perm, _vestor) = mail::collect(index).ok()?;
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return None;
-        }
-        index += 1;
-        if bcall::marked_as(token) == Some(want) {
-            return Some(token);
-        }
-    }
+    mail::pies()
+        .find(|(token, _, _)| bcall::marked_as(*token) == Some(want))
+        .map(|(token, _, _)| token)
 }
 
 /// 本线程的 `who → 死亡道` 小表（一位客人一格；满了就丢——那时板上已经不止 8 位客人）。
@@ -283,18 +266,11 @@ fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
 /// 那一支），两枚同来源的孔靠**记号**分开。
 fn ask_of(who: TaskId) -> Option<PieToken> {
     let ask = ASK_MARK;
-    let mut index = 0usize;
-    loop {
-        let (token, _perm, _vestor) = mail::collect(index).ok()?;
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return None;
-        }
-        index += 1;
-        if bcall::opened_by(token) == Some(who) && bcall::marked_as(token) == Some(ask) {
-            return Some(token);
-        }
-    }
+    mail::pies()
+        .find(|(token, _, _)| {
+            bcall::opened_by(*token) == Some(who) && bcall::marked_as(*token) == Some(ask)
+        })
+        .map(|(token, _, _)| token)
 }
 
 /// 板线程的读数：**只在出岔子时说话**（正常一轮什么都不打）。

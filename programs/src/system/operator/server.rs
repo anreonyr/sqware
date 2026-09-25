@@ -663,31 +663,22 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
 ///   （持树者会永远停在"还有人没挂上"那一档）；
 /// - **干净的关法**是让 `ask_hole` 与入口那一枚也走**有名有姓的泊位**（`Quay::seat` 那条路
 ///   已有同名闸），把"只可能有一枚"从纪律变成**构造**——那是客侧形状的改动，另一刀。
+/// - **照实记（裁定甲之后松掉的一格）**："本表读不动 ⇒ 一枚都不认"那条 fail-closed 随
+///   `mail::collect` 的 `Err` 通道一起没了：迭代器读到读不动就**打住**，与"扫完了"合流
+///   ⇒ 读不动之前已经认到的那一枚**照旧交出去**。今天够不着（那条 `Err` 是防御读数），
+///   但它是**松开**，不是等价。
 fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieToken> {
-    let mut first = None;
-    let mut index = 0usize;
-    loop {
-        let (token, _perm, _vestor) = match mail::collect(index) {
-            Ok(one) => one,
-            // 扫不动了（本表读不出来）：**一枚都不认**——与原来那三版同一条（那时是
-            // `.ok()?`）：数不完就不敢说"只有一枚"。
-            Err(_) => return None,
-        };
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return first;
-        }
-        index += 1;
-        if ocall::opened_by(token) == Some(who) && ocall::marked_as(token) == Some(mark) {
-            if first.is_some() {
-                if let Some(note) = more {
-                    say(note);
-                }
-                return first;
-            }
-            first = Some(token);
+    let mut hits = mail::pies().filter(|(token, _, _)| {
+        ocall::opened_by(*token) == Some(who) && ocall::marked_as(*token) == Some(mark)
+    });
+    let (first, _, _) = hits.next()?;
+    // **第二枚 ⇒ "只可能有一枚"那条纪律破了**：说话（`more` 那一格就是这句话）。
+    if hits.next().is_some() {
+        if let Some(note) = more {
+            say(note);
         }
     }
+    Some(first)
 }
 
 /// 持树者的读数：**只在出岔子时说话**（正常一轮什么都不打）。

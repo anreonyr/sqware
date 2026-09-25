@@ -124,19 +124,13 @@ pub fn evict(say: PieToken, link: &Quay, millis: usize) -> Result<u8, Fail> {
 pub fn take(link: &Quay, board: TaskId) -> Option<PieToken> {
     let at = Name::new(LINK).ok()?;
     let _ = link.find(at)?;
-    let mut index = 0usize;
     let mut found = None;
-    loop {
-        let (token, _perm, vestor) = mail::collect(index).ok()?;
-        // 越界哨兵：这一遍扫完了。
-        if token.get() == 0 {
-            return found;
-        }
-        index += 1;
+    for (token, _perm, vestor) in mail::pies() {
         if vestor == board {
             found = Some(token);
         }
     }
+    found
 }
 
 /// 收下板路上那一格：**答话的是谁**（[`tell`] 的对偶）。
