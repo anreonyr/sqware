@@ -235,6 +235,17 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
     static FRAMES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
     let n = FRAMES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     say(&format!("rtc: pies={} frames={n}", mail::table_size()));
+    if n == 0 {
+        // **量一次内核调用**（这一刀）：`chrono::clock()` 自己就是一次 ecall ⇒ 100 次背靠背
+        // 除出来就是**陷阱那一层**的价钱——`Collect` / `reserve` 只会比它更贵（它们还要动表）。
+        // 取在这一帧（第 0 帧）里：与被量的那几趟**同一个上下文**，不是启动期。
+        let t0 = runtime::env::chrono::clock().unwrap_or(0);
+        for _ in 0..100 {
+            let _ = runtime::env::chrono::clock();
+        }
+        let t1 = runtime::env::chrono::clock().unwrap_or(0);
+        say(&format!("rtc: ecall n=100 cost_ns={}", t1.saturating_sub(t0)));
+    }
 }
 
 /// `svc` 那一段（驱动自己干活）的**分步账**：每格 = 上一个戳子到这一步的纳秒数，这一趟没走
