@@ -815,6 +815,41 @@ fn a_frame_that_is_not_that_shape_is_not_guessed_at() {
 }
 
 #[test]
+fn the_coord_frame_carries_one_number_and_one_pair_of_eyes() {
+    use plan::assembly::Eyes;
+
+    // 长度是**字段宽度之和**（一处定义）——不是这里写的 16。
+    assert_eq!(f::CoordFrame::LEN, 16, "一位域（8）＋ 一双眼睛（8）");
+
+    for eyes in [Eyes::Roster, Eyes::League] {
+        let mut buf = [0u8; f::CoordFrame::LEN];
+        f::CoordFrame {
+            who: TaskId::new(7),
+            eyes,
+        }
+        .store(&mut buf);
+        let back = f::CoordFrame::fetch(&buf).expect("写进去的读得回来");
+        assert_eq!(back.who, TaskId::new(7), "那一位域自己的号");
+        assert_eq!(back.eyes, eyes, "哪一双眼睛（两枚共读同一处定义）");
+    }
+
+    // **表外的眼睛码 ⇒ 整帧读不懂**，不猜成某一枚：持树者那一侧据此报一句、不静默
+    // （`programs/src/system/operator/server.rs` 的 `settle`）。这一格是本刀唯一新长出来的
+    // 可读错的形状——`of_wire` 若写成"非 0 即盟册"，这里当场红。
+    let mut outside = [0u8; f::CoordFrame::LEN];
+    outside[8] = 2;
+    assert_eq!(f::CoordFrame::fetch(&outside), None, "表外的眼睛码");
+
+    // 缺一字节就是缺一字节：偏移由 `Field::WIDTH` 求和，故"短"只能是读不懂。
+    assert_eq!(
+        f::CoordFrame::fetch(&outside[..f::CoordFrame::LEN - 1]),
+        None,
+        "短一字节"
+    );
+    assert_eq!(f::CoordFrame::fetch(&[]), None, "空帧");
+}
+
+#[test]
 fn the_rule_cell_round_trips_and_an_unknown_tag_falls_back_to_public() {
     // 五格都来回一趟（`Opens` 那一格进的是**门的号**）。
     for rule in [

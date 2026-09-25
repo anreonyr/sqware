@@ -25,7 +25,7 @@ use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::core::PrincipalId;
 
-use super::bridge::{Coord, CoordFrame};
+use super::bridge::Coord;
 use contract::system::desk::{Desk, DeskFail, Guest};
 use protocol::system::operator::call::desk;
 
@@ -42,7 +42,7 @@ const SETTLE_MS: usize = 1;
 /// （答"这一位在那枚盟里吗"）。
 ///
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的（见
-/// `programs/src/system/operator/bridge.rs` 的 `CoordFrame` 照实记：装配者转授那一版真机
+/// `contract/src/system/operator/frame.rs` 的 `CoordFrame` 照实记：装配者转授那一版真机
 /// 栽在 `coord-ship`）。树**不当自己的客人**：它不去 `seek("/sys/principal")`，理由同那一笔
 /// （自指 ⇒ 环）。
 ///
@@ -58,7 +58,7 @@ impl Session {
     ///
     /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = 服务入口记号
     /// （`bcall::ENTRY_MARK`）。**不必装配者转授**——各域自己在 `serve_tree` 之后把它直接交给
-    /// 持树者（见 `operator/bridge.rs` 的 `CoordFrame` 照实记）。
+    /// 持树者（见 `CoordFrame` 的照实记）。
     ///
     /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ 整格 `None`（读数会喊一句）。盟册那枚
     /// 认不出 ⇒ 只少 `Rule::In` 那一格。
@@ -298,7 +298,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
 ///   不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进组**（那一条推
 ///   落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它；
 /// - **协调那一帧**（16 字节）：装配者把"**哪一位域** + **它是哪一双眼睛**"直接递过来
-///   （见 `programs/src/system/operator/bridge.rs` 的 `CoordFrame`）。两帧、次序不定：名册那一
+///   （见 [`ocall::CoordFrame`]）。两帧、次序不定：名册那一
 ///   枚到了才开闸（门禁从此判得了身份），盟册那一枚到了 [`Rule::In`] 才判得了。
 ///   **长度即语义**：8 = 一位客人，16 = 这一帧；
 /// - **答话路**：装配者转授来的那一枚 ⇒ `admit` 收一位客人；
@@ -312,20 +312,20 @@ fn settle(
 ) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
     // 缓冲按**最大的那一帧**备（16），故协调那一帧也吃得下——小缓冲会把长帧读成"读不懂"。
-    let mut frame = [0u8; CoordFrame::LEN];
+    let mut frame = [0u8; ocall::CoordFrame::LEN];
     let mut pending = false;
     loop {
         let Ok(n) = tip.pull_timeout(&mut frame, Wait::POLL) else {
             break;
         };
-        if n == CoordFrame::LEN {
+        if n == ocall::CoordFrame::LEN {
             // **开闸**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交进来
             // （装配者只递号）；从这里往后，门外那一问（[`gate`](protocol::system::operator::gate)）
             // 判得了身份。
             //
             // 后 8 字节能不能翻（表外的眼睛码）归 [`Eyes`] 自己的 `Field::fetch`：读不懂 ⇒
             // **报一句，别静默**——门禁会一直判不了，而"为什么"要看得见。
-            let Some(rec) = CoordFrame::fetch(&frame[..n]) else {
+            let Some(rec) = ocall::CoordFrame::fetch(&frame[..n]) else {
                 say("operator: coord role unknown");
                 continue;
             };

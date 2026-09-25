@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 const BASELINE: &[(&str, usize)] = &[
     ("operator", 23),
     ("line", 11),
-    ("judge", 24),
+    ("judge", 25),
     ("roster", 20),
     ("board", 11),
     ("quay", 12),
@@ -34,7 +34,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("supply", 7),
 ];
 
-const TOTAL: usize = 118;
+const TOTAL: usize = 119;
 
 /// 一个靶的汇总行。
 struct Summary {

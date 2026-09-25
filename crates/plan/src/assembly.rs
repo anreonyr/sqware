@@ -149,8 +149,8 @@ pub enum Spot {
     Rig,
 }
 
-/// **这一台是持树者的哪一双眼睛**——协调那一帧（`operator::bridge` 的 `CoordFrame`）的后 8 字节
-/// 就用它。
+/// **这一台是持树者的哪一双眼睛**——协调那一帧（`contract::system::operator::frame` 的
+/// `CoordFrame`）的后 8 字节就用它。
 ///
 /// 它是**装配单上的一格**，不是靠名字认的：旧法写 `p.name == "principal"`——装配单上把那一行
 /// 改个名，认它的那一侧就**静默失灵**（门禁从此判不了身份）。与 [`Plan::holds_tree`] 同一形状。
