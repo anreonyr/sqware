@@ -10,6 +10,7 @@ use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
 
+use crate::session::slip::Slip;
 use crate::session::Quay;
 use crate::system::board::Fail;
 use crate::system::board::call as bcall;
@@ -71,8 +72,8 @@ fn me() -> Result<TaskId, Fail> {
 ///
 /// **照实记（`op: u8` 那一格退场）**：这一手从前叫 `ask(…, op: u8, …)`，而树内**四个调用点
 /// 全递 `REGISTER`**（回显、两位探针、常客）；注销与查两条动作到今天没有客人（板那一侧的
-/// 正文记着"板上那个 `LOOKUP` 此后没有真客人"）。故客侧这一手直接叫 [`bcall::Ask::Register`]
-/// 那一条动作的名字，"这一码才带 seed" 那条分辨随之退场——形状由 [`bcall::Ask`] 说。
+/// 正文记着"板上那个 `LOOKUP` 此后没有真客人"）。故客侧这一手直接叫 [`bcall::Req::Register`]
+/// 那一条动作的名字，"这一码才带 seed" 那条分辨随之退场——形状由 [`bcall::Req`] 说。
 pub fn register(
     say: PieToken,
     link: &Quay,
@@ -85,10 +86,11 @@ pub fn register(
     let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 先把入口交出去、换回"它在板表里是几号"，再编帧——两个编号空间不同源。
     let seed = bcall::ship(entry, board).map_err(|_| Fail::Denied)?;
-    let (frame, len) = bcall::pack_ask(bcall::Ask::Register { name, seed });
+    // 装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
-    mail::HolePie::from_token(say)
-        .push(&frame[..len])
+    Slip::<bcall::Req>::seal(say)
+        .load(bcall::Req::Register { name, seed })
+        .ship()
         .map_err(|_| Fail::Unknown)?;
     let mut reply = [0u8; 1];
     match pier.pull(&mut reply, millis) {
@@ -107,10 +109,10 @@ pub fn register(
 pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
-    // 孔是单槽：与 [`register`] 同一条路，只是这一帧短（长度由 [`bcall::Ask`] 说）。
-    let (frame, len) = bcall::pack_ask(bcall::Ask::Evict);
-    mail::HolePie::from_token(say)
-        .push(&frame[..len])
+    // 孔是单槽：与 [`register`] 同一条路，只是这一条报短（长度由形状说）。
+    Slip::<bcall::Req>::seal(say)
+        .load(bcall::Req::Evict)
+        .ship()
         .map_err(|_| Fail::Unknown)?;
     let mut reply = [0u8; 1];
     match pier.pull(&mut reply, millis) {

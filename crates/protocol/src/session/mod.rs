@@ -132,6 +132,7 @@
 //! （"你是谁"内核免费背书，"别人是谁"不免费）。
 
 pub mod call;
+pub mod slip;
 
 // 据与手已搬进「约」——这里**转出**（`crate::session::core` 照旧解析）。
 pub use contract::session::{core, hands};

@@ -31,6 +31,22 @@ pub trait Field: Sized {
 /// **编得过**，症状要等帧被读成"读不懂"才显形。故这一格**不另立一个只有一格字段的结构体**：
 /// 它的形状就是一个 `TaskId`，一处定义在这里（那边几处的语义各不相同——"客人是谁"与
 /// "答话的是谁"——一个名字反而会说错话）。
+/// **一个裸字节也算一格**——动作码、条数那几格就是它（`WIDTH` = 1）。
+///
+/// **照实记（为什么不另立一个模型类型）**：报文头一格是"这是哪一条报"的动作码，它是帧布局的
+/// 一部分（字段表的第一格），但它不属于任何一枚已有类型。而"动作码"那个名字树里已经有主
+/// （37 处），故这里把 `u8` 本身认成一格：进出都是一个字节，码的**含义**仍归各族自己那枚
+/// 私有常量说（表里只放值）。
+impl Field for u8 {
+    const WIDTH: usize = 1;
+    fn store(&self, out: &mut [u8]) {
+        out[0] = *self;
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        bytes.first().copied()
+    }
+}
+
 impl Field for TaskId {
     const WIDTH: usize = 8;
     fn store(&self, out: &mut [u8]) {
@@ -109,17 +125,29 @@ macro_rules! frame {
             /// 这一帧线上占几字节：**字段宽度之和**（一处定义）。
             pub const LEN: usize = 0 $(+ <$ty as $crate::wire::Field>::WIDTH)+;
 
-            /// 写进 `out`。
+            /// 写进 `out`（**缓冲刚好这么大**——静态成立，故这一手不可能失败）。
             pub fn store(&self, out: &mut [u8; Self::LEN]) {
+                // 恒 `Some`：`out` 恰好 `LEN` 字节。不是吞失败。
+                let _ = self.store_in(out);
+            }
+
+            /// 写进一只**更大的**缓冲：`out.len() < LEN` ⇒ `None`，否则写完返 [`Self::LEN`]。
+            ///
+            /// **照实记（为什么还要这一版）**：`store` 要的是定长数组（`&mut [u8; LEN]`），而
+            /// 一族常常**只有一只缓冲、形状各有长短**（板那族是 41 / 33 / 1）——从大缓冲里切出来
+            /// 的 `&mut [u8]` 转不回定长数组。这一版就是那一格：不 `expect`、不拷贝一次。
+            pub fn store_in(&self, out: &mut [u8]) -> Option<usize> {
+                let head = out.get_mut(..Self::LEN)?;
                 let mut at = 0usize;
                 $(
                     <$ty as $crate::wire::Field>::store(
                         &self.$field,
-                        &mut out[at..at + <$ty as $crate::wire::Field>::WIDTH],
+                        &mut head[at..at + <$ty as $crate::wire::Field>::WIDTH],
                     );
                     at += <$ty as $crate::wire::Field>::WIDTH;
                 )+
                 let _ = at;
+                Some(Self::LEN)
             }
 
             /// 从 `bytes` 读回来；**长度不足** ⇒ `None`（不猜、不崩）。

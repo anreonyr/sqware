@@ -29,100 +29,109 @@ use contract::system::board::{core, frame};
 //
 // **照实记（这一组为什么值当）**：机器那几道门走的是**顺路**——客侧编一帧、板侧解一帧。
 // 下面这些格子机器**一条都走不到**：短帧 / 空帧 / 长一字节、**"哪一条动作带哪份荷载"那一格**
-// （注销与查那两枚只带名字——从前它们也写成 41 字节、尾上 8 个零谁都不读）、表外的动作码、
+// （注销与查那两枚只带名字）、表外的动作码、
 // 名字那几格的判废（空 / 串尾有垃圾 / 不是 UTF-8）、以及失败码表的两端。
 
 use crate::core::{Board, Fail};
 use crate::frame as f;
+use contract::message::Message;
 use env::{Name, PieToken, TaskId};
 
 fn name(text: &str) -> Name {
     Name::new(text).expect("名字合法")
 }
 
+/// 编一条报（**一族一只缓冲**：`Req::Buf` 就是最长那一枚）。
+fn store(m: f::Req) -> ([u8; f::REQ_LEN], usize) {
+    let mut buf = [0u8; f::REQ_LEN];
+    let n = m.store(&mut buf).expect("这一族的缓冲就是最长那一枚");
+    (buf, n)
+}
+
+/// 解一条报。
+fn fetch(bytes: &[u8]) -> Option<f::ReqIn> {
+    <f::Req as Message>::fetch(bytes)
+}
+
 #[test]
-fn an_ask_carries_the_name_and_a_seed_only_for_the_action_that_has_one() {
+fn a_req_carries_the_name_and_a_seed_only_for_the_action_that_has_one() {
     let seed = PieToken::from_bytes(&77u64.to_le_bytes()).unwrap();
-    let (frame, len) = f::pack_ask(f::Ask::Register {
+    let (frame, len) = store(f::Req::Register {
         name: name("console"),
         seed,
     });
-    assert_eq!(len, f::ASK_LEN, "动作码 ＋ 名字 ＋ 那一格入口号");
+    assert_eq!(len, f::RegisterFrame::LEN, "动作码 ＋ 名字 ＋ 那一格入口号");
     assert_eq!(
-        f::unpack_ask(&frame[..len]),
-        Some(f::AskIn::Register {
+        fetch(&frame[..len]),
+        Some(f::ReqIn::Register {
             name: name("console"),
             seed
         }),
         "名字与入口都在"
     );
 
-    // **不带 seed 的那两枚**：帧就是"动作码 ＋ 名字"——**线上没有那 8 个零**（从前有，谁都不
-    // 读；那是"这一码才带 seed"那条约定留在线上的残留）。
-    for (ask, want) in [
+    // **不带 seed 的那两枚**：帧就是"动作码 ＋ 名字"——线上没有那 8 个零（从前有，谁都不读）。
+    for (req, want) in [
         (
-            f::Ask::Unregister {
+            f::Req::Unregister {
                 name: name("console"),
             },
-            f::AskIn::Unregister {
+            f::ReqIn::Unregister {
                 name: name("console"),
             },
         ),
         (
-            f::Ask::Lookup {
+            f::Req::Lookup {
                 name: name("console"),
             },
-            f::AskIn::Lookup {
+            f::ReqIn::Lookup {
                 name: name("console"),
             },
         ),
     ] {
-        let (frame, len) = f::pack_ask(ask);
-        assert_eq!(len, 1 + env::wire::NAME_LEN, "动作码 ＋ 名字，没有尾巴");
-        assert_eq!(f::unpack_ask(&frame[..len]), Some(want));
+        let (frame, len) = store(req);
+        assert_eq!(len, f::NameFrame::LEN, "动作码 ＋ 名字，没有尾巴");
+        assert_eq!(fetch(&frame[..len]), Some(want));
         // 长一字节（旧形状那一帧）**不再是它**：长度为该动作该有的长度是帧的契约。
         assert_eq!(
-            f::unpack_ask(&[&frame[..], &[0u8; 8]].concat()),
+            fetch(&[&frame[..], &[0u8; 8]].concat()),
             None,
             "多一字节就不是这一条了"
         );
     }
 
-    // **退场那一句只有一字节**——`pack_ask` 再也编不出"41 字节的退场"。
-    let (frame, len) = f::pack_ask(f::Ask::Evict);
-    assert_eq!(len, 1, "空载荷");
-    assert_eq!(f::unpack_ask(&frame[..len]), Some(f::AskIn::Evict));
+    // **退场那一句只有一字节**——形状说了它没有荷载，编不出"41 字节的退场"。
+    let (frame, len) = store(f::Req::Evict);
+    assert_eq!(len, f::EvictFrame::LEN, "空载荷");
+    assert_eq!(fetch(&frame[..len]), Some(f::ReqIn::Evict));
 }
 
 #[test]
 fn a_board_frame_that_is_not_that_shape_is_not_guessed_at() {
     let seed = PieToken::from_bytes(&1u64.to_le_bytes()).unwrap();
-    assert_eq!(f::unpack_ask(&[]), None, "空帧");
+    assert_eq!(fetch(&[]), None, "空帧");
     // **短一字节 / 长一字节**：长度为该动作该有的长度是帧的契约。
-    let (reg, len) = f::pack_ask(f::Ask::Register {
+    let (reg, len) = store(f::Req::Register {
         name: name("x"),
         seed,
     });
-    assert_eq!(f::unpack_ask(&reg[..len - 1]), None, "短一字节");
-    let mut long = [0u8; f::ASK_LEN + 1];
+    assert_eq!(fetch(&reg[..len - 1]), None, "短一字节");
+    let mut long = [0u8; f::REQ_LEN + 1];
     long[..len].copy_from_slice(&reg[..len]);
-    assert_eq!(f::unpack_ask(&long), None, "长一字节也读不懂（尾巴不参与）");
+    assert_eq!(fetch(&long), None, "长一字节也读不懂");
     // **表外的动作码**：这一帧读得懂（`[码][名字]` 的形状），但那一码不是这四枚之一
     // ——它与"读不懂"是两回事（板答的话也不同：`UNKNOWN` 而非 `BAD`）。
     let mut outside = reg;
     outside[0] = 200;
     assert_eq!(
-        f::unpack_ask(&outside[..1 + env::wire::NAME_LEN]),
-        Some(f::AskIn::Unknown),
+        fetch(&outside[..f::NameFrame::LEN]),
+        Some(f::ReqIn::Unknown),
         "码不是我的"
     );
-    // **码先于长度**：长度是"某一条动作的契约"，表外的码没有契约可言 ⇒ 任何长度都是
-    // `Unknown`。**照实记（这一格从前答 `BAD`）**：旧法先按 `ASK_LEN` 比长度、再认码，
-    // 故一帧全零的短帧答的是"读不懂"；现在它答"这一码不是我的"——两句话都对，
-    // 后者更具体。
+    // **码先于长度**：长度是"某一条动作的契约"，表外的码没有契约可言 ⇒ 任何长度都是 `Unknown`。
     assert_eq!(
-        f::unpack_ask(&[0u8; f::ASK_LEN - 1]),
-        Some(f::AskIn::Unknown),
+        fetch(&[0u8; f::REQ_LEN - 1]),
+        Some(f::ReqIn::Unknown),
         "0 也不是这四枚之一"
     );
 }

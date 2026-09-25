@@ -13,6 +13,8 @@ use env::{Name, PieToken, TaskId};
 
 use super::core::Fail;
 
+use crate::message::Message;
+
 pub fn name_of(bytes: &[u8]) -> Option<Name> {
     let at = bytes.get(..env::wire::NAME_LEN)?;
     let mut raw = [0u8; env::wire::NAME_LEN];
@@ -22,41 +24,63 @@ pub fn name_of(bytes: &[u8]) -> Option<Name> {
 
 // ── 一问一答那一步（`Query` 的载体）──────────────────────────
 
-/// 一问一答的帧：**一问一答各一句**。
-///
-/// ```text
-///   Query   [0] op   [1..33] name   [33..41] 入口号（只有 Register 用）
-///   Short   [0] op                                （Dismiss：整帧一字节，空载荷）
-///   Reply   [0] status
-/// ```
-///
-/// 答话那一格的六个码见 [`OK`] / [`UNKNOWN`] / [`TAKEN`] / [`DENIED`] / [`FULL`] / [`BAD`]。
-///
-/// 名字按 `NAME_LEN`(env::wire::NAME_LEN) 定长写（尾随 NUL 是填充）——**与牌子同
-/// 一个解码面**，故 `Name` 的读法全树只有一处。
-///
-/// 那一格入口号是**客人把入口交出去之后、换回来的"种在板表里"的号**
-/// （`ship` 的返回值）——不是"客人的入口是几号"。两个编号空间不同源，互相拿错
-/// 正是旧树 `[33..41]` 那一格的病；**答案那一侧则干脆没有这一格**：查到的那枚入口经
-/// 会话交进客人的表，报文里再放一个号只会多出一份两边都得认的约定。
-///
-/// 报文的**上限**：[`Ask::Register`] 那一枚最长（动作码 ＋ 名字 ＋ 入口那 8 字节）。长度仍由
-/// 每次 `push` 自己带（孔不预设上限），这里只是**声明这一版只用多大**——一处上界。
-pub const ASK_LEN: usize = 1 + env::wire::NAME_LEN + 8;
+// ── 四条动作各一张字段表（**偏移一处都不写**）──────────────
+//
+// ```text
+//   Register     [0] op   [1..33] name   [33..41] 入口号      （41 字节）
+//   Unregister   [0] op   [1..33] name                        （33 字节）
+//   Lookup       同上
+//   Evict        [0] op                                       （1 字节）
+//   Rep          [0] status                                   （1 字节）
+// ```
+//
+// 答话那一格的六个码见 [`OK`] / [`UNKNOWN`] / [`TAKEN`] / [`DENIED`] / [`FULL`] / [`BAD`]。
+//
+// 名字按 `NAME_LEN`(env::wire::NAME_LEN) 定长写（尾随 NUL 是填充）——**与牌子同
+// 一个解码面**，故 `Name` 的读法全树只有一处。
+//
+// 那一格入口号是**客人把入口交出去之后、换回来的"种在板表里"的号**
+// （`ship` 的返回值）——不是"客人的入口是几号"。两个编号空间不同源，互相拿错
+// 正是旧树 `[33..41]` 那一格的病；**答案那一侧则干脆没有这一格**：查到的那枚入口经
+// 会话交进客人的表，报文里再放一个号只会多出一份两边都得认的约定。
 
-/// 只带名字那两枚（[`Ask::Unregister`] / [`Ask::Lookup`]）的长度。
-const NAME_ONLY: usize = 1 + env::wire::NAME_LEN;
+env::frame! {
+    /// 登记那一问：动作码 ＋ 名字 ＋ 入口那 8 字节。
+    pub struct RegisterFrame {
+        op: u8,
+        name: Name,
+        seed: PieToken,
+    }
+}
 
-/// 四个动作在报文里的码——**与核心那四个方法同名**（`register` / `unregister` /
-/// `lookup` / `evict`）：线上与模型是同一件事的两层，不该各起一套词。
-///
-/// **它们不再是协议面**：编的那一侧由 [`Ask`] 说、解的那一侧由 [`AskIn`] 说，两枚码各被读
-/// 一次（[`pack_ask`] 写、[`unpack_ask`] 认）。外面认的是类型 ⇒ 降为私有——没有读者的格
-/// 不留在面上。
+env::frame! {
+    /// 只报名字那两问（注销 / 查）共用的形状。
+    pub struct NameFrame {
+        op: u8,
+        name: Name,
+    }
+}
+
+env::frame! {
+    /// 空载荷那一问（退场）：整帧只有动作码这一格。
+    pub struct EvictFrame {
+        op: u8,
+    }
+}
+
+/// 报文的**上限**：登记那一枚最长（`RegisterFrame` 的宽度之和）。长度仍由每次 `push` 自己带
+/// （孔不预设上限），这里只是**声明这一版只用多大**——一处上界。
+pub const REQ_LEN: usize = RegisterFrame::LEN;
+
+// 四个动作在报文里的码——**与核心那四个方法同名**（`register` / `unregister` /
+// `lookup` / `evict`）：线上与模型是同一件事的两层，不该各起一套词。
+//
+// **它们不再是协议面**：编的那一侧由 [`Req`] 说、解的那一侧由 [`ReqIn`] 说，两枚码各被读一次
+// （`Req::store` 写、`Req::fetch` 认）。外面认的是类型 ⇒ 降为私有——没有读者的格不留在面上。
 const REGISTER: u8 = 1;
 const UNREGISTER: u8 = 2;
 const LOOKUP: u8 = 3;
-/// 第四格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节。
+// 第四格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节。
 const EVICT: u8 = 4;
 
 /// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
@@ -94,15 +118,13 @@ crate::fail_codes! {
 /// 关系原先活在**两张表**里（调用方那一处、板那一段 `match` 一处），错配**编得过**，症状要到
 /// 读的那一侧才显形。
 ///
-/// 现在：编不出来 ⇒ 写的那一侧不可能错配；认的是 [`AskIn`] ⇒ 读的那一侧那个 `match` 是
-/// **穷举**的（多一条动作，编不过的地方自己会报出来）。
+/// 现在：形状由类型说、编解码由字段表生成（[`Message`]），外面认的是类型——`pack_ask` /
+/// `unpack_ask` 两枚自由函数随之退场。
 ///
-/// **照实记（同一刀里线上短了两帧，故意的）**：`unregister` / `lookup` 从前也写成 41 字节
-/// ——尾上那 8 字节永远是零，谁都不读（`0` = 不是号，读的人靠它分辨"这一码带没带"）。既是
-/// "帧里就写什么"，这个"白要 8 字节"就该退场：那两枚现在是**动作码 ＋ 名字**（33 字节）。
-/// 树内没有发送者（四个客人都只 `register`），真机那八扇门照跑。
+/// **照实记（名字）**：它从前叫 `Ask`（对偶叫 `AskIn`）。用户裁定：`Ask` / `Reply` 这一对
+/// 不要，**`Req` / `Rep`**——故这里是新生的名字，不是改名。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Ask {
+pub enum Req {
     /// 登记：名字 ＋ **板上那个入口号**（`ship` 换回来的那一枚——不是"客人的 Pie 是几号"）。
     Register { name: Name, seed: PieToken },
     /// 注销：只报名字（板按"开者 = 它"认领）。
@@ -115,10 +137,10 @@ pub enum Ask {
 
 /// 解开一问：**动作码与荷载一起解**（帧里写着是哪一条动作，读的人不必先猜）。
 ///
-/// 四种真动作各占一格；[`AskIn::Unknown`] 单独一格，因为**板对它答的话与"读不懂"不同**
+/// 四种真动作各占一格；[`ReqIn::Unknown`] 单独一格，因为**板对它答的话与"读不懂"不同**
 /// （见 `programs/src/system/board/server.rs` 的 `answer`）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AskIn {
+pub enum ReqIn {
     Register { name: Name, seed: PieToken },
     Unregister { name: Name },
     Lookup { name: Name },
@@ -127,51 +149,63 @@ pub enum AskIn {
     Unknown,
 }
 
-/// 把一问编成字节，返 **`(帧, 实际长度)`**——退场那一句是 1，注销 / 查是 `NAME_ONLY`
-/// （动作码 ＋ 名字），登记是 [`ASK_LEN`]。
-pub fn pack_ask(ask: Ask) -> ([u8; ASK_LEN], usize) {
-    let mut out = [0u8; ASK_LEN];
-    // 名字那一格三枚共用（退场那一句没有名字）。
-    let (op, name) = match ask {
-        Ask::Evict => {
-            out[0] = EVICT;
-            return (out, 1);
-        }
-        Ask::Register { name, seed } => {
-            out[1 + env::wire::NAME_LEN..].copy_from_slice(&seed.to_bytes());
-            (REGISTER, name)
-        }
-        Ask::Unregister { name } => (UNREGISTER, name),
-        Ask::Lookup { name } => (LOOKUP, name),
-    };
-    out[0] = op;
-    out[1..1 + env::wire::NAME_LEN].copy_from_slice(name.bytes());
-    (out, if op == REGISTER { ASK_LEN } else { NAME_ONLY })
-}
+impl Message for Req {
+    type In = ReqIn;
+    /// 这一族的缓冲就是最长那一枚（登记）。`RegisterFrame::LEN` 是**字段宽度之和**，不写数。
+    type Buf = [u8; RegisterFrame::LEN];
+    const EMPTY: Self::Buf = [0u8; RegisterFrame::LEN];
 
-/// 解开一问：**逐条动作比长度**（长度为该动作该有的长度是帧的契约，[`pack_ask`] 产出的就是
-/// 那个长度）——短一字节、长一字节都 ⇒ `None`（持板者据此答 `BAD`，不猜、不崩）。
-///
-/// **空帧 ⇒ `None`**（连动作码都没有）。**表外的动作码 ⇒ [`AskIn::Unknown`]**：那不是"读不懂"，
-/// 是"这一码不是我的"——两件事板答的话不同，故分两格。
-///
-/// 那一格入口号按 [`PieToken::NONE`]（0）= "不是号"解——令牌自 1 起，0 是内核的越界哨兵；
-/// **它是"这枚号合不合法"，不是"这一码带没带"**（带没带由 [`Ask`] 说）。
-pub fn unpack_ask(bytes: &[u8]) -> Option<AskIn> {
-    let op = *bytes.first()?;
-    let name = || name_of(bytes.get(1..)?);
-    Some(match op {
-        EVICT if bytes.len() == 1 => AskIn::Evict,
-        REGISTER if bytes.len() == ASK_LEN => AskIn::Register {
-            name: name()?,
-            seed: PieToken::from_bytes(bytes.get(1 + env::wire::NAME_LEN..)?)?,
-        },
-        UNREGISTER if bytes.len() == NAME_ONLY => AskIn::Unregister { name: name()? },
-        LOOKUP if bytes.len() == NAME_ONLY => AskIn::Lookup { name: name()? },
-        _ if !matches!(op, REGISTER | UNREGISTER | LOOKUP | EVICT) => AskIn::Unknown,
-        // 这四枚之一，长度却不是它该有的那个 ⇒ 读不懂。
-        _ => return None,
-    })
+    /// 编进 `out`：**动作码由形状给**（不在别处再写一遍），偏移与长度由字段表求和。
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        match *self {
+            Req::Register { name, seed } => {
+                RegisterFrame {
+                    op: REGISTER,
+                    name,
+                    seed,
+                }
+                .store_in(out)
+            }
+            Req::Unregister { name } => NameFrame {
+                op: UNREGISTER,
+                name,
+            }
+            .store_in(out),
+            Req::Lookup { name } => NameFrame { op: LOOKUP, name }.store_in(out),
+            Req::Evict => EvictFrame { op: EVICT }.store_in(out),
+        }
+    }
+
+    /// 解开一问：**逐条动作比长度**（长度为该动作该有的长度是帧的契约，`store` 产出的就是
+    /// 那个长度）——短一字节、长一字节都 ⇒ `None`（持板者据此答 `BAD`，不猜、不崩）。
+    ///
+    /// **空帧 ⇒ `None`**（连动作码都没有）。**表外的动作码 ⇒ [`ReqIn::Unknown`]**：那不是
+    /// "读不懂"，是"这一码不是我的"——两件事板答的话不同，故分两格。
+    ///
+    /// 那一格入口号按 [`PieToken::NONE`]（0）= "不是号"解——令牌自 1 起，0 是内核的越界哨兵；
+    /// **它是"这枚号合不合法"，不是"这一码带没带"**（带没带由 [`Req`] 说）。
+    fn fetch(bytes: &[u8]) -> Option<ReqIn> {
+        let op = *bytes.first()?;
+        Some(match op {
+            EVICT if bytes.len() == EvictFrame::LEN => ReqIn::Evict,
+            REGISTER if bytes.len() == RegisterFrame::LEN => {
+                let frame = RegisterFrame::fetch(bytes)?;
+                ReqIn::Register {
+                    name: frame.name,
+                    seed: frame.seed,
+                }
+            }
+            UNREGISTER if bytes.len() == NameFrame::LEN => ReqIn::Unregister {
+                name: NameFrame::fetch(bytes)?.name,
+            },
+            LOOKUP if bytes.len() == NameFrame::LEN => ReqIn::Lookup {
+                name: NameFrame::fetch(bytes)?.name,
+            },
+            _ if !matches!(op, REGISTER | UNREGISTER | LOOKUP | EVICT) => ReqIn::Unknown,
+            // 这四枚之一，长度却不是它该有的那个 ⇒ 读不懂。
+            _ => return None,
+        })
+    }
 }
 
 /// 会话的失败域 → 板的失败域：**"它不在"是一条判据**，故两边只留一个名字
