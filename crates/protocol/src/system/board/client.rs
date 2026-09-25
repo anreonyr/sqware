@@ -61,31 +61,34 @@ fn me() -> Result<TaskId, Fail> {
     runtime::env::unit::self_id().map_err(|_| Fail::Unknown)
 }
 
-/// 客侧第二步：问一句、取一句答。返答话那一格（[`bcall::OK`] = 板收下了）。
+/// 客侧第二步（**登记那一句**）：报上名字 ＋ 把入口交出去，取一句答。
+/// 返答话那一格（[`bcall::OK`] = 板收下了）。
 ///
 /// 问话推 `say`（[`ask_hole`] 铸的那一枚，板读），答话从本端这条板路读（板写）。
 ///
-/// 注册那一句要把**入口**捎上：它经会话交给板（`Accord` 一份），故写进帧里的是"种在板
-/// 表里的那个号"——那个号才是板认得的坐标（两个编号空间不同源，互相拿错正是旧树
-/// `[33..41]` 那一格的病）。
-pub fn ask(
+/// **入口要捎上**：它经会话交给板（`Accord` 一份），故写进帧里的是"种在板表里的那个号"
+/// ——那个号才是板认得的坐标（两个编号空间不同源，互相拿错正是旧树 `[33..41]` 那一格的病）。
+///
+/// **照实记（`op: u8` 那一格退场）**：这一手从前叫 `ask(…, op: u8, …)`，而树内**四个调用点
+/// 全递 `REGISTER`**（回显、两位探针、常客）；注销与查两条动作到今天没有客人（板那一侧的
+/// 正文记着"板上那个 `LOOKUP` 此后没有真客人"）。故客侧这一手直接叫 [`bcall::Ask::Register`]
+/// 那一条动作的名字，"这一码才带 seed" 那条分辨随之退场——形状由 [`bcall::Ask`] 说。
+pub fn register(
     say: PieToken,
     link: &Quay,
     board: TaskId,
-    op: u8,
     name: Name,
     entry: PieToken,
     millis: Wait,
 ) -> Result<u8, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
-    let seed = match op {
-        bcall::REGISTER => Some(bcall::ship(entry, board).map_err(|_| Fail::Denied)?),
-        _ => None,
-    };
+    // 先把入口交出去、换回"它在板表里是几号"，再编帧——两个编号空间不同源。
+    let seed = bcall::ship(entry, board).map_err(|_| Fail::Denied)?;
+    let (frame, len) = bcall::pack_ask(bcall::Ask::Register { name, seed });
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
     mail::HolePie::from_token(say)
-        .push(&bcall::pack_ask(op, name, seed))
+        .push(&frame[..len])
         .map_err(|_| Fail::Unknown)?;
     let mut reply = [0u8; 1];
     match pier.pull(&mut reply, millis) {
@@ -96,17 +99,18 @@ pub fn ask(
 
 /// 客侧第四步：说一句"**我走了**"，收一格答话。
 ///
-/// 与 [`ask`] 同一对动作（推一句问话、从本端板路取一句答话），只少两样：**没有载荷**（不说
-/// 名字、不交入口，故帧只有一字节）与**不带板的号**（没什么要 `ship` 给板的）。
+/// 与 [`register`] 同一对动作（推一句问话、从本端板路取一句答话），只少两样：**没有载荷**
+/// （不说名字、不交入口）与**不带板的号**（没什么要 `ship` 给板的）。
 ///
 /// 板那侧据此撤格 + 摘掉这一位挂在板上的**全部**牌子；它不在账上则答
 /// [`UNKNOWN`](bcall::UNKNOWN)。
 pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
     let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let pier = link.find(at).ok_or(Fail::Unknown)?;
-    // 孔是单槽：与 [`ask`] 同一条路，只是这一帧短。
+    // 孔是单槽：与 [`register`] 同一条路，只是这一帧短（长度由 [`bcall::Ask`] 说）。
+    let (frame, len) = bcall::pack_ask(bcall::Ask::Evict);
     mail::HolePie::from_token(say)
-        .push(&[bcall::EVICT])
+        .push(&frame[..len])
         .map_err(|_| Fail::Unknown)?;
     let mut reply = [0u8; 1];
     match pier.pull(&mut reply, millis) {

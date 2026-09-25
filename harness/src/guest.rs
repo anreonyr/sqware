@@ -104,7 +104,7 @@ fn main() -> Report<'static> {
     let none = PieToken::NONE;
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"guest 在哪"）。
-    let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
+    let reg = board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
 
     // 二、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("guest: no tree link") };

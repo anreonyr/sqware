@@ -74,7 +74,7 @@ fn main() -> Report<'static> {
     let Ok(me) = Name::new(ME) else { return bail("passer: bad name") };
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"passer 在哪"）。
-    let reg = board::ask(talk, &link, board, bcall::REGISTER, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
+    let reg = board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
     say(&format!("passer: reg={reg} entry={} say={ME}", entry.get()));
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——"挂名字该成功"

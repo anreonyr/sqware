@@ -40,19 +40,24 @@ pub fn name_of(bytes: &[u8]) -> Option<Name> {
 /// 正是旧树 `[33..41]` 那一格的病；**答案那一侧则干脆没有这一格**：查到的那枚入口经
 /// 会话交进客人的表，报文里再放一个号只会多出一份两边都得认的约定。
 ///
-/// 报文的**上限就是 [`ASK_LEN`]**：本协议只有两种帧——这一种有载荷的（[`REGISTER`] /
-/// [`UNREGISTER`] / [`LOOKUP`]）与 [`EVICT`] 的一字节短帧。长度仍由每次 `push` 自己带
-/// （孔不预设上限），这里只是**声明这一版只用多大**——一处上界。
+/// 报文的**上限**：[`Ask::Register`] 那一枚最长（动作码 ＋ 名字 ＋ 入口那 8 字节）。长度仍由
+/// 每次 `push` 自己带（孔不预设上限），这里只是**声明这一版只用多大**——一处上界。
 pub const ASK_LEN: usize = 1 + env::wire::NAME_LEN + 8;
+
+/// 只带名字那两枚（[`Ask::Unregister`] / [`Ask::Lookup`]）的长度。
+const NAME_ONLY: usize = 1 + env::wire::NAME_LEN;
 
 /// 四个动作在报文里的码——**与核心那四个方法同名**（`register` / `unregister` /
 /// `lookup` / `evict`）：线上与模型是同一件事的两层，不该各起一套词。
-pub const REGISTER: u8 = 1;
-pub const UNREGISTER: u8 = 2;
-pub const LOOKUP: u8 = 3;
-/// 第四格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节
-/// （给它塞两格空位就白要 40 字节，见 [`op_of`] 与 [`unpack_ask`] 的分工）。
-pub const EVICT: u8 = 4;
+///
+/// **它们不再是协议面**：编的那一侧由 [`Ask`] 说、解的那一侧由 [`AskIn`] 说，两枚码各被读
+/// 一次（[`pack_ask`] 写、[`unpack_ask`] 认）。外面认的是类型 ⇒ 降为私有——没有读者的格
+/// 不留在面上。
+const REGISTER: u8 = 1;
+const UNREGISTER: u8 = 2;
+const LOOKUP: u8 = 3;
+/// 第四格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节。
+const EVICT: u8 = 4;
 
 /// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
@@ -81,33 +86,92 @@ crate::fail_codes! {
     Fail::Full => FULL,
 }
 
-/// 把一问编成字节。`seed` 只有 [`REGISTER`] 用得上。
-pub fn pack_ask(op: u8, name: Name, seed: Option<PieToken>) -> [u8; ASK_LEN] {
+/// **一问的形状**——一条动作一条形状：荷载收什么，帧里就写什么。
+///
+/// **照实记（它替掉了什么）**：从前是 `pack_ask(op: u8, name: Name, seed: Option<PieToken>)`
+/// ——**任何一枚码都能配上任何一种荷载**：给退场那一码塞一个名字就编出一帧 41 字节的"退场"
+/// （而线上那一句是**一字节短帧**），给查那一码配一个入口号也编得出来。四条动作与四张形状的
+/// 关系原先活在**两张表**里（调用方那一处、板那一段 `match` 一处），错配**编得过**，症状要到
+/// 读的那一侧才显形。
+///
+/// 现在：编不出来 ⇒ 写的那一侧不可能错配；认的是 [`AskIn`] ⇒ 读的那一侧那个 `match` 是
+/// **穷举**的（多一条动作，编不过的地方自己会报出来）。
+///
+/// **照实记（同一刀里线上短了两帧，故意的）**：`unregister` / `lookup` 从前也写成 41 字节
+/// ——尾上那 8 字节永远是零，谁都不读（`0` = 不是号，读的人靠它分辨"这一码带没带"）。既是
+/// "帧里就写什么"，这个"白要 8 字节"就该退场：那两枚现在是**动作码 ＋ 名字**（33 字节）。
+/// 树内没有发送者（四个客人都只 `register`），真机那八扇门照跑。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ask {
+    /// 登记：名字 ＋ **板上那个入口号**（`ship` 换回来的那一枚——不是"客人的 Pie 是几号"）。
+    Register { name: Name, seed: PieToken },
+    /// 注销：只报名字（板按"开者 = 它"认领）。
+    Unregister { name: Name },
+    /// 查：只报名字。查到的那枚入口**经会话转授**，不从报文里走。
+    Lookup { name: Name },
+    /// 退场：**空载荷**，整帧一字节。
+    Evict,
+}
+
+/// 解开一问：**动作码与荷载一起解**（帧里写着是哪一条动作，读的人不必先猜）。
+///
+/// 四种真动作各占一格；[`AskIn::Unknown`] 单独一格，因为**板对它答的话与"读不懂"不同**
+/// （见 `programs/src/system/board/server.rs` 的 `answer`）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AskIn {
+    Register { name: Name, seed: PieToken },
+    Unregister { name: Name },
+    Lookup { name: Name },
+    Evict,
+    /// 表外的动作码：**这一帧读得懂（`[码][名字]`），但那一码不是这四枚之一**。
+    Unknown,
+}
+
+/// 把一问编成字节，返 **`(帧, 实际长度)`**——退场那一句是 1，注销 / 查是 `NAME_ONLY`
+/// （动作码 ＋ 名字），登记是 [`ASK_LEN`]。
+pub fn pack_ask(ask: Ask) -> ([u8; ASK_LEN], usize) {
     let mut out = [0u8; ASK_LEN];
+    // 名字那一格三枚共用（退场那一句没有名字）。
+    let (op, name) = match ask {
+        Ask::Evict => {
+            out[0] = EVICT;
+            return (out, 1);
+        }
+        Ask::Register { name, seed } => {
+            out[1 + env::wire::NAME_LEN..].copy_from_slice(&seed.to_bytes());
+            (REGISTER, name)
+        }
+        Ask::Unregister { name } => (UNREGISTER, name),
+        Ask::Lookup { name } => (LOOKUP, name),
+    };
     out[0] = op;
     out[1..1 + env::wire::NAME_LEN].copy_from_slice(name.bytes());
-    if let Some(seed) = seed {
-        out[1 + env::wire::NAME_LEN..].copy_from_slice(&seed.to_bytes());
-    }
-    out
+    (out, if op == REGISTER { ASK_LEN } else { NAME_ONLY })
 }
 
-/// 只读第一格**动作码**——短帧也读得动，故分流先问这一句。空帧 ⇒ `None`
-/// （持板者据此答 `BAD`，不猜、不崩）。
-pub fn op_of(bytes: &[u8]) -> Option<u8> {
-    bytes.first().copied()
-}
-
-/// 解开一问的**载荷**：`(名字, 那一格入口号)`。**读不懂返 `None`**（持板者据此答 `BAD`，
-/// 不猜、不崩）。
+/// 解开一问：**逐条动作比长度**（长度为该动作该有的长度是帧的契约，[`pack_ask`] 产出的就是
+/// 那个长度）——短一字节、长一字节都 ⇒ `None`（持板者据此答 `BAD`，不猜、不崩）。
 ///
-/// 只在**有载荷**的那几码上叫（[`op_of`] 已经分过流：退场那一句是一字节短帧，不进这里）。
-/// 长度为 [`ASK_LEN`] 是**帧的契约**（`pack_ask` 产出的就是这个长度），故短一字节即读不懂。
-/// 那一格入口号按 [`PieToken::NONE`] = "没带"解——令牌自 1 起，0 是内核的越界哨兵。
-pub fn unpack_ask(bytes: &[u8]) -> Option<(Name, PieToken)> {
-    let name = name_of(bytes.get(1..)?)?;
-    let at = bytes.get(1 + env::wire::NAME_LEN..ASK_LEN)?;
-    Some((name, PieToken::from_bytes(at)?))
+/// **空帧 ⇒ `None`**（连动作码都没有）。**表外的动作码 ⇒ [`AskIn::Unknown`]**：那不是"读不懂"，
+/// 是"这一码不是我的"——两件事板答的话不同，故分两格。
+///
+/// 那一格入口号按 [`PieToken::NONE`]（0）= "不是号"解——令牌自 1 起，0 是内核的越界哨兵；
+/// **它是"这枚号合不合法"，不是"这一码带没带"**（带没带由 [`Ask`] 说）。
+pub fn unpack_ask(bytes: &[u8]) -> Option<AskIn> {
+    let op = *bytes.first()?;
+    let name = || name_of(bytes.get(1..)?);
+    Some(match op {
+        EVICT if bytes.len() == 1 => AskIn::Evict,
+        REGISTER if bytes.len() == ASK_LEN => AskIn::Register {
+            name: name()?,
+            seed: PieToken::from_bytes(bytes.get(1 + env::wire::NAME_LEN..)?)?,
+        },
+        UNREGISTER if bytes.len() == NAME_ONLY => AskIn::Unregister { name: name()? },
+        LOOKUP if bytes.len() == NAME_ONLY => AskIn::Lookup { name: name()? },
+        _ if !matches!(op, REGISTER | UNREGISTER | LOOKUP | EVICT) => AskIn::Unknown,
+        // 这四枚之一，长度却不是它该有的那个 ⇒ 读不懂。
+        _ => return None,
+    })
 }
 
 /// 会话的失败域 → 板的失败域：**"它不在"是一条判据**，故两边只留一个名字

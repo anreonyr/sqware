@@ -224,6 +224,6 @@ fn register() -> u8 {
     let Ok(me) = Name::new(ME) else {
         return bcall::BAD;
     };
-    board::ask(talk, &link, board, bcall::REGISTER, me, entry, Wait::AtMost(MS)).unwrap_or(bcall::BAD)
+    board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(bcall::BAD)
 }
 

@@ -278,64 +278,70 @@ fn serve_one(
         return;
     };
     // 一问一答：读不懂也答（答 `BAD`），答话走**这位客人的答话路**（一客一路，单槽）。
-    let answer = answer(board, desk, want, guest.who(), swept, lanes);
-    let _ = mail::HolePie::from_token(guest.reply()).push(&answer);
+    // **解码只做一次**：答哪一句由它定，下面"要不要摘掉它那枚问话孔"也由它定。
+    let decoded = bcall::unpack_ask(want);
+    let said = match decoded {
+        Some(ask) => answer(board, desk, ask, guest.who(), swept, lanes),
+        // 空帧 / 长度不对：读不懂就答 `BAD`——不猜、不崩。
+        None => bcall::BAD,
+    };
+    let _ = mail::HolePie::from_token(guest.reply()).push(&[said]);
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
-    if bcall::op_of(want) == Some(bcall::EVICT) {
+    if matches!(decoded, Some(bcall::AskIn::Evict)) {
         let _ = pile.detach(&mail::HolePie::from_token(ask), HoleDir::Pull);
     }
 }
 
 /// 把一条问交给板，编出一句答（**一格**：读不懂也答，答 `BAD`）。
 ///
-/// **先读动作码、再按码取载荷**：退场那一句是**一字节短帧**（[`bcall::EVICT`]），它没有
-/// 名字也没有入口，故在 [`bcall::unpack_ask`] 之前就分流出去——给它塞两格空位是白要 40 字节。
+/// **形状由 [`bcall::AskIn`] 说**：退场那一句是**一字节短帧**（没有名字也没有入口），
+/// 另外三条各按自己那份荷载走；表外的动作码是**单独一格**（它不是"读不懂"，答的话也不同）。
+///
+/// **照实记（`op_of` 那一手退场）**：从前这里先 `op_of` 读裸码、按码分流、再 `match op` 认
+/// 四枚 `u8`——两个 `match` 都有"没见过的码"那一支，多一条动作**编得过**。现在那个 `match`
+/// 是穷举的：少写一条动作，这里当场编不过。
 fn answer(
     board: &mut Board,
     desk: &mut Desk,
-    want: &[u8],
+    ask: bcall::AskIn,
     who: TaskId,
     swept: usize,
     lanes: &mut Lanes,
-) -> [u8; 1] {
-    let Some(op) = bcall::op_of(want) else {
-        // 读不懂就答 `BAD`——不猜、不崩。
-        return [bcall::BAD];
-    };
-    if op == bcall::EVICT {
-        // 死亡道：**先取走**（撤格/摘牌之后就只剩道这一条线索了）。
-        let lane = take_lane(lanes, who);
-        // 退场：撤它那一格（`None` = **它不在账上**）+ 摘掉它挂在板上的全部牌子。
-        let said = match desk.evict(who) {
-            Some(_slot) => {
-                let names = board.evict(who);
-                // 破例打一行：退场这一件事的读数只此一处（**只在这一件事上打**，不是刷屏）。
-                say(&format!(
-                    "board: bye tid={} names={names} occupied={} swept={swept}",
-                    who.get(),
-                    desk.occupied()
-                ));
-                Ok(())
+) -> u8 {
+    let said = match ask {
+        bcall::AskIn::Evict => {
+            // 死亡道：**先取走**（撤格/摘牌之后就只剩道这一条线索了）。
+            let lane = take_lane(lanes, who);
+            // 退场：撤它那一格（`None` = **它不在账上**）+ 摘掉它挂在板上的全部牌子。
+            let said = match desk.evict(who) {
+                Some(_slot) => {
+                    let names = board.evict(who);
+                    // 破例打一行：退场这一件事的读数只此一处（**只在这一件事上打**，不是刷屏）。
+                    say(&format!(
+                        "board: bye tid={} names={names} occupied={} swept={swept}",
+                        who.get(),
+                        desk.occupied()
+                    ));
+                    Ok(())
+                }
+                None => Err(contract::system::board::core::Fail::Unknown),
+            };
+            // 听来的那一档也要推道：装配者只认道（撤格/摘牌是板自己的账，与它无关）。
+            if let Some(lane) = lane {
+                let _ = mail::HolePie::from_token(lane).push(&[0u8]);
             }
-            None => Err(contract::system::board::core::Fail::Unknown),
-        };
-        // 听来的那一档也要推道：装配者只认道（撤格/摘牌是板自己的账，与它无关）。
-        if let Some(lane) = lane {
-            let _ = mail::HolePie::from_token(lane).push(&[0u8]);
+            return bcall::fail_to_code(said.err());
         }
-        return [bcall::fail_to_code(said.err())];
-    }
-    let Some((name, seed)) = bcall::unpack_ask(want) else {
-        return [bcall::BAD];
-    };
-    let said = match op {
-        bcall::REGISTER => match (seed.get() != 0).then_some(seed) {
+        bcall::AskIn::Register { name, seed } => match (seed.get() != 0).then_some(seed) {
             // 入口要**是它刚交过来的那一枚**。**这枚孔是谁铸的、谁交的**：客人铸（记号
             // `entry`）、经会话交给板（`ship` ⇒ 板上这一份的来源位是客人）——故判据是
             // `{交者 == 它, 记号 == entry}`：前格在核心（`probe(entry) == who`），后格在这里。
             // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
             // 两件事只有记号分得开。
+            //
+            // **那一格 0 是"这枚号不合法"，不是"这一码没带"**：动作码那一格已经说了它会带
+            // （见 [`bcall::Ask`]），故 0 只剩一个意思——**这一帧不是我们的客人编的**。
             Some(entry) if bcall::marked_as(entry) == Some(ENTRY_MARK) => {
                 // **登记只管一件事**：把"名字 → 入口"挂到板上（别人据此按名字找得到它）。
                 // **死亡道不在这里记**——那一条在 `admit` 那一刻就记下了（名字随提示那一格来、
@@ -345,8 +351,8 @@ fn answer(
             }
             _ => Err(Fail::Denied),
         },
-        bcall::UNREGISTER => board.unregister(name, who),
-        bcall::LOOKUP => {
+        bcall::AskIn::Unregister { name } => board.unregister(name, who),
+        bcall::AskIn::Lookup { name } => {
             // 查到就**把板上那一份转授给客人**：入口不从报文里走，从会话里走。
             // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
             let mut grant = Ok(());
@@ -355,7 +361,7 @@ fn answer(
                 .and(grant)
         }
         // 没见过的动作码：与"这个名字不在板上"同一句话（不另立一格）。
-        _ => Err(Fail::Unknown),
+        bcall::AskIn::Unknown => Err(Fail::Unknown),
     };
-    [bcall::fail_to_code(said.err())]
+    bcall::fail_to_code(said.err())
 }

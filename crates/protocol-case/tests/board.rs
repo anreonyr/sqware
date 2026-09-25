@@ -28,8 +28,8 @@ use contract::system::board::{core, frame};
 // ── 帧那一半（`system/board/frame.rs`）──────────────────────
 //
 // **照实记（这一组为什么值当）**：机器那几道门走的是**顺路**——客侧编一帧、板侧解一帧。
-// 下面这些格子机器**一条都走不到**：短帧 / 空帧、**"这一码才带 seed"那一格**（不带 seed 的
-// 那几码，入口那一格是全 0——服务侧**必须在 `unpack_ask` 之前按动作码分流**）、
+// 下面这些格子机器**一条都走不到**：短帧 / 空帧 / 长一字节、**"哪一条动作带哪份荷载"那一格**
+// （注销与查那两枚只带名字——从前它们也写成 41 字节、尾上 8 个零谁都不读）、表外的动作码、
 // 名字那几格的判废（空 / 串尾有垃圾 / 不是 UTF-8）、以及失败码表的两端。
 
 use crate::core::{Board, Fail};
@@ -41,44 +41,89 @@ fn name(text: &str) -> Name {
 }
 
 #[test]
-fn an_ask_carries_the_name_and_a_seed_only_for_the_code_that_has_one() {
+fn an_ask_carries_the_name_and_a_seed_only_for_the_action_that_has_one() {
     let seed = PieToken::from_bytes(&77u64.to_le_bytes()).unwrap();
-    let frame = f::pack_ask(f::REGISTER, name("console"), Some(seed));
-    assert_eq!(frame.len(), f::ASK_LEN);
-    assert_eq!(f::op_of(&frame), Some(f::REGISTER));
+    let (frame, len) = f::pack_ask(f::Ask::Register {
+        name: name("console"),
+        seed,
+    });
+    assert_eq!(len, f::ASK_LEN, "动作码 ＋ 名字 ＋ 那一格入口号");
     assert_eq!(
-        f::unpack_ask(&frame),
-        Some((name("console"), seed)),
+        f::unpack_ask(&frame[..len]),
+        Some(f::AskIn::Register {
+            name: name("console"),
+            seed
+        }),
         "名字与入口都在"
     );
 
-    // **不带 seed 的那几码**：那一格全 0（服务侧在 `unpack_ask` 之前就按动作码分流出去），
-    // 故这里的读数是"名字 + 零号"——不是"没有名字"。
-    for op in [f::UNREGISTER, f::LOOKUP, f::EVICT] {
-        let frame = f::pack_ask(op, name("console"), None);
-        assert_eq!(f::op_of(&frame), Some(op));
+    // **不带 seed 的那两枚**：帧就是"动作码 ＋ 名字"——**线上没有那 8 个零**（从前有，谁都不
+    // 读；那是"这一码才带 seed"那条约定留在线上的残留）。
+    for (ask, want) in [
+        (
+            f::Ask::Unregister {
+                name: name("console"),
+            },
+            f::AskIn::Unregister {
+                name: name("console"),
+            },
+        ),
+        (
+            f::Ask::Lookup {
+                name: name("console"),
+            },
+            f::AskIn::Lookup {
+                name: name("console"),
+            },
+        ),
+    ] {
+        let (frame, len) = f::pack_ask(ask);
+        assert_eq!(len, 1 + env::wire::NAME_LEN, "动作码 ＋ 名字，没有尾巴");
+        assert_eq!(f::unpack_ask(&frame[..len]), Some(want));
+        // 长一字节（旧形状那一帧）**不再是它**：长度为该动作该有的长度是帧的契约。
         assert_eq!(
-            f::unpack_ask(&frame).map(|(n, t)| (n, t.get())),
-            Some((name("console"), 0)),
-            "零号那一格是「没有带」，读的人按动作码分辨"
+            f::unpack_ask(&[&frame[..], &[0u8; 8]].concat()),
+            None,
+            "多一字节就不是这一条了"
         );
     }
+
+    // **退场那一句只有一字节**——`pack_ask` 再也编不出"41 字节的退场"。
+    let (frame, len) = f::pack_ask(f::Ask::Evict);
+    assert_eq!(len, 1, "空载荷");
+    assert_eq!(f::unpack_ask(&frame[..len]), Some(f::AskIn::Evict));
 }
 
 #[test]
 fn a_board_frame_that_is_not_that_shape_is_not_guessed_at() {
+    let seed = PieToken::from_bytes(&1u64.to_le_bytes()).unwrap();
     assert_eq!(f::unpack_ask(&[]), None, "空帧");
-    assert_eq!(f::op_of(&[]), None, "空帧连动作码都没有");
-    let short = [0u8; f::ASK_LEN - 1];
-    assert_eq!(f::unpack_ask(&short), None, "短一字节");
-    // 长一字节：`unpack_ask` 只看 [`f::ASK_LEN`] 那一段，多出来的字节不参与解读
-    // （真服务侧那只缓冲正好是 `ASK_LEN`，故"读一帧"从不看尾巴）。
+    // **短一字节 / 长一字节**：长度为该动作该有的长度是帧的契约。
+    let (reg, len) = f::pack_ask(f::Ask::Register {
+        name: name("x"),
+        seed,
+    });
+    assert_eq!(f::unpack_ask(&reg[..len - 1]), None, "短一字节");
     let mut long = [0u8; f::ASK_LEN + 1];
-    long[..f::ASK_LEN].copy_from_slice(&f::pack_ask(f::LOOKUP, name("x"), None));
+    long[..len].copy_from_slice(&reg[..len]);
+    assert_eq!(f::unpack_ask(&long), None, "长一字节也读不懂（尾巴不参与）");
+    // **表外的动作码**：这一帧读得懂（`[码][名字]` 的形状），但那一码不是这四枚之一
+    // ——它与"读不懂"是两回事（板答的话也不同：`UNKNOWN` 而非 `BAD`）。
+    let mut outside = reg;
+    outside[0] = 200;
     assert_eq!(
-        f::unpack_ask(&long).map(|(n, t)| (n, t.get())),
-        Some((name("x"), 0)),
-        "尾巴不参与"
+        f::unpack_ask(&outside[..1 + env::wire::NAME_LEN]),
+        Some(f::AskIn::Unknown),
+        "码不是我的"
+    );
+    // **码先于长度**：长度是"某一条动作的契约"，表外的码没有契约可言 ⇒ 任何长度都是
+    // `Unknown`。**照实记（这一格从前答 `BAD`）**：旧法先按 `ASK_LEN` 比长度、再认码，
+    // 故一帧全零的短帧答的是"读不懂"；现在它答"这一码不是我的"——两句话都对，
+    // 后者更具体。
+    assert_eq!(
+        f::unpack_ask(&[0u8; f::ASK_LEN - 1]),
+        Some(f::AskIn::Unknown),
+        "0 也不是这四枚之一"
     );
 }
 

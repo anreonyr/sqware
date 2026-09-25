@@ -235,7 +235,7 @@ fn register() -> u8 {
     let Ok(me) = Name::new(ME) else {
         return bcall::BAD;
     };
-    board::ask(talk, &link, board, bcall::REGISTER, me, entry, Wait::AtMost(MS)).unwrap_or(bcall::BAD)
+    board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(bcall::BAD)
 }
 
 /// 上树一趟（装配单里本域 `operator: true`）：**分 → 落 → 寻 → 收 → 剪**五步。
