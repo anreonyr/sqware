@@ -336,8 +336,9 @@ pub const ALL: &[Row] = &[
     // 会死的持有者（**U 态**）：落一块**声明归自己**的门牌然后直接死——好让下一台接手。
     Row { name: "probe-lease", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 13, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, eyes: None, died: E_PROBE_LEASE }) },
     // **上界的证客**（**U 态**）：一位故意的坏客人——推一页 + 1（该被拒），再推一枚不合族的帧
-    // 到树的门上（门该把它吞下去、照旧答得出）。读数见 `harness/src/probe_bound.rs`。
-    Row { name: "probe-bound", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 17, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: false, operator: true, bind: true, holds_tree: false, eyes: None, died: E_PROBE_BOUND }) },
+    // 到**两道门**（树与板）上（门该把它吞下去、照旧答得出）。**两道门各一条腿**，故这一台
+    // 要两条路（`operator: true` ＋ `board: true`）；读数见 `harness/src/probe_bound.rs`。
+    Row { name: "probe-bound", kind: ProgramKind::User, spot: Spot::Probe, scenes: &["root"], plan: Some(Plan { order: 17, announce: Announce::None, tokens: &[], channels: &[], needs: None, board: true, operator: true, bind: true, holds_tree: false, eyes: None, died: E_PROBE_BOUND }) },
     // 压测台的两个（`harness/src/`）：`churn` = 受害者——U 态，不停地在
     // "挂着"与"在台上"之间换（那正是"他杀偶发不生效"那道缝要的状态）；`rig` = 台主——
     // S 态，**景 `rig` 的引导镜像**，反复造/杀它。

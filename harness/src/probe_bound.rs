@@ -4,16 +4,19 @@
 //! probe-bound — **上界的证客**：一页 + 1 推不进去；不合族的帧不把门卡死。
 //!
 //! A 那一刀（消息孔一页封顶）落地时**没有真机读数**——本仓没有一位越界的推者（最大的帧是
-//! `operator::ASK_MAX = 258`），故"超页被拒"当时只有契约与实现两个读者。本程序把那条判据搬到
+//! `operator::REQ_LEN = 258`），故"超页被拒"当时只有契约与实现两个读者。本程序把那条判据搬到
 //! 真机上：**一位故意的坏客人**。
 //!
 //! ```text
-//!   1  与树开会话（`operator::open` + `ask_hole`）
+//!   1  与**两道门**开会话（`board::open` ＋ `operator::open`，各自一枚 `ask_hole`）——两条路
+//!      都要赶在装配那一步的期限之内装上（次序＝装配者那一侧：板在前，树在后）
 //!   2  自铸一枚孔，推 **一页 + 1** 字节            ⇒ 期望 `Denied`
 //!   3  那一枚孔照旧空着（`peek` 答 `Busy`）；再推一条 8 字节的 ⇒ 期望成（拒的是**长度**，
 //!      不是这一枚孔坏了），`peek` 答 8
 //!   4  往树的门上推 **300 字节的不合族帧** ⇒ 门把它取出来、答一句 `BAD`；随后一句正经的问
 //!      （`part /sys`，幂等）照样答得出 —— **门没卡死**（这一格量的是一页缓冲那一刀）
+//!   5  **板那一道门**同一句：推 300 字节 ⇒ 答 `BAD`；随后 `evict`（一字节短帧，空载荷）
+//!      照样答得出 —— 两道门各有一条腿（第二处的来历见下）
 //! ```
 //!
 //! # 为什么"坏客人"必须是一位真域
@@ -25,17 +28,26 @@
 //!
 //! 树的门对**每一条取出来的帧都答一句**（读不懂答 `BAD`）——推了 junk 之后，那声 `BAD` 就落在
 //! 本端的树路上。故这一条先把它读掉，再问正经的：留着不清，下一句问会读到上一句的答。
+//! **板那一道门同款**（第五条的 `evict` 也先读掉 junk 那一声）。
 //!
 //! **代价照实记**：真要是那道门卡死了，这一台会**堵在门外**（`push` 满则挂，核给的形状就是
 //! "等"）——故红了会以"被期限砍断"的样子出现（`gate::stopped` 那一刀使它说得清），
 //! 而不是以某一条断言的失败出现。
 //!
-//! # 照实记（这一台当场抓到的一处）
+//! # 照实记（这一台当场抓到的那一处）
 //!
 //! 它一落地就红了：`operator` 那道门**漏在 A 那一刀之外**（前五处是 principal / coalition /
-//! router / rtc / 板）——那道门的缓冲还是家族帧那么大（`ASK_MAX` = 258），于是 300 字节那一枚
+//! router / rtc / 板）——那道门的缓冲还是家族帧那么大（`operator::REQ_LEN` = 258），于是 300 字节那一枚
 //! 它取不出、也丢不掉，本端随后那句正经的问**堵在门外**。修法与前五处同一句（一页缓冲，起手
 //! 备一次），见 `programs/src/system/operator/server.rs` 的 `serve`。
+//!
+//! # 照实记（第五条那一腿：板那一门在 ④ 那一程里被退掉的一页）
+//!
+//! 上面那句"前五处……板"是 **A 那一刀**的账：板那道门当时**有**一页。而 ④ 那一程的刀一
+//! （`Message` ＋ `Slip` 立起来）把它的收帧换成 `Slip::land`（缓冲 = 家族帧那么大），**顺手把
+//! 那一页退掉了**，并在源码里写下"那一页不再需要"——**那句话是假的**：`land` 收不下更长的那
+//! 一条，而核**不丢**取不出的消息 ⇒ 那一枚永远留在槽里，组每轮唤醒、门每轮答一句 `BAD`，客人
+//! 下一次正经的推堵在门外。第五条就是那一句的判据（修法：`Slip::land_in` ＋ 把那一页请回来）。
 
 extern crate alloc;
 extern crate programs;
@@ -48,6 +60,8 @@ use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
 use harness::cases;
+use protocol::system::board::call as bcall;
+use protocol::system::board::client as board;
 use protocol::system::operator::call as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{LINK, Where};
@@ -70,14 +84,41 @@ const OK_NOTE: &str = "probe-bound: bound held";
 /// **一页 + 1**：刚好越界。再大也是同一个码（界是**一个区间**），但最小反例最读得清。
 const OVER: usize = PAGE_SIZE + 1;
 
-/// 不合族的帧：**在一页之内**，又不是这一族任何一条的形状（树那一边解不出来）。
+/// 不合族的帧有多长：**在一页之内**，又不是这一族任何一条的形状。
 const JUNK: usize = 300;
+
+/// 那一条的首格：**第一条动作码**（树那一族的 `LAND` ＝ 板那一族的 `REGISTER` ＝ `1`），
+/// 其余全零——于是两道门都走到"动作认得、形状不对"那一支 ⇒ 各答一句 `BAD`。
+///
+/// **照实记（第一版拿全零当 junk，读数当场是错的）**：全零那一条在**板**那一族解出来的是
+/// `Wire::Unknown`（`0` 是"表外的动作码"——读得懂，只是那一码不是那四枚之一），故板答的是
+/// `UNKNOWN` 而不是 `BAD`，这一台红在"板没答 `BAD`"上。**是这一条判据写错了，不是门坏了**：
+/// 两道门的读法本来就不同（板那一族多一格"表外的码"，树那一族没有）。
+const JUNK_OP: u8 = 1;
+
+/// 编那一条 junk（点数在 [`JUNK`]，首格在 [`JUNK_OP`]）。
+fn junk() -> [u8; JUNK] {
+    let mut junk = [0u8; JUNK];
+    junk[0] = JUNK_OP;
+    junk
+}
 
 #[programs::entry]
 fn main() -> Report<'static> {
     let Ok(sire) = utask::sire() else { return bail("probe-bound: no sire") };
 
-    // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
+    // 一、**两条路先都装上**：本端那一枚交给生我者（它再转授给对方），另铸一枚问话孔给它。
+    //
+    // **次序＝装配者那一侧的次序**（板在前、树在后），而两条都**必须赶在装配那一步的期限
+    // 之内**：装配者按行装完就把这一位的路 `claim` 下来（有期限），故这一台**不能先做别的
+    // 手脚再装路**——照实记：第一版把树那一条腿（含 junk 那一趟的两个有界等）排在装路之前，
+    // 装配那一侧当场报 `board:claim`（`步骤` 读数），这一台连树路都没拿到。
+    let Ok((deck, seat)) = board::open(sire, Wait::AtMost(MS)) else {
+        return bail("probe-bound: no board link");
+    };
+    let Ok(bolt) = board::ask_hole(seat) else {
+        return bail("probe-bound: no board ask");
+    };
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-bound: no tree link") };
     let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-bound: no tree ask") };
     let Ok(dir) = Name::new("sys") else { return bail("probe-bound: bad name") };
@@ -109,6 +150,9 @@ fn main() -> Report<'static> {
     // 三、往树的门上推一枚不合族的帧，再看那道门还是不是活的。
     let (junk_in, said_bad, after) = junk_trip(hedge, &tree, dir);
 
+    // 三·五、**板那一道门**：同一条判据的另一条腿（来历见文件头那一段照实记）。
+    let (b_junk_in, b_said_bad, b_after) = junk_trip_board(bolt, &deck);
+
     // 四、判据：**一例一条**，名字即结论。
     let mut suite = cases::Suite::new("probe-bound");
     suite.case("the_over_long_push_is_denied", move || {
@@ -124,6 +168,11 @@ fn main() -> Report<'static> {
         assert!(said_bad, "门没把那一条取出来 / 没答 `BAD`");
         assert!(after, "吞了 junk 之后，门不再答正经的问了");
     });
+    suite.case("a_foreign_frame_does_not_wedge_the_board", move || {
+        assert!(b_junk_in, "不合族的帧推不进板那道门（那一枚孔不在？）");
+        assert!(b_said_bad, "板没把那一条取出来 / 没答 `BAD`");
+        assert!(b_after, "吞了 junk 之后，板不再答正经的问了");
+    });
     suite.run();
 
     return Report::note(E_OK, OK_NOTE);
@@ -137,7 +186,7 @@ fn main() -> Report<'static> {
 /// 正经那一问取 `part(/sys)`：**幂等**（`/sys` 是服务起手时立的那一格，重复 `part` 只答同一个
 /// 号），故"答得出"就是这一条要的全部——答案对不对由别的证客管。
 fn junk_trip(hedge: PieToken, tree: &Quay, dir: Name) -> (bool, bool, bool) {
-    let junk = [0u8; JUNK];
+    let junk = junk();
     let pushed = mail::HolePie::from_token(hedge).push(&junk).is_ok();
 
     // 树路那一枚（本端的读口）：`ask_out` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
@@ -150,6 +199,28 @@ fn junk_trip(hedge: PieToken, tree: &Quay, dir: Name) -> (bool, bool, bool) {
 
     // 正经的一问：**门还在答**。
     let after = operator::part(hedge, tree, Where::Root, dir, Wait::AtMost(MS)).is_ok();
+    (pushed, bad, after)
+}
+
+/// 第五条那一趟（**板那一道门**）：与 [`junk_trip`] 逐字同一句判据，换一道门、换一句正经的问。
+///
+/// 正经那一问取 `evict`（**一字节短帧、空载荷**）：这一位没在板上登记过 ⇒ 板答 `UNKNOWN`
+/// ——"答得出"就是这一条要的全部（答得对不对由别的证客管），而它**不铸孔、不交入口**，
+/// 故这一条量的是**门**，不是账。
+fn junk_trip_board(bolt: PieToken, deck: &Quay) -> (bool, bool, bool) {
+    let junk = junk();
+    let pushed = mail::HolePie::from_token(bolt).push(&junk).is_ok();
+
+    // 板那一路那一枚（本端的读口）：junk 那一声 `BAD` 先读掉。
+    let mut back = [0u8; 8];
+    let said = Name::new(bcall::LINK)
+        .ok()
+        .and_then(|at| deck.find(at))
+        .and_then(|pier| pier.pull(&mut back, Wait::AtMost(MS)).ok());
+    let bad = matches!(said, Some(1) if back[0] == bcall::BAD);
+
+    // 正经的一问：**门还在答**。
+    let after = board::evict(bolt, deck, Wait::AtMost(MS)).is_ok();
     (pushed, bad, after)
 }
 

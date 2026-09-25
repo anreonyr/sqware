@@ -130,10 +130,12 @@ pub const MARKS: &[Mark] = &[
     Mark::Shape("^\\[case\\] probe-rule: 16 cases[[:space:]]*$"),
     Mark::Shape("^\\[case\\] probe-rule: cases 16 ok 16 fail 0[[:space:]]*$"),
     // 上界那一格的证客（**A 那一刀的读数**）：一页 + 1 被拒的那一行，与"界守住了"那一句。
+    // **两条腿**：树那道门（A 那一刀当场抓出来的第六处）与板那道门（④ 那一程退掉的一页，
+    // 见 `harness/src/probe_bound.rs` 的第二段照实记）。
     Mark::Literal("probe-bound: push="),
     Mark::Literal("probe-bound: bound held"),
-    Mark::Shape("^\\[case\\] probe-bound: 3 cases[[:space:]]*$"),
-    Mark::Shape("^\\[case\\] probe-bound: cases 3 ok 3 fail 0[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] probe-bound: 4 cases[[:space:]]*$"),
+    Mark::Shape("^\\[case\\] probe-bound: cases 4 ok 4 fail 0[[:space:]]*$"),
     Mark::Absent("operator: two asks"),
     // 判不了那一格的**为什么**：`probe-rule` 那两格（`at_pane` / `gone_door`）必落在 `9`，
     // 而它们各自走 `Court::opens` 的一条臂 ⇒ 这两行读数**必然**在。装配期不产它，产品镜像

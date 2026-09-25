@@ -98,7 +98,19 @@ impl<M: Message> Slip<M> {
     pub fn land(&self, millis: Wait) -> Option<M::In> {
         // `Buf: Copy` ⇒ 借一份出来收（`&self` 不动自己那只）。
         let mut buf = self.buf;
-        let n = self.pie.pull_timeout(buf.as_mut(), millis).ok()?;
-        M::fetch(buf.as_ref().get(..n)?)
+        self.land_in(buf.as_mut(), millis)
+    }
+
+    /// 同 [`Slip::land`]，但**缓冲由调用方给**——凡"门"那一侧收帧的地方都该用这一手。
+    ///
+    /// **照实记（为什么门的收帧不能借船台自己那只 `Buf`）**：`Buf` 是**这一族最长那一枚**，
+    /// 而客人推得进哪一条由**载体**定界（一页）。比 `Buf` 长、又在一页之内的那一条：核答
+    /// `Denied` 而**槽原样**（丢一条消息不可逆）——`land` 于是读到一个"读不懂"，可那一枚
+    /// **还留在槽里** ⇒ 组每轮都唤醒、门每轮答一句 `BAD`，而这位客人下一次正经的推
+    /// **堵在门外**（实测与修法见 `harness/src/probe_bound.rs` 第四条）。拿载体那一页来收就
+    /// 没有这一格：那一条取得出来、解得失败 ⇒ 照旧答 `BAD`，槽也空了。
+    pub fn land_in(&self, buf: &mut [u8], millis: Wait) -> Option<M::In> {
+        let n = self.pie.pull_timeout(buf, millis).ok()?;
+        M::fetch(buf.get(..n)?)
     }
 }

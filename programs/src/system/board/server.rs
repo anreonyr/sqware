@@ -72,6 +72,19 @@ pub(crate) fn host_loop(me: TaskId) {
     // 而道按名字认领（[`lane_for`]）。见 [`remember_lane`] / [`take_lane`]。
     let mut lanes: Lanes = alloc::vec::Vec::new();
     let mut swept = 0usize;
+    // **收帧的那一页**：在循环外备一次。门的缓冲是**载体的一页**，不是家族帧那么大——
+    // 见 [`Slip::land_in`]：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
+    // （读不懂就答 `BAD`），否则它永远留在槽里（取不出 ⇒ 槽原样），这道门从此卡死且空转。
+    //
+    // **照实记（刀一那一句被证伪）**：本处原写着"缓冲躺在船台自己身上，尺寸就是这一族最长
+    // 那一枚——那一页不再需要"。那是假的：`land` 拿家族帧那只缓冲收不下更长的推，而核**不丢**
+    // 取不出的那一条。判据是 `harness/src/probe_bound.rs` 第四条（板那一道门那一腿）。
+    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
+        say("board: no room");
+        return;
+    }
+    buf.resize(runtime::PAGE_SIZE, 0);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
         let settling = settle(&mut desk, &pile, &tip_hole, &mut lanes);
@@ -85,7 +98,15 @@ pub(crate) fn host_loop(me: TaskId) {
         if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut board, &mut desk, &pile, guest, swept, &mut lanes);
+            serve_one(
+                &mut board,
+                &mut desk,
+                &pile,
+                guest,
+                swept,
+                &mut lanes,
+                &mut buf,
+            );
         }
         // 三、客人**死了**（没道别就没了）⇒ 惰性剔：**那一枚入口答不出**（`VestedBy` 答 `None`
         //     ——不在我表里，**或**它那扇门已经封印）即当场扫空，并推它那条死亡道。
@@ -255,6 +276,7 @@ fn serve_one(
     guest: Guest,
     swept: usize,
     lanes: &mut Lanes,
+    buf: &mut [u8],
 ) {
     let Some(ask) = guest.ask() else {
         return;
@@ -262,10 +284,10 @@ fn serve_one(
     // 一问一答：读不懂也答（答 `BAD`），答话走**这位客人的答话路**（一客一路，单槽）。
     // **解码只做一次**：答哪一句由它定，下面"要不要摘掉它那枚问话孔"也由它定。
     //
-    // **照实记（`buf` 那一页退场）**：收帧从前借调用方那一页（"一页是载体的界，装得下任何一条
-    // 消息"）；现在缓冲**躺在船台自己身上**，尺寸就是这一族最长那一枚（`bcall::Seed::LEN`）
-    // ——那一页不再需要，故 `serve_one` 少一个参数。
-    let decoded = Slip::<bcall::Req>::seal(ask).land(Wait::POLL);
+    // **照实记（`buf` 那一页为什么回来）**：收帧用的是**载体那一页**（调用方在循环外备的那
+    // 一只），不是船台自己那只家族缓冲——理由与实测见 [`Slip::land_in`] 的照实记：拿家族缓冲
+    // 收不下比它更长的一条，核**不丢**取不出的消息 ⇒ 门卡死且空转。
+    let decoded = Slip::<bcall::Req>::seal(ask).land_in(buf, Wait::POLL);
     let said = match decoded {
         Some(ask) => answer(board, desk, ask, guest.who(), swept, lanes),
         // 空帧 / 长度不对：读不懂就答 `BAD`——不猜、不崩。
