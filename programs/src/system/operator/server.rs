@@ -13,7 +13,7 @@ use runtime::PAGE_SIZE;
 use protocol::system::operator::call as ocall;
 use protocol::system::operator::gate::{Code, Control, verdict};
 use protocol::system::operator::judge::{Id, Rule};
-use protocol::system::operator::ledger::{Key, Ledger, Line};
+use protocol::system::operator::ledger::{Key, Ledger};
 pub use protocol::system::operator::{ASK_MARK, LINK, TIP_MARK};
 use protocol::system::operator::{EntryId, Fail, Operator, Where};
 use protocol::system::board::call as bcall;
@@ -369,7 +369,7 @@ fn settle(
     }
     // 先抄一份"还没挂上的"：`unarmed` 借住这本账，而下面要改它。这里**不按常数开数组**
     // （那正是"一本账的容量渗到别人的栈上"那一格），也**不直接 `collect`**：`collect` 里的
-    // 那次分配没有预留，失败同样是 abort（与 `core.rs` 那一处、`Desk::admit`、`Ledger::grow`
+    // 那次分配没有预留，失败同样是 abort（与 `core.rs` 那一处、`Desk::admit`、`Ledger::land`
     // 同一条纪律）。备不下就**如实报一句、这一轮先不动**（下一轮再来），而不是崩、
     // 也不是静默丢一位客人。
     let mut waiting: alloc::vec::Vec<(usize, TaskId)> = alloc::vec::Vec::new();
@@ -530,19 +530,14 @@ fn answer(
             if !book.claimable(Key::At(at, name), who, |id| fresh(tree, id)) {
                 return status(out, ocall::DENIED);
             }
-            // **先要位、再动树、最后记账**——次序是硬的（见 [`Ledger::grow`]）：记账失败若发生
-            // 在动树之后，那一格就成了"树上有、账上没有"= **私名变公名**。
-            let Ok(blank) = book.grow() else {
-                return status(out, ocall::FULL);
-            };
-            return match tree.land(at, name, entry) {
-                Ok(id) => {
-                    // 记的是"**那一刻挂上去的那一枚**"：它答不答得出，就是主人还在不在场。
-                    // `mine = false` 是**放弃归属**——与"改规矩"同走这一条（这两条没有独立入口：
-                    // 这一问是**整值赋值**，见 [`protocol::system::operator`] 那一节）。
-                    book.write(blank, Line::new(at, name, id, rule, mine, who, entry));
-                    ocall::pack_id(out, id)
-                }
+            // **一问一动**：要位 → 落树 → 记账全在 [`Ledger::land`] 里，漏不掉中间那一步。
+            // 账上记的那一枚是**落树那一刻挂上去的**（`entry`）：`mine = false` 是**放弃归属**
+            // ——与"改规矩"同走这一条（两条没有独立入口：这一问是**整值赋值**，
+            // 见 [`protocol::system::operator`] 那一节）。
+            return match book.land(at, name, entry, rule, mine, who, || {
+                tree.land(at, name, entry)
+            }) {
+                Ok(id) => ocall::pack_id(out, id),
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
             };
         }

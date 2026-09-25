@@ -73,14 +73,15 @@ use env::{Name, PieToken, TaskId};
 use crate::core::{EntryId, Fail, Where};
 use crate::gate::{Blind, Code, Control, WIRE_DENIED, WIRE_OK, WIRE_UNJUDGED, verdict};
 use crate::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
-use crate::ledger::{Key, Ledger, Line};
+use crate::ledger::{Key, Ledger};
 
 // ── 一台"分配会失败"的台子（只给账的容量那一条用例）────────────────
 //
-// 账有一格判据是 **fail-closed**：`grow` 备不下 ⇒ 这一问**就该失败**（答 `FULL`），因为
-// "用"那一轴一旦漏记，那一格就从**私名**回落成**公名**（`Publishers` 那版是 fail-soft，
-// 照实记见 `ledger.rs::grow`）。它只有把分配**真的**打掉才量得到——故这里给测试靶换一个
-// **可关掉**的全局分配器（与 `protocol-case` 的 `operator` 靶那一台同一款）。
+// 账有一格判据是 **fail-closed**：要位备不下 ⇒ 这一问**就该失败**（答 `FULL`），而且
+// **落树那一手一次都不该被叫**——"用"那一轴一旦漏记，那一格就从**私名**回落成**公名**
+// （`Publishers` 那版是 fail-soft，照实记见 `ledger.rs::land`）。它只有把分配**真的**打掉才
+// 量得到——故这里给测试靶换一个**可关掉**的全局分配器（与 `protocol-case` 的 `operator` 靶
+// 那一台同一款）。
 //
 // 旗帜是**线程局部**的，不是进程级的：libtest 每个用例各一枚线程，而"打掉分配"若做成全局
 // 旗帜，那一条用例亮旗的时候别的用例正好在分配 ⇒ 随机 panic（**随机红的门比没有门更坏**）。
@@ -525,13 +526,15 @@ const AT: Where = Where::At(EntryId::new(4)); // 那一块 Pane（号 4）
 const ID: EntryId = EntryId::new(9); // 那一格自己的号
 
 /// 一本只记了一行的账：`(坐标, 名)` 与 `号` 指着同一条。
+///
+/// **落树那一手是注入的**（[`Ledger::land`] 收的那个闭包）：本台**不测树本身**，故这里直接交出
+/// 那一格自己的号——而要位与记账两步走的是**真**道路，不是替身。
 fn one_line(rule: Rule<Id, Id>, mine: bool, n: usize) -> Ledger<Id, Id> {
     let mut book: Ledger<Id, Id> = Ledger::new(vested_by);
-    let blank = book.grow().expect("腾得出一行");
-    book.write(
-        blank,
-        Line::new(AT, name("uart"), ID, rule, mine, ME, pie(n)),
-    );
+    let id = book
+        .land(AT, name("uart"), pie(n), rule, mine, ME, || Ok(ID))
+        .expect("腾得出一行");
+    assert_eq!(id, ID);
     book
 }
 
@@ -630,11 +633,9 @@ fn a_rebind_rewrites_the_same_line_and_can_give_up_the_slot() {
     let truth = Truth::new(&[ID]);
     alive(2);
     let mut book = one_line(Rule::Public, true, 2);
-    let blank = book.grow().expect("腾得出一行");
-    book.write(
-        blank,
-        Line::new(AT, name("uart"), ID, Rule::Is(P), false, ME, pie(2)),
-    );
+    // 重绑走的是**同一条**动词：同一个 (坐标, 名) ⇒ `write` 覆写那一行，不是再记一条。
+    book.land(AT, name("uart"), pie(2), Rule::Is(P), false, ME, || Ok(ID))
+        .expect("重绑腾得出一行");
     assert_eq!(book.len(), 1, "重绑不该多出一条");
     assert_eq!(
         book.rule(Key::At(AT, name("uart")), |id| truth.fresh(id)),
@@ -659,21 +660,36 @@ fn dropping_a_line_makes_the_slot_free_again() {
 }
 
 #[test]
-fn a_ledger_that_cannot_grow_answers_full_and_leaves_nothing_behind() {
-    // **这一格是"用"那一轴唯一的护栏**：记账失败 ⇒ 这一问**就该失败**（答 `FULL`），
-    // 不能悄悄放过——放过的后果是"树上有、账上没有"，也就是**私名变公名**。
-    // 撤掉 `grow` 那一行 `try_reserve`，这条用例当场变红（分配器按旗帜返空）。
+fn a_ledger_that_cannot_reserve_answers_full_and_never_reaches_the_tree() {
+    // **这一格是"用"那一轴唯一的护栏**：要位失败 ⇒ 这一问**就该失败**（答 `FULL`），不能悄悄
+    // 放过——放过的后果是"树上有、账上没有"，也就是**私名变公名**。
+    //
+    // **落树那一步现在量得到**：它是注入的一手，"它一次都没被叫"是一个可读的读数——从前那个
+    // `Blank` 令牌量不到这个（它只管"没要位就写"编不过，不管"落树先于要位"）。
     let mut book: Ledger<Id, Id> = Ledger::new(vested_by);
+    let mut planted = false;
     no_room(true);
-    assert_eq!(book.grow().err(), Some(Fail::Full), "备不下 ⇒ 如实报");
+    assert_eq!(
+        book.land(AT, name("uart"), pie(1), Rule::Is(P), true, ME, || {
+            planted = true;
+            Ok(ID)
+        })
+        .err(),
+        Some(Fail::Full),
+        "备不下 ⇒ 如实报"
+    );
     no_room(false);
+    assert!(
+        !planted,
+        "要位失败 ⇒ 落树那一手一次都没被叫（树一个字没动）"
+    );
     assert_eq!(book.len(), 0, "失败不留半个状态");
 
-    // 而且**只失败这一次**：放开之后照样写得进（`Blank` 挡的是"没要位就写"，不是"失败即锁死"）。
-    let blank = book.grow().expect("放开之后腾得出一行");
-    book.write(
-        blank,
-        Line::new(AT, name("uart"), ID, Rule::Is(P), true, ME, pie(1)),
+    // 而且**只失败这一次**：放开之后照样落得进（要位失败不是锁死）。
+    assert_eq!(
+        book.land(AT, name("uart"), pie(1), Rule::Is(P), true, ME, || Ok(ID)),
+        Ok(ID),
+        "放开之后腾得出一行"
     );
     assert_eq!(book.len(), 1);
     assert_eq!(book.rule(Key::Id(ID), |_| true), Rule::Is(P));
