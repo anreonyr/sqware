@@ -165,14 +165,9 @@ pub enum Fail {
     Dead,
 }
 
-/// **活性**：那一枚 Pie 还答得出吗？答不出（`None`）= 它后面的人没了。
-///
-/// 与 `system::board` 同一格（`VestedBy` 的形状照旧）：本正文没有 owner，故这里只取"答得出吗"，
-/// 答出来的 `TaskId` 用不到。
-///
-/// **层**：这一格问的是**门闩的授与人**（谁把这一枚交出去的）——与 `Task::heir`（**我生的
-/// 子域**）和 `principal::heir`（**谱系谓词**）同字不同层；内核那两个字段名照旧不动。
-pub type VestedBy = fn(PieToken) -> Option<TaskId>;
+/// **定义在 `system::core`**（照实记：两个面原是各写一遍的同名同形别名；共用的客人账
+/// 要的是**一个**类型 ⇒ 收成了一处）。
+pub use crate::system::core::VestedBy;
 
 /// **放下**：把我这一份自释。剪掉或换掉一枚 `Tile` 时用它——不加这一格，那一枚句柄就漏在树里。
 pub type Unship = fn(PieToken) -> Result<(), ()>;

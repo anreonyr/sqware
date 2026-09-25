@@ -79,18 +79,9 @@ pub enum Fail {
     Full,
 }
 
-/// **活性**：这枚入口**还答得出吗**？谁授的？
-///
-/// `None` = 答不出——两种情形对牌子是**同一件事**（**实例没了**）：
-///
-/// - 那一枚**不在我表里**（令牌越界，或它已被 [`Unship`] 放下）；
-/// - **或**它那扇门**已经封印**：`Reserve` 的 `owner` 那一格带存活闸（内核
-///   `envcall/pie.rs` 的 `owner().ok_or(Fail::Dead)`，闸在 `work/unit/gate/pie.rs`
-///   的 `alive().then(...)`）⇒ 门一封印就答 `Err(-2 Dead)`，而 `env::fid` 的 `Reserve`
-///   注记写着这条契约。**故"答不出"这一格里就有"门封印了"**。
-///
-/// 返回的 [`TaskId`] 是授与人（原始自持编码为 `TaskId(0)`）。
-pub type VestedBy = fn(PieToken) -> Option<TaskId>;
+/// **定义在 `system::core`**（照实记：两个面原是各写一遍的同名同形别名；共用的客人账
+/// 要的是**一个**类型 ⇒ 收成了一处）。
+pub use crate::system::core::VestedBy;
 
 /// **放下**：把自己那一份入口自释。牌子被换掉或扫空时用它，否则那枚门闩漏在板上。
 pub type Unship = fn(PieToken) -> Result<(), ()>;

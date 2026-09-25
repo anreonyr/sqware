@@ -6,7 +6,7 @@
 
 use env::{PieToken, TaskId};
 
-use contract::system::operator::desk::Desk;
+use contract::system::desk::Desk;
 use super::core::{Fail, Operator, Stamps, Unship};
 use crate::session::{Claim, Seat};
 

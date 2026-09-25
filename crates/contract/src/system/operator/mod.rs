@@ -182,7 +182,6 @@
 
 
 pub mod core;
-pub mod desk;
 pub mod frame;
 pub mod gate;
 pub mod judge;

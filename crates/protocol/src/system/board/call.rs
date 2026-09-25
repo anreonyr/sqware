@@ -15,7 +15,7 @@
 
 use env::{PieToken, TaskId};
 
-use contract::system::board::desk::Desk;
+use contract::system::desk::Desk;
 use super::core::{Board, Fail, Unship, VestedBy};
 use crate::session::{Claim, Seat};
 

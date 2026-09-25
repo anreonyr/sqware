@@ -18,7 +18,7 @@ use protocol::system::board::call::ENTRY_MARK;
 pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
 use protocol::system::board::{Board, Fail};
 
-use contract::system::board::desk::{Desk, Guest};
+use contract::system::desk::{Desk, Guest};
 use protocol::system::board::call::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
@@ -70,7 +70,7 @@ pub(crate) fn host_loop(me: TaskId) {
     let mut desk = desk();
     // `who → 死亡道` 的小表：**在 `admit` 那一刻**记——名字随提示那一格来（[`bcall::TIP_LEN`]），
     // 而道按名字认领（[`lane_for`]）。见 [`remember_lane`] / [`take_lane`]。
-    let mut lanes: Lanes = [(TaskId::new(0), PieToken::NONE); Desk::CAP];
+    let mut lanes: Lanes = alloc::vec::Vec::new();
     let mut swept = 0usize;
     // 收帧的那一页：**在循环外备一次**——每次收帧再备就是一份按帧的分配，正是这一刀要把
     // 它从收帧那一刻拿掉的那件事。载体的界是一页（契约见 `env::fid` 的 `Push`），故一页
@@ -155,28 +155,15 @@ fn settle(
             }
         }
 
-    // 先抄一份"还没挂上的"：`unarmed` 借住这本账，而下面要改它。
-    let mut waiting = [(0usize, TaskId::new(0)); Desk::CAP];
-    let mut n = 0;
-    for (slot, who) in desk.unarmed() {
-        waiting[n] = (slot, who);
-        n += 1;
-    }
-    for &(slot, who) in &waiting[..n] {
-        match ask_of(who) {
-            Some(ask) => {
-                let hung = desk.arm(slot, ask).is_ok()
-                    && pile
-                        .attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
-                        .is_ok();
-                if !hung {
-                    let _ = desk.unarm(slot);
-                    pending = true;
-                }
-            }
-            None => pending = true,
-        }
-    }
+    // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 [`Desk::arm_pending`]）——
+    // 调用方这一侧因此不必先抄一份到自己的栈上，那一张按常数开的数组就此退场。
+    pending |= desk.arm_pending(
+        |who| ask_of(who),
+        |ask| {
+            pile.attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
+                .is_ok()
+        },
+    );
     pending
 }
 
@@ -192,46 +179,46 @@ fn lane_for(name: Name) -> Option<PieToken> {
         .map(|p| p.token)
 }
 
-/// 本线程的 `who → 死亡道` 小表（一位客人一格；满了就丢——那时板上已经不止 8 位客人）。
-type Lanes = [(TaskId, PieToken); Desk::CAP];
+/// 本线程的 `who → 死亡道` 小表（一位客人一格；**备不下就丢这一条读数**）。
+///
+/// **照实记（它为什么是 `Vec`）**：它原先是 `[(TaskId, PieToken); Desk::CAP]`——**借来的界**
+/// （客人账那个常数）。两本客人账并成一本、常数退场之后那个界就没了，而这里本来就有"满了就
+/// 丢"的下场 ⇒ 如实收成 `Vec` + 失败即丢。丢的是一条**死亡读数**，不是监督本身：牌子由
+/// 板自己扫，道只喂装配者。
+type Lanes = alloc::vec::Vec<(TaskId, PieToken)>;
 
-/// 把 `who` 的道记下来（同一位置重复登记就覆盖）。
+/// 把 `who` 的道记下来（同一位重复登记就覆盖）；**备不下就丢**（见上面那一格）。
 fn remember_lane(lanes: &mut Lanes, who: TaskId, lane: PieToken) {
-    for cell in lanes.iter_mut() {
-        if cell.0 == who || cell.0.get() == 0 {
-            *cell = (who, lane);
-            return;
-        }
+    if let Some(cell) = lanes.iter_mut().find(|cell| cell.0 == who) {
+        cell.1 = lane;
+        return;
+    }
+    if lanes.try_reserve(1).is_ok() {
+        lanes.push((who, lane));
     }
 }
 
 /// 取走这一位的道（取走即清：一条道一位客人，一次死亡一份）。
 fn take_lane(lanes: &mut Lanes, who: TaskId) -> Option<PieToken> {
-    for cell in lanes.iter_mut() {
-        if cell.0 == who {
-            let lane = cell.1;
-            *cell = (TaskId::new(0), PieToken::NONE);
-            return Some(lane);
-        }
-    }
-    None
+    let at = lanes.iter().position(|cell| cell.0 == who)?;
+    Some(lanes.remove(at).1)
 }
 
 /// 剔掉**已经走了**的客人，并把"没了"这件事推进**它那条死亡道**；返剔了几格。
 ///
-/// 判据全在 `Desk::sweep_who` 那一格（`VestedBy` 答 `None`）——**看出来的**那一档。
+/// 判据全在 [`Desk::sweep_each`] 那一格（`VestedBy` 答 `None`）——**看出来的**那一档。
 /// **听来的**那一档（`EVICT`）在 [`answer`] 里推；两档都推，因为装配者只认道。
+/// **照实记（两个副作用的次序换了）**：从前是"先打一行、再挨个推道"（号先抄进一个按常数
+/// 开的 `dead` 缓冲）。现在号只在回调里拿得到，故推道在打行之前。两条读数走两条不同的路
+/// （道是消息、`say` 是串口），这个次序不承载意义。
 fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
-    let mut dead = [TaskId::new(0); Desk::CAP];
-    let n = desk.sweep_who(&mut dead);
-    if n == 0 {
-        return 0;
-    }
-    say(&format!("board: swept n={n} occupied={}", desk.occupied()));
-    for &who in &dead[..n] {
+    let n = desk.sweep_each(|who| {
         if let Some(lane) = take_lane(lanes, who) {
             let _ = mail::HolePie::from_token(lane).push(&[0u8]);
         }
+    });
+    if n > 0 {
+        say(&format!("board: swept n={n} occupied={}", desk.occupied()));
     }
     n
 }
@@ -320,9 +307,9 @@ fn answer(
     if op == bcall::EVICT {
         // 死亡道：**先取走**（撤格/摘牌之后就只剩道这一条线索了）。
         let lane = take_lane(lanes, who);
-        // 退场：撤它那一格（`Unknown` = **它不在账上**）+ 摘掉它挂在板上的全部牌子。
+        // 退场：撤它那一格（`None` = **它不在账上**）+ 摘掉它挂在板上的全部牌子。
         let said = match desk.evict(who) {
-            Ok(_slot) => {
+            Some(_slot) => {
                 let names = board.evict(who);
                 // 破例打一行：退场这一件事的读数只此一处（**只在这一件事上打**，不是刷屏）。
                 say(&format!(
@@ -332,7 +319,7 @@ fn answer(
                 ));
                 Ok(())
             }
-            Err(fail) => Err(fail),
+            None => Err(contract::system::board::core::Fail::Unknown),
         };
         // 听来的那一档也要推道：装配者只认道（撤格/摘牌是板自己的账，与它无关）。
         if let Some(lane) = lane {

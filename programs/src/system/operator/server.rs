@@ -24,7 +24,7 @@ use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::{COORD_FRAME, Coord};
-use contract::system::operator::desk::{Admit, Desk, Guest};
+use contract::system::desk::{Desk, DeskFail, Guest};
 use protocol::system::operator::call::desk;
 
 
@@ -355,44 +355,28 @@ fn settle(
                 // **重放**（提示是单槽，可能重放）：一位客人只占一格，旧的那一格**原样留着**
                 // ——这一趟不动账，也不打行（重放是常态）。交来的那一枚与账上那一枚**是同一枚**
                 // （按"开者 + 树路记号"认，一位客人只 seat 一次），故这里不丢任何东西
-                // （见 `Admit::Already` 的照实记）。
-                Err(Admit::Already) => {}
+                // （见 `DeskFail::Already` 的照实记）。
+                Err(DeskFail::Already) => {}
                 // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
                 // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**；
                 // 这本账的上限史（撞满过三次）见 `desk.rs` 里 `Desk` 那一格的照实记——这一格
                 // 就是它量出来的那一次。
-                Err(Admit::Full) => say("operator: desk full"),
+                Err(DeskFail::Full) => say("operator: desk full"),
             },
             // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
             None => say("operator: no reply"),
         }
     }
-    // 先抄一份"还没挂上的"：`unarmed` 借住这本账，而下面要改它。这里**不按常数开数组**
-    // （那正是"一本账的容量渗到别人的栈上"那一格），也**不直接 `collect`**：`collect` 里的
-    // 那次分配没有预留，失败同样是 abort（与 `core.rs` 那一处、`Desk::admit`、`Ledger::land`
-    // 同一条纪律）。备不下就**如实报一句、这一轮先不动**（下一轮再来），而不是崩、
-    // 也不是静默丢一位客人。
-    let mut waiting: alloc::vec::Vec<(usize, TaskId)> = alloc::vec::Vec::new();
-    if waiting.try_reserve(desk.unarmed().count()).is_err() {
-        say("operator: settle no room");
-        return true;
-    }
-    waiting.extend(desk.unarmed());
-    for &(slot, who) in &waiting {
-        match ask_of(who) {
-            Some(ask) => {
-                let hung = desk.arm(slot, ask)
-                    && pile
-                        .attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
-                        .is_ok();
-                if !hung {
-                    let _ = desk.unarm(slot);
-                    pending = true;
-                }
-            }
-            None => pending = true,
-        }
-    }
+    // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 [`Desk::arm_pending`]）——
+    // 调用方这一侧因此既不必按常数开数组（"一本账的容量渗到别人的栈上"那一格），
+    // 也不必为"抄一份"再分配一次（`collect` 那次分配没有预留，失败同样是 abort）。
+    pending |= desk.arm_pending(
+        |who| ask_of(who),
+        |ask| {
+            pile.attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
+                .is_ok()
+        },
+    );
     pending
 }
 
