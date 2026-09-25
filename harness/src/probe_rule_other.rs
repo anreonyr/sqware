@@ -139,7 +139,10 @@ fn denied(talk: PieToken, link: &Quay, road: &[Name]) -> u8 {
     };
     // `find` 的失败域是 `Fail`（六格），答话码是另一张表——这里只关心"拒没拒"，
     // 故译不出号/推不动都按 [`ocall::BAD`] 记（读数上分得开）。
-    operator::find(talk, link, id, MS).unwrap_or(ocall::BAD)
+    // （`find` 的第二格 = 那一枚入口在本域表里的号：这一支不看它，只要状态。）
+    operator::find(talk, link, id, MS)
+        .map(|(code, _entry)| code)
+        .unwrap_or(ocall::BAD)
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

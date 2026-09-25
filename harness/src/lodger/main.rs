@@ -159,10 +159,10 @@ fn find_router() -> Option<PieToken> {
     let road = [dir, want];
     // **间接寻址那一手**：名字先译成号，此后按号。
     let id = operator::seek(talk, &link, &road, MS).ok()?;
-    if operator::find(talk, &link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
-        return None;
+    match operator::find(talk, &link, id, MS) {
+        Ok((ocall::OK, Some(entry))) => Some(entry),
+        _ => None,
     }
-    operator::take(&link, host)
 }
 
 /// 占一趟：报**那一段区**、收一格答码。返的第二件是那条线本身（占上了才有）。

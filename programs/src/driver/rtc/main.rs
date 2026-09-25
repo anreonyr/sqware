@@ -138,7 +138,7 @@ fn main() -> Result<(), fail::Fail> {
 
     // 4. 占线：报**发下来的那一段区**（线号由路由者解树解出来，本域从不说它）。
     let key = rtc_pie.key().ok_or(fail::Fail::Line)?;
-    let held = register(&link, talk, host, key).map_err(|_| fail::Fail::Line)?;
+    let held = register(&link, talk, key).map_err(|_| fail::Fail::Line)?;
     say("rtc: line occupied");
 
     // 5. 常驻：**一只组等两个源**——门上有请求、线上有投递。
@@ -314,11 +314,14 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         Err(code) => (code, 0),
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let find = match plate {
-        Ok(id) => operator::find(talk, link, id, MS).unwrap_or(ocall::BAD),
-        Err(code) => code,
+    let (find, got) = match plate {
+        Ok(id) => match operator::find(talk, link, id, MS) {
+            Ok((code, entry)) => (code, entry.is_some()),
+            Err(_) => (ocall::BAD, false),
+        },
+        Err(code) => (code, false),
     };
-    let got = operator::take(link, host).is_some();
+    // **`got` 换了来路**（乙′）：见 `ocall::pack_seed` 的照实记。
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()
@@ -351,7 +354,6 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
 fn register(
     link: &Quay,
     talk: PieToken,
-    host: TaskId,
     key: plan::Key,
 ) -> Result<line::client::Line, ()> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| ())?;
@@ -359,11 +361,10 @@ fn register(
     let road = [dir, want];
     // **间接寻址那一手**：名字先译成号（号才是树的直接坐标），此后按号。
     let id = operator::seek(talk, link, &road, MS).map_err(|_| ())?;
-    let code = operator::find(talk, link, id, MS).unwrap_or(ocall::BAD);
-    if code != ocall::OK {
-        return Err(());
-    }
-    let entry = operator::take(link, host).ok_or(())?;
+    let entry = match operator::find(talk, link, id, MS) {
+        Ok((ocall::OK, Some(entry))) => entry,
+        _ => return Err(()),
+    };
     line::client::Line::occupy(entry, key, MS).map_err(|_| ())
 }
 

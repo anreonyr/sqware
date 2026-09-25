@@ -558,18 +558,28 @@ fn answer(
                 Err(fail) => status(out, ocall::fail_to_code(Some(fail))),
             };
         }
-        // 查到就**把树上那一份转授给客人**：Pie 不从报文里走，从会话里走。
-        // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
+        // 查到就**把树上那一份转授给客人**：Pie 本身不从报文里走，从会话里走；而
+        // **它在客人表里的号**从这条答话里走（`pack_seed`）——客人拿它一次 `Reserve` 就
+        // 认得出，不必扫自己的表（见 [`ocall::pack_seed`] 的照实记）。
+        // "查不到"与"授不出去"是两件事，故查的结论优先：`said` 先答，其次才轮到 `grant`。
         ocall::AskIn::Find(id) => {
+            let mut seed = None;
             let mut grant = Ok(());
             let said = tree.find(id, |pie| {
-                grant = ocall::ship(pie, who).map(|_| ());
+                grant = ocall::ship(pie, who).map(|at| seed = Some(at));
             });
             if said == Err(Fail::Dead) {
                 // 核心**已经**把那一格剔了（"惰性剔死"）——顺手销账，别留一条陈的。
                 book.drop(id);
             }
-            said.and(grant)
+            // 三步都成 ⇒ 答 `[OK][那一格]`；任何一步没成 ⇒ 照旧一格状态（不猜）。
+            let fail = said.err().or(grant.err());
+            return match (fail, seed) {
+                (None, Some(seed)) => ocall::pack_seed(out, seed),
+                (Some(fail), _) => status(out, ocall::fail_to_code(Some(fail))),
+                // 授成功却没拿到号：这是内核契约破了（`ship` 的成功值就是那一格），不猜。
+                (None, None) => status(out, ocall::BAD),
+            };
         }
         ocall::AskIn::Trim(id) => {
             let said = tree.trim(id);

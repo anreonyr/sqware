@@ -156,9 +156,9 @@ fn main() -> Report<'static> {
     let Ok(again) = operator::ask_hole(host) else { return bail("probe-rule: no second tree ask") };
     let ask_same = again == talk;
     let talk = again;
-    let Some(entry) = find_face(&tree, talk, host, ccall::DIR, ccall::NAME) else { return bail("probe-rule: no coalition") };
+    let Some(entry) = find_face(&tree, talk, ccall::DIR, ccall::NAME) else { return bail("probe-rule: no coalition") };
     let Ok(coal) = CoalitionFace::of(entry) else { return bail("probe-rule: bad coalition face") };
-    let Some(entry) = find_face(&tree, talk, host, pcall::DIR, pcall::NAME) else { return bail("probe-rule: no identity") };
+    let Some(entry) = find_face(&tree, talk, pcall::DIR, pcall::NAME) else { return bail("probe-rule: no identity") };
     let Ok(policy) = PrincipalFace::of(entry) else { return bail("probe-rule: bad identity face") };
 
     // 二、我是谁：装配期绑的那一条（`p`），以及它底下的一条（`q`，给"换一位代表"用）。
@@ -431,22 +431,25 @@ fn look(talk: PieToken, link: &Quay, id: EntryId, millis: usize) -> u8 {
     if id.get() == 0 {
         return ocall::UNKNOWN;
     }
-    operator::find(talk, link, id, millis).unwrap_or(ocall::BAD)
+    // （第二格 = 那一枚入口在本域表里的号：这一支只看码。）
+    operator::find(talk, link, id, millis)
+        .map(|(code, _entry)| code)
+        .unwrap_or(ocall::BAD)
 }
 
 /// 按名字找一面服务门牌（`seek` 译号 + `find` 取回）——与 `subject` / `member` 那两台同形。
 ///
 /// **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
-/// `find` 把那一枚授过来（持树者 `ship`），本域按"谁给的"认领最后那一枚。
-fn find_face(link: &Quay, talk: PieToken, host: TaskId, dir: &str, name: &str) -> Option<PieToken> {
+/// `find` 把那一枚授过来（持树者 `ship`），**它在本域表里的号随答话回来** ⇒ 不必认领。
+fn find_face(link: &Quay, talk: PieToken, dir: &str, name: &str) -> Option<PieToken> {
     let (Ok(dir), Ok(one)) = (Name::new(dir), Name::new(name)) else {
         return None;
     };
     let id = seek_id(link, talk, &[dir, one])?;
-    if operator::find(talk, link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
-        return None;
+    match operator::find(talk, link, id, MS) {
+        Ok((ocall::OK, Some(entry))) => Some(entry),
+        _ => None,
     }
-    operator::take(link, host)
 }
 
 /// **点名那一手**：把一条路译成号（名字 → 号），"还没挂上"那一格在那里重试。

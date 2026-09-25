@@ -95,7 +95,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     }
 
     // 五、**身份那一份门牌**：本域是它的客人（K7）。带重试——它可能落得比本域晚。
-    let Some(face_entry) = find_face(&tree, talk, host) else {
+    let Some(face_entry) = find_face(&tree, talk) else {
         return Err(super::fail::Fail::Face);
     };
     let Ok(face) = Face::of(face_entry) else {
@@ -251,9 +251,10 @@ fn said(out: &mut [u8; ccall::REPLY_MAX], frame: [u8; ccall::REPLY_LEN]) -> usiz
 /// **自己就能花掉 `MS`**，`left` 却只减 `RETRY_MS` ⇒ 真实墙钟上界是"重试次数 × MS"，
 /// 与这一行字面差三个数量级。现在**把剩下的预算当这一趟的期限**递下去：总账 ≤ `MS` + 一趟。
 ///
-/// 取回的那一枚按"谁给的"认（[`operator::take`] 取满足条件的**最后**一枚）：本域表里此刻
-/// 还有刚验完的那一枚自己的门牌副本，故**最后那一枚**正是这一趟找回来的。
-fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
+/// 取回的那一枚**随答话回来**（`operator::find` 的第二格）：从前要按"谁给的"扫本端表、取
+/// 满足条件的**最后**一枚——本域表里此刻还有刚验完的那一枚自己的门牌副本，靠次序才分得开。
+/// 甲′ 之后号在答话里，次序那条契约随之退场（照实记见 `echo.rs` 那一份）。
+fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
@@ -270,10 +271,10 @@ fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
             Err(_) => return None,
         }
     };
-    if operator::find(talk, link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
-        return None;
+    match operator::find(talk, link, id, MS) {
+        Ok((ocall::OK, Some(entry))) => Some(entry),
+        _ => None,
     }
-    operator::take(link, host)
 }
 
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（同 rtc / principal 那一趟）。
@@ -312,11 +313,14 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         Err(code) => (code, 0),
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let find = match plate {
-        Ok(id) => operator::find(talk, link, id, MS).unwrap_or(ocall::BAD),
-        Err(code) => code,
+    let (find, got) = match plate {
+        Ok(id) => match operator::find(talk, link, id, MS) {
+            Ok((code, entry)) => (code, entry.is_some()),
+            Err(_) => (ocall::BAD, false),
+        },
+        Err(code) => (code, false),
     };
-    let got = operator::take(link, host).is_some();
+    // **`got` 换了来路**（乙′）：见 `ocall::pack_seed` 的照实记。
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()

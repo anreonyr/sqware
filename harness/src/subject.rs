@@ -39,7 +39,7 @@ use alloc::format;
 use alloc::string::String;
 use core::time::Duration;
 
-use env::{Name, PieToken, TaskId};
+use env::{Name, PieToken};
 use protocol::system::operator::call as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::principal::call as pcall;
@@ -72,7 +72,7 @@ fn main() -> Report<'static> {
     // 上树：本域只开一条会话——按名字找那面身份服务。
     let Ok((tree, host)) = operator::open(sire, MS) else { return bail("subject: no tree link") };
     let Ok(talk) = operator::ask_hole(host) else { return bail("subject: no tree ask") };
-    let Some(entry) = find_face(&tree, talk, host) else { return bail("subject: no face") };
+    let Some(entry) = find_face(&tree, talk) else { return bail("subject: no face") };
     let Ok(face) = Face::of(entry) else { return bail("subject: bad face") };
 
     // 一、此刻代表谁——装配期绑的那一条（服务一起来就答得出）。
@@ -193,7 +193,7 @@ fn main() -> Report<'static> {
 /// 找那面服务：`FIND "/sys/principal"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"。
-fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
+fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
@@ -210,10 +210,10 @@ fn find_face(link: &Quay, talk: PieToken, host: TaskId) -> Option<PieToken> {
             Err(_) => return None,
         }
     };
-    if operator::find(talk, link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
-        return None;
+    match operator::find(talk, link, id, MS) {
+        Ok((ocall::OK, Some(entry))) => Some(entry),
+        _ => None,
     }
-    operator::take(link, host)
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。

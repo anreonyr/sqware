@@ -574,6 +574,22 @@ pub fn pack_id(out: &mut [u8; REPLY_MAX], id: EntryId) -> usize {
     ID_REPLY_LEN
 }
 
+/// 把**回信孔那一格**编成一帧答话（`find` 的下场）：与 [`pack_id`] **同形不同物**——
+/// 都是 `[OK][8 字节]`（[`ID_REPLY_LEN`]），但那一枚号是"我给你的那一枚**在你表里**是几号"
+/// （`PieToken`），不是 `EntryId`。故**另起一名、不复用** `pack_id`：两枚号类型不同，混用
+/// 就是把"树的坐标"与"你表里的门闩"当成一件事。
+///
+/// **照实记（这一格为什么在帧里）**：从前 `find` 只答一格状态，客人拿到 `OK` 之后还得**扫
+/// 自己的表**按"谁给的"把那一枚认回来（`operator::take`）。而号本来就在持树者手上
+/// ——`port::ship` 的 `to.seed()`，原先被 `.map(|_| ())` 扔掉——故随答话一起过来，
+/// 客人拿它一次 `Reserve` 就验得完。代价照实记：**答话丢了一趟，那一枚号也跟着丢**（今天
+/// 还能靠扫表侥幸认回来）——与 rtc / principal / coalition 那三面同一个取舍。
+pub fn pack_seed(out: &mut [u8; REPLY_MAX], seed: PieToken) -> usize {
+    out[0] = OK;
+    out[1..1 + 8].copy_from_slice(&seed.to_bytes());
+    ID_REPLY_LEN
+}
+
 /// 解开一帧「号」：答话那一格不是 [`OK`] ⇒ `Err(那一格)`。
 ///
 /// **长度必须恰好 9**（对照 [`read_list`]）：短一字节是残帧、长一字节是多出来的东西——

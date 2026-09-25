@@ -32,9 +32,13 @@
 //!
 //! # 为什么先找控制台、后落自己那块牌子
 //!
-//! 树上那两趟都是"查回来一枚"，而"认哪一枚"用的是**本端表里最后一份由持树者授进来的孔**
-//! （`operator::take`）⇒ **先查的先认**。本域自己那块门牌也会被授回来一份，若先落牌子再找
-//! 控制台，那一份就会把控制台那一枚盖过去（实测栽过：认错了孔，之后一个字节都读不到）。
+//! 树上那两趟都是"查回来一枚"，而**认哪一枚从前靠次序**：`operator::take` 取本端表里最后
+//! 一份由持树者授进来的孔 ⇒ 先查的先认；先落牌子再找控制台，那一份就会把控制台那一枚盖过去
+//! （实测栽过：认错了孔，之后一个字节都读不到）。
+//!
+//! **照实记（这条次序契约不再是契约）**：甲′ 之后那一枚号**随答话回来**（`operator::find`
+//! 的第二格），每一趟认得的就是它自己那一枚 ⇒ "最后一份"那件事不存在了。下面这个次序照旧
+//! 保留（它本来也是"先有门路、再挂自己的牌子"这条更自然的读法），但它今天**不承担正确性**。
 //!
 //! # 两条边界（设计红线）
 //!
@@ -126,7 +130,7 @@ fn main() -> Result<(), env::Reason> {
     };
 
     // 一、**先找控制台**：`FIND /device/uart` ⇒ 那枚孔经会话授进本域表里。
-    let console = find_console(&tree, talk, host);
+    let console = find_console(&tree, talk);
     let _ = debug::put(&format!("echo: console={}", console.is_some()));
 
     // 二、上树一趟：**本域是第一位真客人**——把入口挂到树上、再查回来取一枚、剪掉一块空 Pane。
@@ -185,9 +189,9 @@ fn main() -> Result<(), env::Reason> {
 
 /// 找控制台：`FIND /device/uart`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///
-/// 找到之后那一枚**从会话里**进本域表（报文里没有号，见 [`ocall`]）：认的是"持树者刚授进来的
-/// 那一份"，而本域此刻**还没落自己的门牌** ⇒ 这一趟拿走的一定是它（次序见头注）。
-fn find_console(link: &Quay, talk: PieToken, host: TaskId) -> Option<HolePie> {
+/// 找到之后那一枚**从会话里**进本域表，而**它在本域表里的号随答话回来**（[`ocall::pack_seed`]）
+/// ——故这一趟不必认"哪一份"，号就是这一趟自己那一枚（次序那件事见本文件头注的照实记）。
+fn find_console(link: &Quay, talk: PieToken) -> Option<HolePie> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
         return None;
     };
@@ -207,10 +211,10 @@ fn find_console(link: &Quay, talk: PieToken, host: TaskId) -> Option<HolePie> {
             Err(_) => return None,
         }
     };
-    if operator::find(talk, link, id, MS).unwrap_or(ocall::BAD) != ocall::OK {
-        return None;
+    match operator::find(talk, link, id, MS) {
+        Ok((ocall::OK, Some(entry))) => Some(HolePie::from_token(entry)),
+        _ => None,
     }
-    Some(HolePie::from_token(operator::take(link, host)?))
 }
 
 /// 上板报到（与 `passer` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
@@ -271,12 +275,15 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         Err(code) => code,
     };
     // 寻回来那一趟：**按号**（名字只在上面用过，此后一律按号）。
-    let c = match plate {
-        Ok(id) => operator::find(talk, link, id, MS).unwrap_or(ocall::BAD),
-        Err(code) => code,
+    let (c, got) = match plate {
+        Ok(id) => match operator::find(talk, link, id, MS) {
+            Ok((code, entry)) => (code, entry.is_some()),
+            Err(_) => (ocall::BAD, false),
+        },
+        Err(code) => (code, false),
     };
-    // 寻回来的那一枚：**来源位是持树者**（号不从报文里走，故只能按"谁给的"认）。
-    let got = operator::take(link, host).is_some();
+    // **`got` 换了来路**（乙′）：从前是"扫本端表、按'谁给的'认出一枚"，今天是"答话里带回了
+    // 那一格"——判据由持树者那侧一次 `Reserve` 验过（见 `ocall::pack_seed`）。
     // 拿号问名——这一格**下一步就被剪掉**，故号与名都得赶在 `trim` 之前取。
     let pname = plate
         .ok()

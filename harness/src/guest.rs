@@ -113,21 +113,28 @@ fn main() -> Report<'static> {
 
     // 三、问一句名字。**找不到就再问**，有界：本域可能比 `router` 先起（树上没有"装配期"）。
     // **间接寻址那一手**：名字先译成号（那一格才谈得上"挂上了没有"），拿到号再按号寻。
+    //
+    // **照实记（乙′：这一格从"两趟"并成"一趟"）**：`find` 从前只答一格状态，查到的那一枚要
+    // 另叫一手 `operator::take` 扫本域表按"谁给的"认回来。今天那一枚号**随答话回来**，故
+    // 这一趟连号带状态一起破出去；`at` 就是本域表里那一枚（读数里的 `entry`）。
     let mut left = MS;
-    let find = loop {
+    let (find, at) = loop {
         match operator::seek(hedge, &tree, &path, MS) {
             // **树那一问用树自己的码**（`ocall::BAD` = 7；`BAD` 那一格是板那一面的，值 5）。
-            Ok(id) => break operator::find(hedge, &tree, id, MS).unwrap_or(ocall::BAD),
+            Ok(id) => match operator::find(hedge, &tree, id, MS) {
+                Ok((code, entry)) => break (code, entry.unwrap_or(none)),
+                Err(_) => break (ocall::BAD, none),
+            },
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
                 left = left.saturating_sub(RETRY_MS);
             }
-            Err(code) => break code,
+            Err(code) => break (code, none),
         }
     };
 
-    // 四、查到的那一枚（持树者经会话授进本域表里）：本域在表里认得出它吗（读数里的 `entry`）。
-    let at = operator::take(&tree, host).unwrap_or(none);
+    // 四、查到的那一枚（持树者经会话授进本域表里）：本域在表里认得出它吗（读数里的 `entry`）
+    // ——它就是上面那一趟带回来的号。
     // 五、走完这一趟：说一句"我走了"（一字节帧，不带名字也不带入口）。板据此撤掉本域那一格、
     //     摘掉本域挂在板上的牌子，答一格 `OK`；本域不在板上那本账上则答 `UNKNOWN`。
     let bye = board::evict(talk, &link, MS).unwrap_or(BAD);

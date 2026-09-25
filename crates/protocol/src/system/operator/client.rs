@@ -149,13 +149,31 @@ pub fn part(
     ocall::read_id(&reply[..n])
 }
 
-/// 客侧第二步（**寻**）：把那一号背后那一枚 Pie 要过来（它经会话授进本端表，见 [`take`]）。
+/// 客侧第二步（**寻**）：把那一号背后那一枚 Pie 要过来——它经会话授进本端表，而
+/// **它在本端表里的号随这条答话回来**（[`ocall::pack_seed`]），故客人不必再扫表。
 ///
-/// 答的是一格状态（[`ocall::OK`] = 授出来了）——那条路走不通（推不动 / 读不到）⇒ `Err(Fail)`。
-pub fn find(say: PieToken, link: &Quay, id: EntryId, millis: usize) -> Result<u8, Fail> {
-    let mut reply = [0u8; 1];
-    ask_out(say, link, ocall::Ask::Find(id), &mut reply, millis)?;
-    Ok(reply[0])
+/// 返 `(状态, 那一格)`：状态是 [`ocall::OK`] 时第二格必有号；其余状态（查不到 / 被拒 /
+/// 授不出去）第二格是 `None`——**不是"零号"**，是"这一趟没有可用的那一格"。
+/// 那条路走不通（推不动 / 读不到 / 答话不是那个形状）⇒ `Err(Fail)`。
+///
+/// **照实记（`take` 那一手退场）**：从前它只返状态，客人随后得拿 `operator::take` 扫自己
+/// 的表按"谁给的（`vestor`）"把那一枚认回来——壳里"最后那一枚"那条次序契约就是为它写的。
+/// 号既然在持树者手里（`to.seed()`），就随答话过来；扫表这一手连同它为 `vestor` 撑起的
+/// 那一个读者一起没了（判据没松：持树者那侧一次 `Reserve` 验"开者 = 本端 ＋ 记号 = 树路"）。
+pub fn find(
+    say: PieToken,
+    link: &Quay,
+    id: EntryId,
+    millis: usize,
+) -> Result<(u8, Option<PieToken>), Fail> {
+    let mut reply = [0u8; ocall::ID_REPLY_LEN];
+    let n = ask_out(say, link, ocall::Ask::Find(id), &mut reply, millis)?;
+    if reply[0] != ocall::OK {
+        return Ok((reply[0], None));
+    }
+    // 成功那一格必然带着那一枚（`pack_seed`）：长度不是那个形状 = 读不懂 ⇒ 与"没走到"同一格。
+    let seed = PieToken::from_bytes(reply.get(1..n).unwrap_or(&[])).ok_or(Fail::Unknown)?;
+    Ok((ocall::OK, Some(seed)))
 }
 
 /// 客侧第二步（**剪**）：把那一号剪掉。答一格状态（[`ocall::OK`] = 剪掉了）。
@@ -195,24 +213,11 @@ pub fn name(say: PieToken, link: &Quay, id: EntryId, millis: usize) -> Result<Na
     ocall::read_name(&reply[..n])
 }
 
-/// 客侧第三步：把**刚授进来的那一枚**从本端表里取出来（`find` 的下场）。
-///
-/// 一格判据：**来源位是持树者**（这一份是它交给本端的——`Reply` 里没有号，故只能按"谁给的"
-/// 认），取满足的那些里**最后**一枚（表按登记先后枚举；一次一问一答只授一枚）。
-///
-/// **`owner` 在这里没用**：那扇门是**别人**开的（树上那一条是谁挂的，开者就是谁），客人不是
-/// 它的开者。
-pub fn take(link: &Quay, host: TaskId) -> Option<PieToken> {
-    let at = Name::new(LINK).ok()?;
-    let _ = link.find(at)?;
-    let mut found = None;
-    for p in mail::pies() {
-        if p.vestor == host {
-            found = Some(p.token);
-        }
-    }
-    found
-}
+// 照实记（删掉的一处：这一面的 `take`）：它从前在这儿——`find` 只答一格状态，客人于是要
+// **扫自己的表**按"来源位是持树者"把刚授进来的那一枚认回来（取满足的里最后一枚）。
+// `find` 的答话带上那一格之后（见本文件 `find` 的照实记）它没有读者了，按"机制退了，格也退"
+// 删掉。**这是 `vestor` 在扫描里的最后一个读者**：它一走，`mail::pies()` 枚举出来的每一枚
+// 就只剩 `owner ＋ mark` 两个事实有人在读，`Collect` 那一格便能收窄（乙′ 的末环）。
 
 /// 收下树路上那一格：**答话的是谁**（[`open`] 的对偶）。
 ///

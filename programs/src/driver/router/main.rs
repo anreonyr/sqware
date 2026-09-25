@@ -527,11 +527,14 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
         Err(code) => (code, 0),
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let find = match plate {
-        Ok(id) => operator::find(talk, &link, id, QUAY_MS).unwrap_or(ocall::BAD),
-        Err(code) => code,
+    let (find, got) = match plate {
+        Ok(id) => match operator::find(talk, &link, id, QUAY_MS) {
+            Ok((code, entry)) => (code, entry.is_some()),
+            Err(_) => (ocall::BAD, false),
+        },
+        Err(code) => (code, false),
     };
-    let got = operator::take(&link, host).is_some();
+    // **`got` 换了来路**（乙′）：见 `ocall::pack_seed` 的照实记。
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()
