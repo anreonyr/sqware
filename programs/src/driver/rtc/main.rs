@@ -208,28 +208,79 @@ fn main() -> Result<(), fail::Fail> {
 /// **拒了的那一趟也要收尾**：那一枚孔不在任何账上（那一格根本没占上），此后没人会替它收
 /// ⇒ 答完当场放下。这与线那一刀 `drop_lane` 是同一条纪律、同一个理由。
 ///
-/// **这一层只打两个戳子**：处理体在 [`desk_`] 里。`t1` = 收到这一帧、`t2` = 答话已推出；
-/// 客人那一侧打 `t0`（决定要说）与 `t3`（答话到手）——**两个钟同基准**
-/// （`chrono::clock()`："自启动基准的纳秒标量（单调）"，与 `room::sleep_until` 的 `at`
-/// 同基准同单位），故"出去 / 服务 / 回来"三段可以直接相减，不必对表。
+/// **这一层只打一行**：处理体在 [`desk_`] 里，它把每一步的账（[`Svc`]）交回来。
+/// `t1` = 收到这一帧、`t2` = 答话已推出；客人那一侧打 `t0`（决定要说）与 `t3`（答话到手）
+/// ——**两个钟同基准**（`chrono::clock()`："自启动基准的纳秒标量（单调）"，与
+/// `room::sleep_until` 的 `at` 同基准同单位），故三段可以直接相减，不必对表。
 ///
-/// **照实记（`t2` 必须取在"答话推出去"那一刻，不在这里）**：第一版把 `t2` 取在 [`desk_`]
-/// **返回之后**——而那几行诊断读数（`rtc: asked` / `armed` / `refused`）就夹在中间，一行
-/// ~1.08 ms（上一刀量出来的，**同步 UART**）⇒ 量出来 `back` 是**负的**（客人比驱动的
-/// "答完"还早到，实测 −0.26 ms）。故 [`desk_`] 把那一刻**交回来**，`t2` 用它。
+/// **照实记（`t2` 必须取在"答话推出去"那一刻）**：第一版把 `t2` 取在 [`desk_`] **返回之后**
+/// ——而那几行诊断读数就夹在中间（一行 ~1.08 ms，**同步 UART**）⇒ 量出来 `back` 是**负的**
+/// （−0.26 ms，客人比驱动的"答完"还早）。
+///
+/// **照实记（为什么只有一行）**：一行 ~1.08 ms，六步各打一行就把要量的东西自己淹了；故攒进
+/// [`Svc`] 一次打，而且打在 `t2` **之后**——这一行自己的价钱不许落在它量的任何一格上。
 fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
     let t1 = runtime::env::chrono::clock().unwrap_or(0);
-    let t2 = desk_(slot, view, from, frame);
-    say(&format!("rtc: legs t1={t1} t2={t2}"));
+    let svc = desk_(slot, view, from, frame);
+    say(&format!(
+        "rtc: legs t1={t1} t2={} unpack={} find={} dev={} slot={} dwrite={} say={} push={} rel={}",
+        svc.t2, svc.unpack, svc.find, svc.dev, svc.slot, svc.dwrite, svc.say, svc.push, svc.rel
+    ));
 }
 
-/// 这一帧的处理体（戳子与那一行读数在 [`desk`] 里）。返**答话推出去那一刻**；没答话的
-/// （帧读不懂 / 没有回信孔）返 0。
-fn desk_(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) -> u64 {
+/// `svc` 那一段（驱动自己干活）的**分步账**：每格 = 上一个戳子到这一步的纳秒数，这一趟没走
+/// 的那几步是 0。`t2` = 答话推出去那一刻（没答话 ⇒ 0）。
+#[derive(Clone, Copy)]
+struct Svc {
+    unpack: u64,
+    find: u64,
+    dev: u64,
+    slot: u64,
+    dwrite: u64,
+    say: u64,
+    push: u64,
+    rel: u64,
+    t2: u64,
+}
+
+impl Svc {
+    fn new() -> Svc {
+        Svc {
+            unpack: 0,
+            find: 0,
+            dev: 0,
+            slot: 0,
+            dwrite: 0,
+            say: 0,
+            push: 0,
+            rel: 0,
+            t2: 0,
+        }
+    }
+}
+
+/// 这一帧的处理体（那一行读数在 [`desk`] 里）。返每一步的账。
+///
+/// **照实记（这一刀量哪几步）**：三段切完，地板落在这一层（~8 ms）⇒ 把它摊开：解帧 /
+/// [`scall::find`]（**扫整张权限表**，一枚一个 `Collect`）/ `rtc::now`（读设备 MMIO）/
+/// 槽 / `rtc::arm`（写设备）/ 那行诊断（**它也在里面**——`Ok` 那一支排在 `push` 之前）/
+/// 答话 push / 放下那枚孔。
+fn desk_(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) -> Svc {
+    let mut svc = Svc::new();
+    let mut last = runtime::env::chrono::clock().unwrap_or(0);
+    // 记一步：把"上一个戳子到这里"的纳秒数写进 `svc.$f`。
+    macro_rules! lap {
+        ($f:ident) => {{
+            let t = runtime::env::chrono::clock().unwrap_or(0);
+            svc.$f = t.saturating_sub(last);
+            last = t;
+        }};
+    }
     let Some(ask) = call::unpack_ask(frame) else {
         // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
-        return 0;
+        return svc;
     };
+    lap!(unpack);
     let Some(back) = scall::find(from, call::BACK) else {
         // 这一趟没把回信孔交进来（或交得不成）：没有可回的路，账一动不动。
         //
@@ -237,37 +288,48 @@ fn desk_(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) -> u64 {
         // 没推上来"在读数里**长得一模一样**（两边都是客人超时）——`harness/sleeper` 那张脸
         // 在真机上查了很久才缩到这一步。丢一趟留一行，谁丢的、丢给谁。
         say(&format!("rtc: no back hole from {}", from.get()));
-        return 0;
+        return svc;
     };
+    lap!(find);
     match ask {
         call::Ask::Now => {
             let now = rtc::now(view);
+            lap!(dev);
             let _ = HolePie::from_token(back).push(&call::pack_time(now));
+            svc.t2 = runtime::env::chrono::clock().unwrap_or(0);
+            lap!(push);
             let _ = mail::release(back);
-            let t = runtime::env::chrono::clock().unwrap_or(0);
+            lap!(rel);
             say(&format!("rtc: asked now={now}"));
-            t
         }
         call::Ask::Arm(at) => {
             let now = rtc::now(view);
+            lap!(dev);
             match slot.arm(at, back, now) {
                 Ok(()) => {
+                    lap!(slot);
                     // **设备那一手紧随原语之后**（账记下了，硬件跟上）——与线那一层
                     // "接线是登记的直接后果"同一条分工。
                     rtc::arm(view, at);
+                    lap!(dwrite);
                     say(&format!(
                         "rtc: armed at={at} ier={} alarm={}",
                         rtc::irq_enabled(view),
                         rtc::armed(view)
                     ));
+                    lap!(say);
                     // 答码**先于**那一声：那一格已经占上，而设备要过一会儿才拉线。
                     let _ = HolePie::from_token(back).push(&[call::OK]);
-                    runtime::env::chrono::clock().unwrap_or(0)
+                    svc.t2 = runtime::env::chrono::clock().unwrap_or(0);
+                    lap!(push);
                 }
                 Err(fail) => {
+                    lap!(slot);
                     let _ = HolePie::from_token(back).push(&[call::fail_to_code(Some(fail))]);
+                    svc.t2 = runtime::env::chrono::clock().unwrap_or(0);
+                    lap!(push);
                     let _ = mail::release(back);
-                    let t = runtime::env::chrono::clock().unwrap_or(0);
+                    lap!(rel);
                     // **照实记（这一行为什么在，以及为什么排在这里）**：拒绝路从前一个字都不
                     // 打，于是"sleeper 那台偶尔少一台"只剩客人侧一句 `alarm err=2`——**迟到
                     // 多少**量不出来。这一行把那格交出来：`late_ns` = 我拿自己的钟比对时 `at`
@@ -275,18 +337,18 @@ fn desk_(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) -> u64 {
                     // `at` 还在前头，按 0 记）。形状声明在 `crates/gate/src/soak.rs` 的读数表里。
                     //
                     // **照实记（它为什么在 `push` 之后）**：第一版排在 `push` 之前，而 `say`
-                    // 是**同步 UART**（一行 ~3 ms）——量的人自己站进了被测的那条路上，把客人
+                    // 是**同步 UART**（一行 ~1 ms）——量的人自己站进了被测的那条路上，把客人
                     // 等答话的时间撑长了。故答话先走、读数后打：这一行不许改变它要量的东西。
                     say(&format!(
                         "rtc: refused={} at={at} now={now} late_ns={}",
                         call::fail_to_code(Some(fail)),
                         now.saturating_sub(at)
                     ));
-                    t
                 }
             }
         }
     }
+    svc
 }
 
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（门牌 = 本域那枚服务入口）。
