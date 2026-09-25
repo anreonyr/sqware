@@ -113,16 +113,14 @@ fn main() -> Report<'static> {
     let _ = debug::put("sleeper: found");
 
     // 一问一答：现在几点。这一句是后面那两约的**基准**（服务收的是绝对时刻）。
-    let Ok(now) = timed("now", || clock::now(face, MS)) else {
+    let Ok(now) = clock::now(face, MS) else {
         return no_service("sleeper: no time");
     };
     let _ = debug::put(&format!("sleeper: now={now}"));
 
     // 失败域第一格：一个**已经过去**的时刻。设备对过去的时刻是当场就报，本面选择当场答 `PAST`
     // （见 `programs/src/driver/rtc/core.rs` 那一注）——故这一趟不需要等。
-    let past = refused(timed("arm-past", || {
-        clock::arm(face, now.saturating_sub(1_000_000), MS)
-    }));
+    let past = refused(clock::arm(face, now.saturating_sub(1_000_000), MS));
     let _ = debug::put(&format!("sleeper: past={past}"));
 
     // 真约：那一枚回信孔从此留在驱动手里（本域退场之前它一直活着）。
@@ -186,11 +184,11 @@ fn arm_next(face: PieToken, first: u64) -> Option<(clock::Alarm, u64)> {
     let mut now = first;
     for n in 0..ARM_TRIES {
         let at = now.saturating_add(AHEAD_NS);
-        match timed("arm", || clock::arm(face, at, MS)) {
+        match clock::arm(face, at, MS) {
             Ok(alarm) => return Some((alarm, at)),
             // **又晚了** ⇒ 重问一个现在、重算一个 `at`（照实记：这就是 `Past` 那一格写的下一步）。
             Err(RFail::Past) => {
-                now = timed("now-retry", || clock::now(face, MS)).ok()?;
+                now = clock::now(face, MS).ok()?;
                 let _ = debug::put(&format!("sleeper: late n={n} now={now}"));
             }
             Err(fail) => {
@@ -209,22 +207,6 @@ fn arm_next(face: PieToken, first: u64) -> Option<(clock::Alarm, u64)> {
         }
     }
     None
-}
-
-/// 一趟往返掐表：打**两个戳子**（`t0` = 决定要说、`t3` = 答话到手），差由读日志的人算。
-///
-/// **两个钟同基准**：这一侧与驱动那一侧都读 `chrono::clock()`（"自启动基准的纳秒标量
-/// （单调）"），故"出去 / 服务 / 回来"三段可以直接相减；驱动那一侧打的是 `t1`（收到这一帧）
-/// 与 `t2`（答话已推出），那一行落在 `t0` 与 `t3` 之间，按值配即可。
-///
-/// **照实记（量的人不许站进被测的那条路）**：戳子在**调用之前/之后**取，那一行读数在
-/// **拿到 `t3` 之后**才打——故它 ~1.08 ms 的价钱落在这一趟之外。
-fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
-    let t0 = runtime::env::chrono::clock().unwrap_or(0);
-    let out = f();
-    let t3 = runtime::env::chrono::clock().unwrap_or(0);
-    let _ = debug::put(&format!("sleeper: legs {what} t0={t0} t3={t3}"));
-    out
 }
 
 /// 被拒那一趟的读数：把失败域按**线上那张表**折成一个数（与驱动的答码同源）。

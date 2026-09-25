@@ -1,15 +1,25 @@
 //! rtc::call — **帧形与记号**：两句话、两种答形（纯函数，零依赖）。
 //!
 //! ```text
-//!   问（客人 → 驱动）   [ASK]               →  [时刻 8B]        「现在几点」
-//!                       [ARM][at 8B]        →  [答码 1B]        「在 at 叫我」
-//!                                            … 到点那一声 [时刻 8B]
-//!   回信孔（客人 ↔ 驱动）  记号 `rtc-back` —— 客人**每趟**铸一枚、借给驱动
+//!   问（客人 → 驱动）   [ASK][那一格 8B]              →  [时刻 8B]     「现在几点」
+//!                       [ARM][那一格 8B][at 8B]       →  [答码 1B]     「在 at 叫我」
+//!                                                     … 到点那一声 [时刻 8B]
+//!   回信孔（客人 ↔ 驱动）  记号 `rtc-back` —— 客人**每趟**铸一枚、借给驱动，
+//!                          并把"它**在驱动表里**是几号"写进帧
 //! ```
 //!
-//! **一问一答、一孔一趟**：报文里没有"往哪回"这一格——回答与那一声都走**这一趟自带的那枚
-//! 孔**（号只在持有它的那张表里念得动，见 `protocol::session` 事实 8）。故帧里没有地址、
-//! 没有身份，只有一个动作码。
+//! **"往哪回"那一格现在在帧里**（`[1..9]`）。**照实记（这是裁定甲′翻掉的旧口径）**：旧写法
+//! 是"报文里没有'往哪回'这一格——回答走那一趟自带的那枚孔，收方按'谁给的 ＋ 记号'**扫全表**
+//! 认回来"。那次拒绝**没有读数垫底**；量出来之后：收方那一扫是**每帧 ~6.5 ms**（表 16 枚
+//! ⇒ 扫一遍 + 每枚一次 `reserve` = O(n²)），而"那一枚在你表里是几号"（`port::ship` 的
+//! `to.seed()`）**本来就算出来了、只是被丢掉**。故客人把它写进帧，收方**一次 `reserve` 验
+//! 一下**就用。
+//!
+//! **那一格不是凭证，是一次验**：收方不许拿它直接写信——必须 `reserve` 出 `(owner, 记号)`
+//! 并核对 `owner == 发信人 && 记号 == rtc-back`，否则客人能让驱动往**别人的孔**里写。
+//! （旧那一扫天然带这条核对；换法之后它是**显式**的一步，不是免费的了。）
+//!
+//! 帧里仍然没有地址、没有身份：那一格是**收方自己表里**的号，对写信的那位毫无意义。
 //!
 //! **答形由问形定、帧长可判**：1 字节是答码、8 字节是一个时刻。同一条 `ARM` 路上先到 1 字节
 //! （收下了没有），后到 8 字节（到点那一声）。
@@ -20,7 +30,7 @@
 //! **成功那一格**（`protocol::OK`）——各家的失败码仍按自己失败域的顺序排。
 
 use super::core::Fail;
-use env::Mark;
+use env::{Mark, PieToken};
 
 /// 问那一句的动作码：「现在几点」。
 pub const ASK: u8 = 1;
@@ -34,13 +44,13 @@ pub const TIME_LEN: usize = 8;
 /// 答码的字节数。
 pub const CODE_LEN: usize = 1;
 
-/// `ASK` 帧的长度。
-pub const ASK_LEN: usize = 1;
+/// `ASK` 帧的长度（动作码 + 那一格）。
+pub const ASK_LEN: usize = 1 + PieToken::WIDTH;
 
-/// `ARM` 帧的长度（动作码 + 一个时刻）。
-pub const ARM_LEN: usize = 1 + TIME_LEN;
+/// `ARM` 帧的长度（动作码 + 那一格 + 一个时刻）。
+pub const ARM_LEN: usize = 1 + PieToken::WIDTH + TIME_LEN;
 
-/// 回信孔的记号：客人每趟铸一枚、借给驱动（回答与那一声都从它回来）。
+/// 回信孔的记号：客人每趟铸一枚、借给驱动（**收方按它验那一格**）。
 pub const BACK: Mark = Mark::of("rtc-back");
 
 /// 答话那一格：收下了——**全协议那一个"没失败"**（`protocol::OK`），本族不再写第二遍。
@@ -77,26 +87,38 @@ pub enum Ask {
     Arm(u64),
 }
 
-/// 编一帧「现在几点」。
-pub fn pack_ask() -> [u8; ASK_LEN] {
-    [ASK]
-}
-
-/// 编一帧「在 at 叫我」。
-pub fn pack_arm(at: u64) -> [u8; ARM_LEN] {
-    let mut out = [0u8; ARM_LEN];
-    out[0] = ARM;
-    out[1..].copy_from_slice(&at.to_le_bytes());
+/// 编一帧「现在几点」：`[ASK][那一格 8B]`。
+///
+/// `back` = "我借给你的那枚回信孔**在你表里**是几号"（[`protocol::session::call::lend_out`]
+/// 的第二格）——见本文件头注的照实记。
+pub fn pack_ask(back: PieToken) -> [u8; ASK_LEN] {
+    let mut out = [0u8; ASK_LEN];
+    out[0] = ASK;
+    out[1..].copy_from_slice(&back.to_bytes());
     out
 }
 
-/// 拆一帧问：**不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜、不动账）。
-pub fn unpack_ask(frame: &[u8]) -> Option<Ask> {
-    match frame {
-        [ASK] => Some(Ask::Now),
-        [ARM, rest @ ..] => {
-            let raw: [u8; TIME_LEN] = rest.try_into().ok()?;
-            Some(Ask::Arm(u64::from_le_bytes(raw)))
+/// 编一帧「在 at 叫我」：`[ARM][那一格 8B][at 8B]`。
+pub fn pack_arm(back: PieToken, at: u64) -> [u8; ARM_LEN] {
+    let mut out = [0u8; ARM_LEN];
+    out[0] = ARM;
+    out[1..1 + PieToken::WIDTH].copy_from_slice(&back.to_bytes());
+    out[1 + PieToken::WIDTH..].copy_from_slice(&at.to_le_bytes());
+    out
+}
+
+/// 拆一帧问：返 `(那一格, 那一问)`。**不是那个形状就答 `None`**（别人往这扇门推别的东西时，
+/// 不猜、不动账）。
+///
+/// **长度也要对**：`ASK` 只认 `ASK_LEN`、`ARM` 只认 `ARM_LEN`（旧版按"动作码 + 余下都是 at"
+/// 解，故长短都进得来；现在那一格也在帧里，长度就是形状的一半）。
+pub fn unpack_ask(frame: &[u8]) -> Option<(PieToken, Ask)> {
+    let back = PieToken::from_bytes(frame.get(1..)?)?;
+    match *frame.first()? {
+        ASK if frame.len() == ASK_LEN => Some((back, Ask::Now)),
+        ARM if frame.len() == ARM_LEN => {
+            let raw: [u8; TIME_LEN] = frame[1 + PieToken::WIDTH..].try_into().ok()?;
+            Some((back, Ask::Arm(u64::from_le_bytes(raw))))
         }
         _ => None,
     }

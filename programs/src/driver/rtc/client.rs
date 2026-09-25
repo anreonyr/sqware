@@ -24,7 +24,11 @@ use super::core::Fail;
 /// 一问一答——这一趟的回信孔只活到这句话答完（同一次往返借一枚，见 `protocol::session`
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）。
 pub fn now(entry: PieToken, millis: usize) -> Result<u64, Fail> {
-    let back = lend(entry, &call::pack_ask())?;
+    let (back, seed) = lend_out(entry)?;
+    if push(entry, &call::pack_ask(seed)).is_err() {
+        let _ = mail::release(back);
+        return Err(Fail::Denied);
+    }
     let mut buf = [0u8; call::TIME_LEN];
     let answer = HolePie::from_token(back)
         .pull_timeout(&mut buf, millis)
@@ -40,7 +44,11 @@ pub fn now(entry: PieToken, millis: usize) -> Result<u64, Fail> {
 /// 失败域两格都由**驱动说的话**给出（`Taken` / `Past`），第三格 `Denied` 是这一趟自己没
 /// 走到——三种情况对客人是三个不同的下一步，故不合并成一格。
 pub fn arm(entry: PieToken, at: u64, millis: usize) -> Result<Alarm, Fail> {
-    let back = lend(entry, &call::pack_arm(at))?;
+    let (back, seed) = lend_out(entry)?;
+    if push(entry, &call::pack_arm(seed, at)).is_err() {
+        let _ = mail::release(back);
+        return Err(Fail::Denied);
+    }
     let mut one = [0u8; call::CODE_LEN];
     let code = match HolePie::from_token(back).pull_timeout(&mut one, millis) {
         Ok(n) if n == call::CODE_LEN => one[0],
@@ -78,8 +86,16 @@ impl Alarm {
 
 /// 借一枚回信孔过去、把这一帧推上那扇门：返**本端那一枚**（答话与那一声都从它回来）。
 ///
-/// 身体住在 [`protocol::session::call::lend`]（第二例到了：principle 那一面也是这个形状），
-/// 这里只留本面自己的记号。
-fn lend(entry: PieToken, frame: &[u8]) -> Result<PieToken, Fail> {
-    protocol::session::call::lend(entry, call::BACK, frame).map_err(|()| Fail::Denied)
+/// 借一枚回信孔（铸 ＋ 交）：返 `(本端那一枚, **在驱动表里那一枚**)`——后者要写进帧
+/// （用户裁定甲′：收方拿它一次 `reserve` 就用，不必扫全表）。
+///
+/// 身体住在 [`protocol::session::call::lend_out`]（那一手与 [`protocol::session::call::lend`]
+/// 只差"推不推"这一步），这里只留本面自己的记号。
+fn lend_out(entry: PieToken) -> Result<(PieToken, PieToken), Fail> {
+    protocol::session::call::lend_out(entry, call::BACK).map_err(|()| Fail::Denied)
+}
+
+/// 把一帧推上那扇门（`lend_out` 的后半）。
+fn push(entry: PieToken, frame: &[u8]) -> Result<(), Fail> {
+    protocol::session::call::push_to(entry, frame).map_err(|()| Fail::Denied)
 }

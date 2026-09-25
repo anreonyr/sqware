@@ -84,7 +84,6 @@ use cases::Suite;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::driver::line;
 use protocol::session::Quay;
-use protocol::session::call as scall;
 use runtime::core::dock::{Dock, View};
 use runtime::core::pile::Pile;
 use runtime::env::debug;
@@ -202,154 +201,56 @@ fn main() -> Result<(), fail::Fail> {
 
 /// 门上那一句话：**解帧 → 办事 → 从这一趟自带的那枚孔答回去**。
 ///
-/// 认那枚孔靠 [`scall::find`] 的两格正判据（谁给的 + 记号），多枚时取**最后**那一枚——
-/// 客人先交孔、后推帧，故最后那一枚就是这一趟那一枚（见 [`call`] 的次序契约）。
+/// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（用户裁定甲′）：那一格是"客人
+/// 交进来的那一枚**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——否则客人
+/// 能让本域往**别人的孔**里写。旧写法是扫全表按 `(谁给的, 记号)` 找（每帧 ~6.5 ms，表 16 枚
+/// 时 O(n²)，读数量在 `crates/gate` 的 soak 那一门）。
 ///
 /// **拒了的那一趟也要收尾**：那一枚孔不在任何账上（那一格根本没占上），此后没人会替它收
 /// ⇒ 答完当场放下。这与线那一刀 `drop_lane` 是同一条纪律、同一个理由。
-///
-/// **这一层只打一行**：处理体在 [`desk_`] 里，它把每一步的账（[`Svc`]）交回来。
-/// `t1` = 收到这一帧、`t2` = 答话已推出；客人那一侧打 `t0`（决定要说）与 `t3`（答话到手）
-/// ——**两个钟同基准**（`chrono::clock()`："自启动基准的纳秒标量（单调）"，与
-/// `room::sleep_until` 的 `at` 同基准同单位），故三段可以直接相减，不必对表。
-///
-/// **照实记（`t2` 必须取在"答话推出去"那一刻）**：第一版把 `t2` 取在 [`desk_`] **返回之后**
-/// ——而那几行诊断读数就夹在中间（一行 ~1.08 ms，**同步 UART**）⇒ 量出来 `back` 是**负的**
-/// （−0.26 ms，客人比驱动的"答完"还早）。
-///
-/// **照实记（为什么只有一行）**：一行 ~1.08 ms，六步各打一行就把要量的东西自己淹了；故攒进
-/// [`Svc`] 一次打，而且打在 `t2` **之后**——这一行自己的价钱不许落在它量的任何一格上。
 fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
-    let t1 = runtime::env::chrono::clock().unwrap_or(0);
-    let svc = desk_(slot, view, from, frame);
-    say(&format!(
-        "rtc: legs t1={t1} t2={} unpack={} find={} dev={} slot={} dwrite={} say={} push={} rel={}",
-        svc.t2, svc.unpack, svc.find, svc.dev, svc.slot, svc.dwrite, svc.say, svc.push, svc.rel
-    ));
-    // **`find` 的价钱是"表有几枚"的函数**（它每帧扫全表，一枚两次内核调用）⇒ 把这个数交出来。
-    //
-    // **照实记（为什么是每帧一行）**：这台域**一轮只经手四帧**（`sleeper` 那四问——板那十几声
-    // `EVICT` 是给板的，不走这里）⇒ 每 4 帧一行等于只有第 0 帧有样本（实测：三轮各一行
-    // `frames=0`）。故**每帧都打**；`table_size()` 自己扫一遍表（~3 ms）落在 `legs` 那一行
-    // **之后** ⇒ 不进任何一格测量。`frames` = 这一帧是第几帧（0 起）。
-    static FRAMES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-    let n = FRAMES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    say(&format!("rtc: pies={} frames={n}", mail::table_size()));
-    if n == 0 {
-        // **量一次内核调用**（这一刀）：`chrono::clock()` 自己就是一次 ecall ⇒ 100 次背靠背
-        // 除出来就是**陷阱那一层**的价钱——`Collect` / `reserve` 只会比它更贵（它们还要动表）。
-        // 取在这一帧（第 0 帧）里：与被量的那几趟**同一个上下文**，不是启动期。
-        let t0 = runtime::env::chrono::clock().unwrap_or(0);
-        for _ in 0..100 {
-            let _ = runtime::env::chrono::clock();
-        }
-        let t1 = runtime::env::chrono::clock().unwrap_or(0);
-        say(&format!("rtc: ecall n=100 cost_ns={}", t1.saturating_sub(t0)));
-    }
-}
-
-/// `svc` 那一段（驱动自己干活）的**分步账**：每格 = 上一个戳子到这一步的纳秒数，这一趟没走
-/// 的那几步是 0。`t2` = 答话推出去那一刻（没答话 ⇒ 0）。
-#[derive(Clone, Copy)]
-struct Svc {
-    unpack: u64,
-    find: u64,
-    dev: u64,
-    slot: u64,
-    dwrite: u64,
-    say: u64,
-    push: u64,
-    rel: u64,
-    t2: u64,
-}
-
-impl Svc {
-    fn new() -> Svc {
-        Svc {
-            unpack: 0,
-            find: 0,
-            dev: 0,
-            slot: 0,
-            dwrite: 0,
-            say: 0,
-            push: 0,
-            rel: 0,
-            t2: 0,
-        }
-    }
-}
-
-/// 这一帧的处理体（那一行读数在 [`desk`] 里）。返每一步的账。
-///
-/// **照实记（这一刀量哪几步）**：三段切完，地板落在这一层（~8 ms）⇒ 把它摊开：解帧 /
-/// [`scall::find`]（**扫整张权限表**，一枚一个 `Collect`）/ `rtc::now`（读设备 MMIO）/
-/// 槽 / `rtc::arm`（写设备）/ 那行诊断（**它也在里面**——`Ok` 那一支排在 `push` 之前）/
-/// 答话 push / 放下那枚孔。
-fn desk_(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) -> Svc {
-    let mut svc = Svc::new();
-    let mut last = runtime::env::chrono::clock().unwrap_or(0);
-    // 记一步：把"上一个戳子到这里"的纳秒数写进 `svc.$f`。
-    macro_rules! lap {
-        ($f:ident) => {{
-            let t = runtime::env::chrono::clock().unwrap_or(0);
-            svc.$f = t.saturating_sub(last);
-            last = t;
-        }};
-    }
-    let Some(ask) = call::unpack_ask(frame) else {
+    let Some((back, ask)) = call::unpack_ask(frame) else {
         // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
-        return svc;
+        return;
     };
-    lap!(unpack);
-    let Some(back) = scall::find(from, call::BACK) else {
-        // 这一趟没把回信孔交进来（或交得不成）：没有可回的路，账一动不动。
-        //
-        // **但它不再无声**（照实记）：这一格从前直接 `return`，于是"我把它丢了"与"客人根本
-        // 没推上来"在读数里**长得一模一样**（两边都是客人超时）——`harness/sleeper` 那张脸
-        // 在真机上查了很久才缩到这一步。丢一趟留一行，谁丢的、丢给谁。
+    // **一次 `reserve`，代替一次全表扫**：判据与旧那一扫**逐字同一条**（谁给的 ＋ 记号），
+    // 只是从"扫遍全表找 match"变成"验这一格 match"。
+    //
+    // **但它不再无声**（照实记）：这一格从前直接 `return`，于是"我把它丢了"与"客人根本
+    // 没推上来"在读数里**长得一模一样**（两边都是客人超时）——`harness/sleeper` 那张脸
+    // 在真机上查了很久才缩到这一步。丢一趟留一行，谁丢的、丢给谁。
+    if !matches!(
+        mail::reserve(back),
+        Ok((_vestor, owner, mark)) if owner == from && mark == call::BACK
+    ) {
         say(&format!("rtc: no back hole from {}", from.get()));
-        return svc;
-    };
-    lap!(find);
+        return;
+    }
     match ask {
         call::Ask::Now => {
             let now = rtc::now(view);
-            lap!(dev);
             let _ = HolePie::from_token(back).push(&call::pack_time(now));
-            svc.t2 = runtime::env::chrono::clock().unwrap_or(0);
-            lap!(push);
             let _ = mail::release(back);
-            lap!(rel);
             say(&format!("rtc: asked now={now}"));
         }
         call::Ask::Arm(at) => {
             let now = rtc::now(view);
-            lap!(dev);
             match slot.arm(at, back, now) {
                 Ok(()) => {
-                    lap!(slot);
                     // **设备那一手紧随原语之后**（账记下了，硬件跟上）——与线那一层
                     // "接线是登记的直接后果"同一条分工。
                     rtc::arm(view, at);
-                    lap!(dwrite);
                     say(&format!(
                         "rtc: armed at={at} ier={} alarm={}",
                         rtc::irq_enabled(view),
                         rtc::armed(view)
                     ));
-                    lap!(say);
                     // 答码**先于**那一声：那一格已经占上，而设备要过一会儿才拉线。
                     let _ = HolePie::from_token(back).push(&[call::OK]);
-                    svc.t2 = runtime::env::chrono::clock().unwrap_or(0);
-                    lap!(push);
                 }
                 Err(fail) => {
-                    lap!(slot);
                     let _ = HolePie::from_token(back).push(&[call::fail_to_code(Some(fail))]);
-                    svc.t2 = runtime::env::chrono::clock().unwrap_or(0);
-                    lap!(push);
                     let _ = mail::release(back);
-                    lap!(rel);
                     // **照实记（这一行为什么在，以及为什么排在这里）**：拒绝路从前一个字都不
                     // 打，于是"sleeper 那台偶尔少一台"只剩客人侧一句 `alarm err=2`——**迟到
                     // 多少**量不出来。这一行把那格交出来：`late_ns` = 我拿自己的钟比对时 `at`
@@ -368,7 +269,6 @@ fn desk_(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) -> Svc {
             }
         }
     }
-    svc
 }
 
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（门牌 = 本域那枚服务入口）。

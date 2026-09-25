@@ -148,6 +148,40 @@ pub fn lend(entry: PieToken, mark: Mark, frame: &[u8]) -> Result<PieToken, ()> {
     Ok(back)
 }
 
+/// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`。
+///
+/// **照实记（用户裁定甲′；这是 [`lend`] 那一版丢掉的一格）**：`port::ship` 的 `to.seed()`
+/// 就是"**我给你的那一枚在你表里是几号**"，而 [`lend`] 把它扔了 ⇒ 收方只能**扫全表**按
+/// "谁给的 ＋ 记号"把这一枚认回来。门上量出来那一扫是**每帧 ~6.5 ms**（表 16 枚 ⇒ O(n²)，
+/// 见 `programs/src/driver/rtc/main.rs` 的读数）。故这一手把第二格交出来，好让它**随帧
+/// 一起过去**；帧由调用方自己推（[`push_to`]）。
+///
+/// 次序仍是契约的一半：**先铸、先交**（这一手），**再推**（下一手）。
+///
+/// **旧形状留着**：principal / coalition 那两面仍旧"借完就推、收方自己扫"——它们那一刀还没
+/// 搬，[`lend`] 因此一个字不改（一处定义，两处用家先分家，搬完再合并）。
+pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
+    let host = opened_by(entry).ok_or(())?;
+    let back = unseal_hole(mark)?;
+    match port::ship(
+        &mail::HolePie::from_token(back),
+        host,
+        Access::STORE,
+        Policy::NONE,
+    ) {
+        Ok(to) => Ok((back, to.seed())),
+        Err(_) => {
+            let _ = mail::release(back);
+            Err(())
+        }
+    }
+}
+
+/// 把一帧推上那扇门（[`lend_out`] 的后半）。
+pub fn push_to(entry: PieToken, frame: &[u8]) -> Result<(), ()> {
+    post(entry, frame)
+}
+
 /// 这枚孔的两格事实（**一次 `Reserve` 取回**）：**谁开的** + **刻的什么记号**。
 ///
 /// `owner`（`Reserve` 第二格）= 这扇门谁开的：副本共享同一事实，转手不变。
