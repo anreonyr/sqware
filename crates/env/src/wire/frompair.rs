@@ -1,8 +1,12 @@
-//! 返回值蒸馏——内核回写的 `(a0, a1)` → 域 Ret 载荷。
+//! 返回值蒸馏——内核回写的寄存器 → 域 Ret 载荷。
 //!
 //! 每个 `#[ret(T)]` 的 `T` 在此实现 [`FromPair`]；derive 生成的 `call()`
 //! 在非负路径调用 `<T as FromPair>::from_pair(v0, v1)`。错误路径由
 //! `EnvError::from_raw` 接管，故此处只见成功值。
+//!
+//! **宽返回那一格**（`#[ret3(T)]`，今天只有 `PieCall::Collect`）走 [`FromTriple`]：
+//! 两口寄存器装不下它那四件事实，故读 `a0..a2`。两条路的分工是**线宽**，不是语义——
+//! 能用一对说完的仍走 [`FromPair`]（三十格），别为了省一次改写把两件事挤进一格。
 //!
 //! # 本文件的校验口径（与 [`Wire`](crate::wire::Wire) 的分工）
 //!
@@ -10,7 +14,7 @@
 //!
 //! | | [`Wire::unpack`](crate::wire::Wire::unpack) | 本文件 `from_pair` |
 //! |---|---|---|
-//! | 数据来自 | **用户态**（a0..a5，完全可控） | **内核回写**（a0/a1，契约约束） |
+//! | 数据来自 | **用户态**（a0..a5，完全可控） | **内核回写**（a0/a1；宽那一格 a0..a2） |
 //! | 策略 | **拒绝**：非法位 / 超宽 → `Err(Decode)` | **按契约取位**（截断是位打包的一部分） |
 //! | 依据 | 不可信输入 | §"由内核保证" |
 //!
@@ -20,7 +24,7 @@
 //!
 //! 故这里的纪律是：**只对"纯靠类型收窄、没有任何契约依据"的取值设防**——今天这样的
 //! 取值一处也没有（全树没有 `impl FromPair for u8` 一类），故下面每一处 `from_pair`
-//! 都不校验。有契约依据的取值（如 `(PieToken, Permission, TaskId)` 从 v1 取位）不设防，
+//! 都不校验。有契约依据的取值（如 `(PieToken, Permission)` 从 v1 取位）不设防，
 //! 因为那个截断**就是**那条契约本身。
 //!
 //! **照实记（清掉的三处）**：本文件原先有两处 impl 自述"当前 ABI 无调用者…留着备复用"
@@ -31,7 +35,7 @@
 //! 故它同样没有调用者。三处一并删：本仓对这类格子的口径是**"机制退了，格也退"**
 //! （见 [`supply`](crate::wire::supply) 头注里 `Kind::Hole` 那一笔），"备复用"不在其中。
 
-use super::{PieToken, TaskId, TeamId, VirtAddr};
+use super::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 use crate::HoleDir;
 use crate::permission::Permission;
 
@@ -42,6 +46,19 @@ use crate::permission::Permission;
 /// `EnvError::from_raw` 分支，故此处只见成功值。
 pub trait FromPair: Sized {
     fn from_pair(v0: usize, v1: usize) -> Self;
+}
+
+/// 由内核回写的 `(a0, a1, a2)` 还原**那一格宽载荷**的契约（R3 蒸馏）。
+///
+/// 与 [`FromPair`] 只差**线宽**：一对寄存器说不完的返回走这一条。derive 生成的
+/// `call()` 对 `#[ret3(T)]` 那几个 variant 调 `<T as FromTriple>::from_triple(v0, v1, v2)`；
+/// **同一枚枚举里两条路可以并存**（今天只有 `PieCall` 是这样），按 variant 各走各的。
+///
+/// **为什么不是"给 [`FromPair`] 多加两个参数"**：那会让三十格只读 `a0`/`a1` 的
+/// 返回各自多背两个空位，而这一格只有一处用家。宽窄是**这一格自己的事实**，
+/// 故写在它自己的 impl 上。
+pub trait FromTriple: Sized {
+    fn from_triple(v0: usize, v1: usize, v2: usize) -> Self;
 }
 
 impl FromPair for () {
@@ -120,13 +137,22 @@ impl FromPair for (PieToken, Permission) {
     }
 }
 
-/// Collect 返回值打包：v0 = token（usize），v1 低 32 位 = permission bits、v1 高 32 位 = vestor task id。
-/// vestor = None 由内核编码为 `TaskId(0)`（哨兵与原 vestor=None 语义一致）。
-impl FromPair for (PieToken, Permission, TaskId) {
-    fn from_pair(v0: usize, v1: usize) -> Self {
-        let permission = Permission::from_bits_truncate(v1 as u32);
-        let vestor = TaskId(v1 >> 32);
-        (PieToken::new(v0), permission, vestor)
+/// `Collect` 返回值打包（本文件唯一一格 [`FromTriple`]）：`v0` = token、
+/// `v1` = owner 高 32 位 | vestor 低 32 位、`v2` = **整一枚记号**。
+///
+/// `v0`/`v1` 两条口径与内核那边的 `Reserve` **逐位同形**：`a0` 兼作"成 / 不成"
+/// 那一格（用户态按符号读 `EnvError`），故只装得下小号，记号整枚另占一格——
+/// 见 `env::fid` 的 `Collect`（口径的唯一真相）。两个 `TaskId` 都读 `0` 作哨兵
+/// （内核在"这一枚不是活着的孔"时两格都答哨兵），故**顺序不可换**：
+/// 第三格是 vestor（谁授的）、第二格是 owner（资源谁开的），换一位就是另一个问题。
+impl FromTriple for (PieToken, TaskId, TaskId, Mark) {
+    fn from_triple(v0: usize, v1: usize, v2: usize) -> Self {
+        (
+            PieToken::new(v0),
+            TaskId(v1 & 0xffff_ffff),
+            TaskId(v1 >> 32),
+            Mark::new(v2 as u64),
+        )
     }
 }
 

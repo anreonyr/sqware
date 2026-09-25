@@ -95,7 +95,7 @@ impl EnvError {
 
 /// # Safety
 /// 唯一碰汇编的原语：a7 = 调用号（slot）、a0..a5 = 参数（packed 数组）→ 任务
-/// **`ebreak`** → 读回 a0/a1。
+/// **`ebreak`** → 读回 a0..a2。
 ///
 /// 为什么不是 `ecall`：`ecall` 的语义随特权级变化——U 态 `ecall`（scause=8）委派
 /// 给 S 态，但 **S 态 `ecall`（scause=9）是 SBI 调用，进 M 态固件**（`medeleg`
@@ -108,24 +108,30 @@ impl EnvError {
 /// **`#[inline(never)]` 是硬不变量**：该 asm 块一旦被内联进调用方，调用方读回的
 /// 返回值会错（实测：同样的 `Collect` 调用，内联时 a0 恒 0，独立函数时正确）。
 /// 与仓库对裸 asm 的一贯纪律同源：**内联会改写我读回的寄存器**。
+///
+/// **为什么读回三格**：绝大多数调用只读 `a0`/`a1`（`a0` 兼作"成 / 不成"那一格），
+/// 而**宽返回那一格**（`#[ret3(T)]`，今天只有 [`PieCall::Collect`](crate::PieCall::Collect)）
+/// 要多交两件事实出来——`a2` 本来就是这一次调用的 `inlateout`（内核本来就可以写它），
+/// 故这里只是**把值绑出来**：不多一次读、也不改任何一格的约定。宽的那一格自己在
+/// [`FromTriple`](crate::wire::FromTriple) 里说清 `a0..a2` 各是什么。
 #[cfg(target_arch = "riscv64")]
 #[inline(never)]
-pub unsafe fn trap(slot: usize, args: [usize; 6]) -> (usize, usize) {
-    let (v0, v1);
+pub unsafe fn trap(slot: usize, args: [usize; 6]) -> (usize, usize, usize) {
+    let (v0, v1, v2);
     unsafe {
         core::arch::asm!(
             "ebreak",
             inlateout("a0") args[0] => v0,
             inlateout("a1") args[1] => v1,
             inlateout("a7") slot => _,
-            inlateout("a2") args[2] => _,
+            inlateout("a2") args[2] => v2,
             inlateout("a3") args[3] => _,
             inlateout("a4") args[4] => _,
             inlateout("a5") args[5] => _,
             options(nostack),
         );
     }
-    (v0, v1)
+    (v0, v1, v2)
 }
 
 /// 非 RISC-V 构建（**只可能是宿主侧测试**）：`ebreak` 入口在这里没有对应物。
@@ -135,6 +141,6 @@ pub unsafe fn trap(slot: usize, args: [usize; 6]) -> (usize, usize) {
 /// 面变成宿主可测的；`call()` 那条路（唯一会走到这里的）在宿主上必然 panic —— 这是
 /// 有意的：**没有汇编就没有调用**，不许静默返回假值。
 #[cfg(not(target_arch = "riscv64"))]
-pub unsafe fn trap(_slot: usize, _args: [usize; 6]) -> (usize, usize) {
+pub unsafe fn trap(_slot: usize, _args: [usize; 6]) -> (usize, usize, usize) {
     unimplemented!("env::ecall::trap 只在 riscv64 上有实现（宿主侧测试不应触发真实调用）")
 }

@@ -95,15 +95,23 @@ fn main() -> Reason {
 }
 
 /// 认领本端那三枚：记号认孔，剩下那一枚是组。
+///
+/// **一次枚举，不再逐枚追问**（照实记：`Collect` 加宽那一刀的收益）：记号随枚举一起回来，
+/// 故这里从前那 `mail::reserve(tok)` 的一问（一枚一次 envcall）没有了。
+///
+/// **判"这一枚不是孔"的口径没变，只是换了一格读**：从前读的是 `reserve` 答不答得出
+/// （`Err` ⇒ 不是孔，或它已封印），今天读 `mark == Mark::NONE`——内核在 `Collect` 里
+/// 与 `reserve` **同一份判据**（先问死活、再问是不是孔），故两类情形落到的还是同一格。
 fn discover() -> (Option<PieToken>, Option<PieToken>, Option<PieToken>) {
     let (mut group, mut member, mut report) = (None, None, None);
-    for (tok, _perm, _vestor) in mail::pies() {
-        match mail::reserve(tok) {
-            Ok((_, _, mark)) if mark == Mark::of("member") => member = Some(tok),
-            Ok((_, _, mark)) if mark == Mark::of("report") => report = Some(tok),
-            Ok(_) => {}
+    for p in mail::pies() {
+        if p.mark == Mark::of("member") {
+            member = Some(p.token);
+        } else if p.mark == Mark::of("report") {
+            report = Some(p.token);
+        } else if p.mark == Mark::NONE {
             // 记号只长在孔上 ⇒ 认不出记号的就是组。
-            Err(_) => group = Some(tok),
+            group = Some(p.token);
         }
     }
     (group, member, report)

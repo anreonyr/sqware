@@ -2,7 +2,7 @@
 //!
 //! 本文件 = **契约核心**：[`Wire`] trait、[`Decode`] 失败域、基元与权限位的 impl。
 //! 字段**词汇表**按语义分居三个子模块（**声明次序即下表次序**，与下面的 `pub use` 同名）：
-//!   - [`frompair`] —— 内核回写的 `(a0, a1)` → 域 Ret 载荷蒸馏；
+//!   - [`frompair`] —— 内核回写的 `(a0, a1)`（宽那一格 `a0..a2`）→ 域 Ret 载荷蒸馏；
 //!   - [`handle`] —— 语义句柄（[`PieToken`] / [`TaskId`] / [`TeamId`] / [`VirtAddr`]）＋ 记号 [`Mark`]；
 //!   - [`name`] —— 定长名字（[`NAME_LEN`] / [`Name`] / [`NameError`]）。
 //!
@@ -32,7 +32,7 @@ pub mod frompair;
 pub mod handle;
 pub mod name;
 
-pub use frompair::FromPair;
+pub use frompair::{FromPair, FromTriple};
 pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 pub use name::{NAME_LEN, Name, NameError};
 

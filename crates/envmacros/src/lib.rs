@@ -7,6 +7,10 @@
 //!   * `Ret` 枚举                   —— 每个标 `#[ret(T)]` 的 variant 一个载荷变体
 //!   * `call(self) -> EnvResult<Ret>`—— 触发并判译（负值即错误）
 //!
+//! **两种返回宽度**：`#[ret(T)]` 走 `wire::FromPair`（读 `a0`/`a1`），`#[ret3(T)]` 走
+//! `wire::FromTriple`（读 `a0..a2`）。宽度是**那一格载荷自己的事实**：一对寄存器说不完的
+//! 才标 `ret3`（今天只有 `PieCall::Collect`），其余三十格一个字不改。
+//!
 //! 通用性：`slot/pack/unpack` 与 `Ret` 只依赖 `Wire`（不绑 env 错误/汇编），sbi 等
 //! S-mode 调用封装未来可复用同一 derive；`call` 则绑定 env 的 `EnvResult`/汇编入口。
 
@@ -19,6 +23,21 @@ use syn::{Attribute, Data, DeriveInput, Fields, Ident, Lit, Type, parse_macro_in
 fn ret_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
     for attr in attrs {
         if attr.path().is_ident("ret") {
+            let ty = attr.parse_args::<Type>()?;
+            return Ok(Some(ty));
+        }
+    }
+    Ok(None)
+}
+
+/// 解析 `#[ret3(T)]` 属性里的返回类型（**宽返回那一格**：读 `a0..a2`）。
+///
+/// 与 [`ret_type`] 分成两个函数、而不是一个函数认两种拼法：**一格载荷最多有一个返回
+/// 宽度**，两处各自只认自己那个属性名，撞上了（同一 variant 两个都标）由
+/// [`variants`] 当场报错，而不是让后一个静默覆盖前一个。
+fn ret_wide_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
+    for attr in attrs {
+        if attr.path().is_ident("ret3") {
             let ty = attr.parse_args::<Type>()?;
             return Ok(Some(ty));
         }
@@ -52,16 +71,26 @@ fn class(attrs: &[Attribute]) -> syn::Result<usize> {
     ))
 }
 
-/// 从 `DeriveInput` 提取 variant 列表：`[(name, fields, ret_type)]`。
-fn variants(ast: &DeriveInput) -> syn::Result<Vec<(Ident, Fields, Option<Type>)>> {
+/// 从 `DeriveInput` 提取 variant 列表：`[(name, fields, ret_type, wide)]`。
+///
+/// `wide` = 这一格标的是 `#[ret3(T)]`（读 `a0..a2`），见 [`ret_wide_type`]。
+fn variants(ast: &DeriveInput) -> syn::Result<Vec<(Ident, Fields, Option<Type>, bool)>> {
     let data = match &ast.data {
         Data::Enum(e) => e,
         _ => return Err(syn::Error::new_spanned(ast, "Envcall only supports enums")),
     };
     let mut out = Vec::new();
     for v in data.variants.iter() {
-        let ret = ret_type(&v.attrs)?;
-        out.push((v.ident.clone(), v.fields.clone(), ret));
+        let narrow = ret_type(&v.attrs)?;
+        let wide = ret_wide_type(&v.attrs)?;
+        if narrow.is_some() && wide.is_some() {
+            return Err(syn::Error::new_spanned(
+                &v.ident,
+                "改一格载荷的返回宽度：`#[ret(T)]` 与 `#[ret3(T)]` 只能标一个",
+            ));
+        }
+        let is_wide = wide.is_some();
+        out.push((v.ident.clone(), v.fields.clone(), narrow.or(wide), is_wide));
     }
     Ok(out)
 }
@@ -116,7 +145,7 @@ fn expr_for(v: &Ident, f: &Fields, binds: &[Ident]) -> TokenStream2 {
     }
 }
 
-#[proc_macro_derive(Envcall, attributes(call, ret))]
+#[proc_macro_derive(Envcall, attributes(call, ret, ret3))]
 pub fn derive_envcall(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let name = &ast.ident;
@@ -135,11 +164,22 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
     let mut vs: Vec<Ident> = Vec::new();
     let mut flds: Vec<Fields> = Vec::new();
     let mut rets: Vec<Option<Type>> = Vec::new();
-    for (v, f, r) in vols {
+    let mut wides: Vec<bool> = Vec::new();
+    for (v, f, r, w) in vols {
         vs.push(v);
         flds.push(f);
         rets.push(r);
+        wides.push(w);
     }
+    // 这一枚枚举里有没有宽返回的那一格——决定 `call()` 绑几口寄存器。
+    let any_wide = wides.iter().any(|w| *w);
+    // 第三口绑不绑名字：只有宽那一格用得上它，其余枚举绑成 `_v2`（不绑名字就不会有
+    // "未使用的变量"那一 warn，而 `a2` 照样按 ABI 读回——线宽不因没人读而改变）。
+    let v2_bind: TokenStream2 = if any_wide {
+        quote! { v2 }
+    } else {
+        quote! { _v2 }
+    };
 
     let slot_arms: Vec<_> = (0..nkind)
         .map(|i| {
@@ -231,8 +271,14 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
         .map(|i| {
             let v = &vs[i];
             let ty = rets[i].clone().expect("ret type");
-            quote! {
-                #i => #ret_name::#v(<#ty as crate::wire::FromPair>::from_pair(v0, v1))
+            if wides[i] {
+                quote! {
+                    #i => #ret_name::#v(<#ty as crate::wire::FromTriple>::from_triple(v0, v1, v2))
+                }
+            } else {
+                quote! {
+                    #i => #ret_name::#v(<#ty as crate::wire::FromPair>::from_pair(v0, v1))
+                }
             }
         })
         .collect();
@@ -295,7 +341,7 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
                 let (slot, args) = match self {
                     #(#call_arms),*
                 };
-                let (v0, v1) = unsafe { crate::ecall::trap(slot, args) };
+                let (v0, v1, #v2_bind) = unsafe { crate::ecall::trap(slot, args) };
                 if (v0 as isize) < 0 {
                     Err(crate::ecall::make_err(crate::ecall::EnvError::from_raw(
                         v0 as isize,

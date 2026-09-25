@@ -117,16 +117,43 @@ pub fn revoke(dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
     }
 }
 
-/// 收拢：本任务权限表第 `index` 份（token + permission + vestor）。
-/// 越界 → `(0, 空权限, 0)`——哨兵不报错。
+/// 表里的一枚（[`collect`] 收拢出来的那一格）——**四件事实一起**，故不必再问第二次。
 ///
-/// **唯一的枚举手段**：`protocol::startup::moor()` 靠它发现「父域授给我的那枚门闩」。
-/// 已知句柄求事实用 [`reserve`]；原始自持 pie（vestor = None）编码为 `TaskId(0)`，
-/// 与 `UnitCall::SelfId` 的"无上下文也是 0"是**同一条哨兵口径**（0 = 这一格没有答案）。
-pub fn collect(index: usize) -> EnvResult<(PieToken, Permission, TaskId)> {
+/// 字段名就是判据：两个 `TaskId` **不可混用**（[`reserve`] 头上那段"三个身份"）——
+/// 一个装元组装不下的地方，正是"两个号挨着、谁是谁"最容易错的地方。
+///
+/// 两处哨兵与 `Reserve` 同一条口径：`TaskId(0)` = 这一格没有答案（原初自持 / 已封印 /
+/// 不是孔），[`Mark::NONE`] = 记号那一格没有答案（记号只长在孔上）。
+#[derive(Clone, Copy)]
+pub struct Pie {
+    /// 这一枚在本任务表里的号（[`unseal_hole`] 那一族铸的）。
+    pub token: PieToken,
+    /// **谁授的**（转手即改写）；`0` = 原初自持。
+    pub vestor: TaskId,
+    /// **这扇门谁开的**（副本共享同一事实）；`0` = 查不出（已封印 / 不是孔）。
+    pub owner: TaskId,
+    /// **这条路的名字**（[`unseal_hole`] 刻的那一格）；`NONE` = 这一枚不是孔。
+    pub mark: Mark,
+}
+
+/// 收拢：本任务权限表第 `index` 份。越界 → 四格全哨兵（见 [`Pie`]），**不报错**。
+///
+/// **唯一的枚举手段**（[`reserve`] 是它的对偶：一个按位置问、一个按句柄问）。
+/// 一次调用答四格，故"扫一遍这张表"**不必每一枚再问一次 `reserve`**——那一问是一次
+/// envcall（~55 µs），表 16 枚 ⇒ 一趟扫描 6.5 ms（读数见
+/// `programs/src/driver/rtc/main.rs` 与 `444d1f3`）。
+///
+/// 原始自持 pie（vestor = None）编码为 `TaskId(0)`，与 `UnitCall::SelfId` 的"无上下文
+/// 也是 0"是**同一条哨兵口径**（0 = 这一格没有答案）。
+pub fn collect(index: usize) -> EnvResult<Pie> {
     let r = PieCall::Collect { index }.call()?;
     match r {
-        PieCallRet::Collect(r) => Ok(r),
+        PieCallRet::Collect((token, vestor, owner, mark)) => Ok(Pie {
+            token,
+            vestor,
+            owner,
+            mark,
+        }),
         _ => unreachable!(),
     }
 }
@@ -140,6 +167,10 @@ pub fn collect(index: usize) -> EnvResult<(PieToken, Permission, TaskId)> {
 /// **名字照实记**：我起初把它叫 `holes()`——**那个名字是错的**：`Collect` 枚举的是整张
 /// 权限表（孔 / 铃 / 页 / 组 / 别人给的副本都在里面），不只是孔。故叫 [`pies`]。
 ///
+/// **每一枚交出去的是四件事实**（[`Pie`]）：token / vestor / owner / 记号。这是 `Collect`
+/// 宽返回的唯一用家——从前那三格（token / permission / vestor）里，**扫表的人都还要再问
+/// 一次 `reserve`** 才拿得到 owner 与记号，而那一问是每一枚一次 envcall。
+///
 /// **`Err` 那一格就此打住**（用户裁定甲）：调用方**无从分辨**"表读不动"与"这一遍扫完"。
 /// 代价照实记两条：① 约那一侧的 `Claim::Unread`（第三个变体）随之退场；② 另外三处
 /// （`operator/server.rs::claim` 与两处 `client.rs::take`）原先"读不动就整趟作废"的
@@ -150,7 +181,7 @@ pub struct Pies {
 }
 
 impl Iterator for Pies {
-    type Item = (PieToken, Permission, TaskId);
+    type Item = Pie;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {
@@ -158,7 +189,7 @@ impl Iterator for Pies {
         }
         match collect(self.index) {
             // 越界哨兵：这一遍扫完了（`Collect` 契约：不报错）。
-            Ok((token, _, _)) if token == PieToken::NONE => {
+            Ok(one) if one.token == PieToken::NONE => {
                 self.done = true;
                 None
             }
@@ -174,7 +205,7 @@ impl Iterator for Pies {
     }
 }
 
-/// 我这张权限表里的每一份（[`collect`] 的 0 起枚举，哨兵收尾）。
+/// 我这张权限表里的每一枚（[`collect`] 的 0 起枚举，哨兵收尾）。
 pub fn pies() -> Pies {
     Pies {
         index: 0,

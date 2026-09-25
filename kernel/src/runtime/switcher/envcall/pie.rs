@@ -377,29 +377,48 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-/// 收拢：报出本任务权限表第 `index` 份——**唯一的枚举手段**（`protocol::startup::moor()`
-/// 靠它发现「父域授给我的那枚门闩」这类未知句柄）。已知句柄求事实用 `Reserve`。
+/// 收拢：报出本任务权限表第 `index` 份——**唯一的枚举手段**（对偶是 `Reserve`：一个按
+/// 位置问、一个按句柄问）。
 ///
-/// 越界 → 全哨兵（token 0 / 权限空 / vestor 0），**不报错**。
-/// a0 = token；a1 = 权限位（低 32）| vestor task id（高 32）。
+/// 越界 → 四格全哨兵（token `NONE` / vestor 0 / owner 0 / 记号 `NONE`），**不报错**。
+/// `a0` = token；`a1` = **owner 高 32 位 | vestor 低 32 位**（与 [`reserve`] 的 `a0`
+/// **逐位同形**——同一份"两个小号挤一格"的口径，故用户侧那两处拆法也只写一遍）；
+/// `a2` = **整一枚记号**（64 位）。
 /// 锁序：先克隆出 pie（还 pies 锁），再取快照求 vestor——两者同为 L3，绝不嵌套。
+///
+/// **四格一起答，是为了省掉"每扫一枚再问一次 `Reserve`"**：那一问是一次 envcall，
+/// 表 16 枚 ⇒ 一趟扫描 6.5 ms（读数见 `programs/src/driver/rtc/main.rs`）。
+///
+/// **owner 与记号只对"活着的孔"有意义，判据与 [`reserve`] 逐条对齐**（顺序也一样：
+/// 先问死活，再问"是不是孔"）。两处差别只有一格：`Reserve` 用 `Dead` / `Denied`
+/// 把两类答不出的情形分开，而本函数**从不报错**（`Collect` 的契约），故那两类在这里
+/// 一律落成哨兵——"答不出"与"没有"同形，读的人只须知道"这一条候选不成立"。
 fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
     let pie = current()
         .running_task()
         .and_then(|t| t.pies.lock().get(index).cloned());
-    let (token, perm_bits, vestor_id) = match pie {
-        Some(p) => (
-            p.token(),
-            p.permission().bits() as usize,
-            gate::vestor(&p, &gate::snap()).unwrap_or(TaskId::new(0)),
+    let (token, vestor_id, owner_id, mark) = match &pie {
+        Some(p) => {
+            let vestor = gate::vestor(p, &gate::snap()).unwrap_or(TaskId::new(0));
+            // `AnyPie::owner()` 自带存活闸（封印 ⇒ `None`）；再过一道"是不是孔"。
+            let (owner, mark) = match (p.owner(), p) {
+                (Some(o), AnyPie::Hole(h)) => (o, h.meta().mark()),
+                _ => (TaskId::new(0), Mark::NONE),
+            };
+            (p.token(), vestor, owner, mark)
+        }
+        None => (
+            PieToken::NONE,
+            TaskId::new(0),
+            TaskId::new(0),
+            Mark::NONE,
         ),
-        None => (PieToken::NONE, 0, TaskId::new(0)),
     };
     frame.gpr.set_x(Gprs::A0, token.get());
-    frame.gpr.set_x(
-        Gprs::A1,
-        (vestor_id.get() << 32) | (perm_bits & 0xffff_ffff),
-    );
+    frame
+        .gpr
+        .set_x(Gprs::A1, (owner_id.get() << 32) | (vestor_id.get() & 0xffff_ffff));
+    frame.gpr.set_x(Gprs::A2, mark.get() as usize);
     Outcome::Resume
 }
 

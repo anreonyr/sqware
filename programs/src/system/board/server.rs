@@ -183,15 +183,17 @@ fn settle(
 ///   `router` 与 `guest` 两位在机上，后到的那位认到了前一位的孔）；
 /// - **记号 == `board`** —— 那一枚是**板路**上的一枚（客侧 `seat` 铸它时刻的就是这条路
 ///   的名字 `LINK`；客人自己铸的另两枚刻的是 `ask` / `entry`）。
+///
+/// **照实记（`Collect` 加宽那一刀）**：本函数与 [`lane_for`] / [`ask_of`] 从前是**每一枚**
+/// 都要 `bcall::opened_by` 或 `bcall::marked_as` 各问一次 `Reserve`（一枚一到两次 envcall，
+/// 板这一台一轮要扫三遍）；今天那两格随枚举一起回来，判据与哨兵口径**一个字没变**——
+/// `owner == who` 在这里等价于 `opened_by(token) == Some(who)`，因为 `who` 是真号、
+/// 而"查不出"那一格答 `0`（见 `runtime::env::pie::Pie` 的哨兵口径）。
 fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
     let board = Mark::of(LINK);
     mail::pies()
-        .find(|(token, _, vestor)| {
-            *vestor == assembler
-                && bcall::opened_by(*token) == Some(who)
-                && bcall::marked_as(*token) == Some(board)
-        })
-        .map(|(token, _, _)| token)
+        .find(|p| p.vestor == assembler && p.owner == who && p.mark == board)
+        .map(|p| p.token)
 }
 
 /// 按**名字**认领这一位的死亡道（`gone-<名字>`；装配者铸、转授给本线程）。
@@ -202,8 +204,8 @@ fn reply_of(assembler: TaskId, who: TaskId) -> Option<PieToken> {
 fn lane_for(name: Name) -> Option<PieToken> {
     let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
     mail::pies()
-        .find(|(token, _, _)| bcall::marked_as(*token) == Some(want))
-        .map(|(token, _, _)| token)
+        .find(|p| p.mark == want)
+        .map(|p| p.token)
 }
 
 /// 本线程的 `who → 死亡道` 小表（一位客人一格；满了就丢——那时板上已经不止 8 位客人）。
@@ -267,10 +269,8 @@ fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
 fn ask_of(who: TaskId) -> Option<PieToken> {
     let ask = ASK_MARK;
     mail::pies()
-        .find(|(token, _, _)| {
-            bcall::opened_by(*token) == Some(who) && bcall::marked_as(*token) == Some(ask)
-        })
-        .map(|(token, _, _)| token)
+        .find(|p| p.owner == who && p.mark == ask)
+        .map(|p| p.token)
 }
 
 /// 板线程的读数：**只在出岔子时说话**（正常一轮什么都不打）。

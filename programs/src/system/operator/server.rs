@@ -668,17 +668,15 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
 ///   ⇒ 读不动之前已经认到的那一枚**照旧交出去**。今天够不着（那条 `Err` 是防御读数），
 ///   但它是**松开**，不是等价。
 fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieToken> {
-    let mut hits = mail::pies().filter(|(token, _, _)| {
-        ocall::opened_by(*token) == Some(who) && ocall::marked_as(*token) == Some(mark)
-    });
-    let (first, _, _) = hits.next()?;
+    let mut hits = mail::pies().filter(|p| p.owner == who && p.mark == mark);
+    let first = hits.next()?;
     // **第二枚 ⇒ "只可能有一枚"那条纪律破了**：说话（`more` 那一格就是这句话）。
     if hits.next().is_some() {
         if let Some(note) = more {
             say(note);
         }
     }
-    Some(first)
+    Some(first.token)
 }
 
 /// 持树者的读数：**只在出岔子时说话**（正常一轮什么都不打）。

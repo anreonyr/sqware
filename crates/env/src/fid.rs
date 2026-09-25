@@ -505,12 +505,32 @@ pub enum PieCall {
     /// 收回授与他人的副本：dst_id + token（`token` = 该副本在**对端表里**的句柄）。
     #[ret(())]
     Revoke { dst: TaskId, token: PieToken },
-    /// 收拢：报出本任务权限表第 `index` 份（token + permission + vestor）。
-    /// 越界 → `PieToken(0)`（无效哨兵，不报错）；vestor = None 时返 `TaskId(0)`。
+    /// 收拢：报出本任务权限表第 `index` 份——**这一枚是几号 / 谁授的 / 谁开的 / 刻的什么**。
+    /// 越界 → 四格全哨兵（`PieToken::NONE` / `TaskId(0)` / `TaskId(0)` / `Mark::NONE`），
+    /// **不报错**。
     ///
-    /// **唯一的枚举手段**：`protocol::startup::moor()` 靠它发现「父域授给我的那枚门闩」
-    /// （未知句柄）。已知句柄求事实用 `Reserve`。
-    #[ret((PieToken, Permission, TaskId))]
+    /// **唯一的枚举手段**（[`PieCall::Reserve`] 是它的对偶：一个**按位置**问，一个**按句柄**问）。
+    /// 四格一起答，是为了让"扫一遍表"这件事**不必每一枚再问一次 `Reserve`**：那一问是
+    /// 一次 envcall（~55 µs），表 16 枚 ⇒ 一趟扫描 6.5 ms 的读数就是这么来的
+    /// （见 `programs/src/driver/rtc/main.rs`）。
+    ///
+    /// **宽返回（本枚举唯一一格 [`FromTriple`](crate::wire::FromTriple)）**：
+    /// `a0` = token；`a1` = **`owner` 高 32 位 | `vestor` 低 32 位**（与 [`PieCall::Reserve`]
+    /// 的 `a0` **逐位同形**，两个号都远小于 2^32）；`a2` = **整一枚记号**（64 位）。
+    /// 记号整枚独占一格的理由与 `Reserve` 那条一样：`a0` 兼作"成 / 不成"那一格，
+    /// 64 位记号有一半最高位是 1，挤进任何"按符号读"的寄存器都会被读成出错。
+    ///
+    /// **哨兵的三重含义与 `Reserve` 同一份判据**：越界 / **这一枚不是活着的孔**（已封印、
+    /// 或本来就无记号——Pole/Nole/Tole）⇒ `owner` 与记号都答 `0` / `NONE`。故**收拢这一格
+    /// 从不判死活**：答不出的那两格与"没有"同形，读的人只须知道"这一条候选不成立"。
+    ///
+    /// **照实记（撤掉的一格：`permission`）**：它从前答的是（token + permission + vestor）。
+    /// 全树七处调用点**没有一处在读 `permission`**（清一色 `_perm`），而那一格自述的
+    /// 唯一用家 `protocol::startup::moor()` **在树里不存在**（只有三处注提到这个名字）。
+    /// 本仓对这类格子的口径是"没有读者的格不留在 ABI 上"（见 `wire::frompair` 头注里
+    /// 清掉的那三处），故这一刀把它**撤掉**、换成真正有三处读者的 `owner` 与记号。
+    /// 这是**撤掉一格能力**，不是等价改写：要问"我这枚能做什么"今天没有原语答得出。
+    #[ret3((PieToken, TaskId, TaskId, Mark))]
     Collect { index: usize },
     /// 查这枚门闩的来历：`vestor`（谁授的）+ `owner`（资源谁开的）+ **记号**（第三格）。
     ///

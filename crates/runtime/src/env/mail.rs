@@ -45,7 +45,7 @@ fn now_ns() -> EnvResult<u64> {
 // 整面转出（**不挑**）：转发是"路径不变"的保证，一旦按"今天谁在用"挑，下一个调用点就得
 // 先认出这层壳才知道自己该写 `pie::`——那正是这一层想免掉的认知成本。
 pub use super::pie::{
-    AnyPie, Pies, accord, collect, narrow, open, pies, release, reserve, revoke, seal, shut,
+    AnyPie, Pie, Pies, accord, collect, narrow, open, pies, release, reserve, revoke, seal, shut,
     table_size, unseal_hole, unseal_nole, unseal_pole,
 };
 

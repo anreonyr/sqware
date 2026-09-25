@@ -125,9 +125,9 @@ pub fn take(link: &Quay, board: TaskId) -> Option<PieToken> {
     let at = Name::new(LINK).ok()?;
     let _ = link.find(at)?;
     let mut found = None;
-    for (token, _perm, vestor) in mail::pies() {
-        if vestor == board {
-            found = Some(token);
+    for p in mail::pies() {
+        if p.vestor == board {
+            found = Some(p.token);
         }
     }
     found
