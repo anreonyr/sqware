@@ -11,7 +11,7 @@ use runtime::env::mail::{self, HolePie};
 
 use super::core::Fail;
 use super::frame;
-use crate::session::slip::Slip;
+use crate::communication::sender::Sender;
 use crate::session::{Pier, Quay};
 
 /// 客户手里那一条线：一条泊位（本端读投递、写排空）。
@@ -46,14 +46,10 @@ impl Line {
         )
         .map_err(|_| ())
         .and_then(|_| {
-            // 登记那一句：**上船台**（这一族一问只有一形：动作码 ＋ 坐标）——装与发都不在这一层
-            // 写字节（缓冲是船台自己那只：这一形定长 [`frame::Occupy::LEN`]）。
-            Slip::<frame::Occupy>::seal(entry)
-                .load(frame::Occupy::of(key))
-                // **装不上这一格是"没做成"**：真落到这里只可能是本族的 `Buf` 被改窄了
-                // （见 `Slip::load` 的照实记）。
-                .map_err(|_| ())?
-                .ship()
+            // 登记那一句：**走 `Sender`**（这一族一问只有一形：动作码 ＋ 坐标）——装与发都不在这一
+            // 层写字节（缓冲在这一帧的栈上：这一形定长 [`frame::Occupy::LEN`]）。
+            Sender::<frame::Occupy>::from_token(entry)
+                .send(frame::Occupy::of(key), Wait::Forever)
                 .map_err(|_| ())
         });
         if sent.is_err() {

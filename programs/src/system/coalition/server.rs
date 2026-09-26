@@ -23,7 +23,7 @@ use env::Wait;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::debug;
 use protocol::session::Quay;
-use protocol::session::slip::Slip;
+use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::coalition as ccall;
@@ -134,13 +134,12 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
         return;
     }
     // 答一句：**形由 [`ccall::Union`] 说**（三种答形合一：格状态 / 一格答 / 一窗号）——装与发
-    // 都不在这一层写字节（缓冲是船台自己那只＝本族最大那一形）。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`）；
+    // 都不在这一层写字节（缓冲在这一帧的栈上＝本族最大那一形）。
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）；
     // 真到了那里，这一答就发不出去。
-    let _ = Slip::<ccall::Union>::seal(back)
-        .load(answer(book, face, from, ask))
-        .ok()
-        .map(|s| s.ship());
+    let _ = Sender::<ccall::Union>::from_token(back)
+        .send(answer(book, face, from, ask), Wait::Forever)
+        .ok();
     let _ = mail::release(back);
 }
 

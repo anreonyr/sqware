@@ -148,7 +148,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
 
     // 3. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::driver::supply::server::serve` 的
     //    `alive`：本域读的那枚孔命随本端，故收场靠探活，不靠"读不出"）。
-    // 收帧那一只由本域给（**发**那一侧的缓冲在船台自己身上，见 `serve`）。
+    // 收帧那一只由本域给（**发**那一侧的缓冲在 `Sender::send` 的栈帧上，见 `serve`）。
     let mut ask = [0u8; supply::ORDER_CAP];
     // 取源只有一个：boot 的配对块。持树者那条提示之路不再经过这里（见文件头）。
     let source = |key: plan::Key| boot.token(key);

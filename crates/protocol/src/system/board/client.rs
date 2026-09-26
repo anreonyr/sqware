@@ -12,7 +12,8 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
 
 use crate::session::Quay;
-use crate::session::slip::Slip;
+use crate::communication::receiver::Receiver;
+use crate::communication::sender::Sender;
 use crate::system::board as bcall;
 use crate::system::board::Fail;
 pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
@@ -89,12 +90,8 @@ pub fn register(
     let seed = bcall::ship(entry, board).map_err(|_| Fail::Denied)?;
     // 装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
-    Slip::<bcall::Req>::seal(say)
-        .load(bcall::Req::Register { name, seed })
-        // **装不上这一格是"没做成"**：真落到这里只可能是本族的 `Buf` 被改窄了
-        // （见 `Slip::load` 的照实记）。
-        .map_err(|_| Fail::Denied)?
-        .ship()
+    Sender::<bcall::Req>::from_token(say)
+        .send(bcall::Req::Register { name, seed }, Wait::Forever)
         .map_err(|_| Fail::Unknown)?;
     hear_rep(link, millis)
 }
@@ -108,10 +105,8 @@ pub fn register(
 /// [`UNKNOWN`](bcall::UNKNOWN)。
 pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
     // 孔是单槽：与 [`register`] 同一条路，只是这一条报短（长度由形状说）。
-    Slip::<bcall::Req>::seal(say)
-        .load(bcall::Req::Evict)
-        .map_err(|_| Fail::Denied)?
-        .ship()
+    Sender::<bcall::Req>::from_token(say)
+        .send(bcall::Req::Evict, Wait::Forever)
         .map_err(|_| Fail::Unknown)?;
     hear_rep(link, millis)
 }
@@ -134,8 +129,8 @@ fn hear_rep(link: &Quay, millis: Wait) -> Result<u8, Fail> {
     let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 收帧的缓冲由调用方给：这条答话路只有板会写 ⇒ 本族那只空缓冲（[`Message::EMPTY`]）就够。
     let mut buf = bcall::Union::EMPTY;
-    Slip::<bcall::Union>::seal(pier.hole())
-        .land(buf.as_mut(), millis)
+    Receiver::<bcall::Union>::from_token(pier.hole())
+        .recv(buf.as_mut(), millis)
         .map(bcall::Union::get)
         // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
         .map_err(|_| Fail::Unknown)

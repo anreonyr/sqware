@@ -12,7 +12,7 @@ use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
 use protocol::debug;
 use protocol::driver::line;
-use protocol::session::slip::Slip;
+use protocol::communication::sender::Sender;
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
@@ -61,13 +61,12 @@ pub fn run(up: &Up, held: line::client::Line, host: &mut Host) -> Result<(), Fai
             let now = rtc::now(view);
             rtc::clear(view);
             if let Ring::Rang { back, now } = host.ring(now) {
-                // 那一声**上船台**（答那一形：一个时刻）——与客人收它走的是同一张表。
-                match Slip::<Time>::seal(back)
-                    .load(Time::of(now))
+                // 那一声**走 `Sender`**（答那一形：一个时刻）——与客人收它走的是同一张表。
+                match Sender::<Time>::from_token(back)
+                    .send(Time::of(now), Wait::Forever)
                     .ok()
-                    .map(|s| s.ship())
                 {
-                    Some(Ok(())) => debug!("rtc: rang n={} now={now}", host.heard()),
+                    Some(()) => debug!("rtc: rang n={} now={now}", host.heard()),
                     // **推不出去 = 那位客人没了**（它开的那枚孔随它退场封印）。那一格已经空着
                     // （取走就是兑现），故这里只报一行，不重试、不补发——**读数也不加一**。
                     _ => debug!("rtc: notify failed"),

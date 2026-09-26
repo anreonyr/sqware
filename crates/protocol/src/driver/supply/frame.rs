@@ -6,15 +6,15 @@
 //! 那两样：**一张头表**（`#[derive(env::Frame)]` 求长）＋ **一个 `impl Message`**（编解一处）；尾巴那两段走
 //! `env::wire::{store_tail, fetch_tail}`。
 //!
-//! **照实记（这一族两端都上了船台——上一版这里写反了）**：
+//! **照实记（这一族两端都上类型化手柄——上一版这里写反了）**：
 //!
-//! · **客侧**（`protocol::driver::supply::client::draw`）：**搬进 `protocol` 之后**才用得上船台
-//!   （那一层同时看得见"孔"与"报"）。它那两句判据仍分得开——"期限内没等到" ⇒ `Local`、
-//!   "收下来解不动" ⇒ `Bad`——靠的是 `Slip::land` 那两格失败（`Land`：没收到 / 解不动）。
+//! · **客侧**（`protocol::driver::supply::client::draw`）：发走 `Sender::<Order>`、收走
+//!   `Receiver::<Reply>`。它那两句判据仍分得开——"期限内没等到" ⇒ `Local`、"收下来解不动"
+//!   ⇒ `Bad`——靠的是 `Receiver::recv` 那三格失败（`Mail` 那一族的忙/死/拒 ＋ `Unread`）。
 //! · **服务侧**（`programs::root::supply::server`）：收帧走同一手（"先探活、再解题"那两格照旧），
-//!   回单走 `Slip::<Reply>` 那一手；泊位那头没齐时不发（与从前 `Pier::post` 同一格）。
+//!   回单走 `Sender::<Reply>` 那一手；泊位那头没齐时不发（与从前 `Pier::post` 同一格）。
 //!
-//! ⇒ 编解一处（表 ＋ `Message`）、收发一处（船台），运输只剩"泊位就是那条路"这一件。
+//! ⇒ 编解一处（表 ＋ `Message`）、收发一处（手柄），运输只剩"泊位就是那条路"这一件。
 //!
 //! 正文见 `protocol` 那一侧的 `driver/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
 

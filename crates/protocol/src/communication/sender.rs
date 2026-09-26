@@ -72,7 +72,7 @@ impl<M: Message> Sender<M> {
             return Err(SendFail::TooLong);
         };
         // **长度也归这一格管**：`store` 报的比 `Buf` 还大时不能拿它去切——那是"编出来的字节
-        // 说了谎"，与"装不下"同一条下场（原 `Slip::load` 的 `debug_assert` 在这里落成返回值）。
+        // 说了谎"，与"装不下"同一条下场（原 `Sender::send` 的 `debug_assert` 在这里落成返回值）。
         let bytes = buf.as_ref().get(..n).ok_or(SendFail::TooLong)?;
         push(hole, bytes, wait).map_err(SendFail::Mail)
     }

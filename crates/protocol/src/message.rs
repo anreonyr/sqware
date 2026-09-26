@@ -11,17 +11,21 @@
 //! ```text
 //!   一张字段表（#[derive(env::Frame)] 那枚结构体）   偏移与长度一处求和得出
 //!   一个 impl Message           这一族会编会解（变长那几枚在这里手写字节算术）
-//!   用 Slip 收发                 protocol 那一层的端点
+//!   用 Sender / Receiver 收发    communication 那一层的手柄
 //! ```
 //!
 //! # 为什么缓冲的尺寸是**关联类型**、不是关联常量
 //!
-//! `Slip<M>` 要把缓冲**装在自己身上**（"编好，躺在船台自己那只缓冲里"）。关联常量那条路
-//! （`buf: [u8; M::MAX]`）在本地 nightly 上实测：**4 处** `unconstrained generic constant`，
-//! 补 `where [(); M::MAX]:` 之后能编过，但那条尾巴**渗到凡是提到 `Slip<M>` 的地方**（连
-//! "只把它当字段"的类型也要），另需 `#![allow(incomplete_features)]`，且开这个门的 crate
-//! **当场退出 next-gen trait solver**。改成关联类型（`type Buf = [u8; 41]`）之后：**0 错、
-//! 0 门、0 尾巴**——同一条"尺寸一处定义"，一笔债都不欠。
+//! 当初这一格是为"把缓冲装在自己身上"那个类型定的（`Slip<M>`）。**那个类型已经拆掉**
+//! （发的那只借 `Sender::send` 的栈帧、收的那只由调用方给），而**这一格照旧要有**：
+//! `M::EMPTY` 要能起一只本族最大的缓冲，`Sender::send` 与每个收帧的调用点都拿它开局。
+//!
+//! **照实记（为什么是关联类型、不是关联常量）**：`buf: [u8; M::MAX]` 那条路在本地 nightly 上
+//! 实测：**4 处** `unconstrained generic constant`，补 `where [(); M::MAX]:` 之后能编过，但那条
+//! 尾巴**渗到凡是提到那个泛型类型的地方**（连"只把它当字段"的类型也要），另需
+//! `#![allow(incomplete_features)]`，且开这个门的 crate **当场退出 next-gen trait solver**。
+//! 改成关联类型（`type Buf = [u8; 41]`）之后：**0 错、0 门、0 尾巴**——同一条"尺寸一处定义"，
+//! 一笔债都不欠。
 //!
 //! `EMPTY` 那一格是因为 `[u8; 41]` **没有 `Default`**（Rust 的数组 `Default` 只到 32），
 //! 故空缓冲由族给一枚。
@@ -35,8 +39,8 @@ pub trait Message {
 
     /// 这一族的缓冲。尺寸就是这一族最长那一枚报文（一处定义）。
     ///
-    /// **发的那只船台自己带**（`Slip::seal` 拿 [`EMPTY`](Self::EMPTY) 起一只）；**收的那只由
-    /// 调用方给**——收进来的那条由载体定界，可以比这更长（见 `Slip::land` 的照实记）。
+    /// **发的那只在 `Sender::send` 的栈帧上借一只**（拿 [`EMPTY`](Self::EMPTY) 起）；**收的那只
+    /// 由调用方给**——收进来的那条由载体定界，可以比这更长（见 `Receiver::recv` 的照实记）。
     type Buf: AsRef<[u8]> + AsMut<[u8]>;
 
     /// 空缓冲（`[u8; 41]` 没有 `Default`，故由族给）。**收帧的调用方也拿它开一只**：客侧那一枚
@@ -49,8 +53,16 @@ pub trait Message {
     /// 编进 `out`，返**实际长度**（形状不同则长度不同）。
     ///
     /// `None` = 缓冲不够（`Buf` 就是 `MAX`，故这一支只在类型被写错时才到得了——不 `panic`）。
-    /// **收它的是 `protocol` 那一侧的 `Slip::load`**：那一手把这一格落成"消息原样交回"，
-    /// 不落成"发出一帧空的"（本 crate 不依赖 `protocol`，故这里只有这一句）。
+    /// **收它的是 `communication::sender::Sender::send`**：那一手把这一格落成
+    /// [`SendFail::TooLong`](crate::communication::sender::SendFail)、**不落成**"发出一帧空的"。
+    ///
+    /// **照实记（它替掉了什么）**：原先是
+    /// ```ignore
+    /// self.len = m.store(self.buf.as_mut()).unwrap_or(0);
+    /// ```
+    /// ⇒ 编码失败把长度记成 0，发出去就是一条 **0 字节帧**（内核答 `Denied`），真因被伪装成
+    /// "对面坏了"。这一支按构造到不了（`Buf` 就是本族最长的那一枚），但"到不了"不等于
+    /// "可以不报"——今天它报得出来。
     fn store(&self, out: &mut [u8]) -> Option<usize>;
 
     /// 从 `bytes` 读回来。**读不懂 ⇒ `None`**（不猜、不崩）。

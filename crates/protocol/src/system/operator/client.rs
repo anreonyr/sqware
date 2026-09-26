@@ -15,7 +15,8 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
 
 use crate::session::Quay;
-use crate::session::slip::Slip;
+use crate::communication::receiver::Receiver;
+use crate::communication::sender::Sender;
 use crate::system::operator as ocall;
 use crate::system::operator::Fail;
 use crate::system::operator::core::judge::Id;
@@ -93,18 +94,14 @@ fn ask_out(
     let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 发：装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
-    Slip::<ocall::Req<'_>>::seal(say)
-        .load(ask)
-        // **装不上这一格是"没做成"**：真落到这里只可能是本族的 `Buf` 被改窄了
-        // （见 `Slip::load` 的照实记）。
-        .map_err(|_| Fail::Unknown)?
-        .ship()
+    Sender::<ocall::Req<'_>>::from_token(say)
+        .send(ask, Wait::Forever)
         .map_err(|_| Fail::Unknown)?;
-    // 收：答话走本端这条树路——与板那一族同一个形状（`Slip::<Union>::seal(pier.hole()).land(buf, ..)`）。
+    // 收：答话走本端这条树路——与板那一族同一个形状（`Receiver::<Union>::from_token(pier.hole()).recv(buf, ..)`）。
     // 缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲（[`Message::EMPTY`]）就够。
     let mut buf = ocall::Union::EMPTY;
-    Slip::<ocall::Union>::seal(pier.hole())
-        .land(buf.as_mut(), millis)
+    Receiver::<ocall::Union>::from_token(pier.hole())
+        .recv(buf.as_mut(), millis)
         // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
         .map_err(|_| Fail::Unknown)
 }

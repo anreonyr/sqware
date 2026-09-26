@@ -53,7 +53,7 @@
 //! 是几号"），报文里走的只是"种在持树者表里的号"。两个编号空间不同源，互相拿错正是旧树
 //! `[33..41]` 那一格的病。
 //!
-//! **答话有四种形状、各有各的上界**，船台那只缓冲按 [`UNION_LEN`] 备（最大那一形）。
+//! **答话有四种形状、各有各的上界**，本族那只缓冲按 [`UNION_LEN`] 备（最大那一形）。
 
 use env::Mark;
 use env::{Name, PieToken, TaskId};
@@ -156,7 +156,7 @@ pub const REQ_LEN: usize = RoadHead::LEN + Operator::ROAD_MAX * env::wire::NAME_
 /// [`Operator::PANE_CAP`] 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
 /// 没有上限，故那里必须带一格"未完"）。
 ///
-/// 船台那只缓冲就是它（[`Message::Buf`]）；另两形都短于它——编译期钉住（`名` 那一形最长是
+/// 本族那只缓冲就是它（[`Message::Buf`]）；另两形都短于它——编译期钉住（`名` 那一形最长是
 /// 状态 ＋ `NAME_LEN - 1` 个字节，`号` 那一形是状态 ＋ 8）。
 pub const UNION_LEN: usize = 2 + Operator::PANE_CAP * 8;
 

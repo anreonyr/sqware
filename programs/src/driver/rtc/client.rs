@@ -11,8 +11,8 @@
 //! **借孔那一趟的次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
 //! "谁给的 + 记号"两格认，多枚时取**最后那一枚**——故最后那一枚一定就是这一趟那一枚。
 //!
-//! **问走门、答走船台**：问那一侧推的是那扇**门**（`session::call::push_to`，同 `principal`
-//! 的客侧），答那一侧是本端自己那枚孔——**上船台**（`Slip::<Time>` / `Slip::<Status>`：答的
+//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`session::call::push_to`，同 `principal`
+//! 的客侧），答那一侧是本端自己那枚孔——**上端点的发送端**（`Sender::<Time>` / `Sender::<Status>`：答的
 //! 两形各是一张实现了报文约定的表，见 [`super::core::frame`]）。
 //!
 //! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
@@ -20,7 +20,7 @@
 use protocol::message::Message;
 use env::PieToken;
 use env::Wait;
-use protocol::session::slip::Slip;
+use protocol::communication::receiver::Receiver;
 use runtime::env::mail::{self, HolePie};
 
 use super::core::frame::{self, Arm, Now, Status, Time};
@@ -39,11 +39,11 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
-    // 收：答话走**这一趟借出去的那一枚孔**（船台那一手；缓冲由调用方给——这一形 8 字节）。
+    // 收：答话走**这一趟借出去的那一枚孔**（`Receiver::recv`；缓冲由调用方给——这一形 8 字节）。
     // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
     let mut buf = Time::EMPTY;
-    let answer = Slip::<Time>::seal(back)
-        .land(buf.as_mut(), millis)
+    let answer = Receiver::<Time>::from_token(back)
+        .recv(buf.as_mut(), millis)
         .map_err(|_| Fail::Denied);
     let _ = mail::release(back);
     answer
@@ -66,7 +66,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     }
     // 收那一格答码（**恰好 1 字节**：长短都不是这一形 ⇒ 读不懂 ⇒ `Denied`）。
     let mut one = Status::EMPTY;
-    let code = match Slip::<Status>::seal(back).land(one.as_mut(), millis) {
+    let code = match Receiver::<Status>::from_token(back).recv(one.as_mut(), millis) {
         Ok(code) => code,
         Err(_) => {
             let _ = mail::release(back);
@@ -94,14 +94,14 @@ impl Alarm {
     /// **无界等**：客人只有这一件事，而对面一没，这一枚孔就封印 ⇒ 当场答 `Err(())`，
     /// 不是永久挂住（寿命边随它的**开者**——这一枚是客人自己铸的）。
     ///
-    /// **照实记（这一格从裸 `pull` 换成船台的"永久"那一档）**：判据一字不改（没到 ⇒ 等、
+    /// **照实记（这一格从裸 `pull` 换成 `Receiver::recv` 的"永久"那一档）**：判据一字不改（没到 ⇒ 等、
     /// 孔封印 ⇒ 当场错），变的是内核那一侧的等法——`Wait::Forever` 在 `pull_timeout` 里落成一个
     /// **到不了的点**（`u64::MAX`），于是这一等每 ~100 ms 被叫醒一次、自己复探（理由与实测见
     /// `HolePie::pull_timeout_from`）。
     pub fn receive(&self) -> Result<u64, ()> {
         let mut buf = Time::EMPTY;
-        Slip::<Time>::seal(self.back.token())
-            .land(buf.as_mut(), Wait::Forever)
+        Receiver::<Time>::from_token(self.back.token())
+            .recv(buf.as_mut(), Wait::Forever)
             .map_err(|_| ())
     }
 }

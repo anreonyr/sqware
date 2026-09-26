@@ -19,7 +19,7 @@ use env::Wait;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::debug;
 use protocol::session::Quay;
-use protocol::session::slip::Slip;
+use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
@@ -137,13 +137,12 @@ fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
         return;
     }
     // 答一句：**一格**（[`pcall::Reply`] 那一形）——走这一趟那枚回信孔，装与发都不在这一层
-    // 写字节（缓冲是船台自己那只：这一形定长 10）。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`）；
+    // 写字节（缓冲在这一帧的栈上：这一形定长 10）。
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）；
     // 真到了那里，这一答就发不出去。
-    let _ = Slip::<pcall::Reply>::seal(back)
-        .load(answer(book, from, ask))
-        .ok()
-        .map(|s| s.ship());
+    let _ = Sender::<pcall::Reply>::from_token(back)
+        .send(answer(book, from, ask), Wait::Forever)
+        .ok();
     let _ = mail::release(back);
 }
 

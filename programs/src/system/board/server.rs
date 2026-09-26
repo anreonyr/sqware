@@ -9,7 +9,8 @@ use env::Wait;
 use alloc::format;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::debug;
-use protocol::session::slip::Slip;
+use protocol::communication::receiver::Receiver;
+use protocol::communication::sender::Sender;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
@@ -74,7 +75,7 @@ pub(crate) fn host_loop(me: TaskId) {
     let mut lanes: Lanes = alloc::vec::Vec::new();
     let mut swept = 0usize;
     // **收帧的那一页**：在循环外备一次。门的缓冲是**载体的一页**，不是家族帧那么大——
-    // 见 [`Slip::land`]：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
+    // 见 `Receiver::recv`：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
     // （读不懂就答 `BAD`），否则它永远留在槽里（取不出 ⇒ 槽原样），这道门从此卡死且空转。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
@@ -251,19 +252,18 @@ fn serve_one(
     };
     // 一问一答：读不懂也答（答 `BAD`），答话走**这位客人的答话路**（一客一路，单槽）。
     // **解码只做一次**：答哪一句由它定，下面"要不要摘掉它那枚问话孔"也由它定。
-    let decoded = Slip::<bcall::Req>::seal(ask).land(buf, Wait::POLL);
+    let decoded = Receiver::<bcall::Req>::from_token(ask).recv(buf, Wait::POLL);
     let said = match decoded {
         Ok(ask) => answer(board, desk, ask, guest.who(), swept, lanes),
         // 空帧 / 长度不对 / 期限到了：**两格失败同一落点**——读不懂就答 `BAD`，不猜、不崩。
         Err(_) => bcall::BAD,
     };
     // 答一句：**一格**（[`bcall::Union`] 那一张形状）——装与发都不在这一层写字节。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`
     // 的照实记）；真到了那里，这一答就发不出去。
-    let _ = Slip::<bcall::Union>::seal(guest.reply())
-        .load(bcall::Union::of(said))
-        .ok()
-        .map(|s| s.ship());
+    let _ = Sender::<bcall::Union>::from_token(guest.reply())
+        .send(bcall::Union::of(said), Wait::Forever)
+        .ok();
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
     if matches!(decoded, Ok(bcall::Wire::Evict)) {

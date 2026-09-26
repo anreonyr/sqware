@@ -2,8 +2,7 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`protocol::driver::supply::frame`]。
 
-use env::PieToken;
-use env::Wait;
+use env::{MailFail, PieToken, Wait};
 use plan::{Key, Pair};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
@@ -11,8 +10,8 @@ use runtime::env::mail::{NolePie, PolePie};
 use protocol::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
 use protocol::driver::supply::core::Fail;
 use protocol::session::Pier;
-use protocol::session::slip::Land;
-use protocol::session::slip::Slip;
+use protocol::communication::receiver::{Receiver, RecvFail};
+use protocol::communication::sender::Sender;
 
 /// 供：照单取源、授出、把记录写进 `records`。返**条数**。
 ///
@@ -57,7 +56,7 @@ pub fn supply(
 /// **报不出来**，读超时也不能当作它没了。故读有上界地等，超时只探一次活（非阻塞），探出没了
 /// 就收场；对端活着时它就是在等，不占核。
 ///
-/// **它现在只管"没消息"那一支**：内核当场说"这一枚孔用不动了"时走 [`Land::Unavailable`]，
+/// **它现在只管"没消息"那一支**：内核当场说"这一枚孔用不动了"时走 `Dead` / `Denied` 那一格，
 /// 那一支直接收摊、**不再问 `alive`**（端点没了，没有下一步可走）——两条判据不再互相顶替。
 pub fn serve(
     pier: &Pier,
@@ -69,12 +68,13 @@ pub fn serve(
     const WAIT_MS: usize = 1000;
     // 记录那一格：至多 [`WANT_MAX`] 条（条数不越界由 `Order` 那一侧保证）。
     let mut records = [Pair::NONE; WANT_MAX];
-    let slip = Slip::<Order>::seal(pier.hole());
+    let rx = Receiver::<Order>::from_token(pier.hole());
     loop {
         // **三格失败分得开**（[`Land`]）：没收到 ⇒ 去探活；孔用不动了 ⇒ 收摊；解不动 ⇒ 答 `BAD`。
-        let order = match slip.land(ask, Wait::AtMost(WAIT_MS)) {
+        let order = match rx.recv(ask, Wait::AtMost(WAIT_MS)) {
             Ok(order) => order,
-            Err(Land::Expired) => {
+            // "没收到"（`Busy` 那一族）⇒ 去探一次活；其余三格见下面两条。
+            Err(RecvFail::Mail(e)) if !matches!(e, MailFail::Dead | MailFail::Denied) => {
                 if !alive() {
                     return;
                 }
@@ -82,8 +82,8 @@ pub fn serve(
             }
             // **内核当场说"这一枚孔用不动了"**——不必再问 `alive()`（那是"没消息"时的替代判据，
             // 见上面 `alive` 那一段）：端点没了，这条循环没有下一步可走。
-            Err(Land::Unavailable) => return,
-            Err(Land::Unread) => {
+            Err(RecvFail::Mail(_)) => return,
+            Err(RecvFail::Unread) => {
                 reply(pier, BAD, &[]);
                 continue;
             }
@@ -99,7 +99,7 @@ pub fn serve(
     }
 }
 
-/// 回一张回单：**一处发**（装与发都不在这一层写字节——缓冲是船台自己那只）。
+/// 回一张回单：**一处发**（装与发都不在这一层写字节——缓冲在这一帧的栈上）。
 ///
 /// 泊位那头还没齐（`at_peer` 空）⇒ 不发：与从前 `Pier::post` 自己那一格同一个意思
 /// （"没有写端就发不出去"，不猜、不空转）。
@@ -108,11 +108,10 @@ fn reply(pier: &Pier, code: u8, records: &[Pair]) {
         return;
     };
     if let Some(reply) = Reply::of(code, records) {
-        // **装不上那一格按构造到不了**（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
+        // **装不上那一格按构造到不了**（`Buf` 由本族 `Message` 自己给，见 `Sender::send`
         // 的照实记）：`.ok()` 显式落地一个到不了的点，不是吞错。
-        let _ = Slip::<Reply>::seal(at_peer)
-            .load(reply)
-            .ok()
-            .map(|s| s.ship());
+        let _ = Sender::<Reply>::from_token(at_peer)
+            .send(reply, Wait::Forever)
+            .ok();
     }
 }

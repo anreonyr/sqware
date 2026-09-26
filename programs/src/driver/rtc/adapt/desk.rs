@@ -1,14 +1,15 @@
 //! rtc::adapt::desk — **门面（适配）**：解帧 → 认孔 → 喂会话核 → 执行它吐的答形。
 //!
 //! 判定在 [`Host::ask`]（纯，见 `core/host.rs`）；本文件只做碰内核与设备的那几手：
-//! `mail::reserve` 认那枚回信孔、从设备读这一刻的钟、上船台发答、放下那一枚、武装设备。
+//! `mail::reserve` 认那枚回信孔、从设备读这一刻的钟、走 `Sender` 发答、放下那一枚、武装设备。
 
 use crate::rtc;
 use env::{PieToken, TaskId};
 use programs::driver::rtc::core::frame::{self, Status, Time};
 use programs::driver::rtc::core::host::{Answer, Host};
 use protocol::debug;
-use protocol::session::slip::Slip;
+use env::Wait;
+use protocol::communication::sender::Sender;
 use runtime::core::dock::View;
 use runtime::env::mail;
 
@@ -41,7 +42,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     }
     let now = rtc::now(view);
     match host.ask(ask, back, now) {
-        // 一问一答：答话**上船台**，这一枚孔这一趟就用完了（一问一答一个往返）。
+        // 一问一答：答话**走 `Sender`**，这一枚孔这一趟就用完了（一问一答一个往返）。
         Answer::Time(now) => {
             ship_time(back, now);
             let _ = mail::release(back);
@@ -71,7 +72,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
             // `at` 还在前头，按 0 记）。形状声明在 `crates/gate/src/soak.rs`（已删）的读数表里。
             //
             // **照实记（它为什么在发答话之后）**：第一版排在那一手之前（那时是裸
-            // `push`，今天是船台的 `ship`），而 `debug!` 是**同步 UART**（一行 ~1 ms）——
+            // `push`，今天是 `Sender::send`），而 `debug!` 是**同步 UART**（一行 ~1 ms）——
             // 量的人自己站进了被测的那条路上，把客人等答话的时间撑长了。故答话先走、
             // 读数后打：这一行不许改变它要量的东西。
             debug!(
@@ -84,18 +85,16 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
 
 /// 把那一声答出去（一个时刻）。
 fn ship_time(back: PieToken, now: u64) {
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load` 的
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send` 的
     // 照实记）；真到了那里，那一层是 `None`，与"推不出去"同一行读数。
-    let _ = Slip::<Time>::seal(back)
-        .load(Time::of(now))
-        .ok()
-        .map(|s| s.ship());
+    let _ = Sender::<Time>::from_token(back)
+        .send(Time::of(now), Wait::Forever)
+        .ok();
 }
 
 /// 把那一格码答出去。
 fn ship_code(back: PieToken, code: u8) {
-    let _ = Slip::<Status>::seal(back)
-        .load(Status::of(code))
-        .ok()
-        .map(|s| s.ship());
+    let _ = Sender::<Status>::from_token(back)
+        .send(Status::of(code), Wait::Forever)
+        .ok();
 }

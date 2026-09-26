@@ -2,18 +2,19 @@
 //!
 //! **照实记（这一份的前身）**：它从前住那个只做形与据的 crate（`driver::supply::client`）
 //! ——那时它手里只有会话核心那条泊位（`Pier::post` / `Pier::pull`），编解还是自由函数。它要用
-//! **船台**：`Slip` 同时看得见"孔"（`runtime`）与"报"（`message`）。**判据一字未改**——
+//! **通信那一层**：它同时看得见"孔"（`runtime`）与"报"（`message`）。**判据一字未改**——
 //! 尤其"`Local` 与 `Bad` 分得开"那一条（见 [`draw`]）。
 
 use env::Wait;
 use env::wire::Field;
-use env::{PieToken, TaskId};
+use env::{MailFail, PieToken, TaskId};
 use plan::{Key, PAIR_LEN, Pair};
 
 use crate::driver::supply::core::Fail;
 use crate::driver::supply::frame::{OK, Order, Reply, ReplyHead, WANT_MAX, Want, code_to_fail};
 use crate::session::Pier;
-use crate::session::slip::{Land, Slip};
+use crate::communication::receiver::{Receiver, RecvFail};
+use crate::communication::sender::Sender;
 
 /// 递一张单子、取回那一段记录。返**记录那一段**（`PAIR_LEN` 步长；借着调用方那只收帧缓冲）。
 pub fn draw<'r>(
@@ -26,27 +27,28 @@ pub fn draw<'r>(
     if wants.is_empty() || wants.len() > WANT_MAX {
         return Err(Fail::Local);
     }
-    // 编一张单子、推过去：**上船台**（编进船台自己那只缓冲＝本族最长那一只）。
+    // 编一张单子、推过去：**编在本族那只缓冲里**（＝本族最长那一只，在这一帧的栈上）。
     // 泊位那头还没齐（`at_peer` 空）⇒ 与从前 `Pier::post` 自己那一格同一落点：`Local`。
     let order = Order::of(who, wants).ok_or(Fail::Local)?;
     let at_peer = pier.at_peer().ok_or(Fail::Local)?;
-    Slip::<Order>::seal(at_peer)
-        .load(order)
-        // **装不上这一格是"没做成"**：真落到这里只可能是本族的 `Buf` 被改窄了
-        // （见 `Slip::load` 的照实记）。
-        .map_err(|_| Fail::Local)?
-        .ship()
+    Sender::<Order>::from_token(at_peer)
+        .send(order, Wait::Forever)
         .map_err(|_| Fail::Local)?;
     // 收一张回单：**三格失败分得开**（[`Land`] 就是为这一格立的）——"期限内没等到" ⇒ `Local`；
     // "这一枚孔用不动了" ⇒ `Denied`（"这一手没做成"）；"收下来解不动" ⇒ `Bad`。前两句与从前
-    // `pier.pull` ＋ `fetch` 那两句一字不差，第三句是 [`Land::Unavailable`] 加进来之后才分开的
+    // `pier.pull` ＋ `fetch` 那两句一字不差，第三句是"孔用不动了"那一格加进来之后才分开的
     // （从前它与 `Expired` 合流）。
-    let slip = Slip::<Reply>::seal(pier.hole());
-    let said = match slip.land(reply, millis) {
+    let rx = Receiver::<Reply>::from_token(pier.hole());
+    let said = match rx.recv(reply, millis) {
         Ok(said) => said,
-        Err(Land::Expired) => return Err(Fail::Local),
-        Err(Land::Unavailable) => return Err(Fail::Denied),
-        Err(Land::Unread) => return Err(Fail::Bad),
+        // **三格失败分得开**（判据与从前那张 `Land` 对照表一字不差）：`Dead` / `Denied`
+        // = "这一枚孔用不动了" ⇒ `Denied`；其余（`Busy` 没消息 / `OoM` / `HandedOver`）
+        // ⇒ `Local`；"收下来解不动" ⇒ `Bad`。
+        Err(RecvFail::Mail(e)) => match e {
+            MailFail::Dead | MailFail::Denied => return Err(Fail::Denied),
+            _ => return Err(Fail::Local),
+        },
+        Err(RecvFail::Unread) => return Err(Fail::Bad),
     };
     match said.code() {
         // **记录那一段就是原样交给客人的那一段**：从**调用方那只缓冲**里切——帧长由解出来的

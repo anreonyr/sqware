@@ -13,7 +13,8 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use protocol::debug;
-use protocol::session::slip::Slip;
+use protocol::communication::receiver::Receiver;
+use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
@@ -388,17 +389,16 @@ fn serve_one(
     let Some(ask) = guest.ask() else {
         return;
     };
-    // **收帧用调用方那一页**（[`Slip::land`]）：比家族最长那一枚更长的一条也取得出来、
+    // **收帧用调用方那一页**（`Receiver::recv`）：比家族最长那一枚更长的一条也取得出来、
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
     // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
-    let decoded = Slip::<ocall::Req<'_>>::seal(ask).land(buf, Wait::POLL).ok();
+    let decoded = Receiver::<ocall::Req<'_>>::from_token(ask).recv(buf, Wait::POLL).ok();
     let said = answer(tree, decoded, guest.who(), session, book);
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`）。
-    let _ = Slip::<ocall::Union>::seal(guest.reply())
-        .load(said)
-        .ok()
-        .map(|s| s.ship());
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）。
+    let _ = Sender::<ocall::Union>::from_token(guest.reply())
+        .send(said, Wait::Forever)
+        .ok();
 }
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。

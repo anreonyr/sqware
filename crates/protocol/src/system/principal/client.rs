@@ -19,7 +19,7 @@ use runtime::env::mail;
 
 use super::core::{Fail, PrincipalId};
 use super::frame::{self, BACK};
-use crate::session::slip::Slip;
+use crate::communication::receiver::Receiver;
 
 pub use super::opened_by;
 
@@ -111,11 +111,11 @@ impl Face {
             let _ = mail::release(back);
             return Err(Fail::Denied);
         }
-        // 收：答话走**这一趟借出去的那一枚孔**（船台那一手；缓冲由调用方给——这一形 10 字节）。
+        // 收：答话走**这一趟借出去的那一枚孔**（`Receiver::recv`；缓冲由调用方给——这一形 10 字节）。
         // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
         let mut buf = frame::Reply::EMPTY;
-        let got = Slip::<frame::Reply>::seal(back)
-            .land(buf.as_mut(), millis)
+        let got = Receiver::<frame::Reply>::from_token(back)
+            .recv(buf.as_mut(), millis)
             .map_err(|_| Fail::Denied);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
         let _ = mail::release(back);

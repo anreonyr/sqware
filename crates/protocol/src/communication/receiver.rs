@@ -72,7 +72,7 @@ impl<M: Message> Receiver<M> {
 ///   `Dead` / `Denied`（这一枚孔用不动了）分得开**——"再等等"与"别等了"是两个下一步：
 ///   `root` 的发货循环靠这一格决定"没收到 ⇒ 去探一次对端活没有"还是"孔用不动 ⇒ 收摊"。
 ///
-/// （原 `Slip::land` 那三格 `Expired` / `Unavailable` / `Unread` 就是这三件；`Expired` 与
+/// （原 `Receiver::recv` 那三格 `Expired` / `Unavailable` / `Unread` 就是这三件；`Expired` 与
 /// `Unavailable` 此前是**折出来的**，今天直接读 `MailFail` 的两族词，不再有中间那张对照表。）
 pub enum RecvFail {
     Mail(MailFail),
