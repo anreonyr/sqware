@@ -568,7 +568,7 @@ fn answer(
 /// - `owner == who` —— **谁的**：那扇门是**这位客人**开的（副本共享同一事实）；
 /// - **记号 == `operator`** —— 那一枚是**树路**上的一枚。
 fn reply_of(who: TaskId) -> Option<PieToken> {
-    // 多枚不可能（`seat` 的同名判据兜着）⇒ 不说。
+    // 多枚不可能（**装配者那一条路只 `endpoint` 一次**；原 `Quay::seat` 的同名闸随那一族退场）⇒ 不说。
     claim(Mark::of(LINK), who, None)
 }
 
@@ -590,7 +590,7 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
 ///
 /// | 处 | 记号 | 多枚是 |
 /// |---|---|---|
-/// | [`reply_of`] | `LINK` | **不可能**——`Quay::seat` 的同名判据兜着（"同一位、同一记号只可能有一枚"） |
+/// | [`reply_of`] | `LINK` | **不可能**——装配者那一条路只 `endpoint` 一次（"同一位、同一记号只可能有一枚"从闸变成了构造） |
 /// | [`find_face`] | `ENTRY` | **结构性正常**（上面那一笔）⇒ 不说 |
 /// | [`ask_of`] | `ASK` | **契约被破**：一个域只该铸一枚问话孔（裸 `unseal_hole`，没有同名闸），多出来的那枚永远没人读它的推 ⇒ 说一句 |
 ///
@@ -601,8 +601,8 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
 /// - **别把它做成 fail-closed**：两枚孔的出现与持树者查表之间有**天然竞态**（持树者每 1ms 查
 ///   一次，而两枚孔之间只隔两个 envcalls）⇒ "拒"是间歇的，且那位客人从此没人给它挂孔
 ///   （持树者会永远停在"还有人没挂上"那一档）；
-/// - **干净的关法**是让 `ask_hole` 与入口那一枚也走**有名有姓的泊位**（`Quay::seat` 那条路
-///   已有同名闸），把"只可能有一枚"从纪律变成**构造**——那是客侧形状的改动，另一刀。
+/// - **干净的关法**是让 `ask_hole` 与入口那一枚也走**一次 `establish::endpoint`**（那一手与
+///   "只铸一枚"同形），把"只可能有一枚"从纪律变成**构造**——那是客侧形状的改动，另一刀。
 fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieToken> {
     let mut hits = mail::pies().filter(|p| p.owner == who && p.mark == mark);
     let first = hits.next()?;

@@ -11,17 +11,15 @@ use env::Mark;
 use env::Wait;
 use env::wire::Field;
 use env::{Name, PieToken, TaskId};
-use runtime::core::port::{self, Access, Policy};
-use runtime::env::mail::{self, AnyPie};
+use runtime::env::mail;
 
-use crate::session::Quay;
-use crate::communication::receiver::Receiver;
+use crate::communication::establish::{self, Endpoint};
 use crate::communication::sender::Sender;
 use crate::system::operator as ocall;
 use crate::system::operator::Fail;
 use crate::system::operator::core::judge::Id;
 use crate::system::operator::core::judge::Rule;
-pub use crate::system::operator::{ASK_MARK, LINK, TIP_NAME};
+pub use crate::system::operator::{ASK_MARK, LINK};
 use crate::system::operator::{EntryId, Listing, Where};
 
 /// 客侧第一步：装上树那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
@@ -31,14 +29,16 @@ use crate::system::operator::{EntryId, Listing, Where};
 ///
 /// `holder` = 客人认的对端 = **它的生我者**（孔交给它，它再转授给持树者）——注意它不是
 /// 持树者：客人交出来的孔都落在生我者表里，故"持树者是谁"得由装配者告诉（见文件头）。
-pub fn open(holder: TaskId, millis: Wait) -> Result<(Quay, TaskId), Fail> {
-    let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let mut quay = Quay::open(holder, crate::communication::hands::hands());
-    quay.seat(link).map_err(ocall::core::map_seat)?;
-    quay.claim(holder, Mark::of(link.as_str()), millis)
-        .map_err(ocall::core::map_claim)?;
-    let host = hear(&quay, millis).ok_or(Fail::Unknown)?;
-    Ok((quay, host))
+pub fn open(holder: TaskId, millis: Wait) -> Result<(Endpoint, TaskId), Fail> {
+    let pair =
+        establish::endpoint(holder, Mark::of(LINK), millis).map_err(ocall::core::map_establish)?;
+    // **认不到对端那一枚 = 这条树路没接上**（原 `map_claim` 那一格）：两侧各装一条、
+    // 凑齐才算通。
+    if pair.tx().is_none() {
+        return Err(Fail::Unknown);
+    }
+    let host = hear(&pair, millis).ok_or(Fail::Unknown)?;
+    Ok((pair, host))
 }
 
 /// 客侧第一步半：铸**问话孔**并交到持树者手里（本端随即自窄到只写）。
@@ -55,18 +55,13 @@ pub fn ask_hole(host: TaskId) -> Result<PieToken, Fail> {
     // 第二枚，而第二枚的症状是"多出来的那枚永远没人读它的推"（`server.rs::claim` 那一格记着）。
     //
     // 照实记：这一手**不改签名、不动调用点**——`ASK_MARK` 全仓只有本函数用它铸孔，
-    // 故把闸装在这个记号唯一的铸者身上，与"把它改成有名有姓的泊位（`Quay::seat`）"是**同一句
+    // 故把闸装在这个记号唯一的铸者身上，与"把它改成一次 `establish::endpoint`"是**同一句
     // 保证的小形状**（那一版要改二十处调用点的签名）。
-    if let Some(have) = crate::communication::hands::find(me(), ASK_MARK) {
+    if let Some(have) = establish::find(me(), ASK_MARK) {
         return Ok(have);
     }
-    let ask = mail::unseal_hole(ASK_MARK).map_err(|_| Fail::Unknown)?;
-    let hole = mail::HolePie::from_token(ask);
-    port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
-        .map_err(|_| Fail::Unknown)?;
-    hole.narrow(env::Permission::STORE)
-        .map_err(|_| Fail::Unknown)?;
-    Ok(ask)
+    // 铸 + 交出读端 + 本端窄到只写：一手就是 `establish::give`。
+    establish::give(host, ASK_MARK).map_err(|_| Fail::Unknown)
 }
 
 /// **本端是哪一枚线程**——"这一枚孔是谁开的"那一问要它。
@@ -86,12 +81,10 @@ fn me() -> TaskId {
 /// 见 `Said` 的照实记：他问的是哪一条，他自己知道）。
 fn ask_out(
     say: PieToken,
-    link: &Quay,
+    link: &Endpoint,
     ask: ocall::Req<'_>,
     millis: Wait,
 ) -> Result<ocall::Said, Fail> {
-    let at = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let pier = link.find(at).ok_or(Fail::Unknown)?;
     // 发：装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
     Sender::<ocall::Req<'_>>::from_token(say)
@@ -100,7 +93,7 @@ fn ask_out(
     // 收：答话走本端这条树路——与板那一族同一个形状（`Receiver::<Union>::from_token(pier.hole()).recv(buf, ..)`）。
     // 缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲（[`Message::EMPTY`]）就够。
     let mut buf = ocall::Union::EMPTY;
-    Receiver::<ocall::Union>::from_token(pier.hole())
+    link.receiver::<ocall::Union>()
         .recv(buf.as_mut(), millis)
         // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
         .map_err(|_| Fail::Unknown)
@@ -120,7 +113,7 @@ fn ask_out(
 /// 不成立；要确定性就得看 `take`。那一景已删，这一格与场景无关，故留在这里。
 pub fn land(
     say: PieToken,
-    link: &Quay,
+    link: &Endpoint,
     host: TaskId,
     at: Where,
     name: Name,
@@ -149,7 +142,7 @@ pub fn land(
 /// 客侧第二步（**分**）：在 `at` 那一块 `Pane` 里给 `name` 放一块空 `Pane`；答那一格自己的号。
 pub fn part(
     say: PieToken,
-    link: &Quay,
+    link: &Endpoint,
     at: Where,
     name: Name,
     millis: Wait,
@@ -172,7 +165,7 @@ pub fn part(
 /// 那一个读者一起没了（判据没松：持树者那侧一次 `Reserve` 验"开者 = 本端 ＋ 记号 = 树路"）。
 pub fn find(
     say: PieToken,
-    link: &Quay,
+    link: &Endpoint,
     id: EntryId,
     millis: Wait,
 ) -> Result<(u8, Option<PieToken>), Fail> {
@@ -189,7 +182,7 @@ pub fn find(
 }
 
 /// 客侧第二步（**剪**）：把那一号剪掉。答一格状态（[`ocall::OK`] = 剪掉了）。
-pub fn trim(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<u8, Fail> {
+pub fn trim(say: PieToken, link: &Endpoint, id: EntryId, millis: Wait) -> Result<u8, Fail> {
     Ok(ask_out(say, link, ocall::Req::Trim(id), millis)?.code())
 }
 
@@ -197,7 +190,7 @@ pub fn trim(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<u8,
 ///
 /// 答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`：这一条的答案体是数据，码不能当成功值带回来
 /// （对照 [`find`]：那一档的码本身就是答案）。一推一读之间读不动 / 迟了 ⇒ [`ocall::BAD`]。
-pub fn list(say: PieToken, link: &Quay, at: Where, millis: Wait) -> Result<Listing, u8> {
+pub fn list(say: PieToken, link: &Endpoint, at: Where, millis: Wait) -> Result<Listing, u8> {
     ask_out(say, link, ocall::Req::List(at), millis)
         .map_err(|_| ocall::BAD)?
         .list()
@@ -207,7 +200,7 @@ pub fn list(say: PieToken, link: &Quay, at: Where, millis: Wait) -> Result<Listi
 ///
 /// 答话是号那一形（`[0] status [1 .. 9] 号`）：答话不是 [`ocall::OK`] ⇒ `Err(那一格码)`。
 /// 拿到号之后同一条路就不必再念了——其余那几条一律按号走（名字只到这一格为止）。
-pub fn seek(say: PieToken, link: &Quay, road: &[Name], millis: Wait) -> Result<EntryId, u8> {
+pub fn seek(say: PieToken, link: &Endpoint, road: &[Name], millis: Wait) -> Result<EntryId, u8> {
     ask_out(say, link, ocall::Req::Road(road), millis)
         .map_err(|_| ocall::BAD)?
         .entry()
@@ -216,7 +209,7 @@ pub fn seek(say: PieToken, link: &Quay, road: &[Name], millis: Wait) -> Result<E
 /// 客侧第二步（**名**）：这枚号此刻叫什么。
 ///
 /// 名字**在答话那一侧**（问话里只有号）——长短由那一帧说。
-pub fn name(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<Name, u8> {
+pub fn name(say: PieToken, link: &Endpoint, id: EntryId, millis: Wait) -> Result<Name, u8> {
     ask_out(say, link, ocall::Req::Name(id), millis)
         .map_err(|_| ocall::BAD)?
         .name()
@@ -235,11 +228,9 @@ pub fn name(say: PieToken, link: &Quay, id: EntryId, millis: Wait) -> Result<Nam
 /// 各写一遍（那一对里记着）。
 ///
 /// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上树（客人报它自己的超时，不猜）。
-pub(crate) fn hear(quay: &Quay, millis: Wait) -> Option<TaskId> {
-    let link = Name::new(LINK).ok()?;
-    let pier = quay.find(link)?;
+pub(crate) fn hear(pair: &Endpoint, millis: Wait) -> Option<TaskId> {
     let mut buf = [0u8; TaskId::WIDTH];
-    match mail::HolePie::from_token(pier.hole()).pull_timeout(&mut buf, millis) {
+    match mail::HolePie::from_token(pair.rx()).pull_timeout(&mut buf, millis) {
         Ok(n) if n == TaskId::WIDTH => TaskId::fetch(&buf),
         _ => None,
     }

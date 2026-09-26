@@ -7,14 +7,14 @@ use super::{MS, RETRY_MS, WANT};
 use core::time::Duration;
 use env::{Name, PieToken, Wait};
 use protocol::driver::DIR;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use runtime::env::mail::HolePie;
 use runtime::env::room;
 
 /// 找控制台（有界）：找不到 ⇒ `None`（`main` 据此报 [`E_NO_CONSOLE`](super::E_NO_CONSOLE)）。
-pub fn find(link: &Quay, talk: PieToken) -> Option<HolePie> {
+pub fn find(link: &Endpoint, talk: PieToken) -> Option<HolePie> {
     let (Ok(dir), Ok(want)) = (Name::new(DIR), Name::new(WANT)) else {
         return None;
     };

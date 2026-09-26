@@ -8,7 +8,7 @@
 
 use env::{Name, PieToken, TaskId};
 
-use crate::session::{Claim, Seat};
+use crate::communication::establish::EstablishFail;
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ pub enum Fail {
     Taken,
     /// 这枚入口不是你亲手交给持板者的。
     Denied,
-    /// 板挂了（条数是策略，容器有界——与 `Service` 表、`Quay` 同款）。
+    /// 板挂了（条数是策略，容器有界——与 `Service` 表同款：按需 `try_reserve`、备不下如实报）。
     Full,
 }
 
@@ -278,31 +278,19 @@ impl Board {
 //
 // 三个注入点（`vested_by` / `unship`，见 [`Board::new`]）就是全部外部依赖。
 
-// ── 两张会话失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
+// ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
 //
-// 两个入参都出自 `session::core`（`Claim` / `Seat`）、产出的又是本文件自己的
-// [`Fail`]，故它们与产出的那一格同住。`call.rs` 并进 `system/board/mod.rs` 那一刀
-// 把这两张表落在这里。
+// 入参出自 [`EstablishFail`]（`communication::establish`）、产出的又是本文件自己的
+// [`Fail`]，故它与产出的那一格同住。原先有两张（`Seat` / `Claim`）——并回一个 crate 之后
+// 只剩一手建立，`Claim` 那一张随之退场（认不到对端那一枚不再是错误，见 `establish`）。
 
-/// 牌子上的名字（**定长解码面**：尾随 NUL 是填充，不是内容）。
-
-pub fn map_claim(claim: Claim) -> Fail {
-    match claim {
-        Claim::Timeout => Fail::Unknown,
-        Claim::Partial => Fail::Full,
-    }
-}
-
-/// 装一条路的失败域 → 板的失败域。
+/// 建立那一手的失败域 → 板的失败域。
 ///
-/// 与 [`map_claim`] 同一条口径：名字/资源上的毛病（名字非法、同名已装、铸不出孔）是
-/// **调用方写错了** ⇒ `Denied`；交不出去（对端已不在）⇒ `Unknown`（"它不在"）；
-/// 账腾不出来 ⇒ `Full`。
-pub fn map_seat(seat: Seat) -> Fail {
-    match seat {
-        Seat::NoName => Fail::Denied,
-        Seat::NoHole => Fail::Denied,
-        Seat::NoSeed => Fail::Unknown,
-        Seat::Full => Fail::Full,
+/// **铸不出孔** ⇒ `Denied`（本端这一手没做成）；**交不出去** ⇒ `Unknown`
+/// （它最常见的那一支是"对端已不在"）。
+pub fn map_establish(fail: EstablishFail) -> Fail {
+    match fail {
+        EstablishFail::NoHole => Fail::Denied,
+        EstablishFail::NoSeed => Fail::Unknown,
     }
 }

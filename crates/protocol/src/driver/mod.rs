@@ -33,7 +33,7 @@
 //! | 每个驱动都要做 | 家 | 本层的动作 |
 //! |---|---|---|
 //! | 递单 / 发货（物料） | [`supply`] | **就是本层** |
-//! | 收物料的**字节形状** | `system::grant`（`Pair` 解）+ [`session`](crate::session) | 引用 |
+//! | 收物料的**字节形状** | `system::grant`（`Pair` 解）+ [`communication`](crate::communication) | 引用 |
 //! | 被按名找到（挂牌） | [`system::board`](crate::system::board) / [`system::operator`](crate::system::operator) 的客侧几手 | 引用 |
 //! | 就绪宣布 | [`system`](crate::system) 的 `Announce` | 引用 |
 //! | 开设备（门闩 → 视图） | `runtime::core::dock` | 引用 |

@@ -13,7 +13,7 @@
 //! 本程序把控制权交给台主：
 //!
 //! ```text
-//!   Quay::open(生我者) → seat("wake")      // 把自己的孔交给台主；台主认领 ⇒ 台主有写端
+//!   endpoint(生我者) → 铸"wake"那一枚交给台主      // 台主认领它 ⇒ 台主手里有写端，推得醒本端
 //!   从孔上读第一句（= 台主给的"在台上跑多少轮"，顺带就是第一次唤醒）
 //!   loop { 空转那么多轮（在台上）; pull(自己那一枚, 永久)（★ 离核） }
 //! ```
@@ -32,9 +32,9 @@ use programs::Reason;
 
 use harness::tick;
 
-use env::Name;
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish;
+use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
 
 /// 本端那枚泊位的名字（同时刻在孔上）：台主按这个名字认领它。
@@ -53,20 +53,20 @@ const REPORT_WAKE: bool = false;
 #[programs::entry]
 fn main() -> Reason {
     let sire = utask::sire();
-    let Ok(mark) = Name::new(MARK) else {
-        return bail("hang: bad mark");
-    };
 
-    // 码头朝生我者：把本端那一枚孔交出去（台主认领它 ⇒ 台主手里有写端，推得醒本端）。
-    let mut quay = Quay::open(sire, protocol::communication::hands::hands());
-    let Ok(pie) = quay.seat(mark).map(|p| *p) else {
+    // 一手就是"两头都装"：铸本端那一枚（刻 `wake` 的记号）交给生我者——台主认领它，于是台主
+    // 手里有写端、推得醒本端——并顺手试认它那一枚（`POLL` = 不等：**它本端用不上**，本端只读
+    // 自己那一枚）。
+    let Ok(pair) = establish::endpoint(sire, env::Mark::of(MARK), Wait::POLL) else {
         return bail("hang: seat");
     };
+    // 本端那一枚：读的就是它（台主每一记 push 落在这里）。
+    let pie = HolePie::from_token(pair.rx());
 
     // 第一句 = "在台上跑多少轮"（前 4 字节小端）。拿不到就退化成"在台上不占时间"。
     let mut buf = [0u8; 8];
     let mut burst = 0usize;
-    if let Ok(n) = pie.pull(&mut buf, Wait::Forever)
+    if let Ok(n) = pie.pull_timeout(&mut buf, Wait::Forever)
         && n >= 4
     {
         burst = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
@@ -80,7 +80,7 @@ fn main() -> Reason {
         // ★ 在台上：跑一小段（台主扫的 `d` 就落在这一段的时序上）。
         tick::spin(burst);
         // ★ 离核：无限挂在自己的孔上——`Wait::Forever` = 永久等，被 push 才醒。
-        let _ = pie.pull(&mut buf, Wait::Forever);
+        let _ = pie.pull_timeout(&mut buf, Wait::Forever);
     }
 }
 

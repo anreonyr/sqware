@@ -154,7 +154,8 @@ pub enum Req {
 /// **照实记（同词不同层：`Wire`）**：本仓有三处 `Wire`／`wire`——这里是**报文**那一层
 /// （一族问话收进来是哪一个形状），另两处是 [`env::wire::Wire`]（六个寄存器的调用约定）
 /// 与 [`env::wire::Field`]（**一种值**怎么落到字节上）。同名不同事，各自写在 doc 首行
-/// （本仓对同词的既有做法，见 `protocol::session::slip` 的三个动词）。
+/// （本仓对同词的既有做法，见 [`communication`](crate::communication) 里 `endpoint` / `give` / `claim`
+/// 三个动词各说各的那一句）。
 ///
 /// 四种真动作各占一格；[`Wire::Unknown`] 单独一格，因为**板对它答的话与"读不懂"不同**
 /// （见 `programs/src/system/board/server.rs` 的 `answer`）——[`Req`] 编不出它。
@@ -307,10 +308,13 @@ pub const ENTRY_MARK: Mark = Mark::of("entry");
 pub const ASK_MARK: Mark = Mark::of("board-ask");
 
 /// 提示孔那一枚上的记号（板线程铸它时刻上去的；装配者按它认领那一枚）。
+///
+/// **照实记（这一格原先有两个记号）**：装配者那一侧从前还 `seat` 过一次——本端另铸一枚、刻的是
+/// 另一个记号（`TIP_NAME = "board-tip"`）——而那一枚**两头都不用**（本端不读它，板线程也不认
+/// 它）：那条路上只走"往板线程那一枚里推一位新客人"。两个记号并成一个之后，装配者那一侧只剩
+/// [`establish::claim`](crate::communication::establish::claim) 一手（认下板线程铸的这一枚），
+/// 另一个名字随之退场（`programs/src/system/board/bridge.rs::host`）。
 pub const TIP_MARK: Mark = Mark::of("tip");
-
-/// 提示之路的名字（只有装配者那侧用得上：板线程那一枚是它自己铸的，不需要名字）。
-pub const TIP_NAME: &str = "board-tip";
 
 /// 提示那一格的载荷：**客人号（8 字节）＋ 定长名字 `NAME_LEN` ＋ 答话路那一格
 /// `PieToken::WIDTH`**——装配者往那条路上推的就是这一条记录（一句话：**来客人了，它是谁**，
@@ -347,10 +351,9 @@ pub const LANE_PREFIX: &str = "gone-";
 // ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
 //
 // 原先这是宿主台的一条运行时用例（`the_board_marks_and_the_lane_prefix_are_what_they_say`）。
-// 那一格里真会撞的只有下面这几对；余下几条（`LINK == "board"` / `TIP_NAME == "board-tip"` /
-// `LANE_PREFIX == "gone-"`）比的是**常量自己的定义式**，是同义反复，故随用例一起去掉。
+// 那一格里真会撞的只有下面这几对；余下几条（`LINK == "board"` / `LANE_PREFIX == "gone-"`）
+// 比的是**常量自己的定义式**，是同义反复，故随用例一起去掉。
 const _: () = assert!(ASK_MARK.get() != Mark::of("operator-ask").get());
 const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
 const _: () = assert!(ASK_MARK.get() != TIP_MARK.get());
-const _: () = assert!(TIP_MARK.get() != Mark::of(TIP_NAME).get());
 const _: () = assert!(ENTRY_MARK.get() != Mark::NONE.get());

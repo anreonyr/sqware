@@ -72,7 +72,7 @@ use env::{Name, PieToken, TaskId};
 
 use crate::id::Id;
 
-use crate::session::{Claim, Seat};
+use crate::communication::establish::EstablishFail;
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -238,7 +238,7 @@ pub type Unship = fn(PieToken) -> Result<(), ()>;
 /// **这扇门是谁开的**：内核 `Reserve` 第二格（`protocol::communication::hands::opened_by`）。
 ///
 /// 与 [`VestedBy`] **同一个类型、不同一句话**——故两枚戳子收在一格里（[`Stamps`]）：谁写反了
-/// **编不过**（照实记：这两枚放成位置参数时是同一个类型，写反照样编过；`session` 那一族认
+/// **编不过**（照实记：这两枚放成位置参数时是同一个类型，写反照样编过；会话那一族认
 /// `owner` 还是 `grantor` 实测栽过一次，同族的坑不再留）。
 ///
 /// **"答不出"这一格里就有"那扇门封印了"**：开者一退场，它开的门随之封印 ⇒ 答 `None`。
@@ -303,7 +303,7 @@ impl Operator {
     /// 立一棵树：注入的两枚戳子与那一次动作跟着树走——它们对每一条同值，故不必逐个作参数传。
     ///
     /// `stamps` 收成**一格具名的组**（照实记：两枚戳子是同型的函数指针，摆成位置参数时写反了
-    /// 编不过才算数——`session` 那一族认 `owner` 还是 `grantor` 实测栽过一次）。
+    /// 编不过才算数——会话那一族认 `owner` 还是 `grantor` 实测栽过一次）。
     pub const fn new(stamps: Stamps, unship: Unship) -> Operator {
         Operator {
             root: Vec::new(),
@@ -619,33 +619,17 @@ impl Operator {
     }
 }
 
-// ── 两张会话失败域的对照表（原住 `protocol` 的 `system/operator/call.rs`）──
+// ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/operator/call.rs`）──
 //
-// 两个入参都出自 `session::core`（`Claim` / `Seat`）、产出的又是本文件自己的
-// [`Fail`]，故它们与产出的那一格同住。`call.rs` 并进 `system/operator/mod.rs` 那一刀
-// 把这两张表落在这里。
+// 入参出自 [`EstablishFail`]（`communication::establish`）、产出的又是本文件自己的
+// [`Fail`]，故它与产出的那一格同住。原先有两张（`Seat` / `Claim`）——并回一个 crate 之后
+// 只剩一手建立，`Claim` 那一张随之退场（认不到对端那一枚不再是错误，见 `establish`）。
 
-/// 会话的失败域 → 树的失败域：**"它不在"是一条判据**，故两边只留一个名字
+/// 建立那一手的失败域 → 树的失败域：**"它不在"是一条判据**，故两边只留一个名字
 /// （[`Fail::Unknown`]）。
 ///
-/// 「一笔都没到」与「到了一些、不齐」在上面那一层都归 `Unknown` / `Full`：树这一侧只有
-/// 一格答话码，问的人按它决定要不要重问。
-pub fn map_claim(claim: Claim) -> Fail {
-    match claim {
-        Claim::Timeout => Fail::Unknown,
-        Claim::Partial => Fail::Full,
-    }
-}
-
-/// 装一条路的失败域 → 树的失败域。
-///
-/// 名字 / 资源上的毛病（名字非法、同名已装、铸不出孔）是**调用方写错了** ⇒ `Unknown`
-/// （树上没有这一格可指）；交不出去（对端已不在）⇒ `Unknown`（"它不在"）；账腾不出来 ⇒ `Full`。
-pub fn map_seat(seat: Seat) -> Fail {
-    match seat {
-        Seat::NoName => Fail::Unknown,
-        Seat::NoHole => Fail::Unknown,
-        Seat::NoSeed => Fail::Unknown,
-        Seat::Full => Fail::Full,
-    }
+/// 铸不出孔 / 交不出去在这一层是同一件事（"这一手没做成"）：树这一侧只有一格答话码，
+/// 问的人按它决定要不要重问。
+pub fn map_establish(_fail: EstablishFail) -> Fail {
+    Fail::Unknown
 }

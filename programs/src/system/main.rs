@@ -129,7 +129,8 @@ fn system() -> Result<(), Fail> {
         sys.enlist(&program).map_err(|_| Fail::Assemble(E_TABLE))?;
     }
 
-    // 4. 逐条起。
+    // 4. 逐条起。`Service` 那本通道账**不必抱着**：孔归本域那张表（`Endpoint::close` 才放下），
+    //    起完就不指着它了——装配者往后只通过板 / 树那两条路与它说话。
     for row in &rows {
         let program = Program {
             name: row.name,

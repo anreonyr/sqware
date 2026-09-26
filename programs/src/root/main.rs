@@ -45,7 +45,7 @@ use env::Wait;
 use programs::root::boot;
 
 use env::Name;
-use protocol::session::Quay;
+use protocol::communication::establish;
 // 协议侧那三档（判定 / 账 / 适配）与那台装配机器**同名不同物**，故逐个取名进来。
 use programs::system::control::service::{self as core, until};
 use programs::system::control::{Catalog, Died, E_MANIFEST, READY_MS};
@@ -124,17 +124,19 @@ fn main() -> Result<programs::Report<'static>, Die> {
 
     // 2. 起编排者：它有一条 `boot` 通道——配给从那里问、回单从那里回。
     let orch = mint(&mut table, &catalog, ORCH, orch_name, Announce::Channel)?;
-    // 这条泊位两头都装：本域**读**自己那一枚（单子从这来），**写**对端那一枚（回单往这去）。
-    let mut quay = Quay::open(orch, protocol::communication::hands::hands());
-    if quay.seat(slot).is_err() {
-        return Err(Die::Orch(E_ORCH));
-    }
+    // 这条通道**两头都装**（一手就是 `establish::endpoint`：铸本端那一枚交给它、并试认它那一枚）：
+    // 本域**读**自己那一枚（单子从这来），**写**对端那一枚（回单往这去）。`POLL` = 这一趟不等它
+    // 那一枚——它此刻一步都还没跑，真正的认领由 `core::start` 的 `ready` 做（判据同一个记号）。
+    //
+    // **持有者活到本函数结束**：这一对孔在 `channels` 里（`Endpoint` 落出作用域才放下本端那一枚）。
+    let mut channels = [establish::endpoint(orch, Mark::of(slot.as_str()), Wait::POLL)
+        .map_err(|_| Die::Orch(E_ORCH))?];
     if core::start(
         &mut table,
         orch_name,
         orch,
         &[],
-        Some(&mut quay),
+        &mut channels,
         &[Mark::of(slot.as_str())],
         Wait::AtMost(READY_MS),
     )
@@ -142,9 +144,6 @@ fn main() -> Result<programs::Report<'static>, Die> {
     {
         return Err(Die::Orch(E_ORCH));
     }
-    let Some(pier) = quay.find(slot) else {
-        return Err(Die::Orch(E_ORCH));
-    };
 
     // 3. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::driver::supply::server::serve` 的
     //    `alive`：本域读的那枚孔命随本端，故收场靠探活，不靠"读不出"）。
@@ -154,7 +153,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
     let source = |key: plan::Key| boot.token(key);
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, Wait::POLL), Ok(Reaped::Now));
-    programs::root::supply::server::serve(&pier, source, alive, &mut ask);
+    programs::root::supply::server::serve(&channels[0], source, alive, &mut ask);
     Ok(programs::Report::note(env::EXIT_OK, "root: done"))
 }
 

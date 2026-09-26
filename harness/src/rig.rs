@@ -61,13 +61,13 @@
 //! | 台上 | 记一笔 + 投递，SSIP 自退（读数 `waited`） |
 //!
 //! 要量"点名落在它**离核那一瞬**"那一格，上台/离核必须**由台主控制**——**rig A 已经落在
-//! 这台子上了**（见下面的 `trial`）：受害者换成 `hang`；它 `seat` 把孔交出来、随即挂在自己
-//! 那枚孔上，台主 `claim` 到它就等于"它已经挂好了"；台主随后 `push` 一记唤醒——于是"醒来跑
+//! 这台子上了**（见下面的 `trial`）：受害者换成 `hang`；它铸出自己那一枚交给台主、随即挂在自己
+//! 那枚孔上，台主认下它那一枚就等于"它已经挂好了"；台主随后 `push` 一记唤醒——于是"醒来跑
 //! 一小段 → 又挂回去"的转折点由台主定，杀令的偏移才真的落在"在台上"那一段的时序上。
 //! 旧版（`churn` + 放行即跑）的读数留在上面那张表里当历史：那台子量不到这一格。
 //!
 //! ```text
-//!   造(hang) → 台主 seat("wake") → Hatch → hang seat("wake") → 台主 claim 认下它（="它挂好了"）
+//!   造(hang) → 台主铸"wake"那一枚 → Hatch → hang 也铸一枚交给台主 → 台主认下它（="它挂好了"）
 //!   → 台主 push（正文 = "在台上跑多少轮"，这一句同时就是第一次唤醒）→ 空转 d µs → Doom → 判
 //! ```
 //!
@@ -134,8 +134,8 @@
 
 //! # 照实记：曾疑"每轮漏一枚对端孔的句柄" —— **已量，推翻**
 //!
-//! 原先在这里写着：每轮台主表里会多留**对端那一枚孔的句柄**（理由是 `Quay::shut` 只
-//! `unship` 本端那一枚），一轮一枚、线性增长。**这条是读代码读出来的，不是量出来的**
+//! 原先在这里写着：每轮台主表里会多留**对端那一枚孔的句柄**（理由是那时台主只放
+//! 本端那一枚），一轮一枚、线性增长。**这条是读代码读出来的，不是量出来的**
 //! ——量过之后它不成立。
 //!
 //! 量具（临时，量完即撤）：台主**自己的权限表**有几枚门闩——`Collect` 是唯一的枚举手段
@@ -145,22 +145,22 @@
 //! | 时点 | 表内枚数 | 表里多出来的是谁 |
 //! |---|---|---|
 //! | 空载基线，以及每轮开头 `a` | 20 / 20 | — |
-//! | `seat` + 认下对端交来的那一枚之后 `b` | 22 | 本端 seat 的那一枚 + 对端那一枚 |
-//! | 判决拿到 `Reaped`、**`shut` 之前** `c` | **21** | 只剩本端那枚 ⇒ 对端那枚**已经没了** |
-//! | `quay.shut()` 之后 `d` | **20** | 回到基线 |
+//! | 铸出本端那一枚 + 认下对端交来的那一枚之后 `b` | 22 | 本端铸的那一枚 + 对端那一枚 |
+//! | 判决拿到 `Reaped`、**放下之前** `c` | **21** | 只剩本端那枚 ⇒ 对端那枚**已经没了** |
+//! | 本端那一记 `close()` 之后 `d` | **20** | 回到基线 |
 //!
-//! **328/328 轮四个数一模一样**，整场基线 20 不动 ⇒ 没有泄漏。收掉对端那一枚的不是 `shut`
-//! （它只放本端那一枚），是**退场级联**：那一枚是受害者 `ship` 出来的副本，`sire` 指着
+//! **328/328 轮四个数一模一样**，整场基线 20 不动 ⇒ 没有泄漏。收掉对端那一枚的不是那一记
+//! `close`（它只放本端那一枚），是**退场级联**：那一枚是受害者 `ship` 出来的副本，`sire` 指着
 //! 受害者表里那一枚（见 `gate::accord` 头注"派生边只写在这里"），而受害者在 `reap` 里
 //! **先跑退出钩子再置 `Reaped`**（`messenger::reap`：`hooked(...)` 在 `transform(Reaped)`
 //! 之前；钩子里的 `gate::doom` 沿 `sire` 反查全世界、`cull` 摘子树）⇒ 台主拿到 `Reaped`
 //! 那一刻它已经不在我表里了。**结论：对端那一枚不是台主该放的账**，也不需要"放对端"这个
-//! 动作（协议那三对 `open↔shut` / `seat↔unseat` / `claim` 就是全部）。
+//! 动作（协议那三对 `endpoint` / `give` / `claim` 就是全部）。
 //!
 //! # 照实记：台子真正的缺口在**错路**上（读到 → 已补）
 //!
-//! 查台子用法时读到：`trial()` 里 `register` / `spawn` / `seat` / `start` / `post` /
-//! `handshake unpaired` 那几条早退**都不收场**（不 `oust`、不 `shut`）⇒ 真出错时会留下一个
+//! 查台子用法时读到：`trial()` 里 `register` / `spawn` / `铸那一枚` / `start` / `post` /
+//! `handshake unpaired` 那几条早退**都不收场**（不 `oust`、不放本端那一枚）⇒ 真出错时会留下一个
 //! 没起或没杀的受害者域、外加本端那枚孔。实测各场**没有一条 `trial failed`**（早退没发生过），
 //! 故它一直只是"错路上的账"。
 //!
@@ -221,21 +221,22 @@ use core::time::Duration;
 use env::Name;
 use programs::system::control::service as service;
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::{self, Endpoint};
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Slot, Table};
+use runtime::env::mail::HolePie;
 use runtime::env::room;
 use runtime::env::unit;
 
-/// 受害者的清单名（`plan::assembly::ALL` 里 `scenes` 含 `rig` 的那一行）：**rig A 的握手版受害者**——把孔交给
-/// 台主（`seat`）→ 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
+/// 受害者的清单名（`plan::assembly::ALL` 里 `scenes` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
+/// 台主 → 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
 /// （见 `hang.rs` 头注）。旧版 `churn` 仍在清单里（留档），本台子不再用它。
 const VICTIM: &str = "hang";
 
-/// 握手那条泊位的名字：**两侧同名**（台主 `seat` 一条、受害者也 `seat` 一条、记号相同才配得齐）。
+/// 握手那条路的记号：**两侧同一个**（台主铸一枚、受害者也铸一枚，刻的都是它才配得齐）。
 const LINK: &str = "wake";
 
-/// 等它把手伸出来（`seat`）的上限。它是 `Announce::Channel` 的就绪证据：认领成功 ⇒ 它已经挂好、
+/// 等它把手伸出来（铸出它那一枚）的上限。它是 `Announce::Channel` 的就绪证据：认领成功 ⇒ 它已经挂好、
 /// 可以被唤醒了。
 const HANDSHAKE_MS: usize = 1_000;
 
@@ -410,7 +411,7 @@ enum Verdict {
 /// 造一个受害者、放行、空转 `delay` 轮、杀、判、放下。
 ///
 /// **收场与正文分开**：`trial` 只管"造 + 收"，一轮的正文在 [`body`]。这样造不出来的早退
-/// （`seat` / `start` / `no pier` / `handshake unpaired` / `post`）**也照样收场**——否则它们
+/// （铸那一枚 / `start` / `no pier` / `handshake unpaired` / `post`）**也照样收场**——否则它们
 /// 会留下一个没起或没杀的受害者域，外加本端那枚孔。（照实记：这条缺口是查台子用法时读到的，
 /// 实测各场没有一条 `trial failed`；现在收场不看这一轮成没成。）
 ///
@@ -430,12 +431,14 @@ fn trial(
         .register(name, Announce::Channel)
         .map_err(|_| "register")?;
     let task = service::mint(&mut table, name, elf, kind).map_err(|_| "spawn")?;
-    // **rig A：握手**。台主这一侧先 `seat` 一条（顺带给 `claim` 一个"额度"），放行时把码头
-    // 交给受害者；它 `seat` 把孔交出来、随即挂在自己那枚孔上 ⇒ 台主 `claim` 到它就等于
-    // **"它已经挂好了、可以被唤醒了"**（它**不自己校准**，轮数随后由台主发过去）。
-    // `start` 丢弃 `ready` 的 bool，故正文里显式查 `paired`。
-    let mut quay = Quay::open(task, protocol::communication::hands::hands());
-    let verdict = body(name, delay_us, iters_per_ms, &mut table, &mut quay, link);
+    // **rig A：握手**。台主这一侧先铸一条（`endpoint`：本端那一枚交出去，顺带试认它那一枚），
+    // 放行时把通道交给受害者；它铸出自己那一枚交给台主、随即挂在自己那枚孔上 ⇒ 台主 `claim`
+    // 到它就等于**"它已经挂好了、可以被唤醒了"**（它**不自己校准**，轮数随后由台主发过去）。
+    // `start` 丢弃 `ready` 的 bool，故正文里显式查写端在不在。
+    let mut channels = [establish::endpoint(task, Mark::of(link.as_str()), Wait::POLL)
+        .map_err(|_| "seat")?];
+    let verdict = body(name, task, delay_us, iters_per_ms, &mut table, &mut channels, link);
+    let channel = channels[0];
 
     // ── 收场（**不论这一轮成没成**）────────────────────────
     // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。
@@ -445,41 +448,45 @@ fn trial(
     {
         let _ = unit::oust(team);
     }
-    // 本端那一枚孔随码头放下。对端交上来的那一枚不归我：受害者在 `reap` 里先跑退出钩子
-    // （能力级联），台主拿到 `Reaped` 时它已经不在我表里了——**已量，见头注①**。
-    quay.shut();
+    // 本端那一枚孔**明说放下**（`Endpoint::close`，即旧 `quay.shut()` 那一手）——放下一手不由
+    // 作用域替人做（`establish` 的照实记）。
+    // 对端交上来的那一枚不归我：受害者在 `reap` 里先跑退出钩子（能力级联），台主拿到 `Reaped`
+    // 时它已经不在我表里了——**已量，见头注①**。
+    channel.close();
     verdict
 }
 
-/// 一轮的正文：起码头之后到判决那一段（**早退也不收场**——收场归 [`trial`]）。
+/// 一轮的正文：起通道之后到判决那一段（**早退也不收场**——收场归 [`trial`]）。
 fn body(
     name: Name,
+    task: env::TaskId,
     delay_us: usize,
     iters_per_ms: usize,
     table: &mut Table,
-    quay: &mut Quay,
+    channels: &mut [Endpoint],
     link: Name,
 ) -> Result<Verdict, &'static str> {
-    quay.seat(link).map_err(|_| "seat")?;
     service::start(
         table,
         name,
-        quay.peer(),
+        task,
         &[],
-        Some(quay),
+        channels,
         &[Mark::of(link.as_str())],
         Wait::AtMost(HANDSHAKE_MS),
     )
     .map_err(|_| "start")?;
-    let pie = *quay.find(link).ok_or("no pier")?;
-    if !pie.paired() {
-        return Err("handshake unpaired");
-    }
+    let at_peer = channels.first().and_then(Endpoint::tx).ok_or("no pier")?;
     // ★ 唤醒，并顺手把"在台上跑多少轮"告诉它（**第一句即第一次唤醒**；此后每句都只是唤醒）。
     // 那个轮数由台主**空载校准一次**（`main` 里，铺负荷之前），受害者不自己校准——它每轮都是
     // 一枚新任务，自己校准等于每轮白扔 0.4 s（睡 200 ms + 忙等两格刻度）。
+    //
+    // 推的是**对端那一枚**（我写、受害者读），且是**裸字节**（那句轮数不是一族那种报）
+    // ⇒ 走裸孔，不套手柄。
     let burst = iters_per_ms.saturating_mul(STAGE_MS);
-    pie.post(&burst.to_le_bytes()).map_err(|_| "post")?;
+    HolePie::from_token(at_peer)
+        .push(&burst.to_le_bytes())
+        .map_err(|_| "post")?;
 
     // 诊断（默认关）：push 之后**先让出一拍**再空转。判据是 `doom: nudged` 会不会从个位数
     // 跳上去——跳到"几乎每轮"就说明卡点是"源核（台主）空转不 yield"（`kick` 的兜底正是

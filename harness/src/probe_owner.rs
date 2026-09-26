@@ -45,7 +45,7 @@ use protocol::system::operator::{EntryId, Where};
 
 use env::{Name, PieToken, TaskId};
 use protocol::driver;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -162,7 +162,7 @@ fn main() -> Report<'static> {
 /// 落 `/sys/lease`——**那一格的主人（`probe-lease`）已经退场**，故这一次该接得上。
 ///
 /// 有界重试：对面那台与本域并行起来，"它死了没有"要看读数而不是靠猜。
-fn take_over(hedge: PieToken, link: &Quay, host: TaskId) -> Result<EntryId, u8> {
+fn take_over(hedge: PieToken, link: &Endpoint, host: TaskId) -> Result<EntryId, u8> {
     let (Ok(dir), Ok(me)) = (Name::new("sys"), Name::new("lease")) else {
         return Err(ocall::BAD);
     };
@@ -206,13 +206,13 @@ fn take_over(hedge: PieToken, link: &Quay, host: TaskId) -> Result<EntryId, u8> 
 }
 
 /// `/device` 那一格的号（分目录幂等 + 译号）。
-fn wait_dir(say_hole: PieToken, link: &Quay, dir: Name) -> Option<EntryId> {
+fn wait_dir(say_hole: PieToken, link: &Endpoint, dir: Name) -> Option<EntryId> {
     operator::part(say_hole, link, Where::Root, dir, Wait::AtMost(MS)).ok()?;
     operator::seek(say_hole, link, &[dir], Wait::AtMost(MS)).ok()
 }
 
 /// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。
-fn wait_id(say_hole: PieToken, link: &Quay, road: &[Name]) -> Option<EntryId> {
+fn wait_id(say_hole: PieToken, link: &Endpoint, road: &[Name]) -> Option<EntryId> {
     let mut left = MS;
     loop {
         match operator::seek(say_hole, link, road, Wait::AtMost(MS)) {

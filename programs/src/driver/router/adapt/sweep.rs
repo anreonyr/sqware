@@ -15,7 +15,7 @@ use crate::plic::Plic;
 use env::HoleDir;
 use protocol::debug;
 use protocol::driver::line::core::Lines;
-use protocol::session::Pier;
+use protocol::communication::establish::Endpoint;
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 
@@ -29,11 +29,13 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
         let Some(lane) = lines.lane(line) else {
             continue;
         };
-        if alive(&lane) {
+        if alive(lane) {
             continue;
         }
         plic.unwire(line);
-        let _ = pile.detach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
+        let _ = pile.detach(&HolePie::from_token(lane.rx()), HoleDir::Pull);
+        // **空出这一格就是放下那条路**：账里那一格装的是持有者本身（`Endpoint`），
+        // 换回 `Idle` 那一刻本端铸的那一枚随之放下（旧形状里那一手是适配层自己清）。
         let _ = lines.vacate(line);
         debug!("router: vacate line={line}");
     }
@@ -41,9 +43,9 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
 
 /// 客人还答得出来吗：**问它铸的那一枚**（`mail::reserve` 走存活闸：封印之后答不出）。
 ///
-/// 问的是对端的写端（`at_peer`）而不是本端读的那一枚：本端那一枚的活命随本域，问它恒活。
-fn alive(lane: &Pier) -> bool {
-    match lane.at_peer() {
+/// 问的是对端的写端（`Endpoint::tx`）而不是本端读的那一枚：本端那一枚的活命随本域，问它恒活。
+fn alive(lane: &Endpoint) -> bool {
+    match lane.tx() {
         Some(at_peer) => mail::reserve(at_peer).is_ok(),
         None => false,
     }

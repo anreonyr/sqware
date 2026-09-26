@@ -6,11 +6,13 @@
 //! **按泊位认线**：一条线一枚泊位，谁推的那一枚就是哪一条——**帧里没有线号**（1 字节记号，
 //! 见 [`protocol::driver::line::frame`]），故这里无需对账，取到就是那一条。
 //!
-//! 非阻塞取干净再回去等：`pull(.., 0)` 期限内没有就是没有，**不是错误**。
+//! 非阻塞取干净再回去等：`POLL` 期限内没有就是没有，**不是错误**。这一格是**裸字节**（道上的
+//! 记号只有一个动作码，不是一族那种报）⇒ 走裸孔，不套手柄。
 
 use crate::plic::{LINE_PRIORITY, Plic};
 use env::Wait;
 use protocol::driver::line::core::Lines;
+use runtime::env::mail::HolePie;
 
 /// 排空：取"忙"的那些，把里面的通知取干净，每条回闲 + 放线。
 ///
@@ -25,7 +27,9 @@ pub fn drain(lines: &mut Lines, plic: &Plic, buf: &mut [u8]) {
         let Some(lane) = lines.lane(line) else {
             continue;
         };
-        while lane.pull(buf, Wait::POLL).is_ok() {
+        // 收**本端那一枚**（客人往它写"我排空了"）；号先取出来，下面那一手要改账（借不动）。
+        let rx = lane.rx();
+        while HolePie::from_token(rx).pull_timeout(buf, Wait::POLL).is_ok() {
             let _ = lines.exhaust(line);
             plic.enable(line, LINE_PRIORITY);
             // debug!("router: exhaust line={line}");

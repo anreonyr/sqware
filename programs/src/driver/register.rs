@@ -10,7 +10,7 @@
 use env::Wait;
 use env::{Name, PieToken};
 use protocol::driver::line;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 
@@ -25,7 +25,7 @@ const SERVICE: &str = "router";
 /// 失败：`Err(())` = 找不到 / 授不进来 / 占不上——调用方按自己那格死法折
 /// （今天两台都折 `Fail::at(Step::Line)`）。
 pub fn occupy(
-    link: &Quay,
+    link: &Endpoint,
     talk: PieToken,
     key: plan::Key,
     millis: Wait,

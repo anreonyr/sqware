@@ -51,7 +51,7 @@ use core::time::Duration;
 
 use env::{Name, PieToken};
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use runtime::env::room;
@@ -128,7 +128,7 @@ fn main() -> Report<'static> {
 /// 沿一条路译成号再 `find`：答线上那一格码（译不出号 ⇒ `UNKNOWN`）。
 ///
 /// **带一轮有界重试**：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚。
-fn denied(talk: PieToken, link: &Quay, road: &[Name]) -> u8 {
+fn denied(talk: PieToken, link: &Endpoint, road: &[Name]) -> u8 {
     let mut left = MS;
     let id = loop {
         match operator::seek(talk, link, road, Wait::AtMost(MS)) {

@@ -48,7 +48,7 @@ use protocol::system::operator::client as operator;
 use core::time::Duration;
 
 use env::{Name, PieToken};
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 // 那一面服务：帧形与记号、客侧两手——**与驱动同一份源码**（见 `programs/src/driver/rtc/mod.rs`）。
 use programs::driver::rtc::core::frame as rcall;
 use programs::driver::rtc::client as clock;
@@ -178,7 +178,7 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"，
 /// 而本域此刻只查了这一趟 ⇒ 这一趟拿走的一定是它（次序见 `programs/src/user/echo/mod.rs` 头注）。
-fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
+fn find_face(link: &Endpoint, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
         return None;
     };

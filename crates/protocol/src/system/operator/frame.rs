@@ -753,11 +753,14 @@ pub const LINK: &str = "operator";
 pub const ASK_MARK: Mark = Mark::of("operator-ask");
 
 /// 提示孔那一枚上的记号（持树者铸它时刻上去的；装配者按它认领那一枚）。
+///
+/// **照实记（这一格原先有两个记号）**：装配者那一侧从前还 `seat` 过一次——本端另铸一枚、刻的是
+/// 另一个记号（`TIP_NAME = "operator-tip"`）——而那一枚**两头都不用**：那条路上只走"往持树者
+/// 那一枚里推一位新客人 / 一帧协调"。两个记号并成一个之后，装配者那一侧只剩
+/// [`establish::claim`](crate::communication::establish::claim) 一手，另一个名字随之退场
+/// （`programs/src/system/operator/bridge.rs::host_of`）。它那条注里"引导域按名来要"的说法
+/// **没有下家**：引导期那一枚提示孔今天由 `Tree` 自己拿着逐次传下去。
 pub const TIP_MARK: Mark = Mark::of("tip");
-
-/// 提示之路的名字（两侧共用：持树者那侧不用它——它那一枚是自己铸的；引导域用它把
-/// 认来的那一枚挂在"名字 → 我手里的一枚"这张账上，好让编排域按名来要）。
-pub const TIP_NAME: &str = "operator-tip";
 
 // ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
 //
@@ -770,4 +773,3 @@ pub const TIP_NAME: &str = "operator-tip";
 const _: () = assert!(ASK_MARK.get() != Mark::of("board-ask").get());
 const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
 const _: () = assert!(ASK_MARK.get() != TIP_MARK.get());
-const _: () = assert!(TIP_MARK.get() != Mark::of(TIP_NAME).get());

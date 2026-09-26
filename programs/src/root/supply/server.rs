@@ -9,7 +9,7 @@ use runtime::env::mail::{NolePie, PolePie};
 
 use protocol::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
 use protocol::driver::supply::core::Fail;
-use protocol::session::Pier;
+use protocol::communication::establish::Endpoint;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
 
@@ -59,7 +59,7 @@ pub fn supply(
 /// **它现在只管"没消息"那一支**：内核当场说"这一枚孔用不动了"时走 `Dead` / `Denied` 那一格，
 /// 那一支直接收摊、**不再问 `alive`**（端点没了，没有下一步可走）——两条判据不再互相顶替。
 pub fn serve(
-    pier: &Pier,
+    pier: &Endpoint,
     src_of: impl Fn(Key) -> Option<PieToken>,
     alive: impl Fn() -> bool,
     ask: &mut [u8],
@@ -68,9 +68,9 @@ pub fn serve(
     const WAIT_MS: usize = 1000;
     // 记录那一格：至多 [`WANT_MAX`] 条（条数不越界由 `Order` 那一侧保证）。
     let mut records = [Pair::NONE; WANT_MAX];
-    let rx = Receiver::<Order>::from_token(pier.hole());
+    let rx = Receiver::<Order>::from_token(pier.rx());
     loop {
-        // **三格失败分得开**（[`Land`]）：没收到 ⇒ 去探活；孔用不动了 ⇒ 收摊；解不动 ⇒ 答 `BAD`。
+        // **三格失败分得开**（[`RecvFail`]）：没收到 ⇒ 去探活；孔用不动了 ⇒ 收摊；解不动 ⇒ 答 `BAD`。
         let order = match rx.recv(ask, Wait::AtMost(WAIT_MS)) {
             Ok(order) => order,
             // "没收到"（`Busy` 那一族）⇒ 去探一次活；其余三格见下面两条。
@@ -101,10 +101,10 @@ pub fn serve(
 
 /// 回一张回单：**一处发**（装与发都不在这一层写字节——缓冲在这一帧的栈上）。
 ///
-/// 泊位那头还没齐（`at_peer` 空）⇒ 不发：与从前 `Pier::post` 自己那一格同一个意思
-/// （"没有写端就发不出去"，不猜、不空转）。
-fn reply(pier: &Pier, code: u8, records: &[Pair]) {
-    let Some(at_peer) = pier.at_peer() else {
+/// 那头还没齐（没有写端 ⇒ [`Endpoint::tx`] 是 `None`）⇒ 不发：**没有写端就发不出去**，
+/// 不猜、不空转（与从前同一条口径）。
+fn reply(pier: &Endpoint, code: u8, records: &[Pair]) {
+    let Some(at_peer) = pier.tx() else {
         return;
     };
     if let Some(reply) = Reply::of(code, records) {

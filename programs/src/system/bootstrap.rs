@@ -15,9 +15,8 @@
 //! [`Control::wire`](crate::system::control::Control::wire)）。
 
 use env::Mark;
-use env::Name;
 use env::Wait;
-use protocol::session::{Pier, Quay};
+use protocol::communication::establish::{self, Endpoint};
 
 use protocol::driver::supply::frame::{Kind, Want};
 use protocol::driver::supply;
@@ -72,7 +71,7 @@ const E_BOOT: env::Reason = plan::assembly::E_BOOT;
 /// **起手要的三样东西**：与引导域的会话、那台机器的自述、那块载荷区（清单）。
 pub struct Boot {
     /// 与引导域那条双向问答路（配给从这条路上领）。
-    pub pier: Pier,
+    pub pier: Endpoint,
     /// 本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一段区"要有它。
     pub machine: Machine,
     /// 这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
@@ -102,20 +101,18 @@ pub fn take() -> Result<Boot, Fail> {
 
 /// 与引导域搭一条**双向**的问答路。
 ///
-/// 两侧各装一枚（`seat`）、各认下对方那一枚（`claim`）：本域**读**自己那一枚（回单从这来），
-/// **写**对端那一枚（单子往那去）。
-fn talk_to_root() -> Option<Pier> {
+/// **一手就是"两头都装"**（[`establish::endpoint`]）：本域铸一枚（刻 `boot` 的记号）交给生我者
+/// ——本域**读**自己那一枚（回单从这来）——并认下它那一枚（**写**：单子往那去）。
+fn talk_to_root() -> Option<Endpoint> {
     let sire = utask::sire();
-    let slot = Name::new(supply::BOOT).ok()?;
-    let mut quay = Quay::open(sire, protocol::communication::hands::hands());
-    quay.seat(slot).ok()?;
-    quay.claim(sire, Mark::of(supply::BOOT), Wait::AtMost(BOOT_MS))
-        .ok()?;
-    quay.find(slot).copied()
+    let pier = establish::endpoint(sire, Mark::of(supply::BOOT), Wait::AtMost(BOOT_MS)).ok()?;
+    // **认不到它那一枚 = 这条问答路没搭上**：单子发不出去（原 `claim` 那一格）。
+    pier.tx()?;
+    Some(pier)
 }
 
 /// 领树：与载荷区同一条路（一张只有一条的单子 + 借映）。
-fn take_machine(pier: &Pier) -> Result<Machine, ()> {
+fn take_machine(pier: &Endpoint) -> Result<Machine, ()> {
     let want = Want::new(plan::Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE);
     let token = draw_one(pier, want).ok_or(())?;
     let dock = Dock::open(PolePie::from_token(token)).map_err(|_| ())?;
@@ -125,7 +122,7 @@ fn take_machine(pier: &Pier) -> Result<Machine, ()> {
 /// 领那块载荷区并把清单读出来。坐标是**机器自己在树里写的那一段**（`/chosen`）。
 ///
 /// **零拷贝**：那几十 MB 不是搬过来的，是同一批物理页借映进本域。
-fn take_catalog(pier: &Pier, key: plan::Key) -> Result<Catalog<'static>, ()> {
+fn take_catalog(pier: &Endpoint, key: plan::Key) -> Result<Catalog<'static>, ()> {
     let want = Want::new(key, Kind::Pole, Access::FETCH, Policy::NONE);
     let token = draw_one(pier, want).ok_or(())?;
     let dock = Dock::open(PolePie::from_token(token)).map_err(|_| ())?;
@@ -140,7 +137,7 @@ fn take_catalog(pier: &Pier, key: plan::Key) -> Result<Catalog<'static>, ()> {
 /// 问引导域要一枚：递一张只有一条的单子，取回那一条的号（按**坐标**认，不按位次）。
 ///
 /// 缓冲是本调用的局部（**一问一答**，一问一次）；引导期只发生两次。
-fn draw_one(pier: &Pier, want: Want) -> Option<env::PieToken> {
+fn draw_one(pier: &Endpoint, want: Want) -> Option<env::PieToken> {
     let me = utask::self_id();
     let key = want.key()?;
     let mut reply = [0u8; supply::REPLY_CAP];

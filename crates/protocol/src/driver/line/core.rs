@@ -3,12 +3,17 @@
 //! **四个原语**（`occupy` / `deliver` / `exhaust` / `vacate`）动账；**查询**（`lane` / `busy` /
 //! `held` / `told`）只读账（`told` 顺手置一格"报过没有"，见它自己的注）。
 //!
-//! 本文件**不碰内核**——这条纪律现在由 **crate 边界**管着（见本 crate 头注）。唯一的设备侧动作
-//! ——接线 / 静音 / 拆线——由适配层紧随原语之后做（它要动硬件），故核心只记账、可独立推理。
+//! **它碰内核的地方只有一处**：`deliver` 推那一帧（[`hands::push_to`]）——那句话不在账上，
+//! 是"往对端那枚孔推一串字节"。**设备侧的动作**（接线 / 静音 / 拆线）一律不在这里：它们由
+//! 适配层紧随原语之后做（那几手要动硬件），故账仍可独立推理。
+//!
+//! 那一处从前是**注入**进来的（`Pier` 里挂着 `post` 那只函数指针，会话那一层一件内核都不碰）；
+//! 注入与 `Hands` 一起退场之后，这一句留在这里（纪律由 **crate 边界**管着，见本 crate 头注）。
 
 use alloc::vec::Vec;
 
-use crate::session::Pier;
+use crate::communication::establish::Endpoint;
+use crate::communication::hands;
 
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -21,11 +26,14 @@ pub enum Fail {
     Denied,
 }
 
-/// 一格：没主，或者有主（一条泊位 + 忙不忙）。
-#[derive(Clone, Copy)]
+/// 一格：没主，或者有主（**那条路的持有者** ＋ 忙不忙）。
+///
+/// **装的是两枚号一起**（[`Endpoint`]），不是散着的裸号：那一对孔归本域那张表，而
+/// "这一段代码结束了"**不是**放下它的理由（见 `establish` 的照实记）——故 `vacate` 那一手
+/// 要**明说** `close`（那是"主人没了 ⇒ 这条路作废"，不是词法结束）。
 enum Cell {
     Idle,
-    Owned { lane: Pier, busy: bool },
+    Owned { lane: Endpoint, busy: bool },
 }
 
 /// 一张按线号索引的账。
@@ -51,7 +59,10 @@ impl Lines {
         let n = device_count as usize + 1;
         let mut cells = Vec::new();
         cells.try_reserve(n).ok()?;
-        cells.resize(n, Cell::Idle);
+        // 逐格压（不是 `resize`）：这一格装的是持有者，不是 `Copy` 的号。
+        for _ in 0..n {
+            cells.push(Cell::Idle);
+        }
         let mut told = Vec::new();
         told.try_reserve(n).ok()?;
         told.resize(n, false);
@@ -59,9 +70,10 @@ impl Lines {
     }
 
     /// **occupy**：占住这一格（登记）。**接线那一手是它的后果**，由适配层紧随其后做；
-    /// **拒绝（`Taken`）那一趟反过来**：刚交上来的那条泊位由适配层放下——账里根本没有它，
-    /// 别人也不会替它收（`programs/src/driver/router/adapt/desk.rs::drop_lane`）。
-    pub fn occupy(&mut self, line: u32, lane: Pier) -> Result<(), Fail> {
+    /// **拒绝（`Taken`）那一趟反过来**：刚交上来的那条路**不在账里**，它归调用方放下
+    /// ——`Endpoint` 是 `Copy` 的，故调用方收下 `Err` 之后仍拿着那一对号、当场 `close` 就是
+    /// （见 `programs/src/driver/router/adapt/desk.rs`）。
+    pub fn occupy(&mut self, line: u32, lane: Endpoint) -> Result<(), Fail> {
         if line == 0 {
             return Err(Fail::Unknown);
         }
@@ -79,7 +91,10 @@ impl Lines {
     pub fn deliver(&mut self, line: u32, frame: &[u8]) -> Result<(), Fail> {
         match self.cells.get_mut(line as usize) {
             Some(Cell::Owned { lane, busy }) => {
-                lane.post(frame).map_err(|()| Fail::Denied)?;
+                // 推的是**对端那一枚**（我写、对端读）；还没认到 ⇒ 与从前 `Pier::post`
+                // 自己那一格同一落点：没写端就发不出去。
+                let at_peer = lane.tx().ok_or(Fail::Denied)?;
+                hands::push_to(at_peer, frame).map_err(|()| Fail::Denied)?;
                 *busy = true;
                 Ok(())
             }
@@ -98,10 +113,14 @@ impl Lines {
         }
     }
 
-    /// **vacate**：主人没了——空出这一格。**拆线那一手是它的后果**，由适配层紧随其后做。
+    /// **vacate**：主人没了——空出这一格，**并把那条路放下**（主人没了 ⇒ 它作废，本端那一枚
+    /// 继续留着没有下家）。**拆线那一手是它的后果**，由适配层紧随其后做（先拆线再空格）。
     pub fn vacate(&mut self, line: u32) -> Result<(), Fail> {
         match self.cells.get_mut(line as usize) {
             Some(cell @ Cell::Owned { .. }) => {
+                if let Cell::Owned { lane, .. } = cell {
+                    lane.close();
+                }
                 *cell = Cell::Idle;
                 Ok(())
             }
@@ -109,10 +128,10 @@ impl Lines {
         }
     }
 
-    /// 这一格的泊位（没主 ⇒ `None`）。
-    pub fn lane(&self, line: u32) -> Option<Pier> {
+    /// 这一格的泊位（没主 ⇒ `None`）。**借**出去：持有者不在这一层放手。
+    pub fn lane(&self, line: u32) -> Option<&Endpoint> {
         match self.cells.get(line as usize)? {
-            Cell::Owned { lane, .. } => Some(*lane),
+            Cell::Owned { lane, .. } => Some(lane),
             Cell::Idle => None,
         }
     }

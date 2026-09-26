@@ -45,7 +45,7 @@
 //!
 //! 线上的形状是 **`Req` → `Union`**：一问一答，一次往返。三个动作是**模型**里的动作
 //! （`register` / `unregister` / `lookup` 那一张表），线上那一侧的名字是 `Req`——两者不是
-//! 重名，是同一件事的两层（`session` 里 `open` 既是动作也是那一步的说法）；收进来的一问
+//! 重名，是同一件事的两层（[`communication::establish`] 里 `endpoint` 既是动作也是那一步的说法）；收进来的一问
 //! 另叫 `Wire`（它多一格：表外的动作码）。
 //!
 //! 线上还有第四条动作 `frame::Req::Evict`（**一字节短帧，空载荷**），它**不落在牌子上**：那
@@ -54,13 +54,13 @@
 //!
 //! # 一问一答的载体
 //!
-//! 往返**建在会话上**，不另铸一条路——两侧都用同一对动作
-//! （[`seat`](crate::session::Quay::seat) + [`claim`](crate::session::Quay::claim)，
-//! 靠**孔上的记号**对位，见 `call::marked_as`）：
+//! 往返**建在会话上**，不另铸一条路——两侧都用同一手（[`endpoint`](crate::communication::establish::endpoint)，
+//! 铸本端那一枚 ＋ 认下对端那一枚），靠**孔上的记号**对位，见
+//! [`marked_as`](crate::communication::hands::marked_as)）：
 //!
 //! ```text
 //!   客侧（问）                              板侧（答）
-//!   open(生我者) + seat(名字) + claim        seat(名字) + claim(客人)
+//!   endpoint(生我者, 名字)                  endpoint(客人, 名字)
 //!     ├ 交出一枚孔（本端读，刻着名字）──────▶ 落到**生我者**表里（不是板手里）
 //!     └ 等板那一枚（本端写） ◀────────────── 板交出一枚孔（板读，刻着同一个名字）
 //!                                            装配者：把那枚孔 Ship 给板线程
@@ -68,7 +68,7 @@
 //!   pull → [status]          ◀────────────── post([status])
 //! ```
 //!
-//! **中间那一格（装配者转授）是必须的**：客人只认得它的生我者（[`session`](crate::session)
+//! **中间那一格（装配者转授）是必须的**：客人只认得它的生我者（[`communication`](crate::communication)
 //! 事实 1），故客人交出来的那一枚先落在装配者表里，板线程拿不到——由装配者转授过去。
 //! 转授的是**客人开的那扇门**：副本共享 `owner` **与记号**，故板那一侧照样认得出它。
 //!
@@ -105,7 +105,7 @@
 //!
 //! # 谁给持板者那枚入口
 //!
-//! 与 [`session`](crate::session) 同一条路：**由父域经 `Accord` 下发**
+//! 与 [`communication`](crate::communication) 同一条路：**由父域经 `Accord` 下发**
 //! （`env/src/fid.rs` 里那句旧注记说的就是这件事）。板是一枚普通入口，不是内核机制；
 //! 自举不需要"目录入口"这一格启动参数——`boot` 写 args 的时候还没有任何服务。
 //!
@@ -196,7 +196,7 @@
 //
 //!  ```text
 //!    装配者（编排域 system）                    客人（服务域）            板线程（一枚）
-//!    quay.seat(板路) + quay.claim(客人, 板路) ▶ open: seat(板路) + claim(生我者, 板路)
+//!    endpoint(客人, 板路)               ▶   open: endpoint(生我者, 板路)
 //!    转授：把客人那一枚 Ship 给板线程 ─────────────────────────────────▶  按"谁转授的 + 记号"认答话写端
 //!    板路上先递一格：板线程的号 ────────────▶  open 收下 ⇒ 此后叫得出板
 //!    提示：往提示之路推一个客人号 ────────────────────────────────────▶  收一位客人（admit）
@@ -220,7 +220,7 @@
 //!  **为什么中间要装配者过一手**：客人只认得它的生我者（孔是交给"生我者"的），板线程不是
 //!  它的生我者 ⇒ 客人交出来的那一枚落在装配者表里。装配者把它**转授**给板线程——装配者本来
 //!  就是设备门闩的第一个持有者与转授者，这里走的是同一条路。转授的是**客人开的那扇门**：
-//!  副本共享 `owner` **与记号**（`session` 事实 3），故板那一侧照样念得出"这是哪位的孔、
+//!  副本共享 `owner` **与记号**（[`communication`](crate::communication) 事实 3），故板那一侧照样念得出"这是哪位的孔、
 //!  走的哪条路"。
 //!
 //! # 一问一答的次序
@@ -261,8 +261,8 @@ use crate::system::desk::Desk;
 use env::{PieToken, TaskId};
 
 pub use frame::{
-    ASK_MARK, BAD, ENTRY_MARK, LANE_PREFIX, LINK, OK, Req, TIP_MARK, TIP_NAME, Tip, UNKNOWN, Union,
-    Wire, code_to_fail, fail_to_code,
+    ASK_MARK, BAD, ENTRY_MARK, LANE_PREFIX, LINK, OK, Req, TIP_MARK, Tip, UNKNOWN, Union, Wire,
+    code_to_fail, fail_to_code,
 };
 
 // ── 一个调用的三个事实：身体在 `communication::hands`，这里只取名字 ──────────

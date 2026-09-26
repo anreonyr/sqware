@@ -15,6 +15,7 @@
 use env::{Name, Wait};
 use protocol::debug;
 use protocol::system::desk::Announce;
+use runtime::env::mail;
 
 use protocol::driver::supply::frame::{WANT_MAX, Want};
 use protocol::driver::supply;
@@ -46,7 +47,7 @@ impl Control {
         service: &Service,
         setup: &'static [Setup],
     ) -> Result<(), Error> {
-        let (task, quay) = service;
+        let (task, channels) = service;
         // 门闩单：按 `setup` 的次序（= 收方那张单的次序）。条数上限那一格与 `draw` 同一条
         // （单子装不下）：这里先拦，好按定长缓冲逐格填。
         let mut wants = [Want::NONE; WANT_MAX];
@@ -76,20 +77,17 @@ impl Control {
             return Ok(());
         }
 
-        // 递单走**第一条**通道（旧 `wire` 读的就是 `channels.first()`）。
-        let Some(ch) = setup.iter().find_map(|s| match s {
-            Setup::Channel(c) => Some(*c),
-            _ => None,
-        }) else {
+        // 递单走**第一条**通道（旧 `wire` 读的就是 `channels.first()`）：`setup` 里
+        // `Channel` 那几条按序逐件装成了 [`Service`] 里那本账，第一条就是它。
+        let Some(link) = channels.first() else {
             return Err(Error::Step("no channel"));
         };
-        let ch = Name::new(ch).map_err(|_| Error::Step("no channel"))?;
-        let Some(pier) = quay.find(ch) else {
+        // **那头齐了没有**：写端在不在（原 `pier.paired()` 那一格）。`ready` 已经等到过一次，
+        // 这里只是把"没有写端就不发"那条口径照样带着。
+        let paired = link.tx().is_some();
+        let Some(tx) = link.tx() else {
             return Err(Error::Step("no channel"));
         };
-        if !pier.paired() {
-            return Err(Error::Step("no channel"));
-        }
 
         // 一枚一枚要：条数就在那张表里，本层不抄"要几样"。
         // **编单子那只缓冲在 `draw` 里头**（一族最长那一只，见 `Message::Buf`）——这一层只备收的那一只。
@@ -102,11 +100,13 @@ impl Control {
             Wait::AtMost(READY_MS),
         )
         .map_err(|_| Error::Step("draw failed"))?;
-        let said = pier.post(records);
+        // **递的是裸字节**：这一段是内核回的那个记录（不是本族的一种报）——故走裸孔推过去，
+        // 不套手柄；客人那一侧的对偶是 `driver::assemble::receive` 的 `pull_timeout`。
+        let said = mail::HolePie::from_token(tx).push(records);
         debug!(
             "wire: {} bytes, paired={}, post={}",
             records.len(),
-            pier.paired(),
+            paired,
             said.is_ok()
         );
         said.map_err(|_| Error::Step("no channel"))

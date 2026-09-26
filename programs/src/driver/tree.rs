@@ -21,7 +21,7 @@
 use env::Wait;
 use env::{Name, PieToken, TaskId};
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
@@ -46,7 +46,7 @@ pub enum Mine {
 pub fn plate(
     me: &str,
     mine: Mine,
-    link: &Quay,
+    link: &Endpoint,
     talk: PieToken,
     host: TaskId,
     entry: PieToken,

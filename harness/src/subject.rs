@@ -42,7 +42,7 @@ use core::time::Duration;
 use env::{Name, PieToken};
 use alloc::format;
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
@@ -205,7 +205,7 @@ fn main() -> Report<'static> {
 /// 找那面服务：`FIND "/sys/principal"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"。
-fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
+fn find_face(link: &Endpoint, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };

@@ -39,7 +39,7 @@ impl Pile {
         })
     }
 
-    /// 收下一枚已经在对端的组（`Pier` 递过来的 token）。
+    /// 收下一枚已经在对端的组（调用方递过来的 token）。
     pub fn new(pie: TolePie) -> Pile {
         Pile { pie }
     }

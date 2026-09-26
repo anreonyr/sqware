@@ -21,8 +21,9 @@
 use alloc::vec;
 use env::Wait;
 use plan::{PAIR_LEN, Pair};
-use protocol::session::Quay;
+use protocol::communication::establish;
 use protocol::system::grant;
+use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
 
 /// 收记录那条通道的名字——**两端同一个**（装配单的 `channels` 里也写的它）。
@@ -48,12 +49,16 @@ pub const E_GRANT: usize = 3;
 pub fn receive(slots: &mut [Option<Pair>]) -> Result<usize, usize> {
     let sire = utask::sire();
     let channel = env::Name::new(RECORDS).map_err(|_| E_UP)?;
-    let mut quay = Quay::open(sire, protocol::communication::hands::hands());
-    quay.seat(channel).map_err(|_| E_UP)?;
-    let up = quay.find(channel).ok_or(E_UP)?;
+    // 一手就是"两头都装"：铸本域那一枚（刻 `records` 的记号）交给生我者，并顺手试认它那一枚
+    // （`POLL` = 不等：**配给走的是本域那一枚**——`pull` 收的就是它；对端那一枚本域用不上）。
+    // 父域在放行本域**之前**已经 `connect` 过（`Control::connect`），故它那一枚通常当场到手。
+    let up = establish::endpoint(sire, env::Mark::of(channel.as_str()), Wait::POLL)
+        .map_err(|_| E_UP)?;
     // 缓冲按本域那张单子备：需求单几条就备几条（发货方不必抄这个数）。
     let mut buf = vec![0u8; PAIR_LEN * slots.len()];
-    let n = up.pull(&mut buf, Wait::AtMost(MS)).map_err(|_| E_GRANT)?;
+    let n = HolePie::from_token(up.rx())
+        .pull_timeout(&mut buf, Wait::AtMost(MS))
+        .map_err(|_| E_GRANT)?;
     if n != PAIR_LEN * slots.len() {
         // 短了/长了都算这次配给不成立：位置即格，条数对不上就没有"第 i 格"可言。
         return Err(E_GRANT);

@@ -18,7 +18,7 @@ use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
@@ -196,7 +196,7 @@ fn answer(book: &mut Principal, from: TaskId, ask: Option<pcall::Wire>) -> pcall
 ///
 /// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/subject.rs`）证——它照同一条路
 /// 找上门、问一句、拿回一条号。故本域不自问自答。
-fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
+fn serve_tree(link: &Endpoint, talk: PieToken, host: TaskId, entry: PieToken) {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         debug!("principal: tree: bad name");
         return;

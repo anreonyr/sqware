@@ -22,7 +22,7 @@ use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
@@ -214,7 +214,7 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 /// ——故这一趟**必须有重试**：撞 `UNKNOWN` 就睡 `RETRY_MS` 再来，总预算 [`MS`]。
 ///
 /// 把剩下的预算当这一趟的期限递下去：总账 ≤ `MS` + 一趟。
-fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
+fn find_face(link: &Endpoint, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
@@ -241,7 +241,7 @@ fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
 ///
 /// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/member.rs`）证——它照同一条路
 /// 找上门、立一枚盟、进进出出。故本域不自问自答。
-fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
+fn serve_tree(link: &Endpoint, talk: PieToken, host: TaskId, entry: PieToken) {
     let (Ok(dir), Ok(me)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
         debug!("coalition: tree: bad name");
         return;

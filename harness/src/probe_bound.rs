@@ -61,12 +61,12 @@ use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::{LINK, Where};
+use protocol::system::operator::Where;
 use runtime::PAGE_SIZE;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -202,16 +202,15 @@ fn main() -> Report<'static> {
 ///
 /// 正经那一问取 `part(/sys)`：**幂等**（`/sys` 是服务起手时立的那一格，重复 `part` 只答同一个
 /// 号），故"答得出"就是这一条要的全部——答案对不对由别的证客管。
-fn junk_trip(hedge: PieToken, tree: &Quay, dir: Name) -> (bool, bool, bool) {
+fn junk_trip(hedge: PieToken, tree: &Endpoint, dir: Name) -> (bool, bool, bool) {
     let junk = junk();
     let pushed = mail::HolePie::from_token(hedge).push(&junk).is_ok();
 
     // 树路那一枚（本端的读口）：`ask_out` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
-    let said = Name::new(LINK)
-        .ok()
-        .and_then(|at| tree.find(at))
-        .and_then(|pier| pier.pull(&mut back, Wait::AtMost(MS)).ok());
+    let said = mail::HolePie::from_token(tree.rx())
+        .pull_timeout(&mut back, Wait::AtMost(MS))
+        .ok();
     let bad = matches!(said, Some(1) if back[0] == ocall::BAD);
 
     // 正经的一问：**门还在答**。
@@ -224,16 +223,15 @@ fn junk_trip(hedge: PieToken, tree: &Quay, dir: Name) -> (bool, bool, bool) {
 /// 正经那一问取 `evict`（**一字节短帧、空载荷**）：这一位没在板上登记过 ⇒ 板答 `UNKNOWN`
 /// ——"答得出"就是这一条要的全部（答得对不对由别的证客管），而它**不铸孔、不交入口**，
 /// 故这一条量的是**门**，不是账。
-fn junk_trip_board(bolt: PieToken, deck: &Quay) -> (bool, bool, bool) {
+fn junk_trip_board(bolt: PieToken, deck: &Endpoint) -> (bool, bool, bool) {
     let junk = junk();
     let pushed = mail::HolePie::from_token(bolt).push(&junk).is_ok();
 
     // 板那一路那一枚（本端的读口）：junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
-    let said = Name::new(bcall::LINK)
-        .ok()
-        .and_then(|at| deck.find(at))
-        .and_then(|pier| pier.pull(&mut back, Wait::AtMost(MS)).ok());
+    let said = mail::HolePie::from_token(deck.rx())
+        .pull_timeout(&mut back, Wait::AtMost(MS))
+        .ok();
     let bad = matches!(said, Some(1) if back[0] == bcall::BAD);
 
     // 正经的一问：**门还在答**。

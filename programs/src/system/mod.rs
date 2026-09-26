@@ -103,10 +103,16 @@ impl System {
             .spawn(program.name)
             .map_err(|e| fail(program, plan, e))?;
 
-        // 通信：放行前把 `setup` 里那几条通道装上（记号 = 通道名，放行后逐条认领）。
+        // 通信：放行前把 `setup` 里那几条通道逐条装上（记号 = 通道名，放行后逐条认领）。
+        // 一件一件来：`connect` 返的是**那条通道的持有者**（一次一手、一手一对孔）。
         for s in program.setup {
             if let Setup::Channel(ch) = s {
-                connect(&mut service.1, ch).map_err(|e| fail(program, plan, e))?;
+                service
+                    .1
+                    .try_reserve(1)
+                    .map_err(|_| fail(program, plan, Error::Step("no room for channels")))?;
+                let channel = connect(service.0, ch).map_err(|e| fail(program, plan, e))?;
+                service.1.push(channel);
             }
         }
 
@@ -130,7 +136,6 @@ impl System {
             let lane = self.watch.lane_of(program.name);
             self.board
                 .attach(
-                    &mut service.1,
                     utask::self_id(),
                     service.0,
                     name,
@@ -144,7 +149,7 @@ impl System {
         if plan.operator {
             // 持树者必须先于这位客人起：提示之路还没认下就没得接。
             self.tree
-                .attach(&mut service.1, service.0, Wait::AtMost(READY_MS))
+                .attach(service.0, Wait::AtMost(READY_MS))
                 .map_err(|why| fail(program, plan, Error::Step(why)))?;
         }
 

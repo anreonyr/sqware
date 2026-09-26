@@ -4,6 +4,7 @@
 //! 帧与记号见 [`protocol::system::board`]。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
+
 use env::Mark;
 use env::Wait;
 use env::wire::Field;
@@ -13,9 +14,9 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::core::unit::{self, Join};
 use runtime::env::mail;
 
-use protocol::session::Quay;
+use protocol::communication::establish;
 use protocol::system::board as bcall;
-pub use protocol::system::board::{LINK, TIP_MARK, TIP_NAME};
+pub use protocol::system::board::{LINK, TIP_MARK};
 
 use super::server::host_loop;
 
@@ -37,14 +38,13 @@ impl Bridge {
     /// **把这位客人接上板**（三步见 [`attach`]，次序即契约）。返 `Err(哪一步)`。
     pub fn attach(
         &mut self,
-        quay: &mut Quay,
         me: TaskId,
         client: TaskId,
         name: Name,
         millis: Wait,
         lane: Option<PieToken>,
     ) -> Result<(), &'static str> {
-        attach(quay, me, client, name, millis, &mut self.tip, lane)
+        attach(me, client, name, millis, &mut self.tip, lane)
     }
 }
 
@@ -60,7 +60,6 @@ impl Bridge {
 /// 对调用方是同一件事——**这条服务没接上板**——但"死在哪一步"正是装配诊断要的那一格
 /// （与 `service::step` 同款；逐字的因就是函数体里那几处 `map_err` 的字符串）。
 pub fn attach(
-    quay: &mut Quay,
     me: TaskId,
     client: TaskId,
     name: Name,
@@ -69,15 +68,18 @@ pub fn attach(
     lane: Option<PieToken>,
 ) -> Result<(), &'static str> {
     let link = Name::new(LINK).map_err(|_| "board:name")?;
-    // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
-    quay.seat(link).map_err(|_| "board:seat")?;
-    // 2. 认领**这位客人**交出来的那一枚（记号 = 板路自己的名字，客侧 `seat` 刻的就是它）。
-    //    本域给每个孩子各开一座码头，故认的是"它给我的"——不然会把别的客人的孔配到它头上
-    //    （`Quay::claim` 的正文）。
-    //    **次序**：板那条比 `records` 后到，而 `records` 的写端已经用掉了 ⇒ 这一枚认在
-    //    板泊位上（一枚孔只配一条泊位）。
-    quay.claim(client, Mark::of(link.as_str()), millis)
-        .map_err(|_| "board:claim")?;
+    // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
+    //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 板路的名字，客侧
+    //      铸的也是它）。判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源
+    //      ——本域给每个孩子各开一条路，故认的是"它给我的"，不然会把别的客人的孔配到它头上。
+    //      **次序**：板那条比 `records` 后到，而 `records` 的写端已经用掉了。
+    let link = establish::endpoint(client, Mark::of(link.as_str()), millis)
+        .map_err(|_| "board:seat")?;
+    // **认不到对端那一枚 = 这条板路没接上**（原 `claim` 那一格）：本端这一侧虽然只读答话，
+    // 但"两侧各装一条、凑齐才算通"那条不变量仍在——没齐就是没接上，不必等到第一次收帧。
+    if link.tx().is_none() {
+        return Err("board:claim");
+    }
     // 3. 板线程（只起一枚）→ 把客人那一枚转授过去 → 板路上递一格"答话的是谁" → 提示来客人了。
     let host = host(me, millis, tip)?;
     // 死亡道：**这一位的那一条**转授给板线程（板按记号 `gone-<名字>` 在自己表里认领它）。
@@ -90,7 +92,8 @@ pub fn attach(
     let Some(tip) = *tip else {
         return Err("board:tip");
     };
-    let reply = reply_path(quay).ok_or("board:hand")?;
+    // 板路上本端手里那一枚 = **客人答话路的写端**（认下来时进 `link.tx()`）。
+    let reply = link.tx().ok_or("board:hand")?;
     // **转授那一手把"我给你的那一枚在你表里是几号"交出来**（`to.seed()`）：它随提示一起过去，
     // 板那边一次 `Reserve` 就认得答话路——不必扫自己的表。
     let seed = hand(reply, host).map_err(|()| "board:hand")?;
@@ -99,6 +102,10 @@ pub fn attach(
     // 提示在**转授之后**：板据此可以按"提示一到，答话路必已在本表里"办事。
     // **提示那一格多带两格**（名字 ＋ 答话路那一格）：名字让板在 `admit` 那一刻把这一位的死亡道
     // 记下（不必等它自己报名），末格让板认答话路不必扫表。
+    // **这一对孔不必本函数拿着**：本端那一枚（`link.rx()`）是垫的（本端从不读它），可它得
+    // **一直活着**——客人那一侧要有人认它（`board::client::open` 的 `claim` 扫的就是本域铸出去
+    // 那一枚的副本），而认下之后板那一路也一直指着它写。放下这一手因此**不由作用域替我们做**：
+    // 不打 `close`，它就活到本域退场（`Endpoint` 的正文里那条照实记）。
     tell_guest(client, name, seed, tip).map_err(|_| "board:tell")
 }
 
@@ -121,17 +128,18 @@ fn host(me: TaskId, millis: Wait, tip: &mut Option<PieToken>) -> Result<TaskId, 
     drop(node);
     HOST.store(id.get(), Ordering::Release);
 
-    // 认领板线程交回来的那一枚提示孔：本域另开一座码头等它（判据 = `owner == 板线程`
-    // **且** 记号 = `tip`——板线程那一枚是它自己铸的，记号就是它的用途名）。
-    // 这条路上只走"一位新客人"（号 ＋ 名字，见 [`tell_guest`]），故本端那一枚交出去也无妨
-    // （板线程不用它，也不碍事）。
-    let slot = Name::new(TIP_NAME).map_err(|_| "board:name")?;
-    let mut quay = Quay::open(id, protocol::communication::hands::hands());
-    quay.seat(slot).map_err(|_| "board:seat")?;
-    quay.claim(id, TIP_MARK, millis).map_err(|_| "board:tip")?;
-    let pier = quay.find(slot).ok_or("board:tip")?;
+    // 认领板线程交回来的那一枚提示孔（判据 = `owner == 板线程` **且** 记号 = `TIP_MARK`
+    // ——板线程那一枚是它自己铸的，记号就是它的用途名）。**只认、不铸**：本端这一侧在这条路上
+    // 不需要自己那一枚（`claim` 那一手）。
+    //
+    // **照实记（这一格原先还多装了一条）**：从前这里先 `seat` 一次——本端另铸一枚、刻的是
+    // 另一个记号（`TIP_NAME = "board-tip"`）——而那一枚两头都不用（本端不读它，板线程也不认
+    // 它）。两个记号并成一个之后，这条路上只剩这一手。
+    *tip = establish::claim(id, TIP_MARK, millis);
+    if tip.is_none() {
+        return Err("board:tip");
+    }
     // 交给调用方拿着：同一条路上以后每次都往里推一位新客人（**同一枚线程**用它）。
-    *tip = pier.at_peer();
     Ok(id)
 }
 
@@ -173,12 +181,6 @@ pub(crate) fn tell_guest(
     into.push(&rec).map_err(|_| ())
 }
 
-/// 板路上本端手里那一枚（客人答话路的**写端**）：答话往它推，"答话的是谁"也从它递。
-pub(crate) fn reply_path(quay: &Quay) -> Option<PieToken> {
-    let link = Name::new(LINK).ok()?;
-    quay.find(link)?.at_peer()
-}
-
 /// 把**客人交出来的那一枚**转授给板线程，返**它在板表里的号**（`port::ship` 的 `to.seed()`）。
 ///
 /// 转授的是"客人开的那扇门"（`owner` 是客人），板那侧认领时认的正是它。
@@ -186,9 +188,9 @@ pub(crate) fn reply_path(quay: &Quay) -> Option<PieToken> {
 /// **返那一格是这一刀的要害**：板拿到它就能一次 `Reserve` 把答话路认下来，不必扫自己的表。
 ///
 /// 子集只给 `R|W`，**不加 `VEST`**：板线程用这一枚写答话，不需要再授出——一分不多。
-/// 本域自己那一份转授之后**不收**：客人给过来的这一枚不带 `ONLY`（`seat` 给的是
-/// `R|W|VEST`）⇒ 这次授出是**复制**，源枚在我表里照旧可用；收它要多一条 `release`，
-/// 而这一步之后没有任何东西再碰它——本域常驻，随域退场一起回收。
+/// 本域自己那一份转授之后**不收**：客人给过来的这一枚带 `VEST`（`establish::endpoint` 铸的
+/// 就是 `R|W|VEST`）⇒ 这次授出是**复制**，源枚在我表里照旧可用；而它**归本域持有**
+/// （放下要明说 `close`，见 `establish` 的照实记）⇒ 本域退场时随表一起消失。
 pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<PieToken, ()> {
     let hole = mail::HolePie::from_token(reply);
     port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)

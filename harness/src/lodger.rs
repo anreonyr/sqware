@@ -122,7 +122,7 @@ fn main() -> Report<'static> {
     //    随退出钩子封印，路由者那一格因此醒来（`router: vacate line=1`）。
     let _held = held;
     // 三趟之后本域表里还剩几枚：**失败那两趟两边收干净了没有**的读数——`TAKEN` 与 `UNKNOWN`
-    // 各把本端 `seat` 出去的那一枚（`Quay::shut`）与本趟借出去的那枚回信孔放下（见
+    // 各把本端 `seat` 出去的那一枚（`Endpoint::shut`）与本趟借出去的那枚回信孔放下（见
     // `protocol::driver::line::client::Line::occupy`）。少放一枚，这一格当场大 1。
     let pies = mail::table_size();
     debug!("lodger: pies={pies}");

@@ -10,7 +10,7 @@ use core::time::Duration;
 
 use env::{TaskId, Wait};
 use protocol::debug;
-use protocol::communication::hands as scall;
+use protocol::communication::establish;
 use protocol::system::board as bcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::PrincipalId;
@@ -73,12 +73,12 @@ impl Roster {
 /// 认下名册**交给生我者**的那一枚门牌（装配者自己的那一份）。
 ///
 /// 装配期**不必上树查自己起的那一枚**：名册起手就把门牌那一枚 `ship` 进本域表里，本域按
-/// `(开者 = 它, 记号 = entry)` 两格认出来（[`scall::find`] 的两格正判据）。它起手就交，
+/// `(开者 = 它, 记号 = entry)` 两格认出来（[`establish::find`] 的两格正判据）。它起手就交，
 /// 故这里是**短等**：还没到就隔一拍再问，问到期限为止。
 fn face_of(host: TaskId) -> Option<Face> {
     let mut left = READY_MS;
     loop {
-        if let Some(entry) = scall::find(host, bcall::ENTRY_MARK) {
+        if let Some(entry) = establish::find(host, bcall::ENTRY_MARK) {
             return Face::of(entry).ok();
         }
         if left == 0 {

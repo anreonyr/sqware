@@ -16,7 +16,7 @@ use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
 
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::system::desk::{Announce, Service, Slot, State, Table};
 
@@ -135,13 +135,13 @@ pub fn mint(
     Ok(task)
 }
 
-/// 第二相：**放行**，并在放行前塞门闩、定会话。
+/// 第二相：**放行**，并在放行前塞门闩、备通道。
 ///
-/// `grants` = 放行前要交到它手里的门闩（空 = 什么都不预先给）；`quay` = 与它的会话
-/// （`Announce::Channel` 那一种要用：它就绪的凭据长在这里）；`marks` = 放行后要逐条
-/// 认领的**记号**（顺序无关；记号即泊位名）；`millis` = 就绪等待（上限族，`Wait`）。
+/// `grants` = 放行前要交到它手里的门闩（空 = 什么都不预先给）；`channels` = 与它的那几条通道
+/// （`Announce::Channel` 那一种要用：它就绪的凭据长在这里）；`marks` = 放行后要逐条认领的
+/// **记号**（记号即通道名）；`millis` = 就绪等待（上限族，`Wait`）。
 ///
-/// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、定会话都发生在这段窗口里。
+/// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、备通道都发生在这段窗口里。
 ///
 /// **失败时不留下半行**：本相失败 ⇒ 实例与状态如实留在表里（它确实在跑），调用方用
 /// [`stop`] 收尾。
@@ -150,7 +150,7 @@ pub fn start(
     name: Name,
     task: TaskId,
     grants: &[Grant],
-    quay: Option<&mut Quay>,
+    channels: &mut [Endpoint],
     marks: &[Mark],
     millis: Wait,
 ) -> Result<(), Fail> {
@@ -166,7 +166,7 @@ pub fn start(
         table.set_state(name, State::Dead);
         return Err(e);
     }
-    ready(table, name, quay, marks, millis)?;
+    ready(table, name, channels, marks, millis)?;
     Ok(())
 }
 
@@ -174,11 +174,11 @@ pub fn start(
 ///
 /// 唯一会改表的地方就是这个函数：确认它的宣布之后置 [`State::Ready`]，确认它死了之后
 /// 落 [`State::Dead`]——**内核的事实在这里变成表里的事实**。而"它宣布了"那件事本身
-/// **归 `session`**：会话在对方交回孔并归位时成立，本函数只去问那句"成立了没有"。
+/// **归建立那一手**：通道在对方交回孔并归位（`claim`）时成立，本函数只去问那句"成立了没有"。
 pub fn ready(
     table: &mut Table,
     name: Name,
-    quay: Option<&mut Quay>,
+    channels: &mut [Endpoint],
     marks: &[Mark],
     millis: Wait,
 ) -> Result<bool, Fail> {
@@ -207,18 +207,19 @@ pub fn ready(
         return Err(Fail::NotReady);
     }
 
-    // 它会交回一枚孔 ⇒ 那件事归会话：`claim` 把它认下来（凑齐了才算）。
-    if let Some(q) = quay {
-        // 它会交回孔、也会自己装一条 ⇒ 那件事归会话：**逐条按记号认领**（记号 = 那条
-        // 泊位的名字 = 装配单给的通道名），每条都配齐才算起来。
-        if !marks.is_empty()
-            && marks
-                .iter()
-                .all(|mark| q.claim(task, *mark, millis).is_ok())
-        {
-            table.set_state(name, State::Ready);
-            return Ok(false);
-        }
+    // 它会交回一枚孔 ⇒ 那件事归建立那一手：`claim` 把它认下来（逐条凑齐了才算起来）。
+    //
+    // **两条数要一样**：`marks` 是装配单上那几条通道，`channels` 是放行前逐条装上的
+    // （`connect` 一次一件）——对不上就是装配错，与"没认齐"同一落点：**不算起来**。
+    if !marks.is_empty()
+        && channels.len() == marks.len()
+        && channels
+            .iter_mut()
+            .zip(marks)
+            .all(|(channel, mark)| channel.claim(task, *mark, millis))
+    {
+        table.set_state(name, State::Ready);
+        return Ok(false);
     }
     if utask::join(task, Wait::POLL).unwrap_or(true) {
         table.detach(name);

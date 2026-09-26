@@ -53,7 +53,7 @@ use protocol::system::operator::{EntryId, Where};
 
 
 use env::{Name, PieToken};
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -149,7 +149,7 @@ fn main() -> Report<'static> {
 }
 
 /// `/sys` 那一格的号：**分目录（幂等）+ 译号**。拿不到就 `None`（调用方报一句退场）。
-fn tree_dir(say_hole: PieToken, link: &Quay, dir: Name) -> Option<EntryId> {
+fn tree_dir(say_hole: PieToken, link: &Endpoint, dir: Name) -> Option<EntryId> {
     operator::part(say_hole, link, Where::Root, dir, Wait::AtMost(MS)).ok()?;
     operator::seek(say_hole, link, &[dir], Wait::AtMost(MS)).ok()
 }

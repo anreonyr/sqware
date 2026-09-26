@@ -18,8 +18,8 @@
 //! 那类实现细节词一个都没用上。
 //!
 //! 两个类型名与两条原语名**不同名**（`part` 建 `Pane`、`land` 落 `Tile`）——这是照实记：名动同形
-//! 那一格本来留给 `tile`，最后定的是 `land`（"落位"那个画面），而 `seat` 因为与会话的
-//! `Seat` / `Quay::seat` 撞在同一个文件里而被否掉。
+//! 那一格本来留给 `tile`，最后定的是 `land`（"落位"那个画面）。（照实记：`seat` 当初是因为与会话
+//! 那一族的 `Seat` / `Quay::seat` 撞在同一个文件里被否掉的——那两个类型本刀已删，这个决定照旧。）
 //!
 //! # 树
 //!
@@ -141,7 +141,8 @@
 //! [`Stamps`]（那一枚 Pie 还答得出吗 / 这扇门是谁开的）与 [`Unship`]（把我这一份放下——剪掉或
 //! 换掉一枚 `Tile` 时用它，不加这一格那一枚句柄就漏在树里）。核心因此不 `use` 内核，喂三个假
 //! 闭包就能把规矩推理干净。两枚戳子收在**一格具名的组**里：它们同型，摆成位置参数时写反了
-//! 编不过（`session` 那一族认 `owner` 还是 `grantor` 实测栽过一次）。
+//! 编不过（会话那一族认 `owner` 还是 `grantor` 实测栽过一次；那一族本刀已收进
+//! [`communication`](crate::communication)）。
 //!
 //! # 与 [`system::board`](crate::system::board) 的关系
 //!
@@ -188,11 +189,12 @@
 // 与**装配侧**（把持树者接上客人 / 认下提示之路）住 `programs/src/system/operator/{server,bridge}.rs`。
 // 下面这段是那一台的说明——它讲的是"怎么跑"。
 //
-//!  同一对动作（`seat` + `claim`），靠**孔上的记号**对位。
+//!  同一手（[`endpoint`](crate::communication::establish::endpoint)：铸本端那一枚 ＋ 认下对端那一枚），
+//!  靠**孔上的记号**对位。
 //!
 //!  ```text
 //!    装配者（编排域 system）                    客人（某个服务域）        持树者（operator 域，一枚线程）
-//!    quay.seat(LINK) + quay.claim(客人, LINK) ▶ open: seat(LINK) + claim(生我者, LINK)
+//!    endpoint(客人, LINK)                ▶   open: endpoint(生我者, LINK)
 //!    转授：把客人那一枚 Ship 给持树者 ──────────────────────────────────▶  按"谁转授的 + 记号"认答话写端
 //!    LINK 上先递一格：持树者的号 ────────────▶  open 收下 ⇒ 此后叫得出它
 //!    提示：往提示之路推一个客人号 ─────────────────────────────────────▶  收一位客人（admit）
@@ -212,7 +214,7 @@
 //!
 //!  1. **持树者住在自己的域里**（板线程住编排域）：故它是被 `service::spawn` 产出来的，
 //!     装配者从 `task` 就知道它是谁，不必再起线程；它那一枚提示孔由**它自己**铸、Ship 给
-//!     生我者（= 装配者 = 那一枚 `Quay::claim` 的对端）。
+//!     生我者（= 装配者 = 认下它那一枚的对端）。
 //!  2. **没有"客人说走了"那一档**：本正文里没有客人生命周期（谁问都答）。故没有退场的
 //!     那一格——只有"看出来"那一档（那一枚答不出 ⇒ 剔格子）。
 //!  3. **死亡那一档不在本协议里**：它由**板**那条路看——树这一侧也**上板**、与别的服务同形
@@ -259,7 +261,7 @@ pub use crate::system::operator::core::judge::{
 pub use crate::system::operator::core::ledger::{Key, Ledger, Line, Owner};
 pub use frame::{
     ASK_MARK, BAD, CoordFrame, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Said, TIP_MARK,
-    TIP_NAME, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
+    UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
 };
 
 // ── 一个调用的三个事实：身体在 `communication::hands`，这里只取名字 ──────────

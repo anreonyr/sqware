@@ -210,7 +210,7 @@ fn spawn_one(
     let Ok(task) = service::mint(table, name, elf, kind) else {
         return false;
     };
-    service::start(table, name, task, &[], None, &[], Wait::POLL).is_ok()
+    service::start(table, name, task, &[], &mut [], &[], Wait::POLL).is_ok()
 }
 
 /// 清单里按名字取镜像（台主只认这两条）。

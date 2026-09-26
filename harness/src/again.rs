@@ -123,7 +123,7 @@ fn main() -> Reason {
         debug!("again: r={round} step=spawn ok");
 
         // start（无授权、无会话、放行即起来的那一种）。
-        if service::start(&mut table, name, task, &[], None, &[], Wait::AtMost(MS)).is_err() {
+        if service::start(&mut table, name, task, &[], &mut [], &[], Wait::AtMost(MS)).is_err() {
             failures += 1;
             debug!("again: r={round} step=start REFUSED");
             break;
@@ -192,7 +192,7 @@ fn main() -> Reason {
             failures += 1;
             break;
         };
-        if service::start(&mut table, name, task, &[], None, &[], Wait::AtMost(MS)).is_err() {
+        if service::start(&mut table, name, task, &[], &mut [], &[], Wait::AtMost(MS)).is_err() {
             failures += 1;
             break;
         }

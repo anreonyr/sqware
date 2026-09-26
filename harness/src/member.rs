@@ -46,7 +46,7 @@ use env::{Name, PieToken};
 use alloc::format;
 use protocol::debug;
 use protocol::id::Id;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::coalition::core::{CoalitionId, Fail, Window};
@@ -280,7 +280,7 @@ fn main() -> Report<'static> {
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：按"谁给的"认，取**最后**那一枚
 /// （一次一问一答只授一枚，故最后那一枚就是这一趟的）。
-fn find_face(link: &Quay, talk: PieToken, dir: &str, name: &str) -> Option<PieToken> {
+fn find_face(link: &Endpoint, talk: PieToken, dir: &str, name: &str) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(dir), Name::new(name)) else {
         return None;
     };

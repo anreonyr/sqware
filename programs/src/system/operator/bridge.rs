@@ -11,9 +11,9 @@ use plan::assembly::Eyes;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use protocol::session::Quay;
+use protocol::communication::establish;
 use protocol::system::operator::frame::CoordFrame;
-pub use protocol::system::operator::{LINK, TIP_MARK, TIP_NAME};
+pub use protocol::system::operator::{LINK, TIP_MARK};
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
 
@@ -61,12 +61,11 @@ impl Tree {
     /// **把这位客人接上树**（三步见 [`attach`]）。持树者还没起就没得接。
     pub fn attach(
         &mut self,
-        quay: &mut Quay,
         client: TaskId,
         millis: Wait,
     ) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
-        attach(quay, client, host, millis, &mut self.tip, self.coord)
+        attach(client, host, millis, &mut self.tip, self.coord)
     }
 
     /// **它就是持树者本身**：认下它那条提示之路，此后客人上树才有路可走。
@@ -96,7 +95,6 @@ impl Tree {
 /// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 提示孔认不到……对调用方是
 /// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格。
 pub fn attach(
-    quay: &mut Quay,
     client: TaskId,
     host: TaskId,
     millis: Wait,
@@ -104,11 +102,15 @@ pub fn attach(
     coord: Coord,
 ) -> Result<(), &'static str> {
     let link = Name::new(LINK).map_err(|_| "operator:name")?;
-    // 1. 本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：答话从客人自己那枚走）。
-    quay.seat(link).map_err(|_| "operator:seat")?;
-    // 2. 认领**这位客人**交出来的那一枚（记号 = 这条路的名字，客侧 `seat` 刻的就是它）。
-    quay.claim(client, Mark::of(link.as_str()), millis)
-        .map_err(|_| "operator:claim")?;
+    // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
+    //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 这条路的名字）。
+    //      判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源。
+    let link =
+        establish::endpoint(client, Mark::of(link.as_str()), millis).map_err(|_| "operator:seat")?;
+    // **认不到对端那一枚 = 这条路没接上**（原 `claim` 那一格）。
+    if link.tx().is_none() {
+        return Err("operator:claim");
+    }
     // 3. 提示孔（只认一次）→ 把客人那一枚转授给持树者 → 告两边。
     //    `host_of` 之后 `tip` 必有值（认不到它自己就返 `Err` 了）——所以这里取的是**那一枚孔**，
     //    要推的正是它（**不是** `host`：那是持树者的号，推不动）。
@@ -123,18 +125,26 @@ pub fn attach(
             coord_frame(tip_at, who, eyes).map_err(|_| "operator:coord")?;
         }
     }
-    let reply = reply_path(quay).ok_or("operator:hand")?;
+    // 树路上本端手里那一枚 = **客人答话路的写端**（认下来时进 `link.tx()`）。
+    let reply = link.tx().ok_or("operator:hand")?;
     hand(reply, host).map_err(|()| "operator:hand")?;
     // 客人那一侧的一格：**答话的是谁**（持树者的号，8 字节）。
     tell(host, reply).map_err(|_| "operator:who")?;
     // 提示在**转授之后**：持树者据此可以按"提示一到，答话路必已在本表里"办事。
+    // **这一对孔不必本函数拿着**：本端那一枚（`link.rx()`）是垫的（本端从不读它），可它得
+    // **一直活着**——客人那一侧要有人认它（`operator::client::open` 的 `claim` 扫的就是本域铸
+    // 出去那一枚的副本），而认下之后持树者那一路也一直指着它写。放下这一手因此**不由作用域替
+    // 我们做**：不打 `close`，它就活到本域退场（`Endpoint` 的正文里那条照实记）。
     tell(client, (*tip).ok_or("operator:tip")?).map_err(|_| "operator:tell")
 }
 
-/// 认下持树者交回来的那一枚提示孔（**只认一次**）：本域另开一座码头等它。
+/// 认下持树者交回来的那一枚提示孔（**只认一次**）：判据两格——`owner == 持树者`
+/// （那一枚是它铸的）**且** 记号 = [`TIP_MARK`]。认下来之后本线程拿着的就是
+/// "往提示之路推客人号 / 推协调帧"那一枚。
 ///
-/// 判据两格：`owner == 持树者`（那一枚是它铸的）**且** 记号 = `tip`。认下来之后本线程
-/// 拿着的就是"往提示之路推客人号"那一枚。
+/// **只认、不铸**：本端这一侧在这条路上不需要自己那一枚。**照实记（这一格原先还多装了一条）**：
+/// 从前这里先 `seat` 一次——本端另铸一枚、刻的是另一个记号（`TIP_NAME = "operator-tip"`）——
+/// 而那一枚两头都不用。两个记号并成一个之后，这条路上只剩这一手。
 ///
 /// **两种装配者都用它**：编排域用它把客人接上树（[`attach`] 的第一步），引导域用它
 /// 把这条提示之路先认到手里、再转授给编排域（`root` 引导期的交接那一格）。
@@ -146,14 +156,8 @@ pub fn host_of(
     if tip.is_some() {
         return Ok(host);
     }
-    let slot = Name::new(TIP_NAME).map_err(|_| "operator:name")?;
-    let mut quay = Quay::open(host, protocol::communication::hands::hands());
-    quay.seat(slot).map_err(|_| "operator:seat")?;
-    quay.claim(host, TIP_MARK, millis)
-        .map_err(|_| "operator:tip")?;
-    let pier = quay.find(slot).ok_or("operator:tip")?;
-    // 交给调用方拿着：同一条路上以后每次都往里推客人号（**同一枚线程**用它）。
-    *tip = pier.at_peer();
+    // 交给调用方拿着：同一条路上以后每次都往里推客人号 / 协调帧（**同一枚线程**用它）。
+    *tip = establish::claim(host, TIP_MARK, millis);
     if tip.is_none() {
         return Err("operator:tip");
     }
@@ -172,12 +176,6 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     who.store(&mut rec);
     let into = mail::HolePie::from_token(into);
     into.push(&rec).map_err(|_| ())
-}
-
-/// 树路上本端手里那一枚（客人答话路的**写端**）：答话往它推，"答话的是谁"也从它递。
-pub(crate) fn reply_path(quay: &Quay) -> Option<PieToken> {
-    let link = Name::new(LINK).ok()?;
-    quay.find(link)?.at_peer()
 }
 
 /// 把**客人交出来的那一枚**转授给持树者。

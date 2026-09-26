@@ -9,7 +9,7 @@ use env::{PieToken, TaskId, Wait};
 use plan::assembly::UART_WANTS as WANTS;
 use programs::driver::assemble;
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::board::client as board;
 use protocol::system::operator::client as operator;
 use runtime::core::dock::{Dock, View};
@@ -28,7 +28,7 @@ pub struct Up {
     /// 读行那枚孔——**它就是本域的门牌**（服务入口）。
     pub entry: PieToken,
     /// 树那条会话（上树与登记**共用这一条**）。
-    pub link: Quay,
+    pub link: Endpoint,
     /// 会话上那枚问话孔。
     pub talk: PieToken,
     /// 持树者。

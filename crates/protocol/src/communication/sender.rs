@@ -48,17 +48,6 @@ impl<M: Message> Sender<M> {
         }
     }
 
-    /// **没有写端**的那一只（对端那一枚没认到）。
-    ///
-    /// **这不是错误**：一段关系可以只有收的方向——单向那一档就是这么用的。
-    /// `send` 对它答 [`SendFail::Unbound`]。
-    pub(crate) fn unbound() -> Self {
-        Self {
-            hole: None,
-            _m: PhantomData,
-        }
-    }
-
     /// 编 ＋ 推。`wait` = 槽满等多久（**三态**，见文件头 ②）。
     ///
     /// 失败三层**分得开**（[`SendFail`]）：编不下（`TooLong`）/ 没有写端（`Unbound`）/

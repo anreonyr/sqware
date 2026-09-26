@@ -11,7 +11,7 @@
 //! 一条：**碰不碰 `runtime`**；`protocol` 里满地的 `pub use crate::…` 就是那条边的形状。
 //!
 //! **照实记（这条边界为什么退成约定）**：它唯一能被机械检查的消费者是一台**编外宿主靶**
-//! （`protocol-case`：`#[path]` 真依赖 `crate::session::core` 同一份源码、由运行时那层给一个
+//! （`protocol-case`：`#[path]` 真依赖当时那份会话核心的源码（`session/core.rs`，本刀已删）、由运行时那层给一个
 //! 桩），而"约定住哪"那三件（`frame` / `id` / `fail_codes`）当初就是为它单开的文件。那台靶
 //! 已删（用户裁定"protocol-case 没必要"，提交 `d0c7166`）⇒ 这条边界**实践价值为零**，本轮
 //! 并回一个 crate。
@@ -19,44 +19,44 @@
 //! **代价照实记**：本 crate 拖 `runtime`（riscv 内联汇编、无 `cfg` 护栏）⇒ **永久不能宿主
 //! 链接测试**（见 `Cargo.toml` 那一段）。故"纯核不碰 runtime"此后是一条**纪律，不是编译期
 //! 保证**：判定与账仍单独成份（`core.rs` / `frame.rs`），落内核的适配一律另开一份
-//! （`client.rs` / `call.rs` / `slip.rs`）。
+//! （`client.rs` / [`communication`]）。
 //!
 //! # 划界只有一条判据（原「约」的正文，判据未改）
 //!
 //! > **判定与账不碰 `runtime` 那一层。**
 //!
 //! 这条纪律从前写在**六份文件的头注**里（`system/board/core.rs`、`system/operator/core.rs`、
-//! `session/core.rs`、`driver/line/core.rs`、`programs/.../board/desk.rs`、
-//! `programs/.../operator/desk.rs`）——**有纪律，没有边界**。并回来之后它仍是这一层内部的
-//! 分家依据：`core.rs` / `frame.rs` 只判、只记；碰内核的住 `client.rs` 与那几手。
+//! `session/core.rs`（这一份已随会话那一刀删掉）、`driver/line/core.rs`、
+//! `programs/.../board/desk.rs`、`programs/.../operator/desk.rs`）——**有纪律，没有边界**。
+//! 并回来之后它仍是这一层内部的分家依据：`core.rs` / `frame.rs` 只判、只记；碰内核的住
+//! `client.rs` 与 [`communication`] 那几手。
 //!
 //! # 面上有什么
 //!
 //! ```text
-//!   frame       形：principal 与 coalition **同形的那一份**骨架
-//!   id          号：`Id` 那一族怎么编、怎么读
-//!   message     报：一族会编会解的那条约定（`store` / `fetch`）
-//!   fail_codes  负码表：`fail_codes!` 宏 ＋ 全协议共用的那一格 `OK`
+//!   frame         形：principal 与 coalition **同形的那一份**骨架
+//!   id            号：`Id` 那一族怎么编、怎么读
+//!   message       报：一族会编会解的那条约定（`store` / `fetch`）
+//!   fail_codes    负码表：`fail_codes!` 宏 ＋ 全协议共用的那一格 `OK`
+//!   communication 建：一段关系怎么建立、报怎么收发（`establish` / `sender` / `receiver` /
+//!                 `hands`）——**其余每一份都建在它上面**
 //! ```
 //!
 //! **照实记（`frame` / `id` / `fail_codes` 为什么是一组）**：`frame` 要 `id` 与 `fail_codes`
 //! ⇒ 三件是一组，只搬一件编不过。
 //!
-//! # 面会长成什么样（后面几批）
+//! # 照实记（"面会长成什么样"那一节已撤）
 //!
-//! ```text
-//!   正文   `mod.rs`（薄：这句话是什么 ＋ 不变量）
-//!   形     `frame.rs`
-//!   据     `core.rs`
-//!   账     `desk.rs`
-//!   适配   `system/*/mod.rs`（**不碰内核**的那几手：立板、注入；两张对照表随失败域落进 `core`）
-//! ```
+//! 它记的是两个 crate（「约」/「口」）分家时对本 crate 的打算：哪几份留下、哪几份搬走。
+//! 那一版已经并回一个 crate（见上面的照实记），故这节连同"搬它们那一批时按手劈"的说法
+//! 一起撤掉。它唯二还成立的两条落到别处：
 //!
-//! **不进来**：`client.rs` 的客侧那几手、`session/call.rs` 的会话手——它们碰内核，住 `protocol`。
-//! **照实记（一处按手切、不按文件切）**：`system/{board,operator}/mod.rs` 现在不碰 `runtime`，
-//! 但它 `pub use` 的三手（`marked_as` / `opened_by` / `vested_by`）由 `reserve_reads!` 包着
-//! `mail::reserve`——**是内核读**。搬它们那一批时按手劈：立板与两张对照表进本 crate，
-//! `ship` 与那三手进口。
+//! - `system/{board,operator}/mod.rs` **不碰 `runtime`**，但它 `pub use` 的三手
+//!   （`marked_as` / `opened_by` / `vested_by`）由 `reserve_reads!` 包着 `mail::reserve`
+//!   ——**是内核读**。这三手的身体如今只住 [`communication::hands`]（一处分身、两处取名）；
+//! - **客侧那几手与碰内核的那几手另开一份**（`client.rs` / [`communication`]），与判定、账
+//!   分开摆——这是本 crate 内部的分家依据，与 crate 边界不是一回事。
+//!
 //! # 这一层装什么：**两句**
 //!
 //! 1. **给别的 task 用的一切** —— 正文、判定、帧、**客侧那几手**（`*/client.rs`）：从外面找上
@@ -75,10 +75,10 @@
 //! 与 `programs/src/lib.rs` 的"**判据是谁在说话**"同一条线：这一层是那条线的**接口那一边**，
 //! `programs` 是**实现那一边**（实现方跟着"用它那个程序所在的档"走）。
 //!
-//! **顶层只有三份正文**——这里就是"目录层次"那句话：
+//! **顶层只有四份正文**——这里就是"目录层次"那句话：
 //!
 //! ```text
-//!   session          地板    会话怎么建起来（其余每一份都建在它上面）
+//!   communication    地板    会话怎么建起来（其余每一份都建在它上面）
 //!   system           系统    编排（core / desk / grant）
 //!                     └ 容纳  board      运行期的公示板 ＋ 待客账
 //!                             operator   命名寻址：一棵树，名字 → Pie
@@ -95,7 +95,7 @@
 //! 各自的 `mod.rs` ⇒ **协议树上不再有 `call.rs`**。实现树上最后一个也走了：`programs/src/system/call.rs`
 //! （编排者的适配）**唯一读者就是 `system/server.rs`**，故并进那个文件。驱动那一侧也走了：
 //! `programs/src/driver/rtc/call.rs` 拆进 `rtc/core/`（形与记号归 `core/frame.rs`）⇒
-//! 这个名字今天只剩一处：底座 `session/call.rs` 是**十件手的身体**。
+//! 这个名字今天只剩一处：底座 `communication/hands.rs` 是**那几件手的身体**。
 //!
 //! **照实记（"容纳"是用户裁的）**：`board` 一直在 [`system`] 之下；`operator` / `principal` /
 //! `coalition` 原先是**顶层**（与 `system` 平级），裁定之后收进去。**判据是"谁住编排域"**：
@@ -106,7 +106,7 @@
 //!
 //! 落地程度不一样：**三份顶层 ＋ 容纳的四套都已经有代码跑在机器上**（[`system`]、[`driver`]
 //! （**两半都落了**：`supply` 与 `line`——见 [`driver::line`]，四格原语 + 账 + 客侧几手，
-//! `router` / `uart` / `rtc` 与两位客人 `lodger` / `sleeper` 都跑在机器上）、[`session`]、
+//! `router` / `uart` / `rtc` 与两位客人 `lodger` / `sleeper` 都跑在机器上）、[`communication`]、
 //! [`system::operator`]、[`system::principal`]（**名册 + 谱系**：九条原语、一位真客人
 //! `subject`）与 [`system::coalition`]（**横向盟籍**：一张两列表 + 一枚计数器、六条原语、
 //! 一位真客人 `member`））。
@@ -143,8 +143,10 @@
 //!   照实记：这一句原来写的是"四条上线、两条住核心"，那是 `band` / `bloc` 还没接上时的口径。
 //!   它是**身份服务的客人**：每条写原语嵌一次 `Resolve(发送者)`——"self"因此在适配层，
 //!   不在核心（正文的"已知边界"里写着这一条的确切含义）。
-//! - [`session`] = **会话建立**："两个陌生实体怎么建起一条会话"。身份由内核盖、地址靠
-//!   对方交、认领按"谁开的这扇门"——不需要 Server 就能成立，而其余几份都建在它上面。
+//! - [`communication`] = **建立与收发**："两个陌生实体怎么建起一条会话"——身份由内核盖、地址靠
+//!   对方交、认领按"谁开的这扇门"。**三格动词**（`endpoint` 两头都要 / `give` 只把读端交出去 /
+//!   `find` · `claim` 只认对方那一枚），加上两个方向的手柄（[`communication::Sender`] /
+//!   [`communication::Receiver`]）。不需要 Server 就能成立，其余每一份都建在它上面。
 //! - [`system::operator`] = **命名寻址（树那一版）**：一个 Operator 管着所有条目，其他任务只是
 //!   操作它——**对外七条**：`land` 落 / `part` 分 / `find` 寻 / `trim` 剪 / `list` 列 /
 //!   `seek` 译 / `name` 名（外加核心那一条只读 `opens`，不上线）。树是**一张按号排的表**
@@ -156,7 +158,7 @@
 //!   判（`Rule`：公开 / 就是某一位 / 在某一支里 / 在某枚盟里 / 就是开着某一格的那位），
 //!   **改**那一轴记在持树者那本账上（`Ledger` 的 `Owner` + `claimable`）。树自己两轴都不判。
 //!
-//! [`session`] 是 `system` 起服务时等就绪的那一步；[`system::board`] 是 `programs` 里那**一枚**
+//! [`communication`] 是 `system` 起服务时等就绪的那一步（逐条 `claim` 那本账）；[`system::board`] 是 `programs` 里那**一枚**
 //! 板线程（招待所有客人，见该模块"板为什么就一枚线程"）+ 编排域里共享的那一份板
 //! （服务怎么问在 [`system::board::client`]；板那一台与装配侧在
 //! `programs/src/system/board/`）。
@@ -216,7 +218,6 @@ pub mod fail_codes;
 pub mod frame;
 pub mod id;
 pub mod message;
-pub mod session;
 pub mod system;
 
 /// **答话那一格的"没失败"**（0）——全协议**一个号**：六家（principal / coalition / operator /

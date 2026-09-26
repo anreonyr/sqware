@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 
 use env::{Mark, Name, TaskId, Wait};
 use plan::manifest;
-use protocol::session::{Pier, Quay};
+use protocol::communication::establish::{self, Endpoint};
 use protocol::system::core::{Fail, Reaped};
 use protocol::system::desk::Table;
 
@@ -78,11 +78,16 @@ impl Error {
     }
 }
 
-/// **一条运行时服务**：一枚线程 ＋ 它的码头（会话）。
+/// **一条运行时服务**：一枚线程 ＋ 它那几条通道（会话）。
 ///
-/// 码头与线程都在这里：`start` 要在它上面认领记号，板 / 树两条路也要在**同一座**码头上接。
+/// 线程与通道都在这里：`spawn` 只挂线程（账是空的），放行前 `connect` 按 `setup` 逐条装
+/// （第一条是 `records`），随后板 / 树两条装配路也各往这本账里添一件。
+///
+/// **一条通道一件持有者**（[`Endpoint`]）——`Endpoint` 只装两枚孔，故"一条关系 N 条通道"那一档
+/// 在这里就是**几个 `Endpoint`**，不是一个能装的容器类型。**这本账归装配者拿着**：那几枚孔是
+/// 本域铸出去、客人将来要认的那一半，放早了客人就没得认（见 `System::bring_up`）。
 /// 名字不进这个别名——账里那一行就是名字，调用方手里也有 `Program`。
-pub type Service = (TaskId, Quay);
+pub type Service = (TaskId, Vec<Endpoint>);
 
 /// 清单的读面：装配者按名字挑镜像。
 ///
@@ -128,12 +133,12 @@ pub struct Control {
     table: Table,
     catalog: Catalog<'static>,
     machine: Machine,
-    boot: Pier,
+    boot: Endpoint,
 }
 
 impl Control {
     /// 就位（四样都由 `System` 在引导之后交进来）。
-    pub fn new(catalog: Catalog<'static>, machine: Machine, boot: Pier) -> Control {
+    pub fn new(catalog: Catalog<'static>, machine: Machine, boot: Endpoint) -> Control {
         Control {
             table: Table::new(),
             catalog,
@@ -142,28 +147,30 @@ impl Control {
         }
     }
 
-    /// **起一个 Service**：按名字去清单里挑镜像 → 建域 → 产线程 → 开码头。
+    /// **起一个 Service**：按名字去清单里挑镜像 → 建域 → 产线程 → 备通道账。
     ///
     /// 前置：这一行**已经登记过**（[`Control::enlist`]）——没登记过由 `admit_start` 拦下。
+    ///
+    /// 通道账起手是空的：`setup` 里那几条由 [`connect`] 逐条装上（放行之前）。
     pub fn spawn(&mut self, name: &'static str) -> Result<Service, Error> {
         let name = Name::new(name).map_err(|_| Error::Manifest)?;
         let entry = self.catalog.find(name.as_str()).ok_or(Error::Missing)?;
         let task = service::mint(&mut self.table, name, entry.elf, entry.kind)
             .map_err(|_| Error::Spawn)?;
-        Ok((task, Quay::open(task, protocol::communication::hands::hands())))
+        Ok((task, Vec::new()))
     }
 
     /// **放行 + 等就绪 + 认领通道**（有通道的那一条顺带逐条认领）。
     ///
-    /// **这一刀之后它就跑了**：门闩、会话都在放行前定下（两相之间的窗口就是"它一步都还没跑"）。
-    /// `setup` 里那几条 `Channel` 就是放行后要逐条认领的记号（记号即泊位名）。
+    /// **这一刀之后它就跑了**：门闩、通道都在放行前定下（两相之间的窗口就是"它一步都还没跑"）。
+    /// `setup` 里那几条 `Channel` 就是放行后要逐条认领的记号（记号即通道名）。
     pub fn start(
         &mut self,
         name: Name,
         service: &mut Service,
         setup: &'static [Setup],
     ) -> Result<(), Error> {
-        let (task, quay) = service;
+        let (task, channels) = service;
         let mut marks: Vec<Mark> = Vec::new();
         for s in setup {
             if let Setup::Channel(ch) = s {
@@ -173,17 +180,12 @@ impl Control {
                 marks.push(Mark::of(ch));
             }
         }
-        let ups = if marks.is_empty() {
-            None
-        } else {
-            Some(&mut *quay)
-        };
         service::start(
             &mut self.table,
             name,
             *task,
             &[],
-            ups,
+            channels.as_mut_slice(),
             &marks,
             Wait::AtMost(READY_MS),
         )
@@ -211,12 +213,13 @@ impl Control {
     }
 }
 
-/// **装一条通道**（放行前）：在它的码头上装一条泊位——放行后按同一个记号认领。
+/// **装一条通道**（放行前）：铸本端那一枚（刻 `ch` 的记号）交给这条服务的域、并顺手试认它那一枚
+/// （`POLL` = 不等：放行前它一步都还没跑，认不到是常态）——放行后按同一个记号再认一次
+/// （[`service::ready`] 逐条 `claim`）。
 ///
-/// 只碰码头、不碰 `Control` 的任何一格，故是自由函数（`Control::connect` 那一层是白加的壳）。
-pub fn connect(quay: &mut Quay, ch: &'static str) -> Result<(), Error> {
+/// 只碰通道、不碰 `Control` 的任何一格，故是自由函数（`Control::connect` 那一层是白加的壳）。
+pub fn connect(to: TaskId, ch: &'static str) -> Result<Endpoint, Error> {
     let name = Name::new(ch).map_err(|_| Error::Manifest)?;
-    quay.seat(name)
-        .map(|_| ())
-        .map_err(|_| Error::Step("seat failed"))
+    establish::endpoint(to, Mark::of(name.as_str()), Wait::POLL)
+        .map_err(|_| Error::Step("connect failed"))
 }

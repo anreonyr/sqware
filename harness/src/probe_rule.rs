@@ -90,7 +90,7 @@ use core::time::Duration;
 
 use env::{Name, PieToken, TaskId};
 use protocol::debug;
-use protocol::session::Quay;
+use protocol::communication::establish::Endpoint;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::operator as ocall;
@@ -154,7 +154,7 @@ fn main() -> Report<'static> {
     };
     // 一点五、**再要一次问话孔**：一个域只该铸一枚 ⇒ 第二次叫回来的是**同一枚**（客侧先找后铸），
     // 故下面每一问都改用**第二枚**那个号——它要是另一枚孔，持树者认的还是第一枚，
-    // 这些话就全石沉大海（`session` 事实 9 那个症状）。两件事一次量：`ask_same` 与后面所有读数。
+    // 这些话就全石沉大海（`communication` 事实 9 那个症状）。两件事一次量：`ask_same` 与后面所有读数。
     let Ok(again) = operator::ask_hole(host) else {
         return bail("probe-rule: no second tree ask");
     };
@@ -440,7 +440,7 @@ fn main() -> Report<'static> {
 /// / `coalition` 起头就分了它，见装配单），故这时落出来的号不可能是 `0`。
 fn plate(
     talk: PieToken,
-    link: &Quay,
+    link: &Endpoint,
     host: TaskId,
     at: EntryId,
     name: &str,
@@ -468,7 +468,7 @@ fn plate(
 }
 
 /// 拿那一格去 `find`：答线上那一格码（`OK` = 放行；本程序只看码，不看那一枚）。
-fn look(talk: PieToken, link: &Quay, id: EntryId, millis: Wait) -> u8 {
+fn look(talk: PieToken, link: &Endpoint, id: EntryId, millis: Wait) -> u8 {
     if id.get() == 0 {
         return ocall::UNKNOWN;
     }
@@ -482,7 +482,7 @@ fn look(talk: PieToken, link: &Quay, id: EntryId, millis: Wait) -> u8 {
 ///
 /// **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
 /// `find` 把那一枚授过来（持树者 `ship`），**它在本域表里的号随答话回来** ⇒ 不必认领。
-fn find_face(link: &Quay, talk: PieToken, dir: &str, name: &str) -> Option<PieToken> {
+fn find_face(link: &Endpoint, talk: PieToken, dir: &str, name: &str) -> Option<PieToken> {
     let (Ok(dir), Ok(one)) = (Name::new(dir), Name::new(name)) else {
         return None;
     };
@@ -496,7 +496,7 @@ fn find_face(link: &Quay, talk: PieToken, dir: &str, name: &str) -> Option<PieTo
 /// **点名那一手**：把一条路译成号（名字 → 号），"还没挂上"那一格在那里重试。
 ///
 /// 这是这一刀唯一新用到的读：规矩里那个号的来路从"别人告诉我"变成"**树上换来**"。
-fn seek_id(link: &Quay, talk: PieToken, road: &[Name]) -> Option<EntryId> {
+fn seek_id(link: &Endpoint, talk: PieToken, road: &[Name]) -> Option<EntryId> {
     let mut left = MS;
     loop {
         match operator::seek(talk, link, &road, Wait::AtMost(MS)) {
