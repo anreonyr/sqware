@@ -102,10 +102,10 @@ pub fn attach(
     // 提示在**转授之后**：板据此可以按"提示一到，答话路必已在本表里"办事。
     // **提示那一格多带两格**（名字 ＋ 答话路那一格）：名字让板在 `admit` 那一刻把这一位的死亡道
     // 记下（不必等它自己报名），末格让板认答话路不必扫表。
-    // **这一对孔不必本函数拿着**：本端那一枚（`link.rx()`）是垫的（本端从不读它），可它得
-    // **一直活着**——客人那一侧要有人认它（`board::client::open` 的 `claim` 扫的就是本域铸出去
-    // 那一枚的副本），而认下之后板那一路也一直指着它写。放下这一手因此**不由作用域替我们做**：
-    // 不打 `close`，它就活到本域退场（`Endpoint` 的正文里那条照实记）。
+    // **这一对孔本函数不必拿着、也放不下**：本端那一枚（`link.rx()`）是垫的（本端从不读它），
+    // 可它得**一直活着**——客人那一侧要有人认它（`board::client::open` 的 `claim` 扫的就是本域
+    // 铸出去那一枚的副本），而认下之后板那一路也一直指着它写。它归**本域那张表**（`Endpoint`
+    // 上只有 `claim`，没有"放下"这个动作）⇒ 本域退场时一并回收。
     tell_guest(client, name, seed, tip).map_err(|_| "board:tell")
 }
 
@@ -190,7 +190,7 @@ pub(crate) fn tell_guest(
 /// 子集只给 `R|W`，**不加 `VEST`**：板线程用这一枚写答话，不需要再授出——一分不多。
 /// 本域自己那一份转授之后**不收**：客人给过来的这一枚带 `VEST`（`establish::endpoint` 铸的
 /// 就是 `R|W|VEST`）⇒ 这次授出是**复制**，源枚在我表里照旧可用；而它**归本域持有**
-/// （放下要明说 `close`，见 `establish` 的照实记）⇒ 本域退场时随表一起消失。
+/// （`Endpoint` 上放不下它，见 `establish` 文件头那条照实记）⇒ 本域退场时随表一起消失。
 pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<PieToken, ()> {
     let hole = mail::HolePie::from_token(reply);
     port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)

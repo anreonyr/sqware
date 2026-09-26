@@ -147,10 +147,10 @@
 //! | 空载基线，以及每轮开头 `a` | 20 / 20 | — |
 //! | 铸出本端那一枚 + 认下对端交来的那一枚之后 `b` | 22 | 本端铸的那一枚 + 对端那一枚 |
 //! | 判决拿到 `Reaped`、**放下之前** `c` | **21** | 只剩本端那枚 ⇒ 对端那枚**已经没了** |
-//! | 本端那一记 `close()` 之后 `d` | **20** | 回到基线 |
+//! | 本端那一记 `Held` 落出作用域（`Drop`）之后 `d` | **20** | 回到基线 |
 //!
 //! **328/328 轮四个数一模一样**，整场基线 20 不动 ⇒ 没有泄漏。收掉对端那一枚的不是那一记
-//! `close`（它只放本端那一枚），是**退场级联**：那一枚是受害者 `ship` 出来的副本，`sire` 指着
+//! `Drop`（它只放本端那一枚），是**退场级联**：那一枚是受害者 `ship` 出来的副本，`sire` 指着
 //! 受害者表里那一枚（见 `gate::accord` 头注"派生边只写在这里"），而受害者在 `reap` 里
 //! **先跑退出钩子再置 `Reaped`**（`messenger::reap`：`hooked(...)` 在 `transform(Reaped)`
 //! 之前；钩子里的 `gate::doom` 沿 `sire` 反查全世界、`cull` 摘子树）⇒ 台主拿到 `Reaped`
@@ -435,10 +435,13 @@ fn trial(
     // 放行时把通道交给受害者；它铸出自己那一枚交给台主、随即挂在自己那枚孔上 ⇒ 台主 `claim`
     // 到它就等于**"它已经挂好了、可以被唤醒了"**（它**不自己校准**，轮数随后由台主发过去）。
     // `start` 丢弃 `ready` 的 bool，故正文里显式查写端在不在。
-    let mut channels = [establish::endpoint(task, Mark::of(link.as_str()), Wait::POLL)
-        .map_err(|_| "seat")?];
+    // **有主地建**（`hold`）：这一轮的关系是**真·作用域寿命**（一轮一条、这一轮结束就还回去），
+    // 故它由 `Held` 的 `Drop` 收——一台子跑几百轮，这一格必须自己回基线（读数见头注那张表）。
+    let held = establish::hold(task, Mark::of(link.as_str()), Wait::POLL).map_err(|_| "seat")?;
+    // `start` 收的是这本账（`&mut [Endpoint]`）；`Endpoint` 是 `Copy` 的号束，故从 `held` 里
+    // 取一份出来用，所有权仍在 `held` 手里（放下时放的是同一枚孔）。
+    let mut channels = [*held];
     let verdict = body(name, task, delay_us, iters_per_ms, &mut table, &mut channels, link);
-    let channel = channels[0];
 
     // ── 收场（**不论这一轮成没成**）────────────────────────
     // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。
@@ -448,11 +451,9 @@ fn trial(
     {
         let _ = unit::oust(team);
     }
-    // 本端那一枚孔**明说放下**（`Endpoint::close`，即旧 `quay.shut()` 那一手）——放下一手不由
-    // 作用域替人做（`establish` 的照实记）。
+    // 本端那一枚孔随 `held` 落出作用域放下（`Held` 的 `Drop`，即旧 `quay.shut()` 那一手）。
     // 对端交上来的那一枚不归我：受害者在 `reap` 里先跑退出钩子（能力级联），台主拿到 `Reaped`
     // 时它已经不在我表里了——**已量，见头注①**。
-    channel.close();
     verdict
 }
 

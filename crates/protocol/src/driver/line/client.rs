@@ -10,13 +10,17 @@ use runtime::env::mail::{self, HolePie};
 
 use super::core::Fail;
 use super::frame;
-use crate::communication::establish::{self, Endpoint};
+use crate::communication::establish::{self, Held};
 use crate::communication::hands;
 use crate::communication::sender::Sender;
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）。
+///
+/// **归本端持有**（[`Held`]）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
+/// 放下，**一处也不用记**。这一段关系的寿命就是"我拿着这条 Line"，故它不走
+/// [`Endpoint`](crate::communication::establish::Endpoint)（那一类归域、放不下）。
 pub struct Line {
-    pair: Endpoint,
+    pair: Held,
 }
 
 impl Line {
@@ -25,20 +29,23 @@ impl Line {
     /// `entry` = 树上查来的那扇门（`/device/router` 下驱动族那一块）；对端 = **那扇门的主人**
     /// （`owner`：副本共享同一事实、转手不变）。
     ///
-    /// **失败那一趟两边都收干净**：本端铸出去的那一枚（`pair` 落出作用域时放下）与本趟借出去
-    /// 的那枚回信孔。两枚都**不在任何账上**——账里根本没有这一格，故此后没人会替它收，而路由者
-    /// 那侧**收不了别人的表**（它只放得下自己表里的那一枚），故这一侧自己收干净。
-    /// 不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，直到它退场。
+    /// **失败那一趟两边都收干净**：本端铸出去的那一枚（`pair` 是 [`Held`]，三条 `return` 上
+    /// 各自放下）与本趟借出去的那枚回信孔。两枚都**不在任何账上**——账里根本没有这一格，
+    /// 故此后没人会替它收，而路由者那侧**收不了别人的表**（它只放得下自己表里的那一枚），
+    /// 故这一侧自己收干净。不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，
+    /// 直到它退场（读数见 `programs/src/driver/router/adapt/desk.rs` 那一格 `pies=`）。
     pub fn occupy(entry: PieToken, key: Key, millis: Wait) -> Result<Line, Fail> {
         let host = hands::opened_by(entry).ok_or(Fail::Denied)?;
         // 本端那一枚先铸出来交给它（它按"谁开的 + 记号"认下来，往这里投递）。**这一步不等对端
         // 那一枚**：对端要到它读过登记那一句之后才装它那一半（次序是契约的一半，见下面 `claim`）。
+        // **有主地建**（`hold`）：这一条线归本端持有，`Line` 落出作用域即放下；失败那几趟
+        // 也由它的 `Drop` 代劳（下面三处 `return` 一个字都不用写）。
         let mut pair =
-            establish::endpoint(host, Mark::of(frame::LANE), Wait::POLL).map_err(|_| Fail::Denied)?;
+            establish::hold(host, Mark::of(frame::LANE), Wait::POLL).map_err(|_| Fail::Denied)?;
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单槽的孔只够一个方向）。
         let back = mail::unseal_hole(frame::BACK_MARK).map_err(|_| Fail::Denied)?;
-        // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条泊位）——**泊位由本函数 `close`
-        // 收**（放的是本端铸的那一枚），回信孔也由本函数收（它不是本端铸的）。
+        // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条线）——**线由 `pair` 的 `Drop`
+        // 收**（放的是本端铸的那一枚），回信孔由本函数收（它不是本端铸的）。
         let sent = port::ship(
             &HolePie::from_token(back),
             host,
@@ -55,7 +62,6 @@ impl Line {
         });
         if sent.is_err() {
             let _ = mail::release(back);
-            pair.close();
             return Err(Fail::Denied);
         }
         let mut one = [0u8; 1];
@@ -67,7 +73,6 @@ impl Line {
         // 这一份，路由者那一份由它自己放。
         let _ = mail::release(back);
         if code != frame::OK {
-            pair.close();
             return Err(match code {
                 frame::TAKEN => Fail::Taken,
                 frame::UNKNOWN => Fail::Unknown,
@@ -76,7 +81,6 @@ impl Line {
         }
         // 认下它那一枚：它另装了一条泊位的一半，本端写的那一枚从它来。
         if !pair.claim(host, Mark::of(frame::LANE), millis) {
-            pair.close();
             return Err(Fail::Denied);
         }
         Ok(Line { pair })

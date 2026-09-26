@@ -12,7 +12,7 @@
 
 use alloc::vec::Vec;
 
-use crate::communication::establish::Endpoint;
+use crate::communication::establish::Held;
 use crate::communication::hands;
 
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**。
@@ -28,12 +28,13 @@ pub enum Fail {
 
 /// 一格：没主，或者有主（**那条路的持有者** ＋ 忙不忙）。
 ///
-/// **装的是两枚号一起**（[`Endpoint`]），不是散着的裸号：那一对孔归本域那张表，而
-/// "这一段代码结束了"**不是**放下它的理由（见 `establish` 的照实记）——故 `vacate` 那一手
-/// 要**明说** `close`（那是"主人没了 ⇒ 这条路作废"，不是词法结束）。
+/// **装的是 [`Held`]**（不是 [`Endpoint`](crate::communication::establish::Endpoint)）：
+/// 这一格的关系是**真·作用域寿命**——"这一格归这位主人"就是它活着的全部理由，主人没了
+/// （`vacate`）或换一条线占进来，那一格就该被放下。放下一手因此由 `Held` 的 `Drop` 代劳，
+/// **一处也不用记**（旧形状里那一手是适配层自己写的 `drop_lane` / `unseat`）。
 enum Cell {
     Idle,
-    Owned { lane: Endpoint, busy: bool },
+    Owned { lane: Held, busy: bool },
 }
 
 /// 一张按线号索引的账。
@@ -70,10 +71,10 @@ impl Lines {
     }
 
     /// **occupy**：占住这一格（登记）。**接线那一手是它的后果**，由适配层紧随其后做；
-    /// **拒绝（`Taken`）那一趟反过来**：刚交上来的那条路**不在账里**，它归调用方放下
-    /// ——`Endpoint` 是 `Copy` 的，故调用方收下 `Err` 之后仍拿着那一对号、当场 `close` 就是
-    /// （见 `programs/src/driver/router/adapt/desk.rs`）。
-    pub fn occupy(&mut self, line: u32, lane: Endpoint) -> Result<(), Fail> {
+    /// **拒绝（`Taken`）那一趟反过来**：刚交上来的那条路**不在账里**——`lane` 是按值收进来的
+    /// （[`Held`]），`Taken` / `Unknown` 两条出口都把它丢在门外 ⇒ **它自己放下**，
+    /// 调用方一行都不用写。
+    pub fn occupy(&mut self, line: u32, lane: Held) -> Result<(), Fail> {
         if line == 0 {
             return Err(Fail::Unknown);
         }
@@ -113,14 +114,12 @@ impl Lines {
         }
     }
 
-    /// **vacate**：主人没了——空出这一格，**并把那条路放下**（主人没了 ⇒ 它作废，本端那一枚
-    /// 继续留着没有下家）。**拆线那一手是它的后果**，由适配层紧随其后做（先拆线再空格）。
+    /// **vacate**：主人没了——空出这一格（**放下那条路**：格子换回 `Idle` 即 `Held` 落出
+    /// 作用域，本端铸的那一枚随之放下）。**拆线那一手是它的后果**，由适配层紧随其后做
+    /// （先拆线再空格：那一枚还挂在组上）。
     pub fn vacate(&mut self, line: u32) -> Result<(), Fail> {
         match self.cells.get_mut(line as usize) {
             Some(cell @ Cell::Owned { .. }) => {
-                if let Cell::Owned { lane, .. } = cell {
-                    lane.close();
-                }
                 *cell = Cell::Idle;
                 Ok(())
             }
@@ -128,8 +127,8 @@ impl Lines {
         }
     }
 
-    /// 这一格的泊位（没主 ⇒ `None`）。**借**出去：持有者不在这一层放手。
-    pub fn lane(&self, line: u32) -> Option<&Endpoint> {
+    /// 这一格的泊位（没主 ⇒ `None`）。**借**出去：持有者不在这一层放手（放下归格子自己）。
+    pub fn lane(&self, line: u32) -> Option<&Held> {
         match self.cells.get(line as usize)? {
             Cell::Owned { lane, .. } => Some(lane),
             Cell::Idle => None,

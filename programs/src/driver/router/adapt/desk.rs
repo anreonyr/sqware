@@ -2,9 +2,9 @@
 //! ⇒ 占住那一格 + 接上线 ⇒ 回一格状态码。
 //!
 //! 判定在 `protocol::driver::line::core`（`Lines` 的四原语）与 `crate::core::sources`（区 → 线号）；
-//! 本文件只做碰内核与设备的那几手：认泊位、解帧、接线、挂组、答话。**放回那一手也在这里**：
-//! 登记被拒时那一条由本文件当场 [`Endpoint::close`]（见 [`serve`] 里那一支）——放下一手不由
-//! 作用域替人做（`establish` 的照实记）。
+//! 本文件只做碰内核与设备的那几手：认泊位、解帧、接线、挂组、答话。**放回那一手不在这里**：
+//! 登记被拒时那一条由 [`Held`] 的 `Drop` 当场放下（见 [`serve`] 里那一支）——这一格的关系是
+//! 真·作用域寿命，故交给类型管（`establish` 文件头那条照实记）。
 
 use crate::core::sources::Sources;
 use crate::plic::{LINE_PRIORITY, Plic};
@@ -12,7 +12,7 @@ use protocol::message::Message;
 use env::{HoleDir, Mark, TaskId, Wait};
 use protocol::debug;
 use protocol::driver::line::{core::Lines, frame as lcall};
-use protocol::communication::establish::{self, Endpoint};
+use protocol::communication::establish::{self, Held};
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 
@@ -60,23 +60,22 @@ pub fn serve(
                             lcall::OK
                         }
                         // **拒了就放回去**：这一趟刚交上来的那条路**不在账里**（`Lines::occupy`
-                        // 收下了它、又拒了它），故放下它的是**这里**——`Endpoint` 是 `Copy` 的，
-                        // 下面这一记 `close` 放的就是本端铸的那一枚（旧形状里这一手是本文件的
-                        // `drop_lane`）。
+                        // 收下了它、又拒了它）——`lane` 是 [`Held`]，**它自己放下**，这里一行都
+                        // 不用写（旧形状里这一手是本文件的 `drop_lane`）。
                         //
                         // **照实记（旧 `drop_lane` 那笔账）**：从前不放会**每失败一次就在本域
                         // 表里多留两枚**（本端铸的那一枚 ＋ 从客人手里认下的那一枚），直到本域
-                        // 退场——对一个会重试的客户就是无界增长；那一笔账如今由本文件这一记
-                        // `close` 收：本端那一枚当场放下，客人那一枚（本域表里的副本）随**客人
-                        // 自己**放下它那一枚时一起摘掉（派生边在 `gate::accord` 上）——客户那一
-                        // 侧失败几趟就自己收几趟（`Line::occupy` 的 `pair.close()`）。
+                        // 退场——对一个会重试的客户就是无界增长；那一笔账如今由**类型**收：
+                        // `lane` 是 `Held`，失败那一刻它落出作用域、本端那一枚随之放下；客人
+                        // 那一枚（本域表里的副本）随**客人自己**放下它那一枚时一起摘掉（派生边在
+                        // `gate::accord` 上）——客户那一侧失败几趟就自己收几趟（`Line::occupy`
+                        // 的 `pair`，同样是 `Held`）。
                         // **读数仍在下面这一行**：`pies=` 是本域表里此刻有几枚，少放一枚这一格
                         // 当场大 1（探针量过：临时关掉那几手，房客那一行从 `9` 涨到 `14`）。
                         //
                         // **拒了不再另递一句话**：客人从**回信孔**读到的那个非 `OK` 码就是这一
                         // 句（旧 `unseat` 那次过线通知的是一件已经说过的事）。
                         Err(fail) => {
-                            lane.close();
                             debug!(
                                 "router: lane dropped line={line} pies={}",
                                 mail::table_size()
@@ -99,15 +98,15 @@ pub fn serve(
 
 /// 认下这位客户交出来的**线泊位**（记号 [`lcall::LANE`]），并把本端那一枚交给它。
 ///
-/// 返**那条路的持有者**（[`Endpoint`]：本端读的那一枚 ＋ 认下来的写端）：`deliver` 往**它**推
+/// 返**那条路的持有者**（[`Held`]：本端读的那一枚 ＋ 认下来的写端）：`deliver` 往**它**推
 /// 投递（客户读的那一枚），`exhaust` 收**它的**排空。
 ///
 /// **一手就是"两头都装"**（[`establish::endpoint`]：铸本端那一枚交给它 ＋ 认下它那一枚，判据
 /// 两格 = `owner == from` ＋ 记号 `lane`）。客户在推登记之前先铸先交，故这一步通常当场成
-/// ——认不到就是它没交（或交不出来），那一趟不算（**本端刚铸的那一枚由调用方 `close`**，
-/// 正是 [`serve`] 里那一支要说的那件事）。
-fn take_lane(from: TaskId) -> Option<Endpoint> {
-    let lane = establish::endpoint(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS)).ok()?;
+/// ——认不到就是它没交（或交不出来），那一趟不算（**本端刚铸的那一枚由 [`Held`] 的 `Drop`
+/// 放下**，正是 [`serve`] 里那一支要说的那件事）。
+fn take_lane(from: TaskId) -> Option<Held> {
+    let lane = establish::hold(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS)).ok()?;
     // **没有写端就投不出去**（原 `Quay::claim` 答不出来的那一格）：这条泊位不成立。
     lane.tx()?;
     Some(lane)
