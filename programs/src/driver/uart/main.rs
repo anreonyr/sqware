@@ -54,7 +54,7 @@ extern crate programs;
 // 共享件住驱动这一族里：`assemble` 是三台驱动都要写一遍的那段客侧装配。
 use env::Wait;
 use programs::driver::assemble;
-use programs::driver::uart::needs;
+use plan::assembly::UART_WANTS as WANTS;
 
 // 板：本域是**客侧**（只装上板路，不挂牌子）；树：也是客侧（门牌挂 `/device/uart`、按名找线路由者）。
 use protocol::system::operator::Where;
@@ -95,7 +95,7 @@ const DRAIN_MAX: usize = 64;
 #[programs::entry]
 fn main() -> Result<(), fail::Fail> {
     // 1. 客侧装配：父域按本域那张单子把 `ns16550a` 那一台授进来（坐标由它读树定下来）。
-    let mut slots = [None; needs::WANTS.len()];
+    let mut slots = [None; WANTS.len()];
     let got = assemble::receive(&mut slots)?;
     let [Some(serial)] = slots else {
         // 单子上只有一条，缺了它就没得开工（父域按同一张单发货，缺格即装配错）。
@@ -104,7 +104,7 @@ fn main() -> Result<(), fail::Fail> {
     say(&alloc::format!("uart: got {got}"));
 
     // 2. 开图 + 开闸。**设备到手之后第一件要打开的就是"收到字节就拉线"**：这条线归本域，
-    //    因为只有持有设备的人才有资格动它（`ONLY` 是资源事实，见 `needs`）。
+    //    因为只有持有设备的人才有资格动它（`ONLY` 是资源事实，见 `plan::assembly::UART_WANTS`）。
     let dock = Dock::open(PolePie::from_token(serial.token())).map_err(|_| fail::Fail::Open)?;
     uart::arm_rx(dock.view());
     // 坐标**随记录发下来**（内核按 `reg` 段造的门闩；本域既不写死名字、也不写死地址）。

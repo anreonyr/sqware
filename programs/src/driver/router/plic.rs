@@ -13,7 +13,7 @@
 //! # 本域要哪三样
 //!
 //! 要哪几样、多少权、以什么形态出去，写在**本域自己开的**需求单里
-//! （[`crate::driver::router::needs`]）：本域收到记录后**按位次**认领自己那几格——**控制器
+//! （[`plan::assembly::ROUTER_WANTS`]）：本域收到记录后**按位次**认领自己那几格——**控制器
 //! 按类**（`compatible`，编排域读树把类定成那一段区），**设备树本体与门铃按坐标本身**
 //! （`Key::dtb()` / `Key::irq()`：它们不是树里的节点）。名字不在本文件里第二遍。
 //! 本模块只管这台控制器自己——寄存器布局、几条线、哪个 context。
@@ -33,7 +33,7 @@
 use alloc::vec::Vec;
 
 use env::{Name};
-use plan::{Key};
+use plan::{assembly::PLIC_CLASS, Key};
 use runtime::core::dock::View;
 
 /// S 模式外部中断的中断号：`interrupts-extended` 里 `cell == 9` 的那一项。
@@ -73,7 +73,7 @@ impl Plic {
     /// **没进来的那几笔账**一起交出去（见模块头）。
     ///
     /// 认控制器用的那个类（`compatible`）与单子上那一格是**同一个常量**
-    /// （[`super::needs::PLIC`]）——"我是哪台控制器"这个断言只有一处。
+    /// （[`PLIC_CLASS`]，住 `plan::assembly` 那张单子旁边）——"我是哪台控制器"这个断言只有一处。
     ///
     /// 返的第二件是**源账**（每条带区与线号，另加那几笔没进来的账）：登记那一趟按
     /// [`Sources::line_of`] 解"区 → 线号"——**那条权威只在这一处**。
@@ -83,7 +83,7 @@ impl Plic {
         let node = fdt.all_nodes().find(|n| {
             n.property("interrupt-controller").is_some()
                 && n.compatible()
-                    .is_some_and(|c| c.all().any(|s| s == super::needs::PLIC))
+                    .is_some_and(|c| c.all().any(|s| s == PLIC_CLASS))
         })?;
         let device_count = node
             .property("riscv,ndev")

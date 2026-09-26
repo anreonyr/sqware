@@ -2,7 +2,7 @@
 //!
 //! 这是**这台机器的事实**，不是协议：它读的是启动参数（`plan::args`），行的还是
 //! "谁被装进来了"这件事。物料面（单子与回单）住在 [`protocol::driver::supply`]；要哪几样由
-//! **收方**自己开单（[`crate::driver::router::needs`] 等，开口的形态就是 `Need`）。
+//! **收方**自己开单（三张都在 [`plan::assembly`]，开口的形态就是 `Need`）。
 
 use alloc::format;
 

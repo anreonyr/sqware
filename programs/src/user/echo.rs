@@ -59,7 +59,6 @@
 extern crate alloc;
 extern crate programs;
 
-// 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板与树：本域都只用**客侧**那几手。
 use env::Wait;
 use protocol::system::operator::client as operator;

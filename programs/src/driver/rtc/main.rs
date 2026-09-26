@@ -69,7 +69,7 @@ extern crate programs;
 // 共享件住驱动这一族里：`assemble` 是各驱动都要写一遍的那段客侧装配，需求单同一份源码编一次。
 use env::Wait;
 use programs::driver::assemble;
-use programs::driver::rtc::needs;
+use plan::assembly::RTC_WANTS as WANTS;
 // 服务面那三份：帧形与记号、那一格、客侧两手（客人 `use` 的是同一份）。
 use programs::driver::rtc::{
     call::{self, Status, Time},
@@ -115,7 +115,7 @@ const MS: usize = 1000;
 #[programs::entry]
 fn main() -> Result<(), fail::Fail> {
     // 1. 领配给：那一页寄存器（`ONLY`：同一时刻只该有一个持有者）。
-    let mut slots = [None; needs::WANTS.len()];
+    let mut slots = [None; WANTS.len()];
     let got = assemble::receive(&mut slots)?;
     let [Some(rtc_pie)] = slots else {
         return Err(fail::Fail::Assemble(assemble::E_GRANT));

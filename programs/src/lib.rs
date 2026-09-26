@@ -17,8 +17,8 @@
 //! **`harness`**——它们只借这里的一件共享入口（`extern crate programs;` ⇒ [`entry`] 的
 //! `_start`）。哪几台进哪张镜像，仍只在 `plan::assembly::ALL` 每行的 `scenes` 里声明。
 //!
-//! **表归主人**：硬件需求单在**收方**（`driver/{router,uart,rtc}/needs.rs` 与
-//! `harness/src/lodger/needs.rs`：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
+//! **表归主人**：四张硬件需求单在**收方**（今天住 `plan::assembly`——装配单本就要把那一格
+//! 摆出来，故与它同层：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
 //! **引导域**（`root/boot.rs`：只有它读得到）——装配者只是 `use` 它们，不另抄一份。
 //!
 //! 内含之后**共用件只剩三枚**：`entry`（`_start` + panic 处理，每个程序共用）、

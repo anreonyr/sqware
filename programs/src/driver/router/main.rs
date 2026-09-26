@@ -5,7 +5,7 @@
 //!
 //! **它为什么叫 router**：它管的是**线**（哪条线、谁领走、领完怎么结），不是某一台设备。
 //! 控制器自己的寄存器布局与"线怎么从树里解出来"在同目录的 `plic.rs`——**设备语义各带各的**，
-//! 那是 [`crate::driver`] 的家族纪律；需求单在 [`needs`]。
+//! 那是 [`crate::driver`] 的家族纪律；需求单在 [`plan::assembly::ROUTER_WANTS`]。
 //!
 //! ```text
 //! 收配给（父域按同一张需求单推来记录，**按位次归位**：控制器 / 自描述 / 门铃）
@@ -108,7 +108,7 @@ extern crate programs;
 use env::Wait;
 use env::Mark;
 use programs::driver::assemble;
-use programs::driver::router::needs;
+use plan::assembly::ROUTER_WANTS as WANTS;
 
 // 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
 use contract::message::Message;
@@ -151,7 +151,7 @@ const QUAY_MS: usize = 1000;
 fn main() -> Result<(), fail::Fail> {
     // 客侧装配：会话 + 收配给（**编号原样带出去**——`assemble` 报的是"死在装配的哪一步"，
     // 折成同一个号就等于把那几个编号变成没人读得到的死码）。
-    let mut slots = [None; needs::WANTS.len()];
+    let mut slots = [None; WANTS.len()];
     let got = assemble::receive(&mut slots)?;
     // 三枚都要在：少一枚就不必继续（父域按同一张单子发货，缺格即装配错）。
     let [Some(plic_pie), Some(dtb_pie), Some(bell_pie)] = slots else {

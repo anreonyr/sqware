@@ -74,16 +74,24 @@ pub const E_PROBE_RULE: Died = 21;
 pub const E_PROBE_OTHER: Died = 22;
 pub const E_PROBE_BOUND: Died = 23;
 
-// ── 四张硬件需求单（**收方开的**，逐字从各域的 `needs.rs` 搬下来）────────────
+// ── 四张硬件需求单（**收方开的**，逐字从各域当年的 `needs.rs` 搬下来——那几份转发本笔已删）────────────
 //
 // **照实记（为什么住这里）**：它们本来住在各自的域里（"它是**收方**开的那张单子"），而装配单
-// 要把它们摆出来（`Plan::needs`）⇒ 必须与装配单同层。各域的 `needs.rs` 现在是 `pub use` 转发，
-// **调用点一行没改**，那句"它住在本域里"仍由那一处读得出来。
+// 要把它们摆出来（`Plan::needs`）⇒ 必须与装配单同层。各域原先那份 `needs.rs`（`pub use` 转发）
+// 已随"形状归一"那一刀删掉，各域**直接从这一层取**——单子仍只有这一处。
+
+/// 中断控制器那一类（`compatible`）——**"我是哪台控制器"这个断言只有一处**：线路由域认设备树
+/// 时读它（`programs/src/driver/router/plic.rs`），下面那张单子要的也是它。
+///
+/// **照实记（尾账那一刀量出来的）**：这串字面量原先有**两份**——下面 `ROUTER_WANTS` 里内联一份，
+/// `programs/.../router/needs.rs` 里另有一个 `PLIC` 常量；只有散文把它们说成"同一个常量"。
+/// 那一处 `needs.rs` 删掉时它归到**定义处**（就是这里：单子在这一层，两侧都读得到的也只有这一层）。
+pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 
 /// 线路由者要的那三样：**中断控制器**（按类要）+ **设备树本体 / 门铃**（boot 造的，按已知坐标）。
 pub const ROUTER_WANTS: &[Need] = &[
     Need::class(
-        class_block("sifive,plic-1.0.0"),
+        class_block(PLIC_CLASS),
         Kind::Pole,
         Access::FETCH_STORE,
         Policy::ONLY,
