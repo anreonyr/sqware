@@ -1,47 +1,24 @@
-//! mold — `#[derive(Envcall)]`：给环境调用枚举生成载荷 codec。
+//! mold —— 三个过程宏：**定长帧**、**环境调用枚举**、**入口那一手**。
 //!
-//! 方案 3（typed payload）的 proc-macro 实现。输入一个带载荷的调用枚举，输出：
-//!   * `slot(&self) -> usize`       —— 调用号（`#[call(class = N)]` 的 class << 32 | 判别号）
-//!   * `pack(&self) -> [usize; 6]`  —— 字段按声明顺序 wire 化（`Wire::pack`）
-//!   * `from_wire(slot, &[usize; 6])` —— 按 slot 取 variant，逐字段 `Wire::unpack`
-//!   * `Ret` 枚举                   —— 每个标 `#[ret(T)]` 的 variant 一个载荷变体
-//!   * `call(self) -> EnvResult<Ret>`—— 触发并判译（负值即错误）
+//! 三者互不相干，各占一节，各节的头注跟着它自己那个宏。
 //!
-//! **两种返回宽度**：`#[ret(T)]` 走 `wire::FromPair`（读 `a0`/`a1`），`#[ret3(T)]` 走
-//! `wire::FromTriple`（读 `a0..a2`）。宽度是**那一格载荷自己的事实**：一对寄存器说不完的
-//! 才标 `ret3`（今天只有 `PieCall::Collect`），其余三十格一个字不改。
+//! **形态不同，各由"它要产出什么"定死**：
+//!   * `frame!`             —— 要产出**结构体本身**，故只能是 function-like（derive 依附不到
+//!     一枚还不存在的 item）；
+//!   * `#[derive(Envcall)]` —— 产出一枚枚举的 `impl` 与一枚新枚举，附属在你手写的那枚枚举上；
+//!   * `#[entry]`           —— 要**改写**自己挂着的那一项（原函数留着、另加一个符号），故只能
+//!     是 attribute。
 //!
-//! 通用性：`slot/pack/unpack` 与 `Ret` 只依赖 `Wire`（不绑 env 错误/汇编），sbi 等
-//! S-mode 调用封装未来可复用同一 derive；`call` 则绑定 env 的 `EnvResult`/汇编入口。
-
-//! `#[entry]` —— **入口那一手**的过程宏：把 bin 里那个 `main` 与"汇编要调的那个符号"接上。
-//!
-//! ```ignore
-//! #[entry]
-//! fn main() -> Result<(), fail::Fail> { … }
-//! ```
-//!
-//! 展开成两件东西（**你写的那个函数一个字没动**）：
-//!
-//! ```ignore
-//! fn main() -> Result<(), fail::Fail> { … }        // 原样
-//!
-//! #[unsafe(no_mangle)]
-//! extern "C" fn clean_ret() { programs::entry::entry(main) }
-//! ```
-//!
-//! `_start` 的汇编调的就是 `clean_ret`（见 `programs/src/entry.rs`）——**符号名不再是 `main`**，
-//! 于是：
-//!
-//! - 你那个 `main` 照旧叫 `main`（不必改名、不必加 attribute）；
-//! - 也不必把它藏进一个 `mod` 里躲名字冲突（上一版那层 `mod __entry` 因此撤掉）；
-//! - 生成的这一层是**宏展开**，不是 `OUT_DIR` 里的一个文件 ⇒ bin 的源码里不再有
-//!   `include!(concat!(env!("OUT_DIR"), …))` 那行路径咒语。
-//!
-//! 名字为什么叫 `clean_ret`：入口那一手做的是"**干净地回来**"——`main` 正常返回时，
-//! 把退出码与那句话折成 `Report` 交给内核；`main` 自己退场（`-> !`）时这一层根本走不到。
+//! 共享的只有解析小工具（`ret_type` 等），归用到它的那一节。
 
 mod frame_impl;
+
+use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
+use quote::quote;
+use syn::{Attribute, Data, DeriveInput, Fields, Ident, ItemFn, Lit, Type, parse_macro_input};
+
+// ── `frame!`：定长帧 ─────────────────────────────────────────────────────────
 
 /// **定长帧**那一族的一处定义：给一张字段表，生成结构体 ＋ 长度 ＋ 一对 `store` / `fetch`。
 ///
@@ -71,143 +48,30 @@ mod frame_impl;
 ///
 /// **照实记（它从前是 `macro_rules!`）**：那时它 `#[macro_export]`，名字落在 `env` 的
 /// **crate 根**上——与同 crate 里的同名模块撞过车。改成过程宏之后诊断能指到**那一格字段**
-/// （哪个字段没实现 `Field`），而生成物与调用点一个字没改。实现见 [`frame_impl`]。
+/// （哪个字段没实现 `Field`），而生成物与调用点一个字没改（调用点照旧写 `env::frame!`：
+/// 那条路径由 `env` 的 `pub use mold::frame;` 转出来）。实现见 [`frame_impl`]。
 #[proc_macro]
 pub fn frame(input: TokenStream) -> TokenStream {
     frame_impl::expand(input.into()).into()
 }
 
-use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
-use syn::{Attribute, Data, DeriveInput, Fields, Ident, ItemFn, Lit, Type, parse_macro_input};
+// ── `#[derive(Envcall)]`：环境调用枚举 ───────────────────────────────────────
 
-/// 解析 `#[ret(T)]` 属性里的返回类型。
-fn ret_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
-    for attr in attrs {
-        if attr.path().is_ident("ret") {
-            let ty = attr.parse_args::<Type>()?;
-            return Ok(Some(ty));
-        }
-    }
-    Ok(None)
-}
-
-/// 解析 `#[ret3(T)]` 属性里的返回类型（**宽返回那一格**：读 `a0..a2`）。
+/// 方案 3（typed payload）的 proc-macro 实现。输入一个带载荷的调用枚举，输出：
+///   * `slot(&self) -> usize`       —— 调用号（`#[call(class = N)]` 的 class << 32 | 判别号）
+///   * `pack(&self) -> [usize; 6]`  —— 字段按声明顺序 wire 化（`Wire::pack`）
+///   * `from_wire(slot, &[usize; 6])` —— 按 slot 取 variant，逐字段 `Wire::unpack`
+///   * `Ret` 枚举                   —— 每个标 `#[ret(T)]` 的 variant 一个载荷变体
+///   * `call(self) -> EnvResult<Ret>`—— 触发并判译（负值即错误）
 ///
-/// 与 [`ret_type`] 分成两个函数、而不是一个函数认两种拼法：**一格载荷最多有一个返回
-/// 宽度**，两处各自只认自己那个属性名，撞上了（同一 variant 两个都标）由
-/// [`variants`] 当场报错，而不是让后一个静默覆盖前一个。
-fn ret_wide_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
-    for attr in attrs {
-        if attr.path().is_ident("ret3") {
-            let ty = attr.parse_args::<Type>()?;
-            return Ok(Some(ty));
-        }
-    }
-    Ok(None)
-}
-
-/// 解析 `#[call(class = N)]` 属性里的 class。
-fn class(attrs: &[Attribute]) -> syn::Result<usize> {
-    for attr in attrs {
-        if attr.path().is_ident("call") {
-            let mut value = None;
-            let _ = attr.parse_nested_meta(|nested| {
-                if nested.path.is_ident("class") {
-                    let lit: Lit = nested.value()?.parse()?;
-                    if let Lit::Int(i) = lit {
-                        value = Some(i.base10_parse::<usize>()?);
-                    }
-                }
-                Ok(())
-            });
-            if let Some(v) = value {
-                return Ok(v);
-            }
-            return Err(syn::Error::new_spanned(attr, "expected #[call(class = N)]"));
-        }
-    }
-    Err(syn::Error::new_spanned(
-        &attrs[0],
-        "expected #[call(class = N)] on the enum",
-    ))
-}
-
-/// 从 `DeriveInput` 提取 variant 列表：`[(name, fields, ret_type, wide)]`。
+/// **两种返回宽度**：`#[ret(T)]` 走 `wire::FromPair`（读 `a0`/`a1`），`#[ret3(T)]` 走
+/// `wire::FromTriple`（读 `a0..a2`）。宽度是**那一格载荷自己的事实**：一对寄存器说不完的
+/// 才标 `ret3`（今天只有 `PieCall::Collect`），其余四十八格一个字不改。
 ///
-/// `wide` = 这一格标的是 `#[ret3(T)]`（读 `a0..a2`），见 [`ret_wide_type`]。
-fn variants(ast: &DeriveInput) -> syn::Result<Vec<(Ident, Fields, Option<Type>, bool)>> {
-    let data = match &ast.data {
-        Data::Enum(e) => e,
-        _ => return Err(syn::Error::new_spanned(ast, "Envcall only supports enums")),
-    };
-    let mut out = Vec::new();
-    for v in data.variants.iter() {
-        let narrow = ret_type(&v.attrs)?;
-        let wide = ret_wide_type(&v.attrs)?;
-        if narrow.is_some() && wide.is_some() {
-            return Err(syn::Error::new_spanned(
-                &v.ident,
-                "改一格载荷的返回宽度：`#[ret(T)]` 与 `#[ret3(T)]` 只能标一个",
-            ));
-        }
-        let is_wide = wide.is_some();
-        out.push((v.ident.clone(), v.fields.clone(), narrow.or(wide), is_wide));
-    }
-    Ok(out)
-}
-
-fn field_types(f: &Fields) -> Vec<Type> {
-    match f {
-        Fields::Named(named) => named.named.iter().map(|f| f.ty.clone()).collect(),
-        Fields::Unnamed(unnamed) => unnamed.unnamed.iter().map(|f| f.ty.clone()).collect(),
-        Fields::Unit => Vec::new(),
-    }
-}
-
-fn field_names_as_ident(f: &Fields) -> Vec<Ident> {
-    match f {
-        Fields::Named(named) => named
-            .named
-            .iter()
-            .map(|f| f.ident.clone().unwrap())
-            .collect(),
-        Fields::Unnamed(unnamed) => (0..unnamed.unnamed.len())
-            .map(|i| Ident::new(&format!("f{i}"), proc_macro2::Span::call_site()))
-            .collect(),
-        Fields::Unit => Vec::new(),
-    }
-}
-
-fn is_unit(f: &Fields) -> bool {
-    matches!(f, Fields::Unit)
-}
-
-fn is_unnamed(f: &Fields) -> bool {
-    matches!(f, Fields::Unnamed(_))
-}
-
-fn pat_for(v: &Ident, f: &Fields, binds: &[Ident]) -> TokenStream2 {
-    if is_unit(f) {
-        quote! { Self::#v }
-    } else if is_unnamed(f) {
-        quote! { Self::#v(#(#binds),*) }
-    } else {
-        quote! { Self::#v { #(#binds),* } }
-    }
-}
-
-fn expr_for(v: &Ident, f: &Fields, binds: &[Ident]) -> TokenStream2 {
-    if is_unit(f) {
-        quote! { Self::#v }
-    } else if is_unnamed(f) {
-        quote! { Self::#v(#(#binds),*) }
-    } else {
-        quote! { Self::#v { #(#binds),* } }
-    }
-}
-
+/// 通用性：`slot/pack/unpack` 与 `Ret` 只依赖 `Wire`（不绑 env 错误/汇编），sbi 等
+/// S-mode 调用封装未来可复用同一 derive；`call` 则绑定 env 的 `EnvResult`/汇编入口。
+///
+/// 实现见 [`derive_envcall`]。
 #[proc_macro_derive(Envcall, attributes(call, ret, ret3))]
 pub fn derive_envcall(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
@@ -220,22 +84,10 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
         Ok(v) => v,
         Err(e) => return e.to_compile_error().into(),
     };
-    let nkind = vols.len();
     let ret_name = Ident::new(&format!("{}Ret", name), proc_macro2::Span::call_site());
 
-    // Split into parallel vectors.
-    let mut vs: Vec<Ident> = Vec::new();
-    let mut flds: Vec<Fields> = Vec::new();
-    let mut rets: Vec<Option<Type>> = Vec::new();
-    let mut wides: Vec<bool> = Vec::new();
-    for (v, f, r, w) in vols {
-        vs.push(v);
-        flds.push(f);
-        rets.push(r);
-        wides.push(w);
-    }
     // 这一枚枚举里有没有宽返回的那一格——决定 `call()` 绑几口寄存器。
-    let any_wide = wides.iter().any(|w| *w);
+    let any_wide = vols.iter().any(|v| v.wide);
     // 第三口绑不绑名字：只有宽那一格用得上它，其余枚举绑成 `_v2`（不绑名字就不会有
     // "未使用的变量"那一 warn，而 `a2` 照样按 ABI 读回——线宽不因没人读而改变）。
     let v2_bind: TokenStream2 = if any_wide {
@@ -244,31 +96,24 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
         quote! { _v2 }
     };
 
-    let slot_arms: Vec<_> = (0..nkind)
-        .map(|i| {
-            let v = &vs[i];
-            let f = &flds[i];
-            let pat = if is_unit(f) {
-                quote! { Self::#v }
-            } else if is_unnamed(f) {
-                quote! { Self::#v(..) }
-            } else {
-                quote! { Self::#v { .. } }
-            };
-            quote! { #pat => ( #class << 32 ) | #i }
+    let slot_arms: Vec<_> = vols
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let form = v.shape(None);
+            quote! { #form => ( #class << 32 ) | #i }
         })
         .collect();
 
-    let pack_arms: Vec<_> = (0..nkind)
-        .map(|i| {
-            let v = &vs[i];
-            let f = &flds[i];
-            let typs = field_types(f);
-            let binds = field_names_as_ident(f);
-            let pat = pat_for(v, f, &binds);
-            if is_unit(f) {
-                quote! { #pat => [0usize; 6] }
+    let pack_arms: Vec<_> = vols
+        .iter()
+        .map(|v| {
+            let binds = v.binds();
+            let form = v.shape(Some(&binds));
+            if v.is_unit() {
+                quote! { #form => [0usize; 6] }
             } else {
+                let typs = v.types();
                 let packs = binds
                     .iter()
                     .zip(typs.iter())
@@ -279,7 +124,7 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
                     })
                     .collect::<Vec<_>>();
                 quote! {
-                    #pat => {
+                    #form => {
                         let mut s = [0usize; 6];
                         let mut i = 0usize;
                         #(#packs)*
@@ -290,15 +135,16 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let unpack_arms: Vec<_> = (0..nkind)
-        .map(|i| {
-            let v = &vs[i];
-            let f = &flds[i];
-            let typs = field_types(f);
-            let binds = field_names_as_ident(f);
-            if is_unit(f) {
-                quote! { #i => Ok(Self::#v) }
+    let unpack_arms: Vec<_> = vols
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let binds = v.binds();
+            let form = v.shape(Some(&binds));
+            if v.is_unit() {
+                quote! { #i => Ok(#form) }
             } else {
+                let typs = v.types();
                 let unpacks = binds
                     .iter()
                     .zip(typs.iter())
@@ -308,54 +154,53 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
                         }
                     })
                     .collect::<Vec<_>>();
-                let build = pat_for(v, f, &binds);
                 quote! {
                     #i => {
                         let mut i = 0usize;
                         #(#unpacks)*
-                        Ok(#build)
+                        Ok(#form)
                     }
                 }
             }
         })
         .collect();
 
-    let ret_variants: Vec<_> = (0..nkind)
-        .map(|i| {
-            let v = &vs[i];
-            let ty = rets[i].clone().expect("every variant must have #[ret(T)]");
+    let ret_variants: Vec<_> = vols
+        .iter()
+        .map(|v| {
+            let (id, ty) = (&v.ident, &v.ret);
             quote! {
-                #v(#ty)
+                #id(#ty)
             }
         })
         .collect();
 
-    let distill_arms: Vec<_> = (0..nkind)
-        .map(|i| {
-            let v = &vs[i];
-            let ty = rets[i].clone().expect("ret type");
-            if wides[i] {
+    let distill_arms: Vec<_> = vols
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let (id, ty) = (&v.ident, &v.ret);
+            if v.wide {
                 quote! {
-                    #i => #ret_name::#v(<#ty as crate::wire::FromTriple>::from_triple(v0, v1, v2))
+                    #i => #ret_name::#id(<#ty as crate::wire::FromTriple>::from_triple(v0, v1, v2))
                 }
             } else {
                 quote! {
-                    #i => #ret_name::#v(<#ty as crate::wire::FromPair>::from_pair(v0, v1))
+                    #i => #ret_name::#id(<#ty as crate::wire::FromPair>::from_pair(v0, v1))
                 }
             }
         })
         .collect();
 
-    let call_arms: Vec<_> = (0..nkind)
-        .map(|i| {
-            let v = &vs[i];
-            let f = &flds[i];
-            let binds = field_names_as_ident(f);
-            let pat = pat_for(v, f, &binds);
-            let expr = expr_for(v, f, &binds);
+    let call_arms: Vec<_> = vols
+        .iter()
+        .map(|v| {
+            let binds = v.binds();
+            // 匹配与造值**同形**：同一份 `shape`，一处都不重写（从前这里写了两遍）。
+            let form = v.shape(Some(&binds));
             quote! {
-                #pat => {
-                    let this = #expr;
+                #form => {
+                    let this = #form;
                     let slot = Self::slot(&this);
                     let args = Self::pack(&this);
                     (slot, args)
@@ -422,7 +267,193 @@ pub fn derive_envcall(input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-/// 见 crate 头注。
+/// 一枚变体：**名字、字段、返回载荷、返回宽度**四件事绑在一起。
+///
+/// 从前它们是四个并行数组（`vs` / `flds` / `rets` / `wides`），靠下标对齐——于是每一处用它的
+/// 地方都要写一遍 `&vs[i]` / `&flds[i]` / `rets[i].clone()`，下标写错一格**编得过**。
+struct Variant {
+    ident: Ident,
+    fields: Fields,
+    /// 这一格的返回载荷：`#[ret(T)]` 读 `a0`/`a1`，`#[ret3(T)]` 读 `a0..a2`。
+    ///
+    /// **不是 `Option`**：`Ret` 枚举一个变体一格载荷 ⇒ "这一格没标返回"是那张表的错，
+    /// 在 [`variants`] 里当场报、不往后传 `None`。
+    ret: Type,
+    /// 标的是 `#[ret3(T)]` ⇒ 蒸馏走 `FromTriple` 而不是 `FromPair`。
+    wide: bool,
+}
+
+impl Variant {
+    /// 字段类型，按声明顺序。
+    fn types(&self) -> Vec<Type> {
+        match &self.fields {
+            Fields::Named(named) => named.named.iter().map(|f| f.ty.clone()).collect(),
+            Fields::Unnamed(unnamed) => unnamed.unnamed.iter().map(|f| f.ty.clone()).collect(),
+            Fields::Unit => Vec::new(),
+        }
+    }
+
+    /// 字段名，按声明顺序（无名那一族现造 `f0`/`f1`…——名字只在展开体里用，不落到用户面）。
+    fn binds(&self) -> Vec<Ident> {
+        match &self.fields {
+            Fields::Named(named) => named
+                .named
+                .iter()
+                .map(|f| f.ident.clone().unwrap())
+                .collect(),
+            Fields::Unnamed(unnamed) => (0..unnamed.unnamed.len())
+                .map(|i| Ident::new(&format!("f{i}"), proc_macro2::Span::call_site()))
+                .collect(),
+            Fields::Unit => Vec::new(),
+        }
+    }
+
+    fn is_unit(&self) -> bool {
+        matches!(self.fields, Fields::Unit)
+    }
+
+    /// **变体那一格的唯一一处拼法**：匹配与造值**逐字同形**，故只有这一个函数。
+    ///
+    /// `binds = None` ⇒ 字段位写 `..`：只匹配、不绑名字（不绑就不会长出"未使用的变量"）。
+    /// 从前这件事有三个出处：`pat_for` 与 `expr_for` 是一对复制品，`slot(&self)` 里是第三份。
+    fn shape(&self, binds: Option<&[Ident]>) -> TokenStream2 {
+        let v = &self.ident;
+        match (&self.fields, binds) {
+            (Fields::Unit, _) => quote! { Self::#v },
+            (Fields::Unnamed(_), Some(b)) => quote! { Self::#v(#(#b),*) },
+            (Fields::Unnamed(_), None) => quote! { Self::#v(..) },
+            (Fields::Named(_), Some(b)) => quote! { Self::#v { #(#b),* } },
+            (Fields::Named(_), None) => quote! { Self::#v { .. } },
+        }
+    }
+}
+
+/// 解析 `#[ret(T)]` 属性里的返回类型。
+fn ret_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
+    for attr in attrs {
+        if attr.path().is_ident("ret") {
+            let ty = attr.parse_args::<Type>()?;
+            return Ok(Some(ty));
+        }
+    }
+    Ok(None)
+}
+
+/// 解析 `#[ret3(T)]` 属性里的返回类型（**宽返回那一格**：读 `a0..a2`）。
+///
+/// 与 [`ret_type`] 分成两个函数、而不是一个函数认两种拼法：**一格载荷最多有一个返回
+/// 宽度**，两处各自只认自己那个属性名，撞上了（同一 variant 两个都标）由
+/// [`variants`] 当场报错，而不是让后一个静默覆盖前一个。
+fn ret_wide_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
+    for attr in attrs {
+        if attr.path().is_ident("ret3") {
+            let ty = attr.parse_args::<Type>()?;
+            return Ok(Some(ty));
+        }
+    }
+    Ok(None)
+}
+
+/// 解析 `#[call(class = N)]` 属性里的 class。
+fn class(attrs: &[Attribute]) -> syn::Result<usize> {
+    for attr in attrs {
+        if attr.path().is_ident("call") {
+            let mut value = None;
+            let _ = attr.parse_nested_meta(|nested| {
+                if nested.path.is_ident("class") {
+                    let lit: Lit = nested.value()?.parse()?;
+                    if let Lit::Int(i) = lit {
+                        value = Some(i.base10_parse::<usize>()?);
+                    }
+                }
+                Ok(())
+            });
+            if let Some(v) = value {
+                return Ok(v);
+            }
+            return Err(syn::Error::new_spanned(attr, "expected #[call(class = N)]"));
+        }
+    }
+    Err(syn::Error::new_spanned(
+        &attrs[0],
+        "expected #[call(class = N)] on the enum",
+    ))
+}
+
+/// 从 `DeriveInput` 提取变体列表；三条当场报错，都落在**那一格的名字**上：不是枚举、
+/// 两种返回宽度都标了、**这一格没标返回**。
+fn variants(ast: &DeriveInput) -> syn::Result<Vec<Variant>> {
+    let data = match &ast.data {
+        Data::Enum(e) => e,
+        _ => return Err(syn::Error::new_spanned(ast, "Envcall only supports enums")),
+    };
+    data.variants
+        .iter()
+        .map(|v| {
+            let (narrow, wide) = (ret_type(&v.attrs)?, ret_wide_type(&v.attrs)?);
+            let (ret, is_wide) = match (narrow, wide) {
+                (Some(_), Some(_)) => {
+                    return Err(syn::Error::new_spanned(
+                        &v.ident,
+                        "改一格载荷的返回宽度：`#[ret(T)]` 与 `#[ret3(T)]` 只能标一个",
+                    ));
+                }
+                // **照实记（这一条从前不在这里报）**：`variants` 曾把"没标返回"折成 `None`
+                // 放过去，到 `rets[i].clone().expect("every variant must have #[ret(T)]")`
+                // 才炸——用户拿到的是 `error: proc macro panicked`（消息埋在 `help:` 里、
+                // **不指那一格**）。`fid.rs` 那 49 格里漏标一格，找它只能靠人眼。返回载荷是
+                // 这个宏的**不变式**（`Ret` 枚举一个变体一格载荷），故它在这里就该断。
+                (None, None) => {
+                    return Err(syn::Error::new_spanned(
+                        &v.ident,
+                        "这一格没有返回载荷：标 `#[ret(T)]`（读 `a0`/`a1`）或 `#[ret3(T)]`（读 `a0..a2`）",
+                    ));
+                }
+                (Some(t), None) => (t, false),
+                (None, Some(t)) => (t, true),
+            };
+            Ok(Variant {
+                ident: v.ident.clone(),
+                fields: v.fields.clone(),
+                ret,
+                wide: is_wide,
+            })
+        })
+        .collect()
+}
+
+// ── `#[entry]`：入口那一手 ───────────────────────────────────────────────────
+
+/// **入口那一手**的过程宏：把 bin 里那个 `main` 与"汇编要调的那个符号"接上。
+///
+/// ```ignore
+/// #[entry]
+/// fn main() -> Result<(), fail::Fail> { … }
+/// ```
+///
+/// 展开成两件东西（**你写的那个函数一个字没动**）：
+///
+/// ```ignore
+/// fn main() -> Result<(), fail::Fail> { … }        // 原样
+///
+/// #[unsafe(no_mangle)]
+/// extern "C" fn clean_ret() { programs::entry::entry(main) }
+/// ```
+///
+/// `_start` 的汇编调的就是 `clean_ret`（见 `programs/src/entry.rs`）——**符号名不再是 `main`**，
+/// 于是：
+///
+/// - 你那个 `main` 照旧叫 `main`（不必改名、不必加 attribute）；
+/// - 也不必把它藏进一个 `mod` 里躲名字冲突（上一版那层 `mod __entry` 因此撤掉）；
+/// - 生成的这一层是**宏展开**，不是 `OUT_DIR` 里的一个文件 ⇒ bin 的源码里不再有
+///   `include!(concat!(env!("OUT_DIR"), …))` 那行路径咒语。
+///
+/// 名字为什么叫 `clean_ret`：入口那一手做的是"**干净地回来**"——`main` 正常返回时，
+/// 把退出码与那句话折成 `Report` 交给内核；`main` 自己退场（`-> !`）时这一层根本走不到。
+///
+/// **照实记（它绑下游）**：展开体里写死 `programs::entry::entry(#name)`——这一枚宏**不是**
+/// 通用的，它认的就是 `programs` 那一格入口胶水。与 [`derive_envcall`] 的主张不同：那个只
+/// 依赖 `Wire`，这个依赖一个具体的下游 crate。
 #[proc_macro_attribute]
 pub fn entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
