@@ -116,13 +116,13 @@ fn main() -> Report<'static> {
 
     // 四、判据：**一例一条**——三格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
     {
-        { assert_eq!(is, ocall::DENIED) }
+        assert_eq!(is, ocall::DENIED)
     }
     {
-        { assert_eq!(under, ocall::DENIED) }
+        assert_eq!(under, ocall::DENIED)
     }
     {
-        { assert_eq!(foreign, ocall::DENIED) }
+        assert_eq!(foreign, ocall::DENIED)
     }
 
     return Report::note(E_OK, OK_NOTE);

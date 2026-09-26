@@ -235,11 +235,11 @@ pub fn order() {
         "活着但权不够：必须答 Denied"
     );
     crate::expect!(
-        matches!(gate::accede(&task, live_token, Need::Fetch), Ok(_)),
+        gate::accede(&task, live_token, Need::Fetch).is_ok(),
         "活着且权够：必须取到"
     );
     crate::expect!(
-        matches!(gate::locate(&task, dead_token), Ok(_)),
+        gate::locate(&task, dead_token).is_ok(),
         "locate 不过闸：已封印的那一枚也定位得到"
     );
     crate::expect!(

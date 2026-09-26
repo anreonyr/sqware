@@ -104,17 +104,17 @@ fn main() -> Report<'static> {
     let sired = face.sire(p, Wait::AtMost(MS));
     say(&format!("policy: sire(me)={}", one_opt(sired)));
     {
-        { assert_eq!(no_sire, Ok(None)) }
+        assert_eq!(no_sire, Ok(None))
     }
     {
-        { assert_eq!(sired, Ok(Some(PrincipalId::ROOT))) }
+        assert_eq!(sired, Ok(Some(PrincipalId::ROOT)))
     }
 
     // 三、自反。
     let reflexive = face.heir(p, p, Wait::AtMost(MS));
     say(&format!("policy: heir(me,me)={}", flag(reflexive)));
     {
-        { assert_eq!(reflexive, Ok(true)) }
+        assert_eq!(reflexive, Ok(true))
     }
 
     // 四、向下派生一条自己的子身份。
@@ -129,21 +129,21 @@ fn main() -> Report<'static> {
         say(&format!("policy: heir(sub,me)={}", flag(r)));
     }
     {
-        { assert_eq!(not_ancestor, Some(Ok(false))) }
+        assert_eq!(not_ancestor, Some(Ok(false)))
     }
 
     // 六、第三态：树外的号。
     let out_heir = face.heir(PrincipalId::new(OUTSIDE), p, Wait::AtMost(MS));
     say(&format!("policy: heir(out,me)={}", flag(out_heir)));
     {
-        { assert!(matches!(out_heir, Err(Fail::Unknown))) }
+        assert!(matches!(out_heir, Err(Fail::Unknown)))
     }
 
     // 七、越权一趟：名册只有装配者能写，本域不是它。
     let bound = face.bind(me, p, Wait::AtMost(MS));
     say(&format!("policy: bind(self)={}", done(bound)));
     {
-        { assert!(matches!(bound, Err(Fail::Denied))) }
+        assert!(matches!(bound, Err(Fail::Denied)))
     }
 
     // ── 转换那两条（刀 2）────────────────────────────────────
@@ -154,7 +154,7 @@ fn main() -> Report<'static> {
     let adopted = face.adopt(q, Wait::AtMost(MS));
     say(&format!("policy: adopt(sub)={}", done(adopted)));
     {
-        { assert!(adopted.is_ok()) }
+        assert!(adopted.is_ok())
     }
 
     // 九、名册真的改了（不是打个印记）。
@@ -165,21 +165,21 @@ fn main() -> Report<'static> {
     let stale = face.derive(p, Wait::AtMost(MS));
     say(&format!("policy: derive(old)={}", one(stale)));
     {
-        { assert!(matches!(stale, Err(Fail::Denied))) }
+        assert!(matches!(stale, Err(Fail::Denied)))
     }
 
     // 十一、向上 / 跨支：`p` 是 `sub` 的父，不在 `sub` 那一支里。
     let up = face.adopt(p, Wait::AtMost(MS));
     say(&format!("policy: adopt(up)={}", done(up)));
     {
-        { assert!(matches!(up, Err(Fail::Denied))) }
+        assert!(matches!(up, Err(Fail::Denied)))
     }
 
     // 十二、树外。
     let outside = face.adopt(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
     say(&format!("policy: adopt(out)={}", done(outside)));
     {
-        { assert!(matches!(outside, Err(Fail::Unknown))) }
+        assert!(matches!(outside, Err(Fail::Unknown)))
     }
 
     // 十三、弃：回到装配给我的那一条（不删格）。

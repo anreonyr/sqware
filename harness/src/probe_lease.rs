@@ -106,7 +106,7 @@ fn main() -> Report<'static> {
     // 判据：**一例**（这一台只有一条：牌落上了；落完就退场，把那一格留成"没主"）。
     let ok = landed.is_ok();
     {
-        { assert!(ok, "牌没落上（land 答的是码，见上面那一行读数）") }
+        assert!(ok, "牌没落上（land 答的是码，见上面那一行读数）")
     }
 
     return Report::note(E_OK, OK_NOTE);

@@ -164,10 +164,10 @@ fn main() -> Report<'static> {
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——那三样都是本站
     // 此刻就知道的期望（旧宿主靶上 `guest: reg=0 find=0` 那一行钉的就是它们）。
     {
-        { assert_eq!(reg, bcall::OK) }
+        assert_eq!(reg, bcall::OK)
     }
     {
-        { assert_eq!(find, ocall::OK) }
+        assert_eq!(find, ocall::OK)
     }
     {
         {

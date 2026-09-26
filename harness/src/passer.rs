@@ -88,7 +88,7 @@ fn main() -> Report<'static> {
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——"挂名字该成功"
     // 是本站此刻就知道的期望（旧宿主靶上那一条 `passer: reg=0 entry=… say=passer` 钉的就是它）。
     {
-        { assert_eq!(reg, bcall::OK) }
+        assert_eq!(reg, bcall::OK)
     }
 
     // 二、**直接死**：不说退场那一句、不交回、不留门闩。板上那枚牌子与板侧那一格从此是

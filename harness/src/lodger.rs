@@ -135,13 +135,13 @@ fn main() -> Report<'static> {
     // 就是这四样。
     assert_eq!(ok, lcall::OK);
     {
-        { assert_eq!(taken, lcall::TAKEN) }
+        assert_eq!(taken, lcall::TAKEN)
     }
     {
-        { assert_eq!(unknown, lcall::UNKNOWN) }
+        assert_eq!(unknown, lcall::UNKNOWN)
     }
     {
-        { assert_eq!(pies, 9) }
+        assert_eq!(pies, 9)
     }
 
     let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;

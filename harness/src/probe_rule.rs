@@ -371,15 +371,15 @@ fn main() -> Report<'static> {
     // 结论**（每一例后面那句"为什么"，与头注里那几条同源）。
     // —— 装配：一条规矩没落上，后面全没意义。故它排第一：红了不会被后面的假红淹没。
     {
-        { assert!(made == 3, "made={made}") }
+        assert!(made == 3, "made={made}")
     }
     // —— 以 p 试（`p = resolve(self)`）：三条正证。
     assert_eq!(is, ocall::OK);
     {
-        { assert_eq!(under, ocall::OK) }
+        assert_eq!(under, ocall::OK)
     }
     {
-        { assert_eq!(inside, ocall::OK) }
+        assert_eq!(inside, ocall::OK)
     }
     // 每一问用的都是**第二枚**孔那个号：它要是另一枚，持树者认的是第一枚，这些话全石沉大海。
     {
@@ -393,34 +393,34 @@ fn main() -> Report<'static> {
     }
     // —— `Opens` 的正负两面。
     {
-        { assert_eq!(open, ocall::OK) }
+        assert_eq!(open, ocall::OK)
     }
     {
-        { assert_eq!(foreign, ocall::DENIED, "别人开着的那一格，我该被拒") }
+        assert_eq!(foreign, ocall::DENIED, "别人开着的那一格，我该被拒")
     }
     // —— 两格「判不了」：`9` 单列的理由正是"这一格没通"，故它**不算通过**。
     {
-        { assert_eq!(on_pane, ocall::UNJUDGED, "那一号是块 Pane：没有开者这一说") }
+        assert_eq!(on_pane, ocall::UNJUDGED, "那一号是块 Pane：没有开者这一说")
     }
     {
-        { assert_eq!(on_gone, ocall::UNJUDGED, "那一格剪掉了 ⇒ 永久没有开者") }
+        assert_eq!(on_gone, ocall::UNJUDGED, "那一格剪掉了 ⇒ 永久没有开者")
     }
     // —— `trim` 那一手真的落下去了（上面 `gone-door` 那一格的前提）。
     {
-        { assert!(trimmed, "temp 没剪掉") }
+        assert!(trimmed, "temp 没剪掉")
     }
     // —— 换一位代表（**同一条 TID**）：`adopt` 成功；两条负证、两条仍是正证。
     {
-        { assert!(adopt, "adopt(q) 没成功") }
+        assert!(adopt, "adopt(q) 没成功")
     }
     {
-        { assert_eq!(is_sub, ocall::DENIED, "换代表之后 Is(p) 该拒") }
+        assert_eq!(is_sub, ocall::DENIED, "换代表之后 Is(p) 该拒")
     }
     {
-        { assert_eq!(in_sub, ocall::DENIED, "换代表之后不在那枚盟里了") }
+        assert_eq!(in_sub, ocall::DENIED, "换代表之后不在那枚盟里了")
     }
     {
-        { assert_eq!(under_sub, ocall::OK, "q 仍在 p 那一支里 ⇒ Under(p) 照旧过") }
+        assert_eq!(under_sub, ocall::OK, "q 仍在 p 那一支里 ⇒ Under(p) 照旧过")
     }
     {
         {
@@ -433,7 +433,7 @@ fn main() -> Report<'static> {
     }
     // —— "改"那一轴：归属记的是**命**，换代表之后自己那一格照样改得。
     {
-        { assert_eq!(keep, ocall::OK, "归属记的是命，换代表照样改得") }
+        assert_eq!(keep, ocall::OK, "归属记的是命，换代表照样改得")
     }
 
     return Report::note(E_OK, OK_NOTE);

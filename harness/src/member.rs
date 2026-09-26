@@ -139,14 +139,14 @@ fn main() -> Report<'static> {
         return bail("member: no coalition id");
     };
     {
-        { assert!(c1.get() > c0.get()) }
+        assert!(c1.get() > c0.get())
     }
 
     // 三、立了不等于进了。
     let apart = coal.amid(p, c0, Wait::AtMost(MS));
     say(&format!("member: amid(me,c0)={}", flag(apart)));
     {
-        { assert_eq!(apart, Ok(false)) }
+        assert_eq!(apart, Ok(false))
     }
 
     // 四、入：名册真的改了，而且**再入一遍还是 ok**（集合没有"第二次"）。
@@ -158,7 +158,7 @@ fn main() -> Report<'static> {
     say(&format!("member: enter(c0)={}", done(again)));
     assert!(entered.is_ok());
     {
-        { assert_eq!(inside, Ok(true)) }
+        assert_eq!(inside, Ok(true))
     }
     assert!(again.is_ok());
 
@@ -168,10 +168,10 @@ fn main() -> Report<'static> {
     let amid_c1 = coal.amid(p, c1, Wait::AtMost(MS));
     say(&format!("member: amid(me,c1)={}", flag(amid_c1)));
     {
-        { assert!(in_c1.is_ok()) }
+        assert!(in_c1.is_ok())
     }
     {
-        { assert_eq!(amid_c1, Ok(true)) }
+        assert_eq!(amid_c1, Ok(true))
     }
 
     // 六、领到第二条身份，把它也放进 c0 ⇒ 这枚盟里有**两位**。
@@ -189,10 +189,10 @@ fn main() -> Report<'static> {
     let q_there = coal.amid(q, c0, Wait::AtMost(MS));
     say(&format!("member: amid(sub,c0)={}", flag(q_there)));
     {
-        { assert!(adopted.is_ok()) }
+        assert!(adopted.is_ok())
     }
     {
-        { assert!(q_in.is_ok()) }
+        assert!(q_in.is_ok())
     }
     {
         {
@@ -223,7 +223,7 @@ fn main() -> Report<'static> {
     say(&format!("member: amid(me,c0)={}", flag(after_waive)));
     assert!(waived.is_ok());
     {
-        { assert_eq!(after_waive, Ok(true)) }
+        assert_eq!(after_waive, Ok(true))
     }
 
     // 九、第三态：没铸过的盟（号是伪造的线上值）。
@@ -235,20 +235,20 @@ fn main() -> Report<'static> {
     let out_leave = coal.leave(outside, Wait::AtMost(MS));
     say(&format!("member: leave(out)={}", done(out_leave)));
     {
-        { assert!(matches!(out_amid, Err(Fail::Unknown))) }
+        assert!(matches!(out_amid, Err(Fail::Unknown)))
     }
     {
-        { assert!(matches!(out_enter, Err(Fail::Unknown))) }
+        assert!(matches!(out_enter, Err(Fail::Unknown)))
     }
     {
-        { assert!(matches!(out_leave, Err(Fail::Unknown))) }
+        assert!(matches!(out_leave, Err(Fail::Unknown)))
     }
 
     // 十、伪造的**身份**号：答 false，**不是失败**——`p` 是标签，本册不去问名册。
     let forged = coal.amid(PrincipalId::new(OUTSIDE), c1, Wait::AtMost(MS));
     say(&format!("member: amid(out,me)={}", flag(forged)));
     {
-        { assert_eq!(forged, Ok(false)) }
+        assert_eq!(forged, Ok(false))
     }
 
     // 十一、**一串**（取窗两条）：`band` 答成员、`bloc` 答盟籍（序都是号序）。
@@ -265,16 +265,16 @@ fn main() -> Report<'static> {
     let bloc = coal.bloc(p, None, Wait::AtMost(MS));
     say(&format!("member: bloc(me)={}", window_ids(bloc)));
     {
-        { assert_eq!(band.as_ref().ok().map(|w| w.len()), Some(1)) }
+        assert_eq!(band.as_ref().ok().map(|w| w.len()), Some(1))
     }
     {
-        { assert_eq!(empty.as_ref().ok().map(|w| w.len()), Some(0)) }
+        assert_eq!(empty.as_ref().ok().map(|w| w.len()), Some(0))
     }
     {
-        { assert!(matches!(out_band, Err(Fail::Unknown))) }
+        assert!(matches!(out_band, Err(Fail::Unknown)))
     }
     {
-        { assert_eq!(bloc.as_ref().ok().map(|w| w.len()), Some(2)) }
+        assert_eq!(bloc.as_ref().ok().map(|w| w.len()), Some(2))
     }
 
     return Report::note(E_OK, "member: done");

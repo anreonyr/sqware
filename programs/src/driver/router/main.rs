@@ -550,14 +550,14 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
     ));
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
     {
-        { assert_eq!(part, ocall::OK) }
+        assert_eq!(part, ocall::OK)
     }
     assert_eq!(land, ocall::OK);
     {
-        { assert_eq!(find, ocall::OK) }
+        assert_eq!(find, ocall::OK)
     }
     assert!(got);
-    { { assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(SERVICE)) } }
+    assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(SERVICE))
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。

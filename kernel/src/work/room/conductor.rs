@@ -369,7 +369,8 @@ pub(crate) fn pick() -> HartId {
             best_bit = bit;
         }
     }
-    let to = if best_rel != usize::MAX {
+    
+    if best_rel != usize::MAX {
         HartId::new(best_bit)
     } else {
         // 没有核在等：退到轮转落点。本核要跳过——`seat % n == 我` 时推一格，`(seat + 1) % n`
@@ -380,8 +381,7 @@ pub(crate) fn pick() -> HartId {
             to = (to + 1) % n;
         }
         HartId::new(to)
-    };
-    to
+    }
 }
 
 // ── 唤醒侧只读计数（停机读出口打）──

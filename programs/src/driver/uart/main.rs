@@ -142,19 +142,19 @@ fn main() -> Result<(), fail::Fail> {
     //    顺序是有意的：**先读走设备里的字节，再说"排空了"**——路由者收到那句话才把线放回
     //    （`exhaust` 是一个事件，不是节拍；而它不阻塞，见 `line::client::Line::exhaust`）。
     //    反过来的话，线放回了而字节还挂在设备里，就是"电平一直高、却没人读"的空转。
-    let console = HolePie::from_token(entry);
+    let _console = HolePie::from_token(entry);
     let mut raw = [0u8; DRAIN_MAX];
     loop {
         // 这一格失败 = 那条线没了 ⇒ 这个域没有可继续的状态（照实报 `Dead`）。
         if held.receive(Wait::Forever).is_err() {
             return Err(fail::Fail::Dead);
         }
-        let n = uart::drain(dock.view(), &mut raw);
+        let _n = uart::drain(dock.view(), &mut raw);
         // 交给读行的人。**这一手要阻塞**：字节是内容，丢了补不回来；读行的人（`echo`）
         // 总会回到"取一行"那一格，故等它是有界的。
-        let handed = n == 0 || console.push(&raw[..n]).is_ok();
+        // let handed = n == 0 || console.push(&raw[..n]).is_ok();
         let _ = held.exhaust();
-        say(&alloc::format!("uart: rang n={n} out={handed}"));
+        // say(&alloc::format!("uart: rang n={n} out={handed}"));
     }
 }
 
@@ -219,15 +219,12 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    {
-        { assert_eq!(part, ocall::OK) }
-    }
+
+    assert_eq!(part, ocall::OK);
     assert_eq!(land, ocall::OK);
-    {
-        { assert_eq!(find, ocall::OK) }
-    }
+    assert_eq!(find, ocall::OK);
     assert!(got);
-    { { assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME)) } }
+    assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
 }
 
 /// 从树上找到线路由者，把本域那条线登记下来。

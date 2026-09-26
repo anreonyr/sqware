@@ -141,10 +141,10 @@ fn main() -> Report<'static> {
     let denied = land_code == ocall::DENIED;
     let unplaced = matches!(after, Err(ocall::UNKNOWN));
     {
-        { assert!(denied, "本该被拒，land={land_code}") }
+        assert!(denied, "本该被拒，land={land_code}")
     }
     {
-        { assert!(unplaced, "拒了，可那一格动过了（seek 答的不是 UNKNOWN）") }
+        assert!(unplaced, "拒了，可那一格动过了（seek 答的不是 UNKNOWN）")
     }
 
     return Report::note(E_OK, OK_NOTE);

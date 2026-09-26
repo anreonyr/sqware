@@ -158,12 +158,12 @@ fn main() -> Report<'static> {
     // `assert_eq!(armed_code, 0)` 就是把 `bail` 改个名字（这一格是写的时候当场撞上的：
     // 第一版写了 `assert!(armed.is_ok())`，而 `armed` 根本不是 `Result`）。
     {
-        { assert_eq!(reg, bcall::OK) }
+        assert_eq!(reg, bcall::OK)
     }
     // 照实记：`arming_the_past_is_refused` 那一例随 `Wire::Arm` 收相对量而退场（"过去"
     // 不可表达）——判据数 3 → 2，`crates/gate/src/soak.rs`（已删）那张表跟着改。
     {
-        { assert_eq!(taken, rcall::TAKEN) }
+        assert_eq!(taken, rcall::TAKEN)
     }
 
     return Report::note(env::EXIT_OK, "sleeper: gone");

@@ -152,10 +152,10 @@ fn main() -> Report<'static> {
         }
     }
     {
-        { assert!(untouched, "被拒之后那一格换号了（不再是 before 那个号）") }
+        assert!(untouched, "被拒之后那一格换号了（不再是 before 那个号）")
     }
     {
-        { assert!(took, "probe-lease 已经死了，那一格该重新可落") }
+        assert!(took, "probe-lease 已经死了，那一格该重新可落")
     }
 
     return Report::note(E_OK, OK_NOTE);

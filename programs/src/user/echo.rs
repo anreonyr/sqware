@@ -142,7 +142,7 @@ fn main() -> Result<(), env::Reason> {
 
     // **返回值那一格判在消耗它的这一层**：`serial` 内部看不见自己那一趟被改坏。
     {
-        { assert_eq!(seq, ocall::OK) }
+        assert_eq!(seq, ocall::OK)
     }
 
     let Some(console) = console else {
@@ -296,18 +296,18 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
 
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
     {
-        { assert_eq!(a, ocall::OK) }
+        assert_eq!(a, ocall::OK)
     }
     assert_eq!(b, ocall::OK);
     {
-        { assert_eq!(c, ocall::OK) }
+        assert_eq!(c, ocall::OK)
     }
     assert!(got);
     {
-        { assert_eq!(d, ocall::OK) }
+        assert_eq!(d, ocall::OK)
     }
     {
-        { assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME)) }
+        assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
     }
 
     d
