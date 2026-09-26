@@ -4,12 +4,12 @@
 //! "谁被装进来了"这件事。物料面（单子与回单）住在 [`protocol::driver::supply`]；要哪几样由
 //! **收方**自己开单（三张都在 [`plan::assembly`]，开口的形态就是 `Need`）。
 
-use alloc::format;
 
 use env::PieToken;
 use plan::key::{DTB, IRQ, REGION};
 use plan::{Key, PAIR_LEN, Pair};
 use plan::{args as boot_args, manifest};
+use protocol::debug;
 
 /// boot 给引导域的两块账：清单（装了哪些程序）与配对块（有哪些门闩）。
 pub struct Root {
@@ -77,9 +77,9 @@ impl Root {
                 _ => bad += 1,
             }
         }
-        let _ = runtime::env::debug::put(&format!(
+        debug!(
             "root: block n={n} region={region} dtb={dtb} irq={irq} bad={bad}"
-        ));
+        );
     }
 
     /// 第 `i` 条的坐标（定长记录，块只保证页对齐 ⇒ `read_unaligned`）。

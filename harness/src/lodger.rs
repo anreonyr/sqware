@@ -63,16 +63,15 @@ use plan::assembly::LODGER_WANTS as WANTS;
 use programs::driver::assemble;
 
 // 树：本域是**客侧**（按名找服务）。
+use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 
-use alloc::format;
 
 use env::{Name, PieToken};
 use plan::Key;
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -97,7 +96,7 @@ fn main() -> Report<'static> {
     let [Some(grant)] = slots else {
         return Report::note(assemble::E_GRANT, "lodger: no grant");
     };
-    say(&format!("lodger: got {got}"));
+    debug!("lodger: got {got}");
 
     // 2. 上树一条会话：找到线路由者，取回那扇门——三趟登记都往它推（会话一个域只开一条）。
     let entry = match find_router() {
@@ -111,13 +110,13 @@ fn main() -> Report<'static> {
 
     // 3. 三趟登记：占上 / 同一条线再来一次 / 报一件**不是中断源**的东西。
     let (ok, held) = attempt(entry, key);
-    say(&format!("lodger: occupy={ok}"));
+    debug!("lodger: occupy={ok}");
     let (taken, _) = attempt(entry, key);
-    say(&format!("lodger: taken={taken}"));
+    debug!("lodger: taken={taken}");
     // 第三趟报**门铃**那一形：坐标本身是合法的（内核真造过它），而**线只挂在设备上**
     // ——路由者在它那张源表里找不到这个坐标，答 `UNKNOWN`（1）。
     let unknown = attempt(entry, Key::irq()).0;
-    say(&format!("lodger: unknown={unknown}"));
+    debug!("lodger: unknown={unknown}");
 
     // 4. **直接死**：不说退场那一句、不交回。`held` 那条线活到本域退场为止——它铸的那枚孔
     //    随退出钩子封印，路由者那一格因此醒来（`router: vacate line=1`）。
@@ -126,7 +125,7 @@ fn main() -> Report<'static> {
     // 各把本端 `seat` 出去的那一枚（`Quay::shut`）与本趟借出去的那枚回信孔放下（见
     // `protocol::driver::line::client::Line::occupy`）。少放一枚，这一格当场大 1。
     let pies = mail::table_size();
-    say(&format!("lodger: pies={pies}"));
+    debug!("lodger: pies={pies}");
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**。前三例的期望是
     // 三趟登记的答码（与读数同一批常量）；第四例 `pies=9` 是**探针良过的那一格**（头注：把失败
@@ -181,7 +180,3 @@ fn attempt(entry: PieToken, key: Key) -> (u8, Option<line::client::Line>) {
     }
 }
 
-/// 打一行。调试面是本域唯一的嘴（与 `guest` / `passer` 用的是同一格）。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

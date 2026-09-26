@@ -9,6 +9,7 @@ use super::fail;
 use env::Wait;
 use programs::driver::register;
 use programs::driver::tree::{self, Mine};
+use protocol::debug;
 use protocol::driver::line;
 
 /// 本域挂在树上的名字：`/device/rtc`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
@@ -34,6 +35,6 @@ pub fn plate(up: &Up) -> Result<line::client::Line, fail::Fail> {
     let key = up.pie.key().ok_or(fail::Fail::Line)?;
     let held = register::occupy(&up.link, up.talk, key, Wait::AtMost(MS))
         .map_err(|_| fail::Fail::Line)?;
-    crate::say("rtc: line occupied");
+    debug!("rtc: line occupied");
     Ok(held)
 }

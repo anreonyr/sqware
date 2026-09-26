@@ -3,11 +3,12 @@
 //! 三侧分家之后本文件只放**板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board`]。
 
-use alloc::format;
 use env::Mark;
 use env::Wait;
 
+use alloc::format;
 use env::{HoleDir, Name, PieToken, TaskId};
+use protocol::debug;
 use protocol::session::slip::Slip;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
@@ -47,22 +48,22 @@ pub(crate) fn host_loop(me: TaskId) {
     // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给装配者。**记号 = `tip`**：
     // 装配者认领那一枚时就按它（它那张表里同时躺着别的路）。
     let Ok(tip) = mail::unseal_hole(TIP_MARK) else {
-        say("board: no tip");
+        debug!("board: no tip");
         return;
     };
     let tip_hole = mail::HolePie::from_token(tip);
     if port::ship(&tip_hole, me, Access::FETCH | Access::STORE, Policy::VEST).is_err() {
-        say("board: tip not handed");
+        debug!("board: tip not handed");
         return;
     }
     // **一个组**：提示孔 + 每位客人的问话孔。提示孔也挂进来，故"来客人了"与"有人问话"
     // 是**同一个等待**——这正是"等 N 位客人说话"要的那一格。本线程独享它（`shared = false`）。
     let Ok(pile) = Pile::unseal(false) else {
-        say("board: no group");
+        debug!("board: no group");
         return;
     };
     if pile.attach(&tip_hole, HoleDir::Pull).is_err() {
-        say("board: tip not hung");
+        debug!("board: tip not hung");
         return;
     }
 
@@ -77,7 +78,7 @@ pub(crate) fn host_loop(me: TaskId) {
     // （读不懂就答 `BAD`），否则它永远留在槽里（取不出 ⇒ 槽原样），这道门从此卡死且空转。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
-        say("board: no room");
+        debug!("board: no room");
         return;
     }
     buf.resize(runtime::PAGE_SIZE, 0);
@@ -131,7 +132,7 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) 
     while let Ok(bcall::Tip::LEN) = tip.pull_timeout(&mut rec, Wait::POLL) {
         // **帧形只有一处**：三格怎么切全在 [`bcall::Tip`] 那一对里。
         let Some(tip) = bcall::Tip::fetch(&rec) else {
-            say("board: no reply");
+            debug!("board: no reply");
             continue;
         };
         let client = tip.who;
@@ -147,7 +148,7 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) 
             }
             // 次序被破坏（提示先到、答话路不在本表里 / 那一格指的不是这一位）：报一句；
             // 客人那边会报它自己的超时。
-            _ => say("board: no reply"),
+            _ => debug!("board: no reply"),
         }
     }
 
@@ -206,7 +207,7 @@ fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
         }
     });
     if n > 0 {
-        say(&format!("board: swept n={n} occupied={}", desk.occupied()));
+        debug!("board: swept n={n} occupied={}", desk.occupied());
     }
     n
 }
@@ -225,11 +226,6 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
     mail::pies()
         .find(|p| p.owner == who && p.mark == ask)
         .map(|p| p.token)
-}
-
-/// 板线程的读数：**只在出岔子时说话**（正常一轮什么都不打）。
-fn say(msg: &str) {
-    let _ = runtime::env::debug::put(msg);
 }
 
 /// 招待一位客人：从**它的问话孔**读一帧、交给板、把答话推进**它的答话路**。
@@ -296,11 +292,11 @@ fn answer(
                 Some(_slot) => {
                     let names = board.evict(who);
                     // 破例打一行：退场这一件事的读数只此一处（**只在这一件事上打**，不是刷屏）。
-                    say(&format!(
+                    debug!(
                         "board: bye tid={} names={names} occupied={} swept={swept}",
                         who.get(),
                         desk.occupied()
-                    ));
+                    );
                     Ok(())
                 }
                 None => Err(contract::system::board::core::Fail::Unknown),

@@ -33,8 +33,8 @@ use programs::Reason;
 use harness::tick;
 
 use env::Name;
+use protocol::debug;
 use protocol::session::Quay;
-use runtime::env::debug;
 use runtime::env::unit as utask;
 
 /// 本端那枚泊位的名字（同时刻在孔上）：台主按这个名字认领它。
@@ -72,7 +72,7 @@ fn main() -> Reason {
         burst = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
         // 诊断探针（默认关）：一行一域，回答"台主那一记 push 到底有没有把它唤醒"。
         if REPORT_WAKE {
-            say("hang: woke");
+            debug!("hang: woke");
         }
     }
 
@@ -84,14 +84,9 @@ fn main() -> Reason {
     }
 }
 
-/// 打一行。调试面是本域唯一的嘴。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}
-
 /// 起不来就报哪一句（kernel 收场时把这一句连同域号打出来）——**并把原因码交回调用方**：
 /// 报码那一笔现在是 `main` 的账，这一层不再自己退场。
 fn bail(msg: &str) -> Reason {
-    say(msg);
+    debug!("{}", msg);
     1
 }

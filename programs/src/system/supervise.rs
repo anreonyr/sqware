@@ -17,6 +17,7 @@ use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
 
+use protocol::debug;
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Slot, State, Table};
 
@@ -41,7 +42,7 @@ pub fn run(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
     // 那一位的死就永远记不上账。备不下 ⇒ 报一句就交给退场时的级联，不在这里赌。
     let mut lane_buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if lane_buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
-        let _ = runtime::env::debug::put("system: no room");
+        debug!("system: no room");
         return;
     }
     lane_buf.resize(runtime::PAGE_SIZE, 0);
@@ -119,10 +120,10 @@ pub fn stop_running(table: &mut Table, lanes: &[Lane]) {
             // 有界期内没等出来：照实报，交出这一位。**不是"没收到"**——判决只认非阻塞
             // 那一问，这里说的是"还没收干净"。
             Ok(Reaped::Unsettled) | Err(_) => {
-                let _ = runtime::env::debug::put(&alloc::format!(
+                debug!(
                     "system: stuck {} （退场级联接管）",
                     lane.name
-                ));
+                );
             }
         }
     }
@@ -177,9 +178,9 @@ fn mark_dead(table: &mut Table, name: Name, reaped: Reaped) {
         Reaped::Waited => "waited",
         Reaped::Unsettled => "unsettled",
     };
-    let _ = runtime::env::debug::put(&alloc::format!(
+    debug!(
         "system: gone {} state=Dead ousted={ousted} heir={before}→{after} wait={wait}{}",
         name.as_str(),
         if team.is_none() { " inner" } else { "" }
-    ));
+    );
 }

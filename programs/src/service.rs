@@ -40,6 +40,7 @@ use env::Wait;
 use crate::system::server::{self as service, Grant};
 use env::{Name, PieToken, TaskId};
 use plan::manifest;
+use protocol::debug;
 use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
 use protocol::system::board as bcall;
@@ -365,7 +366,7 @@ pub fn assemble<'a>(
                             })?;
                         }
                         None => {
-                            let _ = runtime::env::debug::put("principal: no tree to bind");
+                            debug!("principal: no tree to bind");
                         }
                     }
                     face = Some(f);
@@ -519,8 +520,8 @@ pub fn start(
 /// 只在失败路径上调：**成功不说话**（装配正常的机器不该刷屏），而失败时这一行决定
 /// 还得读几遍代码——所以它报"服务名"与"步骤"两格。
 fn step(p: &Program, what: &str) {
-    let _ = runtime::env::debug::put(p.name);
-    let _ = runtime::env::debug::put(what);
+    debug!("{}", p.name);
+    debug!("{}", what);
 }
 
 /// 递单那一关的失败：**原因就是读数**（[`step`] 印它）。
@@ -592,12 +593,12 @@ fn wire(
             .ok_or(Why::Unplaced)?;
         if let (Some(class), Some(base)) = (class, cell.key().and_then(|key| key.base())) {
             // 新机制要有读数：**类 → 那一段区**（翻译那一手看得见、可复核）。
-            let _ = runtime::env::debug::put(&alloc::format!(
+            debug!(
                 "system: {} {} -> {:#x}",
                 p.name,
                 class.as_str(),
                 base
-            ));
+            );
         }
     }
 
@@ -613,12 +614,12 @@ fn wire(
     )
     .map_err(Why::Draw)?;
     let said = pier.post(records);
-    let _ = runtime::env::debug::put(&alloc::format!(
+    debug!(
         "wire: {} bytes, paired={}, post={}",
         records.len(),
         pier.paired(),
         said.is_ok()
-    ));
+    );
     said.map_err(|_| Why::NoChannel)
 }
 

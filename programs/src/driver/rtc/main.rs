@@ -34,7 +34,6 @@ mod adapt;
 mod rtc;
 
 use programs::driver::rtc::core::Host;
-use runtime::env::debug;
 
 /// 本域那一台：**返回类型就是它的死法**——编号与那句话都在 [`adapt::fail::Fail`] 里
 /// （装配那三步 `1`–`3` 由 [`programs::driver::assemble`] 那一族共用，本域自己那几格从 4 起）。
@@ -48,7 +47,3 @@ fn main() -> Result<(), adapt::fail::Fail> {
     adapt::resident::run(&up, held, &mut Host::new())
 }
 
-/// 打一行。调试面是"服务还没起来的嘴"：本域没有控制台，只有它。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

@@ -20,11 +20,11 @@
 
 use env::Wait;
 use env::{Name, PieToken, TaskId};
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
-use runtime::env::debug;
 
 /// 门牌那一格声不声明归属（[`operator::land`] 的最后一格）。
 ///
@@ -54,7 +54,7 @@ pub fn plate(
     millis: Wait,
 ) {
     let (Ok(dir), Ok(name)) = (Name::new(protocol::driver::DIR), Name::new(me)) else {
-        say(&alloc::format!("{me}: tree: bad name"));
+        debug!("{me}: tree: bad name");
         return;
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
@@ -96,11 +96,11 @@ pub fn plate(
     let pname = plate
         .ok()
         .and_then(|id| operator::name(talk, link, id, millis).ok());
-    say(&alloc::format!(
+    debug!(
         "{me}: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-    ));
+    );
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
     {
         assert_eq!(part, ocall::OK)
@@ -113,7 +113,3 @@ pub fn plate(
     assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(me))
 }
 
-/// 打一行。调试面是"服务还没起来的嘴"：驱动没有控制台，只有它。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

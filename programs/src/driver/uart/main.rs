@@ -60,11 +60,11 @@ use programs::driver::register;
 use programs::driver::tree::{self, Mine};
 
 // 板：本域是**客侧**（只装上板路，不挂牌子）；树：也是客侧（门牌挂 `/device/uart`，这里只开会话）。
+use protocol::debug;
 use protocol::system::board::client as board;
 use protocol::system::operator::client as operator;
 
 use runtime::core::dock::Dock;
-use runtime::env::debug;
 use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::unit as utask;
 
@@ -95,7 +95,7 @@ fn main() -> Result<(), fail::Fail> {
         // 单子上只有一条，缺了它就没得开工（父域按同一张单发货，缺格即装配错）。
         return Err(fail::Fail::Assemble(assemble::E_GRANT));
     };
-    say(&alloc::format!("uart: got {got}"));
+    debug!("uart: got {got}");
 
     // 2. 开图 + 开闸。**设备到手之后第一件要打开的就是"收到字节就拉线"**：这条线归本域，
     //    因为只有持有设备的人才有资格动它（`ONLY` 是资源事实，见 `plan::assembly::UART_WANTS`）。
@@ -105,7 +105,7 @@ fn main() -> Result<(), fail::Fail> {
     let key = serial.key().ok_or(fail::Fail::Open)?;
     // 设备门的坐标只能是区（内核就是按 `reg` 段造的）；别的形就是配给错了。
     let base = key.base().ok_or(fail::Fail::Open)?;
-    say(&alloc::format!("uart: ier=rx at={base:#x}"));
+    debug!("uart: ier=rx at={base:#x}");
 
     // 3. 上板：**只为让板看得见本域的死**（本域开的那扇门随收尾封印 ⇒ 板当场看出来）。
     //    不挂牌子——名字在树上。**问话孔照交**：不交的那一位在板账上永远"没挂齐"，
@@ -131,7 +131,7 @@ fn main() -> Result<(), fail::Fail> {
     // 5. **登记本域那条线**：按名从树上找到线路由者（`/device/router`），报的是**发下来的那一段
     //    区**——"线 = 区的函数"那条权威在路由者那边解，本域从不说线号，也不自己造坐标。
     let held = register::occupy(&link, talk, key, Wait::AtMost(MS)).map_err(|_| fail::Fail::Line)?;
-    say("uart: line occupied");
+    debug!("uart: line occupied");
 
     // 6. 常驻：那条线一响 ⇒ 排空设备 ⇒ 把这一批字节交给读行的人 ⇒ 说一句"我排空了"。
     //
@@ -159,11 +159,7 @@ fn main() -> Result<(), fail::Fail> {
         }
         // 排空的**通知**照旧发：0 字节也算"这一条我处理完了"——那一格回闲 + 把线放回去。
         held.exhaust().unwrap();
-        // say(&alloc::format!("uart: rang n={n}"));
+        // debug!("uart: rang n={n}");
     }
 }
 
-/// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

@@ -39,11 +39,12 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use alloc::format;
 use alloc::string::String;
 use core::time::Duration;
 
 use env::{Name, PieToken};
+use alloc::format;
+use protocol::debug;
 use protocol::id::Id;
 use protocol::session::Quay;
 use protocol::system::coalition as ccall;
@@ -55,7 +56,6 @@ use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PolicyFace;
 use protocol::system::principal::core::Fail as PolicyFail;
 use protocol::system::principal::core::PrincipalId;
-use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit as utask;
 
@@ -102,7 +102,7 @@ fn main() -> Report<'static> {
 
     // 一、此刻代表谁——装配期绑的那一条。
     let mine = policy.resolve(me, Wait::AtMost(MS));
-    say(&format!("member: me={}", one_opt(mine)));
+    debug!("member: me={}", one_opt(mine));
     let Ok(Some(p)) = mine else {
         return bail("member: unbound");
     };
@@ -128,9 +128,9 @@ fn main() -> Report<'static> {
     // **号只增**。至于号**能用**（进得去、查得着、放得下），由后面那一整串
     // （`enter` / `leave` / `waive` / `band` / `bloc`）证，不靠这两格。
     let c0 = coal.found(Wait::AtMost(MS));
-    say(&format!("member: found={}", one_id(c0)));
+    debug!("member: found={}", one_id(c0));
     let c1 = coal.found(Wait::AtMost(MS));
-    say(&format!("member: found={}", one_id(c1)));
+    debug!("member: found={}", one_id(c1));
     let (Ok(c0), Ok(c1)) = (c0, c1) else {
         return bail("member: no coalition id");
     };
@@ -140,18 +140,18 @@ fn main() -> Report<'static> {
 
     // 三、立了不等于进了。
     let apart = coal.amid(p, c0, Wait::AtMost(MS));
-    say(&format!("member: amid(me,c0)={}", flag(apart)));
+    debug!("member: amid(me,c0)={}", flag(apart));
     {
         assert_eq!(apart, Ok(false))
     }
 
     // 四、入：名册真的改了，而且**再入一遍还是 ok**（集合没有"第二次"）。
     let entered = coal.enter(c0, Wait::AtMost(MS));
-    say(&format!("member: enter(c0)={}", done(entered)));
+    debug!("member: enter(c0)={}", done(entered));
     let inside = coal.amid(p, c0, Wait::AtMost(MS));
-    say(&format!("member: amid(me,c0)={}", flag(inside)));
+    debug!("member: amid(me,c0)={}", flag(inside));
     let again = coal.enter(c0, Wait::AtMost(MS));
-    say(&format!("member: enter(c0)={}", done(again)));
+    debug!("member: enter(c0)={}", done(again));
     assert!(entered.is_ok());
     {
         assert_eq!(inside, Ok(true))
@@ -160,9 +160,9 @@ fn main() -> Report<'static> {
 
     // 五、同一条身份可以在第二枚盟里。
     let in_c1 = coal.enter(c1, Wait::AtMost(MS));
-    say(&format!("member: enter(c1)={}", done(in_c1)));
+    debug!("member: enter(c1)={}", done(in_c1));
     let amid_c1 = coal.amid(p, c1, Wait::AtMost(MS));
-    say(&format!("member: amid(me,c1)={}", flag(amid_c1)));
+    debug!("member: amid(me,c1)={}", flag(amid_c1));
     {
         assert!(in_c1.is_ok())
     }
@@ -172,18 +172,18 @@ fn main() -> Report<'static> {
 
     // 六、领到第二条身份，把它也放进 c0 ⇒ 这枚盟里有**两位**。
     let sub = policy.derive(p, Wait::AtMost(MS));
-    say(&format!("member: derive(me)={}", one_policy(sub)));
+    debug!("member: derive(me)={}", one_policy(sub));
     let Some(q) = sub.ok() else {
         return bail("member: no sub identity");
     };
     let adopted = policy.adopt(q, Wait::AtMost(MS));
-    say(&format!("member: adopt(sub)={}", done(adopted)));
+    debug!("member: adopt(sub)={}", done(adopted));
     let q_in = coal.enter(c0, Wait::AtMost(MS));
-    say(&format!("member: enter(c0)={}", done(q_in)));
+    debug!("member: enter(c0)={}", done(q_in));
     let p_there = coal.amid(p, c0, Wait::AtMost(MS));
-    say(&format!("member: amid(me,c0)={}", flag(p_there)));
+    debug!("member: amid(me,c0)={}", flag(p_there));
     let q_there = coal.amid(q, c0, Wait::AtMost(MS));
-    say(&format!("member: amid(sub,c0)={}", flag(q_there)));
+    debug!("member: amid(sub,c0)={}", flag(q_there));
     {
         assert!(adopted.is_ok())
     }
@@ -199,11 +199,11 @@ fn main() -> Report<'static> {
 
     // 七、**出的是那一对，不是那个人**：此刻代表 `sub`，故出掉的是 `sub` 那一行。
     let left = coal.leave(c0, Wait::AtMost(MS));
-    say(&format!("member: leave(c0)={}", done(left)));
+    debug!("member: leave(c0)={}", done(left));
     let q_gone = coal.amid(q, c0, Wait::AtMost(MS));
-    say(&format!("member: amid(sub,c0)={}", flag(q_gone)));
+    debug!("member: amid(sub,c0)={}", flag(q_gone));
     let p_still = coal.amid(p, c0, Wait::AtMost(MS));
-    say(&format!("member: amid(me,c0)={}", flag(p_still)));
+    debug!("member: amid(me,c0)={}", flag(p_still));
     assert!(left.is_ok());
     {
         {
@@ -214,9 +214,9 @@ fn main() -> Report<'static> {
 
     // 八、弃回起点：键 = 身份那条定理的另一半——第一条身份那一行照旧在。
     let waived = policy.waive(Wait::AtMost(MS));
-    say(&format!("member: waive={}", done(waived)));
+    debug!("member: waive={}", done(waived));
     let after_waive = coal.amid(p, c0, Wait::AtMost(MS));
-    say(&format!("member: amid(me,c0)={}", flag(after_waive)));
+    debug!("member: amid(me,c0)={}", flag(after_waive));
     assert!(waived.is_ok());
     {
         assert_eq!(after_waive, Ok(true))
@@ -225,11 +225,11 @@ fn main() -> Report<'static> {
     // 九、第三态：没铸过的盟（号是伪造的线上值）。
     let outside = CoalitionId::new(OUTSIDE);
     let out_amid = coal.amid(p, outside, Wait::AtMost(MS));
-    say(&format!("member: amid(me,out)={}", flag(out_amid)));
+    debug!("member: amid(me,out)={}", flag(out_amid));
     let out_enter = coal.enter(outside, Wait::AtMost(MS));
-    say(&format!("member: enter(out)={}", done(out_enter)));
+    debug!("member: enter(out)={}", done(out_enter));
     let out_leave = coal.leave(outside, Wait::AtMost(MS));
-    say(&format!("member: leave(out)={}", done(out_leave)));
+    debug!("member: leave(out)={}", done(out_leave));
     {
         assert!(matches!(out_amid, Err(Fail::Unknown)))
     }
@@ -242,24 +242,24 @@ fn main() -> Report<'static> {
 
     // 十、伪造的**身份**号：答 false，**不是失败**——`p` 是标签，本册不去问名册。
     let forged = coal.amid(PrincipalId::new(OUTSIDE), c1, Wait::AtMost(MS));
-    say(&format!("member: amid(out,me)={}", flag(forged)));
+    debug!("member: amid(out,me)={}", flag(forged));
     {
         assert_eq!(forged, Ok(false))
     }
 
     // 十一、**一串**（取窗两条）：`band` 答成员、`bloc` 答盟籍（序都是号序）。
     let band = coal.band(c0, None, Wait::AtMost(MS));
-    say(&format!("member: band(c0)={}", window_ids(band)));
+    debug!("member: band(c0)={}", window_ids(band));
     // 拿末一枚当游标接着取：**阈值**语义下再往后没有了 ⇒ 空窗，**不是错**（也不是"过期游标"）。
     let after = band.as_ref().ok().and_then(|w| w.last());
     let empty = coal.band(c0, after, Wait::AtMost(MS));
-    say(&format!("member: band(c0,next)={}", window_ids(empty)));
+    debug!("member: band(c0,next)={}", window_ids(empty));
     // 没铸过的那枚盟：取窗这一条**有失败域**（同 amid）。
     let out_band = coal.band(outside, None, Wait::AtMost(MS));
-    say(&format!("member: band(out)={}", window_ids(out_band)));
+    debug!("member: band(out)={}", window_ids(out_band));
     // 反向那一趟：这条身份在哪些盟里（**没有失败域**：不在任何盟里就是空窗）。
     let bloc = coal.bloc(p, None, Wait::AtMost(MS));
-    say(&format!("member: bloc(me)={}", window_ids(bloc)));
+    debug!("member: bloc(me)={}", window_ids(bloc));
     {
         assert_eq!(band.as_ref().ok().map(|w| w.len()), Some(1))
     }
@@ -403,7 +403,3 @@ fn bail<'a>(msg: &'a str) -> Report<'a> {
     return Report::note(E_NO_SERVICE, msg);
 }
 
-/// 打一行。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

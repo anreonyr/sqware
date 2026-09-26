@@ -86,10 +86,10 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken, TaskId};
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
@@ -99,7 +99,6 @@ use protocol::system::operator::core::judge::Rule;
 use protocol::system::operator::{EntryId, Where};
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PrincipalFace;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -343,7 +342,7 @@ fn main() -> Report<'static> {
     };
 
     // 九、一行读数。
-    say(&format!(
+    debug!(
         "probe-rule: tree part={} made={made} p={} adopt={} \
          is={is} under={under} in={inside} \
          is_sub={is_sub} under_sub={under_sub} in_sub={in_sub} \
@@ -358,7 +357,7 @@ fn main() -> Report<'static> {
         mine_id.get(),
         again.get(),
         ask_same as u8,
-    ));
+    );
 
     // 十、判据：**一例一条**（用户裁定"程序侧 pilot"）。
     //
@@ -513,11 +512,7 @@ fn seek_id(link: &Quay, talk: PieToken, road: &[Name]) -> Option<EntryId> {
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
 fn bail<'a>(note: &'a str) -> Report<'a> {
-    say(note);
+    debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
 
-/// 打一行。调试面是本域唯一的嘴（与 `echo` / `guest` 用的是同一格）。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

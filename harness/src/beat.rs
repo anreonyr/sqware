@@ -40,12 +40,11 @@
 extern crate alloc;
 extern crate programs;
 
-use alloc::format;
 use core::time::Duration;
 
 use runtime::env::chrono;
-use runtime::env::debug;
 use runtime::env::room;
+use protocol::debug;
 
 /// 每轮要的周期（毫秒）。
 const PERIOD_MS: u64 = 5;
@@ -72,13 +71,13 @@ fn main() {
         min = min.min(drift);
     }
     let span_rel = now_ns().saturating_sub(start);
-    say(&format!(
+    debug!(
         "beat: rel n={N} period_ms={PERIOD_MS} drift_sum_us={} drift_max_us={} drift_min_us={} span_ms={}",
         sum / 1000,
         max / 1000,
         min / 1000,
         span_rel / 1_000_000
-    ));
+    );
 
     // ── B 绝对：到点是绝对的 ⇒ 迟到**不落进下一轮**（`drift_sum_us` 仍是逐轮累加，
     //    真正体现"不累积"的是 `span_ms`：它 ≈ n × period + 初值那一个 period + 末轮迟到）──
@@ -96,21 +95,21 @@ fn main() {
         min = min.min(drift);
     }
     let span_abs = now_ns().saturating_sub(start);
-    say(&format!(
+    debug!(
         "beat: abs n={N} period_ms={PERIOD_MS} drift_sum_us={} drift_max_us={} drift_min_us={} span_ms={}",
         sum / 1000,
         max / 1000,
         min / 1000,
         span_abs / 1_000_000
-    ));
+    );
 
     // 差值就是本台子要说的那句话：同一台机器上，A 的 span 与 B 的 span 差多少。
-    say(&format!(
+    debug!(
         "beat: total rel_span_ms={} abs_span_ms={} diff_ms={}",
         span_rel / 1_000_000,
         span_abs / 1_000_000,
         (span_rel as i64 - span_abs as i64) / 1_000_000
-    ));
+    );
     // 跑完 = 报 `EXIT_OK`（`()` 折出来的那个码），不必再写一遍。
 }
 
@@ -119,7 +118,3 @@ fn now_ns() -> u64 {
     chrono::clock()
 }
 
-/// 打一行读数。台子的嘴只有调试面这一格。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

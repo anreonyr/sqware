@@ -114,6 +114,7 @@ use programs::driver::tree::{self, Mine};
 
 // 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
 use contract::message::Message;
+use protocol::debug;
 use protocol::system::board::client as board;
 // 树：本域也是**客侧**——那一趟的身子住 `programs::driver::tree`，这里只开会话、递过去。
 use protocol::system::operator::client as operator;
@@ -132,7 +133,6 @@ use runtime::PAGE_SIZE;
 use runtime::core::bell::Bell;
 use runtime::core::dock::Dock;
 use runtime::core::pile::Pile;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::mail::{HolePie, NolePie, PolePie};
 use runtime::env::unit as utask;
@@ -157,7 +157,7 @@ fn main() -> Result<(), fail::Fail> {
     let [Some(plic_pie), Some(dtb_pie), Some(bell_pie)] = slots else {
         return Err(fail::Fail::Assemble(assemble::E_GRANT));
     };
-    say(&alloc::format!("router: got {got}"));
+    debug!("router: got {got}");
 
     // 开图 + 读树：控制器、本域的 context、要接的线（与"没进来的账"）。
     let plic_dock =
@@ -165,9 +165,9 @@ fn main() -> Result<(), fail::Fail> {
     let dtb_dock =
         Dock::open(PolePie::from_token(dtb_pie.token())).map_err(|_| fail::Fail::Open)?;
     let (plic, sources) = Plic::new(plic_dock.view(), dtb_dock.view()).ok_or(fail::Fail::Tree)?;
-    say("router: docks open");
+    debug!("router: docks open");
     // 线集合与五笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
-    say(&alloc::format!(
+    debug!(
         "router: device_count={} ctx={} lines={:?} unparented={} beyond={} mapped={} unparsed={} unregion={}",
         plic.device_count(),
         plic.context(),
@@ -181,7 +181,7 @@ fn main() -> Result<(), fail::Fail> {
         sources.mapped,
         sources.unparsed,
         sources.unregion
-    ));
+    );
     let bell = Bell::new(NolePie::from_token(bell_pie.token()));
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
@@ -263,7 +263,7 @@ fn main() -> Result<(), fail::Fail> {
             if lines.deliver(line, &[lcall::NOTE]).is_ok() {
                 plic.disable(line);
             } else {
-                say(&alloc::format!("router: deliver failed line={line}"));
+                debug!("router: deliver failed line={line}");
             }
             // 这条线的**第一次**：打一行只可能由中断链产生的读数（见文件头）。
             //
@@ -277,7 +277,7 @@ fn main() -> Result<(), fail::Fail> {
             // **报过没有**那一格归账（[`Lines::told`]）——从前是这里另开的一本定长账，容量
             // 与账不联动、越界是裸下标（> 127 条线的控制器上当场 panic）。**一线一次，退场不清**。
             if lines.told(line) {
-                say(&alloc::format!("\nrouter: line={line}"));
+                debug!("\nrouter: line={line}");
             }
             plic.complete(line);
         }
@@ -308,7 +308,7 @@ fn drain_exhaust(lines: &mut Lines, plic: &Plic, buf: &mut [u8]) {
         while lane.pull(buf, Wait::POLL).is_ok() {
             let _ = lines.exhaust(line);
             plic.enable(line, LINE_PRIORITY);
-            // say(&alloc::format!("router: exhaust line={line}"));
+            // debug!("router: exhaust line={line}");
         }
     }
 }
@@ -337,7 +337,7 @@ fn sweep(lines: &mut Lines, plic: &Plic, pile: &Pile) {
         plic.unwire(line);
         let _ = pile.detach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
         let _ = lines.vacate(line);
-        say(&alloc::format!("router: vacate line={line}"));
+        debug!("router: vacate line={line}");
     }
 }
 
@@ -363,17 +363,17 @@ fn serve_board(sire: TaskId, entry: PieToken) {
         None => false,
     };
     if !boarded {
-        say("router: board: no link");
+        debug!("router: board: no link");
     }
     // 上树：本域的门牌 = `/device/router`（名字用服务名，见 [`protocol::driver::DIR`]）。
     // **开会话那两步留在这里**（那一趟同构的部分在 [`tree::plate`]）：拿不到会话就只报一行、
     // 不拦主循环——收与结照旧。
     let Ok((link, host)) = operator::open(sire, Wait::AtMost(QUAY_MS)) else {
-        say("router: tree: no lane");
+        debug!("router: tree: no lane");
         return;
     };
     let Ok(talk) = operator::ask_hole(host) else {
-        say("router: tree: no ask");
+        debug!("router: tree: no ask");
         return;
     };
     tree::plate(
@@ -421,10 +421,10 @@ fn desk_face(
                                     pile.attach(&HolePie::from_token(lane.hole()), HoleDir::Pull);
                             }
                             // 名字只为日志：**当场从树里读**（装不下就打 `?`）。
-                            say(&alloc::format!(
+                            debug!(
                                 "router: line {line} = {}",
                                 name.as_ref().map(|n| n.as_str()).unwrap_or("?")
-                            ));
+                            );
                             lcall::OK
                         }
                         // **拒了就放回去**：这一趟刚交上来的那条泊位不能留在账外（见 `drop_lane`）。
@@ -487,13 +487,9 @@ fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
     if let Ok(mark) = Name::new(lcall::LANE) {
         quay.unseat(mark);
     }
-    say(&alloc::format!(
+    debug!(
         "router: lane dropped line={line} pies={}",
         mail::table_size()
-    ));
+    );
 }
 
-/// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

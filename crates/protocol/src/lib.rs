@@ -37,6 +37,13 @@ pub use contract::fail_codes;
 /// "没失败"那一格。
 pub use contract::fail_codes::OK;
 
+// 调试面那一支宏（`debug!`）住 `debug.rs`——**只在 debug 构建下有效**（见那个文件的头注）。
+// 它拿 `format!` 拼行，故把 `alloc` 那一支在这里转出：调用方（`programs` / `harness`）因此
+// 不必自己先有 `alloc` 这个前提（与上面 `fail_codes` 的转出同一条规矩）。
+pub mod debug;
+#[doc(hidden)]
+pub use alloc::format as __format;
+
 pub mod driver;
 // 转出「约」那两件：`crate::frame` / `crate::id` 与 `protocol::frame` / `protocol::id` **照旧解析**
 // ⇒ 调用点一处不改。

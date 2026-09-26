@@ -36,16 +36,16 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
+use alloc::format;
+use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{EntryId, Where};
 
-use alloc::format;
 
 use env::{Name, PieToken, TaskId};
 use protocol::driver;
 use protocol::session::Quay;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -105,7 +105,7 @@ fn main() -> Report<'static> {
     );
     let land_code = match land {
         Ok(id) => {
-            say(&format!("probe-owner: tree land=OK id={}", id.get()));
+            debug!("probe-owner: tree land=OK id={}", id.get());
             ocall::OK
         }
         Err(code) => code,
@@ -117,10 +117,10 @@ fn main() -> Report<'static> {
         Ok(id) => format!("id={}", id.get()),
         Err(code) => format!("err:{code}"),
     };
-    say(&format!(
+    debug!(
         "probe-owner: tree land={land_code} before={} after={seq}",
         before.get()
-    ));
+    );
 
     // 五、判据两格：被拒（`DENIED`）**且**那一格没动（还是原来那个号）。
     let denied = land_code == ocall::DENIED;
@@ -131,13 +131,13 @@ fn main() -> Report<'static> {
     //     比它先跑完那几手（提示是单槽，装配者按计划顺序推）。
     let taken = take_over(hedge, &tree, host);
 
-    say(&format!(
+    debug!(
         "probe-owner: lease land={} (owner gone ⇒ take-over)",
         match taken {
             Ok(id) => format!("0 id={}", id.get()),
             Err(code) => format!("{code}"),
         }
-    ));
+    );
 
     // 七、判据：**一例一条**（原先三格 `&&` 成一句）。
     let took = taken.is_ok();
@@ -228,11 +228,7 @@ fn wait_id(say_hole: PieToken, link: &Quay, road: &[Name]) -> Option<EntryId> {
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
 fn bail<'a>(note: &'a str) -> Report<'a> {
-    say(note);
+    debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
 
-/// 打一行。调试面是本域唯一的嘴。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

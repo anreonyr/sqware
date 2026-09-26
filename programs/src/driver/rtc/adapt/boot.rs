@@ -6,12 +6,11 @@
 
 use super::fail;
 use crate::rtc;
-use crate::say;
-use alloc::format;
 use env::{PieToken, TaskId, Wait};
 use plan::Pair;
 use plan::assembly::RTC_WANTS as WANTS;
 use programs::driver::assemble;
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::board::client as board;
 use protocol::system::operator::client as operator;
@@ -58,13 +57,13 @@ pub fn up() -> Result<Up, fail::Fail> {
     let [Some(pie)] = slots else {
         return Err(fail::Fail::Assemble(assemble::E_GRANT));
     };
-    say(&format!("rtc: got {got}"));
+    debug!("rtc: got {got}");
 
     // 2. 开图 + 自证。
     let dock = Dock::open(PolePie::from_token(pie.token())).map_err(|_| fail::Fail::Open)?;
     let view = dock.view();
     let (t0, t1) = (rtc::now(view), rtc::now(view));
-    say(&format!("rtc: time {t0} -> {t1}"));
+    debug!("rtc: time {t0} -> {t1}");
 
     // 3. 上板 + 树那条会话。
     let sire = utask::sire();

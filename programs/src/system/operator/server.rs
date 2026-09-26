@@ -12,6 +12,7 @@ use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
+use protocol::debug;
 use protocol::session::slip::Slip;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
@@ -134,18 +135,18 @@ impl Control for Court<'_> {
             Ok(tid) => Ok(Some(tid)),
             // 碑 / 从没铸过：**永久**。
             Err(Fail::Unknown) => {
-                say(&alloc::format!("operator: opens gone n={}", at.get()));
+                debug!("operator: opens gone n={}", at.get());
                 Ok(None)
             }
             // 那一号是块窗格：**永久**（结构事实）。
             Err(Fail::NotATile) => {
-                say(&alloc::format!("operator: opens pane n={}", at.get()));
+                debug!("operator: opens pane n={}", at.get());
                 Ok(None)
             }
             // 开者答不出——**永久**。`Dead` 自己仍是**三因一码**（不是孔 / 不在我表里 / 已封印，
             // 见 [`Fail::Dead`]）：这一行读数是"没有开者"，不声称分得开那三因。
             Err(Fail::Dead) => {
-                say(&alloc::format!("operator: opens sealed n={}", at.get()));
+                debug!("operator: opens sealed n={}", at.get());
                 Ok(None)
             }
             // 余下三格**到不了**（`core::opens` 的判据表只有上面三条）。一格一格列出来，是为了
@@ -317,7 +318,7 @@ fn settle(
             // 后 8 字节能不能翻（表外的眼睛码）归 [`Eyes`] 自己的 `Field::fetch`：读不懂 ⇒
             // **报一句，别静默**——门禁会一直判不了，而"为什么"要看得见。
             let Some(rec) = ocall::CoordFrame::fetch(&frame[..n]) else {
-                say("operator: coord role unknown");
+                debug!("operator: coord role unknown");
                 continue;
             };
             match rec.eyes {
@@ -329,7 +330,7 @@ fn settle(
             // "判不了"。
             let renewed = Session::of(*coord);
             if renewed.is_none() {
-                say("operator: coord not recognised");
+                debug!("operator: coord not recognised");
             }
             *session = renewed;
             continue;
@@ -347,10 +348,10 @@ fn settle(
                 Err(DeskFail::Already) => {}
                 // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
                 // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**。
-                Err(DeskFail::Full) => say("operator: desk full"),
+                Err(DeskFail::Full) => debug!("operator: desk full"),
             },
             // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
-            None => say("operator: no reply"),
+            None => debug!("operator: no reply"),
         }
     }
     // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 [`Desk::arm_pending`]）——
@@ -610,13 +611,9 @@ fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieToken> {
     // **第二枚 ⇒ "只可能有一枚"那条纪律破了**：说话（`more` 那一格就是这句话）。
     if hits.next().is_some() {
         if let Some(note) = more {
-            say(note);
+            debug!("{}", note);
         }
     }
     Some(first.token)
 }
 
-/// 持树者的读数：**只在出岔子时说话**（正常一轮什么都不打）。
-fn say(msg: &str) {
-    let _ = runtime::env::debug::put(msg);
-}

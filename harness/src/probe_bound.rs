@@ -56,10 +56,10 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use alloc::format;
 use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
@@ -67,7 +67,6 @@ use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{LINK, Where};
 use runtime::PAGE_SIZE;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -151,9 +150,9 @@ fn main() -> Report<'static> {
     let empty = matches!(mine.peek(), Err(ref e) if e.source.is_busy());
     let small = mine.push(&[0u8; 8]).is_ok();
     let len = mine.peek().map(|(n, _)| n).unwrap_or(0);
-    say(&format!(
+    debug!(
         "probe-bound: push={over_code} empty={empty} small={small} len={len}"
-    ));
+    );
 
     // 三、往树的门上推一枚不合族的帧，再看那道门还是不是活的。
     let (junk_in, said_bad, after) = junk_trip(hedge, &tree, dir);
@@ -243,11 +242,7 @@ fn junk_trip_board(bolt: PieToken, deck: &Quay) -> (bool, bool, bool) {
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
 fn bail<'a>(note: &'a str) -> Report<'a> {
-    say(note);
+    debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
 
-/// 打一行。调试面是本域唯一的嘴（与 `echo` / `guest` 用的是同一格）。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

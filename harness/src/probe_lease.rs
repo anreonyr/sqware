@@ -30,14 +30,13 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
+use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
 
-use alloc::format;
 
 use env::Name;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -93,12 +92,12 @@ fn main() -> Report<'static> {
 
     // 读数那一行照旧（两种形状：落上了报号、没落上报码）——**判据**在下面那一例里。
     match &landed {
-        Ok(id) => say(&format!(
+        Ok(id) => debug!(
             "probe-lease: tree land=0 dir={} plate={}",
             at.get(),
             id.get()
-        )),
-        Err(code) => say(&format!("probe-lease: tree land={code}")),
+        ),
+        Err(code) => debug!("probe-lease: tree land={code}"),
     }
 
     // 判据：**一例**（这一台只有一条：牌落上了；落完就退场，把那一格留成"没主"）。
@@ -112,11 +111,7 @@ fn main() -> Report<'static> {
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
 fn bail<'a>(note: &'a str) -> Report<'a> {
-    say(note);
+    debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
 
-/// 打一行。调试面是本域唯一的嘴。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

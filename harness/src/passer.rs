@@ -33,13 +33,12 @@ use env::Wait;
 use programs::Report;
 
 // 板：本域是**客侧**（挂一个名字）。
+use protocol::debug;
 use protocol::system::board::client as board;
 
-use alloc::format;
 
 use env::Name;
 use protocol::system::board as bcall;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -81,7 +80,7 @@ fn main() -> Report<'static> {
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"passer 在哪"）。
     let reg = board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
-    say(&format!("passer: reg={reg} entry={} say={ME}", entry.get()));
+    debug!("passer: reg={reg} entry={} say={ME}", entry.get());
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——"挂名字该成功"
     // 是本站此刻就知道的期望（旧宿主靶上那一条 `passer: reg=0 entry=… say=passer` 钉的就是它）。
@@ -107,7 +106,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
     return Report::note(E_TRIP, note);
 }
 
-/// 打一行。调试面是本域唯一的嘴（与 `guest` / `echo` 用的是同一格）。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

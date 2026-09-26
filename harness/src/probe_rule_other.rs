@@ -47,14 +47,13 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken};
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit as utask;
 
@@ -108,9 +107,9 @@ fn main() -> Report<'static> {
     let foreign = denied(talk, &tree, &[dir, pane, foreign_name]);
 
     // 三、一行读数。
-    say(&format!(
+    debug!(
         "probe-other: tree is={is} under={under} foreign={foreign}"
-    ));
+    );
 
     // 四、判据：**一例一条**——三格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
     {
@@ -151,11 +150,7 @@ fn denied(talk: PieToken, link: &Quay, road: &[Name]) -> u8 {
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
 fn bail<'a>(note: &'a str) -> Report<'a> {
-    say(note);
+    debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
 
-/// 打一行。调试面是本域唯一的嘴（与 `echo` / `guest` 用的是同一格）。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

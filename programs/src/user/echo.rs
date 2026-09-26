@@ -61,11 +61,12 @@ extern crate programs;
 
 // 板与树：本域都只用**客侧**那几手。
 use env::Wait;
+use alloc::format;
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::board::client as board;
 use protocol::system::operator::client as operator;
 
-use alloc::format;
 use alloc::string::String;
 use core::time::Duration;
 
@@ -74,7 +75,6 @@ use env::{Name, PieToken, TaskId};
 use protocol::system::board as bcall;
 use protocol::system::operator as ocall;
 use protocol::system::operator::{EntryId, Listing, Where};
-use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -112,10 +112,10 @@ const NON_UTF8: &str = "<non-utf8>";
 /// （不立 `Fail` 枚举：一格不值得一个类型）。出口那一手在 [`programs::entry`]，全仓一处。
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
-    let _ = debug::put(READY);
+    debug!("{}", READY);
     // 上板：**注册在回显之前**——板要能看见本域（见头注）。挂不上照旧回显。
     let reg = register();
-    let _ = debug::put(&format!("echo: reg={reg}"));
+    debug!("echo: reg={reg}");
 
     let sire = utask::sire();
     // 树那条路：本域只开一条会话——先找控制台，再落自己那块牌子（次序见头注）。
@@ -128,15 +128,15 @@ fn main() -> Result<(), env::Reason> {
 
     // 一、**先找控制台**：`FIND /device/uart` ⇒ 那枚孔经会话授进本域表里。
     let console = find_console(&tree, talk);
-    let _ = debug::put(&format!("echo: console={}", console.is_some()));
+    debug!("echo: console={}", console.is_some());
 
     // 二、上树一趟：**本域是第一位真客人**——把入口挂到树上、再查回来取一枚、剪掉一块空 Pane。
     let op = trip(&tree, talk, host);
-    let _ = debug::put(&format!("echo: op={op}"));
+    debug!("echo: op={op}");
 
     // 三、上树第二趟：**一串**（列号 → 按号翻名 → 列 `/device` → 问一枚没铸过的号）。
     let seq = serial(&tree, talk);
-    let _ = debug::put(&format!("echo: seq={seq}"));
+    debug!("echo: seq={seq}");
 
     // **返回值那一格判在消耗它的这一层**：`serial` 内部看不见自己那一趟被改坏。
     {
@@ -164,7 +164,7 @@ fn main() -> Result<(), env::Reason> {
                     if text == &b"exit"[..] {
                         break 'echo;
                     }
-                    let _ = debug::put(core::str::from_utf8(text).unwrap_or(NON_UTF8));
+                    debug!("{}", core::str::from_utf8(text).unwrap_or(NON_UTF8));
                     n_line = 0;
                 }
                 // 行太长：多的字节丢掉（截断回显），但行尾判据照旧。
@@ -284,11 +284,11 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
         Ok(id) => operator::trim(talk, link, id, Wait::AtMost(MS)).unwrap_or(ocall::BAD),
         Err(code) => code,
     };
-    let _ = debug::put(&format!(
+    debug!(
         "echo: tree part={a} land={b} find={c} got={got} trim={d} plate={} pname={}",
         plate.ok().map(|id| id.get()).unwrap_or(0),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-    ));
+    );
 
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
     {
@@ -319,7 +319,7 @@ fn serial(link: &Quay, talk: PieToken) -> u8 {
     let Ok(root) = operator::list(talk, link, Where::Root, Wait::AtMost(MS)) else {
         return ocall::UNKNOWN;
     };
-    let _ = debug::put(&format!("echo: list root={}", ids_of(&root)));
+    debug!("echo: list root={}", ids_of(&root));
 
     // 逐枚翻名：`0` 是真的第一个格子（**根没有号**），故它也该翻得出名字。
     let mut names = String::new();
@@ -336,7 +336,7 @@ fn serial(link: &Quay, talk: PieToken) -> u8 {
             }
         }
     }
-    let _ = debug::put(&format!("echo: list names={names}"));
+    debug!("echo: list names={names}");
 
     // 第二块 Pane：`/device`（那一段名字本域已经知道——头注里那两条来路之一）。
     let Ok(dir) = Name::new(protocol::driver::DIR) else {
@@ -347,17 +347,17 @@ fn serial(link: &Quay, talk: PieToken) -> u8 {
         .and_then(|at| operator::list(talk, link, Where::At(at), Wait::AtMost(MS)))
     {
         Ok(sub) => {
-            let _ = debug::put(&format!("echo: list device={}", ids_of(&sub)));
+            debug!("echo: list device={}", ids_of(&sub));
         }
         Err(code) => {
-            let _ = debug::put(&format!("echo: list device=err:{code}"));
+            debug!("echo: list device=err:{code}");
             return ocall::UNKNOWN;
         }
     }
 
     // 一枚没铸过的号：**`UNKNOWN`，不是"答了一格空名字"**。
     let miss = operator::name(talk, link, EntryId::new(4095), Wait::AtMost(MS)).is_err();
-    let _ = debug::put(&format!("echo: name miss={miss}"));
+    debug!("echo: name miss={miss}");
 
     // 一枚**本域自己选的**没铸过的号 ⇒ 该答不出（命名空间的契约，不是装配事实）。
     assert!(miss);

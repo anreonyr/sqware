@@ -36,18 +36,18 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use alloc::format;
 use alloc::string::String;
 use core::time::Duration;
 
 use env::{Name, PieToken};
+use alloc::format;
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::{Fail, PrincipalId};
-use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit as utask;
 
@@ -85,7 +85,7 @@ fn main() -> Report<'static> {
 
     // 一、此刻代表谁——装配期绑的那一条（服务一起来就答得出）。
     let mine = face.resolve(me, Wait::AtMost(MS));
-    say(&format!("policy: me={}", one_opt(mine)));
+    debug!("policy: me={}", one_opt(mine));
     let Ok(Some(p)) = mine else {
         return bail("subject: unbound");
     };
@@ -96,9 +96,9 @@ fn main() -> Report<'static> {
 
     // 二、三态的头两格。
     let no_sire = face.sire(PrincipalId::ROOT, Wait::AtMost(MS));
-    say(&format!("policy: sire(root)={}", one_opt(no_sire)));
+    debug!("policy: sire(root)={}", one_opt(no_sire));
     let sired = face.sire(p, Wait::AtMost(MS));
-    say(&format!("policy: sire(me)={}", one_opt(sired)));
+    debug!("policy: sire(me)={}", one_opt(sired));
     {
         assert_eq!(no_sire, Ok(None))
     }
@@ -108,21 +108,21 @@ fn main() -> Report<'static> {
 
     // 三、自反。
     let reflexive = face.heir(p, p, Wait::AtMost(MS));
-    say(&format!("policy: heir(me,me)={}", flag(reflexive)));
+    debug!("policy: heir(me,me)={}", flag(reflexive));
     {
         assert_eq!(reflexive, Ok(true))
     }
 
     // 四、向下派生一条自己的子身份。
     let sub = face.derive(p, Wait::AtMost(MS));
-    say(&format!("policy: derive(me)={}", one(sub)));
+    debug!("policy: derive(me)={}", one(sub));
     let child = sub.ok();
     assert!(sub.is_ok());
 
     // 五、否定：子代不是祖先（拿刚派生出来的那一条问）。
     let not_ancestor = child.map(|q| face.heir(q, p, Wait::AtMost(MS)));
     if let Some(r) = not_ancestor {
-        say(&format!("policy: heir(sub,me)={}", flag(r)));
+        debug!("policy: heir(sub,me)={}", flag(r));
     }
     {
         assert_eq!(not_ancestor, Some(Ok(false)))
@@ -130,14 +130,14 @@ fn main() -> Report<'static> {
 
     // 六、第三态：树外的号。
     let out_heir = face.heir(PrincipalId::new(OUTSIDE), p, Wait::AtMost(MS));
-    say(&format!("policy: heir(out,me)={}", flag(out_heir)));
+    debug!("policy: heir(out,me)={}", flag(out_heir));
     {
         assert!(matches!(out_heir, Err(Fail::Unknown)))
     }
 
     // 七、越权一趟：名册只有装配者能写，本域不是它。
     let bound = face.bind(me, p, Wait::AtMost(MS));
-    say(&format!("policy: bind(self)={}", done(bound)));
+    debug!("policy: bind(self)={}", done(bound));
     {
         assert!(matches!(bound, Err(Fail::Denied)))
     }
@@ -148,44 +148,44 @@ fn main() -> Report<'static> {
     };
     // 八、领：换到自己刚派生出来的那一支里（`sub` 一定在 `p` 那一支里）。
     let adopted = face.adopt(q, Wait::AtMost(MS));
-    say(&format!("policy: adopt(sub)={}", done(adopted)));
+    debug!("policy: adopt(sub)={}", done(adopted));
     {
         assert!(adopted.is_ok())
     }
 
     // 九、名册真的改了（不是打个印记）。
     let led = face.resolve(me, Wait::AtMost(MS));
-    say(&format!("policy: me={}", one_opt(led)));
+    debug!("policy: me={}", one_opt(led));
 
     // 十、**钥匙反证**：已不代表 `p`，故"从 `p` 派生"被拒。
     let stale = face.derive(p, Wait::AtMost(MS));
-    say(&format!("policy: derive(old)={}", one(stale)));
+    debug!("policy: derive(old)={}", one(stale));
     {
         assert!(matches!(stale, Err(Fail::Denied)))
     }
 
     // 十一、向上 / 跨支：`p` 是 `sub` 的父，不在 `sub` 那一支里。
     let up = face.adopt(p, Wait::AtMost(MS));
-    say(&format!("policy: adopt(up)={}", done(up)));
+    debug!("policy: adopt(up)={}", done(up));
     {
         assert!(matches!(up, Err(Fail::Denied)))
     }
 
     // 十二、树外。
     let outside = face.adopt(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
-    say(&format!("policy: adopt(out)={}", done(outside)));
+    debug!("policy: adopt(out)={}", done(outside));
     {
         assert!(matches!(outside, Err(Fail::Unknown)))
     }
 
     // 十三、弃：回到装配给我的那一条（不删格）。
     let waived = face.waive(Wait::AtMost(MS));
-    say(&format!("policy: waive={}", done(waived)));
+    debug!("policy: waive={}", done(waived));
     assert!(waived.is_ok());
 
     // 十四、回到起点。
     let back = face.resolve(me, Wait::AtMost(MS));
-    say(&format!("policy: me={}", one_opt(back)));
+    debug!("policy: me={}", one_opt(back));
 
     // 三条 `policy: me=`（装配绑的 / 领之后 / 弃之后）的关系：**绑 ≠ 领 = 弃**。
     //
@@ -276,7 +276,3 @@ fn bail<'a>(msg: &'a str) -> Report<'a> {
     return Report::note(E_NO_SERVICE, msg);
 }
 
-/// 打一行。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

@@ -39,12 +39,12 @@ use env::Wait;
 use programs::Report;
 
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
+use protocol::debug;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 
-use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken};
@@ -53,7 +53,6 @@ use protocol::session::Quay;
 use programs::driver::rtc::core::frame as rcall;
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -93,7 +92,7 @@ fn no_service(step: &'static str) -> Report<'static> {
 fn main() -> Report<'static> {
     // 上板：**注册在前面**——板要能看见本域（挂不上照样往下走，只是那条信号缺席）。
     let reg = register();
-    let _ = debug::put(&format!("sleeper: reg={reg}"));
+    debug!("sleeper: reg={reg}");
 
     let sire = utask::sire();
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
@@ -105,13 +104,13 @@ fn main() -> Report<'static> {
     let Some(face) = find_face(&tree, talk) else {
         return no_service("sleeper: no rtc plate");
     };
-    let _ = debug::put("sleeper: found");
+    debug!("sleeper: found");
 
     // 一问一答：现在几点。这一句是后面那两约的**基准**（服务收的是绝对时刻）。
     let Ok(now) = clock::now(face, Wait::AtMost(MS)) else {
         return no_service("sleeper: no time");
     };
-    let _ = debug::put(&format!("sleeper: now={now}"));
+    debug!("sleeper: now={now}");
 
     // **照实记（退场的一例：`arming_the_past_is_refused`）**：那一例是"拿 `now - 1ms` 去约，
     // 期望驱动答 `PAST`"。`Wire::Arm` 收了**相对量**之后"过去"**不可表达** ⇒ 判据与它的
@@ -127,25 +126,25 @@ fn main() -> Report<'static> {
             // 码本在 `programs/src/driver/rtc/core/fail.rs`：**1 = `Taken`**（那一格有人了）/
             // **2 = `Past`**（相对量下只剩 `after_ns == 0` 到得了）/ **3 = `Denied`**（这一趟
             // 自己没走到：孔借不出去 / 帧推不动 / 等到期 / 答话读不懂）。
-            let _ = debug::put(&format!(
+            debug!(
                 "sleeper: alarm err={}",
                 rcall::fail_to_code(Some(fail))
-            ));
+            );
             return no_service("sleeper: no alarm");
         }
     };
-    let _ = debug::put(&format!("sleeper: armed={}", rcall::fail_to_code(None)));
+    debug!("sleeper: armed={}", rcall::fail_to_code(None));
 
     // 失败域第二格：再约一次。那一格里有人——就是本域刚约下的那一次（拿自己的线试，
     // 答 `TAKEN` 是确定的）。
     let taken = refused(clock::arm(face, SLOT_NS, Wait::AtMost(MS)));
-    let _ = debug::put(&format!("sleeper: taken={taken}"));
+    debug!("sleeper: taken={taken}");
 
     // 等到那一声：**无界等**（本域只有这一件事），而对面一没那枚孔就封印、当场答错。
     let Ok(rang) = armed.receive() else {
         return no_service("sleeper: no ring");
     };
-    let _ = debug::put(&format!("sleeper: rang after={SLOT_NS} now={rang}"));
+    debug!("sleeper: rang after={SLOT_NS} now={rang}");
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**。三例的期望都是
     // 本站此刻就知道的，而且比较用的是**与读数同一批常量**（`bcall::OK` / `rcall::` 那两个码），

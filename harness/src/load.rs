@@ -95,13 +95,12 @@ use harness::tick;
 
 use programs::root::boot;
 
-use alloc::format;
 use core::time::Duration;
 
 use env::Name;
 use programs::system::server as service;
+use protocol::debug;
 use protocol::system::desk::{Announce, Table};
-use runtime::env::debug;
 use runtime::env::room;
 
 /// 占核者与打点者的**清单名**（`plan::assembly::ALL` 里 `scenes` 含 `load` 的那两行）。
@@ -151,9 +150,9 @@ fn main() -> Reason {
 
     // 校准在铺负荷**之前**：此刻机器是静的，量出来的是"空载那把尺"（只用来定放行间隔）。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
-    say(&format!(
+    debug!(
         "load: calib iters_per_ms={iters_per_ms} ms_per_tick={ms_per_tick}"
-    ));
+    );
     let gap = (iters_per_ms.saturating_mul(GAP_US) / 1_000).max(1);
 
     let mut table = Table::new();
@@ -172,9 +171,9 @@ fn main() -> Reason {
         rows += 1;
         tick::spin_iters(gap);
     }
-    say(&format!(
+    debug!(
         "load: spawned rows={rows} hogs={HOGS} parkers={PARKERS} rounds={ROUNDS}"
-    ));
+    );
 
     // 台主自己：每 1 ms 让出一次核（**不许纯空转**，见头注坑 2）。
     let t0 = runtime::env::chrono::ticks();
@@ -182,14 +181,14 @@ fn main() -> Reason {
         let _ = room::sleep(Duration::from_millis(1));
     }
     let t1 = runtime::env::chrono::ticks();
-    say(&format!("load: ran rounds={ROUNDS} ticks={t0}→{t1}"));
+    debug!("load: ran rounds={ROUNDS} ticks={t0}→{t1}");
 
     for name in PARKER_NAMES.iter().chain(HOG_NAMES.iter()) {
         if let Ok(name) = Name::new(name) {
             let _ = service::stop(&mut table, name);
         }
     }
-    say("load: stopped all rows");
+    debug!("load: stopped all rows");
     // 退场：本域的那些行随级联一起收干净，最后一枚任务退出时内核打停机行 + 读数。
     return 0;
 }
@@ -226,13 +225,8 @@ fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], env::ProgramKin
     }
 }
 
-/// 打一行读数。台主的嘴只有调试面这一格。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}
-
 /// 铺不满就没得量。
 fn die(msg: &str) -> Reason {
-    say(msg);
+    debug!("{}", msg);
     1
 }

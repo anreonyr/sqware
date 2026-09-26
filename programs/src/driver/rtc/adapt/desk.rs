@@ -4,11 +4,10 @@
 //! `mail::reserve` 认那枚回信孔、从设备读这一刻的钟、上船台发答、放下那一枚、武装设备。
 
 use crate::rtc;
-use crate::say;
-use alloc::format;
 use env::{PieToken, TaskId};
 use programs::driver::rtc::core::frame::{self, Status, Time};
 use programs::driver::rtc::core::host::{Answer, Host};
+use protocol::debug;
 use protocol::session::slip::Slip;
 use runtime::core::dock::View;
 use runtime::env::mail;
@@ -37,7 +36,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
         mail::reserve(back),
         Ok((_vestor, owner, mark)) if owner == from && mark == frame::BACK
     ) {
-        say(&format!("rtc: no back hole from {}", from.get()));
+        debug!("rtc: no back hole from {}", from.get());
         return;
     }
     let now = rtc::now(view);
@@ -46,17 +45,17 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
         Answer::Time(now) => {
             ship_time(back, now);
             let _ = mail::release(back);
-            say(&format!("rtc: asked now={now}"));
+            debug!("rtc: asked now={now}");
         }
         // **设备那一手紧随原语之后**（账记下了，硬件跟上）——与线那一层
         // "接线是登记的直接后果"同一条分工。
         Answer::Armed { at } => {
             rtc::arm(view, at);
-            say(&format!(
+            debug!(
                 "rtc: armed at={at} ier={} alarm={}",
                 rtc::irq_enabled(view),
                 rtc::armed(view)
-            ));
+            );
             // 答码**先于**那一声：那一格已经占上，而设备要过一会儿才拉线。
             // **这一枚不还**：那一格现在收着它，到点从那枚孔回来。
             ship_code(back, frame::OK);
@@ -72,13 +71,13 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
             // `at` 还在前头，按 0 记）。形状声明在 `crates/gate/src/soak.rs`（已删）的读数表里。
             //
             // **照实记（它为什么在发答话之后）**：第一版排在那一手之前（那时是裸
-            // `push`，今天是船台的 `ship`），而 `say` 是**同步 UART**（一行 ~1 ms）——
+            // `push`，今天是船台的 `ship`），而 `debug!` 是**同步 UART**（一行 ~1 ms）——
             // 量的人自己站进了被测的那条路上，把客人等答话的时间撑长了。故答话先走、
             // 读数后打：这一行不许改变它要量的东西。
-            say(&format!(
+            debug!(
                 "rtc: refused={code} at={at} now={now} late_ns={}",
                 now.saturating_sub(at)
-            ));
+            );
         }
     }
 }

@@ -42,8 +42,8 @@ use env::HoleDir;
 use env::Mark;
 use env::PieToken;
 use runtime::core::pile::Pile;
-use runtime::env::debug;
 use runtime::env::mail::{self, HolePie, TolePie};
+use protocol::debug;
 
 #[programs::entry]
 fn main() -> Reason {
@@ -63,7 +63,7 @@ fn main() -> Reason {
     if report.push(b"H").is_err() {
         return bail("waiter: report");
     }
-    say("waiter: hung");
+    debug!("waiter: hung");
 
     // ★ 正路：共享组上**多个等待者挂在同一只组键上**。
     //
@@ -82,13 +82,13 @@ fn main() -> Reason {
         }
         match member.peek() {
             Ok(_) => {
-                say("waiter: woke");
+                debug!("waiter: woke");
                 let _ = report.push(b"T");
                 break;
             }
             Err(e) if e.source.is_busy() => continue,
             Err(e) => {
-                say(&alloc::format!("waiter: err={}", e.source.code()));
+                debug!("waiter: err={}", e.source.code());
                 let _ = report.push(b"E");
                 break;
             }
@@ -120,13 +120,8 @@ fn discover() -> (Option<PieToken>, Option<PieToken>, Option<PieToken>) {
     (group, member, report)
 }
 
-/// 打一行。调试面是本域唯一的嘴。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}
-
 /// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
 fn bail(msg: &str) -> Reason {
-    say(msg);
+    debug!("{}", msg);
     1
 }

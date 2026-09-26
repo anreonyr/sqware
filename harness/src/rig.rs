@@ -216,15 +216,14 @@ use harness::tick;
 
 use programs::root::boot;
 
-use alloc::format;
 use core::time::Duration;
 
 use env::Name;
 use programs::system::server as service;
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Slot, Table};
-use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit;
 
@@ -313,9 +312,9 @@ fn main() -> Reason {
 
     // 校准：本机"一毫秒 = 多少轮空转"。受害者那边量的是同一把尺。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
-    say(&format!(
+    debug!(
         "rig: calib iters_per_ms={iters_per_ms} ms_per_tick={ms_per_tick}"
-    ));
+    );
 
     let mut total = Tally::default();
     let mut d_us = 0usize;
@@ -334,15 +333,15 @@ fn main() -> Reason {
                 }
                 // 造不出来（`Full`：表满 / 备不下）：这一档作罢，照实报出来。
                 Err(why) => {
-                    say(&format!("rig: d_us={d_us} trial failed: {why}"));
+                    debug!("rig: d_us={d_us} trial failed: {why}");
                     break;
                 }
             }
         }
-        say(&format!(
+        debug!(
             "rig: d_us={d_us} n={} now={} waited={} late={} lost={}",
             t.n, t.now, t.waited, t.late, t.lost
-        ));
+        );
         total.n += t.n;
         total.now += t.now;
         total.waited += t.waited;
@@ -373,15 +372,15 @@ fn main() -> Reason {
                     }
                 }
                 Err(why) => {
-                    say(&format!("rig: edge d_us={b_us} trial failed: {why}"));
+                    debug!("rig: edge d_us={b_us} trial failed: {why}");
                     break;
                 }
             }
         }
-        say(&format!(
+        debug!(
             "rig: edge d_us={b_us} n={} now={} waited={} late={} lost={}",
             t.n, t.now, t.waited, t.late, t.lost
-        ));
+        );
         total.n += t.n;
         total.now += t.now;
         total.waited += t.waited;
@@ -389,10 +388,10 @@ fn main() -> Reason {
         total.lost += t.lost;
         b_us += 25;
     }
-    say(&format!(
+    debug!(
         "rig: total n={} now={} waited={} late={} lost={}",
         total.n, total.now, total.waited, total.late, total.lost
-    ));
+    );
     return 0;
 }
 
@@ -517,13 +516,8 @@ fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], env::ProgramKin
     }
 }
 
-/// 打一行读数。台主的嘴只有调试面这一格。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}
-
 /// 读不出启动账就没得压测。
 fn die(msg: &str) -> Reason {
-    say(msg);
+    debug!("{}", msg);
     1
 }

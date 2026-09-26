@@ -51,16 +51,15 @@ use env::Wait;
 use programs::Report;
 
 // 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
+use protocol::debug;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 
-use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken};
 use protocol::system::board as bcall;
-use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -154,10 +153,10 @@ fn main() -> Report<'static> {
     //     摘掉本域挂在板上的牌子，答一格 `OK`；本域不在板上那本账上则答 `UNKNOWN`。
     let bye = board::evict(talk, &link, Wait::AtMost(MS)).unwrap_or(BAD);
 
-    say(&format!(
+    debug!(
         "guest: reg={reg} find={find} entry={} bye={bye}",
         at.get()
-    ));
+    );
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——那三样都是本站
     // 此刻就知道的期望（旧宿主靶上 `guest: reg=0 find=0` 那一行钉的就是它们）。
@@ -190,7 +189,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
     return Report::note(E_TRIP, note);
 }
 
-/// 打一行。调试面是本域唯一的嘴（与 `echo` 用的是同一格）。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}

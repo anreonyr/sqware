@@ -14,10 +14,10 @@
 //! ```
 
 use crate::system::server::Start;
-use alloc::format;
 use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
+use protocol::debug;
 use protocol::session::Quay;
 use protocol::session::slip::Slip;
 use protocol::system::board as bcall;
@@ -200,7 +200,7 @@ fn answer(book: &mut Principal, from: TaskId, ask: Option<pcall::Wire>) -> pcall
 /// 找上门、问一句、拿回一条号。故本域不自问自答。
 fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
-        say("principal: tree: bad name");
+        debug!("principal: tree: bad name");
         return;
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
@@ -241,14 +241,10 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
     let pname = plate
         .ok()
         .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
-    say(&format!(
+    debug!(
         "principal: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-    ));
+    );
 }
 
-/// 打一行。调试面是"服务还没起来的嘴"：本域没有控制台，只有它。
-fn say(msg: &str) {
-    let _ = runtime::env::debug::put(msg);
-}

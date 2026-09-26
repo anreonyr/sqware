@@ -57,13 +57,12 @@ use programs::Reason;
 
 use programs::root::boot;
 
-use alloc::format;
 
 use env::Name;
 use programs::system::server as service;
+use protocol::debug;
 use protocol::system::core::{Ready, probe_ready};
 use protocol::system::desk::{Announce, Slot, State, Table};
-use runtime::env::debug;
 use runtime::env::unit;
 
 /// 被重起的服务（清单里已有的一个常驻程序——它起来就不走，故必须靠 `stop` 收）。
@@ -96,18 +95,18 @@ fn main() -> Reason {
         // 首启唯一的一次 register；重发**不许**再 register（重名即 Unknown，见 §六）。
         if round == 1 {
             match table.register(name, Announce::None) {
-                Ok(()) => say(&format!("again: r={round} step=register ok")),
+                Ok(()) => debug!("again: r={round} step=register ok"),
                 Err(_) => return die("again: register"),
             }
         } else {
             match table.register(name, Announce::None) {
                 // 首启之后再登记必须被拒——这一条也是判据（拒了才说明行是复用的）。
-                Err(_) => say(&format!(
+                Err(_) => debug!(
                     "again: r={round} step=register refused (expected)"
-                )),
+                ),
                 Ok(()) => {
                     failures += 1;
-                    say(&format!("again: r={round} step=register ACCEPTED (bug)"));
+                    debug!("again: r={round} step=register ACCEPTED (bug)");
                 }
             }
         }
@@ -117,16 +116,16 @@ fn main() -> Reason {
             Ok(task) => task,
             Err(_) => {
                 failures += 1;
-                say(&format!("again: r={round} step=spawn REFUSED"));
+                debug!("again: r={round} step=spawn REFUSED");
                 break;
             }
         };
-        say(&format!("again: r={round} step=spawn ok"));
+        debug!("again: r={round} step=spawn ok");
 
         // start（无授权、无会话、放行即起来的那一种）。
         if service::start(&mut table, name, task, &[], None, &[], Wait::AtMost(MS)).is_err() {
             failures += 1;
-            say(&format!("again: r={round} step=start REFUSED"));
+            debug!("again: r={round} step=start REFUSED");
             break;
         }
         if round > 1 {
@@ -136,14 +135,14 @@ fn main() -> Reason {
         trace(&table, name, round, "started");
         if table.find(name).map(|s| s.state) == Some(State::NeverStarted) {
             failures += 1;
-            say(&format!("again: r={round} step=state NEVERSTARTED (bug)"));
+            debug!("again: r={round} step=state NEVERSTARTED (bug)");
         }
 
         // 让旧实例退场：stop（下令）→ watch（等它收干净、并把 `Dead` 落地）→ Oust（父方
         // 放下那一格）。**这里等的是 `watch` 不是 `until`**：`until` 只读，状态归 `watch` 写。
         if service::stop(&mut table, name).is_err() {
             failures += 1;
-            say(&format!("again: r={round} step=stop REFUSED"));
+            debug!("again: r={round} step=stop REFUSED");
             break;
         }
         // **落地 `Dead`**：`until` 只读，写表的是 `watch`（见头注的照实记）。
@@ -151,7 +150,7 @@ fn main() -> Reason {
             Ok(true) => {}
             _ => {
                 failures += 1;
-                say(&format!("again: r={round} step=watch UNSETTLED"));
+                debug!("again: r={round} step=watch UNSETTLED");
             }
         }
         trace(&table, name, round, "stopped");
@@ -205,10 +204,10 @@ fn main() -> Reason {
     // 放弃之后表里的样子：**`Dead` 与坐标并存**（这就是"它是什么"的答案）。
     trace(&table, name, ROUNDS + 1, "gave-up");
 
-    say(&format!(
+    debug!(
         "again: total restarts={restarts} failures={failures} budget_tries={tries} gave_up={gave_up} rows={}",
         table.rows().count()
-    ));
+    );
     return 0;
 }
 
@@ -234,9 +233,9 @@ fn trace(table: &Table, name: Name, round: usize, step: &str) {
         State::Stopping => "Stopping",
         State::Dead => "Dead",
     };
-    say(&format!(
+    debug!(
         "again: r={round} step={step} state={state} slot={slot} ready={ready}"
-    ));
+    );
 }
 
 /// 清单里按名字取镜像（只认这一条，与各台主同款）。
@@ -251,13 +250,8 @@ fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], env::ProgramKin
     }
 }
 
-/// 打一行读数。台子的嘴只有调试面这一格。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}
-
 /// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
 fn die(msg: &str) -> Reason {
-    say(msg);
+    debug!("{}", msg);
     1
 }

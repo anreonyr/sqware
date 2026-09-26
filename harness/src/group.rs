@@ -80,17 +80,16 @@ use programs::Reason;
 use env::Mark;
 use programs::root::boot;
 
-use alloc::format;
 
 use env::PieToken;
 use env::ProgramKind;
 use env::TaskId;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
-use runtime::env::debug;
 use runtime::env::mail::{self, HolePie, TolePie};
 use runtime::env::room;
 use runtime::env::unit;
+use protocol::debug;
 
 /// 清单里等待者的名字（`plan::assembly::ALL` 里 `scenes` 含 `group` 的那一行）。
 const WAITER: &str = "waiter";
@@ -207,10 +206,10 @@ fn main() -> Reason {
     }
 
     let pass = hung == WAITERS && woke == WAITERS && deliver && control;
-    say(&format!(
+    debug!(
         "group: hung={hung} woke={woke} deliver={deliver} control={control}"
-    ));
-    say(if pass { "group: PASS" } else { "group: FAIL" });
+    );
+    debug!("{}", if pass { "group: PASS" } else { "group: FAIL" });
     return if pass { 0 } else { 1 };
 }
 
@@ -255,13 +254,8 @@ fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], ProgramKind)> {
     }
 }
 
-/// 打一行读数。台子的嘴只有调试面这一格。
-fn say(msg: &str) {
-    let _ = debug::put(msg);
-}
-
 /// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
 fn die(msg: &str) -> Reason {
-    say(msg);
+    debug!("{}", msg);
     1
 }

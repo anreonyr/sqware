@@ -7,11 +7,10 @@ use super::boot::Up;
 use super::desk;
 use super::fail;
 use crate::rtc;
-use crate::say;
-use alloc::format;
 use env::{HoleDir, Wait};
 use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
+use protocol::debug;
 use protocol::driver::line;
 use protocol::session::slip::Slip;
 use runtime::PAGE_SIZE;
@@ -68,10 +67,10 @@ pub fn run(up: &Up, held: line::client::Line, host: &mut Host) -> Result<(), fai
                     .ok()
                     .map(|s| s.ship())
                 {
-                    Some(Ok(())) => say(&format!("rtc: rang n={} now={now}", host.heard())),
+                    Some(Ok(())) => debug!("rtc: rang n={} now={now}", host.heard()),
                     // **推不出去 = 那位客人没了**（它开的那枚孔随它退场封印）。那一格已经空着
                     // （取走就是兑现），故这里只报一行，不重试、不补发——**读数也不加一**。
-                    _ => say("rtc: notify failed"),
+                    _ => debug!("rtc: notify failed"),
                 }
                 let _ = mail::release(back);
             }
