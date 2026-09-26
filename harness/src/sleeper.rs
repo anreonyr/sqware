@@ -71,7 +71,7 @@ const MS: usize = 1000;
 /// 找不到就再问一次的间隔（毫秒）：门牌是驱动落的，本域可能比它先起。
 const RETRY_MS: usize = 1;
 
-/// 这一槽的**周期**（纳秒）："再过这么久叫我"。`Ask::Arm` 收了相对量之后，这个数就是
+/// 这一槽的**周期**（纳秒）："再过这么久叫我"。`Wire::Arm` 收了相对量之后，这个数就是
 /// **想要的那段距离本身**，不再是"要罩住一趟往返的提前量"——延迟由收帧的驱动承担
 /// （见 `programs/src/driver/rtc/call.rs` 那格的照实记），故它不必再留 4× 余量。
 const SLOT_NS: u64 = 50_000_000;
@@ -117,7 +117,7 @@ fn main() -> Report<'static> {
     let _ = debug::put(&format!("sleeper: now={now}"));
 
     // **照实记（退场的一例：`arming_the_past_is_refused`）**：那一例是"拿 `now - 1ms` 去约，
-    // 期望驱动答 `PAST`"。`Ask::Arm` 收了**相对量**之后"过去"**不可表达** ⇒ 判据与它的
+    // 期望驱动答 `PAST`"。`Wire::Arm` 收了**相对量**之后"过去"**不可表达** ⇒ 判据与它的
     // `sleeper: past=…` 读数一起退场（机制退了，判据也退）。驱动的 `PAST` 那一码留着：`after_ns
     // == 0` 与回绕仍到得了它，只是不再有判据钉着——**这是少了一条判据**，写在这里备查。
 
@@ -162,7 +162,7 @@ fn main() -> Report<'static> {
     suite.case("the_board_took_my_name", move || {
         assert_eq!(reg, bcall::OK)
     });
-    // 照实记：`arming_the_past_is_refused` 那一例随 `Ask::Arm` 收相对量而退场（"过去"
+    // 照实记：`arming_the_past_is_refused` 那一例随 `Wire::Arm` 收相对量而退场（"过去"
     // 不可表达）——判据数 3 → 2，`crates/gate/src/soak.rs` 那张表跟着改。
     suite.case("the_slot_is_already_mine", move || {
         assert_eq!(taken, rcall::TAKEN)

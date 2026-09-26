@@ -25,7 +25,8 @@ plan = { path = "../crates/plan" }
 runtime = { path = "../crates/runtime" }
 # 协议层：第一条协议操作出现了（root 用 `protocol::system` 的服务表起子域）。
 protocol = { path = "../crates/protocol" }
-# 「约」：不碰内核的那一半。取它只为码表宏（`contract::fail_codes!`）——驱动自己的协议住本 crate。
+# 「约」：不碰内核的那一半。取它有两处——码表宏（`contract::fail_codes!`）与报文那一条约定
+# （`contract::message::Message`：rtc 那一族的答那两形要上船台）。驱动自己的协议住本 crate。
 contract = { path = "../crates/contract" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
 # 使用者目前只有 `prog-router`（要数自己的 context、列自己要接的线）。

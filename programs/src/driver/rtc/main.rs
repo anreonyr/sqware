@@ -71,7 +71,10 @@ use env::Wait;
 use programs::driver::assemble;
 use programs::driver::rtc::needs;
 // 服务面那三份：帧形与记号、那一格、客侧两手（客人 `use` 的是同一份）。
-use programs::driver::rtc::{call, core::Slot};
+use programs::driver::rtc::{
+    call::{self, Status, Time},
+    core::Slot,
+};
 
 // 板：本域是**客侧**（只装板路）；树：也是客侧（落门牌 + 按名找线路由者）。
 use protocol::system::operator::Where;
@@ -85,6 +88,7 @@ use cases::Suite;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::driver::line;
 use protocol::session::Quay;
+use protocol::session::slip::Slip;
 use runtime::core::dock::{Dock, View};
 use runtime::core::pile::Pile;
 use runtime::env::debug;
@@ -158,7 +162,7 @@ fn main() -> Result<(), fail::Fail> {
     }
 
     let mut slot = Slot::new();
-    // 一问的形状是 `ARM_LEN`（`ASK` 更短，也走得进来）；缓冲给**一页**（载体的界，
+    // 一问最长那一形是 `Arm`（`Now` 更短，也走得进来）；缓冲给**一页**（载体的界，
     // 见 `Push` 的前置条件）——于是任何一条消息一趟都取得出来。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
@@ -184,7 +188,8 @@ fn main() -> Result<(), fail::Fail> {
             let now = rtc::now(view);
             rtc::clear(view);
             if let Some(back) = slot.fire(now) {
-                match HolePie::from_token(back).push(&call::pack_time(now)) {
+                // 那一声**上船台**（答那一形：一个时刻）——与客人收它走的是同一张表。
+                match Slip::<Time>::seal(back).load(Time::of(now)).ship() {
                     Ok(()) => {
                         rang += 1;
                         say(&format!("rtc: rang n={rang} now={now}"));
@@ -210,7 +215,7 @@ fn main() -> Result<(), fail::Fail> {
 /// **拒了的那一趟也要收尾**：那一枚孔不在任何账上（那一格根本没占上），此后没人会替它收
 /// ⇒ 答完当场放下。这与线那一刀 `drop_lane` 是同一条纪律、同一个理由。
 fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
-    let Some((back, ask)) = call::unpack_ask(frame) else {
+    let Some((back, ask)) = call::Wire::take(frame) else {
         // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
         return;
     };
@@ -228,15 +233,16 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
         return;
     }
     match ask {
-        call::Ask::Now => {
+        call::Wire::Now => {
             let now = rtc::now(view);
-            let _ = HolePie::from_token(back).push(&call::pack_time(now));
+            // 答话**上船台**（答那一形：一个时刻）——与客人收它走的是同一张表。
+            let _ = Slip::<Time>::seal(back).load(Time::of(now)).ship();
             let _ = mail::release(back);
             say(&format!("rtc: asked now={now}"));
         }
-        call::Ask::Arm { after_ns } => {
+        call::Wire::Arm { after_ns } => {
             // **相对量在这一刻落地**：`after_ns` 是"再过多久"，故那个绝对时刻由**收帧的人**算
-            // ——客侧不必猜路有多长（见 `call::Ask` 那一格的照实记）。
+            // ——客侧不必猜路有多长（见 `call::Wire::Arm` 那一格的照实记）。
             let now = rtc::now(view);
             let at = now.saturating_add(after_ns);
             match slot.arm(at, back, now) {
@@ -250,10 +256,11 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
                         rtc::armed(view)
                     ));
                     // 答码**先于**那一声：那一格已经占上，而设备要过一会儿才拉线。
-                    let _ = HolePie::from_token(back).push(&[call::OK]);
+                    let _ = Slip::<Status>::seal(back).load(Status::of(call::OK)).ship();
                 }
                 Err(fail) => {
-                    let _ = HolePie::from_token(back).push(&[call::fail_to_code(Some(fail))]);
+                    let code = call::fail_to_code(Some(fail));
+                    let _ = Slip::<Status>::seal(back).load(Status::of(code)).ship();
                     let _ = mail::release(back);
                     // **照实记（这一行为什么在，以及为什么排在这里）**：拒绝路从前一个字都不
                     // 打，于是"sleeper 那台偶尔少一台"只剩客人侧一句 `alarm err=2`——**迟到
@@ -261,12 +268,12 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
                     // 已经过去了多久（`Past` 那一支 `at <= now`，故它 ≥ 0；`Taken` 那一支
                     // `at` 还在前头，按 0 记）。形状声明在 `crates/gate/src/soak.rs` 的读数表里。
                     //
-                    // **照实记（它为什么在 `push` 之后）**：第一版排在 `push` 之前，而 `say`
-                    // 是**同步 UART**（一行 ~1 ms）——量的人自己站进了被测的那条路上，把客人
-                    // 等答话的时间撑长了。故答话先走、读数后打：这一行不许改变它要量的东西。
+                    // **照实记（它为什么在发答话之后）**：第一版排在那一手之前（那时是裸
+                    // `push`，今天是船台的 `ship`），而 `say` 是**同步 UART**（一行 ~1 ms）——
+                    // 量的人自己站进了被测的那条路上，把客人等答话的时间撑长了。故答话先走、
+                    // 读数后打：这一行不许改变它要量的东西。
                     say(&format!(
-                        "rtc: refused={} at={at} now={now} late_ns={}",
-                        call::fail_to_code(Some(fail)),
+                        "rtc: refused={code} at={at} now={now} late_ns={}",
                         now.saturating_sub(at)
                     ));
                 }

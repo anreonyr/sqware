@@ -4,20 +4,26 @@
 //!
 //! ```text
 //!   now(门牌, ms)        一问一答，自带一枚回信孔，答完就放掉
-//!   arm(门牌, at, ms)    约；**那一枚回信孔留下来**——驱动把它收在那一格里，
+//!   arm(门牌, after, ms) 约；**那一枚回信孔留下来**——驱动把它收在那一格里，
 //!                        到点从那枚孔把"那一声"推回来
 //! ```
 //!
 //! **借孔那一趟的次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
 //! "谁给的 + 记号"两格认，多枚时取**最后那一枚**——故最后那一枚一定就是这一趟那一枚。
 //!
+//! **问走门、答走船台**：问那一侧推的是那扇**门**（`session::call::push_to`，同 `principal`
+//! 的客侧），答那一侧是本端自己那枚孔——**上船台**（`Slip::<Time>` / `Slip::<Status>`：答的
+//! 两形各是一张实现了报文约定的表，见 `call`）。
+//!
 //! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
-use env::Wait;
+use contract::message::Message;
 use env::PieToken;
+use env::Wait;
+use protocol::session::slip::Slip;
 use runtime::env::mail::{self, HolePie};
 
-use super::call;
+use super::call::{self, Arm, Now, Status, Time};
 use super::core::Fail;
 
 /// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数。
@@ -26,16 +32,19 @@ use super::core::Fail;
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）。
 pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     let (back, seed) = lend_out(entry)?;
-    if push(entry, &call::pack_ask(seed)).is_err() {
+    // 编一问：**表上那一手**（定长缓冲，故它不可能失败；`back` 是运输那一格，随动作一起进帧）。
+    let mut frame = [0u8; Now::LEN];
+    Now::of(seed).store(&mut frame);
+    if push(entry, &frame).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
-    let mut buf = [0u8; call::TIME_LEN];
-    let answer = HolePie::from_token(back)
-        .pull_timeout(&mut buf, millis)
-        .ok()
-        .and_then(|n| call::unpack_time(&buf[..n]))
-        .ok_or(Fail::Denied);
+    // 收：答话走**这一趟借出去的那一枚孔**（船台那一手；缓冲由调用方给——这一形 8 字节）。
+    // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
+    let mut buf = Time::EMPTY;
+    let answer = Slip::<Time>::seal(back)
+        .land(buf.as_mut(), millis)
+        .map_err(|_| Fail::Denied);
     let _ = mail::release(back);
     answer
 }
@@ -43,20 +52,23 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
 /// 约一段**时间**：`after_ns`（相对纳秒，"再过多 long"）。成 ⇒ 返那一次约；到点从那枚孔收那一声。
 ///
 /// **照实记（从"时刻"改成"时长"）**：绝对时刻那版要客侧自己补一个送达延迟的猜（见
-/// `call::Ask` 那一格的照实记）；相对量由收帧的驱动算，客侧不必知道路有多长。
+/// `call::Wire::Arm` 那一格的照实记）；相对量由收帧的驱动算，客侧不必知道路有多长。
 ///
 /// 失败域两格都由**驱动说的话**给出（`Taken` / `Past`），第三格 `Denied` 是这一趟自己没
 /// 走到——三种情况对客人是三个不同的下一步，故不合并成一格。
 pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> {
     let (back, seed) = lend_out(entry)?;
-    if push(entry, &call::pack_arm(seed, after_ns)).is_err() {
+    let mut frame = [0u8; Arm::LEN];
+    Arm::of(seed, after_ns).store(&mut frame);
+    if push(entry, &frame).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
-    let mut one = [0u8; call::CODE_LEN];
-    let code = match HolePie::from_token(back).pull_timeout(&mut one, millis) {
-        Ok(n) if n == call::CODE_LEN => one[0],
-        _ => {
+    // 收那一格答码（**恰好 1 字节**：长短都不是这一形 ⇒ 读不懂 ⇒ `Denied`）。
+    let mut one = Status::EMPTY;
+    let code = match Slip::<Status>::seal(back).land(one.as_mut(), millis) {
+        Ok(code) => code,
+        Err(_) => {
             let _ = mail::release(back);
             return Err(Fail::Denied);
         }
@@ -81,10 +93,16 @@ impl Alarm {
     ///
     /// **无界等**：客人只有这一件事，而对面一没，这一枚孔就封印 ⇒ 当场答 `Err(())`，
     /// 不是永久挂住（寿命边随它的**开者**——这一枚是客人自己铸的）。
+    ///
+    /// **照实记（这一格从裸 `pull` 换成船台的"永久"那一档）**：判据一字不改（没到 ⇒ 等、
+    /// 孔封印 ⇒ 当场错），变的是内核那一侧的等法——`Wait::Forever` 在 `pull_timeout` 里落成一个
+    /// **到不了的点**（`u64::MAX`），于是这一等每 ~100 ms 被叫醒一次、自己复探（理由与实测见
+    /// `HolePie::pull_timeout_from`）。
     pub fn receive(&self) -> Result<u64, ()> {
-        let mut buf = [0u8; call::TIME_LEN];
-        let n = self.back.pull(&mut buf).map_err(|_| ())?;
-        call::unpack_time(&buf[..n]).ok_or(())
+        let mut buf = Time::EMPTY;
+        Slip::<Time>::seal(self.back.token())
+            .land(buf.as_mut(), Wait::Forever)
+            .map_err(|_| ())
     }
 }
 
