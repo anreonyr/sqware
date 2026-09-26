@@ -8,7 +8,7 @@
 //!
 //! **① 一枚孔一个方向。** Mail 是单向单槽 ⇒ "收发"不是一枚孔上的两件事，而是**两枚孔、
 //! 两个对象**（本文件与 [`Receiver`](super::receiver)）。这一枚孔是谁铸的、谁读的，由
-//! **建立那一步**说（`establish.rs`），本文件不问。
+//! **建立那一步**说（[`super::establish`]），本文件不问。
 //!
 //! **② 期限在每次调用上**（与 `std::sync::mpsc` 的 `recv_timeout` 同构）：`Wait` 一个参数
 //! 说尽三态——`POLL`（= `AtMost(0)`）**就是** `try_send`：单次尝试、槽满当场答 `Busy`，
@@ -25,8 +25,8 @@ use core::marker::PhantomData;
 
 use env::{HoleDir, MailFail, PieToken, Wait};
 
+use super::{deadline, remain};
 use crate::message::Message;
-use runtime::env::chrono;
 use runtime::env::mail;
 
 /// **我推的那一枚孔** ＋ 这一路流的那一种报（类型）。
@@ -38,11 +38,23 @@ pub struct Sender<M: Message> {
 impl<M: Message> Sender<M> {
     /// 认下一枚**别人给的**号（服务端那一侧：孔是对方铸的、交给我的）。
     ///
-    /// **本文件不分辨"这枚是谁的"**——归属归建立那一手返的那一对：那一对里两枚都是本端铸的，
-    /// 收尾时放下；这一手拿到的**不归本端**，放下它不是本端的事（放了就把客人的孔收掉）。
+    /// **本文件不分辨"这枚是谁的"**——归属归建立那一手返的那一对（[`super::establish::Pair`]）：
+    /// 那一对里两枚都是本端铸的，收尾时放下；这一手拿到的**不归本端**，放下它不是本端的事
+    /// （放了就把客人的孔收掉）。
     pub fn from_token(hole: PieToken) -> Self {
         Self {
             hole: Some(hole),
+            _m: PhantomData,
+        }
+    }
+
+    /// **没有写端**的那一只（对端那一枚没认到）。
+    ///
+    /// **这不是错误**：一段关系可以只有收的方向——单向那一档就是这么用的。
+    /// `send` 对它答 [`SendFail::Unbound`]。
+    pub(crate) fn unbound() -> Self {
+        Self {
+            hole: None,
             _m: PhantomData,
         }
     }
@@ -65,7 +77,7 @@ impl<M: Message> Sender<M> {
         push(hole, bytes, wait).map_err(SendFail::Mail)
     }
 
-    /// 这一枚孔（诊断、挂进组、转授都从这里取）。**没写到端时答 `None`**。
+    /// 这一枚孔（诊断、挂进组、转授都从这里取）。**没有写端时答 `None`**。
     pub fn hole(&self) -> Option<PieToken> {
         self.hole
     }
@@ -92,10 +104,7 @@ fn push(hole: PieToken, bytes: &[u8], wait: Wait) -> Result<(), MailFail> {
         return mail::push(hole, bytes.as_ptr(), bytes.len()).map_err(|e| e.source);
     }
 
-    let deadline = match wait {
-        Wait::Forever => u64::MAX,
-        Wait::AtMost(ms) => chrono::clock().saturating_add(ms as u64 * 1_000_000),
-    };
+    let until = deadline(wait);
     let pie = mail::HolePie::from_token(hole);
     loop {
         match mail::push(hole, bytes.as_ptr(), bytes.len()) {
@@ -104,25 +113,12 @@ fn push(hole: PieToken, bytes: &[u8], wait: Wait) -> Result<(), MailFail> {
             Err(e) if e.source.is_busy() => {}
             Err(e) => return Err(e.source),
         }
-        let remain = remain(deadline);
+        let remain = remain(until);
         if remain == Wait::POLL {
             // 期限内没腾出槽位：这一格答**忙**，不是"孔坏了"。
             return Err(MailFail::Busy);
         }
         // **醒来自己再推一次**：这一手只是提示（真醒还是期限到，由下一轮那一推说了算）。
         let _ = pie.wait(HoleDir::Push, remain);
-    }
-}
-
-/// 期限 → 还剩多久（`POLL` = 已经不剩）。单调钟按纳秒读，**不依赖 timebase 频率**。
-fn remain(deadline: u64) -> Wait {
-    if deadline == u64::MAX {
-        return Wait::Forever;
-    }
-    let now = chrono::clock();
-    if now >= deadline {
-        Wait::POLL
-    } else {
-        Wait::AtMost(((deadline - now) / 1_000_000) as usize)
     }
 }
