@@ -35,8 +35,8 @@ mod rtc;
 
 use programs::driver::rtc::core::Host;
 
-/// 本域那一台：**返回类型就是它的死法**——编号与那句话都在 [`adapt::fail::Fail`] 里
-/// （装配那三步 `1`–`3` 由 [`programs::driver::assemble`] 那一族共用，本域自己那几格从 4 起）。
+/// 本域那一台：**返回类型就是它的死法**——一格一格都在 [`adapt::fail`] 里
+/// （**一族口径**在 [`programs::driver::fail`]：号取自装配单——本域自己那几步报 `E_RTC`）。
 #[programs::entry]
 fn main() -> Result<(), adapt::fail::Fail> {
     // 1–3：领配给（按位次归位）→ 开图自证 → 上板 + 开会话。

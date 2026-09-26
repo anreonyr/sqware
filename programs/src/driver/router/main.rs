@@ -33,8 +33,9 @@ mod core;
 /// 设备面（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
 mod plic;
 
-/// 本域那一台：**返回类型就是它的死法**——编号与那句话都在 [`adapt::fail::Fail`] 里
-/// （装配那几步 `1`–`3` 由 [`programs::driver::assemble`] 那一族共用，本域自己那几格从 4 起）。
+/// 本域那一台：**返回类型就是它的死法**——一格一格都在 [`adapt::fail`] 里
+/// （**一族口径**在 [`programs::driver::fail`]：号取自装配单——本域自己那几步报 `E_ROUTER`，
+/// "配给那一趟没成"那一格照旧带 `assemble` 那一族的小整数）。
 #[programs::entry]
 fn main() -> Result<(), adapt::fail::Fail> {
     // 起手：领配给 → 开两图 → 读树 → 建账 → 铸入口 → 上板 ＋ 上树 → 挂组。

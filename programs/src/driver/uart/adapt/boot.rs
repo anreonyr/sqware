@@ -3,7 +3,7 @@
 //! 三步的产物是**同一条命**（设备映射 ＋ 树那条会话 ＋ 读行那枚孔），故合成一个类型 [`Up`]：
 //! 上树、登记、常驻都从它取件。装会话那一步也在这里，因为**同一个域只开一条**——上树与登记共用它。
 
-use super::fail;
+use super::fail::{Fail, Step};
 use crate::uart as device;
 use env::{PieToken, TaskId, Wait};
 use plan::assembly::UART_WANTS as WANTS;
@@ -48,39 +48,39 @@ impl Up {
 /// 2. 开图 ＋ 开闸：**设备到手之后第一件要打开的就是"收到字节就拉线"**（这条线归本域，
 ///    因为只有持有设备的人才有资格动它）；
 /// 3. 上板：**只为让板看得见本域的死**（本域开的那扇门随收尾封印 ⇒ 板当场看出来）。
-pub fn up() -> Result<Up, fail::Fail> {
+pub fn up() -> Result<Up, Fail> {
     // 1. 客侧装配。
     let mut slots = [None; WANTS.len()];
     let got = assemble::receive(&mut slots)?;
     // 单子上只有一条，缺了它就没得开工（父域按同一张单发货，缺格即装配错）。
     let [Some(serial)] = slots else {
-        return Err(fail::Fail::Assemble(assemble::E_GRANT));
+        return Err(Fail::at(Step::Assemble(assemble::E_GRANT)));
     };
     debug!("uart: got {got}");
 
     // 2. 开图 + 开闸。
-    let dock = Dock::open(PolePie::from_token(serial.token())).map_err(|_| fail::Fail::Open)?;
+    let dock = Dock::open(PolePie::from_token(serial.token())).map_err(|_| Fail::at(Step::Open))?;
     device::arm_rx(dock.view());
     // 坐标**随记录发下来**（内核按 `reg` 段造的门闩；本域既不写死名字、也不写死地址）。
-    let key = serial.key().ok_or(fail::Fail::Open)?;
+    let key = serial.key().ok_or(Fail::at(Step::Open))?;
     // 设备门的坐标只能是区（内核就是按 `reg` 段造的）；别的形就是配给错了。
-    let base = key.base().ok_or(fail::Fail::Open)?;
+    let base = key.base().ok_or(Fail::at(Step::Open))?;
     debug!("uart: ier=rx at={base:#x}");
 
     // 3. 上板：**只为让板看得见本域的死**；不挂牌子——名字在树上。**问话孔照交**：不交的那一位
     //    在板账上永远"没挂齐"，板线程会一直退化成 1 ms 节拍（`board::settle` 的 `unarmed`）。
     let sire = utask::sire();
-    let (_link, board) = board::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Board)?;
+    let (_link, board) = board::open(sire, Wait::AtMost(MS)).map_err(|_| Fail::at(Step::Board))?;
     if board::ask_hole(board).is_err() {
-        return Err(fail::Fail::Board);
+        return Err(Fail::at(Step::Board));
     }
 
     // 树那条会话：**只能开一条**（`operator::open` 装的是"一条叫 `operator` 的泊位"，同一个域开
     // 第二条会撞同名；而两次 `open` 拿到的是两条*不同*的会话，孔各归各的表，混用更糟）——
     // 实测栽过：第二趟 `open` 失败 ⇒ 本域当场退出，客人那一侧读一枚封了的孔，一个字节都读不到。
-    let (link, host) = operator::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Tree)?;
-    let talk = operator::ask_hole(host).map_err(|_| fail::Fail::Tree)?;
-    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| fail::Fail::Tree)?;
+    let (link, host) = operator::open(sire, Wait::AtMost(MS)).map_err(|_| Fail::at(Step::Tree))?;
+    let talk = operator::ask_hole(host).map_err(|_| Fail::at(Step::Tree))?;
+    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| Fail::at(Step::Tree))?;
     Ok(Up {
         key,
         dock,

@@ -4,7 +4,7 @@
 //! 后面的门面、上树、常驻都从它取件。装会话那一步也在这里，因为**同一个域只开一条**
 //! （`operator::open` 装的是"一条叫 `operator` 的泊位"，开第二条会撞同名）——上树与登记共用它。
 
-use super::fail;
+use super::fail::{Fail, Step};
 use crate::rtc;
 use env::{PieToken, TaskId, Wait};
 use plan::Pair;
@@ -49,31 +49,31 @@ impl Up {
 /// 1. 领配给：那一页寄存器（`ONLY`：同一时刻只该有一个持有者）；
 /// 2. 开图 ＋ **自证**：那对纳秒格子读两次（两次不同 ⇒ 它是活的）；
 /// 3. 上板（**只为让板看得见本域的死**）＋ 开树那条会话。
-pub fn up() -> Result<Up, fail::Fail> {
+pub fn up() -> Result<Up, Fail> {
     // 1. 领配给。
     let mut slots = [None; WANTS.len()];
     let got = assemble::receive(&mut slots)?;
     // 单子上只有一条，缺了它就没得开工（父域按同一张单发货，缺格即装配错）。
     let [Some(pie)] = slots else {
-        return Err(fail::Fail::Assemble(assemble::E_GRANT));
+        return Err(Fail::at(Step::Assemble(assemble::E_GRANT)));
     };
     debug!("rtc: got {got}");
 
     // 2. 开图 + 自证。
-    let dock = Dock::open(PolePie::from_token(pie.token())).map_err(|_| fail::Fail::Open)?;
+    let dock = Dock::open(PolePie::from_token(pie.token())).map_err(|_| Fail::at(Step::Open))?;
     let view = dock.view();
     let (t0, t1) = (rtc::now(view), rtc::now(view));
     debug!("rtc: time {t0} -> {t1}");
 
     // 3. 上板 + 树那条会话。
     let sire = utask::sire();
-    let (_link, board_link) = board::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Board)?;
+    let (_link, board_link) = board::open(sire, Wait::AtMost(MS)).map_err(|_| Fail::at(Step::Board))?;
     if board::ask_hole(board_link).is_err() {
-        return Err(fail::Fail::Board);
+        return Err(Fail::at(Step::Board));
     }
-    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| fail::Fail::Tree)?;
-    let (link, host) = operator::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Tree)?;
-    let talk = operator::ask_hole(host).map_err(|_| fail::Fail::Tree)?;
+    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| Fail::at(Step::Tree))?;
+    let (link, host) = operator::open(sire, Wait::AtMost(MS)).map_err(|_| Fail::at(Step::Tree))?;
+    let talk = operator::ask_hole(host).map_err(|_| Fail::at(Step::Tree))?;
     Ok(Up {
         pie,
         dock,

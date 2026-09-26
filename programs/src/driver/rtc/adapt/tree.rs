@@ -5,7 +5,7 @@
 //! 名字 `rtc`、归属 [`Mine::No`]（门牌公开可查，谁都能查、谁都能用），以及"线 = 发下来的那一段区"。
 
 use super::boot::Up;
-use super::fail;
+use super::fail::{Fail, Step};
 use env::Wait;
 use programs::driver::register;
 use programs::driver::tree::{self, Mine};
@@ -22,7 +22,7 @@ const MS: usize = 1000;
 ///
 /// 坐标**随配给记录发下来**（内核按 `reg` 段造的门闩；本域既不写死名字、也不写死地址）——
 /// 取它这一步的**次序照旧**：在那一趟之后（失败路径上"先报树那一行、再死"与原先一致）。
-pub fn plate(up: &Up) -> Result<line::client::Line, fail::Fail> {
+pub fn plate(up: &Up) -> Result<line::client::Line, Fail> {
     tree::plate(
         ME,
         Mine::No,
@@ -32,9 +32,9 @@ pub fn plate(up: &Up) -> Result<line::client::Line, fail::Fail> {
         up.entry,
         Wait::AtMost(MS),
     );
-    let key = up.pie.key().ok_or(fail::Fail::Line)?;
+    let key = up.pie.key().ok_or(Fail::at(Step::Line))?;
     let held = register::occupy(&up.link, up.talk, key, Wait::AtMost(MS))
-        .map_err(|_| fail::Fail::Line)?;
+        .map_err(|_| Fail::at(Step::Line))?;
     debug!("rtc: line occupied");
     Ok(held)
 }

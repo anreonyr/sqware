@@ -8,7 +8,7 @@
 //! 反过来的话，线放回了而字节还挂在设备里，就是"电平一直高、却没人读"的空转。
 
 use super::boot::Up;
-use super::fail;
+use super::fail::{Fail, Step};
 use crate::core::batch::Batch;
 use crate::uart as device;
 use env::Wait;
@@ -22,13 +22,13 @@ const DRAIN_MAX: usize = 64;
 /// 常驻。
 ///
 /// 失败：那条线没了（`receive` 答错）⇒ 这个域没有可继续的状态（照实报 `Dead`）。
-pub fn run(up: &Up, held: line::client::Line) -> Result<(), fail::Fail> {
+pub fn run(up: &Up, held: line::client::Line) -> Result<(), Fail> {
     // 读行那枚孔**就是门牌**：本域铸的，客人经树上 `FIND /device/uart` 拿到它的副本。
     let console = HolePie::from_token(up.entry);
     let mut raw = [0u8; DRAIN_MAX];
     loop {
         if held.receive(Wait::Forever).is_err() {
-            return Err(fail::Fail::Dead);
+            return Err(Fail::at(Step::Dead));
         }
         let n = device::drain(up.view(), &mut raw);
         // 交给读行的人。**这一手要阻塞**：字节是内容，丢了补不回来；读行的人（`echo`）

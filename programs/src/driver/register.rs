@@ -23,7 +23,7 @@ const SERVICE: &str = "router";
 /// 泊位由 [`line`] 那一层装。名字先译成号（号才是树的直接坐标），此后按号。
 ///
 /// 失败：`Err(())` = 找不到 / 授不进来 / 占不上——调用方按自己那格死法折
-/// （今天两台都折 `Fail::Line`）。
+/// （今天两台都折 `Fail::at(Step::Line)`）。
 pub fn occupy(
     link: &Quay,
     talk: PieToken,

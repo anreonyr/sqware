@@ -1,22 +1,22 @@
-//! uart 这一域的**错误类型**——`main` 的返回类型，`?` 一路把它带出来。
+//! uart::adapt::fail — 本域的死法：**一格 = 死在启动/常驻的哪一步**（一族口径在 [`driver::fail`]）。
 //!
-//! 它就是从前那几张 `const E_*` 编号表换了个样子：**号没变**（`Died` 那一族还是小整数，
-//! 读 trace 的人照样一眼看出死在第几步），只是现在
-//!   - **有类型**：忘了一个格子是编译错误（从前 `exit_with(6)` 谁也拦不住）；
-//!   - **能带话**：退场那一句 note 与号长在一起（`Report::note`），内核在出口当场打；
-//!   - **能过 `?`**：`assemble` 那一族的号有 `From`，调用点不必再拆
-//!     `Err(code) => return code`。
+//! 本文件只留 uart 自己的事实：**它走得到哪几步**、每一步那句话，以及它在装配单上那一号
+//! （`plan::assembly::E_UART`——**本域一个数都不写**，见 `driver/fail.rs` 那条照实记）。
 //!
-//! 编号口径：`2..=3` 是 [`assemble`] 那一族（`1` 是已撤的 `E_SIRE`），`4..` 起是本域自己的。
+//! [`driver::fail`]: programs::driver::fail
 
-use programs::{Exit, Report};
+use plan::assembly::{Died, E_UART};
+use programs::driver::fail::{self, Who};
 
-/// uart 的死法：**一格 = 死在启动/常驻的哪一步**。
+/// uart 这一台（[`Fail`] 里那格"谁"）。
+pub struct Uart;
+
+/// uart 的死法：**一格 = 死在启动/常驻的哪一步**（只有 uart 走得到的那几格）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fail {
+pub enum Step {
     /// 环境调用失败（`sire` / 开会话 / 铸孔这一类）。
     /// `assemble::receive` 带来的号（`E_UP` / `E_GRANT`——原样往外带）。
-    Assemble(env::Reason),
+    Assemble(Died),
     /// 设备门开不动 / 坐标不是区（`Dock::open`、`key.base()`）。
     Open,
     /// 上板那三步（开板路、要问话孔、交接）。
@@ -29,42 +29,35 @@ pub enum Fail {
     Dead,
 }
 
-/// 本域的小整数编号（**与从前的 `const E_*` 同值**，只是搬进了类型里）。
-impl Fail {
-    fn code(self) -> env::Reason {
+impl fail::Step for Step {
+    fn code(self, died: Died) -> Died {
         match self {
-            // 环境负码的**样子**照实带出去：`usize` 是 64 位，负码在自己那段高位上仍互不相同。
-            Fail::Assemble(code) => code,
-            Fail::Open => 4,
-            Fail::Board => 5,
-            Fail::Line => 6,
-            Fail::Tree => 7,
-            Fail::Dead => 8,
+            // 配给那一趟的号**原样带过**；本域自己那几格取装配单里那一号。
+            Step::Assemble(code) => code,
+            _ => died,
         }
     }
 
-    const fn text(self) -> &'static str {
+    fn text(self) -> &'static str {
         match self {
-            Fail::Assemble(_) => "uart: assemble",
-            Fail::Open => "uart: device open failed",
-            Fail::Board => "uart: board",
-            Fail::Tree => "uart: tree",
-            Fail::Line => "uart: line",
-            Fail::Dead => "uart: line gone",
+            Step::Assemble(_) => "uart: assemble",
+            Step::Open => "uart: device open failed",
+            Step::Board => "uart: board",
+            Step::Tree => "uart: tree",
+            Step::Line => "uart: line",
+            Step::Dead => "uart: line gone",
         }
     }
 }
 
-impl Exit for Fail {
-    fn report(&self) -> Report<'_> {
-        Report::note(self.code(), self.text())
+impl Who for Uart {
+    type Step = Step;
+    const DIED: Died = E_UART;
+
+    fn assembled(code: Died) -> Step {
+        Step::Assemble(code)
     }
 }
 
-
-
-impl From<env::Reason> for Fail {
-    fn from(code: env::Reason) -> Self {
-        Fail::Assemble(code)
-    }
-}
+/// 本域的死法（`main` 的返回类型）。
+pub type Fail = fail::Fail<Uart>;

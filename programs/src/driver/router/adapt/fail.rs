@@ -1,15 +1,22 @@
-//! router 这一域的**错误类型**——`main` 的返回类型，`?` 一路把它带出来。
+//! router::adapt::fail — 本域的死法：**一格 = 死在启动/常驻的哪一步**（一族口径在 [`driver::fail`]）。
 //!
-//! 号与从前的 `const E_*` **同值**（1–3 归 [`assemble`]，4 起是本域），只是现在有类型、能带话。
+//! 本文件只留 router 自己的事实：**它走得到哪几步**、每一步那句话，以及它在装配单上那一号
+//! （`plan::assembly::E_ROUTER`——**本域一个数都不写**，见 `driver/fail.rs` 那条照实记）。
+//!
+//! [`driver::fail`]: programs::driver::fail
 
-use programs::{Exit, Report};
+use plan::assembly::{Died, E_ROUTER};
+use programs::driver::fail::{self, Who};
 
-/// 线路由者的死法：**一格 = 死在启动/常驻的哪一步**。
+/// router 这一台（[`Fail`] 里那格"谁"）。
+pub struct Router;
+
+/// 线路由者的死法：**一格 = 死在启动/常驻的哪一步**（只有 router 走得到的那几格）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fail {
+pub enum Step {
     /// 环境调用失败（`sire` / 铸孔 / 开会话这一类）。
     /// `assemble::receive` 带来的号（`E_UP` / `E_GRANT`——原样往外带）。
-    Assemble(env::Reason),
+    Assemble(Died),
     /// 两枚门闩开不动（控制器 / 树）。
     Open,
     /// 读树那一趟没读出控制器、context 与线集合。
@@ -22,41 +29,35 @@ pub enum Fail {
     Bell,
 }
 
-impl Fail {
-    fn code(self) -> env::Reason {
+impl fail::Step for Step {
+    fn code(self, died: Died) -> Died {
         match self {
-            // 环境负码的**样子**照实带出去：`usize` 是 64 位，负码在自己那段高位上仍互不相同。
-            Fail::Assemble(code) => code,
-            Fail::Open => 4,
-            Fail::Tree => 5,
-            Fail::Bell => 6,
-            Fail::Desk => 7,
-            Fail::Account => 8,
+            // 配给那一趟的号**原样带过**；本域自己那几格取装配单里那一号。
+            Step::Assemble(code) => code,
+            _ => died,
         }
     }
 
-    const fn text(self) -> &'static str {
+    fn text(self) -> &'static str {
         match self {
-            Fail::Assemble(_) => "router: assemble",
-            Fail::Open => "router: docks",
-            Fail::Tree => "router: tree",
-            Fail::Bell => "router: bell",
-            Fail::Desk => "router: desk",
-            Fail::Account => "router: line account full",
+            Step::Assemble(_) => "router: assemble",
+            Step::Open => "router: docks",
+            Step::Tree => "router: tree",
+            Step::Account => "router: line account full",
+            Step::Desk => "router: desk",
+            Step::Bell => "router: bell",
         }
     }
 }
 
-impl Exit for Fail {
-    fn report(&self) -> Report<'_> {
-        Report::note(self.code(), self.text())
+impl Who for Router {
+    type Step = Step;
+    const DIED: Died = E_ROUTER;
+
+    fn assembled(code: Died) -> Step {
+        Step::Assemble(code)
     }
 }
 
-
-
-impl From<env::Reason> for Fail {
-    fn from(code: env::Reason) -> Self {
-        Fail::Assemble(code)
-    }
-}
+/// 本域的死法（`main` 的返回类型）。
+pub type Fail = fail::Fail<Router>;

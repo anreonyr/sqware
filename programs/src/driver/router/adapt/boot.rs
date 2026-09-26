@@ -3,7 +3,7 @@
 //! 起手的产物是**同一条命**（控制器的事实 / 账 / 门铃 / 组 / 门外那一页缓冲），故合成一个
 //! 类型 [`Up`]：常驻那一圈每醒一次用到的就是它。
 
-use super::fail;
+use super::fail::{Fail, Step};
 use crate::core::sources::Sources;
 use crate::plic::Plic;
 use alloc::vec::Vec;
@@ -47,26 +47,26 @@ pub struct Up {
 }
 
 /// 起手。
-pub fn up() -> Result<Up, fail::Fail> {
+pub fn up() -> Result<Up, Fail> {
     // 客侧装配：会话 + 收配给（**编号原样带出去**——`assemble` 报的是"死在装配的哪一步"，
     // 折成同一个号就等于把那几个编号变成没人读得到的死码）。
     let mut slots = [None; WANTS.len()];
     let got = assemble::receive(&mut slots)?;
     // 三枚都要在：少一枚就不必继续（父域按同一张单子发货，缺格即装配错）。
     let [Some(plic_pie), Some(dtb_pie), Some(bell_pie)] = slots else {
-        return Err(fail::Fail::Assemble(assemble::E_GRANT));
+        return Err(Fail::at(Step::Assemble(assemble::E_GRANT)));
     };
     debug!("router: got {got}");
 
     // 开图 + 读树：控制器、本域的 context、要接的线（与"没进来的账"）。
     let plic_dock =
-        Dock::open(PolePie::from_token(plic_pie.token())).map_err(|_| fail::Fail::Open)?;
+        Dock::open(PolePie::from_token(plic_pie.token())).map_err(|_| Fail::at(Step::Open))?;
     let dtb_dock =
-        Dock::open(PolePie::from_token(dtb_pie.token())).map_err(|_| fail::Fail::Open)?;
+        Dock::open(PolePie::from_token(dtb_pie.token())).map_err(|_| Fail::at(Step::Open))?;
     let dtb = dtb_dock.view();
     // SAFETY: 设备树是内核只读借映进本域的整棵（保留区，终身存活）；`Sources::of` 只读它。
     let bytes = unsafe { core::slice::from_raw_parts(dtb.base() as *const u8, dtb.size()) };
-    let sources = Sources::of(bytes).ok_or(fail::Fail::Tree)?;
+    let sources = Sources::of(bytes).ok_or(Fail::at(Step::Tree))?;
     let plic = Plic::new(plic_dock.view(), &sources);
     debug!("router: docks open");
     // 线集合与五笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
@@ -89,14 +89,14 @@ pub fn up() -> Result<Up, fail::Fail> {
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见 `driver/router/mod.rs`）。
-    let lines = Lines::new(sources.device_count()).ok_or(fail::Fail::Account)?;
+    let lines = Lines::new(sources.device_count()).ok_or(Fail::at(Step::Account))?;
 
     // 服务入口：本线程铸、本线程读——**它就是树上那块门牌**。
     //
     // 线那一面（账 + 各家客户的泊位）与入口同住这一张表：`PieToken` 只在铸它的那张表里
     // 念得出来，而客户往门里推、路由者往客户手里推——两端都得在同一张表里，故这里不再有
     // 第二枚线程。
-    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| fail::Fail::Desk)?;
+    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| Fail::at(Step::Desk))?;
 
     // 板那趟（装上板路、交上问话孔——只为让板看得见本域的死）+ 上树那趟（门牌）。
     let sire = utask::sire();
@@ -105,20 +105,20 @@ pub fn up() -> Result<Up, fail::Fail> {
     // 等三个源：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**（每登记一条线
     // 就把那位客户的泊位挂进来，见 `desk`）。一只组同时等这三样——三件都是事件，
     // 故等待**没有期限**（见 `resident` 里那一注）：会丢的那一次铃已在根上修掉。
-    let pile = Pile::unseal(false).map_err(|_| fail::Fail::Bell)?;
+    let pile = Pile::unseal(false).map_err(|_| Fail::at(Step::Bell))?;
     let entry_hole = HolePie::from_token(entry);
     if pile
         .attach(&NolePie::from_token(bell_pie.token()), HoleDir::Pull)
         .is_err()
         || pile.attach(&entry_hole, HoleDir::Pull).is_err()
     {
-        return Err(fail::Fail::Bell);
+        return Err(Fail::at(Step::Bell));
     }
 
     // 一问的形状是 `lcall::Occupy::LEN`；缓冲给**一页**（载体的界，见 `Push` 的前置条件）。
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(fail::Fail::Desk);
+        return Err(Fail::at(Step::Desk));
     }
     buf.resize(PAGE_SIZE, 0);
 

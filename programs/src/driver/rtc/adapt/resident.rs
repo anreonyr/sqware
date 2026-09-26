@@ -5,7 +5,7 @@
 
 use super::boot::Up;
 use super::desk;
-use super::fail;
+use super::fail::{Fail, Step};
 use crate::rtc;
 use env::{HoleDir, Wait};
 use programs::driver::rtc::core::frame::Time;
@@ -22,17 +22,17 @@ use runtime::env::mail::{self, HolePie};
 /// 两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的，故等待没有期限。
 /// 那只组的成员就是那两枚孔（"就绪"挂进组，"取消息"仍走各自那一手）。
 ///
-/// 失败：组坏了 ⇒ `Err(Fail::Desk)`——本域没有可继续的状态。
-pub fn run(up: &Up, held: line::client::Line, host: &mut Host) -> Result<(), fail::Fail> {
-    let pile = Pile::unseal(false).map_err(|_| fail::Fail::Desk)?;
+/// 失败：组坏了 ⇒ `Err(Fail::at(Step::Desk))`——本域没有可继续的状态。
+pub fn run(up: &Up, held: line::client::Line, host: &mut Host) -> Result<(), Fail> {
+    let pile = Pile::unseal(false).map_err(|_| Fail::at(Step::Desk))?;
     let entry_hole = HolePie::from_token(up.entry);
-    let lane = held.hole().map_err(|_| fail::Fail::Line)?;
+    let lane = held.hole().map_err(|_| Fail::at(Step::Line))?;
     if pile.attach(&entry_hole, HoleDir::Pull).is_err()
         || pile
             .attach(&HolePie::from_token(lane), HoleDir::Pull)
             .is_err()
     {
-        return Err(fail::Fail::Desk);
+        return Err(Fail::at(Step::Desk));
     }
 
     let view = up.view();
@@ -40,7 +40,7 @@ pub fn run(up: &Up, held: line::client::Line, host: &mut Host) -> Result<(), fai
     // 见 `Push` 的前置条件）——于是任何一条消息一趟都取得出来。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(fail::Fail::Desk);
+        return Err(Fail::at(Step::Desk));
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
@@ -48,7 +48,7 @@ pub fn run(up: &Up, held: line::client::Line, host: &mut Host) -> Result<(), fai
         // 到点才有的说（次序不承担语义，只省一次绕回）。
         match pile.await_(Wait::Forever) {
             Ok(_) => {}
-            Err(_) => return Err(fail::Fail::Desk),
+            Err(_) => return Err(Fail::at(Step::Desk)),
         }
         // 门牌是**单槽**：一趟把槽里的都取走。缓冲是一页（见上），故"取不出也丢不掉"
         // 那个状态不存在。
