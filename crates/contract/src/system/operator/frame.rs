@@ -173,58 +173,58 @@ const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= UNIO
 
 // ── 问话：一个动作一条形状，一张形状一张字段表 ──────────────
 
-env::frame! {
-    /// `Road` 那一问的**头两格**：动作码 ＋ **段数**。
-    ///
-    /// **段数写的是真实条数**（哪怕超过 [`Operator::ROAD_MAX`]）：那样"路太长"由持树者按
-    /// [`Fail::Full`] 答出来，而不是在这里被悄悄截断成另一条路。故这一格**允许大于实际带的
-    /// 项数**——它是**声明**，不是长度（"尾巴"那一族里只有它这样）。
-    pub struct RoadHead {
-        op: u8,
-        count: u8,
-    }
+/// `Road` 那一问的**头两格**：动作码 ＋ **段数**。
+///
+/// **段数写的是真实条数**（哪怕超过 [`Operator::ROAD_MAX`]）：那样"路太长"由持树者按
+/// [`Fail::Full`] 答出来，而不是在这里被悄悄截断成另一条路。故这一格**允许大于实际带的
+/// 项数**——它是**声明**，不是长度（"尾巴"那一族里只有它这样）。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct RoadHead {
+    pub op: u8,
+    pub count: u8,
 }
 
-env::frame! {
-    /// `List` 那一问：动作码 ＋ 容器坐标。
-    pub struct List {
-        op: u8,
-        at: Where,
-    }
+/// `List` 那一问：动作码 ＋ 容器坐标。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct List {
+    pub op: u8,
+    pub at: Where,
 }
 
-env::frame! {
-    /// `Part` 那一问：动作码 ＋ 容器坐标 ＋ 新名。
-    pub struct Part {
-        op: u8,
-        at: Where,
-        name: Name,
-    }
+/// `Part` 那一问：动作码 ＋ 容器坐标 ＋ 新名。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Part {
+    pub op: u8,
+    pub at: Where,
+    pub name: Name,
 }
 
-env::frame! {
-    /// `Land` 那一问：动作码 ＋ 容器坐标 ＋ 新名 ＋ 入口那一枚 ＋ **这一格的两轴条件**
-    /// （改那一轴 `mine` / 用那一轴 `rule`）。
-    pub struct Land {
-        op: u8,
-        at: Where,
-        name: Name,
-        entry: PieToken,
-        mine: bool,
-        rule: Rule<Id, Id>,
-    }
+/// `Land` 那一问：动作码 ＋ 容器坐标 ＋ 新名 ＋ 入口那一枚 ＋ **这一格的两轴条件**
+/// （改那一轴 `mine` / 用那一轴 `rule`）。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Land {
+    pub op: u8,
+    pub at: Where,
+    pub name: Name,
+    pub entry: PieToken,
+    pub mine: bool,
+    pub rule: Rule<Id, Id>,
 }
 
-env::frame! {
-    /// `Find` / `Trim` / `Name` 那三问**共用**的形状：动作码 ＋ 一枚号。
-    ///
-    /// **照实记（这三条为什么共用一张表）**：三者的荷载逐字同形（一枚 [`EntryId`]），差别只在
-    /// 动作码那一格——故解出来仍是三格（[`Wire::Find`] / [`Wire::Trim`] / [`Wire::Name`]），
-    /// 而"这一格占多宽"只有一处。
-    pub struct Entry {
-        op: u8,
-        id: EntryId,
-    }
+/// `Find` / `Trim` / `Name` 那三问**共用**的形状：动作码 ＋ 一枚号。
+///
+/// **照实记（这三条为什么共用一张表）**：三者的荷载逐字同形（一枚 [`EntryId`]），差别只在
+/// 动作码那一格——故解出来仍是三格（[`Wire::Find`] / [`Wire::Trim`] / [`Wire::Name`]），
+/// 而"这一格占多宽"只有一处。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Entry {
+    pub op: u8,
+    pub id: EntryId,
 }
 
 /// **一问的荷载**——一个动作一条形状，没有"报法"那一格可以填错。
@@ -475,36 +475,36 @@ impl Listing {
 
 // ── 答那一侧的三张字段表（四种答形共用它们）──────────────────
 
-env::frame! {
-    /// **头一格**：状态。它自己就是"一格状态"那一形（六格失败与"门外那两格"都走它），也是另外
-    /// 三形的起头。
-    pub struct Status {
-        status: u8,
-    }
+/// **头一格**：状态。它自己就是"一格状态"那一形（六格失败与"门外那两格"都走它），也是另外
+/// 三形的起头。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Status {
+    pub status: u8,
 }
 
-env::frame! {
-    /// 「列」那一形的**头两格**：状态 ＋ **条数**（后面跟着那么多个号——那是尾巴，走
-    /// [`env::wire::store_tail`]）。
-    ///
-    /// **这一格的条数与帧长绑死**（读的人两边对不上就判读不懂），故它**不是** `Road` 那一格
-    /// 的条数（那里的条数是**声明**，允许大于实际带的）——两句不同的话，故各说各的。
-    pub struct Tally {
-        status: u8,
-        count: u8,
-    }
+/// 「列」那一形的**头两格**：状态 ＋ **条数**（后面跟着那么多个号——那是尾巴，走
+/// [`env::wire::store_tail`]）。
+///
+/// **这一格的条数与帧长绑死**（读的人两边对不上就判读不懂），故它**不是** `Road` 那一格
+/// 的条数（那里的条数是**声明**，允许大于实际带的）——两句不同的话，故各说各的。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Tally {
+    pub status: u8,
+    pub count: u8,
 }
 
-env::frame! {
-    /// 「号」那一形：`[status][8 字节]`——**定长 9**（`part` / `seek` 答坐标、`find` 答门闩，
-    /// 线上逐字同形）。
-    ///
-    /// **照实记（这一格的类型为什么是裸 8 字节）**：两个号空间（[`EntryId`] / [`PieToken`]）
-    /// 在这一格上分不开，故字段表不假装它是哪一枚——读面见 [`Said::entry`] / [`Said::seed`]。
-    pub struct Word {
-        status: u8,
-        word: [u8; 8],
-    }
+/// 「号」那一形：`[status][8 字节]`——**定长 9**（`part` / `seek` 答坐标、`find` 答门闩，
+/// 线上逐字同形）。
+///
+/// **照实记（这一格的类型为什么是裸 8 字节）**：两个号空间（[`EntryId`] / [`PieToken`]）
+/// 在这一格上分不开，故字段表不假装它是哪一枚——读面见 [`Said::entry`] / [`Said::seed`]。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Word {
+    pub status: u8,
+    pub word: [u8; 8],
 }
 
 /// **一答的形状**——答有四种：一格状态 / 一串号 / 一枚名字 / 一枚号。
@@ -683,50 +683,50 @@ impl Message for Union {
 // 一格号**（装完那一位域之后一次）。两族同住本文件，因为"帧形只有一处"这一条不分装配期与
 // 运行期——它是同一棵树的两半。
 
-env::frame! {
-    /// **协调那一帧**——装配者告诉持树者"哪一位域把门牌交过来了、它是哪一双眼睛"。
-    ///
-    /// 布局（由字段表求和得出，**这里不再写数**）：那一位域自己的号（`TaskId`）｜[`Eyes`]。
-    ///
-    /// **照实记（后 8 字节的对齐方式换过一次）**：原先这一枚枚举（`Role`）与持树者那一侧的
-    /// `ROLE_ROSTER` / `ROLE_LEAGUE` 常量**各写一遍** 0/1，靠两边注释说"必须同值"。现在两侧共读
-    /// [`Eyes`]（`plan::assembly`）——装配单上那一格、这一帧、收的那一侧，一处定义。
-    ///
-    /// **照实记（后 8 字节的来历）**：门禁那一刀里它们是**保留零**。这一刀起有了意思——于是两枚
-    /// 门牌可以**分两帧、按位递**，"长度即语义"（16 = 这一帧）一个字没破。
-    ///
-    /// **照实记（三个名字并成一个，再并成一张表）**：收的那一侧原先自己写着 `COORD_FRAME = 16`，
-    /// 靠注释说"必须同值"——同一条长度写两处，改一处漏一处**编得过**，症状要等帧被读成"读不懂"
-    /// 才显形（正是 [`Eyes`] 那一段照实记里同一个毛病的第二次）。先把两个常量并成一个，再并成上面
-    /// 这张字段表：`16` 这个数从此**一处都不写**，两侧读的是同一个 `LEN`；后 8 字节怎么翻也不再由
-    /// 装配侧按 `Eyes::of_wire` 现算、由收侧按 `from_le_bytes` 现翻——那是 [`Eyes`] 自己的 `Field`
-    /// （读不懂 ⇒ 整帧读不懂，收侧照旧报一句）。
-    ///
-    /// **照实记（它为什么从 `programs/.../operator/bridge.rs` 搬到这里）**：那一帧原先跟着它的
-    /// 那个常量住在**装配侧**（`pub(crate) const COORD_FRAME`），故它**只有真机能跑**——宿主靶
-    /// 编不到 `programs`。搬进「约」的这一半之后，它与 [`Tip`](crate::system::board::frame::Tip)
-    /// 一样在宿主上编得动；**"表外的眼睛码 ⇒ 整帧读不懂"那一条原先由 `judge` 靶钉着，那条判据
-    /// 随靶一并删了**（用户裁定"protocol-case 没必要"）——搬家的理由撤了一半，位置不动。
-    ///
-    /// # 为什么门牌不由装配者转授（照实记：这一格返工过）
-    ///
-    /// 第一版让装配者把那一枚门牌**再转授**给树。真机栽了：`principal` 那一格报
-    /// `operator:coord-ship`，内核答 `-1 Denied`——而装配者手里那一枚权限位是对的（`0x3`：
-    /// `FETCH|STORE`；**那一版授的是这两位**，后来收成 `STORE`——见 `principal/server.rs` 给生我者
-    /// 那一格的照实记）、也在表里。那一格的三道闸（覆盖子集 / 持 `VEST` / 形态一致）都不是原因，
-    /// 于是这一笔"第二手转授"在装配窗口里带进了说不清的锚与来历问题。
-    ///
-    /// **改成由各域自己交**（它本来就是树的客人：`serve_tree` 那一趟已经握着树路）：
-    /// 它 `serve_tree` 之后把门牌那一枚直接 `ship` 给持树者，再把**自己的号 + 哪一双眼睛**经这一
-    /// 帧递过去。于是：
-    ///
-    /// - 持树者拿到的门牌**一手来源**，没有第二手转授；
-    /// - 装配者只剩"递一格号"这一件事，`attach` 里不多一次 `Ship`；
-    /// - 各域本来就与树有一条会话（挂门牌那一趟），这一笔是它的近邻。
-    pub struct CoordFrame {
-        who: TaskId,
-        eyes: Eyes,
-    }
+/// **协调那一帧**——装配者告诉持树者"哪一位域把门牌交过来了、它是哪一双眼睛"。
+///
+/// 布局（由字段表求和得出，**这里不再写数**）：那一位域自己的号（`TaskId`）｜[`Eyes`]。
+///
+/// **照实记（后 8 字节的对齐方式换过一次）**：原先这一枚枚举（`Role`）与持树者那一侧的
+/// `ROLE_ROSTER` / `ROLE_LEAGUE` 常量**各写一遍** 0/1，靠两边注释说"必须同值"。现在两侧共读
+/// [`Eyes`]（`plan::assembly`）——装配单上那一格、这一帧、收的那一侧，一处定义。
+///
+/// **照实记（后 8 字节的来历）**：门禁那一刀里它们是**保留零**。这一刀起有了意思——于是两枚
+/// 门牌可以**分两帧、按位递**，"长度即语义"（16 = 这一帧）一个字没破。
+///
+/// **照实记（三个名字并成一个，再并成一张表）**：收的那一侧原先自己写着 `COORD_FRAME = 16`，
+/// 靠注释说"必须同值"——同一条长度写两处，改一处漏一处**编得过**，症状要等帧被读成"读不懂"
+/// 才显形（正是 [`Eyes`] 那一段照实记里同一个毛病的第二次）。先把两个常量并成一个，再并成上面
+/// 这张字段表：`16` 这个数从此**一处都不写**，两侧读的是同一个 `LEN`；后 8 字节怎么翻也不再由
+/// 装配侧按 `Eyes::of_wire` 现算、由收侧按 `from_le_bytes` 现翻——那是 [`Eyes`] 自己的 `Field`
+/// （读不懂 ⇒ 整帧读不懂，收侧照旧报一句）。
+///
+/// **照实记（它为什么从 `programs/.../operator/bridge.rs` 搬到这里）**：那一帧原先跟着它的
+/// 那个常量住在**装配侧**（`pub(crate) const COORD_FRAME`），故它**只有真机能跑**——宿主靶
+/// 编不到 `programs`。搬进「约」的这一半之后，它与 [`Tip`](crate::system::board::frame::Tip)
+/// 一样在宿主上编得动；**"表外的眼睛码 ⇒ 整帧读不懂"那一条原先由 `judge` 靶钉着，那条判据
+/// 随靶一并删了**（用户裁定"protocol-case 没必要"）——搬家的理由撤了一半，位置不动。
+///
+/// # 为什么门牌不由装配者转授（照实记：这一格返工过）
+///
+/// 第一版让装配者把那一枚门牌**再转授**给树。真机栽了：`principal` 那一格报
+/// `operator:coord-ship`，内核答 `-1 Denied`——而装配者手里那一枚权限位是对的（`0x3`：
+/// `FETCH|STORE`；**那一版授的是这两位**，后来收成 `STORE`——见 `principal/server.rs` 给生我者
+/// 那一格的照实记）、也在表里。那一格的三道闸（覆盖子集 / 持 `VEST` / 形态一致）都不是原因，
+/// 于是这一笔"第二手转授"在装配窗口里带进了说不清的锚与来历问题。
+///
+/// **改成由各域自己交**（它本来就是树的客人：`serve_tree` 那一趟已经握着树路）：
+/// 它 `serve_tree` 之后把门牌那一枚直接 `ship` 给持树者，再把**自己的号 + 哪一双眼睛**经这一
+/// 帧递过去。于是：
+///
+/// - 持树者拿到的门牌**一手来源**，没有第二手转授；
+/// - 装配者只剩"递一格号"这一件事，`attach` 里不多一次 `Ship`；
+/// - 各域本来就与树有一条会话（挂门牌那一趟），这一笔是它的近邻。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CoordFrame {
+    pub who: TaskId,
+    pub eyes: Eyes,
 }
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────

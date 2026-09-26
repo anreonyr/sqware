@@ -9,7 +9,7 @@
 //! ```
 //!
 //! **四张表、两个方向**：[`Now`] / [`Arm`] 是问的两形，[`Time`] / [`Status`] 是答的两形——偏移与
-//! 长度全部由字段宽度求和得出（`env::frame!` 那一处定义），手写的那五枚自由函数
+//! 长度全部由字段宽度求和得出（`#[derive(env::Frame)]` 那一处定义），手写的那五枚自由函数
 //! （`pack_ask` / `pack_arm` / `unpack_ask` / `pack_time` / `unpack_time`）与那四个长度常量
 //! （`ASK_LEN` / `ARM_LEN` / `TIME_LEN` / `CODE_LEN`）一起退场。
 //!
@@ -55,7 +55,7 @@
 //!
 //! 本文件住**驱动自己那一片目录**，不在 `crates/protocol`：服务面 = 各驱动自己的具体协议
 //! （那一条裁定见 `protocol::driver`），而它由驱动与客人**同一份源码**各 `use` 一次。
-//! 可共用的只有那几样：**帧的骨架**（`env::frame!`）、**报文那一条约定**（[`Message`] 与
+//! 可共用的只有那几样：**帧的骨架**（`#[derive(env::Frame)]`）、**报文那一条约定**（[`Message`] 与
 //! 船台）、**"失败域 ↔ 线上那一格"那张表**（`contract::fail_codes!`）与**成功那一格**
 //! （`protocol::OK`）——各家的失败码仍按自己失败域的顺序排。
 
@@ -101,23 +101,23 @@ contract::fail_codes! {
 
 // ── 一问：两形各一张表 ───────────────────────────────────────
 
-env::frame! {
-    /// **问那一形 · 「现在几点」**：动作码 ＋ 那一格。
-    ///
-    /// 动作码由 [`Now::of`] 钉进来（表那一格是裸字节，是构造那一手保证的）。
-    pub struct Now {
-        op: u8,
-        back: PieToken,
-    }
+/// **问那一形 · 「现在几点」**：动作码 ＋ 那一格。
+///
+/// 动作码由 [`Now::of`] 钉进来（表那一格是裸字节，是构造那一手保证的）。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Now {
+    pub op: u8,
+    pub back: PieToken,
 }
 
-env::frame! {
-    /// **问那一形 · 「再过多 long 叫我」**：动作码 ＋ 那一格 ＋ **一个相对量**。
-    pub struct Arm {
-        op: u8,
-        back: PieToken,
-        after_ns: u64,
-    }
+/// **问那一形 · 「再过多 long 叫我」**：动作码 ＋ 那一格 ＋ **一个相对量**。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Arm {
+    pub op: u8,
+    pub back: PieToken,
+    pub after_ns: u64,
 }
 
 impl Now {
@@ -178,20 +178,20 @@ impl Wire {
 
 // ── 一答：两形各一张表（**只有这两张上船台**）────────────────
 
-env::frame! {
-    /// **答那一形 · 一个时刻**：驱动读设备那一刻的纳秒计数（u64 LE）。
-    pub struct Time {
-        ns: u64,
-    }
+/// **答那一形 · 一个时刻**：驱动读设备那一刻的纳秒计数（u64 LE）。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Time {
+    pub ns: u64,
 }
 
-env::frame! {
-    /// **答那一形 · 一个答码**：收下了没有（[`OK`] / [`TAKEN`] / [`PAST`] / [`BAD`]）。
-    ///
-    /// 与板 / 树那两族的 1 字节答**同名同位**（`Status`）：一格状态、没有荷载。
-    pub struct Status {
-        status: u8,
-    }
+/// **答那一形 · 一个答码**：收下了没有（[`OK`] / [`TAKEN`] / [`PAST`] / [`BAD`]）。
+///
+/// 与板 / 树那两族的 1 字节答**同名同位**（`Status`）：一格状态、没有荷载。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Status {
+    pub status: u8,
 }
 
 impl Time {

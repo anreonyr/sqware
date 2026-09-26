@@ -32,30 +32,30 @@ use env::PieToken;
 
 // ── 一问那一形 ──────────────────────────────────────────────
 
-env::frame! {
-    /// **一问那一形**（principal 与 coalition **同形**）：动作码 ＋ 两个 8 字节的号 ＋
-    /// **回信孔那一格**。
-    ///
-    /// `a` / `b` 两格的**意义由动作码定**（各族那枚 `Req` 说它这一条有几格）；`back` 是**运输**
-    /// 那一格（往哪回），不是动作的荷载——故它排最后，谁都不许把它当第三个号使。
-    ///
-    /// **照实记（`back` 那一格为什么在帧里）**：从前它不在——客侧 `lend` 把 `port::ship` 的第二格
-    /// （`to.seed()`，就是"我给你的那一枚在你表里是几号"）**扔了**，于是服务端只能**扫自己的表**
-    /// 按"谁给的 ＋ 记号"把那一枚认回来（`session::call::find`）。那一扫是每趟请求一遍全表，
-    /// 而 `Collect` 每枚还要算一次 `vestor`（吃全世界快照）——读数见
-    /// `programs/src/driver/rtc/main.rs` 与提交 `444d1f3` / `b58fda4`。
-    /// 把它放进帧里之后，服务端**一次 `Reserve` 就验完**（判据一字未改：谁开的 ＋ 记号）。
-    ///
-    /// **照实记（"`ASK_LEN = 17`"那一句是假的）**：本文件、`principal/frame.rs`、
-    /// `coalition/frame.rs` 与两族的 `mod.rs` 原先都写"一问 17 字节"——那是 `back` 那一格
-    /// **落地之前**抄的，此后它一直是 `1 + 8 + 8 + 8 = 25`（`pack_ask` 写满 25、`unpack_ask`
-    /// 要 25）。今天这个数**一处都不写**（表求和），那几处假的也一并改真。
-    pub struct Query {
-        op: u8,
-        a: u64,
-        b: u64,
-        back: PieToken,
-    }
+/// **一问那一形**（principal 与 coalition **同形**）：动作码 ＋ 两个 8 字节的号 ＋
+/// **回信孔那一格**。
+///
+/// `a` / `b` 两格的**意义由动作码定**（各族那枚 `Req` 说它这一条有几格）；`back` 是**运输**
+/// 那一格（往哪回），不是动作的荷载——故它排最后，谁都不许把它当第三个号使。
+///
+/// **照实记（`back` 那一格为什么在帧里）**：从前它不在——客侧 `lend` 把 `port::ship` 的第二格
+/// （`to.seed()`，就是"我给你的那一枚在你表里是几号"）**扔了**，于是服务端只能**扫自己的表**
+/// 按"谁给的 ＋ 记号"把那一枚认回来（`session::call::find`）。那一扫是每趟请求一遍全表，
+/// 而 `Collect` 每枚还要算一次 `vestor`（吃全世界快照）——读数见
+/// `programs/src/driver/rtc/main.rs` 与提交 `444d1f3` / `b58fda4`。
+/// 把它放进帧里之后，服务端**一次 `Reserve` 就验完**（判据一字未改：谁开的 ＋ 记号）。
+///
+/// **照实记（"`ASK_LEN = 17`"那一句是假的）**：本文件、`principal/frame.rs`、
+/// `coalition/frame.rs` 与两族的 `mod.rs` 原先都写"一问 17 字节"——那是 `back` 那一格
+/// **落地之前**抄的，此后它一直是 `1 + 8 + 8 + 8 = 25`（`pack_ask` 写满 25、`unpack_ask`
+/// 要 25）。今天这个数**一处都不写**（表求和），那几处假的也一并改真。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Query {
+    pub op: u8,
+    pub a: u64,
+    pub b: u64,
+    pub back: PieToken,
 }
 
 // **编 / 解**：两族各自的 `Req` / `Wire` 用表自己那两手（`store` / `fetch`）。
@@ -76,21 +76,21 @@ env::frame! {
 
 // ── 一答那一形 ──────────────────────────────────────────────
 
-env::frame! {
-    /// **一答那一形**（两族同形）：状态 ＋ 有没有 ＋ 一枚号。
-    ///
-    /// `a` 那一格是**裸的 8 字节小端**（[`Id::to_bytes`] 就是它，与 `Field for u64` 同一条
-    /// 口径）：principal 的 `DERIVE` / `SIRE` / `RESOLVE` 与 coalition 的 `FOUND` 都填这一格。
-    ///
-    /// **照实记（`flag` 那一格：`== 1` 变成 `!= 0`）**：换表之前这一格由 `unpack_reply` 交成**裸
-    /// 字节**，读法是**调用方**各写的那一句 `present == 1`；而 `Field for bool` 的读法是 `!= 0`。
-    /// 合法帧（写的那一侧只写 0 / 1）逐字与读法都不变，**畸形的 `2` 从此读成"是"**。要严格就把
-    /// "这一格只许 0 / 1"并进下面 `fetch` 的判据（今天没有这一格）。
-    pub struct Reply {
-        status: u8,
-        flag: bool,
-        a: u64,
-    }
+/// **一答那一形**（两族同形）：状态 ＋ 有没有 ＋ 一枚号。
+///
+/// `a` 那一格是**裸的 8 字节小端**（[`Id::to_bytes`] 就是它，与 `Field for u64` 同一条
+/// 口径）：principal 的 `DERIVE` / `SIRE` / `RESOLVE` 与 coalition 的 `FOUND` 都填这一格。
+///
+/// **照实记（`flag` 那一格：`== 1` 变成 `!= 0`）**：换表之前这一格由 `unpack_reply` 交成**裸
+/// 字节**，读法是**调用方**各写的那一句 `present == 1`；而 `Field for bool` 的读法是 `!= 0`。
+/// 合法帧（写的那一侧只写 0 / 1）逐字与读法都不变，**畸形的 `2` 从此读成"是"**。要严格就把
+/// "这一格只许 0 / 1"并进下面 `fetch` 的判据（今天没有这一格）。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Reply {
+    pub status: u8,
+    pub flag: bool,
+    pub a: u64,
 }
 
 impl Reply {

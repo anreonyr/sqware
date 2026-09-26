@@ -1,13 +1,12 @@
-//! mold —— 三个过程宏：**定长帧**、**环境调用枚举**、**入口那一手**。
+//! mold —— 三个过程宏：`#[derive(Frame)]`（**定长帧**）、`#[derive(Envcall)]`（**环境调用
+//! 枚举**）、`#[entry]`（**入口那一手**）。
 //!
 //! 三者互不相干，各占一节，各节的头注跟着它自己那个宏。
 //!
-//! **形态不同，各由"它要产出什么"定死**：
-//!   * `frame!`             —— 要产出**结构体本身**，故只能是 function-like（derive 依附不到
-//!     一枚还不存在的 item）；
-//!   * `#[derive(Envcall)]` —— 产出一枚枚举的 `impl` 与一枚新枚举，附属在你手写的那枚枚举上；
-//!   * `#[entry]`           —— 要**改写**自己挂着的那一项（原函数留着、另加一个符号），故只能
-//!     是 attribute。
+//! **形态不同，各由"它要产出什么"定死**：两个 derive 产出的都是"**附属在你手写的那枚 item
+//! 上的**东西"（`Frame` → 那枚结构体的 `LEN` 与三手；`Envcall` → 那枚枚举的 `impl` 与一枚
+//! 新枚举）；`#[entry]` 则要**改写**自己挂着的那一项（原函数留着、另加一个符号），故只能是
+//! attribute。
 //!
 //! 共享的只有解析小工具（`ret_type` 等），归用到它的那一节。
 
@@ -18,23 +17,23 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Attribute, Data, DeriveInput, Fields, Ident, ItemFn, Lit, Type, parse_macro_input};
 
-// ── `frame!`：定长帧 ─────────────────────────────────────────────────────────
+// ── `#[derive(Frame)]`：定长帧 ───────────────────────────────────────────────
 
-/// **定长帧**那一族的一处定义：给一张字段表，生成结构体 ＋ 长度 ＋ 一对 `store` / `fetch`。
+/// **定长帧**那一族的一处定义：给一枚具名字段的结构体，生成 `LEN` ＋ `store` / `store_in` /
+/// `fetch` 三手（**结构体归你写**——它本就是那张字段表）。
 ///
 /// ```ignore
-/// env::frame! {
-///     /// 板那条提示帧：号 ＋ 定长名字 ＋ 答话路那一格。
-///     pub struct Tip {
-///         who: TaskId,
-///         name: Name,
-///         reply: PieToken,
-///     }
+/// #[derive(env::Frame)]
+/// #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// pub struct Tip {
+///     pub who: TaskId,
+///     pub name: Name,
+///     pub reply: PieToken,
 /// }
 /// ```
 ///
-/// 生成的东西**一眼看得完**（没有隐藏机制）：`pub struct` ＋ 公开字段、`pub const LEN`
-/// （**字段宽度之和**）、`store(&self, &mut [u8; LEN])`、`store_in(&mut [u8]) -> Option<usize>`、
+/// 生成的东西**一眼看得完**（没有隐藏机制）：`pub const LEN`（**字段宽度之和**）、
+/// `store(&self, &mut [u8; LEN])`、`store_in(&mut [u8]) -> Option<usize>`、
 /// `fetch(&[u8]) -> Option<Self>`。
 ///
 /// **偏移一处都不写**——两半由**同一张字段表**生成，故"同一条长度写两处、改一处漏一处
@@ -43,15 +42,16 @@ use syn::{Attribute, Data, DeriveInput, Fields, Ident, ItemFn, Lit, Type, parse_
 /// **它只管定长字段序列**：变长（一条路几段不定）与重复（计数 ＋ 一段数组）那两类**不归它**，
 /// 那几族各有各的手写 `store` / `fetch`（今住在各族的 `impl Message` 里）。
 ///
-/// **字段的字节编解码归 [`env::wire::Field`]**（`WIDTH` / `store` / `fetch`）：宏只负责
+/// **字段的字节编解码归 [`env::wire::Field`]**（`WIDTH` / `store` / `fetch`）：derive 只负责
 /// "顺序与偏移"，一格自己是多宽、怎么写，是那一格自己的事。
 ///
-/// **照实记（它从前是 `macro_rules!`）**：那时它 `#[macro_export]`，名字落在 `env` 的
-/// **crate 根**上——与同 crate 里的同名模块撞过车。改成过程宏之后诊断能指到**那一格字段**
-/// （哪个字段没实现 `Field`），而生成物与调用点一个字没改（调用点照旧写 `env::frame!`：
-/// 那条路径由 `env` 的 `pub use mold::frame;` 转出来）。实现见 [`frame_impl`]。
-#[proc_macro]
-pub fn frame(input: TokenStream) -> TokenStream {
+/// **照实记（它走过三站）**：`macro_rules!`（`#[macro_export]`，名字落在 `env` 的 **crate 根**
+/// 上——与同 crate 里的同名模块撞过车）→ function-like 的 `frame!`（诊断从此能指到**那一格
+/// 字段**，哪个字段没实现 `Field`）→ 今天的 derive。最后一站的理由：`frame!` 吃进去的那张字段
+/// 表**本身就是一枚结构体**，宏却替用户把它写了一遍（连各格的 `pub` 与那行
+/// `#[derive(Clone, Copy, PartialEq, Eq, Debug)]` 都是宏注入的）。实现见 [`frame_impl`]。
+#[proc_macro_derive(Frame)]
+pub fn derive_frame(input: TokenStream) -> TokenStream {
     frame_impl::expand(input.into()).into()
 }
 

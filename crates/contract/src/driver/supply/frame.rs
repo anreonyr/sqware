@@ -3,7 +3,7 @@
 //! **照实记（这一份从前是什么样）**：单子与回单各有一对**自由函数**（`pack_order` /
 //! `unpack_order`、`pack_reply` / `unpack_reply`）、两个**借字节的视图**（`Order<'a>` /
 //! `Reply<'a>`）、一处手算的帧头（`HEAD_LEN`）——"多长、怎么写、怎么读"散在三处。今天收成报那一层
-//! 那两样：**一张头表**（`env::frame!` 求长）＋ **一个 `impl Message`**（编解一处）；尾巴那两段走
+//! 那两样：**一张头表**（`#[derive(env::Frame)]` 求长）＋ **一个 `impl Message`**（编解一处）；尾巴那两段走
 //! `env::wire::{store_tail, fetch_tail}`。
 //!
 //! **照实记（这一族两端都上了船台——上一版这里写反了）**：
@@ -57,16 +57,16 @@ pub const BAD: u8 = 4;
 
 // ── 一单（问）───────────────────────────────────────────────
 
-env::frame! {
-    /// 单子那三格头：**哪一动作**（今天只有 [`OP_SUPPLY`]）＋ 条数 ＋ **给谁**。
-    ///
-    /// 条数是**声明**：与后面那一段绑死（读的人两边对不上就是读不懂）。这一族一问只有这一形，
-    /// 故不留"未完"那一格（对照 coalition 那扇窗：盟籍没有上限）。
-    pub struct OrderHead {
-        op: u8,
-        count: u8,
-        who: TaskId,
-    }
+/// 单子那三格头：**哪一动作**（今天只有 [`OP_SUPPLY`]）＋ 条数 ＋ **给谁**。
+///
+/// 条数是**声明**：与后面那一段绑死（读的人两边对不上就是读不懂）。这一族一问只有这一形，
+/// 故不留"未完"那一格（对照 coalition 那扇窗：盟籍没有上限）。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OrderHead {
+    pub op: u8,
+    pub count: u8,
+    pub who: TaskId,
 }
 
 /// **一张单子**：给谁 ＋ 至多 [`WANT_MAX`] 条（尾巴走 [`env::wire::store_tail`]）。
@@ -158,13 +158,13 @@ impl Message for Order {
 
 // ── 一答（回单）─────────────────────────────────────────────
 
-env::frame! {
-    /// 回单那头两格：**答话那一格**（[`OK`] / [`UNKNOWN`] / [`DENIED`] / [`FULL`] / [`BAD`]）
-    /// ＋ 条数。
-    pub struct ReplyHead {
-        code: u8,
-        count: u8,
-    }
+/// 回单那头两格：**答话那一格**（[`OK`] / [`UNKNOWN`] / [`DENIED`] / [`FULL`] / [`BAD`]）
+/// ＋ 条数。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ReplyHead {
+    pub code: u8,
+    pub count: u8,
 }
 
 /// **一张回单**：答话那一格 ＋ 至多 [`WANT_MAX`] 条记录（坐标 ＋ 号）。

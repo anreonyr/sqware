@@ -57,19 +57,19 @@ crate::fail_codes! {
     Fail::Denied => DENIED,
 }
 
-env::frame! {
-    /// 登记那一帧：动作码 ＋ 坐标。
-    ///
-    /// **照实记（这一份从前是什么样）**：它从前是一对**自由函数**（`pack_occupy` /
-    /// `unpack_occupy`）＋ 一处手算的长度（`OCCUPY_LEN = 1 + KEY_LEN`）。今天收成报那一层那两样：
-    /// **一张表**（`env::frame!` 求长）＋ **一个 `impl Message`**（编解一处）。
-    ///
-    /// **`op` 那一格留着**（用户裁定，见文件头）：[`Message::fetch`] 真的读它——形状不对就答
-    /// `None`，路由器不动账。
-    pub struct Occupy {
-        op: u8,
-        key: Key,
-    }
+/// 登记那一帧：动作码 ＋ 坐标。
+///
+/// **照实记（这一份从前是什么样）**：它从前是一对**自由函数**（`pack_occupy` /
+/// `unpack_occupy`）＋ 一处手算的长度（`OCCUPY_LEN = 1 + KEY_LEN`）。今天收成报那一层那两样：
+/// **一张表**（`#[derive(env::Frame)]` 求长）＋ **一个 `impl Message`**（编解一处）。
+///
+/// **`op` 那一格留着**（用户裁定，见文件头）：[`Message::fetch`] 真的读它——形状不对就答
+/// `None`，路由器不动账。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Occupy {
+    pub op: u8,
+    pub key: Key,
 }
 
 impl Occupy {

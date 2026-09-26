@@ -54,35 +54,35 @@ pub fn name_of(bytes: &[u8]) -> Option<env::Name> {
 // 正是旧树 `[33..41]` 那一格的病；**答案那一侧则干脆没有这一格**：查到的那枚入口经
 // 会话交进客人的表，报文里再放一个号只会多出一份两边都得认的约定。
 
-env::frame! {
-    /// 登记那一问：动作码 ＋ 名字 ＋ 入口那 8 字节。
-    pub struct Seed {
-        op: u8,
-        name: env::Name,
-        seed: PieToken,
-    }
+/// 登记那一问：动作码 ＋ 名字 ＋ 入口那 8 字节。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Seed {
+    pub op: u8,
+    pub name: env::Name,
+    pub seed: PieToken,
 }
 
-env::frame! {
-    /// 只报名字那两问（注销 / 查）共用的形状。
-    pub struct Name {
-        op: u8,
-        name: env::Name,
-    }
+/// 只报名字那两问（注销 / 查）共用的形状。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Name {
+    pub op: u8,
+    pub name: env::Name,
 }
 
-env::frame! {
-    /// 空载荷那一问（退场）：整帧只有动作码这一格。
-    pub struct Evict {
-        op: u8,
-    }
+/// 空载荷那一问（退场）：整帧只有动作码这一格。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Evict {
+    pub op: u8,
 }
 
-env::frame! {
-    /// **答话那一格**：整帧一格——答只有一句话（成功 / 四种失败 / 读不懂）。
-    pub struct Status {
-        status: u8,
-    }
+/// **答话那一格**：整帧一格——答只有一句话（成功 / 四种失败 / 读不懂）。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Status {
+    pub status: u8,
 }
 
 /// 报文的**上限**：登记那一枚最长（[`Seed`] 的宽度之和）。长度仍由每次 `push` 自己带
@@ -305,30 +305,30 @@ pub const TIP_MARK: Mark = Mark::of("tip");
 /// 提示之路的名字（只有装配者那侧用得上：板线程那一枚是它自己铸的，不需要名字）。
 pub const TIP_NAME: &str = "board-tip";
 
-env::frame! {
-    /// 提示那一格的载荷：**客人号（8 字节）＋ 定长名字 `NAME_LEN` ＋ 答话路那一格
-    /// `PieToken::WIDTH`**——装配者往那条路上推的就是这一条记录（一句话：**来客人了，它是谁**，
-    /// 以及**它的答话路在我表里是几号**）。
-    ///
-    /// **照实记（末格为什么在，以及它替掉了什么）**：它从前不在——板拿到提示之后要**扫自己的表**
-    /// 找回那一枚（`server.rs::reply_of`：来源 = 装配者 ＋ 开者 = 这位客人 ＋ 记号 = 板路）。那一扫
-    /// 是每位客人**每趟事件**一遍全表，而枚举每一枚还要算一次 `vestor`（吃全世界快照 + 一次分配）：
-    /// 读数见提交 `b58fda4`。装配者**本来就有**这个号（`port::ship` 的 `to.seed()`，原先在
-    /// `bridge.rs::hand` 里被 `.map(|_| ())` 扔掉），故让它随提示一起过来、板一次 `Reserve` 验完——
-    /// 判据一字没改（开者 ＋ 记号）。
-    ///
-    /// **照实记（名字为什么从这一格走，而不是等客人 `REGISTER`）**：死亡道是**装配者**铸的
-    /// （记号 `gone-<名字>` 照装配单写），故"这一位叫什么"它本来就有；而板要认领那一条道，
-    /// 只能按名字（[`LANE_PREFIX`]）。从前板只能等客人自己在 `REGISTER` 里报名字 ⇒
-    /// **没登记的客人死了也没人报**。实测（临时探针：让结盟服务在起手之后死掉）：
-    /// `board: swept n=1` 有、**`system: gone coalition` 一条都没有**——三枚内件与三台驱动都
-    /// 不登记。名字搭提示这一格过来之后，板在 `admit` 那一刻就把"谁 → 道"记下，
-    /// **与客人登不登记无关**；`REGISTER` 从此只管"名字 → 入口"那一件事。
-    pub struct Tip {
-        who: TaskId,
-        name: env::Name,
-        reply: PieToken,
-    }
+/// 提示那一格的载荷：**客人号（8 字节）＋ 定长名字 `NAME_LEN` ＋ 答话路那一格
+/// `PieToken::WIDTH`**——装配者往那条路上推的就是这一条记录（一句话：**来客人了，它是谁**，
+/// 以及**它的答话路在我表里是几号**）。
+///
+/// **照实记（末格为什么在，以及它替掉了什么）**：它从前不在——板拿到提示之后要**扫自己的表**
+/// 找回那一枚（`server.rs::reply_of`：来源 = 装配者 ＋ 开者 = 这位客人 ＋ 记号 = 板路）。那一扫
+/// 是每位客人**每趟事件**一遍全表，而枚举每一枚还要算一次 `vestor`（吃全世界快照 + 一次分配）：
+/// 读数见提交 `b58fda4`。装配者**本来就有**这个号（`port::ship` 的 `to.seed()`，原先在
+/// `bridge.rs::hand` 里被 `.map(|_| ())` 扔掉），故让它随提示一起过来、板一次 `Reserve` 验完——
+/// 判据一字没改（开者 ＋ 记号）。
+///
+/// **照实记（名字为什么从这一格走，而不是等客人 `REGISTER`）**：死亡道是**装配者**铸的
+/// （记号 `gone-<名字>` 照装配单写），故"这一位叫什么"它本来就有；而板要认领那一条道，
+/// 只能按名字（[`LANE_PREFIX`]）。从前板只能等客人自己在 `REGISTER` 里报名字 ⇒
+/// **没登记的客人死了也没人报**。实测（临时探针：让结盟服务在起手之后死掉）：
+/// `board: swept n=1` 有、**`system: gone coalition` 一条都没有**——三枚内件与三台驱动都
+/// 不登记。名字搭提示这一格过来之后，板在 `admit` 那一刻就把"谁 → 道"记下，
+/// **与客人登不登记无关**；`REGISTER` 从此只管"名字 → 入口"那一件事。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Tip {
+    pub who: TaskId,
+    pub name: env::Name,
+    pub reply: PieToken,
 }
 
 /// 死亡道的记号前缀：**一位客人一条**（`gone-<名字>`），由装配者铸、各交一份给板。

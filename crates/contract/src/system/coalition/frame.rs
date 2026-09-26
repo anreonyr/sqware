@@ -176,31 +176,31 @@ pub fn cursor_in(b: u64) -> Option<usize> {
 
 // ── 一答：三种形状（格状态 ＋ 一格答 ＋ 一窗号）──────────────
 
-env::frame! {
-    /// 「格状态」那一形：失败那几格（[`UNKNOWN`] / [`FULL`] / [`BAD`]）只有这一格。
-    ///
-    /// **照实记（为什么这一族多出这一形）**：成功那两形都带回荷载，失败没有——故线上有三种长度
-    /// （1 / 10 / `3 + 8n`），客侧按"我问的是哪一条"认。principal 那一面没有这一形：它的失败也占满
-    /// 10 字节（`Reply` 那一形）。
-    pub struct Status {
-        status: u8,
-    }
+/// 「格状态」那一形：失败那几格（[`UNKNOWN`] / [`FULL`] / [`BAD`]）只有这一格。
+///
+/// **照实记（为什么这一族多出这一形）**：成功那两形都带回荷载，失败没有——故线上有三种长度
+/// （1 / 10 / `3 + 8n`），客侧按"我问的是哪一条"认。principal 那一面没有这一形：它的失败也占满
+/// 10 字节（`Reply` 那一形）。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Status {
+    pub status: u8,
 }
 
-env::frame! {
-    /// 「窗」那一形的**头三格**：状态 ＋ 未完 ＋ 条数（后面跟着那么多个号——那是尾巴，走
-    /// [`env::wire::store_tail`]）。
-    ///
-    /// **"未完"那一格为什么只此一族有**：盟籍没有上限（一格盟可以有很多人）⇒ 窗装不下是常态；
-    /// 对照 operator 那一侧：一条 pane 本来就不超过 `PANE_CAP`，故那边不用带。
-    ///
-    /// **`more` 那一格是裸字节、不是 `bool`**：`Field for bool` 的读法是 `!= 0`，而这一形的判据是
-    /// **只许 0 / 1**（[`Union`] 的 `fetch` 里判）——借 `bool` 会把畸形的 `2` 读成"未完"。
-    pub struct SeqHead {
-        status: u8,
-        more: u8,
-        count: u8,
-    }
+/// 「窗」那一形的**头三格**：状态 ＋ 未完 ＋ 条数（后面跟着那么多个号——那是尾巴，走
+/// [`env::wire::store_tail`]）。
+///
+/// **"未完"那一格为什么只此一族有**：盟籍没有上限（一格盟可以有很多人）⇒ 窗装不下是常态；
+/// 对照 operator 那一侧：一条 pane 本来就不超过 `PANE_CAP`，故那边不用带。
+///
+/// **`more` 那一格是裸字节、不是 `bool`**：`Field for bool` 的读法是 `!= 0`，而这一形的判据是
+/// **只许 0 / 1**（[`Union`] 的 `fetch` 里判）——借 `bool` 会把畸形的 `2` 读成"未完"。
+#[derive(env::Frame)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SeqHead {
+    pub status: u8,
+    pub more: u8,
+    pub count: u8,
 }
 
 /// 一答的上界：**最大那一形**（窗：头三格 ＋ [`WINDOW_CAP`] 枚号）。

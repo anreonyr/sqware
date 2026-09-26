@@ -6,8 +6,8 @@
 //! **`fetch` 的 `None` 说的是"这一帧读不懂"**，不是"这个字段的值不合规矩"——值那一层各有各的
 //! 失败域（如 [`NameError`](crate::wire::NameError)），故这里只答 `Option`。
 //!
-//! 本文件还有 `frame!` 宏（**定长帧**那一族的一处定义）：帧的偏移全部由 [`Field::WIDTH`]
-//! 求和得出，从而两头不可能各写一份。
+//! **定长帧**（`#[derive(Frame)]`，实现住 `mold`）的底座就是这里：帧的偏移全部由
+//! [`Field::WIDTH`] 求和得出，从而两头不可能各写一份。
 
 use crate::wire::{Name, PieToken, TaskId, NAME_LEN};
 
@@ -131,7 +131,7 @@ impl Field for Name {
 
 // ── 尾巴：**变长那一段**（两种）──────────────────────────────
 //
-// 定长那一支由 `frame!` 的字段表接手（`LEN` = 宽度之和，偏移一处都不写）；**变长**那一支在
+// 定长那一支由 `#[derive(Frame)]` 的字段表接手（`LEN` = 宽度之和，偏移一处都不写）；**变长**那一支在
 // 本仓只有两种形状：
 //
 //   数得出来的   `[条数][条 × 等宽项]`   树那一族的 `seek` 路、它的「列」答，供单的 `n × 32`
@@ -186,11 +186,13 @@ pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
     bytes.get(at..)
 }
 
-// ── `frame!`：搬去 `mold` 了 ────────────────────────────
+// ── `Frame`：搬去 `mold` 了 ────────────────────────────
 //
 // 它从前就在这一格（`#[macro_export] macro_rules! frame`，故名字落在 **crate 根**上）。
-// 改成**过程宏**（用户裁定）之后，实现住 `crates/mold/src/frame_impl.rs`，由 `env` 转出来
-// （`crates/env/src/lib.rs` 的 `pub use mold::frame;`）——**调用点一个字没改**。
+// 用户裁定先改成过程宏，又收成 `#[derive(Frame)]`：实现住 `crates/mold/src/frame_impl.rs`，
+// 由 `env` 转出来（`crates/env/src/lib.rs` 的 `pub use mold::Frame;`）。
 //
-// 两件事因此变好：诊断指到**那一格字段**（`macro_rules` 只能报在展开体里）；名字不再在
-// `env` 的 crate 根上当一条"与模块同名的宏"（第一刀与 `contract::frame` 撞的正是那一次）。
+// 三件事因此变好：诊断指到**那一格字段**（`macro_rules` 只能报在展开体里）；名字不再是
+// `env` 的 crate 根上一条"与模块同名的宏"（第一刀与 `contract::frame` 撞的正是那一次）；
+// 结构体现在**写在调用点**——各格的 `pub` 与字段上的文档都在用户那一边看得见，而生成的
+// `LEN` / `store` / `store_in` / `fetch` 一个字没变（展开物逐字节比对过）。

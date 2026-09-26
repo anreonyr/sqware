@@ -1,32 +1,48 @@
-//! `frame!` 的实现——**定长帧**那一族的一处定义。
+//! `Frame` 的实现——**定长帧**那一族的一处定义。
 //!
-//! 它从前是 `env/src/wire/field.rs` 里的一条 `macro_rules!`（`#[macro_export]`，故名字落在
-//! **crate 根**上，与同 crate 里的同名模块撞过车）。改成过程宏之后：
+//! **照实记（它走过三站）**：它从前是 `env/src/wire/field.rs` 里的一条 `macro_rules!`
+//! （`#[macro_export]`，故名字落在 **crate 根**上，与同 crate 里的同名模块撞过车）；随后改成
+//! function-like 的过程宏 `frame!`（诊断从此能指到**那一格字段**）；今天收成 `#[derive(Frame)]`。
 //!
-//! - **诊断指到那一格**：哪个字段没实现 `Field`、少了哪个 bound，报在**那个字段**上，
-//!   而不是指在展开体里那一行；
-//! - 生成的代码与从前**逐字一样**（见下），故调用点一个字不改。
+//! **为什么最后一站是 derive**：`frame!` 吃进去的那张字段表**本身就是一枚结构体**——宏却替
+//! 用户把它写了一遍（连各格的 `pub` 与那行 `#[derive(Clone, Copy, PartialEq, Eq, Debug)]` 都是
+//! 宏注入的）。收成 derive 之后那枚结构体回到源码里：字段可见性、字段上的文档、IDE 的跳转都
+//! 在用户那一边看得见，而生成的 `LEN` / `store` / `store_in` / `fetch` **一个字没变**
+//! （展开物逐字节比对过）。
 
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-use syn::{Fields, ItemStruct, parse2};
+use syn::{Data, DeriveInput, Fields, parse2};
 
-/// 给一张字段表生成：结构体 ＋ `LEN` ＋ `store` / `store_in` / `fetch`。
+/// 给一枚具名字段的结构体生成：`LEN` ＋ `store` / `store_in` / `fetch`。
 ///
 /// **生成的路径是 `::env::wire::Field`**（过程宏没有 `$crate`）：故调用方的 extern prelude
-/// 里要有 `env`——`contract` / `programs` 都有。`env` 自己若要 `frame!`，先写一句
+/// 里要有 `env`——`contract` / `programs` 都有。`env` 自己若要这个 derive，先写一句
 /// `extern crate self as env;`（今天没有这个需要）。
 pub fn expand(input: TokenStream) -> TokenStream {
-    let item: ItemStruct = match parse2(input) {
-        Ok(item) => item,
+    let ast: DeriveInput = match parse2(input) {
+        Ok(ast) => ast,
         Err(e) => return e.to_compile_error(),
     };
-    let (name, vis, attrs) = (&item.ident, &item.vis, &item.attrs);
-    let Fields::Named(named) = &item.fields else {
-        return syn::Error::new_spanned(&item, "`frame!` 只吃具名字段的定长帧").to_compile_error();
+    let name = &ast.ident;
+    let Data::Struct(data) = &ast.data else {
+        return syn::Error::new_spanned(&ast, "`Frame` 只吃结构体（一张定长帧的字段表）")
+            .to_compile_error();
+    };
+    let Fields::Named(named) = &data.fields else {
+        return syn::Error::new_spanned(&ast, "`Frame` 只吃具名字段的定长帧").to_compile_error();
     };
     if named.named.is_empty() {
-        return syn::Error::new_spanned(&item, "一张字段表至少要有一格").to_compile_error();
+        return syn::Error::new_spanned(&ast, "一张字段表至少要有一格").to_compile_error();
+    }
+    // 参数那一格**没有对应物**：生成的 `impl` 不转发 `generics`，放过去只会换来一句
+    // `missing generics for struct`——在这里当场报。
+    if !ast.generics.params.is_empty() || ast.generics.where_clause.is_some() {
+        return syn::Error::new_spanned(
+            &ast.generics,
+            "`Frame` 不支持带参数的结构体：定长帧的字段表没有参数那一格",
+        )
+        .to_compile_error();
     }
     let mut idents = Vec::new();
     let mut types = Vec::new();
@@ -44,12 +60,6 @@ pub fn expand(input: TokenStream) -> TokenStream {
     let head = Ident::new("head", Span::mixed_site());
 
     quote! {
-        #(#attrs)*
-        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-        #vis struct #name {
-            #(pub #idents: #types),*
-        }
-
         impl #name {
             /// 这一帧线上占几字节：**字段宽度之和**（一处定义）。
             pub const LEN: usize = 0 #(+ <#types as ::env::wire::Field>::WIDTH)*;

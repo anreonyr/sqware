@@ -40,9 +40,9 @@ pub use fid::{
 };
 pub use permission::{Access, Permission, Policy};
 pub use wait::Wait;
-/// **`frame!`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
-/// ——故调用点写 `env::frame! { … }` 照旧。
-pub use mold::frame;
+/// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
+/// ——故调用点写 `#[derive(env::Frame)]`（`contract` 不依赖 `mold`，只能经这里取）。
+pub use mold::Frame;
 pub use wire::{
     Decode, FromPair, Mark, NAME_LEN, Name, NameError, PieToken, TaskId, TeamId, VirtAddr, Wire,
 };
