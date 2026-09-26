@@ -68,9 +68,8 @@ fn main() -> Result<(), env::Reason> {
     debug!("echo: seq={seq}");
 
     // **返回值那一格判在消耗它的这一层**：`serial` 内部看不见自己那一趟被改坏。
-    {
-        assert_eq!(seq, ocall::OK)
-    }
+
+    assert_eq!(seq, ocall::OK);
 
     let Some(console) = console else {
         return Err(E_NO_CONSOLE);
