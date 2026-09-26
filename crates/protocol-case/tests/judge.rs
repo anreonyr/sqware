@@ -1014,8 +1014,7 @@ fn the_name_and_id_answers_are_fixed_shapes() {
 #[test]
 fn the_operator_failure_table_is_bijective_and_keeps_bad_outside() {
     use f::{
-        BAD, DEAD, DENIED, FULL, NONEMPTY, NOTAPANE, NOTATILE, OK, UNKNOWN, code_to_fail,
-        fail_to_code,
+        BAD, DEAD, FULL, NONEMPTY, NOTAPANE, NOTATILE, OK, UNKNOWN, code_to_fail, fail_to_code,
     };
     assert_eq!(fail_to_code(None), OK);
     for (fail, code) in [

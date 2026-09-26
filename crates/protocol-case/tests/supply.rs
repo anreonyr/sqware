@@ -26,7 +26,7 @@ extern crate alloc;
 use contract::driver::supply::{core, frame as call};
 use contract::message::Message;
 
-use crate::call::{Kind, Need, Want};
+use crate::call::{Kind, Want};
 use crate::core::Fail;
 use env::{Access, Name, PieToken, Policy, TaskId};
 use plan::Key;
@@ -182,7 +182,7 @@ fn a_reply_frame_round_trips_and_refuses_a_ragged_record_block() {
 
 #[test]
 fn a_need_settles_into_a_want_through_the_class_name() {
-    use crate::call::{At, Need, class_block};
+    use crate::call::{Need, class_block};
 
     // 按类名造一格：类名进的是 `NAME_LEN` 那一块（尾部补零）。
     let class = class_block("ns16550a");
