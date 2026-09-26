@@ -19,10 +19,10 @@ runner = ["nu", "scripts/runner.nu"]
 # `cargo run` 只管编内核；交互式跑之前先来这一下（`scripts/runner.nu` 会查镜像在不在）。
 image = "run --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linux-gnu --"
 
-# riscv 上。`--target x86_64-unknown-linux-gnu` 就是"宿主"这两个字的落点。一门一条
-# `#[test]`，故：
+# 门那一台要在**宿主 target** 上跑（`--target x86_64-unknown-linux-gnu` 就是"宿主"两个字的
+# 落点）。一门一条 `#[test]`，故：
 #
-#   cargo gate                       快门（宿主档，秒级）
+#   cargo gate                       快门——不起机那一门（装配单），秒级
 #   cargo gate -- --ignored          要起 QEMU 的那几门
 #   cargo gate -- --include-ignored  全量（含要起 QEMU 的那几门）
 gate = "test --manifest-path crates/gate/Cargo.toml --target x86_64-unknown-linux-gnu"

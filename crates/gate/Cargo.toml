@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# 门 —— 本仓所有**要跑**的判据的落点：台（起机 / 跑宿主命令）+ 判据 + 变异。
+# 门 —— 本仓所有**要跑**的判据的落点：台（起机）+ 判据 + 变异。
 #
-# 它是**编外**的（根 `Cargo.toml` 的 `exclude`），理由与 `crates/protocol-case` 同源：主工作区
+# 它是**编外**的（根 `Cargo.toml` 的 `exclude`），理由与 `crates/alloc-probe` 同源：主工作区
 # 被 `.cargo/config.toml` 钉在 `riscv64gc-unknown-none-elf` 上，而这一台要 std + host ABI。
 # 故它跑法里必须显式写 `--target x86_64-unknown-linux-gnu`——那句就是"宿主"这两个字的落点，
 # 已经收进根 `.cargo/config.toml` 的 `[alias] gate`。

@@ -45,7 +45,7 @@
 //!
 //! **照实记（这一族的帧边角今天仍没有跑着的判据）**：本文件住**驱动自己那一片目录**（见下一
 //! 段），而 `programs → protocol → runtime` 在宿主上编不成（`runtime/src/core/tls.rs` 那两行
-//! riscv 内联汇编，理由见 `crates/protocol-case/Cargo.toml`）⇒ 宿主靶够不着它。真路只有
+//! riscv 内联汇编）⇒ 宿主那一侧够不着它。真路只有
 //! `cargo gate -- --ignored` 那扇 `soak` 门（真客人 `harness/src/sleeper.rs` 走：`Now`→[`Time`]、
 //! `Arm`→[`Status`]`(OK)`、再约一次→[`Status`]`(TAKEN)`、到点→[`Time`]）。**够不着的是畸形帧**
 //! ——长短不对 / 动作码不认 / 答话那一格长度不对：判据与手写那版**一字不改**，但它今天仍是

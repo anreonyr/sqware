@@ -1,10 +1,10 @@
 //! principal 的**帧那一半** —— 帧与码（内核那两只手的别名在 `protocol` 那一侧的 `mod.rs`）。
 //!
 //! **照实记（这一份为什么拆出来）**：帧形今天只有机器在跑，而机器只走**顺路**——边角
-//! （短帧 / 长帧 / 动作码不对 / 答话那一格读不懂）一格都走不到。拆开之后这一份**只认
-//! `env` 与同层 `core`**——**一处例外**：末尾那条"面不相撞"的编译期断言看得见
-//! `crate::system::coalition`（常量对，不进机器）。宿主靶能把它逐字编进去
-//! 跑判据；适配那半（`opened_by` 那种内核手的别名）留在 `protocol` 那一侧的 `mod.rs`。
+//! （短帧 / 长帧 / 动作码不对 / 答话那一格读不懂）一格都走不到。拆开是为了让那些边角在**宿主靶**
+//! 上编得动；**那台靶已删**（用户裁定"protocol-case 没必要"）⇒ 这一份照旧只认 `env` 与同层
+//! `core`——**一处例外**：末尾那条"面不相撞"的编译期断言看得见 `crate::system::coalition`
+//! （常量对，不进机器）；适配那半（`opened_by` 那种内核手的别名）留在 `protocol` 那一侧的 `mod.rs`。
 //!
 //! 本文件**不做裁决**：名册与谱系的规矩全在 [`core`](super::core)。这里只有三件事——
 //! 把失败域翻成答话码、把答案编进答话那一格、以及**本族**那几格码与记号。
@@ -194,10 +194,11 @@ pub const NAME: &str = "principal";
 
 // ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────
 //
-// 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`：三条路的回信
-// 孔记号两两不同（`principal-back` / `coalition-back` / `line-back`）。这里钉得着的是**与盟籍
-// 那一对**（本文件看得见 `crate::system::coalition`）；**与线那两对钉在 `lib.rs`**——线那一枚住在
-// `driver::line::frame`，而帧这一半要能在宿主靶里**单独**编（那个靶的模块树里没有 `driver`）。
+// 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`（那条判据随宿主靶
+// 一并删了）：三条路的回信孔记号两两不同（`principal-back` / `coalition-back` / `line-back`）。
+// 这里钉得着的是**与盟籍那一对**（本文件看得见 `crate::system::coalition`）；**与线那两对钉在
+// `lib.rs`**——线那一枚住在 `driver::line::frame`，而帧这一半**只认得 `env` 与同层 `core`**，
+// 看不见 `driver`。
 //
 // **照实记（这一条曾经一直是空的）**：跨面那一对原先写作 `Mark::of("board-back")`，而**那个名字
 // 从来没有存在过**——板那条路的答话走码头（`system/board/client.rs`：问话孔只写、答话从板路

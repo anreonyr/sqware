@@ -44,23 +44,21 @@
 //!
 //! # 这一格为什么住在协议里、而不在服务里
 //!
-//! 它是**模型**（"这一位许不许"这句话的定义），住在 `protocol` 才能被宿主台**逐字编进测试靶**
-//! （照 `protocol-case` 的 `operator` 靶那台的现成路数；`programs` 那一侧编进宿主要 `runtime` 的 riscv
-//! 内联汇编，走不通）。服务那一侧只做装配：把 `principal::client::Face` / `coalition::client::Face`
-//! 套成这三个 trait，再把 [`Ruling`] 翻成线上那一格码。
+//! 它是**模型**（"这一位许不许"这句话的定义）——**这里只定义，不装配**：把
+//! `principal::client::Face` / `coalition::client::Face` 套成这三个 trait、再把 [`Ruling`]
+//! 翻成线上那一格码，都归服务那一侧。（**照实记**：这一句原先是"住在 `protocol` 才能被宿主台
+//! 逐字编进测试靶"——那台靶已删，用户裁定"protocol-case 没必要"；模型/装配这条分线不受影响。）
 //!
 //! # 为什么两个号是**泛型**，而不是直接写 `PrincipalId` / `CoalitionId`
 //!
-//! 若这里直接 `use crate::system::principal::core::PrincipalId`，宿主靶就得跟着编 `principal/core.rs` 与
-//! `coalition/core.rs` 两份——而"宿主靶只编一份逐字未改的核心源码"这条纪律会被打破。泛型把线
-//! 划死：本文件只认识四样东西——`env::TaskId`、四个 trait、一个 [`Rule`]、以及 [`EntryId`]。
+//! 泛型把线划死：本文件只认识
+//! 四样东西——`env::TaskId`、四个 trait、一个 [`Rule`]、以及 [`EntryId`]。
 //! 调用点写 `judge::<PrincipalId, CoalitionId>`（或让它自己推），类型安全一分不减（两个号空间
 //! 仍然互相排斥）。
 //!
-//! 照实记：这一格换过一次。第一版签名里写死了 `PrincipalId` / `CoalitionId`，代价是宿主靶要多编
-//! 两个文件——而那两个文件的判据住在**别的靶**里（`roster`），在这里再编一遍就是把同一批判据跑
-//! 第二遍。（写这条时的原话是"那两份的 `cfg(test)` 一次都没跑过"；后来它们搬去 `roster` 靶、
-//! 真正有了门——那是另一刀。）
+//! 照实记：这一格换过一次。第一版签名里写死了 `PrincipalId` / `CoalitionId`，两个号空间的排斥
+//! 只能靠纪律；泛型之后由编译器管。**（原来还挂着一条"少编两份核心源码"的代价论——那条随宿主靶
+//! 一并撤。）**
 //!
 //! 照实记（第五格那一刀）：[`EntryId`] 是**同一个模块族**的核心（`super`），而 `judge` 靶
 //! 那一台**本来就编着** `core.rs`（账的两把钥匙就是 `Where` / `EntryId`）——故引它与引
@@ -255,11 +253,11 @@ pub trait League<P, C> {
 ///   由 `programs/src/system/operator/server.rs` 的 `Court::opens` 把它们说进读数。
 /// - `Err(())` = 树自己问不到（⇒ [`Ruling::Unjudged`]）。
 ///
-/// **照实记（这一格生产里到不了，读者是宿主靶）**：`Operator::opens` 只会答
+/// **照实记（这一格生产里到不了）**：`Operator::opens` 只会答
 /// `Unknown` / `NotATile` / `Dead` 三因，而生产那一份 `Court::opens` 把它们**一因各说一行
 /// 读数**、一律返 `Ok(None)`（它连 `_` 都不写，就为了将来 `Fail` 多一格时**编不过**）⇒
-/// `Err(())` 只有 `protocol-case` 的 `judge` 靶喂得出来（`Deaf`）。留着这一格不是为生产：
-/// 判据要一个"对面问不到"的**出口**，而 `Who` / `Branch` / `League` 那三条边同形。
+/// `Err(())` 今天**没有生产者**（原先只有宿主靶喂得出来——**那台靶已删**）。留着这一格不是为生产：
+/// 它是一个"对面问不到"的**出口**，而 `Who` / `Branch` / `League` 那三条边同形。
 ///
 /// 答的是 **TID 不是号**：树的读答"谁开的这扇门"（内核戳），名册那一边答"这个 TID 是谁"——
 /// 两件事两个落点，故 `Rule::Opens` 那一格要走两问。
@@ -329,9 +327,7 @@ where
 const fn allow(ok: bool) -> Ruling {
     if ok { Ruling::Allow } else { Ruling::Deny }
 }
-// ── 用例不在这里（照实记：用户裁定"测试和运行环境分开"）──────────────
+// ── 本文件没有一行测试（用户裁定"protocol-case 没必要"）────────────────
 //
-// 本文件原先那个 `#[cfg(test)] mod tests`（**8 条**）搬走了：它们与 `crates/protocol-case`
-// 的 `judge` 靶里那几条**同名或更强**的判据重复（例如这里只能证"没看到 `Unjudged`"，靶里
-// 换成了会**记数**的谓词桩，直接量"一次都没问"）⇒ **删掉并补进台里**，不在运行时源里再留
-// 一份。**本文件从此没有一行测试。**
+// 原先那个 `#[cfg(test)] mod tests`（**8 条**）曾搬进宿主靶的 `judge` 靶——那台靶连同它那些
+// 判据（含"会**记数**的谓词桩，直接量'一次都没问'"那几条）已一并删。

@@ -29,8 +29,8 @@ fn denied() -> erra::Error<EnvError> {
 // ── 两族视图：**搬家后的名字照旧** ─────────────────────────
 //
 // `Access` / `Policy` 现在住 `env`（与 `Permission` 同层，见 `env::permission`）——
-// 它们只认 `Permission`，一处也不碰内核，而住在这一层会让 `protocol` 那一份
-// （`driver::supply::frame`，荷载每一格都带着它们）上不了宿主靶。
+// 它们只认 `Permission`，一处也不碰内核，而住在这一层会让「约」那一份
+// （`driver::supply::frame`，荷载每一格都带着它们）够不着——`contract` 不依赖 `runtime`。
 // 这里把名字**转出去**：下面 `ship` 的签名与**全部调用点**（22 个文件里的
 // `runtime::core::port::{Access, Policy}`）都照旧。
 pub use env::{Access, Policy};

@@ -1,18 +1,20 @@
 //! 门 —— 本仓所有**要跑**的判据的落点。
 //!
-//! 台有两台，**一个契约**：吃一台、吐一份 [`Transcript`]、**起不动**才 `Err`。
+//! **一个契约**：吃一台、吐一份 [`Transcript`]、**起不动**才 `Err`。
 //!
 //! - **机器那台**（[`Bench::Machine`]）：起 QEMU 走一趟。QEMU 参数的**唯一出处**仍是
 //!   `scripts/boot.nu`——这里只 spawn 它、喂 stdin、按行收两条流、到点收尾。
-//! - **宿主那台**（[`Bench::Host`]）：在**宿主 target** 上跑一次 `cargo test`（那条
-//!   `--target` 不写在门里：它是"宿主"这两个字的落点）。
+//!
+//! **照实记（用户裁定"protocol-case 没必要，删了"）**：台原先**有两台**——另一台是宿主那台
+//! （`Bench::Host`：在宿主 target 上跑一次 `cargo test`），只服务 `tests/host.rs` 那一门。
+//! 那一台、那一门、`HOST` 那个常量与 [`Outcome`] 头注里"宿主那一门不走这里"那句一并撤。
 //!
 //! **被杀与内核 panic 不是 `Err`**：它们是 [`Transcript`] 里的事实，由门去判——判这一格的
 //! 落点是 [`stopped`]（一处措辞，各门把它报在"缺哪条读数"之前）。
 //!
 //! # 照实记（两条流怎么合）
 //!
-//! 两台子各起两个读线程，**按行**把 stdout 与 stderr 添进同一个缓冲——不是"读完整份再拼"。
+//! 这台子进程起两个读线程，**按行**把 stdout 与 stderr 添进同一个缓冲——不是"读完整份再拼"。
 //! 这样既保住"一行就是一行"（整行形状的断言靠它），又不丢先后（今天的日志是 `2>&1` 出来的）。
 //!
 //! # 照实记（期限归谁）
@@ -35,9 +37,6 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 pub mod soak;
-
-/// 宿主那一档的 target 名字。门里不写它——"宿主"这两个字的落点就在这一句。
-pub const HOST: &str = "x86_64-unknown-linux-gnu";
 
 /// 仓根（本 crate 在 `<根>/crates/gate`）。
 pub(crate) fn root() -> PathBuf {
@@ -89,8 +88,9 @@ impl Deadline {
 ///      而那一景多一条 `probe-deep`、root 那份列表本就不保证同形 ⇒ **修好之后也会红**，且红的
 ///      理由与公平无关。
 ///
-/// 深度那一格的职责没丢：它由宿主门 `protocol-case` 的
-/// `a_deep_chain_does_not_need_the_call_stack` 承担（那条有牙、且不抖）。
+/// 深度那一格的职责**今天没有替身**：原先由宿主靶的
+/// `a_deep_chain_does_not_need_the_call_stack` 承担（那条有牙、且不抖），而那一台已删
+/// （用户裁定"protocol-case 没必要"）。
 ///
 /// 顺带照出、**留着**的一格（与场景无关）：`land` **超时了，`take` 仍取到一枚**（`got=true`）
 /// ——超时的 `land` 可能照样把砖投进了收件箱。记在 `operator::client::land` 上。
@@ -279,11 +279,6 @@ pub enum Bench {
         /// 透给 `boot.nu` 的旋钮（`QEMU_SMP` / `QEMU_MEM` / …），按名传。
         env: &'static [(&'static str, &'static str)],
     },
-    Host {
-        /// `--manifest-path` 那一个（宿主那一档只有一个靶场时也只写一个）。
-        manifest: &'static str,
-        within: Deadline,
-    },
 }
 
 /// 一次跑的全部读数。
@@ -295,9 +290,8 @@ pub struct Transcript {
 
 /// **这一轮是怎么收的**——三格各自是一件事，故它们不该被读成"某一条读数缺了"。
 ///
-/// **谁读它**：[`stopped`] 是唯一一处把它翻成话的地方，各机器门从那里读（`soak` / `load` /
-/// `stress` / `group` / `framework` / `examine` / `product`）。宿主那一门不走这里：它的"被杀"
-/// 就是非零退出码，由 [`Transcript::code`] 判（`host.rs`）。
+/// **谁读它**：[`stopped`] 是唯一一处把它翻成话的地方，各门从那里读（`soak` / `load` /
+/// `stress` / `group` / `framework` / `examine` / `product`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// 自己结束（退出码看 [`Transcript::code`]）。
@@ -414,17 +408,6 @@ pub fn run(bench: &Bench) -> Result<Transcript, BenchFailed> {
                 .map_err(|e| BenchFailed::Spawn(format!("nu scripts/boot.nu：{e}")))?;
             (child, *within)
         }
-        Bench::Host { manifest, within } => {
-            let child = Command::new("cargo")
-                .args(["test", "--manifest-path", manifest, "--target", HOST, "--tests"])
-                .current_dir(&root)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| BenchFailed::Spawn(format!("cargo test：{e}")))?;
-            (child, *within)
-        }
     };
 
     let text = Arc::new(Mutex::new(String::new()));
@@ -436,9 +419,10 @@ pub fn run(bench: &Bench) -> Result<Transcript, BenchFailed> {
     // **写端攥到收尾那一步才放**：日程走完不等于可以把 stdin 关掉——今天的 `sleep 12`
     // 尾巴要的就是"别在 guest 收尾之前关掉写端"。这里不用魔法秒数，靠作用域。
     let mut stdin = child.stdin.take();
-    if let Bench::Machine { sched, .. } = bench {
-        drive(sched, &mut stdin, &text);
-    }
+    // 台只剩机器那一台之后这一句不再有分支（**照实记**：原先这里是 `if let Bench::Machine {…}`，
+    // 另一支走宿主台；那台删了之后它是**不可反驳**的 ⇒ 改成一条 `let`，否则编出 warning）。
+    let Bench::Machine { sched, .. } = bench;
+    drive(sched, &mut stdin, &text);
 
     let started = Instant::now();
     let backstop = within.get() + Duration::from_secs(10);

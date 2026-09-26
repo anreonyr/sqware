@@ -268,20 +268,15 @@ impl Board {
         self.signs.iter().position(|sign| !sign.named())
     }
 }
-// ── 用例不在这里（照实记：用户裁定"测试和运行环境分开"）──────────────
+// ── 两条读数（原先由宿主靶那七条用例钉着，用例随靶删了）────────────────
 //
-// 本文件原先那个 `#[cfg(test)] mod tests`（**7 条**）整体搬去了 `crates/protocol-case` 的
-// `board` 靶，门口 `crates/gate/tests/host.rs`；**本文件从此没有一行测试**。
+// **本文件今天没有一行测试**（用户裁定"protocol-case 没必要"：那台编外宿主靶与 `crates/gate`
+// 的 `host` 那一门已删）。原先那七条里有两条是**读数的出处**，结论留在这里：
 //
-// 那七条里有两条是**读数的出处**，故把结论留在这里：
+//   - [`Board::lookup`] 里那次 `sweep` 是**留着的**（见 `board/mod.rs` 末段）；
+//   - [`Board::unregister`] 里那次 `sweep_at`：撤牌子也**先扫后判**。
 //
-//   - `a_dead_entry_is_swept_on_the_read_path` 正是 [`Board::lookup`] 留着那一次 `sweep`
-//     的理由（见 `board/mod.rs` 末段）；
-//   - `unregistering_a_dead_entry_answers_unknown` 是"撤牌子也**先扫后判**"那一格的来由
-//     （牙口量出来的：删掉 `unregister` 里那次 `sweep_at`，全门照绿）。
-//
-// 三个注入点（`vested_by` / `unship`，见 [`Board::new`]）就是全部外部依赖，故喂两张假表即可
-// 把板上规矩推理干净。
+// 三个注入点（`vested_by` / `unship`，见 [`Board::new`]）就是全部外部依赖。
 
 // ── 两张会话失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
 //

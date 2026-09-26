@@ -23,7 +23,7 @@
 //! 留在 `system::coalition::frame`——operator 的"一条 pane 本来就有顶"不需要"未完"那一格，
 //! 故窗不是这一族的共性。
 //!
-//! 本文件是**协议层**的东西，与 `id.rs` / `fail_codes.rs` 同一种编法：宿主靶**真依赖**它。
+//! 本文件是**协议层**的东西，与 `id.rs` / `fail_codes.rs` 同一种编法。
 
 use crate::fail_codes::OK;
 use crate::id::Id;

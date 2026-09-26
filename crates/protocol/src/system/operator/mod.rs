@@ -121,10 +121,9 @@ pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
     crate::session::call::ship(entry, to).map_err(|()| Fail::Unknown)
 }
 
-/// **同步义务**：`gate.rs` 自己留了那三格线上码（它要在宿主靶里编，而 `frame.rs` 拖着帧
-/// 那一族 ⇒ 编不动）。这里在编译期把两份钉在一起——真正的对照表只有 [`frame`] 那一份，
-/// `gate` 那一份一漂就编不过。宿主靶那一侧没有这条断言（它编不到 `protocol` 这一层），
-/// 所以它**必须**住在这里。
+/// **同步义务**：`gate.rs` 自己留了那三格线上码（它只认 `env` 与同层 `core`，`frame.rs` 拖着帧
+/// 那一族 ⇒ 它看不见）。这里在编译期把两份钉在一起——真正的对照表只有 [`frame`] 那一份，
+/// `gate` 那一份一漂就编不过。**这一条必须住在这里**：只有这一层同时看得见 `frame` 与 `core::gate`。
 const _: () = {
     assert!(core::gate::WIRE_OK == frame::OK);
     assert!(core::gate::WIRE_DENIED == frame::DENIED);
