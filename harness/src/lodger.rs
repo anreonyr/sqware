@@ -9,7 +9,7 @@
 //! ```text
 //!   1  领配给：**按类 `virtio,mmio` 要**（本机八台同类，编排域取首址最小的那台 =
 //!      `virtio_mmio@10001000`，1 号线）那枚 ONLY 门闩——真持有那台设备，但本域
-//!      从不映视图、不碰寄存器（为什么要一条**没人要**的线，见 [`needs`]）
+//!      从不映视图、不碰寄存器（为什么要一条**没人要**的线，见 [`plan::assembly::LODGER_WANTS`]）
 //!   2  上树一条会话：FIND /device/router ⇒ 那扇门
 //!   3  三趟登记 —— 成功那一格与**失败域**都卖读数（答码见 `line::frame` 那张表）：
 //!        占那条 virtio 线    → `lodger: occupy=0`    （0 = OK：线归本域）
@@ -34,7 +34,7 @@
 //!
 //! # 名字与线号
 //!
-//! 设备名只有一处（[`needs`] 那张单子），与 `uart` 同一条纪律：**本域不发明名字**；线号由
+//! 设备名只有一处（[`plan::assembly::LODGER_WANTS`] 那张单子），与 `uart` 同一条纪律：**本域不发明名字**；线号由
 //! 路由者解树解出来，本域从不说它（客户手里没有"线"）。唯一一个本域自己编的名字是那趟
 //! `UNKNOWN` 的探针名——它**故意**不是任何节点（"解树答不出"说的就是这个）。
 //!
@@ -42,6 +42,13 @@
 //!
 //! 本域是 **U 态**（`plan::assembly::ALL` 里这一行的 `kind`）：铸孔、交出、上树找服务、领一枚门闩
 //! 都不需要 S 态。
+//!
+//! **照实记（形状归一这一刀；用户裁定"外围再收一轮"）**：本台原先住 `lodger/`——`main.rs`
+//! ＋ `mod.rs` ＋ `needs.rs`，三件里 `needs.rs` 只有**一行转发**（定义早在
+//! `plan::assembly`），`mod.rs` 只为把那一行交给 lib、好让 bin 经 `harness::lodger::needs`
+//! 取到它。22 台测具**只有这一台成目录**，形状因此不齐。这一刀把它拉平成 `lodger.rs`
+//! （与其余 21 台同形），那张单子**直接从定义处取**（`plan::assembly::LODGER_WANTS`），
+//! `lib.rs` 里那两行转发随之下岗——定义仍然只有一处，只是不再绕一圈。
 
 extern crate alloc;
 extern crate programs;
@@ -49,10 +56,11 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-// 需求单归**收方**：本域那张单子住 lib 里（装配者要照它开单），同一份源码编一次。
+// 需求单归**收方**：单子的**定义**住 `plan::assembly`（装配单本就要把那一格摆出来，故与它同层
+// ——见那一处头注），本域直接从定义处取；装配者照同一张表开单。
 // 客侧装配也共用驱动那一族那段机器（会话 + 收配给 + 归位）——它领门闩走的是同一条路。
 use programs::driver::assemble;
-use harness::lodger::needs;
+use plan::assembly::LODGER_WANTS as WANTS;
 
 // 树：本域是**客侧**（按名找服务）。
 use protocol::system::operator as ocall;
@@ -81,7 +89,7 @@ const E_TRIP: usize = 1;
 #[programs::entry]
 fn main() -> Report<'static> {
     // 1. 领配给：门闩到手就是"持有"的全部（本域不映视图、不碰寄存器）。缺格即装配错。
-    let mut slots = [None; needs::WANTS.len()];
+    let mut slots = [None; WANTS.len()];
     let got = match assemble::receive(&mut slots) {
         Ok(n) => n,
         Err(code) => return Report::note(code, "lodger: assemble"),

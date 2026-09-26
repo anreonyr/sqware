@@ -125,7 +125,7 @@ doctest = false
 # 房客（U 态，同 `passer` 一档）：占一条线、**直接死**——线路由者那本账的探活读数。
 [[bin]]
 name = "prog-lodger"
-path = "src/lodger/main.rs"
+path = "src/lodger.rs"
 test = false
 bench = false
 doctest = false

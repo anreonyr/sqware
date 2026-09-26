@@ -57,8 +57,6 @@ use programs::Reason;
 
 use programs::root::boot;
 
-// 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
-
 use alloc::format;
 
 use env::Name;

@@ -47,8 +47,6 @@
 extern crate alloc;
 
 /// 压测台共用的**测时与空转**（各台互不依赖，共享的只有这一份"怎么量时间"）。
+/// 它也是本 crate 唯一的共享件：22 台各是独立 bin，共用物住 `src/` 顶层、由各 bin 各自
+/// `use harness::…` 取一次。
 pub mod tick;
-
-/// 房客那一片模块：`lodger` 的 bin 要从 lib 拿它自己那张 [需求单](lodger::needs)——
-/// 与 `driver/*/needs.rs` 同一个形状（**收方开的单子**，装配者只是照它开单，故两边必须看同一张表）。
-pub mod lodger;

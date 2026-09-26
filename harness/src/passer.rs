@@ -32,7 +32,6 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-// 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**客侧**（挂一个名字）。
 use protocol::system::board::client as board;
 
