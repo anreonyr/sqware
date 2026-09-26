@@ -97,10 +97,15 @@ pub fn sleep_until(at: u64) -> EnvResult<()> {
 /// **不等它回收**——要等用 [`crate::env::unit::join`]，且注意 `Join` 只在"收尾"之前
 /// 答得出（入土之后它问不出"没了"与"从来没有过"的区别）。
 ///
-/// **调用者**（今天三处，都不是政策服务）：`protocol::system` 的收尾路径（`call::doom`，
-/// 由 `service::stop` 与"起失败"那一支调）、`system/board` 那一台的 `shut()`——**编排域**
-/// 点名收掉同域的板线程，而这一刀按域粒度走，收的是**编排域自己那个域**——与
+/// **调用者**（今天三处，都不是政策服务）：`protocol::system` 的收尾路径（`system::server`
+/// 的 `doom`，由 `service::stop` 与"起失败"那一支调）——**编排域**
+/// 点名收掉一个子域，而这一刀按域粒度走——与
 /// `harness/src/group.rs` 的收场那一手（台子把没醒的等待者收掉，那是**台子自己的**客人，不是政策）。
+///
+/// **照实记（第四处已删）**：原先还有一手 `system::board::bridge::shut()`（编排域点名收掉
+/// 同域那枚板线程）。它已删：按域粒度那一刀收的正是**编排域自己**，代价是最后那句判词
+/// `system: done` 永远够不到（见 `system/main.rs` 收尾那一格的照实记）。板线程随"域亡＝成员
+/// 清零"一起走，不需要点名。
 pub fn doom(task: TaskId) -> EnvResult<()> {
     let _ = RoomCall::Doom { task }.call()?;
     Ok(())

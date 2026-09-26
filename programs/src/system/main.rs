@@ -25,6 +25,16 @@
 //! **本文件只剩流程**：起谁、按什么顺序、开哪几条通道、要哪些门闩、上不上板、上不上树，
 //! 全在 `scenario.rs`（`INNER` 那三枚 ＋ 从 `plan::assembly::ALL` 派生的那几台——**一张表只有
 //! 一处**）。要加第三个服务 —— 表里加一行，本文件一个字不改。
+//!
+//! # 四种角色的出口（照实记：这一格原来写三遍）
+//!
+//! `main` 那四个分支各自的失败类型是**各自的 `Fail`**，故从前每个分支各写一遍"折成内核那一格"
+//! 的 match。现在每一域先折成 `Report<'static>`（那四支 `map_err`），四格汇进 [`exit`] 一处
+//! ——**加第五种角色也只加一行**。折法各自只有一行，理由是**同一句话**：`Exit::report` 取
+//! `&self`、返 `Report<'_>`（输出的寿命借在它那个参数上），故本文件里没有能把它转发出去的
+//! 泛型写法；而各域那两句话都是常量（`code()` + `text()`）⇒ 这里自己拼一格。
+//! 另一处细节也是被编译器逼出来的：`Result<(), Report>` 那一层由 `Exit` 为 `Result<T, E>`
+//! 的那份实现拆平（故 `main` 那一格不必自己 match）。
 
 extern crate alloc;
 extern crate programs;
@@ -129,58 +139,84 @@ impl programs::Exit for Fail {
     }
 }
 
+/// **四种角色共用的出口**：`Ok` 报 [`EXIT_OK`](env::EXIT_OK)，`Err` 那一格原样往上递。
+fn exit(role: Result<(), programs::Report<'static>>) -> programs::Report<'static> {
+    match role {
+        Ok(()) => programs::Report::new(env::EXIT_OK),
+        Err(r) => r,
+    }
+}
+
+/// **本域与三枚内件的死法 → 出口那一格**（各域两句话都是常量：`code()` + `text()`）。
+///
+/// **照实记（为什么不叫 `Exit::report`）**：那一手取 `&self`、返 [`Report<'_>`](programs::Report)
+/// ——输出的寿命借在**它那个参数**上，故它出不了这些函数（真机报 E0515：cannot return value
+/// referencing function parameter）。而各域的死法值与 `Report` 没有真关系：这里自己拼一格
+/// （`Report` 里存的是码与**指向常量**的那一对指针，故返 `'static` 是诚实的）。
+fn said(f: Fail) -> programs::Report<'static> {
+    programs::Report::note(f.code(), f.text())
+}
+
+/// 持树者那一域（[`operator::fail`]）的死法 → 出口那一格。
+fn tree_said(f: operator::fail::Fail) -> programs::Report<'static> {
+    programs::Report::note(f.code(), f.text())
+}
+
+/// 名册那一域（[`principal::fail`]）的死法 → 出口那一格。
+fn roster_said(f: principal::fail::Fail) -> programs::Report<'static> {
+    programs::Report::note(f.code(), f.text())
+}
+
+/// 盟册那一域（[`coalition::fail`]）的死法 → 出口那一格。
+fn league_said(f: coalition::fail::Fail) -> programs::Report<'static> {
+    programs::Report::note(f.code(), f.text())
+}
+
 #[programs::entry]
 fn main() -> programs::Report<'static> {
     // **一枚 ELF 四种角色**（iii）：角色由 `Spawn` 那一格 `args` 递进来（[`Role`]）。空 args
     // ⇒ **编排域自己那一枚**——引导域起它时走的就是这一路，照旧。
     //
-    // 四种角色**共用一个出口形状**：成败都折成内核那一格（码 + 一句话），故三分支各写一遍
-    // 那个 match（不用 `?`：它们的失败类型各自是自己的 `Fail`）。
+    // 四个分支各一行：每一域先把自己那一种死法折成出口那一格（那三支 `map_err`），四格随后
+    // 汇进 [`exit`] 一处——**加第五种角色也只加一行**。
     match Role::of_args(runtime::core::unit::args()) {
-        Role::System => system(),
-        Role::Tree => match operator::server::serve() {
-            Ok(()) => programs::Report::new(env::EXIT_OK),
-            Err(e) => programs::Report::note(e.code(), e.text()),
-        },
-        Role::Roster => match principal::server::serve() {
-            Ok(()) => programs::Report::new(env::EXIT_OK),
-            Err(e) => programs::Report::note(e.code(), e.text()),
-        },
-        Role::League => match coalition::server::serve() {
-            Ok(()) => programs::Report::new(env::EXIT_OK),
-            Err(e) => programs::Report::note(e.code(), e.text()),
-        },
+        Role::System => exit(system().map_err(said)),
+        Role::Tree => exit(operator::server::serve().map_err(tree_said)),
+        Role::Roster => exit(principal::server::serve().map_err(roster_said)),
+        Role::League => exit(coalition::server::serve().map_err(league_said)),
     }
 }
 
-/// 本域的死法 → 出口那一格（四种角色共用一个出口类型，故折成 [`programs::Report`]）。
-fn fail(f: Fail) -> programs::Report<'static> {
-    programs::Report::note(f.code(), f.text())
-}
-
 /// **编排域那一枚的身子**（原来就是 `main` 的正文）：这台机器上有哪些服务、怎么起、谁死了怎么办。
-fn system() -> programs::Report<'static> {
+///
+/// 返 `Result<(), Fail>`：本域的死法有类型（[`Fail`]），折成出口那一格是 [`main`] 那一步的事
+/// ——**这一层只管"哪一步没成"**。
+///
+/// **照实记（那一句 `system: done` 已退场）**：本域收场是"被内核那一刀扑杀"（见本函数尾注），
+/// 那句判词**到不了**；它从前那一版只是"`Ok` 那一格想带一句话"的产物（`Report` 不能白借一句
+/// 话，而本域确实没有那句话要说）——故收掉它、成功一格留空，反而与事实一致。
+fn system() -> Result<(), Fail> {
     // 1. 与引导域开会话：本域那一枚交给"生我者"，并认下它那一枚（一问一答两个方向）。
     let Some(boot_pier) = talk_to_root() else {
-        return fail(Fail::Firmware);
+        return Err(Fail::Firmware);
     };
 
     // 2. 领树：本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一段区"要有它。
     //    坐标是 `Key::dtb()`（"哪一件"那一形：树不知道自己写在哪，故只能这么取）。
     let machine = match take_machine(&boot_pier) {
         Ok(machine) => machine,
-        Err(_) => return fail(Fail::Machine),
+        Err(_) => return Err(Fail::Machine),
     };
 
     // 2′. 领账：这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
     //     载荷区的**坐标从树里读**（`/chosen` 的 `linux,initrd-start`）——机器自己写着它在哪，
     //     本域不另抄一个名字。树也在这一块里——它是**本域起的服务**（名册第一条）。
     let Some(payload) = machine.payload() else {
-        return fail(Fail::Payload);
+        return Err(Fail::Payload);
     };
     let catalog = match take_catalog(&boot_pier, payload) {
         Ok(catalog) => catalog,
-        Err(_) => return fail(Fail::Machine),
+        Err(_) => return Err(Fail::Machine),
     };
 
     // 3/4. 死亡道：**上板的那几位**一位一条（本域铸、记号 `gone-<名字>`；装配时各交一份给
@@ -198,14 +234,14 @@ fn system() -> programs::Report<'static> {
     //      死了没有读数）。
     let pile = match Pile::unseal(false) {
         Ok(pile) => pile,
-        Err(_) => return fail(Fail::Group),
+        Err(_) => return Err(Fail::Group),
     };
     // **名册**：内件三枚在前、镜像里那几台在后（`roster` 那一处给次序）。道**自己带着名字**
     // ——`Lane` 那段照实记说了为什么不再按下标。
     let roster = scenario::roster(&catalog);
     let mut lanes: alloc::vec::Vec<Lane> = alloc::vec::Vec::new();
     if lanes.try_reserve(roster.len()).is_err() {
-        return fail(Fail::Group);
+        return Err(Fail::Group);
     }
     for (_, p) in roster.iter() {
         // **有写端才有道**：板不看的那几位不铸（见上面那条照实记）。名册**每一位都在**
@@ -227,7 +263,7 @@ fn system() -> programs::Report<'static> {
     let mut table = Table::new();
     let last = match service::assemble(&mut table, &catalog, &roster, &boot_pier, &lanes, &machine) {
         Ok(last) => last,
-        Err(code) => return fail(Fail::Assemble(code)),
+        Err(code) => return Err(Fail::Assemble(code)),
     };
 
     // 5/6. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
@@ -244,8 +280,8 @@ fn system() -> programs::Report<'static> {
     // `system: done` 在 **1005 份 soak 日志里一次都没有**）。
     // 板线程本来就不必点名收：本域一退场，"域亡＝成员清零"把它一起带走——故那一手是
     // **重复的一刀**，代价是把本机最后一句读数一起收走了。
-    // （本域收场是"被板那一刀扑杀"，故这一句判词**到不了**——留着只为类型闭合。）
-    programs::Report::note(env::EXIT_OK, "system: done")
+    // （本域收场是"被板那一刀扑杀"，故那句判词**到不了**——成功一格因此不带话。）
+    Ok(())
 }
 
 /// 与引导域搭一条**双向**的问答路。
@@ -301,4 +337,3 @@ fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     let records = supply::client::draw(pier, me, &[want], &mut reply, Wait::AtMost(BOOT_MS)).ok()?;
     supply::client::pick(records, key)
 }
-

@@ -30,7 +30,7 @@ contract = { path = "../crates/contract" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
 # 使用者目前只有 `prog-router`（要数自己的 context、列自己要接的线）。
 fdt = { version = "0.1.5", default-features = false }
-# 错误容器：`system::call` 把内核负码包成 `erra::Error<EnvError>`（与 protocol 同款）。
+# 错误容器：`system::server` 把内核负码包成 `erra::Error<EnvError>`（与 protocol 同款）。
 erra = { version = "0.2.0", default-features = false }
 
 [[bin]]

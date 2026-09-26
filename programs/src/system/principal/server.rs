@@ -36,87 +36,81 @@ use runtime::PAGE_SIZE;
 const MS: usize = 1000;
 
 /// 起服务：**读锚 → 上板 → 铸门牌（给生我者 + 上树）→ 一枚线程招待所有客人**。
+///
+/// **起手那几步收在一个闭包**（照实记）：它们清一色是"不成 ⇒ 这一域起不来"的早退步，从前每步
+/// 一段 `let Ok(..) = .. else { return Err(..) }` ——**报的是同一个死法、写的是七段岔口**，
+/// 主脉络因此被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**（先上板 / 铸门牌那两
+/// 桩收尾也是这个道理：它们成败相同）。`serve` 的主干于是只剩"起手 → 常驻"两步。
 pub fn serve() -> Result<(), super::fail::Fail> {
-    // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
-    //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
-    // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
-    // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
-    let Some(assembler) = crate::service::assembler() else {
-        return Err(super::fail::Fail::Sire);
-    };
-
-    // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
-    let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
-        return Err(super::fail::Fail::Board);
-    };
-    if board::ask_hole(board_link).is_err() {
-        return Err(super::fail::Fail::Board);
-    }
-
-    // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
-    let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
-        return Err(super::fail::Fail::Tree);
-    };
-    // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
+    // 一～五：起手（读锚 → 上板 → 铸门牌 → 上树 → 两张表 → 常驻那只组）。
     //
-    // **照实记（这一格的理由换过一次，多出来的那一格也收了）**：原写的是"给 `FETCH` 是因为
-    // **装配者还要把这一枚再转授给树**（门禁那一刀：树要问 `resolve` / `heir`）"——那一版真机
-    // 栽在 `coord-ship`，现在**门牌由各域自己交**（见 `operator/bridge.rs` 的 `COORD` 段），
-    // 那条理由已经不存在。装配者用这一枚只有**一条**路：往里**推帧**（`derive` / `bind`）；
-    // 答话走每一趟自己铸的那枚回信孔（`session::call::lend_out` ＋ `push_to`：铸孔 → 交
-    // `STORE` → 把"那一格"编进帧 → 推），
-    // 读端在装配者这边。⇒ **`STORE` 就是这一格的全部需要**（孔上：`STORE` = `push`、
-    // `FETCH` = `pull`，见 `env::permission` 的位表）；`FETCH` 是旧理由留下的，已收。
-    if port::ship(
-        &HolePie::from_token(entry),
-        assembler,
-        Access::STORE,
-        Policy::NONE,
-    )
-    .is_err()
-    {
-        return Err(super::fail::Fail::Tree);
-    }
+    // 三样东西跟着交出来：**常驻那一问要的两格**（`pile` 是那一组，`entry_hole` 是组下那一枚
+    // 门牌）与**那本账**（`book`，`turn` 收它）。门牌本身不必出来——它在闭包里已经交出去过了
+    // （给生我者、给持树者），循环只需要那枚孔的句柄。
+    let (mut book, pile, entry_hole) = (|| {
+        // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
+        //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
+        // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
+        // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
+        let assembler = crate::service::assembler().ok_or(super::fail::Fail::Sire)?;
 
-    // 四、上树：分 `/sys`、落 `/sys/principal`、再查回来验一遍（同 router / rtc 那一趟）。
-    let Ok((tree, host)) = operator::open(assembler, Wait::AtMost(MS)) else {
-        return Err(super::fail::Fail::Tree);
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return Err(super::fail::Fail::Tree);
-    };
-    serve_tree(&tree, talk, host, entry);
+        // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
+        let (_link, board_link) =
+            board::open(assembler, Wait::AtMost(MS)).map_err(|_| super::fail::Fail::Board)?;
+        board::ask_hole(board_link).map_err(|_| super::fail::Fail::Board)?;
 
-    // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
-    // `operator::open` 交回来的那一格）。它据此才判得了"这一位此刻代表谁"。
-    //
-    // 为什么是**本域自己**交、不是装配者转授：见 `programs/src/system/operator/bridge.rs`
-    // 的 `COORD` 那段照实记——装配者转授那一版真机报 `operator:coord-ship`（内核 `-1`）。
-    // 这一枚在手时权限是 `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。
-    if port::ship(
-        &HolePie::from_token(entry),
-        host,
-        Access::FETCH | Access::STORE,
-        Policy::NONE,
-    )
-    .is_err()
-    {
-        return Err(super::fail::Fail::Tree);
-    }
+        // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
+        let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| super::fail::Fail::Tree)?;
+        // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
+        //
+        // **照实记（这一格的理由换过一次，多出来的那一格也收了）**：原写的是"给 `FETCH` 是因为
+        // **装配者还要把这一枚再转授给树**（门禁那一刀：树要问 `resolve` / `heir`）"——那一版真机
+        // 栽在 `coord-ship`，现在**门牌由各域自己交**（见 `operator/bridge.rs` 的 `COORD` 段），
+        // 那条理由已经不存在。装配者用这一枚只有**一条**路：往里**推帧**（`derive` / `bind`）；
+        // 答话走每一趟自己铸的那枚回信孔（`session::call::lend_out` ＋ `push_to`：铸孔 → 交
+        // `STORE` → 把"那一格"编进帧 → 推），
+        // 读端在装配者这边。⇒ **`STORE` 就是这一格的全部需要**（孔上：`STORE` = `push`、
+        // `FETCH` = `pull`，见 `env::permission` 的位表）；`FETCH` 是旧理由留下的，已收。
+        port::ship(
+            &HolePie::from_token(entry),
+            assembler,
+            Access::STORE,
+            Policy::NONE,
+        )
+        .map_err(|_| super::fail::Fail::Tree)?;
 
-    // 五、两张表：名册空着，谱系只有根（零号节点）。
-    let Ok(mut book) = Principal::new(assembler) else {
-        return Err(super::fail::Fail::Book);
-    };
+        // 四、上树：分 `/sys`、落 `/sys/principal`、再查回来验一遍（同 router / rtc 那一趟）。
+        let (tree, host) =
+            operator::open(assembler, Wait::AtMost(MS)).map_err(|_| super::fail::Fail::Tree)?;
+        let talk = operator::ask_hole(host).map_err(|_| super::fail::Fail::Tree)?;
+        serve_tree(&tree, talk, host, entry);
 
-    // 六、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。
-    let Ok(pile) = Pile::unseal(false) else {
-        return Err(super::fail::Fail::Desk);
-    };
-    let entry_hole = HolePie::from_token(entry);
-    if pile.attach(&entry_hole, HoleDir::Pull).is_err() {
-        return Err(super::fail::Fail::Desk);
-    }
+        // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
+        // `operator::open` 交回来的那一格）。它据此才判得了"这一位此刻代表谁"。
+        //
+        // 为什么是**本域自己**交、不是装配者转授：见 `programs/src/system/operator/bridge.rs`
+        // 的 `COORD` 那段照实记——装配者转授那一版真机报 `operator:coord-ship`（内核 `-1`）。
+        // 这一枚在手时权限是 `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。
+        port::ship(
+            &HolePie::from_token(entry),
+            host,
+            Access::FETCH | Access::STORE,
+            Policy::NONE,
+        )
+        .map_err(|_| super::fail::Fail::Tree)?;
+
+        // 五、两张表：名册空着，谱系只有根（零号节点）。
+        let book = Principal::new(assembler).map_err(|_| super::fail::Fail::Book)?;
+
+        // 六、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。组与名下那一枚孔
+        //     在闭包里立好，交给下面那个循环。
+        let pile = Pile::unseal(false).map_err(|_| super::fail::Fail::Desk)?;
+        let entry_hole = HolePie::from_token(entry);
+        pile
+            .attach(&entry_hole, HoleDir::Pull)
+            .map_err(|_| super::fail::Fail::Desk)?;
+        Ok::<_, super::fail::Fail>((book, pile, entry_hole))
+    })()?;
 
     // 一问的形状是那一形（25 字节）；缓冲给**一页**（载体的界，见 `Push` 的前置条件）——
     // 于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。

@@ -624,14 +624,11 @@ fn face_of(host: TaskId) -> Option<Face> {
     }
 }
 
-/// 起不来时**报一行**并把原因码交给调用方（调用方 `return` 它，出口那一手在 `entry`）。
-///
-/// **它不再自己退场**（从前直接调 `room::exit`）：报码这笔账现在由返回值走，与所有别的
-/// `main` 同一条路。本域没有会话、没有控制台，调试面是唯一能说话的地方。
-pub fn die(died: Died, msg: &str) -> Died {
-    let _ = runtime::env::debug::put(msg);
-    died
-}
+// **照实记（`die` 与 `E_OK` 已退场）**：这里原先住着 `die(died, msg)`（起不来时报一行 +
+// 把号交回调用方）与 `E_OK`。四个角色改走 `Result` 出口（`main.rs` 的 `exit`）之后，**两个
+// 名字一个调用点都没有**——`die` 只活在两处文档的"与从前的 `service::die` 同值"里，`E_OK`
+// 则被各 `Exit` 实现取代（见 `runtime::core::exit`）。故一并删；那两处文档说的是**历史值**，
+// 与这两个名字的存亡无关。
 
 /// 等子域就绪/交通道的上限（毫秒）。**必须有界**：子域要是死在头几步，本域不能陪着挂死。
 pub const READY_MS: usize = 1000;
@@ -640,4 +637,3 @@ pub const READY_MS: usize = 1000;
 pub const E_MANIFEST: Died = 2;
 pub const E_PROGRAM: Died = 3;
 pub const E_TABLE: Died = 4;
-pub const E_OK: Died = 0;

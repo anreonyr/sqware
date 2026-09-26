@@ -1,9 +1,20 @@
 //! system::server — **适配**：把内核答的事实写回表（建域 / 放行 / 等就绪 / 收 / 盯）
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
+//!
+//! # 内核那一侧也在这里（照实记：原 `system/call.rs` 已收进本文件）
+//!
+//! 那七手（建域 / 产线程 / 塞门闩 / 放行 / 收域 / 判收尾）原来另立一个 `call.rs`，而它们的
+//! **唯一读者就是本文件**——分家分错了地方：本文件的名分本来就是"适配"（把内核答的事实
+//! 写回表），那几手正是这句话的孩子。收进来之后每条链子少一跳转发，也不再有一层"转发壳"
+//! 夹在适配与内核之间。
+//!
+//! **一处语义翻译留在这里**（[`fail`]）：内核负码 → 本协议的 [`Fail`]。它在 `env` 的词汇
+//! （[`EnvFail`]）与本协议的词汇之间过一手，故它住适配层、不进「约」（那要给 `contract`
+//! 加一条依赖）。码本身读 [`EnvFail::of_code`]——**一个数字都不写**。
 
 use env::Wait;
-use env::{Mark, Name, ProgramKind, TaskId, TeamId};
+use env::{EnvError, Fail as EnvFail, Mark, Name, ProgramKind, TaskId, TeamId};
 use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
@@ -15,7 +26,74 @@ use protocol::system::desk::{Announce, Service, Slot, State, Table};
 
 use crate::service::{Lane, Role};
 
-// ── 适配：原语（转发到运行时那几件）──────────────────────────
+// ── 内核那一侧（原 `system/call.rs`）：每个函数只做一件事——转发一次 ──────
+//
+// 这几手原来住 `crate::system::call`。它们**只有本文件一个读者**，故收在这里；
+// 判断一律不在这里（那在协议那一侧的判定与账里），下面每一枚都是一行转发。
+//
+// **"它交回了一枚孔"那件事不在这里**——归 `protocol::session`：会话的建立与认领是另一份
+// 协议，本处只剩"起一个服务"需要的那几手。
+
+/// 建域（Mint）：镜像字节 + 特权级 → 新域。
+///
+/// 产出的域归**调用者**（父亲 = 调用者自己）。特权级由**清单**决定、调用方转交
+/// ——程序自称不了特权级（这是"放开建域不构成提权"的那一半）。
+///
+/// **名字不过这里**：清单名归装配账（`system::desk`），内核不收名字。
+pub fn build(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
+    utask::build(image, kind).map_err(fail)
+}
+
+/// 产一枚线程（未放行）：`entry = 0` ⇒ 走域默认入口。
+///
+/// `args` 是 `Spawn` 的那一格（内核拷到新任务栈顶，子方用 `runtime::core::unit::args()` 读）。
+/// 今天只有一处非空：iii 的三枚内件用**同一个入口**、靠这一格分派角色（[`crate::service::Role`]）。
+pub fn spawn(team: TeamId, args: &[usize]) -> Result<TaskId, Fail> {
+    utask::spawn(team, 0, args, 0).map_err(fail)
+}
+
+/// 把一枚门闩塞进目标线程手里（放行前做）。**给多大权由调用方定**——这里不替它做主。
+///
+/// **收的是"交成了"这一格**：内核那手回的是"它种在目标表里那一号"，本层没有读者
+/// （装配期要认的是**别人**交上来的孔，不是自己塞进去的那枚号）——故 `map(|_| ())`。
+pub fn accord(token: env::PieToken, task: TaskId, perm: env::Permission) -> Result<(), Fail> {
+    runtime::env::mail::accord(token, task, perm)
+        .map(|_| ())
+        .map_err(fail)
+}
+
+/// 放行。
+pub fn hatch(task: TaskId) -> Result<(), Fail> {
+    utask::hatch(task).map_err(fail)
+}
+
+/// 收掉目标所属的域（连它的线程一起）。**`doom`：不靠血缘。**
+///
+/// 判活照旧：目标不在世 / 从未入册 ⇒ 已经是死的，视作收到（幂等）。
+pub fn doom(task: TaskId) {
+    let _ = runtime::env::room::doom(task);
+}
+
+/// 它收尾完了没有（非阻塞那一问：`POLL`）。
+pub fn reaped(task: TaskId) -> bool {
+    utask::join(task, Wait::POLL).unwrap_or(true)
+}
+
+/// 内核负码 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
+///
+/// **码读 `env` 的词汇**（[`EnvFail::of_code`]）：本层出现数字就等于把码表抄成第二处。
+/// 三格的来路：`+` 装不上 = [`EnvFail::BadImage`]（`-6`）；`+` 内存不够 / 产不出来 =
+/// [`EnvFail::OoM`]（`-4`，本协议名 [`Fail::Full`]）；其余（含表外那一格 `None`）
+/// 落 [`Fail::Unknown`]——"不认识的失败"不该猜成某一种。
+fn fail(e: erra::Error<EnvError>) -> Fail {
+    match EnvFail::of_code(e.source.code()) {
+        Some(EnvFail::BadImage) => Fail::BadImage,
+        Some(EnvFail::OoM) => Fail::Full,
+        _ => Fail::Unknown,
+    }
+}
+
+// ── 适配：原语（把内核那一侧与表拼起来）──────────────────────
 
 /// 起跑前要交出去的一枚门闩——定义见 [`plan::assembly::Grant`]（本处只是转发）。
 pub use plan::assembly::Grant;
@@ -37,8 +115,8 @@ pub fn mint(
 ) -> Result<TaskId, Fail> {
     admit_start(table, name)?;
 
-    let team = crate::system::call::build(image, kind)?;
-    let Ok(task) = crate::system::call::spawn(team, &[]) else {
+    let team = build(image, kind)?;
+    let Ok(task) = spawn(team, &[]) else {
         return Err(Fail::Full);
     };
     table.attach(name, Some(team), task)?;
@@ -60,7 +138,7 @@ pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, F
     let Ok(me) = utask::self_id() else {
         return Err(Fail::Unknown);
     };
-    let Ok(task) = crate::system::call::spawn(TeamId::new(0), &role.args(me.get())) else {
+    let Ok(task) = spawn(TeamId::new(0), &role.args(me.get())) else {
         return Err(Fail::Full);
     };
     table.attach(name, None, task)?;
@@ -96,12 +174,12 @@ pub fn start(
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
-            crate::system::call::accord(g.token, task, g.perm)?;
+            accord(g.token, task, g.perm)?;
         }
-        crate::system::call::hatch(task)
+        hatch(task)
     })();
     if let Err(e) = launched {
-        crate::system::call::doom(task);
+        doom(task);
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(e);
@@ -139,7 +217,7 @@ pub fn ready(
 
     // 它不宣布的那一种：放行之后只要还活着就算起来了，没有可等的东西。
     if announce == Announce::None {
-        if crate::system::call::running(task) {
+        if !reaped(task) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -159,7 +237,7 @@ pub fn ready(
             return Ok(false);
         }
     }
-    if !crate::system::call::running(task) {
+    if reaped(task) {
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
@@ -181,7 +259,7 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
         return Err(Fail::Unknown);
     };
     let task = *task;
-    crate::system::call::doom(task);
+    doom(task);
     table.set_state(name, State::Stopping);
     Ok(())
 }
@@ -198,7 +276,7 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// ⇒ 等待里的"早醒"只可能来自收尾；"到点"那一支由复探分出来（答 [`Reaped::Unsettled`]）。
 ///
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
-/// 已入土 / 从未入册）按"收尾了"处理——与 [`running`](crate::system::call) 同一折法。
+/// 已入土 / 从未入册）按"收尾了"处理——与 [`reaped`] 同一折法。
 /// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）；超时那支答
 /// [`Reaped::Unsettled`]，
 /// 不写表。
@@ -206,7 +284,7 @@ pub fn until(table: &Table, name: Name, millis: Wait) -> Result<Reaped, Fail> {
     let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
     };
-    if !crate::system::call::running(task) {
+    if reaped(task) {
         return Ok(Reaped::Now);
     }
     if millis == Wait::POLL {
@@ -214,7 +292,7 @@ pub fn until(table: &Table, name: Name, millis: Wait) -> Result<Reaped, Fail> {
     }
     // 挂起等一记：醒来自收尾（`wipe`）或到点，两者当场分不开 ⇒ 醒来复探，判决只认它。
     let _ = runtime::env::unit::join(task, millis);
-    if crate::system::call::running(task) {
+    if reaped(task) {
         Ok(Reaped::Unsettled)
     } else {
         Ok(Reaped::Waited)
