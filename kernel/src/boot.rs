@@ -147,10 +147,12 @@ pub fn init() {
     boot_harts();
 
     // IPI 自检（debug 档）：副核已在各自 WFI 里，此刻是"一记门铃能不能叫醒它"的
-    // 唯一干净时点（没有任务、没有到点登记 ⇒ 醒了只可能是那一记 IPI）。见 `diagnose::ipi`。
+    // 唯一干净时点（没有任务、没有到点登记 ⇒ 醒了只可能是那一记 IPI）。**这一趟不限**
+    // ——它是本模块那张判据表的出处；负载期那次（借空闲核跑）自带 100 ms 上界，见
+    // `diagnose::ipi` 的两条照实记。
     #[cfg(debug_assertions)]
     {
-        crate::runtime::diagnose::ipi::run("early");
+        crate::runtime::diagnose::ipi::run("early", None);
         crate::runtime::diagnose::ipi::start_delayed();
     }
 

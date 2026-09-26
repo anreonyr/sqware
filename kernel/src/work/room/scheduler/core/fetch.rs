@@ -153,6 +153,12 @@ fn wait() -> Option<Arc<Task>> {
         // 目标核进 trap 执行 sfence，无需空闲核主动 sweep。
         // IPI 自检钩子（debug 档，见 `runtime::diagnose::ipi`）：全是只读计数，
         // 生产档一行不编。
+        //
+        // **负载期那次采样也在这里**（不跟着进 WFI）：这一条是**空闲路**——占的是本来就要
+        // 睡的核，不再从定时器陷阱里抢一颗手上有任务的核（那版会吃掉装配的握手预算，照实记
+        // 在那边）。它自带总上界，跑完才睡。
+        #[cfg(debug_assertions)]
+        crate::runtime::diagnose::ipi::idle_hook();
         #[cfg(debug_assertions)]
         crate::runtime::diagnose::ipi::wfi_entry(me);
         unsafe {
