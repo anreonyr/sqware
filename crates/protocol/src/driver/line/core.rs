@@ -3,7 +3,8 @@
 //! **四个原语**（`occupy` / `deliver` / `exhaust` / `vacate`）动账；**查询**（`lane` / `busy` /
 //! `held` / `told`）只读账（`told` 顺手置一格"报过没有"，见它自己的注）。
 //!
-//! **它碰内核的地方只有一处**：`deliver` 推那一帧（[`establish::push_to`]）——那句话不在账上，
+//! **它碰内核的地方只有一处**：`deliver` 推那一帧（`mail::HolePie::from_token(..).push(..)`）——
+//! 那句话不在账上，
 //! 是"往对端那枚孔推一串字节"。**设备侧的动作**（接线 / 静音 / 拆线）一律不在这里：它们由
 //! 适配层紧随原语之后做（那几手要动硬件），故账仍可独立推理。
 //!
@@ -12,7 +13,8 @@
 
 use alloc::vec::Vec;
 
-use crate::communication::establish::{self, Held};
+use crate::communication::establish::Held;
+use runtime::env::mail;
 
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -94,7 +96,9 @@ impl Lines {
                 // 推的是**对端那一枚**（我写、对端读）；还没认到 ⇒ 与从前 `Pier::post`
                 // 自己那一格同一落点：没写端就发不出去。
                 let at_peer = lane.tx().ok_or(Fail::Denied)?;
-                establish::push_to(at_peer, frame).map_err(|()| Fail::Denied)?;
+                mail::HolePie::from_token(at_peer)
+                    .push(frame)
+                    .map_err(|_| Fail::Denied)?;
                 *busy = true;
                 Ok(())
             }

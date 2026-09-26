@@ -221,7 +221,7 @@ use core::time::Duration;
 use env::Name;
 use programs::system::control::service as service;
 use protocol::debug;
-use protocol::communication::establish::{self, Endpoint};
+use protocol::communication::establish::{self, Endpoint, Held};
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Slot, Table};
 use runtime::env::mail::HolePie;
@@ -435,9 +435,12 @@ fn trial(
     // 放行时把通道交给受害者；它铸出自己那一枚交给台主、随即挂在自己那枚孔上 ⇒ 台主 `claim`
     // 到它就等于**"它已经挂好了、可以被唤醒了"**（它**不自己校准**，轮数随后由台主发过去）。
     // `start` 丢弃 `ready` 的 bool，故正文里显式查写端在不在。
-    // **有主地建**（`hold`）：这一轮的关系是**真·作用域寿命**（一轮一条、这一轮结束就还回去），
+    // **有主地建**（`Held(..)`：那一格"有主"由类型说出来，不再有一手 `hold`）：这一轮的
+    // 关系是**真·作用域寿命**（一轮一条、这一轮结束就还回去），
     // 故它由 `Held` 的 `Drop` 收——一台子跑几百轮，这一格必须自己回基线（读数见头注那张表）。
-    let held = establish::hold(task, Mark::of(link.as_str()), Wait::POLL).map_err(|_| "seat")?;
+    let held = Held(
+        establish::endpoint(task, Mark::of(link.as_str()), Wait::POLL).map_err(|_| "seat")?,
+    );
     // `start` 收的是这本账（`&mut [Endpoint]`）；`Endpoint` 是 `Copy` 的号束，故从 `held` 里
     // 取一份出来用，所有权仍在 `held` 手里（放下时放的是同一枚孔）。
     let mut channels = [*held];

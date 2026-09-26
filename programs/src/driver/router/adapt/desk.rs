@@ -106,7 +106,8 @@ pub fn serve(
 /// ——认不到就是它没交（或交不出来），那一趟不算（**本端刚铸的那一枚由 [`Held`] 的 `Drop`
 /// 放下**，正是 [`serve`] 里那一支要说的那件事）。
 fn take_lane(from: TaskId) -> Option<Held> {
-    let lane = establish::hold(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS)).ok()?;
+    // **有主地建**（`Held(..)`：那一格"有主"由类型说出来，不再有一手 `hold`）。
+    let lane = Held(establish::endpoint(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS)).ok()?);
     // **没有写端就投不出去**（原 `Quay::claim` 答不出来的那一格）：这条泊位不成立。
     lane.tx()?;
     Some(lane)

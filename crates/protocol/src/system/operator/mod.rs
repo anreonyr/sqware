@@ -269,7 +269,8 @@ pub use frame::{
 // 于是 `tree()` / `desk()` 两个"把身体接上去"的构造点、以及 `ship` 那一层转发一起退场。
 
 // **照实记（"交出"那一层转发退场）**：这里从前有 `pub fn ship(entry, to)` —— 一行正文加一次
-// `map_err(|()| Fail::Unknown)`。身体只有一具（[`crate::communication::establish::ship`]），
+// `map_err(|()| Fail::Unknown)`。身体只有一具（`port::ship`；它自己那具 `establish::ship`
+// 也已随那六具壳删了），
 // 失败域那一格**在调用点上**了：谁用它、谁按自己那一头折（树这一头是 `Unknown`），
 // 于是"同一个身体、两处不同的话"不靠两层函数说，靠两个调用点说。
 

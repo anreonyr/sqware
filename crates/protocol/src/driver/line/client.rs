@@ -37,10 +37,13 @@ impl Line {
         let host = establish::opened_by(entry).ok_or(Fail::Denied)?;
         // 本端那一枚先铸出来交给它（它按"谁开的 + 记号"认下来，往这里投递）。**这一步不等对端
         // 那一枚**：对端要到它读过登记那一句之后才装它那一半（次序是契约的一半，见下面 `claim`）。
-        // **有主地建**（`hold`）：这一条线归本端持有，`Line` 落出作用域即放下；失败那几趟
+        // **有主地建**：那一格"有主"由类型说出来——`Held(endpoint(..)?)`（没有 `hold` 那一手：
+        // 它只是这一个字面量）。这一条线归本端持有，`Line` 落出作用域即放下；失败那几趟
         // 也由它的 `Drop` 代劳（下面三处 `return` 一个字都不用写）。
-        let mut pair =
-            establish::hold(host, Mark::of(frame::LANE), Wait::POLL).map_err(|_| Fail::Denied)?;
+        let mut pair = Held(
+            establish::endpoint(host, Mark::of(frame::LANE), Wait::POLL)
+                .map_err(|_| Fail::Denied)?,
+        );
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单槽的孔只够一个方向）。
         let back = mail::unseal_hole(frame::BACK_MARK).map_err(|_| Fail::Denied)?;
         // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条线）——**线由 `pair` 的 `Drop`

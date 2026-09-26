@@ -258,34 +258,23 @@ pub mod client;
 // （旧注写的是"这里不出现 `if` / `match`"——**照实记：`map_*` 那两张表与它同一次落地，
 // 那句话从写下的第一天起就是假的**。）
 
-use env::{PieToken, TaskId};
-
 pub use frame::{
     ASK_MARK, BAD, ENTRY_MARK, LANE_PREFIX, LINK, OK, Req, TIP_MARK, Tip, UNKNOWN, Union, Wire,
     code_to_fail, fail_to_code,
 };
 
-// ── 一个调用的三个事实与那一记"交出"：**只有身体，没有壳** ────────────────
+// ── 一个调用的三个事实：**只有身体，没有壳** ────────────────────────────
 //
 // 三格是**一组**，三个名字读成同一句式的被动式事实、故等长（9/9/9）：
 // **这枚是谁授的 / 这扇门是谁开的 / 这枚被标成什么**。板这一侧原先各抄一份
 // （`probe`5 / `opened_by`9 / `mark_of`7——不等长本身就是"这一组还没想清楚"的信号），
 // 那一份已删；**别名也不再各取一份**（照实记）：身体只有一个
 // （[`crate::communication::establish`]），要它的人**直接叫**，
-// 于是 `board()` / `desk()` 两个"把身体接上去"的构造点、以及 `ship` 那一层转发一起退场。
-
-/// **交出**：把调用方手里那枚入口交给持板者（`Accord` 一份副本），返"种在持板者表里"的号；
-/// 反过来的那一半（把板上那一份转授给调用方，`Query` 的下场）**是同一件事**，故同一个名字
-/// ——照实记：这两个方向原先叫 `hang` 与 `give`，收口那一刀并成了这一个。
-///
-/// 这就是"谁挂的"的来历：板上那枚是**亲手交出去的**，故 [`vested_by`] 认得出谁授的它。
-/// 权限给满（`R|W`）**加一格 `VEST`**：入口要能用来说话，而持板者的本职就是**再授出**
-/// （`Query` 的下场）——内核那道"持 `VEST` 才交得出去"的闸（`Need::Grant`）挡的就是
-/// "板查到了却授不出去"；拿到它的人把它转给第三方是常态（那正是"一个名字指向一个入口"
-/// 的用法），故这里也不替调用方裁剪。
-///
-/// 身体在 [`crate::communication::establish::ship`]（**同名的裸手**）；**失败域是本模块的**
-/// （`Denied`）：身体共用，失败值各自说（与 `map_establish` 那两张对照表同款）。
-pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
-    crate::communication::establish::ship(entry, to).map_err(|()| Fail::Denied)
-}
+// 于是 `board()` / `desk()` 两个"把身体接上去"的构造点一起退场。
+//
+// **照实记（这里最后那一具壳也退了）**：本文件末尾原先还有 `pub fn ship(entry, to)` ——
+// 一行正文加一次 `map_err(|()| Fail::Denied)`。**全仓一处也不叫它**（板那一台叫的是
+// `establish::ship`、今叫 `port::ship`），且它踩的那具身体也删了（见
+// `communication::establish` 的照实记）⇒ 它作为一个**没人用的壳**一起退场。板这一侧的
+// "交出"今天写在两个调用点上（`board/client.rs` 的登记与 `board/server.rs` 的 `Lookup`），
+// 各自折自己那一头。

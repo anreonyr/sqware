@@ -11,7 +11,7 @@
 //! **借孔那一趟的次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
 //! "谁给的 + 记号"两格认，多枚时取**最后那一枚**——故最后那一枚一定就是这一趟那一枚。
 //!
-//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`communication::establish::push_to`，同 `principal`
+//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`HolePie::from_token(..).push(..)`，同 `principal`
 //! 的客侧），答那一侧是本端自己那枚孔——**上端点的发送端**（`Sender::<Time>` / `Sender::<Status>`：答的
 //! 两形各是一张实现了报文约定的表，见 [`super::core::frame`]）。
 //!
@@ -38,7 +38,7 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     // 编一问：**表上那一手**（定长缓冲，故它不可能失败；`back` 是运输那一格，随动作一起进帧）。
     let mut frame = [0u8; Now::LEN];
     Now::of(seed).store(&mut frame);
-    if establish::push_to(entry, &frame).is_err() {
+    if HolePie::from_token(entry).push(&frame).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
@@ -65,7 +65,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     let (back, seed) = establish::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)?;
     let mut frame = [0u8; Arm::LEN];
     Arm::of(seed, after_ns).store(&mut frame);
-    if establish::push_to(entry, &frame).is_err() {
+    if HolePie::from_token(entry).push(&frame).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }

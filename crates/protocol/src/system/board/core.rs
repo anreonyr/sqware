@@ -11,7 +11,7 @@
 
 use env::{Name, PieToken, TaskId};
 
-use crate::communication::establish::{EstablishFail, unship, vested_by};
+use crate::communication::establish::{EstablishFail, vested_by};
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -84,10 +84,10 @@ pub enum Fail {
     Full,
 }
 
-// **照实记（"放下"那一枚函数指针已经退场）**：它从前是一个注入的别名
+// **照实记（"放下"那一枚函数指针已经退场，末了那一具壳也退了）**：它从前是一个注入的别名
 // （`pub type Unship = fn(PieToken) -> Result<(), ()>`），由 `board()` 接上身体；身体只有
-// 一个（[`unship`](crate::communication::establish::unship)）⇒ 这里直接叫，别名与构造点
-// 一并撤掉。
+// 一个（`mail::release`）⇒ 这里直接叫，别名与构造点一并撤掉。中间那一版还剩一具
+// `establish::unship` 的转发壳，它也与 `establish` 那六具一起删了（见那个文件的照实记）。
 
 // ── 板 ──────────────────────────────────────────────────────
 
@@ -115,7 +115,7 @@ impl Board {
 
     /// 立一块板。**两枚机制事实不进这里**（照实记）：从前它们跟板走（`Board { vested_by,
     /// unship }`），故多出两枚类型别名、一个构造点、一层"谁接上"；而两边各只有一个身体
-    /// （[`crate::communication::establish`] 的 [`vested_by`] / [`unship`]）⇒ 直接叫。
+    /// （[`vested_by`] 与 `mail::release`）⇒ 直接叫。
     pub const fn new() -> Board {
         Board {
             signs: [Sign::VACANT; Board::CAP],
@@ -208,7 +208,7 @@ impl Board {
     }
 
     /// 同 [`Board::lookup`]，但拿到入口后先交给 `ship`（适配层在这里把入口授给调用方，
-    /// 免得"先查再授"中间再多一次查找）——`ship` 是那一手的名字（与 `unship` 成对）。
+    /// 免得"先查再授"中间再多一次查找）——`ship` 是那一手的名字（与"放下"成对）。
     pub fn lookup_after(
         &mut self,
         name: Name,
@@ -256,7 +256,7 @@ impl Board {
     /// 摘实例、清主人，**牌子留着**。
     fn unship_at(&mut self, at: usize) {
         if let Some(entry) = self.signs[at].entry {
-            let _ = unship(entry);
+            let _ = runtime::env::mail::release(entry);
         }
         self.signs[at].lift();
     }
@@ -274,7 +274,7 @@ impl Board {
 //   - [`Board::lookup`] 里那次 `sweep` 是**留着的**（见 `board/mod.rs` 末段）；
 //   - [`Board::unregister`] 里那次 `sweep_at`：撤牌子也**先扫后判**。
 //
-// 全部外部依赖只有两处：`vested_by`（探入口）与 `unship`（放下）——直接叫的那两具身体。
+// 全部外部依赖只有两处：`vested_by`（探入口）与 `mail::release`（放下）——直接叫的那两具身体。
 
 // ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
 //

@@ -30,7 +30,6 @@ use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::Coord;
 use crate::system::control::service::Start;
-use protocol::communication::establish;
 use protocol::system::desk::{Desk, DeskFail, Guest};
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
@@ -515,9 +514,12 @@ fn answer(
             let mut seed = None;
             let mut grant = Ok(());
             let said = tree.find(id, |pie| {
-                grant = establish::ship(pie, who)
-                    .map(|at| seed = Some(at))
-                    .map_err(|()| Fail::Unknown);
+                // **交出那一手就是 `port::ship`**（`R|W` ＋ 一格 `VEST`）：捡到的那一枚砖
+                // 要能替客人再授出，少 `VEST` ⇒ 转授那一步答 `Denied`。
+                let grant_pie = mail::HolePie::from_token(pie);
+                grant = port::ship(&grant_pie, who, Access::FETCH | Access::STORE, Policy::VEST)
+                    .map(|at| seed = Some(at.seed()))
+                    .map_err(|_| Fail::Unknown);
             });
             if said == Err(Fail::Dead) {
                 // 核心**已经**把那一格剔了（"惰性剔死"）——顺手销账，别留一条陈的。

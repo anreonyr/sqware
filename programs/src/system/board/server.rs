@@ -339,7 +339,12 @@ fn answer(
             let mut grant = Ok(());
             board
                 .lookup_after(name, |entry| {
-                    grant = establish::ship(entry, who).map(|_| ()).map_err(|()| Fail::Denied)
+                    // **交出那一手就是 `port::ship`**（`R|W` ＋ 一格 `VEST`）：查到的入口
+                    // 要能替它再授出（`Query` 的下场），少 `VEST` ⇒ 转授那一步答 `Denied`。
+                    let pie = mail::HolePie::from_token(entry);
+                    grant = port::ship(&pie, who, Access::FETCH | Access::STORE, Policy::VEST)
+                        .map(|_| ())
+                        .map_err(|_| Fail::Denied)
                 })
                 .and(grant)
         }

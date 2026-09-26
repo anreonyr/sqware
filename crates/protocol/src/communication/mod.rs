@@ -1,9 +1,8 @@
 //! communication — **通信**：关系怎么建立、一枚孔上怎么收发。
 //!
 //! ```text
-//!   establish.rs  Endpoint / Held / endpoint / hold / give / claim / find
-//!                 关系怎么建立（＋ 一枚孔本身那几手：ship / unship / push_to /
-//!                 lend_out / `Reserve` 三格）
+//!   establish.rs  Endpoint / Held / endpoint / give / claim / find / lend_out
+//!                 关系怎么建立（＋ 借一枚回信孔，＋ `Reserve` 三格）
 //!   sender.rs     Sender<M>                       我推的那一枚（类型 = 我发的那种报）
 //!   receiver.rs   Receiver<M>                     我收的那一枚（类型 = 我收的那种报）
 //! ```

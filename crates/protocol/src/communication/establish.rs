@@ -8,7 +8,7 @@
 //!
 //! ```text
 //!   endpoint(to, mark, claim_for)   两半都要：我铸我读 ＋ 认对方那枚（认不到就只有收的方向）
-//!   hold(to, mark, claim_for)       同上，但这一段关系**归本端持有**（落出作用域即放下）
+//!   Held(endpoint(..))              同上，但这一段关系**归本端持有**（落出作用域即放下）
 //!   give(to, mark)                  只要前一半，且**把读端交出去**：本端留写端
 //!   claim / find(of, mark)          只要后一半：别人交来的那一枚，按 owner ＋ mark 找回来
 //! ```
@@ -54,21 +54,31 @@
 //! 要类型化的收发时现取一只手柄——`pair.receiver::<Rx>()` / `pair.sender::<Tx>()`。
 //! 这样同一条路上换一种报不必换一个对象。
 //!
-//! # 这一层还装"一枚孔本身那几手"
+//! # 这一层还装什么
 //!
 //! ```text
-//!   ship / unship                 交一枚副本 / 放下本端一份
-//!   push_to                       往一扇门推一帧（裸字节：装与解不在这里）
-//!   lend_out                      借一枚回信孔过去、但先不推（返两格号）
-//!   vested_by / opened_by / marked_as    `Reserve` 的三格：谁授的 / 谁开的 / 刻的什么
+//!   lend_out                            借一枚回信孔过去、但先不推（返两格号）
+//!   vested_by / opened_by / marked_as   `Reserve` 的三格：谁授的 / 谁开的 / 刻的什么
 //! ```
 //!
-//! 它们是上面那三个动词**踩着的原语**，各有各的读者（板 / 树 / 线 / 三台服务各取所需），
-//! 且**身体不能各抄一份**——故只能有一处。**照实记（这几手原先住 `communication/hands.rs`）**：
-//! 那个文件的前身是"注入进来那十枚函数指针的身体"（`session/hands.rs` 的 `Hands` 表，
-//! `session/call.rs` 的转发层）；注入与 `session` 一起退场之后，它只剩这几手，没有自己的
-//! 裁决、也没有第二个读者群体 ⇒ 并回这里（`communication` 从此三份：`establish` /
-//! `sender` / `receiver`）。
+//! 它们是上面那三个动词**踩着的原语**，各有各的读者（板 / 树 / 线 / 三台服务各取所需）。
+//!
+//! **照实记（六具薄壳一起退场）**：这里从前还住着六具"一个调用 / 一处转发"的手——
+//! `ship`（`port::ship` ＋ 一格 `VEST`）、`unship`（`mail::release`）、`push_to`
+//! （`HolePie::push`）、`find`（那一趟扫表的**改名**）、`unseal_hole`（`mail::unseal_hole`
+//! 并擦掉错误）、`hold`（[`Held`] 的构造）。判据是"删了不丢判断、只丢一个名字"，故
+//! **一个也不留**（用户裁定）：调用点直接叫内核那几手——`mail::unseal_hole` / `mail::release` /
+//! `HolePie::push` / `port::ship` / `mail::pies()` 那一趟扫 / `Held(..)` 那个字面量。
+//!
+//! **代价照实记**：`ship` 那一格 `R|W ＋ VEST` 从"一处"变成"每个调用点各写一遍"——少 `VEST`
+//! 的症状（对端再授出那一步答 `Denied`，而两侧已经配好了对）因此在每一处随正文写了一行。
+//! 判据没变，变的是它今天**写在四处外部调用点与本文件 [`endpoint`] 那一手（`seal_and_ship`）上**
+//! ——就是从这具壳里分出去的五处（全仓另有板那一枚提示孔一处，它本来就直叫 `port::ship`）。
+//!
+//! **照实记（这几手原先住 `communication/hands.rs`）**：那个文件的前身是"注入进来那十枚
+//! 函数指针的身体"（`session/hands.rs` 的 `Hands` 表，`session/call.rs` 的转发层）；注入与
+//! `session` 一起退场之后，它只剩这几手，没有自己的裁决、也没有第二个读者群体 ⇒ 并回这里
+//! （`communication` 从此三份：`establish` / `sender` / `receiver`）。
 
 use core::ops::{Deref, DerefMut};
 
@@ -99,7 +109,8 @@ pub enum EstablishFail {
 ///
 /// **它是 `Copy` 的、也没有 `Drop`**：这几枚号归**本域那张表**，故复制一个不改变归属，
 /// 放下一个**什么也不会发生**——"提前放"这件事因此不是"要记得别做"，而是**没有可做的动作**
-/// （见文件头那条照实记）。要一段**有主**的关系（作用域结束即放下）用 [`hold`]。
+/// （见文件头那条照实记）。要一段**有主**的关系（作用域结束即放下）就把它收进 [`Held`]：
+/// `Held(endpoint(..)?)`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Endpoint {
     rx: PieToken,
@@ -159,30 +170,44 @@ impl Endpoint {
 /// **独占**（不可 `Copy`；Rust 也不允许 `Copy` 与 `Drop` 并存）⇒ "谁放"永远只有一个候选，
 /// 没有"漏写一处"这种失败模式。反过来，**它不能被借出去而不放**：那正是要的。
 ///
+/// **构造就是它的字面量**：`Held(endpoint(to, mark, claim_for)?)`——那一格"有主"由**类型**
+/// 说出来，不另起一个名字（`hold` 那一手已删：它只是这一个字面量）。**真·作用域寿命的关系才
+/// 用它**：客户手里的 [`Line`](crate::driver::line::client::Line)（我拿着它，那条线就归我）、
+/// 线账里那一格（换主即作废），以及 `harness` 的压测台（每轮一条、每轮还回去）。板路 / 树路
+/// 那一类是**域级**的，走 [`endpoint`]——见文件头那条照实记（"提前放"为什么在 API 上不存在）。
+///
+/// **照实记（`hold` 退场之后，构造退化成"套一层"）**：这一件原先只有一条来路——`hold`
+/// （它自己先 `endpoint(..)` 铸一枚、再套上）。那一手删了之后，构造就是
+/// `Held(endpoint(..)?)` 这个字面量，字段因此必须是 `pub`（不然三处调用点造不出来）。
+/// 代价照实说：**同一枚号束可以套出两件 `Held`**（`Held(held.0)`，[`Endpoint`] 是 `Copy`）
+/// ⇒ 两记 `release`（号还没被回收时第二记只是答错；**回收之后就是放掉别人的孔**）。
+/// 这一格今天由**纪律**看着（只有 `endpoint(..)` 刚返的那一件该喂进来），不是由类型看着；
+/// 要收回去，构造就得重新经过一个"铸 ＋ 持有"的动作——那就是被删掉的那具 `hold`。
+/// （另：**把里面那一对号换成别的一对**（`*held = ..`）本来就写得出来——`DerefMut` 是原设计
+/// 的一部分，旧的那一枚同样不会因此被放下；这一条不是这次删壳带进来的。）
+///
 /// 它自己不带访问器：`Deref` 到里面那一对号 ⇒ `held.rx()` / `held.tx()` / `held.claim(..)`
 /// 照旧写。
-pub struct Held {
-    link: Endpoint,
-}
+pub struct Held(pub Endpoint);
 
 impl Deref for Held {
     type Target = Endpoint;
 
     fn deref(&self) -> &Endpoint {
-        &self.link
+        &self.0
     }
 }
 
 impl DerefMut for Held {
     fn deref_mut(&mut self) -> &mut Endpoint {
-        &mut self.link
+        &mut self.0
     }
 }
 
 impl Drop for Held {
     fn drop(&mut self) {
         // **只放本端铸的那一枚**（对端那一枚归对端，见文件头）。
-        let _ = mail::release(self.link.rx);
+        let _ = mail::release(self.0.rx);
     }
 }
 
@@ -195,26 +220,14 @@ impl Drop for Held {
 /// 写端（`send` 答 `SendFail::Unbound`），而 `Err` 只留给"铸不出 / 交不出去"。
 ///
 /// **它不"持有"什么**：返的 [`Endpoint`] 只是把本端铸的那一枚记下来（[`Copy`] 的号束）。
-/// 这段关系归**本域那张表**：本域退场时一并回收——要"作用域一结束就放下"，用 [`hold`]。
+/// 这段关系归**本域那张表**：本域退场时一并回收——要"作用域一结束就放下"，把它收进
+/// [`Held`]（`Held(endpoint(..)?)`）。
 pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, EstablishFail> {
     let (rx, seed) = seal_and_ship(to, mark)?;
     Ok(Endpoint {
         rx,
         tx: claim(to, mark, claim_for),
         seed,
-    })
-}
-
-/// **有主地建立**：同 [`endpoint`]，但返的是**这一段关系归本端持有**的那一件——落出作用域
-/// 即放下本端那一枚（[`Held`] 的 `Drop`）。
-///
-/// **只有真·作用域寿命的关系用它**：客户手里的 [`Line`](crate::driver::line::client::Line)
-/// （我拿着它，那条线就归我）、线账里那一格（换主即作废），以及 `harness` 的压测台
-/// （每轮一条、每轮还回去）。板路 / 树路那一类是**域级**的，走 [`endpoint`]——见文件头那条
-/// 照实记（"提前放"为什么在 API 上不存在）。
-pub fn hold(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Held, EstablishFail> {
-    Ok(Held {
-        link: endpoint(to, mark, claim_for)?,
     })
 }
 
@@ -227,7 +240,7 @@ pub fn hold(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Held, EstablishFa
 /// **`narrow` 那一手不能省**：一条路上只有一个读者——不窄下来，本端与对端都能读同一枚孔，
 /// 而孔是单槽，谁先读谁吃掉。
 pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
-    let hole = unseal_hole(mark).map_err(|()| EstablishFail::NoHole)?;
+    let hole = mail::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
     let pie = mail::HolePie::from_token(hole);
     port::ship(&pie, to, Access::FETCH | Access::STORE, Policy::NONE)
         .map_err(|_| EstablishFail::NoSeed)?;
@@ -237,8 +250,18 @@ pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
 }
 
 /// **扫表认领**：按 `owner` ＋ `mark` 两格找回别人交来的那一枚，**只扫一遍、不等**。
+///
+/// 它答的是我表里**这位开的、刻着那个记号的那一枚**。**多枚时给最后那一枚**——表内次序是
+/// "什么时候进来的"，而交孔与推帧是两趟、且**孔先到** ⇒ 最后那一枚就是这一趟那一枚。这条
+/// 次序是契约的一半，不是实现细节。
 pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
-    scan(of, mark)
+    let mut found = None;
+    for p in mail::pies() {
+        if p.owner == of && p.mark == mark {
+            found = Some(p.token);
+        }
+    }
+    found
 }
 
 /// **等对方那一枚**：先扫一遍、再等、醒来再扫（信标是一次事件，先扫才不会漏掉"等之前就落进来"
@@ -248,7 +271,7 @@ pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
 pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Option<PieToken> {
     let until = deadline(wait);
     loop {
-        if let Some(token) = scan(of, mark) {
+        if let Some(token) = find(of, mark) {
             return Some(token);
         }
         let remain = remain(until);
@@ -266,11 +289,13 @@ pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Option<PieToken> {
 /// "持 `VEST` 才交得出去"，而"对端把这一枚转给第三方"是**必然**发生的一步（子方只认得它的
 /// 生我者，故它交出来的孔先落在生我者表里，再由生我者转授——板那条路就是这么接上的）。
 /// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对，看上去像"对面坏了"。
+/// **同一条正文今天在四处外部调用点与本函数上各写一遍**（见文件头那条照实记）。
 fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
-    let hole = unseal_hole(mark).map_err(|()| EstablishFail::NoHole)?;
-    match ship(hole, to) {
-        Ok(at) => Ok((hole, at)),
-        Err(()) => {
+    let hole = mail::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
+    let pie = mail::HolePie::from_token(hole);
+    match port::ship(&pie, to, Access::FETCH | Access::STORE, Policy::VEST) {
+        Ok(at) => Ok((hole, at.seed())),
+        Err(_) => {
             // **交不出去就当场放回来**：不留一枚没人认得的孔在本端表里。
             let _ = mail::release(hole);
             Err(EstablishFail::NoSeed)
@@ -278,69 +303,22 @@ fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), Establi
     }
 }
 
-/// 我表里**这位开的、刻着那个记号的那一枚**。**多枚时给最后那一枚**——表内次序是"什么时候
-/// 进来的"，而交孔与推帧是两趟、且**孔先到** ⇒ 最后那一枚就是这一趟那一枚。这条次序是契约的
-/// 一半，不是实现细节。
-fn scan(of: TaskId, mark: Mark) -> Option<PieToken> {
-    let mut found = None;
-    for p in mail::pies() {
-        if p.owner == of && p.mark == mark {
-            found = Some(p.token);
-        }
-    }
-    found
-}
-
-
-// ── 一枚孔本身那几手 ────────────────────────────────────────────
+// ── 剩下那一手 ──────────────────────────────────────────────────
 //
 // 上面那三个动词踩着的原语。**一个调用一处转发，不做裁决**——全层的规矩（谁的孔归谁、
 // 认领按哪两格）在上面那几节里；这里一格裁决都没有。
-
-/// 铸一枚孔（**记号刻在上面**）：对端认领时按"谁开的 ＋ 记号"两格找的就是它。
-fn unseal_hole(mark: Mark) -> Result<PieToken, ()> {
-    mail::unseal_hole(mark).map_err(|_| ())
-}
-
-/// **交出**：一枚副本种进对端表里，返**种在它表里的那个号**。
-///
-/// 这一族只有三个名字：**`ship` 交出 / `take` 接手 / `unship` 放下**（[`unship`] 是它的反面）。
-///
-/// 权限给满（`R|W`）**加一格 `VEST`**：对端因此**可以再授出**。那一格不是客气——内核的
-/// `Accord` 有一道闸是"持 `VEST` 才交得出去"，而"对端把这一枚转给第三方"是**必然**发生的一步
-/// （子方只认得它的生我者，故它交出来的孔先落在生我者表里，再由生我者转授——板那条路就是
-/// 这么接上的）。不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对——看上去
-/// 像"板坏了"。
-pub fn ship(hole: PieToken, peer: TaskId) -> Result<PieToken, ()> {
-    let pie = mail::HolePie::from_token(hole);
-    port::ship(&pie, peer, Access::FETCH | Access::STORE, Policy::VEST)
-        .map(|to| to.seed())
-        .map_err(|_| ())
-}
-
-/// 卸下本端那一枚孔——[`ship`] 的反面：**装运 / 卸下**。
-pub fn unship(hole: PieToken) -> Result<(), ()> {
-    mail::release(hole).map_err(|_| ())
-}
-
-/// 把一帧推上那扇门（**裸字节**：装与解不在这里——调用方自己编）。
-pub fn push_to(entry: PieToken, frame: &[u8]) -> Result<(), ()> {
-    mail::HolePie::from_token(entry)
-        .push(frame)
-        .map_err(|_| ())
-}
 
 /// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`。
 ///
 /// **照实记（用户裁定甲′）**：`port::ship` 的 `to.seed()` 就是"**我给你的那一枚在你表里是几号**"，
 /// 而从前那一版（`lend`）把它扔了 ⇒ 收方只能**扫全表**按"谁给的 ＋ 记号"把这一枚认回来。
 /// 门上量出来那一扫是**每帧 ~6.5 ms**（表 16 枚 ⇒ O(n²)）。故这一手把第二格交出来，好让它
-/// **随帧一起过去**；帧由调用方自己推（[`push_to`]）。
+/// **随帧一起过去**；帧由调用方自己推（`mail::HolePie::from_token(..).push(..)`）。
 ///
 /// 次序仍是契约的一半：**先铸、先交**（这一手），**再推**（下一手）。
 pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
     let host = opened_by(entry).ok_or(())?;
-    let back = unseal_hole(mark)?;
+    let back = mail::unseal_hole(mark).map_err(|_| ())?;
     match port::ship(
         &mail::HolePie::from_token(back),
         host,

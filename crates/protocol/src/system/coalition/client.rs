@@ -115,7 +115,7 @@ impl Face {
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
         act.query(seed).store(&mut frame);
-        if crate::communication::establish::push_to(self.entry, &frame).is_err() {
+        if mail::HolePie::from_token(self.entry).push(&frame).is_err() {
             let _ = mail::release(back);
             return Err(Fail::Unknown);
         }

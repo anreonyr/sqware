@@ -18,8 +18,8 @@
 //! 那一枚（`M::Buf` 就是它）⇒ 既不占调用方的缓冲、也不占结构体的字段。而
 //! **`HolePie::push` 把等待写死成 `Wait::Forever`**（`runtime/src/env/mail.rs` 那一圈）⇒
 //! `POLL` 与 `AtMost` 在它那里落不下来；故下面这一手用 `env::mail::push` ＋
-//! `HolePie::wait(HoleDir::Push, …)` 把那一圈重写一遍（原 `communication::establish::push_to` /
-//! `try_post` 就是这两态各自一副身体，现在收成同一条路上的三态）。
+//! `HolePie::wait(HoleDir::Push, …)` 把那一圈重写一遍（原 `communication::establish` 那具
+//! `push_to` 壳已经删了，现在收成同一条路上的三态）。
 
 use core::marker::PhantomData;
 
@@ -38,7 +38,7 @@ pub struct Sender<M: Message> {
 impl<M: Message> Sender<M> {
     /// 认下一枚**别人给的**号（服务端那一侧：孔是对方铸的、交给我的）。
     ///
-    /// **本文件不分辨"这枚是谁的"**——归属归建立那一手返的那一对（[`super::establish::Pair`]）：
+    /// **本文件不分辨"这枚是谁的"**——归属归建立那一手返的那一对（[`super::establish::Endpoint`]）：
     /// 那一对里两枚都是本端铸的，收尾时放下；这一手拿到的**不归本端**，放下它不是本端的事
     /// （放了就把客人的孔收掉）。
     pub fn from_token(hole: PieToken) -> Self {

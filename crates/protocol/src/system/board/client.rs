@@ -9,6 +9,7 @@ use env::Mark;
 use env::Wait;
 use env::wire::Field;
 use env::{Name, PieToken, TaskId};
+use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::communication::establish::{self, Endpoint};
@@ -77,7 +78,13 @@ pub fn register(
     millis: Wait,
 ) -> Result<u8, Fail> {
     // 先把入口交出去、换回"它在板表里是几号"，再编帧——两个编号空间不同源。
-    let seed = crate::communication::establish::ship(entry, board).map_err(|()| Fail::Denied)?;
+    // **交出那一手就是 `port::ship` 本身**（`establish` 那条照实记：壳一个不留），
+    // 权限 `R|W` ＋ 一格 `VEST`：板的本职是**再授出**（`Query` 的下场），
+    // 少 `VEST` ⇒ 板转授那一步答 `Denied`、看上去像"板坏了"。
+    let pie = mail::HolePie::from_token(entry);
+    let seed = port::ship(&pie, board, Access::FETCH | Access::STORE, Policy::VEST)
+        .map(|to| to.seed())
+        .map_err(|_| Fail::Denied)?;
     // 装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`send` 满则挂），不是错误。
     Sender::<bcall::Req>::from_token(say)

@@ -11,6 +11,7 @@ use env::Mark;
 use env::Wait;
 use env::wire::Field;
 use env::{Name, PieToken, TaskId};
+use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::communication::establish::{self, Endpoint};
@@ -102,8 +103,8 @@ fn ask_out(
 /// 客侧第二步（**落**）：在 `at` 那一块 `Pane` 里给 `name` 贴一枚 `Tile`；答**那一格自己的号**。
 ///
 /// `entry` 是客人手里那一枚：它**经会话交给持树者**（`Accord` 一份）后才进帧——报文里走的
-/// 是"种在持树者表里的那个号"，那才是它认得的坐标（见文件头与
-/// [`crate::communication::establish::ship`]）。
+/// 是"种在持树者表里的那个号"，那才是它认得的坐标（交出那一手是 `port::ship`：`R|W` ＋
+/// 一格 `VEST`，少它 ⇒ 持树者转授那一步答 `Denied`、看上去像"持树者坏了"）。
 ///
 /// `rule` / `mine` 是**这一格的两轴条件**（用 / 改）——落牌的人当场声明，此后就由持树者
 /// 那一本账替它记着；默认是"公开 + 不声明归属"（既有的装配读数因此一字不改）。
@@ -123,7 +124,10 @@ pub fn land(
     mine: bool,
     millis: Wait,
 ) -> Result<EntryId, u8> {
-    let shipped = crate::communication::establish::ship(entry, host).map_err(|()| ocall::BAD)?;
+    let pie = mail::HolePie::from_token(entry);
+    let shipped = port::ship(&pie, host, Access::FETCH | Access::STORE, Policy::VEST)
+        .map(|to| to.seed())
+        .map_err(|_| ocall::BAD)?;
     ask_out(
         say,
         link,

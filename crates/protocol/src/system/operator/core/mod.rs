@@ -75,7 +75,7 @@ use env::{Name, PieToken, TaskId};
 
 use crate::id::Id;
 
-use crate::communication::establish::{EstablishFail, opened_by, unship, vested_by};
+use crate::communication::establish::{EstablishFail, opened_by, vested_by};
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -292,7 +292,7 @@ impl Operator {
     ///
     /// - `at` 那块 `Pane` 得在（号不在 ⇒ [`Fail::Unknown`]）；它是一枚 `Tile` ⇒ [`Fail::NotAPane`]；
     /// - `name` 那一格空着 ⇒ **铸一枚新号**放上去；
-    /// - `name` 那一格已占 ⇒ **换绑**：旧的那一枚放下（[`unship`]）、**号不动**，答原来那一枚号
+    /// - `name` 那一格已占 ⇒ **换绑**：旧的那一枚放下（`mail::release`）、**号不动**，答原来那一枚号
     ///   ——除非它是一块**非空** `Pane`（⇒ [`Fail::NonEmpty`]：要动它先清空）；
     /// - 那一块 `Pane` 已经有 [`Operator::PANE_CAP`] 条 ⇒ [`Fail::Full`]。
     ///
@@ -324,9 +324,9 @@ impl Operator {
     /// - 号不在树上 ⇒ [`Fail::Unknown`]（剪掉、剔死、从没铸过长得一样）；
     /// - 那一格是一块 `Pane` ⇒ [`Fail::NotATile`]；
     /// - 是一枚 `Tile`：**先探一次**（[`vested_by`]）——答不出 ⇒ 当场剔掉那一格、放下那一份
-    ///   （[`unship`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `ship`。
+    ///   （`mail::release`），答 [`Fail::Dead`]；答得出 ⇒ 交给 `ship`。
     ///
-    /// `ship` 是"交出去"那一手（**回调**：适配层把那一枚授给调用方）——与 [`unship`] 正好是
+    /// `ship` 是"交出去"那一手（**回调**：适配层把那一枚授给调用方）——与"放下"正好是
     /// 一式的两半（交出 / 放下）。它留成参数而不直接叫，是因为它带**去授给谁**那一格
     /// （调用方手里那个号），不是无参动作。
     pub fn find(&mut self, id: EntryId, mut ship: impl FnMut(PieToken)) -> Result<(), Fail> {
@@ -340,7 +340,7 @@ impl Operator {
         };
         if vested_by(pie).is_none() {
             let _ = self.unlink(id);
-            let _ = unship(pie);
+            let _ = runtime::env::mail::release(pie);
             return Err(Fail::Dead);
         }
         ship(pie);
@@ -378,7 +378,7 @@ impl Operator {
     /// **剪**：把那一号那一格剪掉。
     ///
     /// 那一格得存在（否则 [`Fail::Unknown`]）；是 `Pane` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
-    /// 剪掉一枚 `Tile` 时那一枚放下（[`unship`]）——它是资源实体的一份引用，不放下就漏水。
+    /// 剪掉一枚 `Tile` 时那一枚放下（`mail::release`）——它是资源实体的一份引用，不放下就漏水。
     ///
     /// **剪掉的那一槽留成墓碑**（`None`），不 `remove`：号是下标，一移后面全错位。故一枚剪过的
     /// 号从此答 [`Fail::Unknown`]，而**它不会被重新铸出来**（水位只增）。
@@ -393,7 +393,7 @@ impl Operator {
         };
         let _ = self.unlink(id);
         if let Some(pie) = dropped {
-            let _ = unship(pie);
+            let _ = runtime::env::mail::release(pie);
         }
         Ok(())
     }
@@ -482,7 +482,7 @@ impl Operator {
                 };
                 slot.node = node;
                 if let Some(old) = old {
-                    let _ = unship(old);
+                    let _ = runtime::env::mail::release(old);
                 }
                 Ok(id)
             }
