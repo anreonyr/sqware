@@ -189,7 +189,7 @@ pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
 // ── `Frame`：搬去 `mold` 了 ────────────────────────────
 //
 // 它从前就在这一格（`#[macro_export] macro_rules! frame`，故名字落在 **crate 根**上）。
-// 用户裁定先改成过程宏，又收成 `#[derive(Frame)]`：实现住 `crates/mold/src/frame_impl.rs`，
+// 用户裁定先改成过程宏，又收成 `#[derive(Frame)]`：实现住 `crates/mold/src/frame.rs`，
 // 由 `env` 转出来（`crates/env/src/lib.rs` 的 `pub use mold::Frame;`）。
 //
 // 三件事因此变好：诊断指到**那一格字段**（`macro_rules` 只能报在展开体里）；名字不再是

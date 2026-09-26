@@ -1,20 +1,45 @@
-//! `Frame` 的实现——**定长帧**那一族的一处定义。
+//! `#[derive(Frame)]` —— **定长帧**那一族的一处定义：给一枚具名字段的结构体，生成 `LEN` ＋
+//! `store` / `store_in` / `fetch` 三手（**结构体归你写**——它本就是那张字段表）。
+//!
+//! ```ignore
+//! #[derive(env::Frame)]
+//! #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+//! pub struct Tip {
+//!     pub who: TaskId,
+//!     pub name: Name,
+//!     pub reply: PieToken,
+//! }
+//! ```
+//!
+//! 生成的东西**一眼看得完**（没有隐藏机制）：`pub const LEN`（**字段宽度之和**）、
+//! `store(&self, &mut [u8; LEN])`、`store_in(&mut [u8]) -> Option<usize>`、
+//! `fetch(&[u8]) -> Option<Self>`。
+//!
+//! **偏移一处都不写**——两半由**同一张字段表**生成，故"同一条长度写两处、改一处漏一处
+//! **编得过**"那个病**写不出来**（协调那一帧栽的正是它：那边的照实记写着"靠注释说必须同值"）。
+//!
+//! **它只管定长字段序列**：变长（一条路几段不定）与重复（计数 ＋ 一段数组）那两类**不归它**，
+//! 那几族各有各的手写 `store` / `fetch`（今住在各族的 `impl Message` 里）。
+//!
+//! **字段的字节编解码归 [`env::wire::Field`]**（`WIDTH` / `store` / `fetch`）：derive 只负责
+//! "顺序与偏移"，一格自己是多宽、怎么写，是那一格自己的事。
 //!
 //! **照实记（它走过三站）**：它从前是 `env/src/wire/field.rs` 里的一条 `macro_rules!`
-//! （`#[macro_export]`，故名字落在 **crate 根**上，与同 crate 里的同名模块撞过车）；随后改成
-//! function-like 的过程宏 `frame!`（诊断从此能指到**那一格字段**）；今天收成 `#[derive(Frame)]`。
+//! （`#[macro_export]`，故名字落在 `env` 的 **crate 根**上，与同 crate 里的同名模块撞过车）；
+//! 随后改成 function-like 的过程宏 `frame!`（诊断从此能指到**那一格字段**）；今天收成
+//! `#[derive(Frame)]`。**为什么最后一站是 derive**：`frame!` 吃进去的那张字段表**本身就是一枚
+//! 结构体**——宏却替用户把它写了一遍（连各格的 `pub` 与那行
+//! `#[derive(Clone, Copy, PartialEq, Eq, Debug)]` 都是宏注入的）。收成 derive 之后那枚结构体
+//! 回到源码里：字段可见性、字段上的文档、IDE 的跳转都在用户那一边看得见，而生成的 `LEN` /
+//! `store` / `store_in` / `fetch` **一个字没变**（展开物逐字节比对过）。
 //!
-//! **为什么最后一站是 derive**：`frame!` 吃进去的那张字段表**本身就是一枚结构体**——宏却替
-//! 用户把它写了一遍（连各格的 `pub` 与那行 `#[derive(Clone, Copy, PartialEq, Eq, Debug)]` 都是
-//! 宏注入的）。收成 derive 之后那枚结构体回到源码里：字段可见性、字段上的文档、IDE 的跳转都
-//! 在用户那一边看得见，而生成的 `LEN` / `store` / `store_in` / `fetch` **一个字没变**
-//! （展开物逐字节比对过）。
+//! 本文件是该宏的全部——**与另外两个宏一行都不共享**。
 
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, parse2};
 
-/// 给一枚具名字段的结构体生成：`LEN` ＋ `store` / `store_in` / `fetch`。
+/// 给一枚具名字段的结构体生成：`LEN` ＋ `store` / `store_in` / `fetch`。展开见文件头。
 ///
 /// **生成的路径是 `::env::wire::Field`**（过程宏没有 `$crate`）：故调用方的 extern prelude
 /// 里要有 `env`——`contract` / `programs` 都有。`env` 自己若要这个 derive，先写一句
