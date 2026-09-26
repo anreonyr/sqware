@@ -52,6 +52,24 @@ members = [
 default-members = ["kernel"]
 resolver = "3"
 
+# ── 排版口径（**明文声明**，用户裁定：本仓手排、`cargo fmt` 不是判据）──────────────
+#
+# **不跑 `cargo fmt --all`**：它在这棵树上一直是红的。实测（2026-09-26）**207 处、75 个文件**
+# ——`harness` 91 / `programs` 68 / `crates/protocol` 25 / `crates/contract` 16 / `crates/env` 3 /
+# `crates/runtime` 2 / `kernel` 2（75 份全是被 git 跟踪的 `.rs`；全树 338 份里 263 份本来就
+# 是干净的）。故 **fmt 绿不是任何一关的判据**，`cargo fmt --all --check` 的读数只当参考。
+#
+# **照实记（"这一仓的排版是刻意的"不是这 207 处的解释）**：我上一条提议里把现状说成"排版是
+# 刻意的：成对的表、和代码对齐的注释"——读数不支持那个说法，收回来：里面既有**从没被 rustfmt
+# 碰过的漂移**，也有**报文层那一程我自己写下的行**（`protocol/src/session/slip.rs`、
+# `contract/src/system/board/frame.rs`、`protocol/src/driver/{line,supply}/client.rs` …）——
+# 那几刀的判据里没有 fmt，故没有一处拦得住它。这一条是**口径**，规矩两条：
+#
+#   · 改哪一段，就照**那一段**的排法写（邻行即规格；新文件按同目录的排法起手）；
+#   · **不许为了让它变绿而全树重排**——207 处里没有一处改变判据，而重排会把成对的对齐、
+#     与代码对齐的注释一起打散。需要单独钉住的表写 `#[rustfmt::skip]`
+#     （例见 `crates/plan/src/assembly.rs` 的装配单），不是"跑一遍 fmt 再从 diff 里补回来"。
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
