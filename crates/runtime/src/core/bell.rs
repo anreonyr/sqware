@@ -34,7 +34,7 @@
 //! "为什么只有 Pull"。
 
 use env::Wait;
-use env::{EnvResult, HoleDir};
+use env::{HoleDir, MailResult};
 
 use crate::env::mail::{self, NolePie};
 
@@ -53,12 +53,12 @@ impl Bell {
     ///
     /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（挂起过、或超时
     /// ——两者不分）。**不清**那一位，见模块头。
-    pub fn wait(&self, millis: Wait) -> EnvResult<bool> {
+    pub fn wait(&self, millis: Wait) -> MailResult<bool> {
         mail::wait(self.pie.token(), HoleDir::Pull, millis)
     }
 
     /// 应铃：清掉"有待取之事"。未响返 `Busy`（没有可取之事）。
-    pub fn hush(&self) -> EnvResult<()> {
+    pub fn hush(&self) -> MailResult<()> {
         mail::hush(self.pie.token())
     }
 
@@ -68,7 +68,7 @@ impl Bell {
     /// （`kernel/src/platform/devices.rs`，不走门闩），域侧只 `wait` / `hush`
     /// （见 `driver/router/main.rs`）。留着它是因为"自己叫自己"是正当写法——
     /// 响者由持铃者决定，不是内核的特权。
-    pub fn ring(&self) -> EnvResult<()> {
+    pub fn ring(&self) -> MailResult<()> {
         mail::ring(self.pie.token())
     }
 }

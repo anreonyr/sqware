@@ -49,7 +49,7 @@ use crate::lock::{Level, SpinLock};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
-use env::Fail;
+use env::MailFail;
 
 /// Nole 的全局身份（自 1 递增、永不复用）——**听者键的身份**（见 [`key`]）。
 ///
@@ -170,14 +170,14 @@ pub(crate) fn key(meta: &NoleMeta) -> WakeKey {
 /// `from` 是"谁推的"，要交给收方）。
 ///
 /// 调用方不持 L3 锁（`wake` 是 L3）。
-pub(crate) fn ring(meta: &NoleMeta) -> Result<(), Fail> {
+pub(crate) fn ring(meta: &NoleMeta) -> Result<(), MailFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(MailFail::Dead);
     }
     {
         let mut ring = meta.ring.lock();
         if *ring {
-            return Err(Fail::Busy);
+            return Err(MailFail::Busy);
         }
         *ring = true;
     }
@@ -189,10 +189,10 @@ pub(crate) fn ring(meta: &NoleMeta) -> Result<(), Fail> {
 ///
 /// **不唤醒任何人**——没人等"铃不响"（对照 `try_take` 取完要唤醒等写的）。
 /// 不看 `alive`：清位是收场动作，拆铃之后剩的那一位仍要有人来清。
-pub(crate) fn hush(meta: &NoleMeta) -> Result<(), Fail> {
+pub(crate) fn hush(meta: &NoleMeta) -> Result<(), MailFail> {
     let mut ring = meta.ring.lock();
     if !*ring {
-        return Err(Fail::Busy);
+        return Err(MailFail::Busy);
     }
     *ring = false;
     Ok(())
@@ -208,9 +208,9 @@ pub(crate) fn hush(meta: &NoleMeta) -> Result<(), Fail> {
 /// 「先探」同样不可省：响可能已经置起而无人消费，此时若我们 park 在"等响"上就
 /// 永远等不到下一次唤醒。先探与登记之间的窗口由 messenger 的 pend 双检封住
 /// （窗口内的 wake 置 pend，登记时被消费 ⇒ 不挂起）。
-pub(crate) fn wait(meta: &NoleMeta, dur: Duration) -> Result<Handoff<bool>, Fail> {
+pub(crate) fn wait(meta: &NoleMeta, dur: Duration) -> Result<Handoff<bool>, MailFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(MailFail::Dead);
     }
     if meta.ready() {
         return Ok(Handoff::Resume(true));

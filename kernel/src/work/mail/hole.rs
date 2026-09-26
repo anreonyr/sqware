@@ -33,7 +33,7 @@ use env::{HoleDir, Mark, TaskId};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
-use env::Fail;
+use env::MailFail;
 
 /// Hole 的全局身份（自 1 递增、永不复用）——**等待键的身份**（见 [`key`]）。
 ///
@@ -204,16 +204,16 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
 /// （空 = capacity 0，drop 它不释放任何东西 ⇒ **锁内不发生分配或回收**）。
 /// 调用方须在持 `msg` 时不持 slot 锁（slot = L3，Space.segments = L2；持 L3
 /// 调 L2 锁为 4→2 反向嵌套）。
-pub(crate) fn try_push(meta: &HoleMeta, msg: &mut Vec<u8>, from: TaskId) -> Result<(), Fail> {
+pub(crate) fn try_push(meta: &HoleMeta, msg: &mut Vec<u8>, from: TaskId) -> Result<(), MailFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(MailFail::Dead);
     }
     if msg.is_empty() {
-        return Err(Fail::Denied);
+        return Err(MailFail::Denied);
     }
     let mut slot = meta.slot.lock();
     if !slot.buf.is_empty() {
-        return Err(Fail::Busy);
+        return Err(MailFail::Busy);
     }
     core::mem::swap(&mut slot.buf, msg);
     slot.from = from;
@@ -226,13 +226,13 @@ pub(crate) fn try_push(meta: &HoleMeta, msg: &mut Vec<u8>, from: TaskId) -> Resu
 ///
 /// 这是"收方怎么知道该备多大缓冲"的答案：先问长度，再按长度备缓冲，最后
 /// [`try_take`]。空槽返 `Busy`（没有可取之事）。
-pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId), Fail> {
+pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId), MailFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(MailFail::Dead);
     }
     let slot = meta.slot.lock();
     if slot.buf.is_empty() {
-        return Err(Fail::Busy);
+        return Err(MailFail::Busy);
     }
     Ok((slot.buf.len(), slot.from))
 }
@@ -244,17 +244,17 @@ pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId), Fail> {
 /// 移动的方向是"槽 → 收方"：消息整条出去，槽里留下一个空 Vec（零分配）。
 /// 锁序同 try_push：调用方持返回的 `Vec` 时不持 slot 锁——它是**拷贝给用户之前**
 /// 的落点，`copy_out` 必须在锁外、且在 `space.segments`(L2) 那一侧。
-pub(crate) fn try_take(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, TaskId), Fail> {
+pub(crate) fn try_take(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, TaskId), MailFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(MailFail::Dead);
     }
     let mut slot = meta.slot.lock();
     let len = slot.buf.len();
     if len == 0 {
-        return Err(Fail::Busy);
+        return Err(MailFail::Busy);
     }
     if len > max {
-        return Err(Fail::Denied);
+        return Err(MailFail::Denied);
     }
     let from = slot.from;
     let msg = core::mem::take(&mut slot.buf);
@@ -272,9 +272,9 @@ pub(crate) fn try_take(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, TaskId),
 /// 「先探」在此处不可省：对侧可能已经写入并正等我们取，此时若我们 park 在"等写入"
 /// 上就永远等不到下一次唤醒。先探与登记之间的窗口由 messenger 的 pend 双检封住
 /// （窗口内的 wake 置 pend，登记时被消费 ⇒ 不挂起）。
-pub(crate) fn wait(meta: &HoleMeta, dir: HoleDir, dur: Duration) -> Result<Handoff<bool>, Fail> {
+pub(crate) fn wait(meta: &HoleMeta, dir: HoleDir, dur: Duration) -> Result<Handoff<bool>, MailFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(MailFail::Dead);
     }
     if meta.ready(dir) {
         return Ok(Handoff::Resume(true));

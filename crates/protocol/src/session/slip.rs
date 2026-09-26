@@ -39,7 +39,7 @@
 use core::marker::PhantomData;
 
 use contract::message::Message;
-use env::Wait;
+use env::{MailFail, Wait};
 use runtime::env::mail::HolePie;
 
 /// 一枚孔上的端点：**这条路上流的那一种报**由类型参数说。
@@ -108,20 +108,16 @@ impl<M: Message> Slip<M> {
     ///
     /// **照实记（同词不同事）**：`port::ship` 那一族是"授一枚门闩"，这一手是"把一条报推出去"。
     ///
-    /// **照实记（返回的是 [`env::Fail`]——这一格绕了一刀）**：裁的那一版写的就是它，而刀一
-    /// 落盘时返的是 `EnvResult`——那时仓里**没有**"码 → 词汇"那道读法（`Fail` 是**词汇**，
-    /// `EnvError` 是**对线的读法**），硬折成某一格会把 `Busy`（槽满）与 `Dead`（孔没了）都说成
-    /// 别的失败。刀 C 在 `env` 立了 [`env::Fail::of_code`] 之后，这一手按裁决收成词汇。
+    /// **失败是 Mail 域的词表**（`MailFail`）：`Busy`（槽满）与 `Dead`（孔没了）分得开。
     ///
-    /// **照实记（表外的码 ⇒ [`env::Fail::Denied`]）**：表里那七枚都是**读出来**的，本层
-    /// **唯一一处任意**是表外那一格。表外的码是"内核报了一个我这一版不认识的失败"，总得落
-    /// 一格；`Denied` 是"这一手没做成"里**最不含承诺**的那一枚（不说"槽满"、不说"孔没了"）。
-    /// **不假装它是真的**：想分辨这一种情形的调用方得自己拿原样的 `EnvError`——那一层今天
-    /// 没有读者，故这一手不外送它。
-    pub fn ship(self) -> Result<(), env::Fail> {
+    /// **照实记（"唯一一处任意"退场）**：从前这一手返 `env::Fail`，而码 → 词汇那道读法
+    /// 有一格读不出来（表外码），只能折成 `Denied`——注里管它叫"本层唯一一处任意"。域词表
+    /// 落地之后**表外码不存在了**（内核只会写本域声明过的码，写错在生成的那一格就
+    /// `unreachable!`），故那一整段连同折法一并删掉。
+    pub fn ship(self) -> Result<(), MailFail> {
         self.pie
             .push(self.buf.as_ref().get(..self.len).unwrap_or(&[]))
-            .map_err(|e| env::Fail::of_code(e.source.code()).unwrap_or(env::Fail::Denied))
+            .map_err(|e| e.source)
     }
 
     /// 收一条报（**有界等**由参数说，**缓冲由调用方给**）。
@@ -151,13 +147,13 @@ impl<M: Message> Slip<M> {
     pub fn land(&self, buf: &mut [u8], millis: Wait) -> Result<M::In, Land> {
         let n = match self.pie.pull_timeout(buf, millis) {
             Ok(n) => n,
-            // **收这一侧的失败也要分层**：内核答的码分成"再等等"与"别等了"两件事（见 [`Land`]）。
-            // 表外的码按 [`Land::Expired`] 落——那是"没读到"里最不含承诺的一格（与
-            // [`Slip::ship`] 把表外的码折成 `Denied` 同一条口径）。
+            // **收这一侧的失败也要分层**：域词表把"再等等"与"别等了"两件事分得开
+            // （见 [`Land`]）——`Dead` / `Denied` = 这一枚孔用不动；其余（`Busy` 没消息 /
+            // `OoM` / `HandedOver`）落 `Expired`（"没读到"里最不含承诺的一格）。
             Err(e) => {
-                return Err(match env::Fail::of_code(e.source.code()) {
-                    Some(env::Fail::Dead | env::Fail::Denied) => Land::Unavailable,
-                    _ => Land::Expired,
+                return Err(match e.source {
+                    MailFail::Dead | MailFail::Denied => Land::Unavailable,
+                    MailFail::Busy | MailFail::OoM | MailFail::HandedOver => Land::Expired,
                 });
             }
         };

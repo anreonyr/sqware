@@ -30,10 +30,7 @@
 //! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
 
 use env::Wait;
-use env::{
-    EnvResult, HoleDir, MailCall, MailCallRet, Mark, PieResult, PieToken, TaskId, ToleResult,
-    VirtAddr,
-};
+use env::{HoleDir, MailResult, Mark, PieResult, PieToken, TaskId, ToleResult, VirtAddr};
 
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
 /// timebase 频率）。内核那一格没有失败支，故跟着 [`clock`](crate::env::chrono::clock)
@@ -54,23 +51,14 @@ pub use super::pie::{
 // ── 裸函数层（envcall 转发，零业务逻辑）：class 5（数据轴）──
 
 /// push 一条消息（`msg[..len]` 进 hole 槽）。`len ∈ 1..=一页`（破了界答 `Denied`）。
-pub fn push(token: PieToken, msg: *const u8, len: usize) -> EnvResult<()> {
-    let r = MailCall::Push {
-        token,
-        msg: VirtAddr::new(msg as usize),
-        len,
-    }
-    .call()?;
-    match r {
-        MailCallRet::Push(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn push(token: PieToken, msg: *const u8, len: usize) -> MailResult<()> {
+    env::mail::push(token, VirtAddr::new(msg as usize), len)
 }
 
 /// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）；发送者丢弃。
 /// 装不下返 `Denied` 且槽原样；**给一页就装得下任何一条消息**（载体封顶一页）。
 /// 要问长度用 [`pull_len`]。
-pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<usize> {
+pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> MailResult<usize> {
     pull_from(token, buf, max).map(|(n, _)| n)
 }
 
@@ -79,7 +67,7 @@ pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<usize> {
 /// 走 `Pull { max: 0 }`——与 `Wait::POLL`「只探测不挂起」同一形状的"只问"。
 /// **不是取消息的前一步**（那一步由载体的界接手：一页缓冲一趟取走）；它的读者是
 /// "等之前先看一眼"那一格（`harness` 的 waiter）。
-pub fn pull_len(token: PieToken) -> EnvResult<(usize, TaskId)> {
+pub fn pull_len(token: PieToken) -> MailResult<(usize, TaskId)> {
     pull_from(token, core::ptr::null_mut(), 0)
 }
 
@@ -87,17 +75,8 @@ pub fn pull_len(token: PieToken) -> EnvResult<(usize, TaskId)> {
 ///
 /// 发送者由内核在 `Push` 时盖章——身份不可伪造，不必再从报文里猜。
 /// `max == 0` ⇒ 只报长度、不动槽（收方缓冲不参与）。
-pub fn pull_from(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<(usize, TaskId)> {
-    let r = MailCall::Pull {
-        token,
-        buf: VirtAddr::new(buf as usize),
-        max,
-    }
-    .call()?;
-    match r {
-        MailCallRet::Pull((n, from)) => Ok((n, from)),
-        _ => unreachable!(),
-    }
+pub fn pull_from(token: PieToken, buf: *mut u8, max: usize) -> MailResult<(usize, TaskId)> {
+    env::mail::pull(token, VirtAddr::new(buf as usize), max)
 }
 
 /// 等 hole 某方向就绪：`millis`（上限族，`Wait`）。
@@ -105,30 +84,18 @@ pub fn pull_from(token: PieToken, buf: *mut u8, max: usize) -> EnvResult<(usize,
 ///
 /// 门铃（Nole）也走这一个：`dir` 必须给 [`HoleDir::Pull`]——铃只有"响了"一条方向，
 /// 别的值内核答 `Denied`。裸函数层不为它另开一个名字：`Bell::wait` 就是这一句。
-pub fn wait(token: PieToken, dir: HoleDir, millis: Wait) -> EnvResult<bool> {
-    let r = MailCall::Wait { token, dir, millis }.call()?;
-    match r {
-        MailCallRet::Wait(ready) => Ok(ready),
-        _ => unreachable!(),
-    }
+pub fn wait(token: PieToken, dir: HoleDir, millis: Wait) -> MailResult<bool> {
+    env::mail::wait(token, dir, millis)
 }
 
 /// 响铃（门铃专用）：置"有待取之事"并唤醒听者。已响 → `Busy`。
-pub fn ring(token: PieToken) -> EnvResult<()> {
-    let r = MailCall::Ring { token }.call()?;
-    match r {
-        MailCallRet::Ring(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn ring(token: PieToken) -> MailResult<()> {
+    env::mail::ring(token)
 }
 
 /// 应铃（门铃专用）：清掉"有待取之事"，内核随即重开本 hart 的中断闸门。
-pub fn hush(token: PieToken) -> EnvResult<()> {
-    let r = MailCall::Hush { token }.call()?;
-    match r {
-        MailCallRet::Hush(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn hush(token: PieToken) -> MailResult<()> {
+    env::mail::hush(token)
 }
 
 // ── 裸函数层（envcall 转发，零业务逻辑）：class 9（多路等待）──
@@ -185,12 +152,12 @@ impl HolePie {
 
     /// 等某方向就绪：`millis`（上限族，`Wait`）。
     /// 返回 `true` = 调用当场就绪；`false` = 未就绪（探测失败，或挂起过）。
-    pub fn wait(&self, dir: HoleDir, millis: Wait) -> EnvResult<bool> {
+    pub fn wait(&self, dir: HoleDir, millis: Wait) -> MailResult<bool> {
         wait(self.token, dir, millis)
     }
 
     /// 写消息（**`1..=一页`**）：槽满则睡到有空间（让出 CPU）。
-    pub fn push(&self, msg: &[u8]) -> EnvResult<()> {
+    pub fn push(&self, msg: &[u8]) -> MailResult<()> {
         loop {
             match push(self.token, msg.as_ptr(), msg.len()) {
                 Ok(()) => return Ok(()),
@@ -207,7 +174,7 @@ impl HolePie {
     /// **装不下（消息比 `buf` 长）返 `Denied`，且槽原样**——给一页就装得下任何一条消息
     /// （载体封顶一页），故这一支只会发生在**你自己给得更小**的时候；真给了小缓冲又不想丢，
     /// 先问 [`HolePie::peek`] 再备够。这里不替调用方把槽丢掉：丢一条消息是不可逆的。
-    pub fn pull(&self, buf: &mut [u8]) -> EnvResult<usize> {
+    pub fn pull(&self, buf: &mut [u8]) -> MailResult<usize> {
         loop {
             match pull(self.token, buf.as_mut_ptr(), buf.len()) {
                 Ok(n) => return Ok(n),
@@ -220,7 +187,7 @@ impl HolePie {
     }
 
     /// 同 [`HolePie::pull`]，但一并取回**发送者**（内核盖章的 task id）。
-    pub fn pull_from(&self, buf: &mut [u8]) -> EnvResult<(usize, TaskId)> {
+    pub fn pull_from(&self, buf: &mut [u8]) -> MailResult<(usize, TaskId)> {
         loop {
             match pull_from(self.token, buf.as_mut_ptr(), buf.len()) {
                 Ok(v) => return Ok(v),
@@ -237,7 +204,7 @@ impl HolePie {
     /// **不是取消息的前一步**：载体封顶一页 ⇒ 一座一页缓冲一趟取走任何一条消息。
     /// 它的读者是"等之前先看一眼"那一格（`harness` 的 waiter）。
     /// 槽空 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
-    pub fn peek(&self) -> EnvResult<(usize, TaskId)> {
+    pub fn peek(&self) -> MailResult<(usize, TaskId)> {
         pull_len(self.token)
     }
 
@@ -250,13 +217,13 @@ impl HolePie {
     /// 或一次无关唤醒（见 `messenger::wake`：无等待者时置 pend，而成功裸 pull 不会
     /// 消费它，故 pend 可能是陈旧的）。所以这里按 **deadline 循环**：只有 `clock()`
     /// 真的走完 `millis` 才报 Busy，否则带着剩余时间重试。
-    pub fn pull_timeout(&self, buf: &mut [u8], millis: Wait) -> EnvResult<usize> {
+    pub fn pull_timeout(&self, buf: &mut [u8], millis: Wait) -> MailResult<usize> {
         self.pull_timeout_from(buf, millis).map(|(n, _)| n)
     }
 
     /// 同 [`HolePie::pull_timeout`]，但一并取回**发送者**——「有界等」与「认来源」
     /// 是同一次收的两个事实，分成两趟取会把竞态留在中间。
-    pub fn pull_timeout_from(&self, buf: &mut [u8], millis: Wait) -> EnvResult<(usize, TaskId)> {
+    pub fn pull_timeout_from(&self, buf: &mut [u8], millis: Wait) -> MailResult<(usize, TaskId)> {
         // **永久那一格在这里落成一个"到不了的点"，不落成 `Wait::Forever`**——照实记：内核的
         // 武装点被 `min(最近活到点, chrono::timer::BLIND_MS)` 收着（`chrono/timer.rs`），故
         // "一个到不了的点" = **每 ~100 ms 被叫醒一次、自己复探**；那一层复探是这条等待今天的

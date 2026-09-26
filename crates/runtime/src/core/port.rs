@@ -17,13 +17,13 @@
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
 
 use env::Wait;
-use env::{EnvError, EnvResult, PieFail, PieResult, PieToken, TaskId, make_err, make_fail};
+use env::{MailFail, MailResult, PieFail, PieResult, PieToken, TaskId, make_fail};
 
 use crate::env::mail::{self, AnyPie, HolePie};
 
 /// D1 负码：无权 / 协议错（与 `crates/protocol` 各协议的负码同表）。
-fn denied() -> erra::Error<EnvError> {
-    make_err(EnvError::from_raw(-1))
+fn denied_mail() -> erra::Error<MailFail> {
+    make_fail(MailFail::Denied)
 }
 
 /// 权柄轴那一侧的"不成"（Pie 的 `Denied`）——`ship` / `open` / `shut` 用它。
@@ -139,19 +139,19 @@ impl Port {
     /// 推一帧：**已编好的整帧**，本层不看内容。满则等（背压），没有上界。
     ///
     /// 成功 ≠ 对端收到：`entry` 是本端持有的一份副本，对端死了这扇门也不死。
-    pub fn push(&self, frame: &[u8]) -> EnvResult<()> {
+    pub fn push(&self, frame: &[u8]) -> MailResult<()> {
         self.entry.push(frame)
     }
 
     /// 收一帧：有界等 → **核对推者是不是对端** → 返恰好那一帧。
     ///
     /// 推者不符 ⇒ `Denied`，该会话应弃用（迟到的真回复仍可能落槽、污染下一次）。
-    pub fn pull<'a>(&self, buf: &'a mut [u8], within: Wait) -> EnvResult<&'a [u8]> {
+    pub fn pull<'a>(&self, buf: &'a mut [u8], within: Wait) -> MailResult<&'a [u8]> {
         let (len, from) = self.reply.pull_timeout_from(buf, within)?;
         if from != self.to.peer() {
-            return Err(denied());
+            return Err(denied_mail());
         }
-        buf.get(..len).ok_or_else(denied)
+        buf.get(..len).ok_or_else(denied_mail)
     }
 
     /// 关：只放下回信孔（级联已含对端那枚副本），**不碰 `entry`**。
