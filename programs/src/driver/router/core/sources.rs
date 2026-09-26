@@ -10,7 +10,7 @@
 //! 它只把设备树原样搬给域（`platform/devices.rs::supply_dtb`）。
 //!
 //! 认控制器用的那个类（`compatible`）与单子上那一格是**同一个常量**
-//! （[`PLIC_CLASS`]，住 `plan::assembly` 那张单子旁边）——"我是哪台控制器"这个断言只有一处。
+//! （[`PLIC_CLASS`]，住 `programs::program` 那张单子旁边）——"我是哪台控制器"这个断言只有一处。
 //!
 //! # 线集合怎么来的（以及哪两类源**不**进来）
 //!
@@ -26,8 +26,9 @@
 
 use alloc::vec::Vec;
 
+use env::Key;
 use env::Name;
-use plan::{Key, assembly::PLIC_CLASS};
+use programs::program::router::PLIC_CLASS;
 
 /// S 模式外部中断的中断号：`interrupts-extended` 里 `cell == 9` 的那一项。
 ///

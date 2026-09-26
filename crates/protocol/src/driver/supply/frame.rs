@@ -19,7 +19,7 @@
 //! 正文见 `protocol` 那一侧的 `driver/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
 
 use env::TaskId;
-use plan::{PAIR_LEN, Pair};
+use env::{PAIR_LEN, Pair};
 
 use crate::message::Message;
 
@@ -28,9 +28,9 @@ use super::core::Fail;
 /// 引导域↔编排域那条泊位的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
 pub const BOOT: &str = "boot";
 
-// **词汇搬去 `plan` 了**（装配单要宿主侧也读得到，见 `plan::supply` 头注）：本处只转发，
+// **词汇住 `env::supply`**（装配表要宿主侧也读得到，见那一处头注）：本处只转发，
 // **调用点一行没改**。
-pub use plan::supply::{At, Kind, Need, WANT_LEN, Want, class_block};
+pub use env::supply::{At, Kind, Need, WANT_LEN, Want, class_block};
 
 /// 单子的操作码。今天只有"供"这一枚——留着这一格，是为加动作时不必改帧的布局。
 pub const OP_SUPPLY: u8 = 1;

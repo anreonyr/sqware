@@ -6,7 +6,7 @@
 use env::Wait;
 use env::wire::Field;
 use env::{HoleDir, Mark, PieToken, TaskId};
-use plan::assembly::Eyes;
+use env::wire::Eyes;
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};

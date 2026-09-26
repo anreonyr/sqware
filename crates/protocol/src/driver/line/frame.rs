@@ -14,7 +14,7 @@
 //! 1 字节，换来"任何恰好 17 字节推上来的东西都算一次登记"。
 
 use env::Mark;
-use plan::Key;
+use env::Key;
 
 use crate::message::Message;
 

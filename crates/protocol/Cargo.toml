@@ -21,7 +21,6 @@ doctest = false
 
 [dependencies]
 env = { path = "../env" }
-plan = { path = "../plan" }
 # 判定与账**不碰内核**这件事（原「约」，`crates/contract`）现在是本 crate 内部的一条纪律，
 # 不是 crate 边界——宿主靶 `protocol-case` 删掉之后那条边没有消费者；见 `src/lib.rs` 的照实记。
 #

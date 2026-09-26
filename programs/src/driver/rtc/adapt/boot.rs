@@ -7,8 +7,8 @@
 use super::fail::{Fail, Step};
 use crate::rtc;
 use env::{PieToken, TaskId, Wait};
-use plan::Pair;
-use plan::assembly::RTC_WANTS as WANTS;
+use env::Pair;
+use programs::program::rtc::RTC_WANTS as WANTS;
 use programs::driver::assemble;
 use protocol::debug;
 use protocol::communication::establish::Endpoint;

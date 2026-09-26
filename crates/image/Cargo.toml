@@ -13,9 +13,11 @@ publish = false
 # **"initrd 与 kernel 何干"**）。
 
 [dependencies]
-# 装配单（`assembly::ALL`）与清单格式（`wire::manifest`）——**两侧共读的那一份**就在 env。
+# **两侧共读的那一份**：清单格式（`env::manifest`，坐标与启动参数同理）＋ `ProgramKind`。
+#
+# **装配表不在依赖里**：它住 `programs/src/program.rs`，由 `src/lib.rs` 用一行 `#[path]`
+# 文本包含（那份声明只引 `env`，故宿主编得过）——见那边 `mod program;` 的头注。
 env = { path = "../env" }
-plan = { path = "../plan" }
 
 [[bin]]
 name = "sqware-image"

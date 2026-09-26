@@ -46,7 +46,7 @@ use env::TaskId;
 // ── 线上那一格：**本文件自己拿一份** ────────────────────────
 //
 // 照实记：这里**不 `use` 上面那一份**。转发表那一份住同 crate 的
-// `system/operator/frame.rs`（它拖着 `plan` 与 `message`），而本文件**不带载体**、
+// `system/operator/frame.rs`（它拖着 `message` 与 `env::wire::Eyes`），而本文件**不带载体**、
 // 只认 `env`——两条依赖面有意不同，故这一份不伸手过去拿。
 // 故这三格在本文件里各留一个常量，**同步义务由 `protocol` 的 `system/operator/mod.rs` 末尾
 // 那条 `const _: () = assert!(…)` 在编译期钉住**：真正的对照表只有一份（`frame.rs`），

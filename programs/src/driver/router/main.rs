@@ -34,7 +34,7 @@ mod core;
 mod plic;
 
 /// 本域那一台：**返回类型就是它的死法**——一格一格都在 [`adapt::fail`] 里
-/// （**一族口径**在 [`programs::driver::fail`]：号取自装配单——本域自己那几步报 `E_ROUTER`，
+/// （**一族口径**在 [`programs::driver::fail`]：号取自装配表——本域自己那几步报 `E_ROUTER`，
 /// "配给那一趟没成"那一格照旧带 `assemble` 那一族的小整数）。
 #[programs::entry]
 fn main() -> Result<(), adapt::fail::Fail> {

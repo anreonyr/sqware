@@ -150,7 +150,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
     // 收帧那一只由本域给（**发**那一侧的缓冲在 `Sender::send` 的栈帧上，见 `serve`）。
     let mut ask = [0u8; supply::ORDER_CAP];
     // 取源只有一个：boot 的配对块。持树者那条提示之路不再经过这里（见文件头）。
-    let source = |key: plan::Key| boot.token(key);
+    let source = |key: env::Key| boot.token(key);
     // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
     let alive = || !matches!(until(&table, orch_name, Wait::POLL), Ok(Reaped::Now));
     programs::root::supply::server::serve(&channels[0], source, alive, &mut ask);

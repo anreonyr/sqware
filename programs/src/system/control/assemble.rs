@@ -20,7 +20,7 @@ use runtime::env::mail;
 use protocol::driver::supply::frame::{WANT_MAX, Want};
 use protocol::driver::supply;
 
-use crate::system::program::Setup;
+use crate::program::Setup;
 
 use super::{Control, Error, READY_MS, Service};
 
@@ -28,7 +28,7 @@ impl Control {
     /// **登记一行**：只知道名字与它"怎么算起来"——此刻还没有身子（`spawn` 才挂）。
     ///
     /// **"怎么算起来"由 `setup` 推出**：有 `Channel` ⇒ [`Announce::Channel`]（它起来时会交回
-    /// 一枚孔，那枚到了才算起来）；否则 [`Announce::None`]（放行即起来）。这与旧装配单上那
+    /// 一枚孔，那枚到了才算起来）；否则 [`Announce::None`]（放行即起来）。这与旧装配表上那
     /// 两格（`announce` ＋ `channels`）**逐行等价**：有通道的那四台正是旧表里唯一写
     /// `Announce::Channel` 的四台。
     pub fn enlist(&mut self, name: &'static str, setup: &'static [Setup]) -> Result<(), Error> {

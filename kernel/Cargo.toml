@@ -52,7 +52,6 @@ doctest = false
 embedded-test-linker-script = "0.1"
 
 env = { path = "../crates/env" }
-plan = { path = "../crates/plan" }
 sbi = { path = "../crates/sbi" }
 stanza = "0.5.2"
 

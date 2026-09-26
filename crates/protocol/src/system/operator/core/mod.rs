@@ -118,7 +118,7 @@ impl Id for EntryId {
 ///
 /// **照实记（impl 为什么住这一处，不住 `env::wire`）**：impl 跟着类型走——`env` 不认识
 /// [`EntryId`]（依赖是单向的 `protocol → env`），故宽度与字节序只能由定义它的这一处给。
-/// 口径与 `plan::assembly::Eyes` 那一处相同（`Field` 那一族的正文记着）。
+/// 口径与 `env::wire::Eyes` 那一处相同（`Field` 那一族的正文记着）。
 ///
 /// 读的那一侧**不校验"还在不在"**（[`Id::from_bytes`] 的注）：解出来的号在不在表里由核心答
 /// （[`Fail::Unknown`]）。

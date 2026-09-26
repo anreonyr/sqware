@@ -11,7 +11,7 @@
 //! [`protocol::driver::line::core`]（两侧共用一份）；本域只按它办事。
 //!
 //! **它为什么叫 router**：它管的是**线**（哪条线、谁领走、领完怎么结），不是某一台设备。
-//! 需求单在 [`plan::assembly::ROUTER_WANTS`]。
+//! 需求单在 [`programs::program::router::ROUTER_WANTS`]。
 //!
 //! **起域时一条线都不接**：接线是登记的直接后果——没登记的线根本不进本 context，本域不再
 //! 替所有人刹车（今天树里那 10 条里 9 条没主，全接上就是替它们吞中断）。
@@ -95,6 +95,6 @@
 //! `adapt/sweep.rs` 收掉（探活答不出 ⇒ `vacate` + 拆线），`router: deliver failed line=` 是它的读数。
 //!
 //! **照实记（一行转发不该撑起一个文件）**：本模块原先还挂一格 `pub mod needs;`——装两样：一行转发
-//! （[`plan::assembly::ROUTER_WANTS`]）与一个 `PLIC` 常量。前者删掉、bin 直接从定义处取；后者归到
-//! **定义处**（[`plan::assembly::PLIC_CLASS`]）。与 `harness/src/lodger.rs`、`driver/uart`、
+//! （[`programs::program::router::ROUTER_WANTS`]）与一个 `PLIC` 常量。前者删掉、bin 直接从定义处取；后者归到
+//! **定义处**（[`programs::program::router::PLIC_CLASS`]）。与 `harness/src/lodger.rs`、`driver/uart`、
 //! `driver/rtc` 同一条规矩。本模块留下是因为它是**这条路的锚**。

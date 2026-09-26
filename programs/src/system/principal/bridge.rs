@@ -3,7 +3,7 @@
 //! 装配期每一条服务的身份都从这条路上来：**放行前** `derive(ROOT)` + `bind`（负证客人除外）；
 //! **名册自己放行之后**装配者才认下面，并补绑它自己与树（它们起来时名册还没在）。
 //!
-//! 这两手原先散在 `System::bring_up` 里（`face_of` 也住那一处）。它们问的是**名册的语义**
+//! 这两手原先散在装配那一趟（`Program::assemble`）里（`face_of` 也住那一处）。它们问的是**名册的语义**
 //! ——门牌怎么认、谁补绑——故收进名册这一间；装配者那一侧只留一个 [`Roster`] 手柄。
 
 use core::time::Duration;
@@ -27,7 +27,7 @@ pub struct Roster {
 impl Roster {
     /// **放行前**给这一条服务派一条号、绑到它那一枚线程上。
     ///
-    /// `on` = 装配单上 `bind` 那一格（`false` 是负证客人：不绑，它自己 `resolve(self)` 答
+    /// `on` = 装配表上 `bind` 那一格（`false` 是负证客人：不绑，它自己 `resolve(self)` 答
     /// `None`）。名册还没在（名册自己与树）⇒ 什么都不做——那两条由 [`Roster::adopt`] 补绑。
     pub fn bind(&self, task: TaskId, on: bool) -> Result<(), &'static str> {
         if !on {

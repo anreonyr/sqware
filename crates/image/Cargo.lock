@@ -28,7 +28,6 @@ name = "image"
 version = "0.1.0"
 dependencies = [
  "env",
- "plan",
 ]
 
 [[package]]
@@ -38,13 +37,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "plan"
-version = "0.1.0"
-dependencies = [
- "env",
 ]
 
 [[package]]

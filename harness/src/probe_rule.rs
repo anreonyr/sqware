@@ -437,7 +437,7 @@ fn main() -> Report<'static> {
 /// 落一格，带一条规矩；答那一格自己的号（`0` = 没落成）。
 ///
 /// **`0` 当哨兵是安全的**：零号那一格是 `/sys`，本域跑起来的时候它早被占掉了（`principal`
-/// / `coalition` 起头就分了它，见装配单），故这时落出来的号不可能是 `0`。
+/// / `coalition` 起头就分了它，见装配表），故这时落出来的号不可能是 `0`。
 fn plate(
     talk: PieToken,
     link: &Endpoint,

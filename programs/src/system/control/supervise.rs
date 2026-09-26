@@ -13,8 +13,8 @@
 
 use alloc::vec::Vec;
 
+use crate::program::Program;
 use env::{HoleDir, Mark, Name, PieToken, Wait};
-use plan::assembly::Row;
 use protocol::debug;
 use protocol::system::board::LANE_PREFIX;
 use protocol::system::core::Reaped;
@@ -29,14 +29,14 @@ use super::service::{stop, until};
 
 /// **一条死亡道**：哪一位 + 那一条路（装配期铸的孔，记号 `gone-<名字>`）。
 ///
-/// **照实记（为什么按名字，不按下标）**：原先道与装配单**按下标**对齐（`lanes[i]` ↔ `plan[i]`，
-/// 本文件又按同一个下标把"哪条道响"翻回名字）——两张表必须各自自洽。装配单变成两段相接之后，
+/// **照实记（为什么按名字，不按下标）**：原先道与装配表**按下标**对齐（`lanes[i]` ↔ 旧装配表第 i 行，
+/// 本文件又按同一个下标把"哪条道响"翻回名字）——两张表必须各自自洽。装配表变成两段相接之后，
 /// 跨两段维持"位次自洽"正是那条隐患复发的地方 ⇒ 改成**按名字**（板那一侧本来就是按记号
 /// `gone-<名字>` 认领的）。
 pub struct Lane {
-    /// 这一位是谁（装配单上的名字）。
+    /// 这一位是谁（装配表上的名字）。
     pub name: &'static str,
-    /// 那一条道。`None` 有**两条来路**：**这一位不上板**（`plan.board = false`——道是板写的，
+    /// 那一条道。`None` 有**两条来路**：**这一位不上板**（`Program::board = false`——道是板写的，
     /// 没有写端就不铸）或**本域铸不出孔**（交给退场级联）。
     pub road: Option<PieToken>,
 }
@@ -52,17 +52,16 @@ impl Watch {
     ///
     /// 失败（那只组立不起来 / 备不下道表）由调用方折成 `system: no group`。
     /// **不上板的那几位不铸道**：没有写端的道永远不会响。
-    pub fn of(rows: &[&'static Row]) -> Result<Watch, ()> {
+    pub fn of(programs: &[&'static Program]) -> Result<Watch, ()> {
         // 组是**独占**的（`shared = false`）：本线程用它等任一道响（零轮询）。
         let pile = Pile::unseal(false).map_err(|_| ())?;
         let mut lanes: Vec<Lane> = Vec::new();
-        lanes.try_reserve(rows.len()).map_err(|_| ())?;
-        for row in rows {
+        lanes.try_reserve(programs.len()).map_err(|_| ())?;
+        for program in programs {
             // 记号 = `LANE_PREFIX` ＋ 名字：**前缀只有一处定义**（板那一侧按同一个常量
             // 拼出来找它）。
-            let board = row.plan.as_ref().map(|p| p.board).unwrap_or(false);
-            let road = if board {
-                mail::unseal_hole(Mark::of(&alloc::format!("{LANE_PREFIX}{}", row.name))).ok()
+            let road = if program.board {
+                mail::unseal_hole(Mark::of(&alloc::format!("{LANE_PREFIX}{}", program.name))).ok()
             } else {
                 None
             };
@@ -70,7 +69,7 @@ impl Watch {
                 let _ = pile.attach(&HolePie::from_token(road), HoleDir::Pull);
             }
             lanes.push(Lane {
-                name: row.name,
+                name: program.name,
                 road,
             });
         }

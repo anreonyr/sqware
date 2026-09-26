@@ -66,7 +66,7 @@ impl Fail {
 }
 
 /// 引导那一族共用的号（"启动参数读不出来"那一格）。
-const E_BOOT: env::Reason = plan::assembly::E_BOOT;
+use crate::program::system::E_BOOT;
 
 /// **起手要的三样东西**：与引导域的会话、那台机器的自述、那块载荷区（清单）。
 pub struct Boot {
@@ -113,7 +113,7 @@ fn talk_to_root() -> Option<Endpoint> {
 
 /// 领树：与载荷区同一条路（一张只有一条的单子 + 借映）。
 fn take_machine(pier: &Endpoint) -> Result<Machine, ()> {
-    let want = Want::new(plan::Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE);
+    let want = Want::new(env::Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE);
     let token = draw_one(pier, want).ok_or(())?;
     let dock = Dock::open(PolePie::from_token(token)).map_err(|_| ())?;
     Machine::of(dock.view()).map_err(|_| ())
@@ -122,7 +122,7 @@ fn take_machine(pier: &Endpoint) -> Result<Machine, ()> {
 /// 领那块载荷区并把清单读出来。坐标是**机器自己在树里写的那一段**（`/chosen`）。
 ///
 /// **零拷贝**：那几十 MB 不是搬过来的，是同一批物理页借映进本域。
-fn take_catalog(pier: &Endpoint, key: plan::Key) -> Result<Catalog<'static>, ()> {
+fn take_catalog(pier: &Endpoint, key: env::Key) -> Result<Catalog<'static>, ()> {
     let want = Want::new(key, Kind::Pole, Access::FETCH, Policy::NONE);
     let token = draw_one(pier, want).ok_or(())?;
     let dock = Dock::open(PolePie::from_token(token)).map_err(|_| ())?;

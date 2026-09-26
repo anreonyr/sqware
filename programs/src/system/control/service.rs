@@ -11,7 +11,7 @@
 //! **监督相住 [`super::supervise`]**；**立账 / 递单住 [`super::assemble`]**；**生命周期那一圈
 //! 住 [`super`]**。引导域（`root`）与本域共用本文件这几手——起一条只有一条路。
 
-use env::{Mark, Name, PieFail, ProgramKind, TaskId, UnitFail, Wait};
+use env::{Mark, Name, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wait};
 use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -20,7 +20,7 @@ use protocol::communication::establish::Endpoint;
 use protocol::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::system::desk::{Announce, Service, Slot, State, Table};
 
-use plan::assembly::{E_COALITION, E_PRINCIPAL, E_TREE};
+use crate::program::{coalition::E_COALITION, operator::E_TREE, principal::E_PRINCIPAL};
 
 /// **Unit 域**的失败 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
 ///
@@ -76,7 +76,7 @@ pub enum Start {
 }
 
 impl Start {
-    /// **号一律取自装配单**——本域自己的死法**一个数都不写**。
+    /// **号一律取自装配表**——本域自己的死法**一个数都不写**。
     pub fn code(self) -> env::Reason {
         match self {
             Start::Board | Start::Tree | Start::Room => E_TREE,
@@ -107,8 +107,17 @@ impl crate::Exit for Start {
 
 // ── 起跑前要交出去的一枚门闩 ────────────────────────────────
 
-/// 起跑前要交出去的一枚门闩——定义见 [`plan::assembly::Grant`]（本处只是转发）。
-pub use plan::assembly::Grant;
+/// 起跑前要交出去的一枚门闩：给哪一枚、多大权。
+///
+/// **照实记（它为什么住这里）**：它原住本文件，被搬去原先那张独立的装配表旁边（理由是
+/// "装配表要摆出这一格"）；装配表退场之后它回来了——它只有本域一个消费者（`start` 那一手）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Grant {
+    /// 要交出去的那一枚（**在我表里**的句柄）。
+    pub token: PieToken,
+    /// 交出去的权限子集。
+    pub perm: Permission,
+}
 
 // ── 合成的那几手（一步里既问内核又改账）────────────────────
 
@@ -209,7 +218,7 @@ pub fn ready(
 
     // 它会交回一枚孔 ⇒ 那件事归建立那一手：`claim` 把它认下来（逐条凑齐了才算起来）。
     //
-    // **两条数要一样**：`marks` 是装配单上那几条通道，`channels` 是放行前逐条装上的
+    // **两条数要一样**：`marks` 是装配表上那几条通道，`channels` 是放行前逐条装上的
     // （`connect` 一次一件）——对不上就是装配错，与"没认齐"同一落点：**不算起来**。
     if !marks.is_empty()
         && channels.len() == marks.len()

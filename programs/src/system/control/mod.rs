@@ -1,8 +1,9 @@
 //! system::control — **Service 的生命周期**：建 / 配 / 起 / 停。
 //!
 //! 它只答一件事：**这一条服务在不在、怎么被创建 / 配置 / 启动 / 停止。**
-//! 四套协议（板 / 持树者 / 名册 / 盟册）的语义**不在这一层**：那些是装配单上的**边**，
-//! 由 `System` 在装配那一圈按次序落到协议各自的手上。
+//! 四套协议（板 / 持树者 / 名册 / 盟册）的语义**不在这一层**：那些是程序声明上的**边**，
+//! 由 [`Program::assemble`](crate::program::Program::assemble) 在装配那一趟里按次序落到协议
+//! 各自的手上。
 //!
 //! ```text
 //!   Program（静态声明）── spawn → connect → start → wire ──▶ Service（域 + 线程 + 通道）
@@ -13,28 +14,28 @@
 //! 函数拆成三个调用点"逼出来的壳——后三格每次都能从 `setup` 现推，`name`/`task` 账里本来就有。
 //!
 //! 手里只有装配环境四样：账（[`Table`]）、清单、机器自述、与引导域的会话。死亡道与那只组
-//! （监督相的东西）住 `System`。
+//! （监督相的东西）住 [`Assembly`](crate::system::Assembly)。
 //!
 //! **内核那一侧的手住 [`service`]**；**立账与递单住 [`assemble`]**；**监督相住 [`supervise`]**。
 
 use alloc::vec::Vec;
 
+use env::manifest;
 use env::{Mark, Name, TaskId, Wait};
-use plan::manifest;
 use protocol::communication::establish::{self, Endpoint};
 use protocol::system::core::{Fail, Reaped};
 use protocol::system::desk::Table;
 
+use crate::program::Setup;
 use crate::root::boot;
 use crate::system::machine::Machine;
-use crate::system::program::Setup;
 
 pub mod assemble;
 pub mod service;
 pub mod supervise;
 
-/// 装配失败的编号——定义见 [`plan::assembly::Died`]（本处只是转发）。
-pub use plan::assembly::Died;
+/// 装配失败的编号——定义见 [`crate::program::Died`]（本处只是转发）。
+pub use crate::program::Died;
 
 /// 认身份门牌的短等间隔（毫秒）：门牌由名册起手交出，装配者这一侧只是短等。
 pub const RETRY_MS: usize = 1;
@@ -42,7 +43,7 @@ pub const RETRY_MS: usize = 1;
 /// 等子域就绪/交通道的上限（毫秒）。**必须有界**：子域要是死在头几步，本域不能陪着挂死。
 pub const READY_MS: usize = 1000;
 
-/// 装配失败的编号（通用的那几个；按服务分的编号住在装配单旁边）。
+/// 装配失败的编号（通用的那几个；按服务分的编号住在装配表旁边）。
 pub const E_MANIFEST: Died = 2;
 pub const E_PROGRAM: Died = 3;
 pub const E_TABLE: Died = 4;
@@ -50,7 +51,7 @@ pub const E_TABLE: Died = 4;
 /// **Control 的失败域**：一格 = 死在装配的哪一类。
 ///
 /// **不是全局错误表**：它是装配那一圈的返回类型，号（`env::Reason`）由调用方在边界上折
-/// ——按服务分的号归装配单那一格 `died`。
+/// ——按服务分的号归装配表那一格 `died`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Error {
     /// 名字非法 / 读不懂（`Name::new` 那一关）。
@@ -85,7 +86,7 @@ impl Error {
 ///
 /// **一条通道一件持有者**（[`Endpoint`]）——`Endpoint` 只装两枚孔，故"一条关系 N 条通道"那一档
 /// 在这里就是**几个 `Endpoint`**，不是一个能装的容器类型。**这本账归装配者拿着**：那几枚孔是
-/// 本域铸出去、客人将来要认的那一半，放早了客人就没得认（见 `System::bring_up`）。
+/// 本域铸出去、客人将来要认的那一半，放早了客人就没得认（见 [`Program::assemble`](crate::program::Program::assemble)）。
 /// 名字不进这个别名——账里那一行就是名字，调用方手里也有 `Program`。
 pub type Service = (TaskId, Vec<Endpoint>);
 

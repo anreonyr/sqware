@@ -3,7 +3,7 @@
 //! **照实记（这一份为什么拆出来）**：帧形今天只有机器在跑，而机器只走**顺路**——边角
 //! （短帧 / 长帧 / 动作码不对 / 那一串号的条数对不上 / 表外的码）一格都走不到。拆开是为了让那些
 //! 边角在**宿主靶**上编得动；**那台靶已删**（用户裁定"protocol-case 没必要"）⇒ 这一份照旧只认
-//! `env` / `plan` 与同层 `core`/`judge`（[`CoordFrame`] 的后半是装配单上的 [`Eyes`]），而那些
+//! `env` 与同层 `core`/`judge`（[`CoordFrame`] 的后半是装配表上的 [`Eyes`]），而那些
 //! 边角今天**没有判据**；适配那半留在 `protocol` 那一侧的 `mod.rs`（今天的形状：**只有身体、
 //! 没有壳**——要哪一手直接叫 [`crate::communication::establish`]），建立那一手的失败域映射
 //! 随本层 [`core`](super::core) 同住。
@@ -57,8 +57,8 @@
 //! **答话有四种形状、各有各的上界**，本族那只缓冲按 [`UNION_LEN`] 备（最大那一形）。
 
 use env::Mark;
+use env::wire::Eyes;
 use env::{Name, PieToken, TaskId};
-use plan::assembly::Eyes;
 
 use super::core::judge::Id;
 use super::core::{EntryId, Fail, Operator, Where};
@@ -682,7 +682,7 @@ impl Message for Union {
 ///
 /// **照实记（后 8 字节的对齐方式换过一次）**：原先这一枚枚举（`Role`）与持树者那一侧的
 /// `ROLE_ROSTER` / `ROLE_LEAGUE` 常量**各写一遍** 0/1，靠两边注释说"必须同值"。现在两侧共读
-/// [`Eyes`]（`plan::assembly`）——装配单上那一格、这一帧、收的那一侧，一处定义。
+/// [`Eyes`]（`programs::program`）——装配表上那一格、这一帧、收的那一侧，一处定义。
 ///
 /// **照实记（后 8 字节的来历）**：门禁那一刀里它们是**保留零**。这一刀起有了意思——于是两枚
 /// 门牌可以**分两帧、按位递**，"长度即语义"（16 = 这一帧）一个字没破。

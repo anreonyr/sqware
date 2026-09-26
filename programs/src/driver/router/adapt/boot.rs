@@ -8,7 +8,7 @@ use crate::core::sources::Sources;
 use crate::plic::Plic;
 use alloc::vec::Vec;
 use env::{HoleDir, PieToken, TaskId, Wait};
-use plan::assembly::ROUTER_WANTS as WANTS;
+use programs::program::router::ROUTER_WANTS as WANTS;
 use programs::driver::assemble;
 use programs::driver::tree::{self, Mine};
 use protocol::debug;

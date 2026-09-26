@@ -3,7 +3,7 @@
 //! 正文见 [`super`]；记号、帧与上限见 [`protocol::driver::supply::frame`]。
 
 use env::{MailFail, PieToken, Wait};
-use plan::{Key, Pair};
+use env::{Key, Pair};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
 

@@ -91,7 +91,7 @@ use runtime::env::room;
 use runtime::env::unit;
 use protocol::debug;
 
-/// 清单里等待者的名字（`plan::assembly::ALL` 里 `scenes` 含 `group` 的那一行）。
+/// 清单里等待者的名字（`programs::program::PROGRAMS` 里 `scenes` 含 `group` 的那一行）。
 const WAITER: &str = "waiter";
 /// 几名等待者（共享组的重点就是**不止一个**）。
 const WAITERS: usize = 2;

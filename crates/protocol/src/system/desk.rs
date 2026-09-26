@@ -43,8 +43,23 @@ pub enum Slot {
     Live { team: Option<TeamId>, task: TaskId },
 }
 
-/// **怎么知道它起来了**——定义与理由见 [`plan::assembly::Announce`]（本处只是转发，调用点不动）。
-pub use plan::assembly::Announce;
+/// **怎么知道它起来了**——每个 Service 自己的一种，**登记时定死**。
+///
+/// 这一格不能一刀切：有的服务起来时会交回一条通道（那枚句柄的到达就是它的"我好了"），
+/// 有的**什么都不交**（比如只走调试面的回显——它没有通道可交）。它是**装配声明**上的一格
+/// （`programs` 的 `Program.setup` 里有没有 `Channel` 推出来），不是调用 `start` 时的一个
+/// 开关。
+///
+/// **照实记（它为什么住这里）**：它原住本模块，被搬去 `crates/plan` 那张装配表旁边
+/// （理由是"装配表要摆出这一格"）；装配表退场之后它回来了——本模块是它的唯一定义处，
+/// 两侧（装配侧与表那一侧）都从这里取。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Announce {
+    /// 它会交回一枚句柄 ⇒ 那枚到了才算起来。
+    Channel,
+    /// 它不宣布 ⇒ **放行即起来**（"起来了"= 它没死）。
+    None,
+}
 
 /// 表里的一行。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -79,7 +94,7 @@ pub struct Table {
 }
 
 impl Table {
-    /// 行数上限（= `plan::manifest::MAX_PROGRAMS`）。
+    /// 行数上限（= `env::manifest::MAX_PROGRAMS`）。
     pub const CAP: usize = 28;
 
     /// 空表：每一行都"占着位但没名字"。

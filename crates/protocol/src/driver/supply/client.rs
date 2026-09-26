@@ -8,7 +8,7 @@
 use env::Wait;
 use env::wire::Field;
 use env::{MailFail, PieToken, TaskId};
-use plan::{Key, PAIR_LEN, Pair};
+use env::{Key, PAIR_LEN, Pair};
 
 use crate::driver::supply::core::Fail;
 use crate::driver::supply::frame::{OK, Order, Reply, ReplyHead, WANT_MAX, Want, code_to_fail};

@@ -103,7 +103,7 @@ use protocol::debug;
 use protocol::system::desk::{Announce, Table};
 use runtime::env::room;
 
-/// 占核者与打点者的**清单名**（`plan::assembly::ALL` 里 `scenes` 含 `load` 的那两行）。
+/// 占核者与打点者的**清单名**（`programs::program::PROGRAMS` 里 `scenes` 含 `load` 的那两行）。
 const HOG_ELF: &str = "busy";
 const PARKER_ELF: &str = "park";
 

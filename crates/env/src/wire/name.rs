@@ -104,7 +104,7 @@ impl Name {
     /// 内容原始字节（不含填充）——**线形的编码面**：帧里只写这一段，其余位置不上线。
     ///
     /// 与 [`Name::bytes`] 的分工就是两侧的分工：`bytes` 是 ABI 的定长字段
-    /// （`plan/src/key.rs` 的 `Key`，那段区 / 哪一件），`text` 是协议帧里的变长那一段。
+    /// （[`Key`](crate::Key)，那段区 / 哪一件），`text` 是协议帧里的变长那一段。
     pub fn text(&self) -> &[u8] {
         &self.bytes[..self.len()]
     }

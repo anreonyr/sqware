@@ -9,7 +9,7 @@
 //!
 //! 这里全是**核心**：视图进来、坐标出去，没有会话、没有门闩、没有失败策略。
 
-use plan::Key;
+use env::Key;
 use runtime::core::dock::View;
 
 /// 本域手里那台机器的自述。

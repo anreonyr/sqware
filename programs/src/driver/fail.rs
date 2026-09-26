@@ -1,4 +1,4 @@
-//! driver::fail — **一台驱动怎么死**：三台共用这一格口径（**号取自装配单**）。
+//! driver::fail — **一台驱动怎么死**：三台共用这一格口径（**号取自装配表**）。
 //!
 //! ```text
 //!   Step   死在起手/常驻的**哪一步**——各域自己那一枚枚举实现它（只列自己走得到的那几格）
@@ -13,9 +13,9 @@
 //!
 //! # 照实记（并的理由不是"少写三遍"，是"两套号在跑"）
 //!
-//! 装配单里 `E_ROUTER` / `E_UART` / `E_RTC` 说的是"**这一台**死了"，而三台自己那几格从前写的是
+//! 装配表里 `E_ROUTER` / `E_UART` / `E_RTC` 说的是"**这一台**死了"，而三台自己那几格从前写的是
 //! `4..=8`——**同一件事两套号**，与内件那三枚当年一模一样（那一刀记在
-//! `crates/plan/src/assembly.rs` 的 `E_TREE` / `E_PRINCIPAL` / `E_COALITION` 那一段照实记里：
+//! `programs/src/system/{operator,principal,coalition}/program.rs` 的 `E_TREE` / `E_PRINCIPAL` / `E_COALITION` 那几格：
 //! 三份同构的 `fail::Fail` 并成 `system::Start` 一枚，号也收进那张表）。
 //!
 //! 故本表**一个数都不写**：本域那几步一律报 [`Who::DIED`]，"死在第几步"留在那一句话里
@@ -35,22 +35,22 @@
 //! `Denied`）。故本表住适配侧（[`Exit`] 是程序侧那一手），而它**不是**服务面的失败域。
 
 use crate::{Exit, Report};
-use plan::assembly::Died;
+use crate::program::Died;
 
 /// 死在起手/常驻的**哪一步**：各域自己那一枚枚举实现它（**只列自己走得到的那几格**）。
 pub trait Step: Copy {
-    /// 这一格报什么号：**本域那几步一律取装配单里那一号**（`died` 那一格），唯一自己带号的是
+    /// 这一格报什么号：**本域那几步一律取装配表里那一号**（`died` 那一格），唯一自己带号的是
     /// "配给那一趟没成"。
     fn code(self, died: Died) -> Died;
     /// 交给内核出口的那句话（带本域名，如 `"uart: line gone"`）。
     fn text(self) -> &'static str;
 }
 
-/// **哪一台驱动**：决定号（取自装配单）与"配给那一趟没成"那一格。
+/// **哪一台驱动**：决定号（取自装配表）与"配给那一趟没成"那一格。
 pub trait Who {
     /// 本域自己那几格——只有它走得到的那些。
     type Step: Step;
-    /// **号取自装配单**：本域一个数都不写（`plan::assembly` 那一族）。
+    /// **号取自装配表**：本域一个数都不写（`programs::program` 那一族）。
     const DIED: Died;
     /// "配给那一趟没成"那一格：`?` 把装配那一族的号交给它。
     fn assembled(code: Died) -> Self::Step;

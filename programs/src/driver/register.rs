@@ -27,7 +27,7 @@ const SERVICE: &str = "router";
 pub fn occupy(
     link: &Endpoint,
     talk: PieToken,
-    key: plan::Key,
+    key: env::Key,
     millis: Wait,
 ) -> Result<line::client::Line, ()> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| ())?;

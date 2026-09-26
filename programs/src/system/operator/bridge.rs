@@ -7,7 +7,7 @@ use env::Mark;
 use env::Wait;
 use env::wire::Field;
 use env::{Name, PieToken, TaskId};
-use plan::assembly::Eyes;
+use env::wire::Eyes;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 

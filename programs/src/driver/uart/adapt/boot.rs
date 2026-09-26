@@ -6,7 +6,7 @@
 use super::fail::{Fail, Step};
 use crate::uart as device;
 use env::{PieToken, TaskId, Wait};
-use plan::assembly::UART_WANTS as WANTS;
+use programs::program::uart::UART_WANTS as WANTS;
 use programs::driver::assemble;
 use protocol::debug;
 use protocol::communication::establish::Endpoint;
@@ -22,7 +22,7 @@ const MS: usize = 1000;
 /// 起手那几步的产物：本域要活下去的全部凭据。
 pub struct Up {
     /// 那一段区（内核按 `reg` 段造的门闩给的坐标；登记要用它，本域不写死它）。
-    pub key: plan::Key,
+    pub key: env::Key,
     /// 那一页的映射（域活多久它活多久）。
     pub dock: Dock,
     /// 读行那枚孔——**它就是本域的门牌**（服务入口）。

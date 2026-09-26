@@ -28,7 +28,7 @@ exclude = [
 # `harness` 是**工作区成员**，与 `programs` 同一族（同一张链接脚本、同一批"被内核装载的
 # ELF"）：它是**测具**那一档——探针（进验收镜像当客人）与压测台（整台替换引导镜像）。
 # 搬家那一刀的缘由、以及"哪几台进哪张镜像"，见 `harness/Cargo.toml` 与
-# `crates/plan/src/assembly.rs`（装配单那一张表）。
+# `programs/src/program.rs`（**程序装配声明的唯一来源**）。
 members = [
     "kernel",
     "programs",
@@ -39,9 +39,12 @@ members = [
     # 产品与测具里 **97 处** `suite.case("名", move || …)` 按用户裁定换成**裸 `assert!`**
     # ——保留"万一不成立就该当场死"，去掉打点协议本身（失败仍走域内 panic 通道）。
     "crates/env",
-    # `crates/plan` 是**装机的账**（装配单 / 需求单 / 坐标 / 开机三笔账）：
-    # 判据见 `crates/plan/src/lib.rs`——"这里只认表与字节，不碰任何运行时代码"。
-    "crates/plan",
+    # **照实记（`crates/plan` 那一层已退场）**：这里原先是 `crates/plan`——"装机的账"
+    # （装配表 / 需求单 / 坐标 / 开机三笔账）。判据写着"这里只认表与字节，不碰任何运行时代码"，
+    # 而它同时养出了**程序装配的中间层**（`Row` / `Plan` / `ALL` 与 `Plan → Program` 的投影）。
+    # 那一层按用户裁定整个退场：**程序声明回到每台程序自己那份 `program.rs`**（`Program` /
+    # `PROGRAMS`，住 `programs`），线格式那几件（坐标 / 配对 / 启动参数 / 清单 / 供给词汇）
+    # 并回 `crates/env` 顶层。故这一格删掉，不再是一个独立 crate。
     "crates/protocol",
     "crates/runtime",
     "crates/sbi",
@@ -66,7 +69,7 @@ resolver = "3"
 #   · 改哪一段，就照**那一段**的排法写（邻行即规格；新文件按同目录的排法起手）；
 #   · **不许为了让它变绿而全树重排**——207 处里没有一处改变判据，而重排会把成对的对齐、
 #     与代码对齐的注释一起打散。需要单独钉住的表写 `#[rustfmt::skip]`
-#     （例见 `crates/plan/src/assembly.rs` 的装配单），不是"跑一遍 fmt 再从 diff 里补回来"。
+#     （例见 `programs/src/program.rs` 的 `PROGRAMS` 那张表），不是"跑一遍 fmt 再从 diff 里补回来"。
 
 [workspace.package]
 version = "0.1.0"

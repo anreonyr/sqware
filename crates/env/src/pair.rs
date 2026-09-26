@@ -17,8 +17,8 @@
 //! 不认识 ⇒ [`Pair::key`] 答 `None`（记录判废）。
 
 use crate::key::{KEY_LEN, Key};
-use env::PieToken;
-use env::wire::Field;
+use crate::wire::Field;
+use crate::PieToken;
 
 /// 一条记录的字面字节数（`KEY_LEN` + 8）。
 pub const PAIR_LEN: usize = KEY_LEN + size_of::<usize>();

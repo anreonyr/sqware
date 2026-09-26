@@ -16,7 +16,7 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::{EntryId, Listing, Where};
 use runtime::env::mail;
 
-/// 上树一趟（装配单里本域 `operator: true`）：**分 → 落 → 寻 → 收 → 剪**五步。
+/// 上树一趟（装配表里本域 `operator: true`）：**分 → 落 → 寻 → 收 → 剪**五步。
 ///
 /// 返最后那一格（剪的答码，`ocall::OK` = 五步都成）。中间任何一步不成 ⇒ 当场的答码就是
 /// 返回值——**一格里已经有"死在哪一步"**，不需要另立读数。

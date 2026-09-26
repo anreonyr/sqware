@@ -9,7 +9,7 @@
 //! 一问一答的那一趟自带回信孔，"往哪回"不需要 Server 记住任何东西。
 //!
 //! **照实记（`bridge` 回来了）**：装配侧那两面（放行前 `bind`、名册起来之后 `adopt` 补绑）
-//! 原先散在 `System::bring_up` 里；它们问的是名册的语义，故收进 [`bridge`] 那一间。
+//! 原先散在装配那一趟（`Program::assemble`）里；它们问的是名册的语义，故收进 [`bridge`] 那一间。
 
 pub mod bridge;
 pub mod server;

@@ -4,7 +4,7 @@
 
 use env::Wait;
 use env::{Mark, PieToken};
-use plan::Key;
+use env::Key;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 

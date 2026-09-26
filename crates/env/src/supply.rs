@@ -3,9 +3,9 @@
 //!
 //! # 为什么它住 `env`
 //!
-//! 装配单（[`crate::assembly`]）要**两侧读**——内核的 `build.rs`（宿主）与编排域（riscv）——
+//! 装配表（[`crate::assembly`]）要**两侧读**——内核的 `build.rs`（宿主）与编排域（riscv）——
 //! 而 `programs` / `protocol` 都拖着 `runtime`（riscv 内联汇编，宿主上编不过）。故凡是
-//! "装配单要摆出来的东西"，定义都得住 `env`。
+//! "装配表要摆出来的东西"，定义都得住 `env`。
 //!
 //! **照实记（这几样是从 `protocol::driver::supply::frame` 搬下来的）**：那一处现在是
 //! `pub use` 转发，**调用点一行没改**（与 `Access`/`Policy`、`Announce`/`Grant`/`Died` 同一条
@@ -16,9 +16,8 @@
 //! `const` 造出来；线上那一条是 [`Want`]（`repr(C)` + 定长字段，尺寸即线格式）。
 
 use crate::key::Key;
-use env::wire::Field;
-use env::{Access, Policy};
-use env::{NAME_LEN, Name};
+use crate::wire::Field;
+use crate::{Access, NAME_LEN, Name, Policy};
 
 const KIND_POLE: u8 = Kind::Pole as u8;
 const KIND_NOLE: u8 = Kind::Nole as u8;

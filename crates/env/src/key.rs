@@ -20,7 +20,7 @@
 
 use core::mem::size_of;
 
-use env::wire::Field;
+use crate::wire::Field;
 
 /// 坐标的字节数（判别号 1 + 留白 7 + 那一个数 8）。
 pub const KEY_LEN: usize = 16;

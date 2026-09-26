@@ -1,11 +1,11 @@
 //! uart::adapt::fail — 本域的死法：**一格 = 死在启动/常驻的哪一步**（一族口径在 [`driver::fail`]）。
 //!
-//! 本文件只留 uart 自己的事实：**它走得到哪几步**、每一步那句话，以及它在装配单上那一号
-//! （`plan::assembly::E_UART`——**本域一个数都不写**，见 `driver/fail.rs` 那条照实记）。
+//! 本文件只留 uart 自己的事实：**它走得到哪几步**、每一步那句话，以及它在装配表上那一号
+//! （`programs::program::uart::E_UART`——**本域一个数都不写**，见 `driver/fail.rs` 那条照实记）。
 //!
 //! [`driver::fail`]: programs::driver::fail
 
-use plan::assembly::{Died, E_UART};
+use programs::program::{Died, uart::E_UART};
 use programs::driver::fail::{self, Who};
 
 /// uart 这一台（[`Fail`] 里那格"谁"）。
@@ -32,7 +32,7 @@ pub enum Step {
 impl fail::Step for Step {
     fn code(self, died: Died) -> Died {
         match self {
-            // 配给那一趟的号**原样带过**；本域自己那几格取装配单里那一号。
+            // 配给那一趟的号**原样带过**；本域自己那几格取装配表里那一号。
             Step::Assemble(code) => code,
             _ => died,
         }

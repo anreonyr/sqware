@@ -16,23 +16,23 @@
 //!
 //! **"要几样"不在这台机器里**：调用方按自己的需求单把数组**解构**出来
 //! （`let [Some(a), ..] = slots else { … }`）——缺一格就是装配错，而"该有几格"是收方那张单
-//! 的账（收方那张需求单，今天住 `plan::assembly`）。本模块只保证**回单与单子同序同长**：第 i 条落第 i 格。
+//! 的账（收方那张需求单，今天住 `programs::program`）。本模块只保证**回单与单子同序同长**：第 i 条落第 i 格。
 
 use alloc::vec;
 use env::Wait;
-use plan::{PAIR_LEN, Pair};
+use env::{PAIR_LEN, Pair};
 use protocol::communication::establish;
 use protocol::system::grant;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
 
-/// 收记录那条通道的名字——**两端同一个**（装配单的 `channels` 里也写的它）。
+/// 收记录那条通道的名字——**两端同一个**（装配表里 `Setup::Channel("records")` 也写的它）。
 pub const RECORDS: &str = "records";
 
 /// 装配期等配给的上限（毫秒）。**必须有界**：父域死在递单之前时本域不能陪着挂死。
 pub const MS: usize = 1000;
 
-/// 装配失败编号，**这一族共用**：指"死在装配的哪一步"（各驱动自己那几步报的是装配单里那一号
+/// 装配失败编号，**这一族共用**：指"死在装配的哪一步"（各驱动自己那几步报的是装配表里那一号
 /// ——见 [`crate::driver::fail`]；这一族这两个号照旧原样带过）。
 ///
 /// **照实记（`E_SIRE = 1` 已撤）**：那一格是 `sire()` 失败时的号，而 `UnitCall::Sire`
