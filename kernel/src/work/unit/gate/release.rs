@@ -10,7 +10,7 @@
 //   - token 在调用方 task 的权限表内
 //   - 调用方不持任何 L3 锁
 
-use env::{Fail, PieToken};
+use env::{PieFail, PieToken};
 
 use super::cull;
 use super::snap::Snap;
@@ -24,13 +24,13 @@ pub(crate) fn release(
     task: &alloc::sync::Arc<Task>,
     token: PieToken,
     snap: &Snap,
-) -> Result<usize, Fail> {
+) -> Result<usize, PieFail> {
     let present = {
         let pies = task.pies.lock();
         pies.iter().any(|p| p.token() == token)
     };
     if !present {
-        return Err(Fail::Denied);
+        return Err(PieFail::Denied);
     }
     Ok(cull::cull((task.clone(), token), snap))
 }

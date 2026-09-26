@@ -31,7 +31,8 @@
 
 use env::Wait;
 use env::{
-    EnvResult, HoleDir, MailCall, MailCallRet, Mark, PieToken, TaskId, ToleResult, VirtAddr,
+    EnvResult, HoleDir, MailCall, MailCallRet, Mark, PieResult, PieToken, TaskId, ToleResult,
+    VirtAddr,
 };
 
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
@@ -171,7 +172,7 @@ pub struct HolePie {
 
 impl HolePie {
     /// 解封 Hole：**记号必填**（`mark` = 这枚孔干什么用的，见 [`unseal_hole`]）。
-    pub fn unseal(mark: Mark) -> EnvResult<Self> {
+    pub fn unseal(mark: Mark) -> PieResult<Self> {
         Ok(Self {
             token: super::pie::unseal_hole(mark)?,
         })
@@ -301,7 +302,7 @@ pub struct NolePie {
 
 impl NolePie {
     /// 解封一枚 Nole（无参数：没有大小、没有对齐）。
-    pub fn unseal() -> EnvResult<Self> {
+    pub fn unseal() -> PieResult<Self> {
         Ok(Self {
             token: unseal_nole()?,
         })
@@ -327,7 +328,7 @@ impl PolePie {
     ///
     /// 创建者的视图由内核顺手落好（`unseal` 内部 `auto-map`），但**那个 VA 不在这里回**
     /// ——要地址就再 `open` 一次（幂等，返同一个 VA）。
-    pub fn unseal(size: usize) -> EnvResult<Self> {
+    pub fn unseal(size: usize) -> PieResult<Self> {
         Ok(Self {
             token: unseal_pole(size)?,
         })
@@ -341,11 +342,11 @@ impl PolePie {
     /// 开闩：借映进本任务空间 → `(视图起点, 这一段多大)`（同 token 幂等复用）。
     ///
     /// 薄层只封这一次 envcall；"视图"这个用法在 [`crate::core::dock`]。
-    pub fn open(&self) -> EnvResult<(usize, usize)> {
+    pub fn open(&self) -> PieResult<(usize, usize)> {
         open(self.token)
     }
 
-    pub fn shut(&self) -> EnvResult<()> {
+    pub fn shut(&self) -> PieResult<()> {
         shut(self.token)
     }
 

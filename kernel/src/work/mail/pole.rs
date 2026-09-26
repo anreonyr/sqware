@@ -25,7 +25,7 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::{SegmentKind, Space, Span};
 
-use env::Fail;
+use env::PieFail;
 
 /// Pole 状态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,15 +73,15 @@ unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
 impl PoleMeta {
-    pub(super) fn allocate(size: usize, owner: TaskId) -> Result<Arc<Self>, Fail> {
+    pub(super) fn allocate(size: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
-            return Err(Fail::NotAligned);
+            return Err(PieFail::NotAligned);
         }
         let layout =
-            core::alloc::Layout::from_size_align(size, PAGE_SIZE).map_err(|_| Fail::NotAligned)?;
+            core::alloc::Layout::from_size_align(size, PAGE_SIZE).map_err(|_| PieFail::NotAligned)?;
         let ptr = crate::tag!(
             Pole,
-            frame::allocator().allocate(layout).map_err(|_| Fail::OoM)?
+            frame::allocator().allocate(layout).map_err(|_| PieFail::OoM)?
         );
         // SAFETY: 分配返回非空；清零。
         let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };
@@ -107,14 +107,14 @@ impl PoleMeta {
     /// `reg` 是设备树声明的那一段（所有权粒度），页是映射粒度：区间按页界向两侧
     /// 撑开，故同一页里的邻居对持有者可见——UART 的 `reg` 只有 0x100，撑到一页。
     /// 存下来的 `size` 因此**大于** `reg`。
-    pub(super) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<Self>, Fail> {
+    pub(super) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
         if reg == 0 {
-            return Err(Fail::NotAligned);
+            return Err(PieFail::NotAligned);
         }
-        let end = base.checked_add(reg).ok_or(Fail::NotAligned)?;
+        let end = base.checked_add(reg).ok_or(PieFail::NotAligned)?;
         let lo = base & !(PAGE_SIZE - 1);
         let hi = end.next_multiple_of(PAGE_SIZE);
-        let base = NonNull::new(lo as *mut u8).ok_or(Fail::NotAligned)?;
+        let base = NonNull::new(lo as *mut u8).ok_or(PieFail::NotAligned)?;
         let size = hi - lo;
         Ok(Arc::new(Self {
             state: SpinLock::new_level(Level::L3, PoleState::Live),
@@ -147,7 +147,7 @@ impl PoleMeta {
         token: PieToken,
         space: &Arc<Space>,
         flags: PteFlags,
-    ) -> Result<usize, Fail> {
+    ) -> Result<usize, PieFail> {
         {
             let m = self.mappings.lock();
             if let Some((_, _, span)) = m.iter().find(|(t, _, _)| *t == token) {
@@ -160,7 +160,7 @@ impl PoleMeta {
                 // 装配失败 ⇒ 只剩段要还（`SpaceInner::allocate` 那条不变量的现场）：
                 // `borrow` 在登记之前就拒，maps 干净；此刻一片 PTE 未落，故还段
                 // 不必等清退，当场还即可。此前这里用 `?` 直返——**段永久泄漏**，
-                // 且被 `Fail::OoM` 掩成"物理内存不够"。
+                // 且被 `PieFail::OoM` 掩成"物理内存不够"。
                 if let Err(e) = inner.borrow(
                     va,
                     PhysAddr::from_raw(self.base.as_ptr() as usize),
@@ -172,13 +172,13 @@ impl PoleMeta {
                 }
                 Ok::<_, MapError>(va)
             })
-            .map_err(|_| Fail::OoM)?;
+            .map_err(|_| PieFail::OoM)?;
         // 视图清单：**先备后插**（这一步失败时把刚建好的映射当场撤掉）。
         let mut maps = self.mappings.lock();
         if maps.try_reserve(1).is_err() {
             drop(maps);
             let _ = space.release(Span::new(SegmentKind::Normal, va, self.size, None));
-            return Err(Fail::OoM);
+            return Err(PieFail::OoM);
         }
         maps.push((
             token,
@@ -192,7 +192,7 @@ impl PoleMeta {
     ///
     /// cap ⊆ 页表：narrow 收窄 pie 权限后，该 pie 的映射段 PTE 必须同步降权。
     /// 只动 `token` 自己的映射（未映射则无事）；其他 pie（含同 space 的）不受影响。
-    fn narrow_into(&self, token: PieToken, flags: PteFlags) -> Result<(), Fail> {
+    fn narrow_into(&self, token: PieToken, flags: PteFlags) -> Result<(), PieFail> {
         // 锁内只查 + 升级 Arc（锁序纪律：mappings 锁不跨 space 操作）。
         let target = {
             let m = self.mappings.lock();
@@ -206,12 +206,12 @@ impl PoleMeta {
         if let Some((space, va, size)) = target {
             space
                 .protect(VirtAddr::from_raw(va), size, flags)
-                .map_err(|_| Fail::Denied)?;
+                .map_err(|_| PieFail::Denied)?;
         }
         Ok(())
     }
 
-    fn shut_from(&self, token: PieToken) -> Result<(), Fail> {
+    fn shut_from(&self, token: PieToken) -> Result<(), PieFail> {
         let (space, span) = {
             let mut m = self.mappings.lock();
             let pos = m.iter().position(|(t, _, _)| *t == token);
@@ -226,7 +226,7 @@ impl PoleMeta {
                 None => return Ok(()), // 幂等
             }
         };
-        space.release(span).map_err(|_| Fail::Denied)
+        space.release(span).map_err(|_| PieFail::Denied)
     }
 }
 
@@ -264,9 +264,9 @@ pub(crate) fn open(
     token: PieToken,
     space: &Arc<Space>,
     flags: PteFlags,
-) -> Result<(usize, usize), Fail> {
+) -> Result<(usize, usize), PieFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(PieFail::Dead);
     }
     let va = meta.open_into(token, space, flags)?;
     // 强制翻 PTE flags——map_into 偶遇 superpage / 旧 entry 时 flags 没真落位；
@@ -280,14 +280,14 @@ pub(crate) fn open(
 /// **不过存活闸**：撤的是**我自己那张 PTE**，与资源活不活着无关——`Seal` 之后
 /// 仍得能撤。这与 `Release` 是同一条语义：「你总得能放下手里的东西」（见 `fid.rs`
 /// 的 `Release` 那一格）。`shut_from` 本就幂等：未映射、Space 已死都返 `Ok`。
-pub(crate) fn shut(meta: &PoleMeta, token: PieToken) -> Result<(), Fail> {
+pub(crate) fn shut(meta: &PoleMeta, token: PieToken) -> Result<(), PieFail> {
     meta.shut_from(token)
 }
 
 /// Narrow 降权：把 `token` 对应映射段降权到新 `flags`（cap ⊆ 页表）。未映射则无事。
-pub(crate) fn narrow(meta: &PoleMeta, token: PieToken, flags: PteFlags) -> Result<(), Fail> {
+pub(crate) fn narrow(meta: &PoleMeta, token: PieToken, flags: PteFlags) -> Result<(), PieFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(PieFail::Dead);
     }
     meta.narrow_into(token, flags)
 }
@@ -306,7 +306,7 @@ pub(crate) fn seal(meta: &PoleMeta) {
 /// pies.push + pole::open）。返 `Arc`：它既是资源实体，也是门闩持有的**唯一强
 /// 引用**（资源寿命 = 能力寿命；最后一份消失时 `Drop` 归还帧 + 撤映射）。
 /// `owner` = 开辟者任务 id（envcall 入口传当前任务）。
-pub(crate) fn meta(size: usize, owner: TaskId) -> Result<Arc<PoleMeta>, Fail> {
+pub(crate) fn meta(size: usize, owner: TaskId) -> Result<Arc<PoleMeta>, PieFail> {
     PoleMeta::allocate(size, owner)
 }
 
@@ -314,6 +314,6 @@ pub(crate) fn meta(size: usize, owner: TaskId) -> Result<Arc<PoleMeta>, Fail> {
 ///
 /// **只对内核开放**（`pub(crate)`，无 envcall 入口）：设备树是 boot 的事实，
 /// 域不能凭一个物理地址给自己造门闩。独占因此不靠判据，靠**没有第二个创建入口**。
-pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleMeta>, Fail> {
+pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleMeta>, PieFail> {
     PoleMeta::region(base, reg, owner)
 }

@@ -38,7 +38,6 @@ use crate::work::unit::space::{Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
 use crate::work::unit::team::UnitError;
 use crate::work::unit::weak::{Site, TaskWeak};
-use env::Fail;
 
 mod control;
 mod debug;
@@ -62,9 +61,9 @@ pub static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBoo
 /// | other（含空 / 仅 STORE）| Denied                  |
 ///
 /// U 位不在此处决定——由目标空间的 [`Space::pte_policy`] 加。
-fn subset_to_pte(subset: Permission) -> Result<PteFlags, Fail> {
+fn subset_to_pte(subset: Permission) -> Result<PteFlags, env::PieFail> {
     if !subset.contains(Permission::FETCH) {
-        return Err(Fail::Denied);
+        return Err(env::PieFail::Denied);
     }
     let mut f = PteFlags::V | PteFlags::A | PteFlags::D;
     f |= PteFlags::R;

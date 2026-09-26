@@ -16,7 +16,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Fail, HoleDir, Mark, PieToken, TaskId, ToleFail};
+use env::{Fail, HoleDir, Mark, PieFail, PieToken, TaskId, ToleFail};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
@@ -60,7 +60,7 @@ pub fn form() {
             sire
         );
         crate::expect!(
-            matches!(gate::narrow(&mut pie, shared), Err(Fail::Denied)),
+            matches!(gate::narrow(&mut pie, shared), Err(PieFail::Denied)),
             "撤掉 ONLY 应当被拒——**自持枚也不例外**（sire = {:?}）",
             sire
         );
@@ -75,7 +75,7 @@ pub fn form() {
                     &mut pie,
                     Permission::FETCH | Permission::STORE | Permission::ONLY
                 ),
-                Err(Fail::Denied)
+                Err(PieFail::Denied)
             ),
             "非单调收窄（要一个已被收掉的位）应当被拒（sire = {:?}）",
             sire
@@ -230,7 +230,7 @@ pub fn order() {
     crate::expect!(
         matches!(
             gate::accede(&task, live_token, Need::Store),
-            Err(Fail::Denied)
+            Err(PieFail::Denied)
         ),
         "活着但权不够：必须答 Denied"
     );

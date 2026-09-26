@@ -16,28 +16,28 @@
 // - `Dead`   — 资源已封印
 
 use super::pie::{AnyPie, Permission, Pie};
-use env::Fail;
+use env::PieFail;
 
 /// 就地改写一张 pie 的权限为 `subset`（含单调校验）。`alive` 由调用方按 variant
 /// 取（`Pie<M>` 是泛型，不认识具体 Meta 的 `alive`）。
-fn set_perm<M>(pie: &mut Pie<M>, subset: Permission, alive: bool) -> Result<(), Fail> {
+fn set_perm<M>(pie: &mut Pie<M>, subset: Permission, alive: bool) -> Result<(), PieFail> {
     if !alive {
-        return Err(Fail::Dead);
+        return Err(PieFail::Dead);
     }
     if subset.is_empty() || (subset & pie.permission) != subset {
-        return Err(Fail::Denied);
+        return Err(PieFail::Denied);
     }
     // `ONLY` 不许被洗掉，**自持枚也不例外**：它是"这枚资源只允许一个使用者"这条
     // 资源事实的落点。摘掉它，持有者就能把资源复制出去——独占就此失效。
     if pie.permission.contains(Permission::ONLY) && !subset.contains(Permission::ONLY) {
-        return Err(Fail::Denied);
+        return Err(PieFail::Denied);
     }
     pie.permission = subset;
     Ok(())
 }
 
 /// Narrow 数据面原语：按 variant 分派改写。
-pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), Fail> {
+pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), PieFail> {
     match src {
         AnyPie::Hole(p) => {
             let alive = p.meta().alive();

@@ -11,7 +11,7 @@
 
 use alloc::sync::Weak;
 
-use env::{Fail, PieToken};
+use env::{PieFail, PieToken};
 
 use super::cull;
 use super::snap::Snap;
@@ -26,16 +26,16 @@ pub(crate) fn revoke(
     target: &Weak<Task>,
     token: PieToken,
     snap: &Snap,
-) -> Result<usize, Fail> {
-    let target = target.upgrade().ok_or(Fail::Denied)?;
+) -> Result<usize, PieFail> {
+    let target = target.upgrade().ok_or(PieFail::Denied)?;
     // 锁内：定位 + 取 sire（不跨表操作——锁序纪律）。
     let sire = {
         let pies = target.pies.lock();
         let pie = pies
             .iter()
             .find(|p| p.token() == token)
-            .ok_or(Fail::Denied)?;
-        pie.sire().ok_or(Fail::Denied)?
+            .ok_or(PieFail::Denied)?;
+        pie.sire().ok_or(PieFail::Denied)?
     };
     // 鉴权：sire 在调用方表里 = 我是它的 sire。
     let mine = {
@@ -43,7 +43,7 @@ pub(crate) fn revoke(
         pies.iter().any(|p| p.token() == sire)
     };
     if !mine {
-        return Err(Fail::Denied);
+        return Err(PieFail::Denied);
     }
     Ok(cull::cull((target, token), snap))
 }

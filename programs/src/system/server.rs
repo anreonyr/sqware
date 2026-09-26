@@ -5,13 +5,13 @@
 //! **内核那一侧也在这里**：建域 / 产线程 / 塞门闩 / 放行 / 收域 / 判收尾那七手是本文件的
 //! 唯一读者，故收在这里（每条链子少一跳转发）。
 //!
-//! **一处语义翻译留在这里**（[`fail`]）：内核负码 → 本协议的 [`Fail`]。码本身读
-//! [`EnvFail::of_code`]——**一个数字都不写**。
+//! **两处语义翻译留在这里**（[`unit_fail`] / [`pie_fail`]）：域词汇 → 本协议的 [`Fail`]——
+//! **穷尽 match**，一个数字都不写。
 //!
 //! **监督相已分出去**（[`supervise`]）：本文件全是**装配期**的事。
 
 use env::Wait;
-use env::{EnvError, Fail as EnvFail, Mark, Name, ProgramKind, Reason, TaskId, TeamId, UnitFail};
+use env::{Mark, Name, PieFail, ProgramKind, Reason, TaskId, TeamId, UnitFail};
 use runtime::core::exit::Report;
 use runtime::env::unit as utask;
 
@@ -47,7 +47,7 @@ pub fn spawn(team: TeamId, args: &[usize]) -> Result<TaskId, Fail> {
 pub fn accord(token: env::PieToken, task: TaskId, perm: env::Permission) -> Result<(), Fail> {
     runtime::env::mail::accord(token, task, perm)
         .map(|_| ())
-        .map_err(fail)
+        .map_err(pie_fail)
 }
 
 /// 放行。
@@ -84,13 +84,15 @@ fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
 
 /// **Pie 域**的失败 → 本协议的失败域（今天只有 `accord` 一处用它）。
 ///
-/// **过渡期**：Pie 那几格还没换域词表，故这里仍按 `env::Fail` 的码读；Pie 那一刀落地时
-/// 它会变成 `pie_fail(e: erra::Error<PieFail>)` 的穷尽 match（`EnvFail`/`EnvError` 随之退场）。
-fn fail(e: erra::Error<EnvError>) -> Fail {
-    match EnvFail::of_code(e.source.code()) {
-        Some(EnvFail::BadImage) => Fail::BadImage,
-        Some(EnvFail::OoM) => Fail::Full,
-        _ => Fail::Unknown,
+/// **穷尽 match 在域词表上**（`env::PieFail`）：门闩表备不下 = [`PieFail::OoM`]
+/// （本协议名 [`Fail::Full`]）；没权 / 那一枚没了 / 已交出去 / Pole 的区间非法，
+/// 在编排者眼里都是"这一手没做成" ⇒ [`Fail::Unknown`]。
+fn pie_fail(e: erra::Error<PieFail>) -> Fail {
+    match e.source {
+        PieFail::OoM => Fail::Full,
+        PieFail::Denied | PieFail::Dead | PieFail::HandedOver | PieFail::NotAligned => {
+            Fail::Unknown
+        }
     }
 }
 

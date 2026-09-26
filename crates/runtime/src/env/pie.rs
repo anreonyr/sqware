@@ -15,7 +15,7 @@
 //! 这一形（`protocol` / `programs` / `harness` 里十几处调用点）**一行没改**——与
 //! `Access`/`Policy`、`Announce`/`Grant`/`Died` 同一条先例。
 
-use env::{EnvResult, Mark, Permission, PieCall, PieCallRet, PieToken, TaskId};
+use env::{Mark, Permission, PieResult, PieToken, TaskId};
 
 use super::mail::{HolePie, NolePie, PolePie, TolePie};
 
@@ -28,93 +28,57 @@ use super::mail::{HolePie, NolePie, PolePie, TolePie};
 /// 多枚孔"分辨得出（读它走 [`reserve`]）。
 ///
 /// 名字非法（空 / 含 NUL / ≥ 32 字节 / 非 UTF-8）或那段字节拷不动 ⇒ `Denied`。
-pub fn unseal_hole(mark: Mark) -> EnvResult<PieToken> {
-    let r = PieCall::UnsealHole { mark }.call()?;
-    match r {
-        PieCallRet::UnsealHole(tk) => Ok(tk),
-        _ => unreachable!(),
-    }
+pub fn unseal_hole(mark: Mark) -> PieResult<PieToken> {
+    env::pie::unseal_hole(mark)
 }
 
-pub fn unseal_pole(size: usize) -> EnvResult<PieToken> {
-    let r = PieCall::UnsealPole { size }.call()?;
-    match r {
-        PieCallRet::UnsealPole(tk) => Ok(tk),
-        _ => unreachable!(),
-    }
+pub fn unseal_pole(size: usize) -> PieResult<PieToken> {
+    env::pie::unseal_pole(size)
 }
 
 /// 解封 Nole（**无数据面**的权柄载体）：造一枚只有身份与存活的许可载体。
 ///
 /// **无参数**——没有 mtu、没有字节数。它承载**无载荷通信**（门铃，见
 /// [`crate::core::bell`]），与资源权（"你对这份资源能做什么"）正交。
-pub fn unseal_nole() -> EnvResult<PieToken> {
-    let r = PieCall::UnsealNole.call()?;
-    match r {
-        PieCallRet::UnsealNole(tk) => Ok(tk),
-        _ => unreachable!(),
-    }
+pub fn unseal_nole() -> PieResult<PieToken> {
+    env::pie::unseal_nole()
 }
 
 /// 开闩：借映 Pole 页进本任务空间 → `(视图起点, 这一段多大)`（同 token 幂等复用）。
 ///
 /// **两件一起返**：起点与长度是同一段区间的两半，而长度只在内核手里（外来区按
 /// 页界撑开，设备树 `reg` 声明的长度内核不知道）。
-pub fn open(token: PieToken) -> EnvResult<(usize, usize)> {
-    let r = PieCall::Open { token }.call()?;
-    match r {
-        PieCallRet::Open((va, size)) => Ok((va.get(), size)),
-        _ => unreachable!(),
-    }
+pub fn open(token: PieToken) -> PieResult<(usize, usize)> {
+    env::pie::open(token).map(|(va, size)| (va.get(), size))
 }
 
-pub fn shut(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Shut { token }.call()?;
-    match r {
-        PieCallRet::Shut(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn shut(token: PieToken) -> PieResult<()> {
+    env::pie::shut(token)
 }
 
-pub fn seal(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Seal { token }.call()?;
-    match r {
-        PieCallRet::Seal(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn seal(token: PieToken) -> PieResult<()> {
+    env::pie::seal(token)
 }
 
 /// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）。
 ///
 /// 返回的是句柄而非裸数：它要经线形送到对方、再由对方 `from_token` 重建——
 /// 全程一个 `PieToken`，中途不化成 `usize` 便不会与别的 id 混。
-pub fn accord(src: PieToken, dst: TaskId, subset: Permission) -> EnvResult<PieToken> {
-    let r = PieCall::Accord { src, dst, subset }.call()?;
-    match r {
-        PieCallRet::Accord(tk) => Ok(tk),
-        _ => unreachable!(),
-    }
+pub fn accord(src: PieToken, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
+    env::pie::accord(src, dst, subset)
 }
 
 /// 收窄本 pie 权限（就地改写；Pole 同步降页表）。
-pub fn narrow(token: PieToken, subset: Permission) -> EnvResult<()> {
-    let r = PieCall::Narrow { token, subset }.call()?;
-    match r {
-        PieCallRet::Narrow(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn narrow(token: PieToken, subset: Permission) -> PieResult<()> {
+    env::pie::narrow(token, subset)
 }
 
 /// 收回我授给 `dst` 的副本（含其全部后代）。
 ///
 /// `at_dst` = 该副本在**对端表里**的句柄（[`accord`] 的返回值，经线形送达）——
 /// **不是我这边的 token**。鉴权 = 「这枚的 `sire` 在我表里」＝「它是我授出的」。
-pub fn revoke(dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
-    let r = PieCall::Revoke { dst, token: at_dst }.call()?;
-    match r {
-        PieCallRet::Revoke(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn revoke(dst: TaskId, at_dst: PieToken) -> PieResult<()> {
+    env::pie::revoke(dst, at_dst)
 }
 
 /// 表里的一枚（[`collect`] 收拢出来的那一格）——**三件事实一起**，故不必再问第二次。
@@ -146,11 +110,8 @@ pub struct Pie {
 ///
 /// **不返 `EnvResult`**：内核那一格恒写三件事实，没有失败支（理由见 [`Pies`] 的那条裁定）。
 pub fn collect(index: usize) -> Pie {
-    let r = PieCall::Collect { index }.call();
-    match r {
-        Ok(PieCallRet::Collect((token, owner, mark))) => Pie { token, owner, mark },
-        _ => unreachable!(),
-    }
+    let (token, owner, mark) = env::pie::collect(index);
+    Pie { token, owner, mark }
 }
 
 /// [`collect`] 那条枚举：**0 起、哨兵收尾、越界不报错**——这句话**只写这一处**。
@@ -229,26 +190,20 @@ pub fn table_size() -> usize {
 /// **一格返回**（不再有"先问长度、再备缓冲"那一趟）。这一枚不是孔（记号只长在孔上）、
 /// 或表里没有它 ⇒ `Denied`；**资源已封印 ⇒ `Dead`(-2)**——`owner` 那一格带存活闸
 /// （见 `env::fid` 的 `Reserve`），故"这一枚答不出"有两个码，别只接 `Denied`。
-pub fn reserve(token: PieToken) -> EnvResult<(TaskId, TaskId, Mark)> {
-    let r = PieCall::Reserve { token }.call()?;
-    match r {
-        // 打包见 `env::fid` 的 `Reserve`：`a0` = owner 高半 | vestor 低半，`a1` = 记号。
-        PieCallRet::Reserve((pair, mark)) => Ok((
+pub fn reserve(token: PieToken) -> PieResult<(TaskId, TaskId, Mark)> {
+    // 打包见 `env::fid` 的 `Reserve`：`a0` = owner 高半 | vestor 低半，`a1` = 记号。
+    env::pie::reserve(token).map(|(pair, mark)| {
+        (
             TaskId::new(pair & 0xffff_ffff),
             TaskId::new(pair >> 32),
             Mark::new(mark as u64),
-        )),
-        _ => unreachable!(),
-    }
+        )
+    })
 }
 
 /// 放下：自释本任务的一份门闩（Pole 同步 unmap）。表里无此 token → -1。
-pub fn release(token: PieToken) -> EnvResult<()> {
-    let r = PieCall::Release { token }.call()?;
-    match r {
-        PieCallRet::Release(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn release(token: PieToken) -> PieResult<()> {
+    env::pie::release(token)
 }
 
 // ── 类型化句柄：**权柄面**（构造 + 种类无关那几手）──
@@ -277,27 +232,27 @@ pub trait AnyPie {
     /// 只置死并唤醒等待者，**不摘表项**——持有者仍须 [`release`](AnyPie::release)
     /// 收尾，否则表项泄漏。故 `release` 与 `PolePie::shut` 是**仅有的两处**不过存活闸
     /// 的操作（ABI 那一侧的两条注记同时写着这一条：`env::fid` 的 `Release` / `Shut`）。
-    fn seal(&self) -> EnvResult<()>;
+    fn seal(&self) -> PieResult<()>;
 
     /// 收窄本 pie 权限（就地改写，单调；`subset` ⊆ 当前权限）。
     ///
     /// Pole 多一条约束：`subset` 须含 FETCH（RISC-V PTE 无 R=0 的合法数据叶子），
     /// 且会同步把已映射段降权。Hole 无映射，故无此约束。
-    fn narrow(&self, subset: Permission) -> EnvResult<()>;
+    fn narrow(&self, subset: Permission) -> PieResult<()>;
 
     /// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）——
     /// 对方用 `from_token(at_dst)` 重建。
-    fn accord(&self, dst: TaskId, subset: Permission) -> EnvResult<PieToken>;
+    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken>;
 
     /// 收回我授给 `dst` 的副本（含其全部后代，幂等）。
     ///
     /// `at_dst` = 该副本在**对端表里**的句柄（[`accord`](AnyPie::accord) 的返回值，
     /// 经线形送达）——**不是我这边的 token**。鉴权 = 「这枚的 `sire` 在我表里」。
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()>;
+    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()>;
 
     /// 放下我这一份（含其全部后代；Pole 同步撤映射）。资源本身不动——封印用
     /// [`seal`](AnyPie::seal)。不需要任何权限位。
-    fn release(&self) -> EnvResult<()>;
+    fn release(&self) -> PieResult<()>;
 }
 
 // ── 四份同构的实现 ────────────────────────────────────────────────────────
@@ -308,67 +263,67 @@ pub trait AnyPie {
 // `self.token()`，那一处不算例外）。
 
 impl AnyPie for HolePie {
-    fn seal(&self) -> EnvResult<()> {
+    fn seal(&self) -> PieResult<()> {
         seal(self.token())
     }
 
-    fn narrow(&self, subset: Permission) -> EnvResult<()> {
+    fn narrow(&self, subset: Permission) -> PieResult<()> {
         narrow(self.token(), subset)
     }
 
-    fn accord(&self, dst: TaskId, subset: Permission) -> EnvResult<PieToken> {
+    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
         accord(self.token(), dst, subset)
     }
 
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
         revoke(dst, at_dst)
     }
 
-    fn release(&self) -> EnvResult<()> {
+    fn release(&self) -> PieResult<()> {
         release(self.token())
     }
 }
 
 impl AnyPie for NolePie {
-    fn seal(&self) -> EnvResult<()> {
+    fn seal(&self) -> PieResult<()> {
         seal(self.token())
     }
 
-    fn narrow(&self, subset: Permission) -> EnvResult<()> {
+    fn narrow(&self, subset: Permission) -> PieResult<()> {
         narrow(self.token(), subset)
     }
 
-    fn accord(&self, dst: TaskId, subset: Permission) -> EnvResult<PieToken> {
+    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
         accord(self.token(), dst, subset)
     }
 
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
         revoke(dst, at_dst)
     }
 
-    fn release(&self) -> EnvResult<()> {
+    fn release(&self) -> PieResult<()> {
         release(self.token())
     }
 }
 
 impl AnyPie for PolePie {
-    fn seal(&self) -> EnvResult<()> {
+    fn seal(&self) -> PieResult<()> {
         seal(self.token())
     }
 
-    fn narrow(&self, subset: Permission) -> EnvResult<()> {
+    fn narrow(&self, subset: Permission) -> PieResult<()> {
         narrow(self.token(), subset)
     }
 
-    fn accord(&self, dst: TaskId, subset: Permission) -> EnvResult<PieToken> {
+    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
         accord(self.token(), dst, subset)
     }
 
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
         revoke(dst, at_dst)
     }
 
-    fn release(&self) -> EnvResult<()> {
+    fn release(&self) -> PieResult<()> {
         release(self.token())
     }
 }
@@ -382,23 +337,23 @@ impl AnyPie for PolePie {
 /// （见 `env::fid` 那一格："共享组若不可复制，'多个使用者'是空话"），故这一份不是补上
 /// 去的摆设。
 impl AnyPie for TolePie {
-    fn seal(&self) -> EnvResult<()> {
+    fn seal(&self) -> PieResult<()> {
         seal(self.token())
     }
 
-    fn narrow(&self, subset: Permission) -> EnvResult<()> {
+    fn narrow(&self, subset: Permission) -> PieResult<()> {
         narrow(self.token(), subset)
     }
 
-    fn accord(&self, dst: TaskId, subset: Permission) -> EnvResult<PieToken> {
+    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
         accord(self.token(), dst, subset)
     }
 
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> EnvResult<()> {
+    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
         revoke(dst, at_dst)
     }
 
-    fn release(&self) -> EnvResult<()> {
+    fn release(&self) -> PieResult<()> {
         release(self.token())
     }
 }

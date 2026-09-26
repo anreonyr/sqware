@@ -17,13 +17,18 @@
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
 
 use env::Wait;
-use env::{EnvError, EnvResult, PieToken, TaskId, make_err};
+use env::{EnvError, EnvResult, PieFail, PieResult, PieToken, TaskId, make_err, make_fail};
 
 use crate::env::mail::{self, AnyPie, HolePie};
 
 /// D1 负码：无权 / 协议错（与 `crates/protocol` 各协议的负码同表）。
 fn denied() -> erra::Error<EnvError> {
     make_err(EnvError::from_raw(-1))
+}
+
+/// 权柄轴那一侧的"不成"（Pie 的 `Denied`）——`ship` / `open` / `shut` 用它。
+fn denied_pie() -> erra::Error<PieFail> {
+    make_fail(PieFail::Denied)
 }
 
 // ── 两族视图：**搬家后的名字照旧** ─────────────────────────
@@ -81,10 +86,10 @@ impl To {
 ///
 /// 四个码都不折平（内核 `gate::accord` 的判决原样过线）：旧注把"已被关住"写在
 /// `Denied` 那一行——**照实记：那是错的**，关住的码是 `HandedOver`(-7)。
-pub fn ship<P: AnyPie>(pie: &P, peer: TaskId, access: Access, policy: Policy) -> EnvResult<To> {
+pub fn ship<P: AnyPie>(pie: &P, peer: TaskId, access: Access, policy: Policy) -> PieResult<To> {
     let subset = access.bits() | policy.bits();
     if subset.is_empty() {
-        return Err(denied());
+        return Err(denied_pie());
     }
     let seed = pie.accord(peer, subset)?;
     Ok(To::new(peer, seed))
@@ -112,10 +117,10 @@ impl Port {
     ///   （`owner == 0`，引导期那批设备门闩）/ 交不出去
     /// - `Dead`   — 入口那一枚的资源已封印
     /// - `OoM`    — 本端或对端那张表备不下这一枚
-    pub fn open(entry: &HolePie) -> EnvResult<Port> {
+    pub fn open(entry: &HolePie) -> PieResult<Port> {
         let peer = mail::reserve(entry.token())?.1;
         if peer.get() == 0 {
-            return Err(denied());
+            return Err(denied_pie());
         }
         let reply = HolePie::unseal(env::Mark::of("back"))?;
         let to = ship(&reply, peer, Access::STORE, Policy::NONE)?;
@@ -150,7 +155,7 @@ impl Port {
     }
 
     /// 关：只放下回信孔（级联已含对端那枚副本），**不碰 `entry`**。
-    pub fn shut(self) -> EnvResult<()> {
+    pub fn shut(self) -> PieResult<()> {
         self.reply.release()
     }
 
