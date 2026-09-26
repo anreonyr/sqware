@@ -28,7 +28,10 @@
 #  故"串口只绑 stdio"这条口径在测试路上同样成立。）
 
 # 参数表本体。`--board-only` = 让出 `-kernel` 与 `-semihosting*` 两格（见上）。
-export def args [elf?: path, --board-only] {
+# `--serial <后端>` = 换掉串口那一格（默认 `stdio`）。整机用例要把串口搬到一条**能喂输入**
+# 的通道上（`cargo-qtest` 把 QEMU 的 stdin 钉成 null），见 [`qtest.nu`](qtest.nu) 的头注；
+# **串口这一格因此只有一个出处**——`-serial` 不是"后者胜"，写两次会多出一枚串口（实测踩过）。
+export def args [elf?: path, --board-only, --serial: string] {
   let root = ($env.FILE_PWD | path dirname)
   let elf = if ($elf | is-empty) { null } else { ($elf | path expand) }
   let extra = ($env.QEMU_EXTRA_ARGS? | default "" | split row -r '\s+' | where { |s| $s != "" })
@@ -64,12 +67,14 @@ export def args [elf?: path, --board-only] {
 
   let kernel_arg = if $board_only or ($elf == null) { [] } else { ["-kernel", ($elf | into string)] }
 
+  let serial_arg = if ($serial | is-empty) { ["-serial", "stdio"] } else { ["-serial", $serial] }
+
   [
     "-machine", "virt"
     "-bios", ($root | path join "SBI.bin")
     ...$kernel_arg
     "-display", "none"
-    "-serial", "stdio"
+    ...$serial_arg
     "-monitor", "none"
     "-no-reboot"
     # 默认 256：**实测的边界**（两次都量过）——
@@ -90,6 +95,6 @@ export def args [elf?: path, --board-only] {
 }
 
 # 给外壳消费者用：一行一个参数（`qtest.nu` 靠它拼 `--qemu-arg=`）。
-def main [elf?: path, --board-only] {
-  for a in (args $elf --board-only=$board_only) { print $a }
+def main [elf?: path, --board-only, --serial: string] {
+  for a in (args $elf --board-only=$board_only --serial=$serial) { print $a }
 }
