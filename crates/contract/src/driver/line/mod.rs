@@ -84,10 +84,10 @@
 //! **已落**：
 //!
 //! - `exhaust` **有真内容**了——读口搬到设备持有者（`driver/uart`）之后，客户是真的读走了
-//!   设备里的字节才说这句话（见 `programs/src/driver/uart/main.rs`）。两个方向的堵法不对称
+//!   设备里的字节才说这句话（见 `programs/src/driver/uart/mod.rs`）。两个方向的堵法不对称
 //!   也是实测定下来的：投递阻塞、排空**不阻塞**（`client::Line::exhaust`）。
 //! - **探活**：`vacate` 有调用者了——路由者每次醒来扫一遍有主的那些条，`alive` 答不出的
-//!   就**拆线 + 空出格子**（`sweep`，见 `programs/src/driver/router/main.rs`）。时机是
+//!   就**拆线 + 空出格子**（`sweep`，见 `programs/src/driver/router/adapt/sweep.rs`）。时机是
 //!   "组那一次等待回来"，理由：主人一没，它铸的那一枚孔就封印，而那一格正挂在路由者这只组
 //!   上（`wipe` 敲组键）——**醒来本身就是通知**，不必跟着板、也不必拿一拍去探。
 //!   **读数**：`prog-lodger`（房客）每次冷启动都占住 1 号线、一句话不说就走 ⇒

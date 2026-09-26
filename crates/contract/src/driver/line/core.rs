@@ -60,7 +60,7 @@ impl Lines {
 
     /// **occupy**：占住这一格（登记）。**接线那一手是它的后果**，由适配层紧随其后做；
     /// **拒绝（`Taken`）那一趟反过来**：刚交上来的那条泊位由适配层放下——账里根本没有它，
-    /// 别人也不会替它收（`programs/src/driver/router/main.rs::drop_lane`）。
+    /// 别人也不会替它收（`programs/src/driver/router/adapt/desk.rs::drop_lane`）。
     pub fn occupy(&mut self, line: u32, lane: Pier) -> Result<(), Fail> {
         if line == 0 {
             return Err(Fail::Unknown);

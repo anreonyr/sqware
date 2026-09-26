@@ -411,7 +411,7 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
 /// ——那一手按句柄问、一次一枚，不在扫表里。
 ///
 /// **四格一起答，是为了省掉"每扫一枚再问一次 `Reserve`"**：那一问是一次 envcall，
-/// 表 16 枚 ⇒ 一趟扫描 6.5 ms（读数见 `programs/src/driver/rtc/main.rs`）。
+/// 表 16 枚 ⇒ 一趟扫描 6.5 ms（读数见 `programs/src/driver/rtc/adapt/desk.rs`）。
 ///
 /// **owner 与记号只对"活着的孔"有意义，判据与 [`reserve`] 逐条对齐**（顺序也一样：
 /// 先问死活，再问"是不是孔"）。两处差别只有一格：`Reserve` 用 `Dead` / `Denied`

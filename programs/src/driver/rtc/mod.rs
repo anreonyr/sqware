@@ -73,7 +73,7 @@
 //! # 特权级
 //!
 //! **U 态**（`plan::assembly::ALL` 里这一行的 `kind`）：读那页寄存器、`claim` / `complete`、持门闩、
-//! 铸孔挂组都不需要 S 态——驱动那一档是量出来的（见 `programs/src/driver/uart/main.rs` 头注）。
+//! 铸孔挂组都不需要 S 态——驱动那一档是量出来的（见 `programs/src/driver/uart/mod.rs`）。
 
 pub mod client;
 pub mod core;

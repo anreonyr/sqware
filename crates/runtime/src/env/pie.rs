@@ -103,7 +103,7 @@ pub struct Pie {
 /// **唯一的枚举手段**（[`reserve`] 是它的对偶：一个按位置问、一个按句柄问）。
 /// 一次调用答四格，故"扫一遍这张表"**不必每一枚再问一次 `reserve`**——那一问是一次
 /// envcall（~55 µs），表 16 枚 ⇒ 一趟扫描 6.5 ms（读数见
-/// `programs/src/driver/rtc/main.rs` 与 `444d1f3`）。
+/// `programs/src/driver/rtc/adapt/desk.rs` 与 `444d1f3`）。
 ///
 /// 原始自持 pie（vestor = None）编码为 `TaskId(0)`，与 `UnitCall::SelfId` 的"无上下文
 /// 也是 0"是**同一条哨兵口径**（0 = 这一格没有答案）。
@@ -175,7 +175,7 @@ pub fn pies() -> Pies {
 ///
 /// **给人看的读数，不是给判据用的机制**：它自己不改任何东西。用途只有一个——把"该放下的
 /// 放了没有"变成**可量**的一格（少放一枚，这一格当场大 1，见
-/// `programs/src/driver/router/main.rs` 的 `drop_lane` 与 `harness/src/lodger/main.rs`）。
+/// `programs/src/driver/router/adapt/desk.rs` 的 `drop_lane` 与 `harness/src/lodger/main.rs`）。
 pub fn table_size() -> usize {
     pies().count()
 }

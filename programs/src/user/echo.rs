@@ -95,7 +95,7 @@ const RETRY_MS: usize = 1;
 const E_NO_CONSOLE: env::Reason = 1;
 
 /// 一行的上界。更长的行**截断**回显（超过它的行不可能是 `exit`，故收场判据不受影响）；
-/// 与设备侧那一条同值（`programs/src/driver/uart/main.rs::DRAIN_MAX` 那个层次的约定）。
+/// 与设备侧那一条同值（`programs/src/driver/uart/adapt/resident.rs::DRAIN_MAX` 那个层次的约定）。
 const LINE_MAX: usize = 128;
 
 /// 一次从控制台读多少字节的缓冲。

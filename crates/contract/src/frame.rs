@@ -42,7 +42,7 @@ use env::PieToken;
 /// （`to.seed()`，就是"我给你的那一枚在你表里是几号"）**扔了**，于是服务端只能**扫自己的表**
 /// 按"谁给的 ＋ 记号"把那一枚认回来（`session::call::find`）。那一扫是每趟请求一遍全表，
 /// 而 `Collect` 每枚还要算一次 `vestor`（吃全世界快照）——读数见
-/// `programs/src/driver/rtc/main.rs` 与提交 `444d1f3` / `b58fda4`。
+/// `programs/src/driver/rtc/adapt/desk.rs` 与提交 `444d1f3` / `b58fda4`。
 /// 把它放进帧里之后，服务端**一次 `Reserve` 就验完**（判据一字未改：谁开的 ＋ 记号）。
 ///
 /// **照实记（"`ASK_LEN = 17`"那一句是假的）**：本文件、`principal/frame.rs`、

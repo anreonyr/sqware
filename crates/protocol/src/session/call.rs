@@ -81,7 +81,7 @@ pub(super) fn try_post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
 ///
 /// **四件事实一次到手**（照实记：这是 `Collect` 加宽那一刀的收益）：每一枚的 `owner` 与
 /// 记号随枚举一起回来，故这一遍扫描里**不再有"每枚再问一次 `Reserve`"**——那一问从前是
-/// 一枚一次 envcall，表 16 枚就是 6.5 ms 一趟（读数见 `programs/src/driver/rtc/main.rs`）。
+/// 一枚一次 envcall，表 16 枚就是 6.5 ms 一趟（读数见 `programs/src/driver/rtc/adapt/desk.rs`）。
 ///
 /// **"枚举本身失败"那一格不再分辨**（照实记：用户裁定甲）：[`mail::pies`] 读到读不动就
 /// **打住**，与"这一遍扫完了"合流 ⇒ `Claim::Unread` 那个变体随之退场（照实记在
@@ -132,7 +132,7 @@ pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
 ///
 /// **照实记（用户裁定甲′）**：`port::ship` 的 `to.seed()` 就是"**我给你的那一枚在你表里是几号**"，
 /// 而从前那一版（`lend`）把它扔了 ⇒ 收方只能**扫全表**按"谁给的 ＋ 记号"把这一枚认回来。
-/// 门上量出来那一扫是**每帧 ~6.5 ms**（表 16 枚 ⇒ O(n²)，见 `programs/src/driver/rtc/main.rs`
+/// 门上量出来那一扫是**每帧 ~6.5 ms**（表 16 枚 ⇒ O(n²)，见 `programs/src/driver/rtc/adapt/desk.rs`
 /// 的读数）。故这一手把第二格交出来，好让它**随帧一起过去**；帧由调用方自己推（[`push_to`]）。
 ///
 /// 次序仍是契约的一半：**先铸、先交**（这一手），**再推**（下一手）。

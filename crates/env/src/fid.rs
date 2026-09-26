@@ -674,7 +674,7 @@ pub enum PieCall {
     /// **唯一的枚举手段**（[`PieCall::Reserve`] 是它的对偶：一个**按位置**问，一个**按句柄**问）。
     /// 四格一起答，是为了让"扫一遍表"这件事**不必每一枚再问一次 `Reserve`**：那一问是
     /// 一次 envcall（~55 µs），表 16 枚 ⇒ 一趟扫描 6.5 ms 的读数就是这么来的
-    /// （见 `programs/src/driver/rtc/main.rs`）。
+    /// （见 `programs/src/driver/rtc/adapt/desk.rs`）。
     ///
     /// **宽返回（本枚举唯一一格 [`FromTriple`](crate::wire::FromTriple)）**：
     /// `a0` = token；`a1` = `owner`（这扇门谁开的）；`a2` = **整一枚记号**（64 位）。

@@ -42,8 +42,7 @@ pub enum Mine {
 ///
 /// `me` 既是 `LAND` / `FIND` 的那一段，也是读数前缀——三台是**同一个串**（服务名）。
 ///
-/// 前置：`talk` / `link` / `host` 是本域那**一条** `operator` 会话（同一个域只开一条，见
-/// `driver/uart/main.rs` 头注）；`entry` 是本域那枚服务入口。
+/// 前置：`talk` / `link` / `host` 是本域那**一条** `operator` 会话（同一个域只开一条，见 `driver/uart/adapt/boot.rs` 头注）；`entry` 是本域那枚服务入口。
 pub fn plate(
     me: &str,
     mine: Mine,
