@@ -74,6 +74,16 @@
 # 问题。把健康面那九例一并 gate 进 `debug_assertions` 之后，release 档的测试目标只剩整机
 # 那一例，于是它能跑在与产品路**同一个档**上——顺带每景从十几秒降到一秒级。
 #
+# **档那一格的裁决（尾账收口）**：**整机一律 release**——`cargo image` 的 `--profile` 默认
+# release，测试目标 `--scene` 带 `-r`。这不是哪个消费者的偏好，是**世界**的性质（见上）。
+# `debug` 档留给**自检**（健康面那九例、内核启动自检）与单元级核对；整机跑 debug 今天会
+# 给出一台**起不完**的机器（结局笔数 5 / 11 / 6 而非 14）。
+#
+# **照实记（归档这一格）**：测试路**没有结构化导出**（内核那个 `semihosting` feature 不在
+# 测试构建里），故这一轮的现场就是 `cargo qtest` 自己的输出——机侧控制台走 semihosting
+# 落在它里面。纪律与 `runner.nu` 同款：**失败留档**到 `<TRACE_OUT>/scene-<景>-qtest.log`
+# （无 `--scene` 那轮叫 `qtest.log`），正常那轮丢掉，不留一堆绿的日志。
+#
 # **先装那个 runner**（它是个宿主工具，不在仓里）：
 #
 #   cargo install cargo-qemu-test --target x86_64-unknown-linux-gnu   # ⇒ cargo-qtest
@@ -232,16 +242,32 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   # 目标只剩整机那一例——正好，也快。
   let test_profile = if ($scene | is-empty) { [] } else { ["-r"] }
 
-  # 退出码必须自己拿：nu 在外部命令非零退出时当场中止整个脚本（其后语句都不执行）。
-  try { ^cargo qtest --target riscv64gc-unknown-none-elf ...$test_profile ...$qemu_bin ...$qemu_args ...$scene_args ...$pkg ...$rest } catch { }
+  # **归档（O10）**：`cargo qtest` 的输出**就是**这一轮的现场——机侧控制台走 semihosting
+  # 落在它的 stdout 里（见头注），而测试路没有结构化导出（内核那个 `semihosting` feature
+  # 不在测试构建里）。故与 `runner.nu` 同款纪律：**失败留档、正常那轮丢掉**。
+  # `o+e>| tee { save }` 既保终端流、又保退出码（`try` 那两条地雷见 `runner.nu` 头注）。
+  mkdir $trapdir
+  let qtlog = ($trapdir | path join (if ($scene | is-empty) { "qtest.log" } else { $"scene-($scene)-qtest.log" }))
+  # 命令与重定向**必须同一行**（分行 ⇒ `nu::parser::unexpected_redirection`）。故先把 argv
+  # 拼好，再一行发出去——退出码仍由 `LAST_EXIT_CODE` 拿（`try` 那两条地雷见 `runner.nu` 头注）。
+  let qtest_argv = ["qtest" "--target" "riscv64gc-unknown-none-elf" ...$test_profile ...$qemu_bin ...$qemu_args ...$scene_args ...$pkg ...$rest]
+  try { ^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } } catch { }
   let code = $env.LAST_EXIT_CODE
+
+  if ($qtlog | path exists) {
+    if $code == 0 {
+      rm --force $qtlog
+    } else {
+      print $"现场（cargo qtest 全份）-> ($qtlog)"
+    }
+  }
 
   if not ($scene | is-empty) {
     ^bash -c 'p=$(cat "$FEED_PID"); kill "$p" 2>/dev/null; true'
     # 串口是一根"只喂不读"的输入线；机侧控制台仍走 semihosting（见头注）。这一手是为
     # 串口路由万一被改动时留的后手——读不到东西是正常的。
     if $code != 0 and ($cap | path exists) {
-      print $"（机侧控制台：全份 ($cap)，下面是尾 40 行）"
+      print $"（喂入侧捕获：($cap)，下面是尾 40 行）"
       ^tail -40 $cap
     }
   }

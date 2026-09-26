@@ -11,7 +11,10 @@ default = []
 # manifest 相反。另注意 qemu 侧的 `-semihosting` 只在 `QEMU_SEMI=1` / `QEMU_FEATURES`
 # 含 semihosting 时才加（`scripts/qemu-args.nu`，**只管 QEMU 侧**），而造镜像与测试路
 # 都不带这个头文件 feature ⇒ 那些产物没有结构化导出。
-semihosting = []
+# 要有结构化导出就必须有 `serde_json` ⇒ 那一格是**可选依赖**（`dep:` 语法）。不是洁癖：
+# cargo 的 `unused_dependencies` 看不见 `cfg(feature = "semihosting")` 里的用法，依赖写成
+# 必选就永远挂着一条**假警告**（本笔之前正是如此）。
+semihosting = ["dep:serde_json"]
 # **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原先有一格
 # `framework = []`——自研的内核内测试框架：`.tests` 段登记 + 逐例打点，**外加**它顺带
 # 管着的自检数据源（挂起自检 / 帧取还范围 / 簿记↔页表，见 `weak.rs`、`statistics.rs`、
@@ -41,6 +44,11 @@ doctest = false
 # bin 的链接**（bin 不是测试目标，dev 依赖不在它的图里），而 `cargo-qtest` 的
 # `-Tembedded-test.x` 是加给**整次构建**的（bin 也吃）⇒ `rust-lld: cannot find linker
 # script embedded-test.x`。上游 README 也是这么写的：它那片脚本必须住 `[dependencies]`。
+#
+# **照实记（它那条 `unused dependency` 警告消不掉，且不 suppress）**：这个 crate
+# `autolib = false`、没有一行 Rust 用法（只靠 `links` ＋ 构建脚本给出那个 `-L`）⇒ cargo 的
+# `unused_dependencies` 永远报它。**留一条假警告**比把这条 lint 整片关掉划算——关掉会把
+# 真阳性（本笔刚删掉的那两条）一起藏起来。
 embedded-test-linker-script = "0.1"
 
 env = { path = "../crates/env" }
@@ -58,16 +66,19 @@ hashbrown = { version = "0.17.1", default-features = false, features = [
 ] }
 log = { version = "0.4.33" }
 riscv = { version = "0.16.1", features = ["s-mode"] }
-riscv-rt = { version = "0.18.0", features = ["s-mode"] }
-# 符号名 demangle（scene 转储打印）：v0/legacy 全语法、流式零分配（panic 现场
-# 零分配纪律）、非 Rust 符号原样透传。default-features=false → 纯 no_std。
-rustc-demangle = { version = "0.1.28", default-features = false }
+# **照实记（清尾账时删掉两条没有读者的依赖）**：`riscv-rt` 与 `rustc-demangle` **全仓零
+# 引用**（`grep -rn` 过，注释之外一处都没有）——入口 `_start` 与链接脚本都是本仓自己的
+# （`src/main.rs` 的 `global_asm!` ＋ `kernel/link.x`），那条 demangle 注释说的"scene 转储
+# 打印"也没有代码用它。故两格删掉。
 # 诊断报告序列化（整档 + 事件流）：serde_json 承担 JSON，derive 即形状、零手写序列化器。
+# **可选**：只有 `feature = "semihosting"` 那条导出路用得到它（见上面那格 feature）。
 serde = { version = "1.0", default-features = false, features = [
   "derive",
   "alloc",
 ] }
-serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde_json = { version = "1.0", default-features = false, features = [
+  "alloc",
+], optional = true }
 # semihosting = 导宿主文件用的 crate；只开 fs（stdio/panic-handler/time/args 均不需要）。
 semihosting = { version = "0.1.25", features = ["fs"] }
 

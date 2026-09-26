@@ -376,7 +376,9 @@ fn block_kind_at(addr: usize, power: usize) -> Kind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    NotInitialized,
+    // 这一族原先还有一格 `NotInitialized`——它**没有构造点**，因为"未装配"那一档走的是
+    // panic 而不是错误（见 `allocator/mod.rs` 那条"stats() 在 STATS 未装配时 panic"）。
+    // 一个不构造的变体 = 一个不存在的失败域，本笔删掉。
     AlreadyInitialized,
 }
 
