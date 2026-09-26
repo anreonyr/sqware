@@ -110,4 +110,23 @@ mod tests {
     fn hart_multi() {
         kernel::health::hart::count();
     }
+
+    // ── 整机用例：**一例 = 一张镜像** ──────────────────────────────────────────
+    //
+    // 体是"装台 → 开演"两句。差别**不在代码里**，在 runner 给的那张镜像里
+    // （`nu scripts/qtest.nu --scene <景>` 造它、并把 `-initrd` 指过去）。
+    //
+    // **照实记（为什么只有一例，不是每景一例）**：`cargo-qtest` 没有逐例过滤器
+    // （`--help` 里只有 `--test <目标名>`，那是**测试目标**名不是用例名），而
+    // `--qemu-arg=` 是**整次运行**的 ⇒ 一张镜像服务一轮，七个"景用例"只会把**同一张**
+    // 镜像各跑一遍。故收成一例：景由 `--scene` 定，跑七次就是七个景。
+    //
+    // 判据**不在这里**（`boot::run` 不返回）：它在 `conductor::halt` 的 testing 分支
+    // ——账里没有一笔 `EXIT_PANIC` 即绿。
+
+    #[test]
+    fn scene() {
+        kernel::boot::init();
+        kernel::boot::run();
+    }
 }

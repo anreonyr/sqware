@@ -14,12 +14,14 @@
 //!   tests/embedded.rs   `_start` 汇编（多存一个 dtp）+ `#[embedded_test::tests] mod`
 //! ```
 //!
-//! 公开面**只多出四样**：`init` / `main` / `testing_mode` / `health`（用例体住在那一层，
-//! 由测试目标叫）。其余九个模块仍是私有。
+//! 公开面**只多出五样**：[`init`] / [`main`] / [`testing_mode`] / [`health`] / [`boot`]
+//! （用例体住在后两层里，由测试目标叫）。其余八个模块仍是私有。
 
 extern crate alloc;
 
-mod boot;
+/// 世界的装配与起跑（两个入口函数：装台 [`boot::init`] / 开演 [`boot::run`]）。
+/// `pub` 的理由与 `health` 同——测试目标的用例体就是这两句。
+pub mod boot;
 mod console;
 mod hart;
 /// 内核自检用例的**身体**（八个）。`pub` 是因为测试目标是另一个 crate——
@@ -74,9 +76,11 @@ pub fn init(dtp: usize) {
     trap::init();
 }
 
-/// 整机启动：[`init`] 之后再起世界，**不返回**。
+/// 整机启动：装台 [`boot::init`] 之后开演 [`boot::run`]，**不返回**（收场那一刀在
+/// `conductor::halt`）。
 pub fn main(_hartid: usize, dtp: usize) -> ! {
     init(dtp);
     boot::banner();
     boot::init();
+    boot::run()
 }

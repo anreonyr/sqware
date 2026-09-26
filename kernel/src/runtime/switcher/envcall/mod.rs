@@ -104,31 +104,6 @@ fn map_err(e: crate::memory::manager::MapError) -> Fail {
     }
 }
 
-/// 打印域退场时带来的那句话（见 `RoomCall::Reap` 的 `note`）。
-///
-/// 三条纪律：①**栈上定长**（退场路径不分配）；②读失败就如实说读不到（诊断是**加成**，
-/// 不是退场的前提——指针非法不该让"它已经走了"这件事多一个失败模式）；③打印走内核
-/// 自己的出口（SBI DBCN），**不经过任何服务**：控制台可能正是那个死掉的域。
-fn note_out(ident: &TaskIdent, reason: usize, va: usize, len: usize) {
-    if len == 0 {
-        return;
-    }
-    let n = len.min(env::NOTE_MAX);
-    let mut buf = [0u8; env::NOTE_MAX];
-    if !crate::work::mail::copy_in(&ident.team.space, &mut buf[..n], va) {
-        crate::putln!(
-            "exit tid={} reason={reason:#x} note=<unreadable {len} bytes at {va:#x}>",
-            ident.id.get()
-        );
-        return;
-    }
-    let text = core::str::from_utf8(&buf[..n]).unwrap_or("<non-utf8 note>");
-    crate::putln!(
-        "exit tid={} reason={reason:#x} note: {text}",
-        ident.id.get()
-    );
-}
-
 /// 读调用方空间里的 `count` 个字（`Spawn` 的启动参数）。
 ///
 /// 缓冲**定长在栈上**（`MAX_ARGS · 8` = 512 B）：`count` 的界就是 `MAX_ARGS`，不必为
@@ -214,10 +189,10 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // 路径（Reap / 故障隔离 / doom 级联）的公共点，事件因此只发一次、
             // 且每条路径都带得上原因（故障路径带走的是内核给的原因码）。
             //
-            // `note` = 域自己带的一句话（`len = 0` = 无话）：**它必须在这里读**——域一退场，
-            // 那段内存随它的空间一起没了。故拷进栈上的定长缓冲（退场路径不分配），由内核
-            // 自己打印（见 [`note_out`]）。
-            note_out(&ident, reason, note.get(), len);
+            // `note` = 域自己带的一句话（`len = 0` = 无话）：这里只落下它的**位置**——
+            // 打印与入账都在 `quit`（退场路径的公共点），而读它的时点仍在
+            // `reap`/`bury` 之前，那段空间还在（见 `messenger::EXIT_NOTE`）。
+            crate::work::room::messenger::set_exit_note(note.get(), len);
             crate::work::room::messenger::set_exit_reason(reason);
             drop(ident);
             return core::ptr::null_mut();

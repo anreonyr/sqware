@@ -94,9 +94,9 @@ pub fn banner() {
     crate::runtime::diagnose::render::render(sealed, &mut sink, 0);
 }
 
-/// 启动：装配钩子与锁序 → 跑用例（debug 档）或健康检查 → 造根服务域
-/// （`spawn_root`）→ HSM 拉起副核。
-pub fn init() -> ! {
+/// 装出世界：装配钩子与锁序 → 自检（debug 档）→ 造根服务域（`spawn_root`）
+/// → HSM 拉起副核。到「root 已产、副核已起」为止。**返回**——起跑留给 [`run`]。
+pub fn init() {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
     scheduler::boot::init();
 
@@ -119,6 +119,17 @@ pub fn init() -> ! {
     // 同位置、同时点：调度器已就绪、`spawn_root` 未起 ⇒ 用例**没有 shell、没有装槽**，
     // 只有单核与早启动期设施（`putln!`、块/frame 分配器、页表树、`Space` 原语）。
     crate::health::run();
+
+    // **测试模式必须有一张镜像**：没有它 `spawn_root` 会返 `Ok(None)`（"无任务照样能
+    // 停机"那条路照走），于是那一例**静默地什么都没跑就绿了**——最难查的一类假象
+    // （与 `runner.nu` 头注里"而不是静默起一台没有程序的机器"同一条纪律）。
+    // panic ⇒ `testing()` 的 panic 通道 ⇒ semihosting abort ⇒ 那一例红。
+    if crate::testing() && machine::info().initrd().is_none() {
+        panic!(
+            "整机用例没有镜像：`cargo-qtest` 不带 `-initrd`。请用 \
+             `nu scripts/qtest.nu --scene <景>` 跑（本检查只在测试模式生效）"
+        );
+    }
 
     // 根任务交给信标：它一走即"会话结束"，信标据此把收尾期与会话期的空档分开
     // （见 `scheduler::core::beacon` 的头注）。
@@ -150,8 +161,14 @@ pub fn init() -> ! {
         "ROOT stack overflow during boot: canary corrupted {boot_guard:#x}",
     );
 
-    // 进入调度：从本 hart 调度器取首任务（不能用 spawn 返回的帧 PA——可能已被
-    // 副核 steal 走）
+    // 首任务由 `run` 取（不能用 `spawn_root` 返回的那个帧 PA——可能已被副核 steal 走）。
+}
+
+/// 起跑：交出本 hart，直到世界收场。**不返回**。
+///
+/// 收场那一刀在 `conductor::halt`（产品路复位、测试路按账退出），故这一句在产品路与
+/// 测试路**同一个形状**——测试用例的体就是 `boot::init(); boot::run();`。
+pub fn run() -> ! {
     restore(scheduler::trap::run())
 }
 

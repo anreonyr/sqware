@@ -65,6 +65,38 @@ fn take_exit_reason() -> usize {
     EXIT_REASON[slot].swap(0, core::sync::atomic::Ordering::Relaxed)
 }
 
+/// 退场那句话的**逐核暂存槽**：`(va, len)` 两格。
+///
+/// **只暂存落点，不拷字节**：那句话住域自己的空间里，而读它的时点（`quit`，在
+/// `reap`/`bury` 之前）那段空间还在——一次 `copy_in` 就够，不必让每颗核常驻
+/// [`env::NOTE_MAX`] 字节。
+///
+/// 故障隔离 / 他杀 / 级联三路**没有话**（不写这两格），故取即清零——否则会继承上
+/// 一次退场的那句。与 [`EXIT_REASON`] 同一寿命、同一写法。
+static EXIT_NOTE: [core::sync::atomic::AtomicUsize; crate::layout::MAX_HART_SLOTS] =
+    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::layout::MAX_HART_SLOTS];
+static EXIT_NOTE_LEN: [core::sync::atomic::AtomicUsize; crate::layout::MAX_HART_SLOTS] =
+    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::layout::MAX_HART_SLOTS];
+
+/// 记下本次退场那句话的落点（见 [`EXIT_NOTE`]）。
+pub(crate) fn set_exit_note(va: usize, len: usize) {
+    let slot = crate::hart::hart_id()
+        .get()
+        .min(crate::layout::MAX_HART_SLOTS - 1);
+    EXIT_NOTE[slot].store(va, core::sync::atomic::Ordering::Relaxed);
+    EXIT_NOTE_LEN[slot].store(len, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// 取出并清零本次退场那句话的落点（`quit` 用）。
+fn take_exit_note() -> (usize, usize) {
+    let slot = crate::hart::hart_id()
+        .get()
+        .min(crate::layout::MAX_HART_SLOTS - 1);
+    let va = EXIT_NOTE[slot].swap(0, core::sync::atomic::Ordering::Relaxed);
+    let len = EXIT_NOTE_LEN[slot].swap(0, core::sync::atomic::Ordering::Relaxed);
+    (va, len)
+}
+
 // ── 内核给的退出原因码 ──
 //
 // 与 `RoomCall::Reap` 带上来的"域自己的诊断编号"共用同一个字段，值域不重叠：域从 1

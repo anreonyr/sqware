@@ -11,12 +11,14 @@
 
 use alloc::sync::Arc;
 
-use env::TaskId;
+use env::{NOTE_MAX, TaskId};
 
 use crate::lock::{Level, OnceLock, SpinLock};
+use crate::runtime::diagnose::ledger;
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
+use crate::work::unit::space::Space;
 use crate::work::unit::task::{Task, TaskState};
 
 use super::{WakeKey, wipe, wipe_space};
@@ -141,15 +143,71 @@ pub fn quit() -> usize {
         ),
         "running 容器里不是 Running 任务"
     );
-    // 原因码取自逐核暂存槽（`Reap` / 故障隔离杀在调 `quit` 前写下，见
-    // `messenger::EXIT_REASON`）——取即清零，下一次退场重新写。
+    // 原因码与那句话都取自逐核暂存槽（`Reap` / 故障隔离杀在调 `quit` 前写下，见
+    // `messenger::EXIT_REASON` / `messenger::EXIT_NOTE`）——取即清零，下一次退场重新写。
+    let reason = super::take_exit_reason();
+    let (note_va, note_len) = super::take_exit_note();
+    let tid = exited.ident.id;
+    // 那句话**读在这里**：此刻团队空间还在（`bury` 才归还），故一次 `copy_in` 就够。
+    // 打印与入账同在一处——账因此是**全**的（故障隔离 / 他杀 / 级联三路没有话，
+    // `note_out` 对 `len == 0` 一个字都不打）。
+    let mut buf = [0u8; NOTE_MAX];
+    let text = note_out(
+        &exited.ident.team.space,
+        tid,
+        reason,
+        note_va,
+        note_len,
+        &mut buf,
+    );
     trace::note(EventKind::Room(RoomEvent::Exit {
-        tid: exited.ident.id.get(),
-        reason: super::take_exit_reason(),
+        tid: tid.get(),
+        reason,
     }));
+    ledger::note(tid, reason, text);
     reap(exited);
     bury();
     crate::work::room::scheduler::trap::run()
+}
+
+/// 读域退场时带来的那句话（`Reap { note, len }`）：**打印它，并交出那句可入账的文本**。
+///
+/// 三条纪律（原样：读的时点从 `Reap` 挪到 `quit`，为的是让打印与入账同一处）：
+/// ①缓冲由调用方给（**退场路径不分配**）；②读失败就如实说读不到（诊断是**加成**，
+/// 不是退场的前提——指针非法不该让"它已经走了"这件事多一个失败模式）；③打印走内核
+/// 自己的出口（SBI DBCN），**不经过任何服务**：控制台可能正是那个死掉的域。
+fn note_out<'a>(
+    space: &Space,
+    tid: TaskId,
+    reason: usize,
+    va: usize,
+    len: usize,
+    buf: &'a mut [u8; NOTE_MAX],
+) -> &'a str {
+    if len == 0 {
+        return "";
+    }
+    let n = len.min(NOTE_MAX);
+    if !crate::work::mail::copy_in(space, &mut buf[..n], va) {
+        crate::putln!(
+            "exit tid={} reason={reason:#x} note=<unreadable {len} bytes at {va:#x}>",
+            tid.get()
+        );
+        return "";
+    }
+    match core::str::from_utf8(&buf[..n]) {
+        Ok(text) => {
+            crate::putln!("exit tid={} reason={reason:#x} note: {text}", tid.get());
+            text
+        }
+        Err(_) => {
+            crate::putln!(
+                "exit tid={} reason={reason:#x} note: <non-utf8 note>",
+                tid.get()
+            );
+            "<non-utf8 note>"
+        }
+    }
 }
 
 /// 回收全部躯壳任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：躯壳不在任何核

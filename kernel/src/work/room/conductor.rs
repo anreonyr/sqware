@@ -3,7 +3,8 @@
 // 两件事：
 //   全退出停机 — PUSHED/REAPED 任务计数 + ROOTED 守门；ROOTED=true 且
 //              （PUSHED==0 或 REAPED==PUSHED）= 全部退出 → 发 SBI srst 复位；
-//              HALTING 做一次性互斥，防多核同时发复位。
+//              HALTING 做一次性互斥，防多核同时发复位。**测试模式不复位**：改为
+//              按结局账退到 semihosting（判据见 `halt`）。
 //   休眠唤醒   — WAITING 位图（bit h = hart h 正 WFI 等待）；入队者先用 `pick`
 //              挑一颗核（优先"在等"的），再把活**踢给它**（`scheduler::core::kick`
 //              ——唯一的入队路径），落点核若在等就发一记定向 IPI（消雷鸣群）；
@@ -23,6 +24,7 @@ use crate::hart::{self, HartId};
 use crate::lock::OnceLock;
 use crate::putln;
 use crate::runtime::chrono::{clock, timer};
+use crate::runtime::diagnose::ledger;
 use sbi::ecall::SArgs;
 use sbi::{self, fid};
 
@@ -195,6 +197,39 @@ pub(super) fn halt() -> ! {
             crate::runtime::diagnose::trace::HaltEvent::Halt,
         ));
         hooked();
+        // 测试模式：**不复位**——世界已结清，结局由账说话（见 `diagnose::ledger`）。
+        // 判据**只此一处**，三条：
+        //   · **一台域都没起** ⇒ 世界压根没跑起来（镜像里没有可起的域？）——**静默成绿**
+        //     是最难查的一类假象，故它算红。看的是**计数**不是账：账只记非零，
+        //     正常跑完它是空的；
+        //   · 账里有一笔 `EXIT_PANIC` ⇒ 那一台的断言塌了（域内 panic）⇒ 红，并把账上的
+        //     笔全打出来（账只装非零，环只有 8 条，多台同时塌时一次看全）；
+        //   · 其余 ⇒ 绿。
+        if crate::testing() {
+            if counts().0 == 0 {
+                putln!("[verdict] 一台域都没起：世界没跑起来，这一景什么都没验");
+                semihosting::process::exit(101)
+            }
+            let mut blame: Option<ledger::Entry> = None;
+            ledger::each(|e| {
+                if blame.is_none() && e.reason == env::EXIT_PANIC {
+                    blame = Some(*e);
+                }
+            });
+            let Some(e) = blame else {
+                semihosting::process::exit(0)
+            };
+            ledger::each(|x| {
+                putln!(
+                    "[verdict] tid={} reason={:#x} note: {}",
+                    x.task.get(),
+                    x.reason,
+                    x.note()
+                );
+            });
+            putln!("[verdict] 塌在 tid={}: {}", e.task.get(), e.note());
+            semihosting::process::exit(101)
+        }
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
     }
     loop {

@@ -10,6 +10,8 @@ pub mod halt;
 /// IPI 自检（debug 档）：一记 SBI IPI 到底能不能把 WFI 里的核叫醒。
 #[cfg(debug_assertions)]
 pub mod ipi;
+/// 退场的账：哪一台、什么结局、它走时留的话（只记不判）。
+pub mod ledger;
 /// 表格渲染适配：stanza 定宽栅格（列宽自适应）；报告印发。
 pub mod render;
 /// 诊断报告核心（段落 + 行；成册/清空生命周期）。
