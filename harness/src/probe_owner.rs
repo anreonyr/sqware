@@ -43,7 +43,6 @@ use protocol::system::operator::{EntryId, Where};
 use alloc::format;
 
 use env::{Name, PieToken, TaskId};
-use harness::cases;
 use protocol::driver;
 use protocol::session::Quay;
 use runtime::env::debug;
@@ -132,20 +131,18 @@ fn main() -> Report<'static> {
 
     // 七、判据：**一例一条**（原先三格 `&&` 成一句）。
     let took = taken.is_ok();
-    let mut suite = cases::Suite::new("probe-owner");
-    suite.case("a_living_owners_plate_refuses_me", move || {
+    {{
         assert!(
             denied,
             "那一格的主人还活着，land 本该被拒（land={land_code}）"
         )
-    });
-    suite.case("that_cell_did_not_move", move || {
+    }}
+    {{
         assert!(untouched, "被拒之后那一格换号了（不再是 before 那个号）")
-    });
-    suite.case("a_dead_owners_name_can_be_taken_over", move || {
+    }}
+    {{
         assert!(took, "probe-lease 已经死了，那一格该重新可落")
-    });
-    suite.run();
+    }}
 
     return Report::note(E_OK, OK_NOTE);
 }

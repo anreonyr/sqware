@@ -94,7 +94,7 @@ pub fn banner() {
     crate::runtime::diagnose::render::render(sealed, &mut sink, 0);
 }
 
-/// 启动：装配钩子与锁序 → 跑用例（framework 档）或健康检查 → 造根服务域
+/// 启动：装配钩子与锁序 → 跑用例（debug 档）或健康检查 → 造根服务域
 /// （`spawn_root`）→ HSM 拉起副核。
 pub fn init() -> ! {
     // per-hart 调度器状态按实际核数（DTB）动态分配——先于任何调度器访问
@@ -112,14 +112,12 @@ pub fn init() -> ! {
     #[cfg(debug_assertions)]
     crate::lock::init_depend(hart::hart_count()).expect("depend init failed");
 
-    // 用例：两档互斥 —— `--features framework` 走测试框架（逐例打点 + 末行汇总），
-    // 否则走 debug 档的健康检查。任一失败 fail-fast（panic）。
+    // 健康检查：`debug` 档在**启动期**静默跑一遍八例（失败即 panic → crash scene）。
+    // 用例的**登记与逐例打点**不在核心里了——那是 `kernel/tests/embedded.rs` 的事
+    // （用户裁定"迁移到 embedded-test"）。
     //
     // 同位置、同时点：调度器已就绪、`spawn_root` 未起 ⇒ 用例**没有 shell、没有装槽**，
     // 只有单核与早启动期设施（`putln!`、块/frame 分配器、页表树、`Space` 原语）。
-    #[cfg(feature = "framework")]
-    crate::framework::run(&crate::framework::Kernel);
-    #[cfg(not(feature = "framework"))]
     crate::health::run();
 
     // 根任务交给信标：它一走即"会话结束"，信标据此把收尾期与会话期的空档分开
@@ -137,9 +135,9 @@ pub fn init() -> ! {
     // 多核：HSM 拉起其余副核。
     boot_harts();
 
-    // IPI 自检（framework 档）：副核已在各自 WFI 里，此刻是"一记门铃能不能叫醒它"的
+    // IPI 自检（debug 档）：副核已在各自 WFI 里，此刻是"一记门铃能不能叫醒它"的
     // 唯一干净时点（没有任务、没有到点登记 ⇒ 醒了只可能是那一记 IPI）。见 `diagnose::ipi`。
-    #[cfg(feature = "framework")]
+    #[cfg(debug_assertions)]
     {
         crate::runtime::diagnose::ipi::run("early");
         crate::runtime::diagnose::ipi::start_delayed();
@@ -263,10 +261,10 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
     crate::work::unit::task::Task::release(&bootstrap).expect("freshly held task must release");
     crate::platform::devices::install(&bootstrap, devices);
 
-    #[cfg(feature = "framework")]
+    #[cfg(debug_assertions)]
     team.space.audit();
 
-    #[cfg(feature = "framework")]
+    #[cfg(debug_assertions)]
     kernel().expect("kernel team not initialized").space.audit();
 
     Ok(Some(bootstrap))

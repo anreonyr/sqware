@@ -10,14 +10,20 @@
 # 只剩真机那几门间接覆盖。它的来由（八台收成一台、`#[path]` 换真依赖）随它一起撤。
 exclude = [
     "crates/alloc-probe",
-    # `crates/gate` 是**门**那一台（用户裁定"完全消除测试脚本"）：台（起机）+ 判据（含起 QEMU
-    # 的那几门）。它进不来的理由与上面那台同源（要 std + host ABI），跑法见
-    # `.cargo/config.toml` 的 `[alias] gate`。
-    "crates/gate",
     # `crates/image` 是**造镜像那一步**（用户裁定"initrd 与 kernel 何干"）：与上面那台同源，
     # 要 std + host ABI。跑法见 `.cargo/config.toml` 的 `[alias] image`。
     "crates/image",
 ]
+
+# **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原先还编外着一台
+# `crates/gate`（11 文件 2,018 行）——门那一台：`Bench`/`Transcript` 台架、`Mark`/`Reading`
+# 对账器（99 条 MARKS／30 条 READINGS）、9 扇 QEMU 门，外加 `cargo gate` 那条别名。
+# 它整个删了；内核内用例改由 `embedded-test` + `cargo-qtest` 承载，跑法见
+# `scripts/qtest.nu`（参数表仍只有 `scripts/qemu-args.nu` 一处）。
+#
+# **连带删掉的**：`[profile.framework]` 与 `[profile.harden]`——后者只服务前者，
+# 而前者只是为了让"内核内用例跑在与验收门同一套护栏下"。护栏本身（`debug_assertions`：
+# lockdep 全集、页表/空间不变量）**一个字没动**，只是不再有一个专门的测试档去开它。
 
 # `harness` 是**工作区成员**，与 `programs` 同一族（同一张链接脚本、同一批"被内核装载的
 # ELF"）：它是**测具**那一档——探针（进验收镜像当客人）与压测台（整台替换引导镜像）。
@@ -27,9 +33,11 @@ members = [
     "kernel",
     "programs",
     "harness",
-    # **程序侧用例那一台**（用户裁定"服务台搬进 SUT"）：`programs` 与 `harness` 都要用它，
-    # 而 `harness` 依赖 `programs` ⇒ 它不能住在任何一边（成环）。见 `crates/cases/Cargo.toml`。
-    "crates/cases",
+    # **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原先还有一格
+    # `crates/cases`（110 行）——程序侧的用例运行器：`Suite` / `case` / `run`，加上
+    # `[case] <台名>: run/ok/cases …` 那套打点协议。整个删了。
+    # 产品与测具里 **97 处** `suite.case("名", move || …)` 按用户裁定换成**裸 `assert!`**
+    # ——保留"万一不成立就该当场死"，去掉打点协议本身（失败仍走域内 panic 通道）。
     "crates/env",
     # `crates/plan` 是**装机的账**（装配单 / 需求单 / 坐标 / 开机三笔账）：
     # 判据见 `crates/plan/src/lib.rs`——"这里只认表与字节，不碰任何运行时代码"。
@@ -69,25 +77,16 @@ edition = "2024"
 debug = true
 panic = "abort"
 
-# 验收门的 harden 档：**继承 release，只把断言打开**——`debug_assertions` 在 release 里是关的，
-# 而门的构建只有 `--release` ⇒ 容器⇔状态不变量与整条 lockdep 校验（`lock/depend.rs` 全文件
-# `#[cfg(debug_assertions)]`）在门跑过的每个产物里都被编译掉了（实测：release ELF 里
-# 「装槽前 running 必须为空」「new level must exceed max(held)」各 0 次，debug ELF 里各 1 次）。
-# 只多开这一个开关，opt-level 与 debug 与 release 一致 ⇒ 行为可比。
-[profile.harden]
-inherits = "release"
-debug-assertions = true
-
-# 框架档（内核内测试）：**继承 harden**，于是用例与自检跑在与验收门同一套护栏下 ——
-# debug_assertions 开着（页码表/空间不变量、lockdep 全集在场），`--features framework`
-# 再叠上用例与**自检**（挂起自检 / 帧范围 / 簿记↔页表；见 `kernel/Cargo.toml` 的门注）。
-# 用例要测的正是这些护栏，关着断言跑测试等于测了个空壳。
+# **照实记（两条 profile 随 `crates/gate` 一起删，用户裁定"迁移到 embedded-test"）**：
+# 这里原先是 `[profile.harden]`（继承 release、只把 `debug_assertions` 打开）与
+# `[profile.framework]`（继承 harden）。
 #
-# 注：`--features framework` 是**内核 crate 的 feature**，profile 只管构建参数，
-# 两者要一起给（`cargo build --profile framework --features framework`）。
-[profile.framework]
-inherits = "harden"
-debug-assertions = true
+# - `framework` 档的全部用途是"让内核内用例跑在与验收门同一套护栏下"，而
+#   `--features framework` 那个 feature 已随自研框架一起删（见 `kernel/Cargo.toml`）；
+# - `harden` 没有别的消费者（只被 framework 继承）。
+#
+# 护栏本身——`debug_assertions` 开着的 lockdep 全集、页码表/空间不变量——**一个字没动**：
+# 它照旧在 `[profile.dev]` 与任何显式 `debug-assertions = true` 的档里生效。
 
 [profile.release]
 # opt-level=2 是**历史取值**：旧 `WaitKey::compose` 时代（位打包 + mask）在更高优化档

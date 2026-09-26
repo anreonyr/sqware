@@ -356,6 +356,6 @@ impl Coalition {
 // ── 本文件没有一行测试（用户裁定"protocol-case 没必要"）────────────────
 //
 // 那台编外宿主靶（`roster` 靶里 `coalition_core` 那一格——盟籍要
-// `crate::system::principal::core` 的号，故与名册同住一个靶）连同 `crates/gate` 的 `host` 那一门
+// `crate::system::principal::core` 的号，故与名册同住一个靶）连同 `crates/gate`（已删）的 `host` 那一门
 // 已删。原先那六条用例本来就是"编不到、也跑不到"的规格（`protocol` 是 `[lib] test = false`）。
 // 真机上另有探针那几条（`harness/src/member.rs`）。

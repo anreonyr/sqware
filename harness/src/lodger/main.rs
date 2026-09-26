@@ -64,7 +64,6 @@ use env::{Name, PieToken};
 use plan::{Key};
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
-use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -126,18 +125,16 @@ fn main() -> Report<'static> {
     // 那两趟的释放临时关掉，同一处读数从 9 变成 14）——故它是一个**判据**，不是常数（少放一枚
     // 孔，这一例就红）。旧宿主靶上 `lodger: occupy=0` / `taken=2` / `unknown=1` / `pies=9` 钉的
     // 就是这四样。
-    let mut suite = Suite::new("lodger");
-    suite.case("the_line_is_mine", move || assert_eq!(ok, lcall::OK));
-    suite.case("the_same_line_twice_is_taken", move || {
+    assert_eq!(ok, lcall::OK);
+    {{
         assert_eq!(taken, lcall::TAKEN)
-    });
-    suite.case("a_bell_is_not_an_interrupt_source", move || {
+    }}
+    {{
         assert_eq!(unknown, lcall::UNKNOWN)
-    });
-    suite.case("the_failed_attempts_left_no_holes", move || {
+    }}
+    {{
         assert_eq!(pies, 9)
-    });
-    suite.run();
+    }}
 
     let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;
     return Report::note(

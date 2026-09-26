@@ -7,8 +7,8 @@ pub mod export;
 /// 领域无关的执行链投影引擎（栈采样 + 链投影）。
 pub mod frame;
 pub mod halt;
-/// IPI 自检（framework 档）：一记 SBI IPI 到底能不能把 WFI 里的核叫醒。
-#[cfg(feature = "framework")]
+/// IPI 自检（debug 档）：一记 SBI IPI 到底能不能把 WFI 里的核叫醒。
+#[cfg(debug_assertions)]
 pub mod ipi;
 /// 表格渲染适配：stanza 定宽栅格（列宽自适应）；报告印发。
 pub mod render;

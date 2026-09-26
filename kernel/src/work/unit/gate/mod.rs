@@ -42,9 +42,9 @@ mod snap;
 
 pub(crate) use pie::{AnyPie, Need, Permission, Pie, accede, locate, new_pie};
 // `form_ok` 只有 `accord`（走 `super::pie::` 直呼）与 `health::permit` 两条读者，而后者
-// 在 `debug_assertions` / `framework` 之外不编 ⇒ 无条件重导出会在 release 档报
+// 在 `debug_assertions` 之外不编 ⇒ 无条件重导出会在 release 档报
 // `unused import`。门控它，而不是让 release 背一条假警告。
-#[cfg(any(debug_assertions, feature = "framework"))]
+#[cfg(debug_assertions)]
 pub(crate) use pie::form_ok;
 
 pub(crate) use accord::{accord, clear_heir};

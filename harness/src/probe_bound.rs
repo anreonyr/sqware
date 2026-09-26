@@ -60,7 +60,6 @@ use alloc::format;
 use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
-use harness::cases;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
@@ -155,26 +154,24 @@ fn main() -> Report<'static> {
     let (b_junk_in, b_said_bad, b_after) = junk_trip_board(bolt, &deck);
 
     // 四、判据：**一例一条**，名字即结论。
-    let mut suite = cases::Suite::new("probe-bound");
-    suite.case("the_over_long_push_is_denied", move || {
+    {{
         assert_eq!(over_code, -1, "一页 + 1 本该被拒（`Denied` = -1）");
-    });
-    suite.case("the_slot_keeps_nothing_from_the_refusal", move || {
+    }}
+    {{
         assert!(empty, "拒是拒了，可那一枚孔的槽里已经有东西了");
         assert!(small, "拒完之后再推一条 8 字节的也推不进去（这一枚孔坏了？）");
         assert_eq!(len, 8, "槽里那条不是刚推的那一条（长度 {len}）");
-    });
-    suite.case("a_foreign_frame_does_not_wedge_the_door", move || {
+    }}
+    {{
         assert!(junk_in, "不合族的帧推不进门（门那一枚孔不在？）");
         assert!(said_bad, "门没把那一条取出来 / 没答 `BAD`");
         assert!(after, "吞了 junk 之后，门不再答正经的问了");
-    });
-    suite.case("a_foreign_frame_does_not_wedge_the_board", move || {
+    }}
+    {{
         assert!(b_junk_in, "不合族的帧推不进板那道门（那一枚孔不在？）");
         assert!(b_said_bad, "板没把那一条取出来 / 没答 `BAD`");
         assert!(b_after, "吞了 junk 之后，板不再答正经的问了");
-    });
-    suite.run();
+    }}
 
     return Report::note(E_OK, OK_NOTE);
 }

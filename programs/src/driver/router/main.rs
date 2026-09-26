@@ -124,7 +124,6 @@ mod plic;
 /// 本域的死法（编号 + 那句话）——见那个文件与 `programs::Exit`。
 mod fail;
 
-use cases::Suite;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::driver::line::{core::Lines, frame as lcall};
 use protocol::session::call as scall;
@@ -320,7 +319,7 @@ fn drain_exhaust(lines: &mut Lines, plic: &Plic, buf: &mut [u8]) {
 ///
 /// **这一跳有读数了**：`harness/src/lodger`（房客）每次冷启动都占住 1 号线、然后一句话不说就走
 /// ⇒ 本域被叫醒、`alive` 答不出 ⇒ `router: vacate line=1`（两道门的固定读数，见
-/// `crates/gate/src/soak.rs`）。链条本身是 `cull::seal_owned` → `messenger::wipe` → 组键。
+/// `crates/gate/src/soak.rs`（已删））。链条本身是 `cull::seal_owned` → `messenger::wipe` → 组键。
 ///
 /// 两个后果缺一不可：不 `unwire` 则线还在本 context 里（电平挂着 ⇒ 白报），不 `detach` 则
 /// 那一格永远留在组里（对端没了 ⇒ 每次都当场就绪）。
@@ -458,7 +457,7 @@ fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
 /// 临时关掉那几手，同一处从 `9` 涨到 `14`）。
 ///
 /// 读数带一格 **`pies=`**（本域表里现在有几枚）：'放了没有'这件事因此**可量**——少放一枚，
-/// 这一格当场大 1（判据钉在 `crates/gate/src/soak.rs` 里，涨了就是红）。**答完话那一枚回信孔副本**
+/// 这一格当场大 1（判据钉在 `crates/gate/src/soak.rs`（已删）里，涨了就是红）。**答完话那一枚回信孔副本**
 /// 也走同一条纪律（见 `desk_face` 尾上那一手）。
 fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
     if let Some(at_peer) = lane.at_peer() {
@@ -547,19 +546,17 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    let mut suite = Suite::new("router-tree");
-    suite.case("the_device_directory_answered", move || {
+    {{
         assert_eq!(part, ocall::OK)
-    });
-    suite.case("the_plate_landed", move || assert_eq!(land, ocall::OK));
-    suite.case("the_plate_was_found_by_id", move || {
+    }}
+    assert_eq!(land, ocall::OK);
+    {{
         assert_eq!(find, ocall::OK)
-    });
-    suite.case("the_shipped_plate_came_back", move || assert!(got));
-    suite.case("the_id_and_the_name_agree", move || {
+    }}
+    assert!(got);
+    {{
         assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(SERVICE))
-    });
-    suite.run();
+    }}
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。

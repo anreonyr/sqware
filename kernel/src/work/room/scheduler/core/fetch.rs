@@ -151,14 +151,14 @@ fn wait() -> Option<Arc<Task>> {
         // WFI：SSIP（IPI）/ STIP（定时器到期）挂起即唤醒——只唤醒不取中断（SIE=0）。
         // 注意：不再有清退应答点——RFENCE 由固件强制打断空闲核（含 WFI 态），
         // 目标核进 trap 执行 sfence，无需空闲核主动 sweep。
-        // IPI 自检钩子（framework 档，见 `runtime::diagnose::ipi`）：全是只读计数，
+        // IPI 自检钩子（debug 档，见 `runtime::diagnose::ipi`）：全是只读计数，
         // 生产档一行不编。
-        #[cfg(feature = "framework")]
+        #[cfg(debug_assertions)]
         crate::runtime::diagnose::ipi::wfi_entry(me);
         unsafe {
             core::arch::asm!("wfi");
         }
-        #[cfg(feature = "framework")]
+        #[cfg(debug_assertions)]
         crate::runtime::diagnose::ipi::wfi_exit(me, sip::read().ssoft());
         // **待杀记录的兜底也要在这一条路上跑**（修的正是"他杀偶发不生效"那一格）。
         //

@@ -40,7 +40,6 @@ use alloc::format;
 
 use env::Name;
 use protocol::system::board as bcall;
-use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -79,11 +78,9 @@ fn main() -> Report<'static> {
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——"挂名字该成功"
     // 是本站此刻就知道的期望（旧宿主靶上那一条 `passer: reg=0 entry=… say=passer` 钉的就是它）。
-    let mut suite = Suite::new("passer");
-    suite.case("the_entry_is_on_the_board", move || {
+    {{
         assert_eq!(reg, bcall::OK)
-    });
-    suite.run();
+    }}
 
     // 二、**直接死**：不说退场那一句、不交回、不留门闩。板上那枚牌子与板侧那一格从此是
     //     死实例——只有"那一枚还答得出吗"（`VestedBy`）问得出来。

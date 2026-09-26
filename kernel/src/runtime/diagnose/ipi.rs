@@ -1,4 +1,4 @@
-//! IPI 自检（framework 档）— 「一记 SBI IPI 到底能不能把 WFI 里的核叫醒」。
+//! IPI 自检（debug 档）— 「一记 SBI IPI 到底能不能把 WFI 里的核叫醒」。
 //!
 //! # 为什么要有这一格
 //!
@@ -13,10 +13,10 @@
 //! 而 `wfi` 不被它唤醒）还是**内核侧**（某条路径把 SSIP 清掉了）。本模块用最小的一对
 //! 核把这一格单独量出来——刻意进 WFI、打一记、看它多数次里醒几次。
 //!
-//! # 只读、只在 framework 档
+//! # 只读、只在 debug 档
 //!
 //! 两处钩子在 `fetch::wait` 的 WFI 前后（[`wfi_entry`] / [`wfi_exit`]），全是 `Relaxed`
-//! 计数；本模块只在 `--features framework` 档编进内核、只在 boot 拉起副核之后跑一次，
+//! 计数；本模块只在 `debug_assertions` 档编进内核、只在 boot 拉起副核之后跑一次，
 //! **不参与任何生产语义**。跑完打 `ipi:` 行，人工/门看它，不 panic、不改启动路径。
 //!
 //! # 判据怎么读
@@ -55,7 +55,7 @@ static SSIP_EXIT: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// 每核自己读到的调度器地址（`current()`，tp 直达）。
 static SELF_ADDR: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
-/// WFI 前置位（`fetch::wait` 调；framework 档）。
+/// WFI 前置位（`fetch::wait` 调；debug 档）。
 pub(crate) fn wfi_entry(hart: crate::hart::HartId) {
     if hart.get() < SLOTS {
         IN_WFI[hart.get()].store(1, Ordering::Relaxed);
@@ -64,7 +64,7 @@ pub(crate) fn wfi_entry(hart: crate::hart::HartId) {
     }
 }
 
-/// WFI 返回后记一笔（`fetch::wait` 调；framework 档）。`ssip` = 返回时 `sip.SSIP` 置否。
+/// WFI 返回后记一笔（`fetch::wait` 调；debug 档）。`ssip` = 返回时 `sip.SSIP` 置否。
 pub(crate) fn wfi_exit(hart: crate::hart::HartId, ssip: bool) {
     if hart.get() < SLOTS {
         IN_WFI[hart.get()].store(0, Ordering::Relaxed);
@@ -96,7 +96,7 @@ pub(crate) fn start_delayed() {
     SAMPLES_LEFT.store(SAMPLES, Ordering::Relaxed);
 }
 
-/// 定时器陷阱里每拍问一次（framework 档）：到点就跑一遍自检。跑完再把下一个采样点
+/// 定时器陷阱里每拍问一次（debug 档）：到点就跑一遍自检。跑完再把下一个采样点
 /// 推后一个间隔（不在同一次里连跑），采样次数用尽即停。
 pub(crate) fn tick_hook() {
     let now = time::read() as u64;
@@ -117,7 +117,7 @@ pub(crate) fn tick_hook() {
     NEXT_SAMPLE.store(time::read() as u64 + SAMPLE_GAP, Ordering::Relaxed);
 }
 
-/// 自检本体：boot 拉起副核之后调一次（framework 档）。返回 `(测了几个核, 定向醒了几轮, 广播醒了几轮)`。
+/// 自检本体：boot 拉起副核之后调一次（debug 档）。返回 `(测了几个核, 定向醒了几轮, 广播醒了几轮)`。
 pub(crate) fn run(tag: &str) -> (usize, usize, usize) {
     let me = hart::hart_id();
     let n = hart::hart_count();

@@ -6,8 +6,9 @@
 //! **每一个文件**登记成 `rerun-if-changed`；③ 嵌套 cargo 编那两个包；④ `manifest::pack`
 //! 打 initrd，并把引导镜像的偏移/长度经 `cargo::rustc-env` **回喂**内核源码。
 //!
-//! 用户原话：**"initrd 与 kernel 何干"**。②③④ 现在住 **`crates/image`**，由门
-//! （`crates/gate`）与 `scripts/runner.nu` 在**编内核之前**调用；内核与它**只剩一个约定**：
+//! 用户原话：**"initrd 与 kernel 何干"**。②③④ 现在住 **`crates/image`**，由
+//! `scripts/runner.nu` 在**编内核之前**调用（**照实记**：原先还有一道门 `crates/gate`
+//! 也在这儿调它——那台已删，用户裁定"迁移到 embedded-test"）；内核与它**只剩一个约定**：
 //! initrd 落在内核 ELF 同目录。
 //!
 //! 于是这一份不再需要：
@@ -32,9 +33,13 @@
 //! 这两条与场景无关，故留在这里——但**今天这一份一个字都不用它们**。
 
 fn main() {
-    // 内核链接脚本：workspace 化后不同 crate 用不同 `-Tlink.ld`（内核 `0x80200000` /
+    // 内核链接脚本：workspace 化后不同 crate 用不同脚本（内核 `0x80200000` /
     // 用户 `0x10000`），不能放根 `.cargo/config.toml`（全局 rustflags 冲突），改由本脚本传绝对路径。
-    let ld = format!("{}/link.ld", env!("CARGO_MANIFEST_DIR"));
+    //
+    // **照实记（后缀 `ld` → `x`，用户裁定"迁移到 embedded-test"）**：`cargo-qtest` 对 riscv
+    // 的判据是"manifest 目录里有没有 `.x` 文件"——没有就自己在 `0x80000000` 生成一份，
+    // 而那与 `SBI.bin` 撞 ROM 区（实测 `Some ROM regions are overlapping`）。改名即压掉它。
+    let ld = format!("{}/link.x", env!("CARGO_MANIFEST_DIR"));
     println!("cargo::rustc-link-arg=-T{ld}");
-    println!("cargo::rerun-if-changed=link.ld"); // link.ld 变更自动重链
+    println!("cargo::rerun-if-changed=link.x"); // link.x 变更自动重链
 }

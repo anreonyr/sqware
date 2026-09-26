@@ -597,7 +597,7 @@ impl SpaceInner {
     /// 反向（PTE ⇒ map）：每个已装叶都落在某张 map 内、且该页确实"已物化"——
     /// 拆除与改权只碰**簿记说有 PTE** 的页（[`Self::runs`]），这条一破，PTE 就会
     /// 残留成悬垂（指向已归还帧，复用即错乱）。
-    #[cfg(any(debug_assertions, feature = "framework"))]
+    #[cfg(debug_assertions)]
     pub(crate) fn audit(&self) {
         for m in &self.maps {
             for (i, f) in m.frames.iter() {
@@ -707,10 +707,10 @@ impl<'a> InstallGuard<'a> {
 /// 页槽位里那帧的物理地址（恒等映射下指针值即 PA）。
 ///
 /// 独立函数而不是方法：**唯一使用者是 [`SpaceInner::audit`]**，而它整段是
-/// `#[cfg(any(debug_assertions, feature = "framework"))]`——做成结构上的方法会让
+/// `#[cfg(debug_assertions)]`——做成结构上的方法会让
 /// 那个字段在没有用例的档里没有任何读点（dead_code 警告），违反"零警告、零
 /// allow"（用户裁决）。
-#[cfg(any(debug_assertions, feature = "framework"))]
+#[cfg(debug_assertions)]
 fn page_pa(f: &Frame) -> PhysAddr {
     PhysAddr::from_raw(f.as_ptr() as usize)
 }

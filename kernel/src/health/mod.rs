@@ -1,7 +1,10 @@
-// 健康检查面（health）— 内核自检用例：**登记在 `--features framework` 档，跑在启动后**。
+// 健康检查面（health）— 内核自检用例的**身体**：跑在启动后，断言走 `expect!`（失败即 panic）。
 //
-// 这里是**唯一**会产出 `.tests` 段登记行的模块（框架整块门控的理由见 `framework/mod.rs`
-// 头注）：`test!` 块展开成段里的一行，`framework::discover()` 在启动后取到它们。
+// **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原先还有 **8 个 `test!`
+// 登记块**——展开成 `link.ld` 的 `.tests` 段里的一行，由自研的 `framework::discover()` 取到。
+// 那一套连 `kernel/src/framework/`（4 文件 274 行）一起删了；登记改住
+// `kernel/tests/embedded.rs` 的 `#[embedded_test::tests] mod`。**本文件只剩用例体**，
+// 它们从 `pub(super)` 变成 `pub`，因为那个测试目标是**另一个 crate**。
 //
 // 八个用例 = 四块子系统各一 + `permit` 四例，都只经公开接口验收，与生产断言分离：
 //   · `spare`  —— 后备仓预算（ring 常驻 + 溢出演练闭环）
@@ -10,10 +13,9 @@
 //   · `shell` —— 内核原语外壳（任务/团队/空间）的造-收闭环（逐类净额）
 //   · `permit` —— 权柄代数四例（形态位 / 成员投影 / 转发容量 / 取用顺序）
 //
-// 非框架的 `debug_assertions` 档（harden / debug）保留一条旧入口：八个用例仍会在
-// 那里跑一次（**静默**，失败才 panic），行为与框架落地前逐字相同。
+// 这一档（`debug`）另有一条**静默**入口（[`run`]）：同样八例、同样顺序，**失败才 panic**。
 
-#[cfg(any(debug_assertions, feature = "framework"))]
+#[cfg(debug_assertions)]
 use core::fmt;
 
 /// 健康检查断言：条件不成立 → 统一报告 + fail-fast（panic）。
@@ -32,11 +34,12 @@ macro_rules! expect {
     };
 }
 
-/// 输出健康检查结果行（旧档的通过汇报；框架档改由 `[case] ok <name>` 打点）。
+/// 输出健康检查结果行。
 ///
-/// 照实记：本函数在**全部配置**下都没有调用者（用例的通过汇报已各自改走
-/// `[case] ok` / 静默）；保留是给健康 API 留一个汇报口。
-#[cfg(any(debug_assertions, feature = "framework"))]
+/// 照实记：本函数在**全部配置**下都没有调用者——用例的通过汇报原先走 `cases` 那套
+/// `[case] ok` 打点，而那一套已随自研框架删掉（用户裁定"迁移到 embedded-test"），
+/// 用例只剩"失败才 panic"。保留是给健康 API 留一个汇报口。
+#[cfg(debug_assertions)]
 #[allow(dead_code)]
 pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
     crate::putln!("[health] {item}: ok ({detail})");
@@ -48,74 +51,21 @@ pub mod shell;
 pub mod spare;
 pub mod stress;
 
-// ── 用例登记（`--features framework`）────────────────────────────────────────
+// ── 用例**登记**不在这里（用户裁定"迁移到 embedded-test"）─────────────────────
 //
-// 名字是**给失败的人看的**：带子系统与"测什么"，因为首个失败即停机，宿主看到的只是
-// `[case] ok <name>` 序列的截断处加一条 `[case] FAIL <name>`。
-#[cfg(feature = "framework")]
-crate::test! {
-    "spare: 后备仓预算（ring 常驻 + 溢出演练闭环）" {
-        spare::accept();
-    }
-}
+// 原先这里有 8 个 `crate::test! { "名字" { … } }` 块，靠 `.tests` 段 + `framework::discover()`
+// 发现。那一套已删；登记住 `kernel/tests/embedded.rs` 的 `#[embedded_test::tests] mod`——
+// **名字与次序跟着搬过去了**，用例体仍是上面那五个模块。
 
-#[cfg(all(feature = "framework", any(debug_assertions, feature = "framework")))]
-crate::test! {
-    "pagetable: PT 回收（32 轮 map/unmap 无孤儿表）" {
-        pagetable::pagetable();
-    }
-}
-
-#[cfg(feature = "framework")]
-crate::test! {
-    "stress: 分配器压测（block/frame 混合 + 持有 + 耗尽反还）" {
-        stress::accept();
-    }
-}
-
-#[cfg(feature = "framework")]
-crate::test! {
-    "permit: 形态位一致 + ONLY 不可撤（自持枚亦然）" {
-        permit::form();
-    }
-}
-
-#[cfg(feature = "framework")]
-crate::test! {
-    "permit: 组成员（孔/铃）挂摘幂等 + 键投影 + 存活过滤" {
-        permit::members();
-    }
-}
-
-#[cfg(feature = "framework")]
-crate::test! {
-    "permit: 转发容量（FWD_MAX 个组挂得上，第 FWD_MAX+1 个报 OoM 且回滚）" {
-        permit::fanout();
-    }
-}
-
-#[cfg(feature = "framework")]
-crate::test! {
-    "permit: 取用顺序（死活先于权限：同一个已封印 token 不因动词换答案）" {
-        permit::order();
-    }
-}
-
-#[cfg(feature = "framework")]
-crate::test! {
-    "shell: 内核原语外壳（任务/团队/空间）造-收闭环" {
-        shell::accept();
-    }
-}
-
-// ── 旧档入口（非 framework）─────────────────────────────────────────────────
+// ── 静默入口（`debug` 档）───────────────────────────────────────────────────
 //
-// 与框架档互斥：`boot.rs` 按 feature 二选一（同一位置、同一时点）。
-// `debug_assertions` 档才有实体，release 下是空体（与框架落地前一致）。
+// 与 `kernel/tests/embedded.rs` 那一份**同例同序**：这一条不起 QEMU、不用 runner，
+// 只要 `debug_assertions` 就在启动期跑一遍（失败才 panic）。故它**不是**测试框架，
+// 是内核自己的启动自检。
 
 /// 逐项验收各用例；任一失败 = fail-fast panic → crash scene。
 pub fn run() {
-    #[cfg(all(not(feature = "framework"), debug_assertions))]
+    #[cfg(debug_assertions)]
     {
         spare::accept();
         pagetable::pagetable();

@@ -11,7 +11,7 @@
 // `oust_round` 与它配对：**带 sire** 的造-收闭环。`TeamBuilder::sire` 一给，新域当场进
 // 父方 `heir`（强持有）——没有 `Oust` 就收不回来；那一轮顺带验它的前置判据（域里还有
 // 未放行的线程 ⇒ 拒绝）。
-#![cfg(any(debug_assertions, feature = "framework"))]
+#![cfg(debug_assertions)]
 
 use alloc::sync::Arc;
 
@@ -22,7 +22,7 @@ use crate::work::unit::team::TeamBuilder;
 use crate::work::unit::weak::{Site, TaskWeak};
 
 /// 造-收闭环（用例体；登记在 `mod.rs` 的 `test!` 块）。
-pub(super) fn accept() {
+pub fn accept() {
     shell_round();
     oust_round();
     let before = statistics::kinds();

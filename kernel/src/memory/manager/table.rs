@@ -149,10 +149,9 @@ impl TableNode {
 
     /// 树中节点总数（根 + 全部子孙；health/自测用——非审计链）。
     ///
-    /// 门跟着**调用方**走（`Space::table_count`）：它在 `debug_assertions` 与
-    /// `feature = "framework"` 两档都编得进来，而后者能落在 release 上——两处门
-    /// 不一致会让 `cargo build --release --features framework` 编不过（照实记）。
-    #[cfg(any(debug_assertions, feature = "framework"))]
+    /// 门跟着**调用方**走（`Space::table_count`）：两处都是 `#[cfg(debug_assertions)]`
+    /// ——它们必须一起改，不一致的代价是那一档**编不过**（照实记）。
+    #[cfg(debug_assertions)]
     pub(crate) fn count(&self) -> usize {
         1 + self.children.iter().map(|(_, c)| c.count()).sum::<usize>()
     }
@@ -162,7 +161,7 @@ impl TableNode {
     /// `level` = 本节点层号（根传 `levels - 1`）；`node_va` = 本节点覆盖区间的起始
     /// 地址（掩码空间——叶 VA 经 `VirtAddr::from_raw` 规范化回符号扩展形式）。
     /// 只走**存在的**子节点：代价 O(树中节点数)，与地址空间大小无关。
-    #[cfg(any(debug_assertions, feature = "framework"))]
+    #[cfg(debug_assertions)]
     pub(crate) fn mapped(&self, level: usize, node_va: usize, visit: &mut impl FnMut(VirtAddr)) {
         if level == 0 {
             for (i, e) in self.page.entries.iter().enumerate() {

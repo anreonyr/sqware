@@ -70,7 +70,7 @@ impl Husks {
     }
 
     /// 链长（只在挂住现场的信标里读 ⇒ 走一遍，O(n) 无妨；门跟着读者走）。
-    #[cfg(any(debug_assertions, feature = "framework"))]
+    #[cfg(debug_assertions)]
     pub(super) fn len(&self) -> usize {
         let mut n = 0usize;
         let mut cur = self.head.clone();

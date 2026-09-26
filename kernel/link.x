@@ -33,20 +33,24 @@ SECTIONS
   .rodata ALIGN(0x1000) : {
     _rodata_start = .;
     *(.rodata*)
-
-    /* 用例登记段（`--features framework` 才有内容）。三条约束：
-       ① 嵌在 `.rodata` 内 ⇒ **不动 `_kernel_edge`**（主栈 guard 靠它定位，见上段注释）；
-       ② `KEEP` ⇒ 空引用不被 `--gc-sections` 丢掉 —— 这是"零维护发现"的支点，
-          段一丢，症状是**静默零用例**（绿着，什么都没测），比失败更坏；
-       ③ 两边界符号供 `framework::discover()` 取切片（与 `_rodata_start` 同一手法）。
-       内容只有 `&'static str` 与裸函数指针，故落只读段是安全的（无重定位写）。 */
-    . = ALIGN(8);
-    __tests_start = .;
-    KEEP(*(.tests))
-    __tests_end = .;
   }
 
   . = ALIGN(0x1000);
   _kernel_edge = .;
 
 }
+
+/* **照实记（两处与本文件有关的改动，用户裁定"迁移到 embedded-test"）**：
+ *
+ * ① 本文件叫 `link.ld` 时，`cargo-qtest` 认不出它——那份 runner 对 riscv 的判据是
+ *    "manifest 目录里有没有 `.x` 文件"，没有就**自己生成一份**（`ORIGIN = 0x80000000`）。
+ *    而内核链在 **0x80200000**（OpenSBI 占 0x80000000）⇒ 实测报
+ *    `Some ROM regions are overlapping`。改名成 `.x` 既压掉它的生成物，又给出正确地址。
+ *
+ * ② `.rodata` 里原先还有一段 `.tests`（`__tests_start` / `KEEP(*(.tests))` /
+ *    `__tests_end`），供自研框架的 `discover()` 取用例切片。那套已删；用例的元数据段
+ *    由 `embedded-test.x` 提供（`cargo-qtest` 自己加 `-Tembedded-test.x`）。
+ *
+ * 本文件其余部分——尤其是 `.rodata` **放在最后**这一条——一个字没动：主栈 guard 靠
+ * `_kernel_edge` 定位。
+ */

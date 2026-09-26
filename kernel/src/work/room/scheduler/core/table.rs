@@ -69,9 +69,9 @@ pub(super) fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
 }
 
-/// framework 档自检用：`schedulers()[i]` 的地址——与 `current()`（tp 直达）对得上，
+/// debug 档自检用：`schedulers()[i]` 的地址——与 `current()`（tp 直达）对得上，
 /// 才说明"投活的那颗核"与"读队列的那颗核"是同一个对象。见 `runtime::diagnose::ipi`。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 pub(crate) fn scheduler_addr(i: HartId) -> usize {
     core::ptr::addr_of!(schedulers()[i.get()]) as usize
 }

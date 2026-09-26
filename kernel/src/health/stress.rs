@@ -18,8 +18,8 @@
 为长期回归。
 */
 
-// 用例只在 debug / framework 档存在（与 `pagetable.rs` 同一 gate）。
-#![cfg(any(debug_assertions, feature = "framework"))]
+// 用例只在 debug 档存在（与 `pagetable.rs` 同一 gate）。
+#![cfg(debug_assertions)]
 
 use core::alloc::Layout;
 use core::ptr::NonNull;
@@ -42,7 +42,7 @@ const FRAME_STEPS: usize = 64;
 /// 幕 4 持有批大小（跨 order 分裂/合并交错；block 幕 2 的 frame 对偶）。
 const FRAME_HELD: usize = 8;
 
-pub(super) fn accept() {
+pub fn accept() {
     let a = hybrid::allocator();
     // 逐类在册数的起点：本用例全程借完即还，收尾每一类都必须回到这个数。
     let kinds_before = crate::memory::allocator::statistics::kinds();

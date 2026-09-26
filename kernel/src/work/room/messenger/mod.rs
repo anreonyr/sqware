@@ -97,7 +97,7 @@ pub(crate) use wait::site::WakeKey;
 // 转发容量：契约（定长理由、满时的回滚）写在定义处，这里只把它交给 `health::permit`
 // 那条用例——它按这个数挂满，再挂一枚看回滚。**只有那一条读者**，故与 `form_ok` 同款
 // 门控：release 档不该背一条"重导出了却没人用"的假警告。
-#[cfg(any(debug_assertions, feature = "framework"))]
+#[cfg(debug_assertions)]
 pub(crate) use wait::site::FWD_MAX;
 pub(crate) use wait::{
     fall, forward, join, knock, park, park_until, redeem, unforward, wait, wake, wipe, wipe_space,

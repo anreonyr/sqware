@@ -280,7 +280,7 @@ pub mod memory {
         ///
         /// # 两条刻意的"不镜像"（都要交代，否则读数是假的）
         ///
-        /// ① **类目表不建**：内核 debug/framework 档的 `install_frame_kinds` /
+        /// ① **类目表不建**：内核 debug 档的 `install_frame_kinds` /
         ///    `install_block_kinds` 会分配逐帧、逐页的类目表（那是回到内核的那套
         ///    标注账）。宿主 shim 里它们是**空壳** —— 本 crate 的判据不看类目（`tag!` 在宿主上
         ///    恒等），而且"一个事实只有一份账"：在宿主上再实现一遍表尺寸，必然与内核漂移。

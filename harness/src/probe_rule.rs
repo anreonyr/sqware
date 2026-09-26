@@ -104,7 +104,6 @@ use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
 
-use harness::cases;
 
 /// 本域分出来的那一块：`/sys/rule`。
 const DIR: &str = "sys";
@@ -336,70 +335,68 @@ fn main() -> Report<'static> {
     // 照实记：原先这十三条被 `&&` 成**一个** `held`，红了只知道 `probe-rule: a rule did NOT
     // hold`——还得回头看上面那 19 个计数器才认得出是哪一条。现在一例一个名字，而**名字就是
     // 结论**（每一例后面那句"为什么"，与头注里那几条同源）。
-    let mut suite = cases::Suite::new("probe-rule");
     // —— 装配：一条规矩没落上，后面全没意义。故它排第一：红了不会被后面的假红淹没。
-    suite.case("three_rules_landed", move || {
+    {{
         assert!(made == 3, "made={made}")
-    });
+    }}
     // —— 以 p 试（`p = resolve(self)`）：三条正证。
-    suite.case("is_binds_that_identity", move || assert_eq!(is, ocall::OK));
-    suite.case("under_covers_my_own_branch", move || {
+    assert_eq!(is, ocall::OK);
+    {{
         assert_eq!(under, ocall::OK)
-    });
-    suite.case("in_covers_that_league", move || {
+    }}
+    {{
         assert_eq!(inside, ocall::OK)
-    });
+    }}
     // 每一问用的都是**第二枚**孔那个号：它要是另一枚，持树者认的是第一枚，这些话全石沉大海。
-    suite.case("a_second_ask_returns_the_same_hole", move || {
+    {{
         assert!(
             ask_same,
             "先找后铸叫回来的不是同一枚孔：ask2={}",
             again.get()
         )
-    });
+    }}
     // —— `Opens` 的正负两面。
-    suite.case("opens_covers_my_own_door", move || {
+    {{
         assert_eq!(open, ocall::OK)
-    });
-    suite.case("opens_refuses_someone_elses_door", move || {
+    }}
+    {{
         assert_eq!(foreign, ocall::DENIED, "别人开着的那一格，我该被拒")
-    });
+    }}
     // —— 两格「判不了」：`9` 单列的理由正是"这一格没通"，故它**不算通过**。
-    suite.case("opens_on_a_pane_is_unjudged", move || {
+    {{
         assert_eq!(on_pane, ocall::UNJUDGED, "那一号是块 Pane：没有开者这一说")
-    });
-    suite.case("opens_on_a_trimmed_door_is_unjudged", move || {
+    }}
+    {{
         assert_eq!(on_gone, ocall::UNJUDGED, "那一格剪掉了 ⇒ 永久没有开者")
-    });
+    }}
     // —— `trim` 那一手真的落下去了（上面 `gone-door` 那一格的前提）。
-    suite.case("trimming_retires_the_plate", move || {
+    {{
         assert!(trimmed, "temp 没剪掉")
-    });
+    }}
     // —— 换一位代表（**同一条 TID**）：`adopt` 成功；两条负证、两条仍是正证。
-    suite.case("rebinding_succeeds", move || {
+    {{
         assert!(adopt, "adopt(q) 没成功")
-    });
-    suite.case("rebinding_leaves_that_identity", move || {
+    }}
+    {{
         assert_eq!(is_sub, ocall::DENIED, "换代表之后 Is(p) 该拒")
-    });
-    suite.case("leaving_the_league_is_seen", move || {
+    }}
+    {{
         assert_eq!(in_sub, ocall::DENIED, "换代表之后不在那枚盟里了")
-    });
-    suite.case("under_follows_the_branch_not_equality", move || {
+    }}
+    {{
         assert_eq!(under_sub, ocall::OK, "q 仍在 p 那一支里 ⇒ Under(p) 照旧过")
-    });
-    suite.case("opens_follows_the_opener_not_the_caller", move || {
+    }}
+    {{
         assert_eq!(
             open_sub,
             ocall::OK,
             "开者与问的是同一条 TID ⇒ 两边一起变成 q"
         )
-    });
+    }}
     // —— "改"那一轴：归属记的是**命**，换代表之后自己那一格照样改得。
-    suite.case("a_rebound_owner_can_still_change_its_own_cell", move || {
+    {{
         assert_eq!(keep, ocall::OK, "归属记的是命，换代表照样改得")
-    });
-    suite.run();
+    }}
 
     return Report::note(E_OK, OK_NOTE);
 }

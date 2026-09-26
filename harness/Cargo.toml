@@ -44,7 +44,6 @@ doctest = false
 # `#[entry]`：同上（22 台测具与产品那 6 条共用这一手）。
 mold = { path = "../crates/mold" }
 # 程序侧用例那一台（搬出去之后仍从这里转出去，见 `src/lib.rs`）。
-cases = { path = "../crates/cases" }
 env = { path = "../crates/env" }
 plan = { path = "../crates/plan" }
 runtime = { path = "../crates/runtime" }

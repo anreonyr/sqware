@@ -6,7 +6,7 @@ publish = false
 
 # image —— **造镜像那一步**：编程序（`programs` + `harness`）→ 打 initrd → 放到内核 ELF 旁。
 #
-# 它是**编外**的（根 `Cargo.toml` 的 `exclude`），与 `crates/gate` / `crates/alloc-probe` 同源：
+# 它是**编外**的（根 `Cargo.toml` 的 `exclude`），与 `crates/alloc-probe` 同源：
 # 主工作区被 `.cargo/config.toml` 钉在 riscv 上，而这一步要 std + host ABI。
 #
 # 为什么要独立一件事、而不是留在 `kernel/build.rs`：见 `src/lib.rs` 头注（用户原话

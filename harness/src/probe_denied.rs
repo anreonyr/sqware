@@ -52,7 +52,6 @@ use protocol::system::operator::{EntryId, Where};
 use alloc::format;
 
 use env::{Name, PieToken};
-use harness::cases;
 use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::mail;
@@ -127,14 +126,12 @@ fn main() -> Report<'static> {
     // 五、判据：**一例一条**（原先两格 `&&` 成一句）。名字即结论。
     let denied = land_code == ocall::DENIED;
     let unplaced = matches!(after, Err(ocall::UNKNOWN));
-    let mut suite = cases::Suite::new("probe-denied");
-    suite.case("the_landing_is_denied", move || {
+    {{
         assert!(denied, "本该被拒，land={land_code}")
-    });
-    suite.case("the_cell_is_still_free_after_the_refusal", move || {
+    }}
+    {{
         assert!(unplaced, "拒了，可那一格动过了（seek 答的不是 UNKNOWN）")
-    });
-    suite.run();
+    }}
 
     return Report::note(E_OK, OK_NOTE);
 }

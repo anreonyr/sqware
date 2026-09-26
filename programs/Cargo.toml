@@ -19,7 +19,6 @@ doctest = false
 # `#[entry]`：入口那一手的过程宏（把 main 与汇编调的符号接上，见那个 crate 的头注）。
 mold = { path = "../crates/mold" }
 # **程序侧用例那一台**（用户裁定"服务台搬进 SUT"）：服务域把自己的判据就地登记成一例一例。
-cases = { path = "../crates/cases" }
 env = { path = "../crates/env" }
 plan = { path = "../crates/plan" }
 runtime = { path = "../crates/runtime" }

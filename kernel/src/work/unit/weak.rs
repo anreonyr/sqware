@@ -27,7 +27,7 @@
 
 use alloc::sync::Weak;
 use core::ops::Deref;
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use super::task::Task;
@@ -58,7 +58,7 @@ pub(crate) enum Site {
 
 /// 全部出身（下标即 `Site::ix`）。消费者只有框架档的挂起自检（它要把槽位里
 /// 记下的出身下标还原成 `Site`）。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 const ALL: [Site; NSITE] = [
     Site::Roster,
     Site::Holder,
@@ -69,12 +69,12 @@ const ALL: [Site; NSITE] = [
     Site::Empty,
 ];
 
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 const NSITE: usize = 7;
 
 /// 编译期锁：`ALL` 手写的序必须与 `Site` 的**枚举序**逐格对齐（`ix()` 即枚举序）。
 /// 加一个出身漏改一处，读侧就会把出身认成另一个容器——账只在消息里报个错名字。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 const _: () = {
     let mut i = 0;
     while i < NSITE {
@@ -83,7 +83,7 @@ const _: () = {
     }
 };
 
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 impl Site {
     /// 出身下标 = **枚举序**（不是另一段手写 match：那会让"下标"与"枚举"各有一份事实）。
     fn ix(self) -> usize {
@@ -98,7 +98,7 @@ impl Site {
     }
 }
 
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 impl Site {
     /// 出身的人话名字（挂起自检的失败消息里点名用；消费者只有那一处）。
     fn name(self) -> &'static str {
@@ -116,24 +116,24 @@ impl Site {
 
 // ── 账 ────────────────────────────────────────────────
 //
-// 门 = `framework`：这整段的**唯一读者**是挂起自检（[`check_block_heldout`]），
-// 而自检只在用例产物里在场。账与判据同门，非框架档里连这笔原子开销都不存在
+// 门 = `debug_assertions`：这整段的**唯一读者**是挂起自检（[`check_block_heldout`]），
+// 而自检只在 debug 产物里在场。账与判据同门，release 档里连这笔原子开销都不存在
 // （`TaskWeak` 在那里退化成"只是 `Weak<Task>` 的一层出身标注"）。
 
 /// 存活清单的槽位数。存活弱引用的量级 = 在册任务/团队数（个位到几十）。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 const SLOTS: usize = 48;
 
 /// 槽位占用标志（0 = 空）；非 0 即已占。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 static SLOT_ID: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
 /// 槽位元数据：**出身 + 出生核** 两枚小整数打包成一个字（编码见 [`SlotMeta`]）——
 /// 挂起自检按"是不是**本核**出生的抄件"筛，故出生核必须记下来。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 static SLOT_META: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 /// 槽位身份序列（0 = 无效哨兵，故自 1 起）。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 /// 位打包的唯一一扇门：出身在低 `SITE_BITS` 位，出生核占其余高位。
@@ -144,18 +144,18 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 ///
 /// **照实记**：`pack(Site::Roster, HartId::new(0))` 编出来也是 `0`，与"空元数据"同字。
 /// 不冲突：`Site::Empty` 从不记账（`counted()` 为假），且读侧只在 `SLOT_ID != 0` 时读它。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 #[derive(Clone, Copy)]
 struct SlotMeta(usize);
 
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 const SITE_BITS: u32 = 8;
 
 /// 编译期锁：出身下标必须装得进低 `SITE_BITS` 位。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 const _: () = assert!(NSITE <= 1 << SITE_BITS);
 
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 impl SlotMeta {
     /// 空态（清槽用）。
     const EMPTY: SlotMeta = SlotMeta(0);
@@ -207,9 +207,9 @@ impl TaskWeak {
     /// **住进容器**：`site` 说明是哪张表（名册 / 票根 / 团队簿记 / 血亲）。
     pub(crate) fn stored(w: Weak<Task>, site: Site) -> TaskWeak {
         // 记账只在框架档：账的读者是挂起自检（同门）。
-        #[cfg(feature = "framework")]
+        #[cfg(debug_assertions)]
         let id = if site.counted() { record(site) } else { 0 };
-        #[cfg(not(feature = "framework"))]
+        #[cfg(not(debug_assertions))]
         let id = 0;
         TaskWeak { w, id, site }
     }
@@ -242,7 +242,7 @@ impl Deref for TaskWeak {
 impl Drop for TaskWeak {
     fn drop(&mut self) {
         // 销账与记账同门（`stored`）：非框架档 `id` 恒 0，这一整段不在产物里。
-        #[cfg(feature = "framework")]
+        #[cfg(debug_assertions)]
         if self.id != 0 {
             for i in 0..SLOTS {
                 if SLOT_ID[i].load(Relaxed) == self.id {
@@ -261,7 +261,7 @@ impl Drop for TaskWeak {
 /// 抢槽用 CAS：`SLOT_ID` 为 0 是唯一空态，非 0 即已占。多核同时抢同一格只会有
 /// 一个成功（失败者继续扫下一格）。槽满只是"这一枚没记下出身"（挂起自检漏看它），
 /// 不影响任何分配语义。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 fn record(site: Site) -> usize {
     let id = NEXT_ID.fetch_add(1, Relaxed);
     let meta = SlotMeta::pack(site, crate::hart::hart_id());
@@ -296,7 +296,7 @@ fn record(site: Site) -> usize {
 ///
 /// 本核栈上存在出身是抄件的存活弱引用 → panic（fail-fast，crash scene 里能看到
 /// `block` 的挂起点与这里的出身）。
-#[cfg(feature = "framework")]
+#[cfg(debug_assertions)]
 pub(crate) fn check_block_heldout() {
     let me = crate::hart::hart_id();
     for i in 0..SLOTS {

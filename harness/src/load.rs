@@ -12,8 +12,11 @@
 //! # 怎么跑它（**核数就是这条债的开关**）
 //!
 //! ```text
-//!   QEMU_SMP=1 crates/gate/tests/load.rs 1 --release     # 机制隔离档：一核，没有第二颗核能替全局兑现
-//!   QEMU_SMP=4 crates/gate/tests/load.rs 1 --release     # 有核空闲 ⇒ 债被"空闲核按 due() 武装"盖住
+//!   QEMU_SMP=1 cargo image load debug && cargo run   # 机制隔离档：一核，没有第二颗核能替全局兑现
+//!   QEMU_SMP=4 cargo image load debug && cargo run   # 有核空闲 ⇒ 债被"空闲核按 due() 武装"盖住
+//!
+//! （**照实记**：这两行原先指向 `crates/gate/tests/load.rs` 那扇门——那台已删，
+//!  用户裁定"迁移到 embedded-test"。今天没有自动跑这一台的判据，只能手起。）
 //! ```
 //!
 //! 为什么单核才对：`redeem`/`drain` 是**全局**的，而**任何一颗空闲核**都会按 `due()` 武装、
@@ -27,7 +30,7 @@
 //! 故这里不再引它。
 //!
 //! **环境口径（已对齐）**：下面那张表**在 `QEMU_ICOUNT=`（关掉 icount）下重取过**，
-//! 与验收门同一个环境（`crates/gate/tests/load.rs` 显式关掉 icount）。照实记一笔：这条债量的钟是
+//! 与验收同一个环境（显式 `QEMU_ICOUNT=` 关掉 icount）。照实记一笔：这条债量的钟是
 //! **本核的到点武装**，不是 WFI/IPI 那个被 icount 节流的钟——重取后的单核档两边读数与
 //! 当初 icount 开时**同值**（97 / 99 ms）；变的只有 `traps`（645 → 643，±2 的计数噪声）。
 //!

@@ -106,7 +106,7 @@ impl Frames {
     }
 
     /// 该页是否在册（唯一读者是 [`Self::is_materialized`] 的 Lazy 支，故门同它）。
-    #[cfg(any(debug_assertions, feature = "framework"))]
+    #[cfg(debug_assertions)]
     pub(super) fn contains(&self, page: usize) -> bool {
         let at = self.v.partition_point(|(k, _)| *k < page);
         matches!(self.v.get(at), Some((k, _)) if *k == page)
@@ -114,10 +114,10 @@ impl Frames {
 
     /// 页序迭代（键 + 帧）。**不分配**。
     ///
-    /// 门跟着读者走：唯一读者是 `SpaceInner::audit`（`debug_assertions` /
-    /// `framework` 两档），release 档下它连类型都不该被编出来——否则就是零警告
+    /// 门跟着读者走：唯一读者是 `SpaceInner::audit`（`debug_assertions` 档），
+    /// release 档下它连类型都不该被编出来——否则就是零警告
     /// 纪律下的一个死方法。
-    #[cfg(any(debug_assertions, feature = "framework"))]
+    #[cfg(debug_assertions)]
     pub(super) fn iter(&self) -> impl Iterator<Item = (usize, &Frame)> {
         self.v.iter().map(|(k, f)| (*k, f))
     }
@@ -235,7 +235,7 @@ impl Map {
     /// - `Some(Guard)` → 永不物化 → false。
     ///
     /// 运行路径（拆除 / 改权）不用点查询逐页问，用 [`Self::runs`] 的段枚举。
-    #[cfg(any(debug_assertions, feature = "framework"))]
+    #[cfg(debug_assertions)]
     pub(super) fn is_materialized(&self, idx: usize) -> bool {
         match self.pending {
             None => true,

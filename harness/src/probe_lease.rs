@@ -37,7 +37,6 @@ use protocol::system::operator::client as operator;
 use alloc::format;
 
 use env::Name;
-use harness::cases;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -94,11 +93,9 @@ fn main() -> Report<'static> {
 
     // 判据：**一例**（这一台只有一条：牌落上了；落完就退场，把那一格留成"没主"）。
     let ok = landed.is_ok();
-    let mut suite = cases::Suite::new("probe-lease");
-    suite.case("the_plate_landed", move || {
+    {{
         assert!(ok, "牌没落上（land 答的是码，见上面那一行读数）")
-    });
-    suite.run();
+    }}
 
     return Report::note(E_OK, OK_NOTE);
 }

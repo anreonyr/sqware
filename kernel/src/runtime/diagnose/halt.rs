@@ -121,13 +121,17 @@ pub(crate) fn scene() -> (usize, usize) {
 
 #[panic_handler]
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
-    // 两条出口按**状态**挑，不是 cfg 二选一：用例体的执行期里 panic 是"用例失败"——
-    // 报哪一例、断言说了什么，比一百行现场有用；其余时候 panic 是内核缺陷，走崩溃转储。
-    // 自检（挂起自检 / 帧范围 / 簿记↔页表）会在**会话期**响，那时"哪一例"是句假话，
-    // 故 `runner` 跑完用例即把当前用例归零。
-    #[cfg(feature = "framework")]
-    if !crate::framework::running().is_empty() {
-        crate::framework::case_failed(info)
+    // 两条出口按**状态**挑，不是 cfg 二选一：跑用例期间 panic 是"这一例失败"——交给
+    // semihosting abort，runner 据此判红（退出码经 QEMU 传回去）；其余时候 panic 是内核
+    // 缺陷，走崩溃转储。
+    //
+    // **照实记（这一格随自研框架换过一次形状）**：原先这里问的是 `framework::running()`
+    // ——`.tests` 段里"当前在跑哪一例"的那个指针。框架删掉之后（用户裁定"迁移到
+    // embedded-test"），内核**不必**知道是哪一例（名字由 embedded-test 经 semihosting 给），
+    // 只要知道"现在在跑用例" ⇒ 一格的布尔，由测试目标的 `#[init]` 经 `kernel::testing_mode()`
+    // 发布。自检（挂起自检 / 帧范围 / 簿记↔页表）在**会话期**响，那时这一格是假的 ⇒ 走现场。
+    if crate::testing() {
+        semihosting::process::abort()
     }
     crash_scene(info)
 }

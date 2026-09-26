@@ -5,7 +5,7 @@
 // 2×L0 + 1×L1，根槽 = 1）；unmap → 回落；32 轮后「在途帧块 − 堆支撑页」回到轮前。
 // 断言用 `expect!`：失败统一报告 + fail-fast。
 
-#![cfg(any(debug_assertions, feature = "framework"))]
+#![cfg(debug_assertions)]
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -16,7 +16,7 @@ use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::SpaceBuilder;
 
 /// PT 回收自测：map/unmap 循环验证中间表当场归还。
-pub(super) fn pagetable() {
+pub fn pagetable() {
     // 表数期望随模式层级（4 MiB = 2×L0 + 每层一个中间表 = 共 levels 张表）。
     let levels = crate::memory::manager::mode::geometry(crate::memory::manager::mode::mode()).levels
         as usize;

@@ -29,7 +29,7 @@
 //!      `hung=2 woke=2 deliver=true control=true` ⇒ PASS
 //! ```
 //!
-//! # 判据（末行 `group: PASS`；脚本 `crates/gate/tests/group.rs` 只看这一行 + 停机行）
+//! # 判据（末行 `group: PASS`；脚本 `crates/gate/tests/group.rs`（已删）只看这一行 + 停机行）
 //!
 //! - `hung=2`：两人都挂上了（组键上**真的有两个等待者**）；
 //! - `woke=2`：**一次投信两人都被放行**——这就是"整链放行"。**退回单播时这里会是 1**
@@ -67,7 +67,7 @@
 //! # 怎么跑它
 //!
 //! ```text
-//!   crates/gate/tests/group.rs            # 默认 3 轮，判据见上
+//!   cargo image group && cargo run        # 手跑（原先是 `crates/gate/tests/group.rs` 那扇门，已删）
 //!   cargo image group && QEMU_ICOUNT= cargo run --release   # 与验收门同环境（手跑）
 //! ```
 

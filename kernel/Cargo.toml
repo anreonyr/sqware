@@ -9,28 +9,40 @@ default = []
 # sqware-diagnose.jsonl 落在 qemu CWD，runner 归档）。**非默认**（`default = []`，
 # 要开须显式 `--features semihosting`）——旧注写「默认开启（default 引入）」与
 # manifest 相反。另注意 qemu 侧的 `-semihosting` 只在 `QEMU_SEMI=1` / `QEMU_FEATURES`
-# 含 semihosting 时才加（`scripts/boot.nu`，**只管 QEMU 侧**），而 `crates/gate/tests/examine.rs`
-# 的两档都不带头文件 feature ⇒ 门跑过的产物没有结构化导出。
+# 含 semihosting 时才加（`scripts/qemu-args.nu`，**只管 QEMU 侧**），而造镜像与测试路
+# 都不带这个头文件 feature ⇒ 那些产物没有结构化导出。
 semihosting = []
-# 内核内测试框架（framework/ + health/ 的用例 + link.ld 的 `.tests` 段）。
-# **非默认、且不在任何别的档里**。它管三件事，因为它们是**同一批读者**：
-#   ① 启用用例（`.tests` 段登记）；
-#   ② panic 通道按**状态**挑出口（用例体执行期 → 报哪一例失败；其余 → 崩溃转储，
-#      见 `halt.rs`）；
-#   ③ **自检**（挂起自检 / 帧取还范围 / 簿记↔页表双向核对，以及自检的数据源——
-#      `weak` 的出身槽位账）。
-# ③ 跟着 ① 走而不是跟着 `debug_assertions` 走，是用户裁决：**判据只有一个通道，
-# 就是 framework 档**。`debug_assertions` 那条门管的是另一件事 —— 断言与**现场读数**
-# （锁序、数字不变量、挂住现场的三读数），它在 harden/framework 两个 profile 里都开。
+# **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原先有一格
+# `framework = []`——自研的内核内测试框架：`.tests` 段登记 + 逐例打点，**外加**它顺带
+# 管着的自检数据源（挂起自检 / 帧取还范围 / 簿记↔页表，见 `weak.rs`、`statistics.rs`、
+# `space/*` 里那些 `cfg`）。
 #
-# 拆成两个 feature 只会造出无意义的四象限（登记了却走崩溃转储 / 没登记却报用例失败）。
-framework = []
+# 拆法：**登记与打点**搬去 `embedded-test`（`tests/embedded.rs` + `nu scripts/qtest.nu`）；
+# 那些 `cfg(any(debug_assertions, feature = "framework"))` 全部收成 `cfg(debug_assertions)`
+# ——**自检并进断言那一档**，它本来就只在 debug 里有实体。故这一格没有读者，删。
+
+[lib]
+path = "src/lib.rs"
+# **与 `protocol` / `contract` 同款，理由同**：riscv 目标上编不出 libtest（它要 std）。
+# `cargo test` 会把 lib 也编成一个测试目标 ⇒ 不关就是 `E0463: can't find crate for test`。
+# 关掉的是"lib 自身当测试目标"，**不影响** `[[test]] embedded`（集成测试是另一个目标）。
+test = false
+bench = false
+doctest = false
 
 # **这里原先有一格 `[build-dependencies] env`**（照实记）：那时 `build.rs` 自己打 initrd、
 # 读清单格式。②③④ 搬去 `crates/image` 之后（见 `build.rs` 头注），本脚本只剩"把链接脚本
 # 交给 rustc"，故那一格**没有读者**——内核读 initrd 是**开机时**的事
 # （`src/platform/initrd.rs`），那归下面的 `[dependencies]`，不归构建脚本。本笔删掉它。
 [dependencies]
+# 提供 `embedded-test.x`（`cargo-qtest` 自己会加 `-Tembedded-test.x`，本格供出那个 `-L`）。
+#
+# **照实记（为什么它在 `[dependencies]` 而不是 dev）**：实测过放 dev 的版本——`-L` **传不到
+# bin 的链接**（bin 不是测试目标，dev 依赖不在它的图里），而 `cargo-qtest` 的
+# `-Tembedded-test.x` 是加给**整次构建**的（bin 也吃）⇒ `rust-lld: cannot find linker
+# script embedded-test.x`。上游 README 也是这么写的：它那片脚本必须住 `[dependencies]`。
+embedded-test-linker-script = "0.1"
+
 env = { path = "../crates/env" }
 plan = { path = "../crates/plan" }
 sbi = { path = "../crates/sbi" }
@@ -65,3 +77,20 @@ path = "src/main.rs"
 test = false
 bench = false
 doctest = false
+
+# 内核内用例的登记与逐例打点（`embedded-test`）。
+# `harness = false`：我们不要 libtest，要 embedded-test 自己那套 runner 协议。
+[[test]]
+name = "embedded"
+path = "tests/embedded.rs"
+harness = false
+
+[dev-dependencies]
+# **dev，不是 dependencies**——这一格是有讲究的：普通构建里 embedded-test 根本不在场，
+# 于是 `src/main.rs` 那个 `#[no_mangle] fn main` 与它导出的 `#[export_name = "main"]`
+# **永不同框**（测试目标不链 bin：`[[bin]] test = false`）。
+#
+# `default-features = false`：默认那套带 `panic-handler`，它会定义 `#[panic_handler]`，
+# 与内核自己那一个（`runtime::diagnose::halt`）直接撞。取 `semihosting` 是因为
+# `embedded-test` 的 `hosting` 模块**必须**有一个传输实现（std / semihosting 二选一）。
+embedded-test = { version = "0.7", default-features = false, features = ["semihosting"] }

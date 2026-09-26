@@ -45,8 +45,9 @@
 //!
 //! **照实记（这一族的帧边角今天仍没有跑着的判据）**：本文件住**驱动自己那一片目录**（见下一
 //! 段），而 `programs → protocol → runtime` 在宿主上编不成（`runtime/src/core/tls.rs` 那两行
-//! riscv 内联汇编）⇒ 宿主那一侧够不着它。真路只有
-//! `cargo gate -- --ignored` 那扇 `soak` 门（真客人 `harness/src/sleeper.rs` 走：`Now`→[`Time`]、
+//! riscv 内联汇编）⇒ 宿主那一侧够不着它。真路只有**人工起一趟**（`cargo image` + `cargo run`
+//! ——**照实记**：原先由 `crates/gate` 那扇 `soak` 门自动跑，那台已删。真客人
+//! `harness/src/sleeper.rs` 走：`Now`→[`Time`]、
 //! `Arm`→[`Status`]`(OK)`、再约一次→[`Status`]`(TAKEN)`、到点→[`Time`]）。**够不着的是畸形帧**
 //! ——长短不对 / 动作码不认 / 答话那一格长度不对：判据与手写那版**一字不改**，但它今天仍是
 //! "写着的规格"。要让它有跑着的判据，唯一的路是把帧挪进「约」（`contract`），而

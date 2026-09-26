@@ -304,7 +304,7 @@ impl Principal {
 
 // ── 本文件没有一行测试（用户裁定"protocol-case 没必要"）────────────────
 //
-// 那台编外宿主靶（`roster` 靶里 `principal_core` 那一格）连同 `crates/gate` 的 `host` 那一门
+// 那台编外宿主靶（`roster` 靶里 `principal_core` 那一格）连同 `crates/gate`（已删）的 `host` 那一门
 // 已删。原先那七条用例本来就是"编不到、也跑不到"的规格（`protocol` 是 `[lib] test = false`，
 // riscv 上编不出 libtest）——它们**短暂地**被跑起来过（从宿主靶开始），如今又回到只有写着的
 // 规格。真机上另有探针那几条（`harness/src/subject.rs`）。

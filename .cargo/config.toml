@@ -10,8 +10,8 @@ rustflags = ["-Crelocation-model=static", "-Cforce-frame-pointers=yes", "-Ccode-
 runner = ["nu", "scripts/runner.nu"]
 
 [alias]
-# 门（`crates/gate`）那一台是**编外**的：它要 std + host ABI，而本工作区被上面那两行钉在
-# 造镜像那一步（`crates/image`）——**编内核之外**（用户裁定"initrd 与 kernel 何干"）：
+# 造镜像那一步是**编外**的：它要 std + host ABI，而本工作区被上面那两行钉在
+# riscv 上——**编内核之外**（用户裁定"initrd 与 kernel 何干"）：
 #
 #   cargo image               默认 root / release
 #   cargo image rig debug     指定场景与档
@@ -19,10 +19,12 @@ runner = ["nu", "scripts/runner.nu"]
 # `cargo run` 只管编内核；交互式跑之前先来这一下（`scripts/runner.nu` 会查镜像在不在）。
 image = "run --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linux-gnu --"
 
-# 门那一台要在**宿主 target** 上跑（`--target x86_64-unknown-linux-gnu` 就是"宿主"两个字的
-# 落点）。一门一条 `#[test]`，故：
+# **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原有一条
+# `gate` 别名，跑 `crates/gate` 那一台（9 扇 QEMU 门 + 装配单门 + `soak` 读数表）。
+# 那一台连同别名整个删了。内核内用例现在这样跑：
 #
-#   cargo gate                       快门——不起机那一门（装配单），秒级
-#   cargo gate -- --ignored          要起 QEMU 的那几门
-#   cargo gate -- --include-ignored  全量（含要起 QEMU 的那几门）
-gate = "test --manifest-path crates/gate/Cargo.toml --target x86_64-unknown-linux-gnu"
+#   nu scripts/qtest.nu --package kernel
+#
+# 它**不是 cargo 别名**——因为测试路的 QEMU 参数要从 `scripts/qemu-args.nu` 那张**唯一
+# 出处**读出来（runner 自带的命令行与本仓的口径差 `-bios SBI.bin` / `-m 256M`），
+# 而 cargo 别名做不了"读一张表再拼参数"。那一层转发见 `scripts/qtest.nu` 的头注。

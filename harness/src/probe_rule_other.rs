@@ -51,7 +51,6 @@ use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken};
-use harness::cases;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::session::Quay;
@@ -108,17 +107,15 @@ fn main() -> Report<'static> {
     ));
 
     // 四、判据：**一例一条**——三格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
-    let mut suite = cases::Suite::new("probe-rule-other");
-    suite.case("a_foreign_identity_cannot_use_the_is_cell", move || {
+    {{
         assert_eq!(is, ocall::DENIED)
-    });
-    suite.case("nor_the_under_cell", move || {
+    }}
+    {{
         assert_eq!(under, ocall::DENIED)
-    });
-    suite.case("nor_a_cell_pointing_at_someone_elses_door", move || {
+    }}
+    {{
         assert_eq!(foreign, ocall::DENIED)
-    });
-    suite.run();
+    }}
 
     return Report::note(E_OK, OK_NOTE);
 }

@@ -47,7 +47,6 @@ use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::{Fail, PrincipalId};
 use protocol::session::Quay;
-use cases::Suite;
 use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -84,64 +83,63 @@ fn main() -> Report<'static> {
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——下面每一例的期望，
     // 都是本域头注那 14 步里写着的那一句（旧宿主靶上 `policy: …` 那 12 条钉的就是它们）。
     // 台名 = 本域打的那个前缀，门按它钉逐台基线。
-    let mut suite = Suite::new("policy");
 
     // 二、三态的头两格。
     let no_sire = face.sire(PrincipalId::ROOT, Wait::AtMost(MS));
     say(&format!("policy: sire(root)={}", one_opt(no_sire)));
     let sired = face.sire(p, Wait::AtMost(MS));
     say(&format!("policy: sire(me)={}", one_opt(sired)));
-    suite.case("the_root_has_no_sire_and_that_is_not_unknown", move || {
+    {{
         assert_eq!(no_sire, Ok(None))
-    });
-    suite.case("the_sire_of_this_identity_is_the_root", move || {
+    }}
+    {{
         assert_eq!(sired, Ok(Some(PrincipalId::ROOT)))
-    });
+    }}
 
     // 三、自反。
     let reflexive = face.heir(p, p, Wait::AtMost(MS));
     say(&format!("policy: heir(me,me)={}", flag(reflexive)));
-    suite.case("being_an_heir_is_reflexive", move || {
+    {{
         assert_eq!(reflexive, Ok(true))
-    });
+    }}
 
     // 四、向下派生一条自己的子身份。
     let sub = face.derive(p, Wait::AtMost(MS));
     say(&format!("policy: derive(me)={}", one(sub)));
     let child = sub.ok();
-    suite.case("a_child_identity_can_be_derived", move || assert!(sub.is_ok()));
+    assert!(sub.is_ok());
 
     // 五、否定：子代不是祖先（拿刚派生出来的那一条问）。
     let not_ancestor = child.map(|q| face.heir(q, p, Wait::AtMost(MS)));
     if let Some(r) = not_ancestor {
         say(&format!("policy: heir(sub,me)={}", flag(r)));
     }
-    suite.case("a_child_is_not_an_ancestor", move || {
+    {{
         assert_eq!(not_ancestor, Some(Ok(false)))
-    });
+    }}
 
     // 六、第三态：树外的号。
     let out_heir = face.heir(PrincipalId::new(OUTSIDE), p, Wait::AtMost(MS));
     say(&format!("policy: heir(out,me)={}", flag(out_heir)));
-    suite.case("an_identity_outside_the_tree_answers_unknown", move || {
+    {{
         assert!(matches!(out_heir, Err(Fail::Unknown)))
-    });
+    }}
 
     // 七、越权一趟：名册只有装配者能写，本域不是它。
     let bound = face.bind(me, p, Wait::AtMost(MS));
     say(&format!("policy: bind(self)={}", done(bound)));
-    suite.case("writing_the_roster_myself_is_denied", move || {
+    {{
         assert!(matches!(bound, Err(Fail::Denied)))
-    });
+    }}
 
     // ── 转换那两条（刀 2）────────────────────────────────────
     let Some(q) = child else { return bail("subject: no sub identity") };
     // 八、领：换到自己刚派生出来的那一支里（`sub` 一定在 `p` 那一支里）。
     let adopted = face.adopt(q, Wait::AtMost(MS));
     say(&format!("policy: adopt(sub)={}", done(adopted)));
-    suite.case("adopting_my_own_child_is_allowed", move || {
+    {{
         assert!(adopted.is_ok())
-    });
+    }}
 
     // 九、名册真的改了（不是打个印记）。
     let led = face.resolve(me, Wait::AtMost(MS));
@@ -150,28 +148,28 @@ fn main() -> Report<'static> {
     // 十、**钥匙反证**：已不代表 `p`，故"从 `p` 派生"被拒。
     let stale = face.derive(p, Wait::AtMost(MS));
     say(&format!("policy: derive(old)={}", one(stale)));
-    suite.case("a_stale_key_is_denied", move || {
+    {{
         assert!(matches!(stale, Err(Fail::Denied)))
-    });
+    }}
 
     // 十一、向上 / 跨支：`p` 是 `sub` 的父，不在 `sub` 那一支里。
     let up = face.adopt(p, Wait::AtMost(MS));
     say(&format!("policy: adopt(up)={}", done(up)));
-    suite.case("adopting_upwards_is_denied", move || {
+    {{
         assert!(matches!(up, Err(Fail::Denied)))
-    });
+    }}
 
     // 十二、树外。
     let outside = face.adopt(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
     say(&format!("policy: adopt(out)={}", done(outside)));
-    suite.case("adopting_an_identity_outside_the_tree_answers_unknown", move || {
+    {{
         assert!(matches!(outside, Err(Fail::Unknown)))
-    });
+    }}
 
     // 十三、弃：回到装配给我的那一条（不删格）。
     let waived = face.waive(Wait::AtMost(MS));
     say(&format!("policy: waive={}", done(waived)));
-    suite.case("waiving_is_allowed", move || assert!(waived.is_ok()));
+    assert!(waived.is_ok());
 
     // 十四、回到起点。
     let back = face.resolve(me, Wait::AtMost(MS));
@@ -182,11 +180,10 @@ fn main() -> Report<'static> {
     // **照实记（这一条原先住在宿主靶上）**：它是 `soak::verdict` 里那段 `values(...)` 比较 ——
     // 宿主数了三行、比了两个关系；而那三行是**本域自己打的**，本域当然也知道它们该是什么关系。
     // 搬进来之后宿主那一侧不必再数那三行（见四处那一段的改动）。
-    suite.case("adopting_moves_the_name_and_waiving_puts_it_back", move || {
+    {{
         assert_ne!(led, mine);
         assert_eq!(back, mine);
-    });
-    suite.run();
+    }}
 
     return Report::note(E_OK, "subject: done");
 }

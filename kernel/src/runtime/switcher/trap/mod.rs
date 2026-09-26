@@ -194,8 +194,8 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         // 帧仅一份，不搬即被下一次 trap 覆写，被抢占内核任务现场丢失。
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             timer::tick();
-            // IPI 自检的负载期采样点（framework 档；见 `runtime::diagnose::ipi`）。
-            #[cfg(feature = "framework")]
+            // IPI 自检的负载期采样点（debug 档；见 `runtime::diagnose::ipi`）。
+            #[cfg(debug_assertions)]
             crate::runtime::diagnose::ipi::tick_hook();
             // 闸门重开：外部中断的闸门是零状态的
             // ——槽满时关掉本 hart 的 SEIE，下一个 timer tick **无条件**重开。病态情形

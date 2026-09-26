@@ -46,12 +46,6 @@
 
 extern crate alloc;
 
-/// **用例与运行器**（程序侧那一台）——用户裁定"服务台搬进 SUT"那一刀之后，它搬去了**自己
-/// 一个 crate**（`crates/cases`）：`harness` 依赖 `programs`，而十台服务域住在 `programs` 里
-/// ⇒ 两边都要用的东西不能住在本 crate（会成环）。这里只**把它转出去**，故探针那 6 份的
-/// `use harness::cases;` 一个字不用改（那份文件的头注也跟着搬过去了）。
-pub use cases;
-
 /// 压测台共用的**测时与空转**（各台互不依赖，共享的只有这一份"怎么量时间"）。
 pub mod tick;
 

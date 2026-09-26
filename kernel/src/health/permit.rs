@@ -12,7 +12,7 @@
 //     不留"挂着却叫不醒"的半截状态（`permit::fanout`）。
 //   · **取用顺序**：死活先于权限——同一个已封印的 token 不因动词换答案
 //     （`permit::order`）。
-#![cfg(any(debug_assertions, feature = "framework"))]
+#![cfg(debug_assertions)]
 
 use alloc::vec::Vec;
 
@@ -27,7 +27,7 @@ use crate::work::unit::space::SpaceBuilder;
 use crate::work::unit::team::TeamBuilder;
 
 /// 形态位：一致才放行；`ONLY` 不可撤（自持枚与借入枚同罪）。
-pub(super) fn form() {
+pub fn form() {
     let shared = Permission::FETCH | Permission::STORE | Permission::VEST;
     let sole = shared | Permission::ONLY;
 
@@ -92,7 +92,7 @@ pub(super) fn form() {
 ///
 /// 收尾顺带走一遍组的 `Drop`（撤全部转发登记 + `wipe` 自己的键）——那正是"组没了，
 /// 成员那一侧不该再记得它"那条契约的落点。
-pub(super) fn members() {
+pub fn members() {
     let group = tole::meta(TaskId::new(0));
     let mark = Mark::of("mate");
     let hole = hole::meta(TaskId::new(0), mark);
@@ -153,7 +153,7 @@ pub(super) fn members() {
 ///
 /// 组用 `Vec` **持着**：`ToleMeta::drop` 会撤掉自己那格转发登记，松了手容量就白测。
 /// 「满」是**容量**账（同一枚成员被多少个组关心），不是内存不足——见 `FWD_MAX` 定义处。
-pub(super) fn fanout() {
+pub fn fanout() {
     let mark = Mark::of("member");
     let hole = hole::meta(TaskId::new(0), mark);
     let mate = Mate::Hole(hole.id(), HoleDir::Pull);
@@ -197,7 +197,7 @@ pub(super) fn fanout() {
 ///   ③ `locate` 不过闸：已封印的那一枚也定位得到（`Release` / `Reserve` 靠它活着）。
 ///
 /// 收尾照 `shell` 那两步簿记清理——留下的未放行线程会让"所有任务都退场"永远不成立。
-pub(super) fn order() {
+pub fn order() {
     const USER_BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("order: build space");
     space.with_flush(|inner| inner.dynamic(USER_BASE));

@@ -6,9 +6,9 @@
 //     再全部归还——余量须还原到演练前（分配/释放/合并闭环无泄漏）。
 // 断言用 `expect!`（health 专用宏）：失败统一报告 + fail-fast。
 
-// 用例只在 debug / framework 档存在（与 `pagetable.rs` 同一 gate）：这一档才有
+// 用例只在 debug 档存在（与 `pagetable.rs` 同一 gate）：这一档才有
 // 消费者调用它，其余档里编进去就是一段没人跑、也没人读的代码。
-#![cfg(any(debug_assertions, feature = "framework"))]
+#![cfg(debug_assertions)]
 
 use core::alloc::{Allocator, Layout};
 use core::ptr::NonNull;
@@ -22,7 +22,7 @@ use crate::memory::allocator::statistics;
 use crate::runtime::diagnose::trace;
 
 /// spare 预算验收（用例体；登记在 `mod.rs` 的 `test!` 块）。
-pub(super) fn accept() {
+pub fn accept() {
     let h = hart::hart_count();
     let ring = trace::ring_bytes(h);
 

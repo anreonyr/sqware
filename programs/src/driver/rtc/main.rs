@@ -84,7 +84,6 @@ use protocol::system::board::client as board;
 
 use alloc::format;
 
-use cases::Suite;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::driver::line;
 use protocol::session::Quay;
@@ -210,7 +209,7 @@ fn main() -> Result<(), fail::Fail> {
 /// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（用户裁定甲′）：那一格是"客人
 /// 交进来的那一枚**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——否则客人
 /// 能让本域往**别人的孔**里写。旧写法是扫全表按 `(谁给的, 记号)` 找（每帧 ~6.5 ms，表 16 枚
-/// 时 O(n²)，读数量在 `crates/gate` 的 soak 那一门）。
+/// 时 O(n²)，读数量在 `crates/gate`（已删）的 soak 那一门）。
 ///
 /// **拒了的那一趟也要收尾**：那一枚孔不在任何账上（那一格根本没占上），此后没人会替它收
 /// ⇒ 答完当场放下。这与线那一刀 `drop_lane` 是同一条纪律、同一个理由。
@@ -266,7 +265,7 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
                     // 打，于是"sleeper 那台偶尔少一台"只剩客人侧一句 `alarm err=2`——**迟到
                     // 多少**量不出来。这一行把那格交出来：`late_ns` = 我拿自己的钟比对时 `at`
                     // 已经过去了多久（`Past` 那一支 `at <= now`，故它 ≥ 0；`Taken` 那一支
-                    // `at` 还在前头，按 0 记）。形状声明在 `crates/gate/src/soak.rs` 的读数表里。
+                    // `at` 还在前头，按 0 记）。形状声明在 `crates/gate/src/soak.rs`（已删）的读数表里。
                     //
                     // **照实记（它为什么在发答话之后）**：第一版排在那一手之前（那时是裸
                     // `push`，今天是船台的 `ship`），而 `say` 是**同步 UART**（一行 ~1 ms）——
@@ -343,19 +342,17 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    let mut suite = Suite::new("rtc-tree");
-    suite.case("the_device_directory_answered", move || {
+    {{
         assert_eq!(part, ocall::OK)
-    });
-    suite.case("the_plate_landed", move || assert_eq!(land, ocall::OK));
-    suite.case("the_plate_was_found_by_id", move || {
+    }}
+    assert_eq!(land, ocall::OK);
+    {{
         assert_eq!(find, ocall::OK)
-    });
-    suite.case("the_shipped_plate_came_back", move || assert!(got));
-    suite.case("the_id_and_the_name_agree", move || {
+    }}
+    assert!(got);
+    {{
         assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
-    });
-    suite.run();
+    }}
 }
 
 /// 从树上找到线路由者，把本域那条线登记下来。

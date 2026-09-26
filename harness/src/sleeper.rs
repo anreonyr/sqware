@@ -53,7 +53,6 @@ use protocol::session::Quay;
 use programs::driver::rtc::call as rcall;
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
-use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room;
@@ -158,16 +157,14 @@ fn main() -> Report<'static> {
     // 那一行就恒等于 0，所以"它是 0"是**控制流证据**，不是判据；把它写成
     // `assert_eq!(armed_code, 0)` 就是把 `bail` 改个名字（这一格是写的时候当场撞上的：
     // 第一版写了 `assert!(armed.is_ok())`，而 `armed` 根本不是 `Result`）。
-    let mut suite = Suite::new("sleeper");
-    suite.case("the_board_took_my_name", move || {
+    {{
         assert_eq!(reg, bcall::OK)
-    });
+    }}
     // 照实记：`arming_the_past_is_refused` 那一例随 `Wire::Arm` 收相对量而退场（"过去"
-    // 不可表达）——判据数 3 → 2，`crates/gate/src/soak.rs` 那张表跟着改。
-    suite.case("the_slot_is_already_mine", move || {
+    // 不可表达）——判据数 3 → 2，`crates/gate/src/soak.rs`（已删）那张表跟着改。
+    {{
         assert_eq!(taken, rcall::TAKEN)
-    });
-    suite.run();
+    }}
 
     return Report::note(env::EXIT_OK, "sleeper: gone");
 }

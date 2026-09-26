@@ -118,7 +118,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, F
         // 最近活到点)"这一式已在四处收成一个家（`timer::beat_until`）。实测（icount 关、
         // release）：6 打点者档把它关掉，**毫秒那几格一字不变**（`late_n=281 late_avg=0
         // late_max=0`），只有亚毫秒那格不同（关掉 744 µs / 留着 396 µs）、`traps` 差 2；
-        // **删掉之后**单核隔离档（`QEMU_SMP=1 crates/gate/tests/load.rs --release`，3 轮）仍是
+        // **删掉之后**单核隔离档（`QEMU_SMP=1 crates/gate/tests/load.rs --release`（已删），3 轮）仍是
         // `late_n=81 late_avg=0 late_max=0`（`late_max_tick` 2631~4689、`traps=643`，与留着
         // 那句时同档）——逐条读数见 `programs/.../stress/load.rs` 的表。
         //
@@ -180,9 +180,9 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, F
         void(ticket);
         rise(core::iter::once(task));
     }
-    // **挂起前自检**（framework）：此刻本核栈上不该还压着任何"抄件"弱引用 —— 压着就说明
+    // **挂起前自检**（`debug_assertions` 档）：此刻本核栈上不该还压着任何"抄件"弱引用 —— 压着就说明
     // 有引用跨过了挂起，而这条调用链一旦被弃，它的 `Drop` 永不执行（见 `weak`）。
-    #[cfg(feature = "framework")]
+    #[cfg(debug_assertions)]
     crate::work::unit::weak::check_block_heldout();
     // 本核无后继即就地取活：`run()` 只会循环到有帧或停机，故落点恒为 `Switch`。
     Ok(Handoff::Switch(next_pa.unwrap_or_else(run)))
@@ -547,7 +547,7 @@ pub(crate) fn wipe_space(space: Asid) -> usize {
 ///
 /// **只接"一次事件只兑现一个等待者"的键**（成员键、`Pies`）——组键走 [`knock`]（提示型、
 /// 放行整链）。这不是一句规劝：组键走错这里会**静默漏唤醒**（链上其余的人睡到期限），
-/// 故下面有断言，`harden` 与 `framework` 两档都会当场炸。
+/// 故下面有断言，任何开着 `debug_assertions` 的档都会当场炸。
 ///
 /// **键已死 ⇒ `false` 且不建站点**（A2 裁决）：资源没了，这个键再也不会有等待者，
 /// 给它留站点或信标都是墓碑的另一种叫法。此处顺带把死键的残留站点删掉——

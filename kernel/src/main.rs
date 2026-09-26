@@ -1,29 +1,17 @@
 #![no_std]
 #![no_main]
-#![feature(allocator_api)]
 
-extern crate alloc;
-
-mod boot;
-mod console;
-#[cfg(feature = "framework")]
-mod framework;
-mod hart;
-mod health;
-mod layout;
-mod lock;
-mod memory;
-mod platform;
-mod runtime;
-mod work;
+//! 内核的**入口那一半**——只剩 `_start` 与 `main`。
+//!
+//! **照实记（用户裁定"迁移到 embedded-test"）**：模块树搬去了 [`kernel`]（`src/lib.rs`），
+//! 本文件只留入口。这一份 `_start` 与 `tests/embedded.rs` 那一份**同形**，差别只有一行：
+//! 测试目标多存一个 `dtp`（`embedded-test` 的入口不收参数），且它的 `j main` 落进
+//! **embedded-test 导出的** `main`。
+//!
+//! 两者**不会同框**：`main` 由本文件定义、而测试目标不链 bin（`[[bin]] test = false`），
+//! 故不存在符号冲突。
 
 use core::arch::global_asm;
-
-use crate::memory::allocator;
-use crate::runtime::chrono::clock;
-use crate::runtime::diagnose::trace;
-use crate::runtime::switcher::trap;
-use crate::work::unit;
 
 global_asm!(
     ".section .text._start",
@@ -43,14 +31,6 @@ global_asm!(
 );
 
 #[unsafe(no_mangle)]
-extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
-    console::init();
-    platform::machine::init(dtp);
-    allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
-    unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
-    clock::init().unwrap_or_else(|e| panic!("clock init failed: {e}"));
-    trace::init().unwrap_or_else(|e| panic!("trace init failed: {e}"));
-    trap::init();
-    boot::banner();
-    boot::init();
+extern "C" fn main(hartid: usize, dtp: usize) -> ! {
+    kernel::main(hartid, dtp)
 }
