@@ -20,7 +20,7 @@ use protocol::system::board::ENTRY_MARK;
 pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
 use protocol::system::board::{Board, Fail};
 
-use protocol::system::desk::{Desk, Guest};
+use protocol::system::desk::{Desk, DeskFail, Guest};
 use protocol::system::board::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
@@ -140,7 +140,16 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) 
         // 答话路那一格随提示一起来：**一次 `Reserve` 验它**，不扫自己的表。
         match mail::reserve(tip.reply) {
             Ok((_vestor, owner, mark)) if owner == client && mark == board => {
-                let _ = desk.admit(client, tip.reply);
+                match desk.admit(client, tip.reply) {
+                    // 收了。
+                    Ok(_) => {}
+                    // **重放**（提示是单槽，可能重放）：一位客人只占一格，旧的那一格**原样留着**
+                    // ——这一趟不动账，也不打行（重放是常态）。
+                    Err(DeskFail::Already) => {}
+                    // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
+                    // 问话会堵在单槽上。故这一格**报一句，别静默丢一位客人**（与树那一台同款）。
+                    Err(DeskFail::Full) => debug!("board: desk full"),
+                }
                 // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
                 // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
                 if let Some(lane) = lane_for(tip.name) {
@@ -148,7 +157,8 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) 
                 }
             }
             // 次序被破坏（提示先到、答话路不在本表里 / 那一格指的不是这一位）：报一句；
-            // 客人那边会报它自己的超时。
+            // 客人那边会报它自己的超时。**这一格不该再有"本端提前放了"这一因**：
+            // 归域的那一对号在今天那个类型上根本没有"放下"这个动作（见 `establish` 文件头）。
             _ => debug!("board: no reply"),
         }
     }
