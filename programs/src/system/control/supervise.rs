@@ -1,19 +1,18 @@
-//! system::supervise — **监督相**：哪一位没了、怎么记账、怎么收场（[`super`] 头注第 5 / 6 条）
+//! control::supervise — **监督相**：哪一位没了、怎么记账、怎么收场。
 //!
 //! 本文件只管**起完之后一直看**：板把"某位的门封印了"变成它那条死亡道上的一格，本线程从
 //! 组上醒来、按道上的名字认人、等它真收尾、写 `Dead`、放下它的域、报一行读数；名册最后一条
 //! 走了之后，把仍在跑的**有界地**收掉，然后收场。
 //!
-//! **装配那一半不在这里**（[`super::server`]）：建域 / 放行 / 等就绪 / 收一枚都是**装配期**的
-//! 事。两半之间只有两处来往——表里那几格状态（`State` / `Slot`），与那两枚原语 [`stop`] /
-//! [`until`]（本文件只读它们，不重写）。
+//! **装配那一半不在这里**（[`super`] 与 [`super::service`]）：建域 / 放行 / 等就绪 / 收一枚都是
+//! **装配期**的事。两半之间只有两处来往——表里那几格状态（`State` / `Slot`），与那两枚原语
+//! [`stop`] / [`until`]（本文件只读它们，不重写）。
 //!
-//! **死亡道**（[`Lane`]）也住在这一半：那枚孔是装配期铸的（`main` 铸、`server::start` 转授给
+//! **死亡道**（[`Lane`]）也住在这一半：那枚孔是装配期铸的（`System` 铸、`service::start` 转授给
 //! 板），但它的**读者只有本文件**——一条道响一次、响完就完，正是"监督相"这件事本身。
 
 use env::Name;
 use env::Wait;
-use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
 
@@ -22,8 +21,8 @@ use protocol::system::core::Reaped;
 use protocol::system::desk::{Slot, State, Table};
 
 // 表那一侧的两手（本文件只读、不重写）与装配期铸的那一条道。
-use super::server::{stop, until};
-use crate::service::Lane;
+use super::service::{stop, until};
+use super::{Control, Lane};
 
 /// 监督循环：**发现死亡 + 记账 + 放下死域**。
 ///
@@ -36,7 +35,7 @@ use crate::service::Lane;
 /// （**不 `detach`**：坐标是"上一个实例"，留给重启与放下用）、`oust(team)` 放下那个死域、
 /// 报一行。最后一条（单子最后一条）没了之后，对**仍在跑的**逐个 `stop`（`doom` = 域粒度
 /// `Doom`）——它们的死会再走同一条路回来；在册的每一行都 `Dead` 之后才收场。
-pub fn run(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
+pub fn run(control: &mut Control, last: Name) {
     // 死亡道那一格：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
     // 不按"这条路上平常走几个字节"备）。一枚更长的推落进道里时，1 字节的读法取不出也丢不掉，
     // 那一位的死就永远记不上账。备不下 ⇒ 报一句就交给退场时的级联，不在这里赌。
@@ -50,14 +49,14 @@ pub fn run(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
     loop {
         // 等任一条道响。**`Pile` 的既定用法**（板那一轮同款）：**挂起过的那一侧返回的是
         // 预置值**——内核没有第二次执行机会，故醒来必须自己按组复核，不能靠返回值拿身份。
-        if pile.await_(Wait::Forever).is_err() {
+        if control.pile.await_(Wait::Forever).is_err() {
             // 组坏了：退回"等最后一条退场"，行为与改动前一致。
-            crate::service::wait_last(table, last);
+            control.wait_last(last);
             return;
         }
         // 复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次醒来
         // 可能带走多条（两位前后脚死）。
-        for lane in lanes {
+        for lane in &control.lanes {
             let Some(road) = lane.road else {
                 continue;
             };
@@ -70,11 +69,11 @@ pub fn run(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
             let Ok(name) = Name::new(lane.name) else {
                 continue;
             };
-            account(table, name);
+            account(&mut control.table, name);
             // 最后一条走了 ⇒ 会话结束：把仍在跑的显式收掉（只下一次）。
             if name == last && !stopping {
                 stopping = true;
-                stop_running(table, lanes);
+                stop_running(&mut control.table, &control.lanes);
             }
         }
         if stopping {
@@ -120,10 +119,7 @@ pub fn stop_running(table: &mut Table, lanes: &[Lane]) {
             // 有界期内没等出来：照实报，交出这一位。**不是"没收到"**——判决只认非阻塞
             // 那一问，这里说的是"还没收干净"。
             Ok(Reaped::Unsettled) | Err(_) => {
-                debug!(
-                    "system: stuck {} （退场级联接管）",
-                    lane.name
-                );
+                debug!("system: stuck {} （退场级联接管）", lane.name);
             }
         }
     }

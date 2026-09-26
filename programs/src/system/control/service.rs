@@ -1,14 +1,13 @@
-//! system::server — **适配**：把内核答的事实写回表（建域 / 放行 / 等就绪 / 收 / 盯）
+//! control::service — **适配**：把内核答的事实写回表（建域 / 放行 / 等就绪 / 收 / 盯）
 //!
-//! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
-//!
-//! **内核那一侧也在这里**：建域 / 产线程 / 塞门闩 / 放行 / 收域 / 判收尾那七手是本文件的
+//! 内核那一侧也在这里：建域 / 产线程 / 塞门闩 / 放行 / 收域 / 判收尾那七手是本文件的
 //! 唯一读者，故收在这里（每条链子少一跳转发）。
 //!
 //! **两处语义翻译留在这里**（[`unit_fail`] / [`pie_fail`]）：域词汇 → 本协议的 [`Fail`]——
 //! **穷尽 match**，一个数字都不写。
 //!
-//! **监督相已分出去**（[`supervise`]）：本文件全是**装配期**的事。
+//! **监督相已分出去**（[`super::supervise`]）；**装配相在 [`super`]**（立账 / 递单）与
+//! System 那一侧（四套协议的边）——本文件全是**Service 生命周期**的事。
 
 use env::Wait;
 use env::{Mark, Name, PieFail, ProgramKind, Reason, TaskId, TeamId, UnitFail};
@@ -20,7 +19,7 @@ use protocol::session::Quay;
 use protocol::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::system::desk::{Announce, Service, Slot, State, Table};
 
-use crate::service::Role;
+use crate::system::program::Role;
 use plan::assembly::{E_COALITION, E_PRINCIPAL, E_TREE};
 
 // ── 内核那一侧：每个函数只做一件事——转发一次 ──────
@@ -38,7 +37,7 @@ pub fn build(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
 /// 产一枚线程（未放行）：`entry = 0` ⇒ 走域默认入口。
 ///
 /// `args` 是 `Spawn` 的那一格（内核拷到新任务栈顶，子方用 `runtime::core::unit::args()` 读）。
-/// 今天只有一处非空：iii 的三枚内件用**同一个入口**、靠这一格分派角色（[`crate::service::Role`]）。
+/// 今天只有一处非空：iii 的三枚内件用**同一个入口**、靠这一格分派角色（[`Role`]）。
 pub fn spawn(team: TeamId, args: &[usize]) -> Result<TaskId, Fail> {
     utask::spawn(team, 0, args, 0).map_err(unit_fail)
 }
@@ -98,7 +97,7 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
 
 // ── 内件那一族的起手失败（三枚共用）─────────
 
-/// 内件**起手**失败：三枚共用（`Role::System` 那一枚另有 [`super::main::Fail`]）。
+/// 内件**起手**失败：三枚共用（`Role::System` 那一枚另有 `main.rs` 的 `Fail`）。
 ///
 /// **名字为什么不叫 `Fail`**：这一族里 `operator/server.rs` 已经 `use
 /// protocol::system::operator::{…, Fail}`（那是**核心**的失败域：`Unknown` / `Dead` /
@@ -106,13 +105,13 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
 /// 故按"死在起手的哪一步"取名 [`Start`]。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
-    /// 认不出"起我那一枚线程"（`service::assembler`）——`Spawn` 那一格 `args` 没递对。
+    /// 认不出"起我那一枚线程"（`program::assembler`）——`Spawn` 那一格 `args` 没递对。
     Sire,
     /// 上板那一步（`board::open` / `ask_hole`）。
     Board,
     /// 树那一步：持树者铸提示孔交给装配者 / 名册与盟册分目录 + 落门牌 + 回查。
     Tree,
-    /// 本域自己开的那一枚孔（服务入口记号 [`protocol::system::board::ENTRY_MARK`]）。
+    /// 本域自己开的那一枚孔（服务入口记号 `protocol::system::board::ENTRY_MARK`）。
     Entry,
     /// 起手要备的那两样备不下：持树者**收帧那一页**（`Pile` 之外的那一样）。
     Room,
@@ -160,7 +159,7 @@ impl Start {
 
 /// **内件那一支的出口格**（`main` 那三个分支 `map_err` 的就是它）。
 ///
-/// 与 [`super::main`] 的 `said` 同一形状：自己拼一格 `Report<'static>`。
+/// 与 `main.rs` 的 `said` 同一形状：自己拼一格 `Report<'static>`。
 pub fn said(f: Start) -> Report<'static> {
     Report::note(f.code(), f.text())
 }
@@ -262,8 +261,7 @@ pub fn start(
 ///
 /// 唯一会改表的地方就是这个函数：确认它的宣布之后置 [`State::Ready`]，确认它死了之后
 /// 落 [`State::Dead`]——**内核的事实在这里变成表里的事实**。而"它宣布了"那件事本身
-/// **归 [`session`](crate::session)**：会话在对方交回孔并归位时成立，本函数只去问那句
-/// "成立了没有"。
+/// **归 `session`**：会话在对方交回孔并归位时成立，本函数只去问那句"成立了没有"。
 pub fn ready(
     table: &mut Table,
     name: Name,
@@ -384,7 +382,7 @@ fn live_task(table: &Table, name: Name) -> Option<TaskId> {
 /// 那是"还没收干净"，不是"收了"。
 /// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）。
 ///
-/// **读者只有一处**（[`crate::service::wait_last`]）：跟着 [`until`] 一起放进本模块的公面。
+/// **读者只有一处**（[`super::Control::wait_last`]）：跟着 [`until`] 一起放进本模块的公面。
 pub fn watch(table: &mut Table, name: Name, millis: Wait) -> Result<bool, Fail> {
     match until(table, name, millis)? {
         Reaped::Now | Reaped::Waited => {

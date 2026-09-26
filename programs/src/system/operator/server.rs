@@ -28,7 +28,7 @@ use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::Coord;
-use crate::system::server::Start;
+use crate::system::control::service::Start;
 use contract::system::desk::{Desk, DeskFail, Guest};
 use protocol::system::operator::desk;
 
@@ -204,7 +204,7 @@ const MS: usize = 1000;
 pub fn serve() -> Result<(), Start> {
     // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
     // 这一枚指的不是编排者）。
-    let Some(assembler) = crate::service::assembler() else {
+    let Some(assembler) = crate::system::program::assembler() else {
         return Err(Start::Sire);
     };
     // **上板**：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形

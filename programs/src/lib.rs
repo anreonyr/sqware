@@ -22,7 +22,7 @@
 //! **引导域**（`root/boot.rs`：只有它读得到）——装配者只是 `use` 它们，不另抄一份。
 //!
 //! 内含之后**共用件只剩三枚**：`entry`（`_start` + panic 处理，每个程序共用）、
-//! [`service`]（那台装配机器，两个装配者 `root` / `system` 共用）与
+//! [`system::control`]（那台装配与生命周期的机器，两个装配者 `root` / `system` 共用）与
 //! [`driver::assemble`]（**客侧**那台机器，三台驱动与房客共用）。**"打一行"那一句不在本 crate**
 //! ——各域原先各写一份 `fn say(msg: &str)`（二十六份逐字相同），今天只有一处：
 //! `protocol::debug!`（**只在 debug 构建下有效**，见那个模块的头注）。
@@ -51,7 +51,7 @@
 //!
 //! **照实记（iii 之后那三枚不再有 `main.rs`；现在它们住 `system/` 之下）**：持树者 / 名册 /
 //! 盟册的入口退成**角色体**——它们的 `server::serve()` 由 `system/main.rs` 的 `main` 按
-//! [`Role`](service::Role) 分派（一枚 ELF 只能有一处 `#[entry]` ⇒ 四枚线程共用同一
+//! [`Role`](system::program::Role) 分派（一枚 ELF 只能有一处 `#[entry]` ⇒ 四枚线程共用同一
 //! 个入口，靠 `Spawn` 那一格 `args` 分开）；目录随之收进 `system/{operator,principal,
 //! coalition}/`——与 `board/` 同一条判据（**谁住编排域，谁住 `system/` 之下**）。
 //!
@@ -86,7 +86,6 @@ extern crate alloc;
 pub mod driver;
 pub mod entry;
 pub mod root;
-pub mod service;
 pub mod system;
 pub mod user;
 

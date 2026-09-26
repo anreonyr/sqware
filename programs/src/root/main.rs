@@ -43,23 +43,22 @@ extern crate programs;
 use env::Mark;
 use env::Wait;
 use programs::root::boot;
-use programs::service;
 
 use env::Name;
 use protocol::session::Quay;
-// 协议侧那三档（判定 / 账 / 适配）与本地的 `service`（装配机器）**同名不同物**，故逐个取名进来。
-use programs::system::server::{self as core, until};
+// 协议侧那三档（判定 / 账 / 适配）与那台装配机器**同名不同物**，故逐个取名进来。
+use programs::system::control::service::{self as core, until};
+use programs::system::control::{Catalog, Died, E_MANIFEST, READY_MS};
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Table};
 
 use protocol::driver::supply;
-use service::Catalog;
 
 /// 编排者那一条在清单里的名字。
 const ORCH: &str = "system";
 
 /// 本域的死法：**一格 = 死在起手的哪一步**——号与从前的 `service::die` **同值**
-/// （`1` 引导那一族、`2/3/4` 归 [`service`] 那三格、`6` 是"起编排者"那一族）。
+/// （`1` 引导那一族、`2/3/4` 归 [`control`](programs::system::control) 那三格、`6` 是"起编排者"那一族）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Die {
     /// 启动参数那两块账读不出来。
@@ -74,7 +73,7 @@ impl Die {
     fn code(self) -> env::Reason {
         match self {
             Die::BootArgs => E_BOOT,
-            Die::Manifest => service::E_MANIFEST,
+            Die::Manifest => E_MANIFEST,
             Die::Orch(code) => code,
         }
     }
@@ -95,10 +94,10 @@ impl programs::Exit for Die {
 }
 
 /// 起编排者那一族共用的号（`mint` 的失败格与后面三步都用它）。
-const E_ORCH: service::Died = 6;
+const E_ORCH: Died = 6;
 
 /// 引导那一族共用的号（"启动参数读不出来"那一格）。
-const E_BOOT: service::Died = 1;
+const E_BOOT: Died = 1;
 
 #[programs::entry]
 fn main() -> Result<programs::Report<'static>, Die> {
@@ -137,7 +136,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
         &[],
         Some(&mut quay),
         &[Mark::of(slot.as_str())],
-        Wait::AtMost(service::READY_MS),
+        Wait::AtMost(READY_MS),
     )
     .is_err()
     {

@@ -1,72 +1,122 @@
-//! assemble — **装配那一份数据**：这一景起哪些程序、每一条的装配参数。
+//! assemble — **scenario**：这一景有哪些 Program（**节点**）＋ 它们在系统里的关系（**边**）。
 //!
-//! 本目录把"投影"与"内件表"两件事并在一起：
+//! 两件事分开摆：
 //!
-//!   - **本文件 = 投影**：一行 `plan::assembly::Row` → 编排域认识的 [`Program`]（[`plan`] 与
-//!     [`plan_row`]）；
-//!   - **[`inner`] = 内件三枚那张表 + 把两张表接成一条名册的那一手**（[`roster`] 从那里转出）。
+//!   - **节点**（[`Node::program`]）：静态声明——我是谁、实例化我要什么（`Program`）。
+//!   - **边**（[`Node::edges`]）：谁上板 / 谁上树 / 谁是持树者 / 装配期给不给身份 /
+//!     它是哪一双眼睛 / 死在装配哪一步报哪个号。**图的关系不塞进节点**。
+//!
+//! `plan::assembly::ALL` 仍是那张**装机单**（哪几台进哪张镜像、什么特权级、装载次序），
+//! 本文件按它投影出这一景的节点与边；`setup` 那几格（要哪些门闩、开哪条通道）由
+//! [`setup_of`] 一处给出——**需求单本身仍只有一处**（`plan::assembly` 的 `*_WANTS`）。
+//!
+//! 次序即契约：**内件三枚在前**（持树者排第一、名册紧随其后、盟册第三），**镜像那几台在后**
+//! （按 `Plan::order` 排）。装配者按这条次序起，先起的先就绪，后面的就能向它要东西。
 
 use alloc::vec::Vec;
 
-use crate::service::{Catalog, Program};
+use plan::assembly::{Died, Eyes, LODGER_WANTS, ROUTER_WANTS, RTC_WANTS, UART_WANTS};
+
+use crate::system::control::Catalog;
+use crate::system::program::{Program, Setup, Source};
 
 pub mod inner;
 
-/// 这一景的装配单：**从 `plan::assembly::ALL` 派生**——`plan: Some` 的那些行里、**这张镜像真有的**
-/// 那些，按 `order` 排。
+/// **一条服务在系统里的关系（边）**。
 ///
-/// 装配单是"本域认识的全部台"，镜像是"这一次真装了哪些"——两者**不必相等**（`product` 那一景
-/// 只有 7 台，五台探针与六位常客都不在里面）。
-///
-/// **装配单**：本域按这个顺序起服务。
-///
-/// 持树者（`operator`）**排第一**：它是**服务**，但每位上树的客人都要它在——起来之后本域
-/// 当场把它那条提示之路认到手（[`service::assemble`] 的第二段）。
-///
-/// 身份服务（`principal`）**紧随其后**：装配期每一条服务的 `derive` + `bind` 都要它在
-/// （[`service::assemble`] 在它放行之后补绑它自己与树，其后的每一条都在放行前拿到身份）。
-///
-/// 结盟服务（`coalition`）**跟在身份服务之后**：它是身份服务的客人（起手按名字找
-/// `/sys/principal`），故只能在它之后起——这也是本域能给的唯一次序保证（那一台自己还带一轮
-/// 有界的重试，见 [`coalition`] 那一格）。
-///
-/// `echo` **必须在最后**：[`service::assemble`] 返**名册**的最后一条（`roster.last()`），本域等它退场
-/// ——那正是"读到一行 `exit` 才收场"的那一格。**它得是"上板"的那一条**（`board: true`），
-/// 板才看得见它的死。
-///
-/// 三台驱动紧跟在身份服务之后、其余之前：控制器先就位，线再开闸（`uart` / `rtc` 持有那两台设备）。
-/// `sleeper` 排在 `lodger` 之后、`subject` 之前：它要找的那块门牌 `/device/rtc` 由 `rtc` 落。
-pub fn plan(catalog: &Catalog) -> Vec<Program> {
+/// 这五格原先住在 `Program` 上——那是"节点与边不分"。它们不是节点的属性：改一条边
+/// （比如换一双眼睛）不该动节点本身。
+#[derive(Clone, Copy)]
+pub struct Edges {
+    /// 要不要板那条路（`board::attach`）。**道也跟着这一格走**：道是板写的，不上板就不铸。
+    pub board: bool,
+    /// 要不要树那条路（`operator::attach`）。按需发——拿到这条路的服务，就能动整棵树。
+    pub operator: bool,
+    /// **装配期给不给它一条身份**（`derive(ROOT)` + `bind`）。`false` 是给负证客人的。
+    pub bind: bool,
+    /// **它就是持树者本身**：起来之后本域把它那条提示之路认到手，此后每位上树的客人都往
+    /// 那条路上递号。**它必须排在第一位**：排在它前面的客人没树可上。
+    pub holds_tree: bool,
+    /// **它是持树者的哪一双眼睛**（`None` = 不是：绝大多数行都不是）。
+    pub eyes: Option<Eyes>,
+    /// 装配死在这一条时报哪个号（**按服务分的号住这里**）。
+    pub died: Died,
+}
+
+/// **一个节点**：静态声明 ＋ 它在图里的边。
+#[derive(Clone, Copy)]
+pub struct Node {
+    pub program: Program,
+    pub edges: Edges,
+}
+
+/// 这一景要起的全部节点（次序即装配次序）。
+pub fn nodes(catalog: &Catalog) -> Vec<Node> {
     let mut rows: Vec<&plan::assembly::Row> = plan::assembly::ALL
         .iter()
         .filter(|row| row.plan.is_some() && catalog.find(row.name).is_some())
         .collect();
     rows.sort_by_key(|row| row.plan.as_ref().map(|p| p.order));
-    rows.iter()
-        .filter_map(|row| row.plan.as_ref().map(|p| plan_row(row.name, p)))
-        .collect()
+    let mut all: Vec<Node> = inner::INNER.iter().copied().collect();
+    all.extend(
+        rows.iter()
+            .filter_map(|row| row.plan.as_ref().map(|p| node_of(row.name, p))),
+    );
+    all
 }
 
-/// 装配单的一行 → 编排域认识的 [`Program`]（装配参数逐格搬，名字取自那一行）。
-fn plan_row(name: &'static str, p: &plan::assembly::Plan) -> Program {
-    Program {
-        name,
-        announce: p.announce,
-        tokens: p.tokens,
-        channels: p.channels,
-        needs: p.needs,
-        board: p.board,
-        operator: p.operator,
-        bind: p.bind,
-        holds_tree: p.holds_tree,
-        eyes: p.eyes,
-        died: p.died,
+/// 这一景的 **Program 集合**（§9 的读面：只取节点，不含边）。
+pub fn programs(catalog: &Catalog) -> Vec<Program> {
+    nodes(catalog).into_iter().map(|n| n.program).collect()
+}
+
+/// 装配单的一行 → 一个节点（边逐格搬，名字取自那一行）。
+fn node_of(name: &'static str, p: &plan::assembly::Plan) -> Node {
+    Node {
+        program: Program {
+            name,
+            source: Source::Catalog(name),
+            setup: setup_of(name),
+        },
+        edges: Edges {
+            board: p.board,
+            operator: p.operator,
+            bind: p.bind,
+            holds_tree: p.holds_tree,
+            eyes: p.eyes,
+            died: p.died,
+        },
     }
 }
 
-// ── 内件三枚（iii：住本域的那三枚）─────────────────────────────
-//
-// 它们那张**表**（`INNER`）与**把两张表接起来**的那一手（`roster`）住同目录的 `inner.rs`：
-// 读它的是**本文件**（把内件三枚接在镜像那几台前面，接成一条名册）。
+/// **这一台要什么**：按名字给那一份 `setup`（今天只有四台要东西，其余 `&[]`）。
+///
+/// **需求单不在这抄第二遍**：要的几样仍取自 `plan::assembly` 的 `ROUTER_WANTS` /
+/// `UART_WANTS` / `RTC_WANTS` / `LODGER_WANTS`；这里只说"要哪几条、开哪条通道"。
+/// 通道名与客人那一侧是同一个字面量（`driver/assemble.rs` 的 `RECORDS`）。
+fn setup_of(name: &str) -> &'static [Setup] {
+    match name {
+        "router" => ROUTER_SETUP,
+        "uart" => UART_SETUP,
+        "rtc" => RTC_SETUP,
+        "lodger" => LODGER_SETUP,
+        _ => &[],
+    }
+}
 
-pub use inner::{INNER, roster};
+/// 线路由者：中断控制器（按类）＋ 设备树本体 / 门铃（按已知坐标）＋ 一条通道。
+static ROUTER_SETUP: &[Setup] = &[
+    Setup::Need(ROUTER_WANTS[0]),
+    Setup::Need(ROUTER_WANTS[1]),
+    Setup::Need(ROUTER_WANTS[2]),
+    Setup::Channel("records"),
+];
+
+/// 串口驱动：那一台 `ns16550a`（按类）＋ 一条通道。
+static UART_SETUP: &[Setup] = &[Setup::Need(UART_WANTS[0]), Setup::Channel("records")];
+
+/// 实时钟驱动：那一台 `google,goldfish-rtc`（按类）＋ 一条通道。
+static RTC_SETUP: &[Setup] = &[Setup::Need(RTC_WANTS[0]), Setup::Channel("records")];
+
+/// 房客：一条没人要的线（`virtio,mmio`，按类）＋ 一条通道。
+static LODGER_SETUP: &[Setup] = &[Setup::Need(LODGER_WANTS[0]), Setup::Channel("records")];

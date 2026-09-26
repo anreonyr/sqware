@@ -219,7 +219,7 @@ use programs::root::boot;
 use core::time::Duration;
 
 use env::Name;
-use programs::system::server as service;
+use programs::system::control::service as service;
 use protocol::debug;
 use protocol::session::Quay;
 use protocol::system::core::Reaped;

@@ -13,7 +13,7 @@
 //!   常驻：一只组等门牌那一枚 —— 读一帧（连发送者）→ 交给核心 → 从这一趟的回信孔答回去
 //! ```
 
-use crate::system::server::Start;
+use crate::system::control::service::Start;
 use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
@@ -51,7 +51,7 @@ pub fn serve() -> Result<(), Start> {
         //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
         // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
         // 这一枚指的不是编排者）。
-        let assembler = crate::service::assembler().ok_or(Start::Sire)?;
+        let assembler = crate::system::program::assembler().ok_or(Start::Sire)?;
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
         let (_link, board_link) =

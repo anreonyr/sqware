@@ -86,7 +86,7 @@
 //! - **设备语义各带各的**：谁的设备谁在自己目录里放设备模块（[`router`] 的 `plic.rs`、
 //!   [`uart`] 的 `uart.rs`、[`rtc`] 的 `rtc.rs`）——本仓不用一份"驱动框架"去包它们。
 //! - **需求单归收方**：三台各在 [`plan::assembly`] 里开自己那张单（`ROUTER_WANTS` /
-//!   `UART_WANTS` / `RTC_WANTS`），装配者与收方**读同一张**（见 [`crate::service::Program`]）。
+//!   `UART_WANTS` / `RTC_WANTS`），装配者与收方**读同一张**（见 [`crate::system::program::Program`]）。
 //!   单子必须住那一层——装配单本就要把那一格摆出来。**照实记**：各域原先是 `needs.rs` 一行
 //!   转发到那里，那一刀删掉转发、直接取（见 `driver/uart/mod.rs`）。
 //!

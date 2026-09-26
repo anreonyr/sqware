@@ -16,7 +16,7 @@
 //! 就答 0），树那条路是"按名找人"的现成一步；而身份那一份门牌**只能按名字找**——本域不是
 //! 装配者，拿不到它手里那一份副本（正文 K7 的被否项：转授要新装配机制）。
 
-use crate::system::server::Start;
+use crate::system::control::service::Start;
 use core::time::Duration;
 use env::Wait;
 
@@ -58,7 +58,7 @@ pub fn serve() -> Result<(), Start> {
         //     （对照 principal：那边把它当名册钥匙，注入核心那一格）。
         // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
         // 这一枚指的不是编排者）。
-        let assembler = crate::service::assembler().ok_or(Start::Sire)?;
+        let assembler = crate::system::program::assembler().ok_or(Start::Sire)?;
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
         let (_link, board_link) =

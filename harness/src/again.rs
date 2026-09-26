@@ -59,7 +59,7 @@ use programs::root::boot;
 
 
 use env::Name;
-use programs::system::server as service;
+use programs::system::control::service as service;
 use protocol::debug;
 use protocol::system::core::{Ready, probe_ready};
 use protocol::system::desk::{Announce, Slot, State, Table};
