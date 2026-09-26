@@ -48,7 +48,7 @@ use programs::service;
 // （把客人接上板）住 `service::start`，本文件本来就不碰它。
 use env::{HoleDir, Name, PieToken};
 use programs::system::machine::Machine;
-use programs::system::server;
+use programs::system::{server, supervise};
 use protocol::session::{Pier, Quay};
 use protocol::system::board::LANE_PREFIX;
 use protocol::system::desk::Table;
@@ -254,7 +254,7 @@ fn system() -> Result<(), Fail> {
     };
 
     // 5/6. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
-    server::supervise(&mut table, last, &lanes, &pile);
+    supervise::run(&mut table, last, &lanes, &pile);
     // 会话的收尾由会话的主人负责：常驻线程是它起的，也是它收的。本域里那枚板线程没有
     // `Join` 可等（`attach` 里弃权了），故按号点名收掉——同域线程之间没有寿命耦合。
     // **等待线程也住本域**，这一刀连它们一起收（域亡 = 成员清零）。

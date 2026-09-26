@@ -21,6 +21,11 @@
 //! **内核那一侧也住这里**（照实记：独立那份 `call.rs` 已收掉）：建域 / 产线程 / 塞门闩 /
 //! 放行 / 收域 / 判收尾那七手原先另立一份 `call.rs`，而它们的**唯一读者就是 [`server`]** ⇒
 //! 并进那个文件（判据与本模块同一条：**谁在说话**——那几手是"适配"这句话的孩子）。
+//!
+//! **监督相单独一份**（照实记：原先住在 [`server`] 里）：[`server`] 全是**装配期**的事
+//! （建域 / 放行 / 等就绪 / 收一枚 / 等它退场），而 [`supervise`] 是**起完之后一直看**——
+//! 一个做到"名册最后一条没了"为止，另一个从那一刻开始。两半之间只有两处来往：表里那几格
+//! 状态，与 `stop` / `until` 两枚原语。
 
 pub mod board;
 pub mod coalition;
@@ -29,3 +34,4 @@ pub mod machine;
 pub mod operator;
 pub mod principal;
 pub mod server;
+pub mod supervise;
