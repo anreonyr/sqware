@@ -19,7 +19,7 @@ use protocol::system::desk::Announce;
 use contract::driver::supply::frame::{WANT_MAX, Want};
 use protocol::driver::supply;
 
-use crate::system::program::{Program, Setup};
+use crate::system::program::Setup;
 
 use super::{Control, Error, READY_MS, Service};
 
@@ -30,47 +30,65 @@ impl Control {
     /// 一枚孔，那枚到了才算起来）；否则 [`Announce::None`]（放行即起来）。这与旧装配单上那
     /// 两格（`announce` ＋ `channels`）**逐行等价**：有通道的那四台正是旧表里唯一写
     /// `Announce::Channel` 的四台。
-    pub fn enlist(&mut self, program: &Program) -> Result<(), Error> {
-        let name = Name::new(program.name).map_err(|_| Error::Manifest)?;
+    pub fn enlist(&mut self, name: &'static str, setup: &'static [Setup]) -> Result<(), Error> {
+        let name = Name::new(name).map_err(|_| Error::Manifest)?;
         self.table
-            .register(name, announce_of(program.setup))
+            .register(name, announce_of(setup))
             .map_err(|_| Error::Table)
     }
 
-    /// **递单**：只对"要资源"的那几台动手（`need` 一条都没有 ⇒ 立即返回）。
+    /// **递单**：只对"要资源"的那几台动手（`Need` 一条都没有 ⇒ 立即返回）。
     ///
     /// 前置：它**已经起来**（[`Control::start`] 之后）——配给记录要落到它交回的那条路上。
-    pub fn wire(&self, service: &Service) -> Result<(), Error> {
-        let needs = service.needs();
-        // 条数上限那一格与 `draw` 同一条（单子装不下）：这里先拦，好按定长缓冲逐格填。
-        if needs.is_empty() {
+    pub fn wire(
+        &self,
+        name: Name,
+        service: &Service,
+        setup: &'static [Setup],
+    ) -> Result<(), Error> {
+        let (task, quay) = service;
+        // 门闩单：按 `setup` 的次序（= 收方那张单的次序）。条数上限那一格与 `draw` 同一条
+        // （单子装不下）：这里先拦，好按定长缓冲逐格填。
+        let mut wants = [Want::NONE; WANT_MAX];
+        let mut n = 0usize;
+        for s in setup {
+            if let Setup::Need(need) = s {
+                if n >= WANT_MAX {
+                    return Err(Error::Step("too many wants"));
+                }
+                let class = need.class_name();
+                wants[n] = need
+                    .settle(|class| self.machine.site_of(class))
+                    .ok_or(Error::Step("class not in tree"))?;
+                if let (Some(class), Some(base)) = (class, wants[n].key().and_then(|key| key.base())) {
+                    // 新机制要有读数：**类 → 那一段区**（翻译那一手看得见、可复核）。
+                    debug!(
+                        "system: {} {} -> {:#x}",
+                        name.as_str(),
+                        class.as_str(),
+                        base
+                    );
+                }
+                n += 1;
+            }
+        }
+        if n == 0 {
             return Ok(());
         }
-        if needs.len() > WANT_MAX {
-            return Err(Error::Step("too many wants"));
-        }
+
         // 递单走**第一条**通道（旧 `wire` 读的就是 `channels.first()`）。
-        let Some(ch) = service.channel() else {
+        let Some(ch) = setup.iter().find_map(|s| match s {
+            Setup::Channel(c) => Some(*c),
+            _ => None,
+        }) else {
             return Err(Error::Step("no channel"));
         };
-        let Some(pier) = service.quay.find(ch) else {
+        let ch = Name::new(ch).map_err(|_| Error::Step("no channel"))?;
+        let Some(pier) = quay.find(ch) else {
             return Err(Error::Step("no channel"));
         };
         if !pier.paired() {
             return Err(Error::Step("no channel"));
-        }
-
-        // 一格一格定坐标：类翻成那一段区（读数就是这一行），已经知道坐标的原样落下。
-        let mut wants = [Want::NONE; WANT_MAX];
-        for (cell, need) in wants.iter_mut().zip(needs) {
-            let class = need.class_name();
-            *cell = need
-                .settle(|class| self.machine.site_of(class))
-                .ok_or(Error::Step("class not in tree"))?;
-            if let (Some(class), Some(base)) = (class, cell.key().and_then(|key| key.base())) {
-                // 新机制要有读数：**类 → 那一段区**（翻译那一手看得见、可复核）。
-                debug!("system: {} {} -> {:#x}", service.name.as_str(), class.as_str(), base);
-            }
         }
 
         // 一枚一枚要：条数就在那张表里，本层不抄"要几样"。
@@ -78,8 +96,8 @@ impl Control {
         let mut reply = [0u8; supply::REPLY_CAP];
         let records = supply::client::draw(
             &self.boot,
-            service.task,
-            &wants[..needs.len()],
+            *task,
+            &wants[..n],
             &mut reply,
             Wait::AtMost(READY_MS),
         )

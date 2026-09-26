@@ -1,78 +1,33 @@
-//! control::service — **适配**：把内核答的事实写回表（建域 / 放行 / 等就绪 / 收 / 盯）
+//! control::service — **把内核答的事实写回表**：建域 / 放行 / 等就绪 / 收 / 盯。
 //!
-//! 内核那一侧也在这里：建域 / 产线程 / 塞门闩 / 放行 / 收域 / 判收尾那七手是本文件的
-//! 唯一读者，故收在这里（每条链子少一跳转发）。
+//! 这里只放**合成**的几手（一步里既问内核又改账的那几件）：[`mint`] / [`start`] /
+//! [`ready`] / [`stop`] / [`until`] / [`watch`]。**纯转发那一层没有了**——`build` / `spawn` /
+//! `accord` / `hatch` / `doom` / `reaped` 六手原先是"每个函数转发一次"的壳，本笔删掉：
+//! 调用点直接叫 `runtime::env::unit` / `runtime::env::mail` / `runtime::env::room`。
 //!
 //! **两处语义翻译留在这里**（[`unit_fail`] / [`pie_fail`]）：域词汇 → 本协议的 [`Fail`]——
-//! **穷尽 match**，一个数字都不写。
+//! **穷尽 match**，一个数字都不写。这不是转发，是"内核哪一步坏了"翻成"调用方接下来干什么"。
 //!
-//! **监督相已分出去**（[`super::supervise`]）；**装配相在 [`super`]**（立账 / 递单）与
-//! System 那一侧（四套协议的边）——本文件全是**Service 生命周期**的事。
+//! **监督相住 [`super::supervise`]**；**立账 / 递单住 [`super::assemble`]**；**生命周期那一圈
+//! 住 [`super`]**。引导域（`root`）与本域共用本文件这几手——起一条只有一条路。
 
-use env::Wait;
-use env::{Mark, Name, PieFail, ProgramKind, Reason, TaskId, TeamId, UnitFail};
-use runtime::core::exit::Report;
+use env::{Mark, Name, PieFail, ProgramKind, TaskId, UnitFail, Wait};
+use runtime::env::mail;
+use runtime::env::room;
 use runtime::env::unit as utask;
 
 use protocol::session::Quay;
-
 use protocol::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::system::desk::{Announce, Service, Slot, State, Table};
 
-use crate::system::program::Role;
 use plan::assembly::{E_COALITION, E_PRINCIPAL, E_TREE};
-
-// ── 内核那一侧：每个函数只做一件事——转发一次 ──────
-
-/// 建域（Mint）：镜像字节 + 特权级 → 新域。
-///
-/// 产出的域归**调用者**（父亲 = 调用者自己）。特权级由**清单**决定、调用方转交
-/// ——程序自称不了特权级（这是"放开建域不构成提权"的那一半）。
-///
-/// **名字不过这里**：清单名归装配账（`system::desk`），内核不收名字。
-pub fn build(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
-    utask::build(image, kind).map_err(unit_fail)
-}
-
-/// 产一枚线程（未放行）：`entry = 0` ⇒ 走域默认入口。
-///
-/// `args` 是 `Spawn` 的那一格（内核拷到新任务栈顶，子方用 `runtime::core::unit::args()` 读）。
-/// 今天只有一处非空：iii 的三枚内件用**同一个入口**、靠这一格分派角色（[`Role`]）。
-pub fn spawn(team: TeamId, args: &[usize]) -> Result<TaskId, Fail> {
-    utask::spawn(team, 0, args, 0).map_err(unit_fail)
-}
-
-/// 把一枚门闩塞进目标线程手里（放行前做）。**给多大权由调用方定**——这里不替它做主。
-pub fn accord(token: env::PieToken, task: TaskId, perm: env::Permission) -> Result<(), Fail> {
-    runtime::env::mail::accord(token, task, perm)
-        .map(|_| ())
-        .map_err(pie_fail)
-}
-
-/// 放行。
-pub fn hatch(task: TaskId) -> Result<(), Fail> {
-    utask::hatch(task).map_err(unit_fail)
-}
-
-/// 收掉目标所属的域（连它的线程一起）。**`doom`：不靠血缘。**
-///
-/// 判活照旧：目标不在世 / 从未入册 ⇒ 已经是死的，视作收到（幂等）。
-pub fn doom(task: TaskId) {
-    let _ = runtime::env::room::doom(task);
-}
-
-/// 它收尾完了没有（非阻塞那一问：`POLL`）。
-pub fn reaped(task: TaskId) -> bool {
-    utask::join(task, Wait::POLL).unwrap_or(true)
-}
 
 /// **Unit 域**的失败 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
 ///
 /// **穷尽 match 在域词表上**（`env::UnitFail`）：装不上 = [`UnitFail::BadImage`]；
 /// 内存不够 / 产不出来 = [`UnitFail::OoM`]（本协议名 [`Fail::Full`]）；其余
 /// （`Denied` 不在我 heir 里 / 启动参数读不出来；`Busy` 条件未就绪）落 [`Fail::Unknown`]
-/// ——"不认识的失败"不该猜成某一种。**没有表外那一格**：域词表是穷尽的，表外码在
-/// 生成的那一格就 `unreachable!` 了。
+/// ——"不认识的失败"不该猜成某一种。**没有表外那一格**：域词表是穷尽的。
 fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
     match e.source {
         UnitFail::BadImage => Fail::BadImage,
@@ -82,10 +37,6 @@ fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
 }
 
 /// **Pie 域**的失败 → 本协议的失败域（今天只有 `accord` 一处用它）。
-///
-/// **穷尽 match 在域词表上**（`env::PieFail`）：门闩表备不下 = [`PieFail::OoM`]
-/// （本协议名 [`Fail::Full`]）；没权 / 那一枚没了 / 已交出去 / Pole 的区间非法，
-/// 在编排者眼里都是"这一手没做成" ⇒ [`Fail::Unknown`]。
 fn pie_fail(e: erra::Error<PieFail>) -> Fail {
     match e.source {
         PieFail::OoM => Fail::Full,
@@ -95,18 +46,16 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
     }
 }
 
-// ── 内件那一族的起手失败（三枚共用）─────────
-
-/// 内件**起手**失败：三枚共用（`Role::System` 那一枚另有 `main.rs` 的 `Fail`）。
+/// **三枚服务起手失败**（持树者 / 名册 / 盟册各一个 bin，共用这一枚词表）。
 ///
-/// **名字为什么不叫 `Fail`**：这一族里 `operator/server.rs` 已经 `use
-/// protocol::system::operator::{…, Fail}`（那是**核心**的失败域：`Unknown` / `Dead` /
-/// `NotATile`……），两个 `Fail` 在同一份文件里撞名。起手这几格与核心那几格不是一回事，
-/// 故按"死在起手的哪一步"取名 [`Start`]。
+/// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::system::operator::{…,
+/// Fail}`（那是**核心**的失败域），两个 `Fail` 在同一份文件里撞名。起手这几格与核心那几格
+/// 不是一回事，故按"死在起手的哪一步"取名 [`Start`]。
+///
+/// **它自己就是出口**（`impl Exit`）：三个 bin 的 `main` 直接答 `Result<(), Start>`——
+/// 不需要再有一层 `said` / `exit` 的转发。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
-    /// 认不出"起我那一枚线程"（`program::assembler`）——`Spawn` 那一格 `args` 没递对。
-    Sire,
     /// 上板那一步（`board::open` / `ask_hole`）。
     Board,
     /// 树那一步：持树者铸提示孔交给装配者 / 名册与盟册分目录 + 落门牌 + 回查。
@@ -128,53 +77,44 @@ pub enum Start {
 
 impl Start {
     /// **号一律取自装配单**——本域自己的死法**一个数都不写**。
-    pub fn code(self) -> Reason {
+    pub fn code(self) -> env::Reason {
         match self {
-            Start::Sire => E_TREE,
-            Start::Board => E_TREE,
-            Start::Tree => E_TREE,
-            Start::Room => E_TREE,
-            Start::Entry => E_PRINCIPAL,
-            Start::Book => E_PRINCIPAL,
-            Start::Desk => E_COALITION,
-            Start::Face => E_COALITION,
-            Start::Dead => E_COALITION,
+            Start::Board | Start::Tree | Start::Room => E_TREE,
+            Start::Entry | Start::Book => E_PRINCIPAL,
+            Start::Desk | Start::Face | Start::Dead => E_COALITION,
         }
     }
 
     pub fn text(self) -> &'static str {
         match self {
-            Start::Sire => "operator: no sire",
             Start::Board => "operator: board",
             Start::Tree => "operator: tree",
-            Start::Entry => "principal: entry",
             Start::Room => "operator: no room",
-            Start::Desk => "coalition: desk",
+            Start::Entry => "principal: entry",
             Start::Book => "principal: no book",
+            Start::Desk => "coalition: desk",
             Start::Face => "coalition: no identity plate",
             Start::Dead => "inner: group dead",
         }
     }
 }
 
-/// **内件那一支的出口格**（`main` 那三个分支 `map_err` 的就是它）。
-///
-/// 与 `main.rs` 的 `said` 同一形状：自己拼一格 `Report<'static>`。
-pub fn said(f: Start) -> Report<'static> {
-    Report::note(f.code(), f.text())
+impl crate::Exit for Start {
+    fn report(&self) -> crate::Report<'_> {
+        crate::Report::note(self.code(), self.text())
+    }
 }
 
-// ── 适配：原语（把内核那一侧与表拼起来）──────────────────────
+// ── 起跑前要交出去的一枚门闩 ────────────────────────────────
 
 /// 起跑前要交出去的一枚门闩——定义见 [`plan::assembly::Grant`]（本处只是转发）。
 pub use plan::assembly::Grant;
 
-/// 起一个 Service。
+// ── 合成的那几手（一步里既问内核又改账）────────────────────
+
+/// 起一个 Service：**建域 → 产线程 → 挂身子**。
 ///
-/// `image` = 镜像字节（v1 口径）；`kind` = 特权级（**由清单决定**，调用方转交）；
-/// `grants` = **放行前**要交到它手里的门闩（空 = 什么都不预先给）；
-/// `quay` = 与它的会话（`Announce::Channel` 那一种才有：它就绪的凭据长在这里）；
-/// `millis` = 就绪等待（上限族，`Wait`）。
+/// `image` = 镜像字节（v1 口径）；`kind` = 特权级（**由清单决定**，调用方转交）。
 ///
 /// **失败时不留下半行**：产线程**之前**失败 ⇒ 表不动；产线程**之后**失败 ⇒ 实例与
 /// 状态都如实留在表里（它确实在跑），调用方用 [`stop`] 收尾。
@@ -186,31 +126,11 @@ pub fn mint(
 ) -> Result<TaskId, Fail> {
     admit_start(table, name)?;
 
-    let team = build(image, kind)?;
-    let Ok(task) = spawn(team, &[]) else {
+    let team = utask::build(image, kind).map_err(unit_fail)?;
+    let Ok(task) = utask::spawn(team, 0, &[], 0) else {
         return Err(Fail::Full);
     };
     table.attach(name, Some(team), task)?;
-    table.set_state(name, State::Starting);
-    Ok(task)
-}
-
-/// **本域起一枚内件**（iii：编排域的四枚线程里，除编排者自己以外那三枚）。
-///
-/// 与 [`mint`] 是**同一条路的后半段**，差别只在**身子从哪来**：不建域，就在**我自己的域**里
-/// 产一枚线程（`TeamId(0)` = 当前域，见 `UnitCall::Spawn`），角色由 `args` 那一格递过去
-/// （[`Role::args`]；读它的是同一份 ELF 里的 `main`）。
-///
-/// `team` 记 **`None`**：那一行背后**没有别人的域**——`team` 唯一的用途是"放下那个域"
-/// （见 [`Slot`]），而本域那一枚无域可放。
-pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, Fail> {
-    admit_start(table, name)?;
-
-    let me = utask::self_id();
-    let Ok(task) = spawn(TeamId::new(0), &role.args(me.get())) else {
-        return Err(Fail::Full);
-    };
-    table.attach(name, None, task)?;
     table.set_state(name, State::Starting);
     Ok(task)
 }
@@ -219,19 +139,12 @@ pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, F
 ///
 /// `grants` = 放行前要交到它手里的门闩（空 = 什么都不预先给）；`quay` = 与它的会话
 /// （`Announce::Channel` 那一种要用：它就绪的凭据长在这里）；`marks` = 放行后要逐条
-/// 认领的**记号**（顺序无关；记号即泊位名，装配单给的通道名就是它）；`millis` = 就绪等待
-/// （上限族，`Wait`）。
+/// 认领的**记号**（顺序无关；记号即泊位名）；`millis` = 就绪等待（上限族，`Wait`）。
 ///
-/// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、定会话都发生在这段窗口里，这与
-/// 载体的"恒产未放行"是同一条。
+/// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、定会话都发生在这段窗口里。
 ///
-/// **失败时不留下半行**：`spawn` 失败 ⇒ 表不动；本相失败 ⇒ 实例与状态如实留在表里
-/// （它确实在跑），调用方用 [`stop`] 收尾。
-///
-/// # Errors
-/// 见 [`Fail`]。
-/// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）——超时与"成立了"
-/// 按返回值区分。
+/// **失败时不留下半行**：本相失败 ⇒ 实例与状态如实留在表里（它确实在跑），调用方用
+/// [`stop`] 收尾。
 pub fn start(
     table: &mut Table,
     name: Name,
@@ -243,12 +156,12 @@ pub fn start(
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
-            accord(g.token, task, g.perm)?;
+            mail::accord(g.token, task, g.perm).map_err(pie_fail)?;
         }
-        hatch(task)
+        utask::hatch(task).map_err(unit_fail)
     })();
     if let Err(e) = launched {
-        doom(task);
+        let _ = room::doom(task);
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(e);
@@ -285,7 +198,7 @@ pub fn ready(
 
     // 它不宣布的那一种：放行之后只要还活着就算起来了，没有可等的东西。
     if announce == Announce::None {
-        if !reaped(task) {
+        if !utask::join(task, Wait::POLL).unwrap_or(true) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -307,7 +220,7 @@ pub fn ready(
             return Ok(false);
         }
     }
-    if reaped(task) {
+    if utask::join(task, Wait::POLL).unwrap_or(true) {
         table.detach(name);
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
@@ -329,7 +242,7 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
         return Err(Fail::Unknown);
     };
     let task = *task;
-    doom(task);
+    let _ = room::doom(task);
     table.set_state(name, State::Stopping);
     Ok(())
 }
@@ -338,26 +251,21 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// **只读：不动表**。
 ///
 /// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{task, 0}`）；等只是为了少问几次。
-/// `Join{task, millis}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探。
-///
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
-/// 已入土 / 从未入册）按"收尾了"处理——与 [`reaped`] 同一折法。
-/// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）；超时那支答
-/// [`Reaped::Unsettled`]，
-/// 不写表。
+/// 已入土 / 从未入册）按"收尾了"处理。
 pub fn until(table: &Table, name: Name, millis: Wait) -> Result<Reaped, Fail> {
     let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
     };
-    if reaped(task) {
+    if utask::join(task, Wait::POLL).unwrap_or(true) {
         return Ok(Reaped::Now);
     }
     if millis == Wait::POLL {
         return Ok(Reaped::Unsettled);
     }
     // 挂起等一记：醒来自收尾（`wipe`）或到点，两者当场分不开 ⇒ 醒来复探，判决只认它。
-    let _ = runtime::env::unit::join(task, millis);
-    if reaped(task) {
+    let _ = utask::join(task, millis);
+    if utask::join(task, Wait::POLL).unwrap_or(true) {
         Ok(Reaped::Unsettled)
     } else {
         Ok(Reaped::Waited)
@@ -377,12 +285,9 @@ fn live_task(table: &Table, name: Name) -> Option<TaskId> {
 
 /// 盯着它：`true` = 它收尾了（`Now` / `Waited`）。
 ///
-/// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（见 [`Slot`]：
-/// 清了就没得放下、也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：
-/// 那是"还没收干净"，不是"收了"。
-/// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）。
-///
-/// **读者只有一处**（[`super::Control::wait_last`]）：跟着 [`until`] 一起放进本模块的公面。
+/// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（清了就没得放下、
+/// 也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：那是"还没收干净"，
+/// 不是"收了"。
 pub fn watch(table: &mut Table, name: Name, millis: Wait) -> Result<bool, Fail> {
     match until(table, name, millis)? {
         Reaped::Now | Reaped::Waited => {

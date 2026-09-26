@@ -56,9 +56,8 @@ pub fn serve() -> Result<(), Start> {
     let (mut book, face, pile, entry_hole, mut buf) = (|| {
         // 一、锚：`Sire` = 装配者。**只为上板与上树两条会话**——盟无主，核心不需要它
         //     （对照 principal：那边把它当名册钥匙，注入核心那一格）。
-        // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
-        // 这一枚指的不是编排者）。
-        let assembler = crate::system::program::assembler().ok_or(Start::Sire)?;
+        // **起我那一枚线程**：本域是装配者建的，故 `Sire` 答的就是它——只有这一条来源。
+        let assembler = runtime::env::unit::sire();
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
         let (_link, board_link) =

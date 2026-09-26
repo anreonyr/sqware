@@ -49,11 +49,11 @@
 //! 里既有实现也有 `main.rs`，`root/`、`driver/router/`、`driver/uart/`、
 //! `driver/rtc/` 同理；`bin/` 那一层撤了。
 //!
-//! **照实记（iii 之后那三枚不再有 `main.rs`；现在它们住 `system/` 之下）**：持树者 / 名册 /
-//! 盟册的入口退成**角色体**——它们的 `server::serve()` 由 `system/main.rs` 的 `main` 按
-//! [`Role`](system::program::Role) 分派（一枚 ELF 只能有一处 `#[entry]` ⇒ 四枚线程共用同一
-//! 个入口，靠 `Spawn` 那一格 `args` 分开）；目录随之收进 `system/{operator,principal,
-//! coalition}/`——与 `board/` 同一条判据（**谁住编排域，谁住 `system/` 之下**）。
+//! **照实记（iii 那一笔已退：三枚服务是普通程序）**：持树者 / 名册 / 盟册曾经退成"角色体"
+//! ——与编排者共用一份字节，由 `system/main.rs` 的 `main` 按 `Role` 分派（靠 `Spawn` 那一格
+//! `args` 分开）。本笔连同 `Role` / `Source` / 同域 `spawn_here` 一起退了：**它们各自一个
+//! bin、一个域**（`system/{operator,principal,coalition}/main.rs`），由编排域按装配单用与其他
+//! 每一台相同的 `mint` 起起来——目录与 `board/` 同一条判据（**谁住编排域，谁住 `system/` 之下**）。
 //!
 //! **设备侧同理**：谁要读设备，谁的目录里放自己的设备模块（`driver/router/` 下的 `plic.rs`、
 //! `driver/uart/` 下的 `uart.rs`、`driver/rtc/` 下的 `rtc.rs`）——**设备语义各带各的，装配契约才
@@ -62,16 +62,17 @@
 //! 其余驱动侧（名字→线号 / 终端渲染）随旧树一起清了（tag `proto-v1-baseline`），
 //! 需要时按新形状写——**不从那一套搬**。
 //!
-//! 今天产品这一档有**六个**程序——**恰好是产品镜像那 6 条**：
+//! 今天产品这一档有**九个**程序——**恰好是产品镜像那 9 条**：
 //!
 //! ```text
 //!   U 态  prog-echo    调试回显（产品镜像里排最后一条，编排域等它退场才收场）
 //!         prog-router / prog-uart / prog-rtc      三台驱动
+//!         prog-operator / prog-principal / prog-coalition   三枚常驻服务（各一个域）
 //!   S 态  prog-root / prog-system                  引导域 / 编排域
 //! ```
 //!
-//! **另一档不占条数**：`prog-system` 那**一份字节**里住着四个角色（编排者 + 持树者 + 身份 +
-//! 结盟），后三个是**编排域里的线程**（`system/assemble/inner.rs` 的 `INNER`）——它们没有 bin、没有自己的域。
+//! **"六个"那一版是 iii 的读数**：那时后三枚与编排者共用 `prog-system` 一份字节、不占条数。
+//! 它们各自成台之后产品镜像回到 9 条——这与 iii 之前逐字相同。
 //!
 //! **另 22 台测具**住 `harness`（**不进产品镜像的一切**：探针 6 + 试客 6 + 压测台 10）。
 //!

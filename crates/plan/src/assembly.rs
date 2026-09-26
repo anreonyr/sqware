@@ -80,9 +80,9 @@ pub const E_PROBE_RULE: Died = 21;
 pub const E_PROBE_OTHER: Died = 22;
 pub const E_PROBE_BOUND: Died = 23;
 
-/// **内件三枚**（`Role::Tree` / `Role::Roster` / `Role::League`）——它们没有 bin、不进镜像，
-/// 故不在下面那张 `ALL` 上，但**号与上表同源**：`programs/src/system/inner.rs` 的 `INNER`
-/// 每行那一格 `died` 填的就是这三枚（一一对应）。
+/// **三枚服务**（持树者 / 名册 / 盟册）——iii 曾让它们与编排者共用一份字节（不进 `ALL`、
+/// 靠 `Role` 按 args 分派）；今天它们回来了：**各自一个 bin、一个域**，就在下面 `ALL` 里，
+/// 号一一对应。
 pub const E_TREE: Died = 10;
 pub const E_PRINCIPAL: Died = 14;
 pub const E_COALITION: Died = 16;
@@ -150,13 +150,12 @@ pub enum Spot {
     /// 两个**域**：引导域（`root`）与编排域（`system`）——机器本身的骨架，都由内核那 8 字节前言
     /// 指到的那一条派生（见 [`ENTRY`]）。
     Domain,
-    /// **常驻服务**：三台驱动（`router` / `uart` / `rtc`）——用户裁定"真正要发出去的那一台"
-    /// 装的就是这几台。
+    /// **常驻服务**：三台驱动（`router` / `uart` / `rtc`）＋ 三枚服务（持树者 `operator` ·
+    /// 名册 `principal` · 盟册 `coalition`）——用户裁定"真正要发出去的那一台"装的就是这几台。
     ///
-    /// **照实记（原先还列着三个名字）**：持树者（`operator`）· 身份（`principal`）· 结盟
-    /// （`coalition`）原先也是这一档。iii 之后它们**住编排域自己的域里**（`scenario.rs` 的
-    /// `INNER`），不再是镜像里的程序——"装配单里有什么"与"编排域起什么"从此不重合，
-    /// 而后者那三行由**编排域自己**持有。
+    /// **照实记（iii 那一笔已退）**：iii 曾把后三枚从这一档拿掉（让它们与编排者共一份字节、
+    /// 住编排域自己的域里，靠 `Role` 按 args 分派）。那一笔连同 `Role` / `Source` / 同域
+    /// `spawn_here` 一起退了：**它们各自一个 bin、一个域，走与其他每一台相同的 `mint` 路**。
     Service,
     /// **调试回显**（`echo`）：只走 `env` 调试面的那一条（U 态）——产品镜像里它排**最后一条**，
     /// 编排域等它退场才收场。
@@ -300,6 +299,12 @@ pub struct Row {
 #[rustfmt::skip]
 pub const ALL: &[Row] = &[
     Row { name: "root", kind: ProgramKind::Supervisor, spot: Spot::Domain, scenes: &["root", "product"], plan: None },
+    // 三枚服务（持树者 / 名册 / 盟册）：iii 曾让它们与编排者共用一份字节、靠 `Role` 按 args
+    // 分派；今天它们回来——**各自一个 bin、一个域，与其他每一台同一条 `mint` 路**。起手位次
+    // 0/1/2，与内件时代逐字相同（持树者第一、名册第二、盟册第三）。
+    Row { name: "operator", kind: ProgramKind::User, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 0, board: true, operator: false, bind: true, holds_tree: true, eyes: None, died: E_TREE }) },
+    Row { name: "principal", kind: ProgramKind::User, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 1, board: true, operator: true, bind: true, holds_tree: false, eyes: Some(Eyes::Roster), died: E_PRINCIPAL }) },
+    Row { name: "coalition", kind: ProgramKind::User, spot: Spot::Service, scenes: &["root", "product"], plan: Some(Plan { order: 2, board: true, operator: true, bind: true, holds_tree: false, eyes: Some(Eyes::League), died: E_COALITION }) },
     // 调试回显：**U 态**（最小特权）——它只走 `env` 的调试面（`DebugCall`），
     // 够不着建域那道 S 态门。**位次 18**（原 17）：`probe-bound` 那一台要赶在它前面起
     // ——喂键那一套等的是探针收尾，而它一退场整台机器就开始收场（见 `soak` 的门）。

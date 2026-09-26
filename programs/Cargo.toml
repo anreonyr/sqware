@@ -71,6 +71,30 @@ test = false
 bench = false
 doctest = false
 
+# 三枚常驻服务（**U 态，各自一个域**）：持树者 / 名册（身份）/ 盟册（结盟）。它们由编排域
+# 用与其他每一台相同的 `mint` 路起起来——不再与编排者共用一份字节，也没有 `Role` 那层分派。
+# 起手位次 0/1/2（持树者第一、名册第二、盟册第三），与 iii 之前逐字相同。
+[[bin]]
+name = "prog-operator"
+path = "src/system/operator/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-principal"
+path = "src/system/principal/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-coalition"
+path = "src/system/coalition/main.rs"
+test = false
+bench = false
+doctest = false
+
 # 引导域（S 态，boot 引入的唯一顶层域）：读 boot 的两块账、把持树者与编排者起起来，
 # 之后只做一件事——照单发货。
 [[bin]]

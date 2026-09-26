@@ -1,7 +1,7 @@
 //! principal::实现侧 — **身份服务那一台**。
 //!
 //! 判据与 [`crate::system::operator`] 同款：**判定与接口**（正文、九条原语、帧、客侧那一面）
-//! 住 `crates/protocol/src/system/principal/`；**实现方**（iii 之后是**编排域里的一枚线程**，`Role::Roster`）
+//! 住 `crates/protocol/src/system/principal/`；**实现方**（**独立域**，`prog-principal` 那一台）
 //! 住这里。
 //!
 //! **比原计划少两个文件**：载体用的是 rtc 那一面已经量过的"**门牌自带回信孔**"，

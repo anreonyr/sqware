@@ -49,9 +49,8 @@ pub fn serve() -> Result<(), Start> {
     let (mut book, pile, entry_hole, mut buf) = (|| {
         // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
         //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
-        // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
-        // 这一枚指的不是编排者）。
-        let assembler = crate::system::program::assembler().ok_or(Start::Sire)?;
+        // **起我那一枚线程**：本域是装配者建的，故 `Sire` 答的就是它——只有这一条来源。
+        let assembler = runtime::env::unit::sire();
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
         let (_link, board_link) =
