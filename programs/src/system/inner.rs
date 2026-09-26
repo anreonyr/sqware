@@ -25,17 +25,15 @@
 //! 撑着**——同一个教训现在写在 `contract::system::desk` 的并本记里。
 
 use plan::assembly::{Announce, Eyes};
+use plan::assembly::{E_COALITION, E_PRINCIPAL, E_TREE};
 
 use crate::service::{Program, Role};
 
-/// 内件起手失败的三枚号（与原先 `plan::assembly` 上那三枚**同值**）。
-mod died {
-    use plan::assembly::Died;
-    pub const E_TREE: Died = 10;
-    pub const E_PRINCIPAL: Died = 14;
-    pub const E_COALITION: Died = 16;
-}
-use died::{E_COALITION, E_PRINCIPAL, E_TREE};
+// **照实记（那三枚号搬回装配单了）**：这里原有一个私有 `mod died`，握着 `E_TREE` /
+// `E_PRINCIPAL` / `E_COALITION` = 10 / 14 / 16（"由那一处自己持有"）。**结果是两套号在跑**：
+// 装配期失败答 10/14/16（`Plan::died` 这一格），而三枚内件**自己起手失败**（`serve()`）答的是
+// 各域 `fail::Fail` 的 1..5——`operator` 的 `Sire` 甚至占了 `E_BOOT` 的 1。故三枚号搬回
+// `plan::assembly`（与其余每一台同一条规矩：**号在装配单里**），本表照旧填。见那一处的照实记。
 
 /// **内件三条**：住本域的四枚线程里，除编排者自己以外那三枚。
 ///

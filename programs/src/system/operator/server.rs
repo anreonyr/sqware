@@ -3,33 +3,33 @@
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator`]。
 
-use env::wire::Field;
 use env::Wait;
-use plan::assembly::Eyes;
+use env::wire::Field;
 use env::{HoleDir, Mark, PieToken, TaskId};
-use runtime::core::port::{self, Access, Policy};
-use runtime::core::pile::Pile;
-use runtime::env::mail;
+use plan::assembly::Eyes;
 use runtime::PAGE_SIZE;
+use runtime::core::pile::Pile;
+use runtime::core::port::{self, Access, Policy};
+use runtime::env::mail;
 
-use protocol::system::operator as ocall;
 use protocol::session::slip::Slip;
+use protocol::system::board as bcall;
+use protocol::system::board::client as board;
+use protocol::system::operator as ocall;
 use protocol::system::operator::core::gate::{Code, Control, verdict};
 use protocol::system::operator::core::judge::{Id, Rule};
 use protocol::system::operator::core::ledger::{Key, Ledger};
 pub use protocol::system::operator::{ASK_MARK, LINK, TIP_MARK};
 use protocol::system::operator::{EntryId, Fail, Listing, Operator, Where};
-use protocol::system::board as bcall;
-use protocol::system::board::client as board;
 
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::Coord;
+use crate::system::server::Start;
 use contract::system::desk::{Desk, DeskFail, Guest};
 use protocol::system::operator::desk;
-
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -210,11 +210,11 @@ const MS: usize = 1000;
 ///
 /// 头两步是契约：装配者按 `(本域, tip)` 两格认领提示孔（[`attach`] 的 `host_of`），
 /// 而提示一到它就认为"答话路必已在本表里"（转授在前、提示在后）。
-pub fn serve() -> Result<(), super::fail::Fail> {
+pub fn serve() -> Result<(), Start> {
     // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
     // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
     let Some(assembler) = crate::service::assembler() else {
-        return Err(super::fail::Fail::Sire);
+        return Err(Start::Sire);
     };
     // **上板**（乙那一刀）：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形
     // （名册 / 盟册早就在上板）。**名字不必本域自己报名**：装配者随提示那一格递过来
@@ -222,14 +222,14 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     // （装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，故少了这一步装配当场报
     // `board:claim`——实测栽过一次）。
     let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
-        return Err(super::fail::Fail::Board);
+        return Err(Start::Board);
     };
     if board::ask_hole(board_link).is_err() {
-        return Err(super::fail::Fail::Board);
+        return Err(Start::Board);
     }
     // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(TIP_MARK) else {
-        return Err(super::fail::Fail::Tip);
+        return Err(Start::Tree);
     };
     let tip_hole = mail::HolePie::from_token(tip);
     if port::ship(
@@ -240,15 +240,15 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     )
     .is_err()
     {
-        return Err(super::fail::Fail::Tip);
+        return Err(Start::Tree);
     }
     // **一个组**：提示孔 + 每位客人的问话孔。提示孔也挂进来，故"来客人了"与"有人问话"
     // 是**同一个等待**。本线程独享它（`shared = false`）。
     let Ok(pile) = Pile::unseal(false) else {
-        return Err(super::fail::Fail::Group);
+        return Err(Start::Desk);
     };
     if pile.attach(&tip_hole, HoleDir::Pull).is_err() {
-        return Err(super::fail::Fail::Group);
+        return Err(Start::Desk);
     }
 
     let mut tree = ocall::tree();
@@ -270,14 +270,18 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     // 由 `probe-bound` 那一条探针当场抓出来（读数见 `harness/src/probe_bound.rs`）。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(super::fail::Fail::Room);
+        return Err(Start::Room);
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。
         let settling = settle(&mut desk, &pile, &tip_hole, &mut coord, &mut session);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
-        let millis = if settling { Wait::AtMost(SETTLE_MS) } else { Wait::Forever };
+        let millis = if settling {
+            Wait::AtMost(SETTLE_MS)
+        } else {
+            Wait::Forever
+        };
         let Ok(Some((tok, _dir))) = pile.await_(millis) else {
             let _ = desk.sweep();
             continue;

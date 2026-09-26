@@ -39,8 +39,8 @@
 extern crate alloc;
 extern crate programs;
 
-use env::Wait;
 use env::Mark;
+use env::Wait;
 use programs::service;
 
 // 照实记：这里原来还 `use ...::board::bridge as board`——只为收尾那一句 `board::shut()`。
@@ -53,19 +53,18 @@ use protocol::session::{Pier, Quay};
 use protocol::system::board::LANE_PREFIX;
 use protocol::system::desk::Table;
 use runtime::core::dock::Dock;
-use runtime::core::port::{Access, Policy};
 use runtime::core::pile::Pile;
+use runtime::core::port::{Access, Policy};
 use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::unit as utask;
 
-use protocol::driver::supply;
 use contract::driver::supply::frame::{Kind, Want};
 use plan::assembly::E_BOOT;
 use programs::system::{coalition, operator, principal};
+use protocol::driver::supply;
 use service::{Catalog, Lane, Program, Role};
 
 mod scenario;
-
 
 // **照实记（这里原先有四个名字常量：`TREE` / `PRINCIPAL` / `COALITION` / `MEMBER`）**：
 // 它们是"装配期认谁"的四个名字，而**认它们的是装配的机器**（`service::assemble` 里那三处
@@ -75,7 +74,6 @@ mod scenario;
 
 /// 结算两条上限（毫秒）：与引导域开会话、以及装配期的等。
 const BOOT_MS: usize = 1000;
-
 
 // ── 装配单搬到 `scenario.rs`（用户裁定"测试和程序分开"）──────────────
 //
@@ -147,28 +145,16 @@ fn exit(role: Result<(), programs::Report<'static>>) -> programs::Report<'static
     }
 }
 
-/// **本域与三枚内件的死法 → 出口那一格**（各域两句话都是常量：`code()` + `text()`）。
+/// **本域的死法 → 出口那一格**（两句话都是常量：`code()` + `text()`）。
+///
+/// 三枚内件走 [`server::said`](server::said)——它们共用 [`server::Start`] 那一枚死法类型
+/// （三份同构的 `fail.rs` 已并掉），故 `main` 那三支是 `map_err(server::said)`。
 ///
 /// **照实记（为什么不叫 `Exit::report`）**：那一手取 `&self`、返 [`Report<'_>`](programs::Report)
-/// ——输出的寿命借在**它那个参数**上，故它出不了这些函数（真机报 E0515：cannot return value
-/// referencing function parameter）。而各域的死法值与 `Report` 没有真关系：这里自己拼一格
-/// （`Report` 里存的是码与**指向常量**的那一对指针，故返 `'static` 是诚实的）。
+/// ——输出的寿命借在**它那个参数**上，故它出不了这个函数（真机报 E0515：cannot return value
+/// referencing function parameter）。而两句话都是常量 ⇒ 这里自己拼一格（`Report` 里存的是码与
+/// **指向常量**的那一对指针，故返 `'static` 是诚实的）。
 fn said(f: Fail) -> programs::Report<'static> {
-    programs::Report::note(f.code(), f.text())
-}
-
-/// 持树者那一域（[`operator::fail`]）的死法 → 出口那一格。
-fn tree_said(f: operator::fail::Fail) -> programs::Report<'static> {
-    programs::Report::note(f.code(), f.text())
-}
-
-/// 名册那一域（[`principal::fail`]）的死法 → 出口那一格。
-fn roster_said(f: principal::fail::Fail) -> programs::Report<'static> {
-    programs::Report::note(f.code(), f.text())
-}
-
-/// 盟册那一域（[`coalition::fail`]）的死法 → 出口那一格。
-fn league_said(f: coalition::fail::Fail) -> programs::Report<'static> {
     programs::Report::note(f.code(), f.text())
 }
 
@@ -177,13 +163,13 @@ fn main() -> programs::Report<'static> {
     // **一枚 ELF 四种角色**（iii）：角色由 `Spawn` 那一格 `args` 递进来（[`Role`]）。空 args
     // ⇒ **编排域自己那一枚**——引导域起它时走的就是这一路，照旧。
     //
-    // 四个分支各一行：每一域先把自己那一种死法折成出口那一格（那三支 `map_err`），四格随后
-    // 汇进 [`exit`] 一处——**加第五种角色也只加一行**。
+    // 四个分支各一行：三枚内件共用同一枚死法类型（[`server::Start`]），本域那一支另有自己的
+    // [`Fail`]——两支各自折一次，四格汇进 [`exit`] 一处。**加第五种角色也只加一行**。
     match Role::of_args(runtime::core::unit::args()) {
         Role::System => exit(system().map_err(said)),
-        Role::Tree => exit(operator::server::serve().map_err(tree_said)),
-        Role::Roster => exit(principal::server::serve().map_err(roster_said)),
-        Role::League => exit(coalition::server::serve().map_err(league_said)),
+        Role::Tree => exit(operator::server::serve().map_err(server::said)),
+        Role::Roster => exit(principal::server::serve().map_err(server::said)),
+        Role::League => exit(coalition::server::serve().map_err(server::said)),
     }
 }
 
@@ -261,7 +247,8 @@ fn system() -> Result<(), Fail> {
 
     // 登记整条名册，再按顺序起（配给从 `boot_pier` 那条路领）。
     let mut table = Table::new();
-    let last = match service::assemble(&mut table, &catalog, &roster, &boot_pier, &lanes, &machine) {
+    let last = match service::assemble(&mut table, &catalog, &roster, &boot_pier, &lanes, &machine)
+    {
         Ok(last) => last,
         Err(code) => return Err(Fail::Assemble(code)),
     };
@@ -294,7 +281,8 @@ fn talk_to_root() -> Option<Pier> {
     let slot = Name::new(supply::BOOT).ok()?;
     let mut quay = Quay::open(sire, protocol::session::call::hands());
     quay.seat(slot).ok()?;
-    quay.claim(sire, Mark::of(supply::BOOT), Wait::AtMost(BOOT_MS)).ok()?;
+    quay.claim(sire, Mark::of(supply::BOOT), Wait::AtMost(BOOT_MS))
+        .ok()?;
     quay.find(slot).copied()
 }
 
@@ -334,6 +322,7 @@ fn take(pier: &Pier, want: Want) -> Option<PieToken> {
     let me = utask::self_id().ok()?;
     let key = want.key()?;
     let mut reply = [0u8; supply::REPLY_CAP];
-    let records = supply::client::draw(pier, me, &[want], &mut reply, Wait::AtMost(BOOT_MS)).ok()?;
+    let records =
+        supply::client::draw(pier, me, &[want], &mut reply, Wait::AtMost(BOOT_MS)).ok()?;
     supply::client::pick(records, key)
 }

@@ -14,7 +14,8 @@
 //! 加一条依赖）。码本身读 [`EnvFail::of_code`]——**一个数字都不写**。
 
 use env::Wait;
-use env::{EnvError, Fail as EnvFail, Mark, Name, ProgramKind, TaskId, TeamId};
+use env::{EnvError, Fail as EnvFail, Mark, Name, ProgramKind, Reason, TaskId, TeamId};
+use runtime::core::exit::Report;
 use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
@@ -25,6 +26,7 @@ use protocol::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::system::desk::{Announce, Service, Slot, State, Table};
 
 use crate::service::{Lane, Role};
+use plan::assembly::{E_COALITION, E_PRINCIPAL, E_TREE};
 
 // ── 内核那一侧（原 `system/call.rs`）：每个函数只做一件事——转发一次 ──────
 //
@@ -91,6 +93,90 @@ fn fail(e: erra::Error<EnvError>) -> Fail {
         Some(EnvFail::OoM) => Fail::Full,
         _ => Fail::Unknown,
     }
+}
+
+// ── 内件那一族的起手失败（照实记：三份同构的 `fail.rs` 已并成这一枚）─────────
+//
+// **为什么能并**：那三份 `operator/fail.rs` / `principal/fail.rs` / `coalition/fail.rs` 是**同一
+// 件事的三份写法**——各自的 `Fail` + `code()` + `text()` + `impl Exit`，总共 143 行里只有变体名
+// 与文案不同；而三者都实现 `Exit`、都被 `main` 折成同一个出口。那正是"形状相同"的机械证据。
+//
+// **为什么之前那三份是错的**：每一份各从 `1` 起编号 ⇒ 同一台服务"死在起手"有**两套号**在跑：
+// 装配期那一条（`service::{mint,spawn_here}` / `assemble`，答 `Plan::died`）与 `serve()` 自己那
+// 一条（答 1..5）。`operator` 的 `Sire = 1` 甚至与 `E_BOOT` 撞号。现在**号一律取自装配单**
+// （`plan::assembly` 那一套，含内件三枚 10/14/16）⇒ `serve()` 与装配期说的是同一句话。
+//
+// **留下的几格只在"各域真的做过的事"上分**：`Book`（立两张表）只有名册有、`Face`（按名字找
+// 身份那份门牌）只有盟册有、`Room`（收帧那一页）只有持树者有；`Sire` / `Board` / `Entry` 三台
+// 同款，`Tree` 把"铸提示孔"与"上树"这两步**同一个来路**收成一格，`Desk` 收"那只组 + 收帧那
+// 一页"。
+
+/// 内件**起手**失败：三枚共用（`Role::System` 那一枚另有 [`super::main::Fail`]）。
+///
+/// **名字为什么不叫 `Fail`**：这一族里 `operator/server.rs` 已经 `use
+/// protocol::system::operator::{…, Fail}`（那是**核心**的失败域：`Unknown` / `Dead` /
+/// `NotATile`……），两个 `Fail` 在同一份文件里撞名。起手这几格与核心那几格不是一回事，
+/// 故按"死在起手的哪一步"取名 [`Start`]。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    /// 认不出"起我那一枚线程"（`service::assembler`）——`Spawn` 那一格 `args` 没递对。
+    Sire,
+    /// 上板那一步（`board::open` / `ask_hole`）。
+    Board,
+    /// 树那一步：持树者铸提示孔交给装配者 / 名册与盟册分目录 + 落门牌 + 回查。
+    Tree,
+    /// 本域自己开的那一枚孔（服务入口记号 [`protocol::system::board::ENTRY_MARK`]）。
+    Entry,
+    /// 起手要备的那两样备不下：持树者**收帧那一页**（`Pile` 之外的那一样）。
+    Room,
+    /// 常驻那一问：那只组没立起来，或收帧那一页备不下。
+    Desk,
+    /// 身份服务的两张表（谱系 + 名册）没立起来；**只有名册那一台有**。
+    Book,
+    /// 身份服务那份门牌找不到（盟册是它的客人，**按名字找**）；**只有盟册有**。
+    Face,
+    /// **常驻期**：组坏了（`await_` 答不出）——与 [`Start::Desk`] 分开，是因为它不在"起手那
+    /// 几步"里（起手已经过完了），而号同那一族。
+    Dead,
+}
+
+impl Start {
+    /// **号一律取自装配单**（[`Died`](plan::assembly::Died)）——本域自己的死法**一个数都不写**。
+    pub fn code(self) -> Reason {
+        match self {
+            Start::Sire => E_TREE,
+            Start::Board => E_TREE,
+            Start::Tree => E_TREE,
+            Start::Room => E_TREE,
+            Start::Entry => E_PRINCIPAL,
+            Start::Book => E_PRINCIPAL,
+            Start::Desk => E_COALITION,
+            Start::Face => E_COALITION,
+            Start::Dead => E_COALITION,
+        }
+    }
+
+    pub fn text(self) -> &'static str {
+        match self {
+            Start::Sire => "operator: no sire",
+            Start::Board => "operator: board",
+            Start::Tree => "operator: tree",
+            Start::Entry => "principal: entry",
+            Start::Room => "operator: no room",
+            Start::Desk => "coalition: desk",
+            Start::Book => "principal: no book",
+            Start::Face => "coalition: no identity plate",
+            Start::Dead => "inner: group dead",
+        }
+    }
+}
+
+/// **内件那一支的出口格**（`main` 那三个分支 `map_err` 的就是它）。
+///
+/// 与 [`super::main`] 的 `said` 同一形状：自己拼一格 `Report<'static>`（不叫 `Exit::report` 的
+/// 理由见那一处）。
+pub fn said(f: Start) -> Report<'static> {
+    Report::note(f.code(), f.text())
 }
 
 // ── 适配：原语（把内核那一侧与表拼起来）──────────────────────
@@ -232,7 +318,11 @@ pub fn ready(
         // 泊位的名字 = 装配单给的通道名），每条都配齐才算起来。认领的是**它**交上来的
         // 那一批（`owner` = 这个孩子）：孔交给的是"生我者"（建域那一枚线程），而
         // **"谁的孔"与"我认的对端"是两件事**——见 `Quay::claim` 的正文。
-        if !marks.is_empty() && marks.iter().all(|mark| q.claim(task, *mark, millis).is_ok()) {
+        if !marks.is_empty()
+            && marks
+                .iter()
+                .all(|mark| q.claim(task, *mark, millis).is_ok())
+        {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -368,7 +458,10 @@ pub fn supervise(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
             let Some(road) = lane.road else {
                 continue;
             };
-            if HolePie::from_token(road).pull_timeout(&mut lane_buf, Wait::POLL).is_err() {
+            if HolePie::from_token(road)
+                .pull_timeout(&mut lane_buf, Wait::POLL)
+                .is_err()
+            {
                 continue; // 这一条没货
             }
             // **道自己带着名字**（不用下标去装配单里翻：见 [`Lane`] 那段照实记）。

@@ -50,12 +50,18 @@ pub type Died = env::Reason;
 
 // ── 死在装配的哪一步（编号沿用旧树那套小整数）───────────────────────────────
 //
-// **照实记（iii 之后 16 个；`probe-bound` 那一台上表再添一枚 ⇒ 今天 17 个）**：这批编号原住
-// `programs/src/system/main.rs`，与装配单同源（"哪一台、死在第几步"），故随表一起搬下来；
-// 那里现在 `pub use` 转发。iii 把**内件那三枚**随它们那三行送去了
-// `programs/src/system/inner.rs`（`E_TREE` / `E_PRINCIPAL` / `E_COALITION` = 10 / 14 / 16，
-// 由那一处自己持有）。故下面这几格里有空号（2..4 / 10 / 14 / 16）——**那是旧树的号**
-// （见本节标题），不重排。
+// **照实记（iii 之后 16 个；`probe-bound` 那一台上表再添一枚 ⇒ 今天 17 个；内件三枚归位后
+// 19 个）**：这批编号原住 `programs/src/system/main.rs`，与装配单同源（"哪一台、死在第几步"），
+// 故随表一起搬下来；那里现在 `pub use` 转发。
+//
+// **照实记（内件那三枚 10/14/16 已归位）**：iii 把它们送进了 `programs/src/system/inner.rs`，
+// 由那一处自己持有——**结果是两套号在跑**：装配期失败（`service::{mint,spawn_here}` / `assemble`）
+// 答 10/14/16，而三枚内件**自己起手失败**（`serve()` 那几格）答的是各域 `fail::Fail` 的 1..5
+// ——`operator` 的 `Sire` 甚至占了 `E_BOOT` 的 1。同一台服务"死在起手"有两套号，文本里却写着
+// "同值"。这一刀把三枚号收进本表（与其余每一台同一条规矩：**号在装配单里**），三份同构的
+// `fail::Fail` 随之并成 `system::Fail` 一枚 ⇒ `serve()` 与装配期答的是同一套号。
+//
+// 故下面这几格里有空号（2..4）——**那是旧树的号**（见本节标题），不重排。
 pub const E_BOOT: Died = 1;
 pub const E_ROUTER: Died = 5;
 pub const E_ECHO: Died = 6;
@@ -73,6 +79,13 @@ pub const E_PROBE_LEASE: Died = 20;
 pub const E_PROBE_RULE: Died = 21;
 pub const E_PROBE_OTHER: Died = 22;
 pub const E_PROBE_BOUND: Died = 23;
+
+/// **内件三枚**（`Role::Tree` / `Role::Roster` / `Role::League`）——它们没有 bin、不进镜像，
+/// 故不在下面那张 `ALL` 上，但**号与上表同源**：`programs/src/system/inner.rs` 的 `INNER`
+/// 每行那一格 `died` 填的就是这三枚（一一对应）。
+pub const E_TREE: Died = 10;
+pub const E_PRINCIPAL: Died = 14;
+pub const E_COALITION: Died = 16;
 
 // ── 四张硬件需求单（**收方开的**，逐字从各域当年的 `needs.rs` 搬下来——那几份转发本笔已删）────────────
 //

@@ -13,54 +13,53 @@
 //!   常驻：一只组等门牌那一枚 —— 读一帧（连发送者）→ 交给核心 → 从这一趟的回信孔答回去
 //! ```
 
-use env::Wait;
+use crate::system::server::Start;
 use alloc::format;
+use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
-use protocol::system::operator::Where;
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
-use protocol::system::principal as pcall;
-use protocol::system::principal::core::{Principal, PrincipalId};
 use protocol::session::Quay;
 use protocol::session::slip::Slip;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
-use runtime::core::port::{self, Access, Policy};
-use runtime::core::pile::Pile;
-use runtime::env::mail::{self, HolePie};
+use protocol::system::operator as ocall;
+use protocol::system::operator::Where;
+use protocol::system::operator::client as operator;
+use protocol::system::principal as pcall;
+use protocol::system::principal::core::{Principal, PrincipalId};
 use runtime::PAGE_SIZE;
-
+use runtime::core::pile::Pile;
+use runtime::core::port::{self, Access, Policy};
+use runtime::env::mail::{self, HolePie};
 
 /// 等板 / 等树的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
 /// 起服务：**读锚 → 上板 → 铸门牌（给生我者 + 上树）→ 一枚线程招待所有客人**。
 ///
-/// **起手那几步收在一个闭包**（照实记）：它们清一色是"不成 ⇒ 这一域起不来"的早退步，从前每步
-/// 一段 `let Ok(..) = .. else { return Err(..) }` ——**报的是同一个死法、写的是七段岔口**，
-/// 主脉络因此被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**（先上板 / 铸门牌那两
-/// 桩收尾也是这个道理：它们成败相同）。`serve` 的主干于是只剩"起手 → 常驻"两步。
-pub fn serve() -> Result<(), super::fail::Fail> {
-    // 一～五：起手（读锚 → 上板 → 铸门牌 → 上树 → 两张表 → 常驻那只组）。
-    //
-    // 三样东西跟着交出来：**常驻那一问要的两格**（`pile` 是那一组，`entry_hole` 是组下那一枚
-    // 门牌）与**那本账**（`book`，`turn` 收它）。门牌本身不必出来——它在闭包里已经交出去过了
-    // （给生我者、给持树者），循环只需要那枚孔的句柄。
-    let (mut book, pile, entry_hole) = (|| {
+/// **起手那几步收在一个闭包**（照实记，与持树者 / 盟册那两台同形）：它们清一色是"不成 ⇒ 这域
+/// 起不来"的早退步，从前每步一段 `let Ok(..) = .. else { return Err(..) }`——报的是同一个死法、
+/// 写的是七段岔口，主脉络因此被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**。
+/// `serve` 的主干于是只剩两步：**起手 → 常驻**。
+///
+/// 起手要交出去的四样：常驻那一问的两格（`pile` 是那一组、`entry_hole` 是组下那枚门牌）、
+/// `book`（`turn` 收它）、`buf`（收帧那一页，循环里也用）。
+pub fn serve() -> Result<(), Start> {
+    // 一～六：起手（读锚 → 上板 → 铸门牌 → 上树 → 两张表 → 常驻那只组）。
+    let (mut book, pile, entry_hole, mut buf) = (|| {
         // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
         //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
         // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
         // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
-        let assembler = crate::service::assembler().ok_or(super::fail::Fail::Sire)?;
+        let assembler = crate::service::assembler().ok_or(Start::Sire)?;
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
         let (_link, board_link) =
-            board::open(assembler, Wait::AtMost(MS)).map_err(|_| super::fail::Fail::Board)?;
-        board::ask_hole(board_link).map_err(|_| super::fail::Fail::Board)?;
+            board::open(assembler, Wait::AtMost(MS)).map_err(|_| Start::Board)?;
+        board::ask_hole(board_link).map_err(|_| Start::Board)?;
 
         // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
-        let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| super::fail::Fail::Tree)?;
+        let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| Start::Tree)?;
         // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
         //
         // **照实记（这一格的理由换过一次，多出来的那一格也收了）**：原写的是"给 `FETCH` 是因为
@@ -77,12 +76,11 @@ pub fn serve() -> Result<(), super::fail::Fail> {
             Access::STORE,
             Policy::NONE,
         )
-        .map_err(|_| super::fail::Fail::Tree)?;
+        .map_err(|_| Start::Tree)?;
 
         // 四、上树：分 `/sys`、落 `/sys/principal`、再查回来验一遍（同 router / rtc 那一趟）。
-        let (tree, host) =
-            operator::open(assembler, Wait::AtMost(MS)).map_err(|_| super::fail::Fail::Tree)?;
-        let talk = operator::ask_hole(host).map_err(|_| super::fail::Fail::Tree)?;
+        let (tree, host) = operator::open(assembler, Wait::AtMost(MS)).map_err(|_| Start::Tree)?;
+        let talk = operator::ask_hole(host).map_err(|_| Start::Tree)?;
         serve_tree(&tree, talk, host, entry);
 
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
@@ -97,31 +95,27 @@ pub fn serve() -> Result<(), super::fail::Fail> {
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .map_err(|_| super::fail::Fail::Tree)?;
+        .map_err(|_| Start::Tree)?;
 
         // 五、两张表：名册空着，谱系只有根（零号节点）。
-        let book = Principal::new(assembler).map_err(|_| super::fail::Fail::Book)?;
+        let book = Principal::new(assembler).map_err(|_| Start::Book)?;
 
-        // 六、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。组与名下那一枚孔
-        //     在闭包里立好，交给下面那个循环。
-        let pile = Pile::unseal(false).map_err(|_| super::fail::Fail::Desk)?;
+        // 六、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限；那一页缓冲只备一次。
+        let pile = Pile::unseal(false).map_err(|_| Start::Desk)?;
         let entry_hole = HolePie::from_token(entry);
-        pile
-            .attach(&entry_hole, HoleDir::Pull)
-            .map_err(|_| super::fail::Fail::Desk)?;
-        Ok::<_, super::fail::Fail>((book, pile, entry_hole))
+        pile.attach(&entry_hole, HoleDir::Pull)
+            .map_err(|_| Start::Desk)?;
+        let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+        if buf.try_reserve_exact(PAGE_SIZE).is_err() {
+            return Err(Start::Room);
+        }
+        buf.resize(PAGE_SIZE, 0);
+        Ok::<_, Start>((book, pile, entry_hole, buf))
     })()?;
 
-    // 一问的形状是那一形（25 字节）；缓冲给**一页**（载体的界，见 `Push` 的前置条件）——
-    // 于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
-    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-    if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(super::fail::Fail::Desk);
-    }
-    buf.resize(PAGE_SIZE, 0);
     loop {
         if pile.await_(Wait::Forever).is_err() {
-            return Err(super::fail::Fail::Desk);
+            return Err(Start::Dead);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
         while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, Wait::POLL) {

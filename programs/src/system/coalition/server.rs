@@ -16,29 +16,29 @@
 //! 就答 0），树那条路是"按名找人"的现成一步；而身份那一份门牌**只能按名字找**——本域不是
 //! 装配者，拿不到它手里那一份副本（正文 K7 的被否项：转授要新装配机制）。
 
-use env::Wait;
+use crate::system::server::Start;
 use alloc::format;
 use core::time::Duration;
+use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
-use protocol::system::coalition as ccall;
-use protocol::system::coalition::core::{Coalition, Fail};
-use protocol::system::operator::Where;
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
-use protocol::system::principal as pcall;
-use protocol::system::principal::client::Face;
-use protocol::system::principal::core::PrincipalId;
 use protocol::session::Quay;
 use protocol::session::slip::Slip;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
-use runtime::core::port::{self, Access, Policy};
+use protocol::system::coalition as ccall;
+use protocol::system::coalition::core::{Coalition, Fail};
+use protocol::system::operator as ocall;
+use protocol::system::operator::Where;
+use protocol::system::operator::client as operator;
+use protocol::system::principal as pcall;
+use protocol::system::principal::client::Face;
+use protocol::system::principal::core::PrincipalId;
+use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
+use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 use runtime::env::room;
-use runtime::PAGE_SIZE;
-
 
 /// 等板 / 等树 / 问名册的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
@@ -48,35 +48,29 @@ const RETRY_MS: usize = 1;
 
 /// 起服务：**读锚 → 上板 → 铸门牌上树 → 找身份那一份门牌 → 一枚线程招待所有客人**。
 ///
-/// **起手那几步收在一个闭包**（照实记）：与 [`principal`](super::super::principal) 那一台同一
-/// 形状——它们清一色是"不成 ⇒ 这一域起不来"的早退步，从前每步一段 `let Ok(..) = .. else { return
-/// Err(..) }`，主脉络被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**（上板与铸门牌
-/// 那两桩收尾同理：成败相同）。
-pub fn serve() -> Result<(), super::fail::Fail> {
-    // 一～五：起手（读锚 → 上板 → 铸门牌 → 上树 → 找身份那一份 → 空册 → 常驻那只组）。
-    //
-    // 三样东西跟着交出来：**常驻那一问要的两格**（`pile` 是那一组，`entry_hole` 是组下那一枚
-    // 门牌）与**那本账**（`book`，`turn` 收它）＋**名册那一份门牌**（`face`，每条写原语都过
-    // 它）。门牌本身不必出来——它在闭包里已经交出去过了。
-    let (mut book, face, pile, entry_hole) = (|| {
+/// **起手那几步收在一个闭包**（照实记，与持树者 / 名册那两台同形）：它们清一色是"不成 ⇒ 这域
+/// 起不来"的早退步，从前每步一段 `let Ok(..) = .. else { return Err(..) }`——报的是同一个死法、
+/// 写的是七段岔口，主脉络因此被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**。
+pub fn serve() -> Result<(), Start> {
+    // 一～七：起手（读锚 → 上板 → 铸门牌 → 上树 → 找身份那一份 → 空册 → 常驻那只组）。
+    let (mut book, face, pile, entry_hole, mut buf) = (|| {
         // 一、锚：`Sire` = 装配者。**只为上板与上树两条会话**——盟无主，核心不需要它
         //     （对照 principal：那边把它当名册钥匙，注入核心那一格）。
         // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
         // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
-        let assembler = crate::service::assembler().ok_or(super::fail::Fail::Sire)?;
+        let assembler = crate::service::assembler().ok_or(Start::Sire)?;
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
         let (_link, board_link) =
-            board::open(assembler, Wait::AtMost(MS)).map_err(|_| super::fail::Fail::Board)?;
-        board::ask_hole(board_link).map_err(|_| super::fail::Fail::Board)?;
+            board::open(assembler, Wait::AtMost(MS)).map_err(|_| Start::Board)?;
+        board::ask_hole(board_link).map_err(|_| Start::Board)?;
 
         // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
-        let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| super::fail::Fail::Tree)?;
+        let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| Start::Tree)?;
 
         // 四、上树：分 `/sys`、落 `/sys/coalition`、再查回来验一遍（同 router / rtc / principal）。
-        let (tree, host) =
-            operator::open(assembler, Wait::AtMost(MS)).map_err(|_| super::fail::Fail::Tree)?;
-        let talk = operator::ask_hole(host).map_err(|_| super::fail::Fail::Tree)?;
+        let (tree, host) = operator::open(assembler, Wait::AtMost(MS)).map_err(|_| Start::Tree)?;
+        let talk = operator::ask_hole(host).map_err(|_| Start::Tree)?;
         serve_tree(&tree, talk, host, entry);
 
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
@@ -92,35 +86,31 @@ pub fn serve() -> Result<(), super::fail::Fail> {
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .map_err(|_| super::fail::Fail::Tree)?;
+        .map_err(|_| Start::Tree)?;
 
         // 五、**身份那一份门牌**：本域是它的客人（K7）。带重试——它可能落得比本域晚。
-        let face_entry = find_face(&tree, talk).ok_or(super::fail::Fail::Face)?;
-        let face = Face::of(face_entry).map_err(|_| super::fail::Fail::Face)?;
+        let face_entry = find_face(&tree, talk).ok_or(Start::Face)?;
+        let face = Face::of(face_entry).map_err(|_| Start::Face)?;
 
         // 六、一本空册：一枚号都还没铸（**起手不失败**——空册不分配）。
         let book = Coalition::new();
 
-        // 七、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限。组与名下那一枚孔
-        //     在闭包里立好，交给下面那个循环。
-        let pile = Pile::unseal(false).map_err(|_| super::fail::Fail::Desk)?;
+        // 七、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限；那一页缓冲只备一次。
+        let pile = Pile::unseal(false).map_err(|_| Start::Desk)?;
         let entry_hole = HolePie::from_token(entry);
-        pile
-            .attach(&entry_hole, HoleDir::Pull)
-            .map_err(|_| super::fail::Fail::Desk)?;
-        Ok::<_, super::fail::Fail>((book, face, pile, entry_hole))
+        pile.attach(&entry_hole, HoleDir::Pull)
+            .map_err(|_| Start::Desk)?;
+        let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+        if buf.try_reserve_exact(PAGE_SIZE).is_err() {
+            return Err(Start::Room);
+        }
+        buf.resize(PAGE_SIZE, 0);
+        Ok::<_, Start>((book, face, pile, entry_hole, buf))
     })()?;
 
-    // 一问的形状是那一形（25 字节）；缓冲给**一页**（载体的界，见 `Push` 的前置条件）——
-    // 于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
-    let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-    if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(super::fail::Fail::Desk);
-    }
-    buf.resize(PAGE_SIZE, 0);
     loop {
         if pile.await_(Wait::Forever).is_err() {
-            return Err(super::fail::Fail::Desk);
+            return Err(Start::Dead);
         }
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
         while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, Wait::POLL) {
@@ -161,7 +151,12 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
 /// **形状由 [`ccall::Wire`] 说**（收帧那一侧已按动作解好：两格载荷的意义随之定，不再是一枚裸码
 /// ＋ 两个裸数）。三条**写**原语同一个起手：**先拿发送者过名册**（[`who`]）。三条读不过名册
 /// ——`amid` 的 `p` 与两条取窗的键都是问的人给的标签（K6）。
-fn answer(book: &mut Coalition, face: &Face, from: TaskId, ask: Option<ccall::Wire>) -> ccall::Union {
+fn answer(
+    book: &mut Coalition,
+    face: &Face,
+    from: TaskId,
+    ask: Option<ccall::Wire>,
+) -> ccall::Union {
     // 表外的动作码：这一问有回信的路，只是这一码我不认（与"读不懂"同一格）。
     let Some(ask) = ask else {
         return ccall::Union::Status(ccall::BAD);
